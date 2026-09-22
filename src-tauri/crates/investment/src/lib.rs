@@ -45,6 +45,10 @@
 //!   耗尽批次成本闭合、结转成本合计、修改/删除路径的两个精确回补原语
 //!   （issue #1018，父 spec #1005 决策 D4）；
 //! - [`manual_price`]：手动报价两落点（价格历史周采样 + 现价缓存映像规则）；
+//! - [`market`]：市场闭集单点（issue #1673）——市场（Market）七值闭集、可路由
+//!   子集 `QuoteMarket` 与解析路由小闭集 `StockRoute`，可路由性唯一判定点
+//!   `Market::as_quote_market`、美股聚合路由与报价币种推导（ADR-0081）；行情
+//!   同步域向下消费，跨域不存在第二份「市场 → 查询键」口径；
 //! - [`mwr`]：资金加权收益率（MoneyWeightedReturn，ADR-0115 / issue #1195）——
 //!   XIRR 求解器（确定性二分）与三消费面读投影（持仓页单标的 / 盈亏页账户级
 //!   与全账级），现金流、区间期初市值、空值与无解口径见模块头注；
@@ -73,9 +77,9 @@
 //! - [`split`]：份额调整（split）批次成本重述单点——按比例重述在用批次
 //!   （尾差归末批次）与 `security_lot_adjustments` 审计落库（ADR-0106 决策 2/3，
 //!   issue #1049）；
-//! - [`stock`]：股票按（市场，代码）查询的领域规则——代码形态 → 市场单点推断、
-//!   报价币种推导（issue #693 / ADR-0081；行情源访问在行情同步域
-//!   `ledger-market-sync` crate 的 `sync::stock`）；
+//! - [`stock`]：股票按（市场，代码）查询的领域规则——代码形态 → 路由单点推断
+//!   （issue #693 / ADR-0081；行情源访问在行情同步域 `ledger-market-sync` crate
+//!   的 `sync::stock`；币种推导归 [`market`] 单点）；
 //! - [`trade`]：buy/sell/convert/split/dividend 协议分派与买卖/转换/份额调整明细投影
 //!   （`TransactionTrade` / `TransactionConvert`）；
 //! - [`trend`]：单标的 / 组合走势查询。
@@ -119,6 +123,7 @@ pub mod fund;
 pub mod holdings;
 pub mod lots;
 pub mod manual_price;
+pub mod market;
 pub mod mwr;
 pub mod overview;
 pub mod predicates;
@@ -156,7 +161,7 @@ pub use model::{
 /// 模块级接缝（[`holdings`] / [`prices`] / [`predicates`]）按样板留在模块路径
 /// 消费（先例：`item::guard` / `item::cost` 不再导出到根）。
 pub use backfill::{TrendBackfillState, TrendBackfillStatus};
-pub use channel::{PriceChannel, derive_price_channel};
+pub use channel::{PriceChannel, derive_price_channel, derive_quote_market};
 pub use command::{ExchangeRateCommand, InstrumentCommand, PriceCommand};
 pub use constant_price::{
     ConstantPriceValue, ensure_constant_base_price, mark_constant_unit_price,
@@ -172,6 +177,7 @@ pub use fund::{
     is_six_digit_code, reject_carried_fund_market, validate_fund_code,
 };
 pub use manual_price::record_manual_price;
+pub use market::{Market, QuoteMarket, StockRoute, derive_quote_currency};
 pub use mwr::{
     AccountMwr, CurrencyMwr, InstrumentMwr, MoneyWeightedReturnSummary, MwrBasis, MwrRange,
     query_money_weighted_return_summary,
@@ -186,7 +192,7 @@ pub use staleness::{PRICE_STALE_AFTER_DAYS, PriceStaleness, instrument_price_sta
 pub use stock::{
     ResolvedStockCode, StockCreateOutcome, StockCreateRoute, StockEnhancePlan,
     add_stock_instrument_with_quote, adopt_stock_quote, create_stock_degraded,
-    derive_quote_currency, fetch_stock_quote_for_add, resolve_add_stock_channel,
+    explicit_quote_market, fetch_stock_quote_for_add, resolve_add_stock_channel,
     resolve_stock_code, route_stock_creation,
 };
 // 投资交易对外出口收窄为 prepare/apply/revert 三件套 + 删除路径专用 release_for_delete

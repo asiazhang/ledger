@@ -8,20 +8,20 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::{
-    InstrumentType, Quote, add_stock_instrument_with_quote, fetch_stock_quote_for_add,
-    prices::TENCENT_PRICE_SOURCE, resolve_add_stock_channel,
+    InstrumentType, Market, Quote, StockRoute, add_stock_instrument_with_quote,
+    fetch_stock_quote_for_add, prices::TENCENT_PRICE_SOURCE, resolve_add_stock_channel,
 };
 use ledger_infra::error::AppError;
 use tauri_app_lib::test_support::{block_on, open};
 
 /// 构造行情桩的命中回报：统一报价载荷（ADR-0103）自带（市场，代码，价格，类型提示）。
-fn hit_quote(market: &str, code: &str, kind: InstrumentType) -> Quote {
+fn hit_quote(market: Market, code: &str, kind: InstrumentType) -> Quote {
     Quote {
         code: code.to_string(),
         name: format!("权威名称·{code}"),
         price_cents: Some(2325000),
         price_date: Some("2026-09-06".to_string()),
-        market: Some(market.to_string()),
+        market: Some(market),
         kind_hint: Some(kind),
         fund_class: None,
         nav_date: None,
@@ -46,25 +46,28 @@ type RequestTrack = Rc<RefCell<Vec<(String, String)>>>;
 /// `us` 且命中市场属美股三市场（行情源不区分交易所）即返回命中行情，否则未命中
 /// ——换源后查询恒单只。请求轨迹经共享句柄带出供断言。
 fn tracking_fetch(
-    hit: Option<(&'static str, Quote)>,
+    hit: Option<(Market, Quote)>,
 ) -> (
-    impl FnMut(&str, &str) -> std::future::Ready<ledger_infra::error::Result<Quote>>,
+    impl FnMut(&str, StockRoute) -> std::future::Ready<ledger_infra::error::Result<Quote>>,
     RequestTrack,
 ) {
     let requests: RequestTrack = Rc::new(RefCell::new(Vec::new()));
     let track = Rc::clone(&requests);
     (
         // async 接缝桩（ADR-0125 决策 7 / issue #1413）：应答值为立即就绪的 future。
-        move |code: &str, market: &str| {
+        // 命中判定与数据源行为同构：请求路由 = 命中市场的聚合投影（消费投资域
+        // `as_stock_route` 单点，不自建第二份映射，issue #1673）。
+        move |code: &str, route: StockRoute| {
             track
                 .borrow_mut()
-                .push((market.to_string(), code.to_string()));
+                .push((route.as_str().to_string(), code.to_string()));
+            let expected_route = hit
+                .as_ref()
+                .map(|(m, _)| *m)
+                .and_then(|m| m.as_quote_market())
+                .map(|qm| qm.as_stock_route());
             match &hit {
-                Some((hit_market, quote))
-                    if *hit_market == market
-                        || (market == "us"
-                            && matches!(*hit_market, "nasdaq" | "nyse" | "amex")) =>
-                {
+                Some((_, quote)) if expected_route == Some(route) => {
                     std::future::ready(Ok(quote.clone()))
                 }
                 _ => std::future::ready(Err(miss(code))),
@@ -80,9 +83,18 @@ fn tracking_fetch(
 
 #[test]
 fn sh_sz_hk_channels_map_to_explicit_markets() {
-    assert_eq!(resolve_add_stock_channel("sh").unwrap(), Some("sh"));
-    assert_eq!(resolve_add_stock_channel("sz").unwrap(), Some("sz"));
-    assert_eq!(resolve_add_stock_channel("hk").unwrap(), Some("hk"));
+    assert_eq!(
+        resolve_add_stock_channel("sh").unwrap(),
+        Some(crate::QuoteMarket::Sh)
+    );
+    assert_eq!(
+        resolve_add_stock_channel("sz").unwrap(),
+        Some(crate::QuoteMarket::Sz)
+    );
+    assert_eq!(
+        resolve_add_stock_channel("hk").unwrap(),
+        Some(crate::QuoteMarket::Hk)
+    );
 }
 
 #[test]
@@ -114,11 +126,11 @@ fn channel_out_of_closed_set_is_rejected() {
 #[test]
 fn sh_channel_hits_first_candidate_with_normalized_code() {
     let (mut fetch, requests) = tracking_fetch(Some((
-        "sh",
-        hit_quote("sh", "600519", InstrumentType::Stock),
+        Market::Sh,
+        hit_quote(Market::Sh, "600519", InstrumentType::Stock),
     )));
     let quote = block_on(fetch_stock_quote_for_add("sh", "600519", &mut fetch)).unwrap();
-    assert_eq!(quote.stock_market().unwrap(), "sh");
+    assert_eq!(quote.stock_market().unwrap(), Market::Sh);
     assert_eq!(quote.code, "600519");
     assert_eq!(
         *requests.borrow(),
@@ -130,8 +142,8 @@ fn sh_channel_hits_first_candidate_with_normalized_code() {
 #[test]
 fn hk_channel_normalizes_code_before_fetch() {
     let (mut fetch, requests) = tracking_fetch(Some((
-        "hk",
-        hit_quote("hk", "00700", InstrumentType::Stock),
+        Market::Hk,
+        hit_quote(Market::Hk, "00700", InstrumentType::Stock),
     )));
     let quote = block_on(fetch_stock_quote_for_add("hk", "700", &mut fetch)).unwrap();
     assert_eq!(quote.code, "00700", "港股左补零归一后发起查询与落库");
@@ -141,13 +153,13 @@ fn hk_channel_normalizes_code_before_fetch() {
 #[test]
 fn us_channel_hits_in_single_query_with_source_reported_market() {
     let (mut fetch, requests) = tracking_fetch(Some((
-        "nasdaq",
-        hit_quote("nasdaq", "AAPL", InstrumentType::Stock),
+        Market::Nasdaq,
+        hit_quote(Market::Nasdaq, "AAPL", InstrumentType::Stock),
     )));
     let quote = block_on(fetch_stock_quote_for_add("us", "aapl", &mut fetch)).unwrap();
     assert_eq!(
         quote.stock_market().unwrap(),
-        "nasdaq",
+        Market::Nasdaq,
         "落库市场取行情源自报的精确交易所"
     );
     assert_eq!(quote.code, "AAPL", "ticker 大写归一");
@@ -196,10 +208,10 @@ fn beijing_exchange_code_rejects_before_any_fetch() {
 fn temporary_error_surfaced_immediately() {
     let requests = Rc::new(RefCell::new(Vec::new()));
     let track = Rc::clone(&requests);
-    let mut fetch = move |code: &str, market: &str| {
+    let mut fetch = move |code: &str, route: StockRoute| {
         track
             .borrow_mut()
-            .push((market.to_string(), code.to_string()));
+            .push((route.as_str().to_string(), code.to_string()));
         std::future::ready(Err(AppError::Io("行情源临时不可达".into())))
     };
     let err = block_on(fetch_stock_quote_for_add("us", "AAPL", &mut fetch)).unwrap_err();
@@ -214,7 +226,7 @@ fn temporary_error_surfaced_immediately() {
 #[test]
 fn etf_kind_hint_persists_etf_row_with_quote_backfill() {
     let conn = open();
-    let quote = hit_quote("sz", "159915", InstrumentType::Etf);
+    let quote = hit_quote(Market::Sz, "159915", InstrumentType::Etf);
     let result = add_stock_instrument_with_quote(&conn, &quote).unwrap();
     assert_eq!(result.symbol, "159915");
     assert_eq!(result.kind, InstrumentType::Etf, "类型特征识别为 ETF");
@@ -248,7 +260,7 @@ fn etf_kind_hint_persists_etf_row_with_quote_backfill() {
 #[test]
 fn stock_kind_hint_persists_stock_row() {
     let conn = open();
-    let quote = hit_quote("nasdaq", "AAPL", InstrumentType::Stock);
+    let quote = hit_quote(Market::Nasdaq, "AAPL", InstrumentType::Stock);
     let result = add_stock_instrument_with_quote(&conn, &quote).unwrap();
     assert_eq!(result.kind, InstrumentType::Stock);
     assert_eq!(result.currency_code, "USD", "美股币种按市场推导");
@@ -265,7 +277,7 @@ fn stock_kind_hint_persists_stock_row() {
 #[test]
 fn repeat_add_reuses_row_idempotently() {
     let conn = open();
-    let quote = hit_quote("sh", "600519", InstrumentType::Stock);
+    let quote = hit_quote(Market::Sh, "600519", InstrumentType::Stock);
     let first = add_stock_instrument_with_quote(&conn, &quote).unwrap();
     let second = add_stock_instrument_with_quote(&conn, &quote).unwrap();
     assert_eq!(first.instrument_id, second.instrument_id, "幂等复用同一行");
@@ -282,7 +294,7 @@ fn repeat_add_reuses_row_idempotently() {
 #[test]
 fn suspended_quote_creates_row_without_price() {
     let conn = open();
-    let mut quote = hit_quote("sh", "600519", InstrumentType::Stock);
+    let mut quote = hit_quote(Market::Sh, "600519", InstrumentType::Stock);
     quote.price_cents = None;
     quote.price_date = None;
     let result = add_stock_instrument_with_quote(&conn, &quote).unwrap();

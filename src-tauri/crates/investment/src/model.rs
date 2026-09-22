@@ -15,6 +15,7 @@ use utoipa::{PartialSchema, ToSchema};
 
 use super::backfill::TrendBackfillStatus;
 use super::channel::PriceChannel;
+use super::market::Market;
 use ledger_infra::closed_set::closed_set;
 use ledger_infra::db::query::FromRow;
 
@@ -648,18 +649,20 @@ impl FromRow for Instrument {
         // 行映射处消费域单点。恒定单位价格是判定输入不随投影输出（用户可见
         // 口径是价格来源列，见 `price_channel`）。
         let kind: InstrumentType = row.get(2)?;
-        let market: String = row.get(5)?;
+        // DB 读边界 parse 一次（市场闭集类型，issue #1673）；投影字段输出闭集
+        // 字符串（wire 形状不变）。
+        let market: Market = row.get(5)?;
         let symbol: String = row.get(1)?;
         let constant_unit_price: Option<i64> = row.get(13)?;
         let price_channel =
-            super::channel::derive_price_channel(kind, &market, &symbol, constant_unit_price);
+            super::channel::derive_price_channel(kind, market, &symbol, constant_unit_price);
         Ok(Instrument {
             id: row.get(0)?,
             symbol,
             kind,
             name: row.get(3)?,
             currency_code: row.get(4)?,
-            market,
+            market: market.as_str().to_string(),
             created_at: row.get(6)?,
             updated_at: row.get(7)?,
             version: row.get(8)?,

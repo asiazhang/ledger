@@ -28,7 +28,7 @@ const portfolioTrend: PortfolioValueTrend = {
 
 /**
  * 默认布线表：组合走势（动态函数归 overrides）+ 空标的字典；
- * 参考字典命令走接缝内建兑底，不在此枚举。
+ * 参考字典命令走接缝内建兜底，不在此枚举。
  */
 const BASE_OVERRIDES: Record<string, InvokeSeamOverride> = {
   portfolio_value_trend: () => Promise.resolve(portfolioTrend),

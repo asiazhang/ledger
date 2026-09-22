@@ -31,7 +31,8 @@ use ledger_investment::{
     InstrumentInput, InstrumentListFilter, InstrumentListResult, InstrumentPriceTrend,
     InvestmentOverview, ManualPriceInput, ManualPriceResult, MarketPrice, MarketPriceInput,
     MoneyWeightedReturnSummary, MwrRange, PnlFilter, PortfolioValueTrend, PriceStaleness,
-    RealizedPnlSummary, TransactionConvert, TransactionSplit, TransactionTrade, TrendRange,
+    RealizedPnlSummary, StockRoute, TransactionConvert, TransactionSplit, TransactionTrade,
+    TrendRange,
 };
 
 #[tauri::command]
@@ -323,7 +324,7 @@ pub async fn add_fund_by_code(
 /// 慢闭包纪律；ADR-0130 决策 2 / issue #1567）→ 识别落库经统一写入口（ADR-0073）：
 /// 类型自动识别（行情命中 → stock、类型码 → etf，识别单点在投资域）后经创建增强
 /// 同一落库接缝回填权威名称与最新价。落现价即广播价格失效信号（ADR-0031），停牌未取到价仅建标的
-/// 零信号；查询未命中与临时不可达均显式报错不建档（兑底手动建档由前端对话框
+/// 零信号；查询未命中与临时不可达均显式报错不建档（兜底手动建档由前端对话框
 /// 内 `create_instrument` 承接，不在本命令）。
 #[tauri::command]
 pub async fn add_instrument_by_code(
@@ -338,12 +339,12 @@ pub async fn add_instrument_by_code(
     // 查询单元解析）在本命令体 await（ADR-0125 决策 7 / issue #1413：注入闭包返回
     // future，`spawn_blocking` 包装与 JoinError 归一化删除），未命中/临时错误以
     // 码化错误上抛给对话框分流。
-    let mut fetch = |code: &str, market: &str| {
-        // 统一注入签名（ADR-0103）：（代码，市场）——闭包同步段拷贝入参为自有
-        // 数据，future 无借用（与通道束闭包同款约定）。
+    let mut fetch = |code: &str, route: StockRoute| {
+        // 统一注入签名（ADR-0103）：（代码，路由）——闭包同步段拷贝入参为自有
+        // 数据，future 无借用（与通道束闭包同款约定）。路由位为投资域解析流程
+        // 内部小闭集（issue #1673）。
         let code = code.to_string();
-        let market = market.to_string();
-        async move { ledger_market_sync::fetch_stock_quote_production(&market, &code).await }
+        async move { ledger_market_sync::fetch_stock_quote_production(route, &code).await }
     };
     let quote = investment_domain::fetch_stock_quote_for_add(&market, &code, &mut fetch).await?;
     // 识别落库阶段经统一写入口：类型 = 行情 kind_hint（识别语义在投资域单点），

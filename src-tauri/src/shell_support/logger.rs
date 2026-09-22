@@ -84,7 +84,7 @@ pub fn set_level(level: LogLevel) {
 }
 
 /// 读取持久化档位（spec #608 / #611）：`app_settings` 的 `logging.level` 键，缺 key
-/// 或整表缺失（旧版本备份）回默认 info（`settings::get` 兑底）；解析失败（库内被写入
+/// 或整表缺失（旧版本备份）回默认 info（`settings::get` 兜底）；解析失败（库内被写入
 /// 闭集外字符串）同样回默认 info 并告警——读路径不因坏值上抛，行为免费正确。
 /// 界面展示的持久化档位与实际生效档位可能不一致（RUST_LOG 运行时覆盖），属已接受取舍。
 pub fn persisted_level(conn: &rusqlite::Connection) -> LogLevel {
@@ -330,7 +330,7 @@ mod tests {
         crate::test_support::open()
     }
 
-    /// 缺 key / 缺表：`persisted_level` 回默认 info（`settings::get` 兑底）。
+    /// 缺 key / 缺表：`persisted_level` 回默认 info（`settings::get` 兜底）。
     #[test]
     fn persisted_level_defaults_to_info_when_unset() {
         assert_eq!(persisted_level(&migrated_conn()), LogLevel::Info);
@@ -344,7 +344,7 @@ mod tests {
         assert_eq!(persisted_level(&conn), LogLevel::Debug);
     }
 
-    /// 库内残留闭集外字符串：读回兑底默认 info（settings::set 是通用 KV 写、不校验闭集）。
+    /// 库内残留闭集外字符串：读回兜底默认 info（settings::set 是通用 KV 写、不校验闭集）。
     #[test]
     fn persisted_level_falls_back_when_stored_value_outside_closed_set() {
         let conn = migrated_conn();

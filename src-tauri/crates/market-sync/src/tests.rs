@@ -331,7 +331,7 @@ fn guard_source_list_matches_directory_exactly() {
 /// `start_daily_lane`）；车道模块只留接线（调起共享循环）与本车道编排——车道
 /// 模块自建平行调度循环（含 async 形态重写）即接线缺失变红；「接线调起的是真
 /// 车道」这正向事实无法由结构断言观察，行为半边由 tests/ 下三条接线 IT 的
-/// 在途等待超时兑底。
+/// 在途等待超时兜底。
 #[test]
 fn background_lanes_are_global_runtime_async_tasks() {
     let sources: Vec<(&'static str, String)> = production_source_files()

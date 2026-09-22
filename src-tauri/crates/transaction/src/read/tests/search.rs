@@ -753,7 +753,7 @@ fn lazy_backfill_heals_legacy_rows_on_search() {
         .unwrap();
     assert_eq!(backlog_index, 1, "V018 应创建回填探针 partial 索引");
 
-    // 搜索即回填（回填先于下推查询，issue #515 起不再运行时现算兑底）：
+    // 搜索即回填（回填先于下推查询，issue #515 起不再运行时现算兜底）：
     // 拼音子序列语义立即生效，不因列缺失而漏匹配。
     let res = search(&conn, "wy").unwrap();
     assert_eq!(res.total, 1);

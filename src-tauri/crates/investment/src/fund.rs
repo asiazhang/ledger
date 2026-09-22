@@ -1,7 +1,7 @@
 //! 场外基金的行情接入通道（ADR-0103）：按代码即拉添加（issue #301 / ADR-0038
 //! 决策 1）与 AI 创建端点 fund 增强（issue #304 / ADR-0039 决策 3）共用同一套
 //! 字典形态——手动输入 / AI 提交 6 位基金代码 → 查询半边取新浪批量面报价（名称
-//! / 最新单位净值 + 净值日期；已终止基金回退证监会基金电子披露权威兑底，货基
+//! / 最新单位净值 + 净值日期；已终止基金回退证监会基金电子披露权威兜底，货基
 //! 经官方自报形态确认落恒定价，取数编排单点在行情同步域 `ledger-market-sync`
 //! crate 的 `sync::fetch_fund_quote_production`，#1106 / #1568 换源）→
 //! 落库半边（[`adopt_fund_quote`]）落标的字典（类型 fund、市场恒 unknown、
@@ -24,6 +24,7 @@
 use rusqlite::Connection;
 
 use super::crud;
+use super::market::Market;
 use super::model::{AddFundResult, InstrumentInput, InstrumentType};
 use super::quote::{Quote, QuoteAdoptionInput, adopt_quote};
 use ledger_infra::error::{AppError, Result};
@@ -134,7 +135,7 @@ pub fn create_fund_degraded(
 ///（现价的行情日期就是净值本身对应的日期）。覆盖不比较新旧净值日期：水位比较
 /// 归净值同步通道（#303 以 nav_date 为增量水位），本通道语义 = 数据源当前最新值
 /// 整体回放。价格来源随取数产物携带（`Quote::price_source`，ADR-0130 决策 7：
-/// 新浪批量面 / 证监会披露兑底）。建档 + 落现价交 [`adopt_quote`] 一体执行，
+/// 新浪批量面 / 证监会披露兜底）。建档 + 落现价交 [`adopt_quote`] 一体执行，
 /// 此处只构造回显投影 [`AddFundResult`]（含 `price_written`，价格失效信号判定
 /// 依据）。
 pub fn adopt_fund_quote(conn: &Connection, quote: &Quote) -> Result<AddFundResult> {
@@ -143,7 +144,8 @@ pub fn adopt_fund_quote(conn: &Connection, quote: &Quote) -> Result<AddFundResul
         conn,
         &QuoteAdoptionInput {
             kind: InstrumentType::Fund,
-            market: FUND_MARKET,
+            // 场外基金无交易所市场概念，字典市场恒 unknown（市场闭集类型，issue #1673）。
+            market: Market::Unknown,
             currency_code: FUND_CURRENCY,
             // 基金现价时点 = 净值日期；无净值时不落现价，该值不被消费。
             priced_at: nav_date.unwrap_or_default(),

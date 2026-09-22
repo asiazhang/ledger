@@ -142,7 +142,7 @@ beforeEach(async () => {
   mockDetails = new Map();
   // 唯一接缝布线（ADR-0085）：账户/分类/商户以本套夹具覆写（值与规范夹具
   // 不同，属场景契约而非重复枚举），进 defaults 表；可变详情库与重试/展开
-  // 编排为函数型 overrides。其余参考命令由规范夹具兑底；store 层预热
+  // 编排为函数型 overrides。其余参考命令由规范夹具兜底；store 层预热
   // opt-in 开启：弹窗按 id 独立取数前，账户/分类字典已就绪。
   const seam = wireInvokeSeam({
     defaults: {

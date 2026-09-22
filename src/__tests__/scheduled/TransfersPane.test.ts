@@ -90,7 +90,7 @@ beforeEach(async () => {
   failCreate = false;
   // 唯一接缝布线（ADR-0085）：币种（含 USD）与账户以本套夹具覆写（值与规范
   // 夹具不同，属场景契约而非重复枚举），进 defaults 表；可变计划库与创建/
-  // 状态编排为函数型 overrides。其余参考命令由规范夹具兑底；store 层预热
+  // 状态编排为函数型 overrides。其余参考命令由规范夹具兜底；store 层预热
   // opt-in 开启：主题用例依赖参考数据就绪后的即时渲染（账户名、币种符号）。
   const seam = wireInvokeSeam({
     defaults: {

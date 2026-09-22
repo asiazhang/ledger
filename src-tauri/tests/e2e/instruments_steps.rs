@@ -10,8 +10,8 @@ use rusqlite::params;
 use ledger_infra::db::{new_uuid, now_iso};
 use ledger_infra::error::Result;
 use ledger_investment::{
-    InstrumentInput, InstrumentListFilter, InstrumentType, Quote, add_fund_by_code_with,
-    add_stock_instrument_with_quote, create_instrument_manual,
+    InstrumentInput, InstrumentListFilter, InstrumentType, Quote, StockRoute,
+    add_fund_by_code_with, add_stock_instrument_with_quote, create_instrument_manual,
     delete_instrument as delete_instrument_domain, fetch_stock_quote_for_add, get_instrument,
     list_instruments, prices::price_value_to_cents,
 };
@@ -441,7 +441,7 @@ async fn run_add_instrument<F, Fut>(
     code: String,
     fetch: &mut F,
 ) where
-    F: FnMut(&str, &str) -> Fut,
+    F: FnMut(&str, StockRoute) -> Fut,
     Fut: std::future::Future<Output = Result<Quote>>,
 {
     // 查询阶段（生产在连接锁外）：通道解析 → 候选遍历。
@@ -473,18 +473,19 @@ async fn add_instrument_with_stub_quote(
 ) {
     let kind =
         ledger_investment::InstrumentType::parse(&kind_hint).expect("未知类型提示（stock/etf）");
-    let mut fetch = move |code: &str, market: &str| {
+    let quote_market =
+        ledger_investment::Market::parse(&quote_market).expect("未知命中市场（市场闭集词汇）");
+    let mut fetch = move |code: &str, route: StockRoute| {
         let code = code.to_string();
-        let market = market.to_string();
-        let quote_market = quote_market.clone();
         let name = name.clone();
         async move {
-            let hit = market == quote_market
-                || (market == "us" && matches!(quote_market.as_str(), "nasdaq" | "nyse" | "amex"));
+            // 命中判定与数据源行为同构：请求路由 = 命中市场的聚合投影（消费
+            // 投资域 `as_stock_route` 单点，不自建第二份映射，issue #1673）。
+            let hit = quote_market.as_quote_market().map(|qm| qm.as_stock_route()) == Some(route);
             if hit {
                 Ok(Quote {
                     // 代码回显请求归一化形态（与访问层回显同构：命中判定 = 回显全等）；
-                    // 市场回显命中行自报的精确市场（美股请求为聚合 us，数据源自报
+                    // 市场回显命中行自报的精确市场（美股请求为聚合 Us，数据源自报
                     // nasdaq/nyse/amex，落库闭集不受聚合路由值污染）。
                     code,
                     name,
@@ -511,8 +512,7 @@ async fn add_instrument_with_stub_quote(
 
 #[when(expr = "按代码添加投资标的 市场 {string} 代码 {string} 行情查无此码")]
 async fn add_instrument_with_stub_all_miss(world: &mut LedgerWorld, channel: String, code: String) {
-    let mut fetch = |code: &str, market: &str| {
-        let _ = market;
+    let mut fetch = |code: &str, _route: StockRoute| {
         let code = code.to_string();
         async move {
             Err(ledger_infra::error::AppError::codedp(
@@ -531,7 +531,7 @@ async fn add_instrument_with_stub_temporary_failure(
     channel: String,
     code: String,
 ) {
-    let mut fetch = |_code: &str, _market: &str| async move {
+    let mut fetch = |_code: &str, _route: StockRoute| async move {
         Err(ledger_infra::error::AppError::Io("行情源临时不可达".into()))
     };
     run_add_instrument(world, channel, code, &mut fetch).await;

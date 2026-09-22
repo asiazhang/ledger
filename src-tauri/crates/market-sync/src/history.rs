@@ -49,7 +49,9 @@ use ledger_infra::db::tx_scope::ensure_transaction;
 use ledger_infra::error::{AppError, Result};
 use ledger_investment::holdings::FIRST_POSITION_DATE;
 use ledger_investment::predicates::INVESTED_EXISTS;
-use ledger_investment::{InstrumentType, PriceChannel, derive_price_channel};
+use ledger_investment::{
+    InstrumentType, Market, PriceChannel, derive_price_channel, derive_quote_market,
+};
 
 use super::channels::{FetchFuture, QuoteQuery, SyncFetchChannels};
 use super::fund_backfill::{BackfillOutcome, backfill_one_fund_history};
@@ -83,12 +85,13 @@ fn week_behind(reference: Option<&str>, today: NaiveDate) -> bool {
     week_monday(today) - week_monday(reference) > chrono::Duration::days(7)
 }
 
-/// 一只标的的补全目标（通道分区的产物）：行情标的走日 K 通道（查询键由通道
-/// 内部构造，issue #1556），基金走历史净值通道（首刷近两年 / 水位增量；
-/// issue #1377 起本通道为后台补全专用）。目标只分派回填单元、不携带数据源
-/// 查询键——「市场 + 代码」随标的（[`BackfillItem::instrument`]）携带。
+/// 一只标的的补全目标（通道分区的产物）：行情标的走日 K 通道（数据源查询键由
+/// 通道内部构造，issue #1556），基金走历史净值通道（首刷近两年 / 水位增量；
+/// issue #1377 起本通道为后台补全专用）。行情目标的查询单元在分区出口即已
+/// 类型化（[`QuoteQuery`] 携带可路由子集市场 `QuoteMarket`，issue #1673）——
+/// 分区消费方拿不到「Quote 通道但构造不出查询单元」的组合。
 enum BackfillTarget {
-    Quote,
+    Quote(QuoteQuery),
     FundNav,
 }
 
@@ -125,7 +128,8 @@ fn collect_backfill_queue(conn: &Connection) -> Result<Vec<BackfillItem>> {
         Ok((
             row.get::<_, String>(0)?,
             row.get::<_, String>(1)?,
-            row.get::<_, String>(2)?,
+            // DB 读边界 parse 一次（市场闭集类型，issue #1673）。
+            row.get::<_, Market>(2)?,
             row.get::<_, String>(3)?,
             row.get::<_, InstrumentType>(4)?,
             row.get::<_, Option<i64>>(5)?,
@@ -153,15 +157,15 @@ fn collect_backfill_queue(conn: &Connection) -> Result<Vec<BackfillItem>> {
         ) = row?;
         // 价格通道判定消费投资域单点（issue #1060），与标的读投影同源；
         // _invested 已在 SQL 层的 ORDER BY 完成消费（持仓优先），不再取用。
-        let channel = derive_price_channel(kind, &market, &symbol, constant_unit_price);
-        let target = match channel {
-            PriceChannel::Quote => {
-                // 行情标的的「市场 + 代码」随标的携带，日 K 查询键由通道在内部
-                // 构造（issue #1556，编排不拼数据源查询键）。行情分区市场必可查：
-                // 派生单点 `derive_price_channel` 只把可构造查询键的市场判成
-                // Quote，绑定测试 `quote_channel_derivation_matches_secid_construction`
-                // 钉住这一不变量（本编排不镜像市场能力判定）；
-                // 通道侧对无法构造键的市场另有防御兼底（不发请求回空序列）。
+        let channel = derive_price_channel(kind, market, &symbol, constant_unit_price);
+        // 行情目标的查询单元在分区出口即类型化（投资域 `derive_quote_market`
+        // 单点，issue #1673）：Some ⇔ Quote 通道由同一份判定承载——查询单元
+        // 市场是可路由子集 `QuoteMarket`，日 K 数据源键由通道内部构造（issue
+        // #1556，编排不拼数据源查询键）；原「派生与键构造一致」的绑定测试随
+        // 类型单点退役，市场成员漂移在编译期不可表达。
+        let quote_market = derive_quote_market(kind, market, &symbol, constant_unit_price);
+        let target = match quote_market {
+            Some(quote_market) => {
                 let incomplete = match &latest_history {
                     None => true,
                     Some(latest) => week_behind(Some(latest), today),
@@ -169,9 +173,23 @@ fn collect_backfill_queue(conn: &Connection) -> Result<Vec<BackfillItem>> {
                 if !incomplete {
                     continue;
                 }
-                BackfillTarget::Quote
+                BackfillTarget::Quote(QuoteQuery {
+                    market: quote_market,
+                    code: quote_code(&symbol).to_string(),
+                })
             }
-            PriceChannel::FundNav => {
+            // 非行情通道（None ⇔ 通道非 Quote，同一单点判定的另一面）：净值通道
+            // 按缺口进队列，其余通道不进队列。
+            None => {
+                if channel != PriceChannel::FundNav {
+                    // 恒定价格通道不进队列（ADR-0126 决策 4/6）：它的走势由读侧
+                    // 按常量合成，历史行不带来任何信息；且打标后净值水位已清空
+                    //（水位语义不适用），仍按净值通道收集会让它每窗口整根重采。
+                    // 采集链路三入口（首刷队列、逐只刷新、周采样点）对恒定标的
+                    // 全部豁免（#1451）。手动报价与无来源通道没有可采集的历史
+                    // 序列，同样不进队列。
+                    continue;
+                }
                 // 首刷判据 = 磁盘上没有任何历史序列（issue #1059，与基金分区
                 // 同源）；已有历史者按净值水位判缺周点（水位缺失保守判缺），
                 // 或按覆盖目标判覆盖不足——最早历史周点晚于首笔持仓周 → 深回填
@@ -191,13 +209,6 @@ fn collect_backfill_queue(conn: &Connection) -> Result<Vec<BackfillItem>> {
                 }
                 BackfillTarget::FundNav
             }
-            // 恒定价格通道不进队列（ADR-0126 决策 4/6）：它的走势由读侧按常量
-            // 合成，历史行不带来任何信息；且打标后净值水位已清空（水位语义
-            // 不适用），仍按净值通道收集会让它每窗口整根重采。采集链路三入口
-            //（首刷队列、逐只刷新、周采样点）对恒定标的全部豁免（#1451）。
-            PriceChannel::Constant => continue,
-            // 手动报价与无来源通道没有可采集的历史序列，不进队列。
-            PriceChannel::Manual | PriceChannel::None => continue,
         };
         queue.push(BackfillItem {
             instrument: SyncInstrument {
@@ -205,6 +216,8 @@ fn collect_backfill_queue(conn: &Connection) -> Result<Vec<BackfillItem>> {
                 symbol,
                 market,
                 currency,
+                kind,
+                constant_unit_price,
                 channel,
             },
             target,
@@ -227,20 +240,16 @@ fn collect_backfill_queue(conn: &Connection) -> Result<Vec<BackfillItem>> {
 pub(super) async fn backfill_stock_history<Q, K>(
     session: &Q,
     fetch_kline: &mut K,
+    query: &QuoteQuery,
     inst: &SyncInstrument,
 ) -> Result<bool>
 where
     Q: ScopedSession,
     K: FnMut(&QuoteQuery) -> FetchFuture<Vec<KlineBar>> + Send,
 {
-    // 编排只递「市场 + 代码」查询单元（issue #1556）：数据源查询键（腾讯 K 线键）
-    // 由日 K 通道在内部构造——换源只改通道实现，本编排零改动。报价代码与批量
-    // 报价同式归一化（symbol 去市场后缀取裸代码，与响应回显形态对齐）。
-    let query = QuoteQuery {
-        market: inst.market.clone(),
-        code: quote_code(&inst.symbol).to_string(),
-    };
-    let bars = fetch_kline(&query).await?;
+    // 查询单元由队列分区产出（分区出口已类型化，issue #1673）：数据源查询键
+    //（腾讯 K 线键）由日 K 通道在内部构造——换源只改通道实现，本编排零改动。
+    let bars = fetch_kline(query).await?;
     let points = downsample_weekly(&bars);
     if points.is_empty() {
         return Ok(false);
@@ -372,9 +381,11 @@ where
 
     for item in &queue {
         let result: Result<(bool, bool)> = match &item.target {
-            BackfillTarget::Quote => backfill_stock_history(session, fetch_kline, &item.instrument)
-                .await
-                .map(|written| (written, false)),
+            BackfillTarget::Quote(query) => {
+                backfill_stock_history(session, fetch_kline, query, &item.instrument)
+                    .await
+                    .map(|written| (written, false))
+            }
             BackfillTarget::FundNav => {
                 // 队列只收「历史不完整」的基金：首刷与缺周点补齐正是逐只通道
                 // 的两种接管形态（issue #1377 起本单元为后台补全专用，现价刷新

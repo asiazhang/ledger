@@ -43,7 +43,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: pnpm/setup@v2.1.0
+      - uses: pnpm/setup@v3
         with:
           runtime: node@22
           cache: true
@@ -109,7 +109,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: pnpm/setup@v2.1.0
+      - uses: pnpm/setup@v3
         with:
           runtime: node@22
           cache: true
@@ -344,7 +344,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: pnpm/setup@v2.1.0
+      - uses: pnpm/setup@v3
         with:
           runtime: node@22
           cache: true
@@ -387,7 +387,7 @@ jobs:
       # 上游默认值再漂移；SDK/NDK 组件仍由下一步自装。
       - name: 安装 JDK 17（Android gradle 构建所需）
         if: matrix.platform == 'android'
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: 17

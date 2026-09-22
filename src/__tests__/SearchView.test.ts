@@ -216,7 +216,7 @@ const periodLabel = (wrapper: VueWrapper) => wrapper.find(".period-label-text").
 
 beforeEach(async () => {
   pushMock.mockReset();
-  // 参考命令统一走接缝：币种走规范夹具兑底，账户/分类/商户保留本文件夹具
+  // 参考命令统一走接缝：币种走规范夹具兜底，账户/分类/商户保留本文件夹具
   //（交易夹具按 acc-cash/cat-food/mer-jd 解析名称）
   wireInvokeSeam({
     overrides: {

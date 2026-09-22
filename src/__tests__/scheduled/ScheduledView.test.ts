@@ -30,7 +30,7 @@ const emptySpendOverview: SubscriptionSpendOverview = {
 };
 
 /** 壳层布线：只关心页签结构，子页签的 invoke 一律给最小空数据。
- * 参考字典五命令不在此枚举——桩层规范夹具兑底（页签结构不渲染字典内容）。
+ * 参考字典五命令不在此枚举——桩层规范夹具兜底（页签结构不渲染字典内容）。
  * `overrides` 供 describe 级增量命令展开合并重走唯一接缝
  * （持久叠加桩已禁，守门规则 3；issue #750）。 */
 function wireShellDefaults(overrides: Record<string, InvokeSeamOverride> = {}) {

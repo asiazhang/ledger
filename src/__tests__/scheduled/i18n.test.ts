@@ -34,7 +34,7 @@ const emptySpendOverview: SubscriptionSpendOverview = {
 
 function wireI18nDefaults() {
   // 唯一接缝布线（ADR-0085）：只给页签与卡片标题所需的最小空数据；参考字典
-  // 五命令不在此枚举（规范夹具兑底，i18n 文案断言不依赖字典内容）。
+  // 五命令不在此枚举（规范夹具兜底，i18n 文案断言不依赖字典内容）。
   return wireInvokeSeam({
     defaults: {
       subscription_spend_overview: emptySpendOverview,

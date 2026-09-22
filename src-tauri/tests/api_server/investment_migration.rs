@@ -16,7 +16,7 @@ use std::collections::HashMap;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use ledger_investment::InstrumentType;
+use ledger_investment::{InstrumentType, Market};
 use tauri_app_lib::test_support;
 use tower::ServiceExt;
 
@@ -35,7 +35,7 @@ fn generic_chain_stock_hits() -> HashMap<String, StockStubHit> {
                 name: "贵州茅台",
                 price: Some((150000, "2026-09-04")),
                 kind_hint: InstrumentType::Stock,
-                market: "sh",
+                market: Market::Sh,
             },
         ),
         (
@@ -44,7 +44,7 @@ fn generic_chain_stock_hits() -> HashMap<String, StockStubHit> {
                 name: "招商银行",
                 price: Some((45000, "2026-09-04")),
                 kind_hint: InstrumentType::Stock,
-                market: "sh",
+                market: Market::Sh,
             },
         ),
     ])
@@ -283,7 +283,7 @@ async fn test_stock_migration_chain_lookup_create_batch_import_wired() {
             name: "贵州茅台",
             price: Some((200000, "2026-09-04")),
             kind_hint: InstrumentType::Stock,
-            market: "sh",
+            market: Market::Sh,
         },
     )]);
     let (app, conn, calls) = setup_app_with_stock_stub(hits);

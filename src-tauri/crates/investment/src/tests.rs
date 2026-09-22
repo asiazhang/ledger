@@ -31,6 +31,7 @@
 //! - [`holdings_as_of`]：时点持仓推算
 //! - [`instrument_type_string`]：`InstrumentType` 字符串面（宏同体派生，ADR-0108）
 //! - [`instrument_type_check`]：`instrument_type` CHECK 字面量 ↔ `ALL` 互核（ADR-0108）
+//! - [`market_check`]：`market` CHECK 字面量 ↔ `Market::ALL` 互核（issue #1673，ADR-0108 同款）
 //! - [`stock_lookup`]：股票按（市场，代码）查询领域规则（市场推断 / 矛盾 400 / 币种推导，issue #693）
 //! - [`stock_create`]：股票创建增强的行情往返路由与落库接缝（权威名称 + 现价 / 降级市场保留，issue #694）
 //! - [`stock_add`]：「添加投资标的」股票侧录入——通道解析、查询遍历与识别落库（issue #697）
@@ -57,6 +58,7 @@ mod instrument_manual_create;
 mod instrument_type_check;
 mod instrument_type_string;
 mod manual_price;
+mod market_check;
 mod mwr;
 mod overview;
 mod pnl;

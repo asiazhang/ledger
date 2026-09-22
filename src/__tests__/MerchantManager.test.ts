@@ -42,7 +42,7 @@ let merchantDb: Merchant[] = mockMerchants;
 /** 关联交易计数后端响应（issue #445，毛笔数口径）：可缺行（无引用商户前端补 0）。 */
 let countDb: { merchant_id: string; transaction_count: number }[] = [];
 
-/** 管理页只消费商户表与条数聚合（可变库函数型覆写），其余走参考兑底规范夹具。 */
+/** 管理页只消费商户表与条数聚合（可变库函数型覆写），其余走参考兜底规范夹具。 */
 const BASE_OVERRIDES = {
   list_merchants: () => merchantDb,
   list_merchant_transaction_counts: () => countDb,

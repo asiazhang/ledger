@@ -19,7 +19,7 @@ use axum::http::StatusCode;
 use rusqlite::params;
 
 use ledger_infra::error::AppError;
-use ledger_investment::{InstrumentType, Quote};
+use ledger_investment::{InstrumentType, Market, Quote, StockRoute};
 use tauri_app_lib::api_server::StockQuoteFetcher;
 
 use crate::common::{StockStubHit, get_json, post_instrument, setup_app_with_stock_stub};
@@ -84,7 +84,7 @@ fn stub_hit() -> HashMap<String, StockStubHit> {
             name: "贵州茅台",
             price: Some((150000, "2026-09-04")),
             kind_hint: InstrumentType::Stock,
-            market: "sh",
+            market: Market::Sh,
         },
     )])
 }
@@ -99,7 +99,7 @@ fn us_stub_hits() -> HashMap<String, StockStubHit> {
                 name: "苹果",
                 price: Some((3_199_700, "2026-01-08")),
                 kind_hint: InstrumentType::Stock,
-                market: "nasdaq",
+                market: Market::Nasdaq,
             },
         ),
         (
@@ -108,7 +108,7 @@ fn us_stub_hits() -> HashMap<String, StockStubHit> {
                 name: "阿里巴巴",
                 price: Some((1_132_400, "2026-01-08")),
                 kind_hint: InstrumentType::Stock,
-                market: "nyse",
+                market: Market::Nyse,
             },
         ),
     ])
@@ -164,7 +164,7 @@ async fn test_create_stock_without_market_infers_and_creates_with_resolved_marke
             name: "平安银行",
             price: Some((115600, "2026-09-04")),
             kind_hint: InstrumentType::Stock,
-            market: "sz",
+            market: Market::Sz,
         },
     );
     let (app, conn, calls) = setup_app_with_stock_stub(hits);
@@ -195,7 +195,7 @@ async fn test_create_etf_typed_instrument_gets_same_enhancement() {
             name: "沪深300ETF",
             price: Some((398500, "2026-09-04")),
             kind_hint: InstrumentType::Etf,
-            market: "sh",
+            market: Market::Sh,
         },
     );
     let (app, conn, calls) = setup_app_with_stock_stub(hits);
@@ -275,21 +275,21 @@ fn toggle_stub(
     down: Arc<AtomicBool>,
     calls: Arc<Mutex<Vec<(String, String)>>>,
 ) -> StockQuoteFetcher {
-    Arc::new(move |market: &str, code: &str| {
+    Arc::new(move |route: StockRoute, code: &str| {
         calls
             .lock()
             .unwrap()
-            .push((market.to_string(), code.to_string()));
+            .push((route.as_str().to_string(), code.to_string()));
         let result = if down.load(Ordering::SeqCst) {
             Err(AppError::Io("行情网络不可达".into()))
         } else {
-            match hits.get(&format!("{market}/{code}")) {
+            match hits.get(&format!("{}/{code}", route.as_str())) {
                 Some(hit) => Ok(Quote {
                     code: code.to_string(),
                     name: hit.name.to_string(),
                     price_cents: hit.price.map(|(p, _)| p),
                     price_date: hit.price.map(|(_, d)| d.to_string()),
-                    market: Some(hit.market.to_string()),
+                    market: Some(hit.market),
                     kind_hint: Some(hit.kind_hint),
                     fund_class: None,
                     nav_date: None,

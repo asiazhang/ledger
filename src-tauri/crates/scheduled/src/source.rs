@@ -83,7 +83,7 @@ pub fn install_plan_source_hook() {
 /// （[`source_display_by_transaction_ids`]）→ 交易域来源模型的字段映射。
 /// 口径与迁移前交易域内联映射逐字段一致（spec #704）：kind 三枚举 → 来源类型
 /// 三枚举；`cancelled` 计划状态 → Cancelled 标注；展示名 = 计划名（备注，无备注
-/// 回空串，前端按类型名兑底）。
+/// 回空串，前端按类型名兜底）。
 fn plan_source_hook(
     conn: &Connection,
     transaction_ids: &[String],

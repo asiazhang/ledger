@@ -149,7 +149,7 @@ export async function setup() {
   mockMerchantsState = mockMerchants;
   // 唯一接缝布线（ADR-0085）：账户与分类以本套夹具覆写（值与规范夹具不同，
   // 属场景契约而非重复枚举），进 defaults 表；可变库与行为编排（订阅 CRUD、
-  // 状态机、重试、花费总览）为函数型 overrides。其余参考命令由规范夹具兑底；
+  // 状态机、重试、花费总览）为函数型 overrides。其余参考命令由规范夹具兜底；
   // store 层预热 opt-in 开启：主题用例依赖参考数据就绪后的即时渲染。
   const seam = wireInvokeSeam({
     defaults: {
