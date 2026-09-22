@@ -823,18 +823,19 @@ fn prepare_split(
             "份额调整要求该标的有在用持仓（零持仓无从重述批次成本）",
         ));
     }
+    // 无现金腿的本位币与留痕经 amount 零腿构造器取得（知识住址与「为什么不查
+    // 汇率」见其文档，#1692 / ADR-0106 决策 1）；行金额恒 0、六度量系数全 0 不变。
+    let zero_leg = amount::NativeConversion::zero_cash_leg();
 
     Ok(SplitPlan {
         normalized: NormalizedTransaction {
             kind: TransactionKind::Split,
-            // 无现金腿：行金额恒 0、六度量系数全 0。本位币金额同恒 0——
-            // 0 在任何币种下的本位币折算恒为 0，不经汇率表（无现金腿不依赖汇率）。
+            // 无现金腿：行金额恒 0、六度量系数全 0；本位币与留痕取零腿构造器。
             amount_cents: 0,
             currency_code: account_currency,
-            amount_native_cents: 0,
-            // 无现金腿不经汇率表（折算恒 0），无折算留痕（#1548 空值语义）。
-            fx_rate_used: None,
-            fx_rate_source: None,
+            amount_native_cents: zero_leg.native_cents,
+            fx_rate_used: zero_leg.fx_rate_used,
+            fx_rate_source: zero_leg.fx_rate_source,
             account_id: input.account_id.clone(),
             // 单标的、不跨账户：转入账户已拒绝、出资账户已被准入拒绝，恒 None。
             to_account_id: None,
@@ -1658,9 +1659,12 @@ pub(crate) fn replay_split_plan(
             "份额调整数量不能为 0",
         ));
     }
-    // 无现金腿（ADR-0106 决策 1）：行金额恒 0，携带非零金额即伪造/漂移载荷，
-    // 重放不得绕开本地不变量（CONTEXT-sync「经同一接缝执行」）。
-    if row.amount_cents != 0 || row.amount_native_cents != 0 {
+    // 无现金腿（ADR-0106 决策 1）：行金额恒 0、本位币折算与留痕必须与 amount
+    // 零腿构造器一致（知识住址见 `NativeConversion::zero_cash_leg`，#1692）；
+    // 携带非零即伪造/漂移载荷，重放不得绕开本地不变量（CONTEXT-sync「经同一
+    // 接缝执行」）。
+    let zero_leg = amount::NativeConversion::zero_cash_leg();
+    if row.amount_cents != 0 || row.amount_native_cents != zero_leg.native_cents {
         return Err(AppError::coded(
             "trade.split-amount-forbidden",
             "份额调整无现金腿，金额必须为 0",

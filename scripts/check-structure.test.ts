@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSyn
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  CONVERT_CURRENT_CALLERS,
   CRATE_MODULE_TARGETS,
   CRATES,
   INFRA_SRC_REL,
@@ -37,6 +38,14 @@ afterAll(() => {
 
 /** 夹具桩内容（无壳层依赖的最小 Rust 文件） */
 const STUB = "// 结构守门夹具桩\npub fn stub() {}\n";
+
+/** 当期入口闭集在册成员的夹具桩（含一笔生产调用，#1692）：骨架自足化——每个
+ *  在册成员文件都存在且恰有一处调用，骨架默认全绿。 */
+const CONVERT_CALL_STUB =
+  "// 当期入口调用方闭集夹具桩\n" +
+  "pub fn read_path_sum() -> i64 {\n" +
+  '    amount::convert_to_native_current(conn, 1, "CNY")\n' +
+  "}\n";
 
 /** 夹具用现存的壳层引用形态（商户壳层命令）：参考数据三域 #404 归位后账户壳层已无
  *  `*_internal` 下沉函数，夹具文本取现存壳层命令与实际结构保持一致。 */
@@ -184,6 +193,10 @@ interface CrateFixtureOverrides {
   workflow?: string;
   /** 追加一个未登记的成员目录（crates/<name>）——新 crate 漏登记的负向夹具 */
   orphanCrate?: string;
+  /** 当期入口闭集：不写出的在册成员文件（缺文件负向夹具，#1692） */
+  omitConvertCallers?: readonly string[];
+  /** 当期入口闭集：在册成员文件内容覆写（零调用负向夹具，#1692） */
+  convertCallerContent?: Record<string, string>;
   /** 覆盖用例声明的 crate 模块面（{crate, dir, libRs, files}，#1595 T2-3） */
   moduleCases?: readonly CrateCase[];
 }
@@ -295,6 +308,37 @@ function makeCrateFixture(overrides: CrateFixtureOverrides = {}): string[] {
     }
     cases.set(c.dir, c);
   }
+  // 当期入口调用方闭集的在册成员面（#1692）：为每个在册 crate 文件补 lib.rs 声明
+  // 与含调用的桩（骨架自足化，与模块面用例显式声明同一理由）；先克隆再改写，
+  // 骨架常量对象跨夹具共享，不得原地变异。omitConvertCallers 留给缺文件负向用例。
+  const omitCallers = new Set(overrides.omitConvertCallers ?? []);
+  const callerContent = (file: string): string =>
+    overrides.convertCallerContent?.[file] ?? CONVERT_CALL_STUB;
+  for (const entry of CONVERT_CURRENT_CALLERS) {
+    if (omitCallers.has(entry.file) || !entry.file.startsWith("crates/")) continue;
+    const rest = entry.file.slice("crates/".length);
+    const slash = rest.indexOf("/");
+    const crateDir = `crates/${rest.slice(0, slash)}`;
+    // files 键含 .rs 后缀（与磁盘文件同名），mod 声明名去后缀——两者不同源，混用
+    // 会写出无后缀文件、被模块面投影当目录扫而 ENOTDIR。
+    const fileName = rest.slice(slash + 1).replace(/^src\//, "");
+    const key = fileName.replace(/\.rs$/, "");
+    let spec = cases.get(crateDir);
+    if (spec === undefined) {
+      const crate = CRATES.find((c) => c.dir === crateDir);
+      if (crate === undefined) continue;
+      spec = defaultCase(crate.name, crateDir);
+    }
+    spec = { ...spec, files: { ...spec.files } };
+    cases.set(crateDir, spec);
+    const content = callerContent(entry.file);
+    if (key === "lib") {
+      spec.libRs += content;
+    } else {
+      spec.files[fileName] ??= content;
+      if (!spec.libRs.includes(`mod ${key};`)) spec.libRs += `pub mod ${key};\n`;
+    }
+  }
   for (const crate of CRATES) {
     if (crate.dir === ".") continue;
     const c = cases.get(crate.dir) ?? defaultCase(crate.name, crate.dir);
@@ -335,6 +379,14 @@ function makeCrateFixture(overrides: CrateFixtureOverrides = {}): string[] {
         "#[doc(hidden)]\n" +
         "pub use handlers::import::INVESTMENT_SECTION_HEADERS;\n",
   );
+
+  // 当期入口闭集的根 src 在册成员（#1692）：与 crate 面同款自足化写出。
+  for (const entry of CONVERT_CURRENT_CALLERS) {
+    if (omitCallers.has(entry.file) || !entry.file.startsWith("src/")) continue;
+    const abs = join(srcTauri, entry.file);
+    mkdirSync(join(abs, ".."), { recursive: true });
+    writeFileSync(abs, callerContent(entry.file));
+  }
 
   if (overrides.orphanCrate !== undefined) {
     mkdirSync(join(srcTauri, "crates", overrides.orphanCrate, "src"), { recursive: true });
@@ -1728,6 +1780,76 @@ describe("check-structure http 投影 feature 门（ADR-0111 决策 5 / issue #1
       },
     });
     expect(run(args).status).toBe(0);
+  });
+});
+
+describe("check-structure 当期入口调用方闭集（ADR-0011 决策 3 + 2026-09-22 修订 ① / #1692）", () => {
+  it("真实仓库与骨架夹具默认通过：在册成员全部在册且恰有调用", () => {
+    const real = run([]);
+    expect(real.status).toBe(0);
+    expect(real.output).toContain(
+      `当期入口调用方闭集 ${CONVERT_CURRENT_CALLERS.length} 成员全在册`,
+    );
+    expect(run(makeCrateFixture()).status).toBe(0);
+  });
+
+  it("白名单外生产文件调用当期入口 → 红并定位文件行号（白名单外即红）", () => {
+    const r = run(
+      fixtureWith(
+        accountsCase({
+          "core.rs": 'pub fn probe() { amount::convert_to_native_current(conn, 1, "CNY") }\n',
+        }),
+      ),
+    );
+    expect(r.status).toBe(1);
+    expect(r.output).toContain("当期入口调用方闭集");
+    expect(r.output).toContain("crates/accounts/src/core.rs:1");
+  });
+
+  it("注释与字符串里的提及 → 绿（掩码后不构成调用）", () => {
+    const r = run(
+      fixtureWith(
+        accountsCase({
+          "core.rs": '// convert_to_native_current(conn, 1, "CNY")\npub fn stub() {}\n',
+        }),
+      ),
+    );
+    expect(r.status).toBe(0);
+  });
+
+  it("`fn` 定义面 → 绿（定义不是调用）", () => {
+    const r = run(
+      fixtureWith(
+        accountsCase({
+          "core.rs":
+            "pub fn convert_to_native_current(c: &C, a: i64, s: &str) -> i64 { a }\npub fn stub() {}\n",
+        }),
+      ),
+    );
+    expect(r.status).toBe(0);
+  });
+
+  it("测试路径豁免 → 绿（/tests/ 路径约定，ADR-0056 决策 5 同规）", () => {
+    const r = run(fixtureWith(accountsCase({ "tests/amount.rs": CONVERT_CALL_STUB })));
+    expect(r.status).toBe(0);
+  });
+
+  it("在册成员文件缺失 → 红（清单漂移 fail loud）", () => {
+    const r = run(makeCrateFixture({ omitConvertCallers: ["crates/scheduled/src/spend.rs"] }));
+    expect(r.status).toBe(1);
+    expect(r.output).toContain("在册成员文件不存在");
+    expect(r.output).toContain("crates/scheduled/src/spend.rs");
+  });
+
+  it("在册成员零调用 → 红（拒绝空集假绿：符号改名/调用全删不静默过）", () => {
+    const r = run(
+      makeCrateFixture({
+        convertCallerContent: { "crates/item/src/domain.rs": STUB },
+      }),
+    );
+    expect(r.status).toBe(1);
+    expect(r.output).toContain("在册成员零调用");
+    expect(r.output).toContain("crates/item/src/domain.rs");
   });
 });
 

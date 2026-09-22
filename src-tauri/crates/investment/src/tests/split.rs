@@ -22,7 +22,7 @@ use ledger_transaction::{
 
 use super::super::*;
 use super::common::*;
-use tauri_app_lib::test_support::{open, seed_account, seed_instrument};
+use tauri_app_lib::test_support::{open, seed_account, seed_fx_history_weeks, seed_instrument};
 
 /// 全部未删除账户的**实时**余额快照（`compute_balance` 口径，含黑洞等隐藏账户）。
 /// 种子直插的账户无写路径钩子，实时口径才是权威比对基准（ADR-0067）；
@@ -1541,4 +1541,50 @@ fn get_transaction_split_returns_signed_delta() {
         matches!(&err, AppError::Coded { code, .. } if code == "trade.split-detail-not-found"),
         "非 split 交易应得码化 NotFound，got: {err:?}"
     );
+}
+
+/// 零腿例外接口化（#1692 / ADR-0106 决策 1 / ADR-0011 2026-09-22 修订 ③）：外币
+/// 账户的 split 无现金腿，经 amount 零腿构造器（`NativeConversion::zero_cash_leg`）
+/// 取本位币 0/None/None、**不经任何折算入口**——夹具只给建仓周（2026-01-10）种
+/// 历史、调整周（2026-02-01）不种：把 split 改走任一折算入口，0 元外币行会去查
+/// 汇率表并以 `fx.rate-missing` 报错，本测试即红（删除即变红验收，#1692）。
+#[test]
+fn split_zero_leg_skips_fx_lookup_on_foreign_currency_account() {
+    let conn = open();
+    seed_account(&conn, "acc-sp-usd", "美股户", "investment", "USD", 0);
+    seed_instrument(&conn, "inst-sp-usd", "TSLA", "特斯拉", "USD", "unknown");
+    seed_fx_history_weeks(&conn, "USD", "CNY", 7.2, &["2026-01-10"]);
+
+    create_transaction_internal(
+        &conn,
+        make_buy_input("acc-sp-usd", "inst-sp-usd", 10.0, 1_000_000, 0),
+    )
+    .unwrap();
+    let split_id =
+        create_transaction_internal(&conn, make_split_input("acc-sp-usd", "inst-sp-usd", 5.0))
+            .unwrap()
+            .id;
+
+    let (amount_cents, amount_native_cents, currency, fx_rate_used, fx_rate_source): (
+        i64,
+        i64,
+        String,
+        Option<f64>,
+        Option<String>,
+    ) = conn
+        .query_row(
+            "SELECT amount_cents, amount_native_cents, currency_code, fx_rate_used, fx_rate_source \
+             FROM transactions WHERE id=?1",
+            rusqlite::params![split_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+        )
+        .unwrap();
+    assert_eq!(amount_cents, 0, "无现金腿行金额恒 0");
+    assert_eq!(
+        amount_native_cents, 0,
+        "零腿不经折算入口：外币行本位币仍恒 0——改走折算入口即 fx.rate-missing 红"
+    );
+    assert_eq!(currency, "USD", "行币种 = 账户币种");
+    assert_eq!(fx_rate_used, None, "无折算无留痕（#1548 空值语义）");
+    assert_eq!(fx_rate_source, None, "无折算无来源");
 }

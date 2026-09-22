@@ -47,6 +47,14 @@
 //（原语 ← db ← boot 单向，db 不得引用 boot / signals；ADR-0111 决策 4，认许边逐条
 // 留痕 INFRA_BLOCK_ALLOWED_EDGES）。
 //
+// 符号调用方闭集（ADR-0011 决策 3 + 2026-09-22 修订 ① / #1692）：当期入口
+// `convert_to_native_current` 的生产调用方白名单 CONVERT_CURRENT_CALLERS 逐条留痕
+//（7 个读路径消费面 + 压测工具注记 + item 写路径违例过渡态），白名单外调用即红；
+// 测试代码按 `/tests/` 路径约定豁免（ADR-0056 决策 5 同规），`fn` 定义面与注释/
+// 字符串提及经掩码与定义判定排除；在册成员文件缺失或零调用同样红（清单漂移
+// fail loud、拒绝空集假绿）。别名改写等文本不可达形态靠评审兜底（同壳层扫描
+// 边界）。
+//
 // 模型域化禁令（ADR-0059 决策 6/T7 / #424 收口）：① 全局模型模块路径残留即红；
 // ② 域模型 glob 再导出（域接缝 `pub use model::*`、跨域拍平、模型文件/目录内的
 // glob 聚合）即红，所有权必须逐类型可见；③ 产品代码手写
@@ -572,6 +580,78 @@ const INFRA_BLOCK_ALLOWED_EDGES: readonly InfraBlockEdge[] = [
       "ADR-0111 决策 2 / #1131：引导层五模块升顶层 boot 后，既有 `crate::db::{boot,…}` 调用点与协议 crate 的 `ledger_infra::db::…` 路径经本再导出保持零改动——路径兼容面，非机制依赖（#1128 ids 同款口径）",
   },
 ];
+
+/** 当期入口闭集条目：生产调用方文件（相对 src-tauri）+ 成因留痕 */
+interface SymbolCallerEntry {
+  file: string;
+  reason: string;
+}
+
+/** 当期入口符号（规则名与报文定位共用单一字面量） */
+const CONVERT_CURRENT_CALL_SYMBOL = "convert_to_native_current";
+
+/**
+ * 当期入口生产调用方闭集（ADR-0011 决策 3 + 2026-09-22 修订 ① / #1692，成员清单
+ * 的唯一住址）：「写路径全部走交易日历史折算、当期表只服务读路径」的守卫载体——
+ * 文件级白名单，白名单外的生产调用即红，测试代码按 `/tests/` 路径约定豁免。
+ * 每条留痕成因（读路径消费面 / 压测工具注记 / item 违例过渡态），与
+ * INFRA_DOMAIN_ALLOWED_EDGES 同款留痕纪律；在册成员零调用或文件缺失同样红
+ *（清单漂移 fail loud、拒绝空集假绿）。
+ */
+export const CONVERT_CURRENT_CALLERS: readonly SymbolCallerEntry[] = [
+  {
+    file: "crates/item/src/domain.rs",
+    reason:
+      "读路径合计 item_daily_total（DailyUsageCost 按当期折算，ADR-0011 决策 3 / #1676 裁决 3 合计口径不动）；同文件 validate_and_convert 为写路径违例，过渡态临时在册——#1693（#1676 票2）修正后删除本句",
+  },
+  {
+    file: "crates/dashboard/src/lib.rs",
+    reason: "读路径：净资产与持仓市值卡片的当期折算（消费面见 amount convert.rs 当期入口 doc）",
+  },
+  {
+    file: "crates/investment/src/overview.rs",
+    reason: "读路径：投资概览市值与累计盈亏的当期折算",
+  },
+  {
+    file: "crates/investment/src/financial_freedom.rs",
+    reason: "读路径：财务自由度可投资资产与现金合计的当期折算",
+  },
+  {
+    file: "crates/physical-asset/src/crud.rs",
+    reason: "读路径：实物资产估值的当期折算",
+  },
+  {
+    file: "crates/scheduled/src/spend.rs",
+    reason: "读路径：定时计划花费推算的当期折算",
+  },
+  {
+    file: "src/commands/cross_book_summary.rs",
+    reason: "读路径：跨账本汇总的当期折算（壳层命令，ADR-0114 跨本唯一例外）",
+  },
+  {
+    file: "src/bin/ledger-perf/bench.rs",
+    reason: "压测工具（ledger-perf bench）非生产路径，显式列入注记（#1692）",
+  },
+];
+
+/**
+ * 当期入口调用命中扫描（掩码注释与字面量后）：标识符 + 同行左括号才算调用；
+ * `fn convert_to_native_current(` 定义面、`use` 花括号列举与 doc 链提及均不命中。
+ */
+function convertCurrentCallHits(source: string): ScanHit[] {
+  const masked = maskNonCode(source);
+  const rawLines = source.split("\n");
+  const hits: ScanHit[] = [];
+  const re = new RegExp(`\\b${CONVERT_CURRENT_CALL_SYMBOL}[ \\t]*\\(`, "g");
+  for (const m of masked.matchAll(re)) {
+    const idx = m.index ?? 0;
+    // 定义面不是调用：紧邻前文以 `fn ` 收尾（`pub fn name(` 同形）。
+    if (/(?:^|[^\w])fn\s+$/.test(masked.slice(Math.max(0, idx - 4), idx))) continue;
+    const line = lineAt(masked, idx);
+    hits.push({ line, text: (rawLines[line - 1] ?? "").trim(), match: m[0], captured: undefined });
+  }
+  return hits;
+}
 
 /** 规则①形态：全局模型模块路径（全局目录已消亡，任何引用即残留） */
 const GLOBAL_MODEL_PATH_PATTERN = /\b(?:crate|tauri_app_lib)\s*::\s*models\b/;
@@ -1764,6 +1844,63 @@ function checkTransactionZoneDirection(srcTauriDir: string): string[] {
 }
 
 /**
+ * 当期入口调用方闭集核对（ADR-0011 决策 3 + 2026-09-22 修订 ① / #1692）：扫描
+ * 全部非测试 Rust 生产面（根 src + 各 crate 模块面），`convert_to_native_current`
+ * 的调用落在 CONVERT_CURRENT_CALLERS 之外即红；反向核对在册成员——文件缺失
+ *（清单漂移 fail loud）或零调用（拒绝空集假绿：符号改名/调用全删时白名单不静默
+ * 变成空转全绿）同样红。测试代码按 `/tests/` 路径约定豁免（ADR-0056 决策 5）。
+ */
+function checkConvertCurrentCallers(srcDir: string, srcTauriDir: string): string[] {
+  const problems: string[] = [];
+  let files: WalkedFile[] = [];
+  try {
+    files = [
+      ...collectRustFiles(srcDir, "src"),
+      ...CRATE_MODULE_TARGETS.flatMap((target) =>
+        collectRustFiles(join(srcTauriDir, target.srcRel), target.srcRel),
+      ),
+    ];
+  } catch {
+    // 目录缺失：下方在册成员存在性核对逐条报红（fail loud），不在此抛栈
+  }
+  const hitsByFile = new Map<string, ScanHit[]>();
+  for (const f of files) {
+    const hits = convertCurrentCallHits(readFileSync(f.abs, "utf8"));
+    if (hits.length > 0) hitsByFile.set(f.rel, hits);
+  }
+  for (const [rel, hits] of hitsByFile) {
+    if (CONVERT_CURRENT_CALLERS.some((entry) => entry.file === rel)) continue;
+    for (const hit of hits) {
+      problems.push(
+        `✗ 当期入口调用方闭集：${rel}:${hit.line}（${CONVERT_CURRENT_CALL_SYMBOL} 调用）\n` +
+          `    ${hit.text}\n` +
+          `    写路径全部走交易日历史折算、当期表只服务读路径（规则见 ADR-0011 决策 3 / 2026-09-22 修订 ①，#1692）——` +
+          `当期入口生产调用方白名单外即红；读路径消费面须逐条留痕于本脚本 CONVERT_CURRENT_CALLERS（附成因），` +
+          `写路径改接 convert_to_native_on_trade_date / convert_to_native_on_edit，零腿例外见 NativeConversion::zero_cash_leg`,
+      );
+    }
+  }
+  for (const entry of CONVERT_CURRENT_CALLERS) {
+    if (!files.some((f) => f.rel === entry.file)) {
+      problems.push(
+        `✗ 当期入口调用方闭集：在册成员文件不存在：${entry.file}（相对 src-tauri）\n` +
+          `    清单漂移 fail loud（规则见 ADR-0011 决策 3 / 2026-09-22 修订 ①，#1692）：` +
+          `文件移动 / 删除后须同步本脚本 CONVERT_CURRENT_CALLERS`,
+      );
+      continue;
+    }
+    if (!hitsByFile.has(entry.file)) {
+      problems.push(
+        `✗ 当期入口调用方闭集：在册成员零调用：${entry.file}（相对 src-tauri）\n` +
+          `    文件存在但扫不到 ${CONVERT_CURRENT_CALL_SYMBOL} 生产调用——拒绝空集假绿` +
+          `（规则见 ADR-0011 决策 3 / 2026-09-22 修订 ①，#1692）：调用已移除即从 CONVERT_CURRENT_CALLERS 摘除该成员`,
+      );
+    }
+  }
+  return problems;
+}
+
+/**
  * 单个非测试 Rust 文件的分层与方向扫描（白名单政策项与 crate 模块面共用）：
  * 壳层反向依赖（`options.scanShellRefs` 开启时——只有根包 src 白名单面开，
  * 同 crate 引用 cargo 看不见，属 #1596 退役后仅存的源码方向规则）；基础设施
@@ -1970,6 +2107,10 @@ function main(): void {
   // loud），认许边（决策 3 原形状反边）之外即红。
   problems.push(...checkTransactionZoneDirection(srcTauriDir));
 
+  // 当期入口调用方闭集（ADR-0011 决策 3 + 2026-09-22 修订 ① / #1692）：白名单
+  // 外调用即红，测试代码按 /tests/ 路径豁免；在册成员缺失/零调用同样红。
+  problems.push(...checkConvertCurrentCallers(srcDir, srcTauriDir));
+
   if (problems.length > 0) {
     for (const p of problems) console.error(p);
     console.error(
@@ -1989,6 +2130,7 @@ function main(): void {
       `· crate 边界 ${CRATES.length} 个（成员登记 / 门禁继承 / 依赖方向 / workspace 命令覆盖，#1087）` +
       `· crate 内块间反向依赖零未认许引用（认许边 ${INFRA_BLOCK_ALLOWED_EDGES.length} 条，ADR-0111 决策 4 / #1134）` +
       `· 交易域区级层序零未认许反向引用（写读 → 接缝 → 共享语义，认许边 ${TRANSACTION_ZONE_ALLOWED_EDGES.length} 条，ADR-0113 决策 3 / #1181）` +
+      `· 当期入口调用方闭集 ${CONVERT_CURRENT_CALLERS.length} 成员全在册（白名单外即红，ADR-0011 / #1692）` +
       `· test_utils 生产编译门（cfg 门 + 生产依赖不启用 test-utils，#1132）` +
       `· 投资五节锚点生产编译门（cfg 门，#1185）` +
       `· http 投影 feature 门（axum optional + impl cfg 门 + default 不含 http + 域侧不启用，#1133）`,
