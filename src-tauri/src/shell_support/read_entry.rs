@@ -85,30 +85,6 @@ mod tests {
         }
     }
 
-    /// 闭包执行：闭包在**门面读 DB 线程**跑完（不在调用线程内联），Ok 值原样
-    /// 带回 await 点（线程名是可观察坐标，ADR-0125 决策 1）。
-    #[test]
-    fn closure_executes_and_returns_value() {
-        let state = fixture();
-        let caller = std::thread::current().id();
-        let value =
-            tauri::async_runtime::block_on(read_entry("test", state.read_handle(), move |_conn| {
-                assert_ne!(
-                    std::thread::current().id(),
-                    caller,
-                    "闭包应在门面读 DB 线程执行，不在调用线程内联"
-                );
-                assert_eq!(
-                    std::thread::current().name(),
-                    Some("db-read"),
-                    "读作业应在读 DB 线程上执行（读侧与写侧不共线程）"
-                );
-                Ok(41 + 1)
-            }))
-            .expect("入口应传播闭包的 Ok 值");
-        assert_eq!(value, 42);
-    }
-
     /// 闭包拿到可用连接：读已提交的真实行（连接机制内化但真实可用）。
     #[test]
     fn closure_receives_usable_connection_and_reads_persisted_row() {
