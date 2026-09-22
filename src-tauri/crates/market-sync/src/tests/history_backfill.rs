@@ -1740,6 +1740,57 @@ fn fund_first_sync_money_shape_marks_and_lands_no_flat_rows() {
     assert_eq!(*nav_calls.lock().unwrap(), 0, "确认即收尾：零净值抓取请求");
 }
 
+/// 排队后才被并行刷新打标（竞态窗，issue #1711）：队列项携带的通道是收集时点
+/// 投影（净值通道），执行前该行已被别的通道打标——**这道判定门承接它**：判定
+/// 信号取官方披露而非本地标记，确认即打标收尾、零净值抓取。已删的恒定通道短路
+/// 臂要求投影通道为恒定，恒不成立（收集侧排除恒定通道行），**不是**本竞态的
+/// 承接者。**负向接线证明（ADR-0087）**：删除判定门（确认即打标收尾）→ 本用例
+/// 与 `fund_first_sync_money_shape_marks_and_lands_no_flat_rows` 一起变红
+///（竞态窗无人收尾，货基被写成万份收益）。
+#[test]
+fn fund_backfill_gate_finishes_instrument_marked_constant_after_enqueue() {
+    let conn = tauri_app_lib::test_support::open();
+    insert_plain_instrument(&conn, "inst-money", "000905", "fund", "CNY", "unknown");
+    // 排队时点的投影：恒定单位价格为空 ⇒ 净值通道；执行前被并行刷新打标：
+    // 数据库行已带恒定单位价格。
+    let fund = fund_instrument("inst-money", "000905");
+    conn.execute(
+        "UPDATE instruments SET constant_unit_price = 10000 WHERE id = 'inst-money'",
+        [],
+    )
+    .unwrap();
+
+    let nav_calls = Mutex::new(0usize);
+    let mut nav = empty_nav_history_counting(&nav_calls);
+    let confirm_calls = Mutex::new(0usize);
+    let mut confirm = confirm_true_counting(&confirm_calls);
+    let outcome =
+        tauri::async_runtime::block_on(run_fund_backfill(&conn, &fund, &mut nav, &mut confirm))
+            .unwrap();
+
+    assert!(outcome.written);
+    assert!(!outcome.inconclusive);
+    assert_eq!(*nav_calls.lock().unwrap(), 0, "判定门在抓取前收尾");
+    assert_eq!(*confirm_calls.lock().unwrap(), 1, "一次确认请求");
+    let cents: Option<i64> = conn
+        .query_row(
+            "SELECT constant_unit_price FROM instruments WHERE id = 'inst-money'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(cents, Some(10_000), "既有标记不被清空");
+    assert_eq!(
+        fund_price_of(&conn, "inst-money"),
+        Some((10_000, None)),
+        "兜底建档常量价 1.0000 落现价缓存、净值日期为空"
+    );
+    assert!(
+        price_history_rows(&conn, "inst-money").is_empty(),
+        "确认即收尾：平坦历史行不生长"
+    );
+}
+
 /// 首刷时官方披露源不可信（响应异常）：本轮整只不落、按不可信结局待重试——
 /// 信号缺席时落取值位，万份收益就回冒充单位净值（#1342）。
 #[test]
