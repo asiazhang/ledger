@@ -28,8 +28,21 @@ fn input(name: &str, date: &str, cost_cents: i64) -> ItemInput {
 }
 
 /// 创建脚手架账户 + expense 购买交易（issue #207 起创建必关联交易），返回交易 id。
-/// 账户行幂等插入（同 id 复用），交易入参经 Writer 接缝校验（金额>0、日期可解析、折算有汇率）。
+/// 不携显式汇率（序列取数），详见 [`seed_purchase_tx_with_rate`]。
 fn seed_purchase_tx(conn: &Connection, date: &str, cost_cents: i64, currency: &str) -> String {
+    seed_purchase_tx_with_rate(conn, date, cost_cents, currency, None)
+}
+
+/// 同上，可逐笔显式给定该笔汇率（#1549 写入契约 `fx_rate`：显式 > 序列 > 报错）——
+/// `super::fx` 的三方分叉夹具用它在交易行上留痕一个既非序列值也非当期值的显式
+/// 汇率（#1693 物品行折算继承该留痕的锚点前提）。
+pub(super) fn seed_purchase_tx_with_rate(
+    conn: &Connection,
+    date: &str,
+    cost_cents: i64,
+    currency: &str,
+    fx_rate: Option<f64>,
+) -> String {
     // 脚手架账户：工厂账户种子（归一签名，spec #728 / ADR-0084 决策 4）；同连接
     // 可多次播种（同 id 复用），已存在则跳过（幂等语义与原 INSERT OR IGNORE 一致）。
     let scaffold_exists: i64 = conn
@@ -75,7 +88,7 @@ fn seed_purchase_tx(conn: &Connection, date: &str, cost_cents: i64, currency: &s
             in_amount_cents: None,
             idempotency_key: None,
             origin: None,
-            fx_rate: None,
+            fx_rate,
         },
     )
     .unwrap()
