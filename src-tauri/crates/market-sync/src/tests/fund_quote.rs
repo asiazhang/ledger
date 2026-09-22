@@ -9,6 +9,7 @@ use std::time::Duration;
 use crate::fund::fetch_fund_quote_from;
 use crate::http::Pacer;
 use crate::sina_fund::SINA_FUND_BATCH_REFERER;
+use ledger_infra::error::AppError;
 use ledger_investment::prices::{CSRC_PRICE_SOURCE, SINA_PRICE_SOURCE};
 
 /// 新浪批量面真实报文形状（GBK 前解码形态；字段语义见 `sina_fund` 模块文档）：
@@ -221,6 +222,58 @@ fn missing_from_both_sources_is_coded_not_found() {
     assert!(
         err.is_code("sync.fund-not-found"),
         "查无此码应保持既有码化错误，实际 {err:?}"
+    );
+}
+
+///谓词收口（spec #1674，带测谓词）：「查无此码」的识别谓词与构造器同址——正例
+/// 取真实三臂取数产出的构造器错误（两源皆未收录），反例取语义不同的码化错误
+/// 与非码化错误；谓词与构造器各自嗅各自的字符串而漂移时，本用例即红。
+#[test]
+fn fund_not_found_predicate_recognizes_constructor_error() {
+    let client = reqwest::Client::new();
+    let mut pacer = Pacer::new(Duration::ZERO);
+    let (sina, _) = crate::tests::spawn_header_capture_server(gbk(BATCH_BODY));
+    let (csrc, _) =
+        crate::tests::spawn_header_capture_server(CSRC_TRUSTED_EMPTY_PAYLOAD.to_string());
+
+    let err = tauri::async_runtime::block_on(fetch_fund_quote_from(
+        &client,
+        &mut pacer,
+        "999999",
+        &[sina.as_str()],
+        &[csrc.as_str()],
+    ))
+    .expect_err("两源皆未收录应查无此码");
+    assert!(
+        crate::fund::is_fund_not_found(&err),
+        "构造器产出的查无此码应被谓词识别，实际 {err:?}"
+    );
+
+    // 反例一：同为码化错误、语义不同（披露源不可信）——不误判。
+    let other_code = AppError::coded("sync.disclosure-source-malformed", "稍后再试");
+    assert!(
+        !crate::fund::is_fund_not_found(&other_code),
+        "非查无此码的码化错误不得被谓词识别"
+    );
+    // 反例二：非码化错误（网络失败）。
+    let io = AppError::Io("HTTP 请求失败: 连接超时".into());
+    assert!(
+        !crate::fund::is_fund_not_found(&io),
+        "网络类失败不得被谓词识别（否则名称刷新降级会吞掉可重试故障）"
+    );
+}
+
+/// 谓词收口的负向守门（spec #1674，ADR-0087 删除即红）：编排的名称刷新降级消费
+/// 谓词、不嗅错误码字符串——「查无此码」码字面量只许住构造器与谓词同址处
+///（fund 模块），编排 match 臂改回按码嗅探（或编排内任何位置重新引用该字面量，
+/// 含注释）本用例即红。
+#[test]
+fn orchestration_does_not_sniff_fund_not_found_code_string() {
+    let source = include_str!("../incremental.rs");
+    assert!(
+        !source.contains("sync.fund-not-found"),
+        "编排（incremental）不得出现查无此码的错误码字面量——名称刷新降级改回 \
+         is_code 字符串嗅探即红；识别收口在取数侧谓词 is_fund_not_found（spec #1674）"
     );
 }
 

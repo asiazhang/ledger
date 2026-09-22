@@ -47,6 +47,7 @@ use chrono::{Datelike, NaiveDate};
 use rusqlite::{Connection, params};
 
 use super::bulk::{BulkFetchSurfaces, BulkNavPoint, FetchFundBatch, FundBatch};
+use super::fund::is_fund_not_found;
 use super::model::{SyncInstrumentInfoResult, WriteWitness};
 use ledger_infra::error::Result;
 use ledger_investment::crud::refresh_instrument_name;
@@ -566,7 +567,9 @@ where
                 }
                 match fetch_fund_name(&fund.symbol).await {
                     Ok(name) => name,
-                    Err(error) if error.is_code("sync.fund-not-found") => {
+                    // 确定性查无经取数侧谓词识别（spec #1674：识别与构造同址，
+                    // 编排不嗅错误码字符串）。
+                    Err(error) if is_fund_not_found(&error) => {
                         tracing::warn!(
                             code = %fund.symbol,
                             "基金名称刷新查无此码（搜索索引与档案通道皆未命中），保留原名称"

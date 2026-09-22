@@ -14,7 +14,7 @@
 //! 东财 f57 回显同判据）；未命中（数据源明示批量内全部无效，或回显不等）返回
 //! 码化「查无此码」，网络失败 / 风控拦截由 HTTP 层与取数单元 fail-closed 上抛。
 
-use super::http::{Pacer, build_client};
+use super::http::{ForegroundGuard, Pacer, build_client, lock_pacer, shared_pacer};
 use super::tencent::{TENCENT_QUOTE_HOSTS, fetch_tencent_batch, tencent_query_key};
 use ledger_infra::error::{AppError, Result};
 use ledger_investment::{Quote, StockRoute};
@@ -43,13 +43,19 @@ pub(super) async fn fetch_stock_quote(
     }
 }
 
-/// 生产拉取入口：构建客户端与限流器后执行单次行情查询（不经数据库连接，
-/// 供 HTTP 壳在连接锁外完成网络往返，先例：`fetch_fund_quote_production`，
-/// 单请求叠加限流冷却重试最长可达分钟级）。async 形态（ADR-0125 决策 5/7，
-/// issue #1413）：网络等待以 `await` 表达，在异步上下文内直接可调，#1411 的
-/// 过渡同步桥已随接缝 async 化拆除。
+/// 生产拉取入口：构建客户端后经**共享限速器**执行单次行情查询（issue #1674：
+/// 手动查询并入进程全局额度与前台在途守卫——后台车道看得见它并让路；主机 =
+/// 注入面的场内报价生产常量），不经数据库连接，供 HTTP 壳在连接锁外完成网络
+/// 往返，先例：`fetch_fund_quote_production`，单请求叠加限流冷却重试最长可达
+/// 分钟级。本地限速器已随限速单点退役（ADR-0121 修订注记）。async 形态
+///（ADR-0125 决策 5/7，issue #1413）：网络等待以 `await` 表达，在异步上下文内
+/// 直接可调，#1411 的过渡同步桥已随接缝 async 化拆除。
 pub async fn fetch_stock_quote_production(route: StockRoute, code: &str) -> Result<Quote> {
+    // 前台守卫先于取额度：排队等共享限速器期间后台车道同样让行
+    //（ADR-0122 决策 6 的前台请求含手动按代码查询，issue #1674）。
+    let _foreground = ForegroundGuard::enter();
     let client = build_client()?;
-    let mut pacer = Pacer::default();
+    let pacer = shared_pacer();
+    let mut pacer = lock_pacer(&pacer).await;
     fetch_stock_quote(&client, &mut pacer, TENCENT_QUOTE_HOSTS, route, code).await
 }

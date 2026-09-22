@@ -36,11 +36,11 @@ use ledger_infra::error::Result;
 use ledger_investment::QuoteMarket;
 
 use super::bulk::BulkFetchSurfaces;
-use super::csrc::confirm_money_fund_form;
-use super::fund::fetch_fund_quote;
+use super::csrc::{CSRC_HOSTS, confirm_money_fund_form_from};
+use super::fund::fetch_fund_quote_from;
 use super::fund_nav::NavPoint;
 use super::http::{
-    ForegroundGuard, KlineBar, Pacer, build_client, lock_pacer, shared_pacer, wait_foreground_idle,
+    ForegroundGuard, KlineBar, build_client, lock_pacer, shared_pacer, wait_foreground_idle,
 };
 use super::incremental::{do_incremental_sync_with, kline_window};
 use super::model::{SyncInstrumentInfoResult, WriteWitness};
@@ -111,20 +111,27 @@ pub struct SyncFetchChannels {
     /// 单位净值（含已终止基金）；价格历史后台补全（首刷深回填与缺周点补齐）
     /// 与现价刷新逐只回退共用（issue #1571：逐只分页通道随 lsjz 换源退役）。
     pub fetch_nav_history: FetchNavHistory,
-    /// 基金详情名称（issue #827）：代码 → 数据源权威名称。
+    /// 基金详情名称（issue #827）：代码 → 数据源权威名称。主机取注入面的
+    /// 新浪批量面 + 证监会披露面两面（三臂编排：批量面未收录 → 披露兑底，
+    /// issue #1674 接注入面）。
     pub fetch_fund_name: FetchFundName,
     /// 货基判定确认（issue #1563 / ADR-0126 决策 3 换源）：代码 → 官方披露
-    /// 自报形态确认。逐只刷新与历史首刷两确认点消费；判定不进日常热路径——
-    /// 确认后标的退出采集链路，不再产生逐轮请求（ADR-0126 决策 3/4）。
+    /// 自报形态确认。主机取注入面的证监会披露面（issue #1674 接注入面）。
+    /// 逐只刷新与历史首刷两确认点消费；判定不进日常热路径——确认后标的退出
+    /// 采集链路，不再产生逐轮请求（ADR-0126 决策 3/4）。
     pub confirm_money_fund_form: FetchMoneyFundForm,
     /// 批量取数面（ADR-0121 / issue #1374 / ADR-0130 决策 2）：新浪 `f_` 面把
     /// 名称与最新净值同面返回（issue #1565 换源）+ 跨同步记忆。
     pub bulk: BulkFetchSurfaces,
 }
 
-/// 生产通道束的取数主机注入面（测试用，ADR-0130 四条取数面）：四面的主机列表
-/// 各具名——相邻同型 `Vec<String>` 位置参数可互换编译（静默错路由），具名结构让
-/// 「哪一面用哪个本地主机」在调用点自证。
+/// 生产通道束的取数主机注入面（测试用，ADR-0130 取数面 + issue #1674 五面）：
+/// 五面的主机列表各具名——相邻同型 `Vec<String>` 位置参数可互换编译（静默错
+/// 路由），具名结构让「哪一面用哪个本地主机」在调用点自证。束内六条闭包的
+/// 主机一律取自本面（`fetch_fund_name` 消费批量面 + 披露面，
+/// `confirm_money_fund_form` 消费披露面），闭包体不写死主机——生产常量与测试
+/// 注入同形，钉接线测试逐条断言请求打到注入面指定的主机（见
+/// [`SyncFetchChannels::production_lane`] 的六条接线 ↔ 六条测试对照清单）。
 #[derive(Debug, Clone, Default)]
 pub(super) struct SyncFetchHosts {
     /// 腾讯行情批量报价主机。
@@ -135,6 +142,9 @@ pub(super) struct SyncFetchHosts {
     pub(super) fund_batch: Vec<String>,
     /// 新浪场外基金单只全历史面主机（历史补全，issue #1566）。
     pub(super) fund_history: Vec<String>,
+    /// 证监会基金电子披露面主机（货基形态确认与批量面未收录的披露兑底，
+    /// issue #1674）。
+    pub(super) disclosure: Vec<String>,
 }
 
 impl SyncFetchChannels {
@@ -153,13 +163,20 @@ impl SyncFetchChannels {
         Self::production_lane(Lane::Backfill, production_hosts())
     }
 
-    /// 生产通道束构造本体：`hosts` 携带腾讯行情报价、腾讯日 K 与新浪场外基金
-    /// 批量面 / 单只全历史面主机。生产经 [`production_hosts`] 传取数单元单点常量；
-    /// 测试注入本地 HTTP 服务，驱动**生产束**钉住四条接线：「场内现价刷新打到
-    /// 腾讯批量报价端点」（issue #1560）、「历史补全的日 K 打到腾讯 `fqkline/get`」
-    ///（issue #1561）、「场外基金现价与名称刷新打到新浪 `f_` 批量面」（issue
-    /// #1565）与「场外基金历史补全打到新浪全历史面」（issue #1566），删除接线
-    /// 即红。
+    /// 生产通道束构造本体：`hosts` 携带五面注入主机（场内报价 / 场内日 K /
+    /// 新浪基金批量面 / 新浪单只历史面 / 证监会披露面）。生产经
+    /// [`production_hosts`] 传取数单元单点常量；测试注入本地 HTTP 服务，驱动
+    /// **生产束**钉住全部六条接线——「六条接线 ↔ 六条钉接线测试」对照清单
+    /// （删除任一接线即红，ADR-0087）：
+    ///
+    /// | 束内闭包 | 打到的注入面 | 钉接线测试 |
+    /// |---|---|---|
+    /// | `fetch_quotes` | 场内报价 | `production_quote_channel_requests_tencent_batch_endpoint`（issue #1560） |
+    /// | `fetch_kline` | 场内日 K | `production_backfill_channel_lands_history_via_tencent_kline`（issue #1561） |
+    /// | `bulk`（批量取数面） | 新浪基金批量面 | `production_fund_batch_channel_requests_sina_batch_endpoint`（issue #1565） |
+    /// | `fetch_nav_history` | 新浪单只历史面 | `production_backfill_channel_lands_fund_history_via_sina`（issue #1566） |
+    /// | `fetch_fund_name` | 新浪基金批量面 + 证监会披露面（批量面未收录 → 披露兑底双主机） | `production_fund_name_channel_falls_back_to_disclosure_host`（issue #1674） |
+    /// | `confirm_money_fund_form` | 证监会披露面 | `production_confirm_channel_requests_disclosure_host`（issue #1674） |
     pub(super) fn production_lane(lane: Lane, hosts: SyncFetchHosts) -> Result<Self> {
         let client = build_client()?;
         let pacer = shared_pacer();
@@ -239,31 +256,50 @@ impl SyncFetchChannels {
                     })
                 })
             },
-            fetch_fund_name: Box::new(move |code: &str| {
-                let code = code.to_string();
-                Box::pin(async move {
-                    let _foreground = lane.before_request().await;
-                    // 基金报价编排自带客户端与独立限速器（与共享 pacer 无关），
-                    // 与 `fetch_fund_quote_production` 同形，但在同一异步块内
-                    // 完成以让前台在途守卫覆盖整次请求。
-                    let client = build_client()?;
-                    let mut pacer = Pacer::default();
-                    fetch_fund_quote(&client, &mut pacer, &code)
-                        .await
-                        .map(|quote| quote.name)
-                })
-            }),
-            confirm_money_fund_form: {
+            fetch_fund_name: {
                 let client = client.clone();
                 let pacer = pacer.clone();
+                let batch_hosts = hosts.fund_batch.clone();
+                let disclosure_hosts = hosts.disclosure.clone();
                 Box::new(move |code: &str| {
                     let code = code.to_string();
                     let client = client.clone();
                     let pacer = pacer.clone();
+                    let batch_hosts = batch_hosts.clone();
+                    let disclosure_hosts = disclosure_hosts.clone();
                     Box::pin(async move {
                         let _foreground = lane.before_request().await;
                         let mut pacer = lock_pacer(&pacer).await;
-                        confirm_money_fund_form(&client, &mut pacer, &code).await
+                        // 三臂取数编排（新浪批量面 → 官方披露兑底，issue #1568）：
+                        // 两面主机都取注入面（fund_batch / disclosure），与生产
+                        // 常量同形、与共享限速器同额度（issue #1674：本地限速器
+                        // 归零、写死主机归零）。
+                        let batch: Vec<&str> = batch_hosts.iter().map(String::as_str).collect();
+                        let disclosure: Vec<&str> =
+                            disclosure_hosts.iter().map(String::as_str).collect();
+                        fetch_fund_quote_from(&client, &mut pacer, &code, &batch, &disclosure)
+                            .await
+                            .map(|quote| quote.name)
+                    })
+                })
+            },
+            confirm_money_fund_form: {
+                let client = client.clone();
+                let pacer = pacer.clone();
+                let disclosure_hosts = hosts.disclosure.clone();
+                Box::new(move |code: &str| {
+                    let code = code.to_string();
+                    let client = client.clone();
+                    let pacer = pacer.clone();
+                    let disclosure_hosts = disclosure_hosts.clone();
+                    Box::pin(async move {
+                        let _foreground = lane.before_request().await;
+                        let mut pacer = lock_pacer(&pacer).await;
+                        // 判定确认只问官方披露（issue #1563 / ADR-0126 决策 3）：
+                        // 主机取注入面 disclosure 面（issue #1674），与生产常量同形。
+                        let disclosure: Vec<&str> =
+                            disclosure_hosts.iter().map(String::as_str).collect();
+                        confirm_money_fund_form_from(&client, &mut pacer, &code, &disclosure).await
                     })
                 })
             },
@@ -272,10 +308,13 @@ impl SyncFetchChannels {
     }
 }
 
-/// 四条取数面的生产主机（发送单元单点常量的拥有副本）：取数单元单点常量
+/// 五条取数面的生产主机（发送单元单点常量的拥有副本）：取数单元单点常量
 /// [`TENCENT_QUOTE_HOSTS`]、[`tencent_kline::TENCENT_KLINE_HOSTS`]、
-/// [`SINA_FUND_BATCH_HOSTS`] 与 [`SINA_FUND_HISTORY_HOSTS`] 的 `Vec<String>` 形态，
-/// 供通道束构造持有；测试注入本地 HTTP 服务地址替换它们。
+/// [`SINA_FUND_BATCH_HOSTS`]、[`SINA_FUND_HISTORY_HOSTS`] 与 [`CSRC_HOSTS`] 的
+/// `Vec<String>` 形态，供通道束构造持有；测试注入本地 HTTP 服务地址替换它们。
+/// 按代码查询（行情接入的查询半边，束外）取的也是同一组生产常量
+///（[`super::fund::fetch_fund_quote`] / [`super::stock::fetch_stock_quote`] 的
+/// 生产入口），主机单点不因束内束外而分叉。
 fn production_hosts() -> SyncFetchHosts {
     SyncFetchHosts {
         quote: TENCENT_QUOTE_HOSTS
@@ -294,6 +333,7 @@ fn production_hosts() -> SyncFetchHosts {
             .iter()
             .map(|host| host.to_string())
             .collect(),
+        disclosure: CSRC_HOSTS.iter().map(|host| host.to_string()).collect(),
     }
 }
 

@@ -35,7 +35,7 @@
 //! 码化错误（ADR-0121 决策 5）。fixture 单测见
 //! `tests/csrc.rs`（真实报文形状 + 本地 HTTP 服务钉请求形态）。
 //!
-//! 判定确认（issue #1563 接线，ADR-0126 决策 3 换源）：[`confirm_money_fund_form`]
+//! 判定确认（issue #1563 接线，ADR-0126 决策 3 换源）：[`confirm_money_fund_form_from`]
 //! 消费本单元的披露记录回答「这只基金是不是货基」——官方自报形态判定，接线在
 //! 逐只刷新、历史首刷（#1563）与基金查询创建（#1568）三处；区间取数的翻页与
 //! 完整性核验（[`fetch_fund_nav_series`]）由查询创建接线（#1568）的已终止基金
@@ -349,16 +349,10 @@ pub(super) fn disclosure_window_dates() -> (String, String) {
 /// `Err` = 披露源响应不可信（[`malformed_source`]），调用方按本轮不可信处置、
 /// 不落任何价格——在信号缺席时落取数面的取值位，正是 #1342 万份收益冒充
 /// 单位净值的错法。
-pub(super) async fn confirm_money_fund_form(
-    client: &reqwest::Client,
-    pacer: &mut Pacer,
-    code: &str,
-) -> Result<bool> {
-    confirm_money_fund_form_from(client, pacer, code, CSRC_HOSTS).await
-}
-
-/// 同 [`confirm_money_fund_form`]，主机池可注入（本地 HTTP 服务测试请求形态与
-/// 异常响应处置）。
+///
+/// 主机池由调用方传入：生产接通道束注入面的披露面（issue #1674：闭包体不写死
+/// 主机，包装常量的第二入口随注入面收口退役），测试注入本地 HTTP 服务测请求
+/// 形态与异常响应处置。
 pub(super) async fn confirm_money_fund_form_from(
     client: &reqwest::Client,
     pacer: &mut Pacer,

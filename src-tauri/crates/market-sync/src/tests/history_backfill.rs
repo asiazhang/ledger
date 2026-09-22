@@ -817,6 +817,7 @@ fn production_backfill_channel_lands_history_via_tencent_kline() {
             kline: vec![url],
             fund_batch: vec![],
             fund_history: vec![],
+            disclosure: vec![],
         },
     )
     .expect("生产后台车道束应可构造");
@@ -909,6 +910,7 @@ fn production_backfill_channel_lands_fund_history_via_sina() {
             kline: vec![],
             fund_batch: vec![],
             fund_history: vec![url],
+            disclosure: vec![],
         },
     )
     .expect("生产后台车道束应可构造");
