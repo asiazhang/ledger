@@ -29,6 +29,7 @@ use ledger_infra::db::book_registry::Book;
 use ledger_infra::db::data_location::DB_FILE_NAME;
 use ledger_infra::db::encryption::DbFileKind;
 use ledger_infra::db::encryption::probe_file_kind;
+use ledger_infra::db::tx_scope::ensure_transaction;
 use ledger_infra::db::{open_connection_readonly_in, schema_version};
 use ledger_infra::error::Result;
 use ledger_investment as investment;
@@ -88,16 +89,56 @@ pub struct BookInvestmentReading {
 
 /// 单本读数（投资域 `&Connection` 纯读组合）：持仓合计 + 累计收益 + 可投资资产。
 /// 任一读失败原样上抛（调用方决定逐本降级还是整体失败）。
+///
+/// **读快照一致性（issue #1699）**：四段读数（持仓合计 / 累计收益 / 可投资资产
+/// 两腿 / 本位币）整体收进同一读事务（嵌套感知）——写提交落在语句之间会让
+/// 同屏合计与可投资资产不同时点。覆盖活动本与非活动本两条调用路径。
 pub fn read_book_investment(conn: &Connection) -> Result<BookInvestmentReading> {
-    let holding_totals = investment::query_holdings_summary_by_currency(conn)?;
-    let cumulative_pnl = investment::query_cumulative_pnl_summary(conn)?;
-    let investable_assets_cents = investment::query_investable_assets_cents(conn)?;
-    let native_currency = amount::default_currency_code(conn)?;
-    Ok(BookInvestmentReading {
-        native_currency: native_currency.clone(),
-        holding_totals,
-        cumulative_pnl,
-        investable_assets: Some((native_currency, investable_assets_cents)),
+    ensure_transaction(conn, || {
+        let holding_totals = investment::query_holdings_summary_by_currency(conn)?;
+        let cumulative_pnl = investment::query_cumulative_pnl_summary(conn)?;
+        let investable_assets_cents = investment::query_investable_assets_cents(conn)?;
+        let native_currency = amount::default_currency_code(conn)?;
+        Ok(BookInvestmentReading {
+            native_currency: native_currency.clone(),
+            holding_totals,
+            cumulative_pnl,
+            investable_assets: Some((native_currency, investable_assets_cents)),
+        })
+    })
+}
+
+/// 活动本读数与合并的单点（ADR-0114 决策 3 的第④步，壳层编排）：活动本读数、
+/// 目标本位币、当期汇率折算与逐本合并一次给出。
+///
+/// **读快照一致性（issue #1699，证据点「活动本读数与汇率折算跨口径」）**：整段
+/// 收进同一读事务（嵌套感知）——[`read_book_investment`] 的四段读数、目标本位币
+/// 与 merge 的逐笔当期汇率取数同快照，写提交落在其间不会「读数旧、汇率新」。
+/// 非活动本读数各自已收本内快照（`read_book_investment` 内接线）；跨库合天然
+/// 逐本时点（单事务跨不了库文件，结构边界如实保留，不假装跨本一致）。
+///
+/// 从命令闭包抽出的动机：接线要能在**命令线程之外**被探针测试直接驱动
+/// （`trace_v2` 回调与被测读闭包同线程才可见臂装状态），命令壳只留一行调用。
+pub fn read_active_book_and_merge(
+    mut readings: Vec<BookInvestmentReading>,
+    rows: Vec<CrossBookBookRow>,
+    conn: &Connection,
+) -> Result<CrossBookInvestmentSummary> {
+    ensure_transaction(conn, || {
+        readings.push(read_book_investment(conn)?);
+        let target_currency = amount::default_currency_code(conn)?;
+        let totals = merge_readings(&readings, &target_currency, &mut |cents, currency| {
+            amount::convert_to_native_current(conn, cents, currency)
+        })?;
+        Ok(CrossBookInvestmentSummary {
+            target_currency,
+            converted: totals.converted,
+            market_value_cents: totals.market_value_cents,
+            unrealized_pnl_cents: totals.unrealized_pnl_cents,
+            cumulative_pnl_cents: totals.cumulative_pnl_cents,
+            investable_assets_cents: totals.investable_assets_cents,
+            books: rows,
+        })
     })
 }
 
@@ -235,6 +276,125 @@ fn read_other_book(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::snapshot_probe::{self, InjectionOutcome};
+    use crate::test_support::{ScratchDir, open_file, seed_account, seed_exchange_rate};
+
+    /// 读快照一致性·证据点「活动本读数与汇率折算跨口径」（issue #1699）：
+    /// `read_active_book_and_merge` 的活动本读数、目标本位币与 merge 的逐笔当期
+    /// 汇率取数必须同快照。
+    ///
+    /// 探针选点：活动本纯 CNY（内层 `read_book_investment` 零汇率查询），他本读数
+    /// 由参数合入（USD 组只在 merge 折算）——首个 `FROM exchange_rates` 即 merge 的
+    /// 折算取数，臂装契约①（不得命中首条语句）与「首中即外层窗口」同时成立：
+    /// - 读闭包无快照保护（红）：注入的汇率改写提交，merge 按新汇率折算，合并结果
+    ///   与基线漂移（同屏里活动本读数与折算汇率不同时点）；
+    /// - 读闭包收进读事务（绿）：注入写被挡住，合并结果与基线一致。
+    #[test]
+    fn active_book_merge_shares_snapshot_between_readings_and_fx() {
+        let dir = ScratchDir::new("cross-book-fx-read-snapshot");
+        let conn = open_file(dir.path());
+        // 活动本：纯 CNY（默认币即 CNY，现金腿同币短路，内层不读汇率表）。
+        seed_account(&conn, "acc-cny", "投资账户", "investment", "CNY", 200_000);
+        ledger_accounts::balance::refresh_all_account_balances(&conn).unwrap();
+        // 当期汇率：供 merge 把他本 USD 组折到目标币种 CNY。
+        seed_exchange_rate(&conn, "USD", "CNY", 7.0);
+        // 他本读数（参数面）：USD 持仓组 + 可投资资产，只经 merge 折算。
+        let other_book = BookInvestmentReading {
+            native_currency: "USD".into(),
+            holding_totals: vec![investment::CurrencyHoldingTotals {
+                currency_code: "USD".into(),
+                market_value_cents: Some(1_000_000),
+                unrealized_pnl_cents: Some(200_000),
+            }],
+            cumulative_pnl: vec![],
+            investable_assets: Some(("USD".into(), 500_000)),
+        };
+
+        let before = read_active_book_and_merge(vec![other_book], vec![], &conn).unwrap();
+
+        snapshot_probe::arm(
+            &conn,
+            dir.path(),
+            "FROM exchange_rates",
+            &[
+                "UPDATE exchange_rates SET rate = 14.0 WHERE base_code = 'USD' AND quote_code = 'CNY'",
+            ],
+        );
+        let other_book = BookInvestmentReading {
+            native_currency: "USD".into(),
+            holding_totals: vec![investment::CurrencyHoldingTotals {
+                currency_code: "USD".into(),
+                market_value_cents: Some(1_000_000),
+                unrealized_pnl_cents: Some(200_000),
+            }],
+            cumulative_pnl: vec![],
+            investable_assets: Some(("USD".into(), 500_000)),
+        };
+        let after = read_active_book_and_merge(vec![other_book], vec![], &conn).unwrap();
+
+        let outcome = snapshot_probe::outcome();
+        assert!(
+            outcome != InjectionOutcome::NotFired,
+            "探针未命中 merge 的汇率取数（marker 漂移或未臂装），断言失去意义：{outcome:?}"
+        );
+        assert!(before.converted, "他本 USD 组应触发折算口径标注");
+        assert_eq!(
+            before.market_value_cents, after.market_value_cents,
+            "合并持仓市值必须与基线同时点——活动本读数与汇率折算同快照"
+        );
+        assert_eq!(
+            before.investable_assets_cents, after.investable_assets_cents,
+            "可投资资产必须与基线同时点"
+        );
+        assert_eq!(
+            before.target_currency, after.target_currency,
+            "目标币种不应漂移"
+        );
+    }
+
+    /// 读快照一致性（issue #1699）：`read_book_investment` 的四段读数必须同快照。
+    /// 探针在现金腿（账户列表，全闭包首个 `is_hidden=0` 命中）开始前于另一连接
+    /// 提交余额缓存写——两次读数之间库内唯一变动就是这笔注入写，基线对拍即判据：
+    /// - 读闭包无快照保护（红）：持仓/累计读旧、可投资资产读新，对拍变红；
+    /// - 读闭包收进读事务（绿）：注入写被挡住，两次读数逐字段相等。
+    #[test]
+    fn read_book_investment_is_one_snapshot_under_concurrent_write() {
+        let dir = ScratchDir::new("cross-book-read-snapshot");
+        let conn = open_file(dir.path());
+        seed_account(&conn, "acc-inv", "投资账户", "investment", "CNY", 200_000);
+        ledger_accounts::balance::refresh_all_account_balances(&conn).unwrap();
+        seed_exchange_rate(&conn, "CNY", "CNY", 1.0);
+
+        let before = read_book_investment(&conn).unwrap();
+
+        snapshot_probe::arm(
+            &conn,
+            dir.path(),
+            "is_hidden=0",
+            &[
+                "UPDATE account_balance_cache SET balance_cents = balance_cents + 5555 WHERE account_id = 'acc-inv'",
+            ],
+        );
+        let after = read_book_investment(&conn).unwrap();
+
+        let outcome = snapshot_probe::outcome();
+        assert!(
+            outcome != InjectionOutcome::NotFired,
+            "探针未命中现金腿（marker 漂移或未臂装），断言失去意义：{outcome:?}"
+        );
+        assert!(
+            before.investable_assets.is_some(),
+            "种子应产出可投资资产读数（否则对拍空转）"
+        );
+        assert_eq!(
+            before.investable_assets, after.investable_assets,
+            "可投资资产必须与基线同时点——注入写要么整体进快照、要么整体不进"
+        );
+        assert_eq!(
+            before.native_currency, after.native_currency,
+            "本位币不应漂移"
+        );
+    }
 
     /// 同币种直加：目标币种金额直接求和，`converted` 恒 false。
     #[test]

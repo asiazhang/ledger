@@ -17,9 +17,14 @@ use crate::error::{AppError, Result};
 /// [`crate::boot::data_location`] 再导出消费，外部原路径零改动。
 pub const DB_FILE_NAME: &str = "ledger.db";
 
-/// 并发容让的 busy_timeout（读路径独立只读连接，issue #1280 / ADR-0117 决策 4）：
-/// 读连接在写事务取 EXCLUSIVE 锁的提交瞬间窗口内在本超时内等待——取值与既有
-/// 整库转换连接的容让超时同源收口（不在调用点散布），转换连接自本常量取值。
+/// 并发容让的 busy_timeout（读路径独立只读连接，issue #1280 / ADR-0117 决策 4；
+/// 写连接同值显式收口，issue #1699）：读事务在写事务取 EXCLUSIVE 锁的提交瞬间
+/// 窗口内、写事务在读事务持 SHARED 锁的窗口内，各在本超时内等待——取值与既有
+/// 整库转换连接的容让超时同源收口（不在调用点散布），转换连接与两个建连收尾
+/// （`finish_open` / `finish_open_readonly`）自本常量取值。
+///
+/// 说明：rusqlite 建连默认即 5000ms（与本常量巧合同值），两侧收尾的显式设置
+/// 不改行为，作用是把契约从库默认收回源码单点、不随依赖版本漂移。
 pub const CONCURRENT_BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// 在指定目录打开库并完成 schema 迁移，返回裸连接（原位重引导的连接换入用：
@@ -153,7 +158,7 @@ fn finish_open_readonly(conn: Connection, passphrase: Option<&str>) -> Result<Co
     Ok(conn)
 }
 
-/// 建连收尾单点：密钥注入（如有）→ 外键 → 耗时 hook。
+/// 建连收尾单点：密钥注入（如有）→ busy_timeout → 外键 → 耗时 hook。
 fn finish_open(conn: Connection, passphrase: Option<&str>) -> Result<Connection> {
     if let Some(passphrase) = passphrase {
         // `PRAGMA key` 必须是连接上第一条语句；PRAGMA 不支持绑定参数，
@@ -162,6 +167,12 @@ fn finish_open(conn: Connection, passphrase: Option<&str>) -> Result<Connection>
         // 不落主口令）——调整顺序即破坏该纪律。
         conn.pragma_update(None, "key", passphrase)?;
     }
+    // 并发容让（issue #1699；与只读侧同值同源，ADR-0117 决策 4 的收口纪律）：
+    // 多语句读闭包收进读事务后，rollback journal 下读事务持 SHARED 锁横跨语句，
+    // 本连接提交须等其让出——无容让即 SQLITE_BUSY 即时失败，「读一致性」会换成
+    // 用户可见写失败。rusqlite 建连默认恰为同值，此处显式设置不改行为，只把契约
+    // 从库默认收回源码单点（见 [`CONCURRENT_BUSY_TIMEOUT`] 说明）。
+    conn.busy_timeout(CONCURRENT_BUSY_TIMEOUT)?;
     conn.execute("PRAGMA foreign_keys = ON", [])?;
     perf_trace::install_perf_trace(&conn, perf_trace::DEFAULT_SLOW_QUERY_THRESHOLD);
     Ok(conn)

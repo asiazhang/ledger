@@ -16,6 +16,8 @@
 //!   建仓与闭合、零已实现盈亏、余额不变、两腿时点持仓、守卫与回退/删除（ADR-0099）
 //! - [`fund_trade`]：场外基金申赎记账——金额权威、单价反算、成本锚定与盈亏闭合不变式（issue #302 / ADR-0038）
 //! - [`pnl`]：已实现盈亏汇总
+//! - [`read_snapshot`]：多语句读闭包的快照一致性探针——总量=分量和与分子分母
+//!   同时点（issue #1699）
 //! - [`cumulative_pnl`]：累计收益按币种聚合（未实现 + 已实现 + 累计分红三腿相加，issue #1077）
 //! - [`holdings_summary`]：持仓合计按币种分组读投影与可投资资产分子提取
 //!   （issue #1196 / ADR-0114 跨账本汇总的域读接缝）
@@ -64,6 +66,7 @@ mod overview;
 mod pnl;
 mod predicates;
 mod price_channel;
+mod read_snapshot;
 mod split;
 mod staleness;
 mod stock_add;

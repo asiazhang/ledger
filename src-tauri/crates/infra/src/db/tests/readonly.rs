@@ -56,6 +56,28 @@ fn readonly_connection_reads_committed_row_and_rejects_writes() {
     );
 }
 
+/// 并发 busy 容让同源（issue #1699 / ADR-0117 决策 4）：成对建连的写、读两侧
+/// 连接都持 [`crate::db::CONCURRENT_BUSY_TIMEOUT`]——多语句读闭包收进读事务后，
+/// rollback journal 下读事务持 SHARED 锁横跨语句，写者提交须等其让出；无容让
+/// 即 SQLITE_BUSY 即时失败，「读一致性」会换成用户可见写失败。
+#[test]
+fn paired_connections_share_concurrent_busy_timeout() {
+    let dir = temp_dir("busy");
+    let state = crate::db::open_db_in(&dir).unwrap();
+    for (label, conn) in [("write", &state.conn), ("read", &state.read_conn)] {
+        let busy_ms: i64 = conn
+            .lock()
+            .unwrap()
+            .query_row("PRAGMA busy_timeout", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(
+            busy_ms,
+            crate::db::CONCURRENT_BUSY_TIMEOUT.as_millis() as i64,
+            "{label} 连接应持同源并发 busy 容让，实际 {busy_ms}ms"
+        );
+    }
+}
+
 /// 密文库：只读连接凭主口令打开可读（密钥注入在建连收尾单点内，ADR-0117 决策 2）；
 /// 错误口令在建连时静默、首条读语句报错（与写连接同纪律，ADR-0075）。
 #[test]

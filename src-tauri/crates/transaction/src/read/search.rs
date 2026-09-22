@@ -17,6 +17,7 @@ use crate::model::{
     TransactionSearchResult,
 };
 use ledger_infra::db::query::FromRow;
+use ledger_infra::db::tx_scope::ensure_transaction;
 use ledger_infra::error::Result;
 
 use crate::shared::search_text::{is_subsequence, pinyin_initials, split_terms};
@@ -571,6 +572,12 @@ fn fetch_display_rows(conn: &Connection, page_ids: &[String]) -> Result<Vec<Tran
 ///
 /// 参数较多（8 个）是 issue #40 规格要求的签名（四个可选筛选参数直传，BDD/单测
 /// 沿用直调内部函数模式），故显式 allow `too_many_arguments`。
+///
+/// **读快照一致性（issue #1699）**：字典装载、命中计数、回表页与来源 / 转换投影
+/// 填充是多语句读闭包，整体收进同一读事务（嵌套感知）——写提交落在语句之间会
+/// 页与总数错位（与列表 `list_transactions_internal` 同形同修）。备注拼音惰性
+/// 回填是**写路径**（自带分批事务），留在读事务之外先行完成——不嵌套、不改其
+/// 分批提交语义，读段快照只辖读。
 #[allow(clippy::too_many_arguments)]
 pub fn search_transactions_internal(
     conn: &Connection,
@@ -608,114 +615,118 @@ pub fn search_transactions_internal(
         );
     }
 
-    // 可搜索名字与软删口径字典（账户/分类/商户，个位数到千行量级）：每次搜索
-    // 新建，替代 50 万候选流上的逐行 JOIN（改名即刻生效语义不变，见模块注释）。
-    let dicts = load_search_dicts(conn)?;
+    // 读快照起点（issue #1699）：字典、命中计数、回表页与投影填充收进同一读事务；
+    // 其上的拼音回填是写路径（自带分批事务），留在快照之外先行完成。
+    ensure_transaction(conn, || {
+        // 可搜索名字与软删口径字典（账户/分类/商户，个位数到千行量级）：每次搜索
+        // 新建，替代 50 万候选流上的逐行 JOIN（改名即刻生效语义不变，见模块注释）。
+        let dicts = load_search_dicts(conn)?;
 
-    // 可选金额/日期过滤（走既有 B-tree 索引；与关键字 AND 组合）。
-    let mut filters: Vec<Stage1Filter> = Vec::new();
-    if let Some(min) = amount_min_cents {
-        // 本位币分口径（issue #395）：与全仓聚合一致，多币种下跨币种不再混滤。
-        filters.push(Stage1Filter {
-            column: "t.amount_native_cents",
-            op: ">=",
-            value: min.into(),
-        });
-    }
-    if let Some(max) = amount_max_cents {
-        filters.push(Stage1Filter {
-            column: "t.amount_native_cents",
-            op: "<=",
-            value: max.into(),
-        });
-    }
-    if let Some(from) = date_from {
-        filters.push(Stage1Filter {
-            column: "t.date",
-            op: ">=",
-            value: from.to_string().into(),
-        });
-    }
-    if let Some(to) = date_to {
-        filters.push(Stage1Filter {
-            column: "t.date",
-            op: "<=",
-            value: to.to_string().into(),
-        });
-    }
-
-    // saturating 运算防极端输入（usize::MAX）下溢/溢出 panic（与 list_transactions 先例一致）；
-    // 超出命中数的页返回空页。
-    let offset = page.saturating_sub(1).saturating_mul(page_size);
-    let mut total: i64 = 0;
-    let mut page_ids: Vec<String> = Vec::with_capacity(page_size);
-    if terms.is_empty() {
-        // 仅筛选路径：最小列流式扫描 + Rust 层口径过滤（planner 自由，见
-        // [`stage1_sql`]）。行内文本经 get_ref 借用（NULL → None），零分配。
-        let mut where_clauses: Vec<String> = vec!["t.is_deleted = 0".to_string()];
-        where_clauses.extend(filters.iter().map(|f| format!("{} {} ?", f.column, f.op)));
-        let where_refs: Vec<&str> = where_clauses.iter().map(String::as_str).collect();
-        let filter_params: Vec<Value> = filters.iter().map(|f| f.value.clone()).collect();
-        let mut stmt = conn.prepare(&stage1_sql(&where_refs))?;
-        let rows = stmt.query_map(rusqlite::params_from_iter(filter_params.iter()), |row| {
-            // 列序与 [`stage1_sql`] 的 SELECT 清单一一对应。
-            let id = row.get_ref(0)?.as_str()?;
-            let account_id = row.get_ref(3)?.as_str()?;
-            let category_id = row.get_ref(5)?.as_str().ok();
-
-            // 行级口径过滤（与原 JOIN 谓词等价）：账户必须在用；分类未软删（可空）。
-            let Some((_, account_deleted)) = dicts.accounts.get(account_id) else {
-                return Ok(());
-            };
-            if *account_deleted {
-                return Ok(());
-            }
-            if let Some(cid) = category_id
-                && dicts.categories.get(cid).copied().unwrap_or(false)
-            {
-                return Ok(());
-            }
-            total += 1;
-            // 命中序号（0 起）落在当前页区间且未满页才收集 id。
-            if total as usize > offset && page_ids.len() < page_size {
-                page_ids.push(id.to_string());
-            }
-            Ok(())
-        })?;
-        for row in rows {
-            row?;
+        // 可选金额/日期过滤（走既有 B-tree 索引；与关键字 AND 组合）。
+        let mut filters: Vec<Stage1Filter> = Vec::new();
+        if let Some(min) = amount_min_cents {
+            // 本位币分口径（issue #395）：与全仓聚合一致，多币种下跨币种不再混滤。
+            filters.push(Stage1Filter {
+                column: "t.amount_native_cents",
+                op: ">=",
+                value: min.into(),
+            });
         }
-    } else {
-        // 关键字路径：SQL 下推（issue #515，见 [`build_stage1_query`]）。匹配在
-        // SQLite C 层完成，仅命中行的 id 流出，命中计数 total、仅收集当前页 id
-        // （内存 O(当前页)）。
-        let term_lowers: Vec<TermLowered> = terms
-            .iter()
-            .map(|t| TermLowered {
-                lower: t.to_lowercase(),
-            })
-            .collect();
-        let query = build_stage1_query(&term_lowers, &dicts, &filters);
-        let mut stmt = conn.prepare(&query.sql)?;
-        let rows = stmt.query_map(rusqlite::params_from_iter(query.params.iter()), |row| {
-            let id = row.get_ref(0)?.as_str()?;
-            total += 1;
-            // 命中序号（0 起）落在当前页区间且未满页才收集 id。
-            if total as usize > offset && page_ids.len() < page_size {
-                page_ids.push(id.to_string());
-            }
-            Ok(())
-        })?;
-        for row in rows {
-            row?;
+        if let Some(max) = amount_max_cents {
+            filters.push(Stage1Filter {
+                column: "t.amount_native_cents",
+                op: "<=",
+                value: max.into(),
+            });
         }
-    }
+        if let Some(from) = date_from {
+            filters.push(Stage1Filter {
+                column: "t.date",
+                op: ">=",
+                value: from.to_string().into(),
+            });
+        }
+        if let Some(to) = date_to {
+            filters.push(Stage1Filter {
+                column: "t.date",
+                op: "<=",
+                value: to.to_string().into(),
+            });
+        }
 
-    // 第二段：仅为当前页回表取展示列；来源列随页填充（与列表命令同一反查，
-    // spec #704 / issue #706：搜索页与交易页同一来源口径）。
-    let mut items = fetch_display_rows(conn, &page_ids)?;
-    crate::read::source::attach_sources(conn, &mut items)?;
-    crate::read::source::attach_convert_fields(conn, &mut items)?;
+        // saturating 运算防极端输入（usize::MAX）下溢/溢出 panic（与 list_transactions 先例一致）；
+        // 超出命中数的页返回空页。
+        let offset = page.saturating_sub(1).saturating_mul(page_size);
+        let mut total: i64 = 0;
+        let mut page_ids: Vec<String> = Vec::with_capacity(page_size);
+        if terms.is_empty() {
+            // 仅筛选路径：最小列流式扫描 + Rust 层口径过滤（planner 自由，见
+            // [`stage1_sql`]）。行内文本经 get_ref 借用（NULL → None），零分配。
+            let mut where_clauses: Vec<String> = vec!["t.is_deleted = 0".to_string()];
+            where_clauses.extend(filters.iter().map(|f| format!("{} {} ?", f.column, f.op)));
+            let where_refs: Vec<&str> = where_clauses.iter().map(String::as_str).collect();
+            let filter_params: Vec<Value> = filters.iter().map(|f| f.value.clone()).collect();
+            let mut stmt = conn.prepare(&stage1_sql(&where_refs))?;
+            let rows = stmt.query_map(rusqlite::params_from_iter(filter_params.iter()), |row| {
+                // 列序与 [`stage1_sql`] 的 SELECT 清单一一对应。
+                let id = row.get_ref(0)?.as_str()?;
+                let account_id = row.get_ref(3)?.as_str()?;
+                let category_id = row.get_ref(5)?.as_str().ok();
 
-    Ok(TransactionSearchResult { items, total })
+                // 行级口径过滤（与原 JOIN 谓词等价）：账户必须在用；分类未软删（可空）。
+                let Some((_, account_deleted)) = dicts.accounts.get(account_id) else {
+                    return Ok(());
+                };
+                if *account_deleted {
+                    return Ok(());
+                }
+                if let Some(cid) = category_id
+                    && dicts.categories.get(cid).copied().unwrap_or(false)
+                {
+                    return Ok(());
+                }
+                total += 1;
+                // 命中序号（0 起）落在当前页区间且未满页才收集 id。
+                if total as usize > offset && page_ids.len() < page_size {
+                    page_ids.push(id.to_string());
+                }
+                Ok(())
+            })?;
+            for row in rows {
+                row?;
+            }
+        } else {
+            // 关键字路径：SQL 下推（issue #515，见 [`build_stage1_query`]）。匹配在
+            // SQLite C 层完成，仅命中行的 id 流出，命中计数 total、仅收集当前页 id
+            // （内存 O(当前页)）。
+            let term_lowers: Vec<TermLowered> = terms
+                .iter()
+                .map(|t| TermLowered {
+                    lower: t.to_lowercase(),
+                })
+                .collect();
+            let query = build_stage1_query(&term_lowers, &dicts, &filters);
+            let mut stmt = conn.prepare(&query.sql)?;
+            let rows = stmt.query_map(rusqlite::params_from_iter(query.params.iter()), |row| {
+                let id = row.get_ref(0)?.as_str()?;
+                total += 1;
+                // 命中序号（0 起）落在当前页区间且未满页才收集 id。
+                if total as usize > offset && page_ids.len() < page_size {
+                    page_ids.push(id.to_string());
+                }
+                Ok(())
+            })?;
+            for row in rows {
+                row?;
+            }
+        }
+
+        // 第二段：仅为当前页回表取展示列；来源列随页填充（与列表命令同一反查，
+        // spec #704 / issue #706：搜索页与交易页同一来源口径）。
+        let mut items = fetch_display_rows(conn, &page_ids)?;
+        crate::read::source::attach_sources(conn, &mut items)?;
+        crate::read::source::attach_convert_fields(conn, &mut items)?;
+
+        Ok(TransactionSearchResult { items, total })
+    })
 }

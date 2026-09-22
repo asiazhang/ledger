@@ -61,6 +61,13 @@
 //! sync-engine / ledger-perf 经既有 dev-dependency 环消费，无新依赖边。
 //! 登记处：ADR-0084 修订注记、CONTEXT-testing「测试暂存目录」。
 //!
+//! **#1699 追加**（读快照探针 + 文件库建库）：多语句读闭包「写提交落在两语句
+//! 之间」的确定性注入器具收编 [`snapshot_probe`]——`trace_v2` STMT 回调在目标
+//! 语句开始前于另一连接原子提交注入写，供交易 / 投资 / 壳层三域七处探针测试共用
+//! （决策 1 准入：≥2 域同体消费）；配套 [`open_file`]（文件库建库，内存库按
+//! 连接隔离撑不起双连接现场）。登记处：
+//! ADR-0084 修订注记、CONTEXT-testing「读快照探针」词条。
+//!
 //! 说明：集成测试 `tests/api_server/` 链接的是非 `#[cfg(test)]` 构建的 lib，
 //! 因此本模块不能仅以 `#[cfg(test)]` 编译；对生产二进制的影响只是一些未使用的
 //! 测试辅助函数（可被编译器消除）。
@@ -82,6 +89,7 @@ pub mod s3;
 pub mod scan;
 pub mod scratch;
 mod seed;
+pub mod snapshot_probe;
 #[cfg(test)]
 mod tests;
 
@@ -99,6 +107,7 @@ pub use seed::{
 };
 
 use std::future::Future;
+use std::path::Path;
 
 use rusqlite::Connection;
 
@@ -118,33 +127,48 @@ pub fn block_on<F: Future>(future: F) -> F::Output {
 
 /// 零配置打开已初始化的内存测试库：`db::open_in_memory()`（外键 + perf hook）+
 /// `db::init_db()`（迁移 + 默认种子）两行序的唯一承载（ADR-0084 决策 3：建库的
-/// 全部现状就是内存库 + 迁移，无配置项）。文件库/加密是 BDD 场景，不入本工厂。
+/// 全部现状就是内存库 + 迁移，无配置项）。加密是 BDD 场景，不入本工厂；文件库
+/// 建库见 [`open_file`]（issue #1699 读快照探针的双连接现场）。
 ///
 /// 建库经 [`ledger_infra::db::open_in_memory_initialized`]：工厂仍是唯一的建库入口，
 /// 但迁移链不再逐用例重放，改由进程内固定的模板产物还原（spec #1086 / issue #1514，
 /// 口径与独立性不变，见该函数文档）。接口形态（零配置 `open() -> Connection`）与
 /// 全部既有调用点不变。
 pub fn open() -> Connection {
-    // 提交点后置动作接线（spec #1086 / issue #1088）：测试库与生产同形——连接层
-    // 写入口的副作用实现由域侧提供，建库单点负责注册（幂等）。
+    install_test_wiring();
+    ledger_infra::db::open_in_memory_initialized().expect("打开并初始化内存测试库")
+}
+
+/// 打开已初始化的**文件库**测试连接（issue #1699 读快照探针）：建库知识与接线
+/// 与 [`open`] 共享同两处单点（[`install_test_wiring`] + 基础设施建连入口），只把
+/// 库形态换成文件库（`db::open_connection_in`：迁移 + 种子 + 建连收尾）。
+///
+/// 用途边界：**双连接现场**（跨连接的读快照一致性探针）必须用文件库——内存库按
+/// 连接隔离，第二连接是另一个空库；单连接用例仍走 [`open`]（模板还原更快）。
+pub fn open_file(db_dir: &Path) -> Connection {
+    install_test_wiring();
+    ledger_infra::db::open_connection_in(db_dir).expect("打开并初始化文件测试库")
+}
+
+/// 测试接线单点（[`open`] / [`open_file`] 共享；测试库与生产同形，幂等、先装者
+/// 优先）：
+/// - 提交点后置动作（spec #1086 / issue #1088）：连接层写入口的副作用实现由域侧
+///   提供，建库单点负责注册；
+/// - 写后即时同步（#1089）：op 产出单点在协议 crate，响应闭包（去抖合流）由同步域
+///   提供；调度未拉起时信号投递仍是零动作；
+/// - 写路径副作用接缝（issue #1090 / #1091）：余额刷新实现由账户域、计划来源解析
+///   实现由定时计划域提供；期次落账置脏（#1090）实现由备份域（#1091 起为
+///   `ledger-backup` crate）提供、定时计划域注册点对装，追补触发（#1091 挂载点④）
+///   实现由定时计划域提供、备份域注册点对装——两个域互相零直接依赖，接线都在本单点；
+/// - 交易域接缝（issue #1092 / #1180）：六向实现经组合入口一次装入。
+fn install_test_wiring() {
     ledger_backup::install_after_commit_hook();
-    // 写后即时同步接线（#1089）：测试库与生产同形——op 产出单点在协议 crate，
-    // 响应闭包（去抖合流）由同步域提供，此处登记（幂等，先装者优先）；调度未
-    // 拉起时信号投递仍是零动作。
     ledger_sync_engine::trigger::install_after_write_hook();
-    // 写路径副作用接缝接线（issue #1090 / #1091）：测试库与生产同形——余额刷新
-    // 实现由账户域、计划来源解析实现由定时计划域提供，建库单点负责注册（幂等，
-    // 先装者优先）；期次落账置脏（#1090）实现由备份域（#1091 起为 `ledger-backup`
-    // crate）提供、定时计划域注册点对装，追补触发（#1091 挂载点④）实现由定时
-    // 计划域提供、备份域注册点对装——两个域互相零直接依赖，接线都在本单点。
     ledger_accounts::balance::install_balance_refresh_hook();
     ledger_scheduled::install_plan_source_hook();
     ledger_scheduled::auto_run::register_after_occurrence_hook(
         ledger_backup::occurrence_dirty_hook,
     );
     ledger_backup::register_catch_up_hook(ledger_scheduled::auto_run::catch_up_hook);
-    // 交易域接缝接线（issue #1092 / #1180）：测试库与生产同形——六向实现经组合
-    // 入口一次装入（幂等，先装者优先）。
     crate::transaction_wiring::install_all();
-    ledger_infra::db::open_in_memory_initialized().expect("打开并初始化内存测试库")
 }
