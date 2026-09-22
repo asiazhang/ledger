@@ -40,6 +40,7 @@ use rusqlite::Connection;
 
 use super::constant_price::{ensure_constant_base_price, mark_constant_unit_price};
 use super::crud;
+use super::market::Market;
 use super::model::{InstrumentInput, InstrumentType};
 use super::prices::{MarketPriceWrite, upsert_market_price};
 use ledger_infra::error::{AppError, Result};
@@ -62,9 +63,9 @@ pub struct Quote {
     /// 价格日期（ISO 日期）：场外基金为净值日期、场内为交易所当地交易日
     ///（ADR-0130 决策 5）。
     pub price_date: Option<String>,
-    /// 精确市场（sh / sz / hk / nasdaq / nyse / amex）：场内通道携带；
+    /// 精确市场（市场闭集七值中的可路由六值，[`Market`]）：场内通道携带；
     /// 场外基金无交易所市场概念，为 None（字典市场由通道判定为 unknown）。
-    pub market: Option<String>,
+    pub market: Option<Market>,
     /// 类型提示（stock / etf，场内为腾讯类型码探测单点 `sync::tencent::
     /// detect_kind_hint`，ADR-0081 判据 / ADR-0130 决策 3）：场内通道携带；
     /// 场外基金无类型特征字段，为 None。
@@ -87,11 +88,12 @@ pub struct Quote {
 
 impl Quote {
     /// 场内通道的精确市场（通道强约束：场内行情必携带回显市场）。缺省即内部
-    /// 不一致——场外形态（market 缺省）不得经场内通道落库或投影，码化拒绝
-    ///（先例：`sync.secid-unroutable` 的闭集外兜底），不静默降级为 unknown。
-    pub fn stock_market(&self) -> Result<&str> {
+    /// 不一致——场外形态（market 缺省）不得经场内通道落库或投影，码化拒绝，
+    /// 不静默降级为 unknown（ADR-0103 决策 2：通道差异从类型形状退到通道内
+    /// 判定；不可路由市场经 [`Market::as_quote_market`] 在类型上排除，issue
+    /// #1673 后本判定不再有「构造不出查询键」的后续兜底）。
+    pub fn stock_market(&self) -> Result<Market> {
         self.market
-            .as_deref()
             .ok_or_else(|| AppError::coded("quote.market-missing", "行情缺少市场（内部不一致）"))
     }
 
@@ -110,8 +112,8 @@ impl Quote {
 pub struct QuoteAdoptionInput<'a> {
     /// 落库类型（场外基金恒 Fund；场内取调用方提交类型 stock / etf）。
     pub kind: InstrumentType,
-    /// 字典市场（场外基金恒 unknown；场内取行情精确市场）。
-    pub market: &'a str,
+    /// 字典市场（场外基金恒 unknown；场内取行情精确市场，市场闭集类型）。
+    pub market: Market,
     /// 报价币种（场外基金恒人民币；场内按市场推导，ADR-0037 决策 2）。
     pub currency_code: &'a str,
     /// 现价时点（ISO 日期）：场外基金为净值日期、场内为写入时刻。
@@ -143,7 +145,7 @@ pub fn adopt_quote(
             kind: adoption.kind,
             name: Some(quote.name.clone()),
             currency_code: adoption.currency_code.to_string(),
-            market: Some(adoption.market.to_string()),
+            market: Some(adoption.market.as_str().to_string()),
         },
     )?;
     // 恒定价格标的（ADR-0126 决策 3/5）：建档即打标（单向，幂等）——现价缓存

@@ -25,7 +25,7 @@
 
 use ledger_infra::error::{AppError, Result};
 use ledger_investment::prices::TENCENT_PRICE_SOURCE;
-use ledger_investment::{InstrumentType, Quote};
+use ledger_investment::{InstrumentType, Market, Quote, StockRoute};
 
 use super::channels::{QuoteItem, QuoteQuery};
 use super::http::{Pacer, RetryConfig, request_bytes_from_hosts};
@@ -54,8 +54,8 @@ pub struct TencentQuote {
     pub price_cents: Option<i64>,
     /// 价格日期（ISO 日期）：取数据源交易所当地交易日的日期部分，不做时区换算。
     pub price_date: Option<String>,
-    /// 精确市场（sh / sz / hk / nasdaq / nyse / amex）：美股由自报交易所后缀判定。
-    pub market: String,
+    /// 精确市场（市场闭集类型，[`Market`]）：美股由自报交易所后缀判定（issue #1673）。
+    pub market: Market,
     /// 证券类型码原值（未公开字段）：`GP-A` / `ETF` / `LOF` / `ZQ-KZZ` / `GP` / `GP-ETF`。
     pub security_type: String,
     /// 类型提示（stock / etf）：类型码经 [`detect_kind_hint`] 单点探测。
@@ -101,17 +101,27 @@ impl TencentQuote {
     }
 }
 
-/// 「市场 + 代码」→ 腾讯查询键（键构造单点，ADR-0130 决策 2 / issue #1555 的换源
-/// 落点）：沪深港用 `<市场前缀><代码>`（`sh600000` / `sz161725` / `hk00700`），美股
-/// 三市场与聚合路由值 `us`（按代码查询的解析产物，issue #1567——腾讯不区分交易
-/// 所，精确交易所由响应自报后缀判定）统用 `us<代码>`。市场未知返回 None（同步
-/// 编排侧不发请求、跳过该查询单元；查询侧为码化内部不一致）。
-pub(super) fn tencent_query_key(market: &str, code: &str) -> Option<String> {
-    match market {
-        "sh" | "sz" | "hk" => Some(format!("{market}{code}")),
-        "nasdaq" | "nyse" | "amex" | "us" => Some(format!("us{code}")),
-        _ => None,
+/// 腾讯请求键的市场段前缀（源请求词汇，模块本地，issue #1673）：沪深港用市场
+/// 字符串前缀，美股聚合路由 [`StockRoute::Us`] 用 `us` 前缀（腾讯不区分交易所，
+/// 精确交易所由响应自报后缀判定）。「美股三市场聚合单查询」的领域判定在投资域
+/// 市场类型上（`QuoteMarket::as_stock_route`），本表只承担拼写信源词汇。
+fn route_key_prefix(route: StockRoute) -> &'static str {
+    match route {
+        StockRoute::Sh => "sh",
+        StockRoute::Sz => "sz",
+        StockRoute::Hk => "hk",
+        StockRoute::Us => "us",
     }
+}
+
+/// 「路由 + 代码」→ 腾讯查询键（键构造单点，ADR-0130 决策 2 / issue #1555 的换源
+/// 落点 / issue #1673 全函数化）：`<前缀><代码>`（`sh600000` / `sz161725` /
+/// `hk00700` / `usAAPL`）。路由位是解析流程内部小闭集 [`StockRoute`]（同步批量面
+/// 经 `QuoteQuery.market.as_stock_route()` 投影），四值全部可构造键——**全函数**，
+/// 「市场无法构造查询键」的运行时兜底在类型上不可表达。按代码查询的单只取数
+///（#1567）同函数消费。
+pub(super) fn tencent_query_key(route: StockRoute, code: &str) -> String {
+    format!("{}{code}", route_key_prefix(route))
 }
 
 /// 证券类型码 → 类型提示单点（ADR-0130 决策 3）：场内基金类（`ETF` / `LOF` /
@@ -196,34 +206,74 @@ struct QuoteLayout {
     min_fields: usize,
 }
 
-/// 报文键前缀 →（精确市场前缀，字段布局）。前缀即请求键的市场段（`sh` / `sz` /
-/// `hk` / `us`）；未知前缀返回 None（非预期响应）。
-fn quote_layout(key: &str) -> Option<(&'static str, QuoteLayout)> {
-    let prefix = ["sh", "sz", "hk", "us"]
-        .into_iter()
-        .find(|prefix| key.len() > prefix.len() && key.starts_with(prefix))?;
-    let layout = match prefix {
+/// 响应报价键的市场段（源响应词汇，模块本地小闭集，issue #1673）：沪深港为
+/// 精确市场段，美股为聚合段 `us`（与请求键前缀同词汇）。`Us` 不是市场闭集
+/// 成员——美股精确市场由交易所后缀解析（见 [`us_market_from_suffix`]）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ResponseKeyMarket {
+    Sh,
+    Sz,
+    Hk,
+    Us,
+}
+
+impl ResponseKeyMarket {
+    /// 源词汇拼写（错误信息用）。
+    const fn as_str(self) -> &'static str {
+        match self {
+            ResponseKeyMarket::Sh => "sh",
+            ResponseKeyMarket::Sz => "sz",
+            ResponseKeyMarket::Hk => "hk",
+            ResponseKeyMarket::Us => "us",
+        }
+    }
+
+    /// 沪深港市场段的精确市场（市场闭集成员）；美股聚合段无对应成员。
+    const fn precise_market(self) -> Option<Market> {
+        match self {
+            ResponseKeyMarket::Sh => Some(Market::Sh),
+            ResponseKeyMarket::Sz => Some(Market::Sz),
+            ResponseKeyMarket::Hk => Some(Market::Hk),
+            ResponseKeyMarket::Us => None,
+        }
+    }
+}
+
+/// 报文键前缀 →（响应键市场段，字段布局）。未知前缀返回 None（非预期响应）。
+fn quote_layout(key: &str) -> Option<(ResponseKeyMarket, QuoteLayout)> {
+    let market = if key.len() > 2 && key.starts_with("sh") {
+        ResponseKeyMarket::Sh
+    } else if key.len() > 2 && key.starts_with("sz") {
+        ResponseKeyMarket::Sz
+    } else if key.len() > 2 && key.starts_with("hk") {
+        ResponseKeyMarket::Hk
+    } else if key.len() > 2 && key.starts_with("us") {
+        ResponseKeyMarket::Us
+    } else {
+        return None;
+    };
+    let layout = match market {
         // A 股：类型码 61（`GP-A` / `ETF` / `LOF` / `ZQ-KZZ`）、币种 82（CNY）、88 字段。
-        "sh" | "sz" => QuoteLayout {
+        ResponseKeyMarket::Sh | ResponseKeyMarket::Sz => QuoteLayout {
             kind_index: 61,
             currency_index: 82,
             min_fields: 88,
         },
         // 港股：类型码 63（`GP`）、币种 75（HKD）、78 字段。
-        "hk" => QuoteLayout {
+        ResponseKeyMarket::Hk => QuoteLayout {
             kind_index: 63,
             currency_index: 75,
             min_fields: 78,
         },
         // 美股：类型码 56（`GP` / `GP-ETF`）、币种 35（USD）、73 字段；交易所后缀在
         // 回显代码字段（下标 2）内。
-        _ => QuoteLayout {
+        ResponseKeyMarket::Us => QuoteLayout {
             kind_index: 56,
             currency_index: 35,
             min_fields: 73,
         },
     };
-    Some((prefix, layout))
+    Some((market, layout))
 }
 
 /// 解析腾讯批量报价报文（GBK 已解码的文本）为按响应序的报价序列。
@@ -244,18 +294,19 @@ pub(super) fn parse_tencent_quotes(body: &str) -> Result<Vec<TencentQuote>> {
         if key == "pv_none_match" {
             continue;
         }
-        let Some((prefix, layout)) = quote_layout(key) else {
+        let Some((key_market, layout)) = quote_layout(key) else {
             return Err(unexpected_response(format!("响应含非预期的报价键 {key}")));
         };
         let fields: Vec<&str> = value.split('~').collect();
         if fields.len() < layout.min_fields {
             return Err(unexpected_response(format!(
-                "{prefix} 报价字段数 {} 少于布局下界 {}（疑似布局漂移或被截断）",
+                "{} 报价字段数 {} 少于布局下界 {}（疑似布局漂移或被截断）",
+                key_market.as_str(),
                 fields.len(),
                 layout.min_fields
             )));
         }
-        if let Some(quote) = build_quote(prefix, &fields, &layout)? {
+        if let Some(quote) = build_quote(key_market, &fields, &layout)? {
             quotes.push(quote);
         }
     }
@@ -270,7 +321,7 @@ pub(super) fn parse_tencent_quotes(body: &str) -> Result<Vec<TencentQuote>> {
 /// 单条报价语句 → [`TencentQuote`]。空名称/空代码行返回 `Ok(None)`（无效行丢弃）；
 /// 美股缺交易所后缀或后缀未收录返回 `Err`（fail-closed，不猜市场）。
 fn build_quote(
-    prefix: &str,
+    key_market: ResponseKeyMarket,
     fields: &[&str],
     layout: &QuoteLayout,
 ) -> Result<Option<TencentQuote>> {
@@ -279,11 +330,14 @@ fn build_quote(
     if name.is_empty() || echo_code.is_empty() {
         return Ok(None);
     }
-    let (code, market) = if prefix == "us" {
-        let (ticker, exchange) = split_us_code(echo_code)?;
-        (ticker.to_string(), us_market_from_suffix(exchange)?)
-    } else {
-        (echo_code.to_string(), prefix)
+    // 响应市场 = 沪深港取键市场段、美股取自报交易所后缀（源词汇 → 市场闭集的
+    // 解析点，产出类型化市场，issue #1673）。
+    let (code, market) = match key_market.precise_market() {
+        Some(market) => (echo_code.to_string(), market),
+        None => {
+            let (ticker, exchange) = split_us_code(echo_code)?;
+            (ticker.to_string(), us_market_from_suffix(exchange)?)
+        }
     };
     let security_type = field(fields, layout.kind_index).trim().to_string();
     Ok(Some(TencentQuote {
@@ -291,7 +345,7 @@ fn build_quote(
         name: name.to_string(),
         price_cents: price_cents_from_decimal(field(fields, 3)),
         price_date: price_date_from_timestamp(field(fields, 30)),
-        market: market.to_string(),
+        market,
         kind_hint: detect_kind_hint(&security_type),
         security_type,
         currency_code: field(fields, layout.currency_index).trim().to_string(),
@@ -310,13 +364,14 @@ fn split_us_code(echo_code: &str) -> Result<(&str, &str)> {
         .ok_or_else(|| unexpected_response(format!("美股报价缺少交易所后缀：{echo_code}")))
 }
 
-/// 交易所后缀 → 既有市场闭集三值（ADR-0081 决策 2）：`.OQ` 纳斯达克 / `.N` 纽交所 /
-/// `.AM` 美交所。未收录后缀 fail-closed——静默丢弃会少一只，猜值会错挂市场。
-fn us_market_from_suffix(suffix: &str) -> Result<&'static str> {
+/// 交易所后缀 → 市场闭集三值（ADR-0081 决策 2）：`.OQ` 纳斯达克 / `.N` 纽交所 /
+/// `.AM` 美交所。这是「数据源自报词汇 → 市场闭集」的解析点（issue #1673，产出
+/// 类型化市场）。未收录后缀 fail-closed——静默丢弃会少一只，猜值会错挂市场。
+fn us_market_from_suffix(suffix: &str) -> Result<Market> {
     match suffix {
-        "OQ" => Ok("nasdaq"),
-        "N" => Ok("nyse"),
-        "AM" => Ok("amex"),
+        "OQ" => Ok(Market::Nasdaq),
+        "N" => Ok(Market::Nyse),
+        "AM" => Ok(Market::Amex),
         _ => Err(unexpected_response(format!(
             "美股报价含未知交易所后缀 .{suffix}"
         ))),
@@ -345,7 +400,9 @@ fn quote_statements(body: &str) -> Vec<(&str, &str)> {
 }
 
 /// 拉取一批腾讯行情报价（分批，单请求最多 [`TENCENT_QUOTE_BATCH_SIZE`] 只），
-/// 合并各批结果为按请求序的报价序列。市场未知的查询单元不进请求。
+/// 合并各批结果为按请求序的报价序列。查询单元市场是可路由子集
+/// `QuoteMarket`（issue #1673），键构造是全函数——没有「构造不出键被跳过」
+/// 的查询单元。
 pub(super) async fn fetch_tencent_quotes(
     client: &reqwest::Client,
     pacer: &mut Pacer,
@@ -356,11 +413,8 @@ pub(super) async fn fetch_tencent_quotes(
     for chunk in queries.chunks(TENCENT_QUOTE_BATCH_SIZE) {
         let keys: Vec<String> = chunk
             .iter()
-            .filter_map(|query| tencent_query_key(&query.market, &query.code))
+            .map(|query| tencent_query_key(query.market.as_stock_route(), &query.code))
             .collect();
-        if keys.is_empty() {
-            continue;
-        }
         quotes.extend(fetch_tencent_batch(client, pacer, hosts, &keys.join(",")).await?);
     }
     Ok(quotes)

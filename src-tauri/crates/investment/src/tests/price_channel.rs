@@ -4,8 +4,8 @@
 //! 已漂移成第二口径，自本测试钉住的单点派生收口。
 
 use crate::{
-    InstrumentListFilter, InstrumentType, PriceChannel, derive_price_channel, get_instrument,
-    list_instruments,
+    InstrumentListFilter, InstrumentType, Market, PriceChannel, QuoteMarket, derive_price_channel,
+    derive_quote_market, get_instrument, list_instruments,
 };
 
 use super::common::insert_instrument_with_market;
@@ -14,7 +14,12 @@ use tauri_app_lib::test_support::open;
 /// 行情通道：股票与场内 ETF（有市场 + 代码即可构造行情查询，issue #695）。
 #[test]
 fn stock_and_listed_etf_with_known_market_sit_in_quote_channel() {
-    for market in ["sh", "sz", "hk", "nasdaq", "nyse", "amex"] {
+    for quote_market in QuoteMarket::ALL {
+        let market = quote_market.as_market();
+        // 可路由性唯一判定点（issue #1673）：可路由子集成员 ⇔ as_quote_market
+        // Some（反投影 as_market 同源往返）；不可路由的 unknown 恒 None。
+        assert_eq!(market.as_quote_market(), Some(quote_market));
+        assert_eq!(Market::Unknown.as_quote_market(), None);
         assert_eq!(
             derive_price_channel(InstrumentType::Stock, market, "600000", None),
             PriceChannel::Quote,
@@ -25,6 +30,16 @@ fn stock_and_listed_etf_with_known_market_sit_in_quote_channel() {
             PriceChannel::Quote,
             "etf/{market} 应属行情通道"
         );
+        // 分区出口（issue #1673）：行情分区标的经 derive_quote_market 拿到
+        // 类型化查询单元市场；不可路由市场（unknown）组合为 None。
+        assert_eq!(
+            derive_quote_market(InstrumentType::Stock, market, "600000", None),
+            Some(quote_market)
+        );
+        assert_eq!(
+            derive_quote_market(InstrumentType::Stock, Market::Unknown, "600000", None),
+            None
+        );
     }
 }
 
@@ -33,7 +48,7 @@ fn stock_and_listed_etf_with_known_market_sit_in_quote_channel() {
 #[test]
 fn stock_with_unknown_market_has_no_price_source() {
     assert_eq!(
-        derive_price_channel(InstrumentType::Stock, "unknown", "600000", None),
+        derive_price_channel(InstrumentType::Stock, Market::Unknown, "600000", None),
         PriceChannel::None
     );
 }
@@ -43,7 +58,7 @@ fn stock_with_unknown_market_has_no_price_source() {
 #[test]
 fn etf_with_unknown_market_falls_into_manual_channel() {
     assert_eq!(
-        derive_price_channel(InstrumentType::Etf, "unknown", "稳稳地幸福", None),
+        derive_price_channel(InstrumentType::Etf, Market::Unknown, "稳稳地幸福", None),
         PriceChannel::Manual
     );
 }
@@ -53,11 +68,11 @@ fn etf_with_unknown_market_falls_into_manual_channel() {
 #[test]
 fn fund_channel_splits_by_six_digit_code() {
     assert_eq!(
-        derive_price_channel(InstrumentType::Fund, "unknown", "000198", None),
+        derive_price_channel(InstrumentType::Fund, Market::Unknown, "000198", None),
         PriceChannel::FundNav
     );
     assert_eq!(
-        derive_price_channel(InstrumentType::Fund, "unknown", "稳稳地幸福", None),
+        derive_price_channel(InstrumentType::Fund, Market::Unknown, "稳稳地幸福", None),
         PriceChannel::Manual
     );
 }
@@ -67,12 +82,12 @@ fn fund_channel_splits_by_six_digit_code() {
 fn bond_and_other_types_sit_in_manual_channel() {
     for kind in [InstrumentType::Bond, InstrumentType::Other] {
         assert_eq!(
-            derive_price_channel(kind, "unknown", "019547", None),
+            derive_price_channel(kind, Market::Unknown, "019547", None),
             PriceChannel::Manual,
             "{kind} 应属手动报价通道"
         );
         assert_eq!(
-            derive_price_channel(kind, "sh", "019547", None),
+            derive_price_channel(kind, Market::Sh, "019547", None),
             PriceChannel::Manual,
             "{kind}/sh 仍属手动报价通道"
         );

@@ -6,6 +6,7 @@
 
 ### BREAKING
 
+- **投资**：错误码 `sync.secid-unroutable`（「市场无法构造行情查询」的内部不一致兜底）退役——市场闭集收敛为投资域单点类型后，该条件的运行时发生路径结构性消失；查询键构造在类型上全函数化，「市场不可路由」不可再表达（[#1673]）。
 - **AI 导入 / HTTP API**：`GET /api/v1/transactions` 缺省不再返回全部——HTTP 单请求行数上限 100，缺省等价第一页 × 100（`total` 恒返回，读全部须按 `total` 翻页取齐）；显式 `page_size` 超过 100 报 400 码化错误 `transaction.page-size-over-cap`，`limit` 超过 100 或负值报 400 `transaction.limit-out-of-range`。读回核对教学同步改为分页读回；IPC 通道分页语义不变（前端与多端同步不受影响）（[#1631]）。
 
 ### Added
@@ -271,6 +272,7 @@
 - **同步**：修复港股漏抓、进度条重置、启动崩溃、JPY 精度等问题。
 
 <!-- Unreleased 条目引用的 issue 链接（引用式链接，正文保持简洁） -->
+[#1673]: https://github.com/asiazhang/ledger/issues/1673
 
 [#1549]: https://github.com/asiazhang/ledger/issues/1549
 [#1548]: https://github.com/asiazhang/ledger/issues/1548

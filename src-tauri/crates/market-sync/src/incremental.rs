@@ -54,7 +54,9 @@ use ledger_investment::prices::{
     MarketPriceWrite, TENCENT_PRICE_SOURCE, price_value_to_cents, upsert_market_price,
     upsert_price_history,
 };
-use ledger_investment::{InstrumentType, PriceChannel, derive_price_channel};
+use ledger_investment::{
+    InstrumentType, Market, PriceChannel, QuoteMarket, derive_price_channel, derive_quote_market,
+};
 
 use super::channels::{FetchFuture, QuoteItem, QuoteQuery};
 use super::fund_nav::NavPoint;
@@ -73,8 +75,14 @@ pub(super) fn quote_code(symbol: &str) -> &str {
 pub(super) struct SyncInstrument {
     pub(super) instrument_id: String,
     pub(super) symbol: String,
-    pub(super) market: String,
+    /// 挂牌市场（DB 读边界 parse 一次的市场闭集类型，issue #1673）。
+    pub(super) market: Market,
     pub(super) currency: String,
+    /// 标的类型与恒定单位价格：行情分区的查询单元市场再派生输入
+    ///（[`derive_quote_market`]，分区出口单点）。通道判定已在收集时消费过同
+    /// 一批输入，保留在行上使分区不必二次触库。
+    pub(super) kind: InstrumentType,
+    pub(super) constant_unit_price: Option<i64>,
     /// 价格写入通道（issue #1060）：投资域派生单点 [`derive_price_channel`] 的
     /// 判定结果——行情（Quote）/ 净值（FundNav）两分区参与同步，恒定价格
     ///（ADR-0126 决策 4：采集链路全豁免）与手动报价、无来源行计入跳过。分区
@@ -101,15 +109,18 @@ fn collect_instruments(conn: &Connection) -> Result<Vec<SyncInstrument>> {
     // 过滤），与标的读投影同源。
     let rows = stmt.query_map([], |r| {
         let symbol: String = r.get(1)?;
-        let market: String = r.get(2)?;
+        // DB 读边界 parse 一次（市场闭集类型，issue #1673）。
+        let market: Market = r.get(2)?;
         let kind: InstrumentType = r.get(4)?;
         let constant_unit_price: Option<i64> = r.get(5)?;
         Ok(SyncInstrument {
             instrument_id: r.get(0)?,
-            channel: derive_price_channel(kind, &market, &symbol, constant_unit_price),
+            channel: derive_price_channel(kind, market, &symbol, constant_unit_price),
             symbol,
             market,
             currency: r.get(3)?,
+            kind,
+            constant_unit_price,
         })
     })?;
     let mut instruments = Vec::new();
@@ -314,9 +325,17 @@ where
     // 走历史净值通道；其余（恒定价格通道行：ADR-0126 决策 4 采集链路全豁免、
     // 批量面结构上也不覆盖它，#1451；手动报价通道与无来源行：债券/其他、市场
     // 未知自建行、名称充代码基金行等）计入跳过统计——各类统计天然同源。
-    let quote_channel: Vec<&SyncInstrument> = held
+    // 行情分区携带查询单元市场（投资域分区出口单点 `derive_quote_market`，
+    // issue #1673）：分区即回答「这只标的用什么市场发查询」——Quote 通道 ⇔
+    // 可路由市场由同一份判定承载，分区消费方拿不到「Quote 通道但无 QuoteMarket」
+    // 的组合，不可路由市场在类型上进不了查询单元。
+    let quote_channel: Vec<(&SyncInstrument, QuoteMarket)> = held
         .iter()
-        .filter(|i| i.channel == PriceChannel::Quote)
+        .filter_map(|i| {
+            let quote_market =
+                derive_quote_market(i.kind, i.market, &i.symbol, i.constant_unit_price)?;
+            Some((i, quote_market))
+        })
         .collect();
     // 净值分区不含恒定价格通道（ADR-0126 决策 4 / #1451）：恒定标的不进逐只
     // 刷新（批量面未覆盖不再对它回退）、不进进度分母、不计批量面缺口——为一
@@ -344,19 +363,18 @@ where
     }
 
     // 构造行情批量报价的查询单元（「市场 + 代码」，issue #1555）：编排不拼数据源
-    // 查询键，键由报价通道内部构造。报价代码已归一化、与响应 f12 对齐；行情分区内
+    // 查询键，键由报价通道内部构造。报价代码已归一化、与响应回显对齐；行情分区内
     // symbol 唯一（instruments 的 UNIQUE(symbol, instrument_type)），同代码不冲突。
-    // 行情分区市场必可查：派生单点 `derive_price_channel` 只把 `quote_market` 的市场
-    // 判成 Quote，绑定测试 `quote_channel_derivation_matches_secid_construction` 钉住
-    // 这一不变量（同步域不再镜像市场能力判定，ADR-0103 / issue #1060 同款）；通道侧
-    // 对无法构造键的市场另有防御兼底（不进请求）。
+    // 行情分区市场必可查由类型保证（issue #1673）：分区产物 `QuoteMarket` 是
+    // 可路由子集，查询键构造在通道内是全函数——原「派生与键构造一致」的绑定
+    // 测试随类型单点退役，漂移在编译期不可表达。
     let mut meta: HashMap<String, &SyncInstrument> = HashMap::new();
     let mut queryable: Vec<QuoteQuery> = Vec::new();
-    for inst in &quote_channel {
+    for (inst, quote_market) in &quote_channel {
         let code = quote_code(&inst.symbol);
         meta.insert(code.to_string(), inst);
         queryable.push(QuoteQuery {
-            market: inst.market.clone(),
+            market: *quote_market,
             code: code.to_string(),
         });
     }

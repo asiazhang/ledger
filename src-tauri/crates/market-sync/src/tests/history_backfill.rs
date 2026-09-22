@@ -30,7 +30,7 @@ use ledger_investment::prices::{
     EASTMONEY_PRICE_SOURCE, MarketPriceWrite, SINA_PRICE_SOURCE, TENCENT_PRICE_SOURCE,
     price_value_to_cents, upsert_market_price, upsert_price_history,
 };
-use ledger_investment::{InstrumentType, derive_price_channel};
+use ledger_investment::{InstrumentType, Market, QuoteMarket, derive_price_channel};
 use tauri_app_lib::test_support::seed_instrument;
 
 fn bar(date: &str, close: f64) -> KlineBar {
@@ -161,8 +161,8 @@ fn history_rows(conn: &Connection, instrument_id: &str) -> i64 {
     .unwrap()
 }
 
-/// 一轮补全的注入桩集合：按 secid / 基金代码应答并记录「谁被抓取了」——队列
-/// 成员与排队顺序都经这份可观察日志断言。
+/// 一轮补全的注入桩集合：按「市场： 代码」/ 基金代码应答并记录「谁被抓取了」
+/// ——队列成员与排队顺序都经这份可观察日志断言。
 struct Harness {
     /// 处理序日志：行情标的记 `kline:<市场>:<代码>`（不观数据源查询键形态，
     /// issue #1556），基金全历史记 `history:<code>`（issue #1566 起单一全历史
@@ -223,7 +223,7 @@ impl Harness {
 
     fn fetch_kline(&self, query: &QuoteQuery) -> Result<Vec<KlineBar>> {
         // 桩按自己的「市场:代码」形态路由（数据源查询键归通道内部构造，
-        // issue #1556）；断言对准「谁被抓取了」，不钉 secid 形态。
+        // issue #1556）；断言对准「谁被抓取了」，不钉数据源键形态。
         let key = format!("{}:{}", query.market, query.code);
         self.log.lock().unwrap().push(format!("kline:{key}"));
         if self.fail_kline.map(|f| f == key).unwrap_or(false) {
@@ -731,8 +731,8 @@ fn empty_kline_completes_without_writing() {
 /// 「市场 + 代码」，日 K 查询键由通道在内部构造——本用例注入一个按自己形态
 ///（模拟换源）路由查询的通道实现，历史照常落库。
 ///
-/// 把查询键构造挪回编排（编排先拼出东财 secid `1.600519` 再当查询单元的代码
-/// 交给通道）后，本桩拿到的 `code` 是 secid 而非裸代码 `600519`，路由不中
+/// 把查询键构造挪回编排（编排先拼出数据源键 `sh600519` 再当查询单元的代码
+/// 交给通道）后，本桩拿到的 `code` 是数据源键形态而非裸代码 `600519`，路由不中
 /// → 无日线样本 → 无周点可落，本用例变红。
 #[test]
 fn swapping_kline_channel_keeps_history_landing_without_source_key_in_orchestration() {
@@ -741,7 +741,7 @@ fn swapping_kline_channel_keeps_history_landing_without_source_key_in_orchestrat
 
     // 换源形态的通道桩：自己把（市场，代码）编成自己的查询键，只应答自己的形态。
     let mut fetch_kline = |query: &QuoteQuery| {
-        let bars = if query.market == "sh" && query.code == "600519" {
+        let bars = if query.market == QuoteMarket::Sh && query.code == "600519" {
             vec![bar(&date_offset(1), 13.0)]
         } else {
             vec![]
@@ -1046,9 +1046,11 @@ fn fund_instrument(id: &str, code: &str) -> SyncInstrument {
     SyncInstrument {
         instrument_id: id.to_string(),
         symbol: code.to_string(),
-        market: "unknown".to_string(),
+        market: Market::Unknown,
+        kind: InstrumentType::Fund,
+        constant_unit_price: None,
         currency: "CNY".to_string(),
-        channel: derive_price_channel(InstrumentType::Fund, "unknown", code, None),
+        channel: derive_price_channel(InstrumentType::Fund, Market::Unknown, code, None),
     }
 }
 

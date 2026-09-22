@@ -26,6 +26,7 @@ use crate::model::WriteWitness;
 use crate::session::ScopedSession;
 use crate::{FetchFundName, FetchNavHistory};
 use ledger_infra::error::{AppError, Result};
+use ledger_investment::QuoteMarket;
 use ledger_investment::prices::{
     EASTMONEY_PRICE_SOURCE, MarketPriceWrite, SINA_PRICE_SOURCE, TENCENT_PRICE_SOURCE,
     upsert_market_price, upsert_price_history,
@@ -167,7 +168,7 @@ fn orchestration_takes_connection_only_outside_fetch_closures() {
 }
 
 /// 查询单元 → 断言用字符串（`市场:代码` 逗号串，issue #1555）：测试断言不依赖
-/// 数据源查询键（secid）形态。
+/// 数据源查询键形态（查询键由通道在类型化查询单元上构造，issue #1673）。
 fn query_log_line(queries: &[QuoteQuery]) -> String {
     queries
         .iter()
@@ -216,23 +217,6 @@ fn quote_items_for(queries: &[QuoteQuery]) -> Vec<QuoteItem> {
         .iter()
         .map(|query| quote_item(query, &format!("名称-{}", query.code), Some(100_000), None))
         .collect()
-}
-
-#[test]
-fn quote_channel_derivation_matches_quote_key_construction() {
-    // 价格通道收口（issue #1060）：行情通道派生（投资域单点 `derive_price_channel`）
-    // 与行情查询键构造能力（同步域 `tencent_query_key`，issue #1560 接线后）恒等
-    // ——判「可行情」的市场必须恰是可构造查询键的市场，否则 Quote 行进不了查询
-    //（静默跳过）或无通道行混进行情分区。
-    use ledger_investment::{InstrumentType, PriceChannel, derive_price_channel};
-    for market in ["sh", "sz", "hk", "nasdaq", "nyse", "amex", "unknown"] {
-        assert_eq!(
-            derive_price_channel(InstrumentType::Stock, market, "600000", None)
-                == PriceChannel::Quote,
-            crate::tencent::tencent_query_key(market, "600000").is_some(),
-            "行情通道判定与行情查询键构造能力漂移：{market}"
-        );
-    }
 }
 
 #[test]
@@ -704,8 +688,8 @@ fn incremental_sync_hands_all_quote_queries_to_the_channel_in_one_call() {
 /// 「市场 + 代码」查询单元，查询键由批量报价通道在内部构造——本用例注入一个
 /// 按自己形态（模拟换源）构造查询键的通道实现，价格照常落库。
 ///
-/// 把查询键构造挪回编排（编排先拼出东财 secid `1.600519` 再交给通道）后，
-/// 本桩拿到的 `code` 是 secid 而非裸代码 `600519`，构造不出任何匹配的查询键
+/// 把查询键构造挪回编排（编排拼数据源键形态再交给通道）后，
+/// 本桩拿到的 `code` 是数据源键形态而非裸代码 `600519`，构造不出任何匹配的查询键
 /// → 无报价条目 → 价格未落库，本用例变红。
 #[test]
 fn swapping_quote_channel_keeps_prices_landing_without_source_key_in_orchestration() {
@@ -716,7 +700,7 @@ fn swapping_quote_channel_keeps_prices_landing_without_source_key_in_orchestrati
     let mut fetch = |queries: &[QuoteQuery]| {
         let items = queries
             .iter()
-            .filter(|q| q.market == "sh" && q.code == "600519")
+            .filter(|q| q.market == QuoteMarket::Sh && q.code == "600519")
             .map(|q| quote_item(q, "贵州茅台", Some(130_280), None))
             .collect();
         super::ready(Ok(items))

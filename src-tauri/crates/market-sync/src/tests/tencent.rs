@@ -5,7 +5,7 @@
 
 use std::time::Duration;
 
-use ledger_investment::InstrumentType;
+use ledger_investment::{InstrumentType, Market, QuoteMarket, StockRoute};
 
 use crate::channels::QuoteQuery;
 use crate::http::Pacer;
@@ -59,7 +59,7 @@ fn a_share_layout_pins_type_codes_and_fields() {
     for (body, market, code, name, price_cents, security_type, kind) in [
         (
             SH_STOCK,
-            "sh",
+            Market::Sh,
             "600000",
             "浦发银行",
             90_700,
@@ -68,7 +68,7 @@ fn a_share_layout_pins_type_codes_and_fields() {
         ),
         (
             SH_ETF,
-            "sh",
+            Market::Sh,
             "510300",
             "沪深300ETF华泰柏瑞",
             45_820,
@@ -77,7 +77,7 @@ fn a_share_layout_pins_type_codes_and_fields() {
         ),
         (
             SZ_LOF,
-            "sz",
+            Market::Sz,
             "161725",
             "白酒基金LOF",
             5_290,
@@ -86,7 +86,7 @@ fn a_share_layout_pins_type_codes_and_fields() {
         ),
         (
             SH_BOND,
-            "sh",
+            Market::Sh,
             "113050",
             "南银转债",
             1_449_670,
@@ -120,7 +120,7 @@ fn hk_layout_pins_type_code_currency_and_date() {
     assert_eq!(quote.code, "00700");
     assert_eq!(quote.name, "腾讯控股");
     assert_eq!(quote.price_cents, Some(4_190_000), "419.000 港元");
-    assert_eq!(quote.market, "hk");
+    assert_eq!(quote.market, Market::Hk);
     assert_eq!(quote.security_type, "GP", "港股类型码 @63");
     assert_eq!(quote.kind_hint, InstrumentType::Stock);
     assert_eq!(quote.currency_code, "HKD", "港股币种 @75");
@@ -135,7 +135,7 @@ fn us_layout_pins_exchange_suffix_and_currency() {
         (
             US_AAPL,
             "AAPL",
-            "nasdaq",
+            Market::Nasdaq,
             "GP",
             InstrumentType::Stock,
             3_361_300,
@@ -143,7 +143,7 @@ fn us_layout_pins_exchange_suffix_and_currency() {
         (
             US_IBM,
             "IBM",
-            "nyse",
+            Market::Nyse,
             "GP",
             InstrumentType::Stock,
             2_295_500,
@@ -151,7 +151,7 @@ fn us_layout_pins_exchange_suffix_and_currency() {
         (
             US_SPY,
             "SPY",
-            "amex",
+            Market::Amex,
             "GP-ETF",
             InstrumentType::Etf,
             7_616_900,
@@ -190,28 +190,29 @@ fn detect_kind_hint_maps_fund_like_codes_to_etf() {
 }
 
 #[test]
-fn tencent_query_key_pins_market_prefixes() {
-    // 「市场 + 代码」→ 腾讯查询键：沪深港用市场前缀，美股三市场统用 us（精确交易所
-    // 由响应自报后缀判定）。
-    assert_eq!(
-        tencent_query_key("sh", "600000").as_deref(),
-        Some("sh600000")
-    );
-    assert_eq!(
-        tencent_query_key("sz", "161725").as_deref(),
-        Some("sz161725")
-    );
-    assert_eq!(tencent_query_key("hk", "00700").as_deref(), Some("hk00700"));
-    for us_market in ["nasdaq", "nyse", "amex"] {
+fn tencent_query_key_pins_route_prefixes() {
+    // 「路由 + 代码」→ 腾讯查询键（全函数，issue #1673）：沪深港用市场前缀，
+    // 聚合路由 Us 用 us 前缀（精确交易所由响应自报后缀判定）。路由位是投资域
+    // 解析流程内部小闭集——批量面查询单元经 `QuoteMarket::as_stock_route` 投影。
+    assert_eq!(tencent_query_key(StockRoute::Sh, "600000"), "sh600000");
+    assert_eq!(tencent_query_key(StockRoute::Sz, "161725"), "sz161725");
+    assert_eq!(tencent_query_key(StockRoute::Hk, "00700"), "hk00700");
+    assert_eq!(tencent_query_key(StockRoute::Us, "AAPL"), "usAAPL");
+    // 可路由子集到路由的聚合投影：美股三市场统用 Us 单查询（ADR-0130 决策 2）。
+    for quote_market in [QuoteMarket::Nasdaq, QuoteMarket::Nyse, QuoteMarket::Amex] {
         assert_eq!(
-            tencent_query_key(us_market, "AAPL").as_deref(),
-            Some("usAAPL"),
-            "{us_market}"
+            quote_market.as_stock_route(),
+            StockRoute::Us,
+            "{quote_market}"
         );
     }
-    // 市场未知不构造键（调用侧跳过该查询单元）。
-    assert_eq!(tencent_query_key("unknown", "NVDA"), None);
-    assert_eq!(tencent_query_key("", "NVDA"), None);
+    for quote_market in [QuoteMarket::Sh, QuoteMarket::Sz, QuoteMarket::Hk] {
+        assert_eq!(
+            tencent_query_key(quote_market.as_stock_route(), "x"),
+            format!("{}x", quote_market.as_str()),
+            "{quote_market}"
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -300,7 +301,7 @@ fn batch_response_parses_all_statements_and_projects_to_payload() {
 
     let quote = quotes.into_iter().nth(1).expect("两").into_quote();
     assert_eq!(quote.code, "AAPL");
-    assert_eq!(quote.market.as_deref(), Some("nasdaq"));
+    assert_eq!(quote.market, Some(Market::Nasdaq));
     assert_eq!(quote.stock_kind_hint(), InstrumentType::Stock);
     assert_eq!(quote.price_cents, Some(3_361_300));
     assert_eq!(quote.fund_class, None);
@@ -322,19 +323,19 @@ fn fetch_pins_request_shape_and_batch_capacity() {
     let (url, requests) = spawn_header_capture_server(gbk.clone());
     let queries = vec![
         QuoteQuery {
-            market: "sh".into(),
+            market: QuoteMarket::Sh,
             code: "600000".into(),
         },
         QuoteQuery {
-            market: "sz".into(),
+            market: QuoteMarket::Sz,
             code: "161725".into(),
         },
         QuoteQuery {
-            market: "hk".into(),
+            market: QuoteMarket::Hk,
             code: "00700".into(),
         },
         QuoteQuery {
-            market: "nasdaq".into(),
+            market: QuoteMarket::Nasdaq,
             code: "AAPL".into(),
         },
     ];
@@ -361,7 +362,7 @@ fn fetch_pins_request_shape_and_batch_capacity() {
     // 批量承载量：超过单请求承载量的查询分多次请求，单请求键数不超过常量。
     let many: Vec<QuoteQuery> = (0..TENCENT_QUOTE_BATCH_SIZE + 1)
         .map(|i| QuoteQuery {
-            market: "sh".into(),
+            market: QuoteMarket::Sh,
             code: format!("{i:06}"),
         })
         .collect();
@@ -394,7 +395,7 @@ fn fetch_decodes_gbk_and_fails_closed_on_intercepted_response() {
     let client = reqwest::Client::new();
     let mut pacer = Pacer::new(Duration::ZERO);
     let queries = vec![QuoteQuery {
-        market: "sh".into(),
+        market: QuoteMarket::Sh,
         code: "600000".into(),
     }];
 

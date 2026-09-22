@@ -4,20 +4,20 @@
 //! 既有行不覆盖）。全部离线驱动，先例：[`super::fund_add`]。
 
 use crate::{
-    InstrumentType, Quote, StockCreateRoute, adopt_stock_quote, create_stock_degraded,
-    prices::TENCENT_PRICE_SOURCE, route_stock_creation,
+    InstrumentType, Market, Quote, StockCreateRoute, StockRoute, adopt_stock_quote,
+    create_stock_degraded, prices::TENCENT_PRICE_SOURCE, route_stock_creation,
 };
 
 use tauri_app_lib::test_support::open;
 
 /// 构造一份典型股票行情（统一报价载荷，ADR-0103；价格万分之一元刻度）。
-fn quote(code: &str, name: &str, market: &str, price: Option<i64>) -> Quote {
+fn quote(code: &str, name: &str, market: Market, price: Option<i64>) -> Quote {
     Quote {
         code: code.to_string(),
         name: name.to_string(),
         price_cents: price,
         price_date: price.map(|_| "2026-09-04".to_string()),
-        market: Some(market.to_string()),
+        market: Some(market),
         kind_hint: Some(InstrumentType::Stock),
         fund_class: None,
         nav_date: None,
@@ -71,16 +71,19 @@ fn routes_resolvable_real_code_to_enhance_with_resolved_market() {
     let StockCreateRoute::Enhance(plan) = route else {
         panic!("显式一致 market 应路由到增强: {route:?}");
     };
-    assert_eq!(plan.candidate.market, "sh");
+    assert_eq!(plan.candidate.route, StockRoute::Sh);
     assert_eq!(plan.candidate.code, "600519");
-    assert_eq!(plan.degrade_market, "sh", "降级保留解析市场");
+    assert_eq!(plan.degrade_market, Market::Sh, "降级保留解析市场");
 
     // 缺省 market：按形态推断（深市 + 港股补零归一）后同样路由到增强。
-    for (market, code) in [("sz", "000001"), ("hk", "00700")] {
+    for (market, route, code) in [
+        (Market::Sz, StockRoute::Sz, "000001"),
+        (Market::Hk, StockRoute::Hk, "00700"),
+    ] {
         let StockCreateRoute::Enhance(plan) = route_stock_creation(None, code) else {
             panic!("缺省 market 的真实代码应路由到增强: {code}");
         };
-        assert_eq!(plan.candidate.market, market);
+        assert_eq!(plan.candidate.route, route);
         assert_eq!(plan.candidate.code, code, "港股应左补零归一");
         assert_eq!(plan.degrade_market, market);
     }
@@ -94,16 +97,21 @@ fn routes_us_ticker_to_enhance_with_single_query() {
     let StockCreateRoute::Enhance(plan) = route else {
         panic!("美股 ticker 应路由到增强: {route:?}");
     };
-    assert_eq!(plan.candidate.market, "us", "聚合路由值，不落库不出响应");
+    assert_eq!(
+        plan.candidate.route,
+        StockRoute::Us,
+        "聚合路由值，不落库不出响应"
+    );
     assert_eq!(plan.candidate.code, "AAPL", "代码大写归一");
-    assert_eq!(plan.degrade_market, "unknown", "缺省降级无法预知市场");
+    assert_eq!(plan.degrade_market, Market::Unknown, "缺省降级无法预知市场");
 
     // 显式美股市场：同解为聚合查询；降级保留显式市场（行情通道仍可达，issue #694）。
-    for market in ["nasdaq", "nyse", "amex"] {
-        let StockCreateRoute::Enhance(plan) = route_stock_creation(Some(market), "AAPL") else {
+    for market in [Market::Nasdaq, Market::Nyse, Market::Amex] {
+        let StockCreateRoute::Enhance(plan) = route_stock_creation(Some(market.as_str()), "AAPL")
+        else {
             panic!("显式美股市场应路由到增强: {market}");
         };
-        assert_eq!(plan.candidate.market, "us");
+        assert_eq!(plan.candidate.route, StockRoute::Us);
         assert_eq!(plan.candidate.code, "AAPL");
         assert_eq!(plan.degrade_market, market);
     }
@@ -171,7 +179,7 @@ fn persists_quote_as_stock_row_with_market_and_price() {
     let outcome = adopt_stock_quote(
         &conn,
         InstrumentType::Stock,
-        &quote("600519", "贵州茅台", "sh", Some(150000)),
+        &quote("600519", "贵州茅台", Market::Sh, Some(150000)),
     )
     .expect("命中落库应成功");
 
@@ -201,7 +209,7 @@ fn persists_quote_without_price_skips_price_row() {
     let outcome = adopt_stock_quote(
         &conn,
         InstrumentType::Stock,
-        &quote("000001", "平安银行", "sz", None),
+        &quote("000001", "平安银行", Market::Sz, None),
     )
     .expect("应成功");
 
@@ -221,7 +229,7 @@ fn hong_kong_quote_derives_hkd_currency() {
     let outcome = adopt_stock_quote(
         &conn,
         InstrumentType::Stock,
-        &quote("00700", "腾讯控股", "hk", Some(360500)),
+        &quote("00700", "腾讯控股", Market::Hk, Some(360500)),
     )
     .expect("应成功");
     let (_, _, currency, _) = stock_row(&conn, "00700");
@@ -242,7 +250,7 @@ fn degraded_creation_preserves_resolved_market() {
     let outcome = create_stock_degraded(
         &conn,
         InstrumentType::Stock,
-        "sh",
+        Market::Sh,
         "600519",
         Some("贵州茅台（账单名）".to_string()),
     )
@@ -270,7 +278,7 @@ fn degraded_creation_preserves_resolved_market() {
 #[test]
 fn degraded_creation_without_ai_name_creates_nameless_row() {
     let conn = open();
-    create_stock_degraded(&conn, InstrumentType::Stock, "sz", "000001", None)
+    create_stock_degraded(&conn, InstrumentType::Stock, Market::Sz, "000001", None)
         .expect("降级不因缺名称被阻塞");
     let (name, market, ..) = stock_row(&conn, "000001");
     assert!(
@@ -287,14 +295,14 @@ fn degraded_replay_reuses_row_without_overwriting_authoritative_name() {
     let first = adopt_stock_quote(
         &conn,
         InstrumentType::Stock,
-        &quote("600519", "贵州茅台", "sh", Some(150000)),
+        &quote("600519", "贵州茅台", Market::Sh, Some(150000)),
     )
     .expect("命中落库应成功");
     // 第二笔：行情不可达 + AI 提交另一名称 → 降级复用同一 id，权威名称与现价不动。
     let replay = create_stock_degraded(
         &conn,
         InstrumentType::Stock,
-        "sh",
+        Market::Sh,
         "600519",
         Some("账单抄写名（降级）".to_string()),
     )
@@ -324,7 +332,7 @@ fn persists_quote_with_submitted_etf_kind_preserves_type() {
     let outcome = adopt_stock_quote(
         &conn,
         InstrumentType::Etf,
-        &quote("510300", "沪深300ETF", "sh", Some(398500)),
+        &quote("510300", "沪深300ETF", Market::Sh, Some(398500)),
     )
     .expect("etf 命中落库应成功");
 

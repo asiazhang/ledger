@@ -12,7 +12,7 @@ use std::collections::HashMap;
 
 use axum::http::StatusCode;
 
-use ledger_investment::InstrumentType;
+use ledger_investment::{InstrumentType, Market, StockRoute};
 
 use crate::common::{
     StockStubHit, get_json, setup_app_with_stock_fetch, setup_app_with_stock_stub,
@@ -30,7 +30,7 @@ fn stub_hits() -> HashMap<String, StockStubHit> {
                 name: "贵州茅台",
                 price: Some((13_300_000, "2026-09-04")),
                 kind_hint: InstrumentType::Stock,
-                market: "sh",
+                market: Market::Sh,
             },
         ),
         (
@@ -39,7 +39,7 @@ fn stub_hits() -> HashMap<String, StockStubHit> {
                 name: "平安银行",
                 price: Some((115_500, "2026-09-04")),
                 kind_hint: InstrumentType::Stock,
-                market: "sz",
+                market: Market::Sz,
             },
         ),
         (
@@ -48,7 +48,7 @@ fn stub_hits() -> HashMap<String, StockStubHit> {
                 name: "腾讯控股",
                 price: Some((4_428_000, "2026-09-04")),
                 kind_hint: InstrumentType::Stock,
-                market: "hk",
+                market: Market::Hk,
             },
         ),
         (
@@ -57,7 +57,7 @@ fn stub_hits() -> HashMap<String, StockStubHit> {
                 name: "沪深300ETF华泰柏瑞",
                 price: Some((46_160, "2026-09-04")),
                 kind_hint: InstrumentType::Etf,
-                market: "sh",
+                market: Market::Sh,
             },
         ),
         (
@@ -66,7 +66,7 @@ fn stub_hits() -> HashMap<String, StockStubHit> {
                 name: "苹果",
                 price: Some((3_199_700, "2026-01-08")),
                 kind_hint: InstrumentType::Stock,
-                market: "nasdaq",
+                market: Market::Nasdaq,
             },
         ),
         (
@@ -75,7 +75,7 @@ fn stub_hits() -> HashMap<String, StockStubHit> {
                 name: "阿里巴巴",
                 price: Some((1_132_400, "2026-01-08")),
                 kind_hint: InstrumentType::Stock,
-                market: "nyse",
+                market: Market::Nyse,
             },
         ),
         (
@@ -84,7 +84,7 @@ fn stub_hits() -> HashMap<String, StockStubHit> {
                 name: "标普500ETF-SPDR",
                 price: Some((7_701_900, "2026-01-08")),
                 kind_hint: InstrumentType::Etf,
-                market: "amex",
+                market: Market::Amex,
             },
         ),
     ])
@@ -298,13 +298,14 @@ async fn test_lookup_us_ticker_all_miss_returns_400() {
 #[tokio::test]
 async fn test_lookup_us_ticker_network_failure_returns_500() {
     // 网络故障：立即 500 上抛（临时错误不重试其他形态）。
-    let (app, _conn) =
-        setup_app_with_stock_fetch(Some(std::sync::Arc::new(|market: &str, _code: &str| {
-            assert_eq!(market, "us", "查询应以美股聚合路由值发起");
+    let (app, _conn) = setup_app_with_stock_fetch(Some(std::sync::Arc::new(
+        |route: StockRoute, _code: &str| {
+            assert_eq!(route, StockRoute::Us, "查询应以美股聚合路由值发起");
             crate::common::ready_quote(Err(ledger_infra::error::AppError::Io(
                 "行情网络不可达".into(),
             )))
-        })));
+        },
+    )));
 
     let (status, err) = get_json(&app, "/api/v1/stocks/AAPL").await;
     assert_eq!(
@@ -432,12 +433,13 @@ async fn test_lookup_stock_unknown_code_returns_400_chinese_error() {
 #[tokio::test]
 async fn test_lookup_stock_network_failure_returns_500() {
     // 行情源不可达桩：Io 错误上抛（与生产网络故障同形状），端点应 500。
-    let (app, _conn) =
-        setup_app_with_stock_fetch(Some(std::sync::Arc::new(|_market: &str, _code: &str| {
+    let (app, _conn) = setup_app_with_stock_fetch(Some(std::sync::Arc::new(
+        |_route: StockRoute, _code: &str| {
             crate::common::ready_quote(Err(ledger_infra::error::AppError::Io(
                 "行情网络不可达".into(),
             )))
-        })));
+        },
+    )));
 
     let (status, err) = get_json(&app, "/api/v1/stocks/600519").await;
     assert_eq!(

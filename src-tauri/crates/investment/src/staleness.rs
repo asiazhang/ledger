@@ -45,6 +45,7 @@ use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
 use super::channel::{PriceChannel, derive_price_channel};
+use super::market::Market;
 use super::model::InstrumentType;
 use super::predicates::INVESTED_EXISTS;
 use ledger_infra::db::query::{FromRow, query_all};
@@ -118,7 +119,8 @@ pub fn instrument_price_staleness_on(
 /// 时点列 + 持仓标志）。
 struct PriceWatermarkRow {
     kind: InstrumentType,
-    market: String,
+    // DB 读边界 parse 一次（市场闭集类型，issue #1673）。
+    market: Market,
     symbol: String,
     /// 恒定单位价格（万分之一元，ADR-0126）：通道判定的持久化输入。
     constant_unit_price: Option<i64>,
@@ -140,7 +142,7 @@ impl PriceWatermarkRow {
     fn is_stale(&self, today: NaiveDate, threshold_days: i64) -> bool {
         let channel = derive_price_channel(
             self.kind,
-            &self.market,
+            self.market,
             &self.symbol,
             self.constant_unit_price,
         );

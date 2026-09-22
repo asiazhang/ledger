@@ -11,7 +11,7 @@ use ledger_infra::db::encryption::EncryptionGate;
 use ledger_infra::db::{DbReadHandle, DbSlotPair, DbWriteHandle};
 use ledger_infra::error::AppError;
 use ledger_infra::events::SignalEmitter;
-use ledger_investment::Quote;
+use ledger_investment::{Quote, StockRoute};
 use rusqlite::Connection;
 
 /// 基金报价获取函数接缝（issue #304 / ADR-0039 / #1568 换源）：`基金代码 → future<Result<Quote>>`，
@@ -24,14 +24,15 @@ use rusqlite::Connection;
 pub type QuoteFuture = Pin<Box<dyn Future<Output = Result<Quote, AppError>> + Send>>;
 pub type FundQuoteFetcher = Arc<dyn Fn(&str) -> QuoteFuture + Send + Sync>;
 
-/// 股票行情获取函数接缝（issue #693 / ADR-0081；换源 ADR-0130 决策 2 / #1567）：
-/// `(市场, 代码) → future<Result<Quote>>`，查无此码以码化中文错误上抛——注入桩
-/// 形态与 [`FundQuoteFetcher`] 同构（统一报价载荷，ADR-0103）。市场/代码
-/// 形态解析在投资域单点完成（`resolve_stock_code`），本接缝只接归一化后的查询单元
-///（美股为聚合路由值 `us`，精确交易所由行情源自报，候选遍历已退役）。
-/// 生产路径为腾讯行情（`fetch_stock_quote_production`，async 形态直接 await）；
-/// HTTP 集成测试以注入桩离线驱动，全部股票端点集成测试不触真实网络。
-pub type StockQuoteFetcher = Arc<dyn Fn(&str, &str) -> QuoteFuture + Send + Sync>;
+/// 股票行情获取函数接缝（issue #693 / ADR-0081；换源 ADR-0130 决策 2 / #1567；
+/// 路由类型化 issue #1673）：`(路由, 代码) → future<Result<Quote>>`，查无此码以
+/// 码化中文错误上抛——注入桩形态与 [`FundQuoteFetcher`] 同构（统一报价载荷，
+/// ADR-0103）。市场/代码形态解析在投资域单点完成（`resolve_stock_code`），本接缝
+/// 只接归一化后的查询单元，路由位是解析流程内部小闭集 [`StockRoute`]（沪深港
+/// 精确市场 + 美股聚合 `Us`，不落库不出响应）。生产路径为腾讯行情
+///（`fetch_stock_quote_production`，async 形态直接 await）；HTTP 集成测试以注入
+/// 桩离线驱动，全部股票端点集成测试不触真实网络。
+pub type StockQuoteFetcher = Arc<dyn Fn(StockRoute, &str) -> QuoteFuture + Send + Sync>;
 
 /// 失效信号发射槽（壳层 handler 的提取形状，ADR-0054 #367 修订）：写事务提交
 /// 成功后经信号映射单点发射失效信号的机制槽位，收口于发射器接缝

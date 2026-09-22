@@ -78,7 +78,6 @@
   "sync": {
     "fund-not-found": "fund code {0} not found, please verify and retry",
     "stock-not-found": "stock code {0} not found, please verify and retry",
-    "secid-unroutable": "market {0} cannot be resolved to a quote secid (internal inconsistency)",
     "disclosure-source-malformed": "the official fund disclosure source returned unparseable content; please retry the sync later",
     "fund-batch-source-malformed": "the Sina fund batch quote source returned unparseable content; please retry the sync later"
   },
