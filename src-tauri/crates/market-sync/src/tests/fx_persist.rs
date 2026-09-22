@@ -5,6 +5,7 @@
 //! 「人工行不被自动写入覆盖」的负向条目（删除即红）：`manual_row_is_kept` 直接
 //! 依赖落库单元内的人工行保护分支，删掉该分支（保护失效）本用例即红。
 
+use chrono::NaiveDate;
 use rusqlite::Connection;
 
 use tauri_app_lib::test_support::seed_exchange_rate_with_source;
@@ -12,15 +13,17 @@ use tauri_app_lib::test_support::seed_exchange_rate_with_source;
 use crate::ecb::FxPairWeeklySeries;
 use crate::persist::{FxPersistReport, persist_ecb_fx_series};
 
+/// 周采样点日期（测试侧已解析为 NaiveDate，spec #1677 载体中立点集）。
+fn day(date: &str) -> NaiveDate {
+    NaiveDate::parse_from_str(date, "%Y-%m-%d").unwrap()
+}
+
 /// 两点周采样序列：HKD→CNY（ECB 同日两腿交叉的产物形态，1 base = ? quote）。
 fn hkd_cny_series() -> FxPairWeeklySeries {
     FxPairWeeklySeries {
         base: "HKD".to_string(),
         quote: "CNY".to_string(),
-        points: vec![
-            ("2026-09-14".to_string(), 0.9100),
-            ("2026-09-21".to_string(), 0.9150),
-        ],
+        points: vec![(day("2026-09-14"), 0.9100), (day("2026-09-21"), 0.9150)],
     }
 }
 
@@ -96,7 +99,7 @@ fn same_week_sample_overwrites_the_whole_week() {
     let updated = FxPairWeeklySeries {
         base: "HKD".to_string(),
         quote: "CNY".to_string(),
-        points: vec![("2026-09-22".to_string(), 0.9160)],
+        points: vec![(day("2026-09-22"), 0.9160)],
     };
     persist_ecb_fx_series(&conn, &[updated]).unwrap();
 
@@ -135,7 +138,7 @@ fn manual_row_is_kept_from_auto_overwrite() {
     let usd_cny = FxPairWeeklySeries {
         base: "USD".to_string(),
         quote: "CNY".to_string(),
-        points: vec![("2026-09-21".to_string(), 7.10)],
+        points: vec![(day("2026-09-21"), 7.10)],
     };
     let report = persist_ecb_fx_series(&conn, &[series, usd_cny]).unwrap();
     assert_eq!(report.manual_protected, 1, "人工行计入保护统计");
@@ -187,7 +190,7 @@ fn failure_leaves_no_partial_writes() {
     let bad = FxPairWeeklySeries {
         base: "XYZ".to_string(),
         quote: "CNY".to_string(),
-        points: vec![("2026-09-21".to_string(), 1.0)],
+        points: vec![(day("2026-09-21"), 1.0)],
     };
 
     let err = persist_ecb_fx_series(&conn, &[good, bad]).unwrap_err();

@@ -12,6 +12,8 @@
 //!
 //! 水位窗口与水位读留守 `fund_nav`，本模块只收历史回填的编排。
 
+use chrono::NaiveDate;
+
 use ledger_infra::db::tx_scope::ensure_transaction;
 use ledger_infra::error::Result;
 use ledger_investment::PriceChannel;
@@ -21,12 +23,12 @@ use ledger_investment::prices::{
 
 use super::channels::FetchFuture;
 use super::fund_nav::{
-    NavPoint, coverage_short_of_first_position, deep_backfill_window,
+    FundIdentity, NavPoint, coverage_short_of_first_position, deep_backfill_window,
     mark_constant_price_on_confirm, nav_window, read_fund_coverage, read_fund_watermark,
     trim_to_window,
 };
-use super::http::KlineBar;
 use super::session::ScopedSession;
+use super::weekly::commit_price_history_weekly;
 
 /// 单只基金历史回填的结局（issue #1377 走势空态三态的判据输入）：`written` =
 /// 是否实际落库；`inconclusive` = 本轮结局不可信（披露源不可信）——整只不落库、
@@ -67,7 +69,7 @@ pub(super) struct BackfillOutcome {
 /// 本轮）。
 pub(super) async fn backfill_one_fund_history<Q, H, C>(
     session: &Q,
-    fund: &super::incremental::SyncInstrument,
+    fund: &FundIdentity<'_>,
     fetch_nav_history: &mut H,
     confirm_money_fund: &mut C,
 ) -> Result<BackfillOutcome>
@@ -86,10 +88,11 @@ where
     // 若以水位作增量起点，增量窗口只剩「水位次日」而近两年回填静默落空
     //（#303 验收在真实账本上未成立的根因）。水位只服务已有历史序列的增量。
     // 两条读经作用域会话短暂取一次连接完成（issue #1275）；抓取前不再触碰连接。
-    let (watermark, has_history) = read_fund_watermark(session, fund).await?;
+    let (watermark, has_history) = read_fund_watermark(session, fund.instrument_id).await?;
     // 覆盖深度（issue #1534）：首笔持仓流水日早于近两年的基金，窗口起点放宽到
     // 首笔持仓所在周；已有历史但覆盖不足（最早周点晚于首笔持仓周）者同样深回填。
-    let (earliest_history, first_position_date) = read_fund_coverage(session, fund).await?;
+    let (earliest_history, first_position_date) =
+        read_fund_coverage(session, fund.instrument_id).await?;
     let deep = !has_history
         || coverage_short_of_first_position(
             earliest_history.as_deref(),
@@ -107,12 +110,12 @@ where
     // 源不可信（Err）则本轮整只不落，按不可信结局待重试。已标记行（竞态窗：
     // 排队后才被并行刷新打标）在下方短路，不重复确认。
     if fund.channel != PriceChannel::Constant {
-        match confirm_money_fund(&fund.symbol).await {
+        match confirm_money_fund(fund.code).await {
             Ok(true) => {
                 let written = mark_constant_price_on_confirm(
                     session,
-                    &fund.instrument_id,
-                    &fund.currency,
+                    fund.instrument_id,
+                    fund.currency,
                     today.format("%Y-%m-%d").to_string(),
                 )
                 .await?;
@@ -124,7 +127,7 @@ where
             Ok(false) => {}
             Err(error) => {
                 tracing::warn!(
-                    code = %fund.symbol, %error,
+                    code = %fund.code, %error,
                     "官方披露判定源不可信，本轮整只不落（信号缺席时落取值位即万份收益冒充净值）"
                 );
                 return Ok(BackfillOutcome {
@@ -140,8 +143,8 @@ where
     if fund.channel == PriceChannel::Constant {
         let written = mark_constant_price_on_confirm(
             session,
-            &fund.instrument_id,
-            &fund.currency,
+            fund.instrument_id,
+            fund.currency,
             today.format("%Y-%m-%d").to_string(),
         )
         .await?;
@@ -156,7 +159,7 @@ where
     // 失败（网络 / 报文不可信 / 窗口截断）一律上抛，下一窗口按派生事实重试，
     // 不把不可信结果当「无净值」——半根历史冒充完整数据比慢更糟（ADR-0122
     // 决策 8 的「整只不落」由「要么全序列可信、要么零落库」承接）。
-    let points: Vec<NavPoint> = fetch_nav_history(&fund.symbol).await?;
+    let points: Vec<NavPoint> = fetch_nav_history(fund.code).await?;
     let collected: Vec<NavPoint> = trim_to_window(points, &start, &end);
 
     if collected.is_empty() {
@@ -175,7 +178,7 @@ where
     // 前文判空保证，此臂理论不可达；一旦前置防线被移除，此处记警告并跳过
     // 该只、不中断同步。
     let Some(latest) = collected.iter().max_by_key(|p| p.date.as_str()) else {
-        tracing::warn!(code = %fund.symbol, "净值点意外为空，跳过现价更新");
+        tracing::warn!(code = %fund.code, "净值点意外为空，跳过现价更新");
         return Ok(BackfillOutcome {
             written: false,
             inconclusive: false,
@@ -185,44 +188,41 @@ where
     // 周采样与现价落库同在一只一个事务里（ADR-0122 决策 8 / issue #1373）：单只
     // 标的的历史回填整只一次提交，第 N 个周点写入失败或中途中断整体回滚，磁盘上
     // 不留半根历史——「有历史序列」与「历史完整」由此等价，首刷判据（ADR-0038
-    // 决策 6）依赖的正是这个等价。写入前先做新点判定（与行情日 K 通道同一单点，
-    // issue #1534）：窗口内全部周点均已入库且同值（覆盖不足但源无更深点 / 重复
-    // 补全）时整只零落库、不计写入——零新点不置脏不广播。单位净值即价格（ADR-0038
-    // 决策 3），与日线共用降采样与「整周覆盖」幂等（同周重复获取零重复行）。落库
-    // 经作用域会话短暂取一次连接（issue #1275）；抓取已在会话之外完成。事务经
+    // 决策 6）依赖的正是这个等价。周点落库经原语（[`commit_price_history_weekly`]，
+    // spec #1677）：采样、判新（同周同值零写入）、覆盖与事务边界收口一处，降采样
+    // 只算一遍；零新点时整只零落库（含现价——无新周点即无更新净值，现价必然
+    // 已是最新）零新点不置脏不广播。单位净值即价格（ADR-0038 决策 3），净值点
+    // 以载体中立逐日点集直入原语，不再经 KlineBar 适配壳。落库经作用域会话短暂
+    // 取一次连接（issue #1275）；抓取已在会话之外完成。事务经
     // [`ensure_transaction`]（ADR-0033 嵌套感知）：连接 autocommit 则自持事务、
     // 已在事务中则加入外层。「一只一事务」的前提是写错误**不被吞**——本函数的
     // 写失败一律经 `?` 上抛，加入外层时由外层持有者回滚，同样整只不留；任一层
     // 吞掉写错误才会破坏前提。
-    let bars: Vec<KlineBar> = collected
+    // 日期解析失败按缺失点跳过（与降采样核心的无效点跳过同一品味，spec #1677
+    // 前的净值腿同此行为）；净值日期由取数层契约保证为 ISO 形态。
+    let daily_points: Vec<(NaiveDate, f64)> = collected
         .iter()
-        .map(|p| KlineBar {
-            date: p.date.clone(),
-            close: p.nav,
-        })
+        .filter_map(|p| Some((NaiveDate::parse_from_str(&p.date, "%Y-%m-%d").ok()?, p.nav)))
         .collect();
-    let instrument_id = fund.instrument_id.clone();
-    let currency = fund.currency.clone();
+    let instrument_id = fund.instrument_id.to_string();
+    let currency = fund.currency.to_string();
     let latest_date = latest.date.clone();
     let latest_nav = latest.nav;
     let written: bool = session
         .with_connection(move |conn| {
             ensure_transaction(conn, || {
-                // 零新点防线（issue #1534）：降采样后与库内周点逐点比对（同日期
-                // 同值即旧点），全部旧点时整只零落库（含现价——无新周点即无更新
-                // 净值，现价必然已是最新）。
-                let points = super::incremental::downsample_weekly(&bars);
-                if !super::incremental::has_new_weekly_point(conn, &instrument_id, &points)? {
-                    return Ok(false);
-                }
-                // 周采样落库（与日 K 回填共用单点），与现价写在同一事务里整只一次提交。
-                super::incremental::write_weekly_price_history(
+                // 零新点防线（issue #1534）：窗口内全部周点均已入库且同值
+                //（覆盖不足但源无更深点 / 重复补全）时整只零落库。
+                if !commit_price_history_weekly(
                     conn,
                     &instrument_id,
                     &currency,
-                    &bars,
                     SINA_PRICE_SOURCE,
-                )?;
+                    &daily_points,
+                )? {
+                    return Ok(false);
+                }
+                // 周采样落库与新点伴随的现价写在同一事务里整只一次提交。
                 upsert_market_price(
                     conn,
                     &MarketPriceWrite {

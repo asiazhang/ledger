@@ -25,8 +25,8 @@ use quick_xml::events::Event;
 use ledger_infra::error::{AppError, Result};
 
 use super::http::{Pacer, RetryConfig, request_text_from_hosts};
-use super::incremental::downsample_weekly_points;
 use super::source_tail;
+use super::weekly::downsample_weekly_points;
 
 /// 单元标识（取数尾部契约的 `source` 日志字段）：源畸形 warn 按此分源 grep。
 const SOURCE: &str = "ecb-document";
@@ -64,14 +64,15 @@ pub struct EcbDayRates {
 }
 
 /// 单币种对的可落库周采样序列：`points` 每周至多一点（该周最后一个有报价交易日），
-/// 形态与 `upsert_fx_rate_history` 的入参同形（trade_date "YYYY-MM-DD" +
-/// rate「1 base = ? quote」，口径与 exchange_rates / fx_rate_history 一致）。
+/// 形态与 [`super::weekly::commit_fx_rate_history_weekly`] 的入参同形（载体中立
+/// 逐日点集，spec #1677；采样日为 ISO 日期，rate 口径「1 base = ? quote」与
+/// exchange_rates / fx_rate_history 一致）。
 #[derive(Debug, Clone, PartialEq)]
 pub struct FxPairWeeklySeries {
     pub base: String,
     pub quote: String,
-    /// (trade_date, rate)，按日期升序。
-    pub points: Vec<(String, f64)>,
+    /// (采样日, rate)，按日期升序。
+    pub points: Vec<(NaiveDate, f64)>,
 }
 
 /// 拉取 ECB 参考汇率**全量历史**文件并解析（历史回填入口：窗口深度由调用方按
@@ -267,6 +268,11 @@ fn cross_rate(rates: &BTreeMap<String, f64>, base: &str, quote: &str) -> Option<
 mod tests {
     use super::*;
 
+    /// 测试侧周采样点日期解析（points 已载体中立为 NaiveDate，spec #1677）。
+    fn day(date: &str) -> NaiveDate {
+        NaiveDate::parse_from_str(date, "%Y-%m-%d").unwrap()
+    }
+
     /// 真实报文形状钉值：gesmes 前缀 + 默认命名空间 + 自闭腿条目 + 日期降序（ECB 原样）。
     const SAMPLE_XML: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 <gesmes:Envelope xmlns:gesmes="http://www.gesmes.org/xml/2002-08-01" xmlns="http://www.ecb.int/vocabulary/2002-08-01/eurofxref"><gesmes:subject>Reference rates</gesmes:subject><gesmes:Sender><gesmes:name>European Central Bank</gesmes:name></gesmes:Sender><Cube>
@@ -388,10 +394,7 @@ mod tests {
 </Cube>"#;
         let days = parse_ecb_rates(xml).unwrap();
         let series = derive_ecb_weekly_series(&days, &[("HKD".to_string(), "CNY".to_string())]);
-        assert_eq!(
-            series[0].points,
-            vec![("2026-09-18".to_string(), 7.6755 / 8.9903)]
-        );
+        assert_eq!(series[0].points, vec![(day("2026-09-18"), 7.6755 / 8.9903)]);
     }
 
     /// 周采样：每周取该周最后一个有报价交易日；整周无报价的周不出点。
@@ -410,8 +413,8 @@ mod tests {
         assert_eq!(
             series[0].points,
             vec![
-                ("2026-09-18".to_string(), 7.6755 / 8.9903),
-                ("2026-09-28".to_string(), 7.80 / 9.10),
+                (day("2026-09-18"), 7.6755 / 8.9903),
+                (day("2026-09-28"), 7.80 / 9.10),
             ]
         );
     }

@@ -52,9 +52,9 @@ use super::ecb::{
     fetch_ecb_full_history,
 };
 use super::http::{build_client, lock_pacer, shared_pacer};
-use super::incremental::week_monday;
 use super::persist::{ECB_FX_SOURCE, FxPersistReport, persist_ecb_fx_series};
 use super::session::ScopedSession;
+use super::weekly::week_monday;
 
 /// 窗口起点相对最早非本位币日期再前推的周数：序列从该日期**之前**一周起有
 /// 采样点（AC「全量回填覆盖到该日期之前」的余量——即使该日期所属周首日无报价，
@@ -314,8 +314,8 @@ fn fx_depth_reached(conn: &Connection, native: &str, window_start: &str) -> Resu
 }
 
 /// 全量腿的窗口裁剪：只保留周键不早于窗口起点的采样点——深度由账本判据决定
-/// （issue #1544），不把数据源 1999 年起的整根文件灌进库；解析失败的点按缺失跳过
-///（取数层周采样契约保证格式，此处防御性兜底）。
+/// （issue #1544），不把数据源 1999 年起的整根文件灌进库；点集为已解析的
+/// NaiveDate（取数层周采样契约），无解析失败面。
 fn trim_series_to_window(
     series: Vec<super::ecb::FxPairWeeklySeries>,
     window_start: NaiveDate,
@@ -323,11 +323,7 @@ fn trim_series_to_window(
     series
         .into_iter()
         .map(|mut series| {
-            series.points.retain(|(trade_date, _)| {
-                NaiveDate::parse_from_str(trade_date.trim(), "%Y-%m-%d")
-                    .map(|day| week_monday(day) >= window_start)
-                    .unwrap_or(false)
-            });
+            series.points.retain(|(day, _)| *day >= window_start);
             series
         })
         .collect()

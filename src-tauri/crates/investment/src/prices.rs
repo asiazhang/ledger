@@ -51,6 +51,13 @@ pub fn price_value_to_cents(value: f64) -> i64 {
     (value * 10000.0).round() as i64
 }
 
+/// 万分之一元 → 真实价格值（元）：[`price_value_to_cents`] 的逆换算，与刻度
+/// 定义同址单点（spec #1677：持刻度值入周点落库原语的载体换算）。刻度值在
+/// f64 精度内精确表示，往返换算由两侧的舍入吸收、无损。
+pub fn price_cents_to_value(cents: i64) -> f64 {
+    cents as f64 / 10000.0
+}
+
 /// 按 (标的, ISO 周) 插入或覆盖一条周采样价格历史（issue #137 / ADR-0019）。
 /// 「整周覆盖」幂等由 UNIQUE(instrument_id, week_start)（week_start 为生成列）保证：
 /// 同周任一采样日写入都落在同一行上，重复回填零重复行。清仓不删历史（仅随标的删除级联）。

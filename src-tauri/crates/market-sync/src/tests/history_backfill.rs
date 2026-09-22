@@ -19,12 +19,14 @@ use std::sync::Mutex;
 use crate::SyncProgress;
 use crate::channels::{FetchFuture, QuoteQuery};
 use crate::fund_backfill::{BackfillOutcome, backfill_one_fund_history};
+use crate::fund_nav::FundIdentity;
 use crate::fund_nav::NavPoint;
 use crate::history::{HistoryBackfillStats, run_history_backfill_round};
 use crate::http::KlineBar;
-use crate::incremental::{SyncInstrument, beijing_today, daily_window_opens, week_monday};
+use crate::incremental::{SyncInstrument, beijing_today, daily_window_opens};
 use crate::model::WriteWitness;
 use crate::tests::insert_holding;
+use crate::weekly::week_monday;
 use ledger_infra::error::{AppError, Result};
 use ledger_investment::prices::{
     EASTMONEY_PRICE_SOURCE, MarketPriceWrite, SINA_PRICE_SOURCE, TENCENT_PRICE_SOURCE,
@@ -1069,7 +1071,13 @@ where
     H: FnMut(&str) -> FetchFuture<Vec<NavPoint>> + Send,
     C: FnMut(&str) -> FetchFuture<bool> + Send,
 {
-    backfill_one_fund_history(conn, fund, fetch_nav_history, confirm_money_fund).await
+    backfill_one_fund_history(
+        conn,
+        &FundIdentity::from_instrument(fund),
+        fetch_nav_history,
+        confirm_money_fund,
+    )
+    .await
 }
 
 /// 模拟新浪单只全历史通道：按代码返回整只基金的**全部历史**单位净值（wire 序
