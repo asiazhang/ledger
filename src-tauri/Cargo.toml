@@ -213,10 +213,12 @@ tauri = { version = "2", features = ["test"] }
 name = "e2e"
 harness = false
 
-# 多 worktree 并行开发降载：依赖 crate 的 dev 构建只保留行表级调试信息，削减 codegen 与链接体积；
-# 本仓业务 crate 不受影响，断点调试行为不变。需要依赖完整符号时临时注释本段。
+# 多 worktree 并行开发降载：依赖 crate 的 dev 构建完全关闭调试信息，削减 codegen 与链接体积；
+# 依赖产物不再携带 DWARF/OSO 引用，避免链接器（Xcode 26 ld）对 kache 共享 store 还原产物
+# 追溯原始编译路径时吐 unable to open object file 告警。本仓业务 crate 不受影响，断点调试
+# 行为不变；依赖栈帧回溯仍显示函数名，仅无行号。需要依赖完整符号时临时注释本段。
 [profile.dev.package."*"]
-debug = "line-tables-only"
+debug = false
 
 # workspace 骨架（spec #1086 / issue #1087）：Rust 根升级为 workspace 根，根包仍是
 # tauri 应用包（构建与桌面/Android 打包命令零变化）；成员 crate 集中在 `crates/` 下，
