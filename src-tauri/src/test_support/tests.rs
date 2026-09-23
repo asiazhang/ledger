@@ -4,7 +4,10 @@
 
 use rusqlite::params;
 
-use super::{assert_balance_cache_matches_realtime, open, seed_account, seed_exchange_rate};
+use super::{
+    assert_balance_cache_matches_realtime, open, seed_account, seed_exchange_rate,
+    seed_fund_market_price, seed_market_price,
+};
 use super::{seed_fx_rate_history, seed_instrument, seed_investment_setup, seed_price_history};
 use ledger_accounts::balance::refresh_account_balances;
 
@@ -114,6 +117,89 @@ fn seed_exchange_rate_derives_pair_id() {
         )
         .unwrap();
     assert!((rate - 7.2).abs() < f64::EPSILON);
+}
+
+/// `seed_market_price`：现价缓存单行落行，簿记戳与 `priced_at` 全走 FIXED_NOW
+/// 内部发放（调用点零字面量，ADR-0084 决策 5），`source` NULL / `version` 1 /
+/// `device_id` 'test'，行 id 内部发放，返回 instrument_id。
+#[test]
+fn market_price_seed_lands_single_row() {
+    let conn = open();
+    seed_instrument(&conn, "inst-1", "600519.SH", "贵州茅台", "CNY", "sh");
+    let returned = seed_market_price(&conn, "inst-1", 1_200_000, "CNY");
+    assert_eq!(returned, "inst-1", "返回实体 id（登记处形状）");
+    let (price, ccy, priced_at, source, created_at, version, device): (
+        i64,
+        String,
+        String,
+        Option<String>,
+        String,
+        i64,
+        String,
+    ) = conn
+        .query_row(
+            "SELECT price_cents,currency_code,priced_at,source,created_at,version,device_id \
+             FROM market_prices WHERE instrument_id='inst-1'",
+            [],
+            |r| {
+                Ok((
+                    r.get(0)?,
+                    r.get(1)?,
+                    r.get(2)?,
+                    r.get(3)?,
+                    r.get(4)?,
+                    r.get(5)?,
+                    r.get(6)?,
+                ))
+            },
+        )
+        .unwrap();
+    assert_eq!(price, 1_200_000);
+    assert_eq!(ccy, "CNY");
+    assert_eq!(priced_at, super::FIXED_NOW, "行情采集戳由工厂内部发放");
+    assert_eq!(source, None, "缺 source 即 NULL（现存形状）");
+    assert_eq!(created_at, super::FIXED_NOW, "簿记戳由工厂内部发放");
+    assert_eq!(version, 1);
+    assert_eq!(device, "test");
+}
+
+/// `seed_fund_market_price`：基金现价带净值水位——`nav_date` 域时刻显式传入、
+/// `priced_at` 与之同值（基金现价行情日期 = 净值日期，ADR-0038 生产同形），
+/// `source` 透传（同步存量行 / 无源行 NULL），簿记戳走 FIXED_NOW。
+#[test]
+fn fund_market_price_seed_lands_nav_watermark() {
+    let conn = open();
+    seed_instrument(&conn, "inst-fund", "110022", "某基金", "CNY", "unknown");
+    seed_fund_market_price(
+        &conn,
+        "inst-fund",
+        33_480,
+        "CNY",
+        "2026-01-30",
+        Some("eastmoney"),
+    );
+    let (price, priced_at, nav_date, source, created_at): (
+        i64,
+        String,
+        String,
+        Option<String>,
+        String,
+    ) = conn
+        .query_row(
+            "SELECT price_cents,priced_at,nav_date,source,created_at \
+             FROM market_prices WHERE instrument_id='inst-fund'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+        )
+        .unwrap();
+    assert_eq!(price, 33_480);
+    assert_eq!(
+        priced_at, "2026-01-30",
+        "行情日期 = 净值日期（基金现价同形）"
+    );
+    assert_eq!(nav_date, "2026-01-30", "nav_date 是显式域时刻");
+    assert_eq!(source.as_deref(), Some("eastmoney"), "source 透传");
+    assert_eq!(created_at, super::FIXED_NOW, "簿记戳由工厂内部发放");
 }
 
 /// 投资铺垫组合种子：账户（USD 投资户）+ 标的（USD 股票）+ 1:1 汇率三行齐备。

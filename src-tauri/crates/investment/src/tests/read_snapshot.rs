@@ -11,7 +11,7 @@ use super::common::*;
 use tauri_app_lib::test_support::snapshot_probe::{self, InjectionOutcome};
 use tauri_app_lib::test_support::{
     FIXED_NOW, ScratchDir, open_file, seed_account, seed_exchange_rate, seed_fx_history_weeks,
-    seed_instrument, seed_price_history,
+    seed_instrument, seed_market_price, seed_price_history,
 };
 
 fn empty_filter() -> PnlFilter {

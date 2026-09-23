@@ -13,34 +13,9 @@ use ledger_transaction::{
 
 use super::super::*;
 use super::common::*;
-use tauri_app_lib::test_support::{open, seed_account, seed_fx_history_weeks, seed_instrument};
-
-/// 种入标的当前行情（现价缓存单行，`v_holdings` 据此算市值与未实现盈亏）。
-/// `market_prices` 不在种子工厂登记处，故按既有投资域测试先例裸插（形状见 trade 测试）。
-fn seed_market_price(
-    conn: &rusqlite::Connection,
-    instrument_id: &str,
-    price_cents: i64,
-    currency: &str,
-) {
-    let now = ledger_infra::db::now_iso();
-    conn.execute(
-        "INSERT INTO market_prices (id,instrument_id,price_cents,currency_code,priced_at,source,created_at,updated_at,version,device_id) \
-         VALUES (?1,?2,?3,?4,?5,NULL,?6,?7,?8,?9)",
-        rusqlite::params![
-            ledger_infra::db::new_uuid(),
-            instrument_id,
-            price_cents,
-            currency,
-            now,
-            now,
-            now,
-            1,
-            "test"
-        ],
-    )
-    .unwrap();
-}
+use tauri_app_lib::test_support::{
+    open, seed_account, seed_fx_history_weeks, seed_instrument, seed_market_price,
+};
 
 /// 取指定币种的累计收益小计（不存在即 0）。
 fn cumulative_for(groups: &[CurrencyCumulativePnl], currency: &str) -> i64 {

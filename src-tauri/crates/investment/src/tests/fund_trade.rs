@@ -9,7 +9,7 @@ use ledger_transaction::{create_transaction_internal, update_transaction_interna
 use rusqlite::{Connection, params};
 
 use super::common::*;
-use tauri_app_lib::test_support::{open, seed_account, seed_instrument};
+use tauri_app_lib::test_support::{open, seed_account, seed_fund_market_price, seed_instrument};
 
 /// 基金申购输入：确认单整分金额为权威（amount_cents 必填 > 0），单价不提供
 /// （由后端反算，wire 上 price_cents = None）。
@@ -553,13 +553,7 @@ fn fund_holdings_show_market_value_and_unrealized_pnl() {
     )
     .unwrap();
 
-    let now = ledger_infra::db::now_iso();
-    conn.execute(
-        "INSERT INTO market_prices (id,instrument_id,price_cents,currency_code,priced_at,nav_date,source,created_at,updated_at,version,device_id) \
-         VALUES (?1,?2,10800,'CNY',?3,'2026-01-19',NULL,?4,?5,?6,?7)",
-        params![ledger_infra::db::new_uuid(), "inst-holding", now, now, now, 1, "test"],
-    )
-    .unwrap();
+    seed_fund_market_price(&conn, "inst-holding", 10_800, "CNY", "2026-01-19", None);
 
     let (quantity, cost_basis, market_value, unrealized): (f64, i64, i64, i64) = conn
         .query_row(

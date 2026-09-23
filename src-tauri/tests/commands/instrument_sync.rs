@@ -398,7 +398,7 @@ fn bulk_degradation_fact_reaches_the_ipc_result() {
     app.manage(db::open_db_in(&dir).expect("文件库应可开"));
 
     // 静态基线：一只场外基金（fund + 6 位真实代码 → 净值分区，issue #1060 判定
-    // 单点；直插 SQL 为域测试同款先例，ADR-0084 造数纪律）。
+    // 单点；现价水位经统一测试工厂种子，ADR-0084 造数纪律）。
     let conn = app.state::<DbState>().conn.clone();
     {
         let guard = conn.lock().expect("种子写入锁应可取");
@@ -418,13 +418,14 @@ fn bulk_degradation_fact_reaches_the_ipc_result() {
             .expect("种子基金类型应落库");
         // 现价缓存水位 + 历史序列：非首刷、水位同日 → 净值面命中即「无新净值」，
         // 整只零逐只请求（fund_nav 的 bulk_decision 判据）。
-        guard
-            .execute(
-                "INSERT INTO market_prices (id,instrument_id,price_cents,currency_code,priced_at,nav_date,source,created_at,updated_at,version,device_id) \
-                 VALUES ('mp-1','inst-fund',33480,'CNY','2026-01-30','2026-01-30','eastmoney','2026-01-30T00:00:00Z','2026-01-30T00:00:00Z',1,'test')",
-                [],
-            )
-            .expect("种子现价缓存应落库");
+        tauri_app_lib::test_support::seed_fund_market_price(
+            &guard,
+            "inst-fund",
+            33_480,
+            "CNY",
+            "2026-01-30",
+            Some("eastmoney"),
+        );
         tauri_app_lib::test_support::seed_price_history(
             &guard,
             "ph-1",

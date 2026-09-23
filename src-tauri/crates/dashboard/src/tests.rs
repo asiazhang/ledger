@@ -3,38 +3,15 @@
 //! `tauri_app_lib::test_support::snapshot_probe`；域内测试目标随本票立项，
 //! 其余纯读聚合仍由根包侧三层测试覆盖（壳层命令集成与 e2e BDD）。
 
-use rusqlite::Connection;
-
 use ledger_transaction::amount::TransactionKind;
 use ledger_transaction::{TransactionInput, create_transaction_internal};
 
 use crate::query_dashboard_overview;
 use tauri_app_lib::test_support::snapshot_probe::{self, InjectionOutcome};
 use tauri_app_lib::test_support::{
-    ScratchDir, open_file, seed_account, seed_exchange_rate, seed_fx_history_weeks, seed_instrument,
+    ScratchDir, open_file, seed_account, seed_exchange_rate, seed_fx_history_weeks,
+    seed_instrument, seed_market_price,
 };
-
-/// 种入标的当前行情（现价缓存单行，`v_holdings` 据此算持仓腿市值）。现价是
-/// market_prices 单行，不在种子工厂登记处，按既有投资域测试先例裸插。
-fn seed_market_price(conn: &Connection, instrument_id: &str, price_cents: i64, currency: &str) {
-    let now = ledger_infra::db::now_iso();
-    conn.execute(
-        "INSERT INTO market_prices (id,instrument_id,price_cents,currency_code,priced_at,source,created_at,updated_at,version,device_id) \
-         VALUES (?1,?2,?3,?4,?5,NULL,?6,?7,?8,?9)",
-        rusqlite::params![
-            ledger_infra::db::new_uuid(),
-            instrument_id,
-            price_cents,
-            currency,
-            now,
-            now,
-            now,
-            1,
-            "test"
-        ],
-    )
-    .unwrap();
-}
 
 /// 买入输入（价格权威形态：金额 = 数量 × 单价 + 手续费；先例：投资域测试
 /// common 的同名构造器，域特有形态不上收工厂）。

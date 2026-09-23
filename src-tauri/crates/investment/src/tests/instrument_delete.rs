@@ -8,7 +8,7 @@ use ledger_transaction::create_transaction_internal;
 
 use super::super::*;
 use super::common::*;
-use tauri_app_lib::test_support::{open, seed_account};
+use tauri_app_lib::test_support::{open, seed_account, seed_market_price};
 
 fn count_instruments(conn: &Connection, id: &str) -> i64 {
     conn.query_row(
@@ -34,12 +34,7 @@ fn delete_manual_instrument_without_trades_succeeds() {
         "manual",
     );
     // 现价缓存行（手动报价通道可落）应随标的删除级联消失。
-    conn.execute(
-        "INSERT INTO market_prices (id,instrument_id,price_cents,currency_code,priced_at,created_at,updated_at,version,device_id) \
-         VALUES ('mp-1','inst-manual-1',13180,'CNY','2026-08-28','2026-08-28T00:00:00Z','2026-08-28T00:00:00Z',1,'test')",
-        [],
-    )
-    .unwrap();
+    seed_market_price(&conn, "inst-manual-1", 13_180, "CNY");
 
     delete_instrument(&conn, "inst-manual-1").unwrap();
 

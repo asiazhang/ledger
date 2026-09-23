@@ -15,6 +15,7 @@ use super::super::*;
 use super::common::*;
 use tauri_app_lib::test_support::{
     open, seed_account, seed_exchange_rate, seed_fx_history_weeks, seed_instrument,
+    seed_market_price,
 };
 
 /// 币种显式的买入输入构造器（`make_buy_input` 固定 USD，多币种账户按守卫要求
@@ -31,33 +32,6 @@ fn make_buy_input_in(
         currency_code: currency.into(),
         ..make_buy_input(account_id, instrument_id, qty, price, fee)
     }
-}
-
-/// 种入标的当前行情（现价缓存单行，`v_holdings` 据此算市值与未实现盈亏；
-/// 与 cumulative_pnl 测试同款裸插先例）。
-fn seed_market_price(
-    conn: &rusqlite::Connection,
-    instrument_id: &str,
-    price_cents: i64,
-    currency: &str,
-) {
-    let now = ledger_infra::db::now_iso();
-    conn.execute(
-        "INSERT INTO market_prices (id,instrument_id,price_cents,currency_code,priced_at,source,created_at,updated_at,version,device_id) \
-         VALUES (?1,?2,?3,?4,?5,NULL,?6,?7,?8,?9)",
-        rusqlite::params![
-            ledger_infra::db::new_uuid(),
-            instrument_id,
-            price_cents,
-            currency,
-            now,
-            now,
-            now,
-            1,
-            "test"
-        ],
-    )
-    .unwrap();
 }
 
 fn totals_for(groups: &[CurrencyHoldingTotals], currency: &str) -> (Option<i64>, Option<i64>) {
