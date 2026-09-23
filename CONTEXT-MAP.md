@@ -30,6 +30,7 @@ Ledger 的领域词汇表按自然域拆分：本文件列出全部分域、各�
 | 12 | 测试基础设施 | [`docs/contexts/CONTEXT-testing.md`](docs/contexts/CONTEXT-testing.md) | invoke 测试接缝、defaults 表、overrides 表、未命中报错、参考数据预热、清理四件套、消息替身稳定实例、目录级测试薄壳、行为等价判据（ADR-0085）；测试世界、步骤输入工厂、步骤动词、快照分组、公开写入口（测试侧）（ADR-0086）；测试三层与权威层、壳三件套、接线证明、错误码契约代表（ADR-0087）；断言强度、双断言、矩阵、存在性断言、组件测试数据工厂 |
 | 13 | 多端同步 | [`docs/contexts/CONTEXT-sync.md`](docs/contexts/CONTEXT-sync.md) | Sync、Transport、OpLog、DomainCommand、Replay、DeviceId、TotalOrder、OccurrenceKey、ParkedOp、Checkpoint、SyncEnvelope、SyncBoundary（ADR-0091） |
 | 14 | 应用更新 | [`docs/contexts/CONTEXT-app-update.md`](docs/contexts/CONTEXT-app-update.md) | 自动更新（Auto Update）、更新检查、更新清单、更新工件、更新签名（ADR-0124） |
+| 15 | 储蓄目标 | [`docs/contexts/CONTEXT-savings-goal.md`](docs/contexts/CONTEXT-savings-goal.md) | 储蓄目标（SavingsGoal）、目标账户、蓄水进度、预计达成时间（ETA）、所需月存、达成与归档、养老测算 |
 
 ## 域间关系
 
@@ -50,3 +51,4 @@ Ledger 的领域词汇表按自然域拆分：本文件列出全部分域、各�
 - **多端同步 → 经写入接缝重放各域语义命令**：同步域不定义业务语义，op 载荷就是各域既有写入命令，重放是行为编排之外的第 N 写入入口（ADR-0091）；与备份域相邻——SyncEnvelope 复用加密模式 / 主口令，但备份 ≠ 同步（快照还原 vs 增量合并）。期次去重与同步边界细节见同步域词条。
 - **实物资产（单列小域）→ 核心交易（只消费不产流水）**：PhysicalAsset 是大件实物的估值档案，与物品域 Item 按「要不要跟踪市值」互斥分家；金额折算走核心域 Amount 接缝、币种复用核心域字典。估值机制、净资产口径与 MVP 边界见实物资产域词条（ADR-0064）。
 - **应用更新（单列小域）→ 壳层机制，与备份域相邻**：自动更新不持账本语义，后端与前端面归壳层（不立业务域 crate 与壳内域目录，ADR-0111 归位判据；决策集合见 ADR-0124）；安装前经备份域更新前备份，自动检查开关与提醒记忆是设备偏好（见参考设置域轻量设置项），提醒弹层消费界面域弹层编排；与多端同步域无交叉——更新分发应用本体，不分发账本数据。
+- **储蓄目标（单列小域）→ 核心交易 + 定时计划**：蓄水与取出是真实 `transfer` / `expense` 流水，进度即专属账户余额（ADR-0133）；月存节奏复用定时转账（ScheduledTransfer）形态，目标域零新写入路径；与预算互不扣减——预算管花、目标管攒；账户身份由绑定派生、不复用账户类型闭集（黑洞先例）。
