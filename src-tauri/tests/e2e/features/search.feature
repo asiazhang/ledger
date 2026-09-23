@@ -1,7 +1,7 @@
 Feature: 交易搜索
   用户通过关键字检索交易：匹配语义为统一模糊搜索规格（issue #195，ADR-0027）——
   输入按空白切词、词条 AND；每词条命中 = 备注或转出账户名或商户名的原文连续子串
-  （大小写不敏感）∨ 该字段拼音首字母串的子序列（大小写不敏感；商户名由 issue #193 纳入）。
+  （大小写不敏感；拼音首字母子序列匹配已随 #1727 拼音退役拆除，下拉侧拼音可搜不受影响）。
   实现为 SQL 下推匹配（issue #515，ADR-0027 修订：词条匹配与软删口径在 SQL WHERE
   完成、覆盖索引 index-only 全扫），写入立即可搜；
   结果按交易日期降序、服务端分页，覆盖全部交易类型与黑洞账户交易（口径与交易列表一致）。
@@ -17,33 +17,13 @@ Feature: 交易搜索
     Then 搜索命中 1 条 总数 1
     And 搜索结果第 1 条备注应为 "午餐外卖"
 
-  Scenario: 拼音首字母子序列命中（跳字与不跳字均可）
-    Given 存在账户 "现金" 类型 "cash" 币种 "CNY"
-    When 创建交易 类型 "expense" 金额 1500 到账户 "现金" 日期 "2026-02-01" 备注 "万科物业费"
-    When 搜索 "wkwy"
-    Then 搜索命中 1 条 总数 1
-    When 搜索 "wy"
-    Then 搜索命中 1 条 总数 1
-    When 搜索 "yw"
-    Then 搜索命中 0 条
-
-  Scenario: 账户名拼音首字母命中（多音字修正 银行→yh）
-    Given 存在账户 "招商银行" 类型 "bank" 币种 "CNY"
-    When 创建交易 类型 "income" 金额 5000 到账户 "招商银行" 日期 "2026-02-01"
-    When 搜索 "zsyh"
-    Then 搜索命中 1 条 总数 1
-    When 搜索 "yh"
-    Then 搜索命中 1 条 总数 1
-
-  Scenario: 商户名原文与拼音首字母命中（issue #193）
+  Scenario: 商户名原文命中（issue #193）
     Given 存在账户 "现金" 类型 "cash" 币种 "CNY"
     And 存在商户 "京东"
     When 创建交易 类型 "expense" 金额 1500 到账户 "现金" 日期 "2026-02-01" 商户 "京东"
     When 搜索 "京东"
     Then 搜索命中 1 条 总数 1
     And 搜索结果第 1 条商户应为 "京东"
-    When 搜索 "jd"
-    Then 搜索命中 1 条 总数 1
     When 搜索 "拼多多"
     Then 搜索命中 0 条
 
@@ -53,8 +33,6 @@ Feature: 交易搜索
     When 创建交易 类型 "expense" 金额 1500 到账户 "现金" 日期 "2026-02-01" 商户 "京东"
     And 软删商户 "京东"
     When 搜索 "京东"
-    Then 搜索命中 1 条 总数 1
-    When 搜索 "jd"
     Then 搜索命中 1 条 总数 1
 
   Scenario: 商户改名后按新名即刻可搜（无索引刷新步骤）
@@ -68,23 +46,21 @@ Feature: 交易搜索
     When 搜索 "物美超市"
     Then 搜索命中 2 条 总数 2
     And 搜索结果第 1 条商户应为 "物美超市"
-    When 搜索 "wmcs"
-    Then 搜索命中 2 条 总数 2
 
   Scenario: 大小写不敏感
     Given 存在账户 "现金" 类型 "cash" 币种 "CNY"
-    When 创建交易 类型 "expense" 金额 1500 到账户 "现金" 日期 "2026-02-01" 备注 "吃饭"
-    When 搜索 "cf"
+    When 创建交易 类型 "expense" 金额 1500 到账户 "现金" 日期 "2026-02-01" 备注 "ATM转账"
+    When 搜索 "atm"
     Then 搜索命中 1 条 总数 1
-    When 搜索 "CF"
+    When 搜索 "ATM"
     Then 搜索命中 1 条 总数 1
 
-  Scenario: ASCII 原样保留（abcyh 命中 ABC银行）
+  Scenario: ASCII 大小写折叠（abc 命中 ABC银行）
     Given 存在账户 "ABC银行" 类型 "bank" 币种 "CNY"
     When 创建交易 类型 "income" 金额 5000 到账户 "ABC银行" 日期 "2026-02-01"
-    When 搜索 "abcyh"
+    When 搜索 "abc"
     Then 搜索命中 1 条 总数 1
-    When 搜索 "ABCYH"
+    When 搜索 "ABC"
     Then 搜索命中 1 条 总数 1
 
   Scenario: 中英混合词条走原文子串路径

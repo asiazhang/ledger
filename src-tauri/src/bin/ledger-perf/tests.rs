@@ -25,9 +25,7 @@ use ledger_merchants as merchants;
 use ledger_scheduled as scheduled_transactions;
 use ledger_transaction::TransactionListFilter;
 use ledger_transaction::amount::TransactionKind;
-use ledger_transaction::pinyin_initials;
 use ledger_transaction::read::{get_transaction, list_transactions};
-use ledger_transaction::search_transactions_internal;
 use tauri_app_lib::test_support::{self, FIXED_NOW};
 
 use super::bench::{self, BenchCli, BenchConfig, BenchMetrics};
@@ -78,13 +76,12 @@ fn bench_smoke_runs_all_benchmarks() {
             warmup: 0,
             iterations: 2,
             search_term: "咖啡".to_string(),
-            pinyin_search_term: "kf".to_string(),
             books_dir: books::attached_books_root(&path),
         },
     )
     .unwrap();
 
-    // 名单钉住：16 项基准一个不少、顺序稳定（增删基准必须显式更新本断言）。
+    // 名单钉住：15 项基准一个不少、顺序稳定（增删基准必须显式更新本断言）。
     let names: Vec<&str> = results.iter().map(|r| r.name).collect();
     assert_eq!(
         names,
@@ -97,7 +94,6 @@ fn bench_smoke_runs_all_benchmarks() {
             "分类占比",
             "商户占比",
             "备注搜索拼音过滤",
-            "备注搜索拼音子序列",
             "净资产总览",
             "持仓列表",
             "时点持仓",
@@ -118,8 +114,7 @@ fn bench_smoke_runs_all_benchmarks() {
         assert!(r.p95_ms >= r.min_ms, "基准 {} p95 应不小于 min", r.name);
         assert!(!r.context.is_empty(), "基准 {} 应携带规模备注", r.name);
     }
-    // 两条搜索基准都确实产出命中：中文子串基准（「咖啡」，生成器备注池保证）
-    // 与拼音子序列基准（「kf」，命中「买咖啡」mkf 等）各自驱动一条匹配路径。
+    // 中文子串搜索基准确实产出命中（「咖啡」，生成器备注池保证）。
     let search = results
         .iter()
         .find(|r| r.name == "备注搜索拼音过滤")
@@ -128,15 +123,6 @@ fn bench_smoke_runs_all_benchmarks() {
         search.context.contains("命中"),
         "搜索基准备注应含命中数：{}",
         search.context
-    );
-    let pinyin_search = results
-        .iter()
-        .find(|r| r.name == "备注搜索拼音子序列")
-        .unwrap();
-    assert!(
-        pinyin_search.context.contains("命中"),
-        "拼音子序列基准备注应含命中数：{}",
-        pinyin_search.context
     );
     // 跨账本基准确实逐本计入：附属账本全数 + 主库（夹具完整形态的规模备注）。
     let cross_book = results.iter().find(|r| r.name == "跨账本投资汇总").unwrap();
@@ -163,7 +149,6 @@ fn bench_fails_fast_when_attached_books_missing() {
             warmup: 0,
             iterations: 1,
             search_term: "咖啡".to_string(),
-            pinyin_search_term: "kf".to_string(),
             books_dir: books::attached_books_root(&path),
         },
     )
@@ -257,33 +242,6 @@ fn attached_books_deterministic_across_regenerations() {
         d0["transactions"], d1["transactions"],
         "种子派生应使各附属账本内容互不相同"
     );
-}
-
-/// 拼音子序列基准关键字的数据前提（issue #514）：关键字不构成任何备注原文
-/// 子串（否则基准退化为子串路径、测不到拼音匹配），且经拼音首字母子序列在
-/// 生成库上有真实命中（基准项有内容可测）。
-#[test]
-fn pinyin_bench_keyword_hits_only_via_pinyin_path() {
-    let (_dir, path) = temp_db("pinyin-kf");
-    build(&path, 4_000, NaiveDate::from_ymd_opt(2025, 12, 31).unwrap());
-    let conn = open_connection(&path).unwrap();
-
-    // 「kf」不是任何备注（含软删行）的原文子串：语料全为中文/无 kf 的英文词。
-    let kf_substring_notes: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM transactions WHERE note LIKE '%kf%'",
-            [],
-            |r| r.get(0),
-        )
-        .unwrap();
-    assert_eq!(
-        kf_substring_notes, 0,
-        "备注语料不应含关键字原文子串（否则基准测不到拼音路径）"
-    );
-
-    // 同一关键字经搜索有真实命中（「买咖啡」→ mkf 等拼音首字母子序列）。
-    let hits = search_transactions_internal(&conn, "kf", 1, 20, None, None, None, None).unwrap();
-    assert!(hits.total > 0, "拼音子序列关键字应在生成库上有真实命中");
 }
 
 // ---------------------------------------------------------------------------
@@ -671,7 +629,7 @@ USAGE:
 SUBCOMMANDS:
     generate      生成性能基准数据集（默认 50 万笔 Transaction 的多域画像 SQLite
                   库 + 2 本附属账本小库，issue #1630）
-    bench         查询基准——16 项查询 × min/avg/p95 报告（issue #461）
+    bench         查询基准——15 项查询 × min/avg/p95 报告（issue #461）
     bench-import  批量导入写基准——固定行数 × 两种分布 × 总耗时/单行均摊 p95
                   （issue #532，纯观测无门禁）
     bench-sync    同步重放写基准——op 流重放（ingest_ops/apply_ops 权威入口）×
@@ -686,7 +644,6 @@ bench OPTIONS:
     --iterations <N>         每项基准计时迭代次数（默认 20，n=20 才成真 p95 分位
                              数）
     --search <TERM>          中文子串搜索基准的关键字（默认 咖啡）
-    --search-pinyin <TERM>   拼音子序列搜索基准的关键字（默认 kf）
     --max-p95-ms <MS>        默认门禁阈值（毫秒）：全部基准 p95 ≤ 各自阈值才退
                              出 0，任何一项超标即失败（CI 用；缺省不判定；分项例
                              外机制与现行清单见 ADR-0068）
@@ -774,7 +731,7 @@ fn help_renders_every_flag_registered_in_tables() {
 /// 逐子命令合法 flag 名单（测试侧名单钉住，issue #1696 删除即变红②）：与
 /// flag 表双向全等——表内增删未同步名单即红；名单中的 flag 未登记表（想要
 /// 的新 flag 忘了登记）→ 下面的解析矩阵报「未知参数」变红。名单是独立于
-/// 生产表的测试侧期望（同 16 项基准名单钉住的先例形态）。
+/// 生产表的测试侧期望（同 15 项基准名单钉住的先例形态）。
 const EXPECTED_FLAGS: &[(&str, &[&str])] = &[
     (
         "generate",
@@ -787,7 +744,6 @@ const EXPECTED_FLAGS: &[(&str, &[&str])] = &[
             "--warmup",
             "--iterations",
             "--search",
-            "--search-pinyin",
             "--max-p95-ms",
         ],
     ),
@@ -931,9 +887,8 @@ fn bench_help_pins_default_values() {
             format!("默认 {}", d.warmup),
             format!("默认 {}", d.iterations),
             format!("默认 {}", d.search),
-            format!("默认 {}", d.search_pinyin),
         ],
-        ["默认 3", "默认 20", "默认 咖啡", "默认 kf"]
+        ["默认 3", "默认 20", "默认 咖啡"],
     );
     assert_eq!(
         d.max_p95_ms, None,
@@ -947,7 +902,6 @@ fn bench_help_pins_default_values() {
             ("--warmup <N>", "默认 3"),
             ("--iterations <N>", "默认 20"),
             ("--search <TERM>", "默认 咖啡"),
-            ("--search-pinyin <TERM>", "默认 kf"),
             ("--max-p95-ms <MS>", "缺省不判定"),
         ],
     );
@@ -1055,8 +1009,6 @@ fn bench_cli_projects_into_config_via_from() {
         "9",
         "--search",
         "牛奶",
-        "--search-pinyin",
-        "wy",
     ])
     .unwrap();
     let db = cli.db.clone();
@@ -1064,7 +1016,6 @@ fn bench_cli_projects_into_config_via_from() {
     assert_eq!(cfg.warmup, 7);
     assert_eq!(cfg.iterations, 9);
     assert_eq!(cfg.search_term, "牛奶");
-    assert_eq!(cfg.pinyin_search_term, "wy");
     assert_eq!(
         cfg.books_dir,
         books::attached_books_root(&db),
@@ -1161,14 +1112,6 @@ fn bench_cli_gate_option_parses_and_defaults_off() {
     let cli = parse_bench_cli(&["--max-p95-ms=200.5"]).unwrap();
     assert_eq!(cli.max_p95_ms, Some(200.5));
 
-    // 拼音子序列基准关键字：默认 kf，可覆盖。
-    let cli = parse_bench_cli(&[]).unwrap();
-    assert_eq!(cli.search_pinyin, "kf", "拼音子序列关键字默认 kf");
-    let cli = parse_bench_cli(&["--search-pinyin", "mkf"]).unwrap();
-    assert_eq!(cli.search_pinyin, "mkf");
-    let cli = parse_bench_cli(&["--search-pinyin=wy"]).unwrap();
-    assert_eq!(cli.search_pinyin, "wy");
-
     for bad in ["abc", "-1", "0", "NaN", "inf"] {
         assert!(
             parse_bench_cli(&["--max-p95-ms", bad]).is_err(),
@@ -1241,10 +1184,11 @@ fn gate_failures_lists_only_over_threshold_items() {
 #[test]
 fn gate_search_benchmarks_on_default_line_after_exception_revoked() {
     // 分项例外已撤销（ADR-0068 修订，issue #516）：搜索 SQL 下推落地后 CI
-    // 实测（run 33890569837）备注搜索两条路径 p95 69.52ms / 82.21ms，对默认
-    // 线余量 2.9×/2.4×，高于最慢默认线项的余量——400ms 全量扫描型例外存在
-    // 的前提（Rust 逐行全扫、计算模型异于索引加速项，ADR-0027）已消失，
-    // 全部基准统一适用默认线：历史全扫口径实测值 313ms 若复现即门禁红。
+    // 实测（run 33890569837）备注搜索 p95 69.52ms，对默认线余量 2.9×，高于
+    // 最慢默认线项的余量——400ms 全量扫描型例外存在的前提（Rust 逐行全扫、
+    // 计算模型异于索引加速项，ADR-0027）已消失，全部基准统一适用默认线：
+    // 历史全扫口径实测值 313ms 若复现即门禁红。拼音子序列基准项随 #1727
+    // 拼音退役出集（ADR-0068 修订），仅存中文子串基准仍受默认线管辖。
     let mk = |name: &'static str, p95: f64| BenchMetrics {
         name,
         context: String::new(),
@@ -1254,28 +1198,22 @@ fn gate_search_benchmarks_on_default_line_after_exception_revoked() {
         iterations: 20,
     };
     let results = vec![
-        mk("列表首页分页", 250.0),       // > 默认线 200 → 失败
-        mk("备注搜索拼音过滤", 313.0),   // 历史全扫 CI 实测值：无例外 → 默认线 → 失败
-        mk("备注搜索拼音子序列", 313.0), // 同上，两条搜索路径不再有分项线
-        mk("月度汇总", 313.0),           // 名字不在例外表 → 回落默认线 → 失败
+        mk("列表首页分页", 250.0),     // > 默认线 200 → 失败
+        mk("备注搜索拼音过滤", 313.0), // 历史全扫 CI 实测值：无例外 → 默认线 → 失败
+        mk("月度汇总", 313.0),         // 名字不在例外表 → 回落默认线 → 失败
     ];
     assert_eq!(
         bench::gate_failures(&results, 200.0),
         vec![
             "列表首页分页（p95 250.00ms > 阈值 200ms）",
             "备注搜索拼音过滤（p95 313.00ms > 阈值 200ms）",
-            "备注搜索拼音子序列（p95 313.00ms > 阈值 200ms）",
             "月度汇总（p95 313.00ms > 阈值 200ms）",
         ],
         "例外表为空：搜索基准与其它基准共用默认线，逐项判定含各自阈值"
     );
 
     // 本轮 CI 实测口径（run 33890569837，含当时最慢默认线项）：全部达标。
-    let measured = vec![
-        mk("备注搜索拼音过滤", 69.52),
-        mk("备注搜索拼音子序列", 82.21),
-        mk("分类占比", 99.12),
-    ];
+    let measured = vec![mk("备注搜索拼音过滤", 69.52), mk("分类占比", 99.12)];
     assert!(bench::gate_failures(&measured, 200.0).is_empty());
 
     // 例外表钉住：当前为空（撤销后状态）；未来增删分项例外必须显式更新本
@@ -1285,58 +1223,6 @@ fn gate_search_benchmarks_on_default_line_after_exception_revoked() {
         bench::PER_BENCH_MAX_P95_MS.is_empty(),
         "分项例外表应恰为 ADR-0068 声明的清单（当前为空）"
     );
-}
-
-// ---------------------------------------------------------------------------
-// note_pinyin 画像对齐（issue #514：generate 补填派生列，与真实库同口径）
-// ---------------------------------------------------------------------------
-
-#[test]
-fn generated_note_pinyin_matches_writer_rule() {
-    let (_dir, path) = temp_db("note-pinyin");
-    build(&path, 2_000, NaiveDate::from_ymd_opt(2025, 12, 31).unwrap());
-    let conn = open_connection(&path).unwrap();
-
-    // 与真实库同口径：有备注的行已填（无积压）、无备注的行恒 NULL
-    //（Writer 接缝同写维护的派生列口径；软删行同样已填，与删除无关）。
-    let backlog: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM transactions WHERE note IS NOT NULL AND note_pinyin IS NULL",
-            [],
-            |r| r.get(0),
-        )
-        .unwrap();
-    assert_eq!(
-        backlog, 0,
-        "有备注的行必须已填 note_pinyin（generate 不得依赖 bench 预热回填）"
-    );
-    let orphan: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM transactions WHERE note IS NULL AND note_pinyin IS NOT NULL",
-            [],
-            |r| r.get(0),
-        )
-        .unwrap();
-    assert_eq!(orphan, 0, "无备注的行 note_pinyin 应为 NULL");
-
-    // 逐行与 Writer 同一规则（pinyin_initials）一致；note_pinyin 无既有读 API
-    //（内部派生列），按既有纪律以原生 SQL 观察。
-    let mut stmt = conn
-        .prepare("SELECT note, note_pinyin FROM transactions WHERE note IS NOT NULL")
-        .unwrap();
-    let mut rows = stmt.query([]).unwrap();
-    let mut checked = 0;
-    while let Some(row) = rows.next().unwrap() {
-        let note: String = row.get(0).unwrap();
-        let pinyin: String = row.get(1).unwrap();
-        assert_eq!(
-            pinyin,
-            pinyin_initials(&note),
-            "note_pinyin 应与 pinyin_initials 规则一致：{note}"
-        );
-        checked += 1;
-    }
-    assert!(checked > 0, "应存在有备注的行可校验");
 }
 
 // ---------------------------------------------------------------------------

@@ -122,8 +122,6 @@ pub struct TransactionSearchResult {
     pub total: i64,
 }
 
-/// 备注拼音回填失败阶段（issue #513）：报告内可本地化的失败位置——
-/// 积压探测 / 读取积压行 / 开启批事务 / 写入批内行 / 提交批事务。
 #[derive(Debug, Serialize, ToSchema)]
 pub struct TransactionListResult {
     pub items: Vec<Transaction>,

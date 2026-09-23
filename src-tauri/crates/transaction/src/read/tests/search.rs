@@ -14,7 +14,6 @@ use tauri_app_lib::ledger_transaction::read::search::{
 use tauri_app_lib::ledger_transaction::shared::search_text::{
     is_subsequence, pinyin_initials, split_terms, term_matches, term_matches_text,
 };
-use tauri_app_lib::ledger_transaction::write::writer::{NormalizedRow, insert_row, update_row};
 use tauri_app_lib::test_support;
 
 /// 无筛选搜索（第 1 页、每页 20 条）。
@@ -267,13 +266,6 @@ fn search_matches_merchant_name_and_initials() {
     let res = search(&conn, "京东").unwrap();
     assert_eq!(res.total, 1);
     assert_eq!(res.items[0].id, "t1");
-    // 商户名拼音首字母子序列：jd 命中「京东」，wkwy 命中「万科物业」（无索引，写入立即可搜）
-    let res = search(&conn, "jd").unwrap();
-    assert_eq!(res.total, 1);
-    assert_eq!(res.items[0].id, "t1");
-    let res = search(&conn, "wkwy").unwrap();
-    assert_eq!(res.total, 1);
-    assert_eq!(res.items[0].id, "t2");
     // 无商户交易不受影响：备注命中
     let res = search(&conn, "购物").unwrap();
     assert_eq!(res.total, 1);
@@ -293,8 +285,6 @@ fn search_soft_deleted_merchant_still_searchable() {
         .unwrap();
     let res = search(&conn, "京东").unwrap();
     assert_eq!(res.total, 1);
-    let res = search(&conn, "jd").unwrap();
-    assert_eq!(res.total, 1);
 }
 
 #[test]
@@ -309,10 +299,8 @@ fn merchant_rename_takes_effect_immediately() {
     // 旧名不再命中
     let res = search(&conn, "京东").unwrap();
     assert_eq!(res.total, 0);
-    // 新名与新名首字母即刻命中
+    // 新名即刻命中
     let res = search(&conn, "物美超市").unwrap();
-    assert_eq!(res.total, 1);
-    let res = search(&conn, "wmcs").unwrap();
     assert_eq!(res.total, 1);
 }
 
@@ -324,15 +312,15 @@ fn search_multi_term_combines_merchant_and_note() {
     insert_merchant(&conn, "m1", "京东");
     insert_txn_merchant(&conn, "t1", "a1", Some("m1"), Some("键盘"), "2026-02-01");
     insert_txn_merchant(&conn, "t2", "a1", Some("m1"), Some("鼠标"), "2026-02-02");
-    let res = search(&conn, "jd 键盘").unwrap();
+    let res = search(&conn, "京东 键盘").unwrap();
     assert_eq!(res.total, 1);
     assert_eq!(res.items[0].id, "t1");
-    let res = search(&conn, "jd 显示器").unwrap();
+    let res = search(&conn, "京东 显示器").unwrap();
     assert_eq!(res.total, 0);
 }
 
 #[test]
-fn search_matches_note_substring_and_account_initials() {
+fn search_matches_note_substring_and_account_name() {
     let conn = test_support::open();
     test_support::seed_account(&conn, "a1", "招商银行", "bank", "CNY", 0);
     test_support::seed_account(&conn, "a2", "现金", "cash", "CNY", 0);
@@ -342,13 +330,10 @@ fn search_matches_note_substring_and_account_initials() {
     let res = search(&conn, "外卖").unwrap();
     assert_eq!(res.total, 1);
     assert_eq!(res.items[0].id, "t1");
-    // 账户名拼音首字母（无索引，写入立即可搜）
-    let res = search(&conn, "zsyh").unwrap();
+    // 账户名原文子串（t1 挂「招商银行」账户）
+    let res = search(&conn, "招商").unwrap();
     assert_eq!(res.total, 1);
     assert_eq!(res.items[0].id, "t1");
-    // 备注首字母子序列（午餐外卖 → wcwm，wm 为其子序列且非原文子串）
-    let res = search(&conn, "wm").unwrap();
-    assert_eq!(res.total, 1);
 }
 
 #[test]
@@ -363,7 +348,7 @@ fn search_multi_term_and_combination() {
     assert_eq!(res.total, 1);
     assert_eq!(res.items[0].id, "t1");
     // 第二词条命中不同字段（账户名）
-    let res = search(&conn, "午餐 zsyh").unwrap();
+    let res = search(&conn, "午餐 招商银行").unwrap();
     assert_eq!(res.total, 1);
     assert_eq!(res.items[0].id, "t2");
     // 无交集
@@ -634,11 +619,11 @@ fn account_rename_takes_effect_immediately() {
     let conn = test_support::open();
     test_support::seed_account(&conn, "a1", "现金", "cash", "CNY", 0);
     insert_txn(&conn, "t1", "a1", None, Some("午餐"), "2026-02-01");
-    let res = search(&conn, "zsyh").unwrap();
+    let res = search(&conn, "招商银行").unwrap();
     assert_eq!(res.total, 0);
     conn.execute("UPDATE accounts SET name='招商银行' WHERE id='a1'", [])
         .unwrap();
-    let res = search(&conn, "zsyh").unwrap();
+    let res = search(&conn, "招商银行").unwrap();
     assert_eq!(res.total, 1);
 }
 
@@ -660,139 +645,6 @@ fn category_rename_does_not_affect_search() {
 // -----------------------------------------------------------------------
 // 流式分页（见 ADR-0027 修订记录）：较大数据量下分页无重复、无遗漏、total 精确
 // -----------------------------------------------------------------------
-
-// -----------------------------------------------------------------------
-// V018 两段式取行：拼音冗余列 + 惰性回填（issue #492，语义与 ADR-0027 验收口径零变更）
-// -----------------------------------------------------------------------
-
-/// 指定备注拼音列的存量交易（其余列与 `insert_txn` 一致）：
-/// note_pinyin = None 模拟 V018 之前的老行（升级后列为 NULL），Some(str) 模拟脏值。
-fn insert_txn_note_pinyin(
-    conn: &Connection,
-    id: &str,
-    account_id: &str,
-    note: Option<&str>,
-    date: &str,
-    note_pinyin: Option<&str>,
-) {
-    conn.execute(
-        "INSERT INTO transactions \
-         (id,kind,amount_cents,currency_code,amount_native_cents,account_id,to_account_id,\
-         category_id,refund_of_transaction_id,note,note_pinyin,date,created_at,updated_at,version,device_id,is_deleted) \
-         VALUES (?1,'expense',1000,'CNY',1000,?2,NULL,NULL,NULL,?3,?4,?5,?6,?6,1,'test',0)",
-        rusqlite::params![id, account_id, note, note_pinyin, date, test_support::FIXED_NOW],
-    )
-    .unwrap();
-}
-
-fn note_pinyin_of(conn: &Connection, id: &str) -> Option<String> {
-    conn.query_row(
-        "SELECT note_pinyin FROM transactions WHERE id=?1",
-        rusqlite::params![id],
-        |r| r.get(0),
-    )
-    .unwrap()
-}
-
-/// Writer 接缝维护冗余列：创建/修改随 note 同写同换，NULL note → NULL。
-/// 搜索语义不受影响（该列只是匹配加速的派生数据）。
-#[test]
-fn writer_seam_populates_note_pinyin_on_insert_and_update() {
-    let conn = test_support::open();
-    test_support::seed_account(&conn, "a1", "现金", "cash", "CNY", 0);
-    let row = NormalizedRow {
-        kind: tauri_app_lib::ledger_transaction::TransactionKind::Expense,
-        amount_cents: 1000,
-        currency_code: "CNY".into(),
-        amount_native_cents: 1000,
-        fx_rate_used: None,
-        fx_rate_source: None,
-        account_id: "a1".into(),
-        to_account_id: None,
-        category_id: None,
-        merchant_id: None,
-        policy_id: None,
-        refund_of_transaction_id: None,
-        funding_account_id: None,
-        note: Some("万科物业".into()),
-        date: "2026-02-01".into(),
-    };
-    let id = insert_row(&conn, &row).unwrap();
-    assert_eq!(note_pinyin_of(&conn, &id).as_deref(), Some("wkwy"));
-
-    // 修改随新 note 重算。
-    let mut new_row = row.clone();
-    new_row.note = Some("招商银行".into());
-    update_row(&conn, &id, &new_row).unwrap();
-    assert_eq!(note_pinyin_of(&conn, &id).as_deref(), Some("zsyh"));
-
-    // 清空备注 → 冗余列同步置 NULL。
-    let mut empty_note = row.clone();
-    empty_note.note = None;
-    update_row(&conn, &id, &empty_note).unwrap();
-    assert_eq!(note_pinyin_of(&conn, &id), None);
-}
-
-/// 惰性回填（issue #492）：存量老行（note_pinyin NULL）搜索即命中且语义不变，
-/// 搜索后积压被分批回填；回填探针索引存在且收敛（命中集合不再变化）。
-#[test]
-fn lazy_backfill_heals_legacy_rows_on_search() {
-    let conn = test_support::open();
-    test_support::seed_account(&conn, "a1", "现金", "cash", "CNY", 0);
-    // V018 之前的存量行形态：note 有值、拼音列为 NULL。
-    insert_txn_note_pinyin(&conn, "t1", "a1", Some("万科物业"), "2026-02-01", None);
-    insert_txn_note_pinyin(&conn, "t2", "a1", Some("招商银行转账"), "2026-02-02", None);
-    // 回填探针索引存在（惰性回填的 O(1) 探测基础）。
-    let backlog_index: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type='index' \
-             AND name='idx_transactions_note_pinyin_backlog'",
-            [],
-            |r| r.get(0),
-        )
-        .unwrap();
-    assert_eq!(backlog_index, 1, "V018 应创建回填探针 partial 索引");
-
-    // 搜索即回填（回填先于下推查询，issue #515 起不再运行时现算兜底）：
-    // 拼音子序列语义立即生效，不因列缺失而漏匹配。
-    let res = search(&conn, "wy").unwrap();
-    assert_eq!(res.total, 1);
-    assert_eq!(res.items[0].id, "t1");
-    let res = search(&conn, "zsyh").unwrap();
-    assert_eq!(res.total, 1);
-    assert_eq!(res.items[0].id, "t2");
-
-    // 搜索后：积压已被惰性回填，冗余列与现算规则一致。
-    assert_eq!(note_pinyin_of(&conn, "t1").as_deref(), Some("wkwy"));
-    assert_eq!(note_pinyin_of(&conn, "t2").as_deref(), Some("zsyhzz"));
-
-    // 回填后语义不变（同一查询命中集合一致）。
-    let res = search(&conn, "wy").unwrap();
-    assert_eq!(res.total, 1);
-    assert_eq!(res.items[0].id, "t1");
-}
-
-/// 惰性回填兜底：手工脏值（拼音列与 note 不一致的行）不阻断匹配——原文子串
-/// 路径始终按 note 现判，拼音子序列路径按列判（派生列允许漂移，审计不在此）。
-#[test]
-fn search_uses_pinyin_column_for_subsequence_path() {
-    let conn = test_support::open();
-    test_support::seed_account(&conn, "a1", "现金", "cash", "CNY", 0);
-    // 列已回填：拼音子序列走列值（不逐行重算）。
-    insert_txn_note_pinyin(
-        &conn,
-        "t1",
-        "a1",
-        Some("万科物业"),
-        "2026-02-01",
-        Some("wkwy"),
-    );
-    let res = search(&conn, "wy").unwrap();
-    assert_eq!(res.total, 1);
-    // 原文子串路径不受列值影响。
-    let res = search(&conn, "物业").unwrap();
-    assert_eq!(res.total, 1);
-}
 
 /// 第一段下推查询的计划钉定（父 #489 用户故事 18 / issue #515 验收）：下推查询
 /// 必须命中 V018 搜索覆盖索引（idx_transactions_note_search，COVERING INDEX）
@@ -947,9 +799,9 @@ fn unicode_non_ascii_case_folding_is_known_boundary() {
     assert_eq!(res.total, 1);
 }
 
-/// 「不漏」等价性回归网（issue #515 验收）：以纯函数重算旧 Rust 逐行语义的
+/// 「不漏」等价性回归网（issue #515 验收）：以纯 Rust 重算现行逐行语义的
 /// 期望命中集合，断言 SQL 下推命中集合与之一致（⊇ 不遗漏且无误命中），覆盖
-/// 中文子串/拼音子序列/混合输入/多词条 AND/ASCII 大小写/数字/标点字面/
+/// 中文子串/拼音词按字面/混合输入/多词条 AND/ASCII 大小写/数字/标点字面/
 /// 软删口径/零命中/高命中。
 #[test]
 fn pushdown_hit_set_covers_row_semantics() {
@@ -1166,8 +1018,7 @@ fn pushdown_hit_set_covers_row_semantics() {
         dbtx.commit().unwrap();
     }
 
-    // 期望侧：旧 Rust 逐行语义重算（词条 AND、字段 OR、口径同搜索）。
-    // 拼音串取 pinyin_initials(note)，与 Writer/回填同规则（列值同源）。
+    // 期望侧：现行逐行语义重算（词条 AND、字段 OR、口径同搜索；按原文子串判定）。
     let account_by_id: HashMap<&str, (&str, bool)> =
         accounts.iter().map(|(id, n, d)| (*id, (*n, *d))).collect();
     let merchant_by_id: HashMap<&str, &str> =
@@ -1192,9 +1043,16 @@ fn pushdown_hit_set_covers_row_semantics() {
                     return false;
                 }
                 let merchant_name = t.merchant_id.and_then(|m| merchant_by_id.get(m).copied());
-                terms
-                    .iter()
-                    .all(|term| term_matches(term, t.note, name, merchant_name))
+                terms.iter().all(|term| {
+                    let term_lower = term.to_lowercase();
+                    t.note
+                        .map(|n| n.to_lowercase().contains(&term_lower))
+                        .unwrap_or(false)
+                        || name.to_lowercase().contains(&term_lower)
+                        || merchant_name
+                            .map(|m| m.to_lowercase().contains(&term_lower))
+                            .unwrap_or(false)
+                })
             })
             .map(|t| t.id.to_string())
             .collect()
@@ -1205,9 +1063,9 @@ fn pushdown_hit_set_covers_row_semantics() {
     };
     let matrix: Vec<(&str, Vec<&str>)> = vec![
         ("中文子串", vec!["咖啡"]),
-        ("拼音子序列", vec!["kf"]),
-        ("拼音子序列长串", vec!["wkwy"]),
-        ("账户名拼音", vec!["zsyh"]),
+        ("拼音词按字面", vec!["kf"]),
+        ("拼音长词按字面", vec!["wkwy"]),
+        ("账户名拼音按字面", vec!["zsyh"]),
         ("商户名原文", vec!["京东"]),
         ("软删商户名仍可搜", vec!["已删外卖商户"]),
         ("混合输入", vec!["招zsyh"]),
