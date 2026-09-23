@@ -77,7 +77,8 @@
 // - 字符串字面量不掩码（SQL 就住在字符串里）；注释（行/块，含嵌套块注释）掩码
 //   为等长空白。裸字符串 "…" 处理转义，r"…" / r#"…"# 等原始字符串按 hash 数配对
 //   终止；'…' 仅按合法 char 字面量吞掉，其余（生命周期 'a、标签 'outer:）跳过
-//   单字符。
+//   单字符。词法掩码实现 = 守门家族共享原语库 maskNonCode(…, true)（#1680 收口：
+//   本门的第三份实现已删除，与 check-structure 同源同规）。
 //
 // 已知文本不可达逃逸形态（靠评审兜底）：经 use 别名（use … as x; 调 x()）或局部
 // 函数包装的间接建库/写表；宏拼接出的命中形态；`db :: f`（空格分隔限定符）；
@@ -99,7 +100,7 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { pathToFileURL } from "node:url";
-import { lineAt, RUST_EXTENSIONS, walkTextFiles } from "./gate-primitives.ts";
+import { lineAt, maskNonCode, RUST_EXTENSIONS, walkTextFiles } from "./gate-primitives.ts";
 
 /** 规则 3 的固定时刻登记处住址（相对 src-tauri 根，单一来源）：main 从该住址提取
  *  固定时刻常量现值作禁令清单（先例：同脚本规则 2 禁用种子表清单自 seed.rs 登记处
@@ -153,52 +154,11 @@ function charEndAt(source: string, i: number): number {
   return m ? i + m[0].length : -1;
 }
 
-// ——— 词法掩码：注释（行/块，嵌套）替换为等长空白；字符串/char 原样保留 ———
-// 单次顺序扫描：在同一位置先判注释起点再判字符串起点，字符串内的 // 不会误开
-// 注释；原始字符串按 hash 数配对；'…' 仅按合法 char 字面量吞掉，否则按生命周期
-// 跳过单字符。扫描在注释起点处消耗到注释终点，注释体内一切字符不再触发词法。
-function maskComments(source: string): string {
-  const out = source.split("");
-  let i = 0;
-  const blank = (from: number, to: number): void => {
-    for (let k = from; k < to && k < out.length; k++) if (out[k] !== "\n") out[k] = " ";
-  };
-  while (i < source.length) {
-    const c = source[i];
-    if (c === "/" && source[i + 1] === "/") {
-      let e = i;
-      while (e < source.length && source[e] !== "\n") e++;
-      blank(i, e);
-      i = e;
-    } else if (c === "/" && source[i + 1] === "*") {
-      let depth = 1;
-      let e = i + 2;
-      while (e < source.length && depth > 0) {
-        if (source[e] === "/" && source[e + 1] === "*") {
-          depth++;
-          e += 2;
-        } else if (source[e] === "*" && source[e + 1] === "/") {
-          depth--;
-          e += 2;
-        } else e++;
-      }
-      blank(i, e);
-      i = e;
-    } else {
-      const strEnd = stringEndAt(source, i);
-      if (strEnd !== -1) {
-        i = strEnd;
-        continue;
-      }
-      if (c === "'") {
-        i = Math.max(charEndAt(source, i), i + 1);
-        continue;
-      }
-      i++;
-    }
-  }
-  return out.join("");
-}
+// ——— 词法掩码（注释→等长空白、字符串/char 原样保留）————
+// 第三份实现已删除（#1680 收口）：调用点直调守门家族共享原语库
+// maskNonCode(source, true)；全仓 .rs 文件两实现输出逐字节全等
+// （2026-09-24 对拍，524 文件零差异）。stringEndAt / charEndAt 仍被 cfg(test)
+// 块提取的括号配对消费，留本门。
 
 // ——— cfg(test) 内联块提取：属性后随 `mod <name> {`，括号配对取块范围 ———
 interface Region {
@@ -410,7 +370,7 @@ function extractFixedNowValues(registryPath: string): string[] {
   if (!existsSync(registryPath)) {
     fail(`固定时刻登记处缺失：${registryPath}（FIXED_NOW 唯一住址，ADR-0084 决策 5）`);
   }
-  const masked = maskComments(readFileSync(registryPath, "utf8"));
+  const masked = maskNonCode(readFileSync(registryPath, "utf8"), true);
   const values = [...new Set([...masked.matchAll(RULE3_DECLARATION)].map((m) => m[1]))];
   if (values.length === 0) {
     fail(`固定时刻登记处 ${registryPath} 提不出任何 pub const &str 现值（登记处漂移？）`);
@@ -475,7 +435,7 @@ function scanFiles(
     // 入口，见文件头规则 1 范围边界）；规则 2/3 整目录覆盖，例外经严格相等校验。
     const inE2e = rel.startsWith("tests/e2e/");
     const source = readFileSync(file, "utf8");
-    const masked = maskComments(source);
+    const masked = maskNonCode(source, true);
 
     // 各规则的扫描区域：测试路径整文件，产品路径仅内联 cfg(test) 块
     const regions: Region[] = isTestPath(segments)

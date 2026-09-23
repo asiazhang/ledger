@@ -121,7 +121,10 @@ function rawStringOpenQuoteAt(text: string, i: number): number | null {
  * `src-tauri/src/test_support/scan.rs` 的 `mask_non_code` 是同一条词法掩码规则
  * 的两个运行时载体，规则改动必须两侧同步；防漂移断言消费共享语料夹具
  * `scripts/fixtures/rust-mask-corpus.rs`（gate-primitives.test.ts 与 Rust 测试
- * 双侧消费，任一侧单独改规则即红）。
+ * 双侧消费，任一侧单独改规则即红）。TS 侧消费面：check-structure、check-infra-dml、
+ * check-background-services、test-exec、check-test-support（#1680 起第三份实现
+ * 收口至此，消费名单由 gate-primitives.test.ts 锁定）；keepLiterals 形态无 Rust 侧
+ * 对应物（scan.rs 头注登记在案的不对称），由 keepLiterals 语料期望单侧锁定。
  */
 export function maskNonCode(text: string, keepLiterals = false): string {
   const out = text.split("");
