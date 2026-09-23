@@ -158,9 +158,6 @@ describe("单源收敛：maskComments 只有一份实现（issue #1481，#1680 �
   });
 });
 
-// Rust 词法掩码单源收敛（#1680）：maskNonCode 的 TS 消费名单锁定——任一消费方摘掉
-// 库 import、回退本地副本（或新脚本绕开库自建第四份实现），下面的断言即红；
-// 语料期望只锁规则本身，名单把「谁在消费同一实现」也钉住，防分歧潜伏。
 // 一层列举与扩展名匹配的原语（#1742 收口）：平铺 readdir 与递归遍历形状不同构，
 // 收口为家族统一的单层语义——localeCompare 排序 + dirent 类型投影；hasExtension
 // 与 walkTextFiles 内部匹配同款，内联 endsWith(".rs") 残余（test-exec ×3、
@@ -221,13 +218,22 @@ describe("一层目录列举 readDirEntries + 点扩展名匹配 hasExtension（
   });
 });
 
-describe("单源收敛：Rust 词法掩码只有一份实现（#1680）", () => {
+// Rust 词法掩码单源收敛（#1680）：maskNonCode 的 TS 消费名单锁定——任一消费方摘掉
+// 库 import、回退本地副本（或新脚本绕开库自建第四份实现），下面的断言即红；
+// 语料期望只锁规则本身，名单把「谁在消费同一实现」也钉住，防分歧潜伏。
+// #1741 起名单含两份弱形态注释处理器的收口方：check-commands（命令注解腿，
+// 原自持逐行 stripLineComment）、check-i18n-keys（码化构造点提取腿，原自持
+// stripRustComments）——摘掉 import 即红；弱形态回潮的守门在两门各自的
+// 包装夹具（掩码权威形态旧红新绿），本名单只钉「谁在消费同一实现」。
+describe("单源收敛：Rust 词法掩码只有一份实现（#1680 / #1741）", () => {
   const consumers = [
     "check-structure.ts",
     "check-infra-dml.ts",
     "check-background-services.ts",
     "test-exec.ts",
     "check-test-support.ts",
+    "check-commands.ts",
+    "check-i18n-keys.ts",
   ] as const;
 
   for (const file of consumers) {

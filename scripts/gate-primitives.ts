@@ -151,7 +151,9 @@ function rawStringOpenQuoteAt(text: string, i: number): number | null {
  * Rust 侧一致，见下）、
  * char 字面量（'a'、'\n'、'\\'、'\''）；生命周期标注（'a）按非字面量处理。
  * `keepLiterals=true` 时保留字符串/char 字面量内容、只掩码注释——用于靶形态
- * 落在字符串里的扫描（原生事务语句 `execute("BEGIN")`，issue #1014）。
+ * 落在字符串里的扫描（原生事务语句 `execute("BEGIN")`，issue #1014；码化错误
+ * 构造点第一参数与 `const NAME: &str` 值、命令注解腿整文掩码，两份弱形态注释
+ * 处理器随 #1741 收口并入）。
  *
  * **双源登记**（issue #1433）：本函数与 Rust 侧唯一实现
  * `src-tauri/src/test_support/scan.rs` 的 `mask_non_code` 是同一条词法掩码规则
@@ -159,7 +161,9 @@ function rawStringOpenQuoteAt(text: string, i: number): number | null {
  * `scripts/fixtures/rust-mask-corpus.rs`（gate-primitives.test.ts 与 Rust 测试
  * 双侧消费，任一侧单独改规则即红）。TS 侧消费面：check-structure、check-infra-dml、
  * check-background-services、test-exec、check-test-support（#1680 起第三份实现
- * 收口至此，消费名单由 gate-primitives.test.ts 锁定）；keepLiterals 形态无 Rust 侧
+ * 收口至此）、check-commands（命令注解腿整文掩码）、check-i18n-keys（码化构造
+ * 点提取腿，二者均为 #1741 弱形态副本收口），消费名单由 gate-primitives.test.ts
+ * 锁定；keepLiterals 形态无 Rust 侧
  * 对应物（scan.rs 头注登记在案的不对称），由 keepLiterals 语料期望单侧锁定。
  */
 export function maskNonCode(text: string, keepLiterals = false): string {

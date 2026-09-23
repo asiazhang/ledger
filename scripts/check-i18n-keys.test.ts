@@ -196,4 +196,25 @@ describe("码化错误模板覆盖守门（issue #1188 / ADR-0050）", () => {
     expect(status).toBe(0);
     expect(output).toContain("码化错误模板覆盖");
   });
+
+  it("注释掩码口径（issue #1741 收口）：嵌套块注释内的构造点不入枚举", () => {
+    // 码化构造点提取腿自 #1741 起消费共享原语 maskNonCode(·, true)：块注释按
+    // Rust 语义嵌套配对整体掩掉（弱形态剥离器在首个 */ 收尾，夹层里的注释体
+    // 被误保留、其中的构造点误入枚举而假红）。
+    const dir = makeFixture(
+      { "common.json": { save: "保存" } },
+      { "common.json": { save: "Save" } },
+      {
+        rustSrc: [
+          '/* outer /* inner */ AppError::coded("nested.only", "嵌套不算") */',
+          'fn real() { AppError::coded("covered.code", "正文算"); }',
+        ].join("\n"),
+        zhErrors: { covered: { code: "有模板" } },
+        enErrors: { covered: { code: "covered" } },
+      },
+    );
+    const { status, output } = run(dir);
+    expect(status).toBe(0);
+    expect(output).toContain("码化错误模板覆盖");
+  });
 });
