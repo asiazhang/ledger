@@ -6,7 +6,7 @@
 // 兄弟脚本 import 的是一个门——本模块把库与门分离，改遍历语义不必再在两千行守门
 // 逻辑里定位它，新增扫描类守门直接 import，不再抄第五份遍历。
 //
-// 五件闭集：
+// 闭集七件（#1680 五件 + #1742 增补平铺面两件）：
 // - walkTextFiles / WalkedFile / WalkTextOptions —— 递归目录遍历（扩展名闭集过滤、
 //   localeCompare 排序保证输出确定、rel 以 relBase 为前缀归一）；扫描哪些扩展名、
 //   豁免哪些目录与文件属各守门政策，经 options 注入。
@@ -16,6 +16,12 @@
 // - RUST_EXTENSIONS —— Rust 面扩展名闭集（全等副本收口单点，消费方直接 import）。
 // - maskComments —— TS/Vue 注释掩码（自 ts-comment-mask.ts 并入：消费方
 //   check-frontend-structure.ts 与 check-commands.ts 恰 2 门，达 ≥2 门准入判据）。
+// #1742 增补（平铺 readdir 与内联 endsWith 的收口/留门判定票，逐处留痕见票）：
+// - readDirEntries / DirEntry —— 只读一层目录列举（localeCompare 排序 + dirent 类型
+//   投影，不跟随目录符号链接，与 walkTextFiles 同语义；与递归遍历形状不同构，单层
+//   语义单独单点）。
+// - hasExtension —— 点扩展名闭集匹配（walkTextFiles 内部同款）；残余内联
+//   endsWith(".rs")（test-exec ×3、check-structure ×1）换库 RUST_EXTENSIONS 消费。
 //
 // 消费方（守门家族全量，#1680 T2 收口后）：check-structure、check-infra-dml、
 // check-eastmoney-residue、check-background-services、test-exec、check-commands、
@@ -77,14 +83,40 @@ export function walkTextFiles(
         if (!options.skipDirs?.has(entry.name)) walk(entryAbs, entryRel);
         continue;
       }
-      const dot = entry.name.lastIndexOf(".");
-      if (dot === -1 || !options.extensions.has(entry.name.slice(dot))) continue;
+      if (!hasExtension(entry.name, options.extensions)) continue;
       if (options.skipFiles?.has(entryRel)) continue;
       out.push({ abs: entryAbs, rel: entryRel });
     }
   };
   walk(dir, relBase);
   return out;
+}
+
+/** 单层目录列举条目：dirent 类型投影（一层列举的读取面，政策过滤留消费侧） */
+export interface DirEntry {
+  name: string;
+  isDirectory: boolean;
+  isFile: boolean;
+}
+
+/**
+ * 只读一层的目录列举（守门家族共享单点，issue #1742）：平铺 readdir 与递归遍历
+ * 形状不同构，单层语义在此统一——localeCompare 排序保证输出确定（与 walkTextFiles
+ * 同款家族统一行为；直接消费列举序的站点原 plain sort / readdir 原序已实树逐目录
+ * 对拍全等（packages/、crates/、migrations/、locales/*），列举序被下游再排序吸收
+ * 的站点（check-structure diskModuleKeys）对拍不参与、结果与列举序无关，#1742 留痕）、
+ * dirent 类型判定不跟随目录符号链接（同 walkTextFiles）。
+ * 列举哪些、怎么过滤属各守门政策，消费侧自持；目录不存在按 readdirSync 原样抛错
+ * （调用侧的 existsSync 守卫各自保留，不静默空集）。
+ */
+export function readDirEntries(dir: string): DirEntry[] {
+  return readdirSync(dir, { withFileTypes: true })
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .map((entry) => ({
+      name: entry.name,
+      isDirectory: entry.isDirectory(),
+      isFile: entry.isFile(),
+    }));
 }
 
 /**
@@ -214,6 +246,17 @@ export function maskNonCode(text: string, keepLiterals = false): string {
     }
   }
   return out.join("");
+}
+
+/**
+ * 点扩展名闭集匹配：取名字最后一个点之后的后缀对集合判定（与 walkTextFiles 的
+ * 遍历内匹配同款，issue #1742）。对形如 ".rs" 的点扩展名与 endsWith 全等（裸扩展
+ * 名 ".rs"、多点 "a.b.rs"、"a.rs.txt" 等边缘形态由 gate-primitives.test.ts 全等表
+ * 钉住）——残余内联 endsWith(".rs") 收口至此 + RUST_EXTENSIONS。
+ */
+export function hasExtension(name: string, extensions: ReadonlySet<string>): boolean {
+  const dot = name.lastIndexOf(".");
+  return dot !== -1 && extensions.has(name.slice(dot));
 }
 
 /** Rust 面扩展名闭集（walkTextFiles 消费参数；全等副本收口单点，issue #1680） */

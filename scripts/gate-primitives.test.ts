@@ -1,8 +1,16 @@
 import { afterAll, describe, expect, it } from "vitest";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { lineAt, maskComments, maskNonCode, walkTextFiles } from "./gate-primitives.ts";
+import {
+  hasExtension,
+  lineAt,
+  maskComments,
+  maskNonCode,
+  readDirEntries,
+  RUST_EXTENSIONS,
+  walkTextFiles,
+} from "./gate-primitives.ts";
 
 // 被测对象是守门家族共享原语库 scripts/gate-primitives.ts（issue #1680 库归库、门归门）：
 // 原语级测试面归库自身，掩码与遍历的正确性不再借结构守门的通过来间接证明。
@@ -153,6 +161,66 @@ describe("单源收敛：maskComments 只有一份实现（issue #1481，#1680 �
 // Rust 词法掩码单源收敛（#1680）：maskNonCode 的 TS 消费名单锁定——任一消费方摘掉
 // 库 import、回退本地副本（或新脚本绕开库自建第四份实现），下面的断言即红；
 // 语料期望只锁规则本身，名单把「谁在消费同一实现」也钉住，防分歧潜伏。
+// 一层列举与扩展名匹配的原语（#1742 收口）：平铺 readdir 与递归遍历形状不同构，
+// 收口为家族统一的单层语义——localeCompare 排序 + dirent 类型投影；hasExtension
+// 与 walkTextFiles 内部匹配同款，内联 endsWith(".rs") 残余（test-exec ×3、
+// check-structure ×1）换库扩展名闭集消费。
+describe("一层目录列举 readDirEntries + 点扩展名匹配 hasExtension（issue #1742）", () => {
+  it("readDirEntries：一层列举不递归，dirent 类型投影（文件/目录）", () => {
+    const dir = mkdtempSync(join(tmpdir(), "read-dir-entries-"));
+    tempDirs.push(dir);
+    mkdirSync(join(dir, "subdir", "nested"), { recursive: true });
+    writeFileSync(join(dir, "a.rs"), "pub fn a() {}\n");
+    writeFileSync(join(dir, "subdir", "inner.rs"), "pub fn inner() {}\n");
+    writeFileSync(join(dir, "subdir", "nested", "deep.rs"), "pub fn deep() {}\n");
+
+    const entries = readDirEntries(dir);
+    // 一层：子目录只出现自身条目，不下降（嵌套内容不出现）；排序见下款
+    expect(entries.map((e) => e.name)).toEqual(["a.rs", "subdir"]);
+    expect(entries[0]).toEqual({ name: "a.rs", isDirectory: false, isFile: true });
+    expect(entries[1]).toEqual({ name: "subdir", isDirectory: true, isFile: false });
+  });
+
+  it("readDirEntries：localeCompare 排序（家族统一行为，与 walkTextFiles 同款）", () => {
+    const dir = mkdtempSync(join(tmpdir(), "read-dir-entries-sort-"));
+    tempDirs.push(dir);
+    for (const name of ["B", "a", "c"]) writeFileSync(join(dir, name), "x");
+    // localeCompare 大小写不敏感主级比较：a < B；plain sort 按码点会得 ["B", "a", "c"]
+    expect(readDirEntries(dir).map((e) => e.name)).toEqual(["a", "B", "c"]);
+  });
+
+  it("readDirEntries：目录符号链接不跟随（isFile/isDirectory 均 false，与 walkTextFiles 同语义）", () => {
+    const dir = mkdtempSync(join(tmpdir(), "read-dir-entries-symlink-"));
+    tempDirs.push(dir);
+    mkdirSync(join(dir, "real"), { recursive: true });
+    symlinkSync(join(dir, "real"), join(dir, "link"));
+
+    const link = readDirEntries(dir).find((e) => e.name === "link");
+    expect(link).toEqual({ name: "link", isDirectory: false, isFile: false });
+  });
+
+  it("readDirEntries：目录不存在按 readdirSync 原样抛错（不静默空集，调用侧 existsSync 守卫保留）", () => {
+    expect(() => readDirEntries(join(tmpdir(), "read-dir-entries-missing-nope"))).toThrow();
+  });
+
+  it("hasExtension：点扩展名闭集匹配与 endsWith 全等（残余内联 endsWith 收口的等价性判据）", () => {
+    const names = [".rs", "a.rs", "lib.rs", "rs", "a.b.rs", "a.RS", "a.rs.txt", "", ".r", "a."];
+    for (const name of names) {
+      expect(hasExtension(name, RUST_EXTENSIONS)).toBe(name.endsWith(".rs"));
+    }
+    expect(hasExtension("lib.rs", RUST_EXTENSIONS)).toBe(true);
+    expect(hasExtension("main", RUST_EXTENSIONS)).toBe(false);
+  });
+
+  it("hasExtension：多扩展名集合成员判定", () => {
+    const exts = new Set([".json", ".ts"]);
+    expect(hasExtension("errors.json", exts)).toBe(true);
+    expect(hasExtension("app.ts", exts)).toBe(true);
+    expect(hasExtension("a.json5", exts)).toBe(false);
+    expect(hasExtension("json", exts)).toBe(false);
+  });
+});
+
 describe("单源收敛：Rust 词法掩码只有一份实现（#1680）", () => {
   const consumers = [
     "check-structure.ts",
