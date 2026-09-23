@@ -241,7 +241,6 @@ describe("SettingsView.vue Tab 分域（issue #157 ADR-0022 立项；现役格�
     const html = wrapper.html();
     expect(html).toContain("一键备份");
     expect(html).not.toContain("数据存储位置");
-    expect(html).not.toContain("拼音搜索数据");
   });
 
   it("子页签来回切换备份列表不卸载重拉（子 pane show:lazy + 显式 key，issue #568）", async () => {
@@ -681,7 +680,7 @@ describe("SettingsView.vue 页签内容存在性矩阵（issue #769：切页签�
       path: ["数据", "存储位置"],
       texts: ["数据存储位置", "/Users/me/Library/Application Support/ledger"],
     },
-    { nav: "进入「数据 → 数据修复」子页签", path: ["数据", "数据修复"], texts: ["拼音搜索数据"] },
+    { nav: "进入「数据 → 数据修复」子页签", path: ["数据", "数据修复"], texts: ["账户余额缓存"] },
   ])("$nav：期望文案在场 $texts", async ({ path, texts }) => {
     const wrapper = mount(SettingsView);
     for (const tab of path) {

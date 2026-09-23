@@ -79,8 +79,6 @@ pub fn signals_for(op: WriteOp, evidence: WriteEvidence) -> &'static [Signal] {
         WriteOp::AdjustAccountBalance => when(evidence.black_hole_created(), LEDGER_CHANGED_SET),
         // 余额缓存审计修复：派生数据自愈，不置脏不发信号（ADR-0067）。
         WriteOp::AuditBalanceCache => NO_SIGNALS,
-        // 备注拼音一键修复：搜索派生列回填，不置脏不发信号（issue #513，同上豁免形态）。
-        WriteOp::RepairNotePinyin => NO_SIGNALS,
 
         // ── 价格域：四操作共享同一行——映射内唯一一份「实际写入 → 发价格
         //    信号」判定（ADR-0044 决策 4）；零变化不广播（ADR-0031）──

@@ -324,11 +324,6 @@ const IPC_WRITE_ENTRY_EXCEPTIONS: &[(&str, WriteOp, &str)] = &[
         WriteOp::AuditBalanceCache,
         "余额缓存审计修复：派生缓存行直连锁内维护，不置脏不发信号（ADR-0067；置脏口径为已知开放点，不在本票裁决）",
     ),
-    (
-        "repair_note_pinyin",
-        WriteOp::RepairNotePinyin,
-        "备注拼音派生列回填：搜索派生数据直连锁内维护，不置脏不发信号（issue #513）",
-    ),
 ];
 
 /// IPC 派生声明表：`write_entry` 调用点提取的（命令, 身份）。
