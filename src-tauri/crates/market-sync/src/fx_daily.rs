@@ -37,7 +37,7 @@ use tauri::{AppHandle, Manager, Runtime};
 use ledger_infra::db::DbState;
 use ledger_infra::error::Result;
 
-use super::fx::{FxSyncChannels, FxSyncReport, sync_fx_rates};
+use super::fx::{FX_SYNC_GATE, FxSyncChannels, FxSyncReport, sync_fx_rates_guarded};
 use super::lane::{LaneTimings, start_daily_lane};
 use super::session::FacadeWriteSession;
 
@@ -113,5 +113,8 @@ async fn drive_round<R: Runtime>(
 ) -> Result<FxSyncReport> {
     let write = app.state::<DbState>().write_handle();
     let session = FacadeWriteSession::new(write, "daily_fx_sync");
-    sync_fx_rates(&session, channels).await
+    // 在途互斥（issue #1762）：与手动入口共用进程级单例门；撞车时本轮即以
+    // 码化错误收尾（记 warn 日志可见，静默等下一自然日窗口）。每日路径不发阶段
+    // 事件（无 UI 消费）。
+    sync_fx_rates_guarded(&FX_SYNC_GATE, &session, channels, &mut |_| {}).await
 }

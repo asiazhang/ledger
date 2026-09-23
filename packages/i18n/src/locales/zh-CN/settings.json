@@ -430,6 +430,8 @@
     "title": "同步汇率",
     "hint": "从欧洲央行参考汇率同步当期与历史汇率；除每日自动同步外，可在此手动触发一次。",
     "action": "立即同步",
-    "ok": "同步完成：{points} 条汇率数据（覆盖 {earliest} 至 {latest}）"
+    "ok": "同步完成：{points} 条汇率数据（覆盖 {earliest} 至 {latest}）",
+    "stageFetching": "正在读取汇率文件…",
+    "stagePersisting": "已解析 {days} 天，正在写入…"
   }
 }

@@ -1,9 +1,24 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 import { mockInvoke, wireInvokeSeam } from "@ledger/test-support/invoke-mock";
+import { captureListenHandlers, type CapturedListener } from "@ledger/test-support/listen-mock";
 import { mount, flushPromises } from "@vue/test-utils";
 import { NButton } from "naive-ui";
 import ExchangeRateSyncSettings from "@/settings/ExchangeRateSyncSettings.vue";
+import { FX_SYNC_PROGRESS_EVENT, resetFxSyncForTest } from "@/settings/useFxSync";
 
+let progressHandlers: CapturedListener[] = [];
+
+beforeEach(() => {
+  // 模块级单例跨挂载存活：每测复位，否则上测的报告/在途会漏进下测。
+  resetFxSyncForTest();
+  progressHandlers = captureListenHandlers();
+});
+
+/** 触发阶段事件监听器（tauri Event 载荷形状）。 */
+function fireProgress(payload: unknown): void {
+  expect(progressHandlers.length).toBeGreaterThan(0);
+  progressHandlers.at(-1)!({ event: FX_SYNC_PROGRESS_EVENT, payload });
+}
 /**
  * 汇率同步卡片组件测试（issue #1545）：invoke 测试接缝布线（ADR-0085）。
  * 三态断言对准用户可观察结果（ADR-0087 断言强度）：
@@ -110,5 +125,83 @@ describe("ExchangeRateSyncSettings.vue — 设置页「同步汇率」入口（i
     expect(wrapper.text()).toContain("没有可用的汇率数据");
     expect(wrapper.text()).not.toContain("零记录");
     expect(wrapper.text()).not.toContain("暂时不可达");
+  });
+
+  it("同步期间按钮下方出现阶段文字：读取 → 携带天数的写入（issue #1762）", async () => {
+    let release!: () => void;
+    const inFlight = new Promise<typeof REPORT>((resolve) => {
+      release = () => resolve(REPORT);
+    });
+    wireInvokeSeam({ overrides: { sync_exchange_rates: () => inFlight } });
+    const wrapper = mountCard();
+
+    const click = syncButton(wrapper).trigger("click");
+    await flushPromises();
+
+    fireProgress({ stage: "fetching", days_parsed: null });
+    await flushPromises();
+    expect(wrapper.text()).toContain("正在读取汇率文件");
+
+    fireProgress({ stage: "persisting", days_parsed: 21 });
+    await flushPromises();
+    expect(wrapper.text()).toContain("21");
+    expect(wrapper.text()).toContain("正在写入");
+
+    release();
+    await click;
+    await flushPromises();
+    expect(wrapper.text()).toContain("同步完成");
+    expect(wrapper.text()).not.toContain("正在写入");
+  });
+
+  it("切页再切回：按钮仍禁用、阶段文字继续、完成后报告照常显示（issue #1762）", async () => {
+    let release!: () => void;
+    const inFlight = new Promise<typeof REPORT>((resolve) => {
+      release = () => resolve(REPORT);
+    });
+    wireInvokeSeam({ overrides: { sync_exchange_rates: () => inFlight } });
+    const first = mountCard();
+
+    const click = syncButton(first).trigger("click");
+    await flushPromises();
+    fireProgress({ stage: "fetching", days_parsed: null });
+    await flushPromises();
+
+    // 切走：卸载；再切回：重挂——同一份单例状态恢复
+    first.unmount();
+    const second = mountCard();
+    await flushPromises();
+    expect(syncButton(second).props("disabled")).toBe(true);
+    expect(syncButton(second).props("loading")).toBe(true);
+    expect(second.text()).toContain("正在读取汇率文件");
+
+    fireProgress({ stage: "persisting", days_parsed: 21 });
+    await flushPromises();
+    expect(second.text()).toContain("正在写入");
+
+    release();
+    await click;
+    await flushPromises();
+    expect(syncButton(second).props("disabled")).toBe(false);
+    expect(second.text()).toContain("同步完成");
+    expect(second.text()).toContain("30");
+  });
+
+  it("撞车时就地呈现「已有汇率同步在进行」（issue #1762）", async () => {
+    wireInvokeSeam({
+      overrides: {
+        sync_exchange_rates: () =>
+          Promise.reject({
+            kind: "Invalid",
+            code: "fx.sync-in-progress",
+            message: "后端原文（与模板不同文）：busy",
+          }),
+      },
+    });
+    const wrapper = mountCard();
+    await syncButton(wrapper).trigger("click");
+    await flushPromises();
+    expect(wrapper.text()).toContain("已有汇率同步在进行");
+    expect(wrapper.text()).not.toContain("busy");
   });
 });

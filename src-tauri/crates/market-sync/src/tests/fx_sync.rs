@@ -22,7 +22,11 @@ use tauri_app_lib::test_support::{
 };
 
 use crate::ecb::EcbDayRates;
-use crate::fx::{FX_SOURCE_ORIGIN_WEEK, FxSyncChannels, FxSyncReport, sync_fx_rates};
+use crate::fx::{
+    FX_SOURCE_ORIGIN_WEEK, FxSyncChannels, FxSyncGate, FxSyncReport, sync_fx_rates,
+    sync_fx_rates_guarded, sync_fx_rates_with_progress,
+};
+use crate::progress::FxSyncProgress;
 use crate::weekly::week_monday;
 
 use super::{insert_lot, spawn_header_capture_server};
@@ -597,4 +601,152 @@ fn fx_sync_passes_malformed_source_through_unwrapped() {
         "malformed 应原样透传，实际 {err:?}"
     );
     assert_eq!(fx_point_count(&conn), 0, "失败不落库");
+}
+
+// ---------------------------------------------------------------------------
+// 阶段文字进度与在途互斥（issue #1762）
+// ---------------------------------------------------------------------------
+
+/// 阶段回调按阶段闭集依次触发且携带天数（issue #1762 域行为）：全量回填一轮按
+/// `fetching` → 携带已解析天数的 `persisting` 推进，天数 = 取数腿解析出的日快照数。
+/// 删除编排任一 `progress` 接线，本用例即红（ADR-0087 断言强度）。
+#[test]
+fn with_progress_emits_fetching_then_persisting_with_parsed_days() {
+    let conn = tauri_app_lib::test_support::open();
+    seed_foreign_account_at(&conn, "acc-usd", "USD", "2022-06-15T08:00:00Z");
+    let (mut channels, _, _) = stub_channels(
+        &conn,
+        &[
+            ("2022-06-06", 7.2),
+            ("2022-06-15", 7.3),
+            ("2026-09-14", 7.4),
+        ],
+    );
+
+    let mut stages = Vec::new();
+    let report = block_on(sync_fx_rates_with_progress(
+        &conn,
+        &mut channels,
+        &mut |progress: FxSyncProgress| stages.push(progress),
+    ))
+    .unwrap();
+
+    assert!(report.full_backfilled, "深度未达走全量腿");
+    assert_eq!(
+        stages,
+        vec![FxSyncProgress::fetching(), FxSyncProgress::persisting(3),],
+        "阶段按 fetching → persisting(3 天）依次推进"
+    );
+}
+
+/// 零痕迹跳过无任何阶段事件（issue #1762）：不取数不落库，阶段回调零触达。
+#[test]
+fn skip_plan_emits_no_stage_events() {
+    let conn = tauri_app_lib::test_support::open();
+    let (mut channels, full_calls, incr_calls) = stub_channels(&conn, &[]);
+
+    let mut stages = Vec::new();
+    let report = block_on(sync_fx_rates_with_progress(
+        &conn,
+        &mut channels,
+        &mut |progress: FxSyncProgress| stages.push(progress),
+    ))
+    .unwrap();
+
+    assert_eq!(report, FxSyncReport::default(), "零痕迹：默认统计");
+    assert!(stages.is_empty(), "跳过路径不得发出阶段事件");
+    assert_eq!(full_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(incr_calls.load(Ordering::SeqCst), 0);
+}
+
+/// 在途互斥的域行为（issue #1762）：两路并发触发，第二路立即返回
+/// `fx.sync-in-progress` 码化错误——不排队等待（取数零触达）、不落库；
+/// 首路放行后照常完成。删除持门接线，第二路同样成功落库，本用例即红。
+#[test]
+fn guarded_second_trigger_returns_in_progress_while_first_in_flight() {
+    use std::sync::Arc;
+
+    // 两路共用同一扇门（生产即进程级单例 `FX_SYNC_GATE` 的同形）；各路在自有库上
+    // 跑——连接与通道束按所有权移交线程，不跨线程借用。
+    let gate = Arc::new(FxSyncGate::new());
+
+    // 首路：在自有库上持门，全量取数点门控阻塞在途。
+    let conn_first = tauri_app_lib::test_support::open();
+    seed_foreign_account_at(&conn_first, "acc-usd", "USD", "2022-06-15T08:00:00Z");
+    let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    let first_days: Vec<EcbDayRates> = [("2022-06-06", 7.2), ("2026-09-14", 7.4)]
+        .iter()
+        .map(|(date, cny)| day(&conn_first, date, *cny))
+        .collect();
+    let first_channels = FxSyncChannels {
+        fetch_full: Box::new(move || {
+            entered_tx.send(()).expect("在途通知应可送达");
+            release_rx
+                .recv_timeout(std::time::Duration::from_secs(10))
+                .expect("测试应放行首轮取数");
+            let days = first_days.clone();
+            super::ready(Ok(days))
+        }),
+        fetch_incremental: Box::new(|| {
+            Box::pin(async {
+                unreachable!("深度未达的首轮走全量腿，增量腿不应被触达")
+            })
+        }),
+    };
+    let first_gate = Arc::clone(&gate);
+    let first_handle = std::thread::spawn(move || {
+        let mut channels = first_channels;
+        block_on(sync_fx_rates_guarded(
+            &first_gate,
+            &conn_first,
+            &mut channels,
+            &mut |_| {},
+        ))
+    });
+
+    // 第二路：在另一自有库上持同一扇门——若互斥缺失，它将同样走完全链路。
+    // 等首轮真实在途（门控取数点）后再触发。
+    entered_rx
+        .recv_timeout(std::time::Duration::from_secs(10))
+        .expect("首轮同步应到达全量取数点");
+    let conn_second = tauri_app_lib::test_support::open();
+    seed_foreign_account_at(&conn_second, "acc-usd", "USD", "2022-06-15T08:00:00Z");
+    let (mut second_channels, second_full_calls, _) =
+        stub_channels(&conn_second, &[("2022-06-06", 7.2)]);
+    let err = block_on(sync_fx_rates_guarded(
+        &gate,
+        &conn_second,
+        &mut second_channels,
+        &mut |_| {},
+    ))
+    .unwrap_err();
+    assert!(
+        err.is_code("fx.sync-in-progress"),
+        "第二路应立即报 fx.sync-in-progress，实际 {err:?}"
+    );
+    assert_eq!(
+        second_full_calls.load(Ordering::SeqCst),
+        0,
+        "撞车即返：第二路不得触达取数"
+    );
+    assert_eq!(fx_point_count(&conn_second), 0, "撞车即返：第二路零落库");
+
+    // 放行首轮：照常完成，落库不受互斥影响。
+    release_tx.send(()).expect("放行应成功");
+    let first = first_handle.join().expect("首轮线程应正常结束").unwrap();
+    assert!(first.full_backfilled, "首轮按判据走全量回填");
+
+    // 门已释放：新触发可立即进门（守卫 Drop 即清空在途登记）。
+    let conn_third = tauri_app_lib::test_support::open();
+    seed_foreign_account_at(&conn_third, "acc-usd", "USD", "2022-06-15T08:00:00Z");
+    let (mut third_channels, _, _) = stub_channels(&conn_third, &[("2022-06-06", 7.2)]);
+    let third = block_on(sync_fx_rates_guarded(
+        &gate,
+        &conn_third,
+        &mut third_channels,
+        &mut |_| {},
+    ))
+    .unwrap();
+    assert!(third.full_backfilled, "门释放后新触发照常执行");
 }

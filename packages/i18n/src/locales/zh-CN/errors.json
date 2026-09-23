@@ -206,7 +206,8 @@
     "source-unknown": "未知折算来源: {0}（合法值: {1}）",
     "source-malformed": "汇率数据源返回了无法解析的内容，请稍后重试同步",
     "source-unreachable": "汇率数据源暂时不可达，请检查网络后重试",
-    "source-no-data": "数据源已连通，但当前没有可用的汇率数据，请稍后重试"
+    "source-no-data": "数据源已连通，但当前没有可用的汇率数据，请稍后重试",
+    "sync-in-progress": "已有汇率同步在进行，请稍后再试"
   },
   "instrument": {
     "price-positive": "价格必须大于 0",
