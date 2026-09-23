@@ -31,7 +31,6 @@ describe("maskNonCode 双源防漂移语料（issue #1433）", () => {
     expect(maskNonCode(corpus)).toBe(expected);
   });
 
-
   it("keepLiterals=true 与共享语料期望全等（TS 侧单侧锁定：Rust 侧无 keepLiterals 是 scan.rs 头注登记在案的不对称）", () => {
     const corpus = readFileSync(corpusPath, "utf8");
     const keepExpected = readFileSync(
@@ -132,7 +131,8 @@ describe("maskComments（TS/Vue 注释掩码库语义）", () => {
 // import 并回退为本地副本（或共享模块定义被移除），下面的断言至少一条变红；
 // 只在真实仓行为层（exit code / output）保持绿无法单独锚定「同一出口」这条接线。
 describe("单源收敛：maskComments 只有一份实现（issue #1481，#1680 并入 gate-primitives）", () => {
-  const read = (rel: string): string => readFileSync(join(process.cwd(), ...rel.split("/")), "utf8");
+  const read = (rel: string): string =>
+    readFileSync(join(process.cwd(), ...rel.split("/")), "utf8");
   const consumers = ["check-frontend-structure.ts", "check-commands.ts"] as const;
 
   for (const file of consumers) {
@@ -155,7 +155,8 @@ describe("单源收敛：maskComments 只有一份实现（issue #1481，#1680 �
 // 库 import、回退本地副本（或新脚本绕开库自建第四份实现），下面的断言即红；
 // 语料期望只锁规则本身，名单把「谁在消费同一实现」也钉住，防分歧潜伏。
 describe("单源收敛：Rust 词法掩码只有一份实现（#1680）", () => {
-  const read = (rel: string): string => readFileSync(join(process.cwd(), ...rel.split("/")), "utf8");
+  const read = (rel: string): string =>
+    readFileSync(join(process.cwd(), ...rel.split("/")), "utf8");
   const consumers = [
     "check-structure.ts",
     "check-infra-dml.ts",

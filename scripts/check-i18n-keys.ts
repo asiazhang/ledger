@@ -167,9 +167,10 @@ export interface RustCodedCodesResult {
 /** 递归收集 root 下全部 .rs 文件（target/ 剪枝是本守门扫描边界政策）：遍历机制归
  *  守门家族共享单点 walkTextFiles（#1680 收口），扩展名闭集由库 RUST_EXTENSIONS 提供。 */
 function walkRustFiles(root: string): string[] {
-  return walkTextFiles(root, "", { extensions: RUST_EXTENSIONS, skipDirs: new Set(["target"]) }).map(
-    (f) => f.abs,
-  );
+  return walkTextFiles(root, "", {
+    extensions: RUST_EXTENSIONS,
+    skipDirs: new Set(["target"]),
+  }).map((f) => f.abs);
 }
 
 /**
