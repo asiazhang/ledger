@@ -252,6 +252,10 @@
     "not-found": "预算不存在: {0}",
     "period-unknown": "未知预算周期: {0}"
   },
+  "savings-goal": {
+    "target-amount-positive": "目标金额必须为正数",
+    "status-unknown": "未知目标状态: {0}"
+  },
   "scheduled-plan": {
     "amount-positive": "金额必须大于 0",
     "kind-unknown": "未知定时交易类型: {0}",

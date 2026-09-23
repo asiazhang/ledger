@@ -50,6 +50,7 @@ import {
   UmbrellaOutline,
   EyeOutline,
   EyeOffOutline,
+  FlagOutline,
 } from "@vicons/ionicons5";
 import { useAppStore } from "@/stores/app";
 import { currentLocale, t } from "@ledger/i18n";
@@ -175,6 +176,7 @@ const viewIcons: Record<string, Component> = {
   merchants: StorefrontOutline,
   policies: ShieldCheckmarkOutline,
   physicalAssets: CubeOutline,
+  savingsGoals: FlagOutline,
   insurers: UmbrellaOutline,
 };
 

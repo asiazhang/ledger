@@ -1,0 +1,39 @@
+{
+  "listTitle": "储蓄目标",
+  "newButton": "新建目标",
+  "emptyGuide": "还没有储蓄目标——新建一个，账本会为它自动开一个专属账户",
+  "columns": {
+    "name": "名称",
+    "target": "目标金额",
+    "saved": "已存",
+    "remaining": "还差",
+    "deadline": "截止日",
+    "status": "状态"
+  },
+  "status": {
+    "inProgress": "进行中",
+    "achieved": "已达成"
+  },
+  "form": {
+    "title": "新建储蓄目标",
+    "cancel": "取消",
+    "save": "保存",
+    "label": {
+      "name": "名称",
+      "target": "目标金额",
+      "deadline": "截止日期"
+    },
+    "placeholder": {
+      "name": "如：买车基金",
+      "target": "如：50000",
+      "deadline": "不填即无截止日"
+    },
+    "msg": {
+      "nameRequired": "请填写目标名称",
+      "targetInvalid": "目标金额必须大于 0"
+    }
+  },
+  "msg": {
+    "created": "目标已创建，专属账户已就位"
+  }
+}

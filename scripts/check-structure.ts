@@ -295,6 +295,11 @@ export const CRATES: readonly CrateEntry[] = [
     layer: CRATE_LAYER.DOMAIN,
   },
   {
+    name: "ledger-savings-goal",
+    dir: "crates/savings-goal",
+    layer: CRATE_LAYER.DOMAIN,
+  },
+  {
     name: "ledger-scheduled",
     dir: "crates/scheduled",
     layer: CRATE_LAYER.DOMAIN,

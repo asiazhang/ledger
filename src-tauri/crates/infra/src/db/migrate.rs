@@ -98,6 +98,7 @@ pub(crate) fn migrations() -> &'static Migrations<'static> {
             M::up(include_str!(
                 "../../../../migrations/V031__drop_note_pinyin.sql"
             )),
+            M::up(include_str!("../../../../migrations/V032__goals.sql")),
         ])
     })
 }

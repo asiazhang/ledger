@@ -24,6 +24,7 @@ export * from "./merchants";
 export * from "./physical-asset";
 export * from "./policy";
 export * from "./reports";
+export * from "./savings-goal";
 export * from "./scheduled";
 export * from "./sync";
 export * from "./sync-channel";

@@ -1,0 +1,39 @@
+{
+  "listTitle": "Savings Goals",
+  "newButton": "New Goal",
+  "emptyGuide": "No savings goals yet — create one and the ledger will open a dedicated account for it",
+  "columns": {
+    "name": "Name",
+    "target": "Target",
+    "saved": "Saved",
+    "remaining": "Remaining",
+    "deadline": "Deadline",
+    "status": "Status"
+  },
+  "status": {
+    "inProgress": "In progress",
+    "achieved": "Achieved"
+  },
+  "form": {
+    "title": "New Savings Goal",
+    "cancel": "Cancel",
+    "save": "Save",
+    "label": {
+      "name": "Name",
+      "target": "Target amount",
+      "deadline": "Deadline"
+    },
+    "placeholder": {
+      "name": "e.g. New car fund",
+      "target": "e.g. 50000",
+      "deadline": "Leave empty for no deadline"
+    },
+    "msg": {
+      "nameRequired": "Please enter a goal name",
+      "targetInvalid": "Target amount must be greater than 0"
+    }
+  },
+  "msg": {
+    "created": "Goal created — its dedicated account is ready"
+  }
+}

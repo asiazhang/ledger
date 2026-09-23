@@ -75,6 +75,11 @@ pub fn signals_for(op: WriteOp, evidence: WriteEvidence) -> &'static [Signal] {
         | WriteOp::DisposePhysicalAsset
         | WriteOp::DeletePhysicalAsset => LEDGER_CHANGED_SET,
 
+        // ── 储蓄目标域（spec #1750 / ADR-0133）：独立领域复用 ledger:changed
+        //    同名事件——目标 store 自行订阅、自行重拉；同事务建出的专属账户
+        //    随参考表重拉对账户域读命令与各下拉可见 ──
+        WriteOp::CreateSavingsGoal => LEDGER_CHANGED_SET,
+
         // ── 账户域：余额调整仅「按需新建黑洞账户」时参考表变更（ADR-0026）──
         WriteOp::AdjustAccountBalance => when(evidence.black_hole_created(), LEDGER_CHANGED_SET),
         // 余额缓存审计修复：派生数据自愈，不置脏不发信号（ADR-0067）。

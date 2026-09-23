@@ -16,6 +16,7 @@ import {
   BarChartOutline,
   SearchOutline,
   UmbrellaOutline,
+  FlagOutline,
 } from "@vicons/ionicons5";
 import PoliciesView from "@/views/PoliciesView.vue";
 import PhysicalAssetsView from "@/views/PhysicalAssetsView.vue";
@@ -29,6 +30,7 @@ import InvestmentsView from "@/views/InvestmentsView.vue";
 import ItemsView from "@/views/ItemsView.vue";
 import ReportsView from "@/views/ReportsView.vue";
 import SearchView from "@/views/SearchView.vue";
+import SavingsGoalsView from "@/views/SavingsGoalsView.vue";
 import { useSidebarOrderStore, buildTabContextMenuOptions } from "@/stores/sidebar-order";
 import { useFeatureToggleStore } from "@/settings/feature-toggles";
 import { useWindowTier } from "@ledger/window-tier";
@@ -64,6 +66,7 @@ const CONTAINED_VIEWS: Record<ContainableViewName, { component: Component; icon:
   budget: { component: BudgetView, icon: CalculatorOutline },
   investments: { component: InvestmentsView, icon: TrendingUpOutline },
   items: { component: ItemsView, icon: CubeOutline },
+  savingsGoals: { component: SavingsGoalsView, icon: FlagOutline },
   reports: { component: ReportsView, icon: BarChartOutline },
   search: { component: SearchView, icon: SearchOutline },
 };

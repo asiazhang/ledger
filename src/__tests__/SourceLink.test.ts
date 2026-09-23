@@ -48,6 +48,7 @@ describe("SourceLink 来源列单元格（spec #704 / issue #706）", () => {
   });
 
   it("主项态（保单已移回侧栏）落保单独立路由 + focus", async () => {
+    useSidebarOrderStore().applyMoveIntoMore("investments"); // 腾位：资产组随储蓄目标加入出厂满员
     useSidebarOrderStore().applyMoveBackToSidebar("policies");
     const wrapper = mount(SourceLink, { props: { source: makeSource() } });
     await wrapper.find("button.source-link").trigger("click");

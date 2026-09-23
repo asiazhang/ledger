@@ -85,6 +85,8 @@ import type {
   ReportDateRange,
   ReportPeriodRange,
   RealizedPnlSummary,
+  SavingsGoalInput,
+  SavingsGoalProgress,
   RestoreResult,
   TransactionConvert,
   TransactionSplit,
@@ -356,6 +358,11 @@ export const api = {
     invoke<void>("dispose_physical_asset", { id, input }),
   // 软删除（issue #468 T3）：数据与估值历史保留，退出列表与合计
   deletePhysicalAsset: (id: string) => invoke<void>("delete_physical_asset", { id }),
+
+  // 储蓄目标（spec #1750 / ADR-0133）：独立领域——创建同事务自动建专属账户，
+  // 进度 = 专属账户余额；写入后由后端发 ledger:changed
+  savingsGoalProgress: () => invoke<SavingsGoalProgress[]>("savings_goal_progress"),
+  createSavingsGoal: (input: SavingsGoalInput) => invoke<string>("create_savings_goal", { input }),
 
   // 汇率
   listExchangeRates: () => invoke<ExchangeRate[]>("list_exchange_rates"),

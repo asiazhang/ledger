@@ -15,6 +15,8 @@ import type {
   Policy,
   PolicyStats,
   RealizedPnlSummary,
+  SavingsGoal,
+  SavingsGoalProgress,
   SyncChannelConfig,
   SyncRoundReport,
   SyncStatus,
@@ -340,6 +342,43 @@ export function makePhysicalAsset(partial: Partial<PhysicalAsset> & { id: string
     current_valuation_native_cents: 5_000_000,
     native_currency: "CNY",
     ...partial,
+  };
+}
+
+/** 储蓄目标实体夹具（spec #1750 / issue #1751）：全字段读模型（金额整数分）。 */
+export function makeSavingsGoal(partial: Partial<SavingsGoal> & { id: string }): SavingsGoal {
+  return {
+    name: "买车基金",
+    target_amount_cents: 5_000_000,
+    deadline: "2027-06-30",
+    status: "active",
+    planned_monthly_cents: null,
+    account_id: `acc-${partial.id}`,
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+    version: 1,
+    device_id: "test",
+    is_deleted: false,
+    ...partial,
+  };
+}
+
+/** 蓄水进度行夹具（spec #1750 / issue #1751）：目标行 + 已存 / 还差 / 达成态 /
+ *  币种。还差缺省由目标额 − 已存派生（夹具自洽），场景给显式值优先。 */
+export function makeSavingsGoalProgress(
+  over: Partial<SavingsGoalProgress> & {
+    goal?: Partial<SavingsGoal> & { id: string };
+  } = {},
+): SavingsGoalProgress {
+  const { goal, ...rest } = over;
+  const resolvedGoal = makeSavingsGoal(goal ?? { id: "goal-1" });
+  const savedCents = rest.saved_cents ?? 0;
+  return {
+    goal: resolvedGoal,
+    saved_cents: savedCents,
+    remaining_cents: rest.remaining_cents ?? resolvedGoal.target_amount_cents - savedCents,
+    achieved: rest.achieved ?? false,
+    currency_code: rest.currency_code ?? "CNY",
   };
 }
 

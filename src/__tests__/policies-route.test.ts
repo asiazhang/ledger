@@ -22,6 +22,7 @@ describe("/policies 路由守卫（issue #706 focus 透传）", () => {
   });
 
   it("主项态（保单已移回侧栏）：独立路由渲染，query 原样保留", async () => {
+    useSidebarOrderStore().applyMoveIntoMore("investments"); // 腾位：资产组随储蓄目标加入出厂满员
     useSidebarOrderStore().applyMoveBackToSidebar("policies");
     const router = makeRouter();
     await router.push("/policies?focus=pol-1");

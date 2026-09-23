@@ -386,6 +386,7 @@ describe("移回侧栏后的独立路由（issue #475：侧栏/键位按 name �
   });
 
   it("/policies 分流：移回侧栏后独立渲染保单页（守卫放行，侧栏主项导航可达）", async () => {
+    useSidebarOrderStore().applyMoveIntoMore("investments"); // 腾位：资产组随储蓄目标加入出厂满员
     useSidebarOrderStore().applyMoveBackToSidebar("policies");
     await router.push("/policies");
     await flushPromises();

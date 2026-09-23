@@ -45,18 +45,30 @@ afterEach(() => setPlatform(""));
 /** 默认组内序（= SIDEBAR_GROUPS 成员展开）：派生断言复用 */
 const DEFAULT_ORDERS: SidebarGroupOrders = {
   bookkeeping: ["transactions", "accounts", "budget"],
-  assets: ["investments", "items"],
+  assets: ["investments", "items", "savingsGoals"],
   insights: ["reports", "search"],
 };
 
 describe("viewShortcuts 派生（键位只扫主项、固定组带，issue #473 / ADR-0065 取代 ADR-0063 决策 2 线性推导）", () => {
-  it("出厂键位：概览=`、主项按固定组带占 1..5/7..8、⌘6/⌘9 带内空置（无任何记录占用）、AI=0、设置为逗号键", () => {
+  it("出厂键位：概览=`、主项按固定组带占 1..8、⌘9 带内空置（无任何记录占用）、AI=0、设置为逗号键", () => {
     const shortcuts = deriveViewShortcuts(useSidebarOrderStore().sidebarGroupOrders);
-    expect(shortcuts.map((s) => s.key)).toEqual(["`", "1", "2", "3", "4", "5", "7", "8", "0", ","]);
+    expect(shortcuts.map((s) => s.key)).toEqual([
+      "`",
+      "1",
+      "2",
+      "3",
+      "4",
+      "5",
+      "6",
+      "7",
+      "8",
+      "0",
+      ",",
+    ]);
     expect(shortcuts.map((s) => s.name)).toEqual([...DEFAULT_VIEW_ORDER]);
   });
 
-  it("每个侧栏主项/固定项恰一条记录；键位随固定组带：交易=1、账户=2、预算=3、投资=4、物品=5、报表=7、搜索=8、AI=0", () => {
+  it("每个侧栏主项/固定项恰一条记录；键位随固定组带：交易=1、账户=2、预算=3、投资=4、物品=5、储蓄目标=6、报表=7、搜索=8、AI=0", () => {
     const shortcuts = deriveViewShortcuts(useSidebarOrderStore().sidebarGroupOrders);
     const names = shortcuts.map((s) => s.name);
     expect(new Set(names).size).toBe(names.length);
@@ -69,6 +81,7 @@ describe("viewShortcuts 派生（键位只扫主项、固定组带，issue #473 
     expect(keyOf("budget")).toBe("3");
     expect(keyOf("investments")).toBe("4");
     expect(keyOf("items")).toBe("5");
+    expect(keyOf("savingsGoals")).toBe("6");
     expect(keyOf("reports")).toBe("7");
     expect(keyOf("search")).toBe("8");
     expect(keyOf("ai")).toBe("0");
@@ -81,25 +94,27 @@ describe("viewShortcuts 派生（键位只扫主项、固定组带，issue #473 
     }
   });
 
-  it("deriveViewShortcuts：出厂七主项占 ⌘1–⌘5、⌘7、⌘8，⌘6/⌘9 带内空置（组内补足后自然回填）", () => {
+  it("deriveViewShortcuts：出厂八主项占 ⌘1–⌘8，⌘9 带内空置（资产组补足后 ⌘6 回填储蓄目标）", () => {
     const shortcuts = deriveViewShortcuts(DEFAULT_ORDERS);
     expect(shortcuts.find((s) => s.name === "transactions")!.key).toBe("1");
+    expect(shortcuts.find((s) => s.name === "savingsGoals")!.key).toBe("6");
     expect(shortcuts.find((s) => s.name === "search")!.key).toBe("8");
-    expect(shortcuts.filter((s) => s.key === "6" || s.key === "9")).toHaveLength(0);
+    expect(shortcuts.filter((s) => s.key === "9")).toHaveLength(0);
     expect(shortcuts.find((s) => s.name === "ai")!.key).toBe("0");
   });
 
-  it("主项集恒有键位：任意组内序下七主项全部有键位（组内序定带内位置，不跨组压缩）", () => {
+  it("主项集恒有键位：任意组内序下八主项全部有键位（组内序定带内位置，不跨组压缩）", () => {
     const reordered = deriveViewShortcuts({
       ...DEFAULT_ORDERS,
       insights: ["search", "reports"],
-      assets: ["items", "investments"],
+      assets: ["items", "investments", "savingsGoals"],
     });
     for (const name of ARRANGEABLE_VIEWS) {
       expect(reordered.find((s) => s.name === name)!.key, name).not.toBeNull();
     }
     expect(reordered.find((s) => s.name === "items")!.key).toBe("4");
     expect(reordered.find((s) => s.name === "investments")!.key).toBe("5");
+    expect(reordered.find((s) => s.name === "savingsGoals")!.key).toBe("6");
     expect(reordered.find((s) => s.name === "search")!.key).toBe("7");
     expect(reordered.find((s) => s.name === "reports")!.key).toBe("8");
   });
@@ -116,7 +131,7 @@ describe("viewShortcuts 派生（键位只扫主项、固定组带，issue #473 
 });
 
 describe("移入后键位重推导（issue #474 / ADR-0065：主项集变化，仅本组带内键位重排，他组不受牵连）", () => {
-  it("交易移入更多后：账户=1、预算=2（带首锚定），他组键位原样（投资=4、物品=5、报表=7、搜索=8），⌘3/⌘6/⌘9 空置，移入成员退出键位表", () => {
+  it("交易移入更多后：账户=1、预算=2（带首锚定），他组键位原样（投资=4、物品=5、储蓄目标=6、报表=7、搜索=8），⌘3/⌘9 空置，移入成员退出键位表", () => {
     const afterMoveIn = deriveViewShortcuts({
       ...DEFAULT_ORDERS,
       bookkeeping: ["accounts", "budget"],
@@ -125,11 +140,10 @@ describe("移入后键位重推导（issue #474 / ADR-0065：主项集变化，�
     expect(afterMoveIn.find((s) => s.name === "budget")!.key).toBe("2");
     expect(afterMoveIn.find((s) => s.name === "investments")!.key).toBe("4");
     expect(afterMoveIn.find((s) => s.name === "items")!.key).toBe("5");
+    expect(afterMoveIn.find((s) => s.name === "savingsGoals")!.key).toBe("6");
     expect(afterMoveIn.find((s) => s.name === "reports")!.key).toBe("7");
     expect(afterMoveIn.find((s) => s.name === "search")!.key).toBe("8");
-    expect(afterMoveIn.filter((s) => s.key === "3" || s.key === "6" || s.key === "9")).toHaveLength(
-      0,
-    );
+    expect(afterMoveIn.filter((s) => s.key === "3" || s.key === "9")).toHaveLength(0);
     expect(afterMoveIn.find((s) => s.name === "transactions")).toBeUndefined();
   });
 
@@ -156,7 +170,7 @@ describe("键位随动（store 写路径 → 键位带装配，issue #549：状�
     expect(keyOf("budget")).toBe("3");
     expect(keyOf("investments")).toBe("4");
     expect(keyOf("items")).toBe("5");
-    // 本组内键位随动（主项恒有键位，⌘6/⌘9 出厂空置）
+    // 本组内键位随动（主项恒有键位，⌘9 出厂空置）
     expect(keyOf("search")).toBe("7");
     expect(keyOf("reports")).toBe("8");
   });
@@ -194,6 +208,7 @@ describe("键位随动（store 写路径 → 键位带装配，issue #549：状�
       "budget",
       "investments",
       "items",
+      "savingsGoals",
       "search",
       "reports",
       "ai",
@@ -219,6 +234,7 @@ describe("启动读路径（issue #269/#359：读取已存组内序，经解析�
       "accounts",
       "investments",
       "items",
+      "savingsGoals",
       "search",
       "reports",
       "ai",
@@ -275,15 +291,16 @@ describe("matchViewShortcut", () => {
     expect(matchViewShortcut(press("3", { metaKey: true }))).toBe("budget");
     expect(matchViewShortcut(press("4", { metaKey: true }))).toBe("investments");
     expect(matchViewShortcut(press("5", { metaKey: true }))).toBe("items");
+    expect(matchViewShortcut(press("6", { metaKey: true }))).toBe("savingsGoals");
     expect(matchViewShortcut(press("7", { metaKey: true }))).toBe("reports");
     expect(matchViewShortcut(press("8", { metaKey: true }))).toBe("search");
     expect(matchViewShortcut(press("0", { metaKey: true }))).toBe("ai");
     expect(matchViewShortcut(press(",", { metaKey: true }))).toBe("settings");
   });
 
-  it("⌘6/⌘9 带内空置不命中任何视图；收纳成员与「更多」不可经键盘触发（组内任意重排亦然）", () => {
+  it("⌘6 命中储蓄目标（资产组补足回填）、⌘9 带内空置不命中任何视图；收纳成员与「更多」不可经键盘触发（组内任意重排亦然）", () => {
     setPlatform("MacIntel");
-    expect(matchViewShortcut(press("6", { metaKey: true }))).toBeNull();
+    expect(matchViewShortcut(press("6", { metaKey: true }))).toBe("savingsGoals");
     expect(matchViewShortcut(press("9", { metaKey: true }))).toBeNull();
     for (const k of ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"]) {
       expect(matchViewShortcut(press(k, { metaKey: true }))).not.toBe("scheduled");

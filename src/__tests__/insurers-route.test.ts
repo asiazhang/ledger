@@ -21,6 +21,7 @@ describe("/insurers 路由守卫（issue #714）", () => {
   });
 
   it("主项态（保司已移回侧栏）：独立路由渲染，不重定向", async () => {
+    useSidebarOrderStore().applyMoveIntoMore("investments"); // 腾位：资产组随储蓄目标加入出厂满员
     useSidebarOrderStore().applyMoveBackToSidebar("insurers");
     const router = makeRouter();
     await router.push("/insurers");

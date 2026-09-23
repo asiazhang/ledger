@@ -31,7 +31,7 @@ import { t } from "@ledger/i18n";
  */
 export const SIDEBAR_GROUPS = [
   { id: "bookkeeping", views: ["transactions", "accounts", "budget"] },
-  { id: "assets", views: ["investments", "items"] },
+  { id: "assets", views: ["investments", "items", "savingsGoals"] },
   { id: "insights", views: ["reports", "search"] },
 ] as const;
 
