@@ -124,9 +124,12 @@ export function useFxSync() {
       return await syncLoad.run();
     } finally {
       inFlightSyncs -= 1;
-      // 终态收起清空：阶段文字收起、报告/错误接棒（成功/失败同路）。
-      stage.value = null;
-      parsedDays.value = null;
+      // 终态收起清空只在最后一路完成时执行：重叠触发时先完成者（Loadable
+      // 最新胜出下作废）不得擦掉仍在途那路的阶段文字。
+      if (inFlightSyncs <= 0) {
+        stage.value = null;
+        parsedDays.value = null;
+      }
     }
   }
 

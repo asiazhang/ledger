@@ -191,6 +191,39 @@ describe("useFxSync 阶段文字（issue #1762）", () => {
     await p;
   });
 
+  it("重叠触发时先完成者不擦掉仍在途那路的阶段文字", async () => {
+    const resolvers: Array<(v: unknown) => void> = [];
+    mockInvoke.mockImplementation(
+      () =>
+        new Promise((res) => {
+          resolvers.push(res as (v: unknown) => void);
+        }),
+    );
+    const { stageText, syncing, sync } = useFxSync();
+    const p1 = sync();
+    const p2 = sync();
+    expect(mockInvoke).toHaveBeenCalledTimes(2);
+
+    fireProgress({ stage: "fetching", days_parsed: null });
+    await flushPromises();
+    expect(stageText.value).toContain("正在读取汇率文件");
+
+    // 首路先完成（Loadable 最新胜出下作废）：不得擦掉仍在途那路的阶段文字
+    resolvers[0](REPORT);
+    await p1;
+    expect(syncing.value).toBe(true);
+    expect(stageText.value).toContain("正在读取汇率文件");
+
+    fireProgress({ stage: "persisting", days_parsed: 21 });
+    await flushPromises();
+    expect(stageText.value).toContain("正在写入");
+
+    resolvers[1](REPORT);
+    await p2;
+    expect(syncing.value).toBe(false);
+    expect(stageText.value).toBe("");
+  });
+
   it("切页模拟：重挂后的实例看到同一份在途与终态（syncing/阶段/报告零分叉）", async () => {
     let resolveSync!: (v: unknown) => void;
     mockInvoke.mockImplementation(
