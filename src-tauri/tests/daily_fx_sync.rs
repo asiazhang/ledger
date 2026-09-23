@@ -90,7 +90,7 @@ fn usd_leg(codes: &[String]) -> f64 {
     1.0 + (idx as f64) / 10.0
 }
 
-/// 后台桩的四天快照（窗口起点周 / 痕迹日当周 / 近期两周）：覆盖区间与并发桩
+/// 后台桩的四天快照（夹具最早周 / 痕迹日当周 / 近期两周）：覆盖区间与并发桩
 ///（三天快照）重叠三周、多出一周——放行后多出的那一周与当期汇率的改写是
 /// 「后台通道真实落库」的可观察面（数据完全相同时落库不可区分）。
 const LANE_DAY_SPECS: &[(&str, f64)] = &[
@@ -160,7 +160,7 @@ fn fx_point_count(conn: &Connection) -> i64 {
 /// 与另一路互斥）本测试红。
 #[test]
 fn startup_wiring_syncs_fx_rates_and_concurrent_sync_stays_unblocked() {
-    // 交易域接缝接线（本位币读取钩子）：窗口判据读默认币种经该钩子，与生产
+    // 交易域接缝接线（本位币读取钩子）：判据读默认币种经该钩子，与生产
     // 启动接线同形，幂等（先例：tests/daily_price_sync.rs）。
     tauri_app_lib::transaction_wiring::install_all();
 
@@ -173,9 +173,8 @@ fn startup_wiring_syncs_fx_rates_and_concurrent_sync_stays_unblocked() {
     app.manage(ledger_infra::db::encryption::EncryptionGate::new(false));
     app.manage(ledger_infra::db::boot::BootFailureGate::new());
 
-    // 静态基线：非本位币（USD）账户，创建日 2022-06-15（窗口判据输入显式给定，
-    // 与 fx_sync 域单测同一夹具纪律）。窗口起点 = 2022-06-13 所在周周一再前推
-    // 一周 = 2022-06-06。
+    // 静态基线：非本位币（USD）账户，创建日 2022-06-15（零痕迹判据的输入显式给定，
+    // 与 fx_sync 域单测同一夹具纪律）。有痕迹 → 走同步；深度由落库序列定。
     let conn = app.state::<DbState>().conn.clone();
     let codes = {
         let guard = conn.lock().unwrap();
@@ -243,7 +242,7 @@ fn startup_wiring_syncs_fx_rates_and_concurrent_sync_stays_unblocked() {
         .expect("每日汇率同步应到达全量取数点");
 
     // 每日通道在途窗口内，另一路汇率同步（独立通道束 + 独立会话）照常完成、
-    // 不被互斥拒绝：窗口判据、取数、落库全链路走完——多设备 / 手动入口并发
+    // 不被互斥拒绝：判据、取数、落库全链路走完——多设备 / 手动入口并发
     // 的进程内同形（issue #1546 AC4：各自幂等落库，无「只允许一个同步方」开关）。
     let other_report: FxSyncReport = {
         let session = FacadeWriteSession::new(
@@ -259,11 +258,11 @@ fn startup_wiring_syncs_fx_rates_and_concurrent_sync_stays_unblocked() {
         "并发一路按判据走全量回填（此刻库内尚无任何汇率行）"
     );
 
-    // 并发一路的落库可观察：窗口起点 2022-06-06 起 3 个周 × 字典 10 对全落库；
+    // 并发一路的落库可观察：夹具最早周 2022-06-06 起 3 个周 × 字典 10 对全落库；
     // 当期汇率表 USD/CNY = 最新一天的交叉值（CNY 腿 ÷ USD 腿），来源 ECB。
     {
         let guard = conn.lock().unwrap();
-        assert_eq!(fx_point_count(&guard), 30, "10 对 × 3 个窗口内周全落库");
+        assert_eq!(fx_point_count(&guard), 30, "10 对 × 3 个夹具周全落库");
         let earliest: String = guard
             .query_row(
                 "SELECT MIN(week_start) FROM fx_rate_history WHERE base_code='USD'",
@@ -271,7 +270,7 @@ fn startup_wiring_syncs_fx_rates_and_concurrent_sync_stays_unblocked() {
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(earliest, "2022-06-06", "窗口起点周即最早周");
+        assert_eq!(earliest, "2022-06-06", "夹具最早周即落库最早周");
         let (rate, source): (f64, String) = guard
             .query_row(
                 "SELECT rate, source FROM exchange_rates WHERE base_code='USD' AND quote_code='CNY'",

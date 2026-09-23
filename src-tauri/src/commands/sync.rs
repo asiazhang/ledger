@@ -140,7 +140,7 @@ pub async fn sync_instrument_info<R: Runtime>(
 
 /// IPC 命令：手动同步汇率一次（issue #1545 设置页「同步汇率」入口）：门面写槽裸
 /// 作业会话交给汇率同步编排（[`sync_fx_rates`]，#1275 会话接缝同款；生产通道束
-/// 接 ECB 官方站，取数深度由窗口判据分派——深度未达走全量回填、已达走 90 天
+/// 接 ECB 官方站，深度判据分派腿——落库序列未覆盖数据源起点走全量回填、已覆盖走 90 天
 /// 增量），返回同步报告（是否回填 + 覆盖区间 / 条数，前端结果面）。失败原因码化
 /// 三态互不吞并（fx.source-unreachable / fx.source-no-data /
 /// fx.source-malformed），前端按码本地化后可分辨。

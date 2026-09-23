@@ -1,4 +1,4 @@
-//! ECB 汇率同步编排（issue #1544）：窗口判据与全量 / 增量两腿分派的行为断言 +
+//! ECB 汇率同步编排（issue #1544）：深度判据与全量 / 增量两腿分派的行为断言 +
 //! 生产通道束接线证明。断言面为库内可观察的落库行与返回统计（ADR-0087 断言
 //! 强度），不断言函数调用形状；接线证明例外——经本地 HTTP 服务驱动生产束
 //!（[`FxSyncChannels::with_hosts`]），断言两个 ECB 文件路径的到达（删除接线即红）。
@@ -22,9 +22,10 @@ use tauri_app_lib::test_support::{
 };
 
 use crate::ecb::EcbDayRates;
-use crate::fx::{FxSyncChannels, FxSyncReport, sync_fx_rates};
+use crate::fx::{FX_SOURCE_ORIGIN_WEEK, FxSyncChannels, FxSyncReport, sync_fx_rates};
+use crate::weekly::week_monday;
 
-use super::{insert_holding, insert_lot, spawn_header_capture_server};
+use super::{insert_lot, spawn_header_capture_server};
 
 // ---------------------------------------------------------------------------
 // 夹具：字典腿集合、日快照与桩通道束
@@ -102,7 +103,7 @@ fn seed_foreign_account_at(conn: &Connection, id: &str, currency: &str, created_
     .unwrap();
 }
 
-/// 汇率历史周键跨度（窗口判据的可观察落库面）。
+/// 汇率历史周键跨度（深度判据的可观察落库面）。
 fn fx_week_span(conn: &Connection, base: &str, quote: &str) -> (Option<String>, Option<String>) {
     conn.query_row(
         "SELECT MIN(week_start), MAX(week_start) FROM fx_rate_history \
@@ -120,11 +121,23 @@ fn fx_point_count(conn: &Connection) -> i64 {
 }
 
 // ---------------------------------------------------------------------------
-// 窗口判据与两腿分派（issue #1544 AC）
+// 深度判据与两腿分派（issue #1544 AC，#1759 判据收敛）
 // ---------------------------------------------------------------------------
 
 /// 零痕迹 → 零请求零落库（AC）：账本没有非本位币账户与交易时，同步不碰任何
 /// 通道、不落任何行——不做无谓回填。
+/// 起点锚自洽（#1759）：锚 = CNY 腿起点 2005-04-01 所属 ISO 周的周一——周键口径
+/// 单侧调整或锚值漂移时本测试红（锚不再是无绑定的裸字符串字面量）。
+#[test]
+fn fx_source_origin_anchor_is_the_cny_leg_origin_week() {
+    let origin = NaiveDate::parse_from_str("2005-04-01", "%Y-%m-%d").unwrap();
+    assert_eq!(
+        week_monday(origin).format("%Y-%m-%d").to_string(),
+        FX_SOURCE_ORIGIN_WEEK,
+        "起点锚 = CNY 腿起点 2005-04-01 所属 ISO 周周一（周键口径或锚漂移即红）"
+    );
+}
+
 #[test]
 fn no_non_native_traces_skips_sync_entirely() {
     let conn = tauri_app_lib::test_support::open();
@@ -142,21 +155,21 @@ fn no_non_native_traces_skips_sync_entirely() {
     assert_eq!(fx_point_count(&conn), 0, "零落库");
 }
 
-/// 全量回填的窗口锚（AC 核心判据）：窗口起点 = 最早非本位币痕迹所属 ISO 周的
-/// 周一再前推一周——序列自该日期之前一周起有点；与标的 K 线「近两年」窗口无关
-///（痕迹 2022-06-15 早于近两年起点，序列仍补到它之前），窗口起点之前的周不落库。
+/// 全量腿整份灌库（#1759）：窗口判据退役——取数腿覆盖到的全部周点照常落库，
+/// 最早非本位币痕迹之前的周不再被裁掉（旧判据把序列锚在痕迹前一周，历史导入
+/// 永远撞「该周历史空缺」：写入需要该周汇率、汇率需要更早痕迹的死锁）。取数
+/// 腿本来就整份下载，裁剪只省本地行——不为省行保留死锁判据。
 #[test]
-fn full_backfill_windows_at_earliest_non_native_account() {
+fn full_backfill_ingests_whole_document_without_window_trimming() {
     let conn = tauri_app_lib::test_support::open();
-    // 非本位币账户创建日 2022-06-15（周三）：所属周周一 2022-06-13，前推一周
-    // = 2022-06-06（窗口起点）。
+    // 非本位币账户创建日 2022-06-15：只定「有痕迹要同步」，不再定深度。
     seed_foreign_account_at(&conn, "acc-usd", "USD", "2022-06-15T08:00:00Z");
-    // 取数腿含窗口起点之前（2022-05-30 属更早周）与之后的多周。
+    // 取数腿含痕迹日之前的周（2022-05-30 属更早周）——旧窗口判据会把它裁掉。
     let (mut channels, full_calls, incr_calls) = stub_channels(
         &conn,
         &[
-            ("2022-05-30", 7.1), // 窗口起点之前：裁掉
-            ("2022-06-06", 7.2), // 窗口起点当周（周一）
+            ("2022-05-30", 7.1), // 痕迹日之前的周：整份灌库后照常落库
+            ("2022-06-06", 7.2),
             ("2022-06-15", 7.3), // 痕迹日当周
             ("2026-09-14", 7.4), // 近期
         ],
@@ -170,18 +183,15 @@ fn full_backfill_windows_at_earliest_non_native_account() {
     let (min_week, max_week) = fx_week_span(&conn, "USD", "CNY");
     assert_eq!(
         min_week.as_deref(),
-        Some("2022-06-06"),
-        "窗口起点周即最早周"
+        Some("2022-05-30"),
+        "取数腿最早周照常落库（不再按窗口裁剪）"
     );
     assert_eq!(max_week.as_deref(), Some("2026-09-14"));
-    let early: i64 = conn
-        .query_row(
-            "SELECT count(*) FROM fx_rate_history WHERE week_start < '2022-06-06'",
-            [],
-            |r| r.get(0),
-        )
-        .unwrap();
-    assert_eq!(early, 0, "窗口起点之前无落库点（不灌整根文件）");
+    assert_eq!(
+        fx_point_count(&conn),
+        40,
+        "10 对 × 取数腿全部 4 个周（不裁剪）"
+    );
     // 币种对 = 字典全量对本位币（不只「有痕迹的币种」），10 对全量落库。
     let pairs: i64 = conn
         .query_row(
@@ -191,7 +201,6 @@ fn full_backfill_windows_at_earliest_non_native_account() {
         )
         .unwrap();
     assert_eq!(pairs, 10, "字典 11 币种减本位币 = 10 对全量落库");
-    assert_eq!(fx_point_count(&conn), 30, "10 对 × 3 个窗口内周");
     // 当期汇率表随落库更新：每对最新一条，来源标记 ECB。
     let codes = dictionary_codes(&conn);
     let usd_leg = leg_rate(&codes, "USD", 7.4);
@@ -209,64 +218,90 @@ fn full_backfill_windows_at_earliest_non_native_account() {
     );
 }
 
-/// 判据输入 = 非本位币账户创建日 ∪ 非本位币交易日的 MIN；软删行排除（账户与
-/// 交易同规）——任一软删痕迹若未排除，窗口都会更早（负向条目，删除即红）。
+/// 零痕迹判据的排除面（软删行与隐藏账户）：软删账户 / 软删交易 / 隐藏账户都
+/// 不算非本位币痕迹——黑洞账户（V004 种子，承接「资金账户=无」的导入交易，
+/// 对用户隐藏）在每本账本必然存在，其创建日是安装时刻而非用户使用非本位币的
+/// 起点；其内的导入交易不受影响（transactions 无隐藏位，仍是真实痕迹）。账本
+/// 只有这些行时不触发任何取数、零落库（删除排除任一环即红）。
 #[test]
-fn window_takes_min_of_traces_excluding_soft_deleted() {
+fn soft_deleted_and_hidden_traces_do_not_trigger_sync() {
     let conn = tauri_app_lib::test_support::open();
-    // 软删账户（2023-01-01 创建）：排除——若未排除，窗口会锚到 2022-12-26。
+    // 软删账户（2023-01-01 创建）。
     seed_foreign_account_at(&conn, "acc-del", "USD", "2023-01-01T00:00:00Z");
     conn.execute("UPDATE accounts SET is_deleted=1 WHERE id='acc-del'", [])
         .unwrap();
-    // 活跃 HKD 账户（簿记戳 2026，不影响 MIN）+ 非本位币交易 2023-05-10：参与。
-    insert_holding(&conn, "acc-hkd", "inst-live", "00700", "stock", "HKD", "hk");
-    conn.execute(
-        "UPDATE transactions SET date='2023-05-10' WHERE id='txn-acc-hkd-inst-live'",
-        [],
-    )
-    .unwrap();
-    // 软删交易（2023-03-01，同账户第二只标的）：排除——若未排除，窗口会锚到
-    // 2023-02-20。
+    // 隐藏账户（2021 创建）：排除——若未排除会触发回填。
+    seed_foreign_account_at(&conn, "acc-hidden", "USD", "2021-01-01T00:00:00Z");
+    conn.execute("UPDATE accounts SET is_hidden=1 WHERE id='acc-hidden'", [])
+        .unwrap();
+    // 软删交易（2023-03-01，隐藏账户内第二只标的）：排除。
     seed_instrument(&conn, "inst-del", "00001", "已删持仓", "HKD", "hk");
-    insert_lot(&conn, "acc-hkd", "inst-del", "HKD");
+    insert_lot(&conn, "acc-hidden", "inst-del", "HKD");
     conn.execute(
-        "UPDATE transactions SET is_deleted=1, date='2023-03-01' WHERE id='txn-acc-hkd-inst-del'",
+        "UPDATE transactions SET is_deleted=1, date='2023-03-01' WHERE id='txn-acc-hidden-inst-del'",
         [],
     )
     .unwrap();
 
-    let (mut channels, _, _) = stub_channels(
+    let (mut channels, full_calls, incr_calls) = stub_channels(&conn, &[("2005-04-01", 7.1)]);
+    let report = block_on(sync_fx_rates(&conn, &mut channels)).unwrap();
+
+    assert_eq!(
+        report,
+        FxSyncReport::default(),
+        "零活跃痕迹：默认统计（未回填零落库）"
+    );
+    assert_eq!(full_calls.load(Ordering::SeqCst), 0, "全量通道零调用");
+    assert_eq!(incr_calls.load(Ordering::SeqCst), 0, "增量通道零调用");
+    assert_eq!(fx_point_count(&conn), 0, "零落库");
+}
+
+/// 深度判据 = 数据源起点已覆盖（#1759，替代痕迹派生窗口）：全量腿落库覆盖到
+/// 起点锚（CNY 腿起点 2005-04-01 所属 ISO 周周一 2005-03-28）后，重复同步只走
+/// 90 天增量、不重复拉全量（幂等，逐币种对核对）；同数据整周覆盖幂等，行数不变。
+#[test]
+fn repeated_sync_walks_incremental_once_source_origin_covered() {
+    let conn = tauri_app_lib::test_support::open();
+    seed_foreign_account_at(&conn, "acc-usd", "USD", "2022-06-15T08:00:00Z");
+    // 取数腿含起点锚当周（2005-04-01，CNY 腿起点）与近期。
+    let (mut channels, full_calls, incr_calls) = stub_channels(
         &conn,
         &[
-            ("2023-04-03", 7.1), // 窗口起点之前：裁掉
-            ("2023-05-01", 7.2), // 窗口起点当周（2023-05-10 所属周周一 2023-05-08 前推一周）
-            ("2023-05-10", 7.3), // 交易日当周
+            ("2005-04-01", 7.1),
+            ("2022-06-06", 7.2),
             ("2026-09-14", 7.4),
         ],
     );
-    let report = block_on(sync_fx_rates(&conn, &mut channels)).unwrap();
 
-    assert!(report.full_backfilled);
-    let (min_week, _) = fx_week_span(&conn, "HKD", "CNY");
+    let first = block_on(sync_fx_rates(&conn, &mut channels)).unwrap();
+    assert!(first.full_backfilled, "首刷：全量回填");
+    assert_eq!(full_calls.load(Ordering::SeqCst), 1);
+    let (min_week, _) = fx_week_span(&conn, "USD", "CNY");
     assert_eq!(
         min_week.as_deref(),
-        Some("2023-05-01"),
-        "窗口锚在活跃交易日（账户创建日 2023-01-01 与软删交易 2023-03-01 被排除）"
+        Some("2005-03-28"),
+        "起点锚当周即最早周"
     );
-    let early: i64 = conn
-        .query_row(
-            "SELECT count(*) FROM fx_rate_history WHERE week_start < '2023-05-01'",
-            [],
-            |r| r.get(0),
-        )
-        .unwrap();
-    assert_eq!(early, 0, "软删痕迹不参与窗口判据");
+    let rows_after_first = fx_point_count(&conn);
+
+    let second = block_on(sync_fx_rates(&conn, &mut channels)).unwrap();
+    assert!(!second.full_backfilled, "起点已覆盖：第二轮不走全量");
+    assert_eq!(full_calls.load(Ordering::SeqCst), 1, "全量通道不重复拉取");
+    assert_eq!(incr_calls.load(Ordering::SeqCst), 1, "第二轮只走增量腿");
+    assert_eq!(
+        fx_point_count(&conn),
+        rows_after_first,
+        "增量同数据整周覆盖，行数不变"
+    );
+    let (min_week, _) = fx_week_span(&conn, "USD", "CNY");
+    assert_eq!(min_week.as_deref(), Some("2005-03-28"), "起点覆盖深度保持");
 }
 
-/// 深度幂等（AC3）：首次同步走全量回填；重复同步判深度已达成（逐币种对核对），
-/// 只走 90 天增量、不重复拉全量；同数据整周覆盖幂等，落库行数不变。
+/// 起点未覆盖 → 全量腿再启动（#1759 判据的负向面）：首轮只灌到近期周点时
+///（落库序列尚无起点锚当周行），下一轮仍判「未达深」再走全量——判据看落库
+/// 序列对数据源起点的覆盖，不看「是否曾经回填过」。
 #[test]
-fn repeated_sync_skips_full_backfill_once_depth_reached() {
+fn depth_not_reached_restarts_full_backfill() {
     let conn = tauri_app_lib::test_support::open();
     seed_foreign_account_at(&conn, "acc-usd", "USD", "2022-06-15T08:00:00Z");
     let (mut channels, full_calls, incr_calls) = stub_channels(
@@ -280,24 +315,15 @@ fn repeated_sync_skips_full_backfill_once_depth_reached() {
 
     let first = block_on(sync_fx_rates(&conn, &mut channels)).unwrap();
     assert!(first.full_backfilled, "首刷：全量回填");
-    assert_eq!(full_calls.load(Ordering::SeqCst), 1);
-    let rows_after_first = fx_point_count(&conn);
 
     let second = block_on(sync_fx_rates(&conn, &mut channels)).unwrap();
-    assert!(!second.full_backfilled, "深度已达成：第二轮不走全量");
-    assert_eq!(full_calls.load(Ordering::SeqCst), 1, "全量通道不重复拉取");
-    assert_eq!(incr_calls.load(Ordering::SeqCst), 1, "第二轮只走增量腿");
-    assert_eq!(
-        fx_point_count(&conn),
-        rows_after_first,
-        "增量同数据整周覆盖，行数不变"
-    );
-    let (min_week, _) = fx_week_span(&conn, "USD", "CNY");
-    assert_eq!(min_week.as_deref(), Some("2022-06-06"), "窗口深度保持");
+    assert!(second.full_backfilled, "起点未覆盖：全量腿再启动");
+    assert_eq!(full_calls.load(Ordering::SeqCst), 2, "每轮各拉一次全量");
+    assert_eq!(incr_calls.load(Ordering::SeqCst), 0, "未达深不走增量腿");
 }
 
 /// 存量旧来源行（东财时代的 fx_rate_history 行，source='eastmoney'）不计入 ECB
-/// 深度判据（spec #1540 / issue #1551 AC）：全字典各对都有不晚于窗口起点的旧来源
+/// 深度判据（spec #1540 / issue #1551 AC）：全字典各对只有不构成 ECB 覆盖证据的旧来源
 /// 行时，深度判据仍判「未达」——全量回填照常执行，同周键的旧值被 ECB 交叉值
 /// 覆盖、来源翻转为 'ecb'。把深度判据的 `source='ecb'` 过滤删掉，本用例即红：
 /// 旧来源行会被误当作新来源覆盖证据，同步走增量腿、旧值原样留存。
@@ -305,7 +331,7 @@ fn repeated_sync_skips_full_backfill_once_depth_reached() {
 fn legacy_eastmoney_rows_do_not_count_as_ecb_depth_and_are_overwritten() {
     let conn = tauri_app_lib::test_support::open();
     seed_foreign_account_at(&conn, "acc-usd", "USD", "2022-06-15T08:00:00Z");
-    // 全字典各非本位币对各种一条窗口起点当周的旧来源行（值 9.99，非 ECB 口径）。
+    // 全字典各非本位币对各种一条旧来源行（值 9.99，非 ECB 口径，周键 2022-06-06）。
     for code in dictionary_codes(&conn) {
         if code == "CNY" {
             continue;
@@ -352,7 +378,7 @@ fn legacy_eastmoney_rows_do_not_count_as_ecb_depth_and_are_overwritten() {
         (rate - 7.2 / usd_leg).abs() < 1e-9,
         "同周键旧值被 ECB 交叉值覆盖，实际 rate={rate}"
     );
-    assert_eq!(fx_point_count(&conn), 30, "10 对 × 3 个窗口内周，无重复行");
+    assert_eq!(fx_point_count(&conn), 30, "10 对 × 3 个夹具周，无重复行");
 }
 
 // ---------------------------------------------------------------------------
@@ -366,11 +392,12 @@ fn legacy_eastmoney_rows_do_not_count_as_ecb_depth_and_are_overwritten() {
 fn production_bundle_hits_both_ecb_documents() {
     let conn = tauri_app_lib::test_support::open();
     seed_foreign_account_at(&conn, "acc-usd", "USD", "2022-06-15T08:00:00Z");
-    // Cube 报文（与 ecb.rs 解析测试同形）：腿覆盖字典全量币种，含窗口起点之前的
-    // 日期（生产路径同样按窗口裁剪）。
+    // Cube 报文（与 ecb.rs 解析测试同形）：腿覆盖字典全量币种，含起点锚当周（2005-04-01，
+    // CNY 腿起点）与近期多日——全量腿整份灌库，不再按窗口裁剪。
     let codes = dictionary_codes(&conn);
     let mut xml = String::from("<Cube>");
     for (date, cny) in [
+        ("2005-04-01", "7.05"), // 起点锚当周（CNY 腿起点）
         ("2022-05-30", "7.1"),
         ("2022-06-06", "7.2"),
         ("2022-06-15", "7.3"),
@@ -391,13 +418,13 @@ fn production_bundle_hits_both_ecb_documents() {
     let (url, heads) = spawn_header_capture_server(xml);
     let mut channels = FxSyncChannels::with_hosts(vec![url]).unwrap();
 
-    // 首轮：全量回填，窗口裁剪生效（夹具里的 2022-05-30 属窗口前周，不落库）。
+    // 首轮：全量回填，整份文件灌库（夹具最早周 2005-03-28 照常落库，不裁剪）。
     block_on(sync_fx_rates(&conn, &mut channels)).unwrap();
     let (min_week, _) = fx_week_span(&conn, "USD", "CNY");
     assert_eq!(
         min_week.as_deref(),
-        Some("2022-06-06"),
-        "生产路径同样按窗口裁剪"
+        Some("2005-03-28"),
+        "生产路径同样整份落库（不裁剪）"
     );
 
     // 二轮：深度已达成，走 90 天增量文件。
@@ -455,7 +482,7 @@ fn op_count(conn: &Connection) -> i64 {
 }
 
 /// 正常路径的报告面（issue #1545 结果面）：覆盖区间 / 条数 / 币种对数经编排透出
-///（首轮窗口判据走全量腿），当期汇率交叉方向钉值，且自动采集不产同步 op。
+///（首轮深度未达走全量腿），当期汇率交叉方向钉值，且自动采集不产同步 op。
 #[test]
 fn fx_sync_reports_persist_stats_and_produces_no_sync_ops() {
     let conn = tauri_app_lib::test_support::open();
@@ -472,7 +499,7 @@ fn fx_sync_reports_persist_stats_and_produces_no_sync_ops() {
     let report = block_on(sync_fx_rates(&conn, &mut channels)).unwrap();
 
     assert_eq!(report.persist.pairs, 10, "字典 11 币种减本位币 = 10 对");
-    assert_eq!(report.persist.points, 30, "10 对 × 3 个窗口内周");
+    assert_eq!(report.persist.points, 30, "10 对 × 3 个夹具周");
     assert_eq!(report.persist.earliest.as_deref(), Some("2022-06-06"));
     assert_eq!(report.persist.latest.as_deref(), Some("2026-09-14"));
     assert_eq!(report.persist.manual_protected, 0);
