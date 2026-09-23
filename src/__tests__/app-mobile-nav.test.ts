@@ -110,7 +110,7 @@ describe("App 壳窗口分级分支（issue #842，假 matchMedia 换档）", ()
       expect(text, `抽屉菜单项不应含键位提示：${text}`).not.toMatch(/[⌘⌃]/);
     }
     // 同一份导航状态剥离键位带后仍完整：抽屉菜单与桌面侧栏同构（视图集一致）
-    expect(drawerMenuItemTexts()).toHaveLength(10);
+    expect(drawerMenuItemTexts()).toHaveLength(11); // 八主项 + 概览 + AI + 设置
   });
 
   it("ViewState 组内序在抽屉中正确渲染：存量自定义序经解析防御后按序呈现", async () => {

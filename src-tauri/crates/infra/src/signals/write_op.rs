@@ -125,6 +125,10 @@ pub enum WriteOp {
     /// `is_deleted=1`，数据与估值历史保留，退出列表与合计。
     DeletePhysicalAsset,
 
+    // ── 储蓄目标域（spec #1750 / ADR-0133：独立领域，复用 `ledger:changed` 同名事件）──
+    /// 创建储蓄目标（IPC `create_savings_goal`；目标行 + 专属账户同一事务建出）。
+    CreateSavingsGoal,
+
     // ── 账户域 ──
     /// 余额调整（IPC `adjust_account_balance`，ADR-0026）：预期证据
     /// [`crate::signals::WriteEvidence::BlackHoleCreated`]——仅按需新建黑洞账户时参考表变更。

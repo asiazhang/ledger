@@ -205,6 +205,16 @@ fn delete_physical_asset_emits_ledger_changed() {
     );
 }
 
+// ── 储蓄目标域（spec #1750 / ADR-0133）：独立领域一律 ledger:changed ──
+
+#[test]
+fn create_savings_goal_emits_ledger_changed() {
+    assert_signals(
+        signals_for(Op::CreateSavingsGoal, E::None),
+        &[Signal::LedgerChanged],
+    );
+}
+
 #[test]
 fn update_policy_emits_ledger_changed() {
     assert_signals(

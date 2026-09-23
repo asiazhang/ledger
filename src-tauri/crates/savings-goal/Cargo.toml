@@ -1,0 +1,36 @@
+[package]
+name = "ledger-savings-goal"
+version = "0.7.0"
+description = "Ledger 储蓄目标域 crate：创建目标自动建户与蓄水进度读数（SavingsGoal）"
+edition = "2024"
+publish = false
+# 版本与根包锁步（仓库约定：workspace 各成员与根包同版本）。
+
+[dependencies]
+# 储蓄目标域 crate（spec #1750 / issue #1751，P3 叶子业务域 crate）：依赖面是
+# 基础设施、同步协议与两个同级业务域——创建目标在同一事务内经账户域公开写入口
+# 建专属账户（`ledger-accounts`），本位币取值消费交易域 Amount 口缝
+#（`ledger-transaction::amount`，域→域横向依赖 ADR-0056 决策 2 允许）；蓄水与
+# 取出是核心交易域既有 transfer / expense 流水，本 crate 零新写入路径。对根包
+#（壳层）与同步域零依赖：设备标识走 `ledger-sync-protocol`，Goal DomainCommand
+# 与重放分派随多端同步票接入（业务域→同步域零容忍，ADR-0101 决策 4b）。
+ledger-infra = { path = "../infra" }
+ledger-sync-protocol = { path = "../sync-protocol" }
+ledger-accounts = { path = "../accounts" }
+ledger-transaction = { path = "../transaction" }
+rusqlite = { version = "0.40", features = ["bundled-sqlcipher-vendored-openssl", "trace"] }
+serde = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+# 测试专用边（spec #1086 明文裁决「测试工厂与器具以 dev-dependency 环供各域
+# 复用，Cargo 允许」）：域单测经 dev-dependency 环消费根包统一测试数据库工厂
+#（test_support，ADR-0084）。dev-dependency 环由 Cargo 允许——测试目标与生产
+# 依赖图分离，不构成生产环；结构守门的依赖方向核对只辖生产依赖（本 crate 声明
+# tauri-app 为生产依赖即红，负向夹具见 check-structure.test.ts）——机器面负向
+# 核对住结构守门的 crate 依赖方向（ledger-backup / ledger-physical-asset 同款留痕）。
+tauri-app = { path = "../.." }
+
+# 六件套易 panic 构造门禁经 workspace 继承（ADR-0060 / spec #1086 门禁前置）：
+# 本行是继承接线，缺失即门禁静默消失，由 scripts/check-structure.ts 守门。
+[lints]
+workspace = true

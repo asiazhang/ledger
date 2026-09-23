@@ -42,11 +42,11 @@ function reboot() {
 }
 
 describe("侧栏分组常量（issue #359 / ADR-0051；#473 记账组主项三项化，ADR-0063 决策 2/3）", () => {
-  it("三组锁定：记账 = 交易、账户、预算；资产 = 投资、物品；洞察 = 报表、搜索（定时/商户为收纳成员）", () => {
+  it("三组锁定：记账 = 交易、账户、预算；资产 = 投资、物品、储蓄目标；洞察 = 报表、搜索（定时/商户为收纳成员）", () => {
     expect(SIDEBAR_GROUPS.map((g) => g.id)).toEqual(["bookkeeping", "assets", "insights"]);
     expect(SIDEBAR_GROUPS.map((g) => [...g.views])).toEqual([
       ["transactions", "accounts", "budget"],
-      ["investments", "items"],
+      ["investments", "items", "savingsGoals"],
       ["reports", "search"],
     ]);
   });
@@ -59,6 +59,7 @@ describe("侧栏分组常量（issue #359 / ADR-0051；#473 记账组主项三�
       "budget",
       "investments",
       "items",
+      "savingsGoals",
       "reports",
       "search",
       "ai",
@@ -75,13 +76,14 @@ describe("侧栏分组常量（issue #359 / ADR-0051；#473 记账组主项三�
     expect(DEFAULT_VIEW_ORDER[DEFAULT_VIEW_ORDER.length - 1]).toBe(LAST_VIEW);
   });
 
-  it("主项（可排区）= 各组成员按组序展开共 7 项（定时/商户/保单/实物资产均为收纳成员，不在其中）", () => {
+  it("主项（可排区）= 各组成员按组序展开共 8 项（定时/商户/保单/实物资产均为收纳成员，不在其中）", () => {
     expect(ARRANGEABLE_VIEWS).toEqual([
       "transactions",
       "accounts",
       "budget",
       "investments",
       "items",
+      "savingsGoals",
       "reports",
       "search",
     ]);
@@ -109,7 +111,7 @@ describe("侧栏分组常量（issue #359 / ADR-0051；#473 记账组主项三�
 /** 默认组内序（= SIDEBAR_GROUPS 成员展开）：解析/持久化断言复用 */
 const DEFAULT_ORDERS: SidebarGroupOrders = {
   bookkeeping: ["transactions", "accounts", "budget"],
-  assets: ["investments", "items"],
+  assets: ["investments", "items", "savingsGoals"],
   insights: ["reports", "search"],
 };
 
@@ -153,7 +155,7 @@ describe("parseGroupOrders（组内序解析纯函数）", () => {
       }),
     ).toEqual({
       bookkeeping: ["budget", "transactions", "accounts"],
-      assets: ["items", "investments"],
+      assets: ["items", "investments", "savingsGoals"],
       insights: ["reports", "search"],
     });
   });
@@ -204,7 +206,7 @@ describe("parseGroupOrders × 收纳清单耦合（issue #474：收纳成员不�
   it("第二参数（已解析收纳清单）中的成员不回填组内序：缺失项补尾跳过收纳成员", () => {
     expect(parseGroupOrders({ bookkeeping: ["accounts"] }, contained)).toEqual({
       bookkeeping: ["accounts", "budget"],
-      assets: ["investments", "items"],
+      assets: ["investments", "items", "savingsGoals"],
       insights: ["reports", "search"],
     });
   });
@@ -383,7 +385,7 @@ describe("store 启动读路径（issue #269/#359/#472：读 view_state:* 两键
     const store = useSidebarOrderStore();
     expect(store.sidebarGroupOrders).toEqual({
       bookkeeping: ["budget", "transactions", "accounts"],
-      assets: ["investments", "items"],
+      assets: ["investments", "items", "savingsGoals"],
       insights: ["search", "reports"],
     });
     expect(store.sidebarContainment).toEqual({
@@ -600,10 +602,11 @@ describe("isGroupFull（组满置灰判定纯函数，issue #475 / ADR-0063 决�
     expect(GROUP_MAIN_LIMIT).toBe(3);
   });
 
-  it("主项数达 3 即满：记账出厂满员（定时/商户移回置灰的判定面），两员组未满，空组未满", () => {
+  it("主项数达 3 即满：记账与资产出厂满员（收纳成员移回置灰的判定面），洞察两员未满、两员组未满、空组未满", () => {
     expect(isGroupFull(DEFAULT_ORDERS.bookkeeping)).toBe(true);
-    expect(isGroupFull(DEFAULT_ORDERS.assets)).toBe(false);
+    expect(isGroupFull(DEFAULT_ORDERS.assets)).toBe(true);
     expect(isGroupFull(DEFAULT_ORDERS.insights)).toBe(false);
+    expect(isGroupFull(["investments", "items"])).toBe(false);
     expect(isGroupFull([])).toBe(false);
   });
 });
@@ -685,7 +688,7 @@ describe("applySidebarSort 写路径（issue #270/#359：组内点选即重排�
     const stored = JSON.parse(localStorage.getItem(ORDER_KEY)!);
     expect(stored).toEqual({
       bookkeeping: ["transactions", "accounts", "budget"],
-      assets: ["investments", "items"],
+      assets: ["investments", "items", "savingsGoals"],
       insights: ["search", "reports"],
     });
   });
@@ -694,7 +697,7 @@ describe("applySidebarSort 写路径（issue #270/#359：组内点选即重排�
     const store = useSidebarOrderStore();
     store.applySidebarSort("search", "top");
     expect(store.sidebarGroupOrders.bookkeeping).toEqual(["transactions", "accounts", "budget"]);
-    expect(store.sidebarGroupOrders.assets).toEqual(["investments", "items"]);
+    expect(store.sidebarGroupOrders.assets).toEqual(["investments", "items", "savingsGoals"]);
   });
 
   it("固定项不参与排序（applySidebarSort 对固定项为 no-op，不写存储）", () => {
@@ -841,13 +844,13 @@ describe("右键「移回侧栏」写路径（issue #475：点选即清单删除
     expect(localStorage.getItem(CONTAINMENT_KEY)).toBeNull();
   });
 
-  it("移回资产组成员：保单落资产组主项末位（出厂未满员，无需腾位）", () => {
+  it("移回资产组成员：需先腾位（资产组随储蓄目标加入出厂满员），保单落资产组主项末位", () => {
     const store = useSidebarOrderStore();
+    store.applyMoveIntoMore("investments"); // 腾位：资产组出厂满员（投资、物品、储蓄目标）
     store.applyMoveBackToSidebar("policies");
-    expect(store.sidebarContainment.assets).toEqual(["physicalAssets", "insurers"]);
-    expect(store.sidebarGroupOrders.assets).toEqual(["investments", "items", "policies"]);
+    expect(store.sidebarContainment.assets).toEqual(["physicalAssets", "insurers", "investments"]);
+    expect(store.sidebarGroupOrders.assets).toEqual(["items", "savingsGoals", "policies"]);
   });
-
   it("移回组内最后一个收纳成员后清单为空（侧栏「更多」链接渲染条件失效）", () => {
     const store = useSidebarOrderStore();
     store.applyMoveIntoMore("reports");
@@ -906,6 +909,7 @@ describe("右键「移回侧栏」写路径（issue #475：点选即清单删除
   it("isViewContained（收纳在册判定）：出厂种子在册；移回后出册（/policies 路由守卫消费面）", () => {
     const store = useSidebarOrderStore();
     expect(store.isViewContained("policies")).toBe(true);
+    store.applyMoveIntoMore("investments"); // 腾位：资产组随储蓄目标加入出厂满员
     store.applyMoveBackToSidebar("policies");
     expect(store.isViewContained("policies")).toBe(false);
     expect(store.isViewContained("physicalAssets")).toBe(true);

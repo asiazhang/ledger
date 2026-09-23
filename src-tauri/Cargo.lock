@@ -3259,6 +3259,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "ledger-savings-goal"
+version = "0.7.0"
+dependencies = [
+ "ledger-accounts",
+ "ledger-infra",
+ "ledger-sync-protocol",
+ "ledger-transaction",
+ "rusqlite",
+ "serde",
+ "tauri-app",
+]
+
+[[package]]
 name = "ledger-scheduled"
 version = "0.7.0"
 dependencies = [
@@ -5573,6 +5586,7 @@ dependencies = [
  "ledger-physical-asset",
  "ledger-policy",
  "ledger-reports",
+ "ledger-savings-goal",
  "ledger-scheduled",
  "ledger-sync-engine",
  "ledger-sync-protocol",

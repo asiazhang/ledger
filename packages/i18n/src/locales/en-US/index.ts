@@ -11,6 +11,7 @@ import investments from "./investments.json";
 import items from "./items.json";
 import policies from "./policies.json";
 import physicalAssets from "./physicalAssets.json";
+import savingsGoals from "./savingsGoals.json";
 import scheduled from "./scheduled.json";
 import budget from "./budget.json";
 import ai from "./ai.json";
@@ -33,6 +34,7 @@ export default {
   items,
   policies,
   physicalAssets,
+  savingsGoals,
   scheduled,
   budget,
   ai,

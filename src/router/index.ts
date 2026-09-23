@@ -114,6 +114,11 @@ export const routes: RouteRecordRaw[] = [
     beforeEnter: featureRouteGuard("scheduled"),
   },
   {
+    path: "/savings-goals",
+    name: "savingsGoals",
+    component: () => import("@/views/SavingsGoalsView.vue"),
+  },
+  {
     // 旧订阅入口（issue #202）：重定向到定时视图订阅页签，用户无感知；
     // 保留 name 供 ViewState 兼容——旧记录 'subscriptions' 仍可解析并落到订阅页签
     path: "/subscriptions",

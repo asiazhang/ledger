@@ -22,6 +22,7 @@ mod books;
 mod boot;
 mod instrument_sync;
 mod isolation;
+mod savings_goal;
 mod sync_channel;
 mod sync_checkpoint;
 mod sync_trigger;

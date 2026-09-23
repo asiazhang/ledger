@@ -133,6 +133,11 @@ ledger-budget = { path = "crates/budget" }
 # 决策 2 允许），无接缝无注册点、壳层启动零接线（失效信号 notify 回调注入）。
 # 根包 `pub use ledger_physical_asset as physical_asset` 再导出保持原调用点路径。
 ledger-physical-asset = { path = "crates/physical-asset" }
+# 储蓄目标域 crate（spec #1750 / issue #1751，P3 叶子业务域 crate）：创建目标
+# 自动建专属账户与蓄水进度读数归位；依赖面是基础设施、同步协议与账户 / 核心
+# 交易两域（创建联动经账户域公开写入口，域→域横向依赖 ADR-0056 决策 2 允许），
+# 无接缝无注册点、壳层启动零接线。
+ledger-savings-goal = { path = "crates/savings-goal" }
 # 物品域 crate（spec #1086 / issue #1099，P3 叶子域）：物品 CRUD / 处置 / 每天
 # 使用成本聚合与溯源守卫归位；依赖面只有基础设施、同步协议与核心交易域——
 # 交易×物品来源列反查接缝（#1092）的实现注册侧，壳层启动时对装。根包
