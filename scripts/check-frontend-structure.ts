@@ -50,7 +50,7 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { maskComments } from "./ts-comment-mask.ts";
+import { maskComments } from "./gate-primitives.ts";
 
 /** 成员包登记条目（单一事实源，issue #1149）：dir 相对仓库根。 */
 export interface PackageEntry {

@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, it } from "vitest";
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -11,9 +11,6 @@ import {
   TRANSACTION_ZONE_ALLOWED_EDGES,
   TRANSACTION_ZONE_BY_DIR,
   WHITELIST,
-  lineAt,
-  maskNonCode,
-  walkTextFiles,
 } from "../scripts/check-structure.ts";
 import { gateScript, runGateScript } from "./run-gate-script.test-helper.ts";
 
@@ -22,9 +19,9 @@ import { gateScript, runGateScript } from "./run-gate-script.test-helper.ts";
 // 调用同款拉起，测的就是门槛路径。
 // 按测试决策守门行为只测外部可观察结果——进程退出码与输出，不测内部函数；
 // 通过位置参数把扫描目标指向临时夹具目录。
-// 例外（直测导出共享面，同址先例）：maskNonCode 双源防漂移语料（#1433）与
-// 家族共享扫描单点 lineAt / walkTextFiles（#1625）——它们本身就是供多脚本
-// 直接消费的导出面，单测对准可失败断言。
+// 原语级测试面（maskNonCode 语料 / lineAt / walkTextFiles / maskComments）已迁
+// scripts/gate-primitives.test.ts（#1680 库归库、门归门）：库的正确性由库自己的
+// 测试面证明，本文件只测结构守门的门级行为（spawnSync 外部可观察结果）。
 // 夹具自足化（#1595 / T2-3）：每个 crate 的模块面由用例显式声明
 // `{crate, dir, libRs, files}`——合成 lib.rs 文本 + 合成磁盘布局一次生成，
 // 不再有「相对路径 → 目标 crate」的路由链，也不 import 已退役的手写模块清单。
@@ -1850,79 +1847,5 @@ describe("check-structure 当期入口调用方闭集（ADR-0011 决策 3 + 2026
     expect(r.status).toBe(1);
     expect(r.output).toContain("在册成员零调用");
     expect(r.output).toContain("crates/item/src/domain.rs");
-  });
-});
-
-describe("maskNonCode 双源防漂移语料（issue #1433）", () => {
-  // 与 Rust 侧唯一实现（src-tauri/src/test_support/scan.rs 的 mask_non_code）
-  // 消费同一夹具：语料输入 + 期望输出双文件共享，任一侧单独改词法规则即
-  // 本测或 Rust 语料测试红。（vitest 下取进程 cwd = 仓库根定位夹具，同上款先例）
-  const corpusPath = join(process.cwd(), "scripts", "fixtures", "rust-mask-corpus.rs");
-  const expectedPath = join(process.cwd(), "scripts", "fixtures", "rust-mask-corpus.expected.txt");
-
-  it("掩码输出与共享语料期望全等（与 Rust 侧 mask_non_code 同规）", () => {
-    const corpus = readFileSync(corpusPath, "utf8");
-    const expected = readFileSync(expectedPath, "utf8");
-    expect(maskNonCode(corpus)).toBe(expected);
-  });
-
-  it("keepLiterals=true 只掩注释、保留字符串字面量（TS 侧扩展形态，语料外的直接断言）", () => {
-    const src = '// comment\nlet s = "keep";\n';
-    expect(maskNonCode(src, true)).toBe('          \nlet s = "keep";\n');
-  });
-});
-
-describe("守门家族共享扫描单点：命中行定位 lineAt + 文本面遍历 walkTextFiles（issue #1625）", () => {
-  // 与 maskNonCode 同址的家族共享面（供 check-infra-dml / check-eastmoney-residue
-  // 消费）：行号定位与目录遍历收口单点，扩展名闭集与豁免面属各守门政策经参数注入。
-
-  it("lineAt：按命中点之前的换行数计行（1 起算），index undefined 按文首计", () => {
-    const source = ["const a = 1;", "", "const url = 'https://x.example';"].join("\n");
-    const m = /x\.example/.exec(source);
-    expect(m).not.toBeNull();
-    expect(lineAt(source, m?.index)).toBe(3);
-    expect(lineAt("abc def", undefined)).toBe(1);
-    expect(lineAt("abc def", 0)).toBe(1);
-  });
-
-  it("walkTextFiles：扩展名闭集过滤 + 目录名剪枝 + 相对路径剪枝，排序确定", () => {
-    const dir = mkdtempSync(join(tmpdir(), "walk-text-files-"));
-    tempDirs.push(dir);
-    mkdirSync(join(dir, "src", "nested"), { recursive: true });
-    mkdirSync(join(dir, "node_modules"), { recursive: true });
-    writeFileSync(join(dir, "CHANGELOG.md"), "# history\n");
-    writeFileSync(join(dir, "README"), "无扩展名文件不参与文本面");
-    writeFileSync(join(dir, "src", "b.ts"), "export const b = 1;\n");
-    writeFileSync(join(dir, "src", "skip-me.ts"), "export const s = 1;\n");
-    writeFileSync(join(dir, "src", "nested", "a.rs"), "pub fn a() {}\n");
-    writeFileSync(join(dir, "src", "nested", "a.rs.bak"), "junk");
-    writeFileSync(join(dir, "node_modules", "dep.ts"), "export const dep = 1;\n");
-
-    const options = {
-      extensions: new Set([".ts", ".rs", ".md"]),
-      skipDirs: new Set(["node_modules"]),
-      skipFiles: new Set(["src/skip-me.ts"]),
-    };
-    const files = walkTextFiles(dir, "", options);
-    expect(files.map((f) => f.rel)).toEqual(["CHANGELOG.md", "src/b.ts", "src/nested/a.rs"]);
-    // abs 与 rel 指向同一文件（读文件用 abs、报文定位用 rel）
-    expect(files[2].abs).toBe(join(dir, "src", "nested", "a.rs"));
-    // 排序确定性：同一目录重复调用输出全等
-    expect(walkTextFiles(dir, "", options).map((f) => f.rel)).toEqual(files.map((f) => f.rel));
-  });
-
-  it("walkTextFiles：relBase 前缀归一 rel 路径（扫描根 ≠ 仓库根的守门形态）", () => {
-    const dir = mkdtempSync(join(tmpdir(), "walk-text-files-relbase-"));
-    tempDirs.push(dir);
-    // check-infra-dml 形态：扫描根 = join(srcTauri, INFRA_SRC_REL)，relBase 同值——
-    // rel 不随夹具所在绝对路径漂移，始终以声明前缀归一。
-    const scanRoot = join(dir, "crates", "infra", "src");
-    mkdirSync(join(scanRoot, "db"), { recursive: true });
-    writeFileSync(join(scanRoot, "db", "migrate.rs"), "pub fn migrate() {}\n");
-
-    const files = walkTextFiles(scanRoot, INFRA_SRC_REL, {
-      extensions: new Set([".rs"]),
-    });
-    expect(files.map((f) => f.rel)).toEqual(["crates/infra/src/db/migrate.rs"]);
   });
 });

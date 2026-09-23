@@ -4,7 +4,7 @@
 // （与 src-tauri/build.rs 扫描器同源同界）；右集 = packages/api/src/index.ts 的
 // invoke('命令名') / invoke("命令名") 字符串（单双引号均识别；模板字面量维持不
 // 支持，既有文档化取舍，评审兜底），双向全等。TS 调用面先经注释掩码再匹配（复用
-// TS 侧注释掩码单源模块 ts-comment-mask.ts 的 maskComments，#1471 / #1481 上收
+// TS 侧注释掩码库 gate-primitives.ts 的 maskComments，#1471 / #1481 上收、#1680 并入
 // 共享模块）：注释掉的 invoke 形态不算真实调用面，不再报「Rust 无此命令」假红。参数键名腿（#1398，
 // #588 类回归根治）：Rust
 // 数据参数名经 lowerCamelCase 转换（转换规则与 tauri-macros 的 heck
@@ -18,8 +18,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL, fileURLToPath } from "node:url";
-import { walkTextFiles } from "./check-structure.ts";
-import { maskComments } from "./ts-comment-mask.ts";
+import { maskComments, walkTextFiles } from "./gate-primitives.ts";
 
 /** 单条扫描边界违规：行号 1 起算 + 违规行原文 */
 export interface ScanError {

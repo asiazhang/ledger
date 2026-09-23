@@ -87,6 +87,16 @@
 import { existsSync, readdirSync, readFileSync, statSync, type Stats } from "node:fs";
 import { dirname, join } from "node:path";
 import { pathToFileURL, fileURLToPath } from "node:url";
+// 家族共享原语住 scripts/gate-primitives.ts（#1680 库归库、门归门）：本守门只保留
+// 政策核与门专属机制；walkTextFiles / lineAt / maskNonCode / RUST_EXTENSIONS 与 TS
+// 注释掩码 maskComments 由库导出，兄弟脚本直接 import 库、不再从本门「顺手」取件。
+import {
+  RUST_EXTENSIONS,
+  lineAt,
+  maskNonCode,
+  walkTextFiles,
+  type WalkedFile,
+} from "./gate-primitives.ts";
 
 /** 白名单条目（ADR-0056 决策 4）：路径 + 分层；注记归模块文件头（ADR-0113 决策 5）。 */
 export interface WhitelistEntry {
@@ -715,126 +725,9 @@ function isTestFile(relPath: string): boolean {
   return file === "tests.rs" || segments.slice(0, -1).includes("tests");
 }
 
-/** 若 i 起是 Rust 原始字符串前缀，返回其后开引号下标；否则 null。
- *  覆盖 r"…" / r#"…" 与字节变体 br"…" / br#"…"，# 数任意；前一字符为
- *  标识符成分时是普通名字（如 for），不误伤。 */
-function rawStringOpenQuoteAt(text: string, i: number): number | null {
-  const prev = i > 0 ? text[i - 1] : "";
-  if (/[A-Za-z0-9_]/.test(prev)) return null;
-  let j = i;
-  if (text[j] === "b" && text[j + 1] === "r") j += 2;
-  else if (text[j] === "r") j += 1;
-  else return null;
-  while (text[j] === "#") j++;
-  return text[j] === '"' ? j : null;
-}
-
-/**
- * 掩码 Rust 源文本中的注释与字符串/char 字面量：内容替换为等长空白
- * （保留换行与列位，行号不变），使依赖扫描只落在真实代码上。
- * 处理形态：行注释（//、///、//!）、块注释（/* .. *&#47;，可嵌套）、
- * 普通字符串（含转义）、原始字符串 r"…" / r#"…" / r##"…" 及其字节变体
- * br"…" / br#"…" / br##"…"（# 数任意；'\u{…}' 转义不按字面量识别——与
- * Rust 侧一致，见下）、
- * char 字面量（'a'、'\n'、'\\'、'\''）；生命周期标注（'a）按非字面量处理。
- * `keepLiterals=true` 时保留字符串/char 字面量内容、只掩码注释——用于靶形态
- * 落在字符串里的扫描（原生事务语句 `execute("BEGIN")`，issue #1014）。
- *
- * **双源登记**（issue #1433）：本函数与 Rust 侧唯一实现
- * `src-tauri/src/test_support/scan.rs` 的 `mask_non_code` 是同一条词法掩码规则
- * 的两个运行时载体，规则改动必须两侧同步；防漂移断言消费共享语料夹具
- * `scripts/fixtures/rust-mask-corpus.rs`（check-structure.test.ts 与 Rust 测试
- * 双侧消费，任一侧单独改规则即红）。
- */
-export function maskNonCode(text: string, keepLiterals = false): string {
-  const out = text.split("");
-  const n = text.length;
-  const blank = (from: number, to: number): void => {
-    for (let k = from; k < to && k < n; k++) if (out[k] !== "\n") out[k] = " ";
-  };
-  let i = 0;
-  while (i < n) {
-    const c = text[i];
-    if (c === "/" && text[i + 1] === "/") {
-      // 行注释（含 /// 与 //!）到行尾
-      const end = text.indexOf("\n", i);
-      const stop = end === -1 ? n : end;
-      blank(i, stop);
-      i = stop;
-    } else if (c === "/" && text[i + 1] === "*") {
-      // 块注释，Rust 可嵌套
-      let depth = 1;
-      let j = i + 2;
-      while (j < n && depth > 0) {
-        if (text[j] === "/" && text[j + 1] === "*") {
-          depth++;
-          j += 2;
-        } else if (text[j] === "*" && text[j + 1] === "/") {
-          depth--;
-          j += 2;
-        } else {
-          j++;
-        }
-      }
-      blank(i, j);
-      i = j;
-    } else if (c === '"') {
-      // 普通字符串：跳过转义对
-      let j = i + 1;
-      while (j < n) {
-        if (text[j] === "\\") j += 2;
-        else if (text[j] === '"') {
-          j++;
-          break;
-        } else j++;
-      }
-      if (!keepLiterals) blank(i, j);
-      i = j;
-    } else if (c === "r" || c === "b") {
-      // 原始字符串 r"…" / r#"…" / r##"…" 与字节变体 br"…" / br#"…" / br##"…"
-      const open = rawStringOpenQuoteAt(text, i);
-      if (open === null) {
-        i++;
-        continue;
-      }
-      const prefixEnd = c === "b" ? i + 2 : i + 1;
-      const hashes = open - prefixEnd;
-      const close = '"' + "#".repeat(hashes);
-      const end = text.indexOf(close, open + 1);
-      const stop = end === -1 ? n : end + close.length;
-      if (!keepLiterals) blank(i, stop);
-      i = stop;
-    } else if (c === "'") {
-      // char 字面量 vs 生命周期：有闭引号为字面量，否则是生命周期标注（'a）
-      let j = i + 1;
-      if (text[j] === "\\") {
-        j++;
-        if (text[j] === "{") {
-          const e = text.indexOf("}", j);
-          j = e === -1 ? n : e + 1;
-        } else {
-          j++;
-        }
-      } else {
-        j++;
-      }
-      if (text[j] === "'") {
-        const stop = j + 1;
-        if (!keepLiterals) blank(i, stop);
-        i = stop;
-      } else {
-        i++;
-      }
-    } else {
-      i++;
-    }
-  }
-  return out.join("");
-}
-
 /** 单条扫描命中：行号（1 起算）、原文行、匹配文本、捕获组 1
  *  （无捕获组时 undefined，基础设施→域形态为目标域名） */
-export interface ScanHit {
+interface ScanHit {
   line: number;
   text: string;
   match: string;
@@ -845,7 +738,7 @@ export interface ScanHit {
  *  行号（1 起算）与原文；形态缺省为壳层依赖（白名单分层检查的既有行为）。
  *  `keepLiterals=true` 保留字符串/char 字面量内容、只掩码注释——靶形态落在
  *  字符串里的扫描（原生事务语句，issue #1014） */
-export function scanRustSource(
+function scanRustSource(
   text: string,
   pattern: RegExp = SHELL_DEP_PATTERN,
   keepLiterals = false,
@@ -862,19 +755,6 @@ export function scanRustSource(
 }
 
 /**
- * 命中行定位：匹配下标 → 行号（1 起算，数命中点之前的换行，undefined 按文首计）。
- * 守门家族共享单点（issue #1625）：matchAll 逐命中定位 文件:行 的唯一实现，
- * check-infra-dml 的 scanDml 与 check-eastmoney-residue 的 scanResidue 消费；
- * 与 maskNonCode 同址导出。
- */
-export function lineAt(text: string, index: number | undefined): number {
-  return (text.slice(0, index ?? 0).match(/\n/g)?.length ?? 0) + 1;
-}
-
-/** 结构守门 Rust 面扩展名闭集（walkTextFiles 消费参数） */
-const RUST_EXTENSIONS: ReadonlySet<string> = new Set([".rs"]);
-
-/**
  * 结构守门 Rust 面收集：家族共享单点 walkTextFiles 的本守门消费侧（issue #1634，
  * 与 check-infra-dml / check-eastmoney-residue 同源），文件结构复用 WalkedFile。
  * 测试豁免（ADR-0056 决策 5）是本守门政策谓词，walk 后按 rel 过滤——
@@ -886,54 +766,6 @@ function collectRustFiles(dir: string, relBase: string): WalkedFile[] {
   return walkTextFiles(dir, relBase, { extensions: RUST_EXTENSIONS }).filter(
     (f) => !isTestFile(f.rel),
   );
-}
-
-/** 遍历收集的文本面文件：绝对路径（读文件用）+ 相对路径（报文定位用，`/` 分隔） */
-export interface WalkedFile {
-  abs: string;
-  rel: string;
-}
-
-/** 文本面遍历政策（各守门自己的豁免面，经参数注入，不在共享单点内） */
-export interface WalkTextOptions {
-  /** 收集的扩展名闭集（含点，如 ".rs"）；按文件名最后一个点之后的后缀匹配 */
-  extensions: ReadonlySet<string>;
-  /** 目录名剪枝（整目录豁免，如 node_modules / target / docs） */
-  skipDirs?: ReadonlySet<string>;
-  /** 相对路径剪枝（整文件豁免，如 CHANGELOG.md） */
-  skipFiles?: ReadonlySet<string>;
-}
-
-/**
- * 递归收集目录下的文本面文件（守门家族共享单点，issue #1625）：扩展名闭集过滤、
- * 目录名 localeCompare 排序保证输出确定、rel 以 relBase 为前缀 `/` 分隔归一。
- * check-infra-dml（Rust 面）与 check-eastmoney-residue（全仓文本面）消费；
- * 扫描哪些扩展名、豁免哪些目录与文件属各守门政策，经 options 注入。
- */
-export function walkTextFiles(
-  dir: string,
-  relBase: string,
-  options: WalkTextOptions,
-): WalkedFile[] {
-  const out: WalkedFile[] = [];
-  const walk = (current: string, rel: string): void => {
-    for (const entry of readdirSync(current, { withFileTypes: true }).sort((a, b) =>
-      a.name.localeCompare(b.name),
-    )) {
-      const entryAbs = join(current, entry.name);
-      const entryRel = rel ? `${rel}/${entry.name}` : entry.name;
-      if (entry.isDirectory()) {
-        if (!options.skipDirs?.has(entry.name)) walk(entryAbs, entryRel);
-        continue;
-      }
-      const dot = entry.name.lastIndexOf(".");
-      if (dot === -1 || !options.extensions.has(entry.name.slice(dot))) continue;
-      if (options.skipFiles?.has(entryRel)) continue;
-      out.push({ abs: entryAbs, rel: entryRel });
-    }
-  };
-  walk(dir, relBase);
-  return out;
 }
 
 /** 取 TOML 段内容（段头到下一个段头之间，不含段头行）；段不存在返回 null。 */

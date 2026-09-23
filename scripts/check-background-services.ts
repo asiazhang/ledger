@@ -32,7 +32,7 @@
 // `target/`（构建产物不参与，防扫描面膨胀与生成代码假红）——此前只扫根包 src，
 // crates/ 内新增模块绕过分平台门直接拉起受守调度器（恰是 #863 的历史缺陷形态）
 // 守门看不见；lane 守门已示范扫 crates 子树，本票把受守名扫描跟进。文本级扫描，
-// 形态同 check-structure.ts 家族——复用其注释与字符串/char 字面量掩码（文档注释
+// 形态同守门家族——复用 gate-primitives.ts 库的注释与字符串/char 字面量掩码（文档注释
 // 提到函数名不误报）；外挂测试模块/目录豁免（ADR-0056 决策 5），内联 #[cfg(test)]
 // 不豁免；裸标识符 \b 边界匹配，`start_sync_scheduler` 等更长标识符不含更短名
 // 子串、天然不误伤；经别名改名的间接引用文本不可达，靠评审兜底。扫描根提不出
@@ -45,7 +45,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL, fileURLToPath } from "node:url";
-import { maskNonCode, walkTextFiles, type WalkedFile } from "./check-structure.ts";
+import { maskNonCode, walkTextFiles, type WalkedFile } from "./gate-primitives.ts";
 
 /** 唯一编排点：壳层文件（相对 src-tauri 根，#1472 起扫描面基准同址）与函数名
  *  （issue #961 单点） */

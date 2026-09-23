@@ -55,8 +55,8 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { cpus } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-// 复用结构守门的 Rust 词法掩码（注释掩去、字面量保留）——不新建第二份词法器。
-import { maskNonCode } from "./check-structure.ts";
+// 复用守门家族共享原语库的 Rust 词法掩码（注释掩去、字面量保留）——不新建第二份词法器。
+import { maskNonCode } from "./gate-primitives.ts";
 
 /** 根包（Rust workspace 根 = tauri 应用包）目录名，相对仓库根。 */
 const SRC_TAURI_DIR_NAME = "src-tauri";
