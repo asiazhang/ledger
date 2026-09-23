@@ -148,7 +148,7 @@ erDiagram
 | `V015__physical_assets.sql` | 实物资产（physical_assets）与估值历史（physical_asset_valuations）表（ADR-0064） |
 | `V016__transaction_structural_indexes.sql` | 交易表 6 条 partial 覆盖索引（列表序/账户筛选序/双侧现金流/月度表达式/分类覆盖）+ 统计刷新 |
 | `V017__balance_net_worth_cache.sql` | 账户余额缓存与净资产终值缓存表（ADR-0067） |
-| `V018__note_pinyin.sql` | 备注拼音首字母冗余列（写入路径同写维护、存量行搜索惰性回填）+ 回填探针索引与搜索扫描覆盖索引（ADR-0027 修订） |
+| `V018__note_pinyin.sql` | 备注拼音首字母冗余列（写入路径同写维护、存量行搜索惰性回填）+ 回填探针索引与搜索扫描覆盖索引（ADR-0027 修订）——冗余列与探针索引已随 V031 退役、覆盖索引 V031 重建（#1728） |
 | `V019__insurer_dictionary.sql` | 保司字典（insurers）表 + 30 家常用国内保司种子（保险域自有字典，ADR-0082） |
 | `V020__sync_oplog.sql` | 多端同步元数据：设备标识与端内逻辑时钟（sync_device 单行）与操作日志（sync_ops，只追加；issue #855 / ADR-0091） |
 | `V021__sync_merge_semantics.sql` | 多端同步合并语义：sync_ops 实体指向列（LWW 裁决检索）与挂起队列（sync_parked_ops；issue #856 / ADR-0091） |
@@ -161,5 +161,6 @@ erDiagram
 | `V028__instrument_constant_unit_price.sql` | instruments 恒定单位价格列（constant_unit_price，可空，非空即进恒定价格通道——价格恒定标的的单位价格是定义性常量，货基为首个成员；#1450 / ADR-0126 决策 2） |
 | `V029__transaction_fx_rate_trace.sql` | transactions 折算来源留痕列（fx_rate_used / fx_rate_source，#1548 / ADR-0011 修订） |
 | `V030__transaction_merchant_covering_index.sql` | transactions 商户维度部分覆盖索引（商户消费排行聚合的分组列打头覆盖索引，查询侧 INDEXED BY 钉定，#1655） |
+| `V031__drop_note_pinyin.sql` | transactions 拼音派生列退役：DROP note_pinyin 列与回填探针索引，搜索覆盖索引重建（列清单去 note_pinyin，「列表序键 + id/note/三引用列」形态保持）——交易搜索退回原文搜索，拼音可搜语义收窄归下拉侧（#1728 / ADR-0027 修订记录「语义契约定稿」） |
 
 > 迁移版本由 SQLite `user_version` 自动追踪，新迁移在数据库模块统一注册。V005（FTS5 搜索索引）已随统一模糊搜索方案移除（ADR-0027），编号不复用。新增 schema 变更时新建 `V00X__名称.sql` 并在注册处追加；已发布迁移的就地修改与 BREAKING 标记要求见 AGENTS.md 发布约定。

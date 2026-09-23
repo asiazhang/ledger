@@ -8,6 +8,7 @@
 
 - **投资**：错误码 `sync.secid-unroutable`（「市场无法构造行情查询」的内部不一致兜底）退役——市场闭集收敛为投资域单点类型后，该条件的运行时发生路径结构性消失；查询键构造在类型上全函数化，「市场不可路由」不可再表达（[#1673]）。
 - **AI 导入 / HTTP API**：`GET /api/v1/transactions` 缺省不再返回全部——HTTP 单请求行数上限 100，缺省等价第一页 × 100（`total` 恒返回，读全部须按 `total` 翻页取齐）；显式 `page_size` 超过 100 报 400 码化错误 `transaction.page-size-over-cap`，`limit` 超过 100 或负值报 400 `transaction.limit-out-of-range`。读回核对教学同步改为分页读回；IPC 通道分页语义不变（前端与多端同步不受影响）（[#1631]）。
+- **交易搜索**：备注拼音派生列退役——V018 引入的 `transactions.note_pinyin` 冗余列、回填探针索引与含该列的旧搜索覆盖索引经 V031 收敛迁移移除，搜索覆盖索引按原形态重建（不含该列）；交易搜索随本版本读路径退役（#1727）已只按原文命中（备注/账户/商户原文，下拉侧拼音可搜不变），存量库升级自动收敛、数据无感（[#1728]）。
 
 ### Added
 
@@ -419,5 +420,6 @@
 [#1519]: https://github.com/asiazhang/ledger/issues/1519
 [#1631]: https://github.com/asiazhang/ledger/issues/1631
 [#1655]: https://github.com/asiazhang/ledger/issues/1655
+[#1728]: https://github.com/asiazhang/ledger/issues/1728
 [#1654]: https://github.com/asiazhang/ledger/issues/1654
 [#1688]: https://github.com/asiazhang/ledger/issues/1688
