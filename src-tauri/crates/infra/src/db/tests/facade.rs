@@ -718,6 +718,29 @@ fn slow_job_warns_past_probe_threshold() {
     );
 }
 
+/// 登记持锁预算的作业类：作业占用 DB 线程超过 1s 产品阈值但未超登记预算时
+/// 不告警（issue #1765，ADR-0112 决策 5 反转）。负向判据（删除即红）：取掉门面
+/// 取值点的 `hold_threshold_for`，本作业按 1s 阈值判越界，warn 事件出现即红。
+#[test]
+fn budgeted_slow_job_stays_silent_within_registered_budget() {
+    const PREFIX: &str = "facade-budget-probe.";
+    crate::db::register_lock_hold_budget(PREFIX, Duration::from_secs(30));
+
+    let state = write_test_state();
+    let facade = DbFacade::start(&state).expect("门面应启动");
+    let events = capture_events(|| {
+        tauri::async_runtime::block_on(facade.run_write("facade-budget-probe.slow-job", |_conn| {
+            std::thread::sleep(Duration::from_millis(1100));
+            Ok(())
+        }))
+        .expect("预算内慢作业应成功（探针只记日志、不改变行为）");
+    });
+    assert!(
+        events.iter().all(|e| e.level != Level::WARN),
+        "未超登记预算的作业不应记 warn，实际捕获: {events:?}"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // 换连承接：四条路径的成对换连在门面下成立（ADR-0125 决策 2 / 决策 3，issue #1409）
 // ---------------------------------------------------------------------------

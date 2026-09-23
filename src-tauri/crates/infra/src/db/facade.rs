@@ -42,7 +42,10 @@ use tracing::Span;
 use tracing::dispatcher::Dispatch;
 
 use super::job_gate::{JobGate, LockOutcome, StartDecision};
-use super::runtime::{DbState, SlotWatch, probe_lock_hold, with_caller_context, write_locked};
+use super::runtime::{
+    DbState, SlotWatch, hold_threshold_for, probe_lock_hold_within, with_caller_context,
+    write_locked,
+};
 use super::tx_scope::rollback_if_open;
 use crate::error::{AppError, Result};
 
@@ -597,7 +600,9 @@ fn run_job(name: &'static str, watch: &SlotWatch, trust: &mut ConnectionTrust, j
         };
         // 探针在回传前取值：量纲是「作业占用 DB 线程时长」，回传不是作业的一部分
         //（取值晚于回传会与调用方的 await 竞速，告警可能落在 await 之后）。
-        probe_lock_hold(started.elapsed());
+        // 阈值按作业类取（issue #1765）：备份/恢复等锁内重 IO 作业经壳层启动时登记
+        // 的持锁预算自持阈值，其余作业维持 1s 产品阈值。
+        probe_lock_hold_within(started.elapsed(), hold_threshold_for(command));
         // 守卫在此释放（panic 已被拦下，不经过守卫析构）。
         drop(guard);
         // 回传与失败日志同在调用方 span 内（归因口径与迁移前同款）。

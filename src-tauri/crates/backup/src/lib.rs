@@ -48,6 +48,17 @@
 //! use ledger_backup::mark_dirty;
 //! ```
 
+use std::time::Duration;
+
+/// 备份作业类的持锁预算（issue #1765，探针按作业类别取阈值）：备份/恢复在
+/// 连接锁内做 `VACUUM INTO` 全库拷贝 + zip 压缩的本地文件 IO，大库实测数秒
+/// （2.8s，#1765 现场观察）——合法重作业，不属于 ADR-0069 决策 4 约束的
+/// 「分钟级网络往返不得进锁」。预算覆盖 backup 域命令（`backup.` 前缀）与
+/// 锁内做备份/恢复文件 IO 的壳层命令（`create_backup` / `restore_backup` /
+/// `get_backup_meta` / `list_backups`），由壳层启动时接线到基础设施的登记点
+/// （`ledger_infra::db::register_lock_hold_budget`，ADR-0112 决策 5 反转）。
+pub const LOCK_HOLD_BUDGET: Duration = Duration::from_secs(30);
+
 mod auto;
 mod engine;
 

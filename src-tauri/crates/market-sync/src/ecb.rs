@@ -17,6 +17,7 @@
 //!（ADR-0019 修订记录），不进同步日志。
 
 use std::collections::BTreeMap;
+use std::time::Duration;
 
 use chrono::NaiveDate;
 use quick_xml::Reader;
@@ -43,6 +44,19 @@ pub(super) const INCREMENTAL_90D_PATH: &str = "/stats/eurofxref/eurofxref-hist-9
 const FULL_HISTORY_LABEL: &str = "ECB 全量历史";
 const INCREMENTAL_90D_LABEL: &str = "ECB 90 天增量";
 
+/// 全量历史腿的单请求总超时（issue #1765）：hist.xml 是数 MB 大文件，30s 基线偏紧——
+/// 超时在 body 读段被掐断时表现为读体错误（`error decoding response body`），正是
+/// #1765 现场日志的成因。按载荷单列为 120s；90d 增量文件（数十 KB）维持
+/// [`RetryConfig::production`] 的 30s 基线，其余重试预算（短退避 / 长冷却）两腿共用。
+const FULL_HISTORY_REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// 全量历史腿的重试配置：生产重试预算 + [`FULL_HISTORY_REQUEST_TIMEOUT`]。
+pub(super) fn full_history_cfg() -> RetryConfig {
+    RetryConfig {
+        request_timeout: FULL_HISTORY_REQUEST_TIMEOUT,
+        ..RetryConfig::production()
+    }
+}
 /// 非预期形状的码化错误映射（空文件 / 非 XML / 截断 / 零可用日共用一码；
 /// 构造时机与形状归取数尾部契约，spec #1675）。具体是哪个文件、什么形状，
 /// 由日志 ctx（`fetch_ecb:{label}`）与契约统一 warn 的 error 字段定位；
@@ -83,7 +97,15 @@ pub(super) async fn fetch_ecb_full_history(
     pacer: &mut Pacer,
     hosts: &[&str],
 ) -> Result<Vec<EcbDayRates>> {
-    fetch_ecb_document(client, pacer, hosts, FULL_HISTORY_PATH, FULL_HISTORY_LABEL).await
+    fetch_ecb_document(
+        client,
+        pacer,
+        hosts,
+        FULL_HISTORY_PATH,
+        FULL_HISTORY_LABEL,
+        full_history_cfg(),
+    )
+    .await
 }
 
 /// 拉取 ECB 参考汇率 **90 天增量**文件并解析（每日自动增量入口）。`hosts` 供
@@ -99,6 +121,7 @@ pub(super) async fn fetch_ecb_90d_incremental(
         hosts,
         INCREMENTAL_90D_PATH,
         INCREMENTAL_90D_LABEL,
+        RetryConfig::production(),
     )
     .await
 }
@@ -114,6 +137,7 @@ async fn fetch_ecb_document(
     hosts: &[&str],
     path: &str,
     label: &str,
+    cfg: RetryConfig,
 ) -> Result<Vec<EcbDayRates>> {
     tracing::debug!(path, "ECB 参考汇率文件查询");
     let text = request_text_from_hosts(
@@ -121,7 +145,7 @@ async fn fetch_ecb_document(
         &[],
         path,
         hosts,
-        RetryConfig::production(),
+        cfg,
         pacer,
         &format!("fetch_ecb:{label}"),
         None,

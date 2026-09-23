@@ -38,13 +38,18 @@ const THROTTLE_COOLDOWN: Duration = Duration::from_secs(30);
 const MAX_THROTTLE_RETRIES: u32 = 6;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// 重试策略：传输层错误走短退避，风控限流（429 / 200 非 JSON）走长冷却等待窗口过去。
+/// 重试策略：传输层错误走短退避，风控限流（429 / 200 非 JSON）走长冷却等待窗口过去；
+/// `request_timeout` 是单次请求（含响应体读取）的总超时，随载荷大小取值。
 #[derive(Clone, Copy)]
 pub(super) struct RetryConfig {
     pub(super) max_retries: u32,
     pub(super) base_backoff: Duration,
     pub(super) max_throttle_retries: u32,
     pub(super) throttle_cooldown: Duration,
+    /// 单次请求总超时：ECB 全量历史等数 MB 大文件腿按载荷调长（issue #1765）——
+    /// 30s 基线对大文件偏紧，超时在 body 读段被掐断时表现为读体错误，曾恰好落进
+    /// 「读取响应失败」重试分支。其余通道保持 [`REQUEST_TIMEOUT`]。
+    pub(super) request_timeout: Duration,
 }
 
 impl RetryConfig {
@@ -54,6 +59,7 @@ impl RetryConfig {
             base_backoff: BASE_BACKOFF,
             max_throttle_retries: MAX_THROTTLE_RETRIES,
             throttle_cooldown: THROTTLE_COOLDOWN,
+            request_timeout: REQUEST_TIMEOUT,
         }
     }
 }
@@ -207,6 +213,27 @@ pub(super) fn build_client() -> Result<reqwest::Client> {
         .map_err(|e| AppError::Io(e.to_string()))
 }
 
+/// 多主机全部失败的收口错误（issue #1765 码化收敛）：任一主机返回码化错误
+/// （如 `market.throttled`——限流预算耗尽是有意的用户可见分类）即透传首个；
+/// 否则收口为码化 `market.request-exhausted`。各主机失败明细保留在 message
+/// 中文原样里（码化错误的 message 是 fallback 文案，模板按码本地化），不进
+/// params——明细含中文错误文本，违反「params 须 locale 无关」（ADR-0050）；
+/// 透传路径同时把明细折进日志，错误链细节不丢。
+fn hosts_exhausted_error(failures: &[(String, AppError)]) -> AppError {
+    let detail = failures
+        .iter()
+        .map(|(host, e)| format!("{host}: {e}"))
+        .collect::<Vec<_>>()
+        .join("; ");
+    if let Some((_, coded)) = failures.iter().find(|(_, e)| e.code().is_some()) {
+        tracing::warn!(failures = %detail, "全部行情主机请求失败（透传首个码化错误）");
+        return coded.clone();
+    }
+    AppError::coded(
+        "market.request-exhausted",
+        format!("全部行情主机请求失败: {detail}"),
+    )
+}
 /// 发送请求并解析 JSON，按序尝试多个主机，对传输错误做短退避、对限流拦截做长冷却重试。
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn request_json_from_hosts<T>(
@@ -222,18 +249,15 @@ pub(super) async fn request_json_from_hosts<T>(
 where
     T: serde::de::DeserializeOwned,
 {
-    let mut failures: Vec<String> = Vec::new();
+    let mut failures: Vec<(String, AppError)> = Vec::new();
     for host in hosts {
         let url = format!("{host}{path}");
         match request_json_with_retry::<T>(client, &url, params, pacer, ctx, cfg, referer).await {
             Ok(resp) => return Ok(resp),
-            Err(e) => failures.push(format!("{host}: {e}")),
+            Err(e) => failures.push(((*host).to_string(), e)),
         }
     }
-    Err(AppError::Io(format!(
-        "全部行情主机请求失败: {}",
-        failures.join("; ")
-    )))
+    Err(hosts_exhausted_error(&failures))
 }
 
 /// 同 [`request_json_from_hosts`] 的多主机切换，但返回**原始文本**（非 JSON 的
@@ -250,18 +274,15 @@ pub(super) async fn request_text_from_hosts(
     ctx: &str,
     referer: Option<&str>,
 ) -> Result<String> {
-    let mut failures: Vec<String> = Vec::new();
+    let mut failures: Vec<(String, AppError)> = Vec::new();
     for host in hosts {
         let url = format!("{host}{path}");
         match request_text_with_retry(client, &url, params, pacer, ctx, cfg, referer).await {
             Ok(resp) => return Ok(resp),
-            Err(e) => failures.push(format!("{host}: {e}")),
+            Err(e) => failures.push(((*host).to_string(), e)),
         }
     }
-    Err(AppError::Io(format!(
-        "全部行情主机请求失败: {}",
-        failures.join("; ")
-    )))
+    Err(hosts_exhausted_error(&failures))
 }
 
 /// 同 [`request_text_from_hosts`] 的多主机切换，但返回**原始字节**（非 UTF-8
@@ -278,7 +299,7 @@ pub(super) async fn request_bytes_from_hosts(
     ctx: &str,
     referer: Option<&str>,
 ) -> Result<Vec<u8>> {
-    let mut failures: Vec<String> = Vec::new();
+    let mut failures: Vec<(String, AppError)> = Vec::new();
     for host in hosts {
         let url = format!("{host}{path}");
         // 纯字节通道的解析恒成功（解码与形状判定在调用方），因此不命中
@@ -289,13 +310,10 @@ pub(super) async fn request_bytes_from_hosts(
         .await;
         match parsed {
             Ok(resp) => return Ok(resp),
-            Err(e) => failures.push(format!("{host}: {e}")),
+            Err(e) => failures.push(((*host).to_string(), e)),
         }
     }
-    Err(AppError::Io(format!(
-        "全部行情主机请求失败: {}",
-        failures.join("; ")
-    )))
+    Err(hosts_exhausted_error(&failures))
 }
 
 /// GBK 字节 → 文本：GBK 通道的解码原语，收口在本层单点（腾讯行情报价与新浪
@@ -368,7 +386,7 @@ where
         pacer.wait().await;
         // 部分行情接口要求带 Referer 头模拟站内跳来源，缺省被拦截：新浪批量面
         // 缺 Referer 返回 403（issue #1564）；已退役的东财 lsjz 亦同（issue #303）。
-        let mut req = client.get(url).query(params).timeout(REQUEST_TIMEOUT);
+        let mut req = client.get(url).query(params).timeout(cfg.request_timeout);
         if let Some(referer) = referer {
             req = req.header(reqwest::header::REFERER, referer);
         }
@@ -412,15 +430,30 @@ where
                 sleep(cfg.throttle_cooldown).await;
                 continue;
             }
-            return Err(AppError::Io("接口限流(429)，请稍后再试".into()));
+            return Err(AppError::coded(
+                "market.throttled",
+                "接口限流(429)，请稍后再试",
+            ));
         }
 
         let bytes = match resp.bytes().await {
             Ok(b) => b,
             Err(e) => {
-                tracing::warn!(ctx = %ctx, error = %e, "读取响应失败");
-                sleep(cfg.throttle_cooldown).await;
-                continue;
+                // 读体失败（连接中断 / 超时截断数 MB 大文件）与 429 同预算长冷却：
+                // issue #1765 前本分支无计数无限重试——命令永不返回，前端 loading
+                // 永不复位。耗尽后返回终态错误，由多主机收口为码化错误上屏
+                //（负向判据：删除本计数，「读体失败重试耗尽即收敛」测试即红）。
+                throttle_attempts += 1;
+                if throttle_attempts <= cfg.max_throttle_retries {
+                    tracing::warn!(
+                        ctx = %ctx, attempt = throttle_attempts, error = %e,
+                        "读取响应失败，冷却后重试"
+                    );
+                    sleep(cfg.throttle_cooldown).await;
+                    continue;
+                }
+                tracing::error!(ctx = %ctx, error = %e, "读取响应失败（重试耗尽）");
+                return Err(AppError::Io(format!("读取响应失败: {e}")));
             }
         };
         match parse(&bytes) {
