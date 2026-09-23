@@ -216,6 +216,14 @@ fn create_savings_goal_emits_ledger_changed() {
 }
 
 #[test]
+fn update_savings_goal_emits_ledger_changed() {
+    assert_signals(
+        signals_for(Op::UpdateSavingsGoal, E::None),
+        &[Signal::LedgerChanged],
+    );
+}
+
+#[test]
 fn update_policy_emits_ledger_changed() {
     assert_signals(
         signals_for(Op::UpdatePolicy, E::None),

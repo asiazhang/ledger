@@ -128,7 +128,9 @@ pub enum WriteOp {
     // ── 储蓄目标域（spec #1750 / ADR-0133：独立领域，复用 `ledger:changed` 同名事件）──
     /// 创建储蓄目标（IPC `create_savings_goal`；目标行 + 专属账户同一事务建出）。
     CreateSavingsGoal,
-
+    /// 编辑储蓄目标（IPC `update_savings_goal`，issue #1752）：四字段全量替换 +
+    /// 改名联动专属账户——同事务参考表变更，重拉后账户列表与各下拉可见新名。
+    UpdateSavingsGoal,
     // ── 账户域 ──
     /// 余额调整（IPC `adjust_account_balance`，ADR-0026）：预期证据
     /// [`crate::signals::WriteEvidence::BlackHoleCreated`]——仅按需新建黑洞账户时参考表变更。

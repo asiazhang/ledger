@@ -8,7 +8,11 @@
     "saved": "Saved",
     "remaining": "Remaining",
     "deadline": "Deadline",
-    "status": "Status"
+    "status": "Status",
+    "actions": "Actions"
+  },
+  "actions": {
+    "edit": "Edit"
   },
   "status": {
     "inProgress": "In progress",
@@ -16,24 +20,29 @@
   },
   "form": {
     "title": "New Savings Goal",
+    "titleEdit": "Edit Savings Goal",
     "cancel": "Cancel",
     "save": "Save",
     "label": {
       "name": "Name",
       "target": "Target amount",
-      "deadline": "Deadline"
+      "deadline": "Deadline",
+      "plannedMonthly": "Planned monthly saving"
     },
     "placeholder": {
       "name": "e.g. New car fund",
       "target": "e.g. 50000",
-      "deadline": "Leave empty for no deadline"
+      "deadline": "Leave empty for no deadline",
+      "plannedMonthly": "Leave empty for no planned monthly saving"
     },
     "msg": {
       "nameRequired": "Please enter a goal name",
-      "targetInvalid": "Target amount must be greater than 0"
+      "targetInvalid": "Target amount must be greater than 0",
+      "plannedInvalid": "Planned monthly saving must be greater than 0"
     }
   },
   "msg": {
-    "created": "Goal created — its dedicated account is ready"
+    "created": "Goal created — its dedicated account is ready",
+    "updated": "Goal updated"
   }
 }

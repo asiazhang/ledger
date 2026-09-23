@@ -38,6 +38,18 @@ export interface SavingsGoalInput {
   deadline?: string | null;
 }
 
+/**
+ * 编辑入参（对应后端 `savings_goal::SavingsGoalUpdateInput`，issue #1752）：
+ * 四字段全量替换——名称（目标名权威，专属账户名随动只读）、目标金额
+ *（非正数被码化错误拒绝，与创建同校验）、截止日期与手填「计划月存」
+ *（可空 = 清除；携带时必须为正数）。账户信息不出现在入参。
+ */
+export interface SavingsGoalUpdateInput {
+  name: string;
+  target_amount_cents: number;
+  deadline: string | null;
+  planned_monthly_cents: number | null;
+}
 /** 蓄水进度读数（对应后端 `savings_goal::SavingsGoalProgress`）：
  *  已存 = 专属账户余额（余额缓存），还差为带符号差值，达成为读时派生。 */
 export interface SavingsGoalProgress {

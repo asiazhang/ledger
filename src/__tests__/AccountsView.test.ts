@@ -16,8 +16,9 @@ import { setFakeMedia } from "@ledger/test-support/media-mock";
 import { h, nextTick } from "vue";
 import AccountsView from "@/views/AccountsView.vue";
 import AccountLink from "@/accounts/AccountLink.vue";
+import { makeSavingsGoal, makeSavingsGoalProgress } from "./factories";
 import { amountPrivacyEnabled, formatAmount } from "@ledger/money";
-import type { Account, AccountBalance } from "@ledger/types";
+import type { Account, AccountBalance, SavingsGoalProgress } from "@ledger/types";
 
 const pushMock = vi.fn();
 vi.mock("vue-router", () => ({
@@ -45,13 +46,21 @@ const mockBalances: AccountBalance[] = [
   { account: makeAccount("acc-2", "银行"), balance_cents: -500 },
 ];
 
+/** 目标绑定派生夹具（issue #1752）：储蓄目标 store 快照——账户是否目标专属
+ *  由 account_id 集合派生（ADR-0133 决策 2），每测复位。 */
+let goalProgress: SavingsGoalProgress[] = [];
+
 beforeEach(async () => {
   pushMock.mockReset();
+  goalProgress = [];
   // list_accounts 参考命令本场景需自定义值（acc-2「银行」，overrides 优先于参考兜底）；
   // 参考 store 预载走接缝 opt-in 参数。
   await wireInvokeSeam({
     defaults: { list_account_balances: mockBalances },
-    overrides: { list_accounts: mockBalances.map((b) => b.account) },
+    overrides: {
+      list_accounts: mockBalances.map((b) => b.account),
+      savings_goal_progress: () => Promise.resolve(goalProgress),
+    },
     refreshReferenceStores: true,
   }).ready;
 });
@@ -504,5 +513,79 @@ describe("AccountsView 信用卡档案（spec #1327 / ADR-0119）", () => {
     expect(args.statement_day).toBe(5);
     expect(args.due_day, "清空的还款日以 null 落定").toBeNull();
     expect(editModal(wrapper).props("show"), "保存成功后关闭弹窗").toBe(false);
+  });
+});
+
+describe("AccountsView 目标账户名随动只读（issue #1752 / ADR-0133 决策 2）", () => {
+  /** 视图顶层调用 useDialog，与 App.vue 同构需 NDialogProvider 包裹。 */
+  function mountView() {
+    return mount(NDialogProvider, {
+      slots: { default: () => h(AccountsView) },
+    });
+  }
+
+  /** 行菜单：视图内唯一 NDropdown（按 options 含 edit key 识别）。 */
+  function rowMenu(wrapper: ReturnType<typeof mount>) {
+    return wrapper
+      .findAllComponents(NDropdown)
+      .find((d) => (d.props("options") as Array<{ key?: string }>).some((o) => o.key === "edit"))!;
+  }
+
+  /** 打开指定行的编辑弹窗（右键 + onSelect 装配缝）。 */
+  async function openEditOnRow(wrapper: ReturnType<typeof mount>, index: number) {
+    const row = wrapper.findAll(".n-data-table-tbody .n-data-table-tr")[index];
+    await row.trigger("contextmenu");
+    await flushPromises();
+    fireProp(rowMenu(wrapper), "onSelect", "edit");
+    await flushPromises();
+  }
+
+  /** 编辑弹窗名称输入（全局第 2 个 NForm 内首个 NInput）。 */
+  function editNameInput(wrapper: ReturnType<typeof mount>) {
+    return wrapper.findAllComponents(NForm)[1].findComponent(NInput);
+  }
+
+  /** 编辑弹窗保存按钮（NForm 内主按钮，先例信用卡 describe）。 */
+  function editSaveButton(wrapper: ReturnType<typeof mount>) {
+    return wrapper
+      .findAllComponents(NForm)[1]
+      .findAll("button")
+      .find((b) => b.text() === "保存")!;
+  }
+
+  it("目标绑定账户：名称输入禁用（随动只读）且提交不带 name 键", async () => {
+    // 账户身份由绑定派生：acc-1「现金」被储蓄目标绑定（改名唯一入口是目标编辑）
+    goalProgress = [
+      makeSavingsGoalProgress({ goal: makeSavingsGoal({ id: "goal-1", account_id: "acc-1" }) }),
+    ];
+    const wrapper = mountView();
+    await flushPromises();
+
+    await openEditOnRow(wrapper, 0);
+    // 渲染效果：目标账户名称输入禁用（账户侧无独立改名入口）
+    expect(editNameInput(wrapper).props("disabled")).toBe(true);
+
+    await editSaveButton(wrapper).trigger("click");
+    await flushPromises();
+    // 调用事实：update_account 载荷不含 name 键（缺席 = 不改，不回写陈旧名）
+    const args = lastInvokeArgs("update_account") as {
+      id: string;
+      input: Record<string, unknown>;
+    };
+    expect(args.id).toBe("acc-1");
+    expect(args.input).not.toHaveProperty("name");
+    expect(args.input).toHaveProperty("currency_code", "CNY"); // 载荷确实在发（非空调用）
+  });
+
+  it("普通账户编辑不受影响：名称输入可用（不误伤）", async () => {
+    goalProgress = [
+      makeSavingsGoalProgress({ goal: makeSavingsGoal({ id: "goal-1", account_id: "acc-1" }) }),
+    ];
+    const wrapper = mountView();
+    await flushPromises();
+
+    // 第二行「银行」未被任何目标绑定
+    await openEditOnRow(wrapper, 1);
+    expect(editNameInput(wrapper).props("disabled")).toBe(false);
   });
 });

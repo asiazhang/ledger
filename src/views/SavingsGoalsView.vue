@@ -9,11 +9,10 @@ import { useWindowTier } from "@ledger/window-tier";
 import { useSavingsGoalsStore } from "@/savings-goal/savingsGoals";
 import { useReferenceStore } from "@/stores/reference";
 import { sumFixedColumnWidths } from "@ledger/utils/table";
-import type { SavingsGoalProgress } from "@ledger/types";
-
+import type { SavingsGoal, SavingsGoalProgress } from "@ledger/types";
 /**
- * 储蓄目标视图（spec #1750 / issue #1751 / ADR-0133）：目标清单 + 蓄水进度
- * （已存 / 还差 / 达成态）+ 新建入口。
+ * 储蓄目标视图（spec #1750 / issue #1751 建档、#1752 编辑 / ADR-0133）：目标
+ * 清单 + 蓄水进度（已存 / 还差 / 达成态）+ 新建与编辑入口。
  *
  * 进度全部来自后端读数（`useSavingsGoalsStore`，self-init + `ledger:changed`
  * 静默重拉）——已存 = 专属账户余额（余额缓存口径），本组件零业务逻辑、不自算
@@ -33,11 +32,17 @@ function currencyOf(row: SavingsGoalProgress) {
   return reference.getCurrency(row.currency_code);
 }
 
-// —— 新建弹窗（编辑是 ticket ②，当前单成员意图闭集）——
+// —— 新建 / 编辑弹窗（ModalIntent 单成员意图闭集扩展，ADR-0072；编辑随
+//    issue #1752 接入）——
 // 开启/目标/关闭编排归弹窗意图工厂 ModalIntent（ADR-0072）：显示由「意图非空」
 // 派生（无独立 show 布尔），序号随开启递增驱动表单重建（:key=formSeq）。
 interface SavingsGoalFormIntent {
   mode: "create";
+}
+
+interface SavingsGoalEditIntent {
+  mode: "edit";
+  goal: SavingsGoal;
 }
 
 const {
@@ -45,12 +50,20 @@ const {
   seq: formSeq,
   open: openFormIntent,
   close: closeForm,
-} = useModalIntent<SavingsGoalFormIntent>();
+} = useModalIntent<SavingsGoalFormIntent | SavingsGoalEditIntent>();
+
+/** 待编辑目标（null = 新建模式）：四字段回填与全量替换由弹窗承载。 */
+const editingGoal = computed(() =>
+  formIntent.value?.mode === "edit" ? formIntent.value.goal : null,
+);
 
 function openCreate() {
   openFormIntent({ mode: "create" });
 }
 
+function openEdit(goal: SavingsGoal) {
+  openFormIntent({ mode: "edit", goal });
+}
 const columns: DataTableColumns<SavingsGoalProgress> = [
   {
     title: () => t("savingsGoals.columns.name"),
@@ -102,6 +115,24 @@ const columns: DataTableColumns<SavingsGoalProgress> = [
           row.achieved ? t("savingsGoals.status.achieved") : t("savingsGoals.status.inProgress"),
       ),
   },
+  {
+    // 操作列（issue #1752）：编辑入口——新建走卡片按钮，行内只承载编辑。
+    title: () => t("savingsGoals.columns.actions"),
+    key: "actions",
+    width: 80,
+    render: (row) =>
+      h(
+        NButton,
+        {
+          size: "tiny",
+          quaternary: true,
+          type: "primary",
+          "data-testid": "savings-goal-edit",
+          onClick: () => openEdit(row.goal),
+        },
+        () => t("savingsGoals.actions.edit"),
+      ),
+  },
 ];
 
 /** 横向滚动下限 = 固定列宽总和（列定义之后单点派生，桌面档不消费）。 */
@@ -142,6 +173,7 @@ onMounted(() => {
     <SavingsGoalFormModal
       :key="formSeq"
       :show="formIntent !== null"
+      :editing="editingGoal"
       @update:show="(v: boolean) => (v ? undefined : closeForm())"
     />
   </NSpace>

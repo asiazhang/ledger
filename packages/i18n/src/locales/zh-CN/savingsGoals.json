@@ -8,7 +8,11 @@
     "saved": "已存",
     "remaining": "还差",
     "deadline": "截止日",
-    "status": "状态"
+    "status": "状态",
+    "actions": "操作"
+  },
+  "actions": {
+    "edit": "编辑"
   },
   "status": {
     "inProgress": "进行中",
@@ -16,24 +20,29 @@
   },
   "form": {
     "title": "新建储蓄目标",
+    "titleEdit": "编辑储蓄目标",
     "cancel": "取消",
     "save": "保存",
     "label": {
       "name": "名称",
       "target": "目标金额",
-      "deadline": "截止日期"
+      "deadline": "截止日期",
+      "plannedMonthly": "计划月存"
     },
     "placeholder": {
       "name": "如：买车基金",
       "target": "如：50000",
-      "deadline": "不填即无截止日"
+      "deadline": "不填即无截止日",
+      "plannedMonthly": "不填即不设计划月存"
     },
     "msg": {
       "nameRequired": "请填写目标名称",
-      "targetInvalid": "目标金额必须大于 0"
+      "targetInvalid": "目标金额必须大于 0",
+      "plannedInvalid": "计划月存必须大于 0"
     }
   },
   "msg": {
-    "created": "目标已创建，专属账户已就位"
+    "created": "目标已创建，专属账户已就位",
+    "updated": "目标已更新"
   }
 }

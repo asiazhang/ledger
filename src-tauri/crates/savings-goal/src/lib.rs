@@ -13,15 +13,16 @@
     )
 )]
 
-//! 储蓄目标领域 crate（SavingsGoal，spec #1750 / issue #1751 / ADR-0133；单列
-//! 小域，先例物品 / 保单 / 实物资产）：创建目标时在同一事务内经账户域公开写
-//! 入口自动建其专属账户（`other` 类型、目标经绑定持有账户身份，1 目标 : 1 账户），
+//! 储蓄目标领域 crate（SavingsGoal，spec #1750 / issue #1751 / #1752 / ADR-0133；
+//! 单列小域，先例物品 / 保单 / 实物资产）：创建目标时在同一事务内经账户域公开写
+//! 入口自动建其专属账户（`other` 类型、目标经绑定持有账户身份，1 目标 : 1 账户）、
+//! 编辑目标（四字段全量替换 + 改名联动专属账户——目标名权威、账户名随动只读），
 //! 以及蓄水进度读数（已存 = 专属账户余额、还差、达成态——余额口径、读余额缓存
 //! ADR-0067）。语义与边界见储蓄目标域词汇表与 ADR-0133。
 //!
 //! 接缝：域 API 单一权威——写路径 [`create_savings_goal`]（创建联动本体，目标
-//! 金额正数码化守卫先行）、读路径 [`list_savings_goal_progress`]（进度 = 余额，
-//! 读时派生不持久化）。**本 crate 零新写入路径**：蓄水 = `transfer`、取出 =
+//! 金额正数码化守卫先行）与 [`update_savings_goal`]（编辑全量替换 + 改名联动，
+//! issue #1752）、读路径 [`list_savings_goal_progress`]（进度 = 余额，
 //! `expense`，全部走核心交易域既有写入协议（ADR-0133 决策 1），本 crate 只写
 //! 目标本体一行；达成是读时派生的纯展示态，不落库、不反向挂交易写钩子。
 //!
@@ -45,8 +46,10 @@ mod progress;
 
 /// 域 API 再导出：调用面用域语言短名（`savings_goal::create_savings_goal` 等），
 /// 先例 `policy` / `item` / `physical_asset` 入口再导出。
-pub use crud::create_savings_goal;
-pub use model::{SavingsGoal, SavingsGoalInput, SavingsGoalProgress, SavingsGoalStatus};
+pub use crud::{create_savings_goal, update_savings_goal};
+pub use model::{
+    SavingsGoal, SavingsGoalInput, SavingsGoalProgress, SavingsGoalStatus, SavingsGoalUpdateInput,
+};
 pub use progress::list_savings_goal_progress;
 
 #[cfg(test)]
