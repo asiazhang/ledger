@@ -781,6 +781,8 @@ fn bootstrap_migrates_older_schema_snapshot() {
     // V021 时代 = 20）。V025 起迁移链含 DROP：模拟旧时代快照还须把「该时代
     // 在场、后被移除」的对象按原 DDL 复位（V025 删除的 6 索引，DDL 同
     // V001/V006），否则前向迁移到 V025 时 DROP 落空报 no such index。
+    // 同理 V031（#1728）退役 V018 的 note_pinyin：派生列与两个索引在 V021 时代
+    // 在场，前向重放 V031 的 DROP 需要它们在场——按 V018 原 DDL 复位。
     // 旧时代快照夹具（issue #1645）：散文件收进暂存目录，guard 随用例清理。
     let stale_path = ScratchFile::new(
         "v21",
@@ -827,6 +829,21 @@ fn bootstrap_migrates_older_schema_snapshot() {
         stale
             .execute_batch(
                 "CREATE INDEX IF NOT EXISTS idx_transactions_account ON transactions(account_id);\n                 CREATE INDEX IF NOT EXISTS idx_transactions_category ON transactions(category_id);\n                 CREATE INDEX IF NOT EXISTS idx_transactions_refund ON transactions(refund_of_transaction_id);\n                 CREATE INDEX IF NOT EXISTS idx_transactions_sync ON transactions(updated_at, device_id);\n                 CREATE INDEX IF NOT EXISTS idx_transactions_deleted ON transactions(is_deleted, updated_at);\n                 CREATE INDEX IF NOT EXISTS idx_transactions_amount ON transactions(amount_cents);",
+            )
+            .unwrap();
+        // V031（issue #1728）：复位 V018 引入、后被退役的 note_pinyin 派生列与两
+        // 索引（DDL 同 V018 原文），否则前向重放到 V031 时 DROP 落空报 no such
+        // index。先加列再建引用它的索引；快照里的搜索覆盖索引已是 V031 重建后的
+        // 新形态（列集无 note_pinyin），先卸下再按 V018 原形态重建才是该时代形态。
+        stale
+            .execute("ALTER TABLE transactions ADD COLUMN note_pinyin TEXT", [])
+            .unwrap();
+        stale
+            .execute("DROP INDEX IF EXISTS idx_transactions_note_search", [])
+            .unwrap();
+        stale
+            .execute_batch(
+                "CREATE INDEX IF NOT EXISTS idx_transactions_note_pinyin_backlog ON transactions(id) WHERE note_pinyin IS NULL AND note IS NOT NULL;\n                 CREATE INDEX IF NOT EXISTS idx_transactions_note_search ON transactions(date, created_at, id, note, note_pinyin, account_id, merchant_id, category_id) WHERE is_deleted = 0;",
             )
             .unwrap();
         stale.execute("PRAGMA user_version = 20", []).unwrap();
