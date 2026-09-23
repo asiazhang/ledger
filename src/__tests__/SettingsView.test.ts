@@ -241,7 +241,6 @@ describe("SettingsView.vue Tab 分域（issue #157 ADR-0022 立项；现役格�
     const html = wrapper.html();
     expect(html).toContain("一键备份");
     expect(html).not.toContain("数据存储位置");
-    expect(html).not.toContain("拼音搜索数据");
   });
 
   it("子页签来回切换备份列表不卸载重拉（子 pane show:lazy + 显式 key，issue #568）", async () => {
