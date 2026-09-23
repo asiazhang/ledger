@@ -640,6 +640,11 @@ export const CONVERT_CURRENT_CALLERS: readonly SymbolCallerEntry[] = [
     reason: "读路径：定时计划花费推算的当期折算",
   },
   {
+    file: "crates/savings-goal/src/pace.rs",
+    reason:
+      "读路径：储蓄目标关联计划节奏的当期折算（#1753，订阅花费 spend.rs 同款先例——计划金额折算本位币再乘周期系数；计划币种即专属账户币种=本位币，正常数据零汇率读取）",
+  },
+  {
     file: "src/cross_book_summary.rs",
     reason:
       "读路径：跨账本汇总的当期折算（活动本读数合并单点 read_active_book_and_merge，#1699 自壳层命令闭包抽出；ADR-0114 跨本唯一例外）",

@@ -8,16 +8,22 @@ publish = false
 
 [dependencies]
 # 储蓄目标域 crate（spec #1750 / issue #1751，P3 叶子业务域 crate）：依赖面是
-# 基础设施、同步协议与两个同级业务域——创建目标在同一事务内经账户域公开写入口
+# 基础设施、同步协议与三个同级业务域——创建目标在同一事务内经账户域公开写入口
 # 建专属账户（`ledger-accounts`），本位币取值消费交易域 Amount 口缝
 #（`ledger-transaction::amount`，域→域横向依赖 ADR-0056 决策 2 允许）；蓄水与
-# 取出是核心交易域既有 transfer / expense 流水，本 crate 零新写入路径。对根包
+# 取出是核心交易域既有 transfer / expense 流水，本 crate 零新写入路径；节奏来源
+# 的关联计划折算消费定时计划域单一系数表（issue #1753，同上）。对根包
 #（壳层）与同步域零依赖：设备标识走 `ledger-sync-protocol`，Goal DomainCommand
 # 与重放分派随多端同步票接入（业务域→同步域零容忍，ADR-0101 决策 4b）。
 ledger-infra = { path = "../infra" }
 ledger-sync-protocol = { path = "../sync-protocol" }
 ledger-accounts = { path = "../accounts" }
 ledger-transaction = { path = "../transaction" }
+# 关联计划节奏（issue #1753）：指向目标账户的在用定时转账计划按周期折算月存——
+# 折算系数消费定时计划域订阅花费先例的单一系数表（`monthly_coefficient`），
+# 周期闭集解析消费 `RecurrenceType`（域→域横向依赖 ADR-0056 决策 2 允许）。
+ledger-scheduled = { path = "../scheduled" }
+chrono = { version = "0.4.45", features = ["serde"] }
 rusqlite = { version = "0.40", features = ["bundled-sqlcipher-vendored-openssl", "trace"] }
 serde = { version = "1", features = ["derive"] }
 

@@ -9,7 +9,8 @@
     "remaining": "Remaining",
     "deadline": "Deadline",
     "status": "Status",
-    "actions": "Actions"
+    "actions": "Actions",
+    "projection": "Projection"
   },
   "actions": {
     "edit": "Edit"
@@ -44,5 +45,17 @@
   "msg": {
     "created": "Goal created — its dedicated account is ready",
     "updated": "Goal updated"
+  },
+  "projection": {
+    "etaMonths": "{n} months to go",
+    "etaMonth": "On track for {ym}",
+    "requiredMonthly": "Save {amount} per month",
+    "ahead": "Ahead by {amount}/mo",
+    "behind": "Behind by {amount}/mo",
+    "setupGuide": "Set a planned monthly saving or add an auto transfer plan to see projections",
+    "requiredGuide": "Set a planned monthly saving or add an auto transfer plan to compare with the required amount",
+    "deadlinePassed": "Past deadline",
+    "planPace": "Plan {amount}/mo",
+    "manualPace": "Manual {amount}/mo"
   }
 }

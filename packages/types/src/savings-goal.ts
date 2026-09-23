@@ -50,8 +50,15 @@ export interface SavingsGoalUpdateInput {
   deadline: string | null;
   planned_monthly_cents: number | null;
 }
+/** 节奏来源闭集（issue #1753）：关联计划折算（plan）/ 手填「计划月存」（manual）；
+ *  节奏为零时进度读数的节奏字段整体缺席，不外发第三个枚举值。 */
+export type SavingsGoalPaceSource = "plan" | "manual";
+
 /** 蓄水进度读数（对应后端 `savings_goal::SavingsGoalProgress`）：
- *  已存 = 专属账户余额（余额缓存），还差为带符号差值，达成为读时派生。 */
+ *  已存 = 专属账户余额（余额缓存），还差为带符号差值，达成为读时派生；
+ *  双向推算（issue #1753）随行携带——节奏 + 来源 + 无截止 ETA（还差 N 个月 /
+ *  预计年月）+ 有截止所需月存与落后 / 超前差值；达成或节奏为零时相应字段
+ *  为 null（界面给设置引导而非虚构时点），无百分比口径。 */
 export interface SavingsGoalProgress {
   goal: SavingsGoal;
   /** 已存 = 专属账户余额（整数分）。 */
@@ -62,4 +69,16 @@ export interface SavingsGoalProgress {
   achieved: boolean;
   /** 目标币种 = 专属账户币种。 */
   currency_code: string;
+  /** 当前节奏（月存，整数分；null = 节奏为零——无在用计划且未手填）。 */
+  pace_monthly_cents: number | null;
+  /** 节奏来源（闭集 plan / manual；节奏为零为 null）。 */
+  pace_source: SavingsGoalPaceSource | null;
+  /** 无截止正推——还差 N 个月（上取整）；未达成且有节奏才有值，否则 null。 */
+  eta_months: number | null;
+  /** 无截止正推——预计达成年月（YYYY-MM）；同上缺席为 null。 */
+  eta_month: string | null;
+  /** 有截止反推——每月需存（上取整）；有截止、未达成且截止日未过才有值。 */
+  required_monthly_cents: number | null;
+  /** 落后 / 超前差值 = 当前节奏 − 所需月存（正 = 超前、负 = 落后）；任一侧缺席为 null。 */
+  pace_delta_cents: number | null;
 }

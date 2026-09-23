@@ -9,7 +9,8 @@
     "remaining": "还差",
     "deadline": "截止日",
     "status": "状态",
-    "actions": "操作"
+    "actions": "操作",
+    "projection": "推算"
   },
   "actions": {
     "edit": "编辑"
@@ -44,5 +45,17 @@
   "msg": {
     "created": "目标已创建，专属账户已就位",
     "updated": "目标已更新"
+  },
+  "projection": {
+    "etaMonths": "还差 {n} 个月",
+    "etaMonth": "预计 {ym} 攒够",
+    "requiredMonthly": "每月需存 {amount}",
+    "ahead": "超前 {amount}/月",
+    "behind": "落后 {amount}/月",
+    "setupGuide": "设置计划月存或挂一条自动转账计划，这里显示推算",
+    "requiredGuide": "设置计划月存或挂一条自动转账计划，与所需月存对比",
+    "deadlinePassed": "已过截止日",
+    "planPace": "按计划 {amount}/月",
+    "manualPace": "手填 {amount}/月"
   }
 }
