@@ -206,7 +206,7 @@ pub(super) fn spawn_header_capture_server(
 /// 生产执行环境；外挂测试面（tests.rs / tests/）本就不在扫描文件清单里。
 /// 输入须先经 [`mask_non_code`]（词法器具单点住 `test_support::scan`，#1433
 /// 上收——原轻量行注释掩码退役，块注释与字符串字面量同受掩码，与
-/// `scripts/check-structure.ts` 的 `maskNonCode` 双源同规）；花括号配对经
+/// `scripts/gate-primitives.ts` 的 `maskNonCode` 双源同规）；花括号配对经
 /// [`matching_brace_end`] 单一实现。
 fn blank_inline_test_modules(source: &str) -> String {
     let mut out = source.to_string();

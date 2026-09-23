@@ -50,7 +50,7 @@
 //! **#1433 追加**（源码扫描掩码器具）：守门家族三处同型的词法掩码与四处手写
 //! 花括号配对上收 [`scan`] 单一维护点（`mask_non_code` + `matching_brace_end`），
 //! 壳层信号/连接槽/同步触发/行情接缝守门、命令面扫描测试与 market-sync 车道
-//! 守门共用；与 TS 侧 `check-structure.ts::maskNonCode` 双源登记，共享语料
+//! 守门共用；与 TS 侧 `gate-primitives.ts::maskNonCode` 双源登记，共享语料
 //! 夹具防漂移。登记处：ADR-0084 修订注记、CONTEXT-testing 词条。
 //!
 //! **#1645 追加**（测试暂存目录 guard）：Rust 测试「只建不删」的真临时目录

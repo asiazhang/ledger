@@ -20,6 +20,7 @@
 
 - **AI 导入 / HTTP API**：创建标的未带币种时，无法识别的 `market` 取值改报 400 码化错误 `instrument.market-unknown`（附合法值清单），不再落到数据库检查约束才拒绝（原为 500）；合法取值行为不变（[#1673]）。
 - **依赖**：锁文件刷新至范围内最新——前端 vue 3.5.43、vite 8.3.0 等 10 项与后端 tauri 2.11.6 等 7 个 crate；无跨 major、无使用者可见变化，TypeScript 6.x 与 @types/node 22 的既有 hold 不变（[#1688]）。
+- **依赖**：移除壳层根包失活的 `pinyin = "0.11"` 直接依赖声明——拼音消费者全在 crates/transaction（经其自身依赖声明解析），根包无直接引用；纯构建图收缩，无使用者可见变化（[#1732]）。
 - **性能**：报表商户排名加商户维度覆盖索引（V030）并钉定查询计划，50 万笔库聚合 p95 777ms→148ms（[#1655]）。
 - **性能**：投资组合市值走势数量推算改按标的分组增量推进，50 万笔库全窗口周线 p95 8850ms→26ms（[#1654]）。
 
@@ -422,4 +423,5 @@
 [#1655]: https://github.com/asiazhang/ledger/issues/1655
 [#1728]: https://github.com/asiazhang/ledger/issues/1728
 [#1654]: https://github.com/asiazhang/ledger/issues/1654
+[#1732]: https://github.com/asiazhang/ledger/issues/1732
 [#1688]: https://github.com/asiazhang/ledger/issues/1688

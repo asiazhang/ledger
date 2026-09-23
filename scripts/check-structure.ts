@@ -84,7 +84,7 @@
 // 默认校验本仓库；测试可传位置参数指向夹具：
 // bun scripts/check-structure.ts [src-dir] [src-tauri-dir]
 
-import { existsSync, readdirSync, readFileSync, statSync, type Stats } from "node:fs";
+import { existsSync, readFileSync, statSync, type Stats } from "node:fs";
 import { dirname, join } from "node:path";
 import { pathToFileURL, fileURLToPath } from "node:url";
 // 家族共享原语住 scripts/gate-primitives.ts（#1680 库归库、门归门）：本守门只保留
@@ -92,8 +92,10 @@ import { pathToFileURL, fileURLToPath } from "node:url";
 // 注释掩码 maskComments 由库导出，兄弟脚本直接 import 库、不再从本门「顺手」取件。
 import {
   RUST_EXTENSIONS,
+  hasExtension,
   lineAt,
   maskNonCode,
+  readDirEntries,
   walkTextFiles,
   type WalkedFile,
 } from "./gate-primitives.ts";
@@ -942,10 +944,12 @@ function defaultFeaturesInclude(manifest: string, feature: string): boolean {
 function memberCrateDirs(srcTauriDir: string): string[] {
   const cratesDir = join(srcTauriDir, "crates");
   if (!existsSync(cratesDir)) return [];
-  return readdirSync(cratesDir, { withFileTypes: true })
-    .filter((e) => e.isDirectory() && existsSync(join(cratesDir, e.name, "Cargo.toml")))
-    .map((e) => `crates/${e.name}`)
-    .sort();
+  // 列举机制归家族共享单点 readDirEntries（#1742 收口）：排序归一为 localeCompare
+  // （原 plain sort 实树逐目录对拍全等）；成员判定（Cargo.toml 存在）是 workspace
+  // 政策，留本门。
+  return readDirEntries(cratesDir)
+    .filter((e) => e.isDirectory && existsSync(join(cratesDir, e.name, "Cargo.toml")))
+    .map((e) => `crates/${e.name}`);
 }
 
 /**
@@ -1106,6 +1110,8 @@ function checkCrateBoundaries(srcTauriDir: string): string[] {
     const source = readFileSync(abs, "utf8");
     // `.ts` 宿主的命令面是数组字面量（另核对）；shell / YAML 宿主先掩掉引号内内容，
     // 否则 `echo "…cargo test…"` 这类说明文字会被当成命令（P1 假绿）。
+    // #1742 留门：`.ts` 是宿主类型分派政策（数组字面量 vs shell 掩码两条解析路径），
+    // 非文件收集，不换扩展名闭集。
     const isTsHost = rel.endsWith(".ts");
     const text = isTsHost ? source : maskShellQuoted(source);
     let hits = isTsHost ? checkTsCargoArrays(rel, source, problems) : 0;
@@ -1352,16 +1358,20 @@ const MODULE_PROJECTION_RULE =
 /** 磁盘顶层模块键：非测试 `.rs` 文件（去后缀）与扫得到非测试文件的目录名。 */
 function diskModuleKeys(srcDir: string): string[] {
   const keys: string[] = [];
-  for (const entry of readdirSync(srcDir, { withFileTypes: true })) {
+  // 列举机制归家族共享单点 readDirEntries（#1742 收口）：一层混合形态（文件/目录各自
+  // 判定）正是其 dirent 投影面；模块键政策（lib.rs/isTestFile 豁免、目录递归判空）留本门；
+  // 输出经末位 sort，列举序归一不影响结果。.rs 扩展名闭集换库 hasExtension + RUST_EXTENSIONS
+  // （#1742 收口：原内联 endsWith(".rs") 与点扩展名匹配全等，等价表在 gate-primitives.test.ts）。
+  for (const entry of readDirEntries(srcDir)) {
     if (
-      entry.isFile() &&
-      entry.name.endsWith(".rs") &&
+      entry.isFile &&
+      hasExtension(entry.name, RUST_EXTENSIONS) &&
       entry.name !== "lib.rs" &&
       !isTestFile(entry.name)
     ) {
       keys.push(entry.name.replace(/\.rs$/, ""));
     } else if (
-      entry.isDirectory() &&
+      entry.isDirectory &&
       collectRustFiles(join(srcDir, entry.name), entry.name).length > 0
     ) {
       keys.push(entry.name);

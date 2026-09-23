@@ -47,10 +47,10 @@
 // 完全替代生产登记表（#1150 起 PACKAGES 非空，拼接会让生产条目泄漏进夹具）；
 // 生产路径不传，登记表唯一事实源仍是本脚本 PACKAGES。
 
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { maskComments, walkTextFiles, type WalkedFile } from "./gate-primitives.ts";
+import { maskComments, readDirEntries, walkTextFiles, type WalkedFile } from "./gate-primitives.ts";
 
 /** 成员包登记条目（单一事实源，issue #1149）：dir 相对仓库根。 */
 export interface PackageEntry {
@@ -307,10 +307,11 @@ function checkMemberRegistration(
     );
     return;
   }
-  const onDisk = readdirSync(packagesDir, { withFileTypes: true })
-    .filter((e) => e.isDirectory())
-    .map((e) => `packages/${e.name}`)
-    .sort();
+  // 成员目录列举归家族共享单点 readDirEntries（#1742 收口）：排序归一为 localeCompare
+  // （原 plain sort 实树对拍全等）；PACKAGES 登记双向全等是本门政策，留门。
+  const onDisk = readDirEntries(packagesDir)
+    .filter((e) => e.isDirectory)
+    .map((e) => `packages/${e.name}`);
   for (const dir of onDisk) {
     if (!registry.some((p) => p.dir === dir)) {
       problems.push(
