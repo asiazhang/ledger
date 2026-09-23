@@ -12,7 +12,7 @@
 
 use tauri::State;
 
-use crate::shell_support::read_entry::read_entry_on_write;
+use crate::shell_support::read_entry::read_entry;
 use ledger_infra::db::DbState;
 use ledger_infra::error::Result;
 use ledger_transaction as transaction_domain;
@@ -34,10 +34,11 @@ pub async fn search_transactions(
     date_from: Option<String>,
     date_to: Option<String>,
 ) -> Result<TransactionSearchResult> {
-    // 只读甄别收口（issue #1280 / ADR-0117 代价 3）：搜索入口含拼音惰性回填写
-    // （存量行积压时 UPDATE transactions，域设计即搜索前自愈），必须走写连接。
-    let conn = db.write_handle();
-    read_entry_on_write("search_transactions", conn, move |conn| {
+    // 纯读命令走只读连接（ADR-0117）：#1727 拼音退役拆除搜索入口惰性回填后，
+    // 本命令闭包内已无写副作用——原写槽甄别留痕（ADR-0117「存量读路径只读甄别
+    // 结果」）自此退出，读路径专用只读连接承接。
+    let conn = db.read_handle();
+    read_entry("search_transactions", conn, move |conn| {
         transaction_domain::search_transactions_internal(
             conn,
             &query,

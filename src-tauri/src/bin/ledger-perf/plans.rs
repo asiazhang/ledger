@@ -19,8 +19,6 @@
 use chrono::{Datelike, Duration, Months, NaiveDate};
 use rusqlite::Connection;
 
-use ledger_transaction::pinyin_initials;
-
 use super::generate::date_millis;
 use super::generate::{AccountRow, DEVICE_ID, GenCounts};
 use super::rng::{Rng, time_ordered_id};
@@ -298,9 +296,9 @@ pub(crate) fn insert_scheduled(
     let mut occurrence_stmt = conn.prepare(occurrence_sql).map_err(|e| e.to_string())?;
     let txn_sql = "INSERT INTO transactions (id,kind,amount_cents,currency_code,\
          amount_native_cents,account_id,to_account_id,category_id,merchant_id,\
-         refund_of_transaction_id,note,note_pinyin,dedup_hash,idempotency_key,date,created_at,updated_at,\
-         version,device_id,is_deleted,policy_id)\
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,NULL,?10,?11,NULL,NULL,?12,?13,?13,1,?14,0,NULL)";
+         refund_of_transaction_id,note,dedup_hash,idempotency_key,date,created_at,updated_at,\
+         version,device_id,is_deleted,policy_id)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,NULL,?10,NULL,NULL,?11,?12,?12,1,?13,0,NULL)";
     let mut txn_stmt = conn.prepare(txn_sql).map_err(|e| e.to_string())?;
 
     let mut occurrence_seq = 0u64;
@@ -443,8 +441,6 @@ pub(crate) fn insert_scheduled(
                             cat,
                             merchant.clone(),
                             spec.label,
-                            // 派生列与 Writer 同规则同写（issue #514，同 generate 主臂）。
-                            pinyin_initials(spec.label),
                             date.to_string(),
                             occ_stamp,
                             DEVICE_ID,

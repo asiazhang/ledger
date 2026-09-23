@@ -1,5 +1,5 @@
 {
-  "keywordPlaceholder": "Enter keywords to search (note, account, merchant, pinyin initials; multiple keywords supported)",
+  "keywordPlaceholder": "Enter keywords to search (note, account, merchant; multiple keywords supported)",
   "amountMinPlaceholder": "Min amount",
   "amountMaxPlaceholder": "Max amount",
   "appliedFilters": "Applied filters: {filters}",

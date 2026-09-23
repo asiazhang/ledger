@@ -1,5 +1,5 @@
-//! bench 子命令：对 generate 产出的库跑 16 项查询基准并输出 min/avg/p95 报告
-//! （issue #461 / spec #458；拼音子序列基准 issue #514；商户占比与投资三项
+//! bench 子命令：对 generate 产出的库跑 15 项查询基准并输出 min/avg/p95 报告
+//! （issue #461 / spec #458；商户占比与投资三项
 //! 读基准 issue #1627；跨账本投资汇总基准 issue #1630）。
 //!
 //! 唯一接缝（验收项）：全部基准经「现有 pub 查询函数 + 标准连接工厂
@@ -85,9 +85,6 @@ pub(crate) struct BenchCli {
     /// 中文子串搜索基准的关键字（默认「咖啡」，命中备注池，驱动原文连续
     /// 子串匹配路径）。
     pub search: String,
-    /// 拼音子序列搜索基准的关键字（默认「kf」：命中「买咖啡」→ mkf 等，
-    /// 不构成任何备注原文子串，真正驱动拼音首字母子序列匹配路径，issue #514）。
-    pub search_pinyin: String,
     /// 性能门禁阈值（毫秒）：全部基准 p95 ≤ 阈值才退出 0；None = 不判定。
     pub max_p95_ms: Option<f64>,
 }
@@ -99,7 +96,6 @@ impl Default for BenchCli {
             warmup: 3,
             iterations: 20,
             search: "咖啡".to_string(),
-            search_pinyin: "kf".to_string(),
             max_p95_ms: None,
         }
     }
@@ -141,14 +137,6 @@ pub(crate) const FLAGS: &[FlagSpec<BenchCli>] = &[
         },
     },
     FlagSpec {
-        flag: "--search-pinyin <TERM>",
-        help: "拼音子序列搜索基准的关键字（默认 kf）",
-        apply: |cli, _flag, v| {
-            cli.search_pinyin = v.to_string();
-            Ok(())
-        },
-    },
-    FlagSpec {
         flag: "--max-p95-ms <MS>",
         help: "默认门禁阈值（毫秒）：全部基准 p95 ≤ 各自阈值才退出 0，任何一项超标即失败（CI 用；缺省不判定；分项例外机制与现行清单见 ADR-0068）",
         apply: |cli, flag, v| {
@@ -179,7 +167,6 @@ pub(crate) struct BenchConfig {
     pub warmup: usize,
     pub iterations: usize,
     pub search_term: String,
-    pub pinyin_search_term: String,
     /// 附属账本根目录（issue #1630；生产由 `--db` 同级推导，books 模块）：
     /// 跨账本投资汇总基准项的前置探测与逐本建连都消费它。
     pub books_dir: PathBuf,
@@ -193,7 +180,6 @@ impl From<BenchCli> for BenchConfig {
             warmup: cli.warmup,
             iterations: cli.iterations,
             search_term: cli.search,
-            pinyin_search_term: cli.search_pinyin,
             books_dir: super::books::attached_books_root(&cli.db),
         }
     }
@@ -288,7 +274,7 @@ pub(crate) fn gate_failures(results: &[BenchMetrics], max_p95_ms: f64) -> Vec<St
         .collect()
 }
 
-/// 基准执行核心（测试接缝）：对已打开的连接跑全部 16 项基准。
+/// 基准执行核心（测试接缝）：对已打开的连接跑全部 15 项基准。
 ///
 /// 前置数据（账户 id、日期极值、深分页页码）全部经现有查询函数在预热外
 /// 一次性探测，基准闭包内只做「参数已定型的单次查询调用」。
@@ -338,7 +324,7 @@ pub(crate) fn run_benchmarks(
     let attached_books =
         super::books::discover_attached_books(&cfg.books_dir, active_schema_version)?;
 
-    // ---- 16 项基准（每项一个定型参数的查询闭包） ------------------------
+    // ---- 15 项基准（每项一个定型参数的查询闭包） ------------------------
     let first_page_filter = TransactionListFilter {
         page_size: Some(PAGE_SIZE),
         page: Some(1),
@@ -359,7 +345,6 @@ pub(crate) fn run_benchmarks(
     };
     // 每个闭包专用克隆（move 捕获，互不争用所有权）。
     let search_term = cfg.search_term.clone();
-    let pinyin_search_term = cfg.pinyin_search_term.clone();
     let account_window_end = max_date.clone();
     let monthly_min = min_date.clone();
     let monthly_max = max_date.clone();
@@ -490,28 +475,6 @@ pub(crate) fn run_benchmarks(
                 )
                 .map_err(|e| e.to_string())
                 .map(|r| format!("关键字「{search_term}」全量扫描，命中 {} 条", r.total))
-            }),
-        ),
-        (
-            "备注搜索拼音子序列",
-            Box::new(move |conn| {
-                search_transactions_internal(
-                    conn,
-                    &pinyin_search_term,
-                    1,
-                    PAGE_SIZE,
-                    None,
-                    None,
-                    None,
-                    None,
-                )
-                .map_err(|e| e.to_string())
-                .map(|r| {
-                    format!(
-                        "关键字「{pinyin_search_term}」拼音子序列全量扫描，命中 {} 条",
-                        r.total
-                    )
-                })
             }),
         ),
         (

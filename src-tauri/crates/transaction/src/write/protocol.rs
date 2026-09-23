@@ -232,8 +232,8 @@ fn create_protocol(conn: &Connection, source: CreateForm<'_>) -> Result<Transact
         };
         let row = plan.normalized_row()?;
         // ── 落库（分歧点②：id 来源——本端生成 vs 随命令携带）──
-        // 搜索（V018 两段式，issue #492）：Writer 接缝同写维护 note_pinyin 派生列，
-        // 交易立即可搜（存量积压由读路径惰性回填兜底）。
+        // 搜索（#1727 拼音退役）：Writer 只写原文，交易立即可搜（读路径按原文列匹配，
+        // 无派生列维护与回填）。
         let id = match &source {
             CreateForm::Local(_) => writer::insert_row(conn, &row)?,
             CreateForm::Replay { id, .. } => {

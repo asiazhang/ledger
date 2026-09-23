@@ -18,14 +18,6 @@ use ledger_sync_protocol::device::device_id;
 use crate::amount::{self, TransactionKind};
 use crate::model::NormalizedTransaction;
 use crate::seams::balance;
-use crate::shared::search_text::pinyin_initials;
-
-/// 备注拼音首字母冗余列的取值（issue #492 / ADR-0027 修订）：与 note 同写同换，
-/// 供搜索流式匹配免逐行重算拼音。NULL note → NULL（派生列恒随 note）。
-fn note_pinyin_of(note: Option<&str>) -> Option<String> {
-    note.map(pinyin_initials)
-}
-
 /// 通用 kind 的写入入参（income / expense / transfer / refund）。
 ///
 /// 与命令层 [`crate::model::TransactionInput`] 解耦：不含 buy/sell 的投资字段
@@ -366,9 +358,9 @@ pub fn insert_row_with_id(conn: &Connection, id: &str, row: &NormalizedRow) -> R
     conn.execute(
         "INSERT INTO transactions \
          (id,kind,amount_cents,currency_code,amount_native_cents,account_id,to_account_id,\
-         funding_account_id,category_id,merchant_id,policy_id,refund_of_transaction_id,note,note_pinyin,date,created_at,updated_at,version,device_id,\
+         funding_account_id,category_id,merchant_id,policy_id,refund_of_transaction_id,note,date,created_at,updated_at,version,device_id,\
          fx_rate_used,fx_rate_source,is_deleted) \
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,0)",
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,0)",
         params![
             id,
             row.kind.as_str(),
@@ -383,7 +375,6 @@ pub fn insert_row_with_id(conn: &Connection, id: &str, row: &NormalizedRow) -> R
             row.policy_id,
             row.refund_of_transaction_id,
             row.note,
-            note_pinyin_of(row.note.as_deref()),
             row.date,
             now,
             now,
@@ -429,8 +420,8 @@ pub fn update_row(conn: &Connection, id: &str, row: &NormalizedRow) -> Result<()
     conn.execute(
         "UPDATE transactions \
          SET kind=?2, amount_cents=?3, currency_code=?4, amount_native_cents=?5, account_id=?6, \
-         to_account_id=?7, funding_account_id=?8, category_id=?9, merchant_id=?10, policy_id=?11, refund_of_transaction_id=?12, note=?13, note_pinyin=?14, date=?15, \
-         updated_at=?16, version=version+1, device_id=?17, fx_rate_used=?18, fx_rate_source=?19 \
+         to_account_id=?7, funding_account_id=?8, category_id=?9, merchant_id=?10, policy_id=?11, refund_of_transaction_id=?12, note=?13, date=?14, \
+         updated_at=?15, version=version+1, device_id=?16, fx_rate_used=?17, fx_rate_source=?18 \
          WHERE id=?1",
         params![
             id,
@@ -446,7 +437,6 @@ pub fn update_row(conn: &Connection, id: &str, row: &NormalizedRow) -> Result<()
             row.policy_id,
             row.refund_of_transaction_id,
             row.note,
-            note_pinyin_of(row.note.as_deref()),
             row.date,
             now_iso(),
             device_id(conn)?,

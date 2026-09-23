@@ -1,34 +1,26 @@
 //! 查询执行（读路径，issue #515 / ADR-0027 决策 1 修订）：搜索 SQL 下推权威。
 //!
-//! 职责：匹配段在 SQLite C 层完成（备注 LIKE + 拼音首字母子序列多段 LIKE、账户/
-//! 商户名字典 id 集合下推、软删口径一并下推，`INDEXED BY` 钉 V018 覆盖索引），展示段
-//! 仅对当前页命中 id 回表 18 列。不变量：语义契约仍是 ADR-0027 统一模糊搜索（原文
-//! 连续子串 ∨ 拼音首字母子序列，词条间 AND、字段间 OR）；note_pinyin 兜底改为惰性
-//! 回填（[`backfill_note_pinyin`]），回填失败拼音路径降级漏配不静默错配。ADR 指针：
+//! 职责：匹配段在 SQLite C 层完成（备注原文 LIKE + 账户/商户名字典 id 集合下推、
+//! 软删口径一并下推，`INDEXED BY` 钉 V018 覆盖索引），展示段仅对当前页命中 id 回表
+//! 18 列。不变量：交易搜索按原文命中（备注原文子串 ∨ 账户名 ∨ 商户名，词条间 AND、
+//! 字段间 OR；拼音路径随 #1727 拼音退役整体拆除，下拉侧拼音可搜不受影响）。ADR 指针：
 //! ADR-0027 决策 1 修订。陷阱：SQLite LIKE 大小写折叠仅 ASCII（非 ASCII 大写备注边界）。
-
 use std::collections::HashMap;
 
 use rusqlite::Connection;
 use rusqlite::types::Value;
 
-use crate::model::{
-    NotePinyinRepairFailure, NotePinyinRepairReport, NotePinyinRepairStage, Transaction,
-    TransactionSearchResult,
-};
+use crate::model::{Transaction, TransactionSearchResult};
 use ledger_infra::db::query::FromRow;
 use ledger_infra::db::tx_scope::ensure_transaction;
 use ledger_infra::error::Result;
 
-use crate::shared::search_text::{is_subsequence, pinyin_initials, split_terms};
+use crate::shared::search_text::split_terms;
 
 pub use search_transactions_internal as search_transactions;
 
 /// 每页条数上限（防呆，防止极端输入拖垮查询）。
 const MAX_PAGE_SIZE: usize = 200;
-
-/// 惰性回填单批行数：每批一个独立事务，内存有界且可与其它写路径交错。
-const BACKFILL_BATCH: i64 = 2000;
 
 /// 已小写词条（搜索开始时一次性准备；下推 LIKE 模式由它派生）。
 #[doc(hidden)]
@@ -36,11 +28,10 @@ pub struct TermLowered {
     pub lower: String,
 }
 
-/// 可搜索名字字典条目：小写化名字 + 拼音首字母串（均搜索开始时算好，热路径
-/// 免逐行分配）。名字即时读取语义由「字典每次搜索新建」保证（改名即刻生效）。
+/// 可搜索名字字典条目：小写化名字（搜索开始时算好，热路径免逐行分配）。
+/// 名字即时读取语义由「字典每次搜索新建」保证（改名即刻生效）。
 pub(super) struct DictEntry {
     pub(super) name_lower: String,
-    pub(super) pinyin: String,
 }
 
 /// 搜索字典：可搜索名字与软删口径的小参考表，搜索开始时一次性读取。
@@ -71,7 +62,6 @@ fn dict_rows<T>(
 pub fn load_search_dicts(conn: &Connection) -> Result<SearchDicts> {
     let entry = |name: String| DictEntry {
         name_lower: name.to_lowercase(),
-        pinyin: pinyin_initials(&name),
     };
     let mut accounts = HashMap::new();
     for (id, name, deleted) in dict_rows(conn, "SELECT id, name, is_deleted FROM accounts", |r| {
@@ -122,34 +112,10 @@ fn like_substring_pattern(term_lower: &str) -> String {
     format!("%{}%", escape_like(term_lower))
 }
 
-/// 拼音首字母子序列 LIKE 模式：词条逐字符以 `%` 连接（`kf` → `%k%f%`），
-/// 严格等价于「字符按原序出现、允许跳字」的子序列判定；字符同样经转义。
-fn like_subsequence_pattern(term_lower: &str) -> String {
-    let mut out = String::from("%");
-    for ch in term_lower.chars() {
-        out.push_str(&escape_like(&ch.to_string()));
-        out.push('%');
-    }
-    out
-}
-
-/// 已小写词条对目标的子序列判定（热路径，字典预判侧仍在 Rust）。语义与
-/// [`is_subsequence`] 一致（两侧小写化后逐字符有序匹配）：`pattern` 已小写；
-/// `target` 无大写字符时小写化为恒等、直接免分配匹配，含大写（冷情形）降级
-/// 为原分配路径。
-fn is_subsequence_lower(pattern_lower: &str, target: &str) -> bool {
-    if target.chars().any(char::is_uppercase) {
-        return is_subsequence(pattern_lower, target);
-    }
-    let mut chars = target.chars();
-    pattern_lower.chars().all(|p| chars.any(|t| t == p))
-}
-
-/// 已小写词条对字典条目（账户/商户名）判定：原文子串 ∨ 拼音首字母子序列。
-/// 语义与 [`term_matches_text`](crate::shared::search_text::term_matches_text) 一致
-/// （两侧均已小写化；名字体量小且字典每次搜索新建，改名即刻生效）。
+/// 已小写词条对字典条目（账户/商户名）判定：原文连续子串（大小写不敏感由
+/// 两侧小写化承担；名字体量小且字典每次搜索新建，改名即刻生效）。
 fn term_matches_dict(term_lower: &str, entry: &DictEntry) -> bool {
-    entry.name_lower.contains(term_lower) || is_subsequence_lower(term_lower, &entry.pinyin)
+    entry.name_lower.contains(term_lower)
 }
 
 /// 下推第一段查询：SQL 文本 + 绑定参数（`?N` 显式编号，与 `params` 下标一致）。
@@ -210,32 +176,14 @@ fn push_in_clause(
     }
 }
 
-/// 拼音分支可命中判定：`note_pinyin` 列只含 `[a-z0-9]`（拼音首字母规则：
-/// ASCII 字母/数字小写保留、其余跳过），子序列要求词条每个字符都出现在列值中——
-/// 词条含任一 `[a-z0-9]` 之外字符（汉字、标点、`%` 等）时拼音路径必然失败，
-/// 该 LIKE 分支可精确省去（中文搜索成本减半，语义零变更）。
-fn pinyin_branch_possible(term_lower: &str) -> bool {
-    term_lower
-        .chars()
-        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
-}
-
-/// 单词条下推子句（字段 OR）：备注原文子串 LIKE ∨ 拼音首字母子序列 LIKE（仅当
-/// [`pinyin_branch_possible`]）∨ 账户名 ∨ 商户名。账户/商户侧由字典预判命中的
-/// id 集合下推 IN（名字不固化在交易行上，即时读取语义由「字典每次搜索新建 +
-/// 集合现算」保持）；软删账户不进集合，与原行级口径过滤等价。
+/// 单词条下推子句（字段 OR）：备注原文子串 LIKE ∨ 账户名 ∨ 商户名。账户/商户
+/// 侧由字典预判命中的 id 集合下推 IN（名字不固化在交易行上，即时读取语义由
+/// 「字典每次搜索新建 + 集合现算」保持）；软删账户不进集合，与原行级口径过滤等价。
 fn term_clause(term: &TermLowered, dicts: &SearchDicts, params: &mut Vec<Value>) -> String {
-    let mut parts: Vec<String> = Vec::with_capacity(4);
+    let mut parts: Vec<String> = Vec::with_capacity(3);
     params.push(like_substring_pattern(&term.lower).into());
     let note_pattern_index = params.len();
     parts.push(format!("t.note LIKE ?{note_pattern_index} ESCAPE '\\'"));
-    if pinyin_branch_possible(&term.lower) {
-        params.push(like_subsequence_pattern(&term.lower).into());
-        let pinyin_pattern_index = params.len();
-        parts.push(format!(
-            "t.note_pinyin LIKE ?{pinyin_pattern_index} ESCAPE '\\'"
-        ));
-    }
     let account_ids: Vec<Value> = dicts
         .accounts
         .iter()
@@ -264,8 +212,8 @@ fn term_clause(term: &TermLowered, dicts: &SearchDicts, params: &mut Vec<Value>)
 }
 
 /// 第一段下推查询（issue #515，修订 ADR-0027 决策 1）：词条匹配与软删口径
-/// 全部进入 WHERE，`INDEXED BY` 钉定 V018 搜索覆盖索引——子序列语义决定全量
-/// 扫描本质，钉定使排序由索引序满足（无临时 B-tree）且扫描 index-only（零回
+/// 全部进入 WHERE，`INDEXED BY` 钉定 V018 搜索覆盖索引——LIKE 匹配仍为全量
+/// 扫描，钉定使排序由索引序满足（无临时 B-tree）且扫描 index-only（零回
 /// 表），并防 planner 在统计边际上摇摆（先例：V016 月度表达式索引钉定）。
 /// 账户/分类/商户侧口径由字典预判成 id 集合下推（50 万候选流上 JOIN 即取行
 /// 主要成本，实测 25ms → 1170ms，V018 修订记录）。
@@ -278,7 +226,7 @@ fn term_clause(term: &TermLowered, dicts: &SearchDicts, params: &mut Vec<Value>)
 /// WHERE t.is_deleted = 0
 ///   [AND t.account_id NOT IN (软删账户)]
 ///   AND (t.category_id IS NULL OR t.category_id NOT IN (软删分类))
-///   AND (t.note LIKE ? ESCAPE '\\' OR t.note_pinyin LIKE ? ESCAPE '\\'
+///   AND (t.note LIKE ? ESCAPE '\\'
 ///        OR t.account_id IN (…) OR t.merchant_id IN (…))
 ///   AND …
 ///   [AND 金额/日期筛选]
@@ -356,163 +304,12 @@ pub fn build_stage1_query(
 /// 口径由 [`SearchDicts`] 在 Rust 层逐行判定（与关键字路径同一字典）。
 pub(super) fn stage1_sql(where_clauses: &[&str]) -> String {
     format!(
-        "SELECT t.id,t.note,t.note_pinyin,t.account_id,t.merchant_id,t.category_id \
+        "SELECT t.id,t.note,t.account_id,t.merchant_id,t.category_id \
          FROM transactions t \
          WHERE {} \
          ORDER BY t.date DESC, t.created_at DESC, t.id DESC",
         where_clauses.join(" AND ")
     )
-}
-
-/// 备注拼音积压探测（V018 partial 索引 `idx_transactions_note_pinyin_backlog`
-/// 支撑，恒 O(1)）：true = 仍有「有备注且拼音列 NULL」的积压行；无备注行的
-/// NULL 列不构成积压（拼音串仅由备注派生）。
-fn probe_note_pinyin_backlog(conn: &Connection) -> Result<bool> {
-    let hit: i64 = conn.query_row(
-        "SELECT EXISTS(\
-         SELECT 1 FROM transactions WHERE note_pinyin IS NULL AND note IS NOT NULL)",
-        [],
-        |r| r.get(0),
-    )?;
-    Ok(hit != 0)
-}
-
-/// 阶段化失败原因（底层错误消息原样透传，阶段供前端本地化）。
-fn repair_failure(
-    stage: NotePinyinRepairStage,
-    e: impl std::fmt::Display,
-) -> NotePinyinRepairFailure {
-    NotePinyinRepairFailure {
-        stage,
-        message: e.to_string(),
-    }
-}
-
-/// 收尾：最终收敛探测后组装报告（失败路径同样如实报告剩余积压；探测再失败
-/// 时收敛位保守置 false，原始失败原因优先保留）。
-fn finish_repair(
-    conn: &Connection,
-    backfilled: u64,
-    failure: Option<NotePinyinRepairFailure>,
-) -> NotePinyinRepairReport {
-    let converged = match probe_note_pinyin_backlog(conn) {
-        Ok(has_backlog) => !has_backlog,
-        Err(e) => {
-            tracing::warn!(error = %e, "备注拼音收敛探测失败（收敛位保守置否）");
-            false
-        }
-    };
-    NotePinyinRepairReport {
-        backfilled,
-        converged,
-        failure,
-    }
-}
-
-/// 备注拼音分批回填核心（搜索入口惰性回填的唯一实现，issue #513）：返回回填
-/// 行数 / 是否收敛 / 失败原因的报告。幂等——仅补「拼音列仍为 NULL」的行，
-/// 重复执行零回填、已回填行（含手工脏值）原样保留；派生数据维护不置脏（不
-/// 触发备份）；任一批失败记 warn、终止本轮回填、报告携带失败阶段与底层错误，
-/// 不静默。
-fn backfill_note_pinyin(conn: &Connection) -> NotePinyinRepairReport {
-    match probe_note_pinyin_backlog(conn) {
-        // 已收敛：探测恒 O(1)，直接出报告（免二次探测）。
-        Ok(false) => {
-            return NotePinyinRepairReport {
-                backfilled: 0,
-                converged: true,
-                failure: None,
-            };
-        }
-        Ok(true) => {}
-        Err(e) => {
-            tracing::warn!(error = %e, "备注拼音回填探测失败");
-            return finish_repair(
-                conn,
-                0,
-                Some(repair_failure(NotePinyinRepairStage::Probe, e)),
-            );
-        }
-    }
-    tracing::info!("备注拼音列存在积压，开始回填（分批事务）");
-    let mut backfilled: u64 = 0;
-    loop {
-        let rows: Vec<(String, String)> = match (|| {
-            let mut stmt = conn.prepare(
-                "SELECT id,note FROM transactions \
-                 WHERE note_pinyin IS NULL AND note IS NOT NULL LIMIT ?1",
-            )?;
-            let mapped = stmt.query_map([BACKFILL_BATCH], |r| Ok((r.get(0)?, r.get(1)?)))?;
-            mapped.collect::<rusqlite::Result<Vec<_>>>()
-        })() {
-            Ok(rows) => rows,
-            Err(e) => {
-                tracing::warn!(error = %e, "备注拼音回填读取积压失败（终止本轮回填）");
-                return finish_repair(
-                    conn,
-                    backfilled,
-                    Some(repair_failure(NotePinyinRepairStage::Read, e)),
-                );
-            }
-        };
-        if rows.is_empty() {
-            break;
-        }
-        let tx = match conn.unchecked_transaction() {
-            Ok(tx) => tx,
-            Err(e) => {
-                tracing::warn!(error = %e, "备注拼音回填开事务失败（终止本轮回填）");
-                return finish_repair(
-                    conn,
-                    backfilled,
-                    Some(repair_failure(NotePinyinRepairStage::Begin, e)),
-                );
-            }
-        };
-        let mut changed = 0usize;
-        let mut batch_err = None;
-        for (id, note) in &rows {
-            // 仅回填仍为 NULL 的行；updated_at 不动（纯派生列补齐，非业务写）。
-            let res = tx.execute(
-                "UPDATE transactions SET note_pinyin = ?1 \
-                 WHERE id = ?2 AND note_pinyin IS NULL AND note = ?3",
-                rusqlite::params![pinyin_initials(note), id, note],
-            );
-            match res {
-                Ok(n) => changed += n,
-                Err(e) => {
-                    batch_err = Some(e);
-                    break;
-                }
-            }
-        }
-        if let Some(e) = batch_err {
-            tracing::warn!(error = %e, "备注拼音回填写入失败（终止本轮回填）");
-            // tx drop → 回滚本批，剩余积压由收敛探测如实报告。
-            return finish_repair(
-                conn,
-                backfilled,
-                Some(repair_failure(NotePinyinRepairStage::Write, e)),
-            );
-        }
-        if let Err(e) = tx.commit() {
-            tracing::warn!(error = %e, "备注拼音回填提交失败（终止本轮回填，本批回滚）");
-            return finish_repair(
-                conn,
-                backfilled,
-                Some(repair_failure(NotePinyinRepairStage::Commit, e)),
-            );
-        }
-        backfilled += changed as u64;
-        if changed == 0 {
-            // 全批皆已被补齐（防御：防同批死循环）。
-            break;
-        }
-        if rows.len() < BACKFILL_BATCH as usize {
-            break;
-        }
-    }
-    finish_repair(conn, backfilled, None)
 }
 
 /// 第二段：仅为当前页命中 id 回表取展示列（`Transaction::from_row` 的 21 列，
@@ -567,9 +364,7 @@ fn fetch_display_rows(conn: &Connection, page_ids: &[String]) -> Result<Vec<Tran
 ///
 /// **读快照一致性（issue #1699）**：字典装载、命中计数、回表页与来源 / 转换投影
 /// 填充是多语句读闭包，整体收进同一读事务（嵌套感知）——写提交落在语句之间会
-/// 页与总数错位（与列表 `list_transactions_internal` 同形同修）。备注拼音惰性
-/// 回填是**写路径**（自带分批事务），留在读事务之外先行完成——不嵌套、不改其
-/// 分批提交语义，读段快照只辖读。
+/// 页与总数错位（与列表 `list_transactions_internal` 同形同修）。
 #[allow(clippy::too_many_arguments)]
 pub fn search_transactions_internal(
     conn: &Connection,
@@ -595,19 +390,7 @@ pub fn search_transactions_internal(
     }
     let page = page.max(1);
     let page_size = page_size.clamp(1, MAX_PAGE_SIZE);
-    // 惰性回填存量行的拼音冗余列（V018，issue #513）：存量积压在搜索前自愈。
-    // 兜底承诺修订（issue #515 / ADR-0027 修订）：不再逐行现算兜底——回填失败
-    // 时拼音路径降级漏配（warn），积压期间不静默错配。
-    let repair_report = backfill_note_pinyin(conn);
-    if !repair_report.converged {
-        tracing::warn!(
-            backfilled = repair_report.backfilled,
-            "备注拼音列仍有积压，拼音子序列路径可能漏配"
-        );
-    }
-
-    // 读快照起点（issue #1699）：字典、命中计数、回表页与投影填充收进同一读事务；
-    // 其上的拼音回填是写路径（自带分批事务），留在快照之外先行完成。
+    // 读快照（issue #1699）：字典、命中计数、回表页与投影填充收进同一读事务。
     ensure_transaction(conn, || {
         // 可搜索名字与软删口径字典（账户/分类/商户，个位数到千行量级）：每次搜索
         // 新建，替代 50 万候选流上的逐行 JOIN（改名即刻生效语义不变，见模块注释）。
@@ -661,8 +444,8 @@ pub fn search_transactions_internal(
             let rows = stmt.query_map(rusqlite::params_from_iter(filter_params.iter()), |row| {
                 // 列序与 [`stage1_sql`] 的 SELECT 清单一一对应。
                 let id = row.get_ref(0)?.as_str()?;
-                let account_id = row.get_ref(3)?.as_str()?;
-                let category_id = row.get_ref(5)?.as_str().ok();
+                let account_id = row.get_ref(2)?.as_str()?;
+                let category_id = row.get_ref(4)?.as_str().ok();
 
                 // 行级口径过滤（与原 JOIN 谓词等价）：账户必须在用；分类未软删（可空）。
                 let Some((_, account_deleted)) = dicts.accounts.get(account_id) else {
