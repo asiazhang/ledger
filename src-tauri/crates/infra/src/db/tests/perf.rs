@@ -763,9 +763,10 @@ fn v025_date_extremes_pinned_to_date_index() {
     );
 }
 
-/// 搜索第一段钉计划（V018）：INDEXED BY 搜索覆盖索引的流式扫描为 index-only
-/// 且排序由索引列序满足（无临时 B-tree）——与 search.rs `build_stage1_query`
-/// 产品形状同构（词条 OR 组经 LIKE 谓词表达，账户/分类字典下推不影响形状）。
+/// 搜索第一段钉计划（V018 引入、V031 重建，issue #1728）：INDEXED BY 搜索覆盖索引
+/// 的流式扫描为 index-only 且排序由索引列序满足（无临时 B-tree）——与 search.rs
+/// `build_stage1_query` 产品形状同构（词条 OR 组：备注原文 LIKE ∨ 账户/商户字典
+/// id 集合 IN 下推，拼音分支已随 #1727/#1728 拼音退役拆除）。
 #[test]
 fn v025_note_search_stage1_scans_note_search_index() {
     let conn = v025_world();
@@ -773,7 +774,8 @@ fn v025_note_search_stage1_scans_note_search_index() {
         &conn,
         "SELECT t.id FROM transactions t INDEXED BY idx_transactions_note_search \
          WHERE t.is_deleted = 0 \
-         AND (t.note LIKE '%x%' ESCAPE '\\' OR t.note_pinyin LIKE '%x%' ESCAPE '\\') \
+         AND (t.note LIKE '%x%' ESCAPE '\\' OR t.account_id IN ('acc-01') \
+              OR t.merchant_id IN ('m-01')) \
          ORDER BY t.date DESC, t.created_at DESC, t.id DESC",
         [],
     );

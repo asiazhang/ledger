@@ -66,9 +66,9 @@ fn init_db_is_idempotent_and_seeds_defaults() {
     assert_eq!(mismatched, 0);
 }
 
-/// 当前迁移序列长度（V001–V030，V005 移除不回填，共 29 条）；新增迁移时随
+/// 当前迁移序列长度（V001–V031，V005 移除不回填，共 30 条）；新增迁移时随
 /// `migrations()` 同步更新。钉住「从零迁移到最新」的完整性基线。
-const LATEST_SCHEMA_VERSION: usize = 29;
+const LATEST_SCHEMA_VERSION: usize = 30;
 
 /// 从零迁移完整性（内存库从零 → 最新）：user_version 停在最新、全库完整性
 /// 检查通过、每条迁移的签名表/列在场。漏跑或中途失败的迁移批次会停在半途
@@ -134,7 +134,6 @@ fn migration_from_zero_reaches_latest_completely() {
         ("transactions", "merchant_id"),
         ("transactions", "idempotency_key"),
         ("transactions", "policy_id"),
-        ("transactions", "note_pinyin"),
         ("transactions", "funding_account_id"),
         ("instruments", "source"),
         ("subscription_plans", "policy_id"),
@@ -163,8 +162,8 @@ fn migration_from_zero_reaches_latest_completely() {
         assert_eq!(hit, 1, "签名列 {table}.{column} 应存在");
     }
 
-    // 事故索引：V018 搜索覆盖索引在场，且定义文本引用 merchant_id
-    // （索引列集漂移在此确定性失败）。
+    // 事故索引：V018 引入、V031 重建（#1728）的搜索覆盖索引在场，列集为「列表序键
+    // + id/note/三引用列」——列集漂移与退役列残留进索引在此确定性失败。
     let index_sql: String = conn
         .query_row(
             "SELECT sql FROM sqlite_master \
@@ -172,10 +171,53 @@ fn migration_from_zero_reaches_latest_completely() {
             [],
             |r| r.get(0),
         )
-        .unwrap();
+        .unwrap_or_else(|_| panic!("索引 idx_transactions_note_search 应存在"));
+    // SQLite 存储的索引定义文本即迁移原文，去空白后对列清单做全等匹配——
+    // 子串逐列断言会互相误命中（date ⊂ created_at），列序回填或派生列复活均在此变红。
+    let index_ddl: String = index_sql.chars().filter(|c| !c.is_whitespace()).collect();
     assert!(
-        index_sql.contains("merchant_id"),
-        "idx_transactions_note_search 定义应引用 merchant_id，实际: {index_sql}"
+        index_ddl.contains(
+            "ONtransactions(date,created_at,id,note,account_id,merchant_id,category_id)",
+        ),
+        "idx_transactions_note_search 列集应为列表序键 + id/note/三引用列: {index_sql}"
+    );
+    assert!(
+        index_ddl.contains("WHEREis_deleted=0"),
+        "idx_transactions_note_search 应保持 partial 谓词: {index_sql}"
+    );
+    assert!(
+        !index_ddl.contains("note_pinyin"),
+        "idx_transactions_note_search 不得再引用已退役的 note_pinyin（#1728）: {index_sql}"
+    );
+
+    // V031（issue #1728）：note_pinyin 回填探针 partial 索引随派生列退役整体移除，
+    // 迁移后不得残留——从 V031 删掉 DROP INDEX 即在此变红。
+    let backlog_index: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master \
+             WHERE type='index' AND name='idx_transactions_note_pinyin_backlog'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        backlog_index, 0,
+        "回填探针索引 idx_transactions_note_pinyin_backlog 应已随 note_pinyin 退役"
+    );
+
+    // V031（issue #1728）：派生列本体已移除——从 V031 删掉 DROP COLUMN 即在此变红。
+    // 签名清单是 presence-only、schema 漂移守卫对「实际多出的列」方向性容忍，列
+    // 残留没有别的判据，此断言是「删除即变红」的载体。
+    let note_pinyin_column: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('transactions') WHERE name='note_pinyin'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        note_pinyin_column, 0,
+        "派生列 transactions.note_pinyin 应已随 V031 移除"
     );
 
     // V030 商户维度覆盖索引（issue #1655）：分组列打头的 partial 覆盖索引在场，
