@@ -180,8 +180,7 @@ pub fn init(app_handle: &tauri::AppHandle) {
     let (filter_layer, handle) = reload::Layer::new(filter);
 
     let (file_writer, guard) =
-        tracing_appender::non_blocking(tracing_appender::rolling::daily(&dir, "ledger"));
-
+        tracing_appender::non_blocking(tracing_appender::rolling::daily(&dir, LOG_FILE_PREFIX));
     let file_layer = Layer::default()
         .with_writer(file_writer)
         .with_ansi(false)
@@ -204,14 +203,18 @@ pub fn init(app_handle: &tauri::AppHandle) {
     GUARD.set(guard).ok();
 }
 
+/// 日滚文件名前缀：`rolling::daily` 按 `{prefix}.{YYYY-MM-DD}` 产出文件名，
+/// 创建（`init`）与清理共用本常量防漂移——前缀曾写死为 `ledger.log.`，
+/// 与实际文件名永不相交，7 天保留从未生效（#1720 拷问期间发现）。
+const LOG_FILE_PREFIX: &str = "ledger";
+
 fn cleanup_old_logs(dir: &PathBuf) {
     let seven_days_ago = chrono::Utc::now() - chrono::Duration::days(7);
     if let Ok(entries) = std::fs::read_dir(dir) {
         for entry in entries.flatten() {
             let path = entry.path();
             if let Some(name) = path.file_name().and_then(|n| n.to_str())
-                && name.starts_with("ledger.log.")
-                && name.len() > 11
+                && is_rolling_log_name(name)
                 && let Ok(metadata) = std::fs::metadata(&path)
                 && let Ok(modified) = metadata.created().or_else(|_| metadata.modified())
             {
@@ -222,6 +225,15 @@ fn cleanup_old_logs(dir: &PathBuf) {
             }
         }
     }
+}
+
+/// 判断是否本模块日滚产物 `{LOG_FILE_PREFIX}.{YYYY-MM-DD}`；
+/// 日期须可解析，目录内无关文件不命中。
+fn is_rolling_log_name(name: &str) -> bool {
+    name.strip_prefix(LOG_FILE_PREFIX)
+        .and_then(|rest| rest.strip_prefix('.'))
+        .and_then(|date| chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d").ok())
+        .is_some()
 }
 
 #[cfg(test)]
@@ -364,5 +376,26 @@ mod tests {
         let err = set_persisted_level(&conn, "verbose").expect_err("应拒绝闭集外档位");
         assert!(err.is_code("settings.log-level-invalid"));
         assert_eq!(persisted_level(&conn), LogLevel::Info);
+    }
+
+    // ---- 日志清理命名匹配（根因：清理前缀与日滚文件名漂移，7 天保留曾从未生效）----
+
+    /// `rolling::daily(LOG_FILE_PREFIX)` 的真实产物名必须命中清理匹配：
+    /// 前缀再次写死成别的值即红（本用例即当时缺陷的负向条目）。
+    #[test]
+    fn rolling_log_names_match_cleanup() {
+        assert!(is_rolling_log_name("ledger.2026-08-28"));
+        assert!(is_rolling_log_name(&format!(
+            "{LOG_FILE_PREFIX}.2026-01-01"
+        )));
+    }
+
+    /// 纯前缀、日期不可解析、异前缀的目录内无关文件不得被清理命中。
+    #[test]
+    fn cleanup_skips_unrelated_names() {
+        assert!(!is_rolling_log_name("ledger"));
+        assert!(!is_rolling_log_name("ledger.README"));
+        assert!(!is_rolling_log_name("other.2026-08-28"));
+        assert!(!is_rolling_log_name("ledger.log.2026-08-28"));
     }
 }
