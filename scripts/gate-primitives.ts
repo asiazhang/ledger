@@ -17,10 +17,11 @@
 // - maskComments —— TS/Vue 注释掩码（自 ts-comment-mask.ts 并入：消费方
 //   check-frontend-structure.ts 与 check-commands.ts 恰 2 门，达 ≥2 门准入判据）。
 //
-// 消费方：check-structure.ts、check-infra-dml.ts、check-eastmoney-residue.ts、
-// check-background-services.ts、test-exec.ts、check-commands.ts、
-// check-frontend-structure.ts（守门家族）与原语级测试 gate-primitives.test.ts。
-// 掩码与遍历规则改动只动本文件，消费者随引用自动跟随。
+// 消费方（守门家族全量，#1680 T2 收口后）：check-structure、check-infra-dml、
+// check-eastmoney-residue、check-background-services、test-exec、check-commands、
+// check-frontend-structure、check-async-guards、check-test-support、check-test-stubs、
+// check-i18n-keys、check-dialog-forms、check-style-blocks，与原语级测试
+// gate-primitives.test.ts。掩码与遍历规则改动只动本文件，消费者随引用自动跟随。
 //
 // 边界（#1466/#1433 划界声明，自 ts-comment-mask.ts 头部迁入）：maskComments 只
 // 承载 TS/Vue 注释掩码。面向 Rust 源码的词法掩码，本模块 maskNonCode 是 TS 侧
@@ -55,7 +56,10 @@ export interface WalkTextOptions {
 /**
  * 递归收集目录下的文本面文件（守门家族共享单点，issue #1625）：扩展名闭集过滤、
  * 目录名 localeCompare 排序保证输出确定、rel 以 relBase 为前缀 `/` 分隔归一。
- * 扫描哪些扩展名、豁免哪些目录与文件属各守门政策，经 options 注入。
+ * 目录判定按 readdir dirent（不跟随目录符号链接；此语义随 #1680 收口成为家族
+ * 统一行为——原自持遍历中 statSync 跟随符号链接的形态一并归一，本仓扫描树无
+ * 目录符号链接，实害为零、留痕在案）。扫描哪些扩展名、豁免哪些目录与文件属
+ * 各守门政策，经 options 注入。
  */
 export function walkTextFiles(
   dir: string,
