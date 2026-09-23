@@ -19,6 +19,7 @@ import {
 import { api } from "@ledger/api";
 import { t } from "@ledger/i18n";
 import { useReferenceStore } from "@/stores/reference";
+import { useSavingsGoalsStore } from "@/savings-goal/savingsGoals";
 import AppModal from "@ledger/ui-kit/AppModal.vue";
 import AppDropdown from "@ledger/ui-kit/AppDropdown.vue";
 import AppDatePicker from "@ledger/ui-kit/AppDatePicker.vue";
@@ -38,6 +39,7 @@ import { ACCOUNT_TYPES } from "@ledger/types";
 import type { AccountBalance, AccountInput, AccountType, AccountUpdateInput } from "@ledger/types";
 
 const reference = useReferenceStore();
+const savingsGoalsStore = useSavingsGoalsStore();
 const message = useMessage();
 const dialog = useAppDialog();
 const themeVars = useThemeVars();
@@ -139,7 +141,8 @@ function confirmDelete(row: AccountBalance) {
 
 // ---------------------------------------------------------------------------
 // 编辑账户弹窗（name + currency_code；type 不可改——参与余额符号归属；
-// initial_balance_cents 归「调整余额」管，两处不同改同一字段）
+// initial_balance_cents 归「调整余额」管，两处不同改同一字段）；目标绑定账户
+//（issue #1752）名称随动只读——输入禁用且提交不发 name 键（改名唯一入口是目标编辑）
 // 开启/目标/关闭编排归弹窗意图工厂 ModalIntent（ADR-0072）：意图闭集单成员
 // （携带目标账户行），显示由「意图非空」派生、序号随开启递增驱动表单重建、
 // 关闭清回 null 终态。现状已带序号守卫（序号驱动表单重建），迁移为纯方言
@@ -166,6 +169,16 @@ const editStatementDay = ref<number | null>(null);
 const editDueDay = ref<number | null>(null);
 /** 编辑中的账户是否为信用卡（决定三个档案输入与只读摘要是否出现）。 */
 const isCreditEdit = computed(() => editIntent.value?.row.account.type === "credit");
+/**
+ * 编辑中的账户是否为储蓄目标专属账户（名称输入禁用 + 提交不发 name 键）：
+ *  账户身份由绑定派生（ADR-0133 决策 2，issue #1752）——目标名权威、账户名
+ *  随动只读（账户侧无独立改名入口），绑定集选择器归口储蓄目标 store（#1755 同源）。
+ */
+const isGoalBoundEdit = computed(
+  () =>
+    editIntent.value !== null &&
+    savingsGoalsStore.goalAccountIds.has(editIntent.value.row.account.id),
+);
 
 function openEdit(row: AccountBalance) {
   editName.value = row.account.name;
@@ -193,9 +206,13 @@ async function submitEdit() {
     // 信用卡档案字段三态：给值 = 落定、`null` = 清空（未填即空）；非信用卡账户
     // **根本不发这三键**（不发 = 不改，避免把「不适用」误报成后端守卫错误）。
     const payload: AccountUpdateInput = {
-      name: editName.value,
       currency_code: editCurrency.value,
     };
+    // 目标绑定账户（issue #1752）：不发 name 键（缺席 = 不改）——账户名随目标
+    // 联动，账户侧任何路径都不回写名称，防把陈旧名写回去造成两处名字对不上。
+    if (!isGoalBoundEdit.value) {
+      payload.name = editName.value;
+    }
     if (editIntent.value.row.account.type === "credit") {
       payload.credit_limit_cents =
         editCreditLimit.value === null ? null : yuanToCents(editCreditLimit.value);
@@ -609,7 +626,12 @@ onMounted(() => {
         <!-- 行距节奏容器：NFormItem 默认零行距，表单项与按钮行同包（ADR-0079 决策 4 / issue #804） -->
         <NSpace vertical :size="12">
           <NFormItem :label="t('accounts.create.name')">
-            <NInput v-model:value="editName" :placeholder="t('accounts.create.namePlaceholder')" />
+            <NInput
+              v-model:value="editName"
+              :placeholder="t('accounts.create.namePlaceholder')"
+              :disabled="isGoalBoundEdit"
+              data-testid="account-edit-name"
+            />
           </NFormItem>
           <NFormItem :label="t('accounts.create.type')">
             <NInput :value="t(`accounts.type.${editIntent.row.account.type}`)" disabled />

@@ -6,10 +6,12 @@
 //! 再读不存在。域结果细节（进度算术、达成判定、联动矩阵）归域单测权威层
 //!（`ledger-savings-goal` 的 tests），此处不越层。
 
-use ledger_savings_goal::{SavingsGoalInput, SavingsGoalProgress};
+use ledger_savings_goal::{SavingsGoalInput, SavingsGoalProgress, SavingsGoalUpdateInput};
 use tauri::Manager;
 use tauri_app_lib::commands::accounts::list_accounts;
-use tauri_app_lib::commands::savings_goal::{create_savings_goal, savings_goal_progress};
+use tauri_app_lib::commands::savings_goal::{
+    create_savings_goal, savings_goal_progress, update_savings_goal,
+};
 use tauri_app_lib::test_support::ScratchDir;
 
 type AppHandle = tauri::AppHandle<tauri::test::MockRuntime>;
@@ -104,4 +106,94 @@ async fn create_goal_rejects_non_positive_amount_with_code() {
         !accounts.iter().any(|a| a.name == "零元目标"),
         "拒绝创建不应建出专属账户"
     );
+}
+
+/// 接线证明（AC1）：编辑目标返回成功，专属账户经账户域读命令可读出新名——
+/// 改名联动落在账户列表（各下拉同一参考来源）上一步可观察。
+#[tokio::test]
+async fn update_goal_returns_success_and_account_is_renamed() {
+    let (app, _dir) = app_with_db();
+    let goal_id = create_savings_goal(
+        app.state(),
+        app.clone(),
+        SavingsGoalInput {
+            name: "买车基金".into(),
+            target_amount_cents: 500_000,
+            deadline: None,
+        },
+    )
+    .await
+    .expect("创建目标应返回成功");
+
+    update_savings_goal(
+        app.state(),
+        app.clone(),
+        goal_id,
+        SavingsGoalUpdateInput {
+            name: "换车基金".into(),
+            target_amount_cents: 400_000,
+            deadline: Some("2027-12-31".into()),
+            planned_monthly_cents: Some(30_000),
+        },
+    )
+    .await
+    .expect("编辑目标应返回成功");
+
+    // 进度读命令可见编辑后的目标（读出的绑定指向同一专属账户）
+    let progress: Vec<SavingsGoalProgress> = savings_goal_progress(app.state())
+        .await
+        .expect("进度读命令应成功");
+    assert_eq!(progress.len(), 1);
+    let account_id = progress[0].goal.account_id.clone();
+
+    // 专属账户经账户域读命令读出新名（账户列表 / 各下拉同一参考来源）
+    let accounts = list_accounts(app.state())
+        .await
+        .expect("账户域读命令应成功");
+    let bound = accounts
+        .iter()
+        .find(|a| a.id == account_id)
+        .expect("目标绑定的专属账户应可读");
+    assert_eq!(bound.name, "换车基金", "改名后账户列表同步更新");
+}
+
+/// 壳三件套（错误码）+ 接线证明负向面：编辑目标金额非正数（与创建同校验）被
+/// 码化错误拒绝，再读目标仍在且金额未变（拒绝零落库）。
+#[tokio::test]
+async fn update_goal_rejects_non_positive_amount_with_code() {
+    let (app, _dir) = app_with_db();
+    let goal_id = create_savings_goal(
+        app.state(),
+        app.clone(),
+        SavingsGoalInput {
+            name: "买车基金".into(),
+            target_amount_cents: 500_000,
+            deadline: None,
+        },
+    )
+    .await
+    .expect("创建目标应返回成功");
+
+    let err = update_savings_goal(
+        app.state(),
+        app.clone(),
+        goal_id,
+        SavingsGoalUpdateInput {
+            name: "买车基金".into(),
+            target_amount_cents: 0,
+            deadline: None,
+            planned_monthly_cents: None,
+        },
+    )
+    .await
+    .expect_err("非正目标金额应被拒绝");
+    assert!(
+        err.is_code("savings-goal.target-amount-positive"),
+        "应报码化错误 savings-goal.target-amount-positive，实际 {err:?}"
+    );
+
+    let progress = savings_goal_progress(app.state())
+        .await
+        .expect("进度读命令应成功");
+    assert_eq!(progress.len(), 1, "拒绝编辑不应删除目标");
 }

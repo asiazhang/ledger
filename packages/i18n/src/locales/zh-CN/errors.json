@@ -254,7 +254,10 @@
   },
   "savings-goal": {
     "target-amount-positive": "目标金额必须为正数",
-    "status-unknown": "未知目标状态: {0}"
+    "status-unknown": "未知目标状态: {0}",
+    "not-found": "储蓄目标不存在: {0}",
+    "name-required": "目标名称不能为空",
+    "planned-monthly-positive": "计划月存必须为正数"
   },
   "scheduled-plan": {
     "amount-positive": "金额必须大于 0",

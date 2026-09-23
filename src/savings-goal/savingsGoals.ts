@@ -1,8 +1,8 @@
 import { defineStore } from "pinia";
-import { ref } from "vue";
+import { computed, ref } from "vue";
 import { api } from "@ledger/api";
 import { createPushFirstList } from "@/composables/push-first-list";
-import type { SavingsGoalInput, SavingsGoalProgress } from "@ledger/types";
+import type { SavingsGoalInput, SavingsGoalProgress, SavingsGoalUpdateInput } from "@ledger/types";
 
 /**
  * 储蓄目标（SavingsGoal）领域 store（spec #1750 / issue #1751 / ADR-0133）。
@@ -25,6 +25,13 @@ export const useSavingsGoalsStore = defineStore("savingsGoals", () => {
     },
   );
 
+  /**
+   * 目标绑定账户 id 集（issue #1752）：账户身份由绑定派生（ADR-0133 决策 2）
+   * 的单一选择器——账户侧名称只读判定（#1752）与账户页分组（#1755）同源消费，
+   * 派生不外泄到视图层逐行下探。
+   */
+  const goalAccountIds = computed(() => new Set(goals.value.map((p) => p.goal.account_id)));
+
   /** 创建目标（名称、目标金额、可选截止日期）：写入成功即返回目标 id——不因
    *  重拉失败反转为「保存失败」（数据已落库，重复提交才是真错），重拉由
    *  `ledger:changed` 信号兜底，失败信号由 status 承载。 */
@@ -36,7 +43,17 @@ export const useSavingsGoalsStore = defineStore("savingsGoals", () => {
     return id;
   }
 
+  /** 编辑目标（issue #1752）：四字段全量替换 + 改名联动——写入成功即完成，
+   *  不因重拉失败反转为「保存失败」（与 create 同款语义），改名后的账户名
+   *  随参考表重拉对账户列表与各下拉可见。 */
+  async function update(id: string, input: SavingsGoalUpdateInput): Promise<void> {
+    await api.updateSavingsGoal(id, input);
+    await refresh().catch(() => {
+      /* 重拉失败不阻断编辑成功路径 */
+    });
+  }
+
   // push 生命周期（self-init 与 ledger:changed 订阅）由工厂内化（ADR-0123）。
 
-  return { goals, status, version, refresh, invalidate, create };
+  return { goals, goalAccountIds, status, version, refresh, invalidate, create, update };
 });

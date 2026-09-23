@@ -94,6 +94,19 @@ pub struct SavingsGoalInput {
     pub deadline: Option<String>,
 }
 
+/// 目标编辑入参（IPC `update_savings_goal`，issue #1752）：四字段全量替换——
+/// 名称（目标名权威、专属账户名随动只读）、目标金额、可选截止日期与手填
+/// 「计划月存」（可空 = 清除）。账户信息不出现在入参：账户侧无独立改名入口。
+#[derive(Debug, Deserialize)]
+pub struct SavingsGoalUpdateInput {
+    pub name: String,
+    /// 目标金额（整数分，正数——与创建同校验）。
+    pub target_amount_cents: i64,
+    /// 截止日期（可空 = 无截止日；全量替换，键缺席同值 None）。
+    pub deadline: Option<String>,
+    /// 手填「计划月存」（可空 = 清除；携带时必须为正数）。
+    pub planned_monthly_cents: Option<i64>,
+}
 /// 蓄水进度读模型（词汇表「蓄水进度」）：由目标读命令实时计算、不持久化；
 /// 只输出金额与达成判定（差值带符号），不输出百分比口径。
 #[derive(Debug, Clone, Serialize)]

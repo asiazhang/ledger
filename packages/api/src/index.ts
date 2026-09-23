@@ -87,6 +87,7 @@ import type {
   RealizedPnlSummary,
   SavingsGoalInput,
   SavingsGoalProgress,
+  SavingsGoalUpdateInput,
   RestoreResult,
   TransactionConvert,
   TransactionSplit,
@@ -363,6 +364,9 @@ export const api = {
   // 进度 = 专属账户余额；写入后由后端发 ledger:changed
   savingsGoalProgress: () => invoke<SavingsGoalProgress[]>("savings_goal_progress"),
   createSavingsGoal: (input: SavingsGoalInput) => invoke<string>("create_savings_goal", { input }),
+  // 编辑（issue #1752）：四字段全量替换 + 改名联动专属账户
+  updateSavingsGoal: (id: string, input: SavingsGoalUpdateInput) =>
+    invoke<void>("update_savings_goal", { id, input }),
 
   // 汇率
   listExchangeRates: () => invoke<ExchangeRate[]>("list_exchange_rates"),

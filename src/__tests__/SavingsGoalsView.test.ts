@@ -47,6 +47,35 @@ const VIEW_OVERRIDES = {
     ];
     return Promise.resolve(id);
   },
+  update_savings_goal: (args?: Record<string, unknown>) => {
+    const { id, input } = args as {
+      id: string;
+      input: {
+        name: string;
+        target_amount_cents: number;
+        deadline: string | null;
+        planned_monthly_cents: number | null;
+      };
+    };
+    // 镜像后端语义：目标行四字段替换，剩余与达成由读数派生（issue #1752）
+    progress = progress.map((row) =>
+      row.goal.id === id
+        ? {
+            ...row,
+            goal: {
+              ...row.goal,
+              name: input.name,
+              target_amount_cents: input.target_amount_cents,
+              deadline: input.deadline,
+              planned_monthly_cents: input.planned_monthly_cents,
+            },
+            remaining_cents: input.target_amount_cents - row.saved_cents,
+            achieved: row.saved_cents >= input.target_amount_cents,
+          }
+        : row,
+    );
+    return Promise.resolve();
+  },
 };
 
 beforeEach(() => {
@@ -142,6 +171,102 @@ describe("SavingsGoalsView 储蓄目标视图（spec #1750 / issue #1751）", ()
 
     // 调用事实：零次创建调用
     expect(mockInvoke.mock.calls.some(([cmd]) => cmd === "create_savings_goal")).toBe(false);
+    // 效果：弹窗未关闭（内容保留可改）
+    expect(wrapper.findComponent(SavingsGoalFormModal).emitted("update:show")).toBeUndefined();
+  });
+
+  it("编辑目标：弹窗回填并提交 update_savings_goal，列表刷出新名新额、弹窗关闭", async () => {
+    progress = [
+      makeSavingsGoalProgress({
+        goal: makeSavingsGoal({
+          id: "goal-1",
+          name: "买车基金",
+          target_amount_cents: 5_000_000,
+          deadline: "2027-06-30",
+          planned_monthly_cents: null,
+        }),
+      }),
+    ];
+    const wrapper = mount(SavingsGoalsView);
+    await flushPromises();
+
+    // 编辑入口（操作列）在场并打开编辑弹窗
+    await findButtonByTestId(wrapper, "savings-goal-edit").trigger("click");
+    await flushPromises();
+    expect(bodyQuery('[data-testid="savings-goal-form-modal"]')).not.toBeNull();
+    // 回填：名称预填既有目标名；计划月存字段结构性只在编辑模式出现
+    expect(formInput("savings-goal-name").element.value).toBe("买车基金");
+    expect(formInput("savings-goal-planned-monthly").element.value).toBe("");
+
+    await formInput("savings-goal-name").setValue("换车基金");
+    await formInput("savings-goal-amount").setValue("40000");
+    await formInput("savings-goal-planned-monthly").setValue("3000");
+    await saveButton().trigger("click");
+    await flushPromises();
+
+    // 调用事实：update_savings_goal 携 id 与四字段全量载荷（元 → 分）
+    const call = mockInvoke.mock.calls.find(([cmd]) => cmd === "update_savings_goal");
+    expect(call).toBeTruthy();
+    expect(call![1]).toMatchObject({
+      id: "goal-1",
+      input: {
+        name: "换车基金",
+        target_amount_cents: 4_000_000,
+        deadline: "2027-06-30",
+        planned_monthly_cents: 300_000,
+      },
+    });
+    // 渲染效果：列表刷出新名与新目标额（重拉后的读数）
+    expect(wrapper.text()).toContain("换车基金");
+    expect(wrapper.text()).not.toContain("买车基金");
+    expect(wrapper.text()).toContain("4,0000"); // 目标额 40,000 元
+    // 弹窗关闭
+    expect(wrapper.findComponent(SavingsGoalFormModal).emitted("update:show")).toContainEqual([
+      false,
+    ]);
+  });
+
+  it("编辑目标：清空计划月存提交 null（可空列）", async () => {
+    progress = [
+      makeSavingsGoalProgress({
+        goal: makeSavingsGoal({ id: "goal-1", planned_monthly_cents: 500_000 }),
+      }),
+    ];
+    const wrapper = mount(SavingsGoalsView);
+    await flushPromises();
+    await findButtonByTestId(wrapper, "savings-goal-edit").trigger("click");
+    await flushPromises();
+
+    // 回填：计划月存 500000 分 → 5000 元
+    expect(formInput("savings-goal-planned-monthly").element.value).toBe("5000");
+    await formInput("savings-goal-planned-monthly").setValue("");
+    await saveButton().trigger("click");
+    await flushPromises();
+
+    // 调用事实：清除以 null 落定（可空列）
+    const call = mockInvoke.mock.calls.find(([cmd]) => cmd === "update_savings_goal");
+    expect(call).toBeTruthy();
+    expect(call![1]).toMatchObject({
+      input: { planned_monthly_cents: null },
+    });
+    // 效果：保存成功弹窗关闭
+    expect(wrapper.findComponent(SavingsGoalFormModal).emitted("update:show")).toContainEqual([
+      false,
+    ]);
+  });
+
+  it("计划月存非正数：客户端拦截，不调用 update_savings_goal、弹窗不关", async () => {
+    progress = [makeSavingsGoalProgress({ goal: makeSavingsGoal({ id: "goal-1" }) })];
+    const wrapper = mount(SavingsGoalsView);
+    await flushPromises();
+    await findButtonByTestId(wrapper, "savings-goal-edit").trigger("click");
+    await flushPromises();
+    await formInput("savings-goal-planned-monthly").setValue("0");
+    await saveButton().trigger("click");
+    await flushPromises();
+
+    // 调用事实：零次编辑调用
+    expect(mockInvoke.mock.calls.some(([cmd]) => cmd === "update_savings_goal")).toBe(false);
     // 效果：弹窗未关闭（内容保留可改）
     expect(wrapper.findComponent(SavingsGoalFormModal).emitted("update:show")).toBeUndefined();
   });
