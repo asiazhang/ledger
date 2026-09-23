@@ -24,7 +24,7 @@ import type {
  * 已迁为弹窗意图编排通用工厂 ModalIntent（useModalIntent，ADR-0072）之上的首个适配器：
  * 意图与序号两面由工厂持有（意图落位即递增序号、关闭不重置），本模块只补交易弹窗族
  * 特有的异步时序——「先取买卖/转换明细再开窗、失败不开窗、最后一次开启胜出」守卫留适配器层，
- * 不上浮通用工厂。适配器代数（竞态纪元，#1678 起消费共享 module @ledger/latest-wins）随每次开启尝试递增（含取数失败），工厂序号只在意图真正落位递增——代数=竞态纪元、序号=落位计数，语义不同、不合并。
+ * 不上浮通用工厂。适配器代数（竞态纪元，#1678 起消费共享 module @ledger/latest-wins）随每次开启尝试递增（含取数失败），工厂序号只在意图真正落位递增——代数=竞态纪元、序号=落位计数。
  *
  * 依赖 direct-import（api 与 useMessage），不做注入（先例 useScheduledPlanList；
  * getTransactionTrade / getTransactionConvert 各只有一个实现，注入是 YAGNI）。只内化
@@ -114,8 +114,8 @@ export function useTransactionModalState(): UseTransactionModalStateReturn {
    * 迟到的失败也不报错。消灭「慢 A 覆盖快 B」竞态；close 一并推进纪元（invalidate），
    * 使「关闭清回空终态」成为接口保证——取数在途时关闭，迟到的成功不再重开弹窗。
    *
-   * 纪元簿记自 #1678 起消费共享 module @ledger/latest-wins；代数（竞态纪元）与工厂
-   * 序号（落位计数，意图落位才递增、从不过期比较）语义不同、不合并。
+   * 纪元簿记自 #1678 起消费共享 module @ledger/latest-wins（代数=竞态纪元；工厂序号=
+   * 落位计数，意图落位才递增、从不过期比较）。
    */
   const wins = createLatestWins();
 

@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  SEQ_SEAM_FILE,
+  EPOCH_SEAM_FILE,
   TOAST_BASELINE,
   TOAST_WINDOW_LINES,
 } from "../scripts/check-async-guards.ts";
@@ -46,7 +46,7 @@ function makeFixture(overrides: Record<string, string> = {}, withSeam = true): s
     writeFileSync(abs, toastStub(count));
   }
   if (withSeam) {
-    const seam = join(root, SEQ_SEAM_FILE);
+    const seam = join(root, EPOCH_SEAM_FILE);
     mkdirSync(join(seam, ".."), { recursive: true });
     writeFileSync(seam, "export {}\n");
   }
@@ -79,12 +79,12 @@ describe("check-async-guards（前端异步守门）", () => {
     expect(r.output).toContain("空集");
   });
 
-  it("接缝住址不可达即红（搬迁未同步 SEQ_SEAM_FILE，拒绝白名单静默失效）", () => {
+  it("接缝住址不可达即红（搬迁未同步 EPOCH_SEAM_FILE，拒绝白名单静默失效）", () => {
     // withSeam=false：不落接缝住址桩，其他源文件齐备，唯独住址缺失
     const r = run(makeFixture({}, false));
     expect(r.status).toBe(1);
     expect(r.output).toContain("住址不可达");
-    expect(r.output).toContain(SEQ_SEAM_FILE);
+    expect(r.output).toContain(EPOCH_SEAM_FILE);
   });
 
   describe("规则 1：手搓竞态纪元（硬零容忍，唯一合法住址 @ledger/latest-wins）", () => {
@@ -125,7 +125,7 @@ describe("check-async-guards（前端异步守门）", () => {
     it("唯一合法住址：共享 module 本体内 let epoch = 0 绿（#1678 豁免随包）", () => {
       const r = run(
         makeFixture({
-          [SEQ_SEAM_FILE]:
+          [EPOCH_SEAM_FILE]:
             "export function createLatestWins() {\n  let epoch = 0\n  const bind = () => ({ isStale: () => false });\n  return { begin: bind };\n}\n",
         }),
       );
