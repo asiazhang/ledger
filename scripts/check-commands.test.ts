@@ -119,6 +119,32 @@ describe("check-commands（命令注册一致性校验）", () => {
     expect(r.output).toMatch(/未在 TS 调用面扫描到任何/);
   });
 
+  it("注释掩码口径（issue #1741 收口）：块注释缀随/包裹的注解不假红，纯注释里的注解形态不认命令", () => {
+    // Rust 腿自 #1741 起整文 maskNonCode(·, true) 后逐行扫：注解行被块注释缀随或
+    // 前置时掩码后 trim 仍精确命中；整行落在块注释内的注解被掩掉不武装扫描器
+    // （弱形态逐行剥离器会漏掩块注释，注解行误武装、`*/` 行报假红）。
+    const args = makeFixture(
+      {
+        "alpha.rs": [
+          "/* 前缀说明 */ #[tauri::command]",
+          "pub fn alpha_one(db: State<'_, DbState>) -> String { todo!() }",
+          "",
+          "/*",
+          "#[tauri::command]",
+          "*/",
+          "",
+          "#[tauri::command] /* 尾随说明 */",
+          "pub async fn alpha_two(db: State<'_, DbState>) -> String { todo!() }",
+          "",
+        ].join("\n"),
+      },
+      ["invoke<void>('alpha_one')", "invoke<void>('alpha_two')", ""].join("\n"),
+    );
+    const r = run(args);
+    expect(r.status).toBe(0);
+    expect(r.output).toMatch(/双向全等/);
+  });
+
   describe("参数键名腿（issue #1398，#588 类回归根治）", () => {
     const topCmd =
       "#[tauri::command]\npub fn top_report(db: State<'_, DbState>, top_n: Option<i64>) -> String {\n    todo!()\n}\n";

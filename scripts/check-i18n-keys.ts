@@ -24,7 +24,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL, fileURLToPath } from "node:url";
-import { RUST_EXTENSIONS, walkTextFiles } from "./gate-primitives.ts";
+import { maskNonCode, RUST_EXTENSIONS, walkTextFiles } from "./gate-primitives.ts";
 
 /** 源语言目录名（其余 locale 一律与它比对） */
 export const SOURCE_LOCALE_DIR = "zh-CN";
@@ -86,44 +86,13 @@ const CODED_CALL_RE = /\b(codedp_not_found|coded_not_found|codedp|coded)\s*\(/g;
 /** `const NAME: &str = "..."` 一级常量表（跨文件聚合，供常量引用型调用点解析） */
 const RUST_STR_CONST_RE = /\bconst\s+([A-Z_][A-Z0-9_]*)\s*:\s*&str\s*=\s*"([^"]*)"/g;
 
-/** 把 Rust 源码中的注释替换为空格（保留换行与字符串字面量，含转义）。 */
-export function stripRustComments(src: string): string {
-  const out: string[] = [];
-  let i = 0;
-  const n = src.length;
-  while (i < n) {
-    const c = src[i];
-    if (c === '"') {
-      // 字符串字面量：整体保留，跳过转义对
-      let j = i + 1;
-      while (j < n) {
-        if (src[j] === "\\") {
-          j += 2;
-          continue;
-        }
-        if (src[j] === '"') break;
-        j += 1;
-      }
-      out.push(src.slice(i, j + 1));
-      i = j + 1;
-      continue;
-    }
-    if (c === "/" && i + 1 < n && src[i + 1] === "/") {
-      const j = src.indexOf("\n", i);
-      i = j === -1 ? n : j;
-      continue;
-    }
-    if (c === "/" && i + 1 < n && src[i + 1] === "*") {
-      const j = src.indexOf("*/", i + 2);
-      out.push(" ");
-      i = j === -1 ? n : j + 2;
-      continue;
-    }
-    out.push(c);
-    i += 1;
-  }
-  return out.join("");
-}
+// 弱形态注释预处理器 stripRustComments 已收口（issue #1741）：与共享原语
+// maskNonCode 在真实仓 275 个非测试 .rs 逐文件对拍（码集 + unresolved 计数 +
+// 常量表聚合）零差异，管线改消费 gate-primitives 的 maskNonCode(src, true)。
+// keepLiterals 形态只掩注释、保留字符串/char 字面量（码化构造点第一参数与
+// const 值都是字符串字面量，须原样回吐），且等长保位、识别原始串/嵌套块
+// 注释/char 字面量——弱形态不识别这些形态的分歧从此由单一权威裁决；消费
+// 名单由 gate-primitives.test.ts 锁定。
 
 /** 移除 #[cfg(test)] 修饰的 mod 块（跟踪大括号配对，块可重复出现）。 */
 export function stripCfgTestBlocks(src: string): string {
@@ -184,7 +153,7 @@ export function collectRustCodedErrorCodes(rustRoot: string): RustCodedCodesResu
   for (const path of walkRustFiles(rustRoot)) {
     const rel = path.slice(rustRoot.length + 1);
     if (isRustTestPath(rel)) continue;
-    const src = stripCfgTestBlocks(stripRustComments(readFileSync(path, "utf-8")));
+    const src = stripCfgTestBlocks(maskNonCode(readFileSync(path, "utf-8"), true));
     sources.push(src);
     for (const m of src.matchAll(RUST_STR_CONST_RE)) {
       const name = m[1];

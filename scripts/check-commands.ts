@@ -18,7 +18,13 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL, fileURLToPath } from "node:url";
-import { lineAt, maskComments, RUST_EXTENSIONS, walkTextFiles } from "./gate-primitives.ts";
+import {
+  lineAt,
+  maskComments,
+  maskNonCode,
+  RUST_EXTENSIONS,
+  walkTextFiles,
+} from "./gate-primitives.ts";
 
 /** 单条扫描边界违规：行号 1 起算 + 违规行原文 */
 export interface ScanError {
@@ -45,11 +51,13 @@ export interface ScanResult {
   errors: ScanError[];
 }
 
-/** 去掉行注释（签名收集用；签名内不出现字符串字面量，朴素剥离足够） */
-function stripLineComment(line: string): string {
-  const idx = line.indexOf("//");
-  return idx === -1 ? line : line.slice(0, idx);
-}
+// 弱形态行注释剥离器 stripLineComment 已收口（issue #1741）：与共享原语
+// maskNonCode 在真实仓 src-tauri/src/commands 全部 28 个 .rs 逐文件对拍
+// （命令名集 + errors 逐行逐条）零差异，改在 scanRustSource 入口整文
+// maskNonCode(text, true) 后逐行直接 trim。keepLiterals 形态只掩注释、保留
+// 字符串字面量（`//` 落在字符串里不再误切真实代码），块注释一并掩掉——
+// 注解被块注释包裹的假红形态从此由单一权威裁决；消费名单由
+// gate-primitives.test.ts 锁定。
 
 /**
  * 从签名文本提取参数列表：首个 `(` 起到配对 `)` 止。
@@ -161,6 +169,8 @@ export function toLowerCamelCase(name: string): string {
  * 扫描规则与 src-tauri/build.rs 同源同界：注解行必须紧随 fn 定义行，出现其他形态
  * （带参注解、cfg 条件、注解与 fn 之间插入属性行）即记入 errors——fail loud，
  * 未来扩展扫描规则时须同步改 build.rs 与本脚本（维护边界，见 ADR-0047）。
+ * 注释先整文掩码再逐行扫（#1741 收口：共享原语 maskNonCode(text, true)，等长
+ * 保位行号不变、字符串字面量保留、块注释一并掩掉），逐行 trim 后与掩码前同形。
  * 参数提取（#1398）只读签名：fn 匹配后从首个 `(` 累积到参数列表括号平衡，
  * 不改变上述 fn 形态识别规则。
  */
@@ -168,7 +178,7 @@ export function scanRustSource(text: string): ScanResult {
   const names: string[] = [];
   const commands: RustCommand[] = [];
   const errors: ScanError[] = [];
-  const lines = text.split("\n");
+  const lines = maskNonCode(text, true).split("\n");
   interface Pending {
     name: string;
     line: number;
@@ -186,7 +196,7 @@ export function scanRustSource(text: string): ScanResult {
   let armed = false;
   let pending: Pending | null = null;
   for (let i = 0; i < lines.length; i++) {
-    const trimmed = stripLineComment(lines[i]).trim();
+    const trimmed = lines[i].trim();
     if (pending) {
       pending.buffer += " " + trimmed;
       if (complete(pending)) pending = null;
