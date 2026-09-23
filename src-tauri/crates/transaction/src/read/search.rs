@@ -4,7 +4,7 @@
 //! 商户名字典 id 集合下推、软删口径一并下推，`INDEXED BY` 钉 V018 覆盖索引），展示段
 //! 仅对当前页命中 id 回表 18 列。不变量：语义契约仍是 ADR-0027 统一模糊搜索（原文
 //! 连续子串 ∨ 拼音首字母子序列，词条间 AND、字段间 OR）；note_pinyin 兜底改为惰性
-//! 回填（[`repair_note_pinyin`]），回填失败拼音路径降级漏配不静默错配。ADR 指针：
+//! 回填（[`backfill_note_pinyin`]），回填失败拼音路径降级漏配不静默错配。ADR 指针：
 //! ADR-0027 决策 1 修订。陷阱：SQLite LIKE 大小写折叠仅 ASCII（非 ASCII 大写备注边界）。
 
 use std::collections::HashMap;
@@ -409,19 +409,11 @@ fn finish_repair(
     }
 }
 
-/// 备注拼音一键修复（issue #513，域接口）：显式回填全部积压并返回报告
-/// （回填行数 / 是否收敛 / 失败原因）。幂等——仅补「拼音列仍为 NULL」的行，
-/// 重复执行零回填、已回填行（含手工脏值）原样保留；分批事务与失败纪律同惰性
-/// 回填：任一批失败记 warn、终止本轮回填、报告携带失败阶段与底层错误，不静默。
-/// 派生数据维护不置脏（不触发备份）。搜索入口的惰性回填消费同一核心
-/// [`backfill_note_pinyin`]（报告在搜索路径消费收敛位，失败已 warn），本入口
-/// 只以「一键修复」领域语言显式触发同一实现并取报告。
-pub fn repair_note_pinyin(conn: &Connection) -> NotePinyinRepairReport {
-    backfill_note_pinyin(conn)
-}
-
-/// 备注拼音分批回填核心（惰性回填与一键修复的共享实现，见
-/// [`repair_note_pinyin`] 文档）：返回回填行数 / 是否收敛 / 失败原因的报告。
+/// 备注拼音分批回填核心（搜索入口惰性回填的唯一实现，issue #513）：返回回填
+/// 行数 / 是否收敛 / 失败原因的报告。幂等——仅补「拼音列仍为 NULL」的行，
+/// 重复执行零回填、已回填行（含手工脏值）原样保留；派生数据维护不置脏（不
+/// 触发备份）；任一批失败记 warn、终止本轮回填、报告携带失败阶段与底层错误，
+/// 不静默。
 fn backfill_note_pinyin(conn: &Connection) -> NotePinyinRepairReport {
     match probe_note_pinyin_backlog(conn) {
         // 已收敛：探测恒 O(1)，直接出报告（免二次探测）。
@@ -603,15 +595,14 @@ pub fn search_transactions_internal(
     }
     let page = page.max(1);
     let page_size = page_size.clamp(1, MAX_PAGE_SIZE);
-
-    // 惰性回填存量行的拼音冗余列（V018）：与显式一键修复（issue #513）消费
-    // 同一回填核心。兜底承诺修订（issue #515 / ADR-0027 修订）：不再逐行现算
-    // 兜底——回填失败时拼音路径降级漏配（warn），可经设置页一键修复恢复。
+    // 惰性回填存量行的拼音冗余列（V018，issue #513）：存量积压在搜索前自愈。
+    // 兜底承诺修订（issue #515 / ADR-0027 修订）：不再逐行现算兜底——回填失败
+    // 时拼音路径降级漏配（warn），积压期间不静默错配。
     let repair_report = backfill_note_pinyin(conn);
     if !repair_report.converged {
         tracing::warn!(
             backfilled = repair_report.backfilled,
-            "备注拼音列仍有积压，拼音子序列路径可能漏配，可在设置中一键修复"
+            "备注拼音列仍有积压，拼音子序列路径可能漏配"
         );
     }
 

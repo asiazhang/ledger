@@ -681,7 +681,7 @@ describe("SettingsView.vue 页签内容存在性矩阵（issue #769：切页签�
       path: ["数据", "存储位置"],
       texts: ["数据存储位置", "/Users/me/Library/Application Support/ledger"],
     },
-    { nav: "进入「数据 → 数据修复」子页签", path: ["数据", "数据修复"], texts: ["拼音搜索数据"] },
+    { nav: "进入「数据 → 数据修复」子页签", path: ["数据", "数据修复"], texts: ["账户余额缓存"] },
   ])("$nav：期望文案在场 $texts", async ({ path, texts }) => {
     const wrapper = mount(SettingsView);
     for (const tab of path) {

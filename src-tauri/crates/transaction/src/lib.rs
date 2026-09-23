@@ -54,8 +54,7 @@ pub mod write;
 mod model;
 
 pub use model::{
-    ConvertFields, CreateTransactionResult, NormalizedTransaction, NotePinyinRepairFailure,
-    NotePinyinRepairReport, NotePinyinRepairStage, SecurityOrigin, Transaction,
+    ConvertFields, CreateTransactionResult, NormalizedTransaction, SecurityOrigin, Transaction,
     TransactionBatchInput, TransactionInput, TransactionListFilter, TransactionListResult,
     TransactionSearchResult, TransactionSource, TransactionSourceKind, TransactionSourceStatus,
     UpdateTransactionInput,
@@ -68,7 +67,7 @@ pub use amount::{
     policy_inflow_expr, policy_premium_expr, refund_gross_expr, signed_amount,
 };
 pub use command::{ConvertCommandFields, InvestmentCommandFields, TransactionCommand};
-pub use read::search::{repair_note_pinyin, search_transactions, search_transactions_internal};
+pub use read::search::{search_transactions, search_transactions_internal};
 pub use read::{
     get_transaction, get_transaction_internal, list_transactions, list_transactions_internal,
 };

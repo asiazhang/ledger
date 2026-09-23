@@ -162,10 +162,6 @@ pub enum WriteOp {
     /// 刻意零信号——修复的是派生缓存行，不置脏（ADR-0032 豁免形态）、
     /// 前端按返回的差异报告就地刷新，无需失效广播。
     AuditBalanceCache,
-    /// 备注拼音一键修复（IPC `repair_note_pinyin`，issue #513）：刻意零信号——
-    /// 回填的是搜索派生列（V018 `note_pinyin`），不置脏（ADR-0032 豁免形态）、
-    /// 前端按返回的修复报告就地展示，无需失效广播。
-    RepairNotePinyin,
 
     // ── 备份域：`ledger:backups-changed`（issue #129）──
     /// 手动备份（IPC `create_backup`）：刻意零信号——前端备份组合在命令成功后

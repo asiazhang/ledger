@@ -16,7 +16,7 @@ use crate::shell_support::read_entry::read_entry_on_write;
 use ledger_infra::db::DbState;
 use ledger_infra::error::Result;
 use ledger_transaction as transaction_domain;
-use ledger_transaction::{NotePinyinRepairReport, TransactionSearchResult};
+use ledger_transaction::TransactionSearchResult;
 
 /// IPC 命令：搜索交易（可选金额/日期筛选与关键字 AND 组合）。
 /// 四个筛选参数与内部函数一一对应（issue #40），作为独立命令参数暴露，
@@ -48,22 +48,6 @@ pub async fn search_transactions(
             date_from.as_deref(),
             date_to.as_deref(),
         )
-    })
-    .await
-}
-
-/// IPC 命令：备注拼音一键修复（issue #513）：显式回填全部积压并返回报告
-/// （回填行数 / 是否收敛 / 失败原因）。领域权威在
-/// [`ledger_transaction::read::search`]（与搜索入口惰性回填同一实现，幂等）。
-#[tauri::command]
-pub async fn repair_note_pinyin(db: State<'_, DbState>) -> Result<NotePinyinRepairReport> {
-    // 只读甄别收口（issue #1280 / ADR-0117 代价 3）：本命令本体就是回填写
-    //（UPDATE transactions），必须走写连接。
-    let conn = db.write_handle();
-    // 写侧白名单身份保留（ADR-0104 决策 5）：仍是不经 write_entry 的声明写命令，
-    // 闭包体与形状 A 同构，锁仪式归统一读入口。
-    read_entry_on_write("repair_note_pinyin", conn, move |conn| {
-        Ok(transaction_domain::repair_note_pinyin(conn))
     })
     .await
 }
