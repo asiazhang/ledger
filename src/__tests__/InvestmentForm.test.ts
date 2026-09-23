@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, beforeAll } from "vitest";
+import { setActivePinia, createPinia } from "pinia";
 import {
   mockInvoke,
   wireInvokeSeam,
@@ -8,9 +9,10 @@ import { findButton } from "@ledger/test-support/dom";
 import { mount, flushPromises } from "@vue/test-utils";
 import { NSelect } from "naive-ui";
 import { useReferenceStore } from "@/stores/reference";
+import { useSavingsGoalsStore } from "@/savings-goal/savingsGoals";
 import InvestmentForm from "@/investment/InvestmentForm.vue";
-import { makeAccount } from "./factories";
-import type { Account, Instrument } from "@ledger/types";
+import { makeAccount, makeGoalPair } from "./factories";
+import type { Account, Instrument, SavingsGoalProgress } from "@ledger/types";
 
 // jsdom 不实现 scrollTo：naive-ui 打开虚拟滚动下拉时会调用，提前 polyfill 避免 unhandled rejection
 beforeAll(() => {
@@ -68,8 +70,16 @@ const BASE_OVERRIDES = {
 /** 一次性桩（mockImplementationOnce 委托形态，接缝文档钦定）的委托目标。 */
 let base: ReturnType<typeof wireInvokeSeam>;
 
+/** 在用目标账户绑定集（issue #1755）：goals store 进度快照变量，每测复位、
+ *  用例内赋值（布线闭包按调用时刻取值，赋值时机在布线之后也生效）。 */
+let goalProgress: SavingsGoalProgress[] = [];
+
 beforeEach(async () => {
-  base = wireInvokeSeam({ overrides: BASE_OVERRIDES });
+  setActivePinia(createPinia());
+  goalProgress = [];
+  base = wireInvokeSeam({
+    overrides: { ...BASE_OVERRIDES, savings_goal_progress: () => Promise.resolve(goalProgress) },
+  });
   const store = useReferenceStore();
   await store.refresh();
 });
@@ -498,6 +508,13 @@ describe("出资账户表单行（issue #936 / #938 / ADR-0096，buy/sell 对称
     },
     makeAccount({ id: "acc-inv-usd", name: "美股证券户", currency_code: "USD" }),
     makeAccount({ id: "acc-bank-usd", name: "美元卡", type: "bank", currency_code: "USD" }),
+    // 在用目标账户（issue #1755 / ADR-0133 决策 4）：`other` 类型、身份由绑定派生，
+    // 下拉渲染轴的过滤断言在此承担——CNY 与 USD 各一。
+    makeGoalPair({ id: "acc-goal", account: { name: "买车基金账户" } }).account,
+    makeGoalPair({
+      id: "acc-goal-usd",
+      account: { name: "美元目标账户", currency_code: "USD" },
+    }).account,
   ];
   const editingTx = {
     id: "txn-buy-1",
@@ -569,10 +586,16 @@ describe("出资账户表单行（issue #936 / #938 / ADR-0096，buy/sell 对称
       overrides: {
         list_accounts: accountsWithFunding,
         list_instruments: { items: [], total: 0 },
+        savings_goal_progress: () => Promise.resolve(goalProgress),
         ...overrides,
       },
     });
     await useReferenceStore().refresh();
+    // 目标绑定集与参考五命令同规落位（issue #1755）：候选过滤消费绑定集，不消费
+    // 上一用例残留（goals store 不在参考预热内，挂载前显式 refresh）。
+    await useSavingsGoalsStore()
+      .refresh()
+      .catch(() => {});
   }
 
   it("买入与卖出都渲染出资账户下拉（默认空、可选清空，#938 卖出对称落地）", () => {
@@ -599,7 +622,12 @@ describe("出资账户表单行（issue #936 / #938 / ADR-0096，buy/sell 对称
     expect(fundingSelect(untouched).props("value")).toBeNull();
   });
 
-  it("外币投资账户（新建）：币种框显示账户币种、出资候选含同币种现金账户（issue #1191）", async () => {
+  it("外币投资账户（新建）：币种随账户、候选含同币种现金账户、同币种目标户不在候选（issue #1191 / #1755）", async () => {
+    // 两个在用目标账户（CNY + USD）：候选过滤双币种口径一次覆盖（issue #1755）
+    goalProgress = [
+      makeGoalPair({ id: "acc-goal" }).progress,
+      makeGoalPair({ id: "acc-goal-usd" }).progress,
+    ];
     await mountWithFundingReference({ list_currencies: currencyDict });
     const wrapper = mount(InvestmentForm, { props: { kind: "buy", submitLabel: "记买入" } });
     // 未选账户：币种框退默认展示币种，出资候选按该币种过滤
@@ -612,7 +640,12 @@ describe("出资账户表单行（issue #936 / #938 / ADR-0096，buy/sell 对称
     expect(fundingCandidates(wrapper)).toEqual(["美元卡|acc-bank-usd"]);
   });
 
-  it("外币投资账户（编辑回填）：币种框显示账户币种、出资候选含同币种现金账户（issue #1191）", async () => {
+  it("外币投资账户（编辑回填）：币种随账户、候选含同币种现金账户、同币种目标户不在候选（issue #1191 / #1755）", async () => {
+    // 两个在用目标账户（CNY + USD）：候选过滤双币种口径一次覆盖（issue #1755）
+    goalProgress = [
+      makeGoalPair({ id: "acc-goal" }).progress,
+      makeGoalPair({ id: "acc-goal-usd" }).progress,
+    ];
     await mountWithFundingReference({ list_currencies: currencyDict });
     const wrapper = mount(InvestmentForm, {
       props: {

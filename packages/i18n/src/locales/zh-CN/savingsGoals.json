@@ -1,4 +1,8 @@
 {
+  "accounts": {
+    "groupTitle": "储蓄目标",
+    "typeLabel": "储蓄目标"
+  },
   "listTitle": "储蓄目标",
   "newButton": "新建目标",
   "emptyGuide": "还没有储蓄目标——新建一个，账本会为它自动开一个专属账户",
