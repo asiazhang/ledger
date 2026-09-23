@@ -77,12 +77,12 @@ describe("SavingsGoalsView 储蓄目标视图（spec #1750 / issue #1751）", ()
     expect(wrapper.text()).toContain("进行中");
   });
 
-  it("达成态渲染：已达成标签在场，还差列让位", async () => {
+  it("达成态渲染：已达成标签在场，还差恒显带符号差值", async () => {
     progress = [
       makeSavingsGoalProgress({
         goal: makeSavingsGoal({ id: "goal-2", name: "旅行基金", target_amount_cents: 1_000_000 }),
-        saved_cents: 1_500_000,
-        remaining_cents: -500_000,
+        saved_cents: 1_800_000,
+        remaining_cents: -800_000,
         achieved: true,
       }),
     ];
@@ -92,7 +92,9 @@ describe("SavingsGoalsView 储蓄目标视图（spec #1750 / issue #1751）", ()
     const statusTags = wrapper.findAll('[data-testid="savings-goal-status"]');
     expect(statusTags.length).toBe(1);
     expect(statusTags[0].text()).toContain("已达成");
-    expect(wrapper.text()).toContain("1,5000"); // 已存 15,000 元仍可见
+    expect(wrapper.text()).toContain("1,8000"); // 已存 18,000 元仍可见
+    expect(wrapper.text()).toContain("8000"); // 还差 -8,000 元恒显带符号差值（不出「—」）
+    expect(wrapper.text()).not.toContain("—");
     expect(wrapper.text()).not.toContain("进行中");
   });
 

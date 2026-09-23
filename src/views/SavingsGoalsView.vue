@@ -17,7 +17,8 @@ import type { SavingsGoalProgress } from "@ledger/types";
  *
  * 进度全部来自后端读数（`useSavingsGoalsStore`，self-init + `ledger:changed`
  * 静默重拉）——已存 = 专属账户余额（余额缓存口径），本组件零业务逻辑、不自算
- * 进度；达成行的「还差」让位给达成态（超额差值是 ticket ③ 双向推算的口径）。
+ * 进度；达成行的「还差」照显带符号差值（词汇表「蓄水进度」：只输出金额差值，
+ * 无百分比口径），达成态由状态列表达。
  * 金额展示统一走 `formatAmount`（数字分组与隐私掩码随行生效）。
  */
 const savingsGoalsStore = useSavingsGoalsStore();
@@ -70,11 +71,12 @@ const columns: DataTableColumns<SavingsGoalProgress> = [
     render: (row) => formatAmount(row.saved_cents, currencyOf(row)),
   },
   {
-    // 还差：未达成行显示差值；达成行让位给达成态（差值口径归 ticket ③ 双向推算）。
+    // 还差 = 目标额 − 已存的带符号差值恒显（词汇表「蓄水进度」：只输出金额差值、
+    // 无百分比口径；超额存入后为负，达成态由 status 列表达）。
     title: () => t("savingsGoals.columns.remaining"),
     key: "remaining_cents",
     width: 130,
-    render: (row) => (row.achieved ? "—" : formatAmount(row.remaining_cents, currencyOf(row))),
+    render: (row) => formatAmount(row.remaining_cents, currencyOf(row)),
   },
   {
     title: () => t("savingsGoals.columns.deadline"),
