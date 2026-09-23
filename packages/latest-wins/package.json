@@ -1,0 +1,13 @@
+{
+  "name": "@ledger/latest-wins",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "//": "最新胜出竞态纪元包（issue #1678 / ADR-0118 决策 3）：createLatestWins——前端异步竞态裁决机制本体（竞态纪元）的唯一实现与唯一合法住址，token 制接口（begin 推进取 token / observe 采样不推进 / invalidate 推进作废全部在途 + token isStale 过期判据）；词汇表「最新胜出（Latest-Wins）」词条的宿主。工厂零业务语义、零外部依赖（无 vue、无 store、无 api）；过期后「做什么」属各消费点组合层，不入本包。Loadable 消费它而包禁依赖壳，故必须成包；竞态纪元唯一合法住址随包（scripts/check-async-guards.ts 规则 1 豁免坐标同步为包内路径）。源码直出，exports 仅暴露 . 单入口（单文件包，不设 barrel 中转），不建构建链；跨包只能整引包名（深导入由 check-frontend-structure.ts 守门）。",
+  "exports": {
+    ".": "./src/latest-wins.ts"
+  },
+  "devDependencies": {
+    "vitest": "^5.0.0"
+  }
+}

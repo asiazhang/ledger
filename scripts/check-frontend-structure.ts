@@ -145,10 +145,16 @@ export const PACKAGES: readonly PackageEntry[] = [
     note: "窗口分级包（issue #1315 / ADR-0088 / ADR-0118 决策 5）：宽度轴唯一事实源——单一断点两档「宽度信号 → 档位」纯映射 composable；断点常量 WINDOW_TIER_BREAKPOINT_PX 全仓唯一收口包内 src/useWindowTier.ts，vite.config.ts 构建期按源码路径提取（收口漂移 fail-loud，构建期契约保留只换坐标），CSS 媒体查询经占位符替换消费同值；生产依赖仅 vue，@ledger 方向表仅测试边 → @ledger/test-support（媒体查询换档接缝，devDependencies 消费，规则⑤）；不依赖 stores / components / views",
   },
   {
+    name: "@ledger/latest-wins",
+    dir: "packages/latest-wins",
+    deps: [],
+    note: "最新胜出竞态纪元包（issue #1678 / ADR-0118 决策 3）：createLatestWins——前端异步竞态裁决机制本体（竞态纪元）的唯一实现与唯一合法住址（check-async-guards 规则 1 豁免坐标随包）；token 制接口 begin/observe/invalidate + token isStale（#1678 定稿：begin 推进取 token、observe 采样不推进供在途合并、invalidate 推进作废全部在途，不做 run-wrapper）；词汇表「最新胜出（Latest-Wins）」词条宿主；五处消费点收敛（Loadable 每次 run/invalidate、标的搜索与服务端分页列表、push-first-list refresh 采样与 invalidate、系统返回换档/销毁、交易弹窗代数）；工厂零业务语义，方向表恒空（无 @ledger 依赖、无 vue），过期后做什么属消费点组合层不入本包；源码直出 exports 仅 . 单入口（单文件包），不建构建链",
+  },
+  {
     name: "@ledger/loadable",
     dir: "packages/loadable",
-    deps: ["@ledger/utils", "@ledger/test-support"],
-    note: "异步任务生命周期包（issue #1318 / ADR-0040 / ADR-0118 决策 4/6）：useLoadable 统一异步任务生命周期深模块——loading 置收、错误文案归一、竞态裁决（后发覆盖先发）与 invalidate 作废在途的单一实现，竞态序号唯一合法住址随包（check-async-guards 规则 1 豁免坐标同步为包内路径）；模块级 toast sink 单例随包 ESM 持有、对外只暴露 registerToastSink 注册接口，应用入口 MessageSinkBridge 经导入接线，不引入注入机制（ADR-0118 决策 6）；依赖 @ledger/utils（errorMessage）单向成边；测试边 → test-support（假 sink 假件唯一定义点，#1354，devDependencies 消费，规则⑤）；不依赖 stores / components / views",
+    deps: ["@ledger/latest-wins", "@ledger/utils", "@ledger/test-support"],
+    note: "异步任务生命周期包（issue #1318 / ADR-0040 / ADR-0118 决策 4/6）：useLoadable 统一异步任务生命周期深模块——loading 置收、错误文案归一、竞态裁决（后发覆盖先发）与 invalidate 作废在途的单一实现，竞态裁决自 #1678 起经共享 module @ledger/latest-wins 消费（竞态纪元唯一合法住址随该包）；模块级 toast sink 单例随包 ESM 持有、对外只暴露 registerToastSink 注册接口，应用入口 MessageSinkBridge 经导入接线，不引入注入机制（ADR-0118 决策 6）；依赖 @ledger/latest-wins（竞态纪元，#1678）与 @ledger/utils（errorMessage）单向成边；测试边 → test-support（假 sink 假件唯一定义点，#1354，devDependencies 消费，规则⑤）；不依赖 stores / components / views",
   },
   {
     name: "@ledger/scheduled-plan-list",
@@ -170,11 +176,12 @@ export const PACKAGES: readonly PackageEntry[] = [
       "@ledger/modal-intent",
       "@ledger/api",
       "@ledger/i18n",
+      "@ledger/latest-wins",
       "@ledger/types",
       "@ledger/utils",
       "@ledger/test-support",
     ],
-    note: "交易弹窗编排包（issue #1321 / ADR-0045 / ADR-0118 决策 4）：TransactionModalState——交易列表五个弹窗共享的「开启/目标/关闭」编排，意图闭集五单一判别联合唯一事实源，显示开关由「意图非空」派生；ModalIntent 工厂（ADR-0072）之上首个适配器，「先取明细再开窗、失败不开窗、last-open-wins」异步时序守卫留适配器层；直接 import api 与 useMessage 的既有形态随包保持不做注入；方向表与实际 import 全等（票面四包 + types 类型边，测试边 → test-support 仅 devDependencies 消费，规则⑤）；不依赖 stores / components / views",
+    note: "交易弹窗编排包（issue #1321 / ADR-0045 / ADR-0118 决策 4）：TransactionModalState——交易列表五个弹窗共享的「开启/目标/关闭」编排，意图闭集五单一判别联合唯一事实源，显示开关由「意图非空」派生；ModalIntent 工厂（ADR-0072）之上首个适配器，「先取明细再开窗、失败不开窗、last-open-wins」异步时序守卫留适配器层（代数自 #1678 起消费 @ledger/latest-wins，工厂序号是落位计数不收敛）；直接 import api 与 useMessage 的既有形态随包保持不做注入；方向表与实际 import 全等（票面四包 + types 类型边，测试边 → test-support 仅 devDependencies 消费，规则⑤）；不依赖 stores / components / views",
   },
   {
     name: "@ledger/ui-kit",

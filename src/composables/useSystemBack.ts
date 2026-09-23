@@ -4,6 +4,7 @@ import { onBackButtonPress } from "@tauri-apps/api/app";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { closeTopOverlay, hasOpenOverlay } from "@ledger/ui-kit/overlayRegistry";
 import { useWindowTier } from "@ledger/window-tier";
+import { createLatestWins } from "@ledger/latest-wins";
 
 /**
  * 系统返回桥接（issue #845 / ADR-0088 决策 7，词汇表「系统返回语义」）：
@@ -17,7 +18,7 @@ import { useWindowTier } from "@ledger/window-tier";
  *
  * **挂载门禁**：按窗口分级——仅移动档注册监听，桌面档不挂此通道（无返回键即无
  * 此语义，两档互不渗透，ADR-0088）；跨断点换档与作用域销毁时撤销注册，换档与
- * 注册完成之间的竞态以代际号判定，迟到注册自撤。
+ * 注册完成之间的竞态以纪元 token 判定，迟到注册自撤（#1678 起消费共享 module）。
  *
  * **语义三段**：
  * 1. 有弹层 → 关最上层（复用弹层注册表判定与关闭出口 closeTopOverlay，与 ESC
@@ -35,9 +36,10 @@ export function useSystemBack(): void {
   const tier = useWindowTier();
   const router = useRouter();
 
-  // 当前档位的注册撤销句柄（注册是异步的，完成前换档由代际判定自撤）
+  // 当前档位的注册撤销句柄（注册是异步的，完成前换档由纪元判定自撤）；
+  // 竞态纪元自 #1678 起消费共享 module：换档 begin 推进、销毁 invalidate 推进。
   let activeUnlisten: (() => void) | null = null;
-  let generation = 0;
+  const wins = createLatestWins();
 
   function handleBackPress(payload: { canGoBack: boolean }): void {
     // 有弹层：本次返回键由弹层层消费——关最上层；栈顶不可关的退化用法则吞掉，
@@ -59,14 +61,13 @@ export function useSystemBack(): void {
   watch(
     tier,
     (value) => {
-      generation += 1;
+      const myToken = wins.begin();
       activeUnlisten?.();
       activeUnlisten = null;
       if (value !== "mobile") return;
-      const gen = generation;
       onBackButtonPress(handleBackPress)
         .then((listener) => {
-          if (gen !== generation) {
+          if (myToken.isStale()) {
             // 注册完成前已换档/卸载：撤销迟到注册
             void listener.unregister();
             return;
@@ -81,7 +82,7 @@ export function useSystemBack(): void {
   );
 
   onScopeDispose(() => {
-    generation += 1;
+    wins.invalidate();
     activeUnlisten?.();
     activeUnlisten = null;
   });

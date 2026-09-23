@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  SEQ_SEAM_FILE,
+  EPOCH_SEAM_FILE,
   TOAST_BASELINE,
   TOAST_WINDOW_LINES,
 } from "../scripts/check-async-guards.ts";
@@ -46,7 +46,7 @@ function makeFixture(overrides: Record<string, string> = {}, withSeam = true): s
     writeFileSync(abs, toastStub(count));
   }
   if (withSeam) {
-    const seam = join(root, SEQ_SEAM_FILE);
+    const seam = join(root, EPOCH_SEAM_FILE);
     mkdirSync(join(seam, ".."), { recursive: true });
     writeFileSync(seam, "export {}\n");
   }
@@ -79,37 +79,71 @@ describe("check-async-guards（前端异步守门）", () => {
     expect(r.output).toContain("空集");
   });
 
-  it("接缝住址不可达即红（搬迁未同步 SEQ_SEAM_FILE，拒绝白名单静默失效）", () => {
+  it("接缝住址不可达即红（搬迁未同步 EPOCH_SEAM_FILE，拒绝白名单静默失效）", () => {
     // withSeam=false：不落接缝住址桩，其他源文件齐备，唯独住址缺失
     const r = run(makeFixture({}, false));
     expect(r.status).toBe(1);
     expect(r.output).toContain("住址不可达");
-    expect(r.output).toContain(SEQ_SEAM_FILE);
+    expect(r.output).toContain(EPOCH_SEAM_FILE);
   });
 
-  describe("规则 1：手搓竞态序号（硬零容忍，唯一合法住址 useLoadable）", () => {
-    it("let fetchSeq = 0 即红，定位文件与行号", () => {
+  describe("规则 1：手搓竞态纪元（硬零容忍，唯一合法住址 @ledger/latest-wins）", () => {
+    it("let fetchSeq = 0 即红，定位文件与行号（ADR-0087 删除即变红锚点：删除规则 1 判定 → 本用例红）", () => {
       const r = run(
         makeFixture({
           "src/views/BadView.ts": `export function reload() {\n  let fetchSeq = 0\n  fetchSeq++\n}`,
         }),
       );
       expect(r.status).toBe(1);
-      expect(r.output).toContain("手搓竞态序号");
+      expect(r.output).toContain("手搓竞态纪元");
       expect(r.output).toContain("src/views/BadView.ts:2");
     });
 
-    it("裸名 let seq = 0（接缝外）同样红（加宽面）", () => {
+    it("裸名 let seq = 0（接缝外）同样红（#1678 前的加宽面）", () => {
       const r = run(makeFixture({ "src/composables/useOther.ts": "let seq = 0\nexport {} \n" }));
       expect(r.status).toBe(1);
-      expect(r.output).toContain("手搓竞态序号");
+      expect(r.output).toContain("手搓竞态纪元");
       expect(r.output).toContain("src/composables/useOther.ts:1");
     });
 
-    it("唯一合法住址：packages/loadable/src/useLoadable.ts 内 let seq = 0 绿（#1318 随包搬迁）", () => {
+    it("别名面：let epoch = 0 / let generation = 0（接缝外）即红（#1678 按概念执法，新别名不再漏检）", () => {
+      const epochHit = run(
+        makeFixture({ "src/composables/useOther.ts": "let epoch = 0\nexport {}\n" }),
+      );
+      expect(epochHit.status).toBe(1);
+      expect(epochHit.output).toContain("手搓竞态纪元");
+      expect(epochHit.output).toContain("src/composables/useOther.ts:1");
+
+      const generationHit = run(
+        makeFixture({ "src/stores/useOtherStore.ts": "let generation = 0\nexport {}\n" }),
+      );
+      expect(generationHit.status).toBe(1);
+      expect(generationHit.output).toContain("手搓竞态纪元");
+      expect(generationHit.output).toContain("src/stores/useOtherStore.ts:1");
+    });
+
+    it("唯一合法住址：共享 module 本体内 let epoch = 0 绿（#1678 豁免随包）", () => {
       const r = run(
         makeFixture({
-          [SEQ_SEAM_FILE]: "let seq = 0\nexport const x = seq\n",
+          [EPOCH_SEAM_FILE]:
+            "export function createLatestWins() {\n  let epoch = 0\n  const bind = () => ({ isStale: () => false });\n  return { begin: bind };\n}\n",
+        }),
+      );
+      expect(r.status).toBe(0);
+    });
+
+    it("消费点经共享 module 消费（无手搓计数器）绿", () => {
+      const r = run(
+        makeFixture({
+          "src/views/ConsumeView.ts": [
+            'import { createLatestWins } from "@ledger/latest-wins";',
+            "const wins = createLatestWins();",
+            "export async function load() {",
+            "  const token = wins.begin();",
+            "  if (token.isStale()) return;",
+            "}",
+            "",
+          ].join("\n"),
         }),
       );
       expect(r.status).toBe(0);

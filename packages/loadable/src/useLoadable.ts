@@ -1,5 +1,6 @@
 import { ref } from "vue";
 import { errorMessage } from "@ledger/utils/errors";
+import { createLatestWins } from "@ledger/latest-wins";
 
 /**
  * Loadable：前端异步任务统一生命周期模块（工厂形态 composable，ADR-0040 / issue #320）。
@@ -49,33 +50,34 @@ export function useLoadable<T>(task: () => Promise<T>, options: UseLoadableOptio
   const loading = ref(false);
   const error = ref<string | null>(null);
 
-  // 请求序号守卫：竞态后发覆盖先发，终态 = 最后一次发起的结果；
-  // 迟到的前发结果连同其 loading 收尾（及错误 toast）一并作废。
-  let seq = 0;
+  // 竞态裁决：后发覆盖先发，终态 = 最后一次发起的结果；迟到的前发结果连同其
+  // loading 收尾（及错误 toast）一并作废。纪元簿记消费共享 module @ledger/latest-wins
+  // （#1678：竞态纪元唯一合法住址，本模块不再自持序号）。
+  const wins = createLatestWins();
 
   /** 发起（「刷新」即再次发起）：永不 reject——成功回结果、失败回空且 error 置位。 */
   async function run(): Promise<T | null> {
-    const mySeq = ++seq;
+    const myToken = wins.begin();
     loading.value = true;
     try {
       const result = await task();
-      if (mySeq !== seq) return null;
+      if (myToken.isStale()) return null;
       error.value = null;
       return result;
     } catch (e) {
-      if (mySeq !== seq) return null;
+      if (myToken.isStale()) return null;
       error.value = errorMessage(e);
       if (!silent) showErrorToast(error.value);
       return null;
     } finally {
-      if (mySeq === seq) loading.value = false;
+      if (!myToken.isStale()) loading.value = false;
     }
   }
 
-  /** 作废在途：序号推进 + loading 收尾置 false（error 不动），不发起新任务；
+  /** 作废在途：纪元推进 + loading 收尾置 false（error 不动），不发起新任务；
    * 此后迟到的在途结果按既有竞态语义作废（不落位、不收 loading、不弹 toast）。 */
   function invalidate(): void {
-    seq += 1;
+    wins.invalidate();
     loading.value = false;
   }
 

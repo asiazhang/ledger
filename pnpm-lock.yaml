@@ -121,6 +121,9 @@ importers:
       '@ledger/i18n':
         specifier: workspace:*
         version: link:packages/i18n
+      '@ledger/latest-wins':
+        specifier: workspace:*
+        version: link:packages/latest-wins
       '@ledger/loadable':
         specifier: workspace:*
         version: link:packages/loadable
@@ -226,7 +229,7 @@ importers:
         version: 6.0.9(vite@8.3.0(@types/node@22.20.4)(esbuild@0.28.2))(vue@3.5.43(typescript@6.0.3))
       '@vue/test-utils':
         specifier: ^2.5.0
-        version: 2.5.1(@vue/compiler-dom@3.5.43)(vue@3.5.43(typescript@6.0.3))
+        version: 2.5.1(@vue/compiler-dom@3.5.43)(@vue/server-renderer@3.5.43)(vue@3.5.43(typescript@6.0.3))
       jsdom:
         specifier: ^30.0.1
         version: 30.1.0
@@ -288,13 +291,22 @@ importers:
     devDependencies:
       '@vue/test-utils':
         specifier: ^2.5.0
-        version: 2.5.1(@vue/compiler-dom@3.5.43)(vue@3.5.43(typescript@6.0.3))
+        version: 2.5.1(@vue/compiler-dom@3.5.43)(@vue/server-renderer@3.5.43)(vue@3.5.43(typescript@6.0.3))
+      vitest:
+        specifier: ^5.0.0
+        version: 5.0.1(@types/node@22.20.4)(jsdom@30.1.0)(vite@8.3.0(@types/node@22.20.4)(esbuild@0.28.2))
+
+  packages/latest-wins:
+    devDependencies:
       vitest:
         specifier: ^5.0.0
         version: 5.0.1(@types/node@22.20.4)(jsdom@30.1.0)(vite@8.3.0(@types/node@22.20.4)(esbuild@0.28.2))
 
   packages/loadable:
     dependencies:
+      '@ledger/latest-wins':
+        specifier: workspace:*
+        version: link:../latest-wins
       '@ledger/utils':
         specifier: workspace:*
         version: link:../utils
@@ -387,7 +399,7 @@ importers:
         version: 1.21.2
       '@vue/test-utils':
         specifier: ^2.5.0
-        version: 2.5.1(@vue/compiler-dom@3.5.43)(vue@3.5.43(typescript@6.0.3))
+        version: 2.5.1(@vue/compiler-dom@3.5.43)(@vue/server-renderer@3.5.43)(vue@3.5.43(typescript@6.0.3))
       naive-ui:
         specifier: ^2.45.3
         version: 2.45.3(patch_hash=1d273c9e8f7755836be7d55daae02418e67717cd9ee9f835fe703fbaae0ef403)(vue@3.5.43(typescript@6.0.3))
@@ -434,6 +446,9 @@ importers:
       '@ledger/i18n':
         specifier: workspace:*
         version: link:../i18n
+      '@ledger/latest-wins':
+        specifier: workspace:*
+        version: link:../latest-wins
       '@ledger/modal-intent':
         specifier: workspace:*
         version: link:../modal-intent
@@ -455,7 +470,7 @@ importers:
         version: link:../test-support
       '@vue/test-utils':
         specifier: ^2.5.0
-        version: 2.5.1(@vue/compiler-dom@3.5.43)(vue@3.5.43(typescript@6.0.3))
+        version: 2.5.1(@vue/compiler-dom@3.5.43)(@vue/server-renderer@3.5.43)(vue@3.5.43(typescript@6.0.3))
       vitest:
         specifier: ^5.0.0
         version: 5.0.1(@types/node@22.20.4)(jsdom@30.1.0)(vite@8.3.0(@types/node@22.20.4)(esbuild@0.28.2))
@@ -491,7 +506,7 @@ importers:
         version: link:../test-support
       '@vue/test-utils':
         specifier: ^2.5.0
-        version: 2.5.1(@vue/compiler-dom@3.5.43)(vue@3.5.43(typescript@6.0.3))
+        version: 2.5.1(@vue/compiler-dom@3.5.43)(@vue/server-renderer@3.5.43)(vue@3.5.43(typescript@6.0.3))
       vitest:
         specifier: ^5.0.0
         version: 5.0.1(@types/node@22.20.4)(jsdom@30.1.0)(vite@8.3.0(@types/node@22.20.4)(esbuild@0.28.2))
@@ -3096,12 +3111,14 @@ snapshots:
 
   '@vue/shared@3.5.43': {}
 
-  '@vue/test-utils@2.5.1(@vue/compiler-dom@3.5.43)(vue@3.5.43(typescript@6.0.3))':
+  '@vue/test-utils@2.5.1(@vue/compiler-dom@3.5.43)(@vue/server-renderer@3.5.43)(vue@3.5.43(typescript@6.0.3))':
     dependencies:
       '@vue/compiler-dom': 3.5.43
       js-beautify: 2.0.3
       vue: 3.5.43(typescript@6.0.3)
       vue-component-type-helpers: 3.3.11
+    optionalDependencies:
+      '@vue/server-renderer': 3.5.43
 
   '@zxcvbn-ts/core@4.2.0':
     dependencies:
