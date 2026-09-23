@@ -34,3 +34,32 @@ fn lock_hold_probe_stays_silent_below_threshold() {
         "低于阈值不应记 warn，实际捕获: {events:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// 作业类持锁预算（issue #1765，ADR-0112 决策 5 反转）：备份/恢复等锁内重 IO
+// 作业经壳层启动登记自己的预算，探针阈值按命令取——命中前缀取登记值，未命中
+// 维持 1s 产品阈值。负向判据（删除即红）：取掉门面取值点的 `hold_threshold_for`，
+// 门面预算作业测试（budgeted_slow_job_stays_silent）即红。
+// ---------------------------------------------------------------------------
+
+/// 登记前缀按 `starts_with` 匹配：命中前缀的命令取登记预算，未命中命令维持
+/// 产品阈值；命中多条登记取最宽预算。
+#[test]
+fn hold_threshold_for_matches_registered_prefix_only() {
+    use crate::db::register_lock_hold_budget;
+
+    const PREFIX: &str = "lock-probe-budget-test.";
+    const BUDGET: Duration = Duration::from_secs(30);
+    register_lock_hold_budget(PREFIX, BUDGET);
+
+    assert_eq!(
+        crate::db::runtime::hold_threshold_for("lock-probe-budget-test.exit-fallback"),
+        BUDGET,
+        "命中登记前缀的命令取登记预算"
+    );
+    assert_eq!(
+        crate::db::runtime::hold_threshold_for("unregistered-command"),
+        crate::db::LOCK_HOLD_PROBE_THRESHOLD,
+        "未命中登记前缀的命令维持产品阈值"
+    );
+}

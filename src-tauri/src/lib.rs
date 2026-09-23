@@ -198,6 +198,17 @@ pub fn run() {
             // 启动时注册——基础设施 crate 不再反向依赖业务域；注册先于任何建库/写库。
             ledger_backup::install_after_commit_hook();
             // 写后即时同步接线（#1089 / ADR-0091 决策 9）：本地 op 产出单点在协议
+            // 备份作业类的持锁预算接线（issue #1765，ADR-0112 决策 5 反转）：探针注册点
+            // 在基础设施（`register_lock_hold_budget`），预算值由备份域提供
+            // （[`ledger_backup::LOCK_HOLD_BUDGET`]）、壳层启动时装——备份/恢复在
+            // 锁内做全库拷贝 + zip 的本地文件 IO（大库实测数秒），不属于 ADR-0069
+            // 决策 4 约束的分钟级网络往返，不再触发 1s 阈值表的周期性误报。
+            let backup_lock_budget = ledger_backup::LOCK_HOLD_BUDGET;
+            ledger_infra::db::register_lock_hold_budget("backup.", backup_lock_budget);
+            ledger_infra::db::register_lock_hold_budget("create_backup", backup_lock_budget);
+            ledger_infra::db::register_lock_hold_budget("restore_backup", backup_lock_budget);
+            ledger_infra::db::register_lock_hold_budget("get_backup_meta", backup_lock_budget);
+            ledger_infra::db::register_lock_hold_budget("list_backups", backup_lock_budget);
             // crate（共享底座，不认识调度），响应闭包（去抖合流跑一轮）由本域提供、
             // 壳层启动时装入（幂等，先装者优先）。注册先于任何建库/写库。
             ledger_sync_engine::trigger::install_after_write_hook();

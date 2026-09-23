@@ -52,6 +52,52 @@ pub fn probe_lock_hold(hold: Duration) {
 }
 
 // ---------------------------------------------------------------------------
+// 作业类持锁预算登记（ADR-0112 决策 5 反转：下层定义注册点、上层注册实现、
+// 壳层启动时接线）
+// ---------------------------------------------------------------------------
+
+/// 作业类持锁预算登记表：键 = 命令名前缀（`starts_with` 语义），值 = 该作业类
+/// 允许的单作业占用 DB 线程时长阈值。未登记的命令全部取
+/// [`LOCK_HOLD_PROBE_THRESHOLD`]。
+static LOCK_HOLD_BUDGETS: OnceLock<Mutex<Vec<(String, Duration)>>> = OnceLock::new();
+
+/// 登记一类作业的持锁预算（issue #1765）。传入的 `command_prefix` 按
+/// `starts_with` 匹配：传 `"backup."` 覆盖 backup 域全部命令，传完整命令名
+/// 即精确匹配；同一前缀重复登记不报错（幂等语义由调用方保证，登记只在壳层
+/// 启动时发生一次）。
+///
+/// 背景（#1765 现场观察）：备份/恢复作业在锁内做 `VACUUM INTO` 全库拷贝 + zip
+/// 压缩的本地文件 IO，大库实测 2.8s——合法重作业，不属于 ADR-0069 决策 4
+/// 约束的「分钟级网络往返」，但会触发为网络等待标定的 1s 阈值表产生周期性
+/// 误报。预算值由作业所属域提供（备份作业知道自己该跑多久），登记接缝与
+/// 匹配语义由本函数定义。
+pub fn register_lock_hold_budget(command_prefix: impl Into<String>, threshold: Duration) {
+    LOCK_HOLD_BUDGETS
+        .get_or_init(|| Mutex::new(Vec::new()))
+        .lock()
+        // 容毒读：登记表是观测辅助结构，持锁线程 panic 后已登记的预算仍有效
+        //（内容不失一致），不该让探针登记通道毒化整个进程。
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .push((command_prefix.into(), threshold));
+}
+
+/// 取某命令的探针阈值：命中登记前缀即取其中最宽预算，未命中即
+/// [`LOCK_HOLD_PROBE_THRESHOLD`]。
+pub(crate) fn hold_threshold_for(command: &str) -> Duration {
+    let Some(budgets) = LOCK_HOLD_BUDGETS.get() else {
+        return LOCK_HOLD_PROBE_THRESHOLD;
+    };
+    budgets
+        .lock()
+        // 容毒读同 [`register_lock_hold_budget`]：登记内容仍有效。
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .iter()
+        .filter(|(prefix, _)| command.starts_with(prefix.as_str()))
+        .map(|(_, threshold)| *threshold)
+        .max()
+        .unwrap_or(LOCK_HOLD_PROBE_THRESHOLD)
+}
+// ---------------------------------------------------------------------------
 // 连接层统一写入口（ADR-0032）
 // ---------------------------------------------------------------------------
 
