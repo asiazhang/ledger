@@ -31,6 +31,72 @@ pub const INSTRUMENT_SYNC_PROGRESS: &str = "ledger:instrument-sync-progress";
 /// 形状（[`SyncProgress`]）、不同事件名——静默计数面的唯一事件来路。
 pub const HISTORY_BACKFILL_PROGRESS: &str = "ledger:history-backfill-progress";
 
+/// 汇率同步阶段文字进度事件名（issue #1762）：与手动同步进度事件同处
+/// `ledger:*` 命名空间、不同事件名——汇率手动同步的阶段文字唯一事件来路。
+/// 每日自动路径不发本事件（无 UI 消费），但在途互斥与手动路径共用同一门。
+pub const FX_SYNC_PROGRESS: &str = "ledger:fx-sync-progress";
+
+/// 汇率同步阶段闭集（issue #1762）：后端真实边界——下载与解析在取数腿内
+/// 一体完成、不拆分。`fetching` = 正在读取（含下载与解析），`persisting` =
+/// 正在写入。落库仍是单一事务整体回滚，不拆批、不报数——报数仅在读取阶段
+/// 有价值（`days_parsed`）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FxSyncStage {
+    /// 正在读取汇率文件（含下载与解析）。
+    Fetching,
+    /// 正在写入（落库中）。
+    Persisting,
+}
+
+/// 汇率同步阶段事件载荷（issue #1762）：阶段闭集 + 可选统计字段。读取阶段
+/// 结束时携带「已解析天数」（`days_parsed`，单文件整包收完再解析、一次性上报）。
+/// 事件契约留扩展位：将来升级实时字节 / 实时天数计数不换事件名。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct FxSyncProgress {
+    /// 当前阶段（闭集）。
+    pub stage: FxSyncStage,
+    /// 已解析天数：读取完成时一次性上报，读取开始时为 `None`。
+    pub days_parsed: Option<usize>,
+}
+
+impl FxSyncProgress {
+    /// 读取开始：阶段进入 `fetching`，暂无计数。
+    pub fn fetching() -> Self {
+        Self {
+            stage: FxSyncStage::Fetching,
+            days_parsed: None,
+        }
+    }
+
+    /// 写入开始：读取已完成，携带本次共解析天数。
+    pub fn persisting(days_parsed: usize) -> Self {
+        Self {
+            stage: FxSyncStage::Persisting,
+            days_parsed: Some(days_parsed),
+        }
+    }
+}
+
+/// 汇率阶段发射器接缝（issue #1762）：与 [`ProgressEmitter`] 同型的类型化载体，
+/// 仅事件名与载荷不同（[`FX_SYNC_PROGRESS`] / [`FxSyncProgress`]）。唯一实现约定
+/// 同前：**非阻塞**交接即返回；投递失败静默。独立 trait 而非复用 [`ProgressEmitter`]，
+/// 因为 `AppHandle` 只能有一个同名 trait 实现：汇率阶段推进才不会点亮标的信息
+/// 同步的确定进度条，反之亦然。
+pub trait FxProgressEmitter: Send + Sync {
+    /// 投递一次汇率阶段推进。实现必须非阻塞：交接即返回，不等送达。
+    fn emit_fx_progress(&self, progress: FxSyncProgress);
+}
+
+/// 生产实现：与 [`ProgressEmitter for AppHandle`] 同一投递机制，事件名换本事件。
+impl<R: Runtime> FxProgressEmitter for AppHandle<R> {
+    fn emit_fx_progress(&self, progress: FxSyncProgress) {
+        let handle = self.clone();
+        post_emit_with(self, move || {
+            let _ = handle.emit(FX_SYNC_PROGRESS, progress);
+        });
+    }
+}
 /// 进度事件载荷：`done` = 已完成的有通道标的数，`total` = 有通道标的总数
 ///（分母口径见 ADR-0095：行情分区逐标的计 1、有码基金逐只计 1，跳过行不计）。
 /// `total` 随收集完成立即发出（`done = 0`）；此后每完成一个有通道标的推进一格。
@@ -117,5 +183,30 @@ mod tests {
         })
         .unwrap();
         assert_eq!(json, serde_json::json!({ "done": 37, "total": 100 }));
+    }
+
+    #[test]
+    fn fx_event_name_lives_in_ledger_namespace() {
+        // 汇率阶段事件与标的信息进度事件同处 ledger:* 命名空间（issue #1762）；
+        // 带 payload 的阶段事件不冒充 `<domain>-changed` 失效信号形状。
+        assert_eq!(FX_SYNC_PROGRESS, "ledger:fx-sync-progress");
+        assert!(FX_SYNC_PROGRESS.starts_with("ledger:"));
+        assert!(!FX_SYNC_PROGRESS.ends_with("-changed"));
+    }
+
+    #[test]
+    fn fx_payload_serializes_as_stage_with_optional_days() {
+        // 前端消费契约（issue #1762）：阶段闭集 + 可选已解析天数——读取开始无计数、
+        // 写入开始携带本次共解析天数。
+        let fetching = serde_json::to_value(FxSyncProgress::fetching()).unwrap();
+        assert_eq!(
+            fetching,
+            serde_json::json!({ "stage": "fetching", "days_parsed": null })
+        );
+        let persisting = serde_json::to_value(FxSyncProgress::persisting(21)).unwrap();
+        assert_eq!(
+            persisting,
+            serde_json::json!({ "stage": "persisting", "days_parsed": 21 })
+        );
     }
 }

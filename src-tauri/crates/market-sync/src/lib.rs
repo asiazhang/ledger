@@ -232,7 +232,10 @@ pub use daily_refresh::{
 pub use ecb::EcbDayRates;
 pub use fund::fetch_fund_quote_production;
 pub use fund_nav::NavPoint;
-pub use fx::{FxSyncChannels, FxSyncReport, sync_fx_rates};
+pub use fx::{
+    FX_SYNC_GATE, FxSyncChannels, FxSyncGate, FxSyncReport, sync_fx_rates, sync_fx_rates_guarded,
+    sync_fx_rates_with_progress,
+};
 pub use fx_daily::{DailyFxSyncChannelsSlot, start_daily_fx_sync, start_daily_fx_sync_with};
 pub use history::{BackfillChannelsSlot, start_history_backfill, start_history_backfill_with};
 pub use http::KlineBar;
@@ -241,8 +244,8 @@ pub use lane::LaneTimings;
 pub use model::{SyncInstrumentInfoResult, WriteWitness};
 pub use persist::FxPersistReport;
 pub use progress::{
-    BackfillProgressEmitter, HISTORY_BACKFILL_PROGRESS, INSTRUMENT_SYNC_PROGRESS, ProgressEmitter,
-    SyncProgress,
+    BackfillProgressEmitter, FX_SYNC_PROGRESS, FxProgressEmitter, FxSyncProgress, FxSyncStage,
+    HISTORY_BACKFILL_PROGRESS, INSTRUMENT_SYNC_PROGRESS, ProgressEmitter, SyncProgress,
 };
 pub use session::{FacadeWriteSession, ScopedSession};
 pub use stock::fetch_stock_quote_production;

@@ -36,6 +36,8 @@
 //! 取数成功但推导零点 → `fx.source-no-data`，`fx.source-malformed` 原样透传不
 //! 折算，已有汇率不受影响（落库是覆盖幂等 upsert）。
 
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use rusqlite::{Connection, params};
 use serde::Serialize;
 
@@ -49,6 +51,7 @@ use super::ecb::{
 };
 use super::http::{build_client, lock_pacer, shared_pacer};
 use super::persist::{ECB_FX_SOURCE, FxPersistReport, persist_ecb_fx_series};
+use super::progress::FxSyncProgress;
 use super::session::ScopedSession;
 
 /// 深度判据的「起点」锚：ECB 全量文件自 1999-01-04 起发布，但币种字典各对全以
@@ -77,6 +80,63 @@ fn source_no_data() -> AppError {
         "数据源已连通，但当前没有可用的汇率数据，请稍后重试",
     )
 }
+
+/// 「已有汇率同步在进行」码化错误（issue #1762）：手动与每日自动两路触发
+/// 共用编排层在途互斥，撞车时第二个触发立即返回、不排队等待。params 无动态值
+///（ADR-0050）。
+fn sync_in_progress() -> AppError {
+    AppError::coded("fx.sync-in-progress", "已有汇率同步在进行，请稍后再试")
+}
+
+/// 汇率同步在途互斥门（issue #1762）：进程级在途标志的持有者——手动入口与
+/// 每日自动入口经进程级单例 [`FX_SYNC_GATE`] 共用同一扇门，第二路触发立即返回
+/// [`sync_in_progress`] 码化错误，不走队列、不等待。互斥语义从「可并发」改为
+/// 「在途互斥」是对既有两路写入语义的收窄（落库仍是单一事务整体回滚，语义不变）。
+///
+/// 测试隔离：门是显式传入的持有对象——域单测各持自有门，互不干扰；两生产入口
+/// 共用进程级单例。
+pub struct FxSyncGate {
+    in_flight: AtomicBool,
+}
+
+impl FxSyncGate {
+    /// 新建一扇关闭的门（测试各持自有门；生产共用 [`FX_SYNC_GATE`]）。
+    pub const fn new() -> Self {
+        Self {
+            in_flight: AtomicBool::new(false),
+        }
+    }
+
+    /// 尝试进门：在途时返回 `None`（调用方报在途互斥码化错误），空闲时返回
+    /// 持门守卫——守卫释放（一切路径含提前返回）即清空在途登记。
+    fn try_begin(&self) -> Option<FxSyncGuard<'_>> {
+        self.in_flight
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .ok()
+            .map(|_| FxSyncGuard { gate: self })
+    }
+}
+
+impl Default for FxSyncGate {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// 持门守卫：释放即清空在途登记（新触发可立即进门）。
+struct FxSyncGuard<'a> {
+    gate: &'a FxSyncGate,
+}
+
+impl Drop for FxSyncGuard<'_> {
+    fn drop(&mut self) {
+        self.gate.in_flight.store(false, Ordering::Release);
+    }
+}
+
+/// 进程级汇率同步在途互斥单例（issue #1762）：手动 IPC 命令与每日自动车道
+/// 共用同一扇门——任一在途时另一路立即报在途互斥，不并发、不排队。
+pub static FX_SYNC_GATE: FxSyncGate = FxSyncGate::new();
 
 /// 取数失败的归类（issue #1545 AC：不可达与无数据可分辨）：`fx.source-malformed`
 /// 是独立条件（源返回了无法解析的内容），原样透传；其余（连接失败 / 超时 /
@@ -188,10 +248,29 @@ enum FxSyncPlan {
 ///
 /// 判据与取数腿的对应：零痕迹 = [`FxSyncPlan::Skip`]（两个通道都不碰）；深度未达
 /// = 全量腿整份灌库；深度已达 = 只走增量腿（不重复拉全量）。返回 [`FxSyncReport`]。
+///
+/// 进度与互斥（issue #1762）：阶段推进与在途互斥见 [`sync_fx_rates_with_progress`]
+/// 与 [`sync_fx_rates_guarded`]；本函数是无进度直调（域单测判据 / 落库行为的目标形态）。
 pub async fn sync_fx_rates<S: ScopedSession>(
     session: &S,
     channels: &mut FxSyncChannels,
 ) -> Result<FxSyncReport> {
+    sync_fx_rates_with_progress(session, channels, &mut |_| {}).await
+}
+
+/// 带阶段进度的汇率同步（issue #1762）：与 [`sync_fx_rates`] 同编排，另经 `progress`
+/// 发出阶段推进——取数腿调用前报 `fetching`，解析完成落库前报携带已解析天数的
+/// `persisting`；零痕迹跳过不取数不落库、无任何阶段事件。`progress` 不得阻塞
+///（触发面接到非阻塞事件发射器，发射失败不影响同步结果）。
+pub async fn sync_fx_rates_with_progress<S, P>(
+    session: &S,
+    channels: &mut FxSyncChannels,
+    progress: &mut P,
+) -> Result<FxSyncReport>
+where
+    S: ScopedSession,
+    P: FnMut(FxSyncProgress) + Send,
+{
     let (plan, pairs) = session.with_connection(plan_fx_sync).await?;
     match plan {
         FxSyncPlan::Skip => {
@@ -199,11 +278,13 @@ pub async fn sync_fx_rates<S: ScopedSession>(
             Ok(FxSyncReport::default())
         }
         FxSyncPlan::FullBackfill => {
+            progress(FxSyncProgress::fetching());
             let days = (channels.fetch_full)()
                 .await
                 .map_err(classify_fetch_error)?;
             let series = derive_ecb_weekly_series(&days, &pairs);
             ensure_series_has_points(&series)?;
+            progress(FxSyncProgress::persisting(days.len()));
             let persist = session
                 .with_connection(move |conn| persist_ecb_fx_series(conn, &series))
                 .await?;
@@ -218,11 +299,13 @@ pub async fn sync_fx_rates<S: ScopedSession>(
             })
         }
         FxSyncPlan::Incremental => {
+            progress(FxSyncProgress::fetching());
             let days = (channels.fetch_incremental)()
                 .await
                 .map_err(classify_fetch_error)?;
             let series = derive_ecb_weekly_series(&days, &pairs);
             ensure_series_has_points(&series)?;
+            progress(FxSyncProgress::persisting(days.len()));
             let persist = session
                 .with_connection(move |conn| persist_ecb_fx_series(conn, &series))
                 .await?;
@@ -236,6 +319,24 @@ pub async fn sync_fx_rates<S: ScopedSession>(
             })
         }
     }
+}
+
+/// 持门汇率同步（issue #1762）：两路触发（手动 IPC、每日自动）在编排层的统一
+/// 在途互斥入口——持 `gate` 进门后跑 [`sync_fx_rates_with_progress`]；撞车时立即
+/// 返回 [`sync_in_progress`] 码化错误，不走队列、不等待。两生产入口共用
+/// [`FX_SYNC_GATE`]，门对象显式传入以便域单测各持自有门。
+pub async fn sync_fx_rates_guarded<S, P>(
+    gate: &FxSyncGate,
+    session: &S,
+    channels: &mut FxSyncChannels,
+    progress: &mut P,
+) -> Result<FxSyncReport>
+where
+    S: ScopedSession,
+    P: FnMut(FxSyncProgress) + Send,
+{
+    let _guard = gate.try_begin().ok_or_else(sync_in_progress)?;
+    sync_fx_rates_with_progress(session, channels, progress).await
 }
 
 /// 同步判据（一次连接访问算清）：币种对 = 币种字典全量对本位币（投资域 FxRateHistory

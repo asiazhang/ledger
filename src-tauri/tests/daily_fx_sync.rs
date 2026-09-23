@@ -10,10 +10,11 @@
 //!   直接驱动域启动入口；「删除 lib.rs 启动接线即变红」的负向判据由
 //!   `scripts/check-background-services.ts` 源码扫描守门承担（#959 / #961 先例）；
 //! - 每日通道在途（门控桩阻塞在取数点）时，另一路汇率同步（独立通道束 +
-//!   独立会话，另一台设备 / 手动入口并发的进程内同形）照常完成、不互斥——
-//!   各自幂等落库，不引入「只允许一个同步方」的开关（issue #1546 AC4）；
-//! - 两路覆盖区间重叠三周：重叠段不重复落行、每日通道多出的一周与当期汇率
-//!   改写照常落库（重复落库幂等，issue #1546 AC2）；
+//!   独立会话，另一台设备 / 手动入口并发的进程内同形，共用进程级单例门）立即
+//!   被互斥拒绝——报 `fx.sync-in-progress` 码化错误，不排队等待、不触达取数、
+//!   零落库（issue #1762 收窄 issue #1546 AC4 的「可并发」为「在途互斥」）；
+//! - 每日通道 4 个夹具周全量落库（另一路被互斥拒绝、零写入，落库全部来自每日通道）,
+//!   当期汇率改写为最新一天的交叉值；
 //! - 同一自然日窗口不重跑（「每自然日至多一次」，issue #1546 AC2）。
 //!
 //! 失败面的行为断言归域单测：三态错误分类住 market-sync `tests/fx_sync.rs`、
@@ -40,13 +41,13 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use chrono::NaiveDate;
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 use tauri::Manager;
 
 use ledger_infra::db::{self, DbState};
 use ledger_market_sync::{
-    DailyFxSyncChannelsSlot, EcbDayRates, FacadeWriteSession, FxSyncChannels, FxSyncReport,
-    LaneTimings, start_daily_fx_sync_with, sync_fx_rates,
+    DailyFxSyncChannelsSlot, EcbDayRates, FX_SYNC_GATE, FacadeWriteSession, FxSyncChannels,
+    LaneTimings, start_daily_fx_sync_with, sync_fx_rates_guarded,
 };
 
 /// 每日汇率通道巡检周期（与下方注入的 `LaneTimings::window_poll` 同源）：
@@ -155,11 +156,11 @@ fn fx_point_count(conn: &Connection) -> i64 {
 }
 
 /// 接线全流程：启动接线跑出每日汇率同步（汇率历史 + 当期汇率落行），且每日
-/// 通道在途时另一路同步照常完成、不互斥、各自幂等落库；同一自然日窗口不重跑。
-/// 删掉 `start_background_services` 的 `start_daily_fx_sync` 接线（或让每日通道
-/// 与另一路互斥）本测试红。
+/// 通道在途时另一路同步立即被在途互斥拒绝；同一自然日窗口不重跑。
+/// 删掉 `start_background_services` 的 `start_daily_fx_sync` 接线本测试红；删掉
+/// 两路共用的在途互斥（另一路不再被拒绝），「撞车即返」断言即红。
 #[test]
-fn startup_wiring_syncs_fx_rates_and_concurrent_sync_stays_unblocked() {
+fn startup_wiring_syncs_fx_rates_and_concurrent_sync_is_rejected() {
     // 交易域接缝接线（本位币读取钩子）：判据读默认币种经该钩子，与生产
     // 启动接线同形，幂等（先例：tests/daily_price_sync.rs）。
     tauri_app_lib::transaction_wiring::install_all();
@@ -241,76 +242,62 @@ fn startup_wiring_syncs_fx_rates_and_concurrent_sync_stays_unblocked() {
         .recv_timeout(Duration::from_secs(10))
         .expect("每日汇率同步应到达全量取数点");
 
-    // 每日通道在途窗口内，另一路汇率同步（独立通道束 + 独立会话）照常完成、
-    // 不被互斥拒绝：判据、取数、落库全链路走完——多设备 / 手动入口并发
-    // 的进程内同形（issue #1546 AC4：各自幂等落库，无「只允许一个同步方」开关）。
-    let other_report: FxSyncReport = {
+    // 每日通道在途窗口内，另一路汇率同步（独立通道束 + 独立会话，手动入口并发的
+    // 进程内同形，共用进程级单例门）立即被在途互斥拒绝：报 `fx.sync-in-progress`
+    // 码化错误，不排队等待、不触达取数、零落库（issue #1762 收窄 issue #1546 AC4）。
+    {
         let session = FacadeWriteSession::new(
             app.state::<DbState>().write_handle(),
             "daily_fx_sync_it_other",
         );
         let mut channels = other_channels;
-        tauri::async_runtime::block_on(sync_fx_rates(&session, &mut channels))
-            .expect("每日通道在途时另一路同步不应被拒绝")
-    };
-    assert!(
-        other_report.full_backfilled,
-        "并发一路按判据走全量回填（此刻库内尚无任何汇率行）"
-    );
-
-    // 并发一路的落库可观察：夹具最早周 2022-06-06 起 3 个周 × 字典 10 对全落库；
-    // 当期汇率表 USD/CNY = 最新一天的交叉值（CNY 腿 ÷ USD 腿），来源 ECB。
-    {
-        let guard = conn.lock().unwrap();
-        assert_eq!(fx_point_count(&guard), 30, "10 对 × 3 个夹具周全落库");
-        let earliest: String = guard
-            .query_row(
-                "SELECT MIN(week_start) FROM fx_rate_history WHERE base_code='USD'",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap();
-        assert_eq!(earliest, "2022-06-06", "夹具最早周即落库最早周");
-        let (rate, source): (f64, String) = guard
-            .query_row(
-                "SELECT rate, source FROM exchange_rates WHERE base_code='USD' AND quote_code='CNY'",
-                [],
-                |r| Ok((r.get(0)?, r.get(1)?)),
-            )
-            .unwrap();
-        assert_eq!(source, "ecb");
-        let expected = 7.4 / usd_leg(&codes);
+        let err = tauri::async_runtime::block_on(sync_fx_rates_guarded(
+            &FX_SYNC_GATE,
+            &session,
+            &mut channels,
+            &mut |_| {},
+        ))
+        .unwrap_err();
         assert!(
-            (rate - expected).abs() < 1e-9,
-            "当期值 = 最新一天交叉值（{rate} vs {expected}）"
+            err.is_code("fx.sync-in-progress"),
+            "每日通道在途时另一路应立即报 fx.sync-in-progress，实际 {err:?}"
         );
     }
+    assert_eq!(
+        other_calls.load(Ordering::SeqCst),
+        0,
+        "撞车即返：另一路不得触达取数"
+    );
+    {
+        let guard = conn.lock().unwrap();
+        assert_eq!(fx_point_count(&guard), 0, "撞车即返：另一路零落库");
+    }
 
-    // 放行后台取数：每日通道完成落库——多出的那一周（第 4 周）与当期汇率的
-    // 改写（最新一天 2026-09-21 的交叉值）是「后台通道真实落库」的可观察面；
-    // 重叠的三周不产生重复行（两路各写一遍，落库行是 4 周 × 10 对 = 40 而非
-    // 30 + 30，整周覆盖幂等，issue #1546 AC2）。
+    // 放行后台取数：每日通道完成落库——4 个夹具周 × 字典 10 对 = 40 行，当期汇率
+    // 改写为最新一天 2026-09-21 的交叉值（「后台通道真实落库」的可观察面）。
+    // 另一路被互斥拒绝、零写入，落库全部来自每日通道。
     release_tx.send(()).expect("放行应成功");
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
-        let (rows, rate): (i64, f64) = {
+        let (rows, rate): (i64, Option<f64>) = {
             let guard = conn.lock().unwrap();
             let rows = fx_point_count(&guard);
-            let rate: f64 = guard
+            let rate: Option<f64> = guard
                 .query_row(
                     "SELECT rate FROM exchange_rates WHERE base_code='USD' AND quote_code='CNY'",
                     [],
                     |r| r.get(0),
                 )
+                .optional()
                 .unwrap();
             (rows, rate)
         };
-        if rows == 40 && (rate - 7.5 / usd_leg(&codes)).abs() < 1e-9 {
+        if rows == 40 && rate.is_some_and(|rate| (rate - 7.5 / usd_leg(&codes)).abs() < 1e-9) {
             break;
         }
         assert!(
             Instant::now() < deadline,
-            "每日通道未在限时内完成落库（全量取数已放行：rows={rows}, rate={rate}）"
+            "每日通道未在限时内完成落库（全量取数已放行：rows={rows}, rate={rate:?}）"
         );
         std::thread::sleep(Duration::from_millis(50));
     }
@@ -319,7 +306,7 @@ fn startup_wiring_syncs_fx_rates_and_concurrent_sync_stays_unblocked() {
         assert_eq!(
             fx_point_count(&guard),
             40,
-            "重叠三周不重复落行（整周覆盖幂等），第 4 周新增（10 对 × 4 周）"
+            "每日通道 4 个夹具周 × 10 对全落库（另一路被互斥拒绝、零写入）"
         );
     }
 
@@ -341,5 +328,9 @@ fn startup_wiring_syncs_fx_rates_and_concurrent_sync_stays_unblocked() {
         std::thread::sleep(step);
     }
     assert_eq!(lane_calls.load(Ordering::SeqCst), 1, "同日窗口不重跑");
-    assert_eq!(other_calls.load(Ordering::SeqCst), 1, "并发一路只取数一次");
+    assert_eq!(
+        other_calls.load(Ordering::SeqCst),
+        0,
+        "另一路被互斥拒绝，全程零取数"
+    );
 }

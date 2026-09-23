@@ -206,7 +206,8 @@
     "source-unknown": "unknown fx rate source: {0} (valid values: {1})",
     "source-malformed": "the exchange rate source returned unparseable content; please retry the sync later",
     "source-unreachable": "the exchange-rate source is temporarily unreachable; check your network and try again",
-    "source-no-data": "the exchange-rate source responded but currently has no usable rate data; please retry later"
+    "source-no-data": "the exchange-rate source responded but currently has no usable rate data; please retry later",
+    "sync-in-progress": "An exchange-rate sync is already in progress; please try again later"
   },
   "instrument": {
     "price-positive": "price must be greater than 0",
