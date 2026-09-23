@@ -56,7 +56,13 @@ import { cpus } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 // 复用守门家族共享原语库的 Rust 词法掩码（注释掩去、字面量保留）——不新建第二份词法器。
-import { lineAt, maskNonCode, RUST_EXTENSIONS, walkTextFiles } from "./gate-primitives.ts";
+import {
+  hasExtension,
+  lineAt,
+  maskNonCode,
+  RUST_EXTENSIONS,
+  walkTextFiles,
+} from "./gate-primitives.ts";
 
 /** 根包（Rust workspace 根 = tauri 应用包）目录名，相对仓库根。 */
 const SRC_TAURI_DIR_NAME = "src-tauri";
@@ -306,6 +312,9 @@ function readManifest(dir: string): ManifestTables | null {
   return parseManifest(readFileSync(path, "utf8"));
 }
 
+// #1742 留门：listDir 形状与家族一层列举原语不同构——names-only 契约（文件与目录
+// 同列）、缺目录容错（返回 []）、调用侧按路径 stat 重判类型（跟随符号链接，与
+// dirent 不跟随语义不同）；已是单点命名助手，收口只会改语义或纯写法替换。
 function listDir(dir: string): string[] {
   if (!existsSync(dir)) return [];
   return readdirSync(dir).sort();
@@ -415,7 +424,8 @@ function discoverPackage(dir: string, rel: string, tables: ManifestTables): Pack
   for (const candidate of [{ name: packageName, path: join("src", "main.rs") }].concat(
     listDir(join(dir, "src", "bin")).flatMap((entry) => {
       const entryPath = join(dir, "src", "bin", entry);
-      if (entry.endsWith(".rs"))
+      // .rs 扩展名闭集换库 hasExtension + RUST_EXTENSIONS（#1742 收口，全等表在 gate-primitives.test.ts）
+      if (hasExtension(entry, RUST_EXTENSIONS))
         return [{ name: stemName(entry), path: join("src", "bin", entry) }];
       if (isDirectory(entryPath) && existsSync(join(entryPath, "main.rs"))) {
         return [{ name: entry, path: join("src", "bin", entry, "main.rs") }];
@@ -450,7 +460,8 @@ function discoverPackage(dir: string, rel: string, tables: ManifestTables): Pack
   for (const decl of tables.tests) testDecls.set(decl.name ?? stemName(decl.path ?? ""), decl);
   for (const candidate of listDir(join(dir, "tests")).flatMap((entry) => {
     const entryPath = join(dir, "tests", entry);
-    if (entry.endsWith(".rs")) return [{ name: stemName(entry) }];
+    // .rs 闭集换库，同 src/bin 站点（#1742 收口）
+    if (hasExtension(entry, RUST_EXTENSIONS)) return [{ name: stemName(entry) }];
     if (isDirectory(entryPath) && existsSync(join(entryPath, "main.rs"))) return [{ name: entry }];
     return [];
   })) {
@@ -474,7 +485,8 @@ function discoverPackage(dir: string, rel: string, tables: ManifestTables): Pack
       if (name !== "") outOfFace.push(`${rel}/${key === "benches" ? "bench" : "example"}:${name}`);
     }
     for (const entry of listDir(join(dir, key))) {
-      if (entry.endsWith(".rs"))
+      // .rs 闭集换库，同 src/bin 站点（#1742 收口）
+      if (hasExtension(entry, RUST_EXTENSIONS))
         outOfFace.push(`${rel}/${key === "benches" ? "bench" : "example"}:${stemName(entry)}`);
     }
   }

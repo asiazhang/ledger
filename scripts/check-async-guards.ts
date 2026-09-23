@@ -43,11 +43,11 @@
 // 默认扫描本仓库（SCAN_ROOTS 清单，相对仓库根）；测试可传位置参数指向夹具仓库根
 // （夹具按 SCAN_ROOTS 布局摆放）：bun scripts/check-async-guards.ts [repo-root]
 
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { pathToFileURL, fileURLToPath } from "node:url";
 
-import { lineAt, walkTextFiles, type WalkedFile } from "./gate-primitives.ts";
+import { lineAt, readDirEntries, walkTextFiles, type WalkedFile } from "./gate-primitives.ts";
 /** 规则 1 形态：手搓竞态纪元（seq/epoch/generation 三名别名一并识别；`\w*` 含裸名；
  *  `\b` 防吞后缀——seqNum / epochAt 等尾部通配不在检测面，已知盲区见文件头） */
 const HAND_ROLLED_EPOCH_PATTERN = /\blet\s+\w*(?:[Ss]eq|[Ee]poch|[Gg]eneration)\s*=\s*0\b/;
@@ -211,8 +211,11 @@ function scanCrossLine(source: string, pattern: RegExp): number[] {
 function collectUnregisteredPackageSrcRoots(repoRoot: string): string[] {
   const packagesDir = join(repoRoot, "packages");
   if (!existsSync(packagesDir)) return [];
-  return readdirSync(packagesDir, { withFileTypes: true })
-    .filter((e) => e.isDirectory())
+  // 列举机制归家族共享单点 readDirEntries（#1742 收口）：原 readdir 原序（OS 相关、
+  // 不确定）归一为 localeCompare 确定序，判定集与报文内容不变（#1680 walkTextFiles
+  // 排序归一同款）；登记过滤（SCAN_ROOTS 自证政策）留本门。
+  return readDirEntries(packagesDir)
+    .filter((e) => e.isDirectory)
     .map((e) => `packages/${e.name}/src`)
     .filter((rel) => existsSync(join(repoRoot, rel)))
     .filter((rel) => !SCAN_ROOTS.includes(rel));

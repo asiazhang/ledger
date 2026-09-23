@@ -21,10 +21,10 @@
 // - 序列化层统一携带的系统通用码（db.error / parse.error / io.error，ADR-0050
 //   决策 2「底层驱动消息不翻译也不进码表」）无构造点，天然不入枚举，无需白名单。
 
-import { readdirSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL, fileURLToPath } from "node:url";
-import { RUST_EXTENSIONS, walkTextFiles } from "./gate-primitives.ts";
+import { readDirEntries, RUST_EXTENSIONS, walkTextFiles } from "./gate-primitives.ts";
 
 /** 源语言目录名（其余 locale 一律与它比对） */
 export const SOURCE_LOCALE_DIR = "zh-CN";
@@ -68,10 +68,13 @@ export function diffKeySets(
 /** 读取单个 locale 目录：聚合同目录全部 *.json 的点分 key（文件名作为顶层域前缀） */
 export function collectLocaleKeys(dir: string): string[] {
   const keys: string[] = [];
-  for (const entry of readdirSync(dir).sort()) {
-    if (!entry.endsWith(".json")) continue;
-    const domain = entry.slice(0, -".json".length);
-    const parsed: unknown = JSON.parse(readFileSync(join(dir, entry), "utf-8"));
+  // 列举机制归家族共享单点 readDirEntries（#1742 收口）：排序归一为 localeCompare
+  // （原 plain sort 实树对拍全等）；.json 是 i18n 键文件扩展名政策（单消费、无副本
+  // 可漂移），留门不换扩展名闭集（#1742 留门）。
+  for (const entry of readDirEntries(dir)) {
+    if (!entry.name.endsWith(".json")) continue;
+    const domain = entry.name.slice(0, -".json".length);
+    const parsed: unknown = JSON.parse(readFileSync(join(dir, entry.name), "utf-8"));
     keys.push(...flattenKeys(parsed, domain));
   }
   return keys.sort();
@@ -248,10 +251,11 @@ export interface CompareResult {
  * 比对 locales 目录下源语言与其余 locale 的 key 集合。
  */
 export function compareLocalesDir(localesDir: string): CompareResult {
-  const dirs = readdirSync(localesDir, { withFileTypes: true })
-    .filter((e) => e.isDirectory())
-    .map((e) => e.name)
-    .sort();
+  // 子目录列举归家族共享单点 readDirEntries（#1742 收口）；原显式 localeCompare 排序
+  // 与原语排序全等，输出序零变化。
+  const dirs = readDirEntries(localesDir)
+    .filter((e) => e.isDirectory)
+    .map((e) => e.name);
   const sourceKeys = collectLocaleKeys(join(localesDir, SOURCE_LOCALE_DIR));
   const failures: LocaleFailure[] = [];
   for (const locale of dirs) {

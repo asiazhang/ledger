@@ -96,11 +96,17 @@
 // issue #1087）——拆 crate 后测试守门不得因目录随迁而静默漏扫。
 // 包装测试 scripts/check-test-support.test.ts（#1158 归位）。
 
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { pathToFileURL } from "node:url";
-import { lineAt, maskNonCode, RUST_EXTENSIONS, walkTextFiles } from "./gate-primitives.ts";
+import {
+  lineAt,
+  maskNonCode,
+  readDirEntries,
+  RUST_EXTENSIONS,
+  walkTextFiles,
+} from "./gate-primitives.ts";
 
 /** 规则 3 的固定时刻登记处住址（相对 src-tauri 根，单一来源）：main 从该住址提取
  *  固定时刻常量现值作禁令清单（先例：同脚本规则 2 禁用种子表清单自 seed.rs 登记处
@@ -319,10 +325,10 @@ function memberCrateRustRoots(srcTauri: string): string[] {
   const cratesDir = join(srcTauri, "crates");
   if (!existsSync(cratesDir)) return [];
   const roots: string[] = [];
-  for (const entry of readdirSync(cratesDir, { withFileTypes: true }).sort((a, b) =>
-    a.name.localeCompare(b.name),
-  )) {
-    if (!entry.isDirectory()) continue;
+  // 成员目录列举归家族共享单点 readDirEntries（#1742 收口）；原显式 localeCompare
+  // 排序与原语排序全等，输出序零变化。
+  for (const entry of readDirEntries(cratesDir)) {
+    if (!entry.isDirectory) continue;
     for (const sub of ["src", "tests"]) {
       const dir = join(cratesDir, entry.name, sub);
       if (existsSync(dir)) roots.push(dir);

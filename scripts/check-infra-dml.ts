@@ -40,10 +40,16 @@
 // 行号定位与目录遍历消费 gate-primitives.ts（#1680 库归库、门归门）导出的家族共享原语
 // （lineAt / walkTextFiles，issue #1625）；禁令形态与豁免面属本守门政策，自持。
 
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { lineAt, maskNonCode, RUST_EXTENSIONS, walkTextFiles } from "./gate-primitives.ts";
+import {
+  lineAt,
+  maskNonCode,
+  readDirEntries,
+  RUST_EXTENSIONS,
+  walkTextFiles,
+} from "./gate-primitives.ts";
 import { INFRA_SRC_REL } from "./check-structure.ts";
 
 const DEFAULT_SRC_TAURI = join(fileURLToPath(import.meta.url), "..", "..", "src-tauri");
@@ -139,8 +145,12 @@ export function deriveBannedTables(srcTauriDir: string): { inventory: string[]; 
   const sources: string[] = [];
   const migrationsDir = join(srcTauriDir, "migrations");
   if (existsSync(migrationsDir)) {
-    for (const entry of readdirSync(migrationsDir).sort()) {
-      if (entry.endsWith(".sql")) sources.push(readFileSync(join(migrationsDir, entry), "utf8"));
+    // 列举机制归家族共享单点 readDirEntries（#1742 收口）：排序归一为 localeCompare
+    // （原 plain sort 实树对拍全等）；.sql 是迁移链扫描边界政策（单消费、无副本可
+    // 漂移），留门不换扩展名闭集（#1742 留门）。
+    for (const entry of readDirEntries(migrationsDir)) {
+      if (entry.name.endsWith(".sql"))
+        sources.push(readFileSync(join(migrationsDir, entry.name), "utf8"));
     }
   }
   const migrateRs = join(srcTauriDir, INFRA_SRC_REL, "db", "migrate.rs");
