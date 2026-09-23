@@ -36,7 +36,7 @@
 // TypeScript 化 + Bun 运行时（issue #734 / ADR-0083）：类型经 tsconfig.scripts.json
 // 门槛检查；调用方式 `bun scripts/check-infra-dml.ts`。
 // 默认校验本仓库；测试可传位置参数指向夹具：bun scripts/check-infra-dml.ts [src-tauri-dir]
-// 挂载于 scripts/check.sh 质量门槛序列；包装测试 scripts/check-infra-dml.test.ts（#1158 归位）。
+// 包装测试 scripts/check-infra-dml.test.ts（#1158 归位）。
 // 行号定位与目录遍历消费 check-structure.ts 导出的家族共享单点
 // （lineAt / walkTextFiles，issue #1625）；禁令形态与豁免面属本守门政策，自持。
 

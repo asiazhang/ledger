@@ -7,8 +7,7 @@
 // 门槛检查；调用方式 `bun scripts/check-i18n-keys.ts`。
 // 默认校验本仓库（locales 文案资源随 @ledger/i18n 包走，issue #1151）；测试可传位置
 // 参数指向夹具目录：bun scripts/check-i18n-keys.ts [locales-dir] [rust-src-dir]
-// 挂载于 scripts/check.sh 质量门槛序列；CI 无独立 workflow 步骤，经 vitest 测试
-// 分片的真实仓绿基线用例可见（scripts/check-i18n-keys.test.ts，issue #1473）。
+// 真实仓绿基线用例：scripts/check-i18n-keys.test.ts（issue #1473）。
 //
 // 码化错误模板覆盖守门（issue #1188 / ADR-0050）：在 key 全等之外，再枚举 Rust
 // 生产代码中全部码化错误构造点（AppError::coded / codedp / coded_not_found /

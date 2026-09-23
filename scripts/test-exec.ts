@@ -17,10 +17,10 @@
 //    生成、不进 cargo 的 test artifact 报告）仍走 cargo 自有入口，不纳入并发
 //    调度——e2e 的既有入口形态本票不动。
 //
-// 覆盖守门（check 命令；scripts/test.sh 与 scripts/check.sh 同址执行，CI 亦挂）：
+// 覆盖守门（check 命令；挂载登记归守门挂载登记 scripts/gate-mounts.ts，issue #1682）：
 // 目标清单口径与 `cargo test` 默认执行面全等——lib 单测 + bin 单测 + 集成测试 +
 // doc-test；example / bench 不在默认执行面（cargo 只构建 example、不跑 bench），
-// 故不入清单，但发现声明即提示，防口径漂移。守门五条（任一处漂移即红，fail loud）：
+// 故不入清单，但发现声明即提示，防口径漂移。守门四条（任一处漂移即红，fail loud）：
 //   ① 工作区全部测试目标 = 并发入口承接集合 ⊎ 非并发入口承接集合（互斥且无遗漏；
 //      目标清单自 manifest + 目录自动发现派生，新增 target / 新成员 crate 自动入列）；
 //   ② `[[test]] harness = false` 的声明集合 ⇔ scripts/test.sh 非并发入口的
@@ -31,13 +31,14 @@
 //      的 doctest 静默漏跑而守门仍绿）；且 scripts/test.sh 必须调用并发入口
 //      的**运行**命令 `bun scripts/test-exec.ts [run]`（删除即红；`… check` 自检行
 //      不算运行接线）；
-//     ②③ 与④同口径：只认**命令位置**的命令——非注释行里的说明文字（引号内的
+//     ②③ 同口径：只认**命令位置**的命令——非注释行里的说明文字（引号内的
 //      `echo "…bun scripts/test-exec.ts…"`）不算接线，否则把三条真命令全包成
 //      echo 字符串就能让两个入口一起假绿（#1112 第三轮审查实测）。
-//   ④ 门禁自身接线：scripts/check.sh 与 CI frontend job 必须调用 `check`——接线
-//      在管线里、不由单元测试构建，按先例 #959/#961 以源码扫描守门（删除接线即红）；
-//   ⑤ 执行器等价性：测试运行期不得依赖 cargo 注入的环境变量（现状零命中，见
+//   ④ 执行器等价性：测试运行期不得依赖 cargo 注入的环境变量（现状零命中，见
 //      cargoRuntimeEnvProblems 注）。
+//（原守门规则④「门禁自身接线：check.sh 与 CI frontend job 必须调用 check」已退役
+// 并入守门挂载登记——接线成为守门家族 interface 的一环，住可测试的登记而非各门
+// 自证，issue #1682。）
 // run 命令另有第六道交叉核对：`cargo test --no-run` 实际构建出的测试二进制集合
 // 必须与①的目标清单全等——发现逻辑与 cargo 真实行为漂移即红，不给「清单看着对、
 // 实际漏跑」留口子。unsupported manifest 形态（auto* 开关、lib harness=false、
@@ -46,8 +47,8 @@
 // TypeScript 化 + Bun 运行时（issue #734 / ADR-0083）：类型经 tsconfig.scripts.json
 // 门槛检查；调用方式 `bun scripts/test-exec.ts [run|check|plan] [--jobs N]`，
 // 默认 run；测试可传 `--root <夹具根>` 指向夹具（夹具只需 manifest + 目录形态，
-// 不调用 cargo）。挂载于 scripts/test.sh（本地测试入口）与 scripts/check.sh
-// 质量门槛序列 + CI frontend job（覆盖守门部分；CI 的测试执行面本票不动）。
+// 不调用 cargo）。本脚本经 scripts/test.sh 调起（本地测试入口的并发入口与入口自检）；
+// 质量门槛挂载声明归守门挂载登记 scripts/gate-mounts.ts（issue #1682）。
 
 import { spawn } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
@@ -729,61 +730,7 @@ export interface CoverageResult {
 }
 
 /**
- * 门禁自身的接线宿主（守门规则④）：覆盖守门挂在 `scripts/check.sh` 质量门槛序列
- * 与 CI frontend job。两处接线在本机单元测试里不会被管线执行（check.sh 要 cargo、
- * CI 要远端），按 AGENTS.md「接线在本机 CI 不构建的分支内时以源码扫描守门替代」
- * （先例 #959/#961）落成源码扫描——删除接线即 `check` 退出码非零，而 `check` 正是
- * 单元测试与实际管线的共同观察面。
- */
-const GATE_WIRING_HOSTS: readonly { rel: string; label: string }[] = [
-  { rel: join("scripts", "check.sh"), label: "scripts/check.sh 质量门槛序列" },
-  { rel: join(".github", "workflows", "build.yml"), label: "CI frontend job" },
-];
-
-/**
- * 源码扫描：**命令位置**是否出现「`bun` → `scripts/test-exec.ts` → `check`」的命令词序。
- * 按 shell 词切分而非逐字匹配整行——加引号、多空白、`bun --smol` 之类的前置参数、
- * `check` 之后的额外参数、`command bun …` / `if bun …` / `VAR=x bun …` 都不假红；
- * 删掉调用或换成别的子命令（plan/run）即判定未接线。
- *
- * 关键约束：`bun` 必须落在命令位置（见 shellCommands）。否则 `echo "…（bun
- * scripts/test-exec.ts check）…"` 这类**说明文字**会被误判成接线——实测把真实
- * check.sh 的命令改成 `plan` 后，仅剩的 echo 标签行仍能假绿（#1112 审查自证）。
- */
-export function gateWiredIn(content: string): boolean {
-  const needle = [PARALLEL_ENTRY_MARKER, "check"];
-  for (const argv of shellCommands(content)) {
-    if (argv[0] !== "bun") continue;
-    let cursor = 0;
-    for (let i = 1; i < argv.length; i += 1) {
-      if (argv[i] === needle[cursor]) cursor += 1;
-      if (cursor === needle.length) return true;
-    }
-  }
-  return false;
-}
-
-/** 门禁接线守门（守门规则④）：两块宿主都必须源码扫描到 `check` 调用。 */
-function gateWiringProblems(rootDir: string): string[] {
-  const problems: string[] = [];
-  for (const host of GATE_WIRING_HOSTS) {
-    const path = join(rootDir, host.rel);
-    if (!existsSync(path)) {
-      problems.push(`✗ 覆盖守门接线：${host.label} 宿主文件不存在：${host.rel}`);
-      continue;
-    }
-    if (!gateWiredIn(readFileSync(path, "utf8"))) {
-      problems.push(
-        `✗ 覆盖守门接线：${host.label}（${host.rel}）未调用守门命令（\`bun ${PARALLEL_ENTRY_MARKER} check\`）——` +
-          `覆盖守门不在该管线执行，接线删除即红（源码扫描，先例 #959/#961）`,
-      );
-    }
-  }
-  return problems;
-}
-
-/**
- * 执行器等价性守门（守门规则⑤）：执行器直接 spawn 测试二进制，**不**复制 cargo
+ * 执行器等价性守门（守门规则④）：执行器直接 spawn 测试二进制，**不**复制 cargo
  * 运行期注入的环境（`CARGO_MANIFEST_DIR` / `CARGO_PKG_*` / `OUT_DIR` / 动态库搜索
  * 路径）。只对齐其中一部分会给「已等价」的假信心，故取 fail loud 处置：测试运行期
  * （`env::var` / `env::var_os`；编译期 `env!` 不受影响）不得读这些变量，命中即红，
@@ -877,7 +824,6 @@ export function checkCoverage(rootDir: string): CoverageResult {
         `单元测试与集成测试未由统一执行器调度（删除接线即红）`,
     );
   }
-  problems.push(...gateWiringProblems(rootDir));
   problems.push(...cargoRuntimeEnvProblems(rootDir));
 
   return {
@@ -1141,7 +1087,7 @@ async function runAll(options: RunOptions): Promise<number> {
       // 用相对路径，直接以 workspace 根为 cwd 会读到不同位置（Spec 审查发现）。
       // cargo 运行期注入的环境（CARGO_MANIFEST_DIR / CARGO_PKG_* / OUT_DIR /
       // 动态库搜索路径）**不复制**——部分复制会制造「已等价」的假信心；现状等价
-      // 由守门规则⑤兜底（测试运行期读这些变量即红，见 cargoRuntimeEnvProblems）。
+      // 由守门规则④兜底（测试运行期读这些变量即红，见 cargoRuntimeEnvProblems）。
       cwd: target.cwd,
       env: { ...process.env, RUST_TEST_THREADS: "1" },
     });

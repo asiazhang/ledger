@@ -14,7 +14,6 @@
 // TypeScript 化 + Bun 运行时（issue #734 / ADR-0083）：类型经 tsconfig.scripts.json
 // 门槛检查；调用方式 `bun scripts/check-commands.ts`。
 // 默认校验本仓库；测试可传位置参数指向夹具：bun scripts/check-commands.ts [commands-dir] [api-file]
-// 挂载于 scripts/check.sh 质量门槛序列与 CI（build.yml frontend job）。
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";

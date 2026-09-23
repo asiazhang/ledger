@@ -41,7 +41,6 @@
 // 门槛检查；调用方式 `bun scripts/check-background-services.ts`。
 // 默认校验本仓库；测试可传位置参数指向夹具（src-tauri 根等价目录）：
 // bun scripts/check-background-services.ts [src-tauri-dir]
-// 挂载于 scripts/check.sh 质量门槛序列与 CI（build.yml frontend job）。
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";

@@ -12,8 +12,7 @@
 // TypeScript 化 + Bun 运行时（issue #734 / ADR-0083）：类型经 tsconfig.scripts.json
 // 门槛检查；调用方式 `bun scripts/check-style-blocks.ts`。
 // 默认扫描本仓库 src；可传位置参数指向其他目录：bun scripts/check-style-blocks.ts [scan-root]
-// 挂载于 scripts/check.sh 质量门槛序列；CI 无独立 workflow 步骤，经 vitest 测试
-// 分片的真实仓绿基线用例可见（scripts/check-style-blocks.test.ts，issue #1473）。
+// 真实仓绿基线用例：scripts/check-style-blocks.test.ts（issue #1473）。
 
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";

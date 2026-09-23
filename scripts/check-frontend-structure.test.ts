@@ -8,7 +8,7 @@ import { gateScript, runGateScript } from "./run-gate-script.test-helper.ts";
 // 被测对象是仓库工具脚本 scripts/check-frontend-structure.ts 的规则⑦「深模块边界
 // 登记表」（issue #1323 / ADR-0118 决策 7）。与守门脚本测试先例同形制（#1158：测试
 // 与所测脚本同目录；#1149 起既有 src/__tests__/check-frontend-structure.test.ts 覆盖
-// 规则①—⑥与接线核对，本文件只覆盖新增的规则⑦）。脚本以 Bun 运行时执行（ADR-0083）：
+// 规则①—⑥，本文件只覆盖新增的规则⑦）。脚本以 Bun 运行时执行（ADR-0083）：
 // runGateScript 以 spawnSync('bun') 与门槛调用同款拉起，测的就是门槛路径。按测试
 // 决策只测外部可观察结果——进程退出码与输出（ADR-0087 断言强度），不触及脚本内部
 // 函数形状；通过位置参数把校验目标指向临时夹具仓库根（[repo-root]

@@ -23,10 +23,6 @@ interface FixtureOverrides {
   alphaManifest?: string;
   /** test.sh 内容；缺省 = 合规双入口形态。 */
   testSh?: string;
-  /** check.sh 内容；缺省 = 含覆盖守门步骤（守门规则④的接线宿主）。 */
-  checkSh?: string;
-  /** build.yml 内容；缺省 = frontend job 含覆盖守门步骤（守门规则④的接线宿主）。 */
-  workflow?: string;
   /** 追加的成员文件（相对夹具根，含目录）。 */
   files?: Record<string, string>;
   /** 为 true 时删除两个 lib 目标（用于 --doc 登记失效夹具）。 */
@@ -41,16 +37,6 @@ const DEFAULT_TEST_SH = [
   "bun scripts/test-exec.ts",
   "( cd src-tauri && cargo test --workspace --test e2e )",
   "( cd src-tauri && cargo test --workspace --doc )",
-  "",
-].join("\n");
-
-/** check.sh / CI 的守门接线（守门规则④的合规形态）。 */
-const DEFAULT_CHECK_SH = ["#!/bin/sh", "set -eu", "bun scripts/test-exec.ts check", ""].join("\n");
-const DEFAULT_WORKFLOW = [
-  "jobs:",
-  "  frontend:",
-  "    steps:",
-  "      - run: bun scripts/test-exec.ts check",
   "",
 ].join("\n");
 
@@ -101,12 +87,6 @@ function makeFixture(overrides: FixtureOverrides = {}): string {
   writeFileSync(join(alpha, "tests", "e2e.rs"), "fn main() {}\n");
   writeFileSync(join(alpha, "tests", "api.rs"), "#[test]\nfn api() {}\n");
   writeFileSync(join(root, "scripts", "test.sh"), overrides.testSh ?? DEFAULT_TEST_SH);
-  writeFileSync(join(root, "scripts", "check.sh"), overrides.checkSh ?? DEFAULT_CHECK_SH);
-  mkdirSync(join(root, ".github", "workflows"), { recursive: true });
-  writeFileSync(
-    join(root, ".github", "workflows", "build.yml"),
-    overrides.workflow ?? DEFAULT_WORKFLOW,
-  );
   for (const [rel, content] of Object.entries(overrides.files ?? {})) {
     const abs = join(root, rel);
     mkdirSync(dirname(abs), { recursive: true });
@@ -251,68 +231,6 @@ describe("测试执行器两入口覆盖守门（issue #1112）", () => {
     expect(r.status).toBe(1);
     expect(r.output).toContain("缺 workspace 范围");
     expect(r.output).toContain("doc-test 静默漏跑");
-  });
-
-  it("check.sh 删掉 / 换成别的子命令的守门调用 → 红（接线删除即红）", () => {
-    const r = run([
-      "check",
-      "--root",
-      makeFixture({
-        // 行仍在、但调的是 plan：命令词序不对即判定未接线，不是子串匹配。
-        checkSh: ["#!/bin/sh", "set -eu", "bun scripts/test-exec.ts plan", ""].join("\n"),
-      }),
-    ]);
-    expect(r.status).toBe(1);
-    expect(r.output).toContain("覆盖守门接线");
-    expect(r.output).toContain("check.sh");
-  });
-
-  it("CI frontend job 删掉守门步骤 → 红（CI 接线删除即红）", () => {
-    const r = run([
-      "check",
-      "--root",
-      makeFixture({
-        workflow: ["jobs:", "  frontend:", "    steps:", "      - run: pnpm run build", ""].join(
-          "\n",
-        ),
-      }),
-    ]);
-    expect(r.status).toBe(1);
-    expect(r.output).toContain("覆盖守门接线");
-    expect(r.output).toContain("build.yml");
-  });
-
-  it("check.sh 只剩 echo 标签行含命令字样 → 红（说明文字不算接线）", () => {
-    // 实测教训：真实 check.sh 的命令改成 plan 后，仅剩的 `echo "…（bun
-    // scripts/test-exec.ts check）…"` 标签行曾让守门假绿——接线判定要求 `bun`
-    // 落在命令位置（剥掉 YAML / 子 shell 装饰后的首个词）。
-    const r = run([
-      "check",
-      "--root",
-      makeFixture({
-        checkSh: [
-          "#!/bin/sh",
-          "set -eu",
-          'echo "覆盖守门 (bun scripts/test-exec.ts check)"',
-          "",
-        ].join("\n"),
-      }),
-    ]);
-    expect(r.status).toBe(1);
-    expect(r.output).toContain("覆盖守门接线");
-  });
-
-  it("check.sh 接线带引号/前置参数仍算接线 → 不假红", () => {
-    const r = run([
-      "check",
-      "--root",
-      makeFixture({
-        checkSh: ["#!/bin/sh", "set -eu", '  bun "scripts/test-exec.ts" check --jobs 4', ""].join(
-          "\n",
-        ),
-      }),
-    ]);
-    expect(r.status).toBe(0);
   });
 
   it("执行器等价性：测试运行期读 cargo 注入环境变量 → 红（fail loud）", () => {
@@ -524,30 +442,17 @@ describe("测试执行器两入口覆盖守门（issue #1112）", () => {
   });
 });
 
-describe("测试执行接线（删除即变红，观察面 = 守门退出码与输出）", () => {
-  // 本 describe 的断言不钉命令字符串形态（ADR-0087 断言强度）：观察面统一是
-  // `bun scripts/test-exec.ts check` 的**退出码与输出**——守门读真实仓库的
-  // scripts/test.sh（三入口）、scripts/check.sh 与 CI frontend job（门禁接线）与
-  // 运行期环境扫描，任一处接线删除/漂移都让这里变红。各删除形态的「制造变红」
-  // 另由上面的夹具用例逐条覆盖（删并发入口、删/漂移 --test、删 --doc、
-  // doc 缺 workspace 范围、check.sh 与 CI 接线缺失、运行期读 cargo 注入环境）。
-  it("真实仓库：两条入口 + 门禁接线 + 等价性守门齐备 → 通过", () => {
+describe("覆盖守门真实仓库绿基线（删除即变红，观察面 = 守门退出码与输出）", () => {
+  // 观察面是 `bun scripts/test-exec.ts check` 的**退出码与输出**（ADR-0087 断言
+  // 强度）——守门读真实仓库的 scripts/test.sh（双入口 + 自检）与运行期环境扫描，
+  // 任一处漂移都让这里变红。各删除形态的「制造变红」另由上面的夹具用例逐条覆盖
+  // （删并发入口、删/漂移 --test、删 --doc、doc 缺 workspace 范围、运行期读 cargo
+  // 注入环境）；check.sh / CI 的挂载接线核对归守门接线测试
+  //（scripts/gate-mounts.test.ts，登记住 scripts/gate-mounts.ts 守门挂载登记，
+  // issue #1682）——原守门规则④已退役并入该登记。
+  it("真实仓库：两条入口 + 等价性守门齐备 → 通过", () => {
     const r = run(["check"]);
     expect(r.status).toBe(0);
     expect(r.output).toContain("测试执行覆盖守门");
-  });
-
-  it("真实仓库接线仍然可见：删掉 scripts/check.sh 的守门调用 → 同一条断言变红", () => {
-    // 反向证明观察面对准可观察结果：把真实 check.sh 的接线镜像成夹具缺接线形态，
-    // 守门退出码非零；恢复即绿（真实仓库的删除实测见验证文档「负向验收」）。
-    const broken = run([
-      "check",
-      "--root",
-      makeFixture({
-        checkSh: ["#!/bin/sh", "set -eu", "bun scripts/test-exec.ts run", ""].join("\n"),
-      }),
-    ]);
-    expect(broken.status).toBe(1);
-    expect(broken.output).toContain("覆盖守门接线");
   });
 });
