@@ -1,29 +1,26 @@
-//! ECB 汇率同步编排（issue #1544 / ADR-0019 修订记录）：给汇率序列定「要拉多深」
-//! 的窗口判据单点，与全量回填 / 90 天增量两条取数腿的域内编排。
+//! ECB 汇率同步编排（issue #1544 / ADR-0019 修订记录）：给汇率同步定「要不要拉、
+//! 拉哪条腿」的深度判据单点，与全量回填 / 90 天增量两条取数腿的域内编排。
 //!
-//! 用户可观察结果：账本里最早的非本位币痕迹（账户或交易）出现后，一次同步即把
-//! 各币种对的历史序列补到**该日期之前**（写路径按交易日折算的取数因此可用），
-//! 与标的 K 线的「近两年」窗口和首刷 / 缺周队列彻底无关（两条链路各自独立触发，
+//! 用户可观察结果：账本里出现非本位币痕迹（账户或交易）后，一次同步即把各币种对
+//! 的历史序列**整份补齐**（写路径按交易日折算的取数因此可用），
 //! 本模块不读 instruments、不碰 price_history、不进 [`super::history`] 的队列）。
 //!
 //! 三块事实收口在本模块：
-//! - **窗口判据**（[`plan_fx_sync`]）：深度 = 账本中最早的非本位币相关日期
-//!   （[`earliest_non_native_trace_date`]：非本位币账户的 `created_at` 与非本位币
-//!   交易的 `date` 取 MIN；软删行与隐藏账户排除——黑洞账户是 V004 种子的系统
-//!   缓冲池，其创建日是安装时刻而非用户使用非本位币的起点，其内的交易仍是
-//!   真实痕迹）。窗口起点 = 该日期所属 ISO 周的周一再前推一周
-//!   （[`WINDOW_LEAD_WEEKS`]）——序列自此**早于**该日期，
-//!   交易自身所属周必有点。账本没有任何非本位币痕迹时判据为「零痕迹 → 零请求
-//!   零落库」（不做过深的无谓回填，AC 有断言）；痕迹齐全而已落库序列未达窗口
-//!   起点时走全量；已达深度（[`fx_depth_reached`]，**逐币种对**判定，一处旧覆盖
-//!   不掩盖另一对的缺口）的重复同步只走 90 天增量，不重复拉全量（幂等，AC 有
-//!   断言）。已接受代价：某腿在数据源的起点晚于窗口起点时（现字典对 CNY 腿
-//!   2005-04 起），该对永远判「未达深」而重复拉全量文件——真实账本痕迹远新于
-//!   各腿起点，不为其复杂化判据。
+//! - **深度判据**（[`plan_fx_sync`]）：零痕迹 → Skip（[`has_non_native_trace`]：非本位币
+//!   账户的 `created_at` 或非本位币交易的 `date` 存在即有痕迹；软删行与隐藏账户
+//!   排除——黑洞账户是 V004 种子的系统缓冲池，其创建日是安装时刻而非用户使用
+//!   非本位币的起点，其内的交易仍是真实痕迹）→ 零请求零落库（不做过深的无谓
+//!   回填，AC 有断言）。有痕迹时深度 = 落库序列对**数据源起点**的覆盖
+//!   （[`fx_depth_reached`]，**逐币种对**核对，一处旧覆盖不掩盖另一对的缺口；
+//!   覆盖证据只认 [`ECB_FX_SOURCE`]，issue #1551 AC）：未达起点 → 全量腿**整份灌库**
+//!   （不裁剪），已达起点 → 只走 90 天增量，不重复拉全量（幂等，AC 有断言）。
+//!   #1759 收敛：窗口起点不再由「最早非本位币痕迹」派生——痕迹派生窗口死锁历史
+//!   导入（历史交易写入需要该周汇率 → 该周汇率需要全量腿 → 全量腿需要更早的
+//!   痕迹 → 痕迹只能由历史写入产生）；取数腿本来就整份下载（全量文件无日期参数），
+//!   裁剪只省本地行（~3 MB），不为省行保留死锁判据。
 //! - **一轮同步**（[`sync_fx_rates`]）：按判据取数（全量文件或 90 天增量文件，
 //!   币种对 = 币种字典全量对本位币，见投资域 FxRateHistory 词条「全字典可折算」）、
-//!   交叉推导周采样、全量腿按窗口起点裁剪（深度由判据决定，不把 1999 年起的整根
-//!   文件灌进库）后交落库单元 [`persist_ecb_fx_series`]（#1543：单一事务、整周
+//!   交叉推导周采样、整份文件灌库后交落库单元 [`persist_ecb_fx_series`]（#1543：单一事务、整周
 //!   覆盖幂等、不产同步 op、人工行保护）。取数在会话外、落库短暂取连接
 //!   （[`super::session`] 纪律，与 [`super::incremental`] 同形）。
 //! - **通道束**（[`FxSyncChannels`]）：两条取数腿的闭包打包与生产换装接缝——
@@ -39,7 +36,6 @@
 //! 取数成功但推导零点 → `fx.source-no-data`，`fx.source-malformed` 原样透传不
 //! 折算，已有汇率不受影响（落库是覆盖幂等 upsert）。
 
-use chrono::NaiveDate;
 use rusqlite::{Connection, params};
 use serde::Serialize;
 
@@ -54,12 +50,15 @@ use super::ecb::{
 use super::http::{build_client, lock_pacer, shared_pacer};
 use super::persist::{ECB_FX_SOURCE, FxPersistReport, persist_ecb_fx_series};
 use super::session::ScopedSession;
-use super::weekly::week_monday;
 
-/// 窗口起点相对最早非本位币日期再前推的周数：序列从该日期**之前**一周起有
-/// 采样点（AC「全量回填覆盖到该日期之前」的余量——即使该日期所属周首日无报价，
-/// 前一周的点也已先于它落库）。
-const WINDOW_LEAD_WEEKS: i64 = 1;
+/// 深度判据的「起点」锚：ECB 全量文件自 1999-01-04 起发布，但币种字典各对全以
+/// CNY 为报价腿，CNY 腿 2005-04-01 起才有报价（实测 eurofxref-hist 最早 CNY 报价日；
+/// [`super::ecb`] 模块文档同记「CNY 腿 2005-04 才存在」）——整份灌库后各对最早周键
+/// = 2005-04-01 所属 ISO 周的周一 2005-03-28。每对存在不晚于该周的 ECB 周采样行即判
+/// 「起点已覆盖」（#1759：深度看落库序列对数据源起点的覆盖，不看账本痕迹日期）。
+/// 锚失配的最坏面 = 该对判「未达深」而每轮重拉全量（值仍正确、整周覆盖幂等），
+/// 不静默错值；锚与周键口径的绑定由测试 `fx_source_origin_anchor_is_the_cny_leg_origin_week` 钉住。
+pub(crate) const FX_SOURCE_ORIGIN_WEEK: &str = "2005-03-28";
 
 /// 「数据源不可达」码化错误（spec #1540 用户故事 12 / issue #1545：失败提示可
 /// 自助补救——先分清是网络问题还是账本问题）。params 无动态值（ADR-0050）。
@@ -178,17 +177,17 @@ pub struct FxSyncReport {
 enum FxSyncPlan {
     /// 无任何非本位币痕迹：零请求零落库（不做过深的无谓回填）。
     Skip,
-    /// 全量历史回填：携带窗口起点（最早非本位币日期前 [`WINDOW_LEAD_WEEKS`] 周的周一）。
-    FullBackfill(NaiveDate),
+    /// 全量历史回填：整份文件灌库（不裁剪，#1759）。
+    FullBackfill,
     /// 深度已达成：只走 90 天增量。
     Incremental,
 }
 
 /// 一轮汇率同步（issue #1544，#1545 手动入口与 #1546 每日增量的共同编排）：
-/// 读库定判据 → 会话外取数 → 交叉推导与窗口裁剪 → 落库（单一事务幂等）。
+/// 读库定判据 → 会话外取数 → 交叉推导周采样 → 落库（单一事务幂等）。
 ///
 /// 判据与取数腿的对应：零痕迹 = [`FxSyncPlan::Skip`]（两个通道都不碰）；深度未达
-/// = 全量腿 + 窗口裁剪；深度已达 = 只走增量腿（不重复拉全量）。返回 [`FxSyncReport`]。
+/// = 全量腿整份灌库；深度已达 = 只走增量腿（不重复拉全量）。返回 [`FxSyncReport`]。
 pub async fn sync_fx_rates<S: ScopedSession>(
     session: &S,
     channels: &mut FxSyncChannels,
@@ -199,12 +198,11 @@ pub async fn sync_fx_rates<S: ScopedSession>(
             tracing::debug!("账本无非本位币痕迹，汇率同步跳过（零请求零落库）");
             Ok(FxSyncReport::default())
         }
-        FxSyncPlan::FullBackfill(window_start) => {
+        FxSyncPlan::FullBackfill => {
             let days = (channels.fetch_full)()
                 .await
                 .map_err(classify_fetch_error)?;
-            let series =
-                trim_series_to_window(derive_ecb_weekly_series(&days, &pairs), window_start);
+            let series = derive_ecb_weekly_series(&days, &pairs);
             ensure_series_has_points(&series)?;
             let persist = session
                 .with_connection(move |conn| persist_ecb_fx_series(conn, &series))
@@ -212,7 +210,7 @@ pub async fn sync_fx_rates<S: ScopedSession>(
             tracing::info!(
                 earliest = persist.earliest.as_deref().unwrap_or("-"),
                 points = persist.points,
-                "ECB 汇率全量回填完成（窗口起点 {window_start}）"
+                "ECB 汇率全量回填完成（整份文件灌库）"
             );
             Ok(FxSyncReport {
                 full_backfilled: true,
@@ -257,48 +255,47 @@ fn plan_fx_sync(conn: &Connection) -> Result<(FxSyncPlan, Vec<(String, String)>)
     };
     pairs.dedup();
 
-    let Some(earliest) = earliest_non_native_trace_date(conn, &native)? else {
+    if !has_non_native_trace(conn, &native)? {
         return Ok((FxSyncPlan::Skip, pairs));
-    };
-    // 窗口起点 = 最早痕迹日期所属 ISO 周的周一，再前推一周（序列早于该日期）。
-    let window_start = week_monday(earliest) - chrono::Duration::weeks(WINDOW_LEAD_WEEKS);
-    if fx_depth_reached(conn, &native, &window_start.format("%Y-%m-%d").to_string())? {
+    }
+    if fx_depth_reached(conn, &native)? {
         Ok((FxSyncPlan::Incremental, pairs))
     } else {
-        Ok((FxSyncPlan::FullBackfill(window_start), pairs))
+        Ok((FxSyncPlan::FullBackfill, pairs))
     }
 }
 
-/// 账本中最早的非本位币相关日期（窗口判据的输入，issue #1544）：非本位币**账户**
-/// 的创建日与非本位币**交易**的交易日取 MIN；软删行排除（与「删除即从全部视角
-/// 消失」的既有口径一致）；隐藏账户也排除——黑洞账户（V004 种子，承接「资金
-/// 账户=无」的导入交易，对用户隐藏）在每本账本必然存在，其创建日是安装时刻
-/// 而非用户使用非本位币的起点，计入它会让「零痕迹」判据永不成立；其内的导入
-/// 交易不受影响（transactions 无隐藏位，仍是真实痕迹）。无痕迹返回 None
-/// （判据：零痕迹 → 不回填）。
-fn earliest_non_native_trace_date(conn: &Connection, native: &str) -> Result<Option<NaiveDate>> {
-    let raw: Option<String> = conn.query_row(
-        "SELECT MIN(d) FROM ( \
-             SELECT date(created_at) AS d FROM accounts \
+/// 账本是否存在非本位币痕迹（零痕迹判据的输入）：非本位币**账户**（软删行排除，
+/// 与「删除即从全部视角消失」的既有口径一致；隐藏账户也排除——黑洞账户（V004
+/// 种子，承接「资金账户=无」的导入交易，对用户隐藏）在每本账本必然存在，其创建
+/// 日是安装时刻而非用户使用非本位币的起点，计入它会让「零痕迹」判据永不成立；
+/// 其内的导入交易不受影响（transactions 无隐藏位，仍是真实痕迹）或非本位币
+/// **交易**的交易日（软删排除）。只定「要不要同步」，不定「同步多深」——深度
+/// 判据（[`fx_depth_reached`]）只看落库序列对数据源起点的覆盖（#1759：痕迹
+/// 日期派生窗口会把历史导入判成永久不可达）。
+fn has_non_native_trace(conn: &Connection, native: &str) -> Result<bool> {
+    let found: i64 = conn.query_row(
+        "SELECT EXISTS( \
+             SELECT 1 FROM accounts \
               WHERE is_deleted = 0 AND is_hidden = 0 AND currency_code <> ?1 \
              UNION ALL \
-             SELECT date(date) AS d FROM transactions \
+             SELECT 1 FROM transactions \
               WHERE is_deleted = 0 AND currency_code <> ?1 \
          )",
         params![native],
         |row| row.get(0),
     )?;
-    Ok(raw.and_then(|day| NaiveDate::parse_from_str(day.trim(), "%Y-%m-%d").ok()))
+    Ok(found == 1)
 }
 
 /// 深度判据（幂等的依据，issue #1544 AC3）：**逐币种对**核对——币种字典里每个
-/// 非本位币币种对本位币都已有不晚于窗口起点的周采样行，才判「深度已达成」。
+/// 非本位币币种对本位币都已有不晚于起点锚（[`FX_SOURCE_ORIGIN_WEEK`]）的周采样行，
 /// 一处的旧覆盖（如东财时代的孤立序列）不掩盖另一对的缺口（全局 MIN 会漏判）；
 /// 全量回填一次灌齐全部币种对，常态下第二轮即达成。
 /// 覆盖证据只认新来源（[`ECB_FX_SOURCE`]，issue #1551 AC）：存量旧来源行（东财
 /// 时代的 `fx_rate_history` 行）不是 ECB 序列的覆盖证据，不计入深度——否则
 /// 升级账本的首次同步会被误判「已达深」而跳过全量回填，旧值永远不被纠正。
-fn fx_depth_reached(conn: &Connection, native: &str, window_start: &str) -> Result<bool> {
+fn fx_depth_reached(conn: &Connection, native: &str) -> Result<bool> {
     let missing: i64 = conn.query_row(
         "SELECT count(*) FROM currencies c \
           WHERE c.code <> ?1 \
@@ -307,24 +304,8 @@ fn fx_depth_reached(conn: &Connection, native: &str, window_start: &str) -> Resu
                  WHERE f.base_code = c.code AND f.quote_code = ?1 \
                    AND f.week_start <= ?2 AND f.source = ?3 \
             )",
-        params![native, window_start, ECB_FX_SOURCE],
+        params![native, FX_SOURCE_ORIGIN_WEEK, ECB_FX_SOURCE],
         |row| row.get(0),
     )?;
     Ok(missing == 0)
-}
-
-/// 全量腿的窗口裁剪：只保留周键不早于窗口起点的采样点——深度由账本判据决定
-/// （issue #1544），不把数据源 1999 年起的整根文件灌进库；点集为已解析的
-/// NaiveDate（取数层周采样契约），无解析失败面。
-fn trim_series_to_window(
-    series: Vec<super::ecb::FxPairWeeklySeries>,
-    window_start: NaiveDate,
-) -> Vec<super::ecb::FxPairWeeklySeries> {
-    series
-        .into_iter()
-        .map(|mut series| {
-            series.points.retain(|(day, _)| *day >= window_start);
-            series
-        })
-        .collect()
 }
