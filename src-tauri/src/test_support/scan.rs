@@ -6,7 +6,7 @@
 //! 测试）、`commands/investment.rs` 扫描测试，以及行情同步域车道守门（经既有
 //! `tauri-app` dev-dependency 环，spec #1086；登记处 ADR-0084 修订注记）。
 //!
-//! **双源登记**（#1433）：[`mask_non_code`] 与 TS 侧 `scripts/check-structure.ts`
+//! **双源登记**（#1433）：[`mask_non_code`] 与 TS 侧 `scripts/gate-primitives.ts`
 //! 的 `maskNonCode` 是同一条 Rust 词法掩码规则的**两个运行时载体**（守门脚本跑
 //! Bun、Rust 测试跑 cargo，单份实现不可共享），规则改动必须两侧同步；防漂移
 //! 断言消费共享语料夹具 `scripts/fixtures/rust-mask-corpus.rs`（期望输出
@@ -52,7 +52,7 @@ fn raw_string_open_quote(chars: &[char], i: usize) -> Option<usize> {
 /// 成分时是普通名字，不误伤）、char 字面量（`'a'`、`'\n'`、`'\\'`、`'\''`、
 /// `'"'`）；生命周期标注（`'a`）按非字面量处理。`'\u{…}'` 不按字面量识别
 ///（见模块文档「双源登记」）。与 `maskNonCode`
-///（`scripts/check-structure.ts`）双源同规，防漂移见模块文档。
+///（`scripts/gate-primitives.ts`）双源同规，防漂移见模块文档。
 pub fn mask_non_code(text: &str) -> String {
     let bytes: Vec<char> = text.chars().collect();
     let n = bytes.len();
@@ -190,7 +190,7 @@ fn mask_non_code_matches_shared_corpus() {
         mask_non_code(corpus),
         expected,
         "掩码输出与共享语料期望漂移——规则改动必须与 TS 侧 maskNonCode \
-         （scripts/check-structure.ts）同步并重新生成语料期望"
+         （scripts/gate-primitives.ts）同步并重新生成语料期望"
     );
 }
 
