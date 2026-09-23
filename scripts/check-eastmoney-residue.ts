@@ -30,13 +30,13 @@
 // 门槛检查；调用方式 `bun scripts/check-eastmoney-residue.ts`。
 // 默认校验本仓库；测试可传位置参数指向夹具仓库根：bun scripts/check-eastmoney-residue.ts [root]
 // 包装测试 scripts/check-eastmoney-residue.test.ts。
-// 行号定位与目录遍历消费 check-structure.ts 导出的家族共享单点
+// 行号定位与目录遍历消费 gate-primitives.ts（#1680 库归库、门归门）导出的家族共享原语
 // （lineAt / walkTextFiles，issue #1625）；禁令标记与豁免面属本守门政策，自持。
 
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { lineAt, walkTextFiles } from "./check-structure.ts";
+import { lineAt, walkTextFiles } from "./gate-primitives.ts";
 
 const DEFAULT_ROOT = join(fileURLToPath(import.meta.url), "..", "..");
 

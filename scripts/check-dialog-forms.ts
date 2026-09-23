@@ -13,10 +13,14 @@
 // 默认扫描本仓库 src；测试可传位置参数指向夹具目录：bun scripts/check-dialog-forms.ts [scan-root]
 // 真实仓绿基线用例：scripts/check-dialog-forms.test.ts（issue #1473）。
 
-import { readdirSync, readFileSync } from "node:fs";
-import { join, relative } from "node:path";
+import { readFileSync } from "node:fs";
+import { relative } from "node:path";
 import { pathToFileURL, fileURLToPath } from "node:url";
+import { walkTextFiles } from "./gate-primitives.ts";
 import { parse } from "vue/compiler-sfc";
+
+/** 扫描面扩展名闭集（walkTextFiles 消费参数）：本守门只扫 .vue */
+const VUE_EXTENSIONS: ReadonlySet<string> = new Set([".vue"]);
 
 /** 节奏容器唯一档位（ADR-0079 决策 4 定稿值）：改动须回 ADR 并同步此值 */
 const RHYTHM_SIZE = "12";
@@ -150,20 +154,10 @@ export function checkTemplateAst(ast: unknown, file: string, out: Violation[]): 
   for (const child of root.children ?? []) walk(child, []);
 }
 
-/** 递归收集扫描根下全部 .vue 文件（按名排序保证输出稳定） */
+/** 递归收集扫描根下全部 .vue 文件（按名排序保证输出稳定）：遍历机制归守门家族
+ *  共享单点 walkTextFiles（#1680 收口），扩展名闭集经 options 注入。 */
 export function collectVueFiles(root: string): string[] {
-  const out: string[] = [];
-  const visit = (dir: string): void => {
-    for (const entry of readdirSync(dir, { withFileTypes: true }).sort((a, b) =>
-      a.name.localeCompare(b.name),
-    )) {
-      const full = join(dir, entry.name);
-      if (entry.isDirectory()) visit(full);
-      else if (entry.name.endsWith(".vue")) out.push(full);
-    }
-  };
-  visit(root);
-  return out;
+  return walkTextFiles(root, "", { extensions: VUE_EXTENSIONS }).map((f) => f.abs);
 }
 
 /** 检查单个 .vue 文件：返回节奏违例与模板解析失败（如有） */

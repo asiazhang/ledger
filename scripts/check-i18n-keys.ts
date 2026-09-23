@@ -21,9 +21,10 @@
 // - 序列化层统一携带的系统通用码（db.error / parse.error / io.error，ADR-0050
 //   决策 2「底层驱动消息不翻译也不进码表」）无构造点，天然不入枚举，无需白名单。
 
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL, fileURLToPath } from "node:url";
+import { RUST_EXTENSIONS, walkTextFiles } from "./gate-primitives.ts";
 
 /** 源语言目录名（其余 locale 一律与它比对） */
 export const SOURCE_LOCALE_DIR = "zh-CN";
@@ -163,21 +164,13 @@ export interface RustCodedCodesResult {
   unresolvedCallSites: number;
 }
 
+/** 递归收集 root 下全部 .rs 文件（target/ 剪枝是本守门扫描边界政策）：遍历机制归
+ *  守门家族共享单点 walkTextFiles（#1680 收口），扩展名闭集由库 RUST_EXTENSIONS 提供。 */
 function walkRustFiles(root: string): string[] {
-  const files: string[] = [];
-  const visit = (dir: string): void => {
-    for (const entry of readdirSync(dir).sort()) {
-      const full = join(dir, entry);
-      if (statSync(full).isDirectory()) {
-        if (entry === "target") continue;
-        visit(full);
-      } else if (entry.endsWith(".rs")) {
-        files.push(full);
-      }
-    }
-  };
-  visit(root);
-  return files;
+  return walkTextFiles(root, "", {
+    extensions: RUST_EXTENSIONS,
+    skipDirs: new Set(["target"]),
+  }).map((f) => f.abs);
 }
 
 /**

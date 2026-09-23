@@ -37,13 +37,14 @@
 // 门槛检查；调用方式 `bun scripts/check-infra-dml.ts`。
 // 默认校验本仓库；测试可传位置参数指向夹具：bun scripts/check-infra-dml.ts [src-tauri-dir]
 // 包装测试 scripts/check-infra-dml.test.ts（#1158 归位）。
-// 行号定位与目录遍历消费 check-structure.ts 导出的家族共享单点
+// 行号定位与目录遍历消费 gate-primitives.ts（#1680 库归库、门归门）导出的家族共享原语
 // （lineAt / walkTextFiles，issue #1625）；禁令形态与豁免面属本守门政策，自持。
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { INFRA_SRC_REL, lineAt, maskNonCode, walkTextFiles } from "./check-structure.ts";
+import { lineAt, maskNonCode, RUST_EXTENSIONS, walkTextFiles } from "./gate-primitives.ts";
+import { INFRA_SRC_REL } from "./check-structure.ts";
 
 const DEFAULT_SRC_TAURI = join(fileURLToPath(import.meta.url), "..", "..", "src-tauri");
 
@@ -213,8 +214,7 @@ function isTestPath(relSegments: string[]): boolean {
   );
 }
 
-/** 扫描面：Rust 源文件（扩展名闭集，遍历机制归家族共享单点 walkTextFiles） */
-const RUST_EXTENSIONS: ReadonlySet<string> = new Set([".rs"]);
+/** 扫描面：Rust 源文件扩展名闭集——消费库 RUST_EXTENSIONS（#1680 收口全等副本） */
 
 function main(): void {
   const srcTauri = process.argv[2] ? resolve(process.argv[2]) : DEFAULT_SRC_TAURI;

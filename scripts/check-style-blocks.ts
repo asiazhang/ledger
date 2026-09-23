@@ -14,10 +14,14 @@
 // 默认扫描本仓库 src；可传位置参数指向其他目录：bun scripts/check-style-blocks.ts [scan-root]
 // 真实仓绿基线用例：scripts/check-style-blocks.test.ts（issue #1473）。
 
-import { readdirSync, readFileSync } from "node:fs";
-import { join, relative } from "node:path";
+import { readFileSync } from "node:fs";
+import { relative } from "node:path";
 import { pathToFileURL, fileURLToPath } from "node:url";
+import { walkTextFiles } from "./gate-primitives.ts";
 import { parse } from "vue/compiler-sfc";
+
+/** 扫描面扩展名闭集（walkTextFiles 消费参数）：本守门只扫 .vue */
+const VUE_EXTENSIONS: ReadonlySet<string> = new Set([".vue"]);
 
 /** 存量 <style> 块白名单（issue #888 交付时点快照，按路径排序；#1159 起源码按域
  *  归位，域文件路径同步为域目录坐标 src/<域>/）：
@@ -60,20 +64,10 @@ function normalizePath(file: string): string {
   return relative(process.cwd(), file).split("\\").join("/");
 }
 
-/** 递归收集扫描根下全部 .vue 文件（按名排序保证输出稳定）。 */
+/** 递归收集扫描根下全部 .vue 文件（按名排序保证输出稳定）：遍历机制归守门家族
+ *  共享单点 walkTextFiles（#1680 收口），扩展名闭集经 options 注入。 */
 export function collectVueFiles(root: string): string[] {
-  const out: string[] = [];
-  const visit = (dir: string): void => {
-    for (const entry of readdirSync(dir, { withFileTypes: true }).sort((a, b) =>
-      a.name.localeCompare(b.name),
-    )) {
-      const full = join(dir, entry.name);
-      if (entry.isDirectory()) visit(full);
-      else if (entry.name.endsWith(".vue")) out.push(full);
-    }
-  };
-  visit(root);
-  return out;
+  return walkTextFiles(root, "", { extensions: VUE_EXTENSIONS }).map((f) => f.abs);
 }
 
 /** 检查单个 .vue 文件：返回是否携带 <style> 块与解析失败信息（如有）。

@@ -62,7 +62,8 @@ function makeFixture(omit?: string): string {
  *  tsconfig.scripts.json 工程的类型检查与 oxfmt 格式约定保稳，漂移时在本处显式报错。
  *  返回变体脚本绝对路径（写入仓库 node_modules 下：Bun 依赖解析随文件位置向上
  *  走，脱离仓库树则 vue/compiler-sfc 不可达；node_modules 已 gitignore，不污染
- *  工作树状态，afterAll 统一清理）。 */
+ *  工作树状态，afterAll 统一清理。#1680 库拆分后脚本 import ./gate-primitives.ts，
+ *  变体目录里一并落库副本，相对解析才可达）。 */
 function makeWhitelistMutant(entry: string): string {
   const needle = `  "${entry}",\n`;
   const source = readFileSync(script, "utf8");
@@ -71,6 +72,10 @@ function makeWhitelistMutant(entry: string): string {
   }
   const dir = mkdtempSync(join(process.cwd(), "node_modules", "check-style-blocks-mutant-"));
   tempDirs.push(dir);
+  writeFileSync(
+    join(dir, "gate-primitives.ts"),
+    readFileSync(join(process.cwd(), "scripts", "gate-primitives.ts"), "utf8"),
+  );
   const mutant = join(dir, "check-style-blocks.ts");
   writeFileSync(mutant, source.replace(needle, ""));
   return mutant;

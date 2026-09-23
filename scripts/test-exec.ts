@@ -55,8 +55,8 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { cpus } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-// 复用结构守门的 Rust 词法掩码（注释掩去、字面量保留）——不新建第二份词法器。
-import { maskNonCode } from "./check-structure.ts";
+// 复用守门家族共享原语库的 Rust 词法掩码（注释掩去、字面量保留）——不新建第二份词法器。
+import { lineAt, maskNonCode, RUST_EXTENSIONS, walkTextFiles } from "./gate-primitives.ts";
 
 /** 根包（Rust workspace 根 = tauri 应用包）目录名，相对仓库根。 */
 const SRC_TAURI_DIR_NAME = "src-tauri";
@@ -735,35 +735,32 @@ export interface CoverageResult {
  * 路径）。只对齐其中一部分会给「已等价」的假信心，故取 fail loud 处置：测试运行期
  * （`env::var` / `env::var_os`；编译期 `env!` 不受影响）不得读这些变量，命中即红，
  * 由引入者显式扩展执行器并更新本守门。构建脚本的构建期读取不属测试运行期，跳过。
- * 扫描前经结构守门的 Rust 词法掩码（`maskNonCode(…, keepLiterals=true)`）掩去
+ * 扫描前经守门共享原语库的 Rust 词法掩码（`maskNonCode(…, keepLiterals=true)`）掩去
  * 注释、保留字面量——注释里提到这些变量名不误报，字面量本身才是判据。
  */
 const CARGO_RUNTIME_ENV_PATTERN = /\benv::var(?:_os)?\s*\(\s*"(CARGO_[A-Z0-9_]+|OUT_DIR)"/g;
 
 function cargoRuntimeEnvProblems(rootDir: string): string[] {
   const problems: string[] = [];
-  const walk = (dir: string): void => {
-    if (!isDirectory(dir)) return;
-    for (const entry of readdirSync(dir).sort()) {
-      const path = join(dir, entry);
-      if (isDirectory(path)) {
-        if (entry === "target") continue;
-        walk(path);
-        continue;
-      }
-      if (!entry.endsWith(".rs") || entry === "build.rs") continue;
-      const masked = maskNonCode(readFileSync(path, "utf8"), true);
-      for (const match of masked.matchAll(CARGO_RUNTIME_ENV_PATTERN)) {
-        const line = masked.slice(0, match.index ?? 0).split("\n").length;
-        problems.push(
-          `✗ 执行器等价性：${relative(rootDir, path)}:${line} 运行期读 cargo 注入环境变量 \`${match[1]}\`——` +
-            `执行器只对齐 cwd 与 RUST_TEST_THREADS，不复制该环境，测试将读到未定义值。` +
-            `请改走 cwd 相对定位，或先扩展 scripts/test-exec.ts 的 runChild 并更新本守门（issue #1112）`,
-        );
-      }
+  const scanRoot = join(rootDir, SRC_TAURI_DIR_NAME);
+  if (!isDirectory(scanRoot)) return problems;
+  // 遍历机制归守门家族共享单点 walkTextFiles（#1680 收口）：target/ 剪枝经 options
+  // 注入，build.rs 豁免是本守门扫描边界政策、walk 后按文件名过滤。
+  const files = walkTextFiles(scanRoot, "", {
+    extensions: RUST_EXTENSIONS,
+    skipDirs: new Set(["target"]),
+  }).filter((f) => f.rel.split("/").pop() !== "build.rs");
+  for (const file of files) {
+    const masked = maskNonCode(readFileSync(file.abs, "utf8"), true);
+    for (const match of masked.matchAll(CARGO_RUNTIME_ENV_PATTERN)) {
+      const line = lineAt(masked, match.index);
+      problems.push(
+        `✗ 执行器等价性：${relative(rootDir, file.abs)}:${line} 运行期读 cargo 注入环境变量 \`${match[1]}\`——` +
+          `执行器只对齐 cwd 与 RUST_TEST_THREADS，不复制该环境，测试将读到未定义值。` +
+          `请改走 cwd 相对定位，或先扩展 scripts/test-exec.ts 的 runChild 并更新本守门（issue #1112）`,
+      );
     }
-  };
-  walk(join(rootDir, SRC_TAURI_DIR_NAME));
+  }
   return problems;
 }
 
