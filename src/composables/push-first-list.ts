@@ -1,6 +1,7 @@
 import { ref } from "vue";
 import type { Ref } from "vue";
 import { listen } from "@tauri-apps/api/event";
+import { createLatestWins, type LatestWinsToken } from "@ledger/latest-wins";
 
 /**
  * push-first 清单生命周期工厂（ADR-0123）：领域清单 store 共享的同一套机制单点——
@@ -47,23 +48,22 @@ export function createPushFirstList<T>(
   /** 在途加载 promise（并发调用合并去重）。 */
   let inFlight: Promise<void> | null = null;
   /** 竞态纪元：invalidate 推进，迟到旧纪元结果按过期作废（ADR-0040 竞态语义）。
-   *  本纪元簿记是工厂机制本体（单点），非调用点手搓竞态守卫——同 useLoadable
-   *  的 seq 豁免纪律（ADR-0123 决策 4 修订注）；check-async-guards 规则 1 的
-   *  检测面（let *seq = 0）不含本形态，评审兜底以此注为凭。 */
-  let epoch = 0;
+   *  纪元簿记自 #1678 起消费共享 module @ledger/latest-wins——refresh 采样当前纪元
+   *  不推进（在途合并），invalidate 推进作废；本工厂不再自持计数器。 */
+  const wins = createLatestWins();
 
   /** 一次完整重拉：拉取期间保留旧数据，成功后整体替换；任一失败整体失败。
    *  加载期间被 invalidate 的旧纪元：结果与失败一并作废、对旧调用方静默 resolve。 */
-  async function reload(myEpoch: number): Promise<void> {
+  async function reload(myToken: LatestWinsToken): Promise<void> {
     status.value = "loading";
     try {
       const snapshot = await load();
-      if (myEpoch !== epoch) return;
+      if (myToken.isStale()) return;
       apply(snapshot);
       version.value += 1;
       status.value = "ready";
     } catch (e) {
-      if (myEpoch !== epoch) return;
+      if (myToken.isStale()) return;
       status.value = "error";
       throw e;
     }
@@ -72,8 +72,8 @@ export function createPushFirstList<T>(
   /** 在途去重：并发调用（self-init / refresh / 写后重拉 / 事件）合并为同一次加载。 */
   function refresh(): Promise<void> {
     if (inFlight) return inFlight;
-    const myEpoch = epoch;
-    const pending = reload(myEpoch).finally(() => {
+    const myToken = wins.observe();
+    const pending = reload(myToken).finally(() => {
       // invalidate 已放行新加载时只清自己的槽位，不得动新纪元的在途槽
       if (inFlight === pending) inFlight = null;
     });
@@ -83,7 +83,7 @@ export function createPushFirstList<T>(
 
   /** 作废在途：推进纪元 + loading 收尾（不发起新任务，重拉由调用方随后 refresh）。 */
   function invalidate(): void {
-    epoch += 1;
+    wins.invalidate();
     inFlight = null;
     if (status.value === "loading") {
       status.value = version.value > 0 ? "ready" : "idle";

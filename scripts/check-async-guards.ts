@@ -6,14 +6,16 @@
 // 六处收编进 useLoadable 后，手搓竞态序号已在源码面归零；本门把约束固化成可执行
 // 检查（仿 scripts/check-structure.ts 思路，Bun 运行时 ADR-0083）。
 //
-// 规则 1（硬零容忍）：手搓竞态序号 `let <名>seq = 0` 形态即红。竞态序号唯一合法
-// 住址 useLoadable 接缝本体（#1008 收编后的单点；#1318 起随包搬至
-// packages/loadable/src/useLoadable.ts，豁免坐标与扫描根随迁——构建期契约保留，
-// 只换收口点坐标，ADR-0118 决策 6）——与原生事务语句禁令的「唯一合法住址」同款
-// 纪律（check-structure / #1014）。形态较 #1039 票面正则加宽一处：前缀 `\w+` →
-// `\w*`，裸名 `let seq = 0` 同样识别（票面口径下零误伤，实测仅接缝本体命中）；
-// 命名尾部通配（seqNum 等）与非 let 形态不在检测面，靠评审兜底。住址文件不可达
-// 即红（搬迁未同步 SEQ_SEAM_FILE 时拒绝白名单静默失效，同结构守门规则⑥⑦形制）。
+// 规则 1（硬零容忍）：手搓竞态纪元 `let <名>(seq|epoch|generation) = 0` 形态即红。
+// 竞态纪元唯一合法住址共享 module @ledger/latest-wins 本体（#1678：机制实体化成包，
+// 五处消费点收敛；#1008 收编后的旧住址 useLoadable 序号改经 module 消费、不再自持，
+// 豁免随迁）。规则对准概念（手搓纪元）而不是某个名字：seq / epoch / generation 三名
+// 别名一并识别（#1678 收敛前的三名），裸名与任意前缀（`\w*`）同面——与原生事务
+// 语句禁令的「唯一合法住址」同款纪律（check-structure / #1014）。命名尾部通配
+//（seqNum / epochAt 等）、非 let 形态（const 字段、ref(0) 计数、函数参数）与未来
+// 新别名不在检测面，靠评审兜底——已知盲区显式声明于此，不设注释豁免通道。住址
+// 文件不可达即红（搬迁未同步 SEQ_SEAM_FILE 时拒绝白名单静默失效，同结构守门
+// 规则⑥⑦形制）。
 //
 // 规则 2（基线冻结、只减不增）：catch 内直弹 toast 模板
 // `message.error(t(…errorMessage…))` 不能零容忍——#1039 交付时实测 61 处 / 31 文件
@@ -45,14 +47,14 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { pathToFileURL, fileURLToPath } from "node:url";
 
-/** 规则 1 形态：手搓竞态序号（`\w*` 含裸名 seq；`\b` 防吞后缀，seqNum 不在检测面） */
-const HAND_ROLLED_SEQ_PATTERN = /\blet\s+\w*[Ss]eq\s*=\s*0\b/;
+/** 规则 1 形态：手搓竞态纪元（seq/epoch/generation 三名别名一并识别；`\w*` 含裸名；
+ *  `\b` 防吞后缀——seqNum / epochAt 等尾部通配不在检测面，已知盲区见文件头） */
+const HAND_ROLLED_EPOCH_PATTERN = /\blet\s+\w*(?:[Ss]eq|[Ee]poch|[Gg]eneration)\s*=\s*0\b/;
 
-/** 规则 1 唯一合法住址（相对仓库根路径）：useLoadable 接缝本体（#1008 收编后的
- *  竞态守卫单点，其内部 `let seq = 0` 是实现细节而非手搓守卫；#1318 随包搬迁，
- *  坐标同步为包内路径）。导出供包装测试同源引用（TOAST_BASELINE 同款纪律，
- *  单一事实源无双源漂移）。 */
-export const SEQ_SEAM_FILE = "packages/loadable/src/useLoadable.ts";
+/** 规则 1 唯一合法住址（相对仓库根路径）：@ledger/latest-wins 共享 module 本体
+ *  （#1678：竞态纪元机制实体化，其内部 `let epoch = 0` 是机制实现而非手搓守卫）。
+ *  导出供包装测试同源引用（TOAST_BASELINE 同款纪律，单一事实源无双源漂移）。 */
+export const SEQ_SEAM_FILE = "packages/latest-wins/src/latest-wins.ts";
 
 /** 扫描根清单（相对仓库根）：src 应用壳 + 全部 packages 子包 src 树——登记面即
  *  扫描面，清单完整性由磁盘自证兜底（见 collectUnregisteredPackageSrcRoots）：
@@ -62,6 +64,7 @@ const SCAN_ROOTS: readonly string[] = [
   "packages/api/src",
   "packages/field-errors/src",
   "packages/i18n/src",
+  "packages/latest-wins/src",
   "packages/loadable/src",
   "packages/modal-intent/src",
   "packages/money/src",
@@ -240,8 +243,8 @@ function main(): void {
   // 即红，拒绝白名单静默失效（清单漂移 fail loud，同结构守门规则⑥⑦登记目标形制）
   if (!existsSync(join(repoRoot, SEQ_SEAM_FILE))) {
     problems.push(
-      `✗ 竞态守卫唯一合法住址不可达：${SEQ_SEAM_FILE}——useLoadable 接缝文件删除/搬迁` +
-        `后未同步 SEQ_SEAM_FILE 与 SCAN_ROOTS（清单漂移 fail loud，#1039 规则 1 / #1318 随包搬迁）`,
+      `✗ 竞态纪元唯一合法住址不可达：${SEQ_SEAM_FILE}——@ledger/latest-wins 共享 module 文件` +
+        `删除/搬迁后未同步 SEQ_SEAM_FILE 与 SCAN_ROOTS（清单漂移 fail loud，#1678 规则 1）`,
     );
   }
 
@@ -254,21 +257,21 @@ function main(): void {
     );
   }
 
-  // 规则 1：手搓竞态序号，硬零容忍（唯一合法住址豁免）
-  let seqHits = 0;
+  // 规则 1：手搓竞态纪元，硬零容忍（唯一合法住址豁免）
+  let epochHits = 0;
   // 规则 2：按文件计数，与基线全等校验
   const toastCounts = new Map<string, number>();
   const toastLinesByFile = new Map<string, string[]>();
   for (const f of files) {
     const source = readFileSync(f.abs, "utf8");
     if (f.rel !== SEQ_SEAM_FILE) {
-      for (const hit of scanLines(source, HAND_ROLLED_SEQ_PATTERN)) {
-        seqHits++;
+      for (const hit of scanLines(source, HAND_ROLLED_EPOCH_PATTERN)) {
+        epochHits++;
         problems.push(
-          `✗ 手搓竞态序号：${f.rel}:${hit.line}（${hit.text}）\n` +
-            `    竞态守卫一律走 useLoadable 接缝（#1008：后发覆盖先发、迟到结果作废与\n` +
-            `    loading/错误收尾一体化）；手搓序号已归零，此处为回潮——唯一合法住址 ` +
-            `${SEQ_SEAM_FILE}（接缝本体，#1039 规则 1）`,
+          `✗ 手搓竞态纪元：${f.rel}:${hit.line}（${hit.text}）\n` +
+            `    竞态裁决一律走共享 module @ledger/latest-wins（#1678：begin/observe/` +
+            `invalidate + token isStale，最新胜出裁决唯一实现，五处消费点收敛）；手搓` +
+            `纪元已归零，此处为回潮——唯一合法住址 ${SEQ_SEAM_FILE}（module 本体，规则 1）`,
         );
       }
     }
@@ -316,14 +319,14 @@ function main(): void {
   if (problems.length > 0) {
     for (const p of problems) console.error(p);
     console.error(
-      `❌ 异步守门失败：手搓竞态序号 ${seqHits} 处（唯一合法住址 ${SEQ_SEAM_FILE}）· ` +
+      `❌ 异步守门失败：手搓竞态纪元 ${epochHits} 处（唯一合法住址 ${SEQ_SEAM_FILE}）· ` +
         `toast 基线失配 ${toastMismatches} 处（基线 ${Object.keys(TOAST_BASELINE).length} 文件）` +
-        `——手搓异步守卫一律走 Loadable（#1008 / #1039，ADR-0040 当点一处 → 走查三处的教训）`,
+        `——手搓竞态纪元一律走 @ledger/latest-wins（#1678；#1008 / #1039 收编史，ADR-0040 当点一处 → 走查三处的教训）`,
     );
     process.exit(1);
   }
   console.log(
-    `✅ 异步守门：${files.length} 个前端源文件 · 手搓竞态序号 0（唯一合法住址 ${SEQ_SEAM_FILE}）· ` +
+    `✅ 异步守门：${files.length} 个前端源文件 · 手搓竞态纪元 0（唯一合法住址 ${SEQ_SEAM_FILE}）· ` +
       `catch 直弹 toast 基线全等（${toastCounts.size} 文件 ${scannedToastTotal} 处，只减不增，#1039）`,
   );
 }

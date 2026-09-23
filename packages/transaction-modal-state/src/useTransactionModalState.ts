@@ -1,6 +1,7 @@
 import { useMessage } from "naive-ui";
 import type { Ref } from "vue";
 import { useModalIntent } from "@ledger/modal-intent";
+import { createLatestWins, type LatestWinsToken } from "@ledger/latest-wins";
 import { api } from "@ledger/api";
 import { errorMessage } from "@ledger/utils/errors";
 import { t } from "@ledger/i18n";
@@ -23,8 +24,7 @@ import type {
  * 已迁为弹窗意图编排通用工厂 ModalIntent（useModalIntent，ADR-0072）之上的首个适配器：
  * 意图与序号两面由工厂持有（意图落位即递增序号、关闭不重置），本模块只补交易弹窗族
  * 特有的异步时序——「先取买卖/转换明细再开窗、失败不开窗、最后一次开启胜出」守卫留适配器层，
- * 不上浮通用工厂。适配器代数计数器与工厂序号是两个计数器：代数随每次开启尝试递增
- * （含取数失败），序号只在意图真正落位递增，语义不同、不合并。
+ * 不上浮通用工厂。适配器代数（竞态纪元，#1678 起消费共享 module @ledger/latest-wins）随每次开启尝试递增（含取数失败），工厂序号只在意图真正落位递增——代数=竞态纪元、序号=落位计数，语义不同、不合并。
  *
  * 依赖 direct-import（api 与 useMessage），不做注入（先例 useScheduledPlanList；
  * getTransactionTrade / getTransactionConvert 各只有一个实现，注入是 YAGNI）。只内化
@@ -109,30 +109,30 @@ export function useTransactionModalState(): UseTransactionModalStateReturn {
   } = useModalIntent<TransactionModalIntent>();
 
   /**
-   * 代数守卫（last-open-wins）：每次 open 递增一代；异步取数返回后，代数已过期
+   * 代数守卫（last-open-wins）：每次 open 开启新纪元；异步取数返回后，纪元已过期
    * （期间又有新的 open 或 close）则整体丢弃——不落意图（工厂序号不递增）、不开窗，
-   * 迟到的失败也不报错。消灭「慢 A 覆盖快 B」竞态；close 一并推进代数，
+   * 迟到的失败也不报错。消灭「慢 A 覆盖快 B」竞态；close 一并推进纪元（invalidate），
    * 使「关闭清回空终态」成为接口保证——取数在途时关闭，迟到的成功不再重开弹窗。
    *
-   * 代数与工厂序号是两个计数器（ADR-0072）：代数随每次开启尝试递增（含取数失败，
-   * 失败路径只推进代数、序号不动）；序号只在意图真正落位时经工厂递增。
+   * 纪元簿记自 #1678 起消费共享 module @ledger/latest-wins；代数（竞态纪元）与工厂
+   * 序号（落位计数，意图落位才递增、从不过期比较）语义不同、不合并。
    */
-  let generation = 0;
+  const wins = createLatestWins();
 
-  /** 结算一次开启：代数仍最新才经工厂落位意图并递增序号（同步意图即时结算，edit 待取数后结算）。 */
-  function settle(gen: number, next: TransactionModalIntent) {
-    if (gen !== generation) return;
+  /** 结算一次开启：纪元仍最新才经工厂落位意图并递增序号（同步意图即时结算，edit 待取数后结算）。 */
+  function settle(myToken: LatestWinsToken, next: TransactionModalIntent) {
+    if (myToken.isStale()) return;
     landIntent(next);
   }
 
   async function open(request: TransactionModalOpenRequest): Promise<void> {
-    const gen = ++generation;
+    const myToken = wins.begin();
     if (request.type === "create") {
-      settle(gen, { type: "create", kind: request.kind });
+      settle(myToken, { type: "create", kind: request.kind });
       return;
     }
     if (request.type === "refund" || request.type === "add-item") {
-      settle(gen, { type: request.type, row: request.row });
+      settle(myToken, { type: request.type, row: request.row });
       return;
     }
     const { row } = request;
@@ -141,7 +141,7 @@ export function useTransactionModalState(): UseTransactionModalStateReturn {
     // 不落意图（「意图非空即显示」，落一个渲染不出的意图会破坏该不变式）。
     if (request.type === "detail") {
       if (row.kind === "dividend") {
-        settle(gen, { type: "detail", row, detail: { kind: "dividend" } });
+        settle(myToken, { type: "detail", row, detail: { kind: "dividend" } });
         return;
       }
       if (row.kind !== "convert" && row.kind !== "split") return;
@@ -150,29 +150,29 @@ export function useTransactionModalState(): UseTransactionModalStateReturn {
           row.kind === "convert"
             ? { kind: "convert", convert: await api.getTransactionConvert(row.id) }
             : { kind: "split", split: await api.getTransactionSplit(row.id) };
-        settle(gen, { type: "detail", row, detail });
+        settle(myToken, { type: "detail", row, detail });
       } catch (e) {
-        if (gen !== generation) return; // 迟到的失败整体丢弃
+        if (myToken.isStale()) return; // 迟到的失败整体丢弃
         message.error(t("transactions.detail.loadFailed", { msg: errorMessage(e) }));
       }
       return;
     }
     // edit：先取买卖明细再开窗（时序内化）。非买卖行无明细面，开窗即开。
     if (row.kind !== "buy" && row.kind !== "sell") {
-      settle(gen, { type: "edit", row, trade: null });
+      settle(myToken, { type: "edit", row, trade: null });
       return;
     }
     try {
       const trade = await api.getTransactionTrade(row.id);
-      settle(gen, { type: "edit", row, trade });
+      settle(myToken, { type: "edit", row, trade });
     } catch (e) {
-      if (gen !== generation) return; // 迟到的失败整体丢弃
+      if (myToken.isStale()) return; // 迟到的失败整体丢弃
       message.error(t("transactions.modal.editFailed", { msg: errorMessage(e) }));
     }
   }
 
   function close() {
-    generation += 1; // 关闭推进代数：取数在途时关闭，迟到的成功不再重开弹窗
+    wins.invalidate(); // 关闭推进纪元：取数在途时关闭，迟到的成功不再重开弹窗
     clearIntent();
   }
 

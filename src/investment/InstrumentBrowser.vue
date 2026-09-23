@@ -8,7 +8,7 @@ import { t } from "@ledger/i18n";
 import { useInstrumentInfoSync } from "@/investment/useInstrumentInfoSync";
 import { usePricesChanged } from "@/investment/usePricesChanged";
 import { useAppDialog } from "@/composables/useAppDialog";
-import { createLatestWinsGuard } from "@/composables/latest-wins";
+import { createLatestWins } from "@ledger/latest-wins";
 import { SEARCH_DEBOUNCE_MS } from "@/composables/search-debounce";
 import { useWindowTier } from "@ledger/window-tier";
 import SyncProgressBar from "@/investment/SyncProgressBar.vue";
@@ -59,9 +59,10 @@ const page = ref(1);
 const pageSize = 50;
 const loading = ref(false);
 let searchTimer: ReturnType<typeof setTimeout> | undefined;
-/** 列表查询在途竞态纪元（issue #1401）：市场 / 只看持仓 / 翻页无防抖，快速切换会
- *  与在途查询乱序；每次 load 开启新纪元，迟到旧纪元结果不落位（items 与 total 同源） */
-const loadEpoch = createLatestWinsGuard();
+/** 列表查询在途竞态纪元（issue #1401，#1678 起消费共享 module）：市场 / 只看持仓 /
+ *  翻页无防抖，快速切换会与在途查询乱序；每次 load 开启新纪元，迟到旧纪元结果不落位
+ *  （items 与 total 同源） */
+const loadWins = createLatestWins();
 
 const marketOptions = computed(() =>
   // 筛选下拉不展开美股三交易所选项（后端筛选为精确匹配，UI 只显「美股」，
@@ -79,7 +80,7 @@ function enumLabel(
 }
 
 async function load() {
-  const myEpoch = loadEpoch.start();
+  const myToken = loadWins.begin();
   loading.value = true;
   try {
     const res = await api.listInstruments({
@@ -90,11 +91,11 @@ async function load() {
       page: page.value,
       page_size: pageSize,
     });
-    if (!loadEpoch.isCurrent(myEpoch)) return;
+    if (myToken.isStale()) return;
     instruments.value = res.items;
     total.value = res.total;
   } finally {
-    if (loadEpoch.isCurrent(myEpoch)) loading.value = false;
+    if (!myToken.isStale()) loading.value = false;
   }
 }
 

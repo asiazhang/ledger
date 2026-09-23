@@ -10,6 +10,7 @@
   "dependencies": {
     "@ledger/api": "workspace:*",
     "@ledger/i18n": "workspace:*",
+    "@ledger/latest-wins": "workspace:*",
     "@ledger/modal-intent": "workspace:*",
     "@ledger/types": "workspace:*",
     "@ledger/utils": "workspace:*",

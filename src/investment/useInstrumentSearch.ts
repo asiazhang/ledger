@@ -1,6 +1,6 @@
 import { ref, type Ref } from "vue";
 import { api } from "@ledger/api";
-import { createLatestWinsGuard } from "@/composables/latest-wins";
+import { createLatestWins } from "@ledger/latest-wins";
 import { SEARCH_DEBOUNCE_MS } from "@/composables/search-debounce";
 import type { Instrument } from "@ledger/types";
 
@@ -32,14 +32,15 @@ export function useInstrumentSearch(): UseInstrumentSearchReturn {
   const items = ref<Instrument[]>([]);
   const searching = ref(false);
   let timer: ReturnType<typeof setTimeout> | undefined;
-  /** 搜索在途竞态纪元（issue #1401）：每次输入开启新纪元，迟到旧纪元结果不落位 */
-  const epoch = createLatestWinsGuard();
+  /** 搜索在途竞态纪元（issue #1401 首例，#1678 起消费共享 module）：每次输入开启
+   *  新纪元，迟到旧纪元结果不落位 */
+  const wins = createLatestWins();
 
   function search(query: string) {
-    const myEpoch = epoch.start();
+    const myToken = wins.begin();
     clearTimeout(timer);
     timer = setTimeout(async () => {
-      if (!epoch.isCurrent(myEpoch)) return;
+      if (myToken.isStale()) return;
       if (!query.trim()) {
         items.value = [];
         searching.value = false;
@@ -48,13 +49,13 @@ export function useInstrumentSearch(): UseInstrumentSearchReturn {
       searching.value = true;
       try {
         const res = await api.listInstruments({ search: query.trim(), page_size: 50 });
-        if (!epoch.isCurrent(myEpoch)) return;
+        if (myToken.isStale()) return;
         items.value = res.items;
       } catch {
-        if (!epoch.isCurrent(myEpoch)) return;
+        if (myToken.isStale()) return;
         items.value = [];
       } finally {
-        if (epoch.isCurrent(myEpoch)) searching.value = false;
+        if (!myToken.isStale()) searching.value = false;
       }
     }, SEARCH_DEBOUNCE_MS);
   }
