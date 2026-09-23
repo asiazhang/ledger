@@ -45,7 +45,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL, fileURLToPath } from "node:url";
-import { maskNonCode, walkTextFiles, type WalkedFile } from "./gate-primitives.ts";
+import { maskNonCode, RUST_EXTENSIONS, walkTextFiles, type WalkedFile } from "./gate-primitives.ts";
 
 /** 唯一编排点：壳层文件（相对 src-tauri 根，#1472 起扫描面基准同址）与函数名
  *  （issue #961 单点） */
@@ -206,7 +206,7 @@ function isTestFile(relPath: string): boolean {
 
 /** 扫描面：Rust 源文件扩展名闭集 + `target/` 目录剪枝（#1472：构建产物不参与
  *  扫描面，防膨胀与生成代码假红），walkTextFiles 消费参数。 */
-const RUST_EXTENSIONS: ReadonlySet<string> = new Set([".rs"]);
+/** 扩展名闭集消费库 RUST_EXTENSIONS（#1680 收口全等副本）；target/ 剪枝是本门政策 */
 const SKIP_DIRS: ReadonlySet<string> = new Set(["target"]);
 
 /** 收集目录下全部非测试 .rs 文件：遍历机制归守门家族共享单点 walkTextFiles

@@ -50,7 +50,7 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { maskComments } from "./gate-primitives.ts";
+import { maskComments, walkTextFiles, type WalkedFile } from "./gate-primitives.ts";
 
 /** 成员包登记条目（单一事实源，issue #1149）：dir 相对仓库根。 */
 export interface PackageEntry {
@@ -203,8 +203,8 @@ const FROM_SPECIFIER_PATTERN = /\bfrom\s*['"]([^'"]+)['"]/;
 const DYNAMIC_IMPORT_PATTERN = /\bimport\s*\(\s*['"]([^'"]+)['"]/;
 const SIDE_EFFECT_IMPORT_PATTERN = /\bimport\s+['"]([^'"]+)['"]/;
 
-/** 扫描的源文件扩展名（Vue SFC 的 script 块与 TS 源码） */
-const SOURCE_EXTENSIONS = [".ts", ".tsx", ".vue"];
+/** 扫描的源文件扩展名闭集（walkTextFiles 消费参数；Vue SFC 的 script 块与 TS 源码） */
+const SOURCE_EXTENSIONS: ReadonlySet<string> = new Set([".ts", ".tsx", ".vue"]);
 
 /** 单条 import 说明符命中：行号（1 起算）、原文行、说明符 */
 export interface ImportHit {
@@ -244,19 +244,12 @@ function parseLedgerSpecifier(specifier: string): { name: string; subpath?: stri
   return { name: `${PACKAGE_NAME_PREFIX}${m[1]}`, subpath: m[2] };
 }
 
-/** 递归收集目录下全部源文件（相对路径排序保证输出确定） */
-function collectSourceFiles(dir: string, relBase: string): { abs: string; rel: string }[] {
-  const out: { abs: string; rel: string }[] = [];
-  if (!existsSync(dir)) return out;
-  for (const entry of readdirSync(dir, { withFileTypes: true }).sort((a, b) =>
-    a.name.localeCompare(b.name),
-  )) {
-    const abs = join(dir, entry.name);
-    const rel = relBase ? `${relBase}/${entry.name}` : entry.name;
-    if (entry.isDirectory()) out.push(...collectSourceFiles(abs, rel));
-    else if (SOURCE_EXTENSIONS.some((ext) => entry.name.endsWith(ext))) out.push({ abs, rel });
-  }
-  return out;
+/** 递归收集目录下全部源文件（相对路径排序保证输出确定）：遍历机制归守门家族
+ *  共享单点 walkTextFiles（#1680 收口），扩展名闭集经 options 注入；目录缺失
+ *  返回空集（夹具形态）。 */
+function collectSourceFiles(dir: string, relBase: string): WalkedFile[] {
+  if (!existsSync(dir)) return [];
+  return walkTextFiles(dir, relBase, { extensions: SOURCE_EXTENSIONS });
 }
 
 /** 规则④：深导入子路径是否命中目标包 exports 入口（精确键或 `./*` 通配） */

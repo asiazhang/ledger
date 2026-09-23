@@ -43,7 +43,7 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { lineAt, maskNonCode, walkTextFiles } from "./gate-primitives.ts";
+import { lineAt, maskNonCode, RUST_EXTENSIONS, walkTextFiles } from "./gate-primitives.ts";
 import { INFRA_SRC_REL } from "./check-structure.ts";
 
 const DEFAULT_SRC_TAURI = join(fileURLToPath(import.meta.url), "..", "..", "src-tauri");
@@ -214,8 +214,7 @@ function isTestPath(relSegments: string[]): boolean {
   );
 }
 
-/** 扫描面：Rust 源文件（扩展名闭集，遍历机制归家族共享单点 walkTextFiles） */
-const RUST_EXTENSIONS: ReadonlySet<string> = new Set([".rs"]);
+/** 扫描面：Rust 源文件扩展名闭集——消费库 RUST_EXTENSIONS（#1680 收口全等副本） */
 
 function main(): void {
   const srcTauri = process.argv[2] ? resolve(process.argv[2]) : DEFAULT_SRC_TAURI;

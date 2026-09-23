@@ -94,9 +94,10 @@
 // 用法：bun scripts/check-test-stubs.ts [testsDir] [seamHomeDir]
 //   seamHomeDir 默认 packages/test-support/src；packages 根由其上溯两级派生。
 
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
+import { lineAt, walkTextFiles } from "./gate-primitives.ts";
 
 const testsDir = resolve(process.argv[2] ?? join("src", "__tests__"));
 // seam 宿主目录（issue #1152）：共享测试支持包源码住址，登记处（reference-stubs.ts）
@@ -126,22 +127,17 @@ function extractCommands(): string[] {
 }
 
 // —— 递归收集 .ts 文件（目录缺失返回空：夹具可无 packages 子树；接缝自测豁免） ——
+// 遍历机制归守门家族共享单点 walkTextFiles（#1680 收口）；keepName 谓词与接缝
+// 自测豁免（invoke-seam.test.ts）是本守门政策，walk 后按文件名过滤。
+const TS_EXTENSIONS: ReadonlySet<string> = new Set([".ts"]);
 function walk(dir: string, keepName: (name: string) => boolean): string[] {
-  const out: string[] = [];
-  if (!existsSync(dir)) return out;
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    const p = join(dir, entry.name);
-    if (entry.isDirectory()) {
-      out.push(...walk(p, keepName));
-    } else if (
-      entry.name.endsWith(".ts") &&
-      entry.name !== "invoke-seam.test.ts" &&
-      keepName(entry.name)
-    ) {
-      out.push(p);
-    }
-  }
-  return out;
+  if (!existsSync(dir)) return [];
+  return walkTextFiles(dir, "", { extensions: TS_EXTENSIONS })
+    .filter((f) => {
+      const name = f.rel.split("/").pop() ?? "";
+      return name !== "invoke-seam.test.ts" && keepName(name);
+    })
+    .map((f) => f.abs);
 }
 
 // 扫描目标三区间（互斥；rel 基准各归其主，白名单按 posix 相对路径比对）：
@@ -247,12 +243,6 @@ function extractCallbackUnits(source: string): CallbackUnit[] {
   return units;
 }
 
-function lineOf(source: string, offset: number): number {
-  let line = 1;
-  for (let i = 0; i < offset; i++) if (source[i] === "\n") line++;
-  return line;
-}
-
 // —— 规则 2：同回调内同名命令 if 接线去重 ——
 // 仅统计活代码：接线匹配若落在注释/字符串内（与某个注释/字符串范围重叠且伸出其外），
 // 不计数；匹配自身携带的命令字符串完全包含于匹配内，不影响判定。
@@ -280,7 +270,7 @@ function findDuplicateWiring(rel: string, source: string, units: CallbackUnit[])
     while ((m = IF_WIRING.exec(text))) {
       if (!isLive(m.index, m[0].length, localMasks)) continue;
       if (!byCmd.has(m[2])) byCmd.set(m[2], []);
-      byCmd.get(m[2])!.push(lineOf(source, unit.start + m.index));
+      byCmd.get(m[2])!.push(lineAt(source, unit.start + m.index));
     }
     for (const [cmd, lines] of byCmd) {
       if (lines.length > 1) {
@@ -339,7 +329,7 @@ function findHandWrittenDispatchStub(rel: string, source: string, units: Callbac
     }
     if (dispatched) {
       hits.push(
-        `  ${rel}:${lineOf(source, unit.start)}  手写 invoke 分发桩（mockImplementation 全量替换 + cmd 分发）——改走唯一接缝 wireInvokeSeam 两表布线，一次性覆盖用 mockImplementationOnce 委托`,
+        `  ${rel}:${lineAt(source, unit.start)}  手写 invoke 分发桩（mockImplementation 全量替换 + cmd 分发）——改走唯一接缝 wireInvokeSeam 两表布线，一次性覆盖用 mockImplementationOnce 委托`,
       );
     }
   }

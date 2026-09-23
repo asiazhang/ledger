@@ -99,6 +99,7 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { pathToFileURL } from "node:url";
+import { lineAt, RUST_EXTENSIONS, walkTextFiles } from "./gate-primitives.ts";
 
 /** 规则 3 的固定时刻登记处住址（相对 src-tauri 根，单一来源）：main 从该住址提取
  *  固定时刻常量现值作禁令清单（先例：同脚本规则 2 禁用种子表清单自 seed.rs 登记处
@@ -342,14 +343,11 @@ function findHits(
 }
 
 // ——— 文件收集：src/** 与 tests/** 下全部 .rs ———
+// 遍历机制归守门家族共享单点 walkTextFiles（#1680 收口）：.rs 扩展名闭集由库
+// RUST_EXTENSIONS 提供；本守门不豁免目录（tests/ 目录成员照扫、靠 isTestPath
+// 谓词分流豁免），遍历中剪枝与 walk 后过滤对 .rs 面输出全等。
 function walkRustFiles(dir: string): string[] {
-  const out: string[] = [];
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    const p = join(dir, entry.name);
-    if (entry.isDirectory()) out.push(...walkRustFiles(p));
-    else if (entry.name.endsWith(".rs")) out.push(p);
-  }
-  return out;
+  return walkTextFiles(dir, "", { extensions: RUST_EXTENSIONS }).map((f) => f.abs);
 }
 
 /**
@@ -485,11 +483,7 @@ function scanFiles(
       : extractCfgTestRegions(masked);
     if (regions.length === 0) continue;
 
-    const lineOf = (offset: number): number => {
-      let line = 1;
-      for (let k = 0; k < offset; k++) if (masked[k] === "\n") line++;
-      return line;
-    };
+    const lineOf = (offset: number): number => lineAt(masked, offset);
 
     for (const region of regions) {
       const text = masked.slice(region.start, region.end);

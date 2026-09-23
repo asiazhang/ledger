@@ -47,6 +47,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { pathToFileURL, fileURLToPath } from "node:url";
 
+import { lineAt, walkTextFiles, type WalkedFile } from "./gate-primitives.ts";
 /** 规则 1 形态：手搓竞态纪元（seq/epoch/generation 三名别名一并识别；`\w*` 含裸名；
  *  `\b` 防吞后缀——seqNum / epochAt 等尾部通配不在检测面，已知盲区见文件头） */
 const HAND_ROLLED_EPOCH_PATTERN = /\blet\s+\w*(?:[Ss]eq|[Ee]poch|[Gg]eneration)\s*=\s*0\b/;
@@ -163,30 +164,18 @@ function blankCommentLines(source: string): string {
     .join("\n");
 }
 
-interface SourceFileRef {
-  abs: string;
-  rel: string;
-}
+/** 扫描面扩展名闭集（walkTextFiles 消费参数）：本守门扫 .ts 与 .vue */
+const SCAN_EXTENSIONS: ReadonlySet<string> = new Set([".ts", ".vue"]);
 
 /** 递归收集扫描根下全部 .ts/.vue 文件（rel 相对仓库根，按相对路径排序保证输出确定；
- *  目录不存在时返回空集——缺口由住址可达检查兜底） */
-function collectSourceFiles(root: string, repoRoot: string): SourceFileRef[] {
-  const out: SourceFileRef[] = [];
-  const visit = (dir: string): void => {
-    if (!existsSync(dir)) return;
-    for (const entry of readdirSync(dir, { withFileTypes: true }).sort((a, b) =>
-      a.name.localeCompare(b.name),
-    )) {
-      const abs = join(dir, entry.name);
-      if (entry.isDirectory()) visit(abs);
-      else if (entry.name.endsWith(".ts") || entry.name.endsWith(".vue")) {
-        const rel = relative(repoRoot, abs).split("\\").join("/");
-        out.push({ abs, rel });
-      }
-    }
-  };
-  visit(root);
-  return out;
+ *  目录不存在时返回空集——缺口由住址可达检查兜底）：遍历机制归守门家族共享单点
+ *  walkTextFiles（#1680 收口），扩展名闭集经 options 注入、rel 归一留调用侧。 */
+function collectSourceFiles(root: string, repoRoot: string): WalkedFile[] {
+  if (!existsSync(root)) return [];
+  return walkTextFiles(root, "", { extensions: SCAN_EXTENSIONS }).map((f) => ({
+    abs: f.abs,
+    rel: relative(repoRoot, f.abs).split("\\").join("/"),
+  }));
 }
 
 interface LineHit {
@@ -206,13 +195,13 @@ function scanLines(source: string, pattern: RegExp): LineHit[] {
 }
 
 /** 跨行窗口扫描单文件（规则 2）：注释行置空后整窗匹配，返回命中处起始行号
- *  （1 起算；matchAll 非重叠逐处计数，一处跨行调用计 1） */
+ *  （1 起算；matchAll 非重叠逐处计数，一处跨行调用计 1）；行号定位消费
+ *  家族共享单点 lineAt（#1680 收口） */
 function scanCrossLine(source: string, pattern: RegExp): number[] {
   const blanked = blankCommentLines(source);
   const lines: number[] = [];
   for (const m of blanked.matchAll(pattern)) {
-    const start = m.index ?? 0;
-    lines.push(blanked.slice(0, start).split("\n").length);
+    lines.push(lineAt(blanked, m.index));
   }
   return lines;
 }

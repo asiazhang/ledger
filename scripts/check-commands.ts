@@ -18,7 +18,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL, fileURLToPath } from "node:url";
-import { maskComments, walkTextFiles } from "./gate-primitives.ts";
+import { lineAt, maskComments, RUST_EXTENSIONS, walkTextFiles } from "./gate-primitives.ts";
 
 /** 单条扫描边界违规：行号 1 起算 + 违规行原文 */
 export interface ScanError {
@@ -390,15 +390,15 @@ function finishEntries(entries: string[], problems: string[]): string[] {
 export function scanTsInvokeCalls(text: string): TsInvokeCall[] {
   const calls: TsInvokeCall[] = [];
   for (const m of matchInvokeCalls(maskComments(text))) {
-    const line = text.slice(0, m.index).split("\n").length;
+    // 行号定位消费家族共享单点 lineAt（#1680 收口内联行号计算副本）
+    const line = lineAt(text, m.index);
     const { keys, problems } = parseArgsObject(text, m.index + m[0].length);
     calls.push({ command: m[2], line, keys, problems });
   }
   return calls;
 }
 
-/** 扫描面：Rust 源文件扩展名闭集（walkTextFiles 消费参数） */
-const RUST_EXTENSIONS: ReadonlySet<string> = new Set([".rs"]);
+/** 扫描面：Rust 源文件扩展名闭集——消费库 RUST_EXTENSIONS（#1680 收口全等副本） */
 
 /** 收集目录下全部 .rs 文件：遍历机制归守门家族共享单点 walkTextFiles（#1625
  *  收口，#1637 起本脚本同源），localeCompare 排序保证输出确定；本脚本只需要
