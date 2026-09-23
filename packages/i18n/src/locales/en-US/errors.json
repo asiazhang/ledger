@@ -244,6 +244,10 @@
     "market-conflict": "market parameter {0} conflicts with the shape of stock code {1}, please verify and retry",
     "code-unresolvable": "cannot infer the market from the shape of stock code {0}, pass the market parameter explicitly"
   },
+  "market": {
+    "request-exhausted": "all market data hosts failed; check your network and retry",
+    "throttled": "the market data source is rate-limiting; please try again later"
+  },
   "budget": {
     "amount-positive": "budget amount must be positive",
     "category-not-found": "category does not exist: {0}",

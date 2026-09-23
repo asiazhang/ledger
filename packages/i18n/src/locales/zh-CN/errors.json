@@ -244,6 +244,10 @@
     "market-conflict": "market 参数 {0} 与股票代码 {1} 的市场形态矛盾，请核对后重试",
     "code-unresolvable": "无法根据股票代码 {0} 的形态推断市场，请显式传入 market 参数"
   },
+  "market": {
+    "request-exhausted": "行情数据源全部主机请求失败，请检查网络后重试",
+    "throttled": "行情数据源接口限流，请稍后再试"
+  },
   "budget": {
     "amount-positive": "预算金额必须为正数",
     "category-not-found": "分类不存在: {0}",

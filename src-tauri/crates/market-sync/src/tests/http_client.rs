@@ -3,7 +3,10 @@
 
 use std::time::Duration;
 
-use crate::http::{KlineBar, Pacer, RetryConfig, request_json_from_hosts, request_json_with_retry};
+use crate::http::{
+    KlineBar, Pacer, RetryConfig, request_json_from_hosts, request_json_with_retry,
+    request_text_from_hosts,
+};
 
 use super::{spawn_capture_server, spawn_header_capture_server};
 
@@ -25,6 +28,8 @@ fn fast_cfg(max_retries: u32, max_throttle_retries: u32) -> RetryConfig {
         base_backoff: Duration::from_millis(1),
         max_throttle_retries,
         throttle_cooldown: Duration::from_millis(1),
+        // 读体失败重试耗尽测试按 1ms 冷却跑墙钟；30s 基线与生产同值不承载语义。
+        request_timeout: Duration::from_secs(30),
     }
 }
 
@@ -202,7 +207,8 @@ fn request_json_returns_error_after_429_exhausted() {
         None,
     ))
     .unwrap_err();
-    assert!(err.to_string().contains("429"));
+    // 码化收敛（issue #1765）：限流预算耗尽是有意的用户可见分类，钉码不钉裸字符串。
+    assert!(err.is_code("market.throttled"), "实际 {err:?}");
 }
 
 #[test]
@@ -285,7 +291,79 @@ fn request_json_returns_error_when_all_hosts_fail() {
         None,
     ))
     .unwrap_err();
+    assert!(err.is_code("market.request-exhausted"), "实际 {err:?}");
     assert!(err.to_string().contains("全部行情主机请求失败"));
+}
+
+// ---------------------------------------------------------------------------
+// 读取响应失败的重试上限（issue #1765）：读体失败（连接中断 / 超时截断数 MB 大
+// 文件）与 429 同预算长冷却，耗尽即收敛返回码化错误——此前本分支无计数无限重试，
+// 手动同步命令永不返回，前端 loading 永不复位。负向判据（ADR-0087，删除即红）：
+// 取掉 `request_with_retry` 读体分支的重试计数，本用例永不收敛（挂起判红）。
+// ---------------------------------------------------------------------------
+
+/// 起一个「报文头声明 Content-Length 大于实际字节数后断连」的本地服务：客户端
+/// 读 body 必失败（与生产日志 `error decoding response body` 同形），每次连接计数。
+fn spawn_truncated_body_server(hits: std::sync::Arc<std::sync::atomic::AtomicUsize>) -> String {
+    use std::io::{Read, Write};
+
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { break };
+            hits.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let mut buf = [0u8; 2048];
+            let _ = stream.read(&mut buf);
+            // 声明 1000 字节、只发 12 字节即断连：客户端读体必报错。
+            let _ = stream.write_all(
+                b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 1000\r\nConnection: close\r\n\r\nshort-but-ok",
+            );
+        }
+    });
+    url
+}
+
+#[test]
+fn body_read_failure_retries_are_capped_then_converge_to_coded_error() {
+    let hits = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let url = spawn_truncated_body_server(hits.clone());
+    let hosts = [url.as_str()];
+    let client = reqwest::Client::new();
+    let mut pacer = Pacer::new(Duration::ZERO);
+    let err = tauri::async_runtime::block_on(request_text_from_hosts(
+        &client,
+        &[],
+        "/x",
+        &hosts,
+        fast_cfg(0, 2),
+        &mut pacer,
+        "test",
+        None,
+    ))
+    .unwrap_err();
+    // 收敛判据：命令返回终态码化错误，不无限重试；1 次首发 + 2 次冷却重试 = 3 连接。
+    assert!(err.is_code("market.request-exhausted"), "实际 {err:?}");
+    assert!(err.to_string().contains("读取响应失败"), "实际 {err:?}");
+    assert_eq!(
+        hits.load(std::sync::atomic::Ordering::SeqCst),
+        3,
+        "读体失败应有界重试（1 首发 + max_throttle_retries 次冷却重试）"
+    );
+}
+
+/// 全量历史腿超时单列（issue #1765）：数 MB 的 hist.xml 需长于 30s 基线的总超时；
+/// 90d 增量与其它通道维持基线（两腿各自的 cfg 选择在取数入口处编译期可见）。
+#[test]
+fn ecb_full_history_request_timeout_is_sized_for_the_multi_mb_file() {
+    assert_eq!(
+        crate::ecb::full_history_cfg().request_timeout,
+        Duration::from_secs(120),
+    );
+    assert_eq!(
+        RetryConfig::production().request_timeout,
+        Duration::from_secs(30),
+    );
 }
 
 // ---------------------------------------------------------------------------
