@@ -97,6 +97,17 @@ export const useInvestmentsSessionStore = defineStore("investments-session", () 
   const detailPage = ref(1);
   const detailPageSize = ref(LEDGER_TAB_PAGE_SIZE_DEFAULT);
 
+  /**
+   * 明细筛选其余三维（issue #1780 / ADR-0135 决策 3）：账户（涉及账户语义——账户端 ∪
+   * 出资端，后端同一 account_id 参数）、标的（convert 两腿任一命中即算）与日期边界
+   * （双端有界，picker 成对写入/清除，YYYY-MM-DD 含边界）。会话内保留、冷启动回默认
+   * （ADR-0094 默认粒度），语义与类型维度同构。
+   */
+  const detailAccountId = ref<string | null>(null);
+  const detailInstrumentId = ref<string | null>(null);
+  const detailDateFrom = ref<string | null>(null);
+  const detailDateTo = ref<string | null>(null);
+
   /** 走势视图模式与预设区间（会话内保留、冷启动回默认） */
   const trendMode = ref<TrendViewMode>(TREND_MODE_DEFAULT);
   const trendPreset = ref<TrendRangePreset>(TREND_PRESET_DEFAULT);
@@ -198,6 +209,32 @@ export const useInvestmentsSessionStore = defineStore("investments-session", () 
     detailPage.value = 1;
   }
 
+  /**
+   * 明细账户/标的筛选写入意图（null = 清除回默认态）：同值幂等——翻页归零只对
+   * 实际变化响应（类型维度同值守卫同规）。
+   */
+  function setDetailAccount(id: string | null) {
+    if (id === detailAccountId.value) return;
+    detailAccountId.value = id;
+  }
+
+  function setDetailInstrument(id: string | null) {
+    if (id === detailInstrumentId.value) return;
+    detailInstrumentId.value = id;
+  }
+
+  /**
+   * 明细日期边界写入意图（daterange picker 成对回传）：成对写入、成对清除——
+   * 双端有界，单端不落（picker 形态即闭包）；同区间重写幂等不动作。
+   */
+  function setDetailDateRange(range: [string, string] | null) {
+    const from = range?.[0] ?? null;
+    const to = range?.[1] ?? null;
+    if (from === detailDateFrom.value && to === detailDateTo.value) return;
+    detailDateFrom.value = from;
+    detailDateTo.value = to;
+  }
+
   /** 翻页归零：三维任一应用值实际变化即回第一页（排序清除亦属实际变化）。
    * 同步 flush 使归零与意图应用原子生效，不留「维度已变、页码未归」的中间态；
    * 防抖中的搜索不归零（输入回显不是应用值）。 */
@@ -209,9 +246,12 @@ export const useInvestmentsSessionStore = defineStore("investments-session", () 
     { flush: "sync" },
   );
 
-  /** 明细翻页归零：类型筛选实际变化即回第一页（同步 flush 使归零与意图应用原子生效）。 */
+  /**
+   * 明细翻页归零：筛选四维（类型/账户/标的/日期边界）任一应用值实际变化即回第一页
+   * （issue #1780 验收：筛选变化翻页归零；同步 flush 使归零与意图应用原子生效）。
+   */
   watch(
-    detailKinds,
+    [detailKinds, detailAccountId, detailInstrumentId, detailDateFrom, detailDateTo],
     () => {
       detailPage.value = 1;
     },
@@ -297,6 +337,10 @@ export const useInvestmentsSessionStore = defineStore("investments-session", () 
     detailKinds.value = null;
     detailPage.value = 1;
     detailPageSize.value = LEDGER_TAB_PAGE_SIZE_DEFAULT;
+    detailAccountId.value = null;
+    detailInstrumentId.value = null;
+    detailDateFrom.value = null;
+    detailDateTo.value = null;
   }
 
   return {
@@ -310,6 +354,10 @@ export const useInvestmentsSessionStore = defineStore("investments-session", () 
     detailKinds: readonly(detailKinds),
     detailPage: readonly(detailPage),
     detailPageSize: readonly(detailPageSize),
+    detailAccountId: readonly(detailAccountId),
+    detailInstrumentId: readonly(detailInstrumentId),
+    detailDateFrom: readonly(detailDateFrom),
+    detailDateTo: readonly(detailDateTo),
     trendMode: readonly(trendMode),
     trendPreset: readonly(trendPreset),
     trendInstrumentId: readonly(trendInstrumentId),
@@ -324,6 +372,9 @@ export const useInvestmentsSessionStore = defineStore("investments-session", () 
     setDetailKinds,
     setDetailPage,
     setDetailPageSize,
+    setDetailAccount,
+    setDetailInstrument,
+    setDetailDateRange,
     showTrendInstrument,
     registerTrendInstrument,
     selectTrendInstrument,

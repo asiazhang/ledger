@@ -1,18 +1,22 @@
 <script setup lang="ts">
 import { NDataTable, NEmpty, NSpace, type DataTableColumn, type PaginationProps } from "naive-ui";
-import { computed, h, ref, watch } from "vue";
+import { computed, h, onMounted, ref, watch } from "vue";
 import { api } from "@ledger/api";
 import { useLoadable } from "@ledger/loadable";
 import { t } from "@ledger/i18n";
 import { formatAmount, formatPrice, formatQuantity } from "@ledger/money";
 import { sumFixedColumnWidths } from "@ledger/utils/table";
 import AppSelect from "@ledger/ui-kit/AppSelect.vue";
+import PinyinSelect from "@ledger/ui-kit/PinyinSelect.vue";
+import AppDatePicker from "@ledger/ui-kit/AppDatePicker.vue";
 import {
   LEDGER_TAB_PAGE_SIZE_OPTIONS,
   useInvestmentsSessionStore,
 } from "@/investment/investments-session";
 import { useReferenceStore } from "@/stores/reference";
+import { useInstrumentSearch } from "@/investment/useInstrumentSearch";
 import type {
+  Instrument,
   InvestmentTransactionListFilter,
   InvestmentTransactionRow,
   TransactionKind,
@@ -23,10 +27,10 @@ import type {
  * kind 交易行的投资投影列表——消费后端投资明细命令（issue #1778），按 kind 分
  * 形态渲染（buy/sell 标的/数量/单价/手续费/出资账户、convert「A → B」双腿、
  * split 带符号份额增量 Δ、dividend 现金腿与到账账户）；服务端 offset 分页
- * （ADR-0008，「共 N 条」+ 页大小档位与主列表同构）+ 类型多选筛选（投资 kind
- * 子集）。
+ * （ADR-0008，「共 N 条」+ 页大小档位与主列表同构）+ 筛选四维（issue #1780：类型多选
+ * （投资 kind 子集）/ 账户（涉及账户语义）/ 标的（远程搜索）/ 日期（双端有界））。
  *
- * 状态归宿（ADR-0094）：类型筛选与页码/页大小住投资页会话 store（会话内保留、
+ * 状态归宿（ADR-0094）：筛选全维与页码/页大小住投资页会话 store（会话内保留、
  * 冷启动回默认），本组件只读消费 + 经意图入口写入；请求发起、loading 与行数据
  * 归视图（主列表同构，ADR-0030 决策 6）。筛选维度实际变化翻页归零由 store 内化。
  *
@@ -56,6 +60,11 @@ const { loading, run } = useLoadable(async () => {
   };
   // 类型维度：非空集合才携带（空集合 ≡ 不过滤 ≡ 默认态，浅拷贝脱只读）
   if (session.detailKinds?.length) filter.kinds = [...session.detailKinds];
+  // 其余三维（issue #1780）：非默认才携带；日期为双端成对（picker 形态即闭包）
+  if (session.detailAccountId) filter.account_id = session.detailAccountId;
+  if (session.detailInstrumentId) filter.instrument_id = session.detailInstrumentId;
+  if (session.detailDateFrom) filter.from = session.detailDateFrom;
+  if (session.detailDateTo) filter.to = session.detailDateTo;
   return api.listInvestmentTransactions(filter);
 });
 
@@ -75,7 +84,15 @@ async function load() {
 // 重拉；首拉 immediate 承担——默认态以默认态拉取，恢复访次以保留态拉取（会话
 // 内保留语义，页签 display-directive 'if' 重挂后由 store 恢复）。
 watch(
-  [() => session.detailPage, () => session.detailPageSize, () => session.detailKinds],
+  [
+    () => session.detailPage,
+    () => session.detailPageSize,
+    () => session.detailKinds,
+    () => session.detailAccountId,
+    () => session.detailInstrumentId,
+    () => session.detailDateFrom,
+    () => session.detailDateTo,
+  ],
   () => {
     void load();
   },
@@ -104,8 +121,90 @@ function onKindFilterChange(values: TransactionKind[] | null) {
   session.setDetailKinds(values?.length ? values : null);
 }
 
+/**
+ * 账户筛选（issue #1780，涉及账户语义——账户端 ∪ 出资端）：候选 = 参考数据全量账户
+ * （list_accounts 不含隐藏黑洞账户，交易页账户筛选同款边界）；后端 account_id 命中
+ * 账户端或出资端（dividend 到账账户、buy/sell 出资账户），语义单点在后端。
+ */
+const accountOptions = computed(() =>
+  reference.accounts.map((a) => ({ label: a.name, value: a.id })),
+);
+
+function onAccountFilterChange(id: string | null) {
+  session.setDetailAccount(id);
+}
+
+/**
+ * 标的筛选（issue #1780）：远程搜索收口 useInstrumentSearch（盈亏页标的筛选同款
+ * 接缝，#1308），本层只做候选投影与选中项合并——会话恢复/深链落账的选中值经
+ * get_instrument 一次性解析回标签，不把裸 id 留在回显位。
+ */
+const {
+  items: searchedInstruments,
+  searching: searchingInstruments,
+  search: searchInstruments,
+} = useInstrumentSearch();
+const selectedInstrumentOption = ref<{ label: string; value: string } | null>(null);
+
+const instrumentOptions = computed(() => {
+  const opts = searchedInstruments.value.map(instrumentOption);
+  const sel = selectedInstrumentOption.value;
+  if (sel && !opts.some((o) => o.value === sel.value)) opts.push(sel);
+  return opts;
+});
+
+function instrumentOption(i: Instrument): { label: string; value: string } {
+  // label 拼法与盈亏页标的筛选（useRealizedPnl）同形——第三份拷贝，收口另立票跟踪
+  return { label: `${i.symbol}${i.name ? ` · ${i.name}` : ""}`, value: i.id };
+}
+
+function onInstrumentFilterChange(id: string | null) {
+  session.setDetailInstrument(id);
+  if (!id) {
+    selectedInstrumentOption.value = null;
+    return;
+  }
+  // id 在当前候选（用户从搜索结果选中）时刷新回显；不在候选（恢复/深链路径）
+  // 保留旧 option（无则裸 id，onMounted 解析兜底），不误清
+  const picked = searchedInstruments.value.find((i) => i.id === id);
+  if (picked) selectedInstrumentOption.value = instrumentOption(picked);
+}
+
+onMounted(() => {
+  // 会话恢复/深链带入的标的筛选：解析回标签供回显（解析失败静默保留裸 id）
+  const id = session.detailInstrumentId;
+  if (!id) return;
+  void api.getInstrument(id).then(
+    (inst) => {
+      selectedInstrumentOption.value = instrumentOption(inst);
+    },
+    () => {},
+  );
+});
+
+/**
+ * 日期筛选（issue #1780，双端有界）：daterange picker 受控回显成对投影，
+ * 写路径经 store 意图入口（成对写入/清除，翻页归零内化）。
+ */
+const dateRangeValue = computed<[string, string] | null>(() =>
+  session.detailDateFrom && session.detailDateTo
+    ? [session.detailDateFrom, session.detailDateTo]
+    : null,
+);
+
+function onDateFilterChange(range: [string, string] | null) {
+  session.setDetailDateRange(range ? [range[0], range[1]] : null);
+}
+
 /** 是否有激活筛选（控制空态文案分型：无筛选空态 vs 筛选无匹配）。 */
-const filtersActive = computed(() => session.detailKinds !== null);
+const filtersActive = computed(
+  () =>
+    session.detailKinds !== null ||
+    session.detailAccountId !== null ||
+    session.detailInstrumentId !== null ||
+    session.detailDateFrom !== null ||
+    session.detailDateTo !== null,
+);
 
 // —— 行单元格（按 kind 分形态，ADR-0135 决策 3）——
 
@@ -252,8 +351,9 @@ const emptyDescription = computed(() =>
 
 <template>
   <NSpace vertical :size="12">
-    <!-- 类型多选筛选（投资 kind 子集，ADR-0135 决策 3）：立即生效，翻页归零由
-         store 内化；本基座票仅类型一维（账户/标的/日期随后续票接入）。 -->
+    <!-- 筛选四维（ADR-0135 决策 3 / issue #1780）：类型多选（投资 kind 子集）+
+         账户（涉及账户语义）+ 标的（远程搜索）+ 日期（双端有界）。立即生效，
+         翻页归零由 store 内化。 -->
     <NSpace :size="8" align="center" :wrap="true">
       <AppSelect
         :value="kindValue"
@@ -265,6 +365,39 @@ const emptyDescription = computed(() =>
         style="width: 160px"
         data-testid="ledger-kind-filter"
         @update:value="onKindFilterChange"
+      />
+      <PinyinSelect
+        :value="session.detailAccountId"
+        :options="accountOptions"
+        :placeholder="t('investments.ledger.filterAccount')"
+        clearable
+        style="width: 180px"
+        data-testid="ledger-account-filter"
+        @update:value="onAccountFilterChange"
+      />
+      <!-- 远程搜索标的：拼音过滤由后端 list_instruments 统一语义（ADR-0027）
+           承担，remote 下本地 filter 不生效，仅收口 filterable 保持载体一致。 -->
+      <PinyinSelect
+        :value="session.detailInstrumentId"
+        :options="instrumentOptions"
+        :placeholder="t('investments.ledger.filterInstrument')"
+        remote
+        clearable
+        :loading="searchingInstruments"
+        virtual-scroll
+        style="width: 220px"
+        data-testid="ledger-instrument-filter"
+        @update:value="onInstrumentFilterChange"
+        @search="searchInstruments"
+      />
+      <AppDatePicker
+        :formatted-value="dateRangeValue"
+        type="daterange"
+        value-format="yyyy-MM-dd"
+        clearable
+        style="width: 260px"
+        data-testid="ledger-date-filter"
+        @update:formatted-value="onDateFilterChange"
       />
     </NSpace>
     <NDataTable
