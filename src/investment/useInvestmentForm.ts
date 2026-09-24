@@ -17,7 +17,7 @@ import { buildTradeInput } from "@/transaction/transaction-input";
 import { errorMessage } from "@ledger/utils/errors";
 import { useAppStore } from "@/stores/app";
 import { useSavingsGoalsStore } from "@/savings-goal/savingsGoals";
-import type { Transaction, TransactionTrade } from "@ledger/types";
+import type { TransactionModalRow, TransactionTrade } from "@ledger/types";
 
 export function useInvestmentForm(
   kind: "buy" | "sell",
@@ -29,7 +29,7 @@ export function useInvestmentForm(
     /** 编辑模式：待编辑交易 getter。与 useCategoryForm editing 同约定：仅在
      * composable 创建时读一次做回填、提交时重读一次定目标，换目标交易必须由
      * 父层强制重建组件实例（:key 序号重建），否则回填/提交仍指向旧交易。 */
-    editing?: () => Transaction | null;
+    editing?: () => TransactionModalRow | null;
     /** 编辑模式：待编辑交易的买卖明细 getter（security_transactions 扩展表投影）。
      * 创建时读一次做回填；标的展示字段随明细带出，回填后选择框直接显示
      * symbol · name，不依赖远程搜索候选。 */

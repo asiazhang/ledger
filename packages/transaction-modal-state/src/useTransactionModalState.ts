@@ -9,6 +9,7 @@ import type {
   CreateFormKind,
   Transaction,
   TransactionConvert,
+  TransactionModalRow,
   TransactionSplit,
   TransactionTrade,
 } from "@ledger/types";
@@ -52,6 +53,8 @@ export type TransactionDetailPayload =
  * - create：无目标行，携带表单形态子类型（issue #374 起 CreateFormKind：可创建 kind +
  *   借贷两个呈现变体；refund 不在可创建集，入口由交易条目右键承接）；
  * - refund / add-item：携带目标交易行；
+ * - detail / edit 的目标行是弹窗族行投影 TransactionModalRow（ADR-0135 决策 4 /
+ *   issue #1781）：主列表行原样满足，投资明细页签行经弹窗行适配满足；
  * - detail：只读详情（convert / split / dividend 等界面只读 kind 无写操作入口，
  *   ADR-0106 决策 10 / ADR-0109）；
  *   携带被取回的扩展明细（明细由模块先取再开窗，调用方不经手），无详情面的行请求不落
@@ -62,8 +65,8 @@ export type TransactionDetailPayload =
 export type TransactionModalIntent =
   | { type: "create"; kind: CreateFormKind }
   | { type: "refund"; row: Transaction }
-  | { type: "detail"; row: Transaction; detail: TransactionDetailPayload }
-  | { type: "edit"; row: Transaction; trade: TransactionTrade | null }
+  | { type: "detail"; row: TransactionModalRow; detail: TransactionDetailPayload }
+  | { type: "edit"; row: TransactionModalRow; trade: TransactionTrade | null }
   | { type: "add-item"; row: Transaction };
 
 /**
@@ -73,8 +76,8 @@ export type TransactionModalIntent =
 export type TransactionModalOpenRequest =
   | { type: "create"; kind: CreateFormKind }
   | { type: "refund"; row: Transaction }
-  | { type: "detail"; row: Transaction }
-  | { type: "edit"; row: Transaction }
+  | { type: "detail"; row: TransactionModalRow }
+  | { type: "edit"; row: TransactionModalRow }
   | { type: "add-item"; row: Transaction };
 
 // ---------------------------------------------------------------------------

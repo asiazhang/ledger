@@ -5,10 +5,10 @@ import AppSelect from "@ledger/ui-kit/AppSelect.vue";
 import AppDatePicker from "@ledger/ui-kit/AppDatePicker.vue";
 import PinyinSelect from "@ledger/ui-kit/PinyinSelect.vue";
 import { useTransferForm } from "@/transaction/useTransferForm";
-import type { Transaction } from "@ledger/types";
+import type { TransactionModalRow } from "@ledger/types";
 
 // 编辑模式（issue #178）：传入 editing 时回填既有交易并走更新命令。
-const props = defineProps<{ editing?: Transaction | null }>();
+const props = defineProps<{ editing?: TransactionModalRow | null }>();
 
 const emit = defineEmits<{ created: []; saved: [] }>();
 

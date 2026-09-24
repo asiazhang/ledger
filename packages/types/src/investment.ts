@@ -284,6 +284,14 @@ export interface InvestmentTransactionRow {
   trade: InvestmentTradeFields | null;
   convert: InvestmentConvertFields | null;
   split: InvestmentSplitFields | null;
+  /** 备注（弹窗族消费列，issue #1781）：编辑回填防误抹 + 只读详情备注行；列表呈现不读 */
+  note: string | null;
+  /** 记录币种（= 账户币种，ADR-0134）：编辑回填精度换算与 dividend 详情金额标注
+   * 的数据面；列表呈现不读（混合币种列表不暗示同币种） */
+  currency_code: string;
+  /** 本位币金额（分，写路径折算落定）：dividend 只读详情金额展示读它（与主列表
+   * 金额列同口径单点）；列表呈现不读 */
+  amount_native_cents: number;
 }
 
 /** 投资明细列表过滤条件（ADR-0135 / issue #1778）：四维 + 服务端 offset 分页。 */

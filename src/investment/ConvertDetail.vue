@@ -4,7 +4,7 @@ import { NDescriptions, NDescriptionsItem } from "naive-ui";
 import { t } from "@ledger/i18n";
 import { useReferenceStore } from "@/stores/reference";
 import { formatAmount, formatQuantity } from "@ledger/money";
-import type { Transaction, TransactionConvert } from "@ledger/types";
+import type { TransactionModalRow, TransactionConvert } from "@ledger/types";
 
 /**
  * 基金转换只读详情（ADR-0106 决策 10 / #1048）：convert 是「无现金腿」kind，界面不体现
@@ -16,7 +16,7 @@ import type { Transaction, TransactionConvert } from "@ledger/types";
  */
 const props = defineProps<{
   /** 转换交易行（提供日期 / 账户 / 备注） */
-  transaction: Transaction;
+  transaction: TransactionModalRow;
   /** 转换两腿明细（`get_transaction_convert` 读投影） */
   convert: TransactionConvert;
 }>();

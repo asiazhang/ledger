@@ -389,6 +389,16 @@ pub struct InvestmentTransactionRow {
     pub convert: Option<InvestmentConvertFields>,
     /// 份额调整载荷（split）：带符号份额增量 Δ 原样投影（不取绝对值、不重算方向）。
     pub split: Option<InvestmentSplitFields>,
+    /// 备注（弹窗族消费列，ADR-0135 决策 4 / issue #1781）：编辑回填防误抹（编辑
+    /// 提交是全字段替换，缺 note 会把原备注静默清空）与只读详情备注行呈现；
+    /// 列表呈现不读。
+    pub note: Option<String>,
+    /// 记录币种（= 账户币种，ADR-0134）：编辑回填按币种小数位换算金额/费用、
+    /// dividend 只读详情金额展示的币种标注；列表呈现不读（混合币种列表不暗示同币种）。
+    pub currency_code: String,
+    /// 本位币金额（分，写路径折算落定，issue #1548 / ADR-0011）：dividend 只读
+    /// 详情金额展示读它（与主列表金额列同口径单点）；列表呈现不读。
+    pub amount_native_cents: i64,
 }
 
 /// 买卖载荷（buy/sell 行的 kind 专属投影，issue #1778）：与编辑回填明细
@@ -490,6 +500,10 @@ impl FromRow for InvestmentTransactionRow {
             trade,
             convert,
             split,
+            // 弹窗族消费列（尾段追加列，列序见 ledger_tab ROW_COLUMNS 注记）。
+            note: row.get(18)?,
+            currency_code: row.get(19)?,
+            amount_native_cents: row.get(20)?,
         })
     }
 }
