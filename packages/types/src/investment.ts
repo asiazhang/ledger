@@ -1,4 +1,5 @@
 import type { Syncable } from "./common";
+import type { ConvertFields, TransactionKind } from "./transactions";
 
 export type InstrumentType = "stock" | "fund" | "bond" | "etf" | "other";
 
@@ -231,6 +232,70 @@ export interface TransactionSplit {
   instrument_name: string | null;
   /** 带符号份额增量 Δ：`+` = 折算 / 结转 / 送股，`-` = 缩股。 */
   quantity: number;
+}
+
+/** 买卖载荷（buy/sell 行的 kind 专属投影，issue #1778）：不重复携带标的信息
+ * （明细行公共字段已有）；`price_cents` 为万分之一元（ADR-0038 价格刻度）。 */
+export interface InvestmentTradeFields {
+  quantity: number;
+  price_cents: number;
+  fee_cents: number;
+}
+
+/** 份额调整载荷（split 行的 kind 专属投影，issue #1778）：带符号份额增量 Δ，
+ * `+` = 折算 / 结转 / 送股，`-` = 缩股，原样呈现不取绝对值。 */
+export interface InvestmentSplitFields {
+  delta_quantity: number;
+}
+
+/** 投资明细行（ADR-0135 决策 3 / issue #1778）：五种投资 kind（buy/sell/convert/
+ * split/dividend）交易行的投资投影。公共字段恒在场；kind 专属载荷按形态携带
+ * （buy/sell → trade、convert → convert、split → split、dividend 无载荷——
+ * 现金腿与到账账户在公共字段）。convert 行金额锚点是结转成本，展示金额读
+ * convert 载荷（`out_amount_cents`），与主列表同口径。 */
+export interface InvestmentTransactionRow {
+  id: string;
+  date: string;
+  kind: TransactionKind;
+  /** 行金额锚点（分）：convert = 结转成本，展示读 convert 载荷 */
+  amount_cents: number;
+  /** 账户端：buy/sell/convert/split = 投资账户；dividend = 到账账户 */
+  account_id: string;
+  /** 出资账户（仅 buy/sell 可携带，ADR-0096） */
+  funding_account_id: string | null;
+  /** 归属标的：buy/sell/dividend/split = 其标的；convert = 转出腿 */
+  instrument_id: string;
+  symbol: string;
+  instrument_name: string | null;
+  instrument_type: InstrumentType;
+  trade: InvestmentTradeFields | null;
+  convert: ConvertFields | null;
+  split: InvestmentSplitFields | null;
+}
+
+/** 投资明细列表过滤条件（ADR-0135 / issue #1778）：四维 + 服务端 offset 分页。 */
+export interface InvestmentTransactionListFilter {
+  /** 按涉及账户过滤（账户端 ∪ 出资端）：投资账户、出资账户与到账账户（dividend） */
+  account_id?: string | null;
+  /** 按标的过滤：转出腿或 convert 转入腿任一命中即算 */
+  instrument_id?: string | null;
+  /** 类型子集多选（投资 kind 闭集内）：维度内取或；空集合视为未携带 */
+  kinds?: TransactionKind[] | null;
+  /** 起始日期（含），YYYY-MM-DD */
+  from?: string | null;
+  /** 结束日期（含），YYYY-MM-DD */
+  to?: string | null;
+  /** 页码，从 1 开始，默认 1 */
+  page?: number;
+  /** 每页条数，缺省返回全部（total 恒返回） */
+  page_size?: number;
+}
+
+/** 投资明细列表分页结果（ADR-0008） */
+export interface InvestmentTransactionListResult {
+  items: InvestmentTransactionRow[];
+  /** 满足过滤条件的未删除投资交易总数 */
+  total: number;
 }
 
 export interface Holding {

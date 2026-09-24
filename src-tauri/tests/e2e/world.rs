@@ -140,6 +140,8 @@ pub struct AssetGroup {
     pub last_instrument_trend: Option<ledger_investment::InstrumentPriceTrend>,
     /// 最近一次财务自由度总览快照（自由度口径场景断言用，issue #343）
     pub last_financial_freedom: Option<ledger_investment::FinancialFreedomOverview>,
+    /// 最近一次投资明细列表快照（ADR-0135 / issue #1778，明细页签取数断言用）
+    pub last_investment_transactions: Option<ledger_investment::InvestmentTransactionListResult>,
     /// 最近创建的实物资产 id（详情/后续步骤定位用，issue #466）
     pub last_physical_asset_id: Option<String>,
     /// 最近一次实物资产写入发出的失效信号次数（ledger:changed 注入 seam 断言用）

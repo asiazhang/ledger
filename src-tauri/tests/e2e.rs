@@ -44,6 +44,8 @@ mod fund_trade_steps;
 mod instruments_steps;
 #[path = "e2e/insurers_steps.rs"]
 mod insurers_steps;
+#[path = "e2e/investment_ledger_tab_steps.rs"]
+mod investment_ledger_tab_steps;
 #[path = "e2e/investment_migration_steps.rs"]
 mod investment_migration_steps;
 #[path = "e2e/investment_trend_steps.rs"]

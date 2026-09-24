@@ -18,6 +18,8 @@ use super::channel::PriceChannel;
 use super::market::Market;
 use ledger_infra::closed_set::closed_set;
 use ledger_infra::db::query::FromRow;
+use ledger_transaction::ConvertFields;
+use ledger_transaction::amount::TransactionKind;
 
 /// 来源词表「人工」标记（issue #1587 单点声明）：字典侧（`instruments.source`）
 /// 新建行一律取本值、来源随行终身不变（ADR-0036 决策 2）；汇率与价格侧
@@ -315,6 +317,162 @@ impl FromRow for TransactionTrade {
             quantity: row.get(4)?,
             price_cents: row.get(5)?,
             fee_cents: row.get(6)?,
+        })
+    }
+}
+
+/// 投资明细列表过滤条件（ADR-0135 决策 3 / issue #1778）：四维——账户（涉及
+/// 账户语义）、标的（convert 两腿任一命中即算）、类型（投资 kind 子集多选）、
+/// 日期（双端有界）+ 服务端 offset 分页（ADR-0008）。无分类与商户维：投资 kind
+/// 编排入口即拒绝携带这两个参考数据（行为层准入），明细页签不提供。
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct InvestmentTransactionListFilter {
+    /// 按涉及账户过滤（账户端 ∪ 出资端）：投资账户（buy/sell/convert/split 的
+    /// 账户端）、出资账户（buy/sell 可携带，ADR-0096）与到账账户（dividend 行的
+    /// 账户端即到账账户，任意在用账户）——投资 kind 无转入侧（写入守卫恒拒）。
+    pub account_id: Option<String>,
+    /// 按标的过滤：转出腿或 convert 转入腿任一命中即算（与时点持仓推算认
+    /// convert 两腿的口径对齐）。
+    pub instrument_id: Option<String>,
+    /// 类型子集多选：维度内取或、与其余维度 AND 组合；空集合视为未携带
+    /// （不过滤）。通用 kind 不在行集闭包内（传了也只是空集，不报错）。
+    pub kinds: Option<Vec<TransactionKind>>,
+    /// 起始日期（含），YYYY-MM-DD。
+    pub from: Option<String>,
+    /// 结束日期（含），YYYY-MM-DD。
+    pub to: Option<String>,
+    /// 页码，从 1 开始，默认 1。
+    pub page: Option<usize>,
+    /// 每页条数，缺省返回全部（total 恒返回）；小于 1 按 1 处理。
+    pub page_size: Option<usize>,
+}
+
+/// 投资明细列表分页结果（ADR-0008）。
+#[derive(Debug, Serialize)]
+pub struct InvestmentTransactionListResult {
+    /// 当前行（投资投影，公共字段恒在场、kind 专属载荷按形态携带）。
+    pub items: Vec<InvestmentTransactionRow>,
+    /// 满足过滤条件的未删除投资交易总数（用于分页条）。
+    pub total: i64,
+}
+
+/// 投资明细行（ADR-0135 决策 3 / issue #1778）：五种投资 kind（buy/sell/convert/
+/// split/dividend）交易行的投资投影。公共字段（行身份、行金额锚点、账户端、
+/// 归属标的）恒在场；kind 专属载荷按形态携带——buy/sell 买卖载荷、convert
+/// 转入腿、split 带符号 Δ、dividend 无专属载荷（现金腿与到账账户在公共字段）。
+#[derive(Debug, Serialize)]
+pub struct InvestmentTransactionRow {
+    pub id: String,
+    pub date: String,
+    /// 交易类型（投资 kind 闭集内；serde 小写字符串，与主列表同形）。
+    pub kind: TransactionKind,
+    /// 行金额锚点（分）：convert 行 = 结转成本而非确认单金额——列表展示金额
+    /// 读 convert 载荷（`out_amount_cents`），与主列表同口径。
+    pub amount_cents: i64,
+    /// 账户端：buy/sell/convert/split = 投资账户；dividend = 到账账户。
+    pub account_id: String,
+    /// 出资账户（仅 buy/sell 可携带，ADR-0096）。
+    pub funding_account_id: Option<String>,
+    /// 归属标的：buy/sell/dividend/split = 其标的；convert = 转出腿。
+    pub instrument_id: String,
+    /// 归属标的代码（JOIN `instruments` 带出的展示字段）。
+    pub symbol: String,
+    /// 归属标的名称（JOIN 展示字段，可空）。
+    pub instrument_name: Option<String>,
+    /// 标的类型闭集字面量（fund/stock/bond/etf/other）。
+    pub instrument_type: String,
+    /// 买卖载荷（buy/sell）：数量、成交单价、手续费。
+    pub trade: Option<InvestmentTradeFields>,
+    /// 转入腿载荷（convert）：与主列表转换扩展 [`ConvertFields`] 同一类型——
+    /// 转入标的/份额与两侧确认金额（确认单权威），口径单一不另设第二份形状。
+    pub convert: Option<ConvertFields>,
+    /// 份额调整载荷（split）：带符号份额增量 Δ 原样投影（不取绝对值、不重算方向）。
+    pub split: Option<InvestmentSplitFields>,
+}
+
+/// 买卖载荷（buy/sell 行的 kind 专属投影，issue #1778）：与编辑回填明细
+/// [`TransactionTrade`] 的差异是不重复携带标的公共字段（行上已有），费用恒
+/// 在场（buy/sell 写路径恒写）。
+#[derive(Debug, Serialize)]
+pub struct InvestmentTradeFields {
+    pub quantity: f64,
+    /// 成交单价（万分之一元，ADR-0038 价格刻度）。
+    pub price_cents: i64,
+    /// 手续费（整数分）。
+    pub fee_cents: i64,
+}
+
+/// 份额调整载荷（split 行的 kind 专属投影，issue #1778）。
+#[derive(Debug, Serialize)]
+pub struct InvestmentSplitFields {
+    /// 带符号份额增量 Δ（`security_transactions.quantity`）：`+` = 折算 / 结转 /
+    /// 送股，`−` = 缩股——界面按符号原样呈现。
+    pub delta_quantity: f64,
+}
+
+impl FromRow for InvestmentTransactionRow {
+    fn from_row(row: &rusqlite::Row) -> rusqlite::Result<Self> {
+        let kind: TransactionKind = row.get(1)?;
+        let quantity: Option<f64> = row.get(10)?;
+        let price_cents: Option<i64> = row.get(11)?;
+        let fee_cents: Option<i64> = row.get(12)?;
+        let to_instrument_id: Option<String> = row.get(13)?;
+        let to_symbol: Option<String> = row.get(14)?;
+        let to_quantity: Option<f64> = row.get(15)?;
+        let out_amount_cents: Option<i64> = row.get(16)?;
+        let in_amount_cents: Option<i64> = row.get(17)?;
+        // kind 专属载荷按形态装配：各列在对应 kind 的扩展行里恒在位（buy/sell
+        // 的数量/单价、convert 的两腿金额由写路径落定），NULL 形态只属其它 kind。
+        let (trade, convert, split) = match kind {
+            TransactionKind::Buy | TransactionKind::Sell => (
+                Some(InvestmentTradeFields {
+                    quantity: quantity.unwrap_or_default(),
+                    price_cents: price_cents.unwrap_or_default(),
+                    fee_cents: fee_cents.unwrap_or_default(),
+                }),
+                None,
+                None,
+            ),
+            TransactionKind::Convert => (
+                None,
+                Some(ConvertFields {
+                    to_instrument_id: to_instrument_id.unwrap_or_default(),
+                    to_symbol: to_symbol.unwrap_or_default(),
+                    to_quantity: to_quantity.unwrap_or_default(),
+                    out_amount_cents: out_amount_cents.unwrap_or_default(),
+                    in_amount_cents: in_amount_cents.unwrap_or_default(),
+                }),
+                None,
+            ),
+            TransactionKind::Split => (
+                None,
+                None,
+                Some(InvestmentSplitFields {
+                    delta_quantity: quantity.unwrap_or_default(),
+                }),
+            ),
+            // dividend 无 kind 专属载荷；通用 kind 不入行集闭包（JOIN + kind
+            // 闭集），防御性空载荷（穷尽分派，新增 kind 编译期报错）。
+            TransactionKind::Dividend
+            | TransactionKind::Income
+            | TransactionKind::Expense
+            | TransactionKind::Transfer
+            | TransactionKind::Refund => (None, None, None),
+        };
+        Ok(Self {
+            id: row.get(0)?,
+            kind,
+            amount_cents: row.get(2)?,
+            account_id: row.get(3)?,
+            funding_account_id: row.get(4)?,
+            date: row.get(5)?,
+            instrument_id: row.get(6)?,
+            symbol: row.get(7)?,
+            instrument_name: row.get(8)?,
+            instrument_type: row.get(9)?,
+            trade,
+            convert,
+            split,
         })
     }
 }
