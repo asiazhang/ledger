@@ -118,10 +118,10 @@ describe("TransactionsView 记一笔分裂按钮（issue #150）", () => {
     await flushPromises();
   }
 
-  it("下拉菜单为 7 项：5 个 kind 项标注快捷键（支出 a/收入 i/转账 z/买入 b/卖出 s），分隔线后借贷两项（借出/借入），无退款与转换（issue #150/#153/#374/#1048）", async () => {
+  it("下拉菜单为 5 项：3 个 kind 项标注快捷键（支出 a/收入 i/转账 z），分隔线后借贷两项（借出/借入），无退款与转换（issue #150/#153/#374/#1048；ADR-0135 决策 5 收窄后买入/卖出不在交易页入口）", async () => {
     const wrapper = await mountView();
     const labels = await openCreateDropdown(wrapper);
-    expect(labels).toEqual(["支出 a", "收入 i", "转账 z", "买入 b", "卖出 s", "借出", "借入"]);
+    expect(labels).toEqual(["支出 a", "收入 i", "转账 z", "借出", "借入"]);
     expect(labels).not.toContain("退款");
     // 负向收口（ADR-0106 决策 10 / #1048）：convert 无手工录入入口，菜单里不存在该项
     expect(labels.some((label) => label.includes("转换"))).toBe(false);
@@ -131,8 +131,6 @@ describe("TransactionsView 记一笔分裂按钮（issue #150）", () => {
     ["支出 a", "支出", "expense"],
     ["收入 i", "收入", "income"],
     ["转账 z", "转账", "transfer"],
-    ["买入 b", "买入", "buy"],
-    ["卖出 s", "卖出", "sell"],
   ] as const)("点菜单项「%s」打开对应类型弹窗（无类型单选组）", async (label, kindLabel, kind) => {
     const wrapper = await mountView();
     await openCreateDropdown(wrapper);

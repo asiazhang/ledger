@@ -282,6 +282,8 @@
     "total": "共 {n} 条",
     "empty": "暂无投资交易",
     "emptyFiltered": "当前筛选无匹配交易",
-    "filterKind": "类型"
+    "filterKind": "类型",
+    "createBuy": "记买入",
+    "createSell": "记卖出"
   }
 }

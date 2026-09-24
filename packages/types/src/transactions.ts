@@ -242,20 +242,31 @@ export function transactionKindActivation(kind: TransactionKind): TransactionKin
   return TRANSACTION_KIND_ACTIVATION[kind];
 }
 
-/** 「记一笔」分裂按钮可创建的类型：枚举对象以 Record<CreateTransactionKind, true> 表达，
- * 新增 kind 而未更新此表时编译报错（穷尽性由类型系统保证，下拉不会静默漏项）。 */
-const CREATE_KIND_MAP = {
+/**
+ * 「记一笔」入口类型归属表（穷尽表驱动）：true = 交易页「记一笔」入口类型（ADR-0135
+ * 决策 5 / issue #1782 收窄为三通用 kind）；false = 创建入口已迁他处的 kind——buy/sell
+ * 的记一笔入口落投资页「明细」页签头部。新增 kind 而未更新此表时编译报错（穷尽性由
+ * 类型系统保证，入口不会静默漏项）。
+ */
+const CREATE_KIND_ENTRY = {
   expense: true,
   income: true,
   transfer: true,
-  buy: true,
-  sell: true,
-} satisfies Record<CreateTransactionKind, true>;
+  buy: false,
+  sell: false,
+} satisfies Record<CreateTransactionKind, boolean>;
 
-/** 「记一笔」入口可选类型（不含 refund：退款已移出表单域，入口由交易条目
- * 右键菜单承接，独立 ticket 落地前处于过渡态；不含 convert：无现金腿 kind
- * 界面只读、无手工录入，ADR-0106 决策 10 / #1048）。 */
-export const CREATE_KINDS = Object.keys(CREATE_KIND_MAP) as CreateTransactionKind[];
+/** 「记一笔」交易页入口可选类型（CREATE_KIND_ENTRY 归属为 true 的成员，单源）：桌面
+ * 记一笔下拉、移动悬浮按钮与裸键键位共用同一份清单（ADR-0135 决策 5 / issue #1782；
+ * 不含 refund：退款入口由交易条目右键菜单承接；不含 convert/split/dividend：无现金腿
+ * kind 界面只读、无手工录入，ADR-0106 决策 10 / #1048；买入/卖出的归属理由见上方注释）。 */
+export const CREATE_KINDS = (Object.keys(CREATE_KIND_ENTRY) as CreateTransactionKind[]).filter(
+  (kind) => CREATE_KIND_ENTRY[kind],
+);
+
+/** 交易页「记一笔」入口类型闭集的成员类型（CREATE_KINDS 元素；裸键键位映射按此收口，
+ * ADR-0135 决策 5 / issue #1782）。 */
+export type TransactionPageCreateKind = Exclude<CreateTransactionKind, "buy" | "sell">;
 
 /** 「记一笔」表单形态闭集：可创建 kind + 借贷两个呈现变体（issue #374 / ADR-0053：
  * lend/borrow 不新增交易 kind，落账仍为 transfer + receivable/debt 账户）。 */

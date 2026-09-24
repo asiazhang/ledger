@@ -282,6 +282,8 @@
     "total": "Total {n}",
     "empty": "No investment transactions",
     "emptyFiltered": "No matching transactions",
-    "filterKind": "Type"
+    "filterKind": "Type",
+    "createBuy": "Record Buy",
+    "createSell": "Record Sell"
   }
 }

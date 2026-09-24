@@ -1,10 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { lastInvokeArgs, mockInvoke, wireInvokeSeam } from "@ledger/test-support/invoke-mock";
 import { flushPromises, type VueWrapper } from "@vue/test-utils";
-import { NDataTable, NSelect } from "naive-ui";
 import { createPinia, setActivePinia } from "pinia";
+import { NDataTable, NModal, NSelect } from "naive-ui";
 import InvestmentsView from "@/views/InvestmentsView.vue";
 import InvestmentLedgerTab from "@/investment/InvestmentLedgerTab.vue";
+import TransactionForm from "@/transaction/TransactionForm.vue";
+import InvestmentForm from "@/investment/InvestmentForm.vue";
 import { useInvestmentsSessionStore } from "@/investment/investments-session";
 import { formatAmount, formatPrice, formatQuantity } from "@ledger/money";
 import { clickTab } from "@ledger/test-support/dom";
@@ -569,5 +571,137 @@ describe("明细页签移动档横向滚动（issue #1779）", () => {
     );
     expect(fixedSum).toBeGreaterThan(0);
     expect(table.props("scrollX")).toBe(fixedSum);
+  });
+});
+/**
+ * 明细页签头部记买入/卖出（ADR-0135 决策 5 / issue #1782）：创建入口随迁——入口落页签
+ * 头部，提交走既有创建编排（useTransactionModalState 记一笔意图）与 TransactionInput
+ * 装配接缝（TransactionForm → InvestmentForm → buildTradeInput），成功后明细列表刷新
+ * 可见新行（翻回第 1 页，date 倒序新记录最可能可见）。删除任一接线即红，断言对准
+ * 用户可观察结果（弹窗标题/表单类型/create_transaction 载荷/列表重拉页码，ADR-0087）。
+ */
+describe("明细页签头部记买入/卖出（issue #1782）", () => {
+  /** 明细页签内按可见文案找头部入口按钮（页签内查找，避开弹窗提交按钮同名文案）。 */
+  function createEntry(wrapper: VueWrapper, label: string) {
+    const btn = ledgerPane(wrapper)
+      .findAll("button")
+      .find((b) => b.text().includes(label));
+    expect(btn, `明细页签头部应有「${label}」入口`).toBeDefined();
+    return btn!;
+  }
+
+  /** 打开弹窗后展示中的记一笔弹窗（意图非空即显示派生 show）。 */
+  function shownModal(wrapper: VueWrapper) {
+    return wrapper.findAllComponents(NModal).find((m) => m.props("show") === true);
+  }
+
+  it.each([
+    ["记买入", "买入", "buy"],
+    ["记卖出", "卖出", "sell"],
+  ] as const)(
+    "头部「%s」入口：点开「记一笔 · %s」弹窗，复用创建编排与交易表单装配接缝",
+    async (label, kindLabel, kind) => {
+      const wrapper = mountView();
+      await flushPromises();
+      await openLedgerTab(wrapper);
+      await createEntry(wrapper, label).trigger("click");
+      await flushPromises();
+      const modal = shownModal(wrapper);
+      expect(modal, "记一笔弹窗应已打开").toBeDefined();
+      expect(modal!.props("title")).toBe(`记一笔 · ${kindLabel}`);
+      const form = modal!.findComponent(TransactionForm);
+      expect(form.exists()).toBe(true);
+      expect(form.props("kind")).toBe(kind);
+      // 装配接缝复用：买入/卖出按标的形式分派 InvestmentForm（基金金额权威/非基金单价权威）
+      expect(form.findComponent(InvestmentForm).exists()).toBe(true);
+    },
+  );
+
+  it("真实提交链路：填表提交 → create_transaction（TransactionInput 装配）→ 弹窗关闭 + 明细列表刷新翻回第 1 页", async () => {
+    ledgerDb = manyBuyRows;
+    // 表单依赖布线：投资账户字典（同 beforeEach 覆写）+ 标的字典（领域命令自接）+ 目标进度空集
+    wireInvokeSeam({
+      defaults: LEDGER_DEFAULTS,
+      overrides: {
+        list_accounts: [
+          {
+            id: "acc-1",
+            name: "券商户",
+            type: "investment",
+            currency_code: "CNY",
+            initial_balance_cents: 0,
+            created_at: "2026-01-01T00:00:00Z",
+            updated_at: "2026-01-01T00:00:00Z",
+            version: 1,
+            device_id: "test",
+            is_deleted: false,
+            is_hidden: false,
+          },
+        ],
+        list_investment_transactions: listInvestmentTransactions,
+        list_instruments: { items: [], total: 0 },
+        savings_goal_progress: Promise.resolve([]),
+        create_transaction: Promise.resolve("new-investment-id"),
+      },
+    });
+    const wrapper = mountView();
+    await flushPromises();
+    await openLedgerTab(wrapper);
+    // 先翻到第 2 页再记一笔：成功后应翻回第 1 页，新记录可见
+    tablePagination(wrapper).onChange(2);
+    await flushPromises();
+    await createEntry(wrapper, "记买入").trigger("click");
+    await flushPromises();
+    const inv = wrapper.findComponent(TransactionForm).findComponent(InvestmentForm);
+    // 内层 NSelect（0=币种 1=投资账户 2=标的，InvestmentForm.test 同款装配缝）
+    const selects = inv.findAllComponents(NSelect);
+    selects[1].vm.$emit("update:value", "acc-1");
+    // 内层 NSelect 序（0=币种 1=投资账户 2=出资账户 3=标的，InvestmentForm 表单行序）
+    selects[3].vm.$emit("update:value", "ins-1");
+    await flushPromises();
+    // 数量/单价（placeholder 定位，股票形态权威输入 = 数量 + 单价）
+    await inv
+      .findAll("input")
+      .find((i) => i.attributes("placeholder") === "数量")!
+      .setValue("100");
+    await inv
+      .findAll("input")
+      .find((i) => i.attributes("placeholder") === "单价")!
+      .setValue("10");
+    const callsBefore = ledgerCalls().length;
+    await inv
+      .findAll("button")
+      .find((b) => b.text().includes("记买入"))!
+      .trigger("click");
+    await flushPromises();
+    // 后端收到正确账目（非基金形态：数量 × 单价权威，amount_cents 占位由后端重算）
+    const createCalls = mockInvoke.mock.calls.filter(([cmd]) => cmd === "create_transaction");
+    expect(createCalls).toHaveLength(1);
+    const [, createArgs] = createCalls[0] as [string, { input: Record<string, unknown> }];
+    expect(createArgs.input).toMatchObject({
+      kind: "buy",
+      account_id: "acc-1",
+      instrument_id: "ins-1",
+      quantity: 100,
+      price_cents: 100000,
+      amount_cents: 0,
+    });
+    // 弹窗关闭 + 明细列表刷新（翻回第 1 页重拉）
+    expect(shownModal(wrapper)).toBeUndefined();
+    expect(ledgerCalls().length).toBe(callsBefore + 1);
+    expect(lastLedgerFilter()).toMatchObject({ page: 1 });
+  });
+
+  it("仅关闭弹窗（不提交）不触发明细列表刷新", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+    await openLedgerTab(wrapper);
+    await createEntry(wrapper, "记卖出").trigger("click");
+    await flushPromises();
+    const callsBefore = ledgerCalls().length;
+    shownModal(wrapper)!.vm.$emit("update:show", false);
+    await flushPromises();
+    expect(shownModal(wrapper)).toBeUndefined();
+    expect(ledgerCalls().length).toBe(callsBefore);
   });
 });

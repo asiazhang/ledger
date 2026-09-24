@@ -19,8 +19,6 @@ describe("TransactionsView 裸键快捷键（issue #153）", () => {
     ["a", "支出", "expense"],
     ["z", "转账", "transfer"],
     ["i", "收入", "income"],
-    ["b", "买入", "buy"],
-    ["s", "卖出", "sell"],
   ] as const)("裸键 %s 直达「记一笔 · %s」弹窗（与下拉同一入口）", async (key, kindLabel, kind) => {
     const wrapper = await mountView();
     pressKey(key);
@@ -28,6 +26,16 @@ describe("TransactionsView 裸键快捷键（issue #153）", () => {
     expect(wrapper.findComponent(NModal).props("show")).toBe(true);
     expect(wrapper.findComponent(NModal).props("title")).toBe(`记一笔 · ${kindLabel}`);
     expect(wrapper.findComponent(TransactionForm).props("kind")).toBe(kind);
+  });
+
+  it("裸键 b/s 退役（ADR-0135 决策 5 / issue #1782）：不触发记一笔弹窗，命中但不可用原样放行", async () => {
+    const wrapper = await mountView();
+    pressKey("b");
+    await flushPromises();
+    pressKey("s");
+    await flushPromises();
+    expect(wrapper.findComponent(NModal).props("show")).toBe(false);
+    expect(wrapper.findComponent(TransactionForm).exists()).toBe(false);
   });
 
   it("焦点在输入框时按键不触发", async () => {
