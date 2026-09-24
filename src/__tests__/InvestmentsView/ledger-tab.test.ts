@@ -1,30 +1,27 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { afterEach, describe, it, expect, vi, beforeEach } from "vitest";
 import { lastInvokeArgs, mockInvoke, wireInvokeSeam } from "@ledger/test-support/invoke-mock";
 import { flushPromises, type VueWrapper } from "@vue/test-utils";
 import { defineComponent, h, reactive } from "vue";
 import { createPinia, setActivePinia } from "pinia";
-import { NDataTable, NModal, NSelect } from "naive-ui";
+import { NButton, NDataTable, NModal, NSelect, NTag } from "naive-ui";
 import InvestmentsView from "@/views/InvestmentsView.vue";
 import InvestmentLedgerTab from "@/investment/InvestmentLedgerTab.vue";
 import TransactionForm from "@/transaction/TransactionForm.vue";
+import { KIND_TAG_TYPE } from "@/transaction/transaction-columns";
 import InvestmentForm from "@/investment/InvestmentForm.vue";
 import { useInvestmentsSessionStore } from "@/investment/investments-session";
+import { useAppStore } from "@/stores/app";
 import { formatAmount, formatPrice, formatQuantity } from "@ledger/money";
+import { kindSemanticColor } from "@ledger/theme/semantic-colors";
 import { clickTab } from "@ledger/test-support/dom";
 import { componentVm } from "@ledger/test-support/component-vm";
 import { mountWithDialog } from "@ledger/test-support/mount";
 import { setFakeMedia } from "@ledger/test-support/media-mock";
 import AppSelect from "@ledger/ui-kit/AppSelect.vue";
 import PinyinSelect from "@ledger/ui-kit/PinyinSelect.vue";
-import AppDatePicker from "@ledger/ui-kit/AppDatePicker.vue";
 import { useWindowGuard } from "@/composables/useWindowGuard";
 import { clearViewResets } from "@/composables/viewResetRegistry";
-import {
-  makeInstrument,
-  makeInvestmentLedgerRow,
-  makeInvestmentOverview,
-  makeMwrSummary,
-} from "../factories";
+import { makeInvestmentLedgerRow, makeInvestmentOverview, makeMwrSummary } from "../factories";
 import type { InvestmentTransactionRow } from "@ledger/types";
 
 // 走势图用共享桩组件替代（同 InvestmentsView.test.ts 基座）
@@ -188,6 +185,8 @@ const LEDGER_DEFAULTS = {
     details: [],
   },
   money_weighted_return_summary: makeMwrSummary({ by_instrument: [], by_account: [], total: [] }),
+  // 数据期间边界（QuickTimeRange 钳制输入，#1807）：「今天」= 2026-02-10 时各档边界覆盖夹具期间
+  report_date_range: { min_date: "2025-12-15", max_date: "2026-03-01" },
 };
 
 beforeEach(async () => {
@@ -307,9 +306,24 @@ function filterValue(wrapper: VueWrapper, testid: string): unknown {
   return findFilterSelect(wrapper, testid).findComponent(NSelect).props("value");
 }
 
-async function setDateRange(wrapper: VueWrapper, range: [string, string] | null) {
-  const picker = ledgerPane(wrapper).findComponent(AppDatePicker);
-  componentVm(picker).$emit("update:formatted-value", range);
+/**
+ * 冻结「今天」（只伪造 Date、保留真实定时器以免 flushPromises 停摆）：芯片边界
+ * 断言确定化（SearchView 时间维度测试同款日期 2026-02-10）。
+ */
+function freezeToday() {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date(2026, 1, 10, 12, 0, 0));
+}
+
+afterEach(() => vi.useRealTimers());
+
+/** 时间芯片按文案定位（闭集文案唯一：全部/当月/当季/当年/去年，SearchView 同款）。 */
+function chip(wrapper: VueWrapper, label: string) {
+  return wrapper.findAllComponents(NButton).find((b) => b.text().trim() === label)!;
+}
+
+async function clickChip(wrapper: VueWrapper, label: string) {
+  await chip(wrapper, label).trigger("click");
   await flushPromises();
 }
 
@@ -636,8 +650,9 @@ describe("明细页签移动档横向滚动（issue #1779）", () => {
 });
 
 /**
- * 明细页签筛选全维（issue #1780 / ADR-0135 决策 3）：账户（涉及账户语义——账户端 ∪
- * 出资端）、标的（convert 两腿任一命中即算）与日期（双端有界）与类型组合过滤；
+ * 明细页签手动筛选三维 + 标的下钻只读入口（issue #1780 / ADR-0135 决策 3 及其修订注记）：
+ * 账户（涉及账户语义——账户端 ∪ 出资端）与日期（时间范围快捷选择）与类型组合过滤；
+ * 标的维度无手动控件（仅 ?instrument= 深链/会话落账，convert 两腿任一命中即算）；
  * 任一维度实际变化翻页归零（store 内化）。双断言：请求参数 + 渲染效果；删除任一
  * 维度接线即对应断言变红。
  */
@@ -655,32 +670,37 @@ describe("明细页签账户/标的/日期筛选（issue #1780）", () => {
     expect(colCells(wrapper, "kind")).toEqual(["买入", "分红"]);
   });
 
-  it("标的筛选：请求携带 instrument_id，convert 两腿任一命中即算", async () => {
+  it("标的筛选控件已退役（仅下钻只读入口）：无标的下拉，会话维度仍参与过滤", async () => {
+    const store = useInvestmentsSessionStore();
+    store.setDetailInstrument("inst-msft");
     const wrapper = mountView();
     await flushPromises();
     await openLedgerTab(wrapper);
-    // inst-msft 仅出现在转换行转入腿：转出腿不命中、转入腿命中即算（两腿口径）
-    await selectFilter(wrapper, "ledger-instrument-filter", "inst-msft");
+    // 手动控件不存在（ADR-0135 修订注记：降级为仅 URL 下钻只读入口）
+    expect(ledgerPane(wrapper).findAll('[data-testid="ledger-instrument-filter"]')).toHaveLength(0);
+    // 隐藏维度照常参与请求与行过滤——inst-msft 仅出现在转换行转入腿（两腿口径）
     expect(lastLedgerFilter()).toMatchObject({ instrument_id: "inst-msft", page: 1 });
-    expect(filterValue(wrapper, "ledger-instrument-filter")).toBe("inst-msft");
     expect(colCells(wrapper, "kind")).toEqual(["转换"]);
   });
 
-  it("日期筛选：双端有界区间成对携带 from/to，渲染只剩区间内行", async () => {
+  it("日期筛选：点「当月」写入双端有界快照（含边界），渲染只剩区间内行", async () => {
+    freezeToday();
     const wrapper = mountView();
     await flushPromises();
     await openLedgerTab(wrapper);
-    await setDateRange(wrapper, ["2026-03-02", "2026-03-04"]);
-    expect(lastLedgerFilter()).toMatchObject({ from: "2026-03-02", to: "2026-03-04", page: 1 });
-    expect(colCells(wrapper, "date")).toEqual(["2026-03-04", "2026-03-03", "2026-03-02"]);
+    await clickChip(wrapper, "当月");
+    expect(lastLedgerFilter()).toMatchObject({ from: "2026-02-01", to: "2026-02-28", page: 1 });
+    // 夹具仅分红行（2026-02-28）落在当月区间内
+    expect(colCells(wrapper, "date")).toEqual(["2026-02-28"]);
   });
 
-  it("清除日期区间：请求不再携带 from/to（双端成对清除）", async () => {
+  it("日期清除：点「全部」清回双空默认态（请求不再携带 from/to）", async () => {
+    freezeToday();
     const wrapper = mountView();
     await flushPromises();
     await openLedgerTab(wrapper);
-    await setDateRange(wrapper, ["2026-03-02", "2026-03-04"]);
-    await setDateRange(wrapper, null);
+    await clickChip(wrapper, "当月");
+    await clickChip(wrapper, "全部");
     expect(lastLedgerFilter()).toEqual({ page: 1, page_size: 20 });
     expect(colCells(wrapper, "kind")).toHaveLength(5);
   });
@@ -704,25 +724,27 @@ describe("明细页签账户/标的/日期筛选（issue #1780）", () => {
     const wrapper = mountView();
     await flushPromises();
     await openLedgerTab(wrapper);
+    await selectKinds(wrapper, ["sell"]);
     await selectFilter(wrapper, "ledger-account-filter", "acc-2");
-    await selectFilter(wrapper, "ledger-instrument-filter", "inst-msft");
-    // 账户 acc-2（命中买入/分红行）× 标的 inst-msft（仅命中转换行）无交集行
+    // 账户 acc-2（命中买入/分红行）× 类型 sell（仅卖出行，账户 acc-1）无交集行
     expect(wrapper.find('[data-testid="ledger-empty"]').text()).toContain("当前筛选无匹配交易");
   });
 
   it("会话内保留：账户/标的/日期三维切走页签再回来恢复并以保留态重拉", async () => {
+    freezeToday();
+    // 标的维度的写入方是深链（一次性消费），此处以 store 直写模拟其保留态
+    useInvestmentsSessionStore().setDetailInstrument("inst-1");
     const wrapper = mountView();
     await flushPromises();
     await openLedgerTab(wrapper);
     await selectFilter(wrapper, "ledger-account-filter", "acc-2");
-    await selectFilter(wrapper, "ledger-instrument-filter", "inst-1");
-    await setDateRange(wrapper, ["2026-03-01", "2026-03-31"]);
+    await clickChip(wrapper, "当年");
     const last = lastLedgerFilter();
     expect(last).toMatchObject({
       account_id: "acc-2",
       instrument_id: "inst-1",
-      from: "2026-03-01",
-      to: "2026-03-31",
+      from: "2026-01-01",
+      to: "2026-12-31",
     });
     await clickTab(wrapper, "持仓");
     await clickTab(wrapper, "明细");
@@ -731,33 +753,72 @@ describe("明细页签账户/标的/日期筛选（issue #1780）", () => {
     expect(lastLedgerFilter()).toMatchObject({
       account_id: "acc-2",
       instrument_id: "inst-1",
-      from: "2026-03-01",
-      to: "2026-03-31",
+      from: "2026-01-01",
+      to: "2026-12-31",
     });
     expect(filterValue(wrapper, "ledger-account-filter")).toBe("acc-2");
-    expect(filterValue(wrapper, "ledger-instrument-filter")).toBe("inst-1");
   });
+});
 
-  it("恢复访次的标的筛选回显：重挂经 get_instrument 解析回标签（不留裸 id）", async () => {
-    const store = useInvestmentsSessionStore();
-    store.setDetailInstrument("inst-1");
-    wireInvokeSeam({
-      defaults: LEDGER_DEFAULTS,
-      overrides: {
-        get_instrument: makeInstrument({ id: "inst-1", symbol: "600000", name: "浦发银行" }),
-      },
-    });
+/**
+ * 明细页签清除筛选按钮（#1807，主列表同款判定）：任一明细维度激活（含深链带入的
+ * 标的隐藏维度）即可用；点击清明细四维 + 翻页归零，不切页签、不动页大小——明细面
+ * 与 ESC 复位同源，页签回概览仍是 ESC 复位专属出口。删除按钮接线即红。
+ */
+describe("明细页签清除筛选按钮（#1807）", () => {
+  function clearButton(wrapper: VueWrapper) {
+    const btn = ledgerPane(wrapper).find('[data-testid="ledger-clear-filters"]');
+    expect(btn.exists(), "明细页签应有「清除筛选」按钮").toBe(true);
+    return btn!;
+  }
+
+  it("默认态禁用；任一维度激活（含标的隐藏维度）点亮，点击清明细四维 + 翻页归零且不切页签", async () => {
     const wrapper = mountView();
     await flushPromises();
     await openLedgerTab(wrapper);
-    expect(filterValue(wrapper, "ledger-instrument-filter")).toBe("inst-1");
-    // 候选含解析回的标签（拼法与盈亏页标的筛选同源）
-    const options = ledgerPane(wrapper)
-      .findAllComponents(PinyinSelect)
-      .find((c) => c.attributes("data-testid") === "ledger-instrument-filter")!
-      .findComponent(NSelect)
-      .props("options") as Array<{ label: string; value: string }>;
-    expect(options.some((o) => o.value === "inst-1" && o.label.includes("浦发银行"))).toBe(true);
+    expect(clearButton(wrapper).attributes("disabled")).toBeDefined();
+    await selectKinds(wrapper, ["buy"]);
+    await selectFilter(wrapper, "ledger-account-filter", "acc-2");
+    // 深链带入的标的隐藏维度同样点亮按钮
+    const store = useInvestmentsSessionStore();
+    store.setDetailInstrument("inst-1");
+    store.setDetailPage(2);
+    await flushPromises();
+    expect(clearButton(wrapper).attributes("disabled")).toBeUndefined();
+    await clearButton(wrapper).trigger("click");
+    await flushPromises();
+    expect(store.detailKinds).toBeNull();
+    expect(store.detailAccountId).toBeNull();
+    expect(store.detailInstrumentId).toBeNull();
+    expect(store.detailDateFrom).toBeNull();
+    expect(store.detailDateTo).toBeNull();
+    expect(store.detailPage).toBe(1);
+    expect(store.activeTab).toBe("ledger");
+    expect(lastLedgerFilter()).toEqual({ page: 1, page_size: 20 });
+  });
+});
+
+/**
+ * 呈现面对齐主列表（#1807 / ADR-0135 修订注记）：金额列语义色（kindSemanticColor）
+ * 与类型列标签色（KIND_TAG_TYPE）与主列表同源同件。删除任一着色接线即红。
+ */
+describe("明细页签金额/类型着色与主列表同源（#1807）", () => {
+  it("金额列按 kind 语义色着色（AmountCell），类型列 NTag 标签色同 KIND_TAG_TYPE", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+    await openLedgerTab(wrapper);
+    // 金额单元格：首行买入行，色值与主列表同源函数计算结果一致
+    const amountCell = ledgerPane(wrapper).find('td[data-col-key="amount"] .amount-cell');
+    expect(amountCell.exists()).toBe(true);
+    // Vue 会把 hex 色值序列化为 rgb() 形态，比较前换算（色值本体与主列表同源）
+    const color = kindSemanticColor("buy", useAppStore().theme);
+    const [r, g, b] = [1, 3, 5].map((i) => parseInt(color.slice(i, i + 2), 16));
+    expect(amountCell.attributes("style")).toContain(`rgb(${r}, ${g}, ${b})`);
+    // 类型列：行序 date 倒序 = buy/sell/convert/split/dividend，标签色与主列表映射同源
+    const rowKinds = ["buy", "sell", "convert", "split", "dividend"] as const;
+    const kindCells = ledgerPane(wrapper).findAll('td[data-col-key="kind"]');
+    const types = kindCells.map((c) => c.findComponent(NTag).props("type"));
+    expect(types).toEqual(rowKinds.map((k) => KIND_TAG_TYPE[k]));
   });
 });
 
@@ -791,7 +852,7 @@ describe("明细页签 ESC 复位覆盖新增三维（issue #1780）", () => {
     await openLedgerTab(wrapper);
     await selectKinds(wrapper, ["buy"]);
     await selectFilter(wrapper, "ledger-account-filter", "acc-2");
-    await setDateRange(wrapper, ["2026-03-01", "2026-03-31"]);
+    await clickChip(wrapper, "当年");
     useInvestmentsSessionStore().setDetailPage(2);
     await flushPromises();
 

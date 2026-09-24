@@ -291,7 +291,6 @@
     "createBuy": "记买入",
     "createSell": "记卖出",
     "filterAccount": "账户",
-    "filterInstrument": "标的",
     "filterDate": "日期"
   }
 }

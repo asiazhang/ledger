@@ -291,7 +291,6 @@
     "createBuy": "Record Buy",
     "createSell": "Record Sell",
     "filterAccount": "Account",
-    "filterInstrument": "Instrument",
     "filterDate": "Date"
   }
 }
