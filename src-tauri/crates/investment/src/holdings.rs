@@ -43,18 +43,36 @@ use ledger_infra::error::{AppError, Result};
 /// 同一组软删交易行与软删账户；dividend 零份额变动不入判。**多处 SQL 必须同步
 /// 修改**：任何一侧腿口径变化（新增腿类型、过滤条件变化）必须同时改其余各处，
 /// 并保持 `tests/holdings_as_of` 的配对与首笔腿测试绿。
+/// # 查询形态（issue #1804）
+///
+/// 两臂拆分 + `INDEXED BY` 钉定各自的 `security_transactions` 索引（V030 查询侧
+/// 钉定先例）：原 OR 单表达式只有在数据量足够时才触发 MULTI-INDEX OR——空库与
+/// 小库成本平局会退回「`transactions` 全扫 + 按 PK 回表」的逐标的重执行（生产现场
+/// 单条 1737ms）。钉定后计划确定（两臂各一次索引 seek，实测 37MB 库 14.7ms），且
+/// 索引缺失时 prepare 直接报错：删掉 V033 索引迁移 → 首笔腿既有测试与
+/// [`crate::tests::first_position_plan`] 计划守门同时变红。两臂各自 MIN 后外层
+/// 再取 MIN ≡ 原 OR 表达式在同一批行上的 MIN，口径不变。
+///
 ///
 /// # 别名契约
 ///
 /// 以 `i` 引用外层 `instruments` 行（同 [`crate::predicates::INVESTED_EXISTS`]）：
 /// 引用本常量的外层查询**必须**以 `i` 作为 instruments 表别名；逐标的读取走
 /// [`first_position_date`]，不再另写第二份 SQL。
-pub const FIRST_POSITION_DATE: &str = "(SELECT MIN(t.date) FROM security_transactions st \
-      JOIN transactions t ON t.id = st.transaction_id \
-      JOIN accounts a ON a.id = t.account_id \
-      WHERE t.is_deleted = 0 AND a.is_deleted = 0 \
-        AND ((st.action IN ('buy','sell','convert','split') AND st.quantity IS NOT NULL AND st.instrument_id = i.id) \
-          OR (st.action = 'convert' AND st.to_quantity IS NOT NULL AND st.to_instrument_id = i.id)))";
+pub const FIRST_POSITION_DATE: &str = "(SELECT MIN(x) FROM (\
+  SELECT MIN(t.date) AS x FROM security_transactions st INDEXED BY idx_security_transactions_instrument \
+    JOIN transactions t ON t.id = st.transaction_id \
+    JOIN accounts a ON a.id = t.account_id \
+   WHERE t.is_deleted = 0 AND a.is_deleted = 0 \
+    AND st.action IN ('buy','sell','convert','split') AND st.quantity IS NOT NULL \
+    AND st.instrument_id = i.id \
+  UNION ALL \
+  SELECT MIN(t.date) FROM security_transactions st INDEXED BY idx_security_transactions_to_instrument \
+    JOIN transactions t ON t.id = st.transaction_id \
+    JOIN accounts a ON a.id = t.account_id \
+   WHERE t.is_deleted = 0 AND a.is_deleted = 0 \
+    AND st.action = 'convert' AND st.to_quantity IS NOT NULL \
+    AND st.to_instrument_id = i.id))";
 
 /// 单标的的首笔持仓流水日（[`FIRST_POSITION_DATE`] 的逐标的读形态）：无持仓
 /// 流水返回 `None`（覆盖目标维持近两年，行为不变）。

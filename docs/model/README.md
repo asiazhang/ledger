@@ -163,5 +163,6 @@ erDiagram
 | `V030__transaction_merchant_covering_index.sql` | transactions 商户维度部分覆盖索引（商户消费排行聚合的分组列打头覆盖索引，查询侧 INDEXED BY 钉定，#1655） |
 | `V031__drop_note_pinyin.sql` | transactions 拼音派生列退役：DROP note_pinyin 列与回填探针索引，搜索覆盖索引重建（列清单去 note_pinyin，「列表序键 + id/note/三引用列」形态保持）——交易搜索退回原文搜索，拼音可搜语义收窄归下拉侧（#1728 / ADR-0027 修订记录「语义契约定稿」） |
 | `V032__goals.sql` | goals 储蓄目标表（目标金额 + 可选截止日 + 状态 + 手填计划月存 + 专属账户 1:1 绑定，spec #1750 / ADR-0133） |
+| `V033__security_transaction_to_instrument_index.sql` | security_transactions 转入腿索引（to_instrument_id）——首笔持仓流水日两臂各走索引 seek、查询侧 INDEXED BY 钉定（计划由 SQL 确定，索引缺失即 prepare 报错），逐标的全扫退役（#1804） |
 
 > 迁移版本由 SQLite `user_version` 自动追踪，新迁移在数据库模块统一注册。V005（FTS5 搜索索引）已随统一模糊搜索方案移除（ADR-0027），编号不复用。新增 schema 变更时新建 `V00X__名称.sql` 并在注册处追加；已发布迁移的就地修改与 BREAKING 标记要求见 AGENTS.md 发布约定。

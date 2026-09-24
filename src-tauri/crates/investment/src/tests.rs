@@ -32,6 +32,8 @@
 //! - [`dividend`]：现金分红（dividend）写入——现金腿 + 标的扩展行、任意在用账户、
 //!   无持仓可录、守卫齐全、kind 变更拒绝与改 / 删回退（issue #1078 / ADR-0109）
 //! - [`trend`]：走势查询（单标的 / 组合）
+//! - [`first_position_plan`]：首笔持仓流水日查询计划守门（issue #1804）——OR 两臂
+//!   各走 `security_transactions` 索引 seek、不得全扫 `transactions`（删 V033 即红）
 //! - [`holdings_as_of`]：时点持仓推算
 //! - [`instrument_type_string`]：`InstrumentType` 字符串面（宏同体派生，ADR-0108）
 //! - [`ledger_tab`]：投资明细列表读命令（ADR-0135 / issue #1778）——四维过滤逐维
@@ -55,6 +57,7 @@ mod constant_price;
 mod convert;
 mod cumulative_pnl;
 mod dividend;
+mod first_position_plan;
 mod fund_add;
 mod fund_trade;
 mod holdings_as_of;
