@@ -4,7 +4,8 @@
     "pnl": "盈亏",
     "holdings": "持仓",
     "instruments": "标的",
-    "trend": "走势"
+    "trend": "走势",
+    "ledger": "明细"
   },
   "overview": {
     "title": "投资概览",
@@ -265,5 +266,22 @@
   },
   "backfill": {
     "progress": "历史数据补全中 {done}/{total}"
+  },
+  "ledger": {
+    "columns": {
+      "date": "日期",
+      "kind": "类型",
+      "instrument": "标的",
+      "quantity": "数量",
+      "amount": "金额",
+      "price": "单价",
+      "fee": "手续费",
+      "account": "账户",
+      "fundingAccount": "出资账户"
+    },
+    "total": "共 {n} 条",
+    "empty": "暂无投资交易",
+    "emptyFiltered": "当前筛选无匹配交易",
+    "filterKind": "类型"
   }
 }

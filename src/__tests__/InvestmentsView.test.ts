@@ -129,6 +129,9 @@ const INVESTMENT_DEFAULTS = {
   },
   // 资金加权收益率（issue #1195）：持仓/盈亏两页签共用一次拉取
   money_weighted_return_summary: makeMwrSummary({ by_instrument: [], by_account: [], total: [] }),
+  // 投资明细列表（ADR-0135 / issue #1778 后端命令）：明细页签唯一取数接口，
+  // 默认空行集（打开明细页签的用例自行覆写）
+  list_investment_transactions: { items: [], total: 0 },
 };
 
 beforeEach(async () => {
@@ -141,7 +144,7 @@ beforeEach(async () => {
 
 describe("InvestmentsView 标的 tab", () => {
   // issue #769：页签存在性收行——行 = 页签名，删页签即红（生杀线内，见 CONTEXT-testing「存在性断言」）。
-  it.each(["概览", "盈亏", "持仓", "标的", "走势"])("%s tab 存在", async (tab) => {
+  it.each(["概览", "盈亏", "持仓", "明细", "标的", "走势"])("%s tab 存在", async (tab) => {
     const wrapper = mountView();
     await nextTick();
     expect(findTab(wrapper, tab, { exact: true }), `页签「${tab}」应存在`).toBeTruthy();
@@ -219,13 +222,14 @@ describe("InvestmentsView 持仓页签（issue #901）", () => {
     expect(wrapper.findAll(".n-tabs-tab--active").map((el) => el.text())).toEqual(["持仓"]);
   });
 
-  it("页签顺序为概览/盈亏/持仓/标的/走势，默认选中概览（spec #1532 / issue #1536）", async () => {
+  it("页签顺序为概览/盈亏/持仓/明细/标的/走势，默认选中概览（spec #1532 / issue #1536）", async () => {
     const wrapper = mountView();
     await flushPromises();
     expect(wrapper.findAll(".n-tabs-tab").map((el) => el.text())).toEqual([
       "概览",
       "盈亏",
       "持仓",
+      "明细",
       "标的",
       "走势",
     ]);
@@ -884,5 +888,29 @@ describe("InvestmentsView ESC 复位（issue #1192）", () => {
     expect(fireViewReset()).toBe(true);
     wrapper.unmount();
     expect(fireViewReset()).toBe(false);
+  });
+});
+
+/**
+ * 明细页签基座（ADR-0135 决策 3 / issue #1779）：页签在场 + 打开即以默认筛选与
+ * 分页请求投资明细命令。删除页签（存在性行变红）或删除列表接线（请求断言变红）
+ * 即红——变红条件对准用户可观察结果（页签消失 / 列表无数据）。
+ */
+describe("InvestmentsView 明细页签基座（issue #1779）", () => {
+  it("打开明细页签：以默认筛选与分页请求投资明细（无筛选、第 1 页、默认页大小）", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+    // 页签懒挂载：未打开不取数（既有页签同款行为）
+    expect(
+      mockInvoke.mock.calls.filter(([cmd]) => cmd === "list_investment_transactions"),
+    ).toHaveLength(0);
+    await clickTab(wrapper, "明细");
+    await flushPromises();
+    const calls = mockInvoke.mock.calls.filter(([cmd]) => cmd === "list_investment_transactions");
+    expect(calls).toHaveLength(1);
+    expect(lastInvokeArgs("list_investment_transactions").filter).toEqual({
+      page: 1,
+      page_size: 20,
+    });
   });
 });

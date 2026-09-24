@@ -1,7 +1,7 @@
 import { defineStore } from "pinia";
 import { computed, readonly, ref, watch } from "vue";
 import { SEARCH_DEBOUNCE_MS } from "@/composables/search-debounce";
-import type { Instrument } from "@ledger/types";
+import type { Instrument, TransactionKind } from "@ledger/types";
 
 /** 持仓页签排序列闭集（与持仓明细表列 key 一致）：市值 / 持仓收益（未实现盈亏） */
 export type HoldingsSortColumn = "market_value" | "unrealized_pnl";
@@ -28,6 +28,12 @@ export const HOLDINGS_PAGE_SIZE = 20;
  * 不设预算的用户也无需先建预算才能看到这笔资产。
  */
 export const INVESTMENTS_DEFAULT_TAB = "overview";
+
+/** 明细页签默认页大小（页大小档位与主列表同构：档位 [10, 20, 50, 100]，默认 20）。 */
+export const LEDGER_TAB_PAGE_SIZE_DEFAULT = 20;
+
+/** 明细页签页大小可选档位（与主列表 [10, 20, 50, 100] 同构，issue #1779）。 */
+export const LEDGER_TAB_PAGE_SIZE_OPTIONS = [10, 20, 50, 100];
 
 /** 走势视图模式：组合市值曲线 ↔ 单标的曲线同视图切换 */
 export type TrendViewMode = "portfolio" | "instrument";
@@ -81,6 +87,15 @@ export const useInvestmentsSessionStore = defineStore("investments-session", () 
   const holdingsSorter = ref<HoldingsSorter | null>(null);
   /** 持仓页码（1 起）：过滤排序之后派生行集的展示切片 */
   const holdingsPage = ref(1);
+
+  /**
+   * 明细页签状态（ADR-0135 决策 3 / issue #1779）：类型多选筛选（投资 kind 子集，
+   * null = 全部默认态）+ 服务端分页页码与页大小（ADR-0008）。会话内保留、冷启动
+   * 回默认（ADR-0094 默认粒度）；语义与主列表类型维度同构。
+   */
+  const detailKinds = ref<TransactionKind[] | null>(null);
+  const detailPage = ref(1);
+  const detailPageSize = ref(LEDGER_TAB_PAGE_SIZE_DEFAULT);
 
   /** 走势视图模式与预设区间（会话内保留、冷启动回默认） */
   const trendMode = ref<TrendViewMode>(TREND_MODE_DEFAULT);
@@ -153,6 +168,36 @@ export const useInvestmentsSessionStore = defineStore("investments-session", () 
     holdingsPage.value = next;
   }
 
+  /**
+   * 明细类型筛选写入意图（投资 kind 子集多选，AppSelect 回传）：空集合归一为 null
+   * （空集合 ≡ 不过滤 ≡ 默认态，主列表同构）；同一集合不同顺序视作同值不动作——
+   * 翻页归零只对实际变化响应（持仓排序同值守卫同规）。
+   */
+  function setDetailKinds(kinds: TransactionKind[] | null) {
+    const next = kinds?.length ? [...kinds] : null;
+    const current = detailKinds.value;
+    const same =
+      next === current ||
+      (next !== null &&
+        current !== null &&
+        next.length === current.length &&
+        next.every((k) => current.includes(k)));
+    if (same) return;
+    detailKinds.value = next;
+  }
+
+  /** 明细翻页意图（表格内置分页回传）：页码直写，重拉由消费方 watch 承担 */
+  function setDetailPage(next: number) {
+    detailPage.value = next;
+  }
+
+  /** 明细页大小切换意图：切换后翻回第 1 页（主列表页大小切换同构） */
+  function setDetailPageSize(size: number) {
+    if (size === detailPageSize.value) return;
+    detailPageSize.value = size;
+    detailPage.value = 1;
+  }
+
   /** 翻页归零：三维任一应用值实际变化即回第一页（排序清除亦属实际变化）。
    * 同步 flush 使归零与意图应用原子生效，不留「维度已变、页码未归」的中间态；
    * 防抖中的搜索不归零（输入回显不是应用值）。 */
@@ -160,6 +205,15 @@ export const useInvestmentsSessionStore = defineStore("investments-session", () 
     [holdingsSearch, holdingsAccountId, holdingsSorter],
     () => {
       holdingsPage.value = 1;
+    },
+    { flush: "sync" },
+  );
+
+  /** 明细翻页归零：类型筛选实际变化即回第一页（同步 flush 使归零与意图应用原子生效）。 */
+  watch(
+    detailKinds,
+    () => {
+      detailPage.value = 1;
     },
     { flush: "sync" },
   );
@@ -238,6 +292,11 @@ export const useInvestmentsSessionStore = defineStore("investments-session", () 
     trendInstrumentCache.clear();
     trendMode.value = TREND_MODE_DEFAULT;
     trendPreset.value = TREND_PRESET_DEFAULT;
+    // 明细筛选清零 + 翻页归零 + 页大小回默认（ADR-0135：ESC 复位 = 页签回概览 +
+    // 清明细筛选、翻页归零；随本票落地）
+    detailKinds.value = null;
+    detailPage.value = 1;
+    detailPageSize.value = LEDGER_TAB_PAGE_SIZE_DEFAULT;
   }
 
   return {
@@ -248,6 +307,9 @@ export const useInvestmentsSessionStore = defineStore("investments-session", () 
     holdingsAccountId: readonly(holdingsAccountId),
     holdingsSorter: readonly(holdingsSorter),
     holdingsPage: readonly(holdingsPage),
+    detailKinds: readonly(detailKinds),
+    detailPage: readonly(detailPage),
+    detailPageSize: readonly(detailPageSize),
     trendMode: readonly(trendMode),
     trendPreset: readonly(trendPreset),
     trendInstrumentId: readonly(trendInstrumentId),
@@ -259,6 +321,9 @@ export const useInvestmentsSessionStore = defineStore("investments-session", () 
     setAccount,
     setSorter,
     setPage,
+    setDetailKinds,
+    setDetailPage,
+    setDetailPageSize,
     showTrendInstrument,
     registerTrendInstrument,
     selectTrendInstrument,

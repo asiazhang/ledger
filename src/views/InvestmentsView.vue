@@ -6,6 +6,7 @@ import {
   SpeedometerOutline,
   StatsChartOutline,
   ListOutline,
+  DocumentTextOutline,
   PieChartOutline,
   TrendingUpOutline,
 } from "@vicons/ionicons5";
@@ -18,6 +19,7 @@ import { useInvestmentsSessionStore } from "@/investment/investments-session";
 import InvestmentOverviewPanel from "@/investment/InvestmentOverviewPanel.vue";
 import RealizedPnlPanel from "@/investment/RealizedPnlPanel.vue";
 import HoldingsOverview from "@/investment/HoldingsOverview.vue";
+import InvestmentLedgerTab from "@/investment/InvestmentLedgerTab.vue";
 import HistoryBackfillIndicator from "@/investment/HistoryBackfillIndicator.vue";
 import InstrumentBrowser from "@/investment/InstrumentBrowser.vue";
 import PortfolioTrendPanel from "@/investment/PortfolioTrendPanel.vue";
@@ -162,6 +164,18 @@ onMounted(() => focusParam.consume());
         <HoldingsOverview />
       </NTabPane>
 
+      <!-- 明细页签（投资明细页签，ADR-0135 决策 3 / issue #1779 基座）：位置紧随
+           持仓页签；五种投资 kind 行按 kind 分形态呈现，消费投资明细命令（服务端
+           分页 + 类型筛选）。NTabPane 必须带 key（= 页签名）：预取/保活语义依赖
+           组件实例身份（本文件顶部既有红线注释）。 -->
+      <NTabPane key="ledger" name="ledger">
+        <template #tab
+          ><span class="pane-tab"
+            ><NIcon :component="DocumentTextOutline" />{{ t("investments.tabs.ledger") }}</span
+          ></template
+        >
+        <InvestmentLedgerTab />
+      </NTabPane>
       <NTabPane key="instruments" name="instruments">
         <template #tab
           ><span class="pane-tab"

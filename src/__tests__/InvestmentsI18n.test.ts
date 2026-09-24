@@ -41,6 +41,9 @@ const EMPTY_INVESTMENT_DEFAULTS = {
   },
   // 资金加权收益率（issue #1195）：持仓/盈亏两页签共用一次拉取
   money_weighted_return_summary: { by_instrument: [], by_account: [], total: [] },
+  // 投资明细列表（ADR-0135 / issue #1778）：明细页签唯一取数接口（英文冒烟不打开
+  // 明细页签，静态空行集兜底即可）
+  list_investment_transactions: { items: [], total: 0 },
 };
 
 // 英文渲染冒烟（issue #350）：切 en-US 后投资域文案走 en 资源；
@@ -58,7 +61,7 @@ afterEach(async () => {
 const mountView = () => mountWithDialog(InvestmentsView);
 
 describe("InvestmentsView 英文渲染（issue #350 / ADR-0049）", () => {
-  it("页签渲染英文：Overview / P&L / Holdings / Instruments / Trend", async () => {
+  it("页签渲染英文：Overview / P&L / Holdings / Ledger / Instruments / Trend", async () => {
     await applyLocale("en-US");
     await nextTick();
     const wrapper = mountView();
@@ -67,6 +70,7 @@ describe("InvestmentsView 英文渲染（issue #350 / ADR-0049）", () => {
     expect(labels).toContain("Overview");
     expect(labels).toContain("P&L");
     expect(labels).toContain("Holdings");
+    expect(labels).toContain("Ledger");
     expect(labels).toContain("Instruments");
     expect(labels).toContain("Trend");
   });
