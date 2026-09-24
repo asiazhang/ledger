@@ -33,6 +33,7 @@
 
 use std::sync::{Arc, Mutex};
 
+use crate::http::Pacer;
 use ledger_infra::error::Result;
 use rusqlite::{Connection, params};
 use tauri_app_lib::test_support::scan::{mask_non_code, matching_brace_end};
@@ -195,6 +196,17 @@ pub(super) fn spawn_header_capture_server(
 ) -> (String, Arc<Mutex<Vec<String>>>) {
     let body = body.into();
     spawn_capture_server(move |_| (200, body.clone()))
+}
+
+/// 测试注入的零间隔限速器（等待可注入，spec #1086 / issue #1514 同款手法）：
+/// 驱动生产通道束的接线证明用例以此替换进程级共享 pacer 单例（`Pacer::new`
+/// 零间隔即整只限速器惰性），免付相邻请求 1 秒的生产限速真实等待；束内接线
+/// 与请求形态断言不受注入影响（issue #1787）。生产入口仍取共享单例，其单例性
+/// 由 `history_backfill::shared_pacer_is_process_wide_singleton` 钉住。
+pub(super) fn zero_pacer() -> Arc<tokio::sync::Mutex<Pacer>> {
+    Arc::new(tokio::sync::Mutex::new(Pacer::new(
+        std::time::Duration::ZERO,
+    )))
 }
 
 // ---------------------------------------------------------------------------

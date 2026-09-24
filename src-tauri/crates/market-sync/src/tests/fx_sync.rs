@@ -26,6 +26,7 @@ use crate::fx::{
     FX_SOURCE_ORIGIN_WEEK, FxSyncChannels, FxSyncGate, FxSyncReport, sync_fx_rates,
     sync_fx_rates_guarded, sync_fx_rates_with_progress,
 };
+use crate::http::RetryConfig;
 use crate::progress::FxSyncProgress;
 use crate::weekly::week_monday;
 
@@ -122,6 +123,17 @@ fn fx_week_span(conn: &Connection, base: &str, quote: &str) -> (Option<String>, 
 fn fx_point_count(conn: &Connection) -> i64 {
     conn.query_row("SELECT count(*) FROM fx_rate_history", [], |r| r.get(0))
         .unwrap()
+}
+
+/// 毫秒级重试预算（等待可注入）：重试次数与多主机切换语义与生产一致，退避与
+/// 冷却压到 1ms（`tests/http_client.rs` 的 `fast_cfg` 同款；退避绝对值不承载语义，
+/// spec #1086 / issue #1514 同款手法，issue #1787）。
+fn fast_retry_cfg() -> RetryConfig {
+    RetryConfig {
+        base_backoff: std::time::Duration::from_millis(1),
+        throttle_cooldown: std::time::Duration::from_millis(1),
+        ..RetryConfig::production()
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -419,8 +431,14 @@ fn production_bundle_hits_both_ecb_documents() {
         xml.push_str("</Cube>");
     }
     xml.push_str("</Cube>");
-    let (url, heads) = spawn_header_capture_server(xml);
-    let mut channels = FxSyncChannels::with_hosts(vec![url]).unwrap();
+    let (url, heads) = super::spawn_header_capture_server(xml);
+    let mut channels = FxSyncChannels::with_hosts_on(
+        vec![url],
+        super::zero_pacer(),
+        fast_retry_cfg(),
+        fast_retry_cfg(),
+    )
+    .unwrap();
 
     // 首轮：全量回填，整份文件灌库（夹具最早周 2005-03-28 照常落库，不裁剪）。
     block_on(sync_fx_rates(&conn, &mut channels)).unwrap();
@@ -574,7 +592,15 @@ fn fx_sync_classifies_unreachable_source() {
     let conn = tauri_app_lib::test_support::open();
     seed_foreign_account_at(&conn, "acc-usd", "USD", "2022-06-15T08:00:00Z");
     // 127.0.0.1:1 无监听，连接立即被拒；生产束构造（有痕迹才取数，判据非 Skip）。
-    let mut channels = FxSyncChannels::with_hosts(vec!["http://127.0.0.1:1".to_string()]).unwrap();
+    // 零间隔 pacer + 毫秒级退避注入（等待可注入）：本用例钉的是「传输层失败 →
+    // fx.source-unreachable」的分类语义，重试次数不变、等待绝对值不承载语义。
+    let mut channels = FxSyncChannels::with_hosts_on(
+        vec!["http://127.0.0.1:1".to_string()],
+        super::zero_pacer(),
+        fast_retry_cfg(),
+        fast_retry_cfg(),
+    )
+    .unwrap();
 
     let err = block_on(sync_fx_rates(&conn, &mut channels)).unwrap_err();
 
@@ -592,7 +618,13 @@ fn fx_sync_passes_malformed_source_through_unwrapped() {
     let conn = tauri_app_lib::test_support::open();
     seed_foreign_account_at(&conn, "acc-usd", "USD", "2022-06-15T08:00:00Z");
     let (url, _) = spawn_header_capture_server("<html>waf blocked</html>".to_string());
-    let mut channels = FxSyncChannels::with_hosts(vec![url]).unwrap();
+    let mut channels = FxSyncChannels::with_hosts_on(
+        vec![url],
+        super::zero_pacer(),
+        fast_retry_cfg(),
+        fast_retry_cfg(),
+    )
+    .unwrap();
 
     let err = block_on(sync_fx_rates(&conn, &mut channels)).unwrap_err();
 

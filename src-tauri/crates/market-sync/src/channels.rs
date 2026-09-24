@@ -31,6 +31,7 @@
 
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::Arc;
 
 use ledger_infra::error::Result;
 use ledger_investment::QuoteMarket;
@@ -39,8 +40,10 @@ use super::bulk::BulkFetchSurfaces;
 use super::csrc::{CSRC_HOSTS, confirm_money_fund_form_from};
 use super::fund::fetch_fund_quote_from;
 use super::fund_nav::NavPoint;
+use tokio::sync::Mutex as AsyncMutex;
+
 use super::http::{
-    ForegroundGuard, KlineBar, build_client, lock_pacer, shared_pacer, wait_foreground_idle,
+    ForegroundGuard, KlineBar, Pacer, build_client, lock_pacer, shared_pacer, wait_foreground_idle,
 };
 use super::incremental::{do_incremental_sync_with, kline_window};
 use super::model::{SyncInstrumentInfoResult, WriteWitness};
@@ -178,8 +181,20 @@ impl SyncFetchChannels {
     /// | `fetch_fund_name` | 新浪基金批量面 + 证监会披露面（批量面未收录 → 披露兜底双主机） | `production_fund_name_channel_falls_back_to_disclosure_host`（issue #1674） |
     /// | `confirm_money_fund_form` | 证监会披露面 | `production_confirm_channel_requests_disclosure_host`（issue #1674） |
     pub(super) fn production_lane(lane: Lane, hosts: SyncFetchHosts) -> Result<Self> {
+        Self::production_lane_on_pacer(lane, hosts, shared_pacer())
+    }
+
+    /// 构造本体的限速器注入形态（等待可注入，spec #1086 / issue #1514 同款手法）：
+    /// 束形状与六条接线同 [`Self::production_lane`]，仅 pacer 由调用方传入——生产
+    /// 传共享单例（[`shared_pacer`]，双车道同一数据源额度），测试传零间隔限速器
+    ///（零间隔即整只限速器惰性，见 [`Pacer`] 文档）免付相邻请求 1 秒的真实限速
+    /// 等待；接线证明用例的请求形态断言不受注入影响（issue #1787）。
+    pub(super) fn production_lane_on_pacer(
+        lane: Lane,
+        hosts: SyncFetchHosts,
+        pacer: Arc<AsyncMutex<Pacer>>,
+    ) -> Result<Self> {
         let client = build_client()?;
-        let pacer = shared_pacer();
         Ok(Self {
             fetch_quotes: {
                 let client = client.clone();
