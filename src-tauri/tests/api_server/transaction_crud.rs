@@ -822,6 +822,40 @@ async fn test_delete_convert_guarded_by_later_convert_returns_coded_400() {
     assert_eq!(items_of(&list).len(), 1, "只剩建仓买入");
 }
 
+/// 币种一致性守卫的 HTTP 接线（issue #1770 / ADR-0134 决策 1）：把既有交易改为
+/// 与账户币种不一致 → 顶层 400 码化（code + params 双参），行原样在场。
+#[tokio::test]
+async fn test_update_transaction_currency_mismatch_returns_coded_400() {
+    let (app, conn) = setup_app();
+    let account_id = create_account_via_api_with_currency(&app, "港币户", "HKD").await;
+    {
+        let guard = conn.lock().unwrap_or_else(|e| e.into_inner());
+        test_support::seed_fx_rate_history(&guard, "fxh-mism", "HKD", "CNY", "2026-06-29", 0.9);
+    }
+    let tx = format!(
+        r#"{{"kind":"expense","amount_cents":1000,"currency_code":"HKD","account_id":"{account_id}","date":"2026-07-01"}}"#
+    );
+    let created = post_batch(&app, batch_body(&[&tx], None)).await;
+    assert_eq!(created[0]["success"], true, "{created:?}");
+    let id = created[0]["id"].as_str().unwrap().to_string();
+
+    // 币种改为与账户不一致（CNY ≠ 账户 HKD）：码化 400，params = [账户币种, 交易币种]。
+    let mismatch = format!(
+        r#"{{"kind":"expense","amount_cents":1000,"currency_code":"CNY","account_id":"{account_id}","date":"2026-07-01"}}"#
+    );
+    let (status, bytes) = put_transaction_via_api(&app, &id, &mismatch).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{bytes:?}");
+    let err: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(err["code"], "transaction.currency-mismatch");
+    assert_eq!(err["params"], serde_json::json!(["HKD", "CNY"]));
+
+    // 行原样在场：币种未被部分改写。
+    let (_, body) = get_json(&app, "/api/v1/transactions").await;
+    let items = items_of(&body);
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["currency_code"], "HKD");
+}
+
 /// 折算来源留痕（#1548 / ADR-0011 修订）：批量导入非本位币历史行 → 列表读回
 /// 带出本笔使用的汇率值与来源（series）；同币种行两列为 null（空值语义）。
 /// 断言对准用户可观察结果（HTTP 读回），证明写路径留痕接线在壳层入口生效。

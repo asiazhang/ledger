@@ -12,6 +12,7 @@ use ledger_infra::db::now_iso;
 use ledger_sync_protocol::device::device_id;
 use rusqlite::params;
 use tauri_app_lib::ledger_transaction::amount::{FxRateSource, TransactionKind};
+use tauri_app_lib::ledger_transaction::write::writer::{NormalizedRow, insert_row};
 
 #[test]
 fn create_income_and_expense_transactions() {
@@ -1435,4 +1436,54 @@ fn update_with_explicit_fx_rate_beats_baseline_reuse() {
         Some(FxRateSource::Explicit),
         "来源改标显式"
     );
+}
+
+/// 修改路径的币种一致性守卫（issue #1770 / ADR-0134 决策 1）：全字段替换按新值
+/// 验——存量脏行（守卫上线前经 insert_row 直落，USD 交易挂 CNY 账户）原样提交
+/// 被拒；改一致（币种随账户）即放行，不因历史脏而永久锁死。
+#[test]
+fn update_currency_guard_rejects_dirty_row_until_made_consistent() {
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-dirty", "现金", "cash", "CNY", 0);
+    let dirty = NormalizedRow {
+        kind: TransactionKind::Expense,
+        amount_cents: 1000,
+        currency_code: "USD".into(),
+        amount_native_cents: 1000,
+        fx_rate_used: None,
+        fx_rate_source: None,
+        account_id: "acc-dirty".into(),
+        to_account_id: None,
+        funding_account_id: None,
+        category_id: None,
+        merchant_id: None,
+        policy_id: None,
+        refund_of_transaction_id: None,
+        note: None,
+        date: "2026-01-01".into(),
+    };
+    let id = insert_row(&conn, &dirty).unwrap();
+
+    // 原样编辑（只改备注，币种保持 USD ≠ 账户 CNY）：守卫拒绝、行保持原样。
+    let mut keep_dirty = make_input("acc-dirty", TransactionKind::Expense, 1000, "2026-01-01");
+    keep_dirty.currency_code = "USD".into();
+    keep_dirty.note = Some("只改备注".into());
+    let err = update_transaction_internal(&conn, &id, keep_dirty).unwrap_err();
+    match err {
+        AppError::Coded { code, params, .. } => {
+            assert_eq!(code, "transaction.currency-mismatch");
+            assert_eq!(params, vec!["CNY".to_string(), "USD".to_string()]);
+        }
+        other => panic!("应为码化错误，实际: {other:?}"),
+    }
+    let t = get_transaction_internal(&conn, &id).unwrap();
+    assert_eq!(t.note, None, "失败不落库");
+
+    // 改一致（币种改随账户 CNY）：放行，脏行就地修复。
+    let mut fixed = make_input("acc-dirty", TransactionKind::Expense, 1000, "2026-01-01");
+    fixed.note = Some("只改备注".into());
+    update_transaction_internal(&conn, &id, fixed).unwrap();
+    let t = get_transaction_internal(&conn, &id).unwrap();
+    assert_eq!(t.currency_code, "CNY");
+    assert_eq!(t.note.as_deref(), Some("只改备注"));
 }
