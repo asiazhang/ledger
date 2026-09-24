@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, h, type VNodeChild } from "vue";
+import { computed, h, type VNodeChild, type WritableComputedRef } from "vue";
 import { NCard, NDataTable, NEmpty, NGi, NGrid, NSpace, NSpin } from "naive-ui";
 import type { DataTableColumn } from "naive-ui";
 import PinyinSelect from "@ledger/ui-kit/PinyinSelect.vue";
@@ -10,6 +10,7 @@ import { useWindowTier } from "@ledger/window-tier";
 import { kindSemanticColor, pnlSemanticColor } from "@ledger/theme/semantic-colors";
 import { formatAmount } from "@ledger/money";
 import { useRealizedPnl } from "@/investment/useRealizedPnl";
+import { PNL_PAGE_SIZE, useInvestmentsSessionStore } from "@/investment/investments-session";
 import ConceptLabel from "@/investment/ConceptLabel.vue";
 import { subLine } from "@/investment/pnl-cell.css.ts";
 import { renderMwrRateCell, useMoneyWeightedReturn } from "@/investment/useMoneyWeightedReturn";
@@ -31,7 +32,64 @@ const {
   searchInstruments,
   onSelectInstrument,
 } = useRealizedPnl();
+const session = useInvestmentsSessionStore();
 
+// 分页（issue #1795，词汇表「客户端切片分页」）：两表行集一次全量拉取，翻页只是
+// 内存展示切片（表格内置分页），不发请求、不参数化查询。页大小固定 8 不设选择器
+// （PNL_PAGE_SIZE 单源，两表共享）、单页收起分页条（paginate-single-page=false）。
+// 按年行后端升序返回（ORDER BY year），此处倒转为最新年在前——第 1 页 = 最近年份
+// 是分页可用的前提（看盈亏先看最近表现）；同年内保持币种序（稳定排序）。按账户行
+// 保持后端返回顺序（ORDER BY account_name），不引入新排序口径（grilling 定案）。
+// 页码住投资页会话状态 store：会话内保留、筛选变化归零（接线在 useRealizedPnl）、
+// 冷启动回默认（ESC 复位随 resetToDefault 一并归一）；恢复越界在此钳制回落并写回
+// 保留态（回退不归零，读出口即对账，持仓 useHoldingsFilter 同款）。行集与空态
+// 判定都在切片前，与可见页无关。
+const yearRows = computed(() =>
+  [...(summary.value?.by_year ?? [])].sort((a, b) => Number(b.year) - Number(a.year)),
+);
+// 注意命名避开 mwrRows 内的同名局部变量（作用域本不冲突，但同名易误读）
+const accountPnlRows = computed(() => summary.value?.by_account ?? []);
+
+/** 越界钳制页码：读出口即对账（stored 超出有效页数时回落并写回；只往小走、
+ *  幂等，同一越界态只回写一次，不挂 watcher）。 */
+function clampedPage(stored: () => number, rowCount: () => number, commit: (n: number) => void) {
+  return computed<number>({
+    get: () => {
+      const valid = Math.max(1, Math.ceil(rowCount() / PNL_PAGE_SIZE));
+      const current = stored();
+      if (current > valid) {
+        commit(valid);
+        return valid;
+      }
+      return current;
+    },
+    set: (next) => commit(next),
+  });
+}
+
+const yearPage = clampedPage(
+  () => session.pnlYearPage,
+  () => yearRows.value.length,
+  session.setPnlYearPage,
+);
+const accountPage = clampedPage(
+  () => session.pnlAccountPage,
+  () => accountPnlRows.value.length,
+  session.setPnlAccountPage,
+);
+
+/** 表格内置分页装配缝（持仓 HoldingsOverview 同款：客户端切片、onChange 直写页码）。 */
+function paginationFor(page: WritableComputedRef<number>) {
+  return computed(() => ({
+    page: page.value,
+    pageSize: PNL_PAGE_SIZE,
+    onChange: (next: number) => {
+      page.value = next;
+    },
+  }));
+}
+const yearPagination = paginationFor(yearPage);
+const accountPagination = paginationFor(accountPage);
 // 汇总表通用「已实现收益」列（ADR-0129 决策 1）：主值 = 域内算好的合计
 // （已实现盈亏 + 现金分红），副行拆出两腿。金额按行币种格式化（ADR-0107 决策 6：
 // 汇总行随交易行币种），数值列右对齐 + 等宽数字（词汇表「表格列形态」，两表同一
@@ -193,7 +251,9 @@ const mwrColumns: DataTableColumn<MwrRow>[] = [
               <NDataTable
                 v-else
                 :columns="yearColumns"
-                :data="summary.by_year"
+                :data="yearRows"
+                :pagination="yearPagination"
+                :paginate-single-page="false"
                 :bordered="false"
                 size="small"
               />
@@ -208,7 +268,9 @@ const mwrColumns: DataTableColumn<MwrRow>[] = [
               <NDataTable
                 v-else
                 :columns="accountCols"
-                :data="summary.by_account"
+                :data="accountPnlRows"
+                :pagination="accountPagination"
+                :paginate-single-page="false"
                 :bordered="false"
                 size="small"
               />

@@ -104,6 +104,8 @@ describe("resetToDefault（issue #1192 ESC 复位出口）", () => {
     store.setAccount("acc-1");
     store.setSorter({ columnKey: "market_value", order: "descend" });
     store.setPage(3);
+    store.setPnlYearPage(3);
+    store.setPnlAccountPage(2);
     store.showTrendInstrument(makeInstrument({ id: "inst-1" }));
     store.setTrendPreset("1m");
     store.setDetailKinds(["buy", "sell"]);
@@ -119,6 +121,8 @@ describe("resetToDefault（issue #1192 ESC 复位出口）", () => {
     expect(store.holdingsAccountId).toBeNull();
     expect(store.holdingsSorter).toBeNull();
     expect(store.holdingsPage).toBe(1);
+    expect(store.pnlYearPage).toBe(1);
+    expect(store.pnlAccountPage).toBe(1);
     expect(store.trendMode).toBe(TREND_MODE_DEFAULT);
     expect(store.trendPreset).toBe(TREND_PRESET_DEFAULT);
     expect(store.trendInstrumentId).toBeNull();
