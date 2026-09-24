@@ -22,6 +22,9 @@ export interface NaiveUiSorterState {
 /** 分页页大小：固定值不设选择器（全仓先例：交易页与搜索页同为 20，issue #912） */
 export const HOLDINGS_PAGE_SIZE = 20;
 
+/** 盈亏页按年/按账户汇总表分页页大小：固定值不设选择器，两表共享单源（issue #1795） */
+export const PNL_PAGE_SIZE = 8;
+
 /**
  * 投资页默认页签（冷启动与 ESC 复位共用同一默认态来源）：「概览」
  * （spec #1532 / issue #1536，原默认「盈亏」）——一进投资页就看到可投资资产，
@@ -50,6 +53,7 @@ export const TREND_MODE_DEFAULT: TrendViewMode = "portfolio";
 /**
  * 投资页会话状态 store（issue #1192）：投资页四页签瞬态选择的唯一读写方——
  * 当前页签 + 持仓页签筛选三维（搜索/账户过滤/排序）与页码 + 走势页签选中标的
+ * + 盈亏页按年/按账户两表页码（issue #1795，客户端切片分页的展示切片状态）；
  * （模式/预设区间/单标的）提升到会话生命周期（ADR-0094，本票前唯一残留的
  * 「会话内保留」显式豁免，spec #898/#902 的 Out of Scope 随本票落地）。
  *
@@ -87,6 +91,10 @@ export const useInvestmentsSessionStore = defineStore("investments-session", () 
   const holdingsSorter = ref<HoldingsSorter | null>(null);
   /** 持仓页码（1 起）：过滤排序之后派生行集的展示切片 */
   const holdingsPage = ref(1);
+  /** 盈亏页按年汇总页码（1 起）：后端行集的展示切片（issue #1795） */
+  const pnlYearPage = ref(1);
+  /** 盈亏页按账户汇总页码（1 起）：同上，与按年页码彼此独立 */
+  const pnlAccountPage = ref(1);
 
   /**
    * 明细页签状态（ADR-0135 决策 3 / issue #1779）：类型多选筛选（投资 kind 子集，
@@ -166,6 +174,16 @@ export const useInvestmentsSessionStore = defineStore("investments-session", () 
 
   function setPage(next: number) {
     holdingsPage.value = next;
+  }
+
+  /** 盈亏按年/按账户翻页意图（表格内置分页回传，issue #1795）：页码直写，
+   *  无第二查询口径（行集全量驻留内存，切片由表格完成）。 */
+  function setPnlYearPage(next: number) {
+    pnlYearPage.value = next;
+  }
+
+  function setPnlAccountPage(next: number) {
+    pnlAccountPage.value = next;
   }
 
   /**
@@ -288,6 +306,8 @@ export const useInvestmentsSessionStore = defineStore("investments-session", () 
     holdingsAccountId.value = null;
     holdingsSorter.value = null;
     holdingsPage.value = 1;
+    pnlYearPage.value = 1;
+    pnlAccountPage.value = 1;
     trendInstrumentId.value = null;
     trendInstrumentCache.clear();
     trendMode.value = TREND_MODE_DEFAULT;
@@ -307,6 +327,8 @@ export const useInvestmentsSessionStore = defineStore("investments-session", () 
     holdingsAccountId: readonly(holdingsAccountId),
     holdingsSorter: readonly(holdingsSorter),
     holdingsPage: readonly(holdingsPage),
+    pnlYearPage: readonly(pnlYearPage),
+    pnlAccountPage: readonly(pnlAccountPage),
     detailKinds: readonly(detailKinds),
     detailPage: readonly(detailPage),
     detailPageSize: readonly(detailPageSize),
@@ -321,6 +343,8 @@ export const useInvestmentsSessionStore = defineStore("investments-session", () 
     setAccount,
     setSorter,
     setPage,
+    setPnlYearPage,
+    setPnlAccountPage,
     setDetailKinds,
     setDetailPage,
     setDetailPageSize,
