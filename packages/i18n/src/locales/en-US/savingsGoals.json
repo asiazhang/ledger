@@ -1,4 +1,8 @@
 {
+  "accounts": {
+    "groupTitle": "Savings Goals",
+    "typeLabel": "Savings Goal"
+  },
   "listTitle": "Savings Goals",
   "newButton": "New Goal",
   "emptyGuide": "No savings goals yet — create one and the ledger will open a dedicated account for it",

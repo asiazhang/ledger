@@ -389,6 +389,36 @@ export function makeSavingsGoalProgress(
   };
 }
 
+/** 目标专属账户夹具（issue #1755 / ADR-0133 决策 2）：目标账户是 `other` 类型账户，
+ *  特殊性不靠类型值表达——是否目标户由绑定派生，本工厂只造账户本体。 */
+export function makeGoalBoundAccount(partial: Partial<Account> & { id: string }): Account {
+  return makeAccount({ type: "other", ...partial });
+}
+
+/** 目标 + 专属账户成对夹具（issue #1755）：一次造出绑定两端——账户与进度行同源
+ *  （goal.account_id 指向本工厂账户 id），新测试一律走成对厂、不手拼 account_id
+ *  （makeSavingsGoal 的 account_id 缺省是 `acc-${goal.id}`，与账户 id 无关，易错位）。 */
+export function makeGoalPair(
+  options: {
+    /** 专属账户 id（绑定目标 account_id 的锚点）。 */
+    id: string;
+    /** 目标本体覆写（id 缺省 goal-1；account_id 一律指向本工厂账户，不可覆写错位）。 */
+    goal?: Partial<SavingsGoal> & { id: string };
+    /** 账户本体覆写（name / currency_code / 余额等）。 */
+    account?: Partial<Account>;
+  } = { id: "acc-goal" },
+): { account: Account; progress: SavingsGoalProgress } {
+  const account = makeGoalBoundAccount({ id: options.id, ...options.account });
+  const progress = makeSavingsGoalProgress({
+    goal: makeSavingsGoal({
+      ...options.goal,
+      id: options.goal?.id ?? "goal-1",
+      account_id: account.id,
+    }),
+  });
+  return { account, progress };
+}
+
 /** 实物资产列表返回夹具（资产行 + 在持合计同源快照）。 */
 export function makePhysicalAssetList(partial: Partial<PhysicalAssetList> = {}): PhysicalAssetList {
   return {

@@ -1,9 +1,21 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { setActivePinia, createPinia } from "pinia";
 import { mockInvoke, wireInvokeSeam } from "@ledger/test-support/invoke-mock";
 import { useReferenceStore } from "@/stores/reference";
+import { useSavingsGoalsStore } from "@/savings-goal/savingsGoals";
 import { useInvestmentForm } from "@/investment/useInvestmentForm";
-import { makeAccount } from "./factories";
-import type { Account, Instrument, Transaction, TransactionTrade } from "@ledger/types";
+import { makeAccount, makeGoalPair } from "./factories";
+import type {
+  Account,
+  Instrument,
+  SavingsGoalProgress,
+  Transaction,
+  TransactionTrade,
+} from "@ledger/types";
+
+/** 在用目标账户绑定集（issue #1755）：goals store 进度快照变量，每测复位、
+ *  用例内赋值（布线闭包按调用时刻取值，赋值时机在布线之后也生效）。 */
+let goalProgress: SavingsGoalProgress[] = [];
 
 const mockAccounts: Account[] = [
   {
@@ -131,7 +143,11 @@ const BASE_OVERRIDES = { list_accounts: mockAccounts };
 
 describe("useInvestmentForm", () => {
   beforeEach(() => {
-    wireInvokeSeam({ overrides: BASE_OVERRIDES });
+    setActivePinia(createPinia());
+    goalProgress = [];
+    wireInvokeSeam({
+      overrides: { ...BASE_OVERRIDES, savings_goal_progress: () => Promise.resolve(goalProgress) },
+    });
   });
 
   it("初始化状态：账户/标的/数量/价格为空（数量/价格为原始文本，#416）", () => {
@@ -382,6 +398,11 @@ describe("useInvestmentForm", () => {
   });
 });
 
+/** 目标 + 专属账户成对夹具 helper（issue #1755）：goal id 随账户 id 派生、绑定同源。 */
+function pair(id: string) {
+  return makeGoalPair({ id, goal: { id: `goal-${id}` } });
+}
+
 describe("useInvestmentForm 出资账户（issue #936 / #938 / ADR-0096，buy/sell 对称）", () => {
   /** 准入闭集与币种过滤的候选全集：现金类五型 + 排除型三型 + 异币种 */
   const fundingAccounts: Account[] = [
@@ -450,6 +471,13 @@ describe("useInvestmentForm 出资账户（issue #936 / #938 / ADR-0096，buy/se
       is_deleted: false,
       is_hidden: false,
     },
+    // 在用目标账户（issue #1755 / ADR-0133 决策 4）：`other` 类型、身份由绑定派生，
+    // 出资候选按绑定过滤防呆——CNY 与 USD 各一，覆盖币种联动口径。
+    makeGoalPair({ id: "acc-goal", account: { name: "买车基金账户" } }).account,
+    makeGoalPair({
+      id: "acc-goal-usd",
+      account: { name: "美元目标账户", currency_code: "USD" },
+    }).account,
     {
       id: "acc-inv",
       name: "证券户",
@@ -511,16 +539,43 @@ describe("useInvestmentForm 出资账户（issue #936 / #938 / ADR-0096，buy/se
     options?: Parameters<typeof useInvestmentForm>[1],
     kind: "buy" | "sell" = "buy",
   ) {
-    wireInvokeSeam({ overrides: { list_accounts: fundingAccounts } });
+    wireInvokeSeam({
+      overrides: {
+        list_accounts: fundingAccounts,
+        savings_goal_progress: () => Promise.resolve(goalProgress),
+      },
+    });
     const store = useReferenceStore();
     await store.refresh();
+    // 目标绑定集显式 refresh 落位（issue #1755）：与 AccountsView /
+    // InvestmentForm 两处同款口径，不依赖 self-init 的隐式时序。
+    await useSavingsGoalsStore()
+      .refresh()
+      .catch(() => {});
     return useInvestmentForm(kind, options);
   }
 
-  it("候选过滤：只含现金类账户且币种与交易币种一致；默认空", async () => {
-    const form = await fundingForm();
-    expect(form.fundingAccountId.value).toBeNull();
-    expect(form.fundingAccountOptions.value.map((o) => o.value)).toEqual([
+  /** 出资候选双断言 helper（issue #1755）：调用事实（候选过滤消费目标绑定集 → 进度
+   *  命令必被拉取，ADR-0087 断言对准用户可观察结果）+ 候选集合——expectGoalFiltered=true
+   *  断在用目标账户不在候选；false 断无绑定不误伤（普通 other 账户仍在候选）。 */
+  async function fundingCandidates(expectGoalFiltered: boolean, kind: "buy" | "sell" = "buy") {
+    const form = await fundingForm(undefined, kind);
+    expect(
+      mockInvoke.mock.calls.some(([cmd]) => cmd === "savings_goal_progress"),
+      "候选过滤消费目标绑定集：进度命令被拉取（调用事实）",
+    ).toBe(true);
+    const values = form.fundingAccountOptions.value.map((o) => o.value);
+    if (expectGoalFiltered) {
+      expect(values, "在用目标账户不在出资候选").not.toContain("acc-goal");
+    } else {
+      expect(values, "无绑定的普通 other 账户不被误伤").toContain("acc-other");
+    }
+    return values;
+  }
+
+  it("候选过滤：含在用目标账户不在候选（issue #1755 / ADR-0133 决策 4）", async () => {
+    goalProgress = [pair("acc-goal").progress];
+    expect(await fundingCandidates(true)).toEqual([
       "acc-cash",
       "acc-bank",
       "acc-credit",
@@ -529,7 +584,13 @@ describe("useInvestmentForm 出资账户（issue #936 / #938 / ADR-0096，buy/se
     ]);
   });
 
-  it("币种随投资账户联动：选美元投资账户后交易币种为 USD，候选只剩同币种现金类（issue #1191）", async () => {
+  it("无绑定不误伤：普通 other 账户仍在候选；默认空（issue #1755）", async () => {
+    const values = await fundingCandidates(false);
+    expect(values).toEqual(["acc-cash", "acc-bank", "acc-credit", "acc-ewallet", "acc-other"]);
+  });
+
+  it("币种随投资账户联动：选美元投资账户后候选只剩同币种现金类，同币种目标账户同样被滤（issue #1191 / #1755）", async () => {
+    goalProgress = [pair("acc-goal-usd").progress];
     const form = await fundingForm();
     // 未选账户：退「新表单预选币种」（展示币种偏好）
     expect(form.currencyCode.value).toBe("CNY");
@@ -606,7 +667,8 @@ describe("useInvestmentForm 出资账户（issue #936 / #938 / ADR-0096，buy/se
 
   // --- sell 对称（issue #938）：卖出表单与编辑回填复用买入同款模式 ---
 
-  it("sell 候选过滤同款：只含同币种现金类账户，默认空", async () => {
+  it("sell 候选过滤同款：在用目标账户不在候选、默认空（issue #1755 对称）", async () => {
+    goalProgress = [pair("acc-goal").progress, pair("acc-goal-usd").progress];
     const form = await fundingForm(undefined, "sell");
     expect(form.fundingAccountId.value).toBeNull();
     expect(form.fundingAccountOptions.value.map((o) => o.value)).toEqual([

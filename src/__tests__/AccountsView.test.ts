@@ -3,6 +3,7 @@ import { lastInvokeArgs, wireInvokeSeam } from "@ledger/test-support/invoke-mock
 import { fireProp } from "@ledger/test-support/component-vm";
 import { mount, flushPromises } from "@vue/test-utils";
 import {
+  NCard,
   NDataTable,
   NDialogProvider,
   NDropdown,
@@ -14,9 +15,10 @@ import {
 } from "naive-ui";
 import { setFakeMedia } from "@ledger/test-support/media-mock";
 import { h, nextTick } from "vue";
+import { useSavingsGoalsStore } from "@/savings-goal/savingsGoals";
 import AccountsView from "@/views/AccountsView.vue";
 import AccountLink from "@/accounts/AccountLink.vue";
-import { makeSavingsGoal, makeSavingsGoalProgress } from "./factories";
+import { makeGoalPair, makeSavingsGoal, makeSavingsGoalProgress } from "./factories";
 import { amountPrivacyEnabled, formatAmount } from "@ledger/money";
 import type { Account, AccountBalance, SavingsGoalProgress } from "@ledger/types";
 
@@ -63,6 +65,12 @@ beforeEach(async () => {
     },
     refreshReferenceStores: true,
   }).ready;
+  // 账户页分组消费绑定集（issue #1755）：goals store self-init 快照与 goalProgress
+  // 变量同源——每测复位后显式 refresh 落位，绑定派生（分组 / 名随动只读 / 类型标签
+  // 覆写）不消费上一用例的残留。
+  await useSavingsGoalsStore()
+    .refresh()
+    .catch(() => {});
 });
 
 describe("AccountsView 账户名下钻（issue #97）", () => {
@@ -558,6 +566,19 @@ describe("AccountsView 目标账户名随动只读（issue #1752 / ADR-0133 决�
     goalProgress = [
       makeSavingsGoalProgress({ goal: makeSavingsGoal({ id: "goal-1", account_id: "acc-1" }) }),
     ];
+    // 绑定快照落位后挂载视图：分组派生后 acc-1 在储蓄目标组（第一条数据行 = 目标
+    // 账户行）；goals store 不在参考预热五命令内，本用例重布线（含保存命令面）
+    // 后显式 refresh 落位，不消费上一用例残留。
+    await wireInvokeSeam({
+      defaults: { list_account_balances: mockBalances, update_account: null },
+      overrides: {
+        list_accounts: mockBalances.map((b) => b.account),
+        savings_goal_progress: () => Promise.resolve(goalProgress),
+      },
+    }).ready;
+    await useSavingsGoalsStore()
+      .refresh()
+      .catch(() => {});
     const wrapper = mountView();
     await flushPromises();
 
@@ -587,5 +608,110 @@ describe("AccountsView 目标账户名随动只读（issue #1752 / ADR-0133 决�
     // 第二行「银行」未被任何目标绑定
     await openEditOnRow(wrapper, 1);
     expect(editNameInput(wrapper).props("disabled")).toBe(false);
+  });
+});
+
+describe("AccountsView 储蓄目标分组与类型标签（issue #1755 / ADR-0133 决策 2）", () => {
+  /** 视图顶层调用 useDialog，与 App.vue 同构需 NDialogProvider 包裹。 */
+  function mountView() {
+    return mount(NDialogProvider, {
+      slots: { default: () => h(AccountsView) },
+    });
+  }
+
+  /** 数据表格行：分组卡与普通列表卡各一张表，DOM 顺序 = 分组卡在前。 */
+  function bodyRows(wrapper: ReturnType<typeof mount>) {
+    return wrapper.findAll(".n-data-table-tbody .n-data-table-tr");
+  }
+
+  /** 行菜单（选项含 edit key）与打开某行编辑弹窗（同 #1752 describe 帮手）。 */
+  function rowMenu(wrapper: ReturnType<typeof mount>) {
+    return wrapper
+      .findAllComponents(NDropdown)
+      .find((d) => (d.props("options") as Array<{ key?: string }>).some((o) => o.key === "edit"))!;
+  }
+
+  async function openEditOnRow(wrapper: ReturnType<typeof mount>, index: number) {
+    await wrapper.findAll('button[aria-label="更多操作"]')[index].trigger("click");
+    await flushPromises();
+    fireProp(rowMenu(wrapper), "onSelect", "edit");
+    await flushPromises();
+  }
+
+  const CNY = { code: "CNY", name: "人民币", symbol: "¥", decimal_places: 2 };
+
+  it("在用目标账户归入「储蓄目标」分组：类型标签覆写、余额原值展示（读数不受分组影响）", async () => {
+    goalProgress = [makeGoalPair({ id: "acc-1" }).progress];
+    // 绑定快照落位后挂载视图：beforeEach 的 store 快照是空集（goalProgress 在其后赋值）
+    await useSavingsGoalsStore()
+      .refresh()
+      .catch(() => {});
+    const wrapper = mountView();
+    await flushPromises();
+    // 接线敏感性（ADR-0087）：两张卡按标题区分——目标账户行住在「储蓄目标」卡内、
+    // 恰一行；普通「账户列表」卡不含它。仅删分组拆分（改回单表）即红，
+    // 不与标签覆写共用同一调用。
+    const cards = wrapper.findAllComponents(NCard);
+    const goalCard = cards.find((c) => c.props("title") === "储蓄目标");
+    expect(goalCard, "分组卡按标题可定位（删分组拆分即找不到）").toBeDefined();
+    expect(goalCard!.findAll("tbody tr")).toHaveLength(1);
+    const listCard = cards.find((c) => c.props("title") === "账户列表");
+    expect(listCard!.findAll("tbody tr"), "普通卡只余未绑定行").toHaveLength(1);
+    expect(listCard!.text()).toContain("银行");
+    const rows = bodyRows(wrapper);
+    // 分组卡列于普通列表之前：第一条数据行 = 目标账户行
+    expect(rows).toHaveLength(2);
+    expect(rows[0].text()).toContain("现金");
+    // 类型标签覆写为「储蓄目标」，不显示 other 类型的「其他」（特殊性不靠类型值表达）
+    expect(rows[0].text()).toContain("储蓄目标");
+    expect(rows[0].text()).not.toContain("其他");
+    // 余额原值展示：同一 balances 快照拆分、不做任何加减，读数不受分组影响
+    expect(rows[0].text()).toContain(formatAmount(1000, CNY));
+    // 未绑定行留在普通列表（第二条数据行 = acc-2「银行」）
+    expect(rows[1].text()).toContain("银行");
+    expect(rows[1].text()).toContain("银行");
+  });
+
+  it("无绑定不误伤：普通 other 账户仍在原列表原位；目标组空集不渲染空卡", async () => {
+    const balances: AccountBalance[] = [
+      ...mockBalances,
+      { account: { ...makeAccount("acc-3", "备用现金"), type: "other" }, balance_cents: 0 },
+    ];
+    await wireInvokeSeam({
+      defaults: { list_account_balances: balances },
+      overrides: {
+        list_accounts: balances.map((b) => b.account),
+        savings_goal_progress: () => Promise.resolve(goalProgress),
+      },
+      refreshReferenceStores: true,
+    }).ready;
+    await useSavingsGoalsStore()
+      .refresh()
+      .catch(() => {});
+    const wrapper = mountView();
+    await flushPromises();
+    // 无绑定：分组标题（储蓄目标）不出现——目标组空集不渲染空卡
+    expect(wrapper.text()).not.toContain("储蓄目标");
+    // 普通 other 账户不被误伤：仍在原列表原位、类型标签显示「其他」
+    const rows = bodyRows(wrapper);
+    expect(rows).toHaveLength(3);
+    expect(rows[2].text()).toContain("备用现金");
+    expect(rows[2].text()).toContain("其他");
+  });
+
+  it("编辑弹窗：目标账户的只读类型显示「储蓄目标」", async () => {
+    goalProgress = [makeGoalPair({ id: "acc-1" }).progress];
+    // 绑定快照落位后挂载视图（同上：beforeEach 快照为空集）
+    await useSavingsGoalsStore()
+      .refresh()
+      .catch(() => {});
+    const wrapper = mountView();
+    await flushPromises();
+    await openEditOnRow(wrapper, 0);
+    // 只读类型输入框（NForm 内第 2 个 NInput）：值覆写为「储蓄目标」（NInput 的
+    // value 落在 input 元素上，不进 text()，按 props 断言）
+    expect(wrapper.findAllComponents(NForm)[1].findAllComponents(NInput)[1].props("value")).toBe(
+      "储蓄目标",
+    );
   });
 });

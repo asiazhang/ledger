@@ -16,6 +16,7 @@ import { useInstrumentSearch } from "@/investment/useInstrumentSearch";
 import { buildTradeInput } from "@/transaction/transaction-input";
 import { errorMessage } from "@ledger/utils/errors";
 import { useAppStore } from "@/stores/app";
+import { useSavingsGoalsStore } from "@/savings-goal/savingsGoals";
 import type { Transaction, TransactionTrade } from "@ledger/types";
 
 export function useInvestmentForm(
@@ -84,10 +85,16 @@ export function useInvestmentForm(
 
   // 出资账户候选（issue #936 / #938 / ADR-0096）：准入闭集收口参考 store 单一派生，
   // 币种一致过滤随交易币种（= 所选投资账户币种，issue #1191）在此承担（后端行为层
-  // 准入是唯一权威）；默认空，不选 = 维持余额买卖语义（结算账户 = 投资账户）
+  // 准入是唯一权威）；默认空，不选 = 维持余额买卖语义（结算账户 = 投资账户）。
+  // 目标绑定账户不在候选（issue #1755 / ADR-0133 决策 4）：后端准入 v1 不拦，
+  // 前端按绑定过滤防呆——绑定集选择器归储蓄目标 store（#1752 同源），不另立派生。
+  const savingsGoalsStore = useSavingsGoalsStore();
   const fundingAccountOptions = computed(() =>
     reference.fundingCandidateAccounts
-      .filter((a) => a.currency_code === currencyCode.value)
+      .filter(
+        (a) =>
+          a.currency_code === currencyCode.value && !savingsGoalsStore.goalAccountIds.has(a.id),
+      )
       .map((a) => ({ label: a.name, value: a.id })),
   );
 

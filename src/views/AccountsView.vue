@@ -76,6 +76,27 @@ const typeOptions = computed(() =>
 const currencyOptions = () =>
   reference.currencies.map((c) => ({ label: `${c.name} (${c.code})`, value: c.code }));
 
+// ---------------------------------------------------------------------------
+// 账户页分组（issue #1755 / ADR-0133 决策 2）：目标账户特殊性不靠类型值表达——
+// 分组按绑定派生（绑定集选择器归储蓄目标 store，#1752 同源消费），无绑定的
+// 普通 `other` 账户仍在原列表原位；目标组空集不渲染空卡（模板 v-if）。
+// 同一 balances 快照拆分展示、不做任何加减，余额与净资产读数不受分组影响。
+// ---------------------------------------------------------------------------
+/** 目标绑定账户行（进「储蓄目标」分组卡）。 */
+const goalBalances = computed(() =>
+  balances.value.filter((row) => savingsGoalsStore.goalAccountIds.has(row.account.id)),
+);
+/** 非目标账户行（留在原「账户」列表卡）。 */
+const normalBalances = computed(() =>
+  balances.value.filter((row) => !savingsGoalsStore.goalAccountIds.has(row.account.id)),
+);
+/** 类型标签：目标绑定账户覆写为「储蓄目标」（三处消费：桌面类型列、移动档副行、编辑弹窗只读 type）。 */
+function accountTypeLabel(row: AccountBalance): string {
+  return savingsGoalsStore.goalAccountIds.has(row.account.id)
+    ? t("savingsGoals.accounts.typeLabel")
+    : t(`accounts.type.${row.account.type}`);
+}
+
 async function refresh() {
   balances.value = await api.listAccountBalances();
 }
@@ -460,7 +481,7 @@ const columns = computed<DataTableColumns<AccountBalance>>(() => {
             h(
               "div",
               { style: MOBILE_NAME_SUB_STYLE },
-              `${t(`accounts.type.${row.account.type}`)} · ${row.account.currency_code}`,
+              `${accountTypeLabel(row)} · ${row.account.currency_code}`,
             ),
           ]),
       },
@@ -484,7 +505,7 @@ const columns = computed<DataTableColumns<AccountBalance>>(() => {
     {
       title: t("accounts.list.colType"),
       key: "account.type",
-      render: (row) => t(`accounts.type.${row.account.type}`),
+      render: accountTypeLabel,
     },
     { title: t("accounts.list.colCurrency"), key: "account.currency_code" },
     {
@@ -591,10 +612,28 @@ onMounted(() => {
       </NForm>
     </NCard>
 
+    <!-- 储蓄目标分组卡（issue #1755 / ADR-0133 决策 2）：目标账户按绑定派生归入独立
+         分组，行结构与普通列表同源同构（同 columns / row-props，操作与右键菜单全保留）；
+         无绑定时目标组为空集，v-if 不渲染空卡。分组卡列于账户列表之前（目标池是
+         用户刻意划出的资金，置顶可见）。 -->
+    <NCard
+      v-if="goalBalances.length > 0"
+      :title="t('savingsGoals.accounts.groupTitle')"
+      size="small"
+    >
+      <NDataTable
+        :columns="columns"
+        :data="goalBalances"
+        :bordered="false"
+        size="small"
+        :row-props="rowProps"
+      />
+    </NCard>
+
     <NCard :title="t('accounts.list.title')" size="small">
       <NDataTable
         :columns="columns"
-        :data="balances"
+        :data="normalBalances"
         :bordered="false"
         size="small"
         :row-props="rowProps"
@@ -634,7 +673,7 @@ onMounted(() => {
             />
           </NFormItem>
           <NFormItem :label="t('accounts.create.type')">
-            <NInput :value="t(`accounts.type.${editIntent.row.account.type}`)" disabled />
+            <NInput :value="accountTypeLabel(editIntent.row)" disabled />
           </NFormItem>
           <NFormItem :label="t('accounts.create.currency')">
             <AppSelect
