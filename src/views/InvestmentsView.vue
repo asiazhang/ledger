@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted } from "vue";
-import { useRoute } from "vue-router";
+import { computed, onMounted, watch } from "vue";
+import { useRoute, type LocationQuery } from "vue-router";
 import { NAlert, NButton, NIcon, NSpace, NTabPane, NTabs, NText } from "naive-ui";
 import {
   SpeedometerOutline,
@@ -86,6 +86,62 @@ const focusParam = useFocusParam({
   },
 });
 onMounted(() => focusParam.consume());
+
+// —— 明细页签深链落点（issue #1780 / ADR-0135 决策 6，词汇表「持仓下钻」入参键）：
+// 投资页 URL 参数表新增 `tab=detail`（值即明细页签键）+ `account` / `instrument`
+// 过滤参数，供持仓下钻与深链落明细页签。消费纪律与 focus 参数同族：URL 只读不写回
+// （本视图从不写 query）、参数在场永远赢（覆盖保留态对应维度——显式跳转意图总是被
+// 尊重）、一次性消费（同载荷不重放：消费后手动改动不因 URL 残留而复活；不同载荷=
+// 新意图重新消费）。形状校验从窄：tab 值仅收 `detail`（本票唯一参数表入口，其余值
+// 视为不在场）；account / instrument 取非空字符串，无效 id 落空集（空态可见），不做
+// 参考数据映射（涉及账户与标的命中语义单点在后端）。容器形态（组「更多」页）
+// query.tab 归容器（#473 双写互踩约定），tab=detail 深链不产生容器 URL。
+const LEDGER_TAB_URL_VALUE = "detail";
+
+interface LedgerDeepLinkParams {
+  tab: string;
+  account: string | null;
+  instrument: string | null;
+}
+
+/** 读 query 单值：重复键取第一、数组首元 null 按缺席、空串视为不在场。 */
+function readQueryValue(query: LocationQuery, key: string): string | null {
+  const raw = query[key];
+  const value = Array.isArray(raw) ? raw[0] : raw;
+  return typeof value === "string" && value !== "" ? value : null;
+}
+
+/** 已消费参数载荷（一次性消费闸门：同载荷不重放）。 */
+let consumedDeepLink: LedgerDeepLinkParams | null = null;
+
+function consumeLedgerDeepLink(query: LocationQuery) {
+  const tab = readQueryValue(query, "tab");
+  if (tab !== LEDGER_TAB_URL_VALUE) return;
+  const payload: LedgerDeepLinkParams = {
+    tab,
+    account: readQueryValue(query, "account"),
+    instrument: readQueryValue(query, "instrument"),
+  };
+  if (
+    consumedDeepLink !== null &&
+    payload.tab === consumedDeepLink.tab &&
+    payload.account === consumedDeepLink.account &&
+    payload.instrument === consumedDeepLink.instrument
+  ) {
+    return;
+  }
+  consumedDeepLink = payload;
+  session.setActiveTab("ledger");
+  // 参数在场永远赢：在场参数覆盖保留态对应维度，缺席维度保留保留态不动
+  if (payload.account) session.setDetailAccount(payload.account);
+  if (payload.instrument) session.setDetailInstrument(payload.instrument);
+}
+
+watch(
+  () => route.query,
+  (query) => consumeLedgerDeepLink(query),
+  { immediate: true },
+);
 </script>
 
 <template>

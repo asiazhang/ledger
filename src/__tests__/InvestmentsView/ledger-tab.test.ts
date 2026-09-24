@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { lastInvokeArgs, mockInvoke, wireInvokeSeam } from "@ledger/test-support/invoke-mock";
 import { flushPromises, type VueWrapper } from "@vue/test-utils";
+import { defineComponent, h, reactive } from "vue";
 import { NDataTable, NSelect } from "naive-ui";
 import { createPinia, setActivePinia } from "pinia";
 import InvestmentsView from "@/views/InvestmentsView.vue";
@@ -12,7 +13,16 @@ import { componentVm } from "@ledger/test-support/component-vm";
 import { mountWithDialog } from "@ledger/test-support/mount";
 import { setFakeMedia } from "@ledger/test-support/media-mock";
 import AppSelect from "@ledger/ui-kit/AppSelect.vue";
-import { makeInvestmentLedgerRow, makeInvestmentOverview, makeMwrSummary } from "../factories";
+import PinyinSelect from "@ledger/ui-kit/PinyinSelect.vue";
+import AppDatePicker from "@ledger/ui-kit/AppDatePicker.vue";
+import { useWindowGuard } from "@/composables/useWindowGuard";
+import { clearViewResets } from "@/composables/viewResetRegistry";
+import {
+  makeInstrument,
+  makeInvestmentLedgerRow,
+  makeInvestmentOverview,
+  makeMwrSummary,
+} from "../factories";
 import type { InvestmentTransactionRow } from "@ledger/types";
 
 // 走势图用共享桩组件替代（同 InvestmentsView.test.ts 基座）
@@ -31,7 +41,7 @@ vi.mock("@/investment/usePricesChanged", async () => {
 
 // focus 参数读取自路由 query（同 InvestmentsView.test.ts 的可控 mockRoute 先例）
 const pushMock = vi.fn();
-const mockRoute = { query: {} as Record<string, string> };
+const mockRoute = reactive({ query: {} as Record<string, string> });
 vi.mock("vue-router", () => ({
   useRoute: () => mockRoute,
   useRouter: () => ({ push: pushMock }),
@@ -125,12 +135,31 @@ const manyBuyRows: InvestmentTransactionRow[] = Array.from({ length: 25 }, (_, i
 /** 可变明细库（行为编排型 overrides 读取最新值）。 */
 let ledgerDb: InvestmentTransactionRow[] = [];
 
-/** 与后端 ledger_tab 口径一致：kind 子集（维度内取或）+ offset 分页，total 恒返回。 */
+/** 与后端 ledger_tab 口径一致：四维过滤（kind 子集取或、涉及账户两端、标的含 convert 两腿、
+ *  日期双端有界）+ offset 分页，total 恒返回。 */
 function listInvestmentTransactions(args?: { filter?: Record<string, unknown> }) {
   const filter = args?.filter ?? {};
-  const scoped = ledgerDb.filter(
-    (r) => !Array.isArray(filter.kinds) || filter.kinds.includes(r.kind),
-  );
+  const scoped = ledgerDb.filter((r) => {
+    if (Array.isArray(filter.kinds) && !filter.kinds.includes(r.kind)) return false;
+    // 涉及账户：账户端 ∪ 出资端（ADR-0096 出资账户）
+    if (typeof filter.account_id === "string") {
+      if (r.account_id !== filter.account_id && r.funding_account_id !== filter.account_id) {
+        return false;
+      }
+    }
+    // 标的：转出腿或 convert 转入腿任一命中
+    if (typeof filter.instrument_id === "string") {
+      if (
+        r.instrument_id !== filter.instrument_id &&
+        r.convert?.to_instrument_id !== filter.instrument_id
+      ) {
+        return false;
+      }
+    }
+    if (typeof filter.from === "string" && r.date < filter.from) return false;
+    if (typeof filter.to === "string" && r.date > filter.to) return false;
+    return true;
+  });
   const pageSize = (filter.page_size as number) ?? scoped.length;
   const page = (filter.page as number) ?? 1;
   const start = (page - 1) * pageSize;
@@ -160,6 +189,8 @@ const LEDGER_DEFAULTS = {
 
 beforeEach(async () => {
   mockRoute.query = {};
+  // 复位回调注册表清场：上一用例未卸载的视图注册不泄漏进本用例的 ESC 判定
+  clearViewResets();
   ledgerDb = [buyRow, sellRow, convertRow, splitRow, dividendRow];
   await wireInvokeSeam({
     defaults: LEDGER_DEFAULTS,
@@ -249,6 +280,33 @@ function lastLedgerFilter(): Record<string, unknown> {
 async function selectKinds(wrapper: VueWrapper, values: string[] | null) {
   const select = ledgerPane(wrapper).findComponent(AppSelect);
   componentVm(select).$emit("update:value", values);
+  await flushPromises();
+}
+
+/**
+ * 筛选行下拉与日期（受控装配缝直发回传，与用户操作同一路径）：按 testid 定位
+ * 筛选行控件（PinyinSelect / AppDatePicker），直发 update 事件。
+ */
+function findFilterSelect(wrapper: VueWrapper, testid: string) {
+  const select = ledgerPane(wrapper)
+    .findAllComponents(PinyinSelect)
+    .find((c) => c.attributes("data-testid") === testid);
+  expect(select, `应存在筛选控件 ${testid}`).toBeTruthy();
+  return select!;
+}
+
+async function selectFilter(wrapper: VueWrapper, testid: string, value: string | string[] | null) {
+  componentVm(findFilterSelect(wrapper, testid)).$emit("update:value", value);
+  await flushPromises();
+}
+
+function filterValue(wrapper: VueWrapper, testid: string): unknown {
+  return findFilterSelect(wrapper, testid).findComponent(NSelect).props("value");
+}
+
+async function setDateRange(wrapper: VueWrapper, range: [string, string] | null) {
+  const picker = ledgerPane(wrapper).findComponent(AppDatePicker);
+  componentVm(picker).$emit("update:formatted-value", range);
   await flushPromises();
 }
 
@@ -571,5 +629,259 @@ describe("明细页签移动档横向滚动（issue #1779）", () => {
     );
     expect(fixedSum).toBeGreaterThan(0);
     expect(table.props("scrollX")).toBe(fixedSum);
+  });
+});
+
+/**
+ * 明细页签筛选全维（issue #1780 / ADR-0135 决策 3）：账户（涉及账户语义——账户端 ∪
+ * 出资端）、标的（convert 两腿任一命中即算）与日期（双端有界）与类型组合过滤；
+ * 任一维度实际变化翻页归零（store 内化）。双断言：请求参数 + 渲染效果；删除任一
+ * 维度接线即对应断言变红。
+ */
+describe("明细页签账户/标的/日期筛选（issue #1780）", () => {
+  it("账户筛选：请求携带 account_id 且翻回第 1 页，涉及账户两端命中（账户端 + 出资端）", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+    await openLedgerTab(wrapper);
+    const callsBefore = ledgerCalls().length;
+    await selectFilter(wrapper, "ledger-account-filter", "acc-2");
+    expect(ledgerCalls().length).toBe(callsBefore + 1);
+    expect(lastLedgerFilter()).toEqual({ page: 1, page_size: 20, account_id: "acc-2" });
+    // 渲染效果：涉及账户两端命中——分红行（账户端到账）与买入行（出资账户直扣）
+    expect(filterValue(wrapper, "ledger-account-filter")).toBe("acc-2");
+    expect(colCells(wrapper, "kind")).toEqual(["买入", "分红"]);
+  });
+
+  it("标的筛选：请求携带 instrument_id，convert 两腿任一命中即算", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+    await openLedgerTab(wrapper);
+    // inst-msft 仅出现在转换行转入腿：转出腿不命中、转入腿命中即算（两腿口径）
+    await selectFilter(wrapper, "ledger-instrument-filter", "inst-msft");
+    expect(lastLedgerFilter()).toMatchObject({ instrument_id: "inst-msft", page: 1 });
+    expect(filterValue(wrapper, "ledger-instrument-filter")).toBe("inst-msft");
+    expect(colCells(wrapper, "kind")).toEqual(["转换"]);
+  });
+
+  it("日期筛选：双端有界区间成对携带 from/to，渲染只剩区间内行", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+    await openLedgerTab(wrapper);
+    await setDateRange(wrapper, ["2026-03-02", "2026-03-04"]);
+    expect(lastLedgerFilter()).toMatchObject({ from: "2026-03-02", to: "2026-03-04", page: 1 });
+    expect(colCells(wrapper, "date")).toEqual(["2026-03-04", "2026-03-03", "2026-03-02"]);
+  });
+
+  it("清除日期区间：请求不再携带 from/to（双端成对清除）", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+    await openLedgerTab(wrapper);
+    await setDateRange(wrapper, ["2026-03-02", "2026-03-04"]);
+    await setDateRange(wrapper, null);
+    expect(lastLedgerFilter()).toEqual({ page: 1, page_size: 20 });
+    expect(colCells(wrapper, "kind")).toHaveLength(5);
+  });
+
+  it("组合过滤：类型 × 账户 AND 组合，翻页归零随最后一维变化", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+    await openLedgerTab(wrapper);
+    await selectKinds(wrapper, ["dividend"]);
+    await selectFilter(wrapper, "ledger-account-filter", "acc-2");
+    expect(lastLedgerFilter()).toEqual({
+      page: 1,
+      page_size: 20,
+      kinds: ["dividend"],
+      account_id: "acc-2",
+    });
+    expect(colCells(wrapper, "kind")).toEqual(["分红"]);
+  });
+
+  it("筛选无匹配：空态切换为「当前筛选无匹配交易」", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+    await openLedgerTab(wrapper);
+    await selectFilter(wrapper, "ledger-account-filter", "acc-2");
+    await selectFilter(wrapper, "ledger-instrument-filter", "inst-msft");
+    // 账户 acc-2（命中买入/分红行）× 标的 inst-msft（仅命中转换行）无交集行
+    expect(wrapper.find('[data-testid="ledger-empty"]').text()).toContain("当前筛选无匹配交易");
+  });
+
+  it("会话内保留：账户/标的/日期三维切走页签再回来恢复并以保留态重拉", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+    await openLedgerTab(wrapper);
+    await selectFilter(wrapper, "ledger-account-filter", "acc-2");
+    await selectFilter(wrapper, "ledger-instrument-filter", "inst-1");
+    await setDateRange(wrapper, ["2026-03-01", "2026-03-31"]);
+    const last = lastLedgerFilter();
+    expect(last).toMatchObject({
+      account_id: "acc-2",
+      instrument_id: "inst-1",
+      from: "2026-03-01",
+      to: "2026-03-31",
+    });
+    await clickTab(wrapper, "持仓");
+    await clickTab(wrapper, "明细");
+    await flushPromises();
+    // 恢复以保留态请求（任一维度丢失即红）
+    expect(lastLedgerFilter()).toMatchObject({
+      account_id: "acc-2",
+      instrument_id: "inst-1",
+      from: "2026-03-01",
+      to: "2026-03-31",
+    });
+    expect(filterValue(wrapper, "ledger-account-filter")).toBe("acc-2");
+    expect(filterValue(wrapper, "ledger-instrument-filter")).toBe("inst-1");
+  });
+
+  it("恢复访次的标的筛选回显：重挂经 get_instrument 解析回标签（不留裸 id）", async () => {
+    const store = useInvestmentsSessionStore();
+    store.setDetailInstrument("inst-1");
+    wireInvokeSeam({
+      defaults: LEDGER_DEFAULTS,
+      overrides: {
+        get_instrument: makeInstrument({ id: "inst-1", symbol: "600000", name: "浦发银行" }),
+      },
+    });
+    const wrapper = mountView();
+    await flushPromises();
+    await openLedgerTab(wrapper);
+    expect(filterValue(wrapper, "ledger-instrument-filter")).toBe("inst-1");
+    // 候选含解析回的标签（拼法与盈亏页标的筛选同源）
+    const options = ledgerPane(wrapper)
+      .findAllComponents(PinyinSelect)
+      .find((c) => c.attributes("data-testid") === "ledger-instrument-filter")!
+      .findComponent(NSelect)
+      .props("options") as Array<{ label: string; value: string }>;
+    expect(options.some((o) => o.value === "inst-1" && o.label.includes("浦发银行"))).toBe(true);
+  });
+});
+
+/**
+ * 明细页签 ESC 复位扩展（issue #1780 / ADR-0094 决策 4）：无弹层 ESC 复位回调已在
+ * issue #1192 接线（删除接线即既有测试变红）；本票断言复位把明细筛选新增三维一并
+ * 清零——复位即清除保留态本身。
+ */
+describe("明细页签 ESC 复位覆盖新增三维（issue #1780）", () => {
+  function mountGuardHost() {
+    const Host = defineComponent({
+      setup() {
+        useWindowGuard();
+        return () => h("div");
+      },
+    });
+    return mountWithDialog(Host);
+  }
+
+  function fireEscape() {
+    document.body.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
+    );
+  }
+
+  it("无弹层 ESC：账户/标的/日期三维清零、翻页归零、页签回概览", async () => {
+    const guard = mountGuardHost();
+    await flushPromises();
+    const wrapper = mountView();
+    await flushPromises();
+    await openLedgerTab(wrapper);
+    await selectKinds(wrapper, ["buy"]);
+    await selectFilter(wrapper, "ledger-account-filter", "acc-2");
+    await setDateRange(wrapper, ["2026-03-01", "2026-03-31"]);
+    useInvestmentsSessionStore().setDetailPage(2);
+    await flushPromises();
+
+    fireEscape();
+    await flushPromises();
+    const store = useInvestmentsSessionStore();
+    expect(store.activeTab).toBe("overview");
+    expect(store.detailKinds).toBeNull();
+    expect(store.detailAccountId).toBeNull();
+    expect(store.detailInstrumentId).toBeNull();
+    expect(store.detailDateFrom).toBeNull();
+    expect(store.detailDateTo).toBeNull();
+    expect(store.detailPage).toBe(1);
+    // 复位即清除保留态本身：回到明细页签是默认全量行集
+    await openLedgerTab(wrapper);
+    expect(lastLedgerFilter()).toEqual({ page: 1, page_size: 20 });
+    expect(colCells(wrapper, "kind")).toHaveLength(5);
+    wrapper.unmount();
+    guard.unmount();
+  });
+});
+
+/**
+ * 深链落点（issue #1780 / ADR-0135 决策 6）：投资页 URL 参数表新增 `tab=detail`
+ * （值即明细页签键）+ `account` / `instrument` 过滤参数——一次性消费、URL 只读
+ * 不写回、参数在场永远赢（覆盖保留态对应维度）。删除消费接线即变红。
+ */
+describe("明细页签深链落点（issue #1780）", () => {
+  it("?tab=detail：落明细页签并以默认筛选请求；URL 不写回", async () => {
+    mockRoute.query = { tab: "detail" };
+    const wrapper = mountView();
+    await flushPromises();
+    expect(useInvestmentsSessionStore().activeTab).toBe("ledger");
+    expect(wrapper.findAll(".n-tabs-tab--active").map((el) => el.text())).toEqual(["明细"]);
+    // 已在明细页签的默认态请求（一次性消费即生效，页签重挂不重放）
+    expect(lastLedgerFilter()).toEqual({ page: 1, page_size: 20 });
+    expect(pushMock).not.toHaveBeenCalled();
+  });
+
+  it("?tab=detail&account=：参数在场永远赢，覆盖保留态对应维度", async () => {
+    const store = useInvestmentsSessionStore();
+    store.setDetailAccount("acc-1");
+    mockRoute.query = { tab: "detail", account: "acc-2" };
+    const wrapper = mountView();
+    await flushPromises();
+    expect(store.activeTab).toBe("ledger");
+    expect(lastLedgerFilter()).toMatchObject({ account_id: "acc-2", page: 1 });
+    expect(colCells(wrapper, "kind")).toEqual(["买入", "分红"]);
+    expect(pushMock).not.toHaveBeenCalled();
+  });
+
+  it("?tab=detail&instrument=：标的维度落账（convert 两腿口径）", async () => {
+    mockRoute.query = { tab: "detail", instrument: "inst-msft" };
+    const wrapper = mountView();
+    await flushPromises();
+    expect(lastLedgerFilter()).toMatchObject({ instrument_id: "inst-msft", page: 1 });
+    expect(colCells(wrapper, "kind")).toEqual(["转换"]);
+  });
+
+  it("一次性消费：同载荷不重放（消费后手动清除不因 URL 在场而复活）", async () => {
+    mockRoute.query = { tab: "detail", account: "acc-2" };
+    const wrapper = mountView();
+    await flushPromises();
+    expect(useInvestmentsSessionStore().detailAccountId).toBe("acc-2");
+    // 用户手动清除账户筛选
+    await openLedgerTab(wrapper);
+    await selectFilter(wrapper, "ledger-account-filter", null);
+    expect(useInvestmentsSessionStore().detailAccountId).toBeNull();
+    // 同载荷再次在 query 在场（同一 URL 不变）不重放：筛选保持清除
+    mockRoute.query = { tab: "detail", account: "acc-2" };
+    await flushPromises();
+    expect(useInvestmentsSessionStore().detailAccountId).toBeNull();
+    wrapper.unmount();
+  });
+
+  it("新意图：在途新载荷（换标的深链）重新消费并覆盖", async () => {
+    mockRoute.query = { tab: "detail", account: "acc-2" };
+    const wrapper = mountView();
+    await flushPromises();
+    // 会话内在途换一个标的深链（不同载荷）→ 重新消费
+    mockRoute.query = { tab: "detail", account: "acc-2", instrument: "inst-msft" };
+    await flushPromises();
+    const store = useInvestmentsSessionStore();
+    expect(store.detailInstrumentId).toBe("inst-msft");
+    expect(lastLedgerFilter()).toMatchObject({ instrument_id: "inst-msft", page: 1 });
+    wrapper.unmount();
+  });
+
+  it("参数表之外的 tab 值不消费（本票仅新增 detail 一个入口）", async () => {
+    mockRoute.query = { tab: "holdings" };
+    const wrapper = mountView();
+    await flushPromises();
+    expect(useInvestmentsSessionStore().activeTab).toBe("overview");
+    wrapper.unmount();
   });
 });
