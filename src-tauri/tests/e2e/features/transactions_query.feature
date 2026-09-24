@@ -164,3 +164,14 @@ Feature: 交易管理
     Then 分页查询 page 99 page_size 10 应返回 0 条 total 3
     And 分页查询 page 0 page_size 10 应返回 3 条 total 3
     And 分页查询 kind "income" page 1 page_size 10 应返回 0 条 total 0
+
+  # 契约哨兵（issue #1783 / ADR-0135）：主列表收窄走前端显式 kind 集合，后端缺省语义冻结——
+  # 无 kinds 参数（TransactionListFilter::default()）必须返回全部 kind 含投资行。变红条件 =
+  # 有人在后端给缺省查询加默认 kind 排除（例如默认排除投资 kind）。HTTP API 外部消费与
+  # 交易搜索依赖此契约（list_transactions 的 IPC 与 HTTP 双消费面）。
+  Scenario: 契约哨兵：无 kinds 参数仍返回全部 kind 含投资行
+    Given 存在账户 "现金" 类型 "cash" 币种 "CNY"
+    And 存在分类 "餐饮" 类型 "expense"
+    When 播种 9 类交易各带分类与无分类 日期 "2027-01-01" 到账户 "现金" 分类 "餐饮"
+    Then 缺省查询 应返回 18 条 total 18
+    And 缺省查询应覆盖全部 9 类交易

@@ -488,6 +488,29 @@ fn check_default(world: &mut LedgerWorld, expected_count: i64, expected_total: i
     world.txn.transactions_list = result.items;
 }
 
+/// 契约哨兵（issue #1783 / ADR-0135）：无 kinds 参数（TransactionListFilter::default()）
+/// 必须覆盖全部 kind 闭集——HTTP API 外部消费与交易搜索依赖此契约。变红条件 = 有人在
+/// 后端给缺省查询加默认 kind 排除（例如默认排除投资 kind）：主列表收窄走前端显式
+/// kind 集合，后端缺省语义冻结（只增不改）。
+#[then(expr = "缺省查询应覆盖全部 {int} 类交易")]
+fn check_default_covers_all_kinds(world: &mut LedgerWorld, expected_kinds: i64) {
+    let all = TransactionKind::ALL;
+    assert_eq!(
+        all.len() as i64,
+        expected_kinds,
+        "kind 闭集数与步骤参数不一致（闭集演化后请同步步骤参数）"
+    );
+    let result = list_transactions_internal(&world_conn!(world), &TransactionListFilter::default())
+        .expect("缺省查询失败");
+    for kind in all {
+        assert!(
+            result.items.iter().any(|t| t.kind == kind),
+            "缺省查询（无 kinds 参数）应包含 {kind} 行——无 kinds 参数返回全部 kind 的契约被破坏"
+        );
+    }
+    world.txn.transactions_list = result.items;
+}
+
 #[then(expr = "读取 limit {int} 应返回 {int} 条")]
 fn check_limit(world: &mut LedgerWorld, limit: i64, expected: i64) {
     let result = list_transactions_internal(
