@@ -321,6 +321,31 @@ pub(crate) async fn create_account_via_api(app: &Router, name: &str) -> String {
     serde_json::from_slice(&bytes).unwrap()
 }
 
+/// 指定账户类型建户（issue #1810：投资类型账户是「隐藏投资相关流水」判定前提，
+/// 缺省 `cash` 夹具覆盖不到该形态）。
+pub(crate) async fn create_account_via_api_with_type(
+    app: &Router,
+    name: &str,
+    account_type: &str,
+) -> String {
+    let body = format!(r#"{{"name":"{name}","type":"{account_type}","currency_code":"CNY"}}"#);
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/accounts")
+                .header("content-type", "application/json")
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let bytes = body_to_bytes(response.into_body()).await;
+    serde_json::from_slice(&bytes).unwrap()
+}
+
 pub(crate) fn count_rows(conn: &rusqlite::Connection, table: &str) -> i64 {
     conn.query_row(
         &format!("SELECT COUNT(*) FROM {table} WHERE is_deleted=0"),

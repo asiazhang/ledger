@@ -461,3 +461,22 @@ async fn contract_is_data_source_neutral() {
         );
     }
 }
+
+/// AI 契约自描述面同步锁（issue #1810 / ADR-0136 决策 5）：方言不投影 params 结构，
+/// 端点描述 `d` 是 AI 读到查询参数名的唯一面——新可选参数必须出现在 GET /transactions
+/// 自述的参数清单里（删除该名字即红）。OpenAPI 半边的参数清单锁见 documentation.rs。
+#[tokio::test]
+async fn contract_list_transactions_describes_hide_investment_related_param() {
+    let doc = fetch_contract().await;
+    let endpoint = doc["endpoints"]
+        .as_array()
+        .expect("endpoints 数组")
+        .iter()
+        .find(|e| e["m"] == "GET" && e["p"] == "/transactions")
+        .expect("方言应包含 GET /transactions");
+    let desc = endpoint["d"].as_str().expect("端点描述应为字符串");
+    assert!(
+        desc.contains("hide_investment_related"),
+        "GET /transactions 契约自述应包含可选参数 hide_investment_related，实际: {desc}"
+    );
+}

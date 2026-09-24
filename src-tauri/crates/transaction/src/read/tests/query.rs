@@ -1,6 +1,7 @@
 //! 交易查询：列表排序、过滤（账户 / kind / 日期）、分页与退化输入边界。
 
 use crate::tests::common::{make_buy_input, make_input};
+use ledger_categories::{CategoryInput, create_category};
 use rusqlite::Connection;
 use tauri_app_lib::ledger_transaction::*;
 use tauri_app_lib::ledger_transaction::{TransactionInput, TransactionListFilter};
@@ -216,29 +217,13 @@ fn list_transactions_involving_account_filter() {
     // 转出：现金 → 银行（account_id 命中）
     create_transaction_internal(
         &conn,
-        TransactionInput {
-            policy_id: None,
-            kind: TransactionKind::Transfer,
-            amount_cents: 3000,
-            account_id: "acc-inv-1".into(),
-            to_account_id: Some("acc-inv-2".into()),
-            date: "2026-03-02".into(),
-            ..make_input("acc-inv-1", TransactionKind::Expense, 1, "2026-03-02")
-        },
+        make_transfer("acc-inv-1", "acc-inv-2", 3000, "2026-03-02"),
     )
     .unwrap();
     // 转入：银行 → 现金（to_account_id 命中）
     create_transaction_internal(
         &conn,
-        TransactionInput {
-            policy_id: None,
-            kind: TransactionKind::Transfer,
-            amount_cents: 500,
-            account_id: "acc-inv-2".into(),
-            to_account_id: Some("acc-inv-1".into()),
-            date: "2026-03-03".into(),
-            ..make_input("acc-inv-1", TransactionKind::Expense, 1, "2026-03-03")
-        },
+        make_transfer("acc-inv-2", "acc-inv-1", 500, "2026-03-03"),
     )
     .unwrap();
     // 无关账户：支付宝支出（不命中）
@@ -420,6 +405,243 @@ fn list_transactions_involving_account_filter_includes_funding_end() {
         legacy.total, 0,
         "account_id 过滤不含出资端，语义不变（只增不改）"
     );
+}
+
+/// 转账输入构造器（域语义输入构造器，非 DB 夹具）：转出 `from`、转入 `to`。
+fn make_transfer(from: &str, to: &str, amount: i64, date: &str) -> TransactionInput {
+    TransactionInput {
+        kind: TransactionKind::Transfer,
+        amount_cents: amount,
+        account_id: from.into(),
+        to_account_id: Some(to.into()),
+        date: date.into(),
+        ..make_input(from, TransactionKind::Expense, amount, date)
+    }
+}
+
+/// 隐藏投资相关流水（issue #1810 / ADR-0136 决策 2）：行的转出 / 转入 / 出资三端
+/// 任一端账户类型为 `investment` 即排除（与涉及账户过滤同一三端口径，按账户不按
+/// 分类）；三端命中场景逐条断言（充值转账 / 提现 / 投资账户直接付费支出 / 两端皆
+/// 投资），缺省不携带参数 = 行集与现状完全一致（契约只增）。
+#[test]
+fn list_transactions_hide_investment_related_excludes_three_ends() {
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-hide-bank", "银行卡", "bank", "CNY", 0);
+    test_support::seed_account(&conn, "acc-hide-inv", "投资账户", "investment", "CNY", 0);
+    test_support::seed_account(&conn, "acc-hide-inv2", "投资账户二", "investment", "CNY", 0);
+    test_support::seed_account(&conn, "acc-hide-cash", "现金", "cash", "CNY", 0);
+
+    // 刷屏源头三场景 + 两端皆投资：note 作行身份，供逐场景断言
+    create_transaction_internal(
+        &conn,
+        TransactionInput {
+            note: Some("充值转账".into()),
+            ..make_transfer("acc-hide-bank", "acc-hide-inv", 1000, "2026-04-01")
+        },
+    )
+    .unwrap();
+    create_transaction_internal(
+        &conn,
+        TransactionInput {
+            note: Some("提现".into()),
+            ..make_transfer("acc-hide-inv", "acc-hide-bank", 500, "2026-04-02")
+        },
+    )
+    .unwrap();
+    create_transaction_internal(
+        &conn,
+        TransactionInput {
+            note: Some("投资账户直接付费支出".into()),
+            ..make_input("acc-hide-inv", TransactionKind::Expense, 30, "2026-04-03")
+        },
+    )
+    .unwrap();
+    create_transaction_internal(
+        &conn,
+        TransactionInput {
+            note: Some("两端皆投资".into()),
+            ..make_transfer("acc-hide-inv", "acc-hide-inv2", 200, "2026-04-04")
+        },
+    )
+    .unwrap();
+    // 非投资相关三行：银行卡支出 / 现金收入 / 现金 → 银行卡转账，照常返回
+    create_transaction_internal(
+        &conn,
+        TransactionInput {
+            note: Some("银行卡日常支出".into()),
+            ..make_input("acc-hide-bank", TransactionKind::Expense, 40, "2026-04-05")
+        },
+    )
+    .unwrap();
+    create_transaction_internal(
+        &conn,
+        TransactionInput {
+            note: Some("现金收入".into()),
+            ..make_input("acc-hide-cash", TransactionKind::Income, 50, "2026-04-06")
+        },
+    )
+    .unwrap();
+    create_transaction_internal(
+        &conn,
+        TransactionInput {
+            note: Some("现金转账".into()),
+            ..make_transfer("acc-hide-cash", "acc-hide-bank", 60, "2026-04-07")
+        },
+    )
+    .unwrap();
+
+    // 缺省不携带参数：全量行集（只增不改）
+    let all = list_transactions_internal(&conn, &TransactionListFilter::default()).unwrap();
+    assert_eq!(all.total, 7, "缺省不携带参数应返回全部行");
+
+    // 携带参数：逐场景断言三端命中行被排除、其余保留；total 与行集同口径
+    let hidden = list_transactions_internal(
+        &conn,
+        &TransactionListFilter {
+            hide_investment_related: Some(true),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(hidden.total, 3, "三端任一命中投资账户的行应被排除");
+    let visible: Vec<&str> = hidden
+        .items
+        .iter()
+        .filter_map(|t| t.note.as_deref())
+        .collect();
+    for scenario in ["充值转账", "提现", "投资账户直接付费支出", "两端皆投资"]
+    {
+        assert!(
+            !visible.contains(&scenario),
+            "三端命中的「{scenario}」行应被排除，实际可见: {visible:?}"
+        );
+    }
+    for kept in ["银行卡日常支出", "现金收入", "现金转账"] {
+        assert!(
+            visible.contains(&kept),
+            "非投资相关的「{kept}」应保留，实际可见: {visible:?}"
+        );
+    }
+    assert_eq!(
+        visible,
+        vec!["现金转账", "现金收入", "银行卡日常支出"],
+        "保留行按日期倒序"
+    );
+}
+
+/// 隐藏投资相关流水的判定维度是账户不是分类（issue #1810 / ADR-0136 决策 2）：银行卡
+/// 支付的「投资费用」分类支出照常返回，投资账户的支出被排除；与既有筛选维度 AND
+/// 组合，total 与行集、分页同口径（服务端分页，ADR-0008）。
+#[test]
+fn list_transactions_hide_investment_related_is_account_based_and_combines() {
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-cat-bank", "银行卡", "bank", "CNY", 0);
+    test_support::seed_account(&conn, "acc-cat-inv", "投资账户", "investment", "CNY", 0);
+    let fee_category_id = create_category(
+        &conn,
+        CategoryInput {
+            name: "投资费用".into(),
+            kind: "expense".into(),
+            parent_id: None,
+            icon: None,
+        },
+    )
+    .unwrap();
+
+    // 银行卡支付的投资费用分类支出：分类命中、账户不命中 → 保留（按账户不按分类）
+    create_transaction_internal(
+        &conn,
+        TransactionInput {
+            category_id: Some(fee_category_id.clone()),
+            ..make_input("acc-cat-bank", TransactionKind::Expense, 100, "2026-05-01")
+        },
+    )
+    .unwrap();
+    // 投资账户直接付费支出（无分类）→ 排除
+    create_transaction_internal(
+        &conn,
+        make_input("acc-cat-inv", TransactionKind::Expense, 200, "2026-05-02"),
+    )
+    .unwrap();
+    // 银行卡收入 → 保留
+    create_transaction_internal(
+        &conn,
+        make_input("acc-cat-bank", TransactionKind::Income, 300, "2026-05-03"),
+    )
+    .unwrap();
+    // 充值转账（银行卡 → 投资账户，命中转入端）→ 排除
+    create_transaction_internal(
+        &conn,
+        make_transfer("acc-cat-bank", "acc-cat-inv", 400, "2026-05-04"),
+    )
+    .unwrap();
+
+    let hide = TransactionListFilter {
+        hide_investment_related: Some(true),
+        ..Default::default()
+    };
+    let hidden = list_transactions_internal(&conn, &hide).unwrap();
+    assert_eq!(hidden.total, 2, "投资相关行排除后应剩两行");
+    assert_eq!(
+        hidden.items[0].amount_cents, 300,
+        "保留行首行应为银行卡收入"
+    );
+    let kept_expense = &hidden.items[1];
+    assert_eq!(
+        kept_expense.amount_cents, 100,
+        "银行卡『投资费用』分类支出应保留"
+    );
+    assert_eq!(
+        kept_expense.category_id.as_deref(),
+        Some(fee_category_id.as_str()),
+        "保留的正是挂分类的那行（按账户不按分类）"
+    );
+
+    // false 视为未携带（不过滤，先例 uncategorized_only）
+    let off = list_transactions_internal(
+        &conn,
+        &TransactionListFilter {
+            hide_investment_related: Some(false),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(off.total, 4, "false 视为未携带，返回全量");
+
+    // 与类型集合 AND 组合：收入 ∩ 偏好收窄 = 银行卡收入一行
+    let income_only = list_transactions_internal(
+        &conn,
+        &TransactionListFilter {
+            kinds: Some(vec![TransactionKind::Income]),
+            ..hide.clone()
+        },
+    )
+    .unwrap();
+    assert_eq!(income_only.total, 1, "kinds 与偏好收窄应 AND 组合");
+
+    // 与转出账户过滤 AND 组合：投资账户支出 ∩ 偏好收窄 = 空集
+    let inv_account = list_transactions_internal(
+        &conn,
+        &TransactionListFilter {
+            account_id: Some("acc-cat-inv".into()),
+            ..hide.clone()
+        },
+    )
+    .unwrap();
+    assert_eq!(inv_account.total, 0, "账户过滤与偏好收窄应 AND 组合");
+
+    // 分页时 total 与过滤后行集同口径（服务端分页，ADR-0008）
+    let paged = list_transactions_internal(
+        &conn,
+        &TransactionListFilter {
+            page: Some(2),
+            page_size: Some(1),
+            ..hide.clone()
+        },
+    )
+    .unwrap();
+    assert_eq!(paged.items.len(), 1, "第 2 页应返回 1 行");
+    assert_eq!(paged.total, 2, "total 恒为过滤后总数");
 }
 
 #[test]

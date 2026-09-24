@@ -82,7 +82,9 @@ export const TRANSACTION_PAGE_SIZE_DEFAULT = 20;
 
 /**
  * 交易列表过滤维度（会话级 store 是唯一事实源，URL 仅只读初始化入口、不写回）。
- * 字段与 `TransactionListFilter` 请求参数一一对应（见视图 load 装配）。
+ * 字段与 `TransactionListFilter` 请求参数一一对应（见视图 load 装配），唯一例外是后端
+ * 新增的 `hide_investment_related`（隐藏投资相关流水）——它是视图偏好载荷、不是筛选
+ * 维度，不入本会话筛选，也不参与清除筛选 / ESC 复位（ADR-0136 决策 1 偏好与筛选分家）。
  */
 export interface TransactionFilters {
   /** 日期起止过滤（YYYY-MM-DD，与后端 date 字典序一致，含边界） */

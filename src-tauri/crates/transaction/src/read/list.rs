@@ -84,6 +84,21 @@ pub fn list_transactions_internal(
                 .iter()
                 .for_each(|k| params.push(k.as_str().to_string()));
         }
+        // 隐藏投资相关流水（issue #1810 / ADR-0136 决策 2）：行的转出 / 转入 / 出资
+        // 三端任一端账户类型为 investment 即排除——与涉及账户过滤同一三端列，按账户
+        // 不按分类（银行卡支付的「投资费用」分类支出照常返回）。NOT EXISTS 对 NULL 端
+        // 天然安全（未填的转入 / 出资端不参与命中），软删投资账户的类型仍是 investment、
+        // 历史行照常排除；与其余维度 AND 组合，total 与 items 共用同一 WHERE 子句。
+        // 类型字面量对准 `accounts.type` CHECK 闭集的 `investment` 取值——本 crate 不依赖
+        // ledger-accounts，域间经 SQL 表达（先例 mwr.rs 同款字面量）；判定读表不读 id
+        // 清单，新建的投资账户自动纳入隐藏口径（spec #1808 user story 9）。
+        if filter.hide_investment_related == Some(true) {
+            where_clause.push_str(
+                " AND NOT EXISTS (SELECT 1 FROM accounts a WHERE a.type = 'investment' \
+                 AND (a.id = transactions.account_id OR a.id = transactions.to_account_id \
+                 OR a.id = transactions.funding_account_id))",
+            );
+        }
 
         let total: i64 = conn.query_row(
             &format!("SELECT COUNT(*) FROM transactions {where_clause}"),

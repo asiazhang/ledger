@@ -187,6 +187,10 @@ export interface TransactionListFilter {
   page?: number;
   /** 每页条数，缺省返回全部（total 恒返回） */
   page_size?: number;
+  /** 隐藏投资相关流水（issue #1810 / ADR-0136）：true 时行集排除转出 / 转入 / 出资
+   * 三端任一端为投资类型账户的行（按账户不按分类，与其余维度 AND 组合，total 同口径）；
+   * false 或缺省 = 行为不变。视图偏好在读路径上的载荷，不是会话筛选维度 */
+  hide_investment_related?: boolean | null;
 }
 
 /** 交易列表分页结果 */

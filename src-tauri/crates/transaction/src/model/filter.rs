@@ -65,6 +65,16 @@ pub struct TransactionListFilter {
     pub page: Option<usize>,
     /// 每页条数，缺省返回全部（total 恒返回）；小于 1 按 1 处理。
     pub page_size: Option<usize>,
+    /// 隐藏投资相关流水（issue #1810 / ADR-0136）：`true` 时行集排除转出 / 转入 / 出资
+    /// 三端任一端账户类型为 `investment` 的行——与 `involving_account_id` 同一三端口径
+    /// （ADR-0096 决策 5），**按账户不按分类**（银行卡支付的「投资费用」分类支出不受
+    /// 影响）。与其余维度 AND 组合，total 与行集共用同一 WHERE 子句、口径自动一致。
+    /// `false` 视为未携带（不过滤，先例 `uncategorized_only`）；缺省不携带 = 行为不变
+    /// （契约只增）。
+    ///
+    /// 这是**视图偏好在读路径上的载荷**，不是筛选维度：前端偏好状态不入会话筛选
+    /// （ADR-0136 决策 1 偏好与筛选分家——清除筛选与 ESC 复位不触达它）。
+    pub hide_investment_related: Option<bool>,
 }
 
 /// `kinds` 字段双形态反序列化（issue #581，spec #1025 起兼任单值载体）：字符串数组
