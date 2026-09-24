@@ -14,6 +14,7 @@
 
 mod audit;
 mod common;
+mod currency;
 mod merchant;
 mod normalize;
 mod refund;

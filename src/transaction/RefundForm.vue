@@ -59,8 +59,9 @@ const reference = useReferenceStore();
           style="width: 160px"
           @blur="ctx.markAmountBlurred"
         />
+        <!-- 币种随继承目标推导并锁定（issue #1770 / ADR-0134 决策 5） -->
         <AppSelect
-          v-model:value="ctx.currencyCode.value"
+          :value="ctx.currencyCode.value"
           :options="ctx.currencyOptions.value"
           disabled
           style="width: 130px; margin-left: 8px"

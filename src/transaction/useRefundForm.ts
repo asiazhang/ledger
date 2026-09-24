@@ -6,6 +6,7 @@ import { buildRefundInput } from "@/transaction/transaction-input";
 import { judgeAmountText } from "@ledger/utils/field-error";
 import { useFieldErrors } from "@ledger/field-errors";
 import { useFormShared } from "@/composables/useFormShared";
+import { useAppStore } from "@/stores/app";
 import { t } from "@ledger/i18n";
 import type { Transaction } from "@ledger/types";
 import { errorMessage } from "@ledger/utils/errors";
@@ -20,6 +21,7 @@ export function useRefundForm(options?: {
   fixedTarget?: () => Transaction | null;
 }) {
   const { reference, accountOptions, currencyOptions } = useFormShared();
+  const app = useAppStore();
   const message = useMessage();
 
   // 金额字段错误态（ADR-0058 / issue #415 → #1007 收口）：金额以原始文本承载输入
@@ -30,7 +32,6 @@ export function useRefundForm(options?: {
     amount: { text: amountText, judge: judgeAmountText },
   });
 
-  const currencyCode = ref("CNY");
   const accountId = ref<string | null>(null);
   const refundTargetId = ref<string | null>(null);
   const note = ref("");
@@ -46,7 +47,6 @@ export function useRefundForm(options?: {
     amountText.value = String(
       centsToYuan(fixedTx.amount_cents, reference.getCurrency(fixedTx.currency_code)),
     );
-    currencyCode.value = fixedTx.currency_code;
     accountId.value = fixedTx.account_id;
   }
 
@@ -76,6 +76,13 @@ export function useRefundForm(options?: {
       ? null
       : (expenseTransactions.value.find((t) => t.id === refundTargetId.value) ?? null);
   });
+
+  /**
+   * 展示币种（issue #1770 / ADR-0134 决策 5）：退款继承原支出账户/币种（后端
+   * Writer 守卫照跑），表单只读呈现继承值——随继承目标（行内原交易或搜索所选）
+   * 推导，未定目标前退「新表单预选币种」（展示币种偏好）。
+   */
+  const currencyCode = computed(() => refundTarget.value?.currency_code ?? app.defaultCurrency);
 
   async function loadTransactions() {
     try {
@@ -135,7 +142,7 @@ export function useRefundForm(options?: {
   function resetForm() {
     amountText.value = "";
     errors.reset();
-    currencyCode.value = "CNY";
+    // 币种随继承目标推导，无需复位（issue #1770 / ADR-0134 决策 5）
     accountId.value = null;
     refundTargetId.value = null;
     note.value = "";

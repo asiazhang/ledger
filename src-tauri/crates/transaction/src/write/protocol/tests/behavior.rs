@@ -12,6 +12,7 @@ use ledger_infra::db::now_iso;
 use ledger_sync_protocol::device::device_id;
 use rusqlite::params;
 use tauri_app_lib::ledger_transaction::amount::{FxRateSource, TransactionKind};
+use tauri_app_lib::ledger_transaction::write::writer::{NormalizedRow, insert_row};
 
 #[test]
 fn create_income_and_expense_transactions() {
@@ -1244,24 +1245,32 @@ fn update_date_changed_requeries_new_week() {
     assert_eq!(t.fx_rate_source, Some(FxRateSource::Series));
 }
 
-/// 改币种 → 按新币种重查，更新本位币金额与留痕（验收 2）。
+/// 改币种 → 按新币种重查，更新本位币金额与留痕（验收 2）。币种一致性守卫
+/// （issue #1770 / ADR-0134）下交易币种必须等于账户币种，改币种与换账户
+/// 同笔编辑发生：HKD 行移挂 USD 账户并改为 USD，按新币种重查新周序列点。
 #[test]
 fn update_currency_changed_requeries() {
     let conn = test_support::open();
     let id = seeded_hkd_expense(&conn, "2026-07-01");
+    test_support::seed_account(&conn, "acc-usd-ed", "美元户", "cash", "USD", 0);
+    test_support::seed_fx_rate_history(&conn, "fxh-ed-usd", "USD", "CNY", "2026-06-29", 7.2);
 
     update_transaction_internal(
         &conn,
         &id,
-        make_input("acc-fx-ed", TransactionKind::Expense, 1000, "2026-07-01"),
+        TransactionInput {
+            currency_code: "USD".into(),
+            account_id: "acc-usd-ed".into(),
+            ..make_input("acc-usd-ed", TransactionKind::Expense, 1000, "2026-07-01")
+        },
     )
     .unwrap();
 
     let t = get_transaction_internal(&conn, &id).unwrap();
-    assert_eq!(t.currency_code, "CNY", "币种改为本位币后按新币种折算");
-    assert_eq!(t.amount_native_cents, 1000, "同币种 1:1");
-    assert_eq!(t.fx_rate_used, None, "不再折算：留痕转空");
-    assert_eq!(t.fx_rate_source, None);
+    assert_eq!(t.currency_code, "USD", "币种改为 USD 后按新币种折算");
+    assert_eq!(t.amount_native_cents, 7200, "1000 × 7.2 按新币种序列点重查");
+    assert_eq!(t.fx_rate_used, Some(7.2), "留痕更新为新币种使用值");
+    assert_eq!(t.fx_rate_source, Some(FxRateSource::Series));
 }
 
 // ---------------------------------------------------------------------------
@@ -1427,4 +1436,54 @@ fn update_with_explicit_fx_rate_beats_baseline_reuse() {
         Some(FxRateSource::Explicit),
         "来源改标显式"
     );
+}
+
+/// 修改路径的币种一致性守卫（issue #1770 / ADR-0134 决策 1）：全字段替换按新值
+/// 验——存量脏行（守卫上线前经 insert_row 直落，USD 交易挂 CNY 账户）原样提交
+/// 被拒；改一致（币种随账户）即放行，不因历史脏而永久锁死。
+#[test]
+fn update_currency_guard_rejects_dirty_row_until_made_consistent() {
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-dirty", "现金", "cash", "CNY", 0);
+    let dirty = NormalizedRow {
+        kind: TransactionKind::Expense,
+        amount_cents: 1000,
+        currency_code: "USD".into(),
+        amount_native_cents: 1000,
+        fx_rate_used: None,
+        fx_rate_source: None,
+        account_id: "acc-dirty".into(),
+        to_account_id: None,
+        funding_account_id: None,
+        category_id: None,
+        merchant_id: None,
+        policy_id: None,
+        refund_of_transaction_id: None,
+        note: None,
+        date: "2026-01-01".into(),
+    };
+    let id = insert_row(&conn, &dirty).unwrap();
+
+    // 原样编辑（只改备注，币种保持 USD ≠ 账户 CNY）：守卫拒绝、行保持原样。
+    let mut keep_dirty = make_input("acc-dirty", TransactionKind::Expense, 1000, "2026-01-01");
+    keep_dirty.currency_code = "USD".into();
+    keep_dirty.note = Some("只改备注".into());
+    let err = update_transaction_internal(&conn, &id, keep_dirty).unwrap_err();
+    match err {
+        AppError::Coded { code, params, .. } => {
+            assert_eq!(code, "transaction.currency-mismatch");
+            assert_eq!(params, vec!["CNY".to_string(), "USD".to_string()]);
+        }
+        other => panic!("应为码化错误，实际: {other:?}"),
+    }
+    let t = get_transaction_internal(&conn, &id).unwrap();
+    assert_eq!(t.note, None, "失败不落库");
+
+    // 改一致（币种改随账户 CNY）：放行，脏行就地修复。
+    let mut fixed = make_input("acc-dirty", TransactionKind::Expense, 1000, "2026-01-01");
+    fixed.note = Some("只改备注".into());
+    update_transaction_internal(&conn, &id, fixed).unwrap();
+    let t = get_transaction_internal(&conn, &id).unwrap();
+    assert_eq!(t.currency_code, "CNY");
+    assert_eq!(t.note.as_deref(), Some("只改备注"));
 }

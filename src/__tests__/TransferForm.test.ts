@@ -247,3 +247,45 @@ describe("TransferForm.vue", () => {
     });
   });
 });
+
+describe("TransferForm.vue 币种一致性联动（issue #1770 / ADR-0134 决策 5）", () => {
+  const usdAccount = { ...mockAccounts[0], id: "acc-usd", name: "美元户", currency_code: "USD" };
+
+  async function mountWithAccounts(accounts: Account[]) {
+    wireInvokeSeam({ overrides: { list_accounts: accounts } });
+    const store = useReferenceStore();
+    await store.refresh();
+    return mount(TransferForm);
+  }
+
+  function selectAt(wrapper: ReturnType<typeof mount>, index: number, accountId: string) {
+    return wrapper.findAllComponents(NSelect)[index].vm.$emit("update:value", accountId);
+  }
+
+  function saveButton(wrapper: ReturnType<typeof mount>) {
+    return wrapper.find("button");
+  }
+
+  it("币种随转出账户推导并锁定：未选退展示币种偏好，选中显示账户币种", async () => {
+    const wrapper = await mountWithAccounts([...mockAccounts, usdAccount]);
+    const currencySelect = wrapper.findAllComponents(NSelect)[0];
+    expect(currencySelect.props("disabled")).toBe(true);
+    expect(currencySelect.props("value")).toBe("CNY");
+    selectAt(wrapper, 1, "acc-usd");
+    await flushPromises();
+    expect(currencySelect.props("value")).toBe("USD");
+  });
+
+  it("转入候选随转出币种收窄；存量脏行两端异币种红显并禁用保存", async () => {
+    const wrapper = await mountWithAccounts([...mockAccounts, usdAccount]);
+    selectAt(wrapper, 1, "acc-1");
+    await flushPromises();
+    const toSelect = wrapper.findAllComponents(NSelect)[2];
+    const toOptions = toSelect.props("options") as { value: string | number }[];
+    expect(toOptions.map((o) => String(o.value))).toEqual(["acc-1", "acc-2"]);
+    toSelect.vm.$emit("update:value", "acc-usd");
+    await flushPromises();
+    expect(toSelect.props("status")).toBe("error");
+    expect(saveButton(wrapper).attributes("disabled")).toBeDefined();
+  });
+});

@@ -3,7 +3,7 @@ import { mockInvoke, wireInvokeSeam } from "@ledger/test-support/invoke-mock";
 import { useCategoryForm } from "@/categories/useCategoryForm";
 import { useReferenceStore } from "@/stores/reference";
 import { usePoliciesStore } from "@/policy/policies";
-import type { Merchant, Policy, Transaction } from "@ledger/types";
+import type { Account, Merchant, Policy, Transaction } from "@ledger/types";
 
 const mockMerchants: Merchant[] = [
   {
@@ -242,5 +242,29 @@ describe("useCategoryForm 商户输入（issue #189）", () => {
       const input = submitCallInput() as { policy_id: string | null };
       expect(input.policy_id).toBe("pol-1");
     });
+  });
+});
+
+describe("useCategoryForm 币种一致性联动（issue #1770 / ADR-0134 决策 5）", () => {
+  it("币种随所选账户推导：未选退展示币种偏好，选 USD 户变 USD", async () => {
+    const usdAccount: Account = {
+      id: "acc-usd",
+      name: "美元户",
+      type: "cash",
+      currency_code: "USD",
+      initial_balance_cents: 0,
+      created_at: "2026-01-01T00:00:00Z",
+      is_hidden: false,
+      updated_at: "2026-01-01T00:00:00Z",
+      version: 1,
+      device_id: "test",
+      is_deleted: false,
+    };
+    wireInvokeSeam({ overrides: { list_accounts: [usdAccount] } });
+    await useReferenceStore().refresh();
+    const form = useCategoryForm("expense");
+    expect(form.currencyCode.value).toBe("CNY");
+    form.accountId.value = "acc-usd";
+    expect(form.currencyCode.value).toBe("USD");
   });
 });

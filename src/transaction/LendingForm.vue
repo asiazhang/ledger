@@ -55,9 +55,12 @@ const ctx = useLendingForm({
           style="width: 160px"
           @blur="ctx.markAmountBlurred"
         />
+        <!-- 币种随转出账户推导并锁定（issue #1770 / ADR-0134 决策 5）：借贷是转账
+             的派生视角，同一 Writer 守卫与同一联动先例 -->
         <AppSelect
-          v-model:value="ctx.currencyCode.value"
+          :value="ctx.currencyCode.value"
           :options="ctx.currencyOptions.value"
+          :disabled="true"
           style="width: 130px; margin-left: 8px"
         />
       </NFormItem>

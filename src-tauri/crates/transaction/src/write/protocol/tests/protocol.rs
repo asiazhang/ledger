@@ -405,3 +405,53 @@ fn create_split_local_and_replay_enter_domain_guards() {
         "Replay 的 split 应进投资域重放守卫而非 kind 拒绝"
     );
 }
+
+/// 通用 kind 重放臂的币种一致性守卫（issue #1770 / ADR-0134）：命令携带行的
+/// 币种与所涉账户币种不一致 → 与本地 normalize 同码同文案码化拒绝，不落行
+/// （失败由同步引擎挂 ParkedOp、不中断批次）；transfer 两端各比一次。
+///
+/// 删除即变红：删 replay_assembly 通用臂的 validate_currency_consistency 调用，
+/// 下列两处 unwrap_err 即红。
+#[test]
+fn replay_generic_kind_currency_mismatch_rejects_without_booking() {
+    // income 单端：账户 USD、命令携带行 CNY → 同码拒绝、不落行。
+    let conn = test_support::open();
+    seed_account(&conn, "acc-usd", "美元户", "cash", "USD", 0);
+    let err = replay_command(
+        &conn,
+        &TransactionCommand::Create {
+            id: "sync-tx-1".into(),
+            row: carried_row(TransactionKind::Income, "acc-usd", 1_000),
+            investment: None,
+            split: None,
+            convert: None,
+        },
+    )
+    .unwrap_err();
+    let (code, message) = coded_of(err);
+    assert_eq!(code, "transaction.currency-mismatch");
+    assert_eq!(message, "账户币种（USD）与交易币种（CNY）不一致");
+    let count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM transactions", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(count, 0, "守卫拒绝后不落行");
+
+    // transfer 转入端不一致：转出 CNY、转入 USD、交易币种 CNY → 拒绝。
+    let conn = test_support::open();
+    seed_account(&conn, "acc-cny", "现金", "cash", "CNY", 0);
+    seed_account(&conn, "acc-usd", "美元户", "cash", "USD", 0);
+    let mut row = carried_row(TransactionKind::Transfer, "acc-cny", 3_000);
+    row.to_account_id = Some("acc-usd".into());
+    let err = replay_command(
+        &conn,
+        &TransactionCommand::Create {
+            id: "sync-tx-2".into(),
+            row,
+            investment: None,
+            split: None,
+            convert: None,
+        },
+    )
+    .unwrap_err();
+    assert_eq!(coded_of(err).0, "transaction.currency-mismatch");
+}

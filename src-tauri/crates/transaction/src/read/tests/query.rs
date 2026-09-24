@@ -741,7 +741,12 @@ fn list_transactions_filter_by_instrument_hits_buy_and_sell() {
     // 无关交易（不持标的信息）+ 命中标的的买卖 + 无关标的的买入
     create_transaction_internal(
         &conn,
-        make_input("acc-inst", TransactionKind::Expense, 500, "2026-01-05"),
+        TransactionInput {
+            // 杂项支出的币种随投资账户（USD，1:1 折算铺垫）：币种一致性守卫
+            // （issue #1770 / ADR-0134）下，CNY 交易挂 USD 账户已是非法形态。
+            currency_code: "USD".into(),
+            ..make_input("acc-inst", TransactionKind::Expense, 500, "2026-01-05")
+        },
     )
     .unwrap();
     create_transaction_internal(
@@ -891,10 +896,13 @@ fn readback_exposes_fx_rate_trace_and_distinguishes_sources() {
     let mut input = make_input("acc-fx", TransactionKind::Expense, 10000, "2026-01-07");
     input.currency_code = "HKD".into();
     let fx_id = create_transaction_internal(&conn, input).unwrap().id;
-    // 同币种对照行：不折算，两列恒空。
+    // 同币种对照行（CNY 账户上的 CNY 交易）：不折算，两列恒空——币种一致性
+    // 守卫（issue #1770 / ADR-0134）下 CNY 交易挂 HKD 账户已是非法形态，对照行
+    // 落在自己的同币种账户上。
+    test_support::seed_account(&conn, "acc-cny-ref", "现金", "cash", "CNY", 0);
     let cny_id = create_transaction_internal(
         &conn,
-        make_input("acc-fx", TransactionKind::Expense, 500, "2026-01-07"),
+        make_input("acc-cny-ref", TransactionKind::Expense, 500, "2026-01-07"),
     )
     .unwrap()
     .id;

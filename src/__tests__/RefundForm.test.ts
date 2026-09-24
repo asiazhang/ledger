@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { mockInvoke, wireInvokeSeam } from "@ledger/test-support/invoke-mock";
 import { mount, flushPromises } from "@vue/test-utils";
+import { NSelect } from "naive-ui";
 import { useReferenceStore } from "@/stores/reference";
 import RefundForm from "@/transaction/RefundForm.vue";
 import type { Transaction } from "@ledger/types";
@@ -175,5 +176,35 @@ describe("RefundForm.vue", () => {
       expect(hasErrorStatus(wrapper)).toBe(false);
       expect(wrapper.emitted("created")).toHaveLength(1);
     });
+  });
+});
+
+describe("RefundForm.vue 币种随继承目标推导（issue #1770 / ADR-0134 决策 5）", () => {
+  const usdFixedTx: Transaction = {
+    ...fixedTx,
+    id: "txn-usd",
+    currency_code: "USD",
+    amount_cents: 5000,
+    amount_native_cents: 3600,
+  };
+
+  function currencySelect(wrapper: ReturnType<typeof mount>) {
+    // 币种框是第一个锁定下拉（币种先于锁定的账户字段；搜索模式下标 0 是
+    // 关联交易 PinyinSelect、不锁定，两种模式下均成立）
+    const locked = wrapper.findAllComponents(NSelect).filter((s) => s.props("disabled"));
+    expect(locked.length).toBeGreaterThanOrEqual(1);
+    return locked[0];
+  }
+
+  it("行内模式：币种随原交易币种显示且锁定（不再恒 CNY）", async () => {
+    const wrapper = mount(RefundForm, { props: { fixedTarget: usdFixedTx } });
+    expect(currencySelect(wrapper).props("value")).toBe("USD");
+    expect(currencySelect(wrapper).props("disabled")).toBe(true);
+  });
+
+  it("未定目标（搜索模式打开）：币种回落展示币种偏好且锁定", () => {
+    const wrapper = mount(RefundForm);
+    expect(currencySelect(wrapper).props("value")).toBe("CNY");
+    expect(currencySelect(wrapper).props("disabled")).toBe(true);
   });
 });

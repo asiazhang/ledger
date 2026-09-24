@@ -138,6 +138,13 @@ const cases: Case[] = [
     en: "the dividend currency (CNY) must match the destination account currency (USD)",
   },
   {
+    // #1770 / ADR-0134：通用 kind 币种一致写入守卫（params 契约 = [账户币种, 交易币种]）。
+    code: "transaction.currency-mismatch",
+    message: "账户币种（USD）与交易币种（CNY）不一致",
+    params: ["USD", "CNY"],
+    en: "account currency (USD) does not match the transaction currency (CNY)",
+  },
+  {
     code: "trade.dividend-account-not-found",
     message: "分红到账账户不存在或已删除: acc-x",
     params: ["acc-x"],

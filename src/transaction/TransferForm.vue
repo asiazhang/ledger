@@ -33,9 +33,13 @@ const ctx = useTransferForm({
           style="width: 160px"
           @blur="ctx.markAmountBlurred"
         />
+        <!-- 币种随转出账户推导并锁定（issue #1770 / ADR-0134 决策 5）：后端 Writer
+             守卫是唯一权威，前端只读呈现（先例：投资表单 issue #1191） -->
         <AppSelect
-          v-model:value="ctx.currencyCode.value"
+          :value="ctx.currencyCode.value"
           :options="ctx.currencyOptions.value"
+          :disabled="true"
+          data-testid="transfer-form-currency"
           style="width: 130px; margin-left: 8px"
         />
       </NFormItem>
@@ -50,9 +54,12 @@ const ctx = useTransferForm({
       </NFormItem>
 
       <NFormItem :label="t('transactions.form.toAccount')">
+        <!-- 候选与转出账户同币种（跨币种转账不做，ADR-0134 决策 4）；存量脏行
+             回填两端币种不同时红显（字段错误态即时阻止提交，ADR-0134 决策 5） -->
         <PinyinSelect
           v-model:value="ctx.toAccountId.value"
-          :options="ctx.accountOptions.value"
+          :options="ctx.toAccountOptions.value"
+          :status="ctx.toEndCurrencyError.value ? 'error' : undefined"
           :placeholder="t('transactions.form.toAccountPlaceholder')"
           style="width: 200px"
         />
@@ -70,8 +77,13 @@ const ctx = useTransferForm({
         />
       </NFormItem>
 
-      <!-- 任一字段错误态下禁用（红框＋提交禁用两件同发，ADR-0058 决策 1） -->
-      <NButton type="primary" :disabled="ctx.hasFieldError.value" @click="ctx.submit">
+      <!-- 任一字段错误态下禁用（红框＋提交禁用两件同发，ADR-0058 决策 1）；
+           两端币种不一致的红态同享禁用（ADR-0134 决策 5） -->
+      <NButton
+        type="primary"
+        :disabled="ctx.hasFieldError.value || ctx.toEndCurrencyError.value"
+        @click="ctx.submit"
+      >
         {{ editing ? t("transactions.form.saveChanges") : t("transactions.form.submitTransfer") }}
       </NButton>
     </NSpace>

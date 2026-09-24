@@ -215,6 +215,16 @@ pub fn normalize(conn: &Connection, input: &Input) -> Result<NormalizedRow> {
                 None,
             )
         };
+    // 币种一致性守卫（issue #1770 / ADR-0134）：现金腿 `amount_cents` 即账户币种
+    // 金额（余额按账户币种累计的前提，#1769）——交易币种必须等于所涉账户币种，
+    // transfer 两端各比一次。置于折算之前：不变量不成立时不再折算（fail fast）。
+    validate_currency_consistency(
+        conn,
+        &account_id,
+        input.to_account_id.as_deref(),
+        &currency_code,
+    )?;
+
     // 出资账户准入（issue #935 / ADR-0096）：通用 kind 携带出资账户在此拒绝
     //（buy/sell 不经本模块 normalize，其出资校验在投资域 prepare，同一收口）。
     crate::write::funding::validate_funding_account(
@@ -333,6 +343,48 @@ pub fn validate_accounts_alive(
                 "account.not-found",
                 format!("账户不存在或已删除: {id}"),
                 &[*id],
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// 交易币种与账户币种一致性守卫（issue #1770 / ADR-0134）：通用 kind 的现金腿
+/// `amount_cents` 即账户币种金额（余额按账户币种累计的前提，#1769），交易币种
+/// 必须等于所涉账户币种——`account_id` 恒比，`to_account_id` 携带时再比
+/// （transfer 两端各比一次，两端一致由「都等于交易币种」传递成立）。
+///
+/// 创建（本地 / 定时 / 批量 / HTTP）与重放两形态同码同文案：本地经 [`normalize`]
+/// 到达本守卫；重放臂（`protocol::replay_assembly`）在账户存活校验
+/// （[`validate_accounts_alive`]）之后调用同一函数，失败码化上抛、由同步引擎
+/// 挂 ParkedOp 挂起、不中断批次（dividend 重放臂先例）。
+///
+/// 只判「读得到的币种一致」：账户行读不到时跳过——存在性不属本守卫（本地
+/// 形态刻意无账户存活校验，ADR-0105 决策 4；重放臂已先行判定），本守卫不
+/// 夹带存在性拒绝。refund 继承原支出账户/币种天然一致，守卫照跑（防御性，
+/// 拦截守卫上线前的存量脏来源）。
+pub fn validate_currency_consistency(
+    conn: &Connection,
+    account_id: &str,
+    to_account_id: Option<&str>,
+    currency_code: &str,
+) -> Result<()> {
+    let ids = [Some(account_id), to_account_id];
+    for id in ids.iter().flatten() {
+        let account_currency: Option<String> = conn
+            .query_row(
+                "SELECT currency_code FROM accounts WHERE id=?1",
+                params![*id],
+                |r| r.get(0),
+            )
+            .optional()?;
+        if let Some(account_currency) = account_currency
+            && account_currency != currency_code
+        {
+            return Err(AppError::codedp(
+                "transaction.currency-mismatch",
+                format!("账户币种（{account_currency}）与交易币种（{currency_code}）不一致"),
+                &[account_currency.as_str(), currency_code],
             ));
         }
     }

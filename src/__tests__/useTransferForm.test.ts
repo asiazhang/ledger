@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { mockInvoke, wireInvokeSeam } from "@ledger/test-support/invoke-mock";
 import { useTransferForm } from "@/transaction/useTransferForm";
+import { useReferenceStore } from "@/stores/reference";
 import type { Account, Transaction } from "@ledger/types";
 
 const mockAccounts: Account[] = [
@@ -149,6 +150,77 @@ describe("useTransferForm", () => {
       expect(onUpdated).not.toHaveBeenCalled();
       expect(form.amountText.value).toBe("500");
       expect(form.note.value).toBe("房租");
+    });
+  });
+
+  describe("币种一致性联动（issue #1770 / ADR-0134 决策 5）", () => {
+    const usdAccount: Account = {
+      ...mockAccounts[0],
+      id: "acc-usd",
+      name: "美元户",
+      currency_code: "USD",
+    };
+
+    async function formWithUsd() {
+      wireInvokeSeam({ overrides: { list_accounts: [...mockAccounts, usdAccount] } });
+      await useReferenceStore().refresh();
+      return useTransferForm();
+    }
+
+    it("币种随转出账户推导：未选退展示币种偏好，选 USD 户变 USD（先例：useInvestmentForm）", async () => {
+      const form = await formWithUsd();
+      expect(form.currencyCode.value).toBe("CNY");
+      form.accountId.value = "acc-usd";
+      expect(form.currencyCode.value).toBe("USD");
+    });
+
+    it("转入候选随转出币种收窄；未选转出前不收窄", async () => {
+      const form = await formWithUsd();
+      expect(form.toAccountOptions.value.map((o) => o.value)).toEqual([
+        "acc-1",
+        "acc-2",
+        "acc-usd",
+      ]);
+      form.accountId.value = "acc-usd";
+      expect(form.toAccountOptions.value.map((o) => o.value)).toEqual(["acc-usd"]);
+    });
+
+    it("存量脏行编辑回填两端异币种：toEndCurrencyError 即时置位，submit 静默中止不发命令", async () => {
+      wireInvokeSeam({ overrides: { list_accounts: [...mockAccounts, usdAccount] } });
+      await useReferenceStore().refresh();
+      const onUpdated = vi.fn();
+      const dirty: Transaction = {
+        id: "txn-dirty",
+        kind: "transfer",
+        amount_cents: 50000,
+        currency_code: "CNY",
+        amount_native_cents: 50000,
+        fx_rate_used: null,
+        fx_rate_source: null,
+        account_id: "acc-1",
+        to_account_id: "acc-usd",
+        funding_account_id: null,
+        category_id: null,
+        merchant_id: null,
+        policy_id: null,
+        source: null,
+        convert: null,
+        refund_of_transaction_id: null,
+        note: "房租",
+        date: "2026-03-01",
+        created_at: "2026-03-01T00:00:00Z",
+        updated_at: "2026-03-01T00:00:00Z",
+        version: 3,
+        device_id: "test",
+        is_deleted: false,
+      };
+      const form = useTransferForm({ editing: () => dirty, onUpdated });
+      expect(form.toEndCurrencyError.value).toBe(true);
+
+      await form.submit();
+
+      expect(onUpdated).not.toHaveBeenCalled();
+      expect(mockInvoke.mock.calls.filter(([cmd]) => cmd === "update_transaction")).toHaveLength(0);
     });
   });
 });

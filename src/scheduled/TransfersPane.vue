@@ -145,17 +145,17 @@ const toAccountOptions = computed(() => {
   });
 });
 
-// 币种跟随转出账户；切换后清空币种不再匹配的转入账户选中（防跨币种提交）
+// 切换转出账户后清空币种不再匹配的转入账户选中（防跨币种提交）；币种本身随
+// 转出账户推导（接缝 currencyCode computed，issue #1770 / ADR-0134 决策 5），
+// 不再需要 watcher 赋值。
 watch(fromAccountId, (id) => {
   const from = id ? reference.accountMap.get(id) : undefined;
-  if (from) {
-    currencyCode.value = from.currency_code;
-    if (
-      toAccountId.value &&
-      reference.accountMap.get(toAccountId.value)?.currency_code !== from.currency_code
-    ) {
-      toAccountId.value = null;
-    }
+  if (
+    from &&
+    toAccountId.value &&
+    reference.accountMap.get(toAccountId.value)?.currency_code !== from.currency_code
+  ) {
+    toAccountId.value = null;
   }
 });
 
@@ -430,9 +430,11 @@ onMounted(() => {
               :placeholder="t('scheduled.form.amountPerPeriodPlaceholder')"
               style="width: 160px"
             />
+            <!-- 币种随转出账户推导并锁定（issue #1770 / ADR-0134 决策 5） -->
             <AppSelect
-              v-model:value="currencyCode"
+              :value="currencyCode"
               :options="currencyOptions"
+              :disabled="true"
               data-testid="transfer-currency"
               style="width: 130px; margin-left: 8px"
             />

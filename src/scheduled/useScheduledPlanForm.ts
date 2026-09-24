@@ -80,7 +80,17 @@ export function useScheduledPlanForm(options: UseScheduledPlanFormOptions = {}) 
   const accountId = ref<string | null>(null);
   const categoryId = ref<string | null>(null);
   const merchantRef = ref<string | null>(null);
-  const currencyCode = ref(appStore.defaultCurrency);
+  /**
+   * 计划币种（issue #1770 / ADR-0134 决策 5）：由所选账户推导——分期/订阅每期
+   * 生成的交易经 Writer 守卫强制「交易币种 == 账户币种」（币种填错的计划期次
+   * 执行报错、期次永远 pending，ADR-0134 代价 3），前端随账户收敛杜绝新增脏计划；
+   * 未选账户前退「新表单预选币种」（展示币种偏好）。定时转账页签的币种联动
+   * （既有 watcher 先例）与同一推导天然合一。
+   */
+  const currencyCode = computed(() => {
+    const account = accountId.value == null ? undefined : reference.accountMap.get(accountId.value);
+    return account?.currency_code ?? appStore.defaultCurrency;
+  });
   const recurrenceType = ref<RecurrenceType>("monthly");
   const recurrenceInterval = ref(1);
   const recurrenceDay = ref<number | null>(null);
@@ -92,7 +102,7 @@ export function useScheduledPlanForm(options: UseScheduledPlanFormOptions = {}) 
     accountId.value = null;
     categoryId.value = null;
     merchantRef.value = null;
-    currencyCode.value = appStore.defaultCurrency;
+    // 币种随账户推导，清账户即回展示币种偏好（issue #1770 / ADR-0134 决策 5）
     recurrenceType.value = "monthly";
     recurrenceInterval.value = 1;
     recurrenceDay.value = null;

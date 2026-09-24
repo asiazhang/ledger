@@ -92,6 +92,7 @@
   },
   "transaction": {
     "amount-positive": "amount must be greater than 0",
+    "currency-mismatch": "account currency ({0}) does not match the transaction currency ({1})",
     "not-found": "transaction {0} not found",
     "page-size-over-cap": "page_size {0} exceeds the per-page cap of {1}",
     "limit-out-of-range": "limit {0} is out of range (allowed: 0 to {1}; negative-unlimited is IPC-only)",

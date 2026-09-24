@@ -134,8 +134,8 @@ fn item_create_replay_does_not_reconvert() {
     let conn_b = test_support::open();
     seed_device(&conn_a, "dev-a");
     seed_device(&conn_b, "dev-b");
-    seed_account(&conn_a, "acc-1", "现金", "cash", "CNY", 0);
-    seed_account(&conn_b, "acc-1", "现金", "cash", "CNY", 0);
+    seed_account(&conn_a, "acc-1", "现金", "cash", "EUR", 0);
+    seed_account(&conn_b, "acc-1", "现金", "cash", "EUR", 0);
 
     // 汇率只在 A 端存在（EUR→CNY）：源端折算 8.0；B 端无汇率——若重放端重折算
     // 会因缺汇率失败（挂起），物品缺失即失败信号。物品行折算继承交易行留痕

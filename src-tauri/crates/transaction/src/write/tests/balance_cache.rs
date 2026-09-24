@@ -491,13 +491,18 @@ fn adjust_balance_targets_exact_value_via_cache() {
 #[test]
 fn five_outlets_return_realtime_consistent_values() {
     let conn = test_support::open();
-    test_support::seed_account(&conn, "acc-o1", "现金", "cash", "CNY", 0);
+    // 两账户同为 USD（1:1 折算铺垫）：转账与收入的币种随账户——币种一致性守卫
+    // （issue #1770 / ADR-0134）下跨币种转账已是非法形态。
+    test_support::seed_account(&conn, "acc-o1", "现金", "cash", "USD", 0);
     test_support::seed_investment_setup(&conn, "acc-o2", "inst-o");
     backfill_scaffold_account(&conn, "acc-o1");
     backfill_scaffold_account(&conn, "acc-o2");
     create_transaction_internal(
         &conn,
-        make_input("acc-o1", TransactionKind::Income, 1000000, "2026-05-01"),
+        TransactionInput {
+            currency_code: "USD".into(),
+            ..make_input("acc-o1", TransactionKind::Income, 1000000, "2026-05-01")
+        },
     )
     .unwrap();
     // 转入投资账户 600000，买入花费 4000（万分位刻度：1.0×400000/100），
@@ -505,6 +510,7 @@ fn five_outlets_return_realtime_consistent_values() {
     create_transaction_internal(
         &conn,
         TransactionInput {
+            currency_code: "USD".into(),
             to_account_id: Some("acc-o2".into()),
             ..make_input("acc-o1", TransactionKind::Transfer, 600000, "2026-05-02")
         },

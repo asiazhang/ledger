@@ -83,8 +83,8 @@ fn conversion_is_deterministic_across_devices_after_sync() {
     let conn_b = test_support::open();
     seed_device(&conn_a, "dev-a");
     seed_device(&conn_b, "dev-b");
-    seed_account(&conn_a, "acc-1", "现金", "cash", "CNY", 0);
-    seed_account(&conn_b, "acc-1", "现金", "cash", "CNY", 0);
+    seed_account(&conn_a, "acc-1", "现金", "cash", "EUR", 0);
+    seed_account(&conn_b, "acc-1", "现金", "cash", "EUR", 0);
 
     // A 端把基准改为 USD，同步到 B：折算基准全设备一致。
     set_base_currency(&conn_a, "USD").unwrap();
