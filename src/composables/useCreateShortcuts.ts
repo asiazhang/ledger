@@ -1,21 +1,21 @@
 import { onUnmounted, watch } from "vue";
 import { hasOpenOverlay } from "@ledger/ui-kit/overlayRegistry";
 import { useInputMode } from "@/composables/useInputMode";
-import type { CreateTransactionKind } from "@ledger/types";
+import type { CreateTransactionKind, TransactionPageCreateKind } from "@ledger/types";
 
 /**
- * 「记一笔」裸键快捷键（issue #153）：交易页按 a/z/i/b/s 直达对应类型的记一笔弹窗。
+ * 「记一笔」裸键快捷键（issue #153）：交易页按 a/z/i 直达对应类型的记一笔弹窗。
  * 键位映射是单一来源：keydown 匹配与下拉菜单项标注共用，保证提示与行为一致。
+ * 键位闭集随交易页创建闭集同源收窄（CREATE_KINDS，ADR-0135 决策 5 / issue #1782）：
+ * b/s 退役——买入/卖出的创建入口迁投资页「明细」页签（投资页不设裸键）；
  * refund 不占键位（退款入口由交易条目右键菜单承接）；convert 无手工录入入口
  * （无现金腿 kind 界面只读，ADR-0106 决策 10 / #1048），同样不占键位。
  */
-export const CREATE_KIND_KEYS: Record<CreateTransactionKind, string> = {
+export const CREATE_KIND_KEYS = {
   expense: "a",
   transfer: "z",
   income: "i",
-  buy: "b",
-  sell: "s",
-};
+} as const satisfies Record<TransactionPageCreateKind, string>;
 
 /**
  * 纯函数：裸键命中则返回对应 CreateTransactionKind，否则 null。
@@ -47,12 +47,15 @@ export function isEditableTarget(e: Event): boolean {
 }
 
 /**
- * 交易页「记一笔」快捷键：裸键 a/z/i/b/s 打开对应类型弹窗（复用 #150 的弹窗入口）。
+ * 交易页「记一笔」快捷键：裸键 a/z/i 打开对应类型弹窗（复用 #150 的弹窗入口）。
  * 仅在交易页挂载（随视图装卸），抑制条件：焦点在可编辑元素或任一弹层打开。
  *
- * 可用性闸门（issue #1245 / ADR-0116 决策 4）：调用方以 isKindAvailable 收窄可触发
- * 类型——关闭投资后 b/s 属入口侧、不得触发（也不占键位：命中但不可用时直接放行，
- * 不 preventDefault）。判定与下拉/FAB 列表过滤同源（见 utils/create-entry-kinds）。
+ * 可用性闸门：调用方以 isKindAvailable 收窄可触发类型——命中但不可用时直接放行，
+ * 不 preventDefault（不吞键，ADR-0135 决策 5 / issue #1782 的裸键退役即经键位闭集
+ * 收窄 + 本闸门表达）。判定与下拉/FAB 列表同源（见 utils/create-entry-kinds）。
+ *
+ * 投资页不设裸键（ADR-0135 决策 5）：本 composable 仅交易页挂载，买卖弹窗在投资页
+ * 只从明细页签头部入口开启。
  *
  * 触控轴退役（ADR-0088 决策 6 / issue #843）：指针轴注册裸键监听；触控轴不绑定
  * （含运行中换轴实时拆装——输入轴信号变化即重接线）；卸载时清理。监听面由输入轴

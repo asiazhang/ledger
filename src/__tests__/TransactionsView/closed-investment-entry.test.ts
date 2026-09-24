@@ -5,6 +5,7 @@ import {
   makeTxn,
   setTxnDb,
   openCreateDropdown,
+  closeShownModal,
   openCreateFab,
 } from "./common";
 import { describe, it, expect, beforeEach } from "vitest";
@@ -14,95 +15,71 @@ import { resetOverlays } from "@ledger/ui-kit/overlayRegistry";
 import { useFeatureToggleStore } from "@/settings/feature-toggles";
 import AppSelect from "@ledger/ui-kit/AppSelect.vue";
 import TransactionForm from "@/transaction/TransactionForm.vue";
-import {
-  INVESTMENT_CREATE_KINDS,
-  availableCreateKinds,
-  isCreateKindAvailable,
-} from "@ledger/utils/create-entry-kinds";
+import { availableCreateKinds, isCreateKindAvailable } from "@ledger/utils/create-entry-kinds";
 
 /**
- * 关闭投资后交易页投资新建入口消失（issue #1245 / ADR-0116 决策 4「入口侧」）：
- * 新建买入/卖出是向投资功能写入新数据的入口，随投资关闭一并消失（桌面下拉与移动
- * 「记一笔」悬浮按钮同源、一处生效两处，`b`/`s` 裸键同属入口侧）；重开即恢复。
- * 主列表行集与类型筛选的可选集不随开关变化（ADR-0135 / issue #1783）：投资 kind 行
- * 一律不在主列表呈现（搜索中仍可达），类型下拉恒为四通用 kind。
+ * 交易页创建闭集收窄为支出/收入/转账（ADR-0135 决策 5 / issue #1782）：买入/卖出的
+ * 记一笔入口迁至投资页「明细」页签头部，交易页全部创建入口（桌面下拉、移动悬浮按钮、
+ * 裸键）同源收窄，且收窄是无条件的——关闭投资时投资页整页不可达（ADR-0116 决策 4
+ * 修订注记：入口语义由整页覆盖），交易页创建闭集不随功能开关变化、重开亦不回添买卖。
+ * 主列表行集与类型筛选的可选集不受创建入口收窄影响（ADR-0135 / issue #1783）。
  */
 
-const FULL_CREATE_LABELS = ["支出 a", "收入 i", "转账 z", "买入 b", "卖出 s", "借出", "借入"];
-const CLOSED_CREATE_LABELS = ["支出 a", "收入 i", "转账 z", "借出", "借入"];
-const FULL_FAB_LABELS = ["支出", "收入", "转账", "买入", "卖出"];
-const CLOSED_FAB_LABELS = ["支出", "收入", "转账"];
+const CREATE_LABELS = ["支出 a", "收入 i", "转账 z", "借出", "借入"];
+const FAB_LABELS = ["支出", "收入", "转账"];
 
-function closeInvestments() {
-  useFeatureToggleStore().setFeatureClosed("investments", true);
-}
-
-function reopenInvestments() {
-  useFeatureToggleStore().setFeatureClosed("investments", false);
+function setInvestmentsClosed(closed: boolean) {
+  useFeatureToggleStore().setFeatureClosed("investments", closed);
 }
 
 function pressKey(key: string) {
   window.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
 }
 
-describe("新建入口类型闭集（issue #1245：投资关闭 → 买入/卖出退出全部新建入口）", () => {
-  it("投资开启：可用类型为 CREATE_KINDS 全量五类", () => {
-    expect(availableCreateKinds(false)).toEqual(["expense", "income", "transfer", "buy", "sell"]);
+describe("创建闭集判定源（ADR-0135 决策 5 / issue #1782）", () => {
+  it("可用类型恒为三通用 kind：expense/income/transfer（不随投资功能开关变化）", () => {
+    expect(availableCreateKinds()).toEqual(["expense", "income", "transfer"]);
+    setInvestmentsClosed(true);
+    expect(availableCreateKinds()).toEqual(["expense", "income", "transfer"]);
+    setInvestmentsClosed(false);
+    expect(availableCreateKinds()).toEqual(["expense", "income", "transfer"]);
   });
 
-  it("投资关闭：只余支出/收入/转账，买入/卖出退出（位置语义由清单序保留）", () => {
-    expect(availableCreateKinds(true)).toEqual(["expense", "income", "transfer"]);
-  });
-
-  it("单类型判定与列表同源：仅投资类 kind 在关闭时不可用", () => {
-    for (const kind of INVESTMENT_CREATE_KINDS) {
-      expect(isCreateKindAvailable(kind, true)).toBe(false);
-      expect(isCreateKindAvailable(kind, false)).toBe(true);
-    }
-    expect(isCreateKindAvailable("expense", true)).toBe(true);
-    expect(isCreateKindAvailable("transfer", true)).toBe(true);
+  it("单类型判定：买入/卖出恒不可用（创建入口已迁投资页明细页签），三通用 kind 恒可用", () => {
+    expect(isCreateKindAvailable("buy")).toBe(false);
+    expect(isCreateKindAvailable("sell")).toBe(false);
+    expect(isCreateKindAvailable("expense")).toBe(true);
+    expect(isCreateKindAvailable("income")).toBe(true);
+    expect(isCreateKindAvailable("transfer")).toBe(true);
   });
 });
 
-describe("关闭投资：桌面记一笔下拉（issue #1245）", () => {
-  it.each<[label: string, close: boolean, reopen: boolean, expected: string[]]>([
-    ["默认全开：下拉含买入/卖出", false, false, FULL_CREATE_LABELS],
-    ["关闭投资：下拉不含买入/卖出，其余类型与借贷变体照常", true, false, CLOSED_CREATE_LABELS],
-    ["重开投资：下拉恢复买入/卖出（回原位置）", true, true, FULL_CREATE_LABELS],
-  ])("%s", async (_label, close, reopen, expected) => {
-    if (close) closeInvestments();
+describe("创建闭集收窄：桌面记一笔下拉与移动悬浮按钮（同一判定源，一处生效两处）", () => {
+  it.each<[label: string, closed: boolean]>([
+    ["投资开启：下拉只剩支出/收入/转账 + 借贷变体", false],
+    ["关闭投资：下拉闭集不受影响（投资页整页不可达覆盖入口语义）", true],
+  ])("%s", async (_label, closed) => {
+    setInvestmentsClosed(closed);
     const wrapper = await mountView();
-    if (reopen) {
-      reopenInvestments();
-      await flushPromises();
-    }
-    expect(await openCreateDropdown(wrapper)).toEqual(expected);
+    expect(await openCreateDropdown(wrapper)).toEqual(CREATE_LABELS);
   });
-});
 
-describe("关闭投资：移动「记一笔」悬浮按钮（与桌面下拉同源，一处生效两处）", () => {
-  it.each<[label: string, close: boolean, reopen: boolean, expected: string[]]>([
-    ["默认全开：五类型", false, false, FULL_FAB_LABELS],
-    ["关闭投资：不含买入/卖出，其余三项照常", true, false, CLOSED_FAB_LABELS],
-    ["重开投资：恢复五类型", true, true, FULL_FAB_LABELS],
-  ])("%s", async (_label, close, reopen, expected) => {
-    if (close) closeInvestments();
+  it.each<[label: string, closed: boolean]>([
+    ["投资开启：FAB 只剩支出/收入/转账", false],
+    ["关闭投资：FAB 闭集不受影响", true],
+  ])("%s", async (_label, closed) => {
+    setInvestmentsClosed(closed);
     const wrapper = await mountMobile();
-    if (reopen) {
-      reopenInvestments();
-      await flushPromises();
-    }
-    expect(await openCreateFab(wrapper)).toEqual(expected);
+    expect(await openCreateFab(wrapper)).toEqual(FAB_LABELS);
   });
 });
 
-describe("关闭投资：记一笔裸键（issue #1245 / ADR-0116「不占键位」）", () => {
+describe("裸键退役（ADR-0135 决策 5 / issue #1782：交易页 b/s 退役，a/z/i 不变）", () => {
   beforeEach(() => {
     resetOverlays();
   });
 
-  it("关闭投资：b/s 不触发弹窗，a/z/i 照常直达", async () => {
-    closeInvestments();
+  it("b/s 不再触发记一笔弹窗（命中但不可用：原样放行、不吞键）", async () => {
     const wrapper = await mountView();
     pressKey("b");
     await flushPromises();
@@ -110,43 +87,40 @@ describe("关闭投资：记一笔裸键（issue #1245 / ADR-0116「不占键位
     pressKey("s");
     await flushPromises();
     expect(wrapper.findComponent(NModal).props("show")).toBe(false);
+  });
+
+  it("a/z/i 照常直达对应类型弹窗", async () => {
+    const wrapper = await mountView();
     pressKey("a");
     await flushPromises();
     expect(wrapper.findComponent(NModal).props("title")).toBe("记一笔 · 支出");
     expect(wrapper.findComponent(TransactionForm).props("kind")).toBe("expense");
-  });
-
-  it.each([
-    ["b", "买入", "buy"],
-    ["s", "卖出", "sell"],
-  ] as const)("重开投资：裸键 %s 恢复直达「记一笔 · %s」弹窗", async (key, kindLabel, kind) => {
-    closeInvestments();
-    const wrapper = await mountView();
-    reopenInvestments();
+    // 关闭再重开弹窗路径由同一入口覆盖：换 z 直接开转账
+    await closeShownModal(wrapper);
+    pressKey("z");
     await flushPromises();
-    pressKey(key);
+    await closeShownModal(wrapper);
+    pressKey("i");
     await flushPromises();
-    expect(wrapper.findComponent(NModal).props("show")).toBe(true);
-    expect(wrapper.findComponent(NModal).props("title")).toBe(`记一笔 · ${kindLabel}`);
-    expect(wrapper.findComponent(TransactionForm).props("kind")).toBe(kind);
+    expect(wrapper.findComponent(NModal).props("title")).toBe("记一笔 · 收入");
+    expect(wrapper.findComponent(TransactionForm).props("kind")).toBe("income");
   });
 });
 
-describe("主列表行集与类型收窄不随功能开关变化（ADR-0135 / issue #1783）", () => {
-  it("关闭投资：主列表不呈现投资行，类型下拉收窄为四通用 kind（呈现面与开关正交）", async () => {
+describe("主列表行集与类型收窄不随创建入口收窄变化（ADR-0135 / issue #1783）", () => {
+  it("主列表不呈现投资行，类型下拉恒为四通用 kind（呈现面与创建入口正交）", async () => {
     setTxnDb([
       makeTxn(1, "acc-1", { kind: "buy" }),
       makeTxn(2, "acc-1", { kind: "sell" }),
       makeTxn(3, "acc-1", { kind: "expense" }),
     ]);
-    closeInvestments();
     const wrapper = await mountView();
     // 投资行不在主列表（历史投资行在搜索中仍可达）；「共 N 条」随之收窄
     const text = wrapper.text();
     expect(text).not.toContain("买入");
     expect(text).not.toContain("卖出");
     expect(text).toContain("共 1 条");
-    // 类型下拉恒为四通用 kind（入口侧开关不影响呈现面维度）
+    // 类型下拉恒为四通用 kind（创建入口收窄不影响呈现面维度）
     const kindFilter = wrapper
       .findAllComponents(AppSelect)
       .map((select) => select.findComponent(NSelect).props("options") as Array<{ value: string }>)

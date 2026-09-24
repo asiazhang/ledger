@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import {
+  NButton,
+  NButtonGroup,
   NDataTable,
   NEmpty,
   NSpace,
@@ -15,8 +17,8 @@ import { useLoadable } from "@ledger/loadable";
 import { t } from "@ledger/i18n";
 import { formatAmount, formatPrice, formatQuantity } from "@ledger/money";
 import { sumFixedColumnWidths } from "@ledger/utils/table";
-import AppSelect from "@ledger/ui-kit/AppSelect.vue";
 import AppModal from "@ledger/ui-kit/AppModal.vue";
+import AppSelect from "@ledger/ui-kit/AppSelect.vue";
 import AppDropdown from "@ledger/ui-kit/AppDropdown.vue";
 import TransactionForm from "@/transaction/TransactionForm.vue";
 import ConvertDetail from "@/investment/ConvertDetail.vue";
@@ -487,6 +489,60 @@ const pagination = computed<PaginationProps>(() => ({
 const emptyDescription = computed(() =>
   filtersActive.value ? t("investments.ledger.emptyFiltered") : t("investments.ledger.empty"),
 );
+
+// —— 创建入口（页签头部记买入/卖出，ADR-0135 决策 5 / issue #1782）——
+
+/**
+ * 创建弹窗编排：复用交易弹窗族深模块 TransactionModalState 的记一笔意图（type=create
+ * 携带 kind）——全仓弹窗开启编排的唯一形态上，投资页重接线（ADR-0135 决策 4）。类型由
+ * 入口单点表达（头部两个按钮），弹窗内不提供切换，中途换类型 = 关闭重开。
+ * 功能开关关闭投资时投资页整页不可达（ADR-0116 决策 4 修订注记），入口语义由整页覆盖，
+ * 无需逐 kind 闸门。
+ * 与行操作弹窗族（issue #1781）各持 TransactionModalState 新实例，意图/序号互不串扰。
+ */
+const {
+  intent: rawCreateIntent,
+  seq: createSeq,
+  open: openCreateModal,
+  close: closeCreateModal,
+} = useTransactionModalState();
+
+/** 创建意图（窄化）：非 create 意图为 null；模板按意图派生显示开关与标题。 */
+const createIntent = computed(() =>
+  rawCreateIntent.value?.type === "create" ? rawCreateIntent.value : null,
+);
+
+/**
+ * 明细页签头部入口可创建类型闭集 = buy/sell（ADR-0135 决策 5；convert/split/dividend
+ * 无现金腿 kind 无手工录入入口，ADR-0106 决策 10 / #1048）。类型由入口单点表达，
+ * openCreate 直发记一笔意图。
+ */
+function openCreate(kind: "buy" | "sell") {
+  void openCreateModal({ type: "create", kind });
+}
+
+/** 弹窗标题：标明入口选定类型（交易弹窗族同一文案单点）。 */
+const createTitle = computed(() =>
+  createIntent.value
+    ? t("transactions.create.titleWithKind", {
+        kind: t(`transactions.kind.${createIntent.value.kind}`),
+      })
+    : t("transactions.create.title"),
+);
+
+/**
+ * 提交成功：关窗（模块意图清回空终态）并刷新明细列表——新记录按 date 倒序最可能落在
+ * 第 1 页，翻回第 1 页重拉（主列表 onFormCreated 的 refresh 同语义）：页码变化经 store
+ * 意图入口触发既有重拉出口；已在第 1 页时直接重拉（单一请求，不走翻页语义）。
+ */
+function onCreated() {
+  closeCreateModal();
+  if (session.detailPage !== 1) {
+    session.setDetailPage(1);
+  } else {
+    void load();
+  }
+}
 </script>
 
 <template>
@@ -494,7 +550,7 @@ const emptyDescription = computed(() =>
     <!-- 筛选四维（ADR-0135 决策 3 / issue #1780）：类型多选（投资 kind 子集）+
          账户（涉及账户语义）+ 标的（远程搜索）+ 日期（双端有界）。立即生效，
          翻页归零由 store 内化。 -->
-    <NSpace :size="8" align="center" :wrap="true">
+    <NSpace :size="8" align="center" :wrap="true" justify="space-between">
       <AppSelect
         :value="kindValue"
         :options="kindOptions"
@@ -539,6 +595,16 @@ const emptyDescription = computed(() =>
         data-testid="ledger-date-filter"
         @update:formatted-value="onDateFilterChange"
       />
+      <!-- 创建入口（ADR-0135 决策 5 / issue #1782）：买入/卖出的记一笔入口落页签头部，
+           类型由入口单点表达；提交走既有创建编排与 TransactionInput 装配接缝 -->
+      <NButtonGroup>
+        <NButton type="primary" @click="openCreate('buy')">
+          {{ t("investments.ledger.createBuy") }}
+        </NButton>
+        <NButton type="primary" @click="openCreate('sell')">
+          {{ t("investments.ledger.createSell") }}
+        </NButton>
+      </NButtonGroup>
     </NSpace>
     <NDataTable
       :columns="columns"
@@ -563,6 +629,29 @@ const emptyDescription = computed(() =>
         />
       </template>
     </NDataTable>
+    <!-- 创建弹窗（记买入/记卖出共用一枚）：标题标明入口选定类型，内嵌 TransactionForm
+         （按 kind 分派 InvestmentForm，基金金额权威/非基金单价权威，零表单内部改造）；
+         提交成功关窗并刷新明细列表（翻回第 1 页）；显示开关由模块意图派生，序号作表单 key
+         强制重建（ADR-0045 既有编排，投资页重接线） -->
+    <AppModal
+      :show="createIntent !== null"
+      :title="createTitle"
+      preset="card"
+      display-directive="if"
+      card-size="md"
+      @update:show="
+        (show: boolean) => {
+          if (!show) closeCreateModal();
+        }
+      "
+    >
+      <TransactionForm
+        v-if="createIntent"
+        :key="createSeq"
+        :kind="createIntent.kind"
+        @created="onCreated"
+      />
+    </AppModal>
   </NSpace>
   <!-- 行右键菜单（与主列表同构，issue #151 / #550）：手动定位弹出；开合上报经薄封装
        attrs watch 自动生效（`:show` 绑定照旧）。 -->

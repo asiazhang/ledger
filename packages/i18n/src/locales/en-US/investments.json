@@ -288,6 +288,8 @@
     "empty": "No investment transactions",
     "emptyFiltered": "No matching transactions",
     "filterKind": "Type",
+    "createBuy": "Record Buy",
+    "createSell": "Record Sell",
     "filterAccount": "Account",
     "filterInstrument": "Instrument",
     "filterDate": "Date"

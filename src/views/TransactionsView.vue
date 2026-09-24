@@ -54,7 +54,6 @@ import { useTransactionModalState } from "@ledger/transaction-modal-state";
 import { api } from "@ledger/api";
 import { useReferenceStore } from "@/stores/reference";
 import { useItemsStore } from "@/item/items";
-import { useFeatureToggleStore } from "@/settings/feature-toggles";
 import { buildTransactionColumns } from "@/transaction/transaction-columns";
 import { sumFixedColumnWidths } from "@ledger/utils/table";
 import { availableCreateKinds, isCreateKindAvailable } from "@ledger/utils/create-entry-kinds";
@@ -240,22 +239,20 @@ function createKindLabel(kind: CreateFormKind): string {
     : t(`transactions.kind.${kind}`);
 }
 
-/** 下拉选项：5 种可创建类型（refund 不在入口：退款已移出表单域，入口由交易条目
- * 右键菜单承接，独立 ticket 落地前处于过渡态；convert 不在入口：无现金腿 kind 界面
- * 只读、无手工录入，ADR-0106 决策 10 / #1048）+ 借贷变体「借出」「借入」两项
- * （issue #374，分隔线分组；不占快捷键键位）。kind 项标签后附裸键快捷键提示（issue #153），
- * 键位来自 CREATE_KIND_KEYS 单一来源，与 keydown 匹配共用。
+/** 下拉选项：3 个 kind 项标注快捷键（键位来自 CREATE_KIND_KEYS 单一来源，与 keydown
+ * 匹配共用）+ 借贷变体「借出」「借入」两项（issue #374，分隔线分组；不占快捷键键位）。
+ * refund 不在入口：退款已移出表单域，入口由交易条目右键菜单承接，独立 ticket 落地前
+ * 处于过渡态；convert 不在入口：无现金腿 kind 界面只读、无手工录入，ADR-0106 决策 10 /
+ * #1048；买入/卖出不在入口：创建入口迁投资页「明细」页签头部（ADR-0135 决策 5 /
+ * issue #1782），闭集判定与移动悬浮按钮同源（见 utils/create-entry-kinds）。
  * 触控轴下裸键监听不绑定（ADR-0088 决策 6 / issue #843），键位标注同步退役
  * （提示不存在的键位是误导）；指针轴行为不变。 */
 const inputMode = useInputMode();
 
-// 投资功能开关（issue #1245 / ADR-0116 决策 4「入口侧」）：关闭投资后买入/卖出
-// 从全部新建入口消失（桌面下拉与移动悬浮按钮共用 createKinds 一份清单）；既有
-// buy/sell 交易与引用侧（列表、来源列、按 kind 筛选）不受影响。
-const featureToggles = useFeatureToggleStore();
-const investmentsClosed = computed(() => featureToggles.isFeatureClosed("investments"));
-const createKinds = computed(() => availableCreateKinds(investmentsClosed.value));
-
+/** 创建闭集收窄单源（ADR-0135 决策 5 / issue #1782）：桌面下拉与移动悬浮按钮共用同一份
+ * availableCreateKinds 结果，一处生效两处；收窄无条件，不随投资功能开关变化——关闭投资
+ * 时投资页整页不可达（ADR-0116 决策 4 修订注记），入口语义由整页覆盖。 */
+const createKinds = computed(() => availableCreateKinds());
 const createKindOptions = computed<DropdownOption[]>(() => [
   ...createKinds.value.map((k) => ({
     label:
@@ -286,11 +283,11 @@ function openCreate(k: CreateFormKind) {
   void openModal({ type: "create", kind: k });
 }
 
-// 裸键快捷键（issue #153）：a/z/i/b/s 直达对应类型弹窗，与点下拉对应项同一入口；
+// 裸键快捷键（issue #153）：a/z/i 直达对应类型弹窗，与点下拉对应项同一入口；
 // 焦点在可编辑元素或弹层打开时抑制；随视图装卸，仅交易页生效。
-// 可用性闸门（issue #1245）：关闭投资后 b/s 属入口侧、不触发（与列表过滤同一判定）。
-useCreateShortcuts(openCreate, (kind) => isCreateKindAvailable(kind, investmentsClosed.value));
-
+// 键位闭集随创建闭集同源收窄（ADR-0135 决策 5 / issue #1782）：b/s 退役——命中但
+// 不可用的键原样放行（可用性闸门经 create-entry-kinds 判定，不吞键）。
+useCreateShortcuts(openCreate, isCreateKindAvailable);
 /** 提交成功：关窗（模块意图清回终态），回填意图 refresh（重拉 + 翻回第 1 页，
  * 新记录按日期/时间排序最可能落在第 1 页），保留筛选条件（与手动过滤同等语义，不重置）。 */
 function onFormCreated() {
@@ -545,7 +542,7 @@ function activateCard(row: Transaction): void {
       >
         {{ t("transactions.filter.clear") }}
       </NButton>
-      <!-- 分裂按钮（桌面档）：主体直开支出弹窗，箭头展开 5 项类型菜单（issue #150）。
+      <!-- 分裂按钮（桌面档）：主体直开支出弹窗，箭头展开 5 项类型菜单（issue #150；创建闭集收窄后 = 支出/收入/转账 + 借贷两项，ADR-0135 决策 5 / issue #1782）。
            移动档不渲染：记一笔入口分档，FAB 是移动档唯一记一笔入口（ADR-0088 决策 5）。 -->
       <NButtonGroup v-if="!isMobile">
         <NButton type="primary" @click="openCreate('expense')">{{
@@ -751,8 +748,8 @@ function activateCard(row: Transaction): void {
     </NDataTable>
   </NSpace>
   <!-- 记一笔悬浮按钮（移动档交易页右下，ADR-0088 决策 5）：点开大号类型选择
-       轻弹层（可用类型随功能开关，默认全开五类型），经弹窗意图编排的记一笔意图
-       （携带类型）进对应表单；零表单内部改造。
+       轻弹层（可用类型 = 创建闭集单源 availableCreateKinds，ADR-0135 决策 5 / issue #1782
+       收窄为支出/收入/转账），经弹窗意图编排的记一笔意图（携带类型）进对应表单；零表单内部改造。
        独立根节点渲染：固定定位不参与 NSpace 布局流 -->
   <CreateFab v-if="isMobile" :kinds="createKinds" @select="openCreate" />
 </template>

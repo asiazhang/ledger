@@ -27,18 +27,16 @@ function pressOn(target: Element, key = "a"): KeyboardEvent {
 }
 
 describe("CREATE_KIND_KEYS 键位映射", () => {
-  it("恰好覆盖全部可创建类型，refund 不占键位", () => {
+  it("恰好覆盖交易页创建闭集（CREATE_KINDS 单源），refund 不占键位", () => {
     expect(Object.keys(CREATE_KIND_KEYS).sort()).toEqual([...CREATE_KINDS].sort());
     expect("refund" in CREATE_KIND_KEYS).toBe(false);
   });
 
-  it("键位分配：a=支出 z=转账 i=收入 b=买入 s=卖出（convert 无手工录入入口，不占键位）", () => {
+  it("键位分配：a=支出 z=转账 i=收入（b/s 随 ADR-0135 决策 5 / issue #1782 退役——买卖创建入口迁投资页明细页签）", () => {
     expect(CREATE_KIND_KEYS).toEqual({
       expense: "a",
       transfer: "z",
       income: "i",
-      buy: "b",
-      sell: "s",
     });
   });
 });
@@ -48,11 +46,16 @@ describe("matchCreateShortcut 真值表", () => {
     ["a", "expense"],
     ["z", "transfer"],
     ["i", "income"],
-    ["b", "buy"],
-    ["s", "sell"],
   ] as const)("裸键 %s → %s", (key, kind) => {
     expect(matchCreateShortcut(press(key))).toBe(kind);
   });
+
+  it.each(["b", "s"])(
+    "裸键 %s 不命中（ADR-0135 决策 5 / issue #1782：交易页 b/s 键位退役）",
+    (key) => {
+      expect(matchCreateShortcut(press(key))).toBeNull();
+    },
+  );
 
   it.each(["ctrlKey", "metaKey", "altKey", "shiftKey"] as const)(
     "带修饰键 %s 的 a 不命中（仅裸键）",

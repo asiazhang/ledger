@@ -224,18 +224,15 @@ describe("卡片「⋯」与整卡编辑", () => {
 });
 
 describe("记一笔悬浮按钮（移动档交易页右下，ADR-0088 决策 5）", () => {
-  it("点开大号类型选择（默认全开 = 支出/收入/转账/买入/卖出，不含借贷、退款与转换）", async () => {
+  it("点开大号类型选择（创建闭集收窄后 = 支出/收入/转账，不含借贷、退款与转换，ADR-0135 决策 5 / issue #1782）", async () => {
     const wrapper = await mountPhone();
-    expect(await openCreateFab(wrapper)).toEqual(["支出", "收入", "转账", "买入", "卖出"]);
+    expect(await openCreateFab(wrapper)).toEqual(["支出", "收入", "转账"]);
   });
-
-  it("五类型意图矩阵：类型选择 → 记一笔意图（携带类型）→ 对应表单（convert 无手工录入入口）", async () => {
+  it("类型意图矩阵：类型选择 → 记一笔意图（携带类型）→ 对应表单（convert 无手工录入入口；ADR-0135 决策 5 / issue #1782 收窄后只剩三通用类型）", async () => {
     const cases = [
       ["支出", "记一笔 · 支出"],
       ["收入", "记一笔 · 收入"],
       ["转账", "记一笔 · 转账"],
-      ["买入", "记一笔 · 买入"],
-      ["卖出", "记一笔 · 卖出"],
     ] as const;
     const wrapper = await mountPhone();
     for (const [optionLabel, expectedTitle] of cases) {
