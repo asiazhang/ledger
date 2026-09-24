@@ -83,7 +83,7 @@ beforeEach(() => {
   wireInvokeSeam({ overrides: VIEW_OVERRIDES });
 });
 
-describe("SavingsGoalsView 储蓄目标视图（spec #1750 / issue #1751）", () => {
+describe("SavingsGoalsView 储蓄目标视图（spec #1750 / issue #1751 建档编辑 / #1753 双向推算）", () => {
   it("挂载即拉取：调用进度读命令，渲染名称 / 目标额 / 已存 / 还差 / 进行中", async () => {
     progress = [
       makeSavingsGoalProgress({
@@ -269,5 +269,111 @@ describe("SavingsGoalsView 储蓄目标视图（spec #1750 / issue #1751）", ()
     expect(mockInvoke.mock.calls.some(([cmd]) => cmd === "update_savings_goal")).toBe(false);
     // 效果：弹窗未关闭（内容保留可改）
     expect(wrapper.findComponent(SavingsGoalFormModal).emitted("update:show")).toBeUndefined();
+  });
+
+  // —— 双向推算展示（issue #1753）：推算读数全部来自后端，组件零自算 ——
+
+  it("无截止 + 计划节奏：推算列显示节奏来源、还差 N 个月与预计年月", async () => {
+    progress = [
+      makeSavingsGoalProgress({
+        goal: makeSavingsGoal({ id: "goal-1", deadline: null }),
+        saved_cents: 0,
+        remaining_cents: 1_200_000,
+        pace_monthly_cents: 100_000,
+        pace_source: "plan",
+        eta_months: 12,
+        eta_month: "2027-09",
+      }),
+    ];
+    const wrapper = mount(SavingsGoalsView);
+    await flushPromises();
+
+    const cell = wrapper.find('[data-testid="savings-goal-projection"]');
+    expect(cell.exists()).toBe(true);
+    // 渲染效果：节奏来源闭集二值（按计划）、ETA 月数与预计年月（金额 = 分 → 元）
+    expect(cell.text()).toContain("按计划 ¥1000/月");
+    expect(cell.text()).toContain("还差 12 个月");
+    expect(cell.text()).toContain("预计 2027-09 攒够");
+    expect(cell.text()).not.toContain("每月需存");
+  });
+
+  it("有截止 + 节奏：显示每月需存与落后 / 超前差值", async () => {
+    progress = [
+      makeSavingsGoalProgress({
+        goal: makeSavingsGoal({ id: "goal-1", deadline: "2027-06-30" }),
+        saved_cents: 300_000,
+        remaining_cents: 900_000,
+        pace_monthly_cents: 50_000,
+        pace_source: "manual",
+        required_monthly_cents: 100_000,
+        pace_delta_cents: -50_000,
+      }),
+    ];
+    const wrapper = mount(SavingsGoalsView);
+    await flushPromises();
+
+    const cell = wrapper.find('[data-testid="savings-goal-projection"]');
+    expect(cell.text()).toContain("手填 ¥500/月");
+    expect(cell.text()).toContain("每月需存 ¥1000");
+    expect(cell.text()).toContain("落后 ¥500/月");
+    expect(cell.text()).not.toContain("超前");
+  });
+
+  it("有截止 + 节奏充足：差值显示超前", async () => {
+    progress = [
+      makeSavingsGoalProgress({
+        goal: makeSavingsGoal({ id: "goal-1", deadline: "2027-06-30" }),
+        pace_monthly_cents: 200_000,
+        pace_source: "plan",
+        required_monthly_cents: 100_000,
+        pace_delta_cents: 100_000,
+      }),
+    ];
+    const wrapper = mount(SavingsGoalsView);
+    await flushPromises();
+
+    const cell = wrapper.find('[data-testid="savings-goal-projection"]');
+    expect(cell.text()).toContain("超前 ¥1000/月");
+    expect(cell.text()).not.toContain("落后");
+  });
+
+  it("节奏为零：推算列给设置引导而非虚构时点（双断言）", async () => {
+    progress = [
+      makeSavingsGoalProgress({
+        goal: makeSavingsGoal({ id: "goal-1", deadline: null }),
+        pace_monthly_cents: null,
+        pace_source: null,
+        eta_months: null,
+        eta_month: null,
+      }),
+    ];
+    const wrapper = mount(SavingsGoalsView);
+    await flushPromises();
+
+    const cell = wrapper.find('[data-testid="savings-goal-projection"]');
+    // 双断言：设置引导在场，虚构时点不在场
+    expect(cell.text()).toContain("设置计划月存或挂一条自动转账计划");
+    expect(cell.text()).not.toContain("预计");
+    expect(cell.text()).not.toContain("还差");
+  });
+
+  it("达成态：推算整体退场（不虚构时点与月存）", async () => {
+    progress = [
+      makeSavingsGoalProgress({
+        goal: makeSavingsGoal({ id: "goal-1", deadline: "2027-06-30" }),
+        achieved: true,
+        pace_monthly_cents: 100_000,
+        pace_source: "plan",
+        required_monthly_cents: null,
+        pace_delta_cents: null,
+      }),
+    ];
+    const wrapper = mount(SavingsGoalsView);
+    await flushPromises();
+
+    const cell = wrapper.find('[data-testid="savings-goal-projection"]');
+    expect(cell.text()).toBe("");
+    expect(cell.text()).not.toContain("每月需存");
+    expect(cell.text()).not.toContain("还差");
   });
 });

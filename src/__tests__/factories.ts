@@ -363,8 +363,9 @@ export function makeSavingsGoal(partial: Partial<SavingsGoal> & { id: string }):
   };
 }
 
-/** 蓄水进度行夹具（spec #1750 / issue #1751）：目标行 + 已存 / 还差 / 达成态 /
- *  币种。还差缺省由目标额 − 已存派生（夹具自洽），场景给显式值优先。 */
+/** 蓄水进度行夹具（spec #1750 / issue #1751 / #1753）：目标行 + 已存 / 还差 / 达成态 /
+ *  币种 + 双向推算。还差缺省由目标额 − 已存派生（夹具自洽）；推算字段缺省
+ *  节奏为零（全 null，不虚构时点），场景给显式值优先。 */
 export function makeSavingsGoalProgress(
   over: Partial<SavingsGoalProgress> & {
     goal?: Partial<SavingsGoal> & { id: string };
@@ -379,6 +380,12 @@ export function makeSavingsGoalProgress(
     remaining_cents: rest.remaining_cents ?? resolvedGoal.target_amount_cents - savedCents,
     achieved: rest.achieved ?? false,
     currency_code: rest.currency_code ?? "CNY",
+    pace_monthly_cents: rest.pace_monthly_cents ?? null,
+    pace_source: rest.pace_source ?? null,
+    eta_months: rest.eta_months ?? null,
+    eta_month: rest.eta_month ?? null,
+    required_monthly_cents: rest.required_monthly_cents ?? null,
+    pace_delta_cents: rest.pace_delta_cents ?? null,
   };
 }
 

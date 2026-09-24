@@ -92,6 +92,69 @@ const columns: DataTableColumns<SavingsGoalProgress> = [
     render: (row) => formatAmount(row.remaining_cents, currencyOf(row)),
   },
   {
+    // 双向推算（issue #1753）：无截止正推 ETA（还差 N 个月 / 预计年月）、有截止
+    // 反推所需月存 + 落后 / 超前差值；节奏来源闭集二值随行首可见（计划 / 手填）；
+    // 节奏为零给设置引导而非虚构时点（词汇表 ETA / 所需月存——纯展示态由后端
+    // 读数派生，本组件零业务逻辑、不自算）。
+    title: () => t("savingsGoals.columns.projection"),
+    key: "projection",
+    width: 240,
+    render: (row) => {
+      const lines: string[] = [];
+      // 达成 = 读时派生纯展示态：时点已无意义，推算整体退场（状态列表达达成）。
+      if (!row.achieved) {
+        // 节奏行：来源闭集二值随行可见（按计划 / 手填），节奏为零不给本行。
+        if (row.pace_monthly_cents !== null) {
+          lines.push(
+            t(
+              row.pace_source === "plan"
+                ? "savingsGoals.projection.planPace"
+                : "savingsGoals.projection.manualPace",
+              { amount: formatAmount(row.pace_monthly_cents, currencyOf(row)) },
+            ),
+          );
+        }
+        if (row.goal.deadline === null) {
+          // 无截止正推：还差 N 个月 / 预计年月；节奏为零 → 设置引导（不虚构时点）。
+          if (row.eta_months !== null) {
+            lines.push(t("savingsGoals.projection.etaMonths", { n: row.eta_months }));
+            if (row.eta_month !== null) {
+              lines.push(t("savingsGoals.projection.etaMonth", { ym: row.eta_month }));
+            }
+          } else {
+            lines.push(t("savingsGoals.projection.setupGuide"));
+          }
+        } else if (row.required_monthly_cents !== null) {
+          // 有截止反推：每月需存 + 落后 / 超前差值（差值缺席给对比引导）。
+          lines.push(
+            t("savingsGoals.projection.requiredMonthly", {
+              amount: formatAmount(row.required_monthly_cents, currencyOf(row)),
+            }),
+          );
+          if (row.pace_delta_cents !== null) {
+            const amount = formatAmount(Math.abs(row.pace_delta_cents), currencyOf(row));
+            lines.push(
+              row.pace_delta_cents >= 0
+                ? t("savingsGoals.projection.ahead", { amount })
+                : t("savingsGoals.projection.behind", { amount }),
+            );
+          } else {
+            lines.push(t("savingsGoals.projection.requiredGuide"));
+          }
+        } else {
+          // 截止日已过：不反推所需月存、不虚构时点。
+          lines.push(t("savingsGoals.projection.deadlinePassed"));
+        }
+      }
+      // 逐行渲染：节奏 / 方向 / 引导各自成行，不拼成连续一行。
+      return h(
+        "div",
+        { class: "savings-goal-projection", "data-testid": "savings-goal-projection" },
+        lines.map((line) => h("div", line)),
+      );
+    },
+  },
+  {
     title: () => t("savingsGoals.columns.deadline"),
     key: "deadline",
     width: 110,

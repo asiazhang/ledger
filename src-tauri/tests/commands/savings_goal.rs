@@ -6,7 +6,9 @@
 //! 再读不存在。域结果细节（进度算术、达成判定、联动矩阵）归域单测权威层
 //!（`ledger-savings-goal` 的 tests），此处不越层。
 
-use ledger_savings_goal::{SavingsGoalInput, SavingsGoalProgress, SavingsGoalUpdateInput};
+use ledger_savings_goal::{
+    SavingsGoalInput, SavingsGoalPaceSource, SavingsGoalProgress, SavingsGoalUpdateInput,
+};
 use tauri::Manager;
 use tauri_app_lib::commands::accounts::list_accounts;
 use tauri_app_lib::commands::savings_goal::{
@@ -196,4 +198,76 @@ async fn update_goal_rejects_non_positive_amount_with_code() {
         .await
         .expect("进度读命令应成功");
     assert_eq!(progress.len(), 1, "拒绝编辑不应删除目标");
+}
+
+/// 接线证明（issue #1753）：进度读命令携带双向推算——手填节奏 + 无截止 ETA、
+/// 关联计划节奏优先（经定时计划命令挂计划后节奏来源切到 Plan）。域算术细节
+/// 归域单测，此处只证接线一步可观察。
+#[tokio::test]
+async fn progress_command_wires_projection() {
+    let (app, _dir) = app_with_db();
+    let goal_id = create_savings_goal(
+        app.state(),
+        app.clone(),
+        SavingsGoalInput {
+            name: "买车基金".into(),
+            target_amount_cents: 1_200_000,
+            deadline: None,
+        },
+    )
+    .await
+    .expect("创建目标应返回成功");
+
+    // 手填节奏（编辑命令，issue #1752）：读命令应回显节奏与 ETA
+    update_savings_goal(
+        app.state(),
+        app.clone(),
+        goal_id.clone(),
+        SavingsGoalUpdateInput {
+            name: "买车基金".into(),
+            target_amount_cents: 1_200_000,
+            deadline: None,
+            planned_monthly_cents: Some(50_000),
+        },
+    )
+    .await
+    .expect("编辑目标应返回成功");
+
+    let progress: Vec<SavingsGoalProgress> = savings_goal_progress(app.state())
+        .await
+        .expect("进度读命令应成功");
+    let row = &progress[0];
+    assert_eq!(row.pace_monthly_cents, Some(50_000), "节奏 = 手填计划月存");
+    assert_eq!(row.pace_source, Some(SavingsGoalPaceSource::Manual));
+    assert!(row.eta_months.is_some(), "无截止 + 有节奏 → ETA 月数在场");
+    assert!(row.eta_month.is_some(), "预计年月在场");
+
+    // 有截止反推（编辑命令设截止日 + 挂计划的两分支归域单测权威层）：清节奏后
+    // 读命令仍给出所需月存（纯目标参数算术）、差值缺席。
+    update_savings_goal(
+        app.state(),
+        app.clone(),
+        goal_id,
+        SavingsGoalUpdateInput {
+            name: "买车基金".into(),
+            target_amount_cents: 1_200_000,
+            deadline: Some("2030-12-31".into()),
+            planned_monthly_cents: None,
+        },
+    )
+    .await
+    .expect("编辑目标应返回成功");
+
+    let progress: Vec<SavingsGoalProgress> = savings_goal_progress(app.state())
+        .await
+        .expect("进度读命令应成功");
+    let row = &progress[0];
+    assert_eq!(row.pace_monthly_cents, None, "节奏为零");
+    assert_eq!(row.pace_source, None);
+    assert!(
+        row.required_monthly_cents.is_some(),
+        "所需月存是纯目标参数算术，节奏为零照算"
+    );
+    assert_eq!(row.pace_delta_cents, None, "无节奏不虚构差值");
+    assert_eq!(row.eta_months, None, "有截止日不正推 ETA");
 }

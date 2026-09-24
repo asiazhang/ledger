@@ -25,12 +25,13 @@ use ledger_savings_goal::{
 };
 
 /// 蓄水进度读命令：目标清单 × 逐目标进度（已存 = 专属账户余额、读余额缓存，
-/// 还差与达成态读时派生）。返回按创建先后排序。
+/// 还差与达成态读时派生）+ 双向推算（ETA / 所需月存 / 落后超前差值，
+/// issue #1753——节奏闭集二值解析与推算归域，`today` 注入本地今日）。返回按创建先后排序。
 #[tauri::command]
 pub async fn savings_goal_progress(db: State<'_, DbState>) -> Result<Vec<SavingsGoalProgress>> {
     let conn = db.read_handle();
     read_entry("savings_goal_progress", conn, move |conn| {
-        savings_goal_domain::list_savings_goal_progress(conn)
+        savings_goal_domain::list_savings_goal_progress(conn, chrono::Local::now().date_naive())
     })
     .await
 }

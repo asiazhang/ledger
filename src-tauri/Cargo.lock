@@ -3262,8 +3262,10 @@ dependencies = [
 name = "ledger-savings-goal"
 version = "0.7.0"
 dependencies = [
+ "chrono",
  "ledger-accounts",
  "ledger-infra",
+ "ledger-scheduled",
  "ledger-sync-protocol",
  "ledger-transaction",
  "rusqlite",

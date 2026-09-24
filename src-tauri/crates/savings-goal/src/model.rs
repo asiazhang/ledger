@@ -107,8 +107,20 @@ pub struct SavingsGoalUpdateInput {
     /// 手填「计划月存」（可空 = 清除；携带时必须为正数）。
     pub planned_monthly_cents: Option<i64>,
 }
+/// 节奏来源闭集（词汇表「蓄水进度」：关联定时转账计划的每期金额，或目标手填
+/// 的「计划月存」）。节奏为零（两者皆无）时进度读数的节奏字段整体缺席，
+/// 不外发第三个枚举值、不虚构时点（issue #1753）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SavingsGoalPaceSource {
+    /// 关联在用定时转账计划按周期折算月存（订阅花费先例，见 `pace` 模块）。
+    Plan,
+    /// 目标手填「计划月存」（无在用计划时的节奏来源）。
+    Manual,
+}
+
 /// 蓄水进度读模型（词汇表「蓄水进度」）：由目标读命令实时计算、不持久化；
-/// 只输出金额与达成判定（差值带符号），不输出百分比口径。
+/// 只输出金额与达成判定（差值带符号）与月数（ETA / 所需月存），不输出百分比口径。
 #[derive(Debug, Clone, Serialize)]
 pub struct SavingsGoalProgress {
     pub goal: SavingsGoal,
@@ -120,6 +132,16 @@ pub struct SavingsGoalProgress {
     pub achieved: bool,
     /// 目标币种 = 专属账户币种（单币种，目标域不折算）。
     pub currency_code: String,
+    /// 双向推算（词汇表 ETA / 所需月存，issue #1753）：字段语义见
+    /// [`pace::SavingsGoalProjection`](super::pace::SavingsGoalProjection)——
+    /// 节奏 + 来源 + 无截止正推（还差 N 个月 / 预计年月）+ 有截止反推
+    ///（每月需存 + 落后 / 超前差值）；达成或节奏为零时相应字段缺席、不虚构。
+    pub pace_monthly_cents: Option<i64>,
+    pub pace_source: Option<SavingsGoalPaceSource>,
+    pub eta_months: Option<i64>,
+    pub eta_month: Option<String>,
+    pub required_monthly_cents: Option<i64>,
+    pub pace_delta_cents: Option<i64>,
 }
 
 /// 目标行读取单点（列序 = `progress` 模块 SELECT 的目标列段，随后接外联列）：

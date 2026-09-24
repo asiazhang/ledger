@@ -113,11 +113,13 @@ impl FromRow for PlanBase {
 }
 
 /// 折算月成本系数（issue #161，ADR-0023 决策二）：后端单点收口。
-///
 /// 月付 ×1、年付 ÷12、周付 ×52÷12、日付 ×30；`recurrence_interval > 1` 时
 /// 按间隔均摊（每 N 期一扣 → 系数 ÷ N，如「每 3 月 ¥300」折算月成本 ¥100）。
 /// 表约束已保证 `recurrence_interval > 0`（建表 CHECK），直接除法即可。
-fn monthly_coefficient(recurrence_type: RecurrenceType, recurrence_interval: i64) -> f64 {
+///
+/// 公开（issue #1753）：储蓄目标域按周期折算月存复用同一系数（订阅花费先例，
+/// 比照同款口径）——折算系数表后端只此一份，消费方不另抄第二份漂移。
+pub fn monthly_coefficient(recurrence_type: RecurrenceType, recurrence_interval: i64) -> f64 {
     let per_cycle = match recurrence_type {
         RecurrenceType::Monthly => 1.0,
         RecurrenceType::Yearly => 1.0 / 12.0,
