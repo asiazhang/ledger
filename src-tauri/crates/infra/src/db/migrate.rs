@@ -99,6 +99,9 @@ pub(crate) fn migrations() -> &'static Migrations<'static> {
                 "../../../../migrations/V031__drop_note_pinyin.sql"
             )),
             M::up(include_str!("../../../../migrations/V032__goals.sql")),
+            M::up(include_str!(
+                "../../../../migrations/V033__security_transaction_to_instrument_index.sql"
+            )),
         ])
     })
 }
