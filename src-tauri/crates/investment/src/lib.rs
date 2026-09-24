@@ -45,6 +45,11 @@
 //! - [`lots`]：持仓批次（security_lots）单点——取批次、逐批次 FIFO 分摊与
 //!   耗尽批次成本闭合、结转成本合计、修改/删除路径的两个精确回补原语
 //!   （issue #1018，父 spec #1005 决策 D4）；
+//! - [`ledger_tab`]：投资明细列表读命令（ADR-0135 决策 3 / issue #1778）——
+//!   投资页「明细」页签的取数接口：五种投资 kind 交易行的投资投影（标的、
+//!   数量、单价、手续费、convert 两腿、split 带符号 Δ、dividend 现金腿与到账
+//!   账户），四维过滤（账户涉及语义 / 标的 convert 两腿 / kind 子集 / 日期）
+//!   + 服务端 offset 分页（ADR-0008），排序与主列表同构；
 //! - [`manual_price`]：手动报价两落点（价格历史周采样 + 现价缓存映像规则）；
 //! - [`market`]：市场闭集单点（issue #1673）——市场（Market）七值闭集、可路由
 //!   子集 `QuoteMarket` 与解析路由小闭集 `StockRoute`，可路由性唯一判定点
@@ -123,6 +128,7 @@ pub mod financial_freedom;
 pub mod fund;
 pub(crate) mod guards;
 pub mod holdings;
+pub mod ledger_tab;
 pub mod lots;
 pub mod manual_price;
 pub mod market;
@@ -152,7 +158,9 @@ pub use model::{
     AccountPnl, AddFundResult, AddStockInstrumentResult, CurrencyCumulativePnl,
     CurrencyHoldingTotals, CurrencyPnl, FinancialFreedomOverview, Holding, Instrument,
     InstrumentInput, InstrumentListFilter, InstrumentListResult, InstrumentPnl,
-    InstrumentPriceTrend, InstrumentSourceDisplay, InstrumentType, InvestmentOverview,
+    InstrumentPriceTrend, InstrumentSourceDisplay, InstrumentType, InvestmentConvertFields,
+    InvestmentOverview, InvestmentSplitFields, InvestmentTradeFields,
+    InvestmentTransactionListFilter, InvestmentTransactionListResult, InvestmentTransactionRow,
     MANUAL_SOURCE, ManualPriceInput, ManualPriceResult, MarketPrice, MarketPriceInput, PnlFilter,
     PortfolioTrendPoint, PortfolioValueTrend, PriceTrendPoint, RealizedPnlSummary,
     TransactionConvert, TransactionSplit, TransactionTrade, TrendRange, YearPnl,
@@ -178,6 +186,7 @@ pub use fund::{
     FundCreateOutcome, add_fund_by_code_with, adopt_fund_quote, create_fund_degraded,
     is_six_digit_code, reject_carried_fund_market, validate_fund_code,
 };
+pub use ledger_tab::list_investment_transactions;
 pub use manual_price::record_manual_price;
 pub use market::{Market, QuoteMarket, StockRoute, derive_quote_currency};
 pub use mwr::{

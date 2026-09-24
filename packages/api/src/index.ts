@@ -49,6 +49,8 @@ import type {
   InstrumentListResult,
   InstrumentPriceTrend,
   InvestmentOverview,
+  InvestmentTransactionListFilter,
+  InvestmentTransactionListResult,
   ItemDailyCost,
   ItemDailyTotal,
   ItemDisposeInput,
@@ -293,6 +295,14 @@ export const api = {
   // 可投资资产合计与「投资账户现金 / 持仓市值」两腿，全页折全局默认币种单值；
   // 缺汇率按码化错误上抛（展示层卡内警告 + 重试）。纯只读。
   investmentOverview: () => invoke<InvestmentOverview>("investment_overview"),
+
+  // 投资明细列表（ADR-0135 / issue #1778）：投资页「明细」页签的唯一取数接口——
+  // 五种投资 kind 交易行的投资投影，四维筛选（账户涉及语义 / 标的 convert 两腿 /
+  // kind 子集 / 日期）+ 服务端 offset 分页，排序与主列表同构（date 倒序）
+  listInvestmentTransactions: (filter?: InvestmentTransactionListFilter | null) =>
+    invoke<InvestmentTransactionListResult>("list_investment_transactions", {
+      filter: filter ?? null,
+    }),
 
   // 价格过期检查（issue #1190）：打开投资页时的本地水位检查（零网络请求）——
   // 有通道标的的现价水位超出阈值、或持仓标的缺现价时的计数；计数为 0 不提示，

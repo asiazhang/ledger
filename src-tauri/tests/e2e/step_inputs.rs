@@ -180,6 +180,20 @@ pub fn convert_input(
     }
 }
 
+/// 现金分红输入（ADR-0109 / issue #1078）：金额、到账账户、归属标的与日期为热点；
+/// 无份额 / 单价 / 手续费（分红不摊薄成本、不改份额），到账账户任意在用账户。
+pub fn dividend_input(
+    amount_cents: i64,
+    account_id: &str,
+    instrument_id: &str,
+    date: &str,
+) -> TransactionInput {
+    TransactionInput {
+        instrument_id: Some(instrument_id.into()),
+        ..txn_base(TransactionKind::Dividend, amount_cents, account_id, date)
+    }
+}
+
 /// 按已解析 kind 分派买卖工厂（买卖铺垫/直提标的步骤共用，#761 收编 write/edit
 /// 两文件同形 match）：buy/sell 之外不是合法买卖铺垫，场景文本错误即 panic。
 pub fn trade_input(

@@ -29,10 +29,10 @@ use ledger_investment as investment_domain;
 use ledger_investment::{
     AddFundResult, AddStockInstrumentResult, CurrencyCumulativePnl, Holding, Instrument,
     InstrumentInput, InstrumentListFilter, InstrumentListResult, InstrumentPriceTrend,
-    InvestmentOverview, ManualPriceInput, ManualPriceResult, MarketPrice, MarketPriceInput,
-    MoneyWeightedReturnSummary, MwrRange, PnlFilter, PortfolioValueTrend, PriceStaleness,
-    RealizedPnlSummary, StockRoute, TransactionConvert, TransactionSplit, TransactionTrade,
-    TrendRange,
+    InvestmentOverview, InvestmentTransactionListFilter, InvestmentTransactionListResult,
+    ManualPriceInput, ManualPriceResult, MarketPrice, MarketPriceInput, MoneyWeightedReturnSummary,
+    MwrRange, PnlFilter, PortfolioValueTrend, PriceStaleness, RealizedPnlSummary, StockRoute,
+    TransactionConvert, TransactionSplit, TransactionTrade, TrendRange,
 };
 
 #[tauri::command]
@@ -237,6 +237,25 @@ pub async fn delete_instrument(
         WriteOp::DeleteInstrument,
         move |conn| investment_domain::delete_instrument(conn, &id).map(Outcome::Silent),
     )
+    .await
+}
+
+/// IPC 命令：投资明细列表（ADR-0135 决策 3 / issue #1778）——投资页「明细」页签
+/// 的唯一取数接口：五种投资 kind 交易行的投资投影（标的、数量、单价、手续费、
+/// convert 两腿、split 带符号 Δ、dividend 现金腿与到账账户），四维过滤（账户
+/// 涉及语义 / 标的 convert 两腿 / kind 子集 / 日期）+ 服务端 offset 分页；排序
+/// 与主列表同构（date 倒序）。纯只读，无写入路径；本特性唯一契约新增
+/// （IPC-only、无 HTTP 端点、零 BREAKING）。
+#[tauri::command]
+pub async fn list_investment_transactions(
+    db: State<'_, DbState>,
+    filter: Option<InvestmentTransactionListFilter>,
+) -> Result<InvestmentTransactionListResult> {
+    let conn = db.read_handle();
+    read_entry("list_investment_transactions", conn, move |conn| {
+        let filter = filter.unwrap_or_default();
+        investment_domain::list_investment_transactions(conn, &filter)
+    })
     .await
 }
 
