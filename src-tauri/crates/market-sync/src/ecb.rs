@@ -90,12 +90,14 @@ pub struct FxPairWeeklySeries {
 }
 
 /// 拉取 ECB 参考汇率**全量历史**文件并解析（历史回填入口：整份文件交编排灌库，
-/// 不裁剪，#1759）。`hosts` 供测试注入本地服务，
-/// 生产传 [`ECB_HOSTS`]。
+/// 不裁剪，#1759）。`hosts` 供测试注入本地服务，生产传 [`ECB_HOSTS`]；`cfg` 是
+/// 重试预算，生产传 [`full_history_cfg`]，测试可注入毫秒级快速预算（等待可注入，
+/// spec #1086 / issue #1514 同款手法，issue #1787）。
 pub(super) async fn fetch_ecb_full_history(
     client: &reqwest::Client,
     pacer: &mut Pacer,
     hosts: &[&str],
+    cfg: RetryConfig,
 ) -> Result<Vec<EcbDayRates>> {
     fetch_ecb_document(
         client,
@@ -103,17 +105,18 @@ pub(super) async fn fetch_ecb_full_history(
         hosts,
         FULL_HISTORY_PATH,
         FULL_HISTORY_LABEL,
-        full_history_cfg(),
+        cfg,
     )
     .await
 }
 
 /// 拉取 ECB 参考汇率 **90 天增量**文件并解析（每日自动增量入口）。`hosts` 供
-/// 测试注入本地服务，生产传 [`ECB_HOSTS`]。
+/// 测试注入本地服务，生产传 [`ECB_HOSTS`]；`cfg` 同 [`fetch_ecb_full_history`]。
 pub(super) async fn fetch_ecb_90d_incremental(
     client: &reqwest::Client,
     pacer: &mut Pacer,
     hosts: &[&str],
+    cfg: RetryConfig,
 ) -> Result<Vec<EcbDayRates>> {
     fetch_ecb_document(
         client,
@@ -121,7 +124,7 @@ pub(super) async fn fetch_ecb_90d_incremental(
         hosts,
         INCREMENTAL_90D_PATH,
         INCREMENTAL_90D_LABEL,
-        RetryConfig::production(),
+        cfg,
     )
     .await
 }

@@ -812,7 +812,7 @@ fn production_backfill_channel_lands_history_via_tencent_kline() {
 
     // 只取生产束的日 K 闭包（接线本体）；汇率 / 净值通道用空桩，避免本用例
     // 触发与接线无关的真实网络。
-    let channels = SyncFetchChannels::production_lane(
+    let channels = SyncFetchChannels::production_lane_on_pacer(
         Lane::Backfill,
         SyncFetchHosts {
             quote: vec![],
@@ -821,6 +821,7 @@ fn production_backfill_channel_lands_history_via_tencent_kline() {
             fund_history: vec![],
             disclosure: vec![],
         },
+        super::zero_pacer(),
     )
     .expect("生产后台车道束应可构造");
     let mut fetch_kline = channels.fetch_kline;
@@ -905,7 +906,7 @@ fn production_backfill_channel_lands_fund_history_via_sina() {
 
     // 只取生产束的全历史闭包（接线本体）；日 K / 汇率通道用空桩，避免本用例
     // 触发与接线无关的真实网络。
-    let channels = SyncFetchChannels::production_lane(
+    let channels = SyncFetchChannels::production_lane_on_pacer(
         Lane::Backfill,
         SyncFetchHosts {
             quote: vec![],
@@ -914,6 +915,7 @@ fn production_backfill_channel_lands_fund_history_via_sina() {
             fund_history: vec![url],
             disclosure: vec![],
         },
+        super::zero_pacer(),
     )
     .expect("生产后台车道束应可构造");
     let mut fetch_kline = |_: &QuoteQuery| super::ready(Ok(vec![]));

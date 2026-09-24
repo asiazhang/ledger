@@ -482,6 +482,7 @@ fn fetch_ecb_full_history_and_90d_entries_parse_fake_responses() {
         &client,
         &mut pacer,
         &[url.as_str()],
+        RetryConfig::production(),
     ))
     .unwrap();
     assert_eq!(days.len(), 1);
@@ -491,6 +492,7 @@ fn fetch_ecb_full_history_and_90d_entries_parse_fake_responses() {
         &client,
         &mut pacer,
         &[url.as_str()],
+        RetryConfig::production(),
     ))
     .unwrap();
     assert_eq!(days[0].rates.get("CNY"), Some(&7.6755));
@@ -506,6 +508,7 @@ fn fetch_ecb_entries_report_coded_error_on_unexpected_shapes() {
         &client,
         &mut pacer,
         &[url.as_str()],
+        RetryConfig::production(),
     ))
     .unwrap_err();
     assert!(err.is_code("fx.source-malformed"), "实际 {err:?}");
@@ -516,6 +519,7 @@ fn fetch_ecb_entries_report_coded_error_on_unexpected_shapes() {
         &client,
         &mut pacer,
         &[url.as_str()],
+        RetryConfig::production(),
     ))
     .unwrap_err();
     assert!(err.is_code("fx.source-malformed"), "实际 {err:?}");

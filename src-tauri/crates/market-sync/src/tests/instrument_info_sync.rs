@@ -1586,7 +1586,7 @@ fn production_quote_channel_requests_tencent_batch_endpoint() {
     let body = tencent_a_share_line("600000", "浦发银行", "9.07", "20260918161458");
     let gbk = encoding_rs::GBK.encode(&body).0.into_owned();
     let (url, requests) = super::spawn_header_capture_server(gbk);
-    let mut channels = SyncFetchChannels::production_lane(
+    let mut channels = SyncFetchChannels::production_lane_on_pacer(
         Lane::Foreground,
         SyncFetchHosts {
             quote: vec![url],
@@ -1595,6 +1595,7 @@ fn production_quote_channel_requests_tencent_batch_endpoint() {
             fund_history: vec![],
             disclosure: vec![],
         },
+        super::zero_pacer(),
     )
     .expect("生产束应可构造");
 
@@ -1646,7 +1647,7 @@ fn production_fund_batch_channel_requests_sina_batch_endpoint() {
         format!("var hq_str_f_000001=\"华夏成长混合A,1.333,3.906,1.298,{today_s},24.0598\";\n");
     let gbk = encoding_rs::GBK.encode(&body).0.into_owned();
     let (url, requests) = super::spawn_header_capture_server(gbk);
-    let mut channels = SyncFetchChannels::production_lane(
+    let mut channels = SyncFetchChannels::production_lane_on_pacer(
         Lane::Foreground,
         SyncFetchHosts {
             quote: vec![],
@@ -1655,6 +1656,7 @@ fn production_fund_batch_channel_requests_sina_batch_endpoint() {
             fund_history: vec![],
             disclosure: vec![],
         },
+        super::zero_pacer(),
     )
     .expect("生产束应可构造");
 
@@ -1740,7 +1742,7 @@ fn production_fund_name_channel_falls_back_to_disclosure_host() {
     );
     let (nav_url, _nav_requests) = super::spawn_header_capture_server(nav_body);
 
-    let mut channels = SyncFetchChannels::production_lane(
+    let mut channels = SyncFetchChannels::production_lane_on_pacer(
         Lane::Foreground,
         SyncFetchHosts {
             quote: vec![],
@@ -1749,6 +1751,7 @@ fn production_fund_name_channel_falls_back_to_disclosure_host() {
             fund_history: vec![nav_url],
             disclosure: vec![disclosure_url],
         },
+        super::zero_pacer(),
     )
     .expect("生产束应可构造");
 
@@ -1822,7 +1825,7 @@ fn production_confirm_channel_requests_disclosure_host() {
     );
     let (disclosure_url, disclosure_requests) = super::spawn_header_capture_server(disclosure_body);
 
-    let mut channels = SyncFetchChannels::production_lane(
+    let mut channels = SyncFetchChannels::production_lane_on_pacer(
         Lane::Foreground,
         SyncFetchHosts {
             quote: vec![],
@@ -1832,6 +1835,7 @@ fn production_confirm_channel_requests_disclosure_host() {
             fund_history: vec![],
             disclosure: vec![disclosure_url],
         },
+        super::zero_pacer(),
     )
     .expect("生产束应可构造");
 

@@ -22,7 +22,7 @@ use tracing::Level;
 
 use crate::csrc::fetch_fund_nav_series_from;
 use crate::ecb::fetch_ecb_90d_incremental;
-use crate::http::Pacer;
+use crate::http::{Pacer, RetryConfig};
 use crate::sina_fund::{fetch_fund_nav_history, fetch_sina_fund_nav_rows};
 use crate::tencent::fetch_tencent_batch;
 use crate::tests::spawn_capture_server;
@@ -273,8 +273,13 @@ fn ecb_document_tail_on_non_xml_page() {
         body,
         expect: ExpectedError::Coded("fx.source-malformed"),
         fetch: Box::new(|client, url, pacer| {
-            tauri::async_runtime::block_on(fetch_ecb_90d_incremental(client, pacer, &[url]))
-                .map(|_| ())
+            tauri::async_runtime::block_on(fetch_ecb_90d_incremental(
+                client,
+                pacer,
+                &[url],
+                RetryConfig::production(),
+            ))
+            .map(|_| ())
         }),
     });
 }

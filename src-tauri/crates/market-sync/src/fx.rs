@@ -36,10 +36,12 @@
 //! 取数成功但推导零点 → `fx.source-no-data`，`fx.source-malformed` 原样透传不
 //! 折算，已有汇率不受影响（落库是覆盖幂等 upsert）。
 
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use rusqlite::{Connection, params};
 use serde::Serialize;
+use tokio::sync::Mutex as AsyncMutex;
 
 use ledger_infra::error::{AppError, Result};
 use ledger_transaction::amount::default_currency_code;
@@ -47,9 +49,9 @@ use ledger_transaction::amount::default_currency_code;
 use super::channels::FetchFuture;
 use super::ecb::{
     ECB_HOSTS, EcbDayRates, derive_ecb_weekly_series, fetch_ecb_90d_incremental,
-    fetch_ecb_full_history,
+    fetch_ecb_full_history, full_history_cfg,
 };
-use super::http::{build_client, lock_pacer, shared_pacer};
+use super::http::{Pacer, RetryConfig, build_client, lock_pacer, shared_pacer};
 use super::persist::{ECB_FX_SOURCE, FxPersistReport, persist_ecb_fx_series};
 use super::progress::FxSyncProgress;
 use super::session::ScopedSession;
@@ -184,8 +186,26 @@ impl FxSyncChannels {
     /// 传取数单元单点常量；测试注入本地 HTTP 服务，驱动**生产束**钉住接线：
     /// 「回填打到全量历史文件、深度达成后的增量打到 90 天文件」（删除接线即红）。
     pub(super) fn with_hosts(ecb_hosts: Vec<String>) -> Result<Self> {
+        Self::with_hosts_on(
+            ecb_hosts,
+            shared_pacer(),
+            full_history_cfg(),
+            RetryConfig::production(),
+        )
+    }
+
+    /// 构造本体的限速器与重试预算注入形态（等待可注入，spec #1086 / issue #1514
+    /// 同款手法）：束形状与两条取数腿接线同 [`Self::with_hosts`]，仅 pacer 与两腿
+    /// [`RetryConfig`] 由调用方传入——测试传零间隔限速器与毫秒级退避/冷却，免付
+    /// 生产限速与传输退避的真实等待；重试次数、多主机切换与错误分类等语义不变
+    ///（issue #1787）。
+    pub(super) fn with_hosts_on(
+        ecb_hosts: Vec<String>,
+        pacer: Arc<AsyncMutex<Pacer>>,
+        full_cfg: RetryConfig,
+        incremental_cfg: RetryConfig,
+    ) -> Result<Self> {
         let client = build_client()?;
-        let pacer = shared_pacer();
         Ok(Self {
             fetch_full: {
                 let client = client.clone();
@@ -198,7 +218,7 @@ impl FxSyncChannels {
                     Box::pin(async move {
                         let mut pacer = lock_pacer(&pacer).await;
                         let hosts: Vec<&str> = hosts.iter().map(String::as_str).collect();
-                        fetch_ecb_full_history(&client, &mut pacer, &hosts).await
+                        fetch_ecb_full_history(&client, &mut pacer, &hosts, full_cfg).await
                     }) as FetchFuture<Vec<EcbDayRates>>
                 })
             },
@@ -213,7 +233,8 @@ impl FxSyncChannels {
                     Box::pin(async move {
                         let mut pacer = lock_pacer(&pacer).await;
                         let hosts: Vec<&str> = hosts.iter().map(String::as_str).collect();
-                        fetch_ecb_90d_incremental(&client, &mut pacer, &hosts).await
+                        fetch_ecb_90d_incremental(&client, &mut pacer, &hosts, incremental_cfg)
+                            .await
                     }) as FetchFuture<Vec<EcbDayRates>>
                 })
             },
