@@ -780,6 +780,25 @@ fn projection_past_deadline_projects_nothing() {
     assert_eq!(row.eta_months, None, "有截止日不走无截止正推");
 }
 
+/// 截止落在今天所在月（月差 0）：按 1 个整月计（截止当月仍须把剩余存完）——
+/// 所需月存 = 剩余本身；该约定与「截止日已过不反推」由本测试两分支显式钉住。
+#[test]
+fn projection_deadline_in_current_month_counts_one_month() {
+    let conn = setup();
+    create_savings_goal(
+        &conn,
+        &goal_input("当月目标", 1_200_000, Some("2026-09-30")),
+    )
+    .expect("创建目标应成功");
+    let row = only_progress(&conn);
+    assert_eq!(
+        row.required_monthly_cents,
+        Some(1_200_000),
+        "截止当月（2026-09-30 vs 今天 2026-09-23）按 1 个整月计：所需 = 剩余"
+    );
+    assert_eq!(row.pace_delta_cents, None, "节奏为零不虚构差值");
+}
+
 /// 读快照一致性（issue #1699 / #1702 纪律，删除接线即红）：目标行 × 余额 × 关联
 /// 计划节奏是同屏口径的多语句读闭包。探针在关联计划读取开始前于另一连接把
 /// 计划金额翻倍——

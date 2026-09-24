@@ -24,7 +24,9 @@
 //!
 //! 接缝：域 API 单一权威——写路径 [`create_savings_goal`]（创建联动本体，目标
 //! 金额正数码化守卫先行）与 [`update_savings_goal`]（编辑全量替换 + 改名联动，
-//! issue #1752）、读路径 [`list_savings_goal_progress`]（进度 = 余额，
+//! issue #1752）、读路径 [`list_savings_goal_progress`]（进度 = 余额 + 双向推算：
+//! 余额口径、读余额缓存，节奏闭集二值解析与推算算术住 `pace` 模块，读闭包
+//! 收进同一读事务——issue #1753）。
 //!
 //! 依赖方向（spec #1750 / issue #1751 AC）：本 crate 消费基础设施、同步协议与
 //! 三个同级业务域（`ledger-infra` / `ledger-sync-protocol` / `ledger-accounts`

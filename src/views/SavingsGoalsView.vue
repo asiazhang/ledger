@@ -146,10 +146,11 @@ const columns: DataTableColumns<SavingsGoalProgress> = [
           lines.push(t("savingsGoals.projection.deadlinePassed"));
         }
       }
+      // 逐行渲染：节奏 / 方向 / 引导各自成行，不拼成连续一行。
       return h(
         "div",
         { class: "savings-goal-projection", "data-testid": "savings-goal-projection" },
-        lines,
+        lines.map((line) => h("div", line)),
       );
     },
   },

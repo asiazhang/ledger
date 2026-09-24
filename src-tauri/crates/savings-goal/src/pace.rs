@@ -96,7 +96,8 @@ pub struct SavingsGoalProjection {
     pub pace_delta_cents: Option<i64>,
 }
 
-/// 整数上取整除法（两除数均正）：`i64::div_ceil` 尚在稳定化门槛外，手写等价式。
+/// 整数上取整除法（两除数均正）：有符号整数的 `div_ceil` 仍在 `int_roundings` 门后
+///（rustc 1.98 实测 E0658），手写等价式。
 fn div_ceil(a: i64, b: i64) -> i64 {
     (a + b - 1) / b
 }
@@ -139,12 +140,12 @@ pub(crate) fn project(
     {
         let months = div_ceil(remaining_cents, p);
         projection.eta_months = Some(months);
-        projection.eta_month = Some(
-            today
-                .checked_add_months(Months::new(months as u32))
-                .map(|d| format!("{:04}-{:02}", d.year(), d.month()))
-                .unwrap_or_default(),
-        );
+        projection.eta_month = u32::try_from(months)
+            .ok()
+            .and_then(|m| today.checked_add_months(Months::new(m)))
+            .map(|d| format!("{:04}-{:02}", d.year(), d.month()));
+        // 年月溢出（脏数据级月数）：月数照报、预计年月缺席——不静默降级为空串
+        //（域纪律：不虚构时点，宁可缺席不外发残值）。
         return projection;
     }
     // 有截止反推：每月需存 + 落后 / 超前差值

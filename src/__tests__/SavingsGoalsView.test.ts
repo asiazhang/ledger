@@ -83,7 +83,7 @@ beforeEach(() => {
   wireInvokeSeam({ overrides: VIEW_OVERRIDES });
 });
 
-describe("SavingsGoalsView 储蓄目标视图（spec #1750 / issue #1751）", () => {
+describe("SavingsGoalsView 储蓄目标视图（spec #1750 / issue #1751 建档编辑 / #1753 双向推算）", () => {
   it("挂载即拉取：调用进度读命令，渲染名称 / 目标额 / 已存 / 还差 / 进行中", async () => {
     progress = [
       makeSavingsGoalProgress({
