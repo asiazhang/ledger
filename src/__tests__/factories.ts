@@ -158,6 +158,10 @@ export function makeInvestmentLedgerRow(
     trade: null,
     convert: null,
     split: null,
+    // 弹窗族消费列（issue #1781）：默认同币种中性形态，用例按需覆盖。
+    note: null,
+    currency_code: "CNY",
+    amount_native_cents: 10000,
     ...partial,
   };
 }

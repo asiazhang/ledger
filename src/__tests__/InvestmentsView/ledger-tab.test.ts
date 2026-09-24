@@ -619,6 +619,8 @@ describe("明细页签移动档横向滚动（issue #1779）", () => {
       "手续费",
       "账户",
       "出资账户",
+      // 操作列（issue #1781）：行「⋯」菜单入口（触控轴行菜单的唯一入口，无卡片双渲染）
+      "操作",
     ]);
     // scroll-x = 固定列宽总和（标的列弹性 minWidth 不计入）
     const columns = table.props("columns") as unknown as Array<{ width?: number }>;

@@ -5,13 +5,13 @@ import AppDatePicker from "@ledger/ui-kit/AppDatePicker.vue";
 import PinyinSelect from "@ledger/ui-kit/PinyinSelect.vue";
 import { t } from "@ledger/i18n";
 import { useInvestmentForm } from "@/investment/useInvestmentForm";
-import type { Transaction, TransactionTrade } from "@ledger/types";
+import type { TransactionModalRow, TransactionTrade } from "@ledger/types";
 
 const props = defineProps<{
   kind: "buy" | "sell";
   submitLabel: string;
   /** 编辑模式（issue #180）：待编辑交易与买卖明细，创建路径不传 */
-  editing?: Transaction | null;
+  editing?: TransactionModalRow | null;
   trade?: TransactionTrade | null;
 }>();
 const emit = defineEmits<{ created: []; saved: [] }>();

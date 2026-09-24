@@ -8,7 +8,7 @@ import {
   resolveLendingDirection,
   type LendingFormDirection,
 } from "@/transaction/lending";
-import type { AccountType, Transaction } from "@ledger/types";
+import type { AccountType, TransactionModalRow } from "@ledger/types";
 
 /**
  * 借贷录入 = 转账表单的借贷变体（issue #374 / ADR-0053）：金额/币种/日期/备注、
@@ -26,7 +26,7 @@ export function useLendingForm(options?: {
   onCreated?: () => void;
   onUpdated?: () => void;
   /** 编辑模式：与 useTransferForm editing 同约定（创建时读一次回填、提交时重读定目标） */
-  editing?: () => Transaction | null;
+  editing?: () => TransactionModalRow | null;
 }) {
   const { reference } = useFormShared();
 

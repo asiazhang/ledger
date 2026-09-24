@@ -4,7 +4,7 @@ import { NDescriptions, NDescriptionsItem } from "naive-ui";
 import { t } from "@ledger/i18n";
 import { useReferenceStore } from "@/stores/reference";
 import { formatQuantity } from "@ledger/money";
-import type { Transaction, TransactionSplit } from "@ledger/types";
+import type { TransactionModalRow, TransactionSplit } from "@ledger/types";
 
 /**
  * 份额调整只读详情（ADR-0106 决策 10 / issue #1052）：split 是「无现金腿」kind，
@@ -17,7 +17,7 @@ import type { Transaction, TransactionSplit } from "@ledger/types";
  */
 const props = defineProps<{
   /** 份额调整交易行（提供日期 / 账户 / 备注） */
-  transaction: Transaction;
+  transaction: TransactionModalRow;
   /** 份额调整明细（`get_transaction_split` 读投影） */
   split: TransactionSplit;
 }>();

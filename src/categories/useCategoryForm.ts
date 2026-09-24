@@ -12,7 +12,7 @@ import { usePoliciesStore } from "@/policy/policies";
 import { useFormShared, utcMidnightTimestamp } from "@/composables/useFormShared";
 import { useMerchantField } from "@/merchants/useMerchantField";
 import { t } from "@ledger/i18n";
-import type { Transaction } from "@ledger/types";
+import type { TransactionModalRow } from "@ledger/types";
 import { errorMessage } from "@ledger/utils/errors";
 
 export function useCategoryForm(
@@ -25,7 +25,7 @@ export function useCategoryForm(
     /** 编辑模式：待编辑交易 getter。与 useRefundForm fixedTarget 同约定：仅在
      * composable 创建时读一次做回填、提交时重读一次定目标，换目标交易必须由
      * 父层强制重建组件实例（:key 序号重建），否则回填/提交仍指向旧交易。 */
-    editing?: () => Transaction | null;
+    editing?: () => TransactionModalRow | null;
   },
 ) {
   const { accountOptions, currencyOptions } = useFormShared();

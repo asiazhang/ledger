@@ -37,10 +37,15 @@ const LEDGER_TAB_KINDS: [TransactionKind; 5] = [
 /// 证券扩展行载荷列 + 转入腿展示字段。前两列 `t.id, t.kind` 兼作读快照探针的
 /// marker 锚（探针以首段投影列区分 items 语句与 COUNT 语句，改列序先跑探针测试，
 /// 见域单测 `page_and_total_share_one_snapshot` 与 `test_support::snapshot_probe`）。
+/// 尾段（note / currency_code / amount_native_cents）是弹窗族消费列（ADR-0135
+/// 决策 4 / issue #1781）：编辑回填（note 防误抹、currency_code 精度换算）与
+/// dividend 只读详情金额展示经弹窗行适配消费，列表呈现不读；尾段追加不打乱
+/// 前段列序（载荷列下标与探针 marker 锚不动）。
 const ROW_COLUMNS: &str = "t.id, t.kind, t.amount_cents, t.account_id, t.funding_account_id, \
      t.date, st.instrument_id, i.symbol, i.name, i.instrument_type, \
-     st.quantity, st.price_cents, st.fee_cents, \
-     st.to_instrument_id, ti.symbol, st.to_quantity, st.out_amount_cents, st.in_amount_cents";
+    st.quantity, st.price_cents, st.fee_cents, \
+    st.to_instrument_id, ti.symbol, st.to_quantity, st.out_amount_cents, st.in_amount_cents, \
+    t.note, t.currency_code, t.amount_native_cents";
 
 /// 投资明细列表（ADR-0135 决策 3 / issue #1778）：按四维过滤返回五种投资 kind
 /// 交易行的投资投影，date 倒序 + offset 分页，items + total 同快照。

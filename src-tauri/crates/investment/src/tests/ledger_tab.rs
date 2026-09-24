@@ -41,10 +41,13 @@ fn seed_five_kinds(conn: &rusqlite::Connection) -> Vec<String> {
         .unwrap()
         .id;
     // 现金分红：现金腿到账银行卡（非投资账户）——到账账户端的造数前提。
-    let dividend =
-        create_transaction_internal(conn, make_dividend_input("acc-bank", "inst-a", 300, "CNY"))
-            .unwrap()
-            .id;
+    // 现金分红：现金腿到账银行卡（非投资账户）——到账账户端的造数前提；带备注
+    // 与折算留痕断言（弹窗族消费列，issue #1781）的非空形态。
+    let mut dividend_input = make_dividend_input("acc-bank", "inst-a", 300, "CNY");
+    dividend_input.note = Some("年中分红".into());
+    let dividend = create_transaction_internal(conn, dividend_input)
+        .unwrap()
+        .id;
     // 通用 kind（expense）：投资明细行集闭包的反证行。
     create_transaction_internal(
         conn,
@@ -123,6 +126,14 @@ fn projection_covers_all_five_kinds_with_fields() {
     assert_eq!(trade.price_cents, 100_000, "单价存万分之一元");
     assert_eq!(trade.fee_cents, 100);
     assert!(buy.convert.is_none() && buy.split.is_none());
+    // 弹窗族消费列（ADR-0135 决策 4 / issue #1781）：币种 = 账户币种（ADR-0134）、
+    // 同币种行本位币金额恒等、无备注 NULL。
+    assert_eq!(buy.currency_code, "CNY", "记录币种 = 账户币种");
+    assert_eq!(
+        buy.amount_native_cents, buy.amount_cents,
+        "同币种行本位币金额与行金额锚点一致"
+    );
+    assert_eq!(buy.note, None);
 
     let sell = result
         .items
@@ -181,6 +192,11 @@ fn projection_covers_all_five_kinds_with_fields() {
         dividend.trade.is_none() && dividend.convert.is_none() && dividend.split.is_none(),
         "dividend 无 kind 专属载荷（现金腿与到账账户在公共字段）"
     );
+    // 弹窗族消费列（ADR-0135 决策 4 / issue #1781）：备注原样投影（只读详情备注
+    // 行与编辑回填防误抹的数据面）、币种与本位币金额随行。
+    assert_eq!(dividend.note.as_deref(), Some("年中分红"), "备注原样投影");
+    assert_eq!(dividend.currency_code, "CNY");
+    assert_eq!(dividend.amount_native_cents, 300);
 }
 
 /// 账户过滤的涉及账户语义（ADR-0135 决策 3）：投资账户 ∪ 出资账户（buy/sell，
