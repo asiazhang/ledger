@@ -5,7 +5,10 @@ import {
   NDataTable,
   NEmpty,
   NSpace,
+  useMessage,
+  useThemeVars,
   type DataTableColumn,
+  type DropdownOption,
   type PaginationProps,
 } from "naive-ui";
 import { computed, h, onMounted, ref, watch } from "vue";
@@ -16,8 +19,17 @@ import { formatAmount, formatPrice, formatQuantity } from "@ledger/money";
 import { sumFixedColumnWidths } from "@ledger/utils/table";
 import AppModal from "@ledger/ui-kit/AppModal.vue";
 import AppSelect from "@ledger/ui-kit/AppSelect.vue";
-import { useTransactionModalState } from "@ledger/transaction-modal-state";
+import AppDropdown from "@ledger/ui-kit/AppDropdown.vue";
 import TransactionForm from "@/transaction/TransactionForm.vue";
+import ConvertDetail from "@/investment/ConvertDetail.vue";
+import SplitDetail from "@/investment/SplitDetail.vue";
+import DividendDetail from "@/investment/DividendDetail.vue";
+import { useAppDialog } from "@/composables/useAppDialog";
+import { useRowContextMenu } from "@ledger/row-context-menu";
+import { useTransactionModalState } from "@ledger/transaction-modal-state";
+import { buildRowMenuOptions } from "@/transaction/transaction-row-menu";
+import { rowActionsColumn } from "@/transaction/transaction-columns";
+import { instrumentDisplayLabel, ledgerRowToModalRow } from "@/investment/ledger-row-modal";
 import PinyinSelect from "@ledger/ui-kit/PinyinSelect.vue";
 import AppDatePicker from "@ledger/ui-kit/AppDatePicker.vue";
 import {
@@ -41,12 +53,23 @@ import type {
  * （ADR-0008，「共 N 条」+ 页大小档位与主列表同构）+ 筛选四维（issue #1780：类型多选
  * （投资 kind 子集）/ 账户（涉及账户语义）/ 标的（远程搜索）/ 日期（双端有界））。
  *
+ * 行操作与主列表同权（ADR-0135 决策 4 / issue #1781）：编辑 buy/sell 与 convert/
+ * split/dividend 只读详情复用交易弹窗族——弹窗编排 TransactionModalState（先取
+ * 扩展明细再开窗、失败不开窗、慢取竞态守卫内化其中）新实例消费，弹窗组件
+ * （TransactionForm / 三只读详情组件）原样复用，行经弹窗行适配投影
+ * （ledger-row-modal 单点）进编排；软删走既有 delete_transaction（级联与码化
+ * 守卫照常，不新增错误码）；行菜单选项组装复用 transaction-row-menu 单点，行
+ * 激活闭集（buy/sell = 编辑、convert/split/dividend = 只读详情、refund = 无）
+ * 单源 transactionKindActivation 经其判定，本页签无第二套判定。行右键与「⋯」
+ * 常显列是同一 RowContextMenu 编排的两个入口（账户行先例）；触控轴无卡片双渲染
+ * （ADR-0135 决策 8），「⋯」列即触控轴行菜单入口。
+ *
  * 状态归宿（ADR-0094）：筛选全维与页码/页大小住投资页会话 store（会话内保留、
  * 冷启动回默认），本组件只读消费 + 经意图入口写入；请求发起、loading 与行数据
  * 归视图（主列表同构，ADR-0030 决策 6）。筛选维度实际变化翻页归零由 store 内化。
  *
  * 金额列走统一展示格式化（formatAmount：数字分组随界面语言、金额隐私掩码自动
- * 生效）；行投影不携带币种（混合币种列表不暗示同币种），金额按数字呈现。
+ * 生效）；行投影不携带币种呈现（混合币种列表不暗示同币种），金额按数字呈现。
  */
 
 /** 明细页签类型筛选闭集 = 行集闭包：五种投资 kind（与后端 LEDGER_TAB_KINDS 同一闭集）。 */
@@ -109,6 +132,110 @@ watch(
   },
   { immediate: true },
 );
+
+// —— 行操作弹窗族（ADR-0135 决策 4 / issue #1781）：与主列表同权的复用接线 ——
+
+const message = useMessage();
+const dialog = useAppDialog();
+// 主题 error 色：删除项经 DropdownOption props 着色（不硬编码色值，暗色模式自动适配）。
+const themeVars = useThemeVars();
+
+/**
+ * 行操作弹窗编排：复用交易弹窗族深模块 TransactionModalState 新实例（意图/序号
+ * 不与交易页串扰；弹窗组件复用、消费意图在本页签重接线，ADR-0135 决策 4 /
+ * issue #1781）。编辑 buy/sell 的「先取买卖明细再开窗、失败不开窗」与 convert/
+ * split/dividend 只读详情的「先取扩展明细再开窗」异步时序、慢取竞态守卫、
+ * dividend 同步开窗全部内化在模块（弹窗组件明细取数不经视图）；非 detail/edit
+ * 意图（create/refund/add-item）本页签不产生——明细行集闭包内 refund 不在场、
+ * 记一笔入口随创建入口迁址票另接（issue #1782）。
+ */
+const { intent, seq, open: openModal, close: closeModal } = useTransactionModalState();
+
+/** 只读详情意图（窄化）：非 detail 意图为 null；模板按 detail.kind 分派只读组件。 */
+const detailIntent = computed(() => (intent.value?.type === "detail" ? intent.value : null));
+
+/** 编辑弹窗：行经弹窗行适配投影进编排，取数时序内化在模块（取数不经视图）。 */
+function openEditFromRow(row: InvestmentTransactionRow) {
+  void openModal({ type: "edit", row: ledgerRowToModalRow(row) });
+}
+
+/** 只读详情弹窗（界面只读 kind 不体现写操作入口，ADR-0106 决策 10 / ADR-0109）。 */
+function openDetailFromRow(row: InvestmentTransactionRow) {
+  void openModal({ type: "detail", row: ledgerRowToModalRow(row) });
+}
+
+/** 编辑成功：关窗（编排内化关闭意图）并以当前页码重拉列表（保持当前页与筛选，
+ * 不重置页码——与主列表 onEditSaved 同构，不经翻回第 1 页语义）。 */
+function onEditSaved() {
+  closeModal();
+  void load();
+}
+
+/** 软删目标行 id（0 元闭包任务的自读参数，Loadable 纪律：发起动作进、终态出）。 */
+let removingId = "";
+
+/** 软删走既有 delete_transaction（issue #151 二次确认同款，issue #1781 照常）：
+ * 取消不删、遮罩点击不构成关闭意图；确认后才删除。既有级联与码化守卫（部分卖出
+ * 守卫、转换链守卫、在用占用判定）在后端随命令自然生效，不新增错误码。错误反馈
+ * 走 Loadable 统一通道（error 置位 + 统一 toast 单点，#1008：删除请求与列表请求
+ * 同一异步守门基线，不发 catch 直弹分支）。 */
+const { run: runRemove } = useLoadable(async () => {
+  await api.deleteTransaction(removingId);
+});
+
+/** 软删成功：成功提示 + 以当前状态重拉（本页删后剩 0 条且非第 1 页由 load 内的
+ * 空页自愈回退一页（issue #893 同款），与主列表 afterRowDelete 同一可观察结果）。 */
+async function remove(id: string) {
+  removingId = id;
+  const ok = await runRemove();
+  if (ok === null) return; // 失败：error 置位 + 统一 toast 已弹（Loadable 单点）
+  message.success(t("transactions.list.deleted"));
+  await load();
+}
+
+/** 删除走 useAppDialog 二次确认（issue #151）：取消不删，确认后才删除。 */
+function confirmDelete(row: InvestmentTransactionRow) {
+  dialog.warning({
+    title: t("transactions.deleteDialog.title"),
+    content: t("transactions.deleteDialog.content"),
+    positiveText: t("transactions.deleteDialog.confirm"),
+    negativeText: t("transactions.deleteDialog.cancel"),
+    maskClosable: false,
+    onPositiveClick: () => remove(row.id),
+  });
+}
+
+/** 行右键菜单 + 「⋯」常显列（与主列表同构，issue #151 / #550 / #843）：除 refund 外
+ * 可编辑行首项「编辑」、界面只读 kind 仅「详情」、其余行含「删除」——选项组装
+ * 复用 transaction-row-menu 单点（行激活闭集单源 transactionKindActivation 经其
+ * 判定，convert/split/dividend 行不出现编辑/软删入口），业务动作分派留本页签。 */
+const rowMenu = useRowContextMenu<InvestmentTransactionRow>((key, row) => {
+  if (key === "detail") openDetailFromRow(row);
+  else if (key === "edit") openEditFromRow(row);
+  else if (key === "delete") confirmDelete(row);
+});
+
+// 可见性由单判别状态派生（非空即显示）；定位坐标取工厂保留值（issue #798 同款，
+// 离场动画期间仍按坐标重定位）。
+const menuShow = computed(() => rowMenu.state.value !== null);
+const menuX = computed(() => rowMenu.position.value.x);
+const menuY = computed(() => rowMenu.position.value.y);
+
+/** 菜单选项：选项组装单点复用（hasItem 维度仅 expense 行消费，投资 kind 行集不在场）。 */
+const menuOptions = computed<DropdownOption[]>(() => {
+  const row = rowMenu.state.value?.row;
+  return row ? buildRowMenuOptions(row, { errorColor: themeVars.value.errorColor }) : [];
+});
+
+/** 表格行属性：绑定行右键菜单（open 内化重定位舞步；原生菜单拦截单点归窗口行为守卫）。 */
+const rowProps = (row: InvestmentTransactionRow) => ({
+  onContextmenu: (e: MouseEvent) => rowMenu.open(e, row),
+});
+
+/** 弹窗经 ✕ / ESC 显式关闭：走编排内化关闭（意图清回空终态）。 */
+function onModalShowUpdate(show: boolean) {
+  if (!show) closeModal();
+}
 
 /** 类型多选选项：投资 kind 闭集（按闭集顺序渲染），标签复用交易域 kind 文案单点。 */
 const kindOptions = computed<Array<{ label: string; value: TransactionKind }>>(() =>
@@ -234,7 +361,7 @@ function fundingAccountName(row: InvestmentTransactionRow): string {
 /** 标的单元格：convert 行「A → B」双腿（转出 → 转入代码）；其余行代码 + 名称。 */
 function instrumentCell(row: InvestmentTransactionRow): string {
   if (row.convert) return `${row.symbol} → ${row.convert.to_symbol}`;
-  return row.instrument_name ? `${row.symbol} ${row.instrument_name}` : row.symbol;
+  return instrumentDisplayLabel(row.symbol, row.instrument_name);
 }
 
 /** 数量单元格：buy/sell 成交数量；convert「转出 → 转入」份额双腿；split 带符号
@@ -330,6 +457,10 @@ const columns = computed<DataTableColumn<InvestmentTransactionRow>[]>(() => [
     ellipsis: { tooltip: true },
     render: fundingAccountName,
   },
+  // 交易行「⋯」常显操作列（与主列表同构，ADR-0088 决策 6 / issue #843 / #1781）：
+  // 与行右键共用同一行菜单编排 open 入口、以点击坐标弹出；明细页签单表格渲染
+  //（无卡片双渲染），本列即触控轴的行菜单入口（列形态单点 rowActionsColumn）。
+  rowActionsColumn<InvestmentTransactionRow>((e, row) => rowMenu.open(e, row)),
 ]);
 
 // 横向滚动下限 = 各固定列宽总和（全仓单一收口）：标的列为唯一弹性列（minWidth
@@ -367,11 +498,19 @@ const emptyDescription = computed(() =>
  * 入口单点表达（头部两个按钮），弹窗内不提供切换，中途换类型 = 关闭重开。
  * 功能开关关闭投资时投资页整页不可达（ADR-0116 决策 4 修订注记），入口语义由整页覆盖，
  * 无需逐 kind 闸门。
+ * 与行操作弹窗族（issue #1781）各持 TransactionModalState 新实例，意图/序号互不串扰。
  */
-const { intent, seq, open: openModal, close: closeModal } = useTransactionModalState();
+const {
+  intent: rawCreateIntent,
+  seq: createSeq,
+  open: openCreateModal,
+  close: closeCreateModal,
+} = useTransactionModalState();
 
 /** 创建意图（窄化）：非 create 意图为 null；模板按意图派生显示开关与标题。 */
-const createIntent = computed(() => (intent.value?.type === "create" ? intent.value : null));
+const createIntent = computed(() =>
+  rawCreateIntent.value?.type === "create" ? rawCreateIntent.value : null,
+);
 
 /**
  * 明细页签头部入口可创建类型闭集 = buy/sell（ADR-0135 决策 5；convert/split/dividend
@@ -379,7 +518,7 @@ const createIntent = computed(() => (intent.value?.type === "create" ? intent.va
  * openCreate 直发记一笔意图。
  */
 function openCreate(kind: "buy" | "sell") {
-  void openModal({ type: "create", kind });
+  void openCreateModal({ type: "create", kind });
 }
 
 /** 弹窗标题：标明入口选定类型（交易弹窗族同一文案单点）。 */
@@ -397,7 +536,7 @@ const createTitle = computed(() =>
  * 意图入口触发既有重拉出口；已在第 1 页时直接重拉（单一请求，不走翻页语义）。
  */
 function onCreated() {
-  closeModal();
+  closeCreateModal();
   if (session.detailPage !== 1) {
     session.setDetailPage(1);
   } else {
@@ -475,6 +614,7 @@ function onCreated() {
       size="small"
       remote
       :row-key="(r: InvestmentTransactionRow) => r.id"
+      :row-props="rowProps"
       :scroll-x="scrollX"
       :pagination="pagination"
     >
@@ -501,16 +641,79 @@ function onCreated() {
       card-size="md"
       @update:show="
         (show: boolean) => {
-          if (!show) closeModal();
+          if (!show) closeCreateModal();
         }
       "
     >
       <TransactionForm
         v-if="createIntent"
-        :key="seq"
+        :key="createSeq"
         :kind="createIntent.kind"
         @created="onCreated"
       />
     </AppModal>
   </NSpace>
+  <!-- 行右键菜单（与主列表同构，issue #151 / #550）：手动定位弹出；开合上报经薄封装
+       attrs watch 自动生效（`:show` 绑定照旧）。 -->
+  <AppDropdown
+    trigger="manual"
+    placement="bottom-start"
+    :show="menuShow"
+    :x="menuX"
+    :y="menuY"
+    :options="menuOptions"
+    style="max-width: 140px"
+    @select="rowMenu.select"
+    @clickoutside="rowMenu.close"
+  />
+  <!-- 编辑弹窗（ADR-0135 决策 4 / issue #1781）：buy/sell 行经弹窗行适配进编排，
+       回填既有交易全部业务字段（明细回填经 TransactionTrade 投影），kind 锁死；提交
+       走全字段更新命令，成功关窗并保持当前页重拉。开启/关闭经 TransactionModalState
+       编排（目标行与买卖明细由意图携带，序号作表单 key 强制重建）。 -->
+  <AppModal
+    :show="intent?.type === 'edit'"
+    :title="t('transactions.edit.title')"
+    preset="card"
+    display-directive="if"
+    card-size="md"
+    @update:show="onModalShowUpdate"
+  >
+    <TransactionForm
+      :key="seq"
+      v-if="intent?.type === 'edit'"
+      :editing="intent.row"
+      :trade="intent.trade"
+      @saved="onEditSaved"
+    />
+  </AppModal>
+  <!-- 只读详情弹窗（ADR-0106 决策 10 / ADR-0109）：界面只读 kind（convert / split /
+       dividend）不体现任何写操作；convert 只读呈现「A → B」两侧标的、份额、金额、
+       手续费与结转成本，split 只读呈现标的、带符号份额变动、调整日与账户，dividend
+       只读呈现归属标的、金额、到账账户与日期。扩展明细取数时序内化在编排模块 -->
+  <AppModal
+    :show="intent?.type === 'detail'"
+    :title="t('transactions.detail.title')"
+    preset="card"
+    display-directive="if"
+    card-size="md"
+    @update:show="onModalShowUpdate"
+  >
+    <ConvertDetail
+      :key="seq"
+      v-if="detailIntent?.detail.kind === 'convert'"
+      :transaction="detailIntent.row"
+      :convert="detailIntent.detail.convert"
+    />
+    <SplitDetail
+      :key="seq"
+      v-else-if="detailIntent?.detail.kind === 'split'"
+      :transaction="detailIntent.row"
+      :split="detailIntent.detail.split"
+    />
+    <DividendDetail
+      :key="seq"
+      v-else-if="detailIntent?.detail.kind === 'dividend'"
+      :transaction="detailIntent.row"
+    />
+  </AppModal>
 </template>

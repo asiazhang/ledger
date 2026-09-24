@@ -284,6 +284,14 @@ export interface InvestmentTransactionRow {
   trade: InvestmentTradeFields | null;
   convert: InvestmentConvertFields | null;
   split: InvestmentSplitFields | null;
+  /** 备注（弹窗族消费列，issue #1781）：编辑回填防误抹 + 只读详情备注行；列表呈现不读 */
+  note: string | null;
+  /** 记录币种（= 账户币种，ADR-0134）：编辑回填精度换算与 dividend 详情金额标注
+   * 的数据面；列表呈现不读（混合币种列表不暗示同币种） */
+  currency_code: string;
+  /** 本位币金额（分，写路径折算落定）：dividend 只读详情金额展示读它（与主列表
+   * 金额列同口径单点）；列表呈现不读 */
+  amount_native_cents: number;
 }
 
 /** 投资明细列表过滤条件（ADR-0135 / issue #1778）：四维 + 服务端 offset 分页。 */
@@ -324,6 +332,11 @@ export interface Holding {
   latest_nav_date: string | null;
   market_value_cents: number | null;
   unrealized_pnl_cents: number | null;
+  /** 折全局默认币种的市值（当期汇率逐行软折算，issue #1797）：缺现价或缺折算汇率为 null——
+   * 行级空值由展示面显式呈现，命令不因单行缺料失败 */
+  native_market_value_cents: number | null;
+  /** 折全局默认币种的未实现盈亏（当期汇率逐行软折算，issue #1797）；空值语义同 native_market_value_cents */
+  native_unrealized_pnl_cents: number | null;
   updated_at: string;
 }
 
@@ -397,6 +410,19 @@ export interface CurrencyPnl {
 export interface CurrencyCumulativePnl {
   currency_code: string;
   cumulative_pnl_cents: number;
+}
+
+/**
+ * 累计收益·折本位币单值（issue #1797）：三腿（未实现 + 已实现 + 分红）逐行按当期
+ * 汇率折全局默认币种后求和的读投影——持仓页签合计卡与首页投资概览卡的累计收益
+ * 消费面。隐藏账户照常计入（持仓口径）；缺折算汇率码化上抛（`fx.rate-missing`，
+ * 展示层卡内警告 + 重试，不给半截数字），缺价持仓的未实现腿按空值跳过。
+ */
+export interface CumulativePnlNativeTotal {
+  /** 三腿逐行折本位币后的合计（分）。 */
+  total_cents: number;
+  /** 折算基准币种（全局默认币种），供展示面取符号与标注口径。 */
+  native_currency: string;
 }
 
 /** 已实现盈亏汇总（ADR-0107）：盈亏页三视图（按年/按账户/按标的）+ 按币种分组总数；

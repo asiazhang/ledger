@@ -6,7 +6,8 @@ import { appVars } from "@ledger/theme/app-theme.css.ts";
  * 投资合计三卡（总市值 / 持仓收益 / 累计收益）的形态样式（ADR-0093 样式方案，
  * 组件旁路样式文件与组件共置）：每格独立成一张细边框卡片、三张同排（等宽与窄窗
  * 单列归 NGrid），与下方内容分层——细边框 + 微凹底面（暗色下比外层卡片低一阶，
- * 亮色下由边框承担分界）。
+ * 亮色下由边框承担分界）。issue #1797 起三卡改折本位币单值，多币种分组连接符样式
+ * 随展示形态一并退役。
  *
  * 颜色只给中性兜底：数值默认取主文本色——组件库 NStatistic 出厂取次级色偏灰，
  * 与「净资产」卡的主数字（NText strong）不一致。盈亏两卡的语义色不在此定义，
@@ -31,12 +32,7 @@ export const statsLabel = style([
   { gap: "4px" },
 ]);
 
-/** 数值的中性兜底色；等宽数字由 NStatistic 的 tabular-nums 属性承担 */
+/** 数值的中性兑底色；等宽数字由 NStatistic 的 tabular-nums 属性承担 */
 export const statsValue = style({
   color: appVars.text.primary,
-});
-
-/** 多币种分组间的「 / 」连接符：降到三级灰，不与数值争视觉 */
-export const statsSeparator = style({
-  color: appVars.text.tertiary,
 });

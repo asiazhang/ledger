@@ -6,7 +6,7 @@ import AppDatePicker from "@ledger/ui-kit/AppDatePicker.vue";
 import PinyinSelect from "@ledger/ui-kit/PinyinSelect.vue";
 import { useLendingForm } from "@/transaction/useLendingForm";
 import { LENDING_FORM_DIRECTIONS, type LendingFormDirection } from "@/transaction/lending";
-import type { Transaction } from "@ledger/types";
+import type { TransactionModalRow } from "@ledger/types";
 
 // 借贷录入 = 转账表单的借贷变体（issue #374 / ADR-0053）：不新增交易 kind，提交产物与
 // 转账同构（useLendingForm 复用 useTransferForm 的装配与提交路由）。创建模式由入口预置
@@ -16,7 +16,7 @@ const props = defineProps<{
   /** 创建模式预置方向；编辑模式忽略（按既有交易派生，派生失败时兜底） */
   initialDirection?: LendingFormDirection;
   /** 编辑模式：借贷形态的既有转账交易 */
-  editing?: Transaction | null;
+  editing?: TransactionModalRow | null;
 }>();
 
 const emit = defineEmits<{ created: []; saved: [] }>();

@@ -6,14 +6,14 @@ import AppTreeSelect from "@ledger/ui-kit/AppTreeSelect.vue";
 import AppDatePicker from "@ledger/ui-kit/AppDatePicker.vue";
 import { useCategoryForm } from "@/categories/useCategoryForm";
 import { t } from "@ledger/i18n";
-import type { Transaction } from "@ledger/types";
+import type { TransactionModalRow } from "@ledger/types";
 
 // 编辑模式（issue #178）：传入 editing 时回填既有交易并走更新命令，
 // kind 由父层按 editing.kind 锁死传入，本组件内不可切换。
 const props = defineProps<{
   kind: "expense" | "income";
   submitLabel: string;
-  editing?: Transaction | null;
+  editing?: TransactionModalRow | null;
 }>();
 const emit = defineEmits<{ created: []; saved: [] }>();
 

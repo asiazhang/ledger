@@ -3,8 +3,8 @@ import { storeToRefs } from "pinia";
 import { useReferenceStore } from "@/stores/reference";
 import { matchLabel } from "@ledger/utils/pinyin-filter";
 import {
-  sumByCurrency,
-  type CurrencyAmountGroup,
+  rowStatCardValues,
+  type StatCardValue,
   type PortfolioRow,
 } from "@/investment/usePortfolioOverview";
 import {
@@ -162,9 +162,8 @@ export interface UseHoldingsFilterReturn {
   readonly filteredRows: Ref<PortfolioRow[]>;
   /** 页码（1 起）：过滤排序之后派生行集的展示切片，不是第四个过滤维度 */
   readonly page: Ref<number>;
-  /** 派生合计（按币种分组）：随过滤子集更新，排序不影响，缺价行不计入 */
-  readonly totalMarketValueGroups: Ref<CurrencyAmountGroup[]>;
-  readonly totalUnrealizedPnlGroups: Ref<CurrencyAmountGroup[]>;
+  /** 派生合计（折本位币单值，issue #1797）：随过滤子集更新，排序不影响，缺价行不计入 */
+  readonly statCards: Ref<{ marketValue: StatCardValue; unrealizedPnl: StatCardValue }>;
   /** 账户下拉选项：与盈亏页账户下拉同源（投资账户谓词单点在参考 store） */
   readonly accountOptions: Ref<{ label: string; value: string }[]>;
 }
@@ -190,22 +189,9 @@ export function useHoldingsFilter(rows: Ref<PortfolioRow[]>): UseHoldingsFilterR
       sorter.value,
     ),
   );
-  const totalMarketValueGroups = computed(() =>
-    sumByCurrency(
-      filteredRows.value.map((r) => ({
-        currencyCode: r.valueCurrencyCode,
-        cents: r.marketValueCents,
-      })),
-    ),
-  );
-  const totalUnrealizedPnlGroups = computed(() =>
-    sumByCurrency(
-      filteredRows.value.map((r) => ({
-        currencyCode: r.valueCurrencyCode,
-        cents: r.unrealizedPnlCents,
-      })),
-    ),
-  );
+  // 合计随过滤子集更新、排序不影响（排序只是重排行不是换口径）：折本位币单值
+  // 装配复用 rowStatCardValues 单点（issue #1797，与全量口径同一表达式）
+  const statCards = computed(() => rowStatCardValues(filteredRows.value));
 
   const accountOptions = computed(() =>
     reference.investmentAccounts.map((a) => ({ label: a.name, value: a.id })),
@@ -256,8 +242,7 @@ export function useHoldingsFilter(rows: Ref<PortfolioRow[]>): UseHoldingsFilterR
     setSorter: session.setSorter,
     filteredRows,
     page,
-    totalMarketValueGroups,
-    totalUnrealizedPnlGroups,
+    statCards,
     accountOptions,
   };
 }

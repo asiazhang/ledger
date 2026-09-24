@@ -112,8 +112,8 @@ const INVESTMENT_DEFAULTS = {
   list_holdings: [],
   // 价格过期检查（issue #1190）：打开投资页的本地水位检查，默认无过期
   instrument_price_staleness: { stale_count: 0, threshold_days: 3 },
-  // 累计收益聚合（issue #1077）：持仓概览同批拉取（全账本按币种分组）
-  cumulative_pnl_summary: [{ currency_code: "CNY", cumulative_pnl_cents: 45000 }],
+  // 累计收益·折本位币单值（issue #1797）：持仓概览同批拉取（全账本口径）
+  cumulative_pnl_native_total: { total_cents: 45000, native_currency: "CNY" },
   // 走势（issue #139）：标的列表「走势」入口切入走势 tab 时由面板拉取
   portfolio_value_trend: { currency_code: "CNY", points: [] },
   instrument_price_trend: {
@@ -236,7 +236,7 @@ describe("InvestmentsView 持仓页签（issue #901）", () => {
     expect(wrapper.findAll(".n-tabs-tab--active").map((el) => el.text())).toEqual(["概览"]);
   });
 
-  it("持仓页签完整呈现：按币种合计统计（含累计收益）+ 持仓明细表 + 同步按钮在位", async () => {
+  it("持仓页签完整呈现：折本位币单值合计（含累计收益）+ 持仓明细表 + 同步按钮在位", async () => {
     wireInvokeSeam({ defaults: INVESTMENT_DEFAULTS, overrides: { list_holdings: mockHoldings } });
     const wrapper = mountView();
     await flushPromises();
@@ -244,12 +244,12 @@ describe("InvestmentsView 持仓页签（issue #901）", () => {
     expect(wrapper.text()).toContain("当前持仓");
     expect(wrapper.text()).toContain("总市值");
     expect(wrapper.text()).toContain(formatAmount(150000, cny));
-    expect(wrapper.find('[data-testid="total-unrealized-pnl"]').text()).toBe(
-      `持仓收益${formatAmount(30000, cny)}`,
+    expect(wrapper.find('[data-testid="total-unrealized-pnl-value"]').text()).toBe(
+      formatAmount(30000, cny),
     );
-    // 累计收益卡（issue #1077）：持仓页签合计区新增、按币种分组展示
-    expect(wrapper.find('[data-testid="total-cumulative-pnl"]').text()).toBe(
-      `累计收益${formatAmount(45000, cny)}`,
+    // 累计收益卡（issue #1077 / #1797）：持仓页签合计区新增、后端折本位币单值透传
+    expect(wrapper.find('[data-testid="total-cumulative-pnl-value"]').text()).toBe(
+      formatAmount(45000, cny),
     );
     expect(wrapper.text()).not.toContain("未实现盈亏");
     // 持仓明细行上屏（600000 浦发银行）
@@ -342,13 +342,16 @@ describe("InvestmentsView 持仓页签（issue #901）", () => {
   });
 
   it("价格失效信号触发持仓重查：翻新后的市值合计上屏（自动刷新贯通取数与渲染）", async () => {
-    // 第二次取数返回写价后的行情：h-1 价格/市值/未实现盈亏联动翻新（合计 150000 → 300000）
+    // 第二次取数返回写价后的行情：h-1 价格/市值/未实现盈亏（含折本位币两列）联动翻新
+    //（合计 150000 → 300000）
     const repriced = [
       {
         ...mockHoldings[0],
         latest_price_cents: 300000,
         market_value_cents: 300000,
         unrealized_pnl_cents: 180000,
+        native_market_value_cents: 300000,
+        native_unrealized_pnl_cents: 180000,
       },
       mockHoldings[1],
     ];

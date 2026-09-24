@@ -27,12 +27,13 @@ use ledger_infra::error::Result;
 use ledger_infra::signals::{WriteEvidence, WriteOp};
 use ledger_investment as investment_domain;
 use ledger_investment::{
-    AddFundResult, AddStockInstrumentResult, CurrencyCumulativePnl, Holding, Instrument,
-    InstrumentInput, InstrumentListFilter, InstrumentListResult, InstrumentPriceTrend,
-    InvestmentOverview, InvestmentTransactionListFilter, InvestmentTransactionListResult,
-    ManualPriceInput, ManualPriceResult, MarketPrice, MarketPriceInput, MoneyWeightedReturnSummary,
-    MwrRange, PnlFilter, PortfolioValueTrend, PriceStaleness, RealizedPnlSummary, StockRoute,
-    TransactionConvert, TransactionSplit, TransactionTrade, TrendRange,
+    AddFundResult, AddStockInstrumentResult, CumulativePnlNativeTotal, CurrencyCumulativePnl,
+    Holding, Instrument, InstrumentInput, InstrumentListFilter, InstrumentListResult,
+    InstrumentPriceTrend, InvestmentOverview, InvestmentTransactionListFilter,
+    InvestmentTransactionListResult, ManualPriceInput, ManualPriceResult, MarketPrice,
+    MarketPriceInput, MoneyWeightedReturnSummary, MwrRange, PnlFilter, PortfolioValueTrend,
+    PriceStaleness, RealizedPnlSummary, StockRoute, TransactionConvert, TransactionSplit,
+    TransactionTrade, TrendRange,
 };
 
 #[tauri::command]
@@ -124,6 +125,21 @@ pub async fn cumulative_pnl_summary(db: State<'_, DbState>) -> Result<Vec<Curren
     let conn = db.read_handle();
     read_entry("cumulative_pnl_summary", conn, move |conn| {
         investment_domain::query_cumulative_pnl_summary(conn)
+    })
+    .await
+}
+
+/// IPC 命令：累计收益·折本位币单值（issue #1797）——三腿逐行当期折算后求和，
+/// 持仓页签合计卡与首页投资概览卡消费；隐藏账户照常计入（持仓口径，与
+/// `investment_overview` 的「排除」构成差异轴）；缺折算汇率码化上抛（展示层
+/// 卡内警告 + 重试）。只读聚合，无写入路径。
+#[tauri::command]
+pub async fn cumulative_pnl_native_total(
+    db: State<'_, DbState>,
+) -> Result<CumulativePnlNativeTotal> {
+    let conn = db.read_handle();
+    read_entry("cumulative_pnl_native_total", conn, move |conn| {
+        investment_domain::query_cumulative_pnl_native_total(conn)
     })
     .await
 }

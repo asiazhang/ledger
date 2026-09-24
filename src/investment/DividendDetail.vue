@@ -4,7 +4,7 @@ import { NDescriptions, NDescriptionsItem } from "naive-ui";
 import { t } from "@ledger/i18n";
 import { useReferenceStore } from "@/stores/reference";
 import { displayAmountText } from "@/transaction/transaction-columns";
-import type { Transaction } from "@ledger/types";
+import type { TransactionModalRow } from "@ledger/types";
 
 /**
  * 现金分红只读详情（ADR-0109 / issue #1078）：dividend 是界面只读 kind（比照
@@ -17,7 +17,7 @@ import type { Transaction } from "@ledger/types";
  */
 const props = defineProps<{
   /** 分红交易行（提供金额 / 币种 / 日期 / 账户 / 备注与来源列） */
-  transaction: Transaction;
+  transaction: TransactionModalRow;
 }>();
 
 const reference = useReferenceStore();

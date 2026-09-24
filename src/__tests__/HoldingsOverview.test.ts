@@ -44,13 +44,13 @@ vi.mock("@/investment/usePricesChanged", async () => {
   };
 });
 
-/** 默认布线 defaults 表：持仓 + 持仓标的字典 + 累计收益聚合 + 标的信息同步
+/** 默认布线 defaults 表：持仓 + 持仓标的字典 + 累计收益单值 + 标的信息同步
  *（参考五命令走接缝规范兜底） */
 const BASE_DEFAULTS = {
   list_holdings: mockHoldings,
   list_instruments: { items: mockInstruments, total: mockInstruments.length },
-  // 累计收益（issue #1077 / #1078）：全账本按币种聚合，独立于持仓行（后端三腿相加）
-  cumulative_pnl_summary: [{ currency_code: "CNY", cumulative_pnl_cents: 48000 }],
+  // 累计收益·折本位币单值（issue #1077 / #1797）：全账本三腿相加后端折算聚合，独立于持仓行
+  cumulative_pnl_native_total: { total_cents: 48000, native_currency: "CNY" },
   // 资金加权收益率（issue #1195）：与金额口径并列的比例列，独立一次拉取
   money_weighted_return_summary: makeMwrSummary(),
   sync_instrument_info: { synced: 2, skipped: 0, message: "已同步 2 只，跳过 0 只" },
@@ -71,15 +71,19 @@ async function cellText(colKey: string): Promise<string[]> {
 }
 
 describe("HoldingsOverview 当前持仓概览卡（issue #110）", () => {
-  it("渲染总市值、持仓收益合计与累计收益（排除无行情行）", async () => {
+  it("渲染总市值、持仓收益合计与累计收益（折本位币单值，排除无行情行并计数）", async () => {
     wrapper = mount(HoldingsOverview);
     await flushPromises();
     expect(wrapper.text()).toContain("当前持仓");
     expect(wrapper.text()).toContain("总市值");
     expect(wrapper.text()).toContain(formatAmount(150000, cny));
     // 展示词逐字归一（issue #1077）：合计卡标签即「持仓收益」（账务口径仍为未实现盈亏）
-    expect(wrapper.find('[data-testid="total-unrealized-pnl"]').text()).toBe(
-      `持仓收益${formatAmount(30000, cny)}`,
+    expect(wrapper.find('[data-testid="total-unrealized-pnl-value"]').text()).toBe(
+      formatAmount(30000, cny),
+    );
+    // 缺价行未计入但显式计数（issue #1797：既不虚增也不静默低估）
+    expect(wrapper.find('[data-testid="total-unrealized-pnl-missing-price"]').text()).toBe(
+      "1 只持仓因缺现价未计入。",
     );
     // 展示词归一（issue #1077）：持仓页签不再残留「未实现盈亏」文案
     expect(wrapper.text()).not.toContain("未实现盈亏");
@@ -116,7 +120,7 @@ describe("HoldingsOverview 当前持仓概览卡（issue #110）", () => {
     expect(await cellText("unrealized_pnl")).toEqual(["-", formatAmount(30000, cny)]);
   });
 
-  it("合计区新增「累计收益」卡并按币种分组展示（issue #1077 接线负向条目，ADR-0087）", async () => {
+  it("合计区新增「累计收益」卡：折本位币单值透传（issue #1077/#1797 接线负向条目，ADR-0087）", async () => {
     // 断言对准用户可观察结果：删除该卡的接线调用（NStatistic / testid）即找不到卡片、本用例变红。
     wrapper = mount(HoldingsOverview);
     await flushPromises();
@@ -129,7 +133,7 @@ describe("HoldingsOverview 当前持仓概览卡（issue #110）", () => {
     wireInvokeSeam({
       defaults: BASE_DEFAULTS,
       // 累计收益转亏，锁住「绿跌」向；持仓收益保持默认 +30000 的「红涨」向
-      overrides: { cumulative_pnl_summary: [{ currency_code: "CNY", cumulative_pnl_cents: -900 }] },
+      overrides: { cumulative_pnl_native_total: { total_cents: -900, native_currency: "CNY" } },
     });
     wrapper = mount(HoldingsOverview);
     await flushPromises();
@@ -156,7 +160,7 @@ describe("HoldingsOverview 当前持仓概览卡（issue #110）", () => {
     }
   });
 
-  it("多币种盈亏逐组独立着色：各组按自身符号取涨跌色，组间仍以「 / 」连接", async () => {
+  it("多币种持仓折本位币单值：合计不再分组拼接，盈亏卡按单值符号取一处涨跌色（issue #1797）", async () => {
     const usd = { code: "USD", name: "美元", symbol: "$", decimal_places: 2 };
     const usdAccount = makeAccount({ id: "acc-usd", name: "美股账户", currency_code: "USD" });
     wireInvokeSeam({
@@ -176,23 +180,27 @@ describe("HoldingsOverview 当前持仓概览卡（issue #110）", () => {
             latest_price_currency_code: "USD",
             market_value_cents: 3500,
             unrealized_pnl_cents: -500,
+            // 后端当期汇率逐行折算（issue #1797）：USD 行折 CNY 后并入单值
+            native_market_value_cents: 26000,
+            native_unrealized_pnl_cents: -36000,
           }),
         ],
       },
     });
-    // 参考数据在 beforeEach 已按默认币种表水合；本场景自定义 CNY+USD 后需重刷，
-    // 否则 USD 组取不到符号（展示成裸数字）
+    // 参考数据在 beforeEach 已按默认币种表水合；本场景自定义 CNY+USD 后需重刷
     await useReferenceStore().refresh();
     wrapper = mount(HoldingsOverview);
     await flushPromises();
     const theme = useAppStore().theme;
+    // 市值卡：150000 + 26000 单值（多币种分组拼接「 / 」形态退役）
+    const market = wrapper.find('[data-testid="total-market-value-value"]');
+    expect(market.text()).toBe(formatAmount(176000, cny));
+    expect(market.text()).not.toContain(" / ");
+    // 盈亏卡：30000 − 36000 = −6000 单值，单符号单色（红涨绿跌随主题）
     const pnl = wrapper.find('[data-testid="total-unrealized-pnl-value"]');
-    // 文本口径不变：币种代码序（CNY 前、USD 后）+「 / 」连接
-    expect(pnl.text()).toBe(`${formatAmount(30000, cny)} / ${formatAmount(-500, usd)}`);
-    // 逐组着色：CNY 组红涨、USD 组绿跌，不按合并符号一刀切
+    expect(pnl.text()).toBe(formatAmount(-6000, cny));
     expect(pnl.findAll("span[style]").map((s) => (s.element as HTMLElement).style.color)).toEqual([
-      probeColor(pnlSemanticColor(30000, theme)),
-      probeColor(pnlSemanticColor(-500, theme)),
+      probeColor(pnlSemanticColor(-6000, theme)),
     ]);
   });
 
@@ -568,6 +576,8 @@ const FILTER_HOLDINGS: Holding[] = [
     latest_price_currency_code: "CNY",
     market_value_cents: 150000,
     unrealized_pnl_cents: 30000,
+    native_market_value_cents: 150000,
+    native_unrealized_pnl_cents: 30000,
   }),
   makeHolding({
     id: "h-2",
@@ -586,6 +596,8 @@ const FILTER_HOLDINGS: Holding[] = [
     latest_price_currency_code: "HKD",
     market_value_cents: 20000000,
     unrealized_pnl_cents: -500000,
+    native_market_value_cents: 1850000,
+    native_unrealized_pnl_cents: -45000,
   }),
   makeHolding({
     id: "h-4",
@@ -597,14 +609,16 @@ const FILTER_HOLDINGS: Holding[] = [
     latest_price_currency_code: "USD",
     market_value_cents: 500000,
     unrealized_pnl_cents: 10000,
+    native_market_value_cents: 3600000,
+    native_unrealized_pnl_cents: 8000,
   }),
 ];
 
 const FILTER_DEFAULTS = {
   list_holdings: FILTER_HOLDINGS,
   list_instruments: { items: FILTER_INSTRUMENTS, total: FILTER_INSTRUMENTS.length },
-  // 累计收益（issue #1077）：全账本口径，不随三维过滤收窄
-  cumulative_pnl_summary: [{ currency_code: "CNY", cumulative_pnl_cents: 26000 }],
+  // 累计收益·折本位币单值（issue #1797）：全账本口径，不随三维过滤收窄
+  cumulative_pnl_native_total: { total_cents: 26000, native_currency: "CNY" },
   money_weighted_return_summary: makeMwrSummary(),
   sync_instrument_info: { synced: 4, skipped: 0, message: "已同步 4 只，跳过 0 只" },
 };
@@ -636,15 +650,20 @@ describe("HoldingsOverview 三维过滤排序（issue #902）", () => {
     }
   });
 
-  it("默认态：全量行按标的代码字母序，合计为全量口径（缺价行不计入）", async () => {
+  it("默认态：全量行按标的代码字母序，合计为全量口径（折本位币单值，缺价行不计入并计数）", async () => {
     wrapper = mount(HoldingsOverview);
     await flushPromises();
     expect(await cellText("symbol")).toEqual(["000001", "00700", "600000", "AAPL"]);
-    // CNY 组只含 h-1 的 150000（h-2 缺价跳过），HKD/USD 各自成组
-    expect(wrapper.text()).toContain(formatAmount(150000, cny));
-    expect(wrapper.text()).toContain(formatAmount(30000, cny));
-    expect(wrapper.text()).toContain(formatAmount(20000000));
-    expect(wrapper.text()).toContain(formatAmount(500000));
+    // 折本位币单值（issue #1797）：h-1 150000 + h-3 1850000 + h-4 3600000（h-2 缺价跳过并计数）
+    expect(wrapper.find('[data-testid="total-market-value-value"]').text()).toBe(
+      formatAmount(5600000, cny),
+    );
+    expect(wrapper.find('[data-testid="total-unrealized-pnl-value"]').text()).toBe(
+      formatAmount(-7000, cny),
+    );
+    expect(wrapper.find('[data-testid="total-market-value-missing-price"]').text()).toBe(
+      "1 只持仓因缺现价未计入。",
+    );
     // 缺价行金额列显示 "-"（空值语义保持）
     expect(await cellText("market_value")).toEqual([
       "-",
@@ -731,15 +750,14 @@ describe("HoldingsOverview 三维过滤排序（issue #902）", () => {
   it("合计随搜索与账户过滤子集更新；排序不改变合计", async () => {
     wrapper = mount(HoldingsOverview);
     await flushPromises();
-    // 账户过滤后合计只含 acc-b 子集：h-3 + h-4 同折账户本位币（HKD），合为一组
+    // 账户过滤后合计只含 acc-b 子集：h-3 + h-4 折本位币相加
     componentVm(wrapper.findComponent('[data-testid="holdings-account-filter"]')).$emit(
       "update:value",
       "acc-b",
     );
     await nextTick();
-    const marketTotalText = () => wrapper!.find('[data-testid="total-market-value"]').text();
-    expect(marketTotalText()).toContain(formatAmount(20500000));
-    expect(marketTotalText()).not.toContain(formatAmount(150000, cny));
+    const marketTotalText = () => wrapper!.find('[data-testid="total-market-value-value"]').text();
+    expect(marketTotalText()).toBe(formatAmount(5450000, cny)); // 1850000 + 3600000
     // 排序只是重排行不是换口径：合计不动（降序 → 升序两轮后仍同值）
     await wrapper!
       .findAll("th")
@@ -751,11 +769,10 @@ describe("HoldingsOverview 三维过滤排序（issue #902）", () => {
       .find((th) => th.text() === "市值")!
       .trigger("click");
     await nextTick();
-    expect(marketTotalText()).toContain(formatAmount(20500000));
+    expect(marketTotalText()).toBe(formatAmount(5450000, cny));
     // 搜索叠加在过滤之上：合计再收窄到命中行
     await typeSearch(wrapper, "txkg");
-    expect(marketTotalText()).toContain(formatAmount(20000000));
-    expect(marketTotalText()).not.toContain(formatAmount(500000));
+    expect(marketTotalText()).toBe(formatAmount(1850000, cny));
   });
 
   it("「没有持仓」与「筛选条件下无匹配」两种空态可区分", async () => {
@@ -808,6 +825,8 @@ const PAGE_HOLDINGS: Holding[] = Array.from({ length: 25 }, (_, i) => {
     latest_price_currency_code: "CNY",
     market_value_cents: 10000000 + i,
     unrealized_pnl_cents: 1000 + i,
+    native_market_value_cents: 10000000 + i,
+    native_unrealized_pnl_cents: 1000 + i,
   });
 });
 
@@ -822,7 +841,7 @@ const PAGE_INSTRUMENTS: Instrument[] = PAGE_HOLDINGS.map((h, i) =>
 const PAGE_DEFAULTS = {
   list_holdings: PAGE_HOLDINGS,
   list_instruments: { items: PAGE_INSTRUMENTS, total: PAGE_INSTRUMENTS.length },
-  cumulative_pnl_summary: [],
+  cumulative_pnl_native_total: { total_cents: 0, native_currency: "CNY" },
   money_weighted_return_summary: makeMwrSummary({ by_instrument: [], by_account: [], total: [] }),
   sync_instrument_info: { synced: 25, skipped: 0, message: "已同步 25 只，跳过 0 只" },
 };
@@ -1023,7 +1042,7 @@ const GUIDE_INSTRUMENTS: Instrument[] = [
 const GUIDE_DEFAULTS = {
   list_holdings: GUIDE_HOLDINGS,
   list_instruments: { items: GUIDE_INSTRUMENTS, total: GUIDE_INSTRUMENTS.length },
-  cumulative_pnl_summary: [],
+  cumulative_pnl_native_total: { total_cents: 0, native_currency: "CNY" },
   sync_instrument_info: { synced: 1, skipped: 0, message: "已同步 1 只，跳过 0 只" },
 };
 

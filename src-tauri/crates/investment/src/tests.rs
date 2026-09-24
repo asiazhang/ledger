@@ -21,6 +21,8 @@
 //! - [`cumulative_pnl`]：累计收益按币种聚合（未实现 + 已实现 + 累计分红三腿相加，issue #1077）
 //! - [`holdings_summary`]：持仓合计按币种分组读投影与可投资资产分子提取
 //!   （issue #1196 / ADR-0114 跨账本汇总的域读接缝）
+//! - [`holdings_native`]：持仓逐行本位币列（软形态）与累计收益折本位币单值
+//!   （硬形态）——统一单币种显示的读投影（issue #1797）
 //! - [`mwr`]：资金加权收益率（ADR-0115 / issue #1195）——XIRR 求解器手算样本对齐
 //!   与无解不给数、读投影场景矩阵（单笔/定投/部分卖出/分红/转换两腿/缺价跳过/
 //!   币种分组/DRIP 自相抵/区间期初市值）
@@ -56,6 +58,7 @@ mod dividend;
 mod fund_add;
 mod fund_trade;
 mod holdings_as_of;
+mod holdings_native;
 mod holdings_summary;
 mod instrument_create;
 mod instrument_delete;

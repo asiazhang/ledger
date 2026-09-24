@@ -5,7 +5,7 @@
 import { h, type VNode } from "vue";
 import { NEllipsis, NButton, NTag, type DataTableColumn } from "naive-ui";
 import { formatAmount } from "@ledger/money";
-import type { Transaction, TransactionKind } from "@ledger/types";
+import type { Transaction, TransactionKind, TransactionModalRow } from "@ledger/types";
 import type { useReferenceStore } from "@/stores/reference";
 import { useAppStore } from "@/stores/app";
 import { kindSemanticColor } from "@ledger/theme/semantic-colors";
@@ -46,7 +46,7 @@ export const KIND_TAG_TYPE: Record<TransactionKind, "success" | "warning" | "inf
  * 故展示必须走扩展字段；扩展缺失（旧数据/直读快照）时回退行金额，不抛错、不显空。
  * 表格金额列与移动卡片共用 `displayAmountText`，两处各自分支即口径漂移。
  */
-export function displayAmountCents(row: Transaction): number | null {
+export function displayAmountCents(row: TransactionModalRow): number | null {
   if (row.kind === "convert" && row.convert) return row.convert.out_amount_cents;
   // 份额调整（ADR-0106 决策 1）：无现金腿、无金额——按空值语义返回 null，
   // 不以 0 伪装「已知为零」（同持仓缺价行的 '-' 口径）。
@@ -56,7 +56,7 @@ export function displayAmountCents(row: Transaction): number | null {
 
 /** 金额展示文案单点（表格金额列与移动卡片共用）：空值口径（无现金腿的 split 无金额）
  * 渲染 '-'，其余经 `formatAmount`（含金额隐私模式与数字分组）。 */
-export function displayAmountText(reference: ReferenceStore, row: Transaction): string {
+export function displayAmountText(reference: ReferenceStore, row: TransactionModalRow): string {
   const cents = displayAmountCents(row);
   return cents === null ? "-" : formatAmount(cents, reference.getCurrency(row.currency_code));
 }
@@ -185,29 +185,38 @@ export function buildTransactionColumns(
         }),
     },
   ];
-  // 交易行「⋯」常显列（ADR-0088 决策 6，issue #843）：与右键共用同一行菜单编排
-  // open 入口、以点击坐标弹出，全平台常显（账户行先例，桌面可见变化已裁决）；
-  // 仅声明了回调的调用方（交易列表）渲染，搜索结果不追加。
   if (options.onRowMenuOpen) {
-    columns.push({
-      title: t("transactions.columns.actions"),
-      key: "actions",
-      width: 64,
-      render: (row) =>
-        h(
-          NButton,
-          {
-            size: "tiny",
-            quaternary: true,
-            class: "row-actions-btn touch-hit-area",
-            "aria-label": t("transactions.menu.actions"),
-            onClick: (e: MouseEvent) => options.onRowMenuOpen!(e, row),
-          },
-          () => "⋯",
-        ),
-    });
+    columns.push(rowActionsColumn(options.onRowMenuOpen));
   }
   return columns;
+}
+
+/**
+ * 交易行「⋯」常显列（ADR-0088 决策 6，issue #843）：与右键共用同一行菜单编排
+ * open 入口、以点击坐标弹出，全平台常显（账户行先例，桌面可见变化已裁决）；
+ * 消费方（主交易列表与投资明细页签，issue #1781）各自传入回调，搜索结果不追加。
+ * 泛型行：列渲染只承载行菜单入口，不读行内容。
+ */
+export function rowActionsColumn<T>(
+  onRowMenuOpen: (event: MouseEvent, row: T) => void,
+): DataTableColumn<T> {
+  return {
+    title: t("transactions.columns.actions"),
+    key: "actions",
+    width: 64,
+    render: (row) =>
+      h(
+        NButton,
+        {
+          size: "tiny",
+          quaternary: true,
+          class: "row-actions-btn touch-hit-area",
+          "aria-label": t("transactions.menu.actions"),
+          onClick: (e: MouseEvent) => onRowMenuOpen(e, row),
+        },
+        () => "⋯",
+      ),
+  };
 }
 
 /** 转账/出资账户行单元格内账户链接的布局样式：内容宽度 + 允许收缩省略 + 文本左对齐。

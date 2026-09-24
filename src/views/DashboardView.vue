@@ -66,13 +66,14 @@ const budgetRows = computed(() =>
   })),
 );
 
-// 投资概览卡（issue #145）：复用持仓概览 composable 的分组求和结果，
-// 无任何持仓时整卡隐藏；无行情标的不以零计入合计（sumByCurrency 跳过空值）。
+// 投资概览卡（issue #145）：复用持仓概览 composable 的折本位币单值合计（issue #1797），
+// 无任何持仓时整卡隐藏；无行情标的不以零计入合计（缺价行计数标注，缺汇率整卡警告）。
 const {
   rows: holdingRows,
-  totalMarketValueGroups,
-  totalUnrealizedPnlGroups,
-  totalCumulativePnlGroups,
+  statCards,
+  cumulativePnl,
+  nativeCurrency,
+  refresh: refreshPortfolio,
 } = usePortfolioOverview();
 
 // 物品使用成本卡（issue #122）：全部在用物品每天成本合计，后端 `item_daily_total`
@@ -215,9 +216,11 @@ onMounted(async () => {
         v-if="holdingRows.length > 0"
         test-id-prefix="dashboard-total-"
         scope="wholeLedger"
-        :market-value-groups="totalMarketValueGroups"
-        :unrealized-pnl-groups="totalUnrealizedPnlGroups"
-        :cumulative-pnl-groups="totalCumulativePnlGroups"
+        :market-value="statCards.marketValue"
+        :unrealized-pnl="statCards.unrealizedPnl"
+        :cumulative-pnl="cumulativePnl"
+        :native-currency="nativeCurrency"
+        :retry="refreshPortfolio"
       />
       <NEmpty v-else :description="t('dashboard.investment.empty')" />
     </NCard>

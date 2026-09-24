@@ -36,7 +36,7 @@ const mockCurrencies: Currency[] = [
 ];
 
 // 金额断言委托形态（issue #770）：期待值调同一 formatAmount 实现，格式规则唯一归属其专测
-const [cny, usd] = mockCurrencies;
+const [cny] = mockCurrencies;
 
 const mockAccounts: Account[] = [
   {
@@ -74,8 +74,8 @@ const mockItemDailyTotal = { native_currency: "CNY", per_day_cents: 12345, item_
 const BASE_DEFAULTS = {
   list_holdings: mockHoldings,
   list_instruments: { items: mockInstruments, total: mockInstruments.length },
-  // 累计收益（issue #1077 / #1078）：全账本按币种聚合（未实现 + 已实现 + 累计分红 三腿相加）
-  cumulative_pnl_summary: [{ currency_code: "CNY", cumulative_pnl_cents: 48000 }],
+  // 累计收益·折本位币单值（issue #1077 / #1797）：全账本三腿相加后端折算聚合
+  cumulative_pnl_native_total: { total_cents: 48000, native_currency: "CNY" },
   dashboard_overview: mockOverview,
   // 物品使用成本卡（issue #122）挂载时会创建物品 store（self-init 拉列表）
   list_items: [],
@@ -183,11 +183,14 @@ describe("DashboardView 投资概览卡（issue #145）", () => {
     // h-2 无行情（NULL）不计入：合计中不出现零金额
     expect(card.text()).toContain("总市值");
     expect(card.text()).toContain(formatAmount(150000, cny));
-    // 展示词逐字归一（issue #1077）：标签即「持仓收益」
-    expect(card.find('[data-testid="dashboard-total-unrealized-pnl"]').text()).toBe(
-      `持仓收益${formatAmount(30000, cny)}`,
+    // 展示词逐字归一（issue #1077）：标签即「持仓收益」；缺价行计数标注随卡在位（issue #1797）
+    expect(card.find('[data-testid="dashboard-total-unrealized-pnl-value"]').text()).toBe(
+      formatAmount(30000, cny),
     );
-    // 累计收益卡（issue #1077 / #1078）：后端按币种聚合（三腿相加）
+    expect(card.find('[data-testid="dashboard-total-unrealized-pnl-missing-price"]').text()).toBe(
+      "1 只持仓因缺现价未计入。",
+    );
+    // 累计收益卡（issue #1077 / #1797）：后端折本位币单值透传
     expect(card.find('[data-testid="dashboard-total-cumulative-pnl"]').text()).toBe(
       `累计收益${formatAmount(48000, cny)}`,
     );
@@ -238,15 +241,20 @@ describe("DashboardView 投资概览卡（issue #145）", () => {
     wrapper.unmount();
   });
 
-  it("多币种持仓按币种分组展示，组间以「 / 」连接", async () => {
+  it("多币种持仓折本位币单值：不再分组拼接，累计收益同单值（issue #1797）", async () => {
     const usdAccount = makeAccount({ id: "acc-2", name: "美股账户", currency_code: "USD" });
     const usdHolding = makeHolding({
       id: "h-3",
       instrument_id: "inst-2",
       account_id: "acc-2",
       cost_currency_code: "USD",
+      latest_price_cents: 3000,
+      latest_price_currency_code: "USD",
       market_value_cents: 3000,
       unrealized_pnl_cents: -500,
+      // 后端当期汇率逐行折算（issue #1797）：USD 行折 CNY 后并入单值
+      native_market_value_cents: 21000,
+      native_unrealized_pnl_cents: -3500,
     });
     wireInvokeSeam({
       defaults: BASE_DEFAULTS,
@@ -254,21 +262,22 @@ describe("DashboardView 投资概览卡（issue #145）", () => {
         ...BASE_OVERRIDES,
         list_holdings: [mockHoldings[0], usdHolding],
         list_accounts: [mockAccounts[0], usdAccount],
-        cumulative_pnl_summary: [
-          { currency_code: "CNY", cumulative_pnl_cents: 48000 },
-          { currency_code: "USD", cumulative_pnl_cents: -900 },
-        ],
       },
     });
     const wrapper = await mountView();
     const card = wrapper.find('[data-testid="investment-overview-card"]');
-    // 币种代码排序：CNY 在前、USD 在后
-    expect(card.text()).toContain(`${formatAmount(150000, cny)} / ${formatAmount(3000, usd)}`);
-    expect(card.text()).toContain(`${formatAmount(30000, cny)} / ${formatAmount(-500, usd)}`);
-    // 累计收益同按币种独立成组（后端聚合），不跨币种求和
-    expect(card.find('[data-testid="dashboard-total-cumulative-pnl"]').text()).toBe(
-      `累计收益${formatAmount(48000, cny)} / ${formatAmount(-900, usd)}`,
+    // 两账户币种不同：市值/持仓收益各自折本位币后合并为单值（171000 / 26500）
+    expect(card.find('[data-testid="dashboard-total-market-value-value"]').text()).toBe(
+      formatAmount(171000, cny),
     );
+    expect(card.find('[data-testid="dashboard-total-unrealized-pnl-value"]').text()).toBe(
+      formatAmount(26500, cny),
+    );
+    // 累计收益为后端聚合单值，不再按币种成组
+    expect(card.find('[data-testid="dashboard-total-cumulative-pnl-value"]').text()).toBe(
+      formatAmount(48000, cny),
+    );
+    expect(card.text()).not.toContain(" / ");
   });
 
   it("无任何持仓时卡片保留，空态占位而非统计数字", async () => {
@@ -288,24 +297,30 @@ describe("DashboardView 投资概览卡（issue #145）", () => {
     expect(card.text()).not.toContain("总市值");
   });
 
-  it("有持仓但全部无行情时空值分支：合计统计精确降级为「总市值-」", async () => {
+  it("有持仓但全部无行情时空值分支：合计统计降级为「-」并标注缺价计数", async () => {
     wireInvokeSeam({
       defaults: BASE_DEFAULTS,
       overrides: {
         ...BASE_OVERRIDES,
         list_holdings: [mockHoldings[1]],
         list_instruments: { items: [mockInstruments[1]], total: 1 },
-        cumulative_pnl_summary: [],
+        cumulative_pnl_native_total: { total_cents: 0, native_currency: "CNY" },
       },
     });
     const wrapper = await mountView();
     const card = wrapper.find('[data-testid="investment-overview-card"]');
     expect(card.exists()).toBe(true);
     expect(card.text()).toContain("总市值");
-    // 精确锁定降级文本：NStatistic 渲染 label + value 连排
-    expect(card.find('[data-testid="dashboard-total-market-value"]').text()).toBe("总市值-");
-    expect(card.find('[data-testid="dashboard-total-unrealized-pnl"]').text()).toBe("持仓收益-");
-    expect(card.find('[data-testid="dashboard-total-cumulative-pnl"]').text()).toBe("累计收益-");
+    // 精确锁定降级文本：缺价行未计入并计数（issue #1797）
+    expect(card.find('[data-testid="dashboard-total-market-value-value"]').text()).toBe("-");
+    expect(card.find('[data-testid="dashboard-total-unrealized-pnl-value"]').text()).toBe("-");
+    expect(card.find('[data-testid="dashboard-total-market-value-missing-price"]').text()).toBe(
+      "1 只持仓因缺现价未计入。",
+    );
+    // 累计收益为后端聚合单值：全账本无可用腿时为 0（非空态「-」）
+    expect(card.find('[data-testid="dashboard-total-cumulative-pnl-value"]').text()).toBe(
+      formatAmount(0, cny),
+    );
   });
 });
 

@@ -163,6 +163,10 @@ async fn list_investment_transactions_returns_created_buy_with_projection() {
             "trade": {"quantity": 10.0, "price_cents": 100_000, "fee_cents": 100},
             "convert": null,
             "split": null,
+            // 弹窗族消费列（issue #1781）：note / currency_code / amount_native_cents。
+            "note": null,
+            "currency_code": "CNY",
+            "amount_native_cents": 10_100,
         }])
     );
 }

@@ -26,10 +26,12 @@ use rusqlite::Connection;
 
 use ledger_accounts::AccountType;
 use ledger_accounts::balance::list_accounts_with_visibility;
-use ledger_infra::db::query::{FromRow, query_all};
+use ledger_infra::db::query::query_all;
 use ledger_infra::db::tx_scope::ensure_transaction;
 use ledger_infra::error::Result;
 use ledger_transaction::amount;
+
+use super::reports::LegEntry;
 
 use super::financial_freedom::{
     HOLDINGS_VISIBLE_FACET, query_investable_assets_cash_leg_cents,
@@ -76,21 +78,6 @@ fn count_unpriced_holdings(conn: &Connection) -> Result<i64> {
     let sql = format!("SELECT COUNT(*) {HOLDINGS_VISIBLE_FACET} AND h.market_value_cents IS NULL");
     let count = conn.query_row(&sql, [], |row| row.get(0))?;
     Ok(count)
-}
-
-/// 已实现/分红腿行：金额（分，非空）+ 币种（逐行折本位币，与持仓两腿同款）。
-struct LegEntry {
-    amount_cents: i64,
-    currency_code: String,
-}
-
-impl FromRow for LegEntry {
-    fn from_row(row: &rusqlite::Row) -> rusqlite::Result<Self> {
-        Ok(LegEntry {
-            amount_cents: row.get(0)?,
-            currency_code: row.get(1)?,
-        })
-    }
 }
 
 /// 逐行折全局默认币种后求和（缺汇率码化上抛，不给半截数字）。

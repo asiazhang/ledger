@@ -2,7 +2,7 @@
 import { computed } from "vue";
 import { t } from "@ledger/i18n";
 import { useReferenceStore } from "@/stores/reference";
-import type { CreateFormKind, Transaction, TransactionTrade } from "@ledger/types";
+import type { CreateFormKind, TransactionModalRow, TransactionTrade } from "@ledger/types";
 import CategoryForm from "@/categories/CategoryForm.vue";
 import TransferForm from "@/transaction/TransferForm.vue";
 import LendingForm from "@/transaction/LendingForm.vue";
@@ -20,7 +20,7 @@ import { isLendingEntryKind, resolveLendingDirection } from "@/transaction/lendi
 // 变体回填（方向由账户类型派生），普通转账仍走转账表单。
 const props = defineProps<{
   kind?: CreateFormKind;
-  editing?: Transaction | null;
+  editing?: TransactionModalRow | null;
   trade?: TransactionTrade | null;
 }>();
 

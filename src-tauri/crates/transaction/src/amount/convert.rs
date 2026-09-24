@@ -1,8 +1,9 @@
-//! 本位币折算（共享语义区）：raw 币种金额 → 全局默认币种，三个具名入口。
-//!
+//! 本位币折算（共享语义区）：raw 币种金额 → 全局默认币种，三个具名入口 + 软形态。
+//!!
 //! 职责：[`default_currency_code`](本位币基准读取)、[`convert_to_native_current`]
 //! （**当期折算**，读路径入口：持仓市值、净资产、财务自由度、实物资产估值、跨账本
-//! 汇总、定时花费）、[`convert_to_native_on_trade_date`]（**按交易日折算**，写路径
+//! 汇总、定时花费）、[`try_convert_to_native_current`]（当期折算的**软形态**：缺汇率
+//! 返回 `None` 不报错，逐行投影用，issue #1797）、[`convert_to_native_on_trade_date`]（**按交易日折算**，写路径
 //! 创建入口，#1547 接入：按交易所属 ISO 周命中汇率历史；返回值随行携带折算留痕
 //! [`NativeConversion`]，#1548；可选逐笔显式汇率入参，显式 > 序列 > 报错，#1549）、
 //! [`convert_to_native_on_edit`]（**编辑沿用**，写路径修改入口，#1550 接入：未携
@@ -163,8 +164,20 @@ pub fn default_currency_code(conn: &Connection) -> Result<String> {
 /// 私有依赖（spec #52）：旧壳层同名查询已随 issue #60 接线删除，
 /// 本函数即其收口后的单一实现（Writer 接缝落地时已统一）。
 fn lookup_exchange_rate(conn: &Connection, base_code: &str, quote_code: &str) -> Result<f64> {
+    lookup_exchange_rate_opt(conn, base_code, quote_code)?
+        .ok_or_else(|| missing_current_rate_error(base_code, quote_code))
+}
+
+/// [`lookup_exchange_rate`] 的软形态：正反向均无行 → `None`（不报错），
+/// 供逐行投影把单行缺汇率降为行级空值（issue #1797）；非正汇率仍是数据错误，
+/// 不并入缺料静默。同币种视为 1。
+fn lookup_exchange_rate_opt(
+    conn: &Connection,
+    base_code: &str,
+    quote_code: &str,
+) -> Result<Option<f64>> {
     if base_code == quote_code {
-        return Ok(1.0);
+        return Ok(Some(1.0));
     }
     if let Ok(rate) = conn.query_row(
         "SELECT rate FROM exchange_rates WHERE base_code=?1 AND quote_code=?2",
@@ -178,7 +191,7 @@ fn lookup_exchange_rate(conn: &Connection, base_code: &str, quote_code: &str) ->
                 &[base_code, quote_code, &rate.to_string()],
             ));
         }
-        return Ok(rate);
+        return Ok(Some(rate));
     }
     if let Ok(rev) = conn.query_row(
         "SELECT rate FROM exchange_rates WHERE base_code=?1 AND quote_code=?2",
@@ -192,17 +205,22 @@ fn lookup_exchange_rate(conn: &Connection, base_code: &str, quote_code: &str) ->
                 &[quote_code, base_code, &rev.to_string()],
             ));
         }
-        return Ok(1.0 / rev);
+        return Ok(Some(1.0 / rev));
     }
-    Err(AppError::codedp(
+    Ok(None)
+}
+
+/// 当期表缺行（正反向均无）的 `fx.rate-missing` 码化错误；指路文案（issue
+/// #1664）：当期表无行多因从未同步，指向设置页「币种」页签的手动同步入口，
+/// 面向可自助补救。
+fn missing_current_rate_error(base_code: &str, quote_code: &str) -> AppError {
+    AppError::codedp(
         "fx.rate-missing",
-        // 指路文案（issue #1664）：当期表无行多因从未同步，指向设置页「币种」
-        // 页签的手动同步入口，面向可自助补救。
         format!(
             "未找到 {base_code} -> {quote_code} 的汇率（正反向均无），可在设置页「币种」页签同步汇率后重试"
         ),
         &[base_code, quote_code],
-    ))
+    )
 }
 
 /// **当期折算**（读路径入口）：将原始币种金额按**当期汇率**折算为全局默认币种
@@ -233,6 +251,24 @@ pub fn convert_to_native_current(
     }
     let rate = lookup_exchange_rate(conn, currency_code, &target)?;
     Ok((amount_cents as f64 * rate).round() as i64)
+}
+
+/// **当期折算·软形态**（读路径逐行消费面，issue #1797）：同 [`convert_to_native_current`]
+/// 但缺汇率返回 `None` 而非报错——逐行投影里单行缺料不应拖垮整条命令，行级空值
+/// 交由消费面按「未计入 / 警告 + 重试」显式呈现。其余语义（当期表、同币种 1:1、
+/// 非正汇率报错）与硬形态一致；**同样只服务读路径**，写路径一律走交易日入口
+/// （ADR-0011 决策 3），守门台账并入 CONVERT_CURRENT_CALLERS 同一扫描。
+pub fn try_convert_to_native_current(
+    conn: &Connection,
+    amount_cents: i64,
+    currency_code: &str,
+) -> Result<Option<i64>> {
+    let target = default_currency_code(conn)?;
+    if currency_code == target {
+        return Ok(Some(amount_cents));
+    }
+    Ok(lookup_exchange_rate_opt(conn, currency_code, &target)?
+        .map(|rate| (amount_cents as f64 * rate).round() as i64))
 }
 
 /// **按交易日折算**（写路径入口，#1547 接入）：raw 币种金额 → 全局默认币种，

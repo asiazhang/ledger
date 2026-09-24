@@ -84,6 +84,33 @@ export interface Transaction extends Syncable {
   date: string;
   created_at: string;
 }
+/**
+ * 交易弹窗族的行投影（ADR-0135 决策 4 / issue #1781）：交易弹窗编排
+ * （TransactionModalState）与其消费组件（编辑表单族 / 只读详情族 / 菜单组装）
+ * 实际读取的行字段闭集——依赖最小面：弹窗族不读取折算留痕、同步基础字段与
+ * created_at。两个行源都满足本结构：主列表 Transaction 行原样满足；投资明细
+ * 页签行（InvestmentTransactionRow，弹窗族消费列见后端投影注记）经弹窗行适配
+ * 投影满足。消费组件以本类型收窄 props，行形状由数据源保证。
+ */
+export type TransactionModalRow = Pick<
+  Transaction,
+  | "id"
+  | "kind"
+  | "date"
+  | "note"
+  | "account_id"
+  | "to_account_id"
+  | "funding_account_id"
+  | "category_id"
+  | "merchant_id"
+  | "policy_id"
+  | "refund_of_transaction_id"
+  | "amount_cents"
+  | "currency_code"
+  | "amount_native_cents"
+  | "source"
+  | "convert"
+>;
 
 export interface TransactionInput {
   kind: TransactionKind;
