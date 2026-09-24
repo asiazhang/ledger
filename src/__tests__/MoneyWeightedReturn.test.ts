@@ -35,6 +35,8 @@ const HOLDINGS_DEFAULTS = {
       latest_nav_date: null,
       market_value_cents: 150000,
       unrealized_pnl_cents: 30000,
+      native_market_value_cents: 150000,
+      native_unrealized_pnl_cents: 30000,
       updated_at: "2026-01-01T00:00:00Z",
     },
     {
@@ -59,7 +61,7 @@ const HOLDINGS_DEFAULTS = {
     ],
     total: 2,
   },
-  cumulative_pnl_summary: [{ currency_code: "CNY", cumulative_pnl_cents: 48000 }],
+  cumulative_pnl_native_total: { total_cents: 48000, native_currency: "CNY" },
   sync_instrument_info: { synced: 0, skipped: 0, message: "" },
 };
 

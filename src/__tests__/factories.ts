@@ -128,6 +128,9 @@ export function makeHolding(
     latest_nav_date: null,
     market_value_cents: null,
     unrealized_pnl_cents: null,
+    // 折本位币两列（issue #1797）：缺价行默认 null；有行情行由用例按折算结果给值
+    native_market_value_cents: null,
+    native_unrealized_pnl_cents: null,
     updated_at: "2026-01-01T00:00:00Z",
     ...partial,
   };
@@ -159,7 +162,7 @@ export function makeInvestmentLedgerRow(
   };
 }
 
-/** h-1 有行情（价格/市值/未实现盈亏齐全），h-2 无行情（三项为 NULL） */
+/** h-1 有行情（价格/市值/未实现盈亏齐全，账户币 = 本位币故折算值同额），h-2 无行情（全 NULL） */
 export const mockHoldings: Holding[] = [
   makeHolding({
     id: "h-1",
@@ -170,6 +173,8 @@ export const mockHoldings: Holding[] = [
     latest_price_currency_code: "CNY",
     market_value_cents: 150000,
     unrealized_pnl_cents: 30000,
+    native_market_value_cents: 150000,
+    native_unrealized_pnl_cents: 30000,
   }),
   makeHolding({
     id: "h-2",

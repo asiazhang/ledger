@@ -571,6 +571,13 @@ pub struct Holding {
     pub latest_nav_date: Option<String>,
     pub market_value_cents: Option<i64>,
     pub unrealized_pnl_cents: Option<i64>,
+    /// 折全局默认币种的市值（当期汇率，issue #1797）：供持仓页签合计三卡与首页
+    /// 投资概览卡出折本位币单值。缺现价或缺价格币→账户币汇率（账户币值本身为
+    /// NULL）、或缺账户币→本位币汇率（逐行软折算失败）时为 None——行级空值，
+    /// 由展示面显式呈现；命令不因单行缺料失败。
+    pub native_market_value_cents: Option<i64>,
+    /// 折全局默认币种的未实现盈亏（当期汇率，issue #1797）；空值语义同 [`Holding::native_market_value_cents`]。
+    pub native_unrealized_pnl_cents: Option<i64>,
     pub updated_at: String,
 }
 
@@ -679,6 +686,19 @@ pub struct CurrencyHoldingTotals {
     pub unrealized_pnl_cents: Option<i64>,
 }
 
+/// 累计收益·折本位币单值（issue #1797）：三腿（未实现 + 已实现 + 分红）逐行
+/// 按当期汇率折全局默认币种后求和的读投影——持仓页签合计卡与首页投资概览卡的
+/// 累计收益消费面。隐藏账户照常计入（持仓口径，与投资概览页签
+/// `investment_overview` 的「排除」构成差异轴）；缺折算汇率码化上抛
+/// （`fx.rate-missing`，不静默给半截数字），缺价持仓的未实现腿按空值跳过。
+#[derive(Debug, Serialize)]
+pub struct CumulativePnlNativeTotal {
+    /// 三腿逐行折本位币后的合计（分）。
+    pub total_cents: i64,
+    /// 折算基准币种（全局默认币种），供展示面标注口径。
+    pub native_currency: String,
+}
+
 /// 按年分组的已实现收益行（ADR-0129）：已实现盈亏（卖出匹配）与现金分红
 /// （dividend 行）两腿并列，合计即词汇表「已实现收益（RealizedGain）」。
 /// 两腿各自口径逐位不变（ADR-0107 / ADR-0109 决策 2）；合计在域内相加，
@@ -738,6 +758,10 @@ impl FromRow for Holding {
             latest_nav_date: row.get(8)?,
             market_value_cents: row.get(9)?,
             unrealized_pnl_cents: row.get(10)?,
+            // 本位币列由 list_holdings 逐行软折算后回填（FromRow 只投影视图列）；
+            // 其余 Holding 构造面（若有）缺省 None，不伪造折算结果。
+            native_market_value_cents: None,
+            native_unrealized_pnl_cents: None,
             updated_at: row.get(11)?,
         })
     }

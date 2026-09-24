@@ -37,13 +37,15 @@ function makeRow(partial: Partial<PortfolioRow> & { holdingId: string }): Portfo
     latestNavDate: null,
     marketValueCents: null,
     unrealizedPnlCents: null,
+    nativeMarketValueCents: null,
+    nativeUnrealizedPnlCents: null,
     valueCurrencyCode: "CNY",
     priceChannel: "quote",
     ...partial,
   };
 }
 
-/** h2 无行情（全 null 金额）——缺价行语义的常驻样本 */
+/** h2 无行情（全 null 金额）——缺价行语义的常驻样本；native 列为后端当期汇率折算值（issue #1797） */
 const FIXTURE_ROWS: PortfolioRow[] = [
   makeRow({
     holdingId: "h1",
@@ -51,6 +53,8 @@ const FIXTURE_ROWS: PortfolioRow[] = [
     instrumentName: "浦发银行",
     marketValueCents: 150000,
     unrealizedPnlCents: 30000,
+    nativeMarketValueCents: 150000,
+    nativeUnrealizedPnlCents: 30000,
     valueCurrencyCode: "CNY",
   }),
   makeRow({ holdingId: "h2", symbol: "000001", instrumentName: "平安银行" }),
@@ -62,6 +66,8 @@ const FIXTURE_ROWS: PortfolioRow[] = [
     instrumentName: "腾讯控股",
     marketValueCents: 2000000,
     unrealizedPnlCents: -50000,
+    nativeMarketValueCents: 1850000,
+    nativeUnrealizedPnlCents: -45000,
     valueCurrencyCode: "HKD",
   }),
   makeRow({
@@ -72,6 +78,8 @@ const FIXTURE_ROWS: PortfolioRow[] = [
     instrumentName: "Apple",
     marketValueCents: 500000,
     unrealizedPnlCents: 10000,
+    nativeMarketValueCents: 3600000,
+    nativeUnrealizedPnlCents: 8000,
     valueCurrencyCode: "USD",
   }),
 ];
@@ -229,20 +237,22 @@ describe("useHoldingsFilter 工厂", () => {
     scope?.stop();
   });
 
-  it("默认态：全量行按代码字母序，合计为全量口径（按币种分组、缺价行不计入）", () => {
+  it("默认态：全量行按代码字母序，合计为全量口径（折本位币单值、缺价行不计入并计数）", () => {
     const hf = setup(FIXTURE_ROWS);
     expect(ids(hf.filteredRows.value)).toEqual(["h2", "h3", "h1", "h4"]);
-    // CNY = h1 的 150000（h2 缺价跳过）、HKD = 2000000、USD = 500000
-    expect(hf.totalMarketValueGroups.value).toEqual([
-      { currencyCode: "CNY", cents: 150000 },
-      { currencyCode: "HKD", cents: 2000000 },
-      { currencyCode: "USD", cents: 500000 },
-    ]);
-    expect(hf.totalUnrealizedPnlGroups.value).toEqual([
-      { currencyCode: "CNY", cents: 30000 },
-      { currencyCode: "HKD", cents: -50000 },
-      { currencyCode: "USD", cents: 10000 },
-    ]);
+    // 折本位币单值（issue #1797）：h1 150000 + h3 1850000 + h4 3600000（h2 缺价跳过并计数）
+    expect(hf.statCards.value.marketValue).toEqual({
+      cents: 5600000,
+      missingPriceCount: 1,
+      rateMissingCount: 0,
+      error: null,
+    });
+    expect(hf.statCards.value.unrealizedPnl).toEqual({
+      cents: -7000,
+      missingPriceCount: 1,
+      rateMissingCount: 0,
+      error: null,
+    });
   });
 
   it("搜索意图 300ms 防抖生效：输入即时回显、行集合延迟收窄，清空后恢复完整列表", async () => {
@@ -272,15 +282,16 @@ describe("useHoldingsFilter 工厂", () => {
   it("合计随过滤子集更新（搜索 × 账户），排序不影响合计", async () => {
     const hf = setup(FIXTURE_ROWS);
     hf.setAccount("acc-inv-2");
+    expect(hf.statCards.value.marketValue.cents).toBe(5450000); // h3 1850000 + h4 3600000
     hf.setSearch("txkg");
     vi.advanceTimersByTime(SEARCH_DEBOUNCE_MS);
     await flushPromises();
-    expect(hf.totalMarketValueGroups.value).toEqual([{ currencyCode: "HKD", cents: 2000000 }]);
+    expect(hf.statCards.value.marketValue.cents).toBe(1850000);
 
     // 排序只是重排行，不是换口径：合计不动
     hf.setSorter({ columnKey: "market_value", order: "descend" });
     expect(ids(hf.filteredRows.value)).toEqual(["h3"]);
-    expect(hf.totalMarketValueGroups.value).toEqual([{ currencyCode: "HKD", cents: 2000000 }]);
+    expect(hf.statCards.value.marketValue.cents).toBe(1850000);
   });
 
   it("排序意图：naive-ui 单列 sorter 形态接入，order=false / 第三次点击回默认代码序", () => {

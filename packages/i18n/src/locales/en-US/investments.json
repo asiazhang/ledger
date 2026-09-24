@@ -71,9 +71,9 @@
     "marketValueTip": "Sum of each holding's value at quantity × latest price; holdings without a price or FX rate are excluded; cash held in investment accounts is not included.",
     "unrealizedPnlTip": "Market value minus cost basis (FIFO lots, including buy fees) — unrealized P&L that moves with prices and turns into realized P&L only after you sell.",
     "cumulativePnlTip": "Holding P&L (unrealized) + realized P&L + dividends.",
-    "scopeFiltered": "Amounts are converted to each account's currency and listed separately, never merged; the totals narrow with the current search and account filters.",
-    "scopeWholeLedger": "Amounts are converted to each account's currency and listed separately, never merged; the totals cover holdings across the whole ledger and do not narrow with search or filters.",
-    "scopeOverview": "On the overview tab this is the whole-ledger caliber: amounts are converted to the global default (native) currency and merged into a single value; they do not narrow with search or account filters.",
+    "scopeFiltered": "Amounts are converted to the global default (native) currency and merged into a single value; they narrow with the current search and account filters; hidden accounts are included.",
+    "scopeWholeLedger": "Amounts are converted to the global default (native) currency and merged into a single value; they cover holdings across the whole ledger and do not narrow with search or filters; hidden accounts are included.",
+    "scopeOverview": "On the overview tab this is the whole-ledger caliber: amounts are converted to the global default (native) currency and merged into a single value; they do not narrow with search or account filters; hidden accounts are excluded (same as investable assets).",
     "scopeCrossBook": "Each book is summed separately, then converted to the active book's base currency at current rates; locked or uninitialized books are excluded.",
     "costTip": "Remaining holdings summed at their FIFO lot cost, including buy fees; the cost of what you already sold is not included, so this is not the total amount invested; the currency is the cost currency at purchase.",
     "priceTip": "The latest quote: for funds the latest published unit NAV (see the NAV date column), for stocks the latest quote or close; it is not your purchase price or cost basis, and rows without a quote show “-”.",
@@ -84,6 +84,11 @@
     "portfolioTrendTip": "Historical market value at each sample point (shares held then × that week's price), converted to the base currency using same-period historical rates; weekly sampling, and holdings without a price or FX rate are skipped at that point; cash accounts are not included.",
     "instrumentTrendTip": "The instrument's own price series (unit NAV for funds) — not your holding value and not a return rate; only instruments with a price source have a curve.",
     "investableAssetsTip": "Cash in investment accounts + holding market value; hidden accounts and liabilities are excluded, holdings without a price are skipped; it is the numerator of financial freedom."
+  },
+  "statsCards": {
+    "missingPrice": "{count} holdings are excluded for lack of a current price.",
+    "rateMissing": "Some holdings are missing the conversion rate; the total cannot be computed yet.",
+    "retry": "Retry"
   },
   "browser": {
     "searchPlaceholder": "Search symbol or name...",

@@ -17,20 +17,65 @@ use super::model::{
 use super::predicates::INVESTED_EXISTS;
 use super::prices::{MarketPriceWrite, upsert_market_price};
 use ledger_currencies::{ExchangeRate, ExchangeRateInput};
-use ledger_infra::db::query::{query_all, query_one};
+use ledger_infra::db::query::{FromRow, query_all, query_one};
 use ledger_infra::db::{new_uuid, now_iso};
 use ledger_infra::error::{AppError, Result};
 use ledger_sync_protocol::device::device_id;
+use ledger_transaction::amount;
 use ledger_transaction::shared::search_text::{split_terms, term_matches_text};
 
+/// list_holdings 行：Holding 投影 + 账户币种（本位币逐行折算的折算源，issue #1797）。
+struct HoldingRow {
+    holding: Holding,
+    account_currency: String,
+}
+
+impl FromRow for HoldingRow {
+    fn from_row(row: &rusqlite::Row) -> rusqlite::Result<Self> {
+        Ok(HoldingRow {
+            // 前 12 列与 Holding::from_row 的位置列序一致，末列追加账户币种
+            holding: Holding::from_row(row)?,
+            account_currency: row.get(12)?,
+        })
+    }
+}
+
 pub fn list_holdings(conn: &Connection) -> Result<Vec<Holding>> {
-    query_all(
+    let rows: Vec<HoldingRow> = query_all(
         conn,
-        "SELECT id,account_id,instrument_id,quantity,cost_basis_cents,cost_currency_code, \
-         latest_price_cents,latest_price_currency_code,latest_nav_date,market_value_cents,unrealized_pnl_cents,updated_at \
-         FROM v_holdings ORDER BY account_id, instrument_id",
+        "SELECT v.id,v.account_id,v.instrument_id,v.quantity,v.cost_basis_cents,v.cost_currency_code, \
+         v.latest_price_cents,v.latest_price_currency_code,v.latest_nav_date,v.market_value_cents,v.unrealized_pnl_cents,v.updated_at, \
+         a.currency_code \
+         FROM v_holdings v \
+         JOIN accounts a ON a.id = v.account_id \
+         ORDER BY v.account_id, v.instrument_id",
         [],
-    )
+    )?;
+    // 逐行折本位币（issue #1797，当期汇率软形态）：持仓页签合计三卡与首页投资
+    // 概览卡的折本位币单值消费面。单行缺账户币→本位币汇率降为行级 None（命令
+    // 不失败——表格的账户币展示不依赖折算），由展示面按「警告 + 重试」显式呈现。
+    // 账户行必存（视图聚合子查询已排除软删账户），JOIN 不减行；持仓行数远小于
+    // 交易量，逐列查表（每行至多两次索引点查）不做缓存优化。
+    let mut holdings = Vec::with_capacity(rows.len());
+    for row in rows {
+        let mut holding = row.holding;
+        // 市值与未实现盈亏的折算源同账户币；两列折算相互独立（成本腿缺失时
+        // 未实现为 None、市值仍可能有值），逐列软折算。
+        holding.native_market_value_cents = match holding.market_value_cents {
+            Some(cents) => {
+                amount::try_convert_to_native_current(conn, cents, &row.account_currency)?
+            }
+            None => None,
+        };
+        holding.native_unrealized_pnl_cents = match holding.unrealized_pnl_cents {
+            Some(cents) => {
+                amount::try_convert_to_native_current(conn, cents, &row.account_currency)?
+            }
+            None => None,
+        };
+        holdings.push(holding);
+    }
+    Ok(holdings)
 }
 
 pub fn list_exchange_rates(conn: &Connection) -> Result<Vec<ExchangeRate>> {
