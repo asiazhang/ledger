@@ -1,7 +1,7 @@
-//! 投资明细列表 BDD 步骤（ADR-0135 / issue #1778）：投资页「明细」页签取数接口的
+//! 投资明细列表 BDD 步骤（ADR-0135 / issue #1778）：投资页「明细」页签的
 //! 用户旅程——买卖与分红造数走 L1 输入工厂 + 行为层公开写入口（step_verbs），
-//! 明细命令按序返回投资投影行（类型 / 金额 / 数量 / 单价 / 到账账户 / 标的），
-//! 并回归钉报表收入口径不动（分红仍计收入净额）。
+//! 明细命令按序返回投资投影行（行序 / 类型 / 行金额 / 到账账户 / 标的；载荷
+//! 字段逐项断言归域单测），并回归钉报表收入口径不动（分红仍计收入净额）。
 
 use cucumber::{then, when};
 
@@ -143,23 +143,4 @@ fn assert_ledger_tab_row_arrival_and_symbol(
         "投资明细第 {index} 行账户端不符（dividend 到账账户即账户端）"
     );
     assert_eq!(row.symbol, symbol, "投资明细第 {index} 行归属标的不符");
-}
-
-/// 第 n 行的买卖载荷（buy/sell）：数量与成交单价（万分之一元）。
-#[then(expr = "投资明细第 {int} 行数量应为 {int} 单价应为 {int}")]
-fn assert_ledger_tab_row_trade_payload(
-    world: &mut LedgerWorld,
-    index: usize,
-    quantity: i64,
-    price_cents: i64,
-) {
-    let row = ledger_tab_rows(world)
-        .get(index - 1)
-        .unwrap_or_else(|| panic!("投资明细第 {index} 行不存在"));
-    let trade = row
-        .trade
-        .as_ref()
-        .unwrap_or_else(|| panic!("投资明细第 {index} 行应带买卖载荷"));
-    assert_eq!(trade.quantity, quantity as f64, "第 {index} 行数量不符");
-    assert_eq!(trade.price_cents, price_cents, "第 {index} 行单价不符");
 }

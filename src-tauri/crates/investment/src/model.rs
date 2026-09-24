@@ -18,7 +18,6 @@ use super::channel::PriceChannel;
 use super::market::Market;
 use ledger_infra::closed_set::closed_set;
 use ledger_infra::db::query::FromRow;
-use ledger_transaction::ConvertFields;
 use ledger_transaction::amount::TransactionKind;
 
 /// 来源词表「人工」标记（issue #1587 单点声明）：字典侧（`instruments.source`）
@@ -383,9 +382,11 @@ pub struct InvestmentTransactionRow {
     pub instrument_type: String,
     /// 买卖载荷（buy/sell）：数量、成交单价、手续费。
     pub trade: Option<InvestmentTradeFields>,
-    /// 转入腿载荷（convert）：与主列表转换扩展 [`ConvertFields`] 同一类型——
-    /// 转入标的/份额与两侧确认金额（确认单权威），口径单一不另设第二份形状。
-    pub convert: Option<ConvertFields>,
+    /// 转换载荷（convert）：投资域专属形状——转出份额 + 转入腿与两侧确认金额
+    /// （确认单权威，列表展示金额读 `out_amount_cents`，行金额锚点是结转成本）。
+    /// 主列表转换扩展 `ledger_transaction::ConvertFields` 契约冻结不动，不在其上
+    /// 只增字段（转出份额在主列表可由公共标的地 + 行上下文推得）。
+    pub convert: Option<InvestmentConvertFields>,
     /// 份额调整载荷（split）：带符号份额增量 Δ 原样投影（不取绝对值、不重算方向）。
     pub split: Option<InvestmentSplitFields>,
 }
@@ -402,6 +403,27 @@ pub struct InvestmentTradeFields {
     pub fee_cents: i64,
 }
 
+/// 转换载荷（convert 行的 kind 专属投影，issue #1778）：转出份额 + 转入腿 +
+/// 两侧确认金额。与编辑回填明细 [`TransactionConvert`] 的差异是不重复携带转出腿
+/// 标的公共字段（行上已有：公共标的地即转出腿）与结转成本 / 币种（行金额锚点
+/// 与行上下文已有）；主列表转换扩展 `ledger_transaction::ConvertFields` 契约
+/// 冻结不动，本类型是其投资域超集（多转出份额 `quantity`）。
+#[derive(Debug, Serialize)]
+pub struct InvestmentConvertFields {
+    /// 转出份额（`security_transactions.quantity`，转出腿标的即行公共标的）。
+    pub quantity: f64,
+    /// 转入腿标的 id。
+    pub to_instrument_id: String,
+    /// 转入腿标的代码（JOIN `instruments` 带出的展示字段）。
+    pub to_symbol: String,
+    /// 转入腿份额。
+    pub to_quantity: f64,
+    /// 转出金额（确认单口径，整数分）。
+    pub out_amount_cents: i64,
+    /// 转入金额（确认单口径，整数分）。
+    pub in_amount_cents: i64,
+}
+
 /// 份额调整载荷（split 行的 kind 专属投影，issue #1778）。
 #[derive(Debug, Serialize)]
 pub struct InvestmentSplitFields {
@@ -413,34 +435,29 @@ pub struct InvestmentSplitFields {
 impl FromRow for InvestmentTransactionRow {
     fn from_row(row: &rusqlite::Row) -> rusqlite::Result<Self> {
         let kind: TransactionKind = row.get(1)?;
-        let quantity: Option<f64> = row.get(10)?;
-        let price_cents: Option<i64> = row.get(11)?;
-        let fee_cents: Option<i64> = row.get(12)?;
-        let to_instrument_id: Option<String> = row.get(13)?;
-        let to_symbol: Option<String> = row.get(14)?;
-        let to_quantity: Option<f64> = row.get(15)?;
-        let out_amount_cents: Option<i64> = row.get(16)?;
-        let in_amount_cents: Option<i64> = row.get(17)?;
         // kind 专属载荷按形态装配：各列在对应 kind 的扩展行里恒在位（buy/sell
-        // 的数量/单价、convert 的两腿金额由写路径落定），NULL 形态只属其它 kind。
+        // 的数量/单价、convert 的两腿金额由写路径落定），NULL 形态只属其它 kind
+        // ——载荷列 NULL 即行不变量破坏，显式报错（带 kind 与字段名定位）不静默
+        // 回退零值（回退把坏行伪装成好行，问题延后到展示层难追因）。
         let (trade, convert, split) = match kind {
             TransactionKind::Buy | TransactionKind::Sell => (
                 Some(InvestmentTradeFields {
-                    quantity: quantity.unwrap_or_default(),
-                    price_cents: price_cents.unwrap_or_default(),
-                    fee_cents: fee_cents.unwrap_or_default(),
+                    quantity: require_payload_field(row, 10, kind, "quantity")?,
+                    price_cents: require_payload_field(row, 11, kind, "price_cents")?,
+                    fee_cents: require_payload_field(row, 12, kind, "fee_cents")?,
                 }),
                 None,
                 None,
             ),
             TransactionKind::Convert => (
                 None,
-                Some(ConvertFields {
-                    to_instrument_id: to_instrument_id.unwrap_or_default(),
-                    to_symbol: to_symbol.unwrap_or_default(),
-                    to_quantity: to_quantity.unwrap_or_default(),
-                    out_amount_cents: out_amount_cents.unwrap_or_default(),
-                    in_amount_cents: in_amount_cents.unwrap_or_default(),
+                Some(InvestmentConvertFields {
+                    quantity: require_payload_field(row, 10, kind, "quantity")?,
+                    to_instrument_id: require_payload_field(row, 13, kind, "to_instrument_id")?,
+                    to_symbol: require_payload_field(row, 14, kind, "to_symbol")?,
+                    to_quantity: require_payload_field(row, 15, kind, "to_quantity")?,
+                    out_amount_cents: require_payload_field(row, 16, kind, "out_amount_cents")?,
+                    in_amount_cents: require_payload_field(row, 17, kind, "in_amount_cents")?,
                 }),
                 None,
             ),
@@ -448,7 +465,7 @@ impl FromRow for InvestmentTransactionRow {
                 None,
                 None,
                 Some(InvestmentSplitFields {
-                    delta_quantity: quantity.unwrap_or_default(),
+                    delta_quantity: require_payload_field(row, 10, kind, "quantity")?,
                 }),
             ),
             // dividend 无 kind 专属载荷；通用 kind 不入行集闭包（JOIN + kind
@@ -475,6 +492,30 @@ impl FromRow for InvestmentTransactionRow {
             split,
         })
     }
+}
+
+/// kind 专属载荷列取值（NULL 即报错）：对应 kind 的扩展行各载荷列由写路径恒
+/// 落定（buy/sell 的数量/单价/手续费、convert 的两腿金额、split 的 Δ），NULL
+/// 意味着行不变量被破坏——显式报错（消息带 kind 与字段名定位）不静默回退零值
+/// （回退把坏行伪装成好行，错误延后到展示层难追因）。
+fn require_payload_field<T: rusqlite::types::FromSql>(
+    row: &rusqlite::Row,
+    idx: usize,
+    kind: TransactionKind,
+    field: &str,
+) -> rusqlite::Result<T> {
+    let value: Option<T> = row.get(idx)?;
+    value.ok_or_else(|| {
+        rusqlite::Error::FromSqlConversionFailure(
+            idx,
+            rusqlite::types::Type::Null,
+            format!(
+                "投资明细行载荷不变量破坏：kind={} 的字段 {field} 为 NULL",
+                kind.as_str()
+            )
+            .into(),
+        )
+    })
 }
 
 /// 交易列表来源反查投影（spec #704 / issue #709，词汇表「来源列」）：按生成

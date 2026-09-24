@@ -223,16 +223,13 @@ async fn list_investment_transactions_unpacks_filter_dimensions() {
     assert_eq!(dividends.items[0].amount_cents, 30_000, "现金腿金额");
 }
 
-/// wire 错误契约：filter 的 kind 是闭集枚举，未知值在 IPC 边界反序列化即报错，
-/// 不静默吞掉变宽（与 HTTP 侧 `kinds` 逐元素闭集校验同纪律）。
+/// wire 错误契约：filter 的 kind 是闭集枚举，未知值在 IPC 边界反序列化即拒收，
+/// 不静默吞掉变宽（与 HTTP 侧 `kinds` 逐元素闭集校验同纪律）。IPC 反序列化错误
+/// 无码化形状，只断拒收不断言文案（文案形状归域闭集解析单点）。
 #[tokio::test]
 async fn list_investment_transactions_filter_rejects_unknown_kind_on_wire() {
-    let err = serde_json::from_value::<InvestmentTransactionListFilter>(serde_json::json!({
+    let result = serde_json::from_value::<InvestmentTransactionListFilter>(serde_json::json!({
         "kinds": ["bogus"]
-    }))
-    .expect_err("未知 kind 应反序列化报错");
-    assert!(
-        err.to_string().contains("交易类型"),
-        "错误文案应来自交易类型闭集解析，实际 {err:?}"
-    );
+    }));
+    assert!(result.is_err(), "未知 kind 应在 IPC 反序列化边界拒收");
 }

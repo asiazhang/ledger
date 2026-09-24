@@ -120,9 +120,8 @@ pub fn list_investment_transactions(
         // （与主列表 `list_transactions_internal` 同一形态）。
         if let Some(page_size) = filter.page_size {
             let page_size = i64::try_from(page_size.max(1)).unwrap_or(i64::MAX);
-            let page = filter.page.unwrap_or(1).max(1);
-            let offset = i64::try_from(page.saturating_sub(1).saturating_mul(page_size as usize))
-                .unwrap_or(i64::MAX);
+            let page = i64::try_from(filter.page.unwrap_or(1).max(1)).unwrap_or(i64::MAX);
+            let offset = page.saturating_sub(1).saturating_mul(page_size);
             sql.push_str(&format!(" LIMIT {page_size} OFFSET {offset}"));
         }
         let items = query_all::<InvestmentTransactionRow, _>(

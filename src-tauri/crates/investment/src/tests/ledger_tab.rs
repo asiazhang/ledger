@@ -6,11 +6,14 @@
 use ledger_transaction::TransactionInput;
 use ledger_transaction::amount::TransactionKind;
 use ledger_transaction::{create_transaction_internal, delete_transaction_internal};
+use rusqlite::params;
 
 use super::super::*;
 use super::common::*;
 use tauri_app_lib::test_support::snapshot_probe::{self, InjectionOutcome};
-use tauri_app_lib::test_support::{ScratchDir, open, open_file, seed_account, seed_instrument};
+use tauri_app_lib::test_support::{
+    FIXED_NOW, ScratchDir, open, open_file, seed_account, seed_instrument,
+};
 
 /// 五种投资 kind 各造一行（buy/sell/convert/split/dividend）+ 一行通用 expense
 /// （行集闭包的反证），全部 CNY 同币种免汇率铺垫。
@@ -141,7 +144,8 @@ fn projection_covers_all_five_kinds_with_fields() {
         convert.instrument_id, "inst-a",
         "公共标的地 = 转出腿（A → B 的 A）"
     );
-    let leg = convert.convert.as_ref().expect("convert 行应有转入腿载荷");
+    let leg = convert.convert.as_ref().expect("convert 行应有转换载荷");
+    assert_eq!(leg.quantity, 2.0, "转出份额（转出腿标的即行公共标的地）");
     assert_eq!(leg.to_instrument_id, "inst-b");
     assert_eq!(leg.to_symbol, "MSFT");
     assert_eq!(leg.to_quantity, 1.0);
@@ -330,6 +334,14 @@ fn date_range_filter_is_bounded_both_ends() {
 fn sort_desc_and_offset_pagination_cover_all_without_overlap() {
     let conn = open();
     let ids = seed_five_kinds(&conn);
+    // 同秒 tiebreaker 前提钉死：convert 与 split 同日（2026-02-01），把两行
+    // created_at 钉同值（簿记戳引用工厂 FIXED_NOW，零字面量）——排序只剩 id
+    // 倒序一轴，翻页确定性可断言（split 后建，uuid v7 进程内严格单调 → id 更大）。
+    conn.execute(
+        "UPDATE transactions SET created_at = ?1 WHERE id IN (?2, ?3)",
+        params![FIXED_NOW, &ids[2], &ids[3]],
+    )
+    .unwrap();
 
     let result = list_investment_transactions(
         &conn,
@@ -340,9 +352,14 @@ fn sort_desc_and_offset_pagination_cover_all_without_overlap() {
     )
     .unwrap();
     assert_eq!(result.total, 5, "total 恒为满足条件的总数，与页无关");
-    // 首页两条：date 最大的 dividend（02-10）与 02-01 两条之一（同日 tiebreak 不断言序）。
+    // 首页两条：date 最大的 dividend（02-10）与 02-01 两条之一。
     assert_eq!(result.items.len(), 2);
     assert_eq!(result.items[0].kind, TransactionKind::Dividend);
+    // 同日同秒行确定性：id 倒序 → split（后建，id 更大）排前、convert 排后。
+    assert_eq!(
+        result.items[1].id, ids[3],
+        "同日同秒行按 id 倒序：split 后建在前，翻页不漂移"
+    );
 
     let page2 = list_investment_transactions(
         &conn,
@@ -414,6 +431,35 @@ fn soft_deleted_rows_are_excluded() {
         list_investment_transactions(&conn, &InvestmentTransactionListFilter::default()).unwrap();
     assert_eq!(after.total, 0, "软删行排除");
     assert!(after.items.is_empty());
+}
+
+/// 载荷列 NULL 即报错（行不变量破坏不静默回退）：buy 行的 `price_cents` 被破坏
+/// 为 NULL 时，列表读该行显式报错（消息带 kind 与字段名定位），不把坏行伪装成
+/// 零值好行。
+#[test]
+fn broken_payload_invariant_row_is_rejected_not_silently_defaulted() {
+    let conn = open();
+    seed_account(&conn, "acc-brk", "投资户", "investment", "CNY", 0);
+    seed_instrument(&conn, "inst-brk", "AAPL", "苹果", "CNY", "unknown");
+    let buy_id = create_transaction_internal(
+        &conn,
+        make_buy_input("acc-brk", "inst-brk", 1.0, 100_000, 0),
+    )
+    .unwrap()
+    .id;
+    conn.execute(
+        "UPDATE security_transactions SET price_cents = NULL WHERE transaction_id = ?1",
+        params![&buy_id],
+    )
+    .unwrap();
+
+    let err = list_investment_transactions(&conn, &InvestmentTransactionListFilter::default())
+        .expect_err("载荷列 NULL 是不变量破坏，应报错而非回退零值");
+    let message = err.to_string();
+    assert!(
+        message.contains("buy") && message.contains("price_cents"),
+        "错误消息应带 kind 与字段名定位，实际 {message}"
+    );
 }
 
 /// 页与总数必须同快照（#1699 / #1702 同根因的多语句读闭包）：探针在 items 语句

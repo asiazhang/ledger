@@ -1,5 +1,5 @@
 import type { Syncable } from "./common";
-import type { ConvertFields, TransactionKind } from "./transactions";
+import type { TransactionKind } from "./transactions";
 
 export type InstrumentType = "stock" | "fund" | "bond" | "etf" | "other";
 
@@ -242,6 +242,19 @@ export interface InvestmentTradeFields {
   fee_cents: number;
 }
 
+/** 转换载荷（convert 行的 kind 专属投影，issue #1778）：转出份额 + 转入腿与
+ * 两侧确认金额（确认单权威）。主列表 ConvertFields 契约冻结不动，本类型是其
+ * 投资域超集（多转出份额 quantity）。 */
+export interface InvestmentConvertFields {
+  /** 转出份额（转出腿标的即行公共标的地） */
+  quantity: number;
+  to_instrument_id: string;
+  to_symbol: string;
+  to_quantity: number;
+  out_amount_cents: number;
+  in_amount_cents: number;
+}
+
 /** 份额调整载荷（split 行的 kind 专属投影，issue #1778）：带符号份额增量 Δ，
  * `+` = 折算 / 结转 / 送股，`-` = 缩股，原样呈现不取绝对值。 */
 export interface InvestmentSplitFields {
@@ -269,7 +282,7 @@ export interface InvestmentTransactionRow {
   instrument_name: string | null;
   instrument_type: InstrumentType;
   trade: InvestmentTradeFields | null;
-  convert: ConvertFields | null;
+  convert: InvestmentConvertFields | null;
   split: InvestmentSplitFields | null;
 }
 
