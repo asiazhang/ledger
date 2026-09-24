@@ -4,7 +4,8 @@
     "pnl": "P&L",
     "holdings": "Holdings",
     "instruments": "Instruments",
-    "trend": "Trend"
+    "trend": "Trend",
+    "ledger": "Ledger"
   },
   "overview": {
     "title": "Investment Overview",
@@ -265,5 +266,22 @@
   },
   "backfill": {
     "progress": "Backfilling price history {done}/{total}"
+  },
+  "ledger": {
+    "columns": {
+      "date": "Date",
+      "kind": "Type",
+      "instrument": "Instrument",
+      "quantity": "Quantity",
+      "amount": "Amount",
+      "price": "Price",
+      "fee": "Fee",
+      "account": "Account",
+      "fundingAccount": "Funding Account"
+    },
+    "total": "Total {n}",
+    "empty": "No investment transactions",
+    "emptyFiltered": "No matching transactions",
+    "filterKind": "Type"
   }
 }

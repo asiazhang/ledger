@@ -7,6 +7,7 @@ import type {
   Holding,
   Instrument,
   InvestmentOverview,
+  InvestmentTransactionRow,
   MoneyWeightedReturnSummary,
   ItemDailyTotal,
   PhysicalAsset,
@@ -128,6 +129,32 @@ export function makeHolding(
     market_value_cents: null,
     unrealized_pnl_cents: null,
     updated_at: "2026-01-01T00:00:00Z",
+    ...partial,
+  };
+}
+
+/**
+ * 投资明细行工厂（ADR-0135 / issue #1779）：五种投资 kind 的投资投影行底座——
+ * 默认 buy 行形态（trade 载荷按需携带，convert/split 缺省 null），公共字段中性。
+ */
+export function makeInvestmentLedgerRow(
+  partial: Partial<InvestmentTransactionRow> & {
+    id: string;
+    kind: InvestmentTransactionRow["kind"];
+  },
+): InvestmentTransactionRow {
+  return {
+    date: "2026-03-01",
+    amount_cents: 10000,
+    account_id: "acc-1",
+    funding_account_id: null,
+    instrument_id: "inst-1",
+    symbol: "600000",
+    instrument_name: "浦发银行",
+    instrument_type: "stock",
+    trade: null,
+    convert: null,
+    split: null,
     ...partial,
   };
 }

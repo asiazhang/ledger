@@ -2,6 +2,7 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { setActivePinia, createPinia } from "pinia";
 import { SEARCH_DEBOUNCE_MS } from "@/composables/search-debounce";
 import {
+  LEDGER_TAB_PAGE_SIZE_DEFAULT,
   TREND_MODE_DEFAULT,
   TREND_PRESET_DEFAULT,
   useInvestmentsSessionStore,
@@ -96,7 +97,7 @@ describe("useInvestmentsSessionStore（issue #1192 投资页会话状态）", ()
 });
 
 describe("resetToDefault（issue #1192 ESC 复位出口）", () => {
-  it("偏离的页签/筛选/排序/页码/走势全部回默认（清除保留态本身）", () => {
+  it("偏离的页签/筛选/排序/页码/走势/明细筛选全部回默认（清除保留态本身）", () => {
     const store = useInvestmentsSessionStore();
     store.setActiveTab("trend");
     store.setSearch("600");
@@ -105,7 +106,9 @@ describe("resetToDefault（issue #1192 ESC 复位出口）", () => {
     store.setPage(3);
     store.showTrendInstrument(makeInstrument({ id: "inst-1" }));
     store.setTrendPreset("1m");
-
+    store.setDetailKinds(["buy", "sell"]);
+    store.setDetailPage(2);
+    store.setDetailPageSize(50);
     store.resetToDefault();
     expect(store.activeTab).toBe("overview");
     expect(store.holdingsSearchInput).toBe("");
@@ -117,6 +120,9 @@ describe("resetToDefault（issue #1192 ESC 复位出口）", () => {
     expect(store.trendPreset).toBe(TREND_PRESET_DEFAULT);
     expect(store.trendInstrumentId).toBeNull();
     expect(store.trendInstrument).toBeNull();
+    expect(store.detailKinds).toBeNull();
+    expect(store.detailPage).toBe(1);
+    expect(store.detailPageSize).toBe(LEDGER_TAB_PAGE_SIZE_DEFAULT);
   });
 
   it("复位撤销在途搜索防抖：复位后旧输入不落地（不留迟到写入）", () => {
@@ -204,5 +210,54 @@ describe("store 写路径唯一（issue #1192 Standards 轴 finding）", () => {
     store.showTrendInstrument(makeInstrument({ id: "inst-1" }));
     store.selectTrendInstrument("inst-1");
     expect(store.trendInstrumentId).toBe("inst-1");
+  });
+});
+
+/**
+ * 明细页签筛选与分页（ADR-0135 决策 3 / issue #1779）：类型多选筛选与页码/页大小
+ * 入投资页会话 store（会话内保留、冷启动回默认，ADR-0094 默认粒度）。语义与主列表
+ * 类型维度同构：空集合 ≡ 不过滤 ≡ 默认态；维度实际变化翻页归零；页大小切换翻回第 1 页。
+ */
+describe("明细页签筛选与分页（ADR-0135 / issue #1779）", () => {
+  it("冷启动默认：无类型筛选、第 1 页、默认页大小", () => {
+    const store = useInvestmentsSessionStore();
+    expect(store.detailKinds).toBeNull();
+    expect(store.detailPage).toBe(1);
+    expect(store.detailPageSize).toBe(LEDGER_TAB_PAGE_SIZE_DEFAULT);
+  });
+
+  it("类型筛选写入：空集合归一为 null（空集合 ≡ 不过滤 ≡ 默认态）", () => {
+    const store = useInvestmentsSessionStore();
+    store.setDetailKinds(["buy", "dividend"]);
+    expect(store.detailKinds).toEqual(["buy", "dividend"]);
+    store.setDetailKinds([]);
+    expect(store.detailKinds).toBeNull();
+    store.setDetailKinds(null);
+    expect(store.detailKinds).toBeNull();
+  });
+
+  it("类型筛选实际变化翻页归零；同值重设不归零（顺序无关）", () => {
+    const store = useInvestmentsSessionStore();
+    store.setDetailKinds(["buy"]);
+    store.setDetailPage(3);
+    store.setDetailKinds(["sell"]);
+    expect(store.detailPage).toBe(1);
+    // 集合实际变化（扩大）→ 翻页归零
+    store.setDetailKinds(["buy", "sell"]);
+    expect(store.detailPage).toBe(1);
+    store.setDetailPage(2);
+    // 同一集合不同顺序：同值重设，不翻页归零
+    store.setDetailKinds(["sell", "buy"]);
+    // 同值守卫不动作：保留态保持首写顺序，也不触发翻页归零
+    expect(store.detailKinds).toEqual(["buy", "sell"]);
+    expect(store.detailPage).toBe(2);
+  });
+
+  it("页大小切换翻回第 1 页（主列表同构）", () => {
+    const store = useInvestmentsSessionStore();
+    store.setDetailPage(3);
+    store.setDetailPageSize(50);
+    expect(store.detailPageSize).toBe(50);
+    expect(store.detailPage).toBe(1);
   });
 });
