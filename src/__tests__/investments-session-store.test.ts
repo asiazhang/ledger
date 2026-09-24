@@ -109,6 +109,9 @@ describe("resetToDefault（issue #1192 ESC 复位出口）", () => {
     store.setDetailKinds(["buy", "sell"]);
     store.setDetailPage(2);
     store.setDetailPageSize(50);
+    store.setDetailAccount("acc-2");
+    store.setDetailInstrument("inst-1");
+    store.setDetailDateRange(["2026-01-01", "2026-03-31"]);
     store.resetToDefault();
     expect(store.activeTab).toBe("overview");
     expect(store.holdingsSearchInput).toBe("");
@@ -123,6 +126,10 @@ describe("resetToDefault（issue #1192 ESC 复位出口）", () => {
     expect(store.detailKinds).toBeNull();
     expect(store.detailPage).toBe(1);
     expect(store.detailPageSize).toBe(LEDGER_TAB_PAGE_SIZE_DEFAULT);
+    expect(store.detailAccountId).toBeNull();
+    expect(store.detailInstrumentId).toBeNull();
+    expect(store.detailDateFrom).toBeNull();
+    expect(store.detailDateTo).toBeNull();
   });
 
   it("复位撤销在途搜索防抖：复位后旧输入不落地（不留迟到写入）", () => {
@@ -258,6 +265,80 @@ describe("明细页签筛选与分页（ADR-0135 / issue #1779）", () => {
     store.setDetailPage(3);
     store.setDetailPageSize(50);
     expect(store.detailPageSize).toBe(50);
+    expect(store.detailPage).toBe(1);
+  });
+});
+
+/**
+ * 明细页签筛选全维（issue #1780 / ADR-0135 决策 3）：账户（涉及账户语义——账户端 ∪
+ * 出资端）、标的（convert 两腿任一命中即算）与日期（双端有界，picker 成对写入/清除）
+ * 与类型同住会话 store：写入入口、同值幂等、任一维度实际变化翻页归零、会话内保留、
+ * 冷启动回默认、ESC 复位清零。
+ */
+describe("明细页签筛选全维（issue #1780：账户/标的/日期）", () => {
+  it("冷启动默认：三维均为 null（无筛选）", () => {
+    const store = useInvestmentsSessionStore();
+    expect(store.detailAccountId).toBeNull();
+    expect(store.detailInstrumentId).toBeNull();
+    expect(store.detailDateFrom).toBeNull();
+    expect(store.detailDateTo).toBeNull();
+  });
+
+  it("三维写入：会话内保留（同 pinia 跨 store 读取可见）", () => {
+    const store = useInvestmentsSessionStore();
+    store.setDetailAccount("acc-2");
+    store.setDetailInstrument("inst-1");
+    store.setDetailDateRange(["2026-01-01", "2026-03-31"]);
+    const again = useInvestmentsSessionStore();
+    expect(again.detailAccountId).toBe("acc-2");
+    expect(again.detailInstrumentId).toBe("inst-1");
+    expect(again.detailDateFrom).toBe("2026-01-01");
+    expect(again.detailDateTo).toBe("2026-03-31");
+    // 新 pinia = 冷启动：回默认
+    setActivePinia(createPinia());
+    const cold = useInvestmentsSessionStore();
+    expect(cold.detailAccountId).toBeNull();
+    expect(cold.detailInstrumentId).toBeNull();
+    expect(cold.detailDateFrom).toBeNull();
+    expect(cold.detailDateTo).toBeNull();
+  });
+
+  it("同值重设幂等不动作；空集合/空区间归一默认", () => {
+    const store = useInvestmentsSessionStore();
+    store.setDetailAccount("acc-2");
+    store.setDetailAccount("acc-2");
+    expect(store.detailAccountId).toBe("acc-2");
+    store.setDetailInstrument("inst-1");
+    store.setDetailInstrument("inst-1");
+    expect(store.detailInstrumentId).toBe("inst-1");
+    store.setDetailDateRange(["2026-01-01", "2026-03-31"]);
+    // 同区间重写不动作（picker 受控回显重放同值）
+    store.setDetailDateRange(["2026-01-01", "2026-03-31"]);
+    expect(store.detailDateFrom).toBe("2026-01-01");
+    expect(store.detailDateTo).toBe("2026-03-31");
+    // 清除：null 回默认
+    store.setDetailDateRange(null);
+    expect(store.detailDateFrom).toBeNull();
+    expect(store.detailDateTo).toBeNull();
+  });
+
+  it("任一维度实际变化翻页归零；同值重设不归零", () => {
+    const store = useInvestmentsSessionStore();
+    store.setDetailAccount("acc-2");
+    store.setDetailPage(3);
+    store.setDetailInstrument("inst-1");
+    expect(store.detailPage).toBe(1);
+    store.setDetailPage(2);
+    store.setDetailDateRange(["2026-01-01", "2026-03-31"]);
+    expect(store.detailPage).toBe(1);
+    store.setDetailPage(2);
+    // 同值重设（账户/标的/区间）不归零
+    store.setDetailAccount("acc-2");
+    store.setDetailInstrument("inst-1");
+    store.setDetailDateRange(["2026-01-01", "2026-03-31"]);
+    expect(store.detailPage).toBe(2);
+    // 清除账户也是实际变化 → 归零
+    store.setDetailAccount(null);
     expect(store.detailPage).toBe(1);
   });
 });
