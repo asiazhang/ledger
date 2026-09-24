@@ -3,6 +3,7 @@ import { lastInvokeArgs, wireInvokeSeam } from "@ledger/test-support/invoke-mock
 import { fireProp } from "@ledger/test-support/component-vm";
 import { mount, flushPromises } from "@vue/test-utils";
 import {
+  NCard,
   NDataTable,
   NDialogProvider,
   NDropdown,
@@ -647,6 +648,16 @@ describe("AccountsView 储蓄目标分组与类型标签（issue #1755 / ADR-013
       .catch(() => {});
     const wrapper = mountView();
     await flushPromises();
+    // 接线敏感性（ADR-0087）：两张卡按标题区分——目标账户行住在「储蓄目标」卡内、
+    // 恰一行；普通「账户列表」卡不含它。仅删分组拆分（改回单表）即红，
+    // 不与标签覆写共用同一调用。
+    const cards = wrapper.findAllComponents(NCard);
+    const goalCard = cards.find((c) => c.props("title") === "储蓄目标");
+    expect(goalCard, "分组卡按标题可定位（删分组拆分即找不到）").toBeDefined();
+    expect(goalCard!.findAll("tbody tr")).toHaveLength(1);
+    const listCard = cards.find((c) => c.props("title") === "账户列表");
+    expect(listCard!.findAll("tbody tr"), "普通卡只余未绑定行").toHaveLength(1);
+    expect(listCard!.text()).toContain("银行");
     const rows = bodyRows(wrapper);
     // 分组卡列于普通列表之前：第一条数据行 = 目标账户行
     expect(rows).toHaveLength(2);
@@ -657,6 +668,7 @@ describe("AccountsView 储蓄目标分组与类型标签（issue #1755 / ADR-013
     // 余额原值展示：同一 balances 快照拆分、不做任何加减，读数不受分组影响
     expect(rows[0].text()).toContain(formatAmount(1000, CNY));
     // 未绑定行留在普通列表（第二条数据行 = acc-2「银行」）
+    expect(rows[1].text()).toContain("银行");
     expect(rows[1].text()).toContain("银行");
   });
 
