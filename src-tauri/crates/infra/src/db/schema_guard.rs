@@ -11,7 +11,8 @@
 //! 漂移失败经 `boot_sequence` Err → `BootFailureGate` → 启动失败恢复屏（既有
 //! 通道，#601/#602）；解锁路径失败在解锁屏按码呈现。
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
+use std::sync::OnceLock;
 
 use rusqlite::Connection;
 
@@ -53,23 +54,58 @@ fn table_columns(conn: &Connection, table: &str) -> rusqlite::Result<BTreeSet<St
     stmt.query_map([table], |row| row.get(0))?.collect()
 }
 
-/// schema 一致性校验（守卫本体，[`super::init_db`] 尾部接线）：从零迁移一个
-/// 内存参照库（直接调迁移链，不经 `init_db`——避免递归守卫），与真实库做
+/// 参照 schema（迁移链的纯函数产物）：对象清单 + 表列集。迁移链是编译期内联
+/// 常量（`include_str!`），参照集在同一进程内构建一次、后续校验复用——原实现
+/// 每次校验都重放整条链从零建内存参照（本机实测 ~20ms/次），应用每次建连
+/// （启动、解锁换连、原位重引导、建账本、checkpoint 重建）都付一遍，测试进程
+/// 逐用例成倍放大；缓存后进程内只付首建，校验语义不变（参照集与逐次重放
+/// 同源同值，迁移链在进程生命期内不可变）。错误也一并缓存：失败成因是编译期
+/// 迁移链本身，重试结果确定相同（与 [`super::open_in_memory_initialized`] 的
+/// 模板缓存同型）。
+struct ReferenceSchema {
+    objects: BTreeSet<(String, String)>,
+    /// 表名 → 列名集合（仅表；列比对只对两边都在场的表进行，视图/索引不入）。
+    table_columns: BTreeMap<String, BTreeSet<String>>,
+}
+
+/// 参照集构建（进程内单次；构建成本受 ADR-0009 100ms 观测线约束，ADR-0100 性能
+/// 定语）。直接调迁移链、不经 `init_db`——避免递归守卫。
+fn reference_schema() -> Result<&'static ReferenceSchema> {
+    static REFERENCE: OnceLock<std::result::Result<ReferenceSchema, AppError>> = OnceLock::new();
+    REFERENCE
+        .get_or_init(|| {
+            let mut reference = super::open_in_memory()?;
+            super::migrations().to_latest(&mut reference)?;
+            let objects = schema_objects(&reference)?;
+            let mut column_sets = BTreeMap::new();
+            for (kind, name) in &objects {
+                if kind != "table" {
+                    continue;
+                }
+                let columns = table_columns(&reference, name)?;
+                column_sets.insert(name.clone(), columns);
+            }
+            Ok(ReferenceSchema {
+                objects,
+                table_columns: column_sets,
+            })
+        })
+        .as_ref()
+        .map_err(AppError::clone)
+}
+
+/// schema 一致性校验（守卫本体，[`super::init_db`] 尾部接线）：用进程内缓存的
+/// 参照 schema（见 [`reference_schema`]，迁移链从零构建的纯函数）与真实库做
 /// **方向性** diff：参照有而实际缺的对象（表/视图/索引）或列 = 漂移；实际
 /// 多出 = 容忍（V005 搜索索引残留等合法遗留不误报，ADR-0027 / ADR-0100 决策 2）。
 /// `sqlite_%` 内部对象双向排除、不参与比对——引擎自主管理，非迁移链声明
 /// （详见 [`schema_objects`]）。参照库由迁移链自动构建，零手工清单维护。
 pub(crate) fn verify_schema(actual: &Connection) -> Result<()> {
-    // 参照库建连走 [`super::open_in_memory`]（外键 + perf hook，与生产建连同
-    // 收口）：参照构建的 SQL 受 ADR-0009 100ms 观测线约束（ADR-0100 性能定
-    // 语）；不经 `init_db`，无递归守卫。
-    let mut reference = super::open_in_memory()?;
-    super::migrations().to_latest(&mut reference)?;
-
-    let reference_objects = schema_objects(&reference)?;
+    let reference = reference_schema()?;
     let actual_objects = schema_objects(actual)?;
 
-    let missing_objects: Vec<String> = reference_objects
+    let missing_objects: Vec<String> = reference
+        .objects
         .difference(&actual_objects)
         .map(|(kind, name)| format!("{kind} {name}"))
         .collect();
@@ -77,11 +113,10 @@ pub(crate) fn verify_schema(actual: &Connection) -> Result<()> {
     // 列集只对「两边都在场的表」比对：参照表实际缺已属对象级漂移，重复报
     // 只会稀释诊断；实际多出的表按方向性容忍，不入列比对。
     let mut missing_columns: Vec<String> = Vec::new();
-    for (kind, name) in &reference_objects {
-        if kind != "table" || !actual_objects.contains(&(kind.clone(), name.clone())) {
+    for (name, reference_columns) in &reference.table_columns {
+        if !actual_objects.contains(&("table".to_string(), name.clone())) {
             continue;
         }
-        let reference_columns = table_columns(&reference, name)?;
         let actual_columns = table_columns(actual, name)?;
         for column in reference_columns.difference(&actual_columns) {
             missing_columns.push(format!("{name}.{column}"));
