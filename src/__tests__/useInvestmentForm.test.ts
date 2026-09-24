@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { setActivePinia, createPinia } from "pinia";
 import { mockInvoke, wireInvokeSeam } from "@ledger/test-support/invoke-mock";
 import { useReferenceStore } from "@/stores/reference";
+import { useSavingsGoalsStore } from "@/savings-goal/savingsGoals";
 import { useInvestmentForm } from "@/investment/useInvestmentForm";
 import { makeAccount, makeGoalPair } from "./factories";
 import type {
@@ -546,6 +547,11 @@ describe("useInvestmentForm 出资账户（issue #936 / #938 / ADR-0096，buy/se
     });
     const store = useReferenceStore();
     await store.refresh();
+    // 目标绑定集显式 refresh 落位（issue #1755）：与 AccountsView /
+    // InvestmentForm 两处同款口径，不依赖 self-init 的隐式时序。
+    await useSavingsGoalsStore()
+      .refresh()
+      .catch(() => {});
     return useInvestmentForm(kind, options);
   }
 
