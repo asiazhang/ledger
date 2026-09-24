@@ -92,6 +92,7 @@
   },
   "transaction": {
     "amount-positive": "金额必须大于 0",
+    "currency-mismatch": "账户币种（{0}）与交易币种（{1}）不一致",
     "not-found": "交易不存在: {0}",
     "page-size-over-cap": "page_size {0} 超过单页上限 {1}",
     "limit-out-of-range": "limit {0} 超出允许范围（0 到 {1}，负值无上限仅限 IPC）",

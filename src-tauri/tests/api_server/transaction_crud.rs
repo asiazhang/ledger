@@ -3,8 +3,9 @@ use axum::http::StatusCode;
 use tauri_app_lib::test_support;
 
 use crate::common::{
-    batch_body, count_active_transactions, create_account_via_api, delete_account_via_api,
-    delete_transaction_via_api, get_json, items_of, post_batch, put_transaction_via_api, setup_app,
+    batch_body, count_active_transactions, create_account_via_api,
+    create_account_via_api_with_currency, delete_account_via_api, delete_transaction_via_api,
+    get_json, items_of, post_batch, put_transaction_via_api, setup_app,
 };
 
 #[tokio::test]
@@ -827,7 +828,10 @@ async fn test_delete_convert_guarded_by_later_convert_returns_coded_400() {
 #[tokio::test]
 async fn test_batch_import_foreign_currency_row_readback_exposes_fx_trace() {
     let (app, conn) = setup_app();
-    let account_id = create_account_via_api(&app, "港币账户").await;
+    // 币种一致性守卫（issue #1770 / ADR-0134）：外币行与同币种对照行各挂
+    // 自己币种的账户。
+    let account_id = create_account_via_api_with_currency(&app, "港币账户", "HKD").await;
+    let cny_account_id = create_account_via_api(&app, "现金账户").await;
     // 交易周（2026-07-01 所属周）序列点：缺它整行被拒（缺汇率不静默降级）。
     {
         let guard = conn.lock().unwrap_or_else(|e| e.into_inner());
@@ -838,7 +842,7 @@ async fn test_batch_import_foreign_currency_row_readback_exposes_fx_trace() {
         r#"{{"kind":"expense","amount_cents":1000,"currency_code":"HKD","account_id":"{account_id}","date":"2026-07-01"}}"#
     );
     let cny_tx = format!(
-        r#"{{"kind":"expense","amount_cents":500,"currency_code":"CNY","account_id":"{account_id}","date":"2026-07-01"}}"#
+        r#"{{"kind":"expense","amount_cents":500,"currency_code":"CNY","account_id":"{cny_account_id}","date":"2026-07-01"}}"#
     );
     let created = post_batch(&app, batch_body(&[&fx_tx, &cny_tx], None)).await;
     assert_eq!(created[0]["success"], true, "外币行应有汇率可折算");
@@ -875,7 +879,7 @@ async fn test_batch_import_foreign_currency_row_readback_exposes_fx_trace() {
 #[tokio::test]
 async fn test_update_foreign_currency_row_reuses_fx_trace_when_series_missing() {
     let (app, conn) = setup_app();
-    let account_id = create_account_via_api(&app, "港币编辑户").await;
+    let account_id = create_account_via_api_with_currency(&app, "港币编辑户", "HKD").await;
     {
         let guard = conn.lock().unwrap_or_else(|e| e.into_inner());
         test_support::seed_fx_rate_history(&guard, "fxh-upd", "HKD", "CNY", "2026-06-29", 0.9);
@@ -926,14 +930,17 @@ async fn test_update_foreign_currency_row_reuses_fx_trace_when_series_missing() 
 #[tokio::test]
 async fn test_batch_import_row_with_explicit_fx_rate_readback_marks_explicit() {
     let (app, _conn) = setup_app();
-    let account_id = create_account_via_api(&app, "港币账户").await;
+    // 币种一致性守卫（issue #1770 / ADR-0134）：外币行与同币种对照行各挂
+    // 自己币种的账户。
+    let account_id = create_account_via_api_with_currency(&app, "港币账户", "HKD").await;
+    let cny_account_id = create_account_via_api(&app, "现金账户").await;
     // 刻意不种任何序列点：显式汇率正是服务「序列查不到」的日期。
 
     let hkd_tx = format!(
         r#"{{"kind":"expense","amount_cents":1000,"currency_code":"HKD","account_id":"{account_id}","date":"2022-01-21","fx_rate":0.88}}"#
     );
     let cny_tx = format!(
-        r#"{{"kind":"expense","amount_cents":500,"currency_code":"CNY","account_id":"{account_id}","date":"2022-01-21"}}"#
+        r#"{{"kind":"expense","amount_cents":500,"currency_code":"CNY","account_id":"{cny_account_id}","date":"2022-01-21"}}"#
     );
     let created = post_batch(&app, batch_body(&[&hkd_tx, &cny_tx], None)).await;
     assert_eq!(created[0]["success"], true, "带显式汇率的行应照常落库");
@@ -957,13 +964,16 @@ async fn test_batch_import_row_with_explicit_fx_rate_readback_marks_explicit() {
 #[tokio::test]
 async fn test_batch_import_illegal_explicit_fx_rate_rejected_not_persisted() {
     let (app, conn) = setup_app();
-    let account_id = create_account_via_api(&app, "港币账户").await;
+    // 币种一致性守卫（issue #1770 / ADR-0134）：两行各挂自己币种的账户，
+    // 使失败原因仍落在显式汇率合法性上。
+    let account_id = create_account_via_api_with_currency(&app, "港币账户", "HKD").await;
+    let cny_account_id = create_account_via_api(&app, "现金账户").await;
 
     let zero = format!(
         r#"{{"kind":"expense","amount_cents":1000,"currency_code":"HKD","account_id":"{account_id}","date":"2022-01-21","fx_rate":0}}"#
     );
     let same_currency = format!(
-        r#"{{"kind":"expense","amount_cents":500,"currency_code":"CNY","account_id":"{account_id}","date":"2022-01-21","fx_rate":1.0}}"#
+        r#"{{"kind":"expense","amount_cents":500,"currency_code":"CNY","account_id":"{cny_account_id}","date":"2022-01-21","fx_rate":1.0}}"#
     );
     let created = post_batch(&app, batch_body(&[&zero, &same_currency], None)).await;
     assert_eq!(created[0]["success"], false, "非正显式汇率应失败");
@@ -992,7 +1002,7 @@ async fn test_batch_import_illegal_explicit_fx_rate_rejected_not_persisted() {
 #[tokio::test]
 async fn test_batch_import_explicit_fx_rate_row_idempotent_rerun() {
     let (app, conn) = setup_app();
-    let account_id = create_account_via_api(&app, "港币账户").await;
+    let account_id = create_account_via_api_with_currency(&app, "港币账户", "HKD").await;
 
     let row = format!(
         r#"{{"kind":"expense","amount_cents":1000,"currency_code":"HKD","account_id":"{account_id}","date":"2022-01-21","fx_rate":0.88,"idempotency_key":"moomoo-2022-01-21-1"}}"#

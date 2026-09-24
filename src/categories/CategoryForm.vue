@@ -38,9 +38,13 @@ const ctx = useCategoryForm(props.kind, {
           style="width: 160px"
           @blur="ctx.markAmountBlurred"
         />
+        <!-- 币种随所选账户推导并锁定（issue #1770 / ADR-0134 决策 5）：后端 Writer
+             守卫是唯一权威，前端只读呈现（先例：投资表单 issue #1191） -->
         <AppSelect
-          v-model:value="ctx.currencyCode.value"
+          :value="ctx.currencyCode.value"
           :options="ctx.currencyOptions.value"
+          :disabled="true"
+          data-testid="category-form-currency"
           style="width: 130px; margin-left: 8px"
         />
       </NFormItem>

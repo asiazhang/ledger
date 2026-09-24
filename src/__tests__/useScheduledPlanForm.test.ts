@@ -310,13 +310,12 @@ describe("useScheduledPlanForm 草稿初始态与重置", () => {
     expect(form.startDate.value).toBe(todayStr());
   });
 
-  it("reset 回初始态：模态语义下每次打开是全新表单（币种回默认币种）", () => {
+  it("reset 回初始态：模态语义下每次打开是全新表单（账户清空 → 币种随推导回默认币种）", () => {
     const form = useScheduledPlanForm();
     form.note.value = "音乐订阅";
     form.accountId.value = "acc-1";
     form.categoryId.value = "cat-1";
     form.merchantRef.value = "盒马";
-    form.currencyCode.value = "USD";
     form.recurrenceType.value = "weekly";
     form.recurrenceInterval.value = 2;
     form.recurrenceDay.value = 5;
@@ -360,7 +359,6 @@ describe("useScheduledPlanForm submitCreate 提交时序编排（spec #520）", 
     const form = useScheduledPlanForm({ onSubmitted });
     form.note.value = "月度储蓄";
     form.accountId.value = "acc-1";
-    form.currencyCode.value = "CNY";
     return form;
   }
 
@@ -494,7 +492,6 @@ describe("useScheduledPlanForm submitCreate 提交时序编排（spec #520）", 
     // 先改成非初始值，再提交
     form.note.value = "月度储蓄";
     form.accountId.value = "acc-1";
-    form.currencyCode.value = "USD";
     form.recurrenceType.value = "weekly";
     form.recurrenceInterval.value = 2;
     form.startDate.value = "2026-03-01";
@@ -536,5 +533,24 @@ describe("useScheduledPlanForm submitCreate 提交时序编排（spec #520）", 
     expect(form.note.value).toBe("月度储蓄");
     expect(form.accountId.value).toBe("acc-1");
     expect(onSubmitted).not.toHaveBeenCalled();
+  });
+});
+
+describe("useScheduledPlanForm 币种一致性联动（issue #1770 / ADR-0134 决策 5）", () => {
+  it("币种随所选账户推导：未选退展示币种偏好，选美元户变 USD；reset 清账户即回默认", async () => {
+    const usdAccount = {
+      ...mockAccounts[0],
+      id: "acc-usd",
+      name: "美元户",
+      currency_code: "USD",
+    };
+    wireInvokeSeam({ overrides: { list_accounts: [...mockAccounts, usdAccount] } });
+    await useReferenceStore().refresh();
+    const form = useScheduledPlanForm();
+    expect(form.currencyCode.value).toBe(useAppStore().defaultCurrency);
+    form.accountId.value = "acc-usd";
+    expect(form.currencyCode.value).toBe("USD");
+    form.reset();
+    expect(form.currencyCode.value).toBe(useAppStore().defaultCurrency);
   });
 });

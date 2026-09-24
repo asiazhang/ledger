@@ -1,4 +1,4 @@
-import { ref } from "vue";
+import { computed, ref } from "vue";
 import { useMessage } from "naive-ui";
 import { api } from "@ledger/api";
 import { centsToYuan } from "@ledger/money";
@@ -6,6 +6,7 @@ import { buildTransferInput } from "@/transaction/transaction-input";
 import { judgeAmountText } from "@ledger/utils/field-error";
 import { useFieldErrors } from "@ledger/field-errors";
 import { useFormShared, utcMidnightTimestamp } from "@/composables/useFormShared";
+import { useAppStore } from "@/stores/app";
 import { useMerchantField } from "@/merchants/useMerchantField";
 import { t } from "@ledger/i18n";
 import type { Transaction } from "@ledger/types";
@@ -25,6 +26,7 @@ export function useTransferForm(options?: {
   createdMessage?: () => string;
 }) {
   const { reference, accountOptions, currencyOptions } = useFormShared();
+  const app = useAppStore();
   const message = useMessage();
 
   // 金额字段错误态（ADR-0058 / issue #415 → #1007 收口）：金额以原始文本承载输入
@@ -36,9 +38,37 @@ export function useTransferForm(options?: {
     amount: { text: amountText, judge: judgeAmountText },
   });
 
-  const currencyCode = ref("CNY");
   const accountId = ref<string | null>(null);
   const toAccountId = ref<string | null>(null);
+  /**
+   * 交易币种（issue #1770 / ADR-0134 决策 5）：转账的记账币种由转出账户决定——后端
+   * Writer 守卫强制「交易币种 == 两端账户币种」（现金腿 amount_cents 即账户币种
+   * 金额，#1769 余额口径的前提），前端不另存可能漂移的币种状态；未选转出账户前
+   * 退「新表单预选币种」（展示币种偏好，见核心交易域 DefaultCurrency）。先例：
+   * useInvestmentForm（issue #1191）/ 定时转账页签（币种随账户收敛）。
+   */
+  const currencyCode = computed(() => {
+    const account = accountId.value == null ? undefined : reference.accountMap.get(accountId.value);
+    return account?.currency_code ?? app.defaultCurrency;
+  });
+  /** 转入账户候选：与转出账户同币种（跨币种转账不做，ADR-0134 决策 4）；
+   * 未选转出账户前不收窄（两端选择顺序自由）。 */
+  const toAccountOptions = computed(() =>
+    accountId.value == null
+      ? accountOptions.value
+      : accountOptions.value.filter((o) => {
+          const acc = reference.accountMap.get(o.value);
+          return acc && acc.currency_code === currencyCode.value;
+        }),
+  );
+  /** 两端币种不一致的错误态（ADR-0134 决策 5）：候选过滤已挡住新增路径，本态
+   * 承接存量脏行的编辑回填（两端币种不同的历史行）——红显即时阻止提交，
+   * 保存前须把两端改为同币种（后端 Writer 守卫是契约兜底）。 */
+  const toEndCurrencyError = computed(() => {
+    const from = accountId.value == null ? undefined : reference.accountMap.get(accountId.value);
+    const to = toAccountId.value == null ? undefined : reference.accountMap.get(toAccountId.value);
+    return from != null && to != null && from.currency_code !== to.currency_code;
+  });
   const note = ref("");
   const date = ref(Date.now());
 
@@ -57,7 +87,7 @@ export function useTransferForm(options?: {
     amountText.value = String(
       centsToYuan(editingTx.amount_cents, reference.getCurrency(editingTx.currency_code)),
     );
-    currencyCode.value = editingTx.currency_code;
+    // 币种不回填（随转出账户推导，issue #1770 / ADR-0134 决策 5）
     accountId.value = editingTx.account_id;
     toAccountId.value = editingTx.to_account_id;
     merchantRef.value = editingTx.merchant_id;
@@ -84,6 +114,9 @@ export function useTransferForm(options?: {
       message.warning(t("transactions.form.warnSameAccount"));
       return;
     }
+    // 两端币种不一致（存量脏行回填）：红态已在转入账户字段上，静默中止提交
+    // （与格式类错误同一反馈分工，ADR-0134 决策 5）
+    if (toEndCurrencyError.value) return;
     const amount = errors.fields.amount.value.value;
     if (amount == null) return; // 不可达（错误态已被上方守卫拦截），仅为类型收窄
     // 业务类校验（纯零/负数）保留既有提交 toast 通道，不动（ADR-0058：业务不成立不属字段错误态）
@@ -135,8 +168,7 @@ export function useTransferForm(options?: {
   function resetForm() {
     amountText.value = "";
     errors.reset();
-    currencyCode.value = "CNY";
-    accountId.value = null;
+    accountId.value = null; // 币种随账户推导，清账户即回默认币种
     toAccountId.value = null;
     merchantRef.value = null;
     note.value = "";
@@ -151,6 +183,8 @@ export function useTransferForm(options?: {
     currencyCode,
     accountId,
     toAccountId,
+    toAccountOptions,
+    toEndCurrencyError,
     merchantRef,
     merchantOptions,
     note,

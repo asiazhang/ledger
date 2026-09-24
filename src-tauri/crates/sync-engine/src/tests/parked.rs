@@ -189,5 +189,45 @@ fn replay_onto_deleted_account_parks_and_never_resurrects() {
     assert_eq!(count, 1, "仍不落地");
 }
 
+/// 通用 kind 重放的币种一致性守卫（issue #1770 / ADR-0134）：命令携带行币种与
+/// 重放端账户币种不一致 → 同码挂起、不落行、不中断批次（dividend 币种漂移
+/// 挂起先例的通用 kind 形态）。
+#[test]
+fn generic_kind_currency_divergence_parks_without_booking() {
+    let conn_a = test_support::open();
+    let conn_b = test_support::open();
+    seed_account(&conn_a, "acc-1", "现金", "cash", "CNY", 0);
+    seed_account(&conn_b, "acc-1", "现金", "cash", "CNY", 0);
+
+    // 正常与漂移两笔同批：漂移者（载荷币种 USD ≠ 账户币种 CNY，对应载荷篡改 /
+    // 账户币种漂移）挂起，正常者照常落地。
+    protocol::create(&conn_a, make_expense("acc-1", 10000, "午饭")).unwrap();
+    let bad = protocol::create(&conn_a, make_expense("acc-1", 500, "咖啡"))
+        .unwrap()
+        .id;
+    let wire = wire_out(&conn_a);
+    let mut tampered: serde_json::Value = serde_json::from_str(&wire[1]).unwrap();
+    tampered["command"]["payload"]["row"]["currency_code"] = serde_json::json!("USD");
+    let reports = wire_in(
+        &conn_b,
+        &[wire[0].clone(), serde_json::to_string(&tampered).unwrap()],
+    );
+    assert_eq!(reports[0].outcome, OpOutcome::Applied, "批内其余 op 不受阻");
+    assert!(
+        matches!(&reports[1].outcome, OpOutcome::Parked { code, .. } if code == "transaction.currency-mismatch"),
+        "币种不一致应码化挂起，实际: {:?}",
+        reports[1]
+    );
+    assert_eq!(
+        read_ops(&conn_b).unwrap().len(),
+        1,
+        "只有正常 op 落日志，挂起者不落"
+    );
+    assert!(read_transaction(&conn_b, &bad).is_none(), "不落错币行");
+    let parked = parked_ops(&conn_b).unwrap();
+    assert_eq!(parked.len(), 1);
+    assert_eq!(parked[0].params, vec!["CNY".to_string(), "USD".to_string()]);
+}
+
 // 投资命令重放自 #861 起由同步引擎完整执行（buy/sell 三件套），挂起场景
 // （标的不存在、可卖数量依赖倒挂）收敛在 tests/investment.rs。

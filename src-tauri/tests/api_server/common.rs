@@ -277,6 +277,31 @@ pub(crate) async fn create_account_via_api_with_initial(
     serde_json::from_slice(&bytes).unwrap()
 }
 
+/// 带币种建户（issue #1770 / ADR-0134：币种一致性守卫下，外币行夹具的账户
+/// 必须与交易币种同币种，CNY 缺省建户不再覆盖该形态）。
+pub(crate) async fn create_account_via_api_with_currency(
+    app: &Router,
+    name: &str,
+    currency: &str,
+) -> String {
+    let body = format!(r#"{{"name":"{name}","type":"cash","currency_code":"{currency}"}}"#,);
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/accounts")
+                .header("content-type", "application/json")
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let bytes = body_to_bytes(response.into_body()).await;
+    serde_json::from_slice(&bytes).unwrap()
+}
+
 pub(crate) async fn create_account_via_api(app: &Router, name: &str) -> String {
     let body = create_account_json(name);
     let response = app

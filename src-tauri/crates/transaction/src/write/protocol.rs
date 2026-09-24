@@ -873,7 +873,18 @@ fn replay_assembly(
         TransactionKind::Income
         | TransactionKind::Expense
         | TransactionKind::Transfer
-        | TransactionKind::Refund => Ok(Plan::Common(norm_row)),
+        | TransactionKind::Refund => {
+            // 币种一致性守卫（issue #1770 / ADR-0134）：与本地 normalize 同码同文案，
+            // 存活校验（create / update 协议守卫段）已先行；失败码化上抛，由同步
+            // 引擎挂 ParkedOp 挂起、不中断批次（dividend 重放臂先例）。
+            writer::validate_currency_consistency(
+                conn,
+                &norm_row.account_id,
+                norm_row.to_account_id.as_deref(),
+                &norm_row.currency_code,
+            )?;
+            Ok(Plan::Common(norm_row))
+        }
         TransactionKind::Buy
         | TransactionKind::Sell
         | TransactionKind::Convert

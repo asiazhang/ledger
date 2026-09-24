@@ -1244,24 +1244,32 @@ fn update_date_changed_requeries_new_week() {
     assert_eq!(t.fx_rate_source, Some(FxRateSource::Series));
 }
 
-/// 改币种 → 按新币种重查，更新本位币金额与留痕（验收 2）。
+/// 改币种 → 按新币种重查，更新本位币金额与留痕（验收 2）。币种一致性守卫
+/// （issue #1770 / ADR-0134）下交易币种必须等于账户币种，改币种与换账户
+/// 同笔编辑发生：HKD 行移挂 USD 账户并改为 USD，按新币种重查新周序列点。
 #[test]
 fn update_currency_changed_requeries() {
     let conn = test_support::open();
     let id = seeded_hkd_expense(&conn, "2026-07-01");
+    test_support::seed_account(&conn, "acc-usd-ed", "美元户", "cash", "USD", 0);
+    test_support::seed_fx_rate_history(&conn, "fxh-ed-usd", "USD", "CNY", "2026-06-29", 7.2);
 
     update_transaction_internal(
         &conn,
         &id,
-        make_input("acc-fx-ed", TransactionKind::Expense, 1000, "2026-07-01"),
+        TransactionInput {
+            currency_code: "USD".into(),
+            account_id: "acc-usd-ed".into(),
+            ..make_input("acc-usd-ed", TransactionKind::Expense, 1000, "2026-07-01")
+        },
     )
     .unwrap();
 
     let t = get_transaction_internal(&conn, &id).unwrap();
-    assert_eq!(t.currency_code, "CNY", "币种改为本位币后按新币种折算");
-    assert_eq!(t.amount_native_cents, 1000, "同币种 1:1");
-    assert_eq!(t.fx_rate_used, None, "不再折算：留痕转空");
-    assert_eq!(t.fx_rate_source, None);
+    assert_eq!(t.currency_code, "USD", "币种改为 USD 后按新币种折算");
+    assert_eq!(t.amount_native_cents, 7200, "1000 × 7.2 按新币种序列点重查");
+    assert_eq!(t.fx_rate_used, Some(7.2), "留痕更新为新币种使用值");
+    assert_eq!(t.fx_rate_source, Some(FxRateSource::Series));
 }
 
 // ---------------------------------------------------------------------------

@@ -594,6 +594,9 @@ fn ai_batch_import_produces_ops_and_dedup_is_independent() {
     // AI 批量导入（HTTP POST /transactions/batch 同一编排）：普通行 + buy 行，
     // 各带客户端幂等键（指向源文件行的稳定身份）。
     let mut expense = super::common::make_expense("acc-inv", 88_00, "外卖");
+    // 币种随投资账户（USD）：币种一致性守卫（issue #1770 / ADR-0134）下
+    // CNY 交易挂 USD 账户已是非法形态。
+    expense.currency_code = "USD".into();
     expense.idempotency_key = Some("src.csv:1".into());
     let mut buy = buy_input("acc-inv", "inst-1", 100.0, 1500, 5);
     buy.idempotency_key = Some("src.csv:2".into());
@@ -610,6 +613,7 @@ fn ai_batch_import_produces_ops_and_dedup_is_independent() {
     // 不产生第二笔交易，也不产生第二条 op——导入去重（幂等键）与 op 去重
     // （op_id）各自独立，互不冲突。
     let mut expense_again = super::common::make_expense("acc-inv", 88_00, "外卖");
+    expense_again.currency_code = "USD".into();
     expense_again.idempotency_key = Some("src.csv:1".into());
     let mut buy_again = buy_input("acc-inv", "inst-1", 100.0, 1500, 5);
     buy_again.idempotency_key = Some("src.csv:2".into());

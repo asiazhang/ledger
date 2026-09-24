@@ -560,7 +560,8 @@ onMounted(() => {
               style="width: 160px"
             />
             <AppSelect
-              v-model:value="currencyCode"
+              :value="currencyCode"
+              :disabled="true"
               :options="currencyOptions"
               style="width: 130px; margin-left: 8px"
             />
