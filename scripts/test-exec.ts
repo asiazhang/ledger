@@ -6,8 +6,9 @@
 // 尾部空转是纯浪费。执行面按两条入口重划：
 //
 // ① 并发入口（本脚本默认命令 run，scripts/test.sh 第一条命令）：一条
-//    `cargo test --workspace --no-run --message-format=json-render-diagnostics`
-//    构建一次，解析 cargo 报告的测试二进制清单，再由本脚本统一调度——全局
+//    `cargo test --workspace --lib --test '*' --no-run --message-format=json-render-diagnostics`
+//    （与 CI build.yml 的 PR 执行面同口径）构建一次，解析 cargo 报告的测试二进制
+//    清单，再由本脚本统一调度——全局
 //    并行度 = min(--jobs 或 CPU 数, 待跑二进制数)，每个二进制固定
 //    `RUST_TEST_THREADS=1`（只约束 libtest 线程），libtest 线程数 = 并行度，
 //    不出现「各二进制各自开满 libtest 线程」的 CPU 超订（测试自起的 tokio 等
@@ -20,9 +21,13 @@
 // 覆盖守门（check 命令；挂载登记归守门挂载登记 scripts/gate-mounts.ts，issue #1682）：
 // 目标清单口径与 `cargo test` 默认执行面全等——lib 单测 + bin 单测 + 集成测试 +
 // doc-test；example / bench 不在默认执行面（cargo 只构建 example、不跑 bench），
-// 故不入清单，但发现声明即提示，防口径漂移。守门四条（任一处漂移即红，fail loud）：
-//   ① 工作区全部测试目标 = 并发入口承接集合 ⊎ 非并发入口承接集合（互斥且无遗漏；
-//      目标清单自 manifest + 目录自动发现派生，新增 target / 新成员 crate 自动入列）；
+// 故不入清单，但发现声明即提示，防口径漂移。bin 单测不入并发入口（与 CI PR 口径
+// 对齐，issue #1787 热点 2）：零单测 bin 在 manifest 声明 test = false（源码扫描
+// 守门防新增测试静默漏跑），有单测的 bin 登记 EXEMPT_BINS 并写明承接入口。
+// 守门四条（任一处漂移即红，fail loud）：
+//   ① 工作区全部测试目标 = 并发入口承接集合 ⊎ 非并发入口承接集合 ⊎ bin 豁免集合
+//      （互斥且无遗漏；目标清单自 manifest + 目录自动发现派生，新增 target /
+//      新成员 crate 自动入列；豁免登记与发现漂移即红）；
 //   ② `[[test]] harness = false` 的声明集合 ⇔ scripts/test.sh 非并发入口的
 //      `--test <name>` 名单（双向全等——新增自定义 harness 目标未登记即红，登记
 //      失效或拼写漂移同样红）；
@@ -111,12 +116,48 @@ export function runKey(t: { package: string; target: string; kind: TargetKind })
   return `${t.package}::${t.target}::${t.kind}`;
 }
 
+/** bin 单测豁免登记条目：并发入口不跑的 bin 单测，必须写明承接入口。 */
+export interface ExemptBinDecl {
+  package: string;
+  target: string;
+  /** 单测的承接入口（守门报告与 summary 展示用）。 */
+  owner: string;
+}
+
+/**
+ * bin 单测豁免登记（issue #1787 热点 2）：并发入口的执行面与 CI build.yml 的
+ * PR 口径（`cargo test --workspace --lib --test '*'`，不含 bin 单测）对齐，
+ * 有单测的 bin 在此登记承接入口。当前仅 ledger-perf：生成器正确性单测属
+ * 性能工具链，随每日基准在 perf-bench.yml 运行（`cargo test --bin ledger-perf`），
+ * 不拖进 PR CI。守门方向：发现的每个 test = true bin 都必须登记（删登记或
+ * 新增未声明 bin 即红）；bin 删除后残留的死登记无副作用，不红。
+ */
+export const EXEMPT_BINS: ExemptBinDecl[] = [
+  {
+    package: "tauri-app",
+    target: "ledger-perf",
+    // owner 文案勿写成完整命令形状（如 cargo test --bin …）：workspace 命令覆盖
+    // 守门会把它当真命令扫（缺 --workspace 即红，ADR-0056）。
+    owner: "perf-bench.yml 每日基准专属入口（--bin ledger-perf 显式选择）",
+  },
+];
+
+/** `test = false` 的 bin 目标：不产生测试目标，但源码扫描守门防新增测试静默漏跑。 */
+export interface TestFalseBin {
+  package: string;
+  target: string;
+  /** bin 源文件绝对路径（cargo 口径解析结果；解析失败为 null，守门红）。 */
+  source: string | null;
+}
+
 /** 目标发现结果：目标清单 + 形态问题（不支持形态一律显式拒绝而非猜测）。 */
 interface Discovery {
   targets: DiscoveredTarget[];
   problems: string[];
   /** example / bench 目标（不在 `cargo test` 默认执行面，仅提示）。 */
   outOfFace: string[];
+  /** `test = false` 的 bin 目标（不入执行面，源码扫描守门用）。 */
+  testFalseBins: TestFalseBin[];
 }
 
 // ── manifest 解析（窄形态文本扫描，形态同 check-structure.ts 家族） ──────────
@@ -370,16 +411,40 @@ interface PackageTargets {
   targets: DiscoveredTarget[];
   problems: string[];
   outOfFace: string[];
+  testFalseBins: TestFalseBin[];
+}
+
+/**
+ * bin 源文件解析（cargo 口径）：显式 path 优先；无 path 时按 cargo 默认——
+ * target 名 = 包名 → src/main.rs，否则 src/bin/<name>.rs 或 src/bin/<name>/main.rs。
+ * 找不到返回 null（守门红，不猜测）。
+ */
+function resolveBinSource(
+  dir: string,
+  packageName: string,
+  decl: TargetDecl,
+  name: string,
+): string | null {
+  if (decl.path !== undefined)
+    return existsSync(join(dir, decl.path)) ? join(dir, decl.path) : null;
+  const candidates: string[] = [];
+  if (name === packageName) candidates.push(join("src", "main.rs"));
+  candidates.push(join("src", "bin", `${name}.rs`), join("src", "bin", name, "main.rs"));
+  for (const rel of candidates) {
+    if (existsSync(join(dir, rel))) return join(dir, rel);
+  }
+  return null;
 }
 
 function discoverPackage(dir: string, rel: string, tables: ManifestTables): PackageTargets {
   const targets: DiscoveredTarget[] = [];
   const problems: string[] = [];
   const outOfFace: string[] = [];
+  const testFalseBins: TestFalseBin[] = [];
   const packageName = tables.package.name;
   if (packageName === undefined) {
     problems.push(`✗ 目标发现：${rel}/Cargo.toml 缺 [package] name——目标无法归属包，拒绝继续`);
-    return { targets, problems, outOfFace };
+    return { targets, problems, outOfFace, testFalseBins };
   }
   for (const key of tables.unsupportedKeys) {
     problems.push(
@@ -444,15 +509,23 @@ function discoverPackage(dir: string, rel: string, tables: ManifestTables): Pack
       );
       continue;
     }
-    if (decl.test !== false) {
-      targets.push({
+    if (decl.test === false) {
+      // test = false 的 bin 不产生测试目标（cargo 也不构建其测试二进制），但
+      // 登记下来供源码扫描守门：bin 内新增 #[test] 会静默漏跑，见 testFalseBinProblems。
+      testFalseBins.push({
         package: packageName,
         target: name,
-        kind: "bin",
-        harnessFalse: false,
-        cwd: dir,
+        source: resolveBinSource(dir, packageName, decl, name),
       });
+      continue;
     }
+    targets.push({
+      package: packageName,
+      target: name,
+      kind: "bin",
+      harnessFalse: false,
+      cwd: dir,
+    });
   }
 
   // 集成测试：显式 [[test]] 或 tests/*.rs、tests/*/main.rs 自动发现。
@@ -491,7 +564,7 @@ function discoverPackage(dir: string, rel: string, tables: ManifestTables): Pack
     }
   }
 
-  return { targets, problems, outOfFace };
+  return { targets, problems, outOfFace, testFalseBins };
 }
 
 /** 发现工作区全部测试目标（口径 = `cargo test` 默认执行面）。 */
@@ -500,6 +573,7 @@ export function discoverTargets(rootDir: string): Discovery {
   const problems: string[] = [];
   const targets: DiscoveredTarget[] = [];
   const outOfFace: string[] = [];
+  const testFalseBins: TestFalseBin[] = [];
 
   const rootTables = readManifest(srcTauriDir);
   if (rootTables === null) {
@@ -507,6 +581,7 @@ export function discoverTargets(rootDir: string): Discovery {
       targets,
       problems: [`✗ 目标发现：Rust 根 manifest 不存在：${SRC_TAURI_DIR_NAME}/Cargo.toml`],
       outOfFace,
+      testFalseBins,
     };
   }
   const packageDirs: { dir: string; rel: string }[] = [];
@@ -538,6 +613,7 @@ export function discoverTargets(rootDir: string): Discovery {
     const found = discoverPackage(dir, rel, tables);
     problems.push(...found.problems);
     outOfFace.push(...found.outOfFace);
+    testFalseBins.push(...found.testFalseBins);
     for (const target of found.targets) {
       const key = runKey(target);
       if (seen.has(key)) continue;
@@ -545,7 +621,7 @@ export function discoverTargets(rootDir: string): Discovery {
       targets.push(target);
     }
   }
-  return { targets, problems, outOfFace };
+  return { targets, problems, outOfFace, testFalseBins };
 }
 
 // ── 两个入口的覆盖守门 ───────────────────────────────────────────────────
@@ -732,12 +808,14 @@ export function parseEntryWiring(content: string): EntryWiring {
 export interface CoverageResult {
   problems: string[];
   targets: DiscoveredTarget[];
-  /** 并发入口承接（lib 单测 + bin 单测 + harness=true 集成测试）。 */
+  /** 并发入口承接（lib 单测 + 未豁免 bin 单测 + harness=true 集成测试）。 */
   parallel: DiscoveredTarget[];
   /** 非并发入口承接的自定义 harness 集成测试（`--test <name>`）。 */
   delegated: DiscoveredTarget[];
   /** cargo 自有入口承接的 doc-test。 */
   doc: DiscoveredTarget[];
+  /** bin 单测豁免（EXEMPT_BINS 命中的 bin 目标，专属入口承接）。 */
+  exempt: DiscoveredTarget[];
   outOfFace: string[];
 }
 
@@ -776,14 +854,61 @@ function cargoRuntimeEnvProblems(rootDir: string): string[] {
   return problems;
 }
 
-/** 覆盖守门：目标清单 ⇔ 两个入口的并集（互斥且无遗漏）。 */
+/**
+ * bin test = false 源码扫描守门：声明 test = false 的 bin 不构建测试二进制，
+ * 源码里新增 #[test] / #[cfg(test)] / #[tokio::test] 会静默漏跑。扫描前掩注释
+ * （maskNonCode）——注释里提到测试属性不误报，代码里的真属性才命中（issue #1787）。
+ */
+const TEST_ATTR_PATTERN = /#\[\s*(?:tokio\s*::\s*)?test\b|#\[\s*cfg\s*\(\s*test\b/g;
+
+function testFalseBinProblems(rootDir: string, bins: TestFalseBin[]): string[] {
+  const problems: string[] = [];
+  for (const bin of bins) {
+    if (bin.source === null) {
+      problems.push(
+        `✗ bin test=false 守门：${bin.package}::${bin.target} 声明 test = false，但无法定位源文件` +
+          `（显式 [[bin]] 缺 path 时按 cargo 默认 src/main.rs 或 src/bin/<name>.rs 解析失败）——拒绝猜测`,
+      );
+      continue;
+    }
+    const masked = maskNonCode(readFileSync(bin.source, "utf8"), true);
+    for (const match of masked.matchAll(TEST_ATTR_PATTERN)) {
+      const line = lineAt(masked, match.index);
+      problems.push(
+        `✗ bin test=false 守门：${relative(rootDir, bin.source)}:${line} 出现测试属性 \`${match[0]}\`——` +
+          `该 bin 已声明 test = false（不构建测试二进制），新增测试会静默漏跑。` +
+          `请把测试移到 lib 或集成测试，或改回 test = true 并重新评估执行面（issue #1787）`,
+      );
+    }
+  }
+  return problems;
+}
+
+/** 覆盖守门：目标清单 ⇔ 两个入口 + bin 豁免的并集（互斥且无遗漏）。 */
 export function checkCoverage(rootDir: string): CoverageResult {
   const discovery = discoverTargets(rootDir);
   const problems = [...discovery.problems];
   const delegated = discovery.targets.filter((t) => t.kind === "test" && t.harnessFalse);
   const doc = discovery.targets.filter((t) => t.kind === "doc");
+  const exempt = discovery.targets.filter(
+    (t) =>
+      t.kind === "bin" && EXEMPT_BINS.some((e) => e.package === t.package && e.target === t.target),
+  );
+  // bin 单测不入并发入口（与 CI PR 口径对齐）：发现的每个 test = true bin 都必须
+  // 登记豁免（test = false 的 bin 根本不产生目标，无需登记）。删登记或新增未声明
+  // 的 bin 即红；bin 删除后残留的死登记无副作用，不红。
+  for (const t of discovery.targets) {
+    if (t.kind !== "bin") continue;
+    if (EXEMPT_BINS.some((e) => e.package === t.package && e.target === t.target)) continue;
+    problems.push(
+      `✗ 覆盖守门：bin 单测未登记豁免：${targetKey(t)}::bin（test = true）会进入并发入口——` +
+        `bin 单测不入 PR 执行面（issue #1787 热点 2）：零单测请在 [[bin]] 声明 test = false，` +
+        `有单测且有专属承接入口请在 scripts/test-exec.ts 的 EXEMPT_BINS 登记`,
+    );
+  }
+  const exemptKeys = new Set(exempt.map(runKey));
   const parallel = discovery.targets.filter(
-    (t) => t.kind !== "doc" && !(t.kind === "test" && t.harnessFalse),
+    (t) => t.kind !== "doc" && !(t.kind === "test" && t.harnessFalse) && !exemptKeys.has(runKey(t)),
   );
 
   if (discovery.targets.length === 0 && problems.length === 0) {
@@ -834,6 +959,7 @@ export function checkCoverage(rootDir: string): CoverageResult {
     );
   }
   problems.push(...cargoRuntimeEnvProblems(rootDir));
+  problems.push(...testFalseBinProblems(rootDir, discovery.testFalseBins));
 
   return {
     problems,
@@ -841,6 +967,7 @@ export function checkCoverage(rootDir: string): CoverageResult {
     parallel,
     delegated,
     doc,
+    exempt,
     outOfFace: discovery.outOfFace,
   };
 }
@@ -848,12 +975,17 @@ export function checkCoverage(rootDir: string): CoverageResult {
 function summarizeCoverage(result: CoverageResult): string {
   const count = (kind: TargetKind): number => result.parallel.filter((t) => t.kind === kind).length;
   const docPkgs = new Set(result.doc.map((t) => t.package)).size;
+  const exemptOwners = (t: DiscoveredTarget): string =>
+    EXEMPT_BINS.find((e) => e.package === t.package && e.target === t.target)?.owner ?? "?";
   return (
     `✓ 测试执行覆盖守门：目标 ${result.targets.length} 个 = ` +
     `并发入口 ${result.parallel.length}（lib 单测 ${count("lib")} + bin 单测 ${count("bin")} + 集成测试 ${count("test")}）` +
     ` ⊎ 非并发入口 ${result.delegated.length + result.doc.length}` +
     `（cargo 自有 runner：${result.delegated.map((t) => t.target).join(" / ") || "（无）"}` +
     ` + doc-test ${result.doc.length} 个，覆盖 ${docPkgs} 个包）` +
+    (result.exempt.length > 0
+      ? ` ⊎ bin 单测豁免 ${result.exempt.length} 个（${result.exempt.map((t) => `${t.target} → ${exemptOwners(t)}`).join(" / ")}）`
+      : "") +
     (result.outOfFace.length > 0
       ? ` · 默认执行面外 ${result.outOfFace.length} 个（example/bench，不跑）`
       : "")
@@ -919,9 +1051,19 @@ async function buildTestBinaries(
   srcTauriDir: string,
 ): Promise<{ executables: Map<string, string>; problems: string[]; ms: number }> {
   const start = Date.now();
+  // CI PR 口径（build.yml）：--lib --test '*' 排除 bin 单测（issue #1787 热点 2）。
+  // 零单测 bin 声明 test = false；有单测的 bin（当前 ledger-perf）登记 EXEMPT_BINS。
   const result = await runChild(
     cargo,
-    ["test", "--workspace", "--no-run", "--message-format=json-render-diagnostics"],
+    [
+      "test",
+      "--workspace",
+      "--lib",
+      "--test",
+      "*",
+      "--no-run",
+      "--message-format=json-render-diagnostics",
+    ],
     { cwd: srcTauriDir, streamStderr: true },
   );
   const ms = Date.now() - start;
@@ -945,7 +1087,7 @@ async function buildTestBinaries(
   }
   if (!buildSucceeded) {
     problems.push(
-      "✗ 构建失败：`cargo test --workspace --no-run` 非零退出（编译错误见上方 cargo 输出）",
+      "✗ 构建失败：`cargo test --workspace --lib --test '*' --no-run` 非零退出（编译错误见上方 cargo 输出）",
     );
   }
   return { executables, problems, ms };
@@ -1032,21 +1174,25 @@ async function runAll(options: RunOptions): Promise<number> {
   const srcTauriDir = join(rootDir, SRC_TAURI_DIR_NAME);
   const cargo = process.env.CARGO ?? "cargo";
   console.log(
-    `▶ 构建测试二进制（一次构建全部 target）：cargo test --workspace --no-run` +
-      `（缓存命中时秒级返回；冷构建的编译耗时见 cargo 输出）`,
+    `▶ 构建测试二进制（一次构建全部 target）：cargo test --workspace --lib --test '*' --no-run` +
+      `（CI PR 口径同款，bin 单测不入面；缓存命中时秒级返回；冷构建的编译耗时见 cargo 输出）`,
   );
   const build = await buildTestBinaries(cargo, srcTauriDir);
   console.log(`  · 构建阶段 ${formatSeconds(build.ms)}`);
   const problems = [...coverage.problems, ...build.problems];
 
-  // 第四道交叉核对：cargo 实际构建出的测试二进制集合 ⇔ 目标发现清单（lib/bin/集成测试）。
+  // 第四道交叉核对：cargo 实际构建出的测试二进制集合 ⇔ 目标发现清单（lib/集成测试 +
+  // 未豁免 bin）。构建命令 --lib --test '*' 不含 bin 单测，豁免 bin 同步剔除。
+  const exemptKeys = new Set(coverage.exempt.map(runKey));
   const expected = new Map(
-    coverage.targets.filter((t) => t.kind !== "doc").map((t) => [runKey(t), t] as const),
+    coverage.targets
+      .filter((t) => t.kind !== "doc" && !exemptKeys.has(runKey(t)))
+      .map((t) => [runKey(t), t] as const),
   );
   for (const key of expected.keys()) {
     if (!build.executables.has(key)) {
       problems.push(
-        `✗ 执行面漂移：目标清单里的 ${key} 未被 cargo 构建（cargo test --workspace --no-run 无对应可执行文件）`,
+        `✗ 执行面漂移：目标清单里的 ${key} 未被 cargo 构建（cargo test --workspace --lib --test '*' --no-run 无对应可执行文件）`,
       );
     }
   }
@@ -1201,10 +1347,22 @@ async function main(): Promise<void> {
   if (options.command === "plan") {
     const discovery = discoverTargets(options.rootDir);
     if (discovery.problems.length > 0) printProblems(discovery.problems, "❌ 目标发现失败");
+    const exemptKeys = new Set(
+      discovery.targets
+        .filter(
+          (t) =>
+            t.kind === "bin" &&
+            EXEMPT_BINS.some((e) => e.package === t.package && e.target === t.target),
+        )
+        .map(runKey),
+    );
     for (const target of discovery.targets) {
-      console.log(
-        `${target.kind.padEnd(5)} ${targetKey(target)}${target.harnessFalse ? "  harness=false（非并发入口）" : ""}`,
-      );
+      const note = target.harnessFalse
+        ? "  harness=false（非并发入口）"
+        : exemptKeys.has(runKey(target))
+          ? "  bin 单测豁免（EXEMPT_BINS，不入并发入口）"
+          : "";
+      console.log(`${target.kind.padEnd(5)} ${targetKey(target)}${note}`);
     }
     return;
   }

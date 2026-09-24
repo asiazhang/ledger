@@ -95,6 +95,35 @@ function makeFixture(overrides: FixtureOverrides = {}): string {
   return root;
 }
 
+/** 带 test = false bin 的根 manifest（bin 零单测，源文件由 files 覆写提供）。 */
+const ROOT_WITH_TEST_FALSE_BIN = [
+  "[package]",
+  'name = "root-app"',
+  'version = "0.0.0"',
+  'edition = "2021"',
+  "",
+  "[workspace]",
+  'members = ["crates/*"]',
+  "",
+  "[[bin]]",
+  'name = "root-app"',
+  'path = "src/main.rs"',
+  "test = false",
+  "",
+].join("\n");
+
+/** 豁免登记匹配用根 manifest：包名 = tauri-app（EXEMPT_BINS 的 package 名）。 */
+const ROOT_NAMED_TAURI_APP = [
+  "[package]",
+  'name = "tauri-app"',
+  'version = "0.0.0"',
+  'edition = "2021"',
+  "",
+  "[workspace]",
+  'members = ["crates/*"]',
+  "",
+].join("\n");
+
 describe("测试执行器两入口覆盖守门（issue #1112）", () => {
   it("合规夹具：目标清单与两入口并集全等 → 通过", () => {
     const r = run(["check", "--root", makeFixture()]);
@@ -439,6 +468,89 @@ describe("测试执行器两入口覆盖守门（issue #1112）", () => {
     ]);
     expect(r.status).toBe(1);
     expect(r.output).toContain("未支持的 members glob");
+  });
+
+  it("bin test = false 且源码零单测 → 绿（bin 不入目标清单）", () => {
+    const r = run([
+      "check",
+      "--root",
+      makeFixture({
+        rootManifest: ROOT_WITH_TEST_FALSE_BIN,
+        files: { "src-tauri/src/main.rs": "fn main() {}\n" },
+      }),
+    ]);
+    expect(r.status).toBe(0);
+    // bin 不产生测试目标：目标数与无 bin 夹具一致（6），bin 单测计数 0。
+    expect(r.output).toContain("目标 6 个");
+    expect(r.output).toContain("bin 单测 0");
+  });
+
+  it("bin test = false 但源码新增 #[test] → 红（静默漏跑即红）", () => {
+    const r = run([
+      "check",
+      "--root",
+      makeFixture({
+        rootManifest: ROOT_WITH_TEST_FALSE_BIN,
+        files: {
+          "src-tauri/src/main.rs": "#[test]\nfn stray() {}\n\nfn main() {}\n",
+        },
+      }),
+    ]);
+    expect(r.status).toBe(1);
+    expect(r.output).toContain("test = false");
+    expect(r.output).toContain("静默漏跑");
+  });
+
+  it("bin test = false 源码注释里提到 #[test] → 不假红（注释掩码）", () => {
+    const r = run([
+      "check",
+      "--root",
+      makeFixture({
+        rootManifest: ROOT_WITH_TEST_FALSE_BIN,
+        files: {
+          "src-tauri/src/main.rs": "// 不要在 bin 里加 #[test] 或 #[cfg(test)]\nfn main() {}\n",
+        },
+      }),
+    ]);
+    expect(r.status).toBe(0);
+  });
+
+  it("bin 带单测且未登记豁免 → 红（bin 单测不入并发入口）", () => {
+    const r = run([
+      "check",
+      "--root",
+      makeFixture({
+        files: { "src-tauri/src/main.rs": "#[test]\nfn unit() {}\n\nfn main() {}\n" },
+      }),
+    ]);
+    expect(r.status).toBe(1);
+    expect(r.output).toContain("bin 单测未登记豁免");
+    expect(r.output).toContain("root-app::root-app");
+  });
+
+  it("豁免登记命中（tauri-app::ledger-perf）→ 出并发入口，summary 标注承接入口", () => {
+    const r = run([
+      "check",
+      "--root",
+      makeFixture({
+        rootManifest: ROOT_NAMED_TAURI_APP,
+        files: {
+          "src-tauri/src/bin/ledger-perf/main.rs": "#[test]\nfn gen() {}\n\nfn main() {}\n",
+        },
+      }),
+    ]);
+    expect(r.status).toBe(0);
+    expect(r.output).toContain("bin 单测豁免 1 个");
+    expect(r.output).toContain("ledger-perf → perf-bench.yml 每日基准");
+    expect(r.output).toContain("bin 单测 0");
+  });
+
+  it("bin 删除后残留的死登记 → 不红（无副作用，summary 不再展示）", () => {
+    // 守门方向是「发现的 test = true bin 都必须登记」：bin 删除后登记无匹配对象，
+    // 不拖累任何工作区（含夹具）；删登记才红（bin 回到并发入口被未登记检查拦住）。
+    const r = run(["check", "--root", makeFixture({ rootManifest: ROOT_NAMED_TAURI_APP })]);
+    expect(r.status).toBe(0);
+    expect(r.output).not.toContain("bin 单测豁免");
   });
 });
 
