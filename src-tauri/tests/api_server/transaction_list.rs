@@ -4,8 +4,8 @@ use tauri_app_lib::test_support;
 use tauri_app_lib::test_support::FIXED_NOW;
 
 use crate::common::{
-    batch_body, create_account_via_api, create_category_via_api, dates_of, get_json, get_status,
-    items_of, post_batch, seed_readback_transactions, setup_app,
+    batch_body, create_account_via_api, create_account_via_api_with_type, create_category_via_api,
+    dates_of, get_json, get_status, items_of, post_batch, seed_readback_transactions, setup_app,
 };
 
 #[tokio::test]
@@ -163,6 +163,65 @@ async fn test_get_transactions_filters_by_kinds_set() {
     // 集合外字面量：非法值 4xx；Query 反序列化拒绝，响应体非 JSON 契约
     let status = get_status(&app, "/api/v1/transactions?kinds=expense,bogus").await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+/// 隐藏投资相关流水参数的接线证明（issue #1810 / ADR-0136）：参数经 HTTP 进入读路径
+/// 后行集一步可观察收窄（投资相关行消失、total 同步），缺省不携带 = 行为不变。判定
+/// 语义（三端命中矩阵、按账户不按分类）的权威在交易域单测，本层只证壳三件套与接线。
+/// 负向（删除即变红）：读路径删除该 WHERE 分支、或请求不再携带该参数 →
+/// 本用例至少一条断言变红，断言对准行集与 total 这两个可观察结果。
+#[tokio::test]
+async fn test_get_transactions_hide_investment_related_excludes_rows() {
+    let (app, _) = setup_app();
+    let bank = create_account_via_api_with_type(&app, "银行卡", "bank").await;
+    let inv = create_account_via_api_with_type(&app, "投资账户", "investment").await;
+
+    // 充值转账（银行卡 → 投资账户）+ 银行卡日常支出
+    let topup = format!(
+        r#"{{"kind":"transfer","amount_cents":1000,"currency_code":"CNY","account_id":"{bank}","to_account_id":"{inv}","date":"2026-07-01"}}"#
+    );
+    let daily = format!(
+        r#"{{"kind":"expense","amount_cents":300,"currency_code":"CNY","account_id":"{bank}","date":"2026-07-02"}}"#
+    );
+    let created = post_batch(&app, batch_body(&[&topup, &daily], None)).await;
+    assert!(
+        created.iter().all(|r| r["success"] == true),
+        "写入应成功: {created:?}"
+    );
+
+    // 缺省不携带参数 = 行为不变（契约只增）
+    let (status, body) = get_json(&app, "/api/v1/transactions").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["total"], 2, "缺省应返回全部行: {body:?}");
+
+    // 携带参数：投资相关行从行集与 total 同步消失（一步可观察）
+    let (status, body) = get_json(&app, "/api/v1/transactions?hide_investment_related=true").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["total"], 1, "投资相关行应被排除: {body:?}");
+    let txs = items_of(&body);
+    assert_eq!(txs.len(), 1, "行集应与 total 同步收窄: {body:?}");
+    assert_eq!(txs[0]["kind"], "expense", "保留行应为银行卡日常支出");
+
+    // false 显式携带 = 未携带（不过滤）
+    let (status, body) = get_json(&app, "/api/v1/transactions?hide_investment_related=false").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["total"], 2, "false 不收窄行集: {body:?}");
+
+    // 与既有类型过滤 AND 组合：仅转账（1 行）∩ 偏好收窄 = 空集
+    let (status, body) = get_json(&app, "/api/v1/transactions?kinds=transfer").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["total"], 1, "仅类型过滤时转账行照常返回: {body:?}");
+    let (status, body) = get_json(
+        &app,
+        "/api/v1/transactions?kinds=transfer&hide_investment_related=true",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        items_of(&body).is_empty(),
+        "类型 ∩ 偏好收窄应为空集: {body:?}"
+    );
+    assert_eq!(body["total"], 0);
 }
 
 #[tokio::test]

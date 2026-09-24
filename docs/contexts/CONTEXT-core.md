@@ -29,6 +29,7 @@
   - 筛选条件变化时总数随之变化，分页始终基于筛选后的结果。
 
   - **kind 呈现分域（ADR-0135）**：主交易列表只呈现四通用 kind（income / expense / transfer / refund），由前端每次请求显式携带 kind 集合（含默认态）；投资 kind（buy / sell / convert / split / dividend）的呈现面在投资域投资明细页签。列表命令契约仍收全 kind 闭集（只增不改）。
+  - **隐藏投资相关流水（issue #1810 / ADR-0136）**：`list_transactions` 携可选参数 `hide_investment_related=true` 时，行集与 total 排除转出 / 转入 / 出资三端任一端为投资类型账户（`investment`）的行——三端口径同 InvolvingAccount，按账户不按分类；与既有筛选维度 AND 组合，判定住本域读路径（服务端分页要求行集与 total 同口径）。缺省不携带或 `false` = 全量（只增不改）；开关本体是界面域「视图偏好」，不在本域。
 ## 写入协议（Write Protocol）
 
 - **定义**：交易创建与修改的顺序契约（守卫 → 回退 → 计划装配 → 落库 → 应用副作用 → op 产出）的单正文承载（ADR-0105）：本地写入与同步重放（见多端同步域 Replay）作为 Local / Replay 两形态，经形态闭集参数吸收差异，同一写入 grammar 只拼写一遍。

@@ -74,7 +74,7 @@ fn enforce_http_page_bounds(
     summary = "列出交易（可按日期/账户/类型过滤 + 服务端分页）",
     description = "读回/列表唯一入口：返回 `{items, total}`，过滤参数（from/to、account_id、\
                   involving_account_id、merchant_id、category_id、instrument_id、kinds、\
-                  uncategorized_only、limit、page/page_size）全部可选；默认按日期倒序稳定排序。\
+                  uncategorized_only、hide_investment_related、limit、page/page_size）全部可选；默认按日期倒序稳定排序。\
                   HTTP 单请求行数上限 100：缺省不再返回全部（等价 page_size=100），\
                   读全部须按 total 翻页取齐；超限或负值报 400 码化错误。\
                   读回核对与参数语义见导入知识「对账完成判定」节；行携带 `source` 来源字段（读时反查推导），\
@@ -87,6 +87,7 @@ fn enforce_http_page_bounds(
         ("merchant_id" = Option<String>, Query, description = "按商户过滤（含软删商户的历史交易）"),
         ("category_id" = Option<String>, Query, description = "按分类精确过滤（不含子分类，含软删分类的历史交易）"),
         ("uncategorized_only" = Option<bool>, Query, description = "true 时仅返回无分类交易；与 category_id 同携按 AND 组合"),
+        ("hide_investment_related" = Option<bool>, Query, description = "true 时隐藏投资相关流水：转出 / 转入 / 出资三端任一端为投资类型账户的行被排除（按账户不按分类，ADR-0136）；与其余维度 AND 组合，缺省或 false 行为不变"),
         ("instrument_id" = Option<String>, Query, description = "按标的过滤（ADR-0107）：命中证券交易扩展表中该标的的 buy/sell 行，convert 任一腿命中即算（转入腿同算）；与其余维度 AND 组合"),
         ("kinds" = Option<Vec<TransactionKind>>, Query, description = "交易类型集合过滤（唯一类型维度，手动多选与下钻共用）：逗号分隔单参数如 expense,refund（同时承担单值与多值，取代原单值 kind 参数），命中 kind IN (...)；与其余维度 AND 组合，非法值 4xx"),
         ("limit" = Option<i64>, Query, description = "取前 N 条，须在 0 到 100 之间，超范围报 400；与 page_size 互斥，仅携 limit 时按 limit 截取"),
