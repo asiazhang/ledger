@@ -32,6 +32,13 @@ export const useSavingsGoalsStore = defineStore("savingsGoals", () => {
    */
   const goalAccountIds = computed(() => new Set(goals.value.map((p) => p.goal.account_id)));
 
+  /** 进行中目标（issue #1754）：默认列表只留进行中（active）——归档是收纳态，
+   *  退出默认列表但不删除；快照整体替换由 push-first 工厂承接，分组是纯派生。 */
+  const activeGoals = computed(() => goals.value.filter((p) => p.goal.status === "active"));
+
+  /** 已归档目标（issue #1754）：归档列表可查——历史与流水保留，账户原样。 */
+  const archivedGoals = computed(() => goals.value.filter((p) => p.goal.status === "archived"));
+
   /** 创建目标（名称、目标金额、可选截止日期）：写入成功即返回目标 id——不因
    *  重拉失败反转为「保存失败」（数据已落库，重复提交才是真错），重拉由
    *  `ledger:changed` 信号兜底，失败信号由 status 承载。 */
@@ -53,7 +60,47 @@ export const useSavingsGoalsStore = defineStore("savingsGoals", () => {
     });
   }
 
+  /** 归档目标（issue #1754）：写入成功即完成，不因重拉失败反转为「归档失败」
+   *  （与 create / update 同款语义），重拉由 ledger:changed 信号兜底。 */
+  async function archive(id: string): Promise<void> {
+    await api.archiveSavingsGoal(id);
+    await refresh().catch(() => {
+      /* 重拉失败不阻断归档成功路径 */
+    });
+  }
+
+  /** 取消归档目标（issue #1754）：恢复 active 回默认列表。 */
+  async function unarchive(id: string): Promise<void> {
+    await api.unarchiveSavingsGoal(id);
+    await refresh().catch(() => {
+      /* 重拉失败不阻断取消归档成功路径 */
+    });
+  }
+
+  /** 删除目标（issue #1754）：余额非零被后端码化拒绝（引导先转出），余额为零
+   *  后端级联软删专属账户；写入成功即完成，重拉由 ledger:changed 信号兜底。 */
+  async function remove(id: string): Promise<void> {
+    await api.deleteSavingsGoal(id);
+    await refresh().catch(() => {
+      /* 重拉失败不阻断删除成功路径 */
+    });
+  }
+
   // push 生命周期（self-init 与 ledger:changed 订阅）由工厂内化（ADR-0123）。
 
-  return { goals, goalAccountIds, status, version, refresh, invalidate, create, update };
+  return {
+    goals,
+    goalAccountIds,
+    activeGoals,
+    archivedGoals,
+    status,
+    version,
+    refresh,
+    invalidate,
+    create,
+    update,
+    archive,
+    unarchive,
+    remove,
+  };
 });

@@ -271,3 +271,220 @@ async fn progress_command_wires_projection() {
     assert_eq!(row.pace_delta_cents, None, "无节奏不虚构差值");
     assert_eq!(row.eta_months, None, "有截止日不正推 ETA");
 }
+
+// ---------------------------------------------------------------------------
+// 生命周期守卫（issue #1754）：归档 / 取消归档 / 删除守卫 + 账户禁删壳层编排。
+// ---------------------------------------------------------------------------
+
+use ledger_infra::db::DbState;
+use tauri_app_lib::commands::accounts::delete_account;
+use tauri_app_lib::commands::savings_goal::{
+    archive_savings_goal, delete_savings_goal, unarchive_savings_goal,
+};
+
+/// 接线证明（AC 归档）：归档 / 取消归档命令往返——进度读命令 status 字段可见
+/// archived / active 切换；专属账户全程可读（归档不删账户）。
+#[tokio::test]
+async fn archive_unarchive_roundtrip_wires_progress_status() {
+    let (app, _dir) = app_with_db();
+    let goal_id = create_savings_goal(
+        app.state(),
+        app.clone(),
+        SavingsGoalInput {
+            name: "买车基金".into(),
+            target_amount_cents: 500_000,
+            deadline: None,
+        },
+    )
+    .await
+    .expect("创建目标应返回成功");
+
+    archive_savings_goal(app.state(), app.clone(), goal_id.clone())
+        .await
+        .expect("归档应返回成功");
+    let progress: Vec<SavingsGoalProgress> = savings_goal_progress(app.state())
+        .await
+        .expect("进度读命令应成功");
+    assert_eq!(
+        progress[0].goal.status,
+        ledger_savings_goal::SavingsGoalStatus::Archived
+    );
+
+    unarchive_savings_goal(app.state(), app.clone(), goal_id.clone())
+        .await
+        .expect("取消归档应返回成功");
+    let progress: Vec<SavingsGoalProgress> = savings_goal_progress(app.state())
+        .await
+        .expect("进度读命令应成功");
+    assert_eq!(
+        progress[0].goal.status,
+        ledger_savings_goal::SavingsGoalStatus::Active
+    );
+
+    // 账户侧读命令全程可见专属账户（归档不删任何东西）
+    let accounts = list_accounts(app.state()).await.expect("账户读命令应成功");
+    let account_id = progress[0].goal.account_id.clone();
+    assert!(accounts.iter().any(|a| a.id == account_id));
+}
+
+/// 壳三件套（错误码）+ 接线证明负向面：余额非零删除被码化拒绝（引导先转出），
+/// 目标与专属账户原样；真实支出清零后删除成功，专属账户经账户域读命令再读
+/// 不存在、目标退出进度读数。
+#[tokio::test]
+async fn delete_goal_guards_balance_then_cascades_account() {
+    let (app, _dir) = app_with_db();
+    let goal_id = create_savings_goal(
+        app.state(),
+        app.clone(),
+        SavingsGoalInput {
+            name: "买车基金".into(),
+            target_amount_cents: 500_000,
+            deadline: None,
+        },
+    )
+    .await
+    .expect("创建目标应返回成功");
+    let progress: Vec<SavingsGoalProgress> = savings_goal_progress(app.state())
+        .await
+        .expect("进度读命令应成功");
+    let account_id = progress[0].goal.account_id.clone();
+
+    // 造数走真实 transfer 蓄水（余额缓存由产品写路径维护）：命令测试无独立写
+    // 命令面向目标账户，经 DbState 连接直驱交易域公开入口。
+    {
+        let conn = app.state::<DbState>().conn.clone();
+        let guard = conn.lock().expect("种子写入锁应可取");
+        tauri_app_lib::test_support::seed_account(
+            &guard,
+            "src",
+            "活期卡",
+            "bank",
+            "CNY",
+            2_000_000,
+        );
+        ledger_transaction::create(&guard, transfer_input("src", &account_id, 100_000))
+            .expect("转账应成功");
+    }
+
+    let err = delete_savings_goal(app.state(), app.clone(), goal_id.clone())
+        .await
+        .expect_err("余额非零应被拒绝");
+    assert!(
+        err.is_code("savings-goal.delete-balance-nonzero"),
+        "应报码化错误 savings-goal.delete-balance-nonzero，实际 {err:?}"
+    );
+    let progress: Vec<SavingsGoalProgress> = savings_goal_progress(app.state())
+        .await
+        .expect("进度读命令应成功");
+    assert_eq!(progress.len(), 1, "拒绝删除后目标原样");
+
+    // 清零（真实支出冲销余额）后删除：目标退出进度读数、专属账户再读不存在
+    {
+        let conn = app.state::<DbState>().conn.clone();
+        let guard = conn.lock().expect("种子写入锁应可取");
+        ledger_transaction::create(
+            &guard,
+            ledger_transaction::TransactionInput {
+                kind: ledger_transaction::TransactionKind::Expense,
+                account_id: account_id.clone(),
+                ..transfer_input("src", &account_id, 100_000)
+            },
+        )
+        .expect("支出应成功");
+    }
+    delete_savings_goal(app.state(), app.clone(), goal_id.clone())
+        .await
+        .expect("余额为零应可删除");
+    let progress: Vec<SavingsGoalProgress> = savings_goal_progress(app.state())
+        .await
+        .expect("进度读命令应成功");
+    assert!(progress.is_empty(), "删除后目标退出进度读数");
+    let accounts = list_accounts(app.state()).await.expect("账户读命令应成功");
+    assert!(
+        !accounts.iter().any(|a| a.id == account_id),
+        "删除后专属账户经账户域读命令再读不存在"
+    );
+}
+
+/// 接线证明（AC 账户侧删除被拒·壳层编排，删除编排调用本测试即红）：删除在用
+/// 目标的专属账户被码化拒绝（账户域不反向依赖目标域，守卫经壳层编排落在删除
+/// 账户命令入口）；普通账户（非目标绑定）照常删除成功。
+#[tokio::test]
+async fn delete_account_of_active_goal_is_rejected_by_shell_orchestration() {
+    let (app, _dir) = app_with_db();
+    let _ = create_savings_goal(
+        app.state(),
+        app.clone(),
+        SavingsGoalInput {
+            name: "买车基金".into(),
+            target_amount_cents: 500_000,
+            deadline: None,
+        },
+    )
+    .await
+    .expect("创建目标应返回成功");
+    let progress: Vec<SavingsGoalProgress> = savings_goal_progress(app.state())
+        .await
+        .expect("进度读命令应成功");
+    let goal_account = progress[0].goal.account_id.clone();
+
+    let err = delete_account(app.state(), app.clone(), goal_account.clone())
+        .await
+        .expect_err("在用目标的专属账户应被拒绝");
+    assert!(
+        err.is_code("savings-goal.account-in-use"),
+        "应报码化错误 savings-goal.account-in-use，实际 {err:?}"
+    );
+
+    // 普通账户（非目标绑定）照常可删——守卫只拦目标绑定账户
+    let plain = {
+        let conn = app.state::<DbState>().conn.clone();
+        let guard = conn.lock().expect("种子写入锁应可取");
+        ledger_accounts::create_account(
+            &guard,
+            ledger_accounts::AccountInput {
+                name: "普通卡".into(),
+                kind: ledger_accounts::AccountType::Bank,
+                currency_code: "CNY".into(),
+                initial_balance_cents: None,
+                credit_limit_cents: None,
+                statement_day: None,
+                due_day: None,
+            },
+        )
+        .expect("建普通账户应成功")
+    };
+    delete_account(app.state(), app.clone(), plain)
+        .await
+        .expect("非目标账户删除应成功");
+}
+
+/// 造数：真实 transfer 输入（公开写入口，域单测同款全字段形态）。
+fn transfer_input(from: &str, to: &str, amount_cents: i64) -> ledger_transaction::TransactionInput {
+    ledger_transaction::TransactionInput {
+        kind: ledger_transaction::TransactionKind::Transfer,
+        amount_cents,
+        currency_code: "CNY".into(),
+        account_id: from.into(),
+        to_account_id: Some(to.into()),
+        funding_account_id: None,
+        category_id: None,
+        merchant_id: None,
+        merchant_name: None,
+        policy_id: None,
+        refund_of_transaction_id: None,
+        note: None,
+        date: "2026-07-01".into(),
+        instrument_id: None,
+        quantity: None,
+        price_cents: None,
+        fee_cents: None,
+        to_instrument_id: None,
+        to_quantity: None,
+        out_amount_cents: None,
+        in_amount_cents: None,
+        origin: None,
+        fx_rate: None,
+        idempotency_key: None,
+    }
+}

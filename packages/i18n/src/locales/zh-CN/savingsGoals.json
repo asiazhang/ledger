@@ -17,8 +17,13 @@
     "projection": "推算"
   },
   "actions": {
-    "edit": "编辑"
+    "edit": "编辑",
+    "archive": "归档",
+    "unarchive": "取消归档",
+    "delete": "删除"
   },
+  "archivedTitle": "已归档",
+  "achievedPlanHint": "关联计划仍在执行，请到计划页处理",
   "status": {
     "inProgress": "进行中",
     "achieved": "已达成"
@@ -48,7 +53,12 @@
   },
   "msg": {
     "created": "目标已创建，专属账户已就位",
-    "updated": "目标已更新"
+    "updated": "目标已更新",
+    "archived": "目标已归档，历史与流水保留可查",
+    "unarchived": "目标已恢复为进行中",
+    "deleted": "目标已删除，专属账户一并收起，历史交易仍可查",
+    "deleteConfirmTitle": "删除储蓄目标",
+    "deleteConfirmContent": "删除后目标与专属账户一并收起，历史交易保留可查；账户仍有余额时将被拒绝。确认删除「{name}」？"
   },
   "projection": {
     "etaMonths": "还差 {n} 个月",

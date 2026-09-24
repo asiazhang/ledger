@@ -1,6 +1,7 @@
-//! IPC 命令壳 · 储蓄目标（SavingsGoal）（spec #1750 / issue #1751 / #1752 / ADR-0133）：
-//! 创建目标（同一事务自动建专属账户）、编辑目标（四字段全量替换 + 改名联动
-//! 专属账户）与蓄水进度读命令（已存 / 还差 / 达成态）。
+//! IPC 命令壳 · 储蓄目标（SavingsGoal）（spec #1750 / issue #1751 / #1752 / #1754 /
+//! ADR-0133）：创建目标（同一事务自动建专属账户）、编辑目标（四字段全量替换 +
+//! 改名联动专属账户）、生命周期守卫（归档 / 取消归档 / 删除——余额非零码化拒绝、
+//! 余额为零级联软删专属账户）与蓄水进度读命令（已存 / 还差 / 达成态）。
 //!
 //! 只做参数解包与统一读写入口一行调用；目标行为权威在 [`ledger_savings_goal`]
 //!（ADR-0056 分层）。
@@ -78,6 +79,62 @@ pub async fn update_savings_goal<R: Runtime>(
         move |conn| {
             savings_goal_domain::update_savings_goal(conn, &id, &input).map(Outcome::Silent)
         },
+    )
+    .await
+}
+
+/// 归档目标（issue #1754）：状态转 archived 退出默认列表（归档列表经进度读命令
+/// 的 status 字段可查），账户 / 流水 / 关联计划原样保留。
+#[tauri::command]
+pub async fn archive_savings_goal<R: Runtime>(
+    db: State<'_, DbState>,
+    app: AppHandle<R>,
+    id: String,
+) -> Result<()> {
+    let conn = db.write_handle();
+    write_entry(
+        "archive_savings_goal",
+        conn,
+        Some(&app),
+        WriteOp::ArchiveSavingsGoal,
+        move |conn| savings_goal_domain::archive_savings_goal(conn, &id).map(Outcome::Silent),
+    )
+    .await
+}
+
+/// 取消归档目标（issue #1754）：状态恢复 active 回默认列表。
+#[tauri::command]
+pub async fn unarchive_savings_goal<R: Runtime>(
+    db: State<'_, DbState>,
+    app: AppHandle<R>,
+    id: String,
+) -> Result<()> {
+    let conn = db.write_handle();
+    write_entry(
+        "unarchive_savings_goal",
+        conn,
+        Some(&app),
+        WriteOp::UnarchiveSavingsGoal,
+        move |conn| savings_goal_domain::unarchive_savings_goal(conn, &id).map(Outcome::Silent),
+    )
+    .await
+}
+
+/// 删除目标（issue #1754）：余额非零被域守卫码化拒绝（引导先转出）；余额为零时
+/// 域内同一事务目标软删 + 级联软删专属账户（账户删除协议照常产出账户同步 op）。
+#[tauri::command]
+pub async fn delete_savings_goal<R: Runtime>(
+    db: State<'_, DbState>,
+    app: AppHandle<R>,
+    id: String,
+) -> Result<()> {
+    let conn = db.write_handle();
+    write_entry(
+        "delete_savings_goal",
+        conn,
+        Some(&app),
+        WriteOp::DeleteSavingsGoal,
+        move |conn| savings_goal_domain::delete_savings_goal(conn, &id).map(Outcome::Silent),
     )
     .await
 }

@@ -53,9 +53,9 @@ pub async fn create_account<R: Runtime>(
 }
 
 #[tauri::command]
-pub async fn delete_account(
+pub async fn delete_account<R: Runtime>(
     db: State<'_, DbState>,
-    app: tauri::AppHandle,
+    app: AppHandle<R>,
     id: String,
 ) -> Result<()> {
     let conn = db.write_handle();
@@ -64,7 +64,13 @@ pub async fn delete_account(
         conn,
         Some(&app),
         WriteOp::DeleteAccount,
-        move |conn| account_domain::delete_account(conn, &id).map(Outcome::Silent),
+        move |conn| {
+            // 壳层编排守卫（issue #1754 / ADR-0133 决策 4）：账户域不反向依赖目标域，
+            // 「删账户命令先经目标域校验」在本入口先行——在用目标的专属账户被
+            // 码化拒绝（引导先删目标），普通账户照常放行。
+            ledger_savings_goal::ensure_account_not_goal_bound(conn, &id)?;
+            account_domain::delete_account(conn, &id).map(Outcome::Silent)
+        },
     )
     .await
 }

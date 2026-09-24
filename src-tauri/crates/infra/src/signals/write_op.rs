@@ -131,6 +131,15 @@ pub enum WriteOp {
     /// 编辑储蓄目标（IPC `update_savings_goal`，issue #1752）：四字段全量替换 +
     /// 改名联动专属账户——同事务参考表变更，重拉后账户列表与各下拉可见新名。
     UpdateSavingsGoal,
+    /// 归档储蓄目标（IPC `archive_savings_goal`，issue #1754）：状态转 archived，
+    /// 账户 / 流水 / 关联计划原样保留。
+    ArchiveSavingsGoal,
+    /// 取消归档储蓄目标（IPC `unarchive_savings_goal`，issue #1754）：状态恢复
+    /// active 回默认列表。
+    UnarchiveSavingsGoal,
+    /// 删除储蓄目标（IPC `delete_savings_goal`，issue #1754）：余额非零码化拒绝，
+    /// 余额为零目标软删 + 级联软删专属账户（级联走账户删除协议产出账户同步 op）。
+    DeleteSavingsGoal,
     // ── 账户域 ──
     /// 余额调整（IPC `adjust_account_balance`，ADR-0026）：预期证据
     /// [`crate::signals::WriteEvidence::BlackHoleCreated`]——仅按需新建黑洞账户时参考表变更。

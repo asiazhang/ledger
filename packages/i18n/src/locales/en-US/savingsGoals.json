@@ -17,8 +17,13 @@
     "projection": "Projection"
   },
   "actions": {
-    "edit": "Edit"
+    "edit": "Edit",
+    "archive": "Archive",
+    "unarchive": "Unarchive",
+    "delete": "Delete"
   },
+  "archivedTitle": "Archived",
+  "achievedPlanHint": "The linked transfer plan is still running — review it on the plans page",
   "status": {
     "inProgress": "In progress",
     "achieved": "Achieved"
@@ -48,7 +53,12 @@
   },
   "msg": {
     "created": "Goal created — its dedicated account is ready",
-    "updated": "Goal updated"
+    "updated": "Goal updated",
+    "archived": "Goal archived; history and transactions remain queryable",
+    "unarchived": "Goal restored to in progress",
+    "deleted": "Goal deleted; its dedicated account is retired with it, transactions remain queryable",
+    "deleteConfirmTitle": "Delete Savings Goal",
+    "deleteConfirmContent": "The goal and its dedicated account are retired together; transactions are kept. Deletion is rejected while a balance remains. Delete “{name}”?"
   },
   "projection": {
     "etaMonths": "{n} months to go",
