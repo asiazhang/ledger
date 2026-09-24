@@ -168,6 +168,41 @@ fn update_cross_account_refreshes_old_and_new_union() {
     assert_balance_cache_matches_realtime(&conn);
 }
 
+/// 外币账户余额按账户币种累计（issue #1769）：HKD 账户经真实写路径（含本位币
+/// 折算）落一笔收入，余额与缓存仍为账户币种原币金额，而非折算后的本位币值。
+#[test]
+fn foreign_currency_balance_stays_in_account_currency() {
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-fx", "港币现金", "cash", "HKD", 0);
+    backfill_scaffold_account(&conn, "acc-fx");
+    // 写路径按交易日所属 ISO 周取汇率历史：HKD→CNY 0.814145（非 1:1，折算值 ≠ 原币）。
+    test_support::seed_fx_history_weeks(&conn, "HKD", "CNY", 0.814145, &["2026-01-15"]);
+
+    create_transaction_internal(
+        &conn,
+        TransactionInput {
+            currency_code: "HKD".into(),
+            ..make_input("acc-fx", TransactionKind::Income, 19091, "2026-01-15")
+        },
+    )
+    .unwrap();
+
+    assert_balance_cache_matches_realtime(&conn);
+    assert_eq!(
+        compute_balance(&conn, "acc-fx").unwrap(),
+        19091,
+        "余额应为账户币种原币金额，而非折算后的本位币值"
+    );
+    let native: i64 = conn
+        .query_row(
+            "SELECT amount_native_cents FROM transactions WHERE account_id='acc-fx'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_ne!(native, 19091, "夹具应产生非 1:1 折算值，实际: {native}");
+}
+
 /// 删除 transfer 交易：两侧账户缓存回到初始（delete_within_transaction 重算）。
 #[test]
 fn delete_transfer_restores_both_sides() {

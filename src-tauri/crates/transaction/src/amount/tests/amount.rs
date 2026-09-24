@@ -19,11 +19,34 @@ fn insert_txn(
     account_id: &str,
     to_account_id: Option<&str>,
 ) {
+    // 1:1 行：原币 == 本位币（列选错的守卫由 `insert_txn_dual` 承担）。
+    insert_txn_dual(
+        conn,
+        id,
+        kind,
+        amount_native_cents,
+        amount_native_cents,
+        account_id,
+        to_account_id,
+    );
+}
+
+/// 原币金额与本位币金额**不等**的行：锁定各度量取数列表（account_flow 取账户币种
+/// 的 `amount_cents`，其余度量取本位币 `amount_native_cents`）——两者相等时列选错也测不出。
+fn insert_txn_dual(
+    conn: &Connection,
+    id: &str,
+    kind: TransactionKind,
+    amount_cents: i64,
+    amount_native_cents: i64,
+    account_id: &str,
+    to_account_id: Option<&str>,
+) {
     conn.execute(
         "INSERT INTO transactions \
          (id,kind,amount_cents,currency_code,amount_native_cents,account_id,to_account_id,date,created_at,updated_at,version,device_id) \
-         VALUES (?1,?2,?3,'CNY',?3,?4,?5,'2026-02-01','2026-02-01T00:00:00Z','2026-02-01T00:00:00Z',1,'test')",
-        params![id, kind.as_str(), amount_native_cents, account_id, to_account_id],
+         VALUES (?1,?2,?3,'HKD',?4,?5,?6,'2026-02-01','2026-02-01T00:00:00Z','2026-02-01T00:00:00Z',1,'test')",
+        params![id, kind.as_str(), amount_cents, amount_native_cents, account_id, to_account_id],
     )
     .unwrap();
 }
@@ -183,33 +206,45 @@ fn sql_sum(conn: &Connection, expr: &str) -> i64 {
 }
 
 fn rust_sum(conn: &Connection, measure: Measure) -> i64 {
-    // 与 insert_txn 的 kind/amount 布局耦合：按写入顺序读回全部行。
+    // 独立预言（不复制生产 SQL 的列选逻辑）：account_flow 是账户币种口径，
+    // 取 `amount_cents`；其余度量是本位币口径，取 `amount_native_cents`。
+    // 夹具两列取值不同，列选错即红。
     // kind 列经 FromSql 直读为枚举（DB 边界映射，与生产路径一致）。
     let mut stmt = conn
-        .prepare("SELECT kind, amount_native_cents FROM transactions WHERE is_deleted=0")
+        .prepare(
+            "SELECT kind, amount_cents, amount_native_cents FROM transactions WHERE is_deleted=0",
+        )
         .unwrap();
-    let rows: Vec<(TransactionKind, i64)> = stmt
-        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+    let rows: Vec<(TransactionKind, i64, i64)> = stmt
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
         .unwrap()
         .map(|r| r.unwrap())
         .collect();
     rows.into_iter()
-        .map(|(k, amt)| signed_amount(k, amt, measure))
+        .map(|(k, amount, native)| {
+            let amt = if matches!(measure, Measure::AccountFlow(_)) {
+                amount
+            } else {
+                native
+            };
+            signed_amount(k, amt, measure)
+        })
         .sum()
 }
 
-/// 每种 kind 各写一行（金额互异防串位），四个度量的 SQL 片段聚合
-/// 必须与 Rust `signed_amount` 逐行求和一致。
+/// 每种 kind 各写一行（**原币与本位币金额互异**，防串位并锁定取数列），
+/// 各度量的 SQL 片段聚合必须与 Rust `signed_amount` 逐行求和一致。
 #[test]
 fn sql_exprs_match_rust_sums() {
     let conn = test_support::open();
-    test_support::seed_account(&conn, "acc", "acc", "cash", "CNY", 0);
+    test_support::seed_account(&conn, "acc", "acc", "cash", "HKD", 0);
     for (i, kind) in TransactionKind::ALL.into_iter().enumerate() {
-        insert_txn(
+        insert_txn_dual(
             &conn,
             &format!("t-{i}"),
             kind,
             100 + i as i64 * 7,
+            1000 + i as i64 * 13,
             "acc",
             None,
         );
@@ -347,7 +382,7 @@ fn account_flow_expr_balances_match_rust() {
     let balance_rust = |account: &str| -> i64 {
         let mut stmt = conn
             .prepare(
-                "SELECT kind, amount_native_cents, account_id, to_account_id \
+                "SELECT kind, amount_cents, account_id, to_account_id \
                  FROM transactions WHERE is_deleted=0",
             )
             .unwrap();

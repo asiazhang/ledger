@@ -3,7 +3,9 @@
 //! 职责：[`TransferSide`] 归因端点 + [`Measure`] 六度量；[`signed_amount`]（行级/
 //! 展示）与五个 SQL 片段 builder 由同一 [`coefficient`] 矩阵驱动。不变量：两条路径
 //! 口径恒一致（矩阵是唯一真源，改矩阵同时影响展示与聚合）。ADR 指针：ADR-0096 /
-//! ADR-0113 决策 8。陷阱：矩阵数值须以测试锁定。
+//! ADR-0113 决策 8。币种口径：`account_flow` 取账户币种 `amount_cents`（余额口径），
+//! 其余度量取本位币 `amount_native_cents`（报表口径），见 [`measure_amount_column`]。
+//! 陷阱：矩阵数值须以测试锁定。
 
 use std::fmt::Write as _;
 
@@ -139,24 +141,38 @@ fn coefficient(kind: TransactionKind, measure: Measure) -> i64 {
     }
 }
 
-/// 行级/展示用有符号金额：`coefficient(kind, measure) × amount_native_cents`。
+/// 行级/展示用有符号金额：`coefficient(kind, measure) × amount`。
 ///
-/// 输入应为本位币金额（`amount_native_cents`）；
-/// `split` 对现金度量恒为 0，buy/sell 不进 expense_net/income_net。
-pub fn signed_amount(kind: TransactionKind, amount_native_cents: i64, measure: Measure) -> i64 {
-    coefficient(kind, measure) * amount_native_cents
+/// `amount` 的币种随度量而定（与 [`measure_amount_column`] 同口径）：
+/// `AccountFlow` 传**账户币种**金额（`amount_cents`），其余度量传本位币金额
+/// （`amount_native_cents`）。`split` 对现金度量恒为 0，buy/sell 不进
+/// expense_net/income_net。
+pub fn signed_amount(kind: TransactionKind, amount: i64, measure: Measure) -> i64 {
+    coefficient(kind, measure) * amount
 }
 
 // ---------------------------------------------------------------------------
 // SQL 片段 builder（服务端聚合）
 // ---------------------------------------------------------------------------
 
+/// 度量取数列（币种口径的单一真源，issue #1769）：
+/// - [`Measure::AccountFlow`] 是账户余额口径——现金腿金额本就是**账户币种**金额，
+///   取 `amount_cents`；余额即账户币种余额，本位币折算只在净资产/报表等全局口径做
+///   （ADR-0011：折算基准为全局默认币种、与账户币种无关）。
+/// - 其余度量（支出/收入/退款/保单）是报表与统计口径——取本位币 `amount_native_cents`。
+fn measure_amount_column(measure: Measure) -> &'static str {
+    match measure {
+        Measure::AccountFlow(_) => "amount_cents",
+        _ => "amount_native_cents",
+    }
+}
+
 /// 由 coefficient 矩阵生成 `CASE ... END` 片段：按系数分组 kind，
-/// 输出对 `alias.amount_native_cents` 的有符号表达式。
+/// 输出对度量所属币种列（[`measure_amount_column`]）的有符号表达式。
 ///
-/// 只负责 kind→符号，不含 `is_deleted` 等过滤，过滤条件由调用方 WHERE 决定。
+/// 只负责 kind→符号与取数列，不含 `is_deleted` 等过滤，过滤条件由调用方 WHERE 决定。
 fn kind_case_expr(alias: &str, measure: Measure) -> String {
-    let amount_col = format!("{alias}.amount_native_cents");
+    let amount_col = format!("{alias}.{}", measure_amount_column(measure));
     let kind_col = format!("{alias}.kind");
     let mut pos: Vec<&'static str> = Vec::new();
     let mut neg: Vec<&'static str> = Vec::new();
@@ -196,6 +212,7 @@ fn quote_list(items: &[&str]) -> String {
 
 /// `account_flow` 聚合片段。转账符号按 `side` 取：
 /// 转出侧 join `t.account_id`、转入侧 join `t.to_account_id` 后分别求和相加。
+/// 取数列为账户币种 `amount_cents`（[`measure_amount_column`]）——余额是账户币种金额。
 ///
 /// 出资账户归因规则单条在此落库为 SQL（ADR-0096 决策 2，全库唯一直 incarnation）：
 /// 结算账户 = 出资账户 ?? 投资账户（`account_id`）——带出资账户的 buy/sell，其现金
