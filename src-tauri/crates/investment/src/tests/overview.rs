@@ -125,9 +125,9 @@ fn overview_folds_cash_leg_by_account_currency() {
 
 /// 持仓市值腿折全局默认币种（负向判据：删掉持仓腿的折本位币折算 → 本用例变红）。
 ///
-/// 账户余额 = 初始余额 + Σ 本位币流水（account_flow 口径，`v_holdings` 与
-/// 财务自由度 BDD 同款）：买入 20000 美分折本位币流出 140000，初始 244000
-/// 配平后账户现金恰余 104000 美分；市值腿只随现价与账户币种折算。
+/// 账户余额 = 初始余额 + Σ **账户币种**流水（account_flow 口径，`v_holdings` 与
+/// 财务自由度 BDD 同款）：买入 20000 美分（USD）自初始 244000 美分扣出，
+/// 账户现金余 224000 美分（USD）；概览再按账户币种折本位币（× 7.0）。
 #[test]
 fn overview_folds_holdings_leg_by_account_currency() {
     let conn = open();
@@ -158,8 +158,8 @@ fn overview_folds_holdings_leg_by_account_currency() {
         "2 × 150 美元 × 7.0 → 2100 元"
     );
     assert_eq!(
-        overview.investment_cash_cents, 728_000,
-        "账户现金 104000 美分 × 7.0"
+        overview.investment_cash_cents, 1_568_000,
+        "账户现金 224000 美分（USD）× 7.0"
     );
     assert_eq!(
         overview.investable_assets_cents,

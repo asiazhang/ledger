@@ -71,6 +71,88 @@ fn insert_tx(
     crate::balance::refresh_account_balances(conn, &affected).unwrap();
 }
 
+/// 原币金额与本位币金额**不等**的 HKD 行：锁定「余额按账户币种累计」（issue #1769）。
+fn insert_tx_dual(
+    conn: &rusqlite::Connection,
+    id: &str,
+    kind: &str,
+    amount_cents: i64,
+    amount_native_cents: i64,
+    account_id: &str,
+    to_account_id: Option<&str>,
+) {
+    let now = now_iso();
+    conn.execute(
+        "INSERT INTO transactions \
+         (id,kind,amount_cents,currency_code,amount_native_cents,account_id,to_account_id,\
+         category_id,refund_of_transaction_id,note,date,created_at,updated_at,version,device_id,is_deleted) \
+         VALUES (?1,?2,?3,'HKD',?4,?5,?6,NULL,NULL,NULL,'2026-01-15',?7,?8,?9,?10,0)",
+        rusqlite::params![id, kind, amount_cents, amount_native_cents, account_id, to_account_id, now, now, 1, device_id(conn).unwrap()],
+    ).unwrap();
+    // 裸 SQL 绕过 Writer 接缝缓存刷新，同步补齐缓存行（ADR-0067）。
+    let mut affected = vec![account_id];
+    if let Some(to) = to_account_id {
+        affected.push(to);
+    }
+    crate::balance::refresh_account_balances(conn, &affected).unwrap();
+}
+
+/// 外币账户余额按**账户币种**（`amount_cents`）累计，不按本位币折算值累计
+/// （issue #1769）：HKD 投资账户落 dividend/expense 后余额 = 原币现金腿之和，
+/// 缓存出口（UI 与 API 同源）与实时口径一致。
+#[test]
+fn foreign_currency_balance_accumulates_in_account_currency() {
+    let conn = setup();
+    // 账户币种 HKD：行内 amount_cents 为 HKD 分，amount_native_cents 为 CNY 折算值。
+    insert_account(&conn, "acc-hkd", "富图牛牛", "investment", "HKD", 0);
+    insert_tx_dual(&conn, "hkd-d1", "dividend", 19091, 15541, "acc-hkd", None);
+    insert_tx_dual(&conn, "hkd-e1", "expense", 3000, 2442, "acc-hkd", None);
+    insert_tx_dual(&conn, "hkd-e2", "expense", 1800, 1465, "acc-hkd", None);
+    insert_tx_dual(&conn, "hkd-e3", "expense", 6, 5, "acc-hkd", None);
+
+    // 原币现金腿之和 = +190.91 − 30.00 − 18.00 − 0.06 = 142.85 HKD。
+    assert_eq!(balance(&conn, "acc-hkd"), 14285, "余额应为账户币种原币之和");
+
+    // 缓存出口与实时口径一致，且等于原币口径（本位币折算值之和为 116.29）。
+    let rows = crate::balance::list_account_balances_with_visibility(&conn, false).unwrap();
+    let row = rows
+        .iter()
+        .find(|r| r.account.id == "acc-hkd")
+        .expect("账户应入清单");
+    assert_eq!(row.balance_cents, 14285, "缓存出口应为账户币种余额");
+}
+
+/// 黑洞腿佐证（issue #1769）：外币黑洞账户（buy 的出资侧）余额同样按账户币种
+/// 累计——「无(HKD)」应为 −52,508,160 HKD 分，而非 −52,508,160 × 0.814145 的本位币值。
+#[test]
+fn foreign_currency_black_hole_balance_stays_in_account_currency() {
+    let conn = setup();
+    insert_hidden_account(&conn, "hole-hkd", "无(HKD)", "HKD");
+    insert_account(&conn, "acc-inv-hkd", "港美股", "investment", "HKD", 0);
+    let now = now_iso();
+    // buy 52,508,160 HKD 分经黑洞出资；amount_native_cents = ×0.814145 的折算值。
+    conn.execute(
+        "INSERT INTO transactions \
+         (id,kind,amount_cents,currency_code,amount_native_cents,account_id,funding_account_id,\
+         category_id,refund_of_transaction_id,note,date,created_at,updated_at,version,device_id,is_deleted) \
+         VALUES ('hkd-buy-1','buy',52508160,'HKD',42749260,'acc-inv-hkd','hole-hkd',NULL,NULL,NULL,'2026-01-15',?1,?2,1,?3,0)",
+        rusqlite::params![now, now, device_id(&conn).unwrap()],
+    )
+    .unwrap();
+    crate::balance::refresh_account_balances(&conn, &["acc-inv-hkd", "hole-hkd"]).unwrap();
+
+    assert_eq!(
+        balance(&conn, "hole-hkd"),
+        -52_508_160,
+        "黑洞余额应为账户币种原币金额"
+    );
+    assert_eq!(
+        balance(&conn, "acc-inv-hkd"),
+        0,
+        "出资账户命中时投资账户现金腿为 0"
+    );
+}
+
 fn balance(conn: &rusqlite::Connection, account_id: &str) -> i64 {
     crate::balance::compute_balance(conn, account_id).unwrap()
 }

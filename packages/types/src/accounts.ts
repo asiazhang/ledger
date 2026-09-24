@@ -57,6 +57,9 @@ export interface AccountBalanceAdjustInput {
 
 export interface AccountBalance {
   account: Account;
+  /** 账户余额 = 初始余额 + Σ `account_flow`，**以账户币种计**（`account.currency_code`，
+   * 即现金腿原币金额），非本位币折算值——本位币折算仅用于净资产等全局口径。
+   * 读持久化余额缓存（ADR-0067），漂移经余额缓存审计修复。 */
   balance_cents: number;
 }
 
