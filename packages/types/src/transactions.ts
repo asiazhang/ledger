@@ -264,9 +264,12 @@ export const CREATE_KINDS = (Object.keys(CREATE_KIND_ENTRY) as CreateTransaction
   (kind) => CREATE_KIND_ENTRY[kind],
 );
 
-/** 交易页「记一笔」入口类型闭集的成员类型（CREATE_KINDS 元素；裸键键位映射按此收口，
- * ADR-0135 决策 5 / issue #1782）。 */
-export type TransactionPageCreateKind = Exclude<CreateTransactionKind, "buy" | "sell">;
+/** 交易页「记一笔」入口类型闭集的成员类型：由 CREATE_KIND_ENTRY 归属为 true 的键在类型级
+ * 投影派生（单源无第二表达；裸键键位映射按此收口，ADR-0135 决策 5 / issue #1782）——
+ * 新 kind 落 true 即自动入闭集（CREATE_KIND_KEYS satisfies 强制补键位），落 false 则不入。 */
+export type TransactionPageCreateKind = {
+  [K in keyof typeof CREATE_KIND_ENTRY]: (typeof CREATE_KIND_ENTRY)[K] extends true ? K : never;
+}[keyof typeof CREATE_KIND_ENTRY];
 
 /** 「记一笔」表单形态闭集：可创建 kind + 借贷两个呈现变体（issue #374 / ADR-0053：
  * lend/borrow 不新增交易 kind，落账仍为 transfer + receivable/debt 账户）。 */

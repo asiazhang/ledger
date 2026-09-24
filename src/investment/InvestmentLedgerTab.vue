@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import {
   NButton,
+  NButtonGroup,
   NDataTable,
   NEmpty,
   NSpace,
@@ -323,11 +324,11 @@ function onCreated() {
       />
       <!-- 创建入口（ADR-0135 决策 5 / issue #1782）：买入/卖出的记一笔入口落页签头部，
            类型由入口单点表达；提交走既有创建编排与 TransactionInput 装配接缝 -->
-      <NButtonGroup data-testid="ledger-create-entry">
-        <NButton type="primary" data-testid="ledger-create-buy" @click="openCreate('buy')">
+      <NButtonGroup>
+        <NButton type="primary" @click="openCreate('buy')">
           {{ t("investments.ledger.createBuy") }}
         </NButton>
-        <NButton type="primary" data-testid="ledger-create-sell" @click="openCreate('sell')">
+        <NButton type="primary" @click="openCreate('sell')">
           {{ t("investments.ledger.createSell") }}
         </NButton>
       </NButtonGroup>

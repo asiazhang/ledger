@@ -653,7 +653,6 @@ describe("明细页签头部记买入/卖出（issue #1782）", () => {
     await createEntry(wrapper, "记买入").trigger("click");
     await flushPromises();
     const inv = wrapper.findComponent(TransactionForm).findComponent(InvestmentForm);
-    // 内层 NSelect（0=币种 1=投资账户 2=标的，InvestmentForm.test 同款装配缝）
     const selects = inv.findAllComponents(NSelect);
     selects[1].vm.$emit("update:value", "acc-1");
     // 内层 NSelect 序（0=币种 1=投资账户 2=出资账户 3=标的，InvestmentForm 表单行序）
@@ -703,5 +702,16 @@ describe("明细页签头部记买入/卖出（issue #1782）", () => {
     await flushPromises();
     expect(shownModal(wrapper)).toBeUndefined();
     expect(ledgerCalls().length).toBe(callsBefore);
+  });
+
+  it("投资页不设裸键（ADR-0135 决策 5）：裸键 a/z/i/b/s 均不开创建弹窗（记买入/卖出仅头部入口）", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+    await openLedgerTab(wrapper);
+    for (const key of ["a", "z", "i", "b", "s"]) {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
+      await flushPromises();
+    }
+    expect(shownModal(wrapper)).toBeUndefined();
   });
 });
