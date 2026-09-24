@@ -4,6 +4,7 @@ import {
   NButtonGroup,
   NDataTable,
   NEmpty,
+  NTag,
   NSpace,
   useMessage,
   useThemeVars,
@@ -11,16 +12,19 @@ import {
   type DropdownOption,
   type PaginationProps,
 } from "naive-ui";
-import { computed, h, onMounted, ref, watch } from "vue";
+import { computed, h, ref, watch } from "vue";
 import { api } from "@ledger/api";
 import { useLoadable } from "@ledger/loadable";
 import { t } from "@ledger/i18n";
 import { formatAmount, formatPrice, formatQuantity } from "@ledger/money";
 import { sumFixedColumnWidths } from "@ledger/utils/table";
+import { kindSemanticColor } from "@ledger/theme/semantic-colors";
+import type { NullableDateRange } from "@ledger/utils/time-period";
 import AppModal from "@ledger/ui-kit/AppModal.vue";
 import AppSelect from "@ledger/ui-kit/AppSelect.vue";
 import AppDropdown from "@ledger/ui-kit/AppDropdown.vue";
 import TransactionForm from "@/transaction/TransactionForm.vue";
+import AmountCell from "@/transaction/AmountCell.vue";
 import ConvertDetail from "@/investment/ConvertDetail.vue";
 import SplitDetail from "@/investment/SplitDetail.vue";
 import DividendDetail from "@/investment/DividendDetail.vue";
@@ -28,18 +32,17 @@ import { useAppDialog } from "@/composables/useAppDialog";
 import { useRowContextMenu } from "@ledger/row-context-menu";
 import { useTransactionModalState } from "@ledger/transaction-modal-state";
 import { buildRowMenuOptions } from "@/transaction/transaction-row-menu";
-import { rowActionsColumn } from "@/transaction/transaction-columns";
+import { KIND_TAG_TYPE, rowActionsColumn } from "@/transaction/transaction-columns";
 import { instrumentDisplayLabel, ledgerRowToModalRow } from "@/investment/ledger-row-modal";
 import PinyinSelect from "@ledger/ui-kit/PinyinSelect.vue";
-import AppDatePicker from "@ledger/ui-kit/AppDatePicker.vue";
+import QuickTimeRange from "@/components/QuickTimeRange.vue";
 import {
   LEDGER_TAB_PAGE_SIZE_OPTIONS,
   useInvestmentsSessionStore,
 } from "@/investment/investments-session";
 import { useReferenceStore } from "@/stores/reference";
-import { useInstrumentSearch } from "@/investment/useInstrumentSearch";
+import { useAppStore } from "@/stores/app";
 import type {
-  Instrument,
   InvestmentTransactionListFilter,
   InvestmentTransactionRow,
   TransactionKind,
@@ -50,8 +53,9 @@ import type {
  * kind 交易行的投资投影列表——消费后端投资明细命令（issue #1778），按 kind 分
  * 形态渲染（buy/sell 标的/数量/单价/手续费/出资账户、convert「A → B」双腿、
  * split 带符号份额增量 Δ、dividend 现金腿与到账账户）；服务端 offset 分页
- * （ADR-0008，「共 N 条」+ 页大小档位与主列表同构）+ 筛选四维（issue #1780：类型多选
- * （投资 kind 子集）/ 账户（涉及账户语义）/ 标的（远程搜索）/ 日期（双端有界））。
+ * （ADR-0008，「共 N 条」+ 页大小档位与主列表同构）+ 手动筛选三维（issue #1780：类型多选
+ * （投资 kind 子集）/ 账户（涉及账户语义）/ 日期（时间范围快捷选择，ADR-0135 修订注记）；
+ * 标的维度仅作 URL 下钻只读入口（?instrument=，无手动控件，比照主列表分类维度形态）。
  *
  * 行操作与主列表同权（ADR-0135 决策 4 / issue #1781）：编辑 buy/sell 与 convert/
  * split/dividend 只读详情复用交易弹窗族——弹窗编排 TransactionModalState（先取
@@ -69,7 +73,8 @@ import type {
  * 归视图（主列表同构，ADR-0030 决策 6）。筛选维度实际变化翻页归零由 store 内化。
  *
  * 金额列走统一展示格式化（formatAmount：数字分组随界面语言、金额隐私掩码自动
- * 生效）；行投影不携带币种呈现（混合币种列表不暗示同币种），金额按数字呈现。
+ * 生效）并按 kind 语义色着色（kindSemanticColor，与主列表同源同件，ADR-0135 修订注记）；
+ * 行投影不携带币种呈现（混合币种列表不暗示同币种），金额按数字呈现。
  */
 
 /** 明细页签类型筛选闭集 = 行集闭包：五种投资 kind（与后端 LEDGER_TAB_KINDS 同一闭集）。 */
@@ -273,66 +278,18 @@ function onAccountFilterChange(id: string | null) {
 }
 
 /**
- * 标的筛选（issue #1780）：远程搜索收口 useInstrumentSearch（盈亏页标的筛选同款
- * 接缝，#1308），本层只做候选投影与选中项合并——会话恢复/深链落账的选中值经
- * get_instrument 一次性解析回标签，不把裸 id 留在回显位。
+ * 日期筛选（ADR-0135 修订注记）：时间范围快捷选择（QuickTimeRange）受控承载——
+ * 快照区间 v-model 进出，组件不持状态源，唯一事实源是会话 store 明细日期维度
+ * （from/to 成对桥接，与主列表日期维度同构）；快照语义与数据期间边界钳制由
+ * 组件继承，本层零日期数学。
  */
-const {
-  items: searchedInstruments,
-  searching: searchingInstruments,
-  search: searchInstruments,
-} = useInstrumentSearch();
-const selectedInstrumentOption = ref<{ label: string; value: string } | null>(null);
-
-const instrumentOptions = computed(() => {
-  const opts = searchedInstruments.value.map(instrumentOption);
-  const sel = selectedInstrumentOption.value;
-  if (sel && !opts.some((o) => o.value === sel.value)) opts.push(sel);
-  return opts;
+const quickRange = computed<NullableDateRange>({
+  get: () => ({ from: session.detailDateFrom, to: session.detailDateTo }),
+  set: (range) =>
+    session.setDetailDateRange(
+      range.from !== null && range.to !== null ? [range.from, range.to] : null,
+    ),
 });
-
-function instrumentOption(i: Instrument): { label: string; value: string } {
-  // label 拼法与盈亏页标的筛选（useRealizedPnl）同形——第三份拷贝，收口另立票跟踪
-  return { label: `${i.symbol}${i.name ? ` · ${i.name}` : ""}`, value: i.id };
-}
-
-function onInstrumentFilterChange(id: string | null) {
-  session.setDetailInstrument(id);
-  if (!id) {
-    selectedInstrumentOption.value = null;
-    return;
-  }
-  // id 在当前候选（用户从搜索结果选中）时刷新回显；不在候选（恢复/深链路径）
-  // 保留旧 option（无则裸 id，onMounted 解析兜底），不误清
-  const picked = searchedInstruments.value.find((i) => i.id === id);
-  if (picked) selectedInstrumentOption.value = instrumentOption(picked);
-}
-
-onMounted(() => {
-  // 会话恢复/深链带入的标的筛选：解析回标签供回显（解析失败静默保留裸 id）
-  const id = session.detailInstrumentId;
-  if (!id) return;
-  void api.getInstrument(id).then(
-    (inst) => {
-      selectedInstrumentOption.value = instrumentOption(inst);
-    },
-    () => {},
-  );
-});
-
-/**
- * 日期筛选（issue #1780，双端有界）：daterange picker 受控回显成对投影，
- * 写路径经 store 意图入口（成对写入/清除，翻页归零内化）。
- */
-const dateRangeValue = computed<[string, string] | null>(() =>
-  session.detailDateFrom && session.detailDateTo
-    ? [session.detailDateFrom, session.detailDateTo]
-    : null,
-);
-
-function onDateFilterChange(range: [string, string] | null) {
-  session.setDetailDateRange(range ? [range[0], range[1]] : null);
-}
 
 /** 是否有激活筛选（控制空态文案分型：无筛选空态 vs 筛选无匹配）。 */
 const filtersActive = computed(
@@ -398,7 +355,9 @@ const columns = computed<DataTableColumn<InvestmentTransactionRow>[]>(() => [
     title: t("investments.ledger.columns.kind"),
     key: "kind",
     width: 90,
-    render: (r) => t(`transactions.kind.${r.kind}`),
+    // 类型标签色与主列表同源（KIND_TAG_TYPE 单点，ADR-0135 修订注记）
+    render: (row) =>
+      h(NTag, { type: KIND_TAG_TYPE[row.kind] }, () => t(`transactions.kind.${row.kind}`)),
   },
   {
     title: t("investments.ledger.columns.instrument"),
@@ -422,7 +381,12 @@ const columns = computed<DataTableColumn<InvestmentTransactionRow>[]>(() => [
     width: 120,
     align: "right",
     className: "tabular-nums",
-    render: amountCell,
+    // 金额语义色与主列表同源（kindSemanticColor 单点，随主题响应式；ADR-0135 修订注记）
+    render: (row) =>
+      h(AmountCell, {
+        text: amountCell(row),
+        color: kindSemanticColor(row.kind, useAppStore().theme),
+      }),
   },
   {
     title: t("investments.ledger.columns.price"),
@@ -547,9 +511,9 @@ function onCreated() {
 
 <template>
   <NSpace vertical :size="12">
-    <!-- 筛选四维（ADR-0135 决策 3 / issue #1780）：类型多选（投资 kind 子集）+
-         账户（涉及账户语义）+ 标的（远程搜索）+ 日期（双端有界）。立即生效，
-         翻页归零由 store 内化。 -->
+    <!-- 手动筛选三维 + 标的下钻只读入口（ADR-0135 决策 3 及其修订注记 / issue #1780 / #1807）：
+         类型多选（投资 kind 子集）+ 账户（涉及账户语义）+ 日期（时间范围快捷选择）；
+         标的维度无手动控件，仅 ?instrument= 深链落账。立即生效，翻页归零由 store 内化。 -->
     <NSpace :size="8" align="center" :wrap="true" justify="space-between">
       <AppSelect
         :value="kindValue"
@@ -571,30 +535,22 @@ function onCreated() {
         data-testid="ledger-account-filter"
         @update:value="onAccountFilterChange"
       />
-      <!-- 远程搜索标的：拼音过滤由后端 list_instruments 统一语义（ADR-0027）
-           承担，remote 下本地 filter 不生效，仅收口 filterable 保持载体一致。 -->
-      <PinyinSelect
-        :value="session.detailInstrumentId"
-        :options="instrumentOptions"
-        :placeholder="t('investments.ledger.filterInstrument')"
-        remote
-        clearable
-        :loading="searchingInstruments"
-        virtual-scroll
-        style="width: 220px"
-        data-testid="ledger-instrument-filter"
-        @update:value="onInstrumentFilterChange"
-        @search="searchInstruments"
-      />
-      <AppDatePicker
-        :formatted-value="dateRangeValue"
-        type="daterange"
-        value-format="yyyy-MM-dd"
-        clearable
-        style="width: 260px"
-        data-testid="ledger-date-filter"
-        @update:formatted-value="onDateFilterChange"
-      />
+      <!-- 时间范围快捷选择（ADR-0135 修订注记）：五芯片（含「全部」）+ 期间步进器 +
+           期间直达面板，受控桥接会话 store 明细日期维度；弹层上报由面板内
+           AppDatePicker 承担（Overlay Suppression）。 -->
+      <QuickTimeRange v-model="quickRange" data-testid="ledger-date-filter" />
+      <!-- 清除筛选（主列表同款判定，#1807）：任一明细维度激活（含深链带入的标的
+           维度）即可用；清明细筛选 + 翻页归零，不切页签、不动页大小。 -->
+      <NButton
+        size="tiny"
+        quaternary
+        type="primary"
+        :disabled="!filtersActive"
+        data-testid="ledger-clear-filters"
+        @click="session.resetDetailFilters()"
+      >
+        {{ t("transactions.filter.clear") }}
+      </NButton>
       <!-- 创建入口（ADR-0135 决策 5 / issue #1782）：买入/卖出的记一笔入口落页签头部，
            类型由入口单点表达；提交走既有创建编排与 TransactionInput 装配接缝 -->
       <NButtonGroup>

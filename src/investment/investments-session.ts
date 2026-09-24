@@ -253,6 +253,18 @@ export const useInvestmentsSessionStore = defineStore("investments-session", () 
     detailDateTo.value = to;
   }
 
+  /**
+   * 明细筛选清除意图（「清除筛选」按钮，#1807）：明细四维（类型/账户/标的/日期）
+   * 清回默认态，翻页归零由既有 watch 承担——与 ESC 复位（resetToDefault）的明细面
+   * 同出口，但不切页签、不动页大小；无激活筛选时各 setter 幂等无操作。
+   */
+  function resetDetailFilters() {
+    setDetailKinds(null);
+    setDetailAccount(null);
+    setDetailInstrument(null);
+    setDetailDateRange(null);
+  }
+
   /** 翻页归零：三维任一应用值实际变化即回第一页（排序清除亦属实际变化）。
    * 同步 flush 使归零与意图应用原子生效，不留「维度已变、页码未归」的中间态；
    * 防抖中的搜索不归零（输入回显不是应用值）。 */
@@ -399,6 +411,7 @@ export const useInvestmentsSessionStore = defineStore("investments-session", () 
     setDetailAccount,
     setDetailInstrument,
     setDetailDateRange,
+    resetDetailFilters,
     showTrendInstrument,
     registerTrendInstrument,
     selectTrendInstrument,
