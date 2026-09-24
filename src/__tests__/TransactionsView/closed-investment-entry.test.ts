@@ -23,8 +23,9 @@ import {
 /**
  * 关闭投资后交易页投资新建入口消失（issue #1245 / ADR-0116 决策 4「入口侧」）：
  * 新建买入/卖出是向投资功能写入新数据的入口，随投资关闭一并消失（桌面下拉与移动
- * 「记一笔」悬浮按钮同源、一处生效两处，`b`/`s` 裸键同属入口侧）；既有 buy/sell
- * 交易与引用侧（列表展示、来源列、按 kind 筛选）一律照常，重开即恢复。
+ * 「记一笔」悬浮按钮同源、一处生效两处，`b`/`s` 裸键同属入口侧）；重开即恢复。
+ * 主列表行集与类型筛选的可选集不随开关变化（ADR-0135 / issue #1783）：投资 kind 行
+ * 一律不在主列表呈现（搜索中仍可达），类型下拉恒为四通用 kind。
  */
 
 const FULL_CREATE_LABELS = ["支出 a", "收入 i", "转账 z", "买入 b", "卖出 s", "借出", "借入"];
@@ -131,8 +132,8 @@ describe("关闭投资：记一笔裸键（issue #1245 / ADR-0116「不占键位
   });
 });
 
-describe("关闭投资不影响引用侧（issue #1245 验收：引用照常）", () => {
-  it("关闭投资：既有 buy/sell 交易照常展示，按 kind 筛选的选项仍含买入/卖出", async () => {
+describe("主列表行集与类型收窄不随功能开关变化（ADR-0135 / issue #1783）", () => {
+  it("关闭投资：主列表不呈现投资行，类型下拉收窄为四通用 kind（呈现面与开关正交）", async () => {
     setTxnDb([
       makeTxn(1, "acc-1", { kind: "buy" }),
       makeTxn(2, "acc-1", { kind: "sell" }),
@@ -140,18 +141,22 @@ describe("关闭投资不影响引用侧（issue #1245 验收：引用照常）"
     ]);
     closeInvestments();
     const wrapper = await mountView();
-    // 列表照常展示既有 buy/sell 行（kind 列标签）
+    // 投资行不在主列表（历史投资行在搜索中仍可达）；「共 N 条」随之收窄
     const text = wrapper.text();
-    expect(text).toContain("买入");
-    expect(text).toContain("卖出");
-    // 按 kind 筛选的选项未被入口过滤波及（引用侧不受影响）
+    expect(text).not.toContain("买入");
+    expect(text).not.toContain("卖出");
+    expect(text).toContain("共 1 条");
+    // 类型下拉恒为四通用 kind（入口侧开关不影响呈现面维度）
     const kindFilter = wrapper
       .findAllComponents(AppSelect)
       .map((select) => select.findComponent(NSelect).props("options") as Array<{ value: string }>)
-      .find((options) => options.some((option) => option.value === "buy"));
-    expect(kindFilter, "类型筛选应仍含买入项").toBeDefined();
-    expect(kindFilter!.map((option) => option.value)).toEqual(
-      expect.arrayContaining(["buy", "sell"]),
-    );
+      .find((options) => options.some((option) => option.value === "expense"));
+    expect(kindFilter, "类型筛选应存在").toBeDefined();
+    expect(kindFilter!.map((option) => option.value)).toEqual([
+      "income",
+      "expense",
+      "transfer",
+      "refund",
+    ]);
   });
 });

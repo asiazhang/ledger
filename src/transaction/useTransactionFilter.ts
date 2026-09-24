@@ -13,6 +13,9 @@ export {
   UNCATEGORIZED_ONLY,
   CATEGORY_DRILLDOWN_KINDS,
   MERCHANT_DRILLDOWN_KINDS,
+  MAIN_LIST_KINDS,
+  resolveRequestKinds,
+  normalizeKindSelection,
   TRANSACTION_PAGE_SIZE_DEFAULT,
 } from "@/transaction/transactions-session";
 export type {

@@ -1,7 +1,6 @@
 import { defineStore } from "pinia";
 import { reactive, readonly, ref, toRaw, watch } from "vue";
 import { useReferenceStore } from "@/stores/reference";
-import { TRANSACTION_KINDS } from "@ledger/types";
 import type { TransactionKind } from "@ledger/types";
 
 /** 「仅无分类」哨兵值（issue #377）：分类过滤维度三态之一（不过滤 null / 精确 id / 哨兵）。
@@ -33,6 +32,41 @@ const MERCHANT_DRILLDOWN_KIND_TOKENS = [
 ] as const satisfies readonly TransactionKind[];
 export const MERCHANT_DRILLDOWN_KINDS = MERCHANT_DRILLDOWN_KIND_TOKENS.join(",");
 
+/** 主列表 kind 口径（ADR-0135 / issue #1783）：主交易列表只呈现四通用 kind，每次列表
+ *  请求显式携带本集合（含默认态）——排除机制走前端显式 kind 集合，`list_transactions`
+ *  的 IPC 与 HTTP 契约零改动（无 kinds 参数仍返回全部 kind，HTTP API 外部消费与交易
+ *  搜索依赖此契约，e2e BDD 哨兵钉住）；投资 kind 的呈现面在投资域投资明细页签。
+ *  字面量经 satisfies 钉在 TransactionKind 闭集内：kind 字面量改名时此处编译报错。
+/** 主列表类型维度的可选集 = 默认载荷集合（ADR-0135）：类型下拉只提供这四项，
+ *  「满选 ≠ 默认」不等式随可选集收窄解除（满选经 normalizeKindSelection 归一为默认态）。
+ *  单一名单三处消费：类型下拉可选集 / 请求默认载荷 / URL ?kinds= 字面量校验。 */
+export const MAIN_LIST_KINDS = [
+  "income",
+  "expense",
+  "transfer",
+  "refund",
+] as const satisfies readonly TransactionKind[];
+
+/** 列表请求的类型集合装配（ADR-0135）：显式类型集合在场按其携带（浅拷贝脱只读）；
+ *  默认态显式携带四通用 kind——含默认态的显式排除是本集合单点，视图 load 与
+ *  测试替身同构消费。 */
+export function resolveRequestKinds(kinds: readonly TransactionKind[] | null): TransactionKind[] {
+  return kinds?.length ? [...kinds] : [...MAIN_LIST_KINDS];
+}
+
+/** 手动多选归一（ADR-0135）：空集合与满选四通用 kind 都归一为 null（空集合 ≡ 满选 ≡
+ *  不过滤 ≡ 默认态）——可选集收窄后「满选 ≠ 默认」不等式解除，清除筛选按钮的禁用态
+ *  与 ESC 复位判定沿用既有口径（kinds 为 null 即默认）。不变量：本维度的写入口只产
+ *  出 MAIN_LIST_KINDS 的子集（URL 载荷经 literalSet 校验收窄、手动多选经类型下拉可选集
+ *  收窄）——出现投资 kind 字面量即旁路写入，归一与展示序会静默失真。 */
+export function normalizeKindSelection(
+  values: readonly TransactionKind[] | null,
+): TransactionKind[] | null {
+  if (!values?.length) return null;
+  if (MAIN_LIST_KINDS.every((k) => values.includes(k))) return null;
+  return [...values];
+}
+
 /** URL 日期参数格式（issue #380）：YYYY-MM-DD，月/日限定在可能范围内（01-12 / 01-31）；
  * 非法格式视为参数不在场（回退不过滤）。不校验日历真实性（如 02-30 可通过）：后端按
  * 字典序比较，此类手工构造的畸形参数得到的是平移的边界而非报错——应用内跳转载荷
@@ -61,14 +95,18 @@ export interface TransactionFilters {
   /** 分类过滤维度（issue #377，三态）：分类 id = 精确过滤（不含子分类，含软删分类）；
    * UNCATEGORIZED_ONLY 哨兵 = 仅无分类；null = 不过滤。URL 下钻只读入口，无手动控件。 */
   categoryId: string | null;
-  /** 类型维度（spec #1025 单维化，原 issue #581，手动多选 + 下钻共用）：列表页类型
-   * 下拉的多选集合与 URL ?kinds= 携带的下钻载荷（逗号分隔闭集字面量解析为字面量
-   * 数组）共用本字段。维度内多值取或、与其余维度 AND 组合；类型为闭集字面量、
-   * 无参考数据映射、不涉保留值，挂起补判/让位/复位守卫同规。空集合 ≡ 不过滤 ≡
-   * 默认态（选满全部可选类型不归一：类型是可扩闭集）；载荷在场即覆盖手动多选
-   * （URL 永远赢，ADR-0094）。与「仅无分类」解耦：仅无分类命中一切无分类交易、
-   * 不限定类型，收支限定由本维度承担。原「单值 kind 手动维度 + 下钻专用集合」
-   * 两套表示并存、同携取交集的形态已退役（BREAKING，见 CHANGELOG）。 */
+  /** 类型维度（spec #1025 单维化，原 issue #581，手动多选 + 下钻共用；可选集与默认载荷
+   * 收窄为四通用 kind，ADR-0135 / issue #1783）：列表页类型下拉的多选集合与 URL ?kinds=
+   * 携带的下钻载荷（逗号分隔闭集字面量解析为字面量数组）共用本字段。可选集 =
+   * MAIN_LIST_KINDS（income / expense / transfer / refund），投资 kind 的类型筛选在投资域
+   * 投资明细页签；下钻载荷含投资 kind 字面量视为不在场（与非法字面量同规回退）。
+   * 维度内多值取或、与其余维度 AND 组合；类型为闭集字面量、无参考数据映射、不涉
+   * 保留值，挂起补判/让位/复位守卫同规。空集合与满选四通用 kind 经视图归一为 null
+   * ≡ 不过滤 ≡ 默认态；载荷在场即覆盖手动多选（URL 永远赢，ADR-0094）。主列表每次
+   * 请求显式携带四通用 kind（含默认态）——显式排除是视图 load 装配单点
+   * （resolveRequestKinds），不在本字段默认值。与「仅无分类」解耦：仅无分类命中
+   * 一切无分类交易、不限定类型，收支限定由本维度承担。原「单值 kind 手动维度 +
+   * 下钻专用集合」两套表示并存、同携取交集的形态已退役（BREAKING，见 CHANGELOG）。 */
   kinds: readonly TransactionKind[] | null;
   /** 标的下钻维度（ADR-0107，URL-only 无手动控件，与分类维度同规）：持仓页签行的
    * 跳转载荷（盈亏页按标的汇总行已退役，ADR-0107 修订注记 2026-09-13）。标的
@@ -186,12 +224,14 @@ const URL_PARAM_TABLE: ReadonlyArray<UrlParamDef> = [
     toPatch: (value) => ({ instrumentId: value }),
   },
   {
-    // 类型集合维度（issue #581）：报表分类下钻跳转载荷「分类 + 期间 + 收支类型集合」
-    // 的类型集合部分。闭集字面量、无参考数据映射、不涉保留值；挂起补判/让位/复位
+    // 类型集合维度（issue #581，可选集收窄为四通用 kind，ADR-0135 / issue #1783）：
+    // 报表分类下钻跳转载荷「分类 + 期间 + 收支类型集合」的类型集合部分。闭集字面量、
+    // 无参考数据映射、不涉保留值；投资 kind 字面量已收窄出本维度可选集（主列表不再
+    // 呈现投资行），载荷命中视为不在场（与非法字面量同规回退）；挂起补判/让位/复位
     // 守卫对每条同规则处理。
     queryKey: "kinds",
     field: "kinds",
-    check: { literalSet: TRANSACTION_KINDS },
+    check: { literalSet: MAIN_LIST_KINDS },
     toPatch: (value) => ({ kinds: value ? (value.split(",") as TransactionKind[]) : null }),
   },
   {

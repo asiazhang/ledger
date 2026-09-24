@@ -975,6 +975,16 @@ describe("useTransactionFilter URL 参数表·类型维度（手动多选 + 下�
     expect(lastRequest()).toEqual({ page: 1, page_size: 20, category_id: "cat-1" });
   });
 
+  it("投资 kind 字面量已收窄出可选集（ADR-0135 / issue #1783）：载荷视为不在场（回退不过滤）", async () => {
+    const { tf } = mountHarness();
+    await flushPromises();
+    tf.syncUrlQuery({ category: "cat-1", kinds: "buy" });
+    await flushPromises();
+    expect(tf.filters.kinds).toBeNull();
+    expect(tf.filters.categoryId).toBe("cat-1");
+    expect(lastRequest()).toEqual({ page: 1, page_size: 20, category_id: "cat-1" });
+  });
+
   it("复位守卫：kinds 无效回退时另一维度有效在场 → 日期/类型不越界复位", async () => {
     const { tf } = mountHarness();
     await flushPromises();

@@ -42,7 +42,13 @@ import {
 import { useCreateShortcuts, CREATE_KIND_KEYS } from "@/composables/useCreateShortcuts";
 import { useInputMode } from "@/composables/useInputMode";
 import { useRowContextMenu } from "@ledger/row-context-menu";
-import { useTransactionFilter, UNCATEGORIZED_ONLY } from "@/transaction/useTransactionFilter";
+import {
+  useTransactionFilter,
+  UNCATEGORIZED_ONLY,
+  MAIN_LIST_KINDS,
+  resolveRequestKinds,
+  normalizeKindSelection,
+} from "@/transaction/useTransactionFilter";
 import { registerViewReset } from "@/composables/viewResetRegistry";
 import { useTransactionModalState } from "@ledger/transaction-modal-state";
 import { api } from "@ledger/api";
@@ -56,7 +62,6 @@ import { isLendingEntryKind } from "@/transaction/lending";
 import { type NullableDateRange } from "@ledger/utils/time-period";
 import {
   LENDING_CREATE_DIRECTIONS,
-  TRANSACTION_KINDS,
   type CreateFormKind,
   type Transaction,
   type TransactionKind,
@@ -138,21 +143,21 @@ const merchantOptions = computed(() =>
     .map((m) => ({ label: m.name, value: m.id })),
 );
 
-/** 类型下拉选项：前端 TransactionKind 全量闭集（spec #1025 起多选，按闭集顺序渲染，
- * 含只读 kind convert / split / dividend）。标签经 t() 随语言切换。 */
+/** 类型下拉选项：主列表可选集收窄为四通用 kind（ADR-0135 / issue #1783，MAIN_LIST_KINDS
+ * 单源，spec #1025 起多选）；投资 kind 的类型筛选在投资域投资明细页签。标签经 t() 随语言切换。 */
 const kindOptions = computed<Array<{ label: string; value: TransactionKind }>>(() =>
-  TRANSACTION_KINDS.map((value) => ({
+  MAIN_LIST_KINDS.map((value) => ({
     label: t(`transactions.kind.${value}`),
     value,
   })),
 );
 
 /** 类型多选值（spec #1025）：脱只读投影（readonly 数组不直接喚组件）、标签按闭集顺序
- * 渲染（决议 6——手动选择序与 URL 载荷序都不作为展示序）；空集合归一为 null
- * （空集合 ≡ 不过滤 ≡ 默认态）。 */
+ * 渲染（决议 6——手动选择序与 URL 载荷序都不作为展示序）；空集合与满选四通用 kind 经
+ * normalizeKindSelection 归一为 null（空集合 ≡ 满选 ≡ 不过滤 ≡ 默认态，ADR-0135）。 */
 const kindValue = computed<TransactionKind[] | null>(() => {
   if (!filters.kinds?.length) return null;
-  const rank = new Map(TRANSACTION_KINDS.map((k, i) => [k, i]));
+  const rank = new Map<TransactionKind, number>(MAIN_LIST_KINDS.map((k, i) => [k, i]));
   return [...filters.kinds].sort((a, b) => (rank.get(a) ?? 0) - (rank.get(b) ?? 0));
 });
 
@@ -174,8 +179,10 @@ async function load() {
     else if (filters.categoryId) filter.category_id = filters.categoryId;
     // 标的维度（ADR-0107，URL-only 下钻）：无手动控件，挂起补判/让位/复位同规
     if (filters.instrumentId) filter.instrument_id = filters.instrumentId;
-    // 类型维度（spec #1025，手动多选 + 下钻共用）：非空集合 → 后端 kinds 数组（浅拷贝脱只读）
-    if (filters.kinds?.length) filter.kinds = [...filters.kinds];
+    // 类型维度（spec #1025 手动多选 + 下钻共用；主列表收窄 ADR-0135 / issue #1783）：
+    // 每次请求显式携带 kind 集合（含默认态）——显式集合在场按其携带，默认态显式携带
+    // 四通用 kind（主列表排除投资 kind 的唯一机制，装配单点 resolveRequestKinds）。
+    filter.kinds = resolveRequestKinds(filters.kinds);
     const res = await api.listTransactions(filter);
     // 页码钳制（issue #893）：页码超出当前数据有效范围时自愈——空页 + 尚有数据
     // + 非第一页 → 走 ADR-0045 页码回退入口回退一页重拉（既有出口，不新增第二出口、
@@ -301,9 +308,10 @@ function onMerchantFilterChange(id: string | null) {
   setFilter({ merchantId: id });
 }
 
-/** 类型多选处理器（spec #1025）：空数组归一为 null（空集合 ≡ 不过滤 ≡ 默认态）。 */
+/** 类型多选处理器（spec #1025；满选归一 ADR-0135 / issue #1783）：空集合与满选四通用 kind
+ * 都归一为 null（空集合 ≡ 满选 ≡ 不过滤 ≡ 默认态，「满选 ≠ 默认」不等式随可选集收窄解除）。 */
 function onKindFilterChange(values: TransactionKind[] | null) {
-  setFilter({ kinds: values?.length ? values : null });
+  setFilter({ kinds: normalizeKindSelection(values) });
 }
 
 async function remove(id: string) {

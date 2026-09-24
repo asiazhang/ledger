@@ -15,6 +15,7 @@ import { mount, flushPromises } from "@vue/test-utils";
 import { NSelect, NButton } from "naive-ui";
 import { fireProp } from "@ledger/test-support/component-vm";
 import PinyinSelect from "@ledger/ui-kit/PinyinSelect.vue";
+import { MAIN_LIST_KINDS } from "@/transaction/useTransactionFilter";
 import { useReferenceStore } from "@/stores/reference";
 import type { Merchant, Transaction } from "@ledger/types";
 
@@ -41,18 +42,6 @@ describe("TransactionsView URL 下钻接线（issue #97/#191，冒烟级）", ()
     });
     // 涉及 acc-1：txn-1 / txn-3（主账户）+ txn-4（转账转入侧）
     expect(wrapper.text()).toContain("共 3 条");
-  });
-
-  it("涉及语义含出资账户端（issue #937）：按卡过滤命中它出资的买入", async () => {
-    // acc-2 出资、acc-1 投资的买入：按 acc-2（银行卡）下钻应命中，替身镜像后端三端口径
-    setTxnDb([
-      makeTxn(1, "acc-1", { kind: "buy", funding_account_id: "acc-2", date: "2026-01-05" }),
-      makeTxn(2, "acc-1", { date: "2026-01-20" }),
-    ]);
-    routeMock.query = { account: "acc-2" };
-    const wrapper = await mountView();
-    expect(lastListFilter()).toMatchObject({ involving_account_id: "acc-2" });
-    expect(wrapper.text()).toContain("共 1 条");
   });
 
   it("account 与 merchant 参数可组合直达（同时生效）", async () => {
@@ -95,10 +84,10 @@ describe("TransactionsView URL 下钻接线（issue #97/#191，冒烟级）", ()
     expect(wrapper.text()).toContain("共 2 条");
     // 类型维度单维化（spec #1025）：下钻载荷与手动多选共用类型下拉，无新增控件
     expect(wrapper.findAllComponents(NSelect).length).toBe(selectCount);
-    // 导航清除 → 类型集合同步清空回全量
+    // 导航清除 → 类型集合同步清空（请求回默认载荷：显式携带四通用 kind，ADR-0135）
     routeMock.query = {};
     await flushPromises();
-    expect(lastListFilter()).not.toHaveProperty("kinds");
+    expect(lastListFilter().kinds).toEqual([...MAIN_LIST_KINDS]);
     expect(wrapper.text()).toContain("共 3 条");
   });
 });
@@ -154,7 +143,8 @@ describe("TransactionsView 过滤行与手动过滤接线（issue #98，冒烟�
     expect((merchant.props("options") as { value: string }[]).map((o) => o.value)).toEqual([
       "mch-1",
     ]);
-    // 类型下拉：可清除、多选（spec #1025），9 种交易类型按闭集顺序（含 dividend）
+    // 类型下拉：可清除、多选（spec #1025），可选集收窄为四通用 kind（ADR-0135 / issue #1783，
+    // 按闭集顺序渲染；投资 kind 的类型筛选在投资域投资明细页签）
     const kind = kindSelect(wrapper);
     expect(kind.props("clearable")).toBe(true);
     expect(kind.props("multiple")).toBe(true);
@@ -163,11 +153,6 @@ describe("TransactionsView 过滤行与手动过滤接线（issue #98，冒烟�
       "expense",
       "transfer",
       "refund",
-      "buy",
-      "sell",
-      "convert",
-      "split",
-      "dividend",
     ]);
     // 清除筛选按钮：无过滤时禁用
     expect(clearButton(wrapper).attributes("disabled")).toBeDefined();
@@ -221,7 +206,8 @@ describe("TransactionsView 过滤行与手动过滤接线（issue #98，冒烟�
 
   it("过滤无结果时展示空态提示（与加载态区分），空态可一键清除", async () => {
     const wrapper = await mountView();
-    await setKind(wrapper, ["buy"]); // richDb 无 buy → 空结果
+    await setAccount(wrapper, "acc-1");
+    await setKind(wrapper, ["income"]); // richDb 收入行在 acc-2，配合账户过滤 acc-1 → 空结果
     expect(wrapper.text()).toContain("没有符合条件的交易");
     expect(bodyRows(wrapper).length).toBe(0);
     // 空态中的「清除筛选」可一键复位到全量
@@ -230,50 +216,24 @@ describe("TransactionsView 过滤行与手动过滤接线（issue #98，冒烟�
     expect(wrapper.text()).toContain("共 5 条");
   });
 
-  it("类型多选交互路由（spec #1025）：多类型集合生效于请求；选满全部类型不归一（清除按钮仍可用）；清空回全量", async () => {
+  it("类型多选交互路由（spec #1025）：多类型集合生效于请求；满选四通用 kind 归一为默认态（ADR-0135）；清空回默认", async () => {
     const wrapper = await mountView();
-    // 多选买入 + 卖出：请求携带集合（richDb 无 buy/sell → 空结果）
-    await setKind(wrapper, ["buy", "sell"]);
-    expect(lastListFilter()).toMatchObject({ page: 1, page_size: 20, kinds: ["buy", "sell"] });
-    expect(wrapper.text()).toContain("没有符合条件的交易");
+    // 多选收入 + 退款：请求携带集合（richDb 命中 income 与 refund 行）
+    await setKind(wrapper, ["refund", "income"]);
+    expect(lastListFilter()).toMatchObject({ page: 1, page_size: 20, kinds: ["refund", "income"] });
+    expect(wrapper.text()).toContain("共 2 条");
     // 标签按闭集顺序渲染（决议 6）：选择序 / URL 载荷序不作展示序
-    await setKind(wrapper, ["sell", "income"]);
-    expect(kindSelect(wrapper).props("value")).toEqual(["income", "sell"]);
-    // 选满全部可选类型：不归一为默认态——请求仍携带全量集合，清除筛选按钮可用
-    await setKind(wrapper, [
-      "income",
-      "expense",
-      "transfer",
-      "refund",
-      "buy",
-      "sell",
-      "convert",
-      "split",
-    ]);
-    expect(lastListFilter().kinds).toHaveLength(8);
-    expect(clearButton(wrapper).attributes("disabled")).toBeUndefined();
-    // 清空选择：请求不再携带类型参数，回到全量
+    await setKind(wrapper, ["expense", "income"]);
+    expect(kindSelect(wrapper).props("value")).toEqual(["income", "expense"]);
+    // 满选四通用 kind：归一为默认态——请求仍显式携带同集（默认载荷），清除筛选按钮禁用
+    // （「满选 ≠ 默认」不等式随可选集收窄解除，ADR-0135）
+    await setKind(wrapper, [...MAIN_LIST_KINDS]);
+    expect(lastListFilter().kinds).toEqual([...MAIN_LIST_KINDS]);
+    expect(clearButton(wrapper).attributes("disabled")).toBeDefined();
+    // 清空选择：请求回默认载荷（仍显式携带四通用 kind），回到全量
     await setKind(wrapper, null);
-    expect(lastListFilter()).not.toHaveProperty("kinds");
+    expect(lastListFilter().kinds).toEqual([...MAIN_LIST_KINDS]);
     expect(wrapper.text()).toContain("共 5 条");
-  });
-
-  it("类型筛选含「份额调整」：选中 split 只留 split 行，结果正确（ADR-0106 / #1052）", async () => {
-    setTxnDb([
-      makeTxn(1, "acc-1", { kind: "expense", date: "2026-01-05" }),
-      makeTxn(2, "acc-1", {
-        kind: "split",
-        amount_cents: 0,
-        amount_native_cents: 0,
-        date: "2026-02-01",
-      }),
-      makeTxn(3, "acc-1", { kind: "buy", date: "2026-03-01" }),
-    ]);
-    const wrapper = await mountView();
-    await setKind(wrapper, ["split"]);
-    expect(lastListFilter()).toMatchObject({ kinds: ["split"] });
-    expect(bodyRows(wrapper).length).toBe(1);
-    expect(bodyRows(wrapper)[0].text()).toContain("份额调整");
   });
 });
 
