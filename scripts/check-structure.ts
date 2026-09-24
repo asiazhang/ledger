@@ -48,8 +48,8 @@
 // 留痕 INFRA_BLOCK_ALLOWED_EDGES）。
 //
 // 符号调用方闭集（ADR-0011 决策 3 + 2026-09-22 修订 ① / #1692）：当期入口
-// `convert_to_native_current` 的生产调用方白名单 CONVERT_CURRENT_CALLERS 逐条留痕
-//（7 个读路径消费面 + 压测工具注记），白名单外调用即红；
+// `convert_to_native_current`（含 `try_` 软形态，issue #1797）的生产调用方白名单
+// CONVERT_CURRENT_CALLERS 逐条留痕（10 个读路径消费面 + 压测工具注记），白名单外调用即红；
 // 测试代码按 `/tests/` 路径约定豁免（ADR-0056 决策 5 同规），`fn` 定义面与注释/
 // 字符串提及经掩码与定义判定排除；在册成员文件缺失或零调用同样红（清单漂移
 // fail loud、拒绝空集假绿）。别名改写等文本不可达形态靠评审兜底（同壳层扫描
@@ -602,7 +602,8 @@ interface SymbolCallerEntry {
   reason: string;
 }
 
-/** 当期入口符号（规则名与报文定位共用单一字面量） */
+/** 当期入口符号（规则名与报文定位共用单一字面量）；`try_` 软形态（issue #1797）
+ * 同台账同一扫描，扫描正则以 `try_` 可选前缀并入。 */
 const CONVERT_CURRENT_CALL_SYMBOL = "convert_to_native_current";
 
 /**
@@ -626,6 +627,16 @@ export const CONVERT_CURRENT_CALLERS: readonly SymbolCallerEntry[] = [
   {
     file: "crates/investment/src/overview.rs",
     reason: "读路径：投资概览市值与累计盈亏的当期折算",
+  },
+  {
+    file: "crates/investment/src/crud.rs",
+    reason:
+      "读路径：持仓行逐行当期折算的软形态（try_convert_to_native_current，issue #1797）——持仓页签合计卡与首页投资概览卡的逐行本位币列；单行缺汇率降为行级 null，命令不失败",
+  },
+  {
+    file: "crates/investment/src/reports.rs",
+    reason:
+      "读路径：累计收益折本位币单值（query_cumulative_pnl_native_total，issue #1797）——三腿逐行当期折算后求和，缺汇率码化上抛不给半截数字",
   },
   {
     file: "crates/investment/src/financial_freedom.rs",
@@ -657,13 +668,15 @@ export const CONVERT_CURRENT_CALLERS: readonly SymbolCallerEntry[] = [
 
 /**
  * 当期入口调用命中扫描（掩码注释与字面量后）：标识符 + 同行左括号才算调用；
- * `fn convert_to_native_current(` 定义面、`use` 花括号列举与 doc 链提及均不命中。
+ * `fn convert_to_native_current(` / `fn try_convert_to_native_current(` 定义面、
+ * `use` 花括号列举与 doc 链提及均不命中。`try_` 软形态（issue #1797）经可选前缀
+ * 并入同一扫描——软形态同属当期入口，白名单纪律不分形态。
  */
 function convertCurrentCallHits(source: string): ScanHit[] {
   const masked = maskNonCode(source);
   const rawLines = source.split("\n");
   const hits: ScanHit[] = [];
-  const re = new RegExp(`\\b${CONVERT_CURRENT_CALL_SYMBOL}[ \\t]*\\(`, "g");
+  const re = new RegExp(`\\b(?:try_)?${CONVERT_CURRENT_CALL_SYMBOL}[ \\t]*\\(`, "g");
   for (const m of masked.matchAll(re)) {
     const idx = m.index ?? 0;
     // 定义面不是调用：紧邻前文以 `fn ` 收尾（`pub fn name(` 同形）。
@@ -1697,7 +1710,7 @@ function checkTransactionZoneDirection(srcTauriDir: string): string[] {
 /**
  * 当期入口调用方闭集核对（ADR-0011 决策 3 + 2026-09-22 修订 ① / #1692）：扫描
  * 全部非测试 Rust 生产面（根 src + 各 crate 模块面），`convert_to_native_current`
- * 的调用落在 CONVERT_CURRENT_CALLERS 之外即红；反向核对在册成员——文件缺失
+ * （含 `try_` 软形态）的调用落在 CONVERT_CURRENT_CALLERS 之外即红；反向核对在册成员——文件缺失
  *（清单漂移 fail loud）或零调用（拒绝空集假绿：符号改名/调用全删时白名单不静默
  * 变成空转全绿）同样红。测试代码按 `/tests/` 路径约定豁免（ADR-0056 决策 5）。
  */

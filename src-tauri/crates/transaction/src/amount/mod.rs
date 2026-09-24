@@ -16,6 +16,7 @@ mod measure;
 pub use convert::{
     FxEditBaseline, FxRateSource, NativeConversion, convert_to_native_current,
     convert_to_native_on_edit, convert_to_native_on_trade_date, default_currency_code,
+    try_convert_to_native_current,
 };
 pub use kind::TransactionKind;
 pub use measure::{

@@ -155,9 +155,9 @@ pub mod unwind;
 mod model;
 
 pub use model::{
-    AccountPnl, AddFundResult, AddStockInstrumentResult, CurrencyCumulativePnl,
-    CurrencyHoldingTotals, CurrencyPnl, FinancialFreedomOverview, Holding, Instrument,
-    InstrumentInput, InstrumentListFilter, InstrumentListResult, InstrumentPnl,
+    AccountPnl, AddFundResult, AddStockInstrumentResult, CumulativePnlNativeTotal,
+    CurrencyCumulativePnl, CurrencyHoldingTotals, CurrencyPnl, FinancialFreedomOverview, Holding,
+    Instrument, InstrumentInput, InstrumentListFilter, InstrumentListResult, InstrumentPnl,
     InstrumentPriceTrend, InstrumentSourceDisplay, InstrumentType, InvestmentConvertFields,
     InvestmentOverview, InvestmentSplitFields, InvestmentTradeFields,
     InvestmentTransactionListFilter, InvestmentTransactionListResult, InvestmentTransactionRow,
@@ -196,7 +196,8 @@ pub use mwr::{
 pub use overview::query_investment_overview;
 pub use quote::{Quote, QuoteAdoptionInput, QuoteAdoptionOutcome};
 pub use reports::{
-    query_cumulative_pnl_summary, query_holdings_summary_by_currency, query_realized_pnl_summary,
+    query_cumulative_pnl_native_total, query_cumulative_pnl_summary,
+    query_holdings_summary_by_currency, query_realized_pnl_summary,
 };
 pub use source::source_display_by_transaction_ids;
 pub use staleness::{PRICE_STALE_AFTER_DAYS, PriceStaleness, instrument_price_staleness};

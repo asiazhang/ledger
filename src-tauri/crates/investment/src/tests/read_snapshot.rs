@@ -333,6 +333,70 @@ fn mwr_flows_and_end_value_share_one_snapshot() {
     );
 }
 
+/// 累计收益折本位币单值的腿取数与汇率折算必须同快照（issue #1797 接入 #1699
+/// 纪律：三腿 UNION 取数与逐行当期汇率折算是两次独立语句，读数↔汇率折算形态）。
+/// 探针在逐行汇率读取（`SELECT rate FROM exchange_rates`，闭包内首条腿取数之后的
+/// 语句——marker 不得命中闭包首条语句，否则注入整体落在读锁之前）开始前于另一
+/// 连接把当期汇率翻倍——
+/// - 读闭包无快照保护（红）：腿金额读旧、汇率读新，合计相对基线漂移；
+/// - 读闭包收进读事务（绿）：注入写被挡住，合计与基线逐位相等。
+#[test]
+fn cumulative_pnl_native_total_legs_and_fx_share_one_snapshot() {
+    let dir = ScratchDir::new("investment-cpnt-read-snapshot");
+    let conn = open_file(dir.path());
+    seed_account(&conn, "acc-cpnt", "美股账户", "investment", "USD", 0);
+    seed_fx_history_weeks(
+        &conn,
+        "USD",
+        "CNY",
+        7.0,
+        &["2026-01-10", "2026-01-20", "2026-02-01", "2026-02-10"],
+    );
+    seed_exchange_rate(&conn, "USD", "CNY", 7.0);
+    seed_instrument(&conn, "inst-cpnt", "AAPL", "Apple", "USD", "unknown");
+    create_transaction_internal(
+        &conn,
+        make_buy_input("acc-cpnt", "inst-cpnt", 10.0, 1_000_000, 0),
+    )
+    .unwrap();
+    create_transaction_internal(
+        &conn,
+        make_sell_input("acc-cpnt", "inst-cpnt", 5.0, 1_200_000, 200),
+    )
+    .unwrap();
+    seed_market_price(&conn, "inst-cpnt", 1_100_000, "USD");
+
+    let before = query_cumulative_pnl_native_total(&conn).unwrap();
+    assert_eq!(
+        before.total_cents, 103_600,
+        "种子三腿 ×当期汇率 7 应得 103_600 分（否则口径断言空转）"
+    );
+
+    // 探针：逐行折算的当期汇率读取（`SELECT rate FROM exchange_rates`，全闭包
+    // 唯一形态）开始前，另一连接提交汇率翻倍。
+    snapshot_probe::arm(
+        &conn,
+        dir.path(),
+        "SELECT rate FROM exchange_rates",
+        &["UPDATE exchange_rates SET rate = rate * 2"],
+    );
+    let after = query_cumulative_pnl_native_total(&conn).unwrap();
+
+    let outcome = snapshot_probe::outcome();
+    assert!(
+        outcome != InjectionOutcome::NotFired,
+        "探针未命中三腿取数（marker 漂移或未臂装），断言失去意义：{outcome:?}"
+    );
+    assert_eq!(
+        before.total_cents, after.total_cents,
+        "腿金额与折算汇率必须同快照（金额读旧、汇率读新即漂移）"
+    );
+    assert_eq!(
+        before.native_currency, after.native_currency,
+        "折算基准币种不应漂移"
+    );
+}
+
 /// 组合走势的读数与汇率折算必须同快照（issue #1702）：曲线各周 = 数量 × 周线价
 /// × 同期汇率，价格行与汇率历史是两次独立语句（读数↔汇率折算形态，#1699 根因
 /// 清单第四形态）。探针在汇率历史读取开始前于另一连接把 USD→CNY 汇率翻倍——

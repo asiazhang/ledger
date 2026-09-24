@@ -3,19 +3,60 @@
 //!
 //! - [`query_cumulative_pnl_summary`]：未实现盈亏（`v_holdings`）+ 已实现盈亏（卖出
 //!   匹配）+ 累计分红三腿按币种独立成组，不跨币种折算；缺价 / 缺汇率持仓按空值跳过。
+//! - [`query_cumulative_pnl_native_total`]：同三腿的折本位币单值（issue #1797，
+//!   持仓页签合计卡与首页投资概览卡消费面）。
 //! - [`query_realized_pnl_summary`]：盈亏页按年 / 按账户两表（已实现 + 分红两腿）
 //!   与按币种总数、按标的行；软删账户与软删流水排除、隐藏账户照常计入。
 //! - [`query_holdings_summary_by_currency`]：持仓市值 / 未实现盈亏按账户币种分组合计。
 
 use rusqlite::Connection;
 
+use ledger_transaction::amount;
+
 use super::model::{
-    AccountPnl, CurrencyCumulativePnl, CurrencyHoldingTotals, CurrencyPnl, InstrumentPnl,
-    PnlFilter, RealizedPnlSummary, YearPnl,
+    AccountPnl, CumulativePnlNativeTotal, CurrencyCumulativePnl, CurrencyHoldingTotals,
+    CurrencyPnl, InstrumentPnl, PnlFilter, RealizedPnlSummary, YearPnl,
 };
-use ledger_infra::db::query::query_all;
+use ledger_infra::db::query::{FromRow, query_all};
 use ledger_infra::db::tx_scope::ensure_transaction;
 use ledger_infra::error::Result;
+
+/// 已实现/分红腿行：金额（分，非空）+ 币种（逐行折本位币消费面的行载体）。
+pub(crate) struct LegEntry {
+    pub amount_cents: i64,
+    pub currency_code: String,
+}
+
+impl FromRow for LegEntry {
+    fn from_row(row: &rusqlite::Row) -> rusqlite::Result<Self> {
+        Ok(LegEntry {
+            amount_cents: row.get(0)?,
+            currency_code: row.get(1)?,
+        })
+    }
+}
+
+/// 累计收益三腿的 UNION ALL 片段（分组与折本位币单值两聚合共用，口径表达式
+/// 不复制）：未实现腿按账户币种（缺价 / 缺汇率持仓的 NULL 行直接不出——分组
+/// 靠 SUM 跳空、单值靠逐行 Option 过滤，两侧空值语义同源）；已实现腿按匹配
+/// 行币种、分红腿按交易行币种；过滤同源（软删账户与软删交易排除、隐藏账户
+/// 照常计入，issue #217 定案）。
+const CUMULATIVE_PNL_LEGS: &str = "SELECT a.currency_code AS currency_code, v.unrealized_pnl_cents AS amount_cents \
+     FROM v_holdings v \
+     JOIN accounts a ON a.id = v.account_id \
+     WHERE v.unrealized_pnl_cents IS NOT NULL \
+     UNION ALL \
+     SELECT sls.currency_code AS currency_code, sls.realized_pnl_cents AS amount_cents \
+     FROM security_lot_sales sls \
+     JOIN transactions t ON t.id = sls.sell_transaction_id \
+     JOIN accounts a ON a.id = t.account_id AND a.is_deleted = 0 \
+     WHERE t.is_deleted = 0 \
+     UNION ALL \
+     SELECT t.currency_code AS currency_code, t.amount_cents AS amount_cents \
+     FROM transactions t \
+     JOIN security_transactions st ON st.transaction_id = t.id AND st.action='dividend' \
+     JOIN accounts a ON a.id = t.account_id AND a.is_deleted = 0 \
+     WHERE t.is_deleted = 0 AND t.kind='dividend'";
 
 /// 按币种分组的累计收益（issue #1077 / #1078 / 词汇表「累计收益（CumulativePnl）」）：
 /// 未实现盈亏（Holding 侧，`v_holdings`）+ 已实现盈亏（RealizedPnl 侧，
@@ -36,28 +77,38 @@ use ledger_infra::error::Result;
 /// （未实现盈亏与已实现盈亏的既有口径逐位不变），只按其自身现金流量入累计收益——
 /// 与「当前市值 + 累计卖出净收入 − 累计买入总支出 + 累计分红」的现金流口径一致。
 pub fn query_cumulative_pnl_summary(conn: &Connection) -> Result<Vec<CurrencyCumulativePnl>> {
-    // 三腿 `UNION ALL` 后按币种分组求和：未实现腿按账户币种、已实现腿按匹配行币种、
-    // 分红腿按交易行币种，三条口径的币种在单账户内同源（buy/sell 与 dividend 记录
-    // 币种恒为账户币），故同组可直接相加。
-    let sql = "SELECT currency_code, SUM(amount_cents) FROM (\
-                   SELECT a.currency_code AS currency_code, v.unrealized_pnl_cents AS amount_cents \
-                   FROM v_holdings v \
-                   JOIN accounts a ON a.id = v.account_id \
-                   WHERE v.unrealized_pnl_cents IS NOT NULL \
-                   UNION ALL \
-                   SELECT sls.currency_code AS currency_code, sls.realized_pnl_cents AS amount_cents \
-                   FROM security_lot_sales sls \
-                   JOIN transactions t ON t.id = sls.sell_transaction_id \
-                   JOIN accounts a ON a.id = t.account_id AND a.is_deleted = 0 \
-                   WHERE t.is_deleted = 0 \
-                   UNION ALL \
-                   SELECT t.currency_code AS currency_code, t.amount_cents AS amount_cents \
-                   FROM transactions t \
-                   JOIN security_transactions st ON st.transaction_id = t.id AND st.action='dividend' \
-                   JOIN accounts a ON a.id = t.account_id AND a.is_deleted = 0 \
-                   WHERE t.is_deleted = 0 AND t.kind='dividend' \
-               ) GROUP BY currency_code ORDER BY currency_code";
-    query_all(conn, sql, [])
+    // 三腿 `UNION ALL`（[`CUMULATIVE_PNL_LEGS`]）后按币种分组求和：未实现腿按账户
+    // 币种、已实现腿按匹配行币种、分红腿按交易行币种，三条口径的币种在单账户内
+    // 同源（buy/sell 与 dividend 记录币种恒为账户币），故同组可直接相加。
+    let sql = format!(
+        "SELECT currency_code, SUM(amount_cents) FROM ({CUMULATIVE_PNL_LEGS}) \
+         GROUP BY currency_code ORDER BY currency_code"
+    );
+    query_all(conn, &sql, [])
+}
+
+/// 累计收益·折本位币单值（issue #1797，[`CumulativePnlNativeTotal`]）：同
+/// [`query_cumulative_pnl_summary`] 的三腿取数（[`CUMULATIVE_PNL_LEGS`]，同过滤同
+/// 空值语义），唯逐行按当期汇率折全局默认币种后求和（折算单点在交易域入口；
+/// 缺汇率码化上抛 `fx.rate-missing`，不静默给半截数字——与投资概览页签同款硬
+/// 形态，展示层整卡警告 + 重试）。
+///
+/// **读快照一致性（issue #1699 同款）**：三腿取数与逐行折算多语句，整体收进
+/// 同一读事务（嵌套感知）——写提交落在语句之间会合计各腿不同时点。
+pub fn query_cumulative_pnl_native_total(conn: &Connection) -> Result<CumulativePnlNativeTotal> {
+    ensure_transaction(conn, || {
+        let sql = format!("SELECT amount_cents, currency_code FROM ({CUMULATIVE_PNL_LEGS})");
+        let entries: Vec<LegEntry> = query_all(conn, &sql, [])?;
+        let mut total = 0i64;
+        for entry in entries {
+            total +=
+                amount::convert_to_native_current(conn, entry.amount_cents, &entry.currency_code)?;
+        }
+        Ok(CumulativePnlNativeTotal {
+            total_cents: total,
+            native_currency: amount::default_currency_code(conn)?,
+        })
+    })
 }
 
 /// 按币种分组的持仓合计（issue #1196 / ADR-0114 跨账本汇总的域读投影）：

@@ -29,6 +29,7 @@ import type {
   CreateTransactionResult,
   Currency,
   CurrencyCumulativePnl,
+  CumulativePnlNativeTotal,
   CrossBookInvestmentSummary,
   DashboardOverview,
   DataLocationChangeOutcome,
@@ -324,6 +325,9 @@ export const api = {
   // 按币种分组的累计收益（issue #1077）：未实现 + 已实现两腿相加，
   // 持仓页签合计区与首页投资卡共用（不做跨币种折算，缺价行情不计入）
   cumulativePnlSummary: () => invoke<CurrencyCumulativePnl[]>("cumulative_pnl_summary"),
+  // 累计收益·折本位币单值（issue #1797）：三腿逐行当期汇率折全局默认币种后求和，
+  // 持仓页签合计卡与首页投资卡共用；缺折算汇率码化上抛（展示层卡内警告 + 重试）
+  cumulativePnlNativeTotal: () => invoke<CumulativePnlNativeTotal>("cumulative_pnl_native_total"),
   // 资金加权收益率（ADR-0115 / issue #1195）：三个消费面（持仓页单标的 /
   // 盈亏页账户级与全账级）共用的只读投影；可选区间（区间开始存量持仓按
   // 区间首日市值折为期初投入，收益率的输入假设、不改账务）

@@ -6,35 +6,24 @@ import { defineComponent } from "vue";
 import { useReferenceStore } from "@/stores/reference";
 import { registerToastSink } from "@ledger/loadable";
 import {
-  formatCurrencyGroups,
-  sumByCurrency,
+  rowStatCardValues,
   usePortfolioOverview,
+  type PortfolioRow,
 } from "@/investment/usePortfolioOverview";
 import {
   makeFakeSink,
   mockAccounts,
-  mockCurrencies,
   mockHoldings,
   mockInstruments,
   resetToastSink,
 } from "./factories";
-import { formatAmount } from "@ledger/money";
-import type { Currency } from "@ledger/types";
-
-// 金额断言委托形态（issue #770）：期待值调同一 formatAmount 实现，格式规则唯一归属其专测；
-// formatCurrencyGroups 自身规则只剩「 / 」连接符，仍以字面量锁定
-const cny = mockCurrencies[0];
-const usd: Currency = { code: "USD", name: "美元", symbol: "$", decimal_places: 2 };
 
 /** 默认 invoke 布线：持仓 + 持仓标的字典契约快照（参考字典命令走接缝内建兜底） */
 const BASE_DEFAULTS = {
   list_holdings: mockHoldings,
   list_instruments: { items: mockInstruments, total: mockInstruments.length },
-  // 累计收益（issue #1077）：后端按币种分组聚合（未实现 + 已实现两腿相加）
-  cumulative_pnl_summary: [
-    { currency_code: "CNY", cumulative_pnl_cents: 30000 },
-    { currency_code: "USD", cumulative_pnl_cents: -500 },
-  ],
+  // 累计收益·折本位币单值（issue #1797）：后端三腿逐行折算聚合，前端透传
+  cumulative_pnl_native_total: { total_cents: 48000, native_currency: "CNY" },
 };
 
 /** 参考命令本场景需自定义值（overrides 优先于参考兜底）：行装配断言消费账户名「证券账户A」 */
@@ -56,52 +45,84 @@ beforeEach(async () => {
   await store.refresh();
 });
 
-describe("sumByCurrency 按币种汇总金额", () => {
-  it("跳过空值并按币种累加、按币种代码排序", () => {
-    expect(
-      sumByCurrency([
-        { currencyCode: "CNY", cents: 100 },
-        { currencyCode: "HKD", cents: 50 },
-        { currencyCode: "CNY", cents: 200 },
-        { currencyCode: "USD", cents: null },
-      ]),
-    ).toEqual([
-      { currencyCode: "CNY", cents: 300 },
-      { currencyCode: "HKD", cents: 50 },
+// ---------------------------------------------------------------------------
+// rowStatCardValues：行集 → 市值/收益两卡单值装配（缺料三态分离的唯一表达式，
+// issue #1797）。纯函数直测三态闭集；composable 集成口径见下一组。
+// ---------------------------------------------------------------------------
+
+/** 行夹具：只带两卡消费的两列（其余字段与装配无关） */
+function row(partial: Partial<PortfolioRow> & { holdingId: string }): PortfolioRow {
+  return {
+    accountId: "acc-1",
+    accountName: "证券账户A",
+    instrumentId: `inst-${partial.holdingId}`,
+    symbol: null,
+    instrumentName: null,
+    quantity: 100,
+    costBasisCents: 100000,
+    costCurrencyCode: "CNY",
+    latestPriceCents: null,
+    latestPriceCurrencyCode: null,
+    latestNavDate: null,
+    marketValueCents: null,
+    unrealizedPnlCents: null,
+    nativeMarketValueCents: null,
+    nativeUnrealizedPnlCents: null,
+    valueCurrencyCode: "CNY",
+    priceChannel: "quote",
+    ...partial,
+  };
+}
+
+describe("rowStatCardValues 行集 → 单值装配（issue #1797）", () => {
+  it("缺现价行（cents null）计入 missingPriceCount、不计入合计", () => {
+    const { marketValue } = rowStatCardValues([
+      row({ holdingId: "h1", marketValueCents: 150000, nativeMarketValueCents: 150000 }),
+      row({ holdingId: "h2" }),
     ]);
+    expect(marketValue.cents).toBe(150000);
+    expect(marketValue.missingPriceCount).toBe(1);
+    expect(marketValue.rateMissingCount).toBe(0);
+    expect(marketValue.error).toBeNull();
   });
 
-  it("全部为空值时返回空数组", () => {
-    expect(sumByCurrency([{ currencyCode: "CNY", cents: null }])).toEqual([]);
-  });
-});
-
-describe("formatCurrencyGroups 分组合计展示文本（issue #145 首页复用）", () => {
-  it("逐组格式化后以「 / 」连接", () => {
-    const currencyMap = new Map([...mockCurrencies, usd].map((c) => [c.code, c]));
-    expect(
-      formatCurrencyGroups(
-        [
-          { currencyCode: "CNY", cents: 300 },
-          { currencyCode: "USD", cents: -500 },
-        ],
-        currencyMap,
-      ),
-    ).toBe(`${formatAmount(300, cny)} / ${formatAmount(-500, usd)}`);
+  it("有金额但缺折算汇率的行（nativeCents null）计入 rateMissingCount，不给半截数字", () => {
+    const { unrealizedPnl } = rowStatCardValues([
+      row({ holdingId: "h1", unrealizedPnlCents: 30000, nativeUnrealizedPnlCents: null }),
+      row({ holdingId: "h2", unrealizedPnlCents: 10000, nativeUnrealizedPnlCents: 10000 }),
+    ]);
+    // 缺汇率行整卡警告：合计不为任何部分和
+    expect(unrealizedPnl.cents).toBeNull();
+    expect(unrealizedPnl.rateMissingCount).toBe(1);
+    expect(unrealizedPnl.missingPriceCount).toBe(0);
   });
 
-  it("空分组降级为 -", () => {
-    expect(formatCurrencyGroups([], new Map())).toBe("-");
+  it("同币（DefaultCurrency）行直接相加", () => {
+    const { marketValue } = rowStatCardValues([
+      row({ holdingId: "h1", marketValueCents: 150000, nativeMarketValueCents: 150000 }),
+      row({ holdingId: "h2", marketValueCents: 2000000, nativeMarketValueCents: 1850000 }),
+    ]);
+    expect(marketValue.cents).toBe(2000000);
+    expect(marketValue.missingPriceCount).toBe(0);
+    expect(marketValue.rateMissingCount).toBe(0);
+  });
+
+  it("空行集：无可计入行（cents null、计数归零）", () => {
+    const { marketValue, unrealizedPnl } = rowStatCardValues([]);
+    expect(marketValue.cents).toBeNull();
+    expect(unrealizedPnl.cents).toBeNull();
+    expect(marketValue.missingPriceCount).toBe(0);
+    expect(marketValue.rateMissingCount).toBe(0);
   });
 });
 
 describe("usePortfolioOverview 盈亏页持仓概览数据层（issue #110）", () => {
-  it("加载持仓并与持仓标的字典/账户信息拼装成行", async () => {
+  it("加载持仓并与持仓标的字典/账户信息拼装成行（含折本位币两列透传）", async () => {
     const { rows, loading, refresh } = withSetup(() => usePortfolioOverview());
     await refresh();
     expect(loading.value).toBe(false);
     expect(rows.value.length).toBe(2);
-    const row1 = rows.value[0];
+    const row1 = rows.value[0]!;
     expect(row1.symbol).toBe("600000");
     expect(row1.instrumentName).toBe("浦发银行");
     expect(row1.accountName).toBe("证券账户A");
@@ -110,6 +131,9 @@ describe("usePortfolioOverview 盈亏页持仓概览数据层（issue #110）", 
     expect(row1.latestPriceCents).toBe(150000); // 现价为万分之一元刻度（ADR-0038）
     expect(row1.marketValueCents).toBe(150000);
     expect(row1.unrealizedPnlCents).toBe(30000);
+    // 折本位币两列随行透传（后端逐行当期汇率软折算，issue #1797），合计卡消费
+    expect(row1.nativeMarketValueCents).toBe(150000);
+    expect(row1.nativeUnrealizedPnlCents).toBe(30000);
     // 市值/未实现盈亏折算币种 = 账户币
     expect(row1.valueCurrencyCode).toBe("CNY");
   });
@@ -128,51 +152,77 @@ describe("usePortfolioOverview 盈亏页持仓概览数据层（issue #110）", 
     expect(rows.value[0]!.latestNavDate).toBeNull();
   });
 
-  it("总市值与未实现盈亏合计：排除无行情行，按账户币种汇总", async () => {
-    const { totalMarketValueGroups, totalUnrealizedPnlGroups, refresh } = withSetup(() =>
-      usePortfolioOverview(),
-    );
+  it("合计单值（issue #1797）：缺现价行未计入并计数，折本位币列求和", async () => {
+    const { statCards, refresh } = withSetup(() => usePortfolioOverview());
     await refresh();
-    // h-2 无行情 NULL 不计入；只有 h-1 计入
-    expect(totalMarketValueGroups.value).toEqual([{ currencyCode: "CNY", cents: 150000 }]);
-    expect(totalUnrealizedPnlGroups.value).toEqual([{ currencyCode: "CNY", cents: 30000 }]);
+    // h-2 无行情 NULL 不计入且计数；只有 h-1 计入（150000 / 30000）
+    expect(statCards.value.marketValue).toEqual({
+      cents: 150000,
+      missingPriceCount: 1,
+      rateMissingCount: 0,
+      error: null,
+    });
+    expect(statCards.value.unrealizedPnl).toEqual({
+      cents: 30000,
+      missingPriceCount: 1,
+      rateMissingCount: 0,
+      error: null,
+    });
   });
 
-  it("累计收益按币种分组透传（issue #1077）：后端两腿相加结果直接成组，不从持仓行派生", async () => {
-    const { totalCumulativePnlGroups, refresh } = withSetup(() => usePortfolioOverview());
+  it("累计收益透传后端折本位币单值（issue #1797）：不从持仓行派生，nativeCurrency 随命令", async () => {
+    const { cumulativePnl, nativeCurrency, refresh } = withSetup(() => usePortfolioOverview());
     await refresh();
-    expect(totalCumulativePnlGroups.value).toEqual([
-      { currencyCode: "CNY", cents: 30000 },
-      { currencyCode: "USD", cents: -500 },
-    ]);
-    // USD 组只可能来自后端聚合（持仓行全为 CNY），排除前端从持仓行二次求和
-    expect(mockInvoke.mock.calls.some(([c]) => c === "cumulative_pnl_summary")).toBe(true);
+    expect(cumulativePnl.value).toEqual({
+      cents: 48000,
+      missingPriceCount: 0,
+      rateMissingCount: 0,
+      error: null,
+    });
+    expect(nativeCurrency.value).toBe("CNY");
+    // 单值只可能来自后端命令（三腿折算聚合在前端不可复算）
+    expect(mockInvoke.mock.calls.some(([c]) => c === "cumulative_pnl_native_total")).toBe(true);
   });
 
-  it("无持仓时行为明确：rows 为空、汇总为空数组，不报错", async () => {
+  it("无持仓时行为明确：rows 为空、合计无计入行（cents null），不报错", async () => {
     wireInvokeSeam({
       defaults: BASE_DEFAULTS,
       overrides: {
         ...REFERENCE_OVERRIDES,
         list_holdings: [],
         list_instruments: { items: [], total: 0 },
-        cumulative_pnl_summary: [],
       },
     });
-    const {
-      rows,
-      loading,
-      totalMarketValueGroups,
-      totalUnrealizedPnlGroups,
-      totalCumulativePnlGroups,
-      refresh,
-    } = withSetup(() => usePortfolioOverview());
+    const { rows, loading, statCards, refresh } = withSetup(() => usePortfolioOverview());
     await refresh();
     expect(rows.value).toEqual([]);
-    expect(totalMarketValueGroups.value).toEqual([]);
-    expect(totalUnrealizedPnlGroups.value).toEqual([]);
-    expect(totalCumulativePnlGroups.value).toEqual([]);
+    expect(statCards.value.marketValue.cents).toBeNull();
+    expect(statCards.value.unrealizedPnl.cents).toBeNull();
+    expect(statCards.value.marketValue.missingPriceCount).toBe(0);
     expect(loading.value).toBe(false);
+  });
+
+  it("两路读独立（issue #1797）：累计收益命令失败只降级该卡（警告态），不拖累持仓行装配", async () => {
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: {
+        ...REFERENCE_OVERRIDES,
+        cumulative_pnl_native_total: () => Promise.reject(new Error("缺少 USD→CNY 汇率，无法折算")),
+      },
+    });
+    const { rows, cumulativePnl, refresh } = withSetup(() => usePortfolioOverview());
+    await refresh();
+    // 持仓行不受拖累（表格的账户币展示不依赖折算）
+    expect(rows.value.length).toBe(2);
+    // 累计收益卡进入警告态：报错文案置位、不给半截数字
+    expect(cumulativePnl.value.error).toBe("缺少 USD→CNY 汇率，无法折算");
+    expect(cumulativePnl.value.cents).toBeNull();
+
+    // 重试成功即恢复（重试 = 重发同一条读命令）
+    wireInvokeSeam({ defaults: BASE_DEFAULTS, overrides: REFERENCE_OVERRIDES });
+    await refresh();
+    expect(cumulativePnl.value.error).toBeNull();
+    expect(cumulativePnl.value.cents).toBe(48000);
   });
 });
 

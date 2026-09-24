@@ -34,8 +34,9 @@ const appStore = useAppStore();
 // （issue #1192，ADR-0094 会话内保留）：页签重挂恢复离开时的筛选/排序/页码，
 // 冷启动回默认，零写盘。
 // 累计收益是全账本口径、不随三维过滤收窄（已实现腿无法归到某行可见持仓），
-// 故直接来自 usePortfolioOverview 而非 useHoldingsFilter。
-const { rows, loading, refresh, totalCumulativePnlGroups } = usePortfolioOverview();
+// 故直接来自 usePortfolioOverview 而非 useHoldingsFilter；累计收益卡为折本位币
+// 单值（issue #1797），缺折算汇率码化上抛 → 卡面警告 + 重试，不拖累持仓行装配。
+const { rows, loading, refresh, cumulativePnl, nativeCurrency } = usePortfolioOverview();
 // 资金加权收益率（issue #1195 / ADR-0115）：与金额口径并列的比例列，同一请求
 // 内自取（三消费面共用一次 money_weighted_return_summary）；期末市值随行情，
 // 价格失效信号重拉内化在本接缝（与上方 usePricesChanged 各自订阅，消费方自选）。
@@ -49,8 +50,7 @@ const {
   setSorter,
   filteredRows,
   page,
-  totalMarketValueGroups,
-  totalUnrealizedPnlGroups,
+  statCards,
   accountOptions,
 } = useHoldingsFilter(rows);
 
@@ -376,15 +376,18 @@ const overviewColumns = computed<DataTableColumn<PortfolioRow>[]>(() => [
             />
           </NSpace>
 
-          <!-- 合计三卡（issue #902 / #1077）：形态与口径归 PortfolioStatsCards（首页
-               投资概览卡同一组件），合计随过滤子集更新（排序不影响）、累计收益为全账本
-               口径（不受搜索/账户过滤收窄），见 usePortfolioOverview 注记。 -->
+          <!-- 合计三卡（issue #902 / #1077；issue #1797 起折本位币单值）：形态与口径归
+               PortfolioStatsCards（首页投资概览卡同一组件），合计随过滤子集更新（排序
+               不影响）、累计收益为全账本口径（不受搜索/账户过滤收窄），见
+               usePortfolioOverview 注解；缺料警告态的重试 = 重发同一条读命令。 -->
           <PortfolioStatsCards
             test-id-prefix="total-"
             scope="filtered"
-            :market-value-groups="totalMarketValueGroups"
-            :unrealized-pnl-groups="totalUnrealizedPnlGroups"
-            :cumulative-pnl-groups="totalCumulativePnlGroups"
+            :market-value="statCards.marketValue"
+            :unrealized-pnl="statCards.unrealizedPnl"
+            :cumulative-pnl="cumulativePnl"
+            :native-currency="nativeCurrency"
+            :retry="refresh"
           />
 
           <!-- 「没有持仓」（上方）与「筛选条件下无匹配」（此处）两种空态可区分 -->
