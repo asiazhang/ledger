@@ -1,5 +1,6 @@
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import { api } from "@ledger/api";
+import { useInvestmentsSessionStore } from "@/investment/investments-session";
 import { useLoadable } from "@ledger/loadable";
 import { useReferenceStore } from "@/stores/reference";
 import { useInstrumentSearch } from "@/investment/useInstrumentSearch";
@@ -18,10 +19,24 @@ import type { RealizedPnlSummary } from "@ledger/types";
  */
 export function useRealizedPnl() {
   const reference = useReferenceStore();
+  const session = useInvestmentsSessionStore();
 
   const summary = ref<RealizedPnlSummary | null>(null);
   const selectedAccountId = ref<string | null>(null);
   const selectedInstrumentId = ref<string | null>(null);
+
+  // 筛选变化翻页归零（issue #1795，词汇表「客户端切片分页」页码生命周期）：
+  // 账户/标的筛选任一应用值实际变化即回第一页（同步 flush 与意图应用原子生效，
+  // 持仓翻页归零同款；同值重设不触发）。页码住投资页会话状态 store——会话内
+  // 保留、冷启动回默认，越界回落由盈亏面板在读出口钳制（回退不归零）。
+  watch(
+    [selectedAccountId, selectedInstrumentId],
+    () => {
+      session.setPnlYearPage(1);
+      session.setPnlAccountPage(1);
+    },
+    { flush: "sync" },
+  );
 
   // 账户选项：投资账户谓词单点在参考 store（与投资录入表单同源，词汇表
   // RealizedPnl 词条），非投资账户不进选项面；隐藏投资账户保留（隐藏 ≠ 软删）。

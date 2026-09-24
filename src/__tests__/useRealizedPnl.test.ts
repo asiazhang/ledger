@@ -6,6 +6,7 @@ import { defineComponent } from "vue";
 import { SEARCH_DEBOUNCE_MS } from "@/composables/search-debounce";
 import { useReferenceStore } from "@/stores/reference";
 import { useRealizedPnl } from "@/investment/useRealizedPnl";
+import { useInvestmentsSessionStore } from "@/investment/investments-session";
 import { registerToastSink } from "@ledger/loadable";
 import type { RealizedPnlSummary } from "@ledger/types";
 import {
@@ -58,6 +59,23 @@ describe("useRealizedPnl 已实现盈亏数据层", () => {
     await refresh();
     const call = mockInvoke.mock.calls.find(([cmd]) => cmd === "realized_pnl_summary");
     expect(call![1]).toEqual({ filter: null });
+  });
+
+  it("筛选变化翻页归零（issue #1795）：账户/标的筛选实际变化即回第一页", () => {
+    const { selectedAccountId, selectedInstrumentId } = withSetup(() => useRealizedPnl());
+    const session = useInvestmentsSessionStore();
+    session.setPnlYearPage(3);
+    session.setPnlAccountPage(2);
+    selectedAccountId.value = "acc-1";
+    expect(session.pnlYearPage).toBe(1);
+    expect(session.pnlAccountPage).toBe(1);
+    // 同值重设不是实际变化：不触发归零（持仓翻页归零同规）
+    session.setPnlYearPage(2);
+    selectedAccountId.value = "acc-1";
+    expect(session.pnlYearPage).toBe(2);
+    // 标的筛选同规
+    selectedInstrumentId.value = "inst-1";
+    expect(session.pnlYearPage).toBe(1);
   });
 
   it("竞态：后发覆盖先发，迟到前发结果不覆写 summary 终态", async () => {

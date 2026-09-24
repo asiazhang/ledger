@@ -284,6 +284,9 @@
     "emptyFiltered": "当前筛选无匹配交易",
     "filterKind": "类型",
     "createBuy": "记买入",
-    "createSell": "记卖出"
+    "createSell": "记卖出",
+    "filterAccount": "账户",
+    "filterInstrument": "标的",
+    "filterDate": "日期"
   }
 }

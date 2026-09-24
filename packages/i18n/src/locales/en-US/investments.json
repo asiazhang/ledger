@@ -284,6 +284,9 @@
     "emptyFiltered": "No matching transactions",
     "filterKind": "Type",
     "createBuy": "Record Buy",
-    "createSell": "Record Sell"
+    "createSell": "Record Sell",
+    "filterAccount": "Account",
+    "filterInstrument": "Instrument",
+    "filterDate": "Date"
   }
 }
