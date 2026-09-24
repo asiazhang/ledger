@@ -138,7 +138,12 @@ pub async fn delete_account_handler(
         conn,
         emitter.as_deref(),
         WriteOp::DeleteAccount,
-        move |conn| ledger_accounts::delete_account(conn, &id).map(Outcome::Silent),
+        move |conn| {
+            // 壳层编排守卫（issue #1754 / ADR-0133 决策 4）：与 IPC 删除账户命令
+            // 同构——在用目标的专属账户先经目标域校验，命中即码化拒绝。
+            ledger_savings_goal::ensure_account_not_goal_bound(conn, &id)?;
+            ledger_accounts::delete_account(conn, &id).map(Outcome::Silent)
+        },
     )
     .await?;
     Ok(StatusCode::NO_CONTENT)

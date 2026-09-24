@@ -377,6 +377,11 @@ export const api = {
   // 编辑（issue #1752）：四字段全量替换 + 改名联动专属账户
   updateSavingsGoal: (id: string, input: SavingsGoalUpdateInput) =>
     invoke<void>("update_savings_goal", { id, input }),
+  // 归档 / 取消归档（issue #1754）：状态闭集二值，账户 / 流水 / 关联计划原样保留
+  archiveSavingsGoal: (id: string) => invoke<void>("archive_savings_goal", { id }),
+  unarchiveSavingsGoal: (id: string) => invoke<void>("unarchive_savings_goal", { id }),
+  // 删除（issue #1754）：余额非零被后端码化拒绝；余额为零目标软删 + 级联软删专属账户
+  deleteSavingsGoal: (id: string) => invoke<void>("delete_savings_goal", { id }),
 
   // 汇率
   listExchangeRates: () => invoke<ExchangeRate[]>("list_exchange_rates"),

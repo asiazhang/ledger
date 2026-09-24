@@ -224,6 +224,22 @@ fn update_savings_goal_emits_ledger_changed() {
 }
 
 #[test]
+fn archive_unarchive_delete_savings_goal_emit_ledger_changed() {
+    assert_signals(
+        signals_for(Op::ArchiveSavingsGoal, E::None),
+        &[Signal::LedgerChanged],
+    );
+    assert_signals(
+        signals_for(Op::UnarchiveSavingsGoal, E::None),
+        &[Signal::LedgerChanged],
+    );
+    assert_signals(
+        signals_for(Op::DeleteSavingsGoal, E::None),
+        &[Signal::LedgerChanged],
+    );
+}
+
+#[test]
 fn update_policy_emits_ledger_changed() {
     assert_signals(
         signals_for(Op::UpdatePolicy, E::None),

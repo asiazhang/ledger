@@ -57,6 +57,51 @@ async fn test_delete_account_not_found_returns_404() {
     assert!(err["message"].as_str().unwrap().contains("账户不存在"));
 }
 
+/// 壳层编排守卫（issue #1754 / ADR-0133 决策 4）：删除在用储蓄目标的专属账户
+/// 被码化拒绝（IPC 删除命令与 HTTP 端点同构调用目标域守卫——移除编排调用本
+/// 测试即红）。普通账户不受影响（既有用例覆盖）。
+#[tokio::test]
+async fn test_delete_account_of_active_goal_is_rejected() {
+    let (app, conn) = setup_app();
+    // 目标经目标域公开写入口直接建档（专属账户同事务自动创建）；创建命令返回
+    // 目标 id，专属账户 id 从绑定读出（1 目标 : 1 账户）。
+    let goal_id = ledger_savings_goal::create_savings_goal(
+        &conn.lock().unwrap(),
+        &ledger_savings_goal::SavingsGoalInput {
+            name: "买车基金".into(),
+            target_amount_cents: 500_000,
+            deadline: None,
+        },
+    )
+    .expect("创建目标应成功");
+    let account_id: String = conn
+        .lock()
+        .unwrap()
+        .query_row(
+            "SELECT account_id FROM goals WHERE id=?1",
+            rusqlite::params![goal_id],
+            |r| r.get(0),
+        )
+        .unwrap();
+
+    let (status, body) = delete_account_via_api(&app, &account_id).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let err: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(err["code"], "savings-goal.account-in-use");
+
+    // 账户未删（软删计数不变）
+    let active: i64 = conn
+        .lock()
+        .unwrap()
+        .query_row(
+            "SELECT COUNT(*) FROM accounts WHERE id=?1 AND is_deleted=0",
+            rusqlite::params![account_id],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(active, 1, "被拒删除不应留下软删账户");
+}
+
 #[tokio::test]
 async fn test_delete_account_does_not_validate_references() {
     let (app, conn) = setup_app();

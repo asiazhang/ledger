@@ -263,7 +263,9 @@
     "status-unknown": "unknown goal status: {0}",
     "not-found": "savings goal does not exist: {0}",
     "name-required": "goal name cannot be empty",
-    "planned-monthly-positive": "planned monthly saving must be a positive number"
+    "planned-monthly-positive": "planned monthly saving must be a positive number",
+    "delete-balance-nonzero": "the goal account still has a balance — transfer it out before deleting",
+    "account-in-use": "this account belongs to a savings goal — delete that goal first"
   },
   "scheduled-plan": {
     "amount-positive": "amount must be greater than 0",

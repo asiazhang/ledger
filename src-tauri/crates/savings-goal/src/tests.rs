@@ -851,3 +851,230 @@ fn progress_and_linked_plan_share_one_snapshot() {
         "ETA 由同快照的余额与节奏派生，两者异快照即口径矛盾"
     );
 }
+
+// ---------------------------------------------------------------------------
+// 生命周期守卫（issue #1754）：归档 / 取消归档、删除守卫矩阵（余额非零码化拒绝 /
+// 余额为零级联软删）、在用目标专属账户禁删守卫。
+// ---------------------------------------------------------------------------
+
+use super::{
+    archive_savings_goal, delete_savings_goal, ensure_account_not_goal_bound,
+    unarchive_savings_goal,
+};
+
+/// 归档 / 取消归档（AC 归档）：归档后目标行仍在读数中但状态转 archived，
+/// 专属账户与余额原样；取消归档恢复 active。归档不删任何东西。
+#[test]
+fn archive_exits_default_state_and_unarchive_restores() {
+    let conn = setup();
+    tauri_app_lib::test_support::seed_account(&conn, "src", "活期卡", "bank", "CNY", 2_000_000);
+    create_savings_goal(&conn, &goal_input("买车基金", 500_000, None)).expect("创建目标应成功");
+    let goal_id = only_progress(&conn).goal.id.clone();
+    let account_id = only_progress(&conn).goal.account_id.clone();
+    transfer(&conn, "src", &account_id, 200_000);
+
+    archive_savings_goal(&conn, &goal_id).expect("归档应成功");
+
+    let row = only_progress(&conn);
+    assert_eq!(
+        row.goal.status,
+        SavingsGoalStatus::Archived,
+        "归档后状态 archived"
+    );
+    assert_eq!(row.saved_cents, 200_000, "归档不动余额（账户 / 流水原样）");
+
+    unarchive_savings_goal(&conn, &goal_id).expect("取消归档应成功");
+    let row = only_progress(&conn);
+    assert_eq!(
+        row.goal.status,
+        SavingsGoalStatus::Active,
+        "取消归档恢复进行中"
+    );
+    assert_eq!(row.saved_cents, 200_000);
+}
+
+/// 归档不删任何东西（AC 归档不删账户 / 流水 / 计划）：账户仍可读、历史交易仍在、
+/// 关联在用计划不受影响（节奏来源仍为 Plan——目标域不改定时计划域状态）。
+#[test]
+fn archive_deletes_nothing() {
+    let conn = setup();
+    tauri_app_lib::test_support::seed_account(&conn, "src", "活期卡", "bank", "CNY", 2_000_000);
+    create_savings_goal(&conn, &goal_input("买车基金", 500_000, None)).expect("创建目标应成功");
+    let account_id = only_progress(&conn).goal.account_id.clone();
+    transfer(&conn, "src", &account_id, 200_000);
+    create_transfer_plan(&conn, "src", &account_id, 100_000, "monthly", 1);
+    let tx_before = count(
+        &conn,
+        &format!(
+            "SELECT COUNT(*) FROM transactions \
+             WHERE account_id='{account_id}' OR to_account_id='{account_id}'"
+        ),
+    );
+
+    archive_savings_goal(&conn, &only_progress(&conn).goal.id).expect("归档应成功");
+
+    assert_eq!(
+        count(
+            &conn,
+            &format!(
+                "SELECT COUNT(*) FROM transactions \
+                 WHERE account_id='{account_id}' OR to_account_id='{account_id}'"
+            ),
+        ),
+        tx_before,
+        "归档不删流水"
+    );
+    let accounts = ledger_accounts::list_accounts(&conn).expect("账户读命令应成功");
+    assert!(
+        accounts.iter().any(|a| a.id == account_id),
+        "归档不删专属账户"
+    );
+    let row = only_progress(&conn);
+    assert_eq!(
+        row.pace_source,
+        Some(SavingsGoalPaceSource::Plan),
+        "关联计划不受归档影响"
+    );
+    assert_eq!(row.pace_monthly_cents, Some(100_000));
+}
+
+/// 归档不存在的目标：码化 NotFound。
+#[test]
+fn archive_missing_goal_reports_not_found() {
+    let conn = setup();
+    let err = archive_savings_goal(&conn, "no-such-goal").expect_err("不存在目标应被拒绝");
+    assert!(
+        err.is_code("savings-goal.not-found"),
+        "应报码化 NotFound，实际 {err:?}"
+    );
+    let err = unarchive_savings_goal(&conn, "no-such-goal").expect_err("同上");
+    assert!(err.is_code("savings-goal.not-found"), "实际 {err:?}");
+}
+
+/// 删除守卫（AC 删目标·余额非零）：专属账户余额非零被码化拒绝并引导先转出，
+/// 零落库——目标行与专属账户原样。
+#[test]
+fn delete_goal_rejects_nonzero_balance() {
+    let conn = setup();
+    tauri_app_lib::test_support::seed_account(&conn, "src", "活期卡", "bank", "CNY", 2_000_000);
+    create_savings_goal(&conn, &goal_input("买车基金", 500_000, None)).expect("创建目标应成功");
+    let goal_id = only_progress(&conn).goal.id.clone();
+    let account_id = only_progress(&conn).goal.account_id.clone();
+    transfer(&conn, "src", &account_id, 200_000);
+
+    let err = delete_savings_goal(&conn, &goal_id).expect_err("余额非零应被拒绝");
+    assert!(
+        err.is_code("savings-goal.delete-balance-nonzero"),
+        "应报码化错误 savings-goal.delete-balance-nonzero（文案引导先转出），实际 {err:?}"
+    );
+
+    // 零落库：目标行与专属账户都在
+    let row = only_progress(&conn);
+    assert_eq!(row.goal.id, goal_id, "拒绝删除后目标行原样");
+    let accounts = ledger_accounts::list_accounts(&conn).expect("账户读命令应成功");
+    assert!(
+        accounts.iter().any(|a| a.id == account_id),
+        "拒绝删除后专属账户原样"
+    );
+}
+
+/// 删除守卫（AC 删目标·余额为零）：目标与专属账户级联软删，历史交易仍可读
+///（真实蓄水 + 真实支出清零后删除，流水保留）。删除后禁删守卫自然放行。
+#[test]
+fn delete_goal_zero_balance_cascades_account_soft_delete() {
+    let conn = setup();
+    tauri_app_lib::test_support::seed_account(&conn, "src", "活期卡", "bank", "CNY", 2_000_000);
+    create_savings_goal(&conn, &goal_input("买车基金", 500_000, None)).expect("创建目标应成功");
+    let goal_id = only_progress(&conn).goal.id.clone();
+    let account_id = only_progress(&conn).goal.account_id.clone();
+    transfer(&conn, "src", &account_id, 200_000);
+    spend(&conn, &account_id, 200_000);
+    assert_eq!(only_progress(&conn).saved_cents, 0, "夹具应清零余额");
+    let tx_before = count(
+        &conn,
+        &format!(
+            "SELECT COUNT(*) FROM transactions \
+             WHERE account_id='{account_id}' OR to_account_id='{account_id}'"
+        ),
+    );
+    assert!(tx_before > 0, "夹具应留下历史交易");
+
+    delete_savings_goal(&conn, &goal_id).expect("余额为零应可删除");
+
+    // 目标与专属账户软删、历史交易保留可查
+    assert_eq!(
+        count(&conn, "SELECT COUNT(*) FROM goals WHERE is_deleted=0"),
+        0,
+        "目标行软删"
+    );
+    assert_eq!(
+        count(&conn, "SELECT COUNT(*) FROM goals WHERE is_deleted=1"),
+        1,
+        "软删而非物理删除"
+    );
+    assert_eq!(
+        count(
+            &conn,
+            &format!("SELECT COUNT(*) FROM accounts WHERE id='{account_id}' AND is_deleted=0"),
+        ),
+        0,
+        "级联软删专属账户"
+    );
+    assert_eq!(
+        count(
+            &conn,
+            &format!("SELECT COUNT(*) FROM accounts WHERE id='{account_id}' AND is_deleted=1"),
+        ),
+        1,
+        "专属账户为软删而非删除数据"
+    );
+    assert_eq!(
+        count(
+            &conn,
+            &format!(
+                "SELECT COUNT(*) FROM transactions \
+                 WHERE account_id='{account_id}' OR to_account_id='{account_id}'"
+            ),
+        ),
+        tx_before,
+        "历史交易保留可查"
+    );
+    assert!(
+        list_savings_goal_progress(&conn, today())
+            .expect("进度读取应成功")
+            .is_empty()
+    );
+
+    // 删除后守卫放行（该账户已无在用目标绑定）
+    ensure_account_not_goal_bound(&conn, &account_id).expect("已删目标的账户守卫应放行");
+}
+
+/// 删除不存在的目标：码化 NotFound，零落库。
+#[test]
+fn delete_missing_goal_reports_not_found() {
+    let conn = setup();
+    let err = delete_savings_goal(&conn, "no-such-goal").expect_err("不存在目标应被拒绝");
+    assert!(err.is_code("savings-goal.not-found"), "实际 {err:?}");
+    assert_eq!(
+        count(&conn, "SELECT COUNT(*) FROM accounts WHERE is_deleted=1"),
+        0
+    );
+}
+
+/// 账户禁删守卫（AC 账户侧删除被拒·域单测面）：命中在用目标绑定 → 码化拒绝；
+/// 普通账户（非目标绑定）放行。
+#[test]
+fn account_guard_rejects_bound_account_only() {
+    let conn = setup();
+    tauri_app_lib::test_support::seed_account(&conn, "plain", "普通卡", "bank", "CNY", 0);
+    create_savings_goal(&conn, &goal_input("买车基金", 500_000, None)).expect("创建目标应成功");
+    let account_id = only_progress(&conn).goal.account_id.clone();
+
+    let err = ensure_account_not_goal_bound(&conn, &account_id).expect_err("在用目标绑定应被拒");
+    assert!(
+        err.is_code("savings-goal.account-in-use"),
+        "应报码化错误 savings-goal.account-in-use，实际 {err:?}"
+    );
+
+    ensure_account_not_goal_bound(&conn, "plain").expect("非目标账户应放行");
+}

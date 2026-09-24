@@ -263,7 +263,9 @@
     "status-unknown": "未知目标状态: {0}",
     "not-found": "储蓄目标不存在: {0}",
     "name-required": "目标名称不能为空",
-    "planned-monthly-positive": "计划月存必须为正数"
+    "planned-monthly-positive": "计划月存必须为正数",
+    "delete-balance-nonzero": "目标账户仍有余额，请先转出后再删除",
+    "account-in-use": "该账户是储蓄目标专属账户，请先删除对应储蓄目标"
   },
   "scheduled-plan": {
     "amount-positive": "金额必须大于 0",
