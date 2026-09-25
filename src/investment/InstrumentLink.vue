@@ -10,10 +10,10 @@ import {
 } from "@/investment/instrument-link.css";
 
 /**
- * 可点击标的代码（标的前提下钻，ADR-0107 决策 4/5）：点击跳转交易页按标的过滤——
- * 持仓页签行携带 accountId（`/transactions?account=&instrument=`，该账户该标的的
- * 交易历史）。盈亏页「按标的汇总」行退役后（ADR-0107 修订注记，2026-09-13），
- * 不携带 accountId 的用法暂无调用方；`?instrument=` 维度本身保留（URL 可直达）。
+ * 可点击标的代码（持仓下钻，ADR-0135 决策 6 / ADR-0107 决策 4 修订）：点击跳投资页
+ * 明细页签按标的过滤——持仓页签行携带 accountId（`/investments?tab=detail&account=&instrument=`，
+ * 该账户该标的的投资交易历史）；不携带 accountId（已清仓标的形态）落同一明细页签、
+ * 不带账户，可见该标的全部历史交易（含卖出）。
  *
  * 视觉与交互同 AccountLink / MerchantLink 先例：主题强调色文字、hover 提亮 +
  * 下划线 + 微亮背景；用真实 <button> 保证键盘可达（Tab 聚焦 + Enter 触发）。
@@ -37,12 +37,15 @@ const app = useAppStore();
 // （值源：overrides common 单一来源）。
 const accent = computed(() => accentColor(app.theme));
 
+// 持仓下钻改址（ADR-0135 决策 6 / ADR-0107 决策 4 修订）：落投资页明细页签
+// ?tab=detail&account=&instrument=——交易页 ?instrument= 维度随投资 kind 行迁出
+// 主列表而退役（ADR-0107 修订注记），标的历史交易在明细页签重获呈现面。
 function go() {
   router.push({
-    name: "transactions",
+    name: "investments",
     query: props.accountId
-      ? { account: props.accountId, instrument: props.instrumentId }
-      : { instrument: props.instrumentId },
+      ? { tab: "detail", account: props.accountId, instrument: props.instrumentId }
+      : { tab: "detail", instrument: props.instrumentId },
   });
 }
 </script>

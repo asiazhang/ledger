@@ -152,7 +152,6 @@ describe("关闭功能的裸路由守卫（issue #1244 / ADR-0116 决策 4/5）"
 describe("关闭「投资」后其他域的引用照常（issue #1244 / ADR-0116 决策 4）", () => {
   it.each([
     ["按 kind 筛选已有交易", "/transactions?kinds=sell"],
-    ["持仓下钻（标的参数）", "/transactions?instrument=ins-1"],
     ["分类下钻", "/transactions?category=cat-1"],
     ["商户排行下钻", "/transactions?merchant=mch-1"],
     ["来源列账户链接", "/transactions?account=acc-1"],
