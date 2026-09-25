@@ -4,8 +4,8 @@
 //!
 //! 造数走既有步骤动词与公开写入口（CONTEXT-testing「步骤动词」「公开写入口
 //! （测试侧）」）：目标写入经储蓄目标域公开编排入口（`create_savings_goal` /
-//! `archive_savings_goal` / `unarchive_savings_goal`，域内自持事务同形 IPC 命令
-//! 体——`ensure_transaction` 嵌套感知保证在 `world_write!` 外直调也原子提交），
+//! `archive_savings_goal`，域内自持事务同形 IPC 命令体——`ensure_transaction`
+//! 嵌套感知保证在 `world_write!` 外直调也原子提交），
 //! 蓄水走既有转账动词（`create_transfer`，真实 transfer 流水），账户可读性 /
 //! 类型经既有账户查询断言；业务不变量（余额缓存、绑定、达成派生）由产品代码
 //! 保证，不直插 SQL。断言对准用户可观察结果（进度数字、达成态、列表分组），
@@ -19,7 +19,6 @@ use cucumber::{then, when};
 
 use ledger_savings_goal::{
     SavingsGoalStatus, archive_savings_goal, create_savings_goal, list_savings_goal_progress,
-    unarchive_savings_goal,
 };
 
 use crate::common::query_accounts_by_name;
@@ -86,13 +85,6 @@ fn create_goal(world: &mut LedgerWorld, name: String, target: i64, deadline: Str
 fn archive_goal(world: &mut LedgerWorld, name: String) {
     let id = goal_id_by_name(world, &name);
     archive_savings_goal(&world_conn!(world), &id).expect("归档目标失败");
-}
-
-/// 取消归档目标：恢复 active 回默认列表。
-#[when(expr = "取消归档目标 {string}")]
-fn unarchive_goal(world: &mut LedgerWorld, name: String) {
-    let id = goal_id_by_name(world, &name);
-    unarchive_savings_goal(&world_conn!(world), &id).expect("取消归档目标失败");
 }
 
 /// 查询蓄水进度快照（读命令内核同款注入口径）。
@@ -206,7 +198,7 @@ fn assert_achieved_plan_hint(world: &mut LedgerWorld, name: String) {
 /// 分组展示，读命令只带 status——分组即用户可观察列表）。
 #[then(expr = "默认列表（进行中）{word} {string}")]
 fn assert_active_list(world: &mut LedgerWorld, op: String, name: String) {
-    refresh_progress(world);
+    // Then 侧只消费快照（「查询目标进度」已读；场景读数在动作后显式刷新）。
     let names: Vec<String> = world
         .report
         .last_savings_goal_progress
@@ -232,16 +224,7 @@ fn assert_active_list(world: &mut LedgerWorld, op: String, name: String) {
 /// 归档列表分组断言 + 进度读数原样（归档不删任何东西，词汇表「达成与归档」）。
 #[then(expr = "归档列表含 {string} 且进度读数原样（已存 {int}）")]
 fn assert_archived_list(world: &mut LedgerWorld, name: String, saved: i64) {
-    refresh_progress(world);
-    let rows = world
-        .report
-        .last_savings_goal_progress
-        .as_ref()
-        .expect("进度快照应已读出");
-    let row = rows
-        .iter()
-        .find(|p| p.goal.name == name)
-        .unwrap_or_else(|| panic!("归档目标 '{name}' 应仍在进度读数中（归档不删）"));
+    let row = progress_row(world, &name);
     assert_eq!(
         row.goal.status,
         SavingsGoalStatus::Archived,
