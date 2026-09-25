@@ -159,20 +159,7 @@ describe("useRealizedPnl 已实现盈亏数据层", () => {
   });
 });
 
-describe("useRealizedPnl 标的搜索候选投影（编排收口 useInstrumentSearch，机制断言在其模块单测）", () => {
-  it("搜索结果投影为下拉选项：「代码 · 名称」label、id 为 value", async () => {
-    vi.useFakeTimers();
-    try {
-      const { searchInstruments, pnlInstrumentOptions } = withSetup(() => useRealizedPnl());
-      searchInstruments("浦发");
-      await vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS);
-      await flushPromises();
-      expect(pnlInstrumentOptions.value).toEqual([{ label: "600000 · 浦发银行", value: "inst-1" }]);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
+describe("useRealizedPnl 标的筛选的选中回显接线（投影与钉住合并域断言归 useInstrumentOptions 单测）", () => {
   it("选中标的不在新候选时合并不丢（下拉不丢已选筛选）", async () => {
     vi.useFakeTimers();
     try {
@@ -208,11 +195,9 @@ describe("useRealizedPnl 标的搜索候选投影（编排收口 useInstrumentSe
       await vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS);
       await flushPromises();
 
-      // 新候选只有 inst-b，已选 inst-a 仍合并在选项尾部不丢
-      expect(pnlInstrumentOptions.value).toEqual([
-        { label: "BBB · 后搜", value: "inst-b" },
-        { label: "AAA · 先选", value: "inst-a" },
-      ]);
+      // 新候选只有 inst-b，已选 inst-a 仍被钉在候选面尾部不丢（钉尾是本消费方决策）；
+      // label 拼法与合并机制的域断言归 useInstrumentOptions 单测，此处只断言选项面构成与位置
+      expect(pnlInstrumentOptions.value.map((o) => o.value)).toEqual(["inst-b", "inst-a"]);
     } finally {
       vi.useRealTimers();
     }
