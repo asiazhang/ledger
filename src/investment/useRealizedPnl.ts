@@ -1,4 +1,5 @@
 import { computed, onMounted, ref, watch } from "vue";
+import { storeToRefs } from "pinia";
 import { api } from "@ledger/api";
 import { useInvestmentsSessionStore } from "@/investment/investments-session";
 import { useLoadable } from "@ledger/loadable";
@@ -18,7 +19,8 @@ import type { RealizedPnlSummary } from "@ledger/types";
  * 候选投影（label 拼法）与选中合并。
  */
 export function useRealizedPnl() {
-  const reference = useReferenceStore();
+  // 账户下拉候选面单点消费（reference.investmentAccountOptions，#1830 收口）
+  const { investmentAccountOptions: accountOptions } = storeToRefs(useReferenceStore());
   const session = useInvestmentsSessionStore();
 
   const summary = ref<RealizedPnlSummary | null>(null);
@@ -36,12 +38,6 @@ export function useRealizedPnl() {
       session.setPnlAccountPage(1);
     },
     { flush: "sync" },
-  );
-
-  // 账户选项：投资账户谓词单点在参考 store（与投资录入表单同源，词汇表
-  // RealizedPnl 词条），非投资账户不进选项面；隐藏投资账户保留（隐藏 ≠ 软删）。
-  const accountOptions = computed(() =>
-    reference.investmentAccounts.map((a) => ({ label: a.name, value: a.id })),
   );
 
   // 标的筛选下拉：取数编排收口 useInstrumentSearch（issue #1308，对外成员名不变），

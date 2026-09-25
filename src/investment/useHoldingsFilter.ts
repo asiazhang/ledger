@@ -35,8 +35,8 @@ import {
  *   退化为裸代码），走全仓统一模糊搜索语义规格（词条 AND；原文连续子串 ∨
  *   拼音首字母子序列，大小写不敏感，ADR-0027）；输入防抖时长单源
  *   SEARCH_DEBOUNCE_MS（跨域「搜索输入防抖」不变量，issue #1308）。
- * - **账户过滤**：单选（null = 全部默认态），选项与盈亏页账户下拉同源——
- *   投资账户谓词单点收口在参考 store（type = investment）。
+ * - **账户过滤**：单选（null = 全部默认态），候选面投影单点收口在参考 store
+ *   （investmentAccountOptions，#1830；谓词 type = investment 同源同处）。
  * - **排序**：市值 / 未实现盈亏两列列头升降序（naive-ui 受控 sorter 形态，
  *   行集合由本模块排序产出）；无排序状态时默认标的代码字母序；缺价行
  *  （金额 null）恒排末尾，与方向无关。
@@ -164,12 +164,13 @@ export interface UseHoldingsFilterReturn {
   readonly page: Ref<number>;
   /** 派生合计（折本位币单值，issue #1797）：随过滤子集更新，排序不影响，缺价行不计入 */
   readonly statCards: Ref<{ marketValue: StatCardValue; unrealizedPnl: StatCardValue }>;
-  /** 账户下拉选项：与盈亏页账户下拉同源（投资账户谓词单点在参考 store） */
+  /** 账户下拉选项：候选面投影单点在参考 store（investmentAccountOptions，#1830 收口） */
   readonly accountOptions: Ref<{ label: string; value: string }[]>;
 }
 
 export function useHoldingsFilter(rows: Ref<PortfolioRow[]>): UseHoldingsFilterReturn {
-  const reference = useReferenceStore();
+  // 账户下拉候选面单点消费（reference.investmentAccountOptions，#1830 收口）
+  const { investmentAccountOptions: accountOptions } = storeToRefs(useReferenceStore());
   const session = useInvestmentsSessionStore();
   // 会话级 store 是三维状态与页码的唯一读写方（ADR-0094）；本工厂只做投影，
   // 投影一律只读（原实现的 readonly(...) 保证不因状态迁入 store 而消失）。
@@ -192,10 +193,6 @@ export function useHoldingsFilter(rows: Ref<PortfolioRow[]>): UseHoldingsFilterR
   // 合计随过滤子集更新、排序不影响（排序只是重排行不是换口径）：折本位币单值
   // 装配复用 rowStatCardValues 单点（issue #1797，与全量口径同一表达式）
   const statCards = computed(() => rowStatCardValues(filteredRows.value));
-
-  const accountOptions = computed(() =>
-    reference.investmentAccounts.map((a) => ({ label: a.name, value: a.id })),
-  );
 
   // 页码恢复钳制（ADR-0094 决策 3 / ADR-0045「回退不归零」既有出口的等价形态）：
   // 恢复/回访时行集可能少于离开时的页码（离开期间清仓或过滤收窄）——落到有效

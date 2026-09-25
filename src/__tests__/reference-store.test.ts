@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { mockInvoke, wireInvokeSeam } from "@ledger/test-support/invoke-mock";
 import { useReferenceStore } from "@/stores/reference";
+import { makeAccount } from "./factories";
 import type { Account, Category, Currency, Insurer, Merchant } from "@ledger/types";
 
 const mockCurrencies: Currency[] = [
@@ -199,6 +200,27 @@ describe("useReferenceStore", () => {
     expect(store.currencyMap.get("USD")?.name).toBe("美元");
     expect(store.accountMap.get("acc-2")?.name).toBe("招商银行");
     expect(store.categoryMap.get("cat-child")?.name).toBe("外卖");
+  });
+
+  it("投资账户下拉候选面（issue #1830）：谓词→{label,value} 投影单点——非投资类不进、隐藏保留、label=账户名", async () => {
+    wireInvokeSeam({
+      overrides: {
+        list_accounts: [
+          ...mockAccounts,
+          makeAccount({ id: "acc-inv", name: "证券账户" }),
+          makeAccount({ id: "acc-inv-hidden", name: "隐藏证券户", is_hidden: true }),
+        ],
+      },
+    });
+    const store = useReferenceStore();
+    await store.refresh();
+    // 谓词单点语义（词汇表 RealizedPnl 词条）：隐藏 ≠ 软删，隐藏投资账户保留
+    expect(store.investmentAccounts.map((a) => a.id)).toEqual(["acc-inv", "acc-inv-hidden"]);
+    // 候选面投影与谓词同源同处：label 拼法或候选收窄（#1828 类调整）一处生效
+    expect(store.investmentAccountOptions).toEqual([
+      { label: "证券账户", value: "acc-inv" },
+      { label: "隐藏证券户", value: "acc-inv-hidden" },
+    ]);
   });
 
   it("商户派生映射 merchantMap（含按名字查找 merchantByName）正确", async () => {
