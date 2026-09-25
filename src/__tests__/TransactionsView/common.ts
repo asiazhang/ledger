@@ -133,6 +133,22 @@ function applyListFilter(filter: Record<string, unknown>) {
     if (filter.category_id && t.category_id !== (filter.category_id as string)) return false;
     if (filter.uncategorized_only === true && t.category_id !== null) return false;
     if (Array.isArray(filter.kinds) && !filter.kinds.includes(t.kind)) return false;
+    // 镜像后端读路径判定（issue #1810 / ADR-0136 决策 2）：hide_investment_related
+    // 为 true 时排除三端（转出 / 转入 / 出资）任一端为投资类型账户的行。
+    // 判定语义的权威住交易域读路径单测与 API 集成测试（#1810 三层守真）；
+    // 此处镜像只承担前端接线证明（参数进入 → 行集一步可观察变化），
+    // 后端口径漂移由 #1810 侧测试变红，不依赖本镜像。
+    if (filter.hide_investment_related === true) {
+      const investmentIds = new Set(
+        mockAccounts.filter((a) => a.type === "investment").map((a) => a.id),
+      );
+      if (
+        investmentIds.has(t.account_id) ||
+        (t.to_account_id !== null && investmentIds.has(t.to_account_id)) ||
+        (t.funding_account_id !== null && investmentIds.has(t.funding_account_id))
+      )
+        return false;
+    }
     return true;
   });
 }

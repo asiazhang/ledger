@@ -60,7 +60,8 @@
     "account": "Account",
     "merchant": "Merchant",
     "kind": "Type",
-    "clear": "Clear filters"
+    "clear": "Clear filters",
+    "hideInvestmentRelated": "Hide investment-related entries"
   },
   "create": {
     "button": "New",
