@@ -1213,6 +1213,36 @@ describe("useTransactionFilter URL 参数表·就绪补判（模块内部消费 
     expect(tf.filters.merchantId).toBe("mch-2");
     expect(lastRequest()).toEqual({ page: 1, page_size: 20, merchant_id: "mch-2" });
   });
+
+  it("参考数据重拉（ledger:changed 幂等 poke）不清会话保留态：不在场参数不参与补判复位", async () => {
+    const first = mountSessionHarness();
+    await flushPromises();
+    first.tf.setFilter({ dateFrom: "2026-01-01", dateTo: "2026-03-31", kinds: ["income"] });
+    first.tf.page.value = 2;
+    await flushPromises();
+    first.wrapper.unmount();
+
+    // 同一会话重挂（本次访次无 URL 参数、未手动触碰任何维度）：保留态恢复
+    const second = mountSessionHarness();
+    second.tf.syncUrlQuery({}); // 视图 immediate 转发当前无参 query
+    await flushPromises();
+    expect(second.tf.filters.dateFrom).toBe("2026-01-01");
+
+    // ledger:changed → 参考数据重拉（status ready → loading → ready，迁移工具收尾
+    // 幂等 poke 同款信号）：外部数据变化只重拉，不动筛选、不翻页
+    await useReferenceStore().refresh();
+    await flushPromises();
+    expect(second.tf.filters).toEqual({
+      dateFrom: "2026-01-01",
+      dateTo: "2026-03-31",
+      involvingAccountId: null,
+      merchantId: null,
+      categoryId: null,
+      kinds: ["income"],
+    });
+    expect(second.tf.page.value).toBe(2);
+    second.wrapper.unmount();
+  });
 });
 
 describe("useTransactionFilter URL 参数表·字段级让位（issue #234 新增行为）", () => {

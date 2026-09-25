@@ -453,11 +453,18 @@ export const useTransactionsSessionStore = defineStore("transactions-session", (
   // watch 随会话级 store 常驻（非组件作用域）：访次结束后才就绪的挂起参数仍会补判
   // 并落入保留态（URL 意图迟到兑现，下次进入按保留态呈现）；期间版本 bump 无监听者、
   // 无副作用。
+  // 补判范围仅限「在场」参数（raw 非 null）：不在场参数没有可等待的字典校验，其
+  // 复位语义只属 URL 参数变化路径（syncUrlQuery 只结算 changed 条目）——补判若处理
+  // 不在场条目，每次参考数据重拉（ledger:changed，如迁移工具的幂等 poke）都会把
+  // 「本次访次无 URL 参数、未经手动触碰」的会话保留态日期/类型误清，突破「外部数据
+  // 变化重拉不动筛选」边界。
   watch(
     () => reference.status,
     (status) => {
       if (status !== "ready") return;
-      urlParams.forEach(settleEntry);
+      urlParams.forEach((entry) => {
+        if (entry.raw !== null) settleEntry(entry);
+      });
     },
   );
 
