@@ -84,6 +84,8 @@ mod policy_agreement_steps;
 mod policy_stats_steps;
 #[path = "e2e/reports_steps.rs"]
 mod reports_steps;
+#[path = "e2e/savings_goal_steps.rs"]
+mod savings_goal_steps;
 #[path = "e2e/scheduled_steps.rs"]
 mod scheduled_steps;
 #[path = "e2e/search_steps.rs"]

@@ -198,7 +198,7 @@ pub struct PolicyGroup {
     pub last_insurer_by_name_id: Option<String>,
 }
 
-/// 报表组快照：跨域消费端聚合（总览/预算进度/排行/汇总/份额/日期范围）。
+/// 报表组快照：跨域消费端聚合（总览/预算进度/排行/汇总/份额/日期范围/蓄水进度）。
 #[derive(Default)]
 pub struct ReportGroup {
     /// 最近一次净资产总览快照（首页仪表盘场景断言用）
@@ -211,6 +211,9 @@ pub struct ReportGroup {
     pub last_monthly_summary: Vec<ledger_reports::MonthlySummary>,
     /// 最近一次分类份额快照（报表分类份额年份联动场景断言用，issue #376）
     pub last_category_shares: Vec<ledger_reports::CategoryShare>,
+    /// 最近一次蓄水进度快照（储蓄目标跨模块旅程场景断言用，issue #1757）：
+    /// 「进行度查询」类聚合消费端，`last_budget_progress` 同款先例归报表组。
+    pub last_savings_goal_progress: Option<Vec<ledger_savings_goal::SavingsGoalProgress>>,
     /// 最近一次报表日期筛选范围快照（报表日期范围场景断言用，issue #266 / #389）
     pub last_date_range: Option<ledger_reports::DateRange>,
 }
@@ -316,7 +319,7 @@ pub struct LedgerWorld {
     pub item: ItemGroup,
     /// 保单组快照
     pub policy: PolicyGroup,
-    /// 报表组快照
+    /// 报表组快照（含蓄水进度——「进行度查询」类聚合消费端）
     pub report: ReportGroup,
     /// 引导组快照（备份 + 数据位置 + 加密 + 启动失败 + 账本登记 + 同步）
     pub boot: BootGroup,
