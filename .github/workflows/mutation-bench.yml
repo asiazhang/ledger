@@ -1,0 +1,175 @@
+# 每日变异测试 workflow（spec #1816 / ADR-0137）：与主构建（build.yml，push/PR
+# 触发）与性能基准（perf-bench.yml，每日 cron）刻意分离，只在每日 cron 与手动
+# dispatch 时运行——报告驱动的测试有效性观测，不进 PR 门禁：
+#   gate（照抄 perf-bench 的 head_sha 比对）：自上次成功运行以来无新提交即跳过；
+#   cargo mutants --in-diff——只变异「上次成功运行 → 本次」之间改动的 Rust 代码
+#   （cd src-tauri && git diff --relative 输出的路径与变异体路径同口径），
+#   成本随改动量走；无 Rust 改动或 diff 不含变异体时原生成功退出（exit 0）。
+# 观测期不判定（ADR-0137）：cargo-mutants 退出码 2（存在存活变异体）与 3（超时）
+#   不使 job 失败，只进报告；4（基线红）/5/6（diff 错）才视为故障。阈值待 CI 基线
+#   稳定后另立判据（同 ADR-0062→0068 先观察后立阈先例），届时修订本注释与 ADR。
+# 前端 Stryker 本期撤出（ADR-0137 决策 7）：vitest-runner v10 未适配 Vitest 5，
+#   covered mutants 误报 Survived（诊断与复现证据见 #1832），接入待上游支持。
+# 报告：Markdown 汇总进 $GITHUB_STEP_SUMMARY，原始产物（mutants.out）上传
+#   artifact 供下钻。
+name: Mutation Bench
+
+on:
+  schedule:
+    # 每日 03:23 UTC（北京时间 11:23）；避开整点高峰与 perf-bench 的 01:17
+    - cron: '23 3 * * *'
+  workflow_dispatch:
+    inputs:
+      base-ref:
+        description: 'in-diff 的基线 ref（留空则回退 HEAD~1；仅手动触发生效，schedule 走上次成功运行的 head_sha）'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+  actions: read # gate 读取本 workflow 历史运行（head_sha 比对）所需
+
+concurrency:
+  group: mutation-bench
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  gate:
+    name: 变动检测（无新提交则跳过）
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      should-run: ${{ steps.decide.outputs.should-run }}
+      base-sha: ${{ steps.decide.outputs.base-sha }}
+    steps:
+      - name: 判断自上次成功运行以来是否有新提交
+        id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # 手动 dispatch 无条件放行（基线留存与复跑入口，与 perf-bench 同款）；
+          # 基线优先取 base-ref 输入，留空由 diff 生成步骤回退 HEAD~1。
+          if [ "${{ github.event_name }}" != "schedule" ]; then
+            echo "should-run=true" >> "$GITHUB_OUTPUT"
+            echo "base-sha=${{ inputs.base-ref }}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          last_sha="$(gh api \
+            "repos/${{ github.repository }}/actions/workflows/mutation-bench.yml/runs?status=success&branch=${{ github.ref_name }}&per_page=1" \
+            --jq '.workflow_runs[0].head_sha // empty')"
+          if [ -n "$last_sha" ] && [ "$last_sha" = "${{ github.sha }}" ]; then
+            echo "自上次成功运行以来无新提交（$last_sha），跳过本次变异测试"
+            echo "should-run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "有待变异测试的新提交（上次成功：${last_sha:-无}，本次：${{ github.sha }}）"
+            echo "should-run=true" >> "$GITHUB_OUTPUT"
+            # 无历史成功运行时基线为空 → diff 生成步骤回退 HEAD~1。
+            echo "base-sha=$last_sha" >> "$GITHUB_OUTPUT"
+          fi
+
+  rust-mutants:
+    name: Rust 变异测试（in-diff，观测期不判定）
+    needs: gate
+    if: needs.gate.outputs.should-run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # in-diff 需要基线提交的完整历史
+
+      - name: 安装 Linux 系统依赖（tauri 编译所需）
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          cache-on-failure: true
+
+      - name: 安装 cargo-mutants
+        run: cargo install cargo-mutants --locked
+
+      - name: 生成 in-diff（基线 → 本次，路径相对 workspace）
+        id: diff
+        env:
+          BASE_SHA: ${{ needs.gate.outputs.base-sha }}
+        run: |
+          set -euo pipefail
+          cd src-tauri
+          if [ -z "$BASE_SHA" ]; then
+            # 无基线（首跑 / 手动未给 base-ref）：回退 HEAD~1，只变异最近一次
+            # 提交——首日成本有界，次日起 gate 给出真实基线。
+            BASE_SHA=HEAD~1
+            echo "::notice::基线缺失，回退 HEAD~1 作为 in-diff 基线"
+          fi
+          # --relative：路径输出为 crates/... 形态，与变异体 source path 同口径，
+          # 并自动排除 src-tauri/ 之外的改动。
+          git diff --relative "$BASE_SHA"..HEAD > /tmp/mutants.diff
+          echo "diff-bytes=$(wc -c < /tmp/mutants.diff | tr -d ' ')" >> "$GITHUB_OUTPUT"
+
+      - name: 运行 cargo-mutants（观测期：exit 2/3 不失败）
+        id: mutants
+        shell: bash
+        run: |
+          # 默认 shell 已带 -e -o pipefail：管道失败会在本行中断、rc 捕获不到，
+          # 故用 `|| rc=$?` 承接（pipefail 保留管线真实退出码）。
+          rc=0
+          cd src-tauri
+          cargo mutants --in-diff /tmp/mutants.diff --output /tmp/mutants-run \
+            2>&1 | tee /tmp/mutants-stdout.txt || rc=$?
+          echo "rc=$rc" >> "$GITHUB_OUTPUT"
+          # 退出码语义（cargo-mutants exit_code.rs）：0 全捕获或无变异体；
+          # 2 存在存活变异体、3 有超时——观测期记报告不失败；4 基线测试已红、
+          # 5/6 diff 不匹配或不可解析、70 内部错误——故障，失败。
+          case "$rc" in
+            0|2|3) echo "cargo-mutants 完成（rc=$rc，观测期不判定）";;
+            *) echo "cargo-mutants 故障退出（rc=$rc）"; exit "$rc";;
+          esac
+
+      - name: 报告进 Step Summary
+        if: always()
+        run: |
+          {
+            echo "## Rust 变异测试报告（in-diff，观测期不判定）"
+            echo
+            echo "- 触发：${{ github.event_name }} @ \`${{ github.sha }}\`；基线：\`${{ needs.gate.outputs.base-sha || '无（首次/手动，回退 HEAD~1）' }}\`"
+            if [ -s /tmp/mutants.diff ]; then
+              echo "- 范围：基线以来改动的 Rust 代码（diff 见 artifact）"
+            else
+              echo "- 范围：无（diff 为空）"
+            fi
+            echo
+            if [ -f /tmp/mutants-run/mutants.out/outcomes.json ]; then
+              ./scripts/mutation-summary.sh /tmp/mutants-run/mutants.out
+            elif [ -f /tmp/mutants-stdout.txt ]; then
+              echo '> ⚠️ cargo-mutants 未产出结果（基线失败 / diff 不含变异体 / 空转——见 job 日志尾部）'
+              echo
+              echo '```'
+              tail -n 30 /tmp/mutants-stdout.txt
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 上传变异产物（diff + mutants.out + stdout）
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-mutants-${{ github.run_id }}
+          path: |
+            /tmp/mutants.diff
+            /tmp/mutants-run/mutants.out
+            /tmp/mutants-stdout.txt
+          if-no-files-found: ignore
+          retention-days: 30
