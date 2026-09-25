@@ -22,6 +22,7 @@ import { useReferenceStore } from "@/stores/reference";
 import { useModalIntent } from "@ledger/modal-intent";
 import { useWindowTier } from "@ledger/window-tier";
 import { matchLabel } from "@ledger/utils/pinyin-filter";
+import { PAGE_SIZE_OPTIONS } from "@ledger/utils/pagination";
 import { t } from "@ledger/i18n";
 import { formatQuantity } from "@ledger/money";
 import { sumFixedColumnWidths } from "@ledger/utils/table";
@@ -126,7 +127,7 @@ const displayRows = computed<MerchantRow[]>(() => {
 });
 
 // —— 前端分页（issue #457）：组件内受控状态，不持久化；页签卸载重挂即回第一页 ——
-const PAGE_SIZE_OPTIONS = [10, 20, 50, 100];
+// 页大小档位单点 PAGE_SIZE_OPTIONS（@ledger/utils/pagination，#1792）
 const currentPage = ref(1);
 const pageSize = ref(50);
 

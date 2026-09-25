@@ -32,11 +32,9 @@ export const PNL_PAGE_SIZE = 8;
  */
 export const INVESTMENTS_DEFAULT_TAB = "overview";
 
-/** 明细页签默认页大小（页大小档位与主列表同构：档位 [10, 20, 50, 100]，默认 20）。 */
+/** 明细页签默认页大小（档位与主列表同源：PAGE_SIZE_OPTIONS 单点
+ * @ledger/utils/pagination，#1792；默认 20）。 */
 export const LEDGER_TAB_PAGE_SIZE_DEFAULT = 20;
-
-/** 明细页签页大小可选档位（与主列表 [10, 20, 50, 100] 同构，issue #1779）。 */
-export const LEDGER_TAB_PAGE_SIZE_OPTIONS = [10, 20, 50, 100];
 
 /** 走势视图模式：组合市值曲线 ↔ 单标的曲线同视图切换 */
 export type TrendViewMode = "portfolio" | "instrument";
