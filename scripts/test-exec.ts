@@ -1160,6 +1160,13 @@ function formatSeconds(ms: number): string {
   return `${(ms / 1000).toFixed(2)}s`;
 }
 
+/**
+ * 构建阶段超过该时长 = 测试二进制被重新链接（缓存全命中时构建秒级返回），
+ * 每个二进制的首次执行会撞上 macOS 一次性安全扫描/页入开销——per-binary 耗时
+ * 因此虚高，不代表测试或夹具的真实耗时（issue #1787 的误诊源头，提示防再犯）。
+ */
+const FRESH_RELINK_HINT_MS = 3_000;
+
 interface RunOptions {
   rootDir: string;
   jobs: number;
@@ -1179,6 +1186,13 @@ async function runAll(options: RunOptions): Promise<number> {
   );
   const build = await buildTestBinaries(cargo, srcTauriDir);
   console.log(`  · 构建阶段 ${formatSeconds(build.ms)}`);
+  if (build.ms > FRESH_RELINK_HINT_MS) {
+    console.log(
+      `  · 提示：构建阶段超过 3s = 测试二进制被重新链接——macOS 对新链接的二进制` +
+        `首次执行有一次性安全扫描/页入开销（大体量二进制可达秒级），下方 per-binary` +
+        ` 耗时含该一次性成本，不代表测试或夹具的真实耗时（issue #1787 的误诊源头）`,
+    );
+  }
   const problems = [...coverage.problems, ...build.problems];
 
   // 第四道交叉核对：cargo 实际构建出的测试二进制集合 ⇔ 目标发现清单（lib/集成测试 +

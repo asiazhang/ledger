@@ -141,14 +141,24 @@ async fn read_returns_while_long_write_holds_connection_lock() {
     seed_account(&app, "已提交账户", 12_345).await;
 
     // 长写事务在途：后台线程持写连接锁并打开写事务（RESERVED），持有期间
-    // 「写者闸门」不可用——与真实长写任务在途同形。
+    // 「写者闸门」不可用——与真实长写任务在途同形。持有时长事件驱动：读到
+    // 「读断言已完成」信号（或发端被弃——用例已提前失败）即收尾回滚，不按
+    // 最坏情况写死持有期（原固定 3s 睡眠是本二进制的耗时大头，issue #1787
+    // ——读断言本身毫秒级，长持有只拖墙钟不改判据）。
+    //
+    // 负向判据不受影响：读退回写连接（同锁）时读命令被互斥体挡住，2s 限时
+    // 超时变红——此 path 上 read_done 永不发出，写线程收到的是发端弃走
+    // （Disconnected）或安全超时，ROLLBACK 照常收尾，测试进程不悬挂。
     let write_conn = app.state::<DbState>().conn.clone();
     let (locked_tx, locked_rx) = mpsc::channel::<()>();
+    let (read_done_tx, read_done_rx) = mpsc::channel::<()>();
     let writer = std::thread::spawn(move || {
         let conn = write_conn.lock().unwrap();
         conn.execute_batch("BEGIN IMMEDIATE").unwrap();
         locked_tx.send(()).unwrap();
-        std::thread::sleep(Duration::from_secs(3));
+        // 读断言完成（发端弃走 = 用例已失败，同样立刻收尾）；上界只防悬挂，
+        // 正常路径毫秒级即达。
+        let _ = read_done_rx.recv_timeout(Duration::from_secs(10));
         conn.execute_batch("ROLLBACK").unwrap();
     });
     locked_rx
@@ -165,6 +175,9 @@ async fn read_returns_while_long_write_holds_connection_lock() {
     assert_eq!(rows.len(), 1, "应读到当前已提交数据（不含在途写入）");
     assert_eq!(rows[0].name, "已提交账户");
 
+    read_done_tx
+        .send(())
+        .expect("读完成信号应可送达（写线程不应提前收场）");
     writer.join().expect("写事务线程应正常收尾");
 }
 
