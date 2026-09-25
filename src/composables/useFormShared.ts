@@ -31,6 +31,19 @@ export function useAccountCurrency(accountId: Ref<string | null>) {
   });
 }
 
+/**
+ * 币种随已持有对象推导（ADR-0134 决策 5 共享推导单点的持对象变体，#1775 / #1821）：
+ * `所持对象币种 ?? 展示币种偏好`。与 useAccountCurrency（按账户 id 查账户字典）
+ * 互补：推导源已是手中对象、无 id 可解析时用本变体——先例：退款表单的币种继承
+ * 目标是原支出交易本身（退款继承原支出账户/币种，后端 Writer 守卫照跑，ADR-0134
+ * 决策 5），强套按 id 查账户的工厂会歪语义。各表单的币种语义（币种随哪个对象
+ * 继承）仍归各表单注释，本工厂只承载机械推导。
+ */
+export function useEntityCurrency(source: Ref<{ currency_code: string } | null | undefined>) {
+  const app = useAppStore();
+  return computed(() => source.value?.currency_code ?? app.defaultCurrency);
+}
+
 /** 日期字符串（YYYY-MM-DD）→ UTC 午夜时间戳（编辑回填用，issue #178）。
  * 仅作时间戳承载形态，不做时区换算；提交端的日期转换（本地日历日语义）
  * 由 TransactionInput 装配器统一收口（issue #216）。 */

@@ -13,6 +13,7 @@ import {
   type PaginationProps,
 } from "naive-ui";
 import { computed, h, ref, watch } from "vue";
+import { storeToRefs } from "pinia";
 import { api } from "@ledger/api";
 import { useLoadable } from "@ledger/loadable";
 import { t } from "@ledger/i18n";
@@ -263,15 +264,13 @@ function onKindFilterChange(values: TransactionKind[] | null) {
 }
 
 /**
- * 账户筛选（issue #1780，涉及账户语义——账户端 ∪ 出资端）：候选 = 投资类账户
- * （投资账户谓词单点收口 reference.investmentAccounts，与持仓筛选 / 盈亏账户下拉 /
- * 录入表单同源，issue #1828）；后端 account_id 命中账户端或出资端（dividend 到账
- * 账户、buy/sell 出资账户），语义单点在后端——投资账户不在出资闭集，下拉候选只会
+ * 账户筛选（issue #1780，涉及账户语义——账户端 ∪ 出资端）：候选 = 投资类账户，
+ * 下拉候选面取参考 store 单点投影（investmentAccountOptions，#1830，同源消费面
+ * 见 store 注记）；后端 account_id 命中账户端或出资端（dividend 到账账户、
+ * buy/sell 出资账户），语义单点在后端——投资账户不在出资闭集，下拉候选只会
  * 经账户端命中；非投资类出资/到账账户的筛选入口在交易页账户筛选（全量候选）。
  */
-const accountOptions = computed(() =>
-  reference.investmentAccounts.map((a) => ({ label: a.name, value: a.id })),
-);
+const { investmentAccountOptions: accountOptions } = storeToRefs(reference);
 
 function onAccountFilterChange(id: string | null) {
   session.setDetailAccount(id);

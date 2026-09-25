@@ -1,4 +1,5 @@
 import { computed, ref } from "vue";
+import { storeToRefs } from "pinia";
 import { useMessage } from "naive-ui";
 import { api } from "@ledger/api";
 import { t } from "@ledger/i18n";
@@ -80,10 +81,8 @@ export function useInvestmentForm(
     findInstrument,
   } = useInstrumentOptions("head");
 
-  // 投资账户谓词单点收口在参考 store（与盈亏页账户下拉同源，词汇表 RealizedPnl 词条）
-  const investmentAccountOptions = computed(() =>
-    reference.investmentAccounts.map((a) => ({ label: a.name, value: a.id })),
-  );
+  // 投资账户下拉候选面单点消费（reference.investmentAccountOptions，#1830 收口，对外成员名不变）
+  const { investmentAccountOptions } = storeToRefs(reference);
 
   // 出资账户候选（issue #936 / #938 / ADR-0096）：准入闭集收口参考 store 单一派生，
   // 币种一致过滤随交易币种（= 所选投资账户币种，issue #1191）在此承担（后端行为层

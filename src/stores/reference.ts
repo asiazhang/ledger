@@ -161,11 +161,21 @@ export const useReferenceStore = defineStore("reference", () => {
   const incomeCategories = computed(() => categories.value.filter((c) => c.kind === "income"));
 
   /**
-   * 投资账户单一谓词：type = investment 的账户。盈亏页账户下拉与投资录入表单
-   * 共用本派生（「投资账户下拉」语义单点收口），不排隐藏——隐藏 ≠ 软删，
+   * 投资账户单一谓词：type = investment 的账户。「投资账户下拉」语义单点收口，
+   * 候选面投影（investmentAccountOptions，#1830）随本派生同源同处；不排隐藏——
    * 与 v_holdings / 时点持仓口径一致（issue #217 定案 Q2）。
    */
   const investmentAccounts = computed(() => accounts.value.filter((a) => a.type === "investment"));
+
+  /**
+   * 投资账户下拉候选面（issue #1830）：谓词 → `{label, value}` 选项投影单点。
+   * 持仓筛选 / 盈亏账户下拉 / 录入表单 / 明细页签账户筛选四处同形拷贝收口于此，
+   * 候选面类调整（label 拼法、候选收窄，如 #1828）一处生效；「进不进选项面」
+   * 的账户语义仍归谓词 investmentAccounts，本派生只做机械投影。
+   */
+  const investmentAccountOptions = computed(() =>
+    investmentAccounts.value.map((a) => ({ label: a.name, value: a.id })),
+  );
 
   /**
    * 出资账户候选单一谓词派生（issue #936 / ADR-0096 决策 4）：在用账户中类型落在
@@ -226,6 +236,7 @@ export const useReferenceStore = defineStore("reference", () => {
     expenseCategories,
     incomeCategories,
     investmentAccounts,
+    investmentAccountOptions,
     fundingCandidateAccounts,
     categoryChildren,
     categoryPath,

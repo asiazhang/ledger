@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { ref } from "vue";
 import { wireInvokeSeam } from "@ledger/test-support/invoke-mock";
-import { useAccountCurrency } from "@/composables/useFormShared";
+import { useAccountCurrency, useEntityCurrency } from "@/composables/useFormShared";
 import { useReferenceStore } from "@/stores/reference";
 import { useAppStore } from "@/stores/app";
 import type { Account } from "@ledger/types";
@@ -48,6 +48,36 @@ describe("useFormShared.useAccountCurrency（币种随账户推导，#1775 / ADR
     await useReferenceStore().refresh();
     const accountId = ref<string | null>(null);
     const currencyCode = useAccountCurrency(accountId);
+    useAppStore().setDefaultCurrency("HKD");
+    expect(currencyCode.value).toBe("HKD");
+  });
+});
+
+describe("useFormShared.useEntityCurrency（币种随已持有对象推导，#1821 / ADR-0134 决策 5）", () => {
+  it("未持对象（null）：回落展示币种偏好", async () => {
+    await useReferenceStore().refresh();
+    const source = ref<{ currency_code: string } | null>(null);
+    const currencyCode = useEntityCurrency(source);
+    // 钉死字面量而非读实现（app store 缺省偏好即 CNY）：期望与被测实现解耦（ADR-0087 断言强度）
+    expect(currencyCode.value).toBe("CNY");
+  });
+
+  it("持有对象：取对象币种；随对象替换联动", async () => {
+    await useReferenceStore().refresh();
+    const source = ref<{ currency_code: string } | null>(null);
+    const currencyCode = useEntityCurrency(source);
+    source.value = { currency_code: "USD" };
+    expect(currencyCode.value).toBe("USD");
+    source.value = { currency_code: "JPY" };
+    expect(currencyCode.value).toBe("JPY");
+    source.value = null;
+    expect(currencyCode.value).toBe("CNY");
+  });
+
+  it("未持对象时回落值随展示币种偏好变化", async () => {
+    await useReferenceStore().refresh();
+    const source = ref<{ currency_code: string } | null>(null);
+    const currencyCode = useEntityCurrency(source);
     useAppStore().setDefaultCurrency("HKD");
     expect(currencyCode.value).toBe("HKD");
   });
