@@ -290,7 +290,6 @@
     "filterKind": "Type",
     "createBuy": "Record Buy",
     "createSell": "Record Sell",
-    "filterAccount": "Account",
-    "filterDate": "Date"
+    "filterAccount": "Account"
   }
 }
