@@ -2,6 +2,7 @@
 import {
   makeTxn,
   setTxnDb,
+  routeMock,
   setAccountDb,
   mountView,
   mountMobile,
@@ -15,6 +16,7 @@ import { NSelect } from "naive-ui";
 import { applyLocale } from "@ledger/i18n";
 import { useWindowGuard } from "@/composables/useWindowGuard";
 import { makeAccount } from "../factories";
+import type { Transaction } from "@ledger/types";
 
 /**
  * 「隐藏投资相关流水」视图偏好接线（issue #1811 / ADR-0136）：
@@ -31,8 +33,9 @@ import { makeAccount } from "../factories";
 
 const INVESTMENT_ACCOUNT = makeAccount({ id: "acc-inv", name: "证券", type: "investment" });
 
-/** 混合行集：日常支出（保留）+ 充值转账（银行卡 → 投资账户，主列表通用 kind）+ 投资账户直接支付的费用支出。 */
-function seedMixedRows() {
+/** 混合行集：日常支出（保留）+ 充值转账（银行卡 → 投资账户，主列表通用 kind）+ 投资账户直接支付的费用支出；
+ * extra 追加用例自有行（如 acc-1 日常支出，构造「下钻 ∩ 偏好」非空）。 */
+function seedMixedRows(...extra: Transaction[]) {
   setAccountDb([
     makeAccount({ id: "acc-1", name: "现金", type: "cash" }),
     makeAccount({ id: "acc-2", name: "银行", type: "bank" }),
@@ -46,6 +49,7 @@ function seedMixedRows() {
       to_account_id: "acc-inv",
     }),
     makeTxn(3, "acc-inv", { kind: "expense", date: "2026-01-07" }),
+    ...extra,
   ]);
 }
 
@@ -122,20 +126,24 @@ describe("开关 → 主列表请求携带隐藏参数 + 行集收窄（双断�
 
   it("与既有筛选 AND 组合（行集 = 偏好先决收窄 ∩ 筛选）：账户过滤在收窄后行集上照常生效", async () => {
     seedMixedRows();
-    // 追加一行 acc-1 日常支出：「acc-1 ∩ 偏好收窄」非空
-    setTxnDb([
-      makeTxn(1, "acc-2", { kind: "expense", date: "2026-01-05" }),
-      makeTxn(2, "acc-1", {
-        kind: "transfer",
-        date: "2026-01-06",
-        to_account_id: "acc-inv",
-      }),
-      makeTxn(3, "acc-inv", { kind: "expense", date: "2026-01-07" }),
-      makeTxn(4, "acc-1", { kind: "expense", date: "2026-01-08" }),
-    ]);
+    seedMixedRows(makeTxn(4, "acc-1", { kind: "expense", date: "2026-01-08" }));
     const wrapper = await mountView();
     wrapper.findAllComponents(NSelect)[0].vm.$emit("update:value", "acc-1");
     await flushPromises();
+    expect(wrapper.text()).toContain("共 2 条");
+    await toggleHide(wrapper);
+    expect(lastListFilter()).toMatchObject({
+      involving_account_id: "acc-1",
+      hide_investment_related: true,
+    });
+    expect(wrapper.text()).toContain("共 1 条");
+  });
+
+  it("URL 账户下钻同样不让位（ADR-0136 决策 3）：?account= 入口与手动过滤同口径，偏好照常收窄", async () => {
+    seedMixedRows(makeTxn(4, "acc-1", { kind: "expense", date: "2026-01-08" }));
+    routeMock.query = { account: "acc-1" };
+    const wrapper = await mountView();
+    expect(lastListFilter()).toMatchObject({ involving_account_id: "acc-1" });
     expect(wrapper.text()).toContain("共 2 条");
     await toggleHide(wrapper);
     expect(lastListFilter()).toMatchObject({

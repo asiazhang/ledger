@@ -34,9 +34,6 @@ export const useTransactionViewPreferencesStore = defineStore(
     // 启动读路径：原始值经解析防御——脏值整体回默认关（issue #1811）。
     const hideInvestmentRelated = ref(parseHideInvestmentRelated(getSavedHideInvestmentRelated()));
 
-    /** 偏好读值（只读派生）：全部消费面的唯一读路径；写路径不经它。 */
-    const hideInvestment = computed(() => hideInvestmentRelated.value);
-
     /**
      * 写路径（点选即写）：开启持久化、关闭删记录（默认态 = 无记录，ADR-0116
      * 家族同构）；同值守卫——目标态与当前态相同时不动作、不产生存储写入。
@@ -49,7 +46,7 @@ export const useTransactionViewPreferencesStore = defineStore(
     }
 
     return {
-      hideInvestmentRelated: hideInvestment,
+      hideInvestmentRelated: computed(() => hideInvestmentRelated.value),
       setHideInvestmentRelated,
     };
   },
