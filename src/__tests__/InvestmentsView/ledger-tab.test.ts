@@ -657,6 +657,18 @@ describe("明细页签移动档横向滚动（issue #1779）", () => {
  * 维度接线即对应断言变红。
  */
 describe("明细页签账户/标的/日期筛选（issue #1780）", () => {
+  it("账户下拉候选收窄为投资类账户：非投资类账户（出资/到账账户）不进选项面（#1828）", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+    await openLedgerTab(wrapper);
+    // 候选 = 投资账户谓词单点收口（参考 store investmentAccounts，与持仓/盈亏/录入表单同源）：
+    // 券商户（investment）在场，银行（bank，出资/到账账户）不进选项面
+    const options = findFilterSelect(wrapper, "ledger-account-filter")
+      .findComponent(NSelect)
+      .props("options") as Array<{ label: string; value: string }>;
+    expect(options).toEqual([{ label: "券商户", value: "acc-1" }]);
+  });
+
   it("账户筛选：请求携带 account_id 且翻回第 1 页，涉及账户两端命中（账户端 + 出资端）", async () => {
     const wrapper = mountView();
     await flushPromises();
