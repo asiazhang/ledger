@@ -11,11 +11,14 @@ import {
 } from "@ledger/money";
 import { judgeQuantityText, judgePriceText } from "@ledger/utils/field-error";
 import { useFieldErrors } from "@ledger/field-errors";
-import { useFormShared, utcMidnightTimestamp } from "@/composables/useFormShared";
+import {
+  useAccountCurrency,
+  useFormShared,
+  utcMidnightTimestamp,
+} from "@/composables/useFormShared";
 import { useInstrumentSearch } from "@/investment/useInstrumentSearch";
 import { buildTradeInput } from "@/transaction/transaction-input";
 import { errorMessage } from "@ledger/utils/errors";
-import { useAppStore } from "@/stores/app";
 import { useSavingsGoalsStore } from "@/savings-goal/savingsGoals";
 import type { TransactionModalRow, TransactionTrade } from "@ledger/types";
 
@@ -37,7 +40,6 @@ export function useInvestmentForm(
   },
 ) {
   const { reference, currencyOptions } = useFormShared();
-  const app = useAppStore();
   const message = useMessage();
 
   const accountId = ref<string | null>(null);
@@ -58,16 +60,13 @@ export function useInvestmentForm(
   const note = ref("");
   const date = ref(Date.now());
   /**
-   * 交易币种（issue #1191）：buy/sell 的记账币种由投资账户决定——后端 prepare 以
-   * 账户币种落 `currency_code`（见投资域「累计收益」词条的「buy/sell 的记录币种
-   * 恒为账户币」），出资账户准入亦按该币种校验。前端不另存一份可能漂移的币种状态，
-   * 展示值与出资候选过滤同源读账户；未选账户前退「新表单预选币种」（展示币种偏好，
-   * 见核心交易域 DefaultCurrency）。
+   * 交易币种（issue #1191 / ADR-0134 决策 5）：buy/sell 的记账币种由投资账户决定——后端
+   * prepare 以账户币种落 `currency_code`（见投资域「累计收益」词条的「buy/sell 的记录
+   * 币种恒为账户币」），出资账户准入亦按该币种校验。前端不另存一份可能漂移的币种状态，
+   * 展示值与出资候选过滤同源读账户；机械推导（账户币种 ?? 展示币种偏好）收口共享接缝
+   * useAccountCurrency（#1775），先例出处同上。
    */
-  const currencyCode = computed(() => {
-    const account = accountId.value == null ? undefined : reference.accountMap.get(accountId.value);
-    return account?.currency_code ?? app.defaultCurrency;
-  });
+  const currencyCode = useAccountCurrency(accountId);
 
   // 标的远程搜索编排收口 useInstrumentSearch（issue #1308）：防抖、空查询清空、
   // 吞错与在途纪元（#1401）内化于模块；本层消费原始标的候选与在途标志，

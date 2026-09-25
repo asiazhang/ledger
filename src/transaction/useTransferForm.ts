@@ -5,8 +5,11 @@ import { centsToYuan } from "@ledger/money";
 import { buildTransferInput } from "@/transaction/transaction-input";
 import { judgeAmountText } from "@ledger/utils/field-error";
 import { useFieldErrors } from "@ledger/field-errors";
-import { useFormShared, utcMidnightTimestamp } from "@/composables/useFormShared";
-import { useAppStore } from "@/stores/app";
+import {
+  useAccountCurrency,
+  useFormShared,
+  utcMidnightTimestamp,
+} from "@/composables/useFormShared";
 import { useMerchantField } from "@/merchants/useMerchantField";
 import { t } from "@ledger/i18n";
 import type { TransactionModalRow } from "@ledger/types";
@@ -26,7 +29,6 @@ export function useTransferForm(options?: {
   createdMessage?: () => string;
 }) {
   const { reference, accountOptions, currencyOptions } = useFormShared();
-  const app = useAppStore();
   const message = useMessage();
 
   // 金额字段错误态（ADR-0058 / issue #415 → #1007 收口）：金额以原始文本承载输入
@@ -43,14 +45,11 @@ export function useTransferForm(options?: {
   /**
    * 交易币种（issue #1770 / ADR-0134 决策 5）：转账的记账币种由转出账户决定——后端
    * Writer 守卫强制「交易币种 == 两端账户币种」（现金腿 amount_cents 即账户币种
-   * 金额，#1769 余额口径的前提），前端不另存可能漂移的币种状态；未选转出账户前
-   * 退「新表单预选币种」（展示币种偏好，见核心交易域 DefaultCurrency）。先例：
-   * useInvestmentForm（issue #1191）/ 定时转账页签（币种随账户收敛）。
+   * 金额，#1769 余额口径的前提），前端不另存可能漂移的币种状态；机械推导（账户币种
+   * ?? 展示币种偏好）收口共享接缝 useAccountCurrency（#1775），先例 useInvestmentForm
+   * （issue #1191）/ 定时转账页签（币种随账户收敛）。
    */
-  const currencyCode = computed(() => {
-    const account = accountId.value == null ? undefined : reference.accountMap.get(accountId.value);
-    return account?.currency_code ?? app.defaultCurrency;
-  });
+  const currencyCode = useAccountCurrency(accountId);
   /** 转入账户候选：与转出账户同币种（跨币种转账不做，ADR-0134 决策 4）；
    * 未选转出账户前不收窄（两端选择顺序自由）。 */
   const toAccountOptions = computed(() =>

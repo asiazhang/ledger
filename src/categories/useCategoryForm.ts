@@ -7,9 +7,12 @@ import { buildExpenseIncomeInput } from "@/transaction/transaction-input";
 import { judgeAmountText } from "@ledger/utils/field-error";
 import { useFieldErrors } from "@ledger/field-errors";
 import { useReferenceStore } from "@/stores/reference";
-import { useAppStore } from "@/stores/app";
 import { usePoliciesStore } from "@/policy/policies";
-import { useFormShared, utcMidnightTimestamp } from "@/composables/useFormShared";
+import {
+  useAccountCurrency,
+  useFormShared,
+  utcMidnightTimestamp,
+} from "@/composables/useFormShared";
 import { useMerchantField } from "@/merchants/useMerchantField";
 import { t } from "@ledger/i18n";
 import type { TransactionModalRow } from "@ledger/types";
@@ -30,7 +33,6 @@ export function useCategoryForm(
 ) {
   const { accountOptions, currencyOptions } = useFormShared();
   const reference = useReferenceStore();
-  const app = useAppStore();
   const message = useMessage();
 
   // 金额字段错误态（ADR-0058 / issue #414 → #1007 收口）：金额以原始文本承载输入
@@ -45,14 +47,11 @@ export function useCategoryForm(
   /**
    * 交易币种（issue #1770 / ADR-0134 决策 5）：收支的记账币种由所选账户决定——后端
    * Writer 守卫强制「交易币种 == 账户币种」（现金腿 amount_cents 即账户币种金额，
-   * #1769 余额口径的前提），前端不另存可能漂移的币种状态；未选账户前退「新表单
-   * 预选币种」（展示币种偏好，见核心交易域 DefaultCurrency）。先例：
-   * useInvestmentForm（issue #1191）。
+   * #1769 余额口径的前提），前端不另存可能漂移的币种状态；机械推导（账户币种 ??
+   * 展示币种偏好）收口共享接缝 useAccountCurrency（#1775），先例 useInvestmentForm
+   * （issue #1191）。
    */
-  const currencyCode = computed(() => {
-    const account = accountId.value == null ? undefined : reference.accountMap.get(accountId.value);
-    return account?.currency_code ?? app.defaultCurrency;
-  });
+  const currencyCode = useAccountCurrency(accountId);
   const categoryId = ref<string | null>(null);
   // 可选保单引用（issue #361）：支出（保费）与收入（保单现金流入）可挂一张保单；
   // 选项来自保单 store（只含未删除保单，软删不可再被新选择）。
