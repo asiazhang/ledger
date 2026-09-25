@@ -290,7 +290,6 @@
     "filterKind": "类型",
     "createBuy": "记买入",
     "createSell": "记卖出",
-    "filterAccount": "账户",
-    "filterDate": "日期"
+    "filterAccount": "账户"
   }
 }
