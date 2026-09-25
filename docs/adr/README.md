@@ -116,7 +116,7 @@
 - 0113 — 业务域 crate 内部组织：四区（共享语义 / 跨域接缝 / 写路径 / 读路径）按消费面定位、写读 → 接缝 → 共享语义单向层序与三处反边消除、模块清单双向全等与区级反向依赖守门；transaction 首个落地样板（复用 0111 的粒度规则与守门范式、把 0112 决策 1「不做域内模块重排」限缩为拆 crate 阶段纪律；grilling 定稿；zone 登记面由 #1591 定案改目录约定、模块清单 expected 改声明投影，见修订注记）
 - 0118 — 前端 pnpm workspace 拆包：深模块成包裁定（成包判据 = 对壳零依赖；每深模块一包；utils 全量成包；ui-kit 成员闭集 = App* 封装族 + overlay 单例族 + 通用件四项；window-tier 构建期契约改读包路径）、模块级单例随包 ESM 持有通则、不成包深模块的守门规则⑦（深模块边界登记表，首批 TransactionFilter → views）（方法参照 0112、借方法论不涉其范围；spec #1148 / #1157，grilling 定稿）
 - 0128 — 前端格式化器引入 oxfmt：独立 npm 包形态（否决 Vite+ 整体引入——内置 vitest 回退、.vue 类型检查缺口；否决 Prettier/Biome/维持无 formatter），默认 Prettier 兼容风格 printWidth 100 + sortPackageJson 关，`oxfmt --check` 入 check.sh/CI 双侧质量门 + 接线测试（删执行行即红、配置静默回退 fail-loud，oxc #25125）；pre-1.0 破例理由与重评条件在案（grilling 定稿）
-
+- 0137 — 每日变异测试：mutation-bench 独立 workflow（每日 cron + gate，不进 PR 门禁与 check.sh）、`--in-diff` 只变异基线以来改动、观测期不判定（阈值待基线稳定另立，同 0062→0068 先例）、零击杀 = 删除候选 / 包含关系 = 裁决清单 / 存活 = 补测豁免的处置口径、豁免收口 workspace 根 mutants.toml；前端 Stryker 撤出待上游适配 Vitest 5（spec #1816；grilling 定稿，2026-09-25）
 ### 搜索
 - 0027 — 统一模糊搜索语义与实现形态（取代已删除的 0004；0043 流式化、V018 两段式与 SQL 下推均并入修订记录）
 - 0008 — 交易列表服务端分页：offset 页码而非游标（IPC 缺省返回全部；HTTP 缺省上限 100，修订注记 #1631）

@@ -1,0 +1,14 @@
+# cargo-mutants 配置（workspace 根 = src-tauri/，spec #1816 / ADR-0137）
+#
+# 本文件是变异豁免的单点收口：每条豁免必须附内联注释写明类别与理由——
+#   - 等价变异体：变异前后行为不可区分，测试无法也不应捕获
+#   - 不可测变异体：需要外部网络/时间/随机源才能区分的变异
+# 豁免按 schema 可用键：exclude_globs / exclude_re（文件或变异名）、
+# skip_calls（函数名）等，全量见 `cargo mutants --emit-schema config`。
+#
+# 观测期不设分数门禁（ADR-0137）：本文件只服务每日 in-diff 运行与
+# 报告驱动的专项清理，不承载阈值判定。
+
+# 暂无豁免。各域清理过程中按需追加，格式示例：
+# exclude_re = ["replace some_fn.*  # 等价变异体：…（理由）"]
+# skip_calls = ["some_equivalent_fn"]  # 每条在 PR 报告中留理由
