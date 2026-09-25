@@ -5,8 +5,7 @@ import { centsToYuan, formatAmount } from "@ledger/money";
 import { buildRefundInput } from "@/transaction/transaction-input";
 import { judgeAmountText } from "@ledger/utils/field-error";
 import { useFieldErrors } from "@ledger/field-errors";
-import { useFormShared } from "@/composables/useFormShared";
-import { useAppStore } from "@/stores/app";
+import { useEntityCurrency, useFormShared } from "@/composables/useFormShared";
 import { t } from "@ledger/i18n";
 import type { Transaction } from "@ledger/types";
 import { errorMessage } from "@ledger/utils/errors";
@@ -21,7 +20,6 @@ export function useRefundForm(options?: {
   fixedTarget?: () => Transaction | null;
 }) {
   const { reference, accountOptions, currencyOptions } = useFormShared();
-  const app = useAppStore();
   const message = useMessage();
 
   // 金额字段错误态（ADR-0058 / issue #415 → #1007 收口）：金额以原始文本承载输入
@@ -80,9 +78,11 @@ export function useRefundForm(options?: {
   /**
    * 展示币种（issue #1770 / ADR-0134 决策 5）：退款继承原支出账户/币种（后端
    * Writer 守卫照跑），表单只读呈现继承值——随继承目标（行内原交易或搜索所选）
-   * 推导，未定目标前退「新表单预选币种」（展示币种偏好）。
+   * 推导，未定目标前退「新表单预选币种」（展示币种偏好）。推导源是手中持有的
+   * 原支出交易而非所选账户 id（强套按 id 查账户的工厂会歪语义），走持对象变体
+   * useEntityCurrency（#1821）。
    */
-  const currencyCode = computed(() => refundTarget.value?.currency_code ?? app.defaultCurrency);
+  const currencyCode = useEntityCurrency(refundTarget);
 
   async function loadTransactions() {
     try {
