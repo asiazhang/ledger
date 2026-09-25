@@ -3,7 +3,7 @@ import { api } from "@ledger/api";
 import { useInvestmentsSessionStore } from "@/investment/investments-session";
 import { useLoadable } from "@ledger/loadable";
 import { useReferenceStore } from "@/stores/reference";
-import { useInstrumentSearch } from "@/investment/useInstrumentSearch";
+import { useInstrumentOptions } from "@/investment/useInstrumentOptions";
 import type { RealizedPnlSummary } from "@ledger/types";
 
 /**
@@ -14,8 +14,8 @@ import type { RealizedPnlSummary } from "@ledger/types";
  * 发起，闭包内自读当前账户/标的筛选。刷新失败不再静默/产生未处理 rejection（spec 治愈
  * 清单①）：error 置位 + 默认 toast，summary 保持原值不清空成空态。
  * 标的搜索的刻意吞错仍是「刻意静默不收编」的合法形态（词汇表 Loadable 边界），
- * 取数编排自 #1308 起收口 useInstrumentSearch（对 Loadable 的边界不变），本层只做
- * 候选投影（label 拼法）与选中合并。
+ * 标的搜索取数编排收口 useInstrumentSearch（#1308），候选投影与选中回显合并自
+ * #1798 起进一步收口共享域件 useInstrumentOptions，本层只剩筛选状态与刷新编排。
  */
 export function useRealizedPnl() {
   const reference = useReferenceStore();
@@ -44,29 +44,16 @@ export function useRealizedPnl() {
     reference.investmentAccounts.map((a) => ({ label: a.name, value: a.id })),
   );
 
-  // 标的筛选下拉：取数编排收口 useInstrumentSearch（issue #1308，对外成员名不变），
-  // 本层只做候选投影（「代码 · 名称」label 拼法）与选中项合并
+  // 标的筛选下拉：候选面（「代码 · 名称」投影 + 选中回显防丢失合并）收口共享域件
+  // useInstrumentOptions（issue #1798；取数编排仍内化 useInstrumentSearch，#1308），
+  // 选中回显钉尾部——不打扰搜索结果序；对外成员名不变。
   const {
-    items: searchedInstruments,
+    options: pnlInstrumentOptions,
     searching: searchingInstruments,
     search: searchInstruments,
-  } = useInstrumentSearch();
-  const searchInstrumentOptions = computed(() =>
-    searchedInstruments.value.map((i) => ({
-      label: `${i.symbol}${i.name ? ` · ${i.name}` : ""}`,
-      value: i.id,
-    })),
-  );
-  const selectedInstrumentOption = ref<{ label: string; value: string } | null>(null);
-
-  const pnlInstrumentOptions = computed(() => {
-    const opts = [...searchInstrumentOptions.value];
-    const sel = selectedInstrumentOption.value;
-    if (sel && !opts.some((o) => o.value === sel.value)) {
-      opts.push(sel);
-    }
-    return opts;
-  });
+    pin: pinInstrumentOption,
+    findInstrument,
+  } = useInstrumentOptions("tail");
 
   const { loading, error, run } = useLoadable(async () => {
     // 0 元闭包自读当前筛选：发起时点即最新筛选，无需传参
@@ -85,8 +72,8 @@ export function useRealizedPnl() {
 
   function onSelectInstrument(value: string | null) {
     selectedInstrumentId.value = value;
-    selectedInstrumentOption.value =
-      searchInstrumentOptions.value.find((o) => o.value === value) ?? null;
+    // 选中回显：从当前搜索候选解析标的钉住（清选与候选外 id 同样落到无钉住）
+    pinInstrumentOption(value === null ? null : (findInstrument(value) ?? null));
     void refresh();
   }
 
