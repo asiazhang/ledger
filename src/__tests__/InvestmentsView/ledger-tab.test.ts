@@ -904,6 +904,31 @@ describe("明细页签深链落点（issue #1780）", () => {
     expect(pushMock).not.toHaveBeenCalled();
   });
 
+  it("?tab=detail&account=&instrument=：账户 + 标的组合落账（持仓行下钻载荷形态，ADR-0135 决策 6）", async () => {
+    mockRoute.query = { tab: "detail", account: "acc-2", instrument: "inst-1" };
+    const wrapper = mountView();
+    await flushPromises();
+    expect(useInvestmentsSessionStore().activeTab).toBe("ledger");
+    // 落点渲染双断言（ADR-0087）：请求携带双参 + 列表按账户∩标的过滤渲染
+    expect(lastLedgerFilter()).toMatchObject({
+      account_id: "acc-2",
+      instrument_id: "inst-1",
+      page: 1,
+    });
+    expect(colCells(wrapper, "kind")).toEqual(["买入", "分红"]);
+    wrapper.unmount();
+  });
+
+  it("恒可达：未命中标的字典的 id 照常携带请求（空态可见，不产生落空跳转，ADR-0107 决策 5）", async () => {
+    mockRoute.query = { tab: "detail", instrument: "inst-no-such" };
+    const wrapper = mountView();
+    await flushPromises();
+    expect(useInvestmentsSessionStore().activeTab).toBe("ledger");
+    expect(lastLedgerFilter()).toMatchObject({ instrument_id: "inst-no-such" });
+    expect(colCells(wrapper, "kind")).toEqual([]);
+    wrapper.unmount();
+  });
+
   it("?tab=detail&instrument=：标的维度落账（convert 两腿口径）", async () => {
     mockRoute.query = { tab: "detail", instrument: "inst-msft" };
     const wrapper = mountView();

@@ -164,8 +164,8 @@ const overviewColumns = computed<DataTableColumn<PortfolioRow>[]>(() => [
     title: t("investments.holdings.columns.symbol"),
     key: "symbol",
     width: 100,
-    // 标的代码列下钻（ADR-0107 决策 4）：跳交易页 ?account=&instrument=（不带 kinds，
-    // 「该标的的交易历史」语义完整，sell 筛选交易页一键可得）；无代码渲染纯文本「-」。
+    // 标的代码列下钻（ADR-0135 决策 6）：跳投资页明细页签 ?tab=detail&account=&instrument=
+    // （该账户该标的的投资交易历史；不带账户的用法 = 已清仓标的形态）；无代码渲染纯文本「-」。
     render: (r) =>
       h(InstrumentLink, {
         instrumentId: r.instrumentId,

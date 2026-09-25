@@ -257,6 +257,23 @@ describe("InvestmentsView 持仓页签（issue #901）", () => {
     expect(wrapper.find('[data-testid="sync-instrument-info"]').exists()).toBe(true);
   });
 
+  it("持仓行标的/代码列可点击：跳投资页明细页签 ?tab=detail&account=&instrument=（#1784）", async () => {
+    // 列接线负向条目：删除 HoldingsOverview 的 InstrumentLink 接线（代码列退化纯文本）或
+    // go() 改址接线，本用例均变红；断言对准用户可观察结果（点击产生的跳转 query，ADR-0087）。
+    wireInvokeSeam({ defaults: INVESTMENT_DEFAULTS, overrides: { list_holdings: mockHoldings } });
+    const wrapper = mountView();
+    await flushPromises();
+    await clickTab(wrapper, "持仓");
+    const links = wrapper.findAll("button.instrument-link");
+    const link = links.find((l) => l.text().includes("600000"));
+    expect(link, "持仓行标的代码应渲染为可点击链接（600000）").toBeDefined();
+    await link!.trigger("click");
+    expect(pushMock).toHaveBeenCalledWith({
+      name: "investments",
+      query: { tab: "detail", account: mockHoldings[0]!.account_id, instrument: "inst-1" },
+    });
+  });
+
   it("盈亏页签不再渲染持仓卡（收窄为纯已实现盈亏视图），访问持仓页签后返回亦不残留", async () => {
     wireInvokeSeam({ defaults: INVESTMENT_DEFAULTS, overrides: { list_holdings: mockHoldings } });
     const wrapper = mountView();

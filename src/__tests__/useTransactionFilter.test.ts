@@ -127,8 +127,6 @@ const FilterHarness = defineComponent({
       // 分类维度三态装配（issue #377，与视图 load 同构）：哨兵 → 仅无分类，其余非空值 → 精确 id
       if (tf.filters.categoryId === UNCATEGORIZED_ONLY) f.uncategorized_only = true;
       else if (tf.filters.categoryId) f.category_id = tf.filters.categoryId;
-      // 标的维度（ADR-0107，URL-only 下钻，与视图 load 同构）
-      if (tf.filters.instrumentId) f.instrument_id = tf.filters.instrumentId;
       // 类型维度（手动多选 + 下钻共用，spec #1025，与视图 load 同构）：非空集合 → kinds 数组（浅拷贝脱只读）
       if (tf.filters.kinds?.length) f.kinds = [...tf.filters.kinds];
       requests.push(f);
@@ -169,7 +167,6 @@ describe("useTransactionFilter 初始状态", () => {
       merchantId: null,
       categoryId: null,
       kinds: null,
-      instrumentId: null,
     });
     expect(tf.page.value).toBe(1);
     expect(tf.pageSize.value).toBe(20);
@@ -281,7 +278,6 @@ describe("useTransactionFilter setFilter（手动过滤意图）", () => {
       merchantId: "mch-1",
       categoryId: "cat-1",
       kinds: ["transfer"],
-      instrumentId: null,
     });
     // 同一同步批次内的多次 bump 被 watcher 去重，最终以完整过滤状态重拉一次
     expect(requests).toHaveLength(1);
@@ -314,7 +310,6 @@ describe("useTransactionFilter resetFilters（清除筛选）", () => {
       merchantId: null,
       categoryId: null,
       kinds: null,
-      instrumentId: null,
     });
     expect(tf.page.value).toBe(1);
     expect(requests).toHaveLength(2); // setFilter 一次 + resetFilters 一次
@@ -518,7 +513,6 @@ describe("useTransactionFilter URL 参数表·解析与校验（参考数据已�
       merchantId: null,
       categoryId: null,
       kinds: null,
-      instrumentId: null,
     });
     expect(requests).toHaveLength(0);
   });
@@ -577,7 +571,6 @@ describe("useTransactionFilter URL 参数表·复位规则（#96 决策 3）", (
       merchantId: null,
       categoryId: null,
       kinds: null,
-      instrumentId: null,
     });
     expect(tf.page.value).toBe(1);
     expect(lastRequest()).toEqual({ page: 1, page_size: 20 });
@@ -1086,99 +1079,76 @@ describe("useTransactionFilter URL 参数表·类型维度（手动多选 + 下�
   });
 });
 
-// —— 标的维度（ADR-0107）：URL ?instrument= 下钻，UUID 形状校验、非法回退不过滤；
-// 标的不在参考数据字典（无 instrumentMap），校验仅形状。挂起补判/让位/复位守卫与
-// 既有维度同规；持仓页签行是现仅有的跳转入口（盈亏页按标的汇总行已退役，
-// ADR-0107 修订注记 2026-09-13）。
+// —— 标的维度已退役（ADR-0135 决策 6 / ADR-0107 决策 3 修订）：交易页 ?instrument=
+// URL 参数从参数表移除——主列表不再含投资行，维度必然落空；持仓下钻改落投资页
+// 明细页签。TransactionListFilter 的 instrument_id 契约字段冻结并存（ADR-0057
+// 遗留参数先例），前端不消费、不携带；清理另走 BREAKING 窗口。
 
-describe("useTransactionFilter URL 参数表·标的维度（ADR-0107）", () => {
+describe("useTransactionFilter URL 参数表·标的维度退役（ADR-0135）", () => {
   const INSTRUMENT_ID = "0197e2c5-9c1e-7def-8a2b-3c4d5e6f7a8b";
 
-  it("合法 UUID：应用（请求携带 instrument_id），翻页归零 + 一次重拉", async () => {
+  it("?instrument= 参数不再消费：在场不产生过滤、不触发重拉（参数表移除即红）", async () => {
     const { tf, requests } = mountHarness();
     await flushPromises();
-    tf.page.value = 3;
     tf.syncUrlQuery({ instrument: INSTRUMENT_ID });
     await flushPromises();
-    expect(tf.filters.instrumentId).toBe(INSTRUMENT_ID);
-    expect(tf.page.value).toBe(1);
-    expect(requests).toHaveLength(1);
-    expect(lastRequest()).toEqual({ page: 1, page_size: 20, instrument_id: INSTRUMENT_ID });
+    expect(tf.filters).toEqual({
+      dateFrom: null,
+      dateTo: null,
+      involvingAccountId: null,
+      merchantId: null,
+      categoryId: null,
+      kinds: null,
+    });
+    expect(requests).toHaveLength(0);
   });
 
-  it("非法形状回退不过滤（参数视为不在场），不误清其他维度、不越界复位", async () => {
-    const { tf } = mountHarness();
-    await flushPromises();
-    tf.syncUrlQuery({ category: "cat-1", instrument: "not-a-uuid" });
-    await flushPromises();
-    expect(tf.filters.instrumentId).toBeNull();
-    expect(tf.filters.categoryId).toBe("cat-1");
-    expect(lastRequest()).toEqual({ page: 1, page_size: 20, category_id: "cat-1" });
-  });
-
-  it("组合直达：account + instrument（持仓页签行跳转载荷形态）同时生效，一次重拉", async () => {
+  it("组合载荷形态：instrument 被忽略，其余维度（账户）照常消费", async () => {
     const { tf, requests } = mountHarness();
     await flushPromises();
     tf.syncUrlQuery({ account: "acc-1", instrument: INSTRUMENT_ID });
     await flushPromises();
     expect(tf.filters.involvingAccountId).toBe("acc-1");
-    expect(tf.filters.instrumentId).toBe(INSTRUMENT_ID);
     expect(requests).toHaveLength(1);
-    expect(lastRequest()).toEqual({
-      page: 1,
-      page_size: 20,
-      involving_account_id: "acc-1",
-      instrument_id: INSTRUMENT_ID,
-    });
+    expect(lastRequest()).toEqual({ page: 1, page_size: 20, involving_account_id: "acc-1" });
   });
+});
 
-  it("导航清除 instrument 参数：对应维度清空 + 日期/类型复位（复位守卫清集合含 instrumentId）", async () => {
-    const { tf } = mountHarness();
-    await flushPromises();
-    tf.syncUrlQuery({ instrument: INSTRUMENT_ID });
-    await flushPromises();
-    tf.setFilter({ dateFrom: "2026-01-01" });
-    tf.page.value = 2;
-    await flushPromises();
-    tf.syncUrlQuery({});
-    await flushPromises();
-    expect(tf.filters.instrumentId).toBeNull();
-    expect(tf.filters.dateFrom).toBeNull();
-    expect(tf.filters.kinds).toBeNull();
-    expect(tf.page.value).toBe(1);
-    expect(lastRequest()).toEqual({ page: 1, page_size: 20 });
-  });
+// —— 复位守卫与让位的既有覆盖在标的维度退役后改用同规维度承载 ——
 
-  it("复位守卫：instrument 无效回退时另一维度（分类）有效在场 → 日期/类型不越界复位", async () => {
+describe("useTransactionFilter URL 参数表·复位守卫（日期维度无效回退）", () => {
+  it("dateFrom 非法回退时另一维度（分类）有效在场 → 日期/类型不越界复位", async () => {
     const { tf } = mountHarness();
     await flushPromises();
     tf.syncUrlQuery({ category: "cat-1" });
     await flushPromises();
-    tf.setFilter({ dateFrom: "2026-01-01", kinds: ["income"] });
+    tf.setFilter({ dateFrom: "2026-01-01", dateTo: "2026-02-01", kinds: ["income"] });
     await flushPromises();
-    tf.syncUrlQuery({ category: "cat-1", instrument: "not-a-uuid" });
+    tf.syncUrlQuery({ category: "cat-1", dateFrom: "not-a-date" });
     await flushPromises();
-    expect(tf.filters.instrumentId).toBeNull();
+    expect(tf.filters.dateFrom).toBeNull();
     expect(tf.filters.categoryId).toBe("cat-1");
-    expect(tf.filters.dateFrom).toBe("2026-01-01");
+    expect(tf.filters.dateTo).toBe("2026-02-01");
     expect(tf.filters.kinds).toEqual(["income"]);
   });
+});
 
+describe("useTransactionFilter URL 参数表·就绪补判让位（分类维度承载）", () => {
   it("补判前手动改动同维度（setFilter 直写即手动意图）→ 让位且不再重放", async () => {
-    const release = gateReference("list_accounts");
+    const release = gateReference("list_categories");
     const { tf } = mountHarness();
     await flushPromises();
-    tf.syncUrlQuery({ instrument: INSTRUMENT_ID });
+    tf.syncUrlQuery({ category: "cat-1" });
     await flushPromises();
     // 参考数据就绪前，用户手动改动同维度
-    tf.setFilter({ instrumentId: "0197e2c5-9c1e-7def-8a2b-3c4d5e6f7a8c" });
+    tf.setFilter({ categoryId: "cat-2" });
     release();
     await flushPromises();
-    // 标的维度让位：保持手动改动；之后参考数据重拉不重放
-    expect(tf.filters.instrumentId).toBe("0197e2c5-9c1e-7def-8a2b-3c4d5e6f7a8c");
+    // 分类维度让位：保持手动改动；之后参考数据重拉不重放
+    expect(tf.filters.categoryId).toBe("cat-2");
     await useReferenceStore().refresh();
     await flushPromises();
-    expect(tf.filters.instrumentId).toBe("0197e2c5-9c1e-7def-8a2b-3c4d5e6f7a8c");
+    expect(tf.filters.categoryId).toBe("cat-2");
   });
 });
 
@@ -1321,7 +1291,6 @@ describe("useTransactionFilter 会话内保留（issue #893）：同会话卸载
       merchantId: null,
       categoryId: null,
       kinds: ["income"],
-      instrumentId: null,
     });
     expect(second.tf.page.value).toBe(3);
     expect(second.tf.pageSize.value).toBe(50);
@@ -1349,7 +1318,6 @@ describe("useTransactionFilter 会话内保留（issue #893）：同会话卸载
       merchantId: null,
       categoryId: null,
       kinds: null,
-      instrumentId: null,
     });
     expect(second.tf.page.value).toBe(1);
     expect(second.tf.pageSize.value).toBe(20);
@@ -1488,7 +1456,6 @@ describe("useTransactionFilter 会话内保留（issue #893）：同会话卸载
       merchantId: null,
       categoryId: null,
       kinds: null,
-      instrumentId: null,
     });
     expect(second.tf.page.value).toBe(1);
     expect(second.requests).toHaveLength(0);

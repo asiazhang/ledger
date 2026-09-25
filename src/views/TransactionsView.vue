@@ -176,8 +176,6 @@ async function load() {
     if (filters.merchantId) filter.merchant_id = filters.merchantId;
     if (filters.categoryId === UNCATEGORIZED_ONLY) filter.uncategorized_only = true;
     else if (filters.categoryId) filter.category_id = filters.categoryId;
-    // 标的维度（ADR-0107，URL-only 下钻）：无手动控件，挂起补判/让位/复位同规
-    if (filters.instrumentId) filter.instrument_id = filters.instrumentId;
     // 类型维度（spec #1025 手动多选 + 下钻共用；主列表收窄 ADR-0135 / issue #1783）：
     // 每次请求显式携带 kind 集合（含默认态）——显式集合在场按其携带，默认态显式携带
     // 四通用 kind（主列表排除投资 kind 的唯一机制，装配单点 resolveRequestKinds）。
@@ -201,7 +199,7 @@ async function load() {
 }
 
 // URL 下钻只读入口（issue #234 / #96 决策 3/4）：?account= / ?merchant= / ?category=（issue #377）
-// / ?instrument=（ADR-0107）的解析与校验、复位规则、参考数据就绪补判与字段级让位全部内化在
+// / ?kinds= / ?dateFrom= / ?dateTo= 的解析与校验、复位规则、参考数据就绪补判与字段级让位全部内化在
 // TransactionFilter 参数表；
 // 视图只监听路由并把 query 递给模块，不持任何时序标志与解析逻辑。
 // URL 只读不写回（会话级 store 是唯一事实源，issue #893）。
