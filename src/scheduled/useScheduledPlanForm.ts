@@ -2,8 +2,7 @@ import { computed, ref } from "vue";
 import type { TreeSelectOption } from "naive-ui";
 import { useMessage } from "naive-ui";
 import { useReferenceStore } from "@/stores/reference";
-import { useAppStore } from "@/stores/app";
-import { useFormShared } from "@/composables/useFormShared";
+import { useAccountCurrency, useFormShared } from "@/composables/useFormShared";
 import { resolveMerchantRef } from "@/merchants/resolve-merchant";
 import { api } from "@ledger/api";
 import { errorMessage } from "@ledger/utils/errors";
@@ -66,7 +65,6 @@ export interface UseScheduledPlanFormOptions {
 export function useScheduledPlanForm(options: UseScheduledPlanFormOptions = {}) {
   const { onSubmitted } = options;
   const reference = useReferenceStore();
-  const appStore = useAppStore();
   const { accountOptions, currencyOptions } = useFormShared();
   const message = useMessage();
 
@@ -84,13 +82,10 @@ export function useScheduledPlanForm(options: UseScheduledPlanFormOptions = {}) 
    * 计划币种（issue #1770 / ADR-0134 决策 5）：由所选账户推导——分期/订阅每期
    * 生成的交易经 Writer 守卫强制「交易币种 == 账户币种」（币种填错的计划期次
    * 执行报错、期次永远 pending，ADR-0134 代价 3），前端随账户收敛杜绝新增脏计划；
-   * 未选账户前退「新表单预选币种」（展示币种偏好）。定时转账页签的币种联动
-   * （既有 watcher 先例）与同一推导天然合一。
+   * 机械推导（账户币种 ?? 展示币种偏好）收口共享接缝 useAccountCurrency（#1775）。
+   * 定时转账页签的币种联动（既有 watcher 先例）与同一推导天然合一。
    */
-  const currencyCode = computed(() => {
-    const account = accountId.value == null ? undefined : reference.accountMap.get(accountId.value);
-    return account?.currency_code ?? appStore.defaultCurrency;
-  });
+  const currencyCode = useAccountCurrency(accountId);
   const recurrenceType = ref<RecurrenceType>("monthly");
   const recurrenceInterval = ref(1);
   const recurrenceDay = ref<number | null>(null);
