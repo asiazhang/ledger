@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { mockInvoke, wireInvokeSeam } from "@ledger/test-support/invoke-mock";
 import { mount, flushPromises } from "@vue/test-utils";
+import { NSelect } from "naive-ui";
 import { useReferenceStore } from "@/stores/reference";
 import { useInvestmentsSessionStore } from "@/investment/investments-session";
 import PortfolioTrendPanel from "@/investment/PortfolioTrendPanel.vue";
@@ -108,7 +109,7 @@ function mountWithEntry(instrument: Instrument) {
 
 function chartPayload(wrapper: ReturnType<typeof mount>): {
   labels: string[];
-  datasets: { data: number[] }[];
+  datasets: { label?: string; data: number[] }[];
 } {
   const el = wrapper.get('[data-testid="line-chart"]');
   return JSON.parse(el.text());
@@ -441,5 +442,33 @@ describe("PortfolioTrendPanel 走势面板", () => {
     expect(instrumentTrigger.attributes("aria-label")).toBe("单标的说明");
     expect(await hoverTipText(instrumentTrigger)).toContain("不是持仓市值");
     instrumentWrapper.unmount();
+  });
+
+  it("标的展示名空格拼法收口（#1839）：下拉候选与曲线标签同源单点，无名称退化裸代码", async () => {
+    // 字典混入一枚无名称标的：候选项退化裸代码，不出现尾随空格
+    const bareInstrument = makeInstrument({ id: "inst-bare", symbol: "BARE", name: null });
+    wireInvokeSeam({
+      defaults: {
+        list_holdings: [],
+        list_instruments: { items: [stockInstrument, bareInstrument], total: 2 },
+      },
+      overrides: {
+        portfolio_value_trend: portfolioTrendResponse,
+        instrument_price_trend: {
+          instrument_id: "inst-1",
+          points: [{ date: "2026-06-05", price_cents: 1500, currency_code: "CNY" }],
+        },
+      },
+    });
+    const wrapper = mountWithEntry(stockInstrument);
+    await flushPromises();
+    // 下拉候选项：代码 + 名称空格连接 / 无名称退化裸代码（经内层 NSelect 读声明 prop）
+    const options = wrapper
+      .findComponent('[data-testid="trend-instrument-select"]')
+      .findComponent(NSelect)
+      .props("options") as Array<{ label: string; value: string }>;
+    expect(options.map((o) => o.label)).toEqual(["600000 浦发银行", "BARE"]);
+    // 曲线标签（图例 / tooltip 同源）：同一空格拼法
+    expect(chartPayload(wrapper).datasets[0].label).toBe("600000 浦发银行");
   });
 });
