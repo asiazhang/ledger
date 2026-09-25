@@ -12,6 +12,7 @@ import {
   NPagination,
   NSpace,
   NSpin,
+  NSwitch,
   useMessage,
   useThemeVars,
   type DataTableColumn,
@@ -54,6 +55,7 @@ import { useTransactionModalState } from "@ledger/transaction-modal-state";
 import { api } from "@ledger/api";
 import { useReferenceStore } from "@/stores/reference";
 import { useItemsStore } from "@/item/items";
+import { useTransactionViewPreferencesStore } from "@/transaction/transaction-view-preferences";
 import { buildTransactionColumns } from "@/transaction/transaction-columns";
 import { sumFixedColumnWidths } from "@ledger/utils/table";
 import { availableCreateKinds, isCreateKindAvailable } from "@ledger/utils/create-entry-kinds";
@@ -76,6 +78,9 @@ const isMobile = computed(() => tier.value === "mobile");
 // 物品 store（issue #119）：仅用于右键菜单「加入物品」的置灰态判断；
 // self-init + ledger:changed 自动重拉，创建成功后菜单下次打开即为置灰态。
 const itemsStore = useItemsStore();
+// 视图偏好 store（ADR-0136 / issue #1811）：设备级「隐藏投资相关流水」裁决的唯一读写方，
+// 与会话筛选分家（不入 filters、不参与清除筛选与 ESC 复位，ADR-0094 边界原样）。
+const viewPreferences = useTransactionViewPreferencesStore();
 const message = useMessage();
 const dialog = useAppDialog();
 const route = useRoute();
@@ -182,6 +187,10 @@ async function load() {
     // 每次请求显式携带 kind 集合（含默认态）——显式集合在场按其携带，默认态显式携带
     // 四通用 kind（主列表排除投资 kind 的唯一机制，装配单点 resolveRequestKinds）。
     filter.kinds = resolveRequestKinds(filters.kinds);
+    // 视图偏好先决收窄（ADR-0136 决策 1/3 / issue #1811）：偏好不是筛选维度，不入会话
+    // 筛选、不参与清除筛选与 ESC 复位；开启时请求携带隐藏参数（缺省不携带，契约只增），
+    // 行集 = 偏好收窄 ∩ 既有筛选，账户下钻不让位（服务端分页 total 同口径）。
+    if (viewPreferences.hideInvestmentRelated) filter.hide_investment_related = true;
     const res = await api.listTransactions(filter);
     // 页码钳制（issue #893）：页码超出当前数据有效范围时自愈——空页 + 尚有数据
     // + 非第一页 → 走 ADR-0045 页码回退入口回退一页重拉（既有出口，不新增第二出口、
@@ -309,6 +318,14 @@ function onMerchantFilterChange(id: string | null) {
  * 都归一为 null（空集合 ≡ 满选 ≡ 不过滤 ≡ 默认态，「满选 ≠ 默认」不等式随可选集收窄解除）。 */
 function onKindFilterChange(values: TransactionKind[] | null) {
   setFilter({ kinds: normalizeKindSelection(values) });
+}
+
+/** 视图偏好开关处理器（ADR-0136 / issue #1811）：写偏好 store（唯一读写方）后经模块
+ *  统一出口 refresh 重拉（翻页归零 + 版本 bump）——行集裁决入口与筛选变更同构，
+ *  不直写 load、不经 setFilter（偏好不是筛选维度）。 */
+function onHideInvestmentChange(value: boolean) {
+  viewPreferences.setHideInvestmentRelated(value);
+  refresh();
 }
 
 async function remove(id: string) {
@@ -533,6 +550,18 @@ function activateCard(row: Transaction): void {
         style="width: 160px"
         @update:value="onKindFilterChange"
       />
+      <!-- 视图偏好开关（ADR-0136 / issue #1811）：设备级持久裁决落筛选栏，本行在断点
+           分档点之上，桌面 / 移动共用同一渲染（同构，不做双渲染）；偏好与筛选分家——
+           写偏好 store 而非 setFilter，清除筛选与 ESC 复位不触达，也不参与清除按钮禁用态。 -->
+      <span style="display: inline-flex; align-items: center; gap: 6px; user-select: none">
+        <NSwitch
+          size="small"
+          :value="viewPreferences.hideInvestmentRelated"
+          :aria-label="t('transactions.filter.hideInvestmentRelated')"
+          @update:value="onHideInvestmentChange"
+        />
+        <span>{{ t("transactions.filter.hideInvestmentRelated") }}</span>
+      </span>
       <NButton
         size="tiny"
         quaternary

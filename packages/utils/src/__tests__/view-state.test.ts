@@ -14,6 +14,9 @@ import {
   getSavedClosedFeatures,
   saveClosedFeatures,
   clearClosedFeatures,
+  getSavedHideInvestmentRelated,
+  saveHideInvestmentRelated,
+  clearHideInvestmentRelated,
 } from "../view-state";
 
 describe("view-state route", () => {
@@ -174,5 +177,32 @@ describe("view-state closedFeatures 写路径（issue #1241：空集合删记录
 
   it("clearClosedFeatures 对不存在的 key 不报错", () => {
     expect(() => clearClosedFeatures()).not.toThrow();
+  });
+});
+
+describe("view-state hideInvestmentRelated（issue #1811 / ADR-0136：key 与读写助手，解析归视图偏好 store）", () => {
+  it("无记录时返回 null", () => {
+    expect(getSavedHideInvestmentRelated()).toBeNull();
+  });
+
+  it("saveHideInvestmentRelated 写入 JSON，getSavedHideInvestmentRelated 读回原始值", () => {
+    saveHideInvestmentRelated(true);
+    expect(localStorage.getItem(VIEW_STATE_KEYS.hideInvestmentRelated)).toBe("true");
+    expect(getSavedHideInvestmentRelated()).toBe(true);
+  });
+
+  it("脏值原样透传（布尔偏好解析防御整体回默认关，归视图偏好 store），损坏的 JSON 回退 null", () => {
+    localStorage.setItem(VIEW_STATE_KEYS.hideInvestmentRelated, '"yes"');
+    expect(getSavedHideInvestmentRelated()).toBe("yes");
+    localStorage.setItem(VIEW_STATE_KEYS.hideInvestmentRelated, "not-json{");
+    expect(getSavedHideInvestmentRelated()).toBeNull();
+  });
+
+  it("clearHideInvestmentRelated 移除 key，回退无记录态；对不存在的 key 不报错", () => {
+    saveHideInvestmentRelated(true);
+    clearHideInvestmentRelated();
+    expect(localStorage.getItem(VIEW_STATE_KEYS.hideInvestmentRelated)).toBeNull();
+    expect(getSavedHideInvestmentRelated()).toBeNull();
+    expect(() => clearHideInvestmentRelated()).not.toThrow();
   });
 });

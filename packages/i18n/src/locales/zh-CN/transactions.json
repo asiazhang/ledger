@@ -60,7 +60,8 @@
     "account": "账户",
     "merchant": "商户",
     "kind": "类型",
-    "clear": "清除筛选"
+    "clear": "清除筛选",
+    "hideInvestmentRelated": "隐藏投资相关流水"
   },
   "create": {
     "button": "记一笔",

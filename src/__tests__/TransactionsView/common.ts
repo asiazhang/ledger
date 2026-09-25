@@ -133,6 +133,20 @@ function applyListFilter(filter: Record<string, unknown>) {
     if (filter.category_id && t.category_id !== (filter.category_id as string)) return false;
     if (filter.uncategorized_only === true && t.category_id !== null) return false;
     if (Array.isArray(filter.kinds) && !filter.kinds.includes(t.kind)) return false;
+    // 镜像后端读路径判定（issue #1810 / ADR-0136 决策 2）：hide_investment_related
+    // 为 true 时排除三端（转出 / 转入 / 出资）任一端为投资类型账户的行——按账户
+    // 不按分类，与涉及账户过滤同口径（三端列）。
+    if (filter.hide_investment_related === true) {
+      const investmentIds = new Set(
+        mockAccounts.filter((a) => a.type === "investment").map((a) => a.id),
+      );
+      if (
+        investmentIds.has(t.account_id) ||
+        (t.to_account_id !== null && investmentIds.has(t.to_account_id)) ||
+        (t.funding_account_id !== null && investmentIds.has(t.funding_account_id))
+      )
+        return false;
+    }
     return true;
   });
 }
