@@ -35,9 +35,9 @@ use super::model::SyncOp;
 use super::ops;
 use super::parked::{self, ParkedOp};
 use super::registry::{
-    AccountBinding, BudgetBinding, CategoryBinding, ExchangeRateBinding, InstrumentBinding,
-    InsurerBinding, ItemBinding, LedgerSettingBinding, MerchantBinding, PhysicalAssetBinding,
-    PolicyBinding, PriceBinding, ScheduledBinding, TransactionBinding,
+    AccountBinding, BudgetBinding, CategoryBinding, ExchangeRateBinding, GoalBinding,
+    InstrumentBinding, InsurerBinding, ItemBinding, LedgerSettingBinding, MerchantBinding,
+    PhysicalAssetBinding, PolicyBinding, PriceBinding, ScheduledBinding, TransactionBinding,
 };
 
 /// 单条 op 的重放结果：执行（含 op 落日志）、按幂等跳过、LWW 压制、期次去重
@@ -387,6 +387,7 @@ fn dispatch(conn: &rusqlite::Connection, command: &DomainCommand) -> Result<Repl
         DomainCommand::Insurer(cmd) => InsurerBinding::replay(conn, cmd),
         DomainCommand::Item(cmd) => ItemBinding::replay(conn, cmd),
         DomainCommand::PhysicalAsset(cmd) => PhysicalAssetBinding::replay(conn, cmd),
+        DomainCommand::Goal(cmd) => GoalBinding::replay(conn, cmd),
         DomainCommand::Instrument(cmd) => InstrumentBinding::replay(conn, cmd),
         DomainCommand::ExchangeRate(cmd) => ExchangeRateBinding::replay(conn, cmd),
         DomainCommand::Price(cmd) => PriceBinding::replay(conn, cmd),

@@ -26,6 +26,7 @@ ledger-item = { path = "../item" }
 ledger-policy = { path = "../policy" }
 ledger-budget = { path = "../budget" }
 ledger-physical-asset = { path = "../physical-asset" }
+ledger-savings-goal = { path = "../savings-goal" }
 ledger-backup = { path = "../backup" }
 # 数据面惯用库：S3 兼容对象存储通道、信封加密、摘要、Checkpoint 快照与
 # 桌面 AppHandle 触发接线。tauri 只提供 AppHandle/Runtime/Manager（壳层

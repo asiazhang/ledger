@@ -21,6 +21,8 @@
 //!   扩展行自包含（无 FIFO 重建）、标的依赖倒挂挂起自愈、币种分叉码化挂起（issue #1078）
 //! - [`item`]：物品全域 op 产出、源端折算随行（issue #860）
 //! - [`physical_asset`]：实物资产全域 op 产出、并发估值全部存活（issue #860）
+//! - [`savings_goal`]：储蓄目标全域 op 产出与重放收敛、守卫同码挂起自愈、
+//!   不可解码 Goal 载荷挂起（issue #1756）
 //! - [`scheduled_plan`]：定时计划全域 op 产出与收敛（issue #860）
 //! - [`transaction_funding`]：出资账户的重放收敛与旧格式 op 前向兼容（issue #939）
 //! - [`checkpoint`]：Checkpoint 快照、新端引导、位点与截断机制（issue #857）
@@ -48,6 +50,7 @@ mod parked;
 mod physical_asset;
 mod probe;
 mod reference_data;
+mod savings_goal;
 mod scheduled_plan;
 mod split;
 mod total_order;

@@ -7,7 +7,7 @@
 //!
 //! 本模块是同步域对业务域暴露的**契约面**（ADR-0101 决策 1/4b）：信封
 //! [`DomainCommand`] 与重放绑定契约 [`ReplayBinding`] 集中住此——业务域只许经
-//! 本模块路径与根再导出白名单引用同步域（门 b，`check-structure.ts`）。14 个
+//! 本模块路径与根再导出白名单引用同步域（门 b，`check-structure.ts`）。15 个
 //! 适配绑定与 `DomainCommand::subject` 的组装臂住 [`super::registry`]（契约读
 //! 一处即知，绑定与组装同居一处）。
 //!
@@ -31,6 +31,7 @@ use ledger_item::ItemCommand;
 use ledger_merchants::MerchantCommand;
 use ledger_physical_asset::PhysicalAssetCommand;
 use ledger_policy::{InsurerCommand, PolicyCommand};
+use ledger_savings_goal::SavingsGoalCommand;
 use ledger_scheduled::ScheduledCommand;
 use ledger_transaction::TransactionCommand;
 
@@ -66,6 +67,8 @@ pub enum DomainCommand {
     ExchangeRate(ExchangeRateCommand),
     /// 用户侧价格命令（现价录入 / 手动报价，issue #861；行情采集不进 op）。
     Price(PriceCommand),
+    /// 储蓄目标命令（spec #1750 / issue #1756，ADR-0133）。
+    Goal(SavingsGoalCommand),
 }
 
 pub(crate) use ledger_sync_protocol::command::ReplayEffect;

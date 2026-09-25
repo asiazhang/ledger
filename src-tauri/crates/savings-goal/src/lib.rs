@@ -34,11 +34,14 @@
 //! issue #1753）。
 //!
 //! 依赖方向（spec #1750 / issue #1751 AC）：本 crate 消费基础设施、同步协议与
-//! 三个同级业务域（`ledger-infra` / `ledger-sync-protocol` / `ledger-accounts`
+//! 同级业务域（`ledger-infra` / `ledger-sync-protocol` / `ledger-accounts`
 //! / `ledger-transaction` / `ledger-scheduled`——节奏折算系数与周期闭集解析，
 //! issue #1753；域→域横向依赖 ADR-0056 决策 2 允许），对根包（壳层）
-//! 与多端同步域零依赖，无接缝无注册点、壳层启动零接线；同步命令（Goal
-//! DomainCommand）随多端同步票接入，设备标识现走 `ledger-sync-protocol`。
+//! 与多端同步域零依赖（业务域→同步域零容忍，ADR-0101 决策 4b：同步命令
+//! SavingsGoalCommand 走 `ledger-sync-protocol` 契约面自述实体标签与实体键，
+//! op 产出直呼协议面 `record_local`，重放分派由 sync_engine 注册表跨 crate
+//! 消费本 crate 公开接缝 `replay_command`——环依赖由 crate 依赖图断开，
+//! #1089 形态），壳层启动零接线；设备标识走 `ledger-sync-protocol`。
 //! 反向引用由 cargo 依赖图编译期拒绝（生产依赖面无根包，dev-dependency 环只
 //! 覆盖测试目标；机器面负向核对住结构守门的 crate 依赖方向）。
 //!
@@ -48,11 +51,14 @@
 //! 注册静态，域单测直接驱动本实例；经壳层的旅程由根包侧三层测试（命令集成、
 //! e2e BDD）走根包图实例覆盖，断言与场景文本零改动。
 
+mod command;
 mod crud;
 mod model;
 mod pace;
 mod progress;
-
+/// 同步命令与重放接缝（issue #1756）：载荷形态住 `command` 模块，重放执行经
+/// sync_engine 重放注册表跨 crate 分派（#1092 `replay_command` 同款再导出）。
+pub use command::{SavingsGoalCommand, replay_command};
 /// 域 API 再导出：调用面用域语言短名（`savings_goal::create_savings_goal` 等），
 /// 先例 `policy` / `item` / `physical_asset` 入口再导出。
 pub use crud::{
