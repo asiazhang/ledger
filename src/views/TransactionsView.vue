@@ -514,7 +514,12 @@ function activateCard(row: Transaction): void {
 </script>
 
 <template>
-  <NSpace vertical :size="12">
+  <!-- wrap-item=false（根因修复，2026-09-25 交易页大空白）：NSpace 默认把每个组件子项包进
+       一层 role=none 的 div；关闭态弹层（5 个 AppModal + 行右键 AppDropdown）渲染为注释
+       节点，包裹 div 0 高却仍是 flex 子项，各占一个 12px gap 槽位——表格上方凭空多出
+       6×12+12 ≈ 84px 空白。关闭弹层经 teleport 挂 body，本就不参与布局流；
+       wrap-item=false 后子项直接作 flex 子元素，幻影 div 不再产生。 -->
+  <NSpace vertical :size="12" :wrap-item="false">
     <!-- 过滤行（第一行）：账户（涉及账户语义，可清除）+ 商户（可清除，issue #191）+ 类型（可清除）+ 清除筛选。
          任意起止日期筛选已自交易页移除（搜索页保留，issue #381）；
          任一条件变化即重新查询并回到第 1 页；手动改动不同步回 URL
