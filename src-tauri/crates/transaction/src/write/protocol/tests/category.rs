@@ -3,7 +3,7 @@
 //! transfer / buy / sell 携带拒绝；dividend / split 携带亦拒绝且先于投资域装配；
 //! 修改路径与批量导入路径同款收口（先例：[`super::merchant`] 商户携带收口）。
 
-use crate::tests::common::make_input;
+use crate::tests::common::{make_input, seed_category};
 use ledger_infra::error::AppError;
 use rusqlite::{Connection, params};
 use tauri_app_lib::ledger_transaction::amount::TransactionKind;
@@ -31,15 +31,6 @@ fn assert_coded_rejection(err: AppError, code: &str, message_part: &str) {
 // ---------------------------------------------------------------------------
 // 分类携带收口（issue #582）：行为层按 kind 拒绝/放行
 // ---------------------------------------------------------------------------
-fn insert_category(conn: &Connection, id: &str, name: &str, kind: &str) {
-    conn.execute(
-        "INSERT INTO categories (id,name,kind,parent_id,icon,sort_order,created_at,updated_at,version,device_id,is_deleted) \
-         VALUES (?1,?2,?3,NULL,NULL,0,?4,?4,1,'test',0)",
-        params![id, name, kind, test_support::FIXED_NOW],
-    )
-    .unwrap();
-}
-
 /// 交易行上的分类引用。
 fn category_id_of(conn: &Connection, id: &str) -> Option<String> {
     conn.query_row(
@@ -68,8 +59,8 @@ fn create_expense_income_carry_category_transfer_buy_sell_rejected() {
     test_support::seed_account(&conn, "acc-c", "现金", "cash", "CNY", 0);
     test_support::seed_account(&conn, "acc-c-to", "银行", "bank", "CNY", 0);
     test_support::seed_account(&conn, "acc-c-inv", "证券", "investment", "CNY", 0);
-    insert_category(&conn, "cat-food", "餐饮", "expense");
-    insert_category(&conn, "cat-salary", "工资", "income");
+    let cat_food = seed_category(&conn, "餐饮", "expense");
+    let cat_salary = seed_category(&conn, "工资", "income");
 
     // expense / income：携带分类创建成功且读回 category_id 正确。
     let expense_id = create_transaction_internal(
@@ -77,7 +68,7 @@ fn create_expense_income_carry_category_transfer_buy_sell_rejected() {
         TransactionInput {
             policy_id: None,
             merchant_id: None,
-            category_id: Some("cat-food".into()),
+            category_id: Some(cat_food.clone()),
             ..make_input("acc-c", TransactionKind::Expense, 1000, "2026-01-01")
         },
     )
@@ -88,7 +79,7 @@ fn create_expense_income_carry_category_transfer_buy_sell_rejected() {
         TransactionInput {
             policy_id: None,
             merchant_id: None,
-            category_id: Some("cat-salary".into()),
+            category_id: Some(cat_salary.clone()),
             ..make_input("acc-c", TransactionKind::Income, 500, "2026-01-02")
         },
     )
@@ -96,11 +87,11 @@ fn create_expense_income_carry_category_transfer_buy_sell_rejected() {
     .id;
     assert_eq!(
         category_id_of(&conn, &expense_id).as_deref(),
-        Some("cat-food")
+        Some(cat_food.as_str())
     );
     assert_eq!(
         category_id_of(&conn, &income_id).as_deref(),
-        Some("cat-salary")
+        Some(cat_salary.as_str())
     );
 
     // transfer：转出/转入账户齐备，仅因携带分类被拒（码化拒绝，码随测试锁定）。
@@ -110,7 +101,7 @@ fn create_expense_income_carry_category_transfer_buy_sell_rejected() {
             policy_id: None,
             merchant_id: None,
             kind: TransactionKind::Transfer,
-            category_id: Some("cat-food".into()),
+            category_id: Some(cat_food.clone()),
             to_account_id: Some("acc-c-to".into()),
             ..make_input("acc-c", TransactionKind::Transfer, 3000, "2026-01-03")
         },
@@ -126,7 +117,7 @@ fn create_expense_income_carry_category_transfer_buy_sell_rejected() {
                 policy_id: None,
                 merchant_id: None,
                 kind,
-                category_id: Some("cat-food".into()),
+                category_id: Some(cat_food.clone()),
                 instrument_id: Some("inst-x".into()),
                 quantity: Some(10.0),
                 price_cents: Some(1000),
@@ -165,15 +156,15 @@ fn create_expense_income_carry_category_transfer_buy_sell_rejected() {
 fn create_refund_ignores_caller_category_and_inherits_original() {
     let conn = test_support::open();
     test_support::seed_account(&conn, "acc-c", "现金", "cash", "CNY", 0);
-    insert_category(&conn, "cat-food", "餐饮", "expense");
-    insert_category(&conn, "cat-toy", "玩具", "expense");
+    let cat_food = seed_category(&conn, "餐饮", "expense");
+    let cat_toy = seed_category(&conn, "玩具", "expense");
 
     let expense_id = create_transaction_internal(
         &conn,
         TransactionInput {
             policy_id: None,
             merchant_id: None,
-            category_id: Some("cat-food".into()),
+            category_id: Some(cat_food.clone()),
             ..make_input("acc-c", TransactionKind::Expense, 1000, "2026-01-01")
         },
     )
@@ -187,7 +178,7 @@ fn create_refund_ignores_caller_category_and_inherits_original() {
             policy_id: None,
             merchant_id: None,
             kind: TransactionKind::Refund,
-            category_id: Some("cat-toy".into()),
+            category_id: Some(cat_toy.clone()),
             refund_of_transaction_id: Some(expense_id),
             ..make_input("acc-c", TransactionKind::Refund, 100, "2026-01-02")
         },
@@ -196,7 +187,7 @@ fn create_refund_ignores_caller_category_and_inherits_original() {
     .id;
     assert_eq!(
         category_id_of(&conn, &refund_id).as_deref(),
-        Some("cat-food"),
+        Some(cat_food.as_str()),
         "refund 应继承原支出分类、忽略调用方填值"
     );
 }
@@ -208,7 +199,7 @@ fn create_refund_ignores_caller_category_and_inherits_original() {
 fn create_dividend_split_with_category_reports_category_rejection_first() {
     let conn = test_support::open();
     test_support::seed_account(&conn, "acc-c", "现金", "cash", "CNY", 0);
-    insert_category(&conn, "cat-food", "餐饮", "expense");
+    let cat_food = seed_category(&conn, "餐饮", "expense");
 
     for kind in [TransactionKind::Dividend, TransactionKind::Split] {
         // 携带分类：报分类拒绝（先于投资域装配）。
@@ -218,7 +209,7 @@ fn create_dividend_split_with_category_reports_category_rejection_first() {
                 policy_id: None,
                 merchant_id: None,
                 kind,
-                category_id: Some("cat-food".into()),
+                category_id: Some(cat_food.clone()),
                 ..make_input("acc-c", kind, 60, "2026-01-01")
             },
         )
@@ -262,14 +253,14 @@ fn update_to_transfer_with_category_rejected_and_rolls_back() {
     let conn = test_support::open();
     test_support::seed_account(&conn, "acc-c", "现金", "cash", "CNY", 0);
     test_support::seed_account(&conn, "acc-c-to", "银行", "bank", "CNY", 0);
-    insert_category(&conn, "cat-food", "餐饮", "expense");
+    let cat_food = seed_category(&conn, "餐饮", "expense");
 
     let id = create_transaction_internal(
         &conn,
         TransactionInput {
             policy_id: None,
             merchant_id: None,
-            category_id: Some("cat-food".into()),
+            category_id: Some(cat_food.clone()),
             ..make_input("acc-c", TransactionKind::Expense, 500, "2026-01-01")
         },
     )
@@ -283,7 +274,7 @@ fn update_to_transfer_with_category_rejected_and_rolls_back() {
             policy_id: None,
             merchant_id: None,
             kind: TransactionKind::Transfer,
-            category_id: Some("cat-food".into()),
+            category_id: Some(cat_food.clone()),
             to_account_id: Some("acc-c-to".into()),
             ..make_input("acc-c", TransactionKind::Transfer, 3000, "2026-01-02")
         },
@@ -293,7 +284,7 @@ fn update_to_transfer_with_category_rejected_and_rolls_back() {
     // 拒绝后原交易保持不变。
     let t = get_transaction_internal(&conn, &id).unwrap();
     assert_eq!(t.kind, TransactionKind::Expense);
-    assert_eq!(t.category_id.as_deref(), Some("cat-food"));
+    assert_eq!(t.category_id.as_deref(), Some(cat_food.as_str()));
 }
 
 /// 批量导入路径同一收口：批次中携带分类的转账按既有批次失败语义处理
@@ -303,14 +294,14 @@ fn batch_transfer_with_category_fails_row_without_silent_strip() {
     let conn = test_support::open();
     test_support::seed_account(&conn, "acc-c", "现金", "cash", "CNY", 0);
     test_support::seed_account(&conn, "acc-c-to", "银行", "bank", "CNY", 0);
-    insert_category(&conn, "cat-food", "餐饮", "expense");
+    let cat_food = seed_category(&conn, "餐饮", "expense");
 
     let inputs = vec![
         // 同批合法行：带分类的 expense 正常落库。
         TransactionInput {
             policy_id: None,
             merchant_id: None,
-            category_id: Some("cat-food".into()),
+            category_id: Some(cat_food.clone()),
             ..make_input("acc-c", TransactionKind::Expense, 1000, "2026-01-01")
         },
         // 携带分类的 transfer：单行失败（码化 Invalid 归「单行失败」编排语义）。
@@ -318,7 +309,7 @@ fn batch_transfer_with_category_fails_row_without_silent_strip() {
             policy_id: None,
             merchant_id: None,
             kind: TransactionKind::Transfer,
-            category_id: Some("cat-food".into()),
+            category_id: Some(cat_food.clone()),
             to_account_id: Some("acc-c-to".into()),
             ..make_input("acc-c", TransactionKind::Transfer, 3000, "2026-01-02")
         },

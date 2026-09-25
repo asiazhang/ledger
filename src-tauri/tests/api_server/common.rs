@@ -252,39 +252,9 @@ pub(crate) fn create_account_json(account_id: &str) -> String {
     )
 }
 
-pub(crate) async fn create_account_via_api_with_initial(
-    app: &Router,
-    name: &str,
-    initial: i64,
-) -> String {
-    let body = format!(
-        r#"{{"name":"{name}","type":"cash","currency_code":"CNY","initial_balance_cents":{initial}}}"#
-    );
-    let response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/v1/accounts")
-                .header("content-type", "application/json")
-                .body(Body::from(body))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::CREATED);
-    let bytes = body_to_bytes(response.into_body()).await;
-    serde_json::from_slice(&bytes).unwrap()
-}
-
-/// 带币种建户（issue #1770 / ADR-0134：币种一致性守卫下，外币行夹具的账户
-/// 必须与交易币种同币种，CNY 缺省建户不再覆盖该形态）。
-pub(crate) async fn create_account_via_api_with_currency(
-    app: &Router,
-    name: &str,
-    currency: &str,
-) -> String {
-    let body = format!(r#"{{"name":"{name}","type":"cash","currency_code":"{currency}"}}"#,);
+/// POST /api/v1/accounts 单点装配（issue #1814：账户建户助手同形变体的重复装配
+/// 收敛单点，各入口只负责 body 构造）：断言 201 并读回响应 JSON 字符串（账户 id）。
+async fn post_account(app: &Router, body: String) -> String {
     let response = app
         .clone()
         .oneshot(
@@ -303,22 +273,35 @@ pub(crate) async fn create_account_via_api_with_currency(
 }
 
 pub(crate) async fn create_account_via_api(app: &Router, name: &str) -> String {
-    let body = create_account_json(name);
-    let response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/v1/accounts")
-                .header("content-type", "application/json")
-                .body(Body::from(body))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::CREATED);
-    let bytes = body_to_bytes(response.into_body()).await;
-    serde_json::from_slice(&bytes).unwrap()
+    post_account(app, create_account_json(name)).await
+}
+
+pub(crate) async fn create_account_via_api_with_initial(
+    app: &Router,
+    name: &str,
+    initial: i64,
+) -> String {
+    post_account(
+        app,
+        format!(
+            r#"{{"name":"{name}","type":"cash","currency_code":"CNY","initial_balance_cents":{initial}}}"#
+        ),
+    )
+    .await
+}
+
+/// 带币种建户（issue #1770 / ADR-0134：币种一致性守卫下，外币行夹具的账户
+/// 必须与交易币种同币种，CNY 缺省建户不再覆盖该形态）。
+pub(crate) async fn create_account_via_api_with_currency(
+    app: &Router,
+    name: &str,
+    currency: &str,
+) -> String {
+    post_account(
+        app,
+        format!(r#"{{"name":"{name}","type":"cash","currency_code":"{currency}"}}"#),
+    )
+    .await
 }
 
 /// 指定账户类型建户（issue #1810：投资类型账户是「隐藏投资相关流水」判定前提，
@@ -328,22 +311,11 @@ pub(crate) async fn create_account_via_api_with_type(
     name: &str,
     account_type: &str,
 ) -> String {
-    let body = format!(r#"{{"name":"{name}","type":"{account_type}","currency_code":"CNY"}}"#);
-    let response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/v1/accounts")
-                .header("content-type", "application/json")
-                .body(Body::from(body))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::CREATED);
-    let bytes = body_to_bytes(response.into_body()).await;
-    serde_json::from_slice(&bytes).unwrap()
+    post_account(
+        app,
+        format!(r#"{{"name":"{name}","type":"{account_type}","currency_code":"CNY"}}"#),
+    )
+    .await
 }
 
 pub(crate) fn count_rows(conn: &rusqlite::Connection, table: &str) -> i64 {

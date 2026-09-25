@@ -6,6 +6,7 @@ use std::collections::{BTreeSet, HashMap};
 
 use rusqlite::Connection;
 
+use crate::tests::common::seed_category;
 use ledger_infra::error::Result;
 use tauri_app_lib::ledger_transaction::TransactionSearchResult;
 use tauri_app_lib::ledger_transaction::read::search::{
@@ -29,15 +30,6 @@ fn search_paged(
     page_size: usize,
 ) -> Result<TransactionSearchResult> {
     search_transactions_internal(conn, query, page, page_size, None, None, None, None)
-}
-
-fn insert_category(conn: &Connection, id: &str, name: &str, kind: &str) {
-    conn.execute(
-        "INSERT INTO categories (id,name,kind,parent_id,icon,sort_order,created_at,updated_at,version,device_id,is_deleted) \
-         VALUES (?1,?2,?3,NULL,NULL,0,?4,?4,1,'test',0)",
-        rusqlite::params![id, name, kind, test_support::FIXED_NOW],
-    )
-    .unwrap();
 }
 
 fn insert_merchant(conn: &Connection, id: &str, name: &str) {
@@ -631,11 +623,14 @@ fn account_rename_takes_effect_immediately() {
 fn category_rename_does_not_affect_search() {
     let conn = test_support::open();
     test_support::seed_account(&conn, "a1", "现金", "cash", "CNY", 0);
-    insert_category(&conn, "c1", "餐饮", "expense");
-    insert_txn(&conn, "t1", "a1", Some("c1"), Some("午餐"), "2026-02-01");
+    let c1 = seed_category(&conn, "餐饮", "expense");
+    insert_txn(&conn, "t1", "a1", Some(&c1), Some("午餐"), "2026-02-01");
     // 分类名不在搜索范围：改名前后均不因分类名命中
-    conn.execute("UPDATE categories SET name='吃喝' WHERE id='c1'", [])
-        .unwrap();
+    conn.execute(
+        "UPDATE categories SET name='吃喝' WHERE id=?1",
+        rusqlite::params![c1],
+    )
+    .unwrap();
     let res = search(&conn, "餐饮").unwrap();
     assert_eq!(res.total, 0);
     let res = search(&conn, "吃喝").unwrap();
@@ -830,17 +825,19 @@ fn pushdown_hit_set_covers_row_semantics() {
                 .unwrap();
         }
     }
-    for (id, deleted) in &categories {
-        insert_category(
-            &conn,
-            id,
-            if *deleted { "已删分类" } else { "餐饮" },
-            "expense",
-        );
+    // 分类 id 由公开写入口发放（issue #1814）：夹具键 → 落库 id 映射，期望侧与交易
+    // 引用同源取该映射。
+    let mut category_ids: HashMap<&str, String> = HashMap::new();
+    for (key, deleted) in &categories {
+        let id = seed_category(&conn, if *deleted { "已删分类" } else { "餐饮" }, "expense");
         if *deleted {
-            conn.execute("UPDATE categories SET is_deleted=1 WHERE id=?1", [id])
-                .unwrap();
+            conn.execute(
+                "UPDATE categories SET is_deleted=1 WHERE id=?1",
+                rusqlite::params![id],
+            )
+            .unwrap();
         }
+        category_ids.insert(*key, id);
     }
 
     /// 测试夹具中的一笔交易（期望侧重算与落库同源）。
@@ -849,7 +846,7 @@ fn pushdown_hit_set_covers_row_semantics() {
         note: Option<&'static str>,
         account_id: &'static str,
         merchant_id: Option<&'static str>,
-        category_id: Option<&'static str>,
+        category_id: Option<String>,
         deleted: bool,
     }
     let mut txns: Vec<FixtureTxn> = (0..40)
@@ -979,7 +976,7 @@ fn pushdown_hit_set_covers_row_semantics() {
         note: Some("咖啡"),
         account_id: "a1",
         merchant_id: None,
-        category_id: Some("c9"),
+        category_id: Some(category_ids["c9"].clone()),
         deleted: false,
     });
     txns.push(FixtureTxn {
@@ -1003,7 +1000,7 @@ fn pushdown_hit_set_covers_row_semantics() {
         for (i, t) in txns.iter().enumerate() {
             let date = format!("2026-01-{:02}", 1 + i % 28);
             insert_txn_merchant(&dbtx, &t.id, t.account_id, t.merchant_id, t.note, &date);
-            if let Some(cid) = t.category_id {
+            if let Some(cid) = &t.category_id {
                 dbtx.execute(
                     "UPDATE transactions SET category_id=?1 WHERE id=?2",
                     rusqlite::params![cid, t.id],
@@ -1023,8 +1020,10 @@ fn pushdown_hit_set_covers_row_semantics() {
         accounts.iter().map(|(id, n, d)| (*id, (*n, *d))).collect();
     let merchant_by_id: HashMap<&str, &str> =
         merchants.iter().map(|(id, n, _)| (*id, *n)).collect();
-    let category_deleted: HashMap<&str, bool> =
-        categories.iter().map(|(id, d)| (*id, *d)).collect();
+    let category_deleted: HashMap<String, bool> = categories
+        .iter()
+        .map(|(key, d)| (category_ids[*key].clone(), *d))
+        .collect();
     let expected_hits = |terms: &[&str]| -> BTreeSet<String> {
         txns.iter()
             .filter(|t| {
@@ -1037,7 +1036,7 @@ fn pushdown_hit_set_covers_row_semantics() {
                 if *deleted {
                     return false;
                 }
-                if let Some(cid) = t.category_id
+                if let Some(cid) = &t.category_id
                     && category_deleted.get(cid).copied().unwrap_or(false)
                 {
                     return false;

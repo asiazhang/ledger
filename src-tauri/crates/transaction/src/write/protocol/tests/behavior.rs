@@ -1,7 +1,7 @@
 //! 写删行为：创建 / 软删 / 修改、refund 链、dividend 分派进投资域与进 / 出 kind 变更拒绝、
 //! 买入卖出副作用清理，以及行为层编排入口（嵌套感知事务，issue #228 / #229 / ADR-0033）。
 
-use crate::tests::common::{make_buy_input, make_input};
+use crate::tests::common::{make_buy_input, make_input, seed_category};
 use ledger_infra::error::{AppError, ErrClass};
 use rusqlite::Connection;
 use tauri_app_lib::ledger_transaction::TransactionInput;
@@ -1157,16 +1157,12 @@ fn update_note_only_reuses_inline_fx_when_series_missing() {
 fn update_category_only_reuses_inline_fx_when_series_missing() {
     let conn = test_support::open();
     let id = seeded_hkd_expense(&conn, "2026-07-01");
-    conn.execute(
-        "INSERT INTO categories (id,name,kind,created_at,updated_at,version,device_id) \
-                  VALUES ('cat-fx-ed','交通','expense',?1,?1,1,'test')",
-        params![test_support::FIXED_NOW],
-    )
-    .unwrap();
+    // 分类种子经公开写入口单点夹具（issue #1814 同根因收敛：不再裸 SQL 自定行 id）。
+    let cat_fx_ed = seed_category(&conn, "交通", "expense");
     conn.execute("DELETE FROM fx_rate_history", []).unwrap();
 
     let mut edited = hkd_expense_input("acc-fx-ed", 1000, "2026-07-01");
-    edited.category_id = Some("cat-fx-ed".into());
+    edited.category_id = Some(cat_fx_ed);
     update_transaction_internal(&conn, &id, edited).unwrap();
 
     let t = get_transaction_internal(&conn, &id).unwrap();

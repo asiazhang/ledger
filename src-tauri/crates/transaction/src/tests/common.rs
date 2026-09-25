@@ -1,10 +1,14 @@
 //! 交易域测试共享脚手架（crate 根测试目录唯一一份，ADR-0113 决策 6）：供各模块
 //! `tests/` 复用。通用夹具（建库两行序、账户种子、投资铺垫）已上收统一测试工厂
-//! `tauri_app_lib::test_support`（spec #728 / issue #757 / ADR-0084 决策 4/7），本文件剩余
-//! 函数全部为域语义输入构造器——非 DB 夹具，按准入规则（ADR-0084 决策 1）留域内。
+//! `tauri_app_lib::test_support`（spec #728 / issue #757 / ADR-0084 决策 4/7）；分类种子
+//! 单点收口经公开写入口 `ledger_categories::create_category`（issue #1814），其余函数
+//! 为域语义输入构造器——非 DB 夹具，按准入规则（ADR-0084 决策 1）留域内。
 
 use tauri_app_lib::ledger_transaction::TransactionInput;
 use tauri_app_lib::ledger_transaction::amount::TransactionKind;
+
+use ledger_categories::{CategoryInput, create_category};
+use rusqlite::Connection;
 
 pub(crate) fn make_input(
     account_id: &str,
@@ -74,4 +78,21 @@ pub(crate) fn make_buy_input(
         origin: None,
         fx_rate: None,
     }
+}
+
+/// 分类种子单点（issue #1814：原 read/search、write/protocol/category、write/writer
+/// common 三处逐字同形裸 SQL `insert_category` 副本收敛至此）：经公开写入口
+/// `ledger_categories::create_category` 落库，返回生成的分类 id——测试以返回值引用，
+/// 不再自定行 id。仅用于需要真实分类行的用例（行 id / 簿记戳由写入口发放）。
+pub(crate) fn seed_category(conn: &Connection, name: &str, kind: &str) -> String {
+    create_category(
+        conn,
+        CategoryInput {
+            name: name.into(),
+            kind: kind.into(),
+            parent_id: None,
+            icon: None,
+        },
+    )
+    .unwrap()
 }

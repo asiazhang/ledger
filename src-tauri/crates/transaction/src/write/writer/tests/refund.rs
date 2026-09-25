@@ -7,7 +7,8 @@ use ledger_infra::error::{AppError, ErrClass};
 use tauri_app_lib::ledger_transaction::amount::TransactionKind;
 use tauri_app_lib::ledger_transaction::write::writer::{Input, insert_row, normalize};
 
-use super::common::{input, insert_category, insert_source_expense};
+use super::common::{input, insert_source_expense};
+use crate::tests::common::seed_category;
 use tauri_app_lib::test_support;
 
 // ---------------------------------------------------------------------------
@@ -29,8 +30,8 @@ fn normalize_refund_inherits_source_fields() {
     let conn = test_support::open();
     test_support::seed_account(&conn, "acc-src", "acc-src", "cash", "CNY", 0);
     test_support::seed_account(&conn, "acc-other", "acc-other", "cash", "USD", 0);
-    insert_category(&conn, "cat-src");
-    let source_id = insert_source_expense(&conn, "acc-src", Some("cat-src"));
+    let cat_src = seed_category(&conn, "餐饮", "expense");
+    let source_id = insert_source_expense(&conn, "acc-src", Some(&cat_src));
 
     let norm = normalize(
         &conn,
@@ -48,7 +49,7 @@ fn normalize_refund_inherits_source_fields() {
     // 继承原支出：账户/币种/分类均为来源值，而非调用方填的字段
     assert_eq!(norm.account_id, "acc-src");
     assert_eq!(norm.currency_code, "CNY");
-    assert_eq!(norm.category_id.as_deref(), Some("cat-src"));
+    assert_eq!(norm.category_id.as_deref(), Some(cat_src.as_str()));
     assert_eq!(
         norm.refund_of_transaction_id.as_deref(),
         Some(source_id.as_str())
