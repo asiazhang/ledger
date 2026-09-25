@@ -11,10 +11,11 @@ import type { Instrument } from "@ledger/types";
  * 竞态、吞错）改动一处生效。失败吞错是「刻意静默不收编」的合法形态（词汇表
  * Loadable 边界），不迁入 Loadable。
  *
- * 接口最窄（#1308 grilling 决策 4）：原始标的不做 options 投影——label 拼法、
- * 编辑回填候选合并、基金判定等领域形态归消费方；命令式 `search` 与 naive-ui
- * `@search` 回传同形，组件接线零改动；不暴露 cancel/invalidate。防抖时长单源
- * SEARCH_DEBOUNCE_MS（跨域「搜索输入防抖」不变量）。
+ * 接口最窄（#1308 grilling 决策 4，#1798 修订）：原始标的不做 options 投影——
+ * label 拼法与钉住合并（选中回显 / 编辑回填防丢失）自 #1798 起收口至共享域件
+ * useInstrumentOptions（本模块唯一代码消费方），基金判定等领域形态仍归消费方；
+ * 命令式 `search` 与 naive-ui `@search` 回传同形，组件接线零改动；不暴露
+ * cancel/invalidate。防抖时长单源 SEARCH_DEBOUNCE_MS（跨域「搜索输入防抖」不变量）。
  *
  * 服务端分页列表读路径（InstrumentBrowser）不属本接缝：search 只是它四个过滤
  * 维度之一，还牵动 total、分页归零与空态判定，只共享防抖常量（#1308 决策 1）。

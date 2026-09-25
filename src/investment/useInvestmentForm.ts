@@ -17,7 +17,7 @@ import {
   useFormShared,
   utcMidnightTimestamp,
 } from "@/composables/useFormShared";
-import { useInstrumentSearch } from "@/investment/useInstrumentSearch";
+import { useInstrumentOptions } from "@/investment/useInstrumentOptions";
 import { buildTradeInput } from "@/transaction/transaction-input";
 import { errorMessage } from "@ledger/utils/errors";
 import { useSavingsGoalsStore } from "@/savings-goal/savingsGoals";
@@ -69,14 +69,17 @@ export function useInvestmentForm(
    */
   const currencyCode = useAccountCurrency(accountId);
 
-  // 标的远程搜索编排收口 useInstrumentSearch（issue #1308）：防抖、空查询清空、
-  // 吞错与在途纪元（#1401）内化于模块；本层消费原始标的候选与在途标志，
-  // options 投影与基金判定仍属表单领域形态（grilling 决策 4），对外成员名不变。
+  // 标的下拉候选面收口共享域件 useInstrumentOptions（issue #1798）：取数编排
+  // （防抖、空查询清空、吞错与在途纪元 #1401，useInstrumentSearch #1308）、
+  // 「代码 · 名称」投影与编辑回填钉住合并全部内化于域件；本层保留基金判定
+  //（领域形态归消费方，#1308 决策 4），对外成员名不变。
   const {
-    items: instruments,
+    options: instrumentOptions,
     searching: searchingInstruments,
     search: searchInstruments,
-  } = useInstrumentSearch();
+    pin: pinInstrumentOption,
+    findInstrument,
+  } = useInstrumentOptions("head");
 
   // 投资账户下拉候选面单点消费（reference.investmentAccountOptions，#1830 收口，对外成员名不变）
   const { investmentAccountOptions } = storeToRefs(reference);
@@ -96,19 +99,6 @@ export function useInvestmentForm(
       .map((a) => ({ label: a.name, value: a.id })),
   );
 
-  const instrumentOptions = computed(() => {
-    const opts = instruments.value.map((i) => ({
-      label: i.name ? `${i.symbol} · ${i.name}` : i.symbol,
-      value: i.id,
-    }));
-    // 编辑回填（issue #180）：待编辑标的合入候选（已含于搜索结果则不重复），
-    // 保证打开编辑即显示该标的而非裸 id。
-    if (seededInstrumentOption && !opts.some((o) => o.value === seededInstrumentOption.value)) {
-      return [seededInstrumentOption, ...opts];
-    }
-    return opts;
-  });
-
   // 编辑回填（issue #180）：打开即回填该笔 buy/sell 全部业务字段。单价经 priceToYuan
   // 按万分之一元刻度换算（ADR-0038，不手写 /10000）；费用为金额，经 centsToYuan
   // 按币种小数位换算；日期以 UTC 午夜时间戳承载回填，提交端日期转换收口装配器
@@ -118,14 +108,15 @@ export function useInvestmentForm(
   const editingTx = options?.editing?.() ?? null;
   const editingTrade = options?.trade?.() ?? null;
   const seededInstrumentIsFund = editingTrade?.instrument_type === "fund";
-  const seededInstrumentOption = editingTrade
-    ? {
-        label: editingTrade.instrument_name
-          ? `${editingTrade.symbol} · ${editingTrade.instrument_name}`
-          : editingTrade.symbol,
-        value: editingTrade.instrument_id,
-      }
-    : null;
+  // 编辑回填（issue #180）：打开即钉住回填标的（label 走域件投影单点，已含于搜索
+  // 结果则去重不重复），保证打开编辑即显示该标的而非裸 id。
+  if (editingTrade) {
+    pinInstrumentOption({
+      id: editingTrade.instrument_id,
+      symbol: editingTrade.symbol,
+      name: editingTrade.instrument_name,
+    });
+  }
   if (editingTx && editingTrade) {
     accountId.value = editingTx.account_id;
     instrumentId.value = editingTrade.instrument_id;
@@ -158,9 +149,9 @@ export function useInvestmentForm(
   const isFundInstrument = computed(() => {
     const id = instrumentId.value;
     if (id == null) return false;
-    const found = instruments.value.find((i) => i.id === id);
+    const found = findInstrument(id);
     if (found) return found.type === "fund";
-    return id === seededInstrumentOption?.value && seededInstrumentIsFund;
+    return id === editingTrade?.instrument_id && seededInstrumentIsFund;
   });
 
   // 数量/价格错误态装配（ADR-0058 / issue #416 → #1007 收口）：判定走纯函数单点

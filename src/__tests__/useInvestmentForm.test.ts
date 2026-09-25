@@ -4,7 +4,7 @@ import { mockInvoke, wireInvokeSeam } from "@ledger/test-support/invoke-mock";
 import { useReferenceStore } from "@/stores/reference";
 import { useSavingsGoalsStore } from "@/savings-goal/savingsGoals";
 import { useInvestmentForm } from "@/investment/useInvestmentForm";
-import { makeAccount, makeGoalPair } from "./factories";
+import { makeAccount, makeGoalPair, makeInstrument } from "./factories";
 import type {
   Account,
   Instrument,
@@ -43,26 +43,6 @@ const mockAccounts: Account[] = [
     device_id: "test",
     is_deleted: false,
     is_hidden: false,
-  },
-];
-
-const mockInstruments: Instrument[] = [
-  {
-    id: "ins-1",
-    symbol: "NVDA",
-    name: "英伟达",
-    type: "stock",
-    currency_code: "CNY",
-    created_at: "2026-01-01T00:00:00Z",
-    updated_at: "2026-01-01T00:00:00Z",
-    version: 1,
-    device_id: "test",
-    is_deleted: false,
-    market: "unknown",
-    invested: false,
-    source: "eastmoney",
-    price_cents: null,
-    price_channel: "none",
   },
 ];
 
@@ -294,7 +274,7 @@ describe("useInvestmentForm", () => {
   });
 
   describe("编辑模式（issue #180）", () => {
-    it("创建即回填：账户/标的/数量/价格/费用/备注/日期/币种，标的候选项含回填标的（显示 symbol · name）", async () => {
+    it("创建即回填：账户/标的/数量/价格/费用/备注/日期/币种，标的候选项含回填标的", async () => {
       const store = useReferenceStore();
       await store.refresh();
       const form = useInvestmentForm("buy", {
@@ -312,30 +292,36 @@ describe("useInvestmentForm", () => {
       expect(form.note.value).toBe("建仓买入");
       expect(form.date.value).toBe(new Date("2026-01-10T00:00:00Z").getTime());
       expect(form.currencyCode.value).toBe("CNY");
-      // 远程搜索未执行（无候选）时，回填标的仍可显示
-      expect(form.instrumentOptions.value).toEqual([{ label: "NVDA · 英伟达", value: "ins-1" }]);
+      // 远程搜索未执行（无候选）时，回填标的仍可显示（编辑回填钉住接线，删除即红）；
+      // label 拼法断言归 useInstrumentOptions 单测，此处只断言选项面构成
+      expect(form.instrumentOptions.value.map((o) => o.value)).toEqual(["ins-1"]);
     });
 
-    it("回填标的名称为空时候选 label 仅显示 symbol；用户搜索不冲掉回填标的选项", async () => {
+    it("用户搜索不冲掉回填标的选项（回填钉住接线，删除 pin 即红）", async () => {
       const store = useReferenceStore();
       await store.refresh();
       const form = useInvestmentForm("buy", {
         editing: () => editingTx,
         trade: () => ({ ...editingTrade, instrument_name: null }),
       });
-      expect(form.instrumentOptions.value).toEqual([{ label: "NVDA", value: "ins-1" }]);
       wireInvokeSeam({
         overrides: {
           ...BASE_OVERRIDES,
-          list_instruments: Promise.resolve({ items: mockInstruments, total: 1 }),
+          list_instruments: Promise.resolve({
+            items: [makeInstrument({ id: "ins-2", symbol: "MU", name: "美光" })],
+            total: 1,
+          }),
         },
       });
-      form.searchInstruments("NVDA");
+      form.searchInstruments("美光");
+      // 等搜索结果落位（防抖 + 远程取数；searching 在防抖前置位，不能作落位信号），
+      // 再断言回填标的仍在候选面头部
       await vi.waitFor(() => {
-        expect(form.searchingInstruments.value).toBe(false);
+        expect(form.instrumentOptions.value.map((o) => o.value)).toContain("ins-2");
       });
-      // 搜索结果在前、回填标的（已含于结果则不重复）合并展示
-      expect(form.instrumentOptions.value.map((o) => o.value)).toEqual(["ins-1"]);
+      // 回填标的钉在候选面头部、搜索结果不冲掉它（钉头是本消费方决策）；label 拼法与
+      // 合并机制的域断言归 useInstrumentOptions 单测，此处只断言选项面构成与位置
+      expect(form.instrumentOptions.value.map((o) => o.value)).toEqual(["ins-1", "ins-2"]);
     });
 
     it("submit 编辑：分派 update_transaction（同一入参形状），onUpdated 触发、onCreated 不触发、不重置表单", async () => {
