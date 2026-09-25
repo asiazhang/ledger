@@ -3308,6 +3308,7 @@ dependencies = [
  "ledger-merchants",
  "ledger-physical-asset",
  "ledger-policy",
+ "ledger-savings-goal",
  "ledger-scheduled",
  "ledger-sync-protocol",
  "ledger-transaction",

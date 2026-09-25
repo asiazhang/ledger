@@ -1,4 +1,4 @@
-//! 重放注册表（ADR-0101）：14 个语义命令类型的适配绑定 + `DomainCommand::subject`
+//! 重放注册表（ADR-0101）：15 个语义命令类型的适配绑定 + `DomainCommand::subject`
 //! 的组装臂。与 [`super::ops`] / [`super::parked`] 平级；依赖方向保持
 //! registry → command 单向（绑定 wrap 域侧既有接缝，域侧不认识本文件）。
 //!
@@ -8,7 +8,7 @@
 //!   外零改动（ADR-0101 决策 1/3）。
 //! - **subject 组装**：实体标签自 #1089 起单源取域命令类型的
 //!   `SyncCommand::ENTITY`（协议 crate 契约；绑定常量派生，不再另立字面量——
-//!   标签宇宙 = {serde derive, `SyncCommand::ENTITY`} 各 14 处，门 a 维持二源
+//!   标签宇宙 = {serde derive, `SyncCommand::ENTITY`} 各 15 处，门 a 维持二源
 //!   断言），实体键由命令类型派生（域自身知识，`SyncCommand::subject`）；
 //!   `impl DomainCommand` 的第二个 impl 块系刻意安排（标签单源化，ADR-0101 勘误 3），
 //!   非散落。
@@ -48,6 +48,7 @@ impl DomainCommand {
             DomainCommand::Insurer(cmd) => labeled::<InsurerBinding>(cmd),
             DomainCommand::Item(cmd) => labeled::<ItemBinding>(cmd),
             DomainCommand::PhysicalAsset(cmd) => labeled::<PhysicalAssetBinding>(cmd),
+            DomainCommand::Goal(cmd) => labeled::<GoalBinding>(cmd),
             DomainCommand::Instrument(cmd) => labeled::<InstrumentBinding>(cmd),
             DomainCommand::ExchangeRate(cmd) => labeled::<ExchangeRateBinding>(cmd),
             DomainCommand::Price(cmd) => labeled::<PriceBinding>(cmd),
@@ -244,9 +245,25 @@ impl ReplayBinding for PhysicalAssetBinding {
     }
 }
 
+/// 储蓄目标域适配绑定。
+pub(crate) struct GoalBinding;
+
+impl ReplayBinding for GoalBinding {
+    const ENTITY: &'static str = <ledger_savings_goal::SavingsGoalCommand as SyncCommand>::ENTITY;
+    type Command = ledger_savings_goal::SavingsGoalCommand;
+
+    fn subject(command: &Self::Command) -> Option<Cow<'_, str>> {
+        SyncCommand::subject(command)
+    }
+
+    fn replay(conn: &Connection, command: &Self::Command) -> Result<ReplayEffect> {
+        ledger_savings_goal::replay_command(conn, command)?;
+        Ok(ReplayEffect::Applied)
+    }
+}
+
 /// 标的字典适配绑定。
 pub(crate) struct InstrumentBinding;
-
 impl ReplayBinding for InstrumentBinding {
     const ENTITY: &'static str = <ledger_investment::InstrumentCommand as SyncCommand>::ENTITY;
     type Command = ledger_investment::InstrumentCommand;

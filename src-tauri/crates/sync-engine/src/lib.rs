@@ -45,7 +45,7 @@
 //! - [`command`]：跨端语义命令信封与重放契约（DomainCommand / ReplayBinding，
 //!   只增不改）——同步域对业务域暴露的契约面（ADR-0101 决策 4b）；重放效果
 //!   ReplayEffect 与命令契约 SyncCommand 已下放协议 crate（#1089）。
-//! - [`registry`]：重放注册表（ADR-0101）——14 个语义命令类型的适配绑定与
+//! - [`registry`]：重放注册表（ADR-0101）——15 个语义命令类型的适配绑定与
 //!   `DomainCommand::subject` 组装臂，与 ops/parked 平级。
 //! - [`model`]：op 信封 wire 模型（[`model::SyncOp`]）。
 //!

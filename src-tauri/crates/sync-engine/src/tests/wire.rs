@@ -64,6 +64,9 @@ fn sample(entity: &str) -> DomainCommand {
                 id: "pa-1".into(),
             })
         }
+        "goal" => DomainCommand::Goal(ledger_savings_goal::SavingsGoalCommand::Delete {
+            id: "g-1".into(),
+        }),
         "instrument" => DomainCommand::Instrument(ledger_investment::InstrumentCommand::Delete {
             id: "i-1".into(),
         }),
@@ -114,7 +117,7 @@ fn serde_entity_tags() -> Vec<String> {
 fn wire_entity_tag_matches_registry_binding_for_every_variant() {
     let tags = serde_entity_tags();
     assert!(
-        tags.len() >= 14,
+        tags.len() >= 15,
         "serde 自报变体清单不齐（{tags:?}）——门 a 的完备性基准失效"
     );
     let mut seen = BTreeSet::new();
