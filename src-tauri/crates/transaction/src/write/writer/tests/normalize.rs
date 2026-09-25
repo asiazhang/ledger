@@ -5,7 +5,8 @@ use ledger_infra::error::AppError;
 use tauri_app_lib::ledger_transaction::amount::{FxRateSource, TransactionKind};
 use tauri_app_lib::ledger_transaction::write::writer::{Input, normalize};
 
-use super::common::{input, insert_category};
+use super::common::input;
+use crate::tests::common::seed_category;
 use tauri_app_lib::test_support;
 
 // ---------------------------------------------------------------------------
@@ -41,17 +42,17 @@ fn normalize_income_passthrough() {
 fn normalize_expense_passes_optional_fields() {
     let conn = test_support::open();
     test_support::seed_account(&conn, "acc", "acc", "cash", "CNY", 0);
-    insert_category(&conn, "cat-food");
+    let cat_food = seed_category(&conn, "餐饮", "expense");
     let norm = normalize(
         &conn,
         &Input {
-            category_id: Some("cat-food".into()),
+            category_id: Some(cat_food.clone()),
             note: Some("午餐".into()),
             ..input(TransactionKind::Expense, 1500, "acc")
         },
     )
     .unwrap();
-    assert_eq!(norm.category_id.as_deref(), Some("cat-food"));
+    assert_eq!(norm.category_id.as_deref(), Some(cat_food.as_str()));
     assert_eq!(norm.note.as_deref(), Some("午餐"));
 }
 

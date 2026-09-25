@@ -1,23 +1,13 @@
 //! Writer 接缝测试共享脚手架：仅限本测试目录（`writer::tests`）内部使用。
 //! 通用夹具（建库两行序、账户种子）已上收统一测试工厂 `tauri_app_lib::test_support`
-//! （spec #728 / issue #757 / ADR-0084 决策 4/7）；分类种子为单域夹具按准入规则
-//! 留薄皮（簿记戳经 `test_support::FIXED_NOW` 发放），其余为域语义输入构造器
-//! 与 Writer 编排铺垫（ADR-0084 决策 1）。
+//! （spec #728 / issue #757 / ADR-0084 决策 4/7）；分类种子经 crate 根测试目录单点
+//! `crate::tests::common::seed_category`（公开写入口，issue #1814），其余为域语义
+//! 输入构造器与 Writer 编排铺垫（ADR-0084 决策 1）。
 
-use rusqlite::{Connection, params};
+use rusqlite::Connection;
 
 use tauri_app_lib::ledger_transaction::amount::TransactionKind;
 use tauri_app_lib::ledger_transaction::write::writer::{Input, insert_row, normalize};
-use tauri_app_lib::test_support::FIXED_NOW;
-
-pub(super) fn insert_category(conn: &Connection, id: &str) {
-    conn.execute(
-        "INSERT INTO categories (id,name,kind,created_at,updated_at,version,device_id) \
-         VALUES (?1,?1,'expense',?2,?2,1,'test')",
-        params![id, FIXED_NOW],
-    )
-    .unwrap();
-}
 
 /// 通用入参构造器。
 pub(super) fn input(kind: TransactionKind, amount_cents: i64, account_id: &str) -> Input {

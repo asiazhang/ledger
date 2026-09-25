@@ -9,7 +9,8 @@ use tauri_app_lib::ledger_transaction::write::writer::{
     Input, NormalizedRow, insert_row, normalize, update_row,
 };
 
-use super::common::{input, insert_category};
+use super::common::input;
+use crate::tests::common::seed_category;
 use tauri_app_lib::test_support;
 
 /// 读回一行交易的全部业务字段（与 insert_row 的列映射逐列比对）。
@@ -239,12 +240,12 @@ fn update_row_preserves_idempotent_identity() {
 fn normalize_insert_update_roundtrip() {
     let conn = test_support::open();
     test_support::seed_account(&conn, "acc", "acc", "cash", "CNY", 0);
-    insert_category(&conn, "cat-food");
+    let cat_food = seed_category(&conn, "餐饮", "expense");
 
     let created = normalize(
         &conn,
         &Input {
-            category_id: Some("cat-food".into()),
+            category_id: Some(cat_food.clone()),
             note: Some("午餐".into()),
             ..input(TransactionKind::Expense, 1500, "acc")
         },
