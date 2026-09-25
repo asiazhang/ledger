@@ -56,6 +56,7 @@ import { useReferenceStore } from "@/stores/reference";
 import { useItemsStore } from "@/item/items";
 import { buildTransactionColumns } from "@/transaction/transaction-columns";
 import { sumFixedColumnWidths } from "@ledger/utils/table";
+import { PAGE_SIZE_OPTIONS } from "@ledger/utils/pagination";
 import { availableCreateKinds, isCreateKindAvailable } from "@ledger/utils/create-entry-kinds";
 import { isLendingEntryKind } from "@/transaction/lending";
 import { type NullableDateRange } from "@ledger/utils/time-period";
@@ -225,9 +226,6 @@ watch(
   },
   { immediate: true },
 );
-
-/** 页大小选项（不持久化，遵守 ViewState 决策） */
-const PAGE_SIZE_OPTIONS = [10, 20, 50, 100];
 
 /** 记一笔（create）经共享模块实例开启（意图/序号见上方编排声明）：
  * 类型由入口单点表达，弹窗内不提供切换，中途换类型 = 关闭重开。 */

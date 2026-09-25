@@ -18,6 +18,7 @@ import { useLoadable } from "@ledger/loadable";
 import { t } from "@ledger/i18n";
 import { formatAmount, formatPrice, formatQuantity } from "@ledger/money";
 import { sumFixedColumnWidths } from "@ledger/utils/table";
+import { PAGE_SIZE_OPTIONS } from "@ledger/utils/pagination";
 import { kindSemanticColor } from "@ledger/theme/semantic-colors";
 import type { NullableDateRange } from "@ledger/utils/time-period";
 import AppModal from "@ledger/ui-kit/AppModal.vue";
@@ -36,10 +37,7 @@ import { KIND_TAG_TYPE, rowActionsColumn } from "@/transaction/transaction-colum
 import { instrumentDisplayLabel, ledgerRowToModalRow } from "@/investment/ledger-row-modal";
 import PinyinSelect from "@ledger/ui-kit/PinyinSelect.vue";
 import QuickTimeRange from "@/components/QuickTimeRange.vue";
-import {
-  LEDGER_TAB_PAGE_SIZE_OPTIONS,
-  useInvestmentsSessionStore,
-} from "@/investment/investments-session";
+import { useInvestmentsSessionStore } from "@/investment/investments-session";
 import { useReferenceStore } from "@/stores/reference";
 import { useAppStore } from "@/stores/app";
 import type {
@@ -432,13 +430,13 @@ const columns = computed<DataTableColumn<InvestmentTransactionRow>[]>(() => [
 const scrollX = computed(() => sumFixedColumnWidths(columns.value));
 
 /** 服务端分页（ADR-0008）：页码/页大小/总数归 store 与响应，表格 remote 不切片；
- * 「共 N 条」前缀与页大小档位（[10, 20, 50, 100]）与主列表同构。 */
+ * 「共 N 条」前缀与主列表同构；页大小档位与主列表同源（PAGE_SIZE_OPTIONS 单点，#1792）。 */
 const pagination = computed<PaginationProps>(() => ({
   page: session.detailPage,
   pageSize: session.detailPageSize,
   itemCount: total.value,
   showSizePicker: true,
-  pageSizes: LEDGER_TAB_PAGE_SIZE_OPTIONS,
+  pageSizes: PAGE_SIZE_OPTIONS,
   prefix: ({ itemCount }) =>
     h(
       "span",

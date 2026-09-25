@@ -18,6 +18,7 @@
     "./icon": "./src/icon.ts",
     "./installment": "./src/installment.ts",
     "./merchant-chart": "./src/merchant-chart.ts",
+    "./pagination": "./src/pagination.ts",
     "./passphrase-strength": "./src/passphrase-strength.ts",
     "./pinyin-filter": "./src/pinyin-filter.ts",
     "./s3-vendors": "./src/s3-vendors.ts",
