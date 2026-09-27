@@ -1,6 +1,6 @@
 [package]
 name = "ledger-savings-goal"
-version = "0.7.0"
+version = "0.8.0"
 description = "Ledger 储蓄目标域 crate：创建目标自动建户与蓄水进度读数（SavingsGoal）"
 edition = "2024"
 publish = false
