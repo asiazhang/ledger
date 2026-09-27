@@ -5,21 +5,25 @@
 //!   匹配）+ 累计分红三腿按币种独立成组，不跨币种折算；缺价 / 缺汇率持仓按空值跳过。
 //! - [`query_cumulative_pnl_native_total`]：同三腿的折本位币单值（issue #1797，
 //!   持仓页签合计卡与首页投资概览卡消费面）。
-//! - [`query_realized_pnl_summary`]：盈亏页按年 / 按账户两表（已实现 + 分红两腿）
-//!   与按币种总数、按标的行；软删账户与软删流水排除、隐藏账户照常计入。
+//! - [`query_realized_pnl_summary`]：盈亏页按年 / 按账户两张单值表（已实现 + 分红
+//!   两腿逐腿按事件周汇率折本位币，#1845）；软删账户与软删流水排除、隐藏账户照常计入。
 //! - [`query_holdings_summary_by_currency`]：持仓市值 / 未实现盈亏按账户币种分组合计。
 
+use std::collections::{BTreeMap, BTreeSet};
+
+use chrono::NaiveDate;
 use rusqlite::Connection;
 
 use ledger_transaction::amount;
 
+use super::fx_nearest::{FxWeekHistory, load_fx_week_history, nearest_week_fx_rate};
 use super::model::{
-    AccountPnl, CumulativePnlNativeTotal, CurrencyCumulativePnl, CurrencyHoldingTotals,
-    CurrencyPnl, InstrumentPnl, PnlFilter, RealizedPnlSummary, YearPnl,
+    AccountPnl, CumulativePnlNativeTotal, CurrencyCumulativePnl, CurrencyHoldingTotals, PnlFilter,
+    RealizedPnlSummary, YearPnl,
 };
 use ledger_infra::db::query::{FromRow, query_all};
 use ledger_infra::db::tx_scope::ensure_transaction;
-use ledger_infra::error::Result;
+use ledger_infra::error::{AppError, Result};
 
 /// 已实现/分红腿行：金额（分，非空）+ 币种（逐行折本位币消费面的行载体）。
 pub(crate) struct LegEntry {
@@ -130,32 +134,143 @@ pub fn query_holdings_summary_by_currency(conn: &Connection) -> Result<Vec<Curre
     query_all(conn, sql, [])
 }
 
-/// 盈亏页读投影（ADR-0107 / ADR-0129）：按年与按账户两张表各带两条腿——已实现盈亏
-/// （卖出匹配）与现金分红（dividend 行），并给出域内相加的合计（词汇表「已实现收益
-/// （RealizedGain）」）。按币种分组、不跨币种折算（ADR-0107 决策 6）；分红腿与已实现腿
-/// 同源同过滤（ADR-0129 决策 3）：账户 / 标的筛选对两腿各用一次、软删账户与软删流水
-/// 排除、隐藏账户照常计入。按币种总数（`total`）与按标的行维持已实现盈亏专义，不扩分红
-/// （ADR-0129 决策 4）。
+/// 单腿折算输入：(币种, 事件周) → 分合计（事件周为该组全部匹配所在周的周键）。
+/// BTreeMap 保序使错误路径按 (币种, 周) 字典序首个失败点报错，不随哈希序漂移。
+type LegSums = BTreeMap<(String, String), i64>;
+
+/// 单腿分组集：行键（按年 = [year]；按账户 = [id, name]）→ 折算输入组。年行按
+/// 年度升序出数。
+type LegGroups = BTreeMap<Vec<String>, LegSums>;
+
+/// 单腿取数：行键 + (币种, 事件周) 二次聚合（`sql` 的前 `key_cols` 列为行键，
+/// 随后为币种、事件周键、分合计）。事件周键在 SQL 内派生（`date(t.date,'-6
+/// days','weekday 1')`，与 `week_start` 生成列同式）；畸形日期派生 NULL 周键，
+/// 以空串占位、折算侧按缺料处理，不静默给数。
+fn fetch_leg_groups(
+    conn: &Connection,
+    sql: &str,
+    key_cols: usize,
+    params: &[&dyn rusqlite::ToSql],
+) -> Result<LegGroups> {
+    let mut stmt = conn.prepare(sql)?;
+    let rows = stmt.query_map(params, |row| {
+        let mut key = Vec::with_capacity(key_cols);
+        for col in 0..key_cols {
+            key.push(row.get::<_, String>(col)?);
+        }
+        let currency: String = row.get(key_cols)?;
+        let week: Option<String> = row.get(key_cols + 1)?;
+        let total: i64 = row.get::<_, Option<i64>>(key_cols + 2)?.unwrap_or(0);
+        Ok((key, currency, week.unwrap_or_default(), total))
+    })?;
+    let mut groups = LegGroups::new();
+    for row in rows {
+        let (key, currency, week, total) = row?;
+        *groups
+            .entry(key)
+            .or_default()
+            .entry((currency, week))
+            .or_insert(0) += total;
+    }
+    Ok(groups)
+}
+
+/// 单腿折本位币合计：逐 (币种, 事件周) 组按事件周（±8 周就近兜底）折算后求和，
+/// 组内汇率同值、只舍入一次。兜底窗口内无点时分两路：币对（正反向）零历史 →
+/// `fx.rate-missing` 码化错误（指路行情同步）；币对有历史但不在窗口 → `None`
+/// （该腿缺料，调用方整行显式「无法计算」）。
+fn fold_leg_native(fx: &FxWeekHistory, native: &str, groups: &LegSums) -> Result<Option<i64>> {
+    let mut total = 0i64;
+    for ((currency, week), cents) in groups {
+        let rate = NaiveDate::parse_from_str(week, "%Y-%m-%d")
+            .ok()
+            .and_then(|date| nearest_week_fx_rate(fx, currency, native, date));
+        match rate {
+            Some(rate) => total += (*cents as f64 * rate).round() as i64,
+            None => {
+                if pair_has_no_history(fx, currency, native) {
+                    return Err(missing_history_pair_error(currency, native));
+                }
+                return Ok(None);
+            }
+        }
+    }
+    Ok(Some(total))
+}
+
+/// 单行的两腿折算与主值合成：两腿各自可折算 → (主值, 两腿) 全 Some；任一腿
+/// 缺料 → 三项全 None（行显式「无法计算」——不以零计入、不给半截数字）。
+fn assemble_row(
+    fx: &FxWeekHistory,
+    native: &str,
+    realized: &LegSums,
+    dividend: &LegSums,
+) -> Result<(Option<i64>, Option<i64>, Option<i64>)> {
+    let realized = fold_leg_native(fx, native, realized)?;
+    let dividend = fold_leg_native(fx, native, dividend)?;
+    let gain = match (realized, dividend) {
+        (Some(realized), Some(dividend)) => Some(realized + dividend),
+        _ => None,
+    };
+    // 缺料行三项全 None：不在「无法计算」行上携带任何可读数字（含另一腿的
+    // 真实值或 0）——半截数字由契约面排除，而非只靠渲染约束。
+    if gain.is_none() {
+        return Ok((None, None, None));
+    }
+    Ok((gain, realized, dividend))
+}
+
+/// 币对（正反向）在汇率历史中零行。
+fn pair_has_no_history(fx: &FxWeekHistory, base: &str, quote: &str) -> bool {
+    !fx.contains_key(&(base.to_string(), quote.to_string()))
+        && !fx.contains_key(&(quote.to_string(), base.to_string()))
+}
+
+/// 币对零历史的 `fx.rate-missing`：码与插值参数沿用既有错误面（base/quote），
+/// 中文原文与错误模板（errors.json `fx.rate-missing`）逐字一致——历史可由
+/// 行情同步补齐，指路设置页「币种」页签（区别于整周空缺的「重试无济于事」分支）。
+fn missing_history_pair_error(base: &str, quote: &str) -> AppError {
+    AppError::codedp(
+        "fx.rate-missing",
+        format!(
+            "未找到 {base} -> {quote} 的汇率（正反向均无），可在设置页「币种」页签同步汇率后重试"
+        ),
+        &[base, quote],
+    )
+}
+
+/// 盈亏页读投影（ADR-0107 / ADR-0129 / #1845 单值翻案）：按年与按账户两张
+/// 单值表——每行一个折全局默认币种（DefaultCurrency）的已实现收益单值
+/// （行标识 + 主值 + 已实现盈亏 / 现金分红两腿拆解 + native_currency，词汇表
+/// 「已实现收益（RealizedGain）」）。逐腿按自身事件周汇率折算
+/// （[`nearest_week_fx_rate`]）：卖出匹配按卖出周、现金分红按到账周；事件周
+/// 缺失在 ±8 周窗口内就近兜底（本投影新增的唯一折算语义，不回灌其他读路径）；
+/// 窗口内仍无点 → 该腿缺料、整行显式「无法计算」；币对零历史沿用
+/// `fx.rate-missing` 码化错误指路行情同步。分红腿与已实现腿同源同过滤
+/// （ADR-0129 决策 3）：账户 / 标的筛选对两腿各用一次、软删账户与软删流水
+/// 排除、隐藏账户照常计入；行键由（年度，币种）/（账户，币种）收窄为
+/// 年度 / 账户（币种维退役），按年升序、按账户（名, id）序。
 ///
-/// **读快照一致性（issue #1699）**：total / by_year / by_account / by_instrument
-/// 四查整体收进同一读事务（嵌套感知）——写提交落在语句之间会总量≠分量和，
-/// 同屏口径自相矛盾。
+/// **读快照一致性（issue #1699）**：汇率装载与两表四查整体收进同一读事务
+/// （嵌套感知）——写提交落在语句之间会两表各见一套数，同屏口径自相矛盾。
 pub fn query_realized_pnl_summary(
     conn: &Connection,
     filter: &PnlFilter,
 ) -> Result<RealizedPnlSummary> {
     ensure_transaction(conn, || {
+        let native = amount::default_currency_code(conn)?;
+        let fx = load_fx_week_history(conn)?;
+
         // 账户软删在 JOIN 条件排除（issue #217 定案「删除账户 = 从全部投资视角消失」，
         // 与 v_holdings / 时点持仓读口径对齐）；交易行软删（t.is_deleted）同样排除——
         // sell 删除自 ADR-0097 起回补持仓并清空其匹配行，此处的读口径排除保留以覆盖
         // 旧版本遗留的幽灵匹配（issue #940）；隐藏账户不是软删除，照常计入。
-        let base_from = "FROM security_lot_sales sls \
+        let realized_from = "FROM security_lot_sales sls \
                      JOIN transactions t ON t.id = sls.sell_transaction_id \
                      JOIN security_transactions st ON st.transaction_id = sls.sell_transaction_id \
-                     JOIN instruments i ON i.id = st.instrument_id \
                      JOIN accounts a ON a.id = t.account_id AND a.is_deleted = 0";
         // 分红腿的取数面（ADR-0109：kind 与扩展行双条件同 [`query_cumulative_pnl_summary`]）；
-        // 不 JOIN instruments——标的过滤直接落在扩展行的 instrument_id 上，与已实现腿同列同义。
+        // 两腿的标的过滤都直接落在扩展行 instrument_id 上，同列同义、无需 JOIN 字典。
         let dividend_from = "FROM transactions t \
                          JOIN security_transactions st ON st.transaction_id = t.id AND st.action='dividend' \
                          JOIN accounts a ON a.id = t.account_id AND a.is_deleted = 0";
@@ -185,62 +300,88 @@ pub fn query_realized_pnl_summary(
         let where_clause = format!(" WHERE {}", conditions.join(" AND "));
         let dividend_where_clause = format!(" WHERE {}", dividend_conditions.join(" AND "));
 
-        // 汇总按匹配行币种分组（ADR-0107 决策 6）：不做跨币种折算，各币种小计独立成立——
-        // 原「各币种裸数字直接 SUM」的混算口径废止（多币种账户下合计是错的）。
-        // 逐匹配「卖出明细」查询已随明细卡退役（决策 1），本函数只产出三张汇总视图 + 分组总数。
-        let total_sql = format!(
-            "SELECT sls.currency_code, COALESCE(SUM(sls.realized_pnl_cents), 0) \
-         {base_from}{where_clause} GROUP BY sls.currency_code ORDER BY sls.currency_code"
+        // 两表 = 两腿各自按（行键, 币种, 事件周）分组取数（ADR-0129 决策 1/3 的
+        // 「各自聚合」纪律沿用）：只有分红、没有卖出的年份 / 账户同样成行。
+        let week_of = "date(t.date, '-6 days', 'weekday 1')";
+        let realized_year_sql = format!(
+            "SELECT substr(t.date, 1, 4), sls.currency_code, {week_of}, SUM(sls.realized_pnl_cents) \
+             {realized_from}{where_clause} \
+             GROUP BY substr(t.date, 1, 4), sls.currency_code, {week_of}"
         );
-        // 按年 / 按账户两表 = 两腿各自聚合后 UNION ALL，再按 (行键, 币种) 二次聚合
-        // （ADR-0129 决策 1/3）：两腿先各自 GROUP BY 再合并，故「只有分红、没有卖出」的
-        // 年份 / 账户同样成行——原口径下这类行整行不存在；合计在同一段 SQL 内相加。
-        let year_sql = format!(
-            "SELECT year, currency_code, \
-                SUM(realized_pnl_cents), SUM(dividend_cents), \
-                SUM(realized_pnl_cents + dividend_cents) \
-         FROM ( \
-             SELECT substr(t.date, 1, 4) AS year, sls.currency_code AS currency_code, \
-                    SUM(sls.realized_pnl_cents) AS realized_pnl_cents, 0 AS dividend_cents \
-             {base_from}{where_clause} GROUP BY year, sls.currency_code \
-             UNION ALL \
-             SELECT substr(t.date, 1, 4) AS year, t.currency_code AS currency_code, \
-                    0 AS realized_pnl_cents, SUM(t.amount_cents) AS dividend_cents \
-             {dividend_from}{dividend_where_clause} GROUP BY year, t.currency_code \
-         ) GROUP BY year, currency_code ORDER BY year, currency_code"
+        let dividend_year_sql = format!(
+            "SELECT substr(t.date, 1, 4), t.currency_code, {week_of}, SUM(t.amount_cents) \
+             {dividend_from}{dividend_where_clause} \
+             GROUP BY substr(t.date, 1, 4), t.currency_code, {week_of}"
         );
-        let account_sql = format!(
-            "SELECT account_id, account_name, currency_code, \
-                SUM(realized_pnl_cents), SUM(dividend_cents), \
-                SUM(realized_pnl_cents + dividend_cents) \
-         FROM ( \
-             SELECT a.id AS account_id, a.name AS account_name, sls.currency_code AS currency_code, \
-                    SUM(sls.realized_pnl_cents) AS realized_pnl_cents, 0 AS dividend_cents \
-             {base_from}{where_clause} GROUP BY a.id, a.name, sls.currency_code \
-             UNION ALL \
-             SELECT a.id AS account_id, a.name AS account_name, t.currency_code AS currency_code, \
-                    0 AS realized_pnl_cents, SUM(t.amount_cents) AS dividend_cents \
-             {dividend_from}{dividend_where_clause} GROUP BY a.id, a.name, t.currency_code \
-         ) GROUP BY account_id, account_name, currency_code ORDER BY account_name, currency_code"
+        let realized_account_sql = format!(
+            "SELECT a.id, a.name, sls.currency_code, {week_of}, SUM(sls.realized_pnl_cents) \
+             {realized_from}{where_clause} \
+             GROUP BY a.id, a.name, sls.currency_code, {week_of}"
         );
-        let instrument_sql = format!(
-            "SELECT i.id, i.symbol, i.name, sls.currency_code, COALESCE(SUM(sls.realized_pnl_cents), 0) \
-         {base_from}{where_clause} GROUP BY i.id, sls.currency_code ORDER BY i.symbol, sls.currency_code"
+        let dividend_account_sql = format!(
+            "SELECT a.id, a.name, t.currency_code, {week_of}, SUM(t.amount_cents) \
+             {dividend_from}{dividend_where_clause} \
+             GROUP BY a.id, a.name, t.currency_code, {week_of}"
         );
 
         let params_ref: Vec<&dyn rusqlite::ToSql> = params.iter().map(|b| b.as_ref()).collect();
 
-        let total: Vec<CurrencyPnl> = query_all(conn, &total_sql, params_ref.as_slice())?;
-        let by_year: Vec<YearPnl> = query_all(conn, &year_sql, params_ref.as_slice())?;
-        let by_account: Vec<AccountPnl> = query_all(conn, &account_sql, params_ref.as_slice())?;
-        let by_instrument: Vec<InstrumentPnl> =
-            query_all(conn, &instrument_sql, params_ref.as_slice())?;
+        let realized_year = fetch_leg_groups(conn, &realized_year_sql, 1, &params_ref)?;
+        let dividend_year = fetch_leg_groups(conn, &dividend_year_sql, 1, &params_ref)?;
+        let realized_account = fetch_leg_groups(conn, &realized_account_sql, 2, &params_ref)?;
+        let dividend_account = fetch_leg_groups(conn, &dividend_account_sql, 2, &params_ref)?;
+
+        // 行键 = 两腿键集之并（只在一腿出现的行键同样成行）；按年 BTreeMap 序即
+        // 年度升序，按账户出数后按（账户名, id）重排。空腿取空集 = 该腿为 0——
+        // 无匹配是「零」，与「缺料」（None）两回事。
+        let empty = BTreeMap::new();
+        let mut year_keys: BTreeSet<&Vec<String>> = realized_year.keys().collect();
+        year_keys.extend(dividend_year.keys());
+        let mut by_year = Vec::with_capacity(year_keys.len());
+        for key in &year_keys {
+            let (gain, realized, dividend) = assemble_row(
+                &fx,
+                &native,
+                realized_year.get(*key).unwrap_or(&empty),
+                dividend_year.get(*key).unwrap_or(&empty),
+            )?;
+            by_year.push(YearPnl {
+                year: key[0].clone(),
+                native_currency: native.clone(),
+                realized_pnl_cents: realized,
+                dividend_cents: dividend,
+                realized_gain_cents: gain,
+            });
+        }
+
+        let mut account_keys: BTreeSet<&Vec<String>> = realized_account.keys().collect();
+        account_keys.extend(dividend_account.keys());
+        let mut by_account = Vec::with_capacity(account_keys.len());
+        for key in &account_keys {
+            let (gain, realized, dividend) = assemble_row(
+                &fx,
+                &native,
+                realized_account.get(*key).unwrap_or(&empty),
+                dividend_account.get(*key).unwrap_or(&empty),
+            )?;
+            by_account.push(AccountPnl {
+                account_id: key[0].clone(),
+                account_name: key[1].clone(),
+                native_currency: native.clone(),
+                realized_pnl_cents: realized,
+                dividend_cents: dividend,
+                realized_gain_cents: gain,
+            });
+        }
+        by_account.sort_by(|x, y| {
+            x.account_name
+                .cmp(&y.account_name)
+                .then_with(|| x.account_id.cmp(&y.account_id))
+        });
 
         Ok(RealizedPnlSummary {
-            total,
             by_year,
             by_account,
-            by_instrument,
         })
     })
 }

@@ -5,6 +5,7 @@ import { flushPromises } from "@vue/test-utils";
 import { defineComponent, h, nextTick } from "vue";
 import InvestmentsView from "@/views/InvestmentsView.vue";
 import RealizedPnlPanel from "@/investment/RealizedPnlPanel.vue";
+import { t } from "@ledger/i18n";
 import { formatAmount } from "@ledger/money";
 import { clickTab, findTab, probeColor } from "@ledger/test-support/dom";
 import { componentVm } from "@ledger/test-support/component-vm";
@@ -120,13 +121,7 @@ const INVESTMENT_DEFAULTS = {
     instrument_id: "inst-1",
     points: [{ date: "2026-06-05", price_cents: 1500, currency_code: "CNY" }],
   },
-  realized_pnl_summary: {
-    total_realized_pnl_cents: 0,
-    by_year: [],
-    by_account: [],
-    by_instrument: [],
-    details: [],
-  },
+  realized_pnl_summary: { by_year: [], by_account: [] },
   // 资金加权收益率（issue #1195）：持仓/盈亏两页签共用一次拉取
   money_weighted_return_summary: makeMwrSummary({ by_instrument: [], by_account: [], total: [] }),
   // 投资明细列表（ADR-0135 / issue #1778 后端命令）：明细页签唯一取数接口，
@@ -299,14 +294,14 @@ describe("InvestmentsView 持仓页签（issue #901）", () => {
           by_year: [
             {
               year: "2026",
-              currency_code: "CNY",
+              native_currency: "CNY",
               realized_pnl_cents: 30000,
               dividend_cents: 0,
               realized_gain_cents: 30000,
             },
             {
               year: "2025",
-              currency_code: "CNY",
+              native_currency: "CNY",
               realized_pnl_cents: -12345,
               dividend_cents: 40000,
               realized_gain_cents: 27655,
@@ -316,7 +311,7 @@ describe("InvestmentsView 持仓页签（issue #901）", () => {
             {
               account_id: "acc-1",
               account_name: "证券账户A",
-              currency_code: "CNY",
+              native_currency: "CNY",
               realized_pnl_cents: -12345,
               dividend_cents: 40000,
               realized_gain_cents: 27655,
@@ -356,6 +351,46 @@ describe("InvestmentsView 持仓页签（issue #901）", () => {
       `${formatAmount(27655, cny)}已实现盈亏 ${formatAmount(-12345, cny)} · 现金分红 ${formatAmount(40000, cny)}`,
       `${formatAmount(27655, cny)}已实现盈亏 ${formatAmount(-12345, cny)} · 现金分红 ${formatAmount(40000, cny)}`,
     ]);
+  });
+
+  it("缺料行格内显式标注「无法计算」，不出两腿数字（#1845，删除渲染接线即红）", async () => {
+    wireInvokeSeam({
+      defaults: INVESTMENT_DEFAULTS,
+      overrides: {
+        realized_pnl_summary: makePnlSummary({
+          by_year: [
+            {
+              year: "2025",
+              native_currency: "CNY",
+              realized_pnl_cents: null,
+              dividend_cents: null,
+              realized_gain_cents: null,
+            },
+          ],
+          by_account: [],
+        }),
+      },
+    });
+    const wrapper = mountView();
+    await flushPromises();
+
+    const cells = wrapper.findAll('td[data-col-key="realized_gain_cents"]');
+    expect(cells.length).toBeGreaterThan(0);
+    // 整格只有「无法计算」：不出现主值、不出两腿拆解副行
+    for (const cell of cells) {
+      expect(cell.text()).toBe(t("investments.pnl.notComputable"));
+      expect(cell.find("div").exists()).toBe(false);
+    }
+    expect(wrapper.text()).not.toContain(formatAmount(-12345, cny));
+  });
+
+  it("表头口径说明句上屏（#1845）：按实现时点周汇率、就近周折本位币", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+
+    const note = wrapper.find('[data-testid="pnl-calibration-note"]');
+    expect(note.exists()).toBe(true);
+    expect(note.text()).toBe(t("investments.pnl.calibrationNote"));
   });
 
   it("价格失效信号触发持仓重查：翻新后的市值合计上屏（自动刷新贯通取数与渲染）", async () => {

@@ -113,9 +113,9 @@ fn dividend_create_records_cash_leg_and_instrument_extension() {
             }
         )
         .unwrap()
-        .total
+        .by_year
         .iter()
-        .map(|g| g.realized_pnl_cents)
+        .map(|r| r.realized_pnl_cents.unwrap_or(0))
         .sum::<i64>(),
         0
     );

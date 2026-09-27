@@ -40,7 +40,7 @@ const TEN_YEARS: YearPnl[] = Array.from({ length: 10 }, (_, i) => {
   const year = String(2017 + i);
   return {
     year,
-    currency_code: "CNY",
+    native_currency: "CNY",
     realized_pnl_cents: (i + 1) * 100,
     dividend_cents: 0,
     realized_gain_cents: (i + 1) * 100,
@@ -51,7 +51,7 @@ const TEN_YEARS: YearPnl[] = Array.from({ length: 10 }, (_, i) => {
 const TEN_ACCOUNTS: AccountPnl[] = Array.from({ length: 10 }, (_, i) => ({
   account_id: `acc-${i + 1}`,
   account_name: `账户${i + 1}`,
-  currency_code: "CNY",
+  native_currency: "CNY",
   realized_pnl_cents: (i + 1) * 100,
   dividend_cents: 0,
   realized_gain_cents: (i + 1) * 100,

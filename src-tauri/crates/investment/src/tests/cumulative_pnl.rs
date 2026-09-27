@@ -41,9 +41,9 @@ fn legs_of(conn: &rusqlite::Connection) -> (i64, i64) {
         },
     )
     .unwrap()
-    .total
+    .by_year
     .iter()
-    .map(|g| g.realized_pnl_cents)
+    .map(|r| r.realized_pnl_cents.unwrap_or(0))
     .sum();
     (unrealized, realized)
 }

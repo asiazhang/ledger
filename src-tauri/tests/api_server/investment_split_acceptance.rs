@@ -130,7 +130,7 @@ fn net_worth_of(conn: &Arc<Mutex<Connection>>) -> i64 {
         .net_worth_cents
 }
 
-/// 读某标的的已实现盈亏合计（按匹配行币种分组后求和，与投资域读口径同源）。
+/// 读某标的的已实现盈亏合计（按年单值行的已实现腿求和，与投资域读口径同源）。
 fn realized_of(conn: &Arc<Mutex<Connection>>, account_id: &str, instrument_id: &str) -> i64 {
     query_realized_pnl_summary(
         &conn.lock().unwrap(),
@@ -140,9 +140,9 @@ fn realized_of(conn: &Arc<Mutex<Connection>>, account_id: &str, instrument_id: &
         },
     )
     .unwrap()
-    .total
+    .by_year
     .iter()
-    .map(|c| c.realized_pnl_cents)
+    .map(|r| r.realized_pnl_cents.unwrap_or(0))
     .sum()
 }
 

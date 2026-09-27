@@ -94,7 +94,17 @@ describe("useRealizedPnl 已实现盈亏数据层", () => {
             });
           }
           return Promise.resolve(
-            makePnlSummary({ total: [{ currency_code: "CNY", realized_pnl_cents: 777 }] }),
+            makePnlSummary({
+              by_year: [
+                {
+                  year: "2026",
+                  native_currency: "CNY",
+                  realized_pnl_cents: 777,
+                  dividend_cents: 0,
+                  realized_gain_cents: 777,
+                },
+              ],
+            }),
           );
         },
       },
@@ -103,12 +113,12 @@ describe("useRealizedPnl 已实现盈亏数据层", () => {
     const first = refresh();
     const second = refresh();
     await second;
-    expect(summary.value!.total[0].realized_pnl_cents).toBe(777);
+    expect(summary.value!.by_year[0].realized_pnl_cents).toBe(777);
 
     // 迟到的先发结果：已被 Loadable 竞态裁决作废为空，不覆写终态、不置 error
     releaseFirst(mockSummary);
     await first;
-    expect(summary.value!.total[0].realized_pnl_cents).toBe(777);
+    expect(summary.value!.by_year[0].realized_pnl_cents).toBe(777);
     expect(error.value).toBeNull();
   });
 

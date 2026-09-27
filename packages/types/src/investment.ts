@@ -361,43 +361,42 @@ export interface MarketPriceInput {
   source?: string | null;
 }
 
-/** 按年分组的已实现收益行（ADR-0129）：两腿（已实现盈亏 / 现金分红）并列，
- * realized_gain_cents = 两腿之和（词汇表「已实现收益（RealizedGain）」） */
+/**
+ * 已实现收益单值行（ADR-0129 两腿拆解沿用；#1845 起折本位币单值）：
+ * 两腿各自按事件周汇率折全局默认币种（卖出匹配按卖出周、现金分红按到账周，
+ * 事件周缺失 ±8 周内就近兜底）后由后端相加——前端零算术、只装配与格式化。
+ * 不变量：可计算行三项全 number；任一腿缺料（兜底窗口内无汇率点）→ 三项全
+ * null（行显式「无法计算」，契约面不给半截数字、不以零计入）。
+ */
 export interface YearPnl {
   year: string;
-  currency_code: string;
-  realized_pnl_cents: number;
-  dividend_cents: number;
-  realized_gain_cents: number;
+  /** 折算基准币种（全局默认币种），供页面标注与格式化 */
+  native_currency: string;
+  /** 已实现盈亏腿：FIFO 卖出匹配、已扣卖出手续费、不含分红；缺料为 null */
+  realized_pnl_cents: number | null;
+  /** 现金分红腿：归属标的的现金收入，按到账日归年；缺料为 null */
+  dividend_cents: number | null;
+  /** 主值 = 两腿之和（不含浮动盈亏）；任一腿缺料即 null */
+  realized_gain_cents: number | null;
 }
 
-/** 按账户分组的已实现收益行（ADR-0129）：列口径同 YearPnl，按账户聚合 */
+/** 按账户分组的已实现收益单值行（#1845）：列口径同 YearPnl，按账户聚合 */
 export interface AccountPnl {
   account_id: string;
   account_name: string;
-  currency_code: string;
-  realized_pnl_cents: number;
-  dividend_cents: number;
-  realized_gain_cents: number;
-}
-
-export interface InstrumentPnl {
-  instrument_id: string;
-  symbol: string;
-  name: string | null;
-  currency_code: string;
-  realized_pnl_cents: number;
+  /** 折算基准币种（全局默认币种），供页面标注与格式化 */
+  native_currency: string;
+  /** 已实现盈亏腿（折本位币）；缺料为 null */
+  realized_pnl_cents: number | null;
+  /** 现金分红腿（折本位币）；缺料为 null */
+  dividend_cents: number | null;
+  /** 主值 = 两腿之和；任一腿缺料即 null */
+  realized_gain_cents: number | null;
 }
 
 export interface PnlFilter {
   account_id?: string | null;
   instrument_id?: string | null;
-}
-
-/** 按币种分组的已实现盈亏小计（ADR-0107 决策 6）：匹配行币种口径，不做跨币种折算 */
-export interface CurrencyPnl {
-  currency_code: string;
-  realized_pnl_cents: number;
 }
 
 /**
@@ -425,13 +424,15 @@ export interface CumulativePnlNativeTotal {
   native_currency: string;
 }
 
-/** 已实现盈亏汇总（ADR-0107）：盈亏页三视图（按年/按账户/按标的）+ 按币种分组总数；
- * 逐匹配「卖出明细」已退役（决策 1），明细数据不再随本投影返回 */
+/**
+ * 已实现盈亏汇总（ADR-0107 / #1845 单值翻案）：盈亏页按年 / 按账户两张单值表，
+ * 每行一个折本位币的已实现收益单值（行标识 + 主值 + 两腿拆解 + native_currency）。
+ * 逐匹配「卖出明细」已随 ADR-0107 决策 1 退役；按币种分组的 total / by_instrument
+ * 死字段已随 #1845 删除。
+ */
 export interface RealizedPnlSummary {
-  total: CurrencyPnl[];
   by_year: YearPnl[];
   by_account: AccountPnl[];
-  by_instrument: InstrumentPnl[];
 }
 
 /** 走势查询区间：可选起止 ISO 日期，缺省表示该侧不设界（"全部"区间） */

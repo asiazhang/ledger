@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, h, type VNodeChild, type WritableComputedRef } from "vue";
-import { NCard, NDataTable, NEmpty, NGi, NGrid, NSpace, NSpin } from "naive-ui";
+import { NCard, NDataTable, NEmpty, NGi, NGrid, NSpace, NSpin, NText } from "naive-ui";
 import type { DataTableColumn } from "naive-ui";
 import PinyinSelect from "@ledger/ui-kit/PinyinSelect.vue";
 import { t } from "@ledger/i18n";
@@ -14,7 +14,7 @@ import { PNL_PAGE_SIZE, useInvestmentsSessionStore } from "@/investment/investme
 import ConceptLabel from "@/investment/ConceptLabel.vue";
 import { subLine } from "@/investment/pnl-cell.css.ts";
 import { renderMwrRateCell, useMoneyWeightedReturn } from "@/investment/useMoneyWeightedReturn";
-import type { MwrBasis } from "@ledger/types";
+import type { AccountPnl, MwrBasis, YearPnl } from "@ledger/types";
 
 const reference = useReferenceStore();
 const appStore = useAppStore();
@@ -38,8 +38,8 @@ const session = useInvestmentsSessionStore();
 // 内存展示切片（表格内置分页），不发请求、不参数化查询。页大小固定 8 不设选择器
 // （PNL_PAGE_SIZE 单源，两表共享）、单页收起分页条（paginate-single-page=false）。
 // 按年行后端升序返回（ORDER BY year），此处倒转为最新年在前——第 1 页 = 最近年份
-// 是分页可用的前提（看盈亏先看最近表现）；同年内保持币种序（稳定排序）。按账户行
-// 保持后端返回顺序（ORDER BY account_name），不引入新排序口径（grilling 定案）。
+// 是分页可用的前提（看盈亏先看最近表现）。按账户行保持后端返回序（账户名序，
+// 同名按 id 稳定），不引入新排序口径（grilling 定案；#1845 起币种维退役，一行一年 / 一账户）。
 // 页码住投资页会话状态 store：会话内保留、筛选变化归零（接线在 useRealizedPnl）、
 // 冷启动回默认（ESC 复位随 resetToDefault 一并归一）；恢复越界在此钳制回落并写回
 // 保留态（回退不归零，读出口即对账，持仓 useHoldingsFilter 同款）。行集与空态
@@ -90,44 +90,52 @@ function paginationFor(page: WritableComputedRef<number>) {
 }
 const yearPagination = paginationFor(yearPage);
 const accountPagination = paginationFor(accountPage);
-// 汇总表通用「已实现收益」列（ADR-0129 决策 1）：主值 = 域内算好的合计
-// （已实现盈亏 + 现金分红），副行拆出两腿。金额按行币种格式化（ADR-0107 决策 6：
-// 汇总行随交易行币种），数值列右对齐 + 等宽数字（词汇表「表格列形态」，两表同一
-// 单点收口）；主值与已实现腿着盈亏涨跌色（红涨绿跌，与持仓页签「持仓收益」列同源），
-// 分红腿着分红 kind 色（与交易列表的分红金额同源）——拆解项与结果一眼可分。
+// 汇总表通用「已实现收益」列（ADR-0129 决策 1；#1845 起折本位币单值）：主值 =
+// 后端折算好的合计（已实现盈亏 + 现金分红，逐腿按事件周汇率折本位币），副行拆出
+// 两腿——前端零算术，金额按行透出的 native_currency 格式化。任一腿缺料（三项全
+// null）→ 格内只显式标注「无法计算」，不出部分数字、不以零计入。数值列右对齐 +
+// 等宽数字（词汇表「表格列形态」，两表同一单点收口）；主值与已实现腿着盈亏涨跌
+// 色（红涨绿跌，与持仓页签「持仓收益」列同源），分红腿着分红 kind 色（与交易列
+// 表的分红金额同源）——拆解项与结果一眼可分。
 function realizedGainColumn(title: string | (() => VNodeChild)): DataTableColumn {
   return {
     title,
     key: "realized_gain_cents",
     align: "right",
     className: "tabular-nums",
-    render(row: any) {
-      const currency = reference.currencyMap.get(row.currency_code);
+    render(rowData) {
+      // naive-ui 列渲染入口的行类型是 InternalRowData；本列只服务两张盈亏表，
+      // 行形状在入口处一次性收窄（唯一装配面，别处不投第二份断言）。
+      const row = rowData as unknown as YearPnl | AccountPnl;
+      const { realized_gain_cents, realized_pnl_cents, dividend_cents } = row;
+      if (realized_gain_cents === null || realized_pnl_cents === null || dividend_cents === null) {
+        return h("span", t("investments.pnl.notComputable"));
+      }
+      const currency = reference.currencyMap.get(row.native_currency);
       return h("div", [
         h(
           "span",
-          { style: { color: pnlSemanticColor(row.realized_gain_cents, appStore.theme) } },
-          formatAmount(row.realized_gain_cents, currency),
+          { style: { color: pnlSemanticColor(realized_gain_cents, appStore.theme) } },
+          formatAmount(realized_gain_cents, currency),
         ),
         h("div", { class: subLine }, [
           `${t("investments.pnl.columns.realizedPnl")} `,
           h(
             "span",
-            { style: { color: pnlSemanticColor(row.realized_pnl_cents, appStore.theme) } },
-            formatAmount(row.realized_pnl_cents, currency),
+            { style: { color: pnlSemanticColor(realized_pnl_cents, appStore.theme) } },
+            formatAmount(realized_pnl_cents, currency),
           ),
           ` · ${t("investments.pnl.columns.dividend")} `,
           h(
             "span",
             { style: { color: kindSemanticColor("dividend", appStore.theme) } },
-            formatAmount(row.dividend_cents, currency),
+            formatAmount(dividend_cents, currency),
           ),
         ]),
       ]);
     },
   };
 }
-
 // 已实现收益口径（ADR-0129 / issue #1533）：已实现盈亏 + 现金分红，不含浮动盈亏
 const realizedGainTitle = () =>
   h(ConceptLabel, {
@@ -233,12 +241,18 @@ const mwrColumns: DataTableColumn<MwrRow>[] = [
         />
       </NSpace>
 
-      <!-- 页面收敛为 筛选 + 按年/按账户 两张汇总表（ADR-0107 修订注记，2026-09-13）：
-           「已实现盈亏概览」卡与「按标的汇总」表退役——总口径在持仓页签合计（累计收益
-           含已实现腿）可得，按标的信息在交易页标的筛选下钻可得。后端 realized_pnl_summary
-           的 total / by_instrument 读取保留（只减 UI 面，不动 IPC 形状）。 -->
+      <!-- 页面收敛为 筛选 + 按年/按账户 两张单值表（ADR-0107 修订注记，2026-09-13；
+#1845 起每行折本位币单值，total / by_instrument 随单值翻案从契约中删除）——
+总口径在持仓页签合计（累计收益含已实现腿）可得，按标的信息在明细页签标的
+筛选下钻可得。 -->
       <NEmpty v-if="!summary" :description="t('investments.pnl.empty')" />
       <template v-if="summary">
+        <!-- 口径说明句（#1845）：披露折算近似等级（按实现时点所在周汇率、就近周
+             兜底折本位币），不做逐格标注；两表共用一句。 -->
+        <NText depth="3" data-testid="pnl-calibration-note">{{
+          t("investments.pnl.calibrationNote")
+        }}</NText>
+
         <!-- 列数用纯数字 + 窗口分级：NGrid 默认 responsive="self" 只认数字前缀，
              具名断点（s:）永不命中会静默退成 1 列（两表竖排）。 -->
         <NGrid :x-gap="16" :y-gap="16" :cols="isMobileTier ? 1 : 2">
