@@ -5,7 +5,7 @@
  * 主列表来源列标的目标反查为同款拼法的另一站点，read/source.rs ④）。
  *
  * 消费面：明细页签来源列、交易弹窗族行投影（source.display_name）、
- * 走势页签下拉候选与曲线标签。
+ * convert / split 详情弹层标的行、走势页签下拉候选与曲线标签。
  * 「代码 · 名称」下拉候选拼法（useInstrumentOptions.instrumentOptionLabel）
  * 是另一口径，各有单点、不互串。
  */
