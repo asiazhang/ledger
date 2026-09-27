@@ -15,7 +15,7 @@ use tauri_app_lib::test_support::{open, seed_account, seed_fx_history_weeks};
 
 use super::common::{insert_fund_instrument, insert_instrument_with_market, make_buy_input};
 
-/// 判定基准日：周一（前一个周五距本日 3 个自然日，正在阈值上）。
+/// 判定基准日：周一（上周一距本日 7 个自然日，正在阈值上）。
 fn today() -> NaiveDate {
     NaiveDate::from_ymd_opt(2026, 3, 9).expect("固定基准日合法")
 }
@@ -54,7 +54,7 @@ fn usd_rate(conn: &Connection) {
     seed_fx_history_weeks(conn, "USD", "CNY", 1.0, &["2026-01-10"]);
 }
 
-/// 行情通道阈值边界：水位距今 0 / 3 / 4 个自然日分别不计、不计（阈值上）、计入。
+/// 行情通道阈值边界：水位距今 0 / 7 / 8 个自然日分别不计、不计（阈值上）、计入。
 #[test]
 fn quote_watermark_counts_only_beyond_threshold() {
     let conn = open();
@@ -64,8 +64,8 @@ fn quote_watermark_counts_only_beyond_threshold() {
 
     // 基准日 2026-03-09；水位日 = priced_at 的北京日历日
     seed_watermark(&conn, "q-fresh", "2026-03-09T02:00:00Z", None); // 3-09，0 天
-    seed_watermark(&conn, "q-edge", "2026-03-06T02:00:00Z", None); // 3-06，3 天
-    seed_watermark(&conn, "q-old", "2026-03-05T02:00:00Z", None); // 3-05，4 天
+    seed_watermark(&conn, "q-edge", "2026-03-02T02:00:00Z", None); // 3-02，7 天
+    seed_watermark(&conn, "q-old", "2026-03-01T02:00:00Z", None); // 3-01，8 天
 
     let result = instrument_price_staleness_on(&conn, today()).expect("检查应成功");
     assert_eq!(result.threshold_days, PRICE_STALE_AFTER_DAYS);
@@ -74,16 +74,16 @@ fn quote_watermark_counts_only_beyond_threshold() {
 
 /// 水位日按北京日历日换算（16:00 UTC 是北京午夜边界）：同一 UTC 日内的
 /// 15:59:59Z 与 16:00:00Z 落在相邻的北京日历日，判定差一天——基准日 3-09 上
-/// 前者距 4 天（过期）、后者距 3 天（阈值上，不过期）。
+/// 前者距 8 天（过期）、后者距 7 天（阈值上，不过期）。
 #[test]
 fn quote_watermark_uses_beijing_calendar_day() {
     let conn = open();
     insert_instrument_with_market(&conn, "q-before", "B", "北京前一日", "USD", "sh", "stock");
     insert_instrument_with_market(&conn, "q-after", "A", "北京次日", "USD", "sh", "stock");
 
-    // 北京 3-05 23:59 → 距 3-09 共 4 天（过期）；北京 3-06 00:00 → 3 天（不过期）
-    seed_watermark(&conn, "q-before", "2026-03-05T15:59:59Z", None);
-    seed_watermark(&conn, "q-after", "2026-03-05T16:00:00Z", None);
+    // 北京 3-01 23:59 → 距 3-09 共 8 天（过期）；北京 3-02 00:00 → 7 天（不过期）
+    seed_watermark(&conn, "q-before", "2026-03-01T15:59:59Z", None);
+    seed_watermark(&conn, "q-after", "2026-03-01T16:00:00Z", None);
 
     let result = instrument_price_staleness_on(&conn, today()).expect("检查应成功");
     assert_eq!(result.stale_count, 1, "跨北京午夜的水位按北京日历日判定");
@@ -101,7 +101,7 @@ fn fund_channel_reads_nav_date_watermark() {
         &conn,
         "f-old-nav",
         "2026-03-09T02:00:00Z",
-        Some("2026-03-05"),
+        Some("2026-03-01"),
     );
     seed_watermark(
         &conn,
@@ -192,7 +192,7 @@ fn date_only_and_malformed_watermarks() {
         "stock",
     );
 
-    seed_watermark(&conn, "q-date-only", "2026-03-05", None);
+    seed_watermark(&conn, "q-date-only", "2026-03-01", None);
     seed_watermark(&conn, "q-broken", "不是日期", None);
     seed_watermark(&conn, "q-broken-idle", "不是日期", None);
     usd_rate(&conn);
@@ -286,11 +286,11 @@ fn constant_price_instrument_is_exempt_even_with_stale_nav_date() {
 // [`PRICE_STALE_CLEARED_EXIT_DAYS`]（一年）的**非持仓**行视作数据源已停止
 // 披露（清盘 / 长期停牌）——同步永远修不了、又不影响报表，不再计入；持仓行
 // 不豁免（估值依据陈旧的提示仍然诚实）。「删除即变红」：退出臂撤掉（回到
-// 只看 3 日阈值）后，下方两用例即被计入。
+// 只看 7 日提示阈值）后，下方两用例即被计入。
 // ---------------------------------------------------------------------------
 
 /// 已清仓基金的净值水位：超过一年退出计数；恰在退出阈值上（365 日）与普通
-/// 过期（4 日）仍计入——退出只收「数据源已死」的长尾。
+/// 过期（8 日）仍计入——退出只收「数据源已死」的长尾。
 #[test]
 fn cleared_instrument_exits_count_only_beyond_exit_threshold() {
     let conn = open();
@@ -299,7 +299,7 @@ fn cleared_instrument_exits_count_only_beyond_exit_threshold() {
     insert_fund_instrument(&conn, "f-stale", "002435", "普通过期");
 
     // 基准日 2026-03-09：2020 年的净值 = 数据源早已停止披露；2025-03-09 距今
-    // 恰 365 日（退出阈值上，不退出）；2026-03-05 距 4 日（普通过期）。
+    // 恰 365 日（退出阈值上，不退出）；2026-03-01 距 8 日（普通过期）。
     seed_watermark(
         &conn,
         "f-ancient",
@@ -307,7 +307,7 @@ fn cleared_instrument_exits_count_only_beyond_exit_threshold() {
         Some("2020-01-01"),
     );
     seed_watermark(&conn, "f-edge", "2026-03-09T02:00:00Z", Some("2025-03-09"));
-    seed_watermark(&conn, "f-stale", "2026-03-09T02:00:00Z", Some("2026-03-05"));
+    seed_watermark(&conn, "f-stale", "2026-03-09T02:00:00Z", Some("2026-03-01"));
 
     let result = instrument_price_staleness_on(&conn, today()).expect("检查应成功");
     assert_eq!(
