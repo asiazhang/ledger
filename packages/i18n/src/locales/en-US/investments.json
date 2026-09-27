@@ -214,7 +214,7 @@
   "staleness": {
     "message": "{count} instruments may have stale quotes / NAV (not updated for over {days} days, or a holding has no price).",
     "goSync": "Sync Instrument Info",
-    "hint": "Sync refreshes current prices only; trend history is backfilled automatically in the background."
+    "hint": "Sync refreshes current prices only. Fund NAVs publish 1–2 trading days behind (longer over holidays); the notice stays until sources publish new data. Trend history is backfilled automatically."
   },
   "market": {
     "sh": "Shanghai",
