@@ -655,24 +655,14 @@ impl ManualPriceResult {
     }
 }
 
-/// 已实现盈亏汇总（ADR-0107）：盈亏页三视图（按年/按账户/按标的）+ 按币种分组总数。
-/// 逐匹配「卖出明细」已退役（决策 1），明细数据本体（security_lot_sales 逐匹配行）
-/// 不再随本投影返回。
+/// 已实现盈亏汇总（ADR-0107 / #1845 单值翻案）：盈亏页按年 / 按账户两张单值表。
+/// 逐匹配「卖出明细」已退役（决策 1）；按币种分组的 total / by_instrument 字段
+/// 已随单值翻案删除（ADR-0107 修订注记，2026-09-27）——每行一个折本位币的
+/// 已实现收益单值（行标识 + 主值 + 两腿拆解 + native_currency）。
 #[derive(Debug, Serialize)]
 pub struct RealizedPnlSummary {
-    /// 按币种分组的已实现盈亏总数（决策 6：不做跨币种折算）。
-    pub total: Vec<CurrencyPnl>,
     pub by_year: Vec<YearPnl>,
     pub by_account: Vec<AccountPnl>,
-    pub by_instrument: Vec<InstrumentPnl>,
-}
-
-/// 按币种分组的已实现盈亏小计（ADR-0107 决策 6）：匹配行（security_lot_sales）币种口径，
-/// 不做跨币种折算——原「各币种裸数字直接 SUM」的混算口径废止（多币种账户下合计是错的）。
-#[derive(Debug, Serialize)]
-pub struct CurrencyPnl {
-    pub currency_code: String,
-    pub realized_pnl_cents: i64,
 }
 
 /// 按币种分组的累计收益小计（issue #1077 / 词汇表「累计收益（CumulativePnl）」）：
@@ -713,43 +703,41 @@ pub struct CumulativePnlNativeTotal {
     pub native_currency: String,
 }
 
-/// 按年分组的已实现收益行（ADR-0129）：已实现盈亏（卖出匹配）与现金分红
-/// （dividend 行）两腿并列，合计即词汇表「已实现收益（RealizedGain）」。
-/// 两腿各自口径逐位不变（ADR-0107 / ADR-0109 决策 2）；合计在域内相加，
-/// 前端不持算术（ADR-0129 决策 4）。
+/// 按年分组的已实现收益单值行（ADR-0129 两腿拆解沿用；#1845 起折本位币单值）：
+/// 已实现盈亏（卖出匹配）与现金分红（dividend 行）两腿各自按事件周汇率折全局
+/// 默认币种（卖出匹配按卖出周、分红按到账周；事件周缺失 ±8 周内就近兜底）
+/// 后相加，合计即词汇表「已实现收益（RealizedGain）」；两腿各自口径逐位不变
+/// （ADR-0107 / ADR-0109 决策 2），合计在域内相加、前端不持算术（ADR-0129 决策 4）。
+/// 任一腿兜底窗口内无点 → 该腿缺料、整行显式「无法计算」（三项同为 None），
+/// 绝不以零计入、不给半截数字；币对零历史整命令报 `fx.rate-missing`。
 #[derive(Debug, Serialize)]
 pub struct YearPnl {
     pub year: String,
-    pub currency_code: String,
-    /// 已实现盈亏：FIFO 卖出匹配、已扣卖出手续费、不含分红。
-    pub realized_pnl_cents: i64,
-    /// 现金分红：归属标的的现金收入，按交易行日期归年。
-    pub dividend_cents: i64,
-    /// 已实现收益 = 已实现盈亏 + 现金分红（不含浮动盈亏）。
-    pub realized_gain_cents: i64,
+    /// 折算基准币种（全局默认币种），供页面标注与格式化。
+    pub native_currency: String,
+    /// 已实现盈亏腿：FIFO 卖出匹配、已扣卖出手续费、不含分红，折本位币；
+    /// 缺料（兜底窗口内无汇率点）为 None。
+    pub realized_pnl_cents: Option<i64>,
+    /// 现金分红腿：归属标的的现金收入，按交易行日期归年，折本位币；缺料为 None。
+    pub dividend_cents: Option<i64>,
+    /// 主值 = 两腿之和（不含浮动盈亏）；任一腿缺料即 None（行显式「无法计算」）。
+    pub realized_gain_cents: Option<i64>,
 }
 
-/// 按账户分组的已实现收益行（ADR-0129）：列口径同 [`YearPnl`]，按账户聚合。
+/// 按账户分组的已实现收益单值行（ADR-0129）：列口径同 [`YearPnl`]，按账户聚合
+/// （#1845 起折本位币单值，缺料与零历史语义同 [`YearPnl`]）。
 #[derive(Debug, Serialize)]
 pub struct AccountPnl {
     pub account_id: String,
     pub account_name: String,
-    pub currency_code: String,
-    /// 已实现盈亏：FIFO 卖出匹配、已扣卖出手续费、不含分红。
-    pub realized_pnl_cents: i64,
-    /// 现金分红：归属标的的现金收入。
-    pub dividend_cents: i64,
-    /// 已实现收益 = 已实现盈亏 + 现金分红（不含浮动盈亏）。
-    pub realized_gain_cents: i64,
-}
-
-#[derive(Debug, Serialize)]
-pub struct InstrumentPnl {
-    pub instrument_id: String,
-    pub symbol: String,
-    pub name: Option<String>,
-    pub currency_code: String,
-    pub realized_pnl_cents: i64,
+    /// 折算基准币种（全局默认币种），供页面标注与格式化。
+    pub native_currency: String,
+    /// 已实现盈亏腿（折本位币）；缺料为 None。
+    pub realized_pnl_cents: Option<i64>,
+    /// 现金分红腿（折本位币）；缺料为 None。
+    pub dividend_cents: Option<i64>,
+    /// 主值 = 两腿之和；任一腿缺料即 None（行显式「无法计算」）。
+    pub realized_gain_cents: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -799,15 +787,6 @@ impl FromRow for MarketPrice {
     }
 }
 
-impl FromRow for CurrencyPnl {
-    fn from_row(row: &rusqlite::Row) -> rusqlite::Result<Self> {
-        Ok(CurrencyPnl {
-            currency_code: row.get(0)?,
-            realized_pnl_cents: row.get::<_, Option<i64>>(1)?.unwrap_or(0),
-        })
-    }
-}
-
 impl FromRow for CurrencyCumulativePnl {
     fn from_row(row: &rusqlite::Row) -> rusqlite::Result<Self> {
         Ok(CurrencyCumulativePnl {
@@ -823,43 +802,6 @@ impl FromRow for CurrencyHoldingTotals {
             currency_code: row.get(0)?,
             market_value_cents: row.get(1)?,
             unrealized_pnl_cents: row.get(2)?,
-        })
-    }
-}
-
-impl FromRow for YearPnl {
-    fn from_row(row: &rusqlite::Row) -> rusqlite::Result<Self> {
-        Ok(YearPnl {
-            year: row.get(0)?,
-            currency_code: row.get(1)?,
-            realized_pnl_cents: row.get::<_, Option<i64>>(2)?.unwrap_or(0),
-            dividend_cents: row.get::<_, Option<i64>>(3)?.unwrap_or(0),
-            realized_gain_cents: row.get::<_, Option<i64>>(4)?.unwrap_or(0),
-        })
-    }
-}
-
-impl FromRow for AccountPnl {
-    fn from_row(row: &rusqlite::Row) -> rusqlite::Result<Self> {
-        Ok(AccountPnl {
-            account_id: row.get(0)?,
-            account_name: row.get(1)?,
-            currency_code: row.get(2)?,
-            realized_pnl_cents: row.get::<_, Option<i64>>(3)?.unwrap_or(0),
-            dividend_cents: row.get::<_, Option<i64>>(4)?.unwrap_or(0),
-            realized_gain_cents: row.get::<_, Option<i64>>(5)?.unwrap_or(0),
-        })
-    }
-}
-
-impl FromRow for InstrumentPnl {
-    fn from_row(row: &rusqlite::Row) -> rusqlite::Result<Self> {
-        Ok(InstrumentPnl {
-            instrument_id: row.get(0)?,
-            symbol: row.get(1)?,
-            name: row.get(2)?,
-            currency_code: row.get(3)?,
-            realized_pnl_cents: row.get::<_, Option<i64>>(4)?.unwrap_or(0),
         })
     }
 }

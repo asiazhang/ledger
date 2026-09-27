@@ -21,23 +21,20 @@ fn empty_filter() -> PnlFilter {
     }
 }
 
-/// 总量（`total`）与三张分量表（按年 / 按账户 / 按标的）必须同快照：
-/// 探针在按账户表查询开始前于另一连接改写匹配行已实现盈亏——
-/// - 读闭包无快照保护（红）：total 读旧值、分量表读新值，「总量=分量和」变红；
-/// - 读闭包收进读事务（绿）：注入写被挡住，四查同见一套数，断言绿。
+/// 两张单值表（按年 / 按账户）必须同快照（#1845 契约重塑后同款纪律）：两表
+/// 各自对同一份已实现腿取数折算，总量=分量和的旧不变式随 total 字段退役，
+/// 同屏口径不变式改对准「两表已实现腿合计相等」。探针在按账户腿取数
+/// （`SELECT a.id, a.name, …`，与按年的 `SELECT substr(t.date, 1, 4)…` 区分）
+/// 开始前于另一连接改写匹配行已实现盈亏——
+/// - 读闭包无快照保护（红）：按年腿读旧值、按账户腿读新值，两表合计差 5000；
+/// - 读闭包收进读事务（绿）：注入写被挡住，两表同见一套数，断言绿。
 #[test]
-fn realized_pnl_total_equals_group_sums_under_concurrent_write() {
+fn realized_pnl_two_tables_share_one_snapshot_under_concurrent_write() {
     let dir = ScratchDir::new("investment-pnl-read-snapshot");
     let conn = open_file(dir.path());
-    seed_account(&conn, "acc-pnl", "美股账户", "investment", "USD", 0);
-    seed_fx_history_weeks(
-        &conn,
-        "USD",
-        "CNY",
-        1.0,
-        &["2026-01-10", "2026-01-20", "2026-02-01", "2026-02-10"],
-    );
-    seed_instrument(&conn, "inst-pnl", "AAPL", "Apple", "USD", "unknown");
+    // CNY 账户（同币种恒等，折算不引入第二变量——探针只观测腿取数时点）。
+    seed_account(&conn, "acc-pnl", "A股账户", "investment", "CNY", 0);
+    seed_instrument(&conn, "inst-pnl", "600000", "浦发银行", "CNY", "sh");
 
     create_transaction_internal(
         &conn,
@@ -50,13 +47,11 @@ fn realized_pnl_total_equals_group_sums_under_concurrent_write() {
     )
     .unwrap();
 
-    // 探针：按账户表（`SELECT account_id, account_name, …`，与 total 的
-    // `SELECT sls.currency_code…`、按年的 `SELECT year, …` 区分）开始前，
-    // 另一连接提交匹配行改写。
+    // 探针：按账户腿取数开始前，另一连接提交匹配行改写。
     snapshot_probe::arm(
         &conn,
         dir.path(),
-        "SELECT account_id, account_name",
+        "SELECT a.id, a.name, sls.currency_code",
         &["UPDATE security_lot_sales SET realized_pnl_cents = realized_pnl_cents + 5000"],
     );
 
@@ -65,28 +60,25 @@ fn realized_pnl_total_equals_group_sums_under_concurrent_write() {
     let outcome = snapshot_probe::outcome();
     assert!(
         outcome != InjectionOutcome::NotFired,
-        "探针未命中按账户表查询（marker 漂移或未臂装），断言失去意义：{outcome:?}"
+        "探针未命中按账户腿取数（marker 漂移或未臂装），断言失去意义：{outcome:?}"
     );
 
-    let total: i64 = summary.total.iter().map(|g| g.realized_pnl_cents).sum();
-    let by_year: i64 = summary.by_year.iter().map(|r| r.realized_pnl_cents).sum();
+    let realized_of =
+        |rows: &[YearPnl]| -> i64 { rows.iter().map(|r| r.realized_pnl_cents.unwrap_or(0)).sum() };
+    let by_year = realized_of(&summary.by_year);
     let by_account: i64 = summary
         .by_account
         .iter()
-        .map(|r| r.realized_pnl_cents)
-        .sum();
-    let by_instrument: i64 = summary
-        .by_instrument
-        .iter()
-        .map(|r| r.realized_pnl_cents)
+        .map(|r| r.realized_pnl_cents.unwrap_or(0))
         .sum();
     assert!(
-        total > 0,
+        by_year > 0,
         "种子买卖应产出非零已实现盈亏（否则口径断言空转）"
     );
-    assert_eq!(total, by_account, "总量必须等于按账户分量和（同快照）");
-    assert_eq!(total, by_year, "总量必须等于按年分量和（同快照）");
-    assert_eq!(total, by_instrument, "总量必须等于按标的部分和（同快照）");
+    assert_eq!(
+        by_year, by_account,
+        "两表折算自同一份已实现腿，必须同快照（注入写落在两表取数之间即漂移）"
+    );
 }
 
 /// 分子（可投资资产）与分母（年度预算总额）必须同时点：探针在分母 budgets

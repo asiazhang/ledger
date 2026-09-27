@@ -1,6 +1,8 @@
 //! 已实现盈亏汇总（realized PnL）测试：空态、单笔 / 多账户聚合、按账户 / 按
-//! 标的过滤、按币种分组不混算（ADR-0107；issue #257 纯移动归组），
-//! 两表并入现金分红后的已实现收益口径（ADR-0129 / issue #1533）。
+//! 标的过滤、折本位币单值行（#1845，ADR-0107 决策 6 翻案）——逐腿按事件周
+//! 汇率折算（卖出匹配按卖出周、现金分红腿按到账周）、就近周兜底接线、
+//! 币对零历史码化错误、缺料行不以零计入、同币种恒等；两腿并入现金分红后的
+//! 已实现收益口径沿用（ADR-0129）。
 
 use ledger_transaction::amount::TransactionKind;
 use ledger_transaction::create_transaction_internal;
@@ -16,24 +18,21 @@ fn empty_filter() -> PnlFilter {
     }
 }
 
-/// 取指定币种的分组小计（ADR-0107 决策 6：汇总按匹配行币种分组，不混算）。
-fn total_for(summary: &RealizedPnlSummary, currency: &str) -> i64 {
-    summary
-        .total
-        .iter()
-        .find(|g| g.currency_code == currency)
-        .map(|g| g.realized_pnl_cents)
-        .unwrap_or(0)
+/// 主值与两腿拆解三件套断言（单值行形状，#1845）：Some 值逐位相等。
+fn assert_row(row: &YearPnl, year: &str, realized: i64, dividend: i64, gain: i64, native: &str) {
+    assert_eq!(row.year, year);
+    assert_eq!(row.native_currency, native);
+    assert_eq!(row.realized_pnl_cents, Some(realized), "已实现盈亏腿");
+    assert_eq!(row.dividend_cents, Some(dividend), "现金分红腿");
+    assert_eq!(row.realized_gain_cents, Some(gain), "主值 = 两腿之和");
 }
 
 #[test]
 fn realized_pnl_summary_empty_when_no_sales() {
     let conn = open();
     let result = query_realized_pnl_summary(&conn, &empty_filter()).unwrap();
-    assert!(result.total.is_empty());
     assert!(result.by_year.is_empty());
     assert!(result.by_account.is_empty());
-    assert!(result.by_instrument.is_empty());
 }
 
 #[test]
@@ -64,29 +63,268 @@ fn realized_pnl_summary_aggregates_single_sale() {
 
     let result = query_realized_pnl_summary(&conn, &empty_filter()).unwrap();
 
-    assert_eq!(total_for(&result, "USD"), 9800);
     assert_eq!(result.by_year.len(), 1);
-    assert_eq!(result.by_year[0].currency_code, "USD");
-    assert_eq!(result.by_year[0].realized_pnl_cents, 9800);
-    // 无分红场景读数逐位不变（ADR-0129 验收）：分红腿恒 0、合计 = 已实现盈亏
-    assert_eq!(result.by_year[0].dividend_cents, 0);
-    assert_eq!(result.by_year[0].realized_gain_cents, 9800);
+    assert_row(&result.by_year[0], "2026", 9800, 0, 9800, "CNY");
     assert_eq!(result.by_account.len(), 1);
     assert_eq!(result.by_account[0].account_id, "acc-pnl");
-    assert_eq!(result.by_account[0].currency_code, "USD");
-    assert_eq!(result.by_account[0].realized_pnl_cents, 9800);
-    assert_eq!(result.by_account[0].dividend_cents, 0);
-    assert_eq!(result.by_account[0].realized_gain_cents, 9800);
-    assert_eq!(result.by_instrument.len(), 1);
-    assert_eq!(result.by_instrument[0].instrument_id, "inst-pnl");
-    assert_eq!(result.by_instrument[0].symbol, "AAPL");
-    assert_eq!(result.by_instrument[0].realized_pnl_cents, 9800);
+    assert_eq!(result.by_account[0].native_currency, "CNY");
+    assert_eq!(result.by_account[0].realized_pnl_cents, Some(9800));
+    assert_eq!(result.by_account[0].dividend_cents, Some(0));
+    assert_eq!(result.by_account[0].realized_gain_cents, Some(9800));
+}
+
+#[test]
+fn realized_pnl_summary_converts_each_leg_at_its_event_week() {
+    // 逐腿按事件周汇率折算（#1845 核心口径）：卖出匹配按卖出周、现金分红腿
+    // 按到账周——同一行内三个事件周各折各的汇率，不共用单一汇率。
+    let conn = open();
+    seed_account(&conn, "acc-week", "美股账户", "investment", "USD", 0);
+    seed_instrument(&conn, "inst-week", "AAPL", "Apple", "USD", "unknown");
+    // 三个事件周各一个汇率：卖出周 01-19 → 7.0、分红到账周 01-26 → 6.0、
+    // 第二笔卖出周 02-09 → 7.5（买入周不取数——已实现腿只读卖出周）。
+    seed_fx_history_weeks(&conn, "USD", "CNY", 7.0, &["2026-01-10", "2026-01-20"]);
+    seed_fx_history_weeks(&conn, "USD", "CNY", 6.0, &["2026-02-01"]);
+    seed_fx_history_weeks(&conn, "USD", "CNY", 7.5, &["2026-02-10"]);
+
+    create_transaction_internal(
+        &conn,
+        make_buy_input("acc-week", "inst-week", 10.0, 1_000_000, 0),
+    )
+    .unwrap();
+    // 卖 5@120 元 fee 2 元 → +9800 分，落在 01-20（周 01-19，汇率 7.0）
+    create_transaction_internal(
+        &conn,
+        make_sell_input("acc-week", "inst-week", 5.0, 1_200_000, 200),
+    )
+    .unwrap();
+    // 分红 1000 元（100000 分），落在 02-01（周 01-26，汇率 6.0）
+    create_transaction_internal(
+        &conn,
+        make_dividend_input_on("acc-week", "inst-week", 100_000, "USD", "2026-02-01"),
+    )
+    .unwrap();
+    // 卖 5@130 元 → +15000 分，落在 02-10（周 02-09，汇率 7.5）
+    create_transaction_internal(&conn, {
+        let mut input = make_sell_input("acc-week", "inst-week", 5.0, 1_300_000, 0);
+        input.date = "2026-02-10".into();
+        input
+    })
+    .unwrap();
+
+    let result = query_realized_pnl_summary(&conn, &empty_filter()).unwrap();
+
+    assert_eq!(result.by_year.len(), 1);
+    // 已实现腿 = 9800×7.0 + 15000×7.5 = 68600 + 112500 = 181100；
+    // 分红腿 = 100000×6.0 = 600000（按到账周，不按卖出周）。
+    assert_row(&result.by_year[0], "2026", 181_100, 600_000, 781_100, "CNY");
+}
+
+#[test]
+fn realized_pnl_summary_nearest_week_fallback_wired_into_projection() {
+    // 就近周兜底接线（#1845 验收：删除读投影中的就近周接线即红）：卖出周整周
+    // 无点、前一周（窗口内最近）有点 → 按就近周折算；若投影只做精确周命中
+    // （组合走势同款），该行会变「无法计算」，断言立即变红。
+    let conn = open();
+    seed_account(&conn, "acc-near", "美股账户", "investment", "USD", 0);
+    seed_instrument(&conn, "inst-near", "AAPL", "Apple", "USD", "unknown");
+    // 写入按交易日取数（写路径纪律），先种卖出周让交易落库，再删该周点——
+    // 读侧看到的卖出周（01-19）整周无点，最近可用点是前一周 01-12（7.0）。
+    seed_fx_history_weeks(
+        &conn,
+        "USD",
+        "CNY",
+        7.0,
+        &["2026-01-10", "2026-01-13", "2026-01-20"],
+    );
+
+    create_transaction_internal(
+        &conn,
+        make_buy_input("acc-near", "inst-near", 10.0, 1_000_000, 0),
+    )
+    .unwrap();
+    create_transaction_internal(
+        &conn,
+        make_sell_input("acc-near", "inst-near", 5.0, 1_200_000, 200),
+    )
+    .unwrap();
+
+    conn.execute(
+        "DELETE FROM fx_rate_history WHERE trade_date='2026-01-19'",
+        [],
+    )
+    .unwrap();
+
+    let result = query_realized_pnl_summary(&conn, &empty_filter()).unwrap();
+
+    assert_eq!(result.by_year.len(), 1);
+    // 9800 分 × 就近周（01-12）汇率 7.0 = 68600，而不是「无法计算」。
+    assert_row(&result.by_year[0], "2026", 68_600, 0, 68_600, "CNY");
+}
+
+#[test]
+fn realized_pnl_summary_missing_leg_beyond_window_marks_row_not_computable() {
+    // 缺料语义（兜底三级终点）：兜底窗口（±8 周）内无任何点 → 该腿缺料，
+    // 所在行显式「无法计算」——不以零计入、不给半截数字。
+    let conn = open();
+    seed_account(&conn, "acc-gap", "美股账户", "investment", "USD", 0);
+    seed_instrument(&conn, "inst-gap", "AAPL", "Apple", "USD", "unknown");
+    // 写入需卖出周汇率，先种后删：删后唯一历史点在卖出周（2026-01-19）前
+    // 30 余周——窗口外，就近兜底救不了；01-05 距卖出周仅 2 周、必须一并删去。
+    seed_fx_history_weeks(
+        &conn,
+        "USD",
+        "CNY",
+        7.0,
+        &["2025-06-10", "2026-01-10", "2026-01-20"],
+    );
+
+    create_transaction_internal(
+        &conn,
+        make_buy_input("acc-gap", "inst-gap", 10.0, 1_000_000, 0),
+    )
+    .unwrap();
+    create_transaction_internal(
+        &conn,
+        make_sell_input("acc-gap", "inst-gap", 5.0, 1_200_000, 200),
+    )
+    .unwrap();
+
+    conn.execute(
+        "DELETE FROM fx_rate_history WHERE trade_date IN ('2026-01-05','2026-01-19')",
+        [],
+    )
+    .unwrap();
+
+    let result = query_realized_pnl_summary(&conn, &empty_filter()).unwrap();
+
+    assert_eq!(
+        result.by_year.len(),
+        1,
+        "缺料行仍在行集内，显式标注而非消失"
+    );
+    let row = &result.by_year[0];
+    assert_eq!(row.year, "2026");
+    assert_eq!(
+        row.realized_gain_cents, None,
+        "主值必须为 None（无法计算），绝不以零计入"
+    );
+    assert_eq!(row.realized_pnl_cents, None, "缺料腿为 None，不给半截数字");
+    assert_eq!(row.dividend_cents, None, "任一腿缺料即整行无法计算");
+    assert_eq!(result.by_account[0].realized_gain_cents, None);
+}
+
+#[test]
+fn realized_pnl_summary_pair_without_any_history_raises_rate_missing() {
+    // 币对零历史（正反向均无行）沿用 fx.rate-missing 码化错误指路同步——与
+    // 「窗口内仍无点」的缺料行（None）分属两条路径。
+    let conn = open();
+    seed_account(&conn, "acc-zero", "美股账户", "investment", "USD", 0);
+    seed_instrument(&conn, "inst-zero", "AAPL", "Apple", "USD", "unknown");
+    // 写入需要卖出周汇率（写路径纪律），先种后删：模拟「历史被清空的币对」。
+    seed_fx_history_weeks(&conn, "USD", "CNY", 7.0, &["2026-01-10", "2026-01-20"]);
+
+    create_transaction_internal(
+        &conn,
+        make_buy_input("acc-zero", "inst-zero", 10.0, 1_000_000, 0),
+    )
+    .unwrap();
+    create_transaction_internal(
+        &conn,
+        make_sell_input("acc-zero", "inst-zero", 5.0, 1_200_000, 200),
+    )
+    .unwrap();
+
+    conn.execute("DELETE FROM fx_rate_history", []).unwrap();
+
+    let err = query_realized_pnl_summary(&conn, &empty_filter()).unwrap_err();
+    assert!(
+        err.is_code("fx.rate-missing"),
+        "币对零历史应报 fx.rate-missing，实际 {err:?}"
+    );
+}
+
+#[test]
+fn realized_pnl_summary_same_currency_identity_without_any_fx() {
+    // 同币种恒等：CNY 账户在 CNY 本位币下不需要任何汇率历史——库内零汇率行
+    // 也照常出数，数值与折算前逐位相同（单币种用户零变化）。
+    let conn = open();
+    seed_account(&conn, "acc-idn", "A 股账户", "investment", "CNY", 0);
+    seed_instrument(&conn, "inst-idn", "600000", "浦发银行", "CNY", "sh");
+
+    create_transaction_internal(
+        &conn,
+        make_buy_input("acc-idn", "inst-idn", 10.0, 1_000_000, 0),
+    )
+    .unwrap();
+    create_transaction_internal(
+        &conn,
+        make_sell_input("acc-idn", "inst-idn", 5.0, 1_200_000, 200),
+    )
+    .unwrap();
+
+    let result = query_realized_pnl_summary(&conn, &empty_filter()).unwrap();
+
+    assert_eq!(result.by_year.len(), 1);
+    assert_row(&result.by_year[0], "2026", 9800, 0, 9800, "CNY");
+}
+
+#[test]
+fn realized_pnl_summary_row_per_year_not_per_currency() {
+    // 币种维退役（#1845）：同一年度两币种折算后合成一行（旧按币种分组口径下
+    // 是两行）；账户维保留，各自成行。
+    let conn = open();
+    seed_account(&conn, "acc-usd", "美股账户", "investment", "USD", 0);
+    seed_account(&conn, "acc-cny", "A 股账户", "investment", "CNY", 0);
+    seed_fx_history_weeks(
+        &conn,
+        "USD",
+        "CNY",
+        7.0,
+        &["2026-01-10", "2026-01-20", "2026-02-01", "2026-02-10"],
+    );
+    seed_instrument(&conn, "inst-usd", "USDX", "USDX Corp", "USD", "unknown");
+    seed_instrument(&conn, "inst-cny", "CNYX", "CNYX Corp", "CNY", "unknown");
+
+    // USD 账户：+9800 分 → ×7.0 = 68600
+    create_transaction_internal(
+        &conn,
+        make_buy_input("acc-usd", "inst-usd", 10.0, 1_000_000, 0),
+    )
+    .unwrap();
+    create_transaction_internal(
+        &conn,
+        make_sell_input("acc-usd", "inst-usd", 5.0, 1_200_000, 200),
+    )
+    .unwrap();
+    // CNY 账户：−800 分（同币种恒等 ×1）
+    create_transaction_internal(
+        &conn,
+        make_buy_input("acc-cny", "inst-cny", 5.0, 100_000, 0),
+    )
+    .unwrap();
+    create_transaction_internal(
+        &conn,
+        make_sell_input("acc-cny", "inst-cny", 2.0, 60_000, 0),
+    )
+    .unwrap();
+
+    let result = query_realized_pnl_summary(&conn, &empty_filter()).unwrap();
+
+    // 按年一行：68600 + (−800) = 67800，不再按币种拆两行
+    assert_eq!(result.by_year.len(), 1);
+    assert_row(&result.by_year[0], "2026", 67_800, 0, 67_800, "CNY");
+    // 按账户两行（账户维保留），账户名序：A 股账户在前
+    assert_eq!(result.by_account.len(), 2);
+    assert_eq!(result.by_account[0].account_id, "acc-cny");
+    assert_eq!(result.by_account[0].realized_gain_cents, Some(-800));
+    assert_eq!(result.by_account[1].account_id, "acc-usd");
+    assert_eq!(result.by_account[1].realized_gain_cents, Some(68_600));
 }
 
 #[test]
 fn realized_pnl_summary_dividend_only_year_appears() {
-    // 只有分红、没有卖出的年份同样成行（ADR-0129 决策 1）：真实账本「老婆的且慢」
-    // 2019 年即此形态（已实现 0.00、现金分红 8,365.36），原口径下这一行整行不存在。
+    // 只有分红、没有卖出的年份同样成行（ADR-0129 决策 1）：已实现腿为 0（无
+    // 匹配行是「零」，不是「缺料」）、合计 = 分红腿。
     let conn = open();
     seed_account(&conn, "acc-dv", "且慢", "investment", "CNY", 0);
     seed_instrument(&conn, "inst-dv", "502010", "证券基金", "CNY", "unknown");
@@ -100,26 +338,17 @@ fn realized_pnl_summary_dividend_only_year_appears() {
     let result = query_realized_pnl_summary(&conn, &empty_filter()).unwrap();
 
     assert_eq!(result.by_year.len(), 1);
-    assert_eq!(result.by_year[0].year, "2019");
-    assert_eq!(result.by_year[0].currency_code, "CNY");
-    assert_eq!(result.by_year[0].realized_pnl_cents, 0);
-    assert_eq!(result.by_year[0].dividend_cents, 836_536);
-    assert_eq!(result.by_year[0].realized_gain_cents, 836_536);
-    // 按账户表同理：只有分红的账户整行出现（原口径下同样缺席）
+    assert_row(&result.by_year[0], "2019", 0, 836_536, 836_536, "CNY");
+    // 按账户表同理：只有分红的账户整行出现
     assert_eq!(result.by_account.len(), 1);
     assert_eq!(result.by_account[0].account_id, "acc-dv");
-    assert_eq!(result.by_account[0].realized_pnl_cents, 0);
-    assert_eq!(result.by_account[0].dividend_cents, 836_536);
-    assert_eq!(result.by_account[0].realized_gain_cents, 836_536);
-    // 按币种总数维持已实现盈亏专义（ADR-0129 决策 4）：无卖出即无行，不被分红撑出空组
-    assert!(result.total.is_empty());
-    assert!(result.by_instrument.is_empty());
+    assert_eq!(result.by_account[0].realized_gain_cents, Some(836_536));
 }
 
 #[test]
 fn realized_pnl_summary_merges_both_legs_in_same_year() {
-    // 同年既有卖出又有分红：一行两腿、合计 = 两腿之和（ADR-0129 决策 1），
-    // 而已实现腿口径逐位不变（FIFO 匹配、不含分红——ADR-0109 决策 2）。
+    // 同年既有卖出又有分红：一行两腿、主值 = 两腿之和（ADR-0129 决策 1），
+    // 已实现腿口径逐位不变（FIFO 匹配、不含分红——ADR-0109 决策 2）。
     let conn = open();
     seed_account(&conn, "acc-both", "投资户", "investment", "CNY", 0);
     seed_instrument(&conn, "inst-both", "501000", "基金A", "CNY", "unknown");
@@ -157,20 +386,65 @@ fn realized_pnl_summary_merges_both_legs_in_same_year() {
     let result = query_realized_pnl_summary(&conn, &empty_filter()).unwrap();
 
     assert_eq!(result.by_year.len(), 1);
-    assert_eq!(result.by_year[0].year, "2021");
-    // 卖出 5 份，每份 100.00 → 120.00 元（价格刻度万分之一元）：已实现 100.00 元整
-    assert_eq!(result.by_year[0].realized_pnl_cents, 10_000);
-    assert_eq!(result.by_year[0].dividend_cents, 126_318);
-    assert_eq!(result.by_year[0].realized_gain_cents, 136_318);
-    // 同一年同一币种只成一行（两腿在二次聚合里合并，不是两行）
+    assert_row(&result.by_year[0], "2021", 10_000, 126_318, 136_318, "CNY");
     assert_eq!(result.by_account.len(), 1);
-    assert_eq!(result.by_account[0].realized_gain_cents, 136_318);
+    assert_eq!(result.by_account[0].realized_gain_cents, Some(136_318));
+}
+
+#[test]
+fn realized_pnl_summary_orders_years_ascending_and_accounts_by_name() {
+    // 排序沿用：按年后端升序返回（前端倒转展示），按账户按账户名序。
+    let conn = open();
+    seed_account(&conn, "acc-b", "账户B", "investment", "CNY", 0);
+    seed_account(&conn, "acc-a", "账户A", "investment", "CNY", 0);
+    seed_instrument(&conn, "inst-o", "600010", "基金O", "CNY", "sh");
+
+    create_transaction_internal(
+        &conn,
+        make_trade_input(
+            TransactionKind::Buy,
+            "acc-b",
+            "inst-o",
+            10.0,
+            1_000_000,
+            "2020-05-10",
+        ),
+    )
+    .unwrap();
+    create_transaction_internal(
+        &conn,
+        make_trade_input(
+            TransactionKind::Sell,
+            "acc-b",
+            "inst-o",
+            5.0,
+            1_200_000,
+            "2021-06-20",
+        ),
+    )
+    .unwrap();
+    create_transaction_internal(
+        &conn,
+        make_dividend_input_on("acc-a", "inst-o", 50_000, "CNY", "2020-08-01"),
+    )
+    .unwrap();
+
+    let result = query_realized_pnl_summary(&conn, &empty_filter()).unwrap();
+
+    let years: Vec<&str> = result.by_year.iter().map(|r| r.year.as_str()).collect();
+    assert_eq!(years, ["2020", "2021"], "按年升序（前端倒转为最新在前）");
+    let names: Vec<&str> = result
+        .by_account
+        .iter()
+        .map(|r| r.account_name.as_str())
+        .collect();
+    assert_eq!(names, ["账户A", "账户B"], "按账户名序");
 }
 
 #[test]
 fn realized_pnl_summary_dividend_leg_follows_filters() {
-    // 分红腿与已实现腿同源同过滤（ADR-0129 决策 3）：账户筛选与标的筛选对两腿各用一次，
-    // 两张表的行集同样随筛选收窄。
+    // 分红腿与已实现腿同源同过滤（ADR-0129 决策 3）：账户筛选与标的筛选对两腿
+    // 各用一次，两张表的行集同样随筛选收窄。
     let conn = open();
     seed_account(&conn, "acc-a", "账户A", "investment", "CNY", 0);
     seed_account(&conn, "acc-b", "账户B", "investment", "CNY", 0);
@@ -198,9 +472,9 @@ fn realized_pnl_summary_dividend_leg_follows_filters() {
     .unwrap();
     assert_eq!(by_account.by_account.len(), 1);
     assert_eq!(by_account.by_account[0].account_name, "账户A");
-    assert_eq!(by_account.by_account[0].dividend_cents, 100_000);
+    assert_eq!(by_account.by_account[0].dividend_cents, Some(100_000));
     assert_eq!(by_account.by_year.len(), 1);
-    assert_eq!(by_account.by_year[0].dividend_cents, 100_000);
+    assert_eq!(by_account.by_year[0].dividend_cents, Some(100_000));
 
     let by_instrument = query_realized_pnl_summary(
         &conn,
@@ -211,7 +485,7 @@ fn realized_pnl_summary_dividend_leg_follows_filters() {
     )
     .unwrap();
     assert_eq!(by_instrument.by_year.len(), 1);
-    assert_eq!(by_instrument.by_year[0].dividend_cents, 200_000);
+    assert_eq!(by_instrument.by_year[0].dividend_cents, Some(200_000));
     assert_eq!(by_instrument.by_account.len(), 1);
     assert_eq!(by_instrument.by_account[0].account_name, "账户B");
 
@@ -230,8 +504,8 @@ fn realized_pnl_summary_dividend_leg_follows_filters() {
 
 #[test]
 fn realized_pnl_summary_dividend_leg_follows_soft_delete_and_hidden() {
-    // 软删口径与累计收益三腿同源（ADR-0129 决策 3）：软删账户与软删分红流水排除；
-    // 隐藏账户不是软删除（issue #217 定案 Q2），照常计入。
+    // 软删口径与累计收益三腿同源（ADR-0129 决策 3）：软删账户与软删分红流水
+    // 排除；隐藏账户不是软删除（issue #217 定案 Q2），照常计入。
     let conn = open();
     seed_account(&conn, "acc-live", "在用户", "investment", "CNY", 0);
     seed_account(&conn, "acc-del", "已删户", "investment", "CNY", 0);
@@ -267,7 +541,7 @@ fn realized_pnl_summary_dividend_leg_follows_soft_delete_and_hidden() {
         result
             .by_account
             .iter()
-            .map(|a| a.dividend_cents)
+            .map(|a| a.dividend_cents.unwrap_or(0))
             .sum::<i64>(),
         400_000
     );
@@ -280,7 +554,7 @@ fn realized_pnl_summary_dividend_leg_follows_soft_delete_and_hidden() {
     .unwrap();
     let after = query_realized_pnl_summary(&conn, &empty_filter()).unwrap();
     assert_eq!(after.by_account.len(), 1);
-    assert_eq!(after.by_account[0].dividend_cents, 100_000);
+    assert_eq!(after.by_account[0].dividend_cents, Some(100_000));
 }
 
 #[test]
@@ -311,19 +585,17 @@ fn realized_pnl_summary_counts_dividend_reinvestment_leg() {
 
     let result = query_realized_pnl_summary(&conn, &empty_filter()).unwrap();
     assert_eq!(result.by_year.len(), 1);
-    assert_eq!(result.by_year[0].realized_pnl_cents, 0);
-    assert_eq!(result.by_year[0].dividend_cents, 123_180);
-    assert_eq!(result.by_year[0].realized_gain_cents, 123_180);
+    assert_row(&result.by_year[0], "2021", 0, 123_180, 123_180, "CNY");
 }
 
 #[test]
-fn realized_pnl_summary_groups_dividend_by_currency() {
-    // 分红腿按交易行币种分组、不与另一币种相加（ADR-0129 决策 3 沿用 ADR-0107 决策 6）：
-    // 同一年、两币种 → 两行，各自独立成立。
+fn realized_pnl_summary_converted_dividends_of_two_currencies_merge_into_year_row() {
+    // 多币种分红同样折算合并（币种维退役，#1845）：USD 账户与 CNY 账户各收
+    // 一笔分红，按年一行 = 两腿折本位币之和；账户维仍两行。
     let conn = open();
     seed_account(&conn, "acc-cny", "人民币户", "investment", "CNY", 0);
     seed_account(&conn, "acc-usd", "美元户", "investment", "USD", 0);
-    seed_fx_history_weeks(&conn, "USD", "CNY", 1.0, &["2021-03-01"]);
+    seed_fx_history_weeks(&conn, "USD", "CNY", 7.0, &["2021-03-01"]);
     seed_instrument(&conn, "inst-cny", "501000", "基金A", "CNY", "unknown");
     seed_instrument(&conn, "inst-usd", "AAPL", "Apple", "USD", "unknown");
 
@@ -339,19 +611,15 @@ fn realized_pnl_summary_groups_dividend_by_currency() {
     .unwrap();
 
     let result = query_realized_pnl_summary(&conn, &empty_filter()).unwrap();
-    assert_eq!(result.by_year.len(), 2);
-    let cny = result
-        .by_year
-        .iter()
-        .find(|r| r.currency_code == "CNY")
-        .unwrap();
-    let usd = result
-        .by_year
-        .iter()
-        .find(|r| r.currency_code == "USD")
-        .unwrap();
-    assert_eq!(cny.dividend_cents, 100_000);
-    assert_eq!(usd.dividend_cents, 250_000);
+    assert_eq!(result.by_year.len(), 1, "同一年不再按币种拆两行");
+    assert_row(
+        &result.by_year[0],
+        "2021",
+        0,
+        100_000 + 250_000 * 7,
+        100_000 + 250_000 * 7,
+        "CNY",
+    );
     assert_eq!(result.by_account.len(), 2);
 }
 
@@ -380,12 +648,11 @@ fn realized_pnl_summary_aggregates_multiple_accounts() {
 
     let result = query_realized_pnl_summary(&conn, &empty_filter()).unwrap();
 
-    assert_eq!(total_for(&result, "USD"), 3000);
     assert_eq!(result.by_account.len(), 2);
     assert_eq!(result.by_account[0].account_id, "acc-a");
-    assert_eq!(result.by_account[0].realized_pnl_cents, 2000);
+    assert_eq!(result.by_account[0].realized_pnl_cents, Some(2000));
     assert_eq!(result.by_account[1].account_id, "acc-b");
-    assert_eq!(result.by_account[1].realized_pnl_cents, 1000);
+    assert_eq!(result.by_account[1].realized_pnl_cents, Some(1000));
 }
 
 #[test]
@@ -417,14 +684,14 @@ fn realized_pnl_summary_filter_by_account() {
     };
     let result = query_realized_pnl_summary(&conn, &filter).unwrap();
 
-    assert_eq!(total_for(&result, "USD"), 2000);
     assert_eq!(result.by_account.len(), 1);
+    assert_eq!(result.by_account[0].realized_gain_cents, Some(2000));
 }
 
 #[test]
 fn realized_pnl_summary_excludes_soft_deleted_account() {
-    // 软删账户口径（issue #217 定案）：删除账户 = 从全部投资视角（含已实现盈亏）
-    // 消失，与 Holding / 时点持仓 / 走势对齐；恢复（标志翻回）自动回归，口径可逆。
+    // 软删账户口径（issue #217 定案）：删除账户 = 从全部投资视角（含已实现
+    // 盈亏）消失，与 Holding / 时点持仓 / 走势对齐；恢复（标志翻回）自动回归。
     let conn = open();
     seed_account(&conn, "acc-live", "在用户", "investment", "USD", 0);
     seed_account(&conn, "acc-del", "已删户", "investment", "USD", 0);
@@ -462,16 +729,16 @@ fn realized_pnl_summary_excludes_soft_deleted_account() {
         .unwrap();
 
     let result = query_realized_pnl_summary(&conn, &empty_filter()).unwrap();
-    assert_eq!(total_for(&result, "USD"), 2000);
     assert_eq!(result.by_account.len(), 1);
     assert_eq!(result.by_account[0].account_id, "acc-live");
     assert_eq!(result.by_account[0].account_name, "在用户");
+    assert_eq!(result.by_account[0].realized_gain_cents, Some(2000));
 }
 
 #[test]
 fn realized_pnl_summary_excludes_soft_deleted_sell() {
-    // 软删交易口径：sell 删除不清理匹配行（ADR-0013 锁定既有行为），排除发生在
-    // 读口径——软删 sell 的已实现盈亏不再计入汇总，与软删账户同原则。
+    // 软删交易口径：sell 删除回补持仓并清空匹配行（ADR-0097），读口径排除
+    // 仍保留以覆盖旧版本遗留的幽灵匹配（issue #940）。
     let conn = open();
     seed_account(&conn, "acc-pnl", "美股账户", "investment", "USD", 0);
     seed_fx_history_weeks(
@@ -496,7 +763,7 @@ fn realized_pnl_summary_excludes_soft_deleted_sell() {
     .id;
 
     let baseline = query_realized_pnl_summary(&conn, &empty_filter()).unwrap();
-    assert_eq!(total_for(&baseline, "USD"), 2000);
+    assert_eq!(baseline.by_year[0].realized_gain_cents, Some(2000));
 
     conn.execute(
         "UPDATE transactions SET is_deleted=1 WHERE id=?1",
@@ -505,10 +772,8 @@ fn realized_pnl_summary_excludes_soft_deleted_sell() {
     .unwrap();
 
     let result = query_realized_pnl_summary(&conn, &empty_filter()).unwrap();
-    assert!(result.total.is_empty());
     assert!(result.by_year.is_empty());
     assert!(result.by_account.is_empty());
-    assert!(result.by_instrument.is_empty());
 }
 
 #[test]
@@ -540,59 +805,8 @@ fn realized_pnl_summary_filter_by_instrument() {
     };
     let result = query_realized_pnl_summary(&conn, &filter).unwrap();
 
-    assert_eq!(total_for(&result, "USD"), 2000);
-    assert_eq!(result.by_instrument.len(), 1);
-    assert_eq!(result.by_instrument[0].instrument_id, "inst-a");
-}
-
-#[test]
-fn realized_pnl_summary_groups_by_currency_without_mixing() {
-    // 按币种分组（ADR-0107 决策 6）：两种币种的匹配行独立成组，不跨币种相加——
-    // 原「各币种裸数字直接 SUM」的混算口径在多币种账户下合计是错的。
-    let conn = open();
-    seed_account(&conn, "acc-usd", "美股账户", "investment", "USD", 0);
-    seed_account(&conn, "acc-cny", "A 股账户", "investment", "CNY", 0);
-    seed_fx_history_weeks(
-        &conn,
-        "USD",
-        "CNY",
-        1.0,
-        &["2026-01-10", "2026-01-20", "2026-02-01", "2026-02-10"],
-    );
-    seed_instrument(&conn, "inst-usd", "USDX", "USDX Corp", "USD", "unknown");
-    seed_instrument(&conn, "inst-cny", "CNYX", "CNYX Corp", "CNY", "unknown");
-
-    // USD 账户：买 10@100 元、卖 5@120 元 fee 2 元 → +98 元（9800 分）
-    create_transaction_internal(
-        &conn,
-        make_buy_input("acc-usd", "inst-usd", 10.0, 1_000_000, 0),
-    )
-    .unwrap();
-    create_transaction_internal(
-        &conn,
-        make_sell_input("acc-usd", "inst-usd", 5.0, 1_200_000, 200),
-    )
-    .unwrap();
-    // CNY 账户：买 5@10 元、卖 2@6 元 → −8 元（−800 分，同 2026 年）
-    create_transaction_internal(
-        &conn,
-        make_buy_input("acc-cny", "inst-cny", 5.0, 100_000, 0),
-    )
-    .unwrap();
-    create_transaction_internal(
-        &conn,
-        make_sell_input("acc-cny", "inst-cny", 2.0, 60_000, 0),
-    )
-    .unwrap();
-
-    let result = query_realized_pnl_summary(&conn, &empty_filter()).unwrap();
-
-    // 两个币种各成一组：USD +9800、CNY −800，不出现混算后的 9000
-    assert_eq!(result.total.len(), 2);
-    assert_eq!(total_for(&result, "USD"), 9800);
-    assert_eq!(total_for(&result, "CNY"), -800);
-    // 同一年度、不同账户/标的，各按币种拆成两行
-    assert_eq!(result.by_year.len(), 2);
-    assert_eq!(result.by_account.len(), 2);
-    assert_eq!(result.by_instrument.len(), 2);
+    assert_eq!(result.by_year.len(), 1);
+    assert_eq!(result.by_year[0].realized_gain_cents, Some(2000));
+    assert_eq!(result.by_account.len(), 1);
+    assert_eq!(result.by_account[0].realized_gain_cents, Some(2000));
 }

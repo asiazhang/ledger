@@ -33,13 +33,7 @@ const EMPTY_INVESTMENT_DEFAULTS = {
   // 累计收益·折本位币单值（issue #1797）：空账本为 0 单值
   cumulative_pnl_native_total: { total_cents: 0, native_currency: "CNY" },
   portfolio_value_trend: { currency_code: "CNY", points: [] },
-  realized_pnl_summary: {
-    total_realized_pnl_cents: 0,
-    by_year: [],
-    by_account: [],
-    by_instrument: [],
-    details: [],
-  },
+  realized_pnl_summary: { by_year: [], by_account: [] },
   // 资金加权收益率（issue #1195）：持仓/盈亏两页签共用一次拉取
   money_weighted_return_summary: { by_instrument: [], by_account: [], total: [] },
   // 投资明细列表（ADR-0135 / issue #1778）：明细页签唯一取数接口（英文冒烟不打开
