@@ -40,6 +40,11 @@
 //!   （投资账户现金 / 持仓市值），合计 = 两腿之和（issue #1536）；
 //! - [`fund`]：场外基金接入——6 位代码校验、行情接入落库半边（`adopt_fund_quote`）、
 //!   AI 降级建行、按代码即拉注入接缝（`add_fund_by_code_with`）；
+//! - [`fx_nearest`]：事件周就近汇率查找（±8 周窗口兜底，issue #1844，父 spec
+//!   #1843）——按事件日期在 FxRateHistory 周键序列取汇率的读侧纯能力：事件周
+//!   精确命中、未命中 ±8 周窗口内取最近可用周（等距取较早周）、周内正反向
+//!   兜底与同币种恒等沿用既有历史折算纪律、窗口内无点返回缺料信号；
+//!   就近窗口只服务新消费面，不回灌组合走势 / 资金加权收益率 / 写路径折算；
 //! - [`guards`]：共享守卫（SharedGuard）——本地装配与同步重放共用的纯裁决函数，集中登记两端一致的错误码与文案；
 //! - [`holdings`]：时点持仓（AsOfHolding）推算单点；
 //! - [`lots`]：持仓批次（security_lots）单点——取批次、逐批次 FIFO 分摊与
@@ -126,6 +131,7 @@ pub mod constant_price;
 pub mod crud;
 pub mod financial_freedom;
 pub mod fund;
+pub(crate) mod fx_nearest;
 pub(crate) mod guards;
 pub mod holdings;
 pub mod ledger_tab;

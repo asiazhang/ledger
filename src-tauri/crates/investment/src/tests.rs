@@ -15,6 +15,8 @@
 //! - [`convert`]：基金转换（convert）写入——转出腿 FIFO 消耗与结转成本、转入批次
 //!   建仓与闭合、零已实现盈亏、余额不变、两腿时点持仓、守卫与回退/删除（ADR-0099）
 //! - [`fund_trade`]：场外基金申赎记账——金额权威、单价反算、成本锚定与盈亏闭合不变式（issue #302 / ADR-0038）
+//! - [`fx_nearest`]：事件周就近汇率查找（±8 周窗口兜底，issue #1844）——窗口边界：
+//!   精确周命中、向前 / 向后就近、第 8 周边缘、窗口外缺料、正反向兜底、同币种恒等
 //! - [`pnl`]：已实现盈亏汇总
 //! - [`read_snapshot`]：多语句读闭包的快照一致性探针——总量=分量和与分子分母
 //!   同时点（issue #1699）
@@ -63,6 +65,7 @@ mod dividend;
 mod first_position_plan;
 mod fund_add;
 mod fund_trade;
+mod fx_nearest;
 mod holdings_as_of;
 mod holdings_native;
 mod holdings_summary;
