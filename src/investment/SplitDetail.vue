@@ -4,6 +4,7 @@ import { NDescriptions, NDescriptionsItem } from "naive-ui";
 import { t } from "@ledger/i18n";
 import { useReferenceStore } from "@/stores/reference";
 import { formatQuantity } from "@ledger/money";
+import { instrumentDisplayLabel } from "@/investment/instrument-display-label";
 import type { TransactionModalRow, TransactionSplit } from "@ledger/types";
 
 /**
@@ -29,13 +30,6 @@ const accountName = computed(
   () => reference.accountMap.get(props.transaction.account_id)?.name ?? "—",
 );
 
-/** 标的展示：代码 + 名称（名称缺失时仅代码）。 */
-const instrumentText = computed(() =>
-  props.split.instrument_name
-    ? `${props.split.symbol} ${props.split.instrument_name}`
-    : props.split.symbol,
-);
-
 /** 带符号份额变动：正向显式 `+`，负向沿用 `formatQuantity` 的 `-`；隐藏量级不隐藏方向。 */
 const signedQuantityText = computed(() => {
   const magnitude = formatQuantity(Math.abs(props.split.quantity));
@@ -46,7 +40,7 @@ const signedQuantityText = computed(() => {
 <template>
   <NDescriptions :column="1" size="small" label-placement="left" bordered>
     <NDescriptionsItem :label="t('transactions.kind.split')">
-      {{ instrumentText }}
+      {{ instrumentDisplayLabel(split.symbol, split.instrument_name) }}
     </NDescriptionsItem>
     <NDescriptionsItem :label="t('investments.form.splitShares')">
       {{ signedQuantityText }}

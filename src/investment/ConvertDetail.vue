@@ -4,6 +4,7 @@ import { NDescriptions, NDescriptionsItem } from "naive-ui";
 import { t } from "@ledger/i18n";
 import { useReferenceStore } from "@/stores/reference";
 import { formatAmount, formatQuantity } from "@ledger/money";
+import { instrumentDisplayLabel } from "@/investment/instrument-display-label";
 import type { TransactionModalRow, TransactionConvert } from "@ledger/types";
 
 /**
@@ -35,11 +36,6 @@ function amountText(cents: number): string {
 function quantityText(quantity: number): string {
   return formatQuantity(quantity);
 }
-
-/** 标的展示：代码 + 名称（名称缺失时仅代码）。 */
-function instrumentText(symbol: string, name: string | null): string {
-  return name ? `${symbol} ${name}` : symbol;
-}
 </script>
 
 <template>
@@ -52,7 +48,7 @@ function instrumentText(symbol: string, name: string | null): string {
     }}</NDescriptionsItem>
     <NDescriptionsItem :label="t('investments.form.account')">{{ accountName }}</NDescriptionsItem>
     <NDescriptionsItem :label="t('investments.form.convertOutInstrument')">
-      {{ instrumentText(convert.out_symbol, convert.out_instrument_name) }}
+      {{ instrumentDisplayLabel(convert.out_symbol, convert.out_instrument_name) }}
     </NDescriptionsItem>
     <NDescriptionsItem :label="t('investments.form.convertOutShares')">
       {{ quantityText(convert.out_quantity) }}
@@ -61,7 +57,7 @@ function instrumentText(symbol: string, name: string | null): string {
       {{ amountText(convert.out_amount_cents) }}
     </NDescriptionsItem>
     <NDescriptionsItem :label="t('investments.form.convertInInstrument')">
-      {{ instrumentText(convert.in_symbol, convert.in_instrument_name) }}
+      {{ instrumentDisplayLabel(convert.in_symbol, convert.in_instrument_name) }}
     </NDescriptionsItem>
     <NDescriptionsItem :label="t('investments.form.convertInShares')">
       {{ quantityText(convert.in_quantity) }}
