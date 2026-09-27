@@ -18,8 +18,8 @@ export interface InstrumentRef {
 /**
  * 「代码 · 名称」label 拼法单点（issue #1798）：标的下拉候选与钉住项共用同一拼法，
  * 无名称（含空串）退化裸代码。同族异形不归本单点：持仓搜索判定文本
- *（holdingsSearchLabel，判定口径）与来源列展示 label（instrumentDisplayLabel，
- * 空格形、与后端 display_label 同口径）各有自己的单点。
+ *（holdingsSearchLabel，判定口径）与标的展示名（instrumentDisplayLabel，
+ * 空格形、与后端 display_label 同口径，明细来源列与走势页签共用）各有自己的单点。
  */
 export function instrumentOptionLabel(symbol: string, name: string | null): string {
   return name ? `${symbol} · ${name}` : symbol;

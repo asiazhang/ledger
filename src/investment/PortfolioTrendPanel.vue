@@ -11,6 +11,7 @@ import { useReferenceStore } from "@/stores/reference";
 import ConceptLabel from "@/investment/ConceptLabel.vue";
 import { formatAmount, formatPrice, amountPrivacyEnabled } from "@ledger/money";
 import { t } from "@ledger/i18n";
+import { instrumentDisplayLabel } from "@/investment/instrument-display-label";
 import { TREND_RANGE_PRESETS, usePortfolioTrend } from "@/investment/usePortfolioTrend";
 
 const reference = useReferenceStore();
@@ -21,7 +22,7 @@ const trend = usePortfolioTrend();
 
 const instrumentOptions = computed(() =>
   trend.instruments.value.map((i) => ({
-    label: `${i.symbol} ${i.name ?? ""}`.trim(),
+    label: instrumentDisplayLabel(i.symbol, i.name),
     value: i.id,
   })),
 );
@@ -92,7 +93,7 @@ const datasetLabel = computed(() => {
   if (trend.mode.value === "portfolio") return t("investments.trend.modePortfolio");
   const inst = trend.instrument.value;
   return inst
-    ? `${inst.symbol} ${inst.name ?? ""}`.trim()
+    ? instrumentDisplayLabel(inst.symbol, inst.name)
     : t("investments.trend.instrumentFallback");
 });
 

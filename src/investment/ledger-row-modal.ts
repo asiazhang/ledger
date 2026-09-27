@@ -1,4 +1,5 @@
 import type { InvestmentTransactionRow, TransactionModalRow } from "@ledger/types";
+import { instrumentDisplayLabel } from "@/investment/instrument-display-label";
 
 /**
  * 投资明细行 → 交易弹窗族行投影（ADR-0135 决策 4「操作同权」/ issue #1781）：
@@ -42,10 +43,4 @@ export function ledgerRowToModalRow(row: InvestmentTransactionRow): TransactionM
     },
     convert: null,
   };
-}
-
-/** 来源列展示名原料（与后端 InstrumentSourceDisplay::display_label 同一口径）：
- * 代码 + 名称空格连接，无名称（含空串）退化为裸代码。 */
-export function instrumentDisplayLabel(symbol: string, name: string | null): string {
-  return name ? `${symbol} ${name}` : symbol;
 }
