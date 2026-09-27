@@ -15,6 +15,8 @@ use std::collections::HashMap;
 use chrono::NaiveDate;
 use rusqlite::Connection;
 
+use super::fx_nearest::{FxWeekHistory, fx_rate_at_week};
+
 use ledger_infra::error::Result;
 
 /// 某截止日的每标的 ≤ 该日最新周线价格行 + 全量汇率历史。
@@ -22,7 +24,7 @@ pub(crate) struct AsOfValues {
     /// 每标的 ≤ 截止日的最新周点 (trade_date, week_start, price_cents, currency)。
     latest_price: HashMap<String, (String, String, i64, String)>,
     /// 汇率历史：(base, quote) → week_start → rate（周粒度、币种对个位数，全量载入）。
-    fx: HashMap<(String, String), HashMap<String, f64>>,
+    fx: FxWeekHistory,
 }
 
 impl AsOfValues {
@@ -72,7 +74,7 @@ impl AsOfValues {
                 ),
             );
         }
-        let mut fx: HashMap<(String, String), HashMap<String, f64>> = HashMap::new();
+        let mut fx: FxWeekHistory = HashMap::new();
         {
             let mut stmt = conn
                 .prepare("SELECT base_code, quote_code, week_start, rate FROM fx_rate_history")?;
@@ -101,28 +103,10 @@ impl AsOfValues {
         account_currency: &str,
     ) -> Option<i64> {
         let (_, week_start, price_cents, price_currency) = self.latest_price.get(instrument_id)?;
-        let rate = self.fx_rate(price_currency, account_currency, week_start)?;
+        let rate = fx_rate_at_week(&self.fx, price_currency, account_currency, week_start)?;
         // 金额分 = 数量 × 单价（万分之一元）÷ 换算因子（价格刻度，ADR-0038），
         // 再按同期汇率折算。
         let value = (quantity * *price_cents as f64 / crate::prices::PRICE_UNITS_PER_FEN).round();
         Some((value * rate).round() as i64)
-    }
-
-    /// 同期汇率（正查失败则反查取倒数），同币种为 1；与走势查询同思路。
-    fn fx_rate(&self, base: &str, quote: &str, week_start: &str) -> Option<f64> {
-        if base == quote {
-            return Some(1.0);
-        }
-        if let Some(rate) = self
-            .fx
-            .get(&(base.to_string(), quote.to_string()))
-            .and_then(|w| w.get(week_start))
-        {
-            return Some(*rate);
-        }
-        self.fx
-            .get(&(quote.to_string(), base.to_string()))
-            .and_then(|w| w.get(week_start))
-            .map(|rev| 1.0 / rev)
     }
 }
