@@ -68,6 +68,13 @@
 //! 连接隔离撑不起双连接现场）。登记处：
 //! ADR-0084 修订注记、CONTEXT-testing「读快照探针」词条。
 //!
+//! **#1868 追加**（文件库测试模板）：内存库测试模板的文件库变体收编
+//! [`open_file_scratch`]——自带测试暂存目录（`ScratchDir` 发放、drop 整树清理）+
+//! 全量迁移 + 同一建库接线，初始化能力与 [`open`] 等价；跨库（ATTACH 多库）
+//! 事务的集合级原子性断言必须由文件库承载（main 为 `:memory:` 时 SQLite 对多库
+//! 事务无集合级原子保证，ADR-0139 决策 2）。登记处：ADR-0084 修订注记、
+//! CONTEXT-testing「文件库测试模板」词条。
+//!
 //! 说明：集成测试 `tests/api_server/` 链接的是非 `#[cfg(test)]` 构建的 lib，
 //! 因此本模块不能仅以 `#[cfg(test)]` 编译；对生产二进制的影响只是一些未使用的
 //! 测试辅助函数（可被编译器消除）。
@@ -129,7 +136,9 @@ pub fn block_on<F: Future>(future: F) -> F::Output {
 /// 零配置打开已初始化的内存测试库：`db::open_in_memory()`（外键 + perf hook）+
 /// `db::init_db()`（迁移 + 默认种子）两行序的唯一承载（ADR-0084 决策 3：建库的
 /// 全部现状就是内存库 + 迁移，无配置项）。加密是 BDD 场景，不入本工厂；文件库
-/// 建库见 [`open_file`]（issue #1699 读快照探针的双连接现场）。
+/// 全部现状就是内存库 + 迁移，无配置项）。加密是 BDD 场景，不入本工厂；文件库
+/// 建库见 [`open_file`]（issue #1699 读快照探针的双连接现场），跨库原子性断言
+/// 的文件库模板见 [`open_file_scratch`]（issue #1868）。
 ///
 /// 建库经 [`ledger_infra::db::open_in_memory_initialized`]：工厂仍是唯一的建库入口，
 /// 但迁移链不再逐用例重放，改由进程内固定的模板产物还原（spec #1086 / issue #1514，
@@ -151,8 +160,28 @@ pub fn open_file(db_dir: &Path) -> Connection {
     ledger_infra::db::open_connection_in(db_dir).expect("打开并初始化文件测试库")
 }
 
-/// 测试接线单点（[`open`] / [`open_file`] 共享；测试库与生产同形，幂等、先装者
-/// 优先）：
+/// 打开已初始化的**文件库**测试连接，库落工厂自带的测试暂存目录（issue #1868：
+/// 内存库测试模板的文件库变体，ADR-0139 决策 2 跨库原子性断言的承载形态）。
+///
+/// 初始化能力与 [`open`] 等价：全量迁移（含默认种子与 schema 守卫）经 [`open_file`]
+/// 同一建库入口（`db::open_connection_in`），建库接线共享 [`install_test_wiring`]
+/// 单点；种子经 `seed_*` 在返回的连接上注入，与内存模板同体消费。差别只在库
+/// 形态与目录生命周期——暂存目录由工厂经 [`ScratchDir`] 发放
+/// （`ledger-test-{tag}-{uuid}/`），guard 随元组交调用方持到用例结束，drop
+/// （含 panic unwind）整棵删除（[`ScratchDir`] 契约）。
+///
+/// 用途边界：**跨库（ATTACH 多库）事务的集合级原子性断言必须用本入口**——main
+/// 为 `:memory:` 时 SQLite 对多库事务不提供集合级原子保证，内存库测不出真实
+/// 语义（ADR-0139 决策 2）；单连接用例仍走 [`open`]（模板还原更快），自带目录
+/// 的双连接现场（读快照探针）走 [`open_file`]。
+pub fn open_file_scratch(tag: &str) -> (Connection, ScratchDir) {
+    let dir = ScratchDir::new(tag);
+    let conn = open_file(dir.path());
+    (conn, dir)
+}
+
+/// 测试接线单点（[`open`] / [`open_file`] / [`open_file_scratch`] 共享；测试库与
+/// 生产同形，幂等、先装者优先）：
 /// - 提交点后置动作（spec #1086 / issue #1088）：连接层写入口的副作用实现由域侧
 ///   提供，建库单点负责注册；
 /// - 写后即时同步（#1089）：op 产出单点在协议 crate，响应闭包（去抖合流）由同步域
