@@ -449,3 +449,5 @@
 [#1769]: https://github.com/asiazhang/ledger/issues/1769
 [#1810]: https://github.com/asiazhang/ledger/issues/1810
 [#1811]: https://github.com/asiazhang/ledger/issues/1811
+[#1860]: https://github.com/asiazhang/ledger/issues/1860
+[#1861]: https://github.com/asiazhang/ledger/issues/1861
