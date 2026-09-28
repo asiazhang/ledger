@@ -18,6 +18,7 @@
 
 use rusqlite::{Connection, OptionalExtension};
 
+use ledger_infra::db::tx_scope::ensure_transaction;
 use ledger_infra::error::{AppError, Result};
 use ledger_infra::settings;
 
@@ -54,16 +55,19 @@ fn write_setting(conn: &Connection, code: &str) -> Result<()> {
     settings::set(conn, settings::SettingKey::LedgerBaseCurrency, &code)
 }
 
-/// 设置本位币基准（本地写编排入口）：校验、落库与 op 产出同事务——调用方保证
-/// 处于写事务内（IPC 壳经统一写入口），任一步失败整体回滚，不残留半套状态。
+/// 设置本位币基准（本地写编排入口）：校验、落库与 op 产出同事务——嵌套感知事务
+/// （`ensure_transaction`，issue #1867）：autocommit 连接自持事务（中途失败整体
+/// 回滚）、已在外层事务则并入（失败交外层回滚），设置行与 op 行同生共死。
 pub fn set_base_currency(conn: &Connection, code: &str) -> Result<()> {
-    write_setting(conn, code)?;
-    super::command::record_local(
-        conn,
-        super::command::LedgerSettingCommand::SetBaseCurrency {
-            code: code.to_string(),
-        },
-    )
+    ensure_transaction(conn, || {
+        write_setting(conn, code)?;
+        super::command::record_local(
+            conn,
+            super::command::LedgerSettingCommand::SetBaseCurrency {
+                code: code.to_string(),
+            },
+        )
+    })
 }
 
 /// 重放执行（同步引擎分派接缝）：与本地写同一执行协议（校验 + 落库）；不产出

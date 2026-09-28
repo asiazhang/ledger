@@ -21,6 +21,7 @@ use rusqlite::Connection;
 use super::command::{PriceCommand, record_price};
 use super::model::{MANUAL_SOURCE, ManualPriceInput, ManualPriceResult};
 use super::prices::{MarketPriceWrite, upsert_market_price, upsert_price_history};
+use ledger_infra::db::tx_scope::ensure_transaction;
 use ledger_infra::error::{AppError, Result};
 
 /// 手动报价核心接缝：校验 → 价格历史周采样落库 → 按最新点映像规则决定现价
@@ -30,18 +31,22 @@ pub fn record_manual_price(
     conn: &Connection,
     input: &ManualPriceInput,
 ) -> Result<ManualPriceResult> {
-    let outcome = write_manual_price(conn, input)?;
-    // op 产出接缝（issue #861 / ADR-0091）：本地写成功 → 报价随行追加进本机
-    // OpLog（两落点的落库判定在重放端按同一规则执行）；随同一事务提交/回滚。
-    record_price(
-        conn,
-        PriceCommand::ManualPrice {
-            instrument_id: input.instrument_id.clone(),
-            date: input.date.clone(),
-            price_cents: input.price_cents,
-        },
-    )?;
-    Ok(outcome)
+    // 本地写编排入口（issue #1867）：两落点业务写 + op 追加收进嵌套感知事务（自持
+    // 失败整体回滚、嵌套失败交外层回滚）——历史落点已写而 op 缺失的漂移不存在。
+    ensure_transaction(conn, || {
+        let outcome = write_manual_price(conn, input)?;
+        // op 产出接缝（issue #861 / ADR-0091）：本地写成功 → 报价随行追加进本机
+        // OpLog（两落点的落库判定在重放端按同一规则执行）；随同一事务提交/回滚。
+        record_price(
+            conn,
+            PriceCommand::ManualPrice {
+                instrument_id: input.instrument_id.clone(),
+                date: input.date.clone(),
+                price_cents: input.price_cents,
+            },
+        )?;
+        Ok(outcome)
+    })
 }
 
 /// 手动报价写入协议（本地报价与重放共用，无 op 产出）：校验 → 周采样落库 →

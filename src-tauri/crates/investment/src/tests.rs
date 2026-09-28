@@ -92,6 +92,7 @@ mod stock_create;
 mod stock_lookup;
 mod trade;
 mod trend;
+mod write_atomicity;
 
 // instrument_list 子模块的断言沿用原调用路径 `super::crud::…`：在此把投资域
 // crud 模块引入 tests 命名空间，供子模块以原路径解析（纯移动保形）。
