@@ -17,7 +17,7 @@ use rusqlite::Connection;
 use super::constant_price::{
     ConstantPriceValue, constant_for_instrument, load_constant_prices, weekly_samples,
 };
-use super::fx_nearest::{FxWeekHistory, fx_rate_at_week};
+use super::fx_nearest::{fx_rate_at_week, load_fx_week_history};
 use super::holdings::holdings_legs_by_instrument;
 use super::model::{
     InstrumentPriceTrend, PortfolioTrendPoint, PortfolioValueTrend, PriceTrendPoint, TrendRange,
@@ -292,24 +292,8 @@ fn portfolio_value_trend_within_tx(
         }
     }
 
-    // 2. 同期汇率历史：数据量小（周粒度、币种对个位数），全量载入建周键索引。
-    let mut fx: FxWeekHistory = HashMap::new();
-    {
-        let mut stmt =
-            conn.prepare("SELECT base_code, quote_code, week_start, rate FROM fx_rate_history")?;
-        let rows = stmt.query_map([], |r| {
-            Ok((
-                r.get::<_, String>(0)?,
-                r.get::<_, String>(1)?,
-                r.get::<_, String>(2)?,
-                r.get::<_, f64>(3)?,
-            ))
-        })?;
-        for row in rows {
-            let (base, quote, week, rate) = row?;
-            fx.entry((base, quote)).or_default().insert(week, rate);
-        }
-    }
+    // 2. 同期汇率历史：全量载入建周键索引（装载单点 [`load_fx_week_history`]）。
+    let fx = load_fx_week_history(conn)?;
 
     // 3. 数量推算按标的分组增量推进（issue #1654）：一次装载全库持仓变动腿流
     //    （按标的分组、组内交易日升序，推算口径单点在 [`holdings_legs_by_instrument`]），
