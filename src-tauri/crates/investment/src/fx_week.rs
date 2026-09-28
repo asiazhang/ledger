@@ -1,6 +1,11 @@
-//! 周键汇率取数单点（issue #1849 收口；就近窗口 #1844，父 spec #1843）：读侧
-//! 对汇率历史（FxRateHistory）周键索引的取数收口本模块——
+//! 周键汇率取数单点（issue #1849 收口取数、#1852 收口装载并对齐名实——前名
+//! `fx_nearest`，职责扩至「装载 + 原语 + 就近窗口」后按周键取数正名；就近窗口
+//! #1844，父 spec #1843）：读侧对汇率历史（FxRateHistory）周键索引的取数收口
+//! 本模块——
 //!
+//! - [`load_fx_week_history`]：`fx_rate_history` 全量装载为周键索引
+//!   [`FxWeekHistory`]——组合走势 / 边界市值 / 盈亏页读路径共用的装载单点
+//!   （#1852 合并既有两处内联拷贝）；
 //! - [`fx_rate_at_week`]：单周取汇率原语（同币种恒等 / 正查 / 反查取倒数），
 //!   组合走势（[`crate::trend`]）与边界市值（[`crate::as_of`]）的同期折算
 //!   消费单点；
@@ -30,12 +35,12 @@ use rusqlite::Connection;
 pub(crate) const FX_NEAREST_WINDOW_WEEKS: i64 = 8;
 
 /// 汇率历史周键索引：(base, quote) → week_start → rate——读路径装载
-/// `fx_rate_history` 的共享形态（组合走势 / 边界市值同款装载）。
+/// `fx_rate_history` 的共享形态（组合走势 / 边界市值经 [`load_fx_week_history`] 共用）。
 pub(crate) type FxWeekHistory = HashMap<(String, String), HashMap<String, f64>>;
 
 /// 全量装载汇率历史为周键索引：数据量小（周粒度、币种对个位数），一次取回
-/// 建索引；构型与组合走势 / 边界市值装载同款（单点从本模块起步，既有两处
-/// 内联拷贝待合并）。
+/// 建索引；组合走势（[`crate::trend`]）与边界市值（[`crate::as_of`]）装载共用
+/// 本单点（issue #1852 合并既有两处内联拷贝）。
 pub(crate) fn load_fx_week_history(conn: &Connection) -> Result<FxWeekHistory> {
     let mut fx: FxWeekHistory = HashMap::new();
     let mut stmt =
