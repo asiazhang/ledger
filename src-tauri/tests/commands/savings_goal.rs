@@ -386,7 +386,8 @@ async fn delete_goal_guards_balance_then_cascades_account() {
             &guard,
             ledger_transaction::TransactionInput {
                 kind: ledger_transaction::TransactionKind::Expense,
-                account_id: account_id.clone(),
+                account_id: Some(account_id.clone()),
+                funding: Vec::new(),
                 ..transfer_input("src", &account_id, 100_000)
             },
         )
@@ -462,10 +463,11 @@ async fn delete_account_of_active_goal_is_rejected_by_shell_orchestration() {
 /// 造数：真实 transfer 输入（公开写入口，域单测同款全字段形态）。
 fn transfer_input(from: &str, to: &str, amount_cents: i64) -> ledger_transaction::TransactionInput {
     ledger_transaction::TransactionInput {
+        funding: Vec::new(),
         kind: ledger_transaction::TransactionKind::Transfer,
         amount_cents,
         currency_code: "CNY".into(),
-        account_id: from.into(),
+        account_id: Some(from.into()),
         to_account_id: Some(to.into()),
         funding_account_id: None,
         category_id: None,

@@ -14,12 +14,13 @@ use tauri_app_lib::test_support::seed_account;
 
 fn expense_input(account_id: &str) -> TransactionInput {
     TransactionInput {
+        funding: Vec::new(),
         merchant_name: None,
         policy_id: None,
         kind: TransactionKind::Expense,
         amount_cents: 100_000,
         currency_code: "CNY".into(),
-        account_id: account_id.into(),
+        account_id: Some(account_id.into()),
         to_account_id: None,
         category_id: None,
         merchant_id: None,

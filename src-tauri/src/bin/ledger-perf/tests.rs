@@ -396,10 +396,15 @@ fn bench_import_rows_are_deterministic_dedup_unique_and_distribution_shaped() {
 
     // 分布形态：同账户集中全部落首账户；多账户均匀按序轮转。
     assert!(
-        concentrated.iter().all(|i| i.account_id == accounts[0]),
+        concentrated
+            .iter()
+            .all(|i| i.account_id.as_deref() == Some(accounts[0].as_str())),
         "同账户集中应全部落首账户"
     );
-    let uniform_accounts: Vec<&str> = uniform.iter().map(|i| i.account_id.as_str()).collect();
+    let uniform_accounts: Vec<&str> = uniform
+        .iter()
+        .map(|i| i.account_id.as_deref().unwrap_or(""))
+        .collect();
     assert_eq!(
         uniform_accounts,
         vec!["acc-0", "acc-1", "acc-2", "acc-0", "acc-1"],
@@ -1664,7 +1669,11 @@ fn transfers_have_two_accounts() {
     .unwrap();
     for t in &transfers.items {
         let to = t.to_account_id.as_ref().expect("转账必须有转入账户");
-        assert_ne!(&t.account_id, to, "转账两端不同账户");
+        assert_ne!(
+            t.account_id.as_deref(),
+            Some(to.as_str()),
+            "转账两端不同账户"
+        );
         assert!(t.category_id.is_none(), "转账不挂分类");
         assert!(t.merchant_id.is_none(), "转账不挂商户");
     }
@@ -2477,10 +2486,15 @@ fn bench_sync_ops_are_deterministic_and_distribution_shaped() {
         other => panic!("op 流应全为交易创建命令，得到 {other:?}"),
     };
     assert!(
-        concentrated.iter().all(|op| account_of(op) == accounts[0]),
+        concentrated
+            .iter()
+            .all(|op| account_of(op) == Some(accounts[0].clone())),
         "同账户集中应全部落首账户"
     );
-    let uniform_accounts: Vec<String> = uniform.iter().map(account_of).collect();
+    let uniform_accounts: Vec<String> = uniform
+        .iter()
+        .map(|op| account_of(op).unwrap_or_default())
+        .collect();
     assert_eq!(
         uniform_accounts,
         vec!["acc-0", "acc-1", "acc-2", "acc-0", "acc-1"],

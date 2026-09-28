@@ -227,12 +227,13 @@ pub(crate) fn generate_inputs(
 ) -> Vec<TransactionInput> {
     (0..rows)
         .map(|i| TransactionInput {
+            funding: Vec::new(),
             kind: TransactionKind::Expense,
             amount_cents: BASE_AMOUNT_CENTS + i as i64,
             currency_code: currency.to_string(),
             account_id: match distribution {
-                Distribution::Concentrated => account_pool[0].clone(),
-                Distribution::Uniform => account_pool[i % account_pool.len()].clone(),
+                Distribution::Concentrated => Some(account_pool[0].clone()),
+                Distribution::Uniform => Some(account_pool[i % account_pool.len()].clone()),
             },
             to_account_id: None,
             category_id: None,

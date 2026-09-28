@@ -1,9 +1,25 @@
 //! [`affected_accounts`](super::affected_accounts)「受影响账户」并集口径的直测
 //! （issue #533 / spec #519）。纯函数无数据库环境；形态仿 Writer 接缝按主题
-//! 拆分单测先例：单端、双侧、资金端（funding）、旧新重叠、去重与首见顺序、空引用，
-//! 并按创建 / 修改 / 删除三种写入形态覆盖调用面。
+//! 拆分单测先例：单端、双侧、资金端（funding）、出资子行端（ADR-0138）、旧新重叠、
+//! 去重与首见顺序、空引用，并按创建 / 修改 / 删除三种写入形态覆盖调用面。
 
 use super::affected_accounts;
+use ledger_transaction::seams::balance::RowAccounts;
+
+/// 行引用集构造器（测试速记）：主表三列 + 出资子行端。
+fn row<'a>(
+    account_id: &'a str,
+    to_account_id: Option<&'a str>,
+    funding_account_id: Option<&'a str>,
+    funding_items: &'a [&'a str],
+) -> RowAccounts<'a> {
+    RowAccounts {
+        account_id: Some(account_id),
+        to_account_id,
+        funding_account_id,
+        funding_items,
+    }
+}
 
 // ---------------------------------------------------------------------------
 // 单端：行上只有 account_id 一端（income/expense/refund 等）
@@ -12,14 +28,14 @@ use super::affected_accounts;
 /// 创建形态（旧行 None）：单端行推导只含转出账户一端。
 #[test]
 fn create_single_sided_row_yields_only_account_id() {
-    let affected = affected_accounts(None, Some(("acc-a", None, None)));
+    let affected = affected_accounts(None, Some(row("acc-a", None, None, &[])));
     assert_eq!(affected, vec!["acc-a"]);
 }
 
 /// 删除形态（新行 None）：单端行推导只含原行账户一端。
 #[test]
 fn delete_single_sided_row_yields_only_account_id() {
-    let affected = affected_accounts(Some(("acc-a", None, None)), None);
+    let affected = affected_accounts(Some(row("acc-a", None, None, &[])), None);
     assert_eq!(affected, vec!["acc-a"]);
 }
 
@@ -31,14 +47,14 @@ fn delete_single_sided_row_yields_only_account_id() {
 /// 顺序一致（接线无行为变化）。
 #[test]
 fn create_transfer_row_yields_both_sides_out_first() {
-    let affected = affected_accounts(None, Some(("acc-out", Some("acc-in"), None)));
+    let affected = affected_accounts(None, Some(row("acc-out", Some("acc-in"), None, &[])));
     assert_eq!(affected, vec!["acc-out", "acc-in"]);
 }
 
 /// 删除形态：原行 transfer 双侧都进集合。
 #[test]
 fn delete_transfer_row_yields_both_sides() {
-    let affected = affected_accounts(Some(("acc-out", Some("acc-in"), None)), None);
+    let affected = affected_accounts(Some(row("acc-out", Some("acc-in"), None, &[])), None);
     assert_eq!(affected, vec!["acc-out", "acc-in"]);
 }
 
@@ -50,14 +66,14 @@ fn delete_transfer_row_yields_both_sides() {
 /// 后 funding（与「先主账户后扩展端」的行内顺序一致）。
 #[test]
 fn create_buy_row_yields_account_and_funding() {
-    let affected = affected_accounts(None, Some(("acc-inv", None, Some("acc-cash"))));
+    let affected = affected_accounts(None, Some(row("acc-inv", None, Some("acc-cash"), &[])));
     assert_eq!(affected, vec!["acc-inv", "acc-cash"]);
 }
 
 /// 删除形态：原行 buy 的资金端也进集合（删除要恢复资金账户余额）。
 #[test]
 fn delete_buy_row_yields_account_and_funding() {
-    let affected = affected_accounts(Some(("acc-inv", None, Some("acc-cash"))), None);
+    let affected = affected_accounts(Some(row("acc-inv", None, Some("acc-cash"), &[])), None);
     assert_eq!(affected, vec!["acc-inv", "acc-cash"]);
 }
 
@@ -65,10 +81,83 @@ fn delete_buy_row_yields_account_and_funding() {
 #[test]
 fn update_buy_row_funding_move_unions_old_and_new_funding() {
     let affected = affected_accounts(
-        Some(("acc-inv", None, Some("acc-cash-old"))),
-        Some(("acc-inv", None, Some("acc-cash-new"))),
+        Some(row("acc-inv", None, Some("acc-cash-old"), &[])),
+        Some(row("acc-inv", None, Some("acc-cash-new"), &[])),
     );
     assert_eq!(affected, vec!["acc-inv", "acc-cash-old", "acc-cash-new"]);
+}
+
+// ---------------------------------------------------------------------------
+// 出资子行端：分解行的 funding_items（issue #1860 / ADR-0138 决策 7）
+// ---------------------------------------------------------------------------
+
+/// 创建形态（分解行）：主表 account_id 为 None（分解行落 NULL），出资子行端
+/// 全部进集合——组合支付每一方都要重算余额。
+#[test]
+fn create_split_funding_row_yields_all_item_accounts() {
+    let new = RowAccounts {
+        account_id: None,
+        to_account_id: None,
+        funding_account_id: None,
+        funding_items: &["acc-wallet", "acc-balance"],
+    };
+    let affected = affected_accounts(None, Some(new));
+    assert_eq!(affected, vec!["acc-wallet", "acc-balance"]);
+}
+
+/// 删除形态（分解行）：软删要恢复每一出资方余额，子行端全部进集合。
+#[test]
+fn delete_split_funding_row_yields_all_item_accounts() {
+    let old = RowAccounts {
+        account_id: None,
+        to_account_id: None,
+        funding_account_id: None,
+        funding_items: &["acc-wallet", "acc-balance"],
+    };
+    let affected = affected_accounts(Some(old), None);
+    assert_eq!(affected, vec!["acc-wallet", "acc-balance"]);
+}
+
+/// 修改形态（单 ⇄ 多互转）：旧单出资端 ∪ 新分解各端——转出方向恢复旧账户、
+/// 计入各新出资账户。
+#[test]
+fn update_single_to_multi_conversion_unions_old_and_new_items() {
+    let affected = affected_accounts(
+        Some(row("acc-old", None, None, &[])),
+        Some(RowAccounts {
+            account_id: None,
+            to_account_id: None,
+            funding_account_id: None,
+            funding_items: &["acc-wallet", "acc-balance"],
+        }),
+    );
+    assert_eq!(affected, vec!["acc-old", "acc-wallet", "acc-balance"]);
+}
+
+/// 同一账户多条出资项（定金 + 尾款）：并集去重后只出现一次。
+#[test]
+fn duplicate_item_accounts_collapse() {
+    let new = RowAccounts {
+        account_id: None,
+        to_account_id: None,
+        funding_account_id: None,
+        funding_items: &["acc-wallet", "acc-wallet"],
+    };
+    let affected = affected_accounts(None, Some(new));
+    assert_eq!(affected, vec!["acc-wallet"]);
+}
+
+/// 行内顺序：主表三端先于出资子行端（先主账户后扩展端，与既有顺序约定一致）。
+#[test]
+fn item_accounts_come_after_main_refs() {
+    let new = RowAccounts {
+        account_id: Some("acc-main"),
+        to_account_id: None,
+        funding_account_id: Some("acc-cash"),
+        funding_items: &["acc-wallet"],
+    };
+    let affected = affected_accounts(None, Some(new));
+    assert_eq!(affected, vec!["acc-main", "acc-cash", "acc-wallet"]);
 }
 
 // ---------------------------------------------------------------------------
@@ -79,8 +168,8 @@ fn update_buy_row_funding_move_unions_old_and_new_funding() {
 #[test]
 fn update_without_move_unions_old_and_new_dedup() {
     let affected = affected_accounts(
-        Some(("acc-a", Some("acc-b"), None)),
-        Some(("acc-a", Some("acc-b"), None)),
+        Some(row("acc-a", Some("acc-b"), None, &[])),
+        Some(row("acc-a", Some("acc-b"), None, &[])),
     );
     assert_eq!(affected, vec!["acc-a", "acc-b"]);
 }
@@ -88,7 +177,10 @@ fn update_without_move_unions_old_and_new_dedup() {
 /// 修改形态：跨账户移动（旧新无重叠）时两侧都进集合。
 #[test]
 fn update_with_account_move_unions_both() {
-    let affected = affected_accounts(Some(("acc-old", None, None)), Some(("acc-new", None, None)));
+    let affected = affected_accounts(
+        Some(row("acc-old", None, None, &[])),
+        Some(row("acc-new", None, None, &[])),
+    );
     assert_eq!(affected, vec!["acc-old", "acc-new"]);
 }
 
@@ -100,8 +192,8 @@ fn update_with_account_move_unions_both() {
 #[test]
 fn duplicates_collapse_to_first_occurrence() {
     let affected = affected_accounts(
-        Some(("acc-a", Some("acc-b"), None)),
-        Some(("acc-b", Some("acc-a"), None)),
+        Some(row("acc-a", Some("acc-b"), None, &[])),
+        Some(row("acc-b", Some("acc-a"), None, &[])),
     );
     assert_eq!(affected, vec!["acc-a", "acc-b"]);
 }
@@ -110,8 +202,8 @@ fn duplicates_collapse_to_first_occurrence() {
 #[test]
 fn first_seen_order_preserved_across_old_and_new() {
     let affected = affected_accounts(
-        Some(("acc-a", None, None)),
-        Some(("acc-c", Some("acc-b"), None)),
+        Some(row("acc-a", None, None, &[])),
+        Some(row("acc-c", Some("acc-b"), None, &[])),
     );
     assert_eq!(affected, vec!["acc-a", "acc-c", "acc-b"]);
 }

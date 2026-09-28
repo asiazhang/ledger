@@ -25,7 +25,8 @@ use std::collections::HashMap;
 
 use ledger_infra::db::query::{FromRow, query_all};
 use ledger_infra::error::{AppError, Result};
-use ledger_transaction::amount::{TransferSide, account_flow_expr};
+use ledger_transaction::amount::{TransferSide, account_flow_expr, funding_item_flow_expr};
+use ledger_transaction::seams::balance::RowAccounts;
 use rusqlite::{Connection, OptionalExtension};
 
 use super::model::{Account, AccountBalance};
@@ -49,15 +50,28 @@ impl FromRow for AccountBalanceEntry {
 /// 单个与批量余额共用本映射，口径一致性由代码结构保证而非注释约定。
 ///
 /// 与 [`affected_accounts`] 同模块互指：此处消费的账户引用列（`account_id` /
-/// `to_account_id` / `funding_account_id`，transactions 表上的三列闭集）即受影响
-/// 账户推导的引用对——新增账户引用列时两处必须共变（此处决定余额「怎么算」，
-/// 彼处决定刷新「算哪些」，issue #533 / spec #519 / ADR-0096 决策 5）。
+/// `to_account_id` / `funding_account_id`，transactions 表上的三列闭集）与出资子行端
+/// （`transaction_fundings.account_id`，ADR-0138）即受影响账户推导的引用集——
+/// 新增账户引用来源时两处必须共变（此处决定余额「怎么算」，彼处决定刷新
+/// 「算哪些」，issue #533 / spec #519 / ADR-0096 决策 5）。
 fn join_column(side: TransferSide) -> &'static str {
     match side {
         TransferSide::Out => "t.account_id",
         TransferSide::In => "t.to_account_id",
         TransferSide::Funding => "t.funding_account_id",
     }
+}
+
+/// 出资子行端的 `account_flow` 聚合子查询（ADR-0138 决策 7）：出资项按所属
+/// 交易 kind 符号计入其账户——符号表达式与三端同源（[`funding_item_flow_expr`]，
+/// 同一系数矩阵），主行软删的子行不参与（`t.is_deleted=0`）。
+fn funding_item_flow_subquery(account_ref: &str) -> String {
+    format!(
+        "(SELECT COALESCE(SUM({expr}),0) FROM transaction_fundings f \
+         JOIN transactions t ON t.id = f.transaction_id \
+         WHERE t.is_deleted=0 AND f.account_id={account_ref})",
+        expr = funding_item_flow_expr("f", "t"),
+    )
 }
 
 /// 对指定账户（`account_ref` 为 `?1` 参数或 `a.id` 列引用）的
@@ -99,13 +113,19 @@ pub fn compute_balance(conn: &Connection, account_id: &str) -> Result<i64> {
         rusqlite::params![account_id],
         |r| r.get(0),
     )?;
-    Ok(initial + flow_out + flow_in + flow_funding)
+    let flow_funding_items: i64 = conn.query_row(
+        &format!("SELECT {}", funding_item_flow_subquery("?1")),
+        rusqlite::params![account_id],
+        |r| r.get(0),
+    )?;
+    Ok(initial + flow_out + flow_in + flow_funding + flow_funding_items)
 }
 
 /// 批量计算所有未删除账户的余额，单条 SQL 查询。
 ///
 /// 原理：初始余额 + 三个 `account_flow` 关联子查询（转出侧/转入侧/出资侧，
-/// ADR-0096 决策 5）在一条 SQL 内完成汇总，口径与 [`compute_balance`] 完全一致
+/// ADR-0096 决策 5）+ 出资子行端子查询（ADR-0138 决策 7）在一条 SQL 内完成汇总，
+/// 口径与 [`compute_balance`] 完全一致
 /// （同一度量片段、同一关联语义），单个与批量结果恒相等。
 /// 对 N 个账户保持 O(1) 次数据库往返。
 /// UI 侧不包含黑洞账户；AI 对账需要 `include_hidden = true`。
@@ -129,11 +149,13 @@ pub fn compute_all_balances_with_visibility(
                 + COALESCE({out}, 0)
                 + COALESCE({tin}, 0)
                 + COALESCE({funding}, 0)
+                + COALESCE({funding_items}, 0)
          FROM accounts a
          WHERE a.is_deleted = 0 {hidden_clause}",
         out = account_flow_subquery(TransferSide::Out, "a.id"),
         tin = account_flow_subquery(TransferSide::In, "a.id"),
         funding = account_flow_subquery(TransferSide::Funding, "a.id"),
+        funding_items = funding_item_flow_subquery("a.id"),
     );
     let entries: Vec<AccountBalanceEntry> = query_all(conn, &sql, [])?;
 
@@ -195,13 +217,13 @@ pub fn list_account_balances_with_visibility(
 // ---------------------------------------------------------------------------
 
 /// 「受影响账户」推导的唯一定义点（词汇表核心交易域「受影响账户」词条，
-/// issue #533 / spec #519 / ADR-0096 决策 5 扩为三端）：一次交易写入需要重算余额
+/// issue #533 / spec #519 / ADR-0096 决策 5 扩为三端 / ADR-0138 决策 7 扩出资子行端）：
+/// 一次交易写入需要重算余额
 /// 的账户集合——旧行涉及账户 ∪ 新行涉及账户，去重并保持首见顺序（旧行引用先于
-/// 新行，行内先 `account_id` 后 `to_account_id` 后 `funding_account_id`；行级
-/// 三端判定与读视角 InvolvingAccount 共享同一组列，不另设第二套端点口径）。
+/// 新行，行内先 `account_id` 后 `to_account_id` 后 `funding_account_id` 后出资子行端；
+/// 行级端点判定与读视角 InvolvingAccount 共享同一组引用源，不另设第二套端点口径）。
 ///
-/// 入参为两行（可选）的账户引用三元组 `(account_id, to_account_id, funding_account_id)`：
-/// 创建 `old=None`、修改两行都进、删除 `new=None`。kind 不进签名——
+/// 入参为两行（可选）的账户引用集 [`RowAccounts`]：
 /// 退款继承与投资归一的账户语义已被写入前的归一步骤前置消化，
 /// 推导只看行上三个账户引用列。
 ///
@@ -210,22 +232,24 @@ pub fn list_account_balances_with_visibility(
 /// （Writer 接缝 `transaction::write::writer::insert_row`，issue #533）、修改
 /// （`writer::update_row`，旧 ∪ 新并集）与删除（行为层编排
 /// `transaction::write::protocol::soft_delete_transaction_row`，原行三端）。三条路径
-/// 都只交出行上账户引用三元组，推导仍在本函数单点；任何新写入口不得另造
+/// `transaction::write::protocol::soft_delete_transaction_row`，原行全部端）。三条路径
+/// 都只交出行上账户引用集，推导仍在本函数单点；任何新写入口不得另造
 /// 第四份推导，也不得绕开接缝直接引用本模块。
 ///
 /// 与余额口径 SQL 构造（[`account_flow_subquery`] / [`join_column`]）同模块
 /// 互指、必须共变：本函数决定刷新「算哪些」（账户引用端的收集），
-/// SQL 构造决定账户余额「怎么算」（对同一组账户引用列聚合 `account_flow`）——
-/// 新增账户引用列时两处同改。
+/// SQL 构造决定账户余额「怎么算」（对同一组账户引用源聚合 `account_flow`）——
+/// 新增账户引用来源时两处同改。
 fn affected_accounts<'a>(
-    old: Option<(&'a str, Option<&'a str>, Option<&'a str>)>,
-    new: Option<(&'a str, Option<&'a str>, Option<&'a str>)>,
+    old: Option<RowAccounts<'a>>,
+    new: Option<RowAccounts<'a>>,
 ) -> Vec<&'a str> {
     let mut affected: Vec<&'a str> = Vec::new();
-    for (account_id, to_account_id, funding_account_id) in [old, new].into_iter().flatten() {
-        for reference in [Some(account_id), to_account_id, funding_account_id]
+    for row in [old, new].into_iter().flatten() {
+        for reference in [row.account_id, row.to_account_id, row.funding_account_id]
             .into_iter()
             .flatten()
+            .chain(row.funding_items.iter().copied())
         {
             if !affected.contains(&reference) {
                 affected.push(reference);
@@ -258,8 +282,8 @@ fn now_iso_millis() -> String {
 /// 同一写事务内调用（ADR-0067 语义零变化）。
 fn balance_refresh_hook(
     conn: &Connection,
-    old: Option<(&str, Option<&str>, Option<&str>)>,
-    new: Option<(&str, Option<&str>, Option<&str>)>,
+    old: Option<RowAccounts<'_>>,
+    new: Option<RowAccounts<'_>>,
 ) -> ledger_infra::error::Result<()> {
     let affected = affected_accounts(old, new);
     refresh_account_balances(conn, &affected)
@@ -310,7 +334,7 @@ fn refresh_upsert_sql(account_filter: &str) -> String {
         "INSERT INTO account_balance_cache (account_id, balance_cents, updated_at) \
          SELECT a.id, \
                 a.initial_balance_cents + COALESCE({out}, 0) + COALESCE({tin}, 0) \
-                 + COALESCE({funding}, 0), \
+                 + COALESCE({funding}, 0) + COALESCE({funding_items}, 0), \
                 ? \
          FROM accounts a {account_filter} \
          ON CONFLICT(account_id) DO UPDATE SET \
@@ -319,6 +343,7 @@ fn refresh_upsert_sql(account_filter: &str) -> String {
         out = account_flow_subquery(TransferSide::Out, "a.id"),
         tin = account_flow_subquery(TransferSide::In, "a.id"),
         funding = account_flow_subquery(TransferSide::Funding, "a.id"),
+        funding_items = funding_item_flow_subquery("a.id"),
     )
 }
 

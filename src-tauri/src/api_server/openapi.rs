@@ -11,9 +11,9 @@ use ledger_investment::{Instrument, InstrumentListResult, InstrumentType};
 use ledger_merchants::{Merchant, MerchantUpdateInput};
 use ledger_transaction::amount::TransactionKind;
 use ledger_transaction::{
-    CreateTransactionResult, Transaction, TransactionBatchInput, TransactionInput,
-    TransactionListResult, TransactionSource, TransactionSourceKind, TransactionSourceStatus,
-    UpdateTransactionInput,
+    CreateTransactionResult, Transaction, TransactionBatchInput, TransactionFunding,
+    TransactionFundingInput, TransactionInput, TransactionListResult, TransactionSource,
+    TransactionSourceKind, TransactionSourceStatus, UpdateTransactionInput,
 };
 
 use super::error::ErrorResponse;
@@ -87,6 +87,8 @@ use super::handlers::stocks::StockLookup;
         MerchantUpdateInput,
         StockLookup,
         Transaction,
+        TransactionFunding,
+        TransactionFundingInput,
         TransactionInput,
         UpdateTransactionInput,
         TransactionBatchInput,

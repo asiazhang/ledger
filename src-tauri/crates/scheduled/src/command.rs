@@ -192,9 +192,11 @@ pub fn replay_command(conn: &Connection, command: &ScheduledCommand) -> Result<R
             // 定时计划不携带资金账户（funding_account_id 恒 None），与 engine 落地路径一致。
             writer::validate_accounts_alive(
                 conn,
-                &row.account_id,
+                row.account_id.as_deref(),
                 row.to_account_id.as_deref(),
                 None,
+                // 定时计划不携带出资分解（ADR-0138 决策 3：期次维持单出资）。
+                &[],
             )?;
             let norm = writer::NormalizedRow::try_from(row)?;
             writer::insert_row_with_id(conn, &landing_id, &norm)?;

@@ -18,12 +18,13 @@ use tauri_app_lib::test_support::{
 
 fn buy_input(account_id: &str, instrument_id: &str, funding: Option<&str>) -> TransactionInput {
     TransactionInput {
+        funding: Vec::new(),
         merchant_name: None,
         policy_id: None,
         kind: TransactionKind::Buy,
         amount_cents: 0,
         currency_code: "USD".into(),
-        account_id: account_id.into(),
+        account_id: Some(account_id.into()),
         to_account_id: None,
         funding_account_id: funding.map(Into::into),
         category_id: None,

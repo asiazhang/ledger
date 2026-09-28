@@ -8,6 +8,7 @@
 //!
 //! 本文件只做声明与逐项再导出（ADR-0113 决策 5），不含逻辑。
 
+mod funding;
 mod list;
 pub mod search;
 mod source;

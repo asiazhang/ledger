@@ -56,11 +56,12 @@ pub struct ImportedRow {
 impl ImportedRow {
     pub fn to_input(&self, world: &LedgerWorld) -> TransactionInput {
         TransactionInput {
+            funding: Vec::new(),
             kind: TransactionKind::parse(&self.kind)
                 .unwrap_or_else(|e| panic!("非法 kind: {}（{e}）", self.kind)),
             amount_cents: self.amount_cents,
             currency_code: self.currency_code.clone(),
-            account_id: world.account_id(&self.account_name),
+            account_id: Some(world.account_id(&self.account_name)),
             to_account_id: self
                 .to_account_name
                 .as_deref()

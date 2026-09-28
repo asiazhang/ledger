@@ -44,6 +44,7 @@ fn read_row(conn: &Connection, id: &str) -> NormalizedRow {
         )
         .unwrap();
     NormalizedRow {
+        funding: Vec::new(),
         kind: row.kind,
         amount_cents: row.amount_cents,
         currency_code: row.currency_code,
@@ -68,7 +69,7 @@ struct RowFields {
     amount_cents: i64,
     currency_code: String,
     amount_native_cents: i64,
-    account_id: String,
+    account_id: Option<String>,
     to_account_id: Option<String>,
     category_id: Option<String>,
     merchant_id: Option<String>,
@@ -164,13 +165,14 @@ fn update_row_overwrites_fields_and_bumps_version() {
         .unwrap();
 
     let updated = NormalizedRow {
+        funding: Vec::new(),
         kind: TransactionKind::Transfer,
         amount_cents: 3000,
         currency_code: "CNY".into(),
         amount_native_cents: 3000,
         fx_rate_used: None,
         fx_rate_source: None,
-        account_id: "acc-a".into(),
+        account_id: Some("acc-a".into()),
         to_account_id: Some("acc-b".into()),
         category_id: None,
         merchant_id: None,

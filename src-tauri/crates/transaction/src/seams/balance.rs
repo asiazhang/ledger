@@ -3,8 +3,8 @@
 //! 职责：本域只承诺调用时机（创建/修改/软删落库后的同事务刷新点），实现由账户域
 //! 提供（受影响账户推导 + 整体重算，ADR-0067），壳层启动接线。不变量：刷新与引发
 //! 它的写入同事务，未注册即码化错误（失败整体回滚，不产生「源已写、缓存未刷」）；
-//! 本域只交出账户引用三元组，推导与重算在实现侧。ADR 指针：ADR-0112 决策 5 /
-//! ADR-0067 / ADR-0071 决策 5 修订注记。陷阱：实现经
+//! 本域只交出账户引用集，推导与重算在实现侧。ADR 指针：ADR-0112 决策 5 /
+//! ADR-0067 / ADR-0071 决策 5 修订注记 / ADR-0138 决策 7。陷阱：实现经
 //! `accounts::balance::install_balance_refresh_hook` 装入，本域对账户域零直接依赖。
 
 use std::sync::OnceLock;
@@ -13,18 +13,28 @@ use rusqlite::Connection;
 
 use ledger_infra::error::{AppError, Result};
 
-/// 余额刷新钩子签名：连接 + 新旧两行的账户引用三元组
-/// `(account_id, to_account_id, funding_account_id)`（transactions 表上的三列闭集，
-/// 本域自有数据；创建 `old=None`、删除 `new=None`）。
+/// 余额刷新钩子签名：连接 + 新旧两行的账户引用集（ADR-0138 决策 7 扩为「主表
+/// 三列 + 出资子行端」）：[`RowAccounts`]（创建 `old=None`、删除 `new=None`）。
 ///
 /// 「算哪些」（受影响账户推导）与「怎么算」（口径表达式整体重算）的语义都属账户域
-/// 实现，本域只交出引用三元组——推导唯一性（issue #533 / ADR-0096 决策 5）不因接缝
+/// 实现，本域只交出引用集——推导唯一性（issue #533 / ADR-0096 决策 5）不因接缝
 /// 反转而分散。
-pub type BalanceRefreshHook = fn(
-    &Connection,
-    Option<(&str, Option<&str>, Option<&str>)>,
-    Option<(&str, Option<&str>, Option<&str>)>,
-) -> Result<()>;
+pub type BalanceRefreshHook =
+    fn(&Connection, Option<RowAccounts<'_>>, Option<RowAccounts<'_>>) -> Result<()>;
+
+/// 一行交易的账户引用集（主表三列闭集 + 出资子行端序列）：余额刷新接缝的行级
+/// 载荷。出资子行端按顺序位序，数组顺序无推导语义（并集去重在实现侧）。
+#[derive(Debug, PartialEq, Eq)]
+pub struct RowAccounts<'a> {
+    /// 主表 `account_id`（分解行为 `None`，ADR-0138 决策 1）。
+    pub account_id: Option<&'a str>,
+    /// 主表 `to_account_id`（仅 transfer）。
+    pub to_account_id: Option<&'a str>,
+    /// 主表 `funding_account_id`（仅 buy/sell，ADR-0096）。
+    pub funding_account_id: Option<&'a str>,
+    /// 出资子行账户序列（`transaction_fundings.account_id`，ADR-0138）。
+    pub funding_items: &'a [&'a str],
+}
 
 /// 余额刷新钩子的进程级单例（登记点反转的承接面）：先装者优先、重复注册零动作。
 static BALANCE_REFRESH_HOOK: OnceLock<BalanceRefreshHook> = OnceLock::new();
@@ -53,8 +63,8 @@ fn balance_refresh_hook_missing_error() -> AppError {
 pub(crate) fn dispatch_balance_refresh(
     hook: Option<BalanceRefreshHook>,
     conn: &Connection,
-    old: Option<(&str, Option<&str>, Option<&str>)>,
-    new: Option<(&str, Option<&str>, Option<&str>)>,
+    old: Option<RowAccounts<'_>>,
+    new: Option<RowAccounts<'_>>,
 ) -> Result<()> {
     match hook {
         Some(hook) => hook(conn, old, new),
@@ -69,8 +79,8 @@ pub(crate) fn dispatch_balance_refresh(
 /// 接线缺失，码化错误上抛（写入随事务回滚，缓存不漂移）。
 pub fn refresh_affected_balances(
     conn: &Connection,
-    old: Option<(&str, Option<&str>, Option<&str>)>,
-    new: Option<(&str, Option<&str>, Option<&str>)>,
+    old: Option<RowAccounts<'_>>,
+    new: Option<RowAccounts<'_>>,
 ) -> Result<()> {
     dispatch_balance_refresh(BALANCE_REFRESH_HOOK.get().copied(), conn, old, new)
 }

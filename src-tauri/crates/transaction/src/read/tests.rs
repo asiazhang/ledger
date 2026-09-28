@@ -4,6 +4,7 @@
 //! - [`search`]：统一模糊搜索语义与搜索行为
 //! - [`snapshot`]：读快照一致性探针——total 与 items 同快照（issue #1699）
 
+mod funding;
 mod query;
 mod search;
 mod snapshot;

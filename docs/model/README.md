@@ -43,6 +43,8 @@ erDiagram
     categories ||--o{ budgets : "category_id"
     categories ||--o{ categories : "parent_id"
     transactions ||--o{ transactions : "refund_of_transaction_id"
+    accounts ||--o{ transaction_fundings : "account_id"
+    transactions ||--o{ transaction_fundings : "transaction_id"
     merchants ||--o{ transactions : "merchant_id"
     transactions ||--o{ items : "purchase_transaction_id"
     physical_assets ||--o{ physical_asset_valuations : "asset_id"
@@ -59,6 +61,7 @@ erDiagram
     style transactions fill:#FFEAE4,stroke:#E2654D,stroke-width:2px
     style budgets fill:#E0F5F0,stroke:#3CAE98,stroke-width:2px
     style exchange_rates fill:#EFEAFB,stroke:#8A6FD8,stroke-width:2px
+    style transaction_fundings fill:#FDF2D0,stroke:#C9A227,stroke-width:2px
 ```
 
 ### 投资领域（工具 · 证券交易 · 持仓批次 · 卖出匹配 · 转换消耗 · 行情 · 价格/汇率历史）
@@ -164,5 +167,6 @@ erDiagram
 | `V031__drop_note_pinyin.sql` | transactions 拼音派生列退役：DROP note_pinyin 列与回填探针索引，搜索覆盖索引重建（列清单去 note_pinyin，「列表序键 + id/note/三引用列」形态保持）——交易搜索退回原文搜索，拼音可搜语义收窄归下拉侧（#1728 / ADR-0027 修订记录「语义契约定稿」） |
 | `V032__goals.sql` | goals 储蓄目标表（目标金额 + 可选截止日 + 状态 + 手填计划月存 + 专属账户 1:1 绑定，spec #1750 / ADR-0133） |
 | `V033__security_transaction_to_instrument_index.sql` | security_transactions 转入腿索引（to_instrument_id）——首笔持仓流水日两臂各走索引 seek、查询侧 INDEXED BY 钉定（计划由 SQL 确定，索引缺失即 prepare 报错），逐标的全扫退役（#1804） |
+| `V034__transaction_fundings.sql` | 出资项子表（transaction_fundings：交易引用 + 顺序位 + 账户 + 金额 + 扣款标签，子行随主行存亡、存量行零迁移）+ transactions 表重建放宽 account_id NOT NULL（分解行主列落 NULL，账户口径由子行承载；SQLite 12 步重建规程，`init_db` 迁移期外键关闭）（#1860 / ADR-0138） |
 
 > 迁移版本由 SQLite `user_version` 自动追踪，新迁移在数据库模块统一注册。V005（FTS5 搜索索引）已随统一模糊搜索方案移除（ADR-0027），编号不复用。新增 schema 变更时新建 `V00X__名称.sql` 并在注册处追加；已发布迁移的就地修改与 BREAKING 标记要求见 AGENTS.md 发布约定。

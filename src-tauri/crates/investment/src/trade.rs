@@ -26,6 +26,15 @@ use ledger_transaction::command::{
 };
 use ledger_transaction::{ConvertFields, NormalizedTransaction, SecurityOrigin, TransactionInput};
 
+/// 投资 kind 的账户引用解析（非空收口）：投资 kind 不涉出资分解（ADR-0138 决策 3），
+/// 契约仍必填 `account_id`——归一化行/输入载荷类型随分解行放宽为可空后，本域在此
+/// 单点拒绝缺席（码化 `transaction.account-required`）。
+pub(crate) fn require_account(account_id: &Option<String>) -> Result<&str> {
+    account_id
+        .as_deref()
+        .ok_or_else(|| AppError::coded("transaction.account-required", "必须指定账户"))
+}
+
 /// 查询账户本位币代码（原 `commands::fx::account_currency_code`，随投资域归位
 /// 迁入唯一消费方；交易行折算语义归核心交易域 `transaction::amount` 接缝）。
 fn account_currency_code(conn: &Connection, account_id: &str) -> Result<String> {
@@ -273,8 +282,9 @@ fn prepare_buy(
             ((quantity * price_cents as f64 + fee_cents as f64 * PRICE_UNITS_PER_FEN) / quantity)
                 .round() as i64;
     }
-    ensure_investment_account(conn, &input.account_id, InvestmentAccountUse::Buy)?;
-    let account_currency = account_currency_code(conn, &input.account_id)?;
+    let account_id = require_account(&input.account_id)?;
+    ensure_investment_account(conn, account_id, InvestmentAccountUse::Buy)?;
+    let account_currency = account_currency_code(conn, account_id)?;
     // 出资账户准入（issue #935 / ADR-0096）：buy 的结算币种 = 投资账户币种，
     // 出资账户币种必须与其一致。
     ledger_transaction::write::funding::validate_funding_account(
@@ -303,6 +313,7 @@ fn prepare_buy(
             fx_rate_used: native.fx_rate_used,
             fx_rate_source: native.fx_rate_source,
             account_id: input.account_id.clone(),
+            funding: Vec::new(),
             // 现金腿归结算账户，不存在转入侧：携带已在守卫段拒绝，恒 None（issue #1187）。
             to_account_id: None,
             funding_account_id: input.funding_account_id.clone(),
@@ -393,8 +404,9 @@ fn prepare_sell(
         }
         amount_cents = gross_proceeds - fee_cents;
     }
-    ensure_investment_account(conn, &input.account_id, InvestmentAccountUse::Sell)?;
-    let account_currency = account_currency_code(conn, &input.account_id)?;
+    let account_id = require_account(&input.account_id)?;
+    ensure_investment_account(conn, account_id, InvestmentAccountUse::Sell)?;
+    let account_currency = account_currency_code(conn, account_id)?;
     // 出资账户准入（issue #935 / ADR-0096）：sell 的结算币种 = 投资账户币种，
     // 出资账户币种必须与其一致。
     ledger_transaction::write::funding::validate_funding_account(
@@ -415,7 +427,7 @@ fn prepare_sell(
     )?;
 
     // 取批次 → 分摊（含「可卖出数量不足」守卫）两步单点算定消耗规划：apply 只落盘。
-    let active_lots = lots::active_lots(conn, &input.account_id, &instrument_id)?;
+    let active_lots = lots::active_lots(conn, account_id, &instrument_id)?;
     let consumed = lots::plan(conn, &active_lots, quantity)?;
 
     Ok(SellPlan {
@@ -427,6 +439,7 @@ fn prepare_sell(
             fx_rate_used: native.fx_rate_used,
             fx_rate_source: native.fx_rate_source,
             account_id: input.account_id.clone(),
+            funding: Vec::new(),
             // 现金腿归结算账户，不存在转入侧：携带已在守卫段拒绝，恒 None（issue #1187）。
             to_account_id: None,
             funding_account_id: input.funding_account_id.clone(),
@@ -510,12 +523,13 @@ fn prepare_convert(
     // 转出腿展示单价：确认单金额 ÷ 份额反算到万分之一元（金额权威、单价反算，
     // 与场外基金同款）；录入与重放共用同一公式（单点归属，两端不得算出不同单价）。
     let price_cents = derived_out_price_cents(out_amount_cents, quantity)?;
-    ensure_investment_account(conn, &input.account_id, InvestmentAccountUse::Convert)?;
+    let account_id = require_account(&input.account_id)?;
+    ensure_investment_account(conn, account_id, InvestmentAccountUse::Convert)?;
     // 不跨账户（ADR-0099 决策 1）：两腿是同一投资账户内的两个标的，不是两个账户；
     // 携带转入账户即意图跨账户，显式拒绝。
     guards::reject_to_account(TransactionKind::Convert, input.to_account_id.is_some())?;
 
-    let account_currency = account_currency_code(conn, &input.account_id)?;
+    let account_currency = account_currency_code(conn, account_id)?;
     // 出资账户准入（ADR-0096）：convert 不在出资闭集内，携带即被既有「不能携带
     // 出资账户」拒绝——「无现金保障」由此天然成立，不另设第二份判定。
     ledger_transaction::write::funding::validate_funding_account(
@@ -527,7 +541,7 @@ fn prepare_convert(
     // 转出腿 FIFO 消耗与逐批次结转成本（含耗尽批次闭合）在 prepare 阶段算定：
     // 它是行金额锚点与转入批次成本的唯一依据，apply 原样落消耗记录与批次
     // （取批次 → 分摊两步，含「可卖出数量不足」守卫，issue #1019）。
-    let active_lots = lots::active_lots(conn, &input.account_id, &instrument_id)?;
+    let active_lots = lots::active_lots(conn, account_id, &instrument_id)?;
     let consumed = lots::plan(conn, &active_lots, quantity)?;
     let carried_cost_cents = lots::total_cost(&consumed);
     // 按交易日入口折算（#1547）：结转成本按交易所属周汇率折算；
@@ -552,6 +566,7 @@ fn prepare_convert(
             fx_rate_used: native.fx_rate_used,
             fx_rate_source: native.fx_rate_source,
             account_id: input.account_id.clone(),
+            funding: Vec::new(),
             // 两腿是标的而非账户：转入账户已拒绝、出资账户已被准入拒绝，恒 None。
             to_account_id: None,
             funding_account_id: None,
@@ -670,10 +685,11 @@ fn prepare_split(
     // 决策 1：`+` = 折算/结转/送股、`−` = 缩股）；缩股幅度守卫（`|Δ|` 严格小于
     // 当前持仓）归投资域 [`split::plan_restatement`]，与批次快照同源、不在此另算。
     guards::require_nonzero_split_quantity(delta_quantity)?;
-    ensure_investment_account(conn, &input.account_id, InvestmentAccountUse::Split)?;
+    let account_id = require_account(&input.account_id)?;
+    ensure_investment_account(conn, account_id, InvestmentAccountUse::Split)?;
     // 出资账户准入（ADR-0096）：split 不在出资闭集内，携带即被既有
     // 「不能携带出资账户」拒绝——「无现金腿」由此天然成立，不另设第二份判定。
-    let account_currency = account_currency_code(conn, &input.account_id)?;
+    let account_currency = account_currency_code(conn, account_id)?;
     ledger_transaction::write::funding::validate_funding_account(
         conn,
         TransactionKind::Split,
@@ -693,7 +709,7 @@ fn prepare_split(
     };
     let restatement = split::plan_restatement(
         conn,
-        &input.account_id,
+        account_id,
         &instrument_id,
         delta_quantity,
         before_rowid,
@@ -713,6 +729,7 @@ fn prepare_split(
             fx_rate_used: zero_leg.fx_rate_used,
             fx_rate_source: zero_leg.fx_rate_source,
             account_id: input.account_id.clone(),
+            funding: Vec::new(),
             // 单标的、不跨账户：转入账户已拒绝、出资账户已被准入拒绝，恒 None。
             to_account_id: None,
             funding_account_id: None,
@@ -789,7 +806,7 @@ fn prepare_dividend(
     }
     guards::require_positive_cents(guards::PositiveValue::DividendAmount, input.amount_cents)?;
     // 到账账户：任意在用账户（非投资账户亦合法），币种须与账户币种一致。
-    let account_currency = active_account_currency(conn, &input.account_id)?;
+    let account_currency = active_account_currency(conn, require_account(&input.account_id)?)?;
     guards::require_currency_match(&input.currency_code, &account_currency)?;
     // 出资账户准入（ADR-0096）：dividend 不在出资闭集内，携带即被既有「不能携带
     // 出资账户」拒绝——到账账户就是现金腿端点，不另设第二份判定。
@@ -818,6 +835,7 @@ fn prepare_dividend(
             fx_rate_used: native.fx_rate_used,
             fx_rate_source: native.fx_rate_source,
             account_id: input.account_id.clone(),
+            funding: Vec::new(),
             // 单标的、不跨账户：转入标的 / 转入账户已拒绝，出资账户已被准入拒绝。
             to_account_id: None,
             funding_account_id: None,
@@ -1210,7 +1228,11 @@ pub(crate) fn replay_plan(
             // 标的存在性校验（与本地同码）；类型不参与买入重放装配（每份成本
             // 随命令携带），仅作依赖在位检查。
             fetch_instrument_type(conn, &fields.instrument_id, InstrumentUse::Buy)?;
-            ensure_investment_account(conn, &row.account_id, InvestmentAccountUse::Buy)?;
+            ensure_investment_account(
+                conn,
+                require_account(&row.account_id)?,
+                InvestmentAccountUse::Buy,
+            )?;
             // 每份成本是 prepare 单次舍入的派生结果，随命令携带（源端折算）；
             // 缺失属载荷伪造或程序缺陷（产出侧永不产 None），fail loud 由引擎
             // 挂起承接，不以本地重算静默兜底。
@@ -1237,7 +1259,11 @@ pub(crate) fn replay_plan(
             guards::require_positive(guards::PositiveValue::SellQuantity, fields.quantity)?;
             let instrument_type =
                 fetch_instrument_type(conn, &fields.instrument_id, InstrumentUse::Sell)?;
-            ensure_investment_account(conn, &row.account_id, InvestmentAccountUse::Sell)?;
+            ensure_investment_account(
+                conn,
+                require_account(&row.account_id)?,
+                InvestmentAccountUse::Sell,
+            )?;
             // 毛收入重建（与本地 prepare 同式）：基金 = 权威金额 + 手续费
             // （金额随行携带），其余 = round(数量 × 单价 ÷ 换算因子)。
             let gross_proceeds_cents = if instrument_type == "fund" {
@@ -1248,7 +1274,11 @@ pub(crate) fn replay_plan(
             // FIFO 批次快照在本端重建（同序重放 ⇒ 与源端同状态 ⇒ 同一匹配结果；
             // 排序键 rowid 的跨端确定性依据见 `lots::active_lots`），消耗规划
             //（含「可卖出数量不足」守卫）由 `lots::plan` 单点算定。
-            let active_lots = lots::active_lots(conn, &row.account_id, &fields.instrument_id)?;
+            let active_lots = lots::active_lots(
+                conn,
+                require_account(&row.account_id)?,
+                &fields.instrument_id,
+            )?;
             let consumed = lots::plan(conn, &active_lots, fields.quantity)?;
             Ok(Plan::Sell(SellPlan {
                 normalized: row.clone(),
@@ -1278,7 +1308,8 @@ pub(crate) fn replay_plan(
                 row.funding_account_id.as_deref(),
                 &row.currency_code,
             )?;
-            let account_currency = active_account_currency(conn, &row.account_id)?;
+            let account_currency =
+                active_account_currency(conn, require_account(&row.account_id)?)?;
             guards::require_currency_match(&row.currency_code, &account_currency)?;
             Ok(Plan::Dividend(DividendPlan {
                 normalized: row.clone(),
@@ -1332,7 +1363,11 @@ pub(crate) fn replay_convert_plan(
     )?;
     // 展示单价由确认单金额 ÷ 份额反算（与本地录入同一公式单点）。
     let price_cents = derived_out_price_cents(fields.out_amount_cents, fields.quantity)?;
-    ensure_investment_account(conn, &row.account_id, InvestmentAccountUse::Convert)?;
+    ensure_investment_account(
+        conn,
+        require_account(&row.account_id)?,
+        InvestmentAccountUse::Convert,
+    )?;
     // 不跨账户（与本地录入同码）：两腿是同一投资账户内的两个标的，携带转入账户即
     // 伪造/漂移载荷，重放不得绕开本地不变量（CONTEXT-sync「经同一接缝执行」）。
     guards::reject_to_account(TransactionKind::Convert, row.to_account_id.is_some())?;
@@ -1347,7 +1382,11 @@ pub(crate) fn replay_convert_plan(
     // FIFO 批次快照在本端重建（排序键 rowid 的跨端确定性依据同 [`prepare_sell`]）：
     // 同序重放 ⇒ 与源端同状态 ⇒ 同一逐批次消耗结果；消耗规划（含「可卖出数量不足」
     // 守卫）由 `lots::plan` 单点算定。
-    let active_lots = lots::active_lots(conn, &row.account_id, &fields.instrument_id)?;
+    let active_lots = lots::active_lots(
+        conn,
+        require_account(&row.account_id)?,
+        &fields.instrument_id,
+    )?;
     let consumed = lots::plan(conn, &active_lots, fields.quantity)?;
     // 源端结转成本与本地重建的逐批次成本合计必须一致（兼行金额锚点校验）：
     // 不一致即本地 FIFO 快照发散（前序 op 缺失或非确定），挂起待裁决，
@@ -1415,7 +1454,11 @@ pub(crate) fn replay_split_plan(
     guards::reject_split_cash_leg(
         row.amount_cents != 0 || row.amount_native_cents != zero_leg.native_cents,
     )?;
-    ensure_investment_account(conn, &row.account_id, InvestmentAccountUse::Split)?;
+    ensure_investment_account(
+        conn,
+        require_account(&row.account_id)?,
+        InvestmentAccountUse::Split,
+    )?;
     // 不跨账户（与本地录入同码）：单标的份额变动携带转入账户即伪造载荷。
     guards::reject_to_account(TransactionKind::Split, row.to_account_id.is_some())?;
 
@@ -1438,7 +1481,7 @@ pub(crate) fn replay_split_plan(
     };
     let restatement = split::plan_restatement(
         conn,
-        &row.account_id,
+        require_account(&row.account_id)?,
         &fields.instrument_id,
         fields.delta_quantity,
         before_rowid,

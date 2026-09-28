@@ -259,14 +259,17 @@ function renderTwoAccountCell(fromAccountId: string, toAccountId: string): VNode
  * 出资账户为空投资账户照常；出资账户命中时资金实际流出方在前（buy：出资账户，
  * sell：投资账户），与转账「资金流出方在前」的阅读顺序一致（issue #1030）。 */
 export function renderAccountCell(row: Transaction): VNode {
+  // 分解行（ADR-0138）主表账户列为 null——列表层回退占位（与未知账户同款）；
+  // 「首条出资账户 + 等 N 账户」的完整呈现归读侧姊妹票。
+  const accountId = row.account_id ?? "";
   if (row.kind === "transfer" && row.to_account_id) {
-    return renderTwoAccountCell(row.account_id, row.to_account_id);
+    return renderTwoAccountCell(accountId, row.to_account_id);
   }
   if (row.kind === "buy" && row.funding_account_id) {
-    return renderTwoAccountCell(row.funding_account_id, row.account_id);
+    return renderTwoAccountCell(row.funding_account_id, accountId);
   }
   if (row.kind === "sell" && row.funding_account_id) {
-    return renderTwoAccountCell(row.account_id, row.funding_account_id);
+    return renderTwoAccountCell(accountId, row.funding_account_id);
   }
-  return h(AccountLink, { accountId: row.account_id });
+  return h(AccountLink, { accountId });
 }

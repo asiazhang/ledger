@@ -233,6 +233,47 @@ pub fn account_flow_expr(alias: &str, side: TransferSide) -> String {
     }
 }
 
+/// 出资项 `account_flow` 聚合片段（issue #1860 / ADR-0138 决策 7，全库唯一
+/// incarnation）：每条出资子行按**所属交易 kind 的符号**计入该账户 `account_flow`
+///（等价于一组不可见 posting）——取数列为子行账户币种金额 `f.amount_cents`
+///（与 [`Measure::AccountFlow`] 同一币种口径），符号由同一 [`coefficient`] 矩阵
+/// 驱动（expense 记 −、income 记 +；分解仅 expense/income/refund 可携带，其余
+/// kind 的系数在子行上按矩阵原样表达、子行不可存在）。
+///
+/// `funding_alias` 是 `transaction_fundings` 行别名（取 `f.amount_cents`），
+/// `tx_alias` 是 join 到的 `transactions` 行别名（取 `t.kind` 判符号）。调用方
+/// 负责 WHERE（`t.is_deleted=0` + 账户列对齐）与 `COALESCE/SUM` 包裹。
+pub fn funding_item_flow_expr(funding_alias: &str, tx_alias: &str) -> String {
+    let mut pos: Vec<&'static str> = Vec::new();
+    let mut neg: Vec<&'static str> = Vec::new();
+    for kind in TransactionKind::ALL {
+        match coefficient(kind, Measure::AccountFlow(TransferSide::Out)) {
+            1 => pos.push(kind.as_str()),
+            -1 => neg.push(kind.as_str()),
+            _ => {}
+        }
+    }
+    let amount_col = format!("{funding_alias}.amount_cents");
+    let kind_col = format!("{tx_alias}.kind");
+    let mut expr = String::from("CASE");
+    if !pos.is_empty() {
+        let _ = write!(
+            expr,
+            " WHEN {kind_col} IN ({list}) THEN {amount_col}",
+            list = quote_list(&pos)
+        );
+    }
+    if !neg.is_empty() {
+        let _ = write!(
+            expr,
+            " WHEN {kind_col} IN ({list}) THEN -{amount_col}",
+            list = quote_list(&neg)
+        );
+    }
+    expr.push_str(" ELSE 0 END");
+    expr
+}
+
 /// `expense_net` 聚合片段（毛支出 − 退款）。
 pub fn expense_net_expr(alias: &str) -> String {
     kind_case_expr(alias, Measure::ExpenseNet)

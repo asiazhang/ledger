@@ -145,6 +145,43 @@ const cases: Case[] = [
     en: "account currency (USD) does not match the transaction currency (CNY)",
   },
   {
+    // #1860 / ADR-0138：出资分解契约与逐条约束（params 契约见各条目）。
+    code: "transaction.funding-item-unsupported",
+    message: "交易类型 transfer 不能携带出资分解",
+    params: ["transfer"],
+    en: "transaction type transfer cannot carry a funding breakdown",
+  },
+  {
+    code: "transaction.funding-account-conflict",
+    message: "携带出资分解时不可指定 account_id",
+    params: [],
+    en: "account_id cannot be provided together with a funding breakdown",
+  },
+  {
+    code: "transaction.account-required",
+    message: "必须指定账户",
+    params: [],
+    en: "an account is required",
+  },
+  {
+    code: "transaction.funding-sum-mismatch",
+    message: "出资分解合计（2852）与交易金额（28160）不一致",
+    params: ["2852", "28160"],
+    en: "funding breakdown total (2852) does not match the transaction amount (28160)",
+  },
+  {
+    code: "transaction.funding-amount-positive",
+    message: "出资项金额必须大于 0",
+    params: [],
+    en: "funding item amount must be greater than 0",
+  },
+  {
+    code: "transaction.funding-label-too-long",
+    message: "扣款标签长度不能超过 50 字",
+    params: [],
+    en: "funding item label must not exceed 50 characters",
+  },
+  {
     code: "trade.dividend-account-not-found",
     message: "分红到账账户不存在或已删除: acc-x",
     params: ["acc-x"],

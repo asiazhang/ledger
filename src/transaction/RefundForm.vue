@@ -44,7 +44,7 @@ const reference = useReferenceStore();
             )
           }}
           · {{ reference.categoryPath(ctx.refundTarget.value.category_id) || "-" }} ·
-          {{ reference.accountMap.get(ctx.refundTarget.value.account_id)?.name ?? "-" }}
+          {{ reference.accountMap.get(ctx.refundTarget.value.account_id ?? "")?.name ?? "-" }}
         </NText>
       </NFormItem>
 

@@ -2,6 +2,17 @@
 
 本文件记录开源记账（OpenLedger）各版本对使用者可见的变更，格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/)，版本号遵循[语义化版本](https://semver.org/lang/zh-CN/)规则。
 
+## [Unreleased]
+
+### BREAKING
+
+- **交易 / AI 导入 / HTTP API**：多出资方（出资分解）上线——`expense` / `income` 写入可携带 `funding[]`（每条 = {账户, 金额, 扣款标签}，Σ == 交易金额，与 `account_id` 契约互斥：带非空分解时禁 `account_id`，不带则 `account_id` 必填；`UpdateTransactionInput.account_id` 改可选，`None` ⇔ 必须携非空分解）；**读回契约放宽**：分解行的 `account_id` 为 `null`（原为恒非空字符串），出资项走新增的 `fundings` 数组（新增 `TransactionFunding` / `TransactionFundingInput` schema），消费方须适配可空类型（[#1860]，ADR-0138）。组合支付不再需要按账户边界拆多行；refund 关联分解行原支出时缺省按出资比例自动分解（`fundings` 条目带 `derived: true`）。
+
+### Added
+
+- **交易**：出资项子表（V034 `transaction_fundings`）——子行随主行存亡（软删即失效、无独立软删位）、显式顺序位保读回稳定、存量行零迁移；每条出资按所属 kind 符号计入对应账户余额（受影响账户写前 ∪ 写后整体重算，ADR-0067 机制不变）；涉及账户过滤与隐藏投资相关流水口径自动覆盖出资端（[#1860]，ADR-0138）。
+- **错误码**：新增 `transaction.funding-item-unsupported` / `transaction.funding-account-conflict` / `transaction.account-required` / `transaction.funding-sum-mismatch` / `transaction.funding-amount-positive` / `transaction.funding-label-too-long`（zh/en 模板同步）（[#1860]，ADR-0138）。
+
 ## [0.8.0] - 2026-09-27
 
 ### BREAKING

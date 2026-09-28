@@ -192,7 +192,9 @@ pub fn compute_dedup_hash(input: &TransactionInput) -> String {
         input.kind.as_str(),
         input.amount_cents,
         input.currency_code,
-        input.account_id,
+        // 分解行主表账户引用为 None（ADR-0138）：去重公式冻结（ADR-0010），
+        // 缺席端以空串占位（与 to_account_id 缺席同款），分解不进身份。
+        input.account_id.as_deref().unwrap_or(""),
         to_account_id
     );
     if let Some(funding) = input.funding_account_id.as_deref() {

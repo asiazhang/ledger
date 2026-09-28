@@ -21,8 +21,8 @@ pub use convert::{
 pub use kind::TransactionKind;
 pub use measure::{
     Measure, TransferSide, account_flow_expr, contributing_kinds, contributing_kinds_sql,
-    expense_gross_expr, expense_net_expr, income_net_expr, policy_inflow_expr, policy_premium_expr,
-    refund_gross_expr, signed_amount,
+    expense_gross_expr, expense_net_expr, funding_item_flow_expr, income_net_expr,
+    policy_inflow_expr, policy_premium_expr, refund_gross_expr, signed_amount,
 };
 
 #[cfg(test)]

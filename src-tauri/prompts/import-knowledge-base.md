@@ -22,6 +22,15 @@
 - `备注` → `note`；`标签` 可忽略或并入 `note`。
 - 迁移拆行：通用行只产生 `income` / `expense` / `transfer` 三类 kind；投资流水不落这三类——走投资节的专属 kind，拆行与落账以投资节为准（kind 清单见投资节「kind 清单与通用规则」；获取时机见上方知识索引）。
 
+## 组合支付（一笔订单多个账户付款，issue #1860 / ADR-0138）
+
+- 一笔 `expense` / `income` 由多个账户共同付款时，携带出资分解 `funding` 数组，每条 `{"account_id", "amount_cents", "label"?}`：全部条目金额之和必须**恰好等于交易金额**（不等整行 400 码化拒绝）；`label` 是可选扣款标签（≤ 50 字，预售「定金/尾款」靠它区分）。
+- **`funding` 与 `account_id` 互斥**：带非空 `funding` 时不得再给 `account_id`（码化报错）；不带 `funding` 时 `account_id` 必填（现状写法不变）。
+- 每条出资账户的准入与 `account_id` 同口径（存在、未软删、币种与交易一致、不折算）；**无账户类型闭集**——信用卡（credit）、白条（debt）账户可以出资。
+- **不要再把组合支付拆成多行**（旧「跨界拆行」临时形态退役）：一行携带 `funding` 即可表达多账户付款，余额与对账口径由模型保证；拆行会让商品行金额与真实付款账户无法同时成立。
+- 退款（refund）关联分解行原支出时**缺省按出资比例自动分解**（读回 `fundings` 带 `derived: true`，尾差归顺序位最小项），不需要也不应该手工拆退款行；确需精确回退时可显式携带 `funding` 覆盖。
+- 读回形态：分解行的 `account_id` 为 `null`，出资项走 `fundings` 数组（按提交顺序稳定返回）——对账判定「行存在」看 `id`/金额，不要求 `account_id` 非空。
+
 ## 商户（Merchant）
 
 - 交易可带 `merchant_name`（与 `merchant_id` 互斥）：**同一商户始终用同一名字**，想复用已有名先 `GET /api/v1/merchants` 拉在用列表按名提交——归一化责任在后端（命中复用、未命中即建）。
@@ -57,7 +66,7 @@
 
 迁移完成的判定，以下两项全过才算完成：
 
-- **读回核对**：`GET /api/v1/transactions` 按日期区间过滤（区间取源文件覆盖范围）核对：响应为 `{items, total}`，读回取 `.items`；**HTTP 单请求行数上限为 100：缺省（不传分页参数）只返回第一页，不再返回全部——必须分页读回**：携 `page_size=100` 从 `page=1` 起逐页拉取，累计各行 `items` 直到累计条数 = `total` 即已读全，逐行核对源文件各行是否全部落库、金额是否一致；只核对某页/某段时按 `page` 直取该页。按账户核对（含转账转入侧）时加 `involving_account_id`（涉及账户：`account_id` 或 `to_account_id` 命中即算），账户 id 取自 `GET /api/v1/accounts`（**含黑洞账户**）。
+- **读回核对**：`GET /api/v1/transactions` 按日期区间过滤（区间取源文件覆盖范围）核对：响应为 `{items, total}`，读回取 `.items`；**HTTP 单请求行数上限为 100：缺省（不传分页参数）只返回第一页，不再返回全部——必须分页读回**：携 `page_size=100` 从 `page=1` 起逐页拉取，累计各行 `items` 直到累计条数 = `total` 即已读全，逐行核对源文件各行是否全部落库、金额是否一致；只核对某页/某段时按 `page` 直取该页。按账户核对（含转账转入侧）时加 `involving_account_id`（涉及账户：`account_id`、`to_account_id` 或出资分解端命中即算），账户 id 取自 `GET /api/v1/accounts`（**含黑洞账户**）。组合支付行（分解行）的 `account_id` 为 `null`、出资项在 `fundings` 数组，核对时按行金额与 `fundings` 逐条比对，勿以 `account_id` 非空为前提。
 - 读回过滤参数全部可选：`kinds=expense,refund` 逗号分隔多类型（与其余维度 AND 组合）、`category_id` / `merchant_id` 按分类/商户精确过滤（含软删字典的历史行）、`uncategorized_only=true` 仅无分类行、`limit` 取前 N 条（0 到 100，超出或负值报 400 码化错误）与分页互斥；`page_size` 超过 100 也报 400 码化错误（`transaction.page-size-over-cap` / `transaction.limit-out-of-range`，按码自纠减小后重试）；默认按日期倒序稳定排序，翻页无重复无遗漏。
 - **查询纪律**：子集检查——只确认某类行是否存在或求合计——直接用服务端过滤参数查询（如按 `kinds` 过滤，多类型用法见上条），返回行即全部待核对对象。
 - **分页纪律**：分页读回时响应 `total` 是满足过滤条件的总条数，`len(items)` 只是本页条数；未核对 `total` 前不得下「不存在 / 已全部读回」的结论（首页按日期倒序只覆盖最新一段，更早区间可能仍有行）；`total` > 已读条数就必须继续翻页取齐，不得以首页 100 条截断下结论。

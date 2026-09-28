@@ -65,12 +65,13 @@ pub(super) fn seed_purchase_tx_with_rate(
     create_transaction_internal(
         conn,
         TransactionInput {
+            funding: Vec::new(),
             merchant_name: None,
             policy_id: None,
             kind: TransactionKind::Expense,
             amount_cents: cost_cents,
             currency_code: currency.into(),
-            account_id: "acc-item-scaffold".into(),
+            account_id: Some("acc-item-scaffold".into()),
             to_account_id: None,
             category_id: None,
             merchant_id: None,

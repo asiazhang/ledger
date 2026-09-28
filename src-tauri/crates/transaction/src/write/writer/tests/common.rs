@@ -12,10 +12,12 @@ use tauri_app_lib::ledger_transaction::write::writer::{Input, insert_row, normal
 /// 通用入参构造器。
 pub(super) fn input(kind: TransactionKind, amount_cents: i64, account_id: &str) -> Input {
     Input {
+        funding: Vec::new(),
+        existing_funding: Vec::new(),
         kind,
         amount_cents,
         currency_code: "CNY".into(),
-        account_id: account_id.into(),
+        account_id: Some(account_id.into()),
         to_account_id: None,
         funding_account_id: None,
         category_id: None,
@@ -43,7 +45,7 @@ pub(super) fn insert_source_expense(
             kind: TransactionKind::Expense,
             amount_cents: 1000,
             currency_code: "CNY".into(),
-            account_id: account_id.into(),
+            account_id: Some(account_id.into()),
             category_id: category_id.map(String::from),
             ..input(TransactionKind::Expense, 1000, account_id)
         },

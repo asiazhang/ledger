@@ -18,6 +18,7 @@ use ledger_sync_protocol::device::device_id;
 use crate::amount::{self, TransactionKind};
 use crate::model::NormalizedTransaction;
 use crate::seams::balance;
+use crate::seams::balance::RowAccounts;
 /// 通用 kind 的写入入参（income / expense / transfer / refund）。
 ///
 /// 与命令层 [`crate::model::TransactionInput`] 解耦：不含 buy/sell 的投资字段
@@ -29,13 +30,22 @@ pub struct Input {
     pub kind: TransactionKind,
     pub amount_cents: i64,
     pub currency_code: String,
-    pub account_id: String,
+    /// 出资账户引用（ADR-0138 契约互斥）：非空分解时必须为 `None`；空分解时
+    /// 非 refund 必填（码化 `transaction.account-required`）、refund 继承原支出。
+    pub account_id: Option<String>,
     pub to_account_id: Option<String>,
     /// 可选出资账户（issue #935 / ADR-0096）：writer 不判 kind 准入（buy/sell 不经
     /// 本模块 normalize），通用 kind 携带即经 [`crate::write::funding::validate_funding_account`]
     /// 拒绝；buy/sell 由投资域 prepare 校验后随 [`NormalizedRow`] 落库。
     pub funding_account_id: Option<String>,
     pub category_id: Option<String>,
+    /// 出资分解（issue #1860 / ADR-0138）：数组顺序即落库顺序位；非空时
+    /// `account_id` 必须为 `None`（互斥在 [`validate_funding_items`] 收口）。
+    pub funding: Vec<crate::write::funding_items::FundingItem>,
+    /// 修改路径该行**当前**的落库分解（创建路径为空）：提交分解与之逐项相同
+    /// 且币种未变时跳过逐条账户准入（「保持历史引用」，与 `existing_merchant_id`
+    /// 同款语义——历史分解行的出资账户此后软删不阻止编辑其他字段）。
+    pub existing_funding: Vec<crate::write::funding_items::FundingItem>,
     pub merchant_id: Option<String>,
     /// 修改路径该行**当前**的商户 id（创建路径为 None）。提交的 [`merchant_id`] 与其
     /// 相同视为「保持历史引用」：软删商户的历史交易仍可修改其他字段，跳过在用校验；
@@ -80,10 +90,13 @@ pub struct NormalizedRow {
     /// 不参与导入幂等身份（去重哈希不含折算结果）。
     pub fx_rate_used: Option<f64>,
     pub fx_rate_source: Option<amount::FxRateSource>,
-    pub account_id: String,
+    pub account_id: Option<String>,
     pub to_account_id: Option<String>,
-    /// 可选出资账户（issue #935 / ADR-0096）：随行落库的归因端点引用。
     pub funding_account_id: Option<String>,
+    /// 可选出资账户（issue #935 / ADR-0096）：随行落库的归因端点引用。
+    /// 出资项分解（issue #1860 / ADR-0138）：随行落库的子行序列（数组顺序即
+    /// 顺序位）；分解行 `account_id` 为 `None`、本字段非空。
+    pub funding: Vec<crate::write::funding_items::FundingItem>,
     pub category_id: Option<String>,
     pub merchant_id: Option<String>,
     /// 可选保单引用（issue #361 / ADR-0051 决策 3），随 [`Input::policy_id`] 归一化。
@@ -162,7 +175,7 @@ pub fn normalize(conn: &Connection, input: &Input) -> Result<NormalizedRow> {
             // 其余数据库错误（锁/损坏等）原样上抛。
             let (cat, acc, cur, mer, okind): (
                 Option<String>,
-                String,
+                Option<String>,
                 String,
                 Option<String>,
                 TransactionKind,
@@ -215,12 +228,47 @@ pub fn normalize(conn: &Connection, input: &Input) -> Result<NormalizedRow> {
                 None,
             )
         };
+    // 出资分解契约（issue #1860 / ADR-0138）：互斥 + kind 准入 + 逐条约束（正整数分、
+    // 标签上限、账户准入、Σ == 交易金额）。置于继承之后——refund 的最终币种是
+    // 继承币种（调用方填值被忽略），逐条币种一致判定必须对最终币种跑；置于折算
+    // 之前——契约不成立时不折算（fail fast，与币种守卫同序哲学）。
+    let currency_unchanged = input
+        .fx_edit_baseline
+        .as_ref()
+        .map(|b| b.currency_code == currency_code)
+        .unwrap_or(true);
+    crate::write::funding_items::validate_funding_items(
+        conn,
+        crate::write::funding_items::FundingContract {
+            kind: input.kind,
+            account_id: input.account_id.as_deref(),
+            amount_cents: input.amount_cents,
+            currency: &currency_code,
+            funding: &input.funding,
+            existing_funding: &input.existing_funding,
+            currency_unchanged,
+        },
+    )?;
+    // 账户引用落定（ADR-0138 决策 1/2）：非空分解 ⇒ 主表账户列落 NULL（账户口径
+    // 由子行承载，读回 `account_id: null`）；空分解 ⇒ 非 refund 必填（refund 继承
+    // 原支出账户，原支出为分解行时继承 NULL——缺省按比例派生的读时推导前提）。
+    let account_id = if input.funding.is_empty() {
+        if account_id.is_none() && input.kind != TransactionKind::Refund {
+            return Err(AppError::coded(
+                "transaction.account-required",
+                "必须指定账户",
+            ));
+        }
+        account_id
+    } else {
+        None
+    };
     // 币种一致性守卫（issue #1770 / ADR-0134）：现金腿 `amount_cents` 即账户币种
     // 金额（余额按账户币种累计的前提，#1769）——交易币种必须等于所涉账户币种，
     // transfer 两端各比一次。置于折算之前：不变量不成立时不再折算（fail fast）。
     validate_currency_consistency(
         conn,
-        &account_id,
+        account_id.as_deref(),
         input.to_account_id.as_deref(),
         &currency_code,
     )?;
@@ -256,6 +304,8 @@ pub fn normalize(conn: &Connection, input: &Input) -> Result<NormalizedRow> {
         fx_rate_source: native.fx_rate_source,
         account_id,
         to_account_id,
+        // 分解行 account_id 为 None、本字段非空（互斥已收口，见上）。
+        funding: input.funding.clone(),
         // 通用 kind 经准入校验后恒为 None（仅 buy/sell 可携带，见 normalize）。
         funding_account_id: input.funding_account_id.clone(),
         category_id,
@@ -316,20 +366,27 @@ pub fn validate_policy_active(conn: &Connection, policy_id: Option<&str>) -> Res
     Ok(())
 }
 
-/// 重放路径的账户引用存活守卫（issue #856）：转出/转入账户必须存在且未软删除，
-/// 否则码化 NotFound（引擎挂起进队列、不自动复活已删账户）。
+/// 重放路径的账户引用存活守卫（issue #856 / ADR-0138 影响节）：转出/转入/出资
+/// 账户与全部出资项账户必须存在且未软删除，否则码化 NotFound（引擎挂起进队列、
+/// 不自动复活已删账户）——存活校验扩到出资端（出资子行账户引用），缺行挂起同
+/// 现有 ParkedOp 口径。
 ///
 /// 仅同步重放消费：重放端在命令执行前无法预知对端账户的存活状态，与本地写入
 /// （账户引用来自在用字典选取）的守卫位置不同、不变量相同——「往已删账户记账」
 /// 不产生新行。
 pub fn validate_accounts_alive(
     conn: &Connection,
-    account_id: &str,
+    account_id: Option<&str>,
     to_account_id: Option<&str>,
     funding_account_id: Option<&str>,
+    funding_item_accounts: &[String],
 ) -> Result<()> {
-    let mut ids = [Some(account_id), to_account_id, funding_account_id];
-    for id in ids.iter_mut().flatten() {
+    let mut ids: Vec<&str> = vec![account_id, to_account_id, funding_account_id]
+        .into_iter()
+        .flatten()
+        .collect();
+    ids.extend(funding_item_accounts.iter().map(String::as_str));
+    for id in &ids {
         let alive: bool = conn
             .query_row(
                 "SELECT 1 FROM accounts WHERE id=?1 AND is_deleted=0",
@@ -351,7 +408,8 @@ pub fn validate_accounts_alive(
 
 /// 交易币种与账户币种一致性守卫（issue #1770 / ADR-0134）：通用 kind 的现金腿
 /// `amount_cents` 即账户币种金额（余额按账户币种累计的前提，#1769），交易币种
-/// 必须等于所涉账户币种——`account_id` 恒比，`to_account_id` 携带时再比
+/// 必须等于所涉账户币种——`account_id` 携带时必比（分解行为 `None`，账户口径由
+/// 出资子行的币种一致守卫分辖），`to_account_id` 携带时再比
 /// （transfer 两端各比一次，两端一致由「都等于交易币种」传递成立）。
 ///
 /// 创建（本地 / 定时 / 批量 / HTTP）与重放两形态同码同文案：本地经 [`normalize`]
@@ -365,11 +423,11 @@ pub fn validate_accounts_alive(
 /// 拦截守卫上线前的存量脏来源）。
 pub fn validate_currency_consistency(
     conn: &Connection,
-    account_id: &str,
+    account_id: Option<&str>,
     to_account_id: Option<&str>,
     currency_code: &str,
 ) -> Result<()> {
-    let ids = [Some(account_id), to_account_id];
+    let ids = [account_id, to_account_id];
     for id in ids.iter().flatten() {
         let account_currency: Option<String> = conn
             .query_row(
@@ -436,20 +494,27 @@ pub fn insert_row_with_id(conn: &Connection, id: &str, row: &NormalizedRow) -> R
             row.fx_rate_source.map(amount::FxRateSource::as_str),
         ],
     )?;
+    // 出资项子行落库（issue #1860 / ADR-0138）：主行落库后同事务写子行；分解行
+    // account_id 为 NULL，账户口径由子行承载。空分解零写入（单出资现状）。
+    crate::write::funding_items::insert_rows(conn, id, &row.funding)?;
     // 余额缓存写路径（issue #491 / ADR-0067）：新行落库后在同一事务内对受影响
     // 账户按口径表达式整体重算。本接缝是全部交易创建（手动/批量导入/余额调整/
     // buy/sell/定时引擎例外/同步重放）的单一收口，挂此处即覆盖全部创建入口。
     // 受影响账户推导消费余额模块唯一定义（issue #533）：创建 = 新行账户引用对
-    //——经写路径副作用接缝传入本域自有账户引用三元组，推导与重算都在账户域
-    // 实现侧（#1090 接缝反转，本模块对账户域零感知）。
+    //（主表三列 + 出资子行端，ADR-0138 决策 7）——经写路径副作用接缝传入本域
+    // 自有账户引用集，推导与重算都在账户域实现侧（#1090 接缝反转，本模块对
+    // 账户域零感知）。
+    let item_accounts = crate::write::funding_items::item_account_ids(conn, id)?;
+    let item_refs: Vec<&str> = item_accounts.iter().map(String::as_str).collect();
     balance::refresh_affected_balances(
         conn,
         None,
-        Some((
-            row.account_id.as_str(),
-            row.to_account_id.as_deref(),
-            row.funding_account_id.as_deref(),
-        )),
+        Some(RowAccounts {
+            account_id: row.account_id.as_deref(),
+            to_account_id: row.to_account_id.as_deref(),
+            funding_account_id: row.funding_account_id.as_deref(),
+            funding_items: &item_refs,
+        }),
     )?;
     Ok(())
 }
@@ -459,9 +524,10 @@ pub fn insert_row_with_id(conn: &Connection, id: &str, row: &NormalizedRow) -> R
 ///
 /// buy/sell 同样经本函数落交易行字段（其持仓/卖出关联副作用由调用方另行处理）。
 pub fn update_row(conn: &Connection, id: &str, row: &NormalizedRow) -> Result<()> {
-    // 旧账户引用先行读取（同事务）：修改可能移动账户，两侧都要整体重算。
+    // 旧账户引用先行读取（同事务）：修改可能移动账户，两侧都要整体重算；旧出资
+    // 子行端一并读出（ADR-0138 决策 6：单 ⇄ 多互转时旧出资账户也要参与并集）。
     let (old_account_id, old_to_account_id, old_funding_account_id): (
-        String,
+        Option<String>,
         Option<String>,
         Option<String>,
     ) = conn.query_row(
@@ -469,6 +535,7 @@ pub fn update_row(conn: &Connection, id: &str, row: &NormalizedRow) -> Result<()
         params![id],
         |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
     )?;
+    let old_item_accounts = crate::write::funding_items::item_account_ids(conn, id)?;
     conn.execute(
         "UPDATE transactions \
          SET kind=?2, amount_cents=?3, currency_code=?4, amount_native_cents=?5, account_id=?6, \
@@ -496,22 +563,30 @@ pub fn update_row(conn: &Connection, id: &str, row: &NormalizedRow) -> Result<()
             row.fx_rate_source.map(amount::FxRateSource::as_str),
         ],
     )?;
-    // 余额缓存写路径：受影响账户 = 旧行 ∪ 新行账户引用三元组，消费余额模块唯一
-    // 定义（issue #534 / #935）；旧账户引用读取时机与刷新事务位置不变，同事务整体
-    // 重算（修改可能移动账户，ADR-0067）。经写路径副作用接缝传入两行三元组
-    //（#1090 接缝反转），推导与重算都在账户域实现侧。
+    // 出资项子行全量替换（ADR-0138 决策 6 全量语义）：单 ⇄ 多就地互转同一路径，
+    // 与主行 UPDATE 同事务（中途失败整体回滚）。
+    crate::write::funding_items::replace_rows(conn, id, &row.funding)?;
+    // 余额缓存写路径：受影响账户 = 旧行 ∪ 新行账户引用集（主表三列 + 出资子行端，
+    // ADR-0138 决策 7），消费余额模块唯一定义（issue #534 / #935）；旧账户引用读取
+    // 时机与刷新事务位置不变，同事务整体重算（修改可能移动账户，ADR-0067）。经写
+    // 路径副作用接缝传入两行引用集（#1090 接缝反转），推导与重算都在账户域实现侧。
+    let new_item_accounts = crate::write::funding_items::item_account_ids(conn, id)?;
+    let old_item_refs: Vec<&str> = old_item_accounts.iter().map(String::as_str).collect();
+    let new_item_refs: Vec<&str> = new_item_accounts.iter().map(String::as_str).collect();
     balance::refresh_affected_balances(
         conn,
-        Some((
-            old_account_id.as_str(),
-            old_to_account_id.as_deref(),
-            old_funding_account_id.as_deref(),
-        )),
-        Some((
-            row.account_id.as_str(),
-            row.to_account_id.as_deref(),
-            row.funding_account_id.as_deref(),
-        )),
+        Some(RowAccounts {
+            account_id: old_account_id.as_deref(),
+            to_account_id: old_to_account_id.as_deref(),
+            funding_account_id: old_funding_account_id.as_deref(),
+            funding_items: &old_item_refs,
+        }),
+        Some(RowAccounts {
+            account_id: row.account_id.as_deref(),
+            to_account_id: row.to_account_id.as_deref(),
+            funding_account_id: row.funding_account_id.as_deref(),
+            funding_items: &new_item_refs,
+        }),
     )?;
     Ok(())
 }
@@ -537,6 +612,11 @@ impl TryFrom<&NormalizedTransaction> for NormalizedRow {
             account_id: norm.account_id.clone(),
             to_account_id: norm.to_account_id.clone(),
             funding_account_id: norm.funding_account_id.clone(),
+            funding: norm
+                .funding
+                .iter()
+                .map(crate::write::funding_items::FundingItem::from)
+                .collect(),
             category_id: norm.category_id.clone(),
             merchant_id: norm.merchant_id.clone(),
             policy_id: norm.policy_id.clone(),
@@ -562,6 +642,11 @@ impl From<&NormalizedRow> for NormalizedTransaction {
             account_id: row.account_id.clone(),
             to_account_id: row.to_account_id.clone(),
             funding_account_id: row.funding_account_id.clone(),
+            funding: row
+                .funding
+                .iter()
+                .map(crate::model::TransactionFundingInput::from)
+                .collect(),
             category_id: row.category_id.clone(),
             merchant_id: row.merchant_id.clone(),
             policy_id: row.policy_id.clone(),

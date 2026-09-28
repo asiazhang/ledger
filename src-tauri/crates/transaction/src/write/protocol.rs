@@ -210,9 +210,13 @@ fn create_protocol(conn: &Connection, source: CreateForm<'_>) -> Result<Transact
         if let CreateForm::Replay { row, .. } = &source {
             writer::validate_accounts_alive(
                 conn,
-                &row.account_id,
+                row.account_id.as_deref(),
                 row.to_account_id.as_deref(),
                 row.funding_account_id.as_deref(),
+                &row.funding
+                    .iter()
+                    .map(|i| i.account_id.clone())
+                    .collect::<Vec<_>>(),
             )?;
         }
         // ── 计划装配（分歧点①：Local 按输入重折算 / Replay 按命令携带行）──
@@ -367,9 +371,13 @@ fn update_protocol(conn: &Connection, id: &str, source: UpdateForm<'_>) -> Resul
         if let UpdateForm::Replay { row, .. } = &source {
             writer::validate_accounts_alive(
                 conn,
-                &row.account_id,
+                row.account_id.as_deref(),
                 row.to_account_id.as_deref(),
                 row.funding_account_id.as_deref(),
+                &row.funding
+                    .iter()
+                    .map(|i| i.account_id.clone())
+                    .collect::<Vec<_>>(),
             )?;
         }
         // ── 计划装配（分歧点①）──
@@ -474,7 +482,7 @@ fn delete_within_transaction(conn: &Connection, id: &str, form: WriteForm) -> Re
 /// 级联删除的被级联行在**源端**亦各自留痕：同步端按同一 delete 协议逐笔收敛，
 /// 无需感知级联语义；重放端不产 op（见 [`WriteForm::Replay`]）。
 fn soft_delete_transaction_row(conn: &Connection, id: &str, form: WriteForm) -> Result<()> {
-    let (account_id, to_account_id, funding_account_id): (String, Option<String>, Option<String>) = conn
+    let (account_id, to_account_id, funding_account_id): (Option<String>, Option<String>, Option<String>) = conn
         .query_row(
             "SELECT account_id, to_account_id, funding_account_id FROM transactions WHERE id=?1 AND is_deleted=0",
             rusqlite::params![id],
@@ -484,21 +492,28 @@ fn soft_delete_transaction_row(conn: &Connection, id: &str, form: WriteForm) -> 
         .ok_or_else(|| {
             AppError::codedp_not_found("transaction.not-found", format!("交易不存在: {id}"), &[id])
         })?;
+    // 出资子行端先读（ADR-0138 决策 7）：软删后子行不再随主行读出，余额重算的
+    // 受影响账户并集必须包含软删前的出资端（子行无独立软删位，行保留在库、
+    // 随主行 is_deleted 过滤失效）。
+    let item_accounts = crate::write::funding_items::item_account_ids(conn, id)?;
     conn.execute(
         "UPDATE transactions SET is_deleted=1, updated_at=?2, version=version+1, device_id=?3 WHERE id=?1",
         rusqlite::params![id, now_iso(), device_id(conn)?],
     )?;
-    // 余额缓存写路径（issue #491 / ADR-0067）：软删后对原行账户引用三元组（受影响
-    // 账户推导，消费余额模块唯一定义，issue #534 / #935——删除恢复出资账户的现金腿）
-    // 同事务整体重算。经写路径副作用接缝传入原行三元组（#1090 接缝反转），
-    // 推导与重算都在账户域实现侧，本模块对账户域零感知。
+    // 余额缓存写路径（issue #491 / ADR-0067）：软删后对原行账户引用集（主表三列 +
+    // 出资子行端，ADR-0138 决策 7——删除恢复出资项各账户的现金腿；受影响账户推导
+    // 消费余额模块唯一定义，issue #534 / #935）同事务整体重算。经写路径副作用接缝
+    // 传入原行引用集（#1090 接缝反转），推导与重算都在账户域实现侧，本模块对账户
+    // 域零感知。
+    let item_refs: Vec<&str> = item_accounts.iter().map(String::as_str).collect();
     crate::seams::balance::refresh_affected_balances(
         conn,
-        Some((
-            account_id.as_str(),
-            to_account_id.as_deref(),
-            funding_account_id.as_deref(),
-        )),
+        Some(crate::seams::balance::RowAccounts {
+            account_id: account_id.as_deref(),
+            to_account_id: to_account_id.as_deref(),
+            funding_account_id: funding_account_id.as_deref(),
+            funding_items: &item_refs,
+        }),
         None,
     )?;
     // op 产出接缝（issue #855 / ADR-0091）：**仅本地删除**追加 delete op（实体 id）；
@@ -583,6 +598,24 @@ fn guard_reference_admission(input: &TransactionInput) -> Result<()> {
         return Err(AppError::codedp(
             "transaction.policy-unsupported",
             format!("交易类型 {kind} 不能挂保单"),
+            &[&kind.to_string()],
+        ));
+    }
+    // 出资分解携带收口（issue #1860 / ADR-0138 决策 3/5）：expense / income 可带
+    // 分解，refund 可带显式覆盖（决策 5）；transfer（两端已表达）、投资 kind（结算
+    // 归因归出资账户）、dividend / split / convert 携带即码化拒绝。kind 准入在两层
+    // 各判一次、同码同错（刻意冗余）：本函数辖 Local 形态命令入口，Writer 接缝
+    // validate_funding_items 辖全部形态（重放 / 定时引擎不经本函数）；逐条约束
+    // （正性 / 标签 / 账户准入 / Σ）只在 Writer 一处。
+    if !input.funding.is_empty()
+        && !matches!(
+            kind,
+            TransactionKind::Income | TransactionKind::Expense | TransactionKind::Refund
+        )
+    {
+        return Err(AppError::codedp(
+            "transaction.funding-item-unsupported",
+            format!("交易类型 {kind} 不能携带出资分解"),
             &[&kind.to_string()],
         ));
     }
@@ -677,6 +710,19 @@ fn plan_with_existing_refs(
                     // 出资账户随输入下传；通用 kind 携带即被 writer::normalize 内的
                     // 准入校验拒绝（issue #935），此处透传不判定。
                     funding_account_id: input.funding_account_id.clone(),
+                    // 出资分解随输入下传（issue #1860 / ADR-0138）：契约校验与
+                    // 落库形状归 writer::normalize / funding_items，此处透传不判定。
+                    funding: input
+                        .funding
+                        .iter()
+                        .map(crate::write::funding_items::FundingItem::from)
+                        .collect(),
+                    // 修改路径带该行当前落库分解（「保持历史引用」比对基准），
+                    // 创建路径为空。
+                    existing_funding: match existing_id {
+                        Some(id) => crate::write::funding_items::read_rows(conn, id)?,
+                        None => Vec::new(),
+                    },
                     category_id: input.category_id.clone(),
                     merchant_id,
                     existing_merchant_id: existing_merchant_id.map(str::to_string),
@@ -879,8 +925,16 @@ fn replay_assembly(
             // 引擎挂 ParkedOp 挂起、不中断批次（dividend 重放臂先例）。
             writer::validate_currency_consistency(
                 conn,
-                &norm_row.account_id,
+                norm_row.account_id.as_deref(),
                 norm_row.to_account_id.as_deref(),
+                &norm_row.currency_code,
+            )?;
+            // 出资子行币种复验（issue #1860 / ADR-0138 影响节）：分解随行搬运后，
+            // 「现金腿即账户币种」不变量在重放端对子行同样复验——存活校验先行，
+            // 此处实际只补币种差；失败同码挂 ParkedOp。
+            crate::write::funding_items::validate_funding_item_currencies(
+                conn,
+                &norm_row.funding,
                 &norm_row.currency_code,
             )?;
             Ok(Plan::Common(norm_row))

@@ -55,7 +55,7 @@ fn create_appends_one_op_with_source_folding() {
     assert_eq!(row.kind, TransactionKind::Expense);
     assert_eq!(row.amount_cents, 10000);
     assert_eq!(row.amount_native_cents, 10000, "源端折算结果随 op 携带");
-    assert_eq!(row.account_id, "acc-op");
+    assert_eq!(row.account_id.as_deref(), Some("acc-op"));
     assert!(investment.is_none(), "普通 kind 不携带投资字段");
 }
 
@@ -149,7 +149,7 @@ fn refund_op_carries_inherited_normalized_row() {
     };
     // 归一化结果（退款继承原支出账户）随 op 携带：重放端不再重推继承。
     assert_eq!(row.kind, TransactionKind::Refund);
-    assert_eq!(row.account_id, "acc-op");
+    assert_eq!(row.account_id.as_deref(), Some("acc-op"));
     assert_eq!(
         row.refund_of_transaction_id.as_deref(),
         Some(expense_id.as_str())

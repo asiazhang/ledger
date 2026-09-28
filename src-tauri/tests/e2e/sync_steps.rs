@@ -186,13 +186,14 @@ fn peer_delivers_unreplayable_op(world: &mut LedgerWorld) {
         command: DomainCommand::Transaction(TransactionCommand::Create {
             id: "e2e-parked-txn".into(),
             row: NormalizedTransaction {
+                funding: Vec::new(),
                 kind: TransactionKind::Expense,
                 amount_cents: 1_000,
                 currency_code: "CNY".into(),
                 amount_native_cents: 1_000,
                 fx_rate_used: None,
                 fx_rate_source: None,
-                account_id: "no-such-account".into(),
+                account_id: Some("no-such-account".into()),
                 to_account_id: None,
                 funding_account_id: None,
                 category_id: None,

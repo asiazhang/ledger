@@ -107,7 +107,7 @@ export function resolveLendingDirection(
 ): LendingFormDirection | null {
   const direction = deriveLendingDirection(
     tx.kind,
-    accountType(tx.account_id),
+    tx.account_id == null ? undefined : accountType(tx.account_id),
     tx.to_account_id == null ? undefined : accountType(tx.to_account_id),
   );
   return direction === "none" ? null : direction;

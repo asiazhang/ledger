@@ -39,7 +39,7 @@ fn normalize_refund_inherits_source_fields() {
             kind: TransactionKind::Refund,
             amount_cents: 200,
             currency_code: "USD".into(),
-            account_id: "acc-other".into(),
+            account_id: Some("acc-other".into()),
             category_id: Some("cat-other".into()),
             refund_of_transaction_id: Some(source_id.clone()),
             ..input(TransactionKind::Refund, 200, "acc-other")
@@ -47,7 +47,7 @@ fn normalize_refund_inherits_source_fields() {
     )
     .unwrap();
     // 继承原支出：账户/币种/分类均为来源值，而非调用方填的字段
-    assert_eq!(norm.account_id, "acc-src");
+    assert_eq!(norm.account_id.as_deref(), Some("acc-src"));
     assert_eq!(norm.currency_code, "CNY");
     assert_eq!(norm.category_id.as_deref(), Some(cat_src.as_str()));
     assert_eq!(

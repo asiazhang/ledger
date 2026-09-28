@@ -15,6 +15,7 @@
 mod audit;
 mod common;
 mod currency;
+mod funding_item;
 mod merchant;
 mod normalize;
 mod refund;
