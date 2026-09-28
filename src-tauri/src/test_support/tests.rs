@@ -5,8 +5,8 @@
 use rusqlite::params;
 
 use super::{
-    assert_balance_cache_matches_realtime, open, seed_account, seed_exchange_rate,
-    seed_fund_market_price, seed_market_price,
+    assert_balance_cache_matches_realtime, open, open_file_scratch, seed_account,
+    seed_exchange_rate, seed_fund_market_price, seed_market_price,
 };
 use super::{seed_fx_rate_history, seed_instrument, seed_investment_setup, seed_price_history};
 use ledger_accounts::balance::refresh_account_balances;
@@ -256,4 +256,55 @@ fn balance_cache_assertion_catches_drift() {
     )
     .unwrap();
     assert_balance_cache_matches_realtime(&conn);
+}
+
+/// `open_file_scratch`（issue #1868）：文件库模板的初始化能力与内存模板等价——
+/// 外键开启、迁移至最新（user_version 同内存模板）、默认种子（V004）等量在位、
+/// 库文件落在自带暂存目录、种子可在返回连接上注入。
+#[test]
+fn open_file_scratch_initializes_like_memory_template() {
+    let (conn, dir) = open_file_scratch("selftest-file-tpl");
+    let fk: i64 = conn
+        .query_row("PRAGMA foreign_keys", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(fk, 1, "外键约束应随建库打开");
+    assert!(
+        dir.join(ledger_infra::db::data_location::DB_FILE_NAME)
+            .exists(),
+        "库文件应落在自带的暂存目录内"
+    );
+    let memory = open();
+    assert_eq!(
+        scalar(&conn, "PRAGMA user_version"),
+        scalar(&memory, "PRAGMA user_version"),
+        "文件库模板应迁移至与内存模板相同的最新版本"
+    );
+    assert_eq!(
+        scalar(&conn, "SELECT COUNT(*) FROM accounts"),
+        scalar(&memory, "SELECT COUNT(*) FROM accounts"),
+        "默认种子应与内存模板等量在位"
+    );
+    seed_account(&conn, "acc-file", "现金", "cash", "CNY", 0);
+    assert_eq!(
+        scalar(&conn, "SELECT COUNT(*) FROM accounts WHERE id='acc-file'"),
+        1,
+        "种子应可在文件库模板连接上注入"
+    );
+}
+
+/// `open_file_scratch`（issue #1868）：测试后清理——连接关闭、guard drop 后整棵
+/// 暂存目录消失（删掉 `ScratchDir` 的 Drop 实现本断言红）。
+#[test]
+fn open_file_scratch_cleans_up_scratch_dir_after_test() {
+    let dir_path = {
+        let (conn, dir) = open_file_scratch("selftest-file-tpl-cleanup");
+        let path = dir.path().to_path_buf();
+        assert!(
+            path.join(ledger_infra::db::data_location::DB_FILE_NAME)
+                .exists()
+        );
+        drop(conn);
+        path
+    };
+    assert!(!dir_path.exists(), "guard drop 后整棵暂存目录应消失");
 }
