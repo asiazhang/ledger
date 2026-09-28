@@ -26,6 +26,7 @@ pub(super) fn input(kind: TransactionKind, amount_cents: i64, account_id: &str) 
         policy_id: None,
         existing_policy_id: None,
         refund_of_transaction_id: None,
+        source_order_no: None,
         note: None,
         date: "2026-01-01".into(),
         fx_rate: None,

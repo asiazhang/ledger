@@ -72,6 +72,7 @@ impl ImportedRow {
             policy_id: None,
             refund_of_transaction_id: None,
             funding_account_id: None,
+            source_order_no: None,
             note: self.note.clone(),
             date: self.date.clone(),
             instrument_id: None,

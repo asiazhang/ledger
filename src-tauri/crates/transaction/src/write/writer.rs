@@ -63,6 +63,10 @@ pub struct Input {
     pub existing_policy_id: Option<String>,
     pub refund_of_transaction_id: Option<String>,
     pub note: Option<String>,
+    /// 来源订单号（issue #1862 / ADR-0138 决策 9，V035）：随行落库。来源元数据，
+    /// 不限 kind、不参与退款继承（refund 只继承账户/币种/分类/商户，调用方对本
+    /// 字段给什么落什么，缺省 `None`）。
+    pub source_order_no: Option<String>,
     pub date: String,
     /// 可选逐笔显式汇率（issue #1549）：调用方为该笔直接给定折算用汇率（与折算
     /// 同向，`native = amount × rate`），数据源覆盖不到的日期由写入方补口；
@@ -103,6 +107,8 @@ pub struct NormalizedRow {
     pub policy_id: Option<String>,
     pub refund_of_transaction_id: Option<String>,
     pub note: Option<String>,
+    /// 来源订单号（issue #1862 / ADR-0138 决策 9，V035）：随行落库的来源元数据列。
+    pub source_order_no: Option<String>,
     pub date: String,
 }
 
@@ -313,6 +319,7 @@ pub fn normalize(conn: &Connection, input: &Input) -> Result<NormalizedRow> {
         policy_id,
         refund_of_transaction_id: refund_of_id,
         note: input.note.clone(),
+        source_order_no: input.source_order_no.clone(),
         date: input.date.clone(),
     })
 }
@@ -468,9 +475,9 @@ pub fn insert_row_with_id(conn: &Connection, id: &str, row: &NormalizedRow) -> R
     conn.execute(
         "INSERT INTO transactions \
          (id,kind,amount_cents,currency_code,amount_native_cents,account_id,to_account_id,\
-         funding_account_id,category_id,merchant_id,policy_id,refund_of_transaction_id,note,date,created_at,updated_at,version,device_id,\
+         funding_account_id,category_id,merchant_id,policy_id,refund_of_transaction_id,note,source_order_no,date,created_at,updated_at,version,device_id,\
          fx_rate_used,fx_rate_source,is_deleted) \
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,0)",
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,0)",
         params![
             id,
             row.kind.as_str(),
@@ -485,6 +492,7 @@ pub fn insert_row_with_id(conn: &Connection, id: &str, row: &NormalizedRow) -> R
             row.policy_id,
             row.refund_of_transaction_id,
             row.note,
+            row.source_order_no,
             row.date,
             now,
             now,
@@ -540,7 +548,7 @@ pub fn update_row(conn: &Connection, id: &str, row: &NormalizedRow) -> Result<()
         "UPDATE transactions \
          SET kind=?2, amount_cents=?3, currency_code=?4, amount_native_cents=?5, account_id=?6, \
          to_account_id=?7, funding_account_id=?8, category_id=?9, merchant_id=?10, policy_id=?11, refund_of_transaction_id=?12, note=?13, date=?14, \
-         updated_at=?15, version=version+1, device_id=?16, fx_rate_used=?17, fx_rate_source=?18 \
+         updated_at=?15, version=version+1, device_id=?16, fx_rate_used=?17, fx_rate_source=?18, source_order_no=?19 \
          WHERE id=?1",
         params![
             id,
@@ -561,6 +569,7 @@ pub fn update_row(conn: &Connection, id: &str, row: &NormalizedRow) -> Result<()
             device_id(conn)?,
             row.fx_rate_used,
             row.fx_rate_source.map(amount::FxRateSource::as_str),
+            row.source_order_no,
         ],
     )?;
     // 出资项子行全量替换（ADR-0138 决策 6 全量语义）：单 ⇄ 多就地互转同一路径，
@@ -622,6 +631,7 @@ impl TryFrom<&NormalizedTransaction> for NormalizedRow {
             policy_id: norm.policy_id.clone(),
             refund_of_transaction_id: norm.refund_of_transaction_id.clone(),
             note: norm.note.clone(),
+            source_order_no: norm.source_order_no.clone(),
             date: norm.date.clone(),
         })
     }
@@ -652,6 +662,7 @@ impl From<&NormalizedRow> for NormalizedTransaction {
             policy_id: row.policy_id.clone(),
             refund_of_transaction_id: row.refund_of_transaction_id.clone(),
             note: row.note.clone(),
+            source_order_no: row.source_order_no.clone(),
             date: row.date.clone(),
         }
     }

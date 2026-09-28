@@ -39,5 +39,10 @@ pub struct NormalizedTransaction {
     pub policy_id: Option<String>,
     pub refund_of_transaction_id: Option<String>,
     pub note: Option<String>,
+    /// 来源订单号（issue #1862 / ADR-0138 决策 9，V035）：随归一化行落库与随 op 搬运
+    /// （重放端同语义落列）。`#[serde(default)]` 使旧版本载荷（成员缺省）反序列化为
+    /// `None`——只增不改。
+    #[serde(default)]
+    pub source_order_no: Option<String>,
     pub date: String,
 }

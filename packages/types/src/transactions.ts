@@ -98,6 +98,9 @@ export interface Transaction extends Syncable {
   refund_of_transaction_id: string | null;
   /** 出资项分解（issue #1860 / ADR-0138）：分解行按顺序位稳定返回；非分解行为空数组 */
   fundings: TransactionFunding[];
+  /** 来源订单号（issue #1862 / ADR-0138 决策 9，V035）：导入来源单据的外部订单标识，
+   * 行尾订单徽章与详情订单区的行级归属锚点；手动行为 null，单号不入备注 */
+  source_order_no: string | null;
   note: string | null;
   date: string;
   created_at: string;
@@ -130,6 +133,7 @@ export type TransactionModalRow = Pick<
   | "fundings"
   | "source"
   | "convert"
+  | "source_order_no"
 >;
 
 /** 出资项分解条目（issue #1860 / ADR-0138）：`TransactionInput.funding` /
@@ -169,6 +173,9 @@ export interface TransactionInput {
    * 引用不存在的保单返回错误（中文，可读回自纠） */
   policy_id?: string | null;
   refund_of_transaction_id?: string | null;
+  /** 来源订单号（issue #1862 / ADR-0138 决策 9）：同单多行写同一外部订单号；来源元数据
+   * 不限 kind、缺省即不带、单号不入备注；修改路径全字段替换（缺省 = 清除） */
+  source_order_no?: string | null;
   note?: string | null;
   date: string;
   instrument_id?: string | null;
@@ -236,6 +243,32 @@ export interface TransactionListResult {
   items: Transaction[];
   /** 满足过滤条件的未删除交易总数 */
   total: number;
+}
+
+/** 订单汇总按账户聚合的出资构成条目（issue #1862 / ADR-0138 决策 9） */
+export interface OrderAccountContribution {
+  /** 出资账户 id */
+  account_id: string;
+  /** 该账户在本订单的出资合计（正整数分） */
+  amount_cents: number;
+}
+
+/** 订单汇总（issue #1862 / ADR-0138 决策 9）：按来源订单号取同单行集的只读投影。
+ * 合计是各行原始币种金额直和；currency_code 仅行集币种唯一时携带（混合币种 null，
+ * 不静默混算）。出资构成：分解行逐出资项、单出资行按主账户整额、同账户合并。 */
+export interface TransactionOrderSummary {
+  /** 来源订单号（查询键原样返回） */
+  source_order_no: string;
+  /** 同单未删除行数 */
+  row_count: number;
+  /** 同单各行原始币种金额合计（整数分直和） */
+  total_amount_cents: number;
+  /** 同单币种（唯一时携带；混合币种 null） */
+  currency_code: string | null;
+  /** 按账户聚合的出资构成（单账户订单 1 条、多账户订单 ≥2 条） */
+  accounts: OrderAccountContribution[];
+  /** 同单各行明细（日期升序，读回契约与列表同形） */
+  items: Transaction[];
 }
 
 /** 交易搜索分页结果（服务端分页） */

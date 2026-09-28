@@ -57,6 +57,7 @@ describe("buildExpenseIncomeInput", () => {
       merchant_id: "m-1",
       policy_id: null,
       refund_of_transaction_id: null,
+      source_order_no: null,
       note: "午餐",
       date: "2024-06-15",
     });
@@ -86,6 +87,7 @@ describe("buildExpenseIncomeInput", () => {
       merchant_id: null,
       policy_id: null,
       refund_of_transaction_id: null,
+      source_order_no: null,
       note: null,
       date: "2024-06-15",
     });
@@ -110,6 +112,7 @@ describe("buildTransferInput", () => {
       merchant_id: null,
       policy_id: null,
       refund_of_transaction_id: null,
+      source_order_no: null,
       note: "房租分摊",
       date: "2024-06-15",
     });
@@ -161,6 +164,7 @@ describe("buildTransferInput", () => {
         merchant_id: null,
         policy_id: null,
         refund_of_transaction_id: null,
+        source_order_no: null,
         note: `借贷·${direction}`,
         date: "2024-06-15",
       });
@@ -190,6 +194,7 @@ describe("buildRefundInput", () => {
       merchant_id: null,
       policy_id: null,
       refund_of_transaction_id: "tx-origin",
+      source_order_no: null,
       note: "部分退款",
       date: "2024-06-16",
     });
@@ -243,6 +248,7 @@ describe("buildTradeInput", () => {
       merchant_id: null,
       policy_id: null,
       refund_of_transaction_id: null,
+      source_order_no: null,
       note: null,
       date: "2024-06-15",
       instrument_id: "ins-1",
@@ -282,6 +288,7 @@ describe("buildTradeInput", () => {
       merchant_id: null,
       policy_id: null,
       refund_of_transaction_id: null,
+      source_order_no: null,
       note: "止盈",
       date: "2024-06-15",
       instrument_id: "ins-1",
@@ -313,6 +320,7 @@ describe("buildTradeInput", () => {
       merchant_id: null,
       policy_id: null,
       refund_of_transaction_id: null,
+      source_order_no: null,
       note: null,
       date: "2024-06-15",
       instrument_id: "ins-fund",

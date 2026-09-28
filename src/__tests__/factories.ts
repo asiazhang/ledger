@@ -152,6 +152,8 @@ export function makeInvestmentLedgerRow(
     amount_cents: 10000,
     account_id: "acc-1",
     funding_account_id: null,
+    // 来源订单号默认无（V035 / #1862，弹窗族消费列）：订单场景显式传
+    source_order_no: null,
     instrument_id: "inst-1",
     symbol: "600000",
     instrument_name: "浦发银行",
@@ -264,6 +266,8 @@ export function makeTransaction(partial: Partial<Transaction> & { id: string }):
     is_deleted: false,
     // 来源列默认无来源（列表/搜索读路径才填充）；来源场景显式传 source
     source: null,
+    // 来源订单号默认无（V035 / #1862）：手动行为 null，订单场景显式传
+    source_order_no: null,
     // 转换扩展默认无（仅 convert 行由列表/搜索读路径填充）；转换场景显式传 convert
     convert: null,
     ...partial,

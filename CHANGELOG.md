@@ -13,6 +13,7 @@
 - **交易**：出资项子表（V034 `transaction_fundings`）——子行随主行存亡（软删即失效、无独立软删位）、显式顺序位保读回稳定、存量行零迁移；每条出资按所属 kind 符号计入对应账户余额（受影响账户写前 ∪ 写后整体重算，ADR-0067 机制不变）；涉及账户过滤与隐藏投资相关流水口径自动覆盖出资端（[#1860]，ADR-0138）。
 - **错误码**：新增 `transaction.funding-item-unsupported` / `transaction.funding-account-conflict` / `transaction.account-required` / `transaction.funding-sum-mismatch` / `transaction.funding-amount-positive` / `transaction.funding-label-too-long`（zh/en 模板同步）（[#1860]，ADR-0138）。
 - **交易**：多出资方读侧呈现——分解行（带非空出资分解）在交易列表账户列显示首条出资账户并标注「等 N 账户」（多账户）或「同账户 N 笔」（同账户多条），退款按比例自动分解的行另带「按比例自动分解」标注，桌面表格与移动卡片同源；行菜单与移动档整卡点击进只读详情弹窗，呈现出资项列表（账户 / 扣款标签 / 金额）与 Σ 合计。分解行不开放编辑与退款（表单录入分解另行支持）（[#1861]，ADR-0138）。
+- **交易 / AI 导入 / HTTP API**：订单可读性——交易新增可选来源订单号 `source_order_no`（V035，来源元数据、不限 kind，同单多行写同一单号；增量迁移、存量行零变化；AI / HTTP 契约可选字段，导入教学补「单号写入列、不入备注」）；交易列表行尾为有单号的行渲染静态「订单 <单号>」徽章（桌面表格与移动卡片同源，不可点击、无过滤、不分组）；行菜单对订单行开放只读详情（编辑通道保留），详情呈现所属订单区——行数 · 合计 · 按账户聚合的出资构成徽标（单账户订单 1 枚、多账户订单 ≥2 枚）与各行明细，数据经新增订单汇总只读 IPC 命令（同单行集与出资聚合收同一读事务；无 HTTP 端点）（[#1862]，ADR-0138 决策 9）。
 
 ## [0.8.0] - 2026-09-27
 
@@ -449,3 +450,6 @@
 [#1769]: https://github.com/asiazhang/ledger/issues/1769
 [#1810]: https://github.com/asiazhang/ledger/issues/1810
 [#1811]: https://github.com/asiazhang/ledger/issues/1811
+[#1860]: https://github.com/asiazhang/ledger/issues/1860
+[#1861]: https://github.com/asiazhang/ledger/issues/1861
+[#1862]: https://github.com/asiazhang/ledger/issues/1862

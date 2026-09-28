@@ -58,6 +58,7 @@ fn buy_input(
         category_id: None,
         merchant_id: None,
         refund_of_transaction_id: None,
+        source_order_no: None,
         note: None,
         date: date.into(),
         instrument_id: Some(instrument_id.into()),

@@ -392,6 +392,7 @@ fn writer_insert_row_direct_seam_refreshes_cache() {
         existing_policy_id: None,
         refund_of_transaction_id: None,
         funding_account_id: None,
+        source_order_no: None,
         note: None,
         date: "2026-03-01".into(),
         fx_rate: None,

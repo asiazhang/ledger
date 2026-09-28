@@ -153,6 +153,7 @@ fn seed_transactions(conn: &Connection, count: usize) {
             merchant_id: None,
             refund_of_transaction_id: None,
             funding_account_id: None,
+            source_order_no: None,
             note: Some(format!("种子交易 {i}")),
             date: "2026-03-01".into(),
             instrument_id: None,

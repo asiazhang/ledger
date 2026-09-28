@@ -139,6 +139,8 @@ export function useTransferForm(options?: {
         toAccountId: toAccountId.value,
         merchantId,
         note: note.value,
+        // 来源订单号编辑透传（#1862）：表单无输入位，缺省即静默清除订单锚点
+        sourceOrderNo: editing?.source_order_no ?? null,
         date: date.value,
       });
       if (editing) {

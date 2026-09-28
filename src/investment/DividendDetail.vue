@@ -4,6 +4,7 @@ import { NDescriptions, NDescriptionsItem } from "naive-ui";
 import { t } from "@ledger/i18n";
 import { useReferenceStore } from "@/stores/reference";
 import { displayAmountText } from "@/transaction/transaction-columns";
+import OrderSection from "@/transaction/OrderSection.vue";
 import type { TransactionModalRow } from "@ledger/types";
 
 /**
@@ -51,4 +52,8 @@ const amountText = computed(() => displayAmountText(reference, props.transaction
       {{ transaction.note ?? "—" }}
     </NDescriptionsItem>
   </NDescriptions>
+  <!-- 所属订单区（#1862 / ADR-0138 决策 9）：来源订单号列有值才渲染——
+         投资行（券商回单 buy/sell/convert/dividend）同样可有订单归属，
+         点开任一同单行均可读订单汇总（两腿/分红详情与订单区并存） -->
+  <OrderSection v-if="transaction.source_order_no" :source-order-no="transaction.source_order_no" />
 </template>

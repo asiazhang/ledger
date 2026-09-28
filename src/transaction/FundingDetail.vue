@@ -15,6 +15,7 @@ import {
   FUNDING_AMOUNT_CLASS,
   FUNDING_TOTAL_CLASS,
 } from "./funding-detail.css.ts";
+import OrderSection from "@/transaction/OrderSection.vue";
 import type { TransactionModalRow } from "@ledger/types";
 
 /**
@@ -91,5 +92,8 @@ const derived = computed(() => props.row.fundings.some((f) => f.derived));
         <span :class="FUNDING_AMOUNT_CLASS">{{ fundingAmount(row.amount_cents) }}</span>
       </div>
     </div>
+    <!-- 所属订单区（issue #1862 / ADR-0138 决策 9）：来源订单号列有值才渲染——
+         同单聚合（行数 · 合计 · 出资构成徽标 · 各行明细）与本行出资项列表互补 -->
+    <OrderSection v-if="row.source_order_no" :source-order-no="row.source_order_no" />
   </div>
 </template>

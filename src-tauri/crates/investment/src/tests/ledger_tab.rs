@@ -78,6 +78,7 @@ fn plain_expense_input() -> TransactionInput {
         category_id: None,
         merchant_id: None,
         refund_of_transaction_id: None,
+        source_order_no: None,
         note: None,
         date: "2026-03-01".into(),
         instrument_id: None,

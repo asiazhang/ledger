@@ -44,49 +44,44 @@ export { renderRowMenuIcon, errorOptionProps };
  * 尚未支持分解（ADR-0138 决策 8 读侧先行，录入侧另票）。单一来源：交易类型行激活
  * 闭集（transactionKindActivation）+ 行形状（fundings），菜单组装与移动档卡片行激活
  * 共用（issue #846 / #1048 / #1861）。 */
-export function supportsRowEdit(row: Pick<Transaction, "kind" | "fundings">): boolean {
+export function supportsRowEdit(
+  row: Pick<Transaction, "kind" | "fundings" | "source_order_no">,
+): boolean {
   return row.fundings.length === 0 && transactionKindActivation(row.kind) === "edit";
 }
 
 /** 「只读详情」开放判定：界面只读 kind（convert / split 无现金腿；dividend 现金分红，
  * ADR-0106 决策 10 / ADR-0109）不体现写操作入口，只保留列表 / 筛选 / 只读详情；带非空
- * 出资分解的行同样进只读详情（出资项呈现 + Σ，ADR-0138 决策 8，issue #1861）。
- * 单一来源同上（行激活闭集 + 行形状），菜单组装与移动档卡片「整卡点击 = 详情」共用。 */
-export function supportsRowDetail(row: Pick<Transaction, "kind" | "fundings">): boolean {
-  return row.fundings.length > 0 || transactionKindActivation(row.kind) === "detail";
+ * 出资分解的行同样进只读详情（出资项呈现 + Σ，ADR-0138 决策 8，issue #1861）；来源
+ * 订单号列有值的行进只读详情（所属订单区，issue #1862 / ADR-0138 决策 9）——可编辑
+ * kind 的订单行同时保留编辑入口（订单详情是增量呈现，不收走纠错通道）。
+ * 单一来源（行激活闭集 + 行形状），菜单组装与移动档卡片「整卡点击 = 详情」共用。 */
+export function supportsRowDetail(
+  row: Pick<Transaction, "kind" | "fundings" | "source_order_no">,
+): boolean {
+  return (
+    row.fundings.length > 0 ||
+    row.source_order_no != null ||
+    transactionKindActivation(row.kind) === "detail"
+  );
 }
 
 export function buildRowMenuOptions(
-  row: Pick<Transaction, "kind" | "fundings">,
+  row: Pick<Transaction, "kind" | "fundings" | "source_order_no">,
   opts: { hasItem?: boolean; errorColor?: string } = {},
 ): DropdownOption[] {
-  // 只读详情行（界面只读 kind ∪ 出资分解行）菜单首项一律「详情」；
-  // 界面只读 kind 仅详情（无编辑/软删入口，ADR-0106 决策 10 / #1048）；
-  // 分解行保留删除（后端级联子行，写路径已支持）与 expense 加入物品（不读账户端）。
-  if (supportsRowDetail(row)) {
-    const options: DropdownOption[] = [
-      { label: t("transactions.menu.detail"), key: "detail", icon: renderRowMenuIcon(EyeOutline) },
-    ];
-    if (transactionKindActivation(row.kind) === "detail") return options;
-    if (row.kind === "expense") {
-      options.push({
-        label: t("transactions.menu.addItem"),
-        key: "add-item",
-        disabled: opts.hasItem === true,
-        icon: renderRowMenuIcon(AddCircleOutline),
-      });
-    }
-    options.push({ type: "divider", key: "menu-divider" });
-    const errorProps = errorOptionProps(opts.errorColor);
-    options.push({
-      label: t("transactions.menu.delete"),
-      key: "delete",
-      icon: renderRowMenuIcon(TrashOutline),
-      ...errorProps,
-    });
-    return options;
-  }
   const options: DropdownOption[] = [];
+  // 只读详情行（界面只读 kind ∪ 出资分解行 ∪ 来源订单号行）菜单首项「详情」；
+  // 界面只读 kind 仅详情（无编辑/软删入口，ADR-0106 决策 10 / #1048）；
+  // 订单行的详情是增量呈现——可编辑 kind 同时保留编辑 / 退款 / 加入物品（#1862）。
+  if (supportsRowDetail(row)) {
+    options.push({
+      label: t("transactions.menu.detail"),
+      key: "detail",
+      icon: renderRowMenuIcon(EyeOutline),
+    });
+  }
+  if (transactionKindActivation(row.kind) === "detail") return options;
   // 「编辑」显式白名单（refund 破坏关联语义不开放，开放判定见 supportsRowEdit 单源）：
   if (supportsRowEdit(row)) {
     options.push({
@@ -96,11 +91,14 @@ export function buildRowMenuOptions(
     });
   }
   if (row.kind === "expense") {
-    options.push({
-      label: t("transactions.menu.refund"),
-      key: "refund",
-      icon: renderRowMenuIcon(CashOutline),
-    });
+    // 退款表单未支持分解（#1861 口径）：分解行不开放退款，保持既有菜单形状。
+    if (row.fundings.length === 0) {
+      options.push({
+        label: t("transactions.menu.refund"),
+        key: "refund",
+        icon: renderRowMenuIcon(CashOutline),
+      });
+    }
     options.push({
       label: t("transactions.menu.addItem"),
       key: "add-item",

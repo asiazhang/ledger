@@ -122,6 +122,7 @@ pub fn query_all_transactions(conn: &Connection) -> Vec<Transaction> {
             funding_account_id: r.get(7)?,
             category_id: r.get(8)?,
             refund_of_transaction_id: r.get(9)?,
+            source_order_no: None,
             note: r.get(10)?,
             date: r.get(11)?,
             created_at: r.get(12)?,

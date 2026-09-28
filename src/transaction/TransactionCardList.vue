@@ -13,6 +13,7 @@ import {
   KIND_TAG_TYPE,
   displayAmountText,
   renderAccountCell,
+  ORDER_BADGE_STYLE,
 } from "@/transaction/transaction-columns";
 import {
   TRANSACTION_CARD_LIST_CLASS,
@@ -131,6 +132,13 @@ function onCardClick(row: Transaction): void {
       <!-- 来源行：保留链接语义（来源列词条）；无来源不占行 -->
       <div v-else-if="row.source" class="transaction-card-row" @click.stop>
         <SourceLink :source="row.source" />
+      </div>
+      <!-- 订单徽章行（issue #1862 / ADR-0138 决策 9）：来源订单号列有值才渲染——
+           行尾静态徽章与桌面表格同源（ORDER_BADGE_STYLE 单点），不可点击、无过滤 -->
+      <div v-if="row.source_order_no" class="transaction-card-row" @click.stop>
+        <span :style="ORDER_BADGE_STYLE">{{
+          t("transactions.order.badge", { no: row.source_order_no })
+        }}</span>
       </div>
       <!-- 金额行：AmountCell 承载语义色与触控轴全文点按（阻断冒泡） -->
       <div class="transaction-card-amount" @click.stop>

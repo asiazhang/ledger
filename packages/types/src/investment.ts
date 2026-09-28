@@ -292,6 +292,9 @@ export interface InvestmentTransactionRow {
   /** 本位币金额（分，写路径折算落定）：dividend 只读详情金额展示读它（与主列表
    * 金额列同口径单点）；列表呈现不读 */
   amount_native_cents: number;
+  /** 来源订单号（V035 / #1862，弹窗族消费列）：投资行（如券商回单 buy/sell）可携带的
+   * 外部订单标识，经弹窗行适配供订单徽章与订单区消费；列表呈现不读 */
+  source_order_no: string | null;
 }
 
 /** 投资明细列表过滤条件（ADR-0135 / issue #1778）：四维 + 服务端 offset 分页。 */

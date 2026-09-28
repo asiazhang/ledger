@@ -38,6 +38,8 @@ export interface ExpenseIncomeFormState {
   merchantId: string | null;
   /** 已选保单 id（可选；null = 不挂单）；其他字段原样透传 */
   policyId: string | null;
+  /** 来源订单号（#1862，可选）：表单不承载输入位，编辑路径透传行上原值（缺省 null = 创建） */
+  sourceOrderNo?: string | null;
   note: string;
   /** 本地日期时间戳（日期选择器值） */
   date: number;
@@ -54,6 +56,8 @@ export interface TransferFormState {
   merchantId: string | null;
   note: string;
   date: number;
+  /** 来源订单号（#1862，可选）：编辑路径透传行上原值（缺省 null = 创建） */
+  sourceOrderNo?: string | null;
 }
 
 /** 退款表单形态（useRefundForm 表单状态原样；账户/币种由后端继承原支出，此处照表单原样装配） */
@@ -88,6 +92,8 @@ export interface TradeFormState {
   fundingAccountId: string | null;
   note: string;
   date: number;
+  /** 来源订单号（#1862，可选）：编辑路径透传行上原值（缺省 null = 创建） */
+  sourceOrderNo?: string | null;
 }
 
 /**
@@ -241,6 +247,9 @@ function baseInput(
     accountId: string;
     note: string;
     date: string;
+    /** 来源订单号（#1862，可选）：表单无输入位的来源元数据——创建路径不传（null），
+     * 编辑路径由 composable 透传行上原值；全字段替换下缺省即静默清除订单锚点 */
+    sourceOrderNo?: string | null;
   },
 ): TransactionInput {
   const row = KIND_FIELD_MATRIX[kind];
@@ -257,6 +266,7 @@ function baseInput(
     currency_code: fields.currencyCode,
     account_id: fields.accountId,
     note: fields.note || null,
+    source_order_no: fields.sourceOrderNo ?? null,
     date: fields.date,
   };
 }
@@ -269,6 +279,7 @@ export function buildExpenseIncomeInput(state: ExpenseIncomeFormState): Transact
       currencyCode: requireNonEmpty(state.currencyCode, t("transactions.field.currency")),
       accountId: requireNonEmpty(state.accountId, t("transactions.field.account")),
       note: state.note,
+      sourceOrderNo: state.sourceOrderNo,
       date: requireDateISO(state.date),
     }),
     category_id: state.categoryId,
@@ -287,6 +298,7 @@ export function buildTransferInput(state: TransferFormState): TransactionInput {
       currencyCode: requireNonEmpty(state.currencyCode, t("transactions.field.currency")),
       accountId: requireNonEmpty(state.accountId, t("transactions.field.fromAccount")),
       note: state.note,
+      sourceOrderNo: state.sourceOrderNo,
       date: requireDateISO(state.date),
     }),
     to_account_id: requireNonEmpty(state.toAccountId, t("transactions.field.toAccount")),
@@ -330,6 +342,7 @@ export function buildTradeInput(state: TradeFormState): TransactionInput {
       currencyCode: requireNonEmpty(state.currencyCode, t("transactions.field.currency")),
       accountId: requireNonEmpty(state.accountId, t("transactions.field.investmentAccount")),
       note: state.note,
+      sourceOrderNo: state.sourceOrderNo,
       date: requireDateISO(state.date),
     }),
     instrument_id: requireNonEmpty(state.instrumentId, t("transactions.field.instrument")),

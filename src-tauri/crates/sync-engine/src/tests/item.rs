@@ -26,6 +26,7 @@ fn expense_input(account_id: &str) -> TransactionInput {
         merchant_id: None,
         refund_of_transaction_id: None,
         funding_account_id: None,
+        source_order_no: None,
         note: Some("买手机".into()),
         date: "2026-01-10".into(),
         instrument_id: None,

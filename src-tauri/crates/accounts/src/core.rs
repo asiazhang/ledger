@@ -482,6 +482,7 @@ pub fn adjust_account_balance(
                 merchant_name: None,
                 policy_id: None,
                 refund_of_transaction_id: None,
+                source_order_no: None,
                 funding_account_id: None,
                 funding: Vec::new(),
                 note: Some(input.note.clone().unwrap_or_else(|| "余额调整".to_string())),

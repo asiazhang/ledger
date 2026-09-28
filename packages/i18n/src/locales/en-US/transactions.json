@@ -90,6 +90,16 @@
     "autoDerived": "Auto-split by proportion",
     "total": "Total · {n} funding items"
   },
+  "order": {
+    "no": "Order No.",
+    "badge": "Order {no}",
+    "section": "Order",
+    "rowCount": "{n} rows",
+    "total": "Total",
+    "accounts": "Funding composition",
+    "items": "Rows",
+    "loadFailed": "Cannot load order summary: {msg}"
+  },
   "menu": {
     "edit": "Edit",
     "detail": "Details",

@@ -49,7 +49,8 @@ export type TransactionDetailPayload =
   | { kind: "convert"; convert: TransactionConvert }
   | { kind: "split"; split: TransactionSplit }
   | { kind: "dividend" }
-  | { kind: "funding" };
+  | { kind: "funding" }
+  | { kind: "order" };
 
 /**
  * 意图状态（单一判别联合，弹窗编排的唯一事实源）：
@@ -157,7 +158,16 @@ export function useTransactionModalState(): UseTransactionModalStateReturn {
         settle(myToken, { type: "detail", row, detail: { kind: "dividend" } });
         return;
       }
-      if (row.kind !== "convert" && row.kind !== "split") return;
+      if (row.kind !== "convert" && row.kind !== "split") {
+        // 来源订单号行（issue #1862 / ADR-0138 决策 9）：订单区组件自取订单汇总
+        // （Loadable），无扩展读取同步开窗——载荷仅作渲染面判别（dividend 同款）。
+        // convert / split 行带订单号时仍走各自两腿详情（订单检查置于其后）。
+        if (row.source_order_no != null) {
+          settle(myToken, { type: "detail", row, detail: { kind: "order" } });
+          return;
+        }
+        return;
+      }
       try {
         const detail: TransactionDetailPayload =
           row.kind === "convert"

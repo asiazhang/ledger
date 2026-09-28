@@ -1261,3 +1261,44 @@ async fn test_delete_combined_payment_restores_all_funded_balances() {
     assert_eq!(balance_of(balances.as_array().unwrap(), "小金库"), 0);
     assert_eq!(balance_of(balances.as_array().unwrap(), "余额"), 0);
 }
+
+// 来源订单号契约（issue #1862 / ADR-0138 决策 9）：批量导入携 `source_order_no`
+// 落列、读回原样返回；同单多行同单号；PUT 全字段替换缺省（null）即清除。
+// 域行为权威在域单测（read/tests/order.rs），本处只做一步可观察的接线证明。
+#[tokio::test]
+async fn test_batch_import_source_order_no_roundtrips_and_put_clears() {
+    let (app, _conn) = setup_app();
+    let account_id = create_account_via_api(&app, "现金账户").await;
+    let tx1 = format!(
+        r#"{{"kind":"expense","amount_cents":28160,"currency_code":"CNY","account_id":"{account_id}","date":"2026-07-01","source_order_no":"JD-9001","idempotency_key":"src:1"}}"#
+    );
+    let tx2 = format!(
+        r#"{{"kind":"expense","amount_cents":1000,"currency_code":"CNY","account_id":"{account_id}","date":"2026-07-01","source_order_no":"JD-9001","idempotency_key":"src:2"}}"#
+    );
+    let created = post_batch(&app, batch_body(&[&tx1, &tx2], None)).await;
+    assert_eq!(created[0]["duplicate"], false);
+    assert_eq!(created[1]["duplicate"], false);
+
+    // 读回：两行各自携带同一订单号（行尾徽章与订单区的数据源）。
+    let (_, body) = get_json(&app, "/api/v1/transactions").await;
+    let rows = items_of(&body);
+    assert_eq!(rows.len(), 2);
+    assert!(rows.iter().all(|t| t["source_order_no"] == "JD-9001"));
+
+    // PUT 全字段替换：缺省（不提交）即清除。
+    let id = rows[0]["id"].as_str().unwrap();
+    let put = format!(
+        r#"{{"kind":"expense","amount_cents":28160,"currency_code":"CNY","account_id":"{account_id}","date":"2026-07-01"}}"#
+    );
+    let (status, _) = put_transaction_via_api(&app, id, &put).await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, body) = get_json(&app, "/api/v1/transactions").await;
+    let rows = items_of(&body);
+    let cleared = rows.iter().find(|t| t["id"] == *id).unwrap();
+    assert!(
+        cleared["source_order_no"].is_null(),
+        "PUT 缺省应清除来源订单号"
+    );
+    let untouched = rows.iter().find(|t| t["id"] != *id).unwrap();
+    assert_eq!(untouched["source_order_no"], "JD-9001", "未修改行保持原值");
+}

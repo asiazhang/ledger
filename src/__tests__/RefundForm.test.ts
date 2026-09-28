@@ -15,6 +15,7 @@ const fixedTx: Transaction = {
   amount_native_cents: 3000,
   fx_rate_used: null,
   fx_rate_source: null,
+  source_order_no: null,
   account_id: "acc-1",
   to_account_id: null,
   funding_account_id: null,

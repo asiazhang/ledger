@@ -419,6 +419,12 @@ async fn contract_transaction_input_quantity_describes_split_semantics() {
 /// 可空化改写与 6 个出资错误码——加入后实测 27750 字节越 25KB，提至 28KB：超量落在
 /// 剥离出处引用后的语义文本上，互斥二选一、refund 缺省派生标记与出资准入口径是 AI
 /// 正确读写分解行的必需语义，不选删描述换预算（同 ADR-0119 后果节决策）。
+///
+/// issue #1862 / ADR-0138 触线：来源订单号契约面——`TransactionInput` /
+/// `UpdateTransactionInput` / `Transaction` 三处可选 `source_order_no` 字段——加入后
+/// 实测 28826 字节越 28KB。描述按 #1631 先例瘦身至语义必需（同单多行同单号、
+/// 不入备注、不限 kind、缺省即不带、全量替换）后回落至预算内，预算随新功能面
+/// 提至 29KB 留增长余量（维护者决策，同 #1860 决策分支）。
 #[tokio::test]
 async fn contract_size_within_budget() {
     let (app, _) = setup_app();
@@ -434,8 +440,8 @@ async fn contract_size_within_budget() {
     assert_eq!(response.status(), StatusCode::OK);
     let bytes = body_to_bytes(response.into_body()).await;
     assert!(
-        bytes.len() <= 28 * 1024,
-        "紧凑契约方言应保持在预算内（当前 {} 字节，预算 28KB）",
+        bytes.len() <= 29 * 1024,
+        "紧凑契约方言应保持在预算内（当前 {} 字节，预算 29KB）",
         bytes.len()
     );
 }

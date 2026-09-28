@@ -327,7 +327,7 @@ fn fetch_display_rows(conn: &Connection, page_ids: &[String]) -> Result<Vec<Tran
     let sql = format!(
         "SELECT t.id,t.kind,t.amount_cents,t.currency_code,t.amount_native_cents,t.account_id,\
          t.to_account_id,t.funding_account_id,t.category_id,t.refund_of_transaction_id,t.note,t.date,t.created_at,\
-         t.updated_at,t.version,t.device_id,t.is_deleted,t.merchant_id,t.policy_id,t.fx_rate_used,t.fx_rate_source \
+         t.updated_at,t.version,t.device_id,t.is_deleted,t.merchant_id,t.policy_id,t.fx_rate_used,t.fx_rate_source,t.source_order_no \
          FROM transactions t WHERE t.id IN ({placeholders})"
     );
     let mut stmt = conn.prepare(&sql)?;

@@ -475,6 +475,7 @@ fn transfer_input(from: &str, to: &str, amount_cents: i64) -> ledger_transaction
         merchant_name: None,
         policy_id: None,
         refund_of_transaction_id: None,
+        source_order_no: None,
         note: None,
         date: "2026-07-01".into(),
         instrument_id: None,

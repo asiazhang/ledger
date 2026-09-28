@@ -200,6 +200,7 @@ fn peer_delivers_unreplayable_op(world: &mut LedgerWorld) {
                 merchant_id: None,
                 policy_id: None,
                 refund_of_transaction_id: None,
+                source_order_no: None,
                 note: Some("引用不存在账户".into()),
                 date: "2026-02-01".into(),
             },
