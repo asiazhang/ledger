@@ -44,5 +44,8 @@ export function ledgerRowToModalRow(row: InvestmentTransactionRow): TransactionM
     // 出资分解恒空（投资 kind 不做出资分解，ADR-0138 决策 3）：弹窗族行投影闭集成员
     fundings: [],
     convert: null,
+    // 来源订单号随投影行透传（V035 / #1862）：券商回单的 buy/sell 同样有订单归属，
+    // 订单徽章与订单区经本适配对弹窗族生效。
+    source_order_no: row.source_order_no,
   };
 }

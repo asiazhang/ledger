@@ -84,6 +84,9 @@ pub struct TransactionInput {
     pub policy_id: Option<String>,
     pub refund_of_transaction_id: Option<String>,
     pub note: Option<String>,
+    /// 来源订单号（V035 / ADR-0138 决策 9）：导入来源单据的外部订单号，来源元数据、
+    /// 不限 kind；同单多行写同一单号、只写本字段不入备注；缺省（不提交）即不带。
+    pub source_order_no: Option<String>,
     pub date: String,
     /// 标的 id（仅 buy/sell/convert/split/dividend 需提供）：先用标的搜索端点
     /// （`GET /api/v1/instruments`）把源数据中的标的描述解析为 id，未命中再按创建端点
@@ -162,6 +165,8 @@ pub struct UpdateTransactionInput {
     pub policy_id: Option<String>,
     pub refund_of_transaction_id: Option<String>,
     pub note: Option<String>,
+    /// 来源订单号（与 `TransactionInput.source_order_no` 同一契约）：全字段替换，缺省即清除。
+    pub source_order_no: Option<String>,
     pub date: String,
     /// 标的 id（仅 buy/sell/convert/split/dividend 需提供）：与 `TransactionInput` 同一契约；
     /// 引用不存在的标的返回 400（中文错误，可读回自纠）。
@@ -206,6 +211,7 @@ impl From<UpdateTransactionInput> for TransactionInput {
             policy_id: u.policy_id,
             refund_of_transaction_id: u.refund_of_transaction_id,
             note: u.note,
+            source_order_no: u.source_order_no,
             date: u.date,
             instrument_id: u.instrument_id,
             quantity: u.quantity,

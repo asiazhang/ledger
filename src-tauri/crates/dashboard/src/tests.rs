@@ -29,6 +29,7 @@ fn make_buy_input(account_id: &str, instrument_id: &str, qty: f64, price: i64) -
         category_id: None,
         merchant_id: None,
         refund_of_transaction_id: None,
+        source_order_no: None,
         note: None,
         date: "2026-01-10".into(),
         instrument_id: Some(instrument_id.into()),

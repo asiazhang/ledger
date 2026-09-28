@@ -730,6 +730,9 @@ fn plan_with_existing_refs(
                     existing_policy_id: existing_policy_id.map(str::to_string),
                     refund_of_transaction_id: input.refund_of_transaction_id.clone(),
                     note: input.note.clone(),
+                    // 来源订单号随输入下传（issue #1862 / ADR-0138 决策 9）：来源元数据，
+                    // 不限 kind、无准入校验，缺省 None。
+                    source_order_no: input.source_order_no.clone(),
                     date: input.date.clone(),
                     // 逐笔显式汇率随输入下传（#1549）：归一化与非法值校验归
                     // Amount 接缝编辑沿用入口单点，本层不重复判定。

@@ -39,6 +39,9 @@ pub struct Transaction {
     pub fx_rate_used: Option<f64>,
     pub fx_rate_source: Option<FxRateSource>,
     pub note: Option<String>,
+    /// 来源订单号（V035）：导入来源单据的外部订单标识（订单徽章/订单区的归属锚点）；
+    /// 来源元数据不限 kind，手动行为空；单号不入备注（备注可编辑、搜索按原文命中）。
+    pub source_order_no: Option<String>,
     pub date: String,
     pub created_at: String,
     pub updated_at: String,
@@ -176,6 +179,7 @@ impl FromRow for Transaction {
             policy_id: row.get(18)?,
             fx_rate_used: row.get(19)?,
             fx_rate_source: row.get(20)?,
+            source_order_no: row.get(21)?,
             // 出资项分解非库列：FromRow 恒空，由读路径 `attach_fundings` 填充
             //（列表页与单笔读回同填）。
             fundings: Vec::new(),

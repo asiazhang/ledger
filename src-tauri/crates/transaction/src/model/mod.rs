@@ -10,6 +10,7 @@
 mod filter;
 mod input;
 mod normalized;
+mod order;
 mod transaction;
 
 pub use filter::TransactionListFilter;
@@ -18,6 +19,7 @@ pub use input::{
     TransactionInput, UpdateTransactionInput,
 };
 pub use normalized::NormalizedTransaction;
+pub use order::{OrderAccountContribution, TransactionOrderSummary};
 pub use transaction::{
     ConvertFields, Transaction, TransactionFunding, TransactionListResult, TransactionSearchResult,
     TransactionSource, TransactionSourceKind, TransactionSourceStatus,

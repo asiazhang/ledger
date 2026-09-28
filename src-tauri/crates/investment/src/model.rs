@@ -399,6 +399,9 @@ pub struct InvestmentTransactionRow {
     /// 本位币金额（分，写路径折算落定，issue #1548 / ADR-0011）：dividend 只读
     /// 详情金额展示读它（与主列表金额列同口径单点）；列表呈现不读。
     pub amount_native_cents: i64,
+    /// 来源订单号（V035 / #1862，弹窗族消费列）：投资行（如券商回单 buy/sell）
+    /// 可携带的外部订单标识，经弹窗行适配供订单徽章与订单区消费；列表呈现不读。
+    pub source_order_no: Option<String>,
 }
 
 /// 买卖载荷（buy/sell 行的 kind 专属投影，issue #1778）：与编辑回填明细
@@ -504,6 +507,7 @@ impl FromRow for InvestmentTransactionRow {
             note: row.get(18)?,
             currency_code: row.get(19)?,
             amount_native_cents: row.get(20)?,
+            source_order_no: row.get(21)?,
         })
     }
 }

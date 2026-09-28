@@ -90,6 +90,16 @@
     "autoDerived": "按比例自动分解",
     "total": "合计 · {n} 项出资"
   },
+  "order": {
+    "no": "订单号",
+    "badge": "订单 {no}",
+    "section": "所属订单",
+    "rowCount": "{n} 行",
+    "total": "合计",
+    "accounts": "出资构成",
+    "items": "各行明细",
+    "loadFailed": "无法加载订单汇总: {msg}"
+  },
   "menu": {
     "edit": "编辑",
     "detail": "详情",

@@ -77,6 +77,7 @@ pub(super) fn seed_purchase_tx_with_rate(
             merchant_id: None,
             refund_of_transaction_id: None,
             funding_account_id: None,
+            source_order_no: None,
             note: None,
             date: date.into(),
             instrument_id: None,

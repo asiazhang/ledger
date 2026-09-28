@@ -24,7 +24,7 @@ use ledger_infra::signals::WriteOp;
 use ledger_transaction as transaction_domain;
 use ledger_transaction::{
     CreateTransactionResult, TransactionInput, TransactionListFilter, TransactionListResult,
-    UpdateTransactionInput,
+    TransactionOrderSummary, UpdateTransactionInput,
 };
 
 #[tauri::command]
@@ -129,5 +129,21 @@ pub async fn delete_transaction(
         WriteOp::DeleteTransaction,
         move |conn| transaction_domain::delete(conn, &id).map(Outcome::Silent),
     )
+    .await
+}
+
+/// 订单汇总只读命令（issue #1862 / ADR-0138 决策 9）：按来源订单号取同单行集、
+/// 行数、合计与按账户聚合的出资构成（详情订单区的数据源）。只读、无 HTTP 端点；
+/// 行为权威在 [`transaction_domain::get_transaction_order_summary`]（读闭包在域内
+/// 收同一读事务）。无该订单号的行不查本命令；同单行全部删除时返回零行汇总。
+#[tauri::command]
+pub async fn get_transaction_order_summary(
+    db: State<'_, DbState>,
+    source_order_no: String,
+) -> Result<TransactionOrderSummary> {
+    let conn = db.read_handle();
+    read_entry("get_transaction_order_summary", conn, move |conn| {
+        transaction_domain::get_transaction_order_summary(conn, &source_order_no)
+    })
     .await
 }

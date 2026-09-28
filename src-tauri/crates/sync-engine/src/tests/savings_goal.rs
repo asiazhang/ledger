@@ -40,6 +40,7 @@ fn make_income(account_id: &str, amount_cents: i64, note: &str) -> TransactionIn
         category_id: None,
         merchant_id: None,
         refund_of_transaction_id: None,
+        source_order_no: None,
         note: Some(note.into()),
         date: "2026-01-10".into(),
         instrument_id: None,

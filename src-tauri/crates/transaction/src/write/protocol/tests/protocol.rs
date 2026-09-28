@@ -50,6 +50,7 @@ fn carried_row(kind: TransactionKind, account: &str, amount: i64) -> NormalizedT
         merchant_id: None,
         policy_id: None,
         refund_of_transaction_id: None,
+        source_order_no: None,
         note: None,
         date: "2026-05-04".into(),
     }

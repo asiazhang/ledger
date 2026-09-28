@@ -54,10 +54,11 @@ pub mod write;
 mod model;
 
 pub use model::{
-    ConvertFields, CreateTransactionResult, NormalizedTransaction, SecurityOrigin, Transaction,
-    TransactionBatchInput, TransactionFunding, TransactionFundingInput, TransactionInput,
-    TransactionListFilter, TransactionListResult, TransactionSearchResult, TransactionSource,
-    TransactionSourceKind, TransactionSourceStatus, UpdateTransactionInput,
+    ConvertFields, CreateTransactionResult, NormalizedTransaction, OrderAccountContribution,
+    SecurityOrigin, Transaction, TransactionBatchInput, TransactionFunding,
+    TransactionFundingInput, TransactionInput, TransactionListFilter, TransactionListResult,
+    TransactionOrderSummary, TransactionSearchResult, TransactionSource, TransactionSourceKind,
+    TransactionSourceStatus, UpdateTransactionInput,
 };
 
 pub use amount::{
@@ -69,7 +70,8 @@ pub use amount::{
 pub use command::{ConvertCommandFields, InvestmentCommandFields, TransactionCommand};
 pub use read::search::{search_transactions, search_transactions_internal};
 pub use read::{
-    get_transaction, get_transaction_internal, list_transactions, list_transactions_internal,
+    get_transaction, get_transaction_internal, get_transaction_order_summary, list_transactions,
+    list_transactions_internal,
 };
 pub use shared::search_text::{
     is_subsequence, pinyin_initials, split_terms, term_matches, term_matches_text,

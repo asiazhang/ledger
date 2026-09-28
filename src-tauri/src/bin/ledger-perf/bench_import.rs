@@ -241,6 +241,7 @@ pub(crate) fn generate_inputs(
             merchant_name: None,
             policy_id: None,
             refund_of_transaction_id: None,
+            source_order_no: None,
             funding_account_id: None,
             note: None,
             date: date.to_string(),

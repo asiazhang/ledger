@@ -40,12 +40,14 @@ const LEDGER_TAB_KINDS: [TransactionKind; 5] = [
 /// 尾段（note / currency_code / amount_native_cents）是弹窗族消费列（ADR-0135
 /// 决策 4 / issue #1781）：编辑回填（note 防误抹、currency_code 精度换算）与
 /// dividend 只读详情金额展示经弹窗行适配消费，列表呈现不读；尾段追加不打乱
-/// 前段列序（载荷列下标与探针 marker 锚不动）。
+/// 前段列序（载荷列下标与探针 marker 锚不动）。V035 追加 `t.source_order_no`
+/// （#1862，订单可读性）：投资行（如券商回单的 buy/sell）同样可携带来源订单
+/// 号，经弹窗行适配供订单徽章与订单区消费，列表呈现不读。
 const ROW_COLUMNS: &str = "t.id, t.kind, t.amount_cents, t.account_id, t.funding_account_id, \
      t.date, st.instrument_id, i.symbol, i.name, i.instrument_type, \
     st.quantity, st.price_cents, st.fee_cents, \
     st.to_instrument_id, ti.symbol, st.to_quantity, st.out_amount_cents, st.in_amount_cents, \
-    t.note, t.currency_code, t.amount_native_cents";
+    t.note, t.currency_code, t.amount_native_cents, t.source_order_no";
 
 /// 投资明细列表（ADR-0135 决策 3 / issue #1778）：按四维过滤返回五种投资 kind
 /// 交易行的投资投影，date 倒序 + offset 分页，items + total 同快照。

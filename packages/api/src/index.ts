@@ -112,6 +112,7 @@ import type {
   UpdateTransactionInput,
   TransactionListFilter,
   TransactionListResult,
+  TransactionOrderSummary,
   TransactionSearchFilter,
   TransactionSearchResult,
   UpdateStatusInput,
@@ -273,6 +274,8 @@ export const api = {
   // 份额调整明细（ADR-0106 / issue #1052）：split 交易「只读详情」呈现标的与带符号
   // 份额增量 Δ 的数据源（扩展表投影，非 split 交易 NotFound）
   getTransactionSplit: (id: string) => invoke<TransactionSplit>("get_transaction_split", { id }),
+  getTransactionOrderSummary: (sourceOrderNo: string) =>
+    invoke<TransactionOrderSummary>("get_transaction_order_summary", { sourceOrderNo }),
   createInstrument: (input: InstrumentInput) => invoke<string>("create_instrument", { input }),
   // 自建标的删除（issue #292 / ADR-0036）：仅手动来源且无买卖流水引用可删，
   // 守卫在后端前置检查，同步来源拒删
