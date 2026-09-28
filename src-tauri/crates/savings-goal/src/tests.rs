@@ -101,10 +101,11 @@ fn transfer(conn: &Connection, from: &str, to: &str, amount_cents: i64) {
     ledger_transaction::create(
         conn,
         TransactionInput {
+            funding: Vec::new(),
             kind: TransactionKind::Transfer,
             amount_cents,
             currency_code: "CNY".into(),
-            account_id: from.into(),
+            account_id: Some(from.into()),
             to_account_id: Some(to.into()),
             funding_account_id: None,
             category_id: None,
@@ -135,10 +136,11 @@ fn spend(conn: &Connection, account_id: &str, amount_cents: i64) {
     ledger_transaction::create(
         conn,
         TransactionInput {
+            funding: Vec::new(),
             kind: TransactionKind::Expense,
             amount_cents,
             currency_code: "CNY".into(),
-            account_id: account_id.into(),
+            account_id: Some(account_id.into()),
             to_account_id: None,
             funding_account_id: None,
             category_id: None,

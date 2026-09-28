@@ -86,12 +86,13 @@ fn assert_code(err: AppError, code: &str) {
 /// 支出交易输入构造器（行为前置经壳层公开命令，op 产出随之发生）。
 pub(crate) fn expense_input(account_id: &str, amount_cents: i64, note: &str) -> TransactionInput {
     TransactionInput {
+        funding: Vec::new(),
         merchant_name: None,
         policy_id: None,
         kind: TransactionKind::Expense,
         amount_cents,
         currency_code: "CNY".into(),
-        account_id: account_id.into(),
+        account_id: Some(account_id.into()),
         to_account_id: None,
         funding_account_id: None,
         category_id: None,
@@ -510,13 +511,14 @@ fn deliver_unreplayable_op_blocking(config: &SyncChannelConfig) {
         command: DomainCommand::Transaction(TransactionCommand::Create {
             id: "it-parked-txn".into(),
             row: NormalizedTransaction {
+                funding: Vec::new(),
                 kind: TransactionKind::Expense,
                 amount_cents: 1_000,
                 currency_code: "CNY".into(),
                 amount_native_cents: 1_000,
                 fx_rate_used: None,
                 fx_rate_source: None,
-                account_id: "no-such-account".into(),
+                account_id: Some("no-such-account".into()),
                 to_account_id: None,
                 funding_account_id: None,
                 category_id: None,

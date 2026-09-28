@@ -30,7 +30,7 @@ fn normalize_income_passthrough() {
     assert_eq!(norm.amount_cents, 5000);
     assert_eq!(norm.currency_code, "CNY");
     assert_eq!(norm.amount_native_cents, 5000, "本位币与原始币种应 1:1");
-    assert_eq!(norm.account_id, "acc");
+    assert_eq!(norm.account_id.as_deref(), Some("acc"));
     assert_eq!(norm.to_account_id, None);
     assert_eq!(norm.refund_of_transaction_id, None);
     assert_eq!(norm.note.as_deref(), Some("工资"));
@@ -98,7 +98,7 @@ fn normalize_transfer_passes_to_account() {
         },
     )
     .unwrap();
-    assert_eq!(norm.account_id, "acc-a");
+    assert_eq!(norm.account_id.as_deref(), Some("acc-a"));
     assert_eq!(norm.to_account_id.as_deref(), Some("acc-b"));
     assert_eq!(norm.refund_of_transaction_id, None);
 }

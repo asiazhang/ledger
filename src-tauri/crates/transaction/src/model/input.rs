@@ -37,6 +37,21 @@ impl SecurityOrigin {
     }
 }
 
+/// 出资项分解条目（issue #1860 / ADR-0138）：`TransactionInput.funding` /
+/// `UpdateTransactionInput.funding` 的条目类型，也是同步命令归一化行随行的分解
+/// 载荷（`NormalizedTransaction.funding`）——同一契约三处消费，只增不改。
+/// wire 形态：`{account_id, amount_cents, label?}`。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct TransactionFundingInput {
+    /// 出资账户 id：准入与 `account_id` 同口径（存在、未软删、币种与交易一致、
+    /// 不折算），无账户类型闭集（credit / debt 可出资，白条场景）。允许同一账户
+    /// 多条出资项（预售定金 + 尾款靠标签区分）。
+    pub account_id: String,
+    /// 出资金额（正整数分）：Σ 全部条目 == 交易金额。
+    pub amount_cents: i64,
+    /// 扣款标签（可选自由文本，上限 50 字）：同账户多条出资项的区分标注。
+    pub label: Option<String>,
+}
 #[derive(Debug, Clone, Deserialize, ToSchema)]
 pub struct TransactionInput {
     /// 交易类型枚举（serde 小写字符串反序列化）。非法 kind 在反序列化阶段报 400
@@ -44,11 +59,20 @@ pub struct TransactionInput {
     pub kind: TransactionKind,
     pub amount_cents: i64,
     pub currency_code: String,
-    pub account_id: String,
+    /// 出资账户引用（ADR-0138 契约互斥）：与 `funding` 分解二选一——携带非空分解时
+    /// 必须缺省（码化报错），不带分解时必填。分解行的账户口径由子行承载，主表列
+    /// 落 NULL。
+    pub account_id: Option<String>,
     pub to_account_id: Option<String>,
     /// 可选出资账户（issue #935 / ADR-0096）：仅 buy/sell 可携带，准入收口
     /// `funding::validate_funding_account`；缺省即「结算账户 = 投资账户」。
     pub funding_account_id: Option<String>,
+    /// 出资分解（issue #1860 / ADR-0138）：每条 = {账户, 金额, 扣款标签}，全部条目
+    /// 之和恒等于交易金额；仅 expense / income 可携带（refund 显式覆盖同契约），
+    /// 与 `account_id` 互斥——非空分解时 `account_id` 必须缺省。缺省（空数组）
+    /// 即单出资现状，存量行为零变化。
+    #[serde(default)]
+    pub funding: Vec<TransactionFundingInput>,
     pub category_id: Option<String>,
     pub merchant_id: Option<String>,
     /// 商户名字符串（AI 导入契约，issue #194 / ADR-0028）：提交体不带 `merchant_id` 而
@@ -118,10 +142,16 @@ pub struct UpdateTransactionInput {
     pub kind: TransactionKind,
     pub amount_cents: i64,
     pub currency_code: String,
-    pub account_id: String,
+    /// 出资账户引用（ADR-0138 全量语义）：`None` ⇔ 必须携非空 `funding` 分解
+    ///（不用空串哨兵）；`Some` ⇔ 不得携分解。单 ⇄ 多就地互转走既有修改协议。
+    pub account_id: Option<String>,
     pub to_account_id: Option<String>,
     /// 可选出资账户（与 `TransactionInput.funding_account_id` 同一契约）。
     pub funding_account_id: Option<String>,
+    /// 出资分解（与 `TransactionInput.funding` 同一契约，全量替换语义）：不携带
+    /// （空数组）⇔ 必须携 `account_id`（分解被整体移除）；非空 ⇔ 禁 `account_id`。
+    #[serde(default)]
+    pub funding: Vec<TransactionFundingInput>,
     pub category_id: Option<String>,
     pub merchant_id: Option<String>,
     /// 商户名字符串（与 `TransactionInput.merchant_name` 同一契约）：修改路径同样
@@ -169,6 +199,7 @@ impl From<UpdateTransactionInput> for TransactionInput {
             account_id: u.account_id,
             to_account_id: u.to_account_id,
             funding_account_id: u.funding_account_id,
+            funding: u.funding,
             category_id: u.category_id,
             merchant_id: u.merchant_id,
             merchant_name: u.merchant_name,

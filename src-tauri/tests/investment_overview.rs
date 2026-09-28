@@ -100,12 +100,13 @@ fn trade_input(
     currency: &str,
 ) -> TransactionInput {
     TransactionInput {
+        funding: Vec::new(),
         merchant_name: None,
         policy_id: None,
         kind,
         amount_cents: 0,
         currency_code: currency.into(),
-        account_id: account_id.into(),
+        account_id: Some(account_id.into()),
         to_account_id: None,
         funding_account_id: None,
         category_id: None,
@@ -136,12 +137,13 @@ fn dividend_input(
     currency: &str,
 ) -> TransactionInput {
     TransactionInput {
+        funding: Vec::new(),
         merchant_name: None,
         policy_id: None,
         kind: TransactionKind::Dividend,
         amount_cents,
         currency_code: currency.into(),
-        account_id: account_id.into(),
+        account_id: Some(account_id.into()),
         to_account_id: None,
         funding_account_id: None,
         category_id: None,

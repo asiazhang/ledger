@@ -26,7 +26,7 @@ const reference = useReferenceStore();
 
 /** 账户名经参考数据解析，未知账户回退占位（与列表账户列同口径，不抛错）。 */
 const accountName = computed(
-  () => reference.accountMap.get(props.transaction.account_id)?.name ?? "—",
+  () => reference.accountMap.get(props.transaction.account_id ?? "")?.name ?? "—",
 );
 
 function amountText(cents: number): string {

@@ -594,7 +594,7 @@ fn hidden_account_transaction_visible_in_transaction_list() {
     assert!(
         rows.items
             .iter()
-            .any(|t| t.id == "tx-hidden" && t.account_id == "acc-hidden"),
+            .any(|t| t.id == "tx-hidden" && t.account_id.as_deref() == Some("acc-hidden")),
         "黑洞账户的交易应仍在交易列表中"
     );
 }

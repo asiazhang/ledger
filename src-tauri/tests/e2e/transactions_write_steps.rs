@@ -333,7 +333,7 @@ fn check_transfer_kind(world: &mut LedgerWorld, expected_kind: String) {
 fn check_transfer_from(world: &mut LedgerWorld, account_name: String) {
     let txn = world.txn.transactions_list.last().expect("交易列表为空");
     let expected_id = world.account_id(&account_name);
-    assert_eq!(txn.account_id, expected_id);
+    assert_eq!(txn.account_id.as_deref(), Some(expected_id.as_str()));
 }
 
 #[then(expr = "该转账 to_account_id 应匹配账户 {string}")]

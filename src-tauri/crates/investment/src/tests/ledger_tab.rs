@@ -55,7 +55,7 @@ fn seed_five_kinds(conn: &rusqlite::Connection) -> Vec<String> {
             kind: TransactionKind::Expense,
             amount_cents: 100,
             currency_code: "CNY".into(),
-            account_id: "acc-bank".into(),
+            account_id: Some("acc-bank".into()),
             ..plain_expense_input()
         },
     )
@@ -71,7 +71,8 @@ fn plain_expense_input() -> TransactionInput {
         kind: TransactionKind::Expense,
         amount_cents: 0,
         currency_code: "CNY".into(),
-        account_id: String::new(),
+        account_id: Some(String::new()),
+        funding: Vec::new(),
         to_account_id: None,
         funding_account_id: None,
         category_id: None,

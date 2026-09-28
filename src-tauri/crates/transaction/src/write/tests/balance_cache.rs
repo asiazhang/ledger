@@ -378,10 +378,12 @@ fn writer_insert_row_direct_seam_refreshes_cache() {
     backfill_scaffold_account(&conn, "acc-eng");
 
     let input = writer::Input {
+        funding: Vec::new(),
+        existing_funding: Vec::new(),
         kind: TransactionKind::Income,
         amount_cents: 1200,
         currency_code: "CNY".into(),
-        account_id: "acc-eng".into(),
+        account_id: Some("acc-eng".into()),
         to_account_id: None,
         category_id: None,
         merchant_id: None,

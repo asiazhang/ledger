@@ -3,7 +3,7 @@ use axum::http::StatusCode;
 use tauri_app_lib::test_support;
 
 use crate::common::{
-    batch_body, count_active_transactions, create_account_via_api,
+    balance_of, batch_body, count_active_transactions, create_account_via_api,
     create_account_via_api_with_currency, delete_account_via_api, delete_transaction_via_api,
     get_json, items_of, post_batch, put_transaction_via_api, setup_app,
 };
@@ -1053,4 +1053,211 @@ async fn test_batch_import_explicit_fx_rate_row_idempotent_rerun() {
         let guard = conn.lock().unwrap_or_else(|e| e.into_inner());
         assert_eq!(count_active_transactions(&guard), 1, "同批重跑只落一份");
     }
+}
+
+// ---------------------------------------------------------------------------
+// 多出资方（issue #1860 / ADR-0138）：契约互斥、组合支付三路径与读回
+// ---------------------------------------------------------------------------
+
+/// 组合支付样例全链：创建（funding[] 与 account_id 互斥）→ 读回（分解行
+/// account_id=null + 出资项数组按顺序位）→ 两账户余额正确 → 列表计 1 笔
+/// （报表按交易计数、不按出资计数）。
+#[tokio::test]
+async fn test_combined_payment_roundtrip_readback_and_balances() {
+    let (app, conn) = setup_app();
+    let wallet = create_account_via_api(&app, "小金库").await;
+    let balance = create_account_via_api(&app, "余额").await;
+    let tx = format!(
+        r#"{{"kind":"expense","amount_cents":28160,"currency_code":"CNY","date":"2026-07-01","funding":[{{"account_id":"{wallet}","amount_cents":2853,"label":"定金"}},{{"account_id":"{balance}","amount_cents":25307}}]}}"#
+    );
+    let created = post_batch(&app, batch_body(&[&tx], None)).await;
+    assert_eq!(
+        created[0]["success"], true,
+        "组合支付应成功: {:?}",
+        created[0]
+    );
+    let id = created[0]["id"].as_str().unwrap();
+
+    // 读回：分解行 account_id=null、出资项按顺序位稳定返回（BREAKING 契约形态）。
+    let (_, readback) = get_json(&app, "/api/v1/transactions").await;
+    let rows = items_of(&readback);
+    assert_eq!(rows.len(), 1, "列表按交易计数（组合支付计 1 笔）");
+    let row = &rows[0];
+    assert_eq!(row["id"], id);
+    // 行金额 = 交易金额全额（28160）：报表按行聚合（每行计 1 笔、取行金额），
+    // 组合支付不因多出资方被重复计数或拆分金额。
+    assert_eq!(
+        row["amount_cents"], 28160,
+        "组合支付行按交易计 1 笔、金额不拆分"
+    );
+    assert_eq!(
+        row["account_id"],
+        serde_json::Value::Null,
+        "分解行 account_id 读回 null"
+    );
+    let fundings = row["fundings"].as_array().expect("读回携带出资项数组");
+    assert_eq!(fundings.len(), 2);
+    assert_eq!(fundings[0]["account_id"], wallet);
+    assert_eq!(fundings[0]["amount_cents"], 2853);
+    assert_eq!(fundings[0]["label"], "定金");
+    assert_eq!(fundings[1]["account_id"], balance);
+    assert_eq!(fundings[1]["amount_cents"], 25307);
+
+    // 余额缓存（ADR-0067）：每一出资方按 kind 符号（expense 记 −）整体重算。
+    let (_, b) = get_json(&app, "/api/v1/accounts/balances").await;
+    assert_eq!(balance_of(b.as_array().unwrap(), "小金库"), -2853);
+    assert_eq!(balance_of(b.as_array().unwrap(), "余额"), -25307);
+
+    {
+        let guard = conn.lock().unwrap_or_else(|e| e.into_inner());
+        let sub: i64 = guard
+            .query_row(
+                "SELECT COUNT(*) FROM transaction_fundings WHERE transaction_id=?1",
+                rusqlite::params![id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(sub, 2, "子行按顺序位落库");
+    }
+}
+
+/// 契约互斥：携带分解时再给 account_id → 顶层码化 400。
+#[tokio::test]
+async fn test_combined_payment_with_account_id_returns_coded_400() {
+    let (app, _) = setup_app();
+    let account_id = create_account_via_api(&app, "现金").await;
+    let tx = format!(
+        r#"{{"kind":"expense","amount_cents":1000,"currency_code":"CNY","account_id":"{account_id}","date":"2026-07-01","funding":[{{"account_id":"{account_id}","amount_cents":1000}}]}}"#
+    );
+    let results = post_batch(&app, batch_body(&[&tx], None)).await;
+    assert_eq!(results[0]["success"], false);
+    assert!(
+        results[0]["error"]
+            .as_str()
+            .unwrap()
+            .contains("不可指定 account_id"),
+        "互斥错误应可读: {results:?}"
+    );
+}
+
+/// Σ 分解 ≠ 交易金额 → 行级码化错误（含两个插值）。
+#[tokio::test]
+async fn test_combined_payment_sum_mismatch_returns_coded_error() {
+    let (app, _) = setup_app();
+    let wallet = create_account_via_api(&app, "小金库").await;
+    let balance = create_account_via_api(&app, "余额").await;
+    let tx = format!(
+        r#"{{"kind":"expense","amount_cents":1000,"currency_code":"CNY","date":"2026-07-01","funding":[{{"account_id":"{wallet}","amount_cents":600}},{{"account_id":"{balance}","amount_cents":600}}]}}"#
+    );
+    let results = post_batch(&app, batch_body(&[&tx], None)).await;
+    assert_eq!(results[0]["success"], false);
+    let err = results[0]["error"].as_str().unwrap();
+    assert!(
+        err.contains("出资分解合计（1200）") && err.contains("交易金额（1000）"),
+        "{err}"
+    );
+}
+
+/// 扣款标签超 50 字 → 行级码化错误。
+#[tokio::test]
+async fn test_combined_payment_label_too_long_returns_coded_error() {
+    let (app, _) = setup_app();
+    let account_id = create_account_via_api(&app, "小金库").await;
+    let long_label = "标".repeat(51);
+    let tx = format!(
+        r#"{{"kind":"expense","amount_cents":1000,"currency_code":"CNY","date":"2026-07-01","funding":[{{"account_id":"{account_id}","amount_cents":1000,"label":"{long_label}"}}]}}"#
+    );
+    let results = post_batch(&app, batch_body(&[&tx], None)).await;
+    assert_eq!(results[0]["success"], false);
+    assert!(results[0]["error"].as_str().unwrap().contains("50 字"));
+}
+
+/// 修改单 → 多（PUT 全量语义）：分解行读回 null + 子行替换 + 两账户余额正确。
+#[tokio::test]
+async fn test_update_single_to_multi_conversion_roundtrips() {
+    let (app, _) = setup_app();
+    let wallet = create_account_via_api(&app, "小金库").await;
+    let balance = create_account_via_api(&app, "余额").await;
+
+    let tx = format!(
+        r#"{{"kind":"expense","amount_cents":28160,"currency_code":"CNY","account_id":"{wallet}","date":"2026-07-01"}}"#
+    );
+    let created = post_batch(&app, batch_body(&[&tx], None)).await;
+    let id = created[0]["id"].as_str().unwrap().to_string();
+
+    // 单 → 多：account_id 置 null（None ⇔ 必须携非空分解，不用空串哨兵）。
+    let body = format!(
+        r#"{{"kind":"expense","amount_cents":28160,"currency_code":"CNY","date":"2026-07-01","funding":[{{"account_id":"{wallet}","amount_cents":2853}},{{"account_id":"{balance}","amount_cents":25307}}]}}"#
+    );
+    let (status, bytes) = put_transaction_via_api(&app, &id, &body).await;
+    assert_eq!(status, StatusCode::OK);
+    let updated: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(updated["account_id"], serde_json::Value::Null);
+    assert_eq!(updated["fundings"].as_array().unwrap().len(), 2);
+
+    let (_, balances) = get_json(&app, "/api/v1/accounts/balances").await;
+    assert_eq!(balance_of(balances.as_array().unwrap(), "小金库"), -2853);
+    assert_eq!(balance_of(balances.as_array().unwrap(), "余额"), -25307);
+}
+
+/// 退款（refund）缺省按出资比例派生：读回派生分解、尾差归顺序位最小项。
+#[tokio::test]
+async fn test_refund_of_combined_payment_derives_breakdown_by_ratio() {
+    let (app, _) = setup_app();
+    let wallet = create_account_via_api(&app, "小金库").await;
+    let balance = create_account_via_api(&app, "余额").await;
+
+    let tx = format!(
+        r#"{{"kind":"expense","amount_cents":28160,"currency_code":"CNY","date":"2026-07-01","funding":[{{"account_id":"{wallet}","amount_cents":2853}},{{"account_id":"{balance}","amount_cents":25307}}]}}"#
+    );
+    let created = post_batch(&app, batch_body(&[&tx], None)).await;
+    let expense_id = created[0]["id"].as_str().unwrap();
+
+    // 退款 ¥70.40（28160/4）：2853/28160 → floor 713，25307/28160 → floor 6326，
+    // 合计 7039、尾差 1 分归顺序位最小项（713 → 714）。
+    let refund = format!(
+        r#"{{"kind":"refund","amount_cents":7040,"currency_code":"CNY","date":"2026-07-02","refund_of_transaction_id":"{expense_id}"}}"#
+    );
+    let results = post_batch(&app, batch_body(&[&refund], None)).await;
+    assert_eq!(results[0]["success"], true, "退款应成功: {:?}", results[0]);
+    let refund_id = results[0]["id"].as_str().unwrap();
+
+    let (_, readback) = get_json(&app, "/api/v1/transactions").await;
+    let row = items_of(&readback)
+        .iter()
+        .find(|t| t["id"].as_str() == Some(refund_id))
+        .expect("退款行应可读回");
+    assert_eq!(
+        row["account_id"],
+        serde_json::Value::Null,
+        "原支出为分解行：退款无单一账户可继承"
+    );
+    let fundings = row["fundings"].as_array().expect("缺省按比例派生分解");
+    assert_eq!(fundings.len(), 2);
+    assert_eq!(fundings[0]["account_id"], wallet);
+    assert_eq!(fundings[0]["amount_cents"], 714, "floor 713 + 尾差 1 分");
+    assert_eq!(fundings[0]["derived"], true, "派生条目带标注");
+    assert_eq!(fundings[1]["account_id"], balance);
+    assert_eq!(fundings[1]["amount_cents"], 6326);
+}
+
+/// 删除组合支付行：每一出资方余额恢复（受影响账户并集含出资端）。
+#[tokio::test]
+async fn test_delete_combined_payment_restores_all_funded_balances() {
+    let (app, _) = setup_app();
+    let wallet = create_account_via_api(&app, "小金库").await;
+    let balance = create_account_via_api(&app, "余额").await;
+
+    let tx = format!(
+        r#"{{"kind":"expense","amount_cents":28160,"currency_code":"CNY","date":"2026-07-01","funding":[{{"account_id":"{wallet}","amount_cents":2853}},{{"account_id":"{balance}","amount_cents":25307}}]}}"#
+    );
+    let created = post_batch(&app, batch_body(&[&tx], None)).await;
+    let id = created[0]["id"].as_str().unwrap();
+
+    let (status, _) = delete_transaction_via_api(&app, id).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+
+    let (_, balances) = get_json(&app, "/api/v1/accounts/balances").await;
+    assert_eq!(balance_of(balances.as_array().unwrap(), "小金库"), 0);
+    assert_eq!(balance_of(balances.as_array().unwrap(), "余额"), 0);
 }

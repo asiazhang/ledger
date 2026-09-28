@@ -108,7 +108,7 @@ fn normalize_allows_transfer_with_both_ends_matching() {
 fn normalize_skips_guard_when_account_row_unreadable() {
     let conn = test_support::open();
     let norm = normalize(&conn, &input(TransactionKind::Income, 1000, "no-such-acc")).unwrap();
-    assert_eq!(norm.account_id, "no-such-acc");
+    assert_eq!(norm.account_id.as_deref(), Some("no-such-acc"));
 }
 
 /// refund 防御臂：来源支出的币种与账户不一致（守卫上线前的存量脏行，经
@@ -118,13 +118,14 @@ fn normalize_refund_guard_runs_on_inherited_dirty_source() {
     let conn = test_support::open();
     test_support::seed_account(&conn, "acc-cny", "acc-cny", "cash", "CNY", 0);
     let dirty = NormalizedRow {
+        funding: Vec::new(),
         kind: TransactionKind::Expense,
         amount_cents: 1000,
         currency_code: "USD".into(),
         amount_native_cents: 1000,
         fx_rate_used: None,
         fx_rate_source: None,
-        account_id: "acc-cny".into(),
+        account_id: Some("acc-cny".into()),
         to_account_id: None,
         funding_account_id: None,
         category_id: None,

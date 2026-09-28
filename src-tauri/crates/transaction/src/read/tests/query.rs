@@ -259,7 +259,7 @@ fn list_transactions_involving_account_filter() {
     )
     .unwrap();
     assert_eq!(unrelated.total, 1, "无关账户不应命中其他账户交易");
-    assert_eq!(unrelated.items[0].account_id, "acc-inv-3");
+    assert_eq!(unrelated.items[0].account_id.as_deref(), Some("acc-inv-3"));
 
     // 与类型集合组合（单值经集合参数，spec #1025）：涉及现金 + 仅 transfer = 2 条（转出 + 转入）
     let kind_combo = list_transactions_internal(
@@ -412,7 +412,7 @@ fn make_transfer(from: &str, to: &str, amount: i64, date: &str) -> TransactionIn
     TransactionInput {
         kind: TransactionKind::Transfer,
         amount_cents: amount,
-        account_id: from.into(),
+        account_id: Some(from.into()),
         to_account_id: Some(to.into()),
         date: date.into(),
         ..make_input(from, TransactionKind::Expense, amount, date)
@@ -892,12 +892,13 @@ fn make_sell_input(
     price: i64,
 ) -> TransactionInput {
     TransactionInput {
+        funding: Vec::new(),
         merchant_name: None,
         policy_id: None,
         kind: TransactionKind::Sell,
         amount_cents: 0,
         currency_code: "USD".into(),
-        account_id: account_id.into(),
+        account_id: Some(account_id.into()),
         to_account_id: None,
         funding_account_id: None,
         category_id: None,
@@ -927,12 +928,13 @@ fn make_convert_input(
     to_instrument_id: &str,
 ) -> TransactionInput {
     TransactionInput {
+        funding: Vec::new(),
         merchant_name: None,
         policy_id: None,
         kind: TransactionKind::Convert,
         amount_cents: 0,
         currency_code: "USD".into(),
-        account_id: account_id.into(),
+        account_id: Some(account_id.into()),
         to_account_id: None,
         funding_account_id: None,
         category_id: None,
@@ -1075,7 +1077,12 @@ fn list_transactions_filter_by_instrument_combines_with_account() {
     )
     .unwrap();
     assert_eq!(combined.total, 1, "标的与账户维度 AND 组合");
-    assert!(combined.items.iter().all(|t| t.account_id == "acc-i2"));
+    assert!(
+        combined
+            .items
+            .iter()
+            .all(|t| t.account_id.as_deref() == Some("acc-i2"))
+    );
 }
 
 #[test]

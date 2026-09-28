@@ -102,13 +102,26 @@ pub(crate) fn migrations() -> &'static Migrations<'static> {
             M::up(include_str!(
                 "../../../../migrations/V033__security_transaction_to_instrument_index.sql"
             )),
+            M::up(include_str!(
+                "../../../../migrations/V034__transaction_fundings.sql"
+            )),
         ])
     })
 }
 
 /// 初始化数据库 schema 与默认种子数据（全部由迁移驱动）。
+///
+/// 外键时序：迁移批次整体包在 rusqlite_migration 的事务里，`PRAGMA foreign_keys`
+/// 在事务内是 no-op——故必须在进入迁移前显式关闭、提交并过守卫后恢复。关闭是
+/// SQLite 官方表重建流程（12 步，ALTERNATIVE 规程）的前提：V034 放宽
+/// `transactions.account_id` 的 NOT NULL 需 DROP+RENAME 重建该表，外键开着时
+/// DROP 的隐式 DELETE 会触发子表 CASCADE（security_transactions 清库级灾难）；
+/// 关闭下 DROP 不触发任何外键动作，子行原样保留、RENAME 后引用自动解析。
+/// 恢复失败即连接不可用（Err 上抛，不静默带外键缺口运行）。
 pub fn init_db(conn: &mut Connection) -> Result<()> {
     tracing::info!("开始执行数据库迁移");
+    conn.execute("PRAGMA foreign_keys = OFF", [])
+        .map_err(AppError::from)?;
     migrations().to_latest(conn)?;
     tracing::info!("数据库迁移完成");
     // Schema 漂移守卫（issue #971/#992 / ADR-0100）：to_latest 只比 user_version，
@@ -117,6 +130,8 @@ pub fn init_db(conn: &mut Connection) -> Result<()> {
     //（#963 惯例 / ADR-0087）：删除本调用，e2e「缺列漂移的明文库启动进入
     // 失败状态」场景变红。
     schema_guard::verify_schema(conn)?;
+    conn.execute("PRAGMA foreign_keys = ON", [])
+        .map_err(AppError::from)?;
     Ok(())
 }
 

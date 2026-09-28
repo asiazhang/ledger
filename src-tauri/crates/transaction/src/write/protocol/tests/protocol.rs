@@ -36,13 +36,14 @@ use tauri_app_lib::test_support::{self, seed_account, seed_instrument};
 /// 伪造/重放载荷构造器：随命令携带的归一化行（协议 Replay 形态的装配输入）。
 fn carried_row(kind: TransactionKind, account: &str, amount: i64) -> NormalizedTransaction {
     NormalizedTransaction {
+        funding: Vec::new(),
         kind,
         amount_cents: amount,
         currency_code: "CNY".into(),
         amount_native_cents: amount,
         fx_rate_used: None,
         fx_rate_source: None,
-        account_id: account.into(),
+        account_id: Some(account.into()),
         to_account_id: None,
         funding_account_id: None,
         category_id: None,
@@ -72,7 +73,7 @@ fn seed_buy_and_convert(conn: &Connection) -> (String, String) {
         kind: TransactionKind::Buy,
         amount_cents: 0,
         currency_code: "CNY".into(),
-        account_id: "acc-cv".into(),
+        account_id: Some("acc-cv".into()),
         date: "2026-01-10".into(),
         instrument_id: Some("inst-out".into()),
         quantity: Some(10.0),
@@ -84,7 +85,7 @@ fn seed_buy_and_convert(conn: &Connection) -> (String, String) {
     let convert_input = tauri_app_lib::ledger_transaction::TransactionInput {
         kind: TransactionKind::Convert,
         amount_cents: 0,
-        account_id: "acc-cv".into(),
+        account_id: Some("acc-cv".into()),
         date: "2026-02-01".into(),
         instrument_id: Some("inst-out".into()),
         quantity: Some(10.0),

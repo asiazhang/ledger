@@ -313,7 +313,11 @@ fn assert_fund_realized_pnl_total(world: &mut LedgerWorld, symbol: String, expec
 fn check_buy_investment_account(world: &mut LedgerWorld, account_name: String) {
     let txn = world.txn.transactions_list.last().expect("交易列表为空");
     let expected_id = world.account_id(&account_name);
-    assert_eq!(txn.account_id, expected_id, "买入行的投资账户端不符");
+    assert_eq!(
+        txn.account_id.as_deref(),
+        Some(expected_id.as_str()),
+        "买入行的投资账户端不符"
+    );
 }
 
 #[then(expr = "该买入 funding_account_id 应匹配账户 {string}")]

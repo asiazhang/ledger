@@ -55,6 +55,19 @@ export interface TransactionSource {
  * explicit=调用方逐笔显式给定（写侧入参由后续票接入）。wire 字面与后端枚举同源。 */
 export type FxRateSource = "series" | "explicit";
 
+/** 出资项读回条目（issue #1860 / ADR-0138）：分解行随交易读回，按顺序位稳定排序。 */
+export interface TransactionFunding {
+  /** 出资账户 id */
+  account_id: string;
+  /** 出资金额（正整数分）：Σ 全部条目 == 交易金额 */
+  amount_cents: number;
+  /** 扣款标签（可选自由文本，同账户多条出资项的区分标注） */
+  label: string | null;
+  /** refund 缺省按出资比例派生的读时推导标记（ADR-0138 决策 5）：true = 读时推导、
+   * 未落库；落库分解与单出资行恒 false */
+  derived: boolean;
+}
+
 export interface Transaction extends Syncable {
   id: string;
   kind: TransactionKind;
@@ -66,7 +79,10 @@ export interface Transaction extends Syncable {
    * 同币种 / 不折算（split 恒 0）/ 存量行为 null */
   fx_rate_used: number | null;
   fx_rate_source: FxRateSource | null;
-  account_id: string;
+  /** 出资账户引用（ADR-0138）：分解行（携出资子行的 expense/income、显式覆盖的
+   * refund、继承分解原支出的缺省 refund）读回 null——已发布契约放宽（CHANGELOG
+   * BREAKING）；单出资行读回形态与现状兼容 */
+  account_id: string | null;
   to_account_id: string | null;
   /** 可选出资账户（issue #935 / ADR-0096）：仅 buy/sell 可携带，读投影恒返回（无则 null） */
   funding_account_id: string | null;
@@ -80,6 +96,8 @@ export interface Transaction extends Syncable {
    * 行金额锚点是结转成本，列表金额列展示转出金额须读本扩展 */
   convert: ConvertFields | null;
   refund_of_transaction_id: string | null;
+  /** 出资项分解（issue #1860 / ADR-0138）：分解行按顺序位稳定返回；非分解行为空数组 */
+  fundings: TransactionFunding[];
   note: string | null;
   date: string;
   created_at: string;
@@ -112,15 +130,33 @@ export type TransactionModalRow = Pick<
   | "convert"
 >;
 
+/** 出资项分解条目（issue #1860 / ADR-0138）：`TransactionInput.funding` /
+ * `UpdateTransactionInput.funding` 的条目类型。wire：`{account_id, amount_cents, label?}` */
+export interface TransactionFundingInput {
+  /** 出资账户 id：准入与 account_id 同口径（存在、未软删、币种一致、不折算），
+   * 无账户类型闭集；允许同一账户多条（定金 + 尾款靠标签区分） */
+  account_id: string;
+  /** 出资金额（正整数分）：Σ 全部条目 == 交易金额 */
+  amount_cents: number;
+  /** 扣款标签（可选自由文本，上限 50 字） */
+  label?: string | null;
+}
+
 export interface TransactionInput {
   kind: TransactionKind;
   amount_cents: number;
   currency_code: string;
-  account_id: string;
+  /** 出资账户引用（ADR-0138 契约互斥）：与 funding 分解二选一——携带非空分解时
+   * 必须缺省（后端码化报错），不带分解时必填 */
+  account_id?: string | null;
   to_account_id?: string | null;
   /** 可选出资账户（issue #936 / ADR-0096）：仅 buy/sell 可携带（后端行为层准入），
    * 缺省即「结算账户 = 投资账户」；编辑路径全字段替换须显式携带，避免静默抹字段 */
   funding_account_id?: string | null;
+  /** 出资分解（issue #1860 / ADR-0138）：每条 = {账户, 金额, 扣款标签}，Σ == 交易金额；
+   * 仅 expense / income 可携带（refund 显式覆盖同契约），与 account_id 互斥。
+   * 缺省（空数组）即单出资现状；修改路径为全量替换语义（空数组 = 移除分解） */
+  funding?: TransactionFundingInput[] | null;
   category_id?: string | null;
   /** 商户引用（expense/refund/income 可携带；transfer/buy/sell/dividend/split/convert 后端行为层拒绝） */
   merchant_id?: string | null;

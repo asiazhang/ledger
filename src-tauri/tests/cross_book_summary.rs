@@ -72,12 +72,13 @@ fn device_app(tag: &str) -> (tauri::AppHandle<tauri::test::MockRuntime>, Scratch
 /// 买入输入构造器（活动本持仓腿；金额由 prepare 按数量×单价重算）。
 fn buy_input(account_id: &str, instrument_id: &str) -> TransactionInput {
     TransactionInput {
+        funding: Vec::new(),
         merchant_name: None,
         policy_id: None,
         kind: TransactionKind::Buy,
         amount_cents: 0,
         currency_code: "CNY".into(),
-        account_id: account_id.into(),
+        account_id: Some(account_id.into()),
         to_account_id: None,
         funding_account_id: None,
         category_id: None,

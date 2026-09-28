@@ -8,6 +8,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::amount::{FxRateSource, TransactionKind};
 
+use crate::model::TransactionFundingInput;
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct NormalizedTransaction {
     pub kind: TransactionKind,
@@ -23,10 +25,15 @@ pub struct NormalizedTransaction {
     pub fx_rate_used: Option<f64>,
     #[serde(default)]
     pub fx_rate_source: Option<FxRateSource>,
-    pub account_id: String,
+    pub account_id: Option<String>,
     pub to_account_id: Option<String>,
     /// 可选出资账户（issue #935 / ADR-0096）：随归一化行落库与随 op 搬运。
     pub funding_account_id: Option<String>,
+    /// 出资项分解（issue #1860 / ADR-0138）：分解行随行搬运（同步重放同语义落
+    /// 子表）；分解行本字段非空且 `account_id` 为 `None`。`#[serde(default)]` 使
+    /// 旧版本载荷（成员缺省）反序列化为空——只增不改。
+    #[serde(default)]
+    pub funding: Vec<TransactionFundingInput>,
     pub category_id: Option<String>,
     pub merchant_id: Option<String>,
     pub policy_id: Option<String>,

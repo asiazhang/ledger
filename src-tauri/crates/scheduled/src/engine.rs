@@ -978,10 +978,13 @@ pub fn execute_occurrence(conn: &Connection, occurrence_id: &str) -> Result<Stri
             kind,
             amount_cents: occ.amount_cents,
             currency_code: st.currency_code.clone(),
-            account_id: st.account_id.clone(),
+            account_id: Some(st.account_id.clone()),
             to_account_id: ext.to_account_id,
             // 定时计划无出资账户语义（期次只产通用 kind，issue #935）。
             funding_account_id: None,
+            // 定时计划不携带出资分解（ADR-0138 决策 3：分期/订阅维持单出资）。
+            funding: Vec::new(),
+            existing_funding: Vec::new(),
             category_id,
             merchant_id: ext.merchant_id.clone(),
             existing_merchant_id: ext.merchant_id,

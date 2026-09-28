@@ -18,7 +18,11 @@ pub struct Transaction {
     pub amount_cents: i64,
     pub currency_code: String,
     pub amount_native_cents: i64,
-    pub account_id: String,
+    /// 出资账户引用（ADR-0138）：分解行（携出资子行的 expense/income、显式覆盖的
+    /// refund、继承分解原支出的缺省 refund）读回 `None`——AI / HTTP 契约类型域
+    /// `string → string | null`（已发布契约放宽，CHANGELOG BREAKING）；单出资行
+    /// 读回形态与现状兼容。
+    pub account_id: Option<String>,
     pub to_account_id: Option<String>,
     /// 可选出资账户（issue #935 / ADR-0096）：仅 buy/sell 可携带（行为层准入收口
     /// `funding::validate_funding_account`），结算现金腿的归因端点。
@@ -41,6 +45,11 @@ pub struct Transaction {
     pub version: i64,
     pub device_id: String,
     pub is_deleted: bool,
+    /// 出资项分解（issue #1860 / ADR-0138）：分解行按顺序位稳定返回；非库列——
+    /// `FromRow` 恒空，由读路径 `attach_fundings` 填充（列表与单笔读回都填）。
+    /// refund 缺省派生的条目（读时按原支出比例推导、不落库）带 `derived=true`。
+    #[serde(default)]
+    pub fundings: Vec<TransactionFunding>,
     /// 来源列（spec #704 / issue #706，词汇表「来源列」）：发起来源实体的读时反查推导，
     /// 零数据迁移。仅列表/搜索读路径填充（`attach_sources`）；单笔读回与写入响应
     /// 不做反查，恒为 `None`；无来源交易（手动录入/AI 导入）为 `None`。
@@ -49,6 +58,20 @@ pub struct Transaction {
     /// 列表/搜索读路径填充，非转换行恒 `None`。
     /// 列表金额列展示转出金额（`out_amount_cents`），不读行金额锚点（锚点是结转成本）。
     pub convert: Option<ConvertFields>,
+}
+
+/// 出资项读回条目（issue #1860 / ADR-0138）：分解行随交易读回，按顺序位稳定排序。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct TransactionFunding {
+    /// 出资账户 id。
+    pub account_id: String,
+    /// 出资金额（正整数分）：Σ 全部条目 == 交易金额。
+    pub amount_cents: i64,
+    /// 扣款标签（可选自由文本）。
+    pub label: Option<String>,
+    /// refund 缺省按出资比例派生的读时推导标记（ADR-0138 决策 5）：`true` = 读时
+    /// 推导、未落库；落库分解与单出资行恒 `false`。
+    pub derived: bool,
 }
 
 /// 基金转换扩展（ADR-0099）：一笔 convert 两腿的标的、份额与两侧确认金额。
@@ -153,6 +176,9 @@ impl FromRow for Transaction {
             policy_id: row.get(18)?,
             fx_rate_used: row.get(19)?,
             fx_rate_source: row.get(20)?,
+            // 出资项分解非库列：FromRow 恒空，由读路径 `attach_fundings` 填充
+            //（列表页与单笔读回同填）。
+            fundings: Vec::new(),
             // 来源列非库列：FromRow 恒空，由列表/搜索读路径 `attach_sources` 按页填充。
             source: None,
             // 转换扩展同规：非库列，由列表/搜索读路径 `attach_convert_fields` 按页填充。

@@ -58,12 +58,13 @@ fn create_transfer_with_to_account() {
     let id = create_transaction_internal(
         &conn,
         TransactionInput {
+            funding: Vec::new(),
             merchant_name: None,
             policy_id: None,
             kind: TransactionKind::Transfer,
             amount_cents: 3000,
             currency_code: "CNY".into(),
-            account_id: "acc-from".into(),
+            account_id: Some("acc-from".into()),
             to_account_id: Some("acc-to".into()),
             date: "2026-03-01".into(),
             category_id: None,
@@ -651,12 +652,13 @@ fn create_refund_linked_to_expense() {
     let expense_id = create_transaction_internal(
         &conn,
         TransactionInput {
+            funding: Vec::new(),
             merchant_name: None,
             policy_id: None,
             kind: TransactionKind::Expense,
             amount_cents: 1000,
             currency_code: "CNY".into(),
-            account_id: "acc-ref".into(),
+            account_id: Some("acc-ref".into()),
             date: "2026-04-01".into(),
             category_id: None,
             to_account_id: None,
@@ -683,12 +685,13 @@ fn create_refund_linked_to_expense() {
     let refund_id = create_transaction_internal(
         &conn,
         TransactionInput {
+            funding: Vec::new(),
             merchant_name: None,
             policy_id: None,
             kind: TransactionKind::Refund,
             amount_cents: 200,
             currency_code: "CNY".into(),
-            account_id: "acc-ref".into(),
+            account_id: Some("acc-ref".into()),
             date: "2026-04-05".into(),
             merchant_id: None,
             refund_of_transaction_id: Some(expense_id.clone()),
@@ -1256,7 +1259,7 @@ fn update_currency_changed_requeries() {
         &id,
         TransactionInput {
             currency_code: "USD".into(),
-            account_id: "acc-usd-ed".into(),
+            account_id: Some("acc-usd-ed".into()),
             ..make_input("acc-usd-ed", TransactionKind::Expense, 1000, "2026-07-01")
         },
     )
@@ -1442,13 +1445,14 @@ fn update_currency_guard_rejects_dirty_row_until_made_consistent() {
     let conn = test_support::open();
     test_support::seed_account(&conn, "acc-dirty", "现金", "cash", "CNY", 0);
     let dirty = NormalizedRow {
+        funding: Vec::new(),
         kind: TransactionKind::Expense,
         amount_cents: 1000,
         currency_code: "USD".into(),
         amount_native_cents: 1000,
         fx_rate_used: None,
         fx_rate_source: None,
-        account_id: "acc-dirty".into(),
+        account_id: Some("acc-dirty".into()),
         to_account_id: None,
         funding_account_id: None,
         category_id: None,

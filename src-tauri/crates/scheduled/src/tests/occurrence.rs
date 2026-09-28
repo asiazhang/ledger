@@ -309,10 +309,12 @@ fn execute_occurrence_with_preexisting_landing_completes_without_second_row() {
     let norm = writer::normalize(
         &conn,
         &writer::Input {
+            funding: Vec::new(),
+            existing_funding: Vec::new(),
             kind: ledger_transaction::amount::TransactionKind::Expense,
             amount_cents: 3000,
             currency_code: "CNY".into(),
-            account_id: "acc-a".into(),
+            account_id: Some("acc-a".into()),
             to_account_id: None,
             category_id: None,
             merchant_id: None,

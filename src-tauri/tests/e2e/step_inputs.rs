@@ -44,10 +44,11 @@ fn txn_base(
     date: &str,
 ) -> TransactionInput {
     TransactionInput {
+        funding: Vec::new(),
         kind,
         amount_cents,
         currency_code: "CNY".into(),
-        account_id: account_id.into(),
+        account_id: Some(account_id.into()),
         to_account_id: None,
         category_id: None,
         merchant_id: None,
@@ -252,6 +253,7 @@ pub fn plain_input(
 /// 覆盖 instrument/quantity/price/fee（见 transactions_edit_steps::trade_edit_input）。
 pub fn existing_input(existing: &Transaction) -> TransactionInput {
     TransactionInput {
+        funding: Vec::new(),
         merchant_name: None,
         kind: existing.kind,
         amount_cents: existing.amount_cents,

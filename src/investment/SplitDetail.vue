@@ -27,7 +27,7 @@ const reference = useReferenceStore();
 
 /** 账户名经参考数据解析，未知账户回退占位（与列表账户列同口径，不抛错）。 */
 const accountName = computed(
-  () => reference.accountMap.get(props.transaction.account_id)?.name ?? "—",
+  () => reference.accountMap.get(props.transaction.account_id ?? "")?.name ?? "—",
 );
 
 /** 带符号份额变动：正向显式 `+`，负向沿用 `formatQuantity` 的 `-`；隐藏量级不隐藏方向。 */

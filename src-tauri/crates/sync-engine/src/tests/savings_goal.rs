@@ -28,12 +28,13 @@ fn goal_input(name: &str, amount_cents: i64) -> SavingsGoalInput {
 /// 收入输入构造器（存入目标池 = 真实 income 流水，余额缓存随产品写路径重算）。
 fn make_income(account_id: &str, amount_cents: i64, note: &str) -> TransactionInput {
     TransactionInput {
+        funding: Vec::new(),
         merchant_name: None,
         policy_id: None,
         kind: TransactionKind::Income,
         amount_cents,
         currency_code: "CNY".into(),
-        account_id: account_id.into(),
+        account_id: Some(account_id.into()),
         to_account_id: None,
         funding_account_id: None,
         category_id: None,

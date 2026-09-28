@@ -247,6 +247,7 @@ pub(crate) fn generate_ops(
                 command: DomainCommand::Transaction(TransactionCommand::Create {
                     id: deterministic_uuid(&format!("bench-sync-txn-{i}")),
                     row: NormalizedTransaction {
+                        funding: Vec::new(),
                         kind: TransactionKind::Expense,
                         amount_cents,
                         currency_code: currency.to_string(),
@@ -256,8 +257,10 @@ pub(crate) fn generate_ops(
                         fx_rate_used: None,
                         fx_rate_source: None,
                         account_id: match distribution {
-                            Distribution::Concentrated => account_pool[0].clone(),
-                            Distribution::Uniform => account_pool[i % account_pool.len()].clone(),
+                            Distribution::Concentrated => Some(account_pool[0].clone()),
+                            Distribution::Uniform => {
+                                Some(account_pool[i % account_pool.len()].clone())
+                            }
                         },
                         to_account_id: None,
                         funding_account_id: None,

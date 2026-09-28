@@ -140,8 +140,6 @@ pub struct Stage1Filter {
 enum InClauseKind {
     /// `col IN (?,?,…)`——空集合恒假占位 `0`（无可命中 id）。
     In,
-    /// `col NOT IN (?,?,…)`——空集合恒真占位 `1`（无排除对象，子句可省）。
-    NotIn,
     /// `(col IS NULL OR col NOT IN (?,?,…))`——可空列不约束；空集合恒真占位 `1`。
     NullableNotIn,
 }
@@ -157,7 +155,7 @@ fn push_in_clause(
     if ids.is_empty() {
         return match kind {
             InClauseKind::In => "0".into(),
-            InClauseKind::NotIn | InClauseKind::NullableNotIn => "1".into(),
+            InClauseKind::NullableNotIn => "1".into(),
         };
     }
     let placeholders = ids
@@ -169,7 +167,6 @@ fn push_in_clause(
     params.extend(ids);
     match kind {
         InClauseKind::In => format!("{col} IN ({placeholders})"),
-        InClauseKind::NotIn => format!("{col} NOT IN ({placeholders})"),
         InClauseKind::NullableNotIn => {
             format!("({col} IS NULL OR {col} NOT IN ({placeholders}))")
         }
@@ -224,7 +221,7 @@ fn term_clause(term: &TermLowered, dicts: &SearchDicts, params: &mut Vec<Value>)
 /// ```sql
 /// SELECT t.id FROM transactions t INDEXED BY idx_transactions_note_search
 /// WHERE t.is_deleted = 0
-///   [AND t.account_id NOT IN (软删账户)]
+///   [AND (t.account_id IS NULL OR t.account_id NOT IN (软删账户))]
 ///   AND (t.category_id IS NULL OR t.category_id NOT IN (软删分类))
 ///   AND (t.note LIKE ? ESCAPE '\\'
 ///        OR t.account_id IN (…) OR t.merchant_id IN (…))
@@ -253,11 +250,13 @@ pub fn build_stage1_query(
         .map(|(id, _)| Value::Text(id.clone()))
         .collect();
     if !deleted_account_ids.is_empty() {
+        // 可空列必须 IS NULL OR（NULL NOT IN 求值为 NULL 会把分解行整体
+        // 滤出搜索，ADR-0138）；与下方分类子句同形。
         clauses.push(push_in_clause(
             "t.account_id",
             deleted_account_ids,
             &mut params,
-            InClauseKind::NotIn,
+            InClauseKind::NullableNotIn,
         ));
     }
 
@@ -444,15 +443,19 @@ pub fn search_transactions_internal(
             let rows = stmt.query_map(rusqlite::params_from_iter(filter_params.iter()), |row| {
                 // 列序与 [`stage1_sql`] 的 SELECT 清单一一对应。
                 let id = row.get_ref(0)?.as_str()?;
-                let account_id = row.get_ref(2)?.as_str()?;
+                // 账户引用可空（ADR-0138：分解行主表账户列落 NULL）——NULL 无账户
+                // 口径可滤，直接放行（与关键字路径的 IS NULL OR NOT IN 同语义）。
+                let account_id = row.get_ref(2)?.as_str().ok();
                 let category_id = row.get_ref(4)?.as_str().ok();
 
                 // 行级口径过滤（与原 JOIN 谓词等价）：账户必须在用；分类未软删（可空）。
-                let Some((_, account_deleted)) = dicts.accounts.get(account_id) else {
-                    return Ok(());
-                };
-                if *account_deleted {
-                    return Ok(());
+                if let Some(account_id) = account_id {
+                    let Some((_, account_deleted)) = dicts.accounts.get(account_id) else {
+                        return Ok(());
+                    };
+                    if *account_deleted {
+                        return Ok(());
+                    }
                 }
                 if let Some(cid) = category_id
                     && dicts.categories.get(cid).copied().unwrap_or(false)
@@ -500,6 +503,10 @@ pub fn search_transactions_internal(
         let mut items = fetch_display_rows(conn, &page_ids)?;
         crate::read::source::attach_sources(conn, &mut items)?;
         crate::read::source::attach_convert_fields(conn, &mut items)?;
+        // 出资项随页填充（issue #1860 / ADR-0138）：搜索页与列表页同一读回契约——
+        // 分解行 `fundings` 非空 ⇔ 存在分解行，refund 缺省派生同口径；与上两投影
+        // 同处读事务闭包内（本函数整体已收进 ensure_transaction）。
+        crate::read::funding::attach_fundings(conn, &mut items)?;
 
         Ok(TransactionSearchResult { items, total })
     })

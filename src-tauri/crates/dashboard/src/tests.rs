@@ -17,12 +17,13 @@ use tauri_app_lib::test_support::{
 /// common 的同名构造器，域特有形态不上收工厂）。
 fn make_buy_input(account_id: &str, instrument_id: &str, qty: f64, price: i64) -> TransactionInput {
     TransactionInput {
+        funding: Vec::new(),
         merchant_name: None,
         policy_id: None,
         kind: TransactionKind::Buy,
         amount_cents: 0,
         currency_code: "USD".into(),
-        account_id: account_id.into(),
+        account_id: Some(account_id.into()),
         to_account_id: None,
         funding_account_id: None,
         category_id: None,

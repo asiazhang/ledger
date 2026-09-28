@@ -34,12 +34,13 @@ pub(crate) fn wire_in(conn: &Connection, wire: &[String]) -> Vec<crate::ApplyRep
 /// 支出输入构造器（闭环测试的「A 端写」侧语义输入）。
 pub(crate) fn make_expense(account_id: &str, amount_cents: i64, note: &str) -> TransactionInput {
     TransactionInput {
+        funding: Vec::new(),
         merchant_name: None,
         policy_id: None,
         kind: TransactionKind::Expense,
         amount_cents,
         currency_code: "CNY".into(),
-        account_id: account_id.into(),
+        account_id: Some(account_id.into()),
         to_account_id: None,
         funding_account_id: None,
         category_id: None,

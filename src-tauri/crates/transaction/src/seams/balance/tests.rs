@@ -15,18 +15,33 @@ fn 未注册即码化错误_错误码可判读() {
 }
 
 #[test]
-fn 钩子在场即委派_新旧三元组原样透传() {
-    // 断言委派实参按位透传（推导语义属账户域，本域只透传三元组）。
+fn 钩子在场即委派_新旧引用集原样透传() {
+    // 断言委派实参按位透传（推导语义属账户域，本域只透传引用集；出资子行端
+    // 随 ADR-0138 决策 7 纳入载荷）。
     fn stub(
         _conn: &Connection,
-        old: Option<(&str, Option<&str>, Option<&str>)>,
-        new: Option<(&str, Option<&str>, Option<&str>)>,
+        old: Option<RowAccounts<'_>>,
+        new: Option<RowAccounts<'_>>,
     ) -> Result<()> {
         assert_eq!(old, None, "创建形态 old=None 原样透传");
-        assert_eq!(new, Some(("acc", Some("to"), None)));
+        let new = new.expect("new 应在场");
+        assert_eq!(new.account_id, Some("acc"));
+        assert_eq!(new.to_account_id, Some("to"));
+        assert_eq!(new.funding_account_id, None);
+        assert_eq!(new.funding_items, &["f1", "f2"] as &[&str]);
         Ok(())
     }
     let conn = tauri_app_lib::test_support::open();
-    dispatch_balance_refresh(Some(stub), &conn, None, Some(("acc", Some("to"), None)))
-        .expect("钩子在场应成功");
+    dispatch_balance_refresh(
+        Some(stub),
+        &conn,
+        None,
+        Some(RowAccounts {
+            account_id: Some("acc"),
+            to_account_id: Some("to"),
+            funding_account_id: None,
+            funding_items: &["f1", "f2"],
+        }),
+    )
+    .expect("钩子在场应成功");
 }

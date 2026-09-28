@@ -143,7 +143,7 @@ function applyListFilter(filter: Record<string, unknown>) {
         mockAccounts.filter((a) => a.type === "investment").map((a) => a.id),
       );
       if (
-        investmentIds.has(t.account_id) ||
+        (t.account_id !== null && investmentIds.has(t.account_id)) ||
         (t.to_account_id !== null && investmentIds.has(t.to_account_id)) ||
         (t.funding_account_id !== null && investmentIds.has(t.funding_account_id))
       )

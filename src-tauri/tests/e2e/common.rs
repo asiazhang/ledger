@@ -111,6 +111,7 @@ pub fn query_all_transactions(conn: &Connection) -> Vec<Transaction> {
         .unwrap();
     stmt.query_map([], |r| {
         Ok(Transaction {
+            fundings: Vec::new(),
             id: r.get(0)?,
             kind: r.get(1)?,
             amount_cents: r.get(2)?,

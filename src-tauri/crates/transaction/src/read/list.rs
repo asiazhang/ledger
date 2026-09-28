@@ -9,6 +9,7 @@
 use rusqlite::Connection;
 
 use crate::model::{Transaction, TransactionListFilter, TransactionListResult};
+use crate::read::funding::attach_fundings;
 use crate::read::source::{attach_convert_fields, attach_sources};
 use ledger_infra::db::query::{query_all, query_one};
 use ledger_infra::db::tx_scope::ensure_transaction;
@@ -41,10 +42,14 @@ pub fn list_transactions_internal(
             params.push(account_id.to_string());
         }
         if let Some(account_id) = filter.involving_account_id.as_deref() {
-            // 涉及账户三端（issue #937 / ADR-0096）：转出 ∪ 转入 ∪ 出资——按出资账户
-            // 过滤命中它出资的 buy/sell；已发布两端语义不变（只增不改）。
-            where_clause
-                .push_str(" AND (account_id = ? OR to_account_id = ? OR funding_account_id = ?)");
+            // 涉及账户口径（issue #937 / ADR-0096 三端 + ADR-0138 出资子行端）：转出 ∪
+            // 转入 ∪ 出资账户 ∪ 出资子行任一命中即算——按出资账户过滤命中它出资的
+            // buy/sell，按分解账户过滤命中它参与组合支付的行；已发布语义不变（只增不改）。
+            where_clause.push_str(
+                " AND (account_id = ? OR to_account_id = ? OR funding_account_id = ? \
+                 OR id IN (SELECT transaction_id FROM transaction_fundings WHERE account_id = ?))",
+            );
+            params.push(account_id.to_string());
             params.push(account_id.to_string());
             params.push(account_id.to_string());
             params.push(account_id.to_string());
@@ -96,7 +101,9 @@ pub fn list_transactions_internal(
             where_clause.push_str(
                 " AND NOT EXISTS (SELECT 1 FROM accounts a WHERE a.type = 'investment' \
                  AND (a.id = transactions.account_id OR a.id = transactions.to_account_id \
-                 OR a.id = transactions.funding_account_id))",
+                 OR a.id = transactions.funding_account_id \
+                 OR a.id IN (SELECT f.account_id FROM transaction_fundings f \
+                     WHERE f.transaction_id = transactions.id)))",
             );
         }
 
@@ -132,20 +139,33 @@ pub fn list_transactions_internal(
         let mut items = query_all(conn, &sql, rusqlite::params_from_iter(params))?;
         attach_sources(conn, &mut items)?;
         attach_convert_fields(conn, &mut items)?;
+        // 出资项读闭包与页行集同一读事务（issue #1860 / ADR-0138 影响节）：子行
+        // 与 refund 派生的读数都锚在页行快照上，写提交落在语句间即口径错位。
+        attach_fundings(conn, &mut items)?;
         Ok(TransactionListResult { items, total })
     })
 }
 
-/// 按 `id` 读取未删除交易，供修改接口返回更新后的完整交易。不存在返回 `NotFound`。
+/// 按 `id` 读取未删除交易（详情读回），供修改接口返回更新后的完整交易。
+/// 不存在返回 `NotFound`。
+///
+/// 详情读回是多语句读闭包（issue #1860 / ADR-0138 影响节）：主行 SELECT、出资
+/// 子行 SELECT 与 refund 派生的原支出分解读取必须同快照——写提交落在语句间会
+/// 读到「主行为旧、子行为新」的混搭行。整体收进同一读事务（嵌套感知，#1699
+/// 同款纪律），配读快照探针测试（删除接线即红）。
 pub fn get_transaction_internal(conn: &Connection, id: &str) -> Result<Transaction> {
-    query_one::<Transaction, _>(
-        conn,
-        "SELECT id,kind,amount_cents,currency_code,amount_native_cents,account_id,\
+    ensure_transaction(conn, || {
+        let mut tx = query_one::<Transaction, _>(
+            conn,
+            "SELECT id,kind,amount_cents,currency_code,amount_native_cents,account_id,\
          to_account_id,funding_account_id,category_id,refund_of_transaction_id,note,date,created_at,updated_at,\
          version,device_id,is_deleted,merchant_id,policy_id,fx_rate_used,fx_rate_source FROM transactions WHERE id=?1 AND is_deleted=0",
-        rusqlite::params![id],
-    )?
-    .ok_or_else(|| {
-        AppError::codedp_not_found("transaction.not-found", format!("交易不存在: {id}"), &[id])
+            rusqlite::params![id],
+        )?
+        .ok_or_else(|| {
+            AppError::codedp_not_found("transaction.not-found", format!("交易不存在: {id}"), &[id])
+        })?;
+        attach_fundings(conn, std::slice::from_mut(&mut tx))?;
+        Ok(tx)
     })
 }
