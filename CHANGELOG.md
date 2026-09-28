@@ -12,6 +12,7 @@
 
 - **交易**：出资项子表（V034 `transaction_fundings`）——子行随主行存亡（软删即失效、无独立软删位）、显式顺序位保读回稳定、存量行零迁移；每条出资按所属 kind 符号计入对应账户余额（受影响账户写前 ∪ 写后整体重算，ADR-0067 机制不变）；涉及账户过滤与隐藏投资相关流水口径自动覆盖出资端（[#1860]，ADR-0138）。
 - **错误码**：新增 `transaction.funding-item-unsupported` / `transaction.funding-account-conflict` / `transaction.account-required` / `transaction.funding-sum-mismatch` / `transaction.funding-amount-positive` / `transaction.funding-label-too-long`（zh/en 模板同步）（[#1860]，ADR-0138）。
+- **交易**：多出资方读侧呈现——分解行（带非空出资分解）在交易列表账户列显示首条出资账户并标注「等 N 账户」（多账户）或「同账户 N 笔」（同账户多条），退款按比例自动分解的行另带「按比例自动分解」标注，桌面表格与移动卡片同源；行菜单与移动档整卡点击进只读详情弹窗，呈现出资项列表（账户 / 扣款标签 / 金额）与 Σ 合计。分解行不开放编辑与退款（表单录入分解另行支持）（[#1861]，ADR-0138）。
 
 ## [0.8.0] - 2026-09-27
 

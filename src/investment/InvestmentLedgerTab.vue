@@ -229,7 +229,16 @@ const menuY = computed(() => rowMenu.position.value.y);
 /** 菜单选项：选项组装单点复用（hasItem 维度仅 expense 行消费，投资 kind 行集不在场）。 */
 const menuOptions = computed<DropdownOption[]>(() => {
   const row = rowMenu.state.value?.row;
-  return row ? buildRowMenuOptions(row, { errorColor: themeVars.value.errorColor }) : [];
+  // 菜单形状只消费 kind + fundings：投资行恒无分解（ADR-0138 决策 3），按
+  // ledgerRowToModalRow 同款适配投影补 fundings 空数组。
+  return row
+    ? buildRowMenuOptions(
+        { kind: row.kind, fundings: [] },
+        {
+          errorColor: themeVars.value.errorColor,
+        },
+      )
+    : [];
 });
 
 /** 表格行属性：绑定行右键菜单（open 内化重定位舞步；原生菜单拦截单点归窗口行为守卫）。 */

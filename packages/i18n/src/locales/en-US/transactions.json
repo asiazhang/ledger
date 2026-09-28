@@ -83,6 +83,13 @@
     "confirm": "Delete",
     "cancel": "Cancel"
   },
+  "funding": {
+    "section": "Funding Breakdown",
+    "accountCount": "{n} accounts in total",
+    "sameAccountEntries": "{n} entries, same account",
+    "autoDerived": "Auto-split by proportion",
+    "total": "Total · {n} funding items"
+  },
   "menu": {
     "edit": "Edit",
     "detail": "Details",
@@ -152,7 +159,8 @@
     "investmentAccount": "Investment account",
     "instrument": "Instrument",
     "fee": "Fee",
-    "price": "Price"
+    "price": "Price",
+    "merchant": "Merchant"
   },
   "validation": {
     "required": "{label} is required",
