@@ -11,7 +11,7 @@ use std::collections::HashMap;
 
 use chrono::NaiveDate;
 
-use crate::fx_nearest::nearest_week_fx_rate;
+use crate::fx_week::nearest_week_fx_rate;
 
 /// 2026-01 各周一：01-05、01-12、01-19……（与 as_of 测试同一批周键）。
 fn date(s: &str) -> NaiveDate {

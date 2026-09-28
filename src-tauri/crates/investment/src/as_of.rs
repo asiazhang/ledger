@@ -15,7 +15,7 @@ use std::collections::HashMap;
 use chrono::NaiveDate;
 use rusqlite::Connection;
 
-use super::fx_nearest::{FxWeekHistory, fx_rate_at_week, load_fx_week_history};
+use super::fx_week::{FxWeekHistory, fx_rate_at_week, load_fx_week_history};
 
 use ledger_infra::error::Result;
 

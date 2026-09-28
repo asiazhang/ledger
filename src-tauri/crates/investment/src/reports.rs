@@ -16,7 +16,7 @@ use rusqlite::Connection;
 
 use ledger_transaction::amount;
 
-use super::fx_nearest::{FxWeekHistory, load_fx_week_history, nearest_week_fx_rate};
+use super::fx_week::{FxWeekHistory, load_fx_week_history, nearest_week_fx_rate};
 use super::model::{
     AccountPnl, CumulativePnlNativeTotal, CurrencyCumulativePnl, CurrencyHoldingTotals, PnlFilter,
     RealizedPnlSummary, YearPnl,

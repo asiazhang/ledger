@@ -17,7 +17,7 @@ use rusqlite::Connection;
 use super::constant_price::{
     ConstantPriceValue, constant_for_instrument, load_constant_prices, weekly_samples,
 };
-use super::fx_nearest::{fx_rate_at_week, load_fx_week_history};
+use super::fx_week::{fx_rate_at_week, load_fx_week_history};
 use super::holdings::holdings_legs_by_instrument;
 use super::model::{
     InstrumentPriceTrend, PortfolioTrendPoint, PortfolioValueTrend, PriceTrendPoint, TrendRange,
@@ -292,7 +292,8 @@ fn portfolio_value_trend_within_tx(
         }
     }
 
-    // 2. 同期汇率历史：全量载入建周键索引（装载单点 [`load_fx_week_history`]）。
+    // 2. 同期汇率历史：数据量小（周粒度、币种对个位数），全量载入建周键索引
+    //    （装载单点 [`load_fx_week_history`]，issue #1852 合并既有内联拷贝）。
     let fx = load_fx_week_history(conn)?;
 
     // 3. 数量推算按标的分组增量推进（issue #1654）：一次装载全库持仓变动腿流
