@@ -4,6 +4,9 @@
 //! - [`fx_rate_at_week`]：单周取汇率原语（同币种恒等 / 正查 / 反查取倒数），
 //!   组合走势（[`crate::trend`]）与边界市值（[`crate::as_of`]）的同期折算
 //!   消费单点；
+//! - [`load_fx_week_history`]：汇率历史（`fx_rate_history`）全量装载为周键
+//!   索引 [`FxWeekHistory`]——盈亏页读投影 / 组合走势 / 边界市值读路径共用
+//!   的装载单点（#1854 合并既有两处内联拷贝）；
 //! - [`nearest_week_fx_rate`]：按事件日期就近取汇率（±8 周窗口
 //!   [`FX_NEAREST_WINDOW_WEEKS`] 兜底）——事件周精确命中；未命中在窗口内取
 //!   最近可用周；窗口内无任何点返回 `None` 缺料信号，调用方按空值语义显式
@@ -30,12 +33,13 @@ use rusqlite::Connection;
 pub(crate) const FX_NEAREST_WINDOW_WEEKS: i64 = 8;
 
 /// 汇率历史周键索引：(base, quote) → week_start → rate——读路径装载
-/// `fx_rate_history` 的共享形态（组合走势 / 边界市值同款装载）。
+/// `fx_rate_history` 的共享形态（组合走势 / 边界市值经 [`load_fx_week_history`] 共用）。
 pub(crate) type FxWeekHistory = HashMap<(String, String), HashMap<String, f64>>;
 
 /// 全量装载汇率历史为周键索引：数据量小（周粒度、币种对个位数），一次取回
-/// 建索引；构型与组合走势 / 边界市值装载同款（单点从本模块起步，既有两处
-/// 内联拷贝待合并）。
+/// 建索引；盈亏页读投影（[`crate::reports`]）、组合走势（[`crate::trend`]）与
+/// 边界市值（[`crate::as_of`]）读路径共用的装载单点（issue #1854 合并既有
+/// 两处内联拷贝）。
 pub(crate) fn load_fx_week_history(conn: &Connection) -> Result<FxWeekHistory> {
     let mut fx: FxWeekHistory = HashMap::new();
     let mut stmt =

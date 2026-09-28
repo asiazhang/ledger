@@ -15,7 +15,7 @@ use std::collections::HashMap;
 use chrono::NaiveDate;
 use rusqlite::Connection;
 
-use super::fx_nearest::{FxWeekHistory, fx_rate_at_week};
+use super::fx_nearest::{FxWeekHistory, fx_rate_at_week, load_fx_week_history};
 
 use ledger_infra::error::Result;
 
@@ -74,23 +74,7 @@ impl AsOfValues {
                 ),
             );
         }
-        let mut fx: FxWeekHistory = HashMap::new();
-        {
-            let mut stmt = conn
-                .prepare("SELECT base_code, quote_code, week_start, rate FROM fx_rate_history")?;
-            let rows = stmt.query_map([], |r| {
-                Ok((
-                    r.get::<_, String>(0)?,
-                    r.get::<_, String>(1)?,
-                    r.get::<_, String>(2)?,
-                    r.get::<_, f64>(3)?,
-                ))
-            })?;
-            for row in rows {
-                let (base, quote, week, rate) = row?;
-                fx.entry((base, quote)).or_default().insert(week, rate);
-            }
-        }
+        let fx = load_fx_week_history(conn)?;
         Ok(AsOfValues { latest_price, fx })
     }
 
