@@ -260,6 +260,12 @@ async fn test_openapi_doc_has_currencies_endpoint() {
 /// issue #1569 复核：Instrument.source 描述去东财化改写后实测 51181 字节，
 /// 余量仅 19——本票已就地瘦身（删「同词表」措辞、压历史值说明）未提预算；
 /// 下一个新增端点/字段大概率触线，延续人工决策与留痕传统。
+///
+/// issue #1860 / ADR-0138 触线：多出资方（组合支付）契约面（`TransactionFunding` /
+/// `TransactionFundingInput` 两 schema、`funding` / `fundings` 字段、`account_id` 可空化
+/// 与 6 个出资错误码）加入后实测 56909 字节越 52KB，与紧凑方言同票同因提至 57KB：
+/// 新描述承载互斥二选一与 refund 缺省派生语义，删掉会让 AI 误读分解行口径，
+/// 不选删描述换预算（ADR-0119 后果节决策）。
 #[tokio::test]
 async fn test_openapi_doc_size_within_budget() {
     let (app, _) = setup_app();
@@ -277,8 +283,8 @@ async fn test_openapi_doc_size_within_budget() {
 
     let bytes = body_to_bytes(response.into_body()).await;
     assert!(
-        bytes.len() <= 52 * 1024,
-        "OpenAPI 契约文档应保持在预算内（当前 {} 字节，预算 52KB）",
+        bytes.len() <= 57 * 1024,
+        "OpenAPI 契约文档应保持在预算内（当前 {} 字节，预算 57KB）",
         bytes.len()
     );
 }
