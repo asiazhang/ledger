@@ -18,6 +18,7 @@ use super::predicates::INVESTED_EXISTS;
 use super::prices::{MarketPriceWrite, upsert_market_price};
 use ledger_currencies::{ExchangeRate, ExchangeRateInput};
 use ledger_infra::db::query::{FromRow, query_all, query_one};
+use ledger_infra::db::tx_scope::ensure_transaction;
 use ledger_infra::db::{new_uuid, now_iso};
 use ledger_infra::error::{AppError, Result};
 use ledger_sync_protocol::device::device_id;
@@ -88,32 +89,37 @@ pub fn list_exchange_rates(conn: &Connection) -> Result<Vec<ExchangeRate>> {
 }
 
 pub fn create_exchange_rate(conn: &Connection, input: ExchangeRateInput) -> Result<String> {
-    if input.rate <= 0.0 {
-        return Err(AppError::coded("fx.rate-positive", "汇率必须大于 0"));
-    }
-    let id = write_exchange_rate(
-        conn,
-        &new_uuid(),
-        &input.base_code,
-        &input.quote_code,
-        input.rate,
-        &input.priced_at,
-        input.source.as_deref(),
-    )?;
-    // op 产出接缝（issue #861 / ADR-0091）：本地写成功 → 动作随行追加进本机
-    // OpLog；随同一事务提交/回滚，写失败不残留 op。
-    record_exchange_rate(
-        conn,
-        ExchangeRateCommand::Upsert {
-            id: id.clone(),
-            base_code: input.base_code,
-            quote_code: input.quote_code,
-            rate: input.rate,
-            priced_at: input.priced_at,
-            source: input.source,
-        },
-    )?;
-    Ok(id)
+    // 本地写编排入口（issue #1867）：业务写 + op 追加收进嵌套感知事务——autocommit
+    // 连接自持事务（中途失败整体回滚）、已在外层事务则并入（失败交外层回滚），
+    // 业务行与 op 行同生共死。
+    ensure_transaction(conn, || {
+        if input.rate <= 0.0 {
+            return Err(AppError::coded("fx.rate-positive", "汇率必须大于 0"));
+        }
+        let id = write_exchange_rate(
+            conn,
+            &new_uuid(),
+            &input.base_code,
+            &input.quote_code,
+            input.rate,
+            &input.priced_at,
+            input.source.as_deref(),
+        )?;
+        // op 产出接缝（issue #861 / ADR-0091）：本地写成功 → 动作随行追加进本机
+        // OpLog；随同一事务提交/回滚，写失败不残留 op。
+        record_exchange_rate(
+            conn,
+            ExchangeRateCommand::Upsert {
+                id: id.clone(),
+                base_code: input.base_code,
+                quote_code: input.quote_code,
+                rate: input.rate,
+                priced_at: input.priced_at,
+                source: input.source,
+            },
+        )?;
+        Ok(id)
+    })
 }
 
 /// 汇率写入协议（本地录入与重放共用，无 op 产出）：按货币对 upsert，未命中以
@@ -207,41 +213,45 @@ pub fn list_market_prices(conn: &Connection) -> Result<Vec<MarketPrice>> {
 }
 
 pub fn create_market_price(conn: &Connection, input: MarketPriceInput) -> Result<String> {
-    if input.price_cents <= 0 {
-        return Err(AppError::coded(
-            "instrument.price-positive",
-            "价格必须大于 0",
-        ));
-    }
-    // 写入委托现价缓存单点 upsert（issue #291 收口：原就地 SQL 与同步通道
-    // 两份同形 upsert 合并为一份）；手动落价无净值日期语义，nav_date 覆盖为 NULL
-    // （防基金现价被手动更新后旧净值日期残留错配，与同步通道同规则）。
-    // source 透传入参（可空，发布 API 形状不变）；手动报价正经 manual_price 模块
-    // （record_manual_price），本命令为已发布的独立写价通道（issue #291 前的半成品）。
-    let id = upsert_market_price(
-        conn,
-        &MarketPriceWrite {
-            instrument_id: &input.instrument_id,
-            price_cents: input.price_cents,
-            currency_code: &input.currency_code,
-            priced_at: &input.priced_at,
-            nav_date: None,
-            source: input.source.as_deref(),
-        },
-    )?;
-    // op 产出接缝（issue #861 / ADR-0091）：本地写成功 → 动作随行追加（裁决域
-    // = 标的的现价行）；随同一事务提交/回滚。
-    record_price(
-        conn,
-        PriceCommand::MarketPrice {
-            instrument_id: input.instrument_id,
-            price_cents: input.price_cents,
-            currency_code: input.currency_code,
-            priced_at: input.priced_at,
-            source: input.source,
-        },
-    )?;
-    Ok(id)
+    // 本地写编排入口（issue #1867）：业务写 + op 追加收进嵌套感知事务（自持失败
+    // 整体回滚、嵌套失败交外层回滚），业务行与 op 行同生共死。
+    ensure_transaction(conn, || {
+        if input.price_cents <= 0 {
+            return Err(AppError::coded(
+                "instrument.price-positive",
+                "价格必须大于 0",
+            ));
+        }
+        // 写入委托现价缓存单点 upsert（issue #291 收口：原就地 SQL 与同步通道
+        // 两份同形 upsert 合并为一份）；手动落价无净值日期语义，nav_date 覆盖为 NULL
+        // （防基金现价被手动更新后旧净值日期残留错配，与同步通道同规则）。
+        // source 透传入参（可空，发布 API 形状不变）；手动报价正经 manual_price 模块
+        // （record_manual_price），本命令为已发布的独立写价通道（issue #291 前的半成品）。
+        let id = upsert_market_price(
+            conn,
+            &MarketPriceWrite {
+                instrument_id: &input.instrument_id,
+                price_cents: input.price_cents,
+                currency_code: &input.currency_code,
+                priced_at: &input.priced_at,
+                nav_date: None,
+                source: input.source.as_deref(),
+            },
+        )?;
+        // op 产出接缝（issue #861 / ADR-0091）：本地写成功 → 动作随行追加（裁决域
+        // = 标的的现价行）；随同一事务提交/回滚。
+        record_price(
+            conn,
+            PriceCommand::MarketPrice {
+                instrument_id: input.instrument_id,
+                price_cents: input.price_cents,
+                currency_code: input.currency_code,
+                priced_at: input.priced_at,
+                source: input.source,
+            },
+        )?;
+        Ok(id)
+    })
 }
 
 /// 标的搜索的匹配目标：「代码 · 名称」label 等价文本（与投资表单标的下拉的
@@ -390,10 +400,14 @@ pub fn get_instrument(conn: &Connection, id: &str) -> Result<Instrument> {
 /// 自建标的删除（issue #292 / ADR-0036 决策 5）：守卫与删除语义单一归属
 /// [`write_delete_instrument`]，本入口只叠加 op 产出（issue #861）。
 pub fn delete_instrument(conn: &Connection, id: &str) -> Result<()> {
-    write_delete_instrument(conn, id)?;
-    // op 产出接缝（issue #861 / ADR-0091）：删除成功 → delete op（实体 id）
-    // 追加；随同一事务提交/回滚。
-    record_instrument(conn, InstrumentCommand::Delete { id: id.to_string() })
+    // 本地写编排入口（issue #1867）：删除 + op 追加收进嵌套感知事务（自持失败整体
+    // 回滚、嵌套失败交外层回滚）——删了标的却没留 op 的漂移不存在。
+    ensure_transaction(conn, || {
+        write_delete_instrument(conn, id)?;
+        // op 产出接缝（issue #861 / ADR-0091）：删除成功 → delete op（实体 id）
+        // 追加；随同一事务提交/回滚。
+        record_instrument(conn, InstrumentCommand::Delete { id: id.to_string() })
+    })
 }
 
 /// 标的删除协议（本地删除与重放共用，无 op 产出）：守卫前置检查——仅来源为
@@ -444,41 +458,46 @@ pub(crate) fn write_delete_instrument(conn: &Connection, id: &str) -> Result<()>
 /// Create op；复用改名/改市场 → Update op；无变化复用不产出（op 是本机数据
 /// 变化的记录，零变化零 op）。
 pub fn create_instrument(conn: &Connection, input: InstrumentInput) -> Result<String> {
-    if input.symbol.trim().is_empty() {
-        return Err(AppError::coded(
-            "instrument.symbol-required",
-            "标的代码不能为空",
-        ));
-    }
-    let row = InstrumentCommandRow {
-        symbol: input.symbol,
-        kind: input.kind,
-        name: input.name,
-        currency_code: input.currency_code,
-        market: input.market.unwrap_or_else(|| FUND_MARKET.to_string()),
-    };
-    let (id, outcome) = write_instrument(conn, &new_uuid(), &row)?;
-    match outcome {
-        InstrumentWrite::Created => record_instrument(
-            conn,
-            InstrumentCommand::Create {
-                id: id.clone(),
-                row: row.clone(),
-            },
-        )?,
-        InstrumentWrite::Renamed => record_instrument(
-            conn,
-            InstrumentCommand::Update {
-                id: id.clone(),
-                symbol: row.symbol.clone(),
-                kind: row.kind,
-                name: row.name.clone(),
-                market: row.market.clone(),
-            },
-        )?,
-        InstrumentWrite::Unchanged => {}
-    }
-    Ok(id)
+    // 本地写编排入口（issue #1867）：业务写（建档/改名）+ op 追加收进嵌套感知事务
+    // （自持失败整体回滚、嵌套失败交外层回滚），业务行与 op 行同生共死
+    // （Created / Renamed 两产出点同壳）。
+    ensure_transaction(conn, || {
+        if input.symbol.trim().is_empty() {
+            return Err(AppError::coded(
+                "instrument.symbol-required",
+                "标的代码不能为空",
+            ));
+        }
+        let row = InstrumentCommandRow {
+            symbol: input.symbol,
+            kind: input.kind,
+            name: input.name,
+            currency_code: input.currency_code,
+            market: input.market.unwrap_or_else(|| FUND_MARKET.to_string()),
+        };
+        let (id, outcome) = write_instrument(conn, &new_uuid(), &row)?;
+        match outcome {
+            InstrumentWrite::Created => record_instrument(
+                conn,
+                InstrumentCommand::Create {
+                    id: id.clone(),
+                    row: row.clone(),
+                },
+            )?,
+            InstrumentWrite::Renamed => record_instrument(
+                conn,
+                InstrumentCommand::Update {
+                    id: id.clone(),
+                    symbol: row.symbol.clone(),
+                    kind: row.kind,
+                    name: row.name.clone(),
+                    market: row.market.clone(),
+                },
+            )?,
+            InstrumentWrite::Unchanged => {}
+        }
+        Ok(id)
+    })
 }
 
 /// 标的写入形态（op 产出判据）：新建 / 复用有变化 / 复用无变化。
