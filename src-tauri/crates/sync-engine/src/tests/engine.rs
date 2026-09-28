@@ -1,46 +1,84 @@
 //! 同步引擎闭环（issue #855 / ADR-0091）：A 端写 → B 端重放后账本状态一致；
 //! 同一 op 重复投递不产生第二次效果（按 op 标识幂等）；双端 op 收敛到同一全序。
 //!
-//! 双端场景 = 同进程两个引擎实例（各自内存库），Transport 引入前的直接 op
+//! 双端场景 = 同进程两个引擎实例（各自独立建库），Transport 引入前的直接 op
 //! 传递（#859 接线）；重放复用既有行为编排入口，不新增写接缝。
 //! 参考数据（账户字典）的同步归 #860，本目录两端以同一夹具等量种子。
 
 use super::super::{ApplyReport, DomainCommand, OpOutcome, apply_ops, parked_ops, read_ops};
 use super::common::{make_expense, read_transaction, wire_in, wire_out};
 use ledger_transaction::write::protocol;
+use rusqlite::Connection;
 use tauri_app_lib::test_support::{
     self, assert_balance_cache_matches_realtime, seed_account, seed_fx_rate_history,
 };
 
+/// 双端建库模板形态（issue #1868 行为等价判据的矩阵轴）：内存模板 / 文件库模板。
+/// `_dirs` 承载文件库模板的暂存目录 guard；字段序在连接之后——连接先关闭、
+/// 目录后清理。
+struct Ends {
+    conn_a: Connection,
+    conn_b: Connection,
+    _dirs: Vec<test_support::ScratchDir>,
+}
+
+impl Ends {
+    /// 内存模板：双端各自模板还原的独立内存库。
+    fn memory() -> Self {
+        Self {
+            conn_a: test_support::open(),
+            conn_b: test_support::open(),
+            _dirs: Vec::new(),
+        }
+    }
+
+    /// 文件库模板：双端各自落自带暂存目录（ADR-0139 决策 2 的承载形态）。
+    fn file() -> Self {
+        let (conn_a, dir_a) = test_support::open_file_scratch("sync-converge-a");
+        let (conn_b, dir_b) = test_support::open_file_scratch("sync-converge-b");
+        Self {
+            conn_a,
+            conn_b,
+            _dirs: vec![dir_a, dir_b],
+        }
+    }
+}
+
 /// A 端记账 → B 端重放：业务字段逐列一致 + 派生缓存经既有接缝重算自洽。
+/// 行为等价判据（issue #1868）：同一闭环在内存模板与文件库模板上等价绿——
+/// 文件库模板是跨库原子性断言的承载形态（ADR-0139 决策 2），其初始化能力
+/// （全量迁移、种子注入、同一建库接线）与内存模板等价。
 #[test]
 fn a_writes_b_replays_ledger_converges() {
-    let conn_a = test_support::open();
-    let conn_b = test_support::open();
-    seed_account(&conn_a, "acc-1", "现金", "cash", "CNY", 0);
-    seed_account(&conn_b, "acc-1", "现金", "cash", "CNY", 0);
+    for ends in [Ends::memory(), Ends::file()] {
+        seed_account(&ends.conn_a, "acc-1", "现金", "cash", "CNY", 0);
+        seed_account(&ends.conn_b, "acc-1", "现金", "cash", "CNY", 0);
 
-    let created = protocol::create(&conn_a, make_expense("acc-1", 10000, "午饭")).unwrap();
+        let created = protocol::create(&ends.conn_a, make_expense("acc-1", 10000, "午饭")).unwrap();
 
-    let ops = read_ops(&conn_a).unwrap();
-    assert_eq!(ops.len(), 1);
+        let ops = read_ops(&ends.conn_a).unwrap();
+        assert_eq!(ops.len(), 1);
 
-    let reports = apply_ops(&conn_b, &ops).unwrap();
-    assert_eq!(
-        reports,
-        vec![ApplyReport {
-            op_id: ops[0].op_id.clone(),
-            outcome: OpOutcome::Applied,
-        }]
-    );
+        let reports = apply_ops(&ends.conn_b, &ops).unwrap();
+        assert_eq!(
+            reports,
+            vec![ApplyReport {
+                op_id: ops[0].op_id.clone(),
+                outcome: OpOutcome::Applied,
+            }]
+        );
 
-    // 账本状态一致：业务字段逐列相等（审计列是各端本地事实，不参与判定）。
-    let expected = read_transaction(&conn_a, &created.id).unwrap();
-    assert_eq!(read_transaction(&conn_b, &created.id).unwrap(), expected);
-    assert_eq!(expected.amount_native_cents, 10000);
-    assert_eq!(expected.is_deleted, 0);
-    // 派生数据不进日志：B 端经既有接缝重算且自洽（ADR-0067 延伸）。
-    assert_balance_cache_matches_realtime(&conn_b);
+        // 账本状态一致：业务字段逐列相等（审计列是各端本地事实，不参与判定）。
+        let expected = read_transaction(&ends.conn_a, &created.id).unwrap();
+        assert_eq!(
+            read_transaction(&ends.conn_b, &created.id).unwrap(),
+            expected
+        );
+        assert_eq!(expected.amount_native_cents, 10000);
+        assert_eq!(expected.is_deleted, 0);
+        // 派生数据不进日志：B 端经既有接缝重算且自洽（ADR-0067 延伸）。
+        assert_balance_cache_matches_realtime(&ends.conn_b);
+    }
 }
 
 /// 折算来源留痕随 op 收敛（#1548 / ADR-0011 修订）：A 端外币行折算后，汇率值与
