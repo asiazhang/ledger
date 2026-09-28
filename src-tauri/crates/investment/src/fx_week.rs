@@ -39,8 +39,9 @@ pub(crate) const FX_NEAREST_WINDOW_WEEKS: i64 = 8;
 pub(crate) type FxWeekHistory = HashMap<(String, String), HashMap<String, f64>>;
 
 /// 全量装载汇率历史为周键索引：数据量小（周粒度、币种对个位数），一次取回
-/// 建索引；组合走势（[`crate::trend`]）与边界市值（[`crate::as_of`]）装载共用
-/// 本单点（issue #1852 合并既有两处内联拷贝）。
+/// 建索引；盈亏页读投影（[`crate::reports`]）、组合走势（[`crate::trend`]）与
+/// 边界市值（[`crate::as_of`]）读路径共用的装载单点（issue #1852 合并既有
+/// 两处内联拷贝）。
 pub(crate) fn load_fx_week_history(conn: &Connection) -> Result<FxWeekHistory> {
     let mut fx: FxWeekHistory = HashMap::new();
     let mut stmt =
