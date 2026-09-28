@@ -1,0 +1,620 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PROTOTYPE · #1859 多出资方读侧</title>
+<!--
+  PROTOTYPE(抛弃式,不入库)· issue #1859 多出资方(联合扣款)读侧 UI
+  问题:待决 Q9——列表「账户」列分解行怎么呈现、详情出资项怎么呈现;
+        另附变体 D 录入/编辑表单速写(本单范围外,Q6 已裁不做),仅供讨论 Q2 互斥 / Q7 约束 / Q8c 单⇄多互转。
+  页面:R 读侧·四种出资情形(默认,单一定稿形态;此前 A–C 表面变体已裁撤) / D 录入速写(范围外)
+  切换:底部悬浮条 ‹ › 或键盘 ←/→,URL `?variant=R|D`(file:// 下兼容 `#variant=R`)。
+  说明:应用本体是 Vue + naive-ui;按用户要求做成单文件 HTML,观感摹仿应用亮色主题
+        (琥珀主色 #F59E0B、类型语义色与 transaction-columns.ts 一致),数据为 issue #1859
+        真实样例 + 构造样例,纯内存态,无持久化。
+-->
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    font: 14px/1.55 -apple-system, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    color: #33363c; background: #f5f5f8; -webkit-font-smoothing: antialiased;
+  }
+  button { font: inherit; color: inherit; background: none; border: none; cursor: pointer; }
+
+  /* ── 顶部 PROTOTYPE 横幅(刻意与设计区分) ── */
+  .banner {
+    display: flex; align-items: center; gap: 10px;
+    background: #1f1f23; color: #d4d4d8; font-size: 12px;
+    padding: 6px 16px;
+  }
+  .banner .pb {
+    background: #F59E0B; color: #1f1f23; font-weight: 700;
+    padding: 1px 8px; border-radius: 3px; letter-spacing: .5px;
+  }
+
+  /* ── 布局 ── */
+  #app { display: flex; height: calc(100vh - 30px); }
+  .side {
+    width: 196px; flex: none; background: #fbfbfc;
+    border-right: 1px solid #ececf1; padding: 14px 10px; overflow-y: auto;
+  }
+  .side .grp { font-size: 11px; color: #9b9ba3; padding: 12px 10px 4px; }
+  .side .it {
+    display: block; width: 100%; text-align: left;
+    padding: 6px 10px; border-radius: 4px; color: #4b4e57; font-size: 13px;
+  }
+  .side .it:hover { background: #f0f0f4; }
+  .side .it.on { background: rgba(245,158,11,.12); color: #b45309; font-weight: 600; }
+  main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  .top {
+    display: flex; align-items: center; gap: 12px;
+    background: #fff; border-bottom: 1px solid #ececf1; padding: 12px 20px;
+  }
+  .top h1 { font-size: 17px; font-weight: 600; }
+  .top .chip-t {
+    font-size: 12px; color: #6b6e78; background: #f2f2f5;
+    border: 1px solid #e4e4ea; border-radius: 20px; padding: 1px 10px;
+  }
+  .top .spacer { flex: 1; }
+  .btn-primary {
+    background: #F59E0B; color: #fff; font-size: 13px;
+    padding: 5px 14px; border-radius: 4px;
+  }
+  .btn-primary:hover { background: #FBBF24; }
+  .content { flex: 1; overflow: auto; padding: 16px 20px 120px; }
+
+  /* ── 变体说明条 ── */
+  .note {
+    background: rgba(245,158,11,.07); border: 1px solid rgba(245,158,11,.28);
+    border-left: 3px solid #F59E0B; border-radius: 4px;
+    padding: 9px 14px; margin-bottom: 12px; font-size: 12.5px; color: #6b5a33;
+  }
+  .note b { color: #92610a; }
+
+  /* ── 表格 ── */
+  .card { background: #fff; border: 1px solid #ececf1; border-radius: 4px; }
+  table.tbl { width: 100%; table-layout: fixed; border-collapse: collapse; font-size: 13.5px; }
+  .tbl th {
+    text-align: left; font-weight: 500; color: #7a7d87; font-size: 12.5px;
+    background: #fafafc; border-bottom: 1px solid #ececf1; padding: 9px 10px;
+  }
+  .tbl td { border-bottom: 1px solid #f2f2f6; padding: 9px 10px; vertical-align: middle; }
+  .tbl tbody tr.row { cursor: pointer; }
+  .tbl tbody tr.row:hover { background: #f7f7fa; }
+  .tbl tbody tr.row.sel { background: rgba(245,158,11,.08); }
+  .tbl th.r, .tbl td.r { text-align: right; }
+  th.ellipsis, td.ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  a.lk { color: #F59E0B; text-decoration: none; }
+  a.lk:hover { text-decoration: underline; color: #d97706; }
+
+  .tag {
+    display: inline-block; font-size: 12px; line-height: 20px; height: 22px;
+    padding: 0 7px; border-radius: 3px; border: 1px solid transparent; white-space: nowrap;
+  }
+  .k-expense  { color: #d03050; background: rgba(208,48,80,.08);  border-color: rgba(208,48,80,.25); }
+  .k-income   { color: #18a058; background: rgba(24,160,88,.08);  border-color: rgba(24,160,88,.25); }
+  .k-refund   { color: #2080f0; background: rgba(32,128,240,.08); border-color: rgba(32,128,240,.25); }
+  .k-transfer { color: #63666f; background: #f2f2f5; border-color: #e0e0e6; }
+
+  .amt { font-weight: 500; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .c-expense { color: #d03050; } .c-income { color: #18a058; }
+  .c-refund { color: #2080f0; } .c-transfer { color: #722ed1; }
+
+  .suf { color: #9b9ba3; font-size: 12.5px; }
+  .arr { opacity: .5; margin: 0 2px; }
+
+  /* 变体 B:账户徽标组 */
+  .chips { display: inline-flex; gap: 4px; align-items: center; max-width: 100%; flex-wrap: nowrap; overflow: hidden; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 4px; white-space: nowrap;
+    font-size: 12px; color: #55585f; background: #f4f4f7;
+    border: 1px solid #e6e6ec; border-radius: 20px; padding: 0 8px; line-height: 20px;
+  }
+  .chip i { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+
+  /* 变体 C:行内展开 */
+  .exp {
+    font-size: 11.5px; color: #8a6d1f; background: rgba(245,158,11,.12);
+    border: 1px solid rgba(245,158,11,.3); border-radius: 3px;
+    padding: 0 6px; margin-left: 6px; line-height: 18px; white-space: nowrap;
+  }
+  .exp:hover { background: rgba(245,158,11,.22); }
+  .exp.on { background: #F59E0B; color: #fff; border-color: #F59E0B; }
+  .tmp-chip { font-size: 11px; color: #8a8f99; background: #f2f2f5; border: 1px dashed #c9ccd4; border-radius: 20px; padding: 0 7px; line-height: 18px; white-space: nowrap; }
+  .case-badge { font-size: 10.5px; color: #8a6d1f; background: rgba(245,158,11,.06); border: 1px dashed rgba(245,158,11,.45); border-radius: 3px; padding: 0 5px; line-height: 17px; margin-left: 5px; white-space: nowrap; vertical-align: 1px; }
+  tr.case-band td { background: #fffdf5; border-top: 1px dashed rgba(245,158,11,.55); border-bottom: 1px dashed rgba(245,158,11,.55); padding: 6px 10px; font-size: 12px; color: #92610a; }
+  tr.case-band td b { color: #b45309; }
+  tr.note-row td { color: #9b9ba3; font-size: 12px; padding: 6px 10px; }
+  .order-chip { display: inline-block; font-size: 11px; color: #b45309; background: rgba(245,158,11,.1); border: 1px solid rgba(245,158,11,.35); border-radius: 20px; padding: 0 7px; line-height: 18px; white-space: nowrap; vertical-align: 1px; margin-left: 4px; }
+
+  /* ── 出资项行(详情共用) ── */
+  .frow { display: flex; align-items: center; gap: 8px; padding: 6px 0; }
+  .frow + .frow { border-top: 1px dashed #f0f0f4; }
+  .frow .facc { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .frow .famt { flex: none; font-variant-numeric: tabular-nums; font-weight: 500; }
+  .ftag {
+    flex: none; font-size: 11.5px; color: #6b6e78; background: #f2f2f5;
+    border: 1px solid #e4e4ea; border-radius: 3px; padding: 0 6px; line-height: 18px;
+  }
+
+
+  .sumline {
+    display: flex; justify-content: space-between; align-items: center;
+    border-top: 1px solid #ececf1; margin-top: 6px; padding-top: 8px;
+    font-size: 12.5px; color: #7a7d87;
+  }
+  .derived-note { font-size: 12px; color: #2080f0; background: rgba(32,128,240,.07); border-radius: 3px; padding: 4px 8px; margin: 6px 0; }
+  .auto-chip {
+    font-size: 11px; color: #2080f0; background: rgba(32,128,240,.1);
+    border: 1px dashed rgba(32,128,240,.4); border-radius: 20px; padding: 0 7px; line-height: 18px; white-space: nowrap;
+  }
+
+  /* ── 详情抽屉 ── */
+  .ovl { position: fixed; inset: 0; background: rgba(0,0,0,.3); z-index: 40; }
+  .drawer {
+    position: fixed; top: 0; right: 0; bottom: 0; width: 460px; max-width: 92vw;
+    background: #fff; box-shadow: -8px 0 24px rgba(0,0,0,.1); z-index: 41;
+    display: flex; flex-direction: column;
+  }
+  .dhead { padding: 16px 20px 12px; border-bottom: 1px solid #ececf1; }
+  .dhead .meta { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+  .dhead h2 { font-size: 15px; font-weight: 600; }
+  .dhead .close { margin-left: auto; color: #9b9ba3; font-size: 16px; padding: 2px 8px; border-radius: 4px; }
+  .dhead .close:hover { background: #f2f2f5; }
+  .dbody { flex: 1; overflow-y: auto; padding: 14px 20px 30px; }
+  .dsec { margin-bottom: 18px; }
+  .dsec h3 { font-size: 12.5px; font-weight: 600; color: #7a7d87; margin-bottom: 6px; }
+  .kv { display: grid; grid-template-columns: 76px 1fr; row-gap: 6px; font-size: 13px; }
+  .kv dt { color: #9b9ba3; }
+  .big-amt { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .flowline { display: flex; justify-content: space-between; padding: 4px 0; font-size: 13px; }
+  .flowline .s { font-variant-numeric: tabular-nums; font-weight: 500; }
+
+  /* ── 变体 D:表单 ── */
+  .form-wrap { max-width: 600px; margin: 0 auto; }
+  .form-card { background: #fff; border: 1px solid #ececf1; border-radius: 6px; padding: 20px 22px; }
+  .form-card h2 { font-size: 15px; margin-bottom: 14px; }
+  .fld { margin-bottom: 14px; }
+  .fld label { display: block; font-size: 12.5px; color: #7a7d87; margin-bottom: 4px; }
+  .fld input[type=text], .fld input[type=number], .fld select, .fld input[type=date] {
+    width: 100%; font: inherit; font-size: 13.5px; color: #33363c;
+    border: 1px solid #dcdce3; border-radius: 4px; padding: 6px 10px; background: #fff;
+  }
+  .fld input:focus, .fld select:focus { outline: none; border-color: #F59E0B; box-shadow: 0 0 0 2px rgba(245,158,11,.15); }
+  .seg { display: inline-flex; border: 1px solid #dcdce3; border-radius: 5px; overflow: hidden; }
+  .seg button { padding: 5px 16px; font-size: 13px; color: #6b6e78; background: #fff; }
+  .seg button.on { background: rgba(245,158,11,.14); color: #b45309; font-weight: 600; }
+  .frow-edit { display: grid; grid-template-columns: 1.1fr .9fr 1.1fr 30px; gap: 8px; margin-bottom: 8px; align-items: center; }
+  .frow-edit input, .frow-edit select {
+    font: inherit; font-size: 13px; border: 1px solid #dcdce3; border-radius: 4px; padding: 5px 8px; width: 100%;
+  }
+  .frow-edit .del { color: #c2c4cc; font-size: 15px; }
+  .frow-edit .del:hover { color: #d03050; }
+  .addrow {
+    font-size: 12.5px; color: #b45309; border: 1px dashed rgba(245,158,11,.5);
+    border-radius: 4px; padding: 4px 12px; margin-top: 2px;
+  }
+  .addrow:hover { background: rgba(245,158,11,.08); }
+  .sigma { margin-top: 10px; font-size: 13px; font-weight: 600; }
+  .sigma.ok { color: #18a058; } .sigma.bad { color: #d03050; }
+  .hint { font-size: 12px; color: #9b9ba3; line-height: 1.7; }
+  .hint b { color: #6b6e78; }
+  .mutex {
+    margin-top: 14px; font-size: 12px; color: #8a6d1f;
+    background: rgba(245,158,11,.07); border-radius: 4px; padding: 8px 12px;
+  }
+
+  /* ── 悬浮切换条 ── */
+  #switcher {
+    position: fixed; left: 50%; transform: translateX(-50%); bottom: 18px; z-index: 60;
+    display: flex; align-items: center; gap: 6px;
+    background: #1f1f23; color: #e4e4e7; border-radius: 24px;
+    padding: 7px 12px; box-shadow: 0 6px 20px rgba(0,0,0,.25); font-size: 12.5px;
+  }
+  #switcher .arr-btn { color: #a1a1aa; font-size: 15px; padding: 0 6px; }
+  #switcher .arr-btn:hover { color: #fff; }
+  #switcher .vlabel { min-width: 150px; text-align: center; }
+  #switcher .vlabel b { color: #FBBF24; }
+  #switcher .dots { display: flex; gap: 4px; margin-left: 8px; padding-left: 10px; border-left: 1px solid #3f3f46; }
+  #switcher .dot-b {
+    width: 20px; height: 20px; border-radius: 50%; font-size: 11px;
+    color: #a1a1aa; border: 1px solid #52525b; line-height: 18px;
+  }
+  #switcher .dot-b.on { color: #1f1f23; background: #FBBF24; border-color: #FBBF24; font-weight: 700; }
+</style>
+</head>
+<body>
+  <div class="banner">
+    <span class="pb">PROTOTYPE</span>
+    <span>抛弃式原型 · issue #1859 多出资方读侧讨论用 · 数据为构造样例(内存态) · 顶部横幅与底部切换条不属于被评估的设计</span>
+  </div>
+  <div id="app">
+    <aside class="side">
+      <div class="grp">记账</div>
+      <button class="it">概览</button>
+      <button class="it on">交易</button>
+      <button class="it">搜索</button>
+      <button class="it">定时</button>
+      <button class="it">预算</button>
+      <div class="grp">资产</div>
+      <button class="it">账户</button>
+      <button class="it">投资</button>
+      <button class="it">物品</button>
+      <div class="grp">洞察</div>
+      <button class="it">报表</button>
+      <button class="it">更多</button>
+      <div class="grp" style="margin-top:20px">系统</div>
+      <button class="it">设置</button>
+    </aside>
+    <main>
+      <div class="top">
+        <h1>交易</h1>
+        <span class="chip-t">2026年9月 – 10月</span>
+        <span class="spacer"></span>
+        <button class="btn-primary">+ 记一笔</button>
+      </div>
+      <div class="content">
+        <div id="note"></div>
+        <div id="screen"></div>
+      </div>
+    </main>
+  </div>
+
+  <div id="overlay"></div>
+  <div id="drawer"></div>
+  <div id="switcher"></div>
+
+<script>
+"use strict";
+
+/* ── 数据(构造样例,内存态) ── */
+const ACC = {
+  xjk: { n: "小金库",   c: "#F59E0B" },
+  ye:  { n: "余额",     c: "#2080f0" },
+  ghk: { n: "工行储蓄卡", c: "#722ed1" },
+  gzk: { n: "工资卡",   c: "#18a058" },
+  hb:  { n: "花呗",     c: "#d03050" },
+  gtk: { n: "交通卡",   c: "#0ea5e9" },
+};
+const KIND = {
+  expense:  { label: "支出", cls: "k-expense",  cc: "c-expense",  color: "#d03050" },
+  income:   { label: "收入", cls: "k-income",   cc: "c-income",   color: "#18a058" },
+  refund:   { label: "退款", cls: "k-refund",   cc: "c-refund",   color: "#2080f0" },
+  transfer: { label: "转账", cls: "k-transfer", cc: "c-transfer", color: "#722ed1" },
+};
+/* d:1 = 派生(未落库,refund 缺省按比例推导) */
+const TXNS = [
+  { id: "t4", date: "2026-10-02", kind: "income", cat: "其他收入 · 报销", mer: "公司", amount: 120000,
+    fund: [ { a: "gzk", m: 80000, t: "现金部分" }, { a: "xjk", m: 40000, t: "" } ], note: "报销分两卡到账", src: "手动" },
+  { id: "t3", date: "2026-09-30", kind: "refund", cat: "食品饮料 · 零食", mer: "京东", amount: 28160,
+    fund: [ { a: "xjk", m: 2853, t: "罐装", d: 1 }, { a: "ye", m: 25307, t: "固体饼干", d: 1 } ],
+    derived: true, linkTo: "t1", note: "整单退款 · 缺省按比例回退", src: "手动" },
+  { id: "t8", date: "2026-09-29", kind: "expense", cat: "食品饮料 · 罐装咖啡", mer: "京东", amount: 3600,
+    acc: "xjk", note: "订单 JD2901 · 罐装咖啡", src: "AI 导入", order: "JD2901" },
+  { id: "t9", date: "2026-09-29", kind: "expense", cat: "食品饮料 · 挂耳", mer: "京东", amount: 4560,
+    acc: "xjk", note: "订单 JD2901 · 挂耳礼盒", src: "AI 导入", order: "JD2901" },
+  { id: "t10", date: "2026-09-29", kind: "expense", cat: "数码 · 手机配件", mer: "京东", amount: 1800,
+    acc: "xjk", note: "订单 JD2929 · 手机壳", src: "AI 导入", order: "JD2929" },
+  { id: "t11", date: "2026-09-29", kind: "expense", cat: "食品饮料 · 零食", mer: "京东", amount: 15000,
+    fund: [ { a: "xjk", m: 1053, t: "" }, { a: "ye", m: 13947, t: "" } ], crossing: true,
+    note: "订单 JD2929 · 固体饼干(跨界行)", src: "AI 导入", order: "JD2929" },
+  { id: "t12", date: "2026-09-29", kind: "expense", cat: "家居 · 纸品", mer: "京东", amount: 11360,
+    acc: "ye", note: "订单 JD2929 · 抽纸", src: "AI 导入", order: "JD2929" },
+  { id: "t1", date: "2026-09-28", kind: "expense", cat: "食品饮料 · 零食", mer: "京东", amount: 28160,
+    fund: [ { a: "xjk", m: 2853, t: "罐装" }, { a: "ye", m: 25307, t: "固体饼干" } ],
+    note: "京东自营 · 组合支付", src: "AI 导入" },
+  { id: "t2", date: "2026-09-28", kind: "expense", cat: "数码 · 手机", mer: "京东", amount: 450000,
+    fund: [ { a: "ghk", m: 50000, t: "预售定金" }, { a: "ghk", m: 400000, t: "尾款" } ],
+    note: "预售单 · 同账户定金+尾款", src: "AI 导入" },
+  { id: "t5", date: "2026-09-27", kind: "expense", cat: "餐饮 · 咖啡", mer: "瑞幸", amount: 3500,
+    acc: "hb", note: "", src: "手动" },
+  { id: "t6", date: "2026-09-27", kind: "transfer", cat: "转账", mer: "", amount: 200000,
+    from: "gzk", to: "xjk", note: "月度转入", src: "定时" },
+  { id: "t7", date: "2026-09-26", kind: "expense", cat: "交通 · 地铁", mer: "地铁", amount: 600,
+    acc: "gtk", note: "通勤", src: "手动" },
+];
+
+/* 现状临时形态:跨界子单在账户边界拆两行(迁移侧 :c{n}a/:c{n}b),各挂单账户 */
+const LEGACY_ROWS = {
+  t11a: { id: "t11a", date: "2026-09-29", kind: "expense", cat: "食品饮料 · 零食", mer: "京东", amount: 1053,
+    acc: "xjk", note: "固体饼干(跨界拆分 :c1a)", src: "AI 导入", order: "JD2929", legacy: true },
+  t11b: { id: "t11b", date: "2026-09-29", kind: "expense", cat: "食品饮料 · 零食", mer: "京东", amount: 13947,
+    acc: "ye", note: "固体饼干(跨界拆分 :c1b)", src: "AI 导入", order: "JD2929", legacy: true },
+};
+
+const VARIANTS = [
+  { key: "R", name: "读侧 · 四种出资情形",
+    note: "<b>读侧 · 四种出资情形</b>(虚线分节条与「特性后/现状临时」切换是讨论装置,不属于设计)— 真实界面不存在「多对一/多对多」标签;信号只有三个:<b>行级</b>「等 N 账户」标记(分解行才有)、<b>行尾订单徽标</b>(同单各行各自携带,排序/筛选/翻页都跟着行走)、<b>详情订单区</b>(点任意一行即见:N 行商品、合计、出资构成)。订单汇总不占分页位、不怕跨页——这正是它比「组头 + 后续 N 行」可靠的原因。" },
+  { key: "D", name: "录入速写(范围外)",
+    note: "<b>D · 录入/编辑表单速写</b> — <b>本单范围外</b>(Q6 已裁录入侧不做,走契约)。此屏仅供讨论:Q2 契约互斥在表单上如何表达、Q7 约束(Σ==交易金额 / tag 上限 / 同账户多条)、Q8c 单⇄多就地互转。金额输入可直接改动体验 Σ 校验。" },
+];
+
+/* ── 状态 ── */
+const state = {
+  variant: readVariant(),
+  selected: "t1",
+  drawerOpen: true,
+  expanded: new Set(),
+  eMode: ((location.search + location.hash).match(/emode=(\w+)/) || [])[1] || "future",
+  draft: {
+    mode: "multi", singleAcc: "xjk",
+    rows: [ { a: "xjk", amt: 2853, tag: "罐装" }, { a: "ye", amt: 25307, tag: "固体饼干" } ],
+    target: 28160,
+  },
+};
+
+function readVariant() {
+  const m = location.search.match(/[?&]variant=([RD])/) || location.hash.match(/variant=([RD])/);
+  return m ? m[1] : "R";
+}
+function writeVariant(v) {
+  try { history.replaceState(null, "", "?variant=" + v); } catch (e) { location.hash = "variant=" + v; }
+}
+
+/* ── 工具 ── */
+function fmt(c) { return "¥" + (c / 100).toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+function lk(name) { return '<a href="javascript:void 0" class="lk">' + name + "</a>"; }
+function distinct(fund) { return [...new Set(fund.map(f => f.a))]; }
+function byId(id) { return TXNS.find(t => t.id === id) || LEGACY_ROWS[id]; }
+function el(id) { return document.getElementById(id); }
+function tagChip(t) { return t ? '<span class="ftag">' + t + "</span>" : '<span class="ftag" style="visibility:hidden">–</span>'; }
+
+/* ── 列表:账户单元格(按变体) ── */
+function accountCell(tx) {
+  if (tx.kind === "transfer") return lk(ACC[tx.from].n) + ' <span class="arr">→</span> ' + lk(ACC[tx.to].n);
+  if (!tx.fund) return lk(ACC[tx.acc].n);
+  const dist = distinct(tx.fund);
+  let base = lk(ACC[tx.fund[0].a].n);
+  if (dist.length === 1) base += ' <span class="suf">· 同账户 ' + tx.fund.length + " 笔</span>";
+  else base += ' <span class="suf">等 ' + dist.length + " 账户</span>";
+  return base;
+}
+function fundChipForList(tx) { return tx.derived ? ' <span class="auto-chip">按比例自动分解</span>' : ""; }
+
+
+/* ── E 变体:订单分组(组合支付) ── */
+function eDisplayList() {
+  const out = [];
+  const band = (cs, desc) => out.push({ band: true, cs, desc });
+  band("一对一", "一笔交易 · 一个账户 —— 现状形态,列表无任何新标记");
+  out.push(byId("t7"), byId("t5"));
+  band("一对多", "一笔交易 · 多个账户 —— 行级标记「等 N 账户」,详情看出资分解");
+  out.push(byId("t4"), byId("t3"), byId("t1"), byId("t2"));
+  band("多对一", "多行商品 · 一个账户 —— 行尾订单徽标 → 详情内看订单汇总(出资徽标 1 枚)");
+  out.push(byId("t8"), byId("t9"));
+  band("多对多", "多行商品 · 多个账户 —— 仅跨界行带行级标记;订单汇总里出资徽标 ≥ 2 枚");
+  out.push(byId("t10"));
+  if (state.eMode === "legacy") out.push(LEGACY_ROWS.t11a, LEGACY_ROWS.t11b);
+  else out.push(byId("t11"));
+  out.push(byId("t12"));
+  out.push({ noteRow: "transfer(转账)/ 投资类不在本特性范围 —— Q1 已裁:转账两端已表达、投资走出资账户(ADR-0096);定时计划生成亦维持单出资" });
+  return out;
+}
+function orderRows(orderId) {
+  const rows = [];
+  for (const t of TXNS) {
+    if (t.order !== orderId) continue;
+    if (t.crossing && state.eMode === "legacy") rows.push(LEGACY_ROWS[t.id + "a"], LEGACY_ROWS[t.id + "b"]);
+    else rows.push(t);
+  }
+  return rows;
+}
+function caseBandRow(b) {
+  return '<tr class="case-band"><td colspan="9"><b>' + b.cs + "</b>" + (b.desc ? " — " + b.desc : "") + "</td></tr>";
+}
+function noteRowRow(n) {
+  return '<tr class="note-row"><td colspan="9">' + n.noteRow + "</td></tr>";
+}
+function orderChip(orderId) {
+  return ' <span class="order-chip">订单 ' + orderId + "</span>";
+}
+function orderSection(tx) {
+  const rows = orderRows(tx.order);
+  const total = rows.reduce((s, t) => s + t.amount, 0);
+  const byAcc = {};
+  for (const t of rows) for (const f of (t.fund || [{ a: t.acc, m: t.amount }])) byAcc[f.a] = (byAcc[f.a] || 0) + f.m;
+  const chips = Object.entries(byAcc).map(([a, m]) =>
+    '<span class="chip"><i style="background:' + ACC[a].c + '"></i>' + ACC[a].n + " " + fmt(m) + "</span>").join("");
+  const crossing = rows.some(t => t.crossing || t.legacy);
+  const toggle = crossing
+    ? '<div style="margin-top:8px">' +
+      '<button class="exp' + (state.eMode === "future" ? " on" : "") + '" data-action="emode" data-m="future">特性后 · 跨界行 1 行 2 出资</button> ' +
+      '<button class="exp' + (state.eMode === "legacy" ? " on" : "") + '" data-action="emode" data-m="legacy">现状临时 · 拆 2 行</button>' +
+      ' <span class="suf">← 切换为讨论装置,不属于设计</span></div>'
+    : "";
+  return '<div class="dsec"><h3>所属订单 ' + tx.order + " · " + rows.length + " 行商品 · 合计 " + fmt(total) + "</h3>" +
+    '出资构成 <span class="chips">' + chips + "</span>" + toggle +
+    '<div style="margin-top:6px">' + rows.map(t =>
+      '<div class="flowline"><span>' + (t.note || t.cat).replace(/^订单 \S+ · /, "") + "</span>" +
+      '<span class="s suf">' + fmt(t.amount) + "</span></div>").join("") + "</div></div>";
+}
+
+function renderTable() {
+  const list = eDisplayList();
+  let rows = "";
+  for (const tx of list) {
+    if (tx.band) { rows += caseBandRow(tx); continue; }
+    if (tx.noteRow) { rows += noteRowRow(tx); continue; }
+    const k = KIND[tx.kind];
+    const sel = tx.id === state.selected ? " sel" : "";
+    rows += '<tr class="row' + sel + '" data-action="select" data-id="' + tx.id + '">' +
+      '<td>' + tx.date + "</td>" +
+      '<td><span class="tag ' + k.cls + '">' + k.label + "</span>" +
+        (tx.legacy ? ' <span class="tmp-chip">跨界拆分</span>' : fundChipForList(tx)) + "</td>" +
+      '<td class="ellipsis">' + (tx.cat || "-") + "</td>" +
+      '<td class="ellipsis">' + (tx.mer ? lk(tx.mer) : "-") + "</td>" +
+      "<td>" + accountCell(tx) + "</td>" +
+      '<td class="suf">' + (tx.src || "-") + "</td>" +
+      '<td class="ellipsis">' + (tx.order ? orderChip(tx.order) : "") + (tx.note ? tx.note : "-") + "</td>" +
+      '<td class="r"><span class="amt ' + k.cc + '">' + fmt(tx.amount) + "</span></td>" +
+      '<td class="suf">⋯</td></tr>';
+  }
+  return '<div class="card"><table class="tbl"><colgroup>' +
+    '<col style="width:92px"><col style="width:150px"><col style="width:132px"><col style="width:84px">' +
+    '<col style="width:200px"><col style="width:70px"><col><col style="width:104px"><col style="width:44px">' +
+    '</colgroup><thead><tr><th>日期</th><th>类型</th><th>分类</th><th>商户</th><th>账户</th><th>来源</th><th>备注</th><th class="r">金额</th><th></th></tr></thead>' +
+    "<tbody>" + rows + "</tbody></table></div>";
+}
+
+/* ── 详情抽屉(按变体) ── */
+function fundSection(tx) {
+  const total = tx.amount;
+  const cap = tx.derived
+    ? '<div class="derived-note">退款缺省按出资比例自动分解 · 分解为读时推导(未单独落库),可显式指定出资覆盖</div>'
+    : "";
+  return cap + tx.fund.map(f =>
+    '<div class="frow"><span class="facc">' + lk(ACC[f.a].n) + "</span>" + tagChip(f.t) +
+    '<span class="famt">' + fmt(f.m) + "</span></div>").join("") +
+    '<div class="sumline"><span>' + tx.fund.length + " 项 · Σ 出资</span><span class=\"amt\">" + fmt(total) + "</span></div>";
+}
+
+
+function flowLines(tx) {
+  const flows = [];
+  const sign = tx.kind === "expense" ? -1 : 1;
+  if (tx.fund) for (const f of tx.fund) flows.push({ n: ACC[f.a].n, v: sign * f.m });
+  else if (tx.kind === "transfer") { flows.push({ n: ACC[tx.from].n, v: -tx.amount }, { n: ACC[tx.to].n, v: tx.amount }); }
+  else flows.push({ n: ACC[tx.acc].n, v: sign * tx.amount });
+  return flows.map(f => '<div class="flowline"><span>' + f.n + "</span>" +
+    '<span class="s" style="color:' + (f.v >= 0 ? "#18a058" : "#d03050") + '">' + (f.v >= 0 ? "+" : "") + fmt(f.v) + "</span></div>").join("");
+}
+
+function renderDrawer() {
+  const v = state.variant;
+  if (v === "D" || !state.drawerOpen) { el("overlay").style.display = "none"; el("drawer").style.display = "none"; return; }
+  const tx = byId(state.selected); if (!tx) { el("overlay").style.display = "none"; el("drawer").style.display = "none"; return; }
+  const k = KIND[tx.kind];
+  el("overlay").style.display = "block"; el("drawer").style.display = "flex";
+  el("drawer").innerHTML =
+    '<div class="dhead"><div class="meta">' +
+      '<span class="tag ' + k.cls + '">' + k.label + "</span><h2>" + (tx.mer || tx.cat || "交易详情") + "</h2>" +
+      '<button class="close" data-action="close">✕</button></div>' +
+      '<div class="big-amt ' + k.cc + '">' + fmt(tx.amount) + "</div></div>" +
+    '<div class="dbody">' +
+      '<div class="dsec"><h3>基本信息</h3><dl class="kv">' +
+        "<dt>日期</dt><dd>" + tx.date + "</dd>" +
+        "<dt>分类</dt><dd>" + (tx.cat || "-") + "</dd>" +
+        "<dt>商户</dt><dd>" + (tx.mer ? lk(tx.mer) : "-") + "</dd>" +
+        "<dt>备注</dt><dd>" + (tx.note || "-") + "</dd>" +
+        "<dt>来源</dt><dd>" + (tx.src || "-") + "</dd></dl></div>" +
+      (tx.order ? orderSection(tx) : "") +
+      (tx.fund
+        ? '<div class="dsec"><h3>出资分解(Funding · ' + tx.fund.length + " 项)</h3>" + fundSection(tx) + "</div>"
+        : '<div class="dsec"><h3>出资分解</h3><div class="suf">单出资交易(现状形态),无分解子行</div></div>') +
+      '<div class="dsec"><h3>账户流水(InvolvingAccount 口径)</h3>' + flowLines(tx) + "</div>" +
+    "</div>";
+}
+
+/* ── 变体 D:表单 ── */
+function renderD() {
+  const d = state.draft;
+  const accOpts = sel => Object.entries(ACC).map(([k, a]) =>
+    '<option value="' + k + '"' + (k === sel ? " selected" : "") + ">" + a.n + "</option>").join("");
+  const sum = d.rows.reduce((s, r) => s + r.amt, 0);
+  const sigmaHtml = sigmaEl(sum, true);
+  let body;
+  if (d.mode === "single") {
+    body = '<div class="fld"><label>账户</label><select data-f="single">' + accOpts(d.singleAcc) + "</select></div>" +
+      '<div class="hint">现状形态:单 <b>account_id</b> 必填。</div>';
+  } else {
+    body = d.rows.map((r, i) =>
+      '<div class="frow-edit">' +
+        '<select data-f="acc" data-i="' + i + '">' + accOpts(r.a) + "</select>" +
+        '<input type="number" step="0.01" min="0.01" data-f="amt" data-i="' + i + '" value="' + (r.amt / 100).toFixed(2) + '">' +
+        '<input type="text" maxlength="50" placeholder="扣款标签(选填,≤50字)" data-f="tag" data-i="' + i + '" value="' + (r.tag || "") + '">' +
+        '<button class="del" data-action="delrow" data-i="' + i + '" title="删除出资项">✕</button>' +
+      "</div>").join("") +
+      '<button class="addrow" data-action="addrow">+ 添加出资项</button>' + sigmaHtml;
+  }
+  return '<div class="form-wrap">' +
+    '<div class="hint" style="margin-bottom:10px">以 t1(京东组合支付 ¥281.60)为例的<b>编辑表单</b>。切换「出资方式」观察 Q2 互斥的表单表达;改动金额体验 Q7c 的 Σ 校验。</div>' +
+    '<div class="form-card"><h2>编辑交易 · 支出</h2>' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:0 12px">' +
+        '<div class="fld"><label>日期</label><input type="date" value="2026-09-28"></div>' +
+        '<div class="fld"><label>金额</label><input type="text" value="281.60"></div>' +
+      "</div>" +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:0 12px">' +
+        '<div class="fld"><label>分类</label><input type="text" value="食品饮料 · 零食"></div>' +
+        '<div class="fld"><label>商户</label><input type="text" value="京东"></div>' +
+      "</div>" +
+      '<div class="fld"><label>出资方式</label>' +
+        '<span class="seg">' +
+          '<button class="' + (d.mode === "single" ? "on" : "") + '" data-action="mode" data-m="single">单账户</button>' +
+          '<button class="' + (d.mode === "multi" ? "on" : "") + '" data-action="mode" data-m="multi">多账户分解</button>' +
+        "</span></div>" +
+      body +
+      '<div class="mutex"><b>契约(Q2,互斥):</b>带非空 funding[] ⇒ 禁止 account_id(码化报错);不带 ⇒ account_id 必填。表单层面表现为两种形态切换,而非两个并存字段。<br><b>Q8c:</b>单 ⇄ 多就地互转走既有修改协议,受影响账户取并集重算——即本表单两种形态的直接切换。</div>' +
+    "</div></div>";
+}
+function sigmaEl(sum, asHtml) {
+  const d = state.draft;
+  const ok = sum === d.target;
+  const text = ok
+    ? "✓ Σ 出资 " + fmt(sum) + " = 交易金额 " + fmt(d.target)
+    : "✗ Σ 出资 " + fmt(sum) + " ≠ 交易金额 " + fmt(d.target) + "(差 " + fmt(d.target - sum) + ")";
+  if (!asHtml) { const el = document.getElementById("sigma"); if (!el) return; el.className = "sigma " + (ok ? "ok" : "bad"); el.textContent = text; return; }
+  return '<div class="sigma ' + (ok ? "ok" : "bad") + '" id="sigma">' + text + "</div>";
+}
+function refreshSigma() {
+  const d = state.draft;
+  sigmaEl(d.rows.reduce((s, r) => s + r.amt, 0), false);
+}
+
+/* ── 渲染入口 ── */
+function render() {
+  const v = VARIANTS.find(x => x.key === state.variant);
+  el("note").innerHTML = '<div class="note">' + v.note + ' <span class="suf">(点击行查看详情 · ←/→ 切换变体)</span></div>';
+  el("screen").innerHTML = state.variant === "D" ? renderD() : renderTable();
+  renderDrawer();
+  el("switcher").innerHTML =
+    '<button class="arr-btn" data-action="vprev">‹</button>' +
+    '<span class="vlabel"><b>' + v.key + "</b> · " + v.name + "</span>" +
+    '<button class="arr-btn" data-action="vnext">›</button>' +
+    '<span class="dots">' + VARIANTS.map(x =>
+      '<button class="dot-b' + (x.key === state.variant ? " on" : "") + '" data-action="vset" data-v="' + x.key + '">' + x.key + "</button>").join("") +
+    "</span>";
+}
+
+/* ── 事件 ── */
+function setVariant(v) { state.variant = v; state.expanded.clear(); writeVariant(v); render(); }
+function cycle(dir) {
+  const i = VARIANTS.findIndex(x => x.key === state.variant);
+  setVariant(VARIANTS[(i + dir + VARIANTS.length) % VARIANTS.length].key);
+}
+document.addEventListener("click", e => {
+  const t = e.target.closest("[data-action]");
+  if (!t) { if (e.target === el("overlay")) { state.drawerOpen = false; renderDrawer(); } return; }
+  const act = t.dataset.action;
+  if (act === "select") { state.selected = t.dataset.id; state.drawerOpen = true; render(); }
+  else if (act === "expand") { e.stopPropagation(); const id = t.dataset.id; state.expanded.has(id) ? state.expanded.delete(id) : state.expanded.add(id); render(); }
+  else if (act === "close") { state.drawerOpen = false; renderDrawer(); }
+  else if (act === "vprev") cycle(-1);
+  else if (act === "vnext") cycle(1);
+  else if (act === "vset") setVariant(t.dataset.v);
+  else if (act === "mode") { state.draft.mode = t.dataset.m; render(); }
+  else if (act === "emode") { state.eMode = t.dataset.m; render(); }
+  else if (act === "addrow") { state.draft.rows.push({ a: "xjk", amt: 0, tag: "" }); render(); }
+  else if (act === "delrow") { state.draft.rows.splice(+t.dataset.i, 1); render(); }
+});
+document.addEventListener("input", e => {
+  const f = e.target.dataset.f; if (!f) return;
+  const d = state.draft, i = +e.target.dataset.i;
+  if (f === "amt") { d.rows[i].amt = Math.max(0, Math.round(parseFloat(e.target.value || "0") * 100) || 0); refreshSigma(); }
+  else if (f === "tag") d.rows[i].tag = e.target.value;
+  else if (f === "acc") d.rows[i].a = e.target.value;
+  else if (f === "single") d.singleAcc = e.target.value;
+});
+document.addEventListener("keydown", e => {
+  if (/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)) return;
+  if (e.key === "ArrowLeft") cycle(-1);
+  else if (e.key === "ArrowRight") cycle(1);
+  else if (e.key === "Escape") { state.drawerOpen = false; renderDrawer(); }
+});
+
+render();
+</script>
+</body>
+</html>
