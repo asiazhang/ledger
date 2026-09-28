@@ -169,6 +169,8 @@ async fn list_investment_transactions_returns_created_buy_with_projection() {
             "note": null,
             "currency_code": "CNY",
             "amount_native_cents": 10_100,
+            // 来源订单号（V035 / #1862，弹窗族消费列）。
+            "source_order_no": null,
         }])
     );
 }
