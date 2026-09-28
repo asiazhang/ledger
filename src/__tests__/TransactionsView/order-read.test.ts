@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { flushPromises } from "@vue/test-utils";
+import { flushPromises, mount } from "@vue/test-utils";
+import { NDialogProvider } from "naive-ui";
+import { h } from "vue";
 import { lastInvokeArgs, mockInvoke, wireInvokeSeam } from "@ledger/test-support/invoke-mock";
 import type { TransactionOrderSummary } from "@ledger/types";
 import { visibleModalText } from "@ledger/test-support/dom";
+import DividendDetail from "@/investment/DividendDetail.vue";
 import { makeFunding, makeTransaction } from "../factories";
 import {
   cards,
@@ -177,5 +180,37 @@ describe("详情订单区（issue #1862）", () => {
     await flushPromises();
     const calls = mockInvoke.mock.calls;
     expect(calls.filter(([c]) => c === "get_transaction_order_summary").length).toBe(0);
+  });
+});
+
+describe("投资行详情与订单区（issue #1862：点开任一同单行）", () => {
+  it("带单号的 dividend 详情：分红明细与订单区并存（组件级，主列表不呈现投资 kind）", async () => {
+    wireInvokeSeam({
+      defaults: SHELL_DEFAULTS,
+      overrides: {
+        ...SHELL_OVERRIDES,
+        get_transaction_order_summary: () => Promise.resolve(orderSummary()),
+      },
+      refreshReferenceStores: true,
+    });
+    const wrapper = mount(NDialogProvider, {
+      slots: {
+        default: () =>
+          h(DividendDetail, {
+            transaction: makeTransaction({
+              id: "txn-div",
+              kind: "dividend",
+              account_id: "acc-1",
+              source_order_no: "JD-9001",
+            }),
+          }),
+      },
+    });
+    await flushPromises();
+    const text = wrapper.text();
+    expect(text).toContain("所属订单");
+    expect(text).toContain("JD-9001");
+    expect(lastInvokeArgs("get_transaction_order_summary")).toEqual({ sourceOrderNo: "JD-9001" });
+    wrapper.unmount();
   });
 });

@@ -5,6 +5,7 @@ import { t } from "@ledger/i18n";
 import { useReferenceStore } from "@/stores/reference";
 import { formatAmount, formatQuantity } from "@ledger/money";
 import { instrumentDisplayLabel } from "@/investment/instrument-display-label";
+import OrderSection from "@/transaction/OrderSection.vue";
 import type { TransactionModalRow, TransactionConvert } from "@ledger/types";
 
 /**
@@ -75,4 +76,8 @@ function quantityText(quantity: number): string {
       {{ transaction.note ?? "—" }}
     </NDescriptionsItem>
   </NDescriptions>
+  <!-- 所属订单区（#1862 / ADR-0138 决策 9）：来源订单号列有值才渲染——
+         投资行（券商回单 buy/sell/convert/dividend）同样可有订单归属，
+         点开任一同单行均可读订单汇总（两腿/分红详情与订单区并存） -->
+  <OrderSection v-if="transaction.source_order_no" :source-order-no="transaction.source_order_no" />
 </template>

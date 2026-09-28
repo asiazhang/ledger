@@ -110,6 +110,7 @@ function itemAmount(row: TransactionOrderSummary["items"][number]): string {
         </span>
       </div>
       <div :class="ORDER_ACCOUNTS_CLASS">
+        <span :class="ORDER_METRIC_LABEL_CLASS">{{ t("transactions.order.accounts") }}</span>
         <span v-for="a in summary.accounts" :key="a.account_id" :class="ORDER_ACCOUNT_TAG_CLASS">
           <span>{{ accountName(a.account_id) }}</span>
           <span>{{ contributionText(a.amount_cents) }}</span>

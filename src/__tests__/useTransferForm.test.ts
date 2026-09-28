@@ -111,7 +111,11 @@ describe("useTransferForm", () => {
       wireInvokeSeam({ overrides: { ...REFERENCE_OVERRIDES, update_transaction: undefined } });
       const onCreated = vi.fn();
       const onUpdated = vi.fn();
-      const form = useTransferForm({ onCreated, onUpdated, editing: () => editingTx });
+      const form = useTransferForm({
+        onCreated,
+        onUpdated,
+        editing: () => ({ ...editingTx, source_order_no: "JD-9001" }),
+      });
       // 用户改转入账户与金额
       form.toAccountId.value = "acc-1";
       form.accountId.value = "acc-2";
@@ -129,6 +133,8 @@ describe("useTransferForm", () => {
           to_account_id: "acc-1",
           funding_account_id: null,
           note: "房租",
+          // 来源订单号随编辑原样透传（#1862）：表单无输入位，静默清除即摧毁订单锚点
+          source_order_no: "JD-9001",
         }),
       });
       expect(mockInvoke.mock.calls.filter(([cmd]) => cmd === "create_transaction")).toHaveLength(0);
