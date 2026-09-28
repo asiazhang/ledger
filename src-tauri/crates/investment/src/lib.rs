@@ -40,11 +40,13 @@
 //!   （投资账户现金 / 持仓市值），合计 = 两腿之和（issue #1536）；
 //! - [`fund`]：场外基金接入——6 位代码校验、行情接入落库半边（`adopt_fund_quote`）、
 //!   AI 降级建行、按代码即拉注入接缝（`add_fund_by_code_with`）；
-//! - [`fx_nearest`]：周键汇率取数单点（#1849 收口；就近窗口 ±8 周兜底 #1844，
-//!   父 spec #1843）——单周正反向取汇率原语（同币种恒等 / 正查 / 反查取倒数，
-//!   组合走势与边界市值同期折算消费）+ 按事件日期就近取汇率（等距取较早周、
-//!   窗口内无点返回缺料信号）；就近窗口只服务盈亏页新消费面，不回灌既有读
-//!   路径与写路径折算；
+//! - [`fx_week`]：周键汇率取数单点（#1849 收口取数；#1852 收口装载并对齐名实
+//!   ——前名 fx_nearest；就近窗口 ±8 周兜底 #1844，父 spec #1843）——
+//!   fx_rate_history 全量装载为周键索引（组合走势 / 边界市值 / 盈亏页共用）+
+//!   单周正反向取汇率原语（同币种恒等 / 正查 / 反查取倒数，组合走势与边界
+//!   市值同期折算消费）+ 按事件日期就近取汇率（等距取较早周、窗口内无点
+//!   返回缺料信号）；就近窗口只服务盈亏页新消费面，不回灌既有读路径与写
+//!   路径折算；
 //! - [`guards`]：共享守卫（SharedGuard）——本地装配与同步重放共用的纯裁决函数，集中登记两端一致的错误码与文案；
 //! - [`holdings`]：时点持仓（AsOfHolding）推算单点；
 //! - [`lots`]：持仓批次（security_lots）单点——取批次、逐批次 FIFO 分摊与
@@ -131,7 +133,7 @@ pub mod constant_price;
 pub mod crud;
 pub mod financial_freedom;
 pub mod fund;
-pub(crate) mod fx_nearest;
+pub(crate) mod fx_week;
 pub(crate) mod guards;
 pub mod holdings;
 pub mod ledger_tab;
