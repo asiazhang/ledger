@@ -590,7 +590,7 @@ async fn test_import_investment_knowledge_covers_key_conventions() {
         // kind 清单与商户排除：issue #1124 自基础侧迁入（ADR-0110 决策 4）——
         // 投资专属规则的唯一正面陈述点，基础侧退回正面陈述或本节误删时逐词报红。
         "kind 清单与通用规则",
-        "四者均可用",
+        "共五个 kind 值",
         "一律不带商户",
         "提交会被拒绝",
         // 读回来源口径：issue #1124 自基础侧「对账完成判定」迁入——source
