@@ -83,6 +83,13 @@
     "confirm": "删除",
     "cancel": "取消"
   },
+  "funding": {
+    "section": "出资分解",
+    "accountCount": "等 {n} 账户",
+    "sameAccountEntries": "同账户 {n} 笔",
+    "autoDerived": "按比例自动分解",
+    "total": "合计 · {n} 项出资"
+  },
   "menu": {
     "edit": "编辑",
     "detail": "详情",
@@ -152,7 +159,8 @@
     "investmentAccount": "投资账户",
     "instrument": "标的",
     "fee": "手续费",
-    "price": "单价"
+    "price": "单价",
+    "merchant": "商户"
   },
   "validation": {
     "required": "{label}不能为空",

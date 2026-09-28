@@ -22,6 +22,7 @@ import type {
   SyncRoundReport,
   SyncStatus,
   Transaction,
+  TransactionFunding,
 } from "@ledger/types";
 
 // 计划实体工厂三形态 + 期次工厂自 #1322 起上收共享测试支持包
@@ -269,6 +270,17 @@ export function makeTransaction(partial: Partial<Transaction> & { id: string }):
   };
 }
 
+/** 出资项读回条目工厂（issue #1861 / ADR-0138）：默认账户 acc-1、100 元、无标签、
+ * 非派生；分解行场景经 fundings: [makeFunding(...), ...] 组装。 */
+export function makeFunding(partial: Partial<TransactionFunding> = {}): TransactionFunding {
+  return {
+    account_id: "acc-1",
+    amount_cents: 10000,
+    label: null,
+    derived: false,
+    ...partial,
+  };
+}
 /**
  * item_daily_total 返回值工厂（issue #122）：默认人民币本位币、每天成本 123.45 元、3 件在用 */
 export function makeItemDailyTotal(partial: Partial<ItemDailyTotal> = {}): ItemDailyTotal {

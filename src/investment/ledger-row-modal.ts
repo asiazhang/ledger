@@ -41,6 +41,8 @@ export function ledgerRowToModalRow(row: InvestmentTransactionRow): TransactionM
       display_name: instrumentDisplayLabel(row.symbol, row.instrument_name),
       status: null,
     },
+    // 出资分解恒空（投资 kind 不做出资分解，ADR-0138 决策 3）：弹窗族行投影闭集成员
+    fundings: [],
     convert: null,
   };
 }

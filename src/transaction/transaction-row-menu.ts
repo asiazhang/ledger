@@ -29,6 +29,8 @@ export { renderRowMenuIcon, errorOptionProps };
  * - `convert` / `split` / `dividend` 行：仅只读详情（EyeOutline）——界面只读 kind
  *   在 UI 上不体现任何写操作（无编辑、无软删，ADR-0106 决策 10 / #1048、#1052；
  *   ADR-0109 / #1078），写入与纠错走 HTTP 契约。
+ * - 出资分解行（issue #1861 / ADR-0138 决策 8）：详情 + 删除（expense 保留加入物品，
+ *   不读账户端）——编辑 / 退款表单尚未支持分解（录入侧本票范围外），不开放残缺表单入口。
  *
  * `hasItem`：该交易已创建过物品（items store 按溯源指针比对得出，不新增查询）
  * → 「加入物品」置灰禁用（溯源唯一的界面呈现）。
@@ -38,29 +40,51 @@ export { renderRowMenuIcon, errorOptionProps };
  */
 /** 「编辑」开放判定（income/expense/transfer 走分类记账/转账表单，buy/sell 走投资表单
  * 编辑模式，issue #180；refund 破坏关联语义、convert / split / dividend 为界面只读
- * kind 均不开放，ADR-0106 决策 10 / ADR-0109）。单一来源：交易类型行激活闭集
- * （transactionKindActivation），
- * 菜单组装与移动档卡片行激活共用（issue #846 / #1048）。 */
-export function supportsRowEdit(row: Pick<Transaction, "kind">): boolean {
-  return transactionKindActivation(row.kind) === "edit";
+ * kind 均不开放，ADR-0106 决策 10 / ADR-0109）。带非空出资分解的行不开放——编辑表单
+ * 尚未支持分解（ADR-0138 决策 8 读侧先行，录入侧另票）。单一来源：交易类型行激活
+ * 闭集（transactionKindActivation）+ 行形状（fundings），菜单组装与移动档卡片行激活
+ * 共用（issue #846 / #1048 / #1861）。 */
+export function supportsRowEdit(row: Pick<Transaction, "kind" | "fundings">): boolean {
+  return row.fundings.length === 0 && transactionKindActivation(row.kind) === "edit";
 }
 
 /** 「只读详情」开放判定：界面只读 kind（convert / split 无现金腿；dividend 现金分红，
- * ADR-0106 决策 10 / ADR-0109）不体现写操作入口，只保留列表 / 筛选 / 只读详情。
- * 单一来源同上（交易类型行激活闭集），菜单组装与移动档卡片「整卡点击 = 详情」共用。 */
-export function supportsRowDetail(row: Pick<Transaction, "kind">): boolean {
-  return transactionKindActivation(row.kind) === "detail";
+ * ADR-0106 决策 10 / ADR-0109）不体现写操作入口，只保留列表 / 筛选 / 只读详情；带非空
+ * 出资分解的行同样进只读详情（出资项呈现 + Σ，ADR-0138 决策 8，issue #1861）。
+ * 单一来源同上（行激活闭集 + 行形状），菜单组装与移动档卡片「整卡点击 = 详情」共用。 */
+export function supportsRowDetail(row: Pick<Transaction, "kind" | "fundings">): boolean {
+  return row.fundings.length > 0 || transactionKindActivation(row.kind) === "detail";
 }
 
 export function buildRowMenuOptions(
-  row: Pick<Transaction, "kind">,
+  row: Pick<Transaction, "kind" | "fundings">,
   opts: { hasItem?: boolean; errorColor?: string } = {},
 ): DropdownOption[] {
-  // 无现金腿 kind：界面只读——仅只读「详情」，无编辑/软删入口（ADR-0106 决策 10 / #1048）。
+  // 只读详情行（界面只读 kind ∪ 出资分解行）菜单首项一律「详情」；
+  // 界面只读 kind 仅详情（无编辑/软删入口，ADR-0106 决策 10 / #1048）；
+  // 分解行保留删除（后端级联子行，写路径已支持）与 expense 加入物品（不读账户端）。
   if (supportsRowDetail(row)) {
-    return [
+    const options: DropdownOption[] = [
       { label: t("transactions.menu.detail"), key: "detail", icon: renderRowMenuIcon(EyeOutline) },
     ];
+    if (transactionKindActivation(row.kind) === "detail") return options;
+    if (row.kind === "expense") {
+      options.push({
+        label: t("transactions.menu.addItem"),
+        key: "add-item",
+        disabled: opts.hasItem === true,
+        icon: renderRowMenuIcon(AddCircleOutline),
+      });
+    }
+    options.push({ type: "divider", key: "menu-divider" });
+    const errorProps = errorOptionProps(opts.errorColor);
+    options.push({
+      label: t("transactions.menu.delete"),
+      key: "delete",
+      icon: renderRowMenuIcon(TrashOutline),
+      ...errorProps,
+    });
+    return options;
   }
   const options: DropdownOption[] = [];
   // 「编辑」显式白名单（refund 破坏关联语义不开放，开放判定见 supportsRowEdit 单源）：

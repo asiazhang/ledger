@@ -108,7 +108,8 @@ export interface Transaction extends Syncable {
  * 实际读取的行字段闭集——依赖最小面：弹窗族不读取折算留痕、同步基础字段与
  * created_at。两个行源都满足本结构：主列表 Transaction 行原样满足；投资明细
  * 页签行（InvestmentTransactionRow，弹窗族消费列见后端投影注记）经弹窗行适配
- * 投影满足。消费组件以本类型收窄 props，行形状由数据源保证。
+ * 投影满足（fundings 恒空数组：投资 kind 不做出资分解，ADR-0138 决策 3）。
+ * 消费组件以本类型收窄 props，行形状由数据源保证。
  */
 export type TransactionModalRow = Pick<
   Transaction,
@@ -126,6 +127,7 @@ export type TransactionModalRow = Pick<
   | "amount_cents"
   | "currency_code"
   | "amount_native_cents"
+  | "fundings"
   | "source"
   | "convert"
 >;

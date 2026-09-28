@@ -248,7 +248,63 @@ function renderTwoAccountCell(fromAccountId: string, toAccountId: string): VNode
   );
 }
 
+/** 账户单元格标注文字（弱化灰、随标注元素固定宽度不收缩）：语义为「共 N 个」后缀注记。 */
+const ACCOUNT_CELL_SUFFIX_STYLE =
+  "flex: none; color: var(--n-text-color-disabled, #999); font-size: 12px;";
+
+/** 出资分解行账户单元格（issue #1861 / ADR-0138 决策 8）：分解行主表 account_id 为 null，
+ * 账户列显示首条出资账户链接（可下钻，与单账户行同语义）+ 规则标注——
+ * - 多账户：「等 N 账户」（N = 去重账户数，组合支付形态）；
+ * - 同账户多条：退化「同账户 N 笔」（N = 出资项条数，预售定金 + 尾款形态）；
+ * - 单条出资项：仅首账户（无标注）；
+ * - 退款派生分解行（读时推导、不落库，ADR-0138 决策 5）另起一行「按比例自动分解」标注。
+ * 导出面（issue #846）：移动档卡片列表消费同一渲染，账户呈现三形态单源。 */
+function renderFundingAccountCell(row: Transaction): VNode {
+  const first = row.fundings[0];
+  const distinctAccounts = new Set(row.fundings.map((f) => f.account_id)).size;
+  // 标注文案：多账户取「等 N 账户」、同账户多条退化「同账户 N 笔」、单条无标注
+  const markerText =
+    distinctAccounts > 1
+      ? t("transactions.funding.accountCount", { n: distinctAccounts })
+      : row.fundings.length > 1
+        ? t("transactions.funding.sameAccountEntries", { n: row.fundings.length })
+        : null;
+  const line = h(
+    "div",
+    {
+      style:
+        "display: inline-flex; align-items: center; justify-content: flex-start; gap: 4px; width: 100%; max-width: 100%;",
+    },
+    [
+      h(AccountLink, { accountId: first.account_id, style: ACCOUNT_CELL_LINK_STYLE }),
+      ...(markerText ? [h("span", { style: ACCOUNT_CELL_SUFFIX_STYLE }, markerText)] : []),
+    ],
+  );
+  // 派生标注（任意条目 derived=true 即派生分解）另起一行，不与账户名挤同一行
+  if (!row.fundings.some((f) => f.derived)) return line;
+  return h(
+    "div",
+    {
+      style:
+        "display: flex; flex-direction: column; align-items: flex-start; gap: 2px; width: 100%;",
+    },
+    [
+      line,
+      h(
+        "span",
+        {
+          style:
+            "font-size: 11px; line-height: 18px; padding: 0 6px; border-radius: 9px; white-space: nowrap; color: var(--n-info-color, #2080f0); border: 1px dashed currentColor;",
+        },
+        t("transactions.funding.autoDerived"),
+      ),
+    ],
+  );
+}
+
 /** 账户单元格渲染（issue #99 / #937，方向修正 issue #1030）：
+ * - 出资分解行（ADR-0138 决策 8，issue #1861）：首条出资账户 + 「等 N 账户 / 同账户 N 笔」
+ *   标注（退款派生分解行另带「按比例自动分解」标注），见 renderFundingAccountCell；
  * - 转账行显示「转出 → 转入」双向账户名（to_account_id 存在时），两个名字各自可点击、
  *   各自下钻到对应账户的过滤视图；
  * - 带出资账户的 buy/sell 行按「资金流出方在前」显示双向账户名（ADR-0096 决策 6：
@@ -259,8 +315,11 @@ function renderTwoAccountCell(fromAccountId: string, toAccountId: string): VNode
  * 出资账户为空投资账户照常；出资账户命中时资金实际流出方在前（buy：出资账户，
  * sell：投资账户），与转账「资金流出方在前」的阅读顺序一致（issue #1030）。 */
 export function renderAccountCell(row: Transaction): VNode {
-  // 分解行（ADR-0138）主表账户列为 null——列表层回退占位（与未知账户同款）；
-  // 「首条出资账户 + 等 N 账户」的完整呈现归读侧姊妹票。
+  // 分解行（分解子行在场 ⇔ account_id 读回 null，ADR-0138 决策 6）走分解形态；
+  // 账户列三形态（单账户 / 双账户 / 分解标注）与移动档卡片列表共用本渲染单源。
+  if (row.fundings.length > 0) {
+    return renderFundingAccountCell(row);
+  }
   const accountId = row.account_id ?? "";
   if (row.kind === "transfer" && row.to_account_id) {
     return renderTwoAccountCell(accountId, row.to_account_id);

@@ -100,7 +100,7 @@ export let mockAccounts: Account[] = [
  * 其余字段一律走共享 makeTransaction（factories.ts），不在本地复制字段全集。 */
 export function makeTxn(
   i: number,
-  accountId = "acc-1",
+  accountId: string | null = "acc-1",
   overrides: Partial<Transaction> = {},
 ): Transaction {
   return makeTransaction({
