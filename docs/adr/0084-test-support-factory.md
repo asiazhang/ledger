@@ -134,3 +134,12 @@ ADR-0139 决策 2 的实施前置：跨库（main + ATTACH 的 sync.db）事务�
 - **准入与可见性**：工厂本体成员（决策 1/2），无新依赖边、无守门改动（新入口不扩 `check-test-support.ts` 判定面）；词汇表锚定见 CONTEXT-testing「文件库测试模板」。
 - **行为等价判据**：多端同步域首个闭环行为测试改为内存模板 / 文件库模板双形态矩阵（同一场景体两形态等价绿，迁移是纯机械的建库形态轴）；工厂自测另钉直接等值断言（user_version 与默认种子两形态相等）与 drop 后整树清理。
 - **已知边界（如实登记）**：文件库模板逐用例重放迁移链——内存模板的序列化快照机制不适用于文件库（`deserialize` 只能还原内存态，跨库原子性要求真落盘），建库成本回到毫秒级；本票不引入任何 ATTACH 与生产行为改动，跨库原子性断言由拆库切换票（#1871）消费本形态落地。
+
+## 修订注记（#1896，2026-09-29）：op 写失败注入收编 + 拆库票审查的夹具与谓词单点化
+
+拆库切换票（#1871）code-review 标准轴发现的重复形状（判断题级、按「既有技术债立单不顺手修」纪律立票 #1896）按各自归属单点化：
+
+- **op 写失败注入触发器（工厂收编）**：currencies / investment / transaction（oplog）/ sync-engine（engine）四域各自手写的同形「`BEFORE INSERT ON sync.sync_ops` 触发器 RAISE(ABORT)」注入收编 `test_support::op_write_failure`——`block_op_writes` / `unblock_op_writes` / `assert_op_write_failure`。temp schema 是形态契约（普通触发器只能引用所在库的表；temp 触发器跨库引用、仅本连接可见、不留 schema 残迹），内存库与文件库同一形态；注入消息固定并即断言契约，消息断言随夹具单点。准入沿决策 1 放宽面先例（≥2 域同体消费，#956/#1433/#1645 同款）；业务写中途失败的落点注入（交易行、价格落点、期次行等）按触发目标留各域，不上收。词汇表锚定见 CONTEXT-testing「op 写失败注入」。
+- **同票审查的另三处重复（非工厂面，各自归属单点化）**：①attached `sync` 别名判据两份实现（schema 守卫 `pragma_database_list` 与 `sync_tables_live_attached` 前半同形）收敛 `db::connection::sync_alias_attached` 单点，两处消费；②`ATTACH ':memory:' AS sync` 内存世界成对挂载夹具（infra boot/db 测试四处同形样板）收编 infra `test_utils::attach_in_memory_sync`（crate 内测试夹具，经既有 `#[cfg(any(test, feature = "test-utils"))]` 门，不属根包工厂）；③主库判别谓词（建连收尾挂载判别与 ledger-perf generate 工具侧补位同形）导出 `db::connection::is_main_db_path` 共用——评论先例（#1871「工具侧有意补位」）随收敛退役为单点引用。
+- **行为等价判据**：全部迁移为纯机械替换，全量既有测试保持绿；工厂自测另钉臂装/解除直接断言（臂装后 INSERT 被注入消息挡下、解除后同语句不再命中）。
+- **#1872 接口关系（如实登记）**：`sync_tables_live_attached` 的双源回退分支删除（票 06，#1872）落在本注记收敛后的别名谓词之上——该票届时只需重写 `sync_tables_live_attached` 本体，别名单点不受影响。

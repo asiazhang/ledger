@@ -308,3 +308,28 @@ fn open_file_scratch_cleans_up_scratch_dir_after_test() {
     };
     assert!(!dir_path.exists(), "guard drop 后整棵暂存目录应消失");
 }
+
+/// op 写失败注入（issue #1896）：臂装后 `sync.sync_ops` 的 INSERT 被 RAISE(ABORT)
+/// 挡下且错误携带注入消息（消息即断言契约）；解除后同语句不再命中注入——
+/// 约束错误取而代之（sync_ops 全列 NOT NULL 无默认值），证明阻断确来自触发器。
+#[test]
+fn op_write_failure_probe_blocks_and_unblocks() {
+    let conn = open();
+    super::block_op_writes(&conn);
+    let err = conn
+        .execute("INSERT INTO sync.sync_ops DEFAULT VALUES", [])
+        .unwrap_err();
+    assert!(
+        err.to_string().contains("测试注入：op 写失败"),
+        "臂装后 INSERT 应被注入触发器挡下：{err}"
+    );
+
+    super::unblock_op_writes(&conn);
+    let err = conn
+        .execute("INSERT INTO sync.sync_ops DEFAULT VALUES", [])
+        .unwrap_err();
+    assert!(
+        !err.to_string().contains("测试注入：op 写失败"),
+        "解除后同语句不应再命中注入（应为约束错误）：{err}"
+    );
+}

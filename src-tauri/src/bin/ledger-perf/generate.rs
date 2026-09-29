@@ -16,7 +16,7 @@ use chrono::{Datelike, Duration, Months, NaiveDate};
 use rusqlite::Connection;
 
 use ledger_categories as categories;
-use ledger_infra::db::connection::DB_FILE_NAME;
+use ledger_infra::db::connection::is_main_db_path;
 use ledger_infra::db::{init_db, open_connection, sync_db_path};
 
 use super::bench_common::{FlagSpec, Parsed, parse_flags, parse_nonneg_int};
@@ -261,8 +261,9 @@ pub(crate) fn run(cli: GenerateCli) -> Result<(), String> {
     // V036 拆库（issue #1871）：迁移链跨 attached 侧；数据集文件名非产品名
     // 时（建连收尾主库判别不生效）工具侧按同目录 sync.db 显式挂载补位（生成
     // 产物即产品形态世界：主库 + 同目录 sync.db）。产品名 ledger.db 已由挂载
-    // 接线成对挂载，重复 ATTACH 同一别名即报错，按主库判别跳过。
-    if cli.out.file_name() != Some(std::ffi::OsStr::new(DB_FILE_NAME)) {
+    // 接线成对挂载，重复 ATTACH 同一别名即报错，按主库判别跳过——判别谓词
+    // 与建连收尾同源（`is_main_db_path`，issue #1896 收敛）。
+    if !is_main_db_path(&cli.out) {
         let sync_path = sync_db_path(&cli.out);
         conn.execute_batch(&format!(
             "ATTACH DATABASE '{}' AS sync",
