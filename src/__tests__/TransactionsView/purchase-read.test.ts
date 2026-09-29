@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { wireInvokeSeam } from "@ledger/test-support/invoke-mock";
 import type { Category, Transaction } from "@ledger/types";
-import { makeCategory, makePurchase } from "../factories";
+import { visibleModalText } from "@ledger/test-support/dom";
+import { makeCategory, makeFunding, makePurchase } from "../factories";
 import {
   bodyRows,
   makeTxn,
@@ -9,12 +10,14 @@ import {
   openMenuOnRow,
   rowMenu,
   rowMenuKeys,
+  selectRowMenu,
   setTxnDb,
+  closeShownModal,
+  shownModal,
   tablePagination,
   SHELL_DEFAULTS,
   SHELL_OVERRIDES,
 } from "./common";
-
 /**
  * 交易列表逐购买项呈现（issue #1883 / ADR-0138 决策 13）：带购买项的交易展开为
  * 「每个购买项各占一行」，订单级列（日期/类型/商户/来源/账户/金额/操作）纵向合并
@@ -107,9 +110,79 @@ describe("交易列表逐购买项呈现（issue #1883 / ADR-0138 决策 13）",
     // 续行（第 2 个购买项行）右键不开菜单——行 = 购买项不是可操作对象
     await openMenuOnRow(wrapper, 1);
     expect(rowMenu(wrapper)).toBeUndefined();
-    // 订单块首行（承载合并格）右键开订单级菜单，菜单形状零变化
+    // 订单块首行（承载合并格）右键开订单级菜单：详情入口开放（issue #1884 / ADR-0138
+    // 决策 15），编辑关闭（编辑表单未支持购买项、全字段替换会清空子行）
     await openMenuOnRow(wrapper, 0);
-    expect(rowMenuKeys(wrapper)).toEqual(["edit", "refund", "add-item", "menu-divider", "delete"]);
+    expect(rowMenuKeys(wrapper)).toEqual([
+      "detail",
+      "refund",
+      "add-item",
+      "menu-divider",
+      "delete",
+    ]);
+  });
+
+  it("购买项行详情弹窗：清单列出名称 / 件数 / 分类（列表侧商品项渲染与文案单源）", async () => {
+    const wrapper = await mountWithPurchases([orderRow()]);
+    await openMenuOnRow(wrapper, 0);
+    await selectRowMenu(wrapper, "detail");
+    expect(shownModal(wrapper), "期望详情弹窗打开").toBeTruthy();
+    const text = visibleModalText();
+    expect(text).toContain("购买项");
+    expect(text).toContain("猫粮");
+    expect(text).toContain("洗衣液");
+    expect(text).toContain("纸巾");
+    expect(text).toContain("共 2 件");
+    expect(text).toContain("餐饮");
+    expect(text).toContain("日用品");
+    await closeShownModal(wrapper);
+  });
+
+  it("购买项 + 订单号行详情：购买项清单与所属订单区并存", async () => {
+    setTxnDb([makeTxn(1, "acc-1", { ...orderRow(), source_order_no: "JD-9001" })]);
+    wireInvokeSeam({
+      defaults: SHELL_DEFAULTS,
+      overrides: {
+        ...SHELL_OVERRIDES,
+        get_transaction_order_summary: () =>
+          Promise.resolve({
+            source_order_no: "JD-9001",
+            row_count: 1,
+            total_amount_cents: 9990,
+            currency_code: "CNY",
+            accounts: [],
+            items: [],
+          }),
+      },
+      refreshReferenceStores: true,
+    });
+    const wrapper = await mountView();
+    await openMenuOnRow(wrapper, 0);
+    await selectRowMenu(wrapper, "detail");
+    const text = visibleModalText();
+    expect(text).toContain("购买项");
+    expect(text).toContain("猫粮");
+    expect(text).toContain("所属订单");
+    expect(text).toContain("JD-9001");
+    await closeShownModal(wrapper);
+  });
+
+  it("分解 + 购买项行详情：出资分解与购买项清单同层并陈（ADR-0138 决策 15 对称）", async () => {
+    setTxnDb([
+      makeTxn(1, null, {
+        ...orderRow(),
+        fundings: [makeFunding({ account_id: "acc-1", amount_cents: 9990 })],
+      }),
+    ]);
+    const wrapper = await mountView();
+    await openMenuOnRow(wrapper, 0);
+    await selectRowMenu(wrapper, "detail");
+    const text = visibleModalText();
+    expect(text).toContain("出资分解");
+    expect(text).toContain("¥99.9");
+    expect(text).toContain("购买项");
+    expect(text).toContain("猫粮");
+    await closeShownModal(wrapper);
   });
 
   it("分页与「共 N 条」按交易计：一页视觉行数可多于页大小", async () => {

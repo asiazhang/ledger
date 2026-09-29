@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { NButton, NTag } from "naive-ui";
-import type { Transaction } from "@ledger/types";
+import type { Transaction, TransactionPurchase } from "@ledger/types";
 import { useReferenceStore } from "@/stores/reference";
 import { useAppStore } from "@/stores/app";
 import { kindSemanticColor } from "@ledger/theme/semantic-colors";
@@ -13,6 +13,7 @@ import {
   KIND_TAG_TYPE,
   displayAmountText,
   renderAccountCell,
+  renderPurchaseLine,
   ORDER_BADGE_STYLE,
 } from "@/transaction/transaction-columns";
 import {
@@ -58,6 +59,13 @@ const app = useAppStore();
 /** 账户单元格（转账双向 / 单账户）与表格列同一渲染函数；经功能组件进模板。 */
 const AccountCell = (cellProps: { row: Transaction }) => renderAccountCell(cellProps.row);
 AccountCell.props = { row: { type: Object, required: true } };
+
+/** 购买项行（issue #1884 / ADR-0138 决策 15）：列表侧渲染单点的全文形态（商品名
+ * 整名渲染、自然换行 + 共 N 件），经功能组件进模板；行文本无交互，点击冒泡归整卡
+ * 激活（详情是长商品名的全文出口）。 */
+const PurchaseLine = (cellProps: { item: TransactionPurchase }) =>
+  renderPurchaseLine(cellProps.item);
+PurchaseLine.props = { item: { type: Object, required: true } };
 
 /** 分类路径：与表格分类列同一单源解析（未知 id 回退 '-'）。 */
 function categoryText(row: Transaction): string {
@@ -140,6 +148,18 @@ function onCardClick(row: Transaction): void {
           t("transactions.order.badge", { no: row.source_order_no })
         }}</span>
       </div>
+      <!-- 购买项块（issue #1884 / ADR-0138 决策 15）：卡内逐行列出购买项（商品名 + 共 N 件，
+           列表侧渲染单点全文形态）；一卡一笔交易不变、金额仍只出现一次。行文本无交互，
+           点击冒泡归整卡激活（详情是长商品名的全文出口）；无购买项不占行（零变化） -->
+      <template v-if="row.purchases.length > 0">
+        <div
+          v-for="(item, i) in row.purchases"
+          :key="i"
+          class="transaction-card-row transaction-card-purchase"
+        >
+          <PurchaseLine :item="item" />
+        </div>
+      </template>
       <!-- 金额行：AmountCell 承载语义色与触控轴全文点按（阻断冒泡） -->
       <div class="transaction-card-amount" @click.stop>
         <AmountCell :text="amountText(row)" :color="amountColor(row)" />

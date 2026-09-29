@@ -163,19 +163,36 @@ export function orderLevelRowSpan(row: Transaction): number {
 const PURCHASE_QTY_STYLE =
   "flex: none; color: var(--n-text-color-disabled, #999); font-size: 12px;";
 
-/** 购买项单元格渲染（issue #1883 / ADR-0138 决策 13，「商品 / 备注」列的商品形态）：
- * 商品名（NEllipsis 自省略 + 悬停全文，长商品名不再只剩「…」）+「共 N 件」件数标注。
+/** 购买项行渲染单点（issue #1884 / ADR-0138 决策 15：列表 / 移动卡片 / 只读详情共用，
+ * 不自建第二套）——商品名 +「共 N 件」件数标注，两形态可选：
+ * - truncate（桌面列表，「商品 / 备注」列的商品形态，#1883）：名内 NEllipsis 自省略 +
+ *   悬停全文，长商品名不再只剩「…」；
+ * - 全文（缺省，移动卡片与详情）：整名渲染、自然换行——触控轴没有悬停，详情是长
+ *   商品名的全文出口（决策 15）。
  * 只读呈现：无复制按钮（备注复制通道不适用商品名）、无价格（存而不显示，决策 10）；
- * 订单徽章不随购买项行渲染（备注列商品形态只承载商品名与件数，订单号出口在详情）。 */
-function renderPurchaseCell(item: TransactionPurchase): VNode {
+ * `suffix` 额外弱化标注（详情的分类路径）插在件数标注之前。 */
+export function renderPurchaseLine(
+  item: TransactionPurchase,
+  opts: { truncate?: boolean; suffix?: string } = {},
+): VNode {
+  const name = opts.truncate
+    ? h(NEllipsis, { style: "flex: 1 1 auto; min-width: 0;" }, { default: () => item.name })
+    : h("span", { style: "flex: 1 1 auto; min-width: 0; word-break: break-word;" }, item.name);
   return h("div", { style: NOTE_CELL_STYLE }, [
-    h(NEllipsis, { style: "flex: 1 1 auto; min-width: 0;" }, { default: () => item.name }),
+    name,
+    ...(opts.suffix ? [h("span", { style: PURCHASE_QTY_STYLE }, opts.suffix)] : []),
     h(
       "span",
       { style: PURCHASE_QTY_STYLE },
       t("transactions.purchase.quantity", { n: item.quantity }),
     ),
   ]);
+}
+
+/** 「商品 / 备注」列的商品形态（issue #1883 / ADR-0138 决策 13）：截断形态 + 悬停全文；
+ * 订单徽章不随购买项行渲染（备注列商品形态只承载商品名与件数，订单号出口在详情）。 */
+function renderPurchaseCell(item: TransactionPurchase): VNode {
+  return renderPurchaseLine(item, { truncate: true });
 }
 
 /** 备注单元格渲染（显式复制通道，见 CONTEXT-ui-interaction「界面文本不可选」）：

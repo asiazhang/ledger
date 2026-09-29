@@ -92,7 +92,8 @@
     "total": "Total · {n} funding items"
   },
   "purchase": {
-    "quantity": "qty {n}"
+    "quantity": "qty {n}",
+    "section": "Purchase items"
   },
   "order": {
     "no": "Order No.",

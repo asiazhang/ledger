@@ -6,6 +6,7 @@ import { useTransactionModalState } from "../useTransactionModalState";
 import type {
   Transaction,
   TransactionConvert,
+  TransactionPurchase,
   TransactionSplit,
   TransactionTrade,
 } from "@ledger/types";
@@ -220,6 +221,44 @@ describe("useTransactionModalState edit 意图（先取明细再开窗）", () =
     expect(messageCalls()).toEqual([{ method: "error", text: "无法编辑: 数据库不可用" }]);
     expect(modals.intent.value).toBeNull();
     expect(modals.seq.value).toBe(0);
+  });
+});
+
+/** 购买项条目（issue #1884）：包内自足最小工厂，订单场景经 purchases: [..] 组装。 */
+function makePurchaseItem(partial: Partial<TransactionPurchase> = {}): TransactionPurchase {
+  return { name: "商品", quantity: 1, category_id: null, unit_price_cents: null, ...partial };
+}
+
+describe("useTransactionModalState 购买项详情（issue #1884 / ADR-0138 决策 15）", () => {
+  it("带购买项的 expense 行：同步落 purchases 详情意图（明细随行携带，无扩展读取、不经命令）", async () => {
+    const modals = useTransactionModalState();
+    const row = makeTransaction({ id: "txn-p1", purchases: [makePurchaseItem()] });
+    await modals.open({ type: "detail", row });
+    expect(mockInvoke).not.toHaveBeenCalled();
+    expect(modals.intent.value).toEqual({ type: "detail", row, detail: { kind: "purchases" } });
+    expect(modals.seq.value).toBe(1);
+  });
+
+  it("带购买项且带订单号的行：购买项详情优先（清单面 + 订单区由详情面并陈，不落 order 面）", async () => {
+    const modals = useTransactionModalState();
+    const row = makeTransaction({
+      id: "txn-p2",
+      purchases: [makePurchaseItem()],
+      source_order_no: "JD-9001",
+    });
+    await modals.open({ type: "detail", row });
+    expect(modals.intent.value).toMatchObject({ type: "detail", detail: { kind: "purchases" } });
+  });
+
+  it("分解 + 购买项行：出资详情优先（购买项清单由出资详情面同层并陈，ADR-0138 决策 15 对称）", async () => {
+    const modals = useTransactionModalState();
+    const row = makeTransaction({
+      id: "txn-p3",
+      fundings: [{ account_id: "acc-1", amount_cents: 10000, label: null, derived: false }],
+      purchases: [makePurchaseItem()],
+    });
+    await modals.open({ type: "detail", row });
+    expect(modals.intent.value).toMatchObject({ type: "detail", detail: { kind: "funding" } });
   });
 });
 

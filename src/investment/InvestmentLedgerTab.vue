@@ -30,6 +30,7 @@ import AmountCell from "@/transaction/AmountCell.vue";
 import ConvertDetail from "@/investment/ConvertDetail.vue";
 import SplitDetail from "@/investment/SplitDetail.vue";
 import DividendDetail from "@/investment/DividendDetail.vue";
+import OrderDetail from "@/transaction/OrderDetail.vue";
 import { useAppDialog } from "@/composables/useAppDialog";
 import { useRowContextMenu } from "@ledger/row-context-menu";
 import { useTransactionModalState } from "@ledger/transaction-modal-state";
@@ -229,12 +230,17 @@ const menuY = computed(() => rowMenu.position.value.y);
 /** 菜单选项：选项组装单点复用（hasItem 维度仅 expense 行消费，投资 kind 行集不在场）。 */
 const menuOptions = computed<DropdownOption[]>(() => {
   const row = rowMenu.state.value?.row;
-  // 菜单形状只消费 kind + fundings + source_order_no：投资行恒无分解（ADR-0138
-  // 决策 3），订单号随投影行透传（#1862），按 ledgerRowToModalRow 同款适配投影补
-  // fundings 空数组。
+  // 菜单形状只消费 kind + fundings + purchases + source_order_no：投资行恒无分解与
+  // 购买项（ADR-0138 决策 3 / 决策 9），订单号随投影行透传（#1862），按
+  // ledgerRowToModalRow 同款适配投影补两个空数组。
   return row
     ? buildRowMenuOptions(
-        { kind: row.kind, fundings: [], source_order_no: row.source_order_no },
+        {
+          kind: row.kind,
+          fundings: [],
+          purchases: [],
+          source_order_no: row.source_order_no,
+        },
         {
           errorColor: themeVars.value.errorColor,
         },
@@ -680,6 +686,14 @@ function onCreated() {
       :key="seq"
       v-else-if="detailIntent?.detail.kind === 'dividend'"
       :transaction="detailIntent.row"
+    />
+    <!-- 订单区面（范围外修复 #1862 缺口）：带订单号的 buy/sell 行点详情落 order 意图
+         （编排 open 与主列表同一单源），本页签弹窗此前缺分支、呈现空弹窗——补齐与
+         主列表同构的 OrderDetail 渲染（purchases 恒空不落对应意图，不设死分支） -->
+    <OrderDetail
+      :key="seq"
+      v-else-if="detailIntent?.detail.kind === 'order'"
+      :row="detailIntent.row"
     />
   </AppModal>
 </template>
