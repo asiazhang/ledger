@@ -15,7 +15,7 @@ use ledger_infra::db::query::query_all;
 use ledger_infra::db::tx_scope::ensure_transaction;
 use ledger_infra::error::Result;
 
-use crate::model::{OrderAccountContribution, TransactionOrderSummary};
+use crate::model::{OrderAccountContribution, ROW_COLUMNS, TransactionOrderSummary};
 use crate::read::funding::attach_fundings;
 use crate::read::purchase::attach_purchases;
 
@@ -35,11 +35,11 @@ pub fn get_transaction_order_summary(
     ensure_transaction(conn, || {
         let mut items = query_all::<crate::model::Transaction, _>(
             conn,
-            "SELECT id,kind,amount_cents,currency_code,amount_native_cents,account_id,\
-         to_account_id,funding_account_id,category_id,refund_of_transaction_id,note,date,created_at,updated_at,\
-         version,device_id,is_deleted,merchant_id,policy_id,fx_rate_used,fx_rate_source,source_order_no \
-         FROM transactions WHERE source_order_no=?1 AND is_deleted=0 \
-         ORDER BY date ASC, created_at ASC, id ASC",
+            &format!(
+                "SELECT {} FROM transactions WHERE source_order_no=?1 AND is_deleted=0 \
+                 ORDER BY date ASC, created_at ASC, id ASC",
+                ROW_COLUMNS.join(",")
+            ),
             params![source_order_no],
         )?;
         // 出资项读闭包与行集同一读事务：分解行明细与派生分解的读数都锚在行集

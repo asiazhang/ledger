@@ -20,6 +20,7 @@ pub use input::{
 };
 pub use normalized::NormalizedTransaction;
 pub use order::{OrderAccountContribution, TransactionOrderSummary};
+pub(crate) use transaction::ROW_COLUMNS;
 pub use transaction::{
     ConvertFields, Transaction, TransactionFunding, TransactionListResult, TransactionPurchase,
     TransactionSearchResult, TransactionSource, TransactionSourceKind, TransactionSourceStatus,

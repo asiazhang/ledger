@@ -3,7 +3,8 @@
 //! 职责：交易全量读模型类型的单一定义点。不变量：`source` / `convert` 非库列，
 //! `FromRow` 恒填空、由读路径 `attach_*` 按页填充；类型经 `crate::model` 逐项再导出。
 //! ADR 指针：ADR-0113 决策 2/8。陷阱：列序与 `transactions` 表 SELECT 顺序一一对应。
-
+//! ADR 指针：ADR-0113 决策 2/8。陷阱：列序与全列 SELECT 清单 [`ROW_COLUMNS`] 一一
+//! 对应（read 区四处消费同一常量，映射钉住测试 `read/tests/row_columns.rs`）。
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -176,8 +177,41 @@ pub struct TransactionListResult {
     pub total: i64,
 }
 
+/// `transactions` 全列 SELECT 清单单点（issue #1880）：列序 = [`Transaction::from_row`]
+/// 的位置下标序（`id`=0 … `source_order_no`=21）。四处读路径消费同一清单（列表 /
+/// 单笔 / 订单汇总 / 搜索回表，搜索侧逐列加 `t.` 前缀），删除任一处的常量引用即
+/// 编译失败。新增列只改本常量 + `from_row` 下标 + 写入侧列清单；列名→值映射钉住
+/// 测试住 `read/tests/row_columns.rs`，错位或漏更新即红。写入侧（INSERT / UPDATE）
+/// 列序按参数序组织、与读序不同形，不同收本清单（裁决见 issue #1880）。
+pub(crate) const ROW_COLUMNS: &[&str] = &[
+    "id",
+    "kind",
+    "amount_cents",
+    "currency_code",
+    "amount_native_cents",
+    "account_id",
+    "to_account_id",
+    "funding_account_id",
+    "category_id",
+    "refund_of_transaction_id",
+    "note",
+    "date",
+    "created_at",
+    "updated_at",
+    "version",
+    "device_id",
+    "is_deleted",
+    "merchant_id",
+    "policy_id",
+    "fx_rate_used",
+    "fx_rate_source",
+    "source_order_no",
+];
+
 impl FromRow for Transaction {
     fn from_row(row: &rusqlite::Row) -> rusqlite::Result<Self> {
+        // 位置下标与 [`ROW_COLUMNS`] 一一对应（按位取列）：新增列同步改常量与
+        // 此处下标，`read/tests/row_columns.rs` 的探针测试保证错位即红。
         Ok(Transaction {
             id: row.get(0)?,
             kind: row.get(1)?,

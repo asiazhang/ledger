@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use rusqlite::Connection;
 use rusqlite::types::Value;
 
-use crate::model::{Transaction, TransactionSearchResult};
+use crate::model::{ROW_COLUMNS, Transaction, TransactionSearchResult};
 use ledger_infra::db::query::FromRow;
 use ledger_infra::db::tx_scope::ensure_transaction;
 use ledger_infra::error::Result;
@@ -407,9 +407,10 @@ pub(super) fn stage1_sql(where_clauses: &[&str]) -> String {
     )
 }
 
-/// 第二段：仅为当前页命中 id 回表取展示列（`Transaction::from_row` 的 21 列，
-/// 无 JOIN）。输出保持第一段给定的日期降序（page_ids 顺序），页内缺行（理论上
-/// 不可达：id 来自同一连接刚流式扫过的候选）安静跳过。
+/// 第二段：仅为当前页命中 id 回表取展示列（`Transaction::from_row` 的全列，经
+/// [`ROW_COLUMNS`] 消费，逐列加 `t.` 前缀，无 JOIN）。输出保持第一段给定的日期降序
+///（page_ids 顺序），页内缺行（理论上不可达：id 来自同一连接刚流式扫过的候选）
+/// 安静跳过。
 fn fetch_display_rows(conn: &Connection, page_ids: &[String]) -> Result<Vec<Transaction>> {
     if page_ids.is_empty() {
         return Ok(Vec::new());
@@ -420,12 +421,13 @@ fn fetch_display_rows(conn: &Connection, page_ids: &[String]) -> Result<Vec<Tran
         .map(|(i, _)| format!("?{}", i + 1))
         .collect::<Vec<_>>()
         .join(",");
-    let sql = format!(
-        "SELECT t.id,t.kind,t.amount_cents,t.currency_code,t.amount_native_cents,t.account_id,\
-         t.to_account_id,t.funding_account_id,t.category_id,t.refund_of_transaction_id,t.note,t.date,t.created_at,\
-         t.updated_at,t.version,t.device_id,t.is_deleted,t.merchant_id,t.policy_id,t.fx_rate_used,t.fx_rate_source,t.source_order_no \
-         FROM transactions t WHERE t.id IN ({placeholders})"
-    );
+    // 全列 SELECT 清单消费同一常量（issue #1880），本处逐列加 `t.` 前缀（表别名 t）。
+    let columns = ROW_COLUMNS
+        .iter()
+        .map(|c| format!("t.{c}"))
+        .collect::<Vec<_>>()
+        .join(",");
+    let sql = format!("SELECT {columns} FROM transactions t WHERE t.id IN ({placeholders})");
     let mut stmt = conn.prepare(&sql)?;
     let params: Vec<Value> = page_ids.iter().map(|id| id.clone().into()).collect();
     let rows = stmt.query_map(
