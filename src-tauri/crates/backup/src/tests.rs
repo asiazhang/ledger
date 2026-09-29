@@ -414,7 +414,10 @@ fn backup_rejects_foreign_form_db_with_coded_error() {
     let dir = ScratchDir::new("backup-test-foreign");
     let src = dir.join("ledger.db");
     ledger_infra::test_utils::write_foreign_form_plaintext_db(&src, 3);
-    let conn = open_connection(&src).unwrap();
+    // 裸连接：外来形态在产品可开启集之外（启动在建连前归一化，issue #1453；
+    // 建连收尾的同步元数据库挂载会在其上先一步复现同一条无 KEY ATTACH
+    // 推断失败）——本用例的主语是 backup_db_to 的形态门禁，不是建连。
+    let conn = Connection::open(&src).unwrap();
 
     let target = dir.join("ledger-auto-20260918-120000-book-a.db.zip");
     let err = backup_db_to(&conn, &target, "0.6.0", BackupKind::Auto).unwrap_err();
@@ -641,4 +644,59 @@ fn scoped_prune_is_per_book() {
         dir.join("ledger-auto-20260101-000000-book-b.db.zip")
             .exists()
     );
+}
+
+/// 恢复——同步元数据库一并移位（ADR-0139 决策 3 配对纪律，issue #1869）：
+/// 原位遗留的 sync.db 移入恢复安全备份目录保留；恢复后的世界重开时挂载按
+/// 恢复后主库形态补建 sync.db，不留形态错配堵塞（如密文世界恢复明文备份）。
+#[test]
+fn restore_moves_stale_sync_db_aside() {
+    let dir = ScratchDir::new("backup-test-restore-sync");
+    let db_path = dir.join("ledger.db");
+    {
+        let conn = tauri_app_lib::test_support::open();
+        seed(&conn);
+        conn.execute("VACUUM INTO ?1", params![db_path.to_string_lossy()])
+            .unwrap();
+    }
+    // 原位世界带一个 sync.db（挂载接线建连即补建的形态），写入探针表供副本
+    // 可读性断言。
+    let sync_path = dir.join(db::SYNC_DB_FILE_NAME);
+    {
+        let sync = open_connection(&sync_path).unwrap();
+        sync.execute("CREATE TABLE restore_probe(x)", []).unwrap();
+    }
+    let backup = temp_file("rt-sync-backup");
+    {
+        let conn = open_connection(&db_path).unwrap();
+        backup_db_to(&conn, &backup, "0.2.0", BackupKind::Manual).unwrap();
+    }
+
+    let safety_dir = temp_safety_dir();
+    let expected = expected_schema_version().unwrap();
+    restore_db_from(&backup, &db_path, &safety_dir, expected, None).unwrap();
+
+    // 安全目录保留主库与 sync.db 两份副本；移走的 sync.db 副本可凭明文读回
+    // 探针表（证明移位的是原位世界的那一份）。恢复路径末端 open_reset 重开
+    // 时挂载接线会按恢复后主库形态补建新 sync.db，原位存在性不作断言。
+    let entries: Vec<String> = std::fs::read_dir(&safety_dir)
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .collect();
+    let sync_safety_name = entries
+        .iter()
+        .find(|n| n.starts_with("restore-safety-") && n.contains("sync"))
+        .expect("安全目录应保留 sync.db 副本")
+        .clone();
+    let moved = open_connection(safety_dir.join(&sync_safety_name)).unwrap();
+    moved
+        .query_row::<i64, _, _>("SELECT count(*) FROM restore_probe", [], |r| r.get(0))
+        .expect("移位副本应为原位世界的 sync.db（含探针表）");
+    // 恢复后的世界重开：普通挂载成功（新 sync.db 按恢复后主库形态补建），
+    // 数据与备份一致。
+    let conn = open_connection(&db_path).unwrap();
+    assert_eq!(count_transactions(&conn), 1);
+    conn.query_row::<i64, _, _>("SELECT count(*) FROM sync.sqlite_master", [], |r| r.get(0))
+        .expect("恢复后世界应可正常挂载 sync.db");
 }

@@ -1,5 +1,6 @@
 //! 建连 / 重置 / 完整性检查 / 内存库（自 `db/mod.rs` 按职责拆出，issue #1127，
-//! 纯移动）。建连收尾单点 `finish_open`（本模块私有）：密钥注入 → 外键 → 耗时 hook；
+//! 纯移动）。建连收尾单点 `finish_open`（本模块私有）：密钥注入 → 外键 →
+//! 同步元数据库挂载 → 耗时 hook；
 //! 全部生产建连路径统一收口 [`init_db`]（schema 守卫尾部接线，ADR-0100）。
 
 use std::path::Path;
@@ -17,6 +18,13 @@ use crate::error::{AppError, Result};
 /// [`crate::boot::data_location`] 再导出消费，外部原路径零改动。
 pub const DB_FILE_NAME: &str = "ledger.db";
 
+/// 同步元数据库文件名（ADR-0139 决策 1：四张同步表迁出主库落独立库文件，
+/// 与主库同目录；决策 3：建连收尾单点成对挂载）。文件名应用固定，不可配置。
+pub const SYNC_DB_FILE_NAME: &str = "sync.db";
+
+/// 同步元数据库挂载失败的稳定错误码（ADR-0139 决策 3：挂载失败报码化错误、
+/// 不静默降级；损坏 / 口令错误 / 形态错配 / 不可开共用此码，原因进 params）。
+pub const SYNC_MOUNT_FAILED: &str = "db.sync-mount-failed";
 /// 并发容让的 busy_timeout（读路径独立只读连接，issue #1280 / ADR-0117 决策 4；
 /// 写连接同值显式收口，issue #1699）：读事务在写事务取 EXCLUSIVE 锁的提交瞬间
 /// 窗口内、写事务在读事务持 SHARED 锁的窗口内，各在本超时内等待——取值与既有
@@ -95,7 +103,8 @@ pub fn check_integrity(conn: &Connection) -> Result<()> {
 /// 明文路径：不设密钥，行为与 SQLCipher 引擎基座引入前完全一致
 /// （issue #569 不变量：未设密钥的连接保持明文）。
 pub fn open_connection<P: AsRef<Path>>(path: P) -> Result<Connection> {
-    finish_open(Connection::open(path)?, None)
+    let path = path.as_ref();
+    finish_open(Connection::open(path)?, None, Some(path))
 }
 
 /// 以主口令打开数据库连接（issue #569 / ADR-0075）。
@@ -111,7 +120,8 @@ pub fn open_connection_with_passphrase<P: AsRef<Path>>(
     path: P,
     passphrase: &str,
 ) -> Result<Connection> {
-    finish_open(Connection::open(path)?, Some(passphrase))
+    let path = path.as_ref();
+    finish_open(Connection::open(path)?, Some(passphrase), Some(path))
 }
 
 /// 只读打开数据库连接（读路径独立只读连接，issue #1280 / ADR-0117 决策 1/4）：
@@ -120,9 +130,11 @@ pub fn open_connection_with_passphrase<P: AsRef<Path>>(
 /// 写操作，schema 由写连接的建连路径负责（成对建连时写连接先行）。
 /// 明文库路径：不设密钥，行为与密钥基座引入前一致。
 pub fn open_connection_readonly<P: AsRef<Path>>(path: P) -> Result<Connection> {
+    let path = path.as_ref();
     finish_open_readonly(
         Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?,
         None,
+        Some(path),
     )
 }
 
@@ -133,9 +145,11 @@ pub fn open_connection_readonly_with_passphrase<P: AsRef<Path>>(
     path: P,
     passphrase: &str,
 ) -> Result<Connection> {
+    let path = path.as_ref();
     finish_open_readonly(
         Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?,
         Some(passphrase),
+        Some(path),
     )
 }
 
@@ -145,8 +159,125 @@ pub fn open_connection_readonly_in(db_dir: &Path) -> Result<Connection> {
     open_connection_readonly(db_dir.join(DB_FILE_NAME))
 }
 
-/// 建连收尾单点（只读形态）：密钥注入（如有）→ busy_timeout → 外键 → 耗时 hook。
-fn finish_open_readonly(conn: Connection, passphrase: Option<&str>) -> Result<Connection> {
+/// SQL 字符串字面量转义（单引号加倍）：仅用于 ATTACH 的路径与主口令注入
+/// （ATTACH KEY 系语法不支持绑定参数）。调用点必须在耗时 hook 安装前，
+/// 语句文本（含主口令）不进 trace（ADR-0075）。
+pub(crate) fn sql_string_literal(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
+}
+
+/// 同步元数据库挂载（ADR-0139 决策 3/4，issue #1869）：把与主库同目录的
+/// [`SYNC_DB_FILE_NAME`] ATTACH 为 `sync`，挂载点即建连收尾（密钥注入与外键
+/// 之后、耗时 hook 之前——ATTACH 文本含主口令，不进 trace）。
+///
+/// - **成对挂载**：写连接与只读连接（ADR-0117 成对连接）各自挂载；只读侧
+///   挂在只读连接上，对 attached 侧写被拒（只读形态）。
+/// - **同 KEY 注入**：密文形态以主口令同源派生密钥显式挂载——SQLCipher 无
+///   KEY 挂载必然失败，继承推断只是隐式行为，显式注入是决策 3 的裁决。
+/// - **迁移事务外**：ATTACH 不能在事务内执行，本函数在迁移 runner
+///   （[`init_db`] → to_latest）之前执行；V036 起迁移语句可直接引用
+///   attached 侧（决策 4「runner 前置挂载」机制，票 05 消费）。
+///
+/// **主库判别**：只有打开的是主库文件名（[`DB_FILE_NAME`]）才挂载——转换 /
+/// 搬迁 / 恢复 / 备份的临时副本连接（生命周期操作，ADR-0117 决策 4 不属建连
+/// 收尾管辖）不挂载，避免对临时目录旁挂出 sync.db、对同目录真实 sync.db
+/// 误挂或以错配口令触碰。
+///
+/// **expand 期文件策略**（本票不搬数据，票 05 / V036 迁移前四张同步表仍在
+/// 主库，unqualified 表名解析优先 main，生产行为零变化）：
+/// - 写侧文件缺失 → 自动创建空库（双库布局自此成形；V036 落地后「缺失」
+///   须改判码化错误——彼时 sync.db 缺失即设备身份丢失，由票 05 翻转此策略）；
+/// - 只读侧文件缺失 → 跳过挂载：expand 之前的世界没有 sync.db，跨账本只读
+///   聚合等只读开启不得因它失败；活动账本写连接已在同目录补建，成对不变。
+///
+/// 挂载失败（损坏、口令错、形态错配、不可开）报码化错误
+/// [`SYNC_MOUNT_FAILED`]，不静默降级（ADR-0139 决策 3；spec 用户故事 17）。
+fn attach_sync_db(
+    conn: &Connection,
+    main_db_path: &Path,
+    passphrase: Option<&str>,
+    readonly_side: bool,
+) -> Result<()> {
+    if main_db_path.file_name() != Some(std::ffi::OsStr::new(DB_FILE_NAME)) {
+        return Ok(());
+    }
+    let sync_path = main_db_path
+        .parent()
+        .unwrap_or_else(|| Path::new(""))
+        .join(SYNC_DB_FILE_NAME);
+    if readonly_side && !sync_path.exists() {
+        return Ok(());
+    }
+    let key_clause = passphrase
+        .map(|pass| format!(" KEY {}", sql_string_literal(pass)))
+        .unwrap_or_default();
+    let attach_sql = format!(
+        "ATTACH DATABASE {} AS sync{key_clause}",
+        sql_string_literal(&sync_path.to_string_lossy()),
+    );
+    if let Err(e) = conn.execute_batch(&attach_sql) {
+        return Err(mount_failed_error(&e, passphrase));
+    }
+    // 挂载点即验证点：SQLite 惰性读页，损坏 / 口令错误 / 形态错配在 ATTACH
+    // 本身不报错，首个读语句才暴露——强制读一次 attached 侧文件头，失败
+    // 此刻码化上抛，不带病运行。
+    if let Err(e) =
+        conn.query_row::<i64, _, _>("SELECT count(*) FROM sync.sqlite_master", [], |r| r.get(0))
+    {
+        return Err(mount_failed_error(&e, passphrase));
+    }
+    tracing::debug!(sync_db = %sync_path.display(), "同步元数据库已挂载");
+    Ok(())
+}
+
+/// 口令错误/损坏的合并口径码化错误（ADR-0075 决策 5 修订 / issue #603）：
+/// SQLCipher 下错误口令与损坏同为 not-a-database、运行期不可靠区分，统一以
+/// 「口令错误或文件损坏」上报（可就地重试，不误报损坏）。单一构造点住 db
+/// （建连收尾的带 KEY 挂载与引导层解锁/转换共用同一码与文案），引导层
+/// [`crate::boot::encryption::passphrase_incorrect_error`] 经此委托。
+pub(crate) fn passphrase_incorrect_error() -> AppError {
+    AppError::coded(
+        "encryption.passphrase-incorrect",
+        "口令错误或文件损坏，请重试",
+    )
+}
+
+/// not-a-database 判读：带 KEY 挂载下口令错误与 sync.db 损坏共用此形态。
+fn is_not_a_database_error(e: &rusqlite::Error) -> bool {
+    matches!(
+        e,
+        rusqlite::Error::SqliteFailure(f, _)
+            if f.extended_code == rusqlite::ffi::SQLITE_NOTADB
+    )
+}
+
+/// 挂载失败的码化错误构造（单一构造点）：`rusqlite::Error` 的 Display 可能
+/// 内嵌语句文本——ATTACH 语句含主口令（ADR-0075：错误与日志不落主口令），
+/// 只取引擎 errmsg（无密钥材料）进 message 与 params。带 KEY 挂载的
+/// not-a-database 走合并口径（见 [`passphrase_incorrect_error`]）；明文库
+/// 挂载（无 KEY）的 not-a-database 是确定的形态错配/损坏，报挂载失败码。
+fn mount_failed_error(e: &rusqlite::Error, passphrase: Option<&str>) -> AppError {
+    if passphrase.is_some() && is_not_a_database_error(e) {
+        return passphrase_incorrect_error();
+    }
+    let reason = match e {
+        rusqlite::Error::SqliteFailure(f, _) => f.to_string(),
+        other => other.to_string(),
+    };
+    AppError::codedp(
+        SYNC_MOUNT_FAILED,
+        format!("同步元数据库挂载失败: {reason}"),
+        &[reason.as_str()],
+    )
+}
+
+/// 建连收尾单点（只读形态）：密钥注入（如有）→ busy_timeout → 外键 →
+/// 同步元数据库挂载 → 耗时 hook。
+fn finish_open_readonly(
+    conn: Connection,
+    passphrase: Option<&str>,
+    main_db_path: Option<&Path>,
+) -> Result<Connection> {
     if let Some(passphrase) = passphrase {
         // 与写连接同纪律：`PRAGMA key` 必须是连接上第一条语句，语句文本不进
         // trace（耗时 hook 尚未安装）。
@@ -154,12 +285,20 @@ fn finish_open_readonly(conn: Connection, passphrase: Option<&str>) -> Result<Co
     }
     conn.busy_timeout(CONCURRENT_BUSY_TIMEOUT)?;
     conn.execute("PRAGMA foreign_keys = ON", [])?;
+    if let Some(path) = main_db_path {
+        attach_sync_db(&conn, path, passphrase, true)?;
+    }
     perf_trace::install_perf_trace(&conn, perf_trace::DEFAULT_SLOW_QUERY_THRESHOLD);
     Ok(conn)
 }
 
-/// 建连收尾单点：密钥注入（如有）→ busy_timeout → 外键 → 耗时 hook。
-fn finish_open(conn: Connection, passphrase: Option<&str>) -> Result<Connection> {
+/// 建连收尾单点：密钥注入（如有）→ busy_timeout → 外键 → 同步元数据库挂载 →
+/// 耗时 hook。
+fn finish_open(
+    conn: Connection,
+    passphrase: Option<&str>,
+    main_db_path: Option<&Path>,
+) -> Result<Connection> {
     if let Some(passphrase) = passphrase {
         // `PRAGMA key` 必须是连接上第一条语句；PRAGMA 不支持绑定参数，
         // 经 `pragma_update` 以转义后的 SQL 字面量注入。耗时 hook 尚未安装，
@@ -174,6 +313,9 @@ fn finish_open(conn: Connection, passphrase: Option<&str>) -> Result<Connection>
     // 从库默认收回源码单点（见 [`CONCURRENT_BUSY_TIMEOUT`] 说明）。
     conn.busy_timeout(CONCURRENT_BUSY_TIMEOUT)?;
     conn.execute("PRAGMA foreign_keys = ON", [])?;
+    if let Some(path) = main_db_path {
+        attach_sync_db(&conn, path, passphrase, false)?;
+    }
     perf_trace::install_perf_trace(&conn, perf_trace::DEFAULT_SLOW_QUERY_THRESHOLD);
     Ok(conn)
 }
@@ -181,9 +323,8 @@ fn finish_open(conn: Connection, passphrase: Option<&str>) -> Result<Connection>
 /// 打开内存数据库连接并启用外键约束（用于测试和 BDD 集成测试）。
 /// 与文件库路径共用建连收尾单点（外键、耗时 hook）。
 pub fn open_in_memory() -> Result<Connection> {
-    finish_open(Connection::open_in_memory()?, None)
+    finish_open(Connection::open_in_memory()?, None, None)
 }
-
 /// 打开已完成 schema 迁移的内存库（统一测试数据库工厂的快速建库形态，
 /// spec #1086 / issue #1514）。
 ///

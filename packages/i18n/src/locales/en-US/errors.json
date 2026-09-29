@@ -344,7 +344,8 @@
   },
   "db": {
     "integrity-check-failed": "database integrity check failed: {0}",
-    "template-init-failed": "failed to build the in-memory template database, cannot restore the test database: {0}"
+    "template-init-failed": "failed to build the in-memory template database, cannot restore the test database: {0}",
+    "sync-mount-failed": "failed to mount the sync metadata database: {0}"
   },
   "boot": {
     "db-unreadable": "Startup failed; the database is unavailable. Reset or restore from the recovery screen first.",

@@ -597,6 +597,17 @@ pub fn restore_db_from(
         let stamp = db::now_iso().replace([':', 'T'], "-");
         let safety = safety_dir.join(format!("restore-safety-{stamp}.db"));
         std::fs::copy(db_path, &safety)?;
+        // 同步元数据库一并移位（ADR-0139 决策 3 配对纪律，issue #1869）：恢复
+        // 产物是单文件备份（本票 sync.db 恒为空库，四张同步表随备份内主库走），
+        // 原位遗留的 sync.db 与恢复出的世界形态无涉——留在原地，重开挂载可能
+        // 形态错配（如密文世界恢复明文备份）。按恢复安全备份命名语义移入安全
+        // 目录保留（永不删除）；新世界的 sync.db 由挂载接线按恢复后主库形态补建。
+        let sync_path = db_path.with_file_name(db::SYNC_DB_FILE_NAME);
+        if sync_path.exists() {
+            let sync_safety = safety_dir.join(format!("restore-safety-sync-{stamp}.db"));
+            std::fs::rename(&sync_path, &sync_safety)?;
+            tracing::info!(safety = %sync_safety.display(), "恢复前已移位当前同步元数据库");
+        }
         tracing::info!(safety = %safety.display(), "恢复前已自动备份当前数据库");
     }
 

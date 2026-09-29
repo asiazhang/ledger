@@ -94,15 +94,15 @@ fn readonly_encrypted_connection_needs_passphrase() {
         .unwrap();
     assert!(count > 0, "凭正确口令的只读连接应可读密文库");
 
-    let wrong = crate::db::open_connection_readonly_with_passphrase(&db, "主口令-错误").unwrap();
-    assert!(
-        crate::db::encryption::is_not_a_database(
-            &wrong
-                .query_row("SELECT count(*) FROM sqlite_master", [], |r| r
-                    .get::<_, i64>(0))
-                .unwrap_err()
-        ),
-        "错误口令应在首条读语句报 not-a-database"
+    // 错误口令：带 KEY 挂载的探针即首条读（issue #1869）——SQLCipher 下口令
+    // 错误与损坏同为 not-a-database、不可靠区分，建连即报合并口径码化错误
+    // （与写连接/解锁路径同码，可就地重试）。
+    let wrong = crate::db::open_connection_readonly_with_passphrase(&db, "主口令-错误");
+    let err = wrong.expect_err("错误口令的只读建连应在挂载探针即失败");
+    assert_eq!(
+        err.code(),
+        Some("encryption.passphrase-incorrect"),
+        "错误口令应报合并口径码化错误，实际: {err}"
     );
 }
 
