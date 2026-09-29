@@ -53,6 +53,7 @@ fn carried_row(kind: TransactionKind, account: &str, amount: i64) -> NormalizedT
         source_order_no: None,
         note: None,
         date: "2026-05-04".into(),
+        purchases: Vec::new(),
     }
 }
 

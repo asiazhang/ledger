@@ -167,6 +167,7 @@ fn seed_transactions(conn: &Connection, count: usize) {
             idempotency_key: None,
             origin: None,
             fx_rate: None,
+            purchases: Vec::new(),
         };
         ledger_transaction::create_transaction_internal(conn, input).unwrap();
     }

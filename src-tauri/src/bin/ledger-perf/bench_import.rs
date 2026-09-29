@@ -256,6 +256,7 @@ pub(crate) fn generate_inputs(
             idempotency_key: None,
             origin: None,
             fx_rate: None,
+            purchases: Vec::new(),
         })
         .collect()
 }

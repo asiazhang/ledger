@@ -247,6 +247,7 @@ describe("useLendingForm（借贷变体 composable，issue #374 S3）", () => {
       to_account_id: "acc-recv-zhang",
       funding_account_id: null,
       fundings: [],
+      purchases: [],
       category_id: null,
       merchant_id: null,
       policy_id: null,

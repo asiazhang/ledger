@@ -101,6 +101,7 @@ describe("TransferForm.vue", () => {
       to_account_id: "acc-2",
       funding_account_id: null,
       fundings: [],
+      purchases: [],
       category_id: null,
       merchant_id: null,
       policy_id: null,

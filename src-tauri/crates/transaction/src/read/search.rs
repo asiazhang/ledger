@@ -507,6 +507,10 @@ pub fn search_transactions_internal(
         // 分解行 `fundings` 非空 ⇔ 存在分解行，refund 缺省派生同口径；与上两投影
         // 同处读事务闭包内（本函数整体已收进 ensure_transaction）。
         crate::read::funding::attach_fundings(conn, &mut items)?;
+        // 购买项与出资项同一读回契约（issue #1882）：搜索是 Transaction 行的
+        // 第四个读入口，明细与行集同处读事务闭包内（本函数整体已收进
+        // ensure_transaction）。
+        crate::read::purchase::attach_purchases(conn, &mut items)?;
 
         Ok(TransactionSearchResult { items, total })
     })

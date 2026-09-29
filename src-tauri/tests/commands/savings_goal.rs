@@ -489,5 +489,6 @@ fn transfer_input(from: &str, to: &str, amount_cents: i64) -> ledger_transaction
         origin: None,
         fx_rate: None,
         idempotency_key: None,
+        purchases: Vec::new(),
     }
 }

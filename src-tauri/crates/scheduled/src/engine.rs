@@ -985,6 +985,9 @@ pub fn execute_occurrence(conn: &Connection, occurrence_id: &str) -> Result<Stri
             // 定时计划不携带出资分解（ADR-0138 决策 3：分期/订阅维持单出资）。
             funding: Vec::new(),
             existing_funding: Vec::new(),
+            // 定时计划不携带购买项（issue #1882 / ADR-0138 决策 15：仅 AI 导入写入）。
+            purchases: Vec::new(),
+            existing_purchases: Vec::new(),
             // 定时计划不携带来源订单号（期次生成非导入行，V035 缺省 None）。
             source_order_no: None,
             category_id,

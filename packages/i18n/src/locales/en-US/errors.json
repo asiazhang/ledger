@@ -109,6 +109,10 @@
     "funding-sum-mismatch": "funding breakdown total ({0}) does not match the transaction amount ({1})",
     "funding-amount-positive": "funding item amount must be greater than 0",
     "funding-label-too-long": "funding item label must not exceed 50 characters",
+    "purchase-item-unsupported": "transaction type {0} cannot carry purchase lines",
+    "purchase-name-required": "purchase line name must not be empty",
+    "purchase-quantity-positive": "purchase line quantity must be greater than 0",
+    "purchase-price-negative": "purchase line unit price must not be negative",
     "origin-unsupported": "transaction type {0} cannot carry a security origin",
     "convert-fields-missing": "this conversion operation lacks the fields required for sync replay (produced by an earlier version) and cannot be replayed here; delete and re-enter the conversion on the source device, then sync again",
     "convert-carried-cost-mismatch": "conversion carried-cost check mismatch (source {0}, local rebuild {1}, row amount {2}); parked for review",
@@ -129,6 +133,9 @@
     "account-not-found": "funding account does not exist or has been deleted: {0}",
     "account-type-unsupported": "funding account type is not supported: {0} (only cash-like accounts can fund)",
     "currency-mismatch": "funding account currency ({0}) does not match the transaction currency ({1})"
+  },
+  "purchase": {
+    "category-not-found": "purchase line category does not exist or has been deleted: {0}"
   },
   "refund": {
     "source-required": "refund must reference the original expense transaction",

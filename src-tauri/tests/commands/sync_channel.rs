@@ -112,6 +112,7 @@ pub(crate) fn expense_input(account_id: &str, amount_cents: i64, note: &str) -> 
         idempotency_key: None,
         origin: None,
         fx_rate: None,
+        purchases: Vec::new(),
     }
 }
 
@@ -529,6 +530,7 @@ fn deliver_unreplayable_op_blocking(config: &SyncChannelConfig) {
                 source_order_no: None,
                 note: Some("引用不存在账户".into()),
                 date: "2026-02-01".into(),
+                purchases: Vec::new(),
             },
             investment: None,
             split: None,

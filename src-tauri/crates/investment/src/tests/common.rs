@@ -122,6 +122,7 @@ pub(super) fn make_buy_input(
         idempotency_key: None,
         origin: None,
         fx_rate: None,
+        purchases: Vec::new(),
     }
 }
 
@@ -159,6 +160,7 @@ pub(super) fn make_sell_input(
         idempotency_key: None,
         origin: None,
         fx_rate: None,
+        purchases: Vec::new(),
     }
 }
 
@@ -203,6 +205,7 @@ pub(super) fn make_convert_input(
         idempotency_key: None,
         origin: None,
         fx_rate: None,
+        purchases: Vec::new(),
     }
 }
 
@@ -240,6 +243,7 @@ pub(super) fn make_split_input(
         idempotency_key: None,
         origin: None,
         fx_rate: None,
+        purchases: Vec::new(),
     }
 }
 
@@ -297,6 +301,7 @@ pub(super) fn make_dividend_input_on(
         idempotency_key: None,
         origin: None,
         fx_rate: None,
+        purchases: Vec::new(),
     }
 }
 
@@ -336,5 +341,6 @@ pub(super) fn make_trade_input(
         idempotency_key: None,
         origin: None,
         fx_rate: None,
+        purchases: Vec::new(),
     }
 }

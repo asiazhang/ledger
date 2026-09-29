@@ -908,6 +908,7 @@ fn get_transaction_trade_rejects_missing_or_non_trade_transaction() {
             idempotency_key: None,
             origin: None,
             fx_rate: None,
+            purchases: Vec::new(),
         },
     )
     .unwrap()

@@ -203,6 +203,7 @@ fn peer_delivers_unreplayable_op(world: &mut LedgerWorld) {
                 source_order_no: None,
                 note: Some("引用不存在账户".into()),
                 date: "2026-02-01".into(),
+                purchases: Vec::new(),
             },
             investment: None,
             split: None,

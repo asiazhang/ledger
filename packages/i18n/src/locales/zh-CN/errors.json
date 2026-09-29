@@ -109,6 +109,10 @@
     "funding-sum-mismatch": "出资分解合计（{0}）与交易金额（{1}）不一致",
     "funding-amount-positive": "出资项金额必须大于 0",
     "funding-label-too-long": "扣款标签长度不能超过 50 字",
+    "purchase-item-unsupported": "交易类型 {0} 不能携带购买项",
+    "purchase-name-required": "购买项名称不能为空",
+    "purchase-quantity-positive": "购买项件数必须大于 0",
+    "purchase-price-negative": "购买项单价不能为负数",
     "origin-unsupported": "交易类型 {0} 不能携带证券来源口径",
     "convert-fields-missing": "该转换操作缺少同步所需的转换字段（产生自较早版本），无法在本机重放；请在来源设备上删除并重新录入该转换后再次同步",
     "convert-carried-cost-mismatch": "转换结转成本校验不一致（源端 {0}，本机重建 {1}，行金额 {2}），已挂起等待处理",
@@ -129,6 +133,9 @@
     "account-not-found": "出资账户不存在或已删除: {0}",
     "account-type-unsupported": "出资账户类型不支持: {0}（仅现金类账户可作出资账户）",
     "currency-mismatch": "出资账户币种（{0}）与交易币种（{1}）不一致"
+  },
+  "purchase": {
+    "category-not-found": "购买项分类不存在或已删除: {0}"
   },
   "refund": {
     "source-required": "退款必须关联原支出交易",

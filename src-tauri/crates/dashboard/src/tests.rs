@@ -43,6 +43,7 @@ fn make_buy_input(account_id: &str, instrument_id: &str, qty: f64, price: i64) -
         idempotency_key: None,
         origin: None,
         fx_rate: None,
+        purchases: Vec::new(),
     }
 }
 

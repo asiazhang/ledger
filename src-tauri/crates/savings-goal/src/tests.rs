@@ -127,6 +127,7 @@ fn transfer(conn: &Connection, from: &str, to: &str, amount_cents: i64) {
             origin: None,
             fx_rate: None,
             idempotency_key: None,
+            purchases: Vec::new(),
         },
     )
     .expect("转账应成功");
@@ -163,6 +164,7 @@ fn spend(conn: &Connection, account_id: &str, amount_cents: i64) {
             origin: None,
             fx_rate: None,
             idempotency_key: None,
+            purchases: Vec::new(),
         },
     )
     .expect("支出应成功");
