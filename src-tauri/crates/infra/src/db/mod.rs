@@ -37,15 +37,16 @@ pub use job_gate::LockOutcome;
 // 接线证明的观察点：仅测试构建可见（生产接线由源码扫描守门核对，issue #1410）。
 #[cfg(test)]
 pub(crate) use facade_handles::facade_installed;
-pub use migrate::{init_db, schema_version};
+// migrations / SYNC_SPLIT_USER_VERSION：迁移链与世界边界版本的单点。pub 语义
+// 边界见 migrate::migrations 文档——生产路径只经 init_db；测试侧构造历史世界
+// （拆库前形态）经本入口停版。
+pub use connection::SYNC_SPLIT_USER_VERSION;
+pub use migrate::{init_db, migrations, schema_version};
 pub use runtime::{
     AfterCommitHook, DbState, LOCK_HOLD_PROBE_THRESHOLD, register_after_commit_hook,
     replace_read_conn_slot, run_db, write_locked,
 };
 pub use runtime::{probe_lock_hold, probe_lock_hold_within, register_lock_hold_budget};
-
-// 迁移集合保持 crate 内可见面（tests 与 schema_guard 经此消费，非公开 API）。
-pub(crate) use migrate::migrations;
 
 // 时间与身份工厂现住顶层 [`crate::ids`]（issue #1128 / ADR-0111 决策 2：
 // 非数据库关切，文件工具等原语引用不穿透 db）；既有 `crate::db::…` 调用点

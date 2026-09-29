@@ -14,6 +14,7 @@ use ledger_categories::{
     CategoryInput, create_category, delete_category as delete_category_domain,
 };
 use ledger_currencies::ExchangeRateInput;
+use ledger_infra::db::data_location::DB_FILE_NAME;
 use ledger_infra::db::encryption::{DbFileKind, enable_encryption_for_file, probe_file_kind};
 use ledger_infra::db::{
     DbState, new_uuid, now_iso, open_connection, open_connection_with_passphrase,
@@ -926,7 +927,9 @@ fn given_encrypted_file_lib(
 #[given(expr = "一份含 {int} 条交易的明文库备份")]
 fn given_plaintext_backup(world: &mut LedgerWorld, count: usize) {
     let dir = world.scratch_dir("e2e-bak-plain");
-    let db_path = dir.join("plain.db");
+    // 规范名 ledger.db：建连收尾按主库判别挂载 sync 别名，V036 起迁移引用
+    // attached 侧，非规范名的裸库无挂载、跑不了迁移链。
+    let db_path = dir.join(DB_FILE_NAME);
     {
         let mut conn = open_connection(&db_path).unwrap();
         ledger_infra::db::init_db(&mut conn).unwrap();
@@ -954,9 +957,9 @@ fn write_legacy_plaintext_backup(world: &mut LedgerWorld) {
         .expect("尚未自动备份（无受管目录）");
     // 明文空库产物（schema 迁移后 0 条交易）：住自己的暂存目录（issue #1645，
     // 原先落在受管目录的兄弟位——guard 化后那是 /tmp 根，会散落残留）。
-    let plain_db = world
-        .scratch_dir("e2e-backup-legacy")
-        .join(format!("legacy-{}.db", new_uuid()));
+    // 规范名 ledger.db（同 given_plaintext_backup 的挂载判别理由）；目录本身
+    // 每次调用唯一，无需名字再去重。
+    let plain_db = world.scratch_dir("e2e-backup-legacy").join(DB_FILE_NAME);
     {
         let mut conn = open_connection(&plain_db).unwrap();
         ledger_infra::db::init_db(&mut conn).unwrap();

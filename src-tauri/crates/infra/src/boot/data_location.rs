@@ -23,6 +23,7 @@ use super::book_registry::{
 use super::encryption::{DbFileKind, probe_file_kind};
 use crate::db::{
     check_integrity, open_connection_unmounted, open_connection_with_passphrase_unmounted,
+    sync_db_path,
 };
 use crate::error::{AppError, Result};
 use crate::fs_util::{atomic_write, cleanup, replace_file, temp_sibling};
@@ -298,10 +299,17 @@ fn ensure_target_dir(target: &Path) -> std::result::Result<(), String> {
         .map_err(|e| format!("目标目录不可用（无法创建 {}）：{e}", target.display()))
 }
 
-/// 用 `VACUUM INTO` 把源库完整复制到目标：先写唯一临时名，校验完整后再替换启用
-/// （复用备份功能的既有机制）。源库只读不写，任何失败都清理临时文件。
+/// 用 `VACUUM INTO` 把源世界完整复制到目标：先写唯一临时名，校验完整后再替换
+/// 启用（复用备份功能的既有机制）。源库只读不写，任何失败都清理临时文件。
 /// `passphrase`：源库为密文库时必须携带主口令（带口令打开的连接执行
 /// `VACUUM INTO`，产物继承源库加密与密钥，ADR-0075 决策 7）；明文库传 `None`。
+///
+/// **双库成对搬迁**（ADR-0139 决策 1「与主库同目录」的直接后果，issue #1871）：
+/// 源目录存在 sync.db 时一并 `VACUUM INTO` 搬迁——设备身份、OpLog 与位点是
+/// 账本世界的组成部分，搬迁丢下它即丢同步历史；sync.db 缺席（拆库前世界）
+/// 跳过，补建与搬迁由目标位置首次建连的挂载与迁移链完成。落位次序 sync 先、
+/// main 后：main 落位即提交点，落位后的世界双库齐备；sync 落位后中断则目标
+/// 仍无 main，重试整段重跑收敛（源库原样保留，分支判据只看 main）。
 fn relocate(
     source_db: &Path,
     target_db: &Path,
@@ -319,6 +327,11 @@ fn relocate(
     let source = open_by_key(source_db)
         .map_err(|e| format!("原库无法打开（{}）：{e}", source_db.display()))?;
     let tmp_db = temp_sibling(target_db, "relocate");
+    // sync 侧直接以文件为对象搬迁（同一推导点定路径，与挂载/转换/重置同源）。
+    let source_sync = sync_db_path(source_db);
+    let target_sync = sync_db_path(target_db);
+    let tmp_sync = temp_sibling(&target_sync, "relocate");
+    let carries_sync = source_sync.exists();
 
     let result = (|| -> std::result::Result<(), String> {
         source
@@ -328,6 +341,20 @@ fn relocate(
         // （带口令搬迁）凭同一口令验证。
         let check = open_by_key(&tmp_db).map_err(|e| format!("搬迁临时库无法打开：{e}"))?;
         check_integrity(&check).map_err(|e| format!("搬迁临时库完整性检查失败：{e}"))?;
+        if carries_sync {
+            let sync_source = open_by_key(&source_sync)
+                .map_err(|e| format!("同步元数据库无法打开（{}）：{e}", source_sync.display()))?;
+            sync_source
+                .execute("VACUUM INTO ?1", params![tmp_sync.to_string_lossy()])
+                .map_err(|e| format!("同步元数据搬迁失败（VACUUM INTO）：{e}"))?;
+            let check_sync =
+                open_by_key(&tmp_sync).map_err(|e| format!("同步元数据搬迁临时库无法打开：{e}"))?;
+            check_integrity(&check_sync)
+                .map_err(|e| format!("同步元数据搬迁临时库完整性检查失败：{e}"))?;
+            // sync 先落位、main 后落位（提交点）：落位中断的世界由整段重跑收敛。
+            replace_file(&tmp_sync, &target_sync)
+                .map_err(|e| format!("同步元数据搬迁临时库替换启用失败：{e}"))?;
+        }
         replace_file(&tmp_db, target_db).map_err(|e| format!("搬迁临时库替换启用失败：{e}"))?;
         Ok(())
     })();
@@ -335,6 +362,7 @@ fn relocate(
     if let Err(reason) = result {
         // 临时文件用后即清（成功时已被 rename 走，cleanup 容忍不存在）。
         cleanup(&tmp_db);
+        cleanup(&tmp_sync);
         return Err(reason);
     }
     Ok(())

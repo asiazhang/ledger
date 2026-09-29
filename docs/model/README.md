@@ -24,7 +24,7 @@ Ledger 采用 SQLite 作为本地数据库，面向**多设备同步的离线优
 
 ## 实体关系总览
 
-> 实体清单、字段与外键的逐列 ON DELETE 语义以 migration 为唯一事实来源（三类动作的分工见上方「外键约定」）；以下三图只呈现领域结构与关系基数。`v_holdings` 为视图（聚合 security_lots 计算市值与未实现盈亏），不作为实体；`app_settings` 为无外键的 KV 表，不进图，经领域命令读写（ADR-0017）；`sync_device` / `sync_ops` / `sync_parked_ops` / `sync_stream_positions` 为多端同步元数据（设备标识、逻辑时钟、操作日志、挂起队列、各来源流已应用位点），不进图（issue #855 / #856 / #857 / ADR-0091）。
+> 实体清单、字段与外键的逐列 ON DELETE 语义以 migration 为唯一事实来源（三类动作的分工见上方「外键约定」）；以下三图只呈现领域结构与关系基数。`v_holdings` 为视图（聚合 security_lots 计算市值与未实现盈亏），不作为实体；`app_settings` 为无外键的 KV 表，不进图，经领域命令读写（ADR-0017）；`sync_device` / `sync_ops` / `sync_parked_ops` / `sync_stream_positions` 为多端同步元数据（设备标识、逻辑时钟、操作日志、挂起队列、各来源流已应用位点），不进图（issue #855 / #856 / #857 / ADR-0091），且自 V036 起落独立库文件 `sync.db`，经 ATTACH 别名 `sync` 与主库同事务读写（ADR-0139 / #1871）。
 
 **配色图例**：币种（黄）、账户（蓝）、分类（绿）、商户（黄绿）、物品（棕）、交易（红）、预算（青）、汇率（紫）、实物资产与估值历史（赭石）为核心域；投资域用靛蓝（工具）/ 粉（证券扩展）/ 橙（持仓批次）/ 橄榄（卖出匹配）/ 松绿（转换消耗）/ 天蓝（现价）/ 深天蓝（价格历史）/ 深紫（汇率历史）；计划域核心与期次为紫色系，三类扩展表为灰色。同一表在不同图中颜色一致。实体文字颜色跟随主题自适应，未手动覆盖。
 
@@ -171,6 +171,6 @@ erDiagram
 | `V032__goals.sql` | goals 储蓄目标表（目标金额 + 可选截止日 + 状态 + 手填计划月存 + 专属账户 1:1 绑定，spec #1750 / ADR-0133） |
 | `V033__security_transaction_to_instrument_index.sql` | security_transactions 转入腿索引（to_instrument_id）——首笔持仓流水日两臂各走索引 seek、查询侧 INDEXED BY 钉定（计划由 SQL 确定，索引缺失即 prepare 报错），逐标的全扫退役（#1804） |
 | `V034__transaction_fundings.sql` | 出资项子表（transaction_fundings：交易引用 + 顺序位 + 账户 + 金额 + 扣款标签，子行随主行存亡、存量行零迁移）+ transactions 表重建放宽 account_id NOT NULL（分解行主列落 NULL，账户口径由子行承载；SQLite 12 步重建规程，`init_db` 迁移期外键关闭）（#1860 / ADR-0138）；未发布窗口就地扩补**购买项子表** transaction_purchases（交易引用 + 顺序位 + 名称 + 件数 + 分类引用 + 可空单价，子行随主行存亡、存量行零迁移，仅 expense 可带）（#1882 / ADR-0138 决策 9/10） |
-
 | `V035__transaction_source_order_no.sql` | transactions 来源订单号可空列（来源元数据、不限 kind，订单徽章与订单区的行级归属锚点）+ 同单行集部分覆盖索引；存量行零迁移（#1862 / ADR-0138 决策 9） |
+| `V036__sync_db_split.sql` | 同步元数据拆库——四表闭集（sync_device / sync_ops / sync_parked_ops / sync_stream_positions）以最终形态在 attached 侧（`sync.` 限定名）建表，逐表 INSERT…SELECT 搬数（源 `main.` 显式限定）后 DROP 主库同名表；整批待跑迁移包在单一事务里，非 WAL 下经 master journal 跨两库集合级原子，中断整体回滚、重启重跑收敛；IF NOT EXISTS 复用 attached 既有空表（旧单文件快照跨版本引导的续完臂，票 07）；app_settings 同步相关键与业务主表同步审计列留守主库，不属搬迁对象（ADR-0139 决策 1/4）（#1871 / ADR-0139） |
 > 迁移版本由 SQLite `user_version` 自动追踪，新迁移在数据库模块统一注册。V005（FTS5 搜索索引）已随统一模糊搜索方案移除（ADR-0027），编号不复用。新增 schema 变更时新建 `V00X__名称.sql` 并在注册处追加；已发布迁移的就地修改与 BREAKING 标记要求见 AGENTS.md 发布约定。

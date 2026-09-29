@@ -26,6 +26,13 @@ pub const SYNC_DB_FILE_NAME: &str = "sync.db";
 /// 不静默降级；损坏 / 口令错误 / 形态错配 / 不可开共用此码，原因进 params）。
 pub const SYNC_MOUNT_FAILED: &str = "db.sync-mount-failed";
 
+/// 拆库边界版本（迁移链位置版本，V036 拆库迁移的 user_version 值）：
+/// `user_version >= 本值` 即四表已迁入 attached 侧的世界。迁移注册表按位置
+/// 计版本（V005 缺位不回填），V036 是第 35 项，故拆库世界自 35 起。
+/// 写侧挂载对 sync.db 缺失的裁决以此为准（缺失在拆库世界 = 元数据丢失，
+/// 报码化错误；此前世界 = 尚未拆库，自动补建后由 V036 搬迁）。
+pub const SYNC_SPLIT_USER_VERSION: i64 = 35;
+
 /// 主库路径 → 同目录同步元数据库路径（转换配对 / 重置移位 / 恢复移位 / 挂载
 /// 共用的单一推导点，ADR-0139 决策 1「与主库同目录」）。
 pub fn sync_db_path(main_db_path: &Path) -> std::path::PathBuf {
@@ -33,7 +40,7 @@ pub fn sync_db_path(main_db_path: &Path) -> std::path::PathBuf {
 }
 
 /// 同步元数据四表闭集（ADR-0139 决策 1；表 DDL 权威在迁移链 V020/V021/V022，
-/// 票 05 / V034 迁移后四表以同名同形迁入 attached 侧）。生产侧唯一清单：
+/// V036 迁移后四表以同名同形迁入 attached 侧）。生产侧唯一清单：
 /// 判据函数与同步件四表重建（多端同步域）均经本清单，不再各自复制。
 pub const SYNC_TABLES: [&str; 4] = [
     "sync_device",
@@ -41,7 +48,6 @@ pub const SYNC_TABLES: [&str; 4] = [
     "sync_parked_ops",
     "sync_stream_positions",
 ];
-
 /// 同步四表的双源回退判据（ADR-0139 拆库 expand 期判据，票 04 引入、票 06 删
 /// 除）：attached `sync` 侧在位且四表闭集齐备 → 同步元数据归 attached；否则
 ///（连接未挂载、或票 05 迁移前四表仍在 main）回退 main。checkpoint 产出段
@@ -285,12 +291,15 @@ pub(crate) fn sql_string_literal(value: &str) -> String {
 /// 收尾管辖）不挂载，避免对临时目录旁挂出 sync.db、对同目录真实 sync.db
 /// 误挂或以错配口令触碰。
 ///
-/// **expand 期文件策略**（本票不搬数据，票 05 / V036 迁移前四张同步表仍在
-/// 主库，unqualified 表名解析优先 main，生产行为零变化）：
-/// - 写侧文件缺失 → 自动创建空库（双库布局自此成形；V036 落地后「缺失」
-///   须改判码化错误——彼时 sync.db 缺失即设备身份丢失，由票 05 翻转此策略）；
-/// - 只读侧文件缺失 → 跳过挂载：expand 之前的世界没有 sync.db，跨账本只读
-///   聚合等只读开启不得因它失败；活动账本写连接已在同目录补建，成对不变。
+/// **文件缺失裁决**（ADR-0139 决策 3「不静默降级」+ spec 用户故事 17；
+/// issue #1869 expand 期策略在 V036 落地的翻转）：
+/// - 写侧文件缺失、主库已处拆库世界（`user_version ≥` [`SYNC_SPLIT_USER_VERSION`]，
+///   四表已迁入 attached 侧）→ sync.db 缺失即设备身份、日志与位点丢失，报码化
+///   错误 [`SYNC_MOUNT_FAILED`]，不静默补建空库冒充完好世界；
+/// - 写侧文件缺失、拆库前世界（全新安装 / V036 前存量库升级 / 旧形态备份恢复）
+///   → 自动补建空库，随后由 V036 迁移把四表搬入（ADR-0139 决策 4 单链双库）；
+/// - 只读侧文件缺失 → 跳过挂载：成对开启下写侧已先裁决；生命周期只读场景
+///   （跨账本只读聚合等）不得因无 sync.db 失败。
 ///
 /// 挂载失败（损坏、口令错、形态错配、不可开）报码化错误
 /// [`SYNC_MOUNT_FAILED`]，不静默降级（ADR-0139 决策 3；spec 用户故事 17）。
@@ -304,8 +313,24 @@ fn attach_sync_db(
         return Ok(());
     }
     let sync_path = sync_db_path(main_db_path);
-    if readonly_side && !sync_path.exists() {
-        return Ok(());
+    if !sync_path.exists() {
+        if readonly_side {
+            return Ok(());
+        }
+        // 主库版本读取失败（口令错误 / 损坏在首条读语句暴露）按挂载失败同口径
+        // 上抛：缺失裁决依赖版本事实，事实不可得即不裁决、不带病补建。
+        let main_version: i64 = conn
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .map_err(|e| mount_failed_error(&e, passphrase))?;
+        if main_version >= SYNC_SPLIT_USER_VERSION {
+            let reason = "sync.db 文件缺失";
+            return Err(AppError::codedp(
+                SYNC_MOUNT_FAILED,
+                format!("同步元数据库挂载失败: {reason}"),
+                &[reason],
+            ));
+        }
+        // 拆库前世界：自动补建（ATTACH 对缺失文件即建空库）。
     }
     let key_clause = passphrase
         .map(|pass| format!(" KEY {}", sql_string_literal(pass)))
@@ -422,9 +447,15 @@ fn finish_open(
 }
 
 /// 打开内存数据库连接并启用外键约束（用于测试和 BDD 集成测试）。
-/// 与文件库路径共用建连收尾单点（外键、耗时 hook）。
+/// 与文件库路径共用建连收尾单点（外键、耗时 hook），并成对挂载同步元数据库
+///（V036 拆库后内存世界与文件世界同构：attached 侧以 `:memory:` 承载，
+/// 随连接存活，迁移链 V036 在其上建四表；跨库集合级原子性以文件库承载——
+/// 内存库无 master journal 保证，ADR-0139 决策 2，文件库模板见
+/// `test_support::open_file_scratch`）。
 pub fn open_in_memory() -> Result<Connection> {
-    finish_open(Connection::open_in_memory()?, None, None)
+    let conn = finish_open(Connection::open_in_memory()?, None, None)?;
+    conn.execute_batch("ATTACH DATABASE ':memory:' AS sync")?;
+    Ok(conn)
 }
 /// 打开已完成 schema 迁移的内存库（统一测试数据库工厂的快速建库形态，
 /// spec #1086 / issue #1514）。
@@ -453,12 +484,22 @@ pub fn open_in_memory_initialized() -> Result<Connection> {
     // 而模板要在进程内跨测试线程共享，故取一次拷贝（实测产物约 0.6MB，一次性）。
     // 缓存 `Result` 而非仅在成功时落值：本函数返回 `Result`，不得用 `expect` 把
     // 失败升级为 panic（ADR-0060 门禁辖生产文件），失败面按 `Err` 原样回传。
-    static TEMPLATE: OnceLock<std::result::Result<Vec<u8>, String>> = OnceLock::new();
-    fn derive_template() -> std::result::Result<Vec<u8>, String> {
+    static TEMPLATE: OnceLock<std::result::Result<TemplateBlob, String>> = OnceLock::new();
+    /// 双库模板产物（V036 拆库后迁移产物跨 main 与 attached sync 两侧，
+    /// 序列化按库各自定格、还原按侧各归其位）。
+    struct TemplateBlob {
+        main: Vec<u8>,
+        sync: Vec<u8>,
+    }
+    fn derive_template() -> std::result::Result<TemplateBlob, String> {
         let mut conn = open_in_memory().map_err(|e| e.to_string())?;
         init_db(&mut conn).map_err(|e| e.to_string())?;
-        let blob = conn.serialize("main").map_err(|e| e.to_string())?;
-        Ok(blob.to_vec())
+        let main = conn.serialize("main").map_err(|e| e.to_string())?;
+        let sync = conn.serialize("sync").map_err(|e| e.to_string())?;
+        Ok(TemplateBlob {
+            main: main.to_vec(),
+            sync: sync.to_vec(),
+        })
     }
     let template = TEMPLATE.get_or_init(derive_template);
     let Ok(template) = template.as_ref() else {
@@ -472,6 +513,7 @@ pub fn open_in_memory_initialized() -> Result<Connection> {
         ));
     };
     let mut conn = open_in_memory()?;
-    conn.deserialize_read_exact("main", template.as_slice(), template.len(), false)?;
+    conn.deserialize_read_exact("main", template.main.as_slice(), template.main.len(), false)?;
+    conn.deserialize_read_exact("sync", template.sync.as_slice(), template.sync.len(), false)?;
     Ok(conn)
 }

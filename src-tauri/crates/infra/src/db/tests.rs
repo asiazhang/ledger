@@ -30,4 +30,5 @@ mod perf;
 mod readonly;
 mod run_db;
 mod schema_guard;
+mod sync_split;
 mod tx_scope;

@@ -66,9 +66,10 @@ fn init_db_is_idempotent_and_seeds_defaults() {
     assert_eq!(mismatched, 0);
 }
 
-/// 当前迁移序列长度（V001–V035，V005 移除不回填，共 34 条）；新增迁移时随
-/// `migrations()` 同步更新。钉住「从零迁移到最新」的完整性基线。
-const LATEST_SCHEMA_VERSION: usize = 34;
+/// 当前迁移序列长度（V001–V036，V005 移除不回填，共 35 条）；新增迁移时随
+/// `migrations()` 同步更新。钉住「从零迁移到最新」的完整性基线，同时钉住
+/// 拆库边界（V036 = 35，`SYNC_SPLIT_USER_VERSION` 的位置版本依据）。
+const LATEST_SCHEMA_VERSION: usize = 35;
 
 /// 从零迁移完整性（内存库从零 → 最新）：user_version 停在最新、全库完整性
 /// 检查通过、每条迁移的签名表/列在场。漏跑或中途失败的迁移批次会停在半途
@@ -112,10 +113,6 @@ fn migration_from_zero_reaches_latest_completely() {
         "security_lot_adjustments",
         "account_balance_cache",
         "net_worth_cache",
-        "sync_device",
-        "sync_ops",
-        "sync_parked_ops",
-        "sync_stream_positions",
         "goals",
         // V034（issue #1860 / ADR-0138）：出资项子表。
         "transaction_fundings",
@@ -132,6 +129,32 @@ fn migration_from_zero_reaches_latest_completely() {
         assert_eq!(hit, 1, "签名表 {table} 应存在");
     }
 
+    // 签名表（V036 拆库，ADR-0139 决策 1）：四张同步表住 attached 侧、主库
+    // 不留任何同名表——从零安装直达双库布局的完整性锚。
+    for table in [
+        "sync_device",
+        "sync_ops",
+        "sync_parked_ops",
+        "sync_stream_positions",
+    ] {
+        let attached: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sync.sqlite_master WHERE type='table' AND name=?1",
+                params![table],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(attached, 1, "签名表 {table} 应迁入 attached 侧");
+        let main_hit: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM main.sqlite_master WHERE type='table' AND name=?1",
+                params![table],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(main_hit, 0, "签名表 {table} 不应留在主库");
+    }
+
     // 签名列：每条加列迁移的代表列。merchant_id 即 2026-09-08 事故列（就地
     // 修改 V001 引入、无前向迁移补列，历史残留 schema 迁移到 V018 必炸，
     // 由启动失败恢复屏接管）——从零路径在此钉住。
@@ -142,8 +165,9 @@ fn migration_from_zero_reaches_latest_completely() {
         ("transactions", "funding_account_id"),
         ("instruments", "source"),
         ("subscription_plans", "policy_id"),
-        // V021 就地修改（issue #957）：挂起原因的插值参数列。
-        ("sync_parked_ops", "park_params"),
+        // V021 就地修改（issue #957）：挂起原因的插值参数列（V036 起表住
+        // attached 侧，schema 限定取列）。
+        ("sync.sync_parked_ops", "park_params"),
         // V002 就地修改（issue #977）：基金转换的转入腿列（同批另增 to_quantity /
         // out_amount_cents / in_amount_cents 与转出消耗表，形状锁见 convert 专测）。
         ("security_transactions", "to_instrument_id"),
@@ -165,10 +189,16 @@ fn migration_from_zero_reaches_latest_completely() {
         ("transaction_purchases", "category_id"),
         ("transaction_purchases", "unit_price_cents"),
     ] {
+        // 表键允许 schema 限定（V036 拆库后 sync 侧表以「sync.表名」标注侧别，
+        // pragma 表值函数按侧限定取列）。
+        let (schema, table_name) = match table.split_once('.') {
+            Some((s, t)) => (s, t),
+            None => ("main", table),
+        };
         let hit: i64 = conn
             .query_row(
-                "SELECT COUNT(*) FROM pragma_table_info(?1) WHERE name=?2",
-                params![table, column],
+                &format!("SELECT COUNT(*) FROM {schema}.pragma_table_info(?1) WHERE name=?2"),
+                params![table_name, column],
                 |r| r.get(0),
             )
             .unwrap();

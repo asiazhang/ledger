@@ -1,19 +1,22 @@
 //! 同步元数据库挂载（issue #1869 / ADR-0139 决策 3/4）：建连收尾单点把
-//! `sync.db` ATTACH 为 `sync`——写侧文件缺失自动建空库、读侧只读形态挂载
-//! （写被拒）、密文形态同主口令 KEY 注入、损坏/形态错配码化报错不静默降级、
-//! 挂载先于迁移 runner（ATTACH 不能在事务内执行，决策 4 的迁移事务外挂载
-//! 机制）。本票不搬数据：四张同步表仍在主库，attached 侧恒为空库，
-//! unqualified 表名解析优先 main——生产行为零变化。
+//! `sync.db` ATTACH 为 `sync`——读侧只读形态挂载（写被拒）、密文形态同主口令
+//! KEY 注入、损坏/形态错配码化报错不静默降级、挂载先于迁移 runner（ATTACH
+//! 不能在事务内执行，决策 4 的迁移事务外挂载机制）。V036 拆库后（issue
+//! #1871）：四张同步表住 attached 侧，写侧文件缺失按世界版本裁决——拆库世界
+//! 缺失即元数据丢失报码化错误、拆库前世界自动补建后由 V036 搬迁；
+//! unqualified 表名解析优先 main 只在两侧同名并存的搬迁窗口内成立。
 //!
 //! 文件库不入测试工厂（ADR-0084 决策 3）：建库经产品建缝 `open_connection*`
 //! 系（挂载接线即在其中），迁移经产品迁移缝 `migrations().to_latest`（readonly/boot tests
-//! 先例；测试侧不直呼 `init_db`，ADR-0084 守门纪律）。
+//! 先例；测试侧不直呼 `init_db`，ADR-0084 守门纪律）。别名名下的非 ledger.db
+//! 夹具连接不触发挂载，跑迁移链前需自行 `ATTACH ':memory:' AS sync`（内存
+//! 世界成对挂载，与产品 `open_in_memory` 同形）。
 
 use std::io::Read;
 
 use tauri_app_lib::test_support::ScratchDir;
 
-use crate::db::connection::{DB_FILE_NAME, SYNC_DB_FILE_NAME};
+use crate::db::connection::{DB_FILE_NAME, SYNC_DB_FILE_NAME, SYNC_TABLES};
 use crate::db::encryption::SQLITE_HEADER_MAGIC;
 use crate::db::{
     migrations, open_connection, open_connection_in, open_connection_readonly_in,
@@ -54,10 +57,11 @@ fn read_header(db: &std::path::Path) -> [u8; 16] {
     header
 }
 
-/// 写侧建连挂载 sync.db：文件缺失时自动创建空库，attached 侧无用户表
-/// （本票不搬数据，四张同步表仍在主库）。
+/// 写侧建连挂载 sync.db：文件缺失时自动创建空库；全新安装的迁移链在此世界
+/// 直达双库布局——四张同步表恰以闭集落 attached 侧、主库无任何同步表
+/// （V036 拆库，ADR-0139 决策 1/4；验收「全新安装直接得到双库布局」）。
 #[test]
-fn write_side_mount_creates_empty_sync_db() {
+fn fresh_install_lands_dual_layout_four_tables_in_attached() {
     let dir = temp_dir("write-create");
     let conn = open_connection_in(dir.path()).expect("建连");
 
@@ -67,24 +71,29 @@ fn write_side_mount_creates_empty_sync_db() {
         "写连接应挂载 sync：实际 {aliases:?}"
     );
     let sync_path = dir.path().join(SYNC_DB_FILE_NAME);
-    assert!(sync_path.exists(), "挂载应创建 sync.db 空库文件");
+    assert!(sync_path.exists(), "挂载应创建 sync.db 文件");
     let tables = attached_tables(&conn, "sync");
     // 迁移链尾部的裸 ANALYZE（V016/V025/V030/V031）作用于连接上全部 attached
     // 库，会在 attached 侧产出 sqlite_stat1/4（SQLite 内部统计表，无用户语义；
-    // schema_guard 对 sqlite_% 的豁免先例同源）。断言收口为「无用户表」。
-    assert!(
-        tables.iter().all(|t| t.starts_with("sqlite_")),
-        "attached 侧应无用户表（四张同步表仍在主库）：实际 {tables:?}"
+    // schema_guard 对 sqlite_% 的豁免先例同源）。用户表恰为四表闭集。
+    let user_tables: Vec<_> = tables
+        .iter()
+        .filter(|t| !t.starts_with("sqlite_"))
+        .collect();
+    assert_eq!(
+        user_tables.len(),
+        SYNC_TABLES.len(),
+        "attached 侧用户表应恰为四表闭集：实际 {tables:?}"
     );
-    for table in [
-        "sync_device",
-        "sync_ops",
-        "sync_parked_ops",
-        "sync_stream_positions",
-    ] {
+    let main_tables = attached_tables(&conn, "main");
+    for table in SYNC_TABLES {
         assert!(
-            !tables.iter().any(|t| t == table),
-            "同步表 {table} 不应出现在 attached 侧"
+            tables.iter().any(|t| t == table),
+            "同步表 {table} 应在 attached 侧"
+        );
+        assert!(
+            !main_tables.iter().any(|t| t == table),
+            "同步表 {table} 不应留在主库"
         );
     }
 }
@@ -208,6 +217,8 @@ fn readonly_side_tolerates_missing_sync_db() {
     let seed_path = dir.path().join("seed.db");
     {
         let mut conn = open_connection(&seed_path).expect("别名建库（不触发挂载）");
+        conn.execute_batch("ATTACH DATABASE ':memory:' AS sync")
+            .expect("内存世界成对挂载（别名夹具不触发挂载接线）");
         migrations().to_latest(&mut conn).expect("迁移");
         drop(conn);
         std::fs::rename(&seed_path, dir.path().join(DB_FILE_NAME)).expect("归位主库文件名");
@@ -325,6 +336,8 @@ fn reset_db_file_moves_stale_sync_db_aside() {
     let seed_path = dir.path().join("seed.db");
     {
         let mut conn = open_connection(&seed_path).expect("别名建库");
+        conn.execute_batch("ATTACH DATABASE ':memory:' AS sync")
+            .expect("内存世界成对挂载（别名夹具不触发挂载接线）");
         migrations().to_latest(&mut conn).expect("迁移");
         drop(conn);
         std::fs::rename(&seed_path, dir.path().join(DB_FILE_NAME)).expect("归位主库文件名");

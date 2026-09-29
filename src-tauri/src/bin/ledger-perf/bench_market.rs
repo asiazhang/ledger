@@ -65,8 +65,8 @@ use std::time::Instant;
 use chrono::{Datelike, Days, NaiveDate};
 use rusqlite::Connection;
 
+use ledger_infra::db::now_iso;
 use ledger_infra::db::tx_scope::ensure_transaction;
-use ledger_infra::db::{now_iso, open_connection};
 use ledger_investment::prices::{
     MarketPriceWrite, SINA_PRICE_SOURCE, TENCENT_PRICE_SOURCE, upsert_market_price,
     upsert_price_history,
@@ -454,7 +454,7 @@ pub(crate) fn run_benchmark(
     let guard = SnapshotPaths::create(source_db, "bench-market")?;
     // 探测在工作库上做（快照的副本，探测的读路径与正式迭代完全一致）。
     let probe = {
-        let conn = open_connection(&guard.work).map_err(|e| e.to_string())?;
+        let conn = super::snapshot::open_paired(&guard.work).map_err(|e| e.to_string())?;
         let probe = probe_market_dataset(&conn)?;
         drop(conn);
         probe
@@ -482,7 +482,7 @@ fn run_cell(
     let mut durations = Vec::with_capacity(cfg.iterations);
     for iteration in 0..(cfg.warmup + cfg.iterations) {
         restore_from_snapshot(&guard.snapshot, &guard.work)?;
-        let conn = open_connection(&guard.work).map_err(|e| e.to_string())?;
+        let conn = super::snapshot::open_paired(&guard.work).map_err(|e| e.to_string())?;
         // 点流每次迭代重新生成（纯函数、确定性，量测窗口外）；计划按标的
         // 分组，组序即落库序（集中单组、均匀按池序）。
         let plan = generate_price_plan(points, &probe.pool, spread, probe.anchor_monday);

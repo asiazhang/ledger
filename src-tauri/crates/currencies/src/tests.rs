@@ -93,7 +93,7 @@ fn set_base_currency_rejects_unknown_code() {
 fn set_base_currency_op_failure_rolls_back_setting() {
     let conn = setup();
     conn.execute(
-        "CREATE TRIGGER block_sync_ops BEFORE INSERT ON sync_ops \
+        "CREATE TRIGGER sync.block_sync_ops BEFORE INSERT ON sync.sync_ops \
          BEGIN SELECT RAISE(ABORT, '测试注入：op 写失败'); END",
         [],
     )
