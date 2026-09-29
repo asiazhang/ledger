@@ -77,7 +77,7 @@
   - 同键但本轮内容不同 → 仍按同键去重、**跳过并返回已有 id**；改内容请走 `PUT /api/v1/transactions/{id}`（见对账纠错）；
   - 不同键但内容完全相同 → 视为不同交易，都保留。
 - 不带键行回退至 `dedup_hash = sha256(date|kind|amount_cents|currency_code|account_id|to_account_id)` 兜底去重（排除 note/category；携带出资账户时追加入哈希：仅出资账户不同的两笔不互相去重；命中 `duplicate: true` 且 `id: null`）。
-- 每行拆法必须固定不变，否则哈希漂移、去重失效。
+- 每行拆法必须固定不变，否则重跑时幂等键与哈希一齐漂移、去重失效。
 
 ## 对账完成判定
 
