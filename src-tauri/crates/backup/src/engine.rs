@@ -524,14 +524,10 @@ pub fn backup_db_to(
             "VACUUM INTO ?1",
             rusqlite::params![tmp_db.to_string_lossy()],
         )?;
-        // 同步元数据件：同步四表所在库的同刻快照（双源回退，`VACUUM <schema>`
-        // 逐库执行；与业务件同一互斥锁内先后定格，同刻成对）。
+        // 同步元数据件：同步四表所在库的同刻快照（双源回退收口基础设施单点，
+        // `VACUUM <schema>` 逐库执行；与业务件同一互斥锁内先后定格，同刻成对）。
         let paired = db::sync_tables_live_attached(conn);
-        let sync_source = if paired { "sync" } else { "main" };
-        conn.execute(
-            &format!("VACUUM {sync_source} INTO ?1"),
-            rusqlite::params![tmp_sync.to_string_lossy()],
-        )?;
+        db::snapshot_sync_tables_into(conn, &tmp_sync)?;
 
         // 2. 探测产物密文（VACUUM INTO 继承源库加密与密钥，ADR-0075 决策 7：
         //    文件即真相，探测的是实际落盘的快照而非源连接），随元数据落盘。

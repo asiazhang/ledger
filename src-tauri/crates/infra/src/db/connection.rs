@@ -33,8 +33,9 @@ pub fn sync_db_path(main_db_path: &Path) -> std::path::PathBuf {
 }
 
 /// 同步元数据四表闭集（ADR-0139 决策 1；表 DDL 权威在迁移链 V020/V021/V022，
-/// 票 05 / V034 迁移后四表以同名同形迁入 attached 侧）。
-const SYNC_TABLES: [&str; 4] = [
+/// 票 05 / V034 迁移后四表以同名同形迁入 attached 侧）。生产侧唯一清单：
+/// 判据函数与同步件四表重建（多端同步域）均经本清单，不再各自复制。
+pub const SYNC_TABLES: [&str; 4] = [
     "sync_device",
     "sync_ops",
     "sync_parked_ops",
@@ -68,6 +69,28 @@ pub fn sync_tables_live_attached(conn: &Connection) -> bool {
             .unwrap_or(0);
         present > 0
     })
+}
+
+/// 同步元数据件快照（ADR-0139 决策 5/6 的逐库 `VACUUM INTO` 单点，票 04 引入、
+/// 票 06 删除回退）：按 [`sync_tables_live_attached`] 判源——attached 四表齐备
+/// 逐 `VACUUM sync INTO`（真同步元数据），否则回退 `VACUUM main INTO`（票 05
+/// 迁移前四表仍在 main 的 expand 期形态，件内容为 main 的同刻拷贝）。checkpoint
+/// 产出段与备份产出段共用本单点：票 06 删除回退分支后，attached 恒有表，两处
+/// 调用零改动自然切到 attached 分支。
+///
+/// 必须在单连接互斥锁内、非事务路径调用（`VACUUM INTO` 语义约束，与业务件快照
+/// 同刻成对的保证同源）。
+pub fn snapshot_sync_tables_into(conn: &Connection, path: &Path) -> Result<()> {
+    let source = if sync_tables_live_attached(conn) {
+        "sync"
+    } else {
+        "main"
+    };
+    conn.execute(
+        &format!("VACUUM {source} INTO ?1"),
+        rusqlite::params![path.to_string_lossy()],
+    )?;
+    Ok(())
 }
 
 /// 并发容让的 busy_timeout（读路径独立只读连接，issue #1280 / ADR-0117 决策 4；

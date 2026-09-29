@@ -989,3 +989,78 @@ fn paired_backup_missing_sync_entry_fails_loud() {
     let intact = open_connection(&dst_main).unwrap();
     assert_eq!(count_transactions(&intact), 0, "目标世界未被恢复改动");
 }
+
+/// 成对备份的密文形态继承（ADR-0139 决策 3/6）：密文双库世界的产物双件皆密文
+/// （`VACUUM INTO` 继承源库加密与密钥），恢复凭主口令把同步身份一并归位——
+/// 恢复出的世界为密文库，凭同一主口令可开、可挂载。
+#[test]
+fn paired_backup_encrypted_roundtrip_restores_sync_identity() {
+    use ledger_infra::db::encryption::{DbFileKind, enable_encryption_for_file, probe_file_kind};
+
+    let src_dir = ScratchDir::new("backup-test-paired-enc-src");
+    let (main_path, _sync_path) = make_dual_db_world(&src_dir, true);
+    // 主库转密文——#1869 的转换接线两库配对：同目录 sync.db 随主库一并转换
+    // （同口令同密钥，ADR-0139 决策 3），无需单独转换。
+    enable_encryption_for_file(&main_path, "paired-pass").unwrap();
+    let conn = db::open_connection_with_passphrase(&main_path, "paired-pass").unwrap();
+    assert!(
+        db::sync_tables_live_attached(&conn),
+        "前置：密文双库世界挂载就绪"
+    );
+
+    let backup = temp_file("paired-enc-backup");
+    backup_db_to(&conn, &backup, "0.2.0", BackupKind::Manual).unwrap();
+
+    // 产物形态：paired=true，双件皆密文。
+    assert_eq!(read_meta_json(&backup)["paired"], true);
+    for entry in ["ledger.db", "sync.db"] {
+        let extracted = temp_file("paired-enc-entry");
+        {
+            let file = File::open(&backup).unwrap();
+            let mut archive = zip::ZipArchive::new(file).unwrap();
+            let mut zip_entry = archive.by_name(entry).unwrap();
+            let mut out = File::create(extracted.path()).unwrap();
+            std::io::copy(&mut zip_entry, &mut out).unwrap();
+        }
+        assert_eq!(
+            probe_file_kind(extracted.path()).unwrap(),
+            DbFileKind::Encrypted,
+            "{entry} 继承密文形态"
+        );
+    }
+
+    // 恢复到明文新世界（跨形态恢复：恢复出的世界为密文库，issue #572 语义）。
+    let dst_dir = ScratchDir::new("backup-test-paired-enc-dst");
+    let dst_main = dst_dir.join("ledger.db");
+    {
+        let factory = tauri_app_lib::test_support::open();
+        factory
+            .execute("VACUUM INTO ?1", params![dst_main.to_string_lossy()])
+            .unwrap();
+    }
+    let safety_dir = temp_safety_dir();
+    let expected = expected_schema_version().unwrap();
+    restore_db_from(
+        &backup,
+        &dst_main,
+        &safety_dir,
+        expected,
+        Some("paired-pass"),
+    )
+    .unwrap();
+
+    // 同步身份随库归位（密文 sync.db 凭同一主口令打开）。
+    let dst_sync = dst_dir.join("sync.db");
+    assert_eq!(
+        probe_file_kind(&dst_sync).unwrap(),
+        DbFileKind::Encrypted,
+        "sync.db 恢复为密文形态"
+    );
+    let sync = db::open_connection_with_passphrase(&dst_sync, "paired-pass").unwrap();
+    let dev: String = sync
+        .query_row("SELECT id FROM sync_device", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(dev, "dev-src", "设备身份随库回滚（密文形态）");
+    let restored = db::open_connection_with_passphrase(&dst_main, "paired-pass").unwrap();
+    assert_eq!(count_transactions(&restored), 1, "业务行照常恢复");
+}

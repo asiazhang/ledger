@@ -54,15 +54,6 @@ const SNAP_ALIAS: &str = "sync_snap";
 /// 引导期间同步元数据件挂载的 ATTACH 别名（双文件成对，ADR-0139 决策 5）。
 const SNAP_META_ALIAS: &str = "sync_snap_meta";
 
-/// 同步元数据四表闭集（ADR-0139 决策 1）：同步件四表 SQL 级重建的逐表清单；
-/// 双源回退判据经基础设施单点 [`db::sync_tables_live_attached`]（与备份域同源）。
-const SYNC_TABLES: [&str; 4] = [
-    "sync_device",
-    "sync_ops",
-    "sync_parked_ops",
-    "sync_stream_positions",
-];
-
 /// Checkpoint（检查点快照）：全量数据快照 + 各设备 op 流已应用位点。
 ///
 /// `snapshot` 是业务件 SQLite 文件字节（`VACUUM INTO` 产物，继承源库加密形态，
@@ -96,17 +87,10 @@ pub fn create_checkpoint(conn: &Connection) -> Result<Checkpoint> {
             "VACUUM INTO ?1",
             rusqlite::params![snapshot_path.to_string_lossy()],
         )?;
-        // 同步元数据件：同步四表所在库的同刻快照（双源回退，票 04 expand；
-        // 票 05 迁移后 attached 侧恒有表，自然切到 attached 分支，票 06 删除回退）。
-        let source = if db::sync_tables_live_attached(conn) {
-            "sync"
-        } else {
-            "main"
-        };
-        conn.execute(
-            &format!("VACUUM {source} INTO ?1"),
-            rusqlite::params![sync_snapshot_path.to_string_lossy()],
-        )?;
+        // 同步元数据件：同步四表所在库的同刻快照（双源回退收口基础设施单点，
+        // 票 04 expand；票 05 迁移后 attached 侧恒有表，自然切到 attached 分支，
+        // 票 06 删除回退）。
+        db::snapshot_sync_tables_into(conn, &sync_snapshot_path)?;
         Ok(Checkpoint {
             positions: positions::list(conn)?,
             snapshot: std::fs::read(&snapshot_path)?,
@@ -258,7 +242,7 @@ fn consume_sync_snapshot(
 /// 决策 2）。四表闭集无外键（V020 刻意不设）、无生成列，整列拷贝成立。
 fn rebuild_sync_tables_from_snapshot(conn: &Connection) -> Result<()> {
     ensure_transaction(conn, || {
-        for table in SYNC_TABLES {
+        for table in db::SYNC_TABLES {
             conn.execute(&format!("DROP TABLE IF EXISTS sync.{table}"), [])?;
             let ddl: String = conn.query_row(
                 &format!(
@@ -279,7 +263,7 @@ fn rebuild_sync_tables_from_snapshot(conn: &Connection) -> Result<()> {
         }
         // 索引复位（四表的从属索引，按 tbl_name 归属核对、不依赖命名约定；
         // sql IS NULL 的自动索引随表自建，跳过）。
-        let placeholders = SYNC_TABLES
+        let placeholders = db::SYNC_TABLES
             .iter()
             .map(|t| format!("'{t}'"))
             .collect::<Vec<_>>()
