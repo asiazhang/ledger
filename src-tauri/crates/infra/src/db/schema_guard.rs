@@ -91,8 +91,7 @@ fn side_schema(conn: &Connection, db: &str) -> rusqlite::Result<SideSchema> {
     })
 }
 
-/// attached `sync` 别名是否在位（`pragma_database_list`；守卫与
-/// [`super::sync_tables_live_attached`] 的别名核对同源，此处置只关心别名——
+/// attached `sync` 别名是否在位（`pragma_database_list`；守卫只关心别名——
 /// 表级齐备与否是 diff 的结论而非前置）。
 fn sync_alias_attached(conn: &Connection) -> bool {
     conn.query_row(

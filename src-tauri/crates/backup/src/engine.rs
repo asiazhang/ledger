@@ -1,5 +1,5 @@
 //! 备份引擎（ADR-0007 / ADR-0016）：zip 打包（`VACUUM INTO` 双文件成对一致性
-//! 快照——业务件 + 同步元数据件（ADR-0139 决策 6，双源回退判据住基础设施）+
+//! 快照——业务件 + 同步元数据件（ADR-0139 决策 6，逐库 VACUUM 收口住基础设施）+
 //! `backup.json` 元数据）、恢复与恢复前安全备份（恢复按备份形态分支：成对产
 //! 物双库归位，旧形态单文件行为不变）、schema 版本校验（旧→新迁移、新→旧
 //! 拒绝）、受管备份列表与滚动清理（按活动账本分域，ADR-0089 决策 5；无账本
@@ -418,8 +418,9 @@ struct BackupMeta {
     #[serde(default)]
     encrypted: bool,
     /// 双库成对标记（ADR-0139 决策 6，票 04）：true 表示包内 `sync.db` 条目是
-    /// 同步元数据件（恢复按双库成对归位）；缺省 false = 旧形态单文件备份，
-    /// sync 条目（expand 期回退形态）或缺失一律忽略，恢复行为与旧版一致。
+    /// 同步元数据件（恢复按双库成对归位）。产出方拆库后恒写 true（contract，
+    /// #1872：无 main 回退源）；缺省 false = 旧形态单文件备份，sync 条目
+    ///（expand 期回退形态）或缺失一律忽略，恢复行为与旧版一致。
     #[serde(default)]
     paired: bool,
 }
@@ -485,10 +486,8 @@ fn ensure_source_snapshotable(conn: &Connection) -> Result<()> {
 /// `kind` 标记产物来源（自动 / 手动），随元数据落盘供后续识别。
 /// 通过 `VACUUM INTO` 生成一致的库文件快照（双文件成对，ADR-0139 决策 6：
 /// 业务件 + 同步元数据件，单连接互斥锁内逐库快照），不影响正在进行的写入；
-/// 打包完成后原子替换目标文件。同步件按双源回退取源（票 04 expand；票 06
-/// 删除回退）：attached 侧四表齐备逐 attached 快照（真同步元数据，
-/// `paired = true`），否则回退 main——expand 期单库布局的成对形态，件内容
-/// 与业务件同刻同形，`paired = false` 让恢复按旧形态分支（与旧版备份等价）。
+/// 打包完成后原子替换目标文件。同步件对 attached `sync` 侧快照（真同步元数据，
+/// `paired = true`；拆库后 attached 恒有表，无 main 回退源——contract，#1872）。
 pub fn backup_db_to(
     conn: &Connection,
     target: &Path,
@@ -524,9 +523,10 @@ pub fn backup_db_to(
             "VACUUM INTO ?1",
             rusqlite::params![tmp_db.to_string_lossy()],
         )?;
-        // 同步元数据件：同步四表所在库的同刻快照（双源回退收口基础设施单点，
-        // `VACUUM <schema>` 逐库执行；与业务件同一互斥锁内先后定格，同刻成对）。
-        let paired = db::sync_tables_live_attached(conn);
+        // 同步元数据件：attached `sync` 侧的同刻快照（逐库 VACUUM 收口基础设施
+        // 单点；与业务件同一互斥锁内先后定格，同刻成对）。生产连接恒挂载，
+        // 产物恒为真成对形态。
+        let paired = true;
         db::snapshot_sync_tables_into(conn, &tmp_sync)?;
 
         // 2. 探测产物密文（VACUUM INTO 继承源库加密与密钥，ADR-0075 决策 7：
