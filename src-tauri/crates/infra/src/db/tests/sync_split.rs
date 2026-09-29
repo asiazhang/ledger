@@ -21,7 +21,9 @@ fn temp_dir(tag: &str) -> ScratchDir {
 /// `ledger.db`，不触发挂载；V035 及之前的迁移只写 main。
 fn pre_split_world(path: &std::path::Path) -> rusqlite::Connection {
     let mut conn = crate::db::open_connection_unmounted(path).expect("别名裸连接");
-    migrations().to_version(&mut conn, 34).expect("停在 V035");
+    migrations()
+        .to_version(&mut conn, (SYNC_SPLIT_USER_VERSION - 1) as usize)
+        .expect("停在 V035（拆库边界之前）");
     conn.execute(
         &format!(
             "INSERT INTO sync_device (id, logical_clock, created_at, updated_at) \

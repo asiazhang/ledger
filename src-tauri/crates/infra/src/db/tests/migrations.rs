@@ -127,7 +127,6 @@ fn migration_from_zero_reaches_latest_completely() {
             )
             .unwrap();
         assert_eq!(hit, 1, "签名表 {table} 应存在");
-        assert_eq!(hit, 1, "签名表 {table} 应存在");
     }
 
     // 签名表（V036 拆库，ADR-0139 决策 1）：四张同步表住 attached 侧、主库
