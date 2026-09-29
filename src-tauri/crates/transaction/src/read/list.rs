@@ -8,7 +8,7 @@
 
 use rusqlite::Connection;
 
-use crate::model::{Transaction, TransactionListFilter, TransactionListResult};
+use crate::model::{ROW_COLUMNS, Transaction, TransactionListFilter, TransactionListResult};
 use crate::read::funding::attach_fundings;
 use crate::read::purchase::attach_purchases;
 use crate::read::source::{attach_convert_fields, attach_sources};
@@ -118,9 +118,8 @@ pub fn list_transactions_internal(
         // id 是最终 tiebreaker——`now_iso()` 为秒级精度，同一秒内写入的行 created_at 相同，
         // 不加 id 翻页会漂移（重复/遗漏）。
         let mut sql = format!(
-            "SELECT id,kind,amount_cents,currency_code,amount_native_cents,account_id,\
-         to_account_id,funding_account_id,category_id,refund_of_transaction_id,note,date,created_at,updated_at,version,device_id,is_deleted,merchant_id,policy_id,fx_rate_used,fx_rate_source,source_order_no \
-         FROM transactions {where_clause} ORDER BY date DESC, created_at DESC, id DESC"
+            "SELECT {} FROM transactions {where_clause} ORDER BY date DESC, created_at DESC, id DESC",
+            ROW_COLUMNS.join(",")
         );
         // 分页路径优先：传 page_size 时按 offset 页码取当前页（小于 1 按 1 处理，
         // 与 InstrumentListFilter 先例一致；offset 用 saturating 运算防溢出）；
@@ -161,9 +160,10 @@ pub fn get_transaction_internal(conn: &Connection, id: &str) -> Result<Transacti
     ensure_transaction(conn, || {
         let mut tx = query_one::<Transaction, _>(
             conn,
-            "SELECT id,kind,amount_cents,currency_code,amount_native_cents,account_id,\
-         to_account_id,funding_account_id,category_id,refund_of_transaction_id,note,date,created_at,updated_at,\
-         version,device_id,is_deleted,merchant_id,policy_id,fx_rate_used,fx_rate_source,source_order_no FROM transactions WHERE id=?1 AND is_deleted=0",
+            &format!(
+                "SELECT {} FROM transactions WHERE id=?1 AND is_deleted=0",
+                ROW_COLUMNS.join(",")
+            ),
             rusqlite::params![id],
         )?
         .ok_or_else(|| {
