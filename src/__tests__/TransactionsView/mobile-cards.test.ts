@@ -24,6 +24,71 @@ import { useReferenceStore } from "@/stores/reference";
 import { refCurrencies } from "@ledger/test-support/reference-stubs";
 import AccountLink from "@/accounts/AccountLink.vue";
 import TransactionCardList from "@/transaction/TransactionCardList.vue";
+import type { Transaction } from "@ledger/types";
+import { visibleModalText } from "@ledger/test-support/dom";
+import { makePurchase } from "../factories";
+
+/**
+ * 卡片内购买项清单（issue #1884 / ADR-0138 决策 15）：一卡一笔交易不变，卡头仍是
+ * 订单级（日期/类型/金额各一次），购买项在卡内逐行列出（商品名 + 共 N 件，列表侧
+ * 渲染单点的全文形态）；整卡点击进只读详情（长商品名的全文出口）。无购买项卡片
+ * 呈现零变化。
+ */
+describe("卡片内购买项清单（issue #1884 / ADR-0138 决策 15）", () => {
+  /** 三件商品订单：超长商品名 + 多件数 + 无分类，数组顺序 = 对账单顺序。 */
+  function orderTxn(): Transaction {
+    return makeTxn(1, "acc-1", {
+      kind: "expense",
+      amount_cents: 9990,
+      amount_native_cents: 9990,
+      purchases: [
+        makePurchase({
+          name: "进口无谷深海鱼油配方成猫粮专用 10kg 装大袋全新升级",
+          quantity: 1,
+          category_id: "cat-1",
+        }),
+        makePurchase({ name: "洗衣液", quantity: 2, category_id: "cat-2" }),
+        makePurchase({ name: "纸巾" }),
+      ],
+    });
+  }
+
+  it("卡内逐行列出购买项（商品名 + 共 N 件），金额只出现一次、卡头仍是订单级", async () => {
+    setTxnDb([orderTxn()]);
+    const wrapper = await mountMobile();
+    const card = cards(wrapper)[0];
+    const text = card.text();
+    // 三个商品各占一行（同一渲染单源的全文形态 + 件数文案单源）
+    expect(text).toContain("进口无谷深海鱼油配方成猫粮专用 10kg 装大袋全新升级");
+    expect(text).toContain("洗衣液");
+    expect(text).toContain("纸巾");
+    expect(text).toContain("共 2 件");
+    // 卡头订单级：日期与类型标签各一次；金额 = 订单实付只出现一次
+    expect(text.split("2026-01-01").length - 1).toBe(1);
+    expect(card.findAll(".amount-cell").length).toBe(1);
+  });
+
+  it("无购买项卡片零变化：不出现件数标注", async () => {
+    setTxnDb([makeTxn(2, "acc-1", { note: "手工备注" })]);
+    const wrapper = await mountMobile();
+    const text = cards(wrapper)[0].text();
+    expect(text).not.toContain("共 1 件");
+    expect(cards(wrapper)[0].find(".transaction-card-purchase").exists()).toBe(false);
+  });
+
+  it("整卡点击 = 只读详情：购买项清单呈现长商品名全文", async () => {
+    setTxnDb([orderTxn()]);
+    const wrapper = await mountMobile();
+    await cards(wrapper)[0].trigger("click");
+    const modal = shownModal(wrapper);
+    expect(modal, "期望详情弹窗打开").toBeTruthy();
+    const text = visibleModalText();
+    expect(text).toContain("购买项清单");
+    expect(text).toContain("进口无谷深海鱼油配方成猫粮专用 10kg 装大袋全新升级");
+    expect(text).toContain("共 2 件");
+    await closeShownModal(wrapper);
+  });
+});
 
 /**
  * 交易页移动档（issue #846 / ADR-0088 决策 9 断点双渲染）：组件测试主接缝。

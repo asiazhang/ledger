@@ -10,7 +10,7 @@ import {
   supportsRowEdit,
 } from "@/transaction/transaction-row-menu";
 import { TRANSACTION_KINDS, type TransactionFunding } from "@ledger/types";
-import { makeFunding } from "./factories";
+import { makeFunding, makePurchase } from "./factories";
 
 /** 渲染 DropdownOption.icon 工厂，取出其中的图标组件（用于断言挂了哪个图标）。 */
 function iconComponentOf(option: DropdownOption): unknown {
@@ -32,7 +32,12 @@ describe("renderRowMenuIcon（行菜单图标渲染工厂）", () => {
 
 describe("buildRowMenuOptions（行右键菜单选项）", () => {
   it("expense 行：编辑 / 退款 / 加入物品 / 分隔线 / 删除，加入物品默认可用", () => {
-    const options = buildRowMenuOptions({ kind: "expense", fundings: [], source_order_no: null });
+    const options = buildRowMenuOptions({
+      kind: "expense",
+      fundings: [],
+      purchases: [],
+      source_order_no: null,
+    });
     expect(options.map((o) => "key" in o && o.key)).toEqual([
       "edit",
       "refund",
@@ -46,7 +51,7 @@ describe("buildRowMenuOptions（行右键菜单选项）", () => {
 
   it("expense 行已建物品：加入物品置灰禁用（溯源唯一的界面呈现）", () => {
     const options = buildRowMenuOptions(
-      { kind: "expense", fundings: [], source_order_no: null },
+      { kind: "expense", fundings: [], purchases: [], source_order_no: null },
       { hasItem: true },
     );
     const addItem = options.find((o) => "key" in o && o.key === "add-item");
@@ -64,7 +69,12 @@ describe("buildRowMenuOptions（行右键菜单选项）", () => {
   it.each(["income", "transfer"] as const)(
     "%s 行：编辑 / 分隔线 / 删除（无退款/加入物品）",
     (kind) => {
-      const options = buildRowMenuOptions({ kind, fundings: [], source_order_no: null });
+      const options = buildRowMenuOptions({
+        kind,
+        fundings: [],
+        purchases: [],
+        source_order_no: null,
+      });
       expect(options.map((o) => "key" in o && o.key)).toEqual(["edit", "menu-divider", "delete"]);
       expect(options[0]).toMatchObject({ label: "编辑" });
       expect(options[0].disabled).toBeFalsy();
@@ -72,42 +82,77 @@ describe("buildRowMenuOptions（行右键菜单选项）", () => {
   );
 
   it("buy 行：编辑 / 分隔线 / 删除（投资表单编辑模式，issue #180）", () => {
-    const options = buildRowMenuOptions({ kind: "buy", fundings: [], source_order_no: null });
+    const options = buildRowMenuOptions({
+      kind: "buy",
+      fundings: [],
+      purchases: [],
+      source_order_no: null,
+    });
     expect(options.map((o) => "key" in o && o.key)).toEqual(["edit", "menu-divider", "delete"]);
     expect(options[0]).toMatchObject({ label: "编辑" });
     expect(options[0].disabled).toBeFalsy();
   });
 
   it("sell 行：编辑 / 分隔线 / 删除（投资表单编辑模式，issue #180）", () => {
-    const options = buildRowMenuOptions({ kind: "sell", fundings: [], source_order_no: null });
+    const options = buildRowMenuOptions({
+      kind: "sell",
+      fundings: [],
+      purchases: [],
+      source_order_no: null,
+    });
     expect(options.map((o) => "key" in o && o.key)).toEqual(["edit", "menu-divider", "delete"]);
   });
 
   it("refund 行：仅删除（编辑破坏关联语义，本期边界外）", () => {
-    const options = buildRowMenuOptions({ kind: "refund", fundings: [], source_order_no: null });
+    const options = buildRowMenuOptions({
+      kind: "refund",
+      fundings: [],
+      purchases: [],
+      source_order_no: null,
+    });
     expect(options.map((o) => "key" in o && o.key)).toEqual(["delete"]);
   });
 
   it("convert 行：仅只读「详情」（无现金腿 kind 无编辑/软删入口，ADR-0106 决策 10 / #1048）", () => {
-    const options = buildRowMenuOptions({ kind: "convert", fundings: [], source_order_no: null });
+    const options = buildRowMenuOptions({
+      kind: "convert",
+      fundings: [],
+      purchases: [],
+      source_order_no: null,
+    });
     expect(options.map((o) => "key" in o && o.key)).toEqual(["detail"]);
     expect(options[0]).toMatchObject({ label: "详情", key: "detail" });
   });
 
   it("split 行：仅只读「详情」（无现金腿 kind 无编辑/软删入口，ADR-0106 决策 10 / #1052）", () => {
-    const options = buildRowMenuOptions({ kind: "split", fundings: [], source_order_no: null });
+    const options = buildRowMenuOptions({
+      kind: "split",
+      fundings: [],
+      purchases: [],
+      source_order_no: null,
+    });
     expect(options.map((o) => "key" in o && o.key)).toEqual(["detail"]);
     expect(options[0]).toMatchObject({ label: "详情", key: "detail" });
   });
 
   it("dividend 行：仅只读「详情」（界面只读 kind 无编辑/软删入口，ADR-0109 / #1078）", () => {
-    const options = buildRowMenuOptions({ kind: "dividend", fundings: [], source_order_no: null });
+    const options = buildRowMenuOptions({
+      kind: "dividend",
+      fundings: [],
+      purchases: [],
+      source_order_no: null,
+    });
     expect(options.map((o) => "key" in o && o.key)).toEqual(["detail"]);
     expect(options[0]).toMatchObject({ label: "详情", key: "detail" });
   });
 
   it("expense 行挂图标：编辑 CreateOutline、退款 CashOutline、加入物品 AddCircleOutline、删除 TrashOutline", () => {
-    const options = buildRowMenuOptions({ kind: "expense", fundings: [], source_order_no: null });
+    const options = buildRowMenuOptions({
+      kind: "expense",
+      fundings: [],
+      purchases: [],
+      source_order_no: null,
+    });
     const byKey = (key: string) => options.find((o) => "key" in o && o.key === key)!;
     expect(iconComponentOf(byKey("edit"))).toBe(CreateOutline);
     expect(iconComponentOf(byKey("refund"))).toBe(CashOutline);
@@ -119,7 +164,7 @@ describe("buildRowMenuOptions（行右键菜单选项）", () => {
   it("删除项着主题 error 色：经 DropdownOption props 注入（不硬编码色值），图标+文字整体生效", () => {
     const errorColor = "#d03050"; // 传入值即主题 errorColor（组件经 useThemeVars 取当前主题值）
     const options = buildRowMenuOptions(
-      { kind: "expense", fundings: [], source_order_no: null },
+      { kind: "expense", fundings: [], purchases: [], source_order_no: null },
       { errorColor },
     );
     const byKey = (key: string) => options.find((o) => "key" in o && o.key === key)!;
@@ -139,7 +184,7 @@ describe("buildRowMenuOptions（行右键菜单选项）", () => {
     expect(byKey("add-item").props).toBeUndefined();
     // 非 expense 行的删除项同样着色
     const only = buildRowMenuOptions(
-      { kind: "income", fundings: [], source_order_no: null },
+      { kind: "income", fundings: [], purchases: [], source_order_no: null },
       { errorColor },
     );
     expect(only[only.length - 1].props).toMatchObject({
@@ -148,7 +193,12 @@ describe("buildRowMenuOptions（行右键菜单选项）", () => {
   });
 
   it("未传 errorColor 时删除项不注入 props（向后兼容）", () => {
-    const options = buildRowMenuOptions({ kind: "expense", fundings: [], source_order_no: null });
+    const options = buildRowMenuOptions({
+      kind: "expense",
+      fundings: [],
+      purchases: [],
+      source_order_no: null,
+    });
     const del = options.find((o) => "key" in o && o.key === "delete")!;
     expect(del.props).toBeUndefined();
   });
@@ -162,7 +212,12 @@ describe("分解行菜单形态（issue #1861 / ADR-0138 决策 8）", () => {
   ];
 
   it("分解 expense 行：详情 / 加入物品 / 分隔线 / 删除——编辑与退款表单未支持分解（本票范围外），不开放", () => {
-    const options = buildRowMenuOptions({ kind: "expense", fundings, source_order_no: null });
+    const options = buildRowMenuOptions({
+      kind: "expense",
+      fundings,
+      purchases: [],
+      source_order_no: null,
+    });
     expect(options.map((o) => "key" in o && o.key)).toEqual([
       "detail",
       "add-item",
@@ -173,12 +228,22 @@ describe("分解行菜单形态（issue #1861 / ADR-0138 决策 8）", () => {
   });
 
   it("分解 refund 行：详情 / 分隔线 / 删除（派生分解行同样进只读详情）", () => {
-    const options = buildRowMenuOptions({ kind: "refund", fundings, source_order_no: null });
+    const options = buildRowMenuOptions({
+      kind: "refund",
+      fundings,
+      purchases: [],
+      source_order_no: null,
+    });
     expect(options.map((o) => "key" in o && o.key)).toEqual(["detail", "menu-divider", "delete"]);
   });
 
   it("分解 income 行：详情 / 分隔线 / 删除（无 expense 专属项）", () => {
-    const options = buildRowMenuOptions({ kind: "income", fundings, source_order_no: null });
+    const options = buildRowMenuOptions({
+      kind: "income",
+      fundings,
+      purchases: [],
+      source_order_no: null,
+    });
     expect(options.map((o) => "key" in o && o.key)).toEqual(["detail", "menu-divider", "delete"]);
   });
 });
@@ -187,7 +252,7 @@ describe("行激活开放闭集（ADR-0106 决策 10 / #1048、ADR-0109 / #1078�
   it("可编辑 = 除 refund（破坏关联语义）与 convert / split（无现金腿只读）外的全部 kind", () => {
     expect(
       TRANSACTION_KINDS.filter((kind) =>
-        supportsRowEdit({ kind, fundings: [], source_order_no: null }),
+        supportsRowEdit({ kind, fundings: [], purchases: [], source_order_no: null }),
       ),
     ).toEqual(["income", "expense", "transfer", "buy", "sell"]);
   });
@@ -195,16 +260,65 @@ describe("行激活开放闭集（ADR-0106 决策 10 / #1048、ADR-0109 / #1078�
   it("只读详情 = convert / split / dividend 三种界面只读 kind（ADR-0106 决策 10 / ADR-0109）", () => {
     expect(
       TRANSACTION_KINDS.filter((kind) =>
-        supportsRowDetail({ kind, fundings: [], source_order_no: null }),
+        supportsRowDetail({ kind, fundings: [], purchases: [], source_order_no: null }),
       ),
     ).toEqual(["convert", "split", "dividend"]);
   });
 
   it("带非空分解的行：编辑不开放、只读详情开放（编辑表单未支持分解，ADR-0138 决策 8）", () => {
     const fundings: TransactionFunding[] = [makeFunding(), makeFunding()];
-    expect(supportsRowEdit({ kind: "expense", fundings, source_order_no: null })).toBe(false);
-    expect(supportsRowEdit({ kind: "income", fundings, source_order_no: null })).toBe(false);
-    expect(supportsRowDetail({ kind: "expense", fundings, source_order_no: null })).toBe(true);
-    expect(supportsRowDetail({ kind: "refund", fundings, source_order_no: null })).toBe(true);
+    expect(
+      supportsRowEdit({ kind: "expense", fundings, purchases: [], source_order_no: null }),
+    ).toBe(false);
+    expect(
+      supportsRowEdit({ kind: "income", fundings, purchases: [], source_order_no: null }),
+    ).toBe(false);
+    expect(
+      supportsRowDetail({ kind: "expense", fundings, purchases: [], source_order_no: null }),
+    ).toBe(true);
+    expect(
+      supportsRowDetail({ kind: "refund", fundings, purchases: [], source_order_no: null }),
+    ).toBe(true);
+  });
+});
+
+/** 购买项行（issue #1884 / ADR-0138 决策 15）：详情入口开放、编辑入口关闭——
+ * 编辑表单未支持购买项，全字段替换会静默清空购买项子行（分解行同款先例，
+ * ADR-0138 决策 8）；纠错靠按幂等键重导覆盖该订单。 */
+describe("购买项行菜单形态（issue #1884 / ADR-0138 决策 15）", () => {
+  const purchases = [makePurchase(), makePurchase({ name: "洗衣液", quantity: 2 })];
+
+  it("购买项 expense 行：详情 / 退款 / 加入物品 / 分隔线 / 删除（无编辑项）", () => {
+    const options = buildRowMenuOptions({
+      kind: "expense",
+      fundings: [],
+      purchases,
+      source_order_no: null,
+    });
+    expect(options.map((o) => "key" in o && o.key)).toEqual([
+      "detail",
+      "refund",
+      "add-item",
+      "menu-divider",
+      "delete",
+    ]);
+  });
+
+  it("购买项行：编辑不开放、只读详情开放（详情是清单与长商品名全文出口）", () => {
+    expect(
+      supportsRowEdit({ kind: "expense", fundings: [], purchases, source_order_no: null }),
+    ).toBe(false);
+    expect(
+      supportsRowDetail({ kind: "expense", fundings: [], purchases, source_order_no: null }),
+    ).toBe(true);
+  });
+
+  it("无购买项行零回归：编辑照常开放、无详情项", () => {
+    expect(
+      supportsRowEdit({ kind: "expense", fundings: [], purchases: [], source_order_no: null }),
+    ).toBe(true);
+    expect(
+      supportsRowDetail({ kind: "expense", fundings: [], purchases: [], source_order_no: null }),
+    ).toBe(false);
   });
 });

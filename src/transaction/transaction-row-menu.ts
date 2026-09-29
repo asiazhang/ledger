@@ -39,41 +39,49 @@ export { renderRowMenuIcon, errorOptionProps };
  * DropdownOption props，图标+文字整体着色——不硬编码色值，暗色模式自动适配。
  */
 /** 「编辑」开放判定（income/expense/transfer 走分类记账/转账表单，buy/sell 走投资表单
+/** 「编辑」开放判定（income/expense/transfer 走分类记账/转账表单，buy/sell 走投资表单
  * 编辑模式，issue #180；refund 破坏关联语义、convert / split / dividend 为界面只读
- * kind 均不开放，ADR-0106 决策 10 / ADR-0109）。带非空出资分解的行不开放——编辑表单
- * 尚未支持分解（ADR-0138 决策 8 读侧先行，录入侧另票）。单一来源：交易类型行激活
- * 闭集（transactionKindActivation）+ 行形状（fundings），菜单组装与移动档卡片行激活
- * 共用（issue #846 / #1048 / #1861）。 */
+ * kind 均不开放，ADR-0106 决策 10 / ADR-0109）。带非空出资分解或非空购买项的行不开放——
+ * 编辑表单未支持两者（ADR-0138 决策 8 / 决策 15 界面只读，录入侧另票），全字段替换会
+ * 静默清空子行，不开放残缺表单入口；购买项纠错靠按幂等键重导覆盖该订单。单一来源：
+ * 交易类型行激活闭集（transactionKindActivation）+ 行形状（fundings / purchases），
+ * 菜单组装与移动档卡片行激活共用（issue #846 / #1048 / #1861 / #1884）。 */
 export function supportsRowEdit(
-  row: Pick<Transaction, "kind" | "fundings" | "source_order_no">,
+  row: Pick<Transaction, "kind" | "fundings" | "purchases" | "source_order_no">,
 ): boolean {
-  return row.fundings.length === 0 && transactionKindActivation(row.kind) === "edit";
+  return (
+    row.fundings.length === 0 &&
+    row.purchases.length === 0 &&
+    transactionKindActivation(row.kind) === "edit"
+  );
 }
 
 /** 「只读详情」开放判定：界面只读 kind（convert / split 无现金腿；dividend 现金分红，
  * ADR-0106 决策 10 / ADR-0109）不体现写操作入口，只保留列表 / 筛选 / 只读详情；带非空
- * 出资分解的行同样进只读详情（出资项呈现 + Σ，ADR-0138 决策 8，issue #1861）；来源
- * 订单号列有值的行进只读详情（所属订单区，issue #1862 / ADR-0138 决策 9）——可编辑
- * kind 的订单行同时保留编辑入口（订单详情是增量呈现，不收走纠错通道）。
+ * 出资分解的行同样进只读详情（出资项呈现 + Σ，ADR-0138 决策 8，issue #1861）；带非空
+ * 购买项的行进只读详情（购买项清单 + 长商品名全文出口，ADR-0138 决策 15，issue #1884）；
+ * 来源订单号列有值的行进只读详情（所属订单区，issue #1862 / ADR-0138 决策 9）——可编辑
+ * kind 且无子行的订单行同时保留编辑入口（订单详情是增量呈现，不收走纠错通道）。
  * 单一来源（行激活闭集 + 行形状），菜单组装与移动档卡片「整卡点击 = 详情」共用。 */
 export function supportsRowDetail(
-  row: Pick<Transaction, "kind" | "fundings" | "source_order_no">,
+  row: Pick<Transaction, "kind" | "fundings" | "purchases" | "source_order_no">,
 ): boolean {
   return (
     row.fundings.length > 0 ||
+    row.purchases.length > 0 ||
     row.source_order_no != null ||
     transactionKindActivation(row.kind) === "detail"
   );
 }
 
 export function buildRowMenuOptions(
-  row: Pick<Transaction, "kind" | "fundings" | "source_order_no">,
+  row: Pick<Transaction, "kind" | "fundings" | "purchases" | "source_order_no">,
   opts: { hasItem?: boolean; errorColor?: string } = {},
 ): DropdownOption[] {
   const options: DropdownOption[] = [];
-  // 只读详情行（界面只读 kind ∪ 出资分解行 ∪ 来源订单号行）菜单首项「详情」；
+  // 只读详情行（界面只读 kind ∪ 出资分解行 ∪ 购买项行 ∪ 来源订单号行）菜单首项「详情」；
   // 界面只读 kind 仅详情（无编辑/软删入口，ADR-0106 决策 10 / #1048）；
-  // 订单行的详情是增量呈现——可编辑 kind 同时保留编辑 / 退款 / 加入物品（#1862）。
+  // 订单行的详情是增量呈现——可编辑 kind 且无子行时同时保留编辑 / 退款 / 加入物品（#1862 / #1884）。
   if (supportsRowDetail(row)) {
     options.push({
       label: t("transactions.menu.detail"),

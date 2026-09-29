@@ -67,6 +67,12 @@ globalStyle(`.${TRANSACTION_CARD_CLASS} .transaction-card-row`, {
   overflow: "hidden",
 });
 
+/** 购买项行（issue #1884 / ADR-0138 决策 15）：商品名整名渲染、自然换行——
+ * 卡片不硬截断商品名（详情仍是全文出口），信息行基类的 nowrap 在此放开。 */
+globalStyle(`.${TRANSACTION_CARD_CLASS} .transaction-card-purchase`, {
+  whiteSpace: "normal",
+});
+
 globalStyle(`.${TRANSACTION_CARD_CLASS} .transaction-card-row > *`, {
   flexShrink: 1,
   minWidth: 0,

@@ -42,7 +42,8 @@ import type {
  * convert 两腿（ADR-0099 / #1048）、split 份额调整（ADR-0106 / #1052）、
  * dividend 现金分红（ADR-0109 / #1078，无扩展读取，仅作渲染面判别）、
  * 出资分解（issue #1861 / ADR-0138 决策 8，分解行随读回携带 fundings，
- * 无扩展读取，仅作渲染面判别）。
+ * 无扩展读取，仅作渲染面判别）、购买项清单（issue #1884 / ADR-0138 决策 15，
+ * 明细随读回携带 purchases，无扩展读取，仅作渲染面判别）。
  * 只读详情形态共用同一 `detail` 意图，渲染面按 `kind` 收窄。
  */
 export type TransactionDetailPayload =
@@ -50,6 +51,7 @@ export type TransactionDetailPayload =
   | { kind: "split"; split: TransactionSplit }
   | { kind: "dividend" }
   | { kind: "funding" }
+  | { kind: "purchases" }
   | { kind: "order" };
 
 /**
@@ -144,9 +146,9 @@ export function useTransactionModalState(): UseTransactionModalStateReturn {
     }
     const { row } = request;
     // detail：只读详情——convert / split 两类「无现金腿」kind 各自先取扩展明细再开窗
-    // （时序内化）；dividend（ADR-0109）与出资分解行（issue #1861 / ADR-0138 决策 8）
-    // 无扩展读取同步开窗；其余 kind 无详情面，不落意图（「意图非空即显示」，
-    // 落一个渲染不出的意图会破坏该不变式）。
+    // （时序内化）；dividend（ADR-0109）、出资分解行（issue #1861 / ADR-0138 决策 8）
+    // 与购买项行（issue #1884 / ADR-0138 决策 15）无扩展读取同步开窗；其余 kind 无
+    // 详情面，不落意图（「意图非空即显示」，落一个渲染不出的意图会破坏该不变式）。
     if (request.type === "detail") {
       // 出资分解行（issue #1861 / ADR-0138 决策 8）：分解随读回携带在行上（fundings），
       // 无扩展读取，同步开窗——与 dividend 同款「仅作渲染面判别」形态。
@@ -156,6 +158,14 @@ export function useTransactionModalState(): UseTransactionModalStateReturn {
       }
       if (row.kind === "dividend") {
         settle(myToken, { type: "detail", row, detail: { kind: "dividend" } });
+        return;
+      }
+      // 购买项行（issue #1884 / ADR-0138 决策 15）：清单随读回携带在行上（purchases），
+      // 无扩展读取同步开窗——与出资分解同款「仅作渲染面判别」形态。判定先于订单号：
+      // 购买项详情面内嵌订单区，是 order 面的超集；分解行已在上方先落 funding 面，
+      // 购买项清单由该面同层并陈（与出资项列表对称）。
+      if (row.purchases.length > 0) {
+        settle(myToken, { type: "detail", row, detail: { kind: "purchases" } });
         return;
       }
       if (row.kind !== "convert" && row.kind !== "split") {

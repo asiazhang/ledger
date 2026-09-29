@@ -4,6 +4,7 @@ import type { VNode } from "vue";
 import {
   buildTransactionColumns,
   expandPurchaseRows,
+  renderPurchaseLine,
   rowActionsColumn,
   type ReferenceStore,
 } from "@/transaction/transaction-columns";
@@ -294,6 +295,37 @@ describe("buildTransactionColumns 购买项展开装配", () => {
     expect(children).toHaveLength(2);
     expect(children[0].type).toBe(NEllipsis);
     expect((children[1].children as string).length).toBeGreaterThan(0);
+  });
+
+  it("截断形态（列表）与全文形态（卡片 / 详情）经同一渲染单点分形：NEllipsis vs 整名渲染", () => {
+    const item = makePurchase({
+      name: "超长商品名『进口无谷深海鱼油成猫粮专用 10kg 装大袋』",
+      quantity: 3,
+    });
+    // 列表形态：名内 NEllipsis（省略 + 悬停全文）+ 件数标注
+    const truncated = renderPurchaseLine(item, { truncate: true });
+    const truncChildren = truncated.children as VNode[];
+    expect(truncChildren[0].type).toBe(NEllipsis);
+    expect(truncChildren).toHaveLength(2);
+    // 全文形态（卡片 / 详情）：整名渲染、自然换行——触控轴无悬停，详情是全文出口
+    const full = renderPurchaseLine(item);
+    const fullChildren = full.children as VNode[];
+    expect(fullChildren[0].type).not.toBe(NEllipsis);
+    expect(fullChildren[0].children as string).toContain("10kg 装大袋』");
+    expect(fullChildren).toHaveLength(2);
+  });
+
+  it("件数标注两形态同文案单源（transactions.purchase.quantity），全文形态可附分类标注", () => {
+    const item = makePurchase({ name: "猫粮", quantity: 2 });
+    const qtyText = (vnode: VNode) =>
+      ((vnode.children as VNode[]).at(-1) as VNode).children as string;
+    expect(qtyText(renderPurchaseLine(item, { truncate: true }))).toBe("共 2 件");
+    expect(qtyText(renderPurchaseLine(item))).toBe("共 2 件");
+    // 详情形态：分类标注插入在件数标注之前（名称 / 分类 / 件数顺序）
+    const withCategory = renderPurchaseLine(item, { suffix: "生活 > 宠物" });
+    const children = withCategory.children as VNode[];
+    expect(children).toHaveLength(3);
+    expect(children[1].children as string).toBe("生活 > 宠物");
   });
 
   it("展开视图下非购买项行仍走原备注渲染（有备注带复制按钮）", () => {

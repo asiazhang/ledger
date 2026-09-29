@@ -147,6 +147,7 @@ export type TransactionModalRow = Pick<
   | "currency_code"
   | "amount_native_cents"
   | "fundings"
+  | "purchases"
   | "source"
   | "convert"
   | "source_order_no"

@@ -36,6 +36,7 @@ import ConvertDetail from "@/investment/ConvertDetail.vue";
 import SplitDetail from "@/investment/SplitDetail.vue";
 import DividendDetail from "@/investment/DividendDetail.vue";
 import FundingDetail from "@/transaction/FundingDetail.vue";
+import PurchaseDetail from "@/transaction/PurchaseDetail.vue";
 import OrderDetail from "@/transaction/OrderDetail.vue";
 import {
   buildRowMenuOptions,
@@ -689,13 +690,14 @@ function activateCard(row: Transaction): void {
         @saved="onEditSaved"
       />
     </AppModal>
-    <!-- 只读详情弹窗（ADR-0106 决策 10 / #1048、#1052；ADR-0109 / #1078；#1861 / ADR-0138）：
+    <!-- 只读详情弹窗（ADR-0106 决策 10 / #1048、#1052；ADR-0109 / #1078；#1861 / #1862 / #1884 / ADR-0138）：
          界面只读 kind（convert / split / dividend）不体现任何写操作（无创建/编辑/软删），
-         带非空出资分解的交易行（fundings 非空）与来源订单号行同为只读详情（#1862 / ADR-0138
-         决策 9）——convert 只读呈现「A → B」
+         带非空出资分解的交易行（fundings 非空）、带非空购买项的行（purchases 非空，决策 15）
+         与来源订单号行同为只读详情（#1862 / ADR-0138 决策 9）——convert 只读呈现「A → B」
          两侧标的、份额、金额、手续费与结转成本，split 只读呈现标的、带符号份额变动、调整日
          与账户，dividend 只读呈现归属标的、金额、到账账户与日期，funding 只读呈现出资项
-         列表（账户 / 标签 / 金额）与 Σ 合计；行激活与菜单「详情」进本入口，扩展明细的取数
+         列表（账户 / 标签 / 金额）与 Σ 合计，purchases 只读呈现购买项清单（名称 / 分类 / 件数）；
+         行激活与菜单「详情」进本入口，扩展明细的取数
          时序内化在编排模块 -->
     <AppModal
       :show="intent?.type === 'detail'"
@@ -725,6 +727,11 @@ function activateCard(row: Transaction): void {
       <FundingDetail
         :key="seq"
         v-else-if="detailIntent?.detail.kind === 'funding'"
+        :row="detailIntent.row"
+      />
+      <PurchaseDetail
+        :key="seq"
+        v-else-if="detailIntent?.detail.kind === 'purchases'"
         :row="detailIntent.row"
       />
       <OrderDetail

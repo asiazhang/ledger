@@ -229,12 +229,17 @@ const menuY = computed(() => rowMenu.position.value.y);
 /** 菜单选项：选项组装单点复用（hasItem 维度仅 expense 行消费，投资 kind 行集不在场）。 */
 const menuOptions = computed<DropdownOption[]>(() => {
   const row = rowMenu.state.value?.row;
-  // 菜单形状只消费 kind + fundings + source_order_no：投资行恒无分解（ADR-0138
-  // 决策 3），订单号随投影行透传（#1862），按 ledgerRowToModalRow 同款适配投影补
-  // fundings 空数组。
+  // 菜单形状只消费 kind + fundings + purchases + source_order_no：投资行恒无分解与
+  // 购买项（ADR-0138 决策 3 / 决策 9），订单号随投影行透传（#1862），按
+  // ledgerRowToModalRow 同款适配投影补两个空数组。
   return row
     ? buildRowMenuOptions(
-        { kind: row.kind, fundings: [], source_order_no: row.source_order_no },
+        {
+          kind: row.kind,
+          fundings: [],
+          purchases: [],
+          source_order_no: row.source_order_no,
+        },
         {
           errorColor: themeVars.value.errorColor,
         },
