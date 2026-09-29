@@ -61,8 +61,10 @@ import { useItemsStore } from "@/item/items";
 import { useTransactionViewPreferencesStore } from "@/transaction/transaction-view-preferences";
 import {
   buildTransactionColumns,
+  displayRowKey,
   expandPurchaseRows,
   purchaseIndexOf,
+  purchaseRowClass,
 } from "@/transaction/transaction-columns";
 import { sumFixedColumnWidths } from "@ledger/utils/table";
 import { PAGE_SIZE_OPTIONS } from "@ledger/utils/pagination";
@@ -463,11 +465,13 @@ const menuOptions = computed(() => {
 });
 
 /** 表格行属性：绑定行右键菜单（open 内化「收起 → 下一帧重开」重定位舞步；
- * 原生菜单拦截单点归窗口行为守卫，视图不再 preventDefault）。
+ * 原生菜单拦截单点归窗口行为守卫，视图不再 preventDefault）＋订单块行类（块内行线抹掉，
+ * 见 transaction-columns.purchaseRowClass / global.css——分开两个订单块）。
  * 购买项续行不开菜单（issue #1883 / ADR-0138 决策 13）：行 = 购买项不是可操作对象、
  * 无悬浮操作（合并操作格不在续行上）也无右键；订单级交互只在承载合并格的
  * 订单块首行一处。 */
 const rowProps = (row: Transaction) => ({
+  class: purchaseRowClass(row),
   onContextmenu: (e: MouseEvent) => {
     if (purchaseIndexOf(row) > 0) return;
     rowMenu.open(e, row);
@@ -795,6 +799,7 @@ function activateCard(row: Transaction): void {
       v-else
       :columns="columns"
       :data="displayRows"
+      :row-key="displayRowKey"
       :loading="loading"
       :bordered="false"
       size="small"

@@ -147,6 +147,18 @@ export function purchaseIndexOf(row: Transaction): number {
   return (row as ExpandedTransactionRow).purchaseIndex ?? -1;
 }
 
+/** 显示行键（naive-ui `row-key`，展开行集的单一收口）：交易 id +「购买项序位」。
+ *
+ * 必须唯一到**显示行**：展开后同一交易派生多行、行 id 相同，只用 id 会撞键。
+ * 而漏传 `row-key`（或键取不到）的后果不只是 Vue 的重复键警告——naive 的 hover 判据是
+ * `hoverKey !== null && cordKey[r][c].includes(hoverKey)`，行键为 `undefined` 时
+ * `undefined !== null` 为真、合并格的 cordKey 数组里也全是 `undefined`，于是**每个
+ * rowspan 合并格都被贴上 `-td--hover`（hover 底色）常亮**：合并格底色与普通行不同，
+ * 且该底色与 naive 的行线色接近，相邻两单的合并格连成一条浅色带、块间分隔线被淹没。 */
+export function displayRowKey(row: Transaction): string {
+  return `${row.id}:${purchaseIndexOf(row)}`;
+}
+
 /** 行对应的购买项条目；非购买项行或序位越界返回 null（退回原渲染）。 */
 function purchaseOf(row: Transaction): TransactionPurchase | null {
   const index = purchaseIndexOf(row);
@@ -157,6 +169,24 @@ function purchaseOf(row: Transaction): TransactionPurchase | null {
  * 其余行 = 1（被合并覆盖的格子由表格按坐标跳过，不渲染）。 */
 export function orderLevelRowSpan(row: Transaction): number {
   return purchaseIndexOf(row) === 0 ? Math.max(row.purchases.length, 1) : 1;
+}
+
+/** 订单块行类（ADR-0138 决策 13 的呈现边界）：购买项行标 `block-row`、块尾行另标 `block-last`。
+ * 样式（global.css）据此抹掉**块内**行线——订单级列纵向合并后，块内行线只覆盖逐行的
+ * 「分类 / 商品·备注」两列，这条短行线把一单切成好几行、块边界反而看不出来；抹掉它，
+ * 块尾那条整宽行线（合并格 + 本行）就是唯一的订单边界。类只挂在展开出的购买项行上，
+ * 普通行 / 未展开行集零影响。 */
+export const PURCHASE_BLOCK_ROW_CLASS = "purchase-block-row";
+export const PURCHASE_BLOCK_LAST_CLASS = "purchase-block-last";
+
+/** 行的订单块类（rowProps 单一收口）：非购买项行 undefined（普通行零变化），
+ * 购买项行 = 块内行 + 块尾标记（单件订单首行即末行，块内规则因 block-last 不命中、行线保持原样）。 */
+export function purchaseRowClass(row: Transaction): string | undefined {
+  const index = purchaseIndexOf(row);
+  if (index < 0) return undefined;
+  return index === row.purchases.length - 1
+    ? `${PURCHASE_BLOCK_ROW_CLASS} ${PURCHASE_BLOCK_LAST_CLASS}`
+    : PURCHASE_BLOCK_ROW_CLASS;
 }
 
 /** 购买项单元格件数标注样式（弱化灰后缀注记，与账户列「等 N 账户」同型）。 */

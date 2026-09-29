@@ -73,6 +73,22 @@ textarea,
   vertical-align: middle;
 }
 
+/*
+ * 交易列表订单块行线（购买项展开，issue #1883 / ADR-0138 决策 13）：同一订单的购买项行
+ * 读作一体、块与块之间一眼可辨。类由 transaction-columns.purchaseRowClass 挂在购买项行上
+ * （普通行 / 未展开行集不带类，零影响）。
+ *
+ * 为什么只抹「块内」：订单级列纵向合并（rowspan）后，块内行线只覆盖逐行的「分类 /
+ * 商品·备注」两列——这条短行线把一单切成好几行，块尾那条整宽行线（合并格 + 本行）反而
+ * 淹没在行线里。抹掉块内行线后，块尾整宽行线成为唯一的订单边界（不改颜色 / 粗细，暗色
+ * 下仍是 naive 自己的 `--n-merged-border-color`）。
+ * 合并格自身不参与：它的 border-bottom 画在 rowspan 底部（= 块尾），抹掉就没边界了。
+ */
+.n-data-table-tr.purchase-block-row:not(.purchase-block-last)
+  > .n-data-table-td:not(.purchase-merged-cell) {
+  border-bottom-color: transparent;
+}
+
 @media (hover: none) {
   .note-copy-btn {
     opacity: 1;
