@@ -13,6 +13,8 @@ describe("TransactionsView 文案国际化（issue #348）", () => {
     expect(wrapper.text()).toContain("记一笔");
     expect(wrapper.text()).toContain("清除筛选");
     expect(wrapper.text()).toContain("分类");
+    // 展开视图列头「商品 / 备注」（一列两用，issue #1883 / ADR-0138 决策 13）
+    expect(wrapper.text()).toContain("商品 / 备注");
     expect(wrapper.text()).toContain("共 45 条");
 
     await applyLocale("en-US");
@@ -23,8 +25,10 @@ describe("TransactionsView 文案国际化（issue #348）", () => {
     // 列名随语言重建（computed columns）：中文列名消失、英文列名出现
     expect(wrapper.text()).toContain("Category");
     expect(wrapper.text()).toContain("Amount");
+    expect(wrapper.text()).toContain("Item / Note");
     expect(wrapper.text()).not.toContain("分类");
     expect(wrapper.text()).not.toContain("金额");
+    // 列头「备注」随切换消失（行内备注文本不受列名影响，不对整页文本断「备注」缺席）
     // 分页前缀随语言切换
     expect(wrapper.text()).toContain("Total 45");
 

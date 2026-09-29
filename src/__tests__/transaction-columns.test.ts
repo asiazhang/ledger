@@ -1,7 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import { NEllipsis, type DataTableColumn } from "naive-ui";
 import type { VNode } from "vue";
-import { buildTransactionColumns, type ReferenceStore } from "@/transaction/transaction-columns";
+import {
+  buildTransactionColumns,
+  expandPurchaseRows,
+  rowActionsColumn,
+  type ReferenceStore,
+} from "@/transaction/transaction-columns";
 import SourceLink from "@/transaction/SourceLink.vue";
 import NoteCopyButton from "@ledger/ui-kit/NoteCopyButton.vue";
 import AmountCell from "@/transaction/AmountCell.vue";
@@ -9,7 +14,7 @@ import { useAppStore } from "@/stores/app";
 import { kindSemanticColor } from "@ledger/theme/semantic-colors";
 import { TRANSACTION_KINDS, type Transaction, type TransactionSource } from "@ledger/types";
 import { formatAmount } from "@ledger/money";
-import { makeTransaction } from "./factories";
+import { makePurchase, makeTransaction } from "./factories";
 
 /** 金额列按交易类型语义着色（issue #435）：只测外部行为——
  * 给定交易类型与主题，金额单元格最终呈现语义色模块给出的颜色；
@@ -203,5 +208,109 @@ describe("buildTransactionColumns 操作列（「⋯」常显第二入口）", (
     const event = new MouseEvent("click", { clientX: 10, clientY: 20 });
     props.onClick(event);
     expect(onRowMenuOpen).toHaveBeenCalledWith(event, row);
+  });
+});
+
+/** 购买项展开装配（issue #1883 / ADR-0138 决策 13）：列构造器是展开 + 合并规则的
+ * 生产单源——订单级列 rowSpan 纵向合并 + 合并格居中类，分类/备注列不合并。
+ * 视图层外部行为归 TransactionsView/purchase-read.test.ts，此处只测列装配面。 */
+describe("buildTransactionColumns 购买项展开装配", () => {
+  const ORDER_LEVEL_KEYS = [
+    "date",
+    "kind",
+    "merchant_id",
+    "account_id",
+    "source",
+    "amount_native_cents",
+    "actions",
+  ];
+
+  function expandedRows() {
+    return expandPurchaseRows([
+      makeTransaction({
+        id: "t-order",
+        purchases: [
+          makePurchase({ name: "猫粮", quantity: 1 }),
+          makePurchase({ name: "洗衣液", quantity: 2 }),
+          makePurchase({ name: "纸巾", quantity: 1 }),
+        ],
+      }),
+      makeTransaction({ id: "t-plain", note: "普通行" }),
+    ]);
+  }
+
+  function rowSpanOf(columns: DataTableColumn<Transaction>[], key: string) {
+    const hit = columns.find((c) => (c as { key?: unknown }).key === key);
+    expect(hit, `列 ${key} 应存在`).toBeTruthy();
+    return (hit as { rowSpan?: (row: Transaction, index: number) => number }).rowSpan;
+  }
+
+  it("缺省（未声明 expandPurchases）任何列都不带 rowSpan，备注列名不变——搜索结果零变化", () => {
+    const columns = buildTransactionColumns(reference, { onRowMenuOpen: () => {} });
+    for (const key of [...ORDER_LEVEL_KEYS, "category_id", "note"]) {
+      expect(rowSpanOf(columns, key)).toBeUndefined();
+    }
+    const note = columns.find((c) => (c as { key?: unknown }).key === "note");
+    expect((note as { title?: string }).title).toBe("备注");
+  });
+
+  it("展开装配：订单级列带 rowSpan（首行 = 件数、续行与普通行 = 1）与合并格居中类", () => {
+    const columns = buildTransactionColumns(reference, {
+      onRowMenuOpen: () => {},
+      expandPurchases: true,
+    });
+    const [orderFirst, orderSecond, , plainRow] = expandedRows();
+    for (const key of ORDER_LEVEL_KEYS) {
+      const rowSpan = rowSpanOf(columns, key);
+      expect(rowSpan, key).toBeTruthy();
+      expect(rowSpan!(orderFirst, 0)).toBe(3);
+      expect(rowSpan!(orderSecond, 1)).toBe(1);
+      expect(rowSpan!(plainRow, 3)).toBe(1);
+      const col = columns.find((c) => (c as { key?: unknown }).key === key);
+      expect((col as { className?: string }).className, key).toContain("purchase-merged-cell");
+    }
+  });
+
+  it("展开装配：分类列与备注列不合并（分类逐行、备注两用）", () => {
+    const columns = buildTransactionColumns(reference, { expandPurchases: true });
+    expect(rowSpanOf(columns, "category_id")).toBeUndefined();
+    expect(rowSpanOf(columns, "note")).toBeUndefined();
+  });
+
+  it("展开装配：备注列名「商品 / 备注」", () => {
+    const columns = buildTransactionColumns(reference, { expandPurchases: true });
+    const note = columns.find((c) => (c as { key?: unknown }).key === "note");
+    expect((note as { title?: string }).title).toBe("商品 / 备注");
+  });
+
+  it("购买项单元格：商品名走 NEllipsis（悬停全文）+ 件数标注，无复制按钮", () => {
+    const render = renderColumnOf(
+      buildTransactionColumns(reference, { expandPurchases: true }),
+      "note",
+    );
+    const rows = expandedRows();
+    const vnode = render(rows[1], 1) as VNode;
+    const children = vnode.children as VNode[];
+    expect(children).toHaveLength(2);
+    expect(children[0].type).toBe(NEllipsis);
+    expect((children[1].children as string).length).toBeGreaterThan(0);
+  });
+
+  it("展开视图下非购买项行仍走原备注渲染（有备注带复制按钮）", () => {
+    const render = renderColumnOf(
+      buildTransactionColumns(reference, { expandPurchases: true }),
+      "note",
+    );
+    const rows = expandedRows();
+    const vnode = render(rows[3], 3) as VNode;
+    const children = vnode.children as VNode[];
+    expect(children[0].type).toBe(NEllipsis);
+    expect(children[1].type).toBe(NoteCopyButton);
+  });
+
+  it("rowActionsColumn 缺省不带合并装配（投资明细页签零变化）", () => {
+    const col = rowActionsColumn<Transaction>(() => {});
+    expect((col as { rowSpan?: unknown }).rowSpan).toBeUndefined();
+    expect((col as { className?: unknown }).className).toBeUndefined();
   });
 });

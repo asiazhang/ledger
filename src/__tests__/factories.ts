@@ -23,6 +23,7 @@ import type {
   SyncStatus,
   Transaction,
   TransactionFunding,
+  TransactionPurchase,
 } from "@ledger/types";
 
 // 计划实体工厂三形态 + 期次工厂自 #1322 起上收共享测试支持包
@@ -283,6 +284,19 @@ export function makeFunding(partial: Partial<TransactionFunding> = {}): Transact
     amount_cents: 10000,
     label: null,
     derived: false,
+    ...partial,
+  };
+}
+
+/** 购买项读回条目工厂（issue #1883 / ADR-0138 决策 9）：默认有名称、1 件、
+ * 无分类无单价（可空字段的最小形态）；订单场景经 purchases: [makePurchase(...), ...] 组装，
+ * 数组顺序即对账单顺序。 */
+export function makePurchase(partial: Partial<TransactionPurchase> = {}): TransactionPurchase {
+  return {
+    name: "商品",
+    quantity: 1,
+    category_id: null,
+    unit_price_cents: null,
     ...partial,
   };
 }

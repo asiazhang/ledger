@@ -28,7 +28,8 @@
     "source": "来源",
     "note": "备注",
     "amount": "金额",
-    "actions": "操作"
+    "actions": "操作",
+    "itemNote": "商品 / 备注"
   },
   "source": {
     "kind": {
@@ -99,6 +100,9 @@
     "accounts": "出资构成",
     "items": "各行明细",
     "loadFailed": "无法加载订单汇总: {msg}"
+  },
+  "purchase": {
+    "quantity": "共 {n} 件"
   },
   "menu": {
     "edit": "编辑",
