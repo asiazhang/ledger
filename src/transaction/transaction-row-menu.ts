@@ -53,9 +53,7 @@ export type TransactionMenuRow = Pick<
  * 静默清空子行，不开放残缺表单入口；购买项纠错靠按幂等键重导覆盖该订单。单一来源：
  * 交易类型行激活闭集（transactionKindActivation）+ 行形状（fundings / purchases），
  * 菜单组装与移动档卡片行激活共用（issue #846 / #1048 / #1861 / #1884）。 */
-export function supportsRowEdit(
-  row: TransactionMenuRow,
-): boolean {
+export function supportsRowEdit(row: TransactionMenuRow): boolean {
   return (
     row.fundings.length === 0 &&
     row.purchases.length === 0 &&
@@ -70,9 +68,7 @@ export function supportsRowEdit(
  * 来源订单号列有值的行进只读详情（所属订单区，issue #1862 / ADR-0138 决策 9）——可编辑
  * kind 且无子行的订单行同时保留编辑入口（订单详情是增量呈现，不收走纠错通道）。
  * 单一来源（行激活闭集 + 行形状），菜单组装与移动档卡片「整卡点击 = 详情」共用。 */
-export function supportsRowDetail(
-  row: TransactionMenuRow,
-): boolean {
+export function supportsRowDetail(row: TransactionMenuRow): boolean {
   return (
     row.fundings.length > 0 ||
     row.purchases.length > 0 ||
@@ -107,6 +103,8 @@ export function buildRowMenuOptions(
   }
   if (row.kind === "expense") {
     // 退款表单未支持分解（#1861 口径）：分解行不开放退款，保持既有菜单形状。
+    // 购买项行保留退款：退款新建独立 refund 行、不触碰原行子行（refund 也不另挂
+    // 清单，ADR-0138 决策 9），与编辑的全字段替换不同，无静默清空子行风险。
     if (row.fundings.length === 0) {
       options.push({
         label: t("transactions.menu.refund"),
