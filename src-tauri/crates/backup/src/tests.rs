@@ -665,6 +665,29 @@ fn scoped_prune_is_per_book() {
     );
 }
 
+/// 拆库前世界（V035 形态：四表在 main、attached 侧缺席）落盘——旧形态单文件
+/// 备份的真实源世界（拆库前应用的 main 必带四表）。构造与 infra
+/// `sync_split::pre_split_world` 同形：迁移链 `to_version` 停在拆库边界之前，
+/// 表形状权威在迁移链本体、测试不复制；另种同步身份与日志各一行供收敛断言。
+fn pre_split_world_file(path: &Path) {
+    let mut conn = db::open_connection_unmounted(path).expect("别名裸连接");
+    db::migrations()
+        .to_version(&mut conn, (db::SYNC_SPLIT_USER_VERSION - 1) as usize)
+        .expect("停在拆库前");
+    conn.execute(
+        "INSERT INTO sync_device (id, logical_clock, created_at, updated_at) \
+         VALUES ('dev-1', 5, '2026-05-01T00:00:00Z', '2026-05-01T00:00:00Z')",
+        [],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO sync_ops (op_id, device_id, clock, schema_version, entity, entity_id, payload, recorded_at) \
+         VALUES ('op-1', 'dev-1', 1, 34, 'transaction', 'txn-1', '{\"k\":1}', '2026-05-01T00:00:00Z')",
+        [],
+    )
+    .unwrap();
+}
+
 /// 恢复——同步元数据库一并移位（ADR-0139 决策 3 配对纪律，issue #1869）：
 /// 原位遗留的 sync.db 移入恢复安全备份目录保留；恢复后的世界重开时挂载按
 /// 恢复后主库形态补建 sync.db，不留形态错配堵塞（如密文世界恢复明文备份）。
@@ -672,15 +695,11 @@ fn scoped_prune_is_per_book() {
 fn restore_moves_stale_sync_db_aside() {
     let dir = ScratchDir::new("backup-test-restore-sync");
     let db_path = dir.join("ledger.db");
+    // 旧形态单文件备份的真实源世界：拆库前形态（四表在 main，attached 侧缺席）。
+    pre_split_world_file(&db_path);
     {
-        let conn = tauri_app_lib::test_support::open();
+        let conn = db::open_connection_unmounted(&db_path).unwrap();
         seed(&conn);
-        conn.execute("VACUUM INTO ?1", params![db_path.to_string_lossy()])
-            .unwrap();
-        // 主库回退为拆库前版本（旧形态单文件备份的 main 只能来自拆库前应用，
-        // V036 拆库后拆库世界缺失 sync.db 由挂载裁决拒绝开启）。
-        let versioned = db::open_connection_unmounted(&db_path).unwrap();
-        versioned.execute_batch("PRAGMA user_version = 34").unwrap();
     }
     // 原位世界带一个 sync.db（挂载接线建连即补建的形态），写入探针表供副本
     // 可读性断言。
@@ -871,19 +890,13 @@ fn paired_backup_restores_sync_db_when_paired() {
 /// 原位不重建（拆库前主库由恢复后的建连补建 attached 侧并经迁移链收敛）。
 #[test]
 fn legacy_form_backup_ignores_sync_entry_on_restore() {
-    // 拆库前形态产物：工厂库落盘后主库回退为拆库前版本（旧形态备份的 main
-    // 只能来自拆库前应用；文件名非产品名，不触发挂载接线）。
+    // 拆库前形态产物（旧形态备份的 main 来自拆库前应用，必带四表；文件名非
+    // 产品名，不触发挂载接线）。
     let src = temp_file("legacy-form-src");
+    pre_split_world_file(&src);
     {
-        let factory = tauri_app_lib::test_support::open();
-        seed(&factory);
-        factory
-            .execute("VACUUM INTO ?1", params![src.to_string_lossy()])
-            .unwrap();
-    }
-    {
-        let versioned = db::open_connection_unmounted(&src).unwrap();
-        versioned.execute_batch("PRAGMA user_version = 34").unwrap();
+        let conn = db::open_connection_unmounted(&src).unwrap();
+        seed(&conn);
     }
     let conn = db::open_connection(&src).unwrap();
     let backup = temp_file("legacy-form-backup");
@@ -903,11 +916,9 @@ fn legacy_form_backup_ignores_sync_entry_on_restore() {
     let expected = expected_schema_version().unwrap();
     restore_db_from(&backup, &dst_main, &safety_dir, expected, None).unwrap();
 
-    // 旧形态：主库恢复照常；sync.db 移入安全目录、原位不重建（restore 不落
-    // sync 条目——重建归挂载接线，重开后才出现）。
     // 旧形态行为不变：主库照常恢复；sync 条目不落盘——遗留 sync.db 已移入安全
-    // 目录，原位的 sync.db 由恢复尾部的重置建连经挂载接线按空库补建（既有
-    // #1869 行为），不是备份 sync 条目的内容（那会是回退源 main 的整库拷贝）。
+    // 目录，原位的 sync.db 由重开经挂载接线按空库补建（既有 #1869 行为），不是
+    // 备份 sync 条目的内容（那会是回退源 main 的整库拷贝）。
     let restored = open_connection(&dst_main).unwrap();
     assert_eq!(count_transactions(&restored), 1);
     let synced_tables: i64 = restored
@@ -930,6 +941,30 @@ fn legacy_form_backup_ignores_sync_entry_on_restore() {
                 .starts_with("restore-safety-sync-")
         });
     assert!(moved_aside, "遗留 sync.db 应移入恢复安全备份目录");
+
+    // 收敛链（validate_backup 注释的契约）：恢复产物重开经产品建缝
+    // （open_connection_in = 挂载 + init_db 迁移 + 守卫）后，V036 把 main 侧
+    // 四表连数据搬入 sync.db——业务行原样、同步身份与日志行入 attached 侧、
+    // main 无残留。中断（恢复与重开之间）由下次启动同链收敛。
+    drop(restored);
+    let converged = db::open_connection_in(&dst_dir).unwrap();
+    assert_eq!(count_transactions(&converged), 1, "业务行应原样保留在主库");
+    let ops_in_sync: i64 = converged
+        .query_row("SELECT COUNT(*) FROM sync.sync_ops", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(ops_in_sync, 1, "op 行应随 V036 搬入 sync.db");
+    let device: String = converged
+        .query_row("SELECT id FROM sync.sync_device", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(device, "dev-1", "设备身份应随 V036 搬入 sync.db");
+    let in_main: i64 = converged
+        .query_row(
+            "SELECT COUNT(*) FROM main.sqlite_master WHERE type = 'table' AND name = 'sync_ops'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(in_main, 0, "main 不应残留同步表");
 }
 
 /// 成对产物缺 sync 条目（手工拼包才可能命中）：显式报错，不静默丢同步身份。

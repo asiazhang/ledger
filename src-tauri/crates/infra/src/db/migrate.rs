@@ -14,7 +14,9 @@ use crate::error::{AppError, Result};
 /// `V00X__名称.sql`，并在 `migrations()` 的 `vec!` 里追加
 /// `M::up(include_str!("../../../../migrations/V00X__名称.sql"))`。
 /// 版本由 SQLite 的 `user_version` 字段自动追踪，无需手动维护版本表。
-pub(crate) fn migrations() -> &'static Migrations<'static> {
+/// pub 语义边界：生产路径一律经 [`init_db`]（迁移 + 守卫单点）；pub 只为测试侧
+/// 构造历史世界（如旧形态备份夹具的拆库前形态，`to_version` 停版）。
+pub fn migrations() -> &'static Migrations<'static> {
     static MIGRATIONS: OnceLock<Migrations<'static>> = OnceLock::new();
     MIGRATIONS.get_or_init(|| {
         Migrations::new(vec![

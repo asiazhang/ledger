@@ -31,7 +31,7 @@ pub const SYNC_MOUNT_FAILED: &str = "db.sync-mount-failed";
 /// 计版本（V005 缺位不回填），V036 是第 35 项，故拆库世界自 35 起。
 /// 写侧挂载对 sync.db 缺失的裁决以此为准（缺失在拆库世界 = 元数据丢失，
 /// 报码化错误；此前世界 = 尚未拆库，自动补建后由 V036 搬迁）。
-pub(crate) const SYNC_SPLIT_USER_VERSION: i64 = 35;
+pub const SYNC_SPLIT_USER_VERSION: i64 = 35;
 
 /// 主库路径 → 同目录同步元数据库路径（转换配对 / 重置移位 / 恢复移位 / 挂载
 /// 共用的单一推导点，ADR-0139 决策 1「与主库同目录」）。
