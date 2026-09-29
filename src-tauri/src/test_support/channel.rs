@@ -24,7 +24,7 @@
 // C 类豁免（ADR-0060）：仅测试用——本文件随 test_support 文件级放行六件套
 // （见 mod.rs 豁免声明）。
 use ledger_infra::error::{AppError, Result};
-use ledger_sync_engine::StreamPosition;
+use ledger_sync_engine::Checkpoint;
 use ledger_sync_engine::channel::{
     ChannelLayout, ChannelManifest, CheckpointPointer, SegmentEntry, StreamManifest, sha256_hex,
 };
@@ -95,51 +95,37 @@ pub fn publish_raw_segment(
         &serde_json::to_vec_pretty(&manifest)
             .map_err(|e| AppError::Invalid(format!("清单序列化失败: {e}")))?,
     )?;
-    transport.write_file(
-        &layout.manifest_path(),
-        &serde_json::to_vec_pretty(&manifest)
-            .map_err(|e| AppError::Invalid(format!("清单序列化失败: {e}")))?,
-    )?;
     Ok(())
 }
 
 /// 把旧形态单文件检查点发布上通道（票 07 跨版本引导兼容的通道线格式替身，
-/// #956 同一契约单点）：业务件按现行成帧（包头位点 + 快照字节）封包上传，
+/// #956 同一契约单点）：业务件经产品侧成帧单点
+///（[`ledger_sync_engine::channel::frame_checkpoint_bundle`]）封装上传，
 /// manifest 指针退化为旧形态（无 sync_* 字段）。既有 manifest 的流清单原样
 /// 保留（读改写归并，与产品侧发布段后的指针换新同形）；场景内通道为空时
 /// 等价于整体写出。
 ///
-/// `mode` 决定封包形态（同 [`publish_raw_segment`]）；`positions` 是快照时刻
-/// 位点（包头数据面）；`created_at` 取工厂固定时刻（非行为输入的簿记戳）。
-/// 返回写出的指针（旧形态：sync_* 三项 None、不序列化）。
+/// `mode` 决定封包形态（同 [`publish_raw_segment`]）；`checkpoint` 的
+/// `sync_snapshot` 必须为空（旧形态，sync 件不写、指针不带 sync_* 项）；
+/// `created_at` 取工厂固定时刻（非行为输入的簿记戳）。返回写出的指针。
 pub fn publish_raw_legacy_checkpoint(
     transport: &dyn Transport,
     layout: &ChannelLayout,
     generation: i64,
     mode: &EnvelopeMode<'_>,
-    positions: &[StreamPosition],
-    snapshot: &[u8],
+    checkpoint: &Checkpoint,
 ) -> Result<CheckpointPointer> {
     use super::FIXED_NOW;
+    assert!(
+        checkpoint.sync_snapshot.is_empty(),
+        "旧形态替身只承载单文件检查点（sync_snapshot 为空）",
+    );
     transport.ensure_dir(&layout.checkpoint_dir())?;
-    let header = serde_json::json!({
-        "positions": positions
-            .iter()
-            .map(|p| {
-                serde_json::json!({
-                    "device_id": p.device_id,
-                    "applied_through": p.applied_through,
-                })
-            })
-            .collect::<Vec<_>>(),
-    });
-    let header_bytes = serde_json::to_vec(&header)
-        .map_err(|e| AppError::Invalid(format!("检查点头序列化失败: {e}")))?;
-    let mut bundle = Vec::with_capacity(4 + header_bytes.len() + snapshot.len());
-    bundle.extend_from_slice(&(header_bytes.len() as u32).to_le_bytes());
-    bundle.extend_from_slice(&header_bytes);
-    bundle.extend_from_slice(snapshot);
-    let sealed = envelope::seal(&bundle, mode, &EnvelopeParams::default())?;
+    let sealed = envelope::seal(
+        &ledger_sync_engine::channel::frame_checkpoint_bundle(checkpoint)?,
+        mode,
+        &EnvelopeParams::default(),
+    )?;
     let path = layout.checkpoint_path(generation);
     transport.write_file(&path, &sealed)?;
     let pointer = CheckpointPointer {

@@ -728,12 +728,14 @@ async fn envelope_form_mismatch_guards_reject_before_bootstrap() {
 /// 跨版本引导兼容（票 07 / spec #1866）：旧版端产出的单文件快照（四表随
 /// 业务件、manifest 指针无 sync_* 字段）在通道上被新版端引导——业务数据入
 /// main、快照携带的同步元数据经引导收尾的迁移前向重放入 sync.db；旧端此后
-/// 以原段格式发布的增量照常拉取重放，「引导 + 增量 = 源状态」在兼容路径
-/// 成立；世界随后以新形态（双文件指针）继续发布。
+/// 以原段格式发布的增量照常拉取重放（增量交易到达）；世界随后以新形态
+///（双文件指针，代数推进）继续发布。断言钉接线形态（邻测同款）——精确
+/// 终态与「引导 + 增量 = 源状态」逐项判据归域单测
+/// `legacy_single_file_snapshot_lands_tables_in_two_dbs_and_converges`。
 ///
-/// 旧形态通道由测试手工铺就：旧端世界用拆库前一代 schema（`to_version`
-/// 停版，别名裸连接不挂载），业务数据经壳层公开命令产出（op 落 main 四
-/// 表）；检查点文件按现行成帧（包头位点 + 快照字节）、指针退化为旧形态。
+/// 旧形态通道由测试铺就：旧端世界用拆库前一代 schema（`to_version` 停版，
+/// 别名裸连接不挂载），业务数据经壳层公开命令产出（op 落 main 四表）；
+/// 检查点文件经测试支持域替身（产品侧成帧单点）、指针退化为旧形态。
 #[tokio::test]
 async fn legacy_single_file_checkpoint_bootstrap_lands_two_dbs_and_converges() {
     use std::sync::{Arc, Mutex};
@@ -808,18 +810,17 @@ async fn legacy_single_file_checkpoint_bootstrap_lands_two_dbs_and_converges() {
     .await
     .expect("旧端增量记账应成功");
     let source_ops = read_ops(&legacy_conn.lock().unwrap()).expect("旧端日志应可读");
-    let snapshot_ops = source_ops
-        .iter()
-        .filter(|op| op.clock <= positions[0].applied_through)
-        .count();
     let increment_ops: Vec<_> = source_ops
         .iter()
         .filter(|op| op.clock > positions[0].applied_through)
         .cloned()
         .collect();
-    assert_eq!(snapshot_ops + increment_ops.len(), source_ops.len());
+    assert!(
+        !increment_ops.is_empty(),
+        "前置：快照之后应存在增量 op（增量段非空）"
+    );
 
-    // —— 手工铺旧形态通道：业务件按现行成帧，指针退化为旧形态（无 sync_*）。
+    // —— 铺旧形态通道（线格式收归测试支持域替身）。
     let config = stub.channel_config("family");
     let channel = build_channel(&config).expect("通道应可建");
     let transport = channel.transport();
@@ -836,15 +837,19 @@ async fn legacy_single_file_checkpoint_bootstrap_lands_two_dbs_and_converges() {
         &increment_ops,
     )
     .expect("增量段应可发布");
-    // 旧形态检查点发布替身（读改写归并保留上面的段清单）：业务件按现行成帧、
-    // 指针退化为旧形态（无 sync_* 字段）。
+    // 旧形态检查点发布替身（读改写归并保留上面的段清单）：指针退化为旧形态
+    //（无 sync_* 字段），业务件经产品侧成帧单点封装。
+    let legacy_checkpoint = ledger_sync_engine::Checkpoint {
+        positions: positions.clone(),
+        snapshot: snapshot_bytes,
+        sync_snapshot: Vec::new(),
+    };
     let pointer = publish_raw_legacy_checkpoint(
         transport,
         &layout,
         1,
         &EnvelopeMode::Plaintext,
-        &positions,
-        &snapshot_bytes,
+        &legacy_checkpoint,
     )
     .expect("旧形态检查点应可发布");
     assert_eq!(pointer.generation, 1);
@@ -862,7 +867,9 @@ async fn legacy_single_file_checkpoint_bootstrap_lands_two_dbs_and_converges() {
     // 引导落库判据在同步作用域内读取（guard 不跨 await）。
     {
         let b_guard = b_conn.lock().unwrap();
-        // 业务数据入 main（快照时刻状态）。
+        // 两库归位（钉接线形态，邻测同款）：业务数据入 main、旧端流位点行随
+        // 快照就位于 sync.db、主库无残留同步表——精确水位值与 op 计数归域单测
+        //（`legacy_single_file_snapshot_lands_tables_in_two_dbs_and_converges`）。
         assert_eq!(
             read_scalar_i64(
                 &b_guard,
@@ -872,11 +879,14 @@ async fn legacy_single_file_checkpoint_bootstrap_lands_two_dbs_and_converges() {
             Some(10_000),
             "旧端快照业务数据应入 main"
         );
-        // 快照携带的同步元数据入 sync.db；主库无残留同步表。
         assert_eq!(
-            read_scalar_i64(&b_guard, "SELECT COUNT(*) FROM sync.sync_ops", []),
-            Some(snapshot_ops as i64),
-            "快照携带的 op 应入 sync.db"
+            read_scalar_i64(
+                &b_guard,
+                "SELECT COUNT(*) FROM sync_stream_positions WHERE device_id = ?1",
+                [dev_src.as_str()],
+            ),
+            Some(1),
+            "旧端流位点行应随快照就位"
         );
         assert_eq!(
             read_scalar_i64(
@@ -886,15 +896,6 @@ async fn legacy_single_file_checkpoint_bootstrap_lands_two_dbs_and_converges() {
             ),
             Some(0),
             "主库不应残留同步表"
-        );
-        assert_eq!(
-            read_scalar_i64(
-                &b_guard,
-                "SELECT applied_through FROM sync_stream_positions WHERE device_id = ?1",
-                [dev_src.as_str()],
-            ),
-            Some(positions[0].applied_through),
-            "旧端流位点应随快照就位"
         );
     }
     let device_b = get_sync_status(app_b.clone())
@@ -916,20 +917,6 @@ async fn legacy_single_file_checkpoint_bootstrap_lands_two_dbs_and_converges() {
             ),
             Some(2_500),
             "旧端增量交易应到 B"
-        );
-        assert_eq!(
-            read_scalar_i64(&b_guard, "SELECT COUNT(*) FROM sync.sync_ops", []),
-            Some(source_ops.len() as i64),
-            "日志与源端一致（快照携带 + 增量重放）"
-        );
-        assert_eq!(
-            read_scalar_i64(
-                &b_guard,
-                "SELECT balance_cents FROM account_balance_cache WHERE account_id = ?1",
-                [acc_id.as_str()],
-            ),
-            Some(-12_500),
-            "余额缓存与源端终态一致"
         );
     }
 
