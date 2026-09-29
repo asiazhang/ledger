@@ -7,6 +7,7 @@
 //! 判据权威 = 同步引擎公开接口；双端场景 = 同进程两个引擎实例 + 内存假 Transport。
 
 use std::collections::BTreeMap;
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -592,10 +593,12 @@ fn observed_channel_with_snapshot_hook(
 ) -> crate::SyncChannel {
     let on_snapshot = Mutex::new(on_snapshot);
     let hook = move |path: &str| {
+        // 双文件成对（票 04）：业务件与同步元数据件各一次通道读；并发写注入
+        // 只挂业务件读（同步件读不重复落写，注入器非幂等）。
         let (event, is_snapshot) = if path.ends_with("/manifest.json") {
             ("fetch-manifest", false)
         } else {
-            ("fetch-snapshot", true)
+            ("fetch-snapshot", !path.ends_with("-sync.enc"))
         };
         if is_snapshot {
             (on_snapshot.lock().unwrap())();
@@ -624,8 +627,8 @@ fn probe_only_db_path() -> ScratchFile {
     )
 }
 
-/// 引导事件序的期望形态：段1（前置守卫）→ manifest 读 → 快照体读 →
-/// 段2（复验 + 换入），两次通道读都严格落在两段之间。
+/// 引导事件序的期望形态：段1（前置守卫）→ manifest 读 → 业务件读 → 同步件读
+///（双文件成对，票 04）→ 段2（复验 + 换入），全部通道读严格落在两段之间。
 fn assert_fetch_between_segments(events: &[&'static str]) {
     assert_eq!(
         events,
@@ -633,6 +636,7 @@ fn assert_fetch_between_segments(events: &[&'static str]) {
             "seg-start",
             "seg-end",
             "fetch-manifest",
+            "fetch-snapshot",
             "fetch-snapshot",
             "seg-start",
             "seg-end"
@@ -851,6 +855,8 @@ fn bootstrap_migrates_older_schema_snapshot() {
     let cp = super::super::Checkpoint {
         positions: cp22.positions,
         snapshot: std::fs::read(&stale_path).unwrap(),
+        // 旧时代形态（票 04 前）：单文件快照，无同步元数据件。
+        sync_snapshot: Vec::new(),
     };
 
     let mut conn_b = test_support::open();
@@ -924,4 +930,292 @@ fn user_fact_rows_in_any_business_domain_trigger_probe() {
         crate::checkpoint::library_has_user_data(&conn).unwrap(),
         "只有用户自建账户（无交易）也应判为已有业务数据"
     );
+}
+
+// ---------------------------------------------------------------------------
+// 双文件成对形态（票 04 / ADR-0139 决策 5）：业务件 + 同步元数据件同刻成对
+// 产出（双源回退：attached 四表齐备逐 attached，否则回退 main——票 06 删除
+// 回退）；引导按目标形态分支消费。
+// ---------------------------------------------------------------------------
+
+/// 单库布局（回退源 main）下双文件成对产出：同步件非空、四表闭集与源行数
+/// 对等（负向判据：删除产出段的同步件 VACUUM，本测试红）。
+#[test]
+fn checkpoint_produces_paired_sync_component_in_single_db_layout() {
+    let conn = test_support::open();
+    base_ledger(&conn);
+    let dev = device_of(&conn);
+
+    let cp = create_checkpoint(&conn).unwrap();
+    assert!(!cp.snapshot.is_empty());
+    assert!(
+        !cp.sync_snapshot.is_empty(),
+        "同步元数据件成对产出（回退源 main），非空"
+    );
+
+    // 同步件解库核对：四表闭集在场，行数与源一致（回退路径产出同刻 main 拷贝）。
+    let dir = ScratchDir::new("cp-sync-probe");
+    let sync_file = dir.join("sync-component.db");
+    std::fs::write(&sync_file, &cp.sync_snapshot).unwrap();
+    let probe = ledger_infra::db::open_connection_unmounted(&sync_file).unwrap();
+    for (table, source_count) in [
+        ("sync_device", 1),
+        ("sync_ops", read_ops(&conn).unwrap().len() as i64),
+        ("sync_parked_ops", 0),
+        (
+            "sync_stream_positions",
+            stream_positions(&conn).unwrap().len() as i64,
+        ),
+    ] {
+        let count: i64 = probe
+            .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, source_count, "同步件 {table} 行数与源对等");
+    }
+    let probe_dev: String = probe
+        .query_row("SELECT id FROM sync_device", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(probe_dev, dev, "同步件携带源设备身份");
+}
+
+/// 双库布局下双文件快照产出（票 05 迁移后的产出形态，双源机制零改动自然
+/// 切换的证明）：源端 attached 侧四表齐备时，业务件不含同步表、同步件承载
+/// 四表闭集（负向判据：删除产出段的双源回退，本测试红）。
+#[test]
+fn dual_db_source_produces_business_and_sync_files_split() {
+    let src_dir = ScratchDir::new("cp-dual-src");
+    let src_main = src_dir.join("ledger.db");
+    let src_sync = src_dir.join("sync.db");
+    make_business_only_main(&src_main);
+    make_sync_only_db(&src_sync);
+    let conn_a = ledger_infra::db::open_connection(&src_main).unwrap();
+    assert!(
+        ledger_infra::db::sync_tables_live_attached(&conn_a),
+        "前置：源端 attached 侧四表齐备"
+    );
+    seed_account(&conn_a, "acc-1", "现金", "cash", "CNY", 0);
+    protocol::create(&conn_a, make_expense("acc-1", 10_000, "午饭")).unwrap();
+
+    let cp = create_checkpoint(&conn_a).unwrap();
+
+    // 产出形态：业务件无同步表（双库布局的 main 形态）、同步件承载四表与 op。
+    assert_business_file_has_no_sync_tables(&cp.snapshot);
+    let sync_ops_count = assert_sync_file_carries_sync_tables(&cp.sync_snapshot);
+    assert_eq!(sync_ops_count, 1, "同步件承载源端 op");
+
+    // 位点读取（unqualified → attached）与 Checkpoint 位点同源。
+    assert_eq!(stream_positions(&conn_a).unwrap(), cp.positions);
+}
+
+/// 旧形态单文件快照（同步件为空）× 双库就绪目标：恒走单库形态——同步件不
+/// 消费、attached 四表保持空库、业务件照常换入（跨版本拆归两库归票 07）。
+#[test]
+fn legacy_snapshot_on_dual_ready_target_skips_sync_component() {
+    let conn_a = test_support::open();
+    let id = base_ledger(&conn_a);
+    let mut cp = create_checkpoint(&conn_a).unwrap();
+    cp.sync_snapshot = Vec::new(); // 票 04 前形态替身
+
+    let dst_dir = ScratchDir::new("cp-legacy-dual");
+    let dst_main = dst_dir.join("ledger.db");
+    let dst_sync = dst_dir.join("sync.db");
+    {
+        let factory = test_support::open();
+        factory
+            .execute(
+                "VACUUM INTO ?1",
+                rusqlite::params![dst_main.to_string_lossy()],
+            )
+            .unwrap();
+    }
+    make_sync_only_db(&dst_sync);
+    let mut conn_b = ledger_infra::db::open_connection(&dst_main).unwrap();
+
+    bootstrap_from_checkpoint(&mut conn_b, &cp, None).unwrap();
+
+    let attached_ops: i64 = conn_b
+        .query_row("SELECT COUNT(*) FROM sync.sync_ops", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(attached_ops, 0, "旧形态快照不消费同步件，attached 保持空库");
+    let main_txns: i64 = conn_b
+        .query_row("SELECT COUNT(*) FROM main.transactions", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(main_txns, 1, "业务件照常换入 main");
+    assert_eq!(
+        read_transaction(&conn_b, &id).unwrap().note.as_deref(),
+        Some("午饭")
+    );
+}
+
+/// 同步件按形态分支消费（票 05 迁移后引导形态的接线证明）：目标 attached 侧
+/// 四表齐备时，同步件经 SQL 级重建换入 attached——attached 的 op 与位点行只
+/// 可能来自消费分支（业务件重建只写 main），删除消费接线即红。目标 main 保
+/// 留四表以通过现行单库 schema 守卫（守卫双库化归票 05），unqualified 读命中
+/// main 影子——票 04→05 之间的已记录中间态（见 consume_sync_snapshot 文档）。
+#[test]
+fn bootstrap_consumes_sync_component_into_attached_when_ready() {
+    // 源端：内存库（回退形态产出——业务件与同步件同为 main 同刻拷贝，四表
+    // 与数据在场）。
+    let conn_a = test_support::open();
+    base_ledger(&conn_a);
+    let dev_a = device_of(&conn_a);
+    let cp = create_checkpoint(&conn_a).unwrap();
+
+    // 目标端：混合世界——main 为工厂形态（四表在场、守卫干净），attached
+    // sync.db 为仅四表空库（消费分支的就绪形态）。
+    let dst_dir = ScratchDir::new("cp-dual-dst");
+    let dst_main = dst_dir.join("ledger.db");
+    let dst_sync = dst_dir.join("sync.db");
+    // main 为工厂形态原样（四表在场，通过现行单库 schema 守卫）。
+    {
+        let factory = test_support::open();
+        factory
+            .execute(
+                "VACUUM INTO ?1",
+                rusqlite::params![dst_main.to_string_lossy()],
+            )
+            .unwrap();
+    }
+    make_sync_only_db(&dst_sync);
+    let mut conn_b = ledger_infra::db::open_connection(&dst_main).unwrap();
+
+    bootstrap_from_checkpoint(&mut conn_b, &cp, None).unwrap();
+
+    // 消费接线证明：attached 的 op 与位点行来自同步件（业务件重建不写 attached）。
+    let attached_ops: i64 = conn_b
+        .query_row("SELECT COUNT(*) FROM sync.sync_ops", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(attached_ops, 1, "同步件换入 attached：op 行就位");
+    let attached_positions: i64 = conn_b
+        .query_row("SELECT COUNT(*) FROM sync.sync_stream_positions", [], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    assert_eq!(attached_positions, 1, "同步件换入 attached：位点行就位");
+    let attached_position: i64 = conn_b
+        .query_row(
+            "SELECT applied_through FROM sync.sync_stream_positions WHERE device_id = ?1",
+            [&dev_a],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(attached_position, 1);
+    // 业务件照常换入 main（回退语义与既有判据不变）。
+    let main_txns: i64 = conn_b
+        .query_row("SELECT COUNT(*) FROM main.transactions", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(main_txns, 1, "业务件换入 main");
+}
+
+// —— 双库世界构造与形态断言（本文件测试专用器具）——
+
+/// 同步元数据四表闭集（ADR-0139 决策 1；测试侧复制以构造与核对双库世界）。
+const SPLIT_WORLD_SYNC_TABLES: [&str; 4] = [
+    "sync_device",
+    "sync_ops",
+    "sync_parked_ops",
+    "sync_stream_positions",
+];
+
+/// 构造仅含四表闭集的同步元数据库文件（消费分支就绪形态 / 双库世界 sync 侧）。
+/// 文件库不入测试工厂（ADR-0084 决策 3）：落盘与改形态经产品建缝
+/// `open_connection_unmounted`（不触发挂载接线，避免旁挂出第三份库文件）。
+fn make_sync_only_db(sync_path: &Path) {
+    {
+        let factory = test_support::open();
+        factory
+            .execute(
+                "VACUUM INTO ?1",
+                rusqlite::params![sync_path.to_string_lossy()],
+            )
+            .unwrap();
+    }
+    {
+        let conn = ledger_infra::db::open_connection_unmounted(sync_path).unwrap();
+        conn.execute_batch("PRAGMA foreign_keys = OFF").unwrap();
+        let mut stmt = conn
+            .prepare(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
+            )
+            .unwrap();
+        let tables: Vec<String> = stmt
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        drop(stmt);
+        for table in tables {
+            if !SPLIT_WORLD_SYNC_TABLES.contains(&table.as_str()) {
+                conn.execute(&format!("DROP TABLE IF EXISTS \"{table}\""), [])
+                    .unwrap();
+            }
+        }
+    }
+}
+
+/// 构造「票 05 后形态」的业务库：工厂库落盘后卸下四张同步表（attached 分支
+/// 产出形态的 main 侧）。
+fn make_business_only_main(main_path: &Path) {
+    {
+        let factory = test_support::open();
+        factory
+            .execute(
+                "VACUUM INTO ?1",
+                rusqlite::params![main_path.to_string_lossy()],
+            )
+            .unwrap();
+    }
+    {
+        let conn = ledger_infra::db::open_connection_unmounted(main_path).unwrap();
+        conn.execute_batch("PRAGMA foreign_keys = OFF").unwrap();
+        for table in SPLIT_WORLD_SYNC_TABLES {
+            conn.execute(&format!("DROP TABLE IF EXISTS {table}"), [])
+                .unwrap();
+        }
+    }
+}
+
+/// 断言业务件字节解库后不含同步表（双库布局的 main 形态），返回解库连接。
+fn assert_business_file_has_no_sync_tables(bytes: &[u8]) {
+    let dir = ScratchDir::new("cp-dual-probe-biz");
+    let path = dir.join("biz.db");
+    std::fs::write(&path, bytes).unwrap();
+    let conn = ledger_infra::db::open_connection_unmounted(&path).unwrap();
+    let sync_tables: i64 = conn
+        .query_row(
+            "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name LIKE 'sync_%'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(sync_tables, 0, "业务件不含同步表");
+}
+
+/// 断言同步件字节解库后恰含四表闭集（无业务表），返回 sync_ops 行数。
+fn assert_sync_file_carries_sync_tables(bytes: &[u8]) -> i64 {
+    let dir = ScratchDir::new("cp-dual-probe-sync");
+    let path = dir.join("sync.db");
+    std::fs::write(&path, bytes).unwrap();
+    let conn = ledger_infra::db::open_connection_unmounted(&path).unwrap();
+    for table in SPLIT_WORLD_SYNC_TABLES {
+        let present: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
+                [table],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(present, 1, "同步件含 {table}");
+    }
+    let business_tables: i64 = conn
+        .query_row(
+            "SELECT count(*) FROM sqlite_master WHERE type = 'table' \
+             AND name NOT LIKE 'sqlite_%' AND name NOT LIKE 'sync_%'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(business_tables, 0, "同步件不含业务表");
+    conn.query_row("SELECT COUNT(*) FROM sync_ops", [], |r| r.get(0))
+        .unwrap()
 }

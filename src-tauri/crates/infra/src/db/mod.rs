@@ -24,11 +24,12 @@ pub mod schema_guard;
 pub mod tx_scope;
 
 pub use connection::{
-    CONCURRENT_BUSY_TIMEOUT, SYNC_DB_FILE_NAME, SYNC_MOUNT_FAILED, check_integrity,
+    CONCURRENT_BUSY_TIMEOUT, SYNC_DB_FILE_NAME, SYNC_MOUNT_FAILED, SYNC_TABLES, check_integrity,
     open_connection, open_connection_in, open_connection_readonly, open_connection_readonly_in,
     open_connection_readonly_with_passphrase, open_connection_unmounted,
     open_connection_with_passphrase, open_connection_with_passphrase_unmounted, open_db_in,
-    open_in_memory, open_in_memory_initialized, reset_db_file, reset_db_in, sync_db_path,
+    open_in_memory, open_in_memory_initialized, reset_db_file, reset_db_in,
+    snapshot_sync_tables_into, sync_db_path, sync_tables_live_attached,
 };
 pub use facade::DbFacade;
 pub use facade_handles::{DbReadHandle, DbSlotPair, DbWriteHandle, install_facade};

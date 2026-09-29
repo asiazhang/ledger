@@ -6,8 +6,10 @@
 //!
 //! ```text
 //! <同步根>/book-<账本ID>/            # 每账本一份独立世界（ADR-0089 延伸）
-//! ├── manifest.json                 # 各流段清单（序号区间+hash）+ Checkpoint 指针
-//! ├── checkpoint/cp-<代>.enc        # 检查点快照，按代独立文件，写新换指针
+//! ├── manifest.json                 # 各流段清单（序号区间+hash）+ Checkpoint 双指针
+//! ├── checkpoint/cp-<代>.enc        # 检查点业务件，按代独立文件，写新换指针
+//! ├── checkpoint/cp-<代>-sync.enc   # 检查点同步元数据件（双文件成对，ADR-0139
+//!                                   # 决策 5；旧形态单文件产物无此文件）
 //! └── streams/<DeviceId>/seg-<起>-<止>.enc
 //!                                   # 每来源设备一流，仅该设备可写，其余端只读
 //! ```
@@ -157,6 +159,16 @@ impl ChannelLayout {
             checkpoint_file_name(generation)
         )
     }
+
+    /// 同步元数据件文件路径（双文件成对，ADR-0139 决策 5；manifest 双指针的
+    /// sync 件字段 → 通道地址的单一出口）。
+    pub fn checkpoint_sync_path(&self, generation: i64) -> String {
+        format!(
+            "{}/{}",
+            self.checkpoint_dir(),
+            checkpoint_sync_file_name(generation)
+        )
+    }
 }
 
 /// 段文件名：`seg-<起>:010>-<止:010>.enc`。
@@ -167,6 +179,11 @@ fn segment_file_name(first_clock: i64, last_clock: i64) -> String {
 /// 检查点文件名：`cp-<代:06>.enc`。
 fn checkpoint_file_name(generation: i64) -> String {
     format!("cp-{generation:06}.enc")
+}
+
+/// 同步元数据件文件名：`cp-<代:06>-sync.enc`（与业务件同代成对）。
+fn checkpoint_sync_file_name(generation: i64) -> String {
+    format!("cp-{generation:06}-sync.enc")
 }
 
 /// 通道清单（manifest.json）：各流段清单 + 当前 Checkpoint 指针。
@@ -261,18 +278,31 @@ pub struct SegmentEntry {
 }
 
 /// 检查点指针（manifest 中当前代的引用）。
+///
+/// 双文件成对（ADR-0139 决策 5）：原字段组指向业务件，新增 `sync_*` 字段组
+/// 指向同步元数据件。旧形态单文件指针无 `sync_*` 字段（缺省 None）——旧版
+/// 端忽略新增字段、新版端容忍旧字段缺席，通道互操作双向不破坏。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CheckpointPointer {
-    /// 检查点文件名。
+    /// 检查点文件名（业务件）。
     pub file: String,
     /// 检查点代数（单调递增，自当前指针 +1）。
     pub generation: i64,
-    /// 密文字节数。
+    /// 密文字节数（业务件）。
     pub size: u64,
-    /// 密文 SHA-256（hex）。
+    /// 密文 SHA-256（hex；业务件）。
     pub sha256: String,
     /// 产出时刻（ISO；产出端本地事实，仅供排障展示）。
     pub created_at: String,
+    /// 同步元数据件文件名（双文件成对；旧形态单文件指针缺省 None）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sync_file: Option<String>,
+    /// 同步元数据件密文字节数（随 sync_file 成对在位）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sync_size: Option<u64>,
+    /// 同步元数据件密文 SHA-256（hex；随 sync_file 成对在位）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sync_sha256: Option<String>,
 }
 
 /// 轮次内消费连接的数据库段闭集（ADR-0120 决策 2 的表格承载）：连接锁只盖
@@ -652,18 +682,37 @@ pub fn upload_checkpoint_with(
         .map(|p| p.generation)
         .unwrap_or(0)
         + 1;
+    // 业务件（既有形态不变）……
     let sealed = envelope::seal(
         &frame_checkpoint_bundle(checkpoint)?,
         mode,
         &options.envelope,
     )?;
     transport.write_file(&layout.checkpoint_path(generation), &sealed)?;
+    // ……同步元数据件（双文件成对，ADR-0139 决策 5）：同刻定格的快照字节独立
+    // 封包成第二个通道文件，manifest 双指针在件齐后最后原子换——同步件为空的
+    // 旧形态 Checkpoint（票 04 前产物 / 测试替身）不写 sync 件、指针退化为旧
+    // 形态单文件指针（无 sync_* 字段），旧版端照常消费。
+    let (sync_file, sync_size, sync_sha256) = if checkpoint.sync_snapshot.is_empty() {
+        (None, None, None)
+    } else {
+        let sync_sealed = envelope::seal(&checkpoint.sync_snapshot, mode, &options.envelope)?;
+        transport.write_file(&layout.checkpoint_sync_path(generation), &sync_sealed)?;
+        (
+            Some(checkpoint_sync_file_name(generation)),
+            Some(sync_sealed.len() as u64),
+            Some(sha256_hex(&sync_sealed)),
+        )
+    };
     let pointer = CheckpointPointer {
         file: checkpoint_file_name(generation),
         generation,
         size: sealed.len() as u64,
         sha256: sha256_hex(&sealed),
         created_at: now_iso(),
+        sync_file,
+        sync_size,
+        sync_sha256,
     };
     let mut manifest = remote.clone();
     manifest.checkpoint = Some(pointer.clone());
@@ -731,8 +780,23 @@ pub fn fetch_checkpoint(
     // 据此对齐本库加密形态，见 [`FetchedCheckpoint::sealed`]。
     let sealed = envelope::is_sealed(&bytes);
     let bundle = envelope::open(&bytes, passphrase)?;
-    let checkpoint =
+    let mut checkpoint =
         unframe_checkpoint_bundle(&bundle).map_err(|_| checkpoint_corrupt_error(&path))?;
+    // 同步元数据件（双文件成对，ADR-0139 决策 5）：双指针在位才拉取；旧形态
+    // 单文件指针（无 sync_* 字段）按旧形态归一（同步件为空，引导按单库形态
+    // 分支）。尺寸与 hash 校验同业务件（通道条目自校验）。
+    if let (Some(sync_file), Some(sync_size), Some(sync_sha256)) =
+        (&pointer.sync_file, pointer.sync_size, &pointer.sync_sha256)
+    {
+        let sync_path = layout.checkpoint_file_path(sync_file);
+        let sync_bytes = transport
+            .read_file(&sync_path)?
+            .ok_or_else(|| checkpoint_missing_error(&sync_path))?;
+        if sync_bytes.len() as u64 != sync_size || sha256_hex(&sync_bytes) != *sync_sha256 {
+            return Err(checkpoint_corrupt_error(&sync_path));
+        }
+        checkpoint.sync_snapshot = envelope::open(&sync_bytes, passphrase)?;
+    }
     Ok(FetchedCheckpoint {
         checkpoint,
         sealed,
@@ -801,6 +865,10 @@ fn unframe_checkpoint_bundle(bundle: &[u8]) -> std::result::Result<Checkpoint, (
     Ok(Checkpoint {
         positions,
         snapshot: bundle[header_end..].to_vec(),
+        // 业务件捆绑格式自票 04 起不变；同步元数据件走独立通道文件
+        //（manifest 双指针的 sync 件字段），不经本捆绑——旧形态捆绑
+        //（票 04 前产物）与新形态捆绑在此统一解出空同步件，形态归一。
+        sync_snapshot: Vec::new(),
     })
 }
 
