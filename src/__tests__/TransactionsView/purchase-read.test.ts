@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { wireInvokeSeam } from "@ledger/test-support/invoke-mock";
 import type { Category, Transaction } from "@ledger/types";
-import { makePurchase } from "../factories";
+import { makeCategory, makePurchase } from "../factories";
 import {
   bodyRows,
   makeTxn,
@@ -24,34 +24,10 @@ import {
  * 构造器 rowSpan / 两用渲染）即本文件变红（接线负向条目）。
  */
 
-/** 分类字典（列级覆写）：两个在用根分类，供逐行分类断言。 */
+/** 分类字典（列级覆写）：两个在用根分类，供逐行分类断言（组件测试数据工厂单源）。 */
 const purchaseCategories: Category[] = [
-  {
-    id: "cat-1",
-    name: "餐饮",
-    kind: "expense",
-    parent_id: null,
-    icon: null,
-    sort_order: 0,
-    created_at: "2026-01-01T00:00:00Z",
-    updated_at: "2026-01-01T00:00:00Z",
-    version: 1,
-    device_id: "test",
-    is_deleted: false,
-  },
-  {
-    id: "cat-2",
-    name: "日用品",
-    kind: "expense",
-    parent_id: null,
-    icon: null,
-    sort_order: 1,
-    created_at: "2026-01-01T00:00:00Z",
-    updated_at: "2026-01-01T00:00:00Z",
-    version: 1,
-    device_id: "test",
-    is_deleted: false,
-  },
+  makeCategory({ id: "cat-1", name: "餐饮" }),
+  makeCategory({ id: "cat-2", name: "日用品", sort_order: 1 }),
 ];
 
 /** 三件商品订单（京东一单多件形态）：猫粮 / 洗衣液 / 纸巾，数组顺序 = 对账单顺序。 */

@@ -165,10 +165,9 @@ const PURCHASE_QTY_STYLE =
 
 /** 购买项单元格渲染（issue #1883 / ADR-0138 决策 13，「商品 / 备注」列的商品形态）：
  * 商品名（NEllipsis 自省略 + 悬停全文，长商品名不再只剩「…」）+「共 N 件」件数标注。
- * 只读呈现：无复制按钮（备注复制通道不适用商品名）、无价格（存而不显示，决策 10）、
- * 无订单徽章（徽章是订单级信息，随订单块合并格与详情呈现）。 */
-function renderPurchaseCell(row: ExpandedTransactionRow): VNode {
-  const item = row.purchases[row.purchaseIndex];
+ * 只读呈现：无复制按钮（备注复制通道不适用商品名）、无价格（存而不显示，决策 10）；
+ * 订单徽章不随购买项行渲染（备注列商品形态只承载商品名与件数，订单号出口在详情）。 */
+function renderPurchaseCell(item: TransactionPurchase): VNode {
   return h("div", { style: NOTE_CELL_STYLE }, [
     h(NEllipsis, { style: "flex: 1 1 auto; min-width: 0;" }, { default: () => item.name }),
     h(
@@ -281,10 +280,10 @@ export function buildTransactionColumns(
       // 弹性列：不设 width，由 fixed 布局均分剩余空间（超长时省略号 + 悬停显示全文）；
       // 不设列级 ellipsis（账户/来源列同款理由：会把复制按钮一起包进省略容器），
       // 省略与悬停全文由单元格内 NEllipsis 承担（fixed 布局由分类/商户列维持）
-      render: (row) =>
-        options.expandPurchases && purchaseOf(row)
-          ? renderPurchaseCell(row as ExpandedTransactionRow)
-          : renderNoteCell(row),
+      render: (row) => {
+        const item = options.expandPurchases ? purchaseOf(row) : null;
+        return item ? renderPurchaseCell(item) : renderNoteCell(row);
+      },
     },
     {
       title: t("transactions.columns.amount"),
