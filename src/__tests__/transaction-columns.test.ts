@@ -246,7 +246,7 @@ describe("buildTransactionColumns 购买项展开装配", () => {
     return (hit as { rowSpan?: (row: Transaction, index: number) => number }).rowSpan;
   }
 
-  it("缺省（未声明 expandPurchases）任何列都不带 rowSpan，备注列名不变——搜索结果零变化", () => {
+  it("缺省（未声明 expandPurchases）任何列都不带 rowSpan，备注列名不变——未展开行集零变化", () => {
     const columns = buildTransactionColumns(reference, { onRowMenuOpen: () => {} });
     for (const key of [...ORDER_LEVEL_KEYS, "category_id", "note"]) {
       expect(rowSpanOf(columns, key)).toBeUndefined();

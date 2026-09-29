@@ -10,7 +10,7 @@ import { useLoadable } from "@ledger/loadable";
 import { api } from "@ledger/api";
 import { useAppStore } from "@/stores/app";
 import { useReferenceStore } from "@/stores/reference";
-import { buildTransactionColumns } from "@/transaction/transaction-columns";
+import { buildTransactionColumns, expandPurchaseRows } from "@/transaction/transaction-columns";
 import { sumFixedColumnWidths } from "@ledger/utils/table";
 import { type Transaction, type TransactionSearchFilter } from "@ledger/types";
 import type { NullableDateRange } from "@ledger/utils/time-period";
@@ -166,9 +166,17 @@ function clearFilters() {
   dateTo.value = null;
 }
 
-// 复用交易列表列配置（日期/类型/分类/账户/备注/金额），结果只读；
-// 经 computed 构造：列名（t()）随语言切换即时重建
-const columns = computed<DataTableColumn<Transaction>[]>(() => buildTransactionColumns(reference));
+// 复用交易列表列配置（日期/类型/分类/账户/商品备注/金额），结果只读（不传行菜单）；
+// 经 computed 构造：列名（t()）随语言切换即时重建。购买项展开（issue #1885 /
+// ADR-0138 决策 14）：商品名命中即整单呈现全部购买项行，与交易列表同一装配。
+const columns = computed<DataTableColumn<Transaction>[]>(() =>
+  buildTransactionColumns(reference, { expandPurchases: true }),
+);
+
+// 展开显示行集（展开/合并接线唯一入口）：命中交易每购买项一行、订单级格 rowSpan
+// 纵向合并；删除本接线（:data 回退原始行集）即 SearchView 购买项测试变红——搜索
+// 不再逐购买项呈现。分页与「共 N 条」仍按交易计（后端 total，ADR-0008 口径不变）。
+const displayRows = computed(() => expandPurchaseRows(results.value));
 
 // scroll-x：列中所有固定列（有 width 的列，备注为弹性列不计入）宽度总和
 const scrollX = computed(() => sumFixedColumnWidths(columns.value));
@@ -246,7 +254,7 @@ const pagination = computed(() => ({
       <NDataTable
         v-else
         :columns="columns"
-        :data="results"
+        :data="displayRows"
         :loading="loading"
         :bordered="false"
         size="small"

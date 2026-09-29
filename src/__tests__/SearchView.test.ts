@@ -11,7 +11,7 @@ import { applyLocale } from "@ledger/i18n";
 import { resetOverlays } from "@ledger/ui-kit/overlayRegistry";
 import { mockInvoke, wireInvokeSeam } from "@ledger/test-support/invoke-mock";
 import { findButton } from "@ledger/test-support/dom";
-import { makeTransaction } from "./factories";
+import { makePurchase, makeTransaction } from "./factories";
 import { refCurrencies } from "@ledger/test-support/reference-stubs";
 import { formatAmount } from "@ledger/money";
 import type { Account, Category, Merchant, Transaction } from "@ledger/types";
@@ -124,6 +124,24 @@ const mockTransactions: Transaction[] = [
     account_id: "acc-cash",
     category_id: "cat-food",
     merchant_id: "mer-jd",
+  }),
+  // 多商品订单（issue #1885 商品名命中面）：备注唯一关键词「采购订单」避开既有
+  // 测试查询词；3 条购买项中段命中（洗衣液）也整单读回——后端命中即返回全部明细，
+  // 前端不裁剪命中行。
+  // 日期/金额刻意避开既有筛选与时间芯片断言窗口（2024-06 / ¥1.28）
+  makeTransaction({
+    id: "tx-po",
+    note: "采购订单",
+    date: "2024-06-01",
+    amount_cents: 128,
+    amount_native_cents: 128,
+    account_id: "acc-cash",
+    category_id: "cat-food",
+    purchases: [
+      makePurchase({ name: "渴望猫粮", quantity: 1 }),
+      makePurchase({ name: "洗衣液", quantity: 2 }),
+      makePurchase({ name: "纸巾", quantity: 3 }),
+    ],
   }),
 ];
 
@@ -832,5 +850,63 @@ describe("SearchView 移动档卡片复用（issue #846，第二消费方）", (
     await typeAndSearch(wrapper, "午餐");
     expect(wrapper.findComponent(NDataTable).exists()).toBe(true);
     expect(wrapper.find(".transaction-card").exists()).toBe(false);
+  });
+});
+
+describe("SearchView 商品名命中面（issue #1885 / ADR-0138 决策 14）", () => {
+  it("命中交易整单呈现全部购买项行（不裁剪命中行），订单级金额只出现一次", async () => {
+    vi.useFakeTimers();
+    const wrapper = mount(SearchView);
+    await nextTick();
+    await typeAndSearch(wrapper, "采购订单");
+    expect(wrapper.text()).toContain("命中 1 条");
+    // 整单呈现：一单 3 件商品各占一行（表格体行数 = 3，不是 1）
+    const bodyRows = wrapper.findComponent(NDataTable).findAll("tbody tr");
+    expect(bodyRows.length).toBe(3);
+    // 三条购买项行逐行渲染商品名 + 件数标注
+    for (const [name, qty] of [
+      ["渴望猫粮", "共 1 件"],
+      ["洗衣液", "共 2 件"],
+      ["纸巾", "共 3 件"],
+    ] as const) {
+      expect(wrapper.text()).toContain(name);
+      expect(wrapper.text()).toContain(qty);
+    }
+    // 列头一列两用：展开视图「商品 / 备注」
+    expect(wrapper.text()).toContain("商品 / 备注");
+    // 订单级格纵向合并：金额渲染恰一次（合并格不被切碎、金额不重复）
+    const amountText = formatAmount(128, cny);
+    expect(wrapper.text().split(amountText).length - 1).toBe(1);
+    // 双断言：搜索命令确实以关键字发出（调用事实 + 渲染效果）
+    expect(lastSearchArgs()).toMatchObject({ query: "采购订单" });
+  });
+
+  it("无购买项的存量行搜索呈现零变化（备注形态渲染）", async () => {
+    vi.useFakeTimers();
+    const wrapper = mount(SearchView);
+    await nextTick();
+    await typeAndSearch(wrapper, "报销");
+    // 无购买项行退回备注原文渲染，一交易一行
+    const bodyRows = wrapper.findComponent(NDataTable).findAll("tbody tr");
+    expect(bodyRows.length).toBe(2);
+    expect(wrapper.text()).toContain("报销");
+    expect(wrapper.text()).not.toContain("渴望猫粮");
+  });
+
+  it("移动档命中同样整单呈现：卡片内逐行列出购买项", async () => {
+    setFakeMedia({ width: 839 });
+    vi.useFakeTimers();
+    const wrapper = mount(SearchView);
+    await nextTick();
+    await typeAndSearch(wrapper, "采购订单");
+    expect(wrapper.text()).toContain("命中 1 条");
+    const card = wrapper.find(".transaction-card");
+    expect(card.exists()).toBe(true);
+    for (const name of ["渴望猫粮", "洗衣液", "纸巾"]) {
+      expect(card.text()).toContain(name);
+    }
+    // 卡头金额只出现一次（一卡一笔交易，ADR-0138 决策 15）
+    const amountText = formatAmount(128, cny);
+    expect(card.text().split(amountText).length - 1).toBe(1);
   });
 });

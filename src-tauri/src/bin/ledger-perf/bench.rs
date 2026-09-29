@@ -1,6 +1,6 @@
-//! bench 子命令：对 generate 产出的库跑 15 项查询基准并输出 min/avg/p95 报告
+//! bench 子命令：对 generate 产出的库跑 16 项查询基准并输出 min/avg/p95 报告
 //! （issue #461 / spec #458；商户占比与投资三项
-//! 读基准 issue #1627；跨账本投资汇总基准 issue #1630）。
+//! 读基准 issue #1627；跨账本投资汇总基准 issue #1630；商品名搜索基准 issue #1885）。
 //!
 //! 唯一接缝（验收项）：全部基准经「现有 pub 查询函数 + 标准连接工厂
 //! （[`open_connection`]）打开文件库」调用，与 IPC 命令同一 SQL 路径——
@@ -86,6 +86,8 @@ pub(crate) struct BenchCli {
     /// 中文子串搜索基准的关键字（默认「咖啡」，命中备注池，驱动原文连续
     /// 子串匹配路径）。
     pub search: String,
+    /// 商品名搜索基准的关键字（默认「猫粮」，命中购买项名称池，issue #1885）。
+    pub purchase_search: String,
     /// 性能门禁阈值（毫秒）：全部基准 p95 ≤ 阈值才退出 0；None = 不判定。
     pub max_p95_ms: Option<f64>,
 }
@@ -97,6 +99,7 @@ impl Default for BenchCli {
             warmup: 3,
             iterations: 20,
             search: "咖啡".to_string(),
+            purchase_search: "猫粮".to_string(),
             max_p95_ms: None,
         }
     }
@@ -138,6 +141,14 @@ pub(crate) const FLAGS: &[FlagSpec<BenchCli>] = &[
         },
     },
     FlagSpec {
+        flag: "--purchase-search <TERM>",
+        help: "商品名搜索基准的关键字（默认 猫粮）",
+        apply: |cli, _flag, v| {
+            cli.purchase_search = v.to_string();
+            Ok(())
+        },
+    },
+    FlagSpec {
         flag: "--max-p95-ms <MS>",
         help: "默认门禁阈值（毫秒）：全部基准 p95 ≤ 各自阈值才退出 0，任何一项超标即失败（CI 用；缺省不判定；分项例外机制与现行清单见 ADR-0068）",
         apply: |cli, flag, v| {
@@ -168,6 +179,8 @@ pub(crate) struct BenchConfig {
     pub warmup: usize,
     pub iterations: usize,
     pub search_term: String,
+    /// 商品名搜索基准关键字（issue #1885）。
+    pub purchase_search_term: String,
     /// 附属账本根目录（issue #1630；生产由 `--db` 同级推导，books 模块）：
     /// 跨账本投资汇总基准项的前置探测与逐本建连都消费它。
     pub books_dir: PathBuf,
@@ -181,6 +194,7 @@ impl From<BenchCli> for BenchConfig {
             warmup: cli.warmup,
             iterations: cli.iterations,
             search_term: cli.search,
+            purchase_search_term: cli.purchase_search,
             books_dir: super::books::attached_books_root(&cli.db),
         }
     }
@@ -275,7 +289,7 @@ pub(crate) fn gate_failures(results: &[BenchMetrics], max_p95_ms: f64) -> Vec<St
         .collect()
 }
 
-/// 基准执行核心（测试接缝）：对已打开的连接跑全部 15 项基准。
+/// 基准执行核心（测试接缝）：对已打开的连接跑全部 16 项基准。
 ///
 /// 前置数据（账户 id、日期极值、深分页页码）全部经现有查询函数在预热外
 /// 一次性探测，基准闭包内只做「参数已定型的单次查询调用」。
@@ -325,7 +339,7 @@ pub(crate) fn run_benchmarks(
     let attached_books =
         super::books::discover_attached_books(&cfg.books_dir, active_schema_version)?;
 
-    // ---- 15 项基准（每项一个定型参数的查询闭包） ------------------------
+    // ---- 16 项基准（每项一个定型参数的查询闭包） ------------------------
     let first_page_filter = TransactionListFilter {
         page_size: Some(PAGE_SIZE),
         page: Some(1),
@@ -346,6 +360,7 @@ pub(crate) fn run_benchmarks(
     };
     // 每个闭包专用克隆（move 捕获，互不争用所有权）。
     let search_term = cfg.search_term.clone();
+    let purchase_term = cfg.purchase_search_term.clone();
     let account_window_end = max_date.clone();
     let monthly_min = min_date.clone();
     let monthly_max = max_date.clone();
@@ -476,6 +491,23 @@ pub(crate) fn run_benchmarks(
                 )
                 .map_err(|e| e.to_string())
                 .map(|r| format!("关键字「{search_term}」全量扫描，命中 {} 条", r.total))
+            }),
+        ),
+        (
+            "商品名搜索",
+            Box::new(move |conn| {
+                search_transactions_internal(
+                    conn,
+                    &purchase_term,
+                    1,
+                    PAGE_SIZE,
+                    None,
+                    None,
+                    None,
+                    None,
+                )
+                .map_err(|e| e.to_string())
+                .map(|r| format!("关键字「{purchase_term}」命中购买项订单 {} 笔", r.total))
             }),
         ),
         (

@@ -1,10 +1,13 @@
 //! 查询执行（读路径，issue #515 / ADR-0027 决策 1 修订）：搜索 SQL 下推权威。
 //!
-//! 职责：匹配段在 SQLite C 层完成（备注原文 LIKE + 账户/商户名字典 id 集合下推、
-//! 软删口径一并下推，`INDEXED BY` 钉 V018 覆盖索引），展示段仅对当前页命中 id 回表
-//! 18 列。不变量：交易搜索按原文命中（备注原文子串 ∨ 账户名 ∨ 商户名，词条间 AND、
-//! 字段间 OR；拼音路径随 #1727 拼音退役整体拆除，下拉侧拼音可搜不受影响）。ADR 指针：
-//! ADR-0027 决策 1 修订。陷阱：SQLite LIKE 大小写折叠仅 ASCII（非 ASCII 大写备注边界）。
+//! 职责：匹配段在 SQLite C 层完成（备注原文 LIKE + 账户/商户名字典 id 集合下推 +
+//! 购买项名称命中 id 集合下推（issue #1885 / ADR-0138 决策 14）+ 软删口径一并下推，
+//! `INDEXED BY` 钉 V018 覆盖索引），展示段仅对当前页命中 id 回表
+//! 18 列。不变量：交易搜索按原文命中（备注原文子串 ∨ 账户名 ∨ 商户名 ∨ 购买项
+//! 名称原文子串，词条间 AND、字段间 OR；拼音路径随 #1727 拼音退役整体拆除，
+//! 下拉侧拼音可搜不受影响）。ADR 指针：ADR-0027 决策 1 修订；50 万笔库定量
+//! 性能证据（查询计划 + p95）见 ADR-0027 修订记录 #1885 条目。陷阱：SQLite LIKE
+//! 大小写折叠仅 ASCII（非 ASCII 大写备注/购买项名称边界，与备注路径同界）。
 use std::collections::HashMap;
 
 use rusqlite::Connection;
@@ -92,6 +95,67 @@ pub fn load_search_dicts(conn: &Connection) -> Result<SearchDicts> {
     })
 }
 
+// ---------------------------------------------------------------------------
+// 购买项名称命中（issue #1885 / ADR-0138 决策 14）：预查询命中 id 集合下推。
+// 与账户/商户名字典同型的「先算集合、再下推 IN」形态——购买项名称不固化在
+// 交易行上（子表行集与交易数同量级放大），主扫描保持覆盖索引 index-only 全扫，
+// 每行仅多一次 IN 集合探测；集合为空的词条不追加任何子句（零每行开销，
+// 无购买项的库与存量行搜索行为零变化）。
+// ---------------------------------------------------------------------------
+
+/// 全语句共享的购买项命中 id 下推预算：SQLite 语句参数上限（bundled 默认
+/// 32766）需为备注模式、字典 id 集合与筛选参数留余量，命中集合总量超过预算
+/// 的词条退让 [`PurchasePush::Exists`]（无参数上限，正确性不变，仅该极端
+/// 词条的每行探测成本升高——能命中 2 万单的词条本就是超长尾查询）。
+const MAX_PUSHED_PURCHASE_IDS: usize = 20_000;
+
+/// 词条的购买项命中下推形态。
+#[doc(hidden)]
+pub enum PurchasePush {
+    /// 预查询命中的交易 id 集合（已去重排序）；空集合 = 无购买项命中，
+    /// 不追加子句。
+    Ids(Vec<String>),
+    /// 命中集合超出下推预算时的 EXISTS 半连接退让（参数零增长）。
+    Exists,
+}
+
+/// 购买项名称命中 id 集合（原文连续子串，与备注同款 LIKE 语义：词条已小写、
+/// ASCII 大小写折叠由 LIKE 自带、通配经 ESCAPE 按字面）。子表行集远小于交易
+/// 行集（仅 AI 导入的 expense 订单携带），逐词条全扫子表即枚举级成本；
+/// 排序保参数与 SQL 文本确定性。前置通配 LIKE 无法用任何 B-tree 定位
+///（子序列语义与倒排索引不兼容的结论不变，ADR-0027），故不建名称索引。
+fn load_purchase_hit_ids(conn: &Connection, term_lower: &str) -> Result<Vec<String>> {
+    let mut stmt = conn.prepare(
+        "SELECT DISTINCT transaction_id FROM transaction_purchases \
+         WHERE name LIKE ?1 ESCAPE '\\' ORDER BY transaction_id",
+    )?;
+    let rows = stmt.query_map([like_substring_pattern(term_lower)], |r| r.get(0))?;
+    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+}
+
+/// 词条购买项命中下推形态仲裁：逐词条预查询命中 id 集合（须与行集/总数/页回表
+/// 同处读事务，调用方保证），全语句共享 [`MAX_PUSHED_PURCHASE_IDS`] 下推预算——
+/// 超预算的词条退让 [`PurchasePush::Exists`]（无参数上限、正确性不变，仅该
+/// 极端词条的每行探测成本升高：能命中 2 万单的词条本就是超长尾查询）。
+fn resolve_purchase_pushes(
+    conn: &Connection,
+    term_lowers: &[TermLowered],
+) -> Result<Vec<PurchasePush>> {
+    let mut remaining = MAX_PUSHED_PURCHASE_IDS;
+    term_lowers
+        .iter()
+        .map(|term| -> Result<PurchasePush> {
+            let ids = load_purchase_hit_ids(conn, &term.lower)?;
+            if ids.len() <= remaining {
+                remaining -= ids.len();
+                Ok(PurchasePush::Ids(ids))
+            } else {
+                Ok(PurchasePush::Exists)
+            }
+        })
+        .collect()
+}
+
 /// LIKE 通配转义（配 `ESCAPE '\'`）：`\`→`\\`、`%`→`\%`、`_`→`\_`，其余字符
 /// 原样。转义符只出现在这三类序列前——SQLite 对「转义符 + 非特殊字符」的序列
 /// 按不匹配处理，故 `\` 自身也要翻倍，保证特殊字符按字面匹配。
@@ -173,11 +237,18 @@ fn push_in_clause(
     }
 }
 
-/// 单词条下推子句（字段 OR）：备注原文子串 LIKE ∨ 账户名 ∨ 商户名。账户/商户
-/// 侧由字典预判命中的 id 集合下推 IN（名字不固化在交易行上，即时读取语义由
-/// 「字典每次搜索新建 + 集合现算」保持）；软删账户不进集合，与原行级口径过滤等价。
-fn term_clause(term: &TermLowered, dicts: &SearchDicts, params: &mut Vec<Value>) -> String {
-    let mut parts: Vec<String> = Vec::with_capacity(3);
+/// 单词条下推子句（字段 OR）：备注原文子串 LIKE ∨ 账户名 ∨ 商户名 ∨ 购买项名称
+/// （issue #1885 / ADR-0138 决策 14）。账户/商户侧由字典预判命中的 id 集合下推 IN
+/// （名字不固化在交易行上，即时读取语义由「字典每次搜索新建 + 集合现算」保持）；
+/// 软删账户不进集合，与原行级口径过滤等价；购买项侧按 [`PurchasePush`] 形态
+/// 追加命中 id IN 或 EXISTS 半连接，空集合不追加（零每行开销）。
+fn term_clause(
+    term: &TermLowered,
+    dicts: &SearchDicts,
+    purchase: &PurchasePush,
+    params: &mut Vec<Value>,
+) -> String {
+    let mut parts: Vec<String> = Vec::with_capacity(4);
     params.push(like_substring_pattern(&term.lower).into());
     let note_pattern_index = params.len();
     parts.push(format!("t.note LIKE ?{note_pattern_index} ESCAPE '\\'"));
@@ -205,6 +276,21 @@ fn term_clause(term: &TermLowered, dicts: &SearchDicts, params: &mut Vec<Value>)
         params,
         InClauseKind::In,
     ));
+    match purchase {
+        PurchasePush::Ids(ids) if !ids.is_empty() => {
+            let ids: Vec<Value> = ids.iter().map(|id| Value::Text(id.clone())).collect();
+            parts.push(push_in_clause("t.id", ids, params, InClauseKind::In));
+        }
+        PurchasePush::Exists => {
+            params.push(like_substring_pattern(&term.lower).into());
+            let pattern_index = params.len();
+            parts.push(format!(
+                "EXISTS (SELECT 1 FROM transaction_purchases p WHERE p.transaction_id = t.id AND p.name LIKE ?{pattern_index} ESCAPE '\\')"
+            ));
+        }
+        // 空集合：无购买项命中，不追加子句（零每行开销）。
+        PurchasePush::Ids(_) => {}
+    }
     format!("({})", parts.join(" OR "))
 }
 
@@ -213,7 +299,10 @@ fn term_clause(term: &TermLowered, dicts: &SearchDicts, params: &mut Vec<Value>)
 /// 扫描，钉定使排序由索引序满足（无临时 B-tree）且扫描 index-only（零回
 /// 表），并防 planner 在统计边际上摇摆（先例：V016 月度表达式索引钉定）。
 /// 账户/分类/商户侧口径由字典预判成 id 集合下推（50 万候选流上 JOIN 即取行
-/// 主要成本，实测 25ms → 1170ms，V018 修订记录）。
+/// 主要成本，实测 25ms → 1170ms，V018 修订记录）；购买项名称命中 id 集合同型
+/// 下推（issue #1885，预查询见 [`load_purchase_hit_ids`]）。
+///
+/// `purchases` 与 `term_lowers` 按下标一一对应（调用方先做预算仲裁）。
 ///
 /// SQL 形态（每词条一组字段 OR，词条之间 AND，金额/日期筛选以
 /// [`Stage1Filter`] 描述、编号拼接在尾部）：
@@ -224,7 +313,9 @@ fn term_clause(term: &TermLowered, dicts: &SearchDicts, params: &mut Vec<Value>)
 ///   [AND (t.account_id IS NULL OR t.account_id NOT IN (软删账户))]
 ///   AND (t.category_id IS NULL OR t.category_id NOT IN (软删分类))
 ///   AND (t.note LIKE ? ESCAPE '\\'
-///        OR t.account_id IN (…) OR t.merchant_id IN (…))
+///        OR t.account_id IN (…) OR t.merchant_id IN (…)
+///        OR t.id IN (购买项命中 id)  -- 空集合省略；超预算词条改 EXISTS
+///       )
 ///   AND …
 ///   [AND 金额/日期筛选]
 /// ORDER BY t.date DESC, t.created_at DESC, t.id DESC
@@ -233,8 +324,13 @@ fn term_clause(term: &TermLowered, dicts: &SearchDicts, params: &mut Vec<Value>)
 pub fn build_stage1_query(
     term_lowers: &[TermLowered],
     dicts: &SearchDicts,
+    purchases: &[PurchasePush],
     filters: &[Stage1Filter],
 ) -> Stage1Query {
+    assert!(
+        term_lowers.len() == purchases.len(),
+        "purchases 与词条按下标一一对应（release 下 zip 静默截断会少拼子句、漏命中面）"
+    );
     let mut params: Vec<Value> = Vec::new();
     let mut clauses: Vec<String> = Vec::with_capacity(term_lowers.len() + 4);
     clauses.push("t.is_deleted = 0".to_string());
@@ -274,9 +370,9 @@ pub fn build_stage1_query(
         InClauseKind::NullableNotIn,
     ));
 
-    // 词条 AND：每词条一组字段 OR（见 [`term_clause`]）。
-    for term in term_lowers {
-        clauses.push(term_clause(term, dicts, &mut params));
+    // 词条 AND：每词条一组字段 OR（见 [`term_clause`]，购买项形态按下标配对）。
+    for (term, purchase) in term_lowers.iter().zip(purchases) {
+        clauses.push(term_clause(term, dicts, purchase, &mut params));
     }
 
     // 可选金额/日期筛选（与关键字 AND 组合，编号与登记顺序一致）。
@@ -482,7 +578,10 @@ pub fn search_transactions_internal(
                     lower: t.to_lowercase(),
                 })
                 .collect();
-            let query = build_stage1_query(&term_lowers, &dicts, &filters);
+            // 购买项命中面（issue #1885）：逐词条预查询命中 id 集合，同一读事务内
+            // 现算（与行集/总数/页回表同快照）。
+            let purchases = resolve_purchase_pushes(conn, &term_lowers)?;
+            let query = build_stage1_query(&term_lowers, &dicts, &purchases, &filters);
             let mut stmt = conn.prepare(&query.sql)?;
             let rows = stmt.query_map(rusqlite::params_from_iter(query.params.iter()), |row| {
                 let id = row.get_ref(0)?.as_str()?;

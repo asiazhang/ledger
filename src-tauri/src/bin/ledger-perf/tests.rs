@@ -76,12 +76,13 @@ fn bench_smoke_runs_all_benchmarks() {
             warmup: 0,
             iterations: 2,
             search_term: "咖啡".to_string(),
+            purchase_search_term: "猫粮".to_string(),
             books_dir: books::attached_books_root(&path),
         },
     )
     .unwrap();
 
-    // 名单钉住：15 项基准一个不少、顺序稳定（增删基准必须显式更新本断言）。
+    // 名单钉住：16 项基准一个不少、顺序稳定（增删基准必须显式更新本断言）。
     let names: Vec<&str> = results.iter().map(|r| r.name).collect();
     assert_eq!(
         names,
@@ -94,6 +95,7 @@ fn bench_smoke_runs_all_benchmarks() {
             "分类占比",
             "商户占比",
             "备注搜索拼音过滤",
+            "商品名搜索",
             "净资产总览",
             "持仓列表",
             "时点持仓",
@@ -124,6 +126,13 @@ fn bench_smoke_runs_all_benchmarks() {
         "搜索基准备注应含命中数：{}",
         search.context
     );
+    // 商品名搜索基准确实产出命中（「猫粮」，生成器购买项名称池保证，issue #1885）。
+    let purchase_search = results.iter().find(|r| r.name == "商品名搜索").unwrap();
+    assert!(
+        purchase_search.context.contains("命中"),
+        "商品名搜索基准备注应含命中数：{}",
+        purchase_search.context
+    );
     // 跨账本基准确实逐本计入：附属账本全数 + 主库（夹具完整形态的规模备注）。
     let cross_book = results.iter().find(|r| r.name == "跨账本投资汇总").unwrap();
     assert!(
@@ -149,6 +158,7 @@ fn bench_fails_fast_when_attached_books_missing() {
             warmup: 0,
             iterations: 1,
             search_term: "咖啡".to_string(),
+            purchase_search_term: "猫粮".to_string(),
             books_dir: books::attached_books_root(&path),
         },
     )
@@ -634,7 +644,7 @@ USAGE:
 SUBCOMMANDS:
     generate      生成性能基准数据集（默认 50 万笔 Transaction 的多域画像 SQLite
                   库 + 2 本附属账本小库，issue #1630）
-    bench         查询基准——15 项查询 × min/avg/p95 报告（issue #461）
+    bench         查询基准——16 项查询 × min/avg/p95 报告（issue #461）
     bench-import  批量导入写基准——固定行数 × 两种分布 × 总耗时/单行均摊 p95
                   （issue #532，纯观测无门禁）
     bench-sync    同步重放写基准——op 流重放（ingest_ops/apply_ops 权威入口）×
@@ -644,61 +654,62 @@ SUBCOMMANDS:
                   时/单点均摊 p95（issue #1629，剥网络，纯观测无门禁）
 
 bench OPTIONS:
-    --db <PATH>              目标库文件（默认同 generate 输出路径，须已生成）
-    --warmup <N>             每项基准预热次数（默认 3，不计入统计）
-    --iterations <N>         每项基准计时迭代次数（默认 20，n=20 才成真 p95 分位
-                             数）
-    --search <TERM>          中文子串搜索基准的关键字（默认 咖啡）
-    --max-p95-ms <MS>        默认门禁阈值（毫秒）：全部基准 p95 ≤ 各自阈值才退
-                             出 0，任何一项超标即失败（CI 用；缺省不判定；分项例
-                             外机制与现行清单见 ADR-0068）
-    -h, --help               打印本说明
+    --db <PATH>               目标库文件（默认同 generate 输出路径，须已生成）
+    --warmup <N>              每项基准预热次数（默认 3，不计入统计）
+    --iterations <N>          每项基准计时迭代次数（默认 20，n=20 才成真 p95 分
+                              位数）
+    --search <TERM>           中文子串搜索基准的关键字（默认 咖啡）
+    --purchase-search <TERM>  商品名搜索基准的关键字（默认 猫粮）
+    --max-p95-ms <MS>         默认门禁阈值（毫秒）：全部基准 p95 ≤ 各自阈值才退
+                              出 0，任何一项超标即失败（CI 用；缺省不判定；分项
+                              例外机制与现行清单见 ADR-0068）
+    -h, --help                打印本说明
 
 bench-import OPTIONS:
-    --db <PATH>              源库文件（默认同 generate 输出路径，须已生成；本命
-                             令不修改源库——内部建 pristine 快照，每次迭代从快
-                             照恢复）
-    --rows <CSV>             每档导入行数（默认 50,100,200；逗号分隔、保持次序；
-                             单档上限 1000000，issue #1650）
-    --dedup <BOOL>           批量导入去重开关（默认 true，HTTP 批量导入生产默
-                             认）
-    --warmup <N>             每档预热次数（默认 1，不计入统计）
-    --iterations <N>         每档计时迭代次数（默认 5；每次迭代从快照恢复，数据
-                             集规模固定）
-    -h, --help               打印本说明
+    --db <PATH>               源库文件（默认同 generate 输出路径，须已生成；本命
+                              令不修改源库——内部建 pristine 快照，每次迭代从快
+                              照恢复）
+    --rows <CSV>              每档导入行数（默认 50,100,200；逗号分隔、保持次
+                              序；单档上限 1000000，issue #1650）
+    --dedup <BOOL>            批量导入去重开关（默认 true，HTTP 批量导入生产默
+                              认）
+    --warmup <N>              每档预热次数（默认 1，不计入统计）
+    --iterations <N>          每档计时迭代次数（默认 5；每次迭代从快照恢复，数据
+                              集规模固定）
+    -h, --help                打印本说明
 
 bench-sync OPTIONS:
-    --db <PATH>              源库文件（默认同 generate 输出路径，须已生成；本命
-                             令不修改源库——内部建 pristine 快照，每次迭代从快
-                             照恢复）
-    --ops <CSV>              每档重放 op 条数（默认 100,500,2000；逗号分隔、保持
-                             次序；单档上限 1000000，issue #1650）
-    --warmup <N>             每档预热次数（默认 1，不计入统计）
-    --iterations <N>         每档计时迭代次数（默认 5；每次迭代从快照恢复，数据
-                             集规模固定）
-    -h, --help               打印本说明
+    --db <PATH>               源库文件（默认同 generate 输出路径，须已生成；本命
+                              令不修改源库——内部建 pristine 快照，每次迭代从快
+                              照恢复）
+    --ops <CSV>               每档重放 op 条数（默认 100,500,2000；逗号分隔、保
+                              持次序；单档上限 1000000，issue #1650）
+    --warmup <N>              每档预热次数（默认 1，不计入统计）
+    --iterations <N>          每档计时迭代次数（默认 5；每次迭代从快照恢复，数据
+                              集规模固定）
+    -h, --help                打印本说明
 
 bench-market OPTIONS:
-    --db <PATH>              源库文件（默认同 generate 输出路径，须已生成；本命
-                             令不修改源库——内部建 pristine 快照，每次迭代从快
-                             照恢复）
-    --points <CSV>           每档周采样点数（默认 104,1040,5200；逗号分隔、保持
-                             次序；单档上限 1000000，采样日运算防 chrono 日期越
-                             界，issue #1650）
-    --warmup <N>             每档预热次数（默认 1，不计入统计）
-    --iterations <N>         每档计时迭代次数（默认 5；每次迭代从快照恢复，数据
-                             集规模固定）
-    -h, --help               打印本说明
+    --db <PATH>               源库文件（默认同 generate 输出路径，须已生成；本命
+                              令不修改源库——内部建 pristine 快照，每次迭代从快
+                              照恢复）
+    --points <CSV>            每档周采样点数（默认 104,1040,5200；逗号分隔、保持
+                              次序；单档上限 1000000，采样日运算防 chrono 日期越
+                              界，issue #1650）
+    --warmup <N>              每档预热次数（默认 1，不计入统计）
+    --iterations <N>          每档计时迭代次数（默认 5；每次迭代从快照恢复，数据
+                              集规模固定）
+    -h, --help                打印本说明
 
 generate OPTIONS:
-    --seed <N>               随机种子（默认 42，同种子必出同库）
-    --transactions <N>       生成笔数（默认 500000）
-    --end-date <YYYY-MM-DD>  数据窗口锚定结束日期（默认 2025-12-31，不锚定「今
-                             天」）
-    --out <PATH>             输出库文件路径（默认
-                             src-tauri/target/ledger-perf/ledger-perf.db；已存在
-                             会先删除再重建）
-    -h, --help               打印本说明"#;
+    --seed <N>                随机种子（默认 42，同种子必出同库）
+    --transactions <N>        生成笔数（默认 500000）
+    --end-date <YYYY-MM-DD>   数据窗口锚定结束日期（默认 2025-12-31，不锚定「今
+                              天」）
+    --out <PATH>              输出库文件路径（默认
+                              src-tauri/target/ledger-perf/ledger-perf.db；已存
+                              在会先删除再重建）
+    -h, --help                打印本说明"#;
 
 #[test]
 fn usage_help_matches_golden() {
@@ -749,6 +760,7 @@ const EXPECTED_FLAGS: &[(&str, &[&str])] = &[
             "--warmup",
             "--iterations",
             "--search",
+            "--purchase-search",
             "--max-p95-ms",
         ],
     ),
