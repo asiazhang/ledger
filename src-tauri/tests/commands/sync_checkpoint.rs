@@ -724,3 +724,210 @@ async fn envelope_form_mismatch_guards_reject_before_bootstrap() {
         .expect_err("明文快照 × 密文本机应被拒");
     assert_code(err, "sync-channel.bootstrap-form-mismatch");
 }
+
+/// 跨版本引导兼容（票 07 / spec #1866）：旧版端产出的单文件快照（四表随
+/// 业务件、manifest 指针无 sync_* 字段）在通道上被新版端引导——业务数据入
+/// main、快照携带的同步元数据经引导收尾的迁移前向重放入 sync.db；旧端此后
+/// 以原段格式发布的增量照常拉取重放（增量交易到达）；世界随后以新形态
+///（双文件指针，代数推进）继续发布。断言钉接线形态（邻测同款）——精确
+/// 终态与「引导 + 增量 = 源状态」逐项判据归域单测
+/// `legacy_single_file_snapshot_lands_tables_in_two_dbs_and_converges`。
+///
+/// 旧形态通道由测试铺就：旧端世界用拆库前一代 schema（`to_version` 停版，
+/// 别名裸连接不挂载），业务数据经壳层公开命令产出（op 落 main 四表）；
+/// 检查点文件经测试支持域替身（产品侧成帧单点）、指针退化为旧形态。
+#[tokio::test]
+async fn legacy_single_file_checkpoint_bootstrap_lands_two_dbs_and_converges() {
+    use std::sync::{Arc, Mutex};
+
+    use ledger_infra::db::{SYNC_SPLIT_USER_VERSION, migrations, open_connection_unmounted};
+    use ledger_sync_engine::{
+        ChannelLayout, EnvelopeMode, build_channel, read_ops, stream_positions,
+    };
+    use tauri_app_lib::test_support::{
+        ScratchDir, publish_raw_legacy_checkpoint, publish_raw_segment,
+    };
+
+    isolate_home();
+    let stub = spawn_sync_stub();
+    let _wire = tauri_app_lib::test_support::open(); // 测试接线进程级安装
+
+    // —— 旧形态源世界（拆库前一代：四表在 main）——别名裸连接停版后原位挂app。
+    let dir_legacy = ScratchDir::new("it-legacy-src");
+    let legacy_db = dir_legacy.path().join(data_location::DB_FILE_NAME);
+    {
+        let mut legacy = open_connection_unmounted(&legacy_db).expect("旧形态裸连接应可开");
+        migrations()
+            .to_version(&mut legacy, (SYNC_SPLIT_USER_VERSION - 1) as usize)
+            .expect("旧形态世界应停在拆库前一代");
+    }
+    let app_legacy = tauri::test::mock_app();
+    app_legacy.manage(BootCell::new(data_location::boot(dir_legacy.path())));
+    let conn_legacy = db::open_connection_unmounted(&legacy_db).expect("旧形态写连接应可开");
+    let read_legacy = db::open_connection_readonly(&legacy_db).expect("旧形态读连接应可开");
+    app_legacy.manage(DbState {
+        conn: Arc::new(Mutex::new(conn_legacy)),
+        read_conn: Arc::new(Mutex::new(read_legacy)),
+    });
+    let app_legacy = app_legacy.handle().clone();
+    // 旧端世界同样配置同一通道（真实场景：旧端正是向该通道发布检查点的端，
+    // 其通道配置随快照整库换入被引导端继承）。
+    configure_channel(&app_legacy, &stub);
+
+    // 快照前的旧端业务数据（经公开命令，op 落 main 四表）。
+    let (acc_id, txn_a) = seed_account_and_expense(&app_legacy, 10_000, "旧端快照账").await;
+    let legacy_conn = app_legacy.state::<DbState>().conn.clone();
+    let dev_src = {
+        let guard = legacy_conn.lock().unwrap();
+        guard
+            .query_row("SELECT id FROM sync_device LIMIT 1", [], |r| {
+                r.get::<_, String>(0)
+            })
+            .expect("旧端设备标识应就位")
+    };
+
+    // 快照时刻定格：单文件快照（VACUUM INTO 产物，四表随行）+ 快照时刻位点。
+    let snapshot_bytes = {
+        let guard = legacy_conn.lock().unwrap();
+        let snap_path = dir_legacy.path().join("legacy-snapshot.db");
+        guard
+            .execute(
+                "VACUUM INTO ?1",
+                rusqlite::params![snap_path.to_string_lossy()],
+            )
+            .expect("快照应可产出");
+        std::fs::read(&snap_path).expect("快照文件应可读")
+    };
+    let positions = stream_positions(&legacy_conn.lock().unwrap()).expect("位点应可读");
+    assert_eq!(positions.len(), 1, "前置：旧端自己的流位点在列");
+
+    // 快照之后旧端继续记账（增量 op）。
+    let txn_b = transactions::create_transaction(
+        app_legacy.state(),
+        app_legacy.clone(),
+        expense_input(&acc_id, 2_500, "旧端增量账"),
+    )
+    .await
+    .expect("旧端增量记账应成功");
+    let source_ops = read_ops(&legacy_conn.lock().unwrap()).expect("旧端日志应可读");
+    let increment_ops: Vec<_> = source_ops
+        .iter()
+        .filter(|op| op.clock > positions[0].applied_through)
+        .cloned()
+        .collect();
+    assert!(
+        !increment_ops.is_empty(),
+        "前置：快照之后应存在增量 op（增量段非空）"
+    );
+
+    // —— 铺旧形态通道（线格式收归测试支持域替身）。
+    let config = stub.channel_config("family");
+    let channel = build_channel(&config).expect("通道应可建");
+    let transport = channel.transport();
+    let layout = ChannelLayout::new("family").unwrap();
+    transport
+        .ensure_dir(&layout.checkpoint_dir())
+        .expect("检查点目录应可建");
+    // 旧端此后的增量以原段格式发布（段格式跨版本不变；成帧收归测试支持域替身）。
+    publish_raw_segment(
+        transport,
+        &layout,
+        &dev_src,
+        &EnvelopeMode::Plaintext,
+        &increment_ops,
+    )
+    .expect("增量段应可发布");
+    // 旧形态检查点发布替身（读改写归并保留上面的段清单）：指针退化为旧形态
+    //（无 sync_* 字段），业务件经产品侧成帧单点封装。
+    let legacy_checkpoint = ledger_sync_engine::Checkpoint {
+        positions: positions.clone(),
+        snapshot: snapshot_bytes,
+        sync_snapshot: Vec::new(),
+    };
+    let pointer = publish_raw_legacy_checkpoint(
+        transport,
+        &layout,
+        1,
+        &EnvelopeMode::Plaintext,
+        &legacy_checkpoint,
+    )
+    .expect("旧形态检查点应可发布");
+    assert_eq!(pointer.generation, 1);
+    assert!(pointer.sync_file.is_none(), "旧形态指针无 sync_* 字段");
+
+    // —— 新版端引导：单文件快照按表归位两库。
+    let (app_b, _dir_b) = device_app("legacy-b");
+    configure_channel(&app_b, &stub);
+    let outcome = bootstrap_sync_from_channel(app_b.clone(), None)
+        .await
+        .expect("旧形态快照引导应成功");
+    assert_eq!(outcome.generation, 1);
+
+    let b_conn = app_b.state::<DbState>().conn.clone();
+    // 引导落库判据在同步作用域内读取（guard 不跨 await）。
+    {
+        let b_guard = b_conn.lock().unwrap();
+        // 两库归位（钉接线形态，邻测同款）：业务数据入 main、旧端流位点行随
+        // 快照就位于 sync.db、主库无残留同步表——精确水位值与 op 计数归域单测
+        //（`legacy_single_file_snapshot_lands_tables_in_two_dbs_and_converges`）。
+        assert_eq!(
+            read_scalar_i64(
+                &b_guard,
+                "SELECT amount_cents FROM transactions WHERE id = ?1",
+                [txn_a.as_str()],
+            ),
+            Some(10_000),
+            "旧端快照业务数据应入 main"
+        );
+        assert_eq!(
+            read_scalar_i64(
+                &b_guard,
+                "SELECT COUNT(*) FROM sync_stream_positions WHERE device_id = ?1",
+                [dev_src.as_str()],
+            ),
+            Some(1),
+            "旧端流位点行应随快照就位"
+        );
+        assert_eq!(
+            read_scalar_i64(
+                &b_guard,
+                "SELECT COUNT(*) FROM main.sqlite_master WHERE type = 'table' AND name = 'sync_ops'",
+                [],
+            ),
+            Some(0),
+            "主库不应残留同步表"
+        );
+    }
+    let device_b = get_sync_status(app_b.clone())
+        .await
+        .expect("B 状态应可读")
+        .device_id;
+    assert_ne!(device_b, dev_src, "引导端保留自己的设备身份");
+
+    // 引导 + 增量 = 源状态：旧端增量段照常拉取重放（段格式跨版本不变）。
+    sync_now(app_b.clone(), None).await.expect("B 首轮应成功");
+    // 终态判据在同步作用域内读取（guard 不跨 await）。
+    {
+        let b_guard = b_conn.lock().unwrap();
+        assert_eq!(
+            read_scalar_i64(
+                &b_guard,
+                "SELECT amount_cents FROM transactions WHERE id = ?1",
+                [txn_b.as_str()],
+            ),
+            Some(2_500),
+            "旧端增量交易应到 B"
+        );
+    }
+
+    // 世界随后以新形态继续：新端发布双文件检查点（指针带 sync_* 字段）。
+    let published = publish_sync_checkpoint(app_b.clone(), None)
+        .await
+        .expect("新端发布检查点应成功");
+    assert_eq!(published.generation, 2, "代数自旧形态指针推进");
+    let pointer = get_sync_channel_checkpoint(app_b.clone())
+        .await
+        .expect("预检应成功")
+        .expect("通道上应有检查点");
+    assert_eq!(pointer.generation, 2);
+}

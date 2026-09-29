@@ -1019,44 +1019,215 @@ fn dual_db_source_produces_business_and_sync_files_split() {
     assert_eq!(stream_positions(&conn_a).unwrap(), cp.positions);
 }
 
-/// 旧形态单文件快照（同步件为空）× 双库就绪目标：恒走单库形态——同步件不
-/// 消费、attached 四表保持空库、业务件照常换入（跨版本拆归两库归票 07）。
+/// 跨版本引导兼容（票 07 / spec #1866）：旧形态单文件快照（四表随业务件、
+/// user_version 停在拆库前一代）× 双库就绪目标——业务数据归 main、快照携带
+/// 的四表数据经引导收尾的迁移前向重放（V036 IF NOT EXISTS 收敛）归 attached、
+/// 主库无残留；「引导 + 增量 = 源状态」在兼容路径成立。
+///
+/// 负向判据（ADR-0087）：删除迁移搬数（V036 的 INSERT…SELECT，删除即红的
+/// 权威归 infra `upgrade_moves_sync_rows_intact_into_sync_db`）或删除引导收尾
+/// 的 `init_db` 接线，快照携带的 op / 挂起 / 位点不会出现在 attached，本测试红。
 #[test]
-fn legacy_snapshot_on_dual_ready_target_skips_sync_component() {
-    let conn_a = test_support::open();
-    let id = base_ledger(&conn_a);
-    let mut cp = create_checkpoint(&conn_a).unwrap();
-    cp.sync_snapshot = Vec::new(); // 票 04 前形态替身
+fn legacy_single_file_snapshot_lands_tables_in_two_dbs_and_converges() {
+    use ledger_infra::db::{SYNC_SPLIT_USER_VERSION, migrations, open_connection_unmounted};
 
-    let dst_dir = ScratchDir::new("cp-legacy-dual");
-    let dst_main = dst_dir.join("ledger.db");
-    let dst_sync = dst_dir.join("sync.db");
-    {
-        let factory = test_support::open();
-        factory
-            .execute(
-                "VACUUM INTO ?1",
-                rusqlite::params![dst_main.to_string_lossy()],
-            )
-            .unwrap();
-    }
-    make_sync_only_db(&dst_sync);
-    let mut conn_b = ledger_infra::db::open_connection(&dst_main).unwrap();
+    let _wire = test_support::open(); // 测试接线（本位币读取钩子等）进程级安装
 
+    // —— 旧形态源世界（拆库前一代：四表在 main）——别名裸连接 + to_version 停版。
+    let dir = ScratchDir::new("cp-legacy-world");
+    let legacy_path = dir.path().join("legacy.db");
+    let mut legacy = open_connection_unmounted(&legacy_path).unwrap();
+    migrations()
+        .to_version(&mut legacy, (SYNC_SPLIT_USER_VERSION - 1) as usize)
+        .unwrap();
+
+    // 业务数据经公开写入口产出：op 落 main.sync_ops，本机身份与自己的流位点
+    // 随写入口就位。
+    seed_account(&legacy, "acc-1", "现金", "cash", "CNY", 0);
+    let t1 = protocol::create(&legacy, make_expense("acc-1", 10_000, "午饭"))
+        .unwrap()
+        .id;
+    let dev_src = device_of(&legacy);
+    // 外来流位点行与挂起行直置（同 infra pre_split_world 夹具；ADR-0086
+    // 「无公开入口的库内状态直置」同款——挂起与外来位点无公开写入口）。
+    legacy
+        .execute(
+            &format!(
+                "INSERT INTO sync_stream_positions (device_id, applied_through, updated_at) \
+                 VALUES ('dev-foreign', 3, '{}')",
+                test_support::FIXED_NOW
+            ),
+            [],
+        )
+        .unwrap();
+    legacy
+        .execute(
+            &format!(
+                "INSERT INTO sync_parked_ops (op_id, device_id, clock, schema_version, entity, entity_id, payload, park_code, park_params, park_message, parked_at) \
+                 VALUES ('pop-1', 'dev-foreign', 2, 34, 'transaction', 'txn-parked', '{{}}', 'sync-engine.op-foreign-key', '[]', '挂起', '{}')",
+                test_support::FIXED_NOW
+            ),
+            [],
+        )
+        .unwrap();
+
+    // 快照时刻定格：旧形态单文件快照 + 快照时刻位点。
+    let snap_path = dir.path().join("legacy-snapshot.db");
+    legacy
+        .execute(
+            "VACUUM INTO ?1",
+            rusqlite::params![snap_path.to_string_lossy()],
+        )
+        .unwrap();
+    let positions_at_snapshot = stream_positions(&legacy).unwrap();
+    assert_eq!(
+        positions_at_snapshot.len(),
+        2,
+        "前置：本机流与外来流位点都在列"
+    );
+
+    // 快照之后源端继续记账（位点之后的增量 op）。
+    protocol::update(&legacy, &t1, make_expense("acc-1", 10_000, "A 改")).unwrap();
+    let t2 = protocol::create(&legacy, make_expense("acc-1", 2_500, "咖啡"))
+        .unwrap()
+        .id;
+    let source_ops = read_ops(&legacy).unwrap();
+    let source_positions = stream_positions(&legacy).unwrap();
+    let src_t1 = read_transaction(&legacy, &t1).unwrap();
+    let src_t2 = read_transaction(&legacy, &t2).unwrap();
+
+    let cp = super::super::Checkpoint {
+        positions: positions_at_snapshot.clone(),
+        snapshot: std::fs::read(&snap_path).unwrap(),
+        sync_snapshot: Vec::new(), // 旧形态：无同步元数据件
+    };
+    drop(legacy);
+
+    // —— 双库就绪目标（全新文件库：main 无四表、attached 四表空库）——
+    let (mut conn_b, _bdir) = test_support::open_file_scratch("cp-legacy-target");
     bootstrap_from_checkpoint(&mut conn_b, &cp, None).unwrap();
 
+    // 归位判据一：主库不留任何同步表（拆库世界的 main 形态）。
+    for table in SPLIT_WORLD_SYNC_TABLES {
+        let in_main: i64 = conn_b
+            .query_row(
+                "SELECT COUNT(*) FROM main.sqlite_master WHERE type = 'table' AND name = ?1",
+                [table],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(in_main, 0, "主库不应残留同步表 {table}");
+    }
+    // 归位判据二：快照携带的 op 与挂起行归 attached（业务件重建只写 main，
+    // attached 的数据行只能来自迁移前向重放）。
     let attached_ops: i64 = conn_b
         .query_row("SELECT COUNT(*) FROM sync.sync_ops", [], |r| r.get(0))
         .unwrap();
-    assert_eq!(attached_ops, 0, "旧形态快照不消费同步件，attached 保持空库");
-    let main_txns: i64 = conn_b
-        .query_row("SELECT COUNT(*) FROM main.transactions", [], |r| r.get(0))
+    assert_eq!(attached_ops, 1, "快照携带的 op 归位 attached");
+    let attached_parked: i64 = conn_b
+        .query_row("SELECT COUNT(*) FROM sync.sync_parked_ops", [], |r| {
+            r.get(0)
+        })
         .unwrap();
-    assert_eq!(main_txns, 1, "业务件照常换入 main");
+    assert_eq!(attached_parked, 1, "快照携带的挂起行归位 attached");
+    // 位点表以 Checkpoint 为准重建（与快照内置位点同刻）。
     assert_eq!(
-        read_transaction(&conn_b, &id).unwrap().note.as_deref(),
-        Some("午饭")
+        stream_positions(&conn_b).unwrap(),
+        positions_at_snapshot,
+        "位点随 Checkpoint 就位"
     );
+    // 设备身份换入本机：快照携带的来源端身份不残留。
+    let dev_b = device_of(&conn_b);
+    assert_ne!(dev_b, dev_src, "本机持有自己的设备标识");
+    let dev_rows: i64 = conn_b
+        .query_row("SELECT COUNT(*) FROM sync.sync_device", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(dev_rows, 1, "只留本机身份一行");
+    // 业务数据就位（快照时刻状态）且版本收敛到本端最新（迁移前向重放已在
+    // 引导内完成，与全新库一致）。
+    assert_eq!(
+        read_transaction(&conn_b, &t1).unwrap().note.as_deref(),
+        Some("午饭"),
+        "引导后为快照时刻状态"
+    );
+    let fresh = test_support::open();
+    let latest: i64 = fresh
+        .query_row("PRAGMA user_version", [], |r| r.get(0))
+        .unwrap();
+    let ver: i64 = conn_b
+        .query_row("PRAGMA user_version", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(ver, latest, "引导后版本收敛到本端最新");
+
+    // 「引导 + 增量 = 源状态」：仅重放位点之后的 op 即与源端最终状态一致。
+    let after = ops_after_positions(&conn_b, &source_ops).unwrap();
+    assert_eq!(after.len(), 2, "位点之前的 op 无需重放");
+    apply_ops(&conn_b, &after).unwrap();
+    assert_eq!(read_transaction(&conn_b, &t1).unwrap(), src_t1);
+    assert_eq!(read_transaction(&conn_b, &t2).unwrap(), src_t2);
+    assert_eq!(read_ops(&conn_b).unwrap(), source_ops);
+    assert_eq!(stream_positions(&conn_b).unwrap(), source_positions);
+    assert_balance_cache_matches_realtime(&conn_b);
+}
+
+/// 跨版本引导前置校验（票 07 / spec #1866 用户故事 11）：新形态双文件快照
+///（同步件在场、业务件 user_version 已入拆库世界）被「无能力端」（拆库前
+/// 一代库）拿到时，引导在换入前显式报版本过旧类码化错误——不模糊失败、
+/// 快照不落一砖一瓦。发布形态下该组合由版本闭包保证：产出双文件快照的端
+/// 必然 user_version ≥ 拆库边界，无能力端必然 < 拆库边界，版本守卫必然
+/// 先于同步件消费与整库换入触发。
+#[test]
+fn newer_form_checkpoint_on_pre_split_world_target_is_coded_schema_newer() {
+    use ledger_infra::db::{SYNC_SPLIT_USER_VERSION, migrations, open_connection_unmounted};
+
+    let _wire = test_support::open();
+
+    // 来源端（当前拆库世界）：双文件成对快照（同步件在场）。
+    let conn_a = test_support::open();
+    let id = base_ledger(&conn_a);
+    let cp = create_checkpoint(&conn_a).unwrap();
+    assert!(!cp.sync_snapshot.is_empty(), "前置：新形态快照带同步件");
+
+    // 无能力端：拆库前一代库（四表在 main、无 attached 侧）。
+    let dir = ScratchDir::new("cp-pre-split-target");
+    let target_path = dir.path().join("pre-split-target.db");
+    let mut target = open_connection_unmounted(&target_path).unwrap();
+    migrations()
+        .to_version(&mut target, (SYNC_SPLIT_USER_VERSION - 1) as usize)
+        .unwrap();
+    let version_before: i64 = target
+        .query_row("PRAGMA user_version", [], |r| r.get(0))
+        .unwrap();
+
+    let err = bootstrap_from_checkpoint(&mut target, &cp, None).unwrap_err();
+    assert_eq!(
+        err.code(),
+        Some("sync-engine.checkpoint-schema-newer"),
+        "对端版本过旧必须显式报码化错误，非模糊失败"
+    );
+
+    // 零副作用：整库换入未发生——主库同步表未被拆除、快照业务数据未落、
+    // user_version 原样。
+    let in_main: i64 = target
+        .query_row(
+            "SELECT COUNT(*) FROM main.sqlite_master WHERE type = 'table' AND name = 'sync_ops'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(in_main, 1, "主库同步表未被拆除（换入未发生）");
+    let landed: i64 = target
+        .query_row(
+            "SELECT COUNT(*) FROM transactions WHERE id = ?1",
+            [id],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(landed, 0, "快照业务数据不得就位");
+    let version_after: i64 = target
+        .query_row("PRAGMA user_version", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(version_after, version_before, "目标库版本未被改动");
 }
 
 /// 同步件消费接线证明：同步件经 SQL 级重建换入 attached——attached 的 op 与

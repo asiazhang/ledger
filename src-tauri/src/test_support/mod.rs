@@ -111,7 +111,7 @@ mod tests;
 pub use assert::{
     assert_balance_cache_matches_realtime, extract_check_in_literals, read_scalar_i64,
 };
-pub use channel::publish_raw_segment;
+pub use channel::{publish_raw_legacy_checkpoint, publish_raw_segment};
 pub use op_write_failure::{assert_op_write_failure, block_op_writes, unblock_op_writes};
 pub use s3::{
     S3Addressing, S3Deny, S3Gate, S3ObservedRequest, S3Stub, S3StubConfig, spawn_s3_stub,

@@ -809,7 +809,13 @@ pub fn fetch_checkpoint(
 ///
 /// 位点与快照随信封整体封包——引导所需的两半必须同刻成对到达，不依赖
 /// manifest（manifest 是明文元数据，不承载位点数据面）。
-fn frame_checkpoint_bundle(checkpoint: &Checkpoint) -> Result<Vec<u8>> {
+///
+/// `#[doc(hidden)] pub` 而非私有（issue #956 / #1107 的 [`sha256_hex`] 同款先例）：
+/// 测试支持域的旧形态检查点替身（`tauri_app_lib::test_support::channel`，
+/// 票 07）据本单点成帧，测试侧不再自建第二份成帧口径；产品路径的消费者
+/// 仍只有本模块。
+#[doc(hidden)]
+pub fn frame_checkpoint_bundle(checkpoint: &Checkpoint) -> Result<Vec<u8>> {
     let header = serde_json::json!({
         "positions": checkpoint
             .positions

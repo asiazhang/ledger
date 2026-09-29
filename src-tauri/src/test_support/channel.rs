@@ -24,8 +24,9 @@
 // C 类豁免（ADR-0060）：仅测试用——本文件随 test_support 文件级放行六件套
 // （见 mod.rs 豁免声明）。
 use ledger_infra::error::{AppError, Result};
+use ledger_sync_engine::Checkpoint;
 use ledger_sync_engine::channel::{
-    ChannelLayout, ChannelManifest, SegmentEntry, StreamManifest, sha256_hex,
+    ChannelLayout, ChannelManifest, CheckpointPointer, SegmentEntry, StreamManifest, sha256_hex,
 };
 use ledger_sync_engine::envelope::{self, EnvelopeMode, EnvelopeParams};
 use ledger_sync_engine::model::SyncOp;
@@ -95,4 +96,62 @@ pub fn publish_raw_segment(
             .map_err(|e| AppError::Invalid(format!("清单序列化失败: {e}")))?,
     )?;
     Ok(())
+}
+
+/// 把旧形态单文件检查点发布上通道（票 07 跨版本引导兼容的通道线格式替身，
+/// #956 同一契约单点）：业务件经产品侧成帧单点
+///（[`ledger_sync_engine::channel::frame_checkpoint_bundle`]）封装上传，
+/// manifest 指针退化为旧形态（无 sync_* 字段）。既有 manifest 的流清单原样
+/// 保留（读改写归并，与产品侧发布段后的指针换新同形）；场景内通道为空时
+/// 等价于整体写出。
+///
+/// `mode` 决定封包形态（同 [`publish_raw_segment`]）；`checkpoint` 的
+/// `sync_snapshot` 必须为空（旧形态，sync 件不写、指针不带 sync_* 项）；
+/// `created_at` 取工厂固定时刻（非行为输入的簿记戳）。返回写出的指针。
+pub fn publish_raw_legacy_checkpoint(
+    transport: &dyn Transport,
+    layout: &ChannelLayout,
+    generation: i64,
+    mode: &EnvelopeMode<'_>,
+    checkpoint: &Checkpoint,
+) -> Result<CheckpointPointer> {
+    use super::FIXED_NOW;
+    assert!(
+        checkpoint.sync_snapshot.is_empty(),
+        "旧形态替身只承载单文件检查点（sync_snapshot 为空）",
+    );
+    transport.ensure_dir(&layout.checkpoint_dir())?;
+    let sealed = envelope::seal(
+        &ledger_sync_engine::channel::frame_checkpoint_bundle(checkpoint)?,
+        mode,
+        &EnvelopeParams::default(),
+    )?;
+    let path = layout.checkpoint_path(generation);
+    transport.write_file(&path, &sealed)?;
+    let pointer = CheckpointPointer {
+        file: path
+            .rsplit('/')
+            .next()
+            .ok_or_else(|| AppError::Invalid("检查点路径缺文件名".to_string()))?
+            .to_string(),
+        generation,
+        size: sealed.len() as u64,
+        sha256: sha256_hex(&sealed),
+        created_at: FIXED_NOW.to_string(),
+        sync_file: None,
+        sync_size: None,
+        sync_sha256: None,
+    };
+    let mut manifest = match transport.read_file(&layout.manifest_path())? {
+        None => ChannelManifest::default(),
+        Some(bytes) => serde_json::from_slice(&bytes)
+            .map_err(|e| AppError::Invalid(format!("清单解析失败: {e}")))?,
+    };
+    manifest.checkpoint = Some(pointer.clone());
+    transport.write_file(
+        &layout.manifest_path(),
+        &serde_json::to_vec_pretty(&manifest)
+            .map_err(|e| AppError::Invalid(format!("清单序列化失败: {e}")))?,
+    )?;
+    Ok(pointer)
 }
