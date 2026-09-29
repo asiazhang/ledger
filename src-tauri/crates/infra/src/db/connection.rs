@@ -18,6 +18,15 @@ use crate::error::{AppError, Result};
 /// [`crate::boot::data_location`] 再导出消费，外部原路径零改动。
 pub const DB_FILE_NAME: &str = "ledger.db";
 
+/// 主库判别（建连收尾挂载接线与生命周期外工具共用的单一谓词，issue #1896
+/// 收敛两处同形判别）：路径文件名为 [`DB_FILE_NAME`] 即主库。建连收尾只对
+/// 主库挂载同步元数据库（`attach_sync_db`，模块内私有）；ledger-perf generate 等
+/// 生命周期外工具对非产品名数据集按同一判别决定是否补挂伴生 sync.db
+///（工具侧补位注释先例，#1871）。
+pub fn is_main_db_path(path: &Path) -> bool {
+    path.file_name() == Some(std::ffi::OsStr::new(DB_FILE_NAME))
+}
+
 /// 同步元数据库文件名（ADR-0139 决策 1：四张同步表迁出主库落独立库文件，
 /// 与主库同目录；决策 3：建连收尾单点成对挂载）。文件名应用固定，不可配置。
 pub const SYNC_DB_FILE_NAME: &str = "sync.db";
@@ -48,6 +57,20 @@ pub const SYNC_TABLES: [&str; 4] = [
     "sync_parked_ops",
     "sync_stream_positions",
 ];
+/// attached `sync` 别名是否在位（`pragma_database_list`）：别名判据的单点
+///（issue #1896 收敛双实现）——schema 守卫（[`super::schema_guard`]）只关心
+/// 别名（表级齐备与否是 diff 的结论而非前置）；四表闭集核对属已删除的
+/// 双源回退判据（#1872），不再有消费方。
+pub(crate) fn sync_alias_attached(conn: &Connection) -> bool {
+    conn.query_row(
+        "SELECT count(*) FROM pragma_database_list WHERE name = 'sync'",
+        [],
+        |r| r.get::<_, i64>(0),
+    )
+    .map(|n| n > 0)
+    .unwrap_or(false)
+}
+
 /// 同步元数据件快照（ADR-0139 决策 5/6 的逐库 `VACUUM INTO` 单点）：对 attached
 /// `sync` 侧执行 `VACUUM sync INTO`。V036 拆库后生产连接恒经建连收尾挂载
 /// attached 侧且四表齐备（contract 后无 main 回退源，#1872）——连接未挂载时
@@ -274,7 +297,7 @@ fn attach_sync_db(
     passphrase: Option<&str>,
     readonly_side: bool,
 ) -> Result<()> {
-    if main_db_path.file_name() != Some(std::ffi::OsStr::new(DB_FILE_NAME)) {
+    if !is_main_db_path(main_db_path) {
         return Ok(());
     }
     let sync_path = sync_db_path(main_db_path);

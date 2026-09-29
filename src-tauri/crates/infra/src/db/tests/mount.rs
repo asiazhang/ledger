@@ -9,8 +9,8 @@
 //! 文件库不入测试工厂（ADR-0084 决策 3）：建库经产品建缝 `open_connection*`
 //! 系（挂载接线即在其中），迁移经产品迁移缝 `migrations().to_latest`（readonly/boot tests
 //! 先例；测试侧不直呼 `init_db`，ADR-0084 守门纪律）。别名名下的非 ledger.db
-//! 夹具连接不触发挂载，跑迁移链前需自行 `ATTACH ':memory:' AS sync`（内存
-//! 世界成对挂载，与产品 `open_in_memory` 同形）。
+//! 夹具连接不触发挂载，跑迁移链前需自行经 `test_utils::attach_in_memory_sync`
+//! 挂内存世界（与产品 `open_in_memory` 同形，issue #1896 收编单点）。
 
 use std::io::Read;
 
@@ -217,8 +217,7 @@ fn readonly_side_tolerates_missing_sync_db() {
     let seed_path = dir.path().join("seed.db");
     {
         let mut conn = open_connection(&seed_path).expect("别名建库（不触发挂载）");
-        conn.execute_batch("ATTACH DATABASE ':memory:' AS sync")
-            .expect("内存世界成对挂载（别名夹具不触发挂载接线）");
+        crate::test_utils::attach_in_memory_sync(&conn);
         migrations().to_latest(&mut conn).expect("迁移");
         drop(conn);
         std::fs::rename(&seed_path, dir.path().join(DB_FILE_NAME)).expect("归位主库文件名");
@@ -336,8 +335,7 @@ fn reset_db_file_moves_stale_sync_db_aside() {
     let seed_path = dir.path().join("seed.db");
     {
         let mut conn = open_connection(&seed_path).expect("别名建库");
-        conn.execute_batch("ATTACH DATABASE ':memory:' AS sync")
-            .expect("内存世界成对挂载（别名夹具不触发挂载接线）");
+        crate::test_utils::attach_in_memory_sync(&conn);
         migrations().to_latest(&mut conn).expect("迁移");
         drop(conn);
         std::fs::rename(&seed_path, dir.path().join(DB_FILE_NAME)).expect("归位主库文件名");

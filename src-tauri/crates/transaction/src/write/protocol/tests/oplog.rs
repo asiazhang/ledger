@@ -331,14 +331,9 @@ fn file_db_create_lands_row_and_op_in_both_dbs() {
 fn file_db_failed_write_rolls_back_row_and_op_across_both_dbs() {
     let (conn, _dir) = test_support::open_file_scratch("oplog-atomic-failure");
     test_support::seed_account(&conn, "acc-op", "现金", "cash", "CNY", 0);
-    conn.execute(
-        // 触发器注入只能走 temp schema：SQLite 不允许普通触发器引用 attached
-        // 库的表；temp 触发器可跨库引用且仅本连接可见、不留 schema 残迹。
-        "CREATE TEMP TRIGGER atomicity_probe BEFORE INSERT ON sync.sync_ops \
-         BEGIN SELECT RAISE(ABORT, 'injected: 跨库原子性探针'); END",
-        [],
-    )
-    .unwrap();
+    // op 写失败注入器具（`test_support::op_write_failure`，issue #1896）：temp
+    // 触发器跨库引用 attached 侧、仅本连接可见、不留 schema 残迹。
+    test_support::block_op_writes(&conn);
 
     assert!(
         create_transaction_internal(
