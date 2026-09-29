@@ -1,7 +1,7 @@
 //! 备份/恢复测试（issue #91 外迁）：zip 打包/恢复往返/新旧 schema 策略/受管备份列表与修剪。
 
 use std::fs::File;
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::Path;
 
 use tauri_app_lib::test_support::{ScratchDir, ScratchFile};
@@ -794,6 +794,17 @@ fn read_meta_json(path: &Path) -> serde_json::Value {
     entry.read_to_string(&mut buf).unwrap();
     serde_json::from_str(&buf).unwrap()
 }
+/// 前置探针：连接的 attached `sync` 别名在位（挂载接线就绪）。
+fn assert_sync_alias_attached(conn: &Connection, why: &str) {
+    let mounted: i64 = conn
+        .query_row(
+            "SELECT count(*) FROM pragma_database_list WHERE name = 'sync'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(mounted, 1, "{why}");
+}
 
 /// 在目标世界预置一个遗留 sync.db 干扰物（含探针表），返回其路径。
 fn plant_stale_sync_db(dst_dir: &Path) -> std::path::PathBuf {
@@ -811,10 +822,7 @@ fn paired_backup_restores_sync_db_when_paired() {
     let src_dir = ScratchDir::new("backup-test-paired-src");
     let (main_path, _sync_path) = make_dual_db_world(&src_dir, true);
     let conn = open_connection(&main_path).unwrap(); // 挂载接线挂上四表 sync.db
-    assert!(
-        db::sync_tables_live_attached(&conn),
-        "双库世界判据命中 attached（前置：挂载接线在位）"
-    );
+    assert_sync_alias_attached(&conn, "前置：挂载接线在位（attached 侧就绪）");
 
     let backup = temp_file("paired-backup");
     backup_db_to(&conn, &backup, "0.2.0", BackupKind::Manual).unwrap();
@@ -890,17 +898,31 @@ fn paired_backup_restores_sync_db_when_paired() {
 /// 原位不重建（拆库前主库由恢复后的建连补建 attached 侧并经迁移链收敛）。
 #[test]
 fn legacy_form_backup_ignores_sync_entry_on_restore() {
-    // 拆库前形态产物（旧形态备份的 main 来自拆库前应用，必带四表；文件名非
-    // 产品名，不触发挂载接线）。
+    // 旧形态产物只能手工拼包构造：contract 后产出方恒产真成对产物（#1872），
+    // 经 backup_db_to 产不出 paired=false 的包。expand 期回退形态的 sync 条目
+    // 就是「main 的整库拷贝」，恢复必须忽略它。
     let src = temp_file("legacy-form-src");
     pre_split_world_file(&src);
     {
         let conn = db::open_connection_unmounted(&src).unwrap();
         seed(&conn);
     }
-    let conn = db::open_connection(&src).unwrap();
     let backup = temp_file("legacy-form-backup");
-    backup_db_to(&conn, &backup, "0.2.0", BackupKind::Manual).unwrap();
+    {
+        let file = File::create(&backup).unwrap();
+        let mut zip = zip::ZipWriter::new(file);
+        let options = zip::write::SimpleFileOptions::default();
+        for name in ["ledger.db", "sync.db"] {
+            zip.start_file(name, options).unwrap();
+            std::io::copy(&mut File::open(&src).unwrap(), &mut zip).unwrap();
+        }
+        zip.start_file("backup.json", options).unwrap();
+        zip.write_all(
+            br#"{"created_at":"2026-05-01T00:00:00Z","app_version":"0.5.0","schema_version":35,"kind":"manual","paired":false}"#,
+        )
+        .unwrap();
+        zip.finish().unwrap();
+    }
     assert_eq!(read_meta_json(&backup)["paired"], false);
 
     let dst_dir = ScratchDir::new("backup-test-legacy-form");
@@ -1029,10 +1051,7 @@ fn paired_backup_encrypted_roundtrip_restores_sync_identity() {
     // （同口令同密钥，ADR-0139 决策 3），无需单独转换。
     enable_encryption_for_file(&main_path, "paired-pass").unwrap();
     let conn = db::open_connection_with_passphrase(&main_path, "paired-pass").unwrap();
-    assert!(
-        db::sync_tables_live_attached(&conn),
-        "前置：密文双库世界挂载就绪"
-    );
+    assert_sync_alias_attached(&conn, "前置：密文双库世界挂载就绪");
 
     let backup = temp_file("paired-enc-backup");
     backup_db_to(&conn, &backup, "0.2.0", BackupKind::Manual).unwrap();

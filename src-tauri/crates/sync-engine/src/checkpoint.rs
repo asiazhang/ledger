@@ -3,9 +3,9 @@
 //!
 //! 语义约束只有一条——任何端永远能从 Checkpoint 加其后 op 重建出一致状态：
 //! - **产出**（[`create_checkpoint`]）：`VACUUM INTO` 双文件成对一致性快照——
-//!   业务件（main）+ 同步元数据件（同步四表所在库，双源回退：attached 侧四表
-//!   齐备逐 attached VACUUM，否则回退 main——票 04 expand 期单库布局形态，
-//!   ADR-0139 决策 5；与备份同构，ADR-0016 的文件级快照纪律；继承源库加密
+//!   业务件（main）+ 同步元数据件（attached `sync` 侧的同刻快照——拆库后
+//!   四表恒住 attached 侧，contract 后无 main 回退源，#1872；ADR-0139 决策 5；
+//!   与备份同构，ADR-0016 的文件级快照纪律；继承源库加密
 //!   形态，文件即真相），配上本端位点表（[`super::positions`]）。位点与快照
 //!   须同刻成对——调用方持单连接互斥锁一次性完成（壳层同步轮次形态），
 //!   进程内无并发写插入。
@@ -13,15 +13,13 @@
 //!   主口令，与密文备份恢复同形态）挂载后整库换入——SQL 级重建（建表 → 拷行
 //!   → 索引/触发器/视图），任意加密形态组合（明文/密文库 × 明文/密文快照）
 //!   均成立（bundled SQLCipher 对加密库禁用 backup API，SQL 级是官方正解）。
-//!   同步元数据件按形态分支归位（双源回退）：目标 attached 侧四表齐备
-//!   （双库布局）时以同款 SQL 级重建换入四表；单库布局回退读 main——四表
-//!   随业务件已换入 main，同步件跳过（票 04 expand，票 06 删除回退）。
-//!   旧形态单文件快照（同步件为空，票 04 前产物）走跨版本兼容路径（票 07 /
-//!   spec #1866）：四表随业务件整库换入 main（user_version 回退到拆库前），
-//!   引导收尾的迁移前向重放（V036 的 IF NOT EXISTS 收敛）把四表按表搬入
-//!   attached 并清出 main——两库归位由迁移链交付，schema 偏斜双向处置：
-//!   快照更新→拒绝；较旧→对齐后迁移升级。随后换入本机设备身份、位点表以
-//!   Checkpoint 为准重建。
+//!   同步元数据件以同款 SQL 级重建换入 attached 四表（业务件不含四表，同步件
+//!   是四表的唯一来源；contract 后恒消费，#1872）。旧形态单文件快照（同步件
+//!   为空，票 04 前产物）走跨版本兼容路径（票 07 / spec #1866）：四表随业务
+//!   件整库换入 main（user_version 回退到拆库前），引导收尾的迁移前向重放
+//!   （V036 的 IF NOT EXISTS 收敛）把四表按表搬入 attached 并清出 main——
+//!   两库归位由迁移链交付。schema 偏斜双向处置：快照更新→拒绝；较旧→对齐
+//!   后迁移升级。随后换入本机设备身份、位点表以 Checkpoint 为准重建。
 //!   快照携带的日志与挂起队列随行采纳：日志给出位点之前的去重身份（对端
 //!   全量重投不再重放），挂起行经重投递幂等覆盖自愈。
 //! - **截断**（[`truncate_stream_before`]）：机制原语，三硬约束——只有来源
@@ -90,9 +88,8 @@ pub fn create_checkpoint(conn: &Connection) -> Result<Checkpoint> {
             "VACUUM INTO ?1",
             rusqlite::params![snapshot_path.to_string_lossy()],
         )?;
-        // 同步元数据件：同步四表所在库的同刻快照（双源回退收口基础设施单点，
-        // 票 04 expand；票 05 迁移后 attached 侧恒有表，自然切到 attached 分支，
-        // 票 06 删除回退）。
+        // 同步元数据件：attached `sync` 侧的同刻快照（逐库 VACUUM 收口基础设施单点，
+        // 与业务件同一互斥锁内先后定格，同刻成对）。
         db::snapshot_sync_tables_into(conn, &sync_snapshot_path)?;
         Ok(Checkpoint {
             positions: positions::list(conn)?,
@@ -164,12 +161,10 @@ pub fn bootstrap_from_checkpoint(
                 ));
             }
             rebuild_main_from_snapshot(conn, snapshot_version)?;
-            // 同步元数据件按形态分支归位（双源回退，票 04 expand；票 06 删除
-            // 回退）：目标 attached 侧四表齐备（双库布局）才消费同步件；单库
-            // 布局回退读 main——四表已随业务件换入 main，同步件跳过。旧形态
-            // 单文件快照（同步件为空）同走跳过分支——四表随业务件落在 main，
-            // 由下方 init_db 的迁移前向重放按表归位两库（跨版本兼容，票 07），
-            // 不在本分支挂载缺失的同步件。
+            // 同步元数据件换入 attached 四表（业务件不含四表，同步件是四表的唯一
+            // 来源；contract 后恒消费，#1872）。旧形态单文件快照（同步件为空）恒
+            // 跳过——四表随业务件整库换入 main，由下方 init_db 的迁移前向重放
+            // 按表归位两库（跨版本兼容，票 07 已交付），不在本分支挂载缺失的同步件。
             if checkpoint.sync_snapshot.is_empty() {
                 Ok(())
             } else {
@@ -209,17 +204,16 @@ pub fn bootstrap_from_checkpoint(
     Ok(())
 }
 
-/// 同步元数据件按形态分支归位（双源回退，票 04 expand；票 06 删除回退）：
-/// 业务件整库重建完成后调用——目标 attached 侧四表齐备（双库布局）时把同步件
-/// SQL 级重建换入 attached；否则跳过（单库布局回退读 main：四表已随业务件
-/// 换入 main，unqualified 解析命中 main；同步件即回退源 main 的同刻拷贝，无
-/// 独立内容）。
+/// 同步元数据件归位：业务件整库重建完成后调用——把同步件 SQL 级重建换入
+/// attached 四表（业务件不含四表，同步件是四表的唯一来源；contract 后恒消费，
+/// #1872，无「attached 无表则跳过」的回退分支）。
 ///
-/// 旧形态单文件快照（同步件为空，票 04 前产物）同走跳过分支——四表在业务件
-/// 内、随整库换入 main，由引导收尾的迁移前向重放（V036 的 IF NOT EXISTS 收
-/// 敛）按表搬入 attached 并清出 main，两库归位由此交付（票 07 / spec #1866：
-/// 新版端引导旧版端快照的兼容期；归位与「引导 + 增量 = 源状态」判据见域单
-/// 测 `legacy_single_file_snapshot_lands_tables_in_two_dbs_and_converges`）。
+/// 旧形态单文件快照（同步件为空，票 04 前产物）在调用前已被跳过（不挂载缺失
+/// 的同步件）——四表在业务件内、随整库换入 main，由引导收尾的迁移前向重放
+/// （V036 的 IF NOT EXISTS 收敛）按表搬入 attached 并清出 main，两库归位由此
+/// 交付（票 07 / spec #1866：新版端引导旧版端快照的兼容期；归位与「引导 +
+/// 增量 = 源状态」判据见域单测
+/// `legacy_single_file_snapshot_lands_tables_in_two_dbs_and_converges`）。
 ///
 /// 已知中间态（仅存在于票 04→05 之间的未发布开发态，发布形态不可达）：双库
 /// 目标引导「业务件含四表」的回退期快照时，同步件先行换入 attached、随后
@@ -231,9 +225,6 @@ fn consume_sync_snapshot(
     sync_snapshot_path: &Path,
     passphrase: Option<&str>,
 ) -> Result<()> {
-    if !db::sync_tables_live_attached(conn) {
-        return Ok(());
-    }
     attach_snapshot(conn, SNAP_META_ALIAS, sync_snapshot_path, passphrase)?;
     let rebuild = rebuild_sync_tables_from_snapshot(conn);
     // 挂载库恒卸载（重建失败亦然），随后以重建结果为准。

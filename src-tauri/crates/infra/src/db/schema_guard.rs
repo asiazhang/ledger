@@ -23,6 +23,9 @@ use rusqlite::Connection;
 
 use crate::error::{AppError, Result};
 
+// attached `sync` 别名判据经 [`super::connection::sync_alias_attached`] 单点
+// （issue #1896 收敛双实现；守卫只关心别名，表级齐备与否是 diff 的结论）。
+
 /// 启动期 schema 漂移的稳定错误码（issue #992 / ADR-0100 决策 3，ADR-0050
 /// 只增不改）：不复用 `boot.db-unreadable`——漂移库打得开且数据完好，恢复通道
 /// 中「从备份恢复」应作为首选动作呈现，与「库不可读」（重置优先）的处置顺序
@@ -91,19 +94,6 @@ fn side_schema(conn: &Connection, db: &str) -> rusqlite::Result<SideSchema> {
     })
 }
 
-/// attached `sync` 别名是否在位（`pragma_database_list`；守卫与
-/// [`super::sync_tables_live_attached`] 的别名核对同源，此处置只关心别名——
-/// 表级齐备与否是 diff 的结论而非前置）。
-fn sync_alias_attached(conn: &Connection) -> bool {
-    conn.query_row(
-        "SELECT count(*) FROM pragma_database_list WHERE name = 'sync'",
-        [],
-        |r| r.get::<_, i64>(0),
-    )
-    .map(|n| n > 0)
-    .unwrap_or(false)
-}
-
 /// 参照集构建（进程内单次；构建成本受 ADR-0009 100ms 观测线约束，ADR-0100 性能
 /// 定语）。直接调迁移链、不经 `init_db`——避免递归守卫。参照世界由
 /// [`super::open_in_memory`] 建立成对挂载形态（attached `:memory:` 承载 sync
@@ -160,7 +150,7 @@ pub(crate) fn verify_schema(actual: &Connection) -> Result<()> {
     let reference = reference_schema()?;
 
     let actual_main = side_schema(actual, "main")?;
-    let actual_sync = if sync_alias_attached(actual) {
+    let actual_sync = if super::connection::sync_alias_attached(actual) {
         side_schema(actual, "sync")?
     } else {
         SideSchema::default()

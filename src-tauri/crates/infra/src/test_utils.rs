@@ -330,3 +330,19 @@ pub fn write_foreign_form_plaintext_db(path: &std::path::Path, rows: usize) {
         .unwrap();
     }
 }
+
+// ---------------------------------------------------------------------------
+// 内存世界成对挂载夹具（issue #1896）
+// ---------------------------------------------------------------------------
+
+/// 夹具连接的内存世界成对挂载：`ATTACH DATABASE ':memory:' AS sync`。
+///
+/// 非 `ledger.db` 文件名的夹具连接不触发建连收尾挂载接线（主库判别
+/// [`crate::db::connection::is_main_db_path`] 不命中），但迁移链 V036 起
+/// 需要 attached `sync` 侧在位——迁移前自行挂载内存侧，与产品
+/// `open_in_memory` 的成对挂载同形。供 db/tests/mount.rs 与
+/// boot/tests/encryption.rs 共用（四处同形样板的收编单点，issue #1896）。
+pub fn attach_in_memory_sync(conn: &rusqlite::Connection) {
+    conn.execute_batch("ATTACH DATABASE ':memory:' AS sync")
+        .expect("内存世界成对挂载（attached sync 侧就位）");
+}
