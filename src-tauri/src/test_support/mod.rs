@@ -75,6 +75,13 @@
 //! 事务无集合级原子保证，ADR-0139 决策 2）。登记处：ADR-0084 修订注记、
 //! CONTEXT-testing「文件库测试模板」词条。
 //!
+//! **#1896 追加**（op 写失败注入）：拆库票（#1871）审查发现的四域同形触发器
+//! 注入收编 [`op_write_failure`]——`BEFORE INSERT ON sync.sync_ops` 的 temp
+//! 触发器 RAISE(ABORT) 挡下 op 产出，currencies / investment / transaction /
+//! sync-engine 的跨库原子性测试共用（决策 1 准入：≥2 域同体消费）；注入解除
+//! 与「错误确来自注入」的断言一并收口。登记处：ADR-0084 修订注记、
+//! CONTEXT-testing「op 写失败注入」词条。
+//!
 //! 说明：集成测试 `tests/api_server/` 链接的是非 `#[cfg(test)]` 构建的 lib，
 //! 因此本模块不能仅以 `#[cfg(test)]` 编译；对生产二进制的影响只是一些未使用的
 //! 测试辅助函数（可被编译器消除）。
@@ -92,6 +99,7 @@
 
 mod assert;
 pub mod channel;
+pub mod op_write_failure;
 pub mod s3;
 pub mod scan;
 pub mod scratch;
@@ -104,6 +112,7 @@ pub use assert::{
     assert_balance_cache_matches_realtime, extract_check_in_literals, read_scalar_i64,
 };
 pub use channel::publish_raw_segment;
+pub use op_write_failure::{assert_op_write_failure, block_op_writes, unblock_op_writes};
 pub use s3::{
     S3Addressing, S3Deny, S3Gate, S3ObservedRequest, S3Stub, S3StubConfig, spawn_s3_stub,
 };
