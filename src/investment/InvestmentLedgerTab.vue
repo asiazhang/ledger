@@ -30,6 +30,7 @@ import AmountCell from "@/transaction/AmountCell.vue";
 import ConvertDetail from "@/investment/ConvertDetail.vue";
 import SplitDetail from "@/investment/SplitDetail.vue";
 import DividendDetail from "@/investment/DividendDetail.vue";
+import OrderDetail from "@/transaction/OrderDetail.vue";
 import { useAppDialog } from "@/composables/useAppDialog";
 import { useRowContextMenu } from "@ledger/row-context-menu";
 import { useTransactionModalState } from "@ledger/transaction-modal-state";
@@ -685,6 +686,14 @@ function onCreated() {
       :key="seq"
       v-else-if="detailIntent?.detail.kind === 'dividend'"
       :transaction="detailIntent.row"
+    />
+    <!-- 订单区面（范围外修复 #1862 缺口）：带订单号的 buy/sell 行点详情落 order 意图
+         （编排 open 与主列表同一单源），本页签弹窗此前缺分支、呈现空弹窗——补齐与
+         主列表同构的 OrderDetail 渲染（purchases 恒空不落对应意图，不设死分支） -->
+    <OrderDetail
+      :key="seq"
+      v-else-if="detailIntent?.detail.kind === 'order'"
+      :row="detailIntent.row"
     />
   </AppModal>
 </template>

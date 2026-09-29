@@ -7,6 +7,7 @@ import InvestmentLedgerTab from "@/investment/InvestmentLedgerTab.vue";
 import ConvertDetail from "@/investment/ConvertDetail.vue";
 import SplitDetail from "@/investment/SplitDetail.vue";
 import DividendDetail from "@/investment/DividendDetail.vue";
+import OrderDetail from "@/transaction/OrderDetail.vue";
 import InvestmentForm from "@/investment/InvestmentForm.vue";
 import {
   clickTab,
@@ -446,6 +447,34 @@ describe("明细页签只读详情 convert/split/dividend（issue #1781）", () 
     expect(modal.findComponent(SplitDetail).props("split")).toMatchObject({ quantity: 2 });
     expect(visibleModalText()).toContain("000001 平安银行");
     expect(visibleModalText()).toContain("券商户");
+  });
+
+  it("带订单号的 buy 行选详情：订单区呈现（范围外修复 #1862 缺口——页签详情弹窗补 order 面）", async () => {
+    ledgerDb = [
+      { ...buyRow, source_order_no: "JD-9001" },
+      sellRow,
+      convertRow,
+      splitRow,
+      dividendRow,
+    ];
+    withCommandOverride("get_transaction_order_summary", () => ({
+      source_order_no: "JD-9001",
+      row_count: 1,
+      total_amount_cents: 10000,
+      currency_code: "CNY",
+      accounts: [{ account_id: "acc-2", amount_cents: 10000 }],
+      items: [],
+    }));
+    const wrapper = mountView();
+    await flushPromises();
+    await openLedgerTab(wrapper);
+    await openMenuOnRow(wrapper, 0);
+    await selectRowMenu(wrapper, "detail");
+    const modal = modalByTitle(wrapper, "交易详情");
+    expect(modal.props("show")).toBe(true);
+    expect(modal.findComponent(OrderDetail).exists()).toBe(true);
+    expect(visibleModalText()).toContain("所属订单");
+    expect(visibleModalText()).toContain("JD-9001");
   });
 
   it("dividend 行选详情：无扩展读取同步开窗，归属标的/金额/到账账户/备注完整", async () => {
