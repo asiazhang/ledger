@@ -50,7 +50,7 @@ pub fn sync_db_path(main_db_path: &Path) -> std::path::PathBuf {
 
 /// 同步元数据四表闭集（ADR-0139 决策 1；表 DDL 权威在迁移链 V020/V021/V022，
 /// V036 迁移后四表以同名同形迁入 attached 侧）。生产侧唯一清单：
-/// 判据函数与同步件四表重建（多端同步域）均经本清单，不再各自复制。
+/// 同步件四表 SQL 级重建（多端同步域）与双库测试构造均经本清单，不再各自复制。
 pub const SYNC_TABLES: [&str; 4] = [
     "sync_device",
     "sync_ops",
@@ -58,9 +58,9 @@ pub const SYNC_TABLES: [&str; 4] = [
     "sync_stream_positions",
 ];
 /// attached `sync` 别名是否在位（`pragma_database_list`）：别名判据的单点
-/// （issue #1896 收敛双实现）——schema 守卫（[`super::schema_guard`]）只关心
-/// 别名（表级齐备与否是 diff 的结论而非前置）；[`sync_tables_live_attached`]
-/// 在别名在位后继续核对四表闭集。
+///（issue #1896 收敛双实现）——schema 守卫（[`super::schema_guard`]）只关心
+/// 别名（表级齐备与否是 diff 的结论而非前置）；四表闭集核对属已删除的
+/// 双源回退判据（#1872），不再有消费方。
 pub(crate) fn sync_alias_attached(conn: &Connection) -> bool {
     conn.query_row(
         "SELECT count(*) FROM pragma_database_list WHERE name = 'sync'",
@@ -71,45 +71,17 @@ pub(crate) fn sync_alias_attached(conn: &Connection) -> bool {
     .unwrap_or(false)
 }
 
-/// 同步四表的双源回退判据（ADR-0139 拆库 expand 期判据，票 04 引入、票 06 删
-/// 除）：attached `sync` 侧在位且四表闭集齐备 → 同步元数据归 attached；否则
-///（连接未挂载、或票 05 迁移前四表仍在 main）回退 main。checkpoint 产出段
-///（快照源库）与引导段（同步件消费与否）、备份产出段（成对件与 paired 标记）
-/// 共用本单点——同一连接形态恒同判，票 05 迁移后统一命中 attached 分支。
-pub fn sync_tables_live_attached(conn: &Connection) -> bool {
-    if !sync_alias_attached(conn) {
-        return false;
-    }
-    // 别名在位后逐一核对四表闭集（别名与表名均为闭集字面量，无注入面）。
-    SYNC_TABLES.iter().all(|table| {
-        let present: i64 = conn
-            .query_row(
-                &format!("SELECT count(*) FROM sync.sqlite_master WHERE name = '{table}'"),
-                [],
-                |r| r.get(0),
-            )
-            .unwrap_or(0);
-        present > 0
-    })
-}
-
-/// 同步元数据件快照（ADR-0139 决策 5/6 的逐库 `VACUUM INTO` 单点，票 04 引入、
-/// 票 06 删除回退）：按 [`sync_tables_live_attached`] 判源——attached 四表齐备
-/// 逐 `VACUUM sync INTO`（真同步元数据），否则回退 `VACUUM main INTO`（票 05
-/// 迁移前四表仍在 main 的 expand 期形态，件内容为 main 的同刻拷贝）。checkpoint
-/// 产出段与备份产出段共用本单点：票 06 删除回退分支后，attached 恒有表，两处
-/// 调用零改动自然切到 attached 分支。
+/// 同步元数据件快照（ADR-0139 决策 5/6 的逐库 `VACUUM INTO` 单点）：对 attached
+/// `sync` 侧执行 `VACUUM sync INTO`。V036 拆库后生产连接恒经建连收尾挂载
+/// attached 侧且四表齐备（contract 后无 main 回退源，#1872）——连接未挂载时
+/// 本语句报「unknown database」，属调用方契约违反，不做静默兜底。checkpoint
+/// 产出段与备份产出段共用本单点。
 ///
 /// 必须在单连接互斥锁内、非事务路径调用（`VACUUM INTO` 语义约束，与业务件快照
 /// 同刻成对的保证同源）。
 pub fn snapshot_sync_tables_into(conn: &Connection, path: &Path) -> Result<()> {
-    let source = if sync_tables_live_attached(conn) {
-        "sync"
-    } else {
-        "main"
-    };
     conn.execute(
-        &format!("VACUUM {source} INTO ?1"),
+        "VACUUM sync INTO ?1",
         rusqlite::params![path.to_string_lossy()],
     )?;
     Ok(())

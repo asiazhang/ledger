@@ -945,27 +945,24 @@ fn user_fact_rows_in_any_business_domain_trigger_probe() {
 }
 
 // ---------------------------------------------------------------------------
-// 双文件成对形态（票 04 / ADR-0139 决策 5）：业务件 + 同步元数据件同刻成对
-// 产出（双源回退：attached 四表齐备逐 attached，否则回退 main——票 06 删除
-// 回退）；引导按目标形态分支消费。
+// 双文件成对形态（ADR-0139 决策 5；contract 后唯一产出形态，#1872）：业务件
+// + 同步元数据件同刻成对产出；引导把同步件换入 attached 四表（旧形态单文件
+// 快照恒跳过，跨版本拆分归票 07）。
 // ---------------------------------------------------------------------------
 
-/// 单库布局（回退源 main）下双文件成对产出：同步件非空、四表闭集与源行数
-/// 对等（负向判据：删除产出段的同步件 VACUUM，本测试红）。
+/// 双文件成对产出（工厂世界）：同步件非空、四表闭集与源行数对等（负向判据：
+/// 删除产出段的同步件 VACUUM，本测试红）。
 #[test]
-fn checkpoint_produces_paired_sync_component_in_single_db_layout() {
+fn checkpoint_produces_paired_sync_component() {
     let conn = test_support::open();
     base_ledger(&conn);
     let dev = device_of(&conn);
 
     let cp = create_checkpoint(&conn).unwrap();
     assert!(!cp.snapshot.is_empty());
-    assert!(
-        !cp.sync_snapshot.is_empty(),
-        "同步元数据件成对产出（回退源 main），非空"
-    );
+    assert!(!cp.sync_snapshot.is_empty(), "同步元数据件成对产出，非空");
 
-    // 同步件解库核对：四表闭集在场，行数与源一致（回退路径产出同刻 main 拷贝）。
+    // 同步件解库核对：四表闭集在场，行数与源一致。
     let dir = ScratchDir::new("cp-sync-probe");
     let sync_file = dir.join("sync-component.db");
     std::fs::write(&sync_file, &cp.sync_snapshot).unwrap();
@@ -990,9 +987,8 @@ fn checkpoint_produces_paired_sync_component_in_single_db_layout() {
     assert_eq!(probe_dev, dev, "同步件携带源设备身份");
 }
 
-/// 双库布局下双文件快照产出（票 05 迁移后的产出形态，双源机制零改动自然
-/// 切换的证明）：源端 attached 侧四表齐备时，业务件不含同步表、同步件承载
-/// 四表闭集（负向判据：删除产出段的双源回退，本测试红）。
+/// 文件库双库世界下双文件快照产出：业务件不含同步表、同步件承载四表闭集
+///（负向判据：删除产出段的同步件 VACUUM，本测试红）。
 #[test]
 fn dual_db_source_produces_business_and_sync_files_split() {
     let src_dir = ScratchDir::new("cp-dual-src");
@@ -1001,10 +997,14 @@ fn dual_db_source_produces_business_and_sync_files_split() {
     make_business_only_main(&src_main);
     make_sync_only_db(&src_sync);
     let conn_a = ledger_infra::db::open_connection(&src_main).unwrap();
-    assert!(
-        ledger_infra::db::sync_tables_live_attached(&conn_a),
-        "前置：源端 attached 侧四表齐备"
-    );
+    let mounted: i64 = conn_a
+        .query_row(
+            "SELECT count(*) FROM pragma_database_list WHERE name = 'sync'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(mounted, 1, "前置：源端 attached 侧挂载在位");
     seed_account(&conn_a, "acc-1", "现金", "cash", "CNY", 0);
     protocol::create(&conn_a, make_expense("acc-1", 10_000, "午饭")).unwrap();
 
@@ -1059,26 +1059,22 @@ fn legacy_snapshot_on_dual_ready_target_skips_sync_component() {
     );
 }
 
-/// 同步件按形态分支消费（票 05 迁移后引导形态的接线证明）：目标 attached 侧
-/// 四表齐备时，同步件经 SQL 级重建换入 attached——attached 的 op 与位点行只
-/// 可能来自消费分支（业务件重建只写 main），删除消费接线即红。目标 main 保
-/// 留四表以通过现行单库 schema 守卫（守卫双库化归票 05），unqualified 读命中
-/// main 影子——票 04→05 之间的已记录中间态（见 consume_sync_snapshot 文档）。
+/// 同步件消费接线证明：同步件经 SQL 级重建换入 attached——attached 的 op 与
+/// 位点行只可能来自消费分支（业务件重建只写 main），删除消费接线即红。
 #[test]
-fn bootstrap_consumes_sync_component_into_attached_when_ready() {
-    // 源端：内存库（回退形态产出——业务件与同步件同为 main 同刻拷贝，四表
-    // 与数据在场）。
+fn bootstrap_consumes_sync_component_into_attached() {
+    // 源端：工厂内存库（双库世界产出——业务件与同步件各归其位）。
     let conn_a = test_support::open();
     base_ledger(&conn_a);
     let dev_a = device_of(&conn_a);
     let cp = create_checkpoint(&conn_a).unwrap();
 
-    // 目标端：混合世界——main 为工厂形态（四表在场、守卫干净），attached
-    // sync.db 为仅四表空库（消费分支的就绪形态）。
+    // 目标端：双库世界——main 为工厂落盘形态（业务库），attached sync.db 为
+    // 仅四表空库（消费前的就绪形态）。
     let dst_dir = ScratchDir::new("cp-dual-dst");
     let dst_main = dst_dir.join("ledger.db");
     let dst_sync = dst_dir.join("sync.db");
-    // main 为工厂形态原样（四表在场，通过现行单库 schema 守卫）。
+    // main 为工厂形态落盘（业务库；schema 守卫双库化由票 05 落地）。
     {
         let factory = test_support::open();
         factory
@@ -1112,7 +1108,7 @@ fn bootstrap_consumes_sync_component_into_attached_when_ready() {
         )
         .unwrap();
     assert_eq!(attached_position, 1);
-    // 业务件照常换入 main（回退语义与既有判据不变）。
+    // 业务件照常换入 main。
     let main_txns: i64 = conn_b
         .query_row("SELECT COUNT(*) FROM main.transactions", [], |r| r.get(0))
         .unwrap();
@@ -1129,7 +1125,7 @@ const SPLIT_WORLD_SYNC_TABLES: [&str; 4] = [
     "sync_stream_positions",
 ];
 
-/// 构造仅含四表闭集的同步元数据库文件（消费分支就绪形态 / 双库世界 sync 侧）。
+/// 构造仅含四表闭集的同步元数据库文件（消费前的就绪形态 / 双库世界 sync 侧）。
 /// V036 拆库后工厂世界的四表住 attached 侧，`VACUUM sync INTO` 直接落出
 /// 仅四表闭集的库文件（sqlite_% 内部统计表随引擎豁免，先例同 schema_guard）。
 /// 文件库不入测试工厂（ADR-0084 决策 3）：落盘经工厂内存世界的 VACUUM INTO。
