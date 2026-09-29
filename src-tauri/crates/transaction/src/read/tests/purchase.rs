@@ -97,6 +97,27 @@ fn search_and_order_summary_attach_purchases() {
     assert_eq!(summary.items[0].purchases[1].name, "洗衣液");
 }
 
+/// 端到端验收（issue #1885）：经写入通道提交一笔含「渴望 猫粮」的订单 → 搜索
+/// 「猫粮」命中该交易（商品名片段命中 + 整单读回，全部经公开写入口驱动）。
+#[test]
+fn purchase_order_created_via_write_path_hits_search() {
+    let conn = test_support::open();
+    let id = seed_multi_item_order(&conn);
+
+    let hit = search_transactions_internal(&conn, "猫粮", 1, 50, None, None, None, None).unwrap();
+    assert_eq!(hit.total, 1, "商品名片段「猫粮」命中该订单");
+    assert_eq!(hit.items[0].id, id);
+    assert_eq!(
+        hit.items[0].purchases.len(),
+        3,
+        "命中后整单读回全部购买项行，不裁剪命中行"
+    );
+    // 中段片段同样命中（同单另一商品）。
+    let hit = search_transactions_internal(&conn, "洗衣", 1, 50, None, None, None, None).unwrap();
+    assert_eq!(hit.total, 1);
+    assert_eq!(hit.items[0].id, id);
+}
+
 /// 无购买项的存量交易行为零变化：`purchases` 恒空数组。
 #[test]
 fn legacy_rows_read_back_with_empty_purchases() {
@@ -200,5 +221,47 @@ fn list_page_rows_and_purchases_share_one_snapshot() {
     assert_eq!(
         baseline.items[0].purchases, after.items[0].purchases,
         "列表页行与购买项子行必须同快照——注入写要么整体进快照、要么整体不进"
+    );
+}
+
+/// 搜索读闭包（购买项命中 id 集合预查询 ↔ 命中行集/总数/页回表/子行 attach）
+/// 同快照——本票验收判据「命中 id 集合与行集同口径」的探针载体（issue #1885；
+/// 删除搜索闭包内 ensure_transaction 接线本测试变红：注入写落在预查询后，
+/// 命中集合按旧名命中、页行集按新名漂移）。
+#[test]
+fn search_hit_set_and_rows_share_one_snapshot() {
+    let dir = ScratchDir::new("tx-search-purchase-snapshot");
+    let conn = test_support::open_file(dir.path());
+    let id = seed_multi_item_order(&conn);
+
+    let baseline =
+        search_transactions_internal(&conn, "猫粮", 1, 50, None, None, None, None).unwrap();
+    assert_eq!(baseline.total, 1, "夹具前置：搜索「猫粮」命中样例订单");
+
+    // 探针：marker = 命中 id 预查询——注入落在字典装载后、预查询起点，另一连接
+    // 把首条购买项名称改写（猫粮 → 漂移）。
+    snapshot_probe::arm(
+        &conn,
+        dir.path(),
+        "SELECT DISTINCT transaction_id FROM transaction_purchases",
+        &[&format!(
+            "UPDATE transaction_purchases SET name = '漂移' \
+             WHERE transaction_id = '{id}' AND sort = 0"
+        )],
+    );
+    let after = search_transactions_internal(&conn, "猫粮", 1, 50, None, None, None, None).unwrap();
+
+    let outcome = snapshot_probe::outcome();
+    assert!(
+        outcome != InjectionOutcome::NotFired,
+        "探针未命中搜索读闭包（marker 漂移或未臂装），断言失去意义：{outcome:?}"
+    );
+    assert_eq!(
+        baseline.total, after.total,
+        "命中 id 集合与行集/总数必须同快照——注入写要么整体进快照、要么整体不进"
+    );
+    assert_eq!(
+        baseline.items[0].purchases, after.items[0].purchases,
+        "命中展示的购买项子行与命中判定必须同快照"
     );
 }

@@ -67,7 +67,7 @@
 //! ## bench：查询基准（issue #461；门禁 issue #493 / ADR-0068；商户占比与投资三项读基准
 //! ## issue #1627；跨账本投资汇总基准 issue #1630）
 //!
-//! 对 generate 产出的库跑 15 项查询基准并输出 min/avg/p95 报告：
+//! 对 generate 产出的库跑 16 项查询基准并输出 min/avg/p95 报告：
 //!
 //! 用法以 `cargo run --bin ledger-perf -- bench --help` 的渲染输出为准
 //! （flag 表单一真源，issue #1696）。
@@ -220,7 +220,7 @@ const SUBCOMMANDS: &[Subcommand] = &[
     },
     Subcommand {
         name: "bench",
-        summary: "查询基准——15 项查询 × min/avg/p95 报告（issue #461）",
+        summary: "查询基准——16 项查询 × min/avg/p95 报告（issue #461）",
         flags: || flag_helps(bench::FLAGS),
         options_order: 0,
         execute: bench::execute,

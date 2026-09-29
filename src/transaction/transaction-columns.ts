@@ -141,7 +141,7 @@ export function expandPurchaseRows(rows: Transaction[]): ExpandedTransactionRow[
   );
 }
 
-/** 行的购买项序位（行渲染回调的单一收口）：未展开行集（搜索结果等）按无购买项行（-1）处理；
+/** 行的购买项序位（行渲染回调的单一收口）：未展开行集按无购买项行（-1）处理；
  * 订单块首行 = 0（承载合并格，订单级交互入口所在），续行 > 0（纯购买项行，不可交互）。 */
 export function purchaseIndexOf(row: Transaction): number {
   return (row as ExpandedTransactionRow).purchaseIndex ?? -1;
@@ -223,7 +223,8 @@ export interface BuildTransactionColumnsOptions {
   /** 购买项展开（issue #1883 / ADR-0138 决策 13）：声明即按「订单块逐购买项行」
    * 装配——订单级列（日期/类型/商户/来源/账户/金额/操作）rowSpan 纵向合并、
    * 分类列逐行取购买项分类、备注列一列两用。仅消费 expandPurchaseRows 展开行集的
-   * 视图可声明（交易列表）；未展开行集（搜索结果）不声明，呈现零变化。 */
+   * 视图可声明（交易列表与搜索结果，后者自 #1885 起商品名命中即整单呈现）；未
+   * 展开行集不声明，呈现零变化。 */
   expandPurchases?: boolean;
 }
 
@@ -289,7 +290,7 @@ export function buildTransactionColumns(
     },
     {
       // 列名两形态（ADR-0138 决策 13）：展开视图整列「商品 / 备注」（一列两用），
-      // 未展开视图（搜索结果）仍「备注」——列头与其内容形态一致。
+      // 未展开视图仍「备注」——列头与其内容形态一致。
       title: options.expandPurchases
         ? t("transactions.columns.itemNote")
         : t("transactions.columns.note"),

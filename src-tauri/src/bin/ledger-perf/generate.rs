@@ -114,6 +114,32 @@ const NOTE_SUFFIXES: [&str; 8] = [
     "加班餐",
     "临时",
 ];
+/// 购买项订单率：`expense` 行带购买项子表的概率（AI 导入电商回单的量级画像，
+/// issue #1885 商品名搜索基准语料）。
+const PURCHASE_ORDER_RATE: f64 = 0.10;
+/// 每单购买项数上限（1..=4 均匀）。
+const PURCHASE_ITEM_MAX: u64 = 4;
+/// 购买项名称池：与备注素材池关键词刻意不交（「咖啡」等备注关键词不出现在
+/// 商品名，两条搜索基准的命中面互不污染）；「猫粮」系条目保证商品名搜索基准
+/// 的默认关键字必有命中。
+const PURCHASE_NAMES: [&str; 16] = [
+    "渴望猫粮",
+    "冻干猫粮",
+    "猫粮试吃装",
+    "猫砂",
+    "洗衣液",
+    "纸巾",
+    "抽纸",
+    "牙膏",
+    "洗发水",
+    "可乐",
+    "薯片",
+    "牛奶",
+    "面包",
+    "鸡蛋",
+    "垃圾袋",
+    "小零食",
+];
 
 /// generate 参数（解析后、日期已合法的形态）。
 pub(crate) struct GenerateParams {
@@ -129,6 +155,8 @@ pub(crate) struct GenCounts {
     pub categories: usize,
     pub merchants: usize,
     pub transactions: usize,
+    /// 购买项子表行数（issue #1885：商品名搜索基准语料）。
+    pub purchases: usize,
     pub deleted_transactions: usize,
     pub transfer_transactions: usize,
     pub refund_transactions: usize,
@@ -242,7 +270,7 @@ pub(crate) fn run(cli: GenerateCli) -> Result<(), String> {
 
     println!(
         "生成完成：核心域 {} accounts / {} categories（迁移种子另计）/ {} merchants / {} transactions\
-         （软删 {}、转账 {}、退款 {}）",
+         （软删 {}、转账 {}、退款 {}）/ 购买项 {} 行",
         counts.accounts,
         counts.categories,
         counts.merchants,
@@ -250,6 +278,7 @@ pub(crate) fn run(cli: GenerateCli) -> Result<(), String> {
         counts.deleted_transactions,
         counts.transfer_transactions,
         counts.refund_transactions,
+        counts.purchases,
     );
     println!(
         "投资与计划：{} instruments / {} market_prices / {} price_history / {} 标的交易\
@@ -379,7 +408,10 @@ pub(crate) fn generate_into(
     counts.buy_trades = buys;
     counts.sell_trades = sells;
 
-    // 7) 当前汇率 + 全历史周采样汇率（全历史填充供历史折算与走势查询）
+    // 7) 购买项子表语料（issue #1885，独立种子流二次播撒）
+    insert_purchases(&tx, p, &mut counts)?;
+
+    // 8) 当前汇率 + 全历史周采样汇率（全历史填充供历史折算与走势查询）
     counts.exchange_rates = insert_exchange_rates(&tx, p)?;
     counts.fx_rate_history = insert_fx_rate_history(&tx, &mut rng, p, start_date)?;
 
@@ -1109,6 +1141,55 @@ fn trim_buffer(buf: &mut VecDeque<ExpenseRef>) {
     while buf.len() > REFUND_BUFFER_CAP {
         buf.pop_front();
     }
+}
+
+/// 购买项子表语料（issue #1885 / ADR-0138 决策 9）：对已落库的 `expense` 行
+/// 二次播撒购买项（仅 `expense` 挂单，kind 准入；软删行照常携带——子行随主行
+/// 存亡，读侧不出现；单价三成留空，源单只给订单总额的可空单价形态）。
+///
+/// 用独立派生种子流（与 books 附属账本同款派生先例），主随机流（账户/kind/
+/// 金额/日期/备注语料）逐位不变——既有画像测试与基准数字不被本表语料重排。
+/// 逐行扫描按 id 序（time_ordered_id 确定性），两次生成播撒一致。
+fn insert_purchases(
+    conn: &Connection,
+    p: &GenerateParams,
+    counts: &mut GenCounts,
+) -> Result<(), String> {
+    let mut rng = Rng::new(p.seed ^ 0x1885_0000_0000_0001);
+    let mut stmt = conn
+        .prepare(
+            "INSERT INTO transaction_purchases \
+             (transaction_id,sort,name,quantity,category_id,unit_price_cents) \
+             VALUES (?1,?2,?3,?4,NULL,?5)",
+        )
+        .map_err(|e| e.to_string())?;
+    let ids: Vec<String> = {
+        let mut q = conn
+            .prepare("SELECT id FROM transactions WHERE kind = 'expense' ORDER BY id")
+            .map_err(|e| e.to_string())?;
+        let rows = q.query_map([], |r| r.get(0)).map_err(|e| e.to_string())?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(|e| e.to_string())?
+    };
+    for id in ids {
+        if !rng.chance(PURCHASE_ORDER_RATE) {
+            continue;
+        }
+        let items = 1 + rng.below(PURCHASE_ITEM_MAX);
+        for sort in 0..items {
+            let name = rng.pick(&PURCHASE_NAMES);
+            let quantity = (1 + rng.below(3)) as i64;
+            let price = if rng.chance(0.3) {
+                None
+            } else {
+                Some(rng.range_i64(300, 50_000))
+            };
+            stmt.execute(rusqlite::params![id, sort as i64, name, quantity, price])
+                .map_err(|e| e.to_string())?;
+            counts.purchases += 1;
+        }
+    }
+    Ok(())
 }
 
 pub(crate) fn date_millis(d: &NaiveDate) -> i64 {

@@ -10,7 +10,8 @@ use crate::tests::common::seed_category;
 use ledger_infra::error::Result;
 use tauri_app_lib::ledger_transaction::TransactionSearchResult;
 use tauri_app_lib::ledger_transaction::read::search::{
-    Stage1Filter, TermLowered, build_stage1_query, load_search_dicts, search_transactions_internal,
+    PurchasePush, Stage1Filter, TermLowered, build_stage1_query, load_search_dicts,
+    search_transactions_internal,
 };
 use tauri_app_lib::ledger_transaction::shared::search_text::{
     is_subsequence, pinyin_initials, split_terms, term_matches, term_matches_text,
@@ -638,12 +639,117 @@ fn category_rename_does_not_affect_search() {
 }
 
 // -----------------------------------------------------------------------
+// 商品名命中面（issue #1885 / ADR-0138 决策 14）：购买项名称进交易搜索命中面，
+// 统一模糊搜索语义不变（原文连续子串、ASCII 大小写折叠、LIKE 通配字面、
+// 词条间 AND），命中即整单读回全部购买项行（不裁剪命中行）。
+// -----------------------------------------------------------------------
+
+/// 购买项子行夹具（与 [`insert_txn`] 同款裸 INSERT 先例：搜索域测试只消费
+/// 读路径，写入路径纪律归 write/writer 侧测试）。
+fn insert_purchase(conn: &Connection, txn_id: &str, sort: i64, name: &str, quantity: i64) {
+    conn.execute(
+        "INSERT INTO transaction_purchases (transaction_id,sort,name,quantity,category_id,unit_price_cents) \
+         VALUES (?1,?2,?3,?4,NULL,NULL)",
+        rusqlite::params![txn_id, sort, name, quantity],
+    )
+    .unwrap();
+}
+
+/// 商品名片段命中：命中后整单读回全部购买项行（不裁剪命中行——命中「洗衣液」
+/// 也返回同单 3 条明细），写入立即可搜。
+#[test]
+fn purchase_name_fragment_hits_whole_order() {
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "a1", "现金", "cash", "CNY", 0);
+    insert_txn(&conn, "t1", "a1", None, Some("家庭采购"), "2026-02-01");
+    insert_purchase(&conn, "t1", 0, "渴望猫粮", 1);
+    insert_purchase(&conn, "t1", 1, "洗衣液", 2);
+    insert_purchase(&conn, "t1", 2, "纸巾", 3);
+
+    let res = search(&conn, "猫粮").unwrap();
+    assert_eq!(res.total, 1);
+    assert_eq!(res.items[0].id, "t1");
+    assert_eq!(
+        res.items[0].purchases.len(),
+        3,
+        "命中后整单读回全部购买项行，不裁剪命中行"
+    );
+    assert_eq!(res.items[0].purchases[0].name, "渴望猫粮");
+
+    // 中段片段同样命中。
+    let res = search(&conn, "洗衣").unwrap();
+    assert_eq!(res.total, 1);
+    assert_eq!(res.items[0].id, "t1");
+
+    // 无购买项命中的词条零命中。
+    let res = search(&conn, "不存在的商品xyz").unwrap();
+    assert_eq!(res.total, 0);
+}
+
+/// 商品名 ASCII 大小写折叠与 LIKE 通配字面（与备注路径同一语义边界）。
+#[test]
+fn purchase_name_case_folding_and_wildcards_match_note_path() {
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "a1", "现金", "cash", "CNY", 0);
+    insert_txn(&conn, "t1", "a1", None, None, "2026-02-01");
+    insert_purchase(&conn, "t1", 0, "Royal Canin 猫粮", 1);
+
+    // ASCII 大小写折叠由 LIKE 自带（与备注一致）。
+    let res = search(&conn, "canin").unwrap();
+    assert_eq!(res.total, 1);
+    let res = search(&conn, "ROYAL").unwrap();
+    assert_eq!(res.total, 1);
+
+    // LIKE 通配按字面：下划线不当单字通配。
+    insert_txn(&conn, "t2", "a1", None, None, "2026-02-02");
+    insert_purchase(&conn, "t2", 0, "a_b 型号", 1);
+    let res = search(&conn, "a_b").unwrap();
+    assert_eq!(res.total, 1);
+    assert_eq!(res.items[0].id, "t2");
+}
+
+/// 词条间 AND 跨字段组合：词条可各自由不同字段命中（商品名 ∨ 备注 ∨ 账户/商户名）。
+#[test]
+fn purchase_name_multi_term_and_with_other_fields() {
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "a1", "现金", "cash", "CNY", 0);
+    // t1：商品名「渴望猫粮」+ 备注「家庭采购」；t2：仅备注含猫粮、商品不含。
+    insert_txn(&conn, "t1", "a1", None, Some("家庭采购"), "2026-02-01");
+    insert_purchase(&conn, "t1", 0, "渴望猫粮", 1);
+    insert_txn(&conn, "t2", "a1", None, Some("猫粮囤货"), "2026-02-02");
+
+    // 词条各自由不同字段命中（t1：猫粮走商品名、采购走备注）→ 仅 t1 命中；
+    // t2 虽备注含猫粮，但「采购」词条无处命中 → 不命中。
+    let res = search(&conn, "猫粮 采购").unwrap();
+    assert_eq!(res.total, 1);
+    assert_eq!(res.items[0].id, "t1");
+    // 词条 AND：第二词条无命中 → 整体零命中。
+    let res = search(&conn, "猫粮 洗衣机").unwrap();
+    assert_eq!(res.total, 0);
+}
+
+/// 软删口径：软删交易的购买项不进命中面（与交易行软删口径一致）。
+#[test]
+fn purchase_name_of_soft_deleted_txn_excluded() {
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "a1", "现金", "cash", "CNY", 0);
+    insert_txn(&conn, "t1", "a1", None, None, "2026-02-01");
+    insert_purchase(&conn, "t1", 0, "渴望猫粮", 1);
+    conn.execute("UPDATE transactions SET is_deleted=1 WHERE id='t1'", [])
+        .unwrap();
+    let res = search(&conn, "猫粮").unwrap();
+    assert_eq!(res.total, 0, "软删交易的购买项不进命中面");
+}
+
+// -----------------------------------------------------------------------
 // 流式分页（见 ADR-0027 修订记录）：较大数据量下分页无重复、无遗漏、total 精确
 // -----------------------------------------------------------------------
 
 /// 第一段下推查询的计划钉定（父 #489 用户故事 18 / issue #515 验收）：下推查询
 /// 必须命中 V018 搜索覆盖索引（idx_transactions_note_search，COVERING INDEX）
-/// 且不产生 ORDER BY 临时 B-tree——planner 漂移在 CI 即刻暴露。
+/// 且不产生 ORDER BY 临时 B-tree——planner 漂移在 CI 即刻暴露。购买项命中面
+///（issue #1885）两种下推形态（命中 id IN / 超预算 EXISTS 退让）同受本钉定
+/// 管辖：主扫描不得因购买项子句退出覆盖索引或引入临时 B-tree。
 #[test]
 fn stage1_scan_plan_uses_list_order_index() {
     let conn = test_support::open();
@@ -656,6 +762,15 @@ fn stage1_scan_plan_uses_list_order_index() {
             lower: t.to_lowercase(),
         })
         .collect();
+    // 购买项下推形态：空集合（零子句，存量行为）/ 命中 id IN / EXISTS 退让。
+    let push_sets: [Vec<PurchasePush>; 3] = [
+        vec![PurchasePush::Ids(Vec::new()), PurchasePush::Ids(Vec::new())],
+        vec![
+            PurchasePush::Ids(vec!["t1".into()]),
+            PurchasePush::Ids(vec!["t2".into(), "t3".into()]),
+        ],
+        vec![PurchasePush::Exists, PurchasePush::Exists],
+    ];
     // 纯关键字与关键字 + 金额/日期筛选两种形态都必须钉定覆盖索引、无临时 B-tree。
     let filter_sets: [Vec<Stage1Filter>; 2] = [
         Vec::new(),
@@ -672,34 +787,47 @@ fn stage1_scan_plan_uses_list_order_index() {
             },
         ],
     ];
-    for filters in &filter_sets {
-        let query = build_stage1_query(&term_lowers, &dicts, filters);
-        let mut stmt = conn
-            .prepare(&format!("EXPLAIN QUERY PLAN {}", query.sql))
-            .unwrap();
-        let details: Vec<String> = stmt
-            .query_map(rusqlite::params_from_iter(query.params.iter()), |r| {
-                r.get::<_, String>(3)
-            })
-            .unwrap()
-            .filter_map(|r| r.ok())
-            .collect();
-        let plan = details.join(" | ");
-        assert!(
-            plan.contains("idx_transactions_note_search"),
-            "下推查询应命中搜索覆盖索引: {plan}"
-        );
-        if filters.is_empty() {
-            // 纯关键字：无约束可用，应为覆盖索引全扫（index-only 零回表）。
+    for pushes in &push_sets {
+        for filters in &filter_sets {
+            let query = build_stage1_query(&term_lowers, &dicts, pushes, filters);
+            let mut stmt = conn
+                .prepare(&format!("EXPLAIN QUERY PLAN {}", query.sql))
+                .unwrap();
+            let details: Vec<String> = stmt
+                .query_map(rusqlite::params_from_iter(query.params.iter()), |r| {
+                    r.get::<_, String>(3)
+                })
+                .unwrap()
+                .filter_map(|r| r.ok())
+                .collect();
+            let plan = details.join(" | ");
             assert!(
-                plan.contains("SCAN t USING COVERING INDEX idx_transactions_note_search"),
-                "纯关键字下推应为覆盖索引全扫: {plan}"
+                plan.contains("idx_transactions_note_search"),
+                "下推查询应命中搜索覆盖索引: {plan}"
+            );
+            if filters.is_empty() {
+                // 纯关键字：无约束可用，应为覆盖索引全扫（index-only 零回表）。
+                assert!(
+                    plan.contains("SCAN t USING COVERING INDEX idx_transactions_note_search"),
+                    "纯关键字下推应为覆盖索引全扫: {plan}"
+                );
+            }
+            // EXISTS 退让形态：主扫描仍钉定覆盖索引，且子查询必须走子表主键前缀
+            // seek（无购买项的行一次索引探测即判负）——planner 退化成全表扫或
+            // 临时结构即红。
+            if pushes.iter().any(|p| matches!(p, PurchasePush::Exists)) {
+                assert!(
+                    plan.contains(
+                        "SEARCH p USING INDEX sqlite_autoindex_transaction_purchases_1 (transaction_id=?)",
+                    ),
+                    "EXISTS 退让子查询应走子表主键前缀 seek: {plan}"
+                );
+            }
+            assert!(
+                !plan.to_uppercase().contains("TEMP B-TREE"),
+                "排序应由索引序满足，不应出现临时 B-tree: {plan}"
             );
         }
-        assert!(
-            !plan.to_uppercase().contains("TEMP B-TREE"),
-            "排序应由索引序满足，不应出现临时 B-tree: {plan}"
-        );
     }
 }
 
@@ -848,6 +976,8 @@ fn pushdown_hit_set_covers_row_semantics() {
         merchant_id: Option<&'static str>,
         category_id: Option<String>,
         deleted: bool,
+        /// 购买项名称（issue #1885 命中面：期望侧与落库同源）。
+        purchases: Vec<&'static str>,
     }
     let mut txns: Vec<FixtureTxn> = (0..40)
         .map(|i| FixtureTxn {
@@ -857,6 +987,7 @@ fn pushdown_hit_set_covers_row_semantics() {
             merchant_id: None,
             category_id: None,
             deleted: false,
+            purchases: Vec::new(),
         })
         .collect();
     txns.push(FixtureTxn {
@@ -866,6 +997,7 @@ fn pushdown_hit_set_covers_row_semantics() {
         merchant_id: None,
         category_id: None,
         deleted: false,
+        purchases: Vec::new(),
     });
     txns.push(FixtureTxn {
         id: "t_kfc".into(),
@@ -874,6 +1006,7 @@ fn pushdown_hit_set_covers_row_semantics() {
         merchant_id: None,
         category_id: None,
         deleted: false,
+        purchases: Vec::new(),
     });
     txns.push(FixtureTxn {
         id: "t_wkwy".into(),
@@ -882,6 +1015,7 @@ fn pushdown_hit_set_covers_row_semantics() {
         merchant_id: None,
         category_id: None,
         deleted: false,
+        purchases: Vec::new(),
     });
     txns.push(FixtureTxn {
         id: "t_zsyh_row".into(),
@@ -890,6 +1024,7 @@ fn pushdown_hit_set_covers_row_semantics() {
         merchant_id: None,
         category_id: None,
         deleted: false,
+        purchases: Vec::new(),
     });
     txns.push(FixtureTxn {
         id: "t_jd_row".into(),
@@ -898,6 +1033,7 @@ fn pushdown_hit_set_covers_row_semantics() {
         merchant_id: Some("m1"),
         category_id: None,
         deleted: false,
+        purchases: Vec::new(),
     });
     txns.push(FixtureTxn {
         id: "t_delm_row".into(),
@@ -906,6 +1042,7 @@ fn pushdown_hit_set_covers_row_semantics() {
         merchant_id: Some("m2"),
         category_id: None,
         deleted: false,
+        purchases: Vec::new(),
     });
     txns.push(FixtureTxn {
         id: "t_mixed".into(),
@@ -914,6 +1051,7 @@ fn pushdown_hit_set_covers_row_semantics() {
         merchant_id: None,
         category_id: None,
         deleted: false,
+        purchases: Vec::new(),
     });
     txns.push(FixtureTxn {
         id: "t_abc".into(),
@@ -922,6 +1060,7 @@ fn pushdown_hit_set_covers_row_semantics() {
         merchant_id: None,
         category_id: None,
         deleted: false,
+        purchases: Vec::new(),
     });
     txns.push(FixtureTxn {
         id: "t_num".into(),
@@ -930,6 +1069,7 @@ fn pushdown_hit_set_covers_row_semantics() {
         merchant_id: None,
         category_id: None,
         deleted: false,
+        purchases: Vec::new(),
     });
     txns.push(FixtureTxn {
         id: "t_pct".into(),
@@ -938,6 +1078,7 @@ fn pushdown_hit_set_covers_row_semantics() {
         merchant_id: None,
         category_id: None,
         deleted: false,
+        purchases: Vec::new(),
     });
     txns.push(FixtureTxn {
         id: "t_und".into(),
@@ -946,6 +1087,7 @@ fn pushdown_hit_set_covers_row_semantics() {
         merchant_id: None,
         category_id: None,
         deleted: false,
+        purchases: Vec::new(),
     });
     txns.push(FixtureTxn {
         id: "t_bs".into(),
@@ -954,6 +1096,7 @@ fn pushdown_hit_set_covers_row_semantics() {
         merchant_id: None,
         category_id: None,
         deleted: false,
+        purchases: Vec::new(),
     });
     txns.push(FixtureTxn {
         id: "t_both".into(),
@@ -962,6 +1105,7 @@ fn pushdown_hit_set_covers_row_semantics() {
         merchant_id: None,
         category_id: None,
         deleted: false,
+        purchases: Vec::new(),
     });
     txns.push(FixtureTxn {
         id: "t_accdel".into(),
@@ -970,6 +1114,7 @@ fn pushdown_hit_set_covers_row_semantics() {
         merchant_id: None,
         category_id: None,
         deleted: false,
+        purchases: Vec::new(),
     });
     txns.push(FixtureTxn {
         id: "t_catdel".into(),
@@ -978,6 +1123,7 @@ fn pushdown_hit_set_covers_row_semantics() {
         merchant_id: None,
         category_id: Some(category_ids["c9"].clone()),
         deleted: false,
+        purchases: Vec::new(),
     });
     txns.push(FixtureTxn {
         id: "t_txndel".into(),
@@ -986,6 +1132,7 @@ fn pushdown_hit_set_covers_row_semantics() {
         merchant_id: None,
         category_id: None,
         deleted: true,
+        purchases: Vec::new(),
     });
     txns.push(FixtureTxn {
         id: "t_kfacct".into(),
@@ -994,6 +1141,54 @@ fn pushdown_hit_set_covers_row_semantics() {
         merchant_id: None,
         category_id: None,
         deleted: false,
+        purchases: Vec::new(),
+    });
+    // 购买项命中面夹具（issue #1885）：多商品订单 / ASCII 大小写 / 标点字面 /
+    // 商品名与备注并存 / 软删订单。
+    txns.push(FixtureTxn {
+        id: "t_cat".into(),
+        note: Some("普通记录"),
+        account_id: "a1",
+        merchant_id: None,
+        category_id: None,
+        deleted: false,
+        purchases: vec!["渴望猫粮", "猫砂"],
+    });
+    txns.push(FixtureTxn {
+        id: "t_canin".into(),
+        note: None,
+        account_id: "a1",
+        merchant_id: None,
+        category_id: None,
+        deleted: false,
+        purchases: vec!["Royal Canin"],
+    });
+    txns.push(FixtureTxn {
+        id: "t_catnote".into(),
+        note: Some("猫粮报销"),
+        account_id: "a1",
+        merchant_id: None,
+        category_id: None,
+        deleted: false,
+        purchases: vec!["洗衣液"],
+    });
+    txns.push(FixtureTxn {
+        id: "t_pctitem".into(),
+        note: Some("普通记录"),
+        account_id: "a1",
+        merchant_id: None,
+        category_id: None,
+        deleted: false,
+        purchases: vec!["a_b 100%"],
+    });
+    txns.push(FixtureTxn {
+        id: "t_itemdel".into(),
+        note: Some("普通记录"),
+        account_id: "a1",
+        merchant_id: None,
+        category_id: None,
+        deleted: true,
+        purchases: vec!["渴望猫粮"],
     });
     {
         let dbtx = conn.unchecked_transaction().unwrap();
@@ -1010,6 +1205,15 @@ fn pushdown_hit_set_covers_row_semantics() {
             if t.deleted {
                 dbtx.execute("UPDATE transactions SET is_deleted=1 WHERE id=?1", [&t.id])
                     .unwrap();
+            }
+            for (sort, name) in t.purchases.iter().enumerate() {
+                dbtx.execute(
+                    "INSERT INTO transaction_purchases \
+                     (transaction_id,sort,name,quantity,category_id,unit_price_cents) \
+                     VALUES (?1,?2,?3,1,NULL,NULL)",
+                    rusqlite::params![t.id, sort as i64, name],
+                )
+                .unwrap();
             }
         }
         dbtx.commit().unwrap();
@@ -1051,6 +1255,12 @@ fn pushdown_hit_set_covers_row_semantics() {
                         || merchant_name
                             .map(|m| m.to_lowercase().contains(&term_lower))
                             .unwrap_or(false)
+                        // 购买项名称原文子串（issue #1885）；Rust 侧全 Unicode
+                        // 折叠与 SQL LIKE 的 ASCII 边界差异不在本网夹具内
+                        //（夹具仅 ASCII 大小写与中文，见 #515 已知边界测试）。
+                        || t.purchases
+                            .iter()
+                            .any(|n| n.to_lowercase().contains(&term_lower))
                 })
             })
             .map(|t| t.id.to_string())
@@ -1075,6 +1285,14 @@ fn pushdown_hit_set_covers_row_semantics() {
         ("标点百分号", vec!["100%"]),
         ("标点下划线", vec!["a_b"]),
         ("标点反斜杠", vec!["x\\y"]),
+        ("商品名片段", vec!["猫粮"]),
+        ("商品名多件其一", vec!["洗衣液"]),
+        ("商品名ASCII小写", vec!["canin"]),
+        ("商品名ASCII大写", vec!["CANIN"]),
+        ("商品名与备注AND", vec!["猫粮", "报销"]),
+        ("商品名与商品名AND", vec!["猫粮", "洗衣液"]),
+        ("商品名标点字面", vec!["a_b"]),
+        ("商品名零命中", vec!["狗粮"]),
         ("零命中", vec!["不存在的词条xyz"]),
         ("高命中", vec!["记录"]),
         ("高命中加词条", vec!["记录", "普通"]),

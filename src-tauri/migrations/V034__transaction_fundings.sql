@@ -152,7 +152,7 @@ CREATE INDEX IF NOT EXISTS idx_transaction_fundings_account
 -- 明细指针非存续依赖（报表口径按交易行分类整单计入，不按购买项分摊，决策 11），
 -- ON DELETE 语义比照 transactions.category_id（SET NULL，溯源指针）。无账户与
 -- 金额列：购买项不承载资金语义。除主键外不建二级索引——读回按 (transaction_id,
--- sort) 主键前缀走；名称搜索索引随搜索命中面票另行评估（50 万笔库定量证据）。
+-- sort) 主键前缀走；名称搜索不建索引——命中走子表预查询 + 命中 id 集合下推（前置通配 LIKE 无 B-tree 可定位，子表行集远小于交易行集，全扫即枚举级成本；50 万笔库定量证据见 ADR-0027 修订记录 issue #1885）。
 
 CREATE TABLE IF NOT EXISTS transaction_purchases (
     transaction_id   TEXT NOT NULL REFERENCES transactions(id) ON DELETE CASCADE,
