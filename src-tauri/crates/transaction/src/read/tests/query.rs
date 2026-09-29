@@ -918,6 +918,7 @@ fn make_sell_input(
         idempotency_key: None,
         origin: None,
         fx_rate: None,
+        purchases: Vec::new(),
     }
 }
 
@@ -955,6 +956,7 @@ fn make_convert_input(
         idempotency_key: None,
         origin: None,
         fx_rate: None,
+        purchases: Vec::new(),
     }
 }
 

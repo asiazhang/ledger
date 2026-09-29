@@ -328,6 +328,8 @@ fn execute_occurrence_with_preexisting_landing_completes_without_second_row() {
             date: date.clone(),
             fx_rate: None,
             fx_edit_baseline: None,
+            purchases: Vec::new(),
+            existing_purchases: Vec::new(),
         },
     )
     .unwrap();

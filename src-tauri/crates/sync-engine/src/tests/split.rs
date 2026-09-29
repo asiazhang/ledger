@@ -69,6 +69,7 @@ fn buy_input(
         idempotency_key: None,
         origin: None,
         fx_rate: None,
+        purchases: Vec::new(),
     }
 }
 

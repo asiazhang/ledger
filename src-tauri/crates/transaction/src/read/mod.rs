@@ -11,6 +11,7 @@
 mod funding;
 mod list;
 mod order;
+mod purchase;
 pub mod search;
 mod source;
 

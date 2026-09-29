@@ -52,6 +52,25 @@ pub struct TransactionFundingInput {
     /// 扣款标签（可选自由文本，上限 50 字）：同账户多条出资项的区分标注。
     pub label: Option<String>,
 }
+
+/// 购买项条目（issue #1882 / ADR-0138 决策 9/10）：`TransactionInput.purchases` /
+/// `UpdateTransactionInput.purchases` 的条目类型，也是同步命令归一化行随行的
+/// 购买项载荷（`NormalizedTransaction.purchases`）——同一契约三处消费，只增不改。
+/// wire 形态：`{name, quantity, category_id?, unit_price_cents?}`；数组顺序即对账单
+/// 顺序（用户可见语义），落库顺序位与读回顺序都按数组序。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct TransactionPurchaseInput {
+    /// 商品名称（必填，源单原文）：购买项行自承载商品名，不写进交易备注。
+    pub name: String,
+    /// 件数（正整数）。
+    pub quantity: i64,
+    /// 商品分类引用（可选）：须为在用分类 id（AI 先经分类端点解析或即建）；
+    /// 引用已软删分类的历史行可编辑其他字段（保持历史引用）。
+    pub category_id: Option<String>,
+    /// 商品单价（可选，整数分，≥ 0）：源单只给订单总额时**留空（不提交），
+    /// 不猜不编造**；价格存而不显示、不进任何金额与折算口径、不与实付勾稽。
+    pub unit_price_cents: Option<i64>,
+}
 #[derive(Debug, Clone, Deserialize, ToSchema)]
 pub struct TransactionInput {
     /// 交易类型枚举（serde 小写字符串反序列化）。非法 kind 在反序列化阶段报 400
@@ -73,6 +92,12 @@ pub struct TransactionInput {
     /// 即单出资现状，存量行为零变化。
     #[serde(default)]
     pub funding: Vec<TransactionFundingInput>,
+    /// 购买项明细（issue #1882 / ADR-0138 决策 9）：多商品订单的逐件商品行，
+    /// 仅 `expense` 可携带（其余 kind 携带即码化拒绝）；每条 = {名称, 件数, 分类?,
+    /// 单价?}，数组顺序 = 对账单顺序。价格拿不到就留空（不猜不编造）；商品名写
+    /// 购买项，不再写进备注。缺省（空数组）即无明细，存量行为零变化。
+    #[serde(default)]
+    pub purchases: Vec<TransactionPurchaseInput>,
     pub category_id: Option<String>,
     pub merchant_id: Option<String>,
     /// 商户名字符串（AI 导入契约，issue #194 / ADR-0028）：提交体不带 `merchant_id` 而
@@ -155,6 +180,10 @@ pub struct UpdateTransactionInput {
     /// （空数组）⇔ 必须携 `account_id`（分解被整体移除）；非空 ⇔ 禁 `account_id`。
     #[serde(default)]
     pub funding: Vec<TransactionFundingInput>,
+    /// 购买项明细（与 `TransactionInput.purchases` 同一契约，全量替换语义）：
+    /// 空（不携带）⇔ 无明细（整体移除）；仅 `expense` 可携带。
+    #[serde(default)]
+    pub purchases: Vec<TransactionPurchaseInput>,
     pub category_id: Option<String>,
     pub merchant_id: Option<String>,
     /// 商户名字符串（与 `TransactionInput.merchant_name` 同一契约）：修改路径同样
@@ -205,6 +234,7 @@ impl From<UpdateTransactionInput> for TransactionInput {
             to_account_id: u.to_account_id,
             funding_account_id: u.funding_account_id,
             funding: u.funding,
+            purchases: u.purchases,
             category_id: u.category_id,
             merchant_id: u.merchant_id,
             merchant_name: u.merchant_name,

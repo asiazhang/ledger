@@ -54,6 +54,7 @@ fn make_income(account_id: &str, amount_cents: i64, note: &str) -> TransactionIn
         idempotency_key: None,
         origin: None,
         fx_rate: None,
+        purchases: Vec::new(),
     }
 }
 

@@ -397,6 +397,8 @@ fn writer_insert_row_direct_seam_refreshes_cache() {
         date: "2026-03-01".into(),
         fx_rate: None,
         fx_edit_baseline: None,
+        purchases: Vec::new(),
+        existing_purchases: Vec::new(),
     };
     let row = writer::normalize(&conn, &input).unwrap();
     writer::insert_row(&conn, &row).unwrap();

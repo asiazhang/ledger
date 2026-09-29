@@ -619,6 +619,18 @@ fn guard_reference_admission(input: &TransactionInput) -> Result<()> {
             &[&kind.to_string()],
         ));
     }
+    // 购买项携带收口（issue #1882 / ADR-0138 决策 9）：仅 `expense` 可带；`refund`
+    // 不另挂清单，transfer / 投资 kind / dividend / split / convert 携带即码化拒绝。
+    // kind 准入在两层各判一次、同码同错（与出资分解同款刻意冗余）：本函数辖
+    // Local 形态命令入口，Writer 接缝 validate_purchases 辖全部 Local 形态
+    // （重放 / 定时引擎不经本函数）；逐条约束只在 Writer 一处。
+    if !input.purchases.is_empty() && kind != TransactionKind::Expense {
+        return Err(AppError::codedp(
+            "transaction.purchase-item-unsupported",
+            format!("交易类型 {kind} 不能携带购买项"),
+            &[&kind.to_string()],
+        ));
+    }
     // 期初存量准入（issue #1343 / ADR-0115 修订）：`origin` 描述的是证券扩展行的
     // 来源，只有 buy 有证券扩展行——其余 kind 携带即拒绝（比照保单/分类准入先例）。
     if input.origin.is_some() && !matches!(kind, TransactionKind::Buy) {
@@ -721,6 +733,19 @@ fn plan_with_existing_refs(
                     // 创建路径为空。
                     existing_funding: match existing_id {
                         Some(id) => crate::write::funding_items::read_rows(conn, id)?,
+                        None => Vec::new(),
+                    },
+                    // 购买项明细随输入下传（issue #1882 / ADR-0138 决策 9）：kind 准入与
+                    // 逐条约束归 writer::normalize / purchase_items，此处透传不判定。
+                    purchases: input
+                        .purchases
+                        .iter()
+                        .map(crate::write::purchase_items::PurchaseItem::from)
+                        .collect(),
+                    // 修改路径带该行当前落库明细（「保持历史引用」比对基准），
+                    // 创建路径为空。
+                    existing_purchases: match existing_id {
+                        Some(id) => crate::write::purchase_items::read_rows(conn, id)?,
                         None => Vec::new(),
                     },
                     category_id: input.category_id.clone(),

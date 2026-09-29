@@ -10,6 +10,7 @@ use rusqlite::Connection;
 
 use crate::model::{Transaction, TransactionListFilter, TransactionListResult};
 use crate::read::funding::attach_fundings;
+use crate::read::purchase::attach_purchases;
 use crate::read::source::{attach_convert_fields, attach_sources};
 use ledger_infra::db::query::{query_all, query_one};
 use ledger_infra::db::tx_scope::ensure_transaction;
@@ -142,6 +143,9 @@ pub fn list_transactions_internal(
         // 出资项读闭包与页行集同一读事务（issue #1860 / ADR-0138 影响节）：子行
         // 与 refund 派生的读数都锚在页行快照上，写提交落在语句间即口径错位。
         attach_fundings(conn, &mut items)?;
+        // 购买项读闭包与页行集同一读事务（issue #1882 / ADR-0138 影响节）：明细
+        // 读数锚在同一页行快照上（删除本接线，read/tests/purchase.rs 探针变红）。
+        attach_purchases(conn, &mut items)?;
         Ok(TransactionListResult { items, total })
     })
 }
@@ -166,6 +170,9 @@ pub fn get_transaction_internal(conn: &Connection, id: &str) -> Result<Transacti
             AppError::codedp_not_found("transaction.not-found", format!("交易不存在: {id}"), &[id])
         })?;
         attach_fundings(conn, std::slice::from_mut(&mut tx))?;
+        // 购买项与出资项同一 attach 契约（issue #1882）：详情读回携带明细，与主行
+        // 同一读事务（读快照探针见 read/tests/purchase.rs）。
+        attach_purchases(conn, std::slice::from_mut(&mut tx))?;
         Ok(tx)
     })
 }

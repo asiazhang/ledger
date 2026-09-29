@@ -86,6 +86,7 @@ impl ImportedRow {
             idempotency_key: self.idempotency_key.clone(),
             origin: None,
             fx_rate: None,
+            purchases: Vec::new(),
         }
     }
 }

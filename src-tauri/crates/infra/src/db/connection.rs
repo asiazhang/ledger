@@ -142,6 +142,29 @@ pub fn open_connection_with_passphrase<P: AsRef<Path>>(
     finish_open(Connection::open(path)?, Some(passphrase), Some(path))
 }
 
+/// 生命周期连接打开（搬迁 / 恢复 / 转换验证等 ADR-0117 决策 4 生命周期操作）
+/// 不挂载同步元数据库的显式形态：操作对象是库文件本体（VACUUM INTO 复制 /
+/// 替换 / 校验），attached 侧与其无涉；且源库可能损坏（搬迁回退场景），
+/// 挂载验证读会因主库 schema 加载失败把主库损坏误报为挂载失败，缺失时还会
+/// 对源目录旁挂出 sync.db——都背离挂载接线「主库判别」的意图
+///（ADR-0139 决策 3：生命周期连接不属建连收尾管辖，临时文件名判别之外的
+/// 显式出口）。收尾其余步骤（密钥注入 / busy_timeout / 外键 / 耗时 hook）
+/// 与产品建缝同形，密钥注入仍收口单点（ADR-0075）。
+pub fn open_connection_unmounted<P: AsRef<Path>>(path: P) -> Result<Connection> {
+    let path = path.as_ref();
+    finish_open(Connection::open(path)?, None, None)
+}
+
+/// 同 [`open_connection_unmounted`]，密文形态凭主口令（密钥注入同纪律：
+/// `PRAGMA key` 连接首条语句，trace 不落口令）。
+pub fn open_connection_with_passphrase_unmounted<P: AsRef<Path>>(
+    path: P,
+    passphrase: &str,
+) -> Result<Connection> {
+    let path = path.as_ref();
+    finish_open(Connection::open(path)?, Some(passphrase), None)
+}
+
 /// 只读打开数据库连接（读路径独立只读连接，issue #1280 / ADR-0117 决策 1/4）：
 /// `SQLITE_OPEN_READ_ONLY` flags + busy_timeout（[`CONCURRENT_BUSY_TIMEOUT`]），
 /// 经建连收尾单点的只读形态收口（外键 + 耗时 hook 同形）。不执行迁移——迁移是

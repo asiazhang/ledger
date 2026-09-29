@@ -48,6 +48,7 @@ const editingTx: Transaction = {
   to_account_id: null,
   funding_account_id: null,
   fundings: [],
+  purchases: [],
   category_id: null,
   merchant_id: "mch-1",
   policy_id: null,

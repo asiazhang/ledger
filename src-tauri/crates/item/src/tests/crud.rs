@@ -91,6 +91,7 @@ pub(super) fn seed_purchase_tx_with_rate(
             idempotency_key: None,
             origin: None,
             fx_rate,
+            purchases: Vec::new(),
         },
     )
     .unwrap()

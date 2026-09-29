@@ -20,6 +20,7 @@ const fixedTx: Transaction = {
   to_account_id: null,
   funding_account_id: null,
   fundings: [],
+  purchases: [],
   category_id: "cat-1",
   merchant_id: null,
   policy_id: null,

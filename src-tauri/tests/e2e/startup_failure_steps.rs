@@ -351,15 +351,30 @@ fn default_dir_has_no_db(world: &mut LedgerWorld) {
     );
 }
 
-/// 目录中唯一的恢复安全备份文件路径（每场景独立 safety 目录，先例 backup_steps）。
+/// 恢复安全备份目录中主库安全副本的路径（每场景独立 safety 目录，先例
+/// backup_steps）。同步元数据库按 ADR-0139 决策 3 配对纪律一并移位为
+/// `restore-safety-sync-*.db`（issue #1869）；主库副本为 `restore-safety-*.db`，
+/// 断言主库副本恰一份后返回（唯一性语义同旧行为）。
 fn safety_backup_file(safety_dir: &std::path::Path) -> PathBuf {
-    let mut entries: Vec<PathBuf> = std::fs::read_dir(safety_dir)
+    let entries: Vec<PathBuf> = std::fs::read_dir(safety_dir)
         .expect("读安全备份目录失败")
         .filter_map(|e| e.ok())
         .map(|e| e.path())
         .collect();
-    assert_eq!(entries.len(), 1, "安全备份目录应恰有一份安全备份");
-    entries.pop().unwrap()
+    let mut main: Vec<&PathBuf> = entries
+        .iter()
+        .filter(|p| {
+            p.file_name().and_then(|n| n.to_str()).is_some_and(|n| {
+                n.starts_with("restore-safety-") && !n.starts_with("restore-safety-sync-")
+            })
+        })
+        .collect();
+    assert_eq!(
+        main.len(),
+        1,
+        "安全备份目录应恰有一份主库安全备份（sync 副本另计）"
+    );
+    main.pop().unwrap().clone()
 }
 
 #[then(expr = "恢复安全备份应与失败前库字节一致")]

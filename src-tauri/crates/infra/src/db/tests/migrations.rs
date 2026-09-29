@@ -119,6 +119,8 @@ fn migration_from_zero_reaches_latest_completely() {
         "goals",
         // V034（issue #1860 / ADR-0138）：出资项子表。
         "transaction_fundings",
+        // V034 就地扩（issue #1882 / ADR-0138 决策 9）：购买项子表。
+        "transaction_purchases",
     ] {
         let hit: i64 = conn
             .query_row(
@@ -156,6 +158,12 @@ fn migration_from_zero_reaches_latest_completely() {
         ("transactions", "fx_rate_source"),
         // V035（issue #1862 / ADR-0138 决策 9）：来源订单号列（订单可读性锚点）。
         ("transactions", "source_order_no"),
+        // V034 就地扩（issue #1882 / ADR-0138 决策 9/10）：购买项列（名称 / 件数 /
+        // 分类引用 / 可空单价——价格是可缺的原始凭据）。
+        ("transaction_purchases", "name"),
+        ("transaction_purchases", "quantity"),
+        ("transaction_purchases", "category_id"),
+        ("transaction_purchases", "unit_price_cents"),
     ] {
         let hit: i64 = conn
             .query_row(

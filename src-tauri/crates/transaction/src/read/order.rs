@@ -17,6 +17,7 @@ use ledger_infra::error::Result;
 
 use crate::model::{OrderAccountContribution, TransactionOrderSummary};
 use crate::read::funding::attach_fundings;
+use crate::read::purchase::attach_purchases;
 
 /// 按来源订单号读取订单汇总（详情订单区只读命令的行为权威）。
 ///
@@ -44,6 +45,9 @@ pub fn get_transaction_order_summary(
         // 出资项读闭包与行集同一读事务：分解行明细与派生分解的读数都锚在行集
         // 快照上（attach_fundings 只读，事务归属由本闭包保证）。
         attach_fundings(conn, &mut items)?;
+        // 购买项读闭包与行集同一读事务（issue #1882 / ADR-0138 影响节）：明细读数
+        // 锚在行集快照上（attach_purchases 只读，事务归属由本闭包保证）。
+        attach_purchases(conn, &mut items)?;
 
         let row_count = items.len() as i64;
         let total_amount_cents: i64 = items.iter().map(|t| t.amount_cents).sum();

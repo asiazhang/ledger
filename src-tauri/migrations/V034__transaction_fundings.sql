@@ -1,5 +1,7 @@
 -- V034：出资项子表 transaction_fundings + transactions.account_id 放宽 NOT NULL
--- （issue #1860 / ADR-0138 决策 1/6）。本迁移未发布，随实施票定稿。
+-- （issue #1860 / ADR-0138 决策 1/6）；就地扩补购买项子表 transaction_purchases
+-- （issue #1882 / ADR-0138 决策 9/10，未发布窗口内不新开版本号，文件名仍为出资
+-- 项语义——本地已跑过旧版 V034 的开发库需重建库才能获得新子表）。
 --
 -- ── 一、表重建（SQLite 官方 ALTERNATIVE 规程，12 步）────────────────────────
 --
@@ -131,3 +133,34 @@ CREATE TABLE IF NOT EXISTS transaction_fundings (
 
 CREATE INDEX IF NOT EXISTS idx_transaction_fundings_account
     ON transaction_fundings(account_id);
+
+-- ── 三、购买项子表（issue #1882 / ADR-0138 决策 9/10）────────────────────────
+--
+-- 购买项：一笔 expense 交易（订单）的逐件商品明细子行——一条购买项 = {名称,
+-- 件数, 分类引用, 可选单价}，数组顺序即显式顺序位（对账单顺序，用户可见语义，
+-- 不依赖数据库返回顺序）。解决多商品订单「这一单买了什么」不可读的问题；主线
+-- 来源是 AI 导入电商回单（ADR-0138 决策 15：仅 AI 导入写入、界面只读）。
+--
+-- 子行生命周期绑定主行（与出资项同构，ADR-0138 决策 9）：主行软删即失效——读侧
+-- 一律经 transactions.is_deleted=0 过滤，子行无独立软删位、不随主行软删改写；
+-- 主行硬删时 CASCADE 清理。修改为全量替换。存量行零迁移（无购买项 = 现状，
+-- 行为零变化）。
+--
+-- 单价为可空整数分（决策 10：源单只给订单总额时为空——价格是可缺的原始凭据
+-- 而非必需字段），schema 层只设非负 CHECK；价格存而不显示、不进任何金额与
+-- 折算口径、不与实付勾稽，标价小计由「单价 × 件数」复算、不另存。分类引用是
+-- 明细指针非存续依赖（报表口径按交易行分类整单计入，不按购买项分摊，决策 11），
+-- ON DELETE 语义比照 transactions.category_id（SET NULL，溯源指针）。无账户与
+-- 金额列：购买项不承载资金语义。除主键外不建二级索引——读回按 (transaction_id,
+-- sort) 主键前缀走；名称搜索索引随搜索命中面票另行评估（50 万笔库定量证据）。
+
+CREATE TABLE IF NOT EXISTS transaction_purchases (
+    transaction_id   TEXT NOT NULL REFERENCES transactions(id) ON DELETE CASCADE,
+    sort             INTEGER NOT NULL CHECK(sort >= 0),
+    name             TEXT NOT NULL,
+    quantity         INTEGER NOT NULL CHECK(quantity > 0),
+    category_id      TEXT REFERENCES categories(id) ON DELETE SET NULL,
+    unit_price_cents INTEGER CHECK(unit_price_cents IS NULL OR unit_price_cents >= 0),
+    PRIMARY KEY (transaction_id, sort)
+);
+

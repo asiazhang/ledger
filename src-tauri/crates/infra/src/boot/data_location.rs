@@ -21,7 +21,9 @@ use super::book_registry::{
     self, BookRegistry, PendingRelocation, RegistryOrigin, RegistryRead, read_registry,
 };
 use super::encryption::{DbFileKind, probe_file_kind};
-use crate::db::{check_integrity, open_connection, open_connection_with_passphrase};
+use crate::db::{
+    check_integrity, open_connection_unmounted, open_connection_with_passphrase_unmounted,
+};
 use crate::error::{AppError, Result};
 use crate::fs_util::{atomic_write, cleanup, replace_file, temp_sibling};
 
@@ -305,10 +307,14 @@ fn relocate(
     target_db: &Path,
     passphrase: Option<&str>,
 ) -> std::result::Result<(), String> {
-    // 按口令有无选建连缝：密文库凭主口令打开（产物继承加密与密钥）。
+    // 按口令有无选建连缝：密文库凭主口令打开（产物继承加密与密钥）。生命周期
+    // 连接不挂载同步元数据库（ADR-0117 决策 4 / ADR-0139 决策 3）：搬迁对象是
+    // 库文件本体，attached 侧与 VACUUM INTO 无涉；源库损坏时挂载验证读会把
+    // 主库损坏误报为挂载失败（吞掉「整库搬迁失败」的回退信号），缺失时还会
+    // 对源目录旁挂出 sync.db。
     let open_by_key = |path: &Path| match passphrase {
-        Some(pass) => open_connection_with_passphrase(path, pass),
-        None => open_connection(path),
+        Some(pass) => open_connection_with_passphrase_unmounted(path, pass),
+        None => open_connection_unmounted(path),
     };
     let source = open_by_key(source_db)
         .map_err(|e| format!("原库无法打开（{}）：{e}", source_db.display()))?;
