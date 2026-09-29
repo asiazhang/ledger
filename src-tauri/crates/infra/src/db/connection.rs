@@ -25,6 +25,13 @@ pub const SYNC_DB_FILE_NAME: &str = "sync.db";
 /// 同步元数据库挂载失败的稳定错误码（ADR-0139 决策 3：挂载失败报码化错误、
 /// 不静默降级；损坏 / 口令错误 / 形态错配 / 不可开共用此码，原因进 params）。
 pub const SYNC_MOUNT_FAILED: &str = "db.sync-mount-failed";
+
+/// 主库路径 → 同目录同步元数据库路径（转换配对 / 重置移位 / 恢复移位 / 挂载
+/// 共用的单一推导点，ADR-0139 决策 1「与主库同目录」）。
+pub fn sync_db_path(main_db_path: &Path) -> std::path::PathBuf {
+    main_db_path.with_file_name(SYNC_DB_FILE_NAME)
+}
+
 /// 并发容让的 busy_timeout（读路径独立只读连接，issue #1280 / ADR-0117 决策 4；
 /// 写连接同值显式收口，issue #1699）：读事务在写事务取 EXCLUSIVE 锁的提交瞬间
 /// 窗口内、写事务在读事务持 SHARED 锁的窗口内，各在本超时内等待——取值与既有
@@ -201,10 +208,7 @@ fn attach_sync_db(
     if main_db_path.file_name() != Some(std::ffi::OsStr::new(DB_FILE_NAME)) {
         return Ok(());
     }
-    let sync_path = main_db_path
-        .parent()
-        .unwrap_or_else(|| Path::new(""))
-        .join(SYNC_DB_FILE_NAME);
+    let sync_path = sync_db_path(main_db_path);
     if readonly_side && !sync_path.exists() {
         return Ok(());
     }
@@ -242,8 +246,10 @@ pub(crate) fn passphrase_incorrect_error() -> AppError {
     )
 }
 
-/// not-a-database 判读：带 KEY 挂载下口令错误与 sync.db 损坏共用此形态。
-fn is_not_a_database_error(e: &rusqlite::Error) -> bool {
+/// not-a-database 判读：带 KEY 挂载下口令错误与 sync.db 损坏共用此形态；
+/// 引导层同语义谓词（`boot::encryption::is_not_a_database`，跨 crate `pub`）
+/// 经此委托，单一实现点。
+pub(crate) fn is_not_a_database_error(e: &rusqlite::Error) -> bool {
     matches!(
         e,
         rusqlite::Error::SqliteFailure(f, _)

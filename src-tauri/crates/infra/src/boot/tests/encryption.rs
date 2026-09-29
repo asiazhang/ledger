@@ -314,7 +314,7 @@ fn change_passphrase_rekeys_sync_db_too() {
         .query_row::<i64, _, _>("SELECT count(*) FROM pair_probe", [], |r| r.get(0))
         .expect_err("旧口令不应再能读重加密后的 sync.db");
     assert!(
-        err.to_string().contains("file is not a database"),
+        crate::db::connection::is_not_a_database_error(&err),
         "旧口令应报 not-a-database，实际: {err}"
     );
 }

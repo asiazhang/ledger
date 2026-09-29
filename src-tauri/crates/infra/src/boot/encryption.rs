@@ -315,7 +315,7 @@ fn convert_db_file(
     source_passphrase: Option<&str>,
     target_passphrase: Option<&str>,
 ) -> Result<()> {
-    let sync_path = db_path.with_file_name(crate::db::connection::SYNC_DB_FILE_NAME);
+    let sync_path = crate::db::sync_db_path(db_path);
     let sync_exists = sync_path.exists();
     let tmp_path = temp_sibling(db_path, "convert");
     let sync_tmp = sync_exists.then(|| temp_sibling(&sync_path, "convert"));
@@ -447,12 +447,12 @@ fn export_converted_copy(
     let user_version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
     // SQLCipher 空钥匙 = 明文库（关闭加密形态的目标形态）。
     let target_key = match target_passphrase {
-        Some(pass) => sql_string_literal(pass),
+        Some(pass) => crate::db::connection::sql_string_literal(pass),
         None => String::from("''"),
     };
     let attach_sql = format!(
         "ATTACH DATABASE {} AS encryption_target KEY {target_key}",
-        sql_string_literal(&target.to_string_lossy()),
+        crate::db::connection::sql_string_literal(&target.to_string_lossy()),
     );
     conn.execute_batch(&attach_sql)?;
     let export_result = (|| -> Result<()> {
@@ -534,7 +534,7 @@ pub fn reset_encrypted_db_file(db_path: &Path) -> Result<Connection> {
     // 挂载必报形态错配。在动主库之前先移（失败即中止，原库未动、现场可
     // 重试），按既有重置命名语义保留 `sync.db.bak` 副本（永不删除）；新
     // 世界的 sync.db 由挂载接线按明文形态补建。
-    let sync_path = db_path.with_file_name(crate::db::connection::SYNC_DB_FILE_NAME);
+    let sync_path = crate::db::sync_db_path(db_path);
     if sync_path.exists() {
         std::fs::rename(&sync_path, bak_path(&sync_path))?;
     }
@@ -562,12 +562,6 @@ fn open_new_plaintext_db(db_path: &Path) -> Result<Connection> {
     crate::db::init_db(&mut conn)?;
     crate::db::check_integrity(&conn)?;
     Ok(conn)
-}
-
-/// SQL 字符串字面量转义（单引号加倍）。仅用于 ATTACH 的路径与主口令注入
-/// （PRAGMA 系语句不支持绑定参数）；转换连接不装耗时 hook，字面量不外泄。
-fn sql_string_literal(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "''"))
 }
 
 /// SQLCipher 下错误口令与损坏同为 not-a-database、运行期不可靠区分
@@ -633,10 +627,9 @@ pub fn unlock_db_file(db_path: &Path, passphrase: &str) -> Result<Connection> {
 
 /// 错误形态判别：SQLCipher 对错误口令与损坏文件均报 not-a-database；
 /// 本谓词供备份域等消费方归一错误形态（#1088 归位后为跨 crate `pub`：
-/// 域侧消费，壳层不经它做分支）。
+/// 域侧消费，壳层不经它做分支）。实现住 db
+/// `db::connection::is_not_a_database_error`（带 KEY 挂载同语义共用，单一实现点），
+/// 本函数为既有跨 crate 调用面的委托薄皮。
 pub fn is_not_a_database(e: &rusqlite::Error) -> bool {
-    matches!(
-        e,
-        rusqlite::Error::SqliteFailure(err, _) if err.code == rusqlite::ffi::ErrorCode::NotADatabase
-    )
+    crate::db::connection::is_not_a_database_error(e)
 }

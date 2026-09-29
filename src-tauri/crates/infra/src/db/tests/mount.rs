@@ -131,8 +131,11 @@ fn readonly_connection_mounts_sync_and_rejects_writes() {
         .execute("CREATE TABLE sync.mount_probe(x)", [])
         .expect_err("只读连接对 attached 侧写应被拒");
     assert!(
-        err.to_string().contains("readonly"),
-        "应报只读库错误：{err}"
+        matches!(
+            err,
+            rusqlite::Error::SqliteFailure(f, _) if f.code == rusqlite::ErrorCode::ReadOnly
+        ),
+        "应报只读库错误（SQLITE_READONLY）：{err}"
     );
 }
 
@@ -146,8 +149,11 @@ fn readonly_connection_still_rejects_main_writes() {
         .execute("CREATE TABLE mount_probe(x)", [])
         .expect_err("只读连接对主库写应被拒");
     assert!(
-        err.to_string().contains("readonly"),
-        "应报只读库错误：{err}"
+        matches!(
+            err,
+            rusqlite::Error::SqliteFailure(f, _) if f.code == rusqlite::ErrorCode::ReadOnly
+        ),
+        "应报只读库错误（SQLITE_READONLY）：{err}"
     );
 }
 
