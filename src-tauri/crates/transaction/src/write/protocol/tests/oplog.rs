@@ -2,7 +2,9 @@
 //! 对应 op（含源端折算字段）已追加且不重复；写失败不残留 op。
 //!
 //! 断言权威在同步引擎公开接口（`sync_engine::read_ops`）——本文件只经由它
-//! 读取 op，不直查 `sync_ops` 表。
+//! 读取 op 内容，不直查 `sync_ops` 表；唯一例外是文件库跨库原子性断言
+//! （issue #1871 / ADR-0139 决策 2）：「op 落在哪一侧」本身是断言对象，以
+//! `sync.sync_ops` 限定名直查物理位置。
 
 use rusqlite::Connection;
 
@@ -295,4 +297,64 @@ fn update_op_carries_reused_fx_trace_when_series_missing() {
         row.fx_rate_source,
         Some(tauri_app_lib::ledger_transaction::amount::FxRateSource::Series)
     );
+}
+
+/// 跨库原子性·成功侧（issue #1871 / ADR-0139 决策 2）：文件库模板下（内存库对
+/// 多库事务不提供集合级原子保证，跨库断言必须用文件库），本地写成功后业务行
+/// 落 main、op 落 attached sync.sync_ops——两库同生。
+#[test]
+fn file_db_create_lands_row_and_op_in_both_dbs() {
+    let (conn, _dir) = test_support::open_file_scratch("oplog-atomic-success");
+    test_support::seed_account(&conn, "acc-op", "现金", "cash", "CNY", 0);
+
+    create_transaction_internal(
+        &conn,
+        make_input("acc-op", TransactionKind::Expense, 10000, "2026-01-10"),
+    )
+    .unwrap();
+
+    let op_rows: i64 = conn
+        .query_row("SELECT COUNT(*) FROM sync.sync_ops", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(op_rows, 1, "op 落 attached sync.sync_ops");
+    let txn_rows: i64 = conn
+        .query_row("SELECT COUNT(*) FROM transactions", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(txn_rows, 1, "业务行落 main");
+    assert_eq!(ops(&conn).len(), 1);
+}
+
+/// 跨库原子性·失败侧（issue #1871 / ADR-0139 决策 2）：sync.sync_ops 注入
+/// RAISE(ABORT) 触发器阻断 op 产出——本地写整体失败，业务行（main）与 op
+/// （attached sync）两库同滚皆不存在。
+#[test]
+fn file_db_failed_write_rolls_back_row_and_op_across_both_dbs() {
+    let (conn, _dir) = test_support::open_file_scratch("oplog-atomic-failure");
+    test_support::seed_account(&conn, "acc-op", "现金", "cash", "CNY", 0);
+    conn.execute(
+        // 触发器注入只能走 temp schema：SQLite 不允许普通触发器引用 attached
+        // 库的表；temp 触发器可跨库引用且仅本连接可见、不留 schema 残迹。
+        "CREATE TEMP TRIGGER atomicity_probe BEFORE INSERT ON sync.sync_ops \
+         BEGIN SELECT RAISE(ABORT, 'injected: 跨库原子性探针'); END",
+        [],
+    )
+    .unwrap();
+
+    assert!(
+        create_transaction_internal(
+            &conn,
+            make_input("acc-op", TransactionKind::Expense, 10000, "2026-01-10"),
+        )
+        .is_err(),
+        "op 产出被阻断，本地写失败"
+    );
+
+    let txn_rows: i64 = conn
+        .query_row("SELECT COUNT(*) FROM transactions", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(txn_rows, 0, "业务行随失败回滚（main 侧不残留）");
+    let op_rows: i64 = conn
+        .query_row("SELECT COUNT(*) FROM sync.sync_ops", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(op_rows, 0, "op 不残留（sync 侧无行）");
 }

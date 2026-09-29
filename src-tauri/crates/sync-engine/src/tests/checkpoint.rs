@@ -386,6 +386,12 @@ fn encrypted_checkpoint_roundtrip_and_passphrase_guards() {
             rusqlite::params![db_path.to_string_lossy()],
         )
         .unwrap();
+        // sync 件随行落盘（拆库后文件世界的 sync.db 缺失由挂载裁决拒绝开启）。
+        seed.execute(
+            "VACUUM sync INTO ?1",
+            rusqlite::params![dir.join("sync.db").to_string_lossy()],
+        )
+        .unwrap();
     }
     ledger_infra::db::encryption::enable_encryption_for_file(&db_path, "correct horse").unwrap();
     let conn_a =
@@ -795,8 +801,14 @@ fn bootstrap_migrates_older_schema_snapshot() {
     std::fs::write(&stale_path, &cp22.snapshot).unwrap();
     {
         let stale = ledger_infra::db::open_connection(&stale_path).unwrap();
+        // V036 拆库后快照 main 不含同步表；V021 时代的真实形态里三张同步表
+        // （V020/V021 原文 DDL）住 main——按原文复位，前向重放 V022 才是在
+        // V021 世界上的真实续作（位点表缺席 = 待 V022 重建），V036 才有四表
+        // 可搬入 attached 侧。
         stale
-            .execute("DROP TABLE sync_stream_positions", [])
+            .execute_batch(
+                "CREATE TABLE sync_device (\n                 id TEXT PRIMARY KEY,\n                 logical_clock INTEGER NOT NULL DEFAULT 0,\n                 created_at TEXT NOT NULL,\n                 updated_at TEXT NOT NULL\n             );\n             CREATE TABLE sync_ops (\n                 op_id TEXT PRIMARY KEY,\n                 device_id TEXT NOT NULL,\n                 clock INTEGER NOT NULL,\n                 schema_version INTEGER NOT NULL,\n                 entity TEXT NOT NULL,\n                 entity_id TEXT NOT NULL DEFAULT '',\n                 payload TEXT NOT NULL,\n                 recorded_at TEXT NOT NULL\n             );\n             CREATE UNIQUE INDEX idx_sync_ops_device_clock ON sync_ops (device_id, clock);\n             CREATE INDEX idx_sync_ops_entity_id ON sync_ops (entity, entity_id);\n             CREATE TABLE sync_parked_ops (\n                 op_id TEXT PRIMARY KEY,\n                 device_id TEXT NOT NULL,\n                 clock INTEGER NOT NULL,\n                 schema_version INTEGER NOT NULL,\n                 entity TEXT NOT NULL,\n                 entity_id TEXT NOT NULL DEFAULT '',\n                 payload TEXT NOT NULL,\n                 park_code TEXT NOT NULL,\n                 park_params TEXT NOT NULL DEFAULT '[]',\n                 park_message TEXT NOT NULL,\n                 parked_at TEXT NOT NULL\n             );",
+            )
             .unwrap();
         stale
             .execute("DROP INDEX IF EXISTS idx_transactions_funding", [])
@@ -1118,61 +1130,28 @@ const SPLIT_WORLD_SYNC_TABLES: [&str; 4] = [
 ];
 
 /// 构造仅含四表闭集的同步元数据库文件（消费分支就绪形态 / 双库世界 sync 侧）。
-/// 文件库不入测试工厂（ADR-0084 决策 3）：落盘与改形态经产品建缝
-/// `open_connection_unmounted`（不触发挂载接线，避免旁挂出第三份库文件）。
+/// V036 拆库后工厂世界的四表住 attached 侧，`VACUUM sync INTO` 直接落出
+/// 仅四表闭集的库文件（sqlite_% 内部统计表随引擎豁免，先例同 schema_guard）。
+/// 文件库不入测试工厂（ADR-0084 决策 3）：落盘经工厂内存世界的 VACUUM INTO。
 fn make_sync_only_db(sync_path: &Path) {
-    {
-        let factory = test_support::open();
-        factory
-            .execute(
-                "VACUUM INTO ?1",
-                rusqlite::params![sync_path.to_string_lossy()],
-            )
-            .unwrap();
-    }
-    {
-        let conn = ledger_infra::db::open_connection_unmounted(sync_path).unwrap();
-        conn.execute_batch("PRAGMA foreign_keys = OFF").unwrap();
-        let mut stmt = conn
-            .prepare(
-                "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
-            )
-            .unwrap();
-        let tables: Vec<String> = stmt
-            .query_map([], |r| r.get(0))
-            .unwrap()
-            .collect::<Result<_, _>>()
-            .unwrap();
-        drop(stmt);
-        for table in tables {
-            if !SPLIT_WORLD_SYNC_TABLES.contains(&table.as_str()) {
-                conn.execute(&format!("DROP TABLE IF EXISTS \"{table}\""), [])
-                    .unwrap();
-            }
-        }
-    }
+    let factory = test_support::open();
+    factory
+        .execute(
+            "VACUUM sync INTO ?1",
+            rusqlite::params![sync_path.to_string_lossy()],
+        )
+        .unwrap();
 }
 
-/// 构造「票 05 后形态」的业务库：工厂库落盘后卸下四张同步表（attached 分支
-/// 产出形态的 main 侧）。
+/// 构造拆库后形态的业务库：工厂库 main 侧落盘（业务数据，无同步表）。
 fn make_business_only_main(main_path: &Path) {
-    {
-        let factory = test_support::open();
-        factory
-            .execute(
-                "VACUUM INTO ?1",
-                rusqlite::params![main_path.to_string_lossy()],
-            )
-            .unwrap();
-    }
-    {
-        let conn = ledger_infra::db::open_connection_unmounted(main_path).unwrap();
-        conn.execute_batch("PRAGMA foreign_keys = OFF").unwrap();
-        for table in SPLIT_WORLD_SYNC_TABLES {
-            conn.execute(&format!("DROP TABLE IF EXISTS {table}"), [])
-                .unwrap();
-        }
-    }
+    let factory = test_support::open();
+    factory
+        .execute(
+            "VACUUM INTO ?1",
+            rusqlite::params![main_path.to_string_lossy()],
+        )
+        .unwrap();
 }
 
 /// 断言业务件字节解库后不含同步表（双库布局的 main 形态），返回解库连接。

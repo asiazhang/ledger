@@ -44,7 +44,6 @@ use rusqlite::Connection;
 
 use ledger_accounts as accounts;
 use ledger_accounts::{Account, AccountType, balance};
-use ledger_infra::db::open_connection;
 use ledger_reports as reports_domain;
 use ledger_transaction::amount::{TransactionKind, default_currency_code};
 use ledger_transaction::{BatchOutcome, TransactionBatch, TransactionInput};
@@ -392,7 +391,7 @@ pub(crate) fn run_benchmark(
     let guard = SnapshotPaths::create(source_db, "bench-import")?;
     // 探测在工作库上做（快照的副本，探测的读路径与正式迭代完全一致）。
     let probe = {
-        let conn = open_connection(&guard.work).map_err(|e| e.to_string())?;
+        let conn = super::snapshot::open_paired(&guard.work).map_err(|e| e.to_string())?;
         let probe = probe_dataset(&conn)?;
         drop(conn);
         probe
@@ -421,7 +420,7 @@ fn run_cell(
     let mut durations = Vec::with_capacity(cfg.iterations);
     for iteration in 0..(cfg.warmup + cfg.iterations) {
         restore_from_snapshot(&guard.snapshot, &guard.work)?;
-        let conn = open_connection(&guard.work).map_err(|e| e.to_string())?;
+        let conn = super::snapshot::open_paired(&guard.work).map_err(|e| e.to_string())?;
         let inputs = generate_inputs(
             rows,
             &probe.account_pool,

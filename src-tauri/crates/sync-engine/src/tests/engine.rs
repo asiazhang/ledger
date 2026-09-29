@@ -5,7 +5,9 @@
 //! 传递（#859 接线）；重放复用既有行为编排入口，不新增写接缝。
 //! 参考数据（账户字典）的同步归 #860，本目录两端以同一夹具等量种子。
 
-use super::super::{ApplyReport, DomainCommand, OpOutcome, apply_ops, parked_ops, read_ops};
+use super::super::{
+    ApplyReport, DomainCommand, OpOutcome, apply_ops, parked_ops, read_ops, stream_positions,
+};
 use super::common::{make_expense, read_transaction, wire_in, wire_out};
 use ledger_transaction::write::protocol;
 use rusqlite::Connection;
@@ -311,4 +313,75 @@ fn dependency_failure_parks_without_blocking_batch_and_redelivery_applies() {
     );
     assert!(parked_ops(&conn_b).unwrap().is_empty(), "成功即出队");
     assert_balance_cache_matches_realtime(&conn_b);
+}
+
+/// 跨库原子性（issue #1871 / ADR-0139 决策 2）：文件库模板下，重放事务的
+/// 「命令执行 + 外来 op 落日志 + 位点推进」跨 main 与 attached sync 两库集合级
+/// 原子——业务行先落 main 成功，随后 sync 侧 op 落日志注入 RAISE(ABORT) 迫使
+/// 重放失败，main 侧已写入的业务行必须随跨库回滚一并撤销；解除注入重投递，
+/// 业务行（main）、op 日志与位点（sync）三者在两库同生（红→绿同一场景）。
+#[test]
+fn replay_transaction_is_atomic_across_both_dbs() {
+    let ends = Ends::file();
+    let conn_a = &ends.conn_a;
+    let conn_b = &ends.conn_b;
+    seed_account(conn_a, "acc-1", "现金", "cash", "CNY", 0);
+    seed_account(conn_b, "acc-1", "现金", "cash", "CNY", 0);
+
+    protocol::create(conn_a, make_expense("acc-1", 10000, "午饭")).unwrap();
+    let ops = read_ops(conn_a).unwrap();
+    assert_eq!(ops.len(), 1);
+
+    // 失败注入：业务行落 main 成功后，sync 侧 op 落日志被 temp 触发器中止——
+    // 重放事务被迫失败（temp schema：SQLite 不允许普通触发器引用 attached 库的
+    // 表；temp 触发器仅本连接可见、不留 schema 残迹）。挂起承接不阻塞。
+    conn_b
+        .execute(
+            "CREATE TEMP TRIGGER atomicity_probe BEFORE INSERT ON sync.sync_ops \
+             BEGIN SELECT RAISE(ABORT, 'injected: 跨库原子性探针'); END",
+            [],
+        )
+        .unwrap();
+    let reports = apply_ops(conn_b, &ops).unwrap();
+    assert!(
+        matches!(&reports[0].outcome, OpOutcome::Parked { .. }),
+        "重放失败按既有接缝挂起，实际: {:?}",
+        reports[0].outcome
+    );
+
+    // 两库同滚：业务行（main）、op 日志与位点（attached sync）皆不存在。
+    let txn_rows: i64 = conn_b
+        .query_row("SELECT COUNT(*) FROM transactions", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(txn_rows, 0, "业务行不残留（main）");
+    let op_rows: i64 = conn_b
+        .query_row("SELECT COUNT(*) FROM sync.sync_ops", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(op_rows, 0, "外来 op 不落日志（sync）");
+    assert!(
+        stream_positions(conn_b)
+            .unwrap()
+            .iter()
+            .all(|p| p.device_id != ops[0].device_id),
+        "位点不推进（sync）"
+    );
+
+    // 解除注入重投递：命令执行 + op 落日志 + 位点推进一起落地（两库同生）。
+    conn_b.execute("DROP TRIGGER atomicity_probe", []).unwrap();
+    let reports = apply_ops(conn_b, &ops).unwrap();
+    assert_eq!(reports[0].outcome, OpOutcome::Applied, "重投递自然重试成功");
+    let txn_rows: i64 = conn_b
+        .query_row("SELECT COUNT(*) FROM transactions", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(txn_rows, 1, "业务行落 main");
+    let op_rows: i64 = conn_b
+        .query_row("SELECT COUNT(*) FROM sync.sync_ops", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(op_rows, 1, "外来 op 落日志（sync）");
+    let positions = stream_positions(conn_b).unwrap();
+    assert_eq!(positions.len(), 1);
+    assert_eq!(positions[0].device_id, ops[0].device_id);
+    assert_eq!(positions[0].applied_through, ops[0].clock, "位点推进到位");
+    assert!(parked_ops(conn_b).unwrap().is_empty(), "成功即出队");
+    assert_balance_cache_matches_realtime(conn_b);
 }

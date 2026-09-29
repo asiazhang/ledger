@@ -12,16 +12,43 @@
 
 use std::path::{Path, PathBuf};
 
-use ledger_infra::db::open_connection;
+use ledger_infra::db::{open_connection, sync_db_path};
 
 /// 快照与工作库的文件路径组（源库同目录，保证同盘复制与权限一致）。
 ///
 /// `label` 进中间文件名（如 `bench-import` / `bench-sync`）：多个写基准共用
 /// 同一源库时中间文件互不踩踏。Drop 时删除快照/工作库及其 -wal/-shm 残留：
 /// 成功、失败、panic 路径都不留基准中间文件（源库本身全程零改动）。
+///
+/// **同步元数据成对**（V036 拆库，issue #1871）：快照与工作库各带伴生的
+/// sync 件（`-sync.db` 后缀派生名，`label` 隔离不互踩）；打开一律经
+/// [`open_paired`] 显式挂载（中间文件名非 `ledger.db`，建连收尾的主库判别
+/// 不生效——工具侧以同款 ATTACH 形态补位，路径即配对事实）。
 pub(crate) struct SnapshotPaths {
     pub(crate) snapshot: PathBuf,
     pub(crate) work: PathBuf,
+}
+
+/// 伴生同步元数据件路径：主库文件去扩展名加 `-sync.db`（与主文件同目录）。
+/// 无文件名的退化路径（根目录 / `..`）以整路径为名派生——调用方传入的源库与
+/// 本模块构造的中间文件名恒带文件名，fallback 只兜 CLI 退化输入，不 panic。
+fn paired_sync_path(db: &Path) -> PathBuf {
+    let mut name = db.file_stem().unwrap_or(db.as_os_str()).to_os_string();
+    name.push("-sync.db");
+    db.with_file_name(name)
+}
+
+/// 打开基准中间库并挂载其伴生 sync 件（在位才挂，恢复探针等纯 main 场景不受
+/// 影响）。挂载失败原样上抛：中间文件世界的 sync 件由本模块成对拷贝维护，
+/// 缺失只发生在纯业务库源上。
+pub(crate) fn open_paired(db: &Path) -> Result<rusqlite::Connection, String> {
+    let conn = open_connection(db).map_err(|e| e.to_string())?;
+    let sync = paired_sync_path(db);
+    if sync.exists() {
+        conn.execute_batch(&format!("ATTACH DATABASE '{}' AS sync", sync.display()))
+            .map_err(|e| format!("伴生同步件挂载失败（{}）：{e}", sync.display()))?;
+    }
+    Ok(conn)
 }
 
 impl SnapshotPaths {
@@ -41,7 +68,14 @@ impl SnapshotPaths {
         let work = dir.join(format!("ledger-perf-{label}-work.db"));
         remove_db_files(&work);
         remove_db_files(&snapshot);
+        remove_db_files(&paired_sync_path(&work));
+        remove_db_files(&paired_sync_path(&snapshot));
         copy_db_files(source_db, &snapshot)?;
+        // 源库的 sync 件（产品形态固定名 sync.db，与主库同目录）随行固化。
+        let source_sync = sync_db_path(source_db);
+        if source_sync.exists() {
+            copy_db_files(&source_sync, &paired_sync_path(&snapshot))?;
+        }
         // 工作库先行从快照恢复：探测与正式迭代打开同一个完整状态的库。
         restore_from_snapshot(&snapshot, &work)?;
         Ok(SnapshotPaths { snapshot, work })
@@ -52,6 +86,8 @@ impl Drop for SnapshotPaths {
     fn drop(&mut self) {
         remove_db_files(&self.work);
         remove_db_files(&self.snapshot);
+        remove_db_files(&paired_sync_path(&self.work));
+        remove_db_files(&paired_sync_path(&self.snapshot));
     }
 }
 
@@ -79,9 +115,16 @@ fn copy_db_files(src: &Path, dst: &Path) -> Result<(), String> {
 /// 窗口量到的才是被测写入本身。
 pub(crate) fn restore_from_snapshot(snapshot: &Path, work: &Path) -> Result<(), String> {
     remove_db_files(work);
+    remove_db_files(&paired_sync_path(work));
     copy_db_files(snapshot, work)?;
+    // sync 件随行恢复（写基准迭代会往工作库追加 op——迭代间规模固定的隔离
+    // 面包含同步元数据，只还原 main 会把上一迭代的 op 带进计时刻度）。
+    let snapshot_sync = paired_sync_path(snapshot);
+    if snapshot_sync.exists() {
+        copy_db_files(&snapshot_sync, &paired_sync_path(work))?;
+    }
     {
-        let conn = open_connection(work).map_err(|e| e.to_string())?;
+        let conn = open_paired(work)?;
         conn.execute_batch(
             "BEGIN IMMEDIATE; \
              UPDATE accounts SET version = version + 1 WHERE id = (SELECT min(id) FROM accounts); \

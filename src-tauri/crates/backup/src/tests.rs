@@ -55,8 +55,8 @@ fn backup_creates_zip_with_db_and_meta() {
     assert!(result.size_bytes > 0);
     assert!(result.schema_version >= 4);
 
-    // 校验 zip 内容：三个条目（双文件成对，ADR-0139 决策 6；expand 期单库布局
-    // 下 sync 件为回退源 main 的同刻拷贝，paired=false 让恢复按旧形态分支）。
+    // 校验 zip 内容：三个条目（双文件成对，ADR-0139 决策 6；V036 拆库后工厂
+    // 世界四表住 attached 侧，sync 件为真同步元数据，paired=true）。
     let file = File::open(&target).unwrap();
     let mut archive = zip::ZipArchive::new(file).unwrap();
     assert_eq!(archive.len(), 3);
@@ -72,7 +72,10 @@ fn backup_creates_zip_with_db_and_meta() {
         entry.read_to_string(&mut buf).unwrap();
         serde_json::from_str(&buf).unwrap()
     };
-    assert_eq!(meta["paired"], false, "内存库无挂载，回退形态 paired=false");
+    assert_eq!(
+        meta["paired"], true,
+        "工厂世界四表住 attached 侧，paired=true"
+    );
 
     // 解出 db 可打开且数据完整。
     let extracted = temp_file("extracted");
@@ -468,12 +471,18 @@ fn backup_of_app_owned_db_succeeds_with_clean_form() {
 fn backup_of_encrypted_db_bypasses_form_guard_and_stays_encrypted() {
     let dir = ScratchDir::new("backup-test-enc");
     let src = dir.join("ledger.db");
-    // 文件库不入测试工厂（ADR-0084 决策 3，同本文件上方先例）：迁移后的库经
-    // VACUUM INTO 落盘，再整库转密文。
+    // 文件库不入测试工厂（ADR-0084 决策 3，同本文件上方先例）：迁移后的世界
+    // 双侧各自 VACUUM INTO 落盘（拆库后 sync 件随行，缺失即开挂载裁决），再
+    // 整库转密文。
     {
         let conn = tauri_app_lib::test_support::open();
         conn.execute("VACUUM INTO ?1", params![src.to_string_lossy()])
             .unwrap();
+        conn.execute(
+            "VACUUM sync INTO ?1",
+            params![dir.join(db::SYNC_DB_FILE_NAME).to_string_lossy()],
+        )
+        .unwrap();
     }
     ledger_infra::db::encryption::enable_encryption_for_file(&src, "pass-phrase-123").unwrap();
     let conn = ledger_infra::db::open_connection_with_passphrase(&src, "pass-phrase-123").unwrap();
@@ -668,6 +677,10 @@ fn restore_moves_stale_sync_db_aside() {
         seed(&conn);
         conn.execute("VACUUM INTO ?1", params![db_path.to_string_lossy()])
             .unwrap();
+        // 主库回退为拆库前版本（旧形态单文件备份的 main 只能来自拆库前应用，
+        // V036 拆库后拆库世界缺失 sync.db 由挂载裁决拒绝开启）。
+        let versioned = db::open_connection_unmounted(&db_path).unwrap();
+        versioned.execute_batch("PRAGMA user_version = 34").unwrap();
     }
     // 原位世界带一个 sync.db（挂载接线建连即补建的形态），写入探针表供副本
     // 可读性断言。
@@ -717,80 +730,39 @@ fn restore_moves_stale_sync_db_aside() {
 // 设备身份、位点、日志随库一致回滚，旧形态单文件行为不变。
 // ---------------------------------------------------------------------------
 
-/// 同步元数据四表闭集（ADR-0139 决策 1；测试侧复制以构造与核对双库世界）。
-const SYNC_TABLES: [&str; 4] = [
-    "sync_device",
-    "sync_ops",
-    "sync_parked_ops",
-    "sync_stream_positions",
-];
-
-/// 构造「票 05 后形态」的双库世界文件对：业务库（无同步表）与同步元数据库
-/// （仅四表闭集；`sync_rows` 为真时注入身份行——设备 `dev-src`、对 A 流位点 3）。
-/// 文件库不入测试工厂（ADR-0084 决策 3）：落盘与改形态经产品建缝
-/// `open_connection_unmounted`（不触发挂载接线，避免旁挂出第三份库文件）。
+/// 构造拆库后的双库世界文件对：业务库（main 侧，无同步表）与同步元数据库
+///（仅四表闭集；`sync_rows` 为真时注入身份行——设备 `dev-src`、对 A 流位点 3）。
+/// V036 后工厂世界的同步表住 attached 侧：身份行注在 attached，两侧各自
+/// `VACUUM [sync] INTO` 落盘。文件库不入测试工厂（ADR-0084 决策 3）：
+/// 落盘经工厂内存世界的 VACUUM INTO（产品建缝会对别名文件旁挂第三份库）。
 fn make_dual_db_world(dir: &Path, sync_rows: bool) -> (std::path::PathBuf, std::path::PathBuf) {
     let main_path = dir.join("ledger.db");
     let sync_path = dir.join("sync.db");
-    // 业务库：工厂库落盘后卸下四张同步表（票 05 后 main 形态）。
-    {
-        let factory = tauri_app_lib::test_support::open();
-        seed(&factory);
+    let factory = tauri_app_lib::test_support::open();
+    seed(&factory);
+    if sync_rows {
+        // 簿记戳由工厂固定时刻发放（ADR-0084：时刻值收敛 test_support）。
         factory
-            .execute("VACUUM INTO ?1", params![main_path.to_string_lossy()])
-            .unwrap();
-    }
-    {
-        let conn = db::open_connection_unmounted(&main_path).unwrap();
-        conn.execute_batch("PRAGMA foreign_keys = OFF").unwrap();
-        for table in SYNC_TABLES {
-            conn.execute(&format!("DROP TABLE IF EXISTS {table}"), [])
-                .unwrap();
-        }
-    }
-    // 同步库：工厂库落盘后卸下全部业务表（仅剩四表闭集）。
-    {
-        let factory = tauri_app_lib::test_support::open();
-        factory
-            .execute("VACUUM INTO ?1", params![sync_path.to_string_lossy()])
-            .unwrap();
-    }
-    {
-        let conn = db::open_connection_unmounted(&sync_path).unwrap();
-        conn.execute_batch("PRAGMA foreign_keys = OFF").unwrap();
-        let mut stmt = conn
-            .prepare(
-                "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
-            )
-            .unwrap();
-        let tables: Vec<String> = stmt
-            .query_map([], |r| r.get(0))
-            .unwrap()
-            .collect::<Result<_, _>>()
-            .unwrap();
-        drop(stmt);
-        for table in tables {
-            if !SYNC_TABLES.contains(&table.as_str()) {
-                conn.execute(&format!("DROP TABLE IF EXISTS \"{table}\""), [])
-                    .unwrap();
-            }
-        }
-        if sync_rows {
-            // 簿记戳由工厂固定时刻发放（ADR-0084：时刻值收敛 test_support）。
-            conn.execute(
+            .execute(
                 "INSERT INTO sync_device (id, logical_clock, created_at, updated_at) \
                  VALUES ('dev-src', 7, ?1, ?1)",
                 [tauri_app_lib::test_support::FIXED_NOW],
             )
             .unwrap();
-            conn.execute(
+        factory
+            .execute(
                 "INSERT INTO sync_stream_positions (device_id, applied_through, updated_at) \
                  VALUES ('dev-a', 3, ?1)",
                 [tauri_app_lib::test_support::FIXED_NOW],
             )
             .unwrap();
-        }
     }
+    factory
+        .execute("VACUUM INTO ?1", params![main_path.to_string_lossy()])
+        .unwrap();
+    factory
+        .execute("VACUUM sync INTO ?1", params![sync_path.to_string_lossy()])
+        .unwrap();
     (main_path, sync_path)
 }
 
@@ -894,14 +866,26 @@ fn paired_backup_restores_sync_db_when_paired() {
         .expect("恢复后世界应可正常挂载 sync.db（成对产物就位）");
 }
 
-/// 恢复按形态分支（旧形态行为不变）：expand 期单库布局的产物 paired=false
-/// （sync 条目为回退源 main 的同刻拷贝），恢复只落主库——sync.db 照旧移入
-/// 安全目录、原位不重建（由挂载接线按恢复后主库形态补建）。
+/// 恢复按形态分支（旧形态行为不变）：拆库前应用的产物 paired=false（四表在
+/// main 内、attached 侧缺席），恢复只落主库——sync.db 照旧移入安全目录、
+/// 原位不重建（拆库前主库由恢复后的建连补建 attached 侧并经迁移链收敛）。
 #[test]
 fn legacy_form_backup_ignores_sync_entry_on_restore() {
-    // 内存库（无挂载）→ 回退形态产物。
-    let conn = tauri_app_lib::test_support::open();
-    seed(&conn);
+    // 拆库前形态产物：工厂库落盘后主库回退为拆库前版本（旧形态备份的 main
+    // 只能来自拆库前应用；文件名非产品名，不触发挂载接线）。
+    let src = temp_file("legacy-form-src");
+    {
+        let factory = tauri_app_lib::test_support::open();
+        seed(&factory);
+        factory
+            .execute("VACUUM INTO ?1", params![src.to_string_lossy()])
+            .unwrap();
+    }
+    {
+        let versioned = db::open_connection_unmounted(&src).unwrap();
+        versioned.execute_batch("PRAGMA user_version = 34").unwrap();
+    }
+    let conn = db::open_connection(&src).unwrap();
     let backup = temp_file("legacy-form-backup");
     backup_db_to(&conn, &backup, "0.2.0", BackupKind::Manual).unwrap();
     assert_eq!(read_meta_json(&backup)["paired"], false);
@@ -976,9 +960,16 @@ fn paired_backup_missing_sync_entry_fails_loud() {
     let dst_dir = ScratchDir::new("backup-test-paired-missing-dst");
     let dst_main = dst_dir.join("ledger.db");
     {
+        // 目标为完整双库世界（拒绝后原样保留的「原样」以可开启世界为准）。
         let factory = tauri_app_lib::test_support::open();
         factory
             .execute("VACUUM INTO ?1", params![dst_main.to_string_lossy()])
+            .unwrap();
+        factory
+            .execute(
+                "VACUUM sync INTO ?1",
+                params![dst_dir.join(db::SYNC_DB_FILE_NAME).to_string_lossy()],
+            )
             .unwrap();
     }
     let safety_dir = temp_safety_dir();

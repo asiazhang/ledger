@@ -51,7 +51,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use ledger_infra::db::{deterministic_uuid, open_connection, schema_version};
+use ledger_infra::db::{deterministic_uuid, schema_version};
 use ledger_sync_engine::{ApplyReport, DomainCommand, OpOutcome, SyncOp, apply_ops, ingest_ops};
 use ledger_transaction::amount::{TransactionKind, default_currency_code};
 use ledger_transaction::{NormalizedTransaction, TransactionCommand};
@@ -326,7 +326,7 @@ pub(crate) fn run_benchmark(
     // 探测在工作库上做（快照的副本，探测的读路径与正式迭代完全一致）；
     // schema 版本同次读取（op 信封字段的生成依据）。
     let (probe, local_schema_version) = {
-        let conn = open_connection(&guard.work).map_err(|e| e.to_string())?;
+        let conn = super::snapshot::open_paired(&guard.work).map_err(|e| e.to_string())?;
         let probe = probe_dataset(&conn)?;
         let v = schema_version(&conn).map_err(|e| e.to_string())?;
         (probe, v)
@@ -367,7 +367,7 @@ fn run_cell(
     let mut durations = Vec::with_capacity(cfg.iterations);
     for iteration in 0..(cfg.warmup + cfg.iterations) {
         restore_from_snapshot(&guard.snapshot, &guard.work)?;
-        let conn = open_connection(&guard.work).map_err(|e| e.to_string())?;
+        let conn = super::snapshot::open_paired(&guard.work).map_err(|e| e.to_string())?;
         // op 流与 wire 形态每次迭代重新生成（纯函数、确定性，量测窗口外）：
         // 币种随连接口径读取，与 bench-import 的行生成同形。
         let stream = generate_ops(

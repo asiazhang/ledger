@@ -783,7 +783,7 @@ fn open_backup_db_conn(tmp_db: &Path, passphrase: Option<&str>) -> Result<Connec
 
 /// 校验备份数据库文件：完整性检查 + schema 版本策略（旧→新允许并迁移，新→旧拒绝）。
 fn validate_backup(tmp_db: &Path, expected_schema: i64, passphrase: Option<&str>) -> Result<i64> {
-    let mut conn = open_backup_db_conn(tmp_db, passphrase)?;
+    let conn = open_backup_db_conn(tmp_db, passphrase)?;
     db::check_integrity(&conn)?;
     let backup_schema = schema_version(&conn)?;
     if backup_schema > expected_schema {
@@ -796,12 +796,16 @@ fn validate_backup(tmp_db: &Path, expected_schema: i64, passphrase: Option<&str>
         ));
     }
     if backup_schema < expected_schema {
+        // 旧备份不做就地迁移升级（V036 拆库起，迁移链跨 attached 侧，ATTACH
+        // 又不能在事务内执行——本连接是临时副本的无挂载连接，在它上面跑链
+        // 会把四表搬进随连接消亡的库）。收敛点在恢复后的原位重引导：建连收尾
+        // 先按世界版本挂载 sync.db（拆库前世界自动补建），init_db 重放待跑
+        // 迁移（含 V036 搬迁）；恢复与重开之间中断同样由下次启动收敛。
         tracing::info!(
             backup_schema,
             expected_schema,
-            "备份 schema 较旧，恢复时自动迁移升级"
+            "备份 schema 较旧，恢复后由原位重引导的建连迁移升级"
         );
-        db::init_db(&mut conn)?;
     }
     Ok(backup_schema)
 }

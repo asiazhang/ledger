@@ -17,6 +17,7 @@
 - **交易 / AI 导入 / HTTP API**：购买项（订单商品明细）——`expense` 写入可携带 `purchases[]`（每条 = {名称, 件数, 分类?, 单价?}，数组顺序 = 对账单顺序；仅 `expense` 可带，其余类型码化拒绝；单价可空——源单只给订单总额时留空，不进任何金额口径），随交易落购买项子表（V034 就地扩 `transaction_purchases`，子行随主行存亡、无独立软删位、存量行零迁移）并随交易读回（列表 / 详情 / 搜索 / 订单汇总同契约；无购买项行为空数组、存量行为零变化）；新增错误码 `transaction.purchase-item-unsupported` / `transaction.purchase-name-required` / `transaction.purchase-quantity-positive` / `transaction.purchase-price-negative` / `purchase.category-not-found`（zh/en 模板同步）；导入教学补「购买项字段、商品名不写备注、价格拿不到就留空不猜不编造、订单级分类按金额最大的商品确定」（[#1882]，ADR-0138 决策 9/10）。界面呈现随后续票（#1883 / #1884）。
 - **数据文件**：同步元数据库落位 expand 步（ADR-0139 决策 3/4，拆库本体前置）——启动建连即在工作目录成对挂载 `sync.db`（写连接自动建空库、只读连接只读形态挂载，与主库同加密形态同密钥；挂载失败报码化错误 `db.sync-mount-failed`，不静默降级）。本阶段四张同步表仍在主库，同步、备份、检查点行为零变化；开启 / 关闭加密与修改主口令时 `sync.db` 随主库一并转换，恢复时原位遗留的 `sync.db` 移入恢复安全备份保留（[#1869]，ADR-0139）。
 - **数据文件 / 多端同步**：检查点快照与备份产物双文件成对（ADR-0139 决策 5/6，拆库本体 expand 步）——检查点快照改为「业务件 + 同步元数据件」同刻成对产出（单连接互斥锁内逐库 `VACUUM INTO`，双源回退：`sync.db` 四表齐备逐 attached 快照，否则回退主库；本阶段四张同步表仍在主库，行为与单文件形态等价）；通道 manifest 检查点指针扩展为双指针（新增可选 `sync_file` 字段指向同步件，旧版本端忽略新字段、通道互操作不破坏，旧形态单文件快照照常可引导）；应用内备份 zip 成对携带 `sync.db`（元数据新增可选 `paired` 标记），恢复按形态分支——成对备份把同步身份（设备标识、位点、日志）随库一致回滚，恢复后无缝续同步，旧形态备份行为不变（[#1870]，ADR-0139）。
+- **数据文件 / 多端同步**：同步元数据拆库切换核（ADR-0139 决策 1/4）——V036 迁移把四张同步表闭集（设备标识 / 操作日志 / 挂起队列 / 流位点）整体搬入独立库 `sync.db`，主库此后只存账本数据；整批迁移在单一事务内经 master journal 跨两库集合级原子，中断即整体回滚、重启重跑收敛（升级前后数据分毫不差，附失败注入两库同滚实测）；schema 漂移守卫升级为双库校验（main / sync 各侧方向性 diff，诊断带侧别前缀）；数据目录搬迁时 `sync.db` 成对随迁（sync 先落位、main 后落位 = 提交点）；旧备份恢复后由原位重引导建连完成迁移，删除旧备份恢复路径的就地自动迁移（临时库挂载会把四表搬进随连接消亡的库）；本地写与重放事务的跨库原子性以文件库模板实测钉住（业务行与 op 日志、位点同生共死）（[#1871]，ADR-0139）。
 
 ## [0.8.0] - 2026-09-27
 
@@ -458,4 +459,5 @@
 [#1862]: https://github.com/asiazhang/ledger/issues/1862
 [#1869]: https://github.com/asiazhang/ledger/issues/1869
 [#1870]: https://github.com/asiazhang/ledger/issues/1870
+[#1871]: https://github.com/asiazhang/ledger/issues/1871
 [#1882]: https://github.com/asiazhang/ledger/issues/1882

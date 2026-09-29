@@ -544,6 +544,8 @@ fn probe_detects_plaintext_encrypted_and_empty() {
     // 明文库。
     let plain = dir.join("plain.db");
     let mut conn = open_connection(&plain).unwrap();
+    conn.execute_batch("ATTACH DATABASE ':memory:' AS sync")
+        .unwrap(); // 内存世界成对挂载（非产品名夹具不触发挂载接线）
     migrations().to_latest(&mut conn).unwrap();
     drop(conn);
     assert_eq!(probe_file_kind(&plain).unwrap(), DbFileKind::Plaintext);
@@ -551,6 +553,8 @@ fn probe_detects_plaintext_encrypted_and_empty() {
     // 密文库。
     let encrypted = dir.join("encrypted.db");
     let mut conn = open_connection_with_passphrase(&encrypted, "口令").unwrap();
+    conn.execute_batch("ATTACH DATABASE ':memory:' AS sync")
+        .unwrap(); // 内存世界成对挂载（非产品名夹具不触发挂载接线）
     migrations().to_latest(&mut conn).unwrap();
     drop(conn);
     assert_eq!(probe_file_kind(&encrypted).unwrap(), DbFileKind::Encrypted);
@@ -673,7 +677,9 @@ fn foreign_form_db_breaks_vacuum_into_until_normalized() {
 #[test]
 fn normalize_rewrites_foreign_form_db_and_preserves_data() {
     let dir = temp_dir("normalize");
-    let db = dir.join("ledger.db");
+    // 非产品文件名：归一化的对象是任意路径下的库文件，不该踩挂载接线的主库
+    // 判别（ledger.db 名下的缺失 sync.db 裁决是 V036 拆库后的挂载语义）。
+    let db = dir.join("foreign.db");
     write_foreign_form_plaintext_db(&db, 3);
     // 非零 user_version：钉住「显式对齐」而不是依赖导出函数顺带复制。
     {
@@ -798,20 +804,24 @@ fn normalize_failure_keeps_original_db_intact() {
 /// 副作用——带 KEY 挂载会以未验证口令把缺失的 sync.db 补建成错钥匙空库，
 /// 随后正确口令的解锁反而挂载失败（错钥匙残留砖化世界）。主口令先经裸
 /// 连接验证主库、后走产品建缝（挂载凭已验证口令执行）。
+///
+/// V036 拆库后（issue #1871）夹具语义校准：补建空 sync.db 的世界是**未拆库**
+/// 世界（user_version < 拆库边界）——拆库世界（≥ 边界）缺失 sync.db 由挂载
+/// 裁决直接码化报错（元数据丢失，不经解锁口令环节），见挂载测试。
 #[test]
 fn unlock_with_wrong_passphrase_leaves_no_sync_db_artifact() {
     let dir = temp_dir("unlock-no-artifact");
     let db = dir.join("ledger.db");
     let sync_path = dir.join(crate::db::connection::SYNC_DB_FILE_NAME);
     {
-        let mut conn = open_connection_with_passphrase(&db, "正确口令").unwrap();
-        migrations().to_latest(&mut conn).unwrap();
+        // 未拆库世界夹具：密文主库不经产品建缝构造（裸连接带 KEY 建库，
+        // user_version 留 0），全程不产出 sync.db。
+        let conn = Connection::open(&db).unwrap();
+        conn.pragma_update(None, "key", "正确口令").unwrap();
         conn.execute("CREATE TABLE pair_probe(x)", []).unwrap();
         drop(conn);
-        // 模拟「主库被单文件恢复、sync.db 缺席」的旧世界目录。
-        std::fs::remove_file(&sync_path).unwrap();
     }
-    assert!(!sync_path.exists(), "夹具前置：旧世界目录无 sync.db");
+    assert!(!sync_path.exists(), "夹具前置：目录无 sync.db");
 
     let err = unlock_db_file(&db, "错误口令").unwrap_err();
     assert_eq!(
@@ -824,7 +834,8 @@ fn unlock_with_wrong_passphrase_leaves_no_sync_db_artifact() {
         "错误口令尝试不得留下 sync.db（错钥匙残留）"
     );
 
-    // 正确口令解锁照常成功——无错钥匙残留堵塞挂载，数据完整。
+    // 正确口令解锁照常成功——无错钥匙残留堵塞挂载，数据完整；挂载接线按
+    // 未拆库世界补建 sync.db（同口令同 KEY）。
     let conn = unlock_db_file(&db, "正确口令").unwrap();
     check_integrity(&conn).unwrap();
     conn.query_row::<i64, _, _>("SELECT count(*) FROM pair_probe", [], |r| r.get(0))

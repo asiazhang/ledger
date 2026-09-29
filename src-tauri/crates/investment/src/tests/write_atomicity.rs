@@ -22,7 +22,7 @@ use tauri_app_lib::test_support::{FIXED_NOW, open, seed_instrument};
 /// 纯测试侧手段，不触及任何产品代码路径。
 fn block_op_inserts(conn: &Connection) {
     conn.execute(
-        "CREATE TRIGGER block_sync_ops BEFORE INSERT ON sync_ops \
+        "CREATE TRIGGER sync.block_sync_ops BEFORE INSERT ON sync.sync_ops \
          BEGIN SELECT RAISE(ABORT, '测试注入：op 写失败'); END",
         [],
     )
