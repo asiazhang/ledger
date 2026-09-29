@@ -171,6 +171,5 @@ erDiagram
 | `V032__goals.sql` | goals 储蓄目标表（目标金额 + 可选截止日 + 状态 + 手填计划月存 + 专属账户 1:1 绑定，spec #1750 / ADR-0133） |
 | `V033__security_transaction_to_instrument_index.sql` | security_transactions 转入腿索引（to_instrument_id）——首笔持仓流水日两臂各走索引 seek、查询侧 INDEXED BY 钉定（计划由 SQL 确定，索引缺失即 prepare 报错），逐标的全扫退役（#1804） |
 | `V034__transaction_fundings.sql` | 出资项子表（transaction_fundings：交易引用 + 顺序位 + 账户 + 金额 + 扣款标签，子行随主行存亡、存量行零迁移）+ transactions 表重建放宽 account_id NOT NULL（分解行主列落 NULL，账户口径由子行承载；SQLite 12 步重建规程，`init_db` 迁移期外键关闭）（#1860 / ADR-0138）；未发布窗口就地扩补**购买项子表** transaction_purchases（交易引用 + 顺序位 + 名称 + 件数 + 分类引用 + 可空单价，子行随主行存亡、存量行零迁移，仅 expense 可带）（#1882 / ADR-0138 决策 9/10） |
-
 | `V035__transaction_source_order_no.sql` | transactions 来源订单号可空列（来源元数据、不限 kind，订单徽章与订单区的行级归属锚点）+ 同单行集部分覆盖索引；存量行零迁移（#1862 / ADR-0138 决策 9） |
 > 迁移版本由 SQLite `user_version` 自动追踪，新迁移在数据库模块统一注册。V005（FTS5 搜索索引）已随统一模糊搜索方案移除（ADR-0027），编号不复用。新增 schema 变更时新建 `V00X__名称.sql` 并在注册处追加；已发布迁移的就地修改与 BREAKING 标记要求见 AGENTS.md 发布约定。
