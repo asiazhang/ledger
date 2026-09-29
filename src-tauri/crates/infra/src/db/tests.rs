@@ -25,6 +25,7 @@ mod holding;
 mod integrity;
 mod lock_probe;
 mod migrations;
+mod mount;
 mod perf;
 mod readonly;
 mod run_db;

@@ -592,18 +592,46 @@ pub fn restore_db_from(
 
     // 4. 安全备份当前库（恢复出错时可回滚）。文件级拷贝：当前库为密文时
     //    安全备份自然继承密文，凭同一主口令可回滚（issue #572 钉住）。
+    //    同步元数据库移位去向记入 sync_moved（原位路径, 安全副本路径），
+    //    替换失败时归位（见步骤 5）。
+    let mut sync_moved: Option<(std::path::PathBuf, std::path::PathBuf)> = None;
     if db_path.exists() {
         std::fs::create_dir_all(safety_dir)?;
         let stamp = db::now_iso().replace([':', 'T'], "-");
         let safety = safety_dir.join(format!("restore-safety-{stamp}.db"));
         std::fs::copy(db_path, &safety)?;
+        // 同步元数据库一并移位（ADR-0139 决策 3 配对纪律，issue #1869）：恢复
+        // 产物是单文件备份（本票 sync.db 恒为空库，四张同步表随备份内主库走），
+        // 原位遗留的 sync.db 与恢复出的世界形态无涉——留在原地，重开挂载可能
+        // 形态错配（如密文世界恢复明文备份）。按恢复安全备份命名语义移入安全
+        // 目录保留（永不删除）；新世界的 sync.db 由挂载接线按恢复后主库形态补建。
+        let sync_path = db::sync_db_path(db_path);
+        if sync_path.exists() {
+            let sync_safety = safety_dir.join(format!("restore-safety-sync-{stamp}.db"));
+            std::fs::rename(&sync_path, &sync_safety)?;
+            tracing::info!(safety = %sync_safety.display(), "恢复前已移位当前同步元数据库");
+            sync_moved = Some((sync_path, sync_safety));
+        }
         tracing::info!(safety = %safety.display(), "恢复前已自动备份当前数据库");
     }
 
     // 5. 替换原库。
     let replace_result = replace_file(&tmp_db, db_path);
     cleanup(&tmp_db);
-    replace_result?;
+    if let Err(error) = replace_result {
+        // 替换失败主库原样保留（ADR-0117 决策 3 恢复失败语义「回滚无痕」）：
+        // 已移位的 sync.db 尽力归位，现场可重试；归位失败保持移位现场并报错
+        // （主库未动，原世界仍以「主库 + .bak 形态 sync.db」自洽存在）。
+        if let Some((sync_path, sync_safety)) = &sync_moved
+            && let Err(move_back) = std::fs::rename(sync_safety, sync_path)
+        {
+            tracing::error!(
+                error = %move_back,
+                "恢复替换失败后同步元数据库归位失败，保持移位现场"
+            );
+        }
+        return Err(error);
+    }
 
     let restored_at = db::now_iso();
     // 恢复成功后重置自动备份调度状态（issue #126）：不置真、重新计时，避免

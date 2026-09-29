@@ -93,8 +93,10 @@ fn passphrase_connection_writes_ciphertext_and_reopens_with_same_passphrase() {
 }
 
 /// 错误主口令打不开密文库：`PRAGMA key` 本身不校验，失败发生在首条读
-/// 语句（SQLITE_NOTADB「file is not a database」）；口令错误 ≠ 库损坏
-/// 的用户可见区分由文件头探测承担（ADR-0075 决策 5 的基座行为）。
+/// 语句——挂载接线（issue #1869）后首条读即带 KEY 挂载的探针，SQLCipher
+/// 下口令错误与损坏同为 not-a-database、不可靠区分，报合并口径码化错误
+/// `encryption.passphrase-incorrect`（与解锁路径同码，可就地重试；
+/// ADR-0075 决策 5 修订 / issue #603）。
 #[test]
 fn passphrase_connection_rejects_wrong_passphrase() {
     let dir = temp_dir("wrong-key");
@@ -105,11 +107,11 @@ fn passphrase_connection_rejects_wrong_passphrase() {
     }
     assert_eq!(probe_file_kind(&db).unwrap(), DbFileKind::Encrypted);
 
-    let mut conn = open_connection_with_passphrase(&db, "错误口令").unwrap();
-    let err = migrations().to_latest(&mut conn).unwrap_err();
-    assert!(
-        err.to_string().contains("file is not a database"),
-        "错误主口令应以 not-a-database 失败，实际: {err}"
+    let err = open_connection_with_passphrase(&db, "错误口令").unwrap_err();
+    assert_eq!(
+        code_of(&err),
+        Some("encryption.passphrase-incorrect"),
+        "错误主口令应报合并口径码化错误，实际: {err}"
     );
 }
 
@@ -219,6 +221,174 @@ fn enable_encryption_converts_plaintext_db_and_preserves_data() {
     check_integrity(&conn).unwrap();
 }
 
+/// 开启加密——两库配对（ADR-0139 决策 3「主库加密转换时两库同步转换」，
+/// issue #1869）：明文世界的 sync.db（挂载接线在建连时补建）随主库一并
+/// 转入密文；凭新口令重开时同 KEY 挂载成功；旧明文 sync.db 按重置命名
+/// 语义保留为 `sync.db.bak`。若 sync.db 不随转换，重开挂载即形态错配。
+#[test]
+fn enable_encryption_converts_sync_db_too() {
+    let dir = temp_dir("convert-sync-on");
+    let db = dir.join("ledger.db");
+    let sync_path = dir.join(crate::db::connection::SYNC_DB_FILE_NAME);
+    {
+        let mut conn = open_connection(&db).unwrap();
+        migrations().to_latest(&mut conn).unwrap();
+        // 写入一次使 sync.db 成形（SQLCipher 文件头在首个写事务落盘）。
+        conn.execute("CREATE TABLE sync.pair_probe(x)", []).unwrap();
+    }
+    assert_eq!(probe_file_kind(&sync_path).unwrap(), DbFileKind::Plaintext);
+
+    crate::db::encryption::enable_encryption_for_file(&db, "correct horse").unwrap();
+
+    // sync.db 随主库转为密文；旧明文副本按重置命名语义保留。
+    assert_eq!(probe_file_kind(&sync_path).unwrap(), DbFileKind::Encrypted);
+    let sync_bak = sync_path.with_extension("db.bak");
+    assert!(sync_bak.exists(), "旧明文 sync.db 应保留为 .bak 副本");
+    assert_eq!(probe_file_kind(&sync_bak).unwrap(), DbFileKind::Plaintext);
+
+    // 凭新口令重开：同 KEY 挂载成功（挂载点 probe 读通过）。
+    let conn = reopen_with_key(&db, "correct horse").unwrap();
+    conn.query_row::<i64, _, _>("SELECT count(*) FROM sync.sqlite_master", [], |r| r.get(0))
+        .expect("转换后 sync.db 应可凭新口令同 KEY 挂载读取");
+}
+
+/// 关闭加密——两库配对：密文 sync.db（含数据）随主库转回明文，数据经
+/// 导出完整迁移；旧密文 sync.db 保留 `sync.db.bak` 副本（凭旧口令可开）。
+#[test]
+fn disable_encryption_converts_sync_db_too() {
+    let dir = temp_dir("convert-sync-off");
+    let db = dir.join("ledger.db");
+    let sync_path = dir.join(crate::db::connection::SYNC_DB_FILE_NAME);
+    {
+        let mut conn = open_connection_with_passphrase(&db, "旧口令").unwrap();
+        migrations().to_latest(&mut conn).unwrap();
+        conn.execute("CREATE TABLE sync.pair_probe(x)", []).unwrap();
+        conn.execute("INSERT INTO sync.pair_probe VALUES (7)", [])
+            .unwrap();
+    }
+    assert_eq!(probe_file_kind(&sync_path).unwrap(), DbFileKind::Encrypted);
+
+    crate::db::encryption::disable_encryption_for_file(&db, "旧口令").unwrap();
+
+    // sync.db 随主库转回明文，数据完整迁移；旧密文副本保留且凭旧口令可开。
+    assert_eq!(probe_file_kind(&sync_path).unwrap(), DbFileKind::Plaintext);
+    let sync_bak = sync_path.with_extension("db.bak");
+    assert_eq!(probe_file_kind(&sync_bak).unwrap(), DbFileKind::Encrypted);
+    let old = open_connection_with_passphrase(&sync_bak, "旧口令").unwrap();
+    let kept: i64 = old
+        .query_row("SELECT x FROM pair_probe", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(kept, 7, "旧密文副本应可凭旧口令读回");
+
+    // 明文重开：普通挂载成功，attached 侧数据同款完整。
+    let conn = open_connection(&db).unwrap();
+    let kept: i64 = conn
+        .query_row("SELECT x FROM sync.pair_probe", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(kept, 7, "明文世界的 sync.db 数据应完整");
+}
+
+/// 修改主口令——两库配对：sync.db 随主库重加密，新口令可开、旧口令被拒。
+#[test]
+fn change_passphrase_rekeys_sync_db_too() {
+    let dir = temp_dir("convert-sync-key");
+    let db = dir.join("ledger.db");
+    let sync_path = dir.join(crate::db::connection::SYNC_DB_FILE_NAME);
+    {
+        let mut conn = open_connection_with_passphrase(&db, "旧口令").unwrap();
+        migrations().to_latest(&mut conn).unwrap();
+        conn.execute("CREATE TABLE sync.pair_probe(x)", []).unwrap();
+        conn.execute("INSERT INTO sync.pair_probe VALUES (9)", [])
+            .unwrap();
+    }
+
+    crate::db::encryption::change_passphrase_for_file(&db, "旧口令", "新口令啊").unwrap();
+
+    // 新口令重开：同 KEY 挂载成功、数据完整；旧口令不再能读 sync.db。
+    let conn = reopen_with_key(&db, "新口令啊").unwrap();
+    let kept: i64 = conn
+        .query_row("SELECT x FROM sync.pair_probe", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(kept, 9, "重加密后 sync.db 数据应完整");
+    let stale = open_connection_with_passphrase(&sync_path, "旧口令").unwrap();
+    let err = stale
+        .query_row::<i64, _, _>("SELECT count(*) FROM pair_probe", [], |r| r.get(0))
+        .expect_err("旧口令不应再能读重加密后的 sync.db");
+    assert!(
+        crate::db::connection::is_not_a_database_error(&err),
+        "旧口令应报 not-a-database，实际: {err}"
+    );
+}
+
+/// 转换中途失败（sync.db 损坏使其导出失败）：主库与 sync.db 原样保留，
+/// 不存在半转换状态——配对纪律的失败侧。
+#[test]
+fn conversion_failure_keeps_both_dbs_intact() {
+    let dir = temp_dir("convert-sync-fail");
+    let db = dir.join("ledger.db");
+    let sync_path = dir.join(crate::db::connection::SYNC_DB_FILE_NAME);
+    {
+        let mut conn = open_connection(&db).unwrap();
+        migrations().to_latest(&mut conn).unwrap();
+        conn.execute("CREATE TABLE sync.pair_probe(x)", []).unwrap();
+    }
+    let main_bytes = std::fs::read(&db).unwrap();
+    std::fs::write(&sync_path, b"corrupt sync bytes").unwrap();
+    let sync_bytes = std::fs::read(&sync_path).unwrap();
+
+    let err = crate::db::encryption::enable_encryption_for_file(&db, "pw").unwrap_err();
+    let _ = code_of(&err); // 失败形态不拘，转换失败本身就是断言对象。
+
+    // 主库字节保持原样、仍是明文库；sync.db 保持损坏现场字节（转换原样
+    // 保留、未做任何改写）。损坏 sync.db 的世界本就不可开（挂载码化拒绝，
+    // 与转换无关）——此处只断言「转换未使现场更坏」。
+    assert_eq!(
+        std::fs::read(&sync_path).unwrap(),
+        sync_bytes,
+        "sync.db 字节应保持不变"
+    );
+    assert_eq!(
+        std::fs::read(&db).unwrap(),
+        main_bytes,
+        "主库字节应保持不变"
+    );
+    assert_eq!(probe_file_kind(&db).unwrap(), DbFileKind::Plaintext);
+}
+
+/// 忘记口令重置——两库配对移位：密文 sync.db 保留为 `sync.db.bak`，新世界
+/// 明文库开启时挂载按明文补建（若残留密文 sync.db，重开挂载即形态错配——
+/// 回归锚：重置路径漏移 sync.db 即本测试红）。
+#[test]
+fn reset_encrypted_db_moves_sync_db_aside() {
+    let dir = temp_dir("reset-sync");
+    let db = dir.join("ledger.db");
+    let sync_path = dir.join(crate::db::connection::SYNC_DB_FILE_NAME);
+    {
+        let mut conn = open_connection_with_passphrase(&db, "被遗忘的口令").unwrap();
+        migrations().to_latest(&mut conn).unwrap();
+        conn.execute("CREATE TABLE sync.pair_probe(x)", []).unwrap();
+        conn.execute("INSERT INTO sync.pair_probe VALUES (3)", [])
+            .unwrap();
+    }
+
+    let conn = crate::db::encryption::reset_encrypted_db_file(&db).unwrap();
+    drop(conn);
+
+    // 密文世界两库副本均按重置命名语义保留。
+    assert!(db.with_extension("db.bak").exists(), "旧密文库应保留 .bak");
+    let sync_bak = sync_path.with_extension("db.bak");
+    assert!(sync_bak.exists(), "旧密文 sync.db 应保留 .bak");
+    let old = open_connection_with_passphrase(&sync_bak, "被遗忘的口令").unwrap();
+    let kept: i64 = old
+        .query_row("SELECT x FROM pair_probe", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(kept, 3, "旧密文 sync.db 副本应可凭旧口令读回");
+
+    // 新世界明文重开：普通挂载成功（新 sync.db 由挂载接线按明文补建）。
+    let conn = open_connection(&db).unwrap();
+    conn.query_row::<i64, _, _>("SELECT count(*) FROM sync.sqlite_master", [], |r| r.get(0))
+        .expect("新世界 sync.db 应按明文形态挂载可读");
+}
 /// 「目录置只读（0o555）触发转换失败」手段是否可用（issue #791）：
 /// 仅非 root Unix 成立——root 凭 CAP_DAC_OVERRIDE 无视权限位，非 Unix
 /// 无权限位可依；不可用时测试显式跳过，不假红（CI 的 cargo test 仅在
@@ -448,8 +618,11 @@ fn foreign_form_plaintext_fixture_is_a_valid_db_with_reserved_bytes() {
     assert_eq!(probe.reserved_bytes, Some(FOREIGN_RESERVED_BYTES));
     assert_eq!(read_reserved_byte(&db), FOREIGN_RESERVED_BYTES);
 
-    // 合法：明文建连、完整性检查通过、数据可读。
-    let conn = open_connection(&db).unwrap();
+    // 合法：明文建连、完整性检查通过、数据可读。裸连接开启：外来形态在
+    // 产品可开启集之外（启动在建连前归一化，issue #1453），且建连收尾的
+    // 同步元数据库挂载会在其上复现同一条无 KEY ATTACH 推断失败（#1453
+    // 机制）——本用例证明的是「文件本身合法」，走引擎级裸连接。
+    let conn = Connection::open(&db).unwrap();
     check_integrity(&conn).unwrap();
     let rows: i64 = conn
         .query_row("SELECT COUNT(*) FROM fixture_probe", [], |r| r.get(0))
@@ -471,7 +644,9 @@ fn foreign_form_db_breaks_vacuum_into_until_normalized() {
 
     // 归一化前：备份/检查点产出的同款语句必然失败（现场根因）。
     {
-        let conn = open_connection(&db).unwrap();
+        // 裸连接：外来形态在产品可开启集之外（建连收尾挂载会在其上先一步
+        // 失败，#1453 机制），VACUUM INTO 的根因证明走引擎级裸连接。
+        let conn = Connection::open(&db).unwrap();
         // 只断言「失败」这一可观察行为，不钉驱动报错文本（SQLCipher/SQLite 版本
         // 升级会改措辞，断言措辞属实现形状守护）。
         let attempt = conn.execute_batch(&vacuum_into(&snapshot));
@@ -611,9 +786,47 @@ fn normalize_failure_keeps_original_db_intact() {
             .all(|name| !name.starts_with(".ledger.db.")),
         "不应残留归一化临时文件: {leftovers:?}"
     );
-    let conn = open_connection(&db).unwrap();
+    // 裸连接：原库仍是外来形态（失败保留原样），产品建连集之外。
+    let conn = Connection::open(&db).unwrap();
     let rows: i64 = conn
         .query_row("SELECT COUNT(*) FROM fixture_probe", [], |r| r.get(0))
         .unwrap();
     assert_eq!(rows, 2, "原库数据完整可读");
+}
+
+/// 解锁与挂载的时序（issue #1869）：错误口令的解锁尝试不得留下任何库文件
+/// 副作用——带 KEY 挂载会以未验证口令把缺失的 sync.db 补建成错钥匙空库，
+/// 随后正确口令的解锁反而挂载失败（错钥匙残留砖化世界）。主口令先经裸
+/// 连接验证主库、后走产品建缝（挂载凭已验证口令执行）。
+#[test]
+fn unlock_with_wrong_passphrase_leaves_no_sync_db_artifact() {
+    let dir = temp_dir("unlock-no-artifact");
+    let db = dir.join("ledger.db");
+    let sync_path = dir.join(crate::db::connection::SYNC_DB_FILE_NAME);
+    {
+        let mut conn = open_connection_with_passphrase(&db, "正确口令").unwrap();
+        migrations().to_latest(&mut conn).unwrap();
+        conn.execute("CREATE TABLE pair_probe(x)", []).unwrap();
+        drop(conn);
+        // 模拟「主库被单文件恢复、sync.db 缺席」的旧世界目录。
+        std::fs::remove_file(&sync_path).unwrap();
+    }
+    assert!(!sync_path.exists(), "夹具前置：旧世界目录无 sync.db");
+
+    let err = unlock_db_file(&db, "错误口令").unwrap_err();
+    assert_eq!(
+        code_of(&err),
+        Some("encryption.passphrase-incorrect"),
+        "错误口令应报合并口径错误：{err}"
+    );
+    assert!(
+        !sync_path.exists(),
+        "错误口令尝试不得留下 sync.db（错钥匙残留）"
+    );
+
+    // 正确口令解锁照常成功——无错钥匙残留堵塞挂载，数据完整。
+    let conn = unlock_db_file(&db, "正确口令").unwrap();
+    check_integrity(&conn).unwrap();
+    conn.query_row::<i64, _, _>("SELECT count(*) FROM pair_probe", [], |r| r.get(0))
+        .expect("解锁后数据应完整");
 }

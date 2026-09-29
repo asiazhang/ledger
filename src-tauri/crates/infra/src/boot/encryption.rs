@@ -303,24 +303,87 @@ pub fn normalize_plaintext_db_file(db_path: &Path) -> Result<()> {
 /// （`None` = 空钥匙明文，关闭加密形态）命名的新库导出 → 新库试开验证
 /// → 原子替换启用，旧文件保留 `.bak` 副本。调用方负责形态门禁（探测
 /// 三态）与旧口令验证；中途失败清理临时产物、原库原样保留。
+///
+/// **两库配对**（ADR-0139 决策 3「主库加密转换时两库同步转换」，issue #1869）：
+/// 同目录的同步元数据库 `sync.db`（挂载接线启用后由建连侧创建，恒与主库同
+/// 形态同密钥）一并转换——导出与验证对两份临时副本全部完成后才依次替换
+/// 启用，任一步失败原库原样保留，不存在混合形态（半转换的 sync.db 会在
+/// 下次建连挂载时报形态错配，应用落失败恢复屏）。sync.db 不存在（挂载
+/// 机制启用前的旧世界目录）时只转换主库，行为与配对机制引入前一致。
 fn convert_db_file(
     db_path: &Path,
     source_passphrase: Option<&str>,
     target_passphrase: Option<&str>,
 ) -> Result<()> {
+    let sync_path = crate::db::sync_db_path(db_path);
+    let sync_exists = sync_path.exists();
     let tmp_path = temp_sibling(db_path, "convert");
-    let result = export_converted_copy(db_path, &tmp_path, source_passphrase, target_passphrase)
-        .and_then(|user_version| verify_converted_copy(&tmp_path, target_passphrase, user_version))
-        .and_then(|()| promote_converted_copy(db_path, &tmp_path));
+    let sync_tmp = sync_exists.then(|| temp_sibling(&sync_path, "convert"));
+    let result = (|| -> Result<()> {
+        let user_version =
+            export_converted_copy(db_path, &tmp_path, source_passphrase, target_passphrase)?;
+        let sync_user_version = match &sync_tmp {
+            Some(path) => Some(export_converted_copy(
+                &sync_path,
+                path,
+                source_passphrase,
+                target_passphrase,
+            )?),
+            None => None,
+        };
+        verify_converted_copy(&tmp_path, target_passphrase, user_version)?;
+        if let (Some(path), Some(version)) = (&sync_tmp, sync_user_version) {
+            verify_converted_copy(path, target_passphrase, version)?;
+        }
+        promote_converted_copy(db_path, &tmp_path)?;
+        if let Some(path) = &sync_tmp
+            && let Err(error) = promote_converted_copy(&sync_path, path)
+        {
+            // 主库已替换而 sync.db 替换失败：尽力回滚主库（转换副本移开、
+            // .bak 原库归位），不留下半转换世界；回滚失败保持现场并报错。
+            rollback_promoted_copy(db_path);
+            return Err(error);
+        }
+        Ok(())
+    })();
 
     if let Err(error) = result {
         // 失败收尾：临时产物用后即清（成功时已被 rename 走，cleanup 容忍不存在）。
         cleanup(&tmp_path);
+        if let Some(path) = &sync_tmp {
+            cleanup(path);
+        }
         tracing::warn!(error = %error, "整库转换失败，原库保持原样不变");
         return Err(error);
     }
     tracing::info!(bak = %bak_path(db_path).display(), "整库转换完成，原库保留为 .bak 副本");
     Ok(())
+}
+
+/// 回滚已替换启用的转换副本（尽力而为）：新库移开为临时名、`.bak` 原库
+/// 归位；归位失败则把新库移回原位保持可用现场。任一步失败只记日志——
+/// 调用方已处于报错路径，保持现场可人工排查。
+fn rollback_promoted_copy(db_path: &Path) {
+    let bak = bak_path(db_path);
+    if !bak.exists() {
+        tracing::error!("转换回滚失败：找不到 .bak 原库副本，保持现场");
+        return;
+    }
+    let aside = temp_sibling(db_path, "rollback");
+    match std::fs::rename(db_path, &aside) {
+        Ok(()) => {
+            if let Err(e) = std::fs::rename(&bak, db_path) {
+                let _ = std::fs::rename(&aside, db_path);
+                tracing::error!(error = %e, "转换回滚失败：原库副本归位失败，已恢复转换副本");
+                return;
+            }
+            cleanup(&aside);
+            tracing::info!(bak = %bak.display(), "转换回滚完成：原库副本已归位");
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "转换回滚失败：转换副本未能移开，保持现场");
+        }
+    }
 }
 
 /// 形态门禁：只有密文库可关闭加密 / 修改主口令（issue #571，文件即真相）。
@@ -340,13 +403,28 @@ fn require_encrypted_file(db_path: &Path) -> Result<()> {
 
 /// 验证当前主口令确实能读开密文源库（先验证后转换）：类型化读语句先行
 /// 校验（错误形态可精确匹配 not-a-database），口令错误报码化错误，原库
-/// 不动。转换本体在自有裸连接重开源库，验证连接即弃。
+/// 不动。转换本体在自有裸连接重开源库，验证连接即弃。验证经
+/// 不动。转换本体在自有裸连接重开源库，验证连接即弃。验证经裸连接主口令
+/// 验证（`verify_main_passphrase_bare`，crate 内私有：不触挂载接线，见其文档）。
 /// 多端同步壳层（issue #862）同源消费：手动同步拿到的主口令（显式参数 /
 /// 钥匙串缓存）在封包前先验证——错误口令封出的段对端无法解封，且段名
 /// 幂等跳过会令重传永不发生，必须在上传前拦下。
 pub fn verify_source_passphrase(db_path: &Path, passphrase: &str) -> Result<()> {
-    let conn = crate::db::open_connection_with_passphrase(db_path, passphrase)?;
-    match conn.query_row("SELECT count(*) FROM sqlite_master", [], |r| {
+    verify_main_passphrase_bare(db_path, passphrase)
+}
+
+/// 主口令验证（裸连接，不触挂载接线）：`PRAGMA key` 后以类型化读语句校验
+/// 主库，错误口令报合并口径码化错误（可就地重试）。
+///
+/// **为何不经产品建缝**（issue #1869）：建连收尾单点的带 KEY 挂载会在主库
+/// 验证之前执行——口令未验证时 sync.db 缺失即被补建成**错钥匙**空库，随后
+/// 主库验证失败、正确口令的下次解锁反而挂载失败（错钥匙残留砖化世界）。
+/// 解锁与口令验证必须先验主库、后走产品建缝（挂载凭已验证口令执行）。
+fn verify_main_passphrase_bare(db_path: &Path, passphrase: &str) -> Result<()> {
+    let conn = Connection::open(db_path)?;
+    conn.busy_timeout(crate::db::CONCURRENT_BUSY_TIMEOUT)?;
+    conn.pragma_update(None, "key", passphrase)?;
+    match conn.query_row::<i64, _, _>("SELECT count(*) FROM sqlite_master", [], |r| {
         r.get::<_, i64>(0)
     }) {
         Ok(_) => Ok(()),
@@ -384,12 +462,12 @@ fn export_converted_copy(
     let user_version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
     // SQLCipher 空钥匙 = 明文库（关闭加密形态的目标形态）。
     let target_key = match target_passphrase {
-        Some(pass) => sql_string_literal(pass),
+        Some(pass) => crate::db::connection::sql_string_literal(pass),
         None => String::from("''"),
     };
     let attach_sql = format!(
         "ATTACH DATABASE {} AS encryption_target KEY {target_key}",
-        sql_string_literal(&target.to_string_lossy()),
+        crate::db::connection::sql_string_literal(&target.to_string_lossy()),
     );
     conn.execute_batch(&attach_sql)?;
     let export_result = (|| -> Result<()> {
@@ -443,7 +521,8 @@ fn promote_converted_copy(db_path: &Path, tmp_path: &Path) -> Result<()> {
 /// `db::reset_db_in`）保留为**密文副本**——无密钥不可读，日后想起口令
 /// 数据仍可救回。
 ///
-/// 流程：探测确认文件确为密文库 → 旧库改名 `.bak` 保留副本 → 原位新建
+/// 流程：探测确认文件确为密文库 → 旧库改名 `.bak` 保留副本（同目录密文
+/// `sync.db.bak` 一并移位保留，ADR-0139 决策 3 配对纪律）→ 原位新建
 /// 明文库（建连 + 迁移 + 完整性检查）。新库建失败时尽力把副本改回原位，
 /// 保持锁定现场可重试；旧库本身永不删除。
 ///
@@ -465,6 +544,15 @@ pub fn reset_encrypted_db_file(db_path: &Path) -> Result<Connection> {
             ));
         }
     }
+    // 同步元数据库一并移位（ADR-0139 决策 3 配对纪律，issue #1869）：重置产出
+    // 的新世界是明文空库，旧世界遗留的密文 sync.db 若留在原位，下次建连
+    // 挂载必报形态错配。在动主库之前先移（失败即中止，原库未动、现场可
+    // 重试），按既有重置命名语义保留 `sync.db.bak` 副本（永不删除）；新
+    // 世界的 sync.db 由挂载接线按明文形态补建。
+    let sync_path = crate::db::sync_db_path(db_path);
+    if sync_path.exists() {
+        std::fs::rename(&sync_path, bak_path(&sync_path))?;
+    }
     let bak = bak_path(db_path);
     std::fs::rename(db_path, &bak)?;
     match open_new_plaintext_db(db_path) {
@@ -473,8 +561,10 @@ pub fn reset_encrypted_db_file(db_path: &Path) -> Result<Connection> {
             Ok(conn)
         }
         Err(e) => {
-            // 回滚（尽力而为）：新库建失败时把密文库改回原位，锁定现场可重试。
+            // 回滚（尽力而为）：新库建失败时把密文库与同步元数据库副本改回
+            // 原位（副本世界形态自洽），锁定现场可重试。
             std::fs::rename(&bak, db_path).ok();
+            std::fs::rename(bak_path(&sync_path), &sync_path).ok();
             tracing::error!(error = %e, "忘记口令重置失败，原密文库已改回原位");
             Err(e)
         }
@@ -489,21 +579,14 @@ fn open_new_plaintext_db(db_path: &Path) -> Result<Connection> {
     Ok(conn)
 }
 
-/// SQL 字符串字面量转义（单引号加倍）。仅用于 ATTACH 的路径与主口令注入
-/// （PRAGMA 系语句不支持绑定参数）；转换连接不装耗时 hook，字面量不外泄。
-fn sql_string_literal(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "''"))
-}
-
 /// SQLCipher 下错误口令与损坏同为 not-a-database、运行期不可靠区分
 /// （ADR-0075 决策 5 修订 / issue #603）：统一以「口令错误或文件损坏」
-/// 合并口径的码化错误上报——不误报损坏、可无限重试。单一构造点避免
-/// 口径文案多出漂移（zh 模板与之逐字一致，ADR-0050）。
+/// 合并口径的码化错误上报——不误报损坏、可无限重试。构造点住 db
+/// `db::connection::passphrase_incorrect_error`（crate 内可见：带 KEY 挂载与
+/// 解锁/转换共用同一码与文案，ADR-0050 单一构造点），本函数为既有调用面
+/// 的委托薄皮。
 pub fn passphrase_incorrect_error() -> AppError {
-    AppError::coded(
-        "encryption.passphrase-incorrect",
-        "口令错误或文件损坏，请重试",
-    )
+    crate::db::connection::passphrase_incorrect_error()
 }
 
 // ---------------------------------------------------------------------------
@@ -534,17 +617,12 @@ pub fn unlock_db_file(db_path: &Path, passphrase: &str) -> Result<Connection> {
             ));
         }
     }
-    // `PRAGMA key` 本身不校验口令；校验发生在首条读语句。用类型化读语句
-    // 先行校验（错误形态可精确匹配 not-a-database），再执行迁移。
+    // `PRAGMA key` 本身不校验口令；校验发生在首条读语句。主口令先经裸连接
+    // 验证主库（[`verify_main_passphrase_bare`]：错误口令的尝试不得以未验证
+    // 口令触发带 KEY 挂载、给世界留下错钥匙 sync.db），验证通过后经产品建缝
+    // 打开——挂载凭已验证口令执行，再执行迁移。
+    verify_main_passphrase_bare(db_path, passphrase)?;
     let conn = crate::db::open_connection_with_passphrase(db_path, passphrase)?;
-    if let Err(e) = conn.query_row("SELECT count(*) FROM sqlite_master", [], |r| {
-        r.get::<_, i64>(0)
-    }) {
-        if is_not_a_database(&e) {
-            return Err(passphrase_incorrect_error());
-        }
-        return Err(e.into());
-    }
     let mut conn = conn;
     crate::db::init_db(&mut conn)?;
     if let Err(e) = crate::db::check_integrity(&conn) {
@@ -559,10 +637,9 @@ pub fn unlock_db_file(db_path: &Path, passphrase: &str) -> Result<Connection> {
 
 /// 错误形态判别：SQLCipher 对错误口令与损坏文件均报 not-a-database；
 /// 本谓词供备份域等消费方归一错误形态（#1088 归位后为跨 crate `pub`：
-/// 域侧消费，壳层不经它做分支）。
+/// 域侧消费，壳层不经它做分支）。实现住 db
+/// `db::connection::is_not_a_database_error`（带 KEY 挂载同语义共用，单一实现点），
+/// 本函数为既有跨 crate 调用面的委托薄皮。
 pub fn is_not_a_database(e: &rusqlite::Error) -> bool {
-    matches!(
-        e,
-        rusqlite::Error::SqliteFailure(err, _) if err.code == rusqlite::ffi::ErrorCode::NotADatabase
-    )
+    crate::db::connection::is_not_a_database_error(e)
 }
