@@ -7,6 +7,7 @@
 
 mod funding;
 mod order;
+mod purchase;
 mod query;
 mod search;
 mod snapshot;

@@ -14,6 +14,7 @@
 - **错误码**：新增 `transaction.funding-item-unsupported` / `transaction.funding-account-conflict` / `transaction.account-required` / `transaction.funding-sum-mismatch` / `transaction.funding-amount-positive` / `transaction.funding-label-too-long`（zh/en 模板同步）（[#1860]，ADR-0138）。
 - **交易**：多出资方读侧呈现——分解行（带非空出资分解）在交易列表账户列显示首条出资账户并标注「等 N 账户」（多账户）或「同账户 N 笔」（同账户多条），退款按比例自动分解的行另带「按比例自动分解」标注，桌面表格与移动卡片同源；行菜单与移动档整卡点击进只读详情弹窗，呈现出资项列表（账户 / 扣款标签 / 金额）与 Σ 合计。分解行不开放编辑与退款（表单录入分解另行支持）（[#1861]，ADR-0138）。
 - **交易 / AI 导入 / HTTP API**：订单可读性——交易新增可选来源订单号 `source_order_no`（V035，来源元数据、不限 kind，同单多行写同一单号；增量迁移、存量行零变化；AI / HTTP 契约可选字段，导入教学补「单号写入列、不入备注」）；交易列表行尾为有单号的行渲染静态「订单 <单号>」徽章（桌面表格与移动卡片同源，不可点击、无过滤、不分组）；行菜单对订单行开放只读详情（编辑通道保留），详情呈现所属订单区——行数 · 合计 · 按账户聚合的出资构成徽标（单账户订单 1 枚、多账户订单 ≥2 枚）与各行明细，数据经新增订单汇总只读 IPC 命令（同单行集与出资聚合收同一读事务；无 HTTP 端点）（[#1862]，ADR-0138 决策 9）。
+- **交易 / AI 导入 / HTTP API**：购买项（订单商品明细）——`expense` 写入可携带 `purchases[]`（每条 = {名称, 件数, 分类?, 单价?}，数组顺序 = 对账单顺序；仅 `expense` 可带，其余类型码化拒绝；单价可空——源单只给订单总额时留空，不进任何金额口径），随交易落购买项子表（V034 就地扩 `transaction_purchases`，子行随主行存亡、无独立软删位、存量行零迁移）并随交易读回（列表 / 详情 / 搜索 / 订单汇总同契约；无购买项行为空数组、存量行为零变化）；新增错误码 `transaction.purchase-item-unsupported` / `transaction.purchase-name-required` / `transaction.purchase-quantity-positive` / `transaction.purchase-price-negative` / `purchase.category-not-found`（zh/en 模板同步）；导入教学补「购买项字段、商品名不写备注、价格拿不到就留空不猜不编造、订单级分类按金额最大的商品确定」（[#1882]，ADR-0138 决策 9/10）。界面呈现随后续票（#1883 / #1884）。
 
 ## [0.8.0] - 2026-09-27
 
@@ -453,3 +454,4 @@
 [#1860]: https://github.com/asiazhang/ledger/issues/1860
 [#1861]: https://github.com/asiazhang/ledger/issues/1861
 [#1862]: https://github.com/asiazhang/ledger/issues/1862
+[#1882]: https://github.com/asiazhang/ledger/issues/1882

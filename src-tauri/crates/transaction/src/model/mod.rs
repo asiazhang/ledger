@@ -16,11 +16,11 @@ mod transaction;
 pub use filter::TransactionListFilter;
 pub use input::{
     CreateTransactionResult, SecurityOrigin, TransactionBatchInput, TransactionFundingInput,
-    TransactionInput, UpdateTransactionInput,
+    TransactionInput, TransactionPurchaseInput, UpdateTransactionInput,
 };
 pub use normalized::NormalizedTransaction;
 pub use order::{OrderAccountContribution, TransactionOrderSummary};
 pub use transaction::{
-    ConvertFields, Transaction, TransactionFunding, TransactionListResult, TransactionSearchResult,
-    TransactionSource, TransactionSourceKind, TransactionSourceStatus,
+    ConvertFields, Transaction, TransactionFunding, TransactionListResult, TransactionPurchase,
+    TransactionSearchResult, TransactionSource, TransactionSourceKind, TransactionSourceStatus,
 };

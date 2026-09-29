@@ -46,6 +46,13 @@ pub struct Input {
     /// 且币种未变时跳过逐条账户准入（「保持历史引用」，与 `existing_merchant_id`
     /// 同款语义——历史分解行的出资账户此后软删不阻止编辑其他字段）。
     pub existing_funding: Vec<crate::write::funding_items::FundingItem>,
+    /// 购买项明细（issue #1882 / ADR-0138 决策 9）：数组顺序即落库顺序位；仅
+    /// `expense` 可带（kind 准入在 [`validate_purchases`] 收口）。
+    pub purchases: Vec<crate::write::purchase_items::PurchaseItem>,
+    /// 修改路径该行**当前**的落库明细（创建路径为空）：提交明细与之逐项相同
+    /// 时跳过逐条分类准入（「保持历史引用」，与 [`Self::existing_funding`] 同款
+    /// 语义——历史购买项的分类此后软删不阻止编辑其他字段）。
+    pub existing_purchases: Vec<crate::write::purchase_items::PurchaseItem>,
     pub merchant_id: Option<String>,
     /// 修改路径该行**当前**的商户 id（创建路径为 None）。提交的 [`merchant_id`] 与其
     /// 相同视为「保持历史引用」：软删商户的历史交易仍可修改其他字段，跳过在用校验；
@@ -101,6 +108,9 @@ pub struct NormalizedRow {
     /// 出资项分解（issue #1860 / ADR-0138）：随行落库的子行序列（数组顺序即
     /// 顺序位）；分解行 `account_id` 为 `None`、本字段非空。
     pub funding: Vec<crate::write::funding_items::FundingItem>,
+    /// 购买项明细（issue #1882 / ADR-0138 决策 9）：随行落库的子行序列（数组顺序即
+    /// 顺序位）；仅 expense 非空。
+    pub purchases: Vec<crate::write::purchase_items::PurchaseItem>,
     pub category_id: Option<String>,
     pub merchant_id: Option<String>,
     /// 可选保单引用（issue #361 / ADR-0051 决策 3），随 [`Input::policy_id`] 归一化。
@@ -255,6 +265,17 @@ pub fn normalize(conn: &Connection, input: &Input) -> Result<NormalizedRow> {
             currency_unchanged,
         },
     )?;
+    // 购买项契约（issue #1882 / ADR-0138 决策 9/10）：kind 准入 + 逐条约束（名称
+    // 非空、件数正、单价非负、分类准入）。购买项不承载资金语义，与账户落定、
+    // 币种守卫与折算零耦合，校验放行即随行落库。
+    crate::write::purchase_items::validate_purchases(
+        conn,
+        crate::write::purchase_items::PurchaseContract {
+            kind: input.kind,
+            purchases: &input.purchases,
+            existing_purchases: &input.existing_purchases,
+        },
+    )?;
     // 账户引用落定（ADR-0138 决策 1/2）：非空分解 ⇒ 主表账户列落 NULL（账户口径
     // 由子行承载，读回 `account_id: null`）；空分解 ⇒ 非 refund 必填（refund 继承
     // 原支出账户，原支出为分解行时继承 NULL——缺省按比例派生的读时推导前提）。
@@ -312,6 +333,7 @@ pub fn normalize(conn: &Connection, input: &Input) -> Result<NormalizedRow> {
         to_account_id,
         // 分解行 account_id 为 None、本字段非空（互斥已收口，见上）。
         funding: input.funding.clone(),
+        purchases: input.purchases.clone(),
         // 通用 kind 经准入校验后恒为 None（仅 buy/sell 可携带，见 normalize）。
         funding_account_id: input.funding_account_id.clone(),
         category_id,
@@ -505,6 +527,9 @@ pub fn insert_row_with_id(conn: &Connection, id: &str, row: &NormalizedRow) -> R
     // 出资项子行落库（issue #1860 / ADR-0138）：主行落库后同事务写子行；分解行
     // account_id 为 NULL，账户口径由子行承载。空分解零写入（单出资现状）。
     crate::write::funding_items::insert_rows(conn, id, &row.funding)?;
+    // 购买项子行落库（issue #1882 / ADR-0138 决策 9）：主行落库后同事务写子行。
+    // 空明细零写入（无购买项 = 现状，存量行为零变化）。
+    crate::write::purchase_items::insert_rows(conn, id, &row.purchases)?;
     // 余额缓存写路径（issue #491 / ADR-0067）：新行落库后在同一事务内对受影响
     // 账户按口径表达式整体重算。本接缝是全部交易创建（手动/批量导入/余额调整/
     // buy/sell/定时引擎例外/同步重放）的单一收口，挂此处即覆盖全部创建入口。
@@ -576,6 +601,8 @@ pub fn update_row(conn: &Connection, id: &str, row: &NormalizedRow) -> Result<()
     // 与主行 UPDATE 同事务（中途失败整体回滚）。
     crate::write::funding_items::replace_rows(conn, id, &row.funding)?;
     // 余额缓存写路径：受影响账户 = 旧行 ∪ 新行账户引用集（主表三列 + 出资子行端，
+    // 购买项子行全量替换（与出资项同款全量语义）：与主行 UPDATE 同事务。
+    crate::write::purchase_items::replace_rows(conn, id, &row.purchases)?;
     // ADR-0138 决策 7），消费余额模块唯一定义（issue #534 / #935）；旧账户引用读取
     // 时机与刷新事务位置不变，同事务整体重算（修改可能移动账户，ADR-0067）。经写
     // 路径副作用接缝传入两行引用集（#1090 接缝反转），推导与重算都在账户域实现侧。
@@ -627,6 +654,11 @@ impl TryFrom<&NormalizedTransaction> for NormalizedRow {
                 .map(crate::write::funding_items::FundingItem::from)
                 .collect(),
             category_id: norm.category_id.clone(),
+            purchases: norm
+                .purchases
+                .iter()
+                .map(crate::write::purchase_items::PurchaseItem::from)
+                .collect(),
             merchant_id: norm.merchant_id.clone(),
             policy_id: norm.policy_id.clone(),
             refund_of_transaction_id: norm.refund_of_transaction_id.clone(),
@@ -656,6 +688,11 @@ impl From<&NormalizedRow> for NormalizedTransaction {
                 .funding
                 .iter()
                 .map(crate::model::TransactionFundingInput::from)
+                .collect(),
+            purchases: row
+                .purchases
+                .iter()
+                .map(crate::model::TransactionPurchaseInput::from)
                 .collect(),
             category_id: row.category_id.clone(),
             merchant_id: row.merchant_id.clone(),

@@ -84,6 +84,7 @@ fn create_transfer_with_to_account() {
             idempotency_key: None,
             origin: None,
             fx_rate: None,
+            purchases: Vec::new(),
         },
     )
     .unwrap()
@@ -679,6 +680,7 @@ fn create_refund_linked_to_expense() {
             idempotency_key: None,
             origin: None,
             fx_rate: None,
+            purchases: Vec::new(),
         },
     )
     .unwrap()
@@ -713,6 +715,7 @@ fn create_refund_linked_to_expense() {
             idempotency_key: None,
             origin: None,
             fx_rate: None,
+            purchases: Vec::new(),
         },
     )
     .unwrap()
@@ -1465,6 +1468,7 @@ fn update_currency_guard_rejects_dirty_row_until_made_consistent() {
         source_order_no: None,
         note: None,
         date: "2026-01-01".into(),
+        purchases: Vec::new(),
     };
     let id = insert_row(&conn, &dirty).unwrap();
 

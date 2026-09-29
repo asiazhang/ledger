@@ -98,6 +98,7 @@ fn buy_input(account_id: &str, instrument_id: &str) -> TransactionInput {
         idempotency_key: None,
         origin: None,
         fx_rate: None,
+        purchases: Vec::new(),
     }
 }
 

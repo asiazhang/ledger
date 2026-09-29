@@ -53,6 +53,11 @@ pub struct Transaction {
     /// refund 缺省派生的条目（读时按原支出比例推导、不落库）带 `derived=true`。
     #[serde(default)]
     pub fundings: Vec<TransactionFunding>,
+    /// 购买项明细（issue #1882 / ADR-0138 决策 9）：带购买项的 expense 按对账单
+    /// 顺序稳定返回；非库列——`FromRow` 恒空，由读路径 `attach_purchases` 填充
+    /// （列表 / 详情 / 搜索 / 订单汇总同填）。仅 `expense` 可带；无购买项恒空数组。
+    #[serde(default)]
+    pub purchases: Vec<TransactionPurchase>,
     /// 来源列（spec #704 / issue #706，词汇表「来源列」）：发起来源实体的读时反查推导，
     /// 零数据迁移。仅列表/搜索读路径填充（`attach_sources`）；单笔读回与写入响应
     /// 不做反查，恒为 `None`；无来源交易（手动录入/AI 导入）为 `None`。
@@ -75,6 +80,22 @@ pub struct TransactionFunding {
     /// refund 缺省按出资比例派生的读时推导标记（ADR-0138 决策 5）：`true` = 读时
     /// 推导、未落库；落库分解与单出资行恒 `false`。
     pub derived: bool,
+}
+
+/// 购买项读回条目（issue #1882 / ADR-0138 决策 9/10）：带购买项的 expense 随交易
+/// 读回，按顺序位（对账单顺序）稳定排序。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct TransactionPurchase {
+    /// 商品名称（源单原文）。
+    pub name: String,
+    /// 件数（正整数）。
+    pub quantity: i64,
+    /// 商品分类引用（可选，明细指针）：分类删除时读回 null；不承载统计口径
+    /// （报表按交易行分类整单计入，ADR-0138 决策 11）。
+    pub category_id: Option<String>,
+    /// 商品单价（可选，整数分）：源单只给订单总额时为空；存而不显示、不进
+    /// 任何金额与折算口径（ADR-0138 决策 10）。
+    pub unit_price_cents: Option<i64>,
 }
 
 /// 基金转换扩展（ADR-0099）：一笔 convert 两腿的标的、份额与两侧确认金额。
@@ -183,6 +204,9 @@ impl FromRow for Transaction {
             // 出资项分解非库列：FromRow 恒空，由读路径 `attach_fundings` 填充
             //（列表页与单笔读回同填）。
             fundings: Vec::new(),
+            // 购买项明细非库列：FromRow 恒空，由读路径 `attach_purchases` 填充
+            //（列表 / 详情 / 搜索 / 订单汇总同填）。
+            purchases: Vec::new(),
             // 来源列非库列：FromRow 恒空，由列表/搜索读路径 `attach_sources` 按页填充。
             source: None,
             // 转换扩展同规：非库列，由列表/搜索读路径 `attach_convert_fields` 按页填充。

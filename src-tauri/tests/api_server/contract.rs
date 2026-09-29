@@ -425,6 +425,12 @@ async fn contract_transaction_input_quantity_describes_split_semantics() {
 /// 实测 28826 字节越 28KB。描述按 #1631 先例瘦身至语义必需（同单多行同单号、
 /// 不入备注、不限 kind、缺省即不带、全量替换）后回落至预算内，预算随新功能面
 /// 提至 29KB 留增长余量（维护者决策，同 #1860 决策分支）。
+///
+/// issue #1882 / ADR-0138 触线：购买项契约面——`TransactionPurchase` /
+/// `TransactionPurchaseInput` 两个 schema、`purchases` 字段三处与 5 个购买项错误码——
+/// 加入后实测 30388 字节越 29KB，提至 30KB：超量落在剥离出处引用后的语义文本上，
+/// kind 准入（仅 expense）、数组顺序即对账单顺序与「价格拿不到就留空、不猜不编造」
+/// 是 AI 正确读写购买项的必需语义，不选删描述换预算（同 #1860 决策分支）。
 #[tokio::test]
 async fn contract_size_within_budget() {
     let (app, _) = setup_app();
@@ -440,8 +446,8 @@ async fn contract_size_within_budget() {
     assert_eq!(response.status(), StatusCode::OK);
     let bytes = body_to_bytes(response.into_body()).await;
     assert!(
-        bytes.len() <= 29 * 1024,
-        "紧凑契约方言应保持在预算内（当前 {} 字节，预算 29KB）",
+        bytes.len() <= 30 * 1024,
+        "紧凑契约方言应保持在预算内（当前 {} 字节，预算 30KB）",
         bytes.len()
     );
 }
@@ -490,5 +496,35 @@ async fn contract_list_transactions_describes_hide_investment_related_param() {
     assert!(
         desc.contains("hide_investment_related"),
         "GET /transactions 契约自述应包含可选参数 hide_investment_related，实际: {desc}"
+    );
+}
+
+/// 购买项契约锁（issue #1882 / ADR-0138 决策 9/10）：创建/修改请求体与交易读回
+/// schema 都带出 `purchases` 字段、条目 schema 携带可空单价语义——契约自描述端点
+/// 随类型派生自动带出新字段的验收面（AI 据此构造购买项提交；「价格拿不到就留空、
+/// 不猜不编造」的教学前提是契约里写得出来）。
+#[tokio::test]
+async fn contract_transaction_schemas_carry_purchases() {
+    let doc = fetch_contract().await;
+    let schemas = doc["schemas"].as_object().unwrap();
+
+    for name in ["TransactionPurchase", "TransactionPurchaseInput"] {
+        assert!(schemas.contains_key(name), "应带出购买项条目 schema {name}");
+    }
+    for name in ["TransactionInput", "UpdateTransactionInput", "Transaction"] {
+        let has_field = schemas[name]
+            .as_object()
+            .unwrap()
+            .keys()
+            .any(|k| k == "purchases" || k == "purchases?");
+        assert!(has_field, "{name} 应带出购买项字段");
+    }
+
+    let desc = schemas["TransactionPurchaseInput"]["unit_price_cents?"][1]
+        .as_str()
+        .unwrap_or_default();
+    assert!(
+        desc.contains("留空"),
+        "单价字段描述应说明可空语义（价格拿不到就留空），实际: {desc}"
     );
 }

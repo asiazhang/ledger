@@ -182,6 +182,13 @@ const cases: Case[] = [
     en: "funding item label must not exceed 50 characters",
   },
   {
+    // #1882 / ADR-0138 决策 9：购买项 kind 准入（params = kind 字面量）。
+    code: "transaction.purchase-item-unsupported",
+    message: "交易类型 transfer 不能携带购买项",
+    params: ["transfer"],
+    en: "transaction type transfer cannot carry purchase lines",
+  },
+  {
     code: "trade.dividend-account-not-found",
     message: "分红到账账户不存在或已删除: acc-x",
     params: ["acc-x"],

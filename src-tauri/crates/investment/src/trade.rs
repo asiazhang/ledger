@@ -313,7 +313,9 @@ fn prepare_buy(
             fx_rate_used: native.fx_rate_used,
             fx_rate_source: native.fx_rate_source,
             account_id: input.account_id.clone(),
+            // 投资 kind 不携带出资分解（ADR-0138 决策 3）与购买项（issue #1882 / 决策 9）。
             funding: Vec::new(),
+            purchases: Vec::new(),
             // 现金腿归结算账户，不存在转入侧：携带已在守卫段拒绝，恒 None（issue #1187）。
             to_account_id: None,
             funding_account_id: input.funding_account_id.clone(),
@@ -440,7 +442,9 @@ fn prepare_sell(
             fx_rate_used: native.fx_rate_used,
             fx_rate_source: native.fx_rate_source,
             account_id: input.account_id.clone(),
+            // 投资 kind 不携带出资分解（ADR-0138 决策 3）与购买项（issue #1882 / 决策 9）。
             funding: Vec::new(),
+            purchases: Vec::new(),
             // 现金腿归结算账户，不存在转入侧：携带已在守卫段拒绝，恒 None（issue #1187）。
             to_account_id: None,
             funding_account_id: input.funding_account_id.clone(),
@@ -568,7 +572,9 @@ fn prepare_convert(
             fx_rate_used: native.fx_rate_used,
             fx_rate_source: native.fx_rate_source,
             account_id: input.account_id.clone(),
+            // 投资 kind 不携带出资分解（ADR-0138 决策 3）与购买项（issue #1882 / 决策 9）。
             funding: Vec::new(),
+            purchases: Vec::new(),
             // 两腿是标的而非账户：转入账户已拒绝、出资账户已被准入拒绝，恒 None。
             to_account_id: None,
             funding_account_id: None,
@@ -732,7 +738,9 @@ fn prepare_split(
             fx_rate_used: zero_leg.fx_rate_used,
             fx_rate_source: zero_leg.fx_rate_source,
             account_id: input.account_id.clone(),
+            // 投资 kind 不携带出资分解（ADR-0138 决策 3）与购买项（issue #1882 / 决策 9）。
             funding: Vec::new(),
+            purchases: Vec::new(),
             // 单标的、不跨账户：转入账户已拒绝、出资账户已被准入拒绝，恒 None。
             to_account_id: None,
             funding_account_id: None,
@@ -839,7 +847,9 @@ fn prepare_dividend(
             fx_rate_used: native.fx_rate_used,
             fx_rate_source: native.fx_rate_source,
             account_id: input.account_id.clone(),
+            // 投资 kind 不携带出资分解（ADR-0138 决策 3）与购买项（issue #1882 / 决策 9）。
             funding: Vec::new(),
+            purchases: Vec::new(),
             // 单标的、不跨账户：转入标的 / 转入账户已拒绝，出资账户已被准入拒绝。
             to_account_id: None,
             funding_account_id: None,

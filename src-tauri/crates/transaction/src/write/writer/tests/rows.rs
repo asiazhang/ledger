@@ -61,6 +61,7 @@ fn read_row(conn: &Connection, id: &str) -> NormalizedRow {
         source_order_no: None,
         note: row.note,
         date: row.date,
+        purchases: Vec::new(),
     }
 }
 
@@ -183,6 +184,7 @@ fn update_row_overwrites_fields_and_bumps_version() {
         source_order_no: None,
         note: Some("改后".into()),
         date: "2026-02-10".into(),
+        purchases: Vec::new(),
     };
     update_row(&conn, &id, &updated).unwrap();
 

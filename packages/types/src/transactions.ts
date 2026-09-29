@@ -68,6 +68,19 @@ export interface TransactionFunding {
   derived: boolean;
 }
 
+/** 购买项读回条目（issue #1882 / ADR-0138 决策 9/10）：带购买项的 expense 随交易
+ * 读回，按顺序位（对账单顺序）稳定排序。 */
+export interface TransactionPurchase {
+  /** 商品名称（源单原文） */
+  name: string;
+  /** 件数（正整数） */
+  quantity: number;
+  /** 商品分类引用（可选，明细指针）：分类删除时为 null；不承载统计口径 */
+  category_id: string | null;
+  /** 商品单价（可选，整数分）：源单只给订单总额时为空；不进任何金额口径 */
+  unit_price_cents: number | null;
+}
+
 export interface Transaction extends Syncable {
   id: string;
   kind: TransactionKind;
@@ -98,6 +111,9 @@ export interface Transaction extends Syncable {
   refund_of_transaction_id: string | null;
   /** 出资项分解（issue #1860 / ADR-0138）：分解行按顺序位稳定返回；非分解行为空数组 */
   fundings: TransactionFunding[];
+  /** 购买项明细（issue #1882 / ADR-0138 决策 9）：带购买项的 expense 按对账单顺序稳定返回；
+   * 无购买项（含非 expense 行）恒空数组 */
+  purchases: TransactionPurchase[];
   /** 来源订单号（issue #1862 / ADR-0138 决策 9，V035）：导入来源单据的外部订单标识，
    * 行尾订单徽章与详情订单区的行级归属锚点；手动行为 null，单号不入备注 */
   source_order_no: string | null;
@@ -148,6 +164,19 @@ export interface TransactionFundingInput {
   label?: string | null;
 }
 
+/** 购买项条目（issue #1882 / ADR-0138 决策 9/10）：`TransactionInput.purchases` /
+ * `UpdateTransactionInput.purchases` 的条目类型。wire：`{name, quantity, category_id?, unit_price_cents?}` */
+export interface TransactionPurchaseInput {
+  /** 商品名称（必填，源单原文）：购买项行自承载商品名，不写进交易备注 */
+  name: string;
+  /** 件数（正整数） */
+  quantity: number;
+  /** 商品分类引用（可选）：须为在用分类 id，未命中先建 */
+  category_id?: string | null;
+  /** 商品单价（可选，整数分，≥ 0）：源单只给订单总额时留空（不猜不编造） */
+  unit_price_cents?: number | null;
+}
+
 export interface TransactionInput {
   kind: TransactionKind;
   amount_cents: number;
@@ -164,6 +193,10 @@ export interface TransactionInput {
    * 缺省（空数组）即单出资现状；修改路径为全量替换语义（空数组 = 移除分解） */
   funding?: TransactionFundingInput[] | null;
   category_id?: string | null;
+  /** 购买项明细（issue #1882 / ADR-0138 决策 9）：仅 expense 可携带（其余 kind 后端码化拒绝）；
+   * 每条 = {名称, 件数, 分类?, 单价?}，数组顺序 = 对账单顺序；价格拿不到就留空，商品名不写备注；
+   * 缺省（空数组）即无明细；修改路径为全量替换语义 */
+  purchases?: TransactionPurchaseInput[] | null;
   /** 商户引用（expense/refund/income 可携带；transfer/buy/sell/dividend/split/convert 后端行为层拒绝） */
   merchant_id?: string | null;
   /** 商户名字符串（AI 导入契约，issue #194）：后端精确匹配在用商户名，命中复用、未命中即建；

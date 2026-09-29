@@ -271,6 +271,7 @@ pub(crate) fn generate_ops(
                         source_order_no: None,
                         note: None,
                         date: date.to_string(),
+                        purchases: Vec::new(),
                     },
                     investment: None,
                     convert: None,

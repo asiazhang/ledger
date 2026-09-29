@@ -57,8 +57,9 @@ pub use model::{
     ConvertFields, CreateTransactionResult, NormalizedTransaction, OrderAccountContribution,
     SecurityOrigin, Transaction, TransactionBatchInput, TransactionFunding,
     TransactionFundingInput, TransactionInput, TransactionListFilter, TransactionListResult,
-    TransactionOrderSummary, TransactionSearchResult, TransactionSource, TransactionSourceKind,
-    TransactionSourceStatus, UpdateTransactionInput,
+    TransactionOrderSummary, TransactionPurchase, TransactionPurchaseInput,
+    TransactionSearchResult, TransactionSource, TransactionSourceKind, TransactionSourceStatus,
+    UpdateTransactionInput,
 };
 
 pub use amount::{

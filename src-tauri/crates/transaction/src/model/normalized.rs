@@ -8,8 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::amount::{FxRateSource, TransactionKind};
 
-use crate::model::TransactionFundingInput;
-
+use crate::model::{TransactionFundingInput, TransactionPurchaseInput};
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct NormalizedTransaction {
     pub kind: TransactionKind,
@@ -34,6 +33,11 @@ pub struct NormalizedTransaction {
     /// 旧版本载荷（成员缺省）反序列化为空——只增不改。
     #[serde(default)]
     pub funding: Vec<TransactionFundingInput>,
+    /// 购买项明细（issue #1882 / ADR-0138 决策 9）：仅 expense 可带，随行搬运
+    /// （同步重放同语义落子表）。`#[serde(default)]` 使旧版本载荷（成员缺省）
+    /// 反序列化为空——只增不改。
+    #[serde(default)]
+    pub purchases: Vec<TransactionPurchaseInput>,
     pub category_id: Option<String>,
     pub merchant_id: Option<String>,
     pub policy_id: Option<String>,

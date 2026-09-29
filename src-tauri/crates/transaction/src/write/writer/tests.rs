@@ -18,5 +18,6 @@ mod currency;
 mod funding_item;
 mod merchant;
 mod normalize;
+mod purchase_item;
 mod refund;
 mod rows;

@@ -1302,3 +1302,110 @@ async fn test_batch_import_source_order_no_roundtrips_and_put_clears() {
     let untouched = rows.iter().find(|t| t["id"] != *id).unwrap();
     assert_eq!(untouched["source_order_no"], "JD-9001", "未修改行保持原值");
 }
+
+// ---------------------------------------------------------------------------
+// 购买项（issue #1882 / ADR-0138 决策 9/10）：3 件商品订单写入读回、kind 准入、
+// 可空单价
+// ---------------------------------------------------------------------------
+
+/// 多商品订单全链（一步可观察证明）：写入通道提交一笔带 3 件商品的 `expense`
+/// → 读回拿到 3 条购买项、顺序与提交顺序一致（对账单顺序）；源单只给订单总额
+/// 时单价留空照常写入与读回；非 `expense` 携带被拒（码化）。
+#[tokio::test]
+async fn test_multi_item_order_purchases_roundtrip_readback() {
+    let (app, conn) = setup_app();
+    let account_id = create_account_via_api(&app, "现金").await;
+    let tx = format!(
+        r#"{{"kind":"expense","amount_cents":10000,"currency_code":"CNY","account_id":"{account_id}","date":"2026-07-01","note":"京东自营","purchases":[{{"name":"猫粮","quantity":1,"unit_price_cents":5990}},{{"name":"洗衣液","quantity":2}},{{"name":"纸巾","quantity":3}}]}}"#
+    );
+    let created = post_batch(&app, batch_body(&[&tx], None)).await;
+    assert_eq!(
+        created[0]["success"], true,
+        "多商品订单应成功: {:?}",
+        created[0]
+    );
+    let id = created[0]["id"].as_str().unwrap();
+
+    // 读回：3 条购买项、顺序与提交一致、可空单价原样。
+    let (_, readback) = get_json(&app, "/api/v1/transactions").await;
+    let rows = items_of(&readback);
+    assert_eq!(rows.len(), 1, "列表按交易计数（3 件商品仍计 1 笔）");
+    assert_eq!(rows[0]["id"], id);
+    let purchases = rows[0]["purchases"].as_array().expect("读回携带购买项数组");
+    assert_eq!(purchases.len(), 3);
+    assert_eq!(purchases[0]["name"], "猫粮");
+    assert_eq!(purchases[0]["quantity"], 1);
+    assert_eq!(purchases[0]["unit_price_cents"], 5990);
+    assert_eq!(purchases[1]["name"], "洗衣液");
+    assert!(
+        purchases[1]["unit_price_cents"].is_null(),
+        "源单只给总额时单价留空照常落库与读回"
+    );
+    assert_eq!(purchases[2]["name"], "纸巾");
+
+    // 子表落库证据（3 行、顺序位 0..2）。
+    let guard = conn.lock().unwrap_or_else(|e| e.into_inner());
+    let sub: i64 = guard
+        .query_row(
+            "SELECT COUNT(*) FROM transaction_purchases WHERE transaction_id=?1",
+            rusqlite::params![id],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(sub, 3);
+}
+
+/// kind 准入（契约只增不改的准入面）：`transfer` 携带购买项 → 行级码化拒绝。
+#[tokio::test]
+async fn test_purchases_on_transfer_rejected_coded() {
+    let (app, _) = setup_app();
+    let account_id = create_account_via_api(&app, "现金").await;
+    let to_account = create_account_via_api(&app, "银行").await;
+    let tx = format!(
+        r#"{{"kind":"transfer","amount_cents":1000,"currency_code":"CNY","account_id":"{account_id}","to_account_id":"{to_account}","date":"2026-07-01","purchases":[{{"name":"猫粮","quantity":1}}]}}"#
+    );
+    let results = post_batch(&app, batch_body(&[&tx], None)).await;
+    assert_eq!(results[0]["success"], false);
+    let err = results[0]["error"].as_str().unwrap();
+    assert!(
+        err.contains("不能携带购买项"),
+        "准入错误应可读自纠: {results:?}"
+    );
+}
+
+/// 修改路径（PUT 全量替换语义）：换明细整体重写；缺省（不提交）整体移除。
+#[tokio::test]
+async fn test_update_replaces_purchases_full_semantics() {
+    let (app, _) = setup_app();
+    let account_id = create_account_via_api(&app, "现金").await;
+    let tx = format!(
+        r#"{{"kind":"expense","amount_cents":10000,"currency_code":"CNY","account_id":"{account_id}","date":"2026-07-01","purchases":[{{"name":"猫粮","quantity":1}},{{"name":"洗衣液","quantity":2}}]}}"#
+    );
+    let created = post_batch(&app, batch_body(&[&tx], None)).await;
+    let id = created[0]["id"].as_str().unwrap().to_string();
+
+    // 换明细：全量重写。
+    let put = format!(
+        r#"{{"kind":"expense","amount_cents":10000,"currency_code":"CNY","account_id":"{account_id}","date":"2026-07-01","purchases":[{{"name":"纸巾","quantity":3}}]}}"#
+    );
+    let (status, _) = put_transaction_via_api(&app, &id, &put).await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, body) = get_json(&app, "/api/v1/transactions").await;
+    let rows = items_of(&body);
+    let purchases = rows[0]["purchases"].as_array().unwrap();
+    assert_eq!(purchases.len(), 1);
+    assert_eq!(purchases[0]["name"], "纸巾");
+
+    // 缺省（不提交）= 整体移除。
+    let clear = format!(
+        r#"{{"kind":"expense","amount_cents":10000,"currency_code":"CNY","account_id":"{account_id}","date":"2026-07-01"}}"#
+    );
+    let (status, _) = put_transaction_via_api(&app, &id, &clear).await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, body) = get_json(&app, "/api/v1/transactions").await;
+    let rows = items_of(&body);
+    assert!(
+        rows[0]["purchases"].as_array().unwrap().is_empty(),
+        "PUT 缺省应整体移除购买项"
+    );
+}

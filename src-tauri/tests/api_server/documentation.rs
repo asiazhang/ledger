@@ -266,6 +266,12 @@ async fn test_openapi_doc_has_currencies_endpoint() {
 /// 与 6 个出资错误码）加入后实测 56909 字节越 52KB，与紧凑方言同票同因提至 57KB：
 /// 新描述承载互斥二选一与 refund 缺省派生语义，删掉会让 AI 误读分解行口径，
 /// 不选删描述换预算（ADR-0119 后果节决策）。
+///
+/// issue #1882 / ADR-0138 触线：购买项契约面（`TransactionPurchase` /
+/// `TransactionPurchaseInput` 两 schema、`purchases` 字段三处与 5 个购买项错误码）
+/// 加入后实测 61037 字节越 57KB，与紧凑方言同票同因提至 62KB：新描述承载 kind
+/// 准入、对账单顺序与「价格拿不到就留空」语义，删掉会让 AI 误读购买项口径，
+/// 不选删描述换预算（同 #1860 决策分支）。
 #[tokio::test]
 async fn test_openapi_doc_size_within_budget() {
     let (app, _) = setup_app();
@@ -283,8 +289,8 @@ async fn test_openapi_doc_size_within_budget() {
 
     let bytes = body_to_bytes(response.into_body()).await;
     assert!(
-        bytes.len() <= 57 * 1024,
-        "OpenAPI 契约文档应保持在预算内（当前 {} 字节，预算 57KB）",
+        bytes.len() <= 62 * 1024,
+        "OpenAPI 契约文档应保持在预算内（当前 {} 字节，预算 62KB）",
         bytes.len()
     );
 }
@@ -471,6 +477,19 @@ async fn test_import_knowledge_covers_key_conventions() {
         // 携带与现金腿归属的锁随投资节正文在投资端点锁测试。
         "出资账户",
         "仅出资账户不同的两笔不互相去重",
+        // 购买项教学关键词锁（issue #1882 / ADR-0138 决策 9/10/16）：字段位置
+        // （purchases 条目形状）、仅 expense 准入、商品名不写备注、价格留空
+        // 不猜不编造、订单级分类选取规则（金额最大商品 / 件数退让）、读回
+        // 顺序语义——整节被误删或退回「商品名写备注」旧口径时逐词报红。
+        "购买项",
+        "purchases",
+        "unit_price_cents",
+        "只有 `expense` 可带购买项",
+        "不再写进 `note` 备注",
+        "价格拿不到就留空，不猜不编造",
+        "金额最大的商品",
+        "按件数最大的商品退让",
+        "按提交顺序稳定返回",
     ];
     for kw in required_keywords {
         assert!(text.contains(kw), "导入知识应包含关键约定关键词 {kw:?}");

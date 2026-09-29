@@ -138,6 +138,7 @@ pub fn query_all_transactions(conn: &Connection) -> Vec<Transaction> {
             source: None,
             // 转换扩展同规：直读快照不反查，展示口径断言走列表命令。
             convert: None,
+            purchases: Vec::new(),
         })
     })
     .unwrap()

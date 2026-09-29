@@ -84,6 +84,7 @@ fn trade_input(
         idempotency_key: None,
         origin: None,
         fx_rate: None,
+        purchases: Vec::new(),
     }
 }
 
@@ -121,6 +122,7 @@ fn dividend_input(
         idempotency_key: None,
         origin: None,
         fx_rate: None,
+        purchases: Vec::new(),
     }
 }
 

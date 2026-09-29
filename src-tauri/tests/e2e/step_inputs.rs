@@ -70,6 +70,7 @@ fn txn_base(
         idempotency_key: None,
         origin: None,
         fx_rate: None,
+        purchases: Vec::new(),
     }
 }
 
@@ -280,6 +281,7 @@ pub fn existing_input(existing: &Transaction) -> TransactionInput {
         idempotency_key: None,
         origin: None,
         fx_rate: None,
+        purchases: Vec::new(),
     }
 }
 

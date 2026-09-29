@@ -135,6 +135,7 @@ fn normalize_refund_guard_runs_on_inherited_dirty_source() {
         source_order_no: None,
         note: None,
         date: "2026-01-01".into(),
+        purchases: Vec::new(),
     };
     let source_id = insert_row(&conn, &dirty).unwrap();
 
