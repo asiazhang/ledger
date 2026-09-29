@@ -17,7 +17,7 @@ use crate::db::connection::{DB_FILE_NAME, SYNC_DB_FILE_NAME};
 use crate::db::encryption::SQLITE_HEADER_MAGIC;
 use crate::db::{
     migrations, open_connection, open_connection_in, open_connection_readonly_in,
-    open_connection_with_passphrase,
+    open_connection_with_passphrase, reset_db_file,
 };
 
 /// 暂存目录（ScratchDir guard，issue #1645）：drop（含 panic unwind）整棵删除。
@@ -297,4 +297,63 @@ fn mount_precedes_migrations_and_spans_both_dbs() {
         .query_row("SELECT x FROM sync.mount_probe", [], |r| r.get(0))
         .expect("attached 侧回滚恢复");
     assert_eq!((main_v, sync_v), (1, 2), "回滚应覆盖两库");
+}
+
+/// sync.db 不可开（路径被目录占据，CANTOPEN 类——AC「损坏 / 不可开」的
+/// 不可开侧）：挂载点码化报错，与损坏同码。
+#[test]
+fn unopenable_sync_db_reports_coded_error() {
+    let dir = temp_dir("unopenable");
+    std::fs::create_dir(dir.path().join(SYNC_DB_FILE_NAME)).expect("以目录占据 sync.db 路径");
+    let err = open_connection_in(dir.path()).expect_err("不可开的 sync.db 应挂载失败");
+    assert_eq!(
+        err.code(),
+        Some("db.sync-mount-failed"),
+        "应报码化挂载错误：{err}"
+    );
+}
+
+/// 启动失败重置逃生门与挂载共存（issue #601 × ADR-0139 决策 3 配对）：把用户
+/// 送进失败恢复屏的原因可能正是 sync.db 损坏，重置必须把遗留文件一并移位
+/// 保留、产出可开启的新世界——否则逃生门被同一损坏堵死、无法自愈
+/// （回归锚：重置不移 sync.db 即本测试红）。
+#[test]
+fn reset_db_file_moves_stale_sync_db_aside() {
+    let dir = temp_dir("reset-escape");
+    // 失败世界夹具：主库经别名建库归位（写侧建连会提前补建 sync.db，不能作
+    // 失败世界前置），sync.db 手工置为损坏字节。
+    let seed_path = dir.path().join("seed.db");
+    {
+        let mut conn = open_connection(&seed_path).expect("别名建库");
+        migrations().to_latest(&mut conn).expect("迁移");
+        drop(conn);
+        std::fs::rename(&seed_path, dir.path().join(DB_FILE_NAME)).expect("归位主库文件名");
+    }
+    let sync_path = dir.path().join(SYNC_DB_FILE_NAME);
+    std::fs::write(&sync_path, b"corrupt sync bytes").expect("制造损坏 sync.db");
+    assert!(
+        open_connection_in(dir.path()).is_err(),
+        "前置：损坏 sync.db 的世界应开启失败（失败恢复屏来由）"
+    );
+
+    let conn = reset_db_file(dir.path()).expect("重置应成功（不被损坏 sync.db 堵死）");
+    drop(conn);
+
+    // 旧世界两份遗留均按重置命名语义保留；新世界可正常开启。
+    assert!(
+        dir.path().join("ledger.db.bak").exists(),
+        "旧主库应保留 .bak"
+    );
+    let sync_bak = sync_path.with_extension("db.bak");
+    assert!(sync_bak.exists(), "旧 sync.db 应保留 .bak 副本");
+    assert_eq!(
+        std::fs::read(&sync_bak).unwrap(),
+        b"corrupt sync bytes",
+        "移位副本应原样保留"
+    );
+    let conn = open_connection_in(dir.path()).expect("新世界应可正常开启");
+    assert!(
+        attached_aliases(&conn).iter().any(|a| a == "sync"),
+        "新世界 sync.db 应由挂载接线按明文形态补建并挂载"
+    );
 }

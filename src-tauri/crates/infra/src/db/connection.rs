@@ -75,8 +75,19 @@ pub fn reset_db_in(db_dir: &Path) -> Result<DbState> {
 /// 明文空库（建连 + 迁移 + 完整性检查，重置产物验收基准与引导层
 /// `boot::encryption` 的 `open_new_plaintext_db` 同口径）。返回连接供启动失败
 /// 恢复通道原位换入存活 [`DbState`]（占位连接 → 真实新库，无需重启）。
+///
+/// 同步元数据库一并移位（ADR-0139 决策 3 配对纪律，issue #1869）：把用户
+/// 送进失败恢复屏的原因可能正是 sync.db 损坏 / 形态错配（挂载码化失败），
+/// 遗留文件若留守，重置后的新世界开启仍挂在同一处——逃生门被堵死、无法
+/// 自愈。故在动主库之前先移（失败即中止，现场可重试），按同款重置命名
+/// 语义保留 `sync.db.bak` 副本（永不删除）；新世界的 sync.db 由挂载接线
+/// 按明文形态补建。
 pub fn reset_db_file(db_dir: &Path) -> Result<Connection> {
     let db_path = db_dir.join(DB_FILE_NAME);
+    let sync_path = sync_db_path(&db_path);
+    if sync_path.exists() {
+        std::fs::rename(&sync_path, sync_path.with_extension("db.bak"))?;
+    }
     let bak_path = db_path.with_extension("db.bak");
     std::fs::rename(&db_path, &bak_path).ok();
     tracing::info!(bak = %bak_path.display(), "已备份原数据库并重置");

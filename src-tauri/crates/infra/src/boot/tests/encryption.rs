@@ -792,3 +792,40 @@ fn normalize_failure_keeps_original_db_intact() {
         .unwrap();
     assert_eq!(rows, 2, "原库数据完整可读");
 }
+
+/// 解锁与挂载的时序（issue #1869）：错误口令的解锁尝试不得留下任何库文件
+/// 副作用——带 KEY 挂载会以未验证口令把缺失的 sync.db 补建成错钥匙空库，
+/// 随后正确口令的解锁反而挂载失败（错钥匙残留砖化世界）。主口令先经裸
+/// 连接验证主库、后走产品建缝（挂载凭已验证口令执行）。
+#[test]
+fn unlock_with_wrong_passphrase_leaves_no_sync_db_artifact() {
+    let dir = temp_dir("unlock-no-artifact");
+    let db = dir.join("ledger.db");
+    let sync_path = dir.join(crate::db::connection::SYNC_DB_FILE_NAME);
+    {
+        let mut conn = open_connection_with_passphrase(&db, "正确口令").unwrap();
+        migrations().to_latest(&mut conn).unwrap();
+        conn.execute("CREATE TABLE pair_probe(x)", []).unwrap();
+        drop(conn);
+        // 模拟「主库被单文件恢复、sync.db 缺席」的旧世界目录。
+        std::fs::remove_file(&sync_path).unwrap();
+    }
+    assert!(!sync_path.exists(), "夹具前置：旧世界目录无 sync.db");
+
+    let err = unlock_db_file(&db, "错误口令").unwrap_err();
+    assert_eq!(
+        code_of(&err),
+        Some("encryption.passphrase-incorrect"),
+        "错误口令应报合并口径错误：{err}"
+    );
+    assert!(
+        !sync_path.exists(),
+        "错误口令尝试不得留下 sync.db（错钥匙残留）"
+    );
+
+    // 正确口令解锁照常成功——无错钥匙残留堵塞挂载，数据完整。
+    let conn = unlock_db_file(&db, "正确口令").unwrap();
+    check_integrity(&conn).unwrap();
+    conn.query_row::<i64, _, _>("SELECT count(*) FROM pair_probe", [], |r| r.get(0))
+        .expect("解锁后数据应完整");
+}

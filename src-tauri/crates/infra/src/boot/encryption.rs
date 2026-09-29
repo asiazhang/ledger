@@ -403,13 +403,28 @@ fn require_encrypted_file(db_path: &Path) -> Result<()> {
 
 /// 验证当前主口令确实能读开密文源库（先验证后转换）：类型化读语句先行
 /// 校验（错误形态可精确匹配 not-a-database），口令错误报码化错误，原库
-/// 不动。转换本体在自有裸连接重开源库，验证连接即弃。
+/// 不动。转换本体在自有裸连接重开源库，验证连接即弃。验证经
+/// 不动。转换本体在自有裸连接重开源库，验证连接即弃。验证经裸连接主口令
+/// 验证（`verify_main_passphrase_bare`，crate 内私有：不触挂载接线，见其文档）。
 /// 多端同步壳层（issue #862）同源消费：手动同步拿到的主口令（显式参数 /
 /// 钥匙串缓存）在封包前先验证——错误口令封出的段对端无法解封，且段名
 /// 幂等跳过会令重传永不发生，必须在上传前拦下。
 pub fn verify_source_passphrase(db_path: &Path, passphrase: &str) -> Result<()> {
-    let conn = crate::db::open_connection_with_passphrase(db_path, passphrase)?;
-    match conn.query_row("SELECT count(*) FROM sqlite_master", [], |r| {
+    verify_main_passphrase_bare(db_path, passphrase)
+}
+
+/// 主口令验证（裸连接，不触挂载接线）：`PRAGMA key` 后以类型化读语句校验
+/// 主库，错误口令报合并口径码化错误（可就地重试）。
+///
+/// **为何不经产品建缝**（issue #1869）：建连收尾单点的带 KEY 挂载会在主库
+/// 验证之前执行——口令未验证时 sync.db 缺失即被补建成**错钥匙**空库，随后
+/// 主库验证失败、正确口令的下次解锁反而挂载失败（错钥匙残留砖化世界）。
+/// 解锁与口令验证必须先验主库、后走产品建缝（挂载凭已验证口令执行）。
+fn verify_main_passphrase_bare(db_path: &Path, passphrase: &str) -> Result<()> {
+    let conn = Connection::open(db_path)?;
+    conn.busy_timeout(crate::db::CONCURRENT_BUSY_TIMEOUT)?;
+    conn.pragma_update(None, "key", passphrase)?;
+    match conn.query_row::<i64, _, _>("SELECT count(*) FROM sqlite_master", [], |r| {
         r.get::<_, i64>(0)
     }) {
         Ok(_) => Ok(()),
@@ -602,17 +617,12 @@ pub fn unlock_db_file(db_path: &Path, passphrase: &str) -> Result<Connection> {
             ));
         }
     }
-    // `PRAGMA key` 本身不校验口令；校验发生在首条读语句。用类型化读语句
-    // 先行校验（错误形态可精确匹配 not-a-database），再执行迁移。
+    // `PRAGMA key` 本身不校验口令；校验发生在首条读语句。主口令先经裸连接
+    // 验证主库（[`verify_main_passphrase_bare`]：错误口令的尝试不得以未验证
+    // 口令触发带 KEY 挂载、给世界留下错钥匙 sync.db），验证通过后经产品建缝
+    // 打开——挂载凭已验证口令执行，再执行迁移。
+    verify_main_passphrase_bare(db_path, passphrase)?;
     let conn = crate::db::open_connection_with_passphrase(db_path, passphrase)?;
-    if let Err(e) = conn.query_row("SELECT count(*) FROM sqlite_master", [], |r| {
-        r.get::<_, i64>(0)
-    }) {
-        if is_not_a_database(&e) {
-            return Err(passphrase_incorrect_error());
-        }
-        return Err(e.into());
-    }
     let mut conn = conn;
     crate::db::init_db(&mut conn)?;
     if let Err(e) = crate::db::check_integrity(&conn) {
