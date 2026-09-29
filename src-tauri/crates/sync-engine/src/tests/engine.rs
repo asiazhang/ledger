@@ -332,16 +332,10 @@ fn replay_transaction_is_atomic_across_both_dbs() {
     let ops = read_ops(conn_a).unwrap();
     assert_eq!(ops.len(), 1);
 
-    // 失败注入：业务行落 main 成功后，sync 侧 op 落日志被 temp 触发器中止——
-    // 重放事务被迫失败（temp schema：SQLite 不允许普通触发器引用 attached 库的
-    // 表；temp 触发器仅本连接可见、不留 schema 残迹）。挂起承接不阻塞。
-    conn_b
-        .execute(
-            "CREATE TEMP TRIGGER atomicity_probe BEFORE INSERT ON sync.sync_ops \
-             BEGIN SELECT RAISE(ABORT, 'injected: 跨库原子性探针'); END",
-            [],
-        )
-        .unwrap();
+    // 失败注入：业务行落 main 成功后，sync 侧 op 落日志被 op 写失败注入器具
+    // （`test_support::op_write_failure`，issue #1896）的 temp 触发器中止——
+    // 重放事务被迫失败，挂起承接不阻塞。
+    test_support::block_op_writes(conn_b);
     let reports = apply_ops(conn_b, &ops).unwrap();
     assert!(
         matches!(&reports[0].outcome, OpOutcome::Parked { .. }),
@@ -367,7 +361,7 @@ fn replay_transaction_is_atomic_across_both_dbs() {
     );
 
     // 解除注入重投递：命令执行 + op 落日志 + 位点推进一起落地（两库同生）。
-    conn_b.execute("DROP TRIGGER atomicity_probe", []).unwrap();
+    test_support::unblock_op_writes(conn_b);
     let reports = apply_ops(conn_b, &ops).unwrap();
     assert_eq!(reports[0].outcome, OpOutcome::Applied, "重投递自然重试成功");
     let txn_rows: i64 = conn_b

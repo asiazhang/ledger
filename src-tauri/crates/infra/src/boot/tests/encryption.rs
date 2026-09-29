@@ -544,8 +544,7 @@ fn probe_detects_plaintext_encrypted_and_empty() {
     // 明文库。
     let plain = dir.join("plain.db");
     let mut conn = open_connection(&plain).unwrap();
-    conn.execute_batch("ATTACH DATABASE ':memory:' AS sync")
-        .unwrap(); // 内存世界成对挂载（非产品名夹具不触发挂载接线）
+    crate::test_utils::attach_in_memory_sync(&conn); // 非产品名夹具不触发挂载接线
     migrations().to_latest(&mut conn).unwrap();
     drop(conn);
     assert_eq!(probe_file_kind(&plain).unwrap(), DbFileKind::Plaintext);
@@ -553,8 +552,7 @@ fn probe_detects_plaintext_encrypted_and_empty() {
     // 密文库。
     let encrypted = dir.join("encrypted.db");
     let mut conn = open_connection_with_passphrase(&encrypted, "口令").unwrap();
-    conn.execute_batch("ATTACH DATABASE ':memory:' AS sync")
-        .unwrap(); // 内存世界成对挂载（非产品名夹具不触发挂载接线）
+    crate::test_utils::attach_in_memory_sync(&conn); // 非产品名夹具不触发挂载接线
     migrations().to_latest(&mut conn).unwrap();
     drop(conn);
     assert_eq!(probe_file_kind(&encrypted).unwrap(), DbFileKind::Encrypted);
