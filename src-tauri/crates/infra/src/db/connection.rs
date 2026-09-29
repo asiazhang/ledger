@@ -32,6 +32,44 @@ pub fn sync_db_path(main_db_path: &Path) -> std::path::PathBuf {
     main_db_path.with_file_name(SYNC_DB_FILE_NAME)
 }
 
+/// 同步元数据四表闭集（ADR-0139 决策 1；表 DDL 权威在迁移链 V020/V021/V022，
+/// 票 05 / V034 迁移后四表以同名同形迁入 attached 侧）。
+const SYNC_TABLES: [&str; 4] = [
+    "sync_device",
+    "sync_ops",
+    "sync_parked_ops",
+    "sync_stream_positions",
+];
+
+/// 同步四表的双源回退判据（ADR-0139 拆库 expand 期判据，票 04 引入、票 06 删
+/// 除）：attached `sync` 侧在位且四表闭集齐备 → 同步元数据归 attached；否则
+///（连接未挂载、或票 05 迁移前四表仍在 main）回退 main。checkpoint 产出段
+///（快照源库）与引导段（同步件消费与否）、备份产出段（成对件与 paired 标记）
+/// 共用本单点——同一连接形态恒同判，票 05 迁移后统一命中 attached 分支。
+pub fn sync_tables_live_attached(conn: &Connection) -> bool {
+    let attached: i64 = conn
+        .query_row(
+            "SELECT count(*) FROM pragma_database_list WHERE name = 'sync'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
+    if attached == 0 {
+        return false;
+    }
+    // 别名在位后逐一核对四表闭集（别名与表名均为闭集字面量，无注入面）。
+    SYNC_TABLES.iter().all(|table| {
+        let present: i64 = conn
+            .query_row(
+                &format!("SELECT count(*) FROM sync.sqlite_master WHERE name = '{table}'"),
+                [],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+        present > 0
+    })
+}
+
 /// 并发容让的 busy_timeout（读路径独立只读连接，issue #1280 / ADR-0117 决策 4；
 /// 写连接同值显式收口，issue #1699）：读事务在写事务取 EXCLUSIVE 锁的提交瞬间
 /// 窗口内、写事务在读事务持 SHARED 锁的窗口内，各在本超时内等待——取值与既有

@@ -793,3 +793,132 @@ fn network_segments_hold_no_connection_lock() {
         "B 端应经拉取重放收敛 A 端的交易"
     );
 }
+
+// ---------------------------------------------------------------------------
+// 双文件成对检查点（票 04 / ADR-0139 决策 5）：manifest 双指针、双件独立封包
+// 上通道、拉取归一；旧形态单文件指针与新字段缺省的双向兼容。
+// ---------------------------------------------------------------------------
+
+/// 双文件成对发布与拉取：指针携带 sync_* 字段、同步件独立成通道文件、拉取
+/// 所得 Checkpoint 携带双件字节（明文模式字节直通，封包归 envelope 套件）。
+#[test]
+fn checkpoint_upload_fetch_carries_paired_sync_component() {
+    let mem = MemoryTransport::new();
+    let layout = layout();
+    let cp = crate::Checkpoint {
+        positions: Vec::new(),
+        snapshot: b"business-bytes".to_vec(),
+        sync_snapshot: b"sync-bytes".to_vec(),
+    };
+
+    let pointer = upload_checkpoint(&mem, &layout, &EnvelopeMode::Plaintext, &cp).unwrap();
+
+    assert_eq!(
+        pointer.sync_file.as_deref(),
+        Some("cp-000001-sync.enc"),
+        "指针携带同步元数据件文件名（同代成对）"
+    );
+    assert_eq!(pointer.sync_size, Some(b"sync-bytes".len() as u64));
+    // manifest 原文携带新字段（旧版端忽略之，互操作不破坏——serde 未知字段容忍）。
+    let raw = mem.read_file(&layout.manifest_path()).unwrap().unwrap();
+    assert!(String::from_utf8_lossy(&raw).contains("sync_file"));
+    // 同步件独立成文件、字节即同步件（明文直通）。
+    assert_eq!(
+        mem.read_file(&layout.checkpoint_sync_path(1))
+            .unwrap()
+            .unwrap(),
+        b"sync-bytes".to_vec()
+    );
+
+    let fetched = fetch_checkpoint(&mem, &layout, None).unwrap();
+    assert_eq!(fetched.checkpoint.snapshot, b"business-bytes".to_vec());
+    assert_eq!(
+        fetched.checkpoint.sync_snapshot,
+        b"sync-bytes".to_vec(),
+        "拉取归一双件"
+    );
+}
+
+/// 同步件通道损坏（hash 不符）：与业务件同款校验，报检查点损坏，不静默。
+#[test]
+fn tampered_sync_component_is_detected_by_pointer_hash() {
+    let mem = MemoryTransport::new();
+    let layout = layout();
+    let cp = crate::Checkpoint {
+        positions: Vec::new(),
+        snapshot: b"business-bytes".to_vec(),
+        sync_snapshot: b"sync-bytes".to_vec(),
+    };
+    upload_checkpoint(&mem, &layout, &EnvelopeMode::Plaintext, &cp).unwrap();
+    mem.write_file(&layout.checkpoint_sync_path(1), b"tampered-sync-bytes")
+        .unwrap();
+
+    let err = fetch_checkpoint(&mem, &layout, None).unwrap_err();
+    assert!(
+        err.is_code("sync-channel.checkpoint-corrupt"),
+        "同步件 hash 不符按检查点损坏报错"
+    );
+}
+
+/// 旧形态单文件检查点（同步件为空，票 04 前产物 / 兼容替身）：发布退化为旧
+/// 形态——不写 sync 件、指针无 sync_* 字段；拉取按旧形态归一（同步件为空，
+/// 引导按单库形态分支）。
+#[test]
+fn legacy_single_file_checkpoint_publishes_and_fetches_without_sync_fields() {
+    let mem = MemoryTransport::new();
+    let layout = layout();
+    let cp = crate::Checkpoint {
+        positions: Vec::new(),
+        snapshot: b"legacy-business-bytes".to_vec(),
+        sync_snapshot: Vec::new(),
+    };
+
+    let pointer = upload_checkpoint(&mem, &layout, &EnvelopeMode::Plaintext, &cp).unwrap();
+    assert!(pointer.sync_file.is_none(), "旧形态指针无 sync_* 字段");
+    let raw = mem.read_file(&layout.manifest_path()).unwrap().unwrap();
+    assert!(
+        !String::from_utf8_lossy(&raw).contains("sync_file"),
+        "旧形态 manifest 不出现新字段"
+    );
+    assert!(
+        mem.read_file(&layout.checkpoint_sync_path(1))
+            .unwrap()
+            .is_none()
+    );
+
+    let fetched = fetch_checkpoint(&mem, &layout, None).unwrap();
+    assert_eq!(
+        fetched.checkpoint.snapshot,
+        b"legacy-business-bytes".to_vec()
+    );
+    assert!(
+        fetched.checkpoint.sync_snapshot.is_empty(),
+        "旧形态拉取归一为空同步件"
+    );
+}
+
+/// manifest 向后兼容（验收判据）：只有原字段的旧清单不受影响——checkpoint
+/// 指针缺 sync_* 字段按 None 容忍（serde 缺省回落）。
+#[test]
+fn manifest_without_sync_fields_parses() {
+    // created_at 走工厂固定时刻（ADR-0084：时刻值收敛 test_support）。
+    let raw = format!(
+        r#"{{
+  "version": 1,
+  "streams": [],
+  "checkpoint": {{
+    "file": "cp-000001.enc",
+    "generation": 1,
+    "size": 128,
+    "sha256": "abc123",
+    "created_at": "{}"
+  }}
+}}"#,
+        tauri_app_lib::test_support::FIXED_NOW
+    );
+    let manifest: ChannelManifest = serde_json::from_slice(raw.as_bytes()).unwrap();
+    let pointer = manifest.checkpoint.expect("指针在场");
+    assert_eq!(pointer.sync_file, None, "旧形态指针缺省 None");
+    assert_eq!(pointer.sync_size, None);
+    assert_eq!(pointer.sync_sha256, None);
+}

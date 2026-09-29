@@ -29,6 +29,7 @@ pub use connection::{
     open_connection_readonly_with_passphrase, open_connection_unmounted,
     open_connection_with_passphrase, open_connection_with_passphrase_unmounted, open_db_in,
     open_in_memory, open_in_memory_initialized, reset_db_file, reset_db_in, sync_db_path,
+    sync_tables_live_attached,
 };
 pub use facade::DbFacade;
 pub use facade_handles::{DbReadHandle, DbSlotPair, DbWriteHandle, install_facade};

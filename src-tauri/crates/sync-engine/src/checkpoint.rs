@@ -2,18 +2,25 @@
 //! 流已应用位点的产出、新端引导与 OpLog 截断机制。
 //!
 //! 语义约束只有一条——任何端永远能从 Checkpoint 加其后 op 重建出一致状态：
-//! - **产出**（[`create_checkpoint`]）：`VACUUM INTO` 整库一致性快照（与备份
-//!   同构，ADR-0016 的文件级快照纪律；继承源库加密形态，文件即真相），配上
-//!   本端位点表（[`super::positions`]）。位点与快照须同刻成对——调用方持单
-//!   连接互斥锁一次性完成（壳层同步轮次形态），进程内无并发写插入。
-//! - **引导**（[`bootstrap_from_checkpoint`]）：快照经 `ATTACH`（密文快照凭
+//! - **产出**（[`create_checkpoint`]）：`VACUUM INTO` 双文件成对一致性快照——
+//!   业务件（main）+ 同步元数据件（同步四表所在库，双源回退：attached 侧四表
+//!   齐备逐 attached VACUUM，否则回退 main——票 04 expand 期单库布局形态，
+//!   ADR-0139 决策 5；与备份同构，ADR-0016 的文件级快照纪律；继承源库加密
+//!   形态，文件即真相），配上本端位点表（[`super::positions`]）。位点与快照
+//!   须同刻成对——调用方持单连接互斥锁一次性完成（壳层同步轮次形态），
+//!   进程内无并发写插入。
+//! - **引导**（[`bootstrap_from_checkpoint`]）：业务件经 `ATTACH`（密文快照凭
 //!   主口令，与密文备份恢复同形态）挂载后整库换入——SQL 级重建（建表 → 拷行
 //!   → 索引/触发器/视图），任意加密形态组合（明文/密文库 × 明文/密文快照）
 //!   均成立（bundled SQLCipher 对加密库禁用 backup API，SQL 级是官方正解）。
-//!   schema 偏斜双向处置：快照更新→拒绝；较旧→对齐后迁移升级。随后换入本机
-//!   设备身份、位点表以 Checkpoint 为准重建。快照携带的日志与挂起队列随行
-//!   采纳：日志给出位点之前的去重身份（对端全量重投不再重放），挂起行经
-//!   重投递幂等覆盖自愈。
+//!   同步元数据件按形态分支归位（双源回退）：目标 attached 侧四表齐备
+//!   （双库布局）时以同款 SQL 级重建换入四表；单库布局回退读 main——四表
+//!   随业务件已换入 main，同步件跳过（票 04 expand，票 06 删除回退）。
+//!   旧形态单文件快照（同步件为空，票 04 前产物）按单库形态引导——跨版本
+//!   归位两库的拆分归票 07。schema 偏斜双向处置：快照更新→拒绝；较旧→
+//!   对齐后迁移升级。随后换入本机设备身份、位点表以 Checkpoint 为准重建。
+//!   快照携带的日志与挂起队列随行采纳：日志给出位点之前的去重身份（对端
+//!   全量重投不再重放），挂起行经重投递幂等覆盖自愈。
 //! - **截断**（[`truncate_stream_before`]）：机制原语，三硬约束——只有来源
 //!   设备有权截断自己的流；只有位点之前（时钟 ≤ 水位）才可删；挂起 op 不在
 //!   日志、位点不越过它，天然不被截断。**v1 默认不启用**（永不截断，取舍见
@@ -41,24 +48,40 @@ use super::channel::FetchedCheckpoint;
 use super::ops;
 use super::trigger::SyncChannel;
 
-/// 引导期间快照挂载的 ATTACH 别名。
+/// 引导期间业务件挂载的 ATTACH 别名。
 const SNAP_ALIAS: &str = "sync_snap";
+
+/// 引导期间同步元数据件挂载的 ATTACH 别名（双文件成对，ADR-0139 决策 5）。
+const SNAP_META_ALIAS: &str = "sync_snap_meta";
+
+/// 同步元数据四表闭集（ADR-0139 决策 1）：同步件四表 SQL 级重建的逐表清单；
+/// 双源回退判据经基础设施单点 [`db::sync_tables_live_attached`]（与备份域同源）。
+const SYNC_TABLES: [&str; 4] = [
+    "sync_device",
+    "sync_ops",
+    "sync_parked_ops",
+    "sync_stream_positions",
+];
 
 /// Checkpoint（检查点快照）：全量数据快照 + 各设备 op 流已应用位点。
 ///
-/// `snapshot` 是整库 SQLite 文件字节（`VACUUM INTO` 产物，继承源库加密形态，
-/// 文件即真相）；位点与快照同刻成对，是「快照 + 其后 op = 一致状态」判据的
-/// 两个组成部分。通道上的打包与分代命名（SyncEnvelope / manifest 指针）归
-/// Transport（#859）。
+/// `snapshot` 是业务件 SQLite 文件字节（`VACUUM INTO` 产物，继承源库加密形态，
+/// 文件即真相）；`sync_snapshot` 是同步元数据件（同步四表所在库的同刻快照，
+/// ADR-0139 决策 5 双文件成对；旧形态单文件快照无此件，空 `Vec` 承载）。位点
+/// 与快照对同刻成对，是「快照 + 其后 op = 一致状态」判据的组成部分。通道上
+/// 的打包与分代命名（SyncEnvelope / manifest 双指针）归 Transport（#859）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Checkpoint {
     /// 各设备 op 流已应用位点（快照时刻各流头）。
     pub positions: Vec<StreamPosition>,
-    /// 整库全量快照（SQLite 文件字节）。
+    /// 业务件全量快照（main 的 SQLite 文件字节）。
     pub snapshot: Vec<u8>,
+    /// 同步元数据件（同步四表所在库的 SQLite 文件字节；旧形态单文件快照为空）。
+    pub sync_snapshot: Vec<u8>,
 }
 
-/// 任意时刻产出 Checkpoint：整库一致性快照 + 本端位点表。
+/// 任意时刻产出 Checkpoint：双文件成对一致性快照（业务件 + 同步元数据件）+ 本
+/// 端位点表。
 ///
 /// 必须在单连接互斥锁内调用（位点与快照同刻成对的保证）；不得处于写事务中
 /// （`VACUUM INTO` 无法在事务内执行）。成对约束只辖产出段：其后的封包与上传
@@ -66,17 +89,32 @@ pub struct Checkpoint {
 /// 消费连接，在连接锁外完成（#1284，判据同 ADR-0120）。
 pub fn create_checkpoint(conn: &Connection) -> Result<Checkpoint> {
     let snapshot_path = temp_snapshot_path("cp");
+    let sync_snapshot_path = temp_snapshot_path("cp-sync");
     let result = (|| -> Result<Checkpoint> {
+        // 业务件：main 的一致性快照（既有形态不变）。
         conn.execute(
             "VACUUM INTO ?1",
             rusqlite::params![snapshot_path.to_string_lossy()],
         )?;
+        // 同步元数据件：同步四表所在库的同刻快照（双源回退，票 04 expand；
+        // 票 05 迁移后 attached 侧恒有表，自然切到 attached 分支，票 06 删除回退）。
+        let source = if db::sync_tables_live_attached(conn) {
+            "sync"
+        } else {
+            "main"
+        };
+        conn.execute(
+            &format!("VACUUM {source} INTO ?1"),
+            rusqlite::params![sync_snapshot_path.to_string_lossy()],
+        )?;
         Ok(Checkpoint {
             positions: positions::list(conn)?,
             snapshot: std::fs::read(&snapshot_path)?,
+            sync_snapshot: std::fs::read(&sync_snapshot_path)?,
         })
     })();
     fs_util::cleanup(&snapshot_path);
+    fs_util::cleanup(&sync_snapshot_path);
     result
 }
 
@@ -113,11 +151,16 @@ pub fn bootstrap_from_checkpoint(
         |r| r.get(0),
     )?;
 
-    // 快照落临时文件 → 挂载（密文凭口令）→ 整库重建换入 → 卸载。
+    // 快照对落临时文件 → 挂载（密文凭口令）→ 整库重建换入 + 同步件按形态归位
+    // → 卸载。
     let snapshot_path = temp_snapshot_path("restore");
+    let sync_snapshot_path = temp_snapshot_path("restore-sync");
     std::fs::write(&snapshot_path, &checkpoint.snapshot)?;
+    if !checkpoint.sync_snapshot.is_empty() {
+        std::fs::write(&sync_snapshot_path, &checkpoint.sync_snapshot)?;
+    }
     let result = (|| -> Result<()> {
-        attach_snapshot(conn, &snapshot_path, passphrase)?;
+        attach_snapshot(conn, SNAP_ALIAS, &snapshot_path, passphrase)?;
         let rebuild = (|| -> Result<()> {
             let snapshot_version = read_snapshot_version(conn)?;
             let local_version = db::schema_version(conn)?;
@@ -133,7 +176,11 @@ pub fn bootstrap_from_checkpoint(
                     ],
                 ));
             }
-            rebuild_main_from_snapshot(conn, snapshot_version)
+            rebuild_main_from_snapshot(conn, snapshot_version)?;
+            // 同步元数据件按形态分支归位（双源回退，票 04 expand；票 06 删除
+            // 回退）：目标 attached 侧四表齐备（双库布局）才消费同步件；单库
+            // 布局回退读 main——四表已随业务件换入 main，同步件跳过。
+            consume_sync_snapshot(conn, &sync_snapshot_path, passphrase)
         })();
         // 挂载库恒卸载（重建失败亦然），随后以重建结果为准。
         let detach = conn.execute(&format!("DETACH DATABASE {SNAP_ALIAS}"), []);
@@ -142,6 +189,7 @@ pub fn bootstrap_from_checkpoint(
         Ok(())
     })();
     fs_util::cleanup(&snapshot_path);
+    fs_util::cleanup(&sync_snapshot_path);
     result?;
 
     // 快照 schema 较旧时迁移升级（同版本为无操作）；换入本机身份、位点重建
@@ -161,15 +209,102 @@ pub fn bootstrap_from_checkpoint(
         device = %own_device,
         streams = checkpoint.positions.len(),
         snapshot_bytes = checkpoint.snapshot.len(),
+        sync_snapshot_bytes = checkpoint.sync_snapshot.len(),
         "已从检查点快照完成新端引导"
     );
     Ok(())
 }
 
-/// 挂载快照库：密文快照凭主口令 `ATTACH ... KEY`（与密文备份恢复同形态），
-/// 明文快照免口令。SQLCipher 延迟到首条读语句才校验口令——由快照版本读取
-/// 归一错误形态（[`read_snapshot_version`]）。
-fn attach_snapshot(conn: &Connection, path: &Path, passphrase: Option<&str>) -> Result<()> {
+/// 同步元数据件按形态分支归位（双源回退，票 04 expand；票 06 删除回退）：
+/// 业务件整库重建完成后调用——目标 attached 侧四表齐备（双库布局）时把同步件
+/// SQL 级重建换入 attached；否则跳过（单库布局回退读 main：四表已随业务件
+/// 换入 main，unqualified 解析命中 main；同步件即回退源 main 的同刻拷贝，无
+/// 独立内容）。
+///
+/// 旧形态单文件快照（同步件为空，票 04 前产物）同走跳过分支——四表在业务件
+/// 内、随整库换入 main；把旧单文件快照按表拆归两库的跨版本形态分支归票 07
+///（spec #1866：新版端引导旧版端快照的兼容期）。
+///
+/// 已知中间态（仅存在于票 04→05 之间的未发布开发态）：双库目标引导「业务件
+/// 含四表」的回退期快照时，四表同时落在 main（业务件换入）与 attached（同步
+/// 件换入）——同刻同内容，unqualified 读命中 main 影子，行为一致；票 05 迁移
+/// 后业务件不再含四表，该重叠自然消失。
+fn consume_sync_snapshot(
+    conn: &Connection,
+    sync_snapshot_path: &Path,
+    passphrase: Option<&str>,
+) -> Result<()> {
+    if !db::sync_tables_live_attached(conn) {
+        return Ok(());
+    }
+    attach_snapshot(conn, SNAP_META_ALIAS, sync_snapshot_path, passphrase)?;
+    let rebuild = rebuild_sync_tables_from_snapshot(conn);
+    // 挂载库恒卸载（重建失败亦然），随后以重建结果为准。
+    let detach = conn.execute(&format!("DETACH DATABASE {SNAP_META_ALIAS}"), []);
+    rebuild?;
+    detach?;
+    Ok(())
+}
+
+/// 同步元数据件的四表 SQL 级重建：以挂载的同步件（[`SNAP_META_ALIAS`]）换入
+/// attached `sync` 侧。逐表 DROP（自动带走索引）→ 按快照 DDL 建表 → 拷行 →
+/// 索引复位；单事务跨库提交（非 WAL master journal 保证集合级原子，ADR-0139
+/// 决策 2）。四表闭集无外键（V020 刻意不设）、无生成列，整列拷贝成立。
+fn rebuild_sync_tables_from_snapshot(conn: &Connection) -> Result<()> {
+    ensure_transaction(conn, || {
+        for table in SYNC_TABLES {
+            conn.execute(&format!("DROP TABLE IF EXISTS sync.{table}"), [])?;
+            let ddl: String = conn.query_row(
+                &format!(
+                    "SELECT sql FROM {SNAP_META_ALIAS}.sqlite_master \
+                     WHERE type = 'table' AND name = '{table}'"
+                ),
+                [],
+                |r| r.get(0),
+            )?;
+            // DDL 注入 attached 限定符：快照存的是原始非限定 CREATE 语句，
+            // 直接执行会落到 main（unqualified 默认建库侧）。
+            let qualified = ddl.replacen("CREATE TABLE ", "CREATE TABLE sync.", 1);
+            conn.execute(&qualified, [])?;
+            conn.execute(
+                &format!("INSERT INTO sync.{table} SELECT * FROM {SNAP_META_ALIAS}.{table}"),
+                [],
+            )?;
+        }
+        // 索引复位（四表的从属索引，按 tbl_name 归属核对、不依赖命名约定；
+        // sql IS NULL 的自动索引随表自建，跳过）。
+        let placeholders = SYNC_TABLES
+            .iter()
+            .map(|t| format!("'{t}'"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let mut stmt = conn.prepare(&format!(
+            "SELECT sql FROM {SNAP_META_ALIAS}.sqlite_master \
+             WHERE type = 'index' AND sql IS NOT NULL AND tbl_name IN ({placeholders})"
+        ))?;
+        let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+        let index_ddl = rows.collect::<std::result::Result<Vec<_>, _>>()?;
+        for sql in index_ddl {
+            // 同款限定符注入（CREATE [UNIQUE] INDEX 两种形态）。
+            let qualified = sql
+                .replacen("CREATE UNIQUE INDEX ", "CREATE UNIQUE INDEX sync.", 1)
+                .replacen("CREATE INDEX ", "CREATE INDEX sync.", 1);
+            conn.execute(&qualified, [])?;
+        }
+        Ok(())
+    })
+}
+
+/// 挂载快照库到指定别名：密文快照凭主口令 `ATTACH ... KEY`（与密文备份恢复
+/// 同形态），明文快照免口令。SQLCipher 延迟到首条读语句才校验口令——由挂载
+/// 后的类型化读语句（[`attach_sql`]）归一错误形态。业务件与同步元数据件各用
+/// 己方别名挂载（[`SNAP_ALIAS`] / [`SNAP_META_ALIAS`]）。
+fn attach_snapshot(
+    conn: &Connection,
+    alias: &str,
+    path: &Path,
+    passphrase: Option<&str>,
+) -> Result<()> {
     match db::encryption::probe_file_kind(path)? {
         db::encryption::DbFileKind::Encrypted => {
             let passphrase = passphrase.ok_or_else(|| {
@@ -180,14 +315,19 @@ fn attach_snapshot(conn: &Connection, path: &Path, passphrase: Option<&str>) -> 
             })?;
             attach_sql(
                 conn,
-                "ATTACH DATABASE ?1 AS sync_snap KEY ?2",
+                &format!("ATTACH DATABASE ?1 AS {alias} KEY ?2"),
                 passphrase,
                 path,
+                alias,
             )
         }
-        db::encryption::DbFileKind::Plaintext | db::encryption::DbFileKind::Empty => {
-            attach_sql(conn, "ATTACH DATABASE ?1 AS sync_snap KEY ?2", "", path)
-        }
+        db::encryption::DbFileKind::Plaintext | db::encryption::DbFileKind::Empty => attach_sql(
+            conn,
+            &format!("ATTACH DATABASE ?1 AS {alias} KEY ?2"),
+            "",
+            path,
+            alias,
+        ),
     }
 }
 
@@ -195,7 +335,7 @@ fn attach_snapshot(conn: &Connection, path: &Path, passphrase: Option<&str>) -> 
 /// 挂载后立即以类型化读语句校验口令——`PRAGMA key`/`ATTACH KEY` 本身不校验，
 /// 首条读语句才解密页数据；错误口令归一为可重试的码化错误（与密文备份恢复
 /// 同款，不裸上抛）。
-fn attach_sql(conn: &Connection, sql: &str, key: &str, path: &Path) -> Result<()> {
+fn attach_sql(conn: &Connection, sql: &str, key: &str, path: &Path, alias: &str) -> Result<()> {
     conn.execute(sql, rusqlite::params![path.to_string_lossy(), key])
         .map_err(|e| {
             // 错误口令在本 SQLCipher 构建上于 ATTACH 即报 NOTADB，归一为可重试
@@ -206,9 +346,11 @@ fn attach_sql(conn: &Connection, sql: &str, key: &str, path: &Path) -> Result<()
                 e.into()
             }
         })?;
-    if let Err(e) = conn.query_row("SELECT count(*) FROM sync_snap.sqlite_master", [], |r| {
-        r.get::<_, i64>(0)
-    }) {
+    if let Err(e) = conn.query_row(
+        &format!("SELECT count(*) FROM {alias}.sqlite_master"),
+        [],
+        |r| r.get::<_, i64>(0),
+    ) {
         if db::encryption::is_not_a_database(&e) {
             return Err(db::encryption::passphrase_incorrect_error());
         }

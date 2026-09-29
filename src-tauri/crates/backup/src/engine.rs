@@ -1,7 +1,9 @@
-//! 备份引擎（ADR-0007 / ADR-0016）：zip 打包（`VACUUM INTO` 一致性快照 +
-//! `backup.json` 元数据）、恢复与恢复前安全备份、schema 版本校验（旧→新迁移、
-//! 新→旧拒绝）、受管备份列表与滚动清理（按活动账本分域，ADR-0089 决策 5；
-//! 无账本标识的历史产物归属「登记序首本」）。
+//! 备份引擎（ADR-0007 / ADR-0016）：zip 打包（`VACUUM INTO` 双文件成对一致性
+//! 快照——业务件 + 同步元数据件（ADR-0139 决策 6，双源回退判据住基础设施）+
+//! `backup.json` 元数据）、恢复与恢复前安全备份（恢复按备份形态分支：成对产
+//! 物双库归位，旧形态单文件行为不变）、schema 版本校验（旧→新迁移、新→旧
+//! 拒绝）、受管备份列表与滚动清理（按活动账本分域，ADR-0089 决策 5；无账本
+//! 标识的历史产物归属「登记序首本」）。
 
 use std::fs::File;
 use std::io::{Read, Write};
@@ -56,6 +58,9 @@ impl BackupScope {
 
 /// zip 包内数据库条目名。
 const ZIP_DB_ENTRY: &str = "ledger.db";
+/// zip 包内同步元数据件条目名（双文件成对产物，ADR-0139 决策 6；旧形态单
+/// 文件备份无此条目）。
+const ZIP_SYNC_ENTRY: &str = "sync.db";
 /// zip 包内元数据条目名。
 const ZIP_META_ENTRY: &str = "backup.json";
 
@@ -398,8 +403,8 @@ pub fn prune_managed_backups(
     })
 }
 
-/// 备份元数据，写入 zip 包内 `backup.json`。`kind` 与 `encrypted` 均为旧版本
-/// 备份可能缺失的字段（serde 默认回落，向后兼容）。
+/// 备份元数据，写入 zip 包内 `backup.json`。`kind`、`encrypted` 与 `paired` 均为
+/// 旧版本备份可能缺失的字段（serde 默认回落，向后兼容）。
 #[derive(Debug, Serialize, Deserialize)]
 struct BackupMeta {
     created_at: String,
@@ -412,6 +417,11 @@ struct BackupMeta {
     /// 旧版本备份缺该字段时按明文对待（缺省 false，向后兼容）。
     #[serde(default)]
     encrypted: bool,
+    /// 双库成对标记（ADR-0139 决策 6，票 04）：true 表示包内 `sync.db` 条目是
+    /// 同步元数据件（恢复按双库成对归位）；缺省 false = 旧形态单文件备份，
+    /// sync 条目（expand 期回退形态）或缺失一律忽略，恢复行为与旧版一致。
+    #[serde(default)]
+    paired: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -469,10 +479,16 @@ fn ensure_source_snapshotable(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-/// 将当前数据库备份为 zip 包（`ledger.db` + `backup.json`）写入 `target`。
+/// 将当前数据库备份为 zip 包（`ledger.db` + `sync.db` + `backup.json`）写入
+/// `target`。
 ///
 /// `kind` 标记产物来源（自动 / 手动），随元数据落盘供后续识别。
-/// 通过 `VACUUM INTO` 生成一致的库文件快照，不影响正在进行的写入；打包完成后原子替换目标文件。
+/// 通过 `VACUUM INTO` 生成一致的库文件快照（双文件成对，ADR-0139 决策 6：
+/// 业务件 + 同步元数据件，单连接互斥锁内逐库快照），不影响正在进行的写入；
+/// 打包完成后原子替换目标文件。同步件按双源回退取源（票 04 expand；票 06
+/// 删除回退）：attached 侧四表齐备逐 attached 快照（真同步元数据，
+/// `paired = true`），否则回退 main——expand 期单库布局的成对形态，件内容
+/// 与业务件同刻同形，`paired = false` 让恢复按旧形态分支（与旧版备份等价）。
 pub fn backup_db_to(
     conn: &Connection,
     target: &Path,
@@ -496,16 +512,25 @@ pub fn backup_db_to(
     ensure_source_snapshotable(conn)?;
 
     let tmp_db = temp_sibling(target, "db");
+    let tmp_sync = temp_sibling(target, "sync");
     let tmp_zip = temp_sibling(target, "zip");
 
     // 全部步骤收进一个闭包：任一步失败（`VACUUM INTO`、打包、替换启用）都在
-    // 收尾统一清理两个临时文件——失败早退绕过 cleanup 曾每次在备份目录留下
+    // 收尾统一清理临时文件——失败早退绕过 cleanup 曾每次在备份目录留下
     // 临时残留（0 字节文件累积，既有缺陷的范围外修复，issue #1454）。
     let result = (|| -> Result<BackupResult> {
         // 1. VACUUM INTO 生成一致的临时库文件（要求目标不存在，故用唯一临时名）。
         conn.execute(
             "VACUUM INTO ?1",
             rusqlite::params![tmp_db.to_string_lossy()],
+        )?;
+        // 同步元数据件：同步四表所在库的同刻快照（双源回退，`VACUUM <schema>`
+        // 逐库执行；与业务件同一互斥锁内先后定格，同刻成对）。
+        let paired = db::sync_tables_live_attached(conn);
+        let sync_source = if paired { "sync" } else { "main" };
+        conn.execute(
+            &format!("VACUUM {sync_source} INTO ?1"),
+            rusqlite::params![tmp_sync.to_string_lossy()],
         )?;
 
         // 2. 探测产物密文（VACUUM INTO 继承源库加密与密钥，ADR-0075 决策 7：
@@ -520,6 +545,7 @@ pub fn backup_db_to(
             schema_version: schema_version(conn)?,
             kind,
             encrypted,
+            paired,
         };
         let file = File::create(&tmp_zip)?;
         let mut zip = zip::ZipWriter::new(file);
@@ -527,6 +553,9 @@ pub fn backup_db_to(
         zip.start_file(ZIP_DB_ENTRY, options)?;
         let mut db_file = File::open(&tmp_db)?;
         std::io::copy(&mut db_file, &mut zip)?;
+        zip.start_file(ZIP_SYNC_ENTRY, options)?;
+        let mut sync_file = File::open(&tmp_sync)?;
+        std::io::copy(&mut sync_file, &mut zip)?;
         zip.start_file(ZIP_META_ENTRY, options)?;
         zip.write_all(serde_json::to_string_pretty(&meta)?.as_bytes())?;
         zip.finish()?;
@@ -535,7 +564,7 @@ pub fn backup_db_to(
         replace_file(&tmp_zip, target)?;
 
         let size_bytes = std::fs::metadata(target)?.len();
-        tracing::info!(target = %target.display(), size = %size_bytes, schema = %meta.schema_version, "备份完成");
+        tracing::info!(target = %target.display(), size = %size_bytes, schema = %meta.schema_version, paired, "备份完成");
         Ok(BackupResult {
             path: target.to_string_lossy().into_owned(),
             size_bytes,
@@ -544,6 +573,7 @@ pub fn backup_db_to(
         })
     })();
     cleanup(&tmp_db);
+    cleanup(&tmp_sync);
     cleanup(&tmp_zip);
     result
 }
@@ -555,6 +585,12 @@ pub fn backup_db_to(
 /// `passphrase` 用于密文备份（issue #572）：提取出的备份库探测为密文时，
 /// 校验与迁移都需凭备份所在库的主口令打开（缺口令拒绝并报码化错误，
 /// 错误口令报 `encryption.passphrase-incorrect` 可重试）；明文备份不消费口令。
+///
+/// 恢复按备份形态分支（双库成对，ADR-0139 决策 6）：元数据 `paired = true`
+/// 的双库产物把 `sync.db` 一并归位（设备身份、位点、日志随库一致回滚，替换
+/// 先 sync 后 main，任一步失败已归位/已替换的 sync.db 尽力回位，「回滚无痕」
+/// 语义不变）；旧形态（paired 缺省 false）只恢复主库，原位遗留 sync.db 照旧
+/// 移入安全目录保留、由挂载接线补建。
 pub fn restore_db_from(
     backup_path: &Path,
     db_path: &Path,
@@ -563,11 +599,30 @@ pub fn restore_db_from(
     passphrase: Option<&str>,
 ) -> Result<RestoreResult> {
     let tmp_db = temp_sibling(db_path, "restore");
+    let tmp_sync = temp_sibling(db_path, "restore-sync");
 
-    // 1. 提取数据库文件（zip 或裸 db）。
-    if let Err(e) = extract_db_file(backup_path, &tmp_db) {
+    // 1. 提取数据库文件（zip 或裸 db；双库产物同包提取 sync 条目）。
+    let sync_entry_present = match extract_db_files(backup_path, &tmp_db, &tmp_sync) {
+        Ok(found) => found,
+        Err(e) => {
+            cleanup(&tmp_db);
+            cleanup(&tmp_sync);
+            return Err(e);
+        }
+    };
+    // 恢复形态分支判据（自描述元数据，缺省旧形态；元数据缺失/损坏的包按旧
+    // 形态处理——恢复不因元数据而新增失败面，与既有行为一致）。
+    let meta_paired = backup_paired_flag(backup_path);
+    let paired = meta_paired && sync_entry_present;
+    if meta_paired && !sync_entry_present {
+        // 成对产物缺 sync 条目：包不完整（产出方恒成对写条目，只有手工拼包
+        // 会命中），显式报错而不是静默丢同步身份。
         cleanup(&tmp_db);
-        return Err(e);
+        cleanup(&tmp_sync);
+        return Err(AppError::coded(
+            "backup.sync-entry-missing",
+            format!("备份包内未找到 {ZIP_SYNC_ENTRY}，成对备份不完整"),
+        ));
     }
 
     // 2. 探测备份库密文（文件即真相，issue #572），供口令消费与恢复后重置连接选择。
@@ -575,20 +630,28 @@ pub fn restore_db_from(
         Ok(kind) => kind == DbFileKind::Encrypted,
         Err(e) => {
             cleanup(&tmp_db);
+            cleanup(&tmp_sync);
             return Err(e);
         }
     };
 
     // 3. 完整性 + 版本校验；密文备份在此凭主口令打开（缺口令报
     //    backup.passphrase-required，错误口令报 encryption.passphrase-incorrect），
-    //    拒绝发生在安全备份与替换之前；备份旧于当前则迁移升级。
+    //    拒绝发生在安全备份与替换之前；备份旧于当前则迁移升级。成对产物的
+    //    同步件同关口（完整性校验，失败同样发生在任何替换之前）。
     let backup_schema = match validate_backup(&tmp_db, expected_schema, passphrase) {
         Ok(v) => v,
         Err(e) => {
             cleanup(&tmp_db);
+            cleanup(&tmp_sync);
             return Err(e);
         }
     };
+    if paired && let Err(e) = validate_backup_sync_component(&tmp_sync, passphrase) {
+        cleanup(&tmp_db);
+        cleanup(&tmp_sync);
+        return Err(e);
+    }
 
     // 4. 安全备份当前库（恢复出错时可回滚）。文件级拷贝：当前库为密文时
     //    安全备份自然继承密文，凭同一主口令可回滚（issue #572 钉住）。
@@ -600,11 +663,11 @@ pub fn restore_db_from(
         let stamp = db::now_iso().replace([':', 'T'], "-");
         let safety = safety_dir.join(format!("restore-safety-{stamp}.db"));
         std::fs::copy(db_path, &safety)?;
-        // 同步元数据库一并移位（ADR-0139 决策 3 配对纪律，issue #1869）：恢复
-        // 产物是单文件备份（本票 sync.db 恒为空库，四张同步表随备份内主库走），
+        // 同步元数据库一并移位（ADR-0139 决策 3/6 配对纪律，issue #1869）：
         // 原位遗留的 sync.db 与恢复出的世界形态无涉——留在原地，重开挂载可能
         // 形态错配（如密文世界恢复明文备份）。按恢复安全备份命名语义移入安全
-        // 目录保留（永不删除）；新世界的 sync.db 由挂载接线按恢复后主库形态补建。
+        // 目录保留（永不删除）；旧形态恢复的新世界 sync.db 由挂载接线按恢复后
+        // 主库形态补建，成对恢复则由 sync 条目就位。
         let sync_path = db::sync_db_path(db_path);
         if sync_path.exists() {
             let sync_safety = safety_dir.join(format!("restore-safety-sync-{stamp}.db"));
@@ -615,13 +678,29 @@ pub fn restore_db_from(
         tracing::info!(safety = %safety.display(), "恢复前已自动备份当前数据库");
     }
 
-    // 5. 替换原库。
+    // 5. 替换：成对恢复先换 sync.db（此刻主库未动，失败仅归位 sync.db 即回滚
+    //    无痕），再换主库（既有失败语义：已移位/已替换的 sync.db 尽力归位）。
+    let sync_path = db::sync_db_path(db_path);
+    if paired && let Err(error) = replace_file(&tmp_sync, &sync_path) {
+        if let Some((sync_path, sync_safety)) = &sync_moved
+            && let Err(move_back) = std::fs::rename(sync_safety, sync_path)
+        {
+            tracing::error!(
+                error = %move_back,
+                "恢复 sync.db 替换失败后归位失败，保持移位现场"
+            );
+        }
+        cleanup(&tmp_db);
+        cleanup(&tmp_sync);
+        return Err(error);
+    }
+    cleanup(&tmp_sync);
     let replace_result = replace_file(&tmp_db, db_path);
     cleanup(&tmp_db);
     if let Err(error) = replace_result {
         // 替换失败主库原样保留（ADR-0117 决策 3 恢复失败语义「回滚无痕」）：
-        // 已移位的 sync.db 尽力归位，现场可重试；归位失败保持移位现场并报错
-        // （主库未动，原世界仍以「主库 + .bak 形态 sync.db」自洽存在）。
+        // 已移位/已替换的 sync.db 尽力归位，现场可重试；归位失败保持移位现场
+        // 并报错（主库未动，原世界仍以「主库 + 安全副本 sync.db」自洽存在）。
         if let Some((sync_path, sync_safety)) = &sync_moved
             && let Err(move_back) = std::fs::rename(sync_safety, sync_path)
         {
@@ -664,7 +743,7 @@ pub fn restore_db_from(
             tracing::warn!(error = %e, "恢复后打开新库重置自动备份状态失败");
         }
     }
-    tracing::info!(schema = %backup_schema, "恢复完成");
+    tracing::info!(schema = %backup_schema, paired, "恢复完成");
     Ok(RestoreResult {
         schema_version: backup_schema,
         restored_at,
@@ -731,33 +810,60 @@ fn validate_backup(tmp_db: &Path, expected_schema: i64, passphrase: Option<&str>
     Ok(backup_schema)
 }
 
-/// 从备份输入提取数据库文件到 `out`：zip 包解出 `ledger.db`，裸 `.db` 直接拷贝。
-fn extract_db_file(backup_path: &Path, out: &Path) -> Result<()> {
+/// 成对备份的同步件校验：凭主口令打开（密文形态同主库）并做完整性检查——
+/// 失败发生在任何替换之前（校验阶段拒绝，缺口令 / 错误口令 / 损坏的错误
+/// 形态与主库校验同款）。
+fn validate_backup_sync_component(tmp_sync: &Path, passphrase: Option<&str>) -> Result<()> {
+    let conn = open_backup_db_conn(tmp_sync, passphrase)?;
+    db::check_integrity(&conn)
+}
+
+/// 读取备份包的双库成对标记（恢复形态分支判据）：zip 内 `backup.json` 的
+/// `paired` 字段；非 zip、元数据缺失或损坏一律按旧形态单文件备份（false）——
+/// 恢复不因元数据而新增失败面，与既有行为一致。
+fn backup_paired_flag(backup_path: &Path) -> bool {
+    File::open(backup_path)
+        .ok()
+        .and_then(|file| zip::ZipArchive::new(file).ok())
+        .and_then(|mut archive| read_meta_from_archive(&mut archive).ok())
+        .map(|meta| meta.paired)
+        .unwrap_or(false)
+}
+
+/// 从备份输入提取库文件到 `(out_main, out_sync)`：zip 包解出 `ledger.db` 与
+/// `sync.db`（双文件成对产物；缺 sync 条目返回 false = 旧形态单文件备份），
+/// 裸 `.db` 直接拷贝（旧形态，返回 false）。
+fn extract_db_files(backup_path: &Path, out_main: &Path, out_sync: &Path) -> Result<bool> {
     let file = File::open(backup_path)?;
     let mut archive = match zip::ZipArchive::new(file) {
         Ok(a) => a,
         Err(_) => {
-            // 非 zip：按裸 db 处理。
-            std::fs::copy(backup_path, out)?;
-            return Ok(());
+            // 非 zip：按裸 db 处理（旧形态）。
+            std::fs::copy(backup_path, out_main)?;
+            return Ok(false);
         }
     };
 
-    let mut found = false;
+    let mut found_main = false;
+    let mut found_sync = false;
     for i in 0..archive.len() {
         let mut entry = archive.by_index(i)?;
         let name = entry.name().to_string();
         if name == ZIP_DB_ENTRY {
-            let mut out_file = File::create(out)?;
+            let mut out_file = File::create(out_main)?;
             std::io::copy(&mut entry, &mut out_file)?;
-            found = true;
+            found_main = true;
+        } else if name == ZIP_SYNC_ENTRY {
+            let mut out_file = File::create(out_sync)?;
+            std::io::copy(&mut entry, &mut out_file)?;
+            found_sync = true;
         }
     }
-    if !found {
+    if !found_main {
         return Err(AppError::coded(
             "backup.db-entry-missing",
             format!("备份包内未找到 {}，不是有效的开源记账备份", ZIP_DB_ENTRY),
         ));
     }
-    Ok(())
+    Ok(found_sync)
 }

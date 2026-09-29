@@ -16,6 +16,7 @@
 - **交易 / AI 导入 / HTTP API**：订单可读性——交易新增可选来源订单号 `source_order_no`（V035，来源元数据、不限 kind，同单多行写同一单号；增量迁移、存量行零变化；AI / HTTP 契约可选字段，导入教学补「单号写入列、不入备注」）；交易列表行尾为有单号的行渲染静态「订单 <单号>」徽章（桌面表格与移动卡片同源，不可点击、无过滤、不分组）；行菜单对订单行开放只读详情（编辑通道保留），详情呈现所属订单区——行数 · 合计 · 按账户聚合的出资构成徽标（单账户订单 1 枚、多账户订单 ≥2 枚）与各行明细，数据经新增订单汇总只读 IPC 命令（同单行集与出资聚合收同一读事务；无 HTTP 端点）（[#1862]，ADR-0138 决策 9）。
 - **交易 / AI 导入 / HTTP API**：购买项（订单商品明细）——`expense` 写入可携带 `purchases[]`（每条 = {名称, 件数, 分类?, 单价?}，数组顺序 = 对账单顺序；仅 `expense` 可带，其余类型码化拒绝；单价可空——源单只给订单总额时留空，不进任何金额口径），随交易落购买项子表（V034 就地扩 `transaction_purchases`，子行随主行存亡、无独立软删位、存量行零迁移）并随交易读回（列表 / 详情 / 搜索 / 订单汇总同契约；无购买项行为空数组、存量行为零变化）；新增错误码 `transaction.purchase-item-unsupported` / `transaction.purchase-name-required` / `transaction.purchase-quantity-positive` / `transaction.purchase-price-negative` / `purchase.category-not-found`（zh/en 模板同步）；导入教学补「购买项字段、商品名不写备注、价格拿不到就留空不猜不编造、订单级分类按金额最大的商品确定」（[#1882]，ADR-0138 决策 9/10）。界面呈现随后续票（#1883 / #1884）。
 - **数据文件**：同步元数据库落位 expand 步（ADR-0139 决策 3/4，拆库本体前置）——启动建连即在工作目录成对挂载 `sync.db`（写连接自动建空库、只读连接只读形态挂载，与主库同加密形态同密钥；挂载失败报码化错误 `db.sync-mount-failed`，不静默降级）。本阶段四张同步表仍在主库，同步、备份、检查点行为零变化；开启 / 关闭加密与修改主口令时 `sync.db` 随主库一并转换，恢复时原位遗留的 `sync.db` 移入恢复安全备份保留（[#1869]，ADR-0139）。
+- **数据文件 / 多端同步**：检查点快照与备份产物双文件成对（ADR-0139 决策 5/6，拆库本体 expand 步）——检查点快照改为「业务件 + 同步元数据件」同刻成对产出（单连接互斥锁内逐库 `VACUUM INTO`，双源回退：`sync.db` 四表齐备逐 attached 快照，否则回退主库；本阶段四张同步表仍在主库，行为与单文件形态等价）；通道 manifest 检查点指针扩展为双指针（新增可选 `sync_file` 字段指向同步件，旧版本端忽略新字段、通道互操作不破坏，旧形态单文件快照照常可引导）；应用内备份 zip 成对携带 `sync.db`（元数据新增可选 `paired` 标记），恢复按形态分支——成对备份把同步身份（设备标识、位点、日志）随库一致回滚，恢复后无缝续同步，旧形态备份行为不变（[#1870]，ADR-0139）。
 
 ## [0.8.0] - 2026-09-27
 
@@ -456,4 +457,5 @@
 [#1861]: https://github.com/asiazhang/ledger/issues/1861
 [#1862]: https://github.com/asiazhang/ledger/issues/1862
 [#1869]: https://github.com/asiazhang/ledger/issues/1869
+[#1870]: https://github.com/asiazhang/ledger/issues/1870
 [#1882]: https://github.com/asiazhang/ledger/issues/1882
