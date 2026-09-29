@@ -38,7 +38,14 @@ export { renderRowMenuIcon, errorOptionProps };
  * `errorColor`：当前主题的 error 色（组件经 useThemeVars 取值传入），注入删除项
  * DropdownOption props，图标+文字整体着色——不硬编码色值，暗色模式自动适配。
  */
-/** 「编辑」开放判定（income/expense/transfer 走分类记账/转账表单，buy/sell 走投资表单
+
+/** 菜单组装与行激活判定的行形状闭集（单一来源）：kind 行激活闭集 + 子行形状
+ * （出资分解 / 购买项）+ 来源订单号——三个判定函数共用，调用方供行或同形字面量。 */
+export type TransactionMenuRow = Pick<
+  Transaction,
+  "kind" | "fundings" | "purchases" | "source_order_no"
+>;
+
 /** 「编辑」开放判定（income/expense/transfer 走分类记账/转账表单，buy/sell 走投资表单
  * 编辑模式，issue #180；refund 破坏关联语义、convert / split / dividend 为界面只读
  * kind 均不开放，ADR-0106 决策 10 / ADR-0109）。带非空出资分解或非空购买项的行不开放——
@@ -47,7 +54,7 @@ export { renderRowMenuIcon, errorOptionProps };
  * 交易类型行激活闭集（transactionKindActivation）+ 行形状（fundings / purchases），
  * 菜单组装与移动档卡片行激活共用（issue #846 / #1048 / #1861 / #1884）。 */
 export function supportsRowEdit(
-  row: Pick<Transaction, "kind" | "fundings" | "purchases" | "source_order_no">,
+  row: TransactionMenuRow,
 ): boolean {
   return (
     row.fundings.length === 0 &&
@@ -64,7 +71,7 @@ export function supportsRowEdit(
  * kind 且无子行的订单行同时保留编辑入口（订单详情是增量呈现，不收走纠错通道）。
  * 单一来源（行激活闭集 + 行形状），菜单组装与移动档卡片「整卡点击 = 详情」共用。 */
 export function supportsRowDetail(
-  row: Pick<Transaction, "kind" | "fundings" | "purchases" | "source_order_no">,
+  row: TransactionMenuRow,
 ): boolean {
   return (
     row.fundings.length > 0 ||
@@ -75,7 +82,7 @@ export function supportsRowDetail(
 }
 
 export function buildRowMenuOptions(
-  row: Pick<Transaction, "kind" | "fundings" | "purchases" | "source_order_no">,
+  row: TransactionMenuRow,
   opts: { hasItem?: boolean; errorColor?: string } = {},
 ): DropdownOption[] {
   const options: DropdownOption[] = [];
