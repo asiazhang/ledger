@@ -28,7 +28,8 @@
     "source": "Source",
     "note": "Note",
     "amount": "Amount",
-    "actions": "Actions"
+    "actions": "Actions",
+    "itemNote": "Item / Note"
   },
   "source": {
     "kind": {
@@ -89,6 +90,9 @@
     "sameAccountEntries": "{n} entries, same account",
     "autoDerived": "Auto-split by proportion",
     "total": "Total · {n} funding items"
+  },
+  "purchase": {
+    "quantity": "qty {n}"
   },
   "order": {
     "no": "Order No.",

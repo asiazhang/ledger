@@ -64,6 +64,15 @@ textarea,
   opacity: 1;
 }
 
+/*
+ * 交易列表订单级合并格（购买项展开，issue #1883 / ADR-0138 决策 13）：rowspan 单元格
+ * 内容纵向居中。显式声明不依赖浏览器 UA 对 td 的默认对齐；类挂在订单级列
+ * （日期/类型/商户/来源/账户/金额/操作），被合并覆盖的格子不渲染、不受影响。
+ */
+.n-data-table-td.purchase-merged-cell {
+  vertical-align: middle;
+}
+
 @media (hover: none) {
   .note-copy-btn {
     opacity: 1;

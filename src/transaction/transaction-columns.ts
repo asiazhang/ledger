@@ -3,9 +3,14 @@
 // 渲染函数在运行时读取 store 的响应式数据，构建一次即可，无需 computed 包裹。
 
 import { h, type VNode } from "vue";
-import { NEllipsis, NButton, NTag, type DataTableColumn } from "naive-ui";
+import { NEllipsis, NButton, NTag, type DataTableBaseColumn, type DataTableColumn } from "naive-ui";
 import { formatAmount } from "@ledger/money";
-import type { Transaction, TransactionKind, TransactionModalRow } from "@ledger/types";
+import type {
+  Transaction,
+  TransactionKind,
+  TransactionModalRow,
+  TransactionPurchase,
+} from "@ledger/types";
 import type { useReferenceStore } from "@/stores/reference";
 import { useAppStore } from "@/stores/app";
 import { kindSemanticColor } from "@ledger/theme/semantic-colors";
@@ -111,12 +116,75 @@ export function renderOrderBadge(sourceOrderNo: string): VNode {
   );
 }
 
+/** 订单级合并格样式类（购买项展开，ADR-0138 决策 13）：rowspan 单元格内容纵向居中，
+ * 样式收口 global.css（不依赖浏览器 UA 对 td 的默认对齐）。 */
+export const PURCHASE_MERGED_CELL_CLASS = "purchase-merged-cell";
+
+/**
+ * 展开后的显示行（issue #1883 / ADR-0138 决策 13）：购买项行由主交易行派生——
+ * 同一交易带 `purchaseIndex` 复制 N 份（N = 购买项数），无购买项交易复制 1 份
+ * （purchaseIndex = -1，呈现零变化）。派生行不是独立排序/分页单元：行序 = 交易序，
+ * 同单内按购买项顺序位相邻（分页、total、筛选与排序仍按交易计，ADR-0138 决策 14）。
+ */
+export interface ExpandedTransactionRow extends Transaction {
+  /** 本行对应的购买项序位（0 基，对账单顺序）；无购买项行 = -1 */
+  purchaseIndex: number;
+}
+
+/** 交易行集 → 展开显示行集（列表视图侧唯一接线点）：有购买项的交易每项一行，
+ * 其余交易原样一行。浅拷贝保留行只读消费语义（菜单/弹窗读字段，不持行身份）。 */
+export function expandPurchaseRows(rows: Transaction[]): ExpandedTransactionRow[] {
+  return rows.flatMap((row) =>
+    row.purchases.length === 0
+      ? [{ ...row, purchaseIndex: -1 }]
+      : row.purchases.map((_, purchaseIndex) => ({ ...row, purchaseIndex })),
+  );
+}
+
+/** 行的购买项序位（行渲染回调的单一收口）：未展开行集（搜索结果等）按无购买项行（-1）处理；
+ * 订单块首行 = 0（承载合并格，订单级交互入口所在），续行 > 0（纯购买项行，不可交互）。 */
+export function purchaseIndexOf(row: Transaction): number {
+  return (row as ExpandedTransactionRow).purchaseIndex ?? -1;
+}
+
+/** 行对应的购买项条目；非购买项行或序位越界返回 null（退回原渲染）。 */
+function purchaseOf(row: Transaction): TransactionPurchase | null {
+  const index = purchaseIndexOf(row);
+  return index < 0 ? null : (row.purchases[index] ?? null);
+}
+
+/** 订单级格跨度（naive-ui 列 rowSpan 回调）：订单块首行 = 购买项数（向下合并），
+ * 其余行 = 1（被合并覆盖的格子由表格按坐标跳过，不渲染）。 */
+export function orderLevelRowSpan(row: Transaction): number {
+  return purchaseIndexOf(row) === 0 ? Math.max(row.purchases.length, 1) : 1;
+}
+
+/** 购买项单元格件数标注样式（弱化灰后缀注记，与账户列「等 N 账户」同型）。 */
+const PURCHASE_QTY_STYLE =
+  "flex: none; color: var(--n-text-color-disabled, #999); font-size: 12px;";
+
+/** 购买项单元格渲染（issue #1883 / ADR-0138 决策 13，「商品 / 备注」列的商品形态）：
+ * 商品名（NEllipsis 自省略 + 悬停全文，长商品名不再只剩「…」）+「共 N 件」件数标注。
+ * 只读呈现：无复制按钮（备注复制通道不适用商品名）、无价格（存而不显示，决策 10）；
+ * 订单徽章不随购买项行渲染（备注列商品形态只承载商品名与件数，订单号出口在详情）。 */
+function renderPurchaseCell(item: TransactionPurchase): VNode {
+  return h("div", { style: NOTE_CELL_STYLE }, [
+    h(NEllipsis, { style: "flex: 1 1 auto; min-width: 0;" }, { default: () => item.name }),
+    h(
+      "span",
+      { style: PURCHASE_QTY_STYLE },
+      t("transactions.purchase.quantity", { n: item.quantity }),
+    ),
+  ]);
+}
+
 /** 备注单元格渲染（显式复制通道，见 CONTEXT-ui-interaction「界面文本不可选」）：
  * - 无备注且无订单徽章渲染 '-'，不渲染复制按钮（空备注无可复制）；
  * - 有备注：单元格内 flex——NEllipsis 承载文本（自省略 + 悬停全文，同账户/来源列的
  *   单元格内省略模式），NoteCopyButton 复制完整备注（clipboard API + toast），
  *   按钮悬停行显现（显隐样式收口 global.css）；
- * - 来源订单号列有值时行尾追加静态订单徽章（无备注行也渲染徽章，不落 '-'）。 */
+ * - 来源订单号列有值时行尾追加静态订单徽章（无备注行也渲染徽章，不落 '-'）。
+ * - 展开视图（issue #1883）下仅无购买项行走本渲染，购买项行走 renderPurchaseCell。 */
 function renderNoteCell(row: Transaction): VNode | string {
   const { note } = row;
   const badge = row.source_order_no ? renderOrderBadge(row.source_order_no) : null;
@@ -135,18 +203,30 @@ export interface BuildTransactionColumnsOptions {
    * 追加常显操作列，与行右键共用 RowContextMenu 同一 open 入口（账户行先例）；
    * 不传则不渲染该列（搜索结果无行菜单，保持只读）。 */
   onRowMenuOpen?: (event: MouseEvent, row: Transaction) => void;
+  /** 购买项展开（issue #1883 / ADR-0138 决策 13）：声明即按「订单块逐购买项行」
+   * 装配——订单级列（日期/类型/商户/来源/账户/金额/操作）rowSpan 纵向合并、
+   * 分类列逐行取购买项分类、备注列一列两用。仅消费 expandPurchaseRows 展开行集的
+   * 视图可声明（交易列表）；未展开行集（搜索结果）不声明，呈现零变化。 */
+  expandPurchases?: boolean;
 }
 
 export function buildTransactionColumns(
   reference: ReferenceStore,
   options: BuildTransactionColumnsOptions = {},
 ): DataTableColumn<Transaction>[] {
+  // 订单级列合并装配（ADR-0138 决策 13）：展开视图给订单级列套 rowSpan 与
+  // 合并格居中样式类；分类列、备注列不合并（分类逐行、备注两用）。
+  const merged: Partial<Pick<DataTableBaseColumn<Transaction>, "rowSpan" | "className">> =
+    options.expandPurchases
+      ? { rowSpan: orderLevelRowSpan, className: PURCHASE_MERGED_CELL_CLASS }
+      : {};
   const columns: DataTableColumn<Transaction>[] = [
-    { title: t("transactions.columns.date"), key: "date", width: 105 },
+    { title: t("transactions.columns.date"), key: "date", width: 105, ...merged },
     {
       title: t("transactions.columns.kind"),
       key: "kind",
       width: 65,
+      ...merged,
       render: (row) => h(NTag, { type: KIND_TAG_TYPE[row.kind] }, () => kindLabel(reference, row)),
     },
     {
@@ -154,12 +234,20 @@ export function buildTransactionColumns(
       key: "category_id",
       width: 150,
       ellipsis: { tooltip: true },
-      render: (row) => (row.category_id ? reference.categoryPath(row.category_id) || "-" : "-"),
+      // 分类列逐行显示（ADR-0138 决策 13）：展开视图下购买项行显示该购买项自己的分类、
+      // 不做一致性合并（层级分类下没有任何一个真值能同时代表一单内的不同分类）；
+      // 无购买项行与未展开视图仍显示交易行分类，呈现零变化。
+      render: (row) => {
+        const item = options.expandPurchases ? purchaseOf(row) : null;
+        const categoryId = item ? item.category_id : row.category_id;
+        return categoryId ? reference.categoryPath(categoryId) || "-" : "-";
+      },
     },
     {
       title: t("transactions.columns.merchant"),
       key: "merchant_id",
       width: 120,
+      ...merged,
       ellipsis: { tooltip: true },
       // 商户名经 merchantMap（含软删）解析并可点击下钻（issue #191）；未知/无商户回退 '-'
       render: (row) => (row.merchant_id ? h(MerchantLink, { merchantId: row.merchant_id }) : "-"),
@@ -168,12 +256,14 @@ export function buildTransactionColumns(
       title: t("transactions.columns.account"),
       key: "account_id",
       width: 180,
+      ...merged,
       render: (row) => renderAccountCell(row),
     },
     {
       title: t("transactions.columns.source"),
       key: "source",
       width: 140,
+      ...merged,
       // 来源列（spec #704 / issue #706）：图标 + 实体名 + 状态标注，点击经来源
       // 跳转深模块落地（SourceLink 内部收口）；无来源留空（手动/AI 导入口径）。
       // 不设列级 ellipsis（账户列同款理由：NEllipsis 会把图标/名称/标注包装成
@@ -181,17 +271,25 @@ export function buildTransactionColumns(
       render: (row) => (row.source ? h(SourceLink, { source: row.source }) : "-"),
     },
     {
-      title: t("transactions.columns.note"),
+      // 列名两形态（ADR-0138 决策 13）：展开视图整列「商品 / 备注」（一列两用），
+      // 未展开视图（搜索结果）仍「备注」——列头与其内容形态一致。
+      title: options.expandPurchases
+        ? t("transactions.columns.itemNote")
+        : t("transactions.columns.note"),
       key: "note",
       // 弹性列：不设 width，由 fixed 布局均分剩余空间（超长时省略号 + 悬停显示全文）；
       // 不设列级 ellipsis（账户/来源列同款理由：会把复制按钮一起包进省略容器），
       // 省略与悬停全文由单元格内 NEllipsis 承担（fixed 布局由分类/商户列维持）
-      render: renderNoteCell,
+      render: (row) => {
+        const item = options.expandPurchases ? purchaseOf(row) : null;
+        return item ? renderPurchaseCell(item) : renderNoteCell(row);
+      },
     },
     {
       title: t("transactions.columns.amount"),
       key: "amount_native_cents",
       width: 125,
+      ...merged,
       // 金额按交易类型语义色着色（issue #435）：色值单一来源在
       // @ledger/theme/semantic-colors（六类型亮/暗两套）。主题在渲染时读取 app store
       // 响应式取值：切换外观主题即时换色，无需重建列；借出/借入/收回/还款是
@@ -206,7 +304,7 @@ export function buildTransactionColumns(
     },
   ];
   if (options.onRowMenuOpen) {
-    columns.push(rowActionsColumn(options.onRowMenuOpen));
+    columns.push(rowActionsColumn(options.onRowMenuOpen, merged));
   }
   return columns;
 }
@@ -219,11 +317,15 @@ export function buildTransactionColumns(
  */
 export function rowActionsColumn<T>(
   onRowMenuOpen: (event: MouseEvent, row: T) => void,
+  // 合并装配（issue #1883 / ADR-0138 决策 13）：购买项展开视图传入 rowSpan + 合并格
+  // 样式类，操作列在订单块内只渲染一个；其余消费方（投资明细页签）不传，零变化。
+  merge: Partial<Pick<DataTableBaseColumn<T>, "rowSpan" | "className">> = {},
 ): DataTableColumn<T> {
   return {
     title: t("transactions.columns.actions"),
     key: "actions",
     width: 64,
+    ...merge,
     render: (row) =>
       h(
         NButton,
