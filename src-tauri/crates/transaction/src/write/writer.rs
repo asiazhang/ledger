@@ -600,9 +600,9 @@ pub fn update_row(conn: &Connection, id: &str, row: &NormalizedRow) -> Result<()
     // 出资项子行全量替换（ADR-0138 决策 6 全量语义）：单 ⇄ 多就地互转同一路径，
     // 与主行 UPDATE 同事务（中途失败整体回滚）。
     crate::write::funding_items::replace_rows(conn, id, &row.funding)?;
-    // 余额缓存写路径：受影响账户 = 旧行 ∪ 新行账户引用集（主表三列 + 出资子行端，
     // 购买项子行全量替换（与出资项同款全量语义）：与主行 UPDATE 同事务。
     crate::write::purchase_items::replace_rows(conn, id, &row.purchases)?;
+    // 余额缓存写路径：受影响账户 = 旧行 ∪ 新行账户引用集（主表三列 + 出资子行端，
     // ADR-0138 决策 7），消费余额模块唯一定义（issue #534 / #935）；旧账户引用读取
     // 时机与刷新事务位置不变，同事务整体重算（修改可能移动账户，ADR-0067）。经写
     // 路径副作用接缝传入两行引用集（#1090 接缝反转），推导与重算都在账户域实现侧。
