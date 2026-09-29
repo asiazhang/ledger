@@ -179,8 +179,14 @@ pub fn bootstrap_from_checkpoint(
             rebuild_main_from_snapshot(conn, snapshot_version)?;
             // 同步元数据件按形态分支归位（双源回退，票 04 expand；票 06 删除
             // 回退）：目标 attached 侧四表齐备（双库布局）才消费同步件；单库
-            // 布局回退读 main——四表已随业务件换入 main，同步件跳过。
-            consume_sync_snapshot(conn, &sync_snapshot_path, passphrase)
+            // 布局回退读 main——四表已随业务件换入 main，同步件跳过。旧形态
+            // 单文件快照（同步件为空）恒跳过——跨版本拆归两库归票 07，不在
+            // 本分支挂载缺失的同步件。
+            if checkpoint.sync_snapshot.is_empty() {
+                Ok(())
+            } else {
+                consume_sync_snapshot(conn, &sync_snapshot_path, passphrase)
+            }
         })();
         // 挂载库恒卸载（重建失败亦然），随后以重建结果为准。
         let detach = conn.execute(&format!("DETACH DATABASE {SNAP_ALIAS}"), []);

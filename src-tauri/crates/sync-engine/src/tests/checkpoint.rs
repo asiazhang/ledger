@@ -1007,6 +1007,46 @@ fn dual_db_source_produces_business_and_sync_files_split() {
     assert_eq!(stream_positions(&conn_a).unwrap(), cp.positions);
 }
 
+/// 旧形态单文件快照（同步件为空）× 双库就绪目标：恒走单库形态——同步件不
+/// 消费、attached 四表保持空库、业务件照常换入（跨版本拆归两库归票 07）。
+#[test]
+fn legacy_snapshot_on_dual_ready_target_skips_sync_component() {
+    let conn_a = test_support::open();
+    let id = base_ledger(&conn_a);
+    let mut cp = create_checkpoint(&conn_a).unwrap();
+    cp.sync_snapshot = Vec::new(); // 票 04 前形态替身
+
+    let dst_dir = ScratchDir::new("cp-legacy-dual");
+    let dst_main = dst_dir.join("ledger.db");
+    let dst_sync = dst_dir.join("sync.db");
+    {
+        let factory = test_support::open();
+        factory
+            .execute(
+                "VACUUM INTO ?1",
+                rusqlite::params![dst_main.to_string_lossy()],
+            )
+            .unwrap();
+    }
+    make_sync_only_db(&dst_sync);
+    let mut conn_b = ledger_infra::db::open_connection(&dst_main).unwrap();
+
+    bootstrap_from_checkpoint(&mut conn_b, &cp, None).unwrap();
+
+    let attached_ops: i64 = conn_b
+        .query_row("SELECT COUNT(*) FROM sync.sync_ops", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(attached_ops, 0, "旧形态快照不消费同步件，attached 保持空库");
+    let main_txns: i64 = conn_b
+        .query_row("SELECT COUNT(*) FROM main.transactions", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(main_txns, 1, "业务件照常换入 main");
+    assert_eq!(
+        read_transaction(&conn_b, &id).unwrap().note.as_deref(),
+        Some("午饭")
+    );
+}
+
 /// 同步件按形态分支消费（票 05 迁移后引导形态的接线证明）：目标 attached 侧
 /// 四表齐备时，同步件经 SQL 级重建换入 attached——attached 的 op 与位点行只
 /// 可能来自消费分支（业务件重建只写 main），删除消费接线即红。目标 main 保

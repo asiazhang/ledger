@@ -6,7 +6,6 @@
 //!
 //! ```text
 //! <同步根>/book-<账本ID>/            # 每账本一份独立世界（ADR-0089 延伸）
-//! <同步根>/book-<账本ID>/            # 每账本一份独立世界（ADR-0089 延伸）
 //! ├── manifest.json                 # 各流段清单（序号区间+hash）+ Checkpoint 双指针
 //! ├── checkpoint/cp-<代>.enc        # 检查点业务件，按代独立文件，写新换指针
 //! ├── checkpoint/cp-<代>-sync.enc   # 检查点同步元数据件（双文件成对，ADR-0139
