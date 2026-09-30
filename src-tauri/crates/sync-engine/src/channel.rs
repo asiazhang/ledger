@@ -39,22 +39,29 @@
 //! 封包，保证弱原子性下的归并始终可读。
 //!
 //! 调用契约（同步轮次，#1339 / ADR-0120 决策 2/3/4）：轮次**分段取锁**——连接锁
-//! 只盖数据库步骤（读段：DeviceId/位点/待发布 op；重放段：逐段下载后的逐条
-//! 事务重放；落库段：「上次成功同步时刻」），经 [`RoundConn`] 接缝每段各自短取
-//! 一次；网络段（manifest 读/写、段上传/下载、封包与解封含 KDF）在连接锁外
-//! 完成，任何形状下不得进锁（ADR-0069 决策 4）。同端轮次顺序性由域内轮次在途
-//! 互斥承接（`trigger` 的轮次在途互斥单点，同端同库任一时刻至多一轮在途），
-//! manifest 的读-改-写由它独占；通道层既有的「并发整体替换由下一轮归并自愈」
-//! 保留为纵深兜底。失败语义按 ADR-0120 决策 6 三分：已上传段原子（内容确定
-//! 等同、重传幂等）、已重放 op 逐条原子、manifest 回写失败由下一轮归并续作；
-//! 「上次成功同步时刻」只在整轮成功后的整体裁决点落库（`trigger` 编排单点）。
+//! 只盖数据库步骤（读段：DeviceId/位点/待发布 op/位点声明；重放段：逐段下载
+//! 后的逐条事务重放；落库段：「上次成功同步时刻」+ 截断安全水位检查），经
+//! [`RoundConn`] 接缝每段各自短取一次；网络段（manifest 读/写、段上传/下载、
+//! 封包与解封含 KDF）在连接锁外完成，任何形状下不得进锁（ADR-0069 决策 4）。
+//! 同端轮次顺序性由域内轮次在途互斥承接（`trigger` 的轮次在途互斥单点，同端
+//! 同库任一时刻至多一轮在途），manifest 的读-改-写由它独占；通道层既有的
+//! 「并发整体替换由下一轮归并自愈」保留为纵深兜底。失败语义按 ADR-0120 决策 6
+//! 三分：已上传段原子（内容确定等同、重传幂等）、已重放 op 逐条原子、manifest
+//! 回写失败由下一轮归并续作；「上次成功同步时刻」只在整轮成功后的整体裁决点
+//! 落库（`trigger` 编排单点）。
+//!
+//! 截断义务（ADR-0139 决策 8，#1874，推翻 #857「v1 永不截断」）：轮次回写
+//! manifest 时顺带声明本机对各流的已应用位点（[`declare_applied_positions`]）；
+//! 整轮成功的落库段按安全水位（各端声明最小值，并以当前对端可达 Checkpoint 的
+//! 位点覆盖为上界校正）截断自己的流（[`truncate_own_stream_to_watermark`]）——
+//! 无用户开关、无保留期；单端 / 未配同步世界水位不可证即不截。
 //!
 //! 调用契约：检查点发布两段式——产出段 [`checkpoint::create_checkpoint`] 须在
 //! 单连接互斥锁内调用（位点/快照同刻成对约束）；发布段 [`upload_checkpoint`]
 //! 只消费已定格的快照字节与通道（封包 KDF + 网络往返），不消费连接，在连接锁
 //! 外调用（#1284；判据同 ADR-0120——网络等待出锁，连接锁只盖数据库步骤）。
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
@@ -247,12 +254,21 @@ impl ChannelManifest {
 }
 
 /// 单个来源设备的流清单。
+///
+/// 各流条目除段清单外还承载**位点声明**（ADR-0139 决策 8）：`applied_positions`
+/// 记录各报告端（键）对该流（值 = 已应用时钟）的声明，随报告端每轮回写
+/// manifest 顺带更新；声明归报告端所有，流属主的段覆写（本地权威）不得清除
+/// 他人声明。旧清单无此字段（缺省空），旧版端忽略新字段、通道互操作不破坏
+///（旧版端回写会丢弃声明，水位按声明缺失冻结，安全侧保守）。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StreamManifest {
     /// 来源设备标识。
     pub device_id: String,
     /// 已上传段清单（按起始时钟序）。
     pub segments: Vec<SegmentEntry>,
+    /// 各端对本流的已应用位点声明（报告端 device_id → 该流已应用时钟）。
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub applied_positions: BTreeMap<String, i64>,
 }
 
 impl StreamManifest {
@@ -303,6 +319,12 @@ pub struct CheckpointPointer {
     /// 同步元数据件密文 SHA-256（hex；随 sync_file 成对在位）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sync_sha256: Option<String>,
+    /// 该检查点内已并入的各流位点（产出端快照时刻的位点表，键 = 来源设备）：
+    /// 「水位之前的 op 已并入对端可达 Checkpoint」的 manifest 可读证据，截断
+    /// 安全水位的覆盖校正上界（ADR-0139 决策 8）。旧形态指针无此字段（缺省
+    /// 空 = 覆盖不可证，截断冻结，安全侧保守），下一次检查点发布自然补齐。
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub applied_positions: BTreeMap<String, i64>,
 }
 
 /// 轮次内消费连接的数据库段闭集（ADR-0120 决策 2 的表格承载）：连接锁只盖
@@ -315,7 +337,8 @@ pub enum ConnSegment {
     Read,
     /// 重放段：逐段下载后对已解封 op 的重放（逐条事务在闭包内逐条提交）。
     Replay,
-    /// 落库段：「上次成功同步时刻」的设置写入（整轮成功后的整体裁决点）。
+    /// 落库段：整轮成功后的整体裁决点——「上次成功同步时刻」的设置写入与
+    /// 截断安全水位检查（按水位截断自己的流，ADR-0139 决策 8）。
     Bookkeep,
 }
 
@@ -469,7 +492,13 @@ pub fn run_round_with<S: RoundConn>(
     let mut manifest = remote.clone();
     publish_own_ops(&ctx, &device_id, &remote, &mut manifest, &mut report)?;
 
-    // manifest 变化才整体替换写回（读侧轮次零写入）。
+    // 位点声明：本机对各流的已应用位点随本轮 manifest 回写顺带上报（读段短取；
+    // ADR-0139 决策 8）。**负向判据（ADR-0087）**：删除本调用，声明写接线
+    // 即断——「manifest 位点声明的写」域单测红（水位无证据，截断全冻结）。
+    declare_applied_positions(&ctx, &device_id, &mut manifest)?;
+
+    // manifest 变化才整体替换写回（读侧轮次零写入：段与声明都无变化的空闲
+    // 轮次仍零写入）。
     if manifest != remote {
         transport.write_file(&layout.manifest_path(), &manifest.serialize()?)?;
     }
@@ -478,7 +507,114 @@ pub fn run_round_with<S: RoundConn>(
     // → 逐段重放（重放段，交错粒度保持逐段下载 → 逐段重放：内存以段为界，
     // ADR-0120 决策 5）。
     pull_foreign_streams(&ctx, &device_id, &manifest, &mut report)?;
+
+    // 落库段（整轮成功后的最后一步，失败轮次中途返回不达此处）：按安全水位
+    // 截断自己的流（ADR-0139 决策 8，截断放开）。**负向判据（ADR-0087）**：
+    // 删除本调用，「达到安全水位自动截断」域单测红。
+    truncate_own_stream_to_watermark(&ctx, &manifest, &device_id);
     Ok(report)
+}
+
+/// 位点声明（写接线，ADR-0139 决策 8）：读段短取本机对各流的已应用位点，
+/// 顺带写进本轮 manifest 各流条目的声明面（键 = 本端）。只对有位点行的流
+/// 声明——从未拉取的流不伪造 0 声明（声明缺席在他端按冻结计，安全侧同向）。
+/// 声明采集在轮回写点（拉取段之前）：本轮拉取推进的位点在下一轮回写时声明
+/// （一轮滞后，安全侧保守）。位点只随重放推进、本轮内此后不变（同端至多
+/// 一轮在途，本地写不触位点）。
+fn declare_applied_positions<S: RoundConn>(
+    ctx: &RoundCtx<'_, '_, S>,
+    device_id: &str,
+    manifest: &mut ChannelManifest,
+) -> Result<()> {
+    let own: BTreeMap<String, i64> = ctx.locks.with_connection(ConnSegment::Read, |conn| {
+        Ok(position_map(&positions::list(conn)?))
+    })?;
+    for stream in &mut manifest.streams {
+        if let Some(applied) = own.get(&stream.device_id) {
+            stream
+                .applied_positions
+                .insert(device_id.to_string(), *applied);
+        }
+    }
+    Ok(())
+}
+
+/// 位点表 → manifest 声明/覆盖面（报告端或来源设备 → 已应用时钟）的单点投影。
+fn position_map(rows: &[ledger_sync_protocol::position::StreamPosition]) -> BTreeMap<String, i64> {
+    rows.iter()
+        .map(|p| (p.device_id.clone(), p.applied_through))
+        .collect()
+}
+
+/// 本端自己流的截断安全水位（读接线，ADR-0139 决策 8；三硬约束的「只删位点
+/// 之前」上界）：
+///
+/// - **各端声明最小值**：本流条目声明面上、除本端外全部参与端的声明最小值。
+///   参与端闭集 = 流清单来源设备 ∪ 各流声明的报告端（不含本端——本端自己流
+///   位点恒为自己时钟头，不得自证截断：单端世界与「尚未上传的 op 不被截」都
+///   靠它排除）。任一参与端声明缺失按 0 计——离线端 / 旧版端水位冻结，截断
+///   延迟（安全侧保守，只影响瘦身及时性）。
+/// - **Checkpoint 可达覆盖校正（上界）**：水位不得超过当前对端可达 Checkpoint
+///   对本流的位点覆盖——覆盖内的 op 已并入对端可取的检查点文件，manifest 若
+///   因损坏走「删除重发布」自愈，被截前缀仍可由检查点 + 其后 op 重建（新端
+///   引导契约「Checkpoint + 其后 op = 一致状态」不被截断破坏）。指针缺席或
+///   旧形态指针（无位点字段）即覆盖不可证，不截。
+///
+/// 任一半不可证（无对端声明 / 无并入 Checkpoint 证据）返回 `None`——水位
+/// 不可证即不删。
+fn own_stream_watermark(manifest: &ChannelManifest, device_id: &str) -> Option<i64> {
+    let mut participants: BTreeSet<&str> = manifest
+        .streams
+        .iter()
+        .map(|s| s.device_id.as_str())
+        .collect();
+    for stream in &manifest.streams {
+        participants.extend(stream.applied_positions.keys().map(String::as_str));
+    }
+    participants.remove(device_id);
+    if participants.is_empty() {
+        return None;
+    }
+    let own = manifest.streams.iter().find(|s| s.device_id == device_id)?;
+    // 参与端非空已验（上放空检）：fold 取最小，无缺省分支。
+    let declared_min = participants
+        .iter()
+        .map(|p| own.applied_positions.get(*p).copied().unwrap_or(0))
+        .fold(i64::MAX, i64::min);
+    let covered = manifest
+        .checkpoint
+        .as_ref()?
+        .applied_positions
+        .get(device_id)
+        .copied()?;
+    let watermark = declared_min.min(covered);
+    (watermark > 0).then_some(watermark)
+}
+
+/// 落库段顺带义务（ADR-0139 决策 8）：整轮成功后按安全水位截断自己的流——
+/// 无用户开关、无保留期；三硬约束由 [`crate::checkpoint::truncate_stream_before`]
+/// 承接（owner 门 + 时钟上界 + 挂起 op 天然豁免）。截断是瘦身义务、顺带于
+/// 同步：失败不失败整轮（warn 留痕，下一轮水位重证后幂等重试）。
+fn truncate_own_stream_to_watermark<S: RoundConn>(
+    ctx: &RoundCtx<'_, '_, S>,
+    manifest: &ChannelManifest,
+    device_id: &str,
+) {
+    let Some(watermark) = own_stream_watermark(manifest, device_id) else {
+        return;
+    };
+    match ctx.locks.with_connection(ConnSegment::Bookkeep, |conn| {
+        super::checkpoint::truncate_stream_before(conn, device_id, watermark)
+    }) {
+        Ok(deleted) if deleted > 0 => tracing::info!(
+            device = %device_id,
+            watermark,
+            deleted,
+            "轮次落库段按安全水位截断本机日志流"
+        ),
+        Ok(_) => {}
+        Err(error) => tracing::warn!(error = %error, watermark, "截断失败（下一轮重试）"),
+    }
 }
 
 /// 读取并解析通道 manifest（不存在按空清单；损坏/版本未知报码化错误）。
@@ -509,6 +645,7 @@ fn publish_own_ops<S: RoundConn>(
         .unwrap_or_else(|| StreamManifest {
             device_id: device_id.to_string(),
             segments: Vec::new(),
+            applied_positions: BTreeMap::new(),
         });
     // 读段：自通道上传位点之后的本机 op 一次读出（短取锁）；此后的切段、封包
     // （KDF）与上传都是网络段，不消费连接。发布位点的通道视图取自 manifest 而
@@ -553,10 +690,12 @@ fn publish_own_ops<S: RoundConn>(
         report.uploaded_segments += 1;
         report.uploaded_ops += chunk.len();
     }
-    // 自己流以本地权威覆写（他人流在归并外原样保留）。
+    // 自己流以本地权威覆写（他人流在归并外原样保留）；他人对本流的位点声明
+    // 归报告端所有，段覆写不得清除（ADR-0139 决策 8 声明面纪律）。
     let entry = StreamManifest {
         device_id: device_id.to_string(),
         segments: segments.into_values().collect(),
+        applied_positions: remote_own.applied_positions.clone(),
     };
     match manifest
         .streams
@@ -713,6 +852,9 @@ pub fn upload_checkpoint_with(
         sync_file,
         sync_size,
         sync_sha256,
+        // 位点覆盖随指针上 manifest（明文元数据）：截断水位的「已并入对端可达
+        // Checkpoint」证据面（ADR-0139 决策 8），各端按此上界校正水位。
+        applied_positions: position_map(&checkpoint.positions),
     };
     let mut manifest = remote.clone();
     manifest.checkpoint = Some(pointer.clone());

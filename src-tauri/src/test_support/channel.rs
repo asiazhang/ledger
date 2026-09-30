@@ -23,6 +23,8 @@
 //! 自保持原有语义。
 // C 类豁免（ADR-0060）：仅测试用——本文件随 test_support 文件级放行六件套
 // （见 mod.rs 豁免声明）。
+use std::collections::BTreeMap;
+
 use ledger_infra::error::{AppError, Result};
 use ledger_sync_engine::Checkpoint;
 use ledger_sync_engine::channel::{
@@ -87,6 +89,7 @@ pub fn publish_raw_segment(
         streams: vec![StreamManifest {
             device_id: device_id.to_string(),
             segments,
+            applied_positions: BTreeMap::new(),
         }],
         ..ChannelManifest::default()
     };
@@ -141,6 +144,7 @@ pub fn publish_raw_legacy_checkpoint(
         sync_file: None,
         sync_size: None,
         sync_sha256: None,
+        applied_positions: BTreeMap::new(),
     };
     let mut manifest = match transport.read_file(&layout.manifest_path())? {
         None => ChannelManifest::default(),
