@@ -87,6 +87,7 @@ pub fn publish_raw_segment(
         streams: vec![StreamManifest {
             device_id: device_id.to_string(),
             segments,
+            applied_positions: std::collections::BTreeMap::new(),
         }],
         ..ChannelManifest::default()
     };
@@ -141,6 +142,7 @@ pub fn publish_raw_legacy_checkpoint(
         sync_file: None,
         sync_size: None,
         sync_sha256: None,
+        applied_positions: std::collections::BTreeMap::new(),
     };
     let mut manifest = match transport.read_file(&layout.manifest_path())? {
         None => ChannelManifest::default(),

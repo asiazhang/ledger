@@ -16,7 +16,10 @@ use crate::envelope::{EnvelopeMode, EnvelopeParams, is_sealed};
 use crate::tests::common::{MemoryTransport, direct, make_expense, read_transaction};
 use crate::transport::Transport;
 use crate::transport::s3::{S3Config, S3Transport};
-use crate::{OpOutcome, apply_ops, bootstrap_from_checkpoint, create_checkpoint, read_ops};
+use crate::{
+    OpOutcome, apply_ops, bootstrap_from_checkpoint, create_checkpoint, parked_ops, read_ops,
+    stream_positions,
+};
 use ledger_transaction::write::protocol;
 use tauri_app_lib::test_support::{self, seed_account};
 use tauri_app_lib::test_support::{S3Addressing, S3Deny, S3Stub, S3StubConfig, spawn_s3_stub};
@@ -921,4 +924,420 @@ fn manifest_without_sync_fields_parses() {
     assert_eq!(pointer.sync_file, None, "旧形态指针缺省 None");
     assert_eq!(pointer.sync_size, None);
     assert_eq!(pointer.sync_sha256, None);
+}
+
+// ---------------------------------------------------------------------------
+// OpLog 截断启用（#1874 / ADR-0139 决策 8）：manifest 位点声明（写接线）+
+// 安全水位（读接线 = 各端声明最小值 ∩ 对端可达 Checkpoint 覆盖）+ 成功轮次
+// 落库段自动截断。判据一律对准可观察结果（本机日志行数、manifest 声明面、
+// 位点留存），不对准函数调用形状（ADR-0087）。
+// ---------------------------------------------------------------------------
+
+use std::collections::BTreeMap;
+
+/// 指定来源设备在本机日志中的 op 数（截断判据读取）。
+fn stream_log_len(conn: &Connection, device_id: &str) -> i64 {
+    conn.query_row(
+        "SELECT COUNT(*) FROM sync_ops WHERE device_id = ?1",
+        [device_id],
+        |r| r.get(0),
+    )
+    .unwrap()
+}
+
+/// 本端对指定流的已应用位点（位点留存判据读取；按 device_id 定位，
+/// #1112 同款纪律——位点清单按 DeviceId 序，下标随 UUID 生成顺序漂移）。
+fn position_of_stream(conn: &Connection, device_id: &str) -> i64 {
+    stream_positions(conn)
+        .unwrap()
+        .into_iter()
+        .find(|p| p.device_id == device_id)
+        .expect("位点行在列")
+        .applied_through
+}
+
+/// 读通道 manifest（判据读取）。
+fn channel_manifest(mem: &MemoryTransport, layout: &ChannelLayout) -> ChannelManifest {
+    let raw = mem.read_file(&layout.manifest_path()).unwrap().unwrap();
+    serde_json::from_slice(&raw).unwrap()
+}
+
+/// 位点声明的写接线（负向判据，ADR-0087）：各端每轮回写 manifest 顺带声明本机
+/// 对各流的已应用位点——A 发布后声明自己流的位点；B 拉取后把自己对 A 流的
+/// 位点声明写上 manifest；A 下一轮覆写自己流（段清单本地权威）不得清除 B 的
+/// 声明。删除轮次内的声明调用，本测试红。
+#[test]
+fn round_writeback_declares_applied_positions_in_manifest() {
+    let conn_a = test_support::open();
+    let conn_b = test_support::open();
+    seed_account(&conn_a, "acc-1", "现金", "cash", "CNY", 0);
+    seed_account(&conn_b, "acc-1", "现金", "cash", "CNY", 0);
+    protocol::create(&conn_a, make_expense("acc-1", 10000, "午饭")).unwrap();
+    protocol::create(&conn_a, make_expense("acc-1", 500, "咖啡")).unwrap();
+
+    let mem = MemoryTransport::new();
+    let layout = layout();
+    let mode = EnvelopeMode::Plaintext;
+
+    run_round(&direct(&conn_a), &mem, &layout, &mode).unwrap();
+    let dev_a = device_id_of(&conn_a);
+    let own_entry = &channel_manifest(&mem, &layout).streams[0];
+    assert_eq!(own_entry.device_id, dev_a);
+    assert_eq!(
+        own_entry.applied_positions.get(&dev_a),
+        Some(&2),
+        "A 轮回写顺带声明自己流的已应用位点"
+    );
+
+    run_round(&direct(&conn_b), &mem, &layout, &mode).unwrap();
+    // 声明采集在轮回写点（拉取段之前）：首轮拉取的位点在下一轮回写时声明
+    // （一轮滞后，安全侧保守）。
+    run_round(&direct(&conn_b), &mem, &layout, &mode).unwrap();
+    let dev_b = device_id_of(&conn_b);
+    let declared = channel_manifest(&mem, &layout).streams[0]
+        .applied_positions
+        .clone();
+    assert_eq!(
+        declared.get(&dev_b),
+        Some(&2),
+        "B 轮回写顺带声明对 A 流的已应用位点"
+    );
+
+    // A 覆写自己流：段清单本地权威，他人声明原样保留。
+    protocol::create(&conn_a, make_expense("acc-1", 700, "打车")).unwrap();
+    run_round(&direct(&conn_a), &mem, &layout, &mode).unwrap();
+    let after = channel_manifest(&mem, &layout).streams[0]
+        .applied_positions
+        .clone();
+    assert_eq!(
+        after.get(&dev_b),
+        Some(&2),
+        "流属主段覆写不得清除他人位点声明"
+    );
+    assert_eq!(after.get(&dev_a), Some(&3), "自己的声明随后续轮次推进");
+}
+
+/// 达到安全水位自动截断自己的流（负向判据，ADR-0087）：B 声明 + Checkpoint
+/// 覆盖（位点上 manifest）构成水位证据，A 成功轮次落库段按水位截断自己的流
+/// ——位点之前全删、位点留存不回退、业务数据不受影响、截断后同步继续。
+/// 删除轮次内的截断调用，本测试红。
+#[test]
+fn safe_watermark_truncates_own_stream_after_peer_declaration_and_checkpoint() {
+    let conn_a = test_support::open();
+    let conn_b = test_support::open();
+    seed_account(&conn_a, "acc-1", "现金", "cash", "CNY", 0);
+    seed_account(&conn_b, "acc-1", "现金", "cash", "CNY", 0);
+    let first = protocol::create(&conn_a, make_expense("acc-1", 10000, "午饭")).unwrap();
+    protocol::create(&conn_a, make_expense("acc-1", 500, "咖啡")).unwrap();
+
+    let mem = MemoryTransport::new();
+    let layout = layout();
+    let mode = EnvelopeMode::Plaintext;
+
+    run_round(&direct(&conn_a), &mem, &layout, &mode).unwrap();
+    let dev_a = device_id_of(&conn_a);
+    run_round(&direct(&conn_b), &mem, &layout, &mode).unwrap();
+    run_round(&direct(&conn_b), &mem, &layout, &mode).unwrap();
+    // B 发布检查点：位点覆盖随指针上 manifest（截断的「已并入对端可达」证据）。
+    let pointer = upload_checkpoint(
+        &mem,
+        &layout,
+        &mode,
+        &create_checkpoint(&conn_b).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        pointer.applied_positions.get(&dev_a),
+        Some(&2),
+        "指针携带产出端快照时刻的位点覆盖"
+    );
+    assert_eq!(stream_log_len(&conn_a, &dev_a), 2, "截断前日志完整");
+
+    // A 成功轮次：水位 = min(B 声明 2, 覆盖 2) = 2 → 自动截断自己的流。
+    run_round(&direct(&conn_a), &mem, &layout, &mode).unwrap();
+    assert_eq!(
+        stream_log_len(&conn_a, &dev_a),
+        0,
+        "水位之前的 op（整流）已截断"
+    );
+    assert_eq!(
+        position_of_stream(&conn_a, &dev_a), 2,
+        "位点留存不回退（水位不因日志缩短而回退）"
+    );
+    assert!(
+        read_transaction(&conn_a, &first.id).is_some(),
+        "截断只删日志行，业务数据不受影响"
+    );
+    // 他人声明在 A 的覆写与截断轮次后仍在（水位证据持续）。
+    let dev_b = device_id_of(&conn_b);
+    assert_eq!(
+        channel_manifest(&mem, &layout).streams[0]
+            .applied_positions
+            .get(&dev_b),
+        Some(&2)
+    );
+
+    // 截断后同步继续：A 新 op 正常发布（自截掉的时钟之后），B 照常应用。
+    let late = protocol::create(&conn_a, make_expense("acc-1", 700, "打车")).unwrap();
+    run_round(&direct(&conn_a), &mem, &layout, &mode).unwrap();
+    run_round(&direct(&conn_b), &mem, &layout, &mode).unwrap();
+    assert_eq!(
+        read_transaction(&conn_b, &late.id).unwrap().amount_cents,
+        700,
+        "截断后同步不断"
+    );
+}
+
+/// 未达标不截、缺失声明冻结（AC：离线端声明缺失 / 冻结时截断延迟，不越过其
+/// 水位）：从未应用 A 流的参与端（C，未声明）把水位钉在 0——A 不截；C 补齐
+/// 应用并声明后，A 的后续轮次才截到声明水位。
+#[test]
+fn truncation_defers_until_every_participant_has_declared() {
+    let conn_a = test_support::open();
+    let conn_b = test_support::open();
+    let conn_c = test_support::open();
+    for conn in [&conn_a, &conn_b, &conn_c] {
+        seed_account(conn, "acc-1", "现金", "cash", "CNY", 0);
+    }
+    protocol::create(&conn_a, make_expense("acc-1", 10000, "午饭")).unwrap();
+    protocol::create(&conn_a, make_expense("acc-1", 500, "咖啡")).unwrap();
+    protocol::create(&conn_c, make_expense("acc-1", 300, "C 的账")).unwrap();
+
+    let mem = MemoryTransport::new();
+    let layout = layout();
+    let mode = EnvelopeMode::Plaintext;
+
+    run_round(&direct(&conn_a), &mem, &layout, &mode).unwrap();
+    let dev_a = device_id_of(&conn_a);
+    run_round(&direct(&conn_c), &mem, &layout, &mode).unwrap();
+    run_round(&direct(&conn_b), &mem, &layout, &mode).unwrap();
+    let pointer = upload_checkpoint(
+        &mem,
+        &layout,
+        &mode,
+        &create_checkpoint(&conn_b).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(pointer.applied_positions.get(&dev_a), Some(&2));
+
+    // C 有自己的流（参与端）但从未应用 A 流（无声明）→ 水位按 0 冻结，A 不截。
+    run_round(&direct(&conn_a), &mem, &layout, &mode).unwrap();
+    assert_eq!(
+        stream_log_len(&conn_a, &dev_a),
+        2,
+        "参与端声明缺失 → 水位不可证，不截"
+    );
+
+    // C 应用 A 流（补齐）并经下一轮声明位点后，A 才按水位截断。
+    run_round(&direct(&conn_c), &mem, &layout, &mode).unwrap();
+    run_round(&direct(&conn_c), &mem, &layout, &mode).unwrap();
+    run_round(&direct(&conn_a), &mem, &layout, &mode).unwrap();
+    assert_eq!(
+        stream_log_len(&conn_a, &dev_a),
+        0,
+        "全部参与端声明齐备后按水位截断"
+    );
+}
+
+/// 水位不超过任何对端的（含陈旧的）声明，也不超过 Checkpoint 覆盖（AC：未达标
+/// 不截 + 覆盖校正上界）：B 的声明与覆盖停在 2 时，A 新增的 op3-4 不被截；证据
+/// 推进（声明 4 + 新覆盖 4）后下一轮才截到 4。
+#[test]
+fn truncation_is_bounded_by_stale_declaration_and_checkpoint_coverage() {
+    let conn_a = test_support::open();
+    let conn_b = test_support::open();
+    seed_account(&conn_a, "acc-1", "现金", "cash", "CNY", 0);
+    seed_account(&conn_b, "acc-1", "现金", "cash", "CNY", 0);
+    protocol::create(&conn_a, make_expense("acc-1", 10000, "一")).unwrap();
+    protocol::create(&conn_a, make_expense("acc-1", 500, "二")).unwrap();
+
+    let mem = MemoryTransport::new();
+    let layout = layout();
+    let mode = EnvelopeMode::Plaintext;
+
+    run_round(&direct(&conn_a), &mem, &layout, &mode).unwrap();
+    let dev_a = device_id_of(&conn_a);
+    run_round(&direct(&conn_b), &mem, &layout, &mode).unwrap();
+    run_round(&direct(&conn_b), &mem, &layout, &mode).unwrap();
+    upload_checkpoint(&mem, &layout, &mode, &create_checkpoint(&conn_b).unwrap()).unwrap();
+
+    // A 新增 op3-4（证据仍停在 2）：A 的轮次只截到 2，op3-4 保留。
+    protocol::create(&conn_a, make_expense("acc-1", 700, "三")).unwrap();
+    protocol::create(&conn_a, make_expense("acc-1", 900, "四")).unwrap();
+    run_round(&direct(&conn_a), &mem, &layout, &mode).unwrap();
+    assert_eq!(
+        stream_log_len(&conn_a, &dev_a),
+        2,
+        "水位 = min(陈旧声明 2, 覆盖 2)：只截位点之前，新 op 不越界被截"
+    );
+
+    // 证据推进到 4（B 声明 + 重新发布覆盖 4 的检查点）：下一轮截到 4。
+    run_round(&direct(&conn_b), &mem, &layout, &mode).unwrap();
+    run_round(&direct(&conn_b), &mem, &layout, &mode).unwrap();
+    upload_checkpoint(&mem, &layout, &mode, &create_checkpoint(&conn_b).unwrap()).unwrap();
+    run_round(&direct(&conn_a), &mem, &layout, &mode).unwrap();
+    assert_eq!(stream_log_len(&conn_a, &dev_a), 0, "证据推进后按新水位截断");
+}
+
+/// 单端 / 未配同步世界不发生截断（AC）：世界内只有自己的流时无对端声明，即便
+/// 自己发布过检查点（自证不算数——自己流位点恒为自己时钟头），也不截。
+#[test]
+fn single_device_world_never_truncates() {
+    let conn_a = test_support::open();
+    seed_account(&conn_a, "acc-1", "现金", "cash", "CNY", 0);
+    protocol::create(&conn_a, make_expense("acc-1", 10000, "午饭")).unwrap();
+    protocol::create(&conn_a, make_expense("acc-1", 500, "咖啡")).unwrap();
+
+    let mem = MemoryTransport::new();
+    let layout = layout();
+    let mode = EnvelopeMode::Plaintext;
+
+    run_round(&direct(&conn_a), &mem, &layout, &mode).unwrap();
+    let dev_a = device_id_of(&conn_a);
+    upload_checkpoint(&mem, &layout, &mode, &create_checkpoint(&conn_a).unwrap()).unwrap();
+    run_round(&direct(&conn_a), &mem, &layout, &mode).unwrap();
+
+    assert_eq!(
+        stream_log_len(&conn_a, &dev_a),
+        2,
+        "单端世界无对端声明，水位不可证，不截"
+    );
+}
+
+/// 覆盖证据缺席即不截（AC：无并入 Checkpoint 证据不删）：有对端声明但无检查点
+/// 指针、或指针为旧形态（无位点字段，票 04 前产物）时，覆盖不可证，截断冻结。
+#[test]
+fn truncation_requires_reachable_checkpoint_coverage_evidence() {
+    let conn_a = test_support::open();
+    let conn_b = test_support::open();
+    seed_account(&conn_a, "acc-1", "现金", "cash", "CNY", 0);
+    seed_account(&conn_b, "acc-1", "现金", "cash", "CNY", 0);
+    protocol::create(&conn_a, make_expense("acc-1", 10000, "午饭")).unwrap();
+    protocol::create(&conn_a, make_expense("acc-1", 500, "咖啡")).unwrap();
+
+    let mem = MemoryTransport::new();
+    let layout = layout();
+    let mode = EnvelopeMode::Plaintext;
+
+    // 有声明、无指针：不截。
+    run_round(&direct(&conn_a), &mem, &layout, &mode).unwrap();
+    let dev_a = device_id_of(&conn_a);
+    run_round(&direct(&conn_b), &mem, &layout, &mode).unwrap();
+    run_round(&direct(&conn_b), &mem, &layout, &mode).unwrap();
+    run_round(&direct(&conn_a), &mem, &layout, &mode).unwrap();
+    assert_eq!(
+        stream_log_len(&conn_a, &dev_a),
+        2,
+        "无检查点指针（无并入证据）→ 不截"
+    );
+
+    // 旧形态指针（空位点 → manifest 无位点字段）：仍不截。
+    upload_checkpoint(
+        &mem,
+        &layout,
+        &mode,
+        &crate::Checkpoint {
+            positions: Vec::new(),
+            snapshot: b"legacy".to_vec(),
+            sync_snapshot: Vec::new(),
+        },
+    )
+    .unwrap();
+    let manifest = channel_manifest(&mem, &layout);
+    assert!(
+        manifest.checkpoint.as_ref().unwrap().applied_positions.is_empty(),
+        "空覆盖序列化时省略字段（旧形态指针无位点）"
+    );
+    run_round(&direct(&conn_a), &mem, &layout, &mode).unwrap();
+    assert_eq!(
+        stream_log_len(&conn_a, &dev_a),
+        2,
+        "旧形态指针覆盖不可证 → 不截"
+    );
+}
+
+/// 挂起 op 不被截断（AC：位点钉住复验，通道轮次形态）：B 端对 A 流的位点被
+/// 挂起 op 钉住 → B 的声明钉住 A 的截断水位；被挂起的 op 保留在 A 的日志与
+/// 通道段中，B 重投递仍拿到它（幂等覆盖挂起行），不复活不丢失。
+#[test]
+fn parked_op_on_peer_pins_owner_truncation_watermark() {
+    let conn_a = test_support::open();
+    let conn_b = test_support::open();
+    seed_account(&conn_a, "acc-1", "现金", "cash", "CNY", 0);
+    seed_account(&conn_b, "acc-1", "现金", "cash", "CNY", 0);
+    let t1 = protocol::create(&conn_a, make_expense("acc-1", 10000, "午饭")).unwrap();
+
+    let mem = MemoryTransport::new();
+    let layout = layout();
+    let mode = EnvelopeMode::Plaintext;
+
+    run_round(&direct(&conn_a), &mem, &layout, &mode).unwrap();
+    let dev_a = device_id_of(&conn_a);
+    run_round(&direct(&conn_b), &mem, &layout, &mode).unwrap();
+    // B 删 t1（自己的 op）；A 并发更新 t1 → B 重放 A 的更新命中软删行而挂起，
+    // B 对 A 流的位点被钉在 1。
+    protocol::delete(&conn_b, &t1.id).unwrap();
+    run_round(&direct(&conn_b), &mem, &layout, &mode).unwrap();
+    protocol::update(&conn_a, &t1.id, make_expense("acc-1", 12000, "A 改")).unwrap();
+    run_round(&direct(&conn_a), &mem, &layout, &mode).unwrap();
+    run_round(&direct(&conn_b), &mem, &layout, &mode).unwrap();
+    assert_eq!(parked_ops(&conn_b).unwrap().len(), 1, "A 的更新 op 在 B 挂起");
+    assert_eq!(
+        position_of_stream(&conn_b, &dev_a),
+        1,
+        "B 对 A 流的位点被挂起 op 钉住"
+    );
+
+    // B 发布检查点（位点覆盖 A 流 = 1）：A 的水位 = min(B 声明 1, 覆盖 1) = 1。
+    upload_checkpoint(&mem, &layout, &mode, &create_checkpoint(&conn_b).unwrap()).unwrap();
+    run_round(&direct(&conn_a), &mem, &layout, &mode).unwrap();
+    assert_eq!(
+        stream_log_len(&conn_a, &dev_a),
+        1,
+        "只截位点之前的 op；被 B 挂起的更新 op 不被截"
+    );
+
+    // B 重投递：被挂起的 op 仍在（幂等覆盖挂起行，不复活不丢失）。
+    run_round(&direct(&conn_b), &mem, &layout, &mode).unwrap();
+    assert_eq!(parked_ops(&conn_b).unwrap().len(), 1, "挂起行幂等覆盖");
+    assert_eq!(position_of_stream(&conn_b, &dev_a), 1, "位点不越过挂起 op");
+}
+
+/// 失败轮次不触发截断（AC：只在成功轮次落库段检查）：水位证据已齐备，但本轮
+/// 在拉取段失败（段缺失）——中途返回不达落库段，自己的流原样保留。
+#[test]
+fn failed_round_does_not_truncate() {
+    let conn_a = test_support::open();
+    let conn_b = test_support::open();
+    seed_account(&conn_a, "acc-1", "现金", "cash", "CNY", 0);
+    seed_account(&conn_b, "acc-1", "现金", "cash", "CNY", 0);
+    for note in ["一", "二", "三"] {
+        protocol::create(&conn_a, make_expense("acc-1", 100, note)).unwrap();
+    }
+
+    let mem = MemoryTransport::new();
+    let layout = layout();
+    let mode = EnvelopeMode::Plaintext;
+
+    run_round(&direct(&conn_a), &mem, &layout, &mode).unwrap();
+    let dev_a = device_id_of(&conn_a);
+    run_round(&direct(&conn_b), &mem, &layout, &mode).unwrap();
+    let dev_b = device_id_of(&conn_b);
+    protocol::create(&conn_b, make_expense("acc-1", 200, "B 的账")).unwrap();
+    run_round(&direct(&conn_b), &mem, &layout, &mode).unwrap();
+    upload_checkpoint(&mem, &layout, &mode, &create_checkpoint(&conn_b).unwrap()).unwrap();
+
+    // B 再发布一段并从通道上取走段文件：A 的下一轮在拉取段失败（发布与声明
+    // 已完成——若轮次成功，水位 3 会截掉 op1-3）。
+    protocol::create(&conn_b, make_expense("acc-1", 300, "B 的第二笔")).unwrap();
+    run_round(&direct(&conn_b), &mem, &layout, &mode).unwrap();
+    mem.files_remove(&layout.segment_path(&dev_b, 2, 2));
+
+    let err = run_round(&direct(&conn_a), &mem, &layout, &mode).unwrap_err();
+    assert!(err.is_code("sync-channel.segment-missing"), "拉取段失败");
+    assert_eq!(
+        stream_log_len(&conn_a, &dev_a),
+        3,
+        "失败轮次不触发截断：若轮次成功，水位 3 会截掉 op1-3，失败后原样保留"
+    );
 }
