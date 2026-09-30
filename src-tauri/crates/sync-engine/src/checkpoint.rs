@@ -27,7 +27,7 @@
 //!   日志、位点不越过它，天然不被截断。**已启用**（ADR-0139 决策 8 推翻
 //!   #857「v1 永不截断」，#1874 落地触发调度）：安全水位由通道层在成功轮次
 //!   落库段计算——各端经 manifest 声明的位点最小值，并以当前对端可达
-//!   Checkpoint 的位点覆盖为上界校正（[`super::channel::own_stream_watermark`]）；
+//!   Checkpoint 的位点覆盖为上界校正（通道层 own_stream_watermark 单点）；
 //!   本函数保持原语形态（owner 门 + 位点上界 + 挂起豁免）。
 //!
 //! 引导守卫：目标必须尚未参与同步（无日志、无位点、无挂起）——引导是整库
@@ -521,7 +521,7 @@ fn read_snapshot_version(conn: &Connection) -> Result<i64> {
 /// `sync-engine.truncate-not-owner`）；`through_position` 是删除上界（时钟 ≤
 /// 水位的行删除），调用方须传入安全水位——各端经 manifest 声明的位点最小值、
 /// 以当前对端可达 Checkpoint 的位点覆盖为上界（通道层义务，已在成功轮次落库段
-/// 接线：[`super::channel::truncate_own_stream_to_watermark`]）。挂起队列 op
+/// 接线（通道层 truncate_own_stream_to_watermark 单点）。挂起队列 op
 /// 不在日志、位点不越过它，不受截断影响。
 pub fn truncate_stream_before(
     conn: &Connection,

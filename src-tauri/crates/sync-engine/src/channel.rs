@@ -61,7 +61,7 @@
 //! 只消费已定格的快照字节与通道（封包 KDF + 网络往返），不消费连接，在连接锁
 //! 外调用（#1284；判据同 ADR-0120——网络等待出锁，连接锁只盖数据库步骤）。
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
@@ -527,10 +527,7 @@ fn declare_applied_positions<S: RoundConn>(
     manifest: &mut ChannelManifest,
 ) -> Result<()> {
     let own: BTreeMap<String, i64> = ctx.locks.with_connection(ConnSegment::Read, |conn| {
-        Ok(positions::list(conn)?
-            .into_iter()
-            .map(|p| (p.device_id, p.applied_through))
-            .collect())
+        Ok(position_map(&positions::list(conn)?))
     })?;
     for stream in &mut manifest.streams {
         if let Some(applied) = own.get(&stream.device_id) {
@@ -540,6 +537,13 @@ fn declare_applied_positions<S: RoundConn>(
         }
     }
     Ok(())
+}
+
+/// 位点表 → manifest 声明/覆盖面（报告端或来源设备 → 已应用时钟）的单点投影。
+fn position_map(rows: &[ledger_sync_protocol::position::StreamPosition]) -> BTreeMap<String, i64> {
+    rows.iter()
+        .map(|p| (p.device_id.clone(), p.applied_through))
+        .collect()
 }
 
 /// 本端自己流的截断安全水位（读接线，ADR-0139 决策 8；三硬约束的「只删位点
@@ -559,7 +563,7 @@ fn declare_applied_positions<S: RoundConn>(
 /// 任一半不可证（无对端声明 / 无并入 Checkpoint 证据）返回 `None`——水位
 /// 不可证即不删。
 fn own_stream_watermark(manifest: &ChannelManifest, device_id: &str) -> Option<i64> {
-    let mut participants: std::collections::BTreeSet<&str> = manifest
+    let mut participants: BTreeSet<&str> = manifest
         .streams
         .iter()
         .map(|s| s.device_id.as_str())
@@ -572,10 +576,11 @@ fn own_stream_watermark(manifest: &ChannelManifest, device_id: &str) -> Option<i
         return None;
     }
     let own = manifest.streams.iter().find(|s| s.device_id == device_id)?;
+    // 参与端非空已验（上放空检）：fold 取最小，无缺省分支。
     let declared_min = participants
         .iter()
         .map(|p| own.applied_positions.get(*p).copied().unwrap_or(0))
-        .min()?;
+        .fold(i64::MAX, i64::min);
     let covered = manifest
         .checkpoint
         .as_ref()?
@@ -849,11 +854,7 @@ pub fn upload_checkpoint_with(
         sync_sha256,
         // 位点覆盖随指针上 manifest（明文元数据）：截断水位的「已并入对端可达
         // Checkpoint」证据面（ADR-0139 决策 8），各端按此上界校正水位。
-        applied_positions: checkpoint
-            .positions
-            .iter()
-            .map(|p| (p.device_id.clone(), p.applied_through))
-            .collect(),
+        applied_positions: position_map(&checkpoint.positions),
     };
     let mut manifest = remote.clone();
     manifest.checkpoint = Some(pointer.clone());
