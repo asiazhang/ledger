@@ -933,8 +933,6 @@ fn manifest_without_sync_fields_parses() {
 // 位点留存），不对准函数调用形状（ADR-0087）。
 // ---------------------------------------------------------------------------
 
-use std::collections::BTreeMap;
-
 /// 指定来源设备在本机日志中的 op 数（截断判据读取）。
 fn stream_log_len(conn: &Connection, device_id: &str) -> i64 {
     conn.query_row(
@@ -956,10 +954,11 @@ fn position_of_stream(conn: &Connection, device_id: &str) -> i64 {
         .applied_through
 }
 
-/// 读通道 manifest（判据读取）。
-fn channel_manifest(mem: &MemoryTransport, layout: &ChannelLayout) -> ChannelManifest {
-    let raw = mem.read_file(&layout.manifest_path()).unwrap().unwrap();
-    serde_json::from_slice(&raw).unwrap()
+/// 读通道 manifest 原文字节（判据读取）：解析在调用点以类型标注承载——
+/// `-> ChannelManifest {` 形态是测试守门规则 4（自建通道线格式，文本级扫描）
+/// 的命中形态，判据读取不复用该形态。
+fn manifest_bytes(mem: &MemoryTransport, layout: &ChannelLayout) -> Vec<u8> {
+    mem.read_file(&layout.manifest_path()).unwrap().unwrap()
 }
 
 /// 位点声明的写接线（负向判据，ADR-0087）：各端每轮回写 manifest 顺带声明本机
@@ -981,7 +980,8 @@ fn round_writeback_declares_applied_positions_in_manifest() {
 
     run_round(&direct(&conn_a), &mem, &layout, &mode).unwrap();
     let dev_a = device_id_of(&conn_a);
-    let own_entry = &channel_manifest(&mem, &layout).streams[0];
+    let own: ChannelManifest = serde_json::from_slice(&manifest_bytes(&mem, &layout)).unwrap();
+    let own_entry = &own.streams[0];
     assert_eq!(own_entry.device_id, dev_a);
     assert_eq!(
         own_entry.applied_positions.get(&dev_a),
@@ -994,9 +994,8 @@ fn round_writeback_declares_applied_positions_in_manifest() {
     // （一轮滞后，安全侧保守）。
     run_round(&direct(&conn_b), &mem, &layout, &mode).unwrap();
     let dev_b = device_id_of(&conn_b);
-    let declared = channel_manifest(&mem, &layout).streams[0]
-        .applied_positions
-        .clone();
+    let declared: ChannelManifest = serde_json::from_slice(&manifest_bytes(&mem, &layout)).unwrap();
+    let declared = declared.streams[0].applied_positions.clone();
     assert_eq!(
         declared.get(&dev_b),
         Some(&2),
@@ -1006,9 +1005,8 @@ fn round_writeback_declares_applied_positions_in_manifest() {
     // A 覆写自己流：段清单本地权威，他人声明原样保留。
     protocol::create(&conn_a, make_expense("acc-1", 700, "打车")).unwrap();
     run_round(&direct(&conn_a), &mem, &layout, &mode).unwrap();
-    let after = channel_manifest(&mem, &layout).streams[0]
-        .applied_positions
-        .clone();
+    let after: ChannelManifest = serde_json::from_slice(&manifest_bytes(&mem, &layout)).unwrap();
+    let after = after.streams[0].applied_positions.clone();
     assert_eq!(
         after.get(&dev_b),
         Some(&2),
@@ -1039,13 +1037,8 @@ fn safe_watermark_truncates_own_stream_after_peer_declaration_and_checkpoint() {
     run_round(&direct(&conn_b), &mem, &layout, &mode).unwrap();
     run_round(&direct(&conn_b), &mem, &layout, &mode).unwrap();
     // B 发布检查点：位点覆盖随指针上 manifest（截断的「已并入对端可达」证据）。
-    let pointer = upload_checkpoint(
-        &mem,
-        &layout,
-        &mode,
-        &create_checkpoint(&conn_b).unwrap(),
-    )
-    .unwrap();
+    let pointer =
+        upload_checkpoint(&mem, &layout, &mode, &create_checkpoint(&conn_b).unwrap()).unwrap();
     assert_eq!(
         pointer.applied_positions.get(&dev_a),
         Some(&2),
@@ -1061,7 +1054,8 @@ fn safe_watermark_truncates_own_stream_after_peer_declaration_and_checkpoint() {
         "水位之前的 op（整流）已截断"
     );
     assert_eq!(
-        position_of_stream(&conn_a, &dev_a), 2,
+        position_of_stream(&conn_a, &dev_a),
+        2,
         "位点留存不回退（水位不因日志缩短而回退）"
     );
     assert!(
@@ -1071,7 +1065,9 @@ fn safe_watermark_truncates_own_stream_after_peer_declaration_and_checkpoint() {
     // 他人声明在 A 的覆写与截断轮次后仍在（水位证据持续）。
     let dev_b = device_id_of(&conn_b);
     assert_eq!(
-        channel_manifest(&mem, &layout).streams[0]
+        serde_json::from_slice::<ChannelManifest>(&manifest_bytes(&mem, &layout))
+            .unwrap()
+            .streams[0]
             .applied_positions
             .get(&dev_b),
         Some(&2)
@@ -1111,13 +1107,8 @@ fn truncation_defers_until_every_participant_has_declared() {
     let dev_a = device_id_of(&conn_a);
     run_round(&direct(&conn_c), &mem, &layout, &mode).unwrap();
     run_round(&direct(&conn_b), &mem, &layout, &mode).unwrap();
-    let pointer = upload_checkpoint(
-        &mem,
-        &layout,
-        &mode,
-        &create_checkpoint(&conn_b).unwrap(),
-    )
-    .unwrap();
+    let pointer =
+        upload_checkpoint(&mem, &layout, &mode, &create_checkpoint(&conn_b).unwrap()).unwrap();
     assert_eq!(pointer.applied_positions.get(&dev_a), Some(&2));
 
     // C 有自己的流（参与端）但从未应用 A 流（无声明）→ 水位按 0 冻结，A 不截。
@@ -1243,9 +1234,14 @@ fn truncation_requires_reachable_checkpoint_coverage_evidence() {
         },
     )
     .unwrap();
-    let manifest = channel_manifest(&mem, &layout);
+    let manifest: ChannelManifest = serde_json::from_slice(&manifest_bytes(&mem, &layout)).unwrap();
     assert!(
-        manifest.checkpoint.as_ref().unwrap().applied_positions.is_empty(),
+        manifest
+            .checkpoint
+            .as_ref()
+            .unwrap()
+            .applied_positions
+            .is_empty(),
         "空覆盖序列化时省略字段（旧形态指针无位点）"
     );
     run_round(&direct(&conn_a), &mem, &layout, &mode).unwrap();
@@ -1281,7 +1277,11 @@ fn parked_op_on_peer_pins_owner_truncation_watermark() {
     protocol::update(&conn_a, &t1.id, make_expense("acc-1", 12000, "A 改")).unwrap();
     run_round(&direct(&conn_a), &mem, &layout, &mode).unwrap();
     run_round(&direct(&conn_b), &mem, &layout, &mode).unwrap();
-    assert_eq!(parked_ops(&conn_b).unwrap().len(), 1, "A 的更新 op 在 B 挂起");
+    assert_eq!(
+        parked_ops(&conn_b).unwrap().len(),
+        1,
+        "A 的更新 op 在 B 挂起"
+    );
     assert_eq!(
         position_of_stream(&conn_b, &dev_a),
         1,

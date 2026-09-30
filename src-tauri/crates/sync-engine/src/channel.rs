@@ -571,10 +571,7 @@ fn own_stream_watermark(manifest: &ChannelManifest, device_id: &str) -> Option<i
     if participants.is_empty() {
         return None;
     }
-    let own = manifest
-        .streams
-        .iter()
-        .find(|s| s.device_id == device_id)?;
+    let own = manifest.streams.iter().find(|s| s.device_id == device_id)?;
     let declared_min = participants
         .iter()
         .map(|p| own.applied_positions.get(*p).copied().unwrap_or(0))
