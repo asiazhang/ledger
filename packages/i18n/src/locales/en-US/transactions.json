@@ -48,6 +48,7 @@
   },
   "list": {
     "total": "Total {n}",
+    "paginationHint": "[ Prev page · ] Next page",
     "empty": "No data",
     "emptyFiltered": "No matching transactions",
     "loadFailed": "Failed to load: {msg}",

@@ -45,7 +45,9 @@ import {
 } from "@/transaction/transaction-row-menu";
 import { useCreateShortcuts, CREATE_KIND_KEYS } from "@/composables/useCreateShortcuts";
 import { useInputMode } from "@/composables/useInputMode";
+import { usePaginationShortcuts } from "@/composables/usePaginationShortcuts";
 import { useRowContextMenu } from "@ledger/row-context-menu";
+import { paginationHint } from "./TransactionsView.css.ts";
 import {
   useTransactionFilter,
   UNCATEGORIZED_ONLY,
@@ -485,6 +487,16 @@ function onPageChange(p: number): void {
   void load();
 }
 
+// 翻页快捷键（issue #1902 / ADR-0140）：[ 上一页 / ] 下一页，语义等同点击分页条——
+// 以最新页码为基准步进一页，走既有翻页出口 onPageChange（两档零分叉）；首/末页越界
+// 幂等无操作；抑制闸门（可编辑焦点 / 弹层 / 触控轴）由 composable 内化。
+const shortcutPageCount = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)));
+usePaginationShortcuts((dir) => {
+  const target = dir === "prev" ? page.value - 1 : page.value + 1;
+  if (target < 1 || target > shortcutPageCount.value) return;
+  onPageChange(target);
+});
+
 /** 页大小切换（两档同一出口）：写入后经统一出口重拉（翻回第 1 页）。 */
 function onPageSizeChange(size: number): void {
   pageSize.value = size;
@@ -791,6 +803,15 @@ function activateCard(row: Transaction): void {
         <template #prefix>
           <span>{{ t("transactions.list.total", { n: total }) }}</span>
         </template>
+        <template #suffix>
+          <span
+            v-if="inputMode === 'pointer'"
+            :class="paginationHint"
+            :style="{ color: themeVars.textColor3 }"
+          >
+            {{ t("transactions.list.paginationHint") }}
+          </span>
+        </template>
       </NPagination>
     </template>
     <!-- 备注列为弹性列（transaction-columns 中不设 width），表格始终铺满容器；
@@ -820,6 +841,15 @@ function activateCard(row: Transaction): void {
         </NEmpty>
       </template>
     </NDataTable>
+    <!-- 翻页快捷键提示（issue #1902 / ADR-0140）：表格分页内建无插槽，弱化小字右对齐
+         贴表格底部分页条；触控轴不渲染（提示不存在的键位是误导，同记一键位标注） -->
+    <div
+      v-if="!isMobile && inputMode === 'pointer'"
+      :class="paginationHint"
+      :style="{ color: themeVars.textColor3 }"
+    >
+      {{ t("transactions.list.paginationHint") }}
+    </div>
   </NSpace>
   <!-- 记一笔悬浮按钮（移动档交易页右下，ADR-0088 决策 5）：点开大号类型选择
        轻弹层（可用类型 = 创建闭集单源 availableCreateKinds，ADR-0135 决策 5 / issue #1782
