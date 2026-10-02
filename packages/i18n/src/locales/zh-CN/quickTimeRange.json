@@ -8,6 +8,7 @@
     "prev": "上一个周期",
     "next": "下一个周期"
   },
+  "stepHint": "{prev} 上一个周期 · {next} 下一个周期",
   "periodPicker": {
     "format": {
       "month": "yyyy年M月",
