@@ -321,4 +321,46 @@ describe("QuickTimeRange 共享受控组件（issue #410）", () => {
     await flushPromises();
     expect(stepButton(wrapper, "prev").props("disabled")).toBe(false);
   });
+
+  it("defineExpose 步进入口：stepPrev/stepNext 走同一 onStepPeriod 出口（issue #1904）", async () => {
+    const wrapper = mountRange({ from: "2026-01-01", to: "2026-01-31" });
+    await flushPromises();
+    const vm = wrapper.vm as unknown as { stepPrev: () => void; stepNext: () => void };
+    vm.stepPrev();
+    await flushPromises();
+    expect(lastEmitted(wrapper)).toEqual({ from: "2025-12-01", to: "2025-12-31" });
+    // 消费 v-model 后反向走回
+    await wrapper.setProps({ modelValue: { from: "2025-12-01", to: "2025-12-31" } });
+    vm.stepNext();
+    await flushPromises();
+    expect(lastEmitted(wrapper)).toEqual({ from: "2026-01-01", to: "2026-01-31" });
+    // 钳制守卫照常：最新期间越界调用幂等无 emit（不因暴露入口而绕过）
+    await wrapper.setProps({ modelValue: { from: "2026-01-01", to: "2026-01-31" } });
+    const before = emitCount(wrapper);
+    vm.stepNext();
+    await flushPromises();
+    expect(emitCount(wrapper)).toBe(before);
+  });
+
+  it("stepShortcutKeys：缺省不渲染键位提示（其他消费页零变化）；传入后指针轴渲染、触控轴不渲染", async () => {
+    setFakeMedia({ width: 1280, hover: "hover", pointer: "fine" });
+    const plain = mountRange({ from: "2026-01-01", to: "2026-01-31" });
+    await flushPromises();
+    expect(plain.find(".period-step-hint").exists()).toBe(false);
+
+    const keys = { prev: ",", next: "." };
+    const hint = mount(QuickTimeRange, {
+      props: { modelValue: { from: "2026-01-01", to: "2026-01-31" }, stepShortcutKeys: keys },
+    });
+    await flushPromises();
+    expect(hint.find(".period-step-hint").text()).toBe(", 上一个周期 · . 下一个周期");
+
+    // 触控轴不绑监听，渲染提示同样是误导（输入轴 ADR-0088）
+    setFakeMedia({ width: 1280, hover: "none", pointer: "coarse" });
+    const touch = mount(QuickTimeRange, {
+      props: { modelValue: { from: "2026-01-01", to: "2026-01-31" }, stepShortcutKeys: keys },
+    });
+    await flushPromises();
+    expect(touch.find(".period-step-hint").exists()).toBe(false);
+  });
 });

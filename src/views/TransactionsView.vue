@@ -46,6 +46,7 @@ import {
 import { useCreateShortcuts, CREATE_KIND_KEYS } from "@/composables/useCreateShortcuts";
 import { useInputMode } from "@/composables/useInputMode";
 import { usePaginationShortcuts } from "@/composables/usePaginationShortcuts";
+import { useTimePeriodShortcuts, PERIOD_STEP_KEYS } from "@/composables/useTimePeriodShortcuts";
 import { useRowContextMenu } from "@ledger/row-context-menu";
 import { paginationHint } from "./TransactionsView.css.ts";
 import {
@@ -497,6 +498,25 @@ usePaginationShortcuts((dir) => {
   onPageChange(target);
 });
 
+/** 期间步进器暴露面（issue #1904 / ADR-0141）：只声明「等同点击 < / >」这一个入口——
+ * 游标反推、数据期间边界钳制与 v-model 写回全在 QuickTimeRange 内单点。 */
+interface PeriodStepperHandle {
+  stepPrev: () => void;
+  stepNext: () => void;
+}
+
+// 周期步进快捷键（issue #1904 / ADR-0141）：, 上一个周期 / . 下一个周期，语义等同点击
+// 期间步进器 < / >——步进走 QuickTimeRange 经 defineExpose 暴露的同一入口（组件内单点）；
+// 「全部」无游标与数据期间边界末端越界幂等无操作；抑制闸门（可编辑焦点 / 弹层 / 触控轴）
+// 由 composable 内化。
+const periodStepper = ref<PeriodStepperHandle | null>(null);
+useTimePeriodShortcuts((dir) => {
+  const stepper = periodStepper.value;
+  if (!stepper) return;
+  if (dir === "prev") stepper.stepPrev();
+  else stepper.stepNext();
+});
+
 /** 页大小切换（两档同一出口）：写入后经统一出口重拉（翻回第 1 页）。 */
 function onPageSizeChange(size: number): void {
   pageSize.value = size;
@@ -629,7 +649,11 @@ function activateCard(row: Transaction): void {
          芯片「全部 | 当月 | 当季 | 当年 | 去年」＋期间步进器＋期间直达面板整行由
          QuickTimeRange 渲染；快照区间 v-model 进出（唯一事实源仍是 TransactionFilter
          日期维度），交互、文案、弹层注册表上报零变化（ADR-0057 决策 5）。 -->
-    <QuickTimeRange v-model="quickRange" />
+    <QuickTimeRange
+      ref="periodStepper"
+      v-model="quickRange"
+      :step-shortcut-keys="PERIOD_STEP_KEYS"
+    />
     <!-- 快速记账弹窗：标题标明入口选定类型，内嵌收窄后的 TransactionForm（无类型单选），
          提交成功关闭并刷新列表；显示开关由模块意图派生，序号作表单 key 强制重建（ADR-0045） -->
     <AppModal

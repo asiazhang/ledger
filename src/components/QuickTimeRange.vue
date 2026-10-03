@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { NButton, NButtonGroup, NIcon, NSpace } from "naive-ui";
+import { NButton, NButtonGroup, NIcon, NSpace, useThemeVars } from "naive-ui";
 import { ChevronBack, ChevronDown, ChevronForward } from "@vicons/ionicons5";
 import AppDatePicker from "@ledger/ui-kit/AppDatePicker.vue";
 import { useInputMode } from "@/composables/useInputMode";
@@ -52,8 +52,12 @@ const props = withDefaults(
     /** 预设芯片闭集（渲染顺序即数组序）：缺省为交易页全闭集（含「全部」五枚）；
      * 报表页「日期闭集」消费形态传入不含「全部」的子集（ADR-0057，期间必有界）。 */
     presets?: readonly TimePeriodPreset[];
+    /** 周期步进快捷键键位（issue #1904 / ADR-0141）：非空时在步进器旁渲染弱化小字
+     * 键位提示（仅指针轴渲染，ADR-0088）；缺省 null = 不渲染——其他消费页零变化。
+     * 键位闭集由消费视图持有（PERIOD_STEP_KEYS），组件只负责呈现，不持键位状态。 */
+    stepShortcutKeys?: { prev: string; next: string } | null;
   }>(),
-  { presets: () => TIME_PERIOD_PRESETS },
+  { presets: () => TIME_PERIOD_PRESETS, stepShortcutKeys: null },
 );
 
 const emit = defineEmits<{
@@ -71,6 +75,7 @@ let nowTicker: ReturnType<typeof setInterval> | undefined;
 // 无重叠面；按输入轴判定（平板横屏 = 桌面档 + 触控轴同样达标），指针轴不挂零变化。
 // 交互语义零变化：选择产出仍只经 update:modelValue 回流调用方。
 const inputMode = useInputMode();
+const themeVars = useThemeVars();
 const isTouch = computed(() => inputMode.value === "touch");
 const TOUCH_TARGET_STYLE = { minHeight: "48px" };
 
@@ -237,6 +242,18 @@ onBeforeUnmount(() => {
   unlistenLedgerChanged?.();
   unlistenLedgerChanged = null;
 });
+
+/**
+ * 步进入口暴露（issue #1904 / ADR-0141）：交易页周期步进快捷键经此走同一
+ * onStepPeriod 出口——游标反推、数据期间边界钳制、越界幂等与 v-model 写回
+ * 全在组件内单点，调用方不重复派生游标与边界。
+ * 只暴露步进动作：可达性守卫已在 onStepPeriod 内（点击路径同款），暴露只读
+ * 可达性给调用方会成死代码。
+ */
+defineExpose({
+  stepPrev: () => onStepPeriod(-1),
+  stepNext: () => onStepPeriod(1),
+});
 </script>
 
 <template>
@@ -310,6 +327,21 @@ onBeforeUnmount(() => {
         <NIcon><ChevronForward /></NIcon>
       </NButton>
     </NButtonGroup>
+    <!-- 周期步进快捷键键位提示（issue #1904 / ADR-0141）：消费视图传入键位闭集时
+         在步进器旁弱化小字标注键位，仅指针轴渲染（触控轴不绑监听，提示不存在的
+         键位是误导，同翻页快捷键）；缺省不渲染，其他消费页零变化。 -->
+    <span
+      v-if="stepShortcutKeys && inputMode === 'pointer'"
+      class="period-step-hint"
+      :style="{ color: themeVars.textColor3 }"
+    >
+      {{
+        t("quickTimeRange.stepHint", {
+          prev: stepShortcutKeys.prev,
+          next: stepShortcutKeys.next,
+        })
+      }}
+    </span>
   </NSpace>
 </template>
 
@@ -338,5 +370,11 @@ onBeforeUnmount(() => {
 /* 「文字 + ▾」下拉信号：箭头与文案的间距 */
 .period-label-chevron {
   margin-left: 4px;
+}
+
+/* 周期步进快捷键键位提示：弱化小字，不参与点击（消费视图未传键位时整节点不渲染） */
+.period-step-hint {
+  font-size: 12px;
+  white-space: nowrap;
 }
 </style>
