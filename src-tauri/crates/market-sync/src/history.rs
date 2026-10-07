@@ -161,6 +161,14 @@ fn collect_backfill_queue(conn: &Connection) -> Result<Vec<BackfillItem>> {
         // #1556，编排不拼数据源查询键）；原「派生与键构造一致」的绑定测试随
         // 类型单点退役，市场成员漂移在编译期不可表达。
         let quote_market = derive_quote_market(kind, market, &symbol, constant_unit_price);
+        // 覆盖不足判据（issue #1534 基金 / #1906 起行情通道）：两通道共用同一
+        // 「首笔持仓流水周」派生事实（闭包只借两个只读输入）。
+        let coverage_short = || {
+            super::fund_nav::coverage_short_of_first_position(
+                earliest_history.as_deref(),
+                first_position_date.as_deref(),
+            )
+        };
         let target = match quote_market {
             Some(quote_market) => {
                 // 首刷判据 = 磁盘上没有任何历史序列；已有历史者按缺周点（最新
@@ -168,13 +176,7 @@ fn collect_backfill_queue(conn: &Connection) -> Result<Vec<BackfillItem>> {
                 // 周，#1906 起与基金同口径）判进队。
                 let incomplete = match &latest_history {
                     None => true,
-                    Some(latest) => {
-                        week_behind(Some(latest), today)
-                            || super::fund_nav::coverage_short_of_first_position(
-                                earliest_history.as_deref(),
-                                first_position_date.as_deref(),
-                            )
-                    }
+                    Some(latest) => week_behind(Some(latest), today) || coverage_short(),
                 };
                 if !incomplete {
                     continue;
@@ -202,13 +204,7 @@ fn collect_backfill_queue(conn: &Connection) -> Result<Vec<BackfillItem>> {
                 //（issue #1534，判据单点 [`super::fund_nav::coverage_short_of_first_position`]）。
                 let incomplete = match &latest_history {
                     None => true,
-                    Some(_) => {
-                        week_behind(watermark.as_deref(), today)
-                            || super::fund_nav::coverage_short_of_first_position(
-                                earliest_history.as_deref(),
-                                first_position_date.as_deref(),
-                            )
-                    }
+                    Some(_) => week_behind(watermark.as_deref(), today) || coverage_short(),
                 };
                 if !incomplete {
                     continue;
@@ -277,7 +273,7 @@ where
     // 载体中立点集（spec #1677）：窗口外样本丢弃；日期解析失败按缺失点跳过
     //（与降采样核心的无效点跳过同一品味）；无效值（≤0）由原语的采样核心跳过。
     // 周线行已是每周一点，原语内的降采样对周粒度输入恒等。
-    let daily_points: Vec<(NaiveDate, f64)> = bars
+    let weekly_points: Vec<(NaiveDate, f64)> = bars
         .iter()
         .filter(|bar| bar.date.as_str() >= start.as_str() && bar.date.as_str() <= end.as_str())
         .filter_map(|bar| {
@@ -300,7 +296,7 @@ where
                 &instrument_id,
                 &currency,
                 TENCENT_PRICE_SOURCE,
-                &daily_points,
+                &weekly_points,
             )
         })
         .await

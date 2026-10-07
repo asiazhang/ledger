@@ -536,6 +536,89 @@ fn stock_deep_backfill_zero_new_points_writes_nothing() {
     assert_eq!(harness.kline_hits("sh:600519"), 1, "每轮至多一次请求");
 }
 
+/// 无持仓流水的建档股票维持近两年（#1906 深度判据后半）：整段周线样本喂入，
+/// 窗口裁剪丢弃两年前的样本——最早落库行不早于近两年窗口起点。
+#[test]
+fn stock_without_position_flows_keeps_two_year_window() {
+    let conn = tauri_app_lib::test_support::open();
+    insert_plain_instrument(&conn, "inst-stock", "600519", "stock", "CNY", "sh");
+
+    // 周线通道整段样本（起点远早于两年窗口，≈171 周）。
+    let series = weekly_series(
+        beijing_today() - ChronoDuration::days(1200),
+        beijing_today(),
+    );
+    let harness = Harness::new().with_klines(vec![("sh:600519", series)]);
+    let (result, _progress, written) = run_round(&conn, &harness);
+    result.unwrap();
+
+    assert!(written, "首刷实际落库");
+    let rows = price_history_rows(&conn, "inst-stock");
+    assert!(
+        rows.len() > 95 && rows.len() < 110,
+        "裁剪后应只余近两年 ≈ 104 周，实际 {}",
+        rows.len()
+    );
+    let window_start = crate::incremental::two_years_ago(beijing_today())
+        .format("%Y-%m-%d")
+        .to_string();
+    let earliest = rows.first().map(|(d, _, _)| d.clone()).unwrap();
+    assert!(
+        earliest.as_str() >= window_start.as_str(),
+        "最早周点不得早于近两年窗口起点 {window_start}，实际 {earliest}"
+    );
+}
+
+/// 停牌整周无周行 → 该周无点、两侧周点照常落库（#1906 判据 5，与周采样口径
+/// 一致）：曲线跨越空档连续，缺周不补行。
+#[test]
+fn stock_weekly_gap_lands_no_point_for_the_missing_week() {
+    let conn = tauri_app_lib::test_support::open();
+    insert_plain_instrument(&conn, "inst-stock", "600519", "stock", "CNY", "sh");
+
+    // 两根周行相隔两周（中间整周无行，如同停牌）。
+    let older = date_offset(15);
+    let newer = date_offset(1);
+    let harness = Harness::new().with_klines(vec![(
+        "sh:600519",
+        vec![bar(&older, 10.0), bar(&newer, 11.0)],
+    )]);
+    let (result, _progress, written) = run_round(&conn, &harness);
+    result.unwrap();
+
+    assert!(written);
+    assert_eq!(
+        history_rows(&conn, "inst-stock"),
+        2,
+        "缺周即无点，两侧各一根"
+    );
+    let dates: Vec<String> = price_history_rows(&conn, "inst-stock")
+        .into_iter()
+        .map(|(d, _, _)| d)
+        .collect();
+    assert_eq!(dates, vec![older, newer], "曲线跨越空档，缺周不补行");
+}
+
+/// 周 K 车道零现价写入（#1906 判据 6 后半）：回填只落 price_history，现价缓存
+/// 不被触碰（现价归批量取数面，ADR-0122 决策 2）。
+#[test]
+fn stock_backfill_writes_no_market_price() {
+    let conn = tauri_app_lib::test_support::open();
+    insert_plain_instrument(&conn, "inst-stock", "600519", "stock", "CNY", "sh");
+    let harness = Harness::new().with_klines(vec![("sh:600519", vec![bar(&date_offset(1), 13.0)])]);
+    let (result, _progress, _written) = run_round(&conn, &harness);
+    result.unwrap();
+
+    let market_prices: i64 = conn
+        .query_row(
+            "SELECT count(*) FROM market_prices WHERE instrument_id='inst-stock'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(market_prices, 0, "周 K 车道不写现价缓存");
+}
+
 /// 首刷窗口放宽（issue #1534 验收）：首笔买入早于近两年的基金，首刷直接从
 /// 首笔持仓所在周起落周点——最早周点 ≤ 首笔买入所在周。
 #[test]
