@@ -18,7 +18,7 @@ use rusqlite::params;
 
 use ledger_infra::db::{new_uuid, now_iso};
 use ledger_investment::prices::upsert_price_history;
-use ledger_investment::{TrendRange, query_instrument_price_trend, query_portfolio_value_trend};
+use ledger_investment::{TrendRange, query_portfolio_value_trend};
 use ledger_transaction::TransactionKind;
 use ledger_transaction::create_transaction_internal;
 
@@ -177,37 +177,6 @@ fn assert_portfolio_trend_point_count(world: &mut LedgerWorld, expected: usize) 
         trend.points.len(),
         expected,
         "组合走势周点数不符：{trend:?}"
-    );
-}
-
-/// 单标的走势：PriceHistory 直出（基金单位净值即价格，与股票同一承载线，
-/// 查询侧不感知标的类型——净值走势即此，issue #303）。
-#[when(expr = "查询标的 {string} 的走势")]
-fn query_instrument_trend(world: &mut LedgerWorld, symbol: String) {
-    let id = instrument_id_by_symbol(&world_conn!(world), &symbol);
-    match query_instrument_price_trend(&world_conn!(world), &id, &TrendRange::default()) {
-        Ok(trend) => {
-            world.asset.last_instrument_trend = Some(trend);
-            world.last_error = None;
-        }
-        Err(e) => {
-            world.last_error = Some(e.to_string());
-            world.asset.last_instrument_trend = None;
-        }
-    }
-}
-
-#[then(expr = "标的走势应有 {int} 个周点")]
-fn assert_instrument_trend_point_count(world: &mut LedgerWorld, expected: usize) {
-    let trend = world
-        .asset
-        .last_instrument_trend
-        .as_ref()
-        .expect("未查询标的走势");
-    assert_eq!(
-        trend.points.len(),
-        expected,
-        "标的走势周点数不符：{trend:?}"
     );
 }
 

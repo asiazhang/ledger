@@ -142,7 +142,6 @@ const LEDGER_DEFAULTS = {
   instrument_price_staleness: { stale_count: 0, threshold_days: 3 },
   cumulative_pnl_summary: [],
   portfolio_value_trend: { currency_code: "CNY", points: [] },
-  instrument_price_trend: { instrument_id: "inst-1", points: [] },
   realized_pnl_summary: { by_year: [], by_account: [] },
   money_weighted_return_summary: makeMwrSummary({ by_instrument: [], by_account: [], total: [] }),
 };

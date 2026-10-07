@@ -51,6 +51,19 @@ async function mountPanel(): Promise<ReturnType<typeof mount>> {
 }
 
 describe("InvestmentOverviewPanel 投资概览（spec #1532 / issue #1536）", () => {
+  it("组合走势卡随页签装配（#1907 / ADR-0131 决策 9 修订注记）：卡片在位、挂载即拉组合市值", async () => {
+    const wrapper = await mountPanel();
+    // 走势卡在位（存在性断言：删卡即红）
+    expect(wrapper.find('[data-testid="overview-trend-card"]').exists()).toBe(true);
+    // 卡内区间档位闭集（#1907 扩展 3 年/5 年）
+    const text = wrapper.text();
+    for (const label of ["1 月", "3 月", "1 年", "3 年", "5 年", "全部"]) {
+      expect(text).toContain(label);
+    }
+    // 挂载即拉组合市值（删除概览内走势取数接线 → 本断言变红）
+    expect(mockInvoke.mock.calls.some(([cmd]) => cmd === "portfolio_value_trend")).toBe(true);
+  });
+
   it("显示可投资资产（本位币）与「投资账户现金 / 持仓市值」两腿拆分", async () => {
     const wrapper = await mountPanel();
 
@@ -278,7 +291,7 @@ describe("InvestmentOverviewPanel 投资概览（spec #1532 / issue #1536）", (
     expect(colorOf("overview-cumulative-pnl")).toBe(probeColor(pnlSemanticColor(-35_000, theme)));
   });
 
-  it("纯只读：页内无任何写入口或动作入口（唯一交互是口径说明）", async () => {
+  it("纯只读：页内无任何写入口或动作入口（唯一交互是口径说明；#1907 起走势卡同规）", async () => {
     const wrapper = await mountPanel();
 
     // 无同步 / 录价 / 设置预算等既有动作入口的按钮或文案
@@ -286,12 +299,14 @@ describe("InvestmentOverviewPanel 投资概览（spec #1532 / issue #1536）", (
     expect(wrapper.text()).not.toContain("同步标的信息");
     expect(wrapper.text()).not.toContain("录价");
     expect(wrapper.text()).not.toContain("设置预算");
-    // 页内唯一按钮 = 各口径说明触发器（读，不写）：可投资资产 + 合计三项各一个
+    // 页内唯一按钮 = 各口径说明触发器（读，不写）：可投资资产 + 合计三项 +
+    // 走势卡组合走势概念（#1907 走势卡迁入后同规；区间切换是单选组，非按钮）
     expect(wrapper.findAll("button").map((b) => b.attributes("data-testid"))).toEqual([
       "overview-investable-assets-info",
       "overview-total-market-value-info",
       "overview-unrealized-pnl-info",
       "overview-cumulative-pnl-info",
+      "trend-concept-info",
     ]);
   });
 });

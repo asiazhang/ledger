@@ -12,7 +12,7 @@ import { componentVm } from "@ledger/test-support/component-vm";
 import { mountWithDialog } from "@ledger/test-support/mount";
 import { refCurrencies } from "@ledger/test-support/reference-stubs";
 import { useAppStore } from "@/stores/app";
-import { useInvestmentsSessionStore } from "@/investment/investments-session";
+import { TREND_PRESET_DEFAULT, useInvestmentsSessionStore } from "@/investment/investments-session";
 import { useWindowGuard } from "@/composables/useWindowGuard";
 import { createOverlayToken, resetOverlays } from "@ledger/ui-kit/overlayRegistry";
 import { clearViewResets, fireViewReset } from "@/composables/viewResetRegistry";
@@ -115,12 +115,8 @@ const INVESTMENT_DEFAULTS = {
   instrument_price_staleness: { stale_count: 0, threshold_days: 3 },
   // 累计收益·折本位币单值（issue #1797）：持仓概览同批拉取（全账本口径）
   cumulative_pnl_native_total: { total_cents: 45000, native_currency: "CNY" },
-  // 走势（issue #139）：标的列表「走势」入口切入走势 tab 时由面板拉取
+  // 走势（#1907）：概览页签走势卡的组合市值曲线（默认空点，专项用例自行覆写）
   portfolio_value_trend: { currency_code: "CNY", points: [] },
-  instrument_price_trend: {
-    instrument_id: "inst-1",
-    points: [{ date: "2026-06-05", price_cents: 1500, currency_code: "CNY" }],
-  },
   realized_pnl_summary: { by_year: [], by_account: [] },
   // 资金加权收益率（issue #1195）：持仓/盈亏两页签共用一次拉取
   money_weighted_return_summary: makeMwrSummary({ by_instrument: [], by_account: [], total: [] }),
@@ -139,7 +135,7 @@ beforeEach(async () => {
 
 describe("InvestmentsView 标的 tab", () => {
   // issue #769：页签存在性收行——行 = 页签名，删页签即红（生杀线内，见 CONTEXT-testing「存在性断言」）。
-  it.each(["概览", "盈亏", "持仓", "明细", "标的", "走势"])("%s tab 存在", async (tab) => {
+  it.each(["概览", "盈亏", "持仓", "明细", "标的"])("%s tab 存在", async (tab) => {
     const wrapper = mountView();
     await nextTick();
     expect(findTab(wrapper, tab, { exact: true }), `页签「${tab}」应存在`).toBeTruthy();
@@ -161,45 +157,13 @@ describe("InvestmentsView 标的 tab", () => {
     expect(lastInvokeArgs("list_instruments").filter).toMatchObject({ page: 1, page_size: 50 });
   });
 
-  it("标的列表「走势」入口：切到走势 tab 并以单标的模式查询该标的", async () => {
+  it("标的列表不再有「走势」入口列（issue #1907：单标的查看随走势页签退役）", async () => {
     const wrapper = mountView();
     await nextTick();
-    // 进入标的 tab
     await clickTab(wrapper, "标的");
-    // 点第一行（600000 浦发银行）的「走势」按钮
-    const btn = wrapper.find('[data-testid="view-trend-600000"]');
-    expect(btn.exists()).toBe(true);
-    await btn.trigger("click");
-    await nextTick();
-    await nextTick();
-    // tab 已切到走势，面板以单标的模式查询该标的
-    const call = mockInvoke.mock.calls.filter(([cmd]) => cmd === "instrument_price_trend").at(-1);
-    expect(call).toBeTruthy();
-    expect((call![1] as { instrumentId: string }).instrumentId).toBe("inst-1");
-    expect(wrapper.get('[data-testid="line-chart"]').text()).toContain("1500");
-  });
-
-  it("走势选中标的会话内保留（issue #1192）：切走页签再回来仍以同一标的查询出图", async () => {
-    const wrapper = mountView();
-    await nextTick();
-    // 经标的列表入口进入单标的走势
-    await clickTab(wrapper, "标的");
-    await wrapper.find('[data-testid="view-trend-600000"]').trigger("click");
-    await nextTick();
-    await nextTick();
-    expect(mockInvoke.mock.calls.filter(([cmd]) => cmd === "instrument_price_trend")).toHaveLength(
-      1,
-    );
-    expect(wrapper.get('[data-testid="line-chart"]').text()).toContain("600000 浦发银行");
-    // 切到盈亏再回走势：页签重挂（非 KeepAlive），单标的选中经会话 store 恢复
-    await clickTab(wrapper, "盈亏");
-    await clickTab(wrapper, "走势");
     await flushPromises();
-    const instCalls = mockInvoke.mock.calls.filter(([cmd]) => cmd === "instrument_price_trend");
-    expect(instCalls).toHaveLength(2);
-    expect((instCalls.at(-1)![1] as { instrumentId: string }).instrumentId).toBe("inst-1");
-    // 恢复的是选择不是快照：回到页签以同一标的现拉，仍出该标的的曲线
-    expect(wrapper.get('[data-testid="line-chart"]').text()).toContain("600000 浦发银行");
+    expect(wrapper.find('[data-testid="view-trend-600000"]').exists()).toBe(false);
+    expect(wrapper.text()).not.toContain("走势");
   });
 });
 
@@ -226,7 +190,6 @@ describe("InvestmentsView 持仓页签（issue #901）", () => {
       "持仓",
       "明细",
       "标的",
-      "走势",
     ]);
     expect(wrapper.findAll(".n-tabs-tab--active").map((el) => el.text())).toEqual(["概览"]);
   });
@@ -546,11 +509,11 @@ describe("InvestmentsView 价格过期提示（issue #1190）", () => {
   });
 });
 
-/** 来源跳转落点（spec #704 / issue #709，词汇表「实体定位参数（focus 参数）」）：
- * 视图装配断言——focus 在场 → 切走势页签 + 按 id 解析标的 + 单标的模式查询；
- * 无 focus 空转；读一次语义下消费后 query 变化不再消费；解析失败停留组合走势
- * （不提供落空的跳转）。清仓标的（invested=false）照常可达（走势不依赖持仓）。 */
-describe("InvestmentsView 来源跳转落点（issue #709）", () => {
+/** 来源跳转落点（spec #704 / issue #709；#1907 改址，词汇表「实体定位参数（focus 参数）」）：
+ * 视图装配断言——focus 在场 → 切标的页签 + anchor_id 定位查询 + 行高亮在位；
+ * 无 focus 空转；读一次语义下消费后 query 变化不再消费；锚点不命中回落普通
+ * 页码、无高亮（不提供落空的跳转）。清仓标的（invested=false）照常可达。 */
+describe("InvestmentsView 来源跳转落点（issue #709 / #1907 改址）", () => {
   const focusInstrument: Instrument = {
     ...mockInstruments[0],
     id: "inst-sell",
@@ -566,61 +529,87 @@ describe("InvestmentsView 来源跳转落点（issue #709）", () => {
       .join();
   }
 
-  beforeEach(async () => {
-    mockRoute.query = {};
-    // focus 落点用例接 get_instrument（#709 新增按 id 精确取标的）：命中返回
-    // 清仓标的投影，未命中按后端同款码化错误拒绝
-    await wireInvokeSeam({
+  /** anchor 应答桩：anchor_id 命中 inst-sell 时返回其所在页（第 3 页单行），
+   * 其余按默认列表应答（不携带 anchor_page = 后端「不在结果集」语义）。 */
+  function wireAnchorSeam() {
+    return wireInvokeSeam({
       defaults: INVESTMENT_DEFAULTS,
       overrides: {
-        get_instrument: (args) =>
-          args?.id === "inst-sell" ? focusInstrument : Promise.reject(new Error("标的 xxx 不存在")),
+        list_instruments: (args?: { filter?: { anchor_id?: string } }) => {
+          if (args?.filter?.anchor_id === "inst-sell") {
+            return { items: [focusInstrument], total: 101, anchor_page: 3 };
+          }
+          return { items: mockInstruments, total: mockInstruments.length };
+        },
       },
       refreshReferenceStores: true,
     }).ready;
+  }
+
+  beforeEach(async () => {
+    mockRoute.query = {};
+    await wireAnchorSeam();
   });
 
-  it("focus 在场：切到走势页签，按 id 精确取标的并以单标的模式查询该标的（清仓标的照常可达）", async () => {
+  it("focus 在场：切到标的页签，以 anchor_id 定位查询且目标行高亮（清仓标的照常可达）", async () => {
     mockRoute.query = { focus: "inst-sell" };
     const wrapper = mountView();
     await flushPromises();
 
-    expect(lastInvokeArgs("get_instrument")).toMatchObject({ id: "inst-sell" });
-    expect(activeTabText(wrapper)).toContain("走势");
-    const call = mockInvoke.mock.calls.filter(([cmd]) => cmd === "instrument_price_trend").at(-1);
-    expect(call).toBeTruthy();
-    expect((call![1] as { instrumentId: string }).instrumentId).toBe("inst-sell");
-    // 选中态上屏：单标的曲线 dataset 标签 = 代码 + 名称（走势页签选中该标的，
-    // 演示路径「卖出交易点击 → 走势页签选中」的装配锚点）
-    expect(wrapper.get('[data-testid="line-chart"]').text()).toContain("600519 招商银行");
+    expect(activeTabText(wrapper)).toContain("标的");
+    // anchor 定位接缝：列表查询携带锚点 id（删除该接线即本断言变红）
+    expect(lastInvokeArgs("list_instruments").filter).toMatchObject({
+      anchor_id: "inst-sell",
+      page_size: 50,
+    });
+    // 页码切到锚点所在页 + 行高亮在位（行必在当前页）
+    expect((lastInvokeArgs("list_instruments").filter as { page?: number }).page).toBeUndefined();
+    const focusedRow = wrapper.find("tr.instrument-row-focused");
+    expect(focusedRow.exists()).toBe(true);
+    expect(focusedRow.text()).toContain("600519");
   });
 
-  it("无 focus：停留默认概览页签，不调按 id 取标的", async () => {
+  it("无 focus：停留默认概览页签，不发起锚点定位查询", async () => {
     const wrapper = mountView();
     await flushPromises();
 
     expect(activeTabText(wrapper)).toContain("概览");
-    expect(mockInvoke.mock.calls.some(([cmd]) => cmd === "get_instrument")).toBe(false);
+    expect(mockInvoke.mock.calls.some(([cmd]) => cmd === "list_instruments")).toBe(false);
   });
 
   it("读一次语义：消费后 query 再变（页签切换 replace 保留残留 focus 场景）不再消费", async () => {
     mockRoute.query = { focus: "inst-sell" };
     mountView();
     await flushPromises();
-    expect(mockInvoke.mock.calls.filter(([cmd]) => cmd === "get_instrument").length).toBe(1);
+    expect(
+      mockInvoke.mock.calls.filter(
+        ([cmd, args]) =>
+          cmd === "list_instruments" &&
+          (args as { filter?: { anchor_id?: string } })?.filter?.anchor_id === "inst-sell",
+      ).length,
+    ).toBe(1);
 
     mockRoute.query = { tab: "investments", focus: "inst-other" };
     await flushPromises();
-    expect(mockInvoke.mock.calls.filter(([cmd]) => cmd === "get_instrument").length).toBe(1);
+    expect(
+      mockInvoke.mock.calls.filter(
+        ([cmd, args]) =>
+          cmd === "list_instruments" &&
+          (args as { filter?: { anchor_id?: string } })?.filter?.anchor_id === "inst-sell",
+      ).length,
+    ).toBe(1);
   });
 
-  it("focus 解析失败（无效 id）：停留走势页签组合模式（不提供落空的跳转）", async () => {
+  it("锚点不命中（无效 id）：回落普通页码、无高亮行（不提供落空的跳转）", async () => {
     mockRoute.query = { focus: "ghost" };
     const wrapper = mountView();
     await flushPromises();
 
-    expect(activeTabText(wrapper)).toContain("走势");
-    expect(mockInvoke.mock.calls.some(([cmd]) => cmd === "instrument_price_trend")).toBe(false);
+    expect(activeTabText(wrapper)).toContain("标的");
+    // anchor_page 缺省（后端「不在结果集」）→ 前端回落第 1 页、不高亮任何行
+    const call = mockInvoke.mock.calls.filter(([cmd]) => cmd === "list_instruments").at(-1)!;
+    expect((call[1] as { filter: { anchor_id: string } }).filter.anchor_id).toBe("ghost");
+    expect(wrapper.find("tr.instrument-row-focused").exists()).toBe(false);
   });
 });
 
@@ -879,33 +868,22 @@ describe("InvestmentsView ESC 复位（issue #1192）", () => {
     }
   });
 
-  it("无弹层 ESC：走势选中标的清除、回到默认组合曲线（复位后重进仍是组合模式）", async () => {
+  it("无弹层 ESC：页签回概览、走势区间回默认（复位清除保留态本身；#1907 起走势随概览）", async () => {
     const guard = mountGuardHost();
     await flushPromises();
     const wrapper = mountView();
     await flushPromises();
-    await clickTab(wrapper, "标的");
-    await wrapper.find('[data-testid="view-trend-600000"]').trigger("click");
+    // 概览走势卡切到「全部」区间（偏离默认档位的保留态）
+    const radio = wrapper.findAll(".n-radio").find((r) => r.text() === "全部");
+    await radio!.find("input").setValue(true);
     await flushPromises();
-    expect(wrapper.get('[data-testid="line-chart"]').text()).toContain("600000 浦发银行");
-    const instrumentCallsAfterEntry = mockInvoke.mock.calls.filter(
-      ([cmd]) => cmd === "instrument_price_trend",
-    ).length;
-    expect(instrumentCallsAfterEntry).toBe(1);
+    expect(useInvestmentsSessionStore().trendPreset).toBe("all");
 
     fireEscape();
     await flushPromises();
-    // 复位即清除保留态：选中标的从会话态消失（复位后离开再回来 = 默认组合曲线）
-    expect(useInvestmentsSessionStore().trendInstrumentId).toBeNull();
-    await clickTab(wrapper, "盈亏");
-    await clickTab(wrapper, "走势");
-    await flushPromises();
-    // 组合走势空数据 → 引导文案（而非上一标的的单标的曲线残留）
-    expect(wrapper.text()).toContain("暂无历史价格数据");
-    // 复位的保留态已清除：没有新的单标的查询发生（残留会以恢复的标的重拉现拉）
-    expect(mockInvoke.mock.calls.filter(([cmd]) => cmd === "instrument_price_trend")).toHaveLength(
-      instrumentCallsAfterEntry,
-    );
+    // 复位即清除保留态：页签回概览、区间回默认（复位后离开再回来 = 默认）
+    expect(useInvestmentsSessionStore().activeTab).toBe("overview");
+    expect(useInvestmentsSessionStore().trendPreset).toBe(TREND_PRESET_DEFAULT);
     wrapper.unmount();
     guard.unmount();
   });

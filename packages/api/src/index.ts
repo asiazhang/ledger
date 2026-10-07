@@ -44,11 +44,9 @@ import type {
   ExecuteOccurrenceInput,
   FinancialFreedomOverview,
   Holding,
-  Instrument,
   InstrumentInput,
   InstrumentListFilter,
   InstrumentListResult,
-  InstrumentPriceTrend,
   InvestmentOverview,
   InvestmentTransactionListFilter,
   InvestmentTransactionListResult,
@@ -259,12 +257,9 @@ export const api = {
     }),
   budgetProgress: () => invoke<BudgetProgress[]>("budget_progress"),
 
-  // 金融工具
+  // 金融工具（anchor_id：来源跳转落标的页签的分页定位，issue #1907）
   listInstruments: (filter?: InstrumentListFilter | null) =>
     invoke<InstrumentListResult>("list_instruments", { filter: filter ?? null }),
-  // 按 id 精确取标的（issue #709）：走势页签 focus 消费的只读解析路径（列表过滤
-  // 无按 id 路径）；完整标的对象与列表行同投影，清仓/无持仓标的照常返回
-  getInstrument: (id: string) => invoke<Instrument>("get_instrument", { id }),
   // 交易买卖明细（issue #180）：buy/sell 交易编辑回填数据源（扩展表投影，非买卖交易 NotFound）
   getTransactionTrade: (id: string) => invoke<TransactionTrade>("get_transaction_trade", { id }),
   // 基金转换两腿明细（ADR-0099 / issue #979）：convert 交易编辑回填「A → B」
@@ -313,12 +308,7 @@ export const api = {
   // 提示动作导向既有「同步标的信息」入口（不新增第二套同步触发）
   instrumentPriceStaleness: () => invoke<PriceStaleness>("instrument_price_staleness"),
 
-  // 走势（issue #138）：单标的周采样价格序列与组合市值周点曲线
-  instrumentPriceTrend: (instrumentId: string, filter?: TrendRange | null) =>
-    invoke<InstrumentPriceTrend>("instrument_price_trend", {
-      instrumentId,
-      filter: filter ?? null,
-    }),
+  // 走势（issue #138 / #1907）：组合市值周点曲线
   portfolioValueTrend: (filter?: TrendRange | null) =>
     invoke<PortfolioValueTrend>("portfolio_value_trend", { filter: filter ?? null }),
 

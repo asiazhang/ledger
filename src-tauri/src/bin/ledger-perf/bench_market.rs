@@ -344,6 +344,7 @@ pub(crate) fn probe_market_dataset(conn: &Connection) -> Result<MarketProbe, Str
             only_invested: None,
             page: Some(1),
             page_size: Some(500),
+            anchor_id: None,
         },
     )
     .map_err(|e| e.to_string())?;

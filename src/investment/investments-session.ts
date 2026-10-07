@@ -1,7 +1,7 @@
 import { defineStore } from "pinia";
-import { computed, readonly, ref, watch } from "vue";
+import { readonly, ref, watch } from "vue";
 import { SEARCH_DEBOUNCE_MS } from "@/composables/search-debounce";
-import type { Instrument, TransactionKind } from "@ledger/types";
+import type { TransactionKind } from "@ledger/types";
 
 /** 持仓页签排序列闭集（与持仓明细表列 key 一致）：市值 / 持仓收益（未实现盈亏） */
 export type HoldingsSortColumn = "market_value" | "unrealized_pnl";
@@ -36,24 +36,18 @@ export const INVESTMENTS_DEFAULT_TAB = "overview";
  * @ledger/utils/pagination，#1792；默认 20）。 */
 export const LEDGER_TAB_PAGE_SIZE_DEFAULT = 20;
 
-/** 走势视图模式：组合市值曲线 ↔ 单标的曲线同视图切换 */
-export type TrendViewMode = "portfolio" | "instrument";
-
-/** 走势预设区间闭集：1 月 / 3 月 / 1 年 / 全部（ADR-0019） */
-export type TrendRangePreset = "1m" | "3m" | "1y" | "all";
+/** 走势预设区间闭集：1 月 / 3 月 / 1 年 / 3 年 / 5 年 / 全部（ADR-0019，#1907 扩展档位） */
+export type TrendRangePreset = "1m" | "3m" | "1y" | "3y" | "5y" | "all";
 
 /** 走势默认预设区间：近一年（两年回填的中间视角，其余区间一键切换） */
 export const TREND_PRESET_DEFAULT: TrendRangePreset = "1y";
 
-/** 走势默认视图模式：组合市值曲线 */
-export const TREND_MODE_DEFAULT: TrendViewMode = "portfolio";
-
 /**
  * 投资页会话状态 store（issue #1192）：投资页四页签瞬态选择的唯一读写方——
- * 当前页签 + 持仓页签筛选三维（搜索/账户过滤/排序）与页码 + 走势页签选中标的
+ * 当前页签 + 持仓页签筛选三维（搜索/账户过滤/排序）与页码 + 走势预设区间
  * + 盈亏页按年/按账户两表页码（issue #1795，客户端切片分页的展示切片状态）；
- * （模式/预设区间/单标的）提升到会话生命周期（ADR-0094，本票前唯一残留的
- * 「会话内保留」显式豁免，spec #898/#902 的 Out of Scope 随本票落地）。
+ * 走势预设区间提升到会话生命周期（ADR-0094；#1907 起走势随概览页签，
+ * 单标的选中态随单标的走势退役一并移除）。
  *
  * 「会话内保留」语义（ADR-0094，先例 reports-session #427 / 交易页 #893）：
  * 同一应用会话内，切走页签再切回（或经侧栏离开投资视图再回来）回到离开时的
@@ -114,15 +108,8 @@ export const useInvestmentsSessionStore = defineStore("investments-session", () 
   const detailDateFrom = ref<string | null>(null);
   const detailDateTo = ref<string | null>(null);
 
-  /** 走势视图模式与预设区间（会话内保留、冷启动回默认） */
-  const trendMode = ref<TrendViewMode>(TREND_MODE_DEFAULT);
+  /** 走势预设区间（会话内保留、冷启动回默认；#1907 起走势随概览页签） */
   const trendPreset = ref<TrendRangePreset>(TREND_PRESET_DEFAULT);
-  /** 走势页签选中标的（null = 未选，会话内保留、冷启动回默认） */
-  const trendInstrumentId = ref<string | null>(null);
-
-  /** 最近一次选中的标的投影：id → 标的本体（标的不在标的字典分页内时仍可供
-   * 走势面板取数出图，与入口形态一致）。 */
-  const trendInstrumentCache = new Map<string, Instrument>();
 
   /** 搜索防抖定时器：闭包内单个，store 实例唯一。 */
   let searchTimer: ReturnType<typeof setTimeout> | undefined;
@@ -291,51 +278,11 @@ export const useInvestmentsSessionStore = defineStore("investments-session", () 
     activeTab.value = tab;
   }
 
-  /** 走势入口（标的列表「走势」按钮与 focus 落点共用）：带入标的并切到走势页签 */
-  function showTrendInstrument(instrument: Instrument) {
-    registerTrendInstrument(instrument);
-    trendInstrumentId.value = instrument.id;
-    trendMode.value = "instrument";
-  }
-
-  /** 声明会话内已知标的（走势面板标的字典投影）：只登记不选中——面板下拉改选
-   * 仅给 id，经 selectTrendInstrument 时须能解析回标的本体。 */
-  function registerTrendInstrument(instrument: Instrument) {
-    trendInstrumentCache.set(instrument.id, instrument);
-  }
-
-  /** 走势面板标的选中意图（id 进；null = 清除选中回组合模式） */
-  function selectTrendInstrument(id: string | null) {
-    if (id === null) {
-      trendInstrumentId.value = null;
-      trendMode.value = TREND_MODE_DEFAULT;
-      return;
-    }
-    if (!trendInstrumentCache.has(id)) return;
-    trendInstrumentId.value = id;
-    trendMode.value = "instrument";
-  }
-
-  /** 走势模式写入意图（面板 NRadioGroup 回传）：进入单标的模式要求已有选中
-   * 标的（与 selectTrendInstrument 同一不变量，无标的的单标的模式是空态）；
-   * 回组合模式不动选中标的（再切回单标的仍见上次那只）。 */
-  function setTrendMode(mode: TrendViewMode) {
-    if (mode === "instrument" && trendInstrumentId.value === null) return;
-    trendMode.value = mode;
-  }
-
-  /** 走势预设区间写入意图（面板 NRadioGroup 回传）；区间是闭集字面量，
+  /** 走势预设区间写入意图（走势卡 NRadioGroup 回传）；区间是闭集字面量，
    * 无守卫语义（任意档位均可直接生效）。 */
   function setTrendPreset(preset: TrendRangePreset) {
     trendPreset.value = preset;
   }
-
-  /** 当前选中标的投影（未选中的 id 回 null；投影随会话保留） */
-  const trendInstrument = computed<Instrument | null>(() =>
-    trendInstrumentId.value === null
-      ? null
-      : (trendInstrumentCache.get(trendInstrumentId.value) ?? null),
-  );
 
   /**
    * ESC 复位出口（ADR-0094 决策 4）：页签回默认「概览」、持仓筛选三维清零、
@@ -358,9 +305,6 @@ export const useInvestmentsSessionStore = defineStore("investments-session", () 
     holdingsPage.value = 1;
     pnlYearPage.value = 1;
     pnlAccountPage.value = 1;
-    trendInstrumentId.value = null;
-    trendInstrumentCache.clear();
-    trendMode.value = TREND_MODE_DEFAULT;
     trendPreset.value = TREND_PRESET_DEFAULT;
     // 明细筛选清零 + 翻页归零 + 页大小回默认（ADR-0135：ESC 复位 = 页签回概览 +
     // 清明细筛选、翻页归零；随本票落地）
@@ -390,10 +334,7 @@ export const useInvestmentsSessionStore = defineStore("investments-session", () 
     detailInstrumentId: readonly(detailInstrumentId),
     detailDateFrom: readonly(detailDateFrom),
     detailDateTo: readonly(detailDateTo),
-    trendMode: readonly(trendMode),
     trendPreset: readonly(trendPreset),
-    trendInstrumentId: readonly(trendInstrumentId),
-    trendInstrument,
     // 意图入口
     setActiveTab,
     setSearch,
@@ -410,10 +351,6 @@ export const useInvestmentsSessionStore = defineStore("investments-session", () 
     setDetailInstrument,
     setDetailDateRange,
     resetDetailFilters,
-    showTrendInstrument,
-    registerTrendInstrument,
-    selectTrendInstrument,
-    setTrendMode,
     setTrendPreset,
     resetToDefault,
   };

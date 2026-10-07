@@ -11,10 +11,9 @@
 //!   刷新、详情页数据文件形态 → 历史首刷）。标记是本机对数据源事实的缓存，
 //!   不产出同步 op——各设备经自己的取数面独立确认并收敛，不做一次性存量回填。
 //! - **读侧一条取值接缝**（决策 6）：恒定标的的价格在**响应内**按区间周键
-//!   合成，历史表不落虚拟行、存量平坦序列不再被消费。单标的走势、组合走势
-//!   （市值 = 时点份额 × 常量）与资金加权收益率的边界市值三处共用本模块的
-//!   装载器（[`load_constant_prices`] / [`constant_for_instrument`]）与周键
-//!   序列（[`weekly_samples`]），不各自另写第二份取值口径。
+//!   合成，历史表不落虚拟行、存量平坦序列不再被消费。组合走势
+//!   （市值 = 时点份额 × 常量）与资金加权收益率的边界市值两处共用本模块的
+//!   装载器（[`load_constant_prices`]）与周键
 //!
 //! 现价缓存保留建档（或首刷）一条即不再随同步更新（决策 5）：
 //! [`ensure_constant_base_price`] 只在行缺失时落一条常量价（净值日期为空——
@@ -104,8 +103,8 @@ pub fn ensure_constant_base_price(
     Ok(true)
 }
 
-/// 装载库内全部恒定标的的读侧取值行（`constant_unit_price` 非空的行）。三个
-/// 读消费面（单标的走势 / 组合走势 / 收益率边界市值）共用的取值入口。
+/// 装载库内全部恒定标的的读侧取值行（`constant_unit_price` 非空的行）。两个
+/// 读消费面（组合走势 / 收益率边界市值）共用的取值入口。
 pub fn load_constant_prices(conn: &Connection) -> Result<Vec<ConstantPriceValue>> {
     let mut stmt = conn.prepare(
         "SELECT id, constant_unit_price, currency_code, created_at FROM instruments \
@@ -117,23 +116,6 @@ pub fn load_constant_prices(conn: &Connection) -> Result<Vec<ConstantPriceValue>
         values.push(row?);
     }
     Ok(values)
-}
-
-/// 单只标的的恒定取值行；未标记（或标的不存在）返回 `None`。单标的走势的
-/// 分派入口——恒定标的不再读价格历史。
-pub fn constant_for_instrument(
-    conn: &Connection,
-    instrument_id: &str,
-) -> Result<Option<ConstantPriceValue>> {
-    let mut stmt = conn.prepare(
-        "SELECT id, constant_unit_price, currency_code, created_at FROM instruments \
-         WHERE id = ?1 AND constant_unit_price IS NOT NULL",
-    )?;
-    let mut rows = stmt.query_map([instrument_id], map_constant_value)?;
-    match rows.next() {
-        Some(row) => Ok(Some(row?)),
-        None => Ok(None),
-    }
 }
 
 /// 行映射：建档时刻（UTC ISO 时间戳）截取日期部分作序列锚点；形态异常按今天

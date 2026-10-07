@@ -42,8 +42,10 @@ const { syncing, resultMessage, status, progress, degraded, sync } = useInstrume
 // ADR-0035 接入弹层注册表驱动快捷键抑制）
 const dialog = useAppDialog();
 
-// 标的行「走势」入口（issue #139）：向视图层发出带标的信息的事件，由其切换到走势 tab
-const emit = defineEmits<{ "view-trend": [instrument: Instrument] }>();
+// 来源跳转焦点定位（spec #704 / issue #1907）：视图层消费 focus 参数后把标的 id
+// 传入本组件——anchor 查询返回该 id 所在页并切页，行高亮指向该行（行必在当前
+// 页，高亮因此可靠；id 不在结果集内时回落普通页码，不高亮）。
+const props = defineProps<{ focusInstrumentId?: string | null }>();
 
 // 标的全量同步入口/组装已随 ADR-0081 决策 3 整体退役（issue #698）：
 // 股票字典修正归「按代码查询/创建带回权威名称」。
@@ -122,6 +124,40 @@ const hasActiveFilter = computed(
 const emptyDescription = computed(() =>
   hasActiveFilter.value ? t("investments.browser.filterNoMatch") : t("investments.browser.empty"),
 );
+
+// ---------------------------------------------------------------------------
+// 来源跳转焦点定位（spec #704 / issue #1907）：focus id 进来后按 anchor 查询
+// 定位所在页（anchor_id 语义在后端：返回该 id 在当前过滤与排序下的页码，行集
+// 已切到该页）；id 不在结果集内（anchor_page 缺省）回落第 1 页、不高亮。
+// 高亮随 focus id 保留到会话内该 id 变化——与「行必在当前页」配套。
+// ---------------------------------------------------------------------------
+watch(
+  () => props.focusInstrumentId,
+  async (id) => {
+    if (!id) return;
+    // 与常规 load() 共用同一竞态纪元：迟到旧纪元结果不落位（同 #1401 纪律）
+    const myToken = loadWins.begin();
+    loading.value = true;
+    try {
+      const res = await api.listInstruments({
+        page_size: pageSize,
+        anchor_id: id,
+      });
+      if (myToken.isStale()) return;
+      page.value = res.anchor_page ?? 1;
+      instruments.value = res.items;
+      total.value = res.total;
+    } finally {
+      if (!myToken.isStale()) loading.value = false;
+    }
+  },
+  { immediate: true },
+);
+
+/** 行高亮：焦点定位的目标行（数据表 rowClassName 接缝） */
+function rowClassName(row: Instrument): string {
+  return row.id === props.focusInstrumentId ? "instrument-row-focused" : "";
+}
 
 // 价格失效信号（ADR-0031）：标的信息同步/录价等实际写价后原地重拉——
 // 用 load() 保留分页与搜索状态；reload() 会重置到第 1 页，
@@ -273,23 +309,6 @@ const instrumentBrowseColumns = computed<DataTableColumn<Instrument>[]>(() => [
   },
   { title: t("investments.browser.columns.currency"), key: "currency_code", width: 60 },
   {
-    title: t("investments.browser.columns.trend"),
-    key: "trend",
-    width: 70,
-    render(row) {
-      return h(
-        NButton,
-        {
-          size: "tiny",
-          secondary: true,
-          "data-testid": `view-trend-${row.symbol}`,
-          onClick: () => emit("view-trend", row),
-        },
-        { default: () => t("investments.browser.trendAction") },
-      );
-    },
-  },
-  {
     // 录价（issue #291 / ADR-0036）：只对手动报价通道的标的开放（后端派生价格
     // 通道判定，issue #1060）；行情 / 净值通道的现价归同步，无来源行无入口。
     title: t("investments.browser.columns.quote"),
@@ -345,7 +364,12 @@ const instrumentBrowseColumns = computed<DataTableColumn<Instrument>[]>(() => [
   },
 ]);
 
-onMounted(load);
+onMounted(() => {
+  // 有焦点定位时跳过常规首拉：anchor 查询（setup 期 immediate 发起）已按锚点
+  // 切页取数，紧随其后的常规 load() 会以第 1 页行集覆盖锚点页——两查询并发时
+  // 锚点结果必须胜出。
+  if (!props.focusInstrumentId) load();
+});
 
 /** 横向滚动下限 = 固定列宽总和（列定义之后单点派生，桌面档不消费）。 */
 const browseScrollX = computed(() => sumFixedColumnWidths(instrumentBrowseColumns.value));
@@ -412,6 +436,7 @@ const browseScrollX = computed(() => sumFixedColumnWidths(instrumentBrowseColumn
       remote
       :scroll-x="isMobileTier ? browseScrollX : undefined"
       :pagination="pagination"
+      :row-class-name="rowClassName"
     >
       <!-- 空态两态区分（issue #1193）：全部标的不在场 vs 筛选未命中；
            testid 随态切换，测试按用户可观察文案断言。加载门与持仓页同款：
@@ -437,3 +462,12 @@ const browseScrollX = computed(() => sumFixedColumnWidths(instrumentBrowseColumn
     <ManualPriceModal v-model:show="quoteOpen" :instrument="quoteTarget" @quoted="onQuoted" />
   </NSpace>
 </template>
+
+<style>
+/* 来源跳转行高亮（spec #704 / issue #1907）：焦点定位的目标行——行必在当前页
+   （anchor 定位保证），高亮因此可靠。row-class-name 把类打在 NDataTable 内部
+   <tr> 上，scoped 选择器够不到，故用全局规则 + 视图专名类（先例 PoliciesView）。 */
+tr.instrument-row-focused > td {
+  background-color: rgba(245, 158, 11, 0.16);
+}
+</style>

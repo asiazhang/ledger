@@ -6,11 +6,11 @@
 
 use rusqlite::params;
 
+use super::common::instrument_by_id;
 use crate::constant_price::{
     ConstantPriceValue, ensure_constant_base_price, load_constant_prices, mark_constant_unit_price,
     week_monday, weekly_samples,
 };
-use crate::crud::get_instrument;
 use crate::prices::{MarketPriceWrite, upsert_market_price};
 use tauri_app_lib::test_support::open;
 
@@ -199,13 +199,13 @@ fn marked_instrument_reads_as_constant_channel() {
     let conn = open();
     insert_fund_instrument(&conn, "inst-fund", "000198", "天弘余额宝");
     assert_eq!(
-        get_instrument(&conn, "inst-fund").unwrap().price_channel,
+        instrument_by_id(&conn, "inst-fund").price_channel,
         crate::PriceChannel::FundNav,
         "未标记的 6 位基金仍是净值通道"
     );
     seed_constant(&conn, "inst-fund", 10_000);
     assert_eq!(
-        get_instrument(&conn, "inst-fund").unwrap().price_channel,
+        instrument_by_id(&conn, "inst-fund").price_channel,
         crate::PriceChannel::Constant,
         "恒定单位价格在场即恒定价格通道（当且仅当该列有值）"
     );

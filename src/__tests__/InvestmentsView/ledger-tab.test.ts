@@ -176,7 +176,6 @@ const LEDGER_DEFAULTS = {
   // 累计收益·折本位币单值（issue #1797）：空账本为 0 单值
   cumulative_pnl_native_total: { total_cents: 0, native_currency: "CNY" },
   portfolio_value_trend: { currency_code: "CNY", points: [] },
-  instrument_price_trend: { instrument_id: "inst-1", points: [] },
   realized_pnl_summary: { by_year: [], by_account: [] },
   money_weighted_return_summary: makeMwrSummary({ by_instrument: [], by_account: [], total: [] }),
   // 数据期间边界（QuickTimeRange 钳制输入，#1807）：「今天」= 2026-02-10 时各档边界覆盖夹具期间

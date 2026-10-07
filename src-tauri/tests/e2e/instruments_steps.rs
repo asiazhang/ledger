@@ -12,8 +12,8 @@ use ledger_infra::error::Result;
 use ledger_investment::{
     InstrumentInput, InstrumentListFilter, InstrumentType, Quote, StockRoute,
     add_fund_by_code_with, add_stock_instrument_with_quote, create_instrument_manual,
-    delete_instrument as delete_instrument_domain, fetch_stock_quote_for_add, get_instrument,
-    list_instruments, prices::price_value_to_cents,
+    delete_instrument as delete_instrument_domain, fetch_stock_quote_for_add, list_instruments,
+    prices::price_value_to_cents,
 };
 
 use crate::world::LedgerWorld;
@@ -253,91 +253,89 @@ fn assert_delete_instrument_error(world: &mut LedgerWorld, fragment: String) {
 }
 
 // ---------------------------------------------------------------------------
-// 按 id 精确取标的（issue #709）：走势页签 focus 消费的只读解析路径
+// ---------------------------------------------------------------------------
+// 焦点定位（issue #1907）：来源跳转落标的页签——anchor_id 返回所在页，
+// 行集切到该页（行必在返回页内 → 前端行高亮可靠）
 // ---------------------------------------------------------------------------
 
-/// 按代码定位标的并按 id 精确查询（场景内代码唯一）：域接缝直调，与 IPC 命令
+/// 以标的代码为锚点查询标的列表（场景内代码唯一）：域接缝直调，与 IPC 命令
 /// 同一实现（先例：列表搜索步骤直调 `investment::list_instruments`）。
-#[when(expr = "按 id 精确取标的 {string}")]
-fn get_instrument_by_id(world: &mut LedgerWorld, symbol: String) {
+#[when(expr = "以 {string} 为锚点查询标的列表")]
+fn locate_instrument_page(world: &mut LedgerWorld, symbol: String) {
     let id: String = world_conn!(world)
         .query_row(
             "SELECT id FROM instruments WHERE symbol=?1",
             params![symbol],
             |r| r.get(0),
         )
-        .unwrap_or_else(|_| panic!("按 id 取标的：标的 {symbol} 应已存在"));
-    match get_instrument(&world_conn!(world), &id) {
-        Ok(inst) => {
-            world.asset.last_instrument = Some(inst);
+        .unwrap_or_else(|_| panic!("锚点定位：标的 {symbol} 应已存在"));
+    query_with_anchor(world, Some(id));
+}
+
+/// 以未知 id 为锚点：定位不落空的回落语义（不在结果集 → 按普通页码查询）。
+#[when(expr = "以未知 id 为锚点查询标的列表")]
+fn locate_instrument_page_unknown(world: &mut LedgerWorld) {
+    query_with_anchor(world, Some("inst-unknown-id".to_string()));
+}
+
+fn query_with_anchor(world: &mut LedgerWorld, anchor_id: Option<String>) {
+    let filter = InstrumentListFilter {
+        anchor_id,
+        ..Default::default()
+    };
+    match list_instruments(&world_conn!(world), &filter) {
+        Ok(result) => {
+            world.asset.last_instrument_list = Some(result);
             world.last_error = None;
         }
         Err(e) => {
-            world.asset.last_instrument = None;
+            world.asset.last_instrument_list = None;
             world.last_error = Some(e.to_string());
         }
     }
 }
 
-#[when(expr = "按 id 精确取不存在的标的")]
-fn get_instrument_by_unknown_id(world: &mut LedgerWorld) {
-    match get_instrument(&world_conn!(world), "inst-unknown-id") {
-        Ok(_) => {
-            world.asset.last_instrument = None;
-            world.last_error = None;
-        }
-        Err(e) => {
-            world.asset.last_instrument = None;
-            world.last_error = Some(e.to_string());
-        }
-    }
-}
-
-/// 完整对象读回：身份字段（代码/名称/类型/币种）与列表行同投影。
-#[then(expr = "应返回标的 代码 {string} 名称 {string} 类型 {string} 币种 {string}")]
-fn assert_instrument_readback(
-    world: &mut LedgerWorld,
-    symbol: String,
-    name: String,
-    kind: String,
-    currency: String,
-) {
-    let inst = world
+/// 锚点所在页：列表响应携带 anchor_page（分页定位接缝的读出）。
+#[then(expr = "锚点应落在第 {int} 页")]
+fn assert_anchor_page(world: &mut LedgerWorld, expected: usize) {
+    let result = world
         .asset
-        .last_instrument
+        .last_instrument_list
         .as_ref()
-        .expect("按 id 取标的应已返回");
-    assert_eq!(inst.symbol, symbol, "标的代码不匹配");
-    assert_eq!(inst.name.as_deref(), Some(name.as_str()), "标的名称不匹配");
-    assert_eq!(inst.kind.to_string(), kind, "标的类型不匹配");
-    assert_eq!(inst.currency_code, currency, "标的币种不匹配");
-}
-
-/// 清仓标的照常返回且派生持仓标志为 false（走势不依赖持仓）。
-#[then(expr = "返回标的应无持仓（invested 为 false）")]
-fn assert_instrument_not_invested(world: &mut LedgerWorld) {
-    let inst = world
-        .asset
-        .last_instrument
-        .as_ref()
-        .expect("按 id 取标的应已返回");
-    assert!(
-        !inst.invested,
-        "清仓标的 invested 应为 false，实际 {}",
-        inst.invested
+        .expect("锚点定位查询应已执行");
+    assert_eq!(
+        result.anchor_page,
+        Some(expected),
+        "锚点页码不符：{result:?}"
     );
 }
 
-/// 未知 id 的码化错误（同 last_error 记录断言模式）。
-#[then(expr = "取标的应返回错误 {string}")]
-fn assert_get_instrument_error(world: &mut LedgerWorld, fragment: String) {
-    let error = world
-        .last_error
+/// 锚点不在结果集：anchor_page 缺省不携带（回落普通页码，不提供落空的跳转）。
+#[then(expr = "锚点应落空（不携带所在页）")]
+fn assert_anchor_page_absent(world: &mut LedgerWorld) {
+    let result = world
+        .asset
+        .last_instrument_list
         .as_ref()
-        .unwrap_or_else(|| panic!("按 id 取标的应失败但未记录错误"));
+        .expect("锚点定位查询应已执行");
+    assert_eq!(
+        result.anchor_page, None,
+        "未知锚点不应携带所在页：{result:?}"
+    );
+}
+
+/// 锚点行在返回页内（行必在当前页，前端据此高亮）。
+#[then(expr = "锚点行 {string} 应在返回页内")]
+fn assert_anchor_row_in_page(world: &mut LedgerWorld, symbol: String) {
+    let result = world
+        .asset
+        .last_instrument_list
+        .as_ref()
+        .expect("锚点定位查询应已执行");
     assert!(
-        error.contains(&fragment),
-        "错误「{error}」应包含「{fragment}」"
+        result.items.iter().any(|inst| inst.symbol == symbol),
+        "锚点行 {symbol} 应在返回页内：{:?}",
+        result.items.iter().map(|i| &i.symbol).collect::<Vec<_>>()
     );
 }
 

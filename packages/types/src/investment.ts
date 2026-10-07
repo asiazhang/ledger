@@ -127,6 +127,8 @@ export interface InstrumentListFilter {
   page?: number;
   /** 每页条数，默认 50，上限 500 */
   page_size?: number;
+  /** 焦点定位（issue #1907，读契约只增）：给出标的 id 时返回该 id 所在页（anchor_page） */
+  anchor_id?: string | null;
 }
 
 /** 标的列表分页结果 */
@@ -134,6 +136,8 @@ export interface InstrumentListResult {
   items: Instrument[];
   /** 满足过滤条件的总条数（用于分页条） */
   total: number;
+  /** 焦点定位所在页（issue #1907，读投影只增字段）：仅 anchor_id 命中结果集时携带 */
+  anchor_page?: number;
 }
 
 /** 手动报价入参（issue #291 / ADR-0036）：标的 id + 日期（ISO）+ 价格（万分之一元，价格刻度） */
@@ -457,21 +461,6 @@ export interface TrendBackfillStatus {
   done?: number;
   /** 在途轮次的队列总长（仅 running 且有在途轮次时携带）。 */
   total?: number;
-}
-
-/** 单标的走势采样点：周采样交易日 + 收盘价（报价币种万分之一元，价格刻度见上） */
-export interface PriceTrendPoint {
-  date: string;
-  price_cents: number;
-  currency_code: string;
-}
-
-/** 单标的走势：区间裁剪后的周采样点序列（从首个有效点开始） */
-export interface InstrumentPriceTrend {
-  instrument_id: string;
-  points: PriceTrendPoint[];
-  /** 补全状态（issue #1377）：仅空采样点且有通道无历史序列时携带。 */
-  backfill?: TrendBackfillStatus;
 }
 
 /** 组合走势采样点：该周组合总市值（分，本位币） */

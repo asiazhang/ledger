@@ -4,7 +4,6 @@
     "pnl": "盈亏",
     "holdings": "持仓",
     "instruments": "标的",
-    "trend": "走势",
     "ledger": "明细"
   },
   "overview": {
@@ -83,7 +82,6 @@
     "realizedPnlTip": "卖出时按 FIFO 匹配买入成本算出的盈亏，已扣卖出手续费；不含尚未卖出的持仓收益，也不含现金分红。",
     "realizedGainTip": "已实现盈亏 + 现金分红，即这一年（这个账户）已到手的得失与现金收入；不含仍在持仓里的浮动盈亏（本页只算已到手的部分）。分红按到账日归年，含红利再投的分红腿（同日买入抬高的是持仓成本，不在本表）与迁移来源的货基按年收益。",
     "portfolioTrendTip": "每个采样点按「当时持有份额 × 当周价格」折算到本位币的历史市值；跨币种用同期历史汇率；周采样，缺价或缺汇率的标的在该点跳过；不含现金账户。",
-    "instrumentTrendTip": "所选标的自身的价格序列（基金为单位净值），不是持仓市值、也不是收益率；只有有价格来源的标的才有曲线。",
     "investableAssetsTip": "投资账户现金 + 持仓市值；隐藏账户与负债都不计入，缺现价的持仓跳过；它是财务自由度的分子。"
   },
   "statsCards": {
@@ -107,13 +105,11 @@
       "market": "市场",
       "type": "类型",
       "currency": "币种",
-      "trend": "走势",
       "quote": "录价",
       "invested": "持仓",
       "actions": "操作"
     },
     "investedTag": "持仓",
-    "trendAction": "走势",
     "quoteAction": "录价",
     "deleteAction": "删除",
     "deleteTitle": "删除标的",
@@ -137,25 +133,20 @@
   },
   "trend": {
     "modePortfolio": "组合市值",
-    "modeInstrument": "单标的",
-    "instrumentPlaceholder": "选择标的...",
-    "instrumentFallback": "标的",
+    "cardTitle": "组合走势",
     "range1m": "1 月",
     "range3m": "3 月",
     "range1y": "1 年",
+    "range3y": "3 年",
+    "range5y": "5 年",
     "rangeAll": "全部",
     "captionPortfolio": "单位：{currency}（本位币）",
-    "captionInstrument": "计价币种：{currency}",
-    "noSource": "该标的没有价格来源",
-    "noSourceExtra": "市场未知的股票类标的不参与行情采集，也不开放手动录价，无法绘制走势。",
     "empty": "暂无历史价格数据",
     "emptyNoPointsInRange": "当前区间内暂无采样点，可尝试更长的区间。",
-    "emptyExtraManual": "点击标的列表的「录价」录入价格后，即可查看走势。",
     "emptyBackfillRunning": "历史数据补全中，完成后即可查看走势。",
     "emptyBackfillProgress": "历史数据补全中（{done}/{total}），完成后即可查看走势。",
     "emptyBackfillRetryPending": "历史补全暂未成功，后台稍后会自动重试。",
-    "emptyBackfillNoData": "没有可采集的历史数据（如查无此码、新基金未披露净值或已退市）。",
-    "constantNote": "该标的为单位净值恒定标的（恒 1.0000）：价格不随时间变化，收益以份额结转体现（份额增加、净值不变）。"
+    "emptyBackfillNoData": "没有可采集的历史数据（如查无此码、新基金未披露净值或已退市）。"
   },
   "form": {
     "amount": "金额",

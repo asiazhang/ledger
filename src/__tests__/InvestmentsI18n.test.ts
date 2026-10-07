@@ -56,7 +56,7 @@ afterEach(async () => {
 const mountView = () => mountWithDialog(InvestmentsView);
 
 describe("InvestmentsView 英文渲染（issue #350 / ADR-0049）", () => {
-  it("页签渲染英文：Overview / P&L / Holdings / Ledger / Instruments / Trend", async () => {
+  it("页签渲染英文：Overview / P&L / Holdings / Ledger / Instruments（Trend 随 #1907 退役）", async () => {
     await applyLocale("en-US");
     await nextTick();
     const wrapper = mountView();
@@ -67,7 +67,8 @@ describe("InvestmentsView 英文渲染（issue #350 / ADR-0049）", () => {
     expect(labels).toContain("Holdings");
     expect(labels).toContain("Ledger");
     expect(labels).toContain("Instruments");
-    expect(labels).toContain("Trend");
+    // 「Trend」页签随走势页签退役（#1907），组合走势卡迁入 Overview
+    expect(labels).not.toContain("Trend");
   });
 
   it("概览页签渲染英文（Investable assets / 两腿拆分 / 本位币标注）", async () => {
@@ -158,16 +159,17 @@ describe("InvestmentsView 英文渲染（issue #350 / ADR-0049）", () => {
     expect(cells).toEqual(["Quote", "NAV", "Manual Price", "No Source"]);
   });
 
-  it("走势页渲染英文（区间预设 1M / All 与空态引导）", async () => {
+  it("概览走势卡渲染英文（区间预设档位闭集与空态引导，#1907 起走势随概览）", async () => {
     await applyLocale("en-US");
     const wrapper = mountView();
     await flushPromises();
-    await clickTab(wrapper, "Trend");
     const text = wrapper.text();
+    expect(text).toContain("Portfolio Trend");
     expect(text).toContain("Portfolio Value");
-    expect(text).toContain("Single Instrument");
-    expect(text).toContain("1M");
-    expect(text).toContain("All");
+    expect(text).not.toContain("Single Instrument");
+    for (const label of ["1M", "3M", "1Y", "3Y", "5Y", "All"]) {
+      expect(text).toContain(label);
+    }
     // 组合走势空数据 → 英文引导文案
     expect(text).toContain("No historical price data");
   });

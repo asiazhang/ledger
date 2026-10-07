@@ -7,15 +7,13 @@ import {
 } from "@ledger/test-support/invoke-mock";
 import { withSetup } from "@ledger/test-support/mount";
 import { useReferenceStore } from "@/stores/reference";
-import { useInvestmentsSessionStore } from "@/investment/investments-session";
 import {
   toTrendRange,
   toTrendChartSeries,
   isTrendEmpty,
   usePortfolioTrend,
 } from "@/investment/usePortfolioTrend";
-import type { Instrument, InstrumentPriceChannel, PortfolioValueTrend } from "@ledger/types";
-import { makeInstrument } from "./factories";
+import type { PortfolioValueTrend } from "@ledger/types";
 
 const portfolioTrend: PortfolioValueTrend = {
   currency_code: "CNY",
@@ -27,19 +25,12 @@ const portfolioTrend: PortfolioValueTrend = {
 };
 
 /**
- * 默认布线表：组合走势（动态函数归 overrides）+ 空标的字典；
+ * 默认布线表：组合走势（动态函数归 overrides）。
  * 参考字典命令走接缝内建兜底，不在此枚举。
  */
 const BASE_OVERRIDES: Record<string, InvokeSeamOverride> = {
   portfolio_value_trend: () => Promise.resolve(portfolioTrend),
-  list_instruments: { items: [], total: 0 },
 };
-
-/** 走势入口（标的列表「走势」按钮 / focus 落点同款）：标的先经会话 store 声明，
- * 再经选中入口生效——面板下拉与入口共用同一事实源（issue #1192）。 */
-function enterInstrument(inst: Instrument) {
-  useInvestmentsSessionStore().showTrendInstrument(inst);
-}
 
 beforeEach(async () => {
   wireInvokeSeam({ overrides: BASE_OVERRIDES });
@@ -80,7 +71,21 @@ describe("toTrendRange 预设区间 → 查询区间（纯函数）", () => {
     });
   });
 
-  it("闰日减一年落到平年 2-28（2024-02-29 → 2023-02-28）", () => {
+  it("3 年：起点为三年前同日（issue #1907 档位扩展）", () => {
+    expect(toTrendRange("3y", new Date(2026, 7, 27))).toEqual({
+      start_date: "2023-08-27",
+      end_date: null,
+    });
+  });
+
+  it("5 年：起点为五年前同日（issue #1907 档位扩展）", () => {
+    expect(toTrendRange("5y", new Date(2026, 7, 27))).toEqual({
+      start_date: "2021-08-27",
+      end_date: null,
+    });
+  });
+
+  it("月末溢出钳制到目标月最后一日（3-31 减 1 月 → 2-28）", () => {
     expect(toTrendRange("1y", new Date(2024, 1, 29))).toEqual({
       start_date: "2023-02-28",
       end_date: null,
@@ -129,46 +134,6 @@ describe("isTrendEmpty 空态判定（纯函数）", () => {
   });
 });
 
-describe("单标的走势放行（按后端价格通道判定，issue #1060）", () => {
-  const instrumentWithChannel = (id: string, price_channel: InstrumentPriceChannel) =>
-    makeInstrument({ id, symbol: "X1", type: "other", market: "unknown", price_channel });
-
-  function wireInstrumentTrend() {
-    wireInvokeSeam({
-      overrides: {
-        ...BASE_OVERRIDES,
-        instrument_price_trend: {
-          instrument_id: "inst-x",
-          points: [{ date: "2026-06-05", price_cents: 1500, currency_code: "CNY" }],
-        },
-      },
-    });
-  }
-
-  it("无价格来源（price_channel=none）不发起走势查询，由面板给边界说明", async () => {
-    wireInstrumentTrend();
-    const { refresh } = withSetup(() => usePortfolioTrend());
-    await refresh();
-    enterInstrument(instrumentWithChannel("inst-x", "none"));
-    await refresh();
-    expect(mockInvoke.mock.calls.some(([c]) => c === "instrument_price_trend")).toBe(false);
-  });
-
-  it("行情 / 净值 / 恒定价格 / 手动报价通道照常发起走势查询并出图", async () => {
-    for (const channel of ["quote", "fund_nav", "constant", "manual"] as const) {
-      wireInstrumentTrend();
-      mockInvoke.mockClear();
-      const { refresh, chartSeries } = withSetup(() => usePortfolioTrend());
-      await refresh();
-      enterInstrument(instrumentWithChannel("inst-x", channel));
-      await refresh();
-      expect(mockInvoke.mock.calls.some(([c]) => c === "instrument_price_trend")).toBe(true);
-      // 效果断言：放行后曲线拿到采样点（不只断命令调用事实）
-      expect(chartSeries.value.values).toEqual([1500]);
-    }
-  });
-});
-
 describe("usePortfolioTrend 走势数据层", () => {
   it("默认组合模式：加载组合市值曲线并映射为图表序列", async () => {
     const { refresh, chartSeries, currencyCode, isEmpty } = withSetup(() => usePortfolioTrend());
@@ -195,41 +160,6 @@ describe("usePortfolioTrend 走势数据层", () => {
     expect(last.filter.start_date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
   });
 
-  it("单标的模式：以标的 id 调用单标的走势命令，币种取自采样点", async () => {
-    wireInvokeSeam({
-      overrides: {
-        ...BASE_OVERRIDES,
-        instrument_price_trend: {
-          instrument_id: "inst-1",
-          points: [
-            { date: "2026-06-05", price_cents: 1500, currency_code: "CNY" },
-            { date: "2026-06-12", price_cents: 1600, currency_code: "CNY" },
-          ],
-        },
-      },
-    });
-    const { refresh, mode, chartSeries, currencyCode } = withSetup(() => usePortfolioTrend());
-    await refresh();
-    enterInstrument(
-      makeInstrument({
-        id: "inst-1",
-        symbol: "600000",
-        name: "浦发银行",
-        type: "stock",
-        market: "sh",
-      }),
-    );
-    await refresh();
-    expect(mode.value).toBe("instrument");
-    const call = mockInvoke.mock.calls.filter(([c]) => c === "instrument_price_trend").at(-1);
-    expect(call![1]).toMatchObject({ instrumentId: "inst-1" });
-    expect(chartSeries.value).toEqual({
-      labels: ["2026-06-05", "2026-06-12"],
-      values: [1500, 1600],
-    });
-    expect(currencyCode.value).toBe("CNY");
-  });
-
   it("无历史数据：points 为空 → 空态判定为真", async () => {
     wireInvokeSeam({
       overrides: {
@@ -242,7 +172,7 @@ describe("usePortfolioTrend 走势数据层", () => {
     expect(isEmpty.value).toBe(true);
   });
 
-  it("补全状态随当前模式读投影直出（issue #1377）：空采样点时暴露给空态渲染", async () => {
+  it("补全状态读投影直出（issue #1377）：空采样点时暴露给空态渲染", async () => {
     wireInvokeSeam({
       overrides: {
         ...BASE_OVERRIDES,
@@ -251,58 +181,17 @@ describe("usePortfolioTrend 走势数据层", () => {
           points: [],
           backfill: { state: "running", done: 7, total: 20 },
         },
-        instrument_price_trend: {
-          instrument_id: "inst-1",
-          points: [],
-          backfill: { state: "retry_pending" },
-        },
       },
     });
-    const { refresh, mode, backfill } = withSetup(() => usePortfolioTrend());
+    const { refresh, backfill } = withSetup(() => usePortfolioTrend());
     await refresh();
-    // 组合模式：读投影的 backfill 字段直出
     expect(backfill.value).toEqual({ state: "running", done: 7, total: 20 });
-    enterInstrument(
-      makeInstrument({
-        id: "inst-1",
-        symbol: "600000",
-        name: "浦发银行",
-        type: "stock",
-        market: "sh",
-      }),
-    );
-    await refresh();
-    expect(mode.value).toBe("instrument");
-    // 单标的模式：同一接缝切到单标的读投影的字段
-    expect(backfill.value).toEqual({ state: "retry_pending" });
   });
 
   it("有采样点时不携带补全状态（后端缺省不序列化，投影恒为 null）", async () => {
     const { refresh, backfill } = withSetup(() => usePortfolioTrend());
     await refresh();
     expect(backfill.value).toBeNull();
-  });
-
-  it("setMode 切回组合模式后保留选中标的（再切回单标的仍见上次那只）", async () => {
-    const { mode, setMode } = withSetup(() => usePortfolioTrend());
-    enterInstrument(makeInstrument({ id: "inst-1", type: "stock", market: "sh" }));
-    expect(mode.value).toBe("instrument");
-    setMode("portfolio");
-    expect(mode.value).toBe("portfolio");
-    expect(useInvestmentsSessionStore().trendInstrumentId).toBe("inst-1");
-  });
-
-  it("单标的模式守卫：无选中标的时切「单标的」无操作（不进入空态单标的模式）", () => {
-    const { mode, setMode } = withSetup(() => usePortfolioTrend());
-    expect(mode.value).toBe("portfolio");
-    // 无选中标的：模式切换被守卫拦下（不进入「单标的但无标的」空态）
-    setMode("instrument");
-    expect(mode.value).toBe("portfolio");
-    // 有选中标的后可进入单标的模式
-    enterInstrument(makeInstrument({ id: "inst-1", type: "stock", market: "sh" }));
-    setMode("portfolio");
-    setMode("instrument");
-    expect(mode.value).toBe("instrument");
   });
 
   it("加载完成后 loading 复位；命令异常时 loading 同样复位", async () => {

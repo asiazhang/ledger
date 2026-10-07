@@ -28,12 +28,11 @@ use ledger_infra::signals::{WriteEvidence, WriteOp};
 use ledger_investment as investment_domain;
 use ledger_investment::{
     AddFundResult, AddStockInstrumentResult, CumulativePnlNativeTotal, CurrencyCumulativePnl,
-    Holding, Instrument, InstrumentInput, InstrumentListFilter, InstrumentListResult,
-    InstrumentPriceTrend, InvestmentOverview, InvestmentTransactionListFilter,
-    InvestmentTransactionListResult, ManualPriceInput, ManualPriceResult, MarketPrice,
-    MarketPriceInput, MoneyWeightedReturnSummary, MwrRange, PnlFilter, PortfolioValueTrend,
-    PriceStaleness, RealizedPnlSummary, StockRoute, TransactionConvert, TransactionSplit,
-    TransactionTrade, TrendRange,
+    Holding, InstrumentInput, InstrumentListFilter, InstrumentListResult, InvestmentOverview,
+    InvestmentTransactionListFilter, InvestmentTransactionListResult, ManualPriceInput,
+    ManualPriceResult, MarketPrice, MarketPriceInput, MoneyWeightedReturnSummary, MwrRange,
+    PnlFilter, PortfolioValueTrend, PriceStaleness, RealizedPnlSummary, StockRoute,
+    TransactionConvert, TransactionSplit, TransactionTrade, TrendRange,
 };
 
 #[tauri::command]
@@ -67,24 +66,6 @@ pub async fn instrument_price_staleness(db: State<'_, DbState>) -> Result<PriceS
     let conn = db.read_handle();
     read_entry("instrument_price_staleness", conn, move |conn| {
         investment_domain::instrument_price_staleness(conn)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn instrument_price_trend(
-    db: State<'_, DbState>,
-    instrument_id: String,
-    filter: Option<TrendRange>,
-) -> Result<InstrumentPriceTrend> {
-    let conn = db.read_handle();
-    // 域入口单点（#401 域目录化）：BDD 步骤直调同一域函数，与 IPC 命令同一实现。
-    read_entry("instrument_price_trend", conn, move |conn| {
-        investment_domain::query_instrument_price_trend(
-            conn,
-            &instrument_id,
-            &filter.unwrap_or_default(),
-        )
     })
     .await
 }
@@ -220,18 +201,6 @@ pub async fn list_instruments(
     read_entry("list_instruments", conn, move |conn| {
         let filter = filter.unwrap_or_default();
         investment_domain::list_instruments(conn, &filter)
-    })
-    .await
-}
-
-/// IPC 命令：按 id 精确取标的（issue #709）——走势页签 focus 消费的只读解析
-/// 路径（现有标的列表过滤仅支持搜索词/市场/类型/持仓，无按 id 路径）；完整
-/// 标的对象与列表行同投影，清仓/无持仓标的照常返回（走势不依赖持仓）。
-#[tauri::command]
-pub async fn get_instrument(db: State<'_, DbState>, id: String) -> Result<Instrument> {
-    let conn = db.read_handle();
-    read_entry("get_instrument", conn, move |conn| {
-        investment_domain::get_instrument(conn, &id)
     })
     .await
 }

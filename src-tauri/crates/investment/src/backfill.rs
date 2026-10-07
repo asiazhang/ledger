@@ -165,39 +165,6 @@ pub enum TrendBackfillState {
     NoData,
 }
 
-/// 单标的走势空态的补全状态判定（读投影只增字段，issue #1377）：仅对**有价格
-/// 写入通道（行情 / 净值）且磁盘上没有任何历史序列**的标的有值——有历史者与
-/// 无通道者返回 `None`（投影不带该字段，前端按既有空态文案渲染）。判定消费
-/// 派生事实（通道 + 历史）与运行态快照，与后台补全队列同源。
-pub fn instrument_trend_backfill_status(
-    conn: &Connection,
-    instrument_id: &str,
-) -> Result<Option<TrendBackfillStatus>> {
-    let collectable = is_collectable_instrument(conn, instrument_id)?;
-    if !collectable {
-        return Ok(None);
-    }
-    if has_any_history(conn, instrument_id)? {
-        return Ok(None);
-    }
-    let state = snapshot();
-    if let Some(attempt) = state.attempts.get(instrument_id) {
-        return Ok(Some(match attempt {
-            BackfillAttempt::Failed => TrendBackfillStatus {
-                state: TrendBackfillState::RetryPending,
-                done: None,
-                total: None,
-            },
-            BackfillAttempt::NoData => TrendBackfillStatus {
-                state: TrendBackfillState::NoData,
-                done: None,
-                total: None,
-            },
-        }));
-    }
-    Ok(Some(running_status(&state)))
-}
-
 /// 组合走势空态的补全状态判定（读投影只增字段，issue #1377）：对全部「有价格
 /// 写入通道且没有任何历史序列」的标的聚合——任一尚未尝试（或新一轮已开跑）=
 /// 补全中（带在途计数）；否则任一待重试 = 待重试；全部无可采 = 无数据。没有
@@ -249,27 +216,6 @@ pub fn portfolio_trend_backfill_status(conn: &Connection) -> Result<Option<Trend
         done: None,
         total: None,
     }))
-}
-
-/// 标的是否有价格写入通道（行情 / 净值）——与后台补全队列的通道分区同源
-/// ([`derive_price_channel`] 判定单点，issue #1060）。恒定价格通道不在其列：
-/// 它的走势由读侧按常量合成（ADR-0126 决策 6），无空态可言。
-fn is_collectable_instrument(conn: &Connection, instrument_id: &str) -> Result<bool> {
-    conn.query_row(
-        "SELECT symbol, market, instrument_type, constant_unit_price FROM instruments WHERE id = ?1",
-        [instrument_id],
-        |row| {
-            let symbol: String = row.get(0)?;
-            let market: Market = row.get(1)?;
-            let kind: InstrumentType = row.get(2)?;
-            let constant_unit_price: Option<i64> = row.get(3)?;
-            Ok(matches!(
-                derive_price_channel(kind, market, &symbol, constant_unit_price),
-                PriceChannel::Quote | PriceChannel::FundNav
-            ))
-        },
-    )
-    .map_err(Into::into)
 }
 
 /// 磁盘上是否有任何历史序列（全局判据，与区间裁剪无关）——首刷判据

@@ -88,6 +88,7 @@ pub async fn search_instruments_handler(
         only_invested: None,
         page: Some(1),
         page_size: Some(limit as usize),
+        anchor_id: None,
     };
     read_entry("GET /api/v1/instruments", read.0, move |conn| {
         Ok(Json(ledger_investment::list_instruments(conn, &filter)?))
