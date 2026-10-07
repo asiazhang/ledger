@@ -124,7 +124,7 @@ pub struct Instrument {
     /// 是否持有该标的（有当前持仓批次 remaining_quantity > 0，派生自 security_lots）。
     pub invested: bool,
     /// 价格写入通道（派生事实，不落库，issue #1060）：后端按类型 × 市场 × 代码
-    /// 单点派生（见 [`super::channel`]），前端据此放行单标的走势与开放录价入口，
+    /// 单点派生（见 [`super::channel`]），前端据此开放录价入口与展示价格来源，
     /// 不再自行按类型与市场推断。
     pub price_channel: PriceChannel,
 }
@@ -155,6 +155,10 @@ pub struct InstrumentListFilter {
     pub page: Option<usize>,
     /// 每页条数，默认 50，上限 500。
     pub page_size: Option<usize>,
+    /// 焦点定位（issue #1907，读契约只增）：给出标的 id 时返回该 id 在当前
+    /// 过滤与排序下所在页（`anchor_page`），行集切到该页——来源跳转落标的页签
+    /// 的分页定位接缝。id 不在结果集内时 `anchor_page` 为空、按普通页码查询。
+    pub anchor_id: Option<String>,
 }
 
 /// 标的列表分页结果。
@@ -163,6 +167,10 @@ pub struct InstrumentListResult {
     pub items: Vec<Instrument>,
     /// 满足过滤条件的总条数（用于分页条）。
     pub total: i64,
+    /// 焦点定位所在页（issue #1907，读投影只增字段）：仅 `anchor_id` 命中结果集
+    /// 时携带（1 起）；缺省不序列化，旧消费方零破坏。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub anchor_page: Option<usize>,
 }
 
 /// 按代码即拉添加基金的结果（issue #301 / ADR-0038 决策 1）：标的行落库 +
@@ -553,7 +561,7 @@ pub struct InstrumentSourceDisplay {
 }
 
 impl InstrumentSourceDisplay {
-    /// 来源列展示名（走势页签标签惯例）：代码 + 名称空格连接，无名称（含空串）
+    /// 来源列展示名（标的展示名惯例，与标的页签列表标签同源）：代码 + 名称空格连接，无名称（含空串）
     /// 退化为裸代码——代码 NOT NULL 保证展示名恒非空、链接恒可读。
     pub fn display_label(&self) -> String {
         match self.name.as_deref() {
@@ -848,37 +856,13 @@ impl FromRow for Instrument {
 // ---------------------------------------------------------------------------
 
 /// 走势查询区间：可选起止 ISO 8601 日期，`None` 表示该侧不设界。
-/// 前端预设区间（1 月 / 3 月 / 1 年 / 全部）换算成起止日期传入。
+/// 前端预设区间（1 月 / 3 月 / 1 年 / 3 年 / 5 年 / 全部）换算成起止日期传入。
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct TrendRange {
     /// 起始日期（含），ISO 8601。
     pub start_date: Option<String>,
     /// 截止日期（含），ISO 8601。
     pub end_date: Option<String>,
-}
-
-/// 单标的走势采样点：周采样交易日 + 收盘价（报价币种万分之一元，ADR-0038 价格刻度）。
-#[derive(Debug, Serialize)]
-pub struct PriceTrendPoint {
-    /// 周采样交易日（该周最后一个有报价交易日），ISO 8601 日期。
-    pub date: String,
-    /// 收盘价（万分之一元，报价币种）。
-    pub price_cents: i64,
-    /// 报价币种（港股 HKD、沪深 CNY）。
-    pub currency_code: String,
-}
-
-/// 单标的走势：区间裁剪后的周采样点序列（PriceHistory 直出，从首个有效点开始）。
-#[derive(Debug, Serialize)]
-pub struct InstrumentPriceTrend {
-    pub instrument_id: String,
-    pub points: Vec<PriceTrendPoint>,
-    /// 补全状态（ADR-0122 决策 5 / issue #1377，读投影只增字段）：仅当采样点
-    /// 为空且标的有价格写入通道（行情 / 净值）而磁盘上没有任何历史序列时携带
-    /// ——走势空态三态（补全中 / 待重试 / 无数据）的判据；其余场景缺省不序列化，
-    /// 旧消费方零破坏。
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub backfill: Option<TrendBackfillStatus>,
 }
 
 /// 组合走势采样点：该周各持仓标的「持有数量 × 周线价格」折算到本位币后的合计。

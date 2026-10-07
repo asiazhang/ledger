@@ -16,43 +16,13 @@ use super::common::*;
 // seed_fx_rate_history，同体上收自本文件本地副本，spec #728 / 票 #755）。
 
 #[test]
-fn instrument_price_trend_clips_range_and_starts_at_first_point() {
+fn portfolio_trend_validates_range_format_and_order() {
     let conn = open();
     seed_instrument(&conn, "inst-t1", "600519", "贵州茅台", "CNY", "unknown");
-    seed_price_history(&conn, "ph-1", "inst-t1", "2026-01-05", 1_000_000, "CNY");
-    seed_price_history(&conn, "ph-2", "inst-t1", "2026-01-12", 1_100_000, "CNY");
-    seed_price_history(&conn, "ph-3", "inst-t1", "2026-01-19", 1_200_000, "CNY");
-    seed_price_history(&conn, "ph-4", "inst-t1", "2026-02-02", 1_300_000, "CNY");
 
-    // 区间裁剪：只返回区间内（含端点）的周点。
-    let trend = trend::query_instrument_price_trend(
+    // 区间参数非法报错，不静默返回曲线（日期格式、起止倒置两路码化错误）。
+    let err = trend::query_portfolio_value_trend(
         &conn,
-        "inst-t1",
-        &TrendRange {
-            start_date: Some("2026-01-10".into()),
-            end_date: Some("2026-01-31".into()),
-        },
-    )
-    .unwrap();
-    let dates: Vec<&str> = trend.points.iter().map(|p| p.date.as_str()).collect();
-    assert_eq!(dates, ["2026-01-12", "2026-01-19"]);
-    assert_eq!(
-        trend.points[0].price_cents, 1_100_000,
-        "价格点直出万分之一元刻度"
-    );
-    assert_eq!(trend.points[0].currency_code, "CNY");
-    assert_eq!(trend.instrument_id, "inst-t1");
-
-    // 不设界（"全部"区间）：从首个有效采样点开始，升序完整返回。
-    let trend =
-        trend::query_instrument_price_trend(&conn, "inst-t1", &TrendRange::default()).unwrap();
-    assert_eq!(trend.points.len(), 4);
-    assert_eq!(trend.points[0].date, "2026-01-05");
-
-    // 区间参数非法时报错，不静默返回曲线。
-    let err = trend::query_instrument_price_trend(
-        &conn,
-        "inst-t1",
         &TrendRange {
             start_date: Some("2026-13-01".into()),
             end_date: None,
@@ -60,9 +30,8 @@ fn instrument_price_trend_clips_range_and_starts_at_first_point() {
     )
     .unwrap_err();
     assert!(matches!(err, AppError::Coded { .. }));
-    let err = trend::query_instrument_price_trend(
+    let err = trend::query_portfolio_value_trend(
         &conn,
-        "inst-t1",
         &TrendRange {
             start_date: Some("2026-02-01".into()),
             end_date: Some("2026-01-01".into()),
@@ -71,7 +40,6 @@ fn instrument_price_trend_clips_range_and_starts_at_first_point() {
     .unwrap_err();
     assert!(matches!(err, AppError::Coded { .. }));
 }
-
 #[test]
 fn portfolio_trend_derives_quantity_from_buy_sell_flow() {
     let conn = open();
@@ -274,21 +242,15 @@ fn portfolio_trend_skips_weeks_missing_price_or_fx_but_keeps_other_contributors(
 }
 
 #[test]
-fn trend_commands_return_empty_state_without_history() {
+fn portfolio_trend_returns_empty_state_without_history() {
     let conn = open();
     seed_instrument(&conn, "inst-empty", "000002", "万科A", "CNY", "unknown");
 
-    // 无任何价格历史：单标的与组合走势都返回空态结构（points 为空）。
-    let trend =
-        trend::query_instrument_price_trend(&conn, "inst-empty", &TrendRange::default()).unwrap();
-    assert_eq!(trend.instrument_id, "inst-empty");
-    assert!(trend.points.is_empty());
-
+    // 无任何价格历史：组合走势返回空态结构（points 为空）。
     let trend = trend::query_portfolio_value_trend(&conn, &TrendRange::default()).unwrap();
     assert_eq!(trend.currency_code, "CNY");
     assert!(trend.points.is_empty());
 }
-
 #[test]
 fn portfolio_trend_excludes_soft_deleted_account_flow_including_history() {
     // 软删除账户口径（issue #247 / #217 定案 Q1「账户已删」）：组合走势逐期
@@ -436,164 +398,6 @@ fn backfill_status(
 }
 
 #[test]
-fn instrument_trend_empty_carries_backfill_field_only_for_collectable_without_history() {
-    let _guard = backfill_state_lock();
-    let conn = open();
-
-    // 行情通道标的（stock + sh + 6 位代码）无历史：空态带「补全中」——无在途
-    // 轮次时的诚实缺省（后台任务会采它，派生事实与队列同源）。
-    insert_instrument_with_market(
-        &conn,
-        "inst-bf-q",
-        "600519",
-        "贵州茅台",
-        "CNY",
-        "sh",
-        "stock",
-    );
-    let trend =
-        trend::query_instrument_price_trend(&conn, "inst-bf-q", &TrendRange::default()).unwrap();
-    assert!(trend.points.is_empty());
-    assert_eq!(
-        trend.backfill,
-        Some(backfill_status(TrendBackfillState::Running, None, None)),
-        "有通道无历史 = 补全中（无在途轮次时无计数）"
-    );
-
-    // 有历史序列者无空态可言：区间裁剪导致的空不携带该字段。
-    seed_price_history(
-        &conn,
-        "ph-bf-1",
-        "inst-bf-q",
-        "2026-01-05",
-        1_000_000,
-        "CNY",
-    );
-    let trend = trend::query_instrument_price_trend(
-        &conn,
-        "inst-bf-q",
-        &TrendRange {
-            start_date: Some("2027-01-01".into()),
-            end_date: None,
-        },
-    )
-    .unwrap();
-    assert!(trend.points.is_empty());
-    assert_eq!(trend.backfill, None, "有历史者的空（区间裁剪）不带补全状态");
-
-    // 手动报价通道（other + unknown + 非代码形态）：不在补全面，空态不带字段
-    //（前端按既有「录价」引导渲染）。
-    insert_instrument_with_market(
-        &conn,
-        "inst-bf-m",
-        "稳稳地幸福",
-        "且慢组合",
-        "CNY",
-        "unknown",
-        "other",
-    );
-    let trend =
-        trend::query_instrument_price_trend(&conn, "inst-bf-m", &TrendRange::default()).unwrap();
-    assert!(trend.points.is_empty());
-    assert_eq!(trend.backfill, None, "手动通道不归后台补全");
-
-    // 无来源（stock + unknown）：同样不带字段（既有「没有价格来源」边界说明）。
-    insert_instrument_with_market(
-        &conn,
-        "inst-bf-n",
-        "ghost1",
-        "幽灵股票",
-        "CNY",
-        "unknown",
-        "stock",
-    );
-    let trend =
-        trend::query_instrument_price_trend(&conn, "inst-bf-n", &TrendRange::default()).unwrap();
-    assert!(trend.points.is_empty());
-    assert_eq!(trend.backfill, None, "无来源标的没有可采序列，不冒充补全中");
-}
-
-#[test]
-fn instrument_trend_backfill_reflects_round_lifecycle_and_attempt_outcomes() {
-    let _guard = backfill_state_lock();
-    let conn = open();
-    insert_fund_instrument(&conn, "inst-bf-f", "000001", "中国蓝图");
-
-    // 一轮在途：补全中带计数，随标的级推进（与进度事件同口径）。
-    backfill::round_started(2);
-    let trend =
-        trend::query_instrument_price_trend(&conn, "inst-bf-f", &TrendRange::default()).unwrap();
-    assert_eq!(
-        trend.backfill,
-        Some(backfill_status(
-            TrendBackfillState::Running,
-            Some(0),
-            Some(2)
-        ))
-    );
-    backfill::round_progress(1);
-    let trend =
-        trend::query_instrument_price_trend(&conn, "inst-bf-f", &TrendRange::default()).unwrap();
-    assert_eq!(
-        trend.backfill,
-        Some(backfill_status(
-            TrendBackfillState::Running,
-            Some(1),
-            Some(2)
-        ))
-    );
-
-    // 本轮尝试后仍无历史，结局 = 无数据（查无此码）：空态答「无数据」。
-    backfill::record_attempt("inst-bf-f", backfill::BackfillAttempt::NoData);
-    let trend =
-        trend::query_instrument_price_trend(&conn, "inst-bf-f", &TrendRange::default()).unwrap();
-    assert_eq!(
-        trend.backfill,
-        Some(backfill_status(TrendBackfillState::NoData, None, None))
-    );
-
-    // 结局 = 失败（网络错误 / 窗口不完整）：空态答「待重试」。
-    backfill::record_attempt("inst-bf-f", backfill::BackfillAttempt::Failed);
-    let trend =
-        trend::query_instrument_price_trend(&conn, "inst-bf-f", &TrendRange::default()).unwrap();
-    assert_eq!(
-        trend.backfill,
-        Some(backfill_status(
-            TrendBackfillState::RetryPending,
-            None,
-            None
-        ))
-    );
-
-    // 轮次收起后在途计数消失，但结局表保留——轮间窗口的空态依然可答。
-    backfill::round_finished();
-    let trend =
-        trend::query_instrument_price_trend(&conn, "inst-bf-f", &TrendRange::default()).unwrap();
-    assert_eq!(
-        trend.backfill,
-        Some(backfill_status(
-            TrendBackfillState::RetryPending,
-            None,
-            None
-        ))
-    );
-
-    // 新一轮开始：旧结局清空（队列按派生事实重收集），回「补全中」带新计数。
-    backfill::round_started(1);
-    let trend =
-        trend::query_instrument_price_trend(&conn, "inst-bf-f", &TrendRange::default()).unwrap();
-    assert_eq!(
-        trend.backfill,
-        Some(backfill_status(
-            TrendBackfillState::Running,
-            Some(0),
-            Some(1)
-        ))
-    );
-    backfill::round_finished();
-}
-
-#[test]
 fn portfolio_trend_backfill_aggregates_pending_instruments() {
     let _guard = backfill_state_lock();
     let conn = open();
@@ -668,89 +472,6 @@ fn mark_constant(conn: &Connection, instrument_id: &str) {
 /// 固定「今天」：常量合成的序列右界夹点（周一）。
 fn fixed_today() -> chrono::NaiveDate {
     chrono::NaiveDate::from_ymd_opt(2026, 3, 9).unwrap()
-}
-
-#[test]
-fn instrument_trend_for_constant_price_synthesizes_weekly_constant_line() {
-    let conn = open();
-    // 建档时刻 = FIXED_NOW（2026-01-01）→ 序列锚点 2026-01-01，首周周一 2025-12-29。
-    insert_fund_instrument(&conn, "inst-const", "000198", "天弘余额宝");
-    mark_constant(&conn, "inst-const");
-    // 存量平坦序列（历史采集的遗留行）：值刻意偏离常量，读侧消费它即红。
-    seed_price_history(&conn, "ph-flat", "inst-const", "2026-02-02", 20_000, "CNY");
-
-    let trend = trend::query_instrument_price_trend_on(
-        &conn,
-        "inst-const",
-        &TrendRange::default(),
-        fixed_today(),
-    )
-    .unwrap();
-    assert!(trend.backfill.is_none(), "恒定标的没有补全空态可言");
-    // 周键序列：锚点周（2025-12-29）到今天（2026-03-09）共 11 周，价格恒 1.0000。
-    let points: Vec<(String, i64)> = trend
-        .points
-        .iter()
-        .map(|p| (p.date.clone(), p.price_cents))
-        .collect();
-    assert_eq!(points.len(), 11, "每周一条常量点");
-    assert!(
-        points.iter().all(|(_, v)| *v == 10_000),
-        "价格恒 1.0000，存量平坦行（20000）不被消费"
-    );
-    assert_eq!(
-        points[0].0, "2026-01-04",
-        "序列从建档锚点所在周开始（采样日为该周周日）"
-    );
-    assert_eq!(
-        points.last().unwrap().0,
-        "2026-03-09",
-        "末点采样日不越过今天"
-    );
-    assert_eq!(trend.points[0].currency_code, "CNY");
-}
-
-#[test]
-fn instrument_trend_constant_without_any_history_rows_is_not_empty() {
-    let conn = open();
-    insert_fund_instrument(&conn, "inst-const", "000198", "天弘余额宝");
-    mark_constant(&conn, "inst-const");
-    // 无任何价格历史行（新货基建档即打标，不再有采集面为它落行）。
-
-    let trend = trend::query_instrument_price_trend_on(
-        &conn,
-        "inst-const",
-        &TrendRange::default(),
-        fixed_today(),
-    )
-    .unwrap();
-    assert!(
-        !trend.points.is_empty(),
-        "货基走势由读侧常量合成，不因无历史行为空"
-    );
-    assert!(trend.backfill.is_none());
-}
-
-#[test]
-fn instrument_trend_constant_respects_range_clipping() {
-    let conn = open();
-    insert_fund_instrument(&conn, "inst-const", "000198", "天弘余额宝");
-    mark_constant(&conn, "inst-const");
-
-    let trend = trend::query_instrument_price_trend_on(
-        &conn,
-        "inst-const",
-        &TrendRange {
-            start_date: Some("2026-02-04".into()),
-            end_date: Some("2026-02-20".into()),
-        },
-        fixed_today(),
-    )
-    .unwrap();
-    let dates: Vec<&str> = trend.points.iter().map(|p| p.date.as_str()).collect();
-    // 含端点的周裁剪：起点周的采样日（02-08）落在区间内；终点周（02-16 起）
-    // 的采样日被区间终点（02-20）夹住，不越过终点。
-    assert_eq!(dates, ["2026-02-08", "2026-02-15", "2026-02-20"]);
 }
 
 #[test]

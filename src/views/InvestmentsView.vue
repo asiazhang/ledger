@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, watch } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import { useRoute, type LocationQuery } from "vue-router";
 import { NAlert, NButton, NIcon, NSpace, NTabPane, NTabs, NText } from "naive-ui";
 import {
@@ -8,9 +8,7 @@ import {
   ListOutline,
   DocumentTextOutline,
   PieChartOutline,
-  TrendingUpOutline,
 } from "@vicons/ionicons5";
-import { api } from "@ledger/api";
 import { t } from "@ledger/i18n";
 import { useFocusParam } from "@/composables/useFocusParam";
 import { usePriceStaleness } from "@/investment/usePriceStaleness";
@@ -22,8 +20,6 @@ import HoldingsOverview from "@/investment/HoldingsOverview.vue";
 import InvestmentLedgerTab from "@/investment/InvestmentLedgerTab.vue";
 import HistoryBackfillIndicator from "@/investment/HistoryBackfillIndicator.vue";
 import InstrumentBrowser from "@/investment/InstrumentBrowser.vue";
-import PortfolioTrendPanel from "@/investment/PortfolioTrendPanel.vue";
-import type { Instrument } from "@ledger/types";
 
 const route = useRoute();
 
@@ -47,13 +43,9 @@ function onActiveTabChange(tab: string) {
 // （页签回默认、持仓筛选三维清零、翻页归零、走势回默认组合曲线），同值幂等。
 registerViewReset(session.resetToDefault);
 
-// 走势 tab 的单标的入口（issue #139）：标的列表「走势」按钮带入标的（写会话
-// store 并切到走势页签）；走势 tab 保持默认 'if'，每次进入重新挂载，选中标的
-// 经 store 恢复——与面板内下拉切换同一事实源。
-function onViewTrend(inst: Instrument) {
-  session.showTrendInstrument(inst);
-  session.setActiveTab("trend");
-}
+// 来源跳转落点状态（spec #704，#1907 改址）：focus 消费出的标的 id 交给标的
+// 页签做 anchor 分页定位 + 行高亮（走势页签退役，标的页签是新的焦点面）。
+const focusInstrumentId = ref<string | null>(null);
 
 // 价格过期提示（issue #1190）：打开投资页时做一次本地水位检查（零网络请求），
 // 有过期（或持仓缺现价）就提示并导向既有「同步标的信息」入口——刻意不做自动
@@ -66,23 +58,17 @@ function goSyncInstrumentInfo() {
   session.setActiveTab("instruments");
 }
 
-// —— 来源跳转落点（spec #704 / issue #709，词汇表「实体定位参数（focus 参数）」）：
-// 挂载消费一次（读一次语义归 useFocusParam 单点）。标的落走势页签——标的浏览
-// 有分页、行高亮不可靠，走势页签是唯一焦点面：切页签后按 id 精确解析标的
-// （清仓/无持仓照常可达，走势不依赖持仓）再带入单标的模式；解析失败（无效
-// focus）停留组合走势（不提供落空的跳转）。主项路由与收纳页签（资产「更多」
-// investments 页签）共用本视图实例，route.query 同源，两态一套接线。
+// —— 来源跳转落点（spec #704 / issue #709，词汇表「实体定位参数（focus 参数）」；
+// #1907 改址）：挂载消费一次（读一次语义归 useFocusParam 单点）。标的落标的
+// 页签——单标的走势退役后，anchor 分页定位让行必在当前页、行高亮重新可靠
+// （清仓/无持仓照常可达，列表不以持仓为界；无效 focus 在 anchor 查询内回落
+// 普通页码，不提供落空的跳转）。主项路由与收纳页签（资产「更多」investments
+// 页签）共用本视图实例，route.query 同源，两态一套接线。
 const focusParam = useFocusParam({
   query: () => route.query,
   onFocus: (instrumentId) => {
-    session.setActiveTab("trend");
-    void api.getInstrument(instrumentId).then(
-      (inst) => {
-        // 异步解析期间用户已离开走势页签则丢弃（同读一次语义的迟到意图）
-        if (session.activeTab === "trend") session.showTrendInstrument(inst);
-      },
-      () => {},
-    );
+    session.setActiveTab("instruments");
+    focusInstrumentId.value = instrumentId;
   },
 });
 onMounted(() => focusParam.consume());
@@ -238,16 +224,7 @@ watch(
             ><NIcon :component="ListOutline" />{{ t("investments.tabs.instruments") }}</span
           ></template
         >
-        <InstrumentBrowser @view-trend="onViewTrend" />
-      </NTabPane>
-
-      <NTabPane key="trend" name="trend">
-        <template #tab
-          ><span class="pane-tab"
-            ><NIcon :component="TrendingUpOutline" />{{ t("investments.tabs.trend") }}</span
-          ></template
-        >
-        <PortfolioTrendPanel />
+        <InstrumentBrowser :focus-instrument-id="focusInstrumentId" />
       </NTabPane>
     </NTabs>
   </NSpace>

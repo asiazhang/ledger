@@ -4,7 +4,6 @@
     "pnl": "P&L",
     "holdings": "Holdings",
     "instruments": "Instruments",
-    "trend": "Trend",
     "ledger": "Ledger"
   },
   "overview": {
@@ -83,7 +82,6 @@
     "realizedPnlTip": "P&L from sells, matched against FIFO buy cost and net of sell fees; it excludes unrealized holding P&L and cash dividends.",
     "realizedGainTip": "Realized P&L + cash dividends — the gains and cash income already banked this year (for this account). It excludes the unrealized P&L still in your holdings (this page counts only what you have realized). Dividends are grouped by the year they were paid, and include the dividend leg of dividend reinvestment (the same-day buy raises cost basis, which this table does not show) and money-market earnings that migration records as cash dividends.",
     "portfolioTrendTip": "Historical market value at each sample point (shares held then × that week's price), converted to the base currency using same-period historical rates; weekly sampling, and holdings without a price or FX rate are skipped at that point; cash accounts are not included.",
-    "instrumentTrendTip": "The instrument's own price series (unit NAV for funds) — not your holding value and not a return rate; only instruments with a price source have a curve.",
     "investableAssetsTip": "Cash in investment accounts + holding market value; hidden accounts and liabilities are excluded, holdings without a price are skipped; it is the numerator of financial freedom."
   },
   "statsCards": {
@@ -106,13 +104,11 @@
       "market": "Market",
       "type": "Type",
       "currency": "Currency",
-      "trend": "Trend",
       "quote": "Manual Price",
       "invested": "Holding",
       "actions": "Actions"
     },
     "investedTag": "Holding",
-    "trendAction": "Trend",
     "quoteAction": "Manual Price",
     "deleteAction": "Delete",
     "deleteTitle": "Delete Instrument",
@@ -137,25 +133,20 @@
   },
   "trend": {
     "modePortfolio": "Portfolio Value",
-    "modeInstrument": "Single Instrument",
-    "instrumentPlaceholder": "Select an instrument...",
-    "instrumentFallback": "Instrument",
+    "cardTitle": "Portfolio Trend",
     "range1m": "1M",
     "range3m": "3M",
     "range1y": "1Y",
+    "range3y": "3Y",
+    "range5y": "5Y",
     "rangeAll": "All",
     "captionPortfolio": "Unit: {currency} (base currency)",
-    "captionInstrument": "Quote currency: {currency}",
-    "noSource": "No price source for this instrument",
-    "noSourceExtra": "Stock instruments with an unknown market are not covered by market data collection and do not accept manual price entry, so no trend chart is available.",
     "empty": "No historical price data",
     "emptyNoPointsInRange": "No sample points in this range. Try a longer range.",
-    "emptyExtraManual": "Click “Record Price” in the instrument list to enter a price, then the trend will appear.",
     "emptyBackfillRunning": "Backfilling price history; the trend will appear once it finishes.",
     "emptyBackfillProgress": "Backfilling price history ({done}/{total}); the trend will appear once it finishes.",
     "emptyBackfillRetryPending": "Backfill has not succeeded yet; it will retry automatically later.",
-    "emptyBackfillNoData": "No collectable price history (unknown code, no NAV published yet, or delisted).",
-    "constantNote": "This instrument has a constant unit NAV (always 1.0000): the price never changes, and returns accrue as share conversions (shares grow, NAV stays flat)."
+    "emptyBackfillNoData": "No collectable price history (unknown code, no NAV published yet, or delisted)."
   },
   "form": {
     "amount": "Amount",

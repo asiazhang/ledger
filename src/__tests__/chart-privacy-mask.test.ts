@@ -9,7 +9,6 @@ import PortfolioTrendPanel from "@/investment/PortfolioTrendPanel.vue";
 import SubscriptionSpendPanel from "@/scheduled/SubscriptionSpendPanel.vue";
 import { amountPrivacyEnabled } from "@ledger/money";
 import { useReferenceStore } from "@/stores/reference";
-import { useInvestmentsSessionStore } from "@/investment/investments-session";
 import { makeInstrument } from "./factories";
 import type {
   CategoryShare,
@@ -318,7 +317,7 @@ describe("报表卡面：商户排行表格（金额数字同源掩码，issue #
   });
 });
 
-describe("投资趋势面：组合 / 单标的（y 轴刻度 / tooltip 同源掩码，issue #567）", () => {
+describe("投资趋势面：组合市值（y 轴刻度 / tooltip 同源掩码，issue #567）", () => {
   it("组合模式（金额刻度）开启恒掩码，关闭态与现状逐字符一致", async () => {
     const wrapper = mount(PortfolioTrendPanel);
     await flushPromises();
@@ -339,23 +338,6 @@ describe("投资趋势面：组合 / 单标的（y 轴刻度 / tooltip 同源掩
     expect(label(tooltipItem(110000, "组合市值"))).toBe("组合市值: ••••");
     // x 轴为日期字符串，不带金额（核查记录：趋势图仅值轴带金额）
     expect(options.scales?.x?.ticks?.callback).toBeUndefined();
-  });
-
-  it("单标的模式（价格刻度 formatPrice）开启恒掩码，关闭态与现状逐字符一致", async () => {
-    // 走势入口写会话 store（标的列表「走势」按钮同款，issue #1192 起面板无入口 props）
-    useInvestmentsSessionStore().showTrendInstrument(stockInstrument);
-    const wrapper = mount(PortfolioTrendPanel);
-    await flushPromises();
-    const options = wrapper
-      .findComponent({ name: "Line" })
-      .props("options") as ChartOptions<"line">;
-    const tick = linearTick(options, "y");
-    // 1500 万分之一元（价格列 ADR-0038 刻度）；字面量豁免登记同上（issue #770）：
-    // 关闭态逐字符一致回归锚点，委托即同义反复
-    expect(tick(1500, 0, [])).toBe("¥0.15");
-    amountPrivacyEnabled.value = true;
-    await nextTick();
-    expect(tick(1500, 0, [])).toBe("••••");
   });
 });
 

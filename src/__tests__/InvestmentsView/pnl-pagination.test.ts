@@ -64,7 +64,6 @@ const PNL_DEFAULTS = {
   instrument_price_staleness: { stale_count: 0, threshold_days: 3 },
   cumulative_pnl_summary: [{ currency_code: "CNY", cumulative_pnl_cents: 0 }],
   portfolio_value_trend: { currency_code: "CNY", points: [] },
-  instrument_price_trend: { instrument_id: "inst-1", points: [] },
   realized_pnl_summary: makePnlSummary({ by_year: TEN_YEARS, by_account: TEN_ACCOUNTS }),
   money_weighted_return_summary: makeMwrSummary(),
   list_investment_transactions: { items: [], total: 0 },

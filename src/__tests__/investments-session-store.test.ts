@@ -3,18 +3,16 @@ import { setActivePinia, createPinia } from "pinia";
 import { SEARCH_DEBOUNCE_MS } from "@/composables/search-debounce";
 import {
   LEDGER_TAB_PAGE_SIZE_DEFAULT,
-  TREND_MODE_DEFAULT,
   TREND_PRESET_DEFAULT,
   useInvestmentsSessionStore,
 } from "@/investment/investments-session";
-import { makeInstrument } from "./factories";
 
 afterEach(() => {
   vi.useRealTimers();
 });
 
 describe("useInvestmentsSessionStore（issue #1192 投资页会话状态）", () => {
-  it("冷启动默认：默认页签「概览」、无持仓筛选/排序、第 1 页、组合走势默认区间", () => {
+  it("冷启动默认：默认页签「概览」、无持仓筛选/排序、第 1 页、走势默认区间（#1907 起随概览）", () => {
     const store = useInvestmentsSessionStore();
     expect(store.activeTab).toBe("overview");
     expect(store.holdingsSearchInput).toBe("");
@@ -22,10 +20,7 @@ describe("useInvestmentsSessionStore（issue #1192 投资页会话状态）", ()
     expect(store.holdingsAccountId).toBeNull();
     expect(store.holdingsSorter).toBeNull();
     expect(store.holdingsPage).toBe(1);
-    expect(store.trendMode).toBe(TREND_MODE_DEFAULT);
     expect(store.trendPreset).toBe(TREND_PRESET_DEFAULT);
-    expect(store.trendInstrumentId).toBeNull();
-    expect(store.trendInstrument).toBeNull();
   });
 
   it("会话内保留、冷启动回默认（新 pinia 回默认，同 pinia 保留）", () => {
@@ -77,22 +72,13 @@ describe("useInvestmentsSessionStore（issue #1192 投资页会话状态）", ()
     expect(store.holdingsPage).toBe(1);
   });
 
-  it("走势入口：带入标的即选中并切单标的模式；投影可读、面板下拉切换同理", () => {
+  it("走势区间写入意图：闭集字面量直写（面板单选组回传）", () => {
     const store = useInvestmentsSessionStore();
-    const inst = makeInstrument({ id: "inst-1", symbol: "600000", name: "浦发银行" });
-    store.showTrendInstrument(inst);
-    expect(store.trendInstrumentId).toBe("inst-1");
-    expect(store.trendMode).toBe("instrument");
-    expect(store.trendInstrument?.symbol).toBe("600000");
-  });
-
-  it("selectTrendInstrument(null) 清除选中并回组合模式（面板清除/切换出口）", () => {
-    const store = useInvestmentsSessionStore();
-    store.showTrendInstrument(makeInstrument({ id: "inst-1" }));
-    store.selectTrendInstrument(null);
-    expect(store.trendInstrumentId).toBeNull();
-    expect(store.trendMode).toBe(TREND_MODE_DEFAULT);
-    expect(store.trendInstrument).toBeNull();
+    expect(store.trendPreset).toBe(TREND_PRESET_DEFAULT);
+    store.setTrendPreset("3y");
+    expect(store.trendPreset).toBe("3y");
+    store.setTrendPreset("all");
+    expect(store.trendPreset).toBe("all");
   });
 });
 
@@ -106,7 +92,6 @@ describe("resetToDefault（issue #1192 ESC 复位出口）", () => {
     store.setPage(3);
     store.setPnlYearPage(3);
     store.setPnlAccountPage(2);
-    store.showTrendInstrument(makeInstrument({ id: "inst-1" }));
     store.setTrendPreset("1m");
     store.setDetailKinds(["buy", "sell"]);
     store.setDetailPage(2);
@@ -123,10 +108,7 @@ describe("resetToDefault（issue #1192 ESC 复位出口）", () => {
     expect(store.holdingsPage).toBe(1);
     expect(store.pnlYearPage).toBe(1);
     expect(store.pnlAccountPage).toBe(1);
-    expect(store.trendMode).toBe(TREND_MODE_DEFAULT);
     expect(store.trendPreset).toBe(TREND_PRESET_DEFAULT);
-    expect(store.trendInstrumentId).toBeNull();
-    expect(store.trendInstrument).toBeNull();
     expect(store.detailKinds).toBeNull();
     expect(store.detailPage).toBe(1);
     expect(store.detailPageSize).toBe(LEDGER_TAB_PAGE_SIZE_DEFAULT);
@@ -188,8 +170,7 @@ describe("resetToDefault（issue #1192 ESC 复位出口）", () => {
     store.resetToDefault();
     expect(store.activeTab).toBe("overview");
     expect(store.holdingsPage).toBe(1);
-    expect(store.trendMode).toBe(TREND_MODE_DEFAULT);
-    expect(store.trendInstrument).toBeNull();
+    expect(store.trendPreset).toBe(TREND_PRESET_DEFAULT);
   });
 });
 
@@ -202,25 +183,6 @@ describe("store 写路径唯一（issue #1192 Standards 轴 finding）", () => {
     expect(store.trendPreset).toBe(TREND_PRESET_DEFAULT);
     store.setTrendPreset("1m");
     expect(store.trendPreset).toBe("1m");
-  });
-
-  it('单标的模式守卫：无选中标的时 setTrendMode("instrument") 无操作', () => {
-    const store = useInvestmentsSessionStore();
-    store.setTrendMode("instrument");
-    expect(store.trendMode).toBe(TREND_MODE_DEFAULT);
-    store.showTrendInstrument(makeInstrument({ id: "inst-1" }));
-    store.setTrendMode("portfolio");
-    store.setTrendMode("instrument");
-    expect(store.trendMode).toBe("instrument");
-  });
-
-  it("selectTrendInstrument 只接受已声明的标的 id（未知 id 无操作）", () => {
-    const store = useInvestmentsSessionStore();
-    store.selectTrendInstrument("inst-unknown");
-    expect(store.trendInstrumentId).toBeNull();
-    store.showTrendInstrument(makeInstrument({ id: "inst-1" }));
-    store.selectTrendInstrument("inst-1");
-    expect(store.trendInstrumentId).toBe("inst-1");
   });
 });
 

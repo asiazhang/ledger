@@ -1,6 +1,5 @@
 //! 走势查询（issue #138 / spec #135 / ADR-0019）：PortfolioValueTrend 的取数与推算。
 //!
-//! - 单标的走势：`price_history` 直出，按区间裁剪，从首个有效采样点开始。
 //! - 组合市值走势：当期持有数量按标的分组增量推进（issue #1654）——价格行按
 //!   标的分组、组内按采样交易日升序，逐标的一次扫描持仓变动腿流（时点持仓
 //!   同一推算不变量的流水投影，见 [`crate::holdings`]）游标累加运行时数量；
@@ -14,14 +13,10 @@ use std::collections::{BTreeMap, HashMap};
 use chrono::NaiveDate;
 use rusqlite::Connection;
 
-use super::constant_price::{
-    ConstantPriceValue, constant_for_instrument, load_constant_prices, weekly_samples,
-};
+use super::constant_price::{ConstantPriceValue, load_constant_prices, weekly_samples};
 use super::fx_week::{fx_rate_at_week, load_fx_week_history};
 use super::holdings::holdings_legs_by_instrument;
-use super::model::{
-    InstrumentPriceTrend, PortfolioTrendPoint, PortfolioValueTrend, PriceTrendPoint, TrendRange,
-};
+use super::model::{PortfolioTrendPoint, PortfolioValueTrend, TrendRange};
 use super::prices::PRICE_UNITS_PER_FEN;
 use ledger_infra::db::tx_scope::ensure_transaction;
 use ledger_infra::error::{AppError, Result};
@@ -55,99 +50,7 @@ fn validate_range(range: &TrendRange) -> Result<()> {
     Ok(())
 }
 
-/// 单标的走势：PriceHistory 直出，区间裁剪（含端点），按采样日升序。
-/// 恒定价格标的例外：读侧按常量在响应内合成（ADR-0126 决策 6），不读价格
-/// 历史——历史表不为它落行，存量平坦序列也不再被消费。
-pub fn query_instrument_price_trend(
-    conn: &Connection,
-    instrument_id: &str,
-    range: &TrendRange,
-) -> Result<InstrumentPriceTrend> {
-    query_instrument_price_trend_on(
-        conn,
-        instrument_id,
-        range,
-        super::staleness::beijing_today(),
-    )
-}
-
-/// [`query_instrument_price_trend`] 的可注入形态（时钟是测试的行为输入，先例：
-/// `instrument_price_staleness_on`）：常量合成的序列右界由「今天」夹出。
-///
-/// **读快照审计结论（issue #1702，判定不修）**：常量路径单语句 + 纯内存合成；
-/// 直出路径是「价格行查询 + 空集时补全状态判定」两段，但两组输出同源
-/// `price_history` 且按同键查表——写提交落在段间时，空点 + 无补全字段的组合
-/// 即「区间裁剪」的合法形态，任何交错都坍缩为某快照的合法应答，无自相矛盾
-/// 口径可断言，故不收读事务（同根因候选 #1702 留痕）。
-pub fn query_instrument_price_trend_on(
-    conn: &Connection,
-    instrument_id: &str,
-    range: &TrendRange,
-    today: chrono::NaiveDate,
-) -> Result<InstrumentPriceTrend> {
-    validate_range(range)?;
-
-    // 恒定价格标的：按区间周键在响应内合成常量序列（ADR-0126 决策 6）——
-    // 序列下界取建档锚点与区间起点的较晚者，上界夹到区间终点与今天。
-    if let Some(constant) = constant_for_instrument(conn, instrument_id)? {
-        let points = synthesize_constant_points(&constant, range, today);
-        return Ok(InstrumentPriceTrend {
-            instrument_id: instrument_id.to_string(),
-            points,
-            backfill: None,
-        });
-    }
-
-    let mut conditions = vec!["instrument_id=?1".to_string()];
-    let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(instrument_id.to_string())];
-    if let Some(start) = &range.start_date {
-        params.push(Box::new(start.clone()));
-        conditions.push(format!("trade_date>=?{}", params.len()));
-    }
-    if let Some(end) = &range.end_date {
-        params.push(Box::new(end.clone()));
-        conditions.push(format!("trade_date<=?{}", params.len()));
-    }
-    let sql = format!(
-        "SELECT trade_date, price_cents, currency_code FROM price_history \
-         WHERE {} ORDER BY trade_date",
-        conditions.join(" AND ")
-    );
-
-    let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|b| b.as_ref()).collect();
-    let mut points = Vec::new();
-    let mut stmt = conn.prepare(&sql)?;
-    let rows = stmt.query_map(param_refs.as_slice(), |r| {
-        Ok(PriceTrendPoint {
-            date: r.get(0)?,
-            price_cents: r.get(1)?,
-            currency_code: r.get(2)?,
-        })
-    })?;
-    for row in rows {
-        points.push(row?);
-    }
-
-    // 补全状态（ADR-0122 决策 5 / issue #1377，读投影只增字段）：仅空采样点时
-    // 判定——有历史者无空态可言；判定内部再筛「有通道而没有任何历史序列」的
-    // 标的（区间裁剪导致的空不携带该字段）。
-    let backfill = if points.is_empty() {
-        super::backfill::instrument_trend_backfill_status(conn, instrument_id)?
-    } else {
-        None
-    };
-
-    Ok(InstrumentPriceTrend {
-        instrument_id: instrument_id.to_string(),
-        points,
-        backfill,
-    })
-}
-
-/// 恒定标的的单标的走势合成：序列下界取建档锚点与区间起点的较晚者，上界夹
-/// 到区间终点与今天；每周一条常量点（价格与币种逐周不变）。区间为空即无点
-/// ——空态判定对恒定标的不给补全三态（无空态可言，见 backfill 模块判据）。
-/// 恒定标的的常量合成采样窗口（单标的与组合两消费面共用）：下界取建档锚点
+/// 恒定标的的常量合成采样窗口（组合走势消费面）：下界取建档锚点
 /// 与区间起点的较晚者，上界夹到区间终点与今天；区间界解析失败按无界处理。
 fn constant_sample_window(
     constant: &ConstantPriceValue,
@@ -162,22 +65,6 @@ fn constant_sample_window(
         parse(&range.start_date).map_or(constant.anchor_date, |s| s.max(constant.anchor_date));
     let end = parse(&range.end_date).unwrap_or(today);
     (start, end)
-}
-
-fn synthesize_constant_points(
-    constant: &ConstantPriceValue,
-    range: &TrendRange,
-    today: chrono::NaiveDate,
-) -> Vec<PriceTrendPoint> {
-    let (start, end) = constant_sample_window(constant, range, today);
-    weekly_samples(start, end, today)
-        .into_iter()
-        .map(|(_, trade_date)| PriceTrendPoint {
-            date: trade_date,
-            price_cents: constant.price_cents,
-            currency_code: constant.currency_code.clone(),
-        })
-        .collect()
 }
 
 /// 区间内的一条价格历史周点行。

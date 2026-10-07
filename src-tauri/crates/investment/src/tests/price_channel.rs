@@ -5,10 +5,10 @@
 
 use crate::{
     InstrumentListFilter, InstrumentType, Market, PriceChannel, QuoteMarket, derive_price_channel,
-    derive_quote_market, get_instrument, list_instruments,
+    derive_quote_market, list_instruments,
 };
 
-use super::common::insert_instrument_with_market;
+use super::common::{insert_instrument_with_market, instrument_by_id};
 use tauri_app_lib::test_support::open;
 
 /// 行情通道：股票与场内 ETF（有市场 + 代码即可构造行情查询，issue #695）。
@@ -149,13 +149,13 @@ fn instrument_rows_carry_derived_price_channel() {
     assert_eq!(channel_of("inst-manual"), PriceChannel::Manual);
     assert_eq!(channel_of("inst-none"), PriceChannel::None);
 
-    // 按 id 精确取（focus 参数落点）同一形状
+    // 标的列表读路径同一投影（「价格来源」列据此展示，issue #1907 起无按 id 读路径）
     assert_eq!(
-        get_instrument(&conn, "inst-fund").unwrap().price_channel,
+        instrument_by_id(&conn, "inst-fund").price_channel,
         PriceChannel::FundNav
     );
     assert_eq!(
-        get_instrument(&conn, "inst-none").unwrap().price_channel,
+        instrument_by_id(&conn, "inst-none").price_channel,
         PriceChannel::None
     );
 }

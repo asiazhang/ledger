@@ -19,7 +19,6 @@ export const CONCEPT_KEYS = [
   "realizedPnl",
   "realizedGain",
   "portfolioTrend",
-  "instrumentTrend",
   "investableAssets",
 ] as const;
 

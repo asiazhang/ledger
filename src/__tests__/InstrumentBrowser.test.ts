@@ -90,6 +90,71 @@ function bodyQuery(selector: string): HTMLElement | null {
   return document.body.querySelector(selector);
 }
 
+describe("InstrumentBrowser 来源跳转焦点定位（spec #704 / issue #1907）", () => {
+  const focusInstrument: Instrument = {
+    ...mockInstruments[0]!,
+    id: "inst-sell",
+    symbol: "600519",
+    name: "招商银行",
+    invested: false,
+  };
+
+  /** mount 时以 props 带入 focus id（视图消费 focus 后的传参形态） */
+  function mountWithFocus(id: string | null) {
+    return mount(NDialogProvider, {
+      slots: { default: () => h(InstrumentBrowser, { focusInstrumentId: id }) },
+    });
+  }
+
+  it("focus id 在场：以 anchor_id 发起定位查询，页码切到锚点所在页且目标行高亮", async () => {
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: {
+        list_instruments: (args?: { filter?: { anchor_id?: string } }) =>
+          args?.filter?.anchor_id === "inst-sell"
+            ? { items: [focusInstrument], total: 101, anchor_page: 3 }
+            : { items: mockInstruments, total: mockInstruments.length },
+      },
+    });
+    const wrapper = mountWithFocus("inst-sell");
+    await flushPromises();
+    // anchor 定位接缝：查询携带锚点 id（删除接线即本断言变红）
+    expect(lastInvokeArgs("list_instruments").filter).toMatchObject({
+      anchor_id: "inst-sell",
+      page_size: 50,
+    });
+    // 分页落在锚点所在页 + 高亮行在位（行必在当前页）
+    expect(wrapper.find(".n-pagination .n-pagination-item--active").text()).toBe("3");
+    const focusedRow = wrapper.find("tr.instrument-row-focused");
+    expect(focusedRow.exists()).toBe(true);
+    expect(focusedRow.text()).toContain("600519");
+  });
+
+  it("锚点不命中（anchor_page 缺省）：回落第 1 页，不高亮任何行", async () => {
+    const wrapper = mountWithFocus("inst-ghost");
+    await flushPromises();
+    expect(wrapper.find(".n-pagination .n-pagination-item--active").text()).toBe("1");
+    expect(wrapper.find("tr.instrument-row-focused").exists()).toBe(false);
+  });
+
+  it("无 focus：常规首拉，不携带 anchor_id、无高亮行", async () => {
+    const wrapper = mountBrowser();
+    await flushPromises();
+    expect(
+      (lastInvokeArgs("list_instruments").filter as { anchor_id?: string } | undefined)?.anchor_id,
+    ).toBeUndefined();
+    expect(wrapper.find("tr.instrument-row-focused").exists()).toBe(false);
+  });
+});
+
+describe("InstrumentBrowser 走势入口退役（issue #1907）", () => {
+  it("标的行不再有「走势」按钮列", async () => {
+    const wrapper = mountBrowser();
+    await flushPromises();
+    expect(wrapper.find('[data-testid="view-trend-600000"]').exists()).toBe(false);
+  });
+});
+
 describe("InstrumentBrowser 标的页工具栏", () => {
   it("工具栏包含「同步标的信息」按钮", async () => {
     const wrapper = mountBrowser();

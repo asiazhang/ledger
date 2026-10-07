@@ -8,6 +8,7 @@ import { useAppStore } from "@/stores/app";
 import { useReferenceStore } from "@/stores/reference";
 import ConceptLabel from "@/investment/ConceptLabel.vue";
 import { useInvestmentOverview } from "@/investment/useInvestmentOverview";
+import PortfolioTrendPanel from "@/investment/PortfolioTrendPanel.vue";
 import {
   barCash,
   barHoldings,
@@ -36,6 +37,11 @@ import {
  * 与持仓视图「按账户币种分组、不跨币种合并」分工）：本组件只做装配与格式化。
  * 合计三项沿用既有标签（概念键同名），币种口径差异由概念说明的概览 scope 变体
  * 句承担（ADR-0131 决策 3 / ADR-0129 先例），不另造标签。
+ *
+ * 走势卡（#1907 / ADR-0131 决策 9 修订注记）：组合市值曲线自退役的走势页签
+ * 迁入本页签——ADR-0131 决策 9 的「不含组合走势」边界随页签退役改址；两条读
+ * 接缝并存（investment_overview + portfolio_value_trend 各答其问），走势卡
+ * 自带取数与空态，本组件不参与它的口径。
  */
 const reference = useReferenceStore();
 const appStore = useAppStore();
@@ -256,5 +262,10 @@ function retry(): void {
         </NText>
       </NSpace>
     </NSpin>
+  </NCard>
+
+  <!-- 组合走势卡（#1907）：自退役的走势页签迁入；区间切换与空态三态随卡走 -->
+  <NCard :title="t('investments.trend.cardTitle')" data-testid="overview-trend-card">
+    <PortfolioTrendPanel />
   </NCard>
 </template>

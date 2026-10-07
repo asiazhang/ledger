@@ -18,7 +18,7 @@ use tauri_app_lib::test_support::FIXED_NOW;
 // 既有测试经域根 glob（`super::super::*`）消费的旧壳 mod.rs 私有 use 绑定，
 // 随 #401 域归位改由共享脚手架再导出（import 更新，断言与场景不变）；
 // PnlFilter / TrendRange 已由域根模型再导出承载（#422），不再经脚手架转发。
-pub(crate) use crate::{InstrumentListFilter, InstrumentListResult};
+pub(crate) use crate::{Instrument, InstrumentListFilter, InstrumentListResult};
 pub(crate) use ledger_infra::error::AppError;
 
 /// 种入一个标的行（市场 / 类型显式的域内变体形态），panic 形态。库层约束断言
@@ -33,6 +33,17 @@ pub(super) fn insert_instrument_with_market(
     kind: &str,
 ) {
     try_insert_instrument_with_market(conn, id, symbol, name, currency, market, kind).unwrap();
+}
+
+/// 按 id 从标的列表读路径取单行，panic 形态（issue #1907：`get_instrument`
+/// 读路径已随走势页签退役删除，测试取行改走列表——两路径本就同一投影）。
+pub(super) fn instrument_by_id(conn: &Connection, id: &str) -> Instrument {
+    crate::list_instruments(conn, &InstrumentListFilter::default())
+        .unwrap()
+        .items
+        .into_iter()
+        .find(|inst| inst.id == id)
+        .unwrap_or_else(|| panic!("标的 {id} 不在列表投影中"))
 }
 
 /// [`insert_instrument_with_market`] 的可失败形态：断言库层约束（UNIQUE 冲突等）

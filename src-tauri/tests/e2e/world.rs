@@ -135,12 +135,10 @@ pub struct PlanGroup {
 pub struct AssetGroup {
     /// 最近一次标的搜索结果快照（标的搜索语义场景断言用，issue #199）
     pub last_instrument_search: Option<ledger_investment::InstrumentListResult>,
-    /// 最近一次按 id 精确取标的快照（走势 focus 消费解析路径断言用，issue #709）
-    pub last_instrument: Option<ledger_investment::Instrument>,
+    /// 最近一次锚点定位查询快照（来源跳转落标的页签的分页定位断言用，issue #1907）
+    pub last_instrument_list: Option<ledger_investment::InstrumentListResult>,
     /// 最近一次组合走势查询快照（组合走势场景断言用，issue #248）
     pub last_portfolio_trend: Option<ledger_investment::PortfolioValueTrend>,
-    /// 最近一次单标的走势查询快照（基金净值走势场景断言用，issue #303）
-    pub last_instrument_trend: Option<ledger_investment::InstrumentPriceTrend>,
     /// 最近一次财务自由度总览快照（自由度口径场景断言用，issue #343）
     pub last_financial_freedom: Option<ledger_investment::FinancialFreedomOverview>,
     /// 最近一次投资明细列表快照（ADR-0135 / issue #1778，明细页签取数断言用）

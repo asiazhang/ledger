@@ -40,6 +40,7 @@ fn list_instruments_pagination_and_search() {
         only_invested: None,
         page: None,
         page_size: Some(2),
+        anchor_id: None,
     };
     let result = super::crud::list_instruments(&conn, &filter).unwrap();
     assert_eq!(result.total, 5);
@@ -55,6 +56,7 @@ fn list_instruments_pagination_and_search() {
         only_invested: None,
         page: Some(2),
         page_size: Some(2),
+        anchor_id: None,
     };
     let result = super::crud::list_instruments(&conn, &filter).unwrap();
     assert_eq!(result.items.len(), 2);
@@ -68,6 +70,7 @@ fn list_instruments_pagination_and_search() {
         only_invested: None,
         page: None,
         page_size: None,
+        anchor_id: None,
     };
     let result = super::crud::list_instruments(&conn, &filter).unwrap();
     assert_eq!(result.total, 1);
@@ -81,6 +84,7 @@ fn list_instruments_pagination_and_search() {
         only_invested: None,
         page: None,
         page_size: None,
+        anchor_id: None,
     };
     let result = super::crud::list_instruments(&conn, &filter).unwrap();
     assert_eq!(result.total, 1);
@@ -94,6 +98,7 @@ fn list_instruments_pagination_and_search() {
         only_invested: None,
         page: None,
         page_size: None,
+        anchor_id: None,
     };
     let result = super::crud::list_instruments(&conn, &filter).unwrap();
     assert_eq!(result.total, 3);
@@ -107,6 +112,7 @@ fn list_instruments_pagination_and_search() {
         only_invested: None,
         page: Some(2),
         page_size: Some(1),
+        anchor_id: None,
     };
     let result = super::crud::list_instruments(&conn, &filter).unwrap();
     assert_eq!(result.total, 2);
@@ -167,6 +173,7 @@ fn search_all(conn: &Connection, search: &str) -> InstrumentListResult {
             only_invested: None,
             page: None,
             page_size: None,
+            anchor_id: None,
         },
     )
     .unwrap()
@@ -294,6 +301,7 @@ fn list_instruments_only_invested_filter() {
         only_invested: Some(true),
         page: None,
         page_size: None,
+        anchor_id: None,
     };
     let result = super::crud::list_instruments(&conn, &filter).unwrap();
     assert_eq!(result.total, 1);
@@ -309,6 +317,7 @@ fn list_instruments_only_invested_filter() {
         only_invested: Some(true),
         page: None,
         page_size: None,
+        anchor_id: None,
     };
     let result = super::crud::list_instruments(&conn, &filter).unwrap();
     assert_eq!(result.total, 0);
@@ -322,6 +331,7 @@ fn list_instruments_only_invested_filter() {
         only_invested: Some(true),
         page: None,
         page_size: None,
+        anchor_id: None,
     };
     let result = super::crud::list_instruments(&conn, &filter).unwrap();
     assert_eq!(result.total, 1);
@@ -335,6 +345,7 @@ fn list_instruments_only_invested_filter() {
         only_invested: Some(true),
         page: Some(2),
         page_size: Some(1),
+        anchor_id: None,
     };
     let result = super::crud::list_instruments(&conn, &filter).unwrap();
     assert_eq!(result.total, 1);
@@ -348,6 +359,7 @@ fn list_instruments_only_invested_filter() {
         only_invested: Some(false),
         page: None,
         page_size: None,
+        anchor_id: None,
     };
     let result = super::crud::list_instruments(&conn, &filter).unwrap();
     assert_eq!(result.total, 3);
@@ -395,6 +407,7 @@ fn list_instruments_invested_excludes_soft_deleted_accounts() {
         only_invested: Some(true),
         page: None,
         page_size: None,
+        anchor_id: None,
     };
     let result = super::crud::list_instruments(&conn, &filter).unwrap();
     assert_eq!(result.total, 0);
@@ -550,4 +563,119 @@ fn list_holdings_returns_after_buy_and_market_price() {
     assert_eq!(cost_basis, 151000);
     assert_eq!(market_value, 160000);
     assert_eq!(unrealized_pnl, 9000);
+}
+
+// ---------------------------------------------------------------------------
+// 焦点定位（issue #1907，来源跳转落标的页签的分页定位接缝）：anchor_id 返回
+// 该 id 在当前过滤与排序下所在页，行集切到该页；id 不在结果集内按普通页码
+// 查询、不携带 anchor_page。
+// ---------------------------------------------------------------------------
+
+/// 种入 symbol 升序的标的若干（SYM0..SYM{n-1}）。
+fn seed_symbols(conn: &Connection, n: usize) -> Vec<String> {
+    (0..n)
+        .map(|i| {
+            insert_instrument_with_market(
+                conn,
+                &format!("inst-anchor-{i}"),
+                &format!("SYM{i}"),
+                &format!("名称{i}"),
+                "CNY",
+                "sh",
+                "stock",
+            );
+            format!("inst-anchor-{i}")
+        })
+        .collect()
+}
+
+#[test]
+fn anchor_id_locates_page_and_returns_that_page() {
+    let conn = open();
+    let ids = seed_symbols(&conn, 5);
+
+    // 每页 2 条：SYM3（序号 3）应在第 2 页，行集即该页两行。
+    let result = super::crud::list_instruments(
+        &conn,
+        &InstrumentListFilter {
+            page_size: Some(2),
+            anchor_id: Some(ids[3].clone()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(result.anchor_page, Some(2));
+    assert_eq!(result.total, 5);
+    let symbols: Vec<&str> = result.items.iter().map(|i| i.symbol.as_str()).collect();
+    assert_eq!(symbols, ["SYM2", "SYM3"]);
+
+    // 末页不满页：SYM4（序号 4）在第 3 页（仅 1 行）。
+    let result = super::crud::list_instruments(
+        &conn,
+        &InstrumentListFilter {
+            page_size: Some(2),
+            anchor_id: Some(ids[4].clone()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(result.anchor_page, Some(3));
+    assert_eq!(result.items.len(), 1);
+    assert_eq!(result.items[0].symbol, "SYM4");
+}
+
+#[test]
+fn anchor_id_respects_active_filter_when_locating() {
+    let conn = open();
+    let ids = seed_symbols(&conn, 5);
+    // market=sz 只留偶数序号标的（seed 里偶数序号为 sh——改用搜索词造筛选集）。
+    let result = super::crud::list_instruments(
+        &conn,
+        &InstrumentListFilter {
+            search: Some("名称4".into()),
+            page_size: Some(2),
+            anchor_id: Some(ids[4].clone()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    // 过滤后只剩 1 条：锚点必落第 1 页。
+    assert_eq!(result.anchor_page, Some(1));
+    assert_eq!(result.total, 1);
+    assert_eq!(result.items[0].symbol, "SYM4");
+}
+
+#[test]
+fn anchor_id_not_in_result_set_falls_back_to_plain_page() {
+    let conn = open();
+    let ids = seed_symbols(&conn, 5);
+
+    // id 不存在：anchor_page 不携带、按普通页码查询。
+    let result = super::crud::list_instruments(
+        &conn,
+        &InstrumentListFilter {
+            page: Some(2),
+            page_size: Some(2),
+            anchor_id: Some("inst-missing".into()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(result.anchor_page, None);
+    assert_eq!(result.items.len(), 2);
+    assert_eq!(result.items[0].symbol, "SYM2");
+
+    // id 被筛选藏住（only_invested 但无持仓）：同样回落普通页码。
+    let result = super::crud::list_instruments(
+        &conn,
+        &InstrumentListFilter {
+            only_invested: Some(true),
+            anchor_id: Some(ids[0].clone()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(result.anchor_page, None);
+    assert_eq!(result.total, 0);
+    assert!(result.items.is_empty());
 }

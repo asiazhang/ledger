@@ -17,7 +17,7 @@ use super::model::{
 use super::predicates::INVESTED_EXISTS;
 use super::prices::{MarketPriceWrite, upsert_market_price};
 use ledger_currencies::{ExchangeRate, ExchangeRateInput};
-use ledger_infra::db::query::{FromRow, query_all, query_one};
+use ledger_infra::db::query::{FromRow, query_all};
 use ledger_infra::db::tx_scope::ensure_transaction;
 use ledger_infra::db::{new_uuid, now_iso};
 use ledger_infra::error::{AppError, Result};
@@ -312,11 +312,30 @@ pub fn list_instruments(
         )
     };
 
-    let page = filter.page.unwrap_or(1).max(1);
     let page_size = filter.page_size.unwrap_or(50).clamp(1, 500);
-    let offset = (page - 1) * page_size;
 
-    let (total, items) = if let Some(terms) = &search_terms {
+    // 焦点定位（issue #1907，来源跳转落标的页签的分页定位接缝）：给出 anchor_id
+    // 时在「当前过滤 + 排序」的行集内求序号、换算所在页，分页随之切页——行必在
+    // 返回页内，前端行高亮因此可靠。定位只改页码，不改写过滤口径；id 不在结果
+    // 集内（含被筛选藏住）时不携带 anchor_page、按普通页码查询。锚点序号必须与
+    // 分页同一行集：搜索语义过滤在 Rust 侧无法下推 SQL，两分支各按自己的行集求。
+    let anchor_page_in_sql_branch = match filter.anchor_id.as_deref() {
+        Some(anchor_id) => {
+            let id_sql = format!("SELECT i.id FROM instruments i{where_clause} ORDER BY i.symbol");
+            let mut located = None;
+            let mut stmt = conn.prepare(&id_sql)?;
+            let rows = stmt.query_map(params_ref.as_slice(), |r| r.get::<_, String>(0))?;
+            for (idx, id) in rows.flatten().enumerate() {
+                if id == anchor_id {
+                    located = Some(idx / page_size + 1);
+                    break;
+                }
+            }
+            located
+        }
+        None => None,
+    };
+    let (total, items, anchor_page) = if let Some(terms) = &search_terms {
         // 语义匹配分支：全量候选后 Rust 过滤，total = 命中数，内存分页。
         let all: Vec<Instrument> = query_all(conn, &select_sql(""), params_ref.as_slice())?;
         let matched: Vec<Instrument> = all
@@ -328,14 +347,25 @@ pub fn list_instruments(
             })
             .collect();
         let total = matched.len() as i64;
+        // 锚点序号在过滤后的命中集内求（与内存分页同一行集）。
+        let anchor_page = filter.anchor_id.as_deref().and_then(|anchor_id| {
+            matched
+                .iter()
+                .position(|inst| inst.id == anchor_id)
+                .map(|idx| idx / page_size + 1)
+        });
+        let page = anchor_page.unwrap_or_else(|| filter.page.unwrap_or(1).max(1));
+        let offset = (page - 1) * page_size;
         let items = matched.into_iter().skip(offset).take(page_size).collect();
-        (total, items)
+        (total, items, anchor_page)
     } else {
         let total: i64 = conn.query_row(
             &format!("SELECT COUNT(*) FROM instruments i{where_clause}"),
             params_ref.as_slice(),
             |r| r.get(0),
         )?;
+        let page = anchor_page_in_sql_branch.unwrap_or_else(|| filter.page.unwrap_or(1).max(1));
+        let offset = (page - 1) * page_size;
         let mut params = params;
         params.push(Box::new(page_size as i64));
         params.push(Box::new(offset as i64));
@@ -349,44 +379,26 @@ pub fn list_instruments(
             )),
             params_ref.as_slice(),
         )?;
-        (total, items)
+        (total, items, anchor_page_in_sql_branch)
     };
 
-    Ok(InstrumentListResult { items, total })
+    Ok(InstrumentListResult {
+        items,
+        total,
+        anchor_page,
+    })
 }
 
-/// 标的行 SELECT 投影单点（列表行与按 id 精确取同一形状，issue #709）：基础列
-/// 现价缓存（LEFT JOIN）与持仓标志派生列；别名契约 i = instruments、
+/// 标的行 SELECT 投影单点（列表行唯一形状）：基础列 + 现价缓存（LEFT JOIN）与
+/// 持仓标志派生列；别名契约 i = instruments、
 /// p = market_prices（持仓谓词 `INVESTED_EXISTS` 的别名契约同此），投影变更
-/// 只改这里，两个读路径不漂移。末列恒定单位价格是价格通道派生的判定输入
+/// 只改这里，读路径不漂移。末列恒定单位价格是价格通道派生的判定输入
 /// （ADR-0126），消费在行映射处（`FromRow for Instrument`），不随序列化输出。
 fn instrument_row_projection() -> String {
     format!(
         "i.id,i.symbol,i.instrument_type,i.name,i.currency_code,i.market,i.created_at,i.updated_at,i.version,i.device_id,i.source,p.price_cents, \
          CASE WHEN {INVESTED_EXISTS} THEN 1 ELSE 0 END AS invested, i.constant_unit_price"
     )
-}
-
-/// 按 id 精确取标的（issue #709）：走势页签 focus 消费的只读解析路径——现有
-/// 标的列表过滤仅支持搜索词/市场/类型/持仓，无按 id 路径。返回完整标的对象
-/// （行投影与 [`list_instruments`] 列表行一致：含现价缓存与持仓标志），清仓/
-/// 无持仓标的照常返回（走势不依赖持仓）；不存在返回码化错误（与删除守卫
-/// 同码 `instrument.not-found`）。
-pub fn get_instrument(conn: &Connection, id: &str) -> Result<Instrument> {
-    query_one(
-        conn,
-        &format!(
-            "SELECT {} \
-             FROM instruments i \
-             LEFT JOIN market_prices p ON p.instrument_id = i.id \
-             WHERE i.id=?1",
-            instrument_row_projection()
-        ),
-        [id],
-    )?
-    .ok_or_else(|| {
-        AppError::codedp_not_found("instrument.not-found", format!("标的 {id} 不存在"), &[id])
-    })
 }
 
 /// 自建标的物理删除（issue #292 / ADR-0036 决策 5）：守卫前置检查——仅来源为

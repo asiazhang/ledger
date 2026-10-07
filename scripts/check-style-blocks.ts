@@ -37,6 +37,7 @@ export const STYLE_BLOCK_WHITELIST: readonly string[] = [
   "src/components/GlobalBusyBar.vue",
   "src/components/MobileNavShell.vue",
   "src/components/QuickTimeRange.vue",
+  "src/investment/InstrumentBrowser.vue",
   "src/investment/PortfolioTrendPanel.vue",
   "src/merchants/MerchantLink.vue",
   "src/physical-asset/PhysicalAssetDisposeModal.vue",
