@@ -73,7 +73,7 @@ fn gated_daily_refresh_channels(
         }),
         fetch_kline: Box::new(|_| {
             Box::pin(async {
-                unreachable!("现价刷新不发逐只日 K 请求（issue #1377）")
+                unreachable!("现价刷新不发逐只 K 线请求（issue #1377）")
             })
         }),
         fetch_nav_history: Box::new(|_| {
@@ -108,7 +108,7 @@ fn frontend_sync_channels() -> SyncChannelsSlot {
         }),
         fetch_kline: Box::new(|_| {
             Box::pin(async {
-                unreachable!("现价刷新不发逐只日 K 请求（issue #1377）")
+                unreachable!("现价刷新不发逐只 K 线请求（issue #1377）")
             })
         }),
         fetch_nav_history: Box::new(|_| {

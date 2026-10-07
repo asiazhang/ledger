@@ -1,12 +1,12 @@
 //! 同步网络通道束（issue #1276）：五个逐标的抓取通道 + 一个批量取数面
 //!（ADR-0121 / issue #1374 / ADR-0130 决策 2）的打包形态与生产/测试换装接缝。
 //!
-//! 束内闭包：批量报价 / 日 K / 新浪单只全历史 / 基金名称 /
+//! 束内闭包：批量报价 / 周 K / 新浪单只全历史 / 基金名称 /
 //! 货基判定确认（issue #1563 换源，由现价刷新与历史补全两编排消费）五个，
 //! 外加一个批量取数面（新浪 `f_` 面：名称与最新净值同面返回；issue #1565 换源）。
 //! 增量编排（[`super::incremental`]）消费批量报价 / 新浪单只全历史
 //!（issue #1571 起与历史补全同通道）/ 基金名称三闭包 + 批量面 + 货基确认，
-//! 见 `do_incremental_sync_with`；日 K 通道归价格历史后台补全（issue #1377）。
+//! 见 `do_incremental_sync_with`；周 K 通道归价格历史后台补全（issue #1377）。
 //! 汇率序列的采集腿已随 #1551 换 ECB 退役（[`super::fx`] 的 `FxSyncChannels`
 //! 是独立的汇率通道束，不经本束）。
 //! 基金名称闭包走按代码取价编排（新浪批量面 + 官方披露，issue #1568 换源）。
@@ -45,7 +45,7 @@ use tokio::sync::Mutex as AsyncMutex;
 use super::http::{
     ForegroundGuard, KlineBar, Pacer, build_client, lock_pacer, shared_pacer, wait_foreground_idle,
 };
-use super::incremental::{do_incremental_sync_with, kline_window};
+use super::incremental::{beijing_today, do_incremental_sync_with};
 use super::model::{SyncInstrumentInfoResult, WriteWitness};
 use super::progress::SyncProgress;
 use super::session::ScopedSession;
@@ -83,9 +83,10 @@ pub struct QuoteItem {
 
 /// 抓取通道闭包的统一形态（`Box<dyn FnMut>` 别名，降低束字段签名复杂度）。
 pub type FetchQuotes = Box<dyn FnMut(&[QuoteQuery]) -> FetchFuture<Vec<QuoteItem>> + Send>;
-/// 日 K（近两年日线）抓取通道闭包形态：「市场 + 代码」查询单元 → 日线序列；
-/// 查询键（腾讯 K 线键，issue #1561 接线）由通道内部构造（issue #1556 起编排
-/// 不拼数据源键，与批量报价通道同形）。
+/// 周 K 抓取通道闭包形态（#1906 起周粒度）：「市场 + 代码」查询单元 → 周线
+/// 序列（单请求整段周线，研究文档 §14.3）；查询键（腾讯 K 线键，issue #1561
+/// 接线）由通道内部构造（issue #1556 起编排不拼数据源键，与批量报价通道同形），
+/// 回填窗口深度由消费方本地裁剪（与新浪全历史通道同式）。
 pub type FetchKline = Box<dyn FnMut(&QuoteQuery) -> FetchFuture<Vec<KlineBar>> + Send>;
 /// 单只全历史净值抓取通道闭包形态（新浪全历史面，issue #1566 接线）：代码 →
 /// 整只历史单位净值（含已终止基金）；窗口语义（首刷近两年 / 水位次日增量）由
@@ -107,8 +108,9 @@ pub struct SyncFetchChannels {
     /// 批量报价（腾讯行情，issue #1560）：一批「市场 + 代码」查询单元 → 报价条目；
     /// 查询键（市场前缀/交易所后缀）由通道内部构造（issue #1555）。
     pub fetch_quotes: FetchQuotes,
-    /// 日 K（近两年日线）：「市场 + 代码」查询单元 → 日线序列；查询键（腾讯
-    /// K 线键）由通道内部构造（issue #1556 接缝，issue #1561 接线腾讯 K 线）。
+    /// 周 K（#1906 起周粒度，单请求整段周线）：「市场 + 代码」查询单元 → 周线
+    /// 序列；查询键（腾讯 K 线键）由通道内部构造（issue #1556 接缝，issue
+    /// #1561 接线腾讯 K 线）。
     pub fetch_kline: FetchKline,
     /// 单只全历史净值（新浪全历史面，issue #1566 接线）：代码 → 整只历史
     /// 单位净值（含已终止基金）；价格历史后台补全（首刷深回填与缺周点补齐）
@@ -139,7 +141,7 @@ pub struct SyncFetchChannels {
 pub(super) struct SyncFetchHosts {
     /// 腾讯行情批量报价主机。
     pub(super) quote: Vec<String>,
-    /// 腾讯日 K 主机。
+    /// 腾讯周 K 主机。
     pub(super) kline: Vec<String>,
     /// 新浪场外基金批量面主机（名称 + 最新净值同面，issue #1565）。
     pub(super) fund_batch: Vec<String>,
@@ -153,8 +155,8 @@ pub(super) struct SyncFetchHosts {
 impl SyncFetchChannels {
     /// 生产通道束（前台车道，手动同步等用户动作）：五个闭包接 HTTP 层
     ///（`build_client` 主机池 / 重试；pacer 取**进程级全局限速器**单点，issue
-    /// #1375——与后台补全共用同一份数据源额度）。回填窗口起点在束构造时取
-    /// 一次（与先前每次同步取一次同口径）。
+    /// #1375——与后台补全共用同一份数据源额度）。整段周线请求的终点在束构造
+    /// 时取一次北京今天（#1906）。
     pub fn production() -> Result<Self> {
         Self::production_lane(Lane::Foreground, production_hosts())
     }
@@ -166,7 +168,7 @@ impl SyncFetchChannels {
         Self::production_lane(Lane::Backfill, production_hosts())
     }
 
-    /// 生产通道束构造本体：`hosts` 携带五面注入主机（场内报价 / 场内日 K /
+    /// 生产通道束构造本体：`hosts` 携带五面注入主机（场内报价 / 场内周 K /
     /// 新浪基金批量面 / 新浪单只历史面 / 证监会披露面）。生产经
     /// [`production_hosts`] 传取数单元单点常量；测试注入本地 HTTP 服务，驱动
     /// **生产束**钉住全部六条接线——「六条接线 ↔ 六条钉接线测试」对照清单
@@ -175,7 +177,7 @@ impl SyncFetchChannels {
     /// | 束内闭包 | 打到的注入面 | 钉接线测试 |
     /// |---|---|---|
     /// | `fetch_quotes` | 场内报价 | `production_quote_channel_requests_tencent_batch_endpoint`（issue #1560） |
-    /// | `fetch_kline` | 场内日 K | `production_backfill_channel_lands_history_via_tencent_kline`（issue #1561） |
+    /// | `fetch_kline` | 场内周 K | `production_backfill_channel_lands_history_via_tencent_kline`（issue #1561） |
     /// | `bulk`（批量取数面） | 新浪基金批量面 | `production_fund_batch_channel_requests_sina_batch_endpoint`（issue #1565） |
     /// | `fetch_nav_history` | 新浪单只历史面 | `production_backfill_channel_lands_fund_history_via_sina`（issue #1566） |
     /// | `fetch_fund_name` | 新浪基金批量面 + 证监会披露面（批量面未收录 → 披露兜底双主机） | `production_fund_name_channel_falls_back_to_disclosure_host`（issue #1674） |
@@ -222,8 +224,11 @@ impl SyncFetchChannels {
                 let client = client.clone();
                 let pacer = pacer.clone();
                 let hosts = hosts.kline.clone();
-                // 近两年窗口在束构造时取一次（与汇率腿同口径）。
-                let (beg, end) = kline_window();
+                // 整段周线单请求（#1906）：区间起点常量深于数据源有效起点、终点
+                // = 束构造时点的北京今天，根数 1200 周帽（研究文档 §14.3）——
+                // 回填窗口深度不在此表达，由消费方本地裁剪（与新浪全历史通道
+                // 同式）。
+                let end = beijing_today().format("%Y-%m-%d").to_string();
                 Box::new(move |query: &QuoteQuery| {
                     // 查询键（腾讯 K 线键）在通道内部构造（issue #1559 / #1561）：
                     // 编排只递「市场 + 代码」。查询单元市场是可路由子集
@@ -232,18 +237,17 @@ impl SyncFetchChannels {
                     let client = client.clone();
                     let pacer = pacer.clone();
                     let hosts = hosts.clone();
-                    let beg = beg.clone();
                     let end = end.clone();
                     Box::pin(async move {
                         let _foreground = lane.before_request().await;
                         let mut pacer = lock_pacer(&pacer).await;
                         let hosts: Vec<&str> = hosts.iter().map(String::as_str).collect();
-                        tencent_kline::fetch_tencent_day_kline(
+                        tencent_kline::fetch_tencent_week_kline(
                             &client,
                             &mut pacer,
                             &hosts,
                             &symbol,
-                            &beg,
+                            tencent_kline::KLINE_BEG,
                             &end,
                             tencent_kline::KLINE_COUNT,
                         )
@@ -382,7 +386,7 @@ impl Lane {
 /// [`do_incremental_sync_with`](super::incremental::do_incremental_sync_with)
 /// （编排本体单点，另透传写入见证，issue #1277）。命令壳经本入口跑同步——
 /// 生产束（[`SyncFetchChannels::production`]）与测试注入束共用，锁形态与
-/// 编排路径零分叉。日 K 通道不进现价刷新编排（issue #1377 现价与历史解耦）：
+/// 编排路径零分叉。周 K 通道不进现价刷新编排（issue #1377 现价与历史解耦）：
 /// 束内保留供价格历史后台补全消费（issue #1561）；新浪单只全历史通道自
 /// issue #1571 起为现价刷新逐只回退与后台补全共用（逐只分页通道随 lsjz 换源
 /// 退役）。

@@ -44,9 +44,9 @@ use tauri_app_lib::commands::sync::{SyncChannelsSlot, sync_instrument_info};
 /// 观察窗按它取整周期推导，不另写时长字面量。
 const POLL_INTERVAL: Duration = Duration::from_millis(300);
 
-/// 门控桩的后台通道束：日 K 抓取点先通知「后台已在途」，再等测试放行并返回
+/// 门控桩的后台通道束：周 K 抓取点先通知「后台已在途」，再等测试放行并返回
 /// 两个不同周的周线样本——price_history 的行只能来自后台补全（前台同步的
-/// 日 K 桩返回空表，见下方前台桩）。抓取计数供「同日窗口不重跑」断言消费。
+/// 周 K 桩返回空表，见下方前台桩）。抓取计数供「同日窗口不重跑」断言消费。
 fn gated_backfill_channels(
     entered: std::sync::mpsc::Sender<()>,
     release: std::sync::mpsc::Receiver<()>,
@@ -89,7 +89,7 @@ fn gated_backfill_channels(
     BackfillChannelsSlot(Arc::new(tokio::sync::Mutex::new(channels)))
 }
 
-/// 前台同步命令的桩通道束：批量报价返回一条有效报价（现价照常落库），日 K
+/// 前台同步命令的桩通道束：批量报价返回一条有效报价（现价照常落库），周 K
 /// 返回空表——price_history 不因前台同步产生任何行，隔离出「历史只能来自
 /// 后台补全」的断言面。
 fn frontend_sync_channels() -> SyncChannelsSlot {
@@ -195,7 +195,7 @@ fn startup_wiring_backfills_history_and_frontend_sync_stays_unblocked() {
     // 等后台补全真实在途（门控抓取点）。
     entered_rx
         .recv_timeout(Duration::from_secs(10))
-        .expect("后台补全应到达日 K 抓取点");
+        .expect("后台补全应到达周 K 抓取点");
 
     // 后台在途窗口内，前台同步命令照常完成、不被拒绝（不占用户动作在途槽位）。
     {
@@ -215,7 +215,7 @@ fn startup_wiring_backfills_history_and_frontend_sync_stays_unblocked() {
         }
     }
 
-    // 放行后台抓取：补全完成，历史落行（只能来自后台——前台日 K 桩为空表）。
+    // 放行后台抓取：补全完成，历史落行（只能来自后台——前台周 K 桩为空表）。
     release_tx.send(()).expect("放行应成功");
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
@@ -275,14 +275,14 @@ fn startup_wiring_backfills_history_and_frontend_sync_stays_unblocked() {
         std::thread::sleep(Duration::from_millis(10));
     }
 
-    // 同日窗口不重跑（AC「每个自然日窗口各跑一次」）：巡检多次到期后，日 K
+    // 同日窗口不重跑（AC「每个自然日窗口各跑一次」）：巡检多次到期后，周 K
     // 抓取仍只有首轮那一次，进度事件不再重新点亮（无第二轮的 { done: 0 }）。
     //
     // 规则本身（同日不开、跨日开）的权威在 `ledger_market_sync` 的单测
     // `daily_window_opens_only_once_per_beijing_calendar_day`；本断言守的是**接线**
     // ——调度循环确实把判定接上了「标记已跑 + 跑一轮」的副作用。观察窗取「两次
     // 巡检周期」而非固定睡眠：等待长度由此刻生效的注入周期决定，不靠猜；门被删
-    // 或写坏时第二轮会在这两个周期内起跑，日 K 调用计数随即 >1（实测红）。
+    // 或写坏时第二轮会在这两个周期内起跑，周 K 调用计数随即 >1（实测红）。
     let progress_now = progress_log.lock().unwrap().len();
     wait_poll_cycles(2, POLL_INTERVAL, || {
         kline_calls.load(std::sync::atomic::Ordering::SeqCst) == 1

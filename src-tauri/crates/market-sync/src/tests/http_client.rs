@@ -541,22 +541,23 @@ fn ecb_host_and_paths_pin_to_the_official_reference_rates_files() {
 }
 
 // ---------------------------------------------------------------------------
-// 腾讯日线 K 线取数入口（issue #1559 / ADR-0130 决策 2）：请求形态、服务端压缩
+// 腾讯周线 K 线取数入口（issue #1559 / ADR-0130 决策 2；#1906 起周粒度）：请求形态、服务端压缩
 // 与无效代码处置都经本地 HTTP 服务钉住，不依赖真实网络。
 // ---------------------------------------------------------------------------
 
-/// 最小真实形状的腾讯日线响应（2026-09-19 实测形状：`day` 行与信封键原样，
-/// `qt` 旁路字段 trim）。
-const TENCENT_KLINE_BODY: &str = r#"{"code":0,"msg":"","data":{"sh600519":{"day":[["2026-09-17","1257.980","1266.980","1267.600","1254.000","17554.000"],["2026-09-18","1262.990","1257.120","1265.880","1256.100","24891.000"]],"qt":{"sh600519":["1","\u8d35\u5dde\u8305\u53f0","600519"]},"version":"16"}}}"#;
+/// 最小真实形状的腾讯周线响应（日线报文形态移植——研究文档 §14.3 实测：周线
+/// 行形态与日线同、响应键 `week`；`qt` 旁路字段 trim，行日期取各周最后一个
+/// 交易日）。
+const TENCENT_KLINE_BODY: &str = r#"{"code":0,"msg":"","data":{"sh600519":{"week":[["2026-09-11","1257.980","1266.980","1267.600","1254.000","17554.000"],["2026-09-18","1262.990","1257.120","1265.880","1256.100","24891.000"]],"qt":{"sh600519":["1","\u8d35\u5dde\u8305\u53f0","600519"]},"version":"16"}}}"#;
 
 /// 请求形态钉（issue #1559 AC：本地 HTTP 服务用例钉住请求形态）：路径 / 查询键 /
 /// 周期 / 区间 / 根数 / 末段空（不复权）逐段比对，改任一段即红。
 #[test]
-fn fetch_tencent_day_kline_pins_request_shape() {
+fn fetch_tencent_week_kline_pins_request_shape() {
     let (url, heads) = spawn_header_capture_server(TENCENT_KLINE_BODY.to_string());
     let client = reqwest::Client::new();
     let mut pacer = Pacer::new(Duration::ZERO);
-    let bars = tauri::async_runtime::block_on(crate::tencent_kline::fetch_tencent_day_kline(
+    let bars = tauri::async_runtime::block_on(crate::tencent_kline::fetch_tencent_week_kline(
         &client,
         &mut pacer,
         &[url.as_str()],
@@ -569,30 +570,30 @@ fn fetch_tencent_day_kline_pins_request_shape() {
     assert_eq!(
         bars,
         vec![
-            KlineBar::new("2026-09-17", 1266.98),
+            KlineBar::new("2026-09-11", 1266.98),
             KlineBar::new("2026-09-18", 1257.12),
         ]
     );
     let head = heads.lock().unwrap().first().cloned().unwrap_or_default();
     assert!(
         head.contains(
-            "GET /appstock/app/fqkline/get?param=sh600519%2Cday%2C2024-09-19%2C2026-09-19%2C800%2C HTTP/1.1"
+            "GET /appstock/app/fqkline/get?param=sh600519%2Cweek%2C2024-09-19%2C2026-09-19%2C1200%2C HTTP/1.1"
         ),
-        "请求形态须为「查询键,day,起始,结束,根数,」（末段空 = 不复权），实际请求头：{head}"
+        "请求形态须为「查询键,week,起始,结束,根数,」（末段空 = 不复权），实际请求头：{head}"
     );
 }
 
-/// 根数与区间上限行为（issue #1559 AC）：请求区间两年、根数 800，而服务端只回 1
-/// 根（区间裁剪 / 压缩；研究文档 §4.2 记复权形态 1000 / 2000 曾被压回 640）时不
-/// 报错、不补偿，按返回照常解析；请求确实要了 800 根，短返回是服务端行为而不是
-/// 我们少要。
+/// 根数与区间上限行为（issue #1559 AC）：请求区间、根数 1200（#1906 起周线
+/// 上限），而服务端只回 1 根（区间裁剪 / 压缩；研究文档 §4.2 记复权形态 1000 /
+/// 2000 曾被压回 640）时不报错、不补偿，按返回照常解析；请求确实要了 1200 根，
+/// 短返回是服务端行为而不是我们少要。
 #[test]
-fn fetch_tencent_day_kline_accepts_shorter_series_than_requested() {
-    let body = r#"{"code":0,"msg":"","data":{"sh600519":{"day":[["2026-09-18","1262.990","1257.120","1265.880","1256.100","24891.000"]],"version":"16"}}}"#;
+fn fetch_tencent_week_kline_accepts_shorter_series_than_requested() {
+    let body = r#"{"code":0,"msg":"","data":{"sh600519":{"week":[["2026-09-18","1262.990","1257.120","1265.880","1256.100","24891.000"]],"version":"16"}}}"#;
     let (url, heads) = spawn_header_capture_server(body.to_string());
     let client = reqwest::Client::new();
     let mut pacer = Pacer::new(Duration::ZERO);
-    let bars = tauri::async_runtime::block_on(crate::tencent_kline::fetch_tencent_day_kline(
+    let bars = tauri::async_runtime::block_on(crate::tencent_kline::fetch_tencent_week_kline(
         &client,
         &mut pacer,
         &[url.as_str()],
@@ -605,20 +606,20 @@ fn fetch_tencent_day_kline_accepts_shorter_series_than_requested() {
     assert_eq!(bars, vec![KlineBar::new("2026-09-18", 1257.12)]);
     let head = heads.lock().unwrap().first().cloned().unwrap_or_default();
     assert!(
-        head.contains("%2C800%2C"),
+        head.contains("%2C1200%2C"),
         "短返回是服务端行为：请求仍须带上要的根数，实际请求头：{head}"
     );
 }
 
 /// 无效代码返回空序列而非错误（issue #1559 AC：补全不被中断）：`code` 仍为 0、
-/// `day` 为空数组，取数入口直接回空序列而不是 Err。
+/// `week` 为空数组，取数入口直接回空序列而不是 Err。
 #[test]
-fn fetch_tencent_day_kline_returns_empty_for_invalid_code() {
-    let body = r#"{"code":0,"msg":"","data":{"sh999999":{"day":[],"version":"16"}}}"#;
+fn fetch_tencent_week_kline_returns_empty_for_invalid_code() {
+    let body = r#"{"code":0,"msg":"","data":{"sh999999":{"week":[],"version":"16"}}}"#;
     let (url, _) = spawn_header_capture_server(body.to_string());
     let client = reqwest::Client::new();
     let mut pacer = Pacer::new(Duration::ZERO);
-    let bars = tauri::async_runtime::block_on(crate::tencent_kline::fetch_tencent_day_kline(
+    let bars = tauri::async_runtime::block_on(crate::tencent_kline::fetch_tencent_week_kline(
         &client,
         &mut pacer,
         &[url.as_str()],
