@@ -454,7 +454,7 @@ pub fn start_history_backfill_with<R: Runtime>(app: &AppHandle<R>, timings: Lane
 }
 
 /// 价格历史补全的编排（骨架的编排输入，issue #1426）：一轮排空
-///（[`run_history_backfill_round`]，含汇率 K 线同期补齐），进度走静默计数事件面
+///（[`run_history_backfill_round`]），进度走静默计数事件面
 ///（骨架按 [`LaneProgress::HistoryBackfill`] 接线）。
 struct HistoryBackfillRound;
 
