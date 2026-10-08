@@ -115,6 +115,21 @@ fn date_offset(days: i64) -> String {
         .to_string()
 }
 
+/// 逐周周线样本（每周一行、周五标签）：周行 = 该周最后一个有报价交易日的价格
+///（研究文档 §14.3 实测口径），起点所在周即有行——覆盖从首笔持仓周开始。
+fn weekly_series(start: NaiveDate, end: NaiveDate) -> Vec<KlineBar> {
+    let mut bars = Vec::new();
+    let mut week = week_monday(start);
+    while week <= end {
+        let friday = week + Days::new(4);
+        if friday <= end {
+            bars.push(bar(&friday.format("%Y-%m-%d").to_string(), 12.0));
+        }
+        week = week + Days::new(7);
+    }
+    bars
+}
+
 /// 直插一笔指定日期的买入流水（transactions + security_transactions 两行，不建
 /// 批次）：首笔持仓流水日的判据输入是流水腿本身（issue #1534），批次与持仓
 /// 视图不在判据内。
@@ -170,9 +185,9 @@ struct Harness {
     /// issue #1556），基金全历史记 `history:<code>`（issue #1566 起单一全历史
     /// 通道）。
     log: Mutex<Vec<String>>,
-    /// 「市场:代码」→ 日线样本；未命中 = 空表（零有效周点）。
+    /// 「市场:代码」→ 周线样本；未命中 = 空表（零有效周点）。
     klines: Vec<(&'static str, Vec<KlineBar>)>,
-    /// 注入单只失败：命中该「市场:代码」键的日 K 请求返回 Err。
+    /// 注入单只失败：命中该「市场:代码」键的周 K 请求返回 Err。
     fail_kline: Option<&'static str>,
     /// 基金代码 → 整只历史单位净值（新浪全历史面，wire 序任意：消费端
     /// 降采样按日排序）；未收录 = 空序列（可信空）。
@@ -223,13 +238,20 @@ impl Harness {
             .count()
     }
 
+    fn kline_hits(&self, key: &str) -> usize {
+        self.requested()
+            .iter()
+            .filter(|entry| entry.as_str() == format!("kline:{key}").as_str())
+            .count()
+    }
+
     fn fetch_kline(&self, query: &QuoteQuery) -> Result<Vec<KlineBar>> {
         // 桩按自己的「市场:代码」形态路由（数据源查询键归通道内部构造，
         // issue #1556）；断言对准「谁被抓取了」，不钉数据源键形态。
         let key = format!("{}:{}", query.market, query.code);
         self.log.lock().unwrap().push(format!("kline:{key}"));
         if self.fail_kline.map(|f| f == key).unwrap_or(false) {
-            return Err(AppError::Io("日 K 抓取失败".into()));
+            return Err(AppError::Io("周 K 抓取失败".into()));
         }
         Ok(self
             .klines
@@ -387,15 +409,21 @@ fn fund_with_no_new_nav_completes_without_writing() {
     );
 }
 
-/// 队列随补全自然排空：本轮补齐的标的按派生事实退出队列——再跑一轮零队列、
-/// 零进度、零请求（「关掉应用再打开会接着补，而不是每次从头来」的域内根据）。
+/// 队列随补全自然排空：本轮补齐（含深回填覆盖到首笔持仓周）的标的按派生事实
+/// 退出队列——再跑一轮零队列、零进度、零请求（「关掉应用再打开会接着补，而不
+/// 是每次从头来」的域内根据）。
 #[test]
 fn queue_drains_and_stays_empty_once_histories_complete() {
     let conn = tauri_app_lib::test_support::open();
     insert_holding(&conn, "acc-1", "inst-held", "600519", "stock", "CNY", "sh");
+    // 持仓股的首笔买入在 2026-01-10（insert_lot 固定值，当周周一 2026-01-05）：
+    // 周线样本整段覆盖回首笔持仓周，深回填落齐后按派生事实退出队列。
     let harness = Harness::new().with_klines(vec![(
         "sh:600519",
-        vec![bar(&date_offset(8), 12.0), bar(&date_offset(1), 13.0)],
+        weekly_series(
+            NaiveDate::from_ymd_opt(2026, 1, 5).expect("常量日期应可解析"),
+            beijing_today(),
+        ),
     )]);
 
     let (result, progress, written) = run_round(&conn, &harness);
@@ -418,27 +446,27 @@ fn queue_drains_and_stays_empty_once_histories_complete() {
             .filter(|entry| entry.starts_with("kline:"))
             .count(),
         1,
-        "第二轮零日 K 请求"
+        "第二轮零周 K 请求"
     );
 }
 
 // ---------------------------------------------------------------------------
-// 深回填：基金价格历史覆盖到首笔持仓流水日（issue #1534）——队列新增
-// 「覆盖不足」判据，回填窗口起点放宽到首笔持仓周；无持仓流水与行情标的
-// 行为不变。
+// 深回填：价格历史覆盖到首笔持仓流水日（issue #1534 基金 / #1906 起股票同行
+// 口）——队列「覆盖不足」判据辖净值与行情两通道，回填窗口起点放宽到首笔持
+// 仓周；无持仓流水维持近两年。
 // ---------------------------------------------------------------------------
 
-/// 队列「覆盖不足」判据（issue #1534）：已有近两年历史、但首笔持仓流水早于
-/// 覆盖起点的基金进队做深回填；覆盖已达标的基金与行情标的（同样的事实组合）
-/// 不进队——日 K 深度受源限制，行为逐位不变。
+/// 队列「覆盖不足」判据（issue #1534 基金；#1906 起行情通道同口径）：已有近
+/// 两年历史、但首笔持仓流水早于覆盖起点的基金与股票都进队做深回填；覆盖已达
+/// 标的基金不进队。**删除判据的行情通道臂本用例红**（股票不再进队）。
 #[test]
-fn queue_enqueues_fund_short_of_first_position_but_not_stock() {
+fn queue_enqueues_fund_and_stock_short_of_first_position() {
     let conn = tauri_app_lib::test_support::open();
     // 基金：历史新鲜（不缺周点），但首笔买入早于覆盖起点 → 覆盖不足进队。
     insert_plain_instrument(&conn, "inst-fund", "000025", "fund", "CNY", "unknown");
     seed_history_point(&conn, "inst-fund", "CNY", &date_offset(2));
     seed_buy_transaction(&conn, "acc-fund", "inst-fund", "CNY", &date_offset(400));
-    // 股票：同样的事实组合（历史新鲜 + 早期买入）——不进队（行为不变）。
+    // 股票：同样的事实组合（历史新鲜 + 早期买入）→ 同一判据进队（#1906）。
     insert_plain_instrument(&conn, "inst-stock", "600519", "stock", "CNY", "sh");
     seed_history_point(&conn, "inst-stock", "CNY", &date_offset(2));
     seed_buy_transaction(&conn, "acc-stock", "inst-stock", "CNY", &date_offset(400));
@@ -447,18 +475,148 @@ fn queue_enqueues_fund_short_of_first_position_but_not_stock() {
     seed_history_point(&conn, "inst-deep", "CNY", &date_offset(2));
     seed_buy_transaction(&conn, "acc-deep", "inst-deep", "CNY", &date_offset(2));
 
-    let harness =
-        Harness::new().with_nav_history(vec![("000025", vec![nav_point(&date_offset(1), 1.5)])]);
+    let harness = Harness::new()
+        .with_nav_history(vec![("000025", vec![nav_point(&date_offset(1), 1.5)])])
+        .with_klines(vec![("sh:600519", vec![bar(&date_offset(1), 13.0)])]);
     let (result, _progress, _written) = run_round(&conn, &harness);
     let stats = result.unwrap();
 
-    assert_eq!(stats.queued, 1, "只有覆盖不足的基金进队");
+    assert_eq!(stats.queued, 2, "覆盖不足的基金与股票都进队");
     assert_eq!(stats.failed, 0);
     assert_eq!(
         harness.requested(),
-        vec!["history:000025".to_string()],
-        "基金走全历史通道深回填；股票零请求"
+        vec!["history:000025".to_string(), "kline:sh:600519".to_string(),],
+        "基金走全历史通道、股票走周 K 通道各一次深回填请求；覆盖达标者零请求"
     );
+}
+
+/// 股票深回填（#1906 验收主场景）：已有近两年历史、首笔买入早于覆盖起点的
+/// 股票，周线通道一次请求取整段样本、本地裁剪到首笔持仓周整根补齐——最早周
+/// 点落在首笔持仓周内（PriceHistory 行覆盖到首笔持仓周）。删除队列判据的行情
+/// 通道臂或回填单元的窗口裁剪，本用例红。
+#[test]
+fn stock_deep_backfill_lands_history_back_to_first_position_week() {
+    let conn = tauri_app_lib::test_support::open();
+    insert_plain_instrument(&conn, "inst-stock", "600519", "stock", "CNY", "sh");
+    seed_history_point(&conn, "inst-stock", "CNY", &date_offset(2));
+    let first_buy = date_offset(800);
+    seed_buy_transaction(&conn, "acc-stock", "inst-stock", "CNY", &first_buy);
+
+    // 周线通道整段样本（每周一行、起点早于首笔买入两周）。
+    let series = weekly_series(beijing_today() - ChronoDuration::days(820), beijing_today());
+    let harness = Harness::new().with_klines(vec![("sh:600519", series)]);
+    let (result, _progress, written) = run_round(&conn, &harness);
+    result.unwrap();
+
+    assert!(written, "深回填实际落库");
+    let rows = history_rows(&conn, "inst-stock");
+    assert!(rows > 100, "820 天 ≈ 117 个周点，实际 {rows}");
+    assert_earliest_row_within_first_position_week(&conn, "inst-stock", &first_buy);
+}
+
+/// 股票深回填的零新点幂等（#1906 / ADR-0122 长期行为）：覆盖不足进队但数据源
+/// 没有更深的点时，整只零落库、不置写入见证；每轮仍是一次周 K 请求（每窗口重
+/// 进队、fail-closed 自愈，与基金同款）。
+#[test]
+fn stock_deep_backfill_zero_new_points_writes_nothing() {
+    let conn = tauri_app_lib::test_support::open();
+    insert_plain_instrument(&conn, "inst-stock", "600519", "stock", "CNY", "sh");
+    seed_history_point(&conn, "inst-stock", "CNY", &date_offset(2));
+    seed_buy_transaction(&conn, "acc-stock", "inst-stock", "CNY", &date_offset(400));
+
+    // 周线通道只有既有周点（同周同值），无更深样本：窗口非空但零新点。
+    let harness = Harness::new().with_klines(vec![("sh:600519", vec![bar(&date_offset(2), 10.0)])]);
+    let (result, _progress, written) = run_round(&conn, &harness);
+    let stats = result.unwrap();
+
+    assert_eq!(stats.queued, 1, "覆盖不足照常进队");
+    assert_eq!(stats.failed, 0);
+    assert!(!written, "零新点不置写入见证（不置脏不广播）");
+    assert_eq!(history_rows(&conn, "inst-stock"), 1, "既有历史不变");
+    assert_eq!(harness.kline_hits("sh:600519"), 1, "每轮至多一次请求");
+}
+
+/// 无持仓流水的建档股票维持近两年（#1906 深度判据后半）：整段周线样本喂入，
+/// 窗口裁剪丢弃两年前的样本——最早落库行不早于近两年窗口起点。
+#[test]
+fn stock_without_position_flows_keeps_two_year_window() {
+    let conn = tauri_app_lib::test_support::open();
+    insert_plain_instrument(&conn, "inst-stock", "600519", "stock", "CNY", "sh");
+
+    // 周线通道整段样本（起点远早于两年窗口，≈171 周）。
+    let series = weekly_series(
+        beijing_today() - ChronoDuration::days(1200),
+        beijing_today(),
+    );
+    let harness = Harness::new().with_klines(vec![("sh:600519", series)]);
+    let (result, _progress, written) = run_round(&conn, &harness);
+    result.unwrap();
+
+    assert!(written, "首刷实际落库");
+    let rows = price_history_rows(&conn, "inst-stock");
+    assert!(
+        rows.len() > 95 && rows.len() < 110,
+        "裁剪后应只余近两年 ≈ 104 周，实际 {}",
+        rows.len()
+    );
+    let window_start = crate::incremental::two_years_ago(beijing_today())
+        .format("%Y-%m-%d")
+        .to_string();
+    let earliest = rows.first().map(|(d, _, _)| d.clone()).unwrap();
+    assert!(
+        earliest.as_str() >= window_start.as_str(),
+        "最早周点不得早于近两年窗口起点 {window_start}，实际 {earliest}"
+    );
+}
+
+/// 停牌整周无周行 → 该周无点、两侧周点照常落库（#1906 判据 5，与周采样口径
+/// 一致）：曲线跨越空档连续，缺周不补行。
+#[test]
+fn stock_weekly_gap_lands_no_point_for_the_missing_week() {
+    let conn = tauri_app_lib::test_support::open();
+    insert_plain_instrument(&conn, "inst-stock", "600519", "stock", "CNY", "sh");
+
+    // 两根周行相隔两周（中间整周无行，如同停牌）。
+    let older = date_offset(15);
+    let newer = date_offset(1);
+    let harness = Harness::new().with_klines(vec![(
+        "sh:600519",
+        vec![bar(&older, 10.0), bar(&newer, 11.0)],
+    )]);
+    let (result, _progress, written) = run_round(&conn, &harness);
+    result.unwrap();
+
+    assert!(written);
+    assert_eq!(
+        history_rows(&conn, "inst-stock"),
+        2,
+        "缺周即无点，两侧各一根"
+    );
+    let dates: Vec<String> = price_history_rows(&conn, "inst-stock")
+        .into_iter()
+        .map(|(d, _, _)| d)
+        .collect();
+    assert_eq!(dates, vec![older, newer], "曲线跨越空档，缺周不补行");
+}
+
+/// 周 K 车道零现价写入（#1906 判据 6 后半）：回填只落 price_history，现价缓存
+/// 不被触碰（现价归批量取数面，ADR-0122 决策 2）。
+#[test]
+fn stock_backfill_writes_no_market_price() {
+    let conn = tauri_app_lib::test_support::open();
+    insert_plain_instrument(&conn, "inst-stock", "600519", "stock", "CNY", "sh");
+    let harness = Harness::new().with_klines(vec![("sh:600519", vec![bar(&date_offset(1), 13.0)])]);
+    let (result, _progress, _written) = run_round(&conn, &harness);
+    result.unwrap();
+
+    let market_prices: i64 = conn
+        .query_row(
+            "SELECT count(*) FROM market_prices WHERE instrument_id='inst-stock'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(market_prices, 0, "周 K 车道不写现价缓存");
 }
 
 /// 首刷窗口放宽（issue #1534 验收）：首笔买入早于近两年的基金，首刷直接从
@@ -628,7 +786,7 @@ fn round_emits_instrument_level_progress_sequence() {
     );
 }
 
-/// 单只失败不中断本轮：第一只的日 K 抓取失败，第二只照常补齐、进度照常推进、
+/// 单只失败不中断本轮：第一只的周 K 抓取失败，第二只照常补齐、进度照常推进、
 /// 实际写过照常入见证（成败同判的证据源）。
 #[test]
 fn round_continues_after_single_instrument_failure() {
@@ -672,7 +830,7 @@ fn round_continues_after_fund_history_failure() {
     );
 }
 
-/// 全部无新点的重采（停牌/退市股持续在队的每日形态）：日 K 返回与库内完全
+/// 全部无新点的重采（停牌/退市股持续在队的每日形态）：周 K 返回与库内完全
 /// 相同的周点 → 零写入、不置见证（收尾裁决口径「全部无新点不置脏不广播」，
 /// ADR-0122）；返回同周不同值或新增周点 → 照常落库并置见证。
 #[test]
@@ -730,12 +888,12 @@ fn empty_kline_completes_without_writing() {
 }
 
 /// 「替换通道实现即换源」负向接线证明（issue #1556）：历史补全编排只递
-/// 「市场 + 代码」，日 K 查询键由通道在内部构造——本用例注入一个按自己形态
+/// 「市场 + 代码」，周 K 查询键由通道在内部构造——本用例注入一个按自己形态
 ///（模拟换源）路由查询的通道实现，历史照常落库。
 ///
 /// 把查询键构造挪回编排（编排先拼出数据源键 `sh600519` 再当查询单元的代码
 /// 交给通道）后，本桩拿到的 `code` 是数据源键形态而非裸代码 `600519`，路由不中
-/// → 无日线样本 → 无周点可落，本用例变红。
+/// → 无周线样本 → 无周点可落，本用例变红。
 #[test]
 fn swapping_kline_channel_keeps_history_landing_without_source_key_in_orchestration() {
     let conn = tauri_app_lib::test_support::open();
@@ -772,15 +930,16 @@ fn swapping_kline_channel_keeps_history_landing_without_source_key_in_orchestrat
     );
 }
 
-/// 生产补全通道的日 K 接线证明（issue #1561）：驱动**生产后台车道束的日 K
-/// 闭包**跑一轮补全——沪深港美四类标的的日 K 都真的打到腾讯 `fqkline/get`
-///（查询键、近两年窗口与根数由通道内部构造，新浪 K 线对港美返回空，这条接线
-/// 是港美能补到近两年的根据），周点照常落库。本地 HTTP 服务替换腾讯主机应答
-/// 真实形态报文，断言先对准可观察结果（队列取到价、库里有周点），再钉住请求
-/// 形态（腾讯端点 + 腾讯查询键 + `YYYY-MM-DD` 窗口）。删除 / 换回这条接线
-///（回到东财查询键与东财取数路径）后，注入的本地主机不再被使用——请求落到
-/// 那套已经失效的东财端点上，队列取不到价、`price_history` 零行（实测：单只
-/// 计入失败）；把窗口换回东财的 `YYYYMMDD` 形态同样被请求形态断言拦下。
+/// 生产补全通道的周 K 接线证明（issue #1561 接线；#1906 起周粒度）：驱动
+/// **生产后台车道束的周 K 闭包**跑一轮补全——沪深港美四类标的的周 K 都真的打到
+/// 腾讯 `fqkline/get`（查询键、整段周线窗口与 1200 根数帽由通道内部构造，新浪
+/// K 线对港美返回空，这条接线是港美能补到历史的根据），周点照常落库。本地 HTTP
+/// 服务替换腾讯主机应答周线形态报文，断言先对准可观察结果（队列取到价、库里
+/// 有周点），再钉住请求形态（腾讯端点 + 腾讯查询键 + `week` 周期 + 深起点区间
+/// 与根数帽）。删除 / 换回这条接线（回到东财查询键与东财取数路径）后，注入的
+/// 本地主机不再被使用——请求落到那套已经失效的东财端点上，队列取不到价、
+/// `price_history` 零行（实测：单只计入失败）；把周期换回 `day` 或东财的
+/// `YYYYMMDD` 形态同样被请求形态断言拦下。
 #[test]
 fn production_backfill_channel_lands_history_via_tencent_kline() {
     use crate::channels::{Lane, SyncFetchChannels, SyncFetchHosts};
@@ -792,13 +951,13 @@ fn production_backfill_channel_lands_history_via_tencent_kline() {
     insert_plain_instrument(&conn, "inst-hk", "00700", "stock", "HKD", "hk");
     insert_plain_instrument(&conn, "inst-us", "AAPL", "stock", "USD", "nasdaq");
 
-    // 腾讯日 K 报文（形状与 #1559 真实 fixture 同：`data[查询键].day` 每行
-    // `[日期, 开, 收, 高, 低, 量]`，收盘价在下标 2），日期取近端交易日使周点
-    // 落在当前周；美股查询键带交易所后缀。
+    // 腾讯周 K 报文（周线行形态与日线同、响应键 `week`，研究文档 §14.3：
+    // `data[查询键].week` 每行 `[日期, 开, 收, 高, 低, 量]`，收盘价在下标 2），
+    // 日期取近端交易日使周点落在当前周；美股查询键带交易所后缀。
     let day = date_offset(1);
     let entry = |symbol: &str| {
         format!(
-            r#""{symbol}":{{"day":[["{day}","1262.990","1257.120","1265.880","1256.100","24891.000"]]}}"#
+            r#""{symbol}":{{"week":[["{day}","1262.990","1257.120","1265.880","1256.100","24891.000"]]}}"#
         )
     };
     let body = format!(
@@ -810,7 +969,7 @@ fn production_backfill_channel_lands_history_via_tencent_kline() {
     );
     let (url, heads) = super::spawn_header_capture_server(body);
 
-    // 只取生产束的日 K 闭包（接线本体）；汇率 / 净值通道用空桩，避免本用例
+    // 只取生产束的周 K 闭包（接线本体）；汇率 / 净值通道用空桩，避免本用例
     // 触发与接线无关的真实网络。
     let channels = SyncFetchChannels::production_lane_on_pacer(
         Lane::Backfill,
@@ -844,7 +1003,7 @@ fn production_backfill_channel_lands_history_via_tencent_kline() {
         assert_eq!(
             history_rows(&conn, id),
             1,
-            "{id} 的日 K 打到腾讯端点后周点照常落库"
+            "{id} 的周 K 打到腾讯端点后周点照常落库"
         );
     }
     // 场内历史补全的来源标记与实际取数源一致（ADR-0130 决策 7 / issue #1560）：
@@ -858,20 +1017,19 @@ fn production_backfill_channel_lands_history_via_tencent_kline() {
         .unwrap();
     assert_eq!(source, TENCENT_PRICE_SOURCE, "历史补全来源标记为新来源值");
 
-    // 请求形态：腾讯端点 + 腾讯查询键（美股带交易所后缀）+ 近两年 `YYYY-MM-DD`
-    // 窗口 + 根数。换回东财 `YYYYMMDD` 窗口或东财查询键即红。
+    // 请求形态：腾讯端点 + 腾讯查询键（美股带交易所后缀）+ `week` 周期 + 整段
+    // 周线区间（深起点常量到北京今天）+ 根数 1200。换回 `day` 周期、东财
+    // `YYYYMMDD` 窗口或东财查询键即红。
     let today = beijing_today();
-    let beg = crate::incremental::two_years_ago(today)
-        .format("%Y-%m-%d")
-        .to_string();
+    let beg = crate::tencent_kline::KLINE_BEG;
     let end = today.format("%Y-%m-%d").to_string();
     let heads = heads.lock().unwrap().clone();
     for symbol in ["sh600519", "sz000001", "hk00700", "usAAPL.OQ"] {
         let expected =
-            format!("/appstock/app/fqkline/get?param={symbol}%2Cday%2C{beg}%2C{end}%2C800%2C");
+            format!("/appstock/app/fqkline/get?param={symbol}%2Cweek%2C{beg}%2C{end}%2C1200%2C");
         assert!(
             heads.iter().any(|head| head.contains(&expected)),
-            "日 K 请求须为腾讯 fqkline/get 且带腾讯查询键与近两年窗口，缺 {expected}，实际：{heads:?}"
+            "周 K 请求须为腾讯 fqkline/get 且带腾讯查询键与整段周线区间，缺 {expected}，实际：{heads:?}"
         );
     }
 }
@@ -904,7 +1062,7 @@ fn production_backfill_channel_lands_fund_history_via_sina() {
     );
     let (url, heads) = super::spawn_header_capture_server(body);
 
-    // 只取生产束的全历史闭包（接线本体）；日 K / 汇率通道用空桩，避免本用例
+    // 只取生产束的全历史闭包（接线本体）；周 K / 汇率通道用空桩，避免本用例
     // 触发与接线无关的真实网络。
     let channels = SyncFetchChannels::production_lane_on_pacer(
         Lane::Backfill,

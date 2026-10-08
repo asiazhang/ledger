@@ -9,8 +9,8 @@
 //! 三块事实收口在本模块：
 //! - **队列 = 派生事实**（[`collect_backfill_queue`]）：「有价格通道但历史不
 //!   完整」——首刷（磁盘上没有任何历史序列）、缺周点（最新历史点 / 净值水位
-//!   落后当前自然周超过一周）或覆盖不足（最早历史周点晚于首笔持仓流水日
-//!   所在周，issue #1534 基金深回填）。不落任务表、不新增持久状态；进程退出
+//!   落后当前自然周超过一周）或覆盖不足（最早历史周点晚于首笔持仓流水日所在
+//!   周，issue #1534 基金 / #1906 起股票）。不落任务表、不新增持久状态；进程退出
 //!   即硬停（单只原子由 ADR-0122 决策 8 / issue #1373 保证，中断不留半根历史），
 //!   下次启动继续。排队顺序**持仓优先**（投资域 [`INVESTED_EXISTS`] 谓词），
 //!   同级按 symbol 升序。
@@ -82,7 +82,7 @@ fn week_behind(reference: Option<&str>, today: NaiveDate) -> bool {
     week_monday(today) - week_monday(reference) > chrono::Duration::days(7)
 }
 
-/// 一只标的的补全目标（通道分区的产物）：行情标的走日 K 通道（数据源查询键由
+/// 一只标的的补全目标（通道分区的产物）：行情标的走周 K 通道（数据源查询键由
 /// 通道内部构造，issue #1556），基金走历史净值通道（首刷近两年 / 水位增量；
 /// issue #1377 起本通道为后台补全专用）。行情目标的查询单元在分区出口即已
 /// 类型化（[`QuoteQuery`] 携带可路由子集市场 `QuoteMarket`，issue #1673）——
@@ -100,9 +100,9 @@ struct BackfillItem {
 
 /// 补全队列收集（派生事实，一条 SQL）：库内全部标的按投资域单点派生价格通道，
 /// 只留行情与净值两通道，再按「历史不完整」过滤——首刷（无任何历史序列）、
-/// 缺周点（见 [`week_behind`]）或覆盖不足（基金通道：最早历史周点晚于首笔
-/// 持仓流水日所在周，见 [`super::fund_nav::coverage_short_of_first_position`]，
-/// issue #1534）。排序**持仓优先**（[`INVESTED_EXISTS`] 谓词），
+/// 缺周点（见 [`week_behind`]）或覆盖不足（最早历史周点晚于首笔持仓流水日所
+/// 在周，见 [`super::fund_nav::coverage_short_of_first_position`]，issue #1534
+/// 基金 / #1906 起行情通道同口径）。排序**持仓优先**（[`INVESTED_EXISTS`] 谓词），
 /// 同级按 symbol 升序；跳过的行（手动报价 / 无来源通道、历史完整的标的）不进
 /// 队列、零请求。
 fn collect_backfill_queue(conn: &Connection) -> Result<Vec<BackfillItem>> {
@@ -157,15 +157,26 @@ fn collect_backfill_queue(conn: &Connection) -> Result<Vec<BackfillItem>> {
         let channel = derive_price_channel(kind, market, &symbol, constant_unit_price);
         // 行情目标的查询单元在分区出口即类型化（投资域 `derive_quote_market`
         // 单点，issue #1673）：Some ⇔ Quote 通道由同一份判定承载——查询单元
-        // 市场是可路由子集 `QuoteMarket`，日 K 数据源键由通道内部构造（issue
+        // 市场是可路由子集 `QuoteMarket`，周 K 数据源键由通道内部构造（issue
         // #1556，编排不拼数据源查询键）；原「派生与键构造一致」的绑定测试随
         // 类型单点退役，市场成员漂移在编译期不可表达。
         let quote_market = derive_quote_market(kind, market, &symbol, constant_unit_price);
+        // 覆盖不足判据（issue #1534 基金 / #1906 起行情通道）：两通道共用同一
+        // 「首笔持仓流水周」派生事实（闭包只借两个只读输入）。
+        let coverage_short = || {
+            super::fund_nav::coverage_short_of_first_position(
+                earliest_history.as_deref(),
+                first_position_date.as_deref(),
+            )
+        };
         let target = match quote_market {
             Some(quote_market) => {
+                // 首刷判据 = 磁盘上没有任何历史序列；已有历史者按缺周点（最新
+                // 周点落后当前自然周超过一周）或覆盖不足（最早周点晚于首笔持仓
+                // 周，#1906 起与基金同口径）判进队。
                 let incomplete = match &latest_history {
                     None => true,
-                    Some(latest) => week_behind(Some(latest), today),
+                    Some(latest) => week_behind(Some(latest), today) || coverage_short(),
                 };
                 if !incomplete {
                     continue;
@@ -193,13 +204,7 @@ fn collect_backfill_queue(conn: &Connection) -> Result<Vec<BackfillItem>> {
                 //（issue #1534，判据单点 [`super::fund_nav::coverage_short_of_first_position`]）。
                 let incomplete = match &latest_history {
                     None => true,
-                    Some(_) => {
-                        week_behind(watermark.as_deref(), today)
-                            || super::fund_nav::coverage_short_of_first_position(
-                                earliest_history.as_deref(),
-                                first_position_date.as_deref(),
-                            )
-                    }
+                    Some(_) => week_behind(watermark.as_deref(), today) || coverage_short(),
                 };
                 if !incomplete {
                     continue;
@@ -224,16 +229,22 @@ fn collect_backfill_queue(conn: &Connection) -> Result<Vec<BackfillItem>> {
 }
 
 /// 单只行情标的的历史回填单元（issue #1375 自增量同步编排抽出；issue #1377
-/// 起归后台补全专用——现价刷新不再发逐只日 K 请求）：
-/// 一次日 K 请求 + 周采样降采样落 `price_history`，单只整只一次提交
-///（ADR-0122 决策 8 / issue #1373，事务经 [`ensure_transaction`] 嵌套感知）。
+/// 起归后台补全专用——现价刷新不再发逐只 K 线请求；#1906 起取数改腾讯周 K）：
+/// 一次周 K 请求（整段周线单请求）+ 本地窗口裁剪 + 周点落 `price_history`，
+/// 单只整只一次提交（ADR-0122 决策 8 / issue #1373，事务经
+/// [`ensure_transaction`] 嵌套感知）。窗口深度与基金同口径
+///（[`super::fund_nav::deep_backfill_window`]，#1906）：近两年起点与首笔持仓
+/// 流水周周一的较早者（无持仓流水 = 近两年），首刷与存量深回填同用该窗口；
+/// 周 K 输入喂入周点落库原语（spec #1677）——周行收盘 = 该周最后一个有报价
+/// 交易日的价格（取数形态与周采样同构），周粒度输入的降采样恒等，落库口径
+/// 不变（每周至多一条、整周覆盖、同周同值零写入）。
 /// 返回是否实际落库新周点；**全部无新点（已入库且同值）零写入**——返回
 /// false，调用方不置脏不广播（收尾裁决口径「全部无新点不置脏不广播」，
 /// ADR-0122；停牌/退市股持续在队的每日重采因此不空发信号）。有新点时的
 /// 数据结果与无条件重写逐位一致（整周覆盖幂等）。
 ///
-/// 抓取在会话之外（await）、落库短暂取一次连接（issue #1275 / #1412 async 形态，
-/// 与抽取前同形）。
+/// 深度输入读取、抓取与落库分三段：读取与落库各自短暂取一次连接（issue
+/// #1275 / #1412 async 形态），抓取在会话之外（与基金单元同形）。
 pub(super) async fn backfill_stock_history<Q, K>(
     session: &Q,
     fetch_kline: &mut K,
@@ -244,14 +255,27 @@ where
     Q: ScopedSession,
     K: FnMut(&QuoteQuery) -> FetchFuture<Vec<KlineBar>> + Send,
 {
+    // 深度输入执行时点单只读（与基金单元的覆盖读同型）：首笔持仓流水日是回填
+    // 窗口起点的判据输入；无持仓流水 = None（维持近两年）。
+    let first_position: Option<String> = session
+        .with_connection({
+            let instrument_id = inst.instrument_id.clone();
+            move |conn| ledger_investment::holdings::first_position_date(conn, &instrument_id)
+        })
+        .await?;
     // 查询单元由队列分区产出（分区出口已类型化，issue #1673）：数据源查询键
-    //（腾讯 K 线键）由日 K 通道在内部构造——换源只改通道实现，本编排零改动。
+    //（腾讯 K 线键）由周 K 通道在内部构造——换源只改通道实现，本编排零改动。
     let bars = fetch_kline(query).await?;
-    // 载体中立逐日点集（spec #1677）：日期解析失败按缺失点跳过（与降采样核心
-    // 的无效点跳过同一品味，收敛前的日 K 腿同此行为）；无效值（≤0）由原语的
-    // 采样核心跳过。
-    let daily_points: Vec<(NaiveDate, f64)> = bars
+    // 窗口语义由本地裁剪表达（#1906，与基金全历史面同式，issue #1566）：整段
+    // 周线一次取回，裁到回填窗口（ISO 日期闭区间），不依赖服务端窗口过滤行为。
+    let (start, end) =
+        super::fund_nav::deep_backfill_window(first_position.as_deref(), beijing_today());
+    // 载体中立点集（spec #1677）：窗口外样本丢弃；日期解析失败按缺失点跳过
+    //（与降采样核心的无效点跳过同一品味）；无效值（≤0）由原语的采样核心跳过。
+    // 周线行已是每周一点，原语内的降采样对周粒度输入恒等。
+    let weekly_points: Vec<(NaiveDate, f64)> = bars
         .iter()
+        .filter(|bar| bar.date.as_str() >= start.as_str() && bar.date.as_str() <= end.as_str())
         .filter_map(|bar| {
             Some((
                 NaiveDate::parse_from_str(&bar.date, "%Y-%m-%d").ok()?,
@@ -272,7 +296,7 @@ where
                 &instrument_id,
                 &currency,
                 TENCENT_PRICE_SOURCE,
-                &daily_points,
+                &weekly_points,
             )
         })
         .await

@@ -1,6 +1,6 @@
 //! 标的信息同步（InstrumentInfoSync，issue #103 / #137 / ADR-0019；覆盖面放开
 //! 至库内全部标的 + 名称随行刷新 issue #827；确定进度序列 issue #897 / ADR-0095）：
-//! 查询单元路由（市场 + 代码）、日 K / 汇率 K 报文解析、现价 upsert、K 线周采样回填、名称
+//! 查询单元路由（市场 + 代码）、现价 upsert、K 线周采样回填、名称
 //! 刷新与幂等语义。
 //! 编排经注入 mock 查询 / kline / fx / 净值 / 基金名称闭包与进度回调驱动，不依赖
 //! 真实网络。
@@ -977,8 +977,8 @@ fn sync_writes_no_price_history_quote_only() {
 #[test]
 fn sync_lands_current_week_point_for_instrument_with_existing_history() {
     // 当周采样点直落（ADR-0122 决策 2 / issue #1377）：已有历史序列的行情标的，
-    // 现价刷新携带的当日有效报价即当周采样点——不另发逐只日 K 请求（编排的
-    // 参数表已无日 K 通道，编译期不可表达），周采样语义不变（每周至多一条、
+    // 现价刷新携带的当日有效报价即当周采样点——不另发逐只 K 线请求（编排的
+    // 参数表已无周 K 通道，编译期不可表达），周采样语义不变（每周至多一条、
     // 同周整周覆盖幂等）；历史深采集仍归后台补全。
     let today_date = beijing_today();
     let today = today_date.format("%Y-%m-%d").to_string();
@@ -1231,7 +1231,7 @@ fn fund_nav_fetch_error_propagates() {
 
 // ---------------------------------------------------------------------------
 // ETF 行情分区（issue #695 / spec #690 方案 6）：行情分区从仅 stock 扩为
-// stock|etf——场内 ETF 持仓与股票同走批量报价/日 K 通道；fund 仍走净值通道；
+// stock|etf——场内 ETF 持仓与股票同走批量报价通道；fund 仍走净值通道；
 // 债券等无行情来源标的仍计入跳过。离线注入桩钉住三分区行为；
 // three_type_partitions_roll_up_into_one_result 收编既有 fund+stock 汇总用例。
 // ---------------------------------------------------------------------------
@@ -1458,7 +1458,7 @@ fn us_stock_holding_syncs_quote_and_rerun_overwrites() {
         }]))
     };
 
-    // 现价与历史解耦（issue #1377）：同步只刷现价，不回填日 K。
+    // 现价与历史解耦（issue #1377）：同步只刷现价，不回填历史。
     let result = tauri::async_runtime::block_on(do_incremental_sync_with(
         &conn,
         &mut fetch,
@@ -2791,7 +2791,7 @@ fn instrument_version(conn: &Connection, instrument_id: &str) -> i64 {
     .unwrap()
 }
 
-/// 行情两通道（批量报价 / 日 K）的调用计数：用例现场只有场外基金标的，
+/// 行情两通道（批量报价 / 周 K）的调用计数：用例现场只有场外基金标的，
 /// 这两条通道恒不应被触达——被触达即计数 + 断言面（同时硬失败，避免静默）。
 #[derive(Clone, Default)]
 struct QuoteChannelCalls {

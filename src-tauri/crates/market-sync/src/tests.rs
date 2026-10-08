@@ -16,8 +16,8 @@
 //! - `history_backfill`：价格历史后台补全编排（ADR-0122 / issue #1375）——派生事实
 //!   队列、一轮排空与队列随补全自然排空，含基金历史回填单元（issue #1377，
 //!   新浪单只全历史面形态见 issue #1566）；
-//! - `http_client`：HTTP 重试、多主机切换与各来源取数入口的请求形态 / 上限行为（ECB 参考汇率、腾讯日线 K 线）；
-//! - `instrument_info_sync`：标的信息同步与日 K 报文解析；
+//! - `http_client`：HTTP 重试、多主机切换与各来源取数入口的请求形态 / 上限行为（ECB 参考汇率、腾讯周线 K 线）；
+//! - `instrument_info_sync`：标的信息同步（K 线报文解析用例随 #1377 迁 history_backfill）；
 //! - `sina_fund`：新浪场外基金取数（issue #1564，fixture 驱动）——批量面普通行 /
 //!   货基错位行 / 已终止基金行的形态判别与 fail-closed，全历史面末点 / 可信空 /
 //!   非可信形状，请求形态与批量承载量；
