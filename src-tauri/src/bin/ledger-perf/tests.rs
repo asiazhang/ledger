@@ -26,6 +26,7 @@ use ledger_scheduled as scheduled_transactions;
 use ledger_transaction::TransactionListFilter;
 use ledger_transaction::amount::TransactionKind;
 use ledger_transaction::read::{get_transaction, list_transactions};
+use ledger_transaction::search_transactions_internal;
 use tauri_app_lib::test_support::{self, FIXED_NOW};
 
 use super::bench::{self, BenchCli, BenchConfig, BenchMetrics};
@@ -36,7 +37,11 @@ use super::bench_sync::{
     self, BenchSyncCli, EntryForm, SOURCE_DEVICE_ID, SyncBenchConfig, generate_ops, generate_wire,
 };
 use super::books;
-use super::generate::{GenCounts, GenerateCli, GenerateParams, generate_into, parse_generate_args};
+use super::generate::{
+    GenCounts, GenerateCli, GenerateParams, NOTE_SUBJECTS, NOTE_SUFFIXES, PURCHASE_BRANDS,
+    PURCHASE_CATEGORIES, PURCHASE_ITEM_MAX, PURCHASE_REPEAT_SKUS, generate_into,
+    parse_generate_args, purchase_name_pool,
+};
 use ledger_accounts::{Account, AccountType};
 use ledger_backup as backup_domain;
 use ledger_transaction::compute_dedup_hash;
@@ -1726,8 +1731,105 @@ fn same_seed_produces_identical_digest() {
         digest_a["transactions"], digest_c["transactions"],
         "不同种子应产出不同交易数据"
     );
+    assert_ne!(
+        digest_a["transaction_purchases"], digest_c["transaction_purchases"],
+        "不同种子应产出不同购买项语料（摘要含购买项子表，issue #1915）"
+    );
     // 种子只影响生成内容，不影响迁移种子行（currencies 两库一致）。
     assert_eq!(digest_a["currencies"], digest_c["currencies"]);
+}
+
+// ---------------------------------------------------------------------------
+// 购买项语料（issue #1915）：名称池形状、关键词不交与命中面钉住
+// ---------------------------------------------------------------------------
+
+/// 名称池画像（issue #1915 语料修正的验收面）：SKU 级多样性规模、默认关键
+/// 字「猫粮」的命中占比（≤2% 订单，真实复购单品画像）与「名称池和备注素材
+/// 池关键词不交」的既有约束（#1885 立法，本测试钉住——任一侧词面漂移即红）。
+#[test]
+fn purchase_corpus_pool_shape_and_keyword_isolation() {
+    let pool = purchase_name_pool();
+    assert_eq!(
+        pool.len(),
+        PURCHASE_BRANDS.len() * PURCHASE_CATEGORIES.len() + PURCHASE_REPEAT_SKUS.len(),
+        "池规模应与三轴构成一致（品牌 × 品类交叉 + 复购单品块）"
+    );
+    assert!(
+        pool.len() >= 300,
+        "池应达数百个名称的 SKU 级多样性：{}",
+        pool.len()
+    );
+    assert!(pool.iter().all(|n| !n.is_empty()), "名称池不应含空条目");
+
+    // 默认关键字命中面：展开池中含「猫粮」的名称恰为复购单品块的两条；
+    // 购买项数 1..=4 均匀下订单级命中率 ≈ 1.24%，钉在 ≤2%（50 万笔库预期
+    // 数百单——16 名小池时代命中 39% 订单，系语料失真，issue #1915）。
+    let hits: Vec<&String> = pool.iter().filter(|n| n.contains("猫粮")).collect();
+    assert_eq!(
+        hits.len(),
+        2,
+        "「猫粮」系名称应恰为复购单品块两条：{hits:?}"
+    );
+    let p_item = hits.len() as f64 / pool.len() as f64;
+    let p_order = (1..=PURCHASE_ITEM_MAX as i32)
+        .map(|items| 1.0 - (1.0 - p_item).powi(items))
+        .sum::<f64>()
+        / PURCHASE_ITEM_MAX as f64;
+    assert!(
+        p_order <= 0.02,
+        "默认关键字的订单级命中率应 ≤2%（真实复购单品画像）：{p_order:.4}"
+    );
+
+    // 名称池与备注素材池关键词不交：备注素材任何词面（含备注搜索基准关键字
+    // 「咖啡」）不出现在商品名，两条搜索基准的命中面互不污染。
+    for name in &pool {
+        for token in NOTE_SUBJECTS
+            .iter()
+            .chain(NOTE_SUFFIXES.iter())
+            .filter(|t| !t.is_empty())
+        {
+            assert!(
+                !name.contains(token),
+                "商品名「{name}」不应含备注素材词面「{token}」"
+            );
+        }
+        assert!(
+            !name.contains("咖啡"),
+            "商品名「{name}」不应含备注搜索基准关键字「咖啡」"
+        );
+    }
+}
+
+/// 命中数钉住值（issue #1915）：同参数 10,000 笔库上「猫粮」的搜索命中数与
+/// 购买项行数是语料的确定性事实——名称池构成或种子流序漂移即红，须有意
+/// 更新钉住值（与名单钉住断言同款纪律）。
+#[test]
+fn purchase_corpus_keyword_hit_count_is_pinned() {
+    let (_dir, path) = temp_db("purchase-hit-pin");
+    build(
+        &path,
+        10_000,
+        NaiveDate::from_ymd_opt(2025, 12, 31).unwrap(),
+    );
+    let conn = open_connection(&path).unwrap();
+
+    let rows: i64 = conn
+        .query_row("SELECT COUNT(*) FROM transaction_purchases", [], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    assert_eq!(
+        rows, 1_929,
+        "购买项行数应钉住（订单率 × 每单件数的确定性事实）"
+    );
+
+    // 与 bench「商品名搜索」项同一查询路径（search_transactions_internal）。
+    let result =
+        search_transactions_internal(&conn, "猫粮", 1, 20, None, None, None, None).unwrap();
+    assert_eq!(
+        result.total, 14,
+        "「猫粮」命中订单数应钉住（默认关键字命中数百单量级的语料画像，10k 笔库缩影）"
+    );
 }
 
 // ---------------------------------------------------------------------------
