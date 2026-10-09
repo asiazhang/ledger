@@ -24,6 +24,7 @@
 
 ### Changed
 
+- **依赖**：前端引入 Stryker 变异测试三件套（core / vitest-runner / typescript-checker，精确 10.0.0；vitest-runner 经 pnpm patch 套用上游 Vitest 5 适配修复 PR stryker-js#6214）并接入每日 mutation-bench 观测工作流（killer 变异金丝雀验收兜底报告可信）——开发工具与 CI 变更，无使用者可见变化（[#1832]，ADR-0137 修订注记）。
 - **投资**：组合走势并入概览页签（走势页签退役）——概览在可投资资产与两腿拆分下方新增走势卡，区间档位扩展为 1 月 / 3 月 / 1 年 / 3 年 / 5 年 / 全部（默认仍近一年）；3 年 / 5 年档按数据实际起点绘制（股票类历史回填深度为近两年、基金覆盖持仓期，更深回填见 #1906）。单标的走势随走势页签退役：标的列表「走势」入口、单标的模式与选中态一并移除；来源跳转（交易来源列点标的、focus 深链）改落标的页签，按 `list_instruments` 新增锚点参数分页定位并高亮该行（清仓标的照常可达）。随单标的退役删除无消费方的 IPC 命令 `instrument_price_trend` 与 `get_instrument`（[#1907]，ADR-0019 / ADR-0131 修订注记）。
 
 ## [0.8.0] - 2026-09-27
@@ -461,6 +462,7 @@
 [#1769]: https://github.com/asiazhang/ledger/issues/1769
 [#1810]: https://github.com/asiazhang/ledger/issues/1810
 [#1811]: https://github.com/asiazhang/ledger/issues/1811
+[#1832]: https://github.com/asiazhang/ledger/issues/1832
 [#1860]: https://github.com/asiazhang/ledger/issues/1860
 [#1861]: https://github.com/asiazhang/ledger/issues/1861
 [#1862]: https://github.com/asiazhang/ledger/issues/1862

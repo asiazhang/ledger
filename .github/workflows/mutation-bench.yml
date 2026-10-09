@@ -15,10 +15,13 @@
 # 观测期不判定（ADR-0137）：cargo-mutants 退出码 2（存在存活变异体）与 3（超时）
 #   不使 job 失败，只进报告；4（基线红）/5/6（diff 错）才视为故障。阈值待 CI 基线
 #   稳定后另立判据（同 ADR-0062→0068 先观察后立阈先例），届时修订本注释与 ADR。
-# 前端 Stryker 本期撤出（ADR-0137 决策 7）：vitest-runner v10 未适配 Vitest 5，
-#   covered mutants 误报 Survived（诊断与复现证据见 #1832），接入待上游支持。
-# 报告：Markdown 汇总进 $GITHUB_STEP_SUMMARY，原始产物（mutants.out）上传
-#   artifact 供下钻。
+# 前端 Stryker 接入（#1832 / ADR-0137 决策 3 修订注记）：vitest-runner@10.0.0 经
+#   pnpm patch 套用上游修复 PR stryker-js#6214（Vitest 5 用例链分隔符适配）后接入，
+#   补丁与升级退出条件见 pnpm-workspace.yaml patchedDependencies 注释；全量
+#   mutate 面 + 增量文件缓存，金丝雀验收兜底 runner 有效性（已知必杀变异报
+#   Survived 即变红，防 #6073 类残留误报）。
+# 报告：Markdown 汇总进 $GITHUB_STEP_SUMMARY，原始产物（Rust mutants.out、
+#   前端 reports/）上传 artifact 供下钻。
 name: Mutation Bench
 
 on:
@@ -181,3 +184,92 @@ jobs:
             /tmp/mutants-stdout.txt
           if-no-files-found: ignore
           retention-days: 30
+
+  # 前端变异测试（Stryker，#1832 / ADR-0137 决策 3 修订注记）：无 in-diff（前端
+  # 变异面小，增量文件承担加速），观测期不判定（thresholds.break: null，见
+  # stryker.config.mjs），runner 有效性由金丝雀验收兜底。
+  frontend-mutants:
+    name: 前端变异测试（Stryker，观测期不判定）
+    needs: gate
+    if: needs.gate.outputs.should-run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v7
+
+      # 与 build.yml 前端 job 同款（pnpm/setup 自动安装依赖，补丁经
+      # patchedDependencies 在安装时生效）。
+      - uses: pnpm/setup@v3
+        with:
+          runtime: node@22
+          cache: true
+          require-lockfile: true
+
+      # 增量文件（stryker.config.mjs incremental: true）：只重测受结果影响的变异体。
+      # restore-keys 回退旧键兜底首跑——增量文件内容自感知，陈旧条目自动失效重测。
+      - name: 恢复增量文件
+        uses: actions/cache@v4
+        with:
+          path: reports/stryker-incremental.json
+          key: mutation-frontend-incremental-${{ github.ref_name }}
+          restore-keys: mutation-frontend-incremental-
+
+      - name: 运行 Stryker（全量 mutate 面，增量加速）
+        run: pnpm exec stryker run
+
+      - name: 报告进 Step Summary
+        if: always()
+        run: |
+          {
+            echo "## 前端变异测试报告（Stryker，观测期不判定）"
+            echo
+            echo "- 触发：${{ github.event_name }} @ \`${{ github.sha }}\`"
+            echo
+            ./scripts/mutation-frontend-summary.sh reports/mutation/mutation.json
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # 上传在金丝雀之前：金丝雀复用 json reporter 输出路径，会覆盖全量报告。
+      - name: 上传变异产物（json + html 报告 + 增量文件）
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-mutants-${{ github.run_id }}
+          path: reports/
+          if-no-files-found: ignore
+          retention-days: 30
+
+      # 金丝雀验收（#1832，防 #6073 类残留误报复发）：sidebar-order.ts
+      # isArrangeableView（71–73 行）内 ConditionalExpression → false 变异有测试
+      # 覆盖且必须被击杀——runner 失效（如 Vitest 升级后补丁未跟进）时全量误报
+      # Survived，本步变红。函数移位时需同步更新行锚点（缺失即 fail loud）。
+      # 独立于增量：--incrementalFile 指向一次性文件保证真实执行（--force 会重建
+      # 共享增量文件、破坏全量运行加速，不可用）。此步在产物上传之后：json
+      # reporter 输出路径与全量运行相同（reports/mutation/mutation.json）。
+      - name: 金丝雀验收（killer 变异必须报 Killed）
+        run: |
+          set -euo pipefail
+          pnpm exec stryker run \
+            --mutate "src/stores/sidebar-order.ts" \
+            --incrementalFile /tmp/stryker-canary-incremental.json \
+            --reporters json
+          REPORT=reports/mutation/mutation.json
+          counts=$(jq -cr '
+            [.files["src/stores/sidebar-order.ts"].mutants[]
+              | select(.location.start.line >= 71 and .location.start.line <= 73
+                       and .mutatorName == "ConditionalExpression" and .replacement == "false")]
+            | "\(length) \(map(select(. == "Killed")) | length)"
+          ' "$REPORT")
+          total=${counts% *}
+          killed=${counts#* }
+          if [ "$total" -eq 0 ]; then
+            echo "::error::金丝雀缺失：isArrangeableView（sidebar-order.ts 71–73 行）无 ConditionalExpression→false 变异体——函数移位需同步更新锚点，或变异面配置漂移"
+            exit 1
+          fi
+          if [ "$killed" -ne "$total" ]; then
+            echo "::error::金丝雀未通过：$killed/$total 个 killer 变异被击杀（其余非 Killed）——vitest-runner 失效，疑似 #6073 类误报残留（检查 patchedDependencies 补丁是否仍生效）"
+            exit 1
+          fi
+          {
+            echo
+            echo "> ✅ 金丝雀验收通过：isArrangeableView killer 变异 $killed/$total 全部击杀（真实执行，不经增量）"
+          } >> "$GITHUB_STEP_SUMMARY"

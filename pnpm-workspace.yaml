@@ -11,5 +11,16 @@ packages:
 allowBuilds:
   esbuild: true
   fsevents: true
+# Stryker vitest-runner 补丁（#1832）：套用上游 PR stryker-js#6214——Vitest 5 把用例链
+# 分隔符改为 ' > '，vitest-runner@10.0.0 仍用空格拼接，perTest 覆盖分析下
+# testNamePattern 永不匹配 → 变异体零测试执行 → 全部误报 Survived（0/199 实测）。
+# 补丁打在发布包编译产物（dist/src/*.js）上，绑定精确版本 10.0.0；升级该包必须
+# 重做并重跑金丝雀，上游发布支持 Vitest 5 的版本后删除本补丁（退出条件）。
 patchedDependencies:
+  '@stryker-mutator/vitest-runner@10.0.0': patches/@stryker-mutator__vitest-runner@10.0.0.patch
   naive-ui: patches/naive-ui.patch
+# Stryker 插件提升（#1832）：插件加载器从 core 自身模块上下文 bare import
+# runner/checker，pnpm 隔离布局下 core 的解析路径不含它们——提升到虚拟 store
+# 公共层（node_modules/.pnpm/node_modules）后可解析（Stryker + pnpm 官方 workaround）。
+publicHoistPattern:
+  - '@stryker-mutator/*'

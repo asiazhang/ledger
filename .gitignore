@@ -34,6 +34,11 @@ dist-ssr
 coverage
 *.lcov
 
+# Stryker（前端变异测试，#1832）：.stryker-tmp = 就地变异的备份/日志；reports =
+# json/html 报告与增量文件（CI 内由 workflow 重建并缓存增量文件，不入库）
+.stryker-tmp
+reports
+
 # Cache directories
 .cache
 .vite
