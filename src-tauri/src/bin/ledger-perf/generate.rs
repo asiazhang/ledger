@@ -79,7 +79,7 @@ pub(crate) const DEVICE_ID: &str = "ledger-perf";
 const REFUND_BUFFER_CAP: usize = 64;
 
 /// 备注素材池：中英混合 + 纯中文品牌词，供备注随机拼装（TransactionSearch 语料）。
-const NOTE_SUBJECTS: [&str; 24] = [
+pub(crate) const NOTE_SUBJECTS: [&str; 24] = [
     "和同事午餐",
     "超市购物",
     "打车回家",
@@ -105,7 +105,7 @@ const NOTE_SUBJECTS: [&str; 24] = [
     "山姆",
     "京东自营",
 ];
-const NOTE_SUFFIXES: [&str; 8] = [
+pub(crate) const NOTE_SUFFIXES: [&str; 8] = [
     "",
     "（报销）",
     "（家庭）",
@@ -119,29 +119,102 @@ const NOTE_SUFFIXES: [&str; 8] = [
 /// issue #1885 商品名搜索基准语料）。
 const PURCHASE_ORDER_RATE: f64 = 0.10;
 /// 每单购买项数上限（1..=4 均匀）。
-const PURCHASE_ITEM_MAX: u64 = 4;
-/// 购买项名称池：与备注素材池关键词刻意不交（「咖啡」等备注关键词不出现在
-/// 商品名，两条搜索基准的命中面互不污染）；「猫粮」系条目保证商品名搜索基准
-/// 的默认关键字必有命中。
-const PURCHASE_NAMES: [&str; 16] = [
-    "渴望猫粮",
-    "冻干猫粮",
-    "猫粮试吃装",
-    "猫砂",
+pub(crate) const PURCHASE_ITEM_MAX: u64 = 4;
+/// 购买项名称池构成（issue #1915 语料修正）：品牌 × 品类 × 规格三轴 + 复购
+/// 单品块，经 [`purchase_name_pool`] 展开为数百个 SKU 级商品名——对齐真实
+/// 账本的 SKU 级多样性画像（单词条命中占比在百分之几量级）。替换 #1885 的
+/// 16 名小池：池小使默认关键字「猫粮」命中 3/16 条目、39% 的购买订单
+/// （CI run 实测 15,412 单），是语料制造、真实数据不会出现的场景
+/// （perf-bench 两日超标的全部来源，issue #1915 A/B 拆账证伪实现问题）。
+pub(crate) const PURCHASE_BRANDS: [&str; 26] = [
+    "蓝月亮",
+    "立白",
+    "维达",
+    "清风",
+    "心相印",
+    "洁柔",
+    "舒肤佳",
+    "佳洁士",
+    "高露洁",
+    "海飞丝",
+    "潘婷",
+    "多芬",
+    "大宝",
+    "百事",
+    "可口可乐",
+    "乐事",
+    "奥利奥",
+    "好丽友",
+    "徐福记",
+    "卫龙",
+    "伊利",
+    "蒙牛",
+    "桃李",
+    "盼盼",
+    "农夫山泉",
+    "怡宝",
+];
+/// 品类轴（与品牌轴全交叉）。
+pub(crate) const PURCHASE_CATEGORIES: [&str; 15] = [
     "洗衣液",
     "纸巾",
     "抽纸",
     "牙膏",
     "洗发水",
-    "可乐",
+    "沐浴露",
+    "香皂",
+    "湿巾",
+    "碳酸饮料",
     "薯片",
+    "饼干",
     "牛奶",
     "面包",
-    "鸡蛋",
-    "垃圾袋",
-    "小零食",
+    "矿泉水",
+    "辣条",
+];
+/// 规格轴：按（品牌，品类）下标和轮转拼接，空串即无规格（不消费随机流）。
+pub(crate) const PURCHASE_SPECS: [&str; 3] = ["", "量贩装", "旅行装"];
+/// 复购单品块：高频复购单品带规格。「猫粮」仅出现在本块两条——默认关键字
+/// 的命中面钉在数百单量级（50 万笔库预期约 500 单、≤2% 订单，真实复购
+/// 单品画像，issue #1915）。
+pub(crate) const PURCHASE_REPEAT_SKUS: [&str; 10] = [
+    "渴望猫粮 1.8kg",
+    "冻干猫粮 500g",
+    "豆腐猫砂 20L",
+    "鲜鸡蛋 10枚",
+    "加厚垃圾袋 100只",
+    "饮用水 550ml×12",
+    "卷纸 12卷",
+    "酿造酱油 500ml",
+    "东北大米 5kg",
+    "红烧牛肉面 5连包",
 ];
 
+/// 名称池展开：品牌 × 品类全交叉（规格按下标轮转）+ 复购单品块，共
+/// `BRANDS × CATEGORIES + REPEAT_SKUS` = 26 × 15 + 10 = 400 个名称。与备注
+/// 素材池关键词刻意不交（「咖啡」等备注关键词不出现在商品名，两条搜索基准
+/// 的命中面互不污染，tests 钉住）；展开是纯常量计算、不消费随机流——名称
+/// 池扩容只改变 `pick` 取模的分母，购买项独立种子流的播撒序列不变，主库
+/// 既有画像逐位不变（issue #1915）。
+pub(crate) fn purchase_name_pool() -> Vec<String> {
+    let mut names: Vec<String> = PURCHASE_BRANDS
+        .iter()
+        .enumerate()
+        .flat_map(|(bi, brand)| {
+            PURCHASE_CATEGORIES
+                .iter()
+                .enumerate()
+                .map(move |(ci, category)| {
+                    format!(
+                        "{brand}{category}{}",
+                        PURCHASE_SPECS[(bi + ci) % PURCHASE_SPECS.len()]
+                    )
+                })
+        })
+        .collect();
+    names.extend(PURCHASE_REPEAT_SKUS.iter().map(|s| s.to_string()));
+    names
+}
 /// generate 参数（解析后、日期已合法的形态）。
 pub(crate) struct GenerateParams {
     pub seed: u64,
@@ -1170,6 +1243,7 @@ fn insert_purchases(
     counts: &mut GenCounts,
 ) -> Result<(), String> {
     let mut rng = Rng::new(p.seed ^ 0x1885_0000_0000_0001);
+    let names = purchase_name_pool();
     let mut stmt = conn
         .prepare(
             "INSERT INTO transaction_purchases \
@@ -1191,7 +1265,7 @@ fn insert_purchases(
         }
         let items = 1 + rng.below(PURCHASE_ITEM_MAX);
         for sort in 0..items {
-            let name = rng.pick(&PURCHASE_NAMES);
+            let name = rng.pick(&names);
             let quantity = (1 + rng.below(3)) as i64;
             let price = if rng.chance(0.3) {
                 None

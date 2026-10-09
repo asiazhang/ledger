@@ -1,6 +1,6 @@
 # ADR-0137: 每日变异测试——mutation-bench 观测工作流与「测试有效性」的自动化判据
 
-- 状态：已接受（决策入档；实现随实施票落地）
+- 状态：已接受（决策入档；实现随实施票落地）。**修订（2026-10-09）**：决策 3 的「前端 Stryker 本期撤出」被 #1832 修订——vitest-runner@10.0.0 经 pnpm patch 套用上游修复后接入前端观测面，见文末修订注记。
 - 日期：2026-09-25
 - 作者：Ledger 项目
 - 关联：ADR-0087（测试三层权威层与「断言强度」——本 ADR 是其判据的自动化投影，不新增标准）、ADR-0068（性能门禁——本 ADR 复用其「先观察后立阈」路径与「判定下沉工具内、workflow 只传参」形态）、ADR-0062（性能基准确定性数据集——观察期先例）、ADR-0112（crate 分层——in-diff 按 crate 内改动取范围的边界背景）；#1816（spec）、#1817/#1818（currencies / physical-asset 试点，可行性验证）、#1827（本 ADR 与工作流落地票）、#1832（前端 Stryker 接入前置——工具链不兼容诊断）；词汇表：测试基础设施域「零击杀测试」「存活变异体」「等价变异体」（随本 ADR 入档）
@@ -75,3 +75,13 @@ cargo-mutants 豁免配置住 `src-tauri/.cargo/mutants.toml`（工具真源位�
 - CI：新增 `mutation-bench.yml`（每日 03:23 UTC），不入 `scripts/check.sh`、不入 build.yml；新增 `scripts/mutation-summary.sh` 报告格式化脚本（只格式化不判定，同 perf-summary.sh 纪律）。
 - 依赖：本期**零新增**（Stryker 三件套随撤出不入库）；cargo-mutants 由 workflow 内 `cargo install` 安装，版本以安装时解析为真源。
 - 实施拆票建议：本 ADR + workflow + 词条随 #1827 一票落地；阈值判据待观测基线稳定后另立（届时修订本 ADR）；前端接入与 `.vue` 变异随 #1832 另议。
+
+## 修订注记（#1832，2026-10-09）：前端 Stryker 经补丁接入——修 Vitest 5 误报、金丝雀兔底报告可信
+
+决策 3 撤出时预留的接入前置是「上游支持 Vitest 5、或降 Vitest」，#1832 走了第三条路：**pnpm patchedDependencies 把上游修复 PR stryker-js#6214 套在 vitest-runner@10.0.0 的发布产物上**，不降级测试栈、不等待上游，撤出决策就此解除。
+
+- **根因与修复**：Vitest 5 把用例链分隔符从空格改为 `' > '`，runner@10.0.0 仍按空格拼接，perTest 覆盖分析的用例过滤永不命中——变异体零测试执行，covered mutants 全量误报 Survived（0/199 实测复现，修复后同面 187 killed / 15 survived）。补丁打在 dist 编译产物上，绑定精确版本 10.0.0；注册注释与退出条件住 `pnpm-workspace.yaml` 的 `patchedDependencies`。
+- **金丝雀兔底**：「报告可信」从一次性验收改为每日持续验收——mutation-bench 前端 job 选侧栏排序 store 的已知必杀变异（有测试覆盖、形态稳定）作金丝雀，用独立增量文件真实重测（不经增量缓存，防陈旧结果掩盖 runner 失效），报非 Killed 即 job 变红（防 #6073 类残留误报静默复发）。
+- **升级纪律**：升级 vitest-runner 或 Vitest 前必须重做补丁并重跑金丝雀（补丁绑定精确版本，升级即失效）；依赖升级纪律见 `docs/agents/dependency-upgrades.md`「易碎件：补丁依赖」。
+- **退出条件**：上游发布支持 Vitest 5 的版本后删除补丁，重跑金丝雀验证后回归官方产物。
+- **`.vue` 变异面**：维持决策 3 不含 `.vue` 的口径不变，本票不扩面。
