@@ -5,6 +5,13 @@
 #   cargo mutants --in-diff——只变异「上次成功运行 → 本次」之间改动的 Rust 代码
 #   （cd src-tauri && git diff --relative 输出的路径与变异体路径同口径），
 #   成本随改动量走；无 Rust 改动或 diff 不含变异体时原生成功退出（exit 0）。
+# --in-place（#1916）：默认拷贝模式只把 workspace 子树（src-tauri/）拷进临时
+#   目录构建，test_support/scan.rs 的双源语料 include_str!（../../../scripts/
+#   fixtures/，#1433）指向仓库根、落在副本外，未变异基线必红（exit 4），工作流
+#   自上线零成功；且临时目录路径每次随机，rust-cache 恢复的 src-tauri/target 对
+#   副本无效，每天全冷构建。改 in-place：CI checkout 即用即弃（官方推荐场景），
+#   基线直接可见 scripts/fixtures，构建复用 rust-cache。注意 --in-place 与
+#   --jobs 互斥（clap conflicts_with），jobs 默认即 1，不显式传。
 # 观测期不判定（ADR-0137）：cargo-mutants 退出码 2（存在存活变异体）与 3（超时）
 #   不使 job 失败，只进报告；4（基线红）/5/6（diff 错）才视为故障。阈值待 CI 基线
 #   稳定后另立判据（同 ADR-0062→0068 先观察后立阈先例），届时修订本注释与 ADR。
@@ -127,7 +134,8 @@ jobs:
           # 故用 `|| rc=$?` 承接（pipefail 保留管线真实退出码）。
           rc=0
           cd src-tauri
-          cargo mutants --in-diff /tmp/mutants.diff --output /tmp/mutants-run \
+          # --in-place 根因与取舍见文件头注释（#1916）；jobs 默认 1，不传 --jobs。
+          cargo mutants --in-place --in-diff /tmp/mutants.diff --output /tmp/mutants-run \
             2>&1 | tee /tmp/mutants-stdout.txt || rc=$?
           echo "rc=$rc" >> "$GITHUB_OUTPUT"
           # 退出码语义（cargo-mutants exit_code.rs）：0 全捕获或无变异体；
