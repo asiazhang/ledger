@@ -5,10 +5,11 @@
 //!   同一推算不变量的流水投影，见 [`crate::holdings`]）游标累加运行时数量；
 //!   各标的市值 = 数量 × 当期周线价格；非本位币经同期 `fx_rate_history` 正反向
 //!   兜底折算到 DefaultCurrency 后汇总为一条曲线。
-//! - 某周缺价格或缺汇率则该贡献被跳过（不伪造数据）；全部贡献缺失的周无点，
-//!   曲线从区间内首个有效采样点开始。
+//! - 某标的某周无价格行、或某周缺同期汇率，沿用其最近一个有价 / 有汇率周的值（无前值
+//!   则该贡献不计入）；周集合取区间内出现过任一价格行的周，整周无任何价格行则该周
+//!   无点、曲线跨越空档连续。
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use chrono::NaiveDate;
 use rusqlite::Connection;
@@ -83,7 +84,8 @@ struct PriceRow {
 /// 不变量的流水投影，口径单点在推算模块）游标推进运行时数量：买入累加、
 /// 卖出递减、convert 两腿与 split 带符号 Δ。buy/sell 口径单点在推算模块，
 /// 本函数只负责取数、折算与组装（数量按交易日取、汇率按周键取，双时间键
-/// 契约显式分界）；缺价格或缺同期汇率的标的该周跳过，全周无有效贡献则该周
+/// 契约显式分界）；缺价格或缺同期汇率的标的沿用最近有价 / 有汇率周的值（无前值则不计入），
+/// 整周无任何价格行则该周
 /// 无点。恒定价格标的（ADR-0126 决策 6）：历史表无行，市值 = 时点份额 ×
 /// 常量在响应内按区间周键合成，与真实价格行同路聚合——库里不落虚拟行，
 /// 存量平坦序列不再参与。
@@ -197,9 +199,41 @@ fn portfolio_value_trend_within_tx(
             .push(row);
     }
 
-    // 4. 按周聚合：逐价格行取「当期数量 × 周线价格」折算求和；某标的缺汇率
-    //    则跳过该贡献；全周无有效贡献则该周无点。周键为 BTreeMap，周点升序；
-    //    合计为整数分累加（可结合可交换，与行序无关）。
+    // 4. 按周聚合（缺料沿用上一周）：周集合 = 区间内出现过任一价格行的周（升序）；
+    //    整周无任何价格行则该周无点、曲线跨越空档连续。标的在某周无价格行时沿用其
+    //    最近一个有价周的价格；某周缺同期汇率时沿用币种最近一个有汇率周的汇率；
+    //    无前值则该贡献不计入。数量采样日：有真实价格行的周取该行交易日，沿用周取
+    //    周集合内该周最晚交易日。合计为整数分累加（可结合可交换，与行序无关）。
+    let mut week_cut: BTreeMap<&str, &str> = BTreeMap::new();
+    for row in &price_rows {
+        week_cut
+            .entry(row.week_start.as_str())
+            .and_modify(|cut| {
+                if row.trade_date.as_str() > *cut {
+                    *cut = row.trade_date.as_str();
+                }
+            })
+            .or_insert(row.trade_date.as_str());
+    }
+    let weeks: Vec<&str> = week_cut.keys().copied().collect();
+    // 币种汇率沿用表：逐币种沿周序推进，缺同期汇率即取最近一个有汇率的周。
+    let currencies: BTreeSet<&str> = price_rows
+        .iter()
+        .map(|row| row.currency_code.as_str())
+        .collect();
+    let mut fx_carried: HashMap<&str, HashMap<&str, f64>> = HashMap::new();
+    for currency in currencies {
+        let mut carried_rates: HashMap<&str, f64> = HashMap::new();
+        let mut last: Option<f64> = None;
+        for &week in &weeks {
+            if let Some(rate) = fx_rate_at_week(&fx, currency, &native, week).or(last) {
+                carried_rates.insert(week, rate);
+                last = Some(rate);
+            }
+        }
+        fx_carried.insert(currency, carried_rates);
+    }
+
     let mut by_week: BTreeMap<String, (i64, bool)> = BTreeMap::new();
     for (instrument_id, rows) in rows_by_instrument {
         // 组内升序是游标推进正确性的前提：价格行 SQL 已按 trade_date 升序、
@@ -207,22 +241,40 @@ fn portfolio_value_trend_within_tx(
         // 防上游取数形态变化悄悄引入乱序。
         let mut rows = rows;
         rows.sort_by(|a, b| a.trade_date.cmp(&b.trade_date));
+        // 周键 → 真实价格行（组内升序，同周后写覆盖，即取交易日最晚者）。
+        let mut weekly: HashMap<&str, &PriceRow> = HashMap::new();
+        for row in rows {
+            weekly.insert(row.week_start.as_str(), row);
+        }
         let legs = legs_by_instrument
             .get(instrument_id)
             .map(Vec::as_slice)
             .unwrap_or(&[]);
         let mut cursor = 0usize;
         let mut quantity = 0.0f64;
-        for row in rows {
-            while cursor < legs.len() && legs[cursor].0.as_str() <= row.trade_date.as_str() {
+        let mut carried: Option<&PriceRow> = None;
+        for &week in &weeks {
+            if let Some(&row) = weekly.get(week) {
+                carried = Some(row);
+            }
+            let Some(price) = carried else { continue };
+            let sample = match weekly.get(week) {
+                Some(row) => row.trade_date.as_str(),
+                None => week_cut[week],
+            };
+            while cursor < legs.len() && legs[cursor].0.as_str() <= sample {
                 quantity += legs[cursor].1;
                 cursor += 1;
             }
-            let rate = fx_rate_at_week(&fx, &row.currency_code, &native, &row.week_start);
-            let Some(rate) = rate else { continue };
+            let Some(&rate) = fx_carried
+                .get(price.currency_code.as_str())
+                .and_then(|rates| rates.get(week))
+            else {
+                continue;
+            };
             // 金额分 = 数量 × 单价（万分之一元）÷ 换算因子，再折算到本位币（ADR-0038）。
-            let value = (quantity * row.price_cents as f64 / PRICE_UNITS_PER_FEN).round() as i64;
-            let entry = by_week.entry(row.week_start.clone()).or_insert((0, false));
+            let value = (quantity * price.price_cents as f64 / PRICE_UNITS_PER_FEN).round() as i64;
+            let entry = by_week.entry(week.to_string()).or_insert((0, false));
             entry.0 += (value as f64 * rate).round() as i64;
             entry.1 = true;
         }

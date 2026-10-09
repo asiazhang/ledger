@@ -173,18 +173,19 @@ fn portfolio_trend_converts_hkd_via_same_week_fx_with_reverse_fallback() {
         .iter()
         .map(|p| (p.date.clone(), p.market_value_cents))
         .collect();
-    // w1: 2×10000×0.8=16000；w2: 2×20000×(1/5.0)=8000；w3 缺同期汇率 → 该周被跳过（不伪造数据）。
+    // w1: 2×10000×0.8=16000；w2: 2×20000×(1/5.0)=8000；w3 缺同期汇率 → 沿用 w2 的 1/5.0：2×30000×0.2=12000。
     assert_eq!(
         values,
         [
             ("2026-03-02".to_string(), 16000),
             ("2026-03-09".to_string(), 8000),
+            ("2026-03-16".to_string(), 12000),
         ]
     );
 }
 
 #[test]
-fn portfolio_trend_skips_weeks_missing_price_or_fx_but_keeps_other_contributors() {
+fn portfolio_trend_carries_previous_week_price_and_fx_on_gaps() {
     let conn = open();
     seed_account(&conn, "acc-mix", "混合户", "investment", "CNY", 0);
     seed_instrument(&conn, "inst-a", "600000", "浦发银行", "CNY", "unknown");
@@ -218,7 +219,7 @@ fn portfolio_trend_skips_weeks_missing_price_or_fx_but_keeps_other_contributors(
     seed_price_history(&conn, "ph-a1", "inst-a", "2026-03-02", 100_000, "CNY");
     seed_price_history(&conn, "ph-a2", "inst-a", "2026-03-09", 100_000, "CNY");
     seed_price_history(&conn, "ph-a3", "inst-a", "2026-03-16", 100_000, "CNY");
-    // inst-b（HKD）w2 整周无价（停牌语义）；w3 有价但缺同期汇率。
+    // inst-b（HKD）w2 整周无价（停牌语义，沿用 w1 价）；w3 有价但缺同期汇率（沿用 w1 的 0.9）。
     seed_price_history(&conn, "ph-b1", "inst-b", "2026-03-02", 1_000_000, "HKD");
     seed_price_history(&conn, "ph-b3", "inst-b", "2026-03-16", 1_000_000, "HKD");
     // 仅 w1 有 HKD->CNY=0.9。
@@ -230,13 +231,13 @@ fn portfolio_trend_skips_weeks_missing_price_or_fx_but_keeps_other_contributors(
         .iter()
         .map(|p| (p.date.clone(), p.market_value_cents))
         .collect();
-    // w1: 1000 + 10000×0.9=10000；w2: inst-b 缺价被跳过，仅 inst-a 1000；w3: inst-b 缺汇率被跳过，仅 inst-a 1000。
+    // w1: 1000 + 10000×0.9=10000；w2: inst-b 沿用 w1 价与汇率 → 1000 + 9000=10000；w3: inst-b 沿用 0.9 → 1000 + 9000=10000。
     assert_eq!(
         values,
         [
             ("2026-03-02".to_string(), 10000),
-            ("2026-03-09".to_string(), 1000),
-            ("2026-03-16".to_string(), 1000),
+            ("2026-03-09".to_string(), 10000),
+            ("2026-03-16".to_string(), 10000),
         ]
     );
 }
@@ -580,24 +581,44 @@ fn portfolio_trend_constant_fund_ignores_flat_history_rows() {
 // 汇率按夹具已知值解析（含反向量倒数兜底与缺失跳过）。
 // ---------------------------------------------------------------------------
 
-/// 优化前取数形态的参照实现：逐价格行 as-of 取数量 → 分位取整 → 按周键折算。
+/// 参照实现（与生产路径同口径的逐点形态）：周集合内逐标的沿用上一有价周的价格、币种沿用上一有汇率周的汇率，逐点 as-of 取数量 → 分位取整 → 按周键折算。
 /// 价格行四元组 =（标的，采样交易日=周键，价格，币种）。
 fn reference_trend_points(
     conn: &Connection,
     price_rows: &[(&str, &str, i64, &str)],
     rate: impl Fn(&str, &str) -> Option<f64>,
 ) -> Vec<(String, i64)> {
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, BTreeSet};
+    // 周集合 = 价格行周键并集（升序）；标的在无价周沿用最近有价周的价格，
+    // 币种汇率在无汇率周沿用最近有汇率周（区间内最后一个可得值）。
+    let weeks: BTreeSet<&str> = price_rows.iter().map(|row| row.1).collect();
+    let instruments: BTreeSet<&str> = price_rows.iter().map(|row| row.0).collect();
     let mut by_week: BTreeMap<String, (i64, bool)> = BTreeMap::new();
-    for (instrument_id, week, price, currency) in price_rows {
-        let Some(rate) = rate(currency, week) else {
-            continue;
-        };
-        let quantity = holdings::holdings_as_of(conn, Some(instrument_id), week).unwrap();
-        let value = (quantity * *price as f64 / prices::PRICE_UNITS_PER_FEN).round() as i64;
-        let entry = by_week.entry(week.to_string()).or_insert((0, false));
-        entry.0 += (value as f64 * rate).round() as i64;
-        entry.1 = true;
+    for instrument_id in instruments {
+        let mut carried: Option<(i64, &str)> = None;
+        for &week in &weeks {
+            if let Some(&(_, _, price, currency)) = price_rows
+                .iter()
+                .find(|row| row.0 == instrument_id && row.1 == week)
+            {
+                carried = Some((price, currency));
+            }
+            let Some((price, currency)) = carried else {
+                continue;
+            };
+            let Some(rate) = weeks
+                .range(..=week)
+                .filter_map(|w| rate(currency, w))
+                .last()
+            else {
+                continue;
+            };
+            let quantity = holdings::holdings_as_of(conn, Some(instrument_id), week).unwrap();
+            let value = (quantity * price as f64 / prices::PRICE_UNITS_PER_FEN).round() as i64;
+            let entry = by_week.entry(week.to_string()).or_insert((0, false));
+            entry.0 += (value as f64 * rate).round() as i64;
+            entry.1 = true;
+        }
     }
     by_week
         .into_iter()
@@ -790,9 +811,10 @@ fn portfolio_trend_incremental_quantity_matches_per_row_as_of_reference() {
         [
             ("2026-02-09".to_string(), 29_000), // 10000 + 6000 + 0 + 10000 + 3000
             ("2026-02-16".to_string(), 53_000), // 34000 + 0 + 6000 + 10000 + 3000
-            ("2026-02-23".to_string(), 59_000), // 39000 + 20000
-            ("2026-03-02".to_string(), 18_000), // 20000 HKD 分 × 0.9
-            ("2026-03-09".to_string(), 4_000),  // 20000 HKD 分 × (1/5.0)
+            ("2026-02-23".to_string(), 68_000), // 39000 + 6000（in 沿用 02-16 价）+ 20000 + 3000（gone 沿用）
+            ("2026-03-02".to_string(), 86_000), // 39000（cny 沿用 02-23 价）+ 6000 + 20000 + 3000 + 18000（hkd 20000 HKD 分 × 0.9）
+            ("2026-03-09".to_string(), 72_000), // 39000 + 6000 + 20000 + 3000 + 4000（hkd 20000 × (1/5.0)）
+            ("2026-03-16".to_string(), 72_000), // hkd 无行，沿用 03-09 的 1/5.0 → 4000，其余同 03-09
         ],
     );
 
@@ -827,9 +849,10 @@ fn portfolio_trend_incremental_quantity_matches_per_row_as_of_reference() {
         [
             ("2026-02-09".to_string(), 26_000),
             ("2026-02-16".to_string(), 46_000), // cny 15 股 30000 + 0 + 6000 + 10000
-            ("2026-02-23".to_string(), 53_000), // cny 11 股 33000 + 20000
-            ("2026-03-02".to_string(), 18_000),
-            ("2026-03-09".to_string(), 4_000),
+            ("2026-02-23".to_string(), 59_000), // cny 11 股 33000 + in 沿用 02-16 价 6000 + spl 20000
+            ("2026-03-02".to_string(), 77_000), // cny 沿用 33000 + in 沿用 6000 + spl 20000 + hkd 18000
+            ("2026-03-09".to_string(), 63_000), // 33000 + 6000 + 20000 + hkd 4000（1/5.0）
+            ("2026-03-16".to_string(), 63_000), // hkd 无行，沿用 03-09 的 1/5.0 → 4000，其余同 03-09
         ],
     );
 }
