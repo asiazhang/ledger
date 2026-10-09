@@ -199,7 +199,7 @@ pub fn update_savings_goal(
             .ok_or_else(|| {
                 AppError::codedp_not_found(
                     "savings-goal.not-found",
-                    format!("储蓄目标不存在: {id}"),
+                    format!("攒钱目标不存在: {id}"),
                     &[id],
                 )
             })?;
@@ -272,7 +272,7 @@ fn write_update(
     if exists.is_none() {
         return Err(AppError::codedp_not_found(
             "savings-goal.not-found",
-            format!("储蓄目标不存在: {id}"),
+            format!("攒钱目标不存在: {id}"),
             &[id],
         ));
     }
@@ -353,7 +353,7 @@ fn write_status(conn: &Connection, id: &str, status: SavingsGoalStatus) -> Resul
     if exists.is_none() {
         return Err(AppError::codedp_not_found(
             "savings-goal.not-found",
-            format!("储蓄目标不存在: {id}"),
+            format!("攒钱目标不存在: {id}"),
             &[id],
         ));
     }
@@ -423,7 +423,7 @@ fn bound_account_id(conn: &Connection, id: &str) -> Result<String> {
     .ok_or_else(|| {
         AppError::codedp_not_found(
             "savings-goal.not-found",
-            format!("储蓄目标不存在: {id}"),
+            format!("攒钱目标不存在: {id}"),
             &[id],
         )
     })
@@ -456,7 +456,7 @@ pub fn ensure_account_not_goal_bound(conn: &Connection, account_id: &str) -> Res
     if bound.is_some() {
         return Err(AppError::coded(
             "savings-goal.account-in-use",
-            "该账户是储蓄目标专属账户，请先删除对应储蓄目标",
+            "该账户是攒钱目标专属账户，请先删除对应的攒钱目标",
         ));
     }
     Ok(())

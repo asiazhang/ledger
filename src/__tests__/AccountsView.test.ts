@@ -611,7 +611,7 @@ describe("AccountsView 目标账户名随动只读（issue #1752 / ADR-0133 决�
   });
 });
 
-describe("AccountsView 储蓄目标分组与类型标签（issue #1755 / ADR-0133 决策 2）", () => {
+describe("AccountsView 攒钱分组与类型标签（issue #1755 / ADR-0133 决策 2）", () => {
   /** 视图顶层调用 useDialog，与 App.vue 同构需 NDialogProvider 包裹。 */
   function mountView() {
     return mount(NDialogProvider, {
@@ -640,7 +640,7 @@ describe("AccountsView 储蓄目标分组与类型标签（issue #1755 / ADR-013
 
   const CNY = { code: "CNY", name: "人民币", symbol: "¥", decimal_places: 2 };
 
-  it("在用目标账户归入「储蓄目标」分组：类型标签覆写、余额原值展示（读数不受分组影响）", async () => {
+  it("在用目标账户归入「攒钱」分组：类型标签覆写、余额原值展示（读数不受分组影响）", async () => {
     goalProgress = [makeGoalPair({ id: "acc-1" }).progress];
     // 绑定快照落位后挂载视图：beforeEach 的 store 快照是空集（goalProgress 在其后赋值）
     await useSavingsGoalsStore()
@@ -648,11 +648,11 @@ describe("AccountsView 储蓄目标分组与类型标签（issue #1755 / ADR-013
       .catch(() => {});
     const wrapper = mountView();
     await flushPromises();
-    // 接线敏感性（ADR-0087）：两张卡按标题区分——目标账户行住在「储蓄目标」卡内、
+    // 接线敏感性（ADR-0087）：两张卡按标题区分——目标账户行住在「攒钱」卡内、
     // 恰一行；普通「账户列表」卡不含它。仅删分组拆分（改回单表）即红，
     // 不与标签覆写共用同一调用。
     const cards = wrapper.findAllComponents(NCard);
-    const goalCard = cards.find((c) => c.props("title") === "储蓄目标");
+    const goalCard = cards.find((c) => c.props("title") === "攒钱");
     expect(goalCard, "分组卡按标题可定位（删分组拆分即找不到）").toBeDefined();
     expect(goalCard!.findAll("tbody tr")).toHaveLength(1);
     const listCard = cards.find((c) => c.props("title") === "账户列表");
@@ -662,8 +662,8 @@ describe("AccountsView 储蓄目标分组与类型标签（issue #1755 / ADR-013
     // 分组卡列于普通列表之前：第一条数据行 = 目标账户行
     expect(rows).toHaveLength(2);
     expect(rows[0].text()).toContain("现金");
-    // 类型标签覆写为「储蓄目标」，不显示 other 类型的「其他」（特殊性不靠类型值表达）
-    expect(rows[0].text()).toContain("储蓄目标");
+    // 类型标签覆写为「攒钱」，不显示 other 类型的「其他」（特殊性不靠类型值表达）
+    expect(rows[0].text()).toContain("攒钱");
     expect(rows[0].text()).not.toContain("其他");
     // 余额原值展示：同一 balances 快照拆分、不做任何加减，读数不受分组影响
     expect(rows[0].text()).toContain(formatAmount(1000, CNY));
@@ -690,8 +690,8 @@ describe("AccountsView 储蓄目标分组与类型标签（issue #1755 / ADR-013
       .catch(() => {});
     const wrapper = mountView();
     await flushPromises();
-    // 无绑定：分组标题（储蓄目标）不出现——目标组空集不渲染空卡
-    expect(wrapper.text()).not.toContain("储蓄目标");
+    // 无绑定：分组标题（攒钱）不出现——目标组空集不渲染空卡
+    expect(wrapper.text()).not.toContain("攒钱");
     // 普通 other 账户不被误伤：仍在原列表原位、类型标签显示「其他」
     const rows = bodyRows(wrapper);
     expect(rows).toHaveLength(3);
@@ -699,7 +699,7 @@ describe("AccountsView 储蓄目标分组与类型标签（issue #1755 / ADR-013
     expect(rows[2].text()).toContain("其他");
   });
 
-  it("编辑弹窗：目标账户的只读类型显示「储蓄目标」", async () => {
+  it("编辑弹窗：目标账户的只读类型显示「攒钱」", async () => {
     goalProgress = [makeGoalPair({ id: "acc-1" }).progress];
     // 绑定快照落位后挂载视图（同上：beforeEach 快照为空集）
     await useSavingsGoalsStore()
@@ -708,10 +708,10 @@ describe("AccountsView 储蓄目标分组与类型标签（issue #1755 / ADR-013
     const wrapper = mountView();
     await flushPromises();
     await openEditOnRow(wrapper, 0);
-    // 只读类型输入框（NForm 内第 2 个 NInput）：值覆写为「储蓄目标」（NInput 的
+    // 只读类型输入框（NForm 内第 2 个 NInput）：值覆写为「攒钱」（NInput 的
     // value 落在 input 元素上，不进 text()，按 props 断言）
     expect(wrapper.findAllComponents(NForm)[1].findAllComponents(NInput)[1].props("value")).toBe(
-      "储蓄目标",
+      "攒钱",
     );
   });
 });

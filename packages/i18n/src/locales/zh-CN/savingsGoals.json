@@ -1,11 +1,11 @@
 {
   "accounts": {
-    "groupTitle": "储蓄目标",
-    "typeLabel": "储蓄目标"
+    "groupTitle": "攒钱",
+    "typeLabel": "攒钱"
   },
-  "listTitle": "储蓄目标",
+  "listTitle": "攒钱",
   "newButton": "新建目标",
-  "emptyGuide": "还没有储蓄目标——新建一个，账本会为它自动开一个专属账户",
+  "emptyGuide": "还没有攒钱目标——新建一个，账本会为它自动开一个专属账户",
   "columns": {
     "name": "名称",
     "target": "目标金额",
@@ -29,8 +29,8 @@
     "achieved": "已达成"
   },
   "form": {
-    "title": "新建储蓄目标",
-    "titleEdit": "编辑储蓄目标",
+    "title": "新建攒钱目标",
+    "titleEdit": "编辑攒钱目标",
     "cancel": "取消",
     "save": "保存",
     "label": {
@@ -57,7 +57,7 @@
     "archived": "目标已归档，历史与流水保留可查",
     "unarchived": "目标已恢复为进行中",
     "deleted": "目标已删除，专属账户一并收起，历史交易仍可查",
-    "deleteConfirmTitle": "删除储蓄目标",
+    "deleteConfirmTitle": "删除攒钱目标",
     "deleteConfirmContent": "删除后目标与专属账户一并收起，历史交易保留可查；账户仍有余额时将被拒绝。确认删除「{name}」？"
   },
   "projection": {
