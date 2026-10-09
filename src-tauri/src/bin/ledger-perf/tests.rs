@@ -1259,13 +1259,15 @@ fn digest_db(path: &PathBuf) -> Result<BTreeMap<String, String>, String> {
 
     const AUDIT_COLS: [&str; 2] = ["created_at", "updated_at"];
     let conn = open_connection(path).map_err(|e| e.to_string())?;
-    // 全部生成器写入面：核心交易域 7 表（#459）+ 投资域 6 表与预算/计划域 6 表
-    // （issue #460）。新增表必须进摘要清单——确定性验收「含新增表」的落点。
-    const TABLES: [&str; 19] = [
+    // 全部生成器写入面：核心交易域 7 表（#459）+ 购买项子表（issue #1885 语料，
+    // #1915 补登记进摘要）+ 投资域 6 表与预算/计划域 6 表（issue #460）。
+    // 新增表必须进摘要清单——确定性验收「含新增表」的落点。
+    const TABLES: [&str; 20] = [
         "accounts",
         "categories",
         "merchants",
         "transactions",
+        "transaction_purchases",
         "exchange_rates",
         "fx_rate_history",
         "currencies",
