@@ -172,6 +172,25 @@ fn try_init_database(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::E
     }
 }
 
+// App context 装配按 cfg(test) 分流（issue #1826）：macOS dev 构建下
+// `generate_context!` 会把内嵌 Info.plist（`__EMBED_INFO_PLIST`，embed_plist
+// 机制）编进编译目标。本包因测试器具存在自身 dev-dependency（ADR-0111 决策
+// 5），lib 测试二进制同时链接本 crate 的 rlib——宏默认展开使测试二进制与
+// rlib 各带一份同名符号，链接期报 ld duplicate symbol 警告。宏的 `test`
+// 属性即为此设（tauri-codegen context.rs 注释：跳过 embed-plist 等运行期专用产物生成），
+// 但只认字面量 bool，无法在调用点按 cfg(test) 判定，故分流为两个装配函数：
+// 测试目标 `test = true` 跳过内嵌，唯一一份留在 rlib；生产与集成测试路径
+//（lib 不带 cfg(test) 编译）展开零变化。
+#[cfg(not(test))]
+fn app_context() -> tauri::Context<tauri::Wry> {
+    tauri::generate_context!()
+}
+
+#[cfg(test)]
+fn app_context() -> tauri::Context<tauri::Wry> {
+    tauri::generate_context!(test = true)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // 两扇进程级门（issue #570 / #601）：实例在装配期创建，同一份分别供
@@ -293,7 +312,7 @@ pub fn run() {
             ipc_boot_gate,
             tauri_commands_handler(),
         ))
-        .build(tauri::generate_context!())
+        .build(app_context())
         .expect("error while building tauri application")
         .run(|app, event| {
             // 应用退出兜底（issue #125/#386）：退出前若脏且当天尚未自动备份过则补一次（日界门约束）。
