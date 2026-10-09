@@ -53,6 +53,9 @@
   "devDependencies": {
     "@ledger/test-support": "workspace:*",
     "@pinia/testing": "^2.0.1",
+    "@stryker-mutator/core": "10.0.0",
+    "@stryker-mutator/typescript-checker": "10.0.0",
+    "@stryker-mutator/vitest-runner": "10.0.0",
     "@tauri-apps/cli": "^2.11.4",
     "@types/node": "^22.20.1",
     "@vanilla-extract/vite-plugin": "^5.2.6",
