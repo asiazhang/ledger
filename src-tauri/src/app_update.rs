@@ -118,10 +118,7 @@ pub struct UpdateAvailablePayload {
 /// 清单畸形码化错误构造单点。
 #[cfg(desktop)]
 fn manifest_invalid_error() -> AppError {
-    AppError::coded(
-        "update.manifest-invalid",
-        "更新源返回了无法解析的更新清单",
-    )
+    AppError::coded("update.manifest-invalid", "更新源返回了无法解析的更新清单")
 }
 
 /// 更新清单异常 → 码化错误映射单点（票面两条异常路径：不可达、畸形清单）：
