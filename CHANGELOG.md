@@ -21,6 +21,7 @@
 - **数据文件 / 多端同步**：检查点快照与备份产物双文件成对（ADR-0139 决策 5/6，拆库本体 expand 步）——检查点快照改为「业务件 + 同步元数据件」同刻成对产出（单连接互斥锁内逐库 `VACUUM INTO`，双源回退：`sync.db` 四表齐备逐 attached 快照，否则回退主库；本阶段四张同步表仍在主库，行为与单文件形态等价）；通道 manifest 检查点指针扩展为双指针（新增可选 `sync_file` 字段指向同步件，旧版本端忽略新字段、通道互操作不破坏，旧形态单文件快照照常可引导）；应用内备份 zip 成对携带 `sync.db`（元数据新增可选 `paired` 标记），恢复按形态分支——成对备份把同步身份（设备标识、位点、日志）随库一致回滚，恢复后无缝续同步，旧形态备份行为不变（[#1870]，ADR-0139）。
 - **数据文件 / 多端同步**：同步元数据拆库切换核（ADR-0139 决策 1/4）——V036 迁移把四张同步表闭集（设备标识 / 操作日志 / 挂起队列 / 流位点）整体搬入独立库 `sync.db`，主库此后只存账本数据；整批迁移在单一事务内经 master journal 跨两库集合级原子，中断即整体回滚、重启重跑收敛（升级前后数据分毫不差，附失败注入两库同滚实测）；schema 漂移守卫升级为双库校验（main / sync 各侧方向性 diff，诊断带侧别前缀）；数据目录搬迁时 `sync.db` 成对随迁（sync 先落位、main 后落位 = 提交点）；旧备份恢复后由原位重引导建连完成迁移，删除旧备份恢复路径的就地自动迁移（临时库挂载会把四表搬进随连接消亡的库）；本地写与重放事务的跨库原子性以文件库模板实测钉住（业务行与 op 日志、位点同生共死）（[#1871]，ADR-0139）。
 - **数据文件 / 多端同步**：同步元数据拆库 contract 步——删除 checkpoint / 备份的「attached 无表回退读主库」双源回退分支（票 04 expand 期为单库布局落双文件形态而设的判据与回退源选择；票 05 迁移后 attached 恒有表，回退路径成为死代码）。同步件快照恒取 attached 侧、引导恒消费同步件、备份产物恒为真成对形态（`paired` 恒 true）；恢复按形态分支保留（旧形态备份兼容不变），正常路径行为无变化（[#1872]，ADR-0139）。
+- **发布**：发布即分发——发布流水线为桌面三平台产出更新器可消费的全部物料：macOS 补齐更新工件（.app.tar.gz）构建与公证接线（与 DMG 公证同标准，DMG 仍只作首次安装）；Windows NSIS 安装器 / Linux AppImage 即更新工件本体；每个更新工件生成 minisign 式更新签名（.sig，trusted comment 绑定版本），tag 构建缺签名密钥直接失败；publish 阶段自动装配更新清单 latest.json（版本、发布说明、各平台地址与签名）随 Release 上传，deb 与 Android 不产出更新工件。更新清单形态与更新源端点数组（留镜像扩展位）为应用内自动更新（后端票 #1429）的契约依据；更新签名密钥的一次性人工操作清单住发布流水线（[#1428]，ADR-0124 决策 2/10）。
 
 ### Changed
 
@@ -450,6 +451,7 @@
 [#1345]: https://github.com/asiazhang/ledger/issues/1345
 [#1346]: https://github.com/asiazhang/ledger/issues/1346
 [#1381]: https://github.com/asiazhang/ledger/issues/1381
+[#1428]: https://github.com/asiazhang/ledger/issues/1428
 [#1450]: https://github.com/asiazhang/ledger/issues/1450
 [#1451]: https://github.com/asiazhang/ledger/issues/1451
 [#1456]: https://github.com/asiazhang/ledger/issues/1456
