@@ -324,6 +324,37 @@ jobs:
   # macOS 签名 + 公证（issue #658）：配置了 APPLE_* secrets 时自动导入证书签名，构建后
   # notarytool 公证（--wait）+ stapler 附着，并做 codesign/spctl/stapler validate 校验；
   # 未配置 secrets 时相关步骤自动跳过，产物保持未签名（干跑与 PR 构建不受影响）。
+  #
+  # 更新分发接线（issue #1428 / ADR-0124 决策 10）：publish 阶段为桌面三平台产出更
+  # 新器可消费的全部物料，发布不再以「上传安装包」为终点——
+  # - macOS：tauri.conf.json 开 bundle.createUpdaterArtifacts 后，bundler 构建时产出
+  #   更新工件 <App>.app.tar.gz（--bundles 需含 app，.app 不再被 dmg 收尾清理）；
+  #   公证标准与 DMG 一致（notarytool submit --wait + stapler 附着，更新工件内 .app
+  #   与 DMG 内 .app 同签名，共用同一次提交的 notarization 记录）。DMG 仍只作首次安装。
+  # - Windows NSIS 安装器 / Linux AppImage 即更新工件本体（updater v2 形态，无 zip/tar
+  #   包装）；deb 与 Android 不产出更新工件、不进更新清单。
+  # - 每个更新工件经 `tauri signer sign --app-version <版本>` 生成 minisign 式 .sig
+  #   （CLI 2.11.5 起 trusted comment 绑定版本）；tag 构建缺签名密钥直接失败
+  #   （与 Android keystore 同一「先配 secrets 才启用发版」的机械执行）。
+  # - publish 阶段以 scripts/generate-update-manifest.ts 装配 latest.json（平台键
+  #   darwin-aarch64 / windows-x86_64 / linux-x86_64）随 Release 上传——发布即更新源。
+  #   清单形态与更新源端点数组（镜像扩展位）的定形记录住该脚本头注，是后端票 #1429
+  #   测试夹具与插件配置的契约依据。
+  #
+  # 更新签名密钥操作清单（一次性人工操作，issue #1428 验收后、#1429 开工前执行；
+  # 私钥不进仓库、不经过任何自动化通道）：
+  #   1. 生成密钥对（minisign 式，维护者本机）：
+  #        pnpm tauri signer generate -w <离线路径>/openledger-updater.key
+  #      产出 <…>.key（私钥）与 <…>.key.pub（公钥），建议设置口令。
+  #   2. 私钥入 CI secrets（仅仓库有权限者可配置）：
+  #        TAURI_SIGNING_PRIVATE_KEY = <…>.key 的文件内容
+  #        TAURI_SIGNING_PRIVATE_KEY_PASSWORD = 生成时口令；生成时未设口令则此
+  #        secret 配为空值——CI 侧该变量必须存在（空口令键在无终端环境缺变量会走
+  #        交互提示卡死，本地复现实测 os error 6）
+  #   3. 私钥离线备份一份：私钥 + 口令 + 公钥存物理离线介质并记录 sha256（与 CI
+  #      secrets 双保险；公钥随应用发行不可逆，泄漏即需重建信任链）。
+  #   4. 公钥烧入应用配置：本体归 #1429（pubKey = <…>.key.pub 文件内容）；#1429
+  #      开工前确认前三步已完成。
   release:
     name: 发布构建（${{ matrix.label }}）
     if: "startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'"
@@ -342,9 +373,16 @@ jobs:
           - platform: macos
             label: macOS (arm64)
             os: macos-latest
-            bundles: dmg
+            # 更新工件（.app.tar.gz）需 --bundles 含 app：bundler 在 dmg 收尾时不再
+            # 清理 .app，由构建直接产出更新工件（issue #1428）。
+            bundles: dmg,app
             artifact: openledger-macos-arm64
-            paths: src-tauri/target/release/bundle/dmg/*.dmg
+            # DMG 只作首次安装；.app.tar.gz 是更新工件。.sig 由签名步骤生成，未配
+            # 密钥的干跑无 .sig——upload-artifact 只要任一路径有文件即可。
+            paths: |
+              src-tauri/target/release/bundle/dmg/*.dmg
+              src-tauri/target/release/bundle/macos/*.app.tar.gz
+              src-tauri/target/release/bundle/macos/*.app.tar.gz.sig
           - platform: linux
             label: Linux (x64)
             os: ubuntu-latest
@@ -354,12 +392,17 @@ jobs:
             paths: |
               src-tauri/target/release/bundle/deb/*.deb
               src-tauri/target/release/bundle/appimage/*.AppImage
+              # AppImage 即更新工件本体（updater v2 形态），.sig 由签名步骤生成
+              src-tauri/target/release/bundle/appimage/*.AppImage.sig
           - platform: windows
             label: Windows (x64)
             os: windows-latest
             bundles: nsis
             artifact: openledger-windows-x64
-            paths: src-tauri/target/release/bundle/nsis/*.exe
+            # NSIS 安装器即更新工件本体（updater v2 形态），.sig 由签名步骤生成
+            paths: |
+              src-tauri/target/release/bundle/nsis/*.exe
+              src-tauri/target/release/bundle/nsis/*.exe.sig
           # Android：bundles 不适用，构建走 tauri android build 专用步骤；产物经
           # 归集步骤统一命名为 OpenLedger_<版本>_arm64.apk 后交给 upload-artifact。
           - platform: android
@@ -368,6 +411,11 @@ jobs:
             artifact: openledger-android-arm64
             paths: src-tauri/target/release/bundle/apk/*.apk
     runs-on: ${{ matrix.os }}
+    # 桌面三平台步骤统一 bash 语义（Windows runner 默认 pwsh）：更新签名等步骤的
+    # find / glob 脚本按 POSIX 写，三平台共用同一份步骤。
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v7
 
@@ -446,29 +494,37 @@ jobs:
         run: |
           rustup target add aarch64-linux-android
 
-      # versionCode 唯一口径（ADR-0074 决策 4）：major×10⁶ + minor×10³ + patch。
-      # tag 触发时从 tag 派生；workflow_dispatch 试跑无 tag，回退 tauri.conf.json 版本。
-      # 非三段式版本显式失败，不静默算出错误值。
-      - name: 派生版本与 versionCode
-        if: matrix.platform == 'android'
+      # 应用版本唯一派生：tag 触发时从 tag 去 v 前缀；workflow_dispatch 试跑无 tag，
+      # 回退 tauri.conf.json 版本。非三段式版本显式失败，不静默算出错误值。消费方：
+      # Android versionCode（ADR-0074 决策 4）、macOS 更新工件归一命名、更新签名
+      # --app-version 绑定（issue #1428）。
+      - name: 派生应用版本
         run: |
           if [ "$GITHUB_REF_TYPE" = "tag" ]; then
             VERSION="${GITHUB_REF_NAME#v}"
           else
             VERSION="$(jq -r .version src-tauri/tauri.conf.json)"
           fi
+          case "$VERSION" in *.*) ;; *) echo "✗ 版本号 $VERSION 不是三段式语义版本"; exit 1;; esac
           MAJOR=${VERSION%%.*}
           REST=${VERSION#*.}
           MINOR=${REST%%.*}
           PATCH=${REST#*.}
-          case "$REST" in *.*) ;; *) echo "✗ 版本号 $VERSION 不是三段式语义版本，无法派生 versionCode"; exit 1;; esac
-          case "$MAJOR$MINOR$PATCH" in ''|*[!0-9]*) echo "✗ 版本号 $VERSION 不是三段式语义版本，无法派生 versionCode"; exit 1;; esac
+          case "$MAJOR$MINOR$PATCH" in ''|*[!0-9]*) echo "✗ 版本号 $VERSION 不是三段式语义版本"; exit 1;; esac
+          echo "version=$VERSION source=$GITHUB_REF_TYPE"
+          echo "APP_VERSION=$VERSION" >> "$GITHUB_ENV"
+
+      # versionCode 唯一口径（ADR-0074 决策 4）：major×10⁶ + minor×10³ + patch。
+      - name: 派生 versionCode
+        if: matrix.platform == 'android'
+        run: |
+          MAJOR=${APP_VERSION%%.*}
+          REST=${APP_VERSION#*.}
+          MINOR=${REST%%.*}
+          PATCH=${REST#*.}
           VERSION_CODE=$((MAJOR * 1000000 + MINOR * 1000 + PATCH))
-          echo "versionCode=$VERSION_CODE versionName=$VERSION source=$GITHUB_REF_TYPE"
-          {
-            echo "APP_VERSION=$VERSION"
-            echo "APP_VERSION_CODE=$VERSION_CODE"
-          } >> "$GITHUB_ENV"
+          echo "versionCode=$VERSION_CODE versionName=$APP_VERSION"
+          echo "APP_VERSION_CODE=$VERSION_CODE" >> "$GITHUB_ENV"
 
       # 证书导入（issue #658 步骤 3）：base64 p12 → 临时钥匙串。密码随机生成，
       # 仅本次 runner 生命周期内使用，不入 secrets。secrets 未配置时跳过（干跑）；
@@ -498,6 +554,10 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           security list-keychain -d user -s "$KEYCHAIN_PATH"
 
+      # 构建期刻意不注入更新签名密钥（TAURI_SIGNING_PRIVATE_*）：bundler 期签名先于
+      # macOS 公证重新打包，字节必变、其 .sig 必失效；签名统一由其后「生成更新签名」
+      # 步骤盖最终字节（issue #1428）。createUpdaterArtifacts（tauri.conf.json）在此
+      # 步产出各平台更新工件。
       - name: 构建桌面产物
         if: matrix.platform != 'android'
         run: pnpm run tauri build --bundles ${{ matrix.bundles }}
@@ -555,9 +615,10 @@ jobs:
           pnpm run tauri android build --apk --target aarch64 --config "$CONFIG"
 
       # 公证 + 附着（issue #658 步骤 5）：公证输入为 DMG 本体（submit --wait 阻塞至
-      # Apple 出结果 → stapler 附着票据）。注：tauri 的 dmg 打包流程结束后会清掉
-      # bundle/macos 下的 .app（run 34210128468 实测目录为空），无 .app 可单独公证，
-      # zip 分发需另行方案（见 docs/verification/658-ci-signing-notarization.md）。
+      # Apple 出结果 → stapler 附着票据）。注：仅 --bundles dmg 时 dmg 收尾会清掉
+      # bundle/macos 下的 .app（run 34210128468 实测目录为空）；issue #1428 起
+      # --bundles dmg,app 且 createUpdaterArtifacts 开启，.app 与更新工件
+      # .app.tar.gz 保留在 bundle/macos，更新工件的公证接线见其后步骤。
       - name: 公证 DMG（notarytool + stapler）
         if: runner.os == 'macOS'
         env:
@@ -613,6 +674,46 @@ jobs:
             || { echo "✗ 未启用 hardened runtime（公证必需）"; exit 1; }
           hdiutil detach "$MNT"
 
+      # 更新工件归一命名（issue #1428）：bundler 产物 <App>.app.tar.gz 不带版本号，
+      # 统一改名 OpenLedger_<版本>_aarch64.app.tar.gz 与其余 Release 资产命名对齐；
+      # 改名先于公证重新打包与签名，签名覆盖最终文件名。
+      - name: 归一 macOS 更新工件命名
+        if: runner.os == 'macOS'
+        run: |
+          shopt -s nullglob
+          TARS=("$MACOS_BUNDLE_DIR"/*.app.tar.gz)
+          [ ${#TARS[@]} -eq 1 ] || { echo "✗ 更新工件 *.app.tar.gz 缺失或不唯一（createUpdaterArtifacts 未生效？）"; exit 1; }
+          mv "${TARS[0]}" "$MACOS_BUNDLE_DIR/OpenLedger_${APP_VERSION}_aarch64.app.tar.gz"
+          echo "更新工件：OpenLedger_${APP_VERSION}_aarch64.app.tar.gz"
+
+      # 更新工件公证（issue #1428）：与 DMG 同标准——stapler 附着票据 + codesign 校验。
+      # 工件内 .app 与 DMG 内 .app 同签名，共用 DMG 提交产生的 notarization 记录，
+      # stapler 直接补票；附着后按 bundler 布局重新打包（tar 根 = <App>.app/，gzip），
+      # 更新器解包替换的即带票据的 .app。顺序约束：必须在更新签名步骤之前（签名盖
+      # 重新打包后的最终字节）。
+      - name: 公证更新工件（.app.tar.gz）
+        if: runner.os == 'macOS'
+        env:
+          APPLE_CERT_P12: ${{ secrets.APPLE_CERT_P12 }}
+        run: |
+          if [ -z "$APPLE_CERT_P12" ]; then
+            echo "⚠️ 未配置签名证书，跳过更新工件公证"
+            exit 0
+          fi
+          shopt -s nullglob
+          TARS=("$MACOS_BUNDLE_DIR"/*.app.tar.gz)
+          [ ${#TARS[@]} -eq 1 ] || { echo "✗ 更新工件 *.app.tar.gz 缺失或不唯一"; exit 1; }
+          TAR_GZ="${TARS[0]}"
+          STAGE="$RUNNER_TEMP/updater-notarize"
+          rm -rf "$STAGE" && mkdir -p "$STAGE"
+          tar -xzf "$TAR_GZ" -C "$STAGE"
+          APP_IN_TAR=$(find "$STAGE" -maxdepth 1 -name '*.app' | head -n 1)
+          [ -n "$APP_IN_TAR" ] || { echo "✗ 更新工件内未找到 .app"; exit 1; }
+          xcrun stapler staple "$APP_IN_TAR"
+          xcrun stapler validate "$APP_IN_TAR"
+          codesign --verify --strict --verbose=2 "$APP_IN_TAR"
+          tar -czf "$TAR_GZ" -C "$STAGE" "$(basename "$APP_IN_TAR")"
+
       - name: 清理签名钥匙串
         if: always() && runner.os == 'macOS'
         run: |
@@ -620,6 +721,44 @@ jobs:
           [ -f "$KEYCHAIN_PATH" ] && security delete-keychain "$KEYCHAIN_PATH" || true
           # 恢复 login 钥匙串为默认，避免影响后续需要钥匙串的步骤
           security list-keychain -d user -s login.keychain-db || true
+
+      # 更新签名（issue #1428 / ADR-0124 决策 3/10）：对三平台更新工件事后统一签名
+      # ——不在构建期签：bundler 期签名先于 macOS 公证重新打包，字节必变、其 .sig 必
+      # 失效；统一走 `tauri signer sign --app-version` 一条路径（CLI 2.11.5 起
+      # trusted comment 绑定版本，配合插件 requireSignedVersion 可拒降级清单）。签名
+      # 私钥与平台代码签名正交（minisign 式），操作清单见本 job 头注。secrets 未配置
+      # 时干跑跳过（产物无 .sig）；tag 构建缺 secrets 直接失败。跳过判断在脚本内而
+      # 非 step if：secrets 不升 job 级 env（见 job env 注释）。
+      - name: 生成更新签名（.sig）
+        if: matrix.platform != 'android'
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          MATRIX_PLATFORM: ${{ matrix.platform }}
+        run: |
+          if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+              echo "✗ tag 发布必须带更新签名：缺少 TAURI_SIGNING_PRIVATE_KEY（先生成密钥并配齐 secrets，操作清单见本 job 头注）"
+              exit 1
+            fi
+            echo "⚠️ 未配置 TAURI_SIGNING_PRIVATE_KEY，跳过更新签名（产物无 .sig，仅限干跑）"
+            exit 0
+          fi
+          # 空口令键（生成时未设口令）在无终端环境必须显式给空口令：缺变量时签名
+          # CLI 走交互提示，headless runner 上直接报 os error 6（本地干跑实测）。
+          export TAURI_SIGNING_PRIVATE_KEY_PASSWORD="${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-}"
+          shopt -s nullglob
+          case "$MATRIX_PLATFORM" in
+            macos)   ARTIFACTS=("$MACOS_BUNDLE_DIR"/*.app.tar.gz) ;;
+            linux)   ARTIFACTS=(src-tauri/target/release/bundle/appimage/*.AppImage) ;;
+            windows) ARTIFACTS=(src-tauri/target/release/bundle/nsis/*.exe) ;;
+            *) echo "✗ 平台 $MATRIX_PLATFORM 无更新工件定义"; exit 1 ;;
+          esac
+          [ ${#ARTIFACTS[@]} -eq 1 ] || { echo "✗ $MATRIX_PLATFORM 更新工件缺失或不唯一：${ARTIFACTS[*]}"; exit 1; }
+          ARTIFACT="${ARTIFACTS[0]}"
+          pnpm run tauri signer sign --app-version "$APP_VERSION" "$ARTIFACT"
+          [ -f "$ARTIFACT.sig" ] || { echo "✗ 签名未生成：$ARTIFACT.sig"; exit 1; }
+          echo "✓ 已签名：$ARTIFACT.sig"
 
       # 归一命名（OpenLedger_<版本>_arm64.apk）后交 upload-artifact，与桌面
       # 产物一同汇入 publish 的单一 Release。未配置签名 secrets 的干跑产物未签名，
@@ -664,7 +803,8 @@ jobs:
           path: ${{ matrix.paths }}
           if-no-files-found: error
 
-  # 发布收尾：仅 tag 触发；下载全平台产物并创建唯一的 GitHub Release。
+  # 发布收尾：仅 tag 触发；下载全平台产物、装配更新清单 latest.json（issue #1428，
+  # 形态契约住 scripts/generate-update-manifest.ts 头注）并创建唯一的 GitHub Release。
   publish:
     name: 发布 GitHub Release
     if: startsWith(github.ref, 'refs/tags/v')
@@ -678,6 +818,11 @@ jobs:
         with:
           merge-multiple: true
           path: release
+
+      # 守门脚本运行时 = Bun（ADR-0083）；版本与本地门槛同一固定值，升级走显式 bump
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.0
 
       - name: 提取 CHANGELOG 条目作为 Release 说明
         id: changelog
@@ -695,6 +840,23 @@ jobs:
           fi
           printf '%s\n' "$BODY" > /tmp/release_body.md
           echo "body_file=/tmp/release_body.md" >> "$GITHUB_OUTPUT"
+
+      # 更新清单（issue #1428 / ADR-0124 决策 2/10）：版本号、发布说明（承载兼容性
+      # 警告）、各平台更新工件下载地址与签名装配成 latest.json，随下方 Release 一并
+      # 上传——发布即更新源，零手工步骤。清单缺失/缺签名由生成器直接失败。
+      - name: 生成更新清单（latest.json）
+        env:
+          TAG: ${{ github.ref_name }}
+          NOTES_FILE: ${{ steps.changelog.outputs.body_file }}
+        run: |
+          VER="${TAG#v}"
+          bun scripts/generate-update-manifest.ts \
+            --dir release \
+            --version "$VER" \
+            --tag "$TAG" \
+            --notes-file "$NOTES_FILE" \
+            --out release/latest.json
+          cat release/latest.json
 
       - uses: softprops/action-gh-release@v3
         with:
