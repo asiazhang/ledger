@@ -47,7 +47,7 @@ export function ledgerRowToModalRow(row: InvestmentTransactionRow): TransactionM
     purchases: [],
     convert: null,
     // 来源订单号随投影行透传（V035 / #1862）：券商回单的 buy/sell 同样有订单归属，
-    // 订单徽章与订单区经本适配对弹窗族生效。
+    // 订单区经本适配对弹窗族生效（#1928 撤列表徽章后详情订单区是唯一呈现出口）。
     source_order_no: row.source_order_no,
   };
 }

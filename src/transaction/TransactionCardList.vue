@@ -14,7 +14,6 @@ import {
   displayAmountText,
   renderAccountCell,
   renderPurchaseLine,
-  ORDER_BADGE_STYLE,
 } from "@/transaction/transaction-columns";
 import {
   TRANSACTION_CARD_LIST_CLASS,
@@ -141,13 +140,7 @@ function onCardClick(row: Transaction): void {
       <div v-else-if="row.source" class="transaction-card-row" @click.stop>
         <SourceLink :source="row.source" />
       </div>
-      <!-- 订单徽章行（issue #1862 / ADR-0138 决策 9）：来源订单号列有值才渲染——
-           行尾静态徽章与桌面表格同源（ORDER_BADGE_STYLE 单点），不可点击、无过滤 -->
-      <div v-if="row.source_order_no" class="transaction-card-row" @click.stop>
-        <span :style="ORDER_BADGE_STYLE">{{
-          t("transactions.order.badge", { no: row.source_order_no })
-        }}</span>
-      </div>
+      <!-- 订单号不在卡片呈现（#1928 / ADR-0138 修订注记：撤行尾徽章，出口在详情订单区） -->
       <!-- 购买项块（issue #1884 / ADR-0138 决策 15）：卡内逐行列出购买项（商品名 + 共 N 件，
            列表侧渲染单点全文形态）；一卡一笔交易不变、金额仍只出现一次。行文本无交互，
            点击冒泡归整卡激活（详情是长商品名的全文出口）；无购买项不占行（零变化） -->

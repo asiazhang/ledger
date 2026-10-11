@@ -408,7 +408,7 @@ pub struct InvestmentTransactionRow {
     /// 详情金额展示读它（与主列表金额列同口径单点）；列表呈现不读。
     pub amount_native_cents: i64,
     /// 来源订单号（V035 / #1862，弹窗族消费列）：投资行（如券商回单 buy/sell）
-    /// 可携带的外部订单标识，经弹窗行适配供订单徽章与订单区消费；列表呈现不读。
+    /// 可携带的外部订单标识，经弹窗行适配供订单区消费（#1928 撤列表徽章）；列表呈现不读。
     pub source_order_no: Option<String>,
 }
 

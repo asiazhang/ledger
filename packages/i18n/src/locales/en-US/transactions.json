@@ -98,7 +98,6 @@
   },
   "order": {
     "no": "Order No.",
-    "badge": "Order {no}",
     "section": "Order",
     "rowCount": "{n} rows",
     "total": "Total",
