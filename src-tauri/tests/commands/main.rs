@@ -18,6 +18,7 @@
     )
 )]
 
+mod app_update;
 mod books;
 mod boot;
 mod instrument_sync;

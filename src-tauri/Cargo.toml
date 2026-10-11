@@ -172,6 +172,13 @@ ledger-market-sync = { path = "crates/market-sync" }
 # 由 cargo 依赖图编译期拒绝（dev-dependency 环只覆盖测试目标）。根包
 # `pub use ledger_sync_engine as sync_engine` 再导出保持原调用点路径。
 ledger-sync-engine = { path = "crates/sync-engine" }
+# 语义版本解析（issue #1429 / ADR-0124 决策 4）：更新检查三态（更新/相同/更旧）
+# 的版本比较与更新清单 version 字段同一 semver 语义（tauri-plugin-updater 内部
+# 亦用 semver crate 解析），壳层分类单点直呼。
+semver = "1.0.28"
+# URL 类型（issue #1429）：更新源端点注入接缝的参数类型与 tauri-plugin-updater
+# 的 UpdaterBuilder::endpoints 同型（url::Url）。
+url = "2.5.8"
 
 # 主口令本机缓存（issue #574 / ADR-0075 决策 3）：macOS 系统钥匙串 + Touch ID 生物认证门。
 # 仅 macOS 目标编译（security-framework 自带 #![cfg(target_vendor = "apple")]
@@ -204,6 +211,24 @@ objc2-foundation = { version = "0.3", default-features = false, features = [
 # target 三元组条件（Cargo 不解析构建脚本注入的 desktop/mobile 自定义 cfg）。
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-window-state = "2"
+# 应用更新插件（issue #1429 / ADR-0124 决策 1/7）：updater 提供更新检查（官方
+# Static 清单形态 + minisign 验签），process 提供安装确认后的 relaunch；两 crate
+# 均桌面专属（updater 上游仅桌面编译），与窗口状态插件同段同门禁——依赖声明、
+# lib.rs 注册处、capabilities（desktop-updater）三处同步按目标平台门禁。
+# updater 刻意 default-features = false：default 含 system-proxy（reqwest 的
+# macOS/Windows 系统代理集成），feature 统一把**整个二进制**的 reqwest 编译面
+# 翻成「读系统代理」——本机实证：hyper-util 的 macOS 实现只读代理地址不读例外
+# 表，行情域 fx 同步（reqwest 直连语义，ADR-0125 决策 5）对 127.0.0.1 的请求被
+# 劫持进本机代理，既有测试 fx_sync_classifies_unreachable_source 当场变红。数据
+# 面 HTTP 形态归 market-sync 收口，不由别的插件经传递 feature 暗改；更新检查的
+# 可达性按 ADR-0124 决策 2 走端点数组扩展位，环境变量代理（HTTP_PROXY 等）reqwest
+# 默认仍生效。保留 rustls-tls（GitHub 端点 HTTPS）与 zip（macOS .app.tar.gz 解包
+# 即在此 feature 内，命名有误导）。
+tauri-plugin-updater = { version = "2.13.3", default-features = false, features = [
+  "rustls-tls",
+  "zip",
+] }
+tauri-plugin-process = "2.4.0"
 
 [features]
 # 测试器具可见性（ADR-0111 决策 5 / issue #1132）：`test_utils` 生产不编译，

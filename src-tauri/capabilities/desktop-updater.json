@@ -1,0 +1,17 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "desktop-updater",
+  "description": "应用更新前端调用面（issue #1429 / ADR-0124）：updater 插件的检查/下载/安装命令与 process 插件的 relaunch（安装确认后重启，安装路径票 #1430/#1431 消费）。仅桌面三平台参与——updater 上游仅桌面编译，deb 与 Android 无更新工件（更新入口为发布页引导），不持此权限。",
+  "windows": [
+    "main"
+  ],
+  "platforms": [
+    "macOS",
+    "windows",
+    "linux"
+  ],
+  "permissions": [
+    "updater:default",
+    "process:allow-restart"
+  ]
+}

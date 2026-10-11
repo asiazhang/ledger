@@ -4,6 +4,7 @@
 // 等金额展示接缝已抽为独立包 @ledger/money（issue #1153），不从本包转出。
 
 export * from "./accounts";
+export * from "./app-update";
 export * from "./backup";
 export * from "./books";
 export * from "./boot";

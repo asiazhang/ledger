@@ -139,6 +139,7 @@ pub fn signals_for(op: WriteOp, evidence: WriteEvidence) -> &'static [Signal] {
         WriteOp::SetAutoBackupEnabled
         | WriteOp::SetAutoBackupDir
         | WriteOp::SetAutoExecutionEnabled
+        | WriteOp::SetAutoUpdateEnabled
         | WriteOp::SubmitDataLocationChange
         | WriteOp::RestoreDefaultDataLocation
         | WriteOp::SetLogLevel

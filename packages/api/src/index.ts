@@ -117,6 +117,7 @@ import type {
   UpdateSubscriptionInput,
   LogLevelState,
   BaseCurrencyState,
+  UpdateCheckOutcome,
 } from "@ledger/types";
 
 export { busyVisible } from "./globalBusy";
@@ -417,6 +418,13 @@ export const api = {
   setAutoExecutionEnabled: (enabled: boolean) =>
     invoke<void>("set_auto_execution_enabled", { enabled }),
 
+  // 应用更新——检查路径（issue #1429 / ADR-0124 决策 4/8）
+  // 手动检查更新（设置页）：返回版本比较三态，发现新版本携版本号与发布说明；
+  // 失败就地报码化错误。移动端报 update.platform-unsupported（入口呈发布页引导）。
+  checkForUpdates: () => invoke<UpdateCheckOutcome>("check_for_updates"),
+  // 推送设备级「自动检查更新」开关到后端运行期镜像：真源在本机 localStorage
+  // 设备偏好（不随 Backup/Restore 迁移、新装默认开启），应用启动与变更时调用
+  setAutoUpdateEnabled: (enabled: boolean) => invoke<void>("set_auto_update_enabled", { enabled }),
   // 同步标的信息（增量同步，issue #827 改名）：刷库内全部有通道标的现价并随行
   // 刷新名称，返回同步/跳过统计。标的全量同步命令与中断命令已随 ADR-0081 决策 3
   // 退役（issue #698）。

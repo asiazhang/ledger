@@ -509,6 +509,13 @@ fn set_auto_execution_enabled_is_silent() {
 }
 
 #[test]
+fn set_auto_update_enabled_is_silent() {
+    // 应用自动检查更新开关（issue #1429 / ADR-0124 决策 8）：设备偏好运行期镜像
+    // 推送，无 ledger:* 失效语义（与 set_auto_execution_enabled 同形）。
+    assert_signals(signals_for(Op::SetAutoUpdateEnabled, E::None), &[]);
+}
+
+#[test]
 fn submit_data_location_change_is_silent() {
     // 引导指针文件写入：重启后生效，失效信号无消费窗口。
     assert_signals(signals_for(Op::SubmitDataLocationChange, E::None), &[]);
