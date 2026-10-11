@@ -23,8 +23,8 @@ import {
 } from "./common";
 
 /**
- * 订单可读性读侧（issue #1862 / ADR-0138 决策 9）：行尾静态订单徽章、来源订单号
- * 行菜单与详情订单区。徽章静态不可点击、无过滤、不分组；无订单号行零变化；
+ * 订单可读性读侧（issue #1862 / ADR-0138 决策 9；#1928 撤列表徽章）：来源订单号
+ * 行菜单与详情订单区。列表不渲染订单号（出口收敛为详情订单区，ADR-0138 修订注记）；
  * 订单区数据经订单汇总只读命令（get_transaction_order_summary）自取。
  */
 
@@ -84,17 +84,25 @@ async function mountWithOrderSummary() {
   return wrapper;
 }
 
-describe("行尾静态订单徽章（issue #1862）", () => {
-  it("来源订单号列有值的行显示「订单 <单号>」徽章，同单各行携带相同徽章", async () => {
+describe("列表不渲染订单徽章（#1928 / ADR-0138 修订注记）", () => {
+  it("有订单号的行不再渲染「订单 <单号>」徽章（桌面表格，备注照常）", async () => {
     setTxnDb(orderRows());
     const wrapper = await mountView();
     const rows = wrapper.findAll(".n-data-table-tbody .n-data-table-tr");
     expect(rows.length).toBe(2);
-    expect(rows[0].text()).toContain("订单 JD-9001");
-    expect(rows[1].text()).toContain("订单 JD-9001");
+    for (const row of rows) expect(row.text()).not.toContain("订单 JD-9001");
+    expect(rows[0].text()).toContain("组合支付");
+    expect(rows[1].text()).toContain("单账户行");
   });
 
-  it("无订单号的行零变化：不渲染徽章文本（手动记账行）", async () => {
+  it("无备注有单号的行：备注列落 '-'，整行不出现订单号", async () => {
+    setTxnDb([makeTxn(4, "acc-1", { note: null, source_order_no: "JD-9001" })]);
+    const wrapper = await mountView();
+    const row = wrapper.find(".n-data-table-tbody .n-data-table-tr");
+    expect(row.text()).not.toContain("JD-9001");
+  });
+
+  it("无订单号的行零变化（手动记账行）", async () => {
     setTxnDb([makeTxn(3, "acc-1", { note: "普通支出" })]);
     const wrapper = await mountView();
     const row = wrapper.find(".n-data-table-tbody .n-data-table-tr");
@@ -102,12 +110,12 @@ describe("行尾静态订单徽章（issue #1862）", () => {
     expect(row.text()).toContain("普通支出");
   });
 
-  it("移动卡片同源：订单行带徽章，无订单号行不带", async () => {
+  it("移动卡片同源撤徽章：有单号卡与无单号卡都不出现订单号", async () => {
     setTxnDb([...orderRows(), makeTxn(3, "acc-1")]);
     const wrapper = await mountMobile();
     const list = cards(wrapper);
-    expect(list[0].text()).toContain("订单 JD-9001");
-    expect(list[1].text()).toContain("订单 JD-9001");
+    expect(list[0].text()).not.toContain("订单 JD-9001");
+    expect(list[1].text()).not.toContain("订单 JD-9001");
     expect(list[2].text()).not.toContain("订单 JD");
   });
 });

@@ -297,7 +297,7 @@ export interface InvestmentTransactionRow {
    * 金额列同口径单点）；列表呈现不读 */
   amount_native_cents: number;
   /** 来源订单号（V035 / #1862，弹窗族消费列）：投资行（如券商回单 buy/sell）可携带的
-   * 外部订单标识，经弹窗行适配供订单徽章与订单区消费；列表呈现不读 */
+   * 外部订单标识，经弹窗行适配供订单区消费（#1928 撤列表徽章）；列表呈现不读 */
   source_order_no: string | null;
 }
 

@@ -100,22 +100,6 @@ export function kindLabel(reference: ReferenceStore, row: Transaction): string {
 const NOTE_CELL_STYLE =
   "display: flex; align-items: center; gap: 2px; width: 100%; max-width: 100%;";
 
-/** 订单徽章单元格样式（行尾静态徽章，issue #1862 / ADR-0138 决策 9）：弱化描边、
- * 不随主题强调色（静态标注非操作件），固定宽度不收缩。 */
-export const ORDER_BADGE_STYLE =
-  "flex: none; font-size: 11px; line-height: 18px; padding: 0 6px; border-radius: 9px; white-space: nowrap; color: var(--n-text-color-disabled, #999); border: 1px dashed currentColor;";
-
-/** 来源订单号静态徽章（行尾「订单 <单号>」，桌面表格与移动卡片共用单源）：
- * 静态、不可点击、无过滤、不分组（ADR-0138 决策 9 否决位置性交互）——来源订单号
- * 列有值才渲染，无值零变化（不占独立行位，徽章随行渲染）。 */
-export function renderOrderBadge(sourceOrderNo: string): VNode {
-  return h(
-    "span",
-    { style: ORDER_BADGE_STYLE },
-    t("transactions.order.badge", { no: sourceOrderNo }),
-  );
-}
-
 /** 订单级合并格样式类（购买项展开，ADR-0138 决策 13）：rowspan 单元格内容纵向居中，
  * 样式收口 global.css（不依赖浏览器 UA 对 td 的默认对齐）。 */
 export const PURCHASE_MERGED_CELL_CLASS = "purchase-merged-cell";
@@ -220,28 +204,26 @@ export function renderPurchaseLine(
 }
 
 /** 「商品 / 备注」列的商品形态（issue #1883 / ADR-0138 决策 13）：截断形态 + 悬停全文；
- * 订单徽章不随购买项行渲染（备注列商品形态只承载商品名与件数，订单号出口在详情）。 */
+ * 备注列商品形态只承载商品名与件数（订单号出口在详情订单区，#1928）。 */
 function renderPurchaseCell(item: TransactionPurchase): VNode {
   return renderPurchaseLine(item, { truncate: true });
 }
 
 /** 备注单元格渲染（显式复制通道，见 CONTEXT-ui-interaction「界面文本不可选」）：
- * - 无备注且无订单徽章渲染 '-'，不渲染复制按钮（空备注无可复制）；
+ * - 无备注渲染 '-'，不渲染复制按钮（空备注无可复制）；
  * - 有备注：单元格内 flex——NEllipsis 承载文本（自省略 + 悬停全文，同账户/来源列的
  *   单元格内省略模式），NoteCopyButton 复制完整备注（clipboard API + toast），
  *   按钮悬停行显现（显隐样式收口 global.css）；
- * - 来源订单号列有值时行尾追加静态订单徽章（无备注行也渲染徽章，不落 '-'）。
- * - 展开视图（issue #1883）下仅无购买项行走本渲染，购买项行走 renderPurchaseCell。 */
+ * - 展开视图（issue #1883）下仅无购买项行走本渲染，购买项行走 renderPurchaseCell。
+ * - 来源订单号不在列表呈现（#1928 / ADR-0138 修订注记：撤行尾徽章，订单号出口
+ *   收敛为详情订单区），无备注行落 '-' 的原始空值口径恢复。 */
 function renderNoteCell(row: Transaction): VNode | string {
   const { note } = row;
-  const badge = row.source_order_no ? renderOrderBadge(row.source_order_no) : null;
-  if (!note) return badge ?? "-";
-  const children: VNode[] = [
+  if (!note) return "-";
+  return h("div", { style: NOTE_CELL_STYLE }, [
     h(NEllipsis, { style: "flex: 1 1 auto; min-width: 0;" }, { default: () => note }),
     h(NoteCopyButton, { note, style: "flex: none;" }),
-  ];
-  if (badge) children.push(badge);
-  return h("div", { style: NOTE_CELL_STYLE }, children);
+  ]);
 }
 
 /** buildTransactionColumns 可选装配面：调用方按需声明，缺省即纯只读列（搜索结果同款）。 */

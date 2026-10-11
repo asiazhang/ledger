@@ -1279,7 +1279,7 @@ async fn test_batch_import_source_order_no_roundtrips_and_put_clears() {
     assert_eq!(created[0]["duplicate"], false);
     assert_eq!(created[1]["duplicate"], false);
 
-    // 读回：两行各自携带同一订单号（行尾徽章与订单区的数据源）。
+    // 读回：两行各自携带同一订单号（详情订单区的数据源）。
     let (_, body) = get_json(&app, "/api/v1/transactions").await;
     let rows = items_of(&body);
     assert_eq!(rows.len(), 2);

@@ -94,7 +94,6 @@
   },
   "order": {
     "no": "订单号",
-    "badge": "订单 {no}",
     "section": "所属订单",
     "rowCount": "{n} 行",
     "total": "合计",

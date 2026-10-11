@@ -42,7 +42,7 @@ const LEDGER_TAB_KINDS: [TransactionKind; 5] = [
 /// dividend 只读详情金额展示经弹窗行适配消费，列表呈现不读；尾段追加不打乱
 /// 前段列序（载荷列下标与探针 marker 锚不动）。V035 追加 `t.source_order_no`
 /// （#1862，订单可读性）：投资行（如券商回单的 buy/sell）同样可携带来源订单
-/// 号，经弹窗行适配供订单徽章与订单区消费，列表呈现不读。
+/// 号，经弹窗行适配供订单区消费（#1928 撤列表徽章），列表呈现不读。
 const ROW_COLUMNS: &str = "t.id, t.kind, t.amount_cents, t.account_id, t.funding_account_id, \
      t.date, st.instrument_id, i.symbol, i.name, i.instrument_type, \
     st.quantity, st.price_cents, st.fee_cents, \

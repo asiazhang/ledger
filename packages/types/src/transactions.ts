@@ -115,7 +115,7 @@ export interface Transaction extends Syncable {
    * 无购买项（含非 expense 行）恒空数组 */
   purchases: TransactionPurchase[];
   /** 来源订单号（issue #1862 / ADR-0138 决策 9，V035）：导入来源单据的外部订单标识，
-   * 行尾订单徽章与详情订单区的行级归属锚点；手动行为 null，单号不入备注 */
+   * 详情订单区（#1928 撤列表徽章）的行级归属锚点；手动行为 null，单号不入备注 */
   source_order_no: string | null;
   note: string | null;
   date: string;
