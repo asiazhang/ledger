@@ -155,6 +155,8 @@ describe("DashboardView 净资产总览卡（issue #143）", () => {
     expect(card.text()).toContain("净资产");
     // 123456 分（本位币主数字，无各币种分项）
     expect(card.text()).toContain(formatAmount(123456, cny));
+    // 口径说明触发器挂在净资产卡标题行（文案单源见 dashboard.netWorth.tooltip）
+    expect(card.find('[data-testid="net-worth-info"]').exists()).toBe(true);
   });
 
   it("命令报错（如缺汇率）时卡片显示提示文案而非空数字或崩溃", async () => {

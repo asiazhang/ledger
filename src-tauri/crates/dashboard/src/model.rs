@@ -7,8 +7,8 @@ use serde::Serialize;
 
 /// `dashboard_overview` 命令返回的净资产总览（本位币口径，金额单位：分）。
 ///
-/// 净资产 = Σ 非投资账户折本位币余额 + Σ 折本位币持仓市值 + Σ 在持实物
-/// 资产估值（真实财富视角，口径取舍见
+/// 净资产 = Σ 账户折本位币余额（含投资账户现金）+ Σ 折本位币持仓市值 + Σ 在持
+/// 实物资产估值（真实财富视角，口径取舍见
 /// docs/adr/0020-net-worth-real-wealth-perspective.md 与
 /// docs/adr/0064-physical-asset-mvp-decisions.md 决策 6）。
 /// 从未录价的持仓市值按空值语义跳过，不以零计入；已处置 / 软删实物资产
@@ -19,7 +19,7 @@ pub struct DashboardOverview {
     pub native_currency: String,
     /// 净资产合计（本位币，分）
     pub net_worth_cents: i64,
-    /// 非投资账户折本位币余额合计（分；投资账户与隐藏/黑洞账户不计入）
+    /// 账户折本位币余额合计（分；含投资账户现金，隐藏/黑洞账户不计入）
     pub accounts_balance_cents: i64,
     /// 折本位币持仓市值合计（分；未录价标的按空值语义不计入）
     pub holdings_market_value_cents: i64,

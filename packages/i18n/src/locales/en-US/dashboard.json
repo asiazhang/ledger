@@ -1,6 +1,8 @@
 {
   "netWorth": {
-    "label": "Net Worth"
+    "label": "Net Worth",
+    "tooltipAria": "Net worth definition",
+    "tooltip": "Net worth = total account balances (including cash in investment accounts; hidden and black-hole accounts excluded) + total holdings market value (holdings without a current price or FX rate are excluded) + physical assets at current valuation (disposed and deleted assets excluded). Foreign currencies are converted at current rates; if a rate is missing, an error is shown instead of a partial total. Difference from investable assets: net worth also includes living cash and physical assets, and negative balances on liability accounts reduce it."
   },
   "monthly": {
     "title": "This Month",

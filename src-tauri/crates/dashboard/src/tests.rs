@@ -6,6 +6,8 @@
 use ledger_transaction::amount::TransactionKind;
 use ledger_transaction::{TransactionInput, create_transaction_internal};
 
+use crate::DashboardOverview;
+use crate::net_worth::{current_fingerprint, write as write_cache};
 use crate::query_dashboard_overview;
 use tauri_app_lib::test_support::snapshot_probe::{self, InjectionOutcome};
 use tauri_app_lib::test_support::{
@@ -48,11 +50,12 @@ fn make_buy_input(account_id: &str, instrument_id: &str, qty: f64, price: i64) -
 }
 
 /// 净资产三腿（余额 / 持仓 / 实物）必须同快照（issue #1702）：总览由余额腿
-/// （accounts × balance cache）、持仓腿（v_holdings）、实物腿多段语句拼出，
-/// 「总量 = 三腿和」要求三腿同时点。探针在持仓腿读取开始前于另一连接**原子**提交
-/// 「现金缓存减 50000 + 现价翻倍」——
-/// - 读闭包无快照保护（红）：余额腿读旧（1000000）、持仓腿读新（140000），
-///   总量 1140000 不属于任何快照（前快照 1070000、后快照 1120000）——
+/// （accounts × balance cache，含投资账户现金）、持仓腿（v_holdings）、实物腿
+/// 多段语句拼出，「总量 = 三腿和」要求三腿同时点。种子：现金户 1000000 CNY、
+/// 证券户买入 10 股（现金 −70000 CNY、持仓 70000 CNY，市值 = 成本，净资产 1000000）。
+/// 探针在持仓腿读取开始前于另一连接**原子**提交「现金缓存减 50000 + 现价翻倍」——
+/// - 读闭包无快照保护（红）：余额腿读旧（930000）、持仓腿读新（140000），
+///   总量 1070000 不属于任何快照（前快照 1000000、后快照 1020000）——
 ///   「现金已挪动而余额腿未见」的双计形态；
 /// - 读闭包收进读事务（绿）：注入写被挡住，三腿同见种子一套数。
 #[test]
@@ -94,8 +97,8 @@ fn dashboard_overview_legs_share_one_snapshot() {
     );
 
     assert_eq!(
-        after.accounts_balance_cents, 1_000_000,
-        "余额腿必须与种子快照同时点（注入写落在余额腿与持仓腿之间即读到旧值）"
+        after.accounts_balance_cents, 930_000,
+        "余额腿（现金户 1000000 + 证券户现金 −70000）必须与种子快照同时点（注入写落在余额腿与持仓腿之间即读到旧值）"
     );
     assert_eq!(
         after.holdings_market_value_cents, 70_000,
@@ -106,8 +109,50 @@ fn dashboard_overview_legs_share_one_snapshot() {
         "无实物资产时第三腿为零（否则种子口径漂移）"
     );
     assert_eq!(
-        after.net_worth_cents, 1_070_000,
-        "总量必须等于三腿和（同快照；腿间写提交即产出现金未扣 + 仓位翻倍的双计数）"
+        after.net_worth_cents, 1_000_000,
+        "总量必须等于三腿和且与种子快照同时点（腿间写提交即产出现金未扣 + 仓位翻倍的双计数，撕裂值 1070000 不属于任何快照）"
     );
     assert_eq!(after.native_currency, "CNY", "折算基准币种不应漂移");
+}
+
+/// 公式版本标签（ADR-0020 修订）：升级前写入的旧口径缓存行（指纹不带当前
+/// 公式标签，终值为旧口径「不含投资账户现金」）必须失配、被实时重算回填，
+/// 不把旧口径终值当作新口径读出。
+#[test]
+fn legacy_formula_cache_row_is_recomputed() {
+    let dir = ScratchDir::new("dashboard-overview-legacy-cache");
+    let conn = open_file(dir.path());
+    seed_account(&conn, "acc-legacy-cash", "现金户", "cash", "CNY", 500_000);
+    seed_account(
+        &conn,
+        "acc-legacy-inv",
+        "证券户",
+        "investment",
+        "CNY",
+        200_000,
+    );
+    ledger_accounts::balance::refresh_all_account_balances(&conn).unwrap();
+
+    // 旧版指纹 = 当前指纹去掉公式标签前缀（升级前写入的形态）。
+    let current = current_fingerprint(&conn).unwrap();
+    let (_tag, legacy_fingerprint) = current.split_once('|').unwrap();
+    write_cache(
+        &conn,
+        legacy_fingerprint,
+        &DashboardOverview {
+            native_currency: "CNY".into(),
+            net_worth_cents: 500_000,
+            accounts_balance_cents: 500_000,
+            holdings_market_value_cents: 0,
+            physical_assets_value_cents: 0,
+        },
+    )
+    .unwrap();
+
+    let overview = query_dashboard_overview(&conn).unwrap();
+    assert_eq!(
+        overview.net_worth_cents, 700_000,
+        "旧口径缓存行不得被读出：必须按当前口径（现金户 + 证券户现金）重算"
+    );
+    assert_eq!(overview.accounts_balance_cents, 700_000);
 }
