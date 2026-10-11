@@ -8,7 +8,6 @@
     "prev": "Previous period",
     "next": "Next period"
   },
-  "stepHint": "{prev} Previous period · {next} Next period",
   "periodPicker": {
     "format": {
       "month": "MMM yyyy",

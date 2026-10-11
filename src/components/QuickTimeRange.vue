@@ -52,9 +52,9 @@ const props = withDefaults(
     /** 预设芯片闭集（渲染顺序即数组序）：缺省为交易页全闭集（含「全部」五枚）；
      * 报表页「日期闭集」消费形态传入不含「全部」的子集（ADR-0057，期间必有界）。 */
     presets?: readonly TimePeriodPreset[];
-    /** 周期步进快捷键键位（issue #1904 / ADR-0141）：非空时在步进器旁渲染弱化小字
-     * 键位提示（仅指针轴渲染，ADR-0088）；缺省 null = 不渲染——其他消费页零变化。
-     * 键位闭集由消费视图持有（PERIOD_STEP_KEYS），组件只负责呈现，不持键位状态。 */
+    /** 周期步进快捷键键位（issue #1904 / ADR-0141；#1929 修订呈现形态）：非空时在步进
+     * 按钮内嵌弱化键位字符（仅指针轴渲染，ADR-0088）；缺省 null = 不渲染——其他消费页
+     * 零变化。键位闭集由消费视图持有（PERIOD_STEP_KEYS），组件只负责呈现，不持键位状态。 */
     stepShortcutKeys?: { prev: string; next: string } | null;
   }>(),
   { presets: () => TIME_PERIOD_PRESETS, stepShortcutKeys: null },
@@ -78,6 +78,20 @@ const inputMode = useInputMode();
 const themeVars = useThemeVars();
 const isTouch = computed(() => inputMode.value === "touch");
 const TOUCH_TARGET_STYLE = { minHeight: "48px" };
+
+// 周期步进快捷键键位标注（issue #1929 修订 ADR-0141 决策 5 呈现形态）：键位字符内嵌
+// 步进按钮（同「记一笔」kindWithKey 行内标注先例），旁注文字词退役——语义由步进图标与
+// aria-label 承担，title 悬停补键位；仅指针轴渲染（触控轴不绑监听，提示不存在的键位是
+// 误导，ADR-0088）；缺省 null 不渲染不提示，其他消费页零变化。
+const stepKeys = computed(() =>
+  props.stepShortcutKeys != null && inputMode.value === "pointer" ? props.stepShortcutKeys : null,
+);
+const stepPrevTitle = computed(() =>
+  stepKeys.value ? `${t("quickTimeRange.period.prev")} (${stepKeys.value.prev})` : undefined,
+);
+const stepNextTitle = computed(() =>
+  stepKeys.value ? `${t("quickTimeRange.period.next")} (${stepKeys.value.next})` : undefined,
+);
 
 /** 当前点亮芯片：当前区间恰为某预设定义（相对今天）时返回该预设，跨期自动熄灭。 */
 const activePreset = computed(() =>
@@ -279,9 +293,13 @@ defineExpose({
         :style="isTouch ? TOUCH_TARGET_STYLE : undefined"
         :disabled="!canStepPrev"
         :aria-label="t('quickTimeRange.period.prev')"
+        :title="stepPrevTitle"
         @click="onStepPeriod(-1)"
       >
         <NIcon><ChevronBack /></NIcon>
+        <span v-if="stepKeys" class="period-key" :style="{ color: themeVars.textColor3 }">{{
+          stepKeys?.prev
+        }}</span>
       </NButton>
       <!-- 期间标签按钮（issue #425）：与步进箭头同款 quaternary small + ChevronDown
            「文字 + ▾」下拉通用信号，全部态占位文案同款可点（默认月档）；键盘 Tab 聚焦后
@@ -322,26 +340,15 @@ defineExpose({
         :style="isTouch ? TOUCH_TARGET_STYLE : undefined"
         :disabled="!canStepNext"
         :aria-label="t('quickTimeRange.period.next')"
+        :title="stepNextTitle"
         @click="onStepPeriod(1)"
       >
         <NIcon><ChevronForward /></NIcon>
+        <span v-if="stepKeys" class="period-key" :style="{ color: themeVars.textColor3 }">{{
+          stepKeys?.next
+        }}</span>
       </NButton>
     </NButtonGroup>
-    <!-- 周期步进快捷键键位提示（issue #1904 / ADR-0141）：消费视图传入键位闭集时
-         在步进器旁弱化小字标注键位，仅指针轴渲染（触控轴不绑监听，提示不存在的
-         键位是误导，同翻页快捷键）；缺省不渲染，其他消费页零变化。 -->
-    <span
-      v-if="stepShortcutKeys && inputMode === 'pointer'"
-      class="period-step-hint"
-      :style="{ color: themeVars.textColor3 }"
-    >
-      {{
-        t("quickTimeRange.stepHint", {
-          prev: stepShortcutKeys.prev,
-          next: stepShortcutKeys.next,
-        })
-      }}
-    </span>
   </NSpace>
 </template>
 
@@ -372,9 +379,9 @@ defineExpose({
   margin-left: 4px;
 }
 
-/* 周期步进快捷键键位提示：弱化小字，不参与点击（消费视图未传键位时整节点不渲染） */
-.period-step-hint {
-  font-size: 12px;
-  white-space: nowrap;
+/* 周期步进快捷键键位标注：内嵌按钮内的弱化键位字符，不参与点击（未传键位时整节点不渲染） */
+.period-key {
+  font-size: 11px;
+  margin-left: 1px;
 }
 </style>

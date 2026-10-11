@@ -342,25 +342,29 @@ describe("QuickTimeRange 共享受控组件（issue #410）", () => {
     expect(emitCount(wrapper)).toBe(before);
   });
 
-  it("stepShortcutKeys：缺省不渲染键位提示（其他消费页零变化）；传入后指针轴渲染、触控轴不渲染", async () => {
+  it("stepShortcutKeys：缺省不渲染键位标注（其他消费页零变化）；传入后指针轴按钮内嵌键位、触控轴不渲染", async () => {
     setFakeMedia({ width: 1280, hover: "hover", pointer: "fine" });
     const plain = mountRange({ from: "2026-01-01", to: "2026-01-31" });
     await flushPromises();
-    expect(plain.find(".period-step-hint").exists()).toBe(false);
+    expect(plain.find(".period-key").exists()).toBe(false);
 
     const keys = { prev: ",", next: "." };
-    const hint = mount(QuickTimeRange, {
+    const inline = mount(QuickTimeRange, {
       props: { modelValue: { from: "2026-01-01", to: "2026-01-31" }, stepShortcutKeys: keys },
     });
     await flushPromises();
-    expect(hint.find(".period-step-hint").text()).toBe(", 上一个周期 · . 下一个周期");
+    // 键位字符内嵌步进按钮（#1929 修订 ADR-0141 决策 5）：旁注文字词退役，键位随图标
+    const keySpans = inline.findAll(".period-key");
+    expect(keySpans.map((s) => s.text())).toEqual([",", "."]);
+    expect(inline.text()).not.toContain("上一个周期");
+    expect(inline.find('[aria-label="上一个周期"]').attributes("title")).toBe("上一个周期 (,)");
 
-    // 触控轴不绑监听，渲染提示同样是误导（输入轴 ADR-0088）
+    // 触控轴不绑监听，渲染键位标注同样是误导（输入轴 ADR-0088）
     setFakeMedia({ width: 1280, hover: "none", pointer: "coarse" });
     const touch = mount(QuickTimeRange, {
       props: { modelValue: { from: "2026-01-01", to: "2026-01-31" }, stepShortcutKeys: keys },
     });
     await flushPromises();
-    expect(touch.find(".period-step-hint").exists()).toBe(false);
+    expect(touch.find(".period-key").exists()).toBe(false);
   });
 });

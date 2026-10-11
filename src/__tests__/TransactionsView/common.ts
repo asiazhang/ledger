@@ -8,7 +8,7 @@ import {
 import { fireProp } from "@ledger/test-support/component-vm";
 import { flushPromises, type VueWrapper } from "@vue/test-utils";
 import { reactive } from "vue";
-import { NDataTable, NDropdown, NModal } from "naive-ui";
+import { NDropdown, NModal, NPagination } from "naive-ui";
 import { mountWithDialog } from "@ledger/test-support/mount";
 import { makeTransaction } from "../factories";
 import { setFakeMedia } from "@ledger/test-support/media-mock";
@@ -295,12 +295,18 @@ export function lastListFilter() {
 }
 
 export function tablePagination(wrapper: VueWrapper) {
-  return wrapper.findComponent(NDataTable).props("pagination") as {
-    page: number;
-    pageSize: number;
-    itemCount: number;
-    onChange: (page: number) => void;
-    onUpdatePageSize: (pageSize: number) => void;
+  // 桌面档外置分页（issue #1929）：分页交互面 = NPagination 的 update 事件。助手保持
+  // 旧内建分页的调用形状（onChange / onUpdatePageSize / page），消费方测试零语义迁移。
+  const pagination = wrapper.findComponent(NPagination);
+  return {
+    get page() {
+      return pagination.props("page") as number;
+    },
+    get itemCount() {
+      return pagination.props("itemCount") as number;
+    },
+    onChange: (page: number) => fireProp(pagination, "onUpdate:page", page),
+    onUpdatePageSize: (pageSize: number) => fireProp(pagination, "onUpdate:pageSize", pageSize),
   };
 }
 
