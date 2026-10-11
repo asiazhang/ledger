@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { t } from "@ledger/i18n";
 import { errorMessage } from "@ledger/utils/errors";
-import { computed, h, ref, watch } from "vue";
+import { computed, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 import {
   NDataTable,
@@ -17,7 +17,6 @@ import {
   useThemeVars,
   type DataTableColumn,
   type DropdownOption,
-  type PaginationProps,
 } from "naive-ui";
 import { ChevronDown } from "@vicons/ionicons5";
 import AppModal from "@ledger/ui-kit/AppModal.vue";
@@ -48,7 +47,7 @@ import { useInputMode } from "@/composables/useInputMode";
 import { usePaginationShortcuts } from "@/composables/usePaginationShortcuts";
 import { useTimePeriodShortcuts, PERIOD_STEP_KEYS } from "@/composables/useTimePeriodShortcuts";
 import { useRowContextMenu } from "@ledger/row-context-menu";
-import { paginationHint } from "./TransactionsView.css.ts";
+import { paginationHint, paginationRow } from "./TransactionsView.css.ts";
 import {
   useTransactionFilter,
   UNCATEGORIZED_ONLY,
@@ -523,19 +522,6 @@ function onPageSizeChange(size: number): void {
   refresh();
 }
 
-const pagination = computed<PaginationProps>(() => ({
-  page: page.value,
-  pageSize: pageSize.value,
-  itemCount: total.value,
-  showSizePicker: true,
-  showQuickJumper: true,
-  pageSizes: PAGE_SIZE_OPTIONS,
-  prefix: ({ itemCount }) =>
-    h("span", null, () => t("transactions.list.total", { n: itemCount ?? 0 })),
-  onChange: onPageChange,
-  onUpdatePageSize: onPageSizeChange,
-}));
-
 // 列经 computed 构造：列名（t()）随语言切换即时重建（列宽总和随之联动）。
 // 传入 onRowMenuOpen 即追加常显「⋯」操作列（ADR-0088 决策 6 / issue #843）：
 // 与行右键共用同一行菜单编排工厂 open 入口，以点击坐标弹出（账户行先例）。
@@ -851,7 +837,7 @@ function activateCard(row: Transaction): void {
       remote
       :row-props="rowProps"
       :scroll-x="scrollX"
-      :pagination="pagination"
+      :pagination="false"
     >
       <!-- 空态：过滤无结果时展示明确提示（与加载态区分：loading 时空态节点隐藏）；
            无过滤时为默认「暂无数据」文案 -->
@@ -865,14 +851,34 @@ function activateCard(row: Transaction): void {
         </NEmpty>
       </template>
     </NDataTable>
-    <!-- 翻页快捷键提示（issue #1902 / ADR-0140）：表格分页内建无插槽，弱化小字右对齐
-         贴表格底部分页条；触控轴不渲染（提示不存在的键位是误导，同记一键位标注） -->
-    <div
-      v-if="!isMobile && inputMode === 'pointer'"
-      :class="paginationHint"
-      :style="{ color: themeVars.textColor3 }"
-    >
-      {{ t("transactions.list.paginationHint") }}
+    <!-- 桌面档外置分页（issue #1929）：内建分页无插槽是键位提示游离成独立行的根因，
+         改用与移动档同款 NPagination 置于表格下方同一行右端，键位提示走 #suffix 槽
+         两档同源（仅指针轴渲染，触控轴不渲染，ADR-0088）；翻页/页大小/跳页语义与
+         原内建分页一致（ADR-0140 决策 3 修订注记） -->
+    <div v-if="!isMobile" :class="paginationRow">
+      <NPagination
+        :page="page"
+        :page-size="pageSize"
+        :item-count="total"
+        :page-sizes="PAGE_SIZE_OPTIONS"
+        show-size-picker
+        show-quick-jumper
+        @update:page="onPageChange"
+        @update:page-size="onPageSizeChange"
+      >
+        <template #prefix>
+          <span>{{ t("transactions.list.total", { n: total }) }}</span>
+        </template>
+        <template #suffix>
+          <span
+            v-if="inputMode === 'pointer'"
+            :class="paginationHint"
+            :style="{ color: themeVars.textColor3 }"
+          >
+            {{ t("transactions.list.paginationHint") }}
+          </span>
+        </template>
+      </NPagination>
     </div>
   </NSpace>
   <!-- 记一笔悬浮按钮（移动档交易页右下，ADR-0088 决策 5）：点开大号类型选择

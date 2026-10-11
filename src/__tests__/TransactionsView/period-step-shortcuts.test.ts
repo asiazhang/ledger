@@ -15,8 +15,6 @@ import { NButton } from "naive-ui";
 import type { Transaction } from "@ledger/types";
 import { matchPeriodStepShortcut } from "@/composables/useTimePeriodShortcuts";
 
-const HINT_ZH = ", 上一个周期 · . 下一个周期";
-
 /**
  * 周期步进快捷键（issue #1904 / ADR-0141）：裸键 `,` 上一个周期 / `.` 下一个周期，
  * 语义等同点击 QuickTimeRange 的期间步进器 `<` / `>`（步进换算、数据期间边界钳制
@@ -167,16 +165,16 @@ describe("TransactionsView 周期步进快捷键（issue #1904 / ADR-0141）", (
     expect(listCalls().length).toBe(before);
   });
 
-  it("指针轴渲染键位提示（桌面档与移动档同源，提示贴步进器）", async () => {
+  it("指针轴渲染键位标注（桌面档与移动档同源，键位内嵌步进按钮）", async () => {
     const desktop = await mountView();
-    expect(desktop.text()).toContain(HINT_ZH);
+    expect(desktop.findAll(".period-key").map((s) => s.text())).toEqual([",", "."]);
     const mobile = await mountMobile();
-    expect(mobile.text()).toContain(HINT_ZH);
+    expect(mobile.findAll(".period-key").map((s) => s.text())).toEqual([",", "."]);
   });
 
-  it("触控轴不渲染提示", async () => {
+  it("触控轴不渲染键位标注", async () => {
     const wrapper = await mountPhone();
-    expect(wrapper.text()).not.toContain(HINT_ZH);
+    expect(wrapper.find(".period-key").exists()).toBe(false);
   });
 });
 
