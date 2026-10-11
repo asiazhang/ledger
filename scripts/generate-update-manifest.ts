@@ -33,6 +33,7 @@
 
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 
 /** 平台键 → 更新工件文件后缀的闭集（updater Static 形态的 platforms 键）。 */
 const PLATFORM_ARTIFACT_SUFFIXES: ReadonlyArray<{ target: string; suffix: string }> = [
@@ -195,8 +196,8 @@ function main(): void {
   }
 }
 
-// CLI 入口守卫：被测试 / 其他模块 import 时不执行（bun 的 import.meta.main；
-// vitest 下该属性不存在，同为 falsy）。
-if (import.meta.main) {
+// 仅直接运行时执行 main；被测试/其他工具 import 时只取导出的装配函数
+// （与 scripts/check-commands.ts 同一惯法）。
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main();
 }

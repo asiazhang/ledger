@@ -847,13 +847,14 @@ jobs:
       - name: 生成更新清单（latest.json）
         env:
           TAG: ${{ github.ref_name }}
+          NOTES_FILE: ${{ steps.changelog.outputs.body_file }}
         run: |
           VER="${TAG#v}"
           bun scripts/generate-update-manifest.ts \
             --dir release \
             --version "$VER" \
             --tag "$TAG" \
-            --notes-file "${{ steps.changelog.outputs.body_file }}" \
+            --notes-file "$NOTES_FILE" \
             --out release/latest.json
           cat release/latest.json
 
