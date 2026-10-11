@@ -543,18 +543,18 @@ fn five_outlets_return_realtime_consistent_values() {
         );
     }
 
-    // 出口 3：dashboard 余额腿（非投资账户合计，1:1 汇率）。
+    // 出口 3：dashboard 余额腿（含投资账户现金，ADR-0020 修订；1:1 汇率）。
+    // 投资账户余额是未投入的现金（子弹），不经持仓市值体现；买卖是现金与持仓
+    // 之间的零和转换，计入不重复计算（旧口径剔除投资账户会漏掉这笔现金）。
     let overview = query_dashboard_overview(&conn).unwrap();
-    let expected_accounts_sum: i64 = realtime_visible
-        .iter()
-        .filter(|(id, _)| {
-            *id != "acc-o2" // 投资账户余额不计入（市值腿承载，避免重复计算）
-        })
-        .map(|(_, v)| v)
-        .sum();
+    let expected_accounts_sum: i64 = realtime_visible.values().sum();
     assert_eq!(
         overview.accounts_balance_cents, expected_accounts_sum,
         "dashboard 余额腿应与实时合计一致"
+    );
+    assert_eq!(
+        overview.accounts_balance_cents, 996000,
+        "余额腿应计入投资账户现金（acc-o1 400000 + acc-o2 现金 596000）"
     );
     assert_eq!(
         overview.net_worth_cents,
