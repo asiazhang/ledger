@@ -120,7 +120,7 @@ pub struct UpdateAvailablePayload {
 fn manifest_invalid_error() -> AppError {
     AppError::coded(
         "update.manifest-invalid",
-        "更新服务返回了无法解析的更新清单",
+        "更新源返回了无法解析的更新清单",
     )
 }
 
