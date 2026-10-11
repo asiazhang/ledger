@@ -59,6 +59,7 @@ const PAIRED_NAMES = [
   "start_history_backfill",
   "start_daily_price_refresh",
   "start_daily_fx_sync",
+  "start_auto_update_check",
 ] as const;
 
 /**
@@ -122,6 +123,12 @@ export const GUARDED_NAMES: readonly GuardedName[] = [
     wholeFile: ["crates/market-sync/src/fx_daily.rs", "crates/market-sync/src/lib.rs"],
     orchestratorBodyAllowed: true,
     note: "后台每日汇率增量同步调度入口（ADR-0019 修订记录 / issue #1546；定义住 ledger-market-sync crate 的 fx_daily.rs，crate 根再导出）",
+  },
+  {
+    name: "start_auto_update_check",
+    wholeFile: ["src/app_update.rs"],
+    orchestratorBodyAllowed: true,
+    note: "应用更新启动延迟静默检查入口（ADR-0124 决策 4 / issue #1429；定义住壳层 app_update.rs）",
   },
 ];
 

@@ -418,5 +418,10 @@
   },
   "currency": {
     "base-invalid": "Base currency must be a currency from the dictionary: {0}"
+  },
+  "update": {
+    "unreachable": "The update source is temporarily unavailable. Check your network and try again.",
+    "manifest-invalid": "The update source returned an update manifest that could not be parsed.",
+    "platform-unsupported": "In-app updates are not supported on this platform. Download the new version from the releases page."
   }
 }

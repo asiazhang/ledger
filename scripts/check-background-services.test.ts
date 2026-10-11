@@ -36,6 +36,7 @@ const orchestratorPaired = `pub fn ${ORCHESTRATOR_FN}(app: &tauri::AppHandle) {
     market_sync::start_history_backfill(app);
     market_sync::start_daily_price_refresh(app);
     market_sync::start_daily_fx_sync(app);
+    app_update::start_auto_update_check(app);
 }
 `;
 
@@ -284,5 +285,15 @@ describe("check-background-services（后台服务成对拉起守门，issue #96
     // 哨兵自身文案：仅断言「空集」会被车道门既有文案（扫描面不可达）满足，
     // 删掉全树零源文件哨兵也不变红——断言须对准本哨兵（ADR-0087 断言强度）。
     expect(r.output).toContain("扫描面提不出任何非测试 Rust 文件");
+  });
+  it("编排点缺应用更新启动延迟检查 → 报红（删除即变红，ADR-0124 决策 4 / issue #1429）", () => {
+    // 夹具编排点回到五服务形态（缺 start_auto_update_check；启动接线段保留）：
+    // 守门纳入后成组性破坏即红
+    const fiveServices = `pub fn ${ORCHESTRATOR_FN}(app: &tauri::AppHandle) {\n    backup::start_scheduler(app);\n    sync_engine::start_triggers(app);\n    market_sync::start_history_backfill(app);\n    market_sync::start_daily_price_refresh(app);\n    market_sync::start_daily_fx_sync(app);\n}\n`;
+    const args = makeFixture({ [ORCHESTRATOR_FILE]: bootWiring + fiveServices });
+    const r = run(args);
+    expect(r.status).toBe(1);
+    expect(r.output).toContain("成组性破坏");
+    expect(r.output).toContain("start_auto_update_check");
   });
 });

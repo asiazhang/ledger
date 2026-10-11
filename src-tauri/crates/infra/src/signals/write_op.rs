@@ -250,6 +250,10 @@ pub enum WriteOp {
     SetAutoBackupDir,
     /// 定时计划自动执行开关推送（IPC `set_auto_execution_enabled`，进程级标志镜像）。
     SetAutoExecutionEnabled,
+    /// 应用自动检查更新开关推送（IPC `set_auto_update_enabled`，issue #1429 /
+    /// ADR-0124 决策 8：真源前端 localStorage 设备偏好，后端运行期镜像，
+    /// ADR-0017 修订记录例外先例——刻意不入 `app_settings`）。
+    SetAutoUpdateEnabled,
     /// 提交数据目录更改意图（IPC `submit_data_location_change`，写 ADR-0018 引导
     /// 指针文件）：重启后生效，失效信号无消费窗口。
     SubmitDataLocationChange,

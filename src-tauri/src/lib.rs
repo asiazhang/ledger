@@ -39,6 +39,10 @@ pub use ledger_scheduled;
 pub use ledger_sync_engine;
 pub use ledger_transaction;
 pub mod api_server;
+// 应用更新——检查路径（issue #1429 / ADR-0124 决策 4/7/8）：壳层机制（不进基础
+// 设施、不立业务域 crate 与壳内域目录），手动检查命令与启动延迟静默检查共用
+// 唯一 updater 调用点，自动检查开关为前端 localStorage 真源 + 运行期镜像。
+pub mod app_update;
 pub mod commands;
 pub mod cross_book_summary;
 // 壳层机制（spec #1086 P5 / issue #1108 壳层收敛）：壳层统一读写入口、IPC 载荷
@@ -130,9 +134,10 @@ const BOOT_FAILURE_ALLOWED_COMMANDS: &[&str] = &[
 /// 与价格历史后台补全（[`ledger_market_sync::start_history_backfill`]，
 /// ADR-0122 / issue #1375）、后台每日现价刷新（
 /// [`ledger_market_sync::start_daily_price_refresh`]，ADR-0122 决策 3 /
-/// issue #1377）及后台每日汇率增量同步（
+/// issue #1377）、后台每日汇率增量同步（
 /// [`ledger_market_sync::start_daily_fx_sync`]，ADR-0019 修订记录 /
-/// issue #1546）必须在每个业务可用起点成组拉起——多个独立调用无
+/// issue #1546）及应用更新启动延迟静默检查（`start_auto_update_check`，
+/// ADR-0124 决策 4 / issue #1429）必须在每个业务可用起点成组拉起——多个独立调用无
 /// 机制保证成组，#863 会话已由同一根因造成两次真实缺陷（分平台门漂移、
 /// `restart_app` 落 Ready 漏接同步触发），且「缺失一个调用」不会让任何断言
 /// 变红。全部业务可用起点只调本函数：
@@ -148,6 +153,11 @@ pub(crate) fn start_background_services<R: tauri::Runtime>(app: &tauri::AppHandl
     ledger_market_sync::start_history_backfill(app);
     ledger_market_sync::start_daily_price_refresh(app);
     ledger_market_sync::start_daily_fx_sync(app);
+    // 应用更新启动延迟静默检查（issue #1429 / ADR-0124 决策 4）：后台失败完全
+    // 静默，发现新版本经 `ledger:update-available` 事件通知前端；定义与开关镜像
+    // 住 `app_update`（壳层机制，ADR-0124 决策 7），纳入成对拉起守门
+    // （scripts/check-background-services.ts，删除接线即红）。
+    crate::app_update::start_auto_update_check(app);
 }
 
 fn try_init_database(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> {
@@ -207,6 +217,16 @@ pub fn run() {
     // （缺一即 Android 编译失败）；桌面行为零变化。
     #[cfg(desktop)]
     let builder = builder.plugin(tauri_plugin_window_state::Builder::default().build());
+    // 应用更新插件（issue #1429 / ADR-0124 决策 1/7）：updater 提供更新检查
+    // （Static 清单 + minisign 验签，公钥与端点数组烧入 tauri.conf.json 的
+    // plugins.updater 配置），process 提供安装确认后的 relaunch（安装路径票
+    // #1430 消费）。两 crate 均桌面专属（上游仅桌面编译），与窗口状态插件同段
+    // 同门禁：Cargo.toml 依赖、本处注册、capabilities/desktop-updater.json
+    // 三处同步按目标平台门禁，缺一即 Android 编译失败。
+    #[cfg(desktop)]
+    let builder = builder
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init());
     // B 类豁免（ADR-0060）：启动装配失败即无法运行——Tauri 构建失败 fail loud 退出进程。
     #[allow(clippy::expect_used)]
     builder
@@ -254,6 +274,11 @@ pub fn run() {
             // 失败门（issue #601）。
             app.manage(gate.clone());
             app.manage(boot_gate.clone());
+            // 自动检查更新开关运行期镜像登记（issue #1429 / ADR-0124 决策 8）：
+            // 真源在前端 localStorage 设备偏好，启动/变更经 set_auto_update_enabled
+            // 推送；缺省按开启兜底（新装默认开启）。先于后台服务拉起登记——
+            // 启动延迟静默检查读此镜像。
+            app.manage(app_update::AutoUpdateSwitch::default());
             try_init_database(app.handle()).map_err(|e| {
                 // 二次失败兜底（登记失败状态也失败，如连占位内存库都打不开）：
                 // 进程无法运行，fail loud 退出（B 类豁免，ADR-0060）。

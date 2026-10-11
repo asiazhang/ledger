@@ -306,6 +306,12 @@ const IPC_WRITE_ENTRY_EXCEPTIONS: &[(&str, WriteOp, &str)] = &[
         "设备级「自动执行」运行时标志镜像推送：纯内存不触 DB（ADR-0042）",
     ),
     (
+        "set_auto_update_enabled",
+        WriteOp::SetAutoUpdateEnabled,
+        "设备级「自动检查更新」开关运行时镜像推送：纯内存不触 DB（ADR-0124 决策 8 / \
+         issue #1429，ADR-0017 修订记录例外先例；与 set_auto_execution_enabled 同形）",
+    ),
+    (
         "set_log_level",
         WriteOp::SetLogLevel,
         "设置日志等级 KV 写入（app_settings 的 logging.level）：经 settings.rs 单点收口、\

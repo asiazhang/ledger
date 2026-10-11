@@ -24,6 +24,15 @@
       "csp": null
     }
   },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IERGOERFODc5M0E0NTVENjAKUldSZ1hVVTZlZWlOMzBkdDBYaU9Zc0QwNjh6Ky9sc25ZcmpyM3VuNkVLVWozbVZ5ZHlXd055bHQK",
+      "endpoints": [
+        "https://github.com/asiazhang/ledger/releases/latest/download/latest.json"
+      ],
+      "requireSignedVersion": true
+    }
+  },
   "bundle": {
     "active": true,
     "targets": "all",
