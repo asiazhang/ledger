@@ -26,6 +26,7 @@ import { useItemDailyTotal } from "@/dashboard/useItemDailyTotal";
 import { useWindowTier } from "@ledger/window-tier";
 import { useReferenceStore } from "@/stores/reference";
 import AppPopover from "@ledger/ui-kit/AppPopover.vue";
+import ConceptTipHost from "@/investment/ConceptTipHost.vue";
 import { formatAmount } from "@ledger/money";
 import type { BudgetProgress, MonthlySummary } from "@ledger/types";
 import { usePortfolioOverview } from "@/investment/usePortfolioOverview";
@@ -156,7 +157,26 @@ onMounted(async () => {
     <NCard size="small" data-testid="net-worth-card">
       <NSpin :show="loading">
         <NSpace vertical :size="4">
-          <NText depth="3" style="font-size: 12px">{{ t("dashboard.netWorth.label") }}</NText>
+          <NSpace :size="4" align="center" :wrap="false">
+            <NText depth="3" style="font-size: 12px">{{ t("dashboard.netWorth.label") }}</NText>
+            <!-- 净资产口径说明（与财务自由度卡同款）：指针轴悬停即现、触控轴点按弹出，
+                 文案单源 dashboard.netWorth.tooltip，两轴同一份。 -->
+            <ConceptTipHost :text="t('dashboard.netWorth.tooltip')">
+              <template #default="{ isTouch }">
+                <NButton
+                  text
+                  :class="isTouch ? 'touch-hit-area' : undefined"
+                  :style="isTouch ? { '--touch-hit-inset': '-10px -10px' } : undefined"
+                  :aria-label="t('dashboard.netWorth.tooltipAria')"
+                  data-testid="net-worth-info"
+                >
+                  <NIcon :size="14" color="var(--n-title-text-color, #999)">
+                    <InformationCircleOutline />
+                  </NIcon>
+                </NButton>
+              </template>
+            </ConceptTipHost>
+          </NSpace>
           <template v-if="overview">
             <NText strong style="font-size: 28px">
               {{

@@ -2,13 +2,14 @@
 //! #1086 / issue #1104 自根包域目录拆出，P3 叶子业务域 crate）：首页净资产
 //! 跨币种合计，只读聚合。
 //!
-//! 口径（ADR-0020，真实财富视角；第三腿 ADR-0064 决策 6）：
-//! 净资产 = Σ 非投资账户折本位币余额 + Σ 折本位币持仓市值
+//! 口径（ADR-0020 修订，真实财富视角；第三腿 ADR-0064 决策 6）：
+//! 净资产 = Σ 账户折本位币余额（含投资账户现金）+ Σ 折本位币持仓市值
 //!   + Σ 在持实物资产估值折本位币。
 //! - 账户侧余额沿用 `accounts::balance::list_account_balances_with_visibility`
 //!   （内部即 `account_flow` 口径的 `compute_all_balances_with_visibility`，
-//!   与账户列表/余额页一致，排除隐藏与黑洞账户），并剔除投资账户（其价值
-//!   经持仓市值计入，避免同一笔资产重复计算）；
+//!   与账户列表/余额页一致，排除隐藏与黑洞账户），**含投资账户余额**：投资账户
+//!   余额是未投入的现金（子弹），不被持仓市值体现；买卖是现金与持仓之间的零和
+//!   转换（现金腿增减、持仓市值随之增减），同一笔钱只计一次，不重复计算；
 //! - 持仓侧读 `v_holdings` 视图市值（账户本位币），再折算到全局默认币种；
 //!   `market_value_cents` 为 NULL（从未录价或缺折算汇率）时按空值语义跳过；
 //! - 币种折算一律复用 Amount 接缝当期入口 [`amount::convert_to_native_current`]，缺汇率错误上抛
@@ -73,7 +74,6 @@ pub use net_worth::query_dashboard_overview;
 
 use rusqlite::Connection;
 
-use ledger_accounts::AccountType;
 use ledger_accounts::balance::list_account_balances_with_visibility;
 use ledger_infra::db::query::{FromRow, query_all};
 use ledger_infra::error::Result;
@@ -96,16 +96,15 @@ impl FromRow for HoldingValue {
     }
 }
 
-/// 既有实时聚合公式（本位币净资产总览）：三腿合计，口径不变——余额腿自
+/// 既有实时聚合公式（本位币净资产总览）：三腿合计（ADR-0020 修订：余额腿含投资
+/// 账户现金）——余额腿自
 /// B2 起读余额缓存（五出口切缓存），其余两腿仍实时聚合；读探针
 /// （[`net_worth::query_dashboard_overview`]）指纹命中直读缓存、失配回填。
 fn compute_dashboard_overview(conn: &Connection) -> Result<DashboardOverview> {
-    // 非投资账户余额合计：余额口径与账户列表一致（account_flow，排除隐藏/黑洞）。
+    // 账户余额合计（含投资账户现金，ADR-0020 修订）：余额口径与账户列表一致
+    // （account_flow，排除隐藏/黑洞）；投资账户余额即未投入的现金，不经持仓市值体现。
     let mut accounts_sum = 0i64;
     for ab in list_account_balances_with_visibility(conn, false)? {
-        if ab.account.kind == AccountType::Investment {
-            continue;
-        }
         accounts_sum +=
             amount::convert_to_native_current(conn, ab.balance_cents, &ab.account.currency_code)?;
     }

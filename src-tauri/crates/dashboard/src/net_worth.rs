@@ -22,6 +22,10 @@ use ledger_infra::db::tx_scope::ensure_transaction;
 use ledger_infra::error::Result;
 use ledger_transaction::amount;
 
+/// 净资产口径版本标签（ADR-0020 修订）：公式变更时递增，使升级前写入的缓存行
+/// 指纹失配、自动实时重算回填，不把旧口径终值当作新口径读出。
+const NET_WORTH_FORMULA_TAG: &str = "f2";
+
 /// 参与净资产计算的贡献表及其指纹输入（指纹输入清单，单一真源）。
 /// 元组：(表名, 时间戳列, 同秒判别器)。
 ///
@@ -67,12 +71,13 @@ pub fn current_fingerprint(conn: &Connection) -> Result<String> {
             .map(|i| r.get::<_, String>(i))
             .collect::<rusqlite::Result<Vec<_>>>()
     })?;
-    Ok(FINGERPRINT_SOURCES
+    let fingerprint = FINGERPRINT_SOURCES
         .iter()
         .zip(parts)
         .map(|((table, _, _), value)| format!("{table}={value}"))
         .collect::<Vec<_>>()
-        .join("|"))
+        .join("|");
+    Ok(format!("{NET_WORTH_FORMULA_TAG}|{fingerprint}"))
 }
 
 /// 读取与给定指纹匹配的缓存终值；无缓存行或指纹不符返回 `None`

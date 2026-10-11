@@ -109,7 +109,7 @@ fn assert_net_worth(world: &mut LedgerWorld, expected: i64) {
     assert_eq!(overview.net_worth_cents, expected, "净资产合计不符");
 }
 
-#[then(expr = "非投资账户余额合计应为 {int}")]
+#[then(expr = "账户余额合计应为 {int}")]
 fn assert_accounts_balance(world: &mut LedgerWorld, expected: i64) {
     let overview = world
         .report
@@ -118,7 +118,7 @@ fn assert_accounts_balance(world: &mut LedgerWorld, expected: i64) {
         .expect("未查询到净资产总览");
     assert_eq!(
         overview.accounts_balance_cents, expected,
-        "非投资账户余额合计不符"
+        "账户余额合计不符"
     );
 }
 

@@ -6,9 +6,9 @@
 export interface DashboardOverview {
   /** 折算基准币种（全局默认币种） */
   native_currency: string;
-  /** 净资产合计（分）= 非投资账户余额合计 + 持仓市值合计 + 在持实物资产估值合计 */
+  /** 净资产合计（分）= 账户余额合计（含投资账户现金）+ 持仓市值合计 + 在持实物资产估值合计 */
   net_worth_cents: number;
-  /** 非投资账户折本位币余额合计（分；投资账户与隐藏/黑洞账户不计入） */
+  /** 账户折本位币余额合计（分；含投资账户现金，隐藏/黑洞账户不计入） */
   accounts_balance_cents: number;
   /** 折本位币持仓市值合计（分；未录价标的按空值语义不计入） */
   holdings_market_value_cents: number;
