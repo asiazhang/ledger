@@ -98,13 +98,24 @@ pub fn list_transactions_internal(
         // 类型字面量对准 `accounts.type` CHECK 闭集的 `investment` 取值——本 crate 不依赖
         // ledger-accounts，域间经 SQL 表达（先例 mwr.rs 同款字面量）；判定读表不读 id
         // 清单，新建的投资账户自动纳入隐藏口径（spec #1808 user story 9）。
+        //
+        // 「三端 ∪ 出资子行任一命中即排除」按德摩根写成四个独立 NOT EXISTS 而非单个
+        // OR 子查询（issue #1924）：OR 形态使 planner 逐行退化为「每投资户 × fundings
+        // 全表扫」（真实库 COUNT 报 377ms），拆开后每行是纯主键探测（accounts id=? ×3
+        // + fundings transaction_id=? + accounts join），且不依赖 sqlite_stat1；两形态
+        // 语义严格等价（真实库双向 EXCEPT 计数为 0，含分解行 account_id IS NULL——
+        // 故 NOT IN 改写因 NULL 误杀不可用）。
         if filter.hide_investment_related == Some(true) {
             where_clause.push_str(
                 " AND NOT EXISTS (SELECT 1 FROM accounts a WHERE a.type = 'investment' \
-                 AND (a.id = transactions.account_id OR a.id = transactions.to_account_id \
-                 OR a.id = transactions.funding_account_id \
-                 OR a.id IN (SELECT f.account_id FROM transaction_fundings f \
-                     WHERE f.transaction_id = transactions.id)))",
+                 AND a.id = transactions.account_id) \
+                 AND NOT EXISTS (SELECT 1 FROM accounts a WHERE a.type = 'investment' \
+                 AND a.id = transactions.to_account_id) \
+                 AND NOT EXISTS (SELECT 1 FROM accounts a WHERE a.type = 'investment' \
+                 AND a.id = transactions.funding_account_id) \
+                 AND NOT EXISTS (SELECT 1 FROM transaction_fundings f \
+                 JOIN accounts a ON a.id = f.account_id AND a.type = 'investment' \
+                 WHERE f.transaction_id = transactions.id)",
             );
         }
 
