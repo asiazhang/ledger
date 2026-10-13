@@ -202,6 +202,10 @@ export function parseContainmentLists(
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return result;
   const rec = raw as Record<string, unknown>;
   const orderRec =
+    // Stryker disable next-line ConditionalExpression, LogicalOperator —— 等价变异体
+    // （ADR-0137 决策 5 豁免，#1938）：下游 orderArr 定义对 orderRec 有二次形状防御
+    // （orderRec && Array.isArray(orderRec[g.id])），null/数组/标量任何坏形状经变异
+    // 路径与原路径同达 orderArr = null，可观察行为不变。
     typeof rawOrders === "object" && rawOrders !== null && !Array.isArray(rawOrders)
       ? (rawOrders as Record<string, unknown>)
       : null;
@@ -287,9 +291,15 @@ export function moveArrangeable(
 ): ContainableViewName[] {
   const index = (order as readonly string[]).indexOf(name);
   if (index === -1) return [...order];
+  // Stryker disable next-line ArithmeticOperator —— 等价变异体（ADR-0137 决策 5
+  // 豁免，#1938）：target > last 越界守卫与 splice 越界安全（越界 = 末尾追加）互为
+  // 冗余，末位 down/bottom 的内容级结果不变。
   const last = order.length - 1;
   const target =
     action === "up" ? index - 1 : action === "down" ? index + 1 : action === "top" ? 0 : last;
+  // Stryker disable next-line ConditionalExpression —— 等价变异体（ADR-0137 决策 5
+  // 豁免，#1938）：no-op 分支本就返回 [...order] 新数组，越界（target > last）与幂等
+  // （target === index）边界经移动分支产生内容相同的新数组，内容级不可区分。
   if (target < 0 || target > last || target === index) return [...order];
   const next = [...order];
   next.splice(index, 1);
