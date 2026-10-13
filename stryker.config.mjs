@@ -30,6 +30,11 @@ export default {
   // 增量（ADR-0137 决策 3）：只重测受上次结果影响的变异体；增量文件走 CI
   // actions/cache（mutation-bench.yml 前端 job），本地跑完即落 reports/。
   incremental: true,
+  // dry run 超时（#1935）：初始测试运行要单 vitest 进程跑全量前端套件，CI runner
+  // 实测 ≈5–6 分钟（build.yml 双 shard 并行尚需 2m14s + 3m25s），必撞默认
+  // dryRunTimeout 300s（`Initial test run timed out!`，上线首跑即炸）——放宽到
+  // 15 分钟；CI 双 vitest runner 慢于本地是常态，不再按默认值裸奔。
+  dryRunTimeout: 900_000,
   // 观测期不判定（ADR-0137 决策 4）：break 阈值为 null，存活变异体不使命令失败；
   // 报告进 Step Summary 由 mutation-summary 前端脚本格式化，阈值待基线稳定后另立。
   thresholds: { break: null },
