@@ -362,6 +362,9 @@ describe("parseGroupOrders × 移回种子（issue #475：移回的出厂种子�
 });
 
 describe("store 启动读路径（issue #269/#359/#472：读 view_state:* 两键，经解析防御后回默认）", () => {
+  it("store 标识锁定：pinia id = sidebar-order（持久界面状态词表单点，重命名即迁移事件）", () => {
+    expect(useSidebarOrderStore().$id).toBe("sidebar-order");
+  });
   it("读取为空时组内序回默认序、收纳清单回出厂种子（未自定义或恢复默认后存储为空）", () => {
     const store = useSidebarOrderStore();
     expect(store.sidebarGroupOrders).toEqual(DEFAULT_ORDERS);
@@ -462,6 +465,14 @@ describe("moveArrangeable（组内移动纯函数，issue #270/#359）", () => {
       "transactions",
       "budget",
       "accounts",
+    ]);
+  });
+
+  it("首位项下移：与后一项交换——3 项组的中间项 down 与移末位内容重合，首位 down 是 down 分支的独立判定面", () => {
+    expect(moveArrangeable(bookkeeping, "transactions", "down")).toEqual([
+      "accounts",
+      "transactions",
+      "budget",
     ]);
   });
 
@@ -585,6 +596,15 @@ describe("buildSidebarSortMenuOptions（排序菜单选项构建纯函数，含�
   });
 });
 
+describe("isSidebarSortAction（排序动作词表守卫：key 即 action 的否定面，#1938）", () => {
+  it("非动作值一律为假：恢复默认 / 移入更多不是排序动作，固定项名与任意串也不是", () => {
+    expect(isSidebarSortAction("reset")).toBe(false);
+    expect(isSidebarSortAction("intoMore")).toBe(false);
+    expect(isSidebarSortAction("dashboard")).toBe(false);
+    expect(isSidebarSortAction("")).toBe(false);
+  });
+});
+
 describe("isArrangeableView（固定项例外判定，issue #270/#359；#473 主项七项）", () => {
   it("主项（可排区）为真；概览/AI/设置三固定项与收纳成员为假", () => {
     for (const name of ARRANGEABLE_VIEWS) expect(isArrangeableView(name)).toBe(true);
@@ -654,6 +674,8 @@ describe("moveBackToSidebar（移回纯函数，issue #475：移回 = 清单删�
   it("成员不在清单（含空清单组）：原样返回内容（no-op 语义）", () => {
     expect(moveBackToSidebar(lists, "insights", "search")).toEqual(lists);
     expect(moveBackToSidebar(lists, "bookkeeping", "transactions")).toEqual(lists);
+    // 同引用是 no-op 语义的一半：返回原对象 → 调用方 ref 赋值不触发多余响应式更新
+    expect(moveBackToSidebar(lists, "insights", "search")).toBe(lists);
   });
 });
 
@@ -671,6 +693,14 @@ describe("buildTabContextMenuOptions（「更多」页页签右键菜单构建�
     expect(opts[0]!.key).toBe("backToSidebar");
     expect(opts[0]!.disabled).toBe(true);
     expect(typeof opts[0]!.label).toBe("function");
+    // label 渲染函数实产 vnode：提示行的折行样式是刻意排版决策（white-space:normal
+    // 覆写 label 元素的 nowrap、max-width 收窄行宽，见函数注释），走样即红
+    const rendered = (opts[0]!.label as () => unknown)() as {
+      children: { props?: { style?: string } }[];
+    };
+    const hintDiv = rendered.children[1]!;
+    expect(hintDiv.props?.style).toContain("white-space:normal");
+    expect(hintDiv.props?.style).toContain("max-width:220px");
   });
 });
 
