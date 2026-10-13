@@ -422,6 +422,12 @@
   "update": {
     "unreachable": "更新源暂时不可用，请检查网络后重试",
     "manifest-invalid": "更新源返回了无法解析的更新清单",
-    "platform-unsupported": "当前平台不支持应用内更新，请前往发布页下载新版本"
+    "platform-unsupported": "当前平台不支持应用内更新，请前往发布页下载新版本",
+    "backup-failed": "更新前备份创建失败，已中止更新；请排查磁盘与权限后重试",
+    "no-update": "当前没有可安装的更新",
+    "download-failed": "更新下载失败，请检查网络后重试",
+    "signature-invalid": "更新工件验签失败，已拒绝安装",
+    "not-downloaded": "更新尚未下载完成，请先下载",
+    "install-failed": "更新安装失败，请重试"
   }
 }

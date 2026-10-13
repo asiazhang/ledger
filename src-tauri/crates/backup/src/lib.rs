@@ -70,8 +70,9 @@ pub use auto::{
     run_exit_backup, run_first_backup, seed_book_scope, set_state, shared_prefs, start_scheduler,
 };
 pub use engine::{
-    BackupFileInfo, BackupKind, BackupMetaSummary, BackupResult, BackupScope, PruneResult,
-    RestoreResult, backup_db_to, expected_schema_version, list_managed_backups, probe_backup_meta,
+    BackupFileInfo, BackupKind, BackupMetaSummary, BackupResult, BackupScope,
+    PRE_UPDATE_BACKUP_FILE_NAME, PruneResult, RestoreResult, backup_db_to,
+    create_pre_update_backup, expected_schema_version, list_managed_backups, probe_backup_meta,
     prune_managed_backups, read_backup_kind, read_backup_meta, restore_db_from,
 };
 

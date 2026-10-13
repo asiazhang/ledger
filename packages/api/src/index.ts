@@ -118,6 +118,7 @@ import type {
   LogLevelState,
   BaseCurrencyState,
   UpdateCheckOutcome,
+  UpdateDownloadOutcome,
 } from "@ledger/types";
 
 export { busyVisible } from "./globalBusy";
@@ -425,6 +426,14 @@ export const api = {
   // 推送设备级「自动检查更新」开关到后端运行期镜像：真源在本机 localStorage
   // 设备偏好（不随 Backup/Restore 迁移、新装默认开启），应用启动与变更时调用
   setAutoUpdateEnabled: (enabled: boolean) => invoke<void>("set_auto_update_enabled", { enabled }),
+  // 应用更新——安装路径（issue #1430 / ADR-0124 决策 6）：全询问式编排。
+  // 下载更新（用户确认下载后调用）：先创建更新前备份（失败报 update.backup-failed
+  // 并中止，不带病升级），后带进度下载（进度经 ledger:update-download-progress
+  // 事件），完成后等待二次确认安装。移动端报 update.platform-unsupported。
+  downloadUpdate: () => invoke<UpdateDownloadOutcome>("download_update"),
+  // 安装更新（下载完成后的二次确认入口）：安装已下载工件并自动重启进入新版；
+  // 未下载报 update.not-downloaded。成功路径不返回（进程随安装重启）。
+  installUpdate: () => invoke<void>("install_update"),
   // 同步标的信息（增量同步，issue #827 改名）：刷库内全部有通道标的现价并随行
   // 刷新名称，返回同步/跳过统计。标的全量同步命令与中断命令已随 ADR-0081 决策 3
   // 退役（issue #698）。

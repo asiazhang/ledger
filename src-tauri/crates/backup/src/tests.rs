@@ -1109,3 +1109,78 @@ fn paired_backup_encrypted_roundtrip_restores_sync_identity() {
     let restored = db::open_connection_with_passphrase(&dst_main, "paired-pass").unwrap();
     assert_eq!(count_transactions(&restored), 1, "业务行照常恢复");
 }
+
+/// 更新前备份（issue #1430）：固定名产物 + `pre-update` 来源标记。
+#[test]
+fn pre_update_backup_creates_fixed_name_zip_with_pre_update_kind() {
+    let conn = tauri_app_lib::test_support::open();
+    seed(&conn);
+
+    let dir = temp_safety_dir();
+    create_pre_update_backup(&conn, &dir, "0.2.0").unwrap();
+
+    let target = dir.join(PRE_UPDATE_BACKUP_FILE_NAME);
+    assert!(target.exists(), "产物落固定名");
+    assert_eq!(
+        read_backup_kind(&target).unwrap(),
+        BackupKind::PreUpdate,
+        "来源标记为更新前备份"
+    );
+}
+
+/// 覆盖式保留最近一份（issue #1430）：再次更新前备份覆盖上一份，不堆积；
+/// 目录里最终只有最新一份，内容是第二次的世界。
+#[test]
+fn pre_update_backup_overwrites_previous_one() {
+    let conn = tauri_app_lib::test_support::open();
+    seed(&conn);
+
+    let dir = temp_safety_dir();
+    create_pre_update_backup(&conn, &dir, "0.2.0").unwrap();
+    // 第一次备份之后世界再前进：多写一条交易。
+    conn.execute(
+        "INSERT INTO transactions (id,kind,amount_cents,currency_code,amount_native_cents,account_id,date,created_at,updated_at,version,device_id,is_deleted) \
+         VALUES ('txn-2','expense',2500,'CNY',2500,'acc-1','2026-02-02','2026-02-02T00:00:00Z','2026-02-02T00:00:00Z',1,'test',0)",
+        [],
+    )
+    .unwrap();
+    create_pre_update_backup(&conn, &dir, "0.3.0").unwrap();
+
+    let entries: Vec<_> = std::fs::read_dir(&dir)
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert_eq!(entries.len(), 1, "覆盖式保留：目录内只有最近一份");
+
+    // 最近一份是第二次的世界：恢复后可见两条交易。
+    let backup = dir.join(PRE_UPDATE_BACKUP_FILE_NAME);
+    let dst = temp_file("pre-update-overwrite-dst");
+    let safety = temp_safety_dir();
+    restore_db_from(
+        &backup,
+        &dst,
+        &safety,
+        expected_schema_version().unwrap(),
+        None,
+    )
+    .unwrap();
+    let restored = open_connection(&dst).unwrap();
+    assert_eq!(count_transactions(&restored), 2, "覆盖产物是最新世界");
+}
+
+/// 同族语义（issue #1430）：固定名不匹配受管命名前缀——更新前备份不进用户
+/// 备份清单、不参与受管清理（不占 BackupRetentionLimit 配额）。
+#[test]
+fn pre_update_backup_is_not_managed() {
+    assert!(!crate::engine::is_managed_backup_file_name(
+        PRE_UPDATE_BACKUP_FILE_NAME
+    ));
+
+    let conn = tauri_app_lib::test_support::open();
+    let dir = temp_safety_dir();
+    create_pre_update_backup(&conn, &dir, "0.2.0").unwrap();
+    assert!(
+        list_managed_backups(&dir, None).unwrap().is_empty(),
+        "更新前备份不进受管清单"
+    );
+}

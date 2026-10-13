@@ -422,6 +422,12 @@
   "update": {
     "unreachable": "The update source is temporarily unavailable. Check your network and try again.",
     "manifest-invalid": "The update source returned an update manifest that could not be parsed.",
-    "platform-unsupported": "In-app updates are not supported on this platform. Download the new version from the releases page."
+    "platform-unsupported": "In-app updates are not supported on this platform. Download the new version from the releases page.",
+    "backup-failed": "Could not create the pre-update backup; the update was aborted. Check disk space and permissions, then try again.",
+    "no-update": "No update is available to install right now.",
+    "download-failed": "The update could not be downloaded. Check your network and try again.",
+    "signature-invalid": "The update artifact failed signature verification and was rejected.",
+    "not-downloaded": "The update has not finished downloading yet. Download it first.",
+    "install-failed": "The update could not be installed. Try again."
   }
 }
