@@ -1,4 +1,5 @@
-// 应用更新域 IPC 载荷类型（issue #1429 / ADR-0124 决策 4/8）：检查路径命令面。
+// 应用更新域 IPC 载荷类型（issue #1429 / #1430 / ADR-0124 决策 4/6/8）：
+// 检查路径与安装路径命令面。
 
 /**
  * 版本比较三态（`check_for_updates` 返回）。
@@ -22,4 +23,18 @@ export interface UpdateCheckOutcome {
 export interface UpdateAvailablePayload {
   version: string;
   notes: string | null;
+}
+
+/**
+ * 更新下载进度事件载荷（事件名 `ledger:update-download-progress`，issue #1430）：
+ * `received` 为累计已接收字节数，`total` 为工件总大小（服务端未给出时为 null）。
+ */
+export interface UpdateDownloadProgress {
+  received: number;
+  total: number | null;
+}
+
+/** 下载更新结果（`download_update` 返回）：已下载完成的版本号，等待二次确认安装。 */
+export interface UpdateDownloadOutcome {
+  version: string;
 }

@@ -248,6 +248,12 @@ pub fn run() {
             ledger_infra::db::register_lock_hold_budget("restore_backup", backup_lock_budget);
             ledger_infra::db::register_lock_hold_budget("get_backup_meta", backup_lock_budget);
             ledger_infra::db::register_lock_hold_budget("list_backups", backup_lock_budget);
+            // 更新前备份（issue #1430）：`update.pre-update-backup` 裸作业同属
+            // 备份类合法重作业（锁内 `VACUUM INTO` 全库拷贝 + zip），同预算。
+            ledger_infra::db::register_lock_hold_budget(
+                "update.pre-update-backup",
+                backup_lock_budget,
+            );
             // crate（共享底座，不认识调度），响应闭包（去抖合流跑一轮）由本域提供、
             // 壳层启动时装入（幂等，先装者优先）。注册先于任何建库/写库。
             ledger_sync_engine::trigger::install_after_write_hook();
@@ -279,6 +285,11 @@ pub fn run() {
             // 推送；缺省按开启兜底（新装默认开启）。先于后台服务拉起登记——
             // 启动延迟静默检查读此镜像。
             app.manage(app_update::AutoUpdateSwitch::default());
+            // 已下载更新工件暂存槽登记（issue #1430）：下载确认后存入、安装
+            // 确认后取走（安装一次性）；进程内状态，重启自然清零。updater 插件
+            // 桌面专属，登记同门禁。
+            #[cfg(desktop)]
+            app.manage(app_update::DownloadedUpdate::default());
             try_init_database(app.handle()).map_err(|e| {
                 // 二次失败兜底（登记失败状态也失败，如连占位内存库都打不开）：
                 // 进程无法运行，fail loud 退出（B 类豁免，ADR-0060）。

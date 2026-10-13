@@ -90,7 +90,8 @@ pub(crate) fn managed_backup_file_name(
 }
 
 /// 备份来源标记（issue #127）：写入 zip 包内 `backup.json` 的 `kind` 字段，
-/// 自动与手动产物除文件名前缀外再以元数据显式区分。
+/// 自动与手动产物除文件名前缀外再以元数据显式区分；更新前备份（PreUpdateBackup，
+/// issue #1430 / ADR-0124 决策 6）是第三种来源。
 /// 旧版本备份缺该字段（serde `#[serde(default)]`）或值非法时均回落为
 /// [`BackupKind::Manual`]，列表与恢复按手动处理（向后兼容）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Default)]
@@ -102,6 +103,12 @@ pub enum BackupKind {
     #[default]
     #[serde(rename = "manual")]
     Manual,
+    /// 更新前备份（PreUpdateBackup）产物：应用自动更新安装前由系统自动创建
+    /// （见 [`PRE_UPDATE_BACKUP_FILE_NAME`] 与 [`create_pre_update_backup`]）。
+    /// 与 RestoreSafetyBackup 同族——不经调度器、不占保留上限、独立目录存放；
+    /// 旧版本读侧不认识该值，按 [`BackupKind::Manual`] 回落（向后兼容）。
+    #[serde(rename = "pre-update")]
+    PreUpdate,
 }
 
 impl std::fmt::Display for BackupKind {
@@ -109,13 +116,15 @@ impl std::fmt::Display for BackupKind {
         match self {
             Self::Auto => f.write_str("auto"),
             Self::Manual => f.write_str("manual"),
+            Self::PreUpdate => f.write_str("pre-update"),
         }
     }
 }
 
 // 反序列化手写而非用 `rename_all` 派生：旧备份来源兼容优先于严格校验——
-// 序列化只写 auto/manual 两态，读侧未知/非法值一律按 [`BackupKind::Manual`]
-// 落地而不是让整个元数据解析失败。
+// 序列化只写 auto/manual/pre-update 三态，读侧未知/非法值一律按
+// [`BackupKind::Manual`] 落地而不是让整个元数据解析失败（旧版本应用读到
+// 更新前备份的 `pre-update` 标记同样回落手动，列表与恢复不报错）。
 impl<'de> Deserialize<'de> for BackupKind {
     fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
     where
@@ -124,6 +133,8 @@ impl<'de> Deserialize<'de> for BackupKind {
         let s = String::deserialize(deserializer)?;
         if s == "auto" {
             Ok(Self::Auto)
+        } else if s == "pre-update" {
+            Ok(Self::PreUpdate)
         } else {
             Ok(Self::Manual)
         }
@@ -572,6 +583,35 @@ pub fn backup_db_to(
     cleanup(&tmp_sync);
     cleanup(&tmp_zip);
     result
+}
+
+/// 更新前备份产物名（issue #1430 / ADR-0124 决策 6）：**固定名**——每次更新
+/// 前备份覆盖上一份（覆盖式保留最近一份，不堆积），与恢复安全备份的
+/// 「永不删除」族内差异点。落点独立于用户备份目录（壳层解析为应用数据目录），
+/// 不匹配受管命名前缀，永不进入用户备份清单、不占备份保留上限（词汇表见
+/// 备份与数据文件域 PreUpdateBackup 词条）。
+pub const PRE_UPDATE_BACKUP_FILE_NAME: &str = "pre-update.db.zip";
+
+/// 创建更新前备份（PreUpdateBackup，issue #1430 / ADR-0124 决策 6）：应用自动
+/// 更新安装前由系统自动为当前活动账本创建的备份，用于新版迁移出错时回滚。
+///
+/// 与恢复安全备份同族语义（系统自动创建与命名、不经调度器、不标脏、不占
+/// 保留上限）：不经调度器与不标脏由调用形态保证——调用方以**裸作业**投递本
+/// 函数（不经统一写入口，无提交点置脏，先例同 `create_backup` 命令），调度
+/// 状态零接触；产物落 [`PRE_UPDATE_BACKUP_FILE_NAME`] 固定名，覆盖上一份。
+/// 备份失败（`VACUUM INTO` / 打包 / 落盘任一步）原样上抛，由调用方中止更新
+/// ——不带病升级（ADR-0124 决策 6）。
+pub fn create_pre_update_backup(
+    conn: &Connection,
+    dir: &Path,
+    app_version: &str,
+) -> Result<BackupResult> {
+    backup_db_to(
+        conn,
+        &dir.join(PRE_UPDATE_BACKUP_FILE_NAME),
+        app_version,
+        BackupKind::PreUpdate,
+    )
 }
 
 /// 从备份恢复：提取数据库 → 完整性 + 版本校验（必要时迁移升级）→ 安全备份当前库 → 替换。
