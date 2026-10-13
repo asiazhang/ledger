@@ -1,10 +1,19 @@
 # 每日变异测试 workflow（spec #1816 / ADR-0137）：与主构建（build.yml，push/PR
 # 触发）与性能基准（perf-bench.yml，每日 cron）刻意分离，只在每日 cron 与手动
 # dispatch 时运行——报告驱动的测试有效性观测，不进 PR 门禁：
-#   gate（照抄 perf-bench 的 head_sha 比对）：自上次成功运行以来无新提交即跳过；
-#   cargo mutants --in-diff——只变异「上次成功运行 → 本次」之间改动的 Rust 代码
-#   （cd src-tauri && git diff --relative 输出的路径与变异体路径同口径），
+#   gate：自上次成功运行以来无新提交即跳过；无成功运行（连续失败）时基线回退
+#   为「除本次外最近一次运行」的 head_sha 推进——防「超时→失败→基线冻结→diff
+#   积压→再超时」死循环（#1935），欠账按 ADR-0137 决策 2 不重放；
+#   cargo mutants --in-diff --workspace --file <白名单>——只变异白名单内「基线 →
+#   本次」之间改动的 Rust 代码（cd src-tauri && git diff --relative 供 in-diff），
 #   成本随改动量走；无 Rust 改动或 diff 不含变异体时原生成功退出（exit 0）。
+# 观测面白名单渐进扩面（#1935 / ADR-0137 修订注记）：cargo mutants 默认只变异
+#   当前包，不传 --workspace 时 crates/ 域全部静默漏检（自上线即如此，#1935 修
+#   复）；全量 --workspace 6,197 变异体 ≈ 124h 超 job 上限，按 crate 优先级渐进。
+#   批次 1 = transaction（资金写入核心）+ 根包 commands/api_server（命令出口接
+#   缝，保留既有观测面）。扩面纪律：每批 = 加一行 --file + ADR 修订注记记录当批
+#   清单与成本预估，扩面前先看上批报告的存活分布。长期排除 src/bin、
+#   src/test_support（工具与测试支撑）——白名单外自然排除。
 # --in-place（#1916）：默认拷贝模式只把 workspace 子树（src-tauri/）拷进临时
 #   目录构建，test_support/scan.rs 的双源语料 include_str!（../../../scripts/
 #   fixtures/，#1433）指向仓库根、落在副本外，未变异基线必红（exit 4），工作流
@@ -31,7 +40,7 @@ on:
   workflow_dispatch:
     inputs:
       base-ref:
-        description: 'in-diff 的基线 ref（留空则回退 HEAD~1；仅手动触发生效，schedule 走上次成功运行的 head_sha）'
+        description: 'in-diff 的基线 ref（留空则回退 HEAD~1；仅手动触发生效，schedule 走上次成功运行、全败时回退上次运行的 head_sha）'
         required: false
         default: ''
 
@@ -55,7 +64,7 @@ jobs:
       should-run: ${{ steps.decide.outputs.should-run }}
       base-sha: ${{ steps.decide.outputs.base-sha }}
     steps:
-      - name: 判断自上次成功运行以来是否有新提交
+      - name: 判断是否有待测新提交并给出 in-diff 基线
         id: decide
         env:
           GH_TOKEN: ${{ github.token }}
@@ -74,19 +83,33 @@ jobs:
           if [ -n "$last_sha" ] && [ "$last_sha" = "${{ github.sha }}" ]; then
             echo "自上次成功运行以来无新提交（$last_sha），跳过本次变异测试"
             echo "should-run=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "有待变异测试的新提交（上次成功：${last_sha:-无}，本次：${{ github.sha }}）"
-            echo "should-run=true" >> "$GITHUB_OUTPUT"
-            # 无历史成功运行时基线为空 → diff 生成步骤回退 HEAD~1。
-            echo "base-sha=$last_sha" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
+          echo "有待变异测试的新提交（上次成功：${last_sha:-无}，本次：${{ github.sha }}）"
+          echo "should-run=true" >> "$GITHUB_OUTPUT"
+          # 基线 = 上次成功运行 head_sha；无任何成功运行（连续失败，如 #1935 的
+          # 基线冻结循环）时回退「除本次外最近一次运行」的 head_sha——失败也推进
+          # 基线，diff 永远只含增量，欠账不重放（ADR-0137 决策 2）。per_page=10
+          # + 过滤本次 sha：runs 按创建时间倒序，不过滤会取到本次运行自己。
+          # 仍为空（仓库首次运行）→ diff 生成步骤回退 HEAD~1。
+          if [ -n "$last_sha" ]; then
+            base_sha="$last_sha"
+          else
+            base_sha="$(gh api \
+              "repos/${{ github.repository }}/actions/workflows/mutation-bench.yml/runs?branch=${{ github.ref_name }}&per_page=10" \
+              --jq '[.workflow_runs[] | select(.head_sha != "'"${{ github.sha }}"'")][0].head_sha // empty')"
+          fi
+          echo "base-sha=$base_sha" >> "$GITHUB_OUTPUT"
 
   rust-mutants:
     name: Rust 变异测试（in-diff，观测期不判定）
     needs: gate
     if: needs.gate.outputs.should-run == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    # 180：首跑需消化积压（白名单 ∧ 长期未推进的基线 diff，#1935 诊断实测
+    # transaction ∧ 54 天 diff = 120 变异体 ≈ 150 分钟）；基线正常推进后日常
+    # 回到 ~36 分钟（批次 1 体量），180 留出扩面余量。GitHub job 硬上限 6h。
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@v7
         with:
@@ -138,7 +161,15 @@ jobs:
           rc=0
           cd src-tauri
           # --in-place 根因与取舍见文件头注释（#1916）；jobs 默认 1，不传 --jobs。
-          cargo mutants --in-place --in-diff /tmp/mutants.diff --output /tmp/mutants-run \
+          # --workspace + --file 白名单（#1935 / ADR-0137 修订注记）：默认只变异当前
+          # 包会静默漏检 crates/ 域；批次 1 清单与扩面纪律见文件头注释。
+          # --test-workspace=true 显式固化「测试集 = 全 workspace」契约（含根包集成
+          # 测试与 e2e，击杀判定可信的前提；当前默认即 true，防上游变更）。
+          cargo mutants --in-place --workspace --test-workspace=true \
+            --file 'crates/transaction/src/**' \
+            --file 'src/commands/**' \
+            --file 'src/api_server/**' \
+            --in-diff /tmp/mutants.diff --output /tmp/mutants-run \
             2>&1 | tee /tmp/mutants-stdout.txt || rc=$?
           echo "rc=$rc" >> "$GITHUB_OUTPUT"
           # 退出码语义（cargo-mutants exit_code.rs）：0 全捕获或无变异体；
