@@ -14,7 +14,8 @@
 //    （Java Properties 转义字符，gradle 会报 Malformed \uxxxx）；jks 本身永不入库
 //    （src-tauri/.gitignore 兜底）。
 // 2. 人工暂停点（确认前不得继续）：口令 + alias `openledger` + 有效期已录入密码
-//    管理器；`openledger-release.jks` 已异地备份（网盘/U 盘皆可，至少一份离开本机）。
+//    管理器；`openledger-release.jks` 已异地备份（网盘/U 盘皆可，至少一份离开本机）；
+//    明确确认「备份完成，可以继续」。
 // 3. 配置 secrets（repo Settings → Secrets and variables → Actions，或 gh secret set；
 //    口令经 stdin 粘贴）：
 //      base64 -i ~/openledger-release.jks -o ~/openledger-release.jks.b64
@@ -26,9 +27,10 @@
 //    （tag 构建缺 secrets 直接失败：未签名 APK 不可安装也无法覆盖升级）；签名验收走
 //    workflow_dispatch 试跑，看「解码 Android 签名 keystore」无跳过、「校验 APK 签名
 //    （apksigner）」通过、artifact 可下载。
-// 4. 发布后人工验收：APK 传输到真机（下载/adb 均可）安装成功（首次安装放行「未知
-//    来源」）并冒烟记账主流程；后续版本必须用同一 keystore 签名才可覆盖升级
-//    （versionCode 由 tag 派生，单调递增）。
+// 4. 发布后人工验收：下载 artifact `openledger-android-arm64`（=
+//    `OpenLedger_<版本>_arm64.apk`），传输到真机（下载/adb 均可）安装成功（首次
+//    安装放行「未知来源」）并冒烟记账主流程；后续版本必须用同一 keystore 签名才可
+//    覆盖升级（versionCode 由 tag 派生，单调递增）。
 import java.util.Properties
 
 plugins {
