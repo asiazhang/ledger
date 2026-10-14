@@ -1,3 +1,36 @@
+// Android 发布签名运维 runbook（issue #560 / ADR-0074 决策 3）。release 签名经
+// keystore.properties 接线（本文件下方 signingConfigs）；keystore 是「丢失即永远
+// 无法给已装用户发升级」的资产，强制顺序：本地生成 keystore → 口令入密码管理器 +
+// jks 异地备份（人工暂停点）→ 配置 GitHub Actions secrets → 才启用发版。
+//
+// 前置：本机无 JDK 时先装一个真实 JDK（`brew install --cask temurin`，或用
+// Android Studio 内置 JBR 的 keytool）。
+//
+// 1. 本地生成 keystore（RSA 2048+、有效期 10000 天）：
+//      keytool -genkey -v -keystore ~/openledger-release.jks -alias openledger \
+//        -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=OpenLedger"
+//    口令在交互提示中输入（不进 shell 历史）；key 口令提示处直接回车（与 store 口令
+//    相同，CI 的 keystore.properties 单口令接线按此约定）；口令避免含反斜杠 `\`
+//    （Java Properties 转义字符，gradle 会报 Malformed \uxxxx）；jks 本身永不入库
+//    （src-tauri/.gitignore 兜底）。
+// 2. 人工暂停点（确认前不得继续）：口令 + alias `openledger` + 有效期已录入密码
+//    管理器；`openledger-release.jks` 已异地备份（网盘/U 盘皆可，至少一份离开本机）；
+//    明确确认「备份完成，可以继续」。
+// 3. 配置 secrets（repo Settings → Secrets and variables → Actions，或 gh secret set；
+//    口令经 stdin 粘贴）：
+//      base64 -i ~/openledger-release.jks -o ~/openledger-release.jks.b64
+//      gh secret set ANDROID_KEY_BASE64 < ~/openledger-release.jks.b64
+//      gh secret set ANDROID_KEY_PASSWORD    # 回车后按提示粘贴口令
+//      gh secret set ANDROID_KEY_ALIAS --body openledger
+//      rm ~/openledger-release.jks.b64
+//    CI 侧解码与接线见 .github/workflows/build.yml「解码 Android 签名 keystore」步骤
+//    （tag 构建缺 secrets 直接失败：未签名 APK 不可安装也无法覆盖升级）；签名验收走
+//    workflow_dispatch 试跑，看「解码 Android 签名 keystore」无跳过、「校验 APK 签名
+//    （apksigner）」通过、artifact 可下载。
+// 4. 发布后人工验收：下载 artifact `openledger-android-arm64`（=
+//    `OpenLedger_<版本>_arm64.apk`），传输到真机（下载/adb 均可）安装成功（首次
+//    安装放行「未知来源」）并冒烟记账主流程；后续版本必须用同一 keystore 签名才可
+//    覆盖升级（versionCode 由 tag 派生，单调递增）。
 import java.util.Properties
 
 plugins {

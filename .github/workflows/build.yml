@@ -26,8 +26,8 @@ jobs:
   # 112–189s（典型 ~170s）｜frontend 检查 39–87s。关键路径 = 后端测试 job（前端分片
   # 不再是决定项），PR 端到端 ≈ 4.3–5.1 分钟（job 跨度口径，不含排队）。
   # 后端测试 job 的四段拆解与「180s 不可达 / 250s 乐观下界」推算（对外口径单点，含
-  # 下界数字）住 backend job 注释；逐 run 实测数据、口径定义与局限见
-  # docs/verification/1110-ci-compile-cache-baseline.md。
+  # 下界数字）住 backend job 注释；逐 run 实测数据与口径定义随 issue #1110 存档
+  # （验收记录不进仓库，git 历史可回溯）。
   # issue #1109 起，backend/backend-lint 挂预构建 CI 镜像（ci-image.yml 发布到
   # GHCR），job 内零 apt 安装；镜像内容与重建路径见 .github/docker/backend-ci.Dockerfile 头注。
 
@@ -154,8 +154,8 @@ jobs:
   # 端到端基线（2026-09-13，issue #1110 刷新）：258–306s，典型 ~271s（来源 = 7 次
   # 成功 PR 运行 run 34747049405–34749024124；runner 画像 = ubuntu-latest Linux x64
   # 4 vCPU + 本 job 的预构建容器镜像；rust-cache 精确 key 命中，依赖缓存
-  # 1.14–1.18 GB）。四段拆解（口径定义与逐 run 表见
-  # docs/verification/1110-ci-compile-cache-baseline.md）：容器初始化（镜像拉取）
+  # 1.14–1.18 GB）。四段拆解（口径定义与逐 run 表随 issue #1110 存档，不进仓库）：
+  # 容器初始化（镜像拉取）
   # 19–31s｜缓存恢复（下载+解压）30–42s｜编译 82–116s｜测试执行 102–121s；四段之和
   # 比端到端少 5–9s，差额是 setup/checkout/Post/stop containers 等固定开销。
   #
@@ -163,7 +163,7 @@ jobs:
   # ① 不加付费 larger runner；② 不缩减 CI 测试范围（不按路径过滤、e2e 不挪 nightly）；
   # ③ 不引入 rustc-wrapper 类方案（编译加速归 kache）；④ 默认不拆后端测试为多 job。
   # 「180s 不可达」推算（单一口径 = 四段各自最小观测值之和，不含残差；极值出处见
-  # 上述文档的逐 run 表）：19（容器）+ 30（缓存）+ 82（编译）+ 102（执行）= 233s，
+  # issue #1110 的逐 run 表）：19（容器）+ 30（缓存）+ 82（编译）+ 102（执行）= 233s，
   # 已高于 180s 达 53s；同一口径计入残差 5–9s 则为 238–242s，结论不变。且每段都被
   # 约束锁死——执行段由约束②固定（时间就是用例本身），容器/缓存段是每 job 必付固定
   # 开销（约束④禁止用拆 job 摊薄，拆了要重复付），编译段在约束①（4 核 runner）与
@@ -319,8 +319,9 @@ jobs:
   # 从 tag 按公式 major×10⁶ + minor×10³ + patch 派生并经 --config 注入（唯一口径，零手工）。
   # 签名接线（决策 3，issue #560）：配置 ANDROID_KEY_* secrets 后，构建经
   # keystore.properties 注入 release 签名并 apksigner 校验；未配置时干跑保持未签名，
-  # tag 构建缺 secrets 直接失败（「先备份、再配 secrets、才启用发版」的机械执行），
-  # 流程与验收见 docs/verification/560-android-apk-signing.md。
+  # tag 构建缺 secrets 直接失败（「先备份、再配 secrets、才启用发版」的机械执行）；
+  # keystore 生成/备份/secrets 配置的运维 runbook 住
+  # src-tauri/gen/android/app/build.gradle.kts 头注释。
   # macOS 签名 + 公证（issue #658）：配置了 APPLE_* secrets 时自动导入证书签名，构建后
   # notarytool 公证（--wait）+ stapler 附着，并做 codesign/spctl/stapler validate 校验；
   # 未配置 secrets 时相关步骤自动跳过，产物保持未签名（干跑与 PR 构建不受影响）。
@@ -585,7 +586,7 @@ jobs:
             # tag 发布缺 secrets 直接失败：发版强约束是「先配 secrets 才启用」
             # （ADR-0074 决策 3），未签名 APK 不可安装也无法覆盖升级，禁止进 Release。
             if [ "$GITHUB_REF_TYPE" = "tag" ]; then
-              echo "✗ tag 发布必须已签名：缺少 ANDROID_KEY_BASE64（先完成 keystore 备份并配齐 secrets，见 docs/verification/560-android-apk-signing.md）"
+              echo "✗ tag 发布必须已签名：缺少 ANDROID_KEY_BASE64（先完成 keystore 备份并配齐 secrets，runbook 见 src-tauri/gen/android/app/build.gradle.kts 头注释）"
               exit 1
             fi
             echo "⚠️ 未配置 ANDROID_KEY_BASE64，跳过签名接线（产物将保持未签名）"
@@ -649,6 +650,11 @@ jobs:
       # 校验（issue #658 交付物）：DMG 公证票据附着有效、Gatekeeper 放行；临时
       # 挂载 DMG 验内部 .app——签名身份必须是 Developer ID Application 且启用
       # hardened runtime（公证必需，防止 bundler 默认行为变化）。任一失败即发布失败。
+      # 发布后人工终验（CI 无 GUI 会话，无法在 workflow 断言）：
+      # ① 本机 GUI 会话 `spctl --assess --type open -vv <dmg>` 显示 accepted；
+      # ② 挂载 DMG 拷出 .app，`codesign -dv --verbose=4` 显示 Developer ID
+      #    Application 与 TeamIdentifier，`spctl --assess --type execute -vv` accepted；
+      # ③ 未登录开发者账号的机器首启：Gatekeeper 提示「已验证」放行。
       - name: 校验签名与公证（Gatekeeper）
         if: runner.os == 'macOS'
         env:
@@ -661,7 +667,7 @@ jobs:
           DMG_PATH=$(find "$DMG_BUNDLE_DIR" -maxdepth 1 -name '*.dmg' | head -n 1)
           xcrun stapler validate "$DMG_PATH"
           # spctl 需 GUI 会话上下文，headless CI 返回 Insufficient Context 误报
-          # （run 34211413678），挪至 docs/verification/658 人工验收清单
+          # （run 34211413678），归入本步骤头注释的发布后人工终验项
           MNT="$RUNNER_TEMP/openledger-dmg-mount"
           hdiutil attach -readonly -nobrowse -mountpoint "$MNT" "$DMG_PATH" >/dev/null
           APP_IN_DMG=$(find "$MNT" -maxdepth 2 -name '*.app' | head -n 1)
