@@ -1,9 +1,11 @@
 // 前端变异测试配置（spec #1816 / ADR-0137 决策 3 / 接入票 #1832）。
-// 每日 mutation-bench.yml workflow 消费，不进 check.sh、不进 PR 门禁（ADR-0137 决策 1）。
+// 本地按需运行（原每日 mutation-bench.yml workflow 已撤下，ADR-0137 修订注记
+// 2026-10-14），不进 check.sh、不进 PR 门禁。
 // 报告可信前提：vitest-runner@10.0.0 未适配 Vitest 5 会全量误报 Survived，
 // 由 pnpm patchedDependencies 套用上游修复 PR stryker-js#6214（见 pnpm-workspace.yaml
-// 与 patches/@stryker-mutator__vitest-runner@10.0.0.patch 头注），并以 workflow 内的
-// killer 变异金丝雀验收（已知必杀变异报 Survived 即 runner 失效，#6073 残留误报探针）。
+// 与 patches/@stryker-mutator__vitest-runner@10.0.0.patch 头注），并以
+// killer 变异金丝雀验收兜底（已知必杀变异报 Survived 即 runner 失效，#6073
+// 残留误报探针；金丝雀命令留档 ADR-0137 载体撤下修订注记）。
 // 普通对象导出（defineConfig 从 @stryker-mutator/api/core 导入会依赖传递依赖
 // 暴露面，pnpm 严格布局下不可达）。
 export default {
@@ -27,8 +29,8 @@ export default {
   // 路径与 @ledger/test-support 包名在 sandbox 内会解析到不同模块实例（双实例），
   // 测试替身接缝失效；就地变异无此问题。
   inPlace: true,
-  // 增量（ADR-0137 决策 3）：只重测受上次结果影响的变异体；增量文件走 CI
-  // actions/cache（mutation-bench.yml 前端 job），本地跑完即落 reports/。
+  // 增量（ADR-0137 决策 3）：只重测受上次结果影响的变异体；增量文件落
+  // reports/stryker-incremental.json 本地留存（原 CI actions/cache 随载体撤下退役）。
   incremental: true,
   // dry run 超时（#1935）：初始测试运行要单 vitest 进程跑全量前端套件，CI runner
   // 实测 ≈5–6 分钟（build.yml 双 shard 并行尚需 2m14s + 3m25s），必撞默认 5 分钟
@@ -37,9 +39,8 @@ export default {
   // 回落默认值（#1936 首跑实测，WARN 里才见 Unknown option）。
   dryRunTimeoutMinutes: 15,
   // 观测期不判定（ADR-0137 决策 4）：break 阈值为 null，存活变异体不使命令失败；
-  // 报告进 Step Summary 由 mutation-summary 前端脚本格式化，阈值待基线稳定后另立。
+  // 报告由 mutation-frontend-summary.sh 格式化阅读，阈值待基线稳定后另立。
   thresholds: { break: null },
-  // json：Step Summary 报告脚本与金丝雀断言的数据源；html：artifact 下钻；
-  // progress：本地跑时控制台进度（CI 自动降级 append-only）。
+  // json：报告脚本与金丝雀断言的数据源；html：浏览器打开下钻；progress：控制台进度。
   reporters: ["json", "html", "progress"],
 };

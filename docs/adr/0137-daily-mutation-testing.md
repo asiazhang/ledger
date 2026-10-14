@@ -1,6 +1,6 @@
 # ADR-0137: 每日变异测试——mutation-bench 观测工作流与「测试有效性」的自动化判据
 
-- 状态：已接受（决策入档；实现随实施票落地）。**修订（2026-10-09）**：决策 3 的「前端 Stryker 本期撤出」被 #1832 修订——vitest-runner@10.0.0 经 pnpm patch 套用上游修复后接入前端观测面，见文末修订注记。**修订（2026-10-13）**：决策 2 的执行面修正为「白名单 ∩ in-diff」渐进扩面并修复观测面静默缺失，代价节成本句同步更新，见文末 #1935 修订注记。
+- 状态：已接受（决策入档；实现随实施票落地）。**修订（2026-10-09）**：决策 3 的「前端 Stryker 本期撤出」被 #1832 修订——vitest-runner@10.0.0 经 pnpm patch 套用上游修复后接入前端观测面，见文末修订注记。**修订（2026-10-13）**：决策 2 的执行面修正为「白名单 ∩ in-diff」渐进扩面并修复观测面静默缺失，代价节成本句同步更新，见文末 #1935 修订注记。**修订（2026-10-14）**：决策 1 的 CI 载体撤下——mutation-bench.yml workflow 删除（GitHub 托管 runner 成本不可行），形态改为本地按需运行，判定口径与豁免收口不变，见文末载体撤下修订注记。
 - 日期：2026-09-25
 - 作者：Ledger 项目
 - 关联：ADR-0087（测试三层权威层与「断言强度」——本 ADR 是其判据的自动化投影，不新增标准）、ADR-0068（性能门禁——本 ADR 复用其「先观察后立阈」路径与「判定下沉工具内、workflow 只传参」形态）、ADR-0062（性能基准确定性数据集——观察期先例）、ADR-0112（crate 分层——in-diff 按 crate 内改动取范围的边界背景）；#1816（spec）、#1817/#1818（currencies / physical-asset 试点，可行性验证）、#1827（本 ADR 与工作流落地票）、#1832（前端 Stryker 接入前置——工具链不兼容诊断）；词汇表：测试基础设施域「零击杀测试」「存活变异体」「等价变异体」（随本 ADR 入档）
@@ -94,3 +94,14 @@ cargo-mutants 豁免配置住 `src-tauri/.cargo/mutants.toml`（工具真源位�
 - **白名单渐进扩面（替代一次性全量）**：全 workspace 6,197 变异体 ≈ 124 小时，超 GitHub job 6 小时上限 20 倍（「全量每日跑」的否决因此加重）；按 crate 优先级渐进——批次 1 = `transaction`（资金写入核心）+ 根包 `commands`/`api_server`（命令出口接缝，保留既有观测面）。每批 = 加一行 `--file` + 本注记补当批清单与成本预估，扩面前先看上批报告存活分布；`src/bin`、`src/test_support`（工具与测试支撑，共 1,231 变异体）长期排除，白名单外自然排除。
 - **基线冻结循环（gate 语义修订）**：gate 原只认上次成功运行为基线，连续失败使基线冻在 2026-09-27，in-diff 积压 54 提交 → 60 分钟跑不完 → 超时 → 继续冻结。修订：无任何成功运行时基线回退「除本次外最近一次运行」的 head_sha——失败也推进基线，diff 永远只含增量，欠账不重放（决策 2 原意）；观测面换「瞬时故障日缺口显式接受」。job 上限 60 → 180 分钟（首跑消化积压 120 变异体 ≈ 150 分钟；基线正常后日常约 36 分钟）。
 - **Stryker dry run 超时（前端 job 零成功根因）**：默认 `dryRunTimeout` 300s，CI 单 vitest 进程跑全量前端套件 ≈ 5–6 分钟必撞，首跑即 `Initial test run timed out!`。修复：`stryker.config.mjs` `dryRunTimeout: 900_000`；4860 变异体全量耗时待首跑实测，超限再议缩面或并发。
+
+## 修订注记（2026-10-14）：CI 载体撤下——mutation-bench workflow 删除，改本地按需运行
+
+上线以来 CI 零成功（#1935 诊断时已 16 连败；run 38415261755 收口实证：Rust job 撞 180 分钟上限被取消、前端 Stryker 步骤连红）——白名单批次 1 已逼近 GitHub 托管 runner 的单 job 时长上限，#1935 的渐进扩面在 CI 上没有可行余量，「每日常驻观测」的成本前提不成立。决策 1 的载体修订为**本地按需运行**；决策 2–6 的判定口径、处置语义、豁免收口与词汇表全部不变；观测面换「无人定期跑」的显式缺口，由本地纪律承接。
+
+本地入口（替代原 workflow 步骤）：
+
+- **Rust（cargo-mutants）**：`cd src-tauri && cargo mutants --in-place --workspace --test-workspace=true --file 'crates/transaction/src/**' --file 'src/commands/**' --file 'src/api_server/**' --output /tmp/mutants-run`（白名单 = #1935 批次 1，扩面纪律不变；in-diff 基线按需以 `--in-diff <diff>` 给定）；报告阅读 `./scripts/mutation-summary.sh /tmp/mutants-run/mutants.out`。
+- **前端（Stryker）**：仓库根 `pnpm exec stryker run`（增量文件 `reports/stryker-incremental.json` 本地留存）；报告阅读 `./scripts/mutation-frontend-summary.sh reports/mutation/mutation.json`。
+- **金丝雀验收**（升级 vitest-runner / Vitest 前必跑，替代原 workflow 步骤）：`pnpm exec stryker run --mutate "src/stores/sidebar-order.ts" --incrementalFile /tmp/stryker-canary-incremental.json --reporters json`，isArrangeableView（sidebar-order.ts 71–73 行）的 ConditionalExpression→false 变异必须全部 Killed；行锚点移位需同步更新，变异面配置漂移即 fail loud。
+- 原报告出口（Step Summary / artifact）随载体退役；`scripts/mutation-*.sh` 转为本地报告阅读工具，输出直写 stdout。
