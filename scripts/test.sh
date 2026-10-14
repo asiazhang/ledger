@@ -1,8 +1,7 @@
 #!/bin/sh
 # 运行 Rust 测试（本地测试入口，issue #1112）：两条入口，一次跑完 workspace
 # 全部成员的测试面。CI 的测试执行面本票不动（build.yml backend job 仍跑
-# `cargo test --workspace --lib --test '*'`，切到本入口属另一决策），见
-# docs/verification/1112-test-exec-parallel.md「未验证项」。
+# `cargo test --workspace --lib --test '*'`，切到本入口属另一决策，见 issue #1112）。
 #
 # 入口① 并发（scripts/test-exec.ts）：一条 `cargo test --workspace --no-run` 构建
 #   一次，再由执行器统一调度全部测试二进制——全局并行度 = min(CPU 数, 待跑二进制
