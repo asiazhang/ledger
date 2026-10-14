@@ -43,14 +43,15 @@ use ledger_infra::db::DbState;
 use ledger_infra::settings::{SettingKey, get as get_setting};
 use tauri::Listener;
 use tauri::Manager;
+use tauri_app_lib::app_update::UpdateSurface;
 use tauri_app_lib::app_update::{
     AutoUpdateSwitch, DownloadedUpdate, PreUpdateBackupDirSlot, UPDATE_AVAILABLE_EVENT,
     UPDATE_DOWNLOAD_PROGRESS_EVENT, UpdateAvailablePayload, UpdateCheckOutcome, UpdateCheckStatus,
     UpdateDownloadOutcome, UpdateDownloadProgress, check_update, download_update, run_silent_check,
 };
 use tauri_app_lib::commands::app_update::{
-    check_for_updates, download_update as download_update_command, install_update,
-    set_auto_update_enabled,
+    check_for_updates, download_update as download_update_command, get_update_surface,
+    install_update, set_auto_update_enabled,
 };
 
 /// 夹具配置的更新源端点（127.0.0.1:1，tcpmux 特权端口，无进程监听，连接确定
@@ -639,4 +640,25 @@ async fn download_update_command_surfaces_error_from_config_endpoint() {
         .expect_err("配置端点被拒应报错");
     assert_eq!(err.code(), Some("update.unreachable"));
     assert!(backup_file(&scratch).exists(), "备份先于检查请求完成");
+}
+
+#[test]
+fn get_update_surface_reports_runtime_platform() {
+    // 平台分支信号（issue #1431）：命令返回值落在形态闭集内，且与运行平台一致——
+    // macOS / Windows 恒 updater；移动端恒 release-page；Linux 按进程 `APPIMAGE`
+    // 观测分辨 AppImage（updater）与 deb（release-page）。测试进程不以 AppImage
+    // 运行（CI 与开发机均为裸二进制），Linux 分支按当前环境如实断言两侧。
+    let surface = get_update_surface().expect("形态查询不失败");
+    if cfg!(any(target_os = "macos", target_os = "windows")) {
+        assert_eq!(surface, UpdateSurface::Updater);
+    } else if cfg!(target_os = "android") || cfg!(target_os = "ios") {
+        assert_eq!(surface, UpdateSurface::ReleasePage);
+    } else if cfg!(target_os = "linux") {
+        let expected = if std::env::var_os("APPIMAGE").is_some() {
+            UpdateSurface::Updater
+        } else {
+            UpdateSurface::ReleasePage
+        };
+        assert_eq!(surface, expected);
+    }
 }

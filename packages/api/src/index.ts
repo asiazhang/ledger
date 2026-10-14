@@ -119,6 +119,7 @@ import type {
   BaseCurrencyState,
   UpdateCheckOutcome,
   UpdateDownloadOutcome,
+  UpdateSurface,
 } from "@ledger/types";
 
 export { busyVisible } from "./globalBusy";
@@ -426,6 +427,10 @@ export const api = {
   // 推送设备级「自动检查更新」开关到后端运行期镜像：真源在本机 localStorage
   // 设备偏好（不随 Backup/Restore 迁移、新装默认开启），应用启动与变更时调用
   setAutoUpdateEnabled: (enabled: boolean) => invoke<void>("set_auto_update_enabled", { enabled }),
+  // 查询更新入口形态（issue #1431 / ADR-0124 决策 1）：updater = 桌面三平台完整
+  // 更新面；release-page = deb 与 Android（打开发布页引导）。设置卡片与提醒弹层
+  // 据此做平台分支。
+  getUpdateSurface: () => invoke<UpdateSurface>("get_update_surface"),
   // 应用更新——安装路径（issue #1430 / ADR-0124 决策 6）：全询问式编排。
   // 下载更新（用户确认下载后调用）：先创建更新前备份（失败报 update.backup-failed
   // 并中止，不带病升级），后带进度下载（进度经 ledger:update-download-progress

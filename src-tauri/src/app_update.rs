@@ -157,6 +157,42 @@ pub fn unsupported_platform_error() -> AppError {
 }
 
 // ---------------------------------------------------------------------------
+// 更新入口形态（issue #1431 平台分支信号，ADR-0124 决策 1）
+// ---------------------------------------------------------------------------
+
+/// 更新入口形态闭集：`updater` = 桌面三平台完整更新面（检查/下载/安装）；
+/// `release-page` = deb 与 Android——无更新器可消费的更新工件，更新入口降级为
+/// 「打开发布页」引导，不冒充可自更新（ADR-0124 决策 1）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum UpdateSurface {
+    /// 完整更新面：检查、带进度下载、确认安装重启。
+    Updater,
+    /// 发布页引导：应用内无下载/安装动作。
+    ReleasePage,
+}
+
+/// 平台 → 更新入口形态判定（纯函数，`APPIMAGE` 环境变量观测以参数注入，单测
+/// 无需触碰进程环境）：
+/// - 移动端（Android）：release-page；
+/// - Linux 桌面：AppImage 运行时才持更新工件——AppImage runtime 启动时注入
+///   `APPIMAGE` 环境变量，是 AppImage 与 deb 两种 Linux 安装形态的唯一运行期判据；
+///   deb 及其他 Linux 形态 → release-page；
+/// - macOS / Windows：updater。
+pub fn update_surface(appimage_env: Option<&std::ffi::OsStr>) -> UpdateSurface {
+    // 移动端（Android）恒发布页引导；Linux 桌面仅 AppImage 运行时持更新工件
+    // （`APPIMAGE` 由 AppImage runtime 注入，deb 等其他形态未注入）；其余桌面
+    // updater。`cfg!` 为编译期常量分支，全平台可编译，无死代码。
+    if cfg!(mobile) {
+        return UpdateSurface::ReleasePage;
+    }
+    if cfg!(target_os = "linux") && appimage_env.is_none() {
+        return UpdateSurface::ReleasePage;
+    }
+    UpdateSurface::Updater
+}
+
+// ---------------------------------------------------------------------------
 // 更新检查（唯一 updater 调用点）
 // ---------------------------------------------------------------------------
 
@@ -615,4 +651,39 @@ pub fn install_pending_update<R: tauri::Runtime>(
     // macOS / Linux 替换完成，重启进程进入新版（diverging：不返回）。
     tracing::info!(version = %version, "更新安装完成，重启应用");
     app.restart()
+}
+
+#[cfg(test)]
+mod surface_tests {
+    use super::*;
+
+    /// Linux 桌面：AppImage 运行时（`APPIMAGE` 注入）→ updater；deb 形态（未注入）
+    /// → release-page（ADR-0124 决策 1：deb 无更新工件）。
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_surface_branches_on_appimage_env() {
+        assert_eq!(
+            update_surface(Some(std::ffi::OsStr::new("/opt/App.OpenLedger.AppImage"))),
+            UpdateSurface::Updater
+        );
+        assert_eq!(update_surface(None), UpdateSurface::ReleasePage);
+    }
+
+    /// macOS / Windows：完整更新面（环境变量观测不参与判定）。
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    #[test]
+    fn desktop_non_linux_surface_is_updater() {
+        assert_eq!(update_surface(None), UpdateSurface::Updater);
+        assert_eq!(
+            update_surface(Some(std::ffi::OsStr::new("anything"))),
+            UpdateSurface::Updater
+        );
+    }
+
+    /// 移动端：恒为发布页引导。
+    #[cfg(mobile)]
+    #[test]
+    fn mobile_surface_is_release_page() {
+        assert_eq!(update_surface(None), UpdateSurface::ReleasePage);
+    }
 }

@@ -3,6 +3,7 @@ import { computed } from "vue";
 import { NCard, NSpace, NSwitch, NText } from "naive-ui";
 import AppSelect from "@ledger/ui-kit/AppSelect.vue";
 import LogSettings from "@/settings/LogSettings.vue";
+import UpdateSettings from "@/settings/UpdateSettings.vue";
 import { SETTINGS_CARD_STACK_CLASS } from "@/settings/settings-layout.css.ts";
 import { useAppStore } from "@/stores/app";
 import { t, type LocaleSetting } from "@ledger/i18n";
@@ -45,5 +46,6 @@ const languageOptions = computed<{ label: string; value: LocaleSetting }[]>(() =
     </NCard>
 
     <LogSettings />
+    <UpdateSettings />
   </div>
 </template>

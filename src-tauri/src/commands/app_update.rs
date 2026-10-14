@@ -77,3 +77,14 @@ pub fn set_auto_update_enabled<R: tauri::Runtime>(app: AppHandle<R>, enabled: bo
     tracing::info!(enabled, "自动检查更新开关镜像已更新");
     Ok(())
 }
+
+/// 报告当前设备的更新入口形态（issue #1431 / ADR-0124 决策 1）：前端据此做平台
+/// 分支——`updater` 呈现完整更新面（检查/下载/安装），`release-page` 只呈打开发布页
+/// 引导。Linux 桌面按 `APPIMAGE` 环境变量分辨 AppImage 与 deb 两种安装形态
+/// （AppImage runtime 启动时注入），deb 与移动端不冒充可自更新。
+#[tauri::command]
+pub fn get_update_surface() -> Result<app_update::UpdateSurface> {
+    Ok(app_update::update_surface(
+        std::env::var_os("APPIMAGE").as_deref(),
+    ))
+}
