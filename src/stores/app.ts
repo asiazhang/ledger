@@ -26,6 +26,16 @@ export const useAppStore = defineStore("app", () => {
   // localStorage，不随 Backup/Restore 迁移——换新机器或恢复备份后保持默认关；
   // 后端只持运行时镜像，由 useDevicePreferenceSync 启动/变更时推送。
   const autoExecutionEnabled = ref<boolean>(loadLocal<boolean>("auto_execution_enabled", false));
+  // 设备级「自动检查更新」开关（issue #1431 / ADR-0124 决策 8）：默认**开**（新装
+  // 默认开启自动检查），真源在本机 localStorage，不随 Backup/Restore 迁移；后端
+  // 只持运行时镜像，由 useDevicePreferenceSync 启动/变更时推送。
+  const autoUpdateEnabled = ref<boolean>(loadLocal<boolean>("auto_update_enabled", true));
+  // 「已提醒版本」记忆（issue #1431 / ADR-0124 决策 4）：提醒弹层展示后记录版本号，
+  // 同一版本后续启动不再自动弹层（每版本至多自动提醒一次；设置页手动检查不受限）。
+  // 设备级、不随 Backup/Restore 迁移；null = 尚未提醒过任何版本。
+  const updateRemindedVersion = ref<string | null>(
+    loadLocal<string | null>("update_reminded_version", null),
+  );
   // 界面语言偏好（issue #342 / ADR-0049）：轻量设置项，'system' = 跟随系统；
   // 存储与生效逻辑收口在 @ledger/i18n，此处只持状态供设置页读写。
   const localeSetting = ref<LocaleSetting>(getLocaleSetting());
@@ -66,6 +76,16 @@ export const useAppStore = defineStore("app", () => {
     saveLocal("auto_execution_enabled", enabled);
   }
 
+  function setAutoUpdateEnabled(enabled: boolean) {
+    autoUpdateEnabled.value = enabled;
+    saveLocal("auto_update_enabled", enabled);
+  }
+
+  function markUpdateReminded(version: string) {
+    updateRemindedVersion.value = version;
+    saveLocal("update_reminded_version", version);
+  }
+
   async function setLocale(value: LocaleSetting) {
     localeSetting.value = value;
     await setLocaleSetting(value);
@@ -87,6 +107,8 @@ export const useAppStore = defineStore("app", () => {
     backupDir,
     backupMaxCount,
     autoExecutionEnabled,
+    autoUpdateEnabled,
+    updateRemindedVersion,
     localeSetting,
     amountPrivacyEnabled,
     rememberPassphrase,
@@ -95,6 +117,8 @@ export const useAppStore = defineStore("app", () => {
     setBackupDir,
     setBackupMaxCount,
     setAutoExecutionEnabled,
+    setAutoUpdateEnabled,
+    markUpdateReminded,
     setLocale,
     setAmountPrivacyEnabled,
     setRememberPassphrase,

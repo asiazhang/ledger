@@ -23,6 +23,7 @@ beforeEach(() => {
     overrides: {
       set_auto_backup_dir: () => Promise.resolve(),
       set_auto_execution_enabled: () => Promise.resolve(),
+      set_auto_update_enabled: () => Promise.resolve(),
     },
   });
 });
@@ -67,5 +68,34 @@ describe("useDevicePreferenceSync（启动回放 + 变更推送）", () => {
     store.setBackupDir("/Users/me/backups");
     await flushPromises();
     expect(mockInvoke).toHaveBeenCalledWith("set_auto_backup_dir", { dir: "/Users/me/backups" });
+  });
+});
+
+describe("useDevicePreferenceSync — 自动检查更新开关（issue #1431 / ADR-0124 决策 8）", () => {
+  it("启动回放：新装默认开启，后端镜像收到 true（缺省开启语义一致）", async () => {
+    mount(Host);
+    await flushPromises();
+    expect(mockInvoke).toHaveBeenCalledWith("set_auto_update_enabled", { enabled: true });
+  });
+
+  it("启动回放：localStorage 恢复出的关闭态如实推送", async () => {
+    localStorage.setItem("auto_update_enabled", "false");
+    mount(Host);
+    await flushPromises();
+    expect(mockInvoke).toHaveBeenCalledWith("set_auto_update_enabled", { enabled: false });
+  });
+
+  it("变更推送：开关变更即再次推送，无需重启", async () => {
+    const store = useAppStore();
+    mount(Host);
+    await flushPromises();
+
+    store.setAutoUpdateEnabled(false);
+    await flushPromises();
+    expect(mockInvoke).toHaveBeenLastCalledWith("set_auto_update_enabled", { enabled: false });
+
+    store.setAutoUpdateEnabled(true);
+    await flushPromises();
+    expect(mockInvoke).toHaveBeenLastCalledWith("set_auto_update_enabled", { enabled: true });
   });
 });

@@ -433,5 +433,32 @@
     "ok": "Synced {points} rate samples (covering {earliest} to {latest})",
     "stageFetching": "Reading exchange-rate file…",
     "stagePersisting": "Parsed {days} days, writing…"
+  },
+  "update": {
+    "cardTitle": "App Updates",
+    "currentVersion": "Current version: ",
+    "checkNow": "Check for updates",
+    "upToDate": "You're up to date",
+    "newVersion": "New version {version} available",
+    "download": "Download update",
+    "autoCheckLabel": "Check for updates automatically",
+    "autoCheckDesc": "Check for new versions once after startup and remind you; manual checks remain available when turned off.",
+    "releasePageOnly": "In-app updates are not available for this installation channel. Please download new versions from the releases page.",
+    "openReleasePage": "Open releases page",
+    "cardDownloading": "Downloading update…",
+    "cardDownloadingPercent": "Downloading update… {percent}%",
+    "cardDownloaded": "Version {version} downloaded, ready to install",
+    "continueInstall": "Continue install",
+    "viewProgress": "View progress",
+    "remindTitle": "New version available",
+    "noNotes": "No release notes for this version.",
+    "later": "Later",
+    "downloadingTitle": "Downloading update",
+    "downloadingBody": "The download continues in the background; closing this dialog won't interrupt it. You'll confirm again before installing.",
+    "hide": "Hide",
+    "downloadedTitle": "Update ready",
+    "installWarning": "Installing will quit the app and restart into the new version.",
+    "installBackupNote": "A pre-update backup was created automatically before downloading (it doesn't count against your backup limit) — restore from it if anything goes wrong.",
+    "installNow": "Install and restart"
   }
 }

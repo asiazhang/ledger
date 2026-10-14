@@ -33,6 +33,13 @@ export interface UpdateDownloadProgress {
   received: number;
   total: number | null;
 }
+/**
+ * 更新入口形态（`get_update_surface` 返回，issue #1431 平台分支信号）：
+ * - `updater`：桌面三平台完整更新面（检查/下载/安装）；
+ * - `release-page`：deb 与 Android——无更新工件，更新入口降级为打开发布页引导
+ *   （ADR-0124 决策 1，不冒充可自更新）。
+ */
+export type UpdateSurface = "updater" | "release-page";
 
 /** 下载更新结果（`download_update` 返回）：已下载完成的版本号，等待二次确认安装。 */
 export interface UpdateDownloadOutcome {

@@ -60,6 +60,7 @@ import { useEncryptionGate } from "@/backup/useEncryptionGate";
 import UnlockScreen from "@/backup/UnlockScreen.vue";
 import StartupFailureScreen from "@/backup/StartupFailureScreen.vue";
 import DevicePreferenceSyncHost from "@/components/DevicePreferenceSyncHost.vue";
+import UpdateReminderHost from "@/components/UpdateReminderHost.vue";
 import MessageSinkBridge from "@/components/MessageSinkBridge.vue";
 import GlobalBusyBar from "@/components/GlobalBusyBar.vue";
 import GlobalErrorBanner from "@/components/GlobalErrorBanner.vue";
@@ -427,6 +428,9 @@ const pageTitle = computed(() => (typeof route.name === "string" ? viewLabel(rou
         <!-- 探测中（null）不渲染主界面；解锁/明文后随设备偏好推送宿主一起挂载 -->
         <template v-if="locked === false">
           <DevicePreferenceSyncHost />
+          <!-- 应用更新提醒宿主（issue #1431 / ADR-0124）：形态探测与提醒事件订阅
+               随已解锁分支挂载（锁定期间更新面不可达，先例设备偏好推送宿主） -->
+          <UpdateReminderHost />
           <!-- 窗口分级分支（ADR-0088 决策 2/4）：≥840 桌面档渲染既有侧栏布局（一字不动）；
                <840 移动档渲染导航壳（顶栏 + 导航抽屉，词汇表「导航抽屉」）。两档消费同一份
                menuOptions / handleSelect 导航状态；右键排序菜单仅桌面档（桌面专属管理动作

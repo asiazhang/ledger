@@ -433,5 +433,32 @@
     "ok": "同步完成：{points} 条汇率数据（覆盖 {earliest} 至 {latest}）",
     "stageFetching": "正在读取汇率文件…",
     "stagePersisting": "已解析 {days} 天，正在写入…"
+  },
+  "update": {
+    "cardTitle": "应用更新",
+    "currentVersion": "当前版本：",
+    "checkNow": "检查更新",
+    "upToDate": "已是最新版本",
+    "newVersion": "发现新版本 {version}",
+    "download": "下载更新",
+    "autoCheckLabel": "自动检查更新",
+    "autoCheckDesc": "启动后自动检查新版本并提醒一次；关闭后仍可随时手动检查。",
+    "releasePageOnly": "当前安装渠道不支持应用内更新，新版本请前往发布页下载。",
+    "openReleasePage": "打开发布页",
+    "cardDownloading": "正在下载更新…",
+    "cardDownloadingPercent": "正在下载更新… {percent}%",
+    "cardDownloaded": "新版本 {version} 已下载，待安装",
+    "continueInstall": "继续安装",
+    "viewProgress": "查看进度",
+    "remindTitle": "发现新版本",
+    "noNotes": "本版本没有发布说明。",
+    "later": "以后再说",
+    "downloadingTitle": "正在下载更新",
+    "downloadingBody": "下载在后台继续，关闭弹层不会中断；安装前会再次确认。",
+    "hide": "收起",
+    "downloadedTitle": "更新已就绪",
+    "installWarning": "安装将退出当前应用并自动重启进入新版本。",
+    "installBackupNote": "下载前已自动创建更新前备份（不占备份保留上限），升级后如遇异常可从备份恢复。",
+    "installNow": "安装并重启"
   }
 }
