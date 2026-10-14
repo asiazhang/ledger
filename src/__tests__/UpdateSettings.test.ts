@@ -5,7 +5,7 @@ import { captureListenHandlers } from "@ledger/test-support/listen-mock";
 import { useAppStore } from "@/stores/app";
 import UpdateSettings from "@/settings/UpdateSettings.vue";
 import GeneralSettings from "@/settings/GeneralSettings.vue";
-import { RELEASE_PAGE_URL, resetAppUpdateForTest } from "@/composables/useAppUpdate";
+import { RELEASE_PAGE_URL, resetAppUpdateForTest, useAppUpdate } from "@/composables/useAppUpdate";
 
 // 发布页引导走 opener 插件，测试以模块替身断言调用事实。
 const openUrl = vi.fn().mockResolvedValue(undefined);
@@ -140,7 +140,9 @@ describe("UpdateSettings.vue — updater 形态（桌面三平台完整更新面
       defaults: {
         get_update_surface: "updater",
         check_for_updates: { status: "update", version: "2.0.0", notes: null },
-        download_update: { version: "2.0.0" },
+      },
+      overrides: {
+        download_update: () => new Promise(() => {}), // 悬挂 = 下载进行中
       },
     });
     const wrapper = mount(UpdateSettings);
@@ -150,7 +152,10 @@ describe("UpdateSettings.vue — updater 形态（桌面三平台完整更新面
     await button(wrapper, "update-card-download-btn").trigger("click");
     await flushPromises();
 
+    // 调用事实：download_update 已发起；渲染效果：流程进入下载中、提醒弹层打开承接进度
     expect(mockInvoke.mock.calls.some(([c]) => c === "download_update")).toBe(true);
+    expect(useAppUpdate().stage.value).toBe("downloading");
+    expect(useAppUpdate().modalOpen.value).toBe(true);
   });
 });
 

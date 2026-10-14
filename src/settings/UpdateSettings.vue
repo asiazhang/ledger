@@ -63,9 +63,10 @@ const flowStatusText = computed(() => {
 <template>
   <NCard :title="t('settings.update.cardTitle')" size="small">
     <NSpace vertical :size="12">
+      <!-- 当前版本号：两形态共有（反馈问题或核对更新状态有依据） -->
+      <NText>{{ t("settings.update.currentVersion") }}{{ pkg.version }}</NText>
       <!-- release-page（deb 与 Android）：只呈打开发布页引导 -->
       <template v-if="isReleasePageSurface">
-        <NText>{{ t("settings.update.currentVersion") }}{{ pkg.version }}</NText>
         <NText depth="3">{{ t("settings.update.releasePageOnly") }}</NText>
         <NSpace>
           <NButton data-testid="update-open-release-page" @click="openReleasePage">
@@ -76,8 +77,6 @@ const flowStatusText = computed(() => {
 
       <!-- updater（桌面三平台）：完整更新面；探测未完成（null）两分支都不渲染 -->
       <template v-else-if="isUpdaterSurface">
-        <NText>{{ t("settings.update.currentVersion") }}{{ pkg.version }}</NText>
-
         <!-- 手动检查：结果就地呈现、失败就地报错 -->
         <NSpace align="center" :size="12">
           <NButton

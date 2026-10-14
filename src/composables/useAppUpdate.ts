@@ -248,7 +248,9 @@ export function resetAppUpdateForTest(): void {
   subscribed = false;
 }
 
-/** 应用更新编排（模块级单例）：状态与动作全集，设置卡片与提醒弹层宿主共享消费。 */
+/** 应用更新编排（模块级单例）：状态与动作全集，设置卡片与提醒弹层宿主共享消费。
+ *  启动提醒入口（offerUpdate）仅由更新可用事件回调消费，不对外暴露；原始进度
+ *  received/total 经 downloadPercent 派生后消费，同不暴露。 */
 export function useAppUpdate() {
   return {
     // 状态（只读消费）
@@ -256,15 +258,12 @@ export function useAppUpdate() {
     stage,
     version,
     notes,
-    received,
-    total,
     downloadPercent,
     modalOpen,
     flowError,
     manualCheck,
     // 动作
     init,
-    offerUpdate,
     checkManually,
     startDownload,
     dismissFlow,
