@@ -49,15 +49,17 @@ pub async fn download_update<R: tauri::Runtime>(
     }
 }
 
-/// 安装更新（安装路径第 2 步，issue #1430 / ADR-0124 决策 6）：下载完成后的
-/// 二次确认入口——安装已下载工件并自动重启进入新版；未下载报
+/// 安装更新（安装路径第 2 步，issue #1430 / #1944 / ADR-0124 决策 6）：下载完成后的
+/// 二次确认入口——**先为当前活动账本创建更新前备份**（失败报
+/// `update.backup-failed` 并中止安装，已下载工件留在暂存、重试无需重新下载），
+/// 后安装已下载工件并自动重启进入新版；未下载报
 /// `update.not-downloaded`。永不静默安装：本命令即安装确认入口。成功路径
 /// 不返回（进程随安装重启），失败就地报码化错误。
 #[tauri::command]
-pub fn install_update<R: tauri::Runtime>(app: AppHandle<R>) -> Result<()> {
+pub async fn install_update<R: tauri::Runtime>(app: AppHandle<R>) -> Result<()> {
     #[cfg(desktop)]
     {
-        app_update::install_pending_update(&app)
+        app_update::install_pending_update(&app).await
     }
     #[cfg(mobile)]
     {

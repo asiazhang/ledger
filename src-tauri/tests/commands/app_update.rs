@@ -3,9 +3,13 @@
 //! 直调命令函数（`#[tokio::test]`），覆盖壳行为：版本比较三态（更新/相同/更旧）、
 //! 更新清单异常路径码化错误（更新源不可达、清单畸形）、自动检查开关对启动延迟
 //! 静默检查的消费（关 → 不发请求；开启 → 发请求并通知前端）；安装路径编排
-//! （issue #1430）：更新前备份先行（失败即中止 + 码化错误，零网络动作）、覆盖式
-//! 保留最近一份、带进度下载（进度事件可观察）、验签失败拒绝、无更新码化错误、
-//! 静默检查零下载。更新源不打桩库：
+//! （issue #1430 / #1944）：下载零备份动作（下载 = 取更新对象 + 带进度下载 +
+//! 暂存，进度事件可观察）、安装确认后先更新前备份后安装（备份失败即中止安装 +
+//! 码化错误，暂存工件保留、重试零重新下载；删除接线即红的负向条目以空暂存 +
+//! 坏备份目录下报错码的先后承载）、覆盖式保留最近一份、验签失败拒绝、无更新
+//! 码化错误、静默检查零下载。测试边界（ADR-0124 测试决策）：任何用例都不得
+//! 触达真实 `update.install`（各平台安装器动作归手动冒烟）——安装编排用例要么
+//! 暂存为空（在备份或取件处中止），要么止于备份失败。更新源不打桩库：
 //! 经插件端点注入（`check_update` / `run_silent_check` / `download_update` 的端点
 //! 覆盖接缝，生产传 `None` 走应用配置）指向测试内起的本地真 HTTP 服务
 //! （127.0.0.1:0，进程内起服务先例同 api_server / s3 套件）。命令级错误路径直接
@@ -407,7 +411,9 @@ fn pre_update_scratch() -> tauri_app_lib::test_support::ScratchDir {
 
 /// 带安装路径完整状态的 mock 应用：updater 插件（夹具配置）+ 内存库 +
 /// 下载暂存槽 + 更新前备份目录换装（临时目录，不触真实用户数据目录）。
-fn download_app() -> (
+/// 下载编排测试也复用本夹具——暂存槽是下载的产物落点，健康备份目录用于
+/// 反证下载零备份动作（#1944）。
+fn install_app() -> (
     tauri::AppHandle<tauri::test::MockRuntime>,
     tauri_app_lib::test_support::ScratchDir,
 ) {
@@ -425,19 +431,37 @@ fn download_app() -> (
     (app, scratch)
 }
 
+/// 备份必然失败的安装夹具：备份目录指向不存在的子目录（坏路径注入，
+/// SyncChannelsSlot 同款测试换装）。内存库与暂存槽同 [`install_app`]。
+fn install_app_with_dead_backup_dir() -> (
+    tauri::AppHandle<tauri::test::MockRuntime>,
+    tauri_app_lib::test_support::ScratchDir,
+) {
+    let app = updater_app();
+    let shared = Arc::new(Mutex::new(tauri_app_lib::test_support::open()));
+    app.manage(DbState {
+        conn: Arc::clone(&shared),
+        read_conn: shared,
+    });
+    app.manage(DownloadedUpdate::default());
+    let scratch = pre_update_scratch();
+    app.manage(PreUpdateBackupDirSlot(Some(scratch.join("no-such-dir"))));
+    (app, scratch)
+}
+
 fn backup_file(scratch: &std::path::Path) -> std::path::PathBuf {
     scratch.join(PRE_UPDATE_BACKUP_FILE_NAME)
 }
 
 #[tokio::test]
-async fn download_update_backs_up_first_then_downloads_and_stages() {
+async fn download_update_downloads_and_stages_without_backup() {
     let artifact = spawn_artifact_source(FIXTURE_ARTIFACT);
     let source = spawn_update_source(download_manifest_json(
         "1.2.3",
         "安装路径夹具版本",
         &artifact.endpoint,
     ));
-    let (app, scratch) = download_app();
+    let (app, scratch) = install_app();
 
     let seen: Arc<Mutex<Vec<UpdateDownloadProgress>>> = Arc::new(Mutex::new(Vec::new()));
     let seen_listener = Arc::clone(&seen);
@@ -460,11 +484,15 @@ async fn download_update_backs_up_first_then_downloads_and_stages() {
             version: "1.2.3".to_string()
         }
     );
-    // 备份产生：更新前备份落固定名，来源标记 pre-update（接线证明一步可观察）。
-    assert!(backup_file(&scratch).exists(), "更新前备份应已产生");
-    assert_eq!(
-        read_backup_kind(&backup_file(&scratch)).unwrap(),
-        BackupKind::PreUpdate
+    // 下载不含备份动作（备份移至安装确认后，#1944）：即便备份目录健康、内存库
+    // 在位，下载编排也不产生任何更新前备份产物。
+    let entries: Vec<_> = std::fs::read_dir(&scratch)
+        .expect("备份目录可读")
+        .collect::<Result<_, _>>()
+        .expect("目录项可读");
+    assert!(
+        entries.is_empty(),
+        "下载编排不得创建更新前备份（备份时机在安装确认后）"
     );
     // 工件下载恰好发生一次，且来自下载确认（不是检查）。
     assert_eq!(request_count(&artifact), 1);
@@ -477,77 +505,6 @@ async fn download_update_backs_up_first_then_downloads_and_stages() {
     );
     // 工件已暂存待装：二次确认安装的入口就绪。
     assert!(app.state::<DownloadedUpdate>().is_pending());
-    // 不标脏：更新前备份是裸作业，不经统一写入口（DirtyMarker 语义，ADR-0032）。
-    let read_conn = app.state::<DbState>().read_conn.clone();
-    let dirty = get_setting(
-        &read_conn.lock().unwrap_or_else(|e| e.into_inner()),
-        SettingKey::AutoBackupDirty,
-        false,
-    )
-    .expect("读取脏标记设置");
-    assert!(!dirty);
-}
-
-#[tokio::test]
-async fn download_update_aborts_with_coded_error_when_backup_fails() {
-    let source = spawn_update_source(download_manifest_json(
-        "1.2.3",
-        "不应被请求",
-        "http://127.0.0.1:1/artifact.bin",
-    ));
-    let artifact = spawn_artifact_source(FIXTURE_ARTIFACT);
-    let app = updater_app();
-    // 内存库经 test_support 工厂（ADR-0084 建库唯一入口）；备份目录指向不存在
-    // 子目录（坏路径注入，SyncChannelsSlot 同款测试换装）：备份必然失败，
-    // 编排应在此中止。
-    let shared = Arc::new(Mutex::new(tauri_app_lib::test_support::open()));
-    app.manage(DbState {
-        conn: Arc::clone(&shared),
-        read_conn: shared,
-    });
-    app.manage(DownloadedUpdate::default());
-    let scratch = pre_update_scratch();
-    app.manage(PreUpdateBackupDirSlot(Some(scratch.join("no-such-dir"))));
-
-    let err = download_update(&app, override_endpoint(&source.endpoint))
-        .await
-        .expect_err("备份失败应中止更新");
-
-    assert_eq!(err.code(), Some("update.backup-failed"));
-    // 先备份后安装的次序可观察：备份失败时连检查请求都未发出（零网络动作）。
-    assert_eq!(request_count(&source), 0, "备份失败时不得发起检查请求");
-    assert_eq!(request_count(&artifact), 0);
-    assert!(!app.state::<DownloadedUpdate>().is_pending());
-}
-
-#[tokio::test]
-async fn download_update_overwrites_previous_backup() {
-    let artifact = spawn_artifact_source(FIXTURE_ARTIFACT);
-    let source = spawn_update_source(download_manifest_json(
-        "1.2.3",
-        "覆盖式保留",
-        &artifact.endpoint,
-    ));
-    let (app, scratch) = download_app();
-
-    download_update(&app, override_endpoint(&source.endpoint))
-        .await
-        .expect("第一次下载应成功");
-    download_update(&app, override_endpoint(&source.endpoint))
-        .await
-        .expect("第二次下载应成功");
-
-    // 覆盖式保留最近一份：固定名产物覆盖上一份，不堆积。
-    let entries: Vec<_> = std::fs::read_dir(&scratch)
-        .expect("备份目录可读")
-        .collect::<Result<_, _>>()
-        .expect("目录项可读");
-    assert_eq!(entries.len(), 1, "目录内只有最近一份更新前备份");
-    assert_eq!(
-        read_backup_kind(&backup_file(&scratch)).unwrap(),
-        BackupKind::PreUpdate
-    );
-    assert_eq!(request_count(&artifact), 2);
 }
 
 #[tokio::test]
@@ -567,7 +524,7 @@ async fn download_update_rejects_artifact_with_invalid_signature() {
         artifact.endpoint
     );
     let source = spawn_update_source(body);
-    let (app, scratch) = download_app();
+    let (app, _scratch) = install_app();
 
     let err = download_update(&app, override_endpoint(&source.endpoint))
         .await
@@ -579,7 +536,6 @@ async fn download_update_rejects_artifact_with_invalid_signature() {
         !app.state::<DownloadedUpdate>().is_pending(),
         "坏工件不暂存"
     );
-    assert!(backup_file(&scratch).exists(), "备份在下载前已完成");
 }
 
 #[tokio::test]
@@ -591,7 +547,7 @@ async fn download_update_without_newer_version_is_coded_error() {
         "同版本",
         &artifact.endpoint,
     ));
-    let (app, scratch) = download_app();
+    let (app, _scratch) = install_app();
 
     let err = download_update(&app, override_endpoint(&source.endpoint))
         .await
@@ -599,15 +555,108 @@ async fn download_update_without_newer_version_is_coded_error() {
 
     assert_eq!(err.code(), Some("update.no-update"));
     assert_eq!(request_count(&artifact), 0);
-    assert!(backup_file(&scratch).exists(), "备份仍先于检查完成");
 }
 
 #[tokio::test]
-async fn install_update_without_download_is_coded_error() {
-    let (app, _scratch) = download_app();
+async fn install_update_backs_up_before_reporting_missing_download() {
+    let (app, scratch) = install_app();
 
-    let err = install_update(app).expect_err("未下载即安装应报错");
+    let err = install_update(app.clone())
+        .await
+        .expect_err("未下载即安装应报错");
     assert_eq!(err.code(), Some("update.not-downloaded"));
+
+    // 先备份、后安装（#1944 / ADR-0124 决策 6）：即便是注定失败的安装尝试
+    // （暂存槽为空），更新前备份也已先于取件完成——编排次序正一步可观察。
+    assert!(
+        backup_file(&scratch).exists(),
+        "安装确认后应先创建更新前备份"
+    );
+    assert_eq!(
+        read_backup_kind(&backup_file(&scratch)).unwrap(),
+        BackupKind::PreUpdate
+    );
+    // 不标脏：更新前备份是裸作业，不经统一写入口（DirtyMarker 语义，ADR-0032）。
+    let read_conn = app.state::<DbState>().read_conn.clone();
+    let dirty = get_setting(
+        &read_conn.lock().unwrap_or_else(|e| e.into_inner()),
+        SettingKey::AutoBackupDirty,
+        false,
+    )
+    .expect("读取脏标记设置");
+    assert!(!dirty);
+}
+
+#[tokio::test]
+async fn install_update_backup_failure_aborts_before_install() {
+    // 删除接线即红（#1944）：备份接线删除或移到取件之后，本用例的报错码都会
+    // 退回 `update.not-downloaded`（暂存槽为空，不会触达真实安装器）。
+    let (app, _scratch) = install_app_with_dead_backup_dir();
+
+    let err = install_update(app).await.expect_err("备份失败应中止安装");
+    assert_eq!(
+        err.code(),
+        Some("update.backup-failed"),
+        "备份失败必须先于取件与安装被观察到"
+    );
+}
+
+#[tokio::test]
+async fn install_update_backup_failure_keeps_staged_artifact_for_retry() {
+    let artifact = spawn_artifact_source(FIXTURE_ARTIFACT);
+    let source = spawn_update_source(download_manifest_json(
+        "1.2.3",
+        "备份失败重试夹具",
+        &artifact.endpoint,
+    ));
+    // 备份目录指向坏路径：下载不再依赖备份目录（#1944），可先正常下载暂存，
+    // 再让安装编排的备份步必然失败。
+    let (app, _scratch) = install_app_with_dead_backup_dir();
+
+    download_update(&app, override_endpoint(&source.endpoint))
+        .await
+        .expect("下载应成功（下载编排零备份动作）");
+    assert!(app.state::<DownloadedUpdate>().is_pending());
+
+    let err = install_update(app.clone())
+        .await
+        .expect_err("备份失败应中止安装");
+    assert_eq!(err.code(), Some("update.backup-failed"));
+    // 暂存工件保留：备份失败不消费工件，现场可重试。
+    assert!(
+        app.state::<DownloadedUpdate>().is_pending(),
+        "备份失败后已下载工件必须留在暂存"
+    );
+
+    // 重试无需重新下载：再次确认安装（备份仍失败）不触发任何新的工件请求。
+    let err = install_update(app)
+        .await
+        .expect_err("重试同样因备份失败中止");
+    assert_eq!(err.code(), Some("update.backup-failed"));
+    assert_eq!(request_count(&artifact), 1, "安装重试不得重新下载工件");
+}
+
+#[tokio::test]
+async fn install_update_overwrites_previous_backup() {
+    let (app, scratch) = install_app();
+
+    install_update(app.clone())
+        .await
+        .expect_err("第一次安装尝试（暂存为空）应报错");
+    install_update(app)
+        .await
+        .expect_err("第二次安装尝试（暂存为空）应报错");
+
+    // 覆盖式保留最近一份：固定名产物覆盖上一份，不堆积。
+    let entries: Vec<_> = std::fs::read_dir(&scratch)
+        .expect("备份目录可读")
+        .collect::<Result<_, _>>()
+        .expect("目录项可读");
+    assert_eq!(entries.len(), 1, "目录内只有最近一份更新前备份");
+    assert_eq!(
+        read_backup_kind(&backup_file(&scratch)).unwrap(),
+        BackupKind::PreUpdate
+    );
 }
 
 #[tokio::test]
@@ -632,14 +681,18 @@ async fn silent_check_never_downloads_artifact() {
 #[tokio::test]
 async fn download_update_command_surfaces_error_from_config_endpoint() {
     // 命令壳直连应用配置端点（夹具 = 确定拒绝）：壳三件套——命令面、错误码
-    // 原样上抛；备份目录换装保证备份动作落在临时目录且先于检查完成。
-    let (app, scratch) = download_app();
+    // 原样上抛；下载编排零备份动作（备份时机在安装确认后，#1944）。
+    let (app, scratch) = install_app();
 
     let err = download_update_command(app)
         .await
         .expect_err("配置端点被拒应报错");
     assert_eq!(err.code(), Some("update.unreachable"));
-    assert!(backup_file(&scratch).exists(), "备份先于检查请求完成");
+    let entries: Vec<_> = std::fs::read_dir(&scratch)
+        .expect("备份目录可读")
+        .collect::<Result<_, _>>()
+        .expect("目录项可读");
+    assert!(entries.is_empty(), "下载编排不得创建更新前备份");
 }
 
 #[test]

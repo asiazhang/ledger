@@ -458,7 +458,7 @@
     "hide": "收起",
     "downloadedTitle": "更新已就绪",
     "installWarning": "安装将退出当前应用并自动重启进入新版本。",
-    "installBackupNote": "下载前已自动创建更新前备份（不占备份保留上限），升级后如遇异常可从备份恢复。",
+    "installBackupNote": "已自动创建更新前备份（不占备份保留上限），升级后如遇异常可从备份恢复。",
     "installNow": "安装并重启"
   }
 }

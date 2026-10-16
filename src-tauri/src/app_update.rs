@@ -8,12 +8,14 @@
 //!   [`check_update`]，返回版本比较三态（更新/相同/更旧）；失败就地报码化错误
 //!   （`update.unreachable` / `update.manifest-invalid`，ADR-0050）。
 //! - **安装路径（issue #1430）**：全询问式编排——`download_update`（用户确认
-//!   下载后调用）先为当前活动账本创建**更新前备份**（备份域
-//!   `create_pre_update_backup`，失败即中止更新并报 `update.backup-failed`
-//!   ——不带病升级，ADR-0124 决策 6），后经唯一调用点取更新对象并带进度下载
-//!   （进度经 [`UPDATE_DOWNLOAD_PROGRESS_EVENT`] 对前端可观察，主线程非阻塞
-//!   投递）；下载完成的工件暂存 [`DownloadedUpdate`]，`install_pending_update`
-//!   （二次确认后调用）安装并自动重启进入新版。永不静默下载、永不静默安装。
+//! - **安装路径（issue #1430 / #1944）**：全询问式编排——`download_update`
+//!   （用户确认下载后调用）经唯一调用点取更新对象并带进度下载（进度经
+//!   [`UPDATE_DOWNLOAD_PROGRESS_EVENT`] 对前端可观察，主线程非阻塞投递），
+//!   下载完成的工件暂存 [`DownloadedUpdate`]；`install_pending_update`
+//!   （二次确认后调用）**先为当前活动账本创建更新前备份**（备份域
+//!   `create_pre_update_backup`，失败即中止安装并报 `update.backup-failed`
+//!   ——不带病升级，已下载工件留在暂存可重试，ADR-0124 决策 6 / #1944），
+//!   后安装并自动重启进入新版。永不静默下载、永不静默安装。
 //! - **启动延迟静默检查**：[`start_auto_update_check`] 经
 //!   `start_background_services` 成组拉起（成对拉起守门
 //!   `scripts/check-background-services.ts`），延迟触发一轮 [`run_silent_check`]；
@@ -423,12 +425,12 @@ impl DownloadedUpdate {
 #[derive(Default)]
 pub struct PreUpdateBackupDirSlot(pub Option<std::path::PathBuf>);
 
-/// 更新前备份失败的码化错误（ADR-0050）：中止更新——不带病升级（ADR-0124
-/// 决策 6），用户明确得知备份未成、更新未继续。
+/// 更新前备份失败的码化错误（ADR-0050）：中止安装——不带病升级（ADR-0124
+/// 决策 6），用户明确得知备份未成、安装未继续；已下载工件留在暂存可重试。
 fn backup_failed_error() -> AppError {
     AppError::coded(
         "update.backup-failed",
-        "更新前备份创建失败，已中止更新；请排查磁盘与权限后重试",
+        "更新前备份创建失败，已中止安装；请排查磁盘与权限后重试",
     )
 }
 
@@ -492,10 +494,11 @@ fn pre_update_backup_dir<R: tauri::Runtime>(
         .map_err(|e| AppError::Io(format!("获取应用数据目录失败：{e}")))
 }
 
-/// 为当前活动账本创建更新前备份（编排第 1 步，先于任何下载/安装）：备份域
-/// `create_pre_update_backup` 经写槽**裸作业**投递（不经统一写入口——不置脏、
-/// 调度状态零接触，先例同 `create_backup` 命令）；失败原样映射
-/// [`backup_failed_error`] 由编排中止更新。作业名注册了备份类持锁预算
+/// 为当前活动账本创建更新前备份（**安装编排第 1 步**，安装确认后、旧版退出前
+/// 执行，#1944 / ADR-0124 决策 6）：备份域 `create_pre_update_backup` 经写槽
+/// **裸作业**投递（不经统一写入口——不置脏、调度状态零接触，先例同
+/// `create_backup` 命令）；失败原样映射 [`backup_failed_error`] 由编排中止安装
+/// ——已下载工件留在暂存，重试无需重新下载。作业名注册了备份类持锁预算
 /// （`VACUUM INTO` 全库拷贝是合法重作业）。
 #[cfg(desktop)]
 async fn create_pre_update_backup<R: tauri::Runtime>(
@@ -531,7 +534,7 @@ fn emit_download_progress<R: tauri::Runtime>(
     });
 }
 
-/// 带进度下载更新工件（编排第 3 步）：进度经 [`UPDATE_DOWNLOAD_PROGRESS_EVENT`]
+/// 带进度下载更新工件（下载编排收尾步）：进度经 [`UPDATE_DOWNLOAD_PROGRESS_EVENT`]
 /// 发射（时间节流 + 收尾必发）；字节在插件内完成更新签名验证后返回，验签失败
 /// 映射 [`signature_invalid_error`]。
 #[cfg(desktop)]
@@ -588,28 +591,24 @@ async fn download_with_progress<R: tauri::Runtime>(
     Ok(bytes)
 }
 
-/// 下载更新（安装路径编排，issue #1430）：**先更新前备份、后下载**——备份失败
-/// 即中止并报 `update.backup-failed`（不带病升级，零网络请求）；随后经唯一
-/// 调用点取更新对象（无更高版本报 `update.no-update`），带进度下载并暂存到
+/// 下载更新（安装路径第 1 步，issue #1430 / #1944）：经唯一调用点取更新对象
+/// （无更高版本报 `update.no-update`），带进度下载并暂存到
 /// [`DownloadedUpdate`]。调用时机 = 用户确认下载之后（全询问式：永不静默下载）；
-/// 安装另有二次确认（[`install_pending_update`]）。
+/// 安装另有二次确认（[`install_pending_update`]）。下载编排零备份动作、
+/// 零账本接触——更新前备份移至安装确认后（ADR-0124 决策 6，#1944 裁决落地）。
 #[cfg(desktop)]
 pub async fn download_update<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
     endpoint_override: Option<Vec<url::Url>>,
 ) -> ledger_infra::error::Result<UpdateDownloadOutcome> {
     use tauri::Manager;
-    // 1. 更新前备份：先于任何网络动作，失败即中止（编排次序可观察——集成
-    //    测试断言备份失败时下载请求为零）。
-    create_pre_update_backup(app).await?;
-
-    // 2. 取更新对象：仅更高版本可装（检查路径三态语义同一单点）。
+    // 1. 取更新对象：仅更高版本可装（检查路径三态语义同一单点）。
     let update = match fetch_remote_update(app, endpoint_override).await? {
         Some(update) if version_status(&update)? == UpdateCheckStatus::Update => update,
         _ => return Err(no_update_error()),
     };
 
-    // 3. 带进度下载（插件内验签）并暂存，等待二次确认安装。暂存槽由壳层
+    // 2. 带进度下载（插件内验签）并暂存，等待二次确认安装。暂存槽由壳层
     //    setup 恒登记（缺槽 = 接线缺陷，state() fail-loud，与
     //    `set_auto_update_enabled` 读开关镜像同形）。
     let bytes = download_with_progress(app, &update).await?;
@@ -622,17 +621,26 @@ pub async fn download_update<R: tauri::Runtime>(
     })
 }
 
-/// 安装已下载的更新（二次确认后的编排终点，issue #1430）：从 [`DownloadedUpdate`]
-/// 取走工件（无暂存报 `update.not-downloaded`）交给插件安装。平台差异由插件
-/// 承担（ADR-0124 决策 7）——Windows 启动 NSIS 安装器后进程退出（安装器默认
-/// 拉起新版）；macOS / Linux 替换完成后由本函数原地重启进程进入新版（真实重启
-/// 链路归手动冒烟）。永不静默安装：本函数只有二次确认这一个调用入口。
+/// 安装已下载的更新（二次确认后的编排终点，issue #1430 / #1944）：**先更新前
+/// 备份、后安装**——先为当前活动账本创建更新前备份（失败即中止安装并报
+/// [`backup_failed_error`]，已下载工件留在暂存、重试无需重新下载——不带病升级，
+/// ADR-0124 决策 6）；后从 [`DownloadedUpdate`] 取走工件（无暂存报
+/// [`not_downloaded_error`]）交给插件安装。平台差异由插件承担（ADR-0124 决策 7）
+/// ——Windows 启动 NSIS 安装器后进程退出（安装器默认拉起新版）；macOS / Linux
+/// 替换完成后由本函数原地重启进程进入新版（真实重启链路归手动冒烟）。永不静默
+/// 安装：本函数只有二次确认这一个调用入口。
 #[cfg(desktop)]
-pub fn install_pending_update<R: tauri::Runtime>(
+pub async fn install_pending_update<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
 ) -> ledger_infra::error::Result<()> {
     use tauri::Manager;
 
+    // 1. 更新前备份：安装确认后、旧版退出前（ADR-0124 决策 6 / #1944）。失败即
+    //    中止安装——编排次序可观察（集成测试断言备份失败时安装中止且暂存工件
+    //    保留、重试零重新下载）。
+    create_pre_update_backup(app).await?;
+
+    // 2. 取走已暂存工件交给插件安装（无暂存报 `update.not-downloaded`）。
     let slot = app.state::<DownloadedUpdate>();
     let Some(StagedUpdate { update, bytes }) = slot.take() else {
         return Err(not_downloaded_error());

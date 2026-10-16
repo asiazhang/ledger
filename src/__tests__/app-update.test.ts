@@ -138,7 +138,7 @@ describe("应用更新编排 — 下载与安装（全询问式，issue #1430 �
     bodyButton("update-download-btn").click();
     await flushPromises();
 
-    // 调用事实：下载已发起（先更新前备份后下载归后端编排，前端只见单命令）
+    // 调用事实：下载已发起（备份时机归后端安装编排，前端只见单命令）
     expect(mockInvoke.mock.calls.some(([c]) => c === "download_update")).toBe(true);
     // 渲染效果：进度阶段 + 总大小已知时呈现百分比
     fireEvent(UPDATE_DOWNLOAD_PROGRESS_EVENT, { received: 500, total: 1000 });
@@ -243,6 +243,39 @@ describe("应用更新编排 — 下载与安装（全询问式，issue #1430 �
       "更新安装失败",
     );
     expect(document.body.querySelector('[data-testid="update-install-btn"]')).toBeTruthy();
+  });
+
+  it("安装在途 submitting：安装按钮禁用消化备份耗时；兜底文案对准安装前时机", async () => {
+    await mountUpdaterSurface();
+    let resolveInstall!: (v: unknown) => void;
+    wireInvokeSeam({
+      overrides: {
+        download_update: { version: "1.2.4" },
+        install_update: () =>
+          new Promise((resolve) => {
+            resolveInstall = resolve;
+          }),
+      },
+    });
+    fireEvent(UPDATE_AVAILABLE_EVENT, { version: "1.2.4", notes: null });
+    await flushPromises();
+    bodyButton("update-download-btn").click();
+    await flushPromises();
+
+    // 兜底文案对准新时机（#1944）：备份在安装确认后创建，不再写「下载前已自动创建」。
+    expect(document.body.textContent).toContain("已自动创建更新前备份");
+    expect(document.body.textContent).not.toContain("下载前已自动创建");
+
+    bodyButton("update-install-btn").click();
+    await flushPromises();
+
+    // 在途 submitting：install_update 在途期间安装按钮禁用（备份+安装在途，
+    // 消化耗时并防重复触发）。
+    expect(bodyButton("update-install-btn").disabled).toBe(true);
+
+    resolveInstall(undefined);
+    await flushPromises();
+    expect(bodyButton("update-install-btn").disabled).toBe(false);
   });
 
   it("下载中收起弹层：下载在后端继续，进度事件照常接受；卡片状态行可重开弹层", async () => {

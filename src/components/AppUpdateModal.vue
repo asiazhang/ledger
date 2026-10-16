@@ -13,8 +13,9 @@ import { useAppUpdate } from "@/composables/useAppUpdate";
  * - **downloading**：下载进度（后端进度事件驱动）；关闭只收起弹层，下载在后端
  *   继续，设置卡片状态行提供再入口。
  * - **downloaded**：已下载待安装——安装是全流程的显式二次确认，按分级确认
- *   warning 级形态承载（有兜底：下载前已自动创建更新前备份，ADR-0078 / ADR-0124
- *   决策 6）：琥珀警示块承载后果与兜底说明 + warning 色确认按钮，关闭即不安装。
+ *   warning 级形态承载（有兜底：安装确认后、旧版退出前自动创建更新前备份，
+ *   ADR-0078 / ADR-0124 决策 6 / #1944）：琥珀警示块承载后果与兜底说明 +
+ *   warning 色确认按钮（submitting 态消化备份+安装在途耗时），关闭即不安装。
  *
  * 弹层纪律继承 AppModal 薄封装：遮罩不关、✕/ESC 可关、开/关上报弹层注册表
  * （Overlay Suppression 快捷键抑制零新机制，ADR-0035）。流程内失败就地渲染
@@ -27,6 +28,7 @@ const {
   downloadPercent,
   modalOpen,
   flowError,
+  installing,
   startDownload,
   dismissFlow,
   confirmInstall,
@@ -91,7 +93,8 @@ function onUpdateShow(value: boolean): void {
       </NSpace>
     </template>
 
-    <!-- downloaded：安装即二次确认（warning 级：后果 + 兜底说明 + warning 色按钮） -->
+    <!-- downloaded：安装即二次确认（warning 级：后果 + 兜底说明 + warning 色按钮，
+         submitting 态消化备份+安装在途耗时） -->
     <template v-else-if="stage === 'downloaded'">
       <NSpace vertical :size="12">
         <NText data-testid="update-downloaded-version" strong>{{ versionLabel }}</NText>
@@ -102,7 +105,13 @@ function onUpdateShow(value: boolean): void {
         <NText v-if="flowError" data-testid="update-flow-error" type="error">{{ flowError }}</NText>
         <NSpace justify="end" :size="8">
           <NButton @click="dismissFlow">{{ t("settings.update.later") }}</NButton>
-          <NButton type="warning" data-testid="update-install-btn" @click="confirmInstall">
+          <NButton
+            type="warning"
+            data-testid="update-install-btn"
+            :loading="installing"
+            :disabled="installing"
+            @click="confirmInstall"
+          >
             {{ t("settings.update.installNow") }}
           </NButton>
         </NSpace>

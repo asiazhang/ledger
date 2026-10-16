@@ -71,6 +71,9 @@ const dismissed = ref(false);
 
 /** 流程内错误（下载失败回 remind 重试、安装失败留 downloaded 重试），就地渲染。 */
 const flowError = ref<string | null>(null);
+/** 安装确认在途（submitting）：install_update 在途期间禁用安装按钮——备份 +
+ *  安装耗时可达秒级，submitting 态既消化等待又防重复触发（#1944）。 */
+const installing = ref(false);
 
 /** 设置页手动检查就地结果。 */
 const manualCheck = ref<ManualCheckState>({ kind: "idle" });
@@ -168,7 +171,8 @@ async function checkManually(): Promise<void> {
   }
 }
 
-/** 确认下载（提醒弹层或设置卡片入口）：后端先更新前备份后带进度下载，失败回提醒就地报错。
+/** 确认下载（提醒弹层或设置卡片入口）：后端带进度下载并暂存（零备份动作，
+ *  备份移至安装确认后，#1944），失败回提醒就地报错。
  *  空闲态入口（卡片手动检查的就地结果）先以检查结果播种流程载荷再进入下载。 */
 async function startDownload(): Promise<void> {
   if (stage.value === "idle") {
@@ -210,15 +214,20 @@ function reopenFlow(): void {
   dismissed.value = false;
 }
 
-/** 确认安装（二次确认入口）：安装已下载工件并自动重启；失败就地报错、现场可重试。 */
+/** 确认安装（二次确认入口）：先更新前备份后安装并自动重启（#1944，备份耗时由
+ *  submitting 态消化）；失败就地报错、现场可重试。 */
 async function confirmInstall(): Promise<void> {
-  if (stage.value !== "downloaded") return;
+  if (stage.value !== "downloaded" || installing.value) return;
   flowError.value = null;
+  installing.value = true;
   try {
-    // 成功路径不返回（进程随安装重启）；失败放回暂存可重试（后端编排）。
+    // 成功路径不返回（进程随安装重启）；失败（含更新前备份失败）留在待安装
+    // 现场，暂存工件保留，可就地重试（后端编排）。
     await api.installUpdate();
   } catch (e) {
     flowError.value = errorMessage(e);
+  } finally {
+    installing.value = false;
   }
 }
 
@@ -244,6 +253,7 @@ export function resetAppUpdateForTest(): void {
   total.value = null;
   dismissed.value = false;
   flowError.value = null;
+  installing.value = false;
   manualCheck.value = { kind: "idle" };
   subscribed = false;
 }
@@ -261,6 +271,7 @@ export function useAppUpdate() {
     downloadPercent,
     modalOpen,
     flowError,
+    installing,
     manualCheck,
     // 动作
     init,
