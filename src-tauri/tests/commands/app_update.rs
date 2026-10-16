@@ -409,8 +409,24 @@ fn pre_update_scratch() -> tauri_app_lib::test_support::ScratchDir {
     tauri_app_lib::test_support::ScratchDir::new("updatetest-preupdate")
 }
 
+/// 安装路径运行态装配（内存库 + 下载暂存槽 + 更新前备份目录换装），夹具间
+/// 共享：建库经 test_support 工厂（ADR-0084 建库唯一入口）；内存库写读两槽
+/// 同指一连接（测试世界形态，ADR-0125 决策 4）。
+fn manage_install_state(
+    app: &tauri::AppHandle<tauri::test::MockRuntime>,
+    backup_dir: std::path::PathBuf,
+) {
+    let shared = Arc::new(Mutex::new(tauri_app_lib::test_support::open()));
+    app.manage(DbState {
+        conn: Arc::clone(&shared),
+        read_conn: shared,
+    });
+    app.manage(DownloadedUpdate::default());
+    app.manage(PreUpdateBackupDirSlot(Some(backup_dir)));
+}
+
 /// 带安装路径完整状态的 mock 应用：updater 插件（夹具配置）+ 内存库 +
-/// 下载暂存槽 + 更新前备份目录换装（临时目录，不触真实用户数据目录）。
+/// 下载暂存槽 + 更新前备份目录换装（健康临时目录，不触真实用户数据目录）。
 /// 下载编排测试也复用本夹具——暂存槽是下载的产物落点，健康备份目录用于
 /// 反证下载零备份动作（#1944）。
 fn install_app() -> (
@@ -418,16 +434,8 @@ fn install_app() -> (
     tauri_app_lib::test_support::ScratchDir,
 ) {
     let app = updater_app();
-    // 内存库：写读两槽同指一连接（测试世界形态，ADR-0125 决策 4）；建库经
-    // test_support 工厂（ADR-0084 建库唯一入口）。
-    let shared = Arc::new(Mutex::new(tauri_app_lib::test_support::open()));
-    app.manage(DbState {
-        conn: Arc::clone(&shared),
-        read_conn: shared,
-    });
-    app.manage(DownloadedUpdate::default());
     let scratch = pre_update_scratch();
-    app.manage(PreUpdateBackupDirSlot(Some(scratch.path().to_path_buf())));
+    manage_install_state(&app, scratch.path().to_path_buf());
     (app, scratch)
 }
 
@@ -438,14 +446,8 @@ fn install_app_with_dead_backup_dir() -> (
     tauri_app_lib::test_support::ScratchDir,
 ) {
     let app = updater_app();
-    let shared = Arc::new(Mutex::new(tauri_app_lib::test_support::open()));
-    app.manage(DbState {
-        conn: Arc::clone(&shared),
-        read_conn: shared,
-    });
-    app.manage(DownloadedUpdate::default());
     let scratch = pre_update_scratch();
-    app.manage(PreUpdateBackupDirSlot(Some(scratch.join("no-such-dir"))));
+    manage_install_state(&app, scratch.join("no-such-dir"));
     (app, scratch)
 }
 
