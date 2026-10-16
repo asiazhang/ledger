@@ -6,8 +6,9 @@
 # 豁免按 schema 可用键：exclude_globs / exclude_re（文件或变异名）、
 # skip_calls（函数名）等，全量见 `cargo mutants --emit-schema config`。
 #
-# 观测期不设分数门禁（ADR-0137）：本文件只服务每日 in-diff 运行与
-# 报告驱动的专项清理，不承载阈值判定。
+# 观测期不设分数门禁（ADR-0137）：本文件只服务本地按需运行与
+# 报告驱动的专项清理（CI 载体 mutation-bench.yml 已撤下，ADR-0137 修订注记
+# 2026-10-14），不承载阈值判定。
 
 # 暂无豁免。各域清理过程中按需追加，格式示例：
 # exclude_re = ["replace some_fn.*  # 等价变异体：…（理由）"]

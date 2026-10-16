@@ -1,19 +1,20 @@
 #!/bin/sh
-# mutation-summary.sh —— 把 cargo-mutants 的 mutants.out 结果目录转成 GitHub
-# Job Summary 的 Markdown 片段（spec #1816 / ADR-0137 每日变异测试）。
+# mutation-summary.sh —— 把 cargo-mutants 的 mutants.out 结果目录转成 Markdown
+# 报告摘要（spec #1816 / ADR-0137；CI 载体 mutation-bench.yml 已撤下，
+# 2026-10-14 起为本地报告阅读工具，ADR-0137 修订注记）。
 #
 # 观测期不判定（ADR-0137）：本脚本只做计数与清单展示，不做任何阈值判定——
 # 存活清单是「看报告优化」的输入，不是门禁输出。
 #
 # 用法：mutation-summary.sh <mutants.out 目录>
 #   目录由 `cargo mutants --output <dir>` 产出（内含 outcomes.json 等）。
-# 输出：Markdown（计数表 + 存活/超时/不可行清单折叠块）写到 stdout，由调用方
-# 重定向进 $GITHUB_STEP_SUMMARY。
+# 输出：Markdown（计数表 + 存活/超时/不可行清单折叠块）写到 stdout，
+# 本地重定向到文件或直接阅读。
 #
 # 解析口径（真源 = cargo-mutants outcomes.json 顶层字段）：
 #   total_mutants / missed / caught / timeout / unviable —— 工具自身聚合计数；
 #   清单行取 missed.txt / timeout.txt / unviable.txt（工具落盘的变异名清单）。
-# outcomes.json 缺失或字段不全即报错退出（fail loud，CI 步骤变红）。
+# outcomes.json 缺失或字段不全即报错退出（fail loud）。
 set -eu
 
 if [ "$#" -ne 1 ]; then
