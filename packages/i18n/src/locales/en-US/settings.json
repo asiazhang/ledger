@@ -458,7 +458,7 @@
     "hide": "Hide",
     "downloadedTitle": "Update ready",
     "installWarning": "Installing will quit the app and restart into the new version.",
-    "installBackupNote": "A pre-update backup was created automatically before downloading (it doesn't count against your backup limit) — restore from it if anything goes wrong.",
+    "installBackupNote": "A pre-update backup was created automatically (it doesn't count against your backup limit) — restore from it if anything goes wrong.",
     "installNow": "Install and restart"
   }
 }

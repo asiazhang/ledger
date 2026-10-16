@@ -28,11 +28,11 @@ pub async fn check_for_updates<R: tauri::Runtime>(app: AppHandle<R>) -> Result<U
     }
 }
 
-/// 下载更新（安装路径第 1 步，issue #1430 / ADR-0124 决策 6）：用户确认下载后
-/// 调用——先为当前活动账本创建更新前备份（失败报 `update.backup-failed` 并
-/// 中止，不带病升级），后带进度下载更新工件（进度经
+/// 下载更新（安装路径第 1 步，issue #1430 / #1944）：用户确认下载后调用——
+/// 经唯一调用点取更新对象并带进度下载更新工件（进度经
 /// `ledger:update-download-progress` 事件对前端可观察），完成后等待二次确认
-/// 安装。全询问式：本命令即下载确认入口，无任何静默下载路径。
+/// 安装。下载编排零备份动作、零账本接触——更新前备份移至安装确认后
+/// （`install_update`）。全询问式：本命令即下载确认入口，无任何静默下载路径。
 #[tauri::command]
 pub async fn download_update<R: tauri::Runtime>(
     app: AppHandle<R>,
@@ -49,15 +49,17 @@ pub async fn download_update<R: tauri::Runtime>(
     }
 }
 
-/// 安装更新（安装路径第 2 步，issue #1430 / ADR-0124 决策 6）：下载完成后的
-/// 二次确认入口——安装已下载工件并自动重启进入新版；未下载报
+/// 安装更新（安装路径第 2 步，issue #1430 / #1944 / ADR-0124 决策 6）：下载完成后的
+/// 二次确认入口——**先为当前活动账本创建更新前备份**（失败报
+/// `update.backup-failed` 并中止安装，已下载工件留在暂存、重试无需重新下载），
+/// 后安装已下载工件并自动重启进入新版；未下载报
 /// `update.not-downloaded`。永不静默安装：本命令即安装确认入口。成功路径
 /// 不返回（进程随安装重启），失败就地报码化错误。
 #[tauri::command]
-pub fn install_update<R: tauri::Runtime>(app: AppHandle<R>) -> Result<()> {
+pub async fn install_update<R: tauri::Runtime>(app: AppHandle<R>) -> Result<()> {
     #[cfg(desktop)]
     {
-        app_update::install_pending_update(&app)
+        app_update::install_pending_update(&app).await
     }
     #[cfg(mobile)]
     {
