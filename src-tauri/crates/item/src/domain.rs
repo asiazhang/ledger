@@ -1,19 +1,18 @@
-//! 物品（Item）域 API（issue #115 / #117 / #118 / #120 / #121 / #122 / spec #113 /
-//! ADR-0014）：创建、修改、处置、删除、列表、单件每天成本与「在用物品每天
-//! 成本合计」聚合的单一权威——写路径的校验与归一化、读路径的口径接线。
+//! 物品（Item）域 API（issue #115 / #117 / #118 / #120 / #121 / spec #113 /
+//! ADR-0014）：创建、修改、处置、删除、列表与单件每天成本的单一权威——写路径
+//! 的校验与归一化、读路径的口径接线。
 //!
 //! 组织方式（阶段 1 域目录化，#397 / ADR-0056）：原 `commands::item` 的
 //! `*_internal` 复用函数整体归位，接口正名为域语言短名（`create_item` /
 //! `list_items` / `update_item` / `dispose_item` / `delete_item` /
-//! `calculate_item_cost` / `item_daily_total`）；IPC 壳层（`commands::item`）
+//! `calculate_item_cost`）；IPC 壳层（`commands::item`）
 //! 只做参数解包、统一写入口与信号发射，转调本模块。
 //!
 //! 接缝约定：
 //! - 金额折算走 Amount 接缝，不另写口径：写路径（创建/修改的本位币成本）按交易日
 //!   入口 `transaction::amount::convert_to_native_on_trade_date` 折算、继承溯源交易行
 //!   留痕汇率（ADR-0014 2026-09-22 修订 / #1693，基础成本与交易行精确一致）；
-//!   读路径合计 `item_daily_total` 走当期入口 `convert_to_native_current`
-//!   （DailyUsageCost 合计口径不动，ADR-0011 决策 3）；
+//!   跨物品当期折算聚合（`item_daily_total`）已随概览汇总卡退役（issue #1950）；
 //! - 每天使用成本走 `item::cost` 接缝（DailyUsageCost 单一权威），列表不重算口径；
 //! - 溯源守卫（创建唯一入口的准入接缝）独立在 [`guard`]：
 //!   创建/换关路径经其解析关联购买交易并自动带出；
@@ -33,8 +32,8 @@ use super::cost;
 use super::guard;
 use super::guard::apply_purchase_link;
 use super::model::{
-    Item, ItemDailyCost, ItemDailyTotal, ItemDisposeInput, ItemInput, ItemSourceDisplay,
-    ItemStatus, ItemWithDailyCost,
+    Item, ItemDailyCost, ItemDisposeInput, ItemInput, ItemSourceDisplay, ItemStatus,
+    ItemWithDailyCost,
 };
 use ledger_infra::db::query::{query_all, query_one};
 use ledger_infra::db::tx_scope::ensure_transaction;
@@ -604,36 +603,6 @@ pub(crate) fn replay_dispose(conn: &Connection, id: &str, input: &ItemDisposeInp
 /// 重放执行：软删除（同一协议含存在性检查）。
 pub(crate) fn replay_delete(conn: &Connection, id: &str) -> Result<()> {
     write_delete(conn, id)
-}
-
-/// 全部在用物品「每天成本合计」（issue #122 dashboard 汇总卡）：conn 级聚合，
-/// 复用 [`list_items`] 的逐件口径快照（分子/天数均经 `item::cost` 接缝），
-/// 本函数只做筛选（仅 `in_use`）、本位币折算（Amount 接缝）与求和，不另写口径表达式。
-///
-/// 合计口径 = Σ 各在用物品分子（折本位币）÷ 各自天数：每件物品每天都在发生的
-/// 持有开销直接相加（「每天成本合计」），**不是** Σ分子 ÷ Σ天数（那是按天数加权的均值，
-/// 不回答「每天合计花多少」）。缺汇率的币种错误上抛（与 `dashboard_overview` 同款，
-/// 不静默以零计入）；分子为 0（残值 ≥ 成本）的物品计件但不贡献金额。
-pub fn item_daily_total(conn: &Connection) -> Result<ItemDailyTotal> {
-    let mut per_day_total = 0f64;
-    let mut item_count = 0u64;
-    for entry in list_items(conn)? {
-        if entry.item.status != ItemStatus::InUse {
-            continue;
-        }
-        let numerator_native = amount::convert_to_native_current(
-            conn,
-            entry.numerator_cents,
-            &entry.item.currency_code,
-        )?;
-        per_day_total += numerator_native as f64 / entry.used_days as f64;
-        item_count += 1;
-    }
-    Ok(ItemDailyTotal {
-        native_currency: amount::default_currency_code(conn)?,
-        per_day_cents: per_day_total,
-        item_count,
-    })
 }
 
 // ---------------------------------------------------------------------------

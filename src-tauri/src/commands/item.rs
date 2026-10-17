@@ -25,7 +25,7 @@ use ledger_infra::db::DbState;
 use ledger_infra::error::Result;
 use ledger_infra::signals::WriteOp;
 use ledger_item::domain;
-use ledger_item::{ItemDailyCost, ItemDailyTotal, ItemDisposeInput, ItemInput, ItemWithDailyCost};
+use ledger_item::{ItemDailyCost, ItemDisposeInput, ItemInput, ItemWithDailyCost};
 
 #[tauri::command]
 pub async fn list_items(db: State<'_, DbState>) -> Result<Vec<ItemWithDailyCost>> {
@@ -44,17 +44,6 @@ pub async fn calculate_item_cost(
     let conn = db.read_handle();
     read_entry("calculate_item_cost", conn, move |conn| {
         domain::calculate_item_cost(conn, &id, reference_date.as_deref())
-    })
-    .await
-}
-
-/// 全部在用物品每天成本合计（issue #122，只读聚合不发失效信号），
-/// 供 dashboard 汇总卡展示（默认币种）。
-#[tauri::command]
-pub async fn item_daily_total(db: State<'_, DbState>) -> Result<ItemDailyTotal> {
-    let conn = db.read_handle();
-    read_entry("item_daily_total", conn, move |conn| {
-        domain::item_daily_total(conn)
     })
     .await
 }

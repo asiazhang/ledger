@@ -23,7 +23,7 @@
 //! - [`cost`]（DailyUsageCost 权威）：「每天使用成本」纯计算，分子（总成本 − 残值）
 //!   ÷ 分母（购买日 → 目标日的日历天数，含起止两端）。
 //! - [`domain`]（域 API，单一权威）：写路径（创建/修改/处置/删除）与读路径
-//!   （列表/单件每天成本/在用合计）七项，域语言短名；失效信号以 `notify`
+//!   （列表/单件每天成本）六项，域语言短名；失效信号以 `notify`
 //!   回调注入（回调注入式，仿行情同步域 `sync` 的 emit 注入先例）。
 //! - [`guard`]（溯源守卫，ADR-0025 创建唯一入口的准入接缝）：关联购买交易的
 //!   解析、校验与自动带出——溯源必填/唯一在创建时刻强制。
@@ -61,8 +61,8 @@ mod model;
 pub use command::{ItemCommand, ItemCommandRow};
 pub use domain::*;
 pub use model::{
-    Item, ItemDailyCost, ItemDailyTotal, ItemDisposeInput, ItemInput, ItemSourceDisplay,
-    ItemStatus, ItemWithDailyCost,
+    Item, ItemDailyCost, ItemDisposeInput, ItemInput, ItemSourceDisplay, ItemStatus,
+    ItemWithDailyCost,
 };
 
 /// 同步重放（跨 crate 消费：sync_engine 分派接缝经根包再导出面执行外来命令，

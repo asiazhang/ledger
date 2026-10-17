@@ -22,24 +22,23 @@ import { t } from "@ledger/i18n";
 import { useDashboardOverview } from "@/dashboard/useDashboardOverview";
 import { useFinancialFreedom } from "@/dashboard/useFinancialFreedom";
 import { useInputMode } from "@/composables/useInputMode";
-import { useItemDailyTotal } from "@/dashboard/useItemDailyTotal";
 import { useWindowTier } from "@ledger/window-tier";
 import { useReferenceStore } from "@/stores/reference";
 import AppPopover from "@ledger/ui-kit/AppPopover.vue";
 import ConceptTipHost from "@/investment/ConceptTipHost.vue";
 import { formatAmount } from "@ledger/money";
-import type { BudgetProgress, MonthlySummary } from "@ledger/types";
+import type { MonthlySummary } from "@ledger/types";
 import { usePortfolioOverview } from "@/investment/usePortfolioOverview";
 import PortfolioStatsCards from "@/investment/PortfolioStatsCards.vue";
 
 // 首页财务全貌仪表盘（issue #140）：净资产总览卡（issue #143）+ 投资概览卡（issue #145）
-// + 本月收支与预算进度（issue #144）。
+// + 本月收支（issue #144）。
 // 快速记账已迁至交易页「记一笔」弹窗、最近交易列表已移除（issue #141）；
 // 逐账户余额卡已移除（逐账户明细归账户页，首页只呈现聚合全貌），
-// 投资概览/预算进度两卡不再按数据隐匿，空态用 NEmpty 占位。
+// 预算进度与物品使用成本两卡已移除（明细归预算页 / 物品页，issue #1950）；
+// 投资概览卡不再按数据隐匿，空态用 NEmpty 占位。
 const reference = useReferenceStore();
 const currentMonth = ref<MonthlySummary | null>(null);
-const budgets = ref<BudgetProgress[]>([]);
 
 // 净资产总览卡（issue #143）：多币种折算与合计全部在后端 `dashboard_overview` 完成，
 // 前端只做装配渲染；缺汇率等报错显示提示文案而非空数字。
@@ -54,19 +53,6 @@ const netExpenseCents = computed(
 );
 const balanceCents = computed(() => netIncomeCents.value - netExpenseCents.value);
 
-// 预算进度复用 budget_progress 命令现行统计窗口行为，前端只做展示；无预算时整卡隐藏。
-// 子分类预算统一以路径名呈现（issue #356）；孤儿预算回退后端返回的分类名（「未分类」）。
-const budgetRows = computed(() =>
-  budgets.value.map((b) => ({
-    ...b,
-    displayName: reference.categoryDisplayName(b.budget.category_id, b.category_name),
-    percentage:
-      b.budget.amount_cents > 0
-        ? Math.min(100, Math.round((b.spent_cents / b.budget.amount_cents) * 100))
-        : 0,
-  })),
-);
-
 // 投资概览卡（issue #145）：复用持仓概览 composable 的折本位币单值合计（issue #1797），
 // 无任何持仓时整卡隐藏；无行情标的不以零计入合计（缺价行计数标注，缺汇率整卡警告）。
 const {
@@ -76,14 +62,6 @@ const {
   nativeCurrency,
   refresh: refreshPortfolio,
 } = usePortfolioOverview();
-
-// 物品使用成本卡（issue #122）：全部在用物品每天成本合计，后端 `item_daily_total`
-// 聚合（折算与求和全在后端），失效复用物品 store 的重拉节奏（监听 version）。
-const {
-  total: itemDailyTotal,
-  loading: itemDailyTotalLoading,
-  error: itemDailyTotalError,
-} = useItemDailyTotal();
 
 // 财务自由度卡（issue #344；口径 ADR-0048）：后端 financial_freedom 聚合
 //（分子折算、分母年化、3% 提取率），前端只做装配渲染与阶段标签派生。
@@ -145,9 +123,8 @@ onMounted(async () => {
   const now = new Date();
   const year = now.getFullYear();
   const monthKey = `${year}-${String(now.getMonth() + 1).padStart(2, "0")}`;
-  const [monthly, progress] = await Promise.all([api.monthlySummary(year), api.budgetProgress()]);
+  const monthly = await api.monthlySummary(year);
   currentMonth.value = monthly.find((m) => m.month === monthKey) ?? null;
-  budgets.value = progress;
 });
 </script>
 
@@ -352,62 +329,6 @@ onMounted(async () => {
           </NText>
         </NSpace>
       </NSpin>
-    </NCard>
-
-    <!-- 物品使用成本卡（issue #122）：全部在用物品每天成本合计（默认币种，后端聚合），
-         无在用物品时空态占位，缺汇率等报错显示提示文案 -->
-    <NCard :title="t('dashboard.itemCost.title')" size="small" data-testid="item-daily-cost-card">
-      <NSpin :show="itemDailyTotalLoading">
-        <NAlert v-if="itemDailyTotalError" type="warning" :bordered="false">
-          {{ itemDailyTotalError }}
-        </NAlert>
-        <NEmpty
-          v-else-if="itemDailyTotal && itemDailyTotal.item_count === 0"
-          :description="t('dashboard.itemCost.empty')"
-        />
-        <NSpace v-else-if="itemDailyTotal" vertical :size="4">
-          <NText depth="3" style="font-size: 12px">{{ t("dashboard.itemCost.subtitle") }}</NText>
-          <NText strong style="font-size: 20px">
-            {{
-              formatAmount(
-                itemDailyTotal.per_day_cents,
-                reference.getCurrency(itemDailyTotal.native_currency),
-              )
-            }}{{ t("dashboard.itemCost.perDay") }}
-          </NText>
-          <NText depth="3" style="font-size: 12px">
-            {{ t("dashboard.itemCost.count", { n: itemDailyTotal.item_count }) }}
-          </NText>
-        </NSpace>
-      </NSpin>
-    </NCard>
-
-    <NCard :title="t('dashboard.budget.title')" size="small" data-testid="budget-progress-card">
-      <NEmpty v-if="budgetRows.length === 0" :description="t('dashboard.budget.empty')" />
-      <NSpace v-else vertical :size="12">
-        <div v-for="row in budgetRows" :key="row.budget.id" class="budget-row">
-          <NSpace align="center" justify="space-between" style="width: 100%">
-            <NText :type="row.over_budget ? 'error' : 'default'">
-              {{ row.displayName }}
-            </NText>
-            <NSpace align="center" :size="8">
-              <NText :type="row.over_budget ? 'error' : 'default'" style="font-size: 12px">
-                {{ formatAmount(row.spent_cents) }} / {{ formatAmount(row.budget.amount_cents) }}
-              </NText>
-              <NTag v-if="row.over_budget" type="error" size="small">{{
-                t("dashboard.budget.over")
-              }}</NTag>
-            </NSpace>
-          </NSpace>
-          <NProgress
-            type="line"
-            :percentage="row.percentage"
-            :status="row.over_budget ? 'error' : 'success'"
-            :show-indicator="false"
-            style="margin-top: 4px"
-          />
-        </div>
-      </NSpace>
     </NCard>
   </NSpace>
 </template>

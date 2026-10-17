@@ -1841,11 +1841,11 @@ describe("check-structure 当期入口调用方闭集（ADR-0011 决策 3 + 2026
   it("在册成员零调用 → 红（拒绝空集假绿：符号改名/调用全删不静默过）", () => {
     const r = run(
       makeCrateFixture({
-        convertCallerContent: { "crates/item/src/domain.rs": STUB },
+        convertCallerContent: { "crates/dashboard/src/lib.rs": STUB },
       }),
     );
     expect(r.status).toBe(1);
     expect(r.output).toContain("在册成员零调用");
-    expect(r.output).toContain("crates/item/src/domain.rs");
+    expect(r.output).toContain("crates/dashboard/src/lib.rs");
   });
 });

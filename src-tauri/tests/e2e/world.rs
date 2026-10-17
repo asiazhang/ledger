@@ -7,7 +7,7 @@ use cucumber::World;
 use ledger_dashboard::DashboardOverview;
 use ledger_infra::db::DbState;
 use ledger_infra::db::data_location::{DataLocationChangeOutcome, DataLocationInfo};
-use ledger_item::{ItemDailyCost, ItemDailyTotal, ItemWithDailyCost};
+use ledger_item::{ItemDailyCost, ItemWithDailyCost};
 use ledger_transaction::amount::TransactionKind;
 use ledger_transaction::{
     CreateTransactionResult, Transaction, TransactionInput, TransactionSearchResult,
@@ -168,8 +168,6 @@ pub struct ItemGroup {
     pub remembered_purchase_transaction_id: Option<String>,
     /// 最近一次自选参考日重算的结果快照（issue #121 断言用）
     pub last_item_cost: Option<ItemDailyCost>,
-    /// 最近一次在用物品每天成本合计快照（issue #122 dashboard 汇总卡断言用）
-    pub last_item_daily_total: Option<ItemDailyTotal>,
 }
 
 impl ItemGroup {

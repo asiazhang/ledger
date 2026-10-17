@@ -9,7 +9,6 @@ import type {
   InvestmentOverview,
   InvestmentTransactionRow,
   MoneyWeightedReturnSummary,
-  ItemDailyTotal,
   PhysicalAsset,
   PhysicalAssetList,
   ParkedOpInfo,
@@ -299,11 +298,6 @@ export function makePurchase(partial: Partial<TransactionPurchase> = {}): Transa
     unit_price_cents: null,
     ...partial,
   };
-}
-/**
- * item_daily_total 返回值工厂（issue #122）：默认人民币本位币、每天成本 123.45 元、3 件在用 */
-export function makeItemDailyTotal(partial: Partial<ItemDailyTotal> = {}): ItemDailyTotal {
-  return { native_currency: "CNY", per_day_cents: 12345, item_count: 3, ...partial };
 }
 
 /** financial_freedom 返回值工厂（issue #344）：默认人民币本位币、自由度 7.5%

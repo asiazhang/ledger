@@ -10,7 +10,6 @@ import DashboardView from "@/views/DashboardView.vue";
 import TransactionForm from "@/transaction/TransactionForm.vue";
 import { amountPrivacyEnabled, formatAmount } from "@ledger/money";
 import { useReferenceStore } from "@/stores/reference";
-import { useItemsStore } from "@/item/items";
 import { useAppStore } from "@/stores/app";
 import { pnlSemanticColor } from "@ledger/theme/semantic-colors";
 import { NGrid, NProgress } from "naive-ui";
@@ -28,7 +27,7 @@ const pushMock = vi.fn();
 vi.mock("vue-router", () => ({
   useRouter: () => ({ push: pushMock }),
 }));
-import type { Account, BudgetProgress, Category, Currency, MonthlySummary } from "@ledger/types";
+import type { Account, Currency, MonthlySummary } from "@ledger/types";
 
 const mockCurrencies: Currency[] = [
   { code: "CNY", name: "人民币", symbol: "¥", decimal_places: 2 },
@@ -57,9 +56,8 @@ const mockAccounts: Account[] = [
 // 净资产总览卡（issue #143）用例可按需覆写
 const mockOverview = makeOverview();
 
-// 首页新卡片用例可按需覆写；默认空集（无预算 → 预算卡隐藏、无当月行 → 三格为 0）
+// 首页新卡片用例可按需覆写；默认空集（无当月行 → 三格为 0）
 let mockMonthlySummary: MonthlySummary[] = [];
-let mockBudgetProgress: BudgetProgress[] = [];
 
 function setCurrentMonthSummary(summary: Omit<MonthlySummary, "month">) {
   const now = new Date();
@@ -67,37 +65,29 @@ function setCurrentMonthSummary(summary: Omit<MonthlySummary, "month">) {
   mockMonthlySummary = [{ month: monthKey, ...summary }];
 }
 
-/** 在用物品每天成本合计（issue #122）用例可按需覆写 */
-const mockItemDailyTotal = { native_currency: "CNY", per_day_cents: 12345, item_count: 3 };
-
-/** 默认布线 defaults 表：持仓 + 持仓标的字典 + 总览 + 物品/自由度（参考五命令走接缝规范兜底） */
+/** 默认布线 defaults 表：持仓 + 持仓标的字典 + 总览 + 自由度（参考五命令走接缝规范兜底） */
 const BASE_DEFAULTS = {
   list_holdings: mockHoldings,
   list_instruments: { items: mockInstruments, total: mockInstruments.length },
   // 累计收益·折本位币单值（issue #1077 / #1797）：全账本三腿相加后端折算聚合
   cumulative_pnl_native_total: { total_cents: 48000, native_currency: "CNY" },
   dashboard_overview: mockOverview,
-  // 物品使用成本卡（issue #122）挂载时会创建物品 store（self-init 拉列表）
-  list_items: [],
-  item_daily_total: mockItemDailyTotal,
   // 财务自由度卡（issue #344）默认自由度 7.5%，用例可覆写
   financial_freedom: makeFinancialFreedom(),
 };
 
 /** 每测基线 overrides 表：函数型 handler 实时读取可变变量（#144 用例挂载前改写生效）；
  * list_currencies 参考命令本场景需自定义值（CNY+USD，overrides 优先于参考兜底）；
- * list_categories 参考命令本场景需自定义空集（分类不在参考表时预算行回退载荷名） */
+ * list_categories 参考命令本场景需自定义空集 */
 const BASE_OVERRIDES = {
   list_currencies: mockCurrencies,
   list_categories: [],
   monthly_summary: () => mockMonthlySummary,
-  budget_progress: () => mockBudgetProgress,
 };
 
 beforeEach(async () => {
   pushMock.mockClear();
   mockMonthlySummary = [];
-  mockBudgetProgress = [];
   wireInvokeSeam({ defaults: BASE_DEFAULTS, overrides: BASE_OVERRIDES });
   const store = useReferenceStore();
   await store.refresh();
@@ -120,7 +110,6 @@ describe("DashboardView 界面语言切换（issue #342 / #351）", () => {
       expect(text).toContain("This Month");
       expect(text).toContain("Income");
       expect(text).toContain("Net Expense");
-      expect(text).toContain("Budget Progress");
       expect(wrapper.find('[data-testid="investment-overview-card"]').text()).toContain(
         "Total Market Value",
       );
@@ -327,12 +316,11 @@ describe("DashboardView 投资概览卡（issue #145）", () => {
 });
 
 describe("DashboardView 财务自由度卡（issue #344）", () => {
-  it("卡片位于投资概览卡之后、物品使用成本卡之前", async () => {
+  it("卡片位于投资概览卡之后（末位）", async () => {
     const wrapper = await mountView();
     const ids = wrapper.findAll('[data-testid$="-card"]').map((w) => w.attributes("data-testid"));
     const freedomIdx = ids.indexOf("financial-freedom-card");
     expect(freedomIdx).toBeGreaterThan(ids.indexOf("investment-overview-card"));
-    expect(freedomIdx).toBeLessThan(ids.indexOf("item-daily-cost-card"));
   });
 
   it("展示大字百分比、进度条、分子/分母金额、覆盖年数与阶段标签", async () => {
@@ -514,70 +502,6 @@ describe("DashboardView 本月收支卡（issue #144）", () => {
   });
 });
 
-describe("DashboardView 物品使用成本卡（issue #122）", () => {
-  it("展示全部在用物品每天成本合计（默认币种）与在用件数", async () => {
-    const wrapper = await mountView();
-    const card = wrapper.find('[data-testid="item-daily-cost-card"]');
-    expect(card.exists()).toBe(true);
-    expect(card.text()).toContain("全部在用物品每天成本合计");
-    // 12345 分（默认币种，后端聚合结果直接展示）
-    expect(card.text()).toContain(`${formatAmount(12345, cny)}/天`);
-    expect(card.text()).toContain("共 3 件在用物品");
-  });
-
-  it("无在用物品时空态占位而非 0 数字", async () => {
-    wireInvokeSeam({
-      defaults: BASE_DEFAULTS,
-      overrides: {
-        ...BASE_OVERRIDES,
-        item_daily_total: { native_currency: "CNY", per_day_cents: 0, item_count: 0 },
-      },
-    });
-    const wrapper = await mountView();
-    const card = wrapper.find('[data-testid="item-daily-cost-card"]');
-    expect(card.text()).toContain("暂无在用物品");
-    expect(card.text()).not.toContain("/天");
-  });
-
-  it("聚合命令报错（如缺汇率）时显示提示文案而非空数字", async () => {
-    wireInvokeSeam({
-      defaults: BASE_DEFAULTS,
-      overrides: {
-        ...BASE_OVERRIDES,
-        item_daily_total: () => Promise.reject(new Error("缺少 JPY→CNY 汇率，无法折算")),
-      },
-    });
-    const wrapper = await mountView();
-    const card = wrapper.find('[data-testid="item-daily-cost-card"]');
-    expect(card.text()).toContain("缺少 JPY→CNY 汇率，无法折算");
-    // 不渲染空数字或合计
-    expect(card.text()).not.toContain(cny.symbol);
-  });
-
-  it("物品写入失效（store version 变化）后自动重拉合计", async () => {
-    let total = { native_currency: "CNY", per_day_cents: 10000, item_count: 1 };
-    wireInvokeSeam({
-      defaults: BASE_DEFAULTS,
-      overrides: {
-        ...BASE_OVERRIDES,
-        item_daily_total: () => Promise.resolve(total),
-        list_items: [],
-      },
-    });
-    const wrapper = await mountView();
-    expect(wrapper.find('[data-testid="item-daily-cost-card"]').text()).toContain(
-      `${formatAmount(10000, cny)}/天`,
-    );
-    // 物品写入 → 物品 store 重拉（模拟 ledger:changed 路径）→ version 自增 → 合计跟随重拉
-    total = { native_currency: "CNY", per_day_cents: 30000, item_count: 2 };
-    await useItemsStore().refresh();
-    await flushPromises();
-    const card = wrapper.find('[data-testid="item-daily-cost-card"]');
-    expect(card.text()).toContain(`${formatAmount(30000, cny)}/天`);
-    expect(card.text()).toContain("共 2 件在用物品");
-  });
-});
-
 describe("DashboardView 移动档（issue #847 / ADR-0088 决策 11 票⑦，词汇表「窗口分级」）", () => {
   it("移动档栅格单列化：本月收支三格与投资概览三格均单列（断点口径接窗口分级常量，不自立断点）", async () => {
     setFakeMedia({ width: 600 });
@@ -655,25 +579,6 @@ describe("DashboardView 移动档（issue #847 / ADR-0088 决策 11 票⑦，词
 describe("DashboardView 金额隐私模式（issue #567 仪表盘面核查：无 canvas 图表，数字卡全走格式化接缝）", () => {
   it("开启后各金额卡显示掩码、币种符号一同隐藏，百分比与件数保留", async () => {
     setCurrentMonthSummary({ income_cents: 100000, expense_cents: 80000, refund_cents: 5000 });
-    mockBudgetProgress = [
-      {
-        budget: {
-          id: "b-ok",
-          category_id: "cat-1",
-          period: "monthly",
-          amount_cents: 50000,
-          start_date: "2026-07-01",
-          created_at: "2026-07-01T00:00:00Z",
-          updated_at: "2026-07-01T00:00:00Z",
-          version: 1,
-          device_id: "test",
-          is_deleted: false,
-        },
-        category_name: "餐饮",
-        spent_cents: 4000,
-        over_budget: false,
-      },
-    ];
     const wrapper = await mountView();
     // 关闭态先确认现状金额在位（回归基准）；预言在掩码开启前取（开启后 formatAmount 返回掩码）
     const netWorthText = formatAmount(123456, cny);
@@ -683,131 +588,16 @@ describe("DashboardView 金额隐私模式（issue #567 仪表盘面核查：无
     await nextTick();
 
     const text = wrapper.text();
-    // 净资产 / 本月收支 / 投资概览 / 自由度分子分母 / 物品成本 / 预算行全部掩码；掩码无币种符号
+    // 净资产 / 本月收支 / 投资概览 / 自由度分子分母全部掩码；掩码无币种符号
     expect(text).toContain("••••");
     expect(text).not.toContain(cny.symbol);
     expect(text).not.toContain(netWorthText);
-    expect(wrapper.find('[data-testid="budget-progress-card"]').text()).toContain("•••• / ••••");
-    // 百分比与件数保留（spec #564：隐藏的是数字不是形状与方向）
+    // 百分比保留（spec #564：隐藏的是数字不是形状与方向）
     expect(wrapper.find('[data-testid="financial-freedom-ratio"]').text()).toBe("7.5%");
-    expect(text).toContain("共 3 件在用物品");
 
     // 关闭后立即恢复原样（回归保障）
     amountPrivacyEnabled.value = false;
     await nextTick();
     expect(wrapper.text()).toContain(netWorthText);
-  });
-});
-
-describe("DashboardView 预算进度卡（issue #144）", () => {
-  const progress = (
-    over: boolean,
-    spent: number,
-    amount: number,
-    name?: string,
-    categoryId = "cat-1",
-  ): BudgetProgress => ({
-    budget: {
-      id: `b-${over ? "over" : "ok"}`,
-      category_id: categoryId,
-      period: "monthly",
-      amount_cents: amount,
-      start_date: "2026-07-01",
-      created_at: "2026-07-01T00:00:00Z",
-      updated_at: "2026-07-01T00:00:00Z",
-      version: 1,
-      device_id: "test",
-      is_deleted: false,
-    },
-    category_name: name ?? (over ? "餐饮" : "交通"),
-    spent_cents: spent,
-    over_budget: over,
-  });
-
-  it("逐行渲染：分类名 + 进度条 + 已花/额度", async () => {
-    mockBudgetProgress = [progress(false, 4000, 50000, "餐饮"), progress(false, 0, 10000, "交通")];
-    const wrapper = await mountView();
-    const text = wrapper.text();
-    expect(text).toContain("预算进度");
-    expect(text).toContain("餐饮");
-    expect(text).toContain("交通");
-    expect(text).toContain(`${formatAmount(4000)} / ${formatAmount(50000)}`);
-    expect(text).toContain(`${formatAmount(0)} / ${formatAmount(10000)}`);
-    expect(wrapper.findComponent(NProgress).exists()).toBe(true);
-  });
-
-  it("超支行红色高亮：进度条 error 状态 + 超支标记", async () => {
-    mockBudgetProgress = [
-      progress(false, 4000, 50000, "交通"),
-      progress(true, 60000, 50000, "餐饮"),
-    ];
-    const wrapper = await mountView();
-    // 财务自由度卡（issue #344）也有进度条：断言收窄到预算进度卡内
-    const card = wrapper.find('[data-testid="budget-progress-card"]');
-    const bars = card.findAllComponents(NProgress);
-    expect(bars).toHaveLength(2);
-    expect(bars[0].props("status")).toBe("success");
-    expect(bars[1].props("status")).toBe("error");
-    expect(wrapper.text()).toContain("超支");
-    // 超支行金额红色高亮（NText type=error）
-    expect(wrapper.text()).toContain(`${formatAmount(60000)} / ${formatAmount(50000)}`);
-  });
-
-  it("无任何预算时卡片保留，空态占位而非逐行进度条", async () => {
-    mockBudgetProgress = [];
-    const wrapper = await mountView();
-    const card = wrapper.find('[data-testid="budget-progress-card"]');
-    expect(card.exists()).toBe(true);
-    expect(card.text()).toContain("未设置预算");
-    // 财务自由度卡（issue #344）也有进度条：断言收窄到预算进度卡内
-    expect(card.findComponent(NProgress).exists()).toBe(false);
-  });
-
-  it("子分类预算显示「父 > 子」路径名；孤儿预算回退「未分类」（issue #356）", async () => {
-    // 参考数据注入父+子分类；孤儿预算的 category_id 不在任何参考表中
-    const dashCategories: Category[] = [
-      {
-        id: "cat-1",
-        name: "餐饮",
-        kind: "expense",
-        parent_id: null,
-        icon: null,
-        sort_order: 0,
-        created_at: "2026-01-01T00:00:00Z",
-        updated_at: "2026-01-01T00:00:00Z",
-        version: 1,
-        device_id: "test",
-        is_deleted: false,
-      },
-      {
-        id: "cat-1-sub",
-        name: "早餐",
-        kind: "expense",
-        parent_id: "cat-1",
-        icon: null,
-        sort_order: 0,
-        created_at: "2026-01-01T00:00:00Z",
-        updated_at: "2026-01-01T00:00:00Z",
-        version: 1,
-        device_id: "test",
-        is_deleted: false,
-      },
-    ];
-    wireInvokeSeam({
-      defaults: BASE_DEFAULTS,
-      overrides: {
-        ...BASE_OVERRIDES,
-        list_categories: dashCategories,
-        budget_progress: () => [
-          progress(false, 4000, 50000, "早餐", "cat-1-sub"),
-          progress(false, 1000, 20000, "未分类", "cat-gone"),
-        ],
-      },
-    });
-    await useReferenceStore().refresh();
-    const wrapper = await mountView();
-    const card = wrapper.find('[data-testid="budget-progress-card"]');
-    expect(card.text()).toContain("餐饮 > 早餐");
-    expect(card.text()).toContain("未分类");
   });
 });
