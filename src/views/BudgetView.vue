@@ -32,7 +32,7 @@ import { useReferenceStore } from "@/stores/reference";
 import { errorMessage } from "@ledger/utils/errors";
 import { yuanToCents, formatAmount, centsToYuan } from "@ledger/money";
 import { todayStr } from "@ledger/utils/date";
-import type { BudgetInput, BudgetProgress } from "@ledger/types";
+import type { BudgetAnnualSummary, BudgetInput, BudgetProgress } from "@ledger/types";
 
 const reference = useReferenceStore();
 const message = useMessage();
@@ -42,6 +42,12 @@ const list = ref<BudgetProgress[]>([]);
 // 提示内化；失败 = error 置位 + 默认裸 toast（治愈原 try/finally 无 catch 的静默
 // 失败与未处理 rejection），旧行保留到下次成功替换。
 const { loading, run: runList } = useLoadable(() => api.budgetProgress());
+
+// 年度汇总（issue #1948）：与进度清单同一 `refresh` 并行发起、各自 Loadable 收编
+// 错误——两处数字恒同时刷新，不会出现「卡是旧的、列表是新的」。只有当前自然年，
+// 历史维度不做（预算无历史快照，回看往年只能是假历史）。
+const summary = ref<BudgetAnnualSummary | null>(null);
+const { run: runSummary } = useLoadable(() => api.budgetAnnualSummary());
 
 // 移动档适配（issue #848 / ADR-0088 决策 11 票⑧）：预算表三分列（周期/状态并入
 // 分类副行、进度含已支/预算文案）+ 新增表单纵排。断点口径接窗口分级 composable
@@ -108,8 +114,9 @@ const editingCategoryName = computed(() =>
 );
 
 async function refresh() {
-  const progress = await runList();
+  const [progress, annual] = await Promise.all([runList(), runSummary()]);
   if (progress !== null) list.value = progress;
+  if (annual !== null) summary.value = annual;
 }
 
 async function create() {
@@ -180,6 +187,27 @@ function progressPercentage(row: BudgetProgress): number {
     ? Math.min(100, Math.round((row.spent_cents / row.budget.amount_cents) * 100))
     : 0;
 }
+
+/** 年度汇总卡进度百分比：本年已支 / 年度预算总额（年化口径），封顶 100。 */
+const summaryPercentage = computed(() => {
+  const s = summary.value;
+  if (s === null || s.annual_budget_total_cents <= 0) return 0;
+  return Math.min(100, Math.round((s.spent_cents / s.annual_budget_total_cents) * 100));
+});
+
+// 年度汇总卡排版（issue #1948）：桌面双数字横排 + 全宽进度条（决策 A，原型定稿）；
+// 移动档只压缩字号与间距，不换布局、不搬数字（同一卡两档缩放，ADR-0088）。
+const summaryStatsStyle = computed(() => ({
+  display: "flex",
+  alignItems: "flex-end",
+  gap: isMobileTier.value ? "16px" : "32px",
+  flexWrap: "wrap" as const,
+}));
+const summaryPrimaryStyle = computed(() => ({ fontSize: isMobileTier.value ? "19px" : "26px" }));
+const summarySecondaryStyle = computed(() => ({
+  fontSize: isMobileTier.value ? "17px" : "21px",
+}));
+const SUMMARY_STAT_LABEL_STYLE = "font-size: 12px;";
 
 /** 进度条状态语义色：超支红 / 正常绿（两分支共用）。 */
 function progressStatus(row: BudgetProgress): "error" | "success" {
@@ -372,6 +400,50 @@ onMounted(() => {
             >{{ t("budget.create.add") }}</NButton
           >
         </NForm>
+      </NCard>
+
+      <!-- 取数失败（summary 仍为 null）时不渲染空卡：错误已由 Loadable 的默认 toast 呈现 -->
+      <NCard
+        v-if="summary !== null"
+        :title="t('budget.summary.title')"
+        size="small"
+        data-testid="budget-annual-summary"
+      >
+        <template #header-extra>
+          <NTag v-if="summary" :type="summary.over_budget ? 'error' : 'success'" size="small">
+            {{ summary.over_budget ? t("budget.summary.over") : t("budget.summary.normal") }}
+          </NTag>
+        </template>
+        <template v-if="summary">
+          <div :style="summaryStatsStyle">
+            <NSpace vertical :size="0">
+              <NText depth="2" :style="SUMMARY_STAT_LABEL_STYLE">
+                {{ t("budget.summary.annualTotal") }}
+              </NText>
+              <NText strong :style="summaryPrimaryStyle">
+                {{ formatAmount(summary.annual_budget_total_cents) }}
+              </NText>
+            </NSpace>
+            <NSpace vertical :size="0">
+              <NText depth="2" :style="SUMMARY_STAT_LABEL_STYLE">
+                {{ t("budget.summary.spent") }}
+              </NText>
+              <NText strong :style="summarySecondaryStyle">
+                {{ formatAmount(summary.spent_cents) }}
+              </NText>
+            </NSpace>
+          </div>
+          <NProgress
+            type="line"
+            :percentage="summaryPercentage"
+            :status="summary.over_budget ? 'error' : 'success'"
+            :show-indicator="false"
+            style="margin-top: 16px"
+          />
+          <NText depth="3" style="font-size: 12px; display: block; margin-top: 8px">
+            {{ t("budget.summary.note") }}
+          </NText>
+        </template>
       </NCard>
 
       <NCard :title="t('budget.list.title')" size="small">

@@ -8,8 +8,10 @@
 //!   空值语义跳过，不以零计入；缺汇率错误上抛（中文错误信息），不静默混币种。
 //!   与净资产的边界差异：净资产同样计入投资账户现金（ADR-0020 修订），两者
 //!   差异仅在生活现金与实物资产（见 ADR-0048 决策 2）。
-//! - 分母 = Σ 月度预算 × 12 + Σ 年度预算（全部未删除预算），无窗口、不滚动；
-//!   预算金额即默认币种单币种口径，与折算后的分子同币种相除；不回退实际支出。
+//! - 分母 = 年度预算总额，取数走预算域单点函数
+//!   [`ledger_budget::annual_budget_total_cents`]（Σ 月度预算 × 12 + Σ 年度预算，
+//!   全部未删除预算），无窗口、不滚动；口径表达式不复制（ADR-0131 决策 4），
+//!   预算页年度汇总卡与财务自由度因此永远同源（issue #1948）。
 //! - 3% 安全提取率为常量，单点收口于 [`SAFE_WITHDRAWAL_RATE`]；调整先修订 ADR-0048。
 //! - 覆盖年数 = 分子 ÷ 分母；未设预算（零分母）时 ratio 与 coverage_years 均为 0，
 //!   占位引导在展示层。
@@ -117,21 +119,15 @@ pub fn query_investable_assets_cents(conn: &Connection) -> Result<i64> {
 /// conn 级聚合：计算财务自由度总览（只读）。
 ///
 /// **读快照一致性（issue #1699）**：分子（现金腿 + 持仓腿逐行折算）与分母
-///（budgets 聚合）跨表多语句，整体收进同一读事务（嵌套感知）——分子分母恒
+///（预算域年度预算总额聚合）跨表多语句，整体收进同一读事务（嵌套感知）——分子分母恒
 /// 同时点，写提交落在语句之间会两端不同时点。
 pub fn query_financial_freedom(conn: &Connection) -> Result<FinancialFreedomOverview> {
     ensure_transaction(conn, || {
         // 分子：投资账户现金 + 持仓市值，口径单点见 [`query_investable_assets_cents`]。
         let numerator_cents = query_investable_assets_cents(conn)?;
 
-        // 分母：年度预算总额（全部未删除预算，无窗口不滚动；月度 × 12 为节奏年化）。
-        let denominator_cents: i64 = conn.query_row(
-            "SELECT COALESCE(SUM(CASE WHEN period='monthly' THEN amount_cents * 12 \
-                                  WHEN period='yearly' THEN amount_cents END), 0) \
-         FROM budgets WHERE is_deleted=0",
-            [],
-            |r| r.get(0),
-        )?;
+        // 分母：年度预算总额，口径单点在预算域（#1948）：月度 × 12 为节奏年化。
+        let denominator_cents = ledger_budget::annual_budget_total_cents(conn)?;
 
         // 零分母（未设预算）：返回零，不回退实际支出；占位引导在展示层。
         let (ratio, coverage_years) = if denominator_cents == 0 {

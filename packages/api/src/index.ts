@@ -17,6 +17,7 @@ import type {
   Book,
   BookListInfo,
   Budget,
+  BudgetAnnualSummary,
   BudgetInput,
   BudgetProgress,
   BudgetUpdateInput,
@@ -259,6 +260,8 @@ export const api = {
       to: period.to,
     }),
   budgetProgress: () => invoke<BudgetProgress[]>("budget_progress"),
+  // 预算年度汇总（issue #1948）：年度预算总额（年化）+ 本年已支 + 超标判定，只读实时聚合
+  budgetAnnualSummary: () => invoke<BudgetAnnualSummary>("budget_annual_summary"),
 
   // 金融工具（anchor_id：来源跳转落标的页签的分页定位，issue #1907）
   listInstruments: (filter?: InstrumentListFilter | null) =>

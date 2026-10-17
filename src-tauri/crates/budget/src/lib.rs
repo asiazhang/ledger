@@ -23,6 +23,13 @@
 //! 窗口为注入 `today` 所在自然月/年，与存储的 start_date 无关）；本 crate 不定义
 //! 口径，只消费 `ledger-transaction::amount`。
 //!
+//! 年度汇总口径（issue #1948）：年度预算总额（Σ 月预算 × 12 + Σ 年预算，无窗口
+//! 不滚动）与本年已支（当前自然年、预算覆盖分类的 `ExpenseNet`，按交易逐行只计入
+//! 一次）由 [`annual_summary::budget_annual_summary`] 输出；该文件的
+//! [`annual_summary::annual_budget_total_cents`] 是跨域单点——投资域财务自由度的
+//! 分母调用同一函数（ADR-0048 / ADR-0131 决策 4），因此本 crate 由「只被消费、
+//! 不消费同级域」的叶子域变为被投资域依赖（依赖边仍单向：投资域 → 预算域）。
+//!
 //! 依赖方向（spec #1086 / issue #1101 AC）：本 crate 消费基础设施、同步协议与
 //! 核心交易域（`ledger-infra` / `ledger-sync-protocol` / `ledger-transaction`），
 //! 对根包（壳层）与任何同级业务域零依赖，无接缝无注册点、壳层启动零接线；
@@ -37,18 +44,22 @@
 //! 根包侧三层测试（API/命令集成、e2e BDD）走根包图实例覆盖，断言与场景文本
 //! 零改动。
 
+mod annual_summary;
 mod command;
 pub mod crud;
 mod model;
 mod progress;
 
+pub use annual_summary::{annual_budget_total_cents, budget_annual_summary};
 pub use command::BudgetCommand;
 /// 同步重放接缝（跨 crate 消费：sync_engine::registry 经根包再导出面分派外来
 /// 预算命令，与本地写同协议。#1101 拆 crate 起 `pub(crate)`→`pub`，签名与语义
 /// 不变，#1092 replay_command 同款）。
 pub use command::replay_command;
 pub use crud::{create_budget, delete_budget, list_budgets, update_budget};
-pub use model::{Budget, BudgetInput, BudgetPeriod, BudgetProgress, BudgetUpdateInput};
+pub use model::{
+    Budget, BudgetAnnualSummary, BudgetInput, BudgetPeriod, BudgetProgress, BudgetUpdateInput,
+};
 pub use progress::budget_progress_rows;
 
 #[cfg(test)]

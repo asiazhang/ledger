@@ -11,7 +11,7 @@ import { messageApi } from "@ledger/test-support/message-mock";
 import { makeFakeSink, resetToastSink } from "./factories";
 import { registerToastSink } from "@ledger/loadable";
 import { findButton, findBodyButton } from "@ledger/test-support/dom";
-import type { BudgetProgress, Category } from "@ledger/types";
+import type { BudgetAnnualSummary, BudgetProgress, Category } from "@ledger/types";
 
 const mockCategories: Category[] = [
   {
@@ -70,6 +70,13 @@ const mockCategories: Category[] = [
 
 /** 参考命令本场景需自定义值（overrides 优先于参考兜底）：断言消费自定义支出分类集。 */
 const REFERENCE_OVERRIDES = { list_categories: mockCategories };
+
+/** 年度汇总替身默认值（issue #1948）：新命令与进度清单同批取数，缺键即未命中报错。 */
+const EMPTY_ANNUAL_SUMMARY: BudgetAnnualSummary = {
+  annual_budget_total_cents: 0,
+  spent_cents: 0,
+  over_budget: false,
+};
 
 const mockProgress: BudgetProgress = {
   budget: {
@@ -145,7 +152,7 @@ function bodyButton(text: string, label: string) {
 beforeEach(async () => {
   resetToastSink();
   wireInvokeSeam({
-    defaults: { budget_progress: [] },
+    defaults: { budget_annual_summary: EMPTY_ANNUAL_SUMMARY, budget_progress: [] },
     overrides: { ...REFERENCE_OVERRIDES },
   });
   const store = useReferenceStore();
@@ -161,7 +168,7 @@ describe("BudgetView 加载失败治愈（issue #1008）", () => {
     const sink = makeFakeSink();
     registerToastSink(sink);
     wireInvokeSeam({
-      defaults: { budget_progress: [] },
+      defaults: { budget_annual_summary: EMPTY_ANNUAL_SUMMARY, budget_progress: [] },
       overrides: {
         ...REFERENCE_OVERRIDES,
         budget_progress: () => Promise.reject(new Error("数据库不可用")),
@@ -218,7 +225,7 @@ describe("BudgetView 预算表单（issue #183）", () => {
 
   it("提交成功清空表单并提示；start_date 仅作记录字段传创建当日（issue #184）", async () => {
     wireInvokeSeam({
-      defaults: { budget_progress: [] },
+      defaults: { budget_annual_summary: EMPTY_ANNUAL_SUMMARY, budget_progress: [] },
       overrides: {
         ...REFERENCE_OVERRIDES,
         create_budget: () => Promise.resolve("budget-1"),
@@ -240,7 +247,7 @@ describe("BudgetView 预算表单（issue #183）", () => {
 
   it("查重失败把后端中文错误清晰呈现，提示引导编辑已有预算（issue #184）", async () => {
     wireInvokeSeam({
-      defaults: { budget_progress: [] },
+      defaults: { budget_annual_summary: EMPTY_ANNUAL_SUMMARY, budget_progress: [] },
       overrides: {
         ...REFERENCE_OVERRIDES,
         create_budget: () =>
@@ -259,7 +266,7 @@ describe("BudgetView 预算表单（issue #183）", () => {
 describe("BudgetView 子分类预算路径名呈现与孤儿回退（issue #356）", () => {
   it("预算执行列表对子分类预算显示「父 > 子」路径名", async () => {
     wireInvokeSeam({
-      defaults: { budget_progress: [subProgress] },
+      defaults: { budget_annual_summary: EMPTY_ANNUAL_SUMMARY, budget_progress: [subProgress] },
       overrides: { ...REFERENCE_OVERRIDES },
     });
     const wrapper = await mountView();
@@ -268,7 +275,7 @@ describe("BudgetView 子分类预算路径名呈现与孤儿回退（issue #356�
 
   it("编辑弹窗分类只读行显示路径名", async () => {
     wireInvokeSeam({
-      defaults: { budget_progress: [subProgress] },
+      defaults: { budget_annual_summary: EMPTY_ANNUAL_SUMMARY, budget_progress: [subProgress] },
       overrides: { ...REFERENCE_OVERRIDES },
     });
     const wrapper = await mountView();
@@ -278,7 +285,7 @@ describe("BudgetView 子分类预算路径名呈现与孤儿回退（issue #356�
 
   it("孤儿预算（分类已删）回退显示「未分类」，列表与编辑弹窗均不报错", async () => {
     wireInvokeSeam({
-      defaults: { budget_progress: [orphanProgress] },
+      defaults: { budget_annual_summary: EMPTY_ANNUAL_SUMMARY, budget_progress: [orphanProgress] },
       overrides: { ...REFERENCE_OVERRIDES },
     });
     const wrapper = await mountView();
@@ -289,7 +296,10 @@ describe("BudgetView 子分类预算路径名呈现与孤儿回退（issue #356�
 
   it("路径名呈现与孤儿回退在同一列表共存（父预算 + 子预算 + 孤儿）", async () => {
     wireInvokeSeam({
-      defaults: { budget_progress: [mockProgress, subProgress, orphanProgress] },
+      defaults: {
+        budget_annual_summary: EMPTY_ANNUAL_SUMMARY,
+        budget_progress: [mockProgress, subProgress, orphanProgress],
+      },
       overrides: { ...REFERENCE_OVERRIDES },
     });
     const wrapper = await mountView();
@@ -302,7 +312,7 @@ describe("BudgetView 子分类预算路径名呈现与孤儿回退（issue #356�
 describe("BudgetView 编辑预算金额（issue #184）", () => {
   it("列表操作列有「编辑」入口，弹窗仅金额可改（分类/周期只读，无日期选择器）", async () => {
     wireInvokeSeam({
-      defaults: { budget_progress: [mockProgress] },
+      defaults: { budget_annual_summary: EMPTY_ANNUAL_SUMMARY, budget_progress: [mockProgress] },
       overrides: { ...REFERENCE_OVERRIDES },
     });
     const wrapper = await mountView();
@@ -321,7 +331,7 @@ describe("BudgetView 编辑预算金额（issue #184）", () => {
 
   it("弹窗回填当前金额，保存调用 update_budget 并刷新列表", async () => {
     wireInvokeSeam({
-      defaults: { budget_progress: [mockProgress] },
+      defaults: { budget_annual_summary: EMPTY_ANNUAL_SUMMARY, budget_progress: [mockProgress] },
       overrides: {
         ...REFERENCE_OVERRIDES,
         update_budget: () => Promise.resolve(null),
@@ -346,7 +356,7 @@ describe("BudgetView 编辑预算金额（issue #184）", () => {
 
   it("弹窗金额非正前置拦截，不发起后端调用", async () => {
     wireInvokeSeam({
-      defaults: { budget_progress: [mockProgress] },
+      defaults: { budget_annual_summary: EMPTY_ANNUAL_SUMMARY, budget_progress: [mockProgress] },
       overrides: { ...REFERENCE_OVERRIDES },
     });
     const wrapper = await mountView();
@@ -361,7 +371,7 @@ describe("BudgetView 编辑预算金额（issue #184）", () => {
 
   it("保存失败把后端错误清晰呈现", async () => {
     wireInvokeSeam({
-      defaults: { budget_progress: [mockProgress] },
+      defaults: { budget_annual_summary: EMPTY_ANNUAL_SUMMARY, budget_progress: [mockProgress] },
       overrides: {
         ...REFERENCE_OVERRIDES,
         update_budget: () => Promise.reject({ kind: "NotFound", message: "预算不存在: budget-1" }),
@@ -386,7 +396,10 @@ describe("BudgetView 移动档（issue #848 / ADR-0088 决策 11 票⑧，词汇
       over_budget: true,
     };
     wireInvokeSeam({
-      defaults: { budget_progress: [over, mockProgress] },
+      defaults: {
+        budget_annual_summary: EMPTY_ANNUAL_SUMMARY,
+        budget_progress: [over, mockProgress],
+      },
       overrides: { ...REFERENCE_OVERRIDES },
     });
     return [over, mockProgress];
@@ -422,7 +435,8 @@ describe("BudgetView 移动档（issue #848 / ADR-0088 决策 11 票⑧，词汇
     setFakeMedia({ width: 600 });
     wireRows();
     const wrapper = await mountView();
-    const bars = wrapper.findAllComponents(NProgress);
+    // 断言面收窄到列表卡：年度汇总卡自带一条进度条（issue #1948），不属于本用例口径
+    const bars = wrapper.find(".n-data-table").findAllComponents(NProgress);
     expect(bars.length).toBe(2);
     expect(bars[0].props("status")).toBe("error");
     expect(bars[0].props("percentage")).toBe(100); // 12000/10000 封顶
@@ -472,5 +486,76 @@ describe("BudgetView 移动档（issue #848 / ADR-0088 决策 11 票⑧，词汇
     const form = wrapper.findComponent(NForm);
     expect(form.props("inline")).toBe(false);
     expect(form.props("labelPlacement")).toBe("top");
+  });
+});
+
+describe("预算年度汇总卡（issue #1948）", () => {
+  const annualSummary = (partial: Partial<BudgetAnnualSummary>): BudgetAnnualSummary => ({
+    annual_budget_total_cents: 600000,
+    spent_cents: 240000,
+    over_budget: false,
+    ...partial,
+  });
+
+  function wireSummary(summary: BudgetAnnualSummary) {
+    wireInvokeSeam({
+      defaults: { budget_annual_summary: summary, budget_progress: [mockProgress] },
+      overrides: { ...REFERENCE_OVERRIDES },
+    });
+  }
+
+  function cardOf(wrapper: Awaited<ReturnType<typeof mountView>>) {
+    return wrapper.find('[data-testid="budget-annual-summary"]');
+  }
+
+  it("显示年度预算总额（年化口径）与本年已支，正常态进度条为 success", async () => {
+    wireSummary(annualSummary({}));
+    const wrapper = await mountView();
+    const card = cardOf(wrapper);
+    expect(card.exists()).toBe(true);
+    expect(card.text()).toContain("年度预算总额");
+    expect(card.text()).toContain(formatAmount(600000));
+    expect(card.text()).toContain("本年已支");
+    expect(card.text()).toContain(formatAmount(240000));
+    expect(card.text()).toContain("正常");
+    expect(card.text()).not.toContain("已超标");
+    const bar = card.findComponent(NProgress);
+    expect(bar.props("status")).toBe("success");
+    expect(bar.props("percentage")).toBe(40);
+  });
+
+  it("已支超过年化总额：标签转「已超标」、进度条转 error、百分比封顶 100", async () => {
+    wireSummary(
+      annualSummary({
+        annual_budget_total_cents: 600000,
+        spent_cents: 810000,
+        over_budget: true,
+      }),
+    );
+    const wrapper = await mountView();
+    const card = cardOf(wrapper);
+    expect(card.text()).toContain("已超标");
+    expect(card.text()).toContain(formatAmount(810000));
+    const bar = card.findComponent(NProgress);
+    expect(bar.props("status")).toBe("error");
+    expect(bar.props("percentage")).toBe(100);
+  });
+
+  it("移动档同一口径：数字不变，仅字号分档（桌面 26px / 移动 19px）", async () => {
+    wireSummary(annualSummary({}));
+    const desktop = await mountView();
+    const fontSizes = (w: Awaited<ReturnType<typeof mountView>>) =>
+      cardOf(w)
+        .findAll(".n-text")
+        .map((t) => (t.element as HTMLElement).style.fontSize);
+    expect(fontSizes(desktop)).toContain("26px");
+
+    setFakeMedia({ width: 600 });
+    await flushPromises();
+    expect(cardOf(desktop).text()).toContain(formatAmount(600000));
+    expect(fontSizes(desktop)).toContain("19px");
+    expect(fontSizes(desktop)).not.toContain("26px");
+    setFakeMedia({ width: 1280 });
+    await flushPromises();
   });
 });

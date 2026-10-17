@@ -34,3 +34,10 @@ export interface BudgetProgress {
   spent_cents: number;
   over_budget: boolean;
 }
+
+/** 预算年度汇总（issue #1948）：年度预算总额（月预算 ×12 年化）与本年已支，均默认币种 */
+export interface BudgetAnnualSummary {
+  annual_budget_total_cents: number;
+  spent_cents: number;
+  over_budget: boolean;
+}
