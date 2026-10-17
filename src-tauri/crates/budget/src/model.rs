@@ -83,10 +83,14 @@ pub struct BudgetInput {
     pub start_date: String,
 }
 
-/// 预算编辑入参（issue #184）：仅允许修改金额，分类/周期不可改（改法为删旧建新）。
+/// 预算编辑入参（issue #184 只许金额 → issue #1946 放开周期）：金额必填；
+/// 周期可改（受「分类 + 周期」唯一校验约束，见 `crud`），分类不可改（删旧建新）。
+/// `period` 缺省 = 不改周期（serde default，兼容旧调用形态与存量同步载荷）。
 #[derive(Debug, Deserialize)]
 pub struct BudgetUpdateInput {
     pub amount_cents: i64,
+    #[serde(default)]
+    pub period: Option<BudgetPeriod>,
 }
 
 #[derive(Debug, Serialize)]

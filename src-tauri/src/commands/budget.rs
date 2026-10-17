@@ -62,7 +62,8 @@ pub async fn update_budget(
         Some(&app),
         WriteOp::UpdateBudget,
         move |conn| {
-            budget_domain::crud::update_budget(conn, &id, input.amount_cents).map(Outcome::Silent)
+            budget_domain::crud::update_budget(conn, &id, input.amount_cents, input.period)
+                .map(Outcome::Silent)
         },
     )
     .await

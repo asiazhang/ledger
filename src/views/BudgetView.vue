@@ -7,6 +7,8 @@ import {
   NForm,
   NFormItem,
   NInputNumber,
+  NRadioButton,
+  NRadioGroup,
   NSpace,
   NProgress,
   NTag,
@@ -32,7 +34,13 @@ import { useReferenceStore } from "@/stores/reference";
 import { errorMessage } from "@ledger/utils/errors";
 import { yuanToCents, formatAmount, centsToYuan } from "@ledger/money";
 import { todayStr } from "@ledger/utils/date";
-import type { BudgetAnnualSummary, BudgetInput, BudgetProgress } from "@ledger/types";
+import {
+  BUDGET_PERIODS,
+  type BudgetAnnualSummary,
+  type BudgetInput,
+  type BudgetPeriod,
+  type BudgetProgress,
+} from "@ledger/types";
 
 const reference = useReferenceStore();
 const message = useMessage();
@@ -62,8 +70,11 @@ const MOBILE_HEAD_STYLE = "display: flex; align-items: center; gap: 6px; min-wid
 
 const categoryId = ref<string | null>(null);
 const amount = ref<number | null>(null);
+// 创建表单周期（issue #1946）：闭集二值单选，默认月度（与后端缺省一致，存量行为不变）。
+const createPeriod = ref<BudgetPeriod>("monthly");
 
-// —— 编辑弹窗（issue #184）：仅金额可改，分类/周期不可改（改法为删旧建新）——
+// —— 编辑弹窗（issue #184 金额 / issue #1946 放开周期，ADR-0029 修订注记）：
+// 金额与周期可改，分类不可改（改法为删旧建新）——
 // 开启/目标/关闭编排归弹窗意图工厂 ModalIntent（ADR-0072，词汇表 ModalIntent）：
 // 意图闭集单成员（携带目标预算进度行），显示由「意图非空」派生（无独立 show 布尔），
 // 序号随开启递增驱动表单重建（:key=editSeq），关闭（✕ / ESC / 取消 / 保存成功）
@@ -85,6 +96,9 @@ const {
 } = useModalIntent<BudgetEditIntent>();
 
 const editAmount = ref<number | null>(null);
+// 编辑弹窗周期：开启时回填当前行现值，保存随金额一并提交（缺省不改语义由
+// 后端承载；表单始终显式传当前选择，避免「不改」歧义）。
+const editPeriod = ref<BudgetPeriod>("monthly");
 
 // 创建预算分类选项（issue #356）：从仅顶级支出分类放开到全部支出分类
 //（顶级 + 子分类，按 kind 过滤即可——子分类与父分类类型一致），按分类树排序
@@ -130,6 +144,7 @@ async function create() {
   }
   const input: BudgetInput = {
     category_id: categoryId.value,
+    period: createPeriod.value,
     amount_cents: yuanToCents(amount.value) ?? 0,
     // start_date 已退化为记录字段（永久滚动预算，进度与日期无关），传创建当日（本地日历日）即可
     start_date: todayStr(),
@@ -139,6 +154,7 @@ async function create() {
     message.success(t("budget.message.created"));
     categoryId.value = null;
     amount.value = null;
+    createPeriod.value = "monthly";
     await refresh();
   } catch (e) {
     // 后端拒绝（金额非正/收入分类/同分类同周期重复）时把错误信息清晰呈现给用户；
@@ -149,6 +165,7 @@ async function create() {
 
 function openEdit(row: BudgetProgress) {
   editAmount.value = centsToYuan(row.budget.amount_cents);
+  editPeriod.value = row.budget.period;
   openEditIntent({ progress: row });
 }
 
@@ -162,6 +179,7 @@ async function saveEdit() {
   try {
     await api.updateBudget(target.progress.budget.id, {
       amount_cents: yuanToCents(editAmount.value) ?? 0,
+      period: editPeriod.value,
     });
     message.success(t("budget.message.updated"));
     closeEdit();
@@ -229,7 +247,7 @@ const columns = computed<DataTableColumns<BudgetProgress>>(() => {
                 ? h(NTag, { type: "error" }, () => t("budget.status.over"))
                 : h(NTag, { type: "success" }, () => t("budget.status.normal")),
             ]),
-            // 周期以本地化标签呈现（桌面列沿用历史原值呈现，移动档不跟随其旧账）
+            // 周期以本地化标签呈现（issue #1946 起桌面列同款 i18n 标签，两档一致）
             h("span", { style: MOBILE_SUB_STYLE }, t(`budget.period.${row.budget.period}`)),
           ]),
       },
@@ -297,7 +315,11 @@ const columns = computed<DataTableColumns<BudgetProgress>>(() => {
       key: "category_name",
       render: (row) => displayCategoryName(row),
     },
-    { title: t("budget.list.colPeriod"), key: "budget.period" },
+    {
+      title: t("budget.list.colPeriod"),
+      key: "budget.period",
+      render: (row) => t(`budget.period.${row.budget.period}`),
+    },
     {
       title: t("budget.list.colAmount"),
       key: "budget.amount_cents",
@@ -385,6 +407,13 @@ onMounted(() => {
               :style="isMobileTier ? { width: '100%' } : { width: '160px' }"
             />
           </NFormItem>
+          <NFormItem :label="t('budget.create.period')">
+            <NRadioGroup v-model:value="createPeriod" size="small" name="create-period">
+              <NRadioButton v-for="p in BUDGET_PERIODS" :key="p" :value="p">
+                {{ t(`budget.period.${p}`) }}
+              </NRadioButton>
+            </NRadioGroup>
+          </NFormItem>
           <NFormItem :label="t('budget.create.amount')">
             <NInputNumber
               v-model:value="amount"
@@ -451,9 +480,9 @@ onMounted(() => {
       </NCard>
     </NSpace>
 
-    <!-- 编辑弹窗（issue #184）：仅金额可改，分类/周期只读。显示由「意图非空」派生
-         （无独立 show 布尔），关闭统一经工厂清回 null 终态；序号作 key 强制重建
-         （ADR-0072）。 -->
+    <!-- 编辑弹窗（issue #184 金额 / issue #1946 放开周期）：金额与周期可改，
+         分类只读。显示由「意图非空」派生（无独立 show 布尔），关闭统一经工厂
+         清回 null 终态；序号作 key 强制重建（ADR-0072）。 -->
     <AppModal
       :key="editSeq"
       :show="editIntent !== null"
@@ -470,9 +499,11 @@ onMounted(() => {
             <NText>{{ editingCategoryName }}</NText>
           </NFormItem>
           <NFormItem :label="t('budget.edit.period')">
-            <NText>{{
-              editIntent ? t(`budget.period.${editIntent.progress.budget.period}`) : ""
-            }}</NText>
+            <NRadioGroup v-model:value="editPeriod" size="small" name="edit-period">
+              <NRadioButton v-for="p in BUDGET_PERIODS" :key="p" :value="p">
+                {{ t(`budget.period.${p}`) }}
+              </NRadioButton>
+            </NRadioGroup>
           </NFormItem>
           <NFormItem :label="t('budget.edit.amount')">
             <NInputNumber v-model:value="editAmount" :precision="2" style="width: 100%" />

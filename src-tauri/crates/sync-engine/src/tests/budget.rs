@@ -40,7 +40,7 @@ fn budget_create_update_delete_ops_replay_and_converge() {
         },
     )
     .unwrap();
-    update_budget(&conn_a, &id, 600_000).unwrap();
+    update_budget(&conn_a, &id, 600_000, None).unwrap();
     delete_budget(&conn_a, &id).unwrap();
 
     // 日志含分类建档 op（夹具经公开写入口产出），预算入口各产出一条。
@@ -97,6 +97,41 @@ fn budget_create_period_defaults_to_monthly_in_payload() {
         .collect();
     assert_eq!(budget_ops.len(), 1);
     assert_eq!(budget_ops[0].command.subject().0, "budget");
+}
+
+#[test]
+fn budget_update_period_op_replays_and_converges() {
+    let (conn_a, conn_b, category_id) = seed_category_on_both_sides();
+    let id = create_budget(
+        &conn_a,
+        &BudgetInput {
+            category_id,
+            period: Some(BudgetPeriod::Monthly),
+            amount_cents: 500_000,
+            start_date: "2026-01-01".into(),
+        },
+    )
+    .unwrap();
+    // 编辑改周期月 → 年（issue #1946）：op 携带目标周期，重放端与本地写同协议生效。
+    update_budget(&conn_a, &id, 600_000, Some(BudgetPeriod::Yearly)).unwrap();
+    let reports = wire_in(&conn_b, &wire_out(&conn_a));
+    assert!(
+        !reports
+            .iter()
+            .any(|r| matches!(r.outcome, OpOutcome::Parked { .. })),
+        "改周期 op 应落地：{reports:?}"
+    );
+    let row = |conn: &rusqlite::Connection| -> (i64, String) {
+        conn.query_row(
+            "SELECT amount_cents, period FROM budgets WHERE id=?1",
+            [&id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap()
+    };
+    assert_eq!(row(&conn_a), (600_000, "yearly".into()));
+    assert_eq!(row(&conn_a), row(&conn_b), "重放后预算状态一致");
+    assert_eq!(read_ops(&conn_a).unwrap(), read_ops(&conn_b).unwrap());
 }
 
 #[test]

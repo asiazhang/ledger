@@ -7,8 +7,8 @@ use rusqlite::Connection;
 
 use super::model::{BudgetInput, BudgetPeriod};
 use crate::{
-    annual_budget_total_cents, budget_annual_summary, budget_progress_rows, create_budget,
-    list_budgets, update_budget,
+    BudgetCommand, annual_budget_total_cents, budget_annual_summary, budget_progress_rows,
+    create_budget, list_budgets, update_budget,
 };
 use ledger_infra::db::now_iso;
 use ledger_infra::error::{AppError, ErrClass};
@@ -384,7 +384,7 @@ fn create_budget_allows_recreate_after_soft_delete() {
     assert_eq!(budget_count(&conn), 2);
 }
 
-// ---- update_budget：编辑金额（issue #184） ----
+// ---- update_budget：编辑金额（issue #184）/ 周期（issue #1946） ----
 
 /// 编辑后金额生效，同步字段沿用软删除同一套机制：version +1、device_id 更新。
 #[test]
@@ -399,7 +399,7 @@ fn update_budget_changes_amount_and_bumps_version() {
         50000,
         "2026-07-01",
     );
-    update_budget(&conn, "budget-edit", 80000).unwrap();
+    update_budget(&conn, "budget-edit", 80000, None).unwrap();
     let (amount, version): (i64, i64) = conn
         .query_row(
             "SELECT amount_cents,version FROM budgets WHERE id='budget-edit'",
@@ -426,7 +426,7 @@ fn update_budget_rejects_non_positive_amount() {
         "2026-07-01",
     );
     for amount in [0, -100] {
-        let err = update_budget(&conn, "budget-edit2", amount).unwrap_err();
+        let err = update_budget(&conn, "budget-edit2", amount, None).unwrap_err();
         assert!(
             matches!(err, AppError::Coded { ref message, .. } if message.contains("预算金额必须为正数")),
             "金额 {amount} 应被拒绝: {err:?}"
@@ -457,7 +457,7 @@ fn update_budget_rejects_missing_or_deleted_budget() {
     );
     conn.execute("UPDATE budgets SET is_deleted=1 WHERE id='budget-gone'", [])
         .unwrap();
-    let err = update_budget(&conn, "budget-gone", 1000).unwrap_err();
+    let err = update_budget(&conn, "budget-gone", 1000, None).unwrap_err();
     assert!(
         matches!(
             err,
@@ -468,7 +468,7 @@ fn update_budget_rejects_missing_or_deleted_budget() {
         ),
         "{err:?}"
     );
-    let err = update_budget(&conn, "no-such-budget", 1000).unwrap_err();
+    let err = update_budget(&conn, "no-such-budget", 1000, None).unwrap_err();
     assert!(
         matches!(
             err,
@@ -499,7 +499,7 @@ fn update_budget_rejects_when_category_deleted() {
         rusqlite::params![cat_id],
     )
     .unwrap();
-    let err = update_budget(&conn, "budget-orphan", 1000).unwrap_err();
+    let err = update_budget(&conn, "budget-orphan", 1000, None).unwrap_err();
     assert!(
         matches!(
             err,
@@ -510,6 +510,162 @@ fn update_budget_rejects_when_category_deleted() {
         ),
         "{err:?}"
     );
+}
+
+/// 编辑改周期生效：monthly → yearly 落库，版本机制同金额编辑（version+1，不新增行）。
+#[test]
+fn update_budget_changes_period() {
+    let conn = setup();
+    let cat_id = first_expense_category_id(&conn);
+    insert_budget(
+        &conn,
+        "budget-period",
+        &cat_id,
+        "monthly",
+        50000,
+        "2026-07-01",
+    );
+    update_budget(&conn, "budget-period", 60000, Some(BudgetPeriod::Yearly)).unwrap();
+    let (period, amount, version): (String, i64, i64) = conn
+        .query_row(
+            "SELECT period,amount_cents,version FROM budgets WHERE id='budget-period'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .unwrap();
+    assert_eq!(period, "yearly");
+    assert_eq!(amount, 60000);
+    assert_eq!(version, 2, "编辑应 version+1");
+    assert_eq!(budget_count(&conn), 1, "编辑不得新增行");
+}
+
+/// period 为 None（旧载荷语义）时保持现周期不变。
+#[test]
+fn update_budget_none_period_keeps_current_period() {
+    let conn = setup();
+    let cat_id = first_expense_category_id(&conn);
+    insert_budget(
+        &conn,
+        "budget-keep",
+        &cat_id,
+        "yearly",
+        100000,
+        "2026-01-01",
+    );
+    update_budget(&conn, "budget-keep", 120000, None).unwrap();
+    let (period, amount): (String, i64) = conn
+        .query_row(
+            "SELECT period,amount_cents FROM budgets WHERE id='budget-keep'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(period, "yearly", "None 应保持现周期");
+    assert_eq!(amount, 120000);
+}
+
+/// 编辑改周期撞上同分类已有目标周期预算：复用创建侧同码拒绝，双方数据均不变。
+#[test]
+fn update_budget_rejects_conflicting_period_and_keeps_rows() {
+    let conn = setup();
+    let cat_id = first_expense_category_id(&conn);
+    insert_budget(
+        &conn,
+        "budget-conflict-m",
+        &cat_id,
+        "monthly",
+        50000,
+        "2026-07-01",
+    );
+    insert_budget(
+        &conn,
+        "budget-conflict-y",
+        &cat_id,
+        "yearly",
+        100000,
+        "2026-01-01",
+    );
+    let err = update_budget(
+        &conn,
+        "budget-conflict-m",
+        50000,
+        Some(BudgetPeriod::Yearly),
+    )
+    .unwrap_err();
+    assert!(
+        matches!(err, AppError::Coded { ref message, .. } if message == "该分类已存在按年预算，可编辑该预算的金额"),
+        "{err:?}"
+    );
+    let rows: Vec<(String, i64)> = conn
+        .prepare(
+            "SELECT period,amount_cents FROM budgets WHERE id LIKE 'budget-conflict-%' ORDER BY id",
+        )
+        .unwrap()
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    assert_eq!(
+        rows,
+        vec![("monthly".into(), 50000), ("yearly".into(), 100000)],
+        "被拒编辑不得改动任何一行"
+    );
+}
+
+/// 编辑改到自身现周期（同周期改金额）不触发唯一拒绝（排除自身）。
+#[test]
+fn update_budget_same_period_excludes_self() {
+    let conn = setup();
+    let cat_id = first_expense_category_id(&conn);
+    insert_budget(
+        &conn,
+        "budget-self",
+        &cat_id,
+        "monthly",
+        50000,
+        "2026-07-01",
+    );
+    update_budget(&conn, "budget-self", 70000, Some(BudgetPeriod::Monthly)).unwrap();
+    let amount: i64 = conn
+        .query_row(
+            "SELECT amount_cents FROM budgets WHERE id='budget-self'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(amount, 70000);
+}
+
+/// 同步载荷兼容（issue #1946）：存量 OpLog 旧载荷无 period 字段，反序列化语义
+/// 不变（period = None，不改周期）。
+#[test]
+fn update_command_old_payload_without_period_deserializes_as_none() {
+    let cmd: BudgetCommand =
+        serde_json::from_str(r#"{"action":"update","id":"b1","amount_cents":100}"#).unwrap();
+    match cmd {
+        BudgetCommand::Update {
+            id,
+            amount_cents,
+            period,
+        } => {
+            assert_eq!(id, "b1");
+            assert_eq!(amount_cents, 100);
+            assert_eq!(period, None, "旧载荷缺 period 字段应反序列化为 None");
+        }
+        other => panic!("应为 Update 命令: {other:?}"),
+    }
+    // 新载荷带 period 完整回读
+    let cmd: BudgetCommand = serde_json::from_str(
+        r#"{"action":"update","id":"b1","amount_cents":100,"period":"yearly"}"#,
+    )
+    .unwrap();
+    assert!(matches!(
+        cmd,
+        BudgetCommand::Update {
+            period: Some(BudgetPeriod::Yearly),
+            ..
+        }
+    ));
 }
 
 // ---- budget_progress_rows：expense_net 口径 ----
