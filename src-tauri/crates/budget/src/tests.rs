@@ -6,7 +6,10 @@ use chrono::NaiveDate;
 use rusqlite::Connection;
 
 use super::model::{BudgetInput, BudgetPeriod};
-use crate::{BudgetCommand, budget_progress_rows, create_budget, list_budgets, update_budget};
+use crate::{
+    BudgetCommand, annual_budget_total_cents, budget_annual_summary, budget_progress_rows,
+    create_budget, list_budgets, update_budget,
+};
 use ledger_infra::db::now_iso;
 use ledger_infra::error::{AppError, ErrClass};
 use ledger_sync_protocol::device::device_id;
@@ -889,4 +892,165 @@ fn budget_progress_excludes_deleted() {
         .unwrap();
     let results = budget_progress_rows(&conn, today()).unwrap();
     assert_eq!(results[0].spent_cents, 0);
+}
+
+// ---- 年度汇总（issue #1948）：年度预算总额年化 + 本年已支去重 ----
+
+fn other_top_expense_category_id(conn: &Connection, exclude: &str) -> String {
+    conn.query_row(
+        "SELECT id FROM categories WHERE kind='expense' AND parent_id IS NULL AND id<>?1 \
+         ORDER BY created_at LIMIT 1",
+        rusqlite::params![exclude],
+        |r| r.get(0),
+    )
+    .unwrap()
+}
+
+fn insert_expense_tx(
+    conn: &Connection,
+    id: &'static str,
+    category_id: &str,
+    amount: i64,
+    date: &'static str,
+) {
+    insert_tx(
+        conn,
+        &TxRow {
+            id,
+            kind: TransactionKind::Expense,
+            amount,
+            category_id: category_id.to_string(),
+            date,
+        },
+    );
+}
+
+#[test]
+fn annual_budget_total_annualizes_monthly_and_adds_yearly() {
+    let conn = setup();
+    let parent_id = first_expense_category_id(&conn);
+    let child_id = first_expense_subcategory_id(&conn, &parent_id);
+    insert_budget(
+        &conn,
+        "budget-a1",
+        &parent_id,
+        "monthly",
+        50000,
+        "2026-07-01",
+    );
+    insert_budget(
+        &conn,
+        "budget-a2",
+        &child_id,
+        "yearly",
+        120000,
+        "2026-07-01",
+    );
+    assert_eq!(
+        annual_budget_total_cents(&conn).unwrap(),
+        50000 * 12 + 120000,
+        "月预算 ×12 年化 + 年预算直接计入"
+    );
+}
+
+#[test]
+fn annual_summary_zero_without_budgets() {
+    let conn = setup();
+    let summary = budget_annual_summary(&conn, today()).unwrap();
+    assert_eq!(summary.annual_budget_total_cents, 0);
+    assert_eq!(summary.spent_cents, 0);
+    assert!(!summary.over_budget);
+}
+
+/// 父子预算并存时同一笔支出只计一次：SUM 按交易逐行累计，不是按预算逐行相加
+/// （ADR-0052 父子彼此独立，但汇总口径不得重复计数）。
+#[test]
+fn annual_summary_counts_each_transaction_once_with_parent_and_child_budgets() {
+    let conn = setup();
+    insert_dummy_account(&conn);
+    let parent_id = first_expense_category_id(&conn);
+    let child_id = first_expense_subcategory_id(&conn, &parent_id);
+    insert_budget(
+        &conn,
+        "budget-b1",
+        &parent_id,
+        "monthly",
+        50000,
+        "2026-07-01",
+    );
+    insert_budget(
+        &conn,
+        "budget-b2",
+        &child_id,
+        "monthly",
+        10000,
+        "2026-07-01",
+    );
+    insert_expense_tx(&conn, "tx-b1", &child_id, 2000, "2026-03-04");
+    let summary = budget_annual_summary(&conn, today()).unwrap();
+    assert_eq!(summary.spent_cents, 2000, "父预算与子预算并存只计一次");
+}
+
+/// 只设子分类预算：子分类自身的支出计入，父分类其他子树的支出不计入
+/// （父分类没有预算，不构成覆盖）。
+#[test]
+fn annual_summary_counts_child_spending_only_for_child_budget() {
+    let conn = setup();
+    insert_dummy_account(&conn);
+    let parent_id = first_expense_category_id(&conn);
+    let child_id = first_expense_subcategory_id(&conn, &parent_id);
+    insert_budget(&conn, "budget-c1", &child_id, "yearly", 10000, "2026-07-01");
+    insert_expense_tx(&conn, "tx-c1", &child_id, 1500, "2026-05-05");
+    insert_expense_tx(&conn, "tx-c2", &parent_id, 900, "2026-05-06");
+    let summary = budget_annual_summary(&conn, today()).unwrap();
+    assert_eq!(summary.spent_cents, 1500, "父分类自身支出不进子分类预算");
+}
+
+/// 未设预算的分类支出不进汇总（与年度预算总额「不回退实际支出」同一边界）。
+#[test]
+fn annual_summary_excludes_categories_without_budget() {
+    let conn = setup();
+    insert_dummy_account(&conn);
+    let cat_id = first_expense_category_id(&conn);
+    let other_id = other_top_expense_category_id(&conn, &cat_id);
+    insert_budget(&conn, "budget-d1", &cat_id, "monthly", 50000, "2026-07-01");
+    insert_expense_tx(&conn, "tx-d1", &other_id, 3000, "2026-04-01");
+    let summary = budget_annual_summary(&conn, today()).unwrap();
+    assert_eq!(summary.spent_cents, 0, "未设预算分类的支出不进汇总");
+}
+
+#[test]
+fn annual_summary_window_is_current_natural_year() {
+    let conn = setup();
+    insert_dummy_account(&conn);
+    let cat_id = first_expense_category_id(&conn);
+    insert_budget(&conn, "budget-e1", &cat_id, "yearly", 100000, "2026-07-01");
+    insert_expense_tx(&conn, "tx-e1", &cat_id, 2000, "2025-12-31");
+    insert_expense_tx(&conn, "tx-e2", &cat_id, 1500, "2026-01-02");
+    let summary = budget_annual_summary(&conn, today()).unwrap();
+    assert_eq!(summary.spent_cents, 1500, "只累计 today 所在自然年");
+}
+
+/// 已支为 `expense_net`（退款冲减），与预算进度同口径；超标 = 已支 > 年化总额。
+#[test]
+fn annual_summary_uses_expense_net_and_flags_over_budget() {
+    let conn = setup();
+    insert_dummy_account(&conn);
+    let cat_id = first_expense_category_id(&conn);
+    insert_budget(&conn, "budget-f1", &cat_id, "yearly", 1000, "2026-07-01");
+    insert_expense_tx(&conn, "tx-f1", &cat_id, 2000, "2026-02-02");
+    insert_tx(
+        &conn,
+        &TxRow {
+            id: "tx-f2",
+            kind: TransactionKind::Refund,
+            amount: 600,
+            category_id: cat_id.clone(),
+            date: "2026-02-03",
+        },
+    );
+    let summary = budget_annual_summary(&conn, today()).unwrap();
+    assert_eq!(summary.spent_cents, 1400, "2000 − 600 退款");
+    assert_eq!(summary.annual_budget_total_cents, 1000);
+    assert!(summary.over_budget);
 }

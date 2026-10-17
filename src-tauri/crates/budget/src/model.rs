@@ -101,6 +101,15 @@ pub struct BudgetProgress {
     pub over_budget: bool,
 }
 
+/// 预算年度汇总（issue #1948；词汇表 BudgetAnnualSummary）：年度预算总额（月预算
+/// 年化口径）与本年已支，两者均为默认币种单币种口径、可直接相减判断超标。
+#[derive(Debug, Serialize)]
+pub struct BudgetAnnualSummary {
+    pub annual_budget_total_cents: i64,
+    pub spent_cents: i64,
+    pub over_budget: bool,
+}
+
 impl FromRow for Budget {
     fn from_row(row: &rusqlite::Row) -> rusqlite::Result<Self> {
         Ok(Budget {

@@ -3129,6 +3129,7 @@ version = "0.9.1"
 dependencies = [
  "chrono",
  "ledger-accounts",
+ "ledger-budget",
  "ledger-currencies",
  "ledger-infra",
  "ledger-sync-protocol",

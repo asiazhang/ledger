@@ -48,5 +48,13 @@
   "period": {
     "monthly": "Monthly",
     "yearly": "Yearly"
+  },
+  "summary": {
+    "title": "This Year's Budget",
+    "annualTotal": "Annual budget total",
+    "spent": "Spent this year",
+    "over": "Over budget",
+    "normal": "On track",
+    "note": "Monthly budgets count toward the total ×12; spending in categories without a budget is excluded."
   }
 }

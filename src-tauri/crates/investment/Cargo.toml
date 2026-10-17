@@ -23,6 +23,11 @@ ledger-sync-protocol = { path = "../sync-protocol" }
 ledger-transaction = { path = "../transaction" }
 ledger-accounts = { path = "../accounts" }
 ledger-currencies = { path = "../currencies" }
+# 预算域（#1948）：财务自由度的分母 = 年度预算总额，直接调用预算域的单点函数
+# `ledger_budget::annual_budget_total_cents`（ADR-0048 / ADR-0131 决策 4：口径
+# 表达式不复制）。又是一条域→域合法上层依赖（上层域消费下层域，ADR-0112 决策 2），
+# 方向单向：预算域不反向依赖本 crate。
+ledger-budget = { path = "../budget" }
 rusqlite = { version = "0.40", features = ["bundled-sqlcipher-vendored-openssl", "trace"] }
 serde = { version = "1", features = ["derive"] }
 # 结构化日志（域内运行态快照的毒化降级告警等；transaction / backup 域同款）。

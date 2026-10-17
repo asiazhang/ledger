@@ -48,5 +48,13 @@
   "period": {
     "monthly": "按月",
     "yearly": "按年"
+  },
+  "summary": {
+    "title": "本年度预算",
+    "annualTotal": "年度预算总额",
+    "spent": "本年已支",
+    "over": "已超标",
+    "normal": "正常",
+    "note": "月预算按 ×12 年化计入总额；未设预算的分类支出不计入已支。"
   }
 }
