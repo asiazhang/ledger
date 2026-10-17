@@ -61,7 +61,7 @@ fn backup_creates_zip_with_db_and_meta() {
     let mut archive = zip::ZipArchive::new(file).unwrap();
     assert_eq!(archive.len(), 3);
     let names: Vec<String> = (0..archive.len())
-        .map(|i| archive.by_index(i).unwrap().name().to_string())
+        .map(|i| archive.by_index(i).unwrap().name().unwrap().to_string())
         .collect();
     assert!(names.contains(&"ledger.db".to_string()));
     assert!(names.contains(&"sync.db".to_string()));

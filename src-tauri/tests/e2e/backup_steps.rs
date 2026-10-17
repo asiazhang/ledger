@@ -337,7 +337,7 @@ fn backup_contains(world: &mut LedgerWorld, a: String, b: String) {
     let file = std::fs::File::open(p).unwrap();
     let mut archive = zip::ZipArchive::new(file).unwrap();
     let names: Vec<String> = (0..archive.len())
-        .map(|i| archive.by_index(i).unwrap().name().to_string())
+        .map(|i| archive.by_index(i).unwrap().name().unwrap().to_string())
         .collect();
     assert!(names.contains(&a), "缺少条目 {a}: {names:?}");
     assert!(names.contains(&b), "缺少条目 {b}: {names:?}");

@@ -34,7 +34,7 @@ serde_json = "1"
 # optional + `http` feature 门（issue #1133）：仅壳侧根包启用，域侧依赖不编入 axum。
 axum = { version = "0.8", optional = true }
 sha2 = "0.11"
-zip = { version = "8.6", default-features = false, features = ["deflate"] }
+zip = { version = "9", default-features = false, features = ["deflate"] }
 tracing = "0.1"
 # 异步 DB 门面（ADR-0125 决策 1，issue #1408）：作业结果经 oneshot 回传。门面的
 # 线程与作业通道自建，不依赖 tokio 运行时——`tokio::sync` 的接收端可在任意执行器

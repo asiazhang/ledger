@@ -58,7 +58,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-appender = "0.2"
 tower-http = { version = "0.7", features = ["trace"] }
 sha2 = "0.11"
-zip = { version = "8.6", default-features = false, features = ["deflate"] }
+zip = { version = "9", default-features = false, features = ["deflate"] }
 utoipa = { version = "5", features = ["axum_extras"] }
 # 基础设施 crate（spec #1086 / issue #1087–#1088）：workspace 成员，承载无域语义、
 # 被所有层消费的能力。数据库、错误、设置、文件工具、日志、事件、信号、闭集与
@@ -245,7 +245,7 @@ cucumber = "0.23"
 futures = "0.3"
 tower = { version = "0.5", features = ["util"] }
 http-body-util = "0.1"
-zip = { version = "8.6", default-features = false, features = ["deflate"] }
+zip = { version = "9", default-features = false, features = ["deflate"] }
 tauri = { version = "2", features = ["test"] }
 
 [[test]]

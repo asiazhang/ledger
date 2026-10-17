@@ -888,7 +888,7 @@ fn extract_db_files(backup_path: &Path, out_main: &Path, out_sync: &Path) -> Res
     let mut found_sync = false;
     for i in 0..archive.len() {
         let mut entry = archive.by_index(i)?;
-        let name = entry.name().to_string();
+        let name = entry.name()?.into_owned();
         if name == ZIP_DB_ENTRY {
             let mut out_file = File::create(out_main)?;
             std::io::copy(&mut entry, &mut out_file)?;
