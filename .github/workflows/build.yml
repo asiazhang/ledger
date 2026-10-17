@@ -555,15 +555,21 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           security list-keychain -d user -s "$KEYCHAIN_PATH"
 
-      # 构建期刻意不注入更新签名密钥（TAURI_SIGNING_PRIVATE_*）：bundler 期签名先于
-      # macOS 公证重新打包，字节必变、其 .sig 必失效；签名统一由其后「生成更新签名」
-      # 步骤盖最终字节（issue #1428）。createUpdaterArtifacts（tauri.conf.json）在此
-      # 步产出各平台更新工件。
+      # 构建期注入更新签名密钥（TAURI_SIGNING_PRIVATE_*）：createUpdaterArtifacts 开启
+      # 后 tauri CLI 在 build 末尾强制要求该变量产出 .sig（v0.9.1 tag 构建实测缺变量
+      # 即 fail；报错文案 "A public key has been found" 为 CLI 写死提示，与公钥是否
+      # 已烧入配置无关）。此份 .sig 是一次性中间产物：macOS 侧随公证重新打包作废——
+      # 归一命名步骤删除之；Windows/Linux 侧被其后「生成更新签名」步骤对同路径原地
+      # 重签覆盖。最终生效签名始终盖最终字节（issue #1428 / ADR-0124 决策 3/10 语义
+      # 不变）。未配 secrets 的运行（含 workflow_dispatch 干跑）在本步直接失败，不再
+      # 存在「干跑无 .sig」形态；「生成更新签名」步骤的缺密钥分支仅剩防御价值。
       - name: 构建桌面产物
         if: matrix.platform != 'android'
         run: pnpm run tauri build --bundles ${{ matrix.bundles }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
       # arm64 单 ABI 产物（ADR-0074 决策 2，显式 --target，不沿用 Tauri 默认四 ABI）。
       # 注入经 --config 补丁（CLI 写入 gen/android/app/tauri.properties，gradle 读取），
@@ -690,6 +696,10 @@ jobs:
           TARS=("$MACOS_BUNDLE_DIR"/*.app.tar.gz)
           [ ${#TARS[@]} -eq 1 ] || { echo "✗ 更新工件 *.app.tar.gz 缺失或不唯一（createUpdaterArtifacts 未生效？）"; exit 1; }
           mv "${TARS[0]}" "$MACOS_BUNDLE_DIR/OpenLedger_${APP_VERSION}_aarch64.app.tar.gz"
+          # 构建期 bundler 签名的一次性 .sig 随公证重新打包作废，最终 .sig 由「生成
+          # 更新签名」步骤对归一后的工件重新生成；不删会混进 upload-artifact 的
+          # *.app.tar.gz.sig 通配（构建期注入密钥见「构建桌面产物」步骤注释）。
+          rm -f "$MACOS_BUNDLE_DIR"/*.app.tar.gz.sig
           echo "更新工件：OpenLedger_${APP_VERSION}_aarch64.app.tar.gz"
 
       # 更新工件公证（issue #1428）：与 DMG 同标准——stapler 附着票据 + codesign 校验。
