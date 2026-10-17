@@ -1,0 +1,689 @@
+<!doctype html>
+<!--
+  PROTOTYPE — 一次性丢弃，不进 main。
+
+  问题：预算页要在哪里、以什么形态展示「本年度预算汇总」（年度预算总额年化 + 本年已支 + 进度 / 超标）。
+  计划：同一页面上三个结构不同的变体，`?variant=` + 底部浮动条切换；另带 桌面/移动 分级、正常/超标 状态、暗/亮 主题切换。
+
+  为什么是独立 HTML 而不是真路由：真路由要跑 Tauri 壳（cargo 构建 + 真实账本数据），
+  原型只需要判断视觉层级，用同一套设计 token 值手搓近似即可（取值来自 packages/theme/src/design-tokens.ts、
+  overrides.ts：body #0E0E10 / card #161618 / border rgba(255,255,255,.08) / 主色 #F59E0B / 圆角 12）。
+  选定变体后按 naive-ui 组件重写进 src/views/BudgetView.vue，本文件丢弃。
+
+  变体：
+    A 顶部汇总卡      —— 独立 NCard，三个数字横排 + 全宽进度条（推荐基线）
+    B 列表内合计      —— 不新增卡；汇总压在列表卡标题右侧 + 细进度条 + 表尾合计行
+    C 环形双栏        —— 桌面左窄栏（环形进度 + 竖排两数）/ 右列表；移动档退化成横条
+-->
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>原型 · 预算年度汇总</title>
+    <style>
+      :root {
+        --body: #0e0e10;
+        --card: #161618;
+        --popover: #1c1c1e;
+        --border: rgba(255, 255, 255, 0.08);
+        --divider: rgba(255, 255, 255, 0.06);
+        --text1: #ececec;
+        --text2: #a0a0a0;
+        --text3: #6e6e6e;
+        --accent: #f59e0b;
+        --success: #63e2b7;
+        --error: #e88080;
+        --track: rgba(255, 255, 255, 0.09);
+        --radius-sm: 6px;
+        --radius: 8px;
+        --radius-lg: 12px;
+      }
+      html[data-theme="light"] {
+        --body: #f4f4f6;
+        --card: #ffffff;
+        --popover: #ffffff;
+        --border: #efeff5;
+        --divider: #efeff5;
+        --text1: #333639;
+        --text2: #666666;
+        --text3: #999999;
+        --accent: #b45309;
+        --success: #18a058;
+        --error: #d03050;
+        --track: rgba(0, 0, 0, 0.09);
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--body);
+        color: var(--text1);
+        font-family:
+          -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB",
+          "Microsoft YaHei", sans-serif;
+        font-size: 14px;
+        line-height: 1.5;
+        -webkit-font-smoothing: antialiased;
+      }
+      .page {
+        max-width: 1100px;
+        margin: 0 auto;
+        padding: 24px 24px 120px;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+      }
+      html[data-tier="mobile"] .page {
+        max-width: 420px;
+        padding: 16px 16px 140px;
+        gap: 12px;
+      }
+      .card {
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-lg);
+        padding: 18px 20px;
+      }
+      html[data-tier="mobile"] .card {
+        padding: 14px 16px;
+      }
+      .card-title {
+        font-size: 15px;
+        font-weight: 600;
+        margin: 0 0 14px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+      html[data-tier="mobile"] .card-title {
+        font-size: 14px;
+        margin-bottom: 12px;
+      }
+      .row {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+      }
+      html[data-tier="mobile"] .row {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 12px;
+      }
+      .field {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        color: var(--text2);
+        font-size: 13px;
+      }
+      .control {
+        background: var(--popover);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        color: var(--text1);
+        padding: 6px 10px;
+        font-size: 13px;
+        min-width: 120px;
+      }
+      html[data-tier="mobile"] .control {
+        min-width: 0;
+        width: 100%;
+      }
+      .btn {
+        background: var(--accent);
+        color: #1a1206;
+        border: none;
+        border-radius: var(--radius);
+        padding: 7px 16px;
+        font-size: 13px;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      .num {
+        font-variant-numeric: tabular-nums;
+        letter-spacing: -0.01em;
+      }
+      .muted {
+        color: var(--text2);
+      }
+      .faint {
+        color: var(--text3);
+        font-size: 12px;
+      }
+      /* 进度条（naive NProgress line） */
+      .bar {
+        height: 8px;
+        border-radius: 4px;
+        background: var(--track);
+        overflow: hidden;
+      }
+      .bar > i {
+        display: block;
+        height: 100%;
+        border-radius: 4px;
+        background: var(--success);
+      }
+      .bar.over > i {
+        background: var(--error);
+      }
+      .tag {
+        display: inline-flex;
+        align-items: center;
+        border-radius: 4px;
+        font-size: 12px;
+        line-height: 1;
+        padding: 4px 7px;
+        border: 1px solid transparent;
+        white-space: nowrap;
+      }
+      .tag.ok {
+        color: var(--success);
+        border-color: var(--success);
+        background: color-mix(in srgb, var(--success) 12%, transparent);
+      }
+      .tag.over {
+        color: var(--error);
+        border-color: var(--error);
+        background: color-mix(in srgb, var(--error) 12%, transparent);
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+      th {
+        text-align: left;
+        font-weight: 500;
+        color: var(--text3);
+        font-size: 12px;
+        padding: 8px 10px;
+        border-bottom: 1px solid var(--divider);
+        white-space: nowrap;
+      }
+      td {
+        padding: 10px;
+        border-bottom: 1px solid var(--divider);
+        font-size: 13px;
+      }
+      tr:last-child td {
+        border-bottom: none;
+      }
+      .right {
+        text-align: right;
+      }
+      .mini-bar {
+        width: 88px;
+        display: inline-block;
+        vertical-align: middle;
+      }
+      .link {
+        color: var(--accent);
+        cursor: pointer;
+        font-size: 13px;
+      }
+      html[data-tier="mobile"] .hide-mobile {
+        display: none;
+      }
+
+      /* —— 变体 A：顶部汇总卡 —— */
+      .vA-stats {
+        display: flex;
+        gap: 32px;
+        align-items: flex-end;
+        flex-wrap: wrap;
+      }
+      html[data-tier="mobile"] .vA-stats {
+        gap: 16px;
+        justify-content: space-between;
+      }
+      .stat-label {
+        font-size: 12px;
+        color: var(--text2);
+        margin-bottom: 2px;
+      }
+      .stat-value {
+        font-size: 26px;
+        font-weight: 600;
+      }
+      html[data-tier="mobile"] .stat-value {
+        font-size: 19px;
+      }
+      .stat-value.sm {
+        font-size: 21px;
+        color: var(--text1);
+      }
+      html[data-tier="mobile"] .stat-value.sm {
+        font-size: 17px;
+      }
+      .vA-bar {
+        margin-top: 16px;
+      }
+
+      /* —— 变体 B：列表内合计 —— */
+      .vB-headline {
+        display: flex;
+        align-items: baseline;
+        gap: 8px;
+        font-size: 13px;
+        color: var(--text2);
+        flex-wrap: wrap;
+        justify-content: flex-end;
+      }
+      .vB-headline b {
+        font-size: 15px;
+        color: var(--text1);
+        font-weight: 600;
+      }
+      .vB-bar {
+        margin: -4px 0 12px;
+      }
+      .vB-bar .bar {
+        height: 4px;
+        border-radius: 2px;
+      }
+      tfoot td {
+        border-top: 1px solid var(--border);
+        font-weight: 600;
+        background: color-mix(in srgb, var(--text1) 4%, transparent);
+      }
+
+      /* —— 变体 C：环形双栏 —— */
+      .vC-grid {
+        display: grid;
+        grid-template-columns: 232px minmax(0, 1fr);
+        gap: 16px;
+        align-items: start;
+      }
+      html[data-tier="mobile"] .vC-grid {
+        grid-template-columns: minmax(0, 1fr);
+        gap: 12px;
+      }
+      .vC-side {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 14px;
+      }
+      html[data-tier="mobile"] .vC-side {
+        flex-direction: row;
+        align-items: center;
+        gap: 16px;
+      }
+      .ring {
+        position: relative;
+        width: 132px;
+        height: 132px;
+        flex: none;
+      }
+      html[data-tier="mobile"] .ring {
+        width: 84px;
+        height: 84px;
+      }
+      .ring text {
+        fill: var(--text2);
+        font-size: 11px;
+      }
+      .ring-value {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 1px;
+      }
+      .ring-value b {
+        font-size: 22px;
+        font-weight: 600;
+      }
+      html[data-tier="mobile"] .ring-value b {
+        font-size: 15px;
+      }
+      .vC-lines {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        width: 100%;
+      }
+      html[data-tier="mobile"] .vC-lines {
+        gap: 6px;
+      }
+      .vC-line {
+        display: flex;
+        justify-content: space-between;
+        gap: 10px;
+        font-size: 13px;
+      }
+      html[data-tier="mobile"] .vC-line {
+        font-size: 12px;
+      }
+      .vC-line b {
+        font-variant-numeric: tabular-nums;
+        font-weight: 600;
+      }
+
+      /* —— 浮动原型条 —— */
+      .proto-bar {
+        position: fixed;
+        left: 50%;
+        bottom: 20px;
+        transform: translateX(-50%);
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        background: #1c1c1e;
+        color: #ececec;
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        border-radius: 999px;
+        padding: 8px 12px;
+        box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55);
+        font-size: 12px;
+        z-index: 99;
+      }
+      .proto-bar button {
+        background: rgba(255, 255, 255, 0.1);
+        color: #ececec;
+        border: none;
+        border-radius: 999px;
+        min-width: 28px;
+        height: 28px;
+        cursor: pointer;
+        font-size: 13px;
+      }
+      .proto-bar .label {
+        min-width: 176px;
+        text-align: center;
+        font-weight: 600;
+        letter-spacing: 0.02em;
+      }
+      .proto-bar .sep {
+        width: 1px;
+        height: 20px;
+        background: rgba(255, 255, 255, 0.16);
+      }
+      .proto-bar .toggle {
+        padding: 0 10px;
+        height: 28px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.08);
+        color: #ececec;
+        border: none;
+        cursor: pointer;
+        font-size: 12px;
+      }
+      .proto-bar .toggle[aria-pressed="true"] {
+        background: #f59e0b;
+        color: #1a1206;
+        font-weight: 600;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="page">
+      <!-- 真实页面语境：新增预算表单（既有布局，桌面横排 / 移动纵排） -->
+      <section class="card">
+        <h2 class="card-title">新增预算</h2>
+        <div class="row">
+          <div class="field"><span>支出分类</span><div class="control">餐饮</div></div>
+          <div class="field"><span>金额</span><div class="control">3,000.00</div></div>
+          <button class="btn">添加</button>
+        </div>
+      </section>
+
+      <div id="variant-root"></div>
+    </div>
+
+    <div class="proto-bar">
+      <button id="prev" title="上一个变体（←）">←</button>
+      <span class="label" id="label">A · 顶部汇总卡</span>
+      <button id="next" title="下一个变体（→）">→</button>
+      <span class="sep"></span>
+      <button class="toggle" id="tier" aria-pressed="false">移动档</button>
+      <button class="toggle" id="over" aria-pressed="false">超标状态</button>
+      <button class="toggle" id="theme" aria-pressed="false">亮色</button>
+    </div>
+
+    <script>
+      // —— 假数据（原型用；真实口径见决策：最上层覆盖分类求和、不设预算分类不进汇总）——
+      const DATA = {
+        normal: {
+          annualTotal: 7560000, // 年度预算总额 = (3000+800+1500)×12 + 12000 = 75,600 元
+          spent: 4238000, // 本年已支 42,380 元
+          rows: [
+            { name: "餐饮", period: "monthly", amount: 300000, spent: 241600, over: false },
+            { name: "交通", period: "monthly", amount: 80000, spent: 51800, over: false },
+            { name: "购物", period: "monthly", amount: 150000, spent: 118400, over: false },
+            { name: "娱乐", period: "yearly", amount: 1200000, spent: 12000, over: false },
+          ],
+        },
+        over: {
+          annualTotal: 7560000,
+          spent: 8106000, // 超标
+          rows: [
+            { name: "餐饮", period: "monthly", amount: 300000, spent: 268900, over: false },
+            { name: "交通", period: "monthly", amount: 80000, spent: 96400, over: true },
+            { name: "购物", period: "monthly", amount: 150000, spent: 173800, over: true },
+            { name: "娱乐", period: "yearly", amount: 1200000, spent: 286900, over: false },
+          ],
+        },
+      };
+
+      const yuan = (cents) =>
+        "￥" +
+        (cents / 100).toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      const pct = (spent, total) => (total > 0 ? Math.min(100, Math.round((spent / total) * 100)) : 0);
+
+      const VARIANTS = {
+        A: { name: "顶部汇总卡", render: variantA },
+        B: { name: "列表内合计", render: variantB },
+        C: { name: "环形双栏", render: variantC },
+      };
+
+      function listRows(d) {
+        const mobile = document.documentElement.dataset.tier === "mobile";
+        const rows = d.rows
+          .map((r) => {
+            const p = pct(r.spent, r.amount);
+            const tag = r.over
+              ? '<span class="tag over">超支</span>'
+              : '<span class="tag ok">正常</span>';
+            if (mobile) {
+              return `<tr><td>
+                <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
+                  <span>${r.name}</span>${tag}
+                </div>
+                <div class="faint" style="margin-bottom:6px">${
+                  r.period === "monthly" ? "按月" : "按年"
+                }</div>
+                <div class="bar ${r.over ? "over" : ""}" style="margin-bottom:4px"><i style="width:${p}%"></i></div>
+                <div class="faint num">${yuan(r.spent)} / ${yuan(r.amount)}</div>
+              </td><td class="right" style="vertical-align:top;white-space:nowrap">
+                <span class="link">编辑</span>
+              </td></tr>`;
+            }
+            return `<tr>
+              <td>${r.name}</td>
+              <td class="muted hide-mobile">${r.period === "monthly" ? "按月" : "按年"}</td>
+              <td class="right num hide-mobile">${yuan(r.amount)}</td>
+              <td class="right num hide-mobile">${yuan(r.spent)}</td>
+              <td style="width:120px"><div class="bar ${r.over ? "over" : ""} mini-bar"><i style="width:${p}%"></i></div></td>
+              <td>${tag}</td>
+              <td class="right"><span class="link">编辑</span></td>
+            </tr>`;
+          })
+          .join("");
+        const head = mobile
+          ? `<tr><th>分类</th><th class="right">操作</th></tr>`
+          : `<tr><th>分类</th><th>周期</th><th class="right">金额</th><th class="right">已支</th><th>进度</th><th>状态</th><th class="right">操作</th></tr>`;
+        return `<table><thead>${head}</thead><tbody>${rows}</tbody></table>`;
+      }
+
+      // —— A：独立汇总卡（推荐基线）——
+      function variantA(d) {
+        const p = pct(d.spent, d.annualTotal);
+        const over = d.spent > d.annualTotal;
+        return `
+        <section class="card">
+          <h2 class="card-title">
+            <span>本年度预算</span>
+            ${over ? '<span class="tag over">已超标</span>' : '<span class="tag ok">正常</span>'}
+          </h2>
+          <div class="vA-stats">
+            <div>
+              <div class="stat-label">年度预算总额</div>
+              <div class="stat-value num">${yuan(d.annualTotal)}</div>
+            </div>
+            <div>
+              <div class="stat-label">本年已支</div>
+              <div class="stat-value sm num">${yuan(d.spent)}</div>
+            </div>
+          </div>
+          <div class="vA-bar">
+            <div class="bar ${over ? "over" : ""}"><i style="width:${p}%"></i></div>
+          </div>
+          <div class="faint" style="margin-top:8px">
+            月预算按 ×12 年化计入总额；未设预算的分类支出不计入已支。
+          </div>
+        </section>
+        <section class="card">
+          <h2 class="card-title"><span>预算列表</span></h2>
+          ${listRows(d)}
+        </section>`;
+      }
+
+      // —— B：不新增卡，汇总压进列表卡 ——
+      function variantB(d) {
+        const p = pct(d.spent, d.annualTotal);
+        const over = d.spent > d.annualTotal;
+        return `
+        <section class="card">
+          <h2 class="card-title">
+            <span>预算列表</span>
+            <span class="vB-headline">
+              <span>年度预算 <b class="num">${yuan(d.annualTotal)}</b></span>
+              <span class="faint">·</span>
+              <span>已支 <b class="num">${yuan(d.spent)}</b></span>
+              ${over ? '<span class="tag over">超标</span>' : ""}
+            </span>
+          </h2>
+          <div class="vB-bar"><div class="bar ${over ? "over" : ""}"><i style="width:${p}%"></i></div></div>
+          ${listRowsRaw(d)}
+          <div class="faint" style="margin-top:10px">
+            月预算按 ×12 年化计入总额；未设预算的分类支出不计入已支。
+          </div>
+        </section>`;
+      }
+      // B 的表尾合计行
+      function listRowsRaw(d) {
+        const table = listRows(d);
+        const mobile = document.documentElement.dataset.tier === "mobile";
+        if (!mobile) {
+          return table.replace(
+            "</tbody>",
+            `<tfoot><tr><td>合计</td><td></td><td class="right num">${yuan(d.annualTotal)}</td>
+             <td class="right num">${yuan(d.spent)}</td><td colspan="3"></td></tr></tfoot></tbody>`,
+          );
+        }
+        // 移动档没有金额列，表尾不重复数字（汇总已在标题行）
+        return table;
+      }
+
+      // —— C：环形 + 双栏 ——
+      function variantC(d) {
+        const p = pct(d.spent, d.annualTotal);
+        const over = d.spent > d.annualTotal;
+        const r = 54;
+        const c = 2 * Math.PI * r;
+        const color = over ? "var(--error)" : "var(--success)";
+        const ring = `
+          <div class="ring">
+            <svg viewBox="0 0 132 132" width="100%" height="100%">
+              <circle cx="66" cy="66" r="${r}" fill="none" stroke="var(--track)" stroke-width="10" />
+              <circle cx="66" cy="66" r="${r}" fill="none" stroke="${color}" stroke-width="10"
+                stroke-linecap="round" stroke-dasharray="${c}"
+                stroke-dashoffset="${c * (1 - p / 100)}" transform="rotate(-90 66 66)" />
+            </svg>
+            <div class="ring-value">
+              <b class="num">${p}%</b>
+              <span class="faint">全年已用</span>
+            </div>
+          </div>`;
+        return `
+        <div class="vC-grid">
+          <section class="card vC-side">
+            ${ring}
+            <div class="vC-lines">
+              <div class="vC-line"><span class="muted">年度预算</span><b>${yuan(d.annualTotal)}</b></div>
+              <div class="vC-line"><span class="muted">本年已支</span><b>${yuan(d.spent)}</b></div>
+              <div class="vC-line">${
+                over ? '<span class="tag over">已超标</span>' : '<span class="tag ok">正常</span>'
+              }</div>
+            </div>
+          </section>
+          <section class="card">
+            <h2 class="card-title"><span>预算列表</span></h2>
+            ${listRows(d)}
+            <div class="faint" style="margin-top:10px">
+              月预算按 ×12 年化计入总额；未设预算的分类支出不计入已支。
+            </div>
+          </section>
+        </div>`;
+      }
+
+      // —— 切换编排 ——
+      const params = new URLSearchParams(location.search);
+      const state = {
+        variant: params.get("variant") || "A",
+        tier: params.get("tier") || "desktop",
+        over: params.get("over") === "1",
+        theme: params.get("theme") || "dark",
+      };
+      function sync() {
+        const q = new URLSearchParams();
+        q.set("variant", state.variant);
+        if (state.tier !== "desktop") q.set("tier", state.tier);
+        if (state.over) q.set("over", "1");
+        if (state.theme !== "dark") q.set("theme", state.theme);
+        history.replaceState(null, "", location.pathname + "?" + q.toString());
+
+        document.documentElement.dataset.tier = state.tier;
+        document.documentElement.dataset.theme = state.theme;
+
+        const v = VARIANTS[state.variant];
+        document.getElementById("variant-root").innerHTML = v.render(DATA[state.over ? "over" : "normal"]);
+        document.getElementById("label").textContent = `${state.variant} · ${v.name}`;
+        document.getElementById("tier").setAttribute("aria-pressed", String(state.tier === "mobile"));
+        document.getElementById("over").setAttribute("aria-pressed", String(state.over));
+        document.getElementById("theme").setAttribute("aria-pressed", String(state.theme === "light"));
+      }
+      const keys = Object.keys(VARIANTS);
+      const step = (dir) => {
+        const i = keys.indexOf(state.variant);
+        state.variant = keys[(i + dir + keys.length) % keys.length];
+        sync();
+      };
+      document.getElementById("prev").onclick = () => step(-1);
+      document.getElementById("next").onclick = () => step(1);
+      document.getElementById("tier").onclick = () => {
+        state.tier = state.tier === "mobile" ? "desktop" : "mobile";
+        sync();
+      };
+      document.getElementById("over").onclick = () => {
+        state.over = !state.over;
+        sync();
+      };
+      document.getElementById("theme").onclick = () => {
+        state.theme = state.theme === "light" ? "dark" : "light";
+        sync();
+      };
+      addEventListener("keydown", (e) => {
+        const t = e.target;
+        if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+        if (e.key === "ArrowLeft") step(-1);
+        if (e.key === "ArrowRight") step(1);
+      });
+      sync();
+    </script>
+  </body>
+</html>
