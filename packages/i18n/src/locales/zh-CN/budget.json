@@ -2,6 +2,7 @@
   "create": {
     "title": "新增预算",
     "category": "分类",
+    "period": "周期",
     "amount": "金额",
     "categoryPlaceholder": "支出分类",
     "add": "添加"

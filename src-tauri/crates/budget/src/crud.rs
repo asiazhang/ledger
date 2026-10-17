@@ -61,7 +61,8 @@ fn validate_amount_and_category(
 
 /// 预算写入校验与落库核心（issue #183）：命令外壳与测试共用。三条底线——
 /// 1) 金额必须为正数；2) 只能挂支出分类（金额与分类校验经 [`validate_amount_and_category`]）；
-/// 3) 同「分类 + 周期」已有未删除预算时明确拒绝（中文提示并引导编辑），不静默覆盖。
+/// 3) 同「分类 + 周期」已有未删除预算时明确拒绝（中文提示并引导编辑），不静默覆盖
+///    （唯一性校验经 [`reject_duplicate_period`]，与编辑改周期共用）。
 pub fn create_budget(conn: &Connection, input: &BudgetInput) -> Result<String> {
     ensure_transaction(conn, || {
         let period = input.period.unwrap_or(BudgetPeriod::Monthly);
@@ -98,10 +99,53 @@ fn write_create(
     start_date: &str,
 ) -> Result<String> {
     validate_amount_and_category(conn, category_id, amount_cents)?;
+    reject_duplicate_period(conn, category_id, period, None)?;
+    let now = now_iso();
+    conn.execute(
+        "INSERT INTO budgets (id,category_id,period,amount_cents,start_date,created_at,updated_at,version,device_id,is_deleted) \
+         VALUES (?1,?2,?3,?4,?5,?6,?7,1,?8,0)",
+        rusqlite::params![id, category_id, period.to_string(), amount_cents, start_date, now, now, device_id(conn)?],
+    )?;
+    Ok(id.to_string())
+}
+
+/// 预算编辑核心（issue #184 金额 / issue #1946 放开周期，ADR-0029 修订注记）：
+/// 沿用软删除同一套 updated_at/version/device_id 更新机制；金额与支出分类校验
+/// 复用创建侧逻辑。分类不可改（改法为删旧建新）；`period` 为 `None` 时保持
+/// 现周期不变（旧调用形态与存量同步旧载荷语义）。
+pub fn update_budget(
+    conn: &Connection,
+    id: &str,
+    amount_cents: i64,
+    period: Option<BudgetPeriod>,
+) -> Result<()> {
+    ensure_transaction(conn, || {
+        write_update(conn, id, amount_cents, period)?;
+        record_local(
+            conn,
+            BudgetCommand::Update {
+                id: id.to_string(),
+                amount_cents,
+                period,
+            },
+        )
+    })
+}
+
+/// 「分类 + 周期」唯一底线（issue #183 创建 / #1946 编辑改周期共用）：同分类同
+/// 周期已有未删除预算（`exclude_id` 排除自身，编辑用）时明确拒绝，中文提示并
+/// 引导编辑既有预算，不静默覆盖；月/年各自独立占位。
+fn reject_duplicate_period(
+    conn: &Connection,
+    category_id: &str,
+    period: BudgetPeriod,
+    exclude_id: Option<&str>,
+) -> Result<()> {
     let duplicate: Option<i64> = conn
         .query_row(
-            "SELECT 1 FROM budgets WHERE category_id=?1 AND period=?2 AND is_deleted=0 LIMIT 1",
-            rusqlite::params![category_id, period.to_string()],
+            "SELECT 1 FROM budgets WHERE category_id=?1 AND period=?2 AND is_deleted=0 \
+             AND (?3 IS NULL OR id != ?3) LIMIT 1",
+            rusqlite::params![category_id, period.to_string(), exclude_id],
             |r| r.get(0),
         )
         .optional()?;
@@ -117,48 +161,34 @@ fn write_create(
             ),
         });
     }
-    let now = now_iso();
-    conn.execute(
-        "INSERT INTO budgets (id,category_id,period,amount_cents,start_date,created_at,updated_at,version,device_id,is_deleted) \
-         VALUES (?1,?2,?3,?4,?5,?6,?7,1,?8,0)",
-        rusqlite::params![id, category_id, period.to_string(), amount_cents, start_date, now, now, device_id(conn)?],
-    )?;
-    Ok(id.to_string())
-}
-
-/// 预算编辑核心（issue #184）：仅修改金额，沿用软删除同一套
-/// updated_at/version/device_id 更新机制；金额与支出分类校验复用创建侧逻辑。
-/// 分类/周期不可改（改法为删旧建新）。
-pub fn update_budget(conn: &Connection, id: &str, amount_cents: i64) -> Result<()> {
-    ensure_transaction(conn, || {
-        write_update(conn, id, amount_cents)?;
-        record_local(
-            conn,
-            BudgetCommand::Update {
-                id: id.to_string(),
-                amount_cents,
-            },
-        )
-    })
+    Ok(())
 }
 
 /// 预算编辑协议（本地编辑与重放共用，无 op 产出）：存在性检查 + 金额与支出
-/// 分类校验 + 落库。
-fn write_update(conn: &Connection, id: &str, amount_cents: i64) -> Result<()> {
-    let category_id: String = conn
+/// 分类校验 + 目标周期唯一校验（排除自身，与创建侧同码同文案）+ 落库。
+/// `period` 为 `None` 时目标周期 = 现周期（不改周期语义，校验与写入均幂等）。
+fn write_update(
+    conn: &Connection,
+    id: &str,
+    amount_cents: i64,
+    period: Option<BudgetPeriod>,
+) -> Result<()> {
+    let (category_id, current_period): (String, BudgetPeriod) = conn
         .query_row(
-            "SELECT category_id FROM budgets WHERE id=?1 AND is_deleted=0",
+            "SELECT category_id,period FROM budgets WHERE id=?1 AND is_deleted=0",
             rusqlite::params![id],
-            |r| r.get(0),
+            |r| Ok((r.get(0)?, r.get(1)?)),
         )
         .optional()?
         .ok_or_else(|| {
             AppError::codedp_not_found("budget.not-found", format!("预算不存在: {id}"), &[id])
         })?;
     validate_amount_and_category(conn, &category_id, amount_cents)?;
+    let target_period = period.unwrap_or(current_period);
+    reject_duplicate_period(conn, &category_id, target_period, Some(id))?;
     conn.execute(
-        "UPDATE budgets SET amount_cents=?2, updated_at=?3, version=version+1, device_id=?4 WHERE id=?1",
-        rusqlite::params![id, amount_cents, now_iso(), device_id(conn)?],
+        "UPDATE budgets SET amount_cents=?2, period=?3, updated_at=?4, version=version+1, device_id=?5 WHERE id=?1",
+        rusqlite::params![id, amount_cents, target_period.to_string(), now_iso(), device_id(conn)?],
     )?;
     Ok(())
 }
@@ -195,7 +225,13 @@ pub(crate) fn replay_create(
     Ok(())
 }
 
-/// 重放执行：编辑金额（同一协议含存在性检查与分类校验）。
-pub(crate) fn replay_update(conn: &Connection, id: &str, amount_cents: i64) -> Result<()> {
-    write_update(conn, id, amount_cents)
+/// 重放执行：编辑金额与周期（同一协议含存在性检查、分类校验与目标周期唯一校验；
+/// `period` 为 `None` = 不改周期，存量旧载荷语义）。
+pub(crate) fn replay_update(
+    conn: &Connection,
+    id: &str,
+    amount_cents: i64,
+    period: Option<BudgetPeriod>,
+) -> Result<()> {
+    write_update(conn, id, amount_cents, period)
 }

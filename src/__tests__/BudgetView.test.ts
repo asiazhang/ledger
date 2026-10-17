@@ -1,7 +1,16 @@
 import { afterEach, describe, it, expect, beforeEach } from "vitest";
 import { mockInvoke, wireInvokeSeam } from "@ledger/test-support/invoke-mock";
 import { mount, flushPromises } from "@vue/test-utils";
-import { NDataTable, NForm, NProgress, NSelect, NInputNumber, NDatePicker, NModal } from "naive-ui";
+import {
+  NDataTable,
+  NForm,
+  NProgress,
+  NSelect,
+  NInputNumber,
+  NDatePicker,
+  NModal,
+  NRadioGroup,
+} from "naive-ui";
 import { setFakeMedia } from "@ledger/test-support/media-mock";
 import { formatAmount } from "@ledger/money";
 import { useReferenceStore } from "@/stores/reference";
@@ -230,12 +239,39 @@ describe("BudgetView 预算表单（issue #183）", () => {
     expect(mockInvoke).toHaveBeenCalledWith("create_budget", {
       input: {
         category_id: "cat-1",
+        period: "monthly",
         amount_cents: 50000,
         // 本地日历日语义（issue #214）：不再用 UTC toISOString 切片
         start_date: todayStr(),
       },
     });
     expect(messageApi.success).toHaveBeenCalledWith("已创建预算");
+  });
+
+  it("周期默认月度，可选年度并随提交载荷上送（issue #1946）", async () => {
+    wireInvokeSeam({
+      defaults: { budget_progress: [] },
+      overrides: {
+        ...REFERENCE_OVERRIDES,
+        create_budget: () => Promise.resolve("budget-1"),
+      },
+    });
+    const wrapper = await mountView();
+    const radio = wrapper.findComponent(NRadioGroup);
+    expect(radio.exists()).toBe(true);
+    // 默认月度（与后端缺省一致）；切年度后随载荷上送
+    expect(radio.props("value")).toBe("monthly");
+    pickCategory(wrapper, "cat-1");
+    radio.vm.$emit("update:value", "yearly");
+    await submitAmount(wrapper, 100);
+    expect(mockInvoke).toHaveBeenCalledWith("create_budget", {
+      input: {
+        category_id: "cat-1",
+        period: "yearly",
+        amount_cents: 10000,
+        start_date: todayStr(),
+      },
+    });
   });
 
   it("查重失败把后端中文错误清晰呈现，提示引导编辑已有预算（issue #184）", async () => {
@@ -299,8 +335,19 @@ describe("BudgetView 子分类预算路径名呈现与孤儿回退（issue #356�
   });
 });
 
-describe("BudgetView 编辑预算金额（issue #184）", () => {
-  it("列表操作列有「编辑」入口，弹窗仅金额可改（分类/周期只读，无日期选择器）", async () => {
+describe("BudgetView 编辑预算（issue #184 金额 / issue #1946 周期）", () => {
+  it("桌面周期列渲染本地化标签，不再显示原始 monthly/yearly（issue #1946）", async () => {
+    wireInvokeSeam({
+      defaults: { budget_progress: [mockProgress] },
+      overrides: { ...REFERENCE_OVERRIDES },
+    });
+    const wrapper = await mountView();
+    const tableText = wrapper.findComponent(NDataTable).text();
+    expect(tableText).toContain("按月");
+    expect(tableText, "原始枚举值不得直接渲染").not.toContain("monthly");
+  });
+
+  it("弹窗金额与周期可改（issue #1946），分类只读、无日期选择器", async () => {
     wireInvokeSeam({
       defaults: { budget_progress: [mockProgress] },
       overrides: { ...REFERENCE_OVERRIDES },
@@ -310,11 +357,14 @@ describe("BudgetView 编辑预算金额（issue #184）", () => {
     await openEditModal(wrapper);
     const modal = wrapper.findComponent(NModal);
     expect(modal.exists()).toBe(true);
-    // 弹窗内只有一个金额输入框，无分类下拉、无日期选择器
+    // 弹窗内只有一个金额输入框，无分类下拉、无日期选择器；周期为单选（issue #1946）
     expect(modal.findAllComponents(NInputNumber).length).toBe(1);
     expect(modal.findComponent(NSelect).exists()).toBe(false);
     expect(modal.findComponent(NDatePicker).exists()).toBe(false);
-    // 分类/周期以只读文案展示（teleport 到 body）
+    const radio = modal.findComponent(NRadioGroup);
+    expect(radio.exists()).toBe(true);
+    expect(radio.props("value")).toBe("monthly"); // 回填当前行现值
+    // 分类以只读文案展示，周期回填当前值本地化标签（teleport 到 body）
     expect(document.body.textContent).toContain("餐饮");
     expect(document.body.textContent).toContain("按月");
   });
@@ -338,10 +388,31 @@ describe("BudgetView 编辑预算金额（issue #184）", () => {
     await flushPromises();
     expect(mockInvoke).toHaveBeenCalledWith("update_budget", {
       id: "budget-1",
-      input: { amount_cents: 80000 },
+      input: { amount_cents: 80000, period: "monthly" },
     });
     expect(messageApi.success).toHaveBeenCalledWith("已更新预算");
     expect(messageApi.error).not.toHaveBeenCalled();
+  });
+
+  it("弹窗切换周期为按年后保存，载荷携带新周期（issue #1946）", async () => {
+    wireInvokeSeam({
+      defaults: { budget_progress: [mockProgress] },
+      overrides: {
+        ...REFERENCE_OVERRIDES,
+        update_budget: () => Promise.resolve(null),
+      },
+    });
+    const wrapper = await mountView();
+    await openEditModal(wrapper);
+    const modal = wrapper.findComponent(NModal);
+    modal.findComponent(NRadioGroup).vm.$emit("update:value", "yearly");
+    bodyButton("保存", "编辑弹窗").click();
+    await flushPromises();
+    expect(mockInvoke).toHaveBeenCalledWith("update_budget", {
+      id: "budget-1",
+      input: { amount_cents: 50000, period: "yearly" },
+    });
+    expect(messageApi.success).toHaveBeenCalledWith("已更新预算");
   });
 
   it("弹窗金额非正前置拦截，不发起后端调用", async () => {

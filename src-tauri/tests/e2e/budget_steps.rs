@@ -12,6 +12,7 @@ use cucumber::{given, then, when};
 use rusqlite::params;
 
 use ledger_budget::BudgetInput;
+use ledger_budget::BudgetPeriod;
 use ledger_budget::{budget_progress_rows, create_budget, delete_budget, update_budget};
 use ledger_categories::{
     CategoryInput, create_category, delete_category as delete_category_domain,
@@ -252,7 +253,40 @@ fn update_budget_via_command(world: &mut LedgerWorld, name: String, amount: i64)
             |r| r.get(0),
         )
         .unwrap_or_else(|e| panic!("分类 '{}' 没有可编辑的预算: {e}", name));
-    world.last_error = match world_write!(world, |conn| update_budget(conn, &budget_id, amount)) {
+    world.last_error =
+        match world_write!(world, |conn| update_budget(conn, &budget_id, amount, None)) {
+            Ok(_) => None,
+            Err(e) => Some(e.to_string()),
+        };
+}
+
+/// When：编辑预算周期 + 金额（issue #1946）。按现周期定位目标行（同分类月/年
+/// 并存时消除歧义），成功清空 last_error，失败记入 last_error 供拒绝断言。
+#[when(expr = "通过预算命令编辑分类 {string} 的 {string} 预算周期为 {string} 金额为 {int}")]
+fn update_budget_period_via_command(
+    world: &mut LedgerWorld,
+    name: String,
+    from_period: String,
+    to_period: String,
+    amount: i64,
+) {
+    let cat_id = category_id_any(&world_conn!(world), &name);
+    let budget_id: String = world_conn!(world)
+        .query_row(
+            "SELECT id FROM budgets WHERE category_id=?1 AND period=?2 AND is_deleted=0 LIMIT 1",
+            params![cat_id, from_period],
+            |r| r.get(0),
+        )
+        .unwrap_or_else(|e| panic!("分类 '{}' 没有周期为 '{}' 的预算: {e}", name, from_period));
+    let period: BudgetPeriod = to_period
+        .parse()
+        .unwrap_or_else(|e| panic!("未知目标周期 '{}': {e}", to_period));
+    world.last_error = match world_write!(world, |conn| update_budget(
+        conn,
+        &budget_id,
+        amount,
+        Some(period)
+    )) {
         Ok(_) => None,
         Err(e) => Some(e.to_string()),
     };
@@ -435,6 +469,23 @@ fn assert_budget_amount(world: &mut LedgerWorld, name: String, expected: i64) {
     assert_eq!(
         row.budget.amount_cents, expected,
         "分类 '{}' 的预算金额不符",
+        name
+    );
+}
+
+/// 经进度读路径断言编辑后的周期（issue #1946：改周期保存后即时反映新窗口粒度）。
+#[then(expr = "分类 {string} 的预算周期应为 {string}")]
+fn assert_budget_period(world: &mut LedgerWorld, name: String, expected: String) {
+    let row = world
+        .report
+        .last_budget_progress
+        .iter()
+        .find(|p| p.category_name == name)
+        .unwrap_or_else(|| panic!("预算进度中不存在分类 '{}'", name));
+    assert_eq!(
+        row.budget.period.to_string(),
+        expected,
+        "分类 '{}' 的预算周期不符",
         name
     );
 }

@@ -2,6 +2,7 @@
   "create": {
     "title": "Add Budget",
     "category": "Category",
+    "period": "Period",
     "amount": "Amount",
     "categoryPlaceholder": "Expense category",
     "add": "Add"
