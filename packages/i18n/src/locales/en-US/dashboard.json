@@ -30,17 +30,5 @@
     "numeratorLabel": "Investable assets {amount}",
     "denominatorLabel": "Annual budget total {amount}",
     "coverageYears": "Covers {years} years"
-  },
-  "itemCost": {
-    "title": "Item Daily Cost",
-    "empty": "No active items",
-    "subtitle": "Total daily cost of all active items",
-    "perDay": "/day",
-    "count": "{n} active items"
-  },
-  "budget": {
-    "title": "Budget Progress",
-    "empty": "No budgets set",
-    "over": "Over Budget"
   }
 }

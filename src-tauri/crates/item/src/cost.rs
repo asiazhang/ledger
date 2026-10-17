@@ -18,7 +18,7 @@ use chrono::NaiveDate;
 use ledger_infra::error::{AppError, Result};
 
 /// 每天使用成本的计算结果：天数、分子与每天成本一并返回，
-/// 供物品列表（需展示「已用天数」）与 dashboard 聚合共用，避免调用方重算天数。
+/// 供物品列表与详情（需展示「已用天数」）共用，避免调用方重算天数。
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DailyUsageCost {
     /// 拥有天数：购买日 → 目标日的日历天数，含起止两端（同日 = 1）。
@@ -27,10 +27,8 @@ pub struct DailyUsageCost {
     pub numerator_cents: i64,
     /// 每天成本（分/天，**小数**）：`numerator_cents ÷ days`。
     ///
-    /// 仅供展示（前端 `formatAmount` 折算），不参与再聚合。跨物品合计口径收敛在
-    /// `item::domain::item_daily_total`（issue #122）：
-    /// Σ 各物品分子（折本位币）÷ 各自天数；勿拿本字段的 f64 反推分子，
-    /// 也勿按 Σ分子 ÷ Σ天数 混算（那是加权均值，不是「每天成本合计」）。
+    /// 仅供展示（前端 `formatAmount` 折算），不参与再聚合：勿拿本字段的 f64 反推
+    /// 分子，任何未来的跨物品合计都必须回到分子与天数重算，不按本字段拼凑。
     pub per_day_cents: f64,
 }
 

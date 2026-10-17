@@ -49,7 +49,7 @@
 //
 // 符号调用方闭集（ADR-0011 决策 3 + 2026-09-22 修订 ① / #1692）：当期入口
 // `convert_to_native_current`（含 `try_` 软形态，issue #1797）的生产调用方白名单
-// CONVERT_CURRENT_CALLERS 逐条留痕（10 个读路径消费面 + 压测工具注记），白名单外调用即红；
+// CONVERT_CURRENT_CALLERS 逐条留痕（9 个读路径消费面 + 压测工具注记），白名单外调用即红；
 // 测试代码按 `/tests/` 路径约定豁免（ADR-0056 决策 5 同规），`fn` 定义面与注释/
 // 字符串提及经掩码与定义判定排除；在册成员文件缺失或零调用同样红（清单漂移
 // fail loud、拒绝空集假绿）。别名改写等文本不可达形态靠评审兜底（同壳层扫描
@@ -615,11 +615,6 @@ const CONVERT_CURRENT_CALL_SYMBOL = "convert_to_native_current";
  *（清单漂移 fail loud、拒绝空集假绿）。
  */
 export const CONVERT_CURRENT_CALLERS: readonly SymbolCallerEntry[] = [
-  {
-    file: "crates/item/src/domain.rs",
-    reason:
-      "读路径合计 item_daily_total（DailyUsageCost 按当期折算，ADR-0011 决策 3 / #1676 裁决 3 合计口径不动）；写路径 validate_and_convert 已改接交易日入口并继承溯源留痕（#1693），本文件仅剩本读路径调用",
-  },
   {
     file: "crates/dashboard/src/lib.rs",
     reason: "读路径：净资产与持仓市值卡片的当期折算（消费面见 amount convert.rs 当期入口 doc）",
