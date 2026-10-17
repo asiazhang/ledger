@@ -555,6 +555,14 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           security list-keychain -d user -s "$KEYCHAIN_PATH"
 
+      # windows-latest 镜像漂移（2026-10，v0.9.1 两次 tag run 实测）：构建步骤 bash 的
+      # PATH 里 MSYS perl 缺 IPC/Cmd.pm，openssl-src（SQLCipher vendor 依赖，版本自
+      # v0.8.0 未变）configure 失败。显式指定镜像预装的 Strawberry Perl；经 GITHUB_ENV
+      # 条件写入而非直接置空 env——openssl-src 对已设变量不回退，空串会被当程序名。
+      - name: 指定 Windows OpenSSL 构建用 Perl
+        if: runner.os == 'Windows'
+        run: echo "OPENSSL_SRC_PERL=C:\Strawberry\perl\bin\perl.exe" >> "$GITHUB_ENV"
+
       # 构建期注入更新签名密钥（TAURI_SIGNING_PRIVATE_*）：createUpdaterArtifacts 开启
       # 后 tauri CLI 在 build 末尾强制要求该变量产出 .sig（v0.9.1 tag 构建实测缺变量
       # 即 fail；报错文案 "A public key has been found" 为 CLI 写死提示，与公钥是否
