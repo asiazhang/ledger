@@ -18,6 +18,7 @@
     "src-tauri/crates/physical-asset/Cargo.toml",
     "src-tauri/crates/policy/Cargo.toml",
     "src-tauri/crates/reports/Cargo.toml",
+    "src-tauri/crates/savings-goal/Cargo.toml",
     "src-tauri/crates/scheduled/Cargo.toml",
     "src-tauri/crates/sync-engine/Cargo.toml",
     "src-tauri/crates/transaction/Cargo.toml"

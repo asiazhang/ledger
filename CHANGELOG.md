@@ -2,6 +2,12 @@
 
 本文件记录开源记账（OpenLedger）各版本对使用者可见的变更，格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/)，版本号遵循[语义化版本](https://semver.org/lang/zh-CN/)规则。
 
+## [0.9.1] - 2026-10-17
+
+### Changed
+
+- **依赖**：前后端锁文件刷新至 semver 范围内最新——后端 95 crate（tauri 家族 minor/patch 对齐、aws-sdk-s3、tokio、hyper、rustls、uuid、serde_json 等，无跨 major，不再被引用的 http 0.2 / windows-* 闭集自锁文件移除）；前端 17 项（@tauri-apps/api 2.11.1→2.12.4 修复与 tauri crate 的版本错配构建失败、@tauri-apps/cli、vue、vite、vitest、pinia、vue-router 等，manifest 说明符原封不动）。应用行为与数据格式零变化。
+
 ## [0.9.0] - 2026-10-16
 
 ### BREAKING
