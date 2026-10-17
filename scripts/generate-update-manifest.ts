@@ -28,7 +28,8 @@
 // 本地干跑（不必触发完整发布，验证生成物）：
 //   bun scripts/generate-update-manifest.ts --dir <工件目录> --version 0.9.0 \
 //     --tag v0.9.0 --repo asiazhang/ledger --notes-file <发布说明.md>
-//   目录内放置三个更新工件（文件名任意，按后缀识别）并各配 `pnpm tauri signer sign
+//   目录内放置三个更新工件（文件名任意、平铺或嵌套子目录均可——按后缀识别，
+//   嵌套形态 = publish 下载的 upload-artifact LCA 布局）并各配 `pnpm tauri signer sign
 //   --app-version 0.9.0 <工件>` 产出的 .sig；不传 --out 时清单打印到 stdout。
 
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -66,13 +67,17 @@ export function validateVersion(version: string): void {
   }
 }
 
-/** 扫描工件目录，按后缀闭集识别三平台更新工件并读取随附 .sig。
+/** 扫描工件目录（递归含子目录），按后缀闭集识别三平台更新工件并读取随附 .sig。
+ *  递归的缘由：publish 下载的工件按 upload-artifact 最小公共祖先保留子目录形态
+ *  （dmg 与更新工件分属 bundle/dmg、bundle/macos，v0.9.1 首次执行 publish 实测）。
+ *  file 取 basename——Release 资产恒平铺，清单 URL 以资产名为准；.sig 与工件同目录。
  *  缺工件 / 缺签名 / 同平台多候选一律报错——发布门禁宁红不哑。 */
 export function collectUpdaterArtifacts(dir: string): PlatformArtifact[] {
-  const entries = readdirSync(dir);
+  const entries = readdirSync(dir, { recursive: true, encoding: "utf8" });
+  const basename = (entry: string): string => entry.split(/[\\/]/).pop()!;
   const artifacts: PlatformArtifact[] = [];
   for (const { target, suffix } of PLATFORM_ARTIFACT_SUFFIXES) {
-    const matches = entries.filter((name) => name.endsWith(suffix));
+    const matches = entries.filter((entry) => basename(entry).endsWith(suffix));
     if (matches.length === 0) {
       throw new Error(
         `✗ ${dir} 中未找到 ${target} 更新工件（*${suffix}）；deb / dmg / apk 不进清单，缺更新工件即发布失败`,
@@ -81,8 +86,8 @@ export function collectUpdaterArtifacts(dir: string): PlatformArtifact[] {
     if (matches.length > 1) {
       throw new Error(`✗ ${target} 更新工件候选不唯一：${matches.join("、")}`);
     }
-    const file = matches[0]!;
-    const sigPath = join(dir, `${file}.sig`);
+    const file = basename(matches[0]!);
+    const sigPath = join(dir, `${matches[0]!}.sig`);
     let signature: string;
     try {
       signature = readFileSync(sigPath, "utf8").trim();

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -44,6 +44,54 @@ describe("collectUpdaterArtifacts", () => {
   it("按后缀闭集识别三平台工件并读取随附 .sig，安装包干扰项不进清单", () => {
     const dir = fixtureDir();
     try {
+      expect(collectUpdaterArtifacts(dir)).toEqual([
+        {
+          target: "darwin-aarch64",
+          file: "OpenLedger_0.9.0_aarch64.app.tar.gz",
+          signature: "bWFjaW50cnVtc2lnbnNpZ25hdHVyZQ==",
+        },
+        {
+          target: "windows-x86_64",
+          file: "OpenLedger_0.9.0_x64-setup.exe",
+          signature: "d2luZG93c21pbnNpZ25zaWc=",
+        },
+        {
+          target: "linux-x86_64",
+          file: "OpenLedger_0.9.0_amd64.AppImage",
+          signature: "bGludXhtaW5zaWduc2lnbg==",
+        },
+      ]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("嵌套子目录形态（download-artifact 按 upload-artifact LCA 保留的结构）同样识别，file 取 basename", () => {
+    // 镜像 v0.9.1 publish 实测布局：windows 工件 LCA 即所在目录（平铺），
+    // macOS / Linux 工件与安装包分属不同根，保留 dmg/ macos/ appimage/ 子目录。
+    const layout: Record<string, Record<string, string>> = {
+      ".": {
+        "OpenLedger_0.9.0_x64-setup.exe": "nsis-installer-bytes",
+        "OpenLedger_0.9.0_x64-setup.exe.sig": "d2luZG93c21pbnNpZ25zaWc=",
+      },
+      dmg: { "OpenLedger_0.9.0_aarch64.dmg": "dmg-bytes" },
+      macos: {
+        "OpenLedger_0.9.0_aarch64.app.tar.gz": "macos-updater-bytes",
+        "OpenLedger_0.9.0_aarch64.app.tar.gz.sig": "bWFjaW50cnVtc2lnbnNpZ25hdHVyZQ==",
+      },
+      appimage: {
+        "OpenLedger_0.9.0_amd64.AppImage": "appimage-bytes",
+        "OpenLedger_0.9.0_amd64.AppImage.sig": "bGludXhtaW5zaWduc2lnbg==",
+      },
+    };
+    const dir = mkdtempSync(join(tmpdir(), "update-manifest-nested-"));
+    try {
+      for (const [subdir, files] of Object.entries(layout)) {
+        mkdirSync(join(dir, subdir), { recursive: true });
+        for (const [name, content] of Object.entries(files)) {
+          writeFileSync(join(dir, subdir, name), content);
+        }
+      }
       expect(collectUpdaterArtifacts(dir)).toEqual([
         {
           target: "darwin-aarch64",
