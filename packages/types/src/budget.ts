@@ -23,9 +23,11 @@ export interface BudgetInput {
   start_date: string;
 }
 
-/** 预算编辑入参（issue #184）：仅允许修改金额，分类/周期不可改（改法为删旧建新） */
+/** 预算编辑入参：金额必填；周期可改（issue #1946，ADR-0029 修订注记），分类不可改
+ *  （删旧建新）；period 缺省 = 不改周期（旧调用兼容） */
 export interface BudgetUpdateInput {
   amount_cents: number;
+  period?: BudgetPeriod;
 }
 
 export interface BudgetProgress {

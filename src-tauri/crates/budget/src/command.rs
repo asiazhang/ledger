@@ -1,8 +1,10 @@
 //! 预算同步命令（issue #860 / ADR-0091）：op 载荷的预算域形态、产出单点与重放分派。
 //!
 //! - **载荷形态**（[`BudgetCommand`]）：创建携带实体 id + 语义行（分类 / 周期 /
-//!   金额 / `start_date` 冻结残留随行保真）；编辑携带落定金额；删除只需实体 id。
-//!   **只增不改**。
+//!   金额 / `start_date` 冻结残留随行保真）；编辑携带落定金额与目标周期（`period`
+//!   serde default 缺省 = 不改周期，存量 OpLog 旧载荷反序列化语义不变；旧版本设备
+//!   重放本载荷时按 serde 默认丢弃未知字段，周期维持旧值，issue #1946）；删除只需
+//!   实体 id。**只增不改**。
 //! - **产出单点**（[`record_local`]）：预算写编排入口（创建 / 编辑 / 删除）成功后
 //!   调用，op 随写事务提交/回滚。
 //! - **重放执行**（[`replay_command`]）：与本地写同一执行协议（金额 / 支出分类 /
@@ -32,8 +34,14 @@ pub enum BudgetCommand {
         /// 冻结残留（ADR-0029）：不参与计算，随行保真（各端行内容一致）。
         start_date: String,
     },
-    /// 编辑预算金额（分类/周期不可改，改法为删旧建新）。
-    Update { id: String, amount_cents: i64 },
+    /// 编辑预算金额与周期（issue #184 只许金额 → #1946 放开周期，ADR-0029 修订注记；
+    /// 分类不可改，改法为删旧建新）。`period` serde default 缺省 = 不改周期。
+    Update {
+        id: String,
+        amount_cents: i64,
+        #[serde(default)]
+        period: Option<BudgetPeriod>,
+    },
     /// 删除预算（软删除；与本地删除同语义：id 不存在时静默无效果）。
     Delete { id: String },
 }
@@ -80,9 +88,11 @@ pub fn replay_command(conn: &Connection, command: &BudgetCommand) -> Result<()> 
             amount_cents,
             start_date,
         } => super::crud::replay_create(conn, id, category_id, *period, *amount_cents, start_date),
-        BudgetCommand::Update { id, amount_cents } => {
-            super::crud::replay_update(conn, id, *amount_cents)
-        }
+        BudgetCommand::Update {
+            id,
+            amount_cents,
+            period,
+        } => super::crud::replay_update(conn, id, *amount_cents, *period),
         BudgetCommand::Delete { id } => super::crud::write_delete(conn, id),
     }
 }
