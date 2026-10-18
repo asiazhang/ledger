@@ -52,6 +52,7 @@
   "archived": {
     "title": "已归档",
     "summary": "{count} 个账户 · 合计 {total}",
+    "summarySeparator": "；",
     "expand": "展开已归档账户",
     "collapse": "收起已归档账户",
     "suffix": "（已归档）"

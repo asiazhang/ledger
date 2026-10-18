@@ -27,6 +27,7 @@ import { useWindowTier } from "@ledger/window-tier";
 import { useScheduledPlanForm } from "@/scheduled/useScheduledPlanForm";
 import {
   earliestPendingOccurrence,
+  isUnfinishedStatus,
   scheduledRecurrenceLabel,
   scheduledRecurrenceOptions,
   useScheduledPlanList,
@@ -293,7 +294,9 @@ function subscriptionActions(row: SubscriptionRow): ScheduledPlanRowAction[] {
       actions.push(action, {
         key: "edit",
         label: t("scheduled.action.edit"),
-        available: status === "active" || status === "paused",
+        // 「未结束」判据同吃计划的单一出处（`isUnfinishedStatus` = active | paused）：
+        // 订阅编辑与计划取消限同一集合，不另写一份字面量。
+        available: isUnfinishedStatus(status),
         confirm: null,
         run: () => openEdit(row),
       });

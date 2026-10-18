@@ -3,6 +3,7 @@ import { lastInvokeArgs, mockInvoke, wireInvokeSeam } from "@ledger/test-support
 import { registerToastSink } from "@ledger/loadable";
 import { makeFakeSink } from "./factories";
 import { fireProp } from "@ledger/test-support/component-vm";
+import { messageCalls } from "@ledger/test-support/message-mock";
 import { mount, flushPromises } from "@vue/test-utils";
 import {
   NCard,
@@ -356,6 +357,99 @@ describe("AccountsView 移动档（issue #847 / ADR-0088 决策 11 票⑦，词�
     amountPrivacyEnabled.value = false;
     await nextTick();
     expect(wrapper.text()).toContain(visible);
+  });
+
+  // -------------------------------------------------------------------------
+  // 移动档下的归档面（spec #1952 用户故事 25 / issue #1955 AC「移动档下确认框
+  // 与提示可读可用」）：窄屏不靠固定宽度撑版面，靠自然换行；行内只有一个「恢复」。
+  // -------------------------------------------------------------------------
+
+  const CNY = { code: "CNY", name: "人民币", symbol: "¥", decimal_places: 2 };
+
+  /** 最新弹层的正文节点（teleport 到 body：同文件前序用例的弹层仍在 body 里，
+   *  故取末位 = 最新确认框）。 */
+  function dialogContent(): HTMLElement {
+    return [...document.body.querySelectorAll<HTMLElement>(".n-dialog__content")].at(-1)!;
+  }
+
+  /** 确认框正向按钮（按文案定位，取末位 = 最新弹层）。 */
+  function dialogButton(text: string): HTMLElement | undefined {
+    const buttons = [...document.body.querySelectorAll<HTMLElement>(".n-dialog__action button")];
+    return buttons.filter((b) => b.textContent?.trim() === text).at(-1);
+  }
+
+  it("移动档：归档确认框可读可用——余额句在正文容器内、无固定宽度（不横向溢出）", async () => {
+    setFakeMedia({ width: 600 });
+    const wrapper = mountView();
+    await flushPromises();
+    // 打开首行（现金，余额 1000 分 ≠ 0）的归档确认框
+    await moreButtons(wrapper)[0].trigger("click");
+    await flushPromises();
+    fireProp(rowMenu(wrapper), "onSelect", "archive");
+    await flushPromises();
+
+    // 正文：通用句 + 余额句 + 「仍计入净资产与余额合计」声明都在场（窄屏不少句）
+    const content = dialogContent();
+    expect(content.textContent).toContain("现金");
+    expect(content.textContent).toContain(formatAmount(1000, CNY));
+    expect(content.textContent).toContain("仍计入净资产与余额合计");
+
+    // 正文行容器：只声明纵排与行距，不设任何固定宽度（窄屏靠自然换行，
+    // 不逼出横向溢出）；每句都住在这个容器内，无越出容器的旁支节点
+    const lines = content.firstElementChild as HTMLElement;
+    expect(lines.style.display).toBe("flex");
+    expect(lines.style.flexDirection).toBe("column");
+    expect(lines.style.width).toBe("");
+    expect(lines.style.minWidth).toBe("");
+    expect(content.children).toHaveLength(1);
+    const lineTexts = [...lines.children].map((el) => el.textContent ?? "");
+    expect(lineTexts.some((t) => t.includes("仍计入净资产与余额合计"))).toBe(true);
+
+    // 可用：确认按钮在场（不阻断归档）
+    expect(dialogButton("归档")).toBeTruthy();
+  });
+
+  it("移动档：已归档分区展开后行可读（名称链接 + 余额），该行菜单只有「恢复」", async () => {
+    setFakeMedia({ width: 600 });
+    const archivedRows: AccountBalance[] = [
+      { account: makeAccount("acc-1", "现金"), balance_cents: 1000 },
+      {
+        account: { ...makeAccount("acc-2", "银行"), type: "bank", is_archived: true },
+        balance_cents: -500,
+      },
+    ];
+    await wireInvokeSeam({
+      defaults: { list_account_balances: archivedRows },
+      overrides: { list_accounts: archivedRows.map((b) => b.account) },
+    }).ready;
+    const wrapper = mountView();
+    await flushPromises();
+
+    await wrapper.find('[data-testid="accounts-archived-toggle"]').trigger("click");
+    await flushPromises();
+    const archivedCard = wrapper.find('[data-testid="accounts-archived-card"]');
+    const archivedTableRows = archivedCard.findAll("tbody tr");
+    expect(archivedTableRows).toHaveLength(1);
+    expect(archivedTableRows[0].text()).toContain("银行卡 · CNY");
+    expect(archivedTableRows[0].text()).toContain(formatAmount(-500, CNY));
+
+    // 名称仍可读可下钻（展示面不打标、不排除，ADR-0142 决策 4）
+    const archivedLink = archivedCard.findAllComponents(AccountLink)[0];
+    expect(archivedLink.text()).toBe("银行");
+    expect(archivedLink.attributes("title")).toBe("查看该账户的交易");
+
+    // 行内只有一个动作：打开已归档行的菜单（DOM 顺序：普通表行在前、已归档行在后）
+    await moreButtons(wrapper)[1].trigger("click");
+    await flushPromises();
+    // 已归档形态的选项集不含 edit，故按「含 restore」定位同一个菜单（视图内唯一 NDropdown）
+    const menu = wrapper
+      .findAllComponents(NDropdown)
+      .find((d) =>
+        (d.props("options") as Array<{ key?: string }>).some((o) => o.key === "restore"),
+      )!;
+    expect((menu.props("options") as Array<{ key: string }>).map((o) => o.key)).toEqual([
+      "restore",
+    ]);
   });
 });
 
@@ -744,6 +838,9 @@ describe("AccountsView 攒钱分组与类型标签（issue #1755 / ADR-0133 决�
 
 describe("AccountsView 账户归档（spec #1952 / ADR-0142）", () => {
   const CNY = { code: "CNY", name: "人民币", symbol: "¥", decimal_places: 2 };
+  /** 第二币种（混币种合计用例）：formatAmount 需要币种符号与精度，故参考数据里
+   *  补这一档（`list_currencies` 覆盖，见 wireArchiveSeam）。 */
+  const USD = { code: "USD", name: "美元", symbol: "$", decimal_places: 2 };
 
   /** 挂载期数据快照（归档 / 恢复把位翻过来后由读命令重拉出新快照）。 */
   let rows: AccountBalance[];
@@ -779,6 +876,8 @@ describe("AccountsView 账户归档（spec #1952 / ADR-0142）", () => {
         list_account_balances: () => rows,
         savings_goal_progress: () => Promise.resolve(goalProgress),
         list_scheduled_transactions: () => plans,
+        // 混币种合计用例（见「合计按币种各算一份」）：参考数据补第二币种符号/精度
+        list_currencies: [CNY, USD],
         archive_account: (args?: Record<string, unknown>) => {
           if (archiveReject) return Promise.reject(archiveReject);
           const { id } = args as { id: string };
@@ -902,6 +1001,48 @@ describe("AccountsView 账户归档（spec #1952 / ADR-0142）", () => {
     ).toBe("false");
   });
 
+  it("合计按币种各算一份：单币种读法与既有逐字相同，混币种绝不跨币种相加", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+    // 单币种：一句「{count} 个账户 · 合计 <金额>」（与 #1953 逐字相同）
+    expect(archivedSummary(wrapper)).toBe(`2 个账户 · 合计 ${formatAmount(2000, CNY)}`);
+    wrapper.unmount();
+
+    // 混币种：归档区两组（CNY 2500 / USD 5600 + 100），一组一个合计
+    rows = [
+      { account: makeAccount("acc-1", "现金"), balance_cents: 1000 },
+      {
+        account: { ...makeAccount("acc-2", "银行"), is_archived: true },
+        balance_cents: 2500,
+      },
+      {
+        account: { ...makeAccount("acc-3", "美元账户"), currency_code: "USD", is_archived: true },
+        balance_cents: 5600,
+      },
+      {
+        account: { ...makeAccount("acc-4", "美元旧卡"), currency_code: "USD", is_archived: true },
+        balance_cents: 100,
+      },
+    ];
+    await wireArchiveSeam();
+    const mixed = mountView();
+    await flushPromises();
+    const summary = archivedSummary(mixed);
+    // 每组：该币种的账户数与合计（各自经 formatAmount，带自己的币种符号）
+    expect(summary).toContain(`1 个账户 · 合计 ${formatAmount(2500, CNY)}`);
+    expect(summary).toContain(`2 个账户 · 合计 ${formatAmount(5700, USD)}`);
+    // 绝不出现跨币种合计（2500 + 5700 = 8200 分，旧实现正是这样相加的）
+    expect(summary).not.toContain(formatAmount(8200, CNY));
+    // 两组以分隔符拼接
+    expect(summary).toContain("；");
+    // 行读数不受合计口径影响
+    await mixed.find('[data-testid="accounts-archived-toggle"]').trigger("click");
+    await flushPromises();
+    expect(mixed.find('[data-testid="accounts-archived-card"]').text()).toContain(
+      formatAmount(2500, CNY),
+    );
+  });
+
   it("展开已归档分区：归档行出现且余额按快照原值渲染，合计不变（读数不受收纳影响）", async () => {
     const wrapper = mountView();
     await flushPromises();
@@ -1008,6 +1149,9 @@ describe("AccountsView 账户归档（spec #1952 / ADR-0142）", () => {
     expect(sink.error.mock.calls.some((c) => String(c[0]).includes("请归档对应的攒钱目标"))).toBe(
       true,
     );
+    // 失败不报成功文案：归档 / 恢复共用助手只在任务回 `true`（真调了 API 且成功）时才
+    // 弹成功提示——失败（Loadable 回 `null`）与目标行缺席空转（回 `false`）都不弹。
+    expect(messageCalls().some((m) => m.method === "success")).toBe(false);
     // 账户未被移走
     expect(listCard(wrapper)!.text()).toContain("现金");
   });

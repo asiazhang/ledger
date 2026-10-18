@@ -1643,3 +1643,126 @@ fn update_account_resolves_archive_key_without_putting_it_in_update_payload() {
         "恢复落定"
     );
 }
+
+/// 归档-only 编辑（PUT 只带 `is_archived`，无任何编辑键）：只产一条 `SetArchived`
+/// op、只写一次账户行——编辑路径在「无编辑键」时必须整段不执行（AC「归档 / 恢复
+/// 幂等（重复调用不报错、不重复产同步 op）」在编辑入口的落点）。
+#[test]
+fn update_account_archive_only_emits_single_set_archived_op() {
+    let conn = setup();
+    insert_account(&conn, "acc-arc-9", "借出·吴十", "receivable", "CNY", 0);
+    let version_before = super::get_account(&conn, "acc-arc-9").unwrap().version;
+    let ops_before = op_count(&conn);
+
+    super::update_account(
+        &conn,
+        "acc-arc-9",
+        AccountUpdateInput {
+            name: None,
+            currency_code: None,
+            credit_limit_cents: None,
+            statement_day: None,
+            due_day: None,
+            is_archived: Some(true),
+        },
+    )
+    .unwrap();
+
+    let archived = super::get_account(&conn, "acc-arc-9").unwrap();
+    assert!(archived.is_archived, "归档键落定");
+    assert_eq!(
+        archived.version,
+        version_before + 1,
+        "归档-only 编辑只写一次账户行（不先走一遍编辑路径）"
+    );
+
+    let payloads = op_payloads(&conn);
+    assert_eq!(
+        payloads.len() as i64,
+        ops_before + 1,
+        "归档-only 编辑只产一条 op：{payloads:?}"
+    );
+    let set_archived: Vec<&serde_json::Value> = payloads
+        .iter()
+        .filter(|p| p["payload"]["action"] == "set_archived")
+        .collect();
+    assert_eq!(set_archived.len(), 1, "恰一条 SetArchived op：{payloads:?}");
+    assert_eq!(set_archived[0]["payload"]["archived"], true);
+    assert!(
+        !payloads.iter().any(|p| p["payload"]["action"] == "update"),
+        "无编辑键时不得产 Update op：{payloads:?}"
+    );
+}
+
+/// 归档-only 编辑的幂等：已是目标态时重复同一 PUT——零 op、零 version bump、不报错。
+#[test]
+fn update_account_archive_only_is_idempotent() {
+    let conn = setup();
+    insert_account(&conn, "acc-arc-10", "借出·郑十一", "receivable", "CNY", 0);
+    let input = || AccountUpdateInput {
+        name: None,
+        currency_code: None,
+        credit_limit_cents: None,
+        statement_day: None,
+        due_day: None,
+        is_archived: Some(true),
+    };
+    super::update_account(&conn, "acc-arc-10", input()).unwrap();
+    let version_after_first = super::get_account(&conn, "acc-arc-10").unwrap().version;
+    let ops_after_first = op_count(&conn);
+
+    // 重复同一 PUT：不报错、零 UPDATE（version 不动）、零 op。
+    super::update_account(&conn, "acc-arc-10", input()).unwrap();
+    assert_eq!(
+        super::get_account(&conn, "acc-arc-10").unwrap().version,
+        version_after_first,
+        "重复归档-only 编辑不得再写账户行"
+    );
+    assert_eq!(
+        op_count(&conn),
+        ops_after_first,
+        "重复归档-only 编辑不得再产 op"
+    );
+}
+
+/// 合并请求（改名 + 归档）仍是「Update + SetArchived 各一条」，同一事务内落定——
+/// 编辑路径只在真的有编辑键时才与归档动作并行执行。
+#[test]
+fn update_account_with_edit_and_archive_emits_both_ops() {
+    let conn = setup();
+    insert_account(&conn, "acc-arc-11", "借出·冯十二", "receivable", "CNY", 0);
+    let version_before = super::get_account(&conn, "acc-arc-11").unwrap().version;
+
+    super::update_account(
+        &conn,
+        "acc-arc-11",
+        AccountUpdateInput {
+            name: Some("借出·冯十二（已收回）".into()),
+            currency_code: None,
+            credit_limit_cents: None,
+            statement_day: None,
+            due_day: None,
+            is_archived: Some(true),
+        },
+    )
+    .unwrap();
+
+    let updated = super::get_account(&conn, "acc-arc-11").unwrap();
+    assert_eq!(updated.name, "借出·冯十二（已收回）");
+    assert!(updated.is_archived);
+    assert_eq!(
+        updated.version,
+        version_before + 2,
+        "改名与归档各写一次账户行"
+    );
+    let actions: Vec<String> = op_payloads(&conn)
+        .iter()
+        .map(|p| {
+            p["payload"]["action"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string()
+        })
+        .collect();
+    assert_eq!(actions, vec!["update", "set_archived"], "两条 op 各一条");
+}

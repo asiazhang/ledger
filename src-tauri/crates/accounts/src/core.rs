@@ -189,11 +189,11 @@ pub fn delete_account(conn: &Connection, id: &str) -> Result<()> {
 /// ADR-0133 决策 4），不在本函数。
 pub fn set_account_archived(conn: &Connection, id: &str, archived: bool) -> Result<()> {
     ensure_transaction(conn, || {
-        let current = current_archived(conn, id)?;
-        if current == archived {
+        // 本地写 = 共用写协议 + op 产出；幂等短路（已是目标态）由协议内裁定，
+        // 此时不产 op（重放臂同走协议、只不产 op）。
+        if !apply_archive(conn, id, archived)? {
             return Ok(());
         }
-        write_set_archived(conn, id, archived)?;
         record_local(
             conn,
             AccountCommand::SetArchived {
@@ -202,6 +202,18 @@ pub fn set_account_archived(conn: &Connection, id: &str, archived: bool) -> Resu
             },
         )
     })
+}
+
+/// 归档翻转共用落库路径（本地写与重放同一入口）：读当前态 → 已是目标态即幂等
+/// 短路（零 UPDATE、零 bump version、零 op）→ [`write_set_archived`]。
+/// 返回「是否真的写了」——本地写据此决定是否产 op，重放臂只看落定。
+/// 调用方保证处于写事务内。
+fn apply_archive(conn: &Connection, id: &str, archived: bool) -> Result<bool> {
+    if current_archived(conn, id)? == archived {
+        return Ok(false);
+    }
+    write_set_archived(conn, id, archived)?;
+    Ok(true)
 }
 
 /// 读当前归档态（存在性检查同 `write_delete` 口径：未删除行，缺失码化
@@ -287,19 +299,30 @@ pub fn update_account(conn: &Connection, id: &str, input: AccountUpdateInput) ->
     // 归档键先取出：`write_update` 不消费它（只吃编辑字段），下沉到域写协议会
     // 让「归档态不进 Update 载荷」的约束靠约定维持。
     let archived = input.is_archived;
+    // 编辑路径只在**真的带编辑键**时执行：五字段全是「缺席 = 不改」形态，`is_some()`
+    // 即该键在场。归档-only 的 PUT（只带 `is_archived`）因此不会先跑一遍编辑落库、
+    // 也不会多产一条 Update op（AC「归档 / 恢复幂等（重复调用不报错、不重复产同步
+    // op）」在编辑入口的落点：重复同一 PUT 零新 op、零 version bump）。
+    let has_edits = input.name.is_some()
+        || input.currency_code.is_some()
+        || input.credit_limit_cents.is_some()
+        || input.statement_day.is_some()
+        || input.due_day.is_some();
     ensure_transaction(conn, || {
-        let (name, currency_code, credit_terms) = write_update(conn, id, &input)?;
-        record_local(
-            conn,
-            AccountCommand::Update {
-                id: id.to_string(),
-                name,
-                currency_code,
-                credit_limit_cents: credit_terms.credit_limit_cents,
-                statement_day: credit_terms.statement_day,
-                due_day: credit_terms.due_day,
-            },
-        )?;
+        if has_edits {
+            let (name, currency_code, credit_terms) = write_update(conn, id, &input)?;
+            record_local(
+                conn,
+                AccountCommand::Update {
+                    id: id.to_string(),
+                    name,
+                    currency_code,
+                    credit_limit_cents: credit_terms.credit_limit_cents,
+                    statement_day: credit_terms.statement_day,
+                    due_day: credit_terms.due_day,
+                },
+            )?;
+        }
         if let Some(archived) = archived {
             set_account_archived(conn, id, archived)?;
         }
@@ -444,11 +467,7 @@ pub(crate) fn replay_delete(conn: &Connection, id: &str) -> Result<()> {
 /// 不产冗余 op，重放侧按「同 write 协议 + 幂等短路」承接（参照目标域
 /// replay_status 同形）。
 pub(crate) fn replay_set_archived(conn: &Connection, id: &str, archived: bool) -> Result<()> {
-    let current = current_archived(conn, id)?;
-    if current == archived {
-        return Ok(());
-    }
-    write_set_archived(conn, id, archived)
+    apply_archive(conn, id, archived).map(|_wrote| ())
 }
 
 /// 查找指定币种的黑洞账户（未删除且 `is_hidden=1`，取最早创建的一个）。

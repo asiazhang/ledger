@@ -120,18 +120,28 @@ const archivedChevronStyle = computed(() => ({
 }));
 
 /** 已归档分区合计：与主表**同一份** `listAccountBalances` 快照直接累加（ADR-0142
- * 决策 1：已归档分区与主表各自派生、互不重算）。单币种时带币种符号；混币种时
- * 退化为无符号数值——前端没有汇率折算接缝（净资产折算归后端 dashboard_overview，
- * ADR-0067），不在此造第二份口径。金额一律经 formatAmount（含金额隐私掩码）。 */
+ * 决策 1：已归档分区与主表各自派生、互不重算），但合计**按币种各算一份**——
+ * 跨币种相加会造出第二份金额口径（前端没有汇率折算接缝，净资产折算归后端
+ * `dashboard_overview`，ADR-0067），故一组一个合计、显示时以分隔符拼接。
+ * 单币种时只剩一组，读法仍是一句「{count} 个账户 · 合计 {amount}」。
+ * 金额一律经 formatAmount（含金额隐私掩码）。 */
 const archivedSummary = computed(() => {
-  const rows = archivedBalances.value;
-  const total = rows.reduce((sum, row) => sum + row.balance_cents, 0);
-  const currencyCodes = new Set(rows.map((row) => row.account.currency_code));
-  const onlyCurrency = currencyCodes.size === 1 ? rows[0]?.account.currency_code : undefined;
-  return t("accounts.archived.summary", {
-    count: rows.length,
-    total: formatAmount(total, onlyCurrency ? reference.getCurrency(onlyCurrency) : undefined),
-  });
+  // 一次遍历分组（Map 保首次出现顺序）：每组 count 与合计同源累加，不加不减。
+  const groups = new Map<string, { count: number; totalCents: number }>();
+  for (const row of archivedBalances.value) {
+    const group = groups.get(row.account.currency_code) ?? { count: 0, totalCents: 0 };
+    group.count += 1;
+    group.totalCents += row.balance_cents;
+    groups.set(row.account.currency_code, group);
+  }
+  return [...groups]
+    .map(([code, { count, totalCents }]) =>
+      t("accounts.archived.summary", {
+        count,
+        total: formatAmount(totalCents, reference.getCurrency(code)),
+      }),
+    )
+    .join(t("accounts.archived.summarySeparator"));
 });
 
 /** 类型标签：目标绑定账户覆写为「储蓄目标」（三处消费：桌面类型列、移动档副行、编辑弹窗只读 type）。 */
@@ -264,27 +274,43 @@ async function unfinishedPlanCountFor(accountId: string): Promise<number> {
 /** 动作目标（闭包内自读的响应式参数——useLoadable 任务以 0 元闭包声明）。 */
 const archiveTarget = ref<AccountBalance | null>(null);
 
-/** 归档（幂等：重复归档不报错、不重复产同步 op）。 */
+/** 归档（幂等：重复归档不报错、不重复产同步 op）。返回是否真的调了 API：
+ *  目标行缺席时任务空转——不调 API，也不返回成功（调用方据此不报成功文案）。 */
 const archiveRun = useLoadable(async () => {
   const row = archiveTarget.value;
-  if (row) await api.archiveAccount(row.account.id);
+  if (!row) return false;
+  await api.archiveAccount(row.account.id);
+  return true;
 });
 
-/** 恢复（幂等：归档的唯一回退动作，回主表与选择面）。 */
+/** 恢复（幂等：归档的唯一回退动作，回主表与选择面）。空转语义同归档。 */
 const restoreRun = useLoadable(async () => {
   const row = archiveTarget.value;
-  if (row) await api.unarchiveAccount(row.account.id);
+  if (!row) return false;
+  await api.unarchiveAccount(row.account.id);
+  return true;
 });
+
+/** 归档 / 恢复共用的落库三步（设目标行 → Loadable 执行 → 成功文案 + 刷新快照）：
+ *  两动作只差一条命令与一句成功文案，分发形状、失败归一（Loadable）与刷新时机
+ *  只写一遍。`run` 回 `false` 即空转（目标行缺席：不调 API，也不报成功），
+ *  `null` 即失败（Loadable 已按码化错误 toast）——两种情况都不弹成功文案。 */
+async function runArchiveChange(
+  row: AccountBalance,
+  run: { run(): Promise<boolean | null> },
+  successMessage: string,
+) {
+  archiveTarget.value = row;
+  if ((await run.run()) !== true) return;
+  message.success(successMessage);
+  // 参考数据由 ledger:changed 信号自动重拉；此处仅刷新余额快照（已归档分区与
+  // 主表同源，一次重拉后行自动分组到位）
+  await refresh();
+}
 
 /** 归档：确认后落库（幂等），成功刷新余额快照——行按标志自动分组进已归档分区。 */
 async function archive(row: AccountBalance) {
-  archiveTarget.value = row;
-  if ((await archiveRun.run()) !== null) {
-    message.success(t("accounts.message.archived"));
-    // 参考数据由 ledger:changed 信号自动重拉；此处仅刷新余额快照（已归档分区与
-    // 主表同源，一次重拉后行自动分组到位）
-    await refresh();
-  }
+  await runArchiveChange(row, archiveRun, t("accounts.message.archived"));
 }
 
 /** 归档二次确认（与删除同语义：遮罩点击不构成关闭意图）。计划数读取是异步的
@@ -304,11 +330,7 @@ async function confirmArchive(row: AccountBalance) {
 
 /** 恢复：确认即落库（幂等），成功刷新余额快照——行自动回到主表。 */
 async function restore(row: AccountBalance) {
-  archiveTarget.value = row;
-  if ((await restoreRun.run()) !== null) {
-    message.success(t("accounts.message.restored"));
-    await refresh();
-  }
+  await runArchiveChange(row, restoreRun, t("accounts.message.restored"));
 }
 
 // ---------------------------------------------------------------------------
@@ -548,7 +570,7 @@ const rowMenu = useRowContextMenu<AccountBalance>((key, row) => {
 const menuOptions = computed(() => {
   const errorColor = themeVars.value.errorColor;
   return rowMenu.state.value?.row.account.is_archived
-    ? buildArchivedAccountRowMenuOptions({ errorColor })
+    ? buildArchivedAccountRowMenuOptions()
     : buildAccountRowMenuOptions({ errorColor });
 });
 

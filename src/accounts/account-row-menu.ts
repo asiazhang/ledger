@@ -51,12 +51,9 @@ export function buildAccountRowMenuOptions(opts: { errorColor?: string } = {}): 
 /**
  * 已归档账户行菜单选项：单一「恢复」项（回主表与选择面）。独立函数而非
  * 未归档形态的参数分支——两种形态各自单一职责，与储蓄目标「归档列独立列集」
- * 同形；不接 `errorColor`（恢复不是危险动作），签名留 `_opts` 只为与上者对称，
- * 调用方传同款入参不用分支。
+ * 同形；不接 `errorColor`（恢复不是危险动作，没有着色调），无参数。
  */
-export function buildArchivedAccountRowMenuOptions(
-  _opts: { errorColor?: string } = {},
-): DropdownOption[] {
+export function buildArchivedAccountRowMenuOptions(): DropdownOption[] {
   return [
     {
       label: t("accounts.menu.restore"),

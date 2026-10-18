@@ -103,7 +103,7 @@ describe("buildArchivedAccountRowMenuOptions（已归档账户行菜单选项）
   });
 
   it("图标：恢复 ArrowUndoOutline；不携带 error 着色（不是危险动作）", () => {
-    const options = buildArchivedAccountRowMenuOptions({ errorColor: "#d03050" });
+    const options = buildArchivedAccountRowMenuOptions();
     expect(iconComponentOf(options[0])).toBe(ArrowUndoOutline);
     expect(options[0].props).toBeUndefined();
   });

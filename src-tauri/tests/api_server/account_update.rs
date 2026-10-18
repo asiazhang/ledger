@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
@@ -616,4 +616,84 @@ async fn test_put_archive_account_of_active_goal_is_rejected() {
         )
         .unwrap();
     assert_eq!(archived, 0, "被拒归档不落库");
+}
+
+/// 该账户在同步 op 日志里的动作序列（op 面探针：只读 `sync.sync_ops` 的载荷，
+/// 不经编辑入口内部；创建期自带一条 `create`）。
+fn account_op_actions(conn: &Arc<Mutex<rusqlite::Connection>>, id: &str) -> Vec<String> {
+    let conn = conn.lock().unwrap();
+    let mut stmt = conn
+        .prepare("SELECT payload FROM sync.sync_ops ORDER BY clock")
+        .unwrap();
+    let payloads: Vec<serde_json::Value> = stmt
+        .query_map([], |r| r.get::<_, String>(0))
+        .unwrap()
+        .map(|row| serde_json::from_str(&row.unwrap()).unwrap())
+        .collect();
+    payloads
+        .iter()
+        .filter(|p| p["payload"]["id"] == id)
+        .map(|p| {
+            p["payload"]["action"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string()
+        })
+        .collect()
+}
+
+/// 归档-only PUT 的 op 幂等（#1953 AC「归档 / 恢复幂等（重复调用不报错、不重复产
+/// 同步 op）」在编辑入口的落点）：只带归档键的 PUT 只产一条 `SetArchived` op（不先
+/// 多产一条 `Update`），重复同一 PUT 零新 op、version 不动。
+#[tokio::test]
+async fn test_put_archive_only_emits_one_op_and_repeat_is_idempotent() {
+    let (app, conn) = setup_app();
+    let id = create_account_via_api(&app, "借出·甲").await;
+    assert_eq!(
+        account_op_actions(&conn, &id),
+        vec!["create"],
+        "建档自身只产一条 create op"
+    );
+
+    let (status, first) = put_account(&app, &id, r#"{"is_archived":true}"#).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(first["is_archived"], true, "归档落定");
+    let version_archived = first["version"].as_i64().unwrap();
+    assert_eq!(
+        account_op_actions(&conn, &id),
+        vec!["create", "set_archived"],
+        "归档-only PUT 只产一条 SetArchived op（无编辑键即无 Update op）"
+    );
+
+    // 重复同一 PUT（已归档再归档）：不报错、零新 op、version 不动。
+    let (status, again) = put_account(&app, &id, r#"{"is_archived":true}"#).await;
+    assert_eq!(status, StatusCode::OK, "重复归档不报错");
+    assert_eq!(again["is_archived"], true);
+    assert_eq!(
+        again["version"].as_i64().unwrap(),
+        version_archived,
+        "重复归档-only PUT 不得 bump version（零 UPDATE）"
+    );
+    assert_eq!(
+        account_op_actions(&conn, &id),
+        vec!["create", "set_archived"],
+        "重复归档-only PUT 不得再产 op"
+    );
+
+    // 恢复方向同路径：一条 set_archived（false），重复零新 op。
+    let (status, restored) = put_account(&app, &id, r#"{"is_archived":false}"#).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(restored["is_archived"], false, "恢复落定");
+    let (status, again) = put_account(&app, &id, r#"{"is_archived":false}"#).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        again["version"].as_i64().unwrap(),
+        restored["version"].as_i64().unwrap(),
+        "重复恢复不得 bump version"
+    );
+    assert_eq!(
+        account_op_actions(&conn, &id),
+        vec!["create", "set_archived", "set_archived"],
+        "归档 + 恢复各一条 op，重复恢复零新 op"
+    );
 }

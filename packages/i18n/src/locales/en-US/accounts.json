@@ -52,6 +52,7 @@
   "archived": {
     "title": "Archived",
     "summary": "{count} accounts · total {total}",
+    "summarySeparator": "; ",
     "expand": "Expand archived accounts",
     "collapse": "Collapse archived accounts",
     "suffix": " (Archived)"
