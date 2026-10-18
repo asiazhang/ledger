@@ -2,6 +2,7 @@
 import { errorMessage } from "@ledger/utils/errors";
 import { centsToYuan, formatAmount, yuanToCents } from "@ledger/money";
 import { computed, h, onMounted, ref } from "vue";
+import type { VNode } from "vue";
 import {
   NCard,
   NButton,
@@ -43,6 +44,7 @@ import {
 } from "@/accounts/credit-card";
 import { ACCOUNT_TYPES } from "@ledger/types";
 import type { AccountBalance, AccountInput, AccountType, AccountUpdateInput } from "@ledger/types";
+import { countUnfinishedPlansUsingAccount } from "@/scheduled/plan-usage";
 
 const reference = useReferenceStore();
 const savingsGoalsStore = useSavingsGoalsStore();
@@ -205,13 +207,55 @@ function confirmDelete(row: AccountBalance) {
 // ---------------------------------------------------------------------------
 // 归档 / 恢复（spec #1952 / ADR-0142）：收纳态——不改任何金额口径（余额、合计、
 // 净资产一律照旧计入），只把行从主表移到页底「已归档」分区。
-// 确认框本票保持最小形态（标题 + 一句通用正文 + 确认/取消）：余额声明与进行中
-// 计划数提示归 #1955，届时在 archiveDialogContent 里加句即可（结构与 i18n 单点）。
+// 确认框把真话说清楚（#1955 / ADR-0142 决策 6）：余额非零时显示当前余额并声明
+// 「仍计入净资产与余额合计」，被未结束计划引用时提示计划数量——**两者都不阻断**
+// 归档（归档不是停用），余额为零 / 无计划引用时不追加任何句子。
 // ---------------------------------------------------------------------------
 
-/** 确认框正文（#1955 的富化口：余额非零声明、进行中计划数提示均从这一处追加）。 */
-function archiveDialogContent(row: AccountBalance): string {
-  return t("accounts.archiveDialog.content", { name: row.account.name });
+/** 确认框多句正文的行距容器：纵排、自然换行，不设固定宽度（移动档窄屏仍可读）；
+ *  左对齐（弹窗 icon-top 形态的正文默认居中，多句居中不好读）。 */
+const ARCHIVE_DIALOG_LINES_STYLE =
+  "display: flex; flex-direction: column; gap: 6px; text-align: start;";
+
+/**
+ * 确认框正文（#1955）：一句通用正文 + 余额非零声明 + 未结束计划数提示。
+ *
+ * - 余额句**经 formatAmount**（与列表同一格式化接缝，金额隐私模式下自动掩码），
+ *   并指明退出净资产的唯一合法路径是「调整余额」归零（ADR-0142 决策 1：归档不承载
+ *   金额语义，坏账核销走余额调整）。
+ * - 计划句只陈述数量与「不停用」，不含任何禁用确认按钮的副作用。
+ * - 无可说的两句时返回**单个字符串**（与 #1953 的渲染形态逐字节相同，不回退）。
+ */
+function archiveDialogContent(row: AccountBalance, unfinishedPlanCount: number): string | VNode {
+  const lines: string[] = [t("accounts.archiveDialog.content", { name: row.account.name })];
+  if (row.balance_cents !== 0) {
+    lines.push(
+      t("accounts.archiveDialog.balance", {
+        amount: formatAmount(row.balance_cents, reference.getCurrency(row.account.currency_code)),
+      }),
+    );
+  }
+  if (unfinishedPlanCount > 0) {
+    lines.push(t("accounts.archiveDialog.plans", { count: unfinishedPlanCount }));
+  }
+  if (lines.length === 1) return lines[0];
+  return h(
+    "div",
+    { style: ARCHIVE_DIALOG_LINES_STYLE },
+    lines.map((line) => h("div", null, line)),
+  );
+}
+
+/** 引用该账户的未结束计划数（判据单一出处：`@/scheduled/plan-usage`）。
+ *  读一次计划清单；**读失败按 0 处理**——计划数提示是佐证信息不是守卫（ADR-0142
+ *  决策 6：不阻断），不让辅信息的读失败挡住用户的收纳动作（同 PlanDetailModal 等
+ *  既有「伴生信息降级」取舍）。 */
+async function unfinishedPlanCountFor(accountId: string): Promise<number> {
+  try {
+    return countUnfinishedPlansUsingAccount(await api.listScheduledTransactions(), accountId);
+  } catch {
+    return 0;
+  }
 }
 
 // 异步失败统一走 Loadable（与储蓄目标归档同款，ADR-0040）：错误捕获、文案归一
@@ -243,11 +287,14 @@ async function archive(row: AccountBalance) {
   }
 }
 
-/** 归档二次确认（与删除同语义：遮罩点击不构成关闭意图）。 */
-function confirmArchive(row: AccountBalance) {
+/** 归档二次确认（与删除同语义：遮罩点击不构成关闭意图）。计划数读取是异步的
+ *  （确认框正文要带上数量），读完才开框：不先开一个空框再补内容，避免用户点中
+ *  一个信息未就位的确认按钮。 */
+async function confirmArchive(row: AccountBalance) {
+  const unfinishedPlanCount = await unfinishedPlanCountFor(row.account.id);
   dialog.warning({
     title: t("accounts.archiveDialog.title"),
-    content: archiveDialogContent(row),
+    content: () => archiveDialogContent(row, unfinishedPlanCount),
     positiveText: t("accounts.archiveDialog.positive"),
     negativeText: t("accounts.archiveDialog.negative"),
     maskClosable: false,
@@ -490,7 +537,7 @@ async function submitAdjust() {
 const rowMenu = useRowContextMenu<AccountBalance>((key, row) => {
   if (key === "edit") openEdit(row);
   else if (key === "adjust-balance") openAdjust(row);
-  else if (key === "archive") confirmArchive(row);
+  else if (key === "archive") void confirmArchive(row);
   else if (key === "restore") void restore(row);
   else if (key === "delete") confirmDelete(row);
 });
