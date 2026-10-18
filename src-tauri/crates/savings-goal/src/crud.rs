@@ -233,6 +233,7 @@ pub fn update_savings_goal(
                     credit_limit_cents: None,
                     statement_day: None,
                     due_day: None,
+                    is_archived: None,
                 },
             )?;
         }
@@ -446,6 +447,18 @@ fn write_delete(conn: &Connection, id: &str) -> Result<()> {
 ///（IPC 与 HTTP 同构调用）先行调用本函数——命中任一未删除目标的绑定即码化拒绝，
 /// 引导先在目标页删除对应目标。守卫只读、零写入、零信号。
 pub fn ensure_account_not_goal_bound(conn: &Connection, account_id: &str) -> Result<()> {
+    if account_has_bound_goal(conn, account_id)? {
+        return Err(AppError::coded(
+            "savings-goal.account-in-use",
+            "该账户是攒钱目标专属账户，请先删除对应的攒钱目标",
+        ));
+    }
+    Ok(())
+}
+
+/// 绑定判定谓词（归档 / 禁删两个守卫共用的单一查询）：账户是否绑定任一未删除
+/// 目标（goals.account_id 1 目标 : 1 账户，V032）。
+fn account_has_bound_goal(conn: &Connection, account_id: &str) -> Result<bool> {
     let bound: Option<i64> = conn
         .query_row(
             "SELECT 1 FROM goals WHERE account_id=?1 AND is_deleted=0 LIMIT 1",
@@ -453,10 +466,20 @@ pub fn ensure_account_not_goal_bound(conn: &Connection, account_id: &str) -> Res
             |row| row.get(0),
         )
         .optional()?;
-    if bound.is_some() {
+    Ok(bound.is_some())
+}
+
+/// 绑定目标的账户拒绝归档守卫（壳层编排消费，spec #1952 / ADR-0142 决策 6 /
+/// issue #1953）：目标进度 = 专属账户余额，账户归档会把「进度 = 余额」的读口径
+/// 打成两套收纳语义。与禁删守卫是两个动作两句话：错误码用 account 命名空间
+/// （拒绝发生在账户动作上），文案指向「归档目标本身」——目标自己的归档才是
+/// 同语义的收纳（ADR-0133），不复用禁删的「请先删除」码与文案。守卫只读、
+/// 零写入、零信号。
+pub fn ensure_account_can_archive(conn: &Connection, account_id: &str) -> Result<()> {
+    if account_has_bound_goal(conn, account_id)? {
         return Err(AppError::coded(
-            "savings-goal.account-in-use",
-            "该账户是攒钱目标专属账户，请先删除对应的攒钱目标",
+            "account.goal-bound-cannot-archive",
+            "该账户是攒钱目标专属账户，请归档对应的攒钱目标",
         ));
     }
     Ok(())

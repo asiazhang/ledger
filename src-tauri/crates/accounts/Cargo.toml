@@ -38,6 +38,10 @@ ledger-infra = { path = "../infra", features = ["test-utils"] }
 # 报表域跨域对拍（黑洞账户交易计入报表）：#1108 起根包别名再导出清除，跨域
 # 引用以 crate 本名直呼（单实例，直呼与经根包再导出同一实例）。
 ledger-reports = { path = "../reports" }
+# 归档命令（spec #1952 / ADR-0142）：域单测需解开 op 载荷，核「Update 载荷不带
+# 归档态、归档走独立 set_archived op」——与域内生产依赖无关，只在测试目标生效
+# （categories crate 同款留痕）。
+serde_json = "1"
 
 # 六件套易 panic 构造门禁经 workspace 继承（ADR-0060 / spec #1086 门禁前置）：
 # 本行是继承接线，缺失即门禁静默消失，由 scripts/check-structure.ts 守门。

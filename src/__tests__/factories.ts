@@ -70,6 +70,7 @@ export function makeAccount(partial: Partial<Account> & { id: string }): Account
     initial_balance_cents: 0,
     created_at: "2026-01-01T00:00:00Z",
     is_hidden: false,
+    is_archived: false,
     updated_at: "2026-01-01T00:00:00Z",
     version: 1,
     device_id: "test",

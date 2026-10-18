@@ -137,6 +137,19 @@ function buildStatusFilterOptions(kind: ScheduledKind): ScheduledPlanStatusOptio
   return STATUS_FILTER_KEYS[kind].map((key) => ({ key, label: scheduledStatusLabel(key) }));
 }
 
+/**
+ * Plan Lifecycle「未结束」判据（`active` | `paused`）：全仓唯一出处。
+ *
+ * 三个消费面同吃这一份，不得各写一份字面量：
+ * - 本模块行操作矩阵——取消限「未结束」（详见 {@link rowActions} 注释）；
+ * - 订阅页签行内自建编辑描述符的可用性（`src/scheduled/SubscriptionsPane.vue`）；
+ * - 账户归档确认框的「未结束计划数」提示（`src/scheduled/plan-usage.ts`）。
+ * `paused` 计入：暂停后 resume 照常生成期次，账户仍持在计划上。
+ */
+export function isUnfinishedStatus(status: ScheduledStatus): boolean {
+  return status === "active" || status === "paused";
+}
+
 // ---------------------------------------------------------------------------
 // 工厂入参与返回面
 // ---------------------------------------------------------------------------
@@ -248,7 +261,8 @@ export function useScheduledPlanList<E>(
 
   /**
    * 行操作描述符（按 Plan Lifecycle 状态的可用性矩阵）：期次详情全状态可用；
-   * 暂停限 active、恢复限 paused、取消限 active/paused（不删已生成交易与历史期次）。
+   * 暂停限 active、恢复限 paused、取消限「未结束」（`isUnfinishedStatus` = active | paused，
+   * 集合定义只此一份，账户归档提示同吃；不删已生成交易与历史期次）。
    * run 经 void 触发，避免浮 promise；确认弹层由适配器按 confirm 文案渲染。
    * 标签与确认文案调用时经 t() 现取（适配器在渲染中调用本函数，切语言即时生效）。
    */
@@ -280,7 +294,7 @@ export function useScheduledPlanList<E>(
       {
         key: "cancel",
         label: t("scheduled.action.cancel"),
-        available: status === "active" || status === "paused",
+        available: isUnfinishedStatus(status),
         confirm: cancelConfirmText(),
         run: () => void changeStatus(id, "cancelled"),
       },

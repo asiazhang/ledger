@@ -774,9 +774,28 @@ async fn legacy_single_file_checkpoint_bootstrap_lands_two_dbs_and_converges() {
     // 其通道配置随快照整库换入被引导端继承）。
     configure_channel(&app_legacy, &stub);
 
-    // 快照前的旧端业务数据（经公开命令，op 落 main 四表）。
-    let (acc_id, txn_a) = seed_account_and_expense(&app_legacy, 10_000, "旧端快照账").await;
+    // 快照前的旧端业务数据（op 落 main 四表）。账户行**直置**而不走账户写命令：
+    // 停版世界的 accounts 停在 V037（账户归档列）之前，而当前账户写入口无条件携带
+    // `is_archived`（V037 排在拆库迁移之后，不能提前补列——引导端的迁移链会从
+    // 停版位重放 V036/V037，预补列必撞 duplicate column）。故按 `sync-engine`
+    // `legacy_single_file_snapshot_...` 同款取直置行写法；本测断言面是快照业务数据
+    // 与四表归位，账户创建 op 不在其列（记账仍经壳层公开命令，op 随之落 main）。
     let legacy_conn = app_legacy.state::<DbState>().conn.clone();
+    let acc_id = tauri_app_lib::test_support::seed_account(
+        &legacy_conn.lock().unwrap(),
+        "acc-legacy",
+        "现金",
+        "cash",
+        "CNY",
+        0,
+    );
+    let txn_a = transactions::create_transaction(
+        app_legacy.state(),
+        app_legacy.clone(),
+        expense_input(&acc_id, 10_000, "旧端快照账"),
+    )
+    .await
+    .expect("旧端记账应成功");
     let dev_src = {
         let guard = legacy_conn.lock().unwrap();
         guard

@@ -2,18 +2,42 @@ import { computed } from "vue";
 import type { Ref } from "vue";
 import { useReferenceStore } from "@/stores/reference";
 import { useAppStore } from "@/stores/app";
+import { pinArchivedAccountOption, type AccountOption } from "@/accounts/account-option-pin";
 
 export function useFormShared() {
   const reference = useReferenceStore();
 
-  const accountOptions = computed(() =>
-    reference.accounts.map((a) => ({ label: a.name, value: a.id })),
-  );
+  /**
+   * 通用账户下拉候选面：消费参考数据的**可选择账户**单一派生
+   * （= 账户去归档，spec #1952 / ADR-0142 决策 4），归档账户不进新选择。
+   * 编辑面「已选值恰是归档账户」的补值不在这里做——用 {@link usePinnedAccountOptions}
+   * （选项面收窄与补值分开：补值只在有已存值的地方生效）。
+   */
+  const accountOptions = computed<AccountOption[]>(() => reference.selectableAccountOptions);
   const currencyOptions = computed(() =>
     reference.currencies.map((c) => ({ label: `${c.name} (${c.code})`, value: c.code })),
   );
 
   return { reference, accountOptions, currencyOptions };
+}
+
+/**
+ * 账户选项 + 编辑面补值（spec #1952 / ADR-0142 决策 4 的共享小工具，纯函数见
+ * `@/accounts/account-option-pin`）：在当前已选值是归档账户时把它补回选项头部并标
+ * 「已归档」，其余情形原数组原样返回（零开销）。
+ *
+ * `baseOptions` 是「新选择面」——已是收窄后的候选（可选择账户派生，可按币种/侧别/
+ * 类别再过滤）。补值在收窄**之后**做，故过滤规则（同币种、同方向侧别等）不会把已存值
+ * 弄丢：编辑存量行时值本身仍可能不满足过滤（存量脏行），也能读得出来、不被静默改挂。
+ */
+export function usePinnedAccountOptions(
+  accountId: Ref<string | null | undefined>,
+  baseOptions: Ref<AccountOption[]>,
+) {
+  const reference = useReferenceStore();
+  return computed(() =>
+    pinArchivedAccountOption(baseOptions.value, accountId.value, reference.accountMap),
+  );
 }
 /**
  * 交易币种随所选账户推导（ADR-0134 决策 5 的共享推导单点，issue #1775）：

@@ -59,6 +59,7 @@ import { registerViewReset } from "@/composables/viewResetRegistry";
 import { useTransactionModalState } from "@ledger/transaction-modal-state";
 import { api } from "@ledger/api";
 import { useReferenceStore } from "@/stores/reference";
+import { usePinnedAccountOptions } from "@/composables/useFormShared";
 import { useItemsStore } from "@/item/items";
 import { useTransactionViewPreferencesStore } from "@/transaction/transaction-view-preferences";
 import {
@@ -146,9 +147,13 @@ const quickRange = computed<NullableDateRange>({
   set: (range) => setFilter({ dateFrom: range.from, dateTo: range.to }),
 });
 
-/** 账户下拉选项：来自参考数据账户映射（list_accounts 不含 is_hidden 黑洞账户，沿用既有边界）。 */
-const accountOptions = computed(() =>
-  reference.accounts.map((a) => ({ label: a.name, value: a.id })),
+/** 账户下拉选项：参考数据的**可选择账户**单一派生（list_accounts 不含 is_hidden 黑洞
+ * 账户，沿用既有边界；归档账户不进新选择，spec #1952 / ADR-0142 决策 4）。当前筛选值
+ * 恰是归档账户（从已归档行下钻 `?account=<id>` 进来）时补回选项并标「已归档」——
+ * 值仍保持选中、过滤照旧生效，不静默清筛选也不露裸 uuid。 */
+const accountOptions = usePinnedAccountOptions(
+  computed(() => filters.involvingAccountId),
+  computed(() => reference.selectableAccountOptions),
 );
 
 /** 商户下拉选项：来自 merchantMap（在用 + 软删，issue #191）——

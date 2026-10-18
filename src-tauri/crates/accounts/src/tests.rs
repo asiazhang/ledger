@@ -13,7 +13,7 @@ fn setup() -> rusqlite::Connection {
 fn list_accounts(conn: &rusqlite::Connection) -> Vec<Account> {
     query_all(
         conn,
-        "SELECT id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted,is_hidden,credit_limit_cents,statement_day,due_day \
+        "SELECT id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted,is_hidden,is_archived,credit_limit_cents,statement_day,due_day \
          FROM accounts WHERE is_deleted=0 AND is_hidden=0 ORDER BY created_at",
         [],
     )
@@ -678,6 +678,7 @@ fn update_account_renames_and_bumps_version() {
             credit_limit_cents: None,
             statement_day: None,
             due_day: None,
+            is_archived: None,
         },
     )
     .unwrap();
@@ -700,6 +701,7 @@ fn update_account_rejects_empty_name() {
             credit_limit_cents: None,
             statement_day: None,
             due_day: None,
+            is_archived: None,
         },
     )
     .unwrap_err();
@@ -721,6 +723,7 @@ fn update_account_rejects_currency_change_when_has_transactions() {
             credit_limit_cents: None,
             statement_day: None,
             due_day: None,
+            is_archived: None,
         },
     )
     .unwrap_err();
@@ -746,6 +749,7 @@ fn update_account_allows_currency_change_without_transactions() {
             credit_limit_cents: None,
             statement_day: None,
             due_day: None,
+            is_archived: None,
         },
     )
     .unwrap();
@@ -768,6 +772,7 @@ fn update_account_rejects_unknown_currency() {
             credit_limit_cents: None,
             statement_day: None,
             due_day: None,
+            is_archived: None,
         },
     )
     .unwrap_err();
@@ -787,6 +792,7 @@ fn update_account_returns_not_found_for_missing_id() {
             credit_limit_cents: None,
             statement_day: None,
             due_day: None,
+            is_archived: None,
         },
     )
     .unwrap_err();
@@ -1201,6 +1207,7 @@ fn update_credit_terms_supports_set_keep_and_clear() {
             credit_limit_cents: None,
             statement_day: None,
             due_day: None,
+            is_archived: None,
         },
     )
     .unwrap();
@@ -1216,6 +1223,7 @@ fn update_credit_terms_supports_set_keep_and_clear() {
             credit_limit_cents: Some(Some(2_000_000)),
             statement_day: Some(Some(10)),
             due_day: None,
+            is_archived: None,
         },
     )
     .unwrap();
@@ -1231,6 +1239,7 @@ fn update_credit_terms_supports_set_keep_and_clear() {
             credit_limit_cents: Some(None),
             statement_day: None,
             due_day: Some(None),
+            is_archived: None,
         },
     )
     .unwrap();
@@ -1260,6 +1269,7 @@ fn update_rejects_invalid_credit_terms_without_writing() {
             credit_limit_cents: Some(Some(0)),
             statement_day: Some(Some(99)),
             due_day: None,
+            is_archived: None,
         },
     )
     .unwrap_err();
@@ -1292,6 +1302,7 @@ fn update_non_credit_account_rejects_credit_terms() {
             credit_limit_cents: None,
             statement_day: Some(Some(5)),
             due_day: None,
+            is_archived: None,
         },
     )
     .unwrap_err();
@@ -1354,6 +1365,7 @@ fn credit_terms_do_not_change_account_balance() {
             credit_limit_cents: Some(Some(5_000_000)),
             statement_day: Some(Some(5)),
             due_day: Some(Some(25)),
+            is_archived: None,
         },
     )
     .unwrap();
@@ -1368,6 +1380,7 @@ fn credit_terms_do_not_change_account_balance() {
             credit_limit_cents: Some(None),
             statement_day: Some(None),
             due_day: Some(None),
+            is_archived: None,
         },
     )
     .unwrap();
@@ -1377,4 +1390,379 @@ fn credit_terms_do_not_change_account_balance() {
         before,
         "缓存口径与实时口径同值"
     );
+}
+
+// ---------------------------------------------------------------------------
+// 账户归档（spec #1952 / ADR-0142 / issue #1953）：归档是收纳态——只翻标志，
+// 不改任何金额口径；幂等（已目标态零 UPDATE 零 op）；读面零过滤。
+// ---------------------------------------------------------------------------
+
+/// 归档态读回（测试侧同形 SELECT：域读面零过滤的直接探针）。
+fn archived_flag(conn: &rusqlite::Connection, id: &str) -> bool {
+    conn.query_row(
+        "SELECT is_archived FROM accounts WHERE id=?1",
+        rusqlite::params![id],
+        |r| r.get::<_, i64>(0),
+    )
+    .map(|v| v != 0)
+    .unwrap()
+}
+
+/// 本机 op 日志行数（幂等断言：重复归档不重复产 op）。
+fn op_count(conn: &rusqlite::Connection) -> i64 {
+    conn.query_row("SELECT COUNT(*) FROM sync.sync_ops", [], |r| r.get(0))
+        .unwrap()
+}
+
+/// 本机 op 日志里指定动作的载荷（按记录顺序，测试侧形状探针：审 Update 载荷不
+/// 携带归档态）。
+fn op_payloads(conn: &rusqlite::Connection) -> Vec<serde_json::Value> {
+    let mut stmt = conn
+        .prepare("SELECT payload FROM sync.sync_ops ORDER BY clock")
+        .unwrap();
+    stmt.query_map([], |r| r.get::<_, String>(0))
+        .unwrap()
+        .map(|row| serde_json::from_str(&row.unwrap()).unwrap())
+        .collect()
+}
+
+#[test]
+fn archive_and_restore_roundtrip_flips_flag_and_bumps_version() {
+    let conn = setup();
+    insert_account(&conn, "acc-arc-1", "借出·张三", "receivable", "CNY", 0);
+
+    super::set_account_archived(&conn, "acc-arc-1", true).unwrap();
+    let archived = super::get_account(&conn, "acc-arc-1").unwrap();
+    assert!(archived.is_archived, "归档后标志应为 true");
+    assert_eq!(archived.version, 2, "归档是一次账户写入，递增 version");
+
+    super::set_account_archived(&conn, "acc-arc-1", false).unwrap();
+    let restored = super::get_account(&conn, "acc-arc-1").unwrap();
+    assert!(!restored.is_archived, "恢复后标志应回到 false");
+}
+
+#[test]
+fn archive_is_idempotent_no_second_op_no_version_bump() {
+    let conn = setup();
+    insert_account(&conn, "acc-arc-2", "借出·李四", "receivable", "CNY", 0);
+    super::set_account_archived(&conn, "acc-arc-2", true).unwrap();
+    let ops_after_first = op_count(&conn);
+    let version_after_first = super::get_account(&conn, "acc-arc-2").unwrap().version;
+
+    // 重复归档：不报错、零 UPDATE（version 不动）、零 op。
+    super::set_account_archived(&conn, "acc-arc-2", true).unwrap();
+    assert_eq!(
+        super::get_account(&conn, "acc-arc-2").unwrap().version,
+        version_after_first,
+        "已是目标态时不得再 bump version（零 UPDATE）"
+    );
+    assert_eq!(op_count(&conn), ops_after_first, "已是目标态时不得再产 op");
+}
+
+/// spec 最关键断言：归档前后该账户余额、全部账户余额合计、净资产读数完全不变。
+#[test]
+fn archive_keeps_balance_totals_and_net_worth_unchanged() {
+    let conn = setup();
+    insert_account(&conn, "acc-arc-3", "现金", "cash", "CNY", 0);
+    insert_account(&conn, "acc-arc-4", "借出·王五", "receivable", "CNY", 0);
+    insert_tx(&conn, "tx-arc-3a", "income", 100_000, "acc-arc-3", None);
+    insert_tx(
+        &conn,
+        "tx-arc-4a",
+        "transfer",
+        30_000,
+        "acc-arc-3",
+        Some("acc-arc-4"),
+    );
+
+    let balance_before = crate::balance::cached_balance(&conn, "acc-arc-4").unwrap();
+    let totals_before: i64 = crate::balance::list_account_balances_with_visibility(&conn, false)
+        .unwrap()
+        .iter()
+        .map(|row| row.balance_cents)
+        .sum();
+    let net_worth_before =
+        tauri_app_lib::ledger_dashboard::net_worth::query_dashboard_overview(&conn)
+            .unwrap()
+            .net_worth_cents;
+
+    super::set_account_archived(&conn, "acc-arc-4", true).unwrap();
+
+    assert_eq!(
+        crate::balance::cached_balance(&conn, "acc-arc-4").unwrap(),
+        balance_before,
+        "归档不改该账户余额"
+    );
+    let totals_after: i64 = crate::balance::list_account_balances_with_visibility(&conn, false)
+        .unwrap()
+        .iter()
+        .map(|row| row.balance_cents)
+        .sum();
+    assert_eq!(totals_after, totals_before, "归档不改全部账户余额合计");
+    let net_worth_after =
+        tauri_app_lib::ledger_dashboard::net_worth::query_dashboard_overview(&conn)
+            .unwrap()
+            .net_worth_cents;
+    assert_eq!(net_worth_after, net_worth_before, "归档不改净资产读数");
+}
+
+#[test]
+fn archive_allows_nonzero_balance() {
+    let conn = setup();
+    insert_account(&conn, "acc-arc-5", "借出·赵六", "receivable", "CNY", 0);
+    insert_tx(&conn, "tx-arc-5a", "income", 50_000, "acc-arc-5", None);
+    assert_eq!(
+        crate::balance::cached_balance(&conn, "acc-arc-5").unwrap(),
+        50_000
+    );
+
+    super::set_account_archived(&conn, "acc-arc-5", true).unwrap();
+    assert!(archived_flag(&conn, "acc-arc-5"), "余额非零允许归档");
+}
+
+#[test]
+fn set_account_archived_returns_not_found_for_missing_id() {
+    let conn = setup();
+    let err = super::set_account_archived(&conn, "不存在的id", true).unwrap_err();
+    assert!(matches!(
+        err,
+        AppError::Coded {
+            class: ErrClass::NotFound,
+            ..
+        }
+    ));
+    assert!(err.to_string().contains("账户不存在"));
+}
+
+/// 读面零过滤（ADR-0142 决策 4）：归档账户继续出现在列表与余额清单（带标志），
+/// 名称映射与历史可读才成立。
+#[test]
+fn archived_account_stays_in_read_faces_with_flag() {
+    let conn = setup();
+    insert_account(&conn, "acc-arc-6", "借出·钱七", "receivable", "CNY", 0);
+    super::set_account_archived(&conn, "acc-arc-6", true).unwrap();
+
+    let listed = list_accounts(&conn);
+    let row = listed
+        .iter()
+        .find(|a| a.id == "acc-arc-6")
+        .expect("列表读面不过滤归档账户");
+    assert!(row.is_archived, "列表读回携带归档标志");
+
+    let balances = crate::balance::list_account_balances_with_visibility(&conn, false).unwrap();
+    assert!(
+        balances.iter().any(|b| b.account.id == "acc-arc-6"),
+        "余额清单不过滤归档账户"
+    );
+}
+
+/// 重放臂与本地写同一执行协议（同 UPDATE + 簿记戳 + touch），且重放不产 op；
+/// 重放自身幂等（同参数重放两次，version 只走一次）。
+#[test]
+fn replay_set_archived_matches_local_protocol_without_op() {
+    let conn = setup();
+    insert_account(&conn, "acc-arc-7", "借出·孙八", "receivable", "CNY", 0);
+
+    crate::core::replay_set_archived(&conn, "acc-arc-7", true).unwrap();
+    let replayed = super::get_account(&conn, "acc-arc-7").unwrap();
+    assert!(replayed.is_archived, "重放后标志落定");
+    assert_eq!(replayed.version, 2, "重放走同一写协议（bump version）");
+    assert_eq!(op_count(&conn), 0, "重放不产出 op");
+
+    crate::core::replay_set_archived(&conn, "acc-arc-7", true).unwrap();
+    assert_eq!(
+        super::get_account(&conn, "acc-arc-7").unwrap().version,
+        2,
+        "重放幂等：已目标态不再 bump"
+    );
+}
+
+/// 编辑入口的归档可选键（spec #1952 / ADR-0142 决策 5）：`update_account` 解出
+/// 该键并落定；Update 命令载荷**不**携带归档态（旧日志重放不会把归档刷回未归档——
+/// 落定走独立 SetArchived op）。
+#[test]
+fn update_account_resolves_archive_key_without_putting_it_in_update_payload() {
+    let conn = setup();
+    insert_account(&conn, "acc-arc-8", "借出·周九", "receivable", "CNY", 0);
+
+    super::update_account(
+        &conn,
+        "acc-arc-8",
+        AccountUpdateInput {
+            name: Some("借出·周九（已收回）".into()),
+            currency_code: None,
+            credit_limit_cents: None,
+            statement_day: None,
+            due_day: None,
+            is_archived: Some(true),
+        },
+    )
+    .unwrap();
+
+    let archived = super::get_account(&conn, "acc-arc-8").unwrap();
+    assert!(archived.is_archived, "编辑载荷携带归档键即落定归档");
+    assert_eq!(
+        archived.name, "借出·周九（已收回）",
+        "改名与归档同一事务落定"
+    );
+
+    let payloads = op_payloads(&conn);
+    assert_eq!(
+        payloads.len(),
+        2,
+        "Update + SetArchived 各一条：{payloads:?}"
+    );
+    // 信封形态：`{entity, payload}`（record_local 单点的落库形态），动作住
+    // 内层 `payload.action`（AccountCommand 的 serde tag）。
+    assert_eq!(payloads[0]["entity"], "account");
+    let update = &payloads[0]["payload"];
+    assert_eq!(update["action"], "update", "首条仍是编辑 op");
+    assert!(
+        update.get("archived").is_none() && update.get("is_archived").is_none(),
+        "Update 载荷不携带归档态（旧日志重放不刷回未归档）：{update}"
+    );
+    assert_eq!(payloads[1]["payload"]["action"], "set_archived");
+    assert_eq!(payloads[1]["payload"]["archived"], true);
+
+    // 恢复方向同路径（`false` 落定）。
+    super::update_account(
+        &conn,
+        "acc-arc-8",
+        AccountUpdateInput {
+            name: None,
+            currency_code: None,
+            credit_limit_cents: None,
+            statement_day: None,
+            due_day: None,
+            is_archived: Some(false),
+        },
+    )
+    .unwrap();
+    assert!(
+        !super::get_account(&conn, "acc-arc-8").unwrap().is_archived,
+        "恢复落定"
+    );
+}
+
+/// 归档-only 编辑（PUT 只带 `is_archived`，无任何编辑键）：只产一条 `SetArchived`
+/// op、只写一次账户行——编辑路径在「无编辑键」时必须整段不执行（AC「归档 / 恢复
+/// 幂等（重复调用不报错、不重复产同步 op）」在编辑入口的落点）。
+#[test]
+fn update_account_archive_only_emits_single_set_archived_op() {
+    let conn = setup();
+    insert_account(&conn, "acc-arc-9", "借出·吴十", "receivable", "CNY", 0);
+    let version_before = super::get_account(&conn, "acc-arc-9").unwrap().version;
+    let ops_before = op_count(&conn);
+
+    super::update_account(
+        &conn,
+        "acc-arc-9",
+        AccountUpdateInput {
+            name: None,
+            currency_code: None,
+            credit_limit_cents: None,
+            statement_day: None,
+            due_day: None,
+            is_archived: Some(true),
+        },
+    )
+    .unwrap();
+
+    let archived = super::get_account(&conn, "acc-arc-9").unwrap();
+    assert!(archived.is_archived, "归档键落定");
+    assert_eq!(
+        archived.version,
+        version_before + 1,
+        "归档-only 编辑只写一次账户行（不先走一遍编辑路径）"
+    );
+
+    let payloads = op_payloads(&conn);
+    assert_eq!(
+        payloads.len() as i64,
+        ops_before + 1,
+        "归档-only 编辑只产一条 op：{payloads:?}"
+    );
+    let set_archived: Vec<&serde_json::Value> = payloads
+        .iter()
+        .filter(|p| p["payload"]["action"] == "set_archived")
+        .collect();
+    assert_eq!(set_archived.len(), 1, "恰一条 SetArchived op：{payloads:?}");
+    assert_eq!(set_archived[0]["payload"]["archived"], true);
+    assert!(
+        !payloads.iter().any(|p| p["payload"]["action"] == "update"),
+        "无编辑键时不得产 Update op：{payloads:?}"
+    );
+}
+
+/// 归档-only 编辑的幂等：已是目标态时重复同一 PUT——零 op、零 version bump、不报错。
+#[test]
+fn update_account_archive_only_is_idempotent() {
+    let conn = setup();
+    insert_account(&conn, "acc-arc-10", "借出·郑十一", "receivable", "CNY", 0);
+    let input = || AccountUpdateInput {
+        name: None,
+        currency_code: None,
+        credit_limit_cents: None,
+        statement_day: None,
+        due_day: None,
+        is_archived: Some(true),
+    };
+    super::update_account(&conn, "acc-arc-10", input()).unwrap();
+    let version_after_first = super::get_account(&conn, "acc-arc-10").unwrap().version;
+    let ops_after_first = op_count(&conn);
+
+    // 重复同一 PUT：不报错、零 UPDATE（version 不动）、零 op。
+    super::update_account(&conn, "acc-arc-10", input()).unwrap();
+    assert_eq!(
+        super::get_account(&conn, "acc-arc-10").unwrap().version,
+        version_after_first,
+        "重复归档-only 编辑不得再写账户行"
+    );
+    assert_eq!(
+        op_count(&conn),
+        ops_after_first,
+        "重复归档-only 编辑不得再产 op"
+    );
+}
+
+/// 合并请求（改名 + 归档）仍是「Update + SetArchived 各一条」，同一事务内落定——
+/// 编辑路径只在真的有编辑键时才与归档动作并行执行。
+#[test]
+fn update_account_with_edit_and_archive_emits_both_ops() {
+    let conn = setup();
+    insert_account(&conn, "acc-arc-11", "借出·冯十二", "receivable", "CNY", 0);
+    let version_before = super::get_account(&conn, "acc-arc-11").unwrap().version;
+
+    super::update_account(
+        &conn,
+        "acc-arc-11",
+        AccountUpdateInput {
+            name: Some("借出·冯十二（已收回）".into()),
+            currency_code: None,
+            credit_limit_cents: None,
+            statement_day: None,
+            due_day: None,
+            is_archived: Some(true),
+        },
+    )
+    .unwrap();
+
+    let updated = super::get_account(&conn, "acc-arc-11").unwrap();
+    assert_eq!(updated.name, "借出·冯十二（已收回）");
+    assert!(updated.is_archived);
+    assert_eq!(
+        updated.version,
+        version_before + 2,
+        "改名与归档各写一次账户行"
+    );
+    let actions: Vec<String> = op_payloads(&conn)
+        .iter()
+        .map(|p| {
+            p["payload"]["action"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string()
+        })
+        .collect();
+    assert_eq!(actions, vec!["update", "set_archived"], "两条 op 各一条");
 }

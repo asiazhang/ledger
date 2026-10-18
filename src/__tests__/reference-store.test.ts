@@ -22,6 +22,7 @@ const mockAccounts: Account[] = [
     device_id: "test",
     is_deleted: false,
     is_hidden: false,
+    is_archived: false,
   },
   {
     id: "acc-2",
@@ -35,6 +36,7 @@ const mockAccounts: Account[] = [
     device_id: "test",
     is_deleted: false,
     is_hidden: false,
+    is_archived: false,
   },
 ];
 
@@ -221,6 +223,74 @@ describe("useReferenceStore", () => {
       { label: "证券账户", value: "acc-inv" },
       { label: "隐藏证券户", value: "acc-inv-hidden" },
     ]);
+  });
+
+  it("账户归档（spec #1952 / ADR-0142 决策 4）：读面零过滤——归档账户照进字典、accountMap 可查名，标志随行披露", async () => {
+    wireInvokeSeam({
+      overrides: {
+        list_accounts: [
+          ...mockAccounts,
+          makeAccount({
+            id: "acc-archived",
+            name: "借出·张三",
+            type: "receivable",
+            is_archived: true,
+          }),
+        ],
+      },
+    });
+    const store = useReferenceStore();
+    await store.refresh();
+    // 归档不是删除：store 不做任何归档过滤（排除只发生在前端选项构造层，#1954），
+    // 否则名称映射与历史下钻断链
+    expect(store.accounts.map((a) => a.id)).toEqual(["acc-1", "acc-2", "acc-archived"]);
+    // 名称映射（AccountLink / 计划行回退名）照常拿到归档账户，标志随行披露
+    expect(store.accountMap.get("acc-archived")?.name).toBe("借出·张三");
+    expect(store.accountMap.get("acc-archived")?.is_archived).toBe(true);
+    expect(store.accountMap.get("acc-1")?.is_archived).toBe(false);
+  });
+
+  it("可选择账户（spec #1952 / ADR-0142 决策 4）：单一派生 = 账户去归档——选项面排除归档，accounts/accountMap 照旧零过滤", async () => {
+    wireInvokeSeam({
+      overrides: {
+        list_accounts: [
+          ...mockAccounts,
+          makeAccount({ id: "acc-inv", name: "证券账户" }),
+          makeAccount({
+            id: "acc-recv-archived",
+            name: "借出·张三",
+            type: "receivable",
+            is_archived: true,
+          }),
+          makeAccount({ id: "acc-inv-archived", name: "旧证券户", is_archived: true }),
+        ],
+      },
+    });
+    const store = useReferenceStore();
+    await store.refresh();
+    // 排除只发生在选项构造层：账户字典与名称映射仍是全量（历史可读、可下钻）
+    expect(store.accounts.map((a) => a.id)).toEqual([
+      "acc-1",
+      "acc-2",
+      "acc-inv",
+      "acc-recv-archived",
+      "acc-inv-archived",
+    ]);
+    expect(store.accountMap.get("acc-recv-archived")?.name).toBe("借出·张三");
+    // 可选择账户 = 去归档（读口径谓词 investmentAccounts 不动，选项面另有变体）
+    expect(store.selectableAccounts.map((a) => a.id)).toEqual(["acc-1", "acc-2", "acc-inv"]);
+    expect(store.selectableAccountOptions).toEqual([
+      { label: "现金", value: "acc-1" },
+      { label: "招商银行", value: "acc-2" },
+      { label: "证券账户", value: "acc-inv" },
+    ]);
+    // 投资账户下拉候选面同样排除归档（#1830 投影 + 归档收纳），读口径 investmentAccounts 不变
+    expect(store.investmentAccounts.map((a) => a.id)).toEqual(["acc-inv", "acc-inv-archived"]);
+    expect(store.selectableInvestmentAccountOptions).toEqual([
+      { label: "证券账户", value: "acc-inv" },
+    ]);
+    // 出资账户候选单一谓词派生亦排除归档（唯一消费者是投资录入表单的选项面）
+    expect(store.fundingCandidateAccounts.map((a) => a.id)).toEqual(["acc-1", "acc-2"]);
   });
 
   it("商户派生映射 merchantMap（含按名字查找 merchantByName）正确", async () => {

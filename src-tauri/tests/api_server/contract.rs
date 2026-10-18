@@ -431,6 +431,13 @@ async fn contract_transaction_input_quantity_describes_split_semantics() {
 /// 加入后实测 30388 字节越 29KB，提至 30KB：超量落在剥离出处引用后的语义文本上，
 /// kind 准入（仅 expense）、数组顺序即对账单顺序与「价格拿不到就留空、不猜不编造」
 /// 是 AI 正确读写购买项的必需语义，不选删描述换预算（同 #1860 决策分支）。
+///
+/// issue #1953 / ADR-0142 触线：账户归档契约面——`Account.is_archived` 与
+/// `AccountUpdateInput.is_archived` 两个字段、`PUT /accounts/{id}` 的可选归档键说明——
+/// 加入后实测 31069 字节越 30KB。描述已按 #1631 先例瘦身至语义必需（收纳态 =
+/// 余额与净资产照旧计入、读面不过滤；可选键缺席 = 不改）后仍越线：本项可省字节
+/// 不足 60（空描述实测 30601），再删就删掉「归档不改金额口径」这条 ADR-0142 的
+/// 核心语义（AI 对账读面需要它），故沿用 #1860 / #1882 分支提至 31KB。
 #[tokio::test]
 async fn contract_size_within_budget() {
     let (app, _) = setup_app();
@@ -446,8 +453,8 @@ async fn contract_size_within_budget() {
     assert_eq!(response.status(), StatusCode::OK);
     let bytes = body_to_bytes(response.into_body()).await;
     assert!(
-        bytes.len() <= 30 * 1024,
-        "紧凑契约方言应保持在预算内（当前 {} 字节，预算 30KB）",
+        bytes.len() <= 31 * 1024,
+        "紧凑契约方言应保持在预算内（当前 {} 字节，预算 31KB）",
         bytes.len()
     );
 }

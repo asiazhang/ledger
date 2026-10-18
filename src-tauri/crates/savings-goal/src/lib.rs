@@ -62,8 +62,8 @@ pub use command::{SavingsGoalCommand, replay_command};
 /// 域 API 再导出：调用面用域语言短名（`savings_goal::create_savings_goal` 等），
 /// 先例 `policy` / `item` / `physical_asset` 入口再导出。
 pub use crud::{
-    archive_savings_goal, create_savings_goal, delete_savings_goal, ensure_account_not_goal_bound,
-    unarchive_savings_goal, update_savings_goal,
+    archive_savings_goal, create_savings_goal, delete_savings_goal, ensure_account_can_archive,
+    ensure_account_not_goal_bound, unarchive_savings_goal, update_savings_goal,
 };
 pub use model::{
     SavingsGoal, SavingsGoalInput, SavingsGoalPaceSource, SavingsGoalProgress, SavingsGoalStatus,

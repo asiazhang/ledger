@@ -88,7 +88,57 @@ pub async fn update_account(
         conn,
         Some(&app),
         WriteOp::UpdateAccount,
-        move |conn| account_domain::update_account(conn, &id, input).map(Outcome::Silent),
+        move |conn| {
+            // 归档可选键（spec #1952）：本命令的载荷与 HTTP PUT 同型，携带 `true`
+            // 即会归档——归档方向的守卫与 `archive_account` 命令成对，不因入口不同
+            // 而漏拦（恢复方向不拦）。
+            if input.is_archived == Some(true) {
+                ledger_savings_goal::ensure_account_can_archive(conn, &id)?;
+            }
+            account_domain::update_account(conn, &id, input).map(Outcome::Silent)
+        },
+    )
+    .await
+}
+
+/// 归档账户（spec #1952 / ADR-0142）：收纳态写入——不删任何东西、不动任何金额
+/// 口径，可逆（恢复）且幂等（已归档再归档零写入零 op）。绑定储蓄目标的账户
+/// 被码化拒绝（守卫住壳层编排——账户域不反向依赖目标域，ADR-0133 决策 4），
+/// 文案指向「归档目标本身」（新码，不复用禁删的删除文案）。
+#[tauri::command]
+pub async fn archive_account<R: Runtime>(
+    db: State<'_, DbState>,
+    app: AppHandle<R>,
+    id: String,
+) -> Result<()> {
+    let conn = db.write_handle();
+    write_entry(
+        "archive_account",
+        conn,
+        Some(&app),
+        WriteOp::ArchiveAccount,
+        move |conn| {
+            ledger_savings_goal::ensure_account_can_archive(conn, &id)?;
+            account_domain::set_account_archived(conn, &id, true).map(Outcome::Silent)
+        },
+    )
+    .await
+}
+
+/// 恢复账户（spec #1952）：归档的唯一回退动作，回主表与选择面。
+#[tauri::command]
+pub async fn unarchive_account<R: Runtime>(
+    db: State<'_, DbState>,
+    app: AppHandle<R>,
+    id: String,
+) -> Result<()> {
+    let conn = db.write_handle();
+    write_entry(
+        "unarchive_account",
+        conn,
+        Some(&app),
+        WriteOp::UnarchiveAccount,
+        move |conn| account_domain::set_account_archived(conn, &id, false).map(Outcome::Silent),
     )
     .await
 }

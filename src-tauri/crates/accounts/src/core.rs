@@ -122,8 +122,8 @@ fn write_create(conn: &Connection, id: &str, row: &AccountCommandRow) -> Result<
         .validate_for(row.kind)?;
     let now = now_iso();
     conn.execute(
-        "INSERT INTO accounts (id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted,is_hidden,credit_limit_cents,statement_day,due_day) \
-         VALUES (?1,?2,?3,?4,?5,?6,?7,1,?8,0,?9,?10,?11,?12)",
+        "INSERT INTO accounts (id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted,is_hidden,is_archived,credit_limit_cents,statement_day,due_day) \
+         VALUES (?1,?2,?3,?4,?5,?6,?7,1,?8,0,?9,0,?10,?11,?12)",
         rusqlite::params![
             id,
             row.name,
@@ -179,6 +179,71 @@ pub fn delete_account(conn: &Connection, id: &str) -> Result<()> {
     })
 }
 
+/// 归档 / 恢复账户（`is_archived` 标志翻转，spec #1952 / ADR-0142）：收纳态写入，
+/// 不改任何金额口径——余额、余额合计、净资产读数一律不动（缓存照常 touch，
+/// 与 delete / update 同纪律：净资产探针按 updated_at 指纹感知行变化，值不变）。
+/// 已是目标态时幂等短路：零 UPDATE、零 op、不 bump version（AC「重复调用不
+/// 报错、不重复产同步 op」的落点；本地幂等必须域内自查状态短路——同步层按
+/// op_id 去重只防重复投递，不防本地重复产 op）。
+/// 「绑定储蓄目标的账户拒绝归档」守卫住壳层编排入口（账户域不反向依赖目标域，
+/// ADR-0133 决策 4），不在本函数。
+pub fn set_account_archived(conn: &Connection, id: &str, archived: bool) -> Result<()> {
+    ensure_transaction(conn, || {
+        // 本地写 = 共用写协议 + op 产出；幂等短路（已是目标态）由协议内裁定，
+        // 此时不产 op（重放臂同走协议、只不产 op）。
+        if !apply_archive(conn, id, archived)? {
+            return Ok(());
+        }
+        record_local(
+            conn,
+            AccountCommand::SetArchived {
+                id: id.to_string(),
+                archived,
+            },
+        )
+    })
+}
+
+/// 归档翻转共用落库路径（本地写与重放同一入口）：读当前态 → 已是目标态即幂等
+/// 短路（零 UPDATE、零 bump version、零 op）→ [`write_set_archived`]。
+/// 返回「是否真的写了」——本地写据此决定是否产 op，重放臂只看落定。
+/// 调用方保证处于写事务内。
+fn apply_archive(conn: &Connection, id: &str, archived: bool) -> Result<bool> {
+    if current_archived(conn, id)? == archived {
+        return Ok(false);
+    }
+    write_set_archived(conn, id, archived)?;
+    Ok(true)
+}
+
+/// 读当前归档态（存在性检查同 `write_delete` 口径：未删除行，缺失码化
+/// `account.not-found`）。调用方保证处于写事务内。
+fn current_archived(conn: &Connection, id: &str) -> Result<bool> {
+    conn.query_row(
+        "SELECT is_archived FROM accounts WHERE id=?1 AND is_deleted=0",
+        rusqlite::params![id],
+        |r| r.get::<_, i64>(0),
+    )
+    .map(|v| v != 0)
+    .optional()?
+    .ok_or_else(|| {
+        AppError::codedp_not_found("account.not-found", format!("账户不存在: {id}"), &[id])
+    })
+}
+
+/// 归档翻转落库协议（本地写与重放共用，无 op 产出）：单 UPDATE 翻标志 + 簿记戳
+/// （形状照 `write_delete`）。调用方保证处于写事务内。
+fn write_set_archived(conn: &Connection, id: &str, archived: bool) -> Result<()> {
+    conn.execute(
+        "UPDATE accounts SET is_archived=?2, updated_at=?3, version=version+1, device_id=?4 WHERE id=?1",
+        rusqlite::params![id, archived, now_iso(), device_id(conn)?],
+    )?;
+    // 余额缓存写路径：touch 缓存行时间戳（归档不改余额值，但净资产读探针按
+    // updated_at 指纹感知行变化——与 delete / update 同纪律）。
+    refresh_account_balances(conn, &[id])?;
+    Ok(())
+}
+
 /// 账户软删协议（本地删除与重放共用，无 op 产出）：存在性检查 + 软删 + 缓存
 /// touch。调用方保证处于写事务内。
 fn write_delete(conn: &Connection, id: &str) -> Result<()> {
@@ -209,7 +274,7 @@ fn write_delete(conn: &Connection, id: &str) -> Result<()> {
 pub fn get_account(conn: &Connection, id: &str) -> Result<Account> {
     query_all(
         conn,
-        "SELECT id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted,is_hidden,credit_limit_cents,statement_day,due_day \
+        "SELECT id,name,type,currency_code,initial_balance_cents,created_at,updated_at,version,device_id,is_deleted,is_hidden,is_archived,credit_limit_cents,statement_day,due_day \
          FROM accounts WHERE id=?1 AND is_deleted=0",
         rusqlite::params![id],
     )?
@@ -223,21 +288,45 @@ pub fn get_account(conn: &Connection, id: &str) -> Result<Account> {
 /// 边界（ADR-0026 同期决策）：
 /// - `type` 不可改（参与 kind→符号矩阵，改动会重写历史交易的余额归属）；
 /// - `currency_code` 仅无交易账户可改（有交易时改币种使历史折算口径错乱）；
-/// - `initial_balance_cents` 不在此改，归余额调整（见 ADR-0026）。
+/// - `initial_balance_cents` 不在此改，归余额调整（见 ADR-0026）；
+/// - 归档可选键（spec #1952 / ADR-0142 决策 5）由本入口解出：命中时在同一事务内
+///   追加一次归档动作（经 [`set_account_archived`]，产出独立 `SetArchived` op——
+///   Update 载荷不携带归档态，见 [`AccountCommand`] 头注记）。解出放在域入口而非
+///   壳层，`AccountUpdateInput` 的每个字段都有唯一消费者（无「壳层读、域内静默
+///   忽略」的字段）；`true` 方向的目标绑定守卫住壳层编排入口（账户域不反向依赖
+///   目标域，ADR-0133 决策 4），与 `archive_account` 命令同一守卫。
 pub fn update_account(conn: &Connection, id: &str, input: AccountUpdateInput) -> Result<()> {
+    // 归档键先取出：`write_update` 不消费它（只吃编辑字段），下沉到域写协议会
+    // 让「归档态不进 Update 载荷」的约束靠约定维持。
+    let archived = input.is_archived;
+    // 编辑路径只在**真的带编辑键**时执行：五字段全是「缺席 = 不改」形态，`is_some()`
+    // 即该键在场。归档-only 的 PUT（只带 `is_archived`）因此不会先跑一遍编辑落库、
+    // 也不会多产一条 Update op（AC「归档 / 恢复幂等（重复调用不报错、不重复产同步
+    // op）」在编辑入口的落点：重复同一 PUT 零新 op、零 version bump）。
+    let has_edits = input.name.is_some()
+        || input.currency_code.is_some()
+        || input.credit_limit_cents.is_some()
+        || input.statement_day.is_some()
+        || input.due_day.is_some();
     ensure_transaction(conn, || {
-        let (name, currency_code, credit_terms) = write_update(conn, id, &input)?;
-        record_local(
-            conn,
-            AccountCommand::Update {
-                id: id.to_string(),
-                name,
-                currency_code,
-                credit_limit_cents: credit_terms.credit_limit_cents,
-                statement_day: credit_terms.statement_day,
-                due_day: credit_terms.due_day,
-            },
-        )
+        if has_edits {
+            let (name, currency_code, credit_terms) = write_update(conn, id, &input)?;
+            record_local(
+                conn,
+                AccountCommand::Update {
+                    id: id.to_string(),
+                    name,
+                    currency_code,
+                    credit_limit_cents: credit_terms.credit_limit_cents,
+                    statement_day: credit_terms.statement_day,
+                    due_day: credit_terms.due_day,
+                },
+            )?;
+        }
+        if let Some(archived) = archived {
+            set_account_archived(conn, id, archived)?;
+        }
+        Ok(())
     })
 }
 
@@ -362,6 +451,8 @@ pub(crate) fn replay_update(
             credit_limit_cents: Some(credit_limit_cents),
             statement_day: Some(statement_day),
             due_day: Some(due_day),
+            // 归档态有独立命令变体，永不随修改载荷抵达（ADR-0142 决策 5）。
+            is_archived: None,
         },
     )?;
     Ok(())
@@ -370,6 +461,13 @@ pub(crate) fn replay_update(
 /// 重放执行：软删除（同一协议含存在性检查：引用失败挂起待裁决）。
 pub(crate) fn replay_delete(conn: &Connection, id: &str) -> Result<()> {
     write_delete(conn, id)
+}
+
+/// 重放执行：归档 / 恢复（同一写协议 + 同幂等短路，不产出 op）。源端已保证
+/// 不产冗余 op，重放侧按「同 write 协议 + 幂等短路」承接（参照目标域
+/// replay_status 同形）。
+pub(crate) fn replay_set_archived(conn: &Connection, id: &str, archived: bool) -> Result<()> {
+    apply_archive(conn, id, archived).map(|_wrote| ())
 }
 
 /// 查找指定币种的黑洞账户（未删除且 `is_hidden=1`，取最早创建的一个）。

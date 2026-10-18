@@ -2,6 +2,7 @@ import {
   routeMock,
   makeTxn,
   setTxnDb,
+  setAccountDb,
   setMerchantDb,
   mountView,
   mountMobile,
@@ -17,7 +18,7 @@ import { fireProp } from "@ledger/test-support/component-vm";
 import PinyinSelect from "@ledger/ui-kit/PinyinSelect.vue";
 import { MAIN_LIST_KINDS } from "@/transaction/useTransactionFilter";
 import { useReferenceStore } from "@/stores/reference";
-import type { Merchant, Transaction } from "@ledger/types";
+import type { Account, Merchant, Transaction } from "@ledger/types";
 
 describe("TransactionsView URL 下钻接线（issue #97/#191，冒烟级）", () => {
   // account/merchant 参数的解析、校验、复位规则、就绪补判与字段级让位已内化在
@@ -358,5 +359,60 @@ describe("TransactionsView 移动档筛选（issue #846 两档一致）", () => 
       .trigger("click");
     await flushPromises();
     expect(cards(wrapper).length).toBe(4);
+  });
+});
+
+describe("账户归档（spec #1952 / ADR-0142 决策 4）：筛选下拉排除归档，已存筛选值补值", () => {
+  /** 已归档账户（从已归档行下钻 `?account=<归档 id>` 进来时的筛选值） */
+  const archivedAccount: Account = {
+    id: "acc-arch",
+    name: "已归档户",
+    type: "bank",
+    currency_code: "CNY",
+    initial_balance_cents: 0,
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+    version: 1,
+    device_id: "test",
+    is_deleted: false,
+    is_hidden: false,
+    is_archived: true,
+  };
+  const activeAccounts: Account[] = [
+    { ...archivedAccount, id: "acc-1", name: "现金", type: "cash", is_archived: false },
+    { ...archivedAccount, id: "acc-2", name: "银行", is_archived: false },
+  ];
+
+  /** 过滤行第 1 个下拉 = 账户（PinyinSelect 内层 NSelect） */
+  const accountSelect = (wrapper: ReturnType<typeof mount>) =>
+    wrapper.findAllComponents(NSelect)[0];
+
+  beforeEach(() => {
+    setAccountDb([...activeAccounts, archivedAccount]);
+    setTxnDb([
+      makeTxn(1, "acc-arch", { date: "2026-01-05" }),
+      makeTxn(2, "acc-1", { date: "2026-01-06" }),
+    ]);
+  });
+
+  it("新建筛选的账户下拉不含归档账户", async () => {
+    const wrapper = await mountView();
+    expect(
+      (accountSelect(wrapper).props("options") as { value: string }[]).map((o) => o.value),
+    ).toEqual(["acc-1", "acc-2"]);
+  });
+
+  it("当前筛选值恰是归档账户：下拉补回该选项并标「已归档」，值保持选中、过滤照旧生效", async () => {
+    routeMock.query = { account: "acc-arch" };
+    const wrapper = await mountView();
+    const account = accountSelect(wrapper);
+    expect(account.props("value")).toBe("acc-arch");
+    expect(account.props("options")).toContainEqual({
+      label: "已归档户（已归档）",
+      value: "acc-arch",
+    });
+    // 展示面零过滤：归档账户的流水照常按该账户过滤出来（下钻链接不失效）
+    expect(lastListFilter()).toMatchObject({ page: 1, involving_account_id: "acc-arch" });
+    expect(bodyRows(wrapper).length).toBe(1);
   });
 });
