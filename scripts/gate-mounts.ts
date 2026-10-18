@@ -219,6 +219,22 @@ export const GATE_MOUNTS: readonly GateMount[] = [
     ],
   },
   {
+    name: "版本元数据一致性检查（check-versions）",
+    refs: "issue #1957 / ADR-0022 修订注记",
+    hosts: [
+      {
+        file: CHECK_SH_FILE,
+        prefix: "bun scripts/check-versions.ts",
+        where: "scripts/check.sh 质量门槛序列",
+      },
+      {
+        file: CI_WORKFLOW_FILE,
+        prefix: "run: bun scripts/check-versions.ts",
+        where: ".github/workflows/build.yml frontend job",
+      },
+    ],
+  },
+  {
     name: "结构守门检查（check-structure）",
     refs: "spec #1086 / ADR-0056",
     hosts: [

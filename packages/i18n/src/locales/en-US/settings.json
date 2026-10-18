@@ -395,13 +395,19 @@
   },
   "about": {
     "title": "About OpenLedger",
-    "appName": "App Name: ",
-    "version": "Version: ",
-    "gitVersion": "Git Version: ",
+    "appName": "App Name",
+    "version": "Version",
+    "gitVersion": "Git Version",
     "gitVersionTitle": "Click to copy the full version",
-    "platform": "Built with: ",
+    "platform": "Platform",
+    "license": "License",
+    "copyright": "Copyright",
+    "homepage": "Project Home",
+    "issues": "Report an Issue",
+    "copyInfo": "Copy version info",
+    "copyInfoOk": "Version info copied",
     "copyShaOk": "Full version copied",
-    "copyShaFailed": "Failed to copy full version: {msg}"
+    "valueSeparator": ": "
   },
   "logs": {
     "card": "Logs",

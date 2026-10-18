@@ -121,7 +121,6 @@ export const TOAST_BASELINE: Readonly<Record<string, number>> = {
   "src/scheduled/PlanDetailModal.vue": 2,
   "src/scheduled/SubscriptionSpendPanel.vue": 1,
   "src/scheduled/SubscriptionsPane.vue": 1,
-  "src/settings/AboutSettings.vue": 1,
   "src/settings/BaseCurrencySettings.vue": 2,
   "src/settings/DataLocationSettings.vue": 3,
   "src/settings/LogSettings.vue": 2,

@@ -68,6 +68,9 @@ jobs:
       - name: 命令注册一致性检查
         run: bun scripts/check-commands.ts
 
+      - name: 版本元数据一致性检查
+        run: bun scripts/check-versions.ts
+
       - name: 结构守门检查
         run: bun scripts/check-structure.ts
 

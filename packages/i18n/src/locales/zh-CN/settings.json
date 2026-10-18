@@ -395,13 +395,19 @@
   },
   "about": {
     "title": "关于开源记账",
-    "appName": "应用名称：",
-    "version": "版本号：",
-    "gitVersion": "Git 版本：",
+    "appName": "应用名称",
+    "version": "版本号",
+    "gitVersion": "Git 版本",
     "gitVersionTitle": "点击复制完整版本号",
-    "platform": "构建平台：",
+    "platform": "运行平台",
+    "license": "许可证",
+    "copyright": "版权",
+    "homepage": "项目主页",
+    "issues": "反馈问题",
+    "copyInfo": "复制版本信息",
+    "copyInfoOk": "已复制版本信息",
     "copyShaOk": "已复制完整版本号",
-    "copyShaFailed": "复制完整版本号失败: {msg}"
+    "valueSeparator": "："
   },
   "logs": {
     "card": "日志",

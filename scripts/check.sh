@@ -47,6 +47,9 @@ echo "▶ 基础设施 rustdoc 门禁 (cargo doc -p ledger-infra --no-deps, -D w
 echo "▶ 命令注册一致性检查 (bun scripts/check-commands.ts)"
 bun scripts/check-commands.ts
 
+echo "▶ 版本元数据一致性检查 (bun scripts/check-versions.ts)"
+bun scripts/check-versions.ts
+
 echo "▶ 结构守门检查 (bun scripts/check-structure.ts)"
 bun scripts/check-structure.ts
 

@@ -51,6 +51,10 @@ function dataLocationInfo(
 const SCENE_DEFAULTS = {
   list_backups: [],
   get_log_level: { level: "info" },
+  // 「关于」与「通用 → 更新」卡片的版本身份源（issue #1957）：当前版本号取壳层
+  // 命令 app_build_info，不再读前端 package.json——场景不布此命令则版本/平台行
+  // 按「宁缺不填假值」不渲染。
+  app_build_info: { version: "0.10.0", platform: "macos", arch: "aarch64" },
   create_backup: {
     path: "/tmp/ledger-backup.db.zip",
     size_bytes: 1024,
