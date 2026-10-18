@@ -18,6 +18,11 @@ export interface Account extends Syncable {
   initial_balance_cents: number;
   created_at: string;
   is_hidden: boolean;
+  /** 归档标志（spec #1952 / ADR-0142）：账户的**收纳态**——只收窄「账户页主表」与
+   * **新建 / 编辑的账户选择面**，不改任何金额口径（余额、合计、净资产、报表一律照旧
+   * 计入归档账户）。读命令零过滤：归档账户照常返回（名称映射与历史下钻靠它）。
+   * 与 `is_hidden`（黑洞占位账户专属）不同义，不得互换。 */
+  is_archived: boolean;
   /** 信用卡档案字段（spec #1327 / ADR-0119）：仅 `credit` 账户可携带，`null`/缺省 = 未设置。
    * **档案字段**：不参与余额与净资产口径（「还欠多少」由 `AccountBalance.balance_cents` 回答）。 */
   credit_limit_cents?: number | null;
@@ -39,13 +44,16 @@ export interface AccountInput {
 }
 
 /** 账户编辑入参：type 不可改（参与余额符号归属）；币种仅无交易账户可改（后端拒绝）。
- * 信用卡档案字段三态：**缺省 = 不改、`null` = 清空、给值 = 落定该值**。 */
+ * 信用卡档案字段三态：**缺省 = 不改、`null` = 清空、给值 = 落定该值**。
+ * `is_archived`：**缺省 = 不改**、`true` / `false` = 落定归档状态（布尔无「清空」态，
+ * `null` 与缺省同义；归档 / 恢复的界面入口走 `archiveAccount` / `unarchiveAccount`）。 */
 export interface AccountUpdateInput {
   name?: string;
   currency_code?: string;
   credit_limit_cents?: number | null;
   statement_day?: number | null;
   due_day?: number | null;
+  is_archived?: boolean | null;
 }
 
 /** 余额调整入参：校准到目标值，后端生成一笔与黑洞账户的转账（ADR-0026）。 */

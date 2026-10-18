@@ -8,6 +8,7 @@ import { useFieldErrors } from "@ledger/field-errors";
 import {
   useAccountCurrency,
   useFormShared,
+  usePinnedAccountOptions,
   utcMidnightTimestamp,
 } from "@/composables/useFormShared";
 import { useMerchantField } from "@/merchants/useMerchantField";
@@ -28,7 +29,7 @@ export function useTransferForm(options?: {
    * 方向给专属文案（issue #374），故取 getter 而非静态串。 */
   createdMessage?: () => string;
 }) {
-  const { reference, accountOptions, currencyOptions } = useFormShared();
+  const { reference, accountOptions: selectableAccountOptions, currencyOptions } = useFormShared();
   const message = useMessage();
 
   // 金额字段错误态（ADR-0058 / issue #415 → #1007 收口）：金额以原始文本承载输入
@@ -42,6 +43,9 @@ export function useTransferForm(options?: {
 
   const accountId = ref<string | null>(null);
   const toAccountId = ref<string | null>(null);
+  /** 转出账户下拉候选面：可选择账户（归档不进新选择）+ 编辑面补值——转出端已存值
+   * 恰是归档账户时补回选项并标「已归档」，值原样保留（spec #1952 / ADR-0142 决策 4）。 */
+  const accountOptions = usePinnedAccountOptions(accountId, selectableAccountOptions);
   /**
    * 交易币种（issue #1770 / ADR-0134 决策 5）：转账的记账币种由转出账户决定——后端
    * Writer 守卫强制「交易币种 == 两端账户币种」（现金腿 amount_cents 即账户币种
@@ -50,15 +54,20 @@ export function useTransferForm(options?: {
    * （issue #1191）/ 定时转账页签（币种随账户收敛）。
    */
   const currencyCode = useAccountCurrency(accountId);
-  /** 转入账户候选：与转出账户同币种（跨币种转账不做，ADR-0134 决策 4）；
-   * 未选转出账户前不收窄（两端选择顺序自由）。 */
-  const toAccountOptions = computed(() =>
-    accountId.value == null
-      ? accountOptions.value
-      : accountOptions.value.filter((o) => {
-          const acc = reference.accountMap.get(o.value);
-          return acc && acc.currency_code === currencyCode.value;
-        }),
+  /** 转入账户候选：以**可选择账户**为基础（不取已补值的转出侧选项，否则归档账户会
+   * 从转出侧漏进新选择的转入面），再与转出账户同币种（跨币种转账不做，ADR-0134
+   * 决策 4）；未选转出账户前不收窄（两端选择顺序自由）。已存转入值恰是归档账户或
+   * 不满足币种收窄（存量脏行）时，补值仍把它补回并标「已归档」（ADR-0142 决策 4）。 */
+  const toAccountOptions = usePinnedAccountOptions(
+    toAccountId,
+    computed(() =>
+      accountId.value == null
+        ? selectableAccountOptions.value
+        : selectableAccountOptions.value.filter((o) => {
+            const acc = reference.accountMap.get(o.value);
+            return acc && acc.currency_code === currencyCode.value;
+          }),
+    ),
   );
   /** 两端币种不一致的错误态（ADR-0134 决策 5）：候选过滤已挡住新增路径，本态
    * 承接存量脏行的编辑回填（两端币种不同的历史行）——红显即时阻止提交，

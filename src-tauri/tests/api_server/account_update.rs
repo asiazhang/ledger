@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
@@ -508,4 +508,192 @@ async fn test_put_account_rejects_credit_terms_for_non_credit_type() {
         .find(|a| a["id"] == id.as_str())
         .unwrap();
     assert!(cash["statement_day"].is_null(), "被拒绝的编辑不落库");
+}
+
+// ---------------------------------------------------------------------------
+// 归档可选键（spec #1952 / ADR-0142 决策 5 / issue #1953）：PUT 追加 is_archived
+// 可选布尔键（缺席 = 不改、true/false 落定）；读面披露标志；绑定储蓄目标的
+// 账户归档被码化拒绝（守卫住壳层编排，指向「归档目标本身」）。
+// ---------------------------------------------------------------------------
+
+/// `is_archived: true` 落定归档、`false` 恢复，读回携带标志（读面零过滤，只增披露）。
+#[tokio::test]
+async fn test_put_account_archives_and_restores_with_explicit_values() {
+    let (app, conn) = setup_app();
+    let id = create_account_via_api(&app, "借出·张三").await;
+
+    let (status, updated) = put_account(&app, &id, r#"{"is_archived":true}"#).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(updated["is_archived"], true, "读回披露归档标志");
+    let archived: i64 = conn
+        .lock()
+        .unwrap()
+        .query_row(
+            "SELECT is_archived FROM accounts WHERE id=?1",
+            rusqlite::params![id],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(archived, 1, "归档落库");
+
+    let (status, updated) = put_account(&app, &id, r#"{"is_archived":false}"#).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(updated["is_archived"], false, "恢复落定");
+}
+
+/// 键缺席 = 不改：归档后只改名，归档态保持（清空需要显式给 `false`）。
+#[tokio::test]
+async fn test_put_account_without_archive_key_keeps_it() {
+    let (app, _) = setup_app();
+    let id = create_account_via_api(&app, "借出·李四").await;
+    let (status, _) = put_account(&app, &id, r#"{"is_archived":true}"#).await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (status, updated) = put_account(&app, &id, r#"{"name":"借出·李四（已收回）"}"#).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(updated["name"], "借出·李四（已收回）");
+    assert_eq!(updated["is_archived"], true, "键缺席不改归档态");
+}
+
+/// GET 列表读面披露归档标志（读面零过滤：归档账户继续返回，只增字段）。
+#[tokio::test]
+async fn test_get_accounts_discloses_archive_flag() {
+    let (app, _) = setup_app();
+    let id = create_account_via_api(&app, "借出·王五").await;
+    let (status, _) = put_account(&app, &id, r#"{"is_archived":true}"#).await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (_, body) = get_json(&app, "/api/v1/accounts").await;
+    let row = body
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|a| a["id"] == id.as_str())
+        .expect("归档账户继续出现在读面（零过滤）");
+    assert_eq!(row["is_archived"], true);
+}
+
+/// 绑定储蓄目标的账户归档被码化拒绝（守卫住壳层编排——移除编排调用本测试即红），
+/// 错误码稳定且文案指向「归档目标本身」；普通字段编辑照常放行。
+#[tokio::test]
+async fn test_put_archive_account_of_active_goal_is_rejected() {
+    let (app, conn) = setup_app();
+    let goal_id = ledger_savings_goal::create_savings_goal(
+        &conn.lock().unwrap(),
+        &ledger_savings_goal::SavingsGoalInput {
+            name: "买房基金".into(),
+            target_amount_cents: 100_000,
+            deadline: None,
+        },
+    )
+    .expect("创建目标应成功");
+    let account_id: String = conn
+        .lock()
+        .unwrap()
+        .query_row(
+            "SELECT account_id FROM goals WHERE id=?1",
+            rusqlite::params![goal_id],
+            |r| r.get(0),
+        )
+        .unwrap();
+
+    let (status, err) = put_account(&app, &account_id, r#"{"is_archived":true}"#).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(err["code"], "account.goal-bound-cannot-archive");
+    assert!(
+        err["message"].as_str().unwrap().contains("归档"),
+        "文案应指向「归档目标本身」而不是「删除目标」"
+    );
+
+    // 未归档落库
+    let archived: i64 = conn
+        .lock()
+        .unwrap()
+        .query_row(
+            "SELECT is_archived FROM accounts WHERE id=?1",
+            rusqlite::params![account_id],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(archived, 0, "被拒归档不落库");
+}
+
+/// 该账户在同步 op 日志里的动作序列（op 面探针：只读 `sync.sync_ops` 的载荷，
+/// 不经编辑入口内部；创建期自带一条 `create`）。
+fn account_op_actions(conn: &Arc<Mutex<rusqlite::Connection>>, id: &str) -> Vec<String> {
+    let conn = conn.lock().unwrap();
+    let mut stmt = conn
+        .prepare("SELECT payload FROM sync.sync_ops ORDER BY clock")
+        .unwrap();
+    let payloads: Vec<serde_json::Value> = stmt
+        .query_map([], |r| r.get::<_, String>(0))
+        .unwrap()
+        .map(|row| serde_json::from_str(&row.unwrap()).unwrap())
+        .collect();
+    payloads
+        .iter()
+        .filter(|p| p["payload"]["id"] == id)
+        .map(|p| {
+            p["payload"]["action"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string()
+        })
+        .collect()
+}
+
+/// 归档-only PUT 的 op 幂等（#1953 AC「归档 / 恢复幂等（重复调用不报错、不重复产
+/// 同步 op）」在编辑入口的落点）：只带归档键的 PUT 只产一条 `SetArchived` op（不先
+/// 多产一条 `Update`），重复同一 PUT 零新 op、version 不动。
+#[tokio::test]
+async fn test_put_archive_only_emits_one_op_and_repeat_is_idempotent() {
+    let (app, conn) = setup_app();
+    let id = create_account_via_api(&app, "借出·甲").await;
+    assert_eq!(
+        account_op_actions(&conn, &id),
+        vec!["create"],
+        "建档自身只产一条 create op"
+    );
+
+    let (status, first) = put_account(&app, &id, r#"{"is_archived":true}"#).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(first["is_archived"], true, "归档落定");
+    let version_archived = first["version"].as_i64().unwrap();
+    assert_eq!(
+        account_op_actions(&conn, &id),
+        vec!["create", "set_archived"],
+        "归档-only PUT 只产一条 SetArchived op（无编辑键即无 Update op）"
+    );
+
+    // 重复同一 PUT（已归档再归档）：不报错、零新 op、version 不动。
+    let (status, again) = put_account(&app, &id, r#"{"is_archived":true}"#).await;
+    assert_eq!(status, StatusCode::OK, "重复归档不报错");
+    assert_eq!(again["is_archived"], true);
+    assert_eq!(
+        again["version"].as_i64().unwrap(),
+        version_archived,
+        "重复归档-only PUT 不得 bump version（零 UPDATE）"
+    );
+    assert_eq!(
+        account_op_actions(&conn, &id),
+        vec!["create", "set_archived"],
+        "重复归档-only PUT 不得再产 op"
+    );
+
+    // 恢复方向同路径：一条 set_archived（false），重复零新 op。
+    let (status, restored) = put_account(&app, &id, r#"{"is_archived":false}"#).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(restored["is_archived"], false, "恢复落定");
+    let (status, again) = put_account(&app, &id, r#"{"is_archived":false}"#).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        again["version"].as_i64().unwrap(),
+        restored["version"].as_i64().unwrap(),
+        "重复恢复不得 bump version"
+    );
+    assert_eq!(
+        account_op_actions(&conn, &id),
+        vec!["create", "set_archived", "set_archived"],
+        "归档 + 恢复各一条 op，重复恢复零新 op"
+    );
 }

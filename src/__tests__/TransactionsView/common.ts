@@ -80,6 +80,7 @@ export let mockAccounts: Account[] = [
     device_id: "test",
     is_deleted: false,
     is_hidden: false,
+    is_archived: false,
   },
   {
     id: "acc-2",
@@ -93,6 +94,7 @@ export let mockAccounts: Account[] = [
     device_id: "test",
     is_deleted: false,
     is_hidden: false,
+    is_archived: false,
   },
 ];
 

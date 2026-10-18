@@ -5,7 +5,11 @@ import { centsToYuan, formatAmount } from "@ledger/money";
 import { buildRefundInput } from "@/transaction/transaction-input";
 import { judgeAmountText } from "@ledger/utils/field-error";
 import { useFieldErrors } from "@ledger/field-errors";
-import { useEntityCurrency, useFormShared } from "@/composables/useFormShared";
+import {
+  useEntityCurrency,
+  useFormShared,
+  usePinnedAccountOptions,
+} from "@/composables/useFormShared";
 import { t } from "@ledger/i18n";
 import type { Transaction } from "@ledger/types";
 import { errorMessage } from "@ledger/utils/errors";
@@ -19,7 +23,7 @@ export function useRefundForm(options?: {
    * （原始币种）；提交跳过全量交易重载（列表刷新由 onCreated 回调承担）。 */
   fixedTarget?: () => Transaction | null;
 }) {
-  const { reference, accountOptions, currencyOptions } = useFormShared();
+  const { reference, accountOptions: selectableAccountOptions, currencyOptions } = useFormShared();
   const message = useMessage();
 
   // 金额字段错误态（ADR-0058 / issue #415 → #1007 收口）：金额以原始文本承载输入
@@ -31,6 +35,9 @@ export function useRefundForm(options?: {
   });
 
   const accountId = ref<string | null>(null);
+  /** 账户下拉候选面：可选择账户 + 编辑面补值（spec #1952 / ADR-0142 决策 4）。退款账户
+   * 是禁用锁定控件，但**显示文本取自选项 label**——不补值会把归档账户显示成裸 uuid。 */
+  const accountOptions = usePinnedAccountOptions(accountId, selectableAccountOptions);
   const refundTargetId = ref<string | null>(null);
   const note = ref("");
   const date = ref(Date.now());

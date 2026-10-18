@@ -77,6 +77,8 @@ pub async fn create_account_handler(
     summary = "编辑账户（改名/改币种）",
     description = "按 `id` 编辑账户，可选字段未传保持原值。`type` 不可改（参与余额符号归属）；\
                   `currency_code` 仅无交易账户可改（有交易时后端拒绝，避免历史折算口径错乱）。\
+                  `is_archived` 为可选归档键：缺席 = 不改，`true` / `false` = 落定归档 / 恢复\
+                  （绑定储蓄目标的账户拒绝归档，指向归档目标本身）。\
                   余额校准不走本端点：创建一笔与黑洞账户的转账即可（余额 = 期初 + Σ 流水）。\
                   不存在的 id 返回 404。成功返回 200 与更新后的完整账户。",
     request_body = AccountUpdateInput,
@@ -103,6 +105,14 @@ pub async fn update_account_handler(
         emitter.as_deref(),
         WriteOp::UpdateAccount,
         move |conn| {
+            // 归档可选键（spec #1952 / ADR-0142 决策 5）：缺席 = 不改、true/false
+            // 落定，由账户编辑入口统一解出（同一事务内追加一次归档动作）。归档
+            // 方向的目标绑定守卫住壳层编排（账户域不反向依赖目标域，ADR-0133
+            // 决策 4；恢复方向不拦——不涉及两套收纳语义），与 `archive_account`
+            // 命令同一守卫。
+            if input.is_archived == Some(true) {
+                ledger_savings_goal::ensure_account_can_archive(conn, &id)?;
+            }
             ledger_accounts::update_account(conn, &id, input)?;
             let updated = ledger_accounts::get_account(conn, &id)?;
             Ok(Outcome::Silent(updated))

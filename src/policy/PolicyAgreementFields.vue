@@ -8,7 +8,7 @@ import { t } from "@ledger/i18n";
 import { todayStr } from "@ledger/utils/date";
 import { yuanToCents } from "@ledger/money";
 import { useAppStore } from "@/stores/app";
-import { useFormShared } from "@/composables/useFormShared";
+import { useFormShared, usePinnedAccountOptions } from "@/composables/useFormShared";
 import { scheduledRecurrenceOptions } from "@ledger/scheduled-plan-list";
 import type { CreateScheduledInput, RecurrenceType } from "@ledger/types";
 
@@ -24,13 +24,16 @@ import type { CreateScheduledInput, RecurrenceType } from "@ledger/types";
  * 承担；备注带险种名称（协议与保单分离，订阅清单靠备注可读）。
  */
 const app = useAppStore();
-const { accountOptions, currencyOptions } = useFormShared();
+const { accountOptions: selectableAccountOptions, currencyOptions } = useFormShared();
 
 const amountYuan = ref("");
 const currencyCode = ref<string | null>(app.defaultCurrency);
 const recurrenceType = ref<RecurrenceType>("yearly");
 const recurrenceInterval = ref(1);
 const accountId = ref<string | null>(null);
+/** 账户下拉候选面：可选择账户（归档不进新选择）+ 补值兜底——改价场景的预填项可能指向
+ * 已归档账户，不补值会露出裸 uuid（spec #1952 / ADR-0142 决策 4）。 */
+const accountOptions = usePinnedAccountOptions(accountId, selectableAccountOptions);
 const startDate = ref<string | null>(todayStr());
 
 const recurrenceOptions = scheduledRecurrenceOptions();

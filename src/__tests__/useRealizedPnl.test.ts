@@ -169,6 +169,30 @@ describe("useRealizedPnl 已实现盈亏数据层", () => {
   });
 });
 
+describe("useRealizedPnl 账户归档（spec #1952 / ADR-0142 决策 4）", () => {
+  it("归档投资账户不进新选择；已选筛选值恰是归档账户时补回并标「已归档」", async () => {
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: {
+        list_accounts: [
+          ...mockAccounts,
+          makeAccount({ id: "acc-arch", name: "旧证券户", is_archived: true }),
+        ],
+      },
+    });
+    await useReferenceStore().refresh();
+    const { accountOptions, selectedAccountId } = withSetup(() => useRealizedPnl());
+    expect(accountOptions.value.map((o) => o.value)).toEqual(["acc-1"]);
+    // 筛选值（会话内已选）指向归档账户：补回选项并标「已归档」，值本身不清
+    selectedAccountId.value = "acc-arch";
+    expect(accountOptions.value).toEqual([
+      { label: "旧证券户（已归档）", value: "acc-arch" },
+      { label: "证券账户A", value: "acc-1" },
+    ]);
+    expect(selectedAccountId.value).toBe("acc-arch");
+  });
+});
+
 describe("useRealizedPnl 标的筛选的选中回显接线（投影与钉住合并域断言归 useInstrumentOptions 单测）", () => {
   it("选中标的不在新候选时合并不丢（下拉不丢已选筛选）", async () => {
     vi.useFakeTimers();

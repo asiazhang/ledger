@@ -2,7 +2,11 @@ import { computed, ref } from "vue";
 import type { TreeSelectOption } from "naive-ui";
 import { useMessage } from "naive-ui";
 import { useReferenceStore } from "@/stores/reference";
-import { useAccountCurrency, useFormShared } from "@/composables/useFormShared";
+import {
+  useAccountCurrency,
+  useFormShared,
+  usePinnedAccountOptions,
+} from "@/composables/useFormShared";
 import { resolveMerchantRef } from "@/merchants/resolve-merchant";
 import { api } from "@ledger/api";
 import { errorMessage } from "@ledger/utils/errors";
@@ -65,7 +69,7 @@ export interface UseScheduledPlanFormOptions {
 export function useScheduledPlanForm(options: UseScheduledPlanFormOptions = {}) {
   const { onSubmitted } = options;
   const reference = useReferenceStore();
-  const { accountOptions, currencyOptions } = useFormShared();
+  const { accountOptions: selectableAccountOptions, currencyOptions } = useFormShared();
   const message = useMessage();
 
   // ---------------------------------------------------------------------------
@@ -76,6 +80,11 @@ export function useScheduledPlanForm(options: UseScheduledPlanFormOptions = {}) 
 
   const note = ref("");
   const accountId = ref<string | null>(null);
+  /** 账户下拉候选面：可选择账户（归档不进新选择）+ 编辑面补值（spec #1952 / ADR-0142
+   * 决策 4）。本工厂每次调用返回独立实例，**编辑弹窗各持一份草稿**——因此补值天然按
+   * 「这一份草稿的当前值」判定：刷新建实例永不命中，编辑实例回填后自动补回归档账户。
+   * 页签不得复用另一实例的 accountOptions 渲染本实例的下拉（订阅编辑即此坑）。 */
+  const accountOptions = usePinnedAccountOptions(accountId, selectableAccountOptions);
   const categoryId = ref<string | null>(null);
   const merchantRef = ref<string | null>(null);
   /**

@@ -135,7 +135,9 @@ const {
 } = form;
 
 /** 转入账户候选（Vitest 验收 seam）：按转出账户币种过滤并排除转出账户本身
- * （转出 = 转入被后端拒绝）；未选转出账户时为全部账户。 */
+ * （转出 = 转入被后端拒绝）；未选转出账户时为全部账户。基础即接缝的**可选择**账户面
+ * （归档不进新选择，spec #1952 / ADR-0142 决策 4），且转出账户本身被排除——转出侧
+ * 因编辑面补值而并回的归档账户不会漏进转入的新选择面。 */
 const toAccountOptions = computed(() => {
   const from = fromAccountId.value ? reference.accountMap.get(fromAccountId.value) : undefined;
   if (!from) return accountOptions.value;

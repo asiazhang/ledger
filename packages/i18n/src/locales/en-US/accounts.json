@@ -41,9 +41,27 @@
     "positive": "Delete",
     "negative": "Cancel"
   },
+  "archiveDialog": {
+    "title": "Archive Account",
+    "content": "Archive account \"{name}\"? It moves out of the main list into the \"Archived\" section below; history and transactions stay available.",
+    "balance": "Current balance {amount}. Archiving keeps it counted toward net worth and the balance total — the money does not disappear; to remove it from net worth, use \"Adjust Balance\" to bring the balance to zero.",
+    "plans": "Archiving does not disable plans: {count} plans that have not ended still use this account and keep running as before.",
+    "positive": "Archive",
+    "negative": "Cancel"
+  },
+  "archived": {
+    "title": "Archived",
+    "summary": "{count} accounts · total {total}",
+    "summarySeparator": "; ",
+    "expand": "Expand archived accounts",
+    "collapse": "Collapse archived accounts",
+    "suffix": " (Archived)"
+  },
   "menu": {
     "edit": "Edit",
     "adjustBalance": "Adjust Balance",
+    "archive": "Archive",
+    "restore": "Restore",
     "delete": "Delete"
   },
   "message": {
@@ -55,7 +73,9 @@
     "saved": "Saved",
     "saveFailed": "Failed to save: {message}",
     "adjusted": "Balance adjusted",
-    "adjustFailed": "Failed to adjust: {message}"
+    "adjustFailed": "Failed to adjust: {message}",
+    "archived": "Account archived; history and transactions stay available",
+    "restored": "Account restored"
   },
   "credit": {
     "limit": "Credit Limit",

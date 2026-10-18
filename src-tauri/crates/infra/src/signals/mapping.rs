@@ -46,6 +46,8 @@ pub fn signals_for(op: WriteOp, evidence: WriteEvidence) -> &'static [Signal] {
         WriteOp::CreateAccount
         | WriteOp::UpdateAccount
         | WriteOp::DeleteAccount
+        | WriteOp::ArchiveAccount
+        | WriteOp::UnarchiveAccount
         | WriteOp::CreateCategory
         | WriteOp::UpdateCategory
         | WriteOp::ReorderCategories

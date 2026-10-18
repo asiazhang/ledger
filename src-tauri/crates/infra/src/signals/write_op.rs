@@ -70,6 +70,10 @@ pub enum WriteOp {
     UpdateAccount,
     /// 删除账户（软删除；IPC `delete_account`；HTTP `DELETE /api/v1/accounts/{id}`）。
     DeleteAccount,
+    /// 归档账户（收纳态；IPC `archive_account`，spec #1952）。
+    ArchiveAccount,
+    /// 恢复账户（解除收纳态；IPC `unarchive_account`，spec #1952）。
+    UnarchiveAccount,
     /// 创建分类（IPC `create_category`；HTTP `POST /api/v1/categories`）。
     CreateCategory,
     /// 编辑分类（IPC `update_category`）。

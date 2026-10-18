@@ -149,6 +149,11 @@ export const api = {
   adjustAccountBalance: (id: string, input: AccountBalanceAdjustInput) =>
     invoke<string>("adjust_account_balance", { id, input }),
   deleteAccount: (id: string) => invoke<void>("delete_account", { id }),
+  /** 归档账户（spec #1952 / ADR-0142）：收纳态，不改任何金额口径；幂等。绑定储蓄目标
+   * 的账户被码化错误拒绝（`account.goal-bound-cannot-archive`）。 */
+  archiveAccount: (id: string) => invoke<void>("archive_account", { id }),
+  /** 恢复账户：归档的唯一回退动作（回主表与选择面）；幂等。 */
+  unarchiveAccount: (id: string) => invoke<void>("unarchive_account", { id }),
   listAccountBalances: () => invoke<AccountBalance[]>("list_account_balances"),
   /** 余额缓存手动审计（issue #491）：全账户实时重算 vs 缓存，修复差异并返回差异报告 */
   auditBalanceCache: () => invoke<BalanceCacheAudit>("audit_balance_cache"),

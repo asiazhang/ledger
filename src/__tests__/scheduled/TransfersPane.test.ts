@@ -52,6 +52,7 @@ function makeAccount(id: string, name: string, currency_code: string): Account {
     device_id: "test",
     is_deleted: false,
     is_hidden: false,
+    is_archived: false,
   };
 }
 

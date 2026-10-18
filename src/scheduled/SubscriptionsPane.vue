@@ -27,6 +27,7 @@ import { useWindowTier } from "@ledger/window-tier";
 import { useScheduledPlanForm } from "@/scheduled/useScheduledPlanForm";
 import {
   earliestPendingOccurrence,
+  isUnfinishedStatus,
   scheduledRecurrenceLabel,
   scheduledRecurrenceOptions,
   useScheduledPlanList,
@@ -75,6 +76,10 @@ const {
   accountId: editAccountId,
   categoryId: editCategoryId,
   merchantRef: editMerchantRef,
+  // 编辑弹窗的账户下拉必须取**编辑实例**的选项面（spec #1952 / ADR-0142 决策 4）：
+  // 补值按「这份草稿的当前值」判定，复用新建实例的 accountOptions 会把回填的归档
+  // 账户渲染成裸 uuid、或让它从新建实例的选项里漏进新的选择面。
+  accountOptions: editAccountOptions,
 } = editForm;
 
 // 实际花费分析区（issue #160）：创建/编辑/生命周期变更/期次变更后同步刷新；
@@ -289,7 +294,9 @@ function subscriptionActions(row: SubscriptionRow): ScheduledPlanRowAction[] {
       actions.push(action, {
         key: "edit",
         label: t("scheduled.action.edit"),
-        available: status === "active" || status === "paused",
+        // 「未结束」判据同吃计划的单一出处（`isUnfinishedStatus` = active | paused）：
+        // 订阅编辑与计划取消限同一集合，不另写一份字面量。
+        available: isUnfinishedStatus(status),
         confirm: null,
         run: () => openEdit(row),
       });
@@ -632,7 +639,7 @@ onMounted(() => {
           <NFormItem :label="t('scheduled.form.account')">
             <PinyinSelect
               v-model:value="editAccountId"
-              :options="accountOptions"
+              :options="editAccountOptions"
               :placeholder="t('scheduled.form.accountPlaceholder')"
               style="width: 200px"
             />

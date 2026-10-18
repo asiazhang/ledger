@@ -783,9 +783,9 @@ fn bootstrap_migrates_older_schema_snapshot() {
     let cp22 = create_checkpoint(&conn_a).unwrap();
 
     // 把快照化成 V021 时代的真实形态：卸下 V022 位点表、V023 出资列、V026 信用卡
-    // 档案列与 V027 期初存量列（快照取自当前最新 schema，逐版回退到此时代才叫
-    // 「V021 时代的真实形态」；新增迁移若往 V021 之后加对象，须在此同步卸下——
-    // 否则前向迁移重放该条 DDL 会撞 duplicate column）
+    // 档案列、V027 期初存量列与 V037 归档标志列（快照取自当前最新 schema，逐版回退
+    // 到此时代才叫「V021 时代的真实形态」；新增迁移若往 V021 之后加对象，须在此
+    // 同步卸下——否则前向迁移重放该条 DDL 会撞 duplicate column）
     //（先卸部分索引再卸列，SQLite 限制：索引列不可直接 DROP COLUMN）并回拨
     // user_version（user_version 以迁移条目计：V005 移除不回填，V022 = 第 21 条，
     // V021 时代 = 20）。V025 起迁移链含 DROP：模拟旧时代快照还须把「该时代
@@ -824,6 +824,10 @@ fn bootstrap_migrates_older_schema_snapshot() {
                 .execute(&format!("ALTER TABLE accounts DROP COLUMN {column}"), [])
                 .unwrap();
         }
+        // V037（spec #1952 / ADR-0142）：账户归档标志列。
+        stale
+            .execute("ALTER TABLE accounts DROP COLUMN is_archived", [])
+            .unwrap();
         stale
             .execute("ALTER TABLE security_transactions DROP COLUMN origin", [])
             .unwrap();

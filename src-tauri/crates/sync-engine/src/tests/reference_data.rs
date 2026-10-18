@@ -4,7 +4,7 @@
 //! 公开写入口（域函数），op 产出与重放断言全部对准同步引擎公开接口
 //! （`read_ops` / `ingest_ops` / `parked_ops`）。
 
-use super::super::{DomainCommand, OpOutcome, read_ops};
+use super::super::{DomainCommand, OpOutcome, ingest_ops, parked_ops, read_ops};
 use super::common::{seed_device, wire_in, wire_out};
 use ledger_accounts::{
     self, AccountCommand, AccountInput, AccountType, AccountUpdateInput, create_account,
@@ -59,6 +59,7 @@ fn account_create_update_delete_ops_replay_and_converge() {
             credit_limit_cents: None,
             statement_day: None,
             due_day: None,
+            is_archived: None,
         },
     )
     .unwrap();
@@ -104,6 +105,7 @@ fn account_concurrent_edits_converge_to_order_last() {
             credit_limit_cents: None,
             statement_day: None,
             due_day: None,
+            is_archived: None,
         },
     )
     .unwrap();
@@ -116,6 +118,7 @@ fn account_concurrent_edits_converge_to_order_last() {
             credit_limit_cents: None,
             statement_day: None,
             due_day: None,
+            is_archived: None,
         },
     )
     .unwrap();
@@ -432,6 +435,7 @@ fn account_credit_terms_create_and_update_ops_replay_and_converge() {
             credit_limit_cents: Some(Some(6_000_000)),
             statement_day: Some(Some(10)),
             due_day: Some(Some(28)),
+            is_archived: None,
         },
     )
     .unwrap();
@@ -461,6 +465,7 @@ fn account_credit_terms_create_and_update_ops_replay_and_converge() {
             credit_limit_cents: Some(None),
             statement_day: None,
             due_day: Some(None),
+            is_archived: None,
         },
     )
     .unwrap();
@@ -520,4 +525,126 @@ fn legacy_account_op_without_credit_fields_replays_as_unset() {
     // 已落日志（幂等重投跳过），不残留挂起。
     let again = wire_in(&conn_b, &[serde_json::to_string(&legacy).unwrap()]);
     assert_eq!(again[0].outcome, OpOutcome::Skipped);
+}
+
+// ---------------------------------------------------------------------------
+// 账户归档命令（spec #1952 / ADR-0142 决策 5 / issue #1953）：SetArchived
+// 独立变体——本地写与重放同一执行协议，跨端收敛；旧版本端按 schema 版本门
+// 挂起（ParkedOp），不崩溃、不丢数据。
+// ---------------------------------------------------------------------------
+
+fn read_archived(conn: &Connection, id: &str) -> Option<bool> {
+    conn.query_row("SELECT is_archived FROM accounts WHERE id=?1", [id], |r| {
+        Ok(r.get::<_, i64>(0)? != 0)
+    })
+    .ok()
+}
+
+#[test]
+fn account_set_archived_op_replays_and_converges() {
+    let conn_a = test_support::open();
+    let conn_b = test_support::open();
+    seed_device(&conn_a, "dev-a");
+    seed_device(&conn_b, "dev-b");
+
+    let id = create_account(&conn_a, account_input("借出·张三")).unwrap();
+    ledger_accounts::set_account_archived(&conn_a, &id, true).unwrap();
+
+    // 本地归档产出一条 SetArchived op。
+    let ops = read_ops(&conn_a).unwrap();
+    assert_eq!(ops.len(), 2, "create + set_archived 各一条 op：{ops:?}");
+    assert!(
+        matches!(
+            &ops[1].command,
+            DomainCommand::Account(AccountCommand::SetArchived { archived: true, .. })
+        ),
+        "归档产出 SetArchived 变体"
+    );
+
+    let reports = wire_in(&conn_b, &wire_out(&conn_a));
+    assert!(reports.iter().all(|r| r.outcome == OpOutcome::Applied));
+    assert_eq!(read_archived(&conn_b, &id), Some(true), "重放后归档态收敛");
+    assert_eq!(read_ops(&conn_a).unwrap(), read_ops(&conn_b).unwrap());
+
+    // 恢复（目标态翻转）同样经命令传播收敛（全量重投含已见 op：已见的幂等
+    // 跳过，新的恢复 op 落地）。
+    ledger_accounts::set_account_archived(&conn_a, &id, false).unwrap();
+    let reports = wire_in(&conn_b, &wire_out(&conn_a));
+    assert!(
+        reports
+            .iter()
+            .all(|r| matches!(r.outcome, OpOutcome::Applied | OpOutcome::Skipped)),
+        "重投不产生挂起：{reports:?}"
+    );
+    assert_eq!(
+        read_archived(&conn_b, &id),
+        Some(false),
+        "恢复后收敛回未归档"
+    );
+
+    // 重复投递：全部 Skipped，无第二次效果。
+    let again = wire_in(&conn_b, &wire_out(&conn_a));
+    assert!(again.iter().all(|r| r.outcome == OpOutcome::Skipped));
+}
+
+/// 旧版本端收到 SetArchived：op 产生自更新 schema（V037 起），schema 版本门
+/// 先行挂起（ParkedOp，`sync-engine.schema-ahead`）——不崩溃、不丢数据，账本
+/// 无其效果；升级本端后重投递自然重试（spec 用户故事 23）。
+#[test]
+fn set_archived_op_from_newer_schema_parks_on_old_end() {
+    let conn_a = test_support::open();
+    let conn_b = test_support::open();
+    seed_device(&conn_a, "dev-a");
+    seed_device(&conn_b, "dev-b");
+    let id = create_account(&conn_a, account_input("借出·李四")).unwrap();
+    // 先把创建 op 同步过去（两端账户行同在）。
+    let create_op = &wire_out(&conn_a)[0];
+    let reports = wire_in(&conn_b, std::slice::from_ref(create_op));
+    assert!(reports.iter().all(|r| r.outcome == OpOutcome::Applied));
+
+    ledger_accounts::set_account_archived(&conn_a, &id, true).unwrap();
+    let mut op = read_ops(&conn_a).unwrap().remove(1);
+    // 两端同进程同 schema，合成「op 来自更新 schema」的偏斜视角（旧版本端收到
+    // 新命令的真实形状，parked.rs 先例同款）：V037 起新端产的 SetArchived 在
+    // 旧端 schema_version 门前挂起。
+    op.schema_version += 1;
+    let ahead = serde_json::to_string(&op).unwrap();
+
+    let reports = ingest_ops(&conn_b, &[ahead]).unwrap();
+    assert_eq!(reports.len(), 1);
+    assert!(
+        matches!(
+            &reports[0].outcome,
+            OpOutcome::Parked { code, .. } if code == "sync-engine.schema-ahead"
+        ),
+        "旧版本端把归档 op 挂起并携带码化原因"
+    );
+    let parked = parked_ops(&conn_b).unwrap();
+    assert_eq!(parked.len(), 1);
+    assert_eq!(parked[0].op_id, op.op_id, "op 身份保留（升级后可重放）");
+    assert_eq!(read_archived(&conn_b, &id), Some(false), "未执行不落地");
+}
+
+/// 同 schema 下未知 action（未来版本命令提前到达）：信封可读、命令不可解 →
+/// 挂起不崩溃、载荷原样保留（serde 失败兜底，与未知实体同款归宿）。
+#[test]
+fn unknown_account_action_parks_and_never_drops() {
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-1", "现金", "cash", "CNY", 0);
+
+    let future_action = r#"{"op_id":"op-account-future","device_id":"dev-x","clock":9,"schema_version":20,"command":{"entity":"account","payload":{"action":"set_archived_forever","id":"acc-1","archived":true}}}"#;
+
+    let reports = ingest_ops(&conn, &[future_action.to_string()]).unwrap();
+    assert_eq!(reports.len(), 1);
+    assert!(
+        matches!(
+            &reports[0].outcome,
+            OpOutcome::Parked { code, .. } if code == "sync-engine.op-undecodable"
+        ),
+        "未知 action 挂起并携带码化原因"
+    );
+    let parked = parked_ops(&conn).unwrap();
+    assert_eq!(parked.len(), 1);
+    assert_eq!(parked[0].payload, future_action, "载荷原样保存");
+    assert_eq!(read_archived(&conn, "acc-1"), Some(false), "未执行不落地");
 }

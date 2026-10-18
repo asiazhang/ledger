@@ -161,7 +161,22 @@ export const useReferenceStore = defineStore("reference", () => {
   const incomeCategories = computed(() => categories.value.filter((c) => c.kind === "income"));
 
   /**
-   * 投资账户单一谓词：type = investment 的账户。「投资账户下拉」语义单点收口，
+   * 可选择账户（spec #1952 / ADR-0142 决策 4）：账户去归档——归档是**收纳态**，
+   * 只收窄「账户页主表」与「新建 / 编辑的账户选择面」，全部选项构造点消费本派生。
+   *
+   * 读面零过滤（同决策）：`accounts` / `accountMap` 仍是全量（名称映射、下钻链接、
+   * 会话 URL 校验靠它），排除**只**发生在这里——不要在 `accounts` 落位处筛（那是
+   * 「删除账户」的断链形态，ADR 背景段已列为反面实例）。
+   */
+  const selectableAccounts = computed(() => accounts.value.filter((a) => !a.is_archived));
+
+  /** 通用账户下拉候选面（`{label, value}` 投影单点，形同 investmentAccountOptions）。 */
+  const selectableAccountOptions = computed(() =>
+    selectableAccounts.value.map((a) => ({ label: a.name, value: a.id })),
+  );
+
+  /**
+   * 投资账户全量谓词：type = investment 的账户。「投资账户下拉」语义单点收口，
    * 候选面投影（investmentAccountOptions，#1830）随本派生同源同处；不排隐藏——
    * 与 v_holdings / 时点持仓口径一致（issue #217 定案 Q2）。
    */
@@ -178,12 +193,26 @@ export const useReferenceStore = defineStore("reference", () => {
   );
 
   /**
+   * 投资类账户的**可选择**候选面（spec #1952 / ADR-0142 决策 4）：投资账户下拉、
+   * 持仓 / 盈亏 / 明细三处筛选下拉的选项面。谓词 investmentAccounts 与投影
+   * investmentAccountOptions 都是**读口径**（对齐 v_holdings，不得加归档过滤），
+   * 故归档收纳以本变体承载而非改谓词：同一投影 + 归档排除，读口径与选项面分家。
+   */
+  const selectableInvestmentAccountOptions = computed(() =>
+    investmentAccounts.value
+      .filter((a) => !a.is_archived)
+      .map((a) => ({ label: a.name, value: a.id })),
+  );
+
+  /**
    * 出资账户候选单一谓词派生（issue #936 / ADR-0096 决策 4）：在用账户中类型落在
    * 准入闭集（现金类，见 types/accounts.ts isFundingCandidateAccount）者。币种一致过滤
    * 随交易币种，由消费表单承担；后端行为层准入是唯一权威，此处仅供表单预过滤。
+   * 排除归档（spec #1952 / ADR-0142 决策 4）：本派生只被投资录入表单的**选项面**
+   * 消费，归档账户不进新选择；编辑已有买卖时已存值由补值工具钉回。
    */
   const fundingCandidateAccounts = computed(() =>
-    accounts.value.filter((a) => isFundingCandidateAccount(a.type)),
+    accounts.value.filter((a) => isFundingCandidateAccount(a.type) && !a.is_archived),
   );
 
   function categoryChildren(parentId: string): Category[] {
@@ -237,6 +266,9 @@ export const useReferenceStore = defineStore("reference", () => {
     incomeCategories,
     investmentAccounts,
     investmentAccountOptions,
+    selectableAccounts,
+    selectableAccountOptions,
+    selectableInvestmentAccountOptions,
     fundingCandidateAccounts,
     categoryChildren,
     categoryPath,

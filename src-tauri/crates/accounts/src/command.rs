@@ -5,6 +5,13 @@
 //!   携带解决后的语义值（名称非空、币种为落定值，重放端以同一协议复验依赖后
 //!   落库）；删除只需实体 id。**只增不改**：字段演进只追加可选成员，旧日志可
 //!   在新 schema 重放。
+//!
+//! 归档命令（spec #1952 / ADR-0142 决策 5）：归档 / 恢复是**独立命令变体**
+//! [`AccountCommand::SetArchived`]（携带目标状态，幂等），不往既有修改命令的
+//! 载荷塞字段——Update 载荷是「落定值」语义（信用卡三件套缺键即置空），旧日志
+//! 重放会把归档态刷回未归档。新增枚举变体的兼容面：旧日志不含 `set_archived`
+//! tag（枚举只加成员不改既有成员 = 旧日志可读）；新日志在旧端 serde 失败 →
+//! ParkedOp（schema 版本门先行拦截，ADR-0091 / ADR-0142 代价节声明）。
 //! - **产出单点**（[`record_local`]）：账户写编排入口（创建 / 修改 / 删除 /
 //!   黑洞即建）成功后调用，op 随写事务提交/回滚。
 //! - **重放执行**（[`replay_command`]）：与本地写同一执行协议（依赖校验 + 落库），
@@ -57,6 +64,9 @@ pub enum AccountCommand {
     },
     /// 删除账户（软删除）：实体 id 足够——重放端执行与本地删除同一协议。
     Delete { id: String },
+    /// 归档 / 恢复账户（spec #1952 / ADR-0142 决策 5）：携带目标状态，幂等；
+    /// LWW 裁决域仍是单个账户。不进 Update 载荷的理由见模块头注记。
+    SetArchived { id: String, archived: bool },
 }
 
 impl AccountCommand {
@@ -65,7 +75,8 @@ impl AccountCommand {
         match self {
             AccountCommand::Create { id, .. }
             | AccountCommand::Update { id, .. }
-            | AccountCommand::Delete { id } => id,
+            | AccountCommand::Delete { id }
+            | AccountCommand::SetArchived { id, .. } => id,
         }
     }
 }
@@ -112,5 +123,8 @@ pub fn replay_command(conn: &Connection, command: &AccountCommand) -> Result<()>
             *due_day,
         ),
         AccountCommand::Delete { id } => super::core::replay_delete(conn, id),
+        AccountCommand::SetArchived { id, archived } => {
+            super::core::replay_set_archived(conn, id, *archived)
+        }
     }
 }

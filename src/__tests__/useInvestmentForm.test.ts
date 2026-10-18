@@ -30,6 +30,7 @@ const mockAccounts: Account[] = [
     device_id: "test",
     is_deleted: false,
     is_hidden: false,
+    is_archived: false,
   },
   {
     id: "acc-cash",
@@ -43,6 +44,7 @@ const mockAccounts: Account[] = [
     device_id: "test",
     is_deleted: false,
     is_hidden: false,
+    is_archived: false,
   },
 ];
 
@@ -407,6 +409,7 @@ describe("useInvestmentForm 出资账户（issue #936 / #938 / ADR-0096，buy/se
       device_id: "test",
       is_deleted: false,
       is_hidden: false,
+      is_archived: false,
     },
     {
       id: "acc-bank",
@@ -420,6 +423,7 @@ describe("useInvestmentForm 出资账户（issue #936 / #938 / ADR-0096，buy/se
       device_id: "test",
       is_deleted: false,
       is_hidden: false,
+      is_archived: false,
     },
     {
       id: "acc-credit",
@@ -433,6 +437,7 @@ describe("useInvestmentForm 出资账户（issue #936 / #938 / ADR-0096，buy/se
       device_id: "test",
       is_deleted: false,
       is_hidden: false,
+      is_archived: false,
     },
     {
       id: "acc-ewallet",
@@ -446,6 +451,7 @@ describe("useInvestmentForm 出资账户（issue #936 / #938 / ADR-0096，buy/se
       device_id: "test",
       is_deleted: false,
       is_hidden: false,
+      is_archived: false,
     },
     {
       id: "acc-other",
@@ -459,6 +465,7 @@ describe("useInvestmentForm 出资账户（issue #936 / #938 / ADR-0096，buy/se
       device_id: "test",
       is_deleted: false,
       is_hidden: false,
+      is_archived: false,
     },
     // 在用目标账户（issue #1755 / ADR-0133 决策 4）：`other` 类型、身份由绑定派生，
     // 出资候选按绑定过滤防呆——CNY 与 USD 各一，覆盖币种联动口径。
@@ -479,6 +486,7 @@ describe("useInvestmentForm 出资账户（issue #936 / #938 / ADR-0096，buy/se
       device_id: "test",
       is_deleted: false,
       is_hidden: false,
+      is_archived: false,
     },
     makeAccount({ id: "acc-inv-usd", name: "美股证券户", currency_code: "USD" }),
     {
@@ -493,6 +501,7 @@ describe("useInvestmentForm 出资账户（issue #936 / #938 / ADR-0096，buy/se
       device_id: "test",
       is_deleted: false,
       is_hidden: false,
+      is_archived: false,
     },
     {
       id: "acc-debt",
@@ -506,6 +515,7 @@ describe("useInvestmentForm 出资账户（issue #936 / #938 / ADR-0096，buy/se
       device_id: "test",
       is_deleted: false,
       is_hidden: false,
+      is_archived: false,
     },
     {
       id: "acc-bank-usd",
@@ -519,6 +529,7 @@ describe("useInvestmentForm 出资账户（issue #936 / #938 / ADR-0096，buy/se
       device_id: "test",
       is_deleted: false,
       is_hidden: false,
+      is_archived: false,
     },
   ];
 

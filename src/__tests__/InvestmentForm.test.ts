@@ -32,6 +32,7 @@ const mockAccounts: Account[] = [
     device_id: "test",
     is_deleted: false,
     is_hidden: false,
+    is_archived: false,
   },
 ];
 
@@ -511,6 +512,7 @@ describe("出资账户表单行（issue #936 / #938 / ADR-0096，buy/sell 对称
       device_id: "test",
       is_deleted: false,
       is_hidden: false,
+      is_archived: false,
     },
     makeAccount({ id: "acc-inv-usd", name: "美股证券户", currency_code: "USD" }),
     makeAccount({ id: "acc-bank-usd", name: "美元卡", type: "bank", currency_code: "USD" }),

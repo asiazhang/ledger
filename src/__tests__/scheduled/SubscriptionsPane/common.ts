@@ -40,6 +40,7 @@ import type {
 // 查找助手直用测试辅助层出口（本目录惯用名 findInput 保持主题文件导入不变）。
 export { findInputByTestId as findInput } from "@ledger/test-support/dom";
 
+/** 目录账户夹具基线（每测重置回它；`setMockAccounts` 供归档等场景追加行） */
 export const mockAccounts: Account[] = [
   {
     id: "acc-1",
@@ -53,6 +54,7 @@ export const mockAccounts: Account[] = [
     device_id: "test",
     is_deleted: false,
     is_hidden: false,
+    is_archived: false,
   },
 ];
 
@@ -135,6 +137,11 @@ export function setFailSubscriptionUpdate(value: boolean) {
 export function setMockMerchants(rows: Merchant[]) {
   mockMerchantsState = rows;
 }
+/** 可变账户库（spec #1952 / ADR-0142：编辑面补值场景需要归档账户进场） */
+let accountsDb: Account[] = mockAccounts;
+export function setMockAccounts(rows: Account[]) {
+  accountsDb = rows;
+}
 
 export async function mountView() {
   return mountFlushed(SubscriptionsPane);
@@ -147,16 +154,18 @@ export async function setup() {
   mockSpendOverview = emptySpendOverview;
   failSubscriptionUpdate = false;
   mockMerchantsState = mockMerchants;
+  accountsDb = mockAccounts;
   // 唯一接缝布线（ADR-0085）：账户与分类以本套夹具覆写（值与规范夹具不同，
   // 属场景契约而非重复枚举），进 defaults 表；可变库与行为编排（订阅 CRUD、
   // 状态机、重试、花费总览）为函数型 overrides。其余参考命令由规范夹具兜底；
   // store 层预热 opt-in 开启：主题用例依赖参考数据就绪后的即时渲染。
   const seam = wireInvokeSeam({
     defaults: {
-      list_accounts: mockAccounts,
       list_categories: mockCategories,
     },
     overrides: {
+      // 可变账户库（同 TransactionsView 薄壳先例）：函数型覆写取最新值
+      list_accounts: () => accountsDb,
       list_merchants: () => mockMerchantsState,
       subscription_spend_overview: () => mockSpendOverview,
       list_scheduled_transactions: () => mockPlans,

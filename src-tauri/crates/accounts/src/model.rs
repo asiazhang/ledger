@@ -92,6 +92,8 @@ pub struct Account {
     pub is_deleted: bool,
     /// 黑洞账户标志：对用户侧列表/余额/下拉选择器隐藏，但交易仍参与交易列表与报表。
     pub is_hidden: bool,
+    /// 归档收纳态：`true` = 已归档，只收窄账户页主表与编辑选择面两处呈现；余额、余额合计与净资产照旧计入，读面不过滤。
+    pub is_archived: bool,
     /// 信用额度（整数分，仅信用卡；`None` = 未设置）。档案字段，不参与余额与净资产。
     pub credit_limit_cents: Option<i64>,
     /// 账单日（1–31 的每月第 N 日声明值，仅信用卡；`None` = 未设置）。
@@ -131,6 +133,9 @@ pub struct AccountUpdateInput {
     pub statement_day: Option<Option<i64>>,
     #[serde(default, deserialize_with = "ledger_infra::serde_util::double_option")]
     pub due_day: Option<Option<i64>>,
+    /// 可选归档键：缺席 = 不改，`true` / `false` = 落定归档 / 恢复（布尔无「清空」态，`null` 同缺席）。
+    #[serde(default)]
+    pub is_archived: Option<bool>,
 }
 
 /// 信用卡档案字段三件套——**不是** wire 形态（wire 与库列都是三个扁平字段），而是
@@ -252,9 +257,10 @@ impl FromRow for Account {
             device_id: row.get(8)?,
             is_deleted: row.get::<_, i64>(9)? != 0,
             is_hidden: row.get::<_, i64>(10)? != 0,
-            credit_limit_cents: row.get(11)?,
-            statement_day: row.get(12)?,
-            due_day: row.get(13)?,
+            is_archived: row.get::<_, i64>(11)? != 0,
+            credit_limit_cents: row.get(12)?,
+            statement_day: row.get(13)?,
+            due_day: row.get(14)?,
         })
     }
 }

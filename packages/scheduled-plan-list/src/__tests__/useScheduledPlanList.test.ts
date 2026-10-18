@@ -17,6 +17,7 @@ import { defineComponent, type PropType } from "vue";
 import { flushPromises, mount } from "@vue/test-utils";
 import {
   earliestPendingOccurrence,
+  isUnfinishedStatus,
   scheduledRecurrenceLabel,
   scheduledRecurrenceOptions,
   useScheduledPlanList,
@@ -369,6 +370,17 @@ describe("useScheduledPlanList Plan Lifecycle 操作", () => {
     await flushPromises();
     expect(lastMessage("error")).toBe("操作失败: 状态不允许变更");
     expect(listCalls()).toBe(1);
+  });
+});
+
+// 「未结束」判据（active | paused）的唯一定义点：取消可用性（行操作矩阵）与账户
+// 归档提示（`isUnfinishedPlan`）同吃这一份，两处不得各写一份字面量。
+describe("isUnfinishedStatus（Plan Lifecycle「未结束」判据）", () => {
+  it("active 与 paused 未结束；cancelled 与 completed 已结束", () => {
+    expect(isUnfinishedStatus("active")).toBe(true);
+    expect(isUnfinishedStatus("paused")).toBe(true);
+    expect(isUnfinishedStatus("cancelled")).toBe(false);
+    expect(isUnfinishedStatus("completed")).toBe(false);
   });
 });
 

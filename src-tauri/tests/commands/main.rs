@@ -18,6 +18,7 @@
     )
 )]
 
+mod accounts;
 mod app_info;
 mod app_update;
 mod books;

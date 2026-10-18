@@ -66,10 +66,10 @@ fn init_db_is_idempotent_and_seeds_defaults() {
     assert_eq!(mismatched, 0);
 }
 
-/// 当前迁移序列长度（V001–V036，V005 移除不回填，共 35 条）；新增迁移时随
-/// `migrations()` 同步更新。钉住「从零迁移到最新」的完整性基线，同时钉住
-/// 拆库边界（V036 = 35，`SYNC_SPLIT_USER_VERSION` 的位置版本依据）。
-const LATEST_SCHEMA_VERSION: usize = 35;
+/// 当前迁移序列长度（V001–V037，V005 移除不回填，共 36 条）；新增迁移时随
+/// `migrations()` 同步更新。钉住「从零迁移到最新」的完整性基线（拆库边界
+/// 35 的常量钉在 `db::tests::sync_split`，此处只管最新版本）。
+const LATEST_SCHEMA_VERSION: usize = 36;
 
 /// 从零迁移完整性（内存库从零 → 最新）：user_version 停在最新、全库完整性
 /// 检查通过、每条迁移的签名表/列在场。漏跑或中途失败的迁移批次会停在半途
@@ -171,6 +171,8 @@ fn migration_from_zero_reaches_latest_completely() {
         // V002 就地修改（issue #977）：基金转换的转入腿列（同批另增 to_quantity /
         // out_amount_cents / in_amount_cents 与转出消耗表，形状锁见 convert 专测）。
         ("security_transactions", "to_instrument_id"),
+        // V037（spec #1952 / ADR-0142）：账户归档标志列（收纳态，不动任何金额口径）。
+        ("accounts", "is_archived"),
         // V026（spec #1327 / ADR-0119）：信用卡档案列（额度 / 账单日 / 还款日）。
         ("accounts", "credit_limit_cents"),
         ("accounts", "statement_day"),

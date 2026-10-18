@@ -7,6 +7,7 @@ import { formatAmount } from "@ledger/money";
 import { refCurrencies } from "@ledger/test-support/reference-stubs";
 import { makeSubscriptionPlan } from "../../factories";
 import {
+  mockAccounts,
   mockDetails,
   makeDetail,
   mockMerchants,
@@ -14,9 +15,11 @@ import {
   mountView,
   setFailSubscriptionUpdate,
   setMockMerchants,
+  setMockAccounts,
   setMockPlans,
   setup,
 } from "./common";
+import type { Account } from "@ledger/types";
 
 // 金额断言委托形态（issue #770）：期待值调同一 formatAmount 实现，格式规则唯一归属其专测
 const cny = refCurrencies[0];
@@ -206,5 +209,37 @@ describe("SubscriptionsPane 订阅编辑——仅非金额字段（issue #162）
     await wrapper.findComponent('[data-testid="sub-edit-save"]').trigger("click");
     await flushPromises();
     expect(findModal(wrapper, "编辑订阅").props("show")).toBe(true);
+  });
+
+  it("编辑挂归档账户的订阅：账户下拉补回该账户并标「已归档」、保持原选中（编辑实例选项面）", async () => {
+    /** 归档账户（spec #1952 / ADR-0142 决策 4：归档不进新选择，已存值补回） */
+    const archived: Account = {
+      id: "acc-arch",
+      name: "旧工资卡",
+      type: "cash",
+      currency_code: "CNY",
+      initial_balance_cents: 0,
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-01T00:00:00Z",
+      version: 1,
+      device_id: "test",
+      is_deleted: false,
+      is_hidden: false,
+      is_archived: true,
+    };
+    const plan = makeSubscriptionPlan({ id: "a1", account_id: "acc-arch" });
+    setMockPlans([plan]);
+    mockDetails.set("a1", makeDetail(plan, []));
+    setMockAccounts([...mockAccounts, archived]);
+    await useReferenceStore().refresh();
+    const wrapper = await mountView();
+    await openEditModal(wrapper);
+    const accountSelect = findModal(wrapper, "编辑订阅").findComponent(NSelect);
+    // 值保持原选中（不静默改挂），选项补回可读名字 + 标记（不露裸 uuid）
+    expect(accountSelect.props("value")).toBe("acc-arch");
+    expect(accountSelect.props("options")).toContainEqual({
+      label: "旧工资卡（已归档）",
+      value: "acc-arch",
+    });
   });
 });

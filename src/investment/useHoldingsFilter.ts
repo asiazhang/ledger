@@ -1,6 +1,7 @@
 import { computed, onScopeDispose, readonly, type Ref } from "vue";
 import { storeToRefs } from "pinia";
 import { useReferenceStore } from "@/stores/reference";
+import { usePinnedAccountOptions } from "@/composables/useFormShared";
 import { matchLabel } from "@ledger/utils/pinyin-filter";
 import {
   rowStatCardValues,
@@ -36,7 +37,8 @@ import {
  *   拼音首字母子序列，大小写不敏感，ADR-0027）；输入防抖时长单源
  *   SEARCH_DEBOUNCE_MS（跨域「搜索输入防抖」不变量，issue #1308）。
  * - **账户过滤**：单选（null = 全部默认态），候选面投影单点收口在参考 store
- *   （investmentAccountOptions，#1830；谓词 type = investment 同源同处）。
+ *   （selectableInvestmentAccountOptions，#1830 收口 + spec #1952 / ADR-0142
+ *   决策 4 的归档排除；读口径谓词 type = investment 同源同处、不排归档）。
  * - **排序**：市值 / 未实现盈亏两列列头升降序（naive-ui 受控 sorter 形态，
  *   行集合由本模块排序产出）；无排序状态时默认标的代码字母序；缺价行
  *  （金额 null）恒排末尾，与方向无关。
@@ -164,13 +166,14 @@ export interface UseHoldingsFilterReturn {
   readonly page: Ref<number>;
   /** 派生合计（折本位币单值，issue #1797）：随过滤子集更新，排序不影响，缺价行不计入 */
   readonly statCards: Ref<{ marketValue: StatCardValue; unrealizedPnl: StatCardValue }>;
-  /** 账户下拉选项：候选面投影单点在参考 store（investmentAccountOptions，#1830 收口） */
+  /** 账户下拉选项：可选择面（归档不进新选择）+ 会话保留值的补值（spec #1952 / ADR-0142 决策 4） */
   readonly accountOptions: Ref<{ label: string; value: string }[]>;
 }
 
 export function useHoldingsFilter(rows: Ref<PortfolioRow[]>): UseHoldingsFilterReturn {
-  // 账户下拉候选面单点消费（reference.investmentAccountOptions，#1830 收口）
-  const { investmentAccountOptions: accountOptions } = storeToRefs(useReferenceStore());
+  // 账户下拉候选面单点消费（#1830 收口）：选项面取**可选择**变体——归档账户不进新选择
+  // （spec #1952 / ADR-0142 决策 4），读口径谓词 investmentAccounts 不动。
+  const { selectableInvestmentAccountOptions } = storeToRefs(useReferenceStore());
   const session = useInvestmentsSessionStore();
   // 会话级 store 是三维状态与页码的唯一读写方（ADR-0094）；本工厂只做投影，
   // 投影一律只读（原实现的 readonly(...) 保证不因状态迁入 store 而消失）。
@@ -181,6 +184,9 @@ export function useHoldingsFilter(rows: Ref<PortfolioRow[]>): UseHoldingsFilterR
     holdingsPage: storedPage,
   } = storeToRefs(session);
   const searchInput = readonly(holdingsSearchInput);
+  /** 账户下拉 = 可选择面 + 补值：筛选值住会话 store（跨页保留），可能指向刚归档的账户
+   * ——补回选项并标「已归档」，筛选照旧生效、不露裸 uuid（spec #1952 / ADR-0142 决策 4）。 */
+  const accountOptions = usePinnedAccountOptions(accountId, selectableInvestmentAccountOptions);
 
   // 派生链：过滤（搜索 × 账户）→ 排序 → 合计。合计只依赖过滤子集，
   // 排序变化不触碰合计（排序不影响合计由派生结构保证，非调用方自觉）。
