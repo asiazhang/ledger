@@ -113,6 +113,9 @@ pub fn migrations() -> &'static Migrations<'static> {
             M::up(include_str!(
                 "../../../../migrations/V036__sync_db_split.sql"
             )),
+            M::up(include_str!(
+                "../../../../migrations/V037__account_archive.sql"
+            )),
         ])
     })
 }

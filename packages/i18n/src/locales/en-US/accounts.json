@@ -41,9 +41,23 @@
     "positive": "Delete",
     "negative": "Cancel"
   },
+  "archiveDialog": {
+    "title": "Archive Account",
+    "content": "Archive account \"{name}\"? It moves out of the main list into the \"Archived\" section below; history and transactions stay available.",
+    "positive": "Archive",
+    "negative": "Cancel"
+  },
+  "archived": {
+    "title": "Archived",
+    "summary": "{count} accounts · total {total}",
+    "expand": "Expand archived accounts",
+    "collapse": "Collapse archived accounts"
+  },
   "menu": {
     "edit": "Edit",
     "adjustBalance": "Adjust Balance",
+    "archive": "Archive",
+    "restore": "Restore",
     "delete": "Delete"
   },
   "message": {
@@ -55,7 +69,9 @@
     "saved": "Saved",
     "saveFailed": "Failed to save: {message}",
     "adjusted": "Balance adjusted",
-    "adjustFailed": "Failed to adjust: {message}"
+    "adjustFailed": "Failed to adjust: {message}",
+    "archived": "Account archived; history and transactions stay available",
+    "restored": "Account restored"
   },
   "credit": {
     "limit": "Credit Limit",

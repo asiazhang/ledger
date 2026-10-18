@@ -8,6 +8,7 @@ import {
   NDataTable,
   NForm,
   NFormItem,
+  NIcon,
   NInput,
   NInputNumber,
   NSpace,
@@ -16,6 +17,7 @@ import {
   useThemeVars,
   type DataTableColumns,
 } from "naive-ui";
+import { ChevronDown } from "@vicons/ionicons5";
 import { api } from "@ledger/api";
 import { t } from "@ledger/i18n";
 import { useReferenceStore } from "@/stores/reference";
@@ -25,11 +27,15 @@ import AppDropdown from "@ledger/ui-kit/AppDropdown.vue";
 import AppDatePicker from "@ledger/ui-kit/AppDatePicker.vue";
 import AppSelect from "@ledger/ui-kit/AppSelect.vue";
 import { useAppDialog } from "@/composables/useAppDialog";
+import { useLoadable } from "@ledger/loadable";
 import { useModalIntent } from "@ledger/modal-intent";
 import { useRowContextMenu } from "@ledger/row-context-menu";
 import { useWindowTier } from "@ledger/window-tier";
 import AccountLink from "@/accounts/AccountLink.vue";
-import { buildAccountRowMenuOptions } from "@/accounts/account-row-menu";
+import {
+  buildAccountRowMenuOptions,
+  buildArchivedAccountRowMenuOptions,
+} from "@/accounts/account-row-menu";
 import {
   CREDIT_UTILIZATION_WARNING_PERCENT,
   creditProfile,
@@ -81,15 +87,51 @@ const currencyOptions = () =>
 // 分组按绑定派生（绑定集选择器归储蓄目标 store，#1752 同源消费），无绑定的
 // 普通 `other` 账户仍在原列表原位；目标组空集不渲染空卡（模板 v-if）。
 // 同一 balances 快照拆分展示、不做任何加减，余额与净资产读数不受分组影响。
+//
+// 已归档分区（spec #1952 / ADR-0142）：三分组 = 普通账户 / 储蓄目标账户 / 已归档，
+// 已归档区在页底、默认折叠、标题行带数量与余额合计。归档是收纳态——行集只重排、
+// 余额口径一字不动；归档行同样住在这份快照里（读命令零过滤，ADR 决策 4）。
 // ---------------------------------------------------------------------------
-/** 目标绑定账户行（进「储蓄目标」分组卡）。 */
+/** 已归档账户行（进页底「已归档」分区）。 */
+const archivedBalances = computed(() => balances.value.filter((row) => row.account.is_archived));
+/** 目标绑定账户行（进「储蓄目标」分组卡；目标绑定账户不可归档，排除只为不变量自明）。 */
 const goalBalances = computed(() =>
-  balances.value.filter((row) => savingsGoalsStore.goalAccountIds.has(row.account.id)),
+  balances.value.filter(
+    (row) => !row.account.is_archived && savingsGoalsStore.goalAccountIds.has(row.account.id),
+  ),
 );
-/** 非目标账户行（留在原「账户」列表卡）。 */
+/** 非目标、未归档账户行（留在原「账户」列表卡）。 */
 const normalBalances = computed(() =>
-  balances.value.filter((row) => !savingsGoalsStore.goalAccountIds.has(row.account.id)),
+  balances.value.filter(
+    (row) => !row.account.is_archived && !savingsGoalsStore.goalAccountIds.has(row.account.id),
+  ),
 );
+
+/** 已归档分区展开态：默认折叠（ADR-0142 决策 1），不持久化——账本收纳态归账本，
+ * 折叠展开只是本次查看的口味，不入设备偏好（ADR-0136 只管视图偏好，不为它开口）。 */
+const archivedExpanded = ref(false);
+
+/** 折叠箭头：折叠时指右、展开时指下（ChevronDown 旋转，不换图标）。 */
+const archivedChevronStyle = computed(() => ({
+  transition: "transform 0.2s",
+  transform: archivedExpanded.value ? "rotate(0deg)" : "rotate(-90deg)",
+}));
+
+/** 已归档分区合计：与主表**同一份** `listAccountBalances` 快照直接累加（ADR-0142
+ * 决策 1：已归档分区与主表各自派生、互不重算）。单币种时带币种符号；混币种时
+ * 退化为无符号数值——前端没有汇率折算接缝（净资产折算归后端 dashboard_overview，
+ * ADR-0067），不在此造第二份口径。金额一律经 formatAmount（含金额隐私掩码）。 */
+const archivedSummary = computed(() => {
+  const rows = archivedBalances.value;
+  const total = rows.reduce((sum, row) => sum + row.balance_cents, 0);
+  const currencyCodes = new Set(rows.map((row) => row.account.currency_code));
+  const onlyCurrency = currencyCodes.size === 1 ? rows[0]?.account.currency_code : undefined;
+  return t("accounts.archived.summary", {
+    count: rows.length,
+    total: formatAmount(total, onlyCurrency ? reference.getCurrency(onlyCurrency) : undefined),
+  });
+});
+
 /** 类型标签：目标绑定账户覆写为「储蓄目标」（三处消费：桌面类型列、移动档副行、编辑弹窗只读 type）。 */
 function accountTypeLabel(row: AccountBalance): string {
   return savingsGoalsStore.goalAccountIds.has(row.account.id)
@@ -158,6 +200,68 @@ function confirmDelete(row: AccountBalance) {
     maskClosable: false,
     onPositiveClick: () => remove(row.account.id),
   });
+}
+
+// ---------------------------------------------------------------------------
+// 归档 / 恢复（spec #1952 / ADR-0142）：收纳态——不改任何金额口径（余额、合计、
+// 净资产一律照旧计入），只把行从主表移到页底「已归档」分区。
+// 确认框本票保持最小形态（标题 + 一句通用正文 + 确认/取消）：余额声明与进行中
+// 计划数提示归 #1955，届时在 archiveDialogContent 里加句即可（结构与 i18n 单点）。
+// ---------------------------------------------------------------------------
+
+/** 确认框正文（#1955 的富化口：余额非零声明、进行中计划数提示均从这一处追加）。 */
+function archiveDialogContent(row: AccountBalance): string {
+  return t("accounts.archiveDialog.content", { name: row.account.name });
+}
+
+// 异步失败统一走 Loadable（与储蓄目标归档同款，ADR-0040）：错误捕获、文案归一
+// （码化错误经 errorMessage 按码本地化，如 `account.goal-bound-cannot-archive`）
+// 与 toast 策略内化在 Loadable 单点，视图不手搓 catch toast。
+/** 动作目标（闭包内自读的响应式参数——useLoadable 任务以 0 元闭包声明）。 */
+const archiveTarget = ref<AccountBalance | null>(null);
+
+/** 归档（幂等：重复归档不报错、不重复产同步 op）。 */
+const archiveRun = useLoadable(async () => {
+  const row = archiveTarget.value;
+  if (row) await api.archiveAccount(row.account.id);
+});
+
+/** 恢复（幂等：归档的唯一回退动作，回主表与选择面）。 */
+const restoreRun = useLoadable(async () => {
+  const row = archiveTarget.value;
+  if (row) await api.unarchiveAccount(row.account.id);
+});
+
+/** 归档：确认后落库（幂等），成功刷新余额快照——行按标志自动分组进已归档分区。 */
+async function archive(row: AccountBalance) {
+  archiveTarget.value = row;
+  if ((await archiveRun.run()) !== null) {
+    message.success(t("accounts.message.archived"));
+    // 参考数据由 ledger:changed 信号自动重拉；此处仅刷新余额快照（已归档分区与
+    // 主表同源，一次重拉后行自动分组到位）
+    await refresh();
+  }
+}
+
+/** 归档二次确认（与删除同语义：遮罩点击不构成关闭意图）。 */
+function confirmArchive(row: AccountBalance) {
+  dialog.warning({
+    title: t("accounts.archiveDialog.title"),
+    content: archiveDialogContent(row),
+    positiveText: t("accounts.archiveDialog.positive"),
+    negativeText: t("accounts.archiveDialog.negative"),
+    maskClosable: false,
+    onPositiveClick: () => archive(row),
+  });
+}
+
+/** 恢复：确认即落库（幂等），成功刷新余额快照——行自动回到主表。 */
+async function restore(row: AccountBalance) {
+  archiveTarget.value = row;
+  if ((await restoreRun.run()) !== null) {
+    message.success(t("accounts.message.restored"));
+    await refresh();
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -383,14 +487,22 @@ async function submitAdjust() {
 // 入参回调，选中即收起并交付收起瞬间的目标行）。
 // ---------------------------------------------------------------------------
 
-const menuOptions = computed(() =>
-  buildAccountRowMenuOptions({ errorColor: themeVars.value.errorColor }),
-);
-
 const rowMenu = useRowContextMenu<AccountBalance>((key, row) => {
   if (key === "edit") openEdit(row);
   else if (key === "adjust-balance") openAdjust(row);
+  else if (key === "archive") confirmArchive(row);
+  else if (key === "restore") void restore(row);
   else if (key === "delete") confirmDelete(row);
+});
+
+/** 行菜单形态按当前目标行的归档态派生：已归档行只有「恢复」（ADR-0142 决策 2），
+ * 未归档行是编辑 / 调整余额 / 归档 / 删除。形态选择读工厂保留的收起瞬间目标行；
+ * 菜单关闭态无目标行，回落未归档形态（此时菜单不可见，形态无消费方）。 */
+const menuOptions = computed(() => {
+  const errorColor = themeVars.value.errorColor;
+  return rowMenu.state.value?.row.account.is_archived
+    ? buildArchivedAccountRowMenuOptions({ errorColor })
+    : buildAccountRowMenuOptions({ errorColor });
 });
 
 // 可见性由单判别状态派生（非空即显示）；定位坐标取工厂保留值（open 同步更新、
@@ -634,6 +746,42 @@ onMounted(() => {
       <NDataTable
         :columns="columns"
         :data="normalBalances"
+        :bordered="false"
+        size="small"
+        :row-props="rowProps"
+      />
+    </NCard>
+
+    <!-- 已归档分区（spec #1952 / ADR-0142 决策 1）：页底、默认折叠、标题行带数量与
+         余额合计（与主表同一份余额快照派生，不重算、不加不减）；展开后才渲染表格
+         （折叠即不挂载行，不靠样式隐藏）。行只提供「恢复」——编辑 / 调整余额 / 删除
+         都要先恢复。空集不渲染空卡（v-if）。 -->
+    <NCard v-if="archivedBalances.length > 0" size="small" data-testid="accounts-archived-card">
+      <template #header>
+        <NButton
+          quaternary
+          size="small"
+          data-testid="accounts-archived-toggle"
+          :aria-expanded="archivedExpanded"
+          :aria-label="
+            archivedExpanded ? t('accounts.archived.collapse') : t('accounts.archived.expand')
+          "
+          @click="archivedExpanded = !archivedExpanded"
+        >
+          <NIcon :style="archivedChevronStyle"><ChevronDown /></NIcon>
+          <span style="margin-left: 4px">{{ t("accounts.archived.title") }}</span>
+          <span
+            data-testid="accounts-archived-summary"
+            style="margin-left: 8px; font-weight: normal; opacity: 0.75"
+          >
+            {{ archivedSummary }}
+          </span>
+        </NButton>
+      </template>
+      <NDataTable
+        v-if="archivedExpanded"
+        :columns="columns"
+        :data="archivedBalances"
         :bordered="false"
         size="small"
         :row-props="rowProps"

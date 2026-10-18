@@ -41,9 +41,23 @@
     "positive": "删除",
     "negative": "取消"
   },
+  "archiveDialog": {
+    "title": "归档账户",
+    "content": "确认归档账户「{name}」？归档后它从主表移入下方的「已归档」分区，历史与流水仍可查。",
+    "positive": "归档",
+    "negative": "取消"
+  },
+  "archived": {
+    "title": "已归档",
+    "summary": "{count} 个账户 · 合计 {total}",
+    "expand": "展开已归档账户",
+    "collapse": "收起已归档账户"
+  },
   "menu": {
     "edit": "编辑",
     "adjustBalance": "调整余额",
+    "archive": "归档",
+    "restore": "恢复",
     "delete": "删除"
   },
   "message": {
@@ -55,7 +69,9 @@
     "saved": "已保存",
     "saveFailed": "保存失败: {message}",
     "adjusted": "余额已调整",
-    "adjustFailed": "调整失败: {message}"
+    "adjustFailed": "调整失败: {message}",
+    "archived": "账户已归档，历史与流水保留可查",
+    "restored": "账户已恢复"
   },
   "credit": {
     "limit": "信用额度",

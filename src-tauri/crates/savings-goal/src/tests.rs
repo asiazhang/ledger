@@ -864,8 +864,8 @@ fn progress_and_linked_plan_share_one_snapshot() {
 // ---------------------------------------------------------------------------
 
 use super::{
-    archive_savings_goal, delete_savings_goal, ensure_account_not_goal_bound,
-    unarchive_savings_goal,
+    archive_savings_goal, delete_savings_goal, ensure_account_can_archive,
+    ensure_account_not_goal_bound, unarchive_savings_goal,
 };
 
 /// 归档 / 取消归档（AC 归档）：归档后目标行仍在读数中但状态转 archived，
@@ -1083,4 +1083,27 @@ fn account_guard_rejects_bound_account_only() {
     );
 
     ensure_account_not_goal_bound(&conn, "plain").expect("非目标账户应放行");
+}
+
+/// 账户归档守卫（spec #1952 / ADR-0142 决策 6 / issue #1953 域单测面）：命中在用
+/// 目标绑定 → 码化拒绝且文案指向「归档目标本身」（不是禁删的「请先删除」）；
+/// 普通账户（非目标绑定）放行。
+#[test]
+fn archive_guard_rejects_bound_account_only_and_points_at_goal_archive() {
+    let conn = setup();
+    tauri_app_lib::test_support::seed_account(&conn, "plain", "普通卡", "bank", "CNY", 0);
+    create_savings_goal(&conn, &goal_input("买房基金", 500_000, None)).expect("创建目标应成功");
+    let account_id = only_progress(&conn).goal.account_id.clone();
+
+    let err = ensure_account_can_archive(&conn, &account_id).expect_err("在用目标绑定应被拒");
+    assert!(
+        err.is_code("account.goal-bound-cannot-archive"),
+        "应报码化错误 account.goal-bound-cannot-archive，实际 {err:?}"
+    );
+    assert!(
+        err.to_string().contains("归档"),
+        "文案应指向「归档目标本身」，实际 {err}"
+    );
+
+    ensure_account_can_archive(&conn, "plain").expect("非目标账户应放行");
 }

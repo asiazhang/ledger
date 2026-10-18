@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { lastInvokeArgs, wireInvokeSeam } from "@ledger/test-support/invoke-mock";
+import { lastInvokeArgs, mockInvoke, wireInvokeSeam } from "@ledger/test-support/invoke-mock";
+import { registerToastSink } from "@ledger/loadable";
+import { makeFakeSink } from "./factories";
 import { fireProp } from "@ledger/test-support/component-vm";
 import { mount, flushPromises } from "@vue/test-utils";
 import {
@@ -40,6 +42,7 @@ function makeAccount(id: string, name: string): Account {
     device_id: "test",
     is_deleted: false,
     is_hidden: false,
+    is_archived: false,
   };
 }
 
@@ -144,7 +147,13 @@ describe("AccountsView 行菜单冒烟（issue #551：右键 + 「⋯」双入�
     expect(rowMenu(wrapper).props("show")).toBe(false);
     await openMenuOnRow(wrapper, 0);
     expect(rowMenu(wrapper).props("show")).toBe(true);
-    expect(menuKeys(wrapper)).toEqual(["edit", "adjust-balance", "menu-divider", "delete"]);
+    expect(menuKeys(wrapper)).toEqual([
+      "edit",
+      "adjust-balance",
+      "archive",
+      "menu-divider",
+      "delete",
+    ]);
   });
 
   it("操作列「⋯」按钮弹出行菜单（第二入口，与右键共用同一菜单）", async () => {
@@ -152,7 +161,13 @@ describe("AccountsView 行菜单冒烟（issue #551：右键 + 「⋯」双入�
     await flushPromises();
     await openMenuOnMoreButton(wrapper, 1);
     expect(rowMenu(wrapper).props("show")).toBe(true);
-    expect(menuKeys(wrapper)).toEqual(["edit", "adjust-balance", "menu-divider", "delete"]);
+    expect(menuKeys(wrapper)).toEqual([
+      "edit",
+      "adjust-balance",
+      "archive",
+      "menu-divider",
+      "delete",
+    ]);
   });
 
   it("菜单选中「编辑」分派到编辑弹窗并回填目标行（第二行「银行」）", async () => {
@@ -292,7 +307,7 @@ describe("AccountsView 移动档（issue #847 / ADR-0088 决策 11 票⑦，词�
     setFakeMedia({ width: 600, hover: "none", pointer: "coarse" });
     const wrapper = mountView();
     await flushPromises();
-    const expected = ["edit", "adjust-balance", "menu-divider", "delete"];
+    const expected = ["edit", "adjust-balance", "archive", "menu-divider", "delete"];
 
     // 触控轴无右键手势可达性要求，但两轴行为一致是验收硬条件：右键入口结果…
     await bodyRows(wrapper)[0].trigger("contextmenu");
@@ -713,5 +728,250 @@ describe("AccountsView 攒钱分组与类型标签（issue #1755 / ADR-0133 决�
     expect(wrapper.findAllComponents(NForm)[1].findAllComponents(NInput)[1].props("value")).toBe(
       "攒钱",
     );
+  });
+});
+
+describe("AccountsView 账户归档（spec #1952 / ADR-0142）", () => {
+  const CNY = { code: "CNY", name: "人民币", symbol: "¥", decimal_places: 2 };
+
+  /** 挂载期数据快照（归档 / 恢复把位翻过来后由读命令重拉出新快照）。 */
+  let rows: AccountBalance[];
+
+  /** 存档夹具：现金（在用）+ 银行 / 旧卡（已归档）。合计 2500 - 500 = 2000 分 = ¥20。 */
+  function seedRows(): AccountBalance[] {
+    return [
+      { account: makeAccount("acc-1", "现金"), balance_cents: 1000 },
+      {
+        account: { ...makeAccount("acc-2", "银行"), is_archived: true },
+        balance_cents: -500,
+      },
+      {
+        account: { ...makeAccount("acc-3", "旧卡"), is_archived: true },
+        balance_cents: 2500,
+      },
+    ];
+  }
+
+  /**
+   * 视图布线：余额快照与归档 / 恢复命令是同一份状态的读写——归档命令把位翻过来、
+   * 视图 `refresh()` 重拉即见行移入 / 移出分区（镜像后端读面零过滤，ADR-0142 决策 4）。
+   * `archiveReject` 让归档命令按码化错误被拒（储蓄目标绑定守卫场景）。
+   */
+  async function wireArchiveSeam(archiveReject?: unknown) {
+    await wireInvokeSeam({
+      defaults: { list_accounts: rows.map((row) => row.account) },
+      overrides: {
+        list_account_balances: () => rows,
+        savings_goal_progress: () => Promise.resolve(goalProgress),
+        archive_account: (args?: Record<string, unknown>) => {
+          if (archiveReject) return Promise.reject(archiveReject);
+          const { id } = args as { id: string };
+          rows = rows.map((row) =>
+            row.account.id === id
+              ? { ...row, account: { ...row.account, is_archived: true } }
+              : row,
+          );
+          return Promise.resolve();
+        },
+        unarchive_account: (args?: Record<string, unknown>) => {
+          const { id } = args as { id: string };
+          rows = rows.map((row) =>
+            row.account.id === id
+              ? { ...row, account: { ...row.account, is_archived: false } }
+              : row,
+          );
+          return Promise.resolve();
+        },
+      },
+      refreshReferenceStores: true,
+    }).ready;
+    await useSavingsGoalsStore()
+      .refresh()
+      .catch(() => {});
+  }
+
+  /** 视图顶层调用 useDialog（确认框），与 App.vue 同构需 NDialogProvider 包裹。 */
+  function mountView() {
+    return mount(NDialogProvider, {
+      slots: { default: () => h(AccountsView) },
+    });
+  }
+
+  /** 普通列表卡（按标题定位）与已归档卡（按 testid 定位）。 */
+  function listCard(wrapper: ReturnType<typeof mount>) {
+    return wrapper.findAllComponents(NCard).find((c) => c.props("title") === "账户列表");
+  }
+  function archivedCard(wrapper: ReturnType<typeof mount>) {
+    return wrapper.find('[data-testid="accounts-archived-card"]');
+  }
+  function archivedSummary(wrapper: ReturnType<typeof mount>) {
+    return wrapper.find('[data-testid="accounts-archived-summary"]').text();
+  }
+
+  /** 行菜单：视图内唯一 NDropdown（选项含 edit 或 restore key 者）。 */
+  function rowMenu(wrapper: ReturnType<typeof mount>) {
+    return wrapper
+      .findAllComponents(NDropdown)
+      .find((d) =>
+        (d.props("options") as Array<{ key?: string }>).some(
+          (o) => o.key === "edit" || o.key === "restore",
+        ),
+      )!;
+  }
+  function menuKeys(wrapper: ReturnType<typeof mount>) {
+    return (rowMenu(wrapper).props("options") as Array<{ key: string }>).map((o) => o.key);
+  }
+  /** 数据行「⋯」按钮（DOM 顺序：普通表在前、展开后的已归档表在后）。 */
+  async function openMenuOnRowButton(wrapper: ReturnType<typeof mount>, index: number) {
+    await wrapper.findAll('button[aria-label="更多操作"]')[index].trigger("click");
+    await flushPromises();
+  }
+  /** 展开已归档分区。 */
+  async function expandArchived(wrapper: ReturnType<typeof mount>) {
+    await wrapper.find('[data-testid="accounts-archived-toggle"]').trigger("click");
+    await flushPromises();
+  }
+  /** 确认框正向按钮（teleport 到 body，按文案定位；取最后一个 = 最新弹层）。 */
+  function dialogButton(text: string) {
+    const buttons = [...document.body.querySelectorAll(".n-dialog__action button")];
+    return buttons.filter((b) => b.textContent?.trim() === text).at(-1) as
+      | HTMLButtonElement
+      | undefined;
+  }
+
+  beforeEach(async () => {
+    rows = seedRows();
+    await wireArchiveSeam();
+  });
+
+  it("已归档行移入页底「已归档」分区：默认折叠、标题显示数量与余额合计，主表只余在用账户", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+
+    // 主表：只剩在用账户（归档行不在主表）
+    const list = listCard(wrapper)!;
+    expect(list.findAll("tbody tr")).toHaveLength(1);
+    expect(list.text()).toContain("现金");
+    expect(list.text()).not.toContain("银行");
+
+    // 已归档分区：标题行带数量与余额合计（同一份余额快照直接相加：2500 + -500）
+    expect(archivedCard(wrapper).exists()).toBe(true);
+    expect(archivedSummary(wrapper)).toContain("2 个账户");
+    expect(archivedSummary(wrapper)).toContain(formatAmount(2000, CNY));
+    // 默认折叠：不渲染表格行，展开按钮 aria-expanded=false
+    expect(archivedCard(wrapper).findAll("tbody tr")).toHaveLength(0);
+    expect(
+      wrapper.find('[data-testid="accounts-archived-toggle"]').attributes("aria-expanded"),
+    ).toBe("false");
+  });
+
+  it("展开已归档分区：归档行出现且余额按快照原值渲染，合计不变（读数不受收纳影响）", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+    const summaryBefore = archivedSummary(wrapper);
+
+    await expandArchived(wrapper);
+
+    const rowsInArchive = archivedCard(wrapper).findAll("tbody tr");
+    expect(rowsInArchive).toHaveLength(2);
+    expect(rowsInArchive[0].text()).toContain("银行");
+    expect(rowsInArchive[0].text()).toContain(formatAmount(-500, CNY));
+    expect(rowsInArchive[1].text()).toContain("旧卡");
+    expect(rowsInArchive[1].text()).toContain(formatAmount(2500, CNY));
+    // 合计不变：展开只是呈现，不重算、不加不减
+    expect(archivedSummary(wrapper)).toBe(summaryBefore);
+    expect(
+      wrapper.find('[data-testid="accounts-archived-toggle"]').attributes("aria-expanded"),
+    ).toBe("true");
+  });
+
+  it("行菜单：未归档行含「归档」，已归档行只有「恢复」（编辑 / 调整余额 / 删除都要先恢复）", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+
+    // 在用行：编辑 / 调整余额 / 归档 / 分隔线 / 删除
+    await openMenuOnRowButton(wrapper, 0);
+    expect(menuKeys(wrapper)).toEqual([
+      "edit",
+      "adjust-balance",
+      "archive",
+      "menu-divider",
+      "delete",
+    ]);
+
+    // 已归档行：打开菜单后只剩「恢复」
+    await expandArchived(wrapper);
+    await openMenuOnRowButton(wrapper, 1);
+    expect(menuKeys(wrapper)).toEqual(["restore"]);
+    expect((rowMenu(wrapper).props("options") as Array<{ label: string }>)[0].label).toBe("恢复");
+  });
+
+  it("点击「归档」→ 二次确认 → 调用 archive_account，行移入已归档分区", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+    await openMenuOnRowButton(wrapper, 0);
+    fireProp(rowMenu(wrapper), "onSelect", "archive");
+    await flushPromises();
+    // 二次确认：确认前零次归档调用
+    expect(mockInvoke.mock.calls.some(([cmd]) => cmd === "archive_account")).toBe(false);
+
+    dialogButton("归档")!.click();
+    await flushPromises();
+
+    expect(lastInvokeArgs("archive_account")).toMatchObject({ id: "acc-1" });
+    // 渲染效果：行移入已归档分区（主表不再含「现金」，分区数量 +1）
+    expect(listCard(wrapper)!.text()).not.toContain("现金");
+    expect(archivedSummary(wrapper)).toContain("3 个账户");
+  });
+
+  it("点击「恢复」→ 调用 unarchive_account，行回到主表并恢复既有行为", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+    await expandArchived(wrapper);
+    await openMenuOnRowButton(wrapper, 1);
+    fireProp(rowMenu(wrapper), "onSelect", "restore");
+    await flushPromises();
+
+    expect(lastInvokeArgs("unarchive_account")).toMatchObject({ id: "acc-2" });
+    // 渲染效果：行回主表、分区只剩一条（合计同步变化）
+    expect(listCard(wrapper)!.text()).toContain("银行");
+    expect(archivedSummary(wrapper)).toContain("1 个账户");
+    // 恢复后的行回到未归档形态（完整动作集）
+    await openMenuOnRowButton(wrapper, 1);
+    expect(menuKeys(wrapper)).toEqual([
+      "edit",
+      "adjust-balance",
+      "archive",
+      "menu-divider",
+      "delete",
+    ]);
+  });
+
+  it("归档被拒（绑定储蓄目标的账户）：码化错误文案在场，账户仍在主表", async () => {
+    // 错误 toast 经 Loadable 默认策略走模块级 sink（断言只看 sink 面，先例 SavingsGoalsView）
+    const sink = makeFakeSink();
+    registerToastSink(sink);
+    rows = seedRows();
+    await wireArchiveSeam({
+      kind: "Invalid",
+      code: "account.goal-bound-cannot-archive",
+      message: "该账户是攒钱目标专属账户，请归档对应的攒钱目标",
+      params: [],
+    });
+    const wrapper = mountView();
+    await flushPromises();
+    await openMenuOnRowButton(wrapper, 0);
+    fireProp(rowMenu(wrapper), "onSelect", "archive");
+    await flushPromises();
+    dialogButton("归档")!.click();
+    await flushPromises();
+
+    // 用户可见：错误提示走 Loadable 默认策略的模块级 sink（先例 SavingsGoalsView），
+    // 文案是码化错误 → `errorMessage` 按错误码取到的本地化模板（界面显示该错误）
+    expect(sink.error.mock.calls.some((c) => String(c[0]).includes("请归档对应的攒钱目标"))).toBe(
+      true,
+    );
+    // 账户未被移走
+    expect(listCard(wrapper)!.text()).toContain("现金");
   });
 });

@@ -38,6 +38,7 @@ export const refAccounts: Account[] = [
     device_id: "test",
     is_deleted: false,
     is_hidden: false,
+    is_archived: false,
   },
   {
     id: "acc-del",
@@ -51,6 +52,7 @@ export const refAccounts: Account[] = [
     device_id: "test",
     is_deleted: true,
     is_hidden: false,
+    is_archived: false,
   },
 ];
 

@@ -266,17 +266,26 @@ fn pre_split_world_with_empty_sync_db_reuses_tables_and_converges() {
 }
 
 /// 拆库边界版本钉：`SYNC_SPLIT_USER_VERSION` = 迁移链位置版本 35（V036，V005
-/// 缺位不回填）；边界之前（34 = V035）四表仍在 main。迁移链插位变化在此变红。
+/// 缺位不回填）；边界之前（34 = V035）四表仍在 main。往 V036 之前插迁移（改变
+/// 它的位置版本）或把拆库搬到别的编号在此变红；V036 之后新增迁移允许继续
+/// 叠加（如 V037 账户归档列），边界自身不得后移。
 #[test]
 fn sync_split_user_version_boundary_is_pinned() {
-    // 拆库后世界：工厂（建库唯一入口）迁到最新，user_version 恰为边界版本。
+    // 边界常量钉死为 35：它是 V036 在链上的位置版本，不随后续迁移增长。
+    assert_eq!(
+        SYNC_SPLIT_USER_VERSION, 35,
+        "拆库边界应钉在 V036 的位置版本 35"
+    );
+
+    // 拆库后世界：工厂（建库唯一入口）迁到最新，最新版本不早于边界——边界
+    // 之后叠加的新迁移（V037 起）在此被接住，而边界若后移则上一条常量钉先红。
     let conn = tauri_app_lib::test_support::open();
     let latest: i64 = conn
         .query_row("PRAGMA user_version", [], |r| r.get(0))
         .unwrap();
-    assert_eq!(
-        latest, SYNC_SPLIT_USER_VERSION,
-        "最新版本应恰为拆库边界（V036 的位置版本）"
+    assert!(
+        latest >= SYNC_SPLIT_USER_VERSION,
+        "最新版本 {latest} 不应早于拆库边界 {SYNC_SPLIT_USER_VERSION}"
     );
 
     // 拆库前世界（与夹具同形的别名裸连接，停在 V035）：四表仍在 main。

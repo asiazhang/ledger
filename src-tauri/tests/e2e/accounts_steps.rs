@@ -70,6 +70,7 @@ fn rename_account(world: &mut LedgerWorld, name: String, new_name: String) {
             credit_limit_cents: None,
             statement_day: None,
             due_day: None,
+            is_archived: None,
         },
     )
     .err()
@@ -89,6 +90,7 @@ fn try_change_currency(world: &mut LedgerWorld, name: String, currency: String) 
             credit_limit_cents: None,
             statement_day: None,
             due_day: None,
+            is_archived: None,
         },
     )
     .err()

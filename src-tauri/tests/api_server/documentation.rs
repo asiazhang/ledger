@@ -149,6 +149,11 @@ async fn test_openapi_doc_batch_wrapper_and_duplicate_field() {
         account["properties"]["is_hidden"].is_object(),
         "Account 应包含 is_hidden 字段"
     );
+    // 归档收纳态读面只增字段（spec #1952 / ADR-0142 决策 5：AI 对账辨识用，无归档写权限）
+    assert!(
+        account["properties"]["is_archived"].is_object(),
+        "Account 应包含 is_archived 字段（只增披露）"
+    );
 }
 
 #[tokio::test]

@@ -22,6 +22,7 @@ const mockAccounts: Account[] = [
     device_id: "test",
     is_deleted: false,
     is_hidden: false,
+    is_archived: false,
   },
   {
     id: "acc-2",
@@ -35,6 +36,7 @@ const mockAccounts: Account[] = [
     device_id: "test",
     is_deleted: false,
     is_hidden: false,
+    is_archived: false,
   },
 ];
 
@@ -221,6 +223,31 @@ describe("useReferenceStore", () => {
       { label: "证券账户", value: "acc-inv" },
       { label: "隐藏证券户", value: "acc-inv-hidden" },
     ]);
+  });
+
+  it("账户归档（spec #1952 / ADR-0142 决策 4）：读面零过滤——归档账户照进字典、accountMap 可查名，标志随行披露", async () => {
+    wireInvokeSeam({
+      overrides: {
+        list_accounts: [
+          ...mockAccounts,
+          makeAccount({
+            id: "acc-archived",
+            name: "借出·张三",
+            type: "receivable",
+            is_archived: true,
+          }),
+        ],
+      },
+    });
+    const store = useReferenceStore();
+    await store.refresh();
+    // 归档不是删除：store 不做任何归档过滤（排除只发生在前端选项构造层，#1954），
+    // 否则名称映射与历史下钻断链
+    expect(store.accounts.map((a) => a.id)).toEqual(["acc-1", "acc-2", "acc-archived"]);
+    // 名称映射（AccountLink / 计划行回退名）照常拿到归档账户，标志随行披露
+    expect(store.accountMap.get("acc-archived")?.name).toBe("借出·张三");
+    expect(store.accountMap.get("acc-archived")?.is_archived).toBe(true);
+    expect(store.accountMap.get("acc-1")?.is_archived).toBe(false);
   });
 
   it("商户派生映射 merchantMap（含按名字查找 merchantByName）正确", async () => {

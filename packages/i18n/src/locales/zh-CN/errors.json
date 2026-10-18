@@ -11,7 +11,8 @@
     "credit-limit-invalid": "信用额度必须大于 0",
     "statement-day-invalid": "账单日必须在 1 到 31 之间: {0}",
     "due-day-invalid": "还款日必须在 1 到 31 之间: {0}",
-    "credit-attribute-not-applicable": "信用额度、账单日与还款日仅信用卡账户可填写"
+    "credit-attribute-not-applicable": "信用额度、账单日与还款日仅信用卡账户可填写",
+    "goal-bound-cannot-archive": "该账户是攒钱目标专属账户，请归档对应的攒钱目标"
   },
   "balance": {
     "cache-row-missing": "账户 {0} 缺少余额缓存行，请执行余额缓存审计修复"
