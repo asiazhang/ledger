@@ -5,6 +5,7 @@
 
 pub mod accounts;
 pub mod ai;
+pub mod app_info;
 pub mod app_update;
 pub mod backup;
 pub mod book;
@@ -35,6 +36,7 @@ pub mod transactions;
 
 pub use accounts::*;
 pub use ai::*;
+pub use app_info::*;
 pub use app_update::*;
 pub use backup::*;
 pub use book::*;

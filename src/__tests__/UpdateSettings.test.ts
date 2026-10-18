@@ -6,17 +6,25 @@ import { useAppStore } from "@/stores/app";
 import UpdateSettings from "@/settings/UpdateSettings.vue";
 import GeneralSettings from "@/settings/GeneralSettings.vue";
 import { RELEASE_PAGE_URL, resetAppUpdateForTest, useAppUpdate } from "@/composables/useAppUpdate";
+import { resetAppBuildInfoForTest } from "@/settings/useAppBuildInfo";
 
 // 发布页引导走 opener 插件，测试以模块替身断言调用事实。
 const openUrl = vi.fn().mockResolvedValue(undefined);
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn((url: string) => openUrl(url)) }));
 
+/** 壳层构建元信息的契约快照（issue #1957）：「当前版本号」取它的 version，
+ *  与「关于」Tab 同源——不再读前端 package.json。 */
+const BUILD_INFO = { version: "9.9.9", platform: "macos", arch: "aarch64" };
+
 /** 挂载前以指定形态完成探测（卡片分支随形态渲染）。 */
 async function mountCard(surface: "updater" | "release-page" | null) {
   if (surface !== null) {
-    wireInvokeSeam({ defaults: { get_update_surface: surface } });
+    wireInvokeSeam({
+      defaults: { get_update_surface: surface, app_build_info: BUILD_INFO },
+    });
   } else {
     wireInvokeSeam({
+      defaults: { app_build_info: BUILD_INFO },
       overrides: { get_update_surface: () => new Promise(() => {}) }, // 悬挂 = 探测未完成
     });
   }
@@ -31,6 +39,7 @@ function button(wrapper: ReturnType<typeof mount>, testid: string) {
 
 beforeEach(() => {
   resetAppUpdateForTest();
+  resetAppBuildInfoForTest();
   captureListenHandlers();
   openUrl.mockClear();
 });
@@ -42,6 +51,17 @@ describe("UpdateSettings.vue — updater 形态（桌面三平台完整更新面
     expect(wrapper.text()).toContain("当前版本：");
     expect(button(wrapper, "update-check-btn").exists()).toBe(true);
     expect(button(wrapper, "update-auto-switch").exists()).toBe(true);
+  });
+
+  it("当前版本号取壳层 app_build_info（删接线即红的负向条目）", async () => {
+    const wrapper = await mountCard("updater");
+
+    // 调用事实：版本不是前端 package.json 的镜像，而是经命令取数
+    expect(mockInvoke.mock.calls.some(([cmd]) => cmd === "app_build_info")).toBe(true);
+    // 渲染效果：屏幕上的当前版本 = 安装包版本（注入的契约快照）
+    expect(wrapper.find('[data-testid="update-current-version"]').text()).toContain(
+      BUILD_INFO.version,
+    );
   });
 
   it("自动检查开关新装默认开启；切换即持久化并推送后端镜像（双断言）", async () => {
@@ -61,6 +81,7 @@ describe("UpdateSettings.vue — updater 形态（桌面三平台完整更新面
     wireInvokeSeam({
       defaults: {
         get_update_surface: "updater",
+        app_build_info: BUILD_INFO,
         check_for_updates: { status: "update", version: "2.0.0", notes: "全新升级" },
       },
     });
@@ -83,6 +104,7 @@ describe("UpdateSettings.vue — updater 形态（桌面三平台完整更新面
       wireInvokeSeam({
         defaults: {
           get_update_surface: "updater",
+          app_build_info: BUILD_INFO,
           check_for_updates: { status, version: null, notes: null },
         },
       });
@@ -125,6 +147,7 @@ describe("UpdateSettings.vue — updater 形态（桌面三平台完整更新面
     wireInvokeSeam({
       defaults: {
         get_update_surface: "updater",
+        app_build_info: BUILD_INFO,
         check_for_updates: { status: "update", version: "2.0.0", notes: "记忆外的再确认" },
       },
     });
@@ -139,6 +162,7 @@ describe("UpdateSettings.vue — updater 形态（桌面三平台完整更新面
     wireInvokeSeam({
       defaults: {
         get_update_surface: "updater",
+        app_build_info: BUILD_INFO,
         check_for_updates: { status: "update", version: "2.0.0", notes: null },
       },
       overrides: {

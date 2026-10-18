@@ -9,6 +9,7 @@ import type {
   AddFundResult,
   AddInstrumentChannel,
   AddStockInstrumentResult,
+  AppBuildInfo,
   BalanceCacheAudit,
   BackupFileInfo,
   AutoBackupState,
@@ -419,6 +420,12 @@ export const api = {
   // 真源在本机 localStorage 设备偏好，应用启动与变更时调用
   setAutoExecutionEnabled: (enabled: boolean) =>
     invoke<void>("set_auto_execution_enabled", { enabled }),
+
+  // 应用构建元信息（issue #1957 / ADR-0022 修订注记）：「关于」Tab 与更新卡片的
+  // 版本身份单一取数口——版本取安装包真源（根 Cargo.toml = tauri.conf.json =
+  // package.json，构建期由守门 scripts/check-versions.ts 钉住），平台与架构取
+  // 编译期常量（不做 UA 推断：Apple Silicon 的 UA 仍报 Intel）。
+  getAppBuildInfo: () => invoke<AppBuildInfo>("app_build_info"),
 
   // 应用更新——检查路径（issue #1429 / ADR-0124 决策 4/8）
   // 手动检查更新（设置页）：返回版本比较三态，发现新版本携版本号与发布说明；

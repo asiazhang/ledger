@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import { NButton, NCard, NSpace, NSwitch, NText } from "naive-ui";
-import pkg from "@/../package.json";
 import { t } from "@ledger/i18n";
 import { useAppStore } from "@/stores/app";
 import { useAppUpdate } from "@/composables/useAppUpdate";
+import { useAppBuildInfo } from "@/settings/useAppBuildInfo";
 
 /**
  * 设置页更新卡片（issue #1431 / ADR-0124 决策 4/7/8）：应用更新无自有业务域
@@ -20,6 +20,7 @@ import { useAppUpdate } from "@/composables/useAppUpdate";
  * 只转交编排模块，不在卡片重复发起。
  */
 const store = useAppStore();
+const { buildInfo } = useAppBuildInfo();
 const {
   surface,
   stage,
@@ -37,6 +38,11 @@ const {
 
 // 形态探测随卡片挂载补一次（幂等：宿主已探测时直接复用；直挂卡片也不落空）。
 void init();
+
+/** 当前版本号：取安装包真源（`app_build_info`），与「关于」Tab 同源。
+ *  改前读前端 `package.json`——与更新比较用的版本是两处独立双写（issue #1957），
+ *  漂移时用户看到的版本与更新判断就不是同一个数。 */
+const currentVersion = computed(() => buildInfo.value?.version ?? "");
 
 const isUpdaterSurface = computed(() => surface.value === "updater");
 /** release-page（deb 与 Android）：降级为发布页引导；null = 形态探测未完成，先不渲染分支。 */
@@ -64,7 +70,9 @@ const flowStatusText = computed(() => {
   <NCard :title="t('settings.update.cardTitle')" size="small">
     <NSpace vertical :size="12">
       <!-- 当前版本号：两形态共有（反馈问题或核对更新状态有依据） -->
-      <NText>{{ t("settings.update.currentVersion") }}{{ pkg.version }}</NText>
+      <NText data-testid="update-current-version"
+        >{{ t("settings.update.currentVersion") }}{{ currentVersion }}</NText
+      >
       <!-- release-page（deb 与 Android）：只呈打开发布页引导 -->
       <template v-if="isReleasePageSurface">
         <NText depth="3">{{ t("settings.update.releasePageOnly") }}</NText>
