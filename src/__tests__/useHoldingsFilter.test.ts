@@ -311,6 +311,30 @@ describe("useHoldingsFilter 工厂", () => {
     ]);
   });
 
+  it("账户归档（spec #1952 / ADR-0142 决策 4）：归档投资账户不进新选择；会话保留的筛选值恰是归档账户时补回并标「已归档」", async () => {
+    wireInvokeSeam({
+      overrides: {
+        list_accounts: [
+          ...FILTER_ACCOUNTS,
+          makeAccount({ id: "acc-inv-arch", name: "旧证券户", is_archived: true }),
+        ],
+      },
+    });
+    await useReferenceStore().refresh();
+    const session = useInvestmentsSessionStore();
+    // 会话保留值指向刚归档的账户（跨页保留的筛选态）
+    session.setAccount("acc-inv-arch");
+    const hf = setup(FIXTURE_ROWS);
+    expect(hf.accountOptions.value).toEqual([
+      { label: "旧证券户（已归档）", value: "acc-inv-arch" },
+      { label: "A股账户", value: "acc-inv-1" },
+      { label: "港美账户", value: "acc-inv-2" },
+    ]);
+    // 清掉筛选后回落新选择面：归档账户不出现（补值只服务于已存值）
+    session.setAccount(null);
+    expect(hf.accountOptions.value.map((o) => o.value)).toEqual(["acc-inv-1", "acc-inv-2"]);
+  });
+
   it("零 IPC 触达：过滤全在前端内存完成，行数据归调用方供给", async () => {
     setup(FIXTURE_ROWS);
     await flushPromises();

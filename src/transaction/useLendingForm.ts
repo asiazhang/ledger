@@ -1,6 +1,6 @@
 import { computed, ref } from "vue";
 import { useTransferForm } from "@/transaction/useTransferForm";
-import { useFormShared } from "@/composables/useFormShared";
+import { useFormShared, usePinnedAccountOptions } from "@/composables/useFormShared";
 import { t } from "@ledger/i18n";
 import {
   LENDING_DIRECTION_SIDES,
@@ -53,21 +53,28 @@ export function useLendingForm(options?: {
       }),
   });
 
-  /** 某侧（from/to）可选项：当前方向该侧允许侧别内的账户（过滤表见 domain 借贷模块） */
-  function accountOptionsFor(sideKey: "from" | "to") {
+  /** 某侧（from/to）可选项：当前方向该侧允许侧别内的**可选择**账户（过滤表见 domain
+   * 借贷模块）；归档账户不进新选择（spec #1952 / ADR-0142 决策 4）。 */
+  function selectableOptionsFor(sideKey: "from" | "to") {
     return computed(() => {
       const side = LENDING_DIRECTION_SIDES[direction.value][sideKey];
-      return reference.accounts
+      return reference.selectableAccounts
         .filter((a) => accountMatchesSide(a.type, side))
         .map((a) => ({ label: a.name, value: a.id }));
     });
   }
 
-  /** 转出侧可选项 */
-  const fromAccountOptions = accountOptionsFor("from");
+  /** 转出侧可选项：可选择面 + 编辑面补值（已存值恰是归档账户时补回并标「已归档」） */
+  const fromAccountOptions = usePinnedAccountOptions(
+    transfer.accountId,
+    selectableOptionsFor("from"),
+  );
 
-  /** 转入侧可选项 */
-  const toAccountOptions = accountOptionsFor("to");
+  /** 转入侧可选项：同上（借贷账户是归档主目标，两端各自都可能归档） */
+  const toAccountOptions = usePinnedAccountOptions(
+    transfer.toAccountId,
+    selectableOptionsFor("to"),
+  );
 
   /** 方向切换：反向方向的既有 Pair 交换两端即贴合新方向（借出↔收回/借入↔还款，不丢
    * 已选账户）；其余情况保留仍属允许侧别的选择、清掉越侧的，不存在中间态残留。 */

@@ -237,4 +237,127 @@ describe("useTransferForm", () => {
       expect(mockInvoke.mock.calls.filter(([cmd]) => cmd === "update_transaction")).toHaveLength(0);
     });
   });
+
+  describe("账户归档（spec #1952 / ADR-0142 决策 4）：选择面排除 + 编辑面补值", () => {
+    /** 归档账户（任一类型皆可归档，ADR-0142 决策 6）：转出/转入两端各一 */
+    const archivedFrom: Account = {
+      ...mockAccounts[0],
+      id: "acc-arch-from",
+      name: "旧储蓄卡",
+      type: "bank",
+      is_archived: true,
+    };
+    const archivedTo: Account = {
+      ...mockAccounts[1],
+      id: "acc-arch-to",
+      name: "旧工资卡",
+      is_archived: true,
+    };
+
+    async function formWithArchived() {
+      wireInvokeSeam({ overrides: { list_accounts: [...mockAccounts, archivedFrom, archivedTo] } });
+      await useReferenceStore().refresh();
+      return useTransferForm();
+    }
+
+    /** 编辑一笔挂归档账户的转账（两端分别指向 archivedFrom / archivedTo） */
+    function editingTransfer(accountId: string, toAccountId: string): Transaction {
+      return {
+        ...editingTx,
+        account_id: accountId,
+        to_account_id: toAccountId,
+      };
+    }
+
+    const editingTx: Transaction = {
+      id: "txn-arch",
+      kind: "transfer",
+      amount_cents: 50000,
+      currency_code: "CNY",
+      amount_native_cents: 50000,
+      fx_rate_used: null,
+      fx_rate_source: null,
+      source_order_no: null,
+      account_id: "acc-1",
+      to_account_id: "acc-2",
+      funding_account_id: null,
+      fundings: [],
+      purchases: [],
+      category_id: null,
+      merchant_id: null,
+      policy_id: null,
+      source: null,
+      convert: null,
+      refund_of_transaction_id: null,
+      note: "房租",
+      date: "2026-03-01",
+      created_at: "2026-03-01T00:00:00Z",
+      updated_at: "2026-03-01T00:00:00Z",
+      version: 3,
+      device_id: "test",
+      is_deleted: false,
+    };
+
+    it("新建：两端候选都不含归档账户", async () => {
+      const form = await formWithArchived();
+      expect(form.accountOptions.value.map((o) => o.value)).toEqual(["acc-1", "acc-2"]);
+      expect(form.toAccountOptions.value.map((o) => o.value)).toEqual(["acc-1", "acc-2"]);
+    });
+
+    it("新建：转出账户已补值也不从转出侧漏进转入候选（补值只补已存值，不扩新选择面）", async () => {
+      wireInvokeSeam({
+        overrides: { list_accounts: [...mockAccounts, archivedFrom, archivedTo] },
+      });
+      await useReferenceStore().refresh();
+      // 模拟「编辑后清空转入值再选新转入」：转出是被补值的归档账户
+      const form = useTransferForm({
+        editing: () => editingTransfer("acc-arch-from", "acc-2"),
+      });
+      form.toAccountId.value = null;
+      // 转出侧补值可见（已存值），转入侧新选择面不含它
+      expect(form.accountOptions.value[0]).toEqual({
+        label: "旧储蓄卡（已归档）",
+        value: "acc-arch-from",
+      });
+      expect(form.toAccountOptions.value.map((o) => o.value)).toEqual(["acc-1", "acc-2"]);
+    });
+
+    it("编辑：转出端已存值是归档账户 → 补回选项、标「已归档」、保持选中，提交原样携带不静默改挂", async () => {
+      wireInvokeSeam({ overrides: { list_accounts: [...mockAccounts, archivedFrom, archivedTo] } });
+      await useReferenceStore().refresh();
+      const form = useTransferForm({
+        editing: () => editingTransfer("acc-arch-from", "acc-2"),
+      });
+      expect(form.accountId.value).toBe("acc-arch-from");
+      expect(form.accountOptions.value[0]).toEqual({
+        label: "旧储蓄卡（已归档）",
+        value: "acc-arch-from",
+      });
+
+      await form.submit();
+
+      expect(mockInvoke).toHaveBeenCalledWith("update_transaction", {
+        id: "txn-arch",
+        input: expect.objectContaining({
+          account_id: "acc-arch-from",
+          to_account_id: "acc-2",
+        }),
+      });
+    });
+
+    it("编辑：转入端已存值是归档账户 → 补回转入候选并标「已归档」，值保持不变", async () => {
+      wireInvokeSeam({ overrides: { list_accounts: [...mockAccounts, archivedFrom, archivedTo] } });
+      await useReferenceStore().refresh();
+      const form = useTransferForm({
+        editing: () => editingTransfer("acc-1", "acc-arch-to"),
+      });
+      expect(form.toAccountId.value).toBe("acc-arch-to");
+      expect(form.toAccountOptions.value).toContainEqual({
+        label: "旧工资卡（已归档）",
+        value: "acc-arch-to",
+      });
+      // 转出侧在用账户不受影响（补值只动已存值那一侧）
+      expect(form.accountOptions.value.map((o) => o.value)).toEqual(["acc-1", "acc-2"]);
+    });
+  });
 });

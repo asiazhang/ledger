@@ -382,3 +382,63 @@ describe("resolveLendingDirection（编辑形态识别，S1 消费点）", () =>
     ).toBe("lend");
   });
 });
+
+describe("useLendingForm 账户归档（spec #1952 / ADR-0142 决策 4）：选择面排除 + 编辑面补值", () => {
+  /** 已归档的借出账户（借贷账户是归档主目标） */
+  const archivedRecv: Account = {
+    ...acc("acc-recv-arch", "借出·旧账", "receivable"),
+    is_archived: true,
+  };
+
+  beforeEach(async () => {
+    wireInvokeSeam({ overrides: { list_accounts: [...mockAccounts, archivedRecv] } });
+    await useReferenceStore().refresh();
+  });
+
+  it("归档账户不进任一侧的新选择面（借出方向：转入侧；收回方向：转出侧）", () => {
+    const form = useLendingForm();
+    expect(optionIds(form.toAccountOptions.value)).toEqual(RECV_IDS);
+    form.setDirection("collect");
+    expect(optionIds(form.fromAccountOptions.value)).toEqual(RECV_IDS);
+  });
+
+  it("编辑挂归档借出账户的历史借贷：该账户补回选项、标「已归档」、保持选中", () => {
+    const editingTx: Transaction = {
+      id: "txn-arch-lend",
+      kind: "transfer",
+      amount_cents: 30000,
+      currency_code: "CNY",
+      amount_native_cents: 30000,
+      fx_rate_used: null,
+      fx_rate_source: null,
+      source_order_no: null,
+      account_id: "acc-cash",
+      to_account_id: "acc-recv-arch",
+      funding_account_id: null,
+      fundings: [],
+      purchases: [],
+      category_id: null,
+      merchant_id: null,
+      policy_id: null,
+      source: null,
+      convert: null,
+      refund_of_transaction_id: null,
+      note: "借给旧账",
+      date: "2026-05-01",
+      created_at: "2026-05-01T00:00:00Z",
+      updated_at: "2026-05-01T00:00:00Z",
+      version: 1,
+      device_id: "test",
+      is_deleted: false,
+    };
+    const form = useLendingForm({ editing: () => editingTx });
+    expect(form.direction.value).toBe("lend");
+    expect(form.toAccountId.value).toBe("acc-recv-arch");
+    expect(form.toAccountOptions.value).toContainEqual({
+      label: "借出·旧账（已归档）",
+      value: "acc-recv-arch",
+    });
+    // 资金侧（转出）不受影响：补值只动已存值那一侧
+    expect(optionIds(form.fromAccountOptions.value)).toEqual(FUND_IDS);
+  });
+});

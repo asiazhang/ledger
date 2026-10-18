@@ -1,7 +1,12 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { ref } from "vue";
 import { wireInvokeSeam } from "@ledger/test-support/invoke-mock";
-import { useAccountCurrency, useEntityCurrency } from "@/composables/useFormShared";
+import {
+  useAccountCurrency,
+  useEntityCurrency,
+  useFormShared,
+  usePinnedAccountOptions,
+} from "@/composables/useFormShared";
 import { useReferenceStore } from "@/stores/reference";
 import { useAppStore } from "@/stores/app";
 import type { Account } from "@ledger/types";
@@ -51,6 +56,51 @@ describe("useFormShared.useAccountCurrency（币种随账户推导，#1775 / ADR
     const currencyCode = useAccountCurrency(accountId);
     useAppStore().setDefaultCurrency("HKD");
     expect(currencyCode.value).toBe("HKD");
+  });
+});
+
+describe("useFormShared.usePinnedAccountOptions（编辑面补值：已选值是归档账户，spec #1952 / ADR-0142 决策 4）", () => {
+  /** 归档账户行：可选项里已排除，但已存值必须能补回并带标记 */
+  const archivedAccount: Account = {
+    ...usdAccount,
+    id: "acc-archived",
+    name: "借出·张三",
+    type: "receivable",
+    is_archived: true,
+  };
+
+  async function setupArchived() {
+    wireInvokeSeam({ overrides: { list_accounts: [usdAccount, archivedAccount] } });
+    await useReferenceStore().refresh();
+    return useFormShared();
+  }
+
+  it("当前值是归档账户：补回选项头部、标「已归档」、值保持不变（不静默改挂）", async () => {
+    const { accountOptions } = await setupArchived();
+    // 新选择面不含归档账户
+    expect(accountOptions.value.map((o) => o.value)).toEqual(["acc-usd"]);
+    const accountId = ref<string | null>("acc-archived");
+    const pinned = usePinnedAccountOptions(accountId, accountOptions);
+    expect(pinned.value).toEqual([
+      { label: "借出·张三（已归档）", value: "acc-archived" },
+      { label: "美元户", value: "acc-usd" },
+    ]);
+    expect(accountId.value).toBe("acc-archived");
+  });
+
+  it("当前值是在用账户 / 未选 / 未知 id：原数组原样返回（零开销，不复制不重复）", async () => {
+    const { accountOptions } = await setupArchived();
+    const active = ref<string | null>("acc-usd");
+    const pinnedActive = usePinnedAccountOptions(active, accountOptions);
+    expect(pinnedActive.value).toBe(accountOptions.value);
+
+    const empty = ref<string | null>(null);
+    const pinnedEmpty = usePinnedAccountOptions(empty, accountOptions);
+    expect(pinnedEmpty.value).toBe(accountOptions.value);
+
+    const unknown = ref<string | null>("acc-gone");
+    const pinnedUnknown = usePinnedAccountOptions(unknown, accountOptions);
+    expect(pinnedUnknown.value).toBe(accountOptions.value);
   });
 });
 

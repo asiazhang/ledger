@@ -41,6 +41,7 @@ import { instrumentDisplayLabel } from "@/investment/instrument-display-label";
 import PinyinSelect from "@ledger/ui-kit/PinyinSelect.vue";
 import QuickTimeRange from "@/components/QuickTimeRange.vue";
 import { useInvestmentsSessionStore } from "@/investment/investments-session";
+import { usePinnedAccountOptions } from "@/composables/useFormShared";
 import { useReferenceStore } from "@/stores/reference";
 import { useAppStore } from "@/stores/app";
 import type {
@@ -282,12 +283,20 @@ function onKindFilterChange(values: TransactionKind[] | null) {
 
 /**
  * 账户筛选（issue #1780，涉及账户语义——账户端 ∪ 出资端）：候选 = 投资类账户，
- * 下拉候选面取参考 store 单点投影（investmentAccountOptions，#1830，同源消费面
- * 见 store 注记）；后端 account_id 命中账户端或出资端（dividend 到账账户、
+ * 下拉候选面取参考 store 单点投影的**可选择**变体（selectableInvestmentAccountOptions，
+ * #1830 收口 + spec #1952 / ADR-0142 决策 4 的归档排除；读口径谓词 investmentAccounts
+ * 保持对齐 v_holdings）；后端 account_id 命中账户端或出资端（dividend 到账账户、
  * buy/sell 出资账户），语义单点在后端——投资账户不在出资闭集，下拉候选只会
  * 经账户端命中；非投资类出资/到账账户的筛选入口在交易页账户筛选（全量候选）。
+ *
+ * 补值：筛选值住投资页会话 store、可跨页保留，可能指向刚归档的账户——补回选项并标
+ * 「已归档」，筛选照旧生效、不露裸 uuid。
  */
-const { investmentAccountOptions: accountOptions } = storeToRefs(reference);
+const { selectableInvestmentAccountOptions } = storeToRefs(reference);
+const accountOptions = usePinnedAccountOptions(
+  computed(() => session.detailAccountId),
+  selectableInvestmentAccountOptions,
+);
 
 function onAccountFilterChange(id: string | null) {
   session.setDetailAccount(id);

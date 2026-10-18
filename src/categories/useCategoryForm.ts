@@ -11,6 +11,7 @@ import { usePoliciesStore } from "@/policy/policies";
 import {
   useAccountCurrency,
   useFormShared,
+  usePinnedAccountOptions,
   utcMidnightTimestamp,
 } from "@/composables/useFormShared";
 import { useMerchantField } from "@/merchants/useMerchantField";
@@ -31,7 +32,7 @@ export function useCategoryForm(
     editing?: () => TransactionModalRow | null;
   },
 ) {
-  const { accountOptions, currencyOptions } = useFormShared();
+  const { accountOptions: selectableAccountOptions, currencyOptions } = useFormShared();
   const reference = useReferenceStore();
   const message = useMessage();
 
@@ -44,6 +45,9 @@ export function useCategoryForm(
   });
 
   const accountId = ref<string | null>(null);
+  /** 账户下拉候选面：可选择账户（归档不进新选择）+ 编辑面补值——已存值恰是归档账户
+   * 时补回选项并标「已归档」，值原样保留（spec #1952 / ADR-0142 决策 4）。 */
+  const accountOptions = usePinnedAccountOptions(accountId, selectableAccountOptions);
   /**
    * 交易币种（issue #1770 / ADR-0134 决策 5）：收支的记账币种由所选账户决定——后端
    * Writer 守卫强制「交易币种 == 账户币种」（现金腿 amount_cents 即账户币种金额，

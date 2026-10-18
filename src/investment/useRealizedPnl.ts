@@ -5,6 +5,7 @@ import { useInvestmentsSessionStore } from "@/investment/investments-session";
 import { useLoadable } from "@ledger/loadable";
 import { useReferenceStore } from "@/stores/reference";
 import { useInstrumentOptions } from "@/investment/useInstrumentOptions";
+import { usePinnedAccountOptions } from "@/composables/useFormShared";
 import type { RealizedPnlSummary } from "@ledger/types";
 
 /**
@@ -19,12 +20,18 @@ import type { RealizedPnlSummary } from "@ledger/types";
  * #1798 起进一步收口共享域件 useInstrumentOptions，本层只剩筛选状态与刷新编排。
  */
 export function useRealizedPnl() {
-  // 账户下拉候选面单点消费（reference.investmentAccountOptions，#1830 收口）
-  const { investmentAccountOptions: accountOptions } = storeToRefs(useReferenceStore());
+  // 账户下拉候选面单点消费（#1830 收口）：选项面取**可选择**变体——归档账户不进新选择
+  // （spec #1952 / ADR-0142 决策 4），读口径谓词 investmentAccounts 不动。
+  const { selectableInvestmentAccountOptions } = storeToRefs(useReferenceStore());
   const session = useInvestmentsSessionStore();
 
   const summary = ref<RealizedPnlSummary | null>(null);
   const selectedAccountId = ref<string | null>(null);
+  /** 账户下拉 = 可选择面 + 补值：已选筛选值恰是归档账户时补回选项并标「已归档」 */
+  const accountOptions = usePinnedAccountOptions(
+    selectedAccountId,
+    selectableInvestmentAccountOptions,
+  );
   const selectedInstrumentId = ref<string | null>(null);
 
   // 筛选变化翻页归零（issue #1795，词汇表「客户端切片分页」页码生命周期）：

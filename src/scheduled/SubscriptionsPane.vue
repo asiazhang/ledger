@@ -75,6 +75,10 @@ const {
   accountId: editAccountId,
   categoryId: editCategoryId,
   merchantRef: editMerchantRef,
+  // 编辑弹窗的账户下拉必须取**编辑实例**的选项面（spec #1952 / ADR-0142 决策 4）：
+  // 补值按「这份草稿的当前值」判定，复用新建实例的 accountOptions 会把回填的归档
+  // 账户渲染成裸 uuid、或让它从新建实例的选项里漏进新的选择面。
+  accountOptions: editAccountOptions,
 } = editForm;
 
 // 实际花费分析区（issue #160）：创建/编辑/生命周期变更/期次变更后同步刷新；
@@ -632,7 +636,7 @@ onMounted(() => {
           <NFormItem :label="t('scheduled.form.account')">
             <PinyinSelect
               v-model:value="editAccountId"
-              :options="accountOptions"
+              :options="editAccountOptions"
               :placeholder="t('scheduled.form.accountPlaceholder')"
               style="width: 200px"
             />

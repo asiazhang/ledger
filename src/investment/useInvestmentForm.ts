@@ -15,6 +15,7 @@ import { useFieldErrors } from "@ledger/field-errors";
 import {
   useAccountCurrency,
   useFormShared,
+  usePinnedAccountOptions,
   utcMidnightTimestamp,
 } from "@/composables/useFormShared";
 import { useInstrumentOptions } from "@/investment/useInstrumentOptions";
@@ -81,8 +82,15 @@ export function useInvestmentForm(
     findInstrument,
   } = useInstrumentOptions("head");
 
-  // 投资账户下拉候选面单点消费（reference.investmentAccountOptions，#1830 收口，对外成员名不变）
-  const { investmentAccountOptions } = storeToRefs(reference);
+  // 投资账户下拉候选面单点消费（#1830 收口，对外成员名不变）：选项面取**可选择**变体
+  // ——归档账户不进新选择（spec #1952 / ADR-0142 决策 4），读口径谓词 investmentAccounts
+  // 与投影 investmentAccountOptions 保持不动（对齐 v_holdings）。
+  const { selectableInvestmentAccountOptions } = storeToRefs(reference);
+  /** 投资账户下拉 = 可选择面 + 编辑面补值（已存值恰是归档账户时补回并标「已归档」）。 */
+  const investmentAccountOptions = usePinnedAccountOptions(
+    accountId,
+    selectableInvestmentAccountOptions,
+  );
 
   // 出资账户候选（issue #936 / #938 / ADR-0096）：准入闭集收口参考 store 单一派生，
   // 币种一致过滤随交易币种（= 所选投资账户币种，issue #1191）在此承担（后端行为层
@@ -90,13 +98,18 @@ export function useInvestmentForm(
   // 目标绑定账户不在候选（issue #1755 / ADR-0133 决策 4）：后端准入 v1 不拦，
   // 前端按绑定过滤防呆——绑定集选择器归储蓄目标 store（#1752 同源），不另立派生。
   const savingsGoalsStore = useSavingsGoalsStore();
-  const fundingAccountOptions = computed(() =>
-    reference.fundingCandidateAccounts
-      .filter(
-        (a) =>
-          a.currency_code === currencyCode.value && !savingsGoalsStore.goalAccountIds.has(a.id),
-      )
-      .map((a) => ({ label: a.name, value: a.id })),
+  /** 出资账户下拉 = 可选择面（候选谓词已排除归档，见参考 store）+ 编辑面补值：
+   * 已存出资账户恰是归档账户时补回并标「已归档」（spec #1952 / ADR-0142 决策 4）。 */
+  const fundingAccountOptions = usePinnedAccountOptions(
+    fundingAccountId,
+    computed(() =>
+      reference.fundingCandidateAccounts
+        .filter(
+          (a) =>
+            a.currency_code === currencyCode.value && !savingsGoalsStore.goalAccountIds.has(a.id),
+        )
+        .map((a) => ({ label: a.name, value: a.id })),
+    ),
   );
 
   // 编辑回填（issue #180）：打开即回填该笔 buy/sell 全部业务字段。单价经 priceToYuan
