@@ -44,6 +44,8 @@
   "archiveDialog": {
     "title": "Archive Account",
     "content": "Archive account \"{name}\"? It moves out of the main list into the \"Archived\" section below; history and transactions stay available.",
+    "balance": "Current balance {amount}. Archiving keeps it counted toward net worth and the balance total — the money does not disappear; to remove it from net worth, use \"Adjust Balance\" to bring the balance to zero.",
+    "plans": "Archiving does not disable plans: {count} plans that have not ended still use this account and keep running as before.",
     "positive": "Archive",
     "negative": "Cancel"
   },

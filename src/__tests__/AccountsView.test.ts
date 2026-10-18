@@ -20,9 +20,20 @@ import { h, nextTick } from "vue";
 import { useSavingsGoalsStore } from "@/savings-goal/savingsGoals";
 import AccountsView from "@/views/AccountsView.vue";
 import AccountLink from "@/accounts/AccountLink.vue";
-import { makeGoalPair, makeSavingsGoal, makeSavingsGoalProgress } from "./factories";
+import {
+  makeGoalPair,
+  makeSavingsGoal,
+  makeSavingsGoalProgress,
+  makeSubscriptionPlan,
+  makeTransferPlan,
+} from "./factories";
 import { amountPrivacyEnabled, formatAmount } from "@ledger/money";
-import type { Account, AccountBalance, SavingsGoalProgress } from "@ledger/types";
+import type {
+  Account,
+  AccountBalance,
+  SavingsGoalProgress,
+  ScheduledTransactionWithExt,
+} from "@ledger/types";
 
 const pushMock = vi.fn();
 vi.mock("vue-router", () => ({
@@ -737,6 +748,10 @@ describe("AccountsView 账户归档（spec #1952 / ADR-0142）", () => {
   /** 挂载期数据快照（归档 / 恢复把位翻过来后由读命令重拉出新快照）。 */
   let rows: AccountBalance[];
 
+  /** 计划读命令应答（#1955 确认框的「进行中计划数」提示同源）：默认空集，
+   *  引用场景的用例就地换成本地计划族。 */
+  let plans: ScheduledTransactionWithExt[];
+
   /** 存档夹具：现金（在用）+ 银行 / 旧卡（已归档）。合计 2500 - 500 = 2000 分 = ¥20。 */
   function seedRows(): AccountBalance[] {
     return [
@@ -763,6 +778,7 @@ describe("AccountsView 账户归档（spec #1952 / ADR-0142）", () => {
       overrides: {
         list_account_balances: () => rows,
         savings_goal_progress: () => Promise.resolve(goalProgress),
+        list_scheduled_transactions: () => plans,
         archive_account: (args?: Record<string, unknown>) => {
           if (archiveReject) return Promise.reject(archiveReject);
           const { id } = args as { id: string };
@@ -831,6 +847,26 @@ describe("AccountsView 账户归档（spec #1952 / ADR-0142）", () => {
     await wrapper.find('[data-testid="accounts-archived-toggle"]').trigger("click");
     await flushPromises();
   }
+  /** 全页数据行文本（普通表 + 已归档区，DOM 顺序）：归档只搬行不碰金额，
+   *  断言前后逐条相同即「读数一字不动」的外部可见形态。 */
+  function allRowTexts(wrapper: ReturnType<typeof mount>) {
+    return wrapper.findAll(".n-data-table-tbody .n-data-table-tr").map((tr) => tr.text());
+  }
+
+  /** 确认框正文（teleport 到 body，取最后一个 = 最新弹层；同文件早前用例的弹层
+   *  仍在 body 里，故必须取末位而非首位的正文节点）。 */
+  function dialogText(): string {
+    return [...document.body.querySelectorAll(".n-dialog__content")].at(-1)?.textContent ?? "";
+  }
+
+  /** 点开某行的「归档」并等确认框就位（确认框正文按归档命令读到的计划数生成，
+   *  故打开是异步的：先等一次微任务把计划读命令跑完）。 */
+  async function openArchiveDialog(wrapper: ReturnType<typeof mount>, index = 0) {
+    await openMenuOnRowButton(wrapper, index);
+    fireProp(rowMenu(wrapper), "onSelect", "archive");
+    await flushPromises();
+  }
+
   /** 确认框正向按钮（teleport 到 body，按文案定位；取最后一个 = 最新弹层）。 */
   function dialogButton(text: string) {
     const buttons = [...document.body.querySelectorAll(".n-dialog__action button")];
@@ -841,6 +877,7 @@ describe("AccountsView 账户归档（spec #1952 / ADR-0142）", () => {
 
   beforeEach(async () => {
     rows = seedRows();
+    plans = [];
     await wireArchiveSeam();
   });
 
@@ -973,5 +1010,113 @@ describe("AccountsView 账户归档（spec #1952 / ADR-0142）", () => {
     );
     // 账户未被移走
     expect(listCard(wrapper)!.text()).toContain("现金");
+  });
+
+  // -------------------------------------------------------------------------
+  // #1955：确认框把真话说清楚（ADR-0142 决策 6）——非零余额显式声明仍计入净资产
+  // 与余额合计，被未结束计划引用时提示计划数量；两者都**不阻断**归档。
+  // -------------------------------------------------------------------------
+
+  it("余额非零：确认框显示当前余额并声明仍计入净资产与余额合计（金额经 formatAmount）", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+    await openArchiveDialog(wrapper, 0);
+
+    const text = dialogText();
+    // 通用正文仍在（#1953 形态不回退）
+    expect(text).toContain("现金");
+    // 当前余额（同一格式化接缝：含币种符号与精度）
+    expect(text).toContain(formatAmount(1000, CNY));
+    // 真相声明：归档不改金额口径，钱不会消失（退出净资产走余额调整归零）
+    expect(text).toContain("仍计入净资产与余额合计");
+  });
+
+  it("余额为零：确认框不追加余额声明（不制造噪音）", async () => {
+    // 结清借贷：余额已归零、无计划引用——确认框只保留 #1953 的通用正文
+    rows = [{ account: makeAccount("acc-zero", "结清借贷"), balance_cents: 0 }];
+    await wireArchiveSeam();
+    const wrapper = mountView();
+    await flushPromises();
+    await openArchiveDialog(wrapper, 0);
+
+    const text = dialogText();
+    expect(text).toContain("结清借贷");
+    expect(text).not.toContain("仍计入净资产与余额合计");
+    expect(text).not.toContain(formatAmount(0, CNY));
+  });
+
+  it("金额隐私模式：确认框余额同样被掩码（收纳不泄露数字）", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+    // 挂载会水合设备偏好（app store 读 localStorage），故开关置位放在挂载之后
+    const plain = formatAmount(1000, CNY);
+    amountPrivacyEnabled.value = true;
+    await nextTick();
+    await openArchiveDialog(wrapper, 0);
+
+    const text = dialogText();
+    expect(text).toContain("••••");
+    expect(text).not.toContain(plain);
+    amountPrivacyEnabled.value = false;
+  });
+
+  it("被未结束计划引用：确认框提示计划数量，确认后归档成功且计划未被停用", async () => {
+    // 计划夹具：两条进行中（扣款账户 / 定时转账的转入账户）、一条暂停（未结束，
+    // resume 后照常执行，同计）；已取消 / 已完成 / 指向别的账户 / 已软删的不计入。
+    plans = [
+      makeSubscriptionPlan({ id: "plan-sub", account_id: "acc-1" }),
+      makeTransferPlan({ id: "plan-in", account_id: "acc-9" }, "acc-1"),
+      makeSubscriptionPlan({ id: "plan-paused", account_id: "acc-1", status: "paused" }),
+      makeSubscriptionPlan({ id: "plan-cancelled", account_id: "acc-1", status: "cancelled" }),
+      makeSubscriptionPlan({ id: "plan-completed", account_id: "acc-1", status: "completed" }),
+      makeSubscriptionPlan({ id: "plan-other", account_id: "acc-9" }),
+      makeSubscriptionPlan({ id: "plan-deleted", account_id: "acc-1", is_deleted: true }),
+    ];
+    const statusesBefore = plans.map((p) => p.core.status);
+    const wrapper = mountView();
+    await flushPromises();
+    await openArchiveDialog(wrapper, 0);
+
+    // 提示只陈述事实：计划数（两条进行中 + 一条暂停）与「不停用」声明都在场
+    const text = dialogText();
+    expect(text).toContain("3 个未结束的定时计划");
+    expect(text).toContain("归档不会停用计划");
+
+    // 不阻断：确认按钮存在且可点，归档照常成功
+    dialogButton("归档")!.click();
+    await flushPromises();
+    expect(lastInvokeArgs("archive_account")).toMatchObject({ id: "acc-1" });
+    expect(listCard(wrapper)!.text()).not.toContain("现金");
+    expect(archivedSummary(wrapper)).toContain("3 个账户");
+
+    // 计划未被停用：全程无计划状态变更命令，计划状态原值不变
+    expect(
+      mockInvoke.mock.calls.some(([cmd]) => cmd === "update_scheduled_transaction_status"),
+    ).toBe(false);
+    expect(plans.map((p) => p.core.status)).toEqual(statusesBefore);
+  });
+
+  it("归档前后余额与合计读数完全一致：行集只重排、金额一字不动", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+    await expandArchived(wrapper);
+    // 归档前：三行（现金在普通表 + 两条已归档行）的渲染文本
+    const rowsBefore = allRowTexts(wrapper);
+    const summaryBefore = archivedSummary(wrapper);
+    expect(summaryBefore).toContain("2 个账户");
+    expect(summaryBefore).toContain(formatAmount(2000, CNY));
+
+    // 归档余额非零的「现金」：行移入已归档区
+    await openArchiveDialog(wrapper, 0);
+    dialogButton("归档")!.click();
+    await flushPromises();
+
+    // 全页行文本集合逐条相同：唯一变化是行住的卡（普通表 → 已归档区）
+    expect(allRowTexts(wrapper)).toEqual(rowsBefore);
+    // 余额合计口径不变：已归档合计 = 原合计 + 迁入行余额（2500 - 500 + 1000）
+    expect(archivedSummary(wrapper)).toContain("3 个账户");
+    expect(archivedSummary(wrapper)).toContain(formatAmount(3000, CNY));
+    // 迁入行的余额读数仍是原值（不重算、不归零）
+    expect(archivedCard(wrapper).text()).toContain(formatAmount(1000, CNY));
   });
 });
