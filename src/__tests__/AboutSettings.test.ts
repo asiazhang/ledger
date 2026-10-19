@@ -7,8 +7,9 @@ import AboutSettings from "@/settings/AboutSettings.vue";
 import { formatPlatform, resetAppBuildInfoForTest } from "@/settings/useAppBuildInfo";
 import { ISSUES_URL, PROJECT_HOME_URL } from "@/settings/app-links";
 
-// 「关于」Tab 是纯只读元信息 + 读型动作（issue #930 / #1957 / ADR-0022 修订注记）：
-// 应用名称、版本、Git 版本、运行平台、许可证、版权，加复制与两个外链。
+// 「关于」Tab 是只读元信息 + 读型动作 + 静态简介（issue #930 / #1957 / #1959 /
+// ADR-0022 修订注记）：应用名称、版本、Git 版本、运行平台、许可证、版权，加复制与
+// 两个外链，以及卡片顶部的定位语与简介（纯静态只读，不进复制文本）。
 // 日志等级与打开日志目录用例住 LogSettings.test.ts（issue #930 迁出）。
 
 const writeText = vi.fn().mockResolvedValue(undefined);
@@ -191,6 +192,26 @@ describe("AboutSettings.vue — Git 版本行", () => {
     expect(writeText).toHaveBeenCalledTimes(1);
     expect(writeText).toHaveBeenCalledWith(FULL_SHA);
     expect(writeText).toHaveBeenCalledWith(expect.not.stringContaining("-dirty"));
+  });
+});
+
+describe("AboutSettings.vue — 软件简介（静态只读，issue #1959）", () => {
+  it("卡片顶部渲染定位语与简介（删除渲染块即红）", () => {
+    const wrapper = mountWithGit();
+    const intro = wrapper.find('[data-testid="about-intro"]');
+    expect(intro.exists()).toBe(true);
+    expect(intro.text()).toContain("本地优先的开源个人账本");
+    expect(intro.text()).toContain("数据只存在你的设备上");
+  });
+
+  it("简介不进复制版本信息（混入即红：报障粘贴格式保持纯元信息行）", async () => {
+    const wrapper = mountWithGit();
+    await flushPromises();
+
+    await wrapper.find('[data-testid="about-copy-info"]').trigger("click");
+    const copied = writeText.mock.calls[0]![0] as string;
+    expect(copied).not.toContain("本地优先的开源个人账本");
+    expect(copied).not.toContain("数据只存在你的设备上");
   });
 });
 

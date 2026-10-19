@@ -395,6 +395,8 @@
   },
   "about": {
     "title": "About OpenLedger",
+    "tagline": "A local-first, open-source personal ledger.",
+    "intro": "OpenLedger keeps your books entirely yours: your data stays on your own device — offline-capable, optionally encrypted, with sync you control. Fully open source, on desktop and Android.",
     "appName": "App Name",
     "version": "Version",
     "gitVersion": "Git Version",
