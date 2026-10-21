@@ -39,6 +39,13 @@ function showErrorToast(message: string): void {
   toastSink.error(message);
 }
 
+/** 基础设施错误 toast 出口（issue #1962 / ADR-0143）：无组件上下文的模块需要
+ *  复用应用统一 toast 通道时消费（替身后端未实现命令的界面出口）。同一模块级
+ *  sink，注册前 no-op；不新设第二消息机制。 */
+export function toastError(content: string): void {
+  showErrorToast(content);
+}
+
 /** 实例级配置：`silent` 为每实例静默 opt-out（默认策略仍全局单点，不是策略注入）。 */
 export interface UseLoadableOptions {
   /** 静默实例：error 照常置位、toast 不弹——失败走优雅降级而非弹窗打扰。 */

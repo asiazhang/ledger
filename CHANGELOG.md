@@ -2,6 +2,12 @@
 
 本文件记录开源记账（OpenLedger）各版本对使用者可见的变更，格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/)，版本号遵循[语义化版本](https://semver.org/lang/zh-CN/)规则。
 
+## [Unreleased]
+
+### Added
+
+- **开发者工具**：浏览器开发模式与替身后端——`pnpm dev:mock`（vite mock mode）在普通浏览器里运行完整前端应用，IPC 由内存替身应答（确定性夹具种子、主路径读写闭环、写后统一发 `ledger:changed`，未实现命令报错含命令名），替代「起完整 Tauri 应用」的重回路；替身以 vite mode 静态分支 + 构建期模块别名隔离，生产包零痕迹，自动化测试三层权威不变（[#1962]，ADR-0143）。
+
 ## [0.10.0] - 2026-10-17
 
 ### Added
@@ -337,6 +343,8 @@
 - **同步**：修复港股漏抓、进度条重置、启动崩溃、JPY 精度等问题。
 
 <!-- Unreleased 条目引用的 issue 链接（引用式链接，正文保持简洁） -->
+[#1962]: https://github.com/asiazhang/ledger/issues/1962
+
 [#1673]: https://github.com/asiazhang/ledger/issues/1673
 
 [#1549]: https://github.com/asiazhang/ledger/issues/1549

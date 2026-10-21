@@ -128,6 +128,9 @@ importers:
       '@ledger/loadable':
         specifier: workspace:*
         version: link:packages/loadable
+      '@ledger/mock-backend':
+        specifier: workspace:*
+        version: link:packages/mock-backend
       '@ledger/modal-intent':
         specifier: workspace:*
         version: link:packages/modal-intent
@@ -239,7 +242,7 @@ importers:
         version: 6.0.10(vite@8.3.4(@types/node@22.20.5)(esbuild@0.28.2))(vue@3.5.44(typescript@6.0.3))
       '@vue/test-utils':
         specifier: ^2.5.0
-        version: 2.5.1(@vue/compiler-dom@3.5.44)(vue@3.5.44(typescript@6.0.3))
+        version: 2.5.1(@vue/compiler-dom@3.5.44)(@vue/server-renderer@3.5.44)(vue@3.5.44(typescript@6.0.3))
       jsdom:
         specifier: ^30.0.1
         version: 30.1.3
@@ -301,7 +304,7 @@ importers:
     devDependencies:
       '@vue/test-utils':
         specifier: ^2.5.0
-        version: 2.5.1(@vue/compiler-dom@3.5.44)(vue@3.5.44(typescript@6.0.3))
+        version: 2.5.1(@vue/compiler-dom@3.5.44)(@vue/server-renderer@3.5.44)(vue@3.5.44(typescript@6.0.3))
       vitest:
         specifier: ^5.0.0
         version: 5.0.5(@types/node@22.20.5)(jsdom@30.1.3)(vite@8.3.4(@types/node@22.20.5)(esbuild@0.28.2))
@@ -330,6 +333,25 @@ importers:
       vitest:
         specifier: ^5.0.0
         version: 5.0.5(@types/node@22.20.5)(jsdom@30.1.3)(vite@8.3.4(@types/node@22.20.5)(esbuild@0.28.2))
+
+  packages/mock-backend:
+    dependencies:
+      '@ledger/loadable':
+        specifier: workspace:*
+        version: link:../loadable
+      '@ledger/types':
+        specifier: workspace:*
+        version: link:../types
+    devDependencies:
+      '@tauri-apps/api':
+        specifier: ^2.11.1
+        version: 2.12.4
+      '@tauri-apps/plugin-dialog':
+        specifier: ^2.7.3
+        version: 2.8.3
+      '@tauri-apps/plugin-opener':
+        specifier: ^2.5.5
+        version: 2.7.2
 
   packages/modal-intent:
     dependencies:
@@ -409,7 +431,7 @@ importers:
         version: 1.21.3
       '@vue/test-utils':
         specifier: ^2.5.0
-        version: 2.5.1(@vue/compiler-dom@3.5.44)(vue@3.5.44(typescript@6.0.3))
+        version: 2.5.1(@vue/compiler-dom@3.5.44)(@vue/server-renderer@3.5.44)(vue@3.5.44(typescript@6.0.3))
       naive-ui:
         specifier: ^2.45.3
         version: 2.45.3(patch_hash=1d273c9e8f7755836be7d55daae02418e67717cd9ee9f835fe703fbaae0ef403)(vue@3.5.44(typescript@6.0.3))
@@ -480,7 +502,7 @@ importers:
         version: link:../test-support
       '@vue/test-utils':
         specifier: ^2.5.0
-        version: 2.5.1(@vue/compiler-dom@3.5.44)(vue@3.5.44(typescript@6.0.3))
+        version: 2.5.1(@vue/compiler-dom@3.5.44)(@vue/server-renderer@3.5.44)(vue@3.5.44(typescript@6.0.3))
       vitest:
         specifier: ^5.0.0
         version: 5.0.5(@types/node@22.20.5)(jsdom@30.1.3)(vite@8.3.4(@types/node@22.20.5)(esbuild@0.28.2))
@@ -516,7 +538,7 @@ importers:
         version: link:../test-support
       '@vue/test-utils':
         specifier: ^2.5.0
-        version: 2.5.1(@vue/compiler-dom@3.5.44)(vue@3.5.44(typescript@6.0.3))
+        version: 2.5.1(@vue/compiler-dom@3.5.44)(@vue/server-renderer@3.5.44)(vue@3.5.44(typescript@6.0.3))
       vitest:
         specifier: ^5.0.0
         version: 5.0.5(@types/node@22.20.5)(jsdom@30.1.3)(vite@8.3.4(@types/node@22.20.5)(esbuild@0.28.2))
@@ -4211,12 +4233,14 @@ snapshots:
 
   '@vue/shared@3.5.44': {}
 
-  '@vue/test-utils@2.5.1(@vue/compiler-dom@3.5.44)(vue@3.5.44(typescript@6.0.3))':
+  '@vue/test-utils@2.5.1(@vue/compiler-dom@3.5.44)(@vue/server-renderer@3.5.44)(vue@3.5.44(typescript@6.0.3))':
     dependencies:
       '@vue/compiler-dom': 3.5.44
       js-beautify: 2.0.3
       vue: 3.5.44(typescript@6.0.3)
       vue-component-type-helpers: 3.3.13
+    optionalDependencies:
+      '@vue/server-renderer': 3.5.44
 
   '@zxcvbn-ts/core@4.2.0':
     dependencies:

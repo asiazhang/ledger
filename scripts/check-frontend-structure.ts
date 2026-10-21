@@ -154,7 +154,7 @@ export const PACKAGES: readonly PackageEntry[] = [
     name: "@ledger/loadable",
     dir: "packages/loadable",
     deps: ["@ledger/latest-wins", "@ledger/utils", "@ledger/test-support"],
-    note: "异步任务生命周期包（issue #1318 / ADR-0040 / ADR-0118 决策 4/6）：useLoadable 统一异步任务生命周期深模块——loading 置收、错误文案归一、竞态裁决（后发覆盖先发）与 invalidate 作废在途的单一实现，竞态裁决自 #1678 起经共享 module @ledger/latest-wins 消费（竞态纪元唯一合法住址随该包）；模块级 toast sink 单例随包 ESM 持有、对外只暴露 registerToastSink 注册接口，应用入口 MessageSinkBridge 经导入接线，不引入注入机制（ADR-0118 决策 6）；依赖 @ledger/latest-wins（竞态纪元，#1678）与 @ledger/utils（errorMessage）单向成边；测试边 → test-support（假 sink 假件唯一定义点，#1354，devDependencies 消费，规则⑤）；不依赖 stores / components / views",
+    note: "异步任务生命周期包（issue #1318 / ADR-0040 / ADR-0118 决策 4/6）：useLoadable 统一异步任务生命周期深模块——loading 置收、错误文案归一、竞态裁决（后发覆盖先发）与 invalidate 作废在途的单一实现，竞态裁决自 #1678 起经共享 module @ledger/latest-wins 消费（竞态纪元唯一合法住址随该包）；模块级 toast sink 单例随包 ESM 持有、对外暴露 registerToastSink 注册接口与 toastError 基础设施错误 toast 出口（#1962 替身后端复用应用统一 sink，注册前 no-op），应用入口 MessageSinkBridge 经导入接线，不引入注入机制（ADR-0118 决策 6）；依赖 @ledger/latest-wins（竞态纪元，#1678）与 @ledger/utils（errorMessage）单向成边；测试边 → test-support（假 sink 假件唯一定义点，#1354，devDependencies 消费，规则⑤）；不依赖 stores / components / views",
   },
   {
     name: "@ledger/scheduled-plan-list",
@@ -188,6 +188,12 @@ export const PACKAGES: readonly PackageEntry[] = [
     dir: "packages/ui-kit",
     deps: ["@ledger/utils", "@ledger/i18n", "@ledger/window-tier", "@ledger/test-support"],
     note: "界面通用件包（issue #1320 / ADR-0118 决策 3/5/6）：App* 弹层薄封装 8 件 + overlay 单例族（overlayRegistry + useOverlayReporting，ADR-0035 一体族，注册接口语义一字不改）+ 通用件 4 项（AppDangerConfirmModal / PinyinSelect / NoteCopyButton / app-modal.css.ts），成员闭集逐项定界不得自行增删（CreateFab 等域/应用专属留壳，#1159 按域归位）；方向表与实际 import 全等（utils / i18n / window-tier；测试边 → test-support，devDependencies 消费，规则⑤），exports 逐组件/逐模块子路径暴露（.vue 直接作 exports 落点，.css.ts 同 theme 先例）；不依赖 stores / views / 壳内 composables",
+  },
+  {
+    name: "@ledger/mock-backend",
+    dir: "packages/mock-backend",
+    deps: ["@ledger/loadable", "@ledger/types"],
+    note: "浏览器开发模式替身后端（issue #1962 / ADR-0143）：与 @ledger/test-support 分家（后者绑定 vitest，本包消费面是 vite 应用构建，非 testSupport——自身 dependencies 非空合法）；内存状态替身 + 确定性夹具，未实现命令运行时报错（含命令名，console + toast 双出口，toast 经 @ledger/loadable 的基础设施出口 toastError 复用应用统一 sink）；tauri/ 子目录只经 vite.config mockModeAliases 按文件路径替换（非包名深导入面），唯一生产消费点是 main.ts 的 mode 分支动态 import（生产构建静态消除，接线由 src/__tests__/mock-mode-wiring.test.ts 守门）；方向表与实际 import 全等（loadable / types）",
   },
 ];
 

@@ -76,8 +76,30 @@ function windowTierBreakpointCss(): Plugin {
   };
 }
 
+/**
+ * 浏览器开发模式的 tauri API 面模块替身别名（issue #1962 / ADR-0143 决策 5）：
+ * 仅 mock mode 下把 tauri API 面整体替换为 @ledger/mock-backend 的进程内替身，
+ * 全部散用直连点（事件 listen、文件对话框、外链打开、系统返回）一字不动；
+ * 其余 mode 返回空——生产构建引用真模块，替身模块图不可达（静态消除的第二
+ * 道构造条件，第一道是 main.ts 仅存的 mode 分支动态 import；接线由
+ * src/__tests__/mock-mode-wiring.test.ts 守门）。
+ */
+export function mockModeAliases(mode: string): Array<{ find: string; replacement: string }> {
+  if (mode !== "mock") return [];
+  const mockTauri = (file: string): string =>
+    fileURLToPath(new URL(`./packages/mock-backend/src/tauri/${file}`, import.meta.url));
+  return [
+    { find: "@tauri-apps/api/core", replacement: mockTauri("core.ts") },
+    { find: "@tauri-apps/api/event", replacement: mockTauri("event.ts") },
+    { find: "@tauri-apps/api/window", replacement: mockTauri("window.ts") },
+    { find: "@tauri-apps/api/app", replacement: mockTauri("app.ts") },
+    { find: "@tauri-apps/plugin-dialog", replacement: mockTauri("plugin-dialog.ts") },
+    { find: "@tauri-apps/plugin-opener", replacement: mockTauri("plugin-opener.ts") },
+  ];
+}
+
 // https://vite.dev/config/
-export default defineConfig(async () => ({
+export default defineConfig(async ({ mode }) => ({
   // vanilla-extract 插件（issue #888 / ADR-0093）：构建期把 *.css.ts 编译为
   // 静态 CSS，无 codegen 产物目录；置于 vue 插件之前（官方推荐顺序）。
   // 惰性动态导入：本模块被 src/__tests__/window-tier-build-contract.test.ts 直接
@@ -94,9 +116,15 @@ export default defineConfig(async () => ({
   define,
 
   resolve: {
-    alias: {
-      "@": fileURLToPath(new URL("./src", import.meta.url)),
-    },
+    alias: [
+      {
+        find: "@",
+        replacement: fileURLToPath(new URL("./src", import.meta.url)),
+      },
+      // 浏览器开发模式（ADR-0143）：mock mode 下 tauri API 面整体模块替身；其余
+      // mode 空表——真模块引用原样解析，替身不进生产包
+      ...mockModeAliases(mode),
+    ],
   },
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
