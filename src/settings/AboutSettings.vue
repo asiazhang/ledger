@@ -17,9 +17,10 @@ import { ISSUES_URL, PROJECT_HOME_URL } from "@/settings/app-links";
 import { formatPlatform, useAppBuildInfo } from "@/settings/useAppBuildInfo";
 
 /**
- * 「关于」Tab 卡片（issue #930 / #1957 / ADR-0022 修订注记）：只读元信息 + 读型
- * 动作。设置入口不在此——日志归「通用」日志卡片、应用更新归「通用」更新卡片、
- * 数据位置归「数据」页签（ADR-0022 的「一问一处」）。
+ * 「关于」Tab 卡片（issue #930 / #1957 / #1959 / ADR-0022 修订注记）：只读元信息 +
+ * 读型动作 + 静态简介（#1959：卡片顶部定位语与简介，纯静态只读、无任何入口，
+ * 不进复制文本）。设置入口不在此——日志归「通用」日志卡片、应用更新归「通用」
+ * 更新卡片、数据位置归「数据」页签（ADR-0022 的「一问一处」）。
  *
  * 三个字段的真源各归其位：版本取壳层命令 `app_build_info`（= 安装包版本，改前
  * 读前端 `package.json`，与更新比较用的版本两处双写）；平台与架构取编译期常量
@@ -139,6 +140,12 @@ function openLink(url: string): void {
 <template>
   <NCard :title="t('settings.about.title')" size="small">
     <NSpace vertical :size="12">
+      <!-- 静态简介（issue #1959）：定位语加粗 + 短说明弱化，纯只读无入口，
+           且不参与复制版本信息的行清单（报障粘贴格式不变）。 -->
+      <NSpace vertical :size="4" data-testid="about-intro">
+        <NText strong>{{ t("settings.about.tagline") }}</NText>
+        <NText depth="3">{{ t("settings.about.intro") }}</NText>
+      </NSpace>
       <NDescriptions :column="1" label-placement="left" size="small">
         <NDescriptionsItem v-for="row in rows" :key="row.key" :label="row.label">
           <NText
