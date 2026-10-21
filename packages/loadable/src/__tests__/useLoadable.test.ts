@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { useLoadable, registerToastSink } from "../useLoadable";
+import { useLoadable, registerToastSink, toastError } from "../useLoadable";
 import { deferred } from "@ledger/test-support/deferred";
 // toast sink 假件消费共享唯一定义点 @ledger/test-support/toast-sink（#1354 上收；
 // 原局部替身与壳侧 factories.ts 双源，随本票消除）
@@ -240,5 +240,18 @@ describe("useLoadable 静默实例与作废在途（issue #1008）", () => {
 
     gates[0].resolve("旧结果");
     await expect(stale).resolves.toBeNull();
+  });
+});
+
+describe("toastError 基础设施出口（issue #1962 / ADR-0143）", () => {
+  it("复用同一模块级 sink：注册后送达，注册前 no-op 不抛", () => {
+    // 注册前（beforeEach 已复位为 no-op）：不抛、不可见
+    expect(() => toastError("静默期")).not.toThrow();
+
+    const sink = makeFakeSink();
+    registerToastSink(sink);
+    toastError("替身后端未实现命令: demo_cmd");
+    expect(sink.error).toHaveBeenCalledTimes(1);
+    expect(sink.error).toHaveBeenCalledWith("替身后端未实现命令: demo_cmd");
   });
 });

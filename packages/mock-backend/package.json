@@ -1,0 +1,19 @@
+{
+  "name": "@ledger/mock-backend",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "//": "浏览器开发模式替身后端（issue #1962 / ADR-0143）：服务前端 UI 迭代的「操作→界面反馈」闭环，与 @ledger/test-support 分家——后者绑定 vitest（消费面是测试运行时），本包消费面是 vite 应用构建（pnpm dev:mock 经 --mode mock 挂载）。刻意不追求与 Rust 后端行为等价（ADR-0143 决策 1）：内存状态替身 + 确定性夹具，未实现命令运行时报错（含命令名，console + toast 双出口）。生产代码零改动：tauri API 面以构建期模块替身整体替换（vite.config mock mode alias），本包唯一生产消费点是 main.ts 的 mode 分支动态 import（生产构建静态消除，替身不进生产包）。源码直出，exports 仅根入口；tauri/ 子目录只经 vite alias 按文件路径替换，不作包名深导入面。",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@ledger/loadable": "workspace:*",
+    "@ledger/types": "workspace:*"
+  },
+  "devDependencies": {
+    "@tauri-apps/api": "^2.11.1",
+    "@tauri-apps/plugin-dialog": "^2.7.3",
+    "@tauri-apps/plugin-opener": "^2.5.5"
+  }
+}

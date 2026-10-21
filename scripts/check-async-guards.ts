@@ -67,6 +67,7 @@ const SCAN_ROOTS: readonly string[] = [
   "packages/i18n/src",
   "packages/latest-wins/src",
   "packages/loadable/src",
+  "packages/mock-backend/src",
   "packages/modal-intent/src",
   "packages/money/src",
   "packages/row-context-menu/src",

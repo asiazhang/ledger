@@ -458,6 +458,12 @@ describe("check-frontend-structure（前端 workspace 结构守门）", () => {
           deps: ["@ledger/utils", "@ledger/i18n", "@ledger/window-tier", "@ledger/test-support"],
           note: expect.any(String),
         },
+        {
+          name: "@ledger/mock-backend",
+          dir: "packages/mock-backend",
+          deps: ["@ledger/loadable", "@ledger/types"],
+          note: expect.any(String),
+        },
       ]);
     });
   });
