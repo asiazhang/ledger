@@ -245,11 +245,12 @@ export function deleteAccount(args: Record<string, unknown>): void {
 export function listAccountBalances(): AccountBalance[] {
   return db()
     .accounts.filter((a) => !a.is_deleted)
-    .map((account) => ({ account, balance_cents: balanceCents(account.id) }));
+    .map((account) => ({ account, balance_cents: accountBalanceCents(account.id) }));
 }
 
-/** 余额 = 期初 + Σ 流水（账户币种直和；折算/缓存维护不模拟，ADR-0143 决策 1）。 */
-function balanceCents(accountId: string): number {
+/** 余额 = 期初 + Σ 流水（账户币种直和；折算/缓存维护不模拟，ADR-0143 决策 1）。
+ *  唯一余额口径，跨域消费（储蓄目标「已存 = 专属账户余额」同源取用，issue #1975）。 */
+export function accountBalanceCents(accountId: string): number {
   const account = db().accounts.find((a) => a.id === accountId);
   let sum = account?.initial_balance_cents ?? 0;
   for (const t of db().transactions) {
@@ -301,7 +302,18 @@ export function listTransactions(args?: Record<string, unknown>): TransactionLis
   if (filter.merchant_id) rows = rows.filter((t) => t.merchant_id === filter.merchant_id);
   if (filter.category_id) rows = rows.filter((t) => t.category_id === filter.category_id);
   if (filter.uncategorized_only) rows = rows.filter((t) => t.category_id === null);
-  if (filter.instrument_id) rows = rows.filter(() => false); // 夹具无标的行
+  if (filter.instrument_id) {
+    // 标的过滤（ADR-0107）：核心交易行不持标的信息，经证券扩展行命中——任一腿
+    // （instrument_id = 转出腿，to_instrument_id = convert 转入腿）与真后端子查询同构
+    const instId = filter.instrument_id;
+    rows = rows.filter((t) =>
+      db().securityTransactions.some(
+        (s) =>
+          s.transaction_id === t.id &&
+          (s.instrument_id === instId || s.to_instrument_id === instId),
+      ),
+    );
+  }
   if (filter.kinds && filter.kinds.length > 0) {
     const kinds = new Set<TransactionKind>(filter.kinds);
     rows = rows.filter((t) => kinds.has(t.kind));
