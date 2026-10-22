@@ -512,9 +512,12 @@ describe("未实现命令：含命令名报错（console + toast 双出口）", 
     const { registerToastSink } = await import("@ledger/loadable");
     registerToastSink({ error: toast });
 
-    await expect(invoke("dashboard_overview")).rejects.toThrow(/dashboard_overview/);
-    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining("dashboard_overview"));
-    expect(toast).toHaveBeenCalledWith(expect.stringContaining("dashboard_overview"));
+    // 样本取恒不登记的占位命令名（invoke-seam.test.ts 同款）：mock 已覆盖真
+    // 后端全部命令面（#1974/#1976/#1977 并入后），无真实未落地命令可取，占位
+    // 名不会随后续并入再撞号（list_policies、dashboard_overview 先后撞号教训）
+    await expect(invoke("no_such_cmd")).rejects.toThrow(/no_such_cmd/);
+    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining("no_such_cmd"));
+    expect(toast).toHaveBeenCalledWith(expect.stringContaining("no_such_cmd"));
 
     errSpy.mockRestore();
   });

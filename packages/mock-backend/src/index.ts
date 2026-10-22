@@ -51,6 +51,7 @@ import {
   updateTransaction,
 } from "./ledger";
 import { categoryShares, merchantShares, monthlySummary, reportDateRange } from "./reports";
+import { crossBookInvestmentSummary, dashboardOverview, financialFreedom } from "./dashboard";
 import { createTransactions, getTransactionOrderSummary, searchTransactions } from "./transactions";
 import {
   appBuildInfo,
@@ -357,7 +358,6 @@ export function installMockBackend(): void {
 
   // 报表聚合（issue #1968）：日期极值 / 月度汇总 / 分类份额 / 商户排行按交易夹具
   // 直聚合（从简口径见 reports.ts 头注）；全读命令不发 ledger:changed。
-  // dashboard_overview 与 financial_freedom 归 #1976，不在本批。
   registerMockCommand("report_date_range", () => reportDateRange());
   registerMockCommand("monthly_summary", (args) => monthlySummary(args));
   registerMockCommand("category_shares", (args) => categoryShares(args));
@@ -374,6 +374,13 @@ export function installMockBackend(): void {
   registerMockCommand("search_transactions", (args) => searchTransactions(args));
   registerMockCommand("create_transactions", (args) => createTransactions(args));
   registerMockCommand("get_transaction_order_summary", (args) => getTransactionOrderSummary(args));
+
+  // 全局聚合页（issue #1976）：首页净资产全貌 / 财务自由度 / 跨账本投资汇总
+  // 三条顶层读命令，各腿由已落地域夹具直投影汇合（口径复用各域模块导出，
+  // 见 dashboard.ts 头注）；全读命令不发 ledger:changed。
+  registerMockCommand("dashboard_overview", () => dashboardOverview());
+  registerMockCommand("financial_freedom", () => financialFreedom());
+  registerMockCommand("cross_book_investment_summary", () => crossBookInvestmentSummary());
 
   // 定时/订阅（issue #1973）：计划 + 期次内存态读写闭环——建计划展开期次、
   // 手动执行真落交易（订阅/分期 expense、转账 transfer）、订阅花费聚合；

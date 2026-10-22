@@ -9,8 +9,9 @@ import { nextId, str } from "./state";
  * 活动指针与原位重引导都不模拟，浏览器开发模式只服务单账本界面迭代。
  */
 
-/** 单账本常量：mock 模式的唯一注册账本（活动账本即它）。 */
-const MOCK_BOOK: Book = { id: "mock-book", name: "Mock 账本", dir: "/mock/data/mock-book" };
+/** 单账本常量：mock 模式的唯一注册账本（活动账本即它）；跨账本投资汇总的
+ *  books 行同源取用（issue #1976，单行 included）。 */
+export const MOCK_BOOK: Book = { id: "mock-book", name: "Mock 账本", dir: "/mock/data/mock-book" };
 
 function requireBook(id: string): Book {
   if (id !== MOCK_BOOK.id) throw new Error(`替身后端：账本不存在 ${id}`);
