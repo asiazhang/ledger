@@ -8,8 +8,8 @@ import { listen } from "./tauri/event";
  * 与订单汇总。接缝 = tauri 命令面（`installMockBackend` + `invoke`），删除任一
  * 登记行即未命中报错、本文件变红（接线负向判据，ADR-0087 断言强度）。
  *
- * 期望值为独立人算字面量。夹具未删交易 6 笔（同 reports.test.ts 头注），其中
- * 005/006 为同单 SO-88 京东两行（2026-01-08）。
+ * 期望值为独立人算字面量。夹具未删交易 11 笔（同 reports.test.ts 头注），其中
+ * 005/006 为同单 SO-88 京东两行（2026-01-08）、101–105 为投资夹具（#1970，2026-02）。
  *
  * search_transactions 载荷是扁平 camelCase（api 层直传四个筛选参数，不走 obj()
  * 嵌套惯例）。替身从简口径（transactions.ts 头注）：匹配面只做备注/商户名
@@ -94,7 +94,7 @@ describe("交易搜索：search_transactions（关键字 + 筛选 AND 组合，�
     ).resolves.toEqual({ items: [], total: 0 });
   });
 
-  it("金额区间仅筛选路径（无关键字）：[2000,10000] 命中 001/005（1200 与 300000 出界）", async () => {
+  it("金额区间仅筛选路径（无关键字）：[2000,10000] 命中 4 笔（1200/300000 等出界）", async () => {
     const result = await invoke<{ items: Array<{ id: string }>; total: number }>(
       "search_transactions",
       {
@@ -107,8 +107,15 @@ describe("交易搜索：search_transactions（关键字 + 筛选 AND 组合，�
         dateTo: null,
       },
     );
-    expect(result.items.map((t) => t.id)).toEqual(["mock-txn-005", "mock-txn-001"]);
-    expect(result.total).toBe(2);
+    // 人算：005 8_800、001 2_500、102 卖出 3_000、105 分红 8_500 入界；
+    // 006 1_200、003 300_000、101 205_200、103 19_800 出界，date 倒序
+    expect(result.items.map((t) => t.id)).toEqual([
+      "mock-txn-105",
+      "mock-txn-102",
+      "mock-txn-005",
+      "mock-txn-001",
+    ]);
+    expect(result.total).toBe(4);
   });
 
   it("关键字与日期区间 AND：京东 + 到 01-08 含边界命中两行，收到 01-07 即空", async () => {
@@ -243,7 +250,7 @@ describe("批量创建：create_transactions（逐笔记内存，ledger:changed 
     }
 
     const list = await invoke<{ total: number }>("list_transactions");
-    expect(list.total).toBe(8); // 夹具 6 + 新 2（人算）
+    expect(list.total).toBe(13); // 夹具 11（含 #1970 投资 5）+ 新 2（人算）
     expect(changed()).toBe(1); // 批量只发一次（专门断言）
   });
 

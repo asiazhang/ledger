@@ -386,7 +386,18 @@ export function listTransactions(args?: Record<string, unknown>): TransactionLis
   if (filter.merchant_id) rows = rows.filter((t) => t.merchant_id === filter.merchant_id);
   if (filter.category_id) rows = rows.filter((t) => t.category_id === filter.category_id);
   if (filter.uncategorized_only) rows = rows.filter((t) => t.category_id === null);
-  if (filter.instrument_id) rows = rows.filter(() => false); // 夹具无标的行
+  if (filter.instrument_id) {
+    // 标的过滤（ADR-0107）：核心交易行不持标的信息，经证券扩展行命中——任一腿
+    // （instrument_id = 转出腿，to_instrument_id = convert 转入腿）与真后端子查询同构
+    const instId = filter.instrument_id;
+    rows = rows.filter((t) =>
+      db().securityTransactions.some(
+        (s) =>
+          s.transaction_id === t.id &&
+          (s.instrument_id === instId || s.to_instrument_id === instId),
+      ),
+    );
+  }
   if (filter.kinds && filter.kinds.length > 0) {
     const kinds = new Set<TransactionKind>(filter.kinds);
     rows = rows.filter((t) => kinds.has(t.kind));

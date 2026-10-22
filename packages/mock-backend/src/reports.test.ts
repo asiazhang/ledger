@@ -8,10 +8,12 @@ import { listen } from "./tauri/event";
  * tauri 命令面（`installMockBackend` + `invoke`），删除任一登记行即未命中报错、
  * 本文件变红（接线负向判据，ADR-0087 断言强度）。
  *
- * 聚合期望值为独立人算字面量。夹具未删交易 6 笔：
+ * 聚合期望值为独立人算字面量。夹具未删交易 11 笔：
  * - 001 expense 2_500 餐饮 美团 2026-01-05 ｜ 002 income 1_200_000 工资 2026-01-10
  * - 003 transfer 300_000 2026-01-25 ｜ 004 refund 1_500 餐饮 美团 2026-01-06
  * - 005 expense 8_800 未分类 京东 2026-01-08 ｜ 006 expense 1_200 未分类 京东 2026-01-08
+ * - 投资五种 kind（101–105，2026-02，#1970）：仅 105 dividend 8_500 进收入列，
+ *   买入/卖出/折算/拆分不进毛值三列（kind→度量矩阵）
  *
  * 替身从简口径（reports.ts 头注记录与真后端差异）：不折算（amount_native_cents
  * = 原币直记）、子类直归本类不模拟上卷。
@@ -31,18 +33,18 @@ function captureLedgerChanged(): () => number {
 }
 
 describe("报表日期极值：report_date_range", () => {
-  it("返回未删交易日期极值对（人算：01-05 最小、01-25 最大）", async () => {
+  it("返回未删交易日期极值对（人算：01-05 最小、02-25 分红最大）", async () => {
     await expect(invoke("report_date_range")).resolves.toEqual({
       min_date: "2026-01-05",
-      max_date: "2026-01-25",
+      max_date: "2026-02-25",
     });
   });
 
-  it("极值随删除收窄：软删 01-25 的转账后 max 落到 01-10", async () => {
-    await invoke("delete_transaction", { id: "mock-txn-003" });
+  it("极值随删除收窄：软删 02-25 的分红后 max 落到 02-20", async () => {
+    await invoke("delete_transaction", { id: "mock-txn-105" });
     await expect(invoke("report_date_range")).resolves.toEqual({
       min_date: "2026-01-05",
-      max_date: "2026-01-10",
+      max_date: "2026-02-20",
     });
   });
 });
@@ -56,14 +58,11 @@ describe("月度汇总：monthly_summary（毛值三列，人算字面量）", (
     ]);
   });
 
-  it("遗留 year 形态：2026 年同期间一行；2025 年空数组", async () => {
+  it("遗留 year 形态：2026 年按月两行（2 月仅分红 8_500）；2025 年空数组", async () => {
     await expect(invoke("monthly_summary", { year: 2026, from: null, to: null })).resolves.toEqual([
-      {
-        month: "2026-01",
-        income_cents: 1_200_000,
-        expense_cents: 12_500,
-        refund_cents: 1_500,
-      },
+      { month: "2026-01", income_cents: 1_200_000, expense_cents: 12_500, refund_cents: 1_500 },
+      // 2 月投资夹具：买入/卖出/折算/拆分不进毛值三列，仅分红计入收入
+      { month: "2026-02", income_cents: 8_500, expense_cents: 0, refund_cents: 0 },
     ]);
     await expect(invoke("monthly_summary", { year: 2025, from: null, to: null })).resolves.toEqual(
       [],
@@ -93,7 +92,8 @@ describe("月度汇总：monthly_summary（毛值三列，人算字面量）", (
       invoke("monthly_summary", { year: 2026, from: "2026-01-01", to: "2026-02-28" }),
     ).resolves.toEqual([
       { month: "2026-01", income_cents: 1_200_000, expense_cents: 12_500, refund_cents: 1_500 },
-      { month: "2026-02", income_cents: 0, expense_cents: 6_600, refund_cents: 0 },
+      // 2 月 = 投资夹具分红 8_500 + 新记支出 6_600（买入等不进毛值列，人算）
+      { month: "2026-02", income_cents: 8_500, expense_cents: 6_600, refund_cents: 0 },
     ]);
   });
 });
