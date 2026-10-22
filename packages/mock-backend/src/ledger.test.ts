@@ -260,7 +260,7 @@ describe("交易读写闭环（ADR-0143 决策 2）", () => {
       filter: { page: 1, page_size: 2 },
     });
     expect(page1.items).toHaveLength(2);
-    expect(page1.total).toBe(9); // 通用 4 + 投资 5（issue #1970 夹具）
+    expect(page1.total).toBe(11); // 通用 4 + 同单 2（#1968）+ 投资 5（#1970 夹具）
     expect(page1.items[0]?.id).toBe("mock-txn-105");
 
     const page2 = await invoke<TransactionListResult>("list_transactions", {
@@ -284,9 +284,9 @@ describe("交易读写闭环（ADR-0143 决策 2）", () => {
       filter: { hide_investment_related: true },
     });
     expect(hidden.items.map((t) => t.account_id)).not.toContain("mock-acc-invest");
-    // 全部 10 行（9 夹具 + 1 新建）隐藏 5 行（投资账户端 4 + 新建投资账户 expense）；
-    // dividend 到账工资卡不隐藏
-    expect(hidden.total).toBe(5);
+    // 全部 12 行（11 夹具 + 1 新建）隐藏 5 行（101–104 投资账户端 4 + 新建投资账户
+    // expense）；dividend 到账工资卡、同单两行（#1968）均不隐藏
+    expect(hidden.total).toBe(7);
   });
 
   it("list_account_balances = 期初 + 流水直和（记一笔后余额反映）", async () => {
@@ -316,6 +316,166 @@ describe("交易读写闭环（ADR-0143 决策 2）", () => {
   });
 });
 
+describe("余额校准：adjust_account_balance（黑洞转账，ADR-0026）", () => {
+  /** 人算基线：cash = 期初 50_000 − 006 支出 1_200 = 48_800；
+   * bank = 1_000_000 + 002 收入 1_200_000 − 003 转出 300_000
+   *   − 101 买入出资 205_200 + 102 卖出到账 3_000 + 105 分红到账 8_500 = 1_706_300。 */
+  it("调高：落黑洞→账户转账，余额到目标，恰发一次 ledger:changed", async () => {
+    const changed = captureLedgerChanged();
+
+    const txId = await invoke<string>("adjust_account_balance", {
+      id: "mock-acc-cash",
+      input: { target_balance_cents: 60_000, date: "2026-01-30" },
+    });
+
+    expect(txId).toBeTruthy();
+    const balances =
+      await invoke<Array<{ account: { id: string }; balance_cents: number }>>(
+        "list_account_balances",
+      );
+    expect(balances.find((b) => b.account.id === "mock-acc-cash")?.balance_cents).toBe(60_000);
+
+    // 转账行：差额 11_200（60_000 − 48_800），方向黑洞→cash，note 缺省「余额调整」
+    const list = await invoke<TransactionListResult>("list_transactions");
+    const row = list.items.find((t) => t.id === txId);
+    expect(row).toMatchObject({
+      kind: "transfer",
+      amount_cents: 11_200,
+      account_id: expect.any(String), // 黑洞账户 id（下一用例断名字）
+      to_account_id: "mock-acc-cash",
+      note: "余额调整",
+      date: "2026-01-30",
+    });
+    expect(changed()).toBe(1);
+  });
+
+  it("调低：账户→黑洞方向，差额绝对值入账（bank 1_706_300 → 1_600_000）", async () => {
+    const txId = await invoke<string>("adjust_account_balance", {
+      id: "mock-acc-bank",
+      input: { target_balance_cents: 1_600_000, date: "2026-01-30" },
+    });
+
+    const list = await invoke<TransactionListResult>("list_transactions");
+    expect(list.items.find((t) => t.id === txId)).toMatchObject({
+      kind: "transfer",
+      amount_cents: 106_300,
+      account_id: "mock-acc-bank",
+      to_account_id: expect.any(String), // 黑洞账户 id
+    });
+    const balances =
+      await invoke<Array<{ account: { id: string }; balance_cents: number }>>(
+        "list_account_balances",
+      );
+    expect(balances.find((b) => b.account.id === "mock-acc-bank")?.balance_cents).toBe(1_600_000);
+  });
+
+  it("黑洞账户按币种即建且复用：两次校准的转账行引用同一黑洞账户", async () => {
+    const first = await invoke<string>("adjust_account_balance", {
+      id: "mock-acc-cash",
+      input: { target_balance_cents: 60_000, date: "2026-01-30" },
+    });
+    const second = await invoke<string>("adjust_account_balance", {
+      id: "mock-acc-bank",
+      input: { target_balance_cents: 1_600_000, date: "2026-01-30" },
+    });
+
+    // 两笔转账的黑洞端是同一 id（即建后复用）；type 不可见（隐藏账户不进账户列表，
+    // 见下一用例），经交易行引用断言
+    const list =
+      await invoke<Array<{ id: string; account_id: string | null; to_account_id: string | null }>>(
+        "list_transactions",
+      );
+    const firstRow = list.items.find((t) => t.id === first);
+    const secondRow = list.items.find((t) => t.id === second);
+    const firstHole = firstRow?.account_id; // 调高：黑洞→cash（黑洞是转出端）
+    const secondHole = secondRow?.to_account_id; // 调低：bank→黑洞（黑洞是转入端）
+    expect(firstHole).toBeTruthy();
+    expect(secondHole).toBe(firstHole);
+  });
+
+  it("隐藏账户不进账户面：校准即建黑洞后 list_accounts / list_account_balances 均不含它", async () => {
+    await invoke<string>("adjust_account_balance", {
+      id: "mock-acc-cash",
+      input: { target_balance_cents: 60_000, date: "2026-01-30" },
+    });
+
+    const accounts = await invoke<Array<{ id: string; name: string }>>("list_accounts");
+    expect(accounts.filter((a) => a.name === "无(CNY)")).toHaveLength(0);
+
+    const balances = await invoke<Array<{ account: { name: string } }>>("list_account_balances");
+    expect(balances.filter((b) => b.account.name === "无(CNY)")).toHaveLength(0);
+  });
+
+  it("目标等于当前余额报错（不落零额转账）", async () => {
+    await expect(
+      invoke<string>("adjust_account_balance", {
+        id: "mock-acc-cash",
+        input: { target_balance_cents: 48_800, date: "2026-01-30" }, // 人算：当前余额
+      }),
+    ).rejects.toThrow(/无需调整/);
+  });
+
+  it("不存在的账户以存在性校验拒绝", async () => {
+    await expect(
+      invoke<string>("adjust_account_balance", {
+        id: "mock-acc-none",
+        input: { target_balance_cents: 1, date: "2026-01-30" },
+      }),
+    ).rejects.toThrow(/mock-acc-none/);
+  });
+});
+
+describe("余额缓存审计：audit_balance_cache（mock 余额口径即唯一口径，答无漂移）", () => {
+  it("夹具种子态：5 账户全检、无漂移、不修复", async () => {
+    await expect(invoke("audit_balance_cache")).resolves.toEqual({
+      accounts_checked: 5,
+      drifts: [],
+      repaired: false,
+    });
+  });
+
+  it("检查面含隐藏账户：校准即建黑洞后 checked +1", async () => {
+    await invoke<string>("adjust_account_balance", {
+      id: "mock-acc-cash",
+      input: { target_balance_cents: 60_000, date: "2026-01-30" },
+    });
+    await expect(invoke("audit_balance_cache")).resolves.toMatchObject({
+      accounts_checked: 6,
+      drifts: [],
+      repaired: false,
+    });
+  });
+});
+
+describe("商户关联交易计数：list_merchant_transaction_counts（毛笔数口径）", () => {
+  /** 人算：京东被 005/006 引用 = 2；美团被 001/004 引用 = 2；已删商户无引用 = 0。
+   * 序按名字典序：京东 < 已删商户 < 美团。 */
+  it("含软删商户全字典行、无引用计 0、未删流水逐笔计 1", async () => {
+    await expect(invoke("list_merchant_transaction_counts")).resolves.toEqual([
+      { merchant_id: "mock-mch-jd", transaction_count: 2 },
+      { merchant_id: "mock-mch-del", transaction_count: 0 },
+      { merchant_id: "mock-mch-meituan", transaction_count: 2 },
+    ]);
+  });
+
+  it("计数随写入实时推导：记一笔美团支出后美团 +1", async () => {
+    await invoke<string>("create_transaction", {
+      input: {
+        kind: "expense",
+        amount_cents: 1_000,
+        currency_code: "CNY",
+        account_id: "mock-acc-cash",
+        merchant_id: "mock-mch-meituan",
+        date: "2026-02-10",
+      },
+    });
+    const counts = await invoke<Array<{ merchant_id: string; transaction_count: number }>>(
+      "list_merchant_transaction_counts",
+    );
+    expect(counts.find((c) => c.merchant_id === "mock-mch-meituan")?.transaction_count).toBe(3);
+  });
+});
+
 describe("会话状态：重装即重播种（刷新重置语义，ADR-0143 决策 6）", () => {
   it("installMockBackend 重装后写入丢弃、状态回夹具种子", async () => {
     await invoke<string>("create_transaction", {
@@ -327,11 +487,11 @@ describe("会话状态：重装即重播种（刷新重置语义，ADR-0143 决�
         date: "2026-02-06",
       },
     });
-    expect((await invoke<TransactionListResult>("list_transactions")).total).toBe(10);
+    expect((await invoke<TransactionListResult>("list_transactions")).total).toBe(12);
 
     installMockBackend();
 
-    expect((await invoke<TransactionListResult>("list_transactions")).total).toBe(9);
+    expect((await invoke<TransactionListResult>("list_transactions")).total).toBe(11);
   });
 });
 

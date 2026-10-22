@@ -588,7 +588,8 @@ export const fixtureSecurityTxns: MockSecurityTxn[] = [
 ];
 
 // —— 交易（覆盖主列表四种通用 kind：expense / income / transfer / refund，ADR-0135；
-// 投资五种 kind 见上方 fixtureSecurityTxns 块） ——
+// 投资五种 kind 见上方 fixtureSecurityTxns 块；issue #1968 增补同单两行 SO-88：
+// 订单汇总/搜索/报表聚合的种子面） ——
 
 function txn(base: Omit<Transaction, keyof ReturnType<typeof refRow>>): Transaction {
   return { ...base, ...refRow() };
@@ -691,8 +692,54 @@ export const fixtureTransactions: Transaction[] = [
     date: "2026-01-06",
     created_at: "2026-01-06T10:00:00Z",
   }),
-  // 投资五种 kind（与 fixtureSecurityTxns 一一对应；币种 = 账户币种 CNY，
-  // amount_native_cents 不折算原币直记，ADR-0143 决策 1）
+  txn({
+    id: "mock-txn-005",
+    kind: "expense",
+    amount_cents: 8_800,
+    currency_code: "CNY",
+    amount_native_cents: 8_800,
+    fx_rate_used: null,
+    fx_rate_source: null,
+    account_id: "mock-acc-ewallet",
+    to_account_id: null,
+    funding_account_id: null,
+    category_id: null, // 未分类：报表「未分类」份额的种子面（避开预算覆盖分类，不动预算聚合基线）
+    merchant_id: "mock-mch-jd",
+    policy_id: null,
+    source: null,
+    convert: null,
+    refund_of_transaction_id: null,
+    fundings: [],
+    purchases: [{ name: "无线耳机", quantity: 1, category_id: null, unit_price_cents: 8_800 }],
+    source_order_no: "SO-88",
+    note: "无线耳机",
+    date: "2026-01-08",
+    created_at: "2026-01-08T11:00:00Z",
+  }),
+  txn({
+    id: "mock-txn-006",
+    kind: "expense",
+    amount_cents: 1_200,
+    currency_code: "CNY",
+    amount_native_cents: 1_200,
+    fx_rate_used: null,
+    fx_rate_source: null,
+    account_id: "mock-acc-cash",
+    to_account_id: null,
+    funding_account_id: null,
+    category_id: null,
+    merchant_id: "mock-mch-jd",
+    policy_id: null,
+    source: null,
+    convert: null,
+    refund_of_transaction_id: null,
+    fundings: [],
+    purchases: [],
+    source_order_no: "SO-88",
+    note: null,
+    date: "2026-01-08",
+    created_at: "2026-01-08T11:00:01Z",
+  }),
   txn({
     id: "mock-txn-101",
     kind: "buy",

@@ -20,7 +20,9 @@ import {
   updateBudget,
 } from "./budget";
 import {
+  adjustAccountBalance,
   archiveAccount,
+  auditBalanceCache,
   createAccount,
   createCategory,
   createInsurer,
@@ -37,6 +39,7 @@ import {
   listCategories,
   listCurrencies,
   listInsurers,
+  listMerchantTransactionCounts,
   listMerchants,
   listTransactions,
   reorderCategories,
@@ -47,6 +50,8 @@ import {
   updateMerchant,
   updateTransaction,
 } from "./ledger";
+import { categoryShares, merchantShares, monthlySummary, reportDateRange } from "./reports";
+import { createTransactions, getTransactionOrderSummary, searchTransactions } from "./transactions";
 import {
   appBuildInfo,
   getAiPrompt,
@@ -306,4 +311,24 @@ export function installMockBackend(): void {
   registerMockCommand("archive_savings_goal", (args) => archiveSavingsGoal(args));
   registerMockCommand("unarchive_savings_goal", (args) => unarchiveSavingsGoal(args));
   registerMockCommand("delete_savings_goal", (args) => deleteSavingsGoal(args));
+
+  // 报表聚合（issue #1968）：日期极值 / 月度汇总 / 分类份额 / 商户排行按交易夹具
+  // 直聚合（从简口径见 reports.ts 头注）；全读命令不发 ledger:changed。
+  // dashboard_overview 与 financial_freedom 归 #1976，不在本批。
+  registerMockCommand("report_date_range", () => reportDateRange());
+  registerMockCommand("monthly_summary", (args) => monthlySummary(args));
+  registerMockCommand("category_shares", (args) => categoryShares(args));
+  registerMockCommand("merchant_shares", (args) => merchantShares(args));
+
+  // 账户/商户扩展（issue #1968）：余额校准黑洞转账（发 ledger:changed）、
+  // 缓存审计答无漂移（读）、商户毛笔数计数（读）。
+  registerMockCommand("adjust_account_balance", (args) => adjustAccountBalance(args));
+  registerMockCommand("audit_balance_cache", () => auditBalanceCache());
+  registerMockCommand("list_merchant_transaction_counts", () => listMerchantTransactionCounts());
+
+  // 交易读扩展（issue #1968）：搜索（扁平 camelCase 载荷）+ 批量创建（ledger:changed
+  // 整批只发一次）+ 订单汇总；get_transaction_trade/convert/split 已由 #1970 落地。
+  registerMockCommand("search_transactions", (args) => searchTransactions(args));
+  registerMockCommand("create_transactions", (args) => createTransactions(args));
+  registerMockCommand("get_transaction_order_summary", (args) => getTransactionOrderSummary(args));
 }
