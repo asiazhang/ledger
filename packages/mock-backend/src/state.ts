@@ -3,9 +3,11 @@ import type {
   Budget,
   Category,
   Currency,
+  ExchangeRate,
   InstallmentPlan,
   Instrument,
   Insurer,
+  MarketPrice,
   Merchant,
   PhysicalAsset,
   SavingsGoal,
@@ -21,11 +23,14 @@ import {
   fixtureBudgets,
   fixtureCategories,
   fixtureCurrencies,
+  fixtureExchangeRates,
   fixtureInstallmentPlans,
   fixtureInstruments,
   fixtureInsurers,
+  fixtureMarketPrices,
   fixtureMerchants,
   fixturePhysicalAssets,
+  fixturePriceHistory,
   fixtureSavingsGoals,
   fixtureScheduledOccurrences,
   fixtureScheduledPlans,
@@ -34,12 +39,13 @@ import {
   fixtureSettings,
   fixtureSubscriptionPlans,
   fixtureTransactions,
+  type MockPriceHistory,
 } from "./fixtures";
 import { emitMockEvent } from "./tauri/event";
 
 /**
  * 替身后端的共享内存状态与跨域助手（issue #1965，自 ledger.ts 下沉）：
- * 内存形态（五字典 + 标的字典 + 预算 + 交易 + 证券扩展行 + 设置 + 实物资产/储蓄目标 + id 计数器）、
+ * 内存形态（五字典 + 标的字典 + 汇率/现价/价格历史 + 预算 + 交易 + 证券扩展行 + 设置 + 实物资产/储蓄目标 + id 计数器）、
  * 重播种、递增 id、触碰同步字段、失效信号出口、参数窄化与存在性校验助手——
  * 供各域实现文件复用，域模块不再自持状态。写入改内存、读投影内存、刷新
  * 重播种（ADR-0143 决策 2/6）。
@@ -90,7 +96,7 @@ export interface MockAssetValuation {
   currency_code: string;
 }
 
-/** 夹具种子快照形态（五字典 + 标的字典 + 预算 + 交易 + 证券扩展行 + 设置 + 实物资产/储蓄目标 + 定时计划/期次与三张扩展行 + id 计数器） */
+/** 夹具种子快照形态（五字典 + 标的字典 + 汇率/现价/价格历史 + 预算 + 交易 + 证券扩展行 + 设置 + 实物资产/储蓄目标 + 定时计划/期次与三张扩展行 + id 计数器） */
 export interface MockLedger {
   currencies: Currency[];
   accounts: Account[];
@@ -98,6 +104,9 @@ export interface MockLedger {
   merchants: Merchant[];
   insurers: Insurer[];
   instruments: Instrument[];
+  exchangeRates: ExchangeRate[];
+  marketPrices: MarketPrice[];
+  priceHistory: MockPriceHistory[];
   budgets: Budget[];
   transactions: Transaction[];
   securityTransactions: MockSecurityTxn[];
@@ -141,6 +150,9 @@ function seed(): MockLedger {
     merchants: structuredClone(fixtureMerchants),
     insurers: structuredClone(fixtureInsurers),
     instruments: structuredClone(fixtureInstruments),
+    exchangeRates: structuredClone(fixtureExchangeRates),
+    marketPrices: structuredClone(fixtureMarketPrices),
+    priceHistory: structuredClone(fixturePriceHistory),
     budgets: structuredClone(fixtureBudgets),
     transactions: structuredClone(fixtureTransactions),
     securityTransactions: structuredClone(fixtureSecurityTxns),
@@ -178,6 +190,11 @@ export function touch(row: { updated_at: string; version: number }): void {
 /** 参考/交易写入的统一失效信号出口（无 payload，ADR-0012）。 */
 export function emitLedgerChanged(): void {
   emitMockEvent("ledger:changed");
+}
+
+/** 价格类写入的失效信号出口（无 payload，ADR-0031：实际写入即发、零写入不广播）。 */
+export function emitPricesChanged(): void {
+  emitMockEvent("ledger:prices-changed");
 }
 
 // —— 参数窄化助手：invoke args 是 Record<string, unknown>，命令实现按契约取用 ——

@@ -3,9 +3,11 @@ import type {
   Budget,
   Category,
   Currency,
+  ExchangeRate,
   InstallmentPlan,
   Instrument,
   Insurer,
+  MarketPrice,
   Merchant,
   SavingsGoal,
   ScheduledTransaction,
@@ -690,6 +692,134 @@ export const fixtureInstruments: Instrument[] = [
   },
 ];
 
+// —— 汇率（issue #1972）：当期汇率表种子，少量货币对覆盖手动 / 同步两种
+// 来源形态；rate 为 base → quote 计价（1 base = rate quote）。
+
+export const fixtureExchangeRates: ExchangeRate[] = [
+  {
+    id: "mock-fx-cny-usd",
+    base_code: "CNY",
+    quote_code: "USD",
+    rate: 0.1389,
+    priced_at: "2026-01-15",
+    source: "manual",
+    updated_at: T0,
+    version: 1,
+    device_id: "mock",
+  },
+  {
+    id: "mock-fx-usd-cny",
+    base_code: "USD",
+    quote_code: "CNY",
+    rate: 7.2,
+    priced_at: "2026-01-15",
+    source: "ecb",
+    updated_at: T0,
+    version: 1,
+    device_id: "mock",
+  },
+];
+
+// —— 行情现价缓存（issue #1972）：种子行与 fixtureInstruments 有现价的五标的
+// 一一对应（price_cents 同值，两表一致性）；019666 无现价行（手动建档未录价
+// 形态）。priced_at 按各价格通道的真实形态取字面量：净值通道为净值日期、
+// 行情/手动通道为数据日期。
+
+export const fixtureMarketPrices: MarketPrice[] = [
+  {
+    id: "mock-mp-custom",
+    instrument_id: "mock-inst-custom",
+    price_cents: 55_000, // 5.50 元/克，与标的现价列同值
+    currency_code: "CNY",
+    priced_at: "2026-01-10",
+    source: "manual",
+    created_at: T0,
+    updated_at: T0,
+    version: 1,
+    device_id: "mock",
+  },
+  {
+    id: "mock-mp-etf",
+    instrument_id: "mock-inst-etf",
+    price_cents: 20_500, // 2.05 元
+    currency_code: "CNY",
+    priced_at: "2026-01-30",
+    source: "eastmoney",
+    created_at: T0,
+    updated_at: T0,
+    version: 1,
+    device_id: "mock",
+  },
+  {
+    id: "mock-mp-fund",
+    instrument_id: "mock-inst-fund",
+    price_cents: 12_345, // 1.2345 元净值（净值日期即 priced_at）
+    currency_code: "CNY",
+    priced_at: "2026-01-31",
+    source: "eastmoney",
+    created_at: T0,
+    updated_at: T0,
+    version: 1,
+    device_id: "mock",
+  },
+  {
+    id: "mock-mp-hk",
+    instrument_id: "mock-inst-hk",
+    price_cents: 385_000_000, // 38500.00 港元
+    currency_code: "HKD",
+    priced_at: "2026-01-30",
+    source: "eastmoney",
+    created_at: T0,
+    updated_at: T0,
+    version: 1,
+    device_id: "mock",
+  },
+  {
+    id: "mock-mp-sh",
+    instrument_id: "mock-inst-sh",
+    price_cents: 1_485_000_000, // 148500.00 元
+    currency_code: "CNY",
+    priced_at: "2026-01-30",
+    source: "eastmoney",
+    created_at: T0,
+    updated_at: T0,
+    version: 1,
+    device_id: "mock",
+  },
+];
+
+// —— 价格历史（issue #1972）：替身内部承载（真后端 PriceHistory 无 IPC 直读
+// 面，由走势等聚合消费），手动报价的历史落点写入这里、现价落点的「最新点
+// 映像」判定读这里。种子仅 GOLD 一行（手动通道标的 + 历史水位锚 2026-01-10）。
+
+export interface MockPriceHistory {
+  instrument_id: string;
+  /** 交易日（ISO YYYY-MM-DD，行内主时点） */
+  trade_date: string;
+  /** ISO 周一日期（周采样自然键的第二维，与真后端 week_start 生成列同义） */
+  week_start: string;
+  price_cents: number;
+  currency_code: string;
+  source: string;
+  updated_at: string;
+  version: number;
+  device_id: string;
+}
+
+export const fixturePriceHistory: MockPriceHistory[] = [
+  {
+    instrument_id: "mock-inst-custom",
+    trade_date: "2026-01-10",
+    week_start: "2026-01-05", // 2026-01-10 为周六，所在 ISO 周的周一
+    price_cents: 55_000,
+    currency_code: "CNY",
+    source: "manual",
+    updated_at: T0,
+    version: 1,
+    device_id: "mock",
+  },
+];
+
 // —— 投资交易（issue #1970）：五种投资 kind 种子行（buy/sell/convert/split/
 // dividend）+ 证券扩展行（引用 fixtureInstruments 标的 id 与既有账户）。金额
 // 沿写路径先例人算（buy 非基金 = 数量 × 单价 + 费用；sell 基金 = 确认净额、
@@ -766,7 +896,8 @@ export const fixtureSecurityTxns: MockSecurityTxn[] = [
 ];
 
 // —— 交易（覆盖主列表四种通用 kind：expense / income / transfer / refund，ADR-0135；
-// 投资五种 kind 见上方 fixtureSecurityTxns 块） ——
+// 投资五种 kind 见上方 fixtureSecurityTxns 块；issue #1968 增补同单两行 SO-88：
+// 订单汇总/搜索/报表聚合的种子面） ——
 
 function txn(base: Omit<Transaction, keyof ReturnType<typeof refRow>>): Transaction {
   return { ...base, ...refRow() };
@@ -869,8 +1000,54 @@ export const fixtureTransactions: Transaction[] = [
     date: "2026-01-06",
     created_at: "2026-01-06T10:00:00Z",
   }),
-  // 投资五种 kind（与 fixtureSecurityTxns 一一对应；币种 = 账户币种 CNY，
-  // amount_native_cents 不折算原币直记，ADR-0143 决策 1）
+  txn({
+    id: "mock-txn-005",
+    kind: "expense",
+    amount_cents: 8_800,
+    currency_code: "CNY",
+    amount_native_cents: 8_800,
+    fx_rate_used: null,
+    fx_rate_source: null,
+    account_id: "mock-acc-ewallet",
+    to_account_id: null,
+    funding_account_id: null,
+    category_id: null, // 未分类：报表「未分类」份额的种子面（避开预算覆盖分类，不动预算聚合基线）
+    merchant_id: "mock-mch-jd",
+    policy_id: null,
+    source: null,
+    convert: null,
+    refund_of_transaction_id: null,
+    fundings: [],
+    purchases: [{ name: "无线耳机", quantity: 1, category_id: null, unit_price_cents: 8_800 }],
+    source_order_no: "SO-88",
+    note: "无线耳机",
+    date: "2026-01-08",
+    created_at: "2026-01-08T11:00:00Z",
+  }),
+  txn({
+    id: "mock-txn-006",
+    kind: "expense",
+    amount_cents: 1_200,
+    currency_code: "CNY",
+    amount_native_cents: 1_200,
+    fx_rate_used: null,
+    fx_rate_source: null,
+    account_id: "mock-acc-cash",
+    to_account_id: null,
+    funding_account_id: null,
+    category_id: null,
+    merchant_id: "mock-mch-jd",
+    policy_id: null,
+    source: null,
+    convert: null,
+    refund_of_transaction_id: null,
+    fundings: [],
+    purchases: [],
+    source_order_no: "SO-88",
+    note: null,
+    date: "2026-01-08",
+    created_at: "2026-01-08T11:00:01Z",
+  }),
   txn({
     id: "mock-txn-101",
     kind: "buy",
