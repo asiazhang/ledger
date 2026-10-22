@@ -20,7 +20,9 @@ import {
   updateBudget,
 } from "./budget";
 import {
+  adjustAccountBalance,
   archiveAccount,
+  auditBalanceCache,
   createAccount,
   createCategory,
   createInsurer,
@@ -37,6 +39,7 @@ import {
   listCategories,
   listCurrencies,
   listInsurers,
+  listMerchantTransactionCounts,
   listMerchants,
   listTransactions,
   reorderCategories,
@@ -47,6 +50,8 @@ import {
   updateMerchant,
   updateTransaction,
 } from "./ledger";
+import { categoryShares, merchantShares, monthlySummary, reportDateRange } from "./reports";
+import { createTransactions, getTransactionOrderSummary, searchTransactions } from "./transactions";
 import {
   appBuildInfo,
   getAiPrompt,
@@ -61,6 +66,23 @@ import {
   setBaseCurrency,
   setLogLevel,
 } from "./settings";
+import {
+  createPhysicalAsset,
+  deletePhysicalAsset,
+  disposePhysicalAsset,
+  getPhysicalAsset,
+  listPhysicalAssets,
+  updatePhysicalAsset,
+  updatePhysicalAssetValuation,
+} from "./physical-asset";
+import {
+  archiveSavingsGoal,
+  createSavingsGoal,
+  deleteSavingsGoal,
+  savingsGoalProgress,
+  unarchiveSavingsGoal,
+  updateSavingsGoal,
+} from "./savings-goal";
 import { reseed } from "./state";
 import { registerMockCommand } from "./tauri/core";
 import {
@@ -88,6 +110,14 @@ import {
   unlockWithRememberedPassphrase,
 } from "./encryption";
 import { createBook, listBooks, removeBook, renameBook, switchBook } from "./books";
+import {
+  createExchangeRate,
+  createMarketPrice,
+  listExchangeRates,
+  listMarketPrices,
+  recordManualPrice,
+  syncExchangeRates,
+} from "./fx-prices";
 import { checkForUpdates, downloadUpdate, getUpdateSurface, installUpdate } from "./app-update";
 import {
   bootstrapSyncFromChannel,
@@ -243,6 +273,17 @@ export function installMockBackend(): void {
   registerMockCommand("add_fund_by_code", (args) => addFundByCode(args));
   registerMockCommand("add_instrument_by_code", (args) => addInstrumentByCode(args));
 
+  // 汇率与行情价格（issue #1972）：设置页汇率卡与投资页录价读写闭环——
+  // 汇率按货币对 upsert 写后发 ledger:changed，同步答常量报告不发进度事件；
+  // 现价缓存 per-instrument upsert、手动报价两落点写入（历史周采样 + 最新点
+  // 映像规则现价），价格写入发 ledger:prices-changed
+  registerMockCommand("list_exchange_rates", () => listExchangeRates());
+  registerMockCommand("create_exchange_rate", (args) => createExchangeRate(args));
+  registerMockCommand("sync_exchange_rates", () => syncExchangeRates());
+  registerMockCommand("list_market_prices", () => listMarketPrices());
+  registerMockCommand("create_market_price", (args) => createMarketPrice(args));
+  registerMockCommand("record_manual_price", (args) => recordManualPrice(args));
+
   // 预算读写闭环（issue #1967）：CRUD 内存态 + 进度/年度汇总按交易夹具直聚合，
   // 写完成后统一发 ledger:changed（见 budget.ts 头注的从简口径）
   registerMockCommand("list_budgets", () => listBudgets());
@@ -272,4 +313,46 @@ export function installMockBackend(): void {
   registerMockCommand("cumulative_pnl_native_total", () => cumulativePnlNativeTotal());
   registerMockCommand("money_weighted_return_summary", () => moneyWeightedReturnSummary());
   registerMockCommand("sync_instrument_info", () => syncInstrumentInfo());
+
+  // 实物资产（issue #1975）：估值档案内存态——估值只追加、当前估值 = 最新一条，
+  // 在持合计恒指在持；写完成后统一发 ledger:changed（见 physical-asset.ts 头注）
+  registerMockCommand("list_physical_assets", (args) => listPhysicalAssets(args));
+  registerMockCommand("get_physical_asset", (args) => getPhysicalAsset(args));
+  registerMockCommand("create_physical_asset", (args) => createPhysicalAsset(args));
+  registerMockCommand("update_physical_asset", (args) => updatePhysicalAsset(args));
+  registerMockCommand("update_physical_asset_valuation", (args) =>
+    updatePhysicalAssetValuation(args),
+  );
+  registerMockCommand("dispose_physical_asset", (args) => disposePhysicalAsset(args));
+  registerMockCommand("delete_physical_asset", (args) => deletePhysicalAsset(args));
+
+  // 储蓄目标（issue #1975）：创建同建专属账户（other 类型、1:1 绑定、账户名
+  // 随动）、进度 = 专属账户余额直和 + ETA/所需月存双向推算；写完成后统一发
+  // ledger:changed（见 savings-goal.ts 头注）
+  registerMockCommand("savings_goal_progress", () => savingsGoalProgress());
+  registerMockCommand("create_savings_goal", (args) => createSavingsGoal(args));
+  registerMockCommand("update_savings_goal", (args) => updateSavingsGoal(args));
+  registerMockCommand("archive_savings_goal", (args) => archiveSavingsGoal(args));
+  registerMockCommand("unarchive_savings_goal", (args) => unarchiveSavingsGoal(args));
+  registerMockCommand("delete_savings_goal", (args) => deleteSavingsGoal(args));
+
+  // 报表聚合（issue #1968）：日期极值 / 月度汇总 / 分类份额 / 商户排行按交易夹具
+  // 直聚合（从简口径见 reports.ts 头注）；全读命令不发 ledger:changed。
+  // dashboard_overview 与 financial_freedom 归 #1976，不在本批。
+  registerMockCommand("report_date_range", () => reportDateRange());
+  registerMockCommand("monthly_summary", (args) => monthlySummary(args));
+  registerMockCommand("category_shares", (args) => categoryShares(args));
+  registerMockCommand("merchant_shares", (args) => merchantShares(args));
+
+  // 账户/商户扩展（issue #1968）：余额校准黑洞转账（发 ledger:changed）、
+  // 缓存审计答无漂移（读）、商户毛笔数计数（读）。
+  registerMockCommand("adjust_account_balance", (args) => adjustAccountBalance(args));
+  registerMockCommand("audit_balance_cache", () => auditBalanceCache());
+  registerMockCommand("list_merchant_transaction_counts", () => listMerchantTransactionCounts());
+
+  // 交易读扩展（issue #1968）：搜索（扁平 camelCase 载荷）+ 批量创建（ledger:changed
+  // 整批只发一次）+ 订单汇总；get_transaction_trade/convert/split 已由 #1970 落地。
+  registerMockCommand("search_transactions", (args) => searchTransactions(args));
+  registerMockCommand("create_transactions", (args) => createTransactions(args));
+  registerMockCommand("get_transaction_order_summary", (args) => getTransactionOrderSummary(args));
 }

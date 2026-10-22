@@ -14,7 +14,7 @@ import type {
   SyncInstrumentInfoResult,
   YearPnl,
 } from "@ledger/types";
-import { balanceCents } from "./ledger";
+import { accountBalanceCents } from "./ledger";
 import { argsOf, db, obj } from "./state";
 import { emitMockEvent } from "./tauri/event";
 
@@ -325,7 +325,7 @@ export function investmentOverview(): InvestmentOverview {
 
   const investmentCash = db()
     .accounts.filter((a) => !a.is_deleted && !a.is_hidden && a.type === "investment")
-    .reduce((sum, a) => sum + balanceCents(a.id), 0);
+    .reduce((sum, a) => sum + accountBalanceCents(a.id), 0);
 
   return {
     native_currency: native,

@@ -3,32 +3,43 @@ import type {
   Budget,
   Category,
   Currency,
+  ExchangeRate,
   Holding,
   Instrument,
   Insurer,
+  MarketPrice,
   Merchant,
+  PhysicalAsset,
   PortfolioTrendPoint,
+  SavingsGoal,
   Transaction,
 } from "@ledger/types";
 import {
   fixtureAccounts,
+  fixtureAssetValuations,
   fixtureBudgets,
   fixtureCategories,
   fixtureCurrencies,
+  fixtureExchangeRates,
   fixtureHoldings,
   fixtureInstruments,
   fixtureInsurers,
+  fixtureMarketPrices,
   fixtureMerchants,
+  fixturePhysicalAssets,
   fixturePortfolioTrendPoints,
+  fixturePriceHistory,
+  fixtureSavingsGoals,
   fixtureSecurityTxns,
   fixtureSettings,
   fixtureTransactions,
+  type MockPriceHistory,
 } from "./fixtures";
 import { emitMockEvent } from "./tauri/event";
 
 /**
  * 替身后端的共享内存状态与跨域助手（issue #1965，自 ledger.ts 下沉）：
- * 内存形态（五字典 + 标的字典 + 预算 + 交易 + 证券扩展行 + 设置 + id 计数器）、
+ * 内存形态（五字典 + 标的字典 + 汇率/现价/价格历史 + 预算 + 交易 + 证券扩展行 + 设置 + 实物资产/储蓄目标 + id 计数器）、
  * 重播种、递增 id、触碰同步字段、失效信号出口、参数窄化与存在性校验助手——
  * 供各域实现文件复用，域模块不再自持状态。写入改内存、读投影内存、刷新
  * 重播种（ADR-0143 决策 2/6）。
@@ -57,8 +68,30 @@ export interface MockSecurityTxn {
   in_amount_cents: number | null;
 }
 
-/** 夹具种子快照形态（五字典 + 标的字典 + 预算 + 交易 + 证券扩展行 + 持仓 +
- * 组合走势周点 + 设置 + id 计数器） */
+/** 实物资产内存行：当前估值三件套与 native 口径不落行——读时由最新一条估值
+ *  历史行投影（与真后端「JOIN 每资产最新一条」同语义，当前估值 = 最新一条）。 */
+export type MockPhysicalAsset = Omit<
+  PhysicalAsset,
+  | "current_valuation_cents"
+  | "current_valuation_currency_code"
+  | "current_valuation_date"
+  | "current_valuation_native_cents"
+  | "native_currency"
+>;
+
+/** 估值历史行（内存形态，issue #1975）：只追加不改写；无同步字段——不外发，
+ *  当前估值的唯一事实源。 */
+export interface MockAssetValuation {
+  id: string;
+  asset_id: string;
+  /** 估值日期（YYYY-MM-DD）；最新判定 = 日期最大，同日按插入序（数组序）。 */
+  valuation_date: string;
+  amount_cents: number;
+  currency_code: string;
+}
+
+/** 夹具种子快照形态（五字典 + 标的字典 + 汇率/现价/价格历史 + 预算 + 交易 +
+ * 证券扩展行 + 持仓 + 组合走势周点 + 设置 + 实物资产/储蓄目标 + id 计数器） */
 export interface MockLedger {
   currencies: Currency[];
   accounts: Account[];
@@ -66,17 +99,28 @@ export interface MockLedger {
   merchants: Merchant[];
   insurers: Insurer[];
   instruments: Instrument[];
+  exchangeRates: ExchangeRate[];
+  marketPrices: MarketPrice[];
+  priceHistory: MockPriceHistory[];
   budgets: Budget[];
   transactions: Transaction[];
   securityTransactions: MockSecurityTxn[];
   holdings: Holding[];
   portfolioTrendPoints: PortfolioTrendPoint[];
   settings: MockSettings;
+  physical_assets: MockPhysicalAsset[];
+  physical_asset_valuations: MockAssetValuation[];
+  savings_goals: SavingsGoal[];
   counters: Map<string, number>;
 }
 
 /** 设备 id 恒为 mock（替身内全部写入行的 device_id）。 */
 export const DEVICE_ID = "mock";
+
+/** 替身「今日」：缺省日期（估值日等）与推算窗口（储蓄目标 ETA / 所需月存）的
+ *  确定性锚（budget.ts 同款锚 2026-01-15，issue #1967 先例）——替身不随真实
+ *  时钟走，刷新重播种后期望值逐字节可复现。 */
+export const MOCK_TODAY = "2026-01-15";
 
 let current: MockLedger = seed();
 
@@ -98,12 +142,18 @@ function seed(): MockLedger {
     merchants: structuredClone(fixtureMerchants),
     insurers: structuredClone(fixtureInsurers),
     instruments: structuredClone(fixtureInstruments),
+    exchangeRates: structuredClone(fixtureExchangeRates),
+    marketPrices: structuredClone(fixtureMarketPrices),
+    priceHistory: structuredClone(fixturePriceHistory),
     budgets: structuredClone(fixtureBudgets),
     transactions: structuredClone(fixtureTransactions),
     securityTransactions: structuredClone(fixtureSecurityTxns),
     holdings: structuredClone(fixtureHoldings),
     portfolioTrendPoints: structuredClone(fixturePortfolioTrendPoints),
     settings: { ...fixtureSettings },
+    physical_assets: structuredClone(fixturePhysicalAssets),
+    physical_asset_valuations: structuredClone(fixtureAssetValuations),
+    savings_goals: structuredClone(fixtureSavingsGoals),
     counters: new Map(),
   };
 }
@@ -129,6 +179,11 @@ export function touch(row: { updated_at: string; version: number }): void {
 /** 参考/交易写入的统一失效信号出口（无 payload，ADR-0012）。 */
 export function emitLedgerChanged(): void {
   emitMockEvent("ledger:changed");
+}
+
+/** 价格类写入的失效信号出口（无 payload，ADR-0031：实际写入即发、零写入不广播）。 */
+export function emitPricesChanged(): void {
+  emitMockEvent("ledger:prices-changed");
 }
 
 // —— 参数窄化助手：invoke args 是 Record<string, unknown>，命令实现按契约取用 ——

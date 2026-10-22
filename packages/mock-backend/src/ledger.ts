@@ -1,8 +1,10 @@
 import type {
   Account,
   AccountBalance,
+  AccountBalanceAdjustInput,
   AccountInput,
   AccountUpdateInput,
+  BalanceCacheAudit,
   Category,
   CategoryInput,
   CategoryUpdateInput,
@@ -12,6 +14,7 @@ import type {
   InsurerUpdateInput,
   Merchant,
   MerchantInput,
+  MerchantTransactionCount,
   MerchantUpdateInput,
   ReorderItem,
   Transaction,
@@ -45,7 +48,8 @@ import {
  * 是参考数据 store 的唯一重拉触发源，不发信号写后刷新即断）。
  *
  * 内存状态、重播种与跨域共享助手已下沉至 ./state（issue #1965），后续各域
- * 实现文件复用同一状态源；本文件只保留参考数据 / 账户 / 交易的命令语义。
+ * 实现文件复用同一状态源；本文件保留参考数据 / 账户 / 交易的命令语义，及
+ * issue #1968 并入的账户/商户扩展（余额校准、缓存审计、商户计数）。
  *
  * 刻意不追求与 Rust 后端行为等价（ADR-0143 决策 1）：金额折算细节、余额缓存
  * 维护、复杂读口径、码化错误体系都不模拟——余额 = 期初 + 流水直和，唯一余额
@@ -65,7 +69,8 @@ export function listCurrencies(): Currency[] {
 }
 
 export function listAccounts(): Account[] {
-  return db().accounts.filter((a) => !a.is_deleted);
+  // 默认不含隐藏账户（黑洞账户）：与真后端 list_accounts 默认可见面同形
+  return db().accounts.filter((a) => !a.is_deleted && !a.is_hidden);
 }
 
 function listSoftDeletable<T extends { is_deleted: boolean }>(
@@ -243,14 +248,16 @@ export function deleteAccount(args: Record<string, unknown>): void {
 }
 
 export function listAccountBalances(): AccountBalance[] {
+  // 与 list_accounts 同可见面（真后端余额清单同样不含隐藏账户）
   return db()
-    .accounts.filter((a) => !a.is_deleted)
-    .map((account) => ({ account, balance_cents: balanceCents(account.id) }));
+    .accounts.filter((a) => !a.is_deleted && !a.is_hidden)
+    .map((account) => ({ account, balance_cents: accountBalanceCents(account.id) }));
 }
 
 /** 余额 = 期初 + Σ 流水（账户币种直和；折算/缓存维护不模拟，ADR-0143 决策 1）。
- * 投资聚合域（issue #1971）复用本口径作投资账户现金腿，导出避免第二份直和表达式。 */
-export function balanceCents(accountId: string): number {
+ *  唯一余额口径，跨域消费（储蓄目标「已存 = 专属账户余额」同源取用，issue #1975；
+ *  投资聚合域「投资账户现金腿」同源取用，issue #1971）。 */
+export function accountBalanceCents(accountId: string): number {
   const account = db().accounts.find((a) => a.id === accountId);
   let sum = account?.initial_balance_cents ?? 0;
   for (const t of db().transactions) {
@@ -282,6 +289,85 @@ export function balanceCents(accountId: string): number {
     }
   }
   return sum;
+}
+
+// —— 账户/商户扩展（issue #1968 / spec #1964）：余额校准黑洞转账、缓存审计、
+// 商户毛笔数计数。从简口径见各函数注记。 ——
+
+/** 黑洞账户即建（ADR-0026）：按币种查找（未删 + is_hidden），缺失则按种子同形创建
+ * （`无(XXX)`、type other、is_hidden、期初 0）。 */
+function ensureBlackHoleAccount(currencyCode: string): string {
+  const hit = db().accounts.find(
+    (a) => !a.is_deleted && a.is_hidden && a.currency_code === currencyCode,
+  );
+  if (hit) return hit.id;
+  const row: Account = {
+    id: nextId("mock-acc"),
+    name: `无(${currencyCode})`,
+    type: "other",
+    currency_code: currencyCode,
+    initial_balance_cents: 0,
+    created_at: nowIso(),
+    is_hidden: true,
+    is_archived: false,
+    updated_at: nowIso(),
+    version: 1,
+    device_id: DEVICE_ID,
+    is_deleted: false,
+  };
+  db().accounts.push(row);
+  return row.id;
+}
+
+/** 余额校准（ADR-0026 黑洞转账）：目标 − 当前 = Δ，Δ>0 从「无」转入、Δ<0 转出至
+ * 「无」，金额取差额绝对值、币种取目标账户自身币种，删除该转账即撤销调整。
+ * 与真后端的信号差异：真后端仅「黑洞即建」发一次 ledger:changed（纯转账零信号）；
+ * 替身写后统一发一次——mock 下交易列表靠信号重拉，「校准→列表出现」的 UI 闭环
+ * 优先（ADR-0143 决策 3 的替身取向）。目标即当前报错，不落零额转账。 */
+export function adjustAccountBalance(args: Record<string, unknown>): string {
+  const account = findActive(db().accounts, str(args, "id"), "账户");
+  if (account.is_hidden) throw new Error("替身后端：黑洞账户不支持余额调整");
+  const input = obj<AccountBalanceAdjustInput>(args, "input");
+  const delta = input.target_balance_cents - accountBalanceCents(account.id);
+  if (delta === 0) throw new Error("替身后端：余额已等于目标值，无需调整");
+  const blackHoleId = ensureBlackHoleAccount(account.currency_code);
+  const id = insertTransaction({
+    kind: "transfer",
+    amount_cents: Math.abs(delta),
+    currency_code: account.currency_code,
+    account_id: delta > 0 ? blackHoleId : account.id,
+    to_account_id: delta > 0 ? account.id : blackHoleId,
+    note: input.note ?? "余额调整",
+    date: input.date,
+  });
+  emitLedgerChanged();
+  return id;
+}
+
+/** 余额缓存审计：mock 余额口径（期初 + 流水直和）即唯一口径、无缓存副本，
+ * 恒答无漂移（检查面含隐藏账户，与真后端含隐藏口径同形）。 */
+export function auditBalanceCache(): BalanceCacheAudit {
+  return {
+    accounts_checked: db().accounts.filter((a) => !a.is_deleted).length,
+    drifts: [],
+    repaired: false,
+  };
+}
+
+/** 商户关联交易计数（issue #445 毛笔数口径）：每个商户（含软删行）被未删流水
+ * 引用的条数，凡引用各计 1、不做退款冲销；无引用计 0；序按名字典序 + 创建先后。 */
+export function listMerchantTransactionCounts(): MerchantTransactionCount[] {
+  const txns = db().transactions;
+  return [...db().merchants]
+    .sort(
+      (a, b) =>
+        (a.name < b.name ? -1 : a.name > b.name ? 1 : 0) ||
+        a.updated_at.localeCompare(b.updated_at),
+    )
+    .map((m) => ({
+      merchant_id: m.id,
+      transaction_count: txns.filter((t) => !t.is_deleted && t.merchant_id === m.id).length,
+    }));
 }
 
 // —— 交易：读写闭环 ——
@@ -351,10 +437,17 @@ export function listTransactions(args?: Record<string, unknown>): TransactionLis
 
 export function createTransaction(args: Record<string, unknown>): string {
   const input = obj<TransactionInput>(args, "input");
+  const id = insertTransaction(input);
+  emitLedgerChanged(); // 交易写入；建商户随交易写一并发一次（ADR-0044 决策 4）
+  return id;
+}
+
+/** 交易写入内核（issue #1968，自 createTransaction 抽出）：逐笔记内存（含商户即建），
+ * 不发信号——批量创建 / 余额校准复用，由各自命令统一收口信号次数。 */
+export function insertTransaction(input: TransactionInput): string {
   const id = nextId("mock-txn");
   const { merchantId } = resolveMerchant(input);
   db().transactions.push(mapInputToTxn(input, id, merchantId));
-  emitLedgerChanged(); // 交易写入；建商户随交易写一并发一次（ADR-0044 决策 4）
   return id;
 }
 

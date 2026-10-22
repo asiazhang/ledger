@@ -32,8 +32,9 @@ import {
  *   `only_invested` 筛选没有别的数据源可算。
  * - 按代码添加的两条通道不联网：「数据源权威名称与最新净值/现价」按代码
  *   确定性推导（规则见各函数，同代码恒同回显），形态对齐契约字段。
- * - `ledger:prices-changed` 不在本域替身发射（真后端按 price_written 广播；
- *   该信号面属行情价格票，落地前消费方在 mock 模式不刷新）。
+ * - 失效信号统一发 `ledger:changed`：含按代码添加通道（真后端落现价后发
+ *   `ledger:prices-changed`，替身多拉一次无害，与 deleteInstrument 同从简
+ *   口径）；`ledger:prices-changed` 的发射面归行情价格域（fx-prices.ts）。
  */
 
 /** 标的删除的行内守卫文案与真后端码化错误语义对齐（issue #292 / ADR-0036 决策 5）。 */
@@ -232,7 +233,7 @@ function adoptRow(
  * （万分之一元刻度）、nav_date 恒字面量；字典形态与真后端一致：类型恒 fund、
  * 市场恒 unknown、币种恒 CNY（含 QDII 人民币份额）；fund_class 恒空串
  * （ADR-0130 决策 8）。同代码幂等复用。真后端落现价后广播价格失效信号，
- * 替身按 spec #1964 统一发 ledger:changed（prices-changed 属行情价格票）。
+ * 替身按 spec #1964 统一发 ledger:changed（prices-changed 发射面归行情价格域）。
  */
 export function addFundByCode(args: Record<string, unknown>): AddFundResult {
   const code = str(args, "code");
