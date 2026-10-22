@@ -139,7 +139,7 @@ describe("交易读写闭环（ADR-0143 决策 2）", () => {
         currency_code: "CNY",
         account_id: "mock-acc-cash",
         category_id: "mock-cat-food",
-        date: "2026-02-01",
+        date: "2026-03-01",
         note: "晚餐",
       },
     });
@@ -225,7 +225,34 @@ describe("交易读写闭环（ADR-0143 决策 2）", () => {
     const involvingBank = await invoke<TransactionListResult>("list_transactions", {
       filter: { involving_account_id: "mock-acc-bank" },
     });
-    expect(involvingBank.items.map((t) => t.id).sort()).toEqual(["mock-txn-002", "mock-txn-003"]);
+    // 投资夹具行：buy/sell 出资工资卡、dividend 到账工资卡（issue #1970）
+    expect(involvingBank.items.map((t) => t.id).sort()).toEqual([
+      "mock-txn-002",
+      "mock-txn-003",
+      "mock-txn-101",
+      "mock-txn-102",
+      "mock-txn-105",
+    ]);
+  });
+
+  it("instrument_id 过滤命中证券扩展行，convert 任一腿同算（ADR-0107）", async () => {
+    const byEtf = await invoke<TransactionListResult>("list_transactions", {
+      filter: { instrument_id: "mock-inst-etf" },
+    });
+    // buy 直接持有 + convert 转入腿，date 倒序
+    expect(byEtf.items.map((t) => t.id)).toEqual(["mock-txn-103", "mock-txn-101"]);
+    expect(byEtf.total).toBe(2);
+
+    const byFund = await invoke<TransactionListResult>("list_transactions", {
+      filter: { instrument_id: "mock-inst-fund" },
+    });
+    // sell 直接持有 + convert 转出腿
+    expect(byFund.items.map((t) => t.id)).toEqual(["mock-txn-103", "mock-txn-102"]);
+
+    const byHk = await invoke<TransactionListResult>("list_transactions", {
+      filter: { instrument_id: "mock-inst-hk" },
+    });
+    expect(byHk.items.map((t) => t.id)).toEqual(["mock-txn-105"]); // dividend 到账行
   });
 
   it("list_transactions 分页：items 切片 + total 恒为过滤全集", async () => {
@@ -233,13 +260,13 @@ describe("交易读写闭环（ADR-0143 决策 2）", () => {
       filter: { page: 1, page_size: 2 },
     });
     expect(page1.items).toHaveLength(2);
-    expect(page1.total).toBe(4);
-    expect(page1.items[0]?.id).toBe("mock-txn-003");
+    expect(page1.total).toBe(9); // 通用 4 + 投资 5（issue #1970 夹具）
+    expect(page1.items[0]?.id).toBe("mock-txn-105");
 
     const page2 = await invoke<TransactionListResult>("list_transactions", {
       filter: { page: 2, page_size: 2 },
     });
-    expect(page2.items[0]?.id).toBe("mock-txn-004");
+    expect(page2.items[0]?.id).toBe("mock-txn-103");
   });
 
   it("hide_investment_related 排除任一端为投资账户的行", async () => {
@@ -257,7 +284,9 @@ describe("交易读写闭环（ADR-0143 决策 2）", () => {
       filter: { hide_investment_related: true },
     });
     expect(hidden.items.map((t) => t.account_id)).not.toContain("mock-acc-invest");
-    expect(hidden.total).toBe(4);
+    // 全部 10 行（9 夹具 + 1 新建）隐藏 5 行（投资账户端 4 + 新建投资账户 expense）；
+    // dividend 到账工资卡不隐藏
+    expect(hidden.total).toBe(5);
   });
 
   it("list_account_balances = 期初 + 流水直和（记一笔后余额反映）", async () => {
@@ -298,11 +327,11 @@ describe("会话状态：重装即重播种（刷新重置语义，ADR-0143 决�
         date: "2026-02-06",
       },
     });
-    expect((await invoke<TransactionListResult>("list_transactions")).total).toBe(5);
+    expect((await invoke<TransactionListResult>("list_transactions")).total).toBe(10);
 
     installMockBackend();
 
-    expect((await invoke<TransactionListResult>("list_transactions")).total).toBe(4);
+    expect((await invoke<TransactionListResult>("list_transactions")).total).toBe(9);
   });
 });
 

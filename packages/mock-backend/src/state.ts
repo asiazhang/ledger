@@ -16,6 +16,7 @@ import {
   fixtureInstruments,
   fixtureInsurers,
   fixtureMerchants,
+  fixtureSecurityTxns,
   fixtureSettings,
   fixtureTransactions,
 } from "./fixtures";
@@ -23,9 +24,10 @@ import { emitMockEvent } from "./tauri/event";
 
 /**
  * 替身后端的共享内存状态与跨域助手（issue #1965，自 ledger.ts 下沉）：
- * 内存形态（五字典 + 预算 + 交易 + 设置 + id 计数器）、重播种、递增 id、触碰同步
- * 字段、失效信号出口、参数窄化与存在性校验助手——供各域实现文件复用，
- * 域模块不再自持状态。写入改内存、读投影内存、刷新重播种（ADR-0143 决策 2/6）。
+ * 内存形态（五字典 + 标的字典 + 预算 + 交易 + 证券扩展行 + 设置 + id 计数器）、
+ * 重播种、递增 id、触碰同步字段、失效信号出口、参数窄化与存在性校验助手——
+ * 供各域实现文件复用，域模块不再自持状态。写入改内存、读投影内存、刷新
+ * 重播种（ADR-0143 决策 2/6）。
  */
 
 /** 账本级设置的内存形态（issue #1965 首批：本位币基准 + 日志等级；后续域随需扩展） */
@@ -34,7 +36,24 @@ export interface MockSettings {
   log_level: string;
 }
 
-/** 夹具种子快照形态（五字典 + 标的字典 + 预算 + 交易 + 设置 + id 计数器） */
+/** 证券交易扩展行（issue #1970，镜像真后端 `security_transactions` 表形态）：
+ * 投资 kind 交易的投资域载荷——`transaction_id` 主键一对一、action 闭集、
+ * convert 两腿、split 带符号增量、dividend 无数量单价。核心 `Transaction` 行
+ * 不含投资字段，投资明细/编辑回填投影经本扩展行 JOIN 装配。 */
+export interface MockSecurityTxn {
+  transaction_id: string;
+  instrument_id: string;
+  action: "buy" | "sell" | "convert" | "split" | "dividend";
+  quantity: number | null;
+  price_cents: number | null;
+  fee_cents: number;
+  to_instrument_id: string | null;
+  to_quantity: number | null;
+  out_amount_cents: number | null;
+  in_amount_cents: number | null;
+}
+
+/** 夹具种子快照形态（五字典 + 标的字典 + 预算 + 交易 + 证券扩展行 + 设置 + id 计数器） */
 export interface MockLedger {
   currencies: Currency[];
   accounts: Account[];
@@ -44,6 +63,7 @@ export interface MockLedger {
   instruments: Instrument[];
   budgets: Budget[];
   transactions: Transaction[];
+  securityTransactions: MockSecurityTxn[];
   settings: MockSettings;
   counters: Map<string, number>;
 }
@@ -73,6 +93,7 @@ function seed(): MockLedger {
     instruments: structuredClone(fixtureInstruments),
     budgets: structuredClone(fixtureBudgets),
     transactions: structuredClone(fixtureTransactions),
+    securityTransactions: structuredClone(fixtureSecurityTxns),
     settings: { ...fixtureSettings },
     counters: new Map(),
   };

@@ -1,4 +1,10 @@
 import {
+  getTransactionConvert,
+  getTransactionSplit,
+  getTransactionTrade,
+  listInvestmentTransactions,
+} from "./investment_txns";
+import {
   addFundByCode,
   addInstrumentByCode,
   createInstrument,
@@ -136,4 +142,12 @@ export function installMockBackend(): void {
   registerMockCommand("delete_budget", (args) => deleteBudget(args));
   registerMockCommand("budget_progress", () => budgetProgress());
   registerMockCommand("budget_annual_summary", () => budgetAnnualSummary());
+
+  // 投资明细与交易扩展投影（issue #1970）：投资页「明细」页签读投影（五种投资
+  // kind 行 JOIN 证券扩展行，四维筛选 + offset 分页）与编辑回填三投影（非对应
+  // kind 答错）——纯读命令，不发失效信号（见 investment_txns.ts 头注）
+  registerMockCommand("list_investment_transactions", (args) => listInvestmentTransactions(args));
+  registerMockCommand("get_transaction_trade", (args) => getTransactionTrade(args));
+  registerMockCommand("get_transaction_convert", (args) => getTransactionConvert(args));
+  registerMockCommand("get_transaction_split", (args) => getTransactionSplit(args));
 }
