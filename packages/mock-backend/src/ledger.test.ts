@@ -215,7 +215,8 @@ describe("交易读写闭环（ADR-0143 决策 2）", () => {
     const onlyTransfer = await invoke<TransactionListResult>("list_transactions", {
       filter: { kinds: ["transfer"] },
     });
-    expect(onlyTransfer.items.map((t) => t.kind)).toEqual(["transfer"]);
+    // 通用 txn-003 + 定时转账期次历史 txn-307（issue #1973 夹具）
+    expect(onlyTransfer.items.map((t) => t.id).sort()).toEqual(["mock-txn-003", "mock-txn-307"]);
 
     const janFirst = await invoke<TransactionListResult>("list_transactions", {
       filter: { from: "2026-01-06", to: "2026-01-06" },
@@ -225,13 +226,16 @@ describe("交易读写闭环（ADR-0143 决策 2）", () => {
     const involvingBank = await invoke<TransactionListResult>("list_transactions", {
       filter: { involving_account_id: "mock-acc-bank" },
     });
-    // 投资夹具行：buy/sell 出资工资卡、dividend 到账工资卡（issue #1970）
+    // 投资夹具行：buy/sell 出资工资卡、dividend 到账工资卡（issue #1970）+
+    // 定时历史行：年缴保费扣工资卡、定投转出工资卡（issue #1973）
     expect(involvingBank.items.map((t) => t.id).sort()).toEqual([
       "mock-txn-002",
       "mock-txn-003",
       "mock-txn-101",
       "mock-txn-102",
       "mock-txn-105",
+      "mock-txn-306",
+      "mock-txn-307",
     ]);
   });
 
@@ -260,7 +264,7 @@ describe("交易读写闭环（ADR-0143 决策 2）", () => {
       filter: { page: 1, page_size: 2 },
     });
     expect(page1.items).toHaveLength(2);
-    expect(page1.total).toBe(11); // 通用 4 + 同单 2（#1968）+ 投资 5（#1970 夹具）
+    expect(page1.total).toBe(20); // 通用 4 + 同单 2（#1968）+ 投资 5（#1970）+ 定时 9（#1973）
     expect(page1.items[0]?.id).toBe("mock-txn-105");
 
     const page2 = await invoke<TransactionListResult>("list_transactions", {
@@ -284,9 +288,10 @@ describe("交易读写闭环（ADR-0143 决策 2）", () => {
       filter: { hide_investment_related: true },
     });
     expect(hidden.items.map((t) => t.account_id)).not.toContain("mock-acc-invest");
-    // 全部 12 行（11 夹具 + 1 新建）隐藏 5 行（101–104 投资账户端 4 + 新建投资账户
-    // expense）；dividend 到账工资卡、同单两行（#1968）均不隐藏
-    expect(hidden.total).toBe(7);
+    // 全部 21 行（11 夹具 + 定时 9 + 1 新建）隐藏 6 行（101–104 投资账户端 4 +
+    // 新建投资账户 expense + 定时转账 txn-307 转入投资账户，issue #1973）；
+    // dividend 到账工资卡、同单两行（#1968）均不隐藏
+    expect(hidden.total).toBe(15);
   });
 
   it("list_account_balances = 期初 + 流水直和（记一笔后余额反映）", async () => {
@@ -349,16 +354,17 @@ describe("余额校准：adjust_account_balance（黑洞转账，ADR-0026）", (
     expect(changed()).toBe(1);
   });
 
-  it("调低：账户→黑洞方向，差额绝对值入账（bank 1_706_300 → 1_600_000）", async () => {
+  it("调低：账户→黑洞方向，差额绝对值入账（bank 606_300 → 600_000）", async () => {
+    // bank 人算：1_706_300（#1968 基数）− 保费 600_000 − 定投转出 500_000（#1973）
     const txId = await invoke<string>("adjust_account_balance", {
       id: "mock-acc-bank",
-      input: { target_balance_cents: 1_600_000, date: "2026-01-30" },
+      input: { target_balance_cents: 600_000, date: "2026-01-30" },
     });
 
     const list = await invoke<TransactionListResult>("list_transactions");
     expect(list.items.find((t) => t.id === txId)).toMatchObject({
       kind: "transfer",
-      amount_cents: 106_300,
+      amount_cents: 6_300,
       account_id: "mock-acc-bank",
       to_account_id: expect.any(String), // 黑洞账户 id
     });
@@ -366,7 +372,7 @@ describe("余额校准：adjust_account_balance（黑洞转账，ADR-0026）", (
       await invoke<Array<{ account: { id: string }; balance_cents: number }>>(
         "list_account_balances",
       );
-    expect(balances.find((b) => b.account.id === "mock-acc-bank")?.balance_cents).toBe(1_600_000);
+    expect(balances.find((b) => b.account.id === "mock-acc-bank")?.balance_cents).toBe(600_000);
   });
 
   it("黑洞账户按币种即建且复用：两次校准的转账行引用同一黑洞账户", async () => {
@@ -376,7 +382,7 @@ describe("余额校准：adjust_account_balance（黑洞转账，ADR-0026）", (
     });
     const second = await invoke<string>("adjust_account_balance", {
       id: "mock-acc-bank",
-      input: { target_balance_cents: 1_600_000, date: "2026-01-30" },
+      input: { target_balance_cents: 600_000, date: "2026-01-30" },
     });
 
     // 两笔转账的黑洞端是同一 id（即建后复用）；type 不可见（隐藏账户不进账户列表，
@@ -448,11 +454,11 @@ describe("余额缓存审计：audit_balance_cache（mock 余额口径即唯一�
 });
 
 describe("商户关联交易计数：list_merchant_transaction_counts（毛笔数口径）", () => {
-  /** 人算：京东被 005/006 引用 = 2；美团被 001/004 引用 = 2；已删商户无引用 = 0。
-   * 序按名字典序：京东 < 已删商户 < 美团。 */
+  /** 人算：京东被 005/006 + 定时历史 7 笔（201/202/301..305，#1973）引用 = 9；
+   * 美团被 001/004 引用 = 2；已删商户无引用 = 0。序按名字典序：京东 < 已删商户 < 美团。 */
   it("含软删商户全字典行、无引用计 0、未删流水逐笔计 1", async () => {
     await expect(invoke("list_merchant_transaction_counts")).resolves.toEqual([
-      { merchant_id: "mock-mch-jd", transaction_count: 2 },
+      { merchant_id: "mock-mch-jd", transaction_count: 9 },
       { merchant_id: "mock-mch-del", transaction_count: 0 },
       { merchant_id: "mock-mch-meituan", transaction_count: 2 },
     ]);
@@ -487,11 +493,11 @@ describe("会话状态：重装即重播种（刷新重置语义，ADR-0143 决�
         date: "2026-02-06",
       },
     });
-    expect((await invoke<TransactionListResult>("list_transactions")).total).toBe(12);
+    expect((await invoke<TransactionListResult>("list_transactions")).total).toBe(21);
 
     installMockBackend();
 
-    expect((await invoke<TransactionListResult>("list_transactions")).total).toBe(11);
+    expect((await invoke<TransactionListResult>("list_transactions")).total).toBe(20);
   });
 });
 

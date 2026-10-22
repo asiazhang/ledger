@@ -8,12 +8,15 @@ import { listen } from "./tauri/event";
  * tauri 命令面（`installMockBackend` + `invoke`），删除任一登记行即未命中报错、
  * 本文件变红（接线负向判据，ADR-0087 断言强度）。
  *
- * 聚合期望值为独立人算字面量。夹具未删交易 11 笔：
+ * 聚合期望值为独立人算字面量。夹具未删交易 20 笔：
  * - 001 expense 2_500 餐饮 美团 2026-01-05 ｜ 002 income 1_200_000 工资 2026-01-10
  * - 003 transfer 300_000 2026-01-25 ｜ 004 refund 1_500 餐饮 美团 2026-01-06
  * - 005 expense 8_800 未分类 京东 2026-01-08 ｜ 006 expense 1_200 未分类 京东 2026-01-08
  * - 投资五种 kind（101–105，2026-02，#1970）：仅 105 dividend 8_500 进收入列，
  *   买入/卖出/折算/拆分不进毛值三列（kind→度量矩阵）
+ * - 定时期次历史 9 笔（#1973，均未分类）：京东 expense 201/202（1_000，
+ *   2025-12-15/2026-01-15）+ 301..305（2_500，2025-09..2026-01 各月 10 日）；
+ *   保费 306 无商户 600_000 2025-06-01；定投 transfer 307 不进毛值列
  *
  * 替身从简口径（reports.ts 头注记录与真后端差异）：不折算（amount_native_cents
  * = 原币直记）、子类直归本类不模拟上卷。
@@ -33,9 +36,9 @@ function captureLedgerChanged(): () => number {
 }
 
 describe("报表日期极值：report_date_range", () => {
-  it("返回未删交易日期极值对（人算：01-05 最小、02-25 分红最大）", async () => {
+  it("返回未删交易日期极值对（人算：保费 2025-06-01 最小、02-25 分红最大）", async () => {
     await expect(invoke("report_date_range")).resolves.toEqual({
-      min_date: "2026-01-05",
+      min_date: "2025-06-01", // 定时保费历史（#1973）早于通用夹具
       max_date: "2026-02-25",
     });
   });
@@ -43,30 +46,37 @@ describe("报表日期极值：report_date_range", () => {
   it("极值随删除收窄：软删 02-25 的分红后 max 落到 02-20", async () => {
     await invoke("delete_transaction", { id: "mock-txn-105" });
     await expect(invoke("report_date_range")).resolves.toEqual({
-      min_date: "2026-01-05",
+      min_date: "2025-06-01",
       max_date: "2026-02-20",
     });
   });
 });
 
 describe("月度汇总：monthly_summary（毛值三列，人算字面量）", () => {
-  it("期间口径：当月一行 income 1_200_000 / expense 毛值 12_500 / refund 1_500", async () => {
+  it("期间口径：当月一行 income 1_200_000 / expense 毛值 16_000 / refund 1_500", async () => {
+    // expense 人算：005+006 10_000 + 定时历史 202（1_000）+ 305（2_500）= 16_000（#1973）
     await expect(
       invoke("monthly_summary", { year: 2026, from: "2026-01-01", to: "2026-01-31" }),
     ).resolves.toEqual([
-      { month: "2026-01", income_cents: 1_200_000, expense_cents: 12_500, refund_cents: 1_500 },
+      { month: "2026-01", income_cents: 1_200_000, expense_cents: 16_000, refund_cents: 1_500 },
     ]);
   });
 
-  it("遗留 year 形态：2026 年按月两行（2 月仅分红 8_500）；2025 年空数组", async () => {
+  it("遗留 year 形态：2026 年按月两行（2 月仅分红 8_500）；2025 年定时历史五行", async () => {
     await expect(invoke("monthly_summary", { year: 2026, from: null, to: null })).resolves.toEqual([
-      { month: "2026-01", income_cents: 1_200_000, expense_cents: 12_500, refund_cents: 1_500 },
+      { month: "2026-01", income_cents: 1_200_000, expense_cents: 16_000, refund_cents: 1_500 },
       // 2 月投资夹具：买入/卖出/折算/拆分不进毛值三列，仅分红计入收入
       { month: "2026-02", income_cents: 8_500, expense_cents: 0, refund_cents: 0 },
     ]);
-    await expect(invoke("monthly_summary", { year: 2025, from: null, to: null })).resolves.toEqual(
-      [],
-    );
+    // 2025 定时历史（#1973）：保费 06 月 600_000、会员 09–11 月各 2_500、
+    // 12 月 = 201（1_000）+ 304（2_500）= 3_500；transfer 307 不进毛值列
+    await expect(invoke("monthly_summary", { year: 2025, from: null, to: null })).resolves.toEqual([
+      { month: "2025-06", income_cents: 0, expense_cents: 600_000, refund_cents: 0 },
+      { month: "2025-09", income_cents: 0, expense_cents: 2_500, refund_cents: 0 },
+      { month: "2025-10", income_cents: 0, expense_cents: 2_500, refund_cents: 0 },
+      { month: "2025-11", income_cents: 0, expense_cents: 2_500, refund_cents: 0 },
+      { month: "2025-12", income_cents: 0, expense_cents: 3_500, refund_cents: 0 },
+    ]);
   });
 
   it("期间边界含两端：from=to=2026-01-08 只聚 005/006（expense 10_000、无收支退款）", async () => {
@@ -91,7 +101,7 @@ describe("月度汇总：monthly_summary（毛值三列，人算字面量）", (
     await expect(
       invoke("monthly_summary", { year: 2026, from: "2026-01-01", to: "2026-02-28" }),
     ).resolves.toEqual([
-      { month: "2026-01", income_cents: 1_200_000, expense_cents: 12_500, refund_cents: 1_500 },
+      { month: "2026-01", income_cents: 1_200_000, expense_cents: 16_000, refund_cents: 1_500 },
       // 2 月 = 投资夹具分红 8_500 + 新记支出 6_600（买入等不进毛值列，人算）
       { month: "2026-02", income_cents: 8_500, expense_cents: 6_600, refund_cents: 0 },
     ]);
@@ -99,7 +109,8 @@ describe("月度汇总：monthly_summary（毛值三列，人算字面量）", (
 });
 
 describe("分类份额：category_shares（净值口径，人算字面量）", () => {
-  it("expense 全月：未分类 10_000（005+006）居首、餐饮 1_000（2500 − 退款 1500）次之", async () => {
+  it("expense 全月：未分类 13_500（005/006 + 定时历史两笔）居首、餐饮 1_000 次之", async () => {
+    // 人算：10_000 + 202（1_000）+ 305（2_500）= 13_500（#1973）；餐饮 = 2500 − 退款 1500
     await expect(
       invoke("category_shares", {
         kind: "expense",
@@ -109,7 +120,7 @@ describe("分类份额：category_shares（净值口径，人算字面量）", (
         to: "2026-01-31",
       }),
     ).resolves.toEqual([
-      { category_id: "", category_name: "未分类", amount_cents: 10_000 },
+      { category_id: "", category_name: "未分类", amount_cents: 13_500 },
       { category_id: "mock-cat-food", category_name: "餐饮", amount_cents: 1_000 },
     ]);
   });
@@ -163,7 +174,7 @@ describe("分类份额：category_shares（净值口径，人算字面量）", (
       to: "2026-01-31",
     });
     expect(rows).toEqual([
-      { category_id: "", category_name: "未分类", amount_cents: 10_000 },
+      { category_id: "", category_name: "未分类", amount_cents: 13_500 },
       { category_id: "mock-cat-food-breakfast", category_name: "早餐", amount_cents: 4_400 },
       { category_id: "mock-cat-food", category_name: "餐饮", amount_cents: 1_000 },
     ]);
@@ -183,7 +194,8 @@ describe("分类份额：category_shares（净值口径，人算字面量）", (
 });
 
 describe("商户消费排行：merchant_shares（expense_net + 同口径笔数 + total，人算字面量）", () => {
-  it("全月：京东 10_000/2 笔居首、美团 1_000（2500−1500）/2 笔，total 11_000", async () => {
+  it("全月：京东 13_500/4 笔居首（含定时历史两笔）、美团 1_000（2500−1500）/2 笔，total 14_500", async () => {
+    // 人算：京东 = 005/006 10_000 + 202（1_000）+ 305（2_500）= 13_500 / 4 笔（#1973）
     await expect(
       invoke("merchant_shares", { year: 2026, from: "2026-01-01", to: "2026-01-31", topN: null }),
     ).resolves.toEqual({
@@ -191,8 +203,8 @@ describe("商户消费排行：merchant_shares（expense_net + 同口径笔数 +
         {
           merchant_id: "mock-mch-jd",
           merchant_name: "京东",
-          amount_cents: 10_000,
-          transaction_count: 2,
+          amount_cents: 13_500,
+          transaction_count: 4,
         },
         {
           merchant_id: "mock-mch-meituan",
@@ -201,11 +213,11 @@ describe("商户消费排行：merchant_shares（expense_net + 同口径笔数 +
           transaction_count: 2,
         },
       ],
-      total_cents: 11_000,
+      total_cents: 14_500,
     });
   });
 
-  it("topN 键名契约（camelCase）：topN=1 截断到首行，total_cents 仍为全量合计 11_000", async () => {
+  it("topN 键名契约（camelCase）：topN=1 截断到首行，total_cents 仍为全量合计 14_500", async () => {
     await expect(
       invoke("merchant_shares", { year: 2026, from: "2026-01-01", to: "2026-01-31", topN: 1 }),
     ).resolves.toEqual({
@@ -213,11 +225,11 @@ describe("商户消费排行：merchant_shares（expense_net + 同口径笔数 +
         {
           merchant_id: "mock-mch-jd",
           merchant_name: "京东",
-          amount_cents: 10_000,
-          transaction_count: 2,
+          amount_cents: 13_500,
+          transaction_count: 4,
         },
       ],
-      total_cents: 11_000,
+      total_cents: 14_500,
     });
   });
 
@@ -258,13 +270,25 @@ describe("商户消费排行：merchant_shares（expense_net + 同口径笔数 +
       amount_cents: 3_300,
       transaction_count: 1,
     });
-    expect(report.total_cents).toBe(14_300); // 11_000 + 3_300（人算）
+    expect(report.total_cents).toBe(17_800); // 14_500 + 3_300（人算）
   });
 
-  it("遗留 year 形态：2025 年无数据空排行", async () => {
+  it("遗留 year 形态：2025 年仅定时历史京东五行", async () => {
+    // 2025 定时历史（#1973）：京东 = 201（1_000）+ 301..304（2_500 × 4）= 11_000 / 5 笔；
+    // 保费 306 无商户不进商户聚合
     await expect(
       invoke("merchant_shares", { year: 2025, from: null, to: null, topN: null }),
-    ).resolves.toEqual({ rows: [], total_cents: 0 });
+    ).resolves.toEqual({
+      rows: [
+        {
+          merchant_id: "mock-mch-jd",
+          merchant_name: "京东",
+          amount_cents: 11_000,
+          transaction_count: 5,
+        },
+      ],
+      total_cents: 11_000,
+    });
   });
 });
 

@@ -49,11 +49,12 @@ describe("investment_overview：两腿与合计、缺价计数、has_investment_
     const overview = await invoke<InvestmentOverview>("investment_overview");
     expect(overview).toEqual({
       native_currency: "CNY",
-      // 现金腿：券商账户期初 0，buy/sell/dividend 现金腿全走工资卡（funding ?? account）
-      investment_cash_cents: 0,
+      // 现金腿：券商账户 = 定投转账 5000 元（#1973 定时夹具，工资卡 → 券商）；
+      // buy/sell/dividend 现金腿全走工资卡（funding ?? account）不再叠加
+      investment_cash_cents: 500_000,
       // 市值腿：123_450 + 385_000_000 + 224_885 + 275（国债缺价跳过，HKD 同币直填）
       holdings_market_value_cents: 385_348_610,
-      investable_assets_cents: 385_348_610, // 0 + 市值腿
+      investable_assets_cents: 385_848_610, // 500_000 + 市值腿
       total_market_value_cents: 385_348_610, // 与市值腿同一聚合
       // 3_450 + 35_000_000 + (-115) + 275
       unrealized_pnl_cents: 35_003_610,

@@ -94,7 +94,7 @@ describe("交易搜索：search_transactions（关键字 + 筛选 AND 组合，�
     ).resolves.toEqual({ items: [], total: 0 });
   });
 
-  it("金额区间仅筛选路径（无关键字）：[2000,10000] 命中 4 笔（1200/300000 等出界）", async () => {
+  it("金额区间仅筛选路径（无关键字）：[2000,10000] 命中 9 笔（1200/300000 等出界）", async () => {
     const result = await invoke<{ items: Array<{ id: string }>; total: number }>(
       "search_transactions",
       {
@@ -107,15 +107,21 @@ describe("交易搜索：search_transactions（关键字 + 筛选 AND 组合，�
         dateTo: null,
       },
     );
-    // 人算：005 8_800、001 2_500、102 卖出 3_000、105 分红 8_500 入界；
-    // 006 1_200、003 300_000、101 205_200、103 19_800 出界，date 倒序
+    // 人算：005 8_800、001 2_500、102 卖出 3_000、105 分红 8_500 入界 +
+    // 定时会员历史 301..305（2_500 × 5，#1973）入界；006 1_200、003 300_000、
+    // 101 205_200、103 19_800、201/202 1_000、306 600_000、307 500_000 出界，date 倒序
     expect(result.items.map((t) => t.id)).toEqual([
       "mock-txn-105",
       "mock-txn-102",
+      "mock-txn-305",
       "mock-txn-005",
       "mock-txn-001",
+      "mock-txn-304",
+      "mock-txn-303",
+      "mock-txn-302",
+      "mock-txn-301",
     ]);
-    expect(result.total).toBe(4);
+    expect(result.total).toBe(9);
   });
 
   it("关键字与日期区间 AND：京东 + 到 01-08 含边界命中两行，收到 01-07 即空", async () => {
@@ -145,7 +151,8 @@ describe("交易搜索：search_transactions（关键字 + 筛选 AND 组合，�
     expect(miss.total).toBe(0);
   });
 
-  it("服务端分页：当月 6 笔命中、pageSize=2 翻页 total 恒为全集", async () => {
+  it("服务端分页：当月 8 笔命中、pageSize=2 翻页 total 恒为全集", async () => {
+    // 人算：2026-01 = 原有 6 笔 + 会员历史 305（01-10）+ 分期历史 202（01-15，#1973）
     const page1 = await invoke<{ items: Array<{ id: string }>; total: number }>(
       "search_transactions",
       {
@@ -158,8 +165,8 @@ describe("交易搜索：search_transactions（关键字 + 筛选 AND 组合，�
         dateTo: "2026-01-31",
       },
     );
-    expect(page1.items.map((t) => t.id)).toEqual(["mock-txn-003", "mock-txn-002"]);
-    expect(page1.total).toBe(6);
+    expect(page1.items.map((t) => t.id)).toEqual(["mock-txn-003", "mock-txn-202"]);
+    expect(page1.total).toBe(8);
 
     const page2 = await invoke<{ items: Array<{ id: string }>; total: number }>(
       "search_transactions",
@@ -173,8 +180,8 @@ describe("交易搜索：search_transactions（关键字 + 筛选 AND 组合，�
         dateTo: "2026-01-31",
       },
     );
-    // 同日 2026-01-08 两行按 created_at 倒序：006 后建在前
-    expect(page2.items.map((t) => t.id)).toEqual(["mock-txn-006", "mock-txn-005"]);
+    // 同日 2026-01-10 两行按 created_at 倒序：002（09:00）在 305（08:00）前
+    expect(page2.items.map((t) => t.id)).toEqual(["mock-txn-002", "mock-txn-305"]);
   });
 
   it("软删商户名仍可搜（历史引用口径）", async () => {
@@ -250,7 +257,7 @@ describe("批量创建：create_transactions（逐笔记内存，ledger:changed 
     }
 
     const list = await invoke<{ total: number }>("list_transactions");
-    expect(list.total).toBe(13); // 夹具 11（含 #1970 投资 5）+ 新 2（人算）
+    expect(list.total).toBe(22); // 夹具 20（含 #1970 投资 5、#1973 定时 9）+ 新 2（人算）
     expect(changed()).toBe(1); // 批量只发一次（专门断言）
   });
 

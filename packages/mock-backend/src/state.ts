@@ -5,6 +5,7 @@ import type {
   Currency,
   ExchangeRate,
   Holding,
+  InstallmentPlan,
   Instrument,
   Insurer,
   MarketPrice,
@@ -12,6 +13,10 @@ import type {
   PhysicalAsset,
   PortfolioTrendPoint,
   SavingsGoal,
+  ScheduledTransaction,
+  ScheduledTransactionOccurrence,
+  ScheduledTransferPlan,
+  SubscriptionPlan,
   Transaction,
 } from "@ledger/types";
 import {
@@ -22,6 +27,7 @@ import {
   fixtureCurrencies,
   fixtureExchangeRates,
   fixtureHoldings,
+  fixtureInstallmentPlans,
   fixtureInstruments,
   fixtureInsurers,
   fixtureMarketPrices,
@@ -30,8 +36,12 @@ import {
   fixturePortfolioTrendPoints,
   fixturePriceHistory,
   fixtureSavingsGoals,
+  fixtureScheduledOccurrences,
+  fixtureScheduledPlans,
+  fixtureScheduledTransferPlans,
   fixtureSecurityTxns,
   fixtureSettings,
+  fixtureSubscriptionPlans,
   fixtureTransactions,
   type MockPriceHistory,
 } from "./fixtures";
@@ -91,7 +101,8 @@ export interface MockAssetValuation {
 }
 
 /** 夹具种子快照形态（五字典 + 标的字典 + 汇率/现价/价格历史 + 预算 + 交易 +
- * 证券扩展行 + 持仓 + 组合走势周点 + 设置 + 实物资产/储蓄目标 + id 计数器） */
+ * 证券扩展行 + 持仓 + 组合走势周点 + 设置 + 实物资产/储蓄目标 + 定时计划/
+ * 期次与三张扩展行 + id 计数器） */
 export interface MockLedger {
   currencies: Currency[];
   accounts: Account[];
@@ -111,6 +122,11 @@ export interface MockLedger {
   physical_assets: MockPhysicalAsset[];
   physical_asset_valuations: MockAssetValuation[];
   savings_goals: SavingsGoal[];
+  scheduledPlans: ScheduledTransaction[];
+  scheduledOccurrences: ScheduledTransactionOccurrence[];
+  installmentPlans: InstallmentPlan[];
+  subscriptionPlans: SubscriptionPlan[];
+  scheduledTransferPlans: ScheduledTransferPlan[];
   counters: Map<string, number>;
 }
 
@@ -154,6 +170,11 @@ function seed(): MockLedger {
     physical_assets: structuredClone(fixturePhysicalAssets),
     physical_asset_valuations: structuredClone(fixtureAssetValuations),
     savings_goals: structuredClone(fixtureSavingsGoals),
+    scheduledPlans: structuredClone(fixtureScheduledPlans),
+    scheduledOccurrences: structuredClone(fixtureScheduledOccurrences),
+    installmentPlans: structuredClone(fixtureInstallmentPlans),
+    subscriptionPlans: structuredClone(fixtureSubscriptionPlans),
+    scheduledTransferPlans: structuredClone(fixtureScheduledTransferPlans),
     counters: new Map(),
   };
 }

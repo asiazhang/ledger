@@ -84,6 +84,16 @@ import {
   updateSavingsGoal,
 } from "./savings-goal";
 import { reseed } from "./state";
+import {
+  createScheduledTransaction,
+  executeScheduledOccurrence,
+  expandScheduledOccurrences,
+  getScheduledTransactionDetail,
+  listScheduledTransactions,
+  subscriptionSpendOverview,
+  updateScheduledSubscription,
+  updateScheduledTransactionStatus,
+} from "./scheduled";
 import { registerMockCommand } from "./tauri/core";
 import {
   cumulativePnlNativeTotal,
@@ -355,4 +365,20 @@ export function installMockBackend(): void {
   registerMockCommand("search_transactions", (args) => searchTransactions(args));
   registerMockCommand("create_transactions", (args) => createTransactions(args));
   registerMockCommand("get_transaction_order_summary", (args) => getTransactionOrderSummary(args));
+
+  // 定时/订阅（issue #1973）：计划 + 期次内存态读写闭环——建计划展开期次、
+  // 手动执行真落交易（订阅/分期 expense、转账 transfer）、订阅花费聚合；
+  // 写完成后统一发 ledger:changed（见 scheduled.ts 头注）
+  registerMockCommand("create_scheduled_transaction", (args) => createScheduledTransaction(args));
+  registerMockCommand("list_scheduled_transactions", () => listScheduledTransactions());
+  registerMockCommand("get_scheduled_transaction_detail", (args) =>
+    getScheduledTransactionDetail(args),
+  );
+  registerMockCommand("update_scheduled_transaction_status", (args) =>
+    updateScheduledTransactionStatus(args),
+  );
+  registerMockCommand("update_scheduled_subscription", (args) => updateScheduledSubscription(args));
+  registerMockCommand("execute_scheduled_occurrence", (args) => executeScheduledOccurrence(args));
+  registerMockCommand("expand_scheduled_occurrences", (args) => expandScheduledOccurrences(args));
+  registerMockCommand("subscription_spend_overview", () => subscriptionSpendOverview());
 }
