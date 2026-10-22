@@ -19,7 +19,6 @@ import {
   listMerchants,
   listTransactions,
   reorderCategories,
-  reseed,
   unarchiveAccount,
   updateAccount,
   updateCategory,
@@ -27,6 +26,7 @@ import {
   updateMerchant,
   updateTransaction,
 } from "./ledger";
+import { reseed } from "./state";
 import { registerMockCommand } from "./tauri/core";
 
 /**

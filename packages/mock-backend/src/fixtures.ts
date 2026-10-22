@@ -154,6 +154,13 @@ export const fixtureInsurers: Insurer[] = [
   { id: "mock-ins-pingan", name: "中国平安", ...refRow() },
 ];
 
+// —— 账本级设置（issue #1965 首批：本位币基准缺省 CNY / 日志等级缺省 info，设置域读写的种子态） ——
+
+export const fixtureSettings = {
+  base_currency: "CNY",
+  log_level: "info",
+};
+
 // —— 交易（覆盖主列表四种通用 kind：expense / income / transfer / refund，ADR-0135） ——
 
 function txn(base: Omit<Transaction, keyof ReturnType<typeof refRow>>): Transaction {
