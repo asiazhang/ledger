@@ -340,20 +340,41 @@ describe("余额校准：adjust_account_balance（黑洞转账，ADR-0026）", (
     expect(balances.find((b) => b.account.id === "mock-acc-bank")?.balance_cents).toBe(1_800_000);
   });
 
-  it("黑洞账户按币种即建且复用：两次校准只建一个「无(CNY)」", async () => {
-    await invoke<string>("adjust_account_balance", {
+  it("黑洞账户按币种即建且复用：两次校准的转账行引用同一黑洞账户", async () => {
+    const first = await invoke<string>("adjust_account_balance", {
       id: "mock-acc-cash",
       input: { target_balance_cents: 60_000, date: "2026-01-30" },
     });
-    await invoke<string>("adjust_account_balance", {
+    const second = await invoke<string>("adjust_account_balance", {
       id: "mock-acc-bank",
       input: { target_balance_cents: 1_800_000, date: "2026-01-30" },
     });
 
-    const accounts = await invoke<Array<{ name: string; type: string }>>("list_accounts");
-    const holes = accounts.filter((a) => a.name === "无(CNY)");
-    expect(holes).toHaveLength(1);
-    expect(holes[0]?.type).toBe("other");
+    // 两笔转账的黑洞端是同一 id（即建后复用）；type 不可见（隐藏账户不进账户列表，
+    // 见下一用例），经交易行引用断言
+    const list =
+      await invoke<Array<{ id: string; account_id: string | null; to_account_id: string | null }>>(
+        "list_transactions",
+      );
+    const firstRow = list.items.find((t) => t.id === first);
+    const secondRow = list.items.find((t) => t.id === second);
+    const firstHole = firstRow?.account_id; // 调高：黑洞→cash（黑洞是转出端）
+    const secondHole = secondRow?.to_account_id; // 调低：bank→黑洞（黑洞是转入端）
+    expect(firstHole).toBeTruthy();
+    expect(secondHole).toBe(firstHole);
+  });
+
+  it("隐藏账户不进账户面：校准即建黑洞后 list_accounts / list_account_balances 均不含它", async () => {
+    await invoke<string>("adjust_account_balance", {
+      id: "mock-acc-cash",
+      input: { target_balance_cents: 60_000, date: "2026-01-30" },
+    });
+
+    const accounts = await invoke<Array<{ id: string; name: string }>>("list_accounts");
+    expect(accounts.filter((a) => a.name === "无(CNY)")).toHaveLength(0);
+
+    const balances = await invoke<Array<{ account: { name: string } }>>("list_account_balances");
+    expect(balances.filter((b) => b.account.name === "无(CNY)")).toHaveLength(0);
   });
 
   it("目标等于当前余额报错（不落零额转账）", async () => {

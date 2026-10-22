@@ -69,7 +69,8 @@ export function listCurrencies(): Currency[] {
 }
 
 export function listAccounts(): Account[] {
-  return db().accounts.filter((a) => !a.is_deleted);
+  // 默认不含隐藏账户（黑洞账户）：与真后端 list_accounts 默认可见面同形
+  return db().accounts.filter((a) => !a.is_deleted && !a.is_hidden);
 }
 
 function listSoftDeletable<T extends { is_deleted: boolean }>(
@@ -247,8 +248,9 @@ export function deleteAccount(args: Record<string, unknown>): void {
 }
 
 export function listAccountBalances(): AccountBalance[] {
+  // 与 list_accounts 同可见面（真后端余额清单同样不含隐藏账户）
   return db()
-    .accounts.filter((a) => !a.is_deleted)
+    .accounts.filter((a) => !a.is_deleted && !a.is_hidden)
     .map((account) => ({ account, balance_cents: balanceCents(account.id) }));
 }
 
