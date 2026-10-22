@@ -426,9 +426,9 @@ describe("余额校准：adjust_account_balance（黑洞转账，ADR-0026）", (
 });
 
 describe("余额缓存审计：audit_balance_cache（mock 余额口径即唯一口径，答无漂移）", () => {
-  it("夹具种子态：5 账户全检、无漂移、不修复", async () => {
+  it("夹具种子态：6 账户全检（含 #1975 储蓄目标专属账户）、无漂移、不修复", async () => {
     await expect(invoke("audit_balance_cache")).resolves.toEqual({
-      accounts_checked: 5,
+      accounts_checked: 6,
       drifts: [],
       repaired: false,
     });
@@ -440,7 +440,7 @@ describe("余额缓存审计：audit_balance_cache（mock 余额口径即唯一�
       input: { target_balance_cents: 60_000, date: "2026-01-30" },
     });
     await expect(invoke("audit_balance_cache")).resolves.toMatchObject({
-      accounts_checked: 6,
+      accounts_checked: 7,
       drifts: [],
       repaired: false,
     });
