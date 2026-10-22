@@ -1,4 +1,12 @@
-import type { Account, Category, Currency, Insurer, Merchant, Transaction } from "@ledger/types";
+import type {
+  Account,
+  Category,
+  Currency,
+  Instrument,
+  Insurer,
+  Merchant,
+  Transaction,
+} from "@ledger/types";
 
 /**
  * 确定性小夹具（issue #1962 / ADR-0143 决策 6）：参考数据五字典 + 覆盖主要 kind
@@ -160,6 +168,100 @@ export const fixtureSettings = {
   base_currency: "CNY",
   log_level: "info",
 };
+
+// —— 投资标的字典（issue #1969）：股/基/ETF/债券/自建多市场种子行，覆盖手动/
+// 同步两种来源与现价有/无两形态；`invested` 与 `price_channel` 真后端为派生列
+//（持仓谓词 / 价格通道判定单点在 Rust 投资域），替身按行直投影（不追行为
+// 等价，ADR-0143 决策 1；持仓域替身落地前 invested 无数据源，夹具即口径）。
+
+export const fixtureInstruments: Instrument[] = [
+  // symbol 排序（真后端 ORDER BY i.symbol）后种子序：000001 / 00700 / 019666 /
+  // 159915 / 600519 / GOLD——筛选分页断言按此序人算
+  {
+    id: "mock-inst-fund",
+    symbol: "000001",
+    type: "fund",
+    name: "华夏成长混合",
+    currency_code: "CNY",
+    market: "unknown", // 场外基金无交易所市场，恒 unknown（ADR-0038）
+    created_at: T0,
+    source: "eastmoney",
+    price_cents: 12_345, // 1.2345 元净值（万分之一元刻度）
+    invested: true,
+    price_channel: "fund_nav",
+    ...refRow(),
+  },
+  {
+    id: "mock-inst-hk",
+    symbol: "00700",
+    type: "stock",
+    name: "腾讯控股",
+    currency_code: "HKD",
+    market: "hk",
+    created_at: T0,
+    source: "eastmoney",
+    price_cents: 385_000_000, // 38500.00 港元
+    invested: true,
+    price_channel: "quote",
+    ...refRow(),
+  },
+  {
+    id: "mock-inst-bond",
+    symbol: "019666",
+    type: "bond",
+    name: "记账式国债",
+    currency_code: "CNY",
+    market: "sh",
+    created_at: T0,
+    source: "manual",
+    price_cents: null, // 现价无（手动建档未录价形态）
+    invested: false,
+    price_channel: "none",
+    ...refRow(),
+  },
+  {
+    id: "mock-inst-etf",
+    symbol: "159915",
+    type: "etf",
+    name: "创业板ETF",
+    currency_code: "CNY",
+    market: "sz",
+    created_at: T0,
+    source: "eastmoney",
+    price_cents: 20_500, // 2.05 元
+    invested: false,
+    price_channel: "quote",
+    ...refRow(),
+  },
+  {
+    id: "mock-inst-sh",
+    symbol: "600519",
+    type: "stock",
+    name: "贵州茅台",
+    currency_code: "CNY",
+    market: "sh",
+    created_at: T0,
+    source: "eastmoney",
+    price_cents: 1_485_000_000, // 148500.00 元
+    invested: true,
+    price_channel: "quote",
+    ...refRow(),
+  },
+  {
+    id: "mock-inst-custom",
+    symbol: "GOLD",
+    type: "other",
+    name: "家庭黄金存折",
+    currency_code: "CNY",
+    market: "unknown",
+    created_at: T0,
+    source: "manual",
+    price_cents: 55_000, // 5.50 元/克折算占位（手动录价通道形态）
+    invested: false,
+    price_channel: "manual",
+    ...refRow(),
+  },
+];
 
 // —— 交易（覆盖主列表四种通用 kind：expense / income / transfer / refund，ADR-0135） ——
 
