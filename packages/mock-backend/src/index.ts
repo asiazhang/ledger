@@ -48,6 +48,23 @@ import {
   setBaseCurrency,
   setLogLevel,
 } from "./settings";
+import {
+  createPhysicalAsset,
+  deletePhysicalAsset,
+  disposePhysicalAsset,
+  getPhysicalAsset,
+  listPhysicalAssets,
+  updatePhysicalAsset,
+  updatePhysicalAssetValuation,
+} from "./physical-asset";
+import {
+  archiveSavingsGoal,
+  createSavingsGoal,
+  deleteSavingsGoal,
+  savingsGoalProgress,
+  unarchiveSavingsGoal,
+  updateSavingsGoal,
+} from "./savings-goal";
 import { reseed } from "./state";
 import { registerMockCommand } from "./tauri/core";
 
@@ -121,4 +138,26 @@ export function installMockBackend(): void {
   registerMockCommand("delete_budget", (args) => deleteBudget(args));
   registerMockCommand("budget_progress", () => budgetProgress());
   registerMockCommand("budget_annual_summary", () => budgetAnnualSummary());
+
+  // 实物资产（issue #1975）：估值档案内存态——估值只追加、当前估值 = 最新一条，
+  // 在持合计恒指在持；写完成后统一发 ledger:changed（见 physical-asset.ts 头注）
+  registerMockCommand("list_physical_assets", (args) => listPhysicalAssets(args));
+  registerMockCommand("get_physical_asset", (args) => getPhysicalAsset(args));
+  registerMockCommand("create_physical_asset", (args) => createPhysicalAsset(args));
+  registerMockCommand("update_physical_asset", (args) => updatePhysicalAsset(args));
+  registerMockCommand("update_physical_asset_valuation", (args) =>
+    updatePhysicalAssetValuation(args),
+  );
+  registerMockCommand("dispose_physical_asset", (args) => disposePhysicalAsset(args));
+  registerMockCommand("delete_physical_asset", (args) => deletePhysicalAsset(args));
+
+  // 储蓄目标（issue #1975）：创建同建专属账户（other 类型、1:1 绑定、账户名
+  // 随动）、进度 = 专属账户余额直和 + ETA/所需月存双向推算；写完成后统一发
+  // ledger:changed（见 savings-goal.ts 头注）
+  registerMockCommand("savings_goal_progress", () => savingsGoalProgress());
+  registerMockCommand("create_savings_goal", (args) => createSavingsGoal(args));
+  registerMockCommand("update_savings_goal", (args) => updateSavingsGoal(args));
+  registerMockCommand("archive_savings_goal", (args) => archiveSavingsGoal(args));
+  registerMockCommand("unarchive_savings_goal", (args) => unarchiveSavingsGoal(args));
+  registerMockCommand("delete_savings_goal", (args) => deleteSavingsGoal(args));
 }

@@ -5,15 +5,20 @@ import type {
   Currency,
   Insurer,
   Merchant,
+  PhysicalAsset,
+  SavingsGoal,
   Transaction,
 } from "@ledger/types";
 import {
   fixtureAccounts,
+  fixtureAssetValuations,
   fixtureBudgets,
   fixtureCategories,
   fixtureCurrencies,
   fixtureInsurers,
   fixtureMerchants,
+  fixturePhysicalAssets,
+  fixtureSavingsGoals,
   fixtureSettings,
   fixtureTransactions,
 } from "./fixtures";
@@ -32,7 +37,29 @@ export interface MockSettings {
   log_level: string;
 }
 
-/** 夹具种子快照形态（五字典 + 预算 + 交易 + 设置 + id 计数器） */
+/** 实物资产内存行：当前估值三件套与 native 口径不落行——读时由最新一条估值
+ *  历史行投影（与真后端「JOIN 每资产最新一条」同语义，当前估值 = 最新一条）。 */
+export type MockPhysicalAsset = Omit<
+  PhysicalAsset,
+  | "current_valuation_cents"
+  | "current_valuation_currency_code"
+  | "current_valuation_date"
+  | "current_valuation_native_cents"
+  | "native_currency"
+>;
+
+/** 估值历史行（内存形态，issue #1975）：只追加不改写；无同步字段——不外发，
+ *  当前估值的唯一事实源。 */
+export interface MockAssetValuation {
+  id: string;
+  asset_id: string;
+  /** 估值日期（YYYY-MM-DD）；最新判定 = 日期最大，同日按插入序（数组序）。 */
+  valuation_date: string;
+  amount_cents: number;
+  currency_code: string;
+}
+
+/** 夹具种子快照形态（五字典 + 预算 + 交易 + 设置 + 实物资产/储蓄目标 + id 计数器） */
 export interface MockLedger {
   currencies: Currency[];
   accounts: Account[];
@@ -42,11 +69,19 @@ export interface MockLedger {
   budgets: Budget[];
   transactions: Transaction[];
   settings: MockSettings;
+  physical_assets: MockPhysicalAsset[];
+  physical_asset_valuations: MockAssetValuation[];
+  savings_goals: SavingsGoal[];
   counters: Map<string, number>;
 }
 
 /** 设备 id 恒为 mock（替身内全部写入行的 device_id）。 */
 export const DEVICE_ID = "mock";
+
+/** 替身「今日」：缺省日期（估值日等）与推算窗口（储蓄目标 ETA / 所需月存）的
+ *  确定性锚（budget.ts 同款锚 2026-01-15，issue #1967 先例）——替身不随真实
+ *  时钟走，刷新重播种后期望值逐字节可复现。 */
+export const MOCK_TODAY = "2026-01-15";
 
 let current: MockLedger = seed();
 
@@ -70,6 +105,9 @@ function seed(): MockLedger {
     budgets: structuredClone(fixtureBudgets),
     transactions: structuredClone(fixtureTransactions),
     settings: { ...fixtureSettings },
+    physical_assets: structuredClone(fixturePhysicalAssets),
+    physical_asset_valuations: structuredClone(fixtureAssetValuations),
+    savings_goals: structuredClone(fixtureSavingsGoals),
     counters: new Map(),
   };
 }
