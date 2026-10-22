@@ -6,9 +6,10 @@ import type {
   Instrument,
   Insurer,
   Merchant,
+  SavingsGoal,
   Transaction,
 } from "@ledger/types";
-import type { MockSecurityTxn } from "./state";
+import type { MockAssetValuation, MockPhysicalAsset, MockSecurityTxn } from "./state";
 
 /**
  * 确定性小夹具（issue #1962 / ADR-0143 决策 6）：参考数据五字典 + 覆盖主要 kind
@@ -97,6 +98,18 @@ export const fixtureAccounts: Account[] = [
     is_archived: false,
     ...refRow(),
   },
+  // 储蓄目标「应急基金」的专属账户（other 类型，issue #1975）：期初即蓄水 300_000
+  {
+    id: "mock-acc-goal-emergency",
+    name: "应急基金",
+    type: "other",
+    currency_code: "CNY",
+    initial_balance_cents: 300_000,
+    created_at: "2025-12-01T09:00:00Z",
+    is_hidden: false,
+    is_archived: false,
+    ...refRow(),
+  },
 ];
 
 export const fixtureCategories: Category[] = [
@@ -162,6 +175,87 @@ export const fixtureMerchants: Merchant[] = [
 export const fixtureInsurers: Insurer[] = [
   { id: "mock-ins-picc", name: "中国人保", ...refRow() },
   { id: "mock-ins-pingan", name: "中国平安", ...refRow() },
+];
+
+// —— 实物资产（issue #1975）：在持 / 已处置各一行，估值历史见 fixtureAssetValuations ——
+// 当前估值不落行：黄金首饰 = 最新一条 2026-01-10 的 132_000；已处置行 native 投影缺席。
+
+export const fixturePhysicalAssets: MockPhysicalAsset[] = [
+  {
+    id: "mock-pa-gold",
+    name: "黄金首饰",
+    purchase_date: "2025-06-15",
+    purchase_price_cents: 120_000,
+    purchase_currency_code: "CNY",
+    status: "holding",
+    disposal_date: null,
+    disposal_price_cents: null,
+    disposal_currency_code: null,
+    created_at: "2025-06-15T10:00:00Z",
+    ...refRow(),
+  },
+  {
+    id: "mock-pa-laptop",
+    name: "笔记本电脑",
+    purchase_date: "2024-03-01",
+    purchase_price_cents: 150_000,
+    purchase_currency_code: "CNY",
+    status: "disposed",
+    disposal_date: "2025-11-20",
+    disposal_price_cents: 40_000,
+    disposal_currency_code: "CNY",
+    created_at: "2024-03-01T10:00:00Z",
+    ...refRow(),
+  },
+];
+
+export const fixtureAssetValuations: MockAssetValuation[] = [
+  {
+    id: "mock-pav-gold-1",
+    asset_id: "mock-pa-gold",
+    valuation_date: "2025-12-31",
+    amount_cents: 130_000,
+    currency_code: "CNY",
+  },
+  {
+    id: "mock-pav-gold-2",
+    asset_id: "mock-pa-gold",
+    valuation_date: "2026-01-10",
+    amount_cents: 132_000,
+    currency_code: "CNY",
+  },
+  {
+    id: "mock-pav-laptop-1",
+    asset_id: "mock-pa-laptop",
+    valuation_date: "2024-12-31",
+    amount_cents: 90_000,
+    currency_code: "CNY",
+  },
+  {
+    id: "mock-pav-laptop-2",
+    asset_id: "mock-pa-laptop",
+    valuation_date: "2025-11-01",
+    amount_cents: 42_000,
+    currency_code: "CNY",
+  },
+];
+
+// —— 储蓄目标（issue #1975）：进行中一行，专属账户 mock-acc-goal-emergency 蓄水
+// 300_000（期初直记，无流水——进度读数 saved = 账户余额直和）；进度推算的独立
+// 人算期望值见 savings-goal.test.ts 头注（ETA 7 个月 / 2026-08）。 ——
+
+export const fixtureSavingsGoals: SavingsGoal[] = [
+  {
+    id: "mock-goal-emergency",
+    name: "应急基金",
+    target_amount_cents: 1_000_000,
+    deadline: null,
+    status: "active",
+    planned_monthly_cents: 100_000,
+    account_id: "mock-acc-goal-emergency",
+    created_at: "2025-12-01T09:00:00Z",
+    ...refRow(),
+  },
 ];
 
 // —— 账本级设置（issue #1965 首批：本位币基准缺省 CNY / 日志等级缺省 info，设置域读写的种子态） ——
