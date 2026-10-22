@@ -71,6 +71,14 @@ import {
   unlockWithRememberedPassphrase,
 } from "./encryption";
 import { createBook, listBooks, removeBook, renameBook, switchBook } from "./books";
+import {
+  createExchangeRate,
+  createMarketPrice,
+  listExchangeRates,
+  listMarketPrices,
+  recordManualPrice,
+  syncExchangeRates,
+} from "./fx-prices";
 import { checkForUpdates, downloadUpdate, getUpdateSurface, installUpdate } from "./app-update";
 import {
   bootstrapSyncFromChannel,
@@ -225,6 +233,17 @@ export function installMockBackend(): void {
   registerMockCommand("delete_instrument", (args) => deleteInstrument(args));
   registerMockCommand("add_fund_by_code", (args) => addFundByCode(args));
   registerMockCommand("add_instrument_by_code", (args) => addInstrumentByCode(args));
+
+  // 汇率与行情价格（issue #1972）：设置页汇率卡与投资页录价读写闭环——
+  // 汇率按货币对 upsert 写后发 ledger:changed，同步答常量报告不发进度事件；
+  // 现价缓存 per-instrument upsert、手动报价两落点写入（历史周采样 + 最新点
+  // 映像规则现价），价格写入发 ledger:prices-changed
+  registerMockCommand("list_exchange_rates", () => listExchangeRates());
+  registerMockCommand("create_exchange_rate", (args) => createExchangeRate(args));
+  registerMockCommand("sync_exchange_rates", () => syncExchangeRates());
+  registerMockCommand("list_market_prices", () => listMarketPrices());
+  registerMockCommand("create_market_price", (args) => createMarketPrice(args));
+  registerMockCommand("record_manual_price", (args) => recordManualPrice(args));
 
   // 预算读写闭环（issue #1967）：CRUD 内存态 + 进度/年度汇总按交易夹具直聚合，
   // 写完成后统一发 ledger:changed（见 budget.ts 头注的从简口径）

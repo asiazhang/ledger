@@ -3,8 +3,10 @@ import type {
   Budget,
   Category,
   Currency,
+  ExchangeRate,
   Instrument,
   Insurer,
+  MarketPrice,
   Merchant,
   Transaction,
 } from "@ledger/types";
@@ -13,11 +15,15 @@ import {
   fixtureBudgets,
   fixtureCategories,
   fixtureCurrencies,
+  fixtureExchangeRates,
   fixtureInstruments,
   fixtureInsurers,
+  fixtureMarketPrices,
   fixtureMerchants,
+  fixturePriceHistory,
   fixtureSettings,
   fixtureTransactions,
+  type MockPriceHistory,
 } from "./fixtures";
 import { emitMockEvent } from "./tauri/event";
 
@@ -34,7 +40,7 @@ export interface MockSettings {
   log_level: string;
 }
 
-/** 夹具种子快照形态（五字典 + 标的字典 + 预算 + 交易 + 设置 + id 计数器） */
+/** 夹具种子快照形态（五字典 + 标的字典 + 汇率/现价/价格历史 + 预算 + 交易 + 设置 + id 计数器） */
 export interface MockLedger {
   currencies: Currency[];
   accounts: Account[];
@@ -42,6 +48,9 @@ export interface MockLedger {
   merchants: Merchant[];
   insurers: Insurer[];
   instruments: Instrument[];
+  exchangeRates: ExchangeRate[];
+  marketPrices: MarketPrice[];
+  priceHistory: MockPriceHistory[];
   budgets: Budget[];
   transactions: Transaction[];
   settings: MockSettings;
@@ -71,6 +80,9 @@ function seed(): MockLedger {
     merchants: structuredClone(fixtureMerchants),
     insurers: structuredClone(fixtureInsurers),
     instruments: structuredClone(fixtureInstruments),
+    exchangeRates: structuredClone(fixtureExchangeRates),
+    marketPrices: structuredClone(fixtureMarketPrices),
+    priceHistory: structuredClone(fixturePriceHistory),
     budgets: structuredClone(fixtureBudgets),
     transactions: structuredClone(fixtureTransactions),
     settings: { ...fixtureSettings },
@@ -99,6 +111,11 @@ export function touch(row: { updated_at: string; version: number }): void {
 /** 参考/交易写入的统一失效信号出口（无 payload，ADR-0012）。 */
 export function emitLedgerChanged(): void {
   emitMockEvent("ledger:changed");
+}
+
+/** 价格类写入的失效信号出口（无 payload，ADR-0031：实际写入即发、零写入不广播）。 */
+export function emitPricesChanged(): void {
+  emitMockEvent("ledger:prices-changed");
 }
 
 // —— 参数窄化助手：invoke args 是 Record<string, unknown>，命令实现按契约取用 ——

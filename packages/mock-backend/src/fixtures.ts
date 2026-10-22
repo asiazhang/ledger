@@ -3,8 +3,10 @@ import type {
   Budget,
   Category,
   Currency,
+  ExchangeRate,
   Instrument,
   Insurer,
+  MarketPrice,
   Merchant,
   Transaction,
 } from "@ledger/types";
@@ -284,6 +286,134 @@ export const fixtureInstruments: Instrument[] = [
     invested: false,
     price_channel: "manual",
     ...refRow(),
+  },
+];
+
+// —— 汇率（issue #1972）：当期汇率表种子，少量货币对覆盖手动 / 同步两种
+// 来源形态；rate 为 base → quote 计价（1 base = rate quote）。
+
+export const fixtureExchangeRates: ExchangeRate[] = [
+  {
+    id: "mock-fx-cny-usd",
+    base_code: "CNY",
+    quote_code: "USD",
+    rate: 0.1389,
+    priced_at: "2026-01-15",
+    source: "manual",
+    updated_at: T0,
+    version: 1,
+    device_id: "mock",
+  },
+  {
+    id: "mock-fx-usd-cny",
+    base_code: "USD",
+    quote_code: "CNY",
+    rate: 7.2,
+    priced_at: "2026-01-15",
+    source: "ecb",
+    updated_at: T0,
+    version: 1,
+    device_id: "mock",
+  },
+];
+
+// —— 行情现价缓存（issue #1972）：种子行与 fixtureInstruments 有现价的五标的
+// 一一对应（price_cents 同值，两表一致性）；019666 无现价行（手动建档未录价
+// 形态）。priced_at 按各价格通道的真实形态取字面量：净值通道为净值日期、
+// 行情/手动通道为数据日期。
+
+export const fixtureMarketPrices: MarketPrice[] = [
+  {
+    id: "mock-mp-custom",
+    instrument_id: "mock-inst-custom",
+    price_cents: 55_000, // 5.50 元/克，与标的现价列同值
+    currency_code: "CNY",
+    priced_at: "2026-01-10",
+    source: "manual",
+    created_at: T0,
+    updated_at: T0,
+    version: 1,
+    device_id: "mock",
+  },
+  {
+    id: "mock-mp-etf",
+    instrument_id: "mock-inst-etf",
+    price_cents: 20_500, // 2.05 元
+    currency_code: "CNY",
+    priced_at: "2026-01-30",
+    source: "eastmoney",
+    created_at: T0,
+    updated_at: T0,
+    version: 1,
+    device_id: "mock",
+  },
+  {
+    id: "mock-mp-fund",
+    instrument_id: "mock-inst-fund",
+    price_cents: 12_345, // 1.2345 元净值（净值日期即 priced_at）
+    currency_code: "CNY",
+    priced_at: "2026-01-31",
+    source: "eastmoney",
+    created_at: T0,
+    updated_at: T0,
+    version: 1,
+    device_id: "mock",
+  },
+  {
+    id: "mock-mp-hk",
+    instrument_id: "mock-inst-hk",
+    price_cents: 385_000_000, // 38500.00 港元
+    currency_code: "HKD",
+    priced_at: "2026-01-30",
+    source: "eastmoney",
+    created_at: T0,
+    updated_at: T0,
+    version: 1,
+    device_id: "mock",
+  },
+  {
+    id: "mock-mp-sh",
+    instrument_id: "mock-inst-sh",
+    price_cents: 1_485_000_000, // 148500.00 元
+    currency_code: "CNY",
+    priced_at: "2026-01-30",
+    source: "eastmoney",
+    created_at: T0,
+    updated_at: T0,
+    version: 1,
+    device_id: "mock",
+  },
+];
+
+// —— 价格历史（issue #1972）：替身内部承载（真后端 PriceHistory 无 IPC 直读
+// 面，由走势等聚合消费），手动报价的历史落点写入这里、现价落点的「最新点
+// 映像」判定读这里。种子仅 GOLD 一行（手动通道标的 + 历史水位锚 2026-01-10）。
+
+export interface MockPriceHistory {
+  instrument_id: string;
+  /** 交易日（ISO YYYY-MM-DD，行内主时点） */
+  trade_date: string;
+  /** ISO 周一日期（周采样自然键的第二维，与真后端 week_start 生成列同义） */
+  week_start: string;
+  price_cents: number;
+  currency_code: string;
+  source: string;
+  updated_at: string;
+  version: number;
+  device_id: string;
+}
+
+export const fixturePriceHistory: MockPriceHistory[] = [
+  {
+    instrument_id: "mock-inst-custom",
+    trade_date: "2026-01-10",
+    week_start: "2026-01-05", // 2026-01-10 为周六，所在 ISO 周的周一
+    price_cents: 55_000,
+    currency_code: "CNY",
+    source: "manual",
+    updated_at: T0,
+    version: 1,
+    device_id: "mock",
   },
 ];
 
