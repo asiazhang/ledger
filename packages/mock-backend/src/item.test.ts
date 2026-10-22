@@ -142,6 +142,30 @@ describe("物品写闭环：建档 → 列表出现 → 处置 → 三元组重�
     expect(row.per_day_cents).toBeCloseTo(25_000 / 46, 9);
   });
 
+  it("未来购买日的在用物品列表不翻车：目标日取购买日当天起算 1 天（#1977 过页发现的错位）", async () => {
+    // 场景重放：mock 模式下新记交易日期 = 浏览器真实今天，可晚于替身时钟锚
+    // 2026-01-15；修复前 list_items 对在用物品传 MOCK_TODAY 整表抛错，
+    // store 重拉静默失败、新物品永不出现。
+    const id = await invoke<string>("create_item", {
+      input: {
+        name: "未来买入",
+        purchase_date: "2026-10-23",
+        total_cost_cents: 10_000,
+        currency_code: "CNY",
+        purchase_transaction_id: null,
+      },
+    });
+    const rows = await invoke<ItemRow[]>("list_items");
+    const row = rows.find((r) => r.id === id);
+    expect(row).toMatchObject({
+      status: "in_use",
+      purchase_date: "2026-10-23",
+      // 购买当天起算：同日 = 1 天，成本全额
+      used_days: 1,
+      numerator_cents: 10_000,
+    });
+  });
+
   it("create_item 关联不存在交易拒绝：不落行、不发信号", async () => {
     const changed = captureLedgerChanged();
     await expect(

@@ -19,9 +19,11 @@ import {
  *
  * - **日均成本三元组与真后端 `item::cost` 接缝同口径**：分母 = 购买日 → 目标日
  *   的日历天数**含起止两端**（同日 = 1）；分子 = 总成本 − 残值，下限 0；
- *   每天成本 = 分子 ÷ 天数（小数，仅供展示）。列表缺省目标日：在用 → 替身
- *   今日（MOCK_TODAY 字面量锚，真后端为本地时区今天）；已处置 → 处置日
- *   （不随今日漂移）。
+ *   每天成本 = 分子 ÷ 天数（小数，仅供展示）。列表缺省目标日：在用 →
+ *   替身今日与购买日取晚（MOCK_TODAY 字面量锚，真后端为本地时区今天；
+ *   浏览器真实日期可晚于替身时钟锚，未来购买的在用物品按购买当天起算
+ *   1 天，不让整列表投影翻车——#1977 过页发现的错位修正）；已处置 →
+ *   处置日（不随今日漂移）。
  * - **`cost_native_cents` 原币直记**（= total_cost_cents）：替身不折算（ADR-0143
  *   决策 1；真后端经 Amount 接缝按交易日折算本位币）。
  * - **购买溯源从简**：创建不强制关联购买交易（真后端溯源守卫必填 expense 且
@@ -61,9 +63,13 @@ function usageTo(item: Item, targetDate: string): ItemDailyCost {
   };
 }
 
-/** 列表缺省目标日（在用 → 替身今日；已处置 → 处置日）。 */
+/** 列表缺省目标日（在用 → 替身今日与购买日取晚，见头注；已处置 → 处置日）。 */
 function dailyUsage(item: Item): ItemDailyCost {
-  if (item.status === "in_use") return usageTo(item, MOCK_TODAY);
+  if (item.status === "in_use") {
+    // YYYY-MM-DD 字面量字典序即时间序：真实「今天」可晚于替身时钟锚，
+    // 未到购买日的在用物品按购买当天起算（同日 = 1 天），不抛错。
+    return usageTo(item, MOCK_TODAY > item.purchase_date ? MOCK_TODAY : item.purchase_date);
+  }
   if (item.disposal_date === null) throw new Error(`替身后端：已处置物品缺少处置日期 ${item.id}`);
   return usageTo(item, item.disposal_date);
 }
