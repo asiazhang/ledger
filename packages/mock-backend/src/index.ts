@@ -26,6 +26,20 @@ import {
   updateMerchant,
   updateTransaction,
 } from "./ledger";
+import {
+  appBuildInfo,
+  getAiPrompt,
+  getBaseCurrency,
+  getLogLevel,
+  logFrontendError,
+  openLogDir,
+  revealInFileManager,
+  restartApp,
+  setAutoExecutionEnabled,
+  setAutoUpdateEnabled,
+  setBaseCurrency,
+  setLogLevel,
+} from "./settings";
 import { reseed } from "./state";
 import { registerMockCommand } from "./tauri/core";
 
@@ -43,6 +57,22 @@ export function installMockBackend(): void {
 
   // 启动门（ADR-0143 决策 6）：答「已解锁」直接进主界面
   registerMockCommand("get_boot_status", () => getBootStatus());
+
+  // 启动链路与设置（issue #1965）：开关推送 no-op、本位币/日志等级内存态、
+  // 构建信息与 AI 提示字面量、壳命令 no-op——启动推送不弹错，设置页「通用」
+  // 「关于」取数可用
+  registerMockCommand("set_auto_execution_enabled", (args) => setAutoExecutionEnabled(args));
+  registerMockCommand("set_auto_update_enabled", (args) => setAutoUpdateEnabled(args));
+  registerMockCommand("get_base_currency", () => getBaseCurrency());
+  registerMockCommand("set_base_currency", (args) => setBaseCurrency(args));
+  registerMockCommand("get_log_level", () => getLogLevel());
+  registerMockCommand("set_log_level", (args) => setLogLevel(args));
+  registerMockCommand("app_build_info", () => appBuildInfo());
+  registerMockCommand("get_ai_prompt", () => getAiPrompt());
+  registerMockCommand("open_log_dir", () => openLogDir());
+  registerMockCommand("log_frontend_error", (args) => logFrontendError(args));
+  registerMockCommand("reveal_in_file_manager", (args) => revealInFileManager(args));
+  registerMockCommand("restart_app", () => restartApp());
 
   // 参考数据五字典：读
   registerMockCommand("list_currencies", () => listCurrencies());
