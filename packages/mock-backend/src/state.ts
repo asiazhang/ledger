@@ -1,6 +1,15 @@
-import type { Account, Category, Currency, Insurer, Merchant, Transaction } from "@ledger/types";
+import type {
+  Account,
+  Budget,
+  Category,
+  Currency,
+  Insurer,
+  Merchant,
+  Transaction,
+} from "@ledger/types";
 import {
   fixtureAccounts,
+  fixtureBudgets,
   fixtureCategories,
   fixtureCurrencies,
   fixtureInsurers,
@@ -12,7 +21,7 @@ import { emitMockEvent } from "./tauri/event";
 
 /**
  * 替身后端的共享内存状态与跨域助手（issue #1965，自 ledger.ts 下沉）：
- * 内存形态（五字典 + 交易 + 设置 + id 计数器）、重播种、递增 id、触碰同步
+ * 内存形态（五字典 + 预算 + 交易 + 设置 + id 计数器）、重播种、递增 id、触碰同步
  * 字段、失效信号出口、参数窄化与存在性校验助手——供各域实现文件复用，
  * 域模块不再自持状态。写入改内存、读投影内存、刷新重播种（ADR-0143 决策 2/6）。
  */
@@ -23,13 +32,14 @@ export interface MockSettings {
   log_level: string;
 }
 
-/** 夹具种子快照形态（五字典 + 交易 + 设置 + id 计数器） */
+/** 夹具种子快照形态（五字典 + 预算 + 交易 + 设置 + id 计数器） */
 export interface MockLedger {
   currencies: Currency[];
   accounts: Account[];
   categories: Category[];
   merchants: Merchant[];
   insurers: Insurer[];
+  budgets: Budget[];
   transactions: Transaction[];
   settings: MockSettings;
   counters: Map<string, number>;
@@ -57,6 +67,7 @@ function seed(): MockLedger {
     categories: structuredClone(fixtureCategories),
     merchants: structuredClone(fixtureMerchants),
     insurers: structuredClone(fixtureInsurers),
+    budgets: structuredClone(fixtureBudgets),
     transactions: structuredClone(fixtureTransactions),
     settings: { ...fixtureSettings },
     counters: new Map(),

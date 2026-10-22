@@ -1,4 +1,12 @@
-import type { Account, Category, Currency, Insurer, Merchant, Transaction } from "@ledger/types";
+import type {
+  Account,
+  Budget,
+  Category,
+  Currency,
+  Insurer,
+  Merchant,
+  Transaction,
+} from "@ledger/types";
 
 /**
  * 确定性小夹具（issue #1962 / ADR-0143 决策 6）：参考数据五字典 + 覆盖主要 kind
@@ -160,6 +168,29 @@ export const fixtureSettings = {
   base_currency: "CNY",
   log_level: "info",
 };
+
+// —— 预算（issue #1967：月度/年度两类种子行，引用在用分类；聚合窗口锚见 budget.ts） ——
+
+export const fixtureBudgets: Budget[] = [
+  {
+    id: "mock-bud-food-monthly",
+    category_id: "mock-cat-food",
+    period: "monthly",
+    amount_cents: 200_000,
+    start_date: "2026-01-01",
+    created_at: T0,
+    ...refRow(),
+  },
+  {
+    id: "mock-bud-transport-yearly",
+    category_id: "mock-cat-transport",
+    period: "yearly",
+    amount_cents: 1_200_000,
+    start_date: "2026-01-01",
+    created_at: T0,
+    ...refRow(),
+  },
+];
 
 // —— 交易（覆盖主列表四种通用 kind：expense / income / transfer / refund，ADR-0135） ——
 

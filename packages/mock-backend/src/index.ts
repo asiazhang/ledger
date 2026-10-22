@@ -1,4 +1,12 @@
 import {
+  budgetAnnualSummary,
+  budgetProgress,
+  createBudget,
+  deleteBudget,
+  listBudgets,
+  updateBudget,
+} from "./budget";
+import {
   archiveAccount,
   createAccount,
   createCategory,
@@ -104,4 +112,13 @@ export function installMockBackend(): void {
   registerMockCommand("create_transaction", (args) => createTransaction(args));
   registerMockCommand("update_transaction", (args) => updateTransaction(args));
   registerMockCommand("delete_transaction", (args) => deleteTransaction(args));
+
+  // 预算读写闭环（issue #1967）：CRUD 内存态 + 进度/年度汇总按交易夹具直聚合，
+  // 写完成后统一发 ledger:changed（见 budget.ts 头注的从简口径）
+  registerMockCommand("list_budgets", () => listBudgets());
+  registerMockCommand("create_budget", (args) => createBudget(args));
+  registerMockCommand("update_budget", (args) => updateBudget(args));
+  registerMockCommand("delete_budget", (args) => deleteBudget(args));
+  registerMockCommand("budget_progress", () => budgetProgress());
+  registerMockCommand("budget_annual_summary", () => budgetAnnualSummary());
 }
