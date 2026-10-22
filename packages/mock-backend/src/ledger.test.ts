@@ -509,9 +509,11 @@ describe("未实现命令：含命令名报错（console + toast 双出口）", 
     const { registerToastSink } = await import("@ledger/loadable");
     registerToastSink({ error: toast });
 
-    await expect(invoke("dashboard_overview")).rejects.toThrow(/dashboard_overview/);
-    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining("dashboard_overview"));
-    expect(toast).toHaveBeenCalledWith(expect.stringContaining("dashboard_overview"));
+    // 样本取仍未登记的命令（#1977 物品/保单批次；dashboard_overview 已由
+    // #1976 落地，见 dashboard.test.ts）
+    await expect(invoke("list_policies")).rejects.toThrow(/list_policies/);
+    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining("list_policies"));
+    expect(toast).toHaveBeenCalledWith(expect.stringContaining("list_policies"));
 
     errSpy.mockRestore();
   });
