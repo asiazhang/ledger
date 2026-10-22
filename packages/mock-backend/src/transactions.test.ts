@@ -8,8 +8,9 @@ import { listen } from "./tauri/event";
  * 与订单汇总。接缝 = tauri 命令面（`installMockBackend` + `invoke`），删除任一
  * 登记行即未命中报错、本文件变红（接线负向判据，ADR-0087 断言强度）。
  *
- * 期望值为独立人算字面量。夹具未删交易 11 笔（同 reports.test.ts 头注），其中
- * 005/006 为同单 SO-88 京东两行（2026-01-08）、101–105 为投资夹具（#1970，2026-02）。
+ * 期望值为独立人算字面量。夹具未删交易 24 笔（同 reports.test.ts 头注），其中
+ * 005/006 为同单 SO-88 京东两行（2026-01-08）、101–105 为投资夹具（#1970，
+ * 2026-02）、203/204 与改号后 308/309 为保单挂单流水（#1974，备注保费/理赔可搜）。
  *
  * search_transactions 载荷是扁平 camelCase（api 层直传四个筛选参数，不走 obj()
  * 嵌套惯例）。替身从简口径（transactions.ts 头注）：匹配面只做备注/商户名
@@ -109,7 +110,8 @@ describe("交易搜索：search_transactions（关键字 + 筛选 AND 组合，�
     );
     // 人算：005 8_800、001 2_500、102 卖出 3_000、105 分红 8_500 入界 +
     // 定时会员历史 301..305（2_500 × 5，#1973）入界；006 1_200、003 300_000、
-    // 101 205_200、103 19_800、201/202 1_000、306 600_000、307 500_000 出界，date 倒序
+    // 101 205_200、103 19_800、201/202 1_000、203/307 500_000、204/308 360_000、
+    // 309 120_000、306 600_000 出界（#1974 保单挂单均出界），date 倒序
     expect(result.items.map((t) => t.id)).toEqual([
       "mock-txn-105",
       "mock-txn-102",
@@ -151,8 +153,9 @@ describe("交易搜索：search_transactions（关键字 + 筛选 AND 组合，�
     expect(miss.total).toBe(0);
   });
 
-  it("服务端分页：当月 8 笔命中、pageSize=2 翻页 total 恒为全集", async () => {
+  it("服务端分页：当月 9 笔命中、pageSize=2 翻页 total 恒为全集", async () => {
     // 人算：2026-01 = 原有 6 笔 + 会员历史 305（01-10）+ 分期历史 202（01-15，#1973）
+    //   + 续期保费 204（01-05，#1974）
     const page1 = await invoke<{ items: Array<{ id: string }>; total: number }>(
       "search_transactions",
       {
@@ -166,7 +169,7 @@ describe("交易搜索：search_transactions（关键字 + 筛选 AND 组合，�
       },
     );
     expect(page1.items.map((t) => t.id)).toEqual(["mock-txn-003", "mock-txn-202"]);
-    expect(page1.total).toBe(8);
+    expect(page1.total).toBe(9); // 原有 6 + 202 + 305 + 204（人算见用例头注）
 
     const page2 = await invoke<{ items: Array<{ id: string }>; total: number }>(
       "search_transactions",
@@ -257,7 +260,7 @@ describe("批量创建：create_transactions（逐笔记内存，ledger:changed 
     }
 
     const list = await invoke<{ total: number }>("list_transactions");
-    expect(list.total).toBe(22); // 夹具 20（含 #1970 投资 5、#1973 定时 9）+ 新 2（人算）
+    expect(list.total).toBe(26); // 夹具 24（#1970 投资 5、#1973 定时 9、#1974 保单挂单 4）+ 新 2（人算）
     expect(changed()).toBe(1); // 批量只发一次（专门断言）
   });
 

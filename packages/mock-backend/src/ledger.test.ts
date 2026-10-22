@@ -227,13 +227,15 @@ describe("交易读写闭环（ADR-0143 决策 2）", () => {
       filter: { involving_account_id: "mock-acc-bank" },
     });
     // 投资夹具行：buy/sell 出资工资卡、dividend 到账工资卡（issue #1970）+
-    // 定时历史行：年缴保费扣工资卡、定投转出工资卡（issue #1973）
+    // 定时历史行：年缴保费扣工资卡、定投转出工资卡（issue #1973）+
+    // 理赔流入到账工资卡（issue #1974 保单挂单）
     expect(involvingBank.items.map((t) => t.id).sort()).toEqual([
       "mock-txn-002",
       "mock-txn-003",
       "mock-txn-101",
       "mock-txn-102",
       "mock-txn-105",
+      "mock-txn-203",
       "mock-txn-306",
       "mock-txn-307",
     ]);
@@ -264,7 +266,7 @@ describe("交易读写闭环（ADR-0143 决策 2）", () => {
       filter: { page: 1, page_size: 2 },
     });
     expect(page1.items).toHaveLength(2);
-    expect(page1.total).toBe(20); // 通用 4 + 同单 2（#1968）+ 投资 5（#1970）+ 定时 9（#1973）
+    expect(page1.total).toBe(24); // 通用 4 + 同单 2（#1968）+ 投资 5（#1970）+ 定时 9（#1973）+ 保单挂单 4（#1974）
     expect(page1.items[0]?.id).toBe("mock-txn-105");
 
     const page2 = await invoke<TransactionListResult>("list_transactions", {
@@ -288,10 +290,10 @@ describe("交易读写闭环（ADR-0143 决策 2）", () => {
       filter: { hide_investment_related: true },
     });
     expect(hidden.items.map((t) => t.account_id)).not.toContain("mock-acc-invest");
-    // 全部 21 行（11 夹具 + 定时 9 + 1 新建）隐藏 6 行（101–104 投资账户端 4 +
+    // 全部 25 行（24 夹具 + 1 新建）隐藏 6 行（101–104 投资账户端 4 +
     // 新建投资账户 expense + 定时转账 txn-307 转入投资账户，issue #1973）；
-    // dividend 到账工资卡、同单两行（#1968）均不隐藏
-    expect(hidden.total).toBe(15);
+    // dividend 到账工资卡、同单两行（#1968）、保单挂单四行（#1974）均不隐藏
+    expect(hidden.total).toBe(19);
   });
 
   it("list_account_balances = 期初 + 流水直和（记一笔后余额反映）", async () => {
@@ -354,8 +356,9 @@ describe("余额校准：adjust_account_balance（黑洞转账，ADR-0026）", (
     expect(changed()).toBe(1);
   });
 
-  it("调低：账户→黑洞方向，差额绝对值入账（bank 606_300 → 600_000）", async () => {
+  it("调低：账户→黑洞方向，差额绝对值入账（bank 1_106_300 → 600_000）", async () => {
     // bank 人算：1_706_300（#1968 基数）− 保费 600_000 − 定投转出 500_000（#1973）
+    //   + 理赔流入 500_000（#1974）= 1_106_300
     const txId = await invoke<string>("adjust_account_balance", {
       id: "mock-acc-bank",
       input: { target_balance_cents: 600_000, date: "2026-01-30" },
@@ -364,7 +367,7 @@ describe("余额校准：adjust_account_balance（黑洞转账，ADR-0026）", (
     const list = await invoke<TransactionListResult>("list_transactions");
     expect(list.items.find((t) => t.id === txId)).toMatchObject({
       kind: "transfer",
-      amount_cents: 6_300,
+      amount_cents: 506_300, // |1_106_300 − 600_000|
       account_id: "mock-acc-bank",
       to_account_id: expect.any(String), // 黑洞账户 id
     });
@@ -493,11 +496,11 @@ describe("会话状态：重装即重播种（刷新重置语义，ADR-0143 决�
         date: "2026-02-06",
       },
     });
-    expect((await invoke<TransactionListResult>("list_transactions")).total).toBe(21);
+    expect((await invoke<TransactionListResult>("list_transactions")).total).toBe(25);
 
     installMockBackend();
 
-    expect((await invoke<TransactionListResult>("list_transactions")).total).toBe(20);
+    expect((await invoke<TransactionListResult>("list_transactions")).total).toBe(24);
   });
 });
 

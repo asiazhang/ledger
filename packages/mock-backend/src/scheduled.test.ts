@@ -75,7 +75,7 @@ describe("定时计划读：列表与详情投影", () => {
     const policySub = rows.find((r) => r.core.id === "mock-sch-policy-sub");
     expect(policySub).toMatchObject({
       merchant_id: null, // 保单协议不挂商户（ADR-0082 决策 2）
-      policy_id: "mock-pol-health",
+      policy_id: "mock-policy-active", // 并入统一：原挂空 mock-pol-health 改指真实保单
     });
     const transfer = rows.find((r) => r.core.id === "mock-sch-transfer");
     expect(transfer).toMatchObject({
@@ -143,7 +143,7 @@ describe("定时计划读：列表与详情投影", () => {
     expect(detail.extension).toEqual({
       scheduled_transaction_id: "mock-sch-policy-sub",
       merchant_id: null,
-      policy_id: "mock-pol-health",
+      policy_id: "mock-policy-active", // 并入统一：原挂空 mock-pol-health 改指真实保单
     });
   });
 

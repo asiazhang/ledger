@@ -8,9 +8,11 @@ import type {
   InstallmentPlan,
   Instrument,
   Insurer,
+  Item,
   MarketPrice,
   Merchant,
   PhysicalAsset,
+  Policy,
   PortfolioTrendPoint,
   SavingsGoal,
   ScheduledTransaction,
@@ -30,9 +32,12 @@ import {
   fixtureInstallmentPlans,
   fixtureInstruments,
   fixtureInsurers,
+  fixtureItems,
   fixtureMarketPrices,
   fixtureMerchants,
   fixturePhysicalAssets,
+  fixturePolicies,
+  fixturePolicyPendingCharges,
   fixturePortfolioTrendPoints,
   fixturePriceHistory,
   fixtureSavingsGoals,
@@ -127,6 +132,10 @@ export interface MockLedger {
   installmentPlans: InstallmentPlan[];
   subscriptionPlans: SubscriptionPlan[];
   scheduledTransferPlans: ScheduledTransferPlan[];
+  items: Item[];
+  policies: Policy[];
+  /** 保单挂靠缴费协议的 pending 期次日清单（issue #1974，见 fixtures 头注）。 */
+  policy_pending_charges: Record<string, string[]>;
   counters: Map<string, number>;
 }
 
@@ -175,6 +184,9 @@ function seed(): MockLedger {
     installmentPlans: structuredClone(fixtureInstallmentPlans),
     subscriptionPlans: structuredClone(fixtureSubscriptionPlans),
     scheduledTransferPlans: structuredClone(fixtureScheduledTransferPlans),
+    items: structuredClone(fixtureItems),
+    policies: structuredClone(fixturePolicies),
+    policy_pending_charges: structuredClone(fixturePolicyPendingCharges),
     counters: new Map(),
   };
 }
