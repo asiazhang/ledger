@@ -20,7 +20,12 @@ import type {
   SubscriptionPlan,
   Transaction,
 } from "@ledger/types";
-import type { MockAssetValuation, MockPhysicalAsset, MockSecurityTxn } from "./state";
+import type {
+  MockAssetValuation,
+  MockPhysicalAsset,
+  MockPriceHistory,
+  MockSecurityTxn,
+} from "./state";
 
 /**
  * 确定性小夹具（issue #1962 / ADR-0143 决策 6）：参考数据五字典 + 覆盖主要 kind
@@ -311,7 +316,7 @@ export const fixtureScheduledPlans: ScheduledTransaction[] = [
     ...refRow(),
   },
   // 订阅·保单：年缴保费协议（保单引用复制到流水 policy_id；不挂商户）。
-  // 保单域替身（spec #1964 批次 8）尚未落地，保单 id 为字面量占位
+  // policy_id 指向保单域夹具的真实在保保单（mock-policy-active，fixturePolicies）
   {
     id: "mock-sch-policy-sub",
     kind: "subscription",
@@ -892,20 +897,6 @@ export const fixtureMarketPrices: MarketPrice[] = [
 // —— 价格历史（issue #1972）：替身内部承载（真后端 PriceHistory 无 IPC 直读
 // 面，由走势等聚合消费），手动报价的历史落点写入这里、现价落点的「最新点
 // 映像」判定读这里。种子仅 GOLD 一行（手动通道标的 + 历史水位锚 2026-01-10）。
-
-export interface MockPriceHistory {
-  instrument_id: string;
-  /** 交易日（ISO YYYY-MM-DD，行内主时点） */
-  trade_date: string;
-  /** ISO 周一日期（周采样自然键的第二维，与真后端 week_start 生成列同义） */
-  week_start: string;
-  price_cents: number;
-  currency_code: string;
-  source: string;
-  updated_at: string;
-  version: number;
-  device_id: string;
-}
 
 export const fixturePriceHistory: MockPriceHistory[] = [
   {

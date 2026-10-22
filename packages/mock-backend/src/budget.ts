@@ -7,6 +7,7 @@ import type {
 } from "@ledger/types";
 import {
   DEVICE_ID,
+  MOCK_TODAY,
   db,
   emitLedgerChanged,
   findActive,
@@ -39,8 +40,6 @@ import {
  * 决策 3：事件驱动失效是预算所属参考 store 的重拉触发源）。
  */
 
-/** 替身「今日」：聚合窗口锚（见头注），确定性纪律的字面量来源。 */
-const MOCK_TODAY = "2026-01-15";
 const CURRENT_MONTH = MOCK_TODAY.slice(0, 7); // "2026-01"
 const CURRENT_YEAR = MOCK_TODAY.slice(0, 4); // "2026"
 

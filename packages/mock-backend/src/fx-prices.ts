@@ -9,6 +9,7 @@ import type {
 } from "@ledger/types";
 import {
   DEVICE_ID,
+  MANUAL,
   db,
   emitLedgerChanged,
   emitPricesChanged,
@@ -18,7 +19,7 @@ import {
   obj,
   touch,
 } from "./state";
-import type { MockPriceHistory } from "./fixtures";
+import type { MockPriceHistory } from "./state";
 
 /**
  * 汇率与行情价格域替身（issue #1972 / spec #1964 / ADR-0143）：设置页汇率卡
@@ -41,8 +42,6 @@ import type { MockPriceHistory } from "./fixtures";
  * - **手动报价日期不归一**：真后端把 "2026-8-8" canonical 化为 "2026-08-08"，
  *   替身只做格式校验（YYYY-MM-DD 串），非 canonical 串直接报错。
  */
-
-const MANUAL = "manual";
 
 // —— 汇率：当期表读写（按货币对 upsert） ——
 

@@ -51,13 +51,14 @@ export function setLogLevel(args: Record<string, unknown>): void {
 
 // —— 构建信息（issue #1957）与 AI 提示词：字面量应答 ——
 
-/**
- * 版本为手写对齐根 package.json 的字面量（当前 0.10.0）——开发模式的「关于」
- * 显示值，发版漂移无害（ADR-0143「代价」节：夹具与字面量漂移由消费报错暴露）；
- * 平台/架构保留 `std::env::consts` 原值形态（显示名映射归前端）。
- */
+/** 替身版本字面量（手写对齐根 package.json，当前 0.10.0）：「关于」显示值与
+ *  更新回执（app-update.ts）共用；发版漂移无害（ADR-0143「代价」节：夹具与
+ *  字面量漂移由消费报错暴露）。 */
+export const MOCK_APP_VERSION = "0.10.0";
+
+/** 构建信息字面量应答：平台/架构保留 `std::env::consts` 原值形态（显示名映射归前端）。 */
 export function appBuildInfo(): AppBuildInfo {
-  return { version: "0.10.0", platform: "macos", arch: "aarch64" };
+  return { version: MOCK_APP_VERSION, platform: "macos", arch: "aarch64" };
 }
 
 /** 真源是 src-tauri/prompts/ledger-api.md（AI 记账入口提示词）；替身答短字面量钉形状。 */

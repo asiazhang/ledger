@@ -11,6 +11,7 @@ import type {
 } from "@ledger/types";
 import {
   DEVICE_ID,
+  MANUAL,
   argsOf,
   db,
   emitLedgerChanged,
@@ -36,9 +37,6 @@ import {
  *   `ledger:prices-changed`，替身多拉一次无害，与 deleteInstrument 同从简
  *   口径）；`ledger:prices-changed` 的发射面归行情价格域（fx-prices.ts）。
  */
-
-/** 标的删除的行内守卫文案与真后端码化错误语义对齐（issue #292 / ADR-0036 决策 5）。 */
-const MANUAL = "manual";
 
 // —— list_instruments：四维筛选 + symbol 排序 + 服务端分页 + anchor 定位 ——
 

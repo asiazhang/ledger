@@ -48,7 +48,6 @@ import {
   fixtureSettings,
   fixtureSubscriptionPlans,
   fixtureTransactions,
-  type MockPriceHistory,
 } from "./fixtures";
 import { emitMockEvent } from "./tauri/event";
 
@@ -105,6 +104,23 @@ export interface MockAssetValuation {
   currency_code: string;
 }
 
+/** 价格历史周采样行（内存形态，issue #1972）：替身内部承载（真后端
+ *  PriceHistory 无 IPC 直读面，由走势等聚合消费）；手动报价的历史落点写入
+ *  此行集，现价落点的「最新点映像」判定读这里。 */
+export interface MockPriceHistory {
+  instrument_id: string;
+  /** 交易日（ISO YYYY-MM-DD，行内主时点） */
+  trade_date: string;
+  /** ISO 周一日期（周采样自然键的第二维，与真后端 week_start 生成列同义） */
+  week_start: string;
+  price_cents: number;
+  currency_code: string;
+  source: string;
+  updated_at: string;
+  version: number;
+  device_id: string;
+}
+
 /** 夹具种子快照形态（五字典 + 标的字典 + 汇率/现价/价格历史 + 预算 + 交易 +
  * 证券扩展行 + 持仓 + 组合走势周点 + 设置 + 实物资产/储蓄目标 + 定时计划/
  * 期次与三张扩展行 + id 计数器） */
@@ -142,9 +158,12 @@ export interface MockLedger {
 /** 设备 id 恒为 mock（替身内全部写入行的 device_id）。 */
 export const DEVICE_ID = "mock";
 
-/** 替身「今日」：缺省日期（估值日等）与推算窗口（储蓄目标 ETA / 所需月存）的
- *  确定性锚（budget.ts 同款锚 2026-01-15，issue #1967 先例）——替身不随真实
- *  时钟走，刷新重播种后期望值逐字节可复现。 */
+/** 手动来源标记（字典 source / 价格 source 的「非同步即手动」闭集值）。 */
+export const MANUAL = "manual";
+
+/** 替身「今日」：缺省日期（估值日等）、推算窗口（储蓄目标 ETA / 所需月存）
+ *  与聚合窗口（预算 / 订阅花费）共用的确定性锚（2026-01-15，issue #1967
+ *  先例）——替身不随真实时钟走，刷新重播种后期望值逐字节可复现。 */
 export const MOCK_TODAY = "2026-01-15";
 
 let current: MockLedger = seed();
