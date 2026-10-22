@@ -59,10 +59,14 @@ describe("list_instruments：夹具投影与四维筛选", () => {
   it("market 精确 / type / only_invested 三维筛选", async () => {
     await expect(symbolsOf({ market: "sh" })).resolves.toEqual(["019666", "600519"]);
     await expect(symbolsOf({ type: "stock" })).resolves.toEqual(["00700", "600519"]);
+    // invested 口径自 issue #1971 起与 fixtureHoldings 行集一致：茅台在库未持有，
+    // 其余五标的有持仓行（期初存量 / 夹具交易建仓）
     await expect(symbolsOf({ only_invested: true })).resolves.toEqual([
       "000001",
       "00700",
-      "600519",
+      "019666",
+      "159915",
+      "GOLD",
     ]);
     // 四维叠加：sh + stock → 仅贵州茅台
     await expect(symbolsOf({ market: "sh", type: "stock" })).resolves.toEqual(["600519"]);

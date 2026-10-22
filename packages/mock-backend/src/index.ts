@@ -64,6 +64,17 @@ import {
 import { reseed } from "./state";
 import { registerMockCommand } from "./tauri/core";
 import {
+  cumulativePnlNativeTotal,
+  cumulativePnlSummary,
+  instrumentPriceStaleness,
+  investmentOverview,
+  listHoldings,
+  moneyWeightedReturnSummary,
+  portfolioValueTrend,
+  realizedPnlSummary,
+  syncInstrumentInfo,
+} from "./investment_aggregates";
+import {
   changeEncryptionPassphrase,
   clearRememberPassphrase,
   disableEncryption,
@@ -248,4 +259,17 @@ export function installMockBackend(): void {
   registerMockCommand("get_transaction_trade", (args) => getTransactionTrade(args));
   registerMockCommand("get_transaction_convert", (args) => getTransactionConvert(args));
   registerMockCommand("get_transaction_split", (args) => getTransactionSplit(args));
+
+  // 投资聚合读数（issue #1971）：持仓 / 概览 / 走势 / 盈亏系列页签取数——
+  // 聚合按夹具直投影给合理单值（不追行为等价，见 investment_aggregates.ts
+  // 头注）；除 sync_instrument_info 发 ledger:prices-changed 外全部纯读
+  registerMockCommand("list_holdings", () => listHoldings());
+  registerMockCommand("investment_overview", () => investmentOverview());
+  registerMockCommand("instrument_price_staleness", () => instrumentPriceStaleness());
+  registerMockCommand("portfolio_value_trend", (args) => portfolioValueTrend(args));
+  registerMockCommand("realized_pnl_summary", (args) => realizedPnlSummary(args));
+  registerMockCommand("cumulative_pnl_summary", () => cumulativePnlSummary());
+  registerMockCommand("cumulative_pnl_native_total", () => cumulativePnlNativeTotal());
+  registerMockCommand("money_weighted_return_summary", () => moneyWeightedReturnSummary());
+  registerMockCommand("sync_instrument_info", () => syncInstrumentInfo());
 }

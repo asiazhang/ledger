@@ -3,9 +3,11 @@ import type {
   Budget,
   Category,
   Currency,
+  Holding,
   Instrument,
   Insurer,
   Merchant,
+  PortfolioTrendPoint,
   Transaction,
 } from "@ledger/types";
 import {
@@ -13,9 +15,11 @@ import {
   fixtureBudgets,
   fixtureCategories,
   fixtureCurrencies,
+  fixtureHoldings,
   fixtureInstruments,
   fixtureInsurers,
   fixtureMerchants,
+  fixturePortfolioTrendPoints,
   fixtureSecurityTxns,
   fixtureSettings,
   fixtureTransactions,
@@ -53,7 +57,8 @@ export interface MockSecurityTxn {
   in_amount_cents: number | null;
 }
 
-/** 夹具种子快照形态（五字典 + 标的字典 + 预算 + 交易 + 证券扩展行 + 设置 + id 计数器） */
+/** 夹具种子快照形态（五字典 + 标的字典 + 预算 + 交易 + 证券扩展行 + 持仓 +
+ * 组合走势周点 + 设置 + id 计数器） */
 export interface MockLedger {
   currencies: Currency[];
   accounts: Account[];
@@ -64,6 +69,8 @@ export interface MockLedger {
   budgets: Budget[];
   transactions: Transaction[];
   securityTransactions: MockSecurityTxn[];
+  holdings: Holding[];
+  portfolioTrendPoints: PortfolioTrendPoint[];
   settings: MockSettings;
   counters: Map<string, number>;
 }
@@ -94,6 +101,8 @@ function seed(): MockLedger {
     budgets: structuredClone(fixtureBudgets),
     transactions: structuredClone(fixtureTransactions),
     securityTransactions: structuredClone(fixtureSecurityTxns),
+    holdings: structuredClone(fixtureHoldings),
+    portfolioTrendPoints: structuredClone(fixturePortfolioTrendPoints),
     settings: { ...fixtureSettings },
     counters: new Map(),
   };

@@ -248,8 +248,9 @@ export function listAccountBalances(): AccountBalance[] {
     .map((account) => ({ account, balance_cents: balanceCents(account.id) }));
 }
 
-/** 余额 = 期初 + Σ 流水（账户币种直和；折算/缓存维护不模拟，ADR-0143 决策 1）。 */
-function balanceCents(accountId: string): number {
+/** 余额 = 期初 + Σ 流水（账户币种直和；折算/缓存维护不模拟，ADR-0143 决策 1）。
+ * 投资聚合域（issue #1971）复用本口径作投资账户现金腿，导出避免第二份直和表达式。 */
+export function balanceCents(accountId: string): number {
   const account = db().accounts.find((a) => a.id === accountId);
   let sum = account?.initial_balance_cents ?? 0;
   for (const t of db().transactions) {

@@ -3,9 +3,11 @@ import type {
   Budget,
   Category,
   Currency,
+  Holding,
   Instrument,
   Insurer,
   Merchant,
+  PortfolioTrendPoint,
   Transaction,
 } from "@ledger/types";
 import type { MockSecurityTxn } from "./state";
@@ -197,7 +199,9 @@ export const fixtureBudgets: Budget[] = [
 // —— 投资标的字典（issue #1969）：股/基/ETF/债券/自建多市场种子行，覆盖手动/
 // 同步两种来源与现价有/无两形态；`invested` 与 `price_channel` 真后端为派生列
 //（持仓谓词 / 价格通道判定单点在 Rust 投资域），替身按行直投影（不追行为
-// 等价，ADR-0143 决策 1；持仓域替身落地前 invested 无数据源，夹具即口径）。
+// 等价，ADR-0143 决策 1）。`invested` 的数据源自 issue #1971 起收敛：与
+// fixtureHoldings 行集一致（有当前持仓行的标的为 true；茅台为「在库未持有」
+// 形态，运行期写入不联动该列——投资写路径不落持仓批次，从简口径）。
 
 export const fixtureInstruments: Instrument[] = [
   // symbol 排序（真后端 ORDER BY i.symbol）后种子序：000001 / 00700 / 019666 /
@@ -240,7 +244,7 @@ export const fixtureInstruments: Instrument[] = [
     created_at: T0,
     source: "manual",
     price_cents: null, // 现价无（手动建档未录价形态）
-    invested: false,
+    invested: true, // 持仓夹具有行（缺价持仓形态，issue #1971 口径收敛）
     price_channel: "none",
     ...refRow(),
   },
@@ -254,7 +258,7 @@ export const fixtureInstruments: Instrument[] = [
     created_at: T0,
     source: "eastmoney",
     price_cents: 20_500, // 2.05 元
-    invested: false,
+    invested: true, // 持仓夹具有行（buy 1000 + convert 转入 97，issue #1971 口径收敛）
     price_channel: "quote",
     ...refRow(),
   },
@@ -268,7 +272,7 @@ export const fixtureInstruments: Instrument[] = [
     created_at: T0,
     source: "eastmoney",
     price_cents: 1_485_000_000, // 148500.00 元
-    invested: true,
+    invested: false, // 在库未持有（字典有行、fixtureHoldings 无行，issue #1971 口径收敛）
     price_channel: "quote",
     ...refRow(),
   },
@@ -282,10 +286,121 @@ export const fixtureInstruments: Instrument[] = [
     created_at: T0,
     source: "manual",
     price_cents: 55_000, // 5.50 元/克折算占位（手动录价通道形态）
-    invested: false,
+    invested: true, // 持仓夹具有行（split Δ+5，issue #1971 口径收敛）
     price_channel: "manual",
     ...refRow(),
   },
+];
+
+// —— 当前持仓（issue #1971）：账户 × 标的的当前持仓快照——真后端 v_holdings
+// 从 security_lots 聚合当前态，替身按独立夹具行直投影（聚合读数的数据源）。
+// 数量与投资交易夹具（fixtureSecurityTxns）对得上：ETF 1097 = buy 1000 +
+// convert 转入 97；基金 1000 = 期初 5000 − sell 2400 − convert 转出 1600
+//（期初为单价 1.20 元的单一批次，FIFO 消耗不模拟）；GOLD 5 = split Δ+5；
+// 腾讯 100 股 / 国债 20 张为期初存量（夹具交易只展示近期，非全部历史）。
+// 成本锚点：ETF = 买入 2052 元 + convert 结转 198 元；腾讯 = 35000.00 HKD ×
+// 100 股；国债 = 100.50 元 × 20 张；GOLD split 无现金腿成本恒 0。市值 =
+// 数量 × 标的现价（万分之一元刻度 ÷ 100 → 分）；native 折算列按同币直填
+//（汇率折算细节不模拟，ADR-0143 决策 1，HKD 行数值即本位币展示值）；缺价
+// 行（国债）市值 / 盈亏 / native 三列全空（latest_price_currency_code 同步
+// 为空）。
+
+export const fixtureHoldings: Holding[] = [
+  {
+    id: "mock-hld-bond",
+    account_id: "mock-acc-invest",
+    instrument_id: "mock-inst-bond",
+    quantity: 20,
+    cost_basis_cents: 201_000,
+    cost_currency_code: "CNY",
+    latest_price_cents: null, // 缺价形态：market_value / unrealized / native 三列全空
+    latest_price_currency_code: null,
+    latest_nav_date: null,
+    market_value_cents: null,
+    unrealized_pnl_cents: null,
+    native_market_value_cents: null,
+    native_unrealized_pnl_cents: null,
+    updated_at: T0,
+  },
+  {
+    id: "mock-hld-custom",
+    account_id: "mock-acc-invest",
+    instrument_id: "mock-inst-custom",
+    quantity: 5, // split Δ+5（无现金腿，成本恒 0）
+    cost_basis_cents: 0,
+    cost_currency_code: "CNY",
+    latest_price_cents: 5_500,
+    latest_price_currency_code: "CNY",
+    latest_nav_date: null,
+    market_value_cents: 275, // 5 × 0.55 元
+    unrealized_pnl_cents: 275,
+    native_market_value_cents: 275,
+    native_unrealized_pnl_cents: 275,
+    updated_at: T0,
+  },
+  {
+    id: "mock-hld-etf",
+    account_id: "mock-acc-invest",
+    instrument_id: "mock-inst-etf",
+    quantity: 1097, // buy 1000 + convert 转入 97
+    cost_basis_cents: 225_000, // 买入 205_200 + convert 结转 19_800
+    cost_currency_code: "CNY",
+    latest_price_cents: 20_500,
+    latest_price_currency_code: "CNY",
+    latest_nav_date: null,
+    market_value_cents: 224_885, // 1097 × 2.05 元
+    unrealized_pnl_cents: -115,
+    native_market_value_cents: 224_885,
+    native_unrealized_pnl_cents: -115,
+    updated_at: T0,
+  },
+  {
+    id: "mock-hld-fund",
+    account_id: "mock-acc-invest",
+    instrument_id: "mock-inst-fund",
+    quantity: 1000, // 期初 5000 − sell 2400 − convert 转出 1600
+    cost_basis_cents: 120_000, // 剩余期初批次 1000 份 × 1.20 元
+    cost_currency_code: "CNY",
+    latest_price_cents: 12_345,
+    latest_price_currency_code: "CNY",
+    latest_nav_date: "2026-01-31", // 基金现价 = 最新公布净值，携带净值日期
+    market_value_cents: 123_450, // 1000 × 1.2345 元
+    unrealized_pnl_cents: 3_450,
+    native_market_value_cents: 123_450,
+    native_unrealized_pnl_cents: 3_450,
+    updated_at: T0,
+  },
+  {
+    id: "mock-hld-hk",
+    account_id: "mock-acc-invest",
+    instrument_id: "mock-inst-hk",
+    quantity: 100, // 期初存量（一手）
+    cost_basis_cents: 350_000_000, // 35000.00 HKD × 100 股
+    cost_currency_code: "HKD",
+    latest_price_cents: 385_000_000,
+    latest_price_currency_code: "HKD",
+    latest_nav_date: null,
+    market_value_cents: 385_000_000, // 100 × 38500.00 HKD（HKD 直记）
+    unrealized_pnl_cents: 35_000_000,
+    native_market_value_cents: 385_000_000, // 同币直填（不折算）
+    native_unrealized_pnl_cents: 35_000_000,
+    updated_at: T0,
+  },
+];
+
+// —— 组合走势周点（issue #1971）：确定性字面量序列（周一采样），不追历史
+// 真实（ADR-0143 决策 1）；终点对齐当前持仓总市值 385_348_610 分（= 概览
+// total_market_value：123_450 + 385_000_000 + 224_885 + 275，国债缺价跳过）。
+
+export const fixturePortfolioTrendPoints: PortfolioTrendPoint[] = [
+  { date: "2026-01-05", market_value_cents: 356_700_000 },
+  { date: "2026-01-12", market_value_cents: 358_900_000 },
+  { date: "2026-01-19", market_value_cents: 361_200_000 },
+  { date: "2026-01-26", market_value_cents: 359_800_000 },
+  { date: "2026-02-02", market_value_cents: 363_400_000 },
+  { date: "2026-02-09", market_value_cents: 375_600_000 }, // buy ETF 建仓后
+  { date: "2026-02-16", market_value_cents: 379_900_000 },
+  { date: "2026-02-23", market_value_cents: 385_348_610 }, // = 当前组合总市值
 ];
 
 // —— 投资交易（issue #1970）：五种投资 kind 种子行（buy/sell/convert/split/
