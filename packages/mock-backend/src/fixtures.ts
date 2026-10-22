@@ -6,8 +6,10 @@ import type {
   ExchangeRate,
   Instrument,
   Insurer,
+  Item,
   MarketPrice,
   Merchant,
+  Policy,
   SavingsGoal,
   Transaction,
 } from "@ledger/types";
@@ -259,6 +261,100 @@ export const fixtureSavingsGoals: SavingsGoal[] = [
     ...refRow(),
   },
 ];
+
+// —— 物品（issue #1974）：在用 / 已处置各一行，覆盖列表缺省目标日的两种
+// 口径（在用 → 替身今日 2026-01-15；已处置 → 处置日）；三元组独立人算
+// 字面量见 item.test.ts 头注。购买溯源指针从简留空（替身不模拟自动带出，
+// 见 item.ts 头注）。 ——
+
+export const fixtureItems: Item[] = [
+  {
+    id: "mock-item-chair",
+    name: "人体工学椅",
+    purchase_date: "2025-09-24",
+    total_cost_cents: 200_000,
+    currency_code: "CNY",
+    cost_native_cents: 200_000, // 原币直记（替身不折算，ADR-0143 决策 1）
+    status: "disposed",
+    disposal_date: "2026-01-01",
+    residual_value_cents: 100_000,
+    purchase_transaction_id: null,
+    note: "二手出闲置",
+    created_at: "2025-09-24T10:00:00Z",
+    ...refRow(),
+  },
+  {
+    id: "mock-item-phone",
+    name: "智能手机",
+    purchase_date: "2026-01-06",
+    total_cost_cents: 599_900,
+    currency_code: "CNY",
+    cost_native_cents: 599_900,
+    status: "in_use",
+    disposal_date: null,
+    residual_value_cents: null,
+    purchase_transaction_id: null,
+    note: null,
+    created_at: "2026-01-06T12:00:00Z",
+    ...refRow(),
+  },
+];
+
+// —— 保单（issue #1974）：在保 / 已到期 / 软删各一行；保司引用咬合保司字典
+// fixtureInsurers（mock-ins-picc / mock-ins-pingan）。保费与理赔流水见
+// fixtureTransactions 的 mock-txn-201/202/203/204（policy_id 挂单）；到期态
+// （end_date 对照替身今日 2026-01-15 实时推导）与统计人算见 policy.test.ts。 ——
+
+export const fixturePolicies: Policy[] = [
+  {
+    id: "mock-policy-expired",
+    insurer_id: "mock-ins-pingan",
+    policy_number: "PA-2025-0001",
+    product_name: "综合意外险",
+    start_date: "2025-01-01",
+    end_date: "2025-12-31",
+    coverage_amount_cents: 50_000_000,
+    coverage_currency_code: "CNY",
+    note: null,
+    created_at: "2025-01-01T09:00:00Z",
+    ...refRow(),
+  },
+  {
+    id: "mock-policy-active",
+    insurer_id: "mock-ins-picc",
+    policy_number: "PICC-2025-0066",
+    product_name: "百万医疗险",
+    start_date: "2025-07-01",
+    end_date: "2027-06-30",
+    coverage_amount_cents: 100_000_000,
+    coverage_currency_code: "CNY",
+    note: "保证续保 20 年",
+    created_at: "2025-07-01T09:00:00Z",
+    ...refRow(),
+  },
+  {
+    id: "mock-policy-del",
+    insurer_id: "mock-ins-picc",
+    policy_number: "PICC-2024-0003",
+    product_name: "定期寿险（已删）",
+    start_date: "2024-05-01",
+    end_date: null, // 长期/终身形态
+    coverage_amount_cents: null,
+    coverage_currency_code: null,
+    note: null,
+    created_at: "2024-05-01T09:00:00Z",
+    ...refRow(),
+    is_deleted: true,
+  },
+];
+
+/** 保单挂靠缴费协议的 pending 期次日夹具（issue #1974）：policy_id → 升序
+ *  pending 日清单——真后端由「引用该保单的活跃订阅计划的 pending 期次」三表
+ *  推导，定时域替身（#1973）落地前替身只取这一统计所需切片；下期扣款日 =
+ *  清单最早日，无挂靠即 null。#1973 并入后口径对齐由扫尾票评估。 */
+export const fixturePolicyPendingCharges: Record<string, string[]> = {
+  "mock-policy-active": ["2026-02-01", "2026-03-01", "2026-04-01"],
+};
 
 // —— 账本级设置（issue #1965 首批：本位币基准缺省 CNY / 日志等级缺省 info，设置域读写的种子态） ——
 
@@ -819,5 +915,105 @@ export const fixtureTransactions: Transaction[] = [
     note: null,
     date: "2026-02-25",
     created_at: "2026-02-25T16:00:00Z",
+  }),
+  // 保单挂单流水（issue #1974，policy_id 归属，ADR-0051 决策 5/6）：保费两笔
+  //（active，2025-07-05 + 2026-01-05）、到期保单保费一笔（expired，2025-03-01）
+  // 与理赔流入一笔（active，2025-11-20）——统计直和的独立人算见 policy.test.ts；
+  // 分类留空（保险无分类字典，不进预算聚合窗口）。
+  txn({
+    id: "mock-txn-201",
+    kind: "expense",
+    amount_cents: 360_000,
+    currency_code: "CNY",
+    amount_native_cents: 360_000,
+    fx_rate_used: null,
+    fx_rate_source: null,
+    account_id: "mock-acc-ewallet",
+    to_account_id: null,
+    funding_account_id: null,
+    category_id: null,
+    merchant_id: null,
+    policy_id: "mock-policy-active",
+    source: null,
+    convert: null,
+    refund_of_transaction_id: null,
+    fundings: [],
+    purchases: [],
+    source_order_no: null,
+    note: "年缴保费",
+    date: "2025-07-05",
+    created_at: "2025-07-05T09:00:00Z",
+  }),
+  txn({
+    id: "mock-txn-202",
+    kind: "expense",
+    amount_cents: 120_000,
+    currency_code: "CNY",
+    amount_native_cents: 120_000,
+    fx_rate_used: null,
+    fx_rate_source: null,
+    account_id: "mock-acc-ewallet",
+    to_account_id: null,
+    funding_account_id: null,
+    category_id: null,
+    merchant_id: null,
+    policy_id: "mock-policy-expired",
+    source: null,
+    convert: null,
+    refund_of_transaction_id: null,
+    fundings: [],
+    purchases: [],
+    source_order_no: null,
+    note: "年缴保费",
+    date: "2025-03-01",
+    created_at: "2025-03-01T09:00:00Z",
+  }),
+  txn({
+    id: "mock-txn-203",
+    kind: "income",
+    amount_cents: 500_000,
+    currency_code: "CNY",
+    amount_native_cents: 500_000,
+    fx_rate_used: null,
+    fx_rate_source: null,
+    account_id: "mock-acc-bank",
+    to_account_id: null,
+    funding_account_id: null,
+    category_id: null,
+    merchant_id: null,
+    policy_id: "mock-policy-active",
+    source: null,
+    convert: null,
+    refund_of_transaction_id: null,
+    fundings: [],
+    purchases: [],
+    source_order_no: null,
+    note: "理赔到账",
+    date: "2025-11-20",
+    created_at: "2025-11-20T14:00:00Z",
+  }),
+  txn({
+    id: "mock-txn-204",
+    kind: "expense",
+    amount_cents: 360_000,
+    currency_code: "CNY",
+    amount_native_cents: 360_000,
+    fx_rate_used: null,
+    fx_rate_source: null,
+    account_id: "mock-acc-ewallet",
+    to_account_id: null,
+    funding_account_id: null,
+    category_id: null,
+    merchant_id: null,
+    policy_id: "mock-policy-active",
+    source: null,
+    convert: null,
+    refund_of_transaction_id: null,
+    fundings: [],
+    purchases: [],
+    source_order_no: null,
+    note: "续期保费",
+    date: "2026-01-05",
+    created_at: "2026-01-05T09:00:00Z",
   }),
 ];

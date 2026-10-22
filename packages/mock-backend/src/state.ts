@@ -6,9 +6,11 @@ import type {
   ExchangeRate,
   Instrument,
   Insurer,
+  Item,
   MarketPrice,
   Merchant,
   PhysicalAsset,
+  Policy,
   SavingsGoal,
   Transaction,
 } from "@ledger/types";
@@ -21,9 +23,12 @@ import {
   fixtureExchangeRates,
   fixtureInstruments,
   fixtureInsurers,
+  fixtureItems,
   fixtureMarketPrices,
   fixtureMerchants,
   fixturePhysicalAssets,
+  fixturePolicies,
+  fixturePolicyPendingCharges,
   fixturePriceHistory,
   fixtureSavingsGoals,
   fixtureSecurityTxns,
@@ -104,6 +109,10 @@ export interface MockLedger {
   physical_assets: MockPhysicalAsset[];
   physical_asset_valuations: MockAssetValuation[];
   savings_goals: SavingsGoal[];
+  items: Item[];
+  policies: Policy[];
+  /** 保单挂靠缴费协议的 pending 期次日清单（issue #1974，见 fixtures 头注）。 */
+  policy_pending_charges: Record<string, string[]>;
   counters: Map<string, number>;
 }
 
@@ -145,6 +154,9 @@ function seed(): MockLedger {
     physical_assets: structuredClone(fixturePhysicalAssets),
     physical_asset_valuations: structuredClone(fixtureAssetValuations),
     savings_goals: structuredClone(fixtureSavingsGoals),
+    items: structuredClone(fixtureItems),
+    policies: structuredClone(fixturePolicies),
+    policy_pending_charges: structuredClone(fixturePolicyPendingCharges),
     counters: new Map(),
   };
 }

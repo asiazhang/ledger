@@ -81,6 +81,15 @@ import {
 import { reseed } from "./state";
 import { registerMockCommand } from "./tauri/core";
 import {
+  calculateItemCost,
+  createItem,
+  deleteItem,
+  disposeItem,
+  listItems,
+  updateItem,
+} from "./item";
+import { createPolicy, deletePolicy, listPolicies, listPolicyStats, updatePolicy } from "./policy";
+import {
   changeEncryptionPassphrase,
   clearRememberPassphrase,
   disableEncryption,
@@ -306,4 +315,23 @@ export function installMockBackend(): void {
   registerMockCommand("archive_savings_goal", (args) => archiveSavingsGoal(args));
   registerMockCommand("unarchive_savings_goal", (args) => unarchiveSavingsGoal(args));
   registerMockCommand("delete_savings_goal", (args) => deleteSavingsGoal(args));
+
+  // 物品（issue #1974）：档案内存态 CRUD + 处置重锚 + 日均成本三元组（含起止
+  // 两端、分子扣残值下限 0，在用摊替身今日 / 已处置摊处置日）；写完成后统一
+  // 发 ledger:changed（见 item.ts 头注的从简口径）
+  registerMockCommand("list_items", () => listItems());
+  registerMockCommand("calculate_item_cost", (args) => calculateItemCost(args));
+  registerMockCommand("create_item", (args) => createItem(args));
+  registerMockCommand("update_item", (args) => updateItem(args));
+  registerMockCommand("dispose_item", (args) => disposeItem(args));
+  registerMockCommand("delete_item", (args) => deleteItem(args));
+
+  // 保单（issue #1974）：档案内存态 CRUD + 逐保单统计（保费/流入挂单直和、
+  // 下期扣款从挂靠协议 pending 期次推导、到期态实时推导）；写完成后统一发
+  // ledger:changed（见 policy.ts 头注的从简口径）
+  registerMockCommand("list_policies", () => listPolicies());
+  registerMockCommand("list_policy_stats", () => listPolicyStats());
+  registerMockCommand("create_policy", (args) => createPolicy(args));
+  registerMockCommand("update_policy", (args) => updatePolicy(args));
+  registerMockCommand("delete_policy", (args) => deletePolicy(args));
 }
