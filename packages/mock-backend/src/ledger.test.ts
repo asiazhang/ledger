@@ -215,7 +215,8 @@ describe("交易读写闭环（ADR-0143 决策 2）", () => {
     const onlyTransfer = await invoke<TransactionListResult>("list_transactions", {
       filter: { kinds: ["transfer"] },
     });
-    expect(onlyTransfer.items.map((t) => t.kind)).toEqual(["transfer"]);
+    // 通用 txn-003 + 定时转账期次历史 txn-307（issue #1973 夹具）
+    expect(onlyTransfer.items.map((t) => t.id).sort()).toEqual(["mock-txn-003", "mock-txn-307"]);
 
     const janFirst = await invoke<TransactionListResult>("list_transactions", {
       filter: { from: "2026-01-06", to: "2026-01-06" },
@@ -225,13 +226,16 @@ describe("交易读写闭环（ADR-0143 决策 2）", () => {
     const involvingBank = await invoke<TransactionListResult>("list_transactions", {
       filter: { involving_account_id: "mock-acc-bank" },
     });
-    // 投资夹具行：buy/sell 出资工资卡、dividend 到账工资卡（issue #1970）
+    // 投资夹具行：buy/sell 出资工资卡、dividend 到账工资卡（issue #1970）+
+    // 定时历史行：年缴保费扣工资卡、定投转出工资卡（issue #1973）
     expect(involvingBank.items.map((t) => t.id).sort()).toEqual([
       "mock-txn-002",
       "mock-txn-003",
       "mock-txn-101",
       "mock-txn-102",
       "mock-txn-105",
+      "mock-txn-306",
+      "mock-txn-307",
     ]);
   });
 
@@ -260,7 +264,7 @@ describe("交易读写闭环（ADR-0143 决策 2）", () => {
       filter: { page: 1, page_size: 2 },
     });
     expect(page1.items).toHaveLength(2);
-    expect(page1.total).toBe(9); // 通用 4 + 投资 5（issue #1970 夹具）
+    expect(page1.total).toBe(18); // 通用 4 + 投资 5 + 定时 9（issue #1973 夹具）
     expect(page1.items[0]?.id).toBe("mock-txn-105");
 
     const page2 = await invoke<TransactionListResult>("list_transactions", {
@@ -284,9 +288,10 @@ describe("交易读写闭环（ADR-0143 决策 2）", () => {
       filter: { hide_investment_related: true },
     });
     expect(hidden.items.map((t) => t.account_id)).not.toContain("mock-acc-invest");
-    // 全部 10 行（9 夹具 + 1 新建）隐藏 5 行（投资账户端 4 + 新建投资账户 expense）；
+    // 全部 19 行（9 夹具 + 定时 9 + 1 新建）隐藏 6 行（投资账户端 4 + 新建
+    // 投资账户 expense + 定时转账 txn-307 转入投资账户，issue #1973）；
     // dividend 到账工资卡不隐藏
-    expect(hidden.total).toBe(5);
+    expect(hidden.total).toBe(13);
   });
 
   it("list_account_balances = 期初 + 流水直和（记一笔后余额反映）", async () => {
@@ -327,11 +332,11 @@ describe("会话状态：重装即重播种（刷新重置语义，ADR-0143 决�
         date: "2026-02-06",
       },
     });
-    expect((await invoke<TransactionListResult>("list_transactions")).total).toBe(10);
+    expect((await invoke<TransactionListResult>("list_transactions")).total).toBe(19);
 
     installMockBackend();
 
-    expect((await invoke<TransactionListResult>("list_transactions")).total).toBe(9);
+    expect((await invoke<TransactionListResult>("list_transactions")).total).toBe(18);
   });
 });
 
