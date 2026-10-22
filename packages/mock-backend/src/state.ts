@@ -3,6 +3,7 @@ import type {
   Budget,
   Category,
   Currency,
+  Instrument,
   Insurer,
   Merchant,
   Transaction,
@@ -12,6 +13,7 @@ import {
   fixtureBudgets,
   fixtureCategories,
   fixtureCurrencies,
+  fixtureInstruments,
   fixtureInsurers,
   fixtureMerchants,
   fixtureSettings,
@@ -32,13 +34,14 @@ export interface MockSettings {
   log_level: string;
 }
 
-/** 夹具种子快照形态（五字典 + 预算 + 交易 + 设置 + id 计数器） */
+/** 夹具种子快照形态（五字典 + 标的字典 + 预算 + 交易 + 设置 + id 计数器） */
 export interface MockLedger {
   currencies: Currency[];
   accounts: Account[];
   categories: Category[];
   merchants: Merchant[];
   insurers: Insurer[];
+  instruments: Instrument[];
   budgets: Budget[];
   transactions: Transaction[];
   settings: MockSettings;
@@ -67,6 +70,7 @@ function seed(): MockLedger {
     categories: structuredClone(fixtureCategories),
     merchants: structuredClone(fixtureMerchants),
     insurers: structuredClone(fixtureInsurers),
+    instruments: structuredClone(fixtureInstruments),
     budgets: structuredClone(fixtureBudgets),
     transactions: structuredClone(fixtureTransactions),
     settings: { ...fixtureSettings },

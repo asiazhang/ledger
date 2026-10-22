@@ -1,4 +1,11 @@
 import {
+  addFundByCode,
+  addInstrumentByCode,
+  createInstrument,
+  deleteInstrument,
+  listInstruments,
+} from "./investment";
+import {
   budgetAnnualSummary,
   budgetProgress,
   createBudget,
@@ -112,6 +119,14 @@ export function installMockBackend(): void {
   registerMockCommand("create_transaction", (args) => createTransaction(args));
   registerMockCommand("update_transaction", (args) => updateTransaction(args));
   registerMockCommand("delete_transaction", (args) => deleteTransaction(args));
+
+  // 投资标的字典（issue #1969）：投资页「标的」页签读投影（四维筛选 + 分页
+  // + anchor 定位）与自建/按代码添加写闭环（完成后统一发 ledger:changed）
+  registerMockCommand("list_instruments", (args) => listInstruments(args));
+  registerMockCommand("create_instrument", (args) => createInstrument(args));
+  registerMockCommand("delete_instrument", (args) => deleteInstrument(args));
+  registerMockCommand("add_fund_by_code", (args) => addFundByCode(args));
+  registerMockCommand("add_instrument_by_code", (args) => addInstrumentByCode(args));
 
   // 预算读写闭环（issue #1967）：CRUD 内存态 + 进度/年度汇总按交易夹具直聚合，
   // 写完成后统一发 ledger:changed（见 budget.ts 头注的从简口径）
