@@ -72,7 +72,7 @@ const themeVars = useThemeVars();
       >
         <NIcon :size="24"><MenuOutline /></NIcon>
       </button>
-      <span class="mobile-top-bar-title">{{ title }}</span>
+      <h1 class="mobile-top-bar-title">{{ title }}</h1>
     </header>
     <div class="mobile-content">
       <slot />
@@ -139,8 +139,11 @@ const themeVars = useThemeVars();
 .mobile-top-bar-title {
   flex: 1;
   min-width: 0;
+  /* h1 默认定级与 margin 复位：顶栏标题本来就是屏名（与桌面档壳层 h1 同一语义） */
+  margin: 0;
   font-size: 18px;
   font-weight: 600;
+  line-height: 1.4;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
