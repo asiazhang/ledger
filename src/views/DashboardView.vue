@@ -21,9 +21,12 @@ import { api } from "@ledger/api";
 import { t } from "@ledger/i18n";
 import { useDashboardOverview } from "@/dashboard/useDashboardOverview";
 import { useFinancialFreedom } from "@/dashboard/useFinancialFreedom";
+import { useBudgetAnnualSummary } from "@/dashboard/useBudgetAnnualSummary";
 import { useInputMode } from "@/composables/useInputMode";
 import { useWindowTier } from "@ledger/window-tier";
+import { useAppStore } from "@/stores/app";
 import { useReferenceStore } from "@/stores/reference";
+import { accentColor } from "@ledger/theme/overrides";
 import AppPopover from "@ledger/ui-kit/AppPopover.vue";
 import ConceptTipHost from "@/investment/ConceptTipHost.vue";
 import { formatAmount } from "@ledger/money";
@@ -38,6 +41,25 @@ import PortfolioStatsCards from "@/investment/PortfolioStatsCards.vue";
 // 预算进度与物品使用成本两卡已移除（明细归预算页 / 物品页，issue #1950）；
 // 投资概览卡不再按数据隐匿，空态用 NEmpty 占位。
 const reference = useReferenceStore();
+// 进度条色：强调色只落数据（自由度的达成比例就是本卡的数据），色值经强调色
+// 单一解析出口取，不另写一份琥珀（ADR-0093）。
+const appStore = useAppStore();
+const freedomBarColor = computed(() => accentColor(appStore.theme).base);
+
+// 本年度预算卡（取数/重试/报错口径与自由度卡同款；日期口径全在后端）
+const {
+  data: budgetSummary,
+  loading: budgetLoading,
+  error: budgetError,
+  refresh: refreshBudget,
+} = useBudgetAnnualSummary();
+
+/** 年度预算进度百分比：本年已支 / 年度预算总额（年化），封顶 100（预算页同一口径）。 */
+const budgetPercentage = computed(() => {
+  const s = budgetSummary.value;
+  if (s === null || s.annual_budget_total_cents <= 0) return 0;
+  return Math.min(100, Math.round((s.spent_cents / s.annual_budget_total_cents) * 100));
+});
 const currentMonth = ref<MonthlySummary | null>(null);
 
 // 净资产总览卡（issue #143）：多币种折算与合计全部在后端 `dashboard_overview` 完成，
@@ -119,6 +141,11 @@ function goBudget() {
   void router.push({ name: "budget" });
 }
 
+/** 净资产卡下钻：总览屏的唯一动作（钱在哪些账户） */
+function goAccounts() {
+  void router.push({ name: "accounts" });
+}
+
 onMounted(async () => {
   const now = new Date();
   const year = now.getFullYear();
@@ -130,73 +157,107 @@ onMounted(async () => {
 
 <template>
   <NSpace vertical :size="16">
-    <!-- 净资产总览卡（issue #143）：置顶呈现本位币单一主数字，第一眼回答「总共有多少钱」 -->
-    <NCard size="small" data-testid="net-worth-card">
-      <NSpin :show="loading">
-        <NSpace vertical :size="4">
-          <NSpace :size="4" align="center" :wrap="false">
-            <NText depth="3" style="font-size: 12px">{{ t("dashboard.netWorth.label") }}</NText>
-            <!-- 净资产口径说明（与财务自由度卡同款）：指针轴悬停即现、触控轴点按弹出，
+    <!-- 总览两卡同排（桌面档 2 列、移动档单列）：两张都是「一句话数字」卡，
+         全幅铺满 1150px 时数字之间空出大片死白；同排后读出顺序不变
+         （净资产 → 本月收支 → 投资 → 自由度），且两卡同底边。 -->
+    <NGrid :cols="isMobileTier ? 1 : 2" :x-gap="16">
+      <NGridItem>
+        <!-- 净资产总览卡（issue #143）：置顶呈现本位币单一主数字，第一眼回答「总共有多少钱」。
+             底部挂「查看账户明细」下钻：总览屏唯一动作，也让本卡与同排的本月收支卡
+             在等高时收尾（否则高出的空白带是没被填的空洞）。 -->
+        <NCard
+          size="small"
+          style="height: 100%"
+          content-style="display: flex; flex-direction: column; height: 100%"
+          data-testid="net-worth-card"
+        >
+          <NSpin :show="loading">
+            <NSpace vertical :size="4">
+              <NSpace :size="4" align="center" :wrap="false">
+                <NText depth="3" style="font-size: 12px">{{ t("dashboard.netWorth.label") }}</NText>
+                <!-- 净资产口径说明（与财务自由度卡同款）：指针轴悬停即现、触控轴点按弹出，
                  文案单源 dashboard.netWorth.tooltip，两轴同一份。 -->
-            <ConceptTipHost :text="t('dashboard.netWorth.tooltip')">
-              <template #default="{ isTouch }">
-                <NButton
-                  text
-                  :class="isTouch ? 'touch-hit-area' : undefined"
-                  :style="isTouch ? { '--touch-hit-inset': '-10px -10px' } : undefined"
-                  :aria-label="t('dashboard.netWorth.tooltipAria')"
-                  data-testid="net-worth-info"
-                >
-                  <NIcon :size="14" color="var(--n-title-text-color, #999)">
-                    <InformationCircleOutline />
-                  </NIcon>
-                </NButton>
+                <ConceptTipHost :text="t('dashboard.netWorth.tooltip')">
+                  <template #default="{ isTouch }">
+                    <NButton
+                      text
+                      :class="isTouch ? 'touch-hit-area' : undefined"
+                      :style="isTouch ? { '--touch-hit-inset': '-10px -10px' } : undefined"
+                      :aria-label="t('dashboard.netWorth.tooltipAria')"
+                      data-testid="net-worth-info"
+                    >
+                      <NIcon :size="14" color="var(--n-title-text-color, #999)">
+                        <InformationCircleOutline />
+                      </NIcon>
+                    </NButton>
+                  </template>
+                </ConceptTipHost>
+              </NSpace>
+              <template v-if="overview">
+                <NText strong class="tabular-nums" style="font-size: 28px">
+                  {{
+                    formatAmount(
+                      overview.net_worth_cents,
+                      reference.getCurrency(overview.native_currency),
+                    )
+                  }}
+                </NText>
               </template>
-            </ConceptTipHost>
-          </NSpace>
-          <template v-if="overview">
-            <NText strong style="font-size: 28px">
-              {{
-                formatAmount(
-                  overview.net_worth_cents,
-                  reference.getCurrency(overview.native_currency),
-                )
-              }}
-            </NText>
-          </template>
-          <NAlert v-else-if="error" type="warning" :bordered="false">
-            {{ error }}
-          </NAlert>
-        </NSpace>
-      </NSpin>
-    </NCard>
 
-    <!-- 本月收支卡（issue #144）：紧随净资产之后，先看本月现金流再看投资/预算。
+              <NAlert v-else-if="error" type="warning" :bordered="false">
+                {{ error }}
+              </NAlert>
+            </NSpace>
+          </NSpin>
+          <NButton
+            text
+            class="net-worth-action"
+            style="margin-top: auto; align-self: flex-start; font-size: 13px"
+            data-testid="net-worth-view-accounts"
+            @click="goAccounts"
+          >
+            {{ t("dashboard.netWorth.viewAccounts") }}
+          </NButton>
+        </NCard>
+      </NGridItem>
+
+      <NGridItem>
+        <!-- 本月收支卡（issue #144）：紧随净资产之后，先看本月现金流再看投资/预算。
          栅格按窗口分级分档（issue #847）：移动档单列（三格纵排，窄屏不横向挤压），
          桌面档保持三列；断点口径接窗口分级 composable，naive 自带断点不用
          （responsive="screen" 在纯数字 cols 下本就惰性，已随本次移除）。 -->
-    <NCard :title="t('dashboard.monthly.title')" size="small">
-      <NGrid :cols="isMobileTier ? 1 : 3" :x-gap="16">
-        <NGridItem>
-          <NSpace vertical :size="4">
-            <NText depth="3" style="font-size: 12px">{{ t("dashboard.monthly.income") }}</NText>
-            <NText strong style="font-size: 20px">{{ formatAmount(netIncomeCents) }}</NText>
-          </NSpace>
-        </NGridItem>
-        <NGridItem>
-          <NSpace vertical :size="4">
-            <NText depth="3" style="font-size: 12px">{{ t("dashboard.monthly.netExpense") }}</NText>
-            <NText strong style="font-size: 20px">{{ formatAmount(netExpenseCents) }}</NText>
-          </NSpace>
-        </NGridItem>
-        <NGridItem>
-          <NSpace vertical :size="4">
-            <NText depth="3" style="font-size: 12px">{{ t("dashboard.monthly.net") }}</NText>
-            <NText strong style="font-size: 20px">{{ formatAmount(balanceCents) }}</NText>
-          </NSpace>
-        </NGridItem>
-      </NGrid>
-    </NCard>
+        <NCard :title="t('dashboard.monthly.title')" size="small" style="height: 100%">
+          <NGrid :cols="isMobileTier ? 1 : 3" :x-gap="16">
+            <NGridItem>
+              <NSpace vertical :size="4">
+                <NText depth="3" style="font-size: 12px">{{ t("dashboard.monthly.income") }}</NText>
+                <NText strong class="tabular-nums" style="font-size: 20px">
+                  {{ formatAmount(netIncomeCents) }}
+                </NText>
+              </NSpace>
+            </NGridItem>
+            <NGridItem>
+              <NSpace vertical :size="4">
+                <NText depth="3" style="font-size: 12px">{{
+                  t("dashboard.monthly.netExpense")
+                }}</NText>
+                <NText strong class="tabular-nums" style="font-size: 20px">
+                  {{ formatAmount(netExpenseCents) }}
+                </NText>
+              </NSpace>
+            </NGridItem>
+            <NGridItem>
+              <NSpace vertical :size="4">
+                <NText depth="3" style="font-size: 12px">{{ t("dashboard.monthly.net") }}</NText>
+                <NText strong class="tabular-nums" style="font-size: 20px">
+                  {{ formatAmount(balanceCents) }}
+                </NText>
+              </NSpace>
+            </NGridItem>
+          </NGrid>
+        </NCard>
+      </NGridItem>
+    </NGrid>
 
     <!-- 投资概览卡（issue #145）：始终展示，无持仓时空态占位 -->
     <NCard
@@ -222,16 +283,98 @@ onMounted(async () => {
       <NEmpty v-else :description="t('dashboard.investment.empty')" />
     </NCard>
 
-    <!-- 财务自由度卡（issue #344）：投资概览之后、物品使用成本之前——
-         先看资产再看「资产够不够躺」，最后才看单品与预算执行 -->
-    <NCard :title="t('dashboard.freedom.title')" size="small" data-testid="financial-freedom-card">
+    <!-- 本年度预算卡（issue #1948 的年度汇总口径在首页的聚合入口）：回答「今年预算还够不够」。
+         独立整行而非与自由度卡并排：两张「上限 vs 已用」卡各占一行，画布高度填到接近一屏，
+         下方不留整条空白带（并排会把两行压回半屏）。
+         文本与口径直接用预算页年度汇总卡的同一组词条（budget.summary.*，同一命令、同一年化口径），
+         数字必然与预算页一致；首页只做一眼可见，不重算。
+         与 #1950「概览只呈现聚合全貌」的边界：这里展示的是全账本年度总量（年度预算总额 + 本年已支），
+         不是逐分类预算明细，不把明细聚合搬回首屏。 -->
+    <NCard :title="t('budget.summary.title')" size="small" data-testid="dashboard-budget-card">
+      <template #header-extra>
+        <NTag
+          v-if="budgetSummary"
+          :type="budgetSummary.over_budget ? 'error' : 'success'"
+          size="small"
+          data-testid="dashboard-budget-stage"
+        >
+          {{ budgetSummary.over_budget ? t("budget.summary.over") : t("budget.summary.normal") }}
+        </NTag>
+      </template>
+      <NSpin :show="budgetLoading">
+        <!-- 取数失败：卡内警告 + 重试（财务自由度卡同款兜底），不给半截数字 -->
+        <NAlert v-if="budgetError" type="warning" :bordered="false">
+          <NSpace align="center" :size="8">
+            <span>{{ budgetError }}</span>
+            <NButton size="tiny" quaternary type="warning" @click="refreshBudget">
+              {{ t("dashboard.freedom.retry") }}
+            </NButton>
+          </NSpace>
+        </NAlert>
+        <template v-else-if="budgetSummary">
+          <!-- 双数字横排：桌面档两端对齐（卡宽 1240px 时两个数字各据一侧，不让右半边空着），
+               移动档靠左紧排 -->
+          <div
+            :style="{
+              display: 'flex',
+              alignItems: 'flex-end',
+              justifyContent: isMobileTier ? 'flex-start' : 'space-between',
+              gap: isMobileTier ? '16px' : '32px',
+              flexWrap: 'wrap',
+            }"
+          >
+            <NSpace vertical :size="0">
+              <NText depth="3" style="font-size: 12px">{{ t("budget.summary.annualTotal") }}</NText>
+              <NText
+                strong
+                :style="{ fontSize: isMobileTier ? '19px' : '26px' }"
+                data-testid="dashboard-budget-total"
+              >
+                {{ formatAmount(budgetSummary.annual_budget_total_cents) }}
+              </NText>
+            </NSpace>
+            <NSpace vertical :size="0">
+              <NText depth="3" style="font-size: 12px">{{ t("budget.summary.spent") }}</NText>
+              <NText
+                strong
+                :style="{ fontSize: isMobileTier ? '17px' : '21px' }"
+                data-testid="dashboard-budget-spent"
+              >
+                {{ formatAmount(budgetSummary.spent_cents) }}
+              </NText>
+            </NSpace>
+          </div>
+          <!-- 条体色与自由度卡同一取舍：正常态用强调色（数据），超标才交给错误色 -->
+          <NProgress
+            type="line"
+            :percentage="budgetPercentage"
+            :color="budgetSummary.over_budget ? undefined : freedomBarColor"
+            :status="budgetSummary.over_budget ? 'error' : undefined"
+            :show-indicator="false"
+            style="margin-top: 16px"
+          />
+          <NText depth="3" style="font-size: 12px; display: block; margin-top: 8px">
+            {{ t("budget.summary.note") }}
+          </NText>
+        </template>
+      </NSpin>
+    </NCard>
+
+    <!-- 财务自由度卡（issue #344）：预算之后——先看今年计划执行得如何，
+     再看「资产够不够躺」（长期口径）；两张卡都是「计划 vs 实际」的比例卡，相邻成组 -->
+    <NCard
+      :title="t('dashboard.freedom.title')"
+      size="small"
+      style="height: 100%"
+      data-testid="financial-freedom-card"
+    >
       <template #header-extra>
         <!-- 计算口径说明（3% 乘数使百分比无法从已展示的分子/分母直接推出，
-             不解释会被当成算错，ADR-0048）。按输入轴分面（ADR-0088 决策 6 悬停
-             一击可达，issue #847）：指针轴悬停即现、移开即关、不拦交互，不在
-             ADR-0035 弹层注册表枚举内，用裸 NTooltip（行为零变化）；触控轴悬停
-             不可达，改点按气泡（经 AppPopover 入弹层注册表，AmountCell 同款），
-             触发器以全局工具类扩热区至 ≥48px。口径文案两轴同源（同一组行）。 -->
+         不解释会被当成算错，ADR-0048）。按输入轴分面（ADR-0088 决策 6 悬停
+         一击可达，issue #847）：指针轴悬停即现、移开即关、不拦交互，不在
+         ADR-0035 弹层注册表枚举内，用裸 NTooltip（行为零变化）；触控轴悬停
+         不可达，改点按气泡（经 AppPopover 入弹层注册表，AmountCell 同款），
+         触发器以全局工具类扩热区至 ≥48px。口径文案两轴同源（同一组行）。 -->
         <NTooltip v-if="!isTouch" placement="top" :style="{ maxWidth: '320px' }">
           <template #trigger>
             <NButton
@@ -253,7 +396,7 @@ onMounted(async () => {
         <AppPopover v-else trigger="click" placement="top" :style="{ maxWidth: '320px' }">
           <template #trigger>
             <!-- 热区外扩量覆写：text 中号按钮高 34px，默认 ±6px 垂直仅 46px 不达
-                 48px 基线，按头部无跨行误触场景加大至 ±8px（ReportsView 同型）。 -->
+             48px 基线，按头部无跨行误触场景加大至 ±8px（ReportsView 同型）。 -->
             <NButton
               text
               class="touch-hit-area"
@@ -275,7 +418,7 @@ onMounted(async () => {
       </template>
       <NSpin :show="freedomLoading">
         <!-- 零分母（未设预算）：占位引导跳预算页，口径不回退实际支出；
-             按钮放 #extra——NEmpty 的 default slot 会顶掉 description -->
+         按钮放 #extra——NEmpty 的 default slot 会顶掉 description -->
         <NEmpty
           v-if="freedom && freedom.denominator_cents === 0"
           :description="t('dashboard.freedom.zeroDenominator')"
@@ -287,7 +430,7 @@ onMounted(async () => {
           </template>
         </NEmpty>
         <!-- 缺汇率等报错：卡内警告（沿物品使用成本卡的警告先例）+ 重试
-             （重试为本卡按验收新增，先例仅警告无重试；重试即 refresh） -->
+         （重试为本卡按验收新增，先例仅警告无重试；重试即 refresh） -->
         <NAlert v-else-if="freedomError" type="warning" :bordered="false">
           <NSpace align="center" :size="8">
             <span>{{ freedomError }}</span>
@@ -298,17 +441,25 @@ onMounted(async () => {
         </NAlert>
         <NSpace v-else-if="freedom && freedomStage" vertical :size="4">
           <NSpace align="center" justify="space-between" style="width: 100%">
-            <NText strong style="font-size: 28px" data-testid="financial-freedom-ratio">
+            <NText
+              strong
+              class="tabular-nums"
+              style="font-size: 28px"
+              data-testid="financial-freedom-ratio"
+            >
               {{ freedom.ratio }}%
             </NText>
             <NTag :type="freedomStage.type" size="small" data-testid="financial-freedom-stage">
               {{ freedomStage.label }}
             </NTag>
           </NSpace>
+          <!-- 进度条用强调色（不挂 status="success"）：达成比例本身就是本卡的数据，
+           强调色只落数据；原 success 档是组件库出厂的薄荷绿，与琥珀品牌色
+           并存成两个强调色相。达成时刻的确认由右侧阶段标签负责。 -->
           <NProgress
             type="line"
             :percentage="freedomProgress.percentage"
-            :status="freedomProgress.success ? 'success' : undefined"
+            :color="freedomBarColor"
             :show-indicator="false"
           />
           <NText depth="3" style="font-size: 12px">
