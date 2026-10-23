@@ -11,7 +11,7 @@ describe("NEUTRAL_TOKENS（中性令牌单一来源）", () => {
       radius: { small: "6px", base: "8px", large: "12px" },
       background: { body: "#0E0E10", card: "#161618", popover: "#1C1C1E", modal: "#1C1C1E" },
       border: { border: "rgba(255, 255, 255, 0.08)", divider: "rgba(255, 255, 255, 0.06)" },
-      text: { primary: "#ECECEC", secondary: "#A0A0A0", tertiary: "#6E6E6E" },
+      text: { primary: "#ECECEC", secondary: "#A0A0A0", tertiary: "#8A8A8A" },
     });
     expect(DARK_FLOAT_LAYER).toEqual({
       color: "#343438",

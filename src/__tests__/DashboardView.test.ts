@@ -75,6 +75,12 @@ const BASE_DEFAULTS = {
   dashboard_overview: mockOverview,
   // 财务自由度卡（issue #344）默认自由度 7.5%，用例可覆写
   financial_freedom: makeFinancialFreedom(),
+  // 本年度预算卡（年度汇总口径，issue #1948）：默认 25%（300000 / 1200000 分），用例可覆写
+  budget_annual_summary: {
+    annual_budget_total_cents: 1_200_000,
+    spent_cents: 300_000,
+    over_budget: false,
+  },
 };
 
 /** 每测基线 overrides 表：函数型 handler 实时读取可变变量（#144 用例挂载前改写生效）；
@@ -147,6 +153,15 @@ describe("DashboardView 净资产总览卡（issue #143）", () => {
     expect(card.text()).toContain(formatAmount(123456, cny));
     // 口径说明触发器挂在净资产卡标题行（文案单源见 dashboard.netWorth.tooltip）
     expect(card.find('[data-testid="net-worth-info"]').exists()).toBe(true);
+  });
+
+  it("卡内下钻：点「查看账户明细」跳账户页（总览屏唯一动作）", async () => {
+    const wrapper = await mountView();
+    const card = wrapper.find('[data-testid="net-worth-card"]');
+    const action = card.find('[data-testid="net-worth-view-accounts"]');
+    expect(action.exists()).toBe(true);
+    await action.trigger("click");
+    expect(pushMock).toHaveBeenCalledWith({ name: "accounts" });
   });
 
   it("命令报错（如缺汇率）时卡片显示提示文案而非空数字或崩溃", async () => {
@@ -316,6 +331,63 @@ describe("DashboardView 投资概览卡（issue #145）", () => {
   });
 });
 
+describe("DashboardView 本年度预算卡（年度汇总口径）", () => {
+  it("展示年度预算总额与本年已支、正常态标签与 25% 进度；位于投资概览之后、自由度之前", async () => {
+    const wrapper = await mountView();
+    const ids = wrapper.findAll('[data-testid$="-card"]').map((w) => w.attributes("data-testid"));
+    const budgetIdx = ids.indexOf("dashboard-budget-card");
+    expect(budgetIdx).toBeGreaterThan(ids.indexOf("investment-overview-card"));
+    expect(budgetIdx).toBeLessThan(ids.indexOf("financial-freedom-card"));
+
+    const card = wrapper.find('[data-testid="dashboard-budget-card"]');
+    // 两个数字与预算页年度汇总卡同一展示口径（formatAmount 不传币种：默认币种、不带符号，
+    // 与 BudgetView 同图一文本，两屏数字必然字面一致）
+    expect(card.find('[data-testid="dashboard-budget-total"]').text()).toBe(
+      formatAmount(1_200_000),
+    );
+    expect(card.find('[data-testid="dashboard-budget-spent"]').text()).toBe(formatAmount(300_000));
+    expect(card.find('[data-testid="dashboard-budget-stage"]').text()).toBe("正常");
+    const bar = card.findComponent(NProgress);
+    expect(bar.props("percentage")).toBe(25);
+    // 正常态不转错误色（条体用强调色，色泽由样式断言覆盖，这里锁状态面）
+    expect(bar.props("status")).toBe("default");
+    // 年化口径说明常驻，避免把 ×12 总额当成实际发生数
+    expect(card.text()).toContain("月预算按 ×12 年化计入总额");
+  });
+
+  it("超标时标签转已超标、进度条转错误色", async () => {
+    wireInvokeSeam({
+      defaults: {
+        ...BASE_DEFAULTS,
+        budget_annual_summary: {
+          annual_budget_total_cents: 1_000_000,
+          spent_cents: 1_500_000,
+          over_budget: true,
+        },
+      },
+      overrides: BASE_OVERRIDES,
+    });
+    const wrapper = await mountView();
+    const card = wrapper.find('[data-testid="dashboard-budget-card"]');
+    expect(card.find('[data-testid="dashboard-budget-stage"]').text()).toBe("已超标");
+    expect(card.findComponent(NProgress).props("status")).toBe("error");
+    // 进度封顶 100，不因超标溢出条外
+    expect(card.findComponent(NProgress).props("percentage")).toBe(100);
+  });
+
+  it("命令报错时卡内警告而非半截数字（重试即再取）", async () => {
+    const retry = vi.fn(() => Promise.reject(new Error("本年预算汇总读取失败")));
+    wireInvokeSeam({
+      defaults: BASE_DEFAULTS,
+      overrides: { ...BASE_OVERRIDES, budget_annual_summary: retry },
+    });
+    const wrapper = await mountView();
+    const card = wrapper.find('[data-testid="dashboard-budget-card"]');
+    expect(card.text()).toContain("本年预算汇总读取失败");
+    expect(card.find('[data-testid="dashboard-budget-total"]').exists()).toBe(false);
+  });
+});
+
 describe("DashboardView 财务自由度卡（issue #344）", () => {
   it("卡片位于投资概览卡之后（末位）", async () => {
     const wrapper = await mountView();
@@ -356,7 +428,7 @@ describe("DashboardView 财务自由度卡（issue #344）", () => {
     expect(await stageOf(100)).toBe("财务自由");
   });
 
-  it("≥100% 进度条转成功状态；>100% 百分比原文呈现、进度条封顶 100", async () => {
+  it("≥100% 进度条封顶 100；>100% 百分比原文呈现", async () => {
     wireInvokeSeam({
       defaults: BASE_DEFAULTS,
       overrides: { ...BASE_OVERRIDES, financial_freedom: makeFinancialFreedom({ ratio: 150 }) },
@@ -365,7 +437,9 @@ describe("DashboardView 财务自由度卡（issue #344）", () => {
     const card = wrapper.find('[data-testid="financial-freedom-card"]');
     expect(card.find('[data-testid="financial-freedom-ratio"]').text()).toBe("150%");
     const bar = card.findComponent(NProgress);
-    expect(bar.props("status")).toBe("success");
+    // 进度条不挂 status：达成状态由右侧阶段标签表达，条体本身是数据，
+    // 统一用强调色（ADR-0093 强调色只落数据与链接）。
+    expect(bar.props("status")).toBe("default");
     expect(bar.props("percentage")).toBe(100);
   });
 
@@ -504,32 +578,36 @@ describe("DashboardView 本月收支卡（issue #144）", () => {
 });
 
 describe("DashboardView 移动档（issue #847 / ADR-0088 决策 11 票⑦，词汇表「窗口分级」）", () => {
-  it("移动档栅格单列化：本月收支三格与投资概览三格均单列（断点口径接窗口分级常量，不自立断点）", async () => {
+  it("移动档栅格单列化：总览两卡、本月收支三格、投资概览三格均单列（断点口径接窗口分级常量，不自立断点）", async () => {
     setFakeMedia({ width: 600 });
     const wrapper = await mountView();
     const grids = wrapper.findAllComponents(NGrid);
-    expect(grids.length).toBe(2);
-    expect(grids[0].props("cols")).toBe(1); // 本月收支
-    expect(grids[1].props("cols")).toBe(1); // 投资概览
+    expect(grids.length).toBe(3);
+    expect(grids[0].props("cols")).toBe(1); // 总览两卡（净资产 / 本月收支）
+    expect(grids[1].props("cols")).toBe(1); // 本月收支三格
+    expect(grids[2].props("cols")).toBe(1); // 投资概览三格
   });
 
-  it('桌面档栅格：本月收支三列、投资概览三列（列数纯数字——具名断点写法在 responsive="self" 下会静默退成 1 列）', async () => {
+  it('桌面档栅格：总览两卡两列、本月收支三列、投资概览三列（列数纯数字——具名断点写法在 responsive="self" 下会静默退成 1 列）', async () => {
     const wrapper = await mountView();
     const grids = wrapper.findAllComponents(NGrid);
-    expect(grids.length).toBe(2);
-    expect(grids[0].props("cols")).toBe(3);
+    expect(grids.length).toBe(3);
+    expect(grids[0].props("cols")).toBe(2);
     expect(grids[1].props("cols")).toBe(3);
+    expect(grids[2].props("cols")).toBe(3);
   });
 
-  it("跨断点缩窗实时切列（单列 ⇄ 三列）", async () => {
+  it("跨断点缩窗实时切列（单列 ⇄ 两列 / 三列）", async () => {
     const wrapper = await mountView();
-    expect(wrapper.findAllComponents(NGrid)[0].props("cols")).toBe(3);
+    expect(wrapper.findAllComponents(NGrid)[1].props("cols")).toBe(3);
     setFakeMedia({ width: 600 });
     await flushPromises();
     expect(wrapper.findAllComponents(NGrid)[0].props("cols")).toBe(1);
+    expect(wrapper.findAllComponents(NGrid)[1].props("cols")).toBe(1);
     setFakeMedia({ width: 1280 });
     await flushPromises();
-    expect(wrapper.findAllComponents(NGrid)[0].props("cols")).toBe(3);
+    expect(wrapper.findAllComponents(NGrid)[0].props("cols")).toBe(2);
+    expect(wrapper.findAllComponents(NGrid)[1].props("cols")).toBe(3);
   });
 
   it("移动档触控轴：自由度口径说明点按可达（气泡全文）；指针轴点击无气泡（行为不变）", async () => {

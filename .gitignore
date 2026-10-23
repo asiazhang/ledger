@@ -55,3 +55,6 @@ reports
 
 # Additional OS files
 Thumbs.db
+
+# tasteskill 审查产物（本地截图与测量报告，不入库）
+.taste-skill/

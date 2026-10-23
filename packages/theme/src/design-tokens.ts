@@ -40,7 +40,10 @@ export const NEUTRAL_TOKENS: Record<Theme, NeutralTokens> = {
       border: "rgba(255, 255, 255, 0.08)",
       divider: "rgba(255, 255, 255, 0.06)",
     },
-    text: { primary: "#ECECEC", secondary: "#A0A0A0", tertiary: "#6E6E6E" },
+    // 三级灰阶：tertiary 是标签/元信息主力灰（首页实测占 44% 文本量），旧值 #6E6E6E
+    // 在卡片底 #161618 上仅 3.5:1（低于 4.5:1 可读下限）；#8A8A8A 为 5.2:1，
+    // 与 secondary 仍差两阶、层级不糊。
+    text: { primary: "#ECECEC", secondary: "#A0A0A0", tertiary: "#8A8A8A" },
   },
   light: {
     radius: {

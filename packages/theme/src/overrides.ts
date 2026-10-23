@@ -77,14 +77,17 @@ export const darkOverrides = {
   Input: {
     borderRadius: token.radius.base,
   },
+  // 导航让位（ADR-0093 中性 token 的用法，视觉取舍见交付说明）：选中态只抬亮度
+  // 与中性底，强调色不落侧栏——琥珀只出现在数据与链接上，避免「强调色铺 Chrome」
+  // 把侧栏变成第二视觉焦点（原 itemTextColorActive/Icon 用品牌琥珀）。
   Menu: {
     borderRadius: token.radius.small,
     itemColorActive: floatLayer.activeOverlay,
     itemColorActiveHover: floatLayer.activeHoverOverlay,
-    itemTextColorActive: "#F59E0B",
-    itemTextColorActiveHover: "#F59E0B",
-    itemIconColorActive: "#F59E0B",
-    itemIconColorActiveHover: "#F59E0B",
+    itemTextColorActive: token.text.primary,
+    itemTextColorActiveHover: token.text.primary,
+    itemIconColorActive: token.text.primary,
+    itemIconColorActiveHover: token.text.primary,
   },
 } satisfies GlobalThemeOverrides;
 

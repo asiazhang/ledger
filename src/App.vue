@@ -22,7 +22,6 @@ import {
   NMenu,
   NIcon,
   NSpace,
-  NText,
   NButton,
   darkTheme,
   zhCN,
@@ -477,9 +476,9 @@ const pageTitle = computed(() => (typeof route.name === "string" ? viewLabel(rou
               <NLayout>
                 <NLayoutContent content-style="padding: 20px;" :native-scrollbar="false">
                   <NSpace vertical :size="16">
-                    <NText strong style="font-size: 20px">
-                      {{ pageTitle }}
-                    </NText>
+                    <!-- 屏名即 h1（tasteskill app 规则：每个屏有且仅有一个 h1，
+                         且它就是屏名）；所有视图共用壳层这一处，不在各页再写一份标题 -->
+                    <h1 class="page-title">{{ pageTitle }}</h1>
                     <RouterView />
                   </NSpace>
                 </NLayoutContent>
@@ -506,6 +505,16 @@ const pageTitle = computed(() => (typeof route.name === "string" ? viewLabel(rou
   </NConfigProvider>
 </template>
 <style scoped>
+/* 屏名标题（壳层单一 h1）：沿用原 NText strong 的 20px/600 观感，只补浏览器的
+   h1 默认外距与字体继承复位。 */
+.page-title {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: inherit;
+}
+
 /* 侧栏纵向骨架：品牌行 → 菜单区（弹性伸展、独立滚动）→ 底部账本入口（issue #834）。
    取代原 NSpace vertical size=0（wrap-item 包裹层会让 flex:1 失效）。 */
 .sider-column {

@@ -20,8 +20,9 @@ export const statsCard = style([
     // 三卡同排等宽等高：卡片吃满网格行高，多币种换行的卡不把同排其余卡拉矮
     height: "100%",
     boxSizing: "border-box",
-    border: `1px solid ${appVars.border.divider}`,
-    background: appVars.background.body,
+    // 分层靠亮度台阶、不靠描边（ADR-0093 暗色浮层语言同向）：凹面带改为比外层卡片
+    // 抬亮一阶，去掉外层卡片里再套一组描边盒的“盒中盒”观感。
+    background: appVars.background.popover,
     padding: "12px 16px",
   },
 ]);
