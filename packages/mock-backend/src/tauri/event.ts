@@ -5,10 +5,11 @@ import type { EventCallback, UnlistenFn } from "@tauri-apps/api/event";
  * 进程内事件总线替代 IPC 事件通道。生产代码零改动——listen 签名与真模块对齐
  * （`listen<T>(event, handler)`），返回真实 unlisten 函数。
  *
- * 替身写路径的失效信号（`ledger:changed`，ADR-0012 契约）经 `emitMockEvent`
- * 回送到本总线的全部监听者——参考数据 store 的「事件驱动重拉」因此成立。
- * 进度类事件（汇率同步 / 更新下载 / 行情同步等）不模拟：对应写入路径在替身
- * 里未实现，未命中报错兜住缺口（ADR-0143 决策 3）。
+ * 替身写路径的失效信号（`ledger:changed`，ADR-0012 契约；价格类写入
+ * `ledger:prices-changed`，ADR-0031）经 `emitMockEvent` 回送到本总线的全部
+ * 监听者——参考数据 store 与价格消费方的「事件驱动重拉」因此成立。
+ * 进度类事件（汇率同步 / 更新下载 / 行情同步等）不模拟：同步类命令在替身
+ * 里答常量态，无真实进度可报。
  */
 
 interface Registration<T> {
