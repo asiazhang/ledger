@@ -1,4 +1,4 @@
-import { createTheme, createThemeContract } from "@vanilla-extract/css";
+import { createTheme, createThemeContract, globalStyle } from "@vanilla-extract/css";
 import { NEUTRAL_TOKENS, type NeutralTokens } from "./design-tokens";
 
 /**
@@ -32,3 +32,14 @@ export const appVars = createThemeContract(contract);
 
 export const darkThemeClass = createTheme(appVars, NEUTRAL_TOKENS.dark);
 export const lightThemeClass = createTheme(appVars, NEUTRAL_TOKENS.light);
+
+/**
+ * 应用根底色与基色文字（全局单点）：主题类绑在 `document.body` 上，故本体规则即
+ * 「当前主题的页面底色 + 正文色」。缺了这条，未显式取色的原生元素（`<span>`、
+ * 计数、说明句）继承浏览器默认的 `#000`——暗色下是黑字落在近黑底上（实测 1.1:1，
+ * 等于不可见），亮色下页面底色也会在浏览器/无窗口底板环境下露白。
+ */
+globalStyle("body", {
+  backgroundColor: appVars.background.body,
+  color: appVars.text.primary,
+});
