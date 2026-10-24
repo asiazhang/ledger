@@ -21,10 +21,12 @@
  * 不存在（与解锁屏同理，见 UnlockScreen 注释）。
  */
 import { NAlert, NButton, NCard, NSpace, NText, useMessage } from "naive-ui";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { computed, ref } from "vue";
 import AppModal from "@ledger/ui-kit/AppModal.vue";
 import RestoreConfirmModal from "@/backup/RestoreConfirmModal.vue";
 import { t } from "@ledger/i18n";
+import { RELEASE_PAGE_URL } from "@/composables/useAppUpdate";
 import { useEncryptionGate } from "@/backup/useEncryptionGate";
 import { useFailureRestore } from "@/backup/useFailureRestore";
 import { errorMessage } from "@ledger/utils/errors";
@@ -44,10 +46,32 @@ const errorText = ref("");
  *  场景共用不变。其它失败码回退既有单一呈现（向后兼容未知码）。 */
 const isSchemaDrift = computed(() => bootErrorCode.value === "boot.schema-drift");
 
-/** 通道排布单一来源（DOM 顺序即呈现顺序）：恢复优先仅漂移场景。 */
+/** 库版本超前（`boot.schema-ahead`）：账本曾由更新版本的应用打开过，数据完好、
+ *  旧版二进制无法也不应继续打开。此码下**不呈现重置/恢复通道**——重置会毁掉
+ *  完好的新库，恢复出的备份同样是超前库，两条通道都通向死路；唯一正确出路
+ *  是升级应用，主通道为打开发布页（与「通用 → 更新」卡片的发布页引导同一
+ *  URL 单点）。 */
+const isSchemaAhead = computed(() => bootErrorCode.value === "boot.schema-ahead");
+
+/** 通道排布单一来源（DOM 顺序即呈现顺序）：恢复优先仅漂移场景；超前场景
+ *  只有升级通道。 */
 const channels = computed(() =>
-  isSchemaDrift.value ? (["restore", "reset"] as const) : (["reset", "restore"] as const),
+  isSchemaAhead.value
+    ? (["upgrade"] as const)
+    : isSchemaDrift.value
+      ? (["restore", "reset"] as const)
+      : (["reset", "restore"] as const),
 );
+
+/** 打开发布页（升级主通道）：失败处理与「通用 → 更新」卡片的发布页引导同款
+ *  （console 留痕，不打断失败屏）。 */
+async function openReleasePage(): Promise<void> {
+  try {
+    await openUrl(RELEASE_PAGE_URL);
+  } catch (e) {
+    console.warn("打开发布页失败", e);
+  }
+}
 
 /** 二次确认：取消或失败都留在失败恢复屏，可再次进入。 */
 function openConfirm() {
@@ -80,19 +104,47 @@ async function confirmReset() {
   <div class="failure-screen">
     <NCard class="failure-card" :bordered="false">
       <NSpace vertical :size="16" align="center" :style="{ width: '100%' }">
-        <!-- 标题/说明按失败码取材（issue #994）：漂移出「结构异常」，其余出「打不开」 -->
+        <!-- 标题/说明按失败码取材（issue #994）：漂移出「结构异常」、超前出
+             「需升级」，其余出「打不开」 -->
         <NText class="failure-title">
-          {{ isSchemaDrift ? t("startupFailure.driftTitle") : t("startupFailure.title") }}
+          {{
+            isSchemaAhead
+              ? t("startupFailure.aheadTitle")
+              : isSchemaDrift
+                ? t("startupFailure.driftTitle")
+                : t("startupFailure.title")
+          }}
         </NText>
         <NText depth="3" class="failure-hint">
-          {{ isSchemaDrift ? t("startupFailure.driftHint") : t("startupFailure.hint") }}
+          {{
+            isSchemaAhead
+              ? t("startupFailure.aheadHint")
+              : isSchemaDrift
+                ? t("startupFailure.driftHint")
+                : t("startupFailure.hint")
+          }}
         </NText>
 
         <!-- 恢复通道按失败码排布（issue #994）：库不可读重置优先（重置入口
-             error 实心），漂移从备份恢复优先（恢复入口 primary 实心） -->
+             error 实心），漂移从备份恢复优先（恢复入口 primary 实心）；超前场景
+             仅升级通道（重置会毁掉完好的新库，不呈现） -->
         <template v-for="channel in channels" :key="channel">
+          <!-- 升级通道（boot.schema-ahead）：唯一正确出路，替代重置/恢复 -->
+          <NSpace v-if="channel === 'upgrade'" vertical :size="8" class="failure-channel">
+            <NText strong>{{ t("startupFailure.upgradeChannelTitle") }}</NText>
+            <NText depth="3">{{ t("startupFailure.upgradeChannelHint") }}</NText>
+            <NButton
+              type="primary"
+              block
+              data-testid="failure-upgrade-open"
+              @click="openReleasePage"
+            >
+              {{ t("startupFailure.upgradeButton") }}
+            </NButton>
+          </NSpace>
+
           <!-- 重置为空库（issue #601）：重置是破坏性操作，error 级二次确认不变 -->
-          <NSpace v-if="channel === 'reset'" vertical :size="8" class="failure-channel">
+          <NSpace v-else-if="channel === 'reset'" vertical :size="8" class="failure-channel">
             <NText strong>{{ t("startupFailure.resetChannelTitle") }}</NText>
             <NText depth="3">{{ t("startupFailure.resetChannelHint") }}</NText>
             <NButton

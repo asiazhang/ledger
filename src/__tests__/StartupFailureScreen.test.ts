@@ -4,7 +4,9 @@ import { mount, flushPromises } from "@vue/test-utils";
 
 import StartupFailureScreen from "@/backup/StartupFailureScreen.vue";
 import { useEncryptionGate } from "@/backup/useEncryptionGate";
+import { RELEASE_PAGE_URL } from "@/composables/useAppUpdate";
 import { open } from "@tauri-apps/plugin-dialog";
+import { openUrl } from "@tauri-apps/plugin-opener";
 
 // 文件选择与重启单点 mock（先例 useBackup.test.ts；restartAppShortly 内含
 // 800ms 延时，测试断言调用而非计时）。
@@ -13,9 +15,11 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({
   save: vi.fn(),
   confirm: vi.fn(),
 }));
+vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn() }));
 const restartAppShortly = vi.fn();
 vi.mock("@/backup/restart", () => ({ restartAppShortly: () => restartAppShortly() }));
 const mockOpen = vi.mocked(open);
+const mockOpenUrl = vi.mocked(openUrl);
 
 beforeEach(() => {
   mockOpen.mockReset();
@@ -248,6 +252,30 @@ describe("StartupFailureScreen.vue（schema 漂移按码呈现·issue #994）", 
     expect(wrapper.html()).toContain("重置为空库？");
     const alert = wrapper.find(".n-modal .n-alert");
     expect(alert.exists(), "红色警示块应存在").toBe(true);
+  });
+
+  it("库版本超前恢复屏（boot.schema-ahead）：按码取「升级」文案，只出升级通道、无重置/恢复", async () => {
+    const gate = useEncryptionGate();
+    gate.bootErrorCode.value = "boot.schema-ahead";
+    const { wrapper } = await mountFailedScreen();
+    const html = wrapper.html();
+    expect(html).toContain("账本由更新版本的应用创建");
+    expect(html).not.toContain("无法打开账本数据库");
+    // 唯一通道：升级。重置/恢复都不呈现——重置会毁掉完好的新库，恢复出的
+    // 备份同样是超前库，两条通道都通向死路。
+    expect(findButton(wrapper, "failure-upgrade-open").exists()).toBe(true);
+    expect(findButton(wrapper, "failure-reset-open").exists()).toBe(false);
+    expect(findButton(wrapper, "failure-restore-open").exists()).toBe(false);
+  });
+
+  it("升级通道点击打开发布页（URL 与「通用 → 更新」卡片同源单点）", async () => {
+    mockOpenUrl.mockClear();
+    const gate = useEncryptionGate();
+    gate.bootErrorCode.value = "boot.schema-ahead";
+    const { wrapper } = await mountFailedScreen();
+    await findButton(wrapper, "failure-upgrade-open")!.trigger("click");
+    await flushPromises();
+    expect(mockOpenUrl).toHaveBeenCalledWith(RELEASE_PAGE_URL);
   });
 });
 

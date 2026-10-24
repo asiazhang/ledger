@@ -71,6 +71,31 @@ fn init_db_is_idempotent_and_seeds_defaults() {
 /// 35 的常量钉在 `db::tests::sync_split`，此处只管最新版本）。
 const LATEST_SCHEMA_VERSION: usize = 36;
 
+/// 库版本超前（`boot.schema-ahead`）：user_version 高于迁移链顶（账本曾由更新
+/// 版本的应用打开过并已迁移）时拒绝并转码化错误，库与 user_version 均保持
+/// 原样——旧版二进制的唯一出路是升级应用；前置判定把 rusqlite_migration 的
+/// `DatabaseTooFarAhead`（对用户是笼统「数据库错误」）转成前端失败恢复屏可
+/// 按码呈现升级引导的稳定码。建库经工厂后拨高版本位——与「新版本应用打开
+/// 过」的真实库形态等价（完整迁移态 + 更高版本位）；直呼守卫本体而非
+/// `init_db`（ADR-0084 守门纪律，同 mount 先例）。
+#[test]
+fn guard_schema_ahead_rejects_db_newer_than_chain() {
+    let conn = tauri_app_lib::test_support::open();
+    let ahead = (LATEST_SCHEMA_VERSION + 1) as i64;
+    conn.pragma_update(None, "user_version", ahead).unwrap();
+    let err = crate::db::migrate::guard_schema_ahead(&conn).unwrap_err();
+    assert_eq!(err.code(), Some(crate::db::migrate::BOOT_SCHEMA_AHEAD));
+    // 版本位原样：拒绝不降级、不动库。
+    let kept: i64 = conn
+        .query_row("PRAGMA user_version", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(kept, ahead, "user_version 应原样保留（不降级、不动库）");
+    // 链内版本不拒：拨回链顶后守卫放行（迁移态库 + 链顶版本 = 正常就绪库）。
+    conn.pragma_update(None, "user_version", LATEST_SCHEMA_VERSION as i64)
+        .unwrap();
+    crate::db::migrate::guard_schema_ahead(&conn).unwrap();
+}
+
 /// 从零迁移完整性（内存库从零 → 最新）：user_version 停在最新、全库完整性
 /// 检查通过、每条迁移的签名表/列在场。漏跑或中途失败的迁移批次会停在半途
 /// （迁移批次单事务回滚），本测试确定性失败。

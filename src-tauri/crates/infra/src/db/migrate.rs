@@ -5,10 +5,20 @@
 use std::sync::OnceLock;
 
 use rusqlite::Connection;
-use rusqlite_migration::{M, Migrations};
+use rusqlite_migration::{M, Migrations, SchemaVersion};
 
 use super::schema_guard;
 use crate::error::{AppError, Result};
+
+/// 启动期「库 schema 版本超前」的稳定错误码（ADR-0050 只增不改）：库
+/// `user_version` 高于本应用迁移链顶（账本曾由更新版本的应用打开过）时，旧版
+/// 二进制不应也无法继续迁移——rusqlite_migration 会以 `DatabaseTooFarAhead`
+/// 拒绝，此处前置判定（[`init_db`]）转本码。不复用 `boot.db-unreadable`：库
+/// 文件完好无损，重置会毁掉完好的新库、恢复出的备份同样是超前库，两条恢复
+/// 通道都通向死路；前端失败恢复屏按码只呈现升级引导（与漂移码
+/// [`crate::db::schema_guard::BOOT_SCHEMA_DRIFT`] 同款「按码区分处置」）。错误模板见
+/// `packages/i18n/src/locales/{zh-CN,en-US}/errors.json` 的 `boot.schema-ahead`。
+pub const BOOT_SCHEMA_AHEAD: &str = "boot.schema-ahead";
 
 /// 迁移集合。新增 schema 变更或种子数据时，在 `src-tauri/migrations/` 下新建
 /// `V00X__名称.sql`，并在 `migrations()` 的 `vec!` 里追加
@@ -120,6 +130,25 @@ pub fn migrations() -> &'static Migrations<'static> {
     })
 }
 
+/// 库版本超前守卫（[`BOOT_SCHEMA_AHEAD`] 的判定本体，[`init_db`] 首步接线）：
+/// 库 `user_version` 高于本应用迁移链顶（账本曾由更新版本的应用打开过）时
+/// 拒绝——旧版二进制不应也无法继续迁移（rusqlite_migration 将以
+/// `DatabaseTooFarAhead` 拒绝，本守卫先行转码）。库与版本位均保持原样。
+/// 单独成函数供域内直测（ADR-0084 守门纪律：测试不直呼 `init_db`）。
+pub fn guard_schema_ahead(conn: &Connection) -> Result<()> {
+    if let SchemaVersion::Outside(v) = migrations().current_version(conn)? {
+        tracing::warn!(
+            db_version = v,
+            "库 schema 版本超前于应用迁移链（账本曾由更新版本的应用打开），拒绝迁移"
+        );
+        return Err(AppError::coded(
+            BOOT_SCHEMA_AHEAD,
+            "账本由更新版本的应用创建，请升级应用后重试",
+        ));
+    }
+    Ok(())
+}
+
 /// 初始化数据库 schema 与默认种子数据（全部由迁移驱动）。
 ///
 /// 外键时序：迁移批次整体包在 rusqlite_migration 的事务里，`PRAGMA foreign_keys`
@@ -131,6 +160,8 @@ pub fn migrations() -> &'static Migrations<'static> {
 /// 恢复失败即连接不可用（Err 上抛，不静默带外键缺口运行）。
 pub fn init_db(conn: &mut Connection) -> Result<()> {
     tracing::info!("开始执行数据库迁移");
+    // 库版本超前判定（先于迁移执行）：前端失败恢复屏按码只呈现升级引导。
+    guard_schema_ahead(conn)?;
     conn.execute("PRAGMA foreign_keys = OFF", [])
         .map_err(AppError::from)?;
     migrations().to_latest(conn)?;
