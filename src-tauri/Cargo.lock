@@ -3009,7 +3009,7 @@ checksum = "20870f649af7073d53e38067b2a84312175d56ea15217e1b15bc83506ec50afb"
 
 [[package]]
 name = "ledger-accounts"
-version = "0.11.0"
+version = "0.11.1"
 dependencies = [
  "chrono",
  "ledger-infra",
@@ -3025,7 +3025,7 @@ dependencies = [
 
 [[package]]
 name = "ledger-backup"
-version = "0.11.0"
+version = "0.11.1"
 dependencies = [
  "chrono",
  "ledger-accounts",
@@ -3041,7 +3041,7 @@ dependencies = [
 
 [[package]]
 name = "ledger-budget"
-version = "0.11.0"
+version = "0.11.1"
 dependencies = [
  "chrono",
  "ledger-infra",
@@ -3055,7 +3055,7 @@ dependencies = [
 
 [[package]]
 name = "ledger-categories"
-version = "0.11.0"
+version = "0.11.1"
 dependencies = [
  "ledger-infra",
  "ledger-sync-protocol",
@@ -3068,7 +3068,7 @@ dependencies = [
 
 [[package]]
 name = "ledger-currencies"
-version = "0.11.0"
+version = "0.11.1"
 dependencies = [
  "ledger-infra",
  "ledger-sync-protocol",
@@ -3081,7 +3081,7 @@ dependencies = [
 
 [[package]]
 name = "ledger-dashboard"
-version = "0.11.0"
+version = "0.11.1"
 dependencies = [
  "ledger-accounts",
  "ledger-infra",
@@ -3094,7 +3094,7 @@ dependencies = [
 
 [[package]]
 name = "ledger-infra"
-version = "0.11.0"
+version = "0.11.1"
 dependencies = [
  "axum",
  "block2",
@@ -3124,7 +3124,7 @@ dependencies = [
 
 [[package]]
 name = "ledger-investment"
-version = "0.11.0"
+version = "0.11.1"
 dependencies = [
  "chrono",
  "ledger-accounts",
@@ -3143,7 +3143,7 @@ dependencies = [
 
 [[package]]
 name = "ledger-item"
-version = "0.11.0"
+version = "0.11.1"
 dependencies = [
  "chrono",
  "ledger-infra",
@@ -3156,7 +3156,7 @@ dependencies = [
 
 [[package]]
 name = "ledger-market-sync"
-version = "0.11.0"
+version = "0.11.1"
 dependencies = [
  "chrono",
  "encoding_rs",
@@ -3178,7 +3178,7 @@ dependencies = [
 
 [[package]]
 name = "ledger-merchants"
-version = "0.11.0"
+version = "0.11.1"
 dependencies = [
  "ledger-infra",
  "ledger-sync-protocol",
@@ -3192,7 +3192,7 @@ dependencies = [
 
 [[package]]
 name = "ledger-physical-asset"
-version = "0.11.0"
+version = "0.11.1"
 dependencies = [
  "chrono",
  "ledger-infra",
@@ -3205,7 +3205,7 @@ dependencies = [
 
 [[package]]
 name = "ledger-policy"
-version = "0.11.0"
+version = "0.11.1"
 dependencies = [
  "chrono",
  "ledger-infra",
@@ -3218,7 +3218,7 @@ dependencies = [
 
 [[package]]
 name = "ledger-reports"
-version = "0.11.0"
+version = "0.11.1"
 dependencies = [
  "ledger-infra",
  "ledger-sync-protocol",
@@ -3230,7 +3230,7 @@ dependencies = [
 
 [[package]]
 name = "ledger-savings-goal"
-version = "0.11.0"
+version = "0.11.1"
 dependencies = [
  "chrono",
  "ledger-accounts",
@@ -3245,7 +3245,7 @@ dependencies = [
 
 [[package]]
 name = "ledger-scheduled"
-version = "0.11.0"
+version = "0.11.1"
 dependencies = [
  "chrono",
  "ledger-backup",
@@ -3263,7 +3263,7 @@ dependencies = [
 
 [[package]]
 name = "ledger-sync-engine"
-version = "0.11.0"
+version = "0.11.1"
 dependencies = [
  "aws-lc-rs",
  "aws-sdk-s3",
@@ -3297,7 +3297,7 @@ dependencies = [
 
 [[package]]
 name = "ledger-sync-protocol"
-version = "0.11.0"
+version = "0.11.1"
 dependencies = [
  "ledger-infra",
  "rusqlite",
@@ -3308,7 +3308,7 @@ dependencies = [
 
 [[package]]
 name = "ledger-transaction"
-version = "0.11.0"
+version = "0.11.1"
 dependencies = [
  "ledger-accounts",
  "ledger-backup",
@@ -5184,9 +5184,9 @@ checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
 
 [[package]]
 name = "smallvec"
-version = "1.16.3"
+version = "1.16.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5b3dc8af474f516a851ff4bd12db780f948b9250ad37211e4eec0bccea54e01b"
+checksum = "d0d5d4b1981b8bbbb7aed204cae5726d683d5d6ac7e74ec54122ea28f315e7c8"
 
 [[package]]
 name = "smart-default"
@@ -5566,7 +5566,7 @@ dependencies = [
 
 [[package]]
 name = "tauri-app"
-version = "0.11.0"
+version = "0.11.1"
 dependencies = [
  "axum",
  "block2",
