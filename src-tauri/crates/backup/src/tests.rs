@@ -2,7 +2,7 @@
 
 use std::fs::File;
 use std::io::{Read, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use tauri_app_lib::test_support::{ScratchDir, ScratchFile};
 
@@ -41,6 +41,119 @@ fn count_transactions(conn: &Connection) -> i64 {
 /// 为每个测试准备独立的安全备份目录（互不干扰）；guard drop 整棵删除。
 fn temp_safety_dir() -> ScratchDir {
     ScratchDir::new("backup-test-safety")
+}
+
+/// 真实成对受管备份夹具（issue #1983）：在暂存目录 `dir` 内以 `file_name`
+/// （受管命名，含或不含账本标识段，由调用方给定）现场产出一份**真实成对
+/// 受管备份**——经备份写出入口 [`backup_db_to`] 生成，zip 内主库件 + 同步
+/// 元数据件 + 内层元数据三件齐全（ADR-0139）。库内容为工厂世界加 [`seed`]
+/// 的一条账户与一笔交易（内容锚稳定为 `txn-1`，供归属判定真开包的后续
+/// 用例取用）。占位文件夹具自本票起退役：内容锚与元数据判定都要真开包。
+fn real_managed_backup(dir: &Path, file_name: &str, kind: BackupKind) -> PathBuf {
+    real_managed_backup_with_meta(dir, file_name, kind, &serde_json::json!({}))
+}
+
+/// 同 [`real_managed_backup`]，另把 `extra_meta`（JSON 对象）的字段并入产物
+/// 内层元数据（`backup.json`）——测试侧注入，供「元数据携带指纹/设备」类
+/// 归属判定用例构造产物（ADR-0144 决策 5；产品写侧字段落地后，后续票可
+/// 改经真实写路径产出，本入口留作任意外来元数据的兜底）。
+fn real_managed_backup_with_meta(
+    dir: &Path,
+    file_name: &str,
+    kind: BackupKind,
+    extra_meta: &serde_json::Value,
+) -> PathBuf {
+    let conn = tauri_app_lib::test_support::open();
+    seed(&conn);
+    let target = dir.join(file_name);
+    backup_db_to(&conn, &target, "0.2.0", kind).unwrap();
+    if extra_meta.as_object().is_some_and(|o| !o.is_empty()) {
+        merge_extra_backup_meta(&target, extra_meta);
+    }
+    target
+}
+
+/// 把 `extra_meta` 的字段并入既有产物的 `backup.json`：逐条目原样复制、
+/// 元数据条目合并重写（整包重建，测试侧一次性动作）。
+fn merge_extra_backup_meta(path: &Path, extra: &serde_json::Value) {
+    let mut archive = zip::ZipArchive::new(File::open(path).unwrap()).unwrap();
+    let mut buf = Vec::new();
+    {
+        let mut writer = zip::ZipWriter::new(std::io::Cursor::new(&mut buf));
+        let options = zip::write::SimpleFileOptions::default();
+        for i in 0..archive.len() {
+            let mut entry = archive.by_index(i).unwrap();
+            let name = entry.name().unwrap().to_string();
+            writer.start_file(name.as_str(), options).unwrap();
+            if name == "backup.json" {
+                let mut text = String::new();
+                entry.read_to_string(&mut text).unwrap();
+                let mut meta: serde_json::Value = serde_json::from_str(&text).unwrap();
+                let obj = meta.as_object_mut().unwrap();
+                for (k, v) in extra.as_object().expect("extra_meta 须为 JSON 对象") {
+                    obj.insert(k.clone(), v.clone());
+                }
+                std::io::Write::write_all(
+                    &mut writer,
+                    serde_json::to_string(&meta).unwrap().as_bytes(),
+                )
+                .unwrap();
+            } else {
+                std::io::copy(&mut entry, &mut writer).unwrap();
+            }
+        }
+        writer.finish().unwrap();
+    }
+    std::fs::write(path, buf).unwrap();
+}
+
+/// 夹具契约（issue #1983）：产出物是真实成对受管产物——受管命名、zip 三
+/// 条目齐全、内层元数据可读且成对；元数据注入扩展点把外来字段并入
+/// `backup.json` 且不破坏既有字段（后续归属判定票据的构造入口）。
+#[test]
+fn real_managed_backup_fixture_produces_paired_product() {
+    let dir = ScratchDir::new("backup-test-fixture");
+    let path = real_managed_backup(
+        &dir,
+        "ledger-auto-20260101-000000-book-a.db.zip",
+        BackupKind::Auto,
+    );
+    assert!(
+        super::engine::is_managed_backup_file_name(path.file_name().unwrap().to_str().unwrap()),
+        "文件名为受管命名"
+    );
+    let names: Vec<String> = {
+        let mut archive = zip::ZipArchive::new(File::open(&path).unwrap()).unwrap();
+        assert_eq!(archive.len(), 3);
+        (0..archive.len())
+            .map(|i| archive.by_index(i).unwrap().name().unwrap().to_string())
+            .collect()
+    };
+    assert!(names.contains(&"ledger.db".to_string()));
+    assert!(names.contains(&"sync.db".to_string()));
+    assert!(names.contains(&"backup.json".to_string()));
+    let read_meta = |path: &Path| -> serde_json::Value {
+        let mut archive = zip::ZipArchive::new(File::open(path).unwrap()).unwrap();
+        let mut entry = archive.by_name("backup.json").unwrap();
+        let mut buf = String::new();
+        entry.read_to_string(&mut buf).unwrap();
+        serde_json::from_str(&buf).unwrap()
+    };
+    let meta = read_meta(&path);
+    assert_eq!(meta["paired"], true, "真实成对产物");
+    assert_eq!(meta["kind"], "auto");
+
+    let injected = real_managed_backup_with_meta(
+        &dir,
+        "ledger-backup-20260102-000000.db.zip",
+        BackupKind::Manual,
+        &serde_json::json!({"fingerprint": "fp-1", "device_id": "dev-1"}),
+    );
+    let meta = read_meta(&injected);
+    assert_eq!(meta["fingerprint"], "fp-1");
+    assert_eq!(meta["device_id"], "dev-1");
+    assert_eq!(meta["paired"], true, "注入不破坏既有字段");
+    assert_eq!(meta["kind"], "manual");
 }
 
 #[test]
@@ -570,13 +683,25 @@ fn managed_name_roundtrip_with_book_tag() {
 #[test]
 fn scoped_listing_filters_by_book() {
     let dir = ScratchDir::new("backup-test-scope-list");
-    for name in [
-        "ledger-backup-20260101-000000.db.zip", // 无标识（历史产物）
-        "ledger-auto-20260102-000000-book-a.db.zip", // 账本 A
-        "ledger-backup-20260103-000000-book-a.db.zip", // 账本 A
-        "ledger-backup-20260104-000000-book-b.db.zip", // 账本 B
+    for (name, kind) in [
+        (
+            "ledger-backup-20260101-000000.db.zip", // 无标识（历史产物）
+            BackupKind::Manual,
+        ),
+        (
+            "ledger-auto-20260102-000000-book-a.db.zip", // 账本 A
+            BackupKind::Auto,
+        ),
+        (
+            "ledger-backup-20260103-000000-book-a.db.zip", // 账本 A
+            BackupKind::Manual,
+        ),
+        (
+            "ledger-backup-20260104-000000-book-b.db.zip", // 账本 B
+            BackupKind::Manual,
+        ),
     ] {
-        std::fs::write(dir.join(name), b"x").unwrap();
+        real_managed_backup(&dir, name, kind);
     }
     let names = |list: &[BackupFileInfo]| -> Vec<String> {
         let mut v: Vec<String> = list.iter().map(|f| f.file_name.clone()).collect();
@@ -614,14 +739,26 @@ fn scoped_listing_filters_by_book() {
 #[test]
 fn scoped_prune_is_per_book() {
     let dir = ScratchDir::new("backup-test-scope-prune");
-    for name in [
-        "ledger-auto-20260101-000000-book-a.db.zip",
-        "ledger-auto-20260102-000000-book-a.db.zip",
-        "ledger-auto-20260103-000000-book-a.db.zip",
-        "ledger-auto-20260101-000000-book-b.db.zip",
-        "ledger-backup-20260101-000000.db.zip",
+    for (name, kind) in [
+        (
+            "ledger-auto-20260101-000000-book-a.db.zip",
+            BackupKind::Auto,
+        ),
+        (
+            "ledger-auto-20260102-000000-book-a.db.zip",
+            BackupKind::Auto,
+        ),
+        (
+            "ledger-auto-20260103-000000-book-a.db.zip",
+            BackupKind::Auto,
+        ),
+        (
+            "ledger-auto-20260101-000000-book-b.db.zip",
+            BackupKind::Auto,
+        ),
+        ("ledger-backup-20260101-000000.db.zip", BackupKind::Manual),
     ] {
-        std::fs::write(dir.join(name), b"x").unwrap();
+        real_managed_backup(&dir, name, kind);
     }
     // 账本 A 上限 1：只删 A 自己最旧的两份，B 的与历史产物不受影响。
     let scope_a = BackupScope {
