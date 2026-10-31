@@ -10,7 +10,8 @@
 //! 现场隔离：每个「设备」是独立的 mock 应用 + 独立临时目录的文件库 + 引导
 //! 登记态（与 `books.rs` 同型）；现场隔离收
 //! [`tauri_app_lib::test_support::isolate_home`]（进程内一次，mock runtime 的
-//! `app_data_dir` 回退解析隔离，#1989 起 `$HOME` 与 XDG 两根一齐重定向）。测试间以各自独立的 S3 桩（真实 HTTP 服务，对象 PUT/GET）对接，
+//! `app_data_dir` 回退解析隔离，#1989 起 `$HOME` 与 XDG 两根一齐重定向）。
+//! 测试间以各自独立的 S3 桩（真实 HTTP 服务，对象 PUT/GET）对接，
 //! 互不共享通道；桩是明文 http 端点，故轮次测试经设置域单点落配置（保存门只
 //! 收 https，见 [`configure_channel`]），保存命令的成功/拒绝路径另有专门用例。
 

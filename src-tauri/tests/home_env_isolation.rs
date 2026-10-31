@@ -55,6 +55,8 @@ fn isolate_home_redirects_xdg_data_and_config_roots() {
         data_dir, poison_data,
         "app_data_dir 仍解析到毒化的 XDG_DATA_HOME：隔离夹具未重定向 XDG 变量（#1989 回潮）"
     );
+    // mock 应用 identifier 为空，app_data_dir 与 XDG 根严格相等——本断言与后
+    // 面的 starts_with 双保险中，本条是「XDG 根未重定向」的精确哨兵。
     assert_ne!(
         config_dir, poison_config,
         "app_config_dir 仍解析到毒化的 XDG_CONFIG_HOME：隔离夹具未重定向 XDG 变量（#1989 回潮）"
