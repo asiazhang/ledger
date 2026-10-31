@@ -9,6 +9,7 @@ import {
   NInputNumber,
   NSpace,
   NSwitch,
+  NTag,
   NText,
 } from "naive-ui";
 import { LockClosedOutline } from "@vicons/ionicons5";
@@ -79,6 +80,24 @@ const pagination = computed(() => ({
 const backupColumns = [
   { title: () => t("settings.data.backup.columns.fileName"), key: "file_name" },
   { title: () => t("settings.data.backup.columns.source"), key: "source_text", width: 70 },
+  // 来源设备列（ADR-0144 / issue #1985 跨端合并可见）：每行徽标呈现产物来源
+  // 设备（内层元数据明文水印）；缺水印（升级前旧产物等）呈「未知来源」警示徽标。
+  {
+    title: () => t("settings.data.backup.columns.device"),
+    key: "source_device_text",
+    width: 120,
+    render: (row: { source_device_id: string | null; source_device_text: string }) =>
+      h(
+        NTag,
+        {
+          size: "small",
+          bordered: false,
+          type: row.source_device_id == null ? "warning" : "default",
+          title: row.source_device_text,
+        },
+        { default: () => row.source_device_text },
+      ),
+  },
   // 加密列（issue #572）：密文备份显示锁形标记，明文/旧备份缺标记不显。
   {
     title: () => t("settings.data.backup.columns.encrypted"),

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { mockInvoke, wireInvokeSeam } from "@ledger/test-support/invoke-mock";
+import { lastInvokeArgs, mockInvoke, wireInvokeSeam } from "@ledger/test-support/invoke-mock";
 import { mount, flushPromises } from "@vue/test-utils";
 import { defineComponent } from "vue";
 import { type UnlistenFn } from "@tauri-apps/api/event";
@@ -26,6 +26,8 @@ const autoBackupFile: BackupFileInfo = {
   created_at: "2026-02-17T09:30:00Z",
   kind: "auto",
   encrypted: true,
+  source_device_id: "dev-this",
+  source_unknown: false,
 };
 
 const manualBackupFile: BackupFileInfo = {
@@ -35,6 +37,28 @@ const manualBackupFile: BackupFileInfo = {
   created_at: "2026-01-01T01:01:01Z",
   kind: "manual",
   encrypted: false,
+  source_device_id: null,
+  source_unknown: true,
+};
+
+/** 本机设备名下的第二/第三份产物（清理弹窗待删数量只统计本设备桶，issue #1987）。 */
+const ownBackupSecond: BackupFileInfo = {
+  ...autoBackupFile,
+  file_name: "ledger-auto-20260216-093000-dev-this.db.zip",
+  path: "/Users/me/backups/ledger-auto-20260216-093000-dev-this.db.zip",
+};
+const ownBackupThird: BackupFileInfo = {
+  ...autoBackupFile,
+  file_name: "ledger-auto-20260215-093000-dev-this.db.zip",
+  path: "/Users/me/backups/ledger-auto-20260215-093000-dev-this.db.zip",
+};
+
+/** 另一台设备名下的产物（本机清理不代删，弹窗数字不含它，issue #1987）。 */
+const foreignBackup: BackupFileInfo = {
+  ...autoBackupFile,
+  file_name: "ledger-auto-20260210-093000-dev-other.db.zip",
+  path: "/Users/me/backups/ledger-auto-20260210-093000-dev-other.db.zip",
+  source_device_id: "dev-other",
 };
 
 // 命令契约快照：正常态（开关开、从未失败）。issue #1456 起状态含连续失败字段。
@@ -56,14 +80,8 @@ function makeStub(initialList: BackupFileInfo[]) {
       get_auto_backup_state: () => Promise.resolve(autoState),
       set_auto_backup_enabled: { kept: 0, deleted: [], failed: [] },
       prune_backups: { kept: 0, deleted: [], failed: [] },
-      // 活动账本标识（issue #836）：手动备份默认名按本分域。
-      list_books: () =>
-        Promise.resolve({
-          books: [{ id: "book-a", name: "默认账本", dir: "/data/a" }],
-          active_id: "book-a",
-          mutable: true,
-          fallback_reason: null,
-        }),
+      // 当前账本指纹（issue #1985）：手动备份默认名的标识段消费。
+      get_book_fingerprint: () => Promise.resolve("fp-book-a"),
     },
   });
 
@@ -442,33 +460,36 @@ describe("useBackup 加密语义（issue #572 / ADR-0075 决策 7）", () => {
 });
 
 describe("useBackup 手动清理确认弹窗（issue #652 / ADR-0078）", () => {
-  /** 预置 3 个备份、保留上限 1：超上限 2 个（上限偏好显式设小，默认 30）。 */
+  /** 预置 5 份产物（本机 3 + 未知来源 1 + 他端 1）、保留上限 1：本机桶超上
+   *  限 2 个（上限偏好显式设小，默认 30）。待删数量只统计本机桶，issue
+   *  #1987：弹窗数字与实际删除一致，不含他端与未知来源产物。 */
   function stubThreeBackups() {
     useAppStore().setBackupMaxCount(1);
     wireInvokeSeam({
       overrides: {
         list_backups: [
           autoBackupFile,
+          ownBackupSecond,
+          ownBackupThird,
           manualBackupFile,
-          {
-            ...manualBackupFile,
-            file_name: "ledger-backup-20260102-010101.db.zip",
-            path: "/Users/me/backups/ledger-backup-20260102-010101.db.zip",
-          },
+          foreignBackup,
         ],
         get_auto_backup_state: AUTO_STATE_OK,
+        // 本机设备标识（issue #1987）：待删数量的比对基准。
+        get_device_id: "dev-this",
         prune_backups: { kept: 1, deleted: ["/a", "/b"], failed: [] },
       },
     });
   }
 
-  it("manualPrune 超上限：开启 warning 级确认弹窗并锁定待删数量，不立即删除", async () => {
+  it("manualPrune 超上限：开启 warning 级确认弹窗并锁定待删数量（只统计本设备桶），不立即删除", async () => {
     stubThreeBackups();
     const { backup } = mountHost();
     await flushPromises();
 
     await backup.manualPrune();
     expect(backup.pruneConfirmShow.value).toBe(true);
+    // 总数 5 份、上限 1：旧口径会报 4；本机桶 3 份 → 待删 2（他端与未知来源不计入）。
     expect(backup.pruneExcess.value).toBe(2);
     expect(mockInvoke.mock.calls.some(([cmd]) => cmd === "prune_backups")).toBe(false);
   });
@@ -507,6 +528,8 @@ describe("useBackup 手动清理确认弹窗（issue #652 / ADR-0078）", () => 
       overrides: {
         list_backups: [manualBackupFile],
         get_auto_backup_state: AUTO_STATE_OK,
+        // 本机标识在场：未知来源产物不进本机桶，本机桶空 → 不弹（issue #1987）。
+        get_device_id: "dev-this",
       },
     });
     const { backup } = mountHost();
@@ -514,6 +537,49 @@ describe("useBackup 手动清理确认弹窗（issue #652 / ADR-0078）", () => 
 
     await backup.manualPrune();
     expect(backup.pruneConfirmShow.value).toBe(false);
+  });
+
+  it("待删数量与后端清理桶镜像一致（spec #1982 review：桶谓词漂移防护）", async () => {
+    // 后端 prune_managed_backups 的桶口径镜像（engine.rs）：本桶 = 指纹归属
+    // （列表已收口）× 设备水印逐值比对；桶内新→旧排序，超额删最旧，kept
+    // = 桶内保留数。替身按同一口径响应 keep，前端弹窗待删数与后端实际
+    // 删除数（deleted.length）必须相等：前端谓词漂移（漏过滤/比错字段/
+    // 比错基准）即红。
+    const mirrorPrune = (files: BackupFileInfo[], deviceId: string, keep: number) => {
+      const bucket = files.filter((f) => f.source_device_id === deviceId);
+      const excess = Math.max(0, bucket.length - keep);
+      return { kept: bucket.length - excess, deleted: bucket.slice(-excess).map((f) => f.path) };
+    };
+
+    const files = [
+      autoBackupFile,
+      ownBackupSecond,
+      ownBackupThird,
+      manualBackupFile,
+      foreignBackup,
+    ];
+    useAppStore().setBackupMaxCount(1);
+    wireInvokeSeam({
+      overrides: {
+        list_backups: files,
+        get_auto_backup_state: AUTO_STATE_OK,
+        get_device_id: "dev-this",
+        prune_backups: (args) =>
+          mirrorPrune(files, "dev-this", (args?.keep as number | undefined) ?? 0),
+      },
+    });
+    const { backup } = mountHost();
+    await flushPromises();
+
+    await backup.manualPrune();
+    expect(backup.pruneConfirmShow.value).toBe(true);
+    // 镜像语义锁定：弹窗待删数 == 后端口径下本桶超额（实际将删数）。
+    const backendResult = mirrorPrune(files, "dev-this", 1);
+    expect(backendResult.deleted.length).toBeGreaterThan(0);
+    expect(backup.pruneExcess.value).toBe(backendResult.deleted.length);
+    await backup.confirmPrune();
+    await flushPromises();
+    expect(lastInvokeArgs("prune_backups")).toMatchObject({ dir: "/Users/me/backups", keep: 1 });
   });
 });
 
@@ -526,50 +592,44 @@ describe("useBackup 手动备份按账本分域（issue #836）", () => {
     vi.useRealTimers();
   });
 
-  it("一键备份默认名携带活动账本标识（产物互不覆盖）", async () => {
+  it("一键备份默认名携带账本指纹（产物互不覆盖，issue #1985）", async () => {
     makeStub([]);
     const { save } = await import("@tauri-apps/plugin-dialog");
     vi.mocked(save).mockResolvedValue(
-      "/Users/me/backups/ledger-backup-20260217-093005-book-a.db.zip",
+      "/Users/me/backups/ledger-backup-20260217-093005-fp-book-a.db.zip",
     );
     wireInvokeSeam({
       overrides: {
         create_backup: {
-          path: "/Users/me/backups/ledger-backup-20260217-093005-book-a.db.zip",
+          path: "/Users/me/backups/ledger-backup-20260217-093005-fp-book-a.db.zip",
           size_bytes: 1,
           schema_version: 24,
           created_at: "2026-02-17T09:30:05Z",
         },
-        // 接缝表按调用整体替换：补上 makeStub 的清单应答（断言 active_id 用）。
-        list_books: () =>
-          Promise.resolve({
-            books: [{ id: "book-a", name: "默认账本", dir: "/data/a" }],
-            active_id: "book-a",
-            mutable: true,
-            fallback_reason: null,
-          }),
+        // 接缝表按调用整体替换：补上 makeStub 的指纹应答（断言命名标识段用）。
+        get_book_fingerprint: () => Promise.resolve("fp-book-a"),
       },
     });
 
     const { backup } = mountHost();
     await flushPromises();
-    expect(backup.activeBookId.value).toBe("book-a");
+    expect(backup.bookFingerprint.value).toBe("fp-book-a");
 
     await backup.backupOnce();
     await flushPromises();
     const call = mockInvoke.mock.calls.filter(([c]) => c === "create_backup").at(-1);
     expect(call![1]).toEqual({
-      targetPath: "/Users/me/backups/ledger-backup-20260217-093005-book-a.db.zip",
+      targetPath: "/Users/me/backups/ledger-backup-20260217-093005-fp-book-a.db.zip",
     });
   });
 
-  it("账本清单不可用时退化为无标识旧命名（产物仍可靠）", async () => {
+  it("账本指纹不可用时退化为无标识旧命名（产物仍可靠）", async () => {
     wireInvokeSeam({
       overrides: {
         list_backups: () => Promise.resolve([]),
         get_auto_backup_state: () => Promise.resolve(AUTO_STATE_OK),
-        // 注册表不可用现场：清单读取失败 → active_id 为 null。
-        list_books: () => Promise.reject(new Error("registry corrupt")),
+        // 指纹读取失败现场：get_book_fingerprint 为 null。
+        get_book_fingerprint: () => Promise.reject(new Error("db unavailable")),
         create_backup: {
           path: "/Users/me/backups/ledger-backup-20260217-093005.db.zip",
           size_bytes: 1,
@@ -583,7 +643,7 @@ describe("useBackup 手动备份按账本分域（issue #836）", () => {
 
     const { backup } = mountHost();
     await flushPromises();
-    expect(backup.activeBookId.value).toBeNull();
+    expect(backup.bookFingerprint.value).toBeNull();
 
     await backup.backupOnce();
     await flushPromises();

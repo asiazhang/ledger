@@ -411,12 +411,20 @@ describe("SettingsView.vue Tab 分域（issue #157 ADR-0022 立项；现役格�
             path: "/Users/me/backups/ledger-backup-20260102-010101.db.zip",
             size_bytes: 2048,
             created_at: "2026-01-02T01:01:01Z",
+            kind: "manual",
+            encrypted: false,
+            source_device_id: "dev-this",
+            source_unknown: false,
           },
           {
             file_name: "ledger-backup-20260101-010101.db.zip",
             path: "/Users/me/backups/ledger-backup-20260101-010101.db.zip",
             size_bytes: 1024,
             created_at: "2026-01-01T01:01:01Z",
+            kind: "manual",
+            encrypted: false,
+            source_device_id: "dev-this",
+            source_unknown: false,
           },
         ],
         prune_backups: () => ({
@@ -424,6 +432,8 @@ describe("SettingsView.vue Tab 分域（issue #157 ADR-0022 立项；现役格�
           deleted: ["ledger-backup-20260101-010101.db.zip"],
           failed: [],
         }),
+        // 本机设备标识（issue #1987）：待删数量只统计本机桶（两份均为本机产物）。
+        get_device_id: "dev-this",
       },
     });
     const wrapper = mount(SettingsView);

@@ -14,9 +14,9 @@ describe("受管备份命名与判定（issue #127）", () => {
     );
   });
 
-  it("defaultBackupFileName 携带账本标识（issue #836）：标识位于时间戳之后", () => {
-    expect(defaultBackupFileName(new Date(2026, 1, 17, 9, 30, 5), "book-a")).toBe(
-      "ledger-backup-20260217-093005-book-a.db.zip",
+  it("defaultBackupFileName 携带账本指纹（issue #836 立段 / #1985 写入指纹）：标识位于时间戳之后", () => {
+    expect(defaultBackupFileName(new Date(2026, 1, 17, 9, 30, 5), "fp-book-a")).toBe(
+      "ledger-backup-20260217-093005-fp-book-a.db.zip",
     );
     // 标识含连字符（UUID 形态）不受影响；空/缺失退化为旧命名。
     expect(
@@ -31,7 +31,7 @@ describe("受管备份命名与判定（issue #127）", () => {
   });
 
   it("isManagedBackupFileName 识别携带账本标识的产物（前后缀夹取不受标识影响）", () => {
-    expect(isManagedBackupFileName(`${MANUAL_BACKUP_PREFIX}20260217-093005-book-a.db.zip`)).toBe(
+    expect(isManagedBackupFileName(`${MANUAL_BACKUP_PREFIX}20260217-093005-fp-book-a.db.zip`)).toBe(
       true,
     );
     expect(

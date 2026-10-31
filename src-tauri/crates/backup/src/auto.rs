@@ -208,16 +208,7 @@ fn mark_dirty_ignoring_failure(conn: &Connection) {
 pub fn after_commit_hook(conn: &Connection) {
     mark_dirty_ignoring_failure(conn);
     let dir = shared_prefs().snapshot_dir();
-    // 备份作用域从偏好镜像快照（引导登记点播种，issue #836）：写路径深处只有
-    // `&Connection`，账本归属经镜像统一承载，与调度线程同一来源。
-    let scope = shared_prefs().snapshot_scope();
-    run_due_backup(
-        conn,
-        dir.as_deref(),
-        env!("CARGO_PKG_VERSION"),
-        Utc::now(),
-        scope.as_ref(),
-    );
+    run_due_backup(conn, dir.as_deref(), env!("CARGO_PKG_VERSION"), Utc::now());
 }
 
 /// 把提交点后置动作注册进连接层写入口（幂等，进程级一次）。
@@ -379,20 +370,27 @@ pub enum SkipReason {
 
 /// 唯一执行落点：生成自动命名产物 + 成功后 [`mark_clean`]。
 /// 失败时不上抛由调用方归入 [`AttemptOutcome::Failed`]——脏标记自然保留。
-/// `scope`：账本作用域（issue #836），产物名携带其账本标识；`None` = 旧命名。
+/// 产物名携带当前账本指纹（ADR-0144 决策 5，issue #1985）：作用域由本连接
+/// 只读构造（[`super::engine::BackupScope::of_conn`]），指纹未固化回内容锚，
+/// 固化由紧随的备份写出首用完成（同值）；`None`（空库未固化）退化为无标识
+/// 旧命名（产物归属由内层元数据水印承担，下轮起命名收敛）。
 fn perform_backup(
     conn: &Connection,
     dir: &str,
     app_version: &str,
     now: DateTime<Utc>,
-    scope: Option<&super::engine::BackupScope>,
 ) -> error::Result<String> {
+    let scope = super::engine::BackupScope::of_conn(conn)?;
     // 产物命名取注入时刻的本地时间（ADR-0016 修订：原 UTC，与手动备份拉齐）；
     // 锚点仍记 UTC 时刻（[`db::iso_at`]），值格式不变。
-    let target = Path::new(dir).join(auto_backup_file_name(
+    let file_name = auto_backup_file_name(
         now.with_timezone(&Local),
-        scope.map(super::engine::BackupScope::book_tag),
-    ));
+        scope.as_ref().map(super::engine::BackupScope::book_tag),
+    );
+    // 产物落点按设备多分一层（ADR-0144 决策 6，#1988）：`<备份目录>/<设备标识>/
+    // <产物名>`；设备标识不可得时回落扁平旧路径（该轮无设备水印 = 来源未知，
+    // 与水印语义一致）。
+    let target = super::engine::managed_write_target(Path::new(dir), &file_name, conn)?;
     let path =
         super::engine::backup_db_to(conn, &target, app_version, super::engine::BackupKind::Auto)?
             .path;
@@ -500,7 +498,6 @@ pub fn run_due_backup(
     dir: Option<&str>,
     app_version: &str,
     now: DateTime<Utc>,
-    scope: Option<&super::engine::BackupScope>,
 ) -> AttemptOutcome {
     let (state, dir) = match gate(conn, dir) {
         Ok(v) => v,
@@ -518,11 +515,7 @@ pub fn run_due_backup(
             return AttemptOutcome::Skipped(SkipReason::AlreadyBackedUpToday);
         }
     }
-    classify_result(
-        conn,
-        "due",
-        perform_backup(conn, &dir, app_version, now, scope),
-    )
+    classify_result(conn, "due", perform_backup(conn, &dir, app_version, now))
 }
 
 /// 触发入口二：退出兜底——脏且当天尚未自动备份过才补一次，与到期入口同受
@@ -532,7 +525,6 @@ pub fn run_exit_backup(
     dir: Option<&str>,
     app_version: &str,
     now: DateTime<Utc>,
-    scope: Option<&super::engine::BackupScope>,
 ) -> AttemptOutcome {
     let (state, dir) = match gate(conn, dir) {
         Ok(v) => v,
@@ -548,11 +540,7 @@ pub fn run_exit_backup(
             return AttemptOutcome::Skipped(SkipReason::AlreadyBackedUpToday);
         }
     }
-    classify_result(
-        conn,
-        "exit",
-        perform_backup(conn, &dir, app_version, now, scope),
-    )
+    classify_result(conn, "exit", perform_backup(conn, &dir, app_version, now))
 }
 
 /// 触发入口三：首次兜底——启动会话首次拿到目录时，若受管备份列表为空
@@ -563,15 +551,20 @@ pub fn run_first_backup(
     dir: Option<&str>,
     app_version: &str,
     now: DateTime<Utc>,
-    scope: Option<&super::engine::BackupScope>,
 ) -> AttemptOutcome {
     let (state, dir) = match gate(conn, dir) {
         Ok(v) => v,
         Err(outcome) => return outcome,
     };
-    // 「列表为空」按账本作用域判定（issue #836）：新账本首次进入即有自己
-    // 的首次兜底，不被其他账本的存量产物挡住。
-    match super::engine::list_managed_backups(Path::new(&dir), scope) {
+    // 「列表为空」按账本指纹作用域判定（issue #836 / #1985）：新账本首次进入
+    // 即有自己的首次兜底，不被其他账本的存量产物挡住。指纹未固化（空库）时
+    // 本账尚无任何可归属产物 → 按空列表兜底，不退化为全量。
+    let scoped_list = match super::engine::BackupScope::of_conn(conn) {
+        Ok(Some(scope)) => super::engine::list_managed_backups(Path::new(&dir), Some(&scope)),
+        Ok(None) => Ok(Vec::new()),
+        Err(e) => Err(e),
+    };
+    match scoped_list {
         Ok(list) if !list.is_empty() => {
             return AttemptOutcome::Skipped(SkipReason::ListNotEmpty);
         }
@@ -584,11 +577,7 @@ pub fn run_first_backup(
         tracing::debug!(trigger = "first", "今天已自动备份，日界门静默跳过首次兜底");
         return AttemptOutcome::Skipped(SkipReason::AlreadyBackedUpToday);
     }
-    classify_result(
-        conn,
-        "first",
-        perform_backup(conn, &dir, app_version, now, scope),
-    )
+    classify_result(conn, "first", perform_backup(conn, &dir, app_version, now))
 }
 
 // ---------------------------------------------------------------------------
@@ -618,10 +607,6 @@ pub fn shared_prefs() -> Arc<PrefsState> {
 pub struct PrefsState {
     /// 当前备份目录镜像。独立 Arc 以便线程与 IPC 两端共享同一份。
     pub dir: Arc<Mutex<Option<String>>>,
-    /// 当前活动账本的备份作用域镜像（issue #836）：引导登记时由壳层播种
-    /// （[`seed_book_scope`]），供调度线程、连接层写入口提交点与退出兜底
-    /// 统一消费——连接层深处只有 `&Connection`，拿不到引导状态。
-    scope: Mutex<Option<super::engine::BackupScope>>,
     /// 本会话是否已认领「首次兜底」机会（每会话至多一次）。
     first_fallback_claimed: AtomicBool,
 }
@@ -644,28 +629,6 @@ impl PrefsState {
     pub fn claim_first_fallback(&self) -> bool {
         !self.first_fallback_claimed.swap(true, Ordering::SeqCst)
     }
-
-    fn lock_scope(&self) -> MutexGuard<'_, Option<super::engine::BackupScope>> {
-        self.scope.lock().unwrap_or_else(|e| e.into_inner())
-    }
-
-    /// 快照当前备份作用域（`None` = 注册表不可用/未播种，按旧命名兼容口径）。
-    pub fn snapshot_scope(&self) -> Option<super::engine::BackupScope> {
-        self.lock_scope().clone()
-    }
-}
-
-/// 播种账本备份作用域（引导登记点调用，issue #836）：由注册表登记信息构造
-/// 当前活动账本的作用域；注册表损坏（`None`）时清空镜像——回退默认目录建连
-/// 的现场无从归属账本，自动备份退化为旧命名兼容口径（产物仍可靠，仅命名
-/// 不携带账本标识，待注册表修复后自然恢复分域）。
-pub fn seed_book_scope(registry: Option<&ledger_infra::db::book_registry::BookRegistry>) {
-    let scope = registry.map(super::engine::BackupScope::of_registry);
-    *shared_prefs().lock_scope() = scope;
-    tracing::debug!(
-        seeded = shared_prefs().snapshot_scope().is_some(),
-        "备份作用域已播种"
-    );
 }
 
 /// 等待连接锁至超时。锁被占用超过 [`LOCK_TIMEOUT`] 或已损坏（poisoned）返回 None，
@@ -724,13 +687,8 @@ static SCHEDULER_SPAWNED: AtomicBool = AtomicBool::new(false);
 /// 的写槽裸作业递入，不再是调用点自己取的槽锁。
 ///
 /// 决策仍全在纯函数到期判定与钩子实现内，本函数只做周期调用。
-fn run_scheduled_round(
-    conn: &Connection,
-    dir: Option<&str>,
-    version: &str,
-    scope: Option<&super::engine::BackupScope>,
-) {
-    run_due_backup(conn, dir, version, Utc::now(), scope);
+fn run_scheduled_round(conn: &Connection, dir: Option<&str>, version: &str) {
+    run_due_backup(conn, dir, version, Utc::now());
     // 追补判定（issue #307 / ADR-0042）：实现由定时计划域经追补触发钩子提供
     // （[`register_catch_up_hook`] 接线，挂载点④），本域对定时计划域零依赖——
     // 开关与「今天」的取数都在钩子实现内注入（与迁移前线程内联形态同口径：
@@ -795,14 +753,11 @@ pub fn start_scheduler<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
                 continue;
             }
             let version = handle.package_info().version.to_string();
-            // 备份作用域从偏好镜像快照（引导登记点播种，issue #836）：切换账本
-            // 经原位重引导后镜像随之更新，调度线程无需重建。
-            let scope = shared_prefs().snapshot_scope();
             let outcome = conn.run_raw_blocking_within("backup.scheduler-round", LOCK_TIMEOUT, {
                 let dir_mirror = Arc::clone(&dir_mirror);
                 move |conn| {
                     let dir = dir_mirror.lock().unwrap_or_else(|e| e.into_inner()).clone();
-                    run_scheduled_round(conn, dir.as_deref(), &version, scope.as_ref());
+                    run_scheduled_round(conn, dir.as_deref(), &version);
                     Ok(())
                 }
             });
@@ -819,10 +774,9 @@ pub fn exit_fallback(app: &tauri::AppHandle) {
     use tauri::Manager;
     let conn = app.state::<DbState>().write_handle();
     let dir = shared_prefs().snapshot_dir();
-    let scope = shared_prefs().snapshot_scope();
     let version = app.package_info().version.to_string();
     let outcome = conn.run_raw_blocking_within("backup.exit-fallback", LOCK_TIMEOUT, move |conn| {
-        run_exit_backup(conn, dir.as_deref(), &version, Utc::now(), scope.as_ref());
+        run_exit_backup(conn, dir.as_deref(), &version, Utc::now());
         Ok(())
     });
     // 退出后没有下一轮：放弃或失败同样只能在日志里留痕（`log_timed_outcome` 的
@@ -1109,7 +1063,6 @@ mod scheduler_tests {
             Some(dir.to_str().unwrap()),
             "0.2.0",
             now_at("2026-02-17T12:00:00Z"),
-            None,
         );
         match &outcome {
             AttemptOutcome::Performed { path } => {
@@ -1141,6 +1094,33 @@ mod scheduler_tests {
         );
     }
 
+    /// 自动产物落设备子目录（ADR-0144 决策 6，#1988）：`<备份目录>/<设备标识>/
+    /// <产物名>`，设备标识与产物水印同源（连接现场首用生成）。
+    #[test]
+    fn product_lands_in_device_subdir() {
+        let c = conn();
+        let dir = temp_dir("device-subdir");
+        mark_dirty(&c).expect("置脏");
+        let device = crate::identity::source_device_id(&c).expect("工厂库可取设备标识");
+        let outcome = run_due_backup(
+            &c,
+            Some(dir.to_str().unwrap()),
+            "0.2.0",
+            now_at("2026-02-17T12:00:00Z"),
+        );
+        match &outcome {
+            AttemptOutcome::Performed { path } => {
+                assert_eq!(
+                    Path::new(path).parent().unwrap(),
+                    dir.join(&device),
+                    "产物应落在设备子目录内"
+                );
+                assert!(Path::new(path).is_file(), "产物文件应存在");
+            }
+            other => panic!("应执行备份，实际 {other:?}"),
+        }
+    }
+
     /// 同一本地日已自动备份过（本地 08:00 锚点、20:00 再触发）→ 静默跳过且原因可辨：
     /// 不产生文件、不前移锚点、脏标记保留（当天改动次日第一个触发点补上）。
     #[test]
@@ -1162,7 +1142,6 @@ mod scheduler_tests {
             Some(dir.to_str().unwrap()),
             "0.2.0",
             local_utc(2026, 2, 17, 20, 0),
-            None,
         );
         assert_eq!(
             outcome,
@@ -1197,7 +1176,7 @@ mod scheduler_tests {
         )
         .expect("写状态");
         let now = local_noon_days_ago_utc(0);
-        let outcome = run_due_backup(&c, Some(dir.to_str().unwrap()), "0.2.0", now, None);
+        let outcome = run_due_backup(&c, Some(dir.to_str().unwrap()), "0.2.0", now);
         assert!(
             matches!(outcome, AttemptOutcome::Performed { .. }),
             "跨本地日后有变动应恢复备份，实际 {outcome:?}"
@@ -1220,20 +1199,14 @@ mod scheduler_tests {
         // 失败现场：父级 nested 不存在（暂存目录在场即可，guard 随用例清理）。
         let missing_root = ScratchDir::new("auto-missing");
         let missing = missing_root.join("nested");
-        let first = run_due_backup(
-            &c,
-            Some(missing.to_str().unwrap()),
-            "0.2.0",
-            Utc::now(),
-            None,
-        );
+        let first = run_due_backup(&c, Some(missing.to_str().unwrap()), "0.2.0", Utc::now());
         assert!(
             matches!(first, AttemptOutcome::Failed { .. }),
             "实际 {first:?}"
         );
         assert!(get_state(&c).unwrap().dirty, "失败必须保留脏标记");
         // 第二次（同日，锚点未记）：换有效目录 → 重试成功。
-        let second = run_due_backup(&c, Some(dir.to_str().unwrap()), "0.2.0", Utc::now(), None);
+        let second = run_due_backup(&c, Some(dir.to_str().unwrap()), "0.2.0", Utc::now());
         assert!(
             matches!(second, AttemptOutcome::Performed { .. }),
             "同日重试应可行，实际 {second:?}"
@@ -1251,7 +1224,7 @@ mod scheduler_tests {
         let c = conn();
         mark_dirty(&c).expect("置脏");
         for dir in [None, Some(""), Some("   ")] {
-            let outcome = run_due_backup(&c, dir, "0.2.0", now_at("2026-02-17T12:00:00Z"), None);
+            let outcome = run_due_backup(&c, dir, "0.2.0", now_at("2026-02-17T12:00:00Z"));
             assert_eq!(outcome, AttemptOutcome::Skipped(SkipReason::DirMissing));
         }
         let state = get_state(&c).unwrap();
@@ -1273,8 +1246,7 @@ mod scheduler_tests {
                 &c,
                 Some(dir.to_str().unwrap()),
                 "0.2.0",
-                now_at("2026-02-17T12:00:00Z"),
-                None,
+                now_at("2026-02-17T12:00:00Z")
             ),
             AttemptOutcome::Skipped(SkipReason::Disabled)
         );
@@ -1283,8 +1255,7 @@ mod scheduler_tests {
                 &c,
                 Some(dir.to_str().unwrap()),
                 "0.2.0",
-                now_at("2026-02-17T12:00:00Z"),
-                None,
+                now_at("2026-02-17T12:00:00Z")
             ),
             AttemptOutcome::Skipped(SkipReason::Disabled)
         );
@@ -1293,8 +1264,7 @@ mod scheduler_tests {
                 &c,
                 Some(dir.to_str().unwrap()),
                 "0.2.0",
-                now_at("2026-02-17T12:00:00Z"),
-                None,
+                now_at("2026-02-17T12:00:00Z")
             ),
             AttemptOutcome::Skipped(SkipReason::Disabled)
         );
@@ -1315,7 +1285,6 @@ mod scheduler_tests {
             Some(missing.to_str().unwrap()),
             "0.2.0",
             now_at("2026-02-17T12:00:00Z"),
-            None,
         );
         assert!(
             matches!(outcome, AttemptOutcome::Failed { .. }),
@@ -1342,7 +1311,6 @@ mod scheduler_tests {
                 Some(missing.to_str().unwrap()),
                 "0.2.0",
                 now_at("2026-02-17T12:00:00Z"),
-                None,
             );
             assert!(
                 matches!(outcome, AttemptOutcome::Failed { .. }),
@@ -1378,7 +1346,6 @@ mod scheduler_tests {
                 Some(missing.to_str().unwrap()),
                 "0.2.0",
                 now_at("2026-02-17T12:00:00Z"),
-                None,
             );
         }
         assert!(
@@ -1392,7 +1359,6 @@ mod scheduler_tests {
             Some(dir.to_str().unwrap()),
             "0.2.0",
             now_at("2026-02-17T13:00:00Z"),
-            None,
         );
         assert!(
             matches!(outcome, AttemptOutcome::Performed { .. }),
@@ -1421,7 +1387,6 @@ mod scheduler_tests {
                 Some(missing.to_str().unwrap()),
                 "0.2.0",
                 now_at("2026-02-17T12:00:00Z"),
-                None,
             );
             assert!(
                 matches!(outcome, AttemptOutcome::Failed { .. }),
@@ -1457,7 +1422,6 @@ mod scheduler_tests {
             Some(dir.to_str().unwrap()),
             "0.2.0",
             local_utc(2026, 2, 17, 20, 0),
-            None,
         );
         assert_eq!(
             outcome,
@@ -1481,7 +1445,7 @@ mod scheduler_tests {
             },
         )
         .expect("写状态");
-        let outcome = run_exit_backup(&c, Some(dir.to_str().unwrap()), "0.2.0", Utc::now(), None);
+        let outcome = run_exit_backup(&c, Some(dir.to_str().unwrap()), "0.2.0", Utc::now());
         assert!(matches!(outcome, AttemptOutcome::Performed { .. }));
     }
 
@@ -1495,7 +1459,6 @@ mod scheduler_tests {
             Some(dir.to_str().unwrap()),
             "0.2.0",
             now_at("2026-02-17T12:00:00Z"),
-            None,
         );
         assert_eq!(outcome, AttemptOutcome::Skipped(SkipReason::Clean));
         assert!(fs::read_dir(&dir).expect("列目录").next().is_none());
@@ -1508,12 +1471,12 @@ mod scheduler_tests {
         let c = conn();
         let dir = temp_dir("first-fallback");
         let d = dir.to_str().unwrap();
-        let first = run_first_backup(&c, Some(d), "0.2.0", now_at("2026-02-17T08:00:00Z"), None);
+        let first = run_first_backup(&c, Some(d), "0.2.0", now_at("2026-02-17T08:00:00Z"));
         assert!(
             matches!(first, AttemptOutcome::Performed { .. }),
             "首次应兜底，实际 {first:?}"
         );
-        let again = run_first_backup(&c, Some(d), "0.2.0", now_at("2026-02-17T09:00:00Z"), None);
+        let again = run_first_backup(&c, Some(d), "0.2.0", now_at("2026-02-17T09:00:00Z"));
         assert_eq!(again, AttemptOutcome::Skipped(SkipReason::ListNotEmpty));
     }
 
@@ -1538,7 +1501,6 @@ mod scheduler_tests {
             Some(dir.to_str().unwrap()),
             "0.2.0",
             local_utc(2026, 2, 17, 20, 0),
-            None,
         );
         assert_eq!(
             outcome,
@@ -1547,19 +1509,29 @@ mod scheduler_tests {
         assert!(fs::read_dir(&dir).expect("列目录").next().is_none());
     }
 
-    /// 首次兜底把手动备份也算进「列表非空」：已有手动产物就不再兜底。
+    /// 首次兜底把本账手动备份也算进「列表非空」：已有本账产物就不再兜底
+    ///（issue #1985：按指纹作用域判定——文件名标识段命中即归属，占位文件
+    /// 亦然；不可归属的残留产物不算）。
     #[test]
     fn first_fallback_counts_manual_backups() {
         let c = conn();
+        ledger_infra::settings::set(
+            &c,
+            ledger_infra::settings::SettingKey::BookFingerprint,
+            &"fp-manual-stub".to_string(),
+        )
+        .expect("预置固化指纹");
         let dir = temp_dir("first-manual");
-        fs::write(dir.join("ledger-backup-20260101-000000.db.zip"), b"stub")
-            .expect("造手动备份占位");
+        fs::write(
+            dir.join("ledger-backup-20260101-000000-fp-manual-stub.db.zip"),
+            b"stub",
+        )
+        .expect("造本账手动备份占位");
         let outcome = run_first_backup(
             &c,
             Some(dir.to_str().unwrap()),
             "0.2.0",
             now_at("2026-02-17T08:00:00Z"),
-            None,
         );
         assert_eq!(outcome, AttemptOutcome::Skipped(SkipReason::ListNotEmpty));
         assert!(
@@ -1612,7 +1584,6 @@ mod scheduler_tests {
                             Some(dir_for_job.as_str()),
                             "0.2.0",
                             Utc::now(),
-                            None,
                         ))
                     },
                 );
@@ -1647,7 +1618,6 @@ mod scheduler_tests {
                         Some(dir.as_str()),
                         "0.2.0",
                         Utc::now(),
-                        None,
                     ))
                 }
             });
@@ -1666,12 +1636,11 @@ mod scheduler_tests {
     }
 }
 
-/// T5 作用域追加测试：首次兜底按账本作用域判定（issue #836）——新账本首次
+/// 首次兜底按账本指纹作用域判定（issue #836 / #1985）——新账本首次
 /// 进入即有自己的首次兜底，不被其他账本的存量产物挡住。
 #[cfg(test)]
 mod book_scope_tests {
     use super::*;
-    use crate::BackupScope;
     use std::fs;
     use tauri_app_lib::test_support::ScratchDir;
 
@@ -1689,50 +1658,46 @@ mod book_scope_tests {
         ScratchDir::new(&format!("auto-scope-{tag}"))
     }
 
-    /// 目录里已有账本 A 的产物：账本 B 的首次兜底仍执行（按本判定列表为空），
-    /// 产物命名携带 B 的标识，互不覆盖。
+    /// 目录里已有不可归属的存量产物（别本账残留）：本账的首次兜底仍执行
+    ///（按指纹判定列表为空），空库未固化指纹时产物退化为无标识旧命名
+    ///（归属由内层元数据水印承担，issue #1985）。
     #[test]
     fn first_fallback_is_scoped_per_book() {
         let c = conn();
         let dir = temp_dir("per-book");
         fs::write(
-            dir.join("ledger-auto-20260101-000000-book-a.db.zip"),
+            dir.join("ledger-auto-20260101-000000-foreign.db.zip"),
             b"stub",
         )
-        .expect("造 A 的存量产物");
-        let scope_b = BackupScope {
-            book_id: "book-b".into(),
-            include_legacy: false,
-        };
+        .expect("造不可归属的存量产物");
         let outcome = run_first_backup(
             &c,
             Some(dir.to_str().unwrap()),
             "0.2.0",
             now_at("2026-02-17T08:00:00Z"),
-            Some(&scope_b),
         );
         match &outcome {
             AttemptOutcome::Performed { path } => {
                 let name = Path::new(path).file_name().unwrap().to_str().unwrap();
                 // 时间戳取注入时刻的本地时间渲染：期望值用 Local 反推，
-                // 对运行机器时区稳定（CI runner 为 UTC，不漂移）。
+                // 对运行机器时区稳定（CI runner 为 UTC，不漂移）；
+                // 空库未固化指纹 → 无标识旧命名（退化口径，不阻断备份）。
                 let expected = format!(
-                    "ledger-auto-{}-book-b.db.zip",
+                    "ledger-auto-{}.db.zip",
                     now_at("2026-02-17T08:00:00Z")
                         .with_timezone(&Local)
                         .format("%Y%m%d-%H%M%S")
                 );
-                assert_eq!(name, expected, "产物命名按本地时间渲染并携带账本标识");
+                assert_eq!(name, expected, "产物命名按本地时间渲染（空库退化无标识）");
             }
-            other => panic!("账本 B 应有自己的首次兜底，实际 {other:?}"),
+            other => panic!("本账应有自己的首次兜底，实际 {other:?}"),
         }
-        // 再次兜底：B 的列表非空，跳过。
+        // 再次兜底：备份写路径已固化指纹，本账列表非空（产物元数据指纹命中），跳过。
         let again = run_first_backup(
             &c,
             Some(dir.to_str().unwrap()),
             "0.2.0",
             now_at("2026-02-17T09:00:00Z"),
-            Some(&scope_b),
         );
         assert_eq!(again, AttemptOutcome::Skipped(SkipReason::ListNotEmpty));
     }

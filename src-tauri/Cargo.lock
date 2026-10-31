@@ -3030,6 +3030,7 @@ dependencies = [
  "chrono",
  "ledger-accounts",
  "ledger-infra",
+ "ledger-sync-protocol",
  "rusqlite",
  "serde",
  "serde_json",

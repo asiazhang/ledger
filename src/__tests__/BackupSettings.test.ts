@@ -26,6 +26,8 @@ const encryptedBackup: BackupFileInfo = {
   created_at: "2026-02-17T09:30:00Z",
   kind: "auto",
   encrypted: true,
+  source_device_id: "dev-this",
+  source_unknown: false,
 };
 
 const plaintextBackup: BackupFileInfo = {
@@ -34,6 +36,16 @@ const plaintextBackup: BackupFileInfo = {
   size_bytes: 1024,
   created_at: "2026-01-01T01:01:01Z",
   kind: "manual",
+  encrypted: false,
+  source_device_id: null,
+  source_unknown: true,
+};
+
+/** 本机设备名下的第二份产物（清理弹窗待删数量只统计本设备桶，issue #1987）。 */
+const ownBackupSecond: BackupFileInfo = {
+  ...encryptedBackup,
+  file_name: "ledger-auto-20260216-093000-dev-this.db.zip",
+  path: "/Users/me/backups/ledger-auto-20260216-093000-dev-this.db.zip",
   encrypted: false,
 };
 
@@ -81,6 +93,28 @@ describe("BackupSettings 备份列表加密列（issue #572 / ADR-0075 决策 7�
     await flushPromises();
 
     expect(wrapper.findAll(".n-data-table-tr svg")).toHaveLength(0);
+  });
+});
+
+describe("BackupSettings 来源设备徽标（issue #1985 / ADR-0144 跨端合并可见）", () => {
+  it("每行渲染来源设备徽标，未知来源呈警示徽标（i18n 文案）", async () => {
+    wireInvokeSeam({
+      defaults: {
+        list_backups: [encryptedBackup, plaintextBackup],
+        get_auto_backup_state: AUTO_BACKUP_ON,
+      },
+    });
+    const wrapper = mount(BackupSettings);
+    await flushPromises();
+
+    // 列头存在（用户可见的「来源设备」列）。
+    expect(wrapper.html()).toContain("来源设备");
+    const tags = wrapper.findAll(".n-data-table-tr .n-tag");
+    expect(tags.length).toBe(2);
+    // 带设备水印的行：徽标展示设备标识本体。
+    expect(tags[0].text()).toBe("dev-this");
+    // 缺水印（升级前旧产物）行：警示徽标 + 「未知来源」文案（用户可见信号）。
+    expect(tags[1].text()).toBe("未知来源");
   });
 });
 
@@ -166,22 +200,31 @@ describe("BackupSettings 备份页签重排与危险视觉修正（issue #651 / 
 });
 
 describe("BackupSettings 手动清理确认弹窗（issue #652 / ADR-0078）", () => {
-  it("超上限点「立即清理」：弹 warning 级应用内弹窗，待删数量与不可恢复后果在场，不立即删除", async () => {
+  /** 清理弹窗布线：本机 2 份 + 未知来源 1 份、上限 1 —— 待删数量只统计本机
+   *  桶（issue #1987）：弹窗报 1 份（而非总数 3 份推的 2 份），与实际删除一致。 */
+  function stubPruneConfirm() {
     wireInvokeSeam({
       defaults: {
-        list_backups: [encryptedBackup, plaintextBackup],
+        list_backups: [encryptedBackup, ownBackupSecond, plaintextBackup],
         get_auto_backup_state: AUTO_BACKUP_ON,
+        // 本机设备标识（issue #1987）：待删数量的比对基准。
+        get_device_id: "dev-this",
         prune_backups: { kept: 1, deleted: ["/a", "/b"], failed: [] },
       },
     });
     useAppStore().setBackupMaxCount(1);
+  }
+
+  it("超上限点「立即清理」：弹 warning 级应用内弹窗，待删数量只统计本设备名下产物且与不可恢复后果在场，不立即删除", async () => {
+    stubPruneConfirm();
     const wrapper = mount(BackupSettings);
     await flushPromises();
 
     await findButton(wrapper, "立即清理")!.trigger("click");
     await flushPromises();
 
-    // warning 级形态（ADR-0078 决策 2）：琥珀警示块承载待删数量与不可恢复后果
+    // warning 级形态（ADR-0078 决策 2）：琥珀警示块承载待删数量与不可恢复后果。
+    // 本机桶 2 份、上限 1 → 待删 1（总数 3 份推不出这个数——他端/未知来源不计入）。
     const alert = document.body.querySelector(".n-modal .n-alert");
     expect(alert, "警示块应存在").toBeTruthy();
     expect(document.body.textContent).toContain("将删除最旧的 1 个备份");
@@ -192,14 +235,7 @@ describe("BackupSettings 手动清理确认弹窗（issue #652 / ADR-0078）", (
   });
 
   it("确认清理：执行 prune_backups 后弹窗关闭并刷新列表", async () => {
-    wireInvokeSeam({
-      defaults: {
-        list_backups: [encryptedBackup, plaintextBackup],
-        get_auto_backup_state: AUTO_BACKUP_ON,
-        prune_backups: { kept: 1, deleted: ["/a", "/b"], failed: [] },
-      },
-    });
-    useAppStore().setBackupMaxCount(1);
+    stubPruneConfirm();
     const wrapper = mount(BackupSettings);
     await flushPromises();
 
@@ -212,14 +248,7 @@ describe("BackupSettings 手动清理确认弹窗（issue #652 / ADR-0078）", (
   });
 
   it("取消清理：弹窗关闭，不发任何删除调用（零副作用）", async () => {
-    wireInvokeSeam({
-      defaults: {
-        list_backups: [encryptedBackup, plaintextBackup],
-        get_auto_backup_state: AUTO_BACKUP_ON,
-        prune_backups: { kept: 1, deleted: ["/a", "/b"], failed: [] },
-      },
-    });
-    useAppStore().setBackupMaxCount(1);
+    stubPruneConfirm();
     const wrapper = mount(BackupSettings);
     await flushPromises();
 
@@ -339,6 +368,8 @@ describe("BackupSettings 备份列表客户端切片分页（issue #1383）", ()
       created_at: `2026-02-01T09:${seq}:00Z`,
       kind: "auto",
       encrypted: false,
+      source_device_id: "dev-this",
+      source_unknown: false,
     };
   });
 

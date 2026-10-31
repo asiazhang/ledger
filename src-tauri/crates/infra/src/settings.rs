@@ -51,6 +51,13 @@ pub enum SettingKey {
     /// 上次成功同步时刻（UTC ISO 字符串，issue #862）：设备本地运行时状态，
     /// 供同步卡片回显；同步轮次成功后随轮次事务写入，失败不更新。
     SyncLastSyncAt,
+    /// 账本指纹（ADR-0144 决策 1，#1984）：账本跳设备、跳目录的稳定身份，
+    /// 值为 UUIDv7 字符串。内容锚（库内最早一笔交易的全局唯一标识）首用
+    /// 算出即固化，此后恒读固化值；空库退化为端内生成随机标识。计算与固化
+    /// 收口在备份域 `identity` 模块（词汇表：参考数据与设置域「账本指纹」）。
+    /// 不参与多端同步语义命令通道（两端从同一份数据各自算出同一答案，
+    /// 不需要协议承载）；随库走、随备份迁移（恢复后同指纹）。
+    BookFingerprint,
 }
 
 impl SettingKey {
@@ -65,6 +72,7 @@ impl SettingKey {
             Self::LedgerBaseCurrency => "ledger.base_currency",
             Self::SyncChannelConfig => "sync.channel.config",
             Self::SyncLastSyncAt => "sync.last_sync_at",
+            Self::BookFingerprint => "book.fingerprint",
         }
     }
 }
@@ -229,5 +237,6 @@ mod tests {
             "auto_backup.next_due_at"
         );
         assert_eq!(SettingKey::LogLevel.as_str(), "logging.level");
+        assert_eq!(SettingKey::BookFingerprint.as_str(), "book.fingerprint");
     }
 }

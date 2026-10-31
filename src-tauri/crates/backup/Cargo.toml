@@ -14,6 +14,10 @@ publish = false
 # 置脏实现的接线函数）已按注册点反转收敛（挂载点①/④，ADR-0112 决策 5）：
 # 备份域只定义注册点，实现由定时计划域/接线在壳层完成。
 ledger-infra = { path = "../infra" }
+# 设备标识（ADR-0144 决策 5，#1984）：产物元数据的来源设备水印取多端同步域
+# DeviceId（安装实例级，ADR-0091）。域 → 协议是合法方向（AGENTS.md「协议」节；
+# 先例：transaction / savings-goal / merchants 等）。
+ledger-sync-protocol = { path = "../sync-protocol" }
 rusqlite = { version = "0.40", features = ["bundled-sqlcipher-vendored-openssl", "trace"] }
 chrono = { version = "0.4.45", features = ["serde"] }
 serde = { version = "1", features = ["derive"] }

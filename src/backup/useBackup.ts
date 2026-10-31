@@ -41,6 +41,12 @@ function sourceText(kind: BackupKind): string {
   return kind === "auto" ? t("settings.data.source.auto") : t("settings.data.source.manual");
 }
 
+/** 来源设备展示文案（issue #1985）：设备水印本体；缺水印（旧产物/产出轮次
+ *  设备不可得）呈「未知来源」，与列表行来源未知标记同源。 */
+function sourceDeviceText(row: Pick<BackupFileInfo, "source_device_id">): string {
+  return row.source_device_id ?? t("settings.data.source.deviceUnknown");
+}
+
 /** 恢复确认弹窗意图（issue #572，ADR-0072 弹窗意图编排）：选中备份的目标载荷。 */
 export interface RestoreIntent {
   /** 所选备份文件路径。 */
@@ -108,17 +114,33 @@ export function useBackup() {
   const autoBackupFailing = ref(false);
   const autoBackupFailures = ref(0);
 
-  // 当前活动账本标识（issue #836 / ADR-0089 决策 5）：手动备份默认名携带它，
-  // 两本账的产物在共享备份目录内可区分、互不覆盖。清单不可用（注册表损坏的
-  // 回退现场）时为 null——退化为无标识旧命名，产物仍可靠。
-  const activeBookId = ref<string | null>(null);
+  // 当前账本指纹（issue #1985 / ADR-0144：命名标识段写入指纹）：手动备份默认名
+  // 携带它，两本账的产物在共享备份目录内可区分、互不覆盖；跨端同账产物靠同一
+  // 指纹合并可见。指纹未固化（空库）时为 null——退化为无标识旧命名，产物归属
+  // 由内层元数据水印承担。
+  const bookFingerprint = ref<string | null>(null);
 
-  /** 拉取活动账本标识（挂载首刷；切换账本经原位重引导，会话内不变）。 */
-  async function refreshActiveBook() {
+  /** 拉取当前账本指纹（挂载首刷；切换账本经原位重引导，会话内不变）。 */
+  async function refreshBookFingerprint() {
     try {
-      activeBookId.value = (await api.listBooks()).active_id;
+      bookFingerprint.value = await api.getBookFingerprint();
     } catch {
-      activeBookId.value = null;
+      bookFingerprint.value = null;
+    }
+  }
+
+  // 本机设备标识（issue #1987 / ADR-0144 决策 4）：清理确认弹窗的待删数量只
+  // 统计「本指纹 × 本设备」桶内产物——列表行来源设备与本机标识比对；标识
+  // 不可得时为 null，桶判定为空、待删数量为零（与后端「设备不可得保守不删」
+  // 同口径，不误报删除数）。
+  const deviceId = ref<string | null>(null);
+
+  /** 拉取本机设备标识（挂载首刷；安装实例级标识，会话内不变）。 */
+  async function refreshDeviceId() {
+    try {
+      deviceId.value = await api.getDeviceId();
+    } catch {
+      deviceId.value = null;
     }
   }
 
@@ -158,6 +180,7 @@ export function useBackup() {
       size_text: formatSize(b.size_bytes),
       created_at: formatBackupTime(b.created_at),
       source_text: sourceText(b.kind),
+      source_device_text: sourceDeviceText(b),
     })),
   );
 
@@ -234,10 +257,16 @@ export function useBackup() {
     }
   }
 
-  /// 手动立即清理：超过上限时弹 warning 级确认弹窗（ADR-0078），确认后执行。
+  /// 手动立即清理：本设备桶（本指纹 × 本设备）超过上限时弹 warning 级确认
+  /// 弹窗（ADR-0078），确认后执行。待删数量只统计当前设备名下可清理产物
+  ///（列表按指纹分域已含他端与未知来源，这里按来源设备比对过滤，issue
+  /// #1987）——与实际删除的数量一致。本机标识不可得时桶判定为空（不误报）。
   function manualPrune() {
     if (!store.backupDir) return;
-    const excess = Math.max(0, backups.value.length - store.backupMaxCount);
+    const ownBucket = deviceId.value
+      ? backups.value.filter((b) => b.source_device_id === deviceId.value)
+      : [];
+    const excess = Math.max(0, ownBucket.length - store.backupMaxCount);
     if (excess === 0) {
       message.info(t("settings.data.msg.pruneNotNeeded"));
       return;
@@ -288,14 +317,14 @@ export function useBackup() {
   async function backupOnce() {
     if (store.backupDir) {
       const { dir, sep } = normalizeBackupDir(store.backupDir);
-      await doBackup(`${dir}${sep}${defaultBackupFileName(new Date(), activeBookId.value)}`);
+      await doBackup(`${dir}${sep}${defaultBackupFileName(new Date(), bookFingerprint.value)}`);
     } else {
       await backupAs();
     }
   }
 
   async function backupAs() {
-    const defaultName = defaultBackupFileName(new Date(), activeBookId.value);
+    const defaultName = defaultBackupFileName(new Date(), bookFingerprint.value);
     const path = await save({
       title: t("settings.data.msg.saveAsTitle"),
       defaultPath: store.backupDir ? `${store.backupDir}/${defaultName}` : defaultName,
@@ -341,7 +370,8 @@ export function useBackup() {
   onMounted(async () => {
     void refreshBackups();
     void refreshAutoBackupState();
-    void refreshActiveBook();
+    void refreshBookFingerprint();
+    void refreshDeviceId();
     // 订阅备份产物变更信号（issue #129）：自动备份完成 / 清理后列表自动刷新。
     try {
       unlistenBackupsChanged = await listen(BACKUPS_CHANGED_EVENT, () => {
@@ -362,7 +392,7 @@ export function useBackup() {
   return {
     backingUp,
     restoring,
-    activeBookId,
+    bookFingerprint,
     lastBackup,
     backups,
     pruning,
