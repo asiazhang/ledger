@@ -563,28 +563,43 @@ fn first_fallback_skipped_by_day_gate(world: &mut LedgerWorld) {
     );
 }
 
-/// 清空自动备份目录内的产物（模拟用户删光备份），目录本身保留。
+/// 清空自动备份目录内的产物（模拟用户删光备份），目录本身保留；设备子目录
+/// （ADR-0144 决策 6，#1988）一并移除。
 #[when(expr = "清空自动备份目录")]
 fn clear_auto_backup_dir(world: &mut LedgerWorld) {
     let dir = world.boot.auto_backup_dir.as_ref().expect("尚未自动备份");
     for entry in std::fs::read_dir(dir).expect("列目录") {
-        std::fs::remove_file(entry.expect("读目录项").path()).expect("删除产物");
+        let path = entry.expect("读目录项").path();
+        if path.is_dir() {
+            std::fs::remove_dir_all(&path).expect("删除设备子目录");
+        } else {
+            std::fs::remove_file(&path).expect("删除产物");
+        }
     }
 }
 
 /// 统计本场景自动备份目录内的自动产物数量（受管前缀识别，混入手动文件不计数）。
+/// 设备子目录（新产物落点，ADR-0144 决策 6）与旧扁平路径一并计数——递归下探。
 #[then(expr = "备份目录内自动备份产物数量应为 {int}")]
 fn auto_backup_product_count(world: &mut LedgerWorld, expected: i64) {
     let dir = world.boot.auto_backup_dir.as_ref().expect("尚未自动备份");
-    let count = std::fs::read_dir(dir)
-        .expect("列目录")
-        .filter_map(|e| e.ok())
-        .filter(|e| {
-            e.file_name()
+    let mut count = 0;
+    let mut stack = vec![dir.clone()];
+    while let Some(current) = stack.pop() {
+        for entry in std::fs::read_dir(&current).expect("列目录") {
+            let entry = entry.expect("读目录项");
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+            } else if entry
+                .file_name()
                 .to_string_lossy()
                 .starts_with(AUTO_BACKUP_PREFIX)
-        })
-        .count() as i64;
+            {
+                count += 1;
+            }
+        }
+    }
     assert_eq!(count, expected, "自动备份产物数量不匹配");
 }
 
