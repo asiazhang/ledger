@@ -426,4 +426,20 @@ export const GATE_MOUNTS: readonly GateMount[] = [
       },
     ],
   },
+  {
+    name: "守门脚本测试（bun test scripts/）",
+    refs: "issue #1991 / ADR-0083",
+    hosts: [
+      {
+        file: CHECK_SH_FILE,
+        prefix: "bun test scripts/",
+        where: "scripts/check.sh 质量门槛序列",
+      },
+      {
+        file: CI_WORKFLOW_FILE,
+        prefix: "run: bun test scripts/",
+        where: ".github/workflows/build.yml frontend job",
+      },
+    ],
+  },
 ];

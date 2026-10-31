@@ -88,3 +88,18 @@ TS 语法子集受限且版本门槛高；② tsx devDep——给「零 npm 依�
 - ADR-0071（派生缓存归域）：check-structure infra→域反向扫描的扩展决策。
 - ADR-0046（包管理器切 pnpm）：CI frontend job 执行器即 pnpm；bun 与 pnpm 在同一 job
   并存，各管门槛脚本与依赖安装/前端构建。
+
+## 修订注记（#1991，2026-10-31）：守门测试唯一运行口径 = bun test，vitest 收集范围自此不含 scripts/
+
+决策 5「双运行时事实固化」的边界自本票起收严：守门测试文件（scripts/*.test.ts，
+自决策 2 的四个增长到十八个）此前经 vitest app project 收集、在 node 运行时下执行，
+但其断言接缝是 spawnSync('bun') 拉起被测门槛——bun 不在 PATH 时基线即红（
+spawn 失败以 `-1 ≠ 0` 断言失败的降态呈现，不指向真实根因）。本票把「测试在哪个
+运行时跑」与「被测脚本在哪个运行时跑」对齐：scripts/*.test.ts 的唯一运行口径 =
+`bun test scripts/`，vitest 收集范围不再含 scripts/——前端 vitest 全量跑自此不依赖
+bun 在场，双运行时各管一段的表述（门槛脚本 = Bun；前端构建/测试 = node）不再是
+灰色地带。执行挂载：本地 scripts/check.sh 与 CI frontend job 各一步 `bun test
+scripts/`，挂载登记与「删除即变红」核对住 scripts/gate-mounts.ts / 同名测试；
+frontend-test 分片 job 不再需要 bun（setup-bun 步骤随之退役）。决策 2 的
+spawnSync('bun') 接缝不变——变的是测试文件自身的执行器（vitest → bun test），
+被测路径仍是真实门槛。

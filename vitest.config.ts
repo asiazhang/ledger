@@ -62,8 +62,10 @@ export default defineConfig({
     testTimeout: 30_000,
     // 多 project 裁定（issue #1152 / spec #1148）：单根配置内 projects 分域，
     // pnpm test 与 CI --shard=N/2 语义不变（分片在各 project 文件并集上均分）。
-    // - app（jsdom）：应用壳测试（src/__tests__，issue #1158）+ 守门脚本包装测试
-    //   （scripts/，与所测脚本同目录住）。全局测试接缝 setupFiles 指向共享测试
+    // - app（jsdom）：应用壳测试（src/__tests__，issue #1158）。scripts/ 守门脚本
+    //   测试不在本收集范围（issue #1991）：其唯一运行口径 = bun test（测试经
+    //   spawnSync('bun') 依赖 bun 在 PATH，vitest/node 下基线即红），挂载登记见
+    //   scripts/gate-mounts.ts。全局测试接缝 setupFiles 指向共享测试
     //   支持包 @ledger/test-support（包内 setup 消费，src/__tests__/setup.ts 已
     //   下沉迁入），再叠应用壳装配薄壳 app-setup.ts（参考 store 刷新器注册——
     //   接缝包不反向依赖应用壳的包化反转）。
@@ -81,7 +83,7 @@ export default defineConfig({
           name: "app",
           environment: "jsdom",
           setupFiles: ["./packages/test-support/src/setup.ts", "./src/__tests__/app-setup.ts"],
-          include: ["src/__tests__/**/*.test.ts", "scripts/**/*.test.ts"],
+          include: ["src/__tests__/**/*.test.ts"],
         },
       },
       {

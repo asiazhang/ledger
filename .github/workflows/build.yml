@@ -94,6 +94,13 @@ jobs:
       - name: 前端异步守门
         run: bun scripts/check-async-guards.ts
 
+      # 守门脚本测试（issue #1991）：scripts/*.test.ts 的唯一运行口径 = bun test
+      # （测试经 spawnSync('bun') 依赖 bun 在 PATH，vitest 收集范围自此不含
+      # scripts/，ADR-0083 双运行时边界收严）；挂载登记归 scripts/gate-mounts.ts，
+      # 删除本步骤即红。
+      - name: 守门脚本测试
+        run: bun test scripts/
+
       - name: 文档一致性检查
         run: ./scripts/check-docs.sh
 
@@ -143,11 +150,6 @@ jobs:
           runtime: node@22
           cache: true
           require-lockfile: true
-
-      # 守门脚本测试经 spawnSync('bun', …) 同运行时调用（ADR-0083），需安装 bun
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.4.0
 
       - name: Vitest 分片运行
         run: pnpm exec vitest run --shard=${{ matrix.shard }}/2
