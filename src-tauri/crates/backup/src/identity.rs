@@ -26,9 +26,17 @@ use ledger_infra::settings::{self, SettingKey};
 /// 交易列表行序同款（`date ASC, created_at ASC, id ASC`，id 最终 tiebreaker），
 /// 排除软删行；空库返回 `None`。指纹首用与产物归属第三顺位（存量产物解包
 /// 归并，issue #1986）共用同款算法——单一事实源。
+///
+/// 行序口径出处：交易域读路径 order 模块（`ledger_transaction::read::order`，
+/// 与列表 `date DESC/created_at DESC/id DESC` 同键反向；口径陈述见该模块
+/// `get_transaction_order_summary` 注记）。锁定测试：`tests.rs` 的
+/// `content_anchor_earliest_follows_transaction_row_order`（乱序 created_at、
+/// 同日多行、含软删——删除排序键或软删过滤即红）。
 pub(crate) fn content_anchor(conn: &Connection) -> Result<Option<String>> {
     let id: Option<String> = conn
         .query_row(
+            // 行序口径见本函数文档：与交易域列表/订单读路径同键反向，软删排除；
+            // 改动本 SQL 前先过上述锁定测试。
             "SELECT id FROM transactions WHERE is_deleted = 0 \
              ORDER BY date ASC, created_at ASC, id ASC LIMIT 1",
             [],
@@ -67,6 +75,15 @@ pub fn book_fingerprint_readonly(conn: &Connection) -> Result<Option<String>> {
 /// 产物来源设备标识：多端同步域 DeviceId（首用生成并持久化，与同步写路径
 /// 同款语义）；获取失败（attached 侧异常）返回 `None`——该轮产物不带设备
 /// 水印（来源未知），不阻断备份（ADR-0144 决策 5）。
+///
+/// **只读路径边界**（spec #1982 review 留痕，行为不改）：本函数也被只读
+/// 连接消费——清理/列表的作用域构造（`engine::BackupScope::of_conn`，
+/// prune/list 读路径）。DeviceId 首用是 INSERT（`sync_device` 无行时），而
+/// 只读连接写不进去：升级后本机未做过任何新备份/同步写即清理时，这里取
+/// 不到设备标识 → 作用域 `device_id = None` → 本机桶判空、不删。结果自洽
+///（该现场目录里也不可能有本机新命名产物，升级存量扁平产物不带设备水印
+/// 本就不进桶，「保守不删」正是预期），但属行为巧合对齐而非机制保证——若
+/// 未来要求只读路径也能首用 DeviceId，需把首用写收口到写路径。
 pub fn source_device_id(conn: &Connection) -> Option<String> {
     match ledger_sync_protocol::device::device_id(conn) {
         Ok(id) => Some(id),

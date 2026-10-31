@@ -409,6 +409,11 @@ pub fn managed_command_target(target: &Path, conn: &Connection) -> Result<PathBu
 
 /// 目录同位判定（尾部分隔符不敏感）：镜像来自前端 `normalizeBackupDir`（去尾
 /// 斜杠）推送，目标父目录来自用户路径拼接，两侧可能差一个尾分隔符。
+///
+/// **已知取舍**（spec #1982 review 留痕，不修）：纯文本比较对大小写不敏感
+/// 文件系统（macOS/Windows，含大小写变体如 `/Users/me/Backups`）会漏判镜像
+/// 目录——后果仅是手动备份不改道设备子目录、退回扁平落点，文件照常落盘、
+/// 清理与归属不受影响（行为正确、布局退化），故不做跨平台路径规范化。
 fn same_dir_path(a: &str, b: &str) -> bool {
     fn norm(s: &str) -> &str {
         s.trim_end_matches(['/', '\\'])

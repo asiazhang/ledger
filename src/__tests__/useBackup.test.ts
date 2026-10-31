@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { mockInvoke, wireInvokeSeam } from "@ledger/test-support/invoke-mock";
+import { lastInvokeArgs, mockInvoke, wireInvokeSeam } from "@ledger/test-support/invoke-mock";
 import { mount, flushPromises } from "@vue/test-utils";
 import { defineComponent } from "vue";
 import { type UnlistenFn } from "@tauri-apps/api/event";
@@ -537,6 +537,49 @@ describe("useBackup 手动清理确认弹窗（issue #652 / ADR-0078）", () => 
 
     await backup.manualPrune();
     expect(backup.pruneConfirmShow.value).toBe(false);
+  });
+
+  it("待删数量与后端清理桶镜像一致（spec #1982 review：桶谓词漂移防护）", async () => {
+    // 后端 prune_managed_backups 的桶口径镜像（engine.rs）：本桶 = 指纹归属
+    // （列表已收口）× 设备水印逐值比对；桶内新→旧排序，超额删最旧，kept
+    // = 桶内保留数。替身按同一口径响应 keep，前端弹窗待删数与后端实际
+    // 删除数（deleted.length）必须相等：前端谓词漂移（漏过滤/比错字段/
+    // 比错基准）即红。
+    const mirrorPrune = (files: BackupFileInfo[], deviceId: string, keep: number) => {
+      const bucket = files.filter((f) => f.source_device_id === deviceId);
+      const excess = Math.max(0, bucket.length - keep);
+      return { kept: bucket.length - excess, deleted: bucket.slice(-excess).map((f) => f.path) };
+    };
+
+    const files = [
+      autoBackupFile,
+      ownBackupSecond,
+      ownBackupThird,
+      manualBackupFile,
+      foreignBackup,
+    ];
+    useAppStore().setBackupMaxCount(1);
+    wireInvokeSeam({
+      overrides: {
+        list_backups: files,
+        get_auto_backup_state: AUTO_STATE_OK,
+        get_device_id: "dev-this",
+        prune_backups: (args) =>
+          mirrorPrune(files, "dev-this", (args?.keep as number | undefined) ?? 0),
+      },
+    });
+    const { backup } = mountHost();
+    await flushPromises();
+
+    await backup.manualPrune();
+    expect(backup.pruneConfirmShow.value).toBe(true);
+    // 镜像语义锁定：弹窗待删数 == 后端口径下本桶超额（实际将删数）。
+    const backendResult = mirrorPrune(files, "dev-this", 1);
+    expect(backendResult.deleted.length).toBeGreaterThan(0);
+    expect(backup.pruneExcess.value).toBe(backendResult.deleted.length);
+    await backup.confirmPrune();
+    await flushPromises();
+    expect(lastInvokeArgs("prune_backups")).toMatchObject({ dir: "/Users/me/backups", keep: 1 });
   });
 });
 

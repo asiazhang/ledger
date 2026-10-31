@@ -4,7 +4,7 @@ use std::fs::File;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
-use tauri_app_lib::test_support::{ScratchDir, ScratchFile};
+use tauri_app_lib::test_support::{ScratchDir, ScratchFile, merge_extra_backup_meta};
 
 use rusqlite::Connection;
 use rusqlite::params;
@@ -56,8 +56,9 @@ fn real_managed_backup(dir: &Path, file_name: &str, kind: BackupKind) -> PathBuf
 
 /// 同 [`real_managed_backup`]，另把 `extra_meta`（JSON 对象）的字段并入产物
 /// 内层元数据（`backup.json`）——测试侧注入，供「元数据携带指纹/设备」类
-/// 归属判定用例构造产物（ADR-0144 决策 5；产品写侧字段落地后，后续票可
-/// 改经真实写路径产出，本入口留作任意外来元数据的兜底）。
+/// 归属判定用例构造产物（ADR-0144 决策 5）。重写动作上收在根包
+/// test_support::merge_extra_backup_meta（spec #1982 review：与 e2e 步骤层
+/// 共享单点，本文件不再自持 zip 整包重写副本）。
 fn real_managed_backup_with_meta(
     dir: &Path,
     file_name: &str,
@@ -72,40 +73,6 @@ fn real_managed_backup_with_meta(
         merge_extra_backup_meta(&target, extra_meta);
     }
     target
-}
-
-/// 把 `extra_meta` 的字段并入既有产物的 `backup.json`：逐条目原样复制、
-/// 元数据条目合并重写（整包重建，测试侧一次性动作）。
-fn merge_extra_backup_meta(path: &Path, extra: &serde_json::Value) {
-    let mut archive = zip::ZipArchive::new(File::open(path).unwrap()).unwrap();
-    let mut buf = Vec::new();
-    {
-        let mut writer = zip::ZipWriter::new(std::io::Cursor::new(&mut buf));
-        let options = zip::write::SimpleFileOptions::default();
-        for i in 0..archive.len() {
-            let mut entry = archive.by_index(i).unwrap();
-            let name = entry.name().unwrap().to_string();
-            writer.start_file(name.as_str(), options).unwrap();
-            if name == "backup.json" {
-                let mut text = String::new();
-                entry.read_to_string(&mut text).unwrap();
-                let mut meta: serde_json::Value = serde_json::from_str(&text).unwrap();
-                let obj = meta.as_object_mut().unwrap();
-                for (k, v) in extra.as_object().expect("extra_meta 须为 JSON 对象") {
-                    obj.insert(k.clone(), v.clone());
-                }
-                std::io::Write::write_all(
-                    &mut writer,
-                    serde_json::to_string(&meta).unwrap().as_bytes(),
-                )
-                .unwrap();
-            } else {
-                std::io::copy(&mut entry, &mut writer).unwrap();
-            }
-        }
-        writer.finish().unwrap();
-    }
-    std::fs::write(path, buf).unwrap();
 }
 
 /// 夹具契约（issue #1983）：产出物是真实成对受管产物——受管命名、zip 三
@@ -1168,6 +1135,51 @@ fn content_anchor_merge_scans_device_subdirs() {
         "设备子目录内的异端产物同样经内容锚归并，两处同名产物都可见"
     );
     assert!(list.iter().all(|f| f.source_unknown), "均为升级前形态");
+}
+
+/// 内容锚行序口径锁定（spec #1982 review）：`content_anchor` 的内联 SQL
+/// 依赖交易域行序（`date ASC, created_at ASC, id ASC`，id 最终 tiebreaker，
+/// 排除软删；口径出处：交易域读路径 order 模块，与列表同键反向）。构造
+/// 乱序 created_at（与 date 反向）、同日同 created_at 双行（id 决胜）、
+/// 更早日期的软删行，断言「最早」取值与交易域行序一致：任一排序键缺失、
+/// 键序反向或软删过滤缺失，取值都会变成本用例中的另一行（删除即红）。
+#[test]
+fn content_anchor_earliest_follows_transaction_row_order() {
+    let conn = tauri_app_lib::test_support::open();
+    tauri_app_lib::test_support::seed_account(&conn, "acc-1", "现金", "cash", "CNY", 0);
+    let insert = |id: &str, date: &str, created_at: &str, deleted: i64| {
+        conn.execute(
+            "INSERT INTO transactions (id,kind,amount_cents,currency_code,amount_native_cents,account_id,date,created_at,updated_at,version,device_id,is_deleted) \
+             VALUES (?1,'expense',1500,'CNY',1500,'acc-1',?2,?3,?3,1,'test',?4)",
+            params![id, date, created_at, deleted],
+        )
+        .unwrap();
+    };
+    // date 最小的一组：created_at 反而最大（乱序），同组两行同 created_at、
+    // id 决胜——正确答案 = txn-w（date 最小 → created_at 平 → id 最小）。
+    insert("txn-w", "2026-01-01", "2026-06-01T00:00:00Z", 0);
+    insert("txn-w2", "2026-01-01", "2026-06-01T00:00:00Z", 0);
+    // created_at 最小的未删行（date 大）：若错误按 created_at 排序会选中它。
+    // 时刻基准用工厂固定时刻（ADR-0084 决策 5），正确答案行用更晚时刻构造乱序。
+    insert(
+        "txn-x",
+        "2026-05-01",
+        tauri_app_lib::test_support::FIXED_NOW,
+        0,
+    );
+    // date 最小的软删行：若漏软删过滤会选中它。
+    insert(
+        "txn-y",
+        "2025-01-01",
+        tauri_app_lib::test_support::FIXED_NOW,
+        1,
+    );
+
+    assert_eq!(
+        super::identity::content_anchor(&conn).unwrap(),
+        Some("txn-w".to_string()),
+        "内容锚 = 按交易域行序（date → created_at → id）排除软删后的最早一笔"
+    );
 }
 
 /// 作用域构造（读侧唯一构造点）：已固化恒读固化值；未固化回内容锚（与首用

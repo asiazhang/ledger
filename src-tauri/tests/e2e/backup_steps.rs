@@ -1,4 +1,4 @@
-use std::io::{Read, Write};
+use std::io::Write;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -148,7 +148,7 @@ fn auto_backup_to_temp(world: &mut LedgerWorld, device_id: String, fingerprint: 
     if !fingerprint.is_empty() {
         extra.insert("fingerprint".into(), serde_json::json!(fingerprint));
     }
-    patch_backup_meta(&path, &extra);
+    patch_backup_meta(&path, extra);
     let path = if fingerprint.is_empty() {
         path
     } else {
@@ -167,37 +167,12 @@ fn auto_backup_to_temp(world: &mut LedgerWorld, device_id: String, fingerprint: 
     world.boot.last_backup_path = Some(path);
 }
 
-/// 把 `extra` 的字段并入既有产物内层元数据 `backup.json`（整包重写，测试侧
-/// 一次性动作，与域单测夹具同构）：模拟另一台设备/另一本账产物的水印形态。
-fn patch_backup_meta(path: &std::path::Path, extra: &serde_json::Map<String, serde_json::Value>) {
-    let file = std::fs::File::open(path).expect("打开备份包失败");
-    let mut archive = zip::ZipArchive::new(file).expect("不是有效 zip 备份包");
-    let mut buf = Vec::new();
-    {
-        let mut writer = zip::ZipWriter::new(std::io::Cursor::new(&mut buf));
-        let options = zip::write::SimpleFileOptions::default();
-        for i in 0..archive.len() {
-            let mut entry = archive.by_index(i).unwrap();
-            let name = entry.name().unwrap().to_string();
-            writer.start_file(name.as_str(), options).unwrap();
-            if name == "backup.json" {
-                let mut text = String::new();
-                entry.read_to_string(&mut text).unwrap();
-                let mut meta: serde_json::Value = serde_json::from_str(&text).unwrap();
-                let obj = meta.as_object_mut().unwrap();
-                for (k, v) in extra {
-                    obj.insert(k.clone(), v.clone());
-                }
-                writer
-                    .write_all(serde_json::to_string(&meta).unwrap().as_bytes())
-                    .unwrap();
-            } else {
-                std::io::copy(&mut entry, &mut writer).unwrap();
-            }
-        }
-        writer.finish().unwrap();
-    }
-    std::fs::write(path, buf).expect("回写备份包失败");
+/// 把 `extra` 的字段并入既有产物内层元数据 `backup.json`（测试侧一次性
+/// 动作）：模拟另一台设备/另一本账产物的水印形态。重写动作上收在根包
+/// test_support::merge_extra_backup_meta（spec #1982 review：与备份域单测
+/// 夹具共享单点）；本薄皮只做 Map→Value 类型适配，e2e 调用点零改动。
+fn patch_backup_meta(path: &std::path::Path, extra: serde_json::Map<String, serde_json::Value>) {
+    tauri_app_lib::test_support::merge_extra_backup_meta(path, &serde_json::Value::Object(extra));
 }
 
 /// 把最近一份自动备份产物复制到指定设备子目录并改写来源设备标识（issue
@@ -223,7 +198,7 @@ fn clone_last_auto_backup_as_other_device(world: &mut LedgerWorld, device: Strin
     std::fs::copy(&path, &target).expect("复制产物失败");
     let mut extra = serde_json::Map::new();
     extra.insert("device_id".into(), serde_json::json!(device));
-    patch_backup_meta(&target, &extra);
+    patch_backup_meta(&target, extra);
 }
 
 /// 以当前活动账本作用域触发自动备份（issue #836 / #1985）：作用域由引擎在
@@ -235,8 +210,8 @@ fn auto_backup_with_active_book_scope(world: &mut LedgerWorld) {
 }
 
 /// 备份产物文件名携带当前账本指纹（命名按指纹分域，产物互不覆盖，issue #1985）。
-#[then(expr = "备份产物文件名应携带当前账本标识")]
-fn backup_file_name_carries_book_id(world: &mut LedgerWorld) {
+#[then(expr = "备份产物文件名应携带当前账本指纹")]
+fn backup_file_name_carries_book_fingerprint(world: &mut LedgerWorld) {
     let fingerprint = active_book_fingerprint(world);
     let path = world
         .boot

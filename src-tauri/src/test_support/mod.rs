@@ -82,6 +82,12 @@
 //! 与「错误确来自注入」的断言一并收口。登记处：ADR-0084 修订注记、
 //! CONTEXT-testing「op 写失败注入」词条。
 //!
+//! **spec #1982 review 追加**（备份包内层元数据注入）：备份域单测夹具与
+//! BDD e2e 步骤层两处同体的 ~30 行 zip 整包重写（把外来字段并入产物
+//! `backup.json`）收编 [`zip_meta`]——`merge_extra_backup_meta` 单一维护点
+//!（ADR-0084 准入：≥2 处同体消费；消费边为既有 dev-dependency 环 + e2e
+//! 链接，无新依赖）。登记处：CONTEXT-testing「目录级测试薄壳」。
+//!
 //! 说明：集成测试 `tests/api_server/` 链接的是非 `#[cfg(test)]` 构建的 lib，
 //! 因此本模块不能仅以 `#[cfg(test)]` 编译；对生产二进制的影响只是一些未使用的
 //! 测试辅助函数（可被编译器消除）。
@@ -107,6 +113,7 @@ mod seed;
 pub mod snapshot_probe;
 #[cfg(test)]
 mod tests;
+pub mod zip_meta;
 
 pub use assert::{
     assert_balance_cache_matches_realtime, extract_check_in_literals, read_scalar_i64,
@@ -122,6 +129,7 @@ pub use seed::{
     seed_fx_history_weeks, seed_fx_rate_history, seed_instrument, seed_investment_setup,
     seed_market_price, seed_price_history,
 };
+pub use zip_meta::merge_extra_backup_meta;
 
 use std::future::Future;
 use std::path::Path;
