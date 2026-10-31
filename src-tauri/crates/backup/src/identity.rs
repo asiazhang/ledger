@@ -24,8 +24,9 @@ use ledger_infra::settings::{self, SettingKey};
 
 /// 库内最早一笔交易的全局唯一标识（内容锚，ADR-0144 决策 1）：排序口径与
 /// 交易列表行序同款（`date ASC, created_at ASC, id ASC`，id 最终 tiebreaker），
-/// 排除软删行；空库返回 `None`。
-fn content_anchor(conn: &Connection) -> Result<Option<String>> {
+/// 排除软删行；空库返回 `None`。指纹首用与产物归属第三顺位（存量产物解包
+/// 归并，issue #1986）共用同款算法——单一事实源。
+pub(crate) fn content_anchor(conn: &Connection) -> Result<Option<String>> {
     let id: Option<String> = conn
         .query_row(
             "SELECT id FROM transactions WHERE is_deleted = 0 \

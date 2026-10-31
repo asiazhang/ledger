@@ -734,8 +734,9 @@ fn scope_of_fixed_fingerprint(conn: &Connection) -> BackupScope {
 }
 
 /// 归属判定按指纹分域（issue #1985 验收①②）：文件名标识段 = 本指纹（顺位一）
-/// 与内层元数据明文指纹 = 本指纹（顺位二，另一台设备产物）都进列表；指纹
-/// 不匹配的产物（别本账的新旧产物、无指纹水印的旧产物）不进列表。
+/// 与内层元数据明文指纹 = 本指纹（顺位二，另一台设备产物）都进列表；别本账
+/// 产物不进列表。元数据无指纹水印的历史产物（升级前形态）走顺位三内容锚
+/// 判定（issue #1986）：内容锚命中即归并进列表（无设备水印 → 来源标注未知）。
 #[test]
 fn listing_attributes_products_by_fingerprint_across_devices() {
     let conn = tauri_app_lib::test_support::open();
@@ -765,12 +766,13 @@ fn listing_attributes_products_by_fingerprint_across_devices() {
         BackupKind::Manual,
         &serde_json::json!({ "fingerprint": "fp-other-book" }),
     );
-    // 无指纹水印的历史产物（升级前形态）：归属判不出，本期不进列表。
+    // 无指纹水印的历史产物（升级前形态，指纹与设备水印同步缺位）：顺位三内
+    // 容锚判定（夹具内库内容锚 = txn-1 = 本指纹）→ 归并进列表（issue #1986）。
     real_managed_backup_with_meta(
         &dir,
         "ledger-backup-20260101-000000.db.zip",
         BackupKind::Manual,
-        &serde_json::json!({ "fingerprint": null }),
+        &serde_json::json!({ "fingerprint": null, "device_id": null }),
     );
 
     let list = list_managed_backups(&dir, Some(&scope)).unwrap();
@@ -781,9 +783,13 @@ fn listing_attributes_products_by_fingerprint_across_devices() {
         vec![
             "ledger-auto-20260103-000000-txn-1.db.zip",
             "ledger-backup-20260102-000000-ab12cd34ef56ab12.db.zip",
+            "ledger-backup-20260101-000000.db.zip",
         ],
-        "两台设备的同账产物合并可见（新→旧），别本与判不出归属的不进列表"
+        "两台设备的同账产物与内容锚归并的旧产物合并可见（新→旧），别本不进列表"
     );
+    // 内容锚归并的旧产物无设备水印：来源标注未知（归属与来源是两个维度）。
+    assert_eq!(list[2].source_device_id, None);
+    assert!(list[2].source_unknown);
     // 来源设备字段（issue #1985 验收：列表返回形状新增来源设备标识与来源是否未知）。
     assert_eq!(
         list[0].source_device_id.as_deref(),
@@ -814,6 +820,353 @@ fn attributed_product_without_device_watermark_lists_as_unknown_source() {
     assert_eq!(list.len(), 1, "指纹命中即归属，设备水印缺失不影响可见性");
     assert_eq!(list[0].source_device_id, None, "无设备水印");
     assert!(list[0].source_unknown, "来源标记为未知");
+}
+
+// -------------------------------------------------------------------------
+// 归属第三顺位：内容锚归并与「未知来源」桶（issue #1986 / ADR-0144 决策 3）。
+// 元数据无指纹的存量产物解包读库内内容锚判定归属；密文且无指纹不尝试解包、
+// 直接落「未知来源」桶；判不出的产物照常可见、明确标注、永不参与自动清理。
+// -------------------------------------------------------------------------
+
+/// 归属归属缓存文件的落盘位置（备份目录内的独立本地文件，非受管命名）。
+use super::attribution::CACHE_FILE_NAME;
+
+/// 升级前异端产物（另一台设备的存量备份）：文件名带他端句柄、内层元数据
+/// 无指纹无设备水印（写侧水印抹除，模拟升级前形态）、内层库内容锚可判定
+/// （真夹具：最早一笔 = txn-1）。
+fn legacy_product_with_anchor(dir: &Path, file_name: &str) -> PathBuf {
+    real_managed_backup_with_meta(
+        dir,
+        file_name,
+        BackupKind::Manual,
+        &serde_json::json!({ "fingerprint": null, "device_id": null }),
+    )
+}
+
+/// 密文世界的升级前产物（真密文内库，ADR-0144 决策 3「密文产物读不出内容锚」
+/// 的真形态）：经加密转换 + 备份写出产出，`extra_meta` 供抹除/保留水印字段。
+fn encrypted_legacy_product(
+    dir: &Path,
+    file_name: &str,
+    extra_meta: &serde_json::Value,
+) -> PathBuf {
+    let work = ScratchDir::new("backup-test-enc-legacy-src");
+    let src = work.join("ledger.db");
+    {
+        let conn = tauri_app_lib::test_support::open();
+        seed(&conn);
+        conn.execute("VACUUM INTO ?1", params![src.to_string_lossy()])
+            .unwrap();
+        conn.execute(
+            "VACUUM sync INTO ?1",
+            params![work.join(db::SYNC_DB_FILE_NAME).to_string_lossy()],
+        )
+        .unwrap();
+    }
+    ledger_infra::db::encryption::enable_encryption_for_file(&src, "pass-phrase-123").unwrap();
+    let conn = ledger_infra::db::open_connection_with_passphrase(&src, "pass-phrase-123").unwrap();
+    let target = dir.join(file_name);
+    backup_db_to(&conn, &target, "0.2.0", BackupKind::Manual).unwrap();
+    if extra_meta.as_object().is_some_and(|o| !o.is_empty()) {
+        merge_extra_backup_meta(&target, extra_meta);
+    }
+    target
+}
+
+/// 现场同构验收（issue #1986）：29 份异端（文件名带他端句柄、元数据无指纹、
+/// 内容锚可判定）+ 4 份无标识历史命名（同桶按内容锚判定）+ 1 份本机——
+/// 升级后首次全部出现在列表里，归属正确、来源标注正确。
+#[test]
+fn field_isomorphic_products_all_visible_and_attributed() {
+    let conn = tauri_app_lib::test_support::open();
+    let scope = scope_of_fixed_fingerprint(&conn);
+    let own_device = scope.device_id.clone().expect("真实设备标识在场");
+    let dir = ScratchDir::new("backup-test-field-34");
+
+    let mut expected: Vec<String> = Vec::new();
+    // 1 份本机（新命名带本指纹 + 本机设备水印，最新）。
+    let own = real_managed_backup_with_meta(
+        &dir,
+        "ledger-auto-20260301-000000-txn-1.db.zip",
+        BackupKind::Auto,
+        &serde_json::json!({ "device_id": own_device }),
+    );
+    let _ = own;
+    expected.push("ledger-auto-20260301-000000-txn-1.db.zip".into());
+    // 4 份无标识历史命名：同桶按内容锚判定（期望序 = 列表新→旧序）。
+    for day in (1..=4).rev() {
+        let name = format!("ledger-backup-2026020{day}-000000.db.zip");
+        legacy_product_with_anchor(&dir, &name);
+        expected.push(name);
+    }
+    // 29 份异端：文件名带他端句柄、元数据无指纹、内容锚可判定。
+    for day in (1..=29).rev() {
+        let name = format!("ledger-backup-202601{day:02}-000000-handle-mac-{day:02}.db.zip");
+        legacy_product_with_anchor(&dir, &name);
+        expected.push(name);
+    }
+
+    let list = list_managed_backups(&dir, Some(&scope)).unwrap();
+
+    assert_eq!(list.len(), 34, "29 异端 + 4 无标识 + 1 本机全部可见");
+    let names: Vec<String> = list.iter().map(|f| f.file_name.clone()).collect();
+    assert_eq!(names, expected, "列表新→旧完整且归属本账本作用域");
+    // 本机产物：设备徽标本机、来源非未知。
+    assert_eq!(
+        list[0].source_device_id.as_deref(),
+        Some(own_device.as_str())
+    );
+    assert!(!list[0].source_unknown);
+    // 33 份升级前产物（异端 + 无标识）：内容锚归并、无设备水印 → 来源标注未知。
+    for f in &list[1..] {
+        assert_eq!(f.source_device_id, None, "{}", f.file_name);
+        assert!(f.source_unknown, "{}", f.file_name);
+    }
+}
+
+/// 密文存量产物的归属（issue #1986）：带明文指纹水印的经顺位二归并（加密
+/// 不影响跨端可见性）；密文且无指纹的不尝试解包，直接落「未知来源」桶——
+/// 照常可见并标注，不猜测、不丢弃。
+#[test]
+fn encrypted_products_attribute_by_watermark_or_land_unknown() {
+    let conn = tauri_app_lib::test_support::open();
+    let scope = scope_of_fixed_fingerprint(&conn);
+    let dir = ScratchDir::new("backup-test-enc-unknown");
+
+    // 密文 + 保留指纹水印：顺位二元数据明文指纹命中（内库密文读不出内容锚）。
+    let watermarked = encrypted_legacy_product(
+        &dir,
+        "ledger-backup-20260101-000000-handle-mac.db.zip",
+        &serde_json::json!({ "device_id": null }),
+    );
+    assert!(
+        read_meta_json(&watermarked)["encrypted"].as_bool().unwrap(),
+        "前置：产物为密文形态"
+    );
+    // 密文 + 抹除指纹水印：升级前密文产物，归属判不出。
+    let anonymous = encrypted_legacy_product(
+        &dir,
+        "ledger-backup-20260102-000000-handle-mac.db.zip",
+        &serde_json::json!({ "fingerprint": null, "device_id": null }),
+    );
+    let _ = anonymous;
+
+    let list = list_managed_backups(&dir, Some(&scope)).unwrap();
+
+    let names: Vec<String> = list.iter().map(|f| f.file_name.clone()).collect();
+    assert_eq!(
+        names,
+        vec![
+            "ledger-backup-20260102-000000-handle-mac.db.zip",
+            "ledger-backup-20260101-000000-handle-mac.db.zip",
+        ],
+        "密文带指纹经水印归并，密文无指纹落未知来源桶——两者都可见"
+    );
+    for f in &list {
+        assert!(f.source_unknown, "{}", f.file_name);
+        assert!(f.encrypted, "{} 锁形标记保留", f.file_name);
+    }
+}
+
+/// 「未知来源」桶（密文无指纹、残缺包）永不参与自动清理（issue #1986）：
+/// 清理只摘本机设备名下的最旧产物，未知来源产物可见、留存、不占配额。
+#[test]
+fn unknown_source_bucket_visible_but_never_pruned() {
+    let conn = tauri_app_lib::test_support::open();
+    let scope = scope_of_fixed_fingerprint(&conn);
+    let own_device = scope.device_id.clone().expect("真实设备标识在场");
+    let dir = ScratchDir::new("backup-test-unknown-prune");
+
+    // 本机名下 2 份（设备水印 = 本机）。
+    for ts in ["20260101", "20260102"] {
+        real_managed_backup_with_meta(
+            &dir,
+            &format!("ledger-auto-{ts}-000000-txn-1.db.zip"),
+            BackupKind::Auto,
+            &serde_json::json!({ "device_id": own_device }),
+        );
+    }
+    // 未知来源桶 2 份：密文无指纹 + 残缺包（元数据都读不出）。
+    let encrypted_unknown = encrypted_legacy_product(
+        &dir,
+        "ledger-backup-20251230-000000-handle-mac.db.zip",
+        &serde_json::json!({ "fingerprint": null, "device_id": null }),
+    );
+    let _ = encrypted_unknown;
+    let broken = dir.join("ledger-backup-20251231-000000.db.zip");
+    std::fs::write(&broken, b"x").unwrap();
+
+    // 先验证可见性：4 份全部在列表（未知来源桶照常出现）。
+    let list = list_managed_backups(&dir, Some(&scope)).unwrap();
+    assert_eq!(list.len(), 4, "未知来源桶产物照常出现在列表");
+    assert!(
+        list.iter().filter(|f| f.source_device_id.is_none()).count() == 2,
+        "未知来源桶产物标注来源未知"
+    );
+
+    // 上限 1：只删本机名下最旧一份；未知来源产物永不清理、不占配额。
+    let r = prune_managed_backups(&dir, 1, Some(&scope)).unwrap();
+    assert_eq!(
+        r.deleted,
+        vec!["ledger-auto-20260101-000000-txn-1.db.zip"],
+        "只摘本机设备名下的最旧产物"
+    );
+    assert!(
+        dir.join("ledger-backup-20251230-000000-handle-mac.db.zip")
+            .exists(),
+        "密文无指纹产物（未知来源桶）不被清理"
+    );
+    assert!(broken.exists(), "残缺包（未知来源桶）不被清理");
+    assert_eq!(r.kept, 3, "未知来源产物不占保留配额");
+}
+
+/// 多账本分域（issue #1986）：同一备份目录内同名时间戳、不同指纹的异端产物
+/// 各归各账本，不得归错——内容锚是唯一判据，时间戳与句柄不参与归属。
+#[test]
+fn same_timestamp_foreign_products_never_cross_attributed() {
+    let conn_a = tauri_app_lib::test_support::open();
+    seed(&conn_a);
+    let scope_a = scope_of_fixed_fingerprint(&conn_a);
+    let dir = ScratchDir::new("backup-test-multi-book");
+
+    // 账本 A 的异端产物：他端句柄命名、无指纹元数据、内容锚 txn-1。
+    let product_a =
+        legacy_product_with_anchor(&dir, "ledger-backup-20260101-000000-handle-a.db.zip");
+    let _ = product_a;
+    // 账本 B 的产物：同名时间戳、不同内容锚（txn-b）、无指纹元数据。
+    {
+        let conn_b = tauri_app_lib::test_support::open();
+        tauri_app_lib::test_support::seed_account(&conn_b, "acc-1", "现金", "cash", "CNY", 0);
+        conn_b.execute(
+            "INSERT INTO transactions (id,kind,amount_cents,currency_code,amount_native_cents,account_id,date,created_at,updated_at,version,device_id,is_deleted) \
+             VALUES ('txn-b','expense',9900,'CNY',9900,'acc-1','2026-01-01',?1,?1,1,'test',0)",
+            [tauri_app_lib::test_support::FIXED_NOW],
+        )
+        .unwrap();
+        let path_b = dir.join("ledger-backup-20260101-000000-handle-b.db.zip");
+        backup_db_to(&conn_b, &path_b, "0.2.0", BackupKind::Manual).unwrap();
+        merge_extra_backup_meta(
+            &path_b,
+            &serde_json::json!({ "fingerprint": null, "device_id": null }),
+        );
+        // 写出时首用固化：账本 B 的指纹 = 内容锚 txn-b。
+        assert_eq!(book_fingerprint(&conn_b).unwrap(), "txn-b");
+    }
+
+    let list_a = list_managed_backups(&dir, Some(&scope_a)).unwrap();
+    let names_a: Vec<String> = list_a.iter().map(|f| f.file_name.clone()).collect();
+    assert_eq!(
+        names_a,
+        vec!["ledger-backup-20260101-000000-handle-a.db.zip"],
+        "账本 A 只见内容锚命中的产物"
+    );
+
+    // 账本 B 的作用域（固化指纹 txn-b）。
+    let conn_b = tauri_app_lib::test_support::open();
+    ledger_infra::settings::set(
+        &conn_b,
+        ledger_infra::settings::SettingKey::BookFingerprint,
+        &"txn-b".to_string(),
+    )
+    .unwrap();
+    let scope_b = BackupScope::of_conn(&conn_b)
+        .unwrap()
+        .expect("固化指纹在场");
+    let list_b = list_managed_backups(&dir, Some(&scope_b)).unwrap();
+    let names_b: Vec<String> = list_b.iter().map(|f| f.file_name.clone()).collect();
+    assert_eq!(
+        names_b,
+        vec!["ledger-backup-20260101-000000-handle-b.db.zip"],
+        "异端产物不得归错账本（同名时间戳、不同指纹各归各账）"
+    );
+}
+
+/// 归属缓存（issue #1986）：判定结果按「文件名 + 大小 + 修改时间」缓存到备份
+/// 目录内的独立本地文件——命中缓存不再解包（篡改缓存结论即改变列表，产物
+/// 真实内容锚本会命中）；大小或修改时间变化即失效重算；缓存文件损坏不阻断
+/// 列表、可从产物重建、可整份丢弃；缓存自身不进受管列表。
+#[test]
+fn attribution_cache_hits_without_repack_and_rebuilds_on_change() {
+    let conn = tauri_app_lib::test_support::open();
+    let scope = scope_of_fixed_fingerprint(&conn);
+    let dir = ScratchDir::new("backup-test-anchor-cache");
+    let name = "ledger-backup-20260101-000000-handle-mac.db.zip";
+    let product = legacy_product_with_anchor(&dir, name);
+    let cache_path = dir.join(CACHE_FILE_NAME);
+
+    // 首次列表：解包判定（内容锚命中）→ 归并可见，缓存落盘。
+    let list = list_managed_backups(&dir, Some(&scope)).unwrap();
+    let names: Vec<String> = list.iter().map(|f| f.file_name.clone()).collect();
+    assert_eq!(names, vec![name], "首次判定解包归并");
+    assert!(cache_path.exists(), "判定结果缓存到独立本地文件");
+
+    // 篡改缓存结论为「内容锚不匹配」：命中缓存不再解包 → 产物从列表消失
+    // （若实现无视缓存直接解包，真实内容锚命中会让它重新出现，本断言即红）。
+    let rewrite_cache = |content_anchor: &str| {
+        let mut cache: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&cache_path).unwrap()).unwrap();
+        cache["entries"][name]["content_anchor"] = serde_json::json!(content_anchor);
+        std::fs::write(&cache_path, cache.to_string()).unwrap();
+    };
+    rewrite_cache("txn-other");
+    let list = list_managed_backups(&dir, Some(&scope)).unwrap();
+    assert!(list.is_empty(), "命中缓存的判定结论被复用（不再解包）");
+
+    // 修改时间变化 → 缓存失效重算：恢复缓存原值并把产物 mtime 改变，重新
+    // 解包判定后归并恢复。
+    rewrite_cache("txn-1");
+    let shifted = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_760_000_000);
+    std::fs::File::options()
+        .write(true)
+        .open(&product)
+        .unwrap()
+        .set_modified(shifted)
+        .unwrap();
+    let list = list_managed_backups(&dir, Some(&scope)).unwrap();
+    let names: Vec<String> = list.iter().map(|f| f.file_name.clone()).collect();
+    assert_eq!(names, vec![name], "缓存因修改时间变化失效，重算恢复归并");
+
+    // 缓存文件损坏：不阻断列表（判定按产物重建），缓存可重建。
+    std::fs::write(&cache_path, b"not-json{").unwrap();
+    let list = list_managed_backups(&dir, Some(&scope)).unwrap();
+    let names: Vec<String> = list.iter().map(|f| f.file_name.clone()).collect();
+    assert_eq!(names, vec![name], "缓存文件损坏不阻断列表");
+
+    // 整份丢弃：删除缓存文件，列表照常（判定可从产物重建，缓存重新落盘）。
+    std::fs::remove_file(&cache_path).unwrap();
+    let list = list_managed_backups(&dir, Some(&scope)).unwrap();
+    let names: Vec<String> = list.iter().map(|f| f.file_name.clone()).collect();
+    assert_eq!(names, vec![name], "缓存可整份丢弃，判定可从产物重建");
+    assert!(cache_path.exists(), "列表完成后缓存重新落盘");
+
+    // 缓存文件自身不进受管列表（非受管命名，不参与清理与备份面）。
+    let all = list_managed_backups(&dir, None).unwrap();
+    assert_eq!(all.len(), 1, "缓存文件不进受管列表");
+}
+
+/// 双路径布局下的内容锚归并（issue #1986 × #1988）：设备子目录内的异端产物
+/// 同样经第三顺位归并进列表；扁平与设备子目录的同名产物在缓存中互不串扰。
+#[test]
+fn content_anchor_merge_scans_device_subdirs() {
+    let conn = tauri_app_lib::test_support::open();
+    let scope = scope_of_fixed_fingerprint(&conn);
+    let dir = ScratchDir::new("backup-test-anchor-dual");
+    let device_dir = dir.join("01971234-4567-789a-bcde-f123456789ab");
+    std::fs::create_dir_all(&device_dir).unwrap();
+
+    // 扁平存量一份 + 设备子目录一份：同名产物（同名是缓存键串扰的探针）。
+    let name = "ledger-backup-20260101-000000-handle-mac.db.zip";
+    legacy_product_with_anchor(&dir, name);
+    legacy_product_with_anchor(&device_dir, name);
+
+    let list = list_managed_backups(&dir, Some(&scope)).unwrap();
+    let names: Vec<String> = list.iter().map(|f| f.file_name.clone()).collect();
+    assert_eq!(
+        names,
+        vec![name, name],
+        "设备子目录内的异端产物同样经内容锚归并，两处同名产物都可见"
+    );
+    assert!(list.iter().all(|f| f.source_unknown), "均为升级前形态");
 }
 
 /// 作用域构造（读侧唯一构造点）：已固化恒读固化值；未固化回内容锚（与首用

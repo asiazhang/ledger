@@ -59,6 +59,7 @@ use std::time::Duration;
 /// （`ledger_infra::db::register_lock_hold_budget`，ADR-0112 决策 5 反转）。
 pub const LOCK_HOLD_BUDGET: Duration = Duration::from_secs(30);
 
+mod attribution;
 mod auto;
 mod engine;
 /// 账本身份（ADR-0144，#1984）：消费面限于本域与壳层读命令（指纹只读判定，

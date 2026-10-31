@@ -4,8 +4,11 @@
 //! 明文水印）、恢复与恢复前安全备份（恢复按备份形态分支：成对产
 //! 物双库归位，旧形态单文件行为不变）、schema 版本校验（旧→新迁移、新→旧
 //! 拒绝）、受管备份列表与滚动清理（列表/清理按**账本指纹**分域，ADR-0144
-//! 决策 3 / issue #1985：跨端产物合并可见，本地句柄不再参与归属；清理以设备
-//! 水印为第二道门——非本机设备名下与来源未知产物保守不删、不占配额）。
+//! 决策 3 / issue #1985：跨端产物合并可见，本地句柄不再参与归属；元数据无
+//! 指纹的存量产物经内容锚第三顺位归并，判不出归属的落「未知来源」桶——
+//! 可见、标注、永不自动清理，issue #1986；清理以设备水印为第二道门——非本
+//! 机设备名下与来源未知产物保守不删、不占配额）。归属判定与缓存住
+//! [`crate::attribution`]。
 
 use std::fs::File;
 use std::io::{Read, Write};
@@ -57,7 +60,7 @@ impl BackupScope {
 }
 
 /// zip 包内数据库条目名。
-const ZIP_DB_ENTRY: &str = "ledger.db";
+pub(crate) const ZIP_DB_ENTRY: &str = "ledger.db";
 /// zip 包内同步元数据件条目名（双文件成对产物，ADR-0139 决策 6；旧形态单
 /// 文件备份无此条目）。
 const ZIP_SYNC_ENTRY: &str = "sync.db";
@@ -193,8 +196,8 @@ pub(crate) fn is_managed_backup_file_name(name: &str) -> bool {
     matched_managed_prefix(name).is_some() && name.ends_with(MANAGED_BACKUP_SUFFIX)
 }
 
-/// 打开 zip 备份包（非 zip 输入报 `backup.invalid-archive`）。
-fn open_backup_archive(backup_path: &Path) -> Result<zip::ZipArchive<File>> {
+/// 打开 zip 备份包（非 zip 输入报 `backup.invalid-archive`；attribution 读侧共用）。
+pub(crate) fn open_backup_archive(backup_path: &Path) -> Result<zip::ZipArchive<File>> {
     let file = File::open(backup_path)?;
     zip::ZipArchive::new(file).map_err(|e| {
         AppError::codedp(
@@ -205,8 +208,8 @@ fn open_backup_archive(backup_path: &Path) -> Result<zip::ZipArchive<File>> {
     })
 }
 
-/// 读取备份包内元数据 `backup.json` 并解析（单次开包，读侧共用）。
-fn read_meta_from_archive(archive: &mut zip::ZipArchive<File>) -> Result<BackupMeta> {
+/// 读取备份包内元数据 `backup.json` 并解析（单次开包，读侧共用；attribution 同）。
+pub(crate) fn read_meta_from_archive(archive: &mut zip::ZipArchive<File>) -> Result<BackupMeta> {
     let mut entry = archive.by_name(ZIP_META_ENTRY).map_err(|_| {
         AppError::coded(
             "backup.meta-missing",
@@ -297,62 +300,23 @@ fn parse_backup_timestamp(file_name: &str) -> Option<NaiveDateTime> {
     split_managed_name(file_name).map(|(ts, _)| ts)
 }
 
-/// 产物内层元数据的读出字段（归属判定与展示共用同一次开包，issue #1985）。
-struct ProductMeta {
-    fingerprint: Option<String>,
-    device_id: Option<String>,
-    kind: BackupKind,
-    encrypted: bool,
-}
-
-/// 单次开包读出 [`ProductMeta`]；元数据读不出（非 zip / 元数据损坏）返回
-/// `None`（残缺包归属判不出，展示字段按前缀/明文回落）。
-fn read_product_meta(backup_path: &Path) -> Option<ProductMeta> {
-    let mut archive = open_backup_archive(backup_path).ok()?;
-    let meta = read_meta_from_archive(&mut archive).ok()?;
-    Some(ProductMeta {
-        fingerprint: meta.fingerprint,
-        device_id: meta.device_id,
-        kind: meta.kind,
-        encrypted: meta.encrypted,
-    })
-}
-
-/// 产物归属判定（ADR-0144 决策 3，issue #1985）：按顺位短路——①文件名标识
-/// 段等于本指纹（新产物命名直书指纹，零开包）；②产物内层元数据明文指纹等
-/// 于本指纹（指向别端句柄或无标识命名的产物经水印归并）。命中返回
-/// `Some(false)`（`true` = 归属读已顺带完成，列表可复用）；未命中返回
-/// `None`——判不出归属的产物本期不进列表（内容锚判定与「未知来源」桶的
-/// 可见性归 #1986/T4）。命中与未命中各记一条 debug 日志（含文件名与结论）。
-fn attribute_to_scope(
-    file_name: &str,
-    path: &Path,
-    file_book: Option<&str>,
-    scope: &BackupScope,
-) -> Option<Option<ProductMeta>> {
-    if file_book == Some(scope.fingerprint.as_str()) {
-        tracing::debug!(file = %file_name, "产物归属本账本（文件名标识段命中指纹）");
-        return Some(None);
-    }
-    match read_product_meta(path) {
-        Some(meta) if meta.fingerprint.as_deref() == Some(scope.fingerprint.as_str()) => {
-            tracing::debug!(file = %file_name, "产物归属本账本（内层元数据指纹命中）");
-            Some(Some(meta))
-        }
-        _ => {
-            tracing::debug!(file = %file_name, "产物不归属本账本（指纹不匹配），不进列表");
-            None
-        }
-    }
-}
+// 产物内层元数据的读出与归属判定（顺位 + 缓存 + 内容锚）住 [`crate::attribution`]
+// （issue #1986）：engine 只消费其 [`crate::attribution::Attribution`] 结论。
 
 /// 把单个目录内作用域内的受管产物收进 `files`（列表扫描单元，双路径共用）；
-/// 归属判定按指纹顺位短路走 [`attribute_to_scope`]（ADR-0089 分域语义保持）。
+/// 归属判定按指纹顺位短路走 [`crate::attribution`]（ADR-0089 分域语义保持）。
+/// `key_prefix`：归属缓存键前缀（目录本体扫描为空，设备子目录为子目录名 +
+/// `/`）——扁平与设备子目录的同名产物在缓存中互不串扰。
 fn collect_scoped_in_dir(
     root: &Path,
-    scope: Option<&BackupScope>,
-    // 第三元：归属判定顺位二命中时顺带读出的产物元数据（复用同一开包，免二次解压）。
-    files: &mut Vec<(NaiveDateTime, PathBuf, Option<ProductMeta>)>,
+    key_prefix: &str,
+    scope_and_cache: &mut Option<(&BackupScope, crate::attribution::AttributionCache)>,
+    // 第三元：归属判定命中时顺带读出的产物元数据（复用同一开包，免二次解压）。
+    files: &mut Vec<(
+        NaiveDateTime,
+        PathBuf,
+        Option<crate::attribution::ProductMeta>,
+    )>,
 ) -> Result<()> {
     for entry in std::fs::read_dir(root)? {
         let entry = entry?;
@@ -362,14 +326,24 @@ fn collect_scoped_in_dir(
             continue;
         }
         let file_book = split_managed_name(&name).and_then(|(_, book)| book);
-        // 归属判定（有作用域时）：命中顺位一 → 元数据留待展示段按既有口径读；
-        // 命中顺位二 → 顺带持有的元数据直接复用；未命中 → 不进列表。
-        let attributed = match scope {
+        // 归属判定（有作用域时）：顺位一/二/三命中 → 进列表（顺带持有的元数
+        // 据直接复用）；「未知来源」桶 → 照常进列表；别本账 → 不进列表。
+        // 缓存键带目录前缀（issue #1986）：扁平与设备子目录同名产物互不串扰。
+        let attributed = match scope_and_cache.as_mut() {
             None => None,
-            Some(scope) => match attribute_to_scope(&name, &entry.path(), file_book, scope) {
-                Some(attributed) => attributed,
-                None => continue,
-            },
+            Some((scope, cache)) => {
+                match crate::attribution::attribute_to_scope(
+                    &format!("{key_prefix}{name}"),
+                    &entry.path(),
+                    file_book,
+                    scope,
+                    cache,
+                ) {
+                    crate::attribution::Attribution::Foreign => continue,
+                    crate::attribution::Attribution::Owned(meta)
+                    | crate::attribution::Attribution::Unknown(meta) => meta,
+                }
+            }
         };
         let ts = parse_backup_timestamp(&name).or_else(|| {
             entry
@@ -449,11 +423,15 @@ fn same_dir_path(a: &str, b: &str) -> bool {
 /// 整表失败；目录本体读失败照旧上抛。
 ///
 /// `scope`：账本作用域（`None` = 不过滤的引擎级兼容口径）；归属判定按指纹
-/// 顺位短路（见 [`attribute_to_scope`]）：其他账本/判不出归属的产物不可见、
-/// 不参与清理（ADR-0089 分域语义保持，ADR-0144 跨端合并）。
-/// 备份时间优先取文件名时间戳（与命名规则强一致），解析失败回退文件修改时间；
-/// 两者皆失败按最旧处理（排序最靠后，清理时最先被删）。目录不存在时返回空列表
-/// （界面展示空态而非报错）。
+/// 顺位短路（见 [`crate::attribution`]）：①文件名标识段命中零开包；②内层
+/// 元数据明文指纹命中；③元数据无指纹的存量产物解包读库内内容锚归并
+///（判定结果按「文件名 + 大小 + 修改时间」缓存在备份目录根内的独立本地文
+/// 件，覆盖扁平与设备子目录两处扫描，命中缓存不再解包）；皆不可得的产物落
+/// 「未知来源」桶——照常可见、标注、永不参与自动清理（ADR-0144 决策 3，
+/// issue #1986）；别本账产物不可见（ADR-0089 分域语义保持，ADR-0144 跨端
+/// 合并）。备份时间优先取文件名时间戳（与命名规则强一致），解析失败回退
+/// 文件修改时间；两者皆失败按最旧处理（排序最靠后，清理时最先被删）。目录
+/// 不存在时返回空列表（界面展示空态而非报错）。
 pub fn list_managed_backups(
     dir: &Path,
     scope: Option<&BackupScope>,
@@ -461,17 +439,29 @@ pub fn list_managed_backups(
     if !dir.is_dir() {
         return Ok(Vec::new());
     }
-    let mut files: Vec<(NaiveDateTime, PathBuf, Option<ProductMeta>)> = Vec::new();
-    collect_scoped_in_dir(dir, scope, &mut files)?;
+    // 作用域与归属缓存成对（issue #1986）：无作用域（兼容口径）不判定也不建
+    // 缓存；缓存住备份目录根，列表收尾统一持久化（见
+    // [`crate::attribution::AttributionCache`]）。
+    let mut scope_and_cache = scope.map(|s| (s, crate::attribution::AttributionCache::new(dir)));
+    let mut files: Vec<(
+        NaiveDateTime,
+        PathBuf,
+        Option<crate::attribution::ProductMeta>,
+    )> = Vec::new();
+    collect_scoped_in_dir(dir, "", &mut scope_and_cache, &mut files)?;
     for entry in std::fs::read_dir(dir)? {
         let entry = entry?;
         if !entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
             continue;
         }
         let sub = entry.path();
-        if let Err(e) = collect_scoped_in_dir(&sub, scope, &mut files) {
+        let prefix = format!("{}/", entry.file_name().to_string_lossy());
+        if let Err(e) = collect_scoped_in_dir(&sub, &prefix, &mut scope_and_cache, &mut files) {
             tracing::debug!(dir = %sub.display(), error = %e, "子目录扫描失败，跳过");
         }
+    }
+    if let Some((_, cache)) = scope_and_cache.as_mut() {
+        cache.flush();
     }
     files.sort_by_key(|a| std::cmp::Reverse(a.0));
     files
@@ -486,7 +476,7 @@ pub fn list_managed_backups(
             // （自动前缀即 auto，否则 manual；加密标记回落明文，不误报锁标）。
             let (kind, encrypted, source_device_id) = match attributed {
                 Some(meta) => (meta.kind, meta.encrypted, meta.device_id),
-                None => match read_product_meta(&path) {
+                None => match crate::attribution::read_product_meta(&path) {
                     Some(meta) => (meta.kind, meta.encrypted, meta.device_id),
                     None => {
                         if file_name.starts_with(super::auto::AUTO_BACKUP_PREFIX) {
@@ -583,36 +573,37 @@ pub fn prune_managed_backups(
 }
 
 /// 备份元数据，写入 zip 包内 `backup.json`。`kind`、`encrypted` 与 `paired` 均为
-/// 旧版本备份可能缺失的字段（serde 默认回落，向后兼容）。
+/// 旧版本备份可能缺失的字段（serde 默认回落，向后兼容）。crate 内可见
+///（attribution 读侧共用同一解析，issue #1986）。
 #[derive(Debug, Serialize, Deserialize)]
-struct BackupMeta {
-    created_at: String,
-    app_version: String,
-    schema_version: i64,
+pub(crate) struct BackupMeta {
+    pub(crate) created_at: String,
+    pub(crate) app_version: String,
+    pub(crate) schema_version: i64,
     /// 来源标记（issue #127）；缺省回落 manual（向后兼容）。
     #[serde(default)]
-    kind: BackupKind,
+    pub(crate) kind: BackupKind,
     /// 加密标记（issue #572 / ADR-0075 决策 7）：备份时探测产物写入；
     /// 旧版本备份缺该字段时按明文对待（缺省 false，向后兼容）。
     #[serde(default)]
-    encrypted: bool,
+    pub(crate) encrypted: bool,
     /// 双库成对标记（ADR-0139 决策 6，票 04）：true 表示包内 `sync.db` 条目是
     /// 同步元数据件（恢复按双库成对归位）。产出方拆库后恒写 true（contract，
     /// #1872：无 main 回退源）；缺省 false = 旧形态单文件备份，sync 条目
     ///（expand 期回退形态）或缺失一律忽略，恢复行为与旧版一致。
     #[serde(default)]
-    paired: bool,
+    pub(crate) paired: bool,
     /// 账本指纹（ADR-0144 决策 5，#1984）：产物归属账本的跨端身份，明文
     ///（只含标识不含密钥，归属判定不依赖主口令）。旧版本产物缺该字段
     ///（缺省 None，向后兼容）；旧版本应用读新产物对未知字段宽容（serde
     /// 默认行为，未开 deny_unknown_fields）。
     #[serde(default)]
-    fingerprint: Option<String>,
+    pub(crate) fingerprint: Option<String>,
     /// 生成端设备标识（DeviceId，ADR-0144 决策 5）：明文，多端同步域
     /// 安装实例级标识。设备标识不可得的轮次不写该字段（skip 序列化）——
     /// 该产物视为来源未知（与旧产物同形态，读侧统一按 None 处理）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    device_id: Option<String>,
+    pub(crate) device_id: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
