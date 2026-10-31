@@ -9,6 +9,7 @@ use tauri_app_lib::test_support::{ScratchDir, ScratchFile};
 use rusqlite::Connection;
 use rusqlite::params;
 
+use super::identity::book_fingerprint;
 use super::*;
 use ledger_infra::db;
 use ledger_infra::db::open_connection;
@@ -410,15 +411,25 @@ fn legacy_backup_restores_and_lists_without_error() {
 #[test]
 fn list_and_prune_managed_backups() {
     let dir = ScratchDir::new("backup-test-managed");
-    // 3 个手动自动命名文件 + 1 个自动备份命名文件 + 1 个不匹配命名 + 1 个名字匹配但为目录。
-    for (name, size) in [
-        ("ledger-backup-20260101-010101.db.zip", 10u64),
-        ("ledger-backup-20260102-010101.db.zip", 20),
-        ("ledger-backup-20260103-010101.db.zip", 30),
-        ("ledger-auto-20260201-010101.db.zip", 40),
-    ] {
-        std::fs::write(dir.join(name), vec![0u8; size as usize]).unwrap();
-    }
+    // 3 个手动命名 + 1 个自动命名的真实成对产物（#1983 夹具，#1984 起清理
+    // 判定要真开包读设备水印，占位文件在此不可用）+ 1 个不匹配命名 + 1 个
+    // 名字匹配但为目录。
+    real_managed_backup(
+        &dir,
+        "ledger-backup-20260101-010101.db.zip",
+        BackupKind::Manual,
+    );
+    real_managed_backup(
+        &dir,
+        "ledger-backup-20260102-010101.db.zip",
+        BackupKind::Manual,
+    );
+    real_managed_backup(
+        &dir,
+        "ledger-backup-20260103-010101.db.zip",
+        BackupKind::Manual,
+    );
+    real_managed_backup(&dir, "ledger-auto-20260201-010101.db.zip", BackupKind::Auto);
     std::fs::write(dir.join("notes.zip"), b"x").unwrap();
     std::fs::create_dir(dir.join("ledger-backup-20260104-010101.db.zip")).unwrap();
 
@@ -429,8 +440,7 @@ fn list_and_prune_managed_backups() {
         "auto 前缀同样受管且按时间排序"
     );
     assert_eq!(list[0].created_at, "2026-02-01T01:01:01");
-    // stub 文件读不出元数据：按文件名前缀回落（issue #129 展示用）。
-    assert_eq!(list[0].kind, BackupKind::Auto);
+    assert_eq!(list[0].kind, BackupKind::Auto, "真实产物元数据读取");
     assert_eq!(list[3].file_name, "ledger-backup-20260101-010101.db.zip");
     assert_eq!(list[3].kind, BackupKind::Manual);
 
@@ -453,6 +463,35 @@ fn list_and_prune_managed_backups() {
     let r2 = prune_managed_backups(&dir, 1, None).unwrap();
     assert_eq!(r2.deleted, vec!["ledger-backup-20260103-010101.db.zip"]);
     assert_eq!(r2.kept, 1);
+    assert!(dir.join("ledger-auto-20260201-010101.db.zip").exists());
+}
+
+/// 残缺包（读不出元数据）在列表按文件名前缀回落展示（issue #129 既有行为）；
+/// 清理按「来源未知」保守不删（ADR-0144 决策 3，#1984）：判定不了归属的产物
+/// 永不参与自动清理，也不占保留配额。
+#[test]
+fn unreadable_products_list_with_fallback_and_never_pruned() {
+    let dir = ScratchDir::new("backup-test-unreadable");
+    std::fs::write(dir.join("ledger-backup-20260101-010101.db.zip"), b"x").unwrap();
+    std::fs::write(
+        dir.join("ledger-auto-20260201-010101.db.zip"),
+        vec![0u8; 40],
+    )
+    .unwrap();
+
+    let list = list_managed_backups(&dir, None).unwrap();
+    assert_eq!(list.len(), 2);
+    assert_eq!(list[0].file_name, "ledger-auto-20260201-010101.db.zip");
+    // stub 读不出元数据：按文件名前缀回落（issue #129 展示用，行为不变）。
+    assert_eq!(list[0].kind, BackupKind::Auto);
+    assert_eq!(list[1].file_name, "ledger-backup-20260101-010101.db.zip");
+    assert_eq!(list[1].kind, BackupKind::Manual);
+
+    // 修剪到 1：两份都判定不了来源 → 一个不删、配额不被挤占（kept = 全部留存）。
+    let r = prune_managed_backups(&dir, 1, None).unwrap();
+    assert!(r.deleted.is_empty(), "来源未知的残缺包保守不删");
+    assert_eq!(r.kept, 2);
+    assert!(dir.join("ledger-backup-20260101-010101.db.zip").exists());
     assert!(dir.join("ledger-auto-20260201-010101.db.zip").exists());
 }
 
@@ -1320,4 +1359,200 @@ fn pre_update_backup_is_not_managed() {
         list_managed_backups(&dir, None).unwrap().is_empty(),
         "更新前备份不进受管清单"
     );
+}
+
+// -------------------------------------------------------------------------
+// 账本身份与水印（ADR-0144 / issue #1984）：账本指纹（内容锚 + 首用固化）
+// 与产物自述（明文 fingerprint / device_id）；清理对来源未知产物保守不删。
+// -------------------------------------------------------------------------
+
+/// 同一份库在两个不同本地目录（各自独立的双文件世界）下独立算出相同指纹：
+/// 内容锚 = 最早一笔交易的全局唯一标识，路径与句柄不参与计算（ADR-0144
+/// 决策 1）。两库各自首用固化后值也相同。
+#[test]
+fn fingerprint_identical_across_dirs_and_handles() {
+    let dir_a = ScratchDir::new("backup-test-fp-dir-a");
+    let dir_b = ScratchDir::new("backup-test-fp-dir-b");
+    let (main_a, _) = make_dual_db_world(&dir_a, false);
+    let (main_b, _) = make_dual_db_world(&dir_b, false);
+    let conn_a = open_connection(&main_a).unwrap();
+    let conn_b = open_connection(&main_b).unwrap();
+
+    let fp_a = book_fingerprint(&conn_a).unwrap();
+    let fp_b = book_fingerprint(&conn_b).unwrap();
+    assert_eq!(fp_a, fp_b, "同一份数据在两个目录/句柄下指纹相同");
+    assert_eq!(fp_a, "txn-1", "内容锚 = 库内最早一笔交易的全局唯一标识");
+}
+
+/// 首用固化：算出即写入，此后恒读固化值——删除最早一笔交易后指纹不变
+///（固化后的身份不再随数据变动，ADR-0144 决策 1）。
+#[test]
+fn fingerprint_persists_once_fixed() {
+    let conn = tauri_app_lib::test_support::open();
+    seed(&conn);
+    let fixed = book_fingerprint(&conn).unwrap();
+    assert_eq!(fixed, "txn-1");
+
+    // 固化值已落 AppSettings。
+    let stored: Option<String> = ledger_infra::settings::get(
+        &conn,
+        ledger_infra::settings::SettingKey::BookFingerprint,
+        None,
+    )
+    .unwrap();
+    assert_eq!(stored.as_deref(), Some("txn-1"), "首用算出即固化存储");
+
+    // 软删最早一笔（内容锚漂移）后恒读固化值，不重算。
+    conn.execute(
+        "UPDATE transactions SET is_deleted = 1 WHERE id = 'txn-1'",
+        [],
+    )
+    .unwrap();
+    assert_eq!(
+        book_fingerprint(&conn).unwrap(),
+        fixed,
+        "删除最早一笔不改变已固化指纹"
+    );
+}
+
+/// 空库（尚无交易）不阻塞备份：指纹退化为端内生成随机标识，首用固化后
+/// 恒读（ADR-0144 决策 1；用户故事 15）。
+#[test]
+fn empty_book_backs_up_with_generated_fingerprint() {
+    let conn = tauri_app_lib::test_support::open();
+    let first = temp_file("fp-empty-1");
+    backup_db_to(&conn, &first, "0.2.0", BackupKind::Manual).unwrap();
+    let fp = read_meta_json(&first)["fingerprint"]
+        .as_str()
+        .expect("空库产物也带账本指纹")
+        .to_string();
+    assert_eq!(fp.len(), 36, "端内生成随机标识（UUID 形态）");
+
+    // 固化：此后恒读同一值。
+    let second = temp_file("fp-empty-2");
+    backup_db_to(&conn, &second, "0.2.0", BackupKind::Manual).unwrap();
+    assert_eq!(
+        read_meta_json(&second)["fingerprint"].as_str().unwrap(),
+        fp,
+        "空库退化标识同样首用固化"
+    );
+}
+
+/// 新产出备份的内层元数据含明文账本指纹与设备标识（ADR-0144 决策 5）：
+/// 指纹 = 内容锚（seed 交易 txn-1）；设备标识 = 多端同步域 DeviceId
+///（首用生成语义，与同步写路径同款）。
+#[test]
+fn backup_meta_carries_fingerprint_and_device_id() {
+    let conn = tauri_app_lib::test_support::open();
+    seed(&conn);
+
+    let target = temp_file("watermark");
+    backup_db_to(&conn, &target, "0.2.0", BackupKind::Manual).unwrap();
+
+    let meta = read_meta_json(&target);
+    assert_eq!(meta["fingerprint"], "txn-1", "指纹 = 内容锚");
+    let device = meta["device_id"].as_str().expect("设备水印落盘");
+    assert_eq!(
+        device,
+        ledger_sync_protocol::device::device_id(&conn).unwrap(),
+        "设备标识取多端同步域 DeviceId"
+    );
+}
+
+/// 密文备份的水印仍是明文（只含标识不含密钥）：开包不凭口令即可读出
+/// fingerprint / device_id（ADR-0144 决策 5——归属判定不依赖主口令）。
+#[test]
+fn encrypted_backup_carries_plaintext_watermark() {
+    let dir = ScratchDir::new("backup-test-enc-watermark");
+    let src = dir.join("ledger.db");
+    {
+        let conn = tauri_app_lib::test_support::open();
+        seed(&conn);
+        conn.execute("VACUUM INTO ?1", params![src.to_string_lossy()])
+            .unwrap();
+        conn.execute(
+            "VACUUM sync INTO ?1",
+            params![dir.join(db::SYNC_DB_FILE_NAME).to_string_lossy()],
+        )
+        .unwrap();
+    }
+    ledger_infra::db::encryption::enable_encryption_for_file(&src, "pass-phrase-123").unwrap();
+    let conn = ledger_infra::db::open_connection_with_passphrase(&src, "pass-phrase-123").unwrap();
+
+    let target = dir.join("ledger-backup-20260918-120000.db.zip");
+    backup_db_to(&conn, &target, "0.6.0", BackupKind::Manual).unwrap();
+
+    let meta = read_meta_json(&target);
+    assert_eq!(meta["fingerprint"], "txn-1", "密文产物水印仍为明文");
+    assert!(!meta["device_id"].as_str().unwrap().is_empty());
+}
+
+/// 读侧宽容（双向兼容，ADR-0144 决策 5/决策 7）：元数据带新增水印字段与
+/// 未知未来字段的包照常读取（旧版本应用读新包同款——serde 默认忽略未知
+/// 字段）；旧包（无水印字段）照常读取由 legacy_* 既有用例覆盖。
+#[test]
+fn meta_with_watermark_and_unknown_fields_reads_ok() {
+    let dir = ScratchDir::new("backup-test-meta-unknown");
+    let path = dir.join("ledger-backup-20260101-000000.db.zip");
+    {
+        let file = File::create(&path).unwrap();
+        let mut zip = zip::ZipWriter::new(file);
+        let options = zip::write::SimpleFileOptions::default();
+        zip.start_file("ledger.db", options).unwrap();
+        std::io::Write::write_all(&mut zip, b"stub").unwrap();
+        zip.start_file("backup.json", options).unwrap();
+        std::io::Write::write_all(
+            &mut zip,
+            br#"{"created_at":"2025-01-01T00:00:00Z","app_version":"0.2.0","schema_version":4,
+                 "kind":"manual","fingerprint":"fp-x","device_id":"dev-x","future_field":{"a":1}}"#,
+        )
+        .unwrap();
+        zip.finish().unwrap();
+    }
+    assert_eq!(read_backup_kind(&path).unwrap(), BackupKind::Manual);
+    assert_eq!(probe_backup_meta(&path).unwrap().kind, BackupKind::Manual);
+}
+
+/// 设备标识不可得（attached 侧无 sync_device 表）的轮次：产物不带设备水印
+/// = 来源未知，备份不阻断（ADR-0144 决策 5）；该产物永不参与自动清理、
+/// 不占保留配额（决策 3——句柄过滤命中后以元数据设备水印为第二道门，
+/// 未知来源保守不删）。
+#[test]
+fn prune_skips_unknown_origin_products() {
+    let dir = ScratchDir::new("backup-test-prune-unknown");
+    for name in [
+        "ledger-auto-20260101-000000-book-a.db.zip",
+        "ledger-auto-20260102-000000-book-a.db.zip",
+        "ledger-auto-20260103-000000-book-a.db.zip",
+    ] {
+        real_managed_backup(&dir, name, BackupKind::Auto);
+    }
+    // 来源未知产物：设备标识不可得（drop attached 侧单行表）。
+    let unknown_name = "ledger-auto-20260101-000000-book-b.db.zip";
+    {
+        let conn = tauri_app_lib::test_support::open();
+        seed(&conn);
+        conn.execute("DROP TABLE sync.sync_device", []).unwrap();
+        backup_db_to(&conn, &dir.join(unknown_name), "0.2.0", BackupKind::Auto).unwrap();
+    }
+    assert!(
+        read_meta_json(&dir.join(unknown_name))
+            .get("device_id")
+            .is_none(),
+        "设备标识不可得的产物不带设备水印（来源未知）"
+    );
+
+    // keep = 3：可清理类恰 3 份 → 什么都不删——未知来源产物不占配额。
+    let r = prune_managed_backups(&dir, 3, None).unwrap();
+    assert!(r.deleted.is_empty(), "未知来源不占保留配额");
+    assert_eq!(r.kept, 4, "kept 报告目录内留存受管产物总数");
+
+    // keep = 2：可清理类超额 1 → 只删可清理类最旧；未知来源产物留存。
+    let r2 = prune_managed_backups(&dir, 2, None).unwrap();
+    assert_eq!(
+        r2.deleted,
+        vec!["ledger-auto-20260101-000000-book-a.db.zip"]
+    );
+    assert!(dir.join(unknown_name).exists(), "来源未知永不自动清理");
+    assert_eq!(r2.kept, 3);
 }

@@ -61,6 +61,9 @@ pub const LOCK_HOLD_BUDGET: Duration = Duration::from_secs(30);
 
 mod auto;
 mod engine;
+/// 账本身份（ADR-0144，#1984）：模块私有，消费面限于本域（备份产出水印与
+/// 后续归属判定票据）；对外暴露随指纹消费面扩大再评估。
+mod identity;
 
 pub use auto::{
     AUTO_BACKUP_PREFIX, AttemptOutcome, AutoBackupState, BackupDecision, FAILURE_ALERT_THRESHOLD,

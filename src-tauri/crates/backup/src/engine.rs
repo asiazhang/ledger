@@ -1,9 +1,12 @@
 //! 备份引擎（ADR-0007 / ADR-0016）：zip 打包（`VACUUM INTO` 双文件成对一致性
 //! 快照——业务件 + 同步元数据件（ADR-0139 决策 6，逐库 VACUUM 收口住基础设施）+
-//! `backup.json` 元数据）、恢复与恢复前安全备份（恢复按备份形态分支：成对产
+//! `backup.json` 元数据，自 ADR-0144 / #1984 起另带账本指纹与来源设备标识两个
+//! 明文水印）、恢复与恢复前安全备份（恢复按备份形态分支：成对产
 //! 物双库归位，旧形态单文件行为不变）、schema 版本校验（旧→新迁移、新→旧
-//! 拒绝）、受管备份列表与滚动清理（按活动账本分域，ADR-0089 决策 5；无账本
-//! 标识的历史产物归属「登记序首本」）。
+//! 拒绝）、受管备份列表与滚动清理（列表按活动账本分域，ADR-0089 决策 5；
+//! 无账本标识的历史产物归属「登记序首本」；清理在句柄过滤之上以元数据设备
+//! 水印为第二道门——缺设备标识 = 来源未知，保守不删、不占配额，ADR-0144
+//! 决策 3/5）。
 
 use std::fs::File;
 use std::io::{Read, Write};
@@ -17,6 +20,8 @@ use ledger_infra::db;
 use ledger_infra::db::encryption::DbFileKind;
 use ledger_infra::error::{AppError, Result};
 use ledger_infra::fs_util::{cleanup, replace_file, temp_sibling};
+
+use crate::identity;
 
 /// 备份作用域（issue #836 / ADR-0089 决策 5：备份按账本分域）：受管备份的
 /// 列表、滚动清理与首次兜底判定都按当前活动账本过滤；`None` 为引擎级兼容
@@ -373,11 +378,27 @@ pub fn list_managed_backups(
         .collect()
 }
 
+/// 读取产物元数据的来源设备标识（清理第二道门判定用，ADR-0144 决策 3/5，
+/// #1984）：元数据读不出（非 zip / 损坏）或字段缺省（旧产物、设备标识不可得
+/// 的轮次）一律 `None` = 来源未知。
+fn read_meta_device_id(backup_path: &Path) -> Option<String> {
+    let mut archive = open_backup_archive(backup_path).ok()?;
+    read_meta_from_archive(&mut archive)
+        .ok()
+        .and_then(|meta| meta.device_id)
+}
+
 /// 将目录中作用域内的受管备份修剪到最多 `keep` 个：按旧→新删除超出部分
 /// （issue #836：各账本在共享 BackupDirectory 内分别滚动清理，保留上限为
 /// 设备本地偏好、按本独立计算）。
 ///
-/// 单个文件删除失败（占用/无权限）时跳过并记入 `failed`，不中断其余清理。
+/// 清理判定两道门（ADR-0144 决策 3/5，#1984）：文件名句柄过滤（第一道，
+/// 决定候选）之后，逐候选读内层元数据的设备标识——带设备水印的产物才是
+/// 可清理的本机产物；缺设备水印（升级前存量、设备标识不可得的轮次、残缺
+/// 包）= 来源未知，保守不删、不占保留配额（句柄命中即本机产物，其水印即
+/// 本机标识，故不再比对值）。未知来源产物不计入配额分母；kept 报告的仍是
+/// 目录内受管产物总数。单个文件删除失败（占用/无权限）时跳过并记入
+/// `failed`，不中断其余清理。
 pub fn prune_managed_backups(
     dir: &Path,
     keep: usize,
@@ -385,7 +406,18 @@ pub fn prune_managed_backups(
 ) -> Result<PruneResult> {
     let files = list_managed_backups(dir, scope)?;
     let total = files.len();
-    if total <= keep {
+    let mut delible: Vec<BackupFileInfo> = Vec::new();
+    for file in files {
+        if read_meta_device_id(Path::new(&file.path)).is_some() {
+            delible.push(file);
+        } else {
+            tracing::debug!(
+                file = %file.file_name,
+                "来源未知的受管产物跳过清理（永不自动清理，ADR-0144）"
+            );
+        }
+    }
+    if delible.len() <= keep {
         return Ok(PruneResult {
             kept: total,
             deleted: Vec::new(),
@@ -394,8 +426,9 @@ pub fn prune_managed_backups(
     }
     let mut deleted = Vec::new();
     let mut failed = Vec::new();
-    // list 已按新→旧排序，reverse 后为旧→新，取前 excess 个删除。
-    for file in files.into_iter().rev().take(total - keep) {
+    // delible 与 list 同序（新→旧），reverse 后为旧→新，取前超额个删除。
+    let excess = delible.len() - keep;
+    for file in delible.into_iter().rev().take(excess) {
         match std::fs::remove_file(&file.path) {
             Ok(()) => {
                 tracing::info!(file = %file.file_name, "已清理旧备份");
@@ -434,6 +467,17 @@ struct BackupMeta {
     ///（expand 期回退形态）或缺失一律忽略，恢复行为与旧版一致。
     #[serde(default)]
     paired: bool,
+    /// 账本指纹（ADR-0144 决策 5，#1984）：产物归属账本的跨端身份，明文
+    ///（只含标识不含密钥，归属判定不依赖主口令）。旧版本产物缺该字段
+    ///（缺省 None，向后兼容）；旧版本应用读新产物对未知字段宽容（serde
+    /// 默认行为，未开 deny_unknown_fields）。
+    #[serde(default)]
+    fingerprint: Option<String>,
+    /// 生成端设备标识（DeviceId，ADR-0144 决策 5）：明文，多端同步域
+    /// 安装实例级标识。设备标识不可得的轮次不写该字段（skip 序列化）——
+    /// 该产物视为来源未知（与旧产物同形态，读侧统一按 None 处理）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    device_id: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -529,6 +573,12 @@ pub fn backup_db_to(
     // 收尾统一清理临时文件——失败早退绕过 cleanup 曾每次在备份目录留下
     // 临时残留（0 字节文件累积，既有缺陷的范围外修复，issue #1454）。
     let result = (|| -> Result<BackupResult> {
+        // 0. 账本身份水印（ADR-0144 / #1984）：先算指纹与设备标识再快照——
+        //    首用固化（AppSettings 写入与 DeviceId 首用生成）落在本轮快照内，
+        //    产物（库件 + 内层元数据）自洽携带身份；设备标识取不到只降级
+        //    水印（来源未知），不阻断备份。
+        let fingerprint = identity::book_fingerprint(conn)?;
+        let device_id = identity::source_device_id(conn);
         // 1. VACUUM INTO 生成一致的临时库文件（要求目标不存在，故用唯一临时名）。
         conn.execute(
             "VACUUM INTO ?1",
@@ -553,6 +603,8 @@ pub fn backup_db_to(
             kind,
             encrypted,
             paired,
+            fingerprint: Some(fingerprint),
+            device_id,
         };
         let file = File::create(&tmp_zip)?;
         let mut zip = zip::ZipWriter::new(file);
