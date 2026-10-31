@@ -36,7 +36,7 @@ use ledger_market_sync::{
 use tauri_app_lib::commands::sync::SyncChannelsSlot;
 use tauri_app_lib::commands::{investment, sync};
 
-use crate::isolation::isolate_home;
+use tauri_app_lib::test_support::isolate_home;
 
 /// 同步在途窗口的读命令时限：分段取锁下读命令毫秒级返回；整段持锁下读命令
 /// 至少要等同步收尾（门不放行即永不返回），限时断言必然超时变红。

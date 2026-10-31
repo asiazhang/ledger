@@ -104,8 +104,16 @@
 
 - **定义**：Rust 侧真临时目录夹具的 RAII 清理唯一定义点（`test_support::scratch`，issue #1645）——`ScratchDir` 构造即建 `temp_dir()/ledger-test-{tag}-{uuid}/`，drop（含 panic unwind）整棵删除；`ScratchFile` 是散文件夹具（临时 .db/.zip 等）的目录化形态，文件住各自的暂存目录内。调用点只学构造函数并把返回值活到用例结束（e2e 场景由测试世界持守，集成测试夹具随元组交调用方持有）；手写 `remove_dir_all` / `fs_util::cleanup` 收尾是回潮。
 - **前缀闭集**：全部暂存目录落 `ledger-test-` 前缀下，tag 保留调用方语义作残留识别的第二段——跑完测试后的残留可一条 `rm -rf /tmp/ledger-test-*` 识别清理。
-- **边界**：进程级 `$HOME` 夹具（目录进程存活期不能删）与产品代码路径（自有收尾机制）不属本器具；基础设施等域 crate 经既有 dev-dependency 环消费（测试专用边，与测试工厂同处理，ADR-0084 决策 1/2），不扩生产依赖面。SIGKILL 下 guard 不执行，残留从「每次全量堆积」降为「异常终止偶发」。
+- **边界**：产品代码路径（自有收尾机制）不属本器具；基础设施等域 crate 经既有 dev-dependency 环消费（测试专用边，与测试工厂同处理，ADR-0084 决策 1/2），不扩生产依赖面。SIGKILL 下 guard 不执行，残留从「每次全量堆积」降为「异常终止偶发」。
 - **别名**：不使用「临时目录 helper」「测试 tempdir」变体指代本器具。
+
+## 进程级现场隔离
+
+- **定义**：Rust 侧测试进程环境变量重定向的唯一定义点（`test_support::isolate_home`，issue #1989）——`$HOME` + `$XDG_DATA_HOME` + `$XDG_CONFIG_HOME` 三根一齐重定向进 `temp_dir()/ledger-test-home-{uuid}/`（data/config 各设子目录）；mock runtime 的 `app_data_dir()` / `app_config_dir()` 由 `dirs` 派生，Linux 下优先解析 XDG 两根，只重定向 `$HOME` 时集成测试的备份/恢复与默认数据目录写入落在真实 `~/.local/share` 根。调用点只学「测试函数首行先调本函数」，现场文件操作发生在后。
+- **`Once` 语义**：环境变量是进程级全局量，同一测试目标的并行用例同进程——写入点唯一且至多执行一次（静态住器具模块，每测试二进制恰一次），多副本自持 `Once` 是回潮；六处历史副本已随本词条收编退役。
+- **删除即变红**：契约测试住仓库测试面专属测试二进制——先毒化 XDG 两根再调夹具，断言 mock 应用 `app_data_dir()` / `app_config_dir()`（事故同一条解析路径）落进隔离根，删除夹具内任一根写入即红；毒化写入是夹具「唯一环境变量写入点」的登记例外。已知边界：macOS 的 `dirs` 不消费 XDG 变量，该平台对此回归不敏感（事故仅 Linux 形态）。
+- **边界**：隔离根由进程存活期引用、不随用例删除，不属「测试暂存目录」的 RAII 管辖（前缀仍归 `ledger-test-` 闭集，残留同一条 rm 识别）；macOS 上 `dirs` 的解析回落 `$HOME` 子路径，与 Linux 共用同一重定向现场。
+- **别名**：不使用「HOME mock」「环境变量隔离 helper」变体指代本器具；现场隔离含三根重定向，不裸称「HOME 重定向」。
 
 ## 读快照探针
 

@@ -34,22 +34,9 @@ use ledger_infra::db::{self};
 use ledger_sync_engine::SessionEnvelope;
 use tauri_app_lib::commands::boot::{BootCell, reset_after_startup_failure};
 use tauri_app_lib::commands::encryption::{reset_after_forgotten_passphrase, unlock_encryption};
+use tauri_app_lib::test_support::isolate_home;
 
 type AppHandle = tauri::AppHandle<tauri::test::MockRuntime>;
-
-/// `$HOME` 现场隔离（本二进制进程内一次；tests/commands/isolation 同型）：
-/// mock runtime 的 `app_data_dir()` 由 `$HOME` 派生，重定向后默认数据目录
-/// 落在进程专属临时区，不触真实用户目录。
-fn isolate_home() {
-    static ISOLATE: std::sync::Once = std::sync::Once::new();
-    ISOLATE.call_once(|| {
-        let root = std::env::temp_dir().join(format!("ledger-sessionenv-it-{}", db::new_uuid()));
-        std::fs::create_dir_all(&root).unwrap();
-        // SAFETY：set_var 自 Rust 2024 起 unsafe；本函数是本测试二进制唯一的
-        // `$HOME` 写入点，Once 保证至多执行一次、写入后不再变化。
-        unsafe { std::env::set_var("HOME", &root) };
-    });
-}
 
 /// 密文库 + 锁定现场（解锁屏 AwaitUnlock 同形）：mock 应用 + 引导登记态 +
 /// 密文库（明文库建好即弃连接 → 原位转密文 → 清 .bak）+ 锁定门 + 占位连接对
