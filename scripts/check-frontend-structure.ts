@@ -592,8 +592,8 @@ function checkTestSupportPurity(
 
 /** 规则⑥ 上行引用禁令登记册（单一事实源，issue #1156）：按目录登记「不得引用的
  *  上层目标」。每个条目 = 一段已固化的方向约束；条目本身即规格——删除/改动条目会
- *  让 src/__tests__/check-frontend-structure.test.ts 的登记表全等断言变红
- *  （删除即变红，issue #1156 验收判据）。 */
+ *  让 scripts/check-frontend-structure.test.ts 的登记表全等断言变红
+ *  （删除即变红，issue #1156 验收判据；测试文件 #1991 起随同目录约定住 scripts/）。 */
 export interface UpwardImportRule {
   /** 被约束的源目录（相对仓库根，posix 分隔） */
   dir: string;

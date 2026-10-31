@@ -1,6 +1,5 @@
 // check-frontend-structure.ts 守门脚本的测试夹具唯一定义点（issue #1435）：
-// scripts/check-frontend-structure.test.ts（规则⑦）与
-// src/__tests__/check-frontend-structure.test.ts（规则①—⑥）共用的
+// scripts/check-frontend-structure.test.ts（规则①—⑦，#1991 起单文件）共用的
 // 夹具仓库根 builder——此前是同构逻辑的两份手写副本（建 workspace yaml +
 // 规则⑦登记模块文件），每次登记项变更都要两处同改，漏一处即 CI 假红/假绿
 // （#1308 新增 useInstrumentSearch 登记项时两处各改一处的实测放大）。
@@ -13,8 +12,8 @@
 //
 // 夹具只构成守门脚本的**最小绿基线**（登记项本体，规则①—⑤经 arg2
 // 注入夹具登记表隔离），靶形场景由各测试文件在夹具上续写（writeSource /
-// writePackageManifest）。测试与所测脚本同目录住（#1158）；跨目录消费
-// （src/__tests__）沿既有先例直引 ../../scripts/（被测脚本同款）。
+// writePackageManifest）。测试与所测脚本同目录住（#1158；规则①—⑥测试
+// 原 #1149 时住 src/__tests__，#1991 并入 scripts/ 侧单文件）。
 
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";

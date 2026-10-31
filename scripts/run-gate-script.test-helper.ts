@@ -7,8 +7,9 @@
 // 退出码与合并输出（stdout + stderr）。收敛后新增守门包装测试直接消费本文件，
 // 不再复制副本；各测试文件只保留被测脚本路径定位（gateScript）与一步绑定 run
 // （签名与既有调用点逐字兼容，style-blocks 的 cwd / 变体脚本覆盖、i18n-keys /
-// dialog-forms 的领域参数构造留在绑定内）。测试与所测脚本同目录住（#1158）；
-// 跨目录消费（src/__tests__）沿既有先例直引 ../../scripts/（被测脚本同款）。
+// dialog-forms 的领域参数构造留在绑定内）。测试与所测脚本同目录住（#1158；
+// 曾有的跨目录消费者 src/__tests__/check-frontend-structure.test.ts 已随 #1991
+// 并入 scripts/ 侧，消费者全表同目录）。
 
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
