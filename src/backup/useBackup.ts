@@ -129,6 +129,21 @@ export function useBackup() {
     }
   }
 
+  // 本机设备标识（issue #1987 / ADR-0144 决策 4）：清理确认弹窗的待删数量只
+  // 统计「本指纹 × 本设备」桶内产物——列表行来源设备与本机标识比对；标识
+  // 不可得时为 null，桶判定为空、待删数量为零（与后端「设备不可得保守不删」
+  // 同口径，不误报删除数）。
+  const deviceId = ref<string | null>(null);
+
+  /** 拉取本机设备标识（挂载首刷；安装实例级标识，会话内不变）。 */
+  async function refreshDeviceId() {
+    try {
+      deviceId.value = await api.getDeviceId();
+    } catch {
+      deviceId.value = null;
+    }
+  }
+
   /** 展示文案：格式化 UTC ISO 为 `YYYY-MM-DD HH:mm`，从未备份时显示「从未」。 */
   const autoBackupLastText = computed(() =>
     autoBackupLastAt.value
@@ -242,10 +257,16 @@ export function useBackup() {
     }
   }
 
-  /// 手动立即清理：超过上限时弹 warning 级确认弹窗（ADR-0078），确认后执行。
+  /// 手动立即清理：本设备桶（本指纹 × 本设备）超过上限时弹 warning 级确认
+  /// 弹窗（ADR-0078），确认后执行。待删数量只统计当前设备名下可清理产物
+  ///（列表按指纹分域已含他端与未知来源，这里按来源设备比对过滤，issue
+  /// #1987）——与实际删除的数量一致。本机标识不可得时桶判定为空（不误报）。
   function manualPrune() {
     if (!store.backupDir) return;
-    const excess = Math.max(0, backups.value.length - store.backupMaxCount);
+    const ownBucket = deviceId.value
+      ? backups.value.filter((b) => b.source_device_id === deviceId.value)
+      : [];
+    const excess = Math.max(0, ownBucket.length - store.backupMaxCount);
     if (excess === 0) {
       message.info(t("settings.data.msg.pruneNotNeeded"));
       return;
@@ -350,6 +371,7 @@ export function useBackup() {
     void refreshBackups();
     void refreshAutoBackupState();
     void refreshBookFingerprint();
+    void refreshDeviceId();
     // 订阅备份产物变更信号（issue #129）：自动备份完成 / 清理后列表自动刷新。
     try {
       unlistenBackupsChanged = await listen(BACKUPS_CHANGED_EVENT, () => {

@@ -227,6 +227,8 @@ pub struct BootGroup {
     pub restored_db_path: Option<PathBuf>,
     /// 最近一次自动备份产物的路径（来源标记场景用）
     pub last_auto_backup_path: Option<PathBuf>,
+    /// 最近一次受管清理的结果（跨端互不代删场景断言用，issue #1987）
+    pub last_prune: Option<ledger_backup::PruneResult>,
     /// 本场景自动备份产物所在目录（日界门场景复用同一目录：同日/跨日产物计数）
     pub auto_backup_dir: Option<PathBuf>,
     /// 最近一次恢复的恢复安全备份目录（加密库安全备份断言用，issue #572）

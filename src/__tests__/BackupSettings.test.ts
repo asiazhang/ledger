@@ -41,6 +41,14 @@ const plaintextBackup: BackupFileInfo = {
   source_unknown: true,
 };
 
+/** 本机设备名下的第二份产物（清理弹窗待删数量只统计本设备桶，issue #1987）。 */
+const ownBackupSecond: BackupFileInfo = {
+  ...encryptedBackup,
+  file_name: "ledger-auto-20260216-093000-dev-this.db.zip",
+  path: "/Users/me/backups/ledger-auto-20260216-093000-dev-this.db.zip",
+  encrypted: false,
+};
+
 /** 自动备份状态命令契约快照（本场景恒为已启用、从未执行、无连续失败）。 */
 const AUTO_BACKUP_ON = {
   enabled: true,
@@ -192,22 +200,31 @@ describe("BackupSettings 备份页签重排与危险视觉修正（issue #651 / 
 });
 
 describe("BackupSettings 手动清理确认弹窗（issue #652 / ADR-0078）", () => {
-  it("超上限点「立即清理」：弹 warning 级应用内弹窗，待删数量与不可恢复后果在场，不立即删除", async () => {
+  /** 清理弹窗布线：本机 2 份 + 未知来源 1 份、上限 1 —— 待删数量只统计本机
+   *  桶（issue #1987）：弹窗报 1 份（而非总数 3 份推的 2 份），与实际删除一致。 */
+  function stubPruneConfirm() {
     wireInvokeSeam({
       defaults: {
-        list_backups: [encryptedBackup, plaintextBackup],
+        list_backups: [encryptedBackup, ownBackupSecond, plaintextBackup],
         get_auto_backup_state: AUTO_BACKUP_ON,
+        // 本机设备标识（issue #1987）：待删数量的比对基准。
+        get_device_id: "dev-this",
         prune_backups: { kept: 1, deleted: ["/a", "/b"], failed: [] },
       },
     });
     useAppStore().setBackupMaxCount(1);
+  }
+
+  it("超上限点「立即清理」：弹 warning 级应用内弹窗，待删数量只统计本设备名下产物且与不可恢复后果在场，不立即删除", async () => {
+    stubPruneConfirm();
     const wrapper = mount(BackupSettings);
     await flushPromises();
 
     await findButton(wrapper, "立即清理")!.trigger("click");
     await flushPromises();
 
-    // warning 级形态（ADR-0078 决策 2）：琥珀警示块承载待删数量与不可恢复后果
+    // warning 级形态（ADR-0078 决策 2）：琥珀警示块承载待删数量与不可恢复后果。
+    // 本机桶 2 份、上限 1 → 待删 1（总数 3 份推不出这个数——他端/未知来源不计入）。
     const alert = document.body.querySelector(".n-modal .n-alert");
     expect(alert, "警示块应存在").toBeTruthy();
     expect(document.body.textContent).toContain("将删除最旧的 1 个备份");
@@ -218,14 +235,7 @@ describe("BackupSettings 手动清理确认弹窗（issue #652 / ADR-0078）", (
   });
 
   it("确认清理：执行 prune_backups 后弹窗关闭并刷新列表", async () => {
-    wireInvokeSeam({
-      defaults: {
-        list_backups: [encryptedBackup, plaintextBackup],
-        get_auto_backup_state: AUTO_BACKUP_ON,
-        prune_backups: { kept: 1, deleted: ["/a", "/b"], failed: [] },
-      },
-    });
-    useAppStore().setBackupMaxCount(1);
+    stubPruneConfirm();
     const wrapper = mount(BackupSettings);
     await flushPromises();
 
@@ -238,14 +248,7 @@ describe("BackupSettings 手动清理确认弹窗（issue #652 / ADR-0078）", (
   });
 
   it("取消清理：弹窗关闭，不发任何删除调用（零副作用）", async () => {
-    wireInvokeSeam({
-      defaults: {
-        list_backups: [encryptedBackup, plaintextBackup],
-        get_auto_backup_state: AUTO_BACKUP_ON,
-        prune_backups: { kept: 1, deleted: ["/a", "/b"], failed: [] },
-      },
-    });
-    useAppStore().setBackupMaxCount(1);
+    stubPruneConfirm();
     const wrapper = mount(BackupSettings);
     await flushPromises();
 

@@ -80,7 +80,7 @@ pub use engine::{
     managed_command_target, probe_backup_meta, prune_managed_backups, read_backup_kind,
     read_backup_meta, restore_db_from,
 };
-pub use identity::book_fingerprint_readonly;
+pub use identity::{book_fingerprint_readonly, source_device_id};
 
 #[cfg(test)]
 mod tests;

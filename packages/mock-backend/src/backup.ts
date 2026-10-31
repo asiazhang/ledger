@@ -51,6 +51,11 @@ export function getBookFingerprint(): string | null {
   return null;
 }
 
+export function getDeviceId(): string | null {
+  // mock 无库可取设备标识：答 null（清理确认弹窗待删数量判定为空，不误报）。
+  return null;
+}
+
 export function pruneBackups(args: Record<string, unknown>): PruneResult {
   str(args, "dir");
   // keep 参数 api 层恒传；mock 清单恒空，保留数无消费面，收下不校验上界

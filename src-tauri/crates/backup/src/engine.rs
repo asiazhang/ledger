@@ -6,8 +6,9 @@
 //! 拒绝）、受管备份列表与滚动清理（列表/清理按**账本指纹**分域，ADR-0144
 //! 决策 3 / issue #1985：跨端产物合并可见，本地句柄不再参与归属；元数据无
 //! 指纹的存量产物经内容锚第三顺位归并，判不出归属的落「未知来源」桶——
-//! 可见、标注、永不自动清理，issue #1986；清理以设备水印为第二道门——非本
-//! 机设备名下与来源未知产物保守不删、不占配额）。归属判定与缓存住
+//! 可见、标注、永不自动清理，issue #1986；清理按（**指纹 × 设备**）分桶，
+//! 只修剪本指纹 × 本设备桶内的超额产物，跨端互不代删、互不挤占配额，
+//! ADR-0144 决策 4 / issue #1987）。归属判定与缓存住
 //! [`crate::attribution`]。
 
 use std::fs::File;
@@ -27,9 +28,9 @@ use crate::identity;
 
 /// 备份作用域（ADR-0144 决策 3，issue #1985）：受管备份的列出与滚动清理按
 /// **账本指纹**分域——指纹是跨端稳定身份，同一本账在各端各目录下的产物
-/// 合并可见，本地句柄与路径不再参与归属判定；设备标识用于清理第二道门
-///（本机设备水印比对，跨端互不代删；(指纹 × 设备) 配额分桶归 #1987）。
-/// `None` 为引擎级兼容口径（不过滤，测试与直接调用形态）。
+/// 合并可见，本地句柄与路径不再参与归属判定；清理的配额分桶再乘设备维度
+///（(指纹 × 设备) 各占各的配额，ADR-0144 决策 4，issue #1987）。`None` 为
+/// 引擎级兼容口径（不过滤，测试与直接调用形态）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BackupScope {
     /// 当前账本指纹（跨端稳定身份；构造见 [`BackupScope::of_conn`]）。
@@ -175,7 +176,9 @@ pub struct BackupMetaSummary {
     pub encrypted: bool,
 }
 
-/// 备份滚动清理结果。
+/// 备份滚动清理结果。`kept` 口径（issue #1987 分桶收口）：**本桶**（本指纹
+/// × 本设备）清理后保留的产物数（= 桶内总数 − 已删数；删除失败跳过的产物
+/// 仍在桶内，计入 kept）。桶外产物（他端设备、未知来源、别本账）不进分母。
 #[derive(Debug, Serialize)]
 pub struct PruneResult {
     pub kept: usize,
@@ -504,56 +507,56 @@ pub fn list_managed_backups(
         .collect()
 }
 
-/// 将目录中作用域内的受管备份修剪到最多 `keep` 个：按旧→新删除超出部分
-/// （issue #836：各账本在共享 BackupDirectory 内分别滚动清理，保留上限为
-/// 设备本地偏好、按本独立计算）。
-///
-/// 清理判定两道门（ADR-0144 决策 3/5；第一道门自 issue #1985 起按指纹分域）：
-/// 指纹归属过滤（第一道，决定候选）之后，逐候选比对内层元数据的设备水印与
-/// 本机设备——带**本机**设备水印的产物才是可清理产物；他端设备名下的同账
-/// 产物互不代删（ADR-0144 决策 4），缺设备水印（升级前存量、设备标识不可得
-/// 的轮次、残缺包）= 来源未知，同样保守不删、不占保留配额（(指纹 × 设备)
-/// 配额分桶归 #1987）。本机设备不可得（作用域无 device_id）时一律不删。
-/// 无作用域兼容口径沿用既有行为：带设备水印即可清理。非本机/未知来源产物
-/// 不计入配额分母；kept 报告的仍是作用域内受管产物总数。单个文件删除失败
-/// （占用/无权限）时跳过并记入 `failed`，不中断其余清理。
+/// 将目录中本桶内的受管备份修剪到最多 `keep` 个（issue #1987 / ADR-0144
+/// 决策 4）：清理按（**账本指纹 × 设备**）分桶执行——指纹归属由列表的归属
+/// 判定收口（[`crate::attribution`]，未知来源桶天然不进任何可清理桶），桶
+/// 的设备维度按产物内层元数据的设备水印与本机设备标识逐值比对；桶内按文件
+/// 名时间戳旧→新淘汰超额部分（解析失败回退文件修改时间的既有规则保留）。
+/// 他端设备名下的产物互不代删、互不挤占配额（一次清理后数量不变）；本机
+/// 设备不可得（作用域无 device_id）时本桶为空、一律不删。无作用域兼容口径
+///（引擎级测试/直接调用形态）沿用既有行为：桶退化为带设备水印的产物。
+/// 上限调小时立即清理到新值的行为由调用方以新 `keep` 复入本函数承载，只
+/// 作用于本桶。单个文件删除失败（占用/无权限）时跳过并记入 `failed`，不
+/// 中断其余清理；`kept` 报告本桶清理后保留数（= 桶内总数 − 已删数）。
 pub fn prune_managed_backups(
     dir: &Path,
     keep: usize,
     scope: Option<&BackupScope>,
 ) -> Result<PruneResult> {
     let files = list_managed_backups(dir, scope)?;
-    let total = files.len();
     let own_device = scope.and_then(|s| s.device_id.as_deref());
-    let mut delible: Vec<BackupFileInfo> = Vec::new();
+    // 分桶：本桶 = 指纹归属（列表已收口）× 本机设备水印；未知来源桶
+    //（无设备水印/残缺包）与别端设备名下产物不进桶，一次清理前后数量不变。
+    let mut bucket: Vec<BackupFileInfo> = Vec::new();
     for file in files {
-        let deletable = match own_device {
+        let in_bucket = match own_device {
             // 有作用域：设备水印逐值比对（指纹归属 ≠ 本机产物，可来自任一端）。
             Some(own) => file.source_device_id.as_deref() == Some(own),
-            // 无作用域兼容口径：带设备水印即可清理（既有行为，#1984）。
+            // 无作用域兼容口径：带设备水印即进桶（既有行为，#1984）。
             None => file.source_device_id.is_some(),
         };
-        if deletable {
-            delible.push(file);
+        if in_bucket {
+            bucket.push(file);
         } else {
             tracing::debug!(
                 file = %file.file_name,
-                "非本机设备名下/来源未知的受管产物跳过清理（永不自动清理，ADR-0144）"
+                "他端设备名下/来源未知的受管产物不在本桶，不参与本次清理（互不代删，ADR-0144 决策 4）"
             );
         }
     }
-    if delible.len() <= keep {
+    let bucket_len = bucket.len();
+    if bucket_len <= keep {
         return Ok(PruneResult {
-            kept: total,
+            kept: bucket_len,
             deleted: Vec::new(),
             failed: Vec::new(),
         });
     }
     let mut deleted = Vec::new();
     let mut failed = Vec::new();
-    // delible 与 list 同序（新→旧），reverse 后为旧→新，取前超额个删除。
-    let excess = delible.len() - keep;
-    for file in delible.into_iter().rev().take(excess) {
+    // bucket 与 list 同序（新→旧），reverse 后为旧→新，取前超额个删除。
+    let excess = bucket_len - keep;
+    for file in bucket.into_iter().rev().take(excess) {
         match std::fs::remove_file(&file.path) {
             Ok(()) => {
                 tracing::info!(file = %file.file_name, "已清理旧备份");
@@ -566,7 +569,7 @@ pub fn prune_managed_backups(
         }
     }
     Ok(PruneResult {
-        kept: total - deleted.len(),
+        kept: bucket_len - deleted.len(),
         deleted,
         failed,
     })

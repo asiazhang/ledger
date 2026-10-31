@@ -7,8 +7,8 @@ use cucumber::{given, then, when};
 use ledger_accounts::{AccountInput, AccountType, create_account};
 use ledger_backup::{
     AUTO_BACKUP_PREFIX, AttemptOutcome, BackupKind, SkipReason, backup_db_to,
-    expected_schema_version, get_state, list_managed_backups, read_backup_kind, read_backup_meta,
-    restore_db_from, set_state,
+    expected_schema_version, get_state, list_managed_backups, prune_managed_backups,
+    read_backup_kind, read_backup_meta, restore_db_from, set_state,
 };
 use ledger_categories::{
     CategoryInput, create_category, delete_category as delete_category_domain,
@@ -200,6 +200,32 @@ fn patch_backup_meta(path: &std::path::Path, extra: &serde_json::Map<String, ser
     std::fs::write(path, buf).expect("回写备份包失败");
 }
 
+/// 把最近一份自动备份产物复制到指定设备子目录并改写来源设备标识（issue
+/// #1987：模拟另一台设备在自己的设备子目录下的产物布局，ADR-0144 决策 6
+/// / #1988 双路径下探；复制源时间戳保留——两桶内产物同名不同目录不冲突）。
+#[when(expr = "把最近一份自动备份产物复制到设备子目录 {string} 并改写来源设备标识")]
+fn clone_last_auto_backup_as_other_device(world: &mut LedgerWorld, device: String) {
+    let dir = world
+        .boot
+        .auto_backup_dir
+        .as_ref()
+        .expect("尚未自动备份（无受管目录）")
+        .clone();
+    let path = world
+        .boot
+        .last_auto_backup_path
+        .as_ref()
+        .expect("尚未自动备份")
+        .clone();
+    let target_dir = dir.join(&device);
+    std::fs::create_dir_all(&target_dir).expect("建设备子目录失败");
+    let target = target_dir.join(path.file_name().expect("产物名应含文件名"));
+    std::fs::copy(&path, &target).expect("复制产物失败");
+    let mut extra = serde_json::Map::new();
+    extra.insert("device_id".into(), serde_json::json!(device));
+    patch_backup_meta(&target, &extra);
+}
+
 /// 以当前活动账本作用域触发自动备份（issue #836 / #1985）：作用域由引擎在
 /// 触发入口内按当前连接只读构造（与壳层/调度同一语义），本步骤仅是场景
 /// 语义标注（与无作用域步骤同执行体）。
@@ -227,13 +253,20 @@ fn backup_file_name_carries_book_id(world: &mut LedgerWorld) {
 /// 当前活动账本指纹（多账本旅程现场取当前账本连接，纯备份场景取 world 库）：
 /// 与壳层/触发入口同一只读构造。
 fn active_book_fingerprint(world: &mut LedgerWorld) -> String {
-    let scope = if let Some(state) = world.boot.dl_conn.as_ref() {
+    active_book_scope(world)
+        .expect("当前账本应有指纹（非空库）")
+        .fingerprint
+}
+
+/// 当前活动账本作用域（多账本旅程现场取当前账本连接，纯备份场景取 world 库）：
+/// 与壳层/触发入口同一只读构造（列表与清理步骤共用）。
+fn active_book_scope(world: &mut LedgerWorld) -> Option<ledger_backup::BackupScope> {
+    if let Some(state) = world.boot.dl_conn.as_ref() {
         let conn = state.conn.lock().unwrap_or_else(|e| e.into_inner());
         ledger_backup::BackupScope::of_conn(&conn).expect("作用域可构造")
     } else {
         ledger_backup::BackupScope::of_conn(&world_conn!(world)).expect("作用域可构造")
-    };
-    scope.expect("当前账本应有指纹（非空库）").fingerprint
+    }
 }
 
 /// 触发入口的公共执行体：独立临时目录（作用域由引擎按连接自构造，issue #1985）；
@@ -1142,18 +1175,37 @@ fn managed_list_encrypted_flags(world: &mut LedgerWorld, encrypted: usize, plain
 /// 按当前账本指纹作用域列出受管备份（issue #1985：跨端合并可见的列表口径，
 /// 与壳层 list_backups 同一构造路径）。
 fn scoped_managed_list(world: &mut LedgerWorld) -> Vec<ledger_backup::BackupFileInfo> {
-    let dir = world.boot.auto_backup_dir.as_ref().expect("无受管备份目录");
-    let scope = if let Some(state) = world.boot.dl_conn.as_ref() {
-        let conn = state.conn.lock().unwrap_or_else(|e| e.into_inner());
-        ledger_backup::BackupScope::of_conn(&conn)
-            .expect("作用域可构造")
-            .expect("当前账本应有指纹")
-    } else {
-        ledger_backup::BackupScope::of_conn(&world_conn!(world))
-            .expect("作用域可构造")
-            .expect("当前账本应有指纹")
-    };
-    list_managed_backups(dir, Some(&scope)).expect("列受管备份失败")
+    let dir = world
+        .boot
+        .auto_backup_dir
+        .as_ref()
+        .expect("无受管备份目录")
+        .clone();
+    let scope = active_book_scope(world).expect("当前账本应有指纹");
+    list_managed_backups(&dir, Some(&scope)).expect("列受管备份失败")
+}
+
+/// 按当前账本作用域滚动清理（issue #1987：与壳层 prune_backups 同一构造
+/// 路径）；结果存 world 供后续步骤断言 deleted 数量。
+#[when(expr = "按当前账本作用域清理受管备份到 {int} 份")]
+fn prune_scoped_to_limit(world: &mut LedgerWorld, keep: usize) {
+    let dir = world
+        .boot
+        .auto_backup_dir
+        .as_ref()
+        .expect("无受管备份目录")
+        .clone();
+    let scope = active_book_scope(world).expect("当前账本应有指纹");
+    let r = prune_managed_backups(&dir, keep, Some(&scope)).expect("清理失败");
+    world.boot.last_prune = Some(r);
+}
+
+/// 清理结果的上报三元中的 deleted 数量（issue #1987 验收：清理结果仍上报
+/// kept/deleted/failed）。
+#[then(expr = "清理应已删除 {int} 份产物")]
+fn prune_deleted_count(world: &mut LedgerWorld, expected: usize) {
+    let r = world.boot.last_prune.as_ref().expect("尚未清理");
+    assert_eq!(r.deleted.len(), expected, "清理删除数量不匹配: {:?}", r);
 }
 
 /// 跨端合并可见（issue #1985）：按指纹作用域列出的产物数量。
@@ -1174,6 +1226,22 @@ fn managed_list_contains_device(world: &mut LedgerWorld, device: String) {
             .iter()
             .any(|f| f.source_device_id.as_deref() == Some(device.as_str())),
         "列表应含来源设备 {device} 的产物: {names:?}"
+    );
+}
+
+/// 指定来源设备的产物数量（issue #1987 验收：一次清理后其他设备名下的产物
+/// 数量不变——清理前后各断言一次同值）。
+#[then(expr = "备份列表中来源设备 {string} 的产物应有 {int} 份")]
+fn managed_list_device_count(world: &mut LedgerWorld, device: String, expected: usize) {
+    let files = scoped_managed_list(world);
+    let names: Vec<String> = files.iter().map(|f| f.file_name.clone()).collect();
+    let count = files
+        .iter()
+        .filter(|f| f.source_device_id.as_deref() == Some(device.as_str()))
+        .count();
+    assert_eq!(
+        count, expected,
+        "来源设备 {device} 的产物数量不匹配: {names:?}"
     );
 }
 

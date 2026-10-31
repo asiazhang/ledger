@@ -160,8 +160,22 @@ pub async fn get_book_fingerprint(app: AppHandle) -> Result<Option<String>> {
     read_entry("get_book_fingerprint", conn, book_fingerprint_readonly).await
 }
 
-/// 将备份目录中的受管备份修剪到最多 `keep` 个（删除最旧的超出部分；按当前
-/// 账本指纹分域，只动本机设备名下的可清理产物，issue #1985）。清理成功后发出
+/// 本机设备标识（issue #1987）：前端清理确认弹窗的待删数量只统计当前设备
+/// 名下可清理产物的比对基准——与 [`list_backups`] / [`prune_backups`] 的作用
+/// 域设备同源（[`ledger_backup::source_device_id`]，读连接只读构造）。不可得
+///（attached 侧异常）= `null`，前端桶判定为空、待删数量为零（与后端「设备
+/// 不可得保守不删」同口径）。
+#[tauri::command]
+pub async fn get_device_id(app: AppHandle) -> Result<Option<String>> {
+    let conn = app.state::<DbState>().read_handle();
+    read_entry("get_device_id", conn, |conn| {
+        Ok(ledger_backup::source_device_id(conn))
+    })
+    .await
+}
+
+/// 将备份目录中的受管备份修剪到最多 `keep` 个（删除桶内（本指纹 × 本设备）
+/// 的超额产物，issue #1987）。清理成功后发出
 /// `ledger:backups-changed` 信号（issue #129，经信号映射单点 `signals::emit_for`
 /// 判定发射，ADR-0044），前端列表随之自动刷新。
 #[tauri::command]
@@ -175,8 +189,9 @@ pub async fn prune_backups(app: AppHandle, dir: String, keep: i64) -> Result<Pru
                 &[&keep.to_string()],
             )
         })?;
-        // 按当前账本指纹作用域滚动清理（issue #1985）：非本机设备名下与来源
-        // 未知产物保守不删（见 prune_managed_backups 两道门文档）。
+        // 按当前账本作用域分桶清理（issue #1987）：只修剪本指纹 × 本设备桶
+        // 内的超额产物；他端设备与未知来源不进桶（见 prune_managed_backups 文
+        // 档）。
         match BackupScope::of_conn(conn)? {
             Some(scope) => prune_managed_backups(Path::new(&dir), keep, Some(&scope)),
             None => Ok(PruneResult {

@@ -487,10 +487,11 @@ fn unreadable_products_list_with_fallback_and_never_pruned() {
     assert_eq!(list[1].file_name, "ledger-backup-20260101-010101.db.zip");
     assert_eq!(list[1].kind, BackupKind::Manual);
 
-    // 修剪到 1：两份都判定不了来源 → 一个不删、配额不被挤占（kept = 全部留存）。
+    // 修剪到 1：两份都判不出来源 → 全不进桶、一个不删、配额不被挤占
+    //（kept = 本桶保留数 = 0：本桶为空，目录内文件原样留存）。
     let r = prune_managed_backups(&dir, 1, None).unwrap();
     assert!(r.deleted.is_empty(), "来源未知的残缺包保守不删");
-    assert_eq!(r.kept, 2);
+    assert_eq!(r.kept, 0, "本桶为空：kept 报告本桶保留数而非目录总数");
     assert!(dir.join("ledger-backup-20260101-010101.db.zip").exists());
     assert!(dir.join("ledger-auto-20260201-010101.db.zip").exists());
 }
@@ -502,7 +503,7 @@ fn prune_keeps_all_when_within_limit_and_missing_dir() {
 
     let r = prune_managed_backups(&dir, 30, None).unwrap();
     assert!(r.deleted.is_empty());
-    assert_eq!(r.kept, 1);
+    assert_eq!(r.kept, 0, "残缺包不进桶：kept 报告本桶保留数");
 
     // 目录不存在：空结果而非报错。
     let missing = dir.join("gone");
@@ -1017,7 +1018,7 @@ fn unknown_source_bucket_visible_but_never_pruned() {
         "密文无指纹产物（未知来源桶）不被清理"
     );
     assert!(broken.exists(), "残缺包（未知来源桶）不被清理");
-    assert_eq!(r.kept, 3, "未知来源产物不占保留配额");
+    assert_eq!(r.kept, 1, "kept 报告本桶保留数；未知来源产物不在桶内");
 }
 
 /// 多账本分域（issue #1986）：同一备份目录内同名时间戳、不同指纹的异端产物
@@ -1190,9 +1191,10 @@ fn scope_of_conn_reads_fixed_fingerprint_or_anchor() {
     assert!(BackupScope::of_conn(&empty).unwrap().is_none());
 }
 
-/// 跨设备互不代删（issue #1985 验收：清理第一道门换指纹后仍不越设备）：同一本账
-/// 两台设备各自产生产物，本机清理只删本机设备名下的最旧产物，另一台设备的
-/// 产物与别本产物不受影响。
+/// 跨设备互不代删（issue #1987 验收：清理按（指纹 × 设备）分桶，桶外不动）：
+/// 同一本账两台设备各自产生产物，本机清理只修剪「本指纹 × 本设备」桶内
+/// 超额的最旧产物；另一台设备的产物**即使自身超额**也数量不变（互不挤占
+/// 配额），别本产物与未知来源桶同样不受影响。
 #[test]
 fn scoped_prune_never_touches_other_device_products() {
     let conn = tauri_app_lib::test_support::open();
@@ -1208,24 +1210,27 @@ fn scoped_prune_never_touches_other_device_products() {
             &serde_json::json!({ "device_id": &own_device }),
         );
     }
-    // 另一台设备的同账产物（更旧）：归属本账但设备水印是 dev-other。
-    real_managed_backup_with_meta(
-        &dir,
-        "ledger-auto-20260101-010000-txn-1.db.zip",
-        BackupKind::Auto,
-        &serde_json::json!({ "device_id": "dev-other" }),
-    );
+    // 另一台设备的同账产物 3 份（同样超出上限）：归属本账但设备水印是
+    // dev-other——数量不变（互不代删，ADR-0144 决策 4）。
+    for ts in ["20260101", "20260102", "20260103"] {
+        real_managed_backup_with_meta(
+            &dir,
+            &format!("ledger-auto-{ts}-010000-txn-1.db.zip"),
+            BackupKind::Auto,
+            &serde_json::json!({ "device_id": "dev-other" }),
+        );
+    }
     // 别本账产物：不在本作用域。
     real_managed_backup_with_meta(
         &dir,
-        "ledger-auto-20260102-010000-fp-b.db.zip",
+        "ledger-auto-20260102-020000-fp-b.db.zip",
         BackupKind::Auto,
         &serde_json::json!({ "fingerprint": "fp-other-book" }),
     );
 
     let r = prune_managed_backups(&dir, 1, Some(&scope)).unwrap();
 
-    // 作用域内 4 份（本机 3 + 另一设备 1），上限 1：只删本机名下最旧两份。
+    // 本桶（本指纹 × 本设备）3 份，上限 1：桶内旧→新淘汰超额两份。
     assert_eq!(
         r.deleted,
         vec![
@@ -1234,19 +1239,27 @@ fn scoped_prune_never_touches_other_device_products() {
         ],
         "只删本机设备名下的最旧产物"
     );
-    assert_eq!(r.kept, 2, "本机最新一份 + 另一台设备的产物留存");
+    assert_eq!(r.kept, 1, "kept 报告本桶清理后保留数（= 上限）");
     assert!(
-        dir.join("ledger-auto-20260101-010000-txn-1.db.zip")
-            .exists(),
-        "另一台设备的产物不被本机清理"
+        r.failed.is_empty(),
+        "清理结果仍上报 kept/deleted/failed 三元（failed 空场）"
     );
+    // 其他设备名下产物数量不变：3 份 dev-other 全部留存（即使自身超额）。
+    for ts in ["20260101", "20260102", "20260103"] {
+        assert!(
+            dir.join(format!("ledger-auto-{ts}-010000-txn-1.db.zip"))
+                .exists(),
+            "另一台设备的产物不被本机清理（{ts}）"
+        );
+    }
     assert!(
-        dir.join("ledger-auto-20260102-010000-fp-b.db.zip").exists(),
+        dir.join("ledger-auto-20260102-020000-fp-b.db.zip").exists(),
         "别本账产物不受影响"
     );
     assert!(
         dir.join("ledger-auto-20260103-000000-txn-1.db.zip")
-            .exists()
+            .exists(),
+        "本桶内最新一份留存"
     );
 }
 
@@ -1951,19 +1964,19 @@ fn prune_skips_unknown_origin_products() {
         "设备标识不可得的产物不带设备水印（来源未知）"
     );
 
-    // keep = 3：可清理类恰 3 份 → 什么都不删——未知来源产物不占配额。
+    // keep = 3：可清理桶恰 3 份 → 什么都不删——未知来源产物不进桶、不占配额。
     let r = prune_managed_backups(&dir, 3, None).unwrap();
     assert!(r.deleted.is_empty(), "未知来源不占保留配额");
-    assert_eq!(r.kept, 4, "kept 报告目录内留存受管产物总数");
+    assert_eq!(r.kept, 3, "kept 报告本桶（带设备水印产物）保留数");
 
-    // keep = 2：可清理类超额 1 → 只删可清理类最旧；未知来源产物留存。
+    // keep = 2：本桶超额 1 → 只删本桶最旧；未知来源产物留存。
     let r2 = prune_managed_backups(&dir, 2, None).unwrap();
     assert_eq!(
         r2.deleted,
         vec!["ledger-auto-20260101-000000-book-a.db.zip"]
     );
     assert!(dir.join(unknown_name).exists(), "来源未知永不自动清理");
-    assert_eq!(r2.kept, 3);
+    assert_eq!(r2.kept, 2);
 }
 
 // ── 设备子目录布局（ADR-0144 决策 6，#1988）──────────────────────────────────

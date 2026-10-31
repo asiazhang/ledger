@@ -41,6 +41,26 @@ const manualBackupFile: BackupFileInfo = {
   source_unknown: true,
 };
 
+/** 本机设备名下的第二/第三份产物（清理弹窗待删数量只统计本设备桶，issue #1987）。 */
+const ownBackupSecond: BackupFileInfo = {
+  ...autoBackupFile,
+  file_name: "ledger-auto-20260216-093000-dev-this.db.zip",
+  path: "/Users/me/backups/ledger-auto-20260216-093000-dev-this.db.zip",
+};
+const ownBackupThird: BackupFileInfo = {
+  ...autoBackupFile,
+  file_name: "ledger-auto-20260215-093000-dev-this.db.zip",
+  path: "/Users/me/backups/ledger-auto-20260215-093000-dev-this.db.zip",
+};
+
+/** 另一台设备名下的产物（本机清理不代删，弹窗数字不含它，issue #1987）。 */
+const foreignBackup: BackupFileInfo = {
+  ...autoBackupFile,
+  file_name: "ledger-auto-20260210-093000-dev-other.db.zip",
+  path: "/Users/me/backups/ledger-auto-20260210-093000-dev-other.db.zip",
+  source_device_id: "dev-other",
+};
+
 // 命令契约快照：正常态（开关开、从未失败）。issue #1456 起状态含连续失败字段。
 const AUTO_STATE_OK: AutoBackupState = {
   enabled: true,
@@ -440,33 +460,36 @@ describe("useBackup 加密语义（issue #572 / ADR-0075 决策 7）", () => {
 });
 
 describe("useBackup 手动清理确认弹窗（issue #652 / ADR-0078）", () => {
-  /** 预置 3 个备份、保留上限 1：超上限 2 个（上限偏好显式设小，默认 30）。 */
+  /** 预置 5 份产物（本机 3 + 未知来源 1 + 他端 1）、保留上限 1：本机桶超上
+   *  限 2 个（上限偏好显式设小，默认 30）。待删数量只统计本机桶，issue
+   *  #1987：弹窗数字与实际删除一致，不含他端与未知来源产物。 */
   function stubThreeBackups() {
     useAppStore().setBackupMaxCount(1);
     wireInvokeSeam({
       overrides: {
         list_backups: [
           autoBackupFile,
+          ownBackupSecond,
+          ownBackupThird,
           manualBackupFile,
-          {
-            ...manualBackupFile,
-            file_name: "ledger-backup-20260102-010101.db.zip",
-            path: "/Users/me/backups/ledger-backup-20260102-010101.db.zip",
-          },
+          foreignBackup,
         ],
         get_auto_backup_state: AUTO_STATE_OK,
+        // 本机设备标识（issue #1987）：待删数量的比对基准。
+        get_device_id: "dev-this",
         prune_backups: { kept: 1, deleted: ["/a", "/b"], failed: [] },
       },
     });
   }
 
-  it("manualPrune 超上限：开启 warning 级确认弹窗并锁定待删数量，不立即删除", async () => {
+  it("manualPrune 超上限：开启 warning 级确认弹窗并锁定待删数量（只统计本设备桶），不立即删除", async () => {
     stubThreeBackups();
     const { backup } = mountHost();
     await flushPromises();
 
     await backup.manualPrune();
     expect(backup.pruneConfirmShow.value).toBe(true);
+    // 总数 5 份、上限 1：旧口径会报 4；本机桶 3 份 → 待删 2（他端与未知来源不计入）。
     expect(backup.pruneExcess.value).toBe(2);
     expect(mockInvoke.mock.calls.some(([cmd]) => cmd === "prune_backups")).toBe(false);
   });
@@ -505,6 +528,8 @@ describe("useBackup 手动清理确认弹窗（issue #652 / ADR-0078）", () => 
       overrides: {
         list_backups: [manualBackupFile],
         get_auto_backup_state: AUTO_STATE_OK,
+        // 本机标识在场：未知来源产物不进本机桶，本机桶空 → 不弹（issue #1987）。
+        get_device_id: "dev-this",
       },
     });
     const { backup } = mountHost();

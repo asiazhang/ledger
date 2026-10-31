@@ -155,6 +155,7 @@ import {
   getAutoBackupState,
   getBackupMeta,
   getBookFingerprint,
+  getDeviceId,
   listBackups,
   pruneBackups,
   restoreBackup,
@@ -246,6 +247,7 @@ export function installMockBackend(): void {
   registerMockCommand("get_backup_meta", (args) => getBackupMeta(args));
   registerMockCommand("list_backups", (args) => listBackups(args));
   registerMockCommand("get_book_fingerprint", () => getBookFingerprint());
+  registerMockCommand("get_device_id", () => getDeviceId());
   registerMockCommand("prune_backups", (args) => pruneBackups(args));
   registerMockCommand("set_auto_backup_dir", (args) => setAutoBackupDir(args));
   registerMockCommand("get_auto_backup_state", () => getAutoBackupState());
