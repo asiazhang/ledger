@@ -1612,3 +1612,174 @@ fn prune_skips_unknown_origin_products() {
     assert!(dir.join(unknown_name).exists(), "来源未知永不自动清理");
     assert_eq!(r2.kept, 3);
 }
+
+// ── 设备子目录布局（ADR-0144 决策 6，#1988）──────────────────────────────────
+// 写侧按设备多分一层（`<备份目录>/<设备标识>/`），列表与恢复同时兼容旧扁平
+// 路径（只读）与设备子目录；引擎判定只认文件名与作用域，不依赖目录形状。
+
+/// 写侧落点：连接现场有设备标识时给出 `<备份目录>/<设备标识>/<产物名>`，
+/// 设备子目录按需创建；备份目录本体缺失不在此补建（交由 backup_db_to 的
+/// 既有目标目录门禁以码化错误收场，自动备份「目录无效即失败」语义不变）。
+#[test]
+fn managed_write_target_layers_device_subdir() {
+    let dir = ScratchDir::new("backup-test-layout");
+    let conn = tauri_app_lib::test_support::open();
+    let device = crate::identity::source_device_id(&conn).expect("工厂库可取设备标识");
+    let target =
+        super::engine::managed_write_target(&dir, "ledger-auto-20260101-000000.db.zip", &conn)
+            .unwrap();
+    assert_eq!(
+        target,
+        dir.join(&device).join("ledger-auto-20260101-000000.db.zip"),
+        "产物名按设备多分一层"
+    );
+    assert!(dir.join(&device).is_dir(), "设备子目录按需创建");
+
+    // 目录本体不存在：不补建目录（返回设备子目录路径，写出由 backup_db_to 报错）。
+    let missing = dir.join("gone");
+    let target =
+        super::engine::managed_write_target(&missing, "ledger-auto-20260101-000000.db.zip", &conn)
+            .unwrap();
+    assert_eq!(
+        target,
+        missing
+            .join(&device)
+            .join("ledger-auto-20260101-000000.db.zip")
+    );
+    assert!(!missing.exists(), "备份目录本体缺失不在此补建");
+}
+
+/// 写侧落点：设备标识不可得（attached 侧无 sync_device 表，极端现场）时回落
+/// 扁平旧路径——该轮产物本就无设备水印（来源未知），备份不因身份缺失阻断。
+#[test]
+fn managed_write_target_falls_back_flat_without_device() {
+    let dir = ScratchDir::new("backup-test-layout-flat");
+    let conn = tauri_app_lib::test_support::open();
+    conn.execute("DROP TABLE sync.sync_device", []).unwrap();
+    let target =
+        super::engine::managed_write_target(&dir, "ledger-auto-20260101-000000.db.zip", &conn)
+            .unwrap();
+    assert_eq!(target, dir.join("ledger-auto-20260101-000000.db.zip"));
+}
+
+/// 列表双路径：旧扁平路径（只读存量）与设备子目录（新产物落点）内的受管产物
+/// 合并列出、统一按新→旧排序、路径各自正确；清理跨布局按路径删除。一级子
+/// 目录一律下探（引擎不认识「设备」形状，受管判定只认文件名）。
+#[test]
+fn list_and_prune_scan_flat_and_device_subdirs() {
+    let dir = ScratchDir::new("backup-test-dual-path");
+    let device_dir = dir.join("01971234-4567-789a-bcde-f123456789ab");
+    std::fs::create_dir_all(&device_dir).unwrap();
+    // 旧扁平路径一份 + 设备子目录两份（真实成对产物，#1983 夹具）。
+    let flat = real_managed_backup(
+        &dir,
+        "ledger-backup-20260101-010101.db.zip",
+        BackupKind::Manual,
+    );
+    real_managed_backup(
+        &device_dir,
+        "ledger-auto-20260201-010101.db.zip",
+        BackupKind::Auto,
+    );
+    let newest = real_managed_backup(
+        &device_dir,
+        "ledger-auto-20260202-010101.db.zip",
+        BackupKind::Auto,
+    );
+
+    let list = list_managed_backups(&dir, None).unwrap();
+    assert_eq!(list.len(), 3, "扁平 + 设备子目录合并列出");
+    assert_eq!(
+        list[0].file_name, "ledger-auto-20260202-010101.db.zip",
+        "跨布局统一按新→旧排序"
+    );
+    assert_eq!(
+        Path::new(&list[0].path),
+        newest,
+        "设备子目录产物给出完整路径"
+    );
+    assert_eq!(list[2].file_name, "ledger-backup-20260101-010101.db.zip");
+    assert_eq!(Path::new(&list[2].path), flat, "扁平产物路径不变");
+
+    // 修剪跨布局生效：最旧的扁平产物被删，设备子目录产物按路径删除。
+    let r = prune_managed_backups(&dir, 2, None).unwrap();
+    assert_eq!(r.deleted, vec!["ledger-backup-20260101-010101.db.zip"]);
+    assert!(!flat.exists(), "扁平路径内的超额产物照常清理");
+    assert!(newest.exists(), "设备子目录产物留存");
+}
+
+/// 恢复双路径：设备子目录产物与扁平产物都走既有恢复通道（开包 → 校验 →
+/// 替换），目录形状不改变恢复行为。
+#[test]
+fn restore_works_from_both_layouts() {
+    let dir = ScratchDir::new("backup-test-restore-dual");
+    let device_dir = dir.join("01971234-4567-789a-bcde-f123456789ab");
+    std::fs::create_dir_all(&device_dir).unwrap();
+    let sources = [
+        real_managed_backup(
+            &device_dir,
+            "ledger-auto-20260201-010101.db.zip",
+            BackupKind::Auto,
+        ),
+        real_managed_backup(
+            &dir,
+            "ledger-backup-20260101-010101.db.zip",
+            BackupKind::Manual,
+        ),
+    ];
+    let safety = temp_safety_dir();
+    let expected = expected_schema_version().unwrap();
+    for (i, source) in sources.iter().enumerate() {
+        let db_path = dir.join(format!("restored-{i}.db"));
+        let result = restore_db_from(source, &db_path, &safety, expected, None).unwrap();
+        assert_eq!(result.schema_version, expected, "两种路径恢复都成功");
+        let conn = open_connection(&db_path).unwrap();
+        assert_eq!(count_transactions(&conn), 1, "恢复内容完整");
+    }
+}
+
+/// 命令写侧改道：目标在当前备份目录（进程内偏好镜像）内且为受管命名 →
+/// 设备子目录落点；另存为到目录之外 / 非受管命名 / 镜像未配置 → 原样落盘。
+/// 偏好镜像为进程级共享态：本组用例以互斥锁串行，收尾复位。
+#[test]
+fn command_target_retargets_only_inside_backup_dir() {
+    static PREFS_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _guard = PREFS_LOCK.lock().unwrap();
+    let prefs = super::auto::shared_prefs();
+    let dir = ScratchDir::new("backup-test-retarget");
+    let conn = tauri_app_lib::test_support::open();
+    let device = crate::identity::source_device_id(&conn).expect("工厂库可取设备标识");
+    let managed = dir.join("ledger-backup-20260101-010101.db.zip");
+    let expected = dir
+        .join(&device)
+        .join("ledger-backup-20260101-010101.db.zip");
+
+    // 目录内受管名 → 设备子目录；尾部分隔符的镜像目录同位命中。
+    for mirror in [
+        dir.to_string_lossy().into_owned(),
+        format!("{}/", dir.to_string_lossy()),
+    ] {
+        prefs.set_dir(Some(mirror));
+        assert_eq!(
+            managed_command_target(&managed, &conn).unwrap(),
+            expected,
+            "镜像目录内受管命名改道设备子目录"
+        );
+    }
+    // 目录外 → 原样（另存为到别处是用户显式选择，不代为改道）。
+    let outside = ScratchDir::new("backup-test-retarget-out");
+    prefs.set_dir(Some(dir.to_string_lossy().into_owned()));
+    assert_eq!(
+        managed_command_target(&outside.join("ledger-backup-20260101-010101.db.zip"), &conn)
+            .unwrap(),
+        outside.join("ledger-backup-20260101-010101.db.zip")
+    );
+    // 目录内非受管名 → 原样。
+    assert_eq!(
+        managed_command_target(&dir.join("my-notes.zip"), &conn).unwrap(),
+        dir.join("my-notes.zip")
+    );
+    // 镜像未配置（极端时序）→ 原样，退回既有扁平行为。
+    prefs.set_dir(None);
+    assert_eq!(managed_command_target(&managed, &conn).unwrap(), managed);
+}

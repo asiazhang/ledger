@@ -75,8 +75,9 @@ pub use auto::{
 pub use engine::{
     BackupFileInfo, BackupKind, BackupMetaSummary, BackupResult, BackupScope,
     PRE_UPDATE_BACKUP_FILE_NAME, PruneResult, RestoreResult, backup_db_to,
-    create_pre_update_backup, expected_schema_version, list_managed_backups, probe_backup_meta,
-    prune_managed_backups, read_backup_kind, read_backup_meta, restore_db_from,
+    create_pre_update_backup, expected_schema_version, list_managed_backups,
+    managed_command_target, probe_backup_meta, prune_managed_backups, read_backup_kind,
+    read_backup_meta, restore_db_from,
 };
 pub use identity::book_fingerprint_readonly;
 

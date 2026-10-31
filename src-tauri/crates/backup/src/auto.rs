@@ -383,10 +383,14 @@ fn perform_backup(
     let scope = super::engine::BackupScope::of_conn(conn)?;
     // 产物命名取注入时刻的本地时间（ADR-0016 修订：原 UTC，与手动备份拉齐）；
     // 锚点仍记 UTC 时刻（[`db::iso_at`]），值格式不变。
-    let target = Path::new(dir).join(auto_backup_file_name(
+    let file_name = auto_backup_file_name(
         now.with_timezone(&Local),
         scope.as_ref().map(super::engine::BackupScope::book_tag),
-    ));
+    );
+    // 产物落点按设备多分一层（ADR-0144 决策 6，#1988）：`<备份目录>/<设备标识>/
+    // <产物名>`；设备标识不可得时回落扁平旧路径（该轮无设备水印 = 来源未知，
+    // 与水印语义一致）。
+    let target = super::engine::managed_write_target(Path::new(dir), &file_name, conn)?;
     let path =
         super::engine::backup_db_to(conn, &target, app_version, super::engine::BackupKind::Auto)?
             .path;
@@ -1088,6 +1092,33 @@ mod scheduler_tests {
             state.last_backup_at,
             Some(String::from("2026-02-17T12:00:00Z"))
         );
+    }
+
+    /// 自动产物落设备子目录（ADR-0144 决策 6，#1988）：`<备份目录>/<设备标识>/
+    /// <产物名>`，设备标识与产物水印同源（连接现场首用生成）。
+    #[test]
+    fn product_lands_in_device_subdir() {
+        let c = conn();
+        let dir = temp_dir("device-subdir");
+        mark_dirty(&c).expect("置脏");
+        let device = crate::identity::source_device_id(&c).expect("工厂库可取设备标识");
+        let outcome = run_due_backup(
+            &c,
+            Some(dir.to_str().unwrap()),
+            "0.2.0",
+            now_at("2026-02-17T12:00:00Z"),
+        );
+        match &outcome {
+            AttemptOutcome::Performed { path } => {
+                assert_eq!(
+                    Path::new(path).parent().unwrap(),
+                    dir.join(&device),
+                    "产物应落在设备子目录内"
+                );
+                assert!(Path::new(path).is_file(), "产物文件应存在");
+            }
+            other => panic!("应执行备份，实际 {other:?}"),
+        }
     }
 
     /// 同一本地日已自动备份过（本地 08:00 锚点、20:00 再触发）→ 静默跳过且原因可辨：

@@ -48,12 +48,11 @@ pub async fn create_backup<R: Runtime>(
     let db = app.state::<DbState>().write_handle();
     let app_version = app.package_info().version.to_string();
     db.run_raw("create_backup", move |conn| {
-        backup_db_to(
-            conn,
-            Path::new(&target_path),
-            &app_version,
-            BackupKind::Manual,
-        )
+        // 受管写侧设备分层（ADR-0144 决策 6，#1988）：目标落在当前备份目录内且为
+        // 受管命名时改道设备子目录（与自动备份同布局）；另存为到目录之外 / 非受管
+        // 名 / 目录未镜像时原样落盘，判定与改道收口在域内（`managed_command_target`）。
+        let target = backup::managed_command_target(Path::new(&target_path), conn)?;
+        backup_db_to(conn, &target, &app_version, BackupKind::Manual)
     })
     .await
 }

@@ -346,23 +346,15 @@ fn attribute_to_scope(
     }
 }
 
-/// 列出目录中作用域内的受管备份文件，按新→旧排序。
-///
-/// `scope`：账本作用域（`None` = 不过滤的引擎级兼容口径）；归属判定按指纹
-/// 顺位短路（见 [`attribute_to_scope`]）：其他账本/判不出归属的产物不可见
-///（ADR-0089 分域语义保持，ADR-0144 跨端合并）。备份时间优先取文件名时间戳
-///（与命名规则强一致），解析失败回退文件修改时间；两者皆失败按最旧处理
-///（排序最靠后，清理时最先被删）。目录不存在时返回空列表（界面展示空态而非报错）。
-pub fn list_managed_backups(
-    dir: &Path,
+/// 把单个目录内作用域内的受管产物收进 `files`（列表扫描单元，双路径共用）；
+/// 归属判定按指纹顺位短路走 [`attribute_to_scope`]（ADR-0089 分域语义保持）。
+fn collect_scoped_in_dir(
+    root: &Path,
     scope: Option<&BackupScope>,
-) -> Result<Vec<BackupFileInfo>> {
-    if !dir.is_dir() {
-        return Ok(Vec::new());
-    }
     // 第三元：归属判定顺位二命中时顺带读出的产物元数据（复用同一开包，免二次解压）。
-    let mut files: Vec<(NaiveDateTime, PathBuf, Option<ProductMeta>)> = Vec::new();
-    for entry in std::fs::read_dir(dir)? {
+    files: &mut Vec<(NaiveDateTime, PathBuf, Option<ProductMeta>)>,
+) -> Result<()> {
+    for entry in std::fs::read_dir(root)? {
         let entry = entry?;
         let name = entry.file_name().to_string_lossy().into_owned();
         let is_file = entry.file_type().map(|t| t.is_file()).unwrap_or(false);
@@ -388,6 +380,98 @@ pub fn list_managed_backups(
                 .map(|t| t.naive_utc())
         });
         files.push((ts.unwrap_or(NaiveDateTime::MIN), entry.path(), attributed));
+    }
+    Ok(())
+}
+
+/// 受管备份写侧落点（ADR-0144 决策 6，#1988）：`<备份目录>/<设备标识>/<产物名>`
+/// ——新产物按设备多分一层，容灾镜像与跨端清理都以设备目录为界；设备标识经
+/// 连接现场读取（[`identity::source_device_id`]，与产物元数据水印同源，首用
+/// 生成）。设备标识取不到时回落扁平旧路径——该轮产物本就无设备水印（来源
+/// 未知，永不参与自动清理），备份不因身份缺失阻断。设备子目录按需创建；
+/// 备份目录本体缺失不在此补建，交由 [`backup_db_to`] 的目标目录门禁以既有
+/// 码化错误收场（自动备份「目录无效即失败」语义不变）。
+pub fn managed_write_target(dir: &Path, file_name: &str, conn: &Connection) -> Result<PathBuf> {
+    let target = match identity::source_device_id(conn) {
+        Some(device) => {
+            let device_dir = dir.join(&device);
+            if dir.is_dir() {
+                std::fs::create_dir_all(&device_dir)?;
+            }
+            device_dir.join(file_name)
+        }
+        None => dir.join(file_name),
+    };
+    Ok(target)
+}
+
+/// 手动备份命令的目标解析（#1988）：目标落在当前备份目录（进程内偏好镜像，
+/// 前端启动/变更时经 `set_auto_backup_dir` 推送）内且文件名为受管命名时，
+/// 改道设备子目录落点（[`managed_write_target`]）——与自动备份同布局；其余
+/// 现场原样返回：另存为到备份目录之外是用户显式选择，不代为改道；镜像未
+/// 配置（极端时序）退回既有扁平行为。
+pub fn managed_command_target(target: &Path, conn: &Connection) -> Result<PathBuf> {
+    let Some(name) = target.file_name().and_then(|n| n.to_str()) else {
+        return Ok(target.to_path_buf());
+    };
+    if !is_managed_backup_file_name(name) {
+        return Ok(target.to_path_buf());
+    }
+    let parent = match target.parent() {
+        Some(p) if !p.as_os_str().is_empty() => p,
+        _ => return Ok(target.to_path_buf()),
+    };
+    let Some(mirror) = super::auto::shared_prefs().snapshot_dir() else {
+        return Ok(target.to_path_buf());
+    };
+    if !same_dir_path(&mirror, &parent.to_string_lossy()) {
+        return Ok(target.to_path_buf());
+    }
+    managed_write_target(parent, name, conn)
+}
+
+/// 目录同位判定（尾部分隔符不敏感）：镜像来自前端 `normalizeBackupDir`（去尾
+/// 斜杠）推送，目标父目录来自用户路径拼接，两侧可能差一个尾分隔符。
+fn same_dir_path(a: &str, b: &str) -> bool {
+    fn norm(s: &str) -> &str {
+        s.trim_end_matches(['/', '\\'])
+    }
+    let (a, b) = (norm(a), norm(b));
+    !a.is_empty() && a == b
+}
+
+/// 列出目录中作用域内的受管备份文件，按新→旧排序。
+///
+/// 扫描两处（ADR-0144 决策 6，#1988）：目录本体 = 旧扁平路径（升级存量，
+/// 只读）+ 一级子目录 = 设备子目录（新产物落点）。引擎不认识「设备」这一
+/// 形状：一级子目录一律下探，受管判定仍只认文件名与作用域，目录多一层不
+/// 引起失配。单个子目录读失败（并发清理移除等瞬态）跳过并留痕，不放大成
+/// 整表失败；目录本体读失败照旧上抛。
+///
+/// `scope`：账本作用域（`None` = 不过滤的引擎级兼容口径）；归属判定按指纹
+/// 顺位短路（见 [`attribute_to_scope`]）：其他账本/判不出归属的产物不可见、
+/// 不参与清理（ADR-0089 分域语义保持，ADR-0144 跨端合并）。
+/// 备份时间优先取文件名时间戳（与命名规则强一致），解析失败回退文件修改时间；
+/// 两者皆失败按最旧处理（排序最靠后，清理时最先被删）。目录不存在时返回空列表
+/// （界面展示空态而非报错）。
+pub fn list_managed_backups(
+    dir: &Path,
+    scope: Option<&BackupScope>,
+) -> Result<Vec<BackupFileInfo>> {
+    if !dir.is_dir() {
+        return Ok(Vec::new());
+    }
+    let mut files: Vec<(NaiveDateTime, PathBuf, Option<ProductMeta>)> = Vec::new();
+    collect_scoped_in_dir(dir, scope, &mut files)?;
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        if !entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+            continue;
+        }
+        let sub = entry.path();
+        if let Err(e) = collect_scoped_in_dir(&sub, scope, &mut files) {
+            tracing::debug!(dir = %sub.display(), error = %e, "子目录扫描失败，跳过");
+        }
     }
     files.sort_by_key(|a| std::cmp::Reverse(a.0));
     files
