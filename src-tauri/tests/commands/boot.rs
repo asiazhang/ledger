@@ -30,8 +30,8 @@ use ledger_infra::db::schema_guard::BOOT_SCHEMA_DRIFT;
 use tauri::Manager;
 use tauri_app_lib::commands::boot::get_boot_status;
 
-use crate::isolation::isolate_home;
 use crate::sync_channel::fresh_app;
+use tauri_app_lib::test_support::isolate_home;
 
 #[tokio::test]
 async fn boot_status_reports_the_recorded_failure_code() {

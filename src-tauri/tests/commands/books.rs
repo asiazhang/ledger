@@ -6,9 +6,10 @@
 //! 「命令壳 → 内核 → 落盘 → 引导」整链。
 //!
 //! 现场隔离：mock runtime 的 `app_data_dir()` 实现为 `dirs::data_dir()` 拼接
-//! 空 identifier（`$HOME/Library/Application Support`），指向真实用户目录。
-//! `$HOME` 重定向收在本测试目标唯一的 [`crate::isolation`]（进程内一次），
-//! 默认数据目录随之落在隔离区。tokio 测试线程池并行执行会互踩同一现场，故
+//! 空 identifier，Linux 下 `data_dir()` 优先解析 `$XDG_DATA_HOME`，指向真实
+//! 用户目录。现场隔离收 [`tauri_app_lib::test_support::isolate_home`]（进程内
+//! 一次，`$HOME` 与 XDG 两根一齐重定向，#1989），默认数据目录随之落在隔离区。
+//! tokio 测试线程池并行执行会互踩同一现场，故
 //! 全部场景收进一个顺序旅程测试（与 BDD 场景流同型）。
 
 use std::path::PathBuf;
@@ -22,7 +23,7 @@ use tauri::Manager;
 use tauri_app_lib::commands::book;
 use tauri_app_lib::commands::boot::BootCell;
 
-use crate::isolation::isolate_home;
+use tauri_app_lib::test_support::isolate_home;
 
 /// mock 应用 + 真实引导态：引导按生产同型登记（真实
 /// [`data_location::boot`] 解析 → [`BootCell`]）——命令预检与清单聚合

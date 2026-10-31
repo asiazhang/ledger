@@ -1,9 +1,9 @@
 //! 跨账本投资汇总命令面集成测试（issue #1196 / ADR-0114）。
 //!
 //! 独立测试二进制（与 `tests/commands/` 分进程）：汇总编排是唯一同时消费注册表
-//! 清单与多本库文件的命令面，`$HOME` 隔离与注册表现场必须独占——`tests/commands/`
-//! 二进制内 books 旅程已共用同一进程级 HOME 现场（见其 isolation.rs），本文件
-//! 自持一份进程内 `Once` 隔离，两二进制互不可见、并行安全。
+//! 清单与多本库文件的命令面，现场隔离与注册表现场必须独占——两二进制各有进程
+//! 内唯一的隔离写入点（收 [`tauri_app_lib::test_support::isolate_home`]，
+//! #1989 起三根一齐重定向），互不可见、并行安全。
 //!
 //! 覆盖壳编排整链（单顺序旅程，场景间有前后依赖）：注册表未就绪的码化拒绝 →
 //! 多本登记与四态逐本分派（明文/空库/密文/版本不一致）→ 缺当期汇率错误上抛 →
@@ -24,7 +24,6 @@
 )]
 
 use std::path::Path;
-use std::sync::Once;
 
 use ledger_infra::db::data_location::{self, DB_FILE_NAME};
 use ledger_infra::db::encryption::enable_encryption_for_file;
@@ -37,23 +36,8 @@ use tauri_app_lib::commands::boot::BootCell;
 use tauri_app_lib::commands::cross_book_summary::cross_book_investment_summary;
 use tauri_app_lib::cross_book_summary::{CrossBookBookStatus, CrossBookInvestmentSummary};
 use tauri_app_lib::test_support::{
-    ScratchDir, seed_account, seed_exchange_rate, seed_instrument, seed_market_price,
+    ScratchDir, isolate_home, seed_account, seed_exchange_rate, seed_instrument, seed_market_price,
 };
-
-/// HOME 重定向（本二进制进程内一次；理由与形态见 tests/commands/isolation.rs）。
-fn isolate_home() {
-    static ISOLATE: Once = Once::new();
-    ISOLATE.call_once(|| {
-        let root = std::env::temp_dir().join(format!(
-            "ledger-crossbook-it-{}",
-            ledger_infra::db::new_uuid()
-        ));
-        std::fs::create_dir_all(&root).unwrap();
-        // SAFETY：`set_var` 自 Rust 2024 起 unsafe；本函数是本测试二进制唯一的
-        // `$HOME` 写入点，`Once` 保证进程内至多执行一次，写入后该值不再变化。
-        unsafe { std::env::set_var("HOME", &root) };
-    });
-}
 
 /// mock 应用 + 独立临时目录文件库 + 真实引导登记态（sync_channel::device_app 同款：
 /// 产品建缝拿连接，落库前显式注册写路径副作用实现）。库目录走 ScratchDir

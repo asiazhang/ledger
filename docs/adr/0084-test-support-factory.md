@@ -143,3 +143,11 @@ ADR-0139 决策 2 的实施前置：跨库（main + ATTACH 的 sync.db）事务�
 - **同票审查的另三处重复（非工厂面，各自归属单点化）**：①attached `sync` 别名判据两份实现（schema 守卫 `pragma_database_list` 与 `sync_tables_live_attached` 前半同形）收敛 `db::connection::sync_alias_attached` 单点，两处消费；②`ATTACH ':memory:' AS sync` 内存世界成对挂载夹具（infra boot/db 测试四处同形样板）收编 infra `test_utils::attach_in_memory_sync`（crate 内测试夹具，经既有 `#[cfg(any(test, feature = "test-utils"))]` 门，不属根包工厂）；③主库判别谓词（建连收尾挂载判别与 ledger-perf generate 工具侧补位同形）导出 `db::connection::is_main_db_path` 共用——评论先例（#1871「工具侧有意补位」）随收敛退役为单点引用。
 - **行为等价判据**：全部迁移为纯机械替换，全量既有测试保持绿；工厂自测另钉臂装/解除直接断言（臂装后 INSERT 被注入消息挡下、解除后同语句不再命中）。
 - **#1872 接口关系（如实登记）**：`sync_tables_live_attached` 的双源回退分支删除（票 06，#1872）落在本注记收敛后的别名谓词之上——该票届时只需重写 `sync_tables_live_attached` 本体，别名单点不受影响。
+
+## 修订注记（#1989，2026-10-31）：进程级现场隔离收编 `test_support::isolate_home`——`$HOME` 单根重定向挡不住 XDG
+
+#1983 实施期间发现（#1989）：本机设置了 `XDG_DATA_HOME` 时，各测试二进制自持的 `$HOME` 夹具只重定向单根——mock runtime 的 `app_data_dir()` 实现为 `dirs::data_dir()` 拼接 identifier，Linux 下 `data_dir()` 优先解析 `$XDG_DATA_HOME`，集成测试的备份/恢复与默认数据目录写入因此落在真实 `~/.local/share` 根（readonly_connection、db_facade_wiring 等在现场环境稳定红）。六处同体副本（commands/isolation + 五个独立二进制）收编 `test_support::isolate_home`：`$HOME` + `$XDG_DATA_HOME` + `$XDG_CONFIG_HOME` 三根一齐重定向进 `temp_dir()/ledger-test-home-{uuid}/`（data/config 各设子目录），`Once` 语义随静态住本模块、每测试二进制恰有一次写入（CI 偶发红根因的既有裁决不变）。#1645 不收编面登记的「进程级 `$HOME` 夹具保持现状」随本收编退役——收编动机正是该夹具被证实有隔离缺口且六副本已漂移，非暂存目录边界重划（隔离根仍不随用例删除，不属 `ScratchDir` 管辖，前缀仍归 `ledger-test-` 闭集）。
+
+- **准入与可见性**：决策 1（≥2 编译单元同体消费，六处副本）+ 决策 2（`pub mod` 工厂内私有模块 + 顶层再导出，与 `ScratchDir` 同面）；无新依赖边、无守门改动。
+- **删除即变红**：契约测试 `tests/home_env_isolation.rs` 先毒化 XDG 两根再调夹具，断言 mock 应用 `app_data_dir()` / `app_config_dir()`（事故同一条解析路径）落进隔离根；删除夹具内任一 XDG 写入即红。已知边界：macOS 的 `dirs` 不消费 XDG 变量，该平台对「未重定向 XDG」回归不敏感（事故仅 Linux 形态）。
+- **行为等价判据**：六处调用点迁移为纯机械替换（本地 fn 删除改 import），全量既有测试在预置 XDG 变量的本机环境保持绿；词汇表锚定见 CONTEXT-testing「进程级现场隔离」。

@@ -30,10 +30,10 @@ use tauri_app_lib::test_support::{
     S3Addressing, S3Gate, S3Stub, S3StubConfig, read_scalar_i64, spawn_s3_stub,
 };
 
-use crate::isolation::isolate_home;
 use crate::sync_channel::{
     configure_channel, device_app, expense_input, fresh_app, spawn_sync_stub,
 };
+use tauri_app_lib::test_support::isolate_home;
 
 /// 命令发出通道请求的限时（真实 HTTP 到本机桩，正常在毫秒级）。
 const CHANNEL_REQUEST_LIMIT: Duration = Duration::from_secs(5);

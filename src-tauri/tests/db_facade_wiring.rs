@@ -34,24 +34,9 @@ use ledger_infra::db::boot::BootFailureGate;
 use ledger_infra::db::encryption::EncryptionGate;
 use tauri_app_lib::commands::accounts::{create_account, list_accounts};
 use tauri_app_lib::commands::boot::restart_app;
+use tauri_app_lib::test_support::isolate_home;
 
 type AppHandle = tauri::AppHandle<tauri::test::MockRuntime>;
-
-/// `$HOME` 现场隔离（`readonly_connection` 同型）：mock runtime 的 `app_data_dir()`
-/// 由 `$HOME` 派生，重定向后默认数据目录落在进程专属临时区。
-fn isolate_home() {
-    static ISOLATE: std::sync::Once = std::sync::Once::new();
-    ISOLATE.call_once(|| {
-        let root = std::env::temp_dir().join(format!(
-            "ledger-facade-wiring-{}",
-            ledger_infra::db::new_uuid()
-        ));
-        std::fs::create_dir_all(&root).unwrap();
-        // SAFETY：set_var 自 Rust 2024 起 unsafe；本函数是本测试二进制唯一的
-        // `$HOME` 写入点，Once 保证至多执行一次、写入后不再变化。
-        unsafe { std::env::set_var("HOME", &root) };
-    });
-}
 
 /// 无 `DbState` 的引导登记态夹具（首次登记路径的充分前置）。
 fn fresh_app() -> AppHandle {

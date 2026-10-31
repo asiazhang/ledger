@@ -52,20 +52,7 @@ use tauri_app_lib::commands::backup::{create_backup, restore_backup};
 use tauri_app_lib::commands::boot::{get_boot_status, restart_app};
 use tauri_app_lib::commands::dashboard::dashboard_overview;
 use tauri_app_lib::commands::encryption::{enable_encryption, unlock_encryption};
-
-/// `$HOME` 现场隔离（本二进制进程内一次；tests/commands/isolation 同型）：
-/// mock runtime 的 `app_data_dir()` 由 `$HOME` 派生，重定向后默认数据目录
-/// 落在进程专属临时区，不触真实用户目录。
-fn isolate_home() {
-    static ISOLATE: std::sync::Once = std::sync::Once::new();
-    ISOLATE.call_once(|| {
-        let root = std::env::temp_dir().join(format!("ledger-readonly-it-{}", db::new_uuid()));
-        std::fs::create_dir_all(&root).unwrap();
-        // SAFETY：set_var 自 Rust 2024 起 unsafe；本函数是本测试二进制唯一的
-        // `$HOME` 写入点，Once 保证至多执行一次、写入后不再变化。
-        unsafe { std::env::set_var("HOME", &root) };
-    });
-}
+use tauri_app_lib::test_support::isolate_home;
 
 /// 明文库现场：mock 应用 + 引导登记态 + 临时目录文件库成对打开 + 两扇门
 /// （与生产 setup / tests/commands 同型）。库目录走 ScratchDir（issue #1645）：

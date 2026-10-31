@@ -88,6 +88,12 @@
 //!（ADR-0084 准入：≥2 处同体消费；消费边为既有 dev-dependency 环 + e2e
 //! 链接，无新依赖）。登记处：CONTEXT-testing「目录级测试薄壳」。
 //!
+//! **#1989 追加**（进程级现场隔离）：六个测试二进制自持的 `$HOME` 隔离副本
+//!（只重定向单根，XDG 两根在场时解析穿透到真实 `~/.local/share`）收编
+//! [`home_isolation`]——`isolate_home` 三根一齐重定向进进程专属临时区，
+//! `Once` 语义随静态单点。登记处：ADR-0084 修订注记、
+//! CONTEXT-testing「进程级现场隔离」。
+//!
 //! 说明：集成测试 `tests/api_server/` 链接的是非 `#[cfg(test)]` 构建的 lib，
 //! 因此本模块不能仅以 `#[cfg(test)]` 编译；对生产二进制的影响只是一些未使用的
 //! 测试辅助函数（可被编译器消除）。
@@ -105,6 +111,7 @@
 
 mod assert;
 pub mod channel;
+mod home_isolation;
 pub mod op_write_failure;
 pub mod s3;
 pub mod scan;
@@ -119,6 +126,7 @@ pub use assert::{
     assert_balance_cache_matches_realtime, extract_check_in_literals, read_scalar_i64,
 };
 pub use channel::{publish_raw_legacy_checkpoint, publish_raw_segment};
+pub use home_isolation::isolate_home;
 pub use op_write_failure::{assert_op_write_failure, block_op_writes, unblock_op_writes};
 pub use s3::{
     S3Addressing, S3Deny, S3Gate, S3ObservedRequest, S3Stub, S3StubConfig, spawn_s3_stub,
