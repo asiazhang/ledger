@@ -61,8 +61,8 @@ pub const LOCK_HOLD_BUDGET: Duration = Duration::from_secs(30);
 
 mod auto;
 mod engine;
-/// 账本身份（ADR-0144，#1984）：模块私有，消费面限于本域（备份产出水印与
-/// 后续归属判定票据）；对外暴露随指纹消费面扩大再评估。
+/// 账本身份（ADR-0144，#1984）：消费面限于本域与壳层读命令（指纹只读判定，
+/// #1985 起前端手动命名消费）。
 mod identity;
 
 pub use auto::{
@@ -70,7 +70,7 @@ pub use auto::{
     LOCK_TIMEOUT, PrefsState, SkipReason, after_commit_hook, auto_backup_file_name, due_decision,
     exit_fallback, failure_alerting, get_state, install_after_commit_hook, lock_conn_with_timeout,
     lock_conn_within, occurrence_dirty_hook, register_catch_up_hook, reset, run_due_backup,
-    run_exit_backup, run_first_backup, seed_book_scope, set_state, shared_prefs, start_scheduler,
+    run_exit_backup, run_first_backup, set_state, shared_prefs, start_scheduler,
 };
 pub use engine::{
     BackupFileInfo, BackupKind, BackupMetaSummary, BackupResult, BackupScope,
@@ -78,6 +78,7 @@ pub use engine::{
     create_pre_update_backup, expected_schema_version, list_managed_backups, probe_backup_meta,
     prune_managed_backups, read_backup_kind, read_backup_meta, restore_db_from,
 };
+pub use identity::book_fingerprint_readonly;
 
 #[cfg(test)]
 mod tests;

@@ -465,6 +465,8 @@ export const api = {
   getBackupMeta: (path: string) => invoke<BackupMetaSummary>("get_backup_meta", { path }),
   restartApp: () => invoke<void>("restart_app"),
   listBackups: (dir: string) => invoke<BackupFileInfo[]>("list_backups", { dir }),
+  // 当前账本指纹（issue #1985）：手动备份默认文件名的标识段消费；null = 空库未固化
+  getBookFingerprint: () => invoke<string | null>("get_book_fingerprint"),
   pruneBackups: (dir: string, keep: number) => invoke<PruneResult>("prune_backups", { dir, keep }),
   // 同步备份目录镜像到后端（自动备份调度用，issue #125）：启动/变更时调用
   setAutoBackupDir: (dir: string) => invoke<void>("set_auto_backup_dir", { dir }),

@@ -3,10 +3,9 @@
 //! `backup.json` 元数据，自 ADR-0144 / #1984 起另带账本指纹与来源设备标识两个
 //! 明文水印）、恢复与恢复前安全备份（恢复按备份形态分支：成对产
 //! 物双库归位，旧形态单文件行为不变）、schema 版本校验（旧→新迁移、新→旧
-//! 拒绝）、受管备份列表与滚动清理（列表按活动账本分域，ADR-0089 决策 5；
-//! 无账本标识的历史产物归属「登记序首本」；清理在句柄过滤之上以元数据设备
-//! 水印为第二道门——缺设备标识 = 来源未知，保守不删、不占配额，ADR-0144
-//! 决策 3/5）。
+//! 拒绝）、受管备份列表与滚动清理（列表/清理按**账本指纹**分域，ADR-0144
+//! 决策 3 / issue #1985：跨端产物合并可见，本地句柄不再参与归属；清理以设备
+//! 水印为第二道门——非本机设备名下与来源未知产物保守不删、不占配额）。
 
 use std::fs::File;
 use std::io::{Read, Write};
@@ -23,41 +22,37 @@ use ledger_infra::fs_util::{cleanup, replace_file, temp_sibling};
 
 use crate::identity;
 
-/// 备份作用域（issue #836 / ADR-0089 决策 5：备份按账本分域）：受管备份的
-/// 列表、滚动清理与首次兜底判定都按当前活动账本过滤；`None` 为引擎级兼容
-/// 口径（不过滤，测试与历史调用形态）。
-///
-/// 无账本标识的历史产物归属「登记序首本」（升级时折叠的默认账本，结构性
-/// 恒为清单第一项）：无标识文件本身不携带归属信息，按首本归属让升级用户
-/// 的存量备份继续受保留上限约束（不归属则永远不清，上限静默失效）。已知
-/// 取舍：移除默认账本后首本漂移，存量无标识文件随之归新首本——归属近似
-/// 的误差范围是有界多删/少删受管旧备份，与 ADR-0016 接受的前缀双份常量同
-/// 级取舍。
+/// 备份作用域（ADR-0144 决策 3，issue #1985）：受管备份的列出与滚动清理按
+/// **账本指纹**分域——指纹是跨端稳定身份，同一本账在各端各目录下的产物
+/// 合并可见，本地句柄与路径不再参与归属判定；设备标识用于清理第二道门
+///（本机设备水印比对，跨端互不代删；(指纹 × 设备) 配额分桶归 #1987）。
+/// `None` 为引擎级兼容口径（不过滤，测试与直接调用形态）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BackupScope {
-    /// 当前活动账本标识（注册表内句柄；产物文件名携带同一标识）。
-    pub book_id: String,
-    /// 是否把无账本标识的历史受管产物计入本作用域（仅活动账本为登记序
-    /// 首本时为真，见类型级注释）。
-    pub include_legacy: bool,
+    /// 当前账本指纹（跨端稳定身份；构造见 [`BackupScope::of_conn`]）。
+    pub fingerprint: String,
+    /// 本机设备标识（多端同步域 DeviceId；不可得 = `None`，清理保守不删）。
+    pub device_id: Option<String>,
 }
 
 impl BackupScope {
-    /// 由注册表构造当前活动账本的作用域：活动账本即登记序首本时一并归属
-    /// 无标识历史产物（include_legacy）。注册表不可用的降级（无作用域口径）
-    /// 由调用方的 `Option<registry>` 层承担，本函数恒可构造。
-    pub fn of_registry(registry: &ledger_infra::db::book_registry::BookRegistry) -> Self {
-        let include_legacy =
-            registry.books.first().map(|b| b.id.as_str()) == Some(registry.active_id.as_str());
-        Self {
-            book_id: registry.active_id.clone(),
-            include_legacy,
-        }
+    /// 由连接构造当前账本的作用域（读侧唯一构造点，壳层与调度侧同源）：指纹
+    /// 已固化恒读固化值；未固化回内容锚（与首用固化算法同源，固化前两者恒
+    /// 等——归属判定据此即时成立，固化仍由备份写出路径首用完成）；空库且未
+    /// 固化 = `None`（该现场本账尚无任何可归属产物，调用方按空列表/不清理处
+    /// 理，不退化为全量）。设备标识不可得时 `device_id = None`，清理保守不删。
+    pub fn of_conn(conn: &Connection) -> Result<Option<Self>> {
+        Ok(
+            identity::book_fingerprint_readonly(conn)?.map(|fingerprint| Self {
+                fingerprint,
+                device_id: identity::source_device_id(conn),
+            }),
+        )
     }
 
-    /// 文件名携带的账本标识（命名侧消费；无作用域 = 旧命名）。
+    /// 产物名携带的账本标识段（命名侧消费；无作用域 = 旧命名）。
     pub(crate) fn book_tag(&self) -> &str {
-        &self.book_id
+        &self.fingerprint
     }
 }
 
@@ -159,6 +154,14 @@ pub struct BackupFileInfo {
     /// 加密标记（issue #572 / ADR-0075 决策 7）：密文备份列表显示锁形标记；
     /// 元数据缺标记（旧备份）或读取失败的残缺包按明文回落。
     pub encrypted: bool,
+    /// 来源设备标识（ADR-0144 决策 5，issue #1985）：产物内层元数据的
+    /// `device_id` 明文水印；缺水印（升级前旧产物/残缺包/产出轮次设备不可得）
+    /// = `None`，前端徽标呈「未知来源」。
+    pub source_device_id: Option<String>,
+    /// 来源是否未知（issue #1985）：元数据读不出设备水印 = true（与
+    /// `source_device_id` 互为表里；归属判定与来源未知是两个维度——指纹
+    /// 可归属的产物也可以来源未知）。
+    pub source_unknown: bool,
 }
 
 /// 备份包元数据摘要（备份列表与恢复确认弹窗的消费形状，issue #572）。
@@ -294,26 +297,62 @@ fn parse_backup_timestamp(file_name: &str) -> Option<NaiveDateTime> {
     split_managed_name(file_name).map(|(ts, _)| ts)
 }
 
-/// 文件是否落入作用域（issue #836）：无作用域 = 全部受管（引擎级兼容口径）；
-/// 有作用域 = 文件名账本标识匹配，无标识历史产物按 `include_legacy` 归登记序
-/// 首本（见 [`BackupScope`] 类型级注释）。
-fn in_scope(file_book: Option<&str>, scope: Option<&BackupScope>) -> bool {
-    match scope {
-        None => true,
-        Some(scope) => match file_book {
-            Some(id) => id == scope.book_id,
-            None => scope.include_legacy,
-        },
+/// 产物内层元数据的读出字段（归属判定与展示共用同一次开包，issue #1985）。
+struct ProductMeta {
+    fingerprint: Option<String>,
+    device_id: Option<String>,
+    kind: BackupKind,
+    encrypted: bool,
+}
+
+/// 单次开包读出 [`ProductMeta`]；元数据读不出（非 zip / 元数据损坏）返回
+/// `None`（残缺包归属判不出，展示字段按前缀/明文回落）。
+fn read_product_meta(backup_path: &Path) -> Option<ProductMeta> {
+    let mut archive = open_backup_archive(backup_path).ok()?;
+    let meta = read_meta_from_archive(&mut archive).ok()?;
+    Some(ProductMeta {
+        fingerprint: meta.fingerprint,
+        device_id: meta.device_id,
+        kind: meta.kind,
+        encrypted: meta.encrypted,
+    })
+}
+
+/// 产物归属判定（ADR-0144 决策 3，issue #1985）：按顺位短路——①文件名标识
+/// 段等于本指纹（新产物命名直书指纹，零开包）；②产物内层元数据明文指纹等
+/// 于本指纹（指向别端句柄或无标识命名的产物经水印归并）。命中返回
+/// `Some(false)`（`true` = 归属读已顺带完成，列表可复用）；未命中返回
+/// `None`——判不出归属的产物本期不进列表（内容锚判定与「未知来源」桶的
+/// 可见性归 #1986/T4）。命中与未命中各记一条 debug 日志（含文件名与结论）。
+fn attribute_to_scope(
+    file_name: &str,
+    path: &Path,
+    file_book: Option<&str>,
+    scope: &BackupScope,
+) -> Option<Option<ProductMeta>> {
+    if file_book == Some(scope.fingerprint.as_str()) {
+        tracing::debug!(file = %file_name, "产物归属本账本（文件名标识段命中指纹）");
+        return Some(None);
+    }
+    match read_product_meta(path) {
+        Some(meta) if meta.fingerprint.as_deref() == Some(scope.fingerprint.as_str()) => {
+            tracing::debug!(file = %file_name, "产物归属本账本（内层元数据指纹命中）");
+            Some(Some(meta))
+        }
+        _ => {
+            tracing::debug!(file = %file_name, "产物不归属本账本（指纹不匹配），不进列表");
+            None
+        }
     }
 }
 
 /// 列出目录中作用域内的受管备份文件，按新→旧排序。
 ///
-/// `scope`：账本作用域（`None` = 不过滤的兼容口径）；文件名携带的账本标识
-/// 与作用域不匹配的产物（其他账本的备份）不可见、不参与清理。
-/// 备份时间优先取文件名时间戳（与命名规则强一致），解析失败回退文件修改时间；
-/// 两者皆失败按最旧处理（排序最靠后，清理时最先被删）。目录不存在时返回空列表
-/// （界面展示空态而非报错）。
+/// `scope`：账本作用域（`None` = 不过滤的引擎级兼容口径）；归属判定按指纹
+/// 顺位短路（见 [`attribute_to_scope`]）：其他账本/判不出归属的产物不可见
+///（ADR-0089 分域语义保持，ADR-0144 跨端合并）。备份时间优先取文件名时间戳
+///（与命名规则强一致），解析失败回退文件修改时间；两者皆失败按最旧处理
+///（排序最靠后，清理时最先被删）。目录不存在时返回空列表（界面展示空态而非报错）。
 pub fn list_managed_backups(
     dir: &Path,
     scope: Option<&BackupScope>,
@@ -321,7 +360,8 @@ pub fn list_managed_backups(
     if !dir.is_dir() {
         return Ok(Vec::new());
     }
-    let mut files: Vec<(NaiveDateTime, PathBuf)> = Vec::new();
+    // 第三元：归属判定顺位二命中时顺带读出的产物元数据（复用同一开包，免二次解压）。
+    let mut files: Vec<(NaiveDateTime, PathBuf, Option<ProductMeta>)> = Vec::new();
     for entry in std::fs::read_dir(dir)? {
         let entry = entry?;
         let name = entry.file_name().to_string_lossy().into_owned();
@@ -329,11 +369,16 @@ pub fn list_managed_backups(
         if !is_managed_backup_file_name(&name) || !is_file {
             continue;
         }
-        // 时间戳解析失败的残缺命名按「无标识」归入历史产物桶（标识无从谈起）。
         let file_book = split_managed_name(&name).and_then(|(_, book)| book);
-        if !in_scope(file_book, scope) {
-            continue;
-        }
+        // 归属判定（有作用域时）：命中顺位一 → 元数据留待展示段按既有口径读；
+        // 命中顺位二 → 顺带持有的元数据直接复用；未命中 → 不进列表。
+        let attributed = match scope {
+            None => None,
+            Some(scope) => match attribute_to_scope(&name, &entry.path(), file_book, scope) {
+                Some(attributed) => attributed,
+                None => continue,
+            },
+        };
         let ts = parse_backup_timestamp(&name).or_else(|| {
             entry
                 .metadata()
@@ -342,12 +387,12 @@ pub fn list_managed_backups(
                 .map(chrono::DateTime::<chrono::Utc>::from)
                 .map(|t| t.naive_utc())
         });
-        files.push((ts.unwrap_or(NaiveDateTime::MIN), entry.path()));
+        files.push((ts.unwrap_or(NaiveDateTime::MIN), entry.path(), attributed));
     }
     files.sort_by_key(|a| std::cmp::Reverse(a.0));
     files
         .into_iter()
-        .map(|(ts, path)| {
+        .map(|(ts, path, attributed)| {
             let size_bytes = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
             let file_name = path
                 .file_name()
@@ -355,15 +400,20 @@ pub fn list_managed_backups(
                 .unwrap_or_default();
             // 来源与加密标记优先读产物元数据；残缺包按前缀/明文回落
             // （自动前缀即 auto，否则 manual；加密标记回落明文，不误报锁标）。
-            let (kind, encrypted) = read_backup_meta(&path)
-                .map(|s| (s.kind, s.encrypted))
-                .unwrap_or_else(|_| {
-                    if file_name.starts_with(super::auto::AUTO_BACKUP_PREFIX) {
-                        (BackupKind::Auto, false)
-                    } else {
-                        (BackupKind::Manual, false)
+            let (kind, encrypted, source_device_id) = match attributed {
+                Some(meta) => (meta.kind, meta.encrypted, meta.device_id),
+                None => match read_product_meta(&path) {
+                    Some(meta) => (meta.kind, meta.encrypted, meta.device_id),
+                    None => {
+                        if file_name.starts_with(super::auto::AUTO_BACKUP_PREFIX) {
+                            (BackupKind::Auto, false, None)
+                        } else {
+                            (BackupKind::Manual, false, None)
+                        }
                     }
-                });
+                },
+            };
+            let source_unknown = source_device_id.is_none();
             Ok(BackupFileInfo {
                 file_name,
                 path: path.to_string_lossy().into_owned(),
@@ -373,32 +423,26 @@ pub fn list_managed_backups(
                 created_at: ts.format("%Y-%m-%dT%H:%M:%S").to_string(),
                 kind,
                 encrypted,
+                source_device_id,
+                source_unknown,
             })
         })
         .collect()
-}
-
-/// 读取产物元数据的来源设备标识（清理第二道门判定用，ADR-0144 决策 3/5，
-/// #1984）：元数据读不出（非 zip / 损坏）或字段缺省（旧产物、设备标识不可得
-/// 的轮次）一律 `None` = 来源未知。
-fn read_meta_device_id(backup_path: &Path) -> Option<String> {
-    let mut archive = open_backup_archive(backup_path).ok()?;
-    read_meta_from_archive(&mut archive)
-        .ok()
-        .and_then(|meta| meta.device_id)
 }
 
 /// 将目录中作用域内的受管备份修剪到最多 `keep` 个：按旧→新删除超出部分
 /// （issue #836：各账本在共享 BackupDirectory 内分别滚动清理，保留上限为
 /// 设备本地偏好、按本独立计算）。
 ///
-/// 清理判定两道门（ADR-0144 决策 3/5，#1984）：文件名句柄过滤（第一道，
-/// 决定候选）之后，逐候选读内层元数据的设备标识——带设备水印的产物才是
-/// 可清理的本机产物；缺设备水印（升级前存量、设备标识不可得的轮次、残缺
-/// 包）= 来源未知，保守不删、不占保留配额（句柄命中即本机产物，其水印即
-/// 本机标识，故不再比对值）。未知来源产物不计入配额分母；kept 报告的仍是
-/// 目录内受管产物总数。单个文件删除失败（占用/无权限）时跳过并记入
-/// `failed`，不中断其余清理。
+/// 清理判定两道门（ADR-0144 决策 3/5；第一道门自 issue #1985 起按指纹分域）：
+/// 指纹归属过滤（第一道，决定候选）之后，逐候选比对内层元数据的设备水印与
+/// 本机设备——带**本机**设备水印的产物才是可清理产物；他端设备名下的同账
+/// 产物互不代删（ADR-0144 决策 4），缺设备水印（升级前存量、设备标识不可得
+/// 的轮次、残缺包）= 来源未知，同样保守不删、不占保留配额（(指纹 × 设备)
+/// 配额分桶归 #1987）。本机设备不可得（作用域无 device_id）时一律不删。
+/// 无作用域兼容口径沿用既有行为：带设备水印即可清理。非本机/未知来源产物
+/// 不计入配额分母；kept 报告的仍是作用域内受管产物总数。单个文件删除失败
+/// （占用/无权限）时跳过并记入 `failed`，不中断其余清理。
 pub fn prune_managed_backups(
     dir: &Path,
     keep: usize,
@@ -406,14 +450,21 @@ pub fn prune_managed_backups(
 ) -> Result<PruneResult> {
     let files = list_managed_backups(dir, scope)?;
     let total = files.len();
+    let own_device = scope.and_then(|s| s.device_id.as_deref());
     let mut delible: Vec<BackupFileInfo> = Vec::new();
     for file in files {
-        if read_meta_device_id(Path::new(&file.path)).is_some() {
+        let deletable = match own_device {
+            // 有作用域：设备水印逐值比对（指纹归属 ≠ 本机产物，可来自任一端）。
+            Some(own) => file.source_device_id.as_deref() == Some(own),
+            // 无作用域兼容口径：带设备水印即可清理（既有行为，#1984）。
+            None => file.source_device_id.is_some(),
+        };
+        if deletable {
             delible.push(file);
         } else {
             tracing::debug!(
                 file = %file.file_name,
-                "来源未知的受管产物跳过清理（永不自动清理，ADR-0144）"
+                "非本机设备名下/来源未知的受管产物跳过清理（永不自动清理，ADR-0144）"
             );
         }
     }

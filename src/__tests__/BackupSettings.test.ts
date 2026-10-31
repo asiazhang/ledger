@@ -26,6 +26,8 @@ const encryptedBackup: BackupFileInfo = {
   created_at: "2026-02-17T09:30:00Z",
   kind: "auto",
   encrypted: true,
+  source_device_id: "dev-this",
+  source_unknown: false,
 };
 
 const plaintextBackup: BackupFileInfo = {
@@ -35,6 +37,8 @@ const plaintextBackup: BackupFileInfo = {
   created_at: "2026-01-01T01:01:01Z",
   kind: "manual",
   encrypted: false,
+  source_device_id: null,
+  source_unknown: true,
 };
 
 /** 自动备份状态命令契约快照（本场景恒为已启用、从未执行、无连续失败）。 */
@@ -81,6 +85,28 @@ describe("BackupSettings 备份列表加密列（issue #572 / ADR-0075 决策 7�
     await flushPromises();
 
     expect(wrapper.findAll(".n-data-table-tr svg")).toHaveLength(0);
+  });
+});
+
+describe("BackupSettings 来源设备徽标（issue #1985 / ADR-0144 跨端合并可见）", () => {
+  it("每行渲染来源设备徽标，未知来源呈警示徽标（i18n 文案）", async () => {
+    wireInvokeSeam({
+      defaults: {
+        list_backups: [encryptedBackup, plaintextBackup],
+        get_auto_backup_state: AUTO_BACKUP_ON,
+      },
+    });
+    const wrapper = mount(BackupSettings);
+    await flushPromises();
+
+    // 列头存在（用户可见的「来源设备」列）。
+    expect(wrapper.html()).toContain("来源设备");
+    const tags = wrapper.findAll(".n-data-table-tr .n-tag");
+    expect(tags.length).toBe(2);
+    // 带设备水印的行：徽标展示设备标识本体。
+    expect(tags[0].text()).toBe("dev-this");
+    // 缺水印（升级前旧产物）行：警示徽标 + 「未知来源」文案（用户可见信号）。
+    expect(tags[1].text()).toBe("未知来源");
   });
 });
 
@@ -339,6 +365,8 @@ describe("BackupSettings 备份列表客户端切片分页（issue #1383）", ()
       created_at: `2026-02-01T09:${seq}:00Z`,
       kind: "auto",
       encrypted: false,
+      source_device_id: "dev-this",
+      source_unknown: false,
     };
   });
 

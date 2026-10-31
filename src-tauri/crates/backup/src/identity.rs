@@ -37,7 +37,7 @@ fn content_anchor(conn: &Connection) -> Result<Option<String>> {
     Ok(id)
 }
 
-/// 当前账本指纹（读侧唯一入口）：已固化恒读固化值；未固化则按内容锚计算
+/// 当前账本指纹（写侧唯一入口）：已固化恒读固化值；未固化则按内容锚计算
 ///（空库退化为端内生成 UUIDv7）并固化，算出即恒定。调用方持连接锁（备份
 /// 产出段在锁内），读后写无竞态。
 pub fn book_fingerprint(conn: &Connection) -> Result<String> {
@@ -49,6 +49,18 @@ pub fn book_fingerprint(conn: &Connection) -> Result<String> {
     settings::set(conn, SettingKey::BookFingerprint, &fp)?;
     tracing::debug!(fingerprint = %fp, "账本指纹首用固化");
     Ok(fp)
+}
+
+/// 只读指纹判定（列表/清理/命名等读路径消费，issue #1985）：已固化恒读固化
+/// 值；未固化回内容锚——与 [`book_fingerprint`] 首用算法同源，固化前两者恒
+/// 等（归属判定据此即时成立，固化仍由备份写出路径首用完成）；空库且未固化
+/// = `None`（该现场本账尚无任何可归属产物）。不写设置（读连接只读）。
+pub fn book_fingerprint_readonly(conn: &Connection) -> Result<Option<String>> {
+    let fixed: Option<String> = settings::get(conn, SettingKey::BookFingerprint, None)?;
+    if fixed.is_some() {
+        return Ok(fixed);
+    }
+    content_anchor(conn)
 }
 
 /// 产物来源设备标识：多端同步域 DeviceId（首用生成并持久化，与同步写路径

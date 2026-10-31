@@ -123,6 +123,7 @@
       "columns": {
         "fileName": "文件名",
         "source": "来源",
+        "device": "来源设备",
         "encrypted": "加密",
         "size": "大小",
         "time": "备份时间",
@@ -315,7 +316,8 @@
     },
     "source": {
       "auto": "自动",
-      "manual": "手动"
+      "manual": "手动",
+      "deviceUnknown": "未知来源"
     },
     "msg": {
       "dirPickTitle": "选择备份目录",

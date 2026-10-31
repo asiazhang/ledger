@@ -23,6 +23,12 @@ export interface BackupFileInfo {
   /** 加密标记（issue #572 / ADR-0075 决策 7）：密文备份列表显示锁形标记；
    *  旧备份缺标记视为明文（向后兼容）。 */
   encrypted: boolean;
+  /** 来源设备标识（ADR-0144 决策 5，issue #1985）：产物内层元数据的
+   *  `device_id` 明文水印；缺水印（旧产物/残缺包/产出轮次设备不可得）为 null。 */
+  source_device_id: string | null;
+  /** 来源是否未知（issue #1985）：元数据读不出设备水印 = true，列表徽标呈
+   *  「未知来源」；与 source_device_id 互为表里。 */
+  source_unknown: boolean;
 }
 
 /** 备份包元数据摘要（issue #572）：单个备份文件的来源 + 加密标记，恢复确认弹窗消费。 */

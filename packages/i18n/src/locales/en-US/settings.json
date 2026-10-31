@@ -123,6 +123,7 @@
       "columns": {
         "fileName": "File",
         "source": "Source",
+        "device": "Source device",
         "encrypted": "Encrypted",
         "size": "Size",
         "time": "Backed Up At",
@@ -315,7 +316,8 @@
     },
     "source": {
       "auto": "Auto",
-      "manual": "Manual"
+      "manual": "Manual",
+      "deviceUnknown": "Unknown source"
     },
     "msg": {
       "dirPickTitle": "Choose Backup Directory",

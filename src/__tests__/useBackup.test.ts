@@ -26,6 +26,8 @@ const autoBackupFile: BackupFileInfo = {
   created_at: "2026-02-17T09:30:00Z",
   kind: "auto",
   encrypted: true,
+  source_device_id: "dev-this",
+  source_unknown: false,
 };
 
 const manualBackupFile: BackupFileInfo = {
@@ -35,6 +37,8 @@ const manualBackupFile: BackupFileInfo = {
   created_at: "2026-01-01T01:01:01Z",
   kind: "manual",
   encrypted: false,
+  source_device_id: null,
+  source_unknown: true,
 };
 
 // 命令契约快照：正常态（开关开、从未失败）。issue #1456 起状态含连续失败字段。
@@ -56,14 +60,8 @@ function makeStub(initialList: BackupFileInfo[]) {
       get_auto_backup_state: () => Promise.resolve(autoState),
       set_auto_backup_enabled: { kept: 0, deleted: [], failed: [] },
       prune_backups: { kept: 0, deleted: [], failed: [] },
-      // 活动账本标识（issue #836）：手动备份默认名按本分域。
-      list_books: () =>
-        Promise.resolve({
-          books: [{ id: "book-a", name: "默认账本", dir: "/data/a" }],
-          active_id: "book-a",
-          mutable: true,
-          fallback_reason: null,
-        }),
+      // 当前账本指纹（issue #1985）：手动备份默认名的标识段消费。
+      get_book_fingerprint: () => Promise.resolve("fp-book-a"),
     },
   });
 
@@ -526,50 +524,44 @@ describe("useBackup 手动备份按账本分域（issue #836）", () => {
     vi.useRealTimers();
   });
 
-  it("一键备份默认名携带活动账本标识（产物互不覆盖）", async () => {
+  it("一键备份默认名携带账本指纹（产物互不覆盖，issue #1985）", async () => {
     makeStub([]);
     const { save } = await import("@tauri-apps/plugin-dialog");
     vi.mocked(save).mockResolvedValue(
-      "/Users/me/backups/ledger-backup-20260217-093005-book-a.db.zip",
+      "/Users/me/backups/ledger-backup-20260217-093005-fp-book-a.db.zip",
     );
     wireInvokeSeam({
       overrides: {
         create_backup: {
-          path: "/Users/me/backups/ledger-backup-20260217-093005-book-a.db.zip",
+          path: "/Users/me/backups/ledger-backup-20260217-093005-fp-book-a.db.zip",
           size_bytes: 1,
           schema_version: 24,
           created_at: "2026-02-17T09:30:05Z",
         },
-        // 接缝表按调用整体替换：补上 makeStub 的清单应答（断言 active_id 用）。
-        list_books: () =>
-          Promise.resolve({
-            books: [{ id: "book-a", name: "默认账本", dir: "/data/a" }],
-            active_id: "book-a",
-            mutable: true,
-            fallback_reason: null,
-          }),
+        // 接缝表按调用整体替换：补上 makeStub 的指纹应答（断言命名标识段用）。
+        get_book_fingerprint: () => Promise.resolve("fp-book-a"),
       },
     });
 
     const { backup } = mountHost();
     await flushPromises();
-    expect(backup.activeBookId.value).toBe("book-a");
+    expect(backup.bookFingerprint.value).toBe("fp-book-a");
 
     await backup.backupOnce();
     await flushPromises();
     const call = mockInvoke.mock.calls.filter(([c]) => c === "create_backup").at(-1);
     expect(call![1]).toEqual({
-      targetPath: "/Users/me/backups/ledger-backup-20260217-093005-book-a.db.zip",
+      targetPath: "/Users/me/backups/ledger-backup-20260217-093005-fp-book-a.db.zip",
     });
   });
 
-  it("账本清单不可用时退化为无标识旧命名（产物仍可靠）", async () => {
+  it("账本指纹不可用时退化为无标识旧命名（产物仍可靠）", async () => {
     wireInvokeSeam({
       overrides: {
         list_backups: () => Promise.resolve([]),
         get_auto_backup_state: () => Promise.resolve(AUTO_STATE_OK),
-        // 注册表不可用现场：清单读取失败 → active_id 为 null。
-        list_books: () => Promise.reject(new Error("registry corrupt")),
+        // 指纹读取失败现场：get_book_fingerprint 为 null。
+        get_book_fingerprint: () => Promise.reject(new Error("db unavailable")),
         create_backup: {
           path: "/Users/me/backups/ledger-backup-20260217-093005.db.zip",
           size_bytes: 1,
@@ -583,7 +575,7 @@ describe("useBackup 手动备份按账本分域（issue #836）", () => {
 
     const { backup } = mountHost();
     await flushPromises();
-    expect(backup.activeBookId.value).toBeNull();
+    expect(backup.bookFingerprint.value).toBeNull();
 
     await backup.backupOnce();
     await flushPromises();
