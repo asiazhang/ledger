@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -56,7 +56,8 @@ const BARE_ITEM = `<template>
 
 describe("弹窗表单行距节奏守门（check.sh 质量门槛）", () => {
   it("真实仓库默认通过：本仓库全部 .vue 无节奏违例（现行仓库绿）", () => {
-    // 无位置参数 = 默认扫描本仓库 src。随 vitest scripts 测试分片进 CI（issue #1473）：
+    // 无位置参数 = 默认扫描本仓库 src。随守门测试挂载进 CI（issue #1473 引入挂载；
+    // #1991 起运行口径 = bun test scripts/）：
     // 真实仓违例即红，不再只靠本地自觉跑 check.sh。文件计数行证明扫描面真实
     // 覆盖（非零 .vue），守门空转（扫描根失效等）即红。
     const r = runGateScript(script);

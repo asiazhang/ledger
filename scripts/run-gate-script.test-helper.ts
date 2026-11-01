@@ -21,7 +21,9 @@ export interface RunResult {
 }
 
 /** 定位被测守门脚本：仓库根下 scripts/<name>.ts。
- *  （vitest 转换后 import.meta.url 非 file: scheme，取进程 cwd = 仓库根定位） */
+ *  （bun test scripts/ 唯一运行口径自仓库根发起，进程 cwd 即仓库根；#1995 前
+ *  vitest 转换下 import.meta.url 非 file: scheme 是改用 cwd 的历史成因，口径
+ *  切换后 cwd 接缝不变、调用面零变化） */
 export function gateScript(name: string): string {
   return join(process.cwd(), "scripts", name);
 }

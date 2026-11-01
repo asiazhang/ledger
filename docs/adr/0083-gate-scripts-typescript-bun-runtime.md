@@ -103,3 +103,15 @@ scripts/`，挂载登记与「删除即变红」核对住 scripts/gate-mounts.ts
 frontend-test 分片 job 不再需要 bun（setup-bun 步骤随之退役）。决策 2 的
 spawnSync('bun') 接缝不变——变的是测试文件自身的执行器（vitest → bun test），
 被测路径仍是真实门槛。
+
+## 修订注记（#1995，2026-11-01）：scripts 测试导入面与运行器同名同源——显式 bun:test，隐式别名依赖消除；types 面新增 bun-types
+
+#1991 把执行器切到 bun test 后，十八个测试文件的导入语句仍写
+`from "vitest"`，靠 Bun 运行时把 vitest 导入隐式别名到 bun:test 才能跑通
+（实测可用但未言明：bun 若移除该别名即全红，且报错不指向根因）。本票把导入
+改为显式 `from "bun:test"`，导入与唯一运行口径同名同源，隐式别名依赖消除。
+类型面同步：tsconfig.scripts.json 的 types 新增 `bun-types`（devDependency，
+精确 1.4.0 与决策 2 钉死的运行时同版——@types/node 同款“纯类型 devDep、
+零 npm 依赖性质不变”先例）；`vitest/globals` 续留——include 面内的部分导入
+测试（仅导入 describe/it 等、全局用 beforeEach/afterEach）与测试助手内联
+用例（packages/test-support/src 源码内的 expect）有真实消费者，非死面。

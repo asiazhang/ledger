@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -10,7 +10,7 @@ import { join } from "node:path";
 //（scripts/gate-mounts.test.ts，issue #1682）：接线成为守门家族 interface 的
 // 一环，住可测试的登记（scripts/gate-mounts.ts 守门挂载登记）而非各门自证；
 // 本文件只保留配置锚点这一独立守门意义。
-// （仓库根 = vitest 进程 cwd，与 run-gate-script 助手同一观察。）
+// （仓库根 = bun test 进程 cwd，与 run-gate-script 助手同一观察。）
 
 describe("oxfmt 配置锚点（防 #25125 式静默回退）", () => {
   it(".oxfmtrc.json 存在、可解析且风格锚点未漂移", () => {

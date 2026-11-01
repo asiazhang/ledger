@@ -4,8 +4,11 @@
      scripts/gate-mounts.ts，issue #1682）。compilerOptions 收敛至 tsconfig.base.json（issue #1149），
      本工程经 extends 继承——行为逐字不变（ADR-0083「与根 tsconfig.json 保持同构」
      表述同步修订为「两工程共用同一份 extends 源」），差异仅两处：
-     ① types 限定 node + vitest/globals（@types/node 提供 node:* 声明；vitest 测试全局
-        describe/it/afterEach 经 globals:true 使用，类型声明须显式引入）；
+     ① types 限定 node + vitest/globals + bun-types（@types/node 提供 node:* 声明；
+        bun-types 提供 scripts 测试显式 `from "bun:test"` 导入的模块声明（#1995 起
+        守门测试不再经 vitest 隐式别名跑 bun:test，导入与运行器同名同源）；
+        vitest/globals 续留——include 面内存在部分导入的测试与测试助手内联用例，
+        全局 beforeEach/afterEach/expect 有真实消费者）；
      ② include = 脚本 + 全量测试目录（#737 收窄入门，#738/#739 分批清债，#740 收口
         翻转——「测试文件零类型检查」缺口正式关死）；本票迁入的包内测试目录收入
         （spec #1148 用户故事 10 / issue #1153、#1154），迁移不带来类型检查缩水，其余包内
@@ -16,7 +19,7 @@
      scripts 由 Bun 运行时执行（ADR-0083），类型检查仍按 TS 语义进行。 */
   "extends": "./tsconfig.base.json",
   "compilerOptions": {
-    "types": ["node", "vitest/globals"]
+    "types": ["node", "vitest/globals", "bun-types"]
   },
   "include": [
     "scripts/**/*.ts",

@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import {
@@ -37,7 +37,8 @@ function writePackageManifest(root: string, dir: string, pkg: Record<string, unk
   writeFileSync(join(root, dir, "package.json"), JSON.stringify(pkg, null, 2));
 }
 
-/** 向夹具写入源文件（路径相对夹具根，posix 分隔） */
+/** 向夹具写入源文件（路径相对夹具根，posix 分隔；规则②消费面靶形等全部
+ *  消费点共用本份——#1995 收敛两文件合并前各自的副本，此前局部份仅注释差异） */
 function writeSource(root: string, rel: string, source: string): void {
   const abs = join(root, ...rel.split("/"));
   mkdirSync(dirname(abs), { recursive: true });
@@ -117,13 +118,6 @@ describe("check-frontend-structure（前端 workspace 结构守门）", () => {
       });
       writePackageManifest(root, "packages/b", { name: "@ledger/b" });
       return args;
-    }
-
-    /** 写包内源文件（路径相对夹具根，posix 分隔）——规则②消费面靶形 */
-    function writeSource(root: string, rel: string, source: string): void {
-      const abs = join(root, ...rel.split("/"));
-      mkdirSync(dirname(abs), { recursive: true });
-      writeFileSync(abs, source);
     }
 
     it("依赖未登记包即红", () => {

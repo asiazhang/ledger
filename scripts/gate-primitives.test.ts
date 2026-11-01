@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -18,8 +18,8 @@ import {
 //   迁入（#1433 / #1625「直测导出共享面」先例随库迁移，删除即变红判据不变：
 //   从库删掉一个导出 → 消费它的门 spawnSync 启动即崩 → 包装测试红 + 类型检查红）；
 // - TS/Vue 注释掩码用例自 ts-comment-mask.test.ts 迁入（#1481，模块已并入本库）。
-// （仓库根 = vitest 进程 cwd；原 repoRoot 助手 has-command-line.test-helper 已随
-//  守门挂载登记收编、消费清零而退役，issue #1682）
+// （仓库根 = bun test 进程 cwd——bun test scripts/ 自仓库根发起；原 repoRoot 助手
+//  has-command-line.test-helper 已随守门挂载登记收编、消费清零而退役，issue #1682）
 
 const read = (rel: string): string => readFileSync(join(process.cwd(), ...rel.split("/")), "utf8");
 const tempDirs: string[] = [];
@@ -30,7 +30,7 @@ afterAll(() => {
 describe("maskNonCode 双源防漂移语料（issue #1433）", () => {
   // 与 Rust 侧唯一实现（src-tauri/src/test_support/scan.rs 的 mask_non_code）
   // 消费同一夹具：语料输入 + 期望输出双文件共享，任一侧单独改词法规则即
-  // 本测或 Rust 语料测试红。（vitest 下取进程 cwd = 仓库根定位夹具，同上款先例）
+  // 本测或 Rust 语料测试红。（bun test 下取进程 cwd = 仓库根定位夹具，同上款先例）
   const corpusPath = join(process.cwd(), "scripts", "fixtures", "rust-mask-corpus.rs");
   const expectedPath = join(process.cwd(), "scripts", "fixtures", "rust-mask-corpus.expected.txt");
 
