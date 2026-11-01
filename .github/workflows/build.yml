@@ -45,7 +45,7 @@ jobs:
 
       - uses: pnpm/setup@v3
         with:
-          runtime: node@22
+          runtime: node@26
           cache: true
           require-lockfile: true
 
@@ -147,7 +147,7 @@ jobs:
 
       - uses: pnpm/setup@v3
         with:
-          runtime: node@22
+          runtime: node@26
           cache: true
           require-lockfile: true
 
@@ -427,7 +427,7 @@ jobs:
 
       - uses: pnpm/setup@v3
         with:
-          runtime: node@22
+          runtime: node@26
           cache: true
           require-lockfile: true
 
