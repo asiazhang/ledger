@@ -2,6 +2,20 @@
 
 本文件记录开源记账（OpenLedger）各版本对使用者可见的变更，格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/)，版本号遵循[语义化版本](https://semver.org/lang/zh-CN/)规则。
 
+## [0.11.2] - 2026-11-01
+
+### Added
+
+- **备份**：跨平台备份合并可见——账本指纹（库内最早一笔交易的内容锚，首用算出即固化）替代本地句柄作归属判据：同一账本在多台设备各自备份的产物合并进同一列表互相可见，每行新增来源设备徽标（缺设备水印呈「未知来源」警示徽标）；存量旧产物（元数据无指纹）按内容锚自动归并进列表，密文且无指纹的产物落「未知来源」桶（可见、标注、永不参与自动清理）；新产物落设备子目录（旧扁平路径长期只读、双路径兼容恢复），自动清理按「指纹 × 设备」分桶淘汰超额——跨端互不代删，清理弹窗待删数只统计本机设备名下产物（[#1982]，ADR-0144）。
+
+### Changed
+
+- **构建**：发布产物瘦身——release profile 补符号剥离（strip）与跨 crate LTO，桌面二进制 69.8 → 40.2 MiB（-42.5%），Android APK 同步受益；运行时行为零变化（[#1999]）。
+
+### Fixed
+
+- **开发者工具**：浏览器 mock 模式（`pnpm dev:mock`）投资盈亏汇总按账户排序改码点序，对齐真后端复合排序键——此前随运行环境 locale 变化，中文环境与 CI 排序不一致（[#2004]）。
+
 ## [0.11.1] - 2026-10-24
 
 ### Fixed
@@ -545,3 +559,6 @@
 [#1921]: https://github.com/asiazhang/ledger/issues/1921
 [#1923]: https://github.com/asiazhang/ledger/issues/1923
 [#1924]: https://github.com/asiazhang/ledger/issues/1924
+[#1982]: https://github.com/asiazhang/ledger/issues/1982
+[#1999]: https://github.com/asiazhang/ledger/issues/1999
+[#2004]: https://github.com/asiazhang/ledger/issues/2004
