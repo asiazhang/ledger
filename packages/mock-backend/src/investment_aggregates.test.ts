@@ -140,6 +140,8 @@ describe("realized_pnl_summary：按年 / 按账户两张单值表，筛选生�
       },
     ]);
     expect(summary.by_account).toEqual([
+      // 账户名序 = 码点序：券商账户（券 U+5238）< 工资卡（工 U+5DE5），复刻
+      // 真后端 String::cmp，非拼音序（#2004：localeCompare 在 zh_CN 环境翻转）。
       {
         account_id: "mock-acc-invest",
         account_name: "券商账户",
