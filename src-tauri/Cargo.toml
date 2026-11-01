@@ -234,6 +234,20 @@ harness = false
 [profile.dev.package."*"]
 debug = false
 
+# 发布产物体积（issue #1999）：release 补 strip + LTO + 单 codegen-unit。cargo 缺省
+# release 不 strip 符号表——v0.11.1 Android APK 60.8 MiB 中 22.3 MiB 是 .strtab/.symtab
+# 调试符号（对用户零价值），LTO + codegen-units=1 再裁跨 crate 死代码（预期 60.8 →
+# ~30 MiB，桌面三平台产物同步受益；代价是 CI release 编译变慢，单次构建接受）。
+# 刻意不设两项：
+# - panic = "abort"（可再省 ~5.9 MiB unwind 表，否决）：生产代码依赖 catch_unwind
+#   保护读事务闭包（crates/infra/src/db/tx_scope.rs、db/facade.rs、
+#   src/shell_support/read_entry.rs），abort 会改变 panic 语义；
+# - opt-level 维持默认 3："s" 是性能换体积的真实取舍，以 perf-bench 数据决策（#2000）。
+[profile.release]
+strip = true
+lto = true
+codegen-units = 1
+
 # workspace 骨架（spec #1086 / issue #1087）：Rust 根升级为 workspace 根，根包仍是
 # tauri 应用包（构建与桌面/Android 打包命令零变化）；成员 crate 集中在 `crates/` 下，
 # 用 glob 纳入——新增成员目录自动成为 workspace 成员，不依赖手工清单。
