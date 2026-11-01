@@ -8,7 +8,7 @@ use rusqlite::Connection;
 use super::model::{BudgetInput, BudgetPeriod};
 use crate::{
     BudgetCommand, annual_budget_total_cents, budget_annual_summary, budget_progress_rows,
-    create_budget, list_budgets, update_budget,
+    create_budget, delete_budget, list_budgets, update_budget,
 };
 use ledger_infra::db::now_iso;
 use ledger_infra::error::{AppError, ErrClass};
@@ -174,12 +174,6 @@ fn all_kinds_fixture(category_id: &str) -> Vec<TxRow> {
 // ---- 预算 CRUD（薄壳 SQL 层） ----
 
 #[test]
-fn list_budgets_empty_initially() {
-    let conn = setup();
-    assert!(list_budgets(&conn).unwrap().is_empty());
-}
-
-#[test]
 fn create_budget_and_list() {
     let conn = setup();
     let cat_id = first_expense_category_id(&conn);
@@ -189,27 +183,31 @@ fn create_budget_and_list() {
     assert_eq!(budgets[0].id, "budget-1");
 }
 
+/// 删除走公开入口 [`delete_budget`]（软删 + 审计字段 + op 产出同一事务；变异测试
+/// 置换：本用例曾手写裸 SQL 模拟软删，不经被测函数，删除路径 no-op 变异全存活），
+/// 读回经公开 [`list_budgets`] 断言已删行被排除。
 #[test]
 fn delete_budget_soft_deletes() {
     let conn = setup();
     let cat_id = first_expense_category_id(&conn);
-    insert_budget(&conn, "budget-2", &cat_id, "monthly", 50000, "2026-07-01");
-    assert_eq!(
-        conn.query_row::<i64, _, _>("SELECT COUNT(*) FROM budgets WHERE is_deleted=0", [], |r| r
-            .get(0))
-            .unwrap(),
-        1,
-    );
-    conn.execute(
-        "UPDATE budgets SET is_deleted=1, updated_at=?2, version=version+1, device_id=?3 WHERE id=?1",
-        rusqlite::params!["budget-2", now_iso(), device_id(&conn).unwrap()],
+    create_budget(
+        &conn,
+        &budget_input(&cat_id, Some(BudgetPeriod::Monthly), 50000),
     )
     .unwrap();
-    assert_eq!(
-        conn.query_row::<i64, _, _>("SELECT COUNT(*) FROM budgets WHERE is_deleted=0", [], |r| r
-            .get(0))
-            .unwrap(),
-        0,
+    let budgets = list_budgets(&conn).unwrap();
+    assert_eq!(budgets.len(), 1);
+    assert!(
+        !budgets[0].is_deleted,
+        "在用行的 is_deleted 投影必须读出 false"
+    );
+    let id = budgets[0].id.clone();
+
+    delete_budget(&conn, &id).unwrap();
+
+    assert!(
+        list_budgets(&conn).unwrap().is_empty(),
+        "软删后公开读回不得再含该行"
     );
 }
 
@@ -756,6 +754,37 @@ fn budget_progress_over_budget() {
     let results = budget_progress_rows(&conn, today()).unwrap();
     assert_eq!(results[0].spent_cents, expense_net_sum(&fixture, "2026-07"));
     assert!(results[0].over_budget);
+}
+
+/// 超标判定是严格大于（spent > limit）：恰好等于限额不算超标——边界断言使
+/// `>` 边界变异（`>=`）可被击杀（变异测试报告的存活点，2026-10 首轮清理）。
+#[test]
+fn budget_progress_at_limit_is_not_over_budget() {
+    let conn = setup();
+    insert_dummy_account(&conn);
+    let cat_id = first_expense_category_id(&conn);
+    create_budget(
+        &conn,
+        &budget_input(&cat_id, Some(BudgetPeriod::Monthly), 2000),
+    )
+    .unwrap();
+    let fixture = vec![TxRow {
+        id: "tx-limit",
+        kind: TransactionKind::Expense,
+        amount: 2000,
+        category_id: cat_id,
+        date: "2026-07-10",
+    }];
+    for r in &fixture {
+        insert_tx(&conn, r);
+    }
+    let results = budget_progress_rows(&conn, today()).unwrap();
+    assert_eq!(results[0].spent_cents, 2000);
+    assert!(!results[0].over_budget, "恰好等于限额不算超标（严格大于）");
+    // 读回投影：在用预算行的 is_deleted 必须读出 false（from_row 布尔反转变异
+    // 的击杀点，同上变异测试报告）。
+    assert!(!results[0].budget.is_deleted);
+    assert_eq!(results.len(), 1);
 }
 
 /// 月预算窗口 = 注入 today 所在自然月（与 start_date 无关）；上月不计入。

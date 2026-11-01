@@ -20,10 +20,13 @@ fn list_merchants(conn: &rusqlite::Connection) -> Vec<Merchant> {
     list_merchants_domain(conn, false).unwrap()
 }
 
+/// 种子口径哨兵：建库不 seed 商户（ADR-0028：商户是强个人属性，seed 是字典
+/// 噪音）。变异面外保留——变红条件 = 建库种子加了商户行（种子/迁移产物不在
+/// cargo-mutants 覆盖面，按「零击杀测试」词条核对覆盖面后裁决保留，
+/// 2026-10 首轮清理）。
 #[test]
 fn list_merchants_starts_empty() {
     let conn = setup();
-    // 空表启动不 seed（ADR-0028：商户是强个人属性，seed 是字典噪音）。
     assert!(list_merchants(&conn).is_empty());
 }
 

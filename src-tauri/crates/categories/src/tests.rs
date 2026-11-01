@@ -1,9 +1,8 @@
-use ledger_infra::db::query::query_all;
 use ledger_infra::db::{new_uuid, now_iso};
 use ledger_infra::error::{AppError, ErrClass};
 use ledger_sync_protocol::device::device_id;
 
-use super::model::Category;
+use super::model::{Category, CategoryInput, ReorderItem};
 
 fn setup() -> rusqlite::Connection {
     // 建库两行序经统一测试工厂承载（spec #728 / issue #754 / ADR-0084 决策 7）。
@@ -13,14 +12,10 @@ fn setup() -> rusqlite::Connection {
     tauri_app_lib::test_support::open()
 }
 
+/// 读回统一走域公开函数（变异测试清理 2026-10 首轮：原私有裸 SQL helper 使
+/// 全部读回断言穿透不到 `list_categories`，该函数固定值替换变异无测试可杀）。
 fn list_categories(conn: &rusqlite::Connection) -> Vec<Category> {
-    query_all(
-        conn,
-        "SELECT id,name,kind,parent_id,icon,sort_order,created_at,updated_at,version,device_id,is_deleted \
-         FROM categories WHERE is_deleted=0 ORDER BY kind, sort_order, created_at",
-        [],
-    )
-    .unwrap()
+    super::list_categories(conn, false).unwrap()
 }
 
 #[test]
@@ -37,34 +32,48 @@ fn list_categories_returns_seed_data() {
 #[test]
 fn create_category_inserts_and_returns_id() {
     let conn = setup();
-    let id = new_uuid();
-    let now = now_iso();
-    conn.execute(
-        "INSERT INTO categories (id,name,kind,parent_id,icon,sort_order,created_at,updated_at,version,device_id,is_deleted) \
-         VALUES (?1,?2,?3,NULL,NULL,0,?4,?5,?6,?7,0)",
-        rusqlite::params![id, "交通", "expense", now, now, 1, device_id(&conn).unwrap()],
+    let id = super::create_category(
+        &conn,
+        CategoryInput {
+            name: "交通".into(),
+            kind: "expense".into(),
+            parent_id: None,
+            icon: None,
+        },
     )
     .unwrap();
     let cats = list_categories(&conn);
-    assert!(cats.iter().any(|c| c.id == id && c.name == "交通"));
+    let created = cats
+        .iter()
+        .find(|c| c.id == id)
+        .expect("公开读回必须含新建行");
+    assert_eq!(created.name, "交通");
+    // 读回投影：在用行的 is_deleted 必须读出 false（from_row 布尔反转变异的
+    // 击杀点，变异测试报告 2026-10 首轮）。
+    assert!(!created.is_deleted);
 }
 
 #[test]
 fn create_subcategory_with_parent() {
     let conn = setup();
-    let parent_id = new_uuid();
-    let child_id = new_uuid();
-    let now = now_iso();
-    conn.execute(
-        "INSERT INTO categories (id,name,kind,parent_id,icon,sort_order,created_at,updated_at,version,device_id,is_deleted) \
-         VALUES (?1,?2,'expense',NULL,NULL,0,?3,?4,?5,?6,0)",
-        rusqlite::params![parent_id, "出行", now, now, 1, device_id(&conn).unwrap()],
+    let parent_id = super::create_category(
+        &conn,
+        CategoryInput {
+            name: "出行".into(),
+            kind: "expense".into(),
+            parent_id: None,
+            icon: None,
+        },
     )
     .unwrap();
-    conn.execute(
-        "INSERT INTO categories (id,name,kind,parent_id,icon,sort_order,created_at,updated_at,version,device_id,is_deleted) \
-         VALUES (?1,?2,'expense',?3,NULL,0,?4,?5,?6,?7,0)",
-        rusqlite::params![child_id, "打车", parent_id, now, now, 1, device_id(&conn).unwrap()],
+    let child_id = super::create_category(
+        &conn,
+        CategoryInput {
+            name: "打车".into(),
+            kind: "expense".into(),
+            parent_id: Some(parent_id.clone()),
+            icon: None,
+        },
     )
     .unwrap();
     let cats = list_categories(&conn);
@@ -72,24 +81,38 @@ fn create_subcategory_with_parent() {
     assert_eq!(child.parent_id.as_deref(), Some(&*parent_id));
 }
 
+/// 幂等创建（HTTP 导入面，供 AI 导入即建）：同自然键（name + kind + parent_id）
+/// 已存在时复用已有 id、不重复插入。击杀面：create_category_idempotent 与
+/// find_category_by_natural_key 的固定值替换变异（变异测试报告，2026-10 首轮清理）。
 #[test]
-fn delete_category_soft_deletes() {
+fn create_category_idempotent_reuses_natural_key() {
     let conn = setup();
-    let id = new_uuid();
-    let now = now_iso();
-    conn.execute(
-        "INSERT INTO categories (id,name,kind,parent_id,icon,sort_order,created_at,updated_at,version,device_id,is_deleted) \
-         VALUES (?1,?2,'expense',NULL,NULL,0,?3,?4,?5,?6,0)",
-        rusqlite::params![id, "临时分类", now, now, 1, device_id(&conn).unwrap()],
-    )
-    .unwrap();
-    assert!(list_categories(&conn).iter().any(|c| c.id == id));
-    conn.execute(
-        "UPDATE categories SET is_deleted=1, updated_at=?2, version=version+1, device_id=?3 WHERE id=?1",
-        rusqlite::params![id, now_iso(), device_id(&conn).unwrap()],
-    )
-    .unwrap();
-    assert!(!list_categories(&conn).iter().any(|c| c.id == id));
+    let input = || CategoryInput {
+        name: "餐饮".into(),
+        kind: "expense".into(),
+        parent_id: None,
+        icon: None,
+    };
+    let first = super::create_category_idempotent(&conn, input()).unwrap();
+    let second = super::create_category_idempotent(&conn, input()).unwrap();
+    assert_eq!(first, second, "同自然键二次创建必须复用同一 id");
+    let count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM categories WHERE name='餐饮' AND is_deleted=0",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(count, 1, "幂等命中不得重复插入");
+    // 返回值必须指向真实行（固定值替换变异的击杀面）。
+    let row_id: String = conn
+        .query_row(
+            "SELECT id FROM categories WHERE name='餐饮' AND is_deleted=0",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(second, row_id);
 }
 
 #[test]
@@ -230,24 +253,27 @@ fn delete_category_ignores_budgets_of_subcategories() {
 #[test]
 fn update_category_updates_fields() {
     use super::model::CategoryUpdateInput;
+
     let conn = setup();
-    let id = new_uuid();
-    let now = now_iso();
-    conn.execute(
-        "INSERT INTO categories (id,name,kind,parent_id,icon,sort_order,created_at,updated_at,version,device_id,is_deleted) \
-         VALUES (?1,?2,'expense',NULL,NULL,0,?3,?4,?5,?6,0)",
-        rusqlite::params![id, "原始分类", now, now, 1, device_id(&conn).unwrap()],
+    let id = super::create_category(
+        &conn,
+        CategoryInput {
+            name: "原始分类".into(),
+            kind: "expense".into(),
+            parent_id: None,
+            icon: None,
+        },
     )
     .unwrap();
 
-    let input = CategoryUpdateInput {
-        name: Some("更新后".into()),
-        icon: Some(Some("🍕".into())),
-        parent_id: None,
-    };
-    conn.execute(
-        "UPDATE categories SET name=?1, icon=?2, parent_id=?3, updated_at=?4, version=version+1, device_id=?5 WHERE id=?6",
-        rusqlite::params![input.name, input.icon, input.parent_id.unwrap_or(None), now_iso(), device_id(&conn).unwrap(), id],
+    super::update_category(
+        &conn,
+        &id,
+        CategoryUpdateInput {
+            name: Some("更新后".into()),
+            icon: Some(Some("🍕".into())),
+            parent_id: None,
+        },
     )
     .unwrap();
     let cats = list_categories(&conn);
@@ -434,30 +460,41 @@ fn parent_id_of(conn: &rusqlite::Connection, id: &str) -> Option<String> {
 #[test]
 fn reorder_categories_sets_sort_order() {
     let conn = setup();
-    let id1 = new_uuid();
-    let id2 = new_uuid();
-    let now = now_iso();
-    conn.execute(
-        "INSERT INTO categories (id,name,kind,parent_id,icon,sort_order,created_at,updated_at,version,device_id,is_deleted) \
-         VALUES (?1,?2,'expense',NULL,NULL,0,?3,?4,?5,?6,0)",
-        rusqlite::params![id1, "分类A", now, now, 1, device_id(&conn).unwrap()],
+    let id1 = super::create_category(
+        &conn,
+        CategoryInput {
+            name: "分类A".into(),
+            kind: "expense".into(),
+            parent_id: None,
+            icon: None,
+        },
     )
     .unwrap();
-    conn.execute(
-        "INSERT INTO categories (id,name,kind,parent_id,icon,sort_order,created_at,updated_at,version,device_id,is_deleted) \
-         VALUES (?1,?2,'expense',NULL,NULL,0,?3,?4,?5,?6,0)",
-        rusqlite::params![id2, "分类B", now, now, 1, device_id(&conn).unwrap()],
+    let id2 = super::create_category(
+        &conn,
+        CategoryInput {
+            name: "分类B".into(),
+            kind: "expense".into(),
+            parent_id: None,
+            icon: None,
+        },
     )
     .unwrap();
 
-    conn.execute(
-        "UPDATE categories SET sort_order=?1, updated_at=?2, version=version+1, device_id=?3 WHERE id=?4",
-        rusqlite::params![2, now_iso(), device_id(&conn).unwrap(), id1],
-    )
-    .unwrap();
-    conn.execute(
-        "UPDATE categories SET sort_order=?1, updated_at=?2, version=version+1, device_id=?3 WHERE id=?4",
-        rusqlite::params![1, now_iso(), device_id(&conn).unwrap(), id2],
+    // 重排走公开入口（变异测试清理 2026-10 首轮：原手写 UPDATE 不经被测函数，
+    // reorder 路径 no-op 变异全存活）。
+    super::reorder_categories(
+        &conn,
+        vec![
+            ReorderItem {
+                id: id2.clone(),
+                sort_order: 1,
+            },
+            ReorderItem {
+                id: id1.clone(),
+                sort_order: 2,
+            },
+        ],
     )
     .unwrap();
 

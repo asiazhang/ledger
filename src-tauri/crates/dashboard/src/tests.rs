@@ -11,7 +11,7 @@ use crate::net_worth::{current_fingerprint, write as write_cache};
 use crate::query_dashboard_overview;
 use tauri_app_lib::test_support::snapshot_probe::{self, InjectionOutcome};
 use tauri_app_lib::test_support::{
-    ScratchDir, open_file, seed_account, seed_exchange_rate, seed_fx_history_weeks,
+    ScratchDir, open, open_file, seed_account, seed_exchange_rate, seed_fx_history_weeks,
     seed_instrument, seed_market_price,
 };
 
@@ -155,4 +155,40 @@ fn legacy_formula_cache_row_is_recomputed() {
         "旧口径缓存行不得被读出：必须按当前口径（现金户 + 证券户现金）重算"
     );
     assert_eq!(overview.accounts_balance_cents, 700_000);
+}
+
+/// 净资产总量 = 三腿之和的第三腿击杀面（变异测试报告 2026-10 首轮：既有两
+/// 测试的实物腿均为 0，求和 `+` 的符号变异在 ±0 下不可区分）。实物腿非零时
+/// 总量必须计入实物估值，断言总量与三腿各自的具体数值。
+#[test]
+fn dashboard_overview_net_worth_includes_physical_assets_leg() {
+    let conn = open();
+    seed_account(&conn, "acc-phys-cash", "现金户", "cash", "CNY", 300_000);
+    ledger_accounts::balance::refresh_all_account_balances(&conn).unwrap();
+    ledger_physical_asset::create_physical_asset(
+        &conn,
+        ledger_physical_asset::PhysicalAssetInput {
+            name: "金条".into(),
+            purchase_date: None,
+            purchase_price_cents: None,
+            purchase_currency_code: None,
+            initial_valuation_cents: Some(200_000),
+            initial_valuation_currency_code: Some("CNY".into()),
+            initial_valuation_date: Some("2026-01-10".into()),
+        },
+        &mut || {},
+    )
+    .unwrap();
+
+    let overview = query_dashboard_overview(&conn).unwrap();
+    assert_eq!(overview.accounts_balance_cents, 300_000);
+    assert_eq!(overview.holdings_market_value_cents, 0);
+    assert_eq!(
+        overview.physical_assets_value_cents, 200_000,
+        "实物腿按在持估值（native 币种）计入"
+    );
+    assert_eq!(
+        overview.net_worth_cents, 500_000,
+        "总量 = 三腿之和（余额 + 持仓 + 实物）"
+    );
 }

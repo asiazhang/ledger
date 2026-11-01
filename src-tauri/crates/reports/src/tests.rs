@@ -698,6 +698,47 @@ fn category_shares_filters_by_period_range() {
     assert_eq!(rows[0].amount_cents, 700, "1000 − 300，界内退款冲减");
 }
 
+/// 单边期间（仅 from 或仅 to）也走期间分支：`from.is_some() || to.is_some()`
+/// 判定的击杀面（变异测试报告 2026-10 首轮：`&&` 变异在既有双边用例下不可区分，
+/// 单边被误判走遗留 month/year 分支即期间过滤丢失）。
+#[test]
+fn category_shares_period_single_sided_bounds() {
+    let conn = setup();
+    insert_account(&conn, "acc");
+    let cat_id = first_category_id(&conn, "expense");
+    let fixture = vec![
+        TxRow {
+            id: "t-early",
+            kind: TransactionKind::Expense,
+            amount: 400,
+            category_id: Some(cat_id.clone()),
+            date: "2025-11-01",
+        },
+        TxRow {
+            id: "t-late",
+            kind: TransactionKind::Expense,
+            amount: 900,
+            category_id: Some(cat_id),
+            date: "2026-03-01",
+        },
+    ];
+    for r in &fixture {
+        insert_tx(&conn, r);
+    }
+
+    // 仅 from：晚于边界的计入（2025-11 排除）。
+    let from_only =
+        category_shares_rows(&conn, "expense", None, None, Some("2026-01-01"), None).unwrap();
+    assert_eq!(from_only.len(), 1, "仅 from 也按期间过滤（早于边界不计）");
+    assert_eq!(from_only[0].amount_cents, 900);
+
+    // 仅 to：早于边界的计入（2026-03 排除）。
+    let to_only =
+        category_shares_rows(&conn, "expense", None, None, None, Some("2025-12-31")).unwrap();
+    assert_eq!(to_only.len(), 1, "仅 to 也按期间过滤（晚于边界不计）");
+    assert_eq!(to_only[0].amount_cents, 400);
+}
+
 /// 期间口径优先：from/to 存在时遗留 month/year 不参与。
 #[test]
 fn category_shares_period_overrides_legacy_month_year() {
