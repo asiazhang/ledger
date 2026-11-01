@@ -157,6 +157,23 @@ export function moneyWeightedReturnSummary(): MoneyWeightedReturnSummary {
 
 // —— realized_pnl_summary：按年 / 按账户两张单值表（ADR-0129 两腿拆解） ——
 
+/** 码点序比较：复刻真后端 Rust `String::cmp`（UTF-8 字节序 = 码点序，逐
+ * 码点字典序）。不用 `localeCompare`——其 collation 随运行环境 locale 变化
+ * （zh_CN 拼音序会翻转中文账户名次序，本地与 CI 排序不一致，#2004）；也不
+ * 用 `<`/`>`——那是 UTF-16 码元序，对增补平面字符（emoji、CJK 扩展 B–F）
+ * 与码点序分歧，迭代器逐码点才严格等价。 */
+function cmpCodepoint(a: string, b: string): number {
+  const ai = a[Symbol.iterator]();
+  const bi = b[Symbol.iterator]();
+  for (;;) {
+    const x = ai.next();
+    const y = bi.next();
+    if (x.done || y.done) return x.done === y.done ? 0 : x.done ? -1 : 1;
+    const d = x.value.codePointAt(0)! - y.value.codePointAt(0)!;
+    if (d !== 0) return d < 0 ? -1 : 1;
+  }
+}
+
 /** 替身口径：两腿事件集（legEvents）直聚合——行键 = 两腿键集之并（只有
  * 分红、没有卖出的年份 / 账户同样成行，真后端同语义）；空腿 = 0（无匹配是
  * 零、非缺料 null，事件周汇率折算不模拟、无 null 形态）；筛选真做（账户落
@@ -206,8 +223,10 @@ export function realizedPnlSummary(args: Record<string, unknown>): RealizedPnlSu
       };
     })
     .sort(
+      // 真后端（investment reports.rs）按（account_name, account_id）String::cmp
+      // 码点序重排，替身同序。
       (a, b) =>
-        a.account_name.localeCompare(b.account_name) || a.account_id.localeCompare(b.account_id),
+        cmpCodepoint(a.account_name, b.account_name) || cmpCodepoint(a.account_id, b.account_id),
     );
 
   return { by_year, by_account };
