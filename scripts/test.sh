@@ -20,7 +20,7 @@ cd "$(dirname "$0")/.."
 
 # 并发执行器以 Bun 运行时执行（issue #734 / ADR-0083）：缺失即显式报错，不静默降级
 if ! command -v bun >/dev/null 2>&1; then
-  echo "✗ 未检测到 bun：测试执行器以 Bun 运行时执行（ADR-0083），请安装 bun（CI 固定 1.4.0）后重试" >&2
+  echo "✗ 未检测到 bun：测试执行器以 Bun 运行时执行（ADR-0083），请安装 bun（CI 固定 1.4.4）后重试" >&2
   exit 1
 fi
 
