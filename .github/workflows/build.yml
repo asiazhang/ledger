@@ -52,7 +52,7 @@ jobs:
       # 守门脚本运行时 = Bun（ADR-0083）；版本与本地门槛同一固定值，升级走显式 bump
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.4.0
+          bun-version: 1.4.4
 
       - run: pnpm run build
 
@@ -851,7 +851,7 @@ jobs:
       # 守门脚本运行时 = Bun（ADR-0083）；版本与本地门槛同一固定值，升级走显式 bump
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.4.0
+          bun-version: 1.4.4
 
       - name: 提取 CHANGELOG 条目作为 Release 说明
         id: changelog
