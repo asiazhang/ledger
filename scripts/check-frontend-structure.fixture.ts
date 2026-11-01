@@ -83,7 +83,7 @@ export function fixtureRepo(opts: FixtureRepoOptions = {}): string[] {
   return args;
 }
 
-/** 清理全部夹具临时目录（各测试文件 afterAll 各调一次，模块态按 vitest 进程隔离） */
+/** 清理全部夹具临时目录（各测试文件 afterAll 各调一次，模块态按 bun test 进程隔离） */
 export function cleanupFixtureRepos(): void {
   for (const dir of tempDirs) rmSync(dir, { recursive: true, force: true });
   tempDirs.length = 0;

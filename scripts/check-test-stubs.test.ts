@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -81,7 +81,8 @@ mockInvoke.mockImplementationOnce((cmd: string, args?: Record<string, unknown>) 
 describe("check-test-stubs", () => {
   it("真实仓库默认通过：三区间扫真实仓全绿（现行仓库绿）", () => {
     // 无参数 = 真实仓库默认扫描根（src/__tests__ + packages/test-support/src +
-    // 包内测试）。随 vitest scripts 测试分片进 CI（issue #1473）：真实仓违例即红，
+    // 包内测试）。随守门测试挂载进 CI（issue #1473 引入挂载；#1991 起运行口径 =
+    // bun test scripts/）：真实仓违例即红，
     // 不再只靠本地自觉跑 check.sh。成功行的登记处计数从 REFERENCE_DEFAULTS 派生
     //（单一事实源），扫描根字段证明默认根解析到真实仓而非空转。
     const r = run([]);

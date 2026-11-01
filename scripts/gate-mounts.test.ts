@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -25,7 +25,8 @@ import {
 // `echo "▶`，结构上永不可能命中执行形态——echo 假绿免疫是判定语义的结构后果
 // （#1112 第三轮审查实测教训；末条用例钉住该语义）。
 
-/** 仓库根：vitest 进程 cwd 即仓库根（同 run-gate-script 助手的定位观察）。 */
+/** 仓库根：bun test 进程 cwd 即仓库根（bun test scripts/ 自仓库根发起；同
+ *  run-gate-script 助手的定位观察）。 */
 const repoRoot = process.cwd();
 
 function readHost(file: string): string {
