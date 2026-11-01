@@ -40,10 +40,8 @@ serde_json = "1"
 # OpenSSL 一并 vendored 静态编译，三平台产物自包含；加密参数用 SQLCipher 4 默认值不调参。
 # 未设密钥的连接保持明文（SQLCipher 无 key 时行为与标准 SQLite 一致）。
 rusqlite = { version = "0.40", features = ["bundled-sqlcipher-vendored-openssl", "trace"] }
-rusqlite_migration = "2.6"
 chrono = { version = "0.4.45", features = ["serde"] }
 uuid = { version = "1.23", features = ["v7", "v5", "serde"] }
-thiserror = "2.0.18"
 tauri-plugin-dialog = "2"
 tokio = { version = "1", features = ["rt", "macros", "time"] }
 axum = "0.8"
@@ -180,31 +178,6 @@ semver = "1.0.28"
 # 的 UpdaterBuilder::endpoints 同型（url::Url）。
 url = "2.5.8"
 
-# 主口令本机缓存（issue #574 / ADR-0075 决策 3）：macOS 系统钥匙串 + Touch ID 生物认证门。
-# 仅 macOS 目标编译（security-framework 自带 #![cfg(target_vendor = "apple")]
-# 空壳，其余平台为不支持桩，见 db/passphrase_cache.rs）；钥匙串/生物认证的
-# 运行期行为以手动冒烟清单验收（issue #574 AC），不进 CI 自动测试。
-# 刻意不启用 OSX_10_15（use_protected_keychain / 数据保护钥匙串）：macOS 26 对
-# 未签名/ad-hoc 进程的无门 DPK 写入同样报 -34018（#662 本机探针实证；先例
-# block/buzz#1266），开发回退走传统钥匙串无门条目，勿因「重签稳定」旧论再开。
-# 生物门自 issue #866 起为 LocalAuthentication 应用层门（读取前 LAContext 弹
-# Touch ID，条目本身无 ACL）：objc2-local-authentication 与依赖树中 objc2 0.6
-# 同代（0.3.x），Developer ID + hardened runtime 可用已被 #657 证据矩阵实证。
-[target.'cfg(target_os = "macos")'.dependencies]
-security-framework = "3.7"
-security-framework-sys = "2.17"
-objc2-local-authentication = "0.3"
-# 类型桥接（命名生成绑定的公开类型，与依赖树同代，feature 由统一化合并）：
-# block2 = LAContext evaluatePolicy 的 reply block；objc2 = runtime Bool；
-# objc2-foundation = NSString（localizedReason）/ NSError（错误码）。
-block2 = { version = "0.6", default-features = false, features = ["alloc"] }
-objc2 = { version = "0.6", default-features = false, features = ["std"] }
-objc2-foundation = { version = "0.3", default-features = false, features = [
-  "alloc",
-  "NSString",
-  "NSError",
-] }
-
 # 窗口状态插件仅桌面目标参与编译（issue #558 / ADR-0074 决策 6）：该 crate 在
 # Android 目标下被整体 cfg 剔除（上游 target-gated），依赖声明、lib.rs 注册处
 # 必须同步按目标平台门禁，缺一即 Android 编译失败。沿用 Tauri 官方片段的
@@ -242,8 +215,10 @@ test-utils = ["ledger-infra/test-utils"]
 # `cargo build` 生产构建不激活 dev-dependency，故不编译测试器具（resolver 3）。
 tauri-app = { path = ".", features = ["test-utils"] }
 cucumber = "0.23"
-futures = "0.3"
 tower = { version = "0.5", features = ["util"] }
+# 迁移脚步驱动（`tests/e2e/startup_failure_steps.rs`：手工逐版跑迁移以构造启动
+# 失败态）：只被集成测试消费，故住 dev-dependencies。
+rusqlite_migration = "2.6"
 http-body-util = "0.1"
 zip = { version = "9", default-features = false, features = ["deflate"] }
 tauri = { version = "2", features = ["test"] }

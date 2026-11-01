@@ -182,10 +182,6 @@ impl S3Stub {
         self.violations.lock().unwrap().clone()
     }
 
-    pub fn clear_requests(&self) {
-        self.observations.lock().unwrap().clear();
-    }
-
     /// 指向本桩的 S3 通道配置（issue #1219）：探针单测与命令集成测试共用同一份
     /// 「桩 → 通道配置」构造，不再由各测试目录各写一份搬运（CONTEXT-testing
     /// 「目录级测试薄壳」：可通用化的夹具一律上收测试辅助层）。
