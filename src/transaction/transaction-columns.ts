@@ -51,7 +51,7 @@ export const KIND_TAG_TYPE: Record<TransactionKind, "success" | "warning" | "inf
  * 故展示必须走扩展字段；扩展缺失（旧数据/直读快照）时回退行金额，不抛错、不显空。
  * 表格金额列与移动卡片共用 `displayAmountText`，两处各自分支即口径漂移。
  */
-export function displayAmountCents(row: TransactionModalRow): number | null {
+function displayAmountCents(row: TransactionModalRow): number | null {
   if (row.kind === "convert" && row.convert) return row.convert.out_amount_cents;
   // 份额调整（ADR-0106 决策 1）：无现金腿、无金额——按空值语义返回 null，
   // 不以 0 伪装「已知为零」（同持仓缺价行的 '-' 口径）。
@@ -102,7 +102,7 @@ const NOTE_CELL_STYLE =
 
 /** 订单级合并格样式类（购买项展开，ADR-0138 决策 13）：rowspan 单元格内容纵向居中，
  * 样式收口 global.css（不依赖浏览器 UA 对 td 的默认对齐）。 */
-export const PURCHASE_MERGED_CELL_CLASS = "purchase-merged-cell";
+const PURCHASE_MERGED_CELL_CLASS = "purchase-merged-cell";
 
 /**
  * 展开后的显示行（issue #1883 / ADR-0138 决策 13）：购买项行由主交易行派生——
@@ -151,7 +151,7 @@ function purchaseOf(row: Transaction): TransactionPurchase | null {
 
 /** 订单级格跨度（naive-ui 列 rowSpan 回调）：订单块首行 = 购买项数（向下合并），
  * 其余行 = 1（被合并覆盖的格子由表格按坐标跳过，不渲染）。 */
-export function orderLevelRowSpan(row: Transaction): number {
+function orderLevelRowSpan(row: Transaction): number {
   return purchaseIndexOf(row) === 0 ? Math.max(row.purchases.length, 1) : 1;
 }
 
@@ -160,8 +160,8 @@ export function orderLevelRowSpan(row: Transaction): number {
  * 「分类 / 商品·备注」两列，这条短行线把一单切成好几行、块边界反而看不出来；抹掉它，
  * 块尾那条整宽行线（合并格 + 本行）就是唯一的订单边界。类只挂在展开出的购买项行上，
  * 普通行 / 未展开行集零影响。 */
-export const PURCHASE_BLOCK_ROW_CLASS = "purchase-block-row";
-export const PURCHASE_BLOCK_LAST_CLASS = "purchase-block-last";
+const PURCHASE_BLOCK_ROW_CLASS = "purchase-block-row";
+const PURCHASE_BLOCK_LAST_CLASS = "purchase-block-last";
 
 /** 行的订单块类（rowProps 单一收口）：非购买项行 undefined（普通行零变化），
  * 购买项行 = 块内行 + 块尾标记（单件订单首行即末行，块内规则因 block-last 不命中、行线保持原样）。 */

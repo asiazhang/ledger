@@ -1,7 +1,6 @@
 import type {
   Account,
   Category,
-  Currency,
   DashboardOverview,
   FinancialFreedomOverview,
   Holding,
@@ -57,10 +56,6 @@ export function resetToastSink(): void {
  * invoke 布线一律走唯一接缝 wireInvokeSeam（@ledger/test-support/invoke-mock.ts，ADR-0085），
  * 本文件只承载数据夹具（toast sink 假件见 @ledger/test-support/toast-sink），不含任何布线能力。
  */
-
-export const mockCurrencies: Currency[] = [
-  { code: "CNY", name: "人民币", symbol: "¥", decimal_places: 2 },
-];
 
 export function makeAccount(partial: Partial<Account> & { id: string }): Account {
   return {
@@ -446,7 +441,7 @@ export function makeSavingsGoalProgress(
 
 /** 目标专属账户夹具（issue #1755 / ADR-0133 决策 2）：目标账户是 `other` 类型账户，
  *  特殊性不靠类型值表达——是否目标户由绑定派生，本工厂只造账户本体。 */
-export function makeGoalBoundAccount(partial: Partial<Account> & { id: string }): Account {
+function makeGoalBoundAccount(partial: Partial<Account> & { id: string }): Account {
   return makeAccount({ type: "other", ...partial });
 }
 

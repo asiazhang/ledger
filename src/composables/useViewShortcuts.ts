@@ -68,7 +68,7 @@ export function deriveViewShortcuts(
 }
 
 /** macOS 用 Cmd（metaKey），Windows/Linux 用 Ctrl（ctrlKey） */
-export function isMacPlatform(): boolean {
+function isMacPlatform(): boolean {
   const nav = navigator as Navigator & { userAgentData?: { platform?: string } };
   const platform = nav.userAgentData?.platform ?? navigator.platform;
   return /mac/i.test(platform);

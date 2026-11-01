@@ -9,7 +9,7 @@ import { useBareKeyShortcuts } from "@/composables/useBareKeyShortcuts";
  * 步进语义由调用方声明：以最新页码为基准走既有翻页出口、首/末页越界幂等无操作，
  * 本模块不持页码状态。
  */
-export const PAGINATION_KEYS = {
+const PAGINATION_KEYS = {
   prev: "[",
   next: "]",
 } as const;
@@ -21,7 +21,7 @@ export type PaginationStep = "prev" | "next";
  * 仅接受无修饰键裸键——任何 Ctrl/Cmd/Alt/Shift 修饰均不命中，
  * 把组合键让给系统与其他快捷键（如 Cmd+1..9 视图切换）。
  */
-export function matchPaginationShortcut(e: KeyboardEvent): PaginationStep | null {
+function matchPaginationShortcut(e: KeyboardEvent): PaginationStep | null {
   if (e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return null;
   if (e.key === PAGINATION_KEYS.prev) return "prev";
   if (e.key === PAGINATION_KEYS.next) return "next";

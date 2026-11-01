@@ -7,8 +7,9 @@ import type {
   TransactionUrlQuery,
 } from "@/transaction/transactions-session";
 
-/** 过滤常量与类型随深模块状态迁入交易页会话 store（issue #893）；此处再导出维持
- * 既有导入路径（消费方经本模块取用），不制造第二口径。 */
+/** 过滤常量随深模块状态迁入交易页会话 store（issue #893）；此处再导出维持
+ * 既有导入路径（消费方经本模块取用），不制造第二口径。过滤类型不再再导出
+ * （issue #1997：三个类型零消费，消费方直取会话 store）。 */
 export {
   UNCATEGORIZED_ONLY,
   CATEGORY_DRILLDOWN_KINDS,
@@ -16,12 +17,6 @@ export {
   MAIN_LIST_KINDS,
   resolveRequestKinds,
   normalizeKindSelection,
-  TRANSACTION_PAGE_SIZE_DEFAULT,
-} from "@/transaction/transactions-session";
-export type {
-  TransactionFilters,
-  TransactionFilterPatch,
-  TransactionUrlQuery,
 } from "@/transaction/transactions-session";
 
 export interface UseTransactionFilterReturn {

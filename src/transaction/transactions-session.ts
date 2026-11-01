@@ -74,7 +74,7 @@ export function normalizeKindSelection(
 const DATE_PARAM_PATTERN = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
 
 /** 页大小默认档：会话内保留、冷启动回此默认（issue #893）。 */
-export const TRANSACTION_PAGE_SIZE_DEFAULT = 20;
+const TRANSACTION_PAGE_SIZE_DEFAULT = 20;
 
 /**
  * 交易列表过滤维度（会话级 store 是唯一事实源，URL 仅只读初始化入口、不写回）。

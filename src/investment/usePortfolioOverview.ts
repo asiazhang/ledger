@@ -44,7 +44,7 @@ export interface PortfolioRow {
  *   不给半截数字）；
  * - 其余行同币（DefaultCurrency）直接相加。
  */
-export interface NativeTotal {
+interface NativeTotal {
   /** 折本位币单值（分）；null = 无可计入行或缺折算汇率行在场（不给半截数字，展示「-」/警告态） */
   cents: number | null;
   /** 缺现价未计入的行数（>0 卡面小字标注） */

@@ -60,7 +60,7 @@ import { emitMockEvent } from "./tauri/event";
  */
 
 /** 账本级设置的内存形态（issue #1965 首批：本位币基准 + 日志等级；后续域随需扩展） */
-export interface MockSettings {
+interface MockSettings {
   base_currency: string;
   log_level: string;
 }

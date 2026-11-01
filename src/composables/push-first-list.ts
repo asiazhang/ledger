@@ -19,7 +19,7 @@ import { createLatestWins, type LatestWinsToken } from "@ledger/latest-wins";
  */
 
 /** 清单加载状态：`idle` 为初始瞬态（self-init 同步置为 `loading`，外部基本观察不到）。 */
-export type PushFirstListStatus = "idle" | "loading" | "ready" | "error";
+type PushFirstListStatus = "idle" | "loading" | "ready" | "error";
 
 /** 工厂产出面：status / version 失效观测信号 + refresh 强制刷新 + invalidate 作废在途；数据面留店。 */
 export interface PushFirstList {

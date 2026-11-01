@@ -67,7 +67,7 @@ vi.mock("vue-router", () => ({
 }));
 
 /** 账户库（可变，issue #374 借贷呈现测试经 setAccountDb 注入 receivable/debt 账户）。 */
-export let mockAccounts: Account[] = [
+let mockAccounts: Account[] = [
   {
     id: "acc-1",
     name: "现金",
