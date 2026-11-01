@@ -26,7 +26,7 @@ import { isUnfinishedStatus } from "@ledger/scheduled-plan-list";
  * 软删计划不进提示：读命令 `list_plans` 已滤 `is_deleted=0`，此处再挡一次让判据自足
  * （谓词独立成立，不依赖调用方拿到的是哪条读路径）。
  */
-export function isUnfinishedPlan(plan: ScheduledTransactionWithExt): boolean {
+function isUnfinishedPlan(plan: ScheduledTransactionWithExt): boolean {
   return !plan.core.is_deleted && isUnfinishedStatus(plan.core.status);
 }
 

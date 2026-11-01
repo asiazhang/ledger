@@ -27,7 +27,7 @@ import type { LocationQuery } from "vue-router";
  */
 
 /** focus 参数词表：一名一义（不按页语义命名，避免与下钻过滤参数混淆）。 */
-export const FOCUS_QUERY_KEY = "focus";
+const FOCUS_QUERY_KEY = "focus";
 
 export interface UseFocusParamOptions {
   /** focus 读取源：目标视图的路由 query（getter 注入，工厂不依赖 router）。 */

@@ -46,7 +46,6 @@ export const NON_CLOSABLE_FEATURES = [
 ] as const;
 
 export type ClosableFeatureId = (typeof CLOSABLE_FEATURES)[number];
-export type NonClosableFeatureId = (typeof NON_CLOSABLE_FEATURES)[number];
 
 /** 闭集判定：仅可关九项为真（不可关六项、未知 id、非字符串一律为假）。 */
 export function isClosableFeature(v: unknown): v is ClosableFeatureId {

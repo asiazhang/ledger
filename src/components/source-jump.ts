@@ -58,11 +58,7 @@ const KIND_TARGETS: Record<
 };
 
 /** 来源落点路由名：四个目标视图独立路由 + 组「更多」聚合页（洞察组无收纳来源，路由预建不达）。 */
-export type SourceJumpRouteName =
-  | SourceTargetView
-  | "bookkeeping-more"
-  | "assets-more"
-  | "insights-more";
+type SourceJumpRouteName = SourceTargetView | "bookkeeping-more" | "assets-more" | "insights-more";
 
 /** 组 → 「更多」聚合页路由名（路由镜像侧栏层级，ADR-0063；与 router 记录一致）。 */
 const GROUP_MORE_ROUTE: Record<SidebarGroupId, SourceJumpRouteName> = {

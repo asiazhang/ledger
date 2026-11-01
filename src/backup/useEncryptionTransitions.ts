@@ -314,5 +314,3 @@ export function useEncryptionTransitions() {
     disableAutoUnlock,
   };
 }
-
-export type EncryptionTransitions = ReturnType<typeof useEncryptionTransitions>;

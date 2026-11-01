@@ -38,7 +38,7 @@ import type { Ref } from "vue";
  */
 
 /** 行右键菜单单判别状态：非空即菜单打开（x/y 为弹出坐标、row 为目标行）。 */
-export interface RowContextMenuState<TRow> {
+interface RowContextMenuState<TRow> {
   x: number;
   y: number;
   row: TRow;

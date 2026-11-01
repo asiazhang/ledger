@@ -16,7 +16,7 @@ import type { CreateScheduledInput, RecurrenceType, ScheduledKind } from "@ledge
 
 /** 形态特化字段（ADR-0041：分期总额/期数、转账转入账户与总期数留页签）：
  * 仅携带该形态真实发送的键——组装结果键集与既有三表单逐字一致，不补空键。 */
-export interface ScheduledPlanSpecificFields {
+interface ScheduledPlanSpecificFields {
   total_amount_cents?: number | null;
   total_occurrences?: number | null;
   to_account_id?: string | null;
@@ -44,7 +44,7 @@ export interface ScheduledPlanSubmitSpec {
 
 /** 提交成功后回调（工厂入参）：适配器注入各自原子动作——转账/分期：关窗 +
  * 特化字段重置 + 清单刷新；订阅追加订阅花费刷新。回调时公共草稿已由接缝重置。 */
-export type SubmitSuccessCallback = () => void | Promise<void>;
+type SubmitSuccessCallback = () => void | Promise<void>;
 
 /** useScheduledPlanForm 工厂入参。 */
 export interface UseScheduledPlanFormOptions {

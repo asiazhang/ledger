@@ -16,13 +16,6 @@ import { formatLocalDateISO } from "@ledger/utils/date";
 /** 使用率警示阈值（%）：达到或超过它时列表小字用警示色。阈值只此一处，不做设置项。 */
 export const CREDIT_UTILIZATION_WARNING_PERCENT = 90;
 
-/** 信用卡档案字段（`null` = 未设置）。 */
-export interface CreditTerms {
-  creditLimitCents: number | null;
-  statementDay: number | null;
-  dueDay: number | null;
-}
-
 /** 信用卡派生视图（账户列表与编辑弹窗共用的唯一形态）。 */
 export interface CreditProfile {
   /** 信用额度（未设置 = `null`）。 */

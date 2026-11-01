@@ -215,5 +215,3 @@ export function useBookSwitcher() {
     removeBook,
   };
 }
-
-export type BookSwitcher = ReturnType<typeof useBookSwitcher>;

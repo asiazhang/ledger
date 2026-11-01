@@ -433,5 +433,3 @@ export function useSyncCard() {
     confirmBootstrap,
   };
 }
-
-export type SyncCard = ReturnType<typeof useSyncCard>;

@@ -5,7 +5,7 @@ import type { TransactionKind } from "@ledger/types";
 
 /** 持仓页签排序列闭集（与持仓明细表列 key 一致）：市值 / 持仓收益（未实现盈亏） */
 export type HoldingsSortColumn = "market_value" | "unrealized_pnl";
-export type HoldingsSortOrder = "ascend" | "descend";
+type HoldingsSortOrder = "ascend" | "descend";
 
 /** 排序状态：null = 默认标的代码字母序 */
 export interface HoldingsSorter {
@@ -30,7 +30,7 @@ export const PNL_PAGE_SIZE = 8;
  * （spec #1532 / issue #1536，原默认「盈亏」）——一进投资页就看到可投资资产，
  * 不设预算的用户也无需先建预算才能看到这笔资产。
  */
-export const INVESTMENTS_DEFAULT_TAB = "overview";
+const INVESTMENTS_DEFAULT_TAB = "overview";
 
 /** 明细页签默认页大小（档位与主列表同源：PAGE_SIZE_OPTIONS 单点
  * @ledger/utils/pagination，#1792；默认 20）。 */

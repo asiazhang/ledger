@@ -3,13 +3,13 @@ import { useInstrumentSearch } from "@/investment/useInstrumentSearch";
 import type { Instrument } from "@ledger/types";
 
 /** 标的下拉选项：naive-ui options 的最小闭集（label + value）。 */
-export interface InstrumentOption {
+interface InstrumentOption {
   label: string;
   value: string;
 }
 
 /** 标的引用：钉住标的的最小结构闭集（Instrument 结构兼容，编辑明细投影可就地构造）。 */
-export interface InstrumentRef {
+interface InstrumentRef {
   id: string;
   symbol: string;
   name: string | null;
@@ -21,12 +21,12 @@ export interface InstrumentRef {
  *（holdingsSearchLabel，判定口径）与标的展示名（instrumentDisplayLabel，
  * 空格形、与后端 display_label 同口径，明细来源列与走势页签共用）各有自己的单点。
  */
-export function instrumentOptionLabel(symbol: string, name: string | null): string {
+function instrumentOptionLabel(symbol: string, name: string | null): string {
   return name ? `${symbol} · ${name}` : symbol;
 }
 
 /** 原始标的 → 下拉选项投影（label 拼法经 instrumentOptionLabel 单点）。 */
-export function toInstrumentOption(i: InstrumentRef): InstrumentOption {
+function toInstrumentOption(i: InstrumentRef): InstrumentOption {
   return { label: instrumentOptionLabel(i.symbol, i.name), value: i.id };
 }
 

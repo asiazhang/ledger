@@ -176,9 +176,6 @@ importers:
       '@vanilla-extract/css':
         specifier: ^1.21.2
         version: 1.21.3
-      '@vanilla-extract/sprinkles':
-        specifier: ^1.7.1
-        version: 1.7.1(@vanilla-extract/css@1.21.3)
       '@vicons/ionicons5':
         specifier: ^0.13.0
         version: 0.13.0
@@ -200,9 +197,6 @@ importers:
       pinia:
         specifier: ^4.0.3
         version: 4.1.0(@vue/devtools-api@8.2.1)(typescript@6.0.3)(vue@3.5.44(typescript@6.0.3))
-      pinyin-pro:
-        specifier: ^3.29.3
-        version: 3.29.5
       vue:
         specifier: ^3.5.42
         version: 3.5.44(typescript@6.0.3)
@@ -349,9 +343,6 @@ importers:
       '@tauri-apps/plugin-dialog':
         specifier: ^2.7.3
         version: 2.8.3
-      '@tauri-apps/plugin-opener':
-        specifier: ^2.5.5
-        version: 2.7.2
 
   packages/modal-intent:
     dependencies:

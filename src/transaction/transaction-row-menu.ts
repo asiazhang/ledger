@@ -10,9 +10,10 @@ import { errorOptionProps, renderRowMenuIcon } from "@/components/row-menu-commo
 import { t } from "@ledger/i18n";
 import { transactionKindActivation, type Transaction } from "@ledger/types";
 
-// 公共件（row-menu-common）原生于本模块：renderRowMenuIcon / errorOptionProps
-// 的完整注释见该文件，此处重导出保持既有 import 路径不变。
-export { renderRowMenuIcon, errorOptionProps };
+// 公共件（row-menu-common）原生于本模块：renderRowMenuIcon 的完整注释见该文件，
+// 此处重导出保持既有 import 路径不变（errorOptionProps 自 issue #1997 起无消费方，
+// 随导出面收窄一并移除）。
+export { renderRowMenuIcon };
 
 /**
  * 交易行右键菜单选项组装（issue #151 退款/删除 + issue #119 加入物品 + #177 图标化）：

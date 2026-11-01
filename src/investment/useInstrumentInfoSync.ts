@@ -4,7 +4,7 @@ import { api } from "@ledger/api";
 import { t } from "@ledger/i18n";
 import type { InstrumentSyncProgress, SyncInstrumentInfoResult } from "@ledger/types";
 
-export type InstrumentInfoSyncStatus = "idle" | "success" | "error";
+type InstrumentInfoSyncStatus = "idle" | "success" | "error";
 /** sync() 返回的终态：InstrumentInfoSyncStatus 去掉 idle，与 status ref 同形。 */
 export type InstrumentInfoSyncOutcome = Exclude<InstrumentInfoSyncStatus, "idle">;
 

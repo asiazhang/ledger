@@ -60,12 +60,7 @@ import {
  * #1308 起单源为跨域常量 SEARCH_DEBOUNCE_MS（@/composables/search-debounce），
  * 消费方直接引用单源。 */
 export { HOLDINGS_PAGE_SIZE } from "@/investment/investments-session";
-export type {
-  HoldingsSortColumn,
-  HoldingsSortOrder,
-  HoldingsSorter,
-  NaiveUiSorterState,
-} from "@/investment/investments-session";
+export type { HoldingsSortColumn, HoldingsSorter } from "@/investment/investments-session";
 
 // ---------------------------------------------------------------------------
 // 纯函数：排序（null 恒排末尾、多币种数值直比、默认代码字母序）
@@ -82,11 +77,7 @@ function nullsLast<T>(a: T | null, b: T | null, cmp: (x: T, y: T) => number): nu
 
 /** 市值/未实现盈亏两列的比较器：缺价行恒排末尾（与方向无关）；
  * 两侧均有值时**数值直比**（跨币种无精确语义，已接受代价）。 */
-export function comparePortfolioRows(
-  a: PortfolioRow,
-  b: PortfolioRow,
-  sorter: HoldingsSorter,
-): number {
+function comparePortfolioRows(a: PortfolioRow, b: PortfolioRow, sorter: HoldingsSorter): number {
   const key = sorter.columnKey === "market_value" ? "marketValueCents" : "unrealizedPnlCents";
   return nullsLast(a[key], b[key], (x, y) => {
     const ascending = x - y;

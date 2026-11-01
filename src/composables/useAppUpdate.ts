@@ -42,10 +42,10 @@ export const UPDATE_DOWNLOAD_PROGRESS_EVENT = "ledger:update-download-progress";
 export const RELEASE_PAGE_URL = "https://github.com/asiazhang/ledger/releases/latest";
 
 /** 更新流程阶段：idle 未开始；remind 提醒待确认；downloading 下载中；downloaded 已下载待安装。 */
-export type UpdateStage = "idle" | "remind" | "downloading" | "downloaded";
+type UpdateStage = "idle" | "remind" | "downloading" | "downloaded";
 
 /** 设置页手动检查的就地结果（idle 初始；checking 进行中；latest 已是最新；available 发现新版本；error 失败）。 */
-export type ManualCheckState =
+type ManualCheckState =
   | { kind: "idle" }
   | { kind: "checking" }
   | { kind: "latest" }

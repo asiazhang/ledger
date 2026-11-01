@@ -58,7 +58,7 @@ export const mockAccounts: Account[] = [
   },
 ];
 
-export const mockCategories: Category[] = [
+const mockCategories: Category[] = [
   {
     id: "cat-1",
     name: "订阅服务",

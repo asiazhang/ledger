@@ -19,22 +19,21 @@ export type Locale = "zh-CN" | "en-US";
 /** 语言偏好：'system' = 跟随系统语言（判定链默认层） */
 export type LocaleSetting = Locale | "system";
 
-export const LOCALE_STORAGE_KEY = "locale";
-export const SOURCE_LOCALE: Locale = "zh-CN";
-export const SUPPORTED_LOCALES: Locale[] = ["zh-CN", "en-US"];
+const LOCALE_STORAGE_KEY = "locale";
+const SOURCE_LOCALE: Locale = "zh-CN";
 
 /** 当前生效语言（响应式）：数字分组、组件库 locale 等展示层口径统一消费此处。
  *  初始恒为 zh-CN，由 initAppLocale() 在应用启动时按判定链刷新。 */
 export const currentLocale = ref<Locale>("zh-CN");
 
 /** 解析系统语言：navigator.language 主子标签以 en 开头 → en-US，其余 → zh-CN（源语言兜底） */
-export function resolveSystemLocale(): Locale {
+function resolveSystemLocale(): Locale {
   const lang = typeof navigator !== "undefined" ? navigator.language : "";
   return lang && lang.toLowerCase().startsWith("en") ? "en-US" : "zh-CN";
 }
 
 /** 语言判定链（ADR-0049）：手动覆盖 > 系统语言 > zh-CN。'system' 即无手动覆盖。 */
-export function resolveLocale(setting: LocaleSetting): Locale {
+function resolveLocale(setting: LocaleSetting): Locale {
   return setting === "system" ? resolveSystemLocale() : setting;
 }
 

@@ -34,7 +34,7 @@ export type ConceptKey = (typeof CONCEPT_KEYS)[number];
  * 只覆盖**语境相关**的挂点：单行值不随筛选变化、或口径本身自带「不随筛选收窄」
  * 属性时（如资金加权收益率按完整历史计算）不挂变体，故本 prop 可选。
  */
-export const CONCEPT_SCOPES = ["filtered", "wholeLedger", "overview", "crossBook"] as const;
+const CONCEPT_SCOPES = ["filtered", "wholeLedger", "overview", "crossBook"] as const;
 
 export type ConceptScope = (typeof CONCEPT_SCOPES)[number];
 

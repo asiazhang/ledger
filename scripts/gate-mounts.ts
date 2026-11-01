@@ -28,7 +28,7 @@ export const CI_WORKFLOW_FILE = ".github/workflows/build.yml";
 export type GateHostFile = typeof CHECK_SH_FILE | typeof CI_WORKFLOW_FILE;
 
 /** 按宿主的挂载声明。 */
-export interface GateHostFileMount {
+interface GateHostFileMount {
   /** 宿主文件（相对仓库根） */
   readonly file: GateHostFile;
   /** 执行行形态：宿主非注释行 trim 后行首前缀匹配 */
