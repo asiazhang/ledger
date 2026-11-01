@@ -13,3 +13,25 @@
 # 暂无豁免。各域清理过程中按需追加，格式示例：
 # exclude_re = ["replace some_fn.*  # 等价变异体：…（理由）"]
 # skip_calls = ["some_equivalent_fn"]  # 每条在 PR 报告中留理由
+
+# 2026-10 首轮本地清理（budget/categories/merchants/dashboard/reports 五域）追加：
+# dashboard 净资产缓存旁路四件 + 指纹判别分量两件。锚定「文件 + 变异形态」、
+# 不含行号（行号随源码漂移即豁免失配、变异重现，fail loud 优于静默失豁免）。
+exclude_re = [
+  # 等价变异体：缓存永不命中 = 每次读走实时重算，用户可观察结果不变（仅
+  # 性能面退化，由 perf 基准另辖）；缓存是纯加速层，正确性不依赖命中。
+  "dashboard/src/net_worth.rs.*replace read_valid .* with Ok\\(None\\)",
+  # 等价变异体：指纹守卫恒 false = 同上（每次重算），结果恒正确。
+  "dashboard/src/net_worth.rs.*replace match guard stored == fingerprint with false",
+  # 等价变异体：缓存永不回填 = 同上（每次重算），结果恒正确。
+  "dashboard/src/net_worth.rs.*replace write -> Result<\\(\\)> with Ok\\(\\(\\)\\)",
+  # 等价变异体：命中后也回写——幂等 UPSERT 同值重写，行为不变。
+  "dashboard/src/net_worth.rs.*delete ! in query_dashboard_overview",
+  # 不可测变异体：指纹丢 version/count 判别分量只在「同秒连续写入后缓存未
+  # 失效」场景可区分；秒级时间戳下测试无法确定性构造同秒写（公开写入口不
+  # 受时钟注入控制）。毫秒分量不收编此盲区：account_balance_cache 的
+  # 毫秒时间戳只在余额影响写时刷新，非余额写（如估值同秒追加）仍靠判别分量。
+  # 误失效风险由重算兜底（结果仍恒正确）。
+  "dashboard/src/net_worth.rs.*delete match arm \"version\" in current_fingerprint",
+  "dashboard/src/net_worth.rs.*delete match arm \"count\" in current_fingerprint",
+]
