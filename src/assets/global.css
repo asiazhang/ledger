@@ -50,6 +50,226 @@ textarea,
 }
 
 /*
+ * 交易表格单元格平替类（issue #2010 渲染性能：行内组件实例化退役，视觉交 CSS）：
+ * 桌面交易表格（交易页/搜索页）的账户/商户/来源链接、类型标签、状态标注、备注省略
+ * 与复制/行操作按钮由纯元素渲染（transaction-columns），样式收口本节——与被平替
+ * 组件（AccountLink / NTag / NEllipsis / NButton）视觉逐一对照，度量与色值来源见
+ * 各规则注。强调色经壳层 CSS 变量注入（transactionTableShellVars：--tx-accent /
+ * --tx-accent-hover / --tx-hover-tint / --tx-ctrl-radius，随主题即时换色）；
+ * 未包壳层的环境（如投资明细页签仅复用 rowActionsColumn）吃下方回退值（暗色默认）。
+ */
+
+/* 链接平替（AccountLink / MerchantLink 同源视觉）：真 <button> 文本链接，
+ 主题强调色内联变量 + hover 亮琥珀 + 下划线浮现 + 微亮背景 + 键盘焦点环；
+ 自身省略号兑底（不依赖列级 NEllipsis，长名收缩不出列）。 */
+.tx-link {
+  border: none;
+  padding: 0;
+  background: none;
+  font: inherit;
+  cursor: pointer;
+  border-radius: 4px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--tx-accent, #f59e0b);
+}
+.tx-link:hover {
+  color: var(--tx-accent-hover, #fbbf24);
+  background: rgba(255, 255, 255, 0.06);
+  text-decoration: underline;
+}
+.tx-link:focus-visible {
+  outline: 2px solid var(--tx-accent-hover, #fbbf24);
+  outline-offset: 2px;
+}
+
+/* 黑洞/隐藏账户占位（AccountLink 占位同款）：继承色纯文本 + 省略号兑底 */
+.tx-link-placeholder {
+  color: inherit;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 双账户/分解首行容器（转账「转出 → 转入」与出资标注行，原内联样式收口）：
+ inline-flex 靠左，链接内容宽度（与单账户行左缘对齐），长名由链接自身省略。 */
+.tx-two-account {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 4px;
+  width: 100%;
+  max-width: 100%;
+}
+.tx-two-account .tx-link {
+  flex: 0 1 auto;
+  min-width: 0;
+  text-align: left;
+}
+.tx-account-arrow {
+  flex: none;
+  opacity: 0.5;
+}
+
+/* 弱化灰后缀注记（「等 N 账户」「同账户 N 笔」/ 商品件数，原内联样式收口） */
+.tx-dim-suffix {
+  flex: none;
+  color: var(--n-text-color-disabled, #999);
+  font-size: 12px;
+}
+
+/* 出资分解行容器（首行 + 派生标注两行纵排）与「按比例自动分解」标注 */
+.tx-funding-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+}
+.tx-derived-marker {
+  font-size: 11px;
+  line-height: 18px;
+  padding: 0 6px;
+  border-radius: 9px;
+  white-space: nowrap;
+  color: var(--n-info-color, #2080f0);
+  border: 1px dashed currentColor;
+}
+
+/* 类型标签平替（bordered 中号 NTag 的度量镜像：28px 高 / 14px 字号 / 0 7px 内边距；
+ 色值与圆角由预计算 style 对象注入，kindTagStyle 单点，守门测试钉与 NTag 逐值一致） */
+.tx-kind-tag {
+  white-space: nowrap;
+  position: relative;
+  box-sizing: border-box;
+  cursor: default;
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  padding: 0 7px;
+  line-height: 1;
+  height: 28px;
+  font-size: 14px;
+  border: 1px solid transparent;
+}
+
+/* 来源状态标注平替（small 无边框 NTag 度量：22px 高 / 12px 字号；
+ 色值由预计算 style 注入，statusTagStyle 单点） */
+.tx-status-tag {
+  white-space: nowrap;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 7px;
+  line-height: 1;
+  height: 22px;
+  font-size: 12px;
+}
+
+/* 来源格容器与图标（SourceLink 同源视觉：图标降存在感、名称可点/软删纯文本、
+ 触控轴类型小字常驻）；类名随组件平替全局化（scoped 样式不覆盖 render 函数元素）。 */
+.tx-source-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  color: inherit;
+  opacity: 0.92;
+}
+.tx-source-icon {
+  flex: none;
+  opacity: 0.65;
+}
+.tx-source-cell .tx-link {
+  min-width: 0;
+}
+.tx-source-name {
+  color: inherit;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tx-source-type-label {
+  flex: none;
+  font-size: 11px;
+  opacity: 0.55;
+}
+
+/* 备注格容器（文本自省略 + 复制按钮固定宽度靠右，原内联样式收口） */
+.tx-note-cell {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  width: 100%;
+  max-width: 100%;
+}
+
+/* 单元格文本原生省略（NEllipsis 平替：分类/备注/商品名，悬停全文由 title 承载） */
+.tx-ellipsis {
+  display: inline-block;
+  vertical-align: bottom;
+  text-overflow: ellipsis;
+  overflow: hidden;
+  white-space: nowrap;
+  max-width: 100%;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* 备注复制按钮平替（tiny quaternary circle NButton 度量：22px 圆 + 14px 图标）：
+ 悬停行显现仍由 .note-copy-btn 全局规则承载（含触控轴常驻），这里只补按钮盒模型；
+ hover 底色用 currentColor 派生（主题无关，免壳层变量）。 */
+.tx-copy-btn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 9999px;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+  font-size: 14px;
+}
+.tx-copy-btn:hover {
+  background: color-mix(in srgb, currentColor 12%, transparent);
+}
+.tx-copy-btn:focus-visible {
+  outline: 2px solid var(--tx-accent-hover, #fbbf24);
+  outline-offset: 2px;
+}
+
+/* 行操作「⋯」按钮平替（tiny quaternary NButton 度量：22px 高 / 12px 字号 / 0 6px 内边距）：
+ 类名保留 row-actions-btn（既有测试/触控热区约定），消费方含投资明细页签
+ （未包壳层，圆角/悬停底色吃回退）。 */
+.tx-ghost-btn {
+  border: none;
+  background: none;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  height: 22px;
+  padding: 0 6px;
+  border-radius: var(--tx-ctrl-radius, 4px);
+  color: inherit;
+  cursor: pointer;
+}
+.tx-ghost-btn:hover {
+  background: var(--tx-hover-tint, rgba(255, 255, 255, 0.12));
+}
+.tx-ghost-btn:focus-visible {
+  outline: 2px solid var(--tx-accent-hover, #fbbf24);
+  outline-offset: 2px;
+}
+
+/*
  * 交易备注列复制按钮（显式复制通道，见 CONTEXT-ui-interaction「界面文本不可选」）：
  * 指针轴下悬停行或键盘聚焦时显现，避免每行常驻按钮的视觉噪音；触控轴无 hover，
  * `hover: none` 时常驻。显隐是纯样式行为，组件不持状态。

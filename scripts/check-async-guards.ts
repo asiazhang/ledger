@@ -127,6 +127,9 @@ export const TOAST_BASELINE: Readonly<Record<string, number>> = {
   "src/settings/LogSettings.vue": 2,
   "src/backup/useBackup.ts": 6,
   "src/transaction/useRefundForm.ts": 1,
+  // #2010 表格级行为委托：备注复制通道自 NoteCopyButton（ui-kit）整体迁入（成功/失败
+  // 双调用随语义原样迁移，i18n 键不变），catch 直弹计数随迁移平移登记（1 = 失败路径）。
+  "src/transaction/transaction-table-actions.ts": 1,
   "src/backup/useRestoreFromFile.ts": 2,
   "src/scheduled/useScheduledPlanForm.ts": 1,
   "packages/transaction-modal-state/src/useTransactionModalState.ts": 2,
@@ -141,7 +144,6 @@ export const TOAST_BASELINE: Readonly<Record<string, number>> = {
   "src/investment/useInvestmentForm.ts": 1,
   // #1322 起计划清单接缝随包出壳，基线键改挂仓库根包内路径（值不变）
   "packages/scheduled-plan-list/src/useScheduledPlanList.ts": 1,
-  "packages/ui-kit/src/NoteCopyButton.vue": 1,
 };
 
 /** 行首注释形态：整行跳过/置空（行内尾注与多行块注释内部行不可达，靠评审兜底） */

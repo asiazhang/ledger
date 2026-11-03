@@ -2,7 +2,6 @@ import { pushMock, makeTxn, mountView, setTxnDb } from "./common";
 import { describe, it, expect, beforeEach } from "vitest";
 import { mount, flushPromises } from "@vue/test-utils";
 import { NSelect } from "naive-ui";
-import AccountLink from "@/accounts/AccountLink.vue";
 import type { Transaction } from "@ledger/types";
 
 describe("TransactionsView 转账行双向账户名（issue #99）", () => {
@@ -26,19 +25,20 @@ describe("TransactionsView 转账行双向账户名（issue #99）", () => {
   it("转账行账户列显示「转出 → 转入」双向账户名，两个名字各自可点击、各自跳转对应账户", async () => {
     const wrapper = await mountView();
     await filterKind(wrapper, ["transfer"]);
-    // 双向展示：两个账户名（转出 acc-2、转入 acc-1）+ 箭头分隔
-    const links = wrapper.findAllComponents(AccountLink);
+    // 双向展示：两个账户名（转出 acc-2、转入 acc-1）+ 箭头分隔（#2010 平替元素，
+    // 账户下钻经壳层委托分发，验收③）
+    const links = wrapper.findAll('[data-action="account"]');
     expect(links.length).toBe(2);
     expect(links.map((l) => l.text())).toEqual(["银行", "现金"]);
     expect(wrapper.text()).toContain("→");
     // 转出账户点击 → 跳转其过滤视图
-    await links[0].find("button").trigger("click");
+    await links[0].trigger("click");
     expect(pushMock).toHaveBeenLastCalledWith({
       name: "transactions",
       query: { account: "acc-2" },
     });
     // 转入账户点击 → 跳转其过滤视图
-    await links[1].find("button").trigger("click");
+    await links[1].trigger("click");
     expect(pushMock).toHaveBeenLastCalledWith({
       name: "transactions",
       query: { account: "acc-1" },
@@ -48,11 +48,11 @@ describe("TransactionsView 转账行双向账户名（issue #99）", () => {
   it("非转账行账户列仍显示单个主账户名（可点击，带 title 提示）", async () => {
     const wrapper = await mountView();
     await filterKind(wrapper, ["income"]);
-    const links = wrapper.findAllComponents(AccountLink);
+    const links = wrapper.findAll('[data-action="account"]');
     expect(links.length).toBe(1);
     expect(links[0].text()).toBe("现金");
     expect(links[0].attributes("title")).toBe("查看该账户的交易");
-    await links[0].find("button").trigger("click");
+    await links[0].trigger("click");
     expect(pushMock).toHaveBeenLastCalledWith({
       name: "transactions",
       query: { account: "acc-1" },

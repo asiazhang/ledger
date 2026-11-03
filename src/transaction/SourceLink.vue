@@ -1,16 +1,9 @@
 <script setup lang="ts">
-import { computed, type Component } from "vue";
+import { computed } from "vue";
 import { useRouter } from "vue-router";
 import { NIcon, NTag } from "naive-ui";
-import {
-  CalendarClearOutline,
-  CubeOutline,
-  RepeatOutline,
-  ShieldCheckmarkOutline,
-  SwapHorizontalOutline,
-  TrendingUpOutline,
-} from "@vicons/ionicons5";
-import { resolveSourceJumpTarget, type TransactionSourceKind } from "@/components/source-jump";
+import { resolveSourceJumpTarget } from "@/components/source-jump";
+import { SOURCE_KIND_ICONS } from "@/transaction/transaction-cells";
 import { useAppStore } from "@/stores/app";
 import { useSidebarOrderStore } from "@/stores/sidebar-order";
 import { useFeatureToggleStore } from "@/settings/feature-toggles";
@@ -35,16 +28,7 @@ import type { TransactionSource } from "@ledger/types";
  * 词汇表「列形态」）。
  */
 
-/** 来源类型 → 图标（六类闭集穷尽映射，编译器强制补行；与侧栏视图图标同源惯例：
- * 保单=盾、物品=立方、标的=走势、订阅=循环、转账=双向、分期=日历）。 */
-const KIND_ICONS = {
-  installmentPlan: CalendarClearOutline,
-  subscription: RepeatOutline,
-  scheduledTransfer: SwapHorizontalOutline,
-  policy: ShieldCheckmarkOutline,
-  item: CubeOutline,
-  instrument: TrendingUpOutline,
-} satisfies Record<TransactionSourceKind, Component>;
+// 图标映射单源住 transaction-cells（#2010 迁入：桌面表格平替渲染与组件同源消费）。
 
 const props = defineProps<{
   /** 行来源对象（列表/搜索命令填充，无来源行不渲染本组件） */
@@ -97,7 +81,7 @@ function go() {
 
 <template>
   <span class="source-cell" :title="t(`transactions.source.kind.${source.kind}`)">
-    <NIcon :component="KIND_ICONS[source.kind]" class="source-cell-icon" />
+    <NIcon :component="SOURCE_KIND_ICONS[source.kind]" class="source-cell-icon" />
     <button
       v-if="clickable"
       type="button"

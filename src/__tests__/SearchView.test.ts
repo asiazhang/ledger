@@ -6,7 +6,6 @@ import { setFakeMedia } from "@ledger/test-support/media-mock";
 import { useReferenceStore } from "@/stores/reference";
 import { SEARCH_DEBOUNCE_MS } from "@/composables/search-debounce";
 import SearchView from "@/views/SearchView.vue";
-import AccountLink from "@/accounts/AccountLink.vue";
 import { applyLocale } from "@ledger/i18n";
 import { resetOverlays } from "@ledger/ui-kit/overlayRegistry";
 import { mockInvoke, wireInvokeSeam } from "@ledger/test-support/invoke-mock";
@@ -25,7 +24,6 @@ beforeAll(() => {
   Element.prototype.scrollTo = () => {};
 });
 
-// AccountLink 经 useRouter 跳转（pushMock 断言导航目标，issue #99）
 const pushMock = vi.fn();
 vi.mock("vue-router", () => ({
   useRouter: () => ({ push: pushMock }),
@@ -773,21 +771,22 @@ describe("SearchView 转账行双向账户名（issue #99）", () => {
     await nextTick();
     await typeAndSearch(wrapper, "转账");
     expect(wrapper.text()).toContain("命中 1 条");
-    // 双向展示：转出（现金）→ 转入（银行）两个可点击账户名 + 箭头
-    const links = wrapper.findAllComponents(AccountLink);
+    // 双向展示：转出（现金）→ 转入（银行）两个可点击账户名 + 箭头（#2010 平替元素，
+    // 账户下钻经壳层委托分发，验收③）
+    const links = wrapper.findAll('[data-action="account"]');
     expect(links.length).toBe(2);
     expect(links.map((l) => l.text())).toEqual(["现金", "银行"]);
     expect(wrapper.text()).toContain("→");
     expect(links[0].attributes("title")).toBe("查看该账户的交易");
     expect(links[1].attributes("title")).toBe("查看该账户的交易");
     // 转出账户点击 → 跳转其过滤视图
-    await links[0].find("button").trigger("click");
+    await links[0].trigger("click");
     expect(pushMock).toHaveBeenLastCalledWith({
       name: "transactions",
       query: { account: "acc-cash" },
     });
     // 转入账户点击 → 跳转其过滤视图
-    await links[1].find("button").trigger("click");
+    await links[1].trigger("click");
     expect(pushMock).toHaveBeenLastCalledWith({
       name: "transactions",
       query: { account: "acc-bank" },
@@ -799,11 +798,11 @@ describe("SearchView 转账行双向账户名（issue #99）", () => {
     const wrapper = mount(SearchView);
     await nextTick();
     await typeAndSearch(wrapper, "报销");
-    // 2 条报销 expense 行，各渲染单个账户链接
-    const links = wrapper.findAllComponents(AccountLink);
+    // 2 条报销 expense 行，各渲染单个账户链接（平替元素，#2010）
+    const links = wrapper.findAll('[data-action="account"]');
     expect(links.length).toBe(2);
     expect(links.map((l) => l.text())).toEqual(["现金", "现金"]);
-    await links[0].find("button").trigger("click");
+    await links[0].trigger("click");
     expect(pushMock).toHaveBeenLastCalledWith({
       name: "transactions",
       query: { account: "acc-cash" },

@@ -6,12 +6,13 @@
 //      全表重渲染窗口内的调用次数 ≤ 阈值；#2010 文本预计算落地后本项应收紧到 0
 //      （预计算在数据到达时完成、不在 patch 期逐格执行，即 #2010 的核心形态）。
 //   ② 行内交互组件实例数（AccountLink / MerchantLink / SourceLink /
-//      NoteCopyButton / AmountCell / NTag / NEllipsis）≤ 阈值。
+//      AmountCell / NTag / NEllipsis）≤ 阈值（NoteCopyButton 组件随 #2010 退役）。
 //   ③ 表格容器内 DOM 节点总数 ≤ 阈值。
 // 计数窗口 = 「同一行集 + 重建列数组」的全表重渲染（列对象引用更新 → 每格
-// DataTableCell 组件收到新列对象而重渲染）：不含数据到达路径——预计算若在数据
-// 到达时完成，不计入窗口；若格式化被改回渲染期逐格执行（#2010 接线被移除的
-// 形态），窗口内计数回到建票基线、阈值收紧后即红（删除即红，ADR-0087 断言强度）。
+// DataTableCell 组件收到新列对象而重渲染；列数组本身在窗口外重建，见①用例）：
+// 不含数据到达路径——预计算在数据到达时完成（withTransactionCells），不计入窗口；
+// 若格式化被改回渲染期逐格执行（#2010 接线被移除的形态），窗口内计数立即越过
+// 收紧后的 0 基线即红（删除即红，ADR-0087 断言强度）。
 // 阈值纪律：初始阈值 = 建票时现状基线（下方常量，fixture 推导式见各常量注）；
 // #2010 落地时收紧到优化后基线，前后差即 #2010 的量化收益（更新进 #2010）；
 // 上调不允许静默进行——须在 PR 中说明原因并关联 #2012。
@@ -31,7 +32,6 @@ import AccountLink from "@/accounts/AccountLink.vue";
 import MerchantLink from "@/merchants/MerchantLink.vue";
 import SourceLink from "@/transaction/SourceLink.vue";
 import AmountCell from "@/transaction/AmountCell.vue";
-import NoteCopyButton from "@ledger/ui-kit/NoteCopyButton.vue";
 import * as lending from "@/transaction/lending";
 import {
   EXPECTED_KIND_LABELS,
@@ -56,32 +56,33 @@ const tSpy = vi.spyOn(i18n, "t");
 const formatAmountSpy = vi.spyOn(money, "formatAmount");
 const resolveLendingSpy = vi.spyOn(lending, "resolveLendingDirection");
 
-// —— ① 渲染期格式化调用基线（2026-11 建票时现状，#2010 前形态）——
-// t = 134：全表重渲染一次的取词总量——类型标签 50（每笔交易）+ 行内组件取词
-//          （AccountLink 悬停提示 60、SourceLink 类型/状态文案、NoteCopyButton
-//          无障碍标签 20×2、购买项件数标注 25、行菜单 aria-label 50）。
-// formatAmount = 50：每笔交易一个订单级合并金额格。
-// resolveLendingDirection = 10：fixture 全部转账行（借贷四方向轮转 + 普通转账）。
-const RENDER_FORMAT_T_BASELINE = 134;
-const RENDER_FORMAT_AMOUNT_BASELINE = 50;
-const RENDER_RESOLVE_LENDING_BASELINE = 10;
+// —— ① 渲染期格式化调用基线（#2010 落地后收紧到 0）——
+// 建票基线（#2010 前）134/50/10：逐格渲染期格式化 + 行内组件取词。#2010 文本预计算
+// 把全部取词/格式化前移到数据到达时（withTransactionCells，计数窗口外）与列构建期
+//（列名/悬停提示/无障碍标签，列数组重建在窗口外执行）；重渲染窗口内格式化调用为 0
+// 是 #2010 的核心形态，任何回归（>0）即红。
+const RENDER_FORMAT_T_BASELINE = 0;
+const RENDER_FORMAT_AMOUNT_BASELINE = 0;
+const RENDER_RESOLVE_LENDING_BASELINE = 0;
 
-// —— ② 行内交互组件实例数基线 ——
-// AccountLink 60（40 单账户行 + 10 转账行 × 2）、MerchantLink 10（含 1 软删）、
-// SourceLink 15（订阅 5 + 分期 5 + 保单 5）、NoteCopyButton 20（有备注且非购买项行）、
-// AmountCell 50（订单级合并）、NTag 52（类型标签 50 + 来源状态标注 2：已删保单 1 +
-// 已取消订阅 1）、NEllipsis 162（分类列 65 显示行 + 商户列 50 交易 + 备注列 45
-//（备注文本 20 + 购买项商品名 25）+ 表头省略 2：分类/商户列头）。
-const ACCOUNT_LINK_BASELINE = 60;
-const MERCHANT_LINK_BASELINE = 10;
-const SOURCE_LINK_BASELINE = 15;
-const NOTE_COPY_BUTTON_BASELINE = 20;
-const AMOUNT_CELL_BASELINE = 50;
-const N_TAG_BASELINE = 52;
-const N_ELLIPSIS_BASELINE = 162;
+// —— ② 行内交互组件实例数基线（#2010 落地后收紧到 0）——
+// 建票基线（#2010 前）：AccountLink 60、MerchantLink 10、SourceLink 15、
+// NoteCopyButton 20、AmountCell 50、NTag 52、NEllipsis 162。#2010 平替渲染后桌面
+// 表格（指针轴）行内零组件实例：链接/标签/省略/复制按钮全部纯元素化，AmountCell
+// 仅触控轴渲染（本 fixture 面向指针轴；触控轴形态归 TransactionsView 两轴测试）。
+// NoteCopyButton 组件随 #2010 整体退役（复制语义迁 transaction-table-actions，
+// 行为等价测试在彼处），不再列入计数面。
+const ACCOUNT_LINK_BASELINE = 0;
+const MERCHANT_LINK_BASELINE = 0;
+const SOURCE_LINK_BASELINE = 0;
+const AMOUNT_CELL_BASELINE = 0;
+const N_TAG_BASELINE = 0;
+const N_ELLIPSIS_BASELINE = 0;
 
 // —— ③ 表格容器内 DOM 节点总数基线（.n-data-table 内全部元素节点）——
-const TABLE_DOM_NODES_BASELINE = 1794;
+// 建票基线（#2010 前）1794；#2010 平替渲染（链接/标签/省略组件纯元素化）后实测
+// 1259（组件包裹层与 NEllipsis/Tooltip 结构消失），按收紧纪律直接落新基线。
+const TABLE_DOM_NODES_BASELINE = 1259;
 
 beforeEach(async () => {
   await wireRenderFixture();
@@ -145,11 +146,14 @@ describe("fixture 形态在场（缺形态即红：计数阈值只对覆盖到�
 describe("渲染期计数守门（初始阈值 = 建票时现状基线，收紧纪律见文件头注）", () => {
   it("① 同一数据全表重渲染：渲染期格式化调用 ≤ 基线", async () => {
     const wrapper = await mountAndFlush();
-    // 计数窗口起点：清哨兵后以「重建列数组」触发同一行集的全表重渲染（纯 patch）。
+    // 计数窗口 = 纯 patch：列数组在窗口**外**重建（列构建期的取词——列名/标签——是
+    // 数据到达/语言切换的合法格式化时机，不属渲染期逐格执行），清哨兵后仅以列对象
+    // 引用更新触发同一行集的全表重渲染。
+    const rebuilt = buildFixtureColumns();
     tSpy.mockClear();
     formatAmountSpy.mockClear();
     resolveLendingSpy.mockClear();
-    await wrapper.setProps({ columns: buildFixtureColumns() });
+    await wrapper.setProps({ columns: rebuilt });
     await flushPromises();
     expect(
       tSpy.mock.calls.length,
@@ -170,9 +174,6 @@ describe("渲染期计数守门（初始阈值 = 建票时现状基线，收紧�
       MERCHANT_LINK_BASELINE,
     );
     expect(wrapper.findAllComponents(SourceLink).length).toBeLessThanOrEqual(SOURCE_LINK_BASELINE);
-    expect(wrapper.findAllComponents(NoteCopyButton).length).toBeLessThanOrEqual(
-      NOTE_COPY_BUTTON_BASELINE,
-    );
     expect(wrapper.findAllComponents(AmountCell).length).toBeLessThanOrEqual(AMOUNT_CELL_BASELINE);
     expect(wrapper.findAllComponents(NTag).length).toBeLessThanOrEqual(N_TAG_BASELINE);
     expect(wrapper.findAllComponents(NEllipsis).length).toBeLessThanOrEqual(N_ELLIPSIS_BASELINE);

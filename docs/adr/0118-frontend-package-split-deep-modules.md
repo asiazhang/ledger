@@ -47,7 +47,7 @@ spec #1148 把前端 `src/`（约 8 万行单包、7 节点强连通依赖分量
 `@ledger/ui-kit` 成员逐项定界，不得自行增删：
 
 - **`App*` 封装 8 件**（DatePicker / Drawer / Dropdown / Modal / Popconfirm / Popover / Select / TreeSelect）+ **overlay 单例族**（`overlayRegistry` + `useOverlayReporting`，ADR-0035 一体族）——8 件封装全部依赖 `useOverlayReporting`，拆开任何一侧都切出自然族；注册表消费面（5 个壳内 composable）全在壳侧，壳 → ui-kit 方向合法，模块级单例随包（决策 6）。
-- **通用件 4 项**：`AppDangerConfirmModal`、`PinyinSelect`、`NoteCopyButton`、`app-modal.css.ts`。
+- **通用件 4 项**：`AppDangerConfirmModal`、`PinyinSelect`、`NoteCopyButton`、`app-modal.css.ts`（NoteCopyButton 后随 #2010 退役，见文末修订注记）。
 - **留壳**：`CreateFab`、`instrument-link.css.ts`、`create-fab.css.ts` 及其余全部 `components/`——域/应用专属，#1159 按域归位。
 
 `useWindowTier` **成包**（消费面 20+ 全在壳，壳 → 包合法；`AppModal` 进 ui-kit 要求其可被包依赖）：`vite.config.ts` 构建期读取路径改为包内文件，断点常量单一来源不变，漂移检查文案同步——构建期契约保留，只换收口点坐标。
@@ -70,3 +70,7 @@ utils（被最多包依赖）与零依赖包（window-tier / modal-intent / row-
 - 新增九包的登记与交付固定成本，换取边界知识可证伪；跨包 import 形态改写量大但纯机械，行为等价由既有测试原样跑绿提供（spec Testing Decisions：不新增行为测试接缝，唯一新接缝是规则⑦及其测试）。
 - `utils → i18n` 使底层包不再全为零依赖叶子；类型层（`@ledger/types`）仍是唯一恒空方向表。
 - 机制术语不进词汇表（ADR-0083 既有口径）；包边界知识落 PACKAGES 登记册与本 ADR，词汇表只保留深模块的领域语义词条（TransactionFilter、Loadable 等）。
+
+## 修订注记
+
+- **#2010（翻页渲染性能）**：`NoteCopyButton` 自本闭集移除（通用件余 3 项）。桌面交易表格改行级事件委托渲染后该组件零消费面，备注复制的显式复制通道语义（clipboard + 成功/失败 toast，i18n 键不变）整体迁至壳内 `src/transaction/transaction-table-actions.ts`（表格级行为委托分发端），行为等价由 `src/__tests__/transaction-table-actions.test.ts` 钉住；「成员不得自行增删」的纪律不变——移除随票留痕于此。

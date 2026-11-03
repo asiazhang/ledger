@@ -186,8 +186,8 @@ export const PACKAGES: readonly PackageEntry[] = [
   {
     name: "@ledger/ui-kit",
     dir: "packages/ui-kit",
-    deps: ["@ledger/utils", "@ledger/i18n", "@ledger/window-tier", "@ledger/test-support"],
-    note: "界面通用件包（issue #1320 / ADR-0118 决策 3/5/6）：App* 弹层薄封装 8 件 + overlay 单例族（overlayRegistry + useOverlayReporting，ADR-0035 一体族，注册接口语义一字不改）+ 通用件 4 项（AppDangerConfirmModal / PinyinSelect / NoteCopyButton / app-modal.css.ts），成员闭集逐项定界不得自行增删（CreateFab 等域/应用专属留壳，#1159 按域归位）；方向表与实际 import 全等（utils / i18n / window-tier；测试边 → test-support，devDependencies 消费，规则⑤），exports 逐组件/逐模块子路径暴露（.vue 直接作 exports 落点，.css.ts 同 theme 先例）；不依赖 stores / views / 壳内 composables",
+    deps: ["@ledger/utils", "@ledger/window-tier", "@ledger/test-support"],
+    note: "界面通用件包（issue #1320 / ADR-0118 决策 3/5/6）：App* 弹层薄封装 8 件 + overlay 单例族（overlayRegistry + useOverlayReporting，ADR-0035 一体族，注册接口语义一字不改）+ 通用件 3 项（AppDangerConfirmModal / PinyinSelect / app-modal.css.ts；NoteCopyButton 随 #2010 桌面表格行为委托退役，i18n 依赖随之归零，见 ADR-0118 决策 5 修订注记），成员闭集逐项定界不得自行增删（CreateFab 等域/应用专属留壳，#1159 按域归位）；方向表与实际 import 全等（utils / window-tier；测试边 → test-support，devDependencies 消费，规则⑤），exports 逐组件/逐模块子路径暴露（.vue 直接作 exports 落点，.css.ts 同 theme 先例）；不依赖 stores / views / 壳内 composables",
   },
   {
     name: "@ledger/mock-backend",
