@@ -7,6 +7,7 @@ import type {
   Instrument,
   InvestmentOverview,
   InvestmentTransactionRow,
+  Merchant,
   MoneyWeightedReturnSummary,
   PhysicalAsset,
   PhysicalAssetList,
@@ -84,6 +85,17 @@ export function makeCategory(partial: Partial<Category> & { id: string }): Categ
     icon: null,
     sort_order: 0,
     created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+    version: 1,
+    device_id: "test",
+    is_deleted: false,
+    ...partial,
+  };
+}
+
+export function makeMerchant(partial: Partial<Merchant> & { id: string }): Merchant {
+  return {
+    name: "京东",
     updated_at: "2026-01-01T00:00:00Z",
     version: 1,
     device_id: "test",

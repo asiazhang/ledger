@@ -11,7 +11,13 @@
 #   合并/写库，网络边界豁免见 ADR-0068）→ 行情/价格历史批量 upsert 写
 #   基准观测（ledger-perf bench-market，issue #1629：只跑最大档 5200 点
 #   × 两分布、剥网络只量本地落库，网络边界豁免见 ADR-0068）→ Markdown
-#   报告写入 $GITHUB_STEP_SUMMARY。
+#   报告写入 $GITHUB_STEP_SUMMARY。前端渲染基准（issue #2012）为独立
+#   bench-frontend job（与 Rust bench job 并行）：Vitest + jsdom 固定 50 行
+#   fixture（与 PR CI 计数 gate 同一 fixture）渲染桌面表格、N 次迭代取
+#   mount p95（只记录不判定）——量 JS 层（组件实例化 + vnode + patch）无
+#   GPU 依赖，CI 可跑；真实 WebKitGTK 布局/绘制不在覆盖内，由 PR CI 计数
+#   gate（render-gate.test.ts）的形态断言间接守护。同样受 gate job 的
+#   「无新提交则跳过」约束。
 # 「每日一次、前提是有代码变动」由 gate job 兜底：schedule 触发时比对本次
 # 调度的提交与本 workflow 最近一次成功运行的 head_sha——相同即自上次成功
 # 以来无新代码，整体跳过不空转；上次失败则最近成功停在更早提交、差异
@@ -252,5 +258,56 @@ jobs:
               ./scripts/perf-summary.sh src-tauri/bench-market-report.txt "ledger-perf bench-market stdout"
             else
               echo '> ⚠️ bench-market 未产出报告（步骤失败，详见上方日志）'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # 前端渲染每日基准（issue #2012，关联 #2010 渲染优化）：与 Rust bench job
+  # 并行的独立 job——只记录不判定，阈值待 CI 基线分布稳定后另立（先例：
+  # bench-import / bench-sync / bench-market 观测项）。同受 gate job 的
+  # 「无新提交则跳过」约束；前端环境对齐 build.yml frontend-test 先例
+  #（pnpm/setup + pnpm exec vitest）。基准本体住 src/__tests__/perf/
+  # render.bench.ts（独立 vitest.bench.config.ts，默认套件不含），与 PR CI
+  # 计数 gate（render-gate.test.ts）同一 fixture——计数 gate 拦「形态劣化」
+  #（确定性、必跑），本基准量「计数之外的成本增长」（依赖升级、框架行为变化）。
+  bench-frontend:
+    name: 前端渲染基准（jsdom mount p95，只记录不判定）
+    needs: gate
+    if: needs.gate.outputs.should-run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      # 前端环境对齐 build.yml frontend-test job 先例（issue #2012）
+      - uses: pnpm/setup@v3
+        with:
+          runtime: node@26
+          cache: true
+          require-lockfile: true
+
+      - name: 运行前端渲染基准（render.bench，50 行 fixture × 20 迭代 mount p95）
+        id: render-bench
+        run: |
+          set -o pipefail
+          pnpm exec vitest run --config vitest.bench.config.ts | tee frontend-render-bench.txt
+
+      - name: 写入 Job Summary（前端渲染基准项，只记录不判定）
+        if: always()
+        run: |
+          {
+            echo "## 前端渲染基准（Vitest + jsdom 桌面表格挂载，只记录不判定）"
+            echo
+            if [ "${{ steps.render-bench.outcome }}" = "success" ]; then
+              echo "- 观测：✅ 完成（50 行 fixture × 20 迭代 mount p95；计时型指标无门禁阈值，待 CI 基线分布稳定后另立判据，#2012）"
+            else
+              echo "- 观测：❌ 未完成 —— render.bench 步骤失败（详见上方日志）"
+            fi
+            echo
+            if [ -f frontend-render-bench.txt ] && grep -q '^RENDER_BENCH' frontend-render-bench.txt; then
+              grep -E '^RENDER_BENCH' frontend-render-bench.txt
+              echo
+              echo "- 口径：固定 50 行 fixture（与 #2012 计数 gate 同一 fixture）渲染桌面表格，量 JS 层（组件实例化 + vnode + patch），无 GPU 依赖、CI 可跑；真实 WebKitGTK 布局/绘制不在覆盖内，由 PR CI 计数 gate 的形态断言间接守护。"
+            else
+              echo '> ⚠️ render.bench 未产出报告（步骤失败，详见上方日志）'
             fi
           } >> "$GITHUB_STEP_SUMMARY"
