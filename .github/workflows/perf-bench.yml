@@ -297,11 +297,16 @@ jobs:
           {
             echo "## 前端渲染基准（Vitest + jsdom 桌面表格挂载，只记录不判定）"
             echo
+            if [ "${{ steps.render-bench.outcome }}" = "success" ]; then
+              echo "- 观测：✅ 完成（50 行 fixture × 20 迭代 mount p95；计时型指标无门禁阈值，待 CI 基线分布稳定后另立判据，#2012）"
+            else
+              echo "- 观测：❌ 未完成 —— render.bench 步骤失败（详见上方日志）"
+            fi
+            echo
             if [ -f frontend-render-bench.txt ] && grep -q '^RENDER_BENCH' frontend-render-bench.txt; then
               grep -E '^RENDER_BENCH' frontend-render-bench.txt
               echo
               echo "- 口径：固定 50 行 fixture（与 #2012 计数 gate 同一 fixture）渲染桌面表格，量 JS 层（组件实例化 + vnode + patch），无 GPU 依赖、CI 可跑；真实 WebKitGTK 布局/绘制不在覆盖内，由 PR CI 计数 gate 的形态断言间接守护。"
-              echo "- 判据：初始只记录不判定（先例 bench-import / bench-sync / bench-market 观测项），基线稳定后另立阈值，不与首版绑定（#2012）。"
             else
               echo '> ⚠️ render.bench 未产出报告（步骤失败，详见上方日志）'
             fi

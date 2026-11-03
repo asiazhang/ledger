@@ -111,7 +111,6 @@ describe("fixture 形态在场（缺形态即红：计数阈值只对覆盖到�
     // 3 件订单的首行承载 rowspan=3 合并格（每轮一个 3 件订单 × 5 轮；按类型列锚定，
     // 其余订单级列同构）
     expect(wrapper.findAll('td[data-col-key="kind"][rowspan="3"]')).toHaveLength(5);
-    await wrapper.unmount();
   });
 
   it("类型列标签覆盖借贷派生四方向 + 普通转账 + 三基础 kind，转账双账户同格呈现", async () => {
@@ -122,7 +121,6 @@ describe("fixture 形态在场（缺形态即红：计数阈值只对覆盖到�
     expect(texts.some((t) => t.includes("现金") && t.includes("工资卡") && t.includes("→"))).toBe(
       true,
     );
-    await wrapper.unmount();
   });
 
   it("长备注与购买项商品名在场（省略路径的触发形态）", async () => {
@@ -130,7 +128,6 @@ describe("fixture 形态在场（缺形态即红：计数阈值只对覆盖到�
     const body = wrapper.find(".n-data-table-tbody").text();
     expect(body).toContain(LONG_NOTE.slice(0, 20));
     expect(body).toContain("进口猫粮 1");
-    await wrapper.unmount();
   });
 
   it("金额隐私模式：掩码即时呈现于全部金额格（••••）", async () => {
@@ -142,7 +139,6 @@ describe("fixture 形态在场（缺形态即红：计数阈值只对覆盖到�
     const amountCells = wrapper.findAll(".amount-cell");
     expect(amountCells.length).toBe(FIXTURE_TXN_COUNT);
     for (const cell of amountCells) expect(cell.text()).toBe("••••");
-    await wrapper.unmount();
   });
 });
 
@@ -163,7 +159,6 @@ describe("渲染期计数守门（初始阈值 = 建票时现状基线，收紧�
     expect(resolveLendingSpy.mock.calls.length).toBeLessThanOrEqual(
       RENDER_RESOLVE_LENDING_BASELINE,
     );
-    await wrapper.unmount();
   });
 
   it("② 行内交互组件实例数 ≤ 基线", async () => {
@@ -181,7 +176,6 @@ describe("渲染期计数守门（初始阈值 = 建票时现状基线，收紧�
     expect(wrapper.findAllComponents(AmountCell).length).toBeLessThanOrEqual(AMOUNT_CELL_BASELINE);
     expect(wrapper.findAllComponents(NTag).length).toBeLessThanOrEqual(N_TAG_BASELINE);
     expect(wrapper.findAllComponents(NEllipsis).length).toBeLessThanOrEqual(N_ELLIPSIS_BASELINE);
-    await wrapper.unmount();
   });
 
   it("③ 表格容器内 DOM 节点总数 ≤ 基线", async () => {
@@ -191,6 +185,5 @@ describe("渲染期计数守门（初始阈值 = 建票时现状基线，收紧�
     expect(table.element.querySelectorAll("*").length).toBeLessThanOrEqual(
       TABLE_DOM_NODES_BASELINE,
     );
-    await wrapper.unmount();
   });
 });
