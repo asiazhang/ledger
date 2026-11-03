@@ -21,6 +21,16 @@ import { resolveSourceJumpTarget, type TransactionSourceKind } from "@/component
 /** 表格级行为委托处理器：绑在桌面表格壳层 div 的 click 监听器（单实例）。 */
 export type TransactionTableActionHandler = (event: MouseEvent) => void;
 
+/** 委托动作闭集（装配端 transaction-columns 的 data-action 载荷值与分发端 switch
+ * 的共享绑定——两端任一侧拼写漂移即类型不匹配，不靠裸字符串对齐）。 */
+export const CELL_ACTIONS = {
+  account: "account",
+  merchant: "merchant",
+  source: "source",
+  copyNote: "copy-note",
+} as const;
+export type CellAction = (typeof CELL_ACTIONS)[keyof typeof CELL_ACTIONS];
+
 /**
  * 装配表格级行为委托（视图 setup 期调用一次；router / 消息 / 两轴谓词 store 就地解析）。
  * 分发闭集见文件头注；非委托目标（普通单元格/箭头分隔等）的点击静默无操作。
@@ -46,13 +56,13 @@ export function useTransactionTableActions(): TransactionTableActionHandler {
     const hit = target?.closest?.("[data-action]");
     if (!(hit instanceof HTMLElement)) return;
     switch (hit.dataset.action) {
-      case "account":
+      case CELL_ACTIONS.account:
         router.push({ name: "transactions", query: { account: hit.dataset.id! } });
         break;
-      case "merchant":
+      case CELL_ACTIONS.merchant:
         router.push({ name: "transactions", query: { merchant: hit.dataset.id! } });
         break;
-      case "source":
+      case CELL_ACTIONS.source:
         router.push(
           resolveSourceJumpTarget(
             hit.dataset.kind as TransactionSourceKind,
@@ -62,7 +72,7 @@ export function useTransactionTableActions(): TransactionTableActionHandler {
           ),
         );
         break;
-      case "copy-note":
+      case CELL_ACTIONS.copyNote:
         void copyNote(hit.dataset.note ?? "");
         break;
       default:

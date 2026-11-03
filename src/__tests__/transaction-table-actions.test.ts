@@ -115,6 +115,16 @@ describe("useTransactionTableActions 表格级行为委托", () => {
     expect(messageApi.error).toHaveBeenCalledWith("复制失败: denied");
   });
 
+  it("键盘可达的结构保证：全部委托载荷元素是真 <button>（Tab 聚焦 + Enter 原生激活，点击冒泡同一分发）", async () => {
+    const wrapper = mountShell();
+    // jsdom 不合成键激活 click，键盘等价落在结构保证上：委托元素一律原生 <button>
+    // （AccountLink 同款键盘语义），Enter/Space 的原生激活在真实引擎里产出冒泡 click。
+    for (const el of wrapper.findAll("[data-action]")) {
+      expect(el.element.tagName).toBe("BUTTON");
+      expect((el.element as HTMLButtonElement).type).toBe("button");
+    }
+  });
+
   it("非委托目标（无 data-action 的元素）点击静默无操作，不触发导航", async () => {
     const wrapper = mountShell();
     await wrapper.find(".tx-account-arrow").trigger("click");

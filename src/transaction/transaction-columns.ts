@@ -21,7 +21,9 @@ import type { Transaction, TransactionPurchase } from "@ledger/types";
 import AccountLink from "@/accounts/AccountLink.vue";
 import AmountCell from "@/transaction/AmountCell.vue";
 import type { InputMode } from "@/composables/useInputMode";
+import { CELL_ACTIONS } from "@/transaction/transaction-table-actions";
 import {
+  purchaseIndexOf,
   purchaseQtyText,
   SOURCE_KIND_ICONS,
   type AccountAtom,
@@ -38,6 +40,7 @@ export {
   KIND_TAG_TYPE,
   kindLabel,
   displayAmountText,
+  purchaseIndexOf,
   type KindTagType,
   type ReferenceStore,
 } from "@/transaction/transaction-cells";
@@ -59,12 +62,6 @@ export function expandPurchaseRows(rows: Transaction[]): ExpandedTransactionRow[
       ? [{ ...row, purchaseIndex: -1 }]
       : row.purchases.map((_, purchaseIndex) => ({ ...row, purchaseIndex })),
   );
-}
-
-/** 行的购买项序位（行渲染回调的单一收口）：未展开行集按无购买项行（-1）处理；
- * 订单块首行 = 0（承载合并格，订单级交互入口所在），续行 > 0（纯购买项行，不可交互）。 */
-export function purchaseIndexOf(row: Transaction): number {
-  return (row as ExpandedTransactionRow).purchaseIndex ?? -1;
 }
 
 /** 显示行键（naive-ui `row-key`，展开行集的单一收口）：交易 id +「购买项序位」。
@@ -117,15 +114,11 @@ export function renderPurchaseLine(
   item: TransactionPurchase,
   opts: { suffix?: string } = {},
 ): VNode {
-  return h(
-    "div",
-    { style: "display: flex; align-items: center; gap: 2px; width: 100%; max-width: 100%;" },
-    [
-      h("span", { style: "flex: 1 1 auto; min-width: 0; word-break: break-word;" }, item.name),
-      ...(opts.suffix ? [h("span", { style: PURCHASE_QTY_STYLE }, opts.suffix)] : []),
-      h("span", { style: PURCHASE_QTY_STYLE }, purchaseQtyText(item)),
-    ],
-  );
+  return h("div", { class: "tx-note-cell" }, [
+    h("span", { style: "flex: 1 1 auto; min-width: 0; word-break: break-word;" }, item.name),
+    ...(opts.suffix ? [h("span", { style: PURCHASE_QTY_STYLE }, opts.suffix)] : []),
+    h("span", { style: PURCHASE_QTY_STYLE }, purchaseQtyText(item)),
+  ]);
 }
 
 /** 购买项件数标注弱化样式（与账户列「等 N 账户」同型，单源样式串）。 */
@@ -153,37 +146,25 @@ interface CellLabelPack {
   copyNote: string;
 }
 
-/** 账户原子 → 平替元素：可见账户 = 真 <button>（键盘可达 + data-action 委托载荷），
- * 黑洞/隐藏账户占位 = 纯文本「-」（不下钻，AccountLink 同口径）。 */
-function accountAtomEl(atom: AccountAtom, labels: CellLabelPack): VNode {
-  return atom.link
-    ? h(
-        "button",
-        {
-          type: "button",
-          class: "tx-link",
-          title: labels.viewAccount,
-          "data-action": "account",
-          "data-id": atom.accountId,
-        },
-        atom.name,
-      )
-    : h("span", { class: "tx-link-placeholder" }, "-");
-}
-
-/** 账户格渲染（消费预计算模型；三形态语义与移动档 renderAccountCell 同一
- * accountCellView 单源，#2010 等价约束「双账户/分解行标注语义不变」）。 */
-function renderAccountCellFast(view: AccountCellView, labels: CellLabelPack): VNode {
-  if (view.form === "single") return accountAtomEl(view.account, labels);
+/** 账户格三形态布局骨架（单一收口，#2010）：形态判定与标注文案来自 accountCellView
+ * 模型，桌面平替与移动档链接组件注入各自的**可下钻原子渲染器**共用本骨架——
+ * 三形态/标注呈现两端不漂移；黑洞/隐藏账户占位「-」两端同形（纯文本，不下钻）。 */
+function accountCellSkeleton(
+  view: AccountCellView,
+  linkAtom: (a: { accountId: string; name: string }) => VNode,
+): VNode {
+  const atom = (a: AccountAtom): VNode =>
+    a.link ? linkAtom(a) : h("span", { class: "tx-link-placeholder" }, "-");
+  if (view.form === "single") return atom(view.account);
   if (view.form === "two") {
     return h("div", { class: "tx-two-account" }, [
-      accountAtomEl(view.from, labels),
+      atom(view.from),
       h("span", { class: "tx-account-arrow" }, "→"),
-      accountAtomEl(view.to, labels),
+      atom(view.to),
     ]);
   }
   const line = h("div", { class: "tx-two-account" }, [
-    accountAtomEl(view.first, labels),
+    atom(view.first),
     ...(view.marker ? [h("span", { class: "tx-dim-suffix" }, view.marker)] : []),
   ]);
   if (!view.derivedMarkerText) return line;
@@ -191,6 +172,24 @@ function renderAccountCellFast(view: AccountCellView, labels: CellLabelPack): VN
     line,
     h("span", { class: "tx-derived-marker" }, view.derivedMarkerText),
   ]);
+}
+
+/** 账户格渲染（消费预计算模型；三形态语义与移动档 renderAccountCell 同一
+ * accountCellView 单源，#2010 等价约束「双账户/分解行标注语义不变」）。 */
+function renderAccountCellFast(view: AccountCellView, labels: CellLabelPack): VNode {
+  return accountCellSkeleton(view, (a) =>
+    h(
+      "button",
+      {
+        type: "button",
+        class: "tx-link",
+        title: labels.viewAccount,
+        "data-action": CELL_ACTIONS.account,
+        "data-id": a.accountId,
+      },
+      a.name,
+    ),
+  );
 }
 
 /** 来源格渲染（消费预计算模型；语义与 SourceLink 组件同一 sourceCellView 单源）：
@@ -202,7 +201,7 @@ function renderSourceCellFast(view: SourceCellView, isTouch: boolean): VNode {
         {
           type: "button",
           class: "tx-link tx-source-link",
-          "data-action": "source",
+          "data-action": CELL_ACTIONS.source,
           "data-kind": view.kind,
           "data-entity": view.entityId,
         },
@@ -243,7 +242,7 @@ function renderNoteCellFast(cells: TransactionCells, labels: CellLabelPack): VNo
         class: "note-copy-btn tx-copy-btn",
         title: labels.copyNote,
         "aria-label": labels.copyNote,
-        "data-action": "copy-note",
+        "data-action": CELL_ACTIONS.copyNote,
         "data-note": note.text,
       },
       [h(CopyOutline)],
@@ -329,7 +328,7 @@ export function buildTransactionColumns(
                 type: "button",
                 class: "tx-link",
                 title: labels.viewMerchant,
-                "data-action": "merchant",
+                "data-action": CELL_ACTIONS.merchant,
                 "data-id": merchant.merchantId,
               },
               merchant.name,
@@ -436,34 +435,13 @@ export function rowActionsColumn<T>(
  * 单源（三形态与标注文案不漂移），呈现层仍是 AccountLink 链接组件（下钻/键盘可达）。
  * 桌面表格自 #2010 起消费同一模型的平替元素渲染（renderAccountCellFast）。 */
 export function renderAccountCell(reference: ReferenceStore, row: Transaction): VNode {
-  return renderAccountView(accountCellView(row, reference));
-}
-
-function renderAccountView(view: AccountCellView): VNode {
-  const atom = (a: AccountAtom): VNode =>
-    a.link
-      ? h(AccountLink, {
-          accountId: a.accountId,
-          style: "flex: 0 1 auto; min-width: 0; text-align: left;",
-        })
-      : h("span", { class: "tx-link-placeholder" }, "-");
-  if (view.form === "single") return atom(view.account);
-  if (view.form === "two") {
-    return h("div", { class: "tx-two-account" }, [
-      atom(view.from),
-      h("span", { class: "tx-account-arrow" }, "→"),
-      atom(view.to),
-    ]);
-  }
-  const line = h("div", { class: "tx-two-account" }, [
-    atom(view.first),
-    ...(view.marker ? [h("span", { class: "tx-dim-suffix" }, view.marker)] : []),
-  ]);
-  if (!view.derivedMarkerText) return line;
-  return h("div", { class: "tx-funding-cell" }, [
-    line,
-    h("span", { class: "tx-derived-marker" }, view.derivedMarkerText),
-  ]);
+  // 可下钻原子 = AccountLink 链接组件（下钻/键盘可达；双账户行内 flex 样式随组件注入）
+  return accountCellSkeleton(accountCellView(row, reference), (a) =>
+    h(AccountLink, {
+      accountId: a.accountId,
+      style: "flex: 0 1 auto; min-width: 0; text-align: left;",
+    }),
+  );
 }
 
 // —— 列宽约定（Naive UI DataTable，headless Chrome 实测验证）——

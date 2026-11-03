@@ -73,4 +73,4 @@ utils（被最多包依赖）与零依赖包（window-tier / modal-intent / row-
 
 ## 修订注记
 
-- **#2010（翻页渲染性能）**：`NoteCopyButton` 自本闭集移除（通用件余 3 项）。桌面交易表格改行级事件委托渲染后该组件零消费面，备注复制的显式复制通道语义（clipboard + 成功/失败 toast，i18n 键不变）整体迁至壳内 `src/transaction/transaction-table-actions.ts`（表格级行为委托分发端），行为等价由 `src/__tests__/transaction-table-actions.test.ts` 钉住；「成员不得自行增删」的纪律不变——移除随票留痕于此。
+- **#2010（翻页渲染性能）**：`NoteCopyButton` 自本闭集移除（通用件余 3 项）。桌面交易表格改行级事件委托渲染后该组件零消费面，备注复制的显式复制通道语义（clipboard + 成功/失败 toast，i18n 键不变）整体迁至壳内交易域的表格级行为委托分发端（`useTransactionTableActions`，见界面状态与交互域词条），行为等价由其专属测试钉住；「成员不得自行增删」的纪律不变——移除随票留痕于此。

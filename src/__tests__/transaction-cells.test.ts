@@ -17,7 +17,14 @@ import {
   type ReferenceStore,
 } from "@/transaction/transaction-cells";
 import { resolveLendingDirection } from "@/transaction/lending";
-import { makeAccount, makeFunding, makeMerchant, makePurchase, makeTransaction } from "./factories";
+import {
+  makeAccount,
+  makeCategory,
+  makeFunding,
+  makeMerchant,
+  makePurchase,
+  makeTransaction,
+} from "./factories";
 
 /** 单元格预计算单测（issue #2010 验收①）：与现渲染口径逐字段一致——类型标签文案
  * （含借贷派生）、金额（含隐私模式与数字分组）、分类路径、借贷派生文案、双账户 /
@@ -36,20 +43,8 @@ const MERCHANTS: Merchant[] = [
   makeMerchant({ id: "mch-del", name: "已闭店商城", is_deleted: true }),
 ];
 const CATEGORIES: Category[] = [
-  {
-    id: "cat-root",
-    name: "生活",
-    parent_id: null,
-    kind: "expense",
-    is_archived: false,
-  } as unknown as Category,
-  {
-    id: "cat-child",
-    name: "宠物",
-    parent_id: "cat-root",
-    kind: "expense",
-    is_archived: false,
-  } as unknown as Category,
+  makeCategory({ id: "cat-root", name: "生活" }),
+  makeCategory({ id: "cat-child", name: "宠物", parent_id: "cat-root" }),
 ];
 
 function buildReference(): ReferenceStore {

@@ -354,9 +354,10 @@ export function sourceCellView(source: TransactionSource, theme: Theme): SourceC
   };
 }
 
-/** 行的购买项序位（与 transaction-columns.purchaseIndexOf 同源；未展开行集 = -1）。
- * 局部引入避免 columns ↔ cells 循环：预计算模块读行上的展开序位标记。 */
-function purchaseIndexOf(row: Transaction): number {
+/** 行的购买项序位（单一收口，#2010 自 transaction-columns 迁入正源）：未展开行集
+ * 按无购买项行（-1）处理；订单块首行 = 0（承载合并格，订单级交互入口所在），
+ * 续行 > 0（纯购买项行，不可交互）。 */
+export function purchaseIndexOf(row: Transaction): number {
   return (row as { purchaseIndex?: number }).purchaseIndex ?? -1;
 }
 
