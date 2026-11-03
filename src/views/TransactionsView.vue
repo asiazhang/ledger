@@ -44,6 +44,7 @@ import {
 } from "@/transaction/transaction-row-menu";
 import { useCreateShortcuts, CREATE_KIND_KEYS } from "@/composables/useCreateShortcuts";
 import { useInputMode } from "@/composables/useInputMode";
+import { useDelayedLoading } from "@/composables/useDelayedLoading";
 import { usePaginationShortcuts } from "@/composables/usePaginationShortcuts";
 import { useAppStore } from "@/stores/app";
 import { useTimePeriodShortcuts, PERIOD_STEP_KEYS } from "@/composables/useTimePeriodShortcuts";
@@ -105,6 +106,13 @@ const route = useRoute();
 const data = ref<Transaction[]>([]);
 const total = ref(0);
 const loading = ref(false);
+// 加载指示延迟整流（#2010 翻页体验收尾）：快加载（数毫秒往返）不显示指示器——
+// NDataTable/NSpin 的 loading 过场被拦断即是闪屏根源；空行集加载（首刷/删空重拉）
+// 维持立即显示（无内容可闪，真加载态）。原始 loading 仍归 load() 生命周期。
+const visibleLoading = useDelayedLoading(loading);
+const tableLoading = computed(
+  () => visibleLoading.value || (data.value.length === 0 && loading.value),
+);
 
 // 过滤状态机（ADR-0030）：「用户意图进、列表状态出」。filters / page / pageSize / 重拉版本号
 // 归 TransactionFilter 模块所有；手动筛选变更走 setFilter、清除筛选走 resetFilters、
@@ -804,7 +812,7 @@ function activateCard(row: Transaction): void {
     <!-- 断点双渲染（ADR-0088 决策 9，issue #846）：同一列表状态，移动档卡片列表
          （分页语义不变：20/页、页大小选择与桌面同一出口），桌面档表格一字不动 -->
     <template v-if="isMobile">
-      <NSpin :show="loading">
+      <NSpin :show="tableLoading">
         <TransactionCardList
           v-if="data.length > 0"
           :rows="data"
@@ -854,7 +862,7 @@ function activateCard(row: Transaction): void {
         :columns="columns"
         :data="displayRows"
         :row-key="displayRowKey"
-        :loading="loading"
+        :loading="tableLoading"
         :bordered="false"
         size="small"
         remote

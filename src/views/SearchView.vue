@@ -14,6 +14,7 @@ import { buildTransactionColumns, expandPurchaseRows } from "@/transaction/trans
 import { transactionTableShellVars, withTransactionCells } from "@/transaction/transaction-cells";
 import { useTransactionTableActions } from "@/transaction/transaction-table-actions";
 import { useInputMode } from "@/composables/useInputMode";
+import { useDelayedLoading } from "@/composables/useDelayedLoading";
 import { sumFixedColumnWidths } from "@ledger/utils/table";
 import { type Transaction, type TransactionSearchFilter } from "@ledger/types";
 import type { NullableDateRange } from "@ledger/utils/time-period";
@@ -46,13 +47,16 @@ let debounceTimer: ReturnType<typeof setTimeout> | undefined;
 
 // 搜索加载收编 Loadable（issue #1008 / ADR-0040）：loading 置收、竞态后发覆盖先发
 // 与错误 toast（默认策略 = 裸 errorMessage）内化；任务只产结果不写状态。
+// 加载指示延迟整流（#2010 翻页体验收尾）：快搜索不显示指示器（过场被拦断即闪屏），
+// 首搜前结果区未渲染（searched 门控）无空态可闪，直接消费整流值。
 const {
-  loading,
+  loading: rawLoading,
   run: runSearchTask,
   invalidate,
 } = useLoadable(() =>
   api.searchTransactions(keyword.value.trim(), page.value, pageSize, buildFilter()),
 );
+const loading = useDelayedLoading(rawLoading);
 
 const amountMinCents = computed(() => yuanToCents(amountMinYuan.value));
 const amountMaxCents = computed(() => yuanToCents(amountMaxYuan.value));
