@@ -505,9 +505,6 @@ importers:
 
   packages/ui-kit:
     dependencies:
-      '@ledger/i18n':
-        specifier: workspace:*
-        version: link:../i18n
       '@ledger/utils':
         specifier: workspace:*
         version: link:../utils

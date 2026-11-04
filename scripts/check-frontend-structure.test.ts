@@ -463,7 +463,7 @@ describe("check-frontend-structure（前端 workspace 结构守门）", () => {
         {
           name: "@ledger/ui-kit",
           dir: "packages/ui-kit",
-          deps: ["@ledger/utils", "@ledger/i18n", "@ledger/window-tier", "@ledger/test-support"],
+          deps: ["@ledger/utils", "@ledger/window-tier", "@ledger/test-support"],
           note: expect.any(String),
         },
         {

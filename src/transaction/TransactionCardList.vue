@@ -55,8 +55,11 @@ const props = defineProps<{
 const reference = useReferenceStore();
 const app = useAppStore();
 
-/** 账户单元格（转账双向 / 单账户）与表格列同一渲染函数；经功能组件进模板。 */
-const AccountCell = (cellProps: { row: Transaction }) => renderAccountCell(cellProps.row);
+/** 账户单元格（转账双向 / 单账户 / 分解标注）与表格列同一模型单源（accountCellView，
+ * #2010）：桌面表格消费模型的平替元素渲染，卡片消费模型的链接组件渲染（移动档
+ * 组件路径保留），两档语义不漂移。经功能组件进模板。 */
+const AccountCell = (cellProps: { row: Transaction }) =>
+  renderAccountCell(reference, cellProps.row);
 AccountCell.props = { row: { type: Object, required: true } };
 
 /** 购买项行（issue #1884 / ADR-0138 决策 15）：列表侧渲染单点的全文形态（商品名

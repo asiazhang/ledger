@@ -11,6 +11,10 @@ import { api } from "@ledger/api";
 import { useAppStore } from "@/stores/app";
 import { useReferenceStore } from "@/stores/reference";
 import { buildTransactionColumns, expandPurchaseRows } from "@/transaction/transaction-columns";
+import { transactionTableShellVars, withTransactionCells } from "@/transaction/transaction-cells";
+import { useTransactionTableActions } from "@/transaction/transaction-table-actions";
+import { useInputMode } from "@/composables/useInputMode";
+import { useDelayedLoading } from "@/composables/useDelayedLoading";
 import { sumFixedColumnWidths } from "@ledger/utils/table";
 import { type Transaction, type TransactionSearchFilter } from "@ledger/types";
 import type { NullableDateRange } from "@ledger/utils/time-period";
@@ -43,13 +47,16 @@ let debounceTimer: ReturnType<typeof setTimeout> | undefined;
 
 // 搜索加载收编 Loadable（issue #1008 / ADR-0040）：loading 置收、竞态后发覆盖先发
 // 与错误 toast（默认策略 = 裸 errorMessage）内化；任务只产结果不写状态。
+// 加载指示延迟整流（#2010 翻页体验收尾）：快搜索不显示指示器（过场被拦断即闪屏），
+// 首搜前结果区未渲染（searched 门控）无空态可闪，直接消费整流值。
 const {
-  loading,
+  loading: rawLoading,
   run: runSearchTask,
   invalidate,
 } = useLoadable(() =>
   api.searchTransactions(keyword.value.trim(), page.value, pageSize, buildFilter()),
 );
+const loading = useDelayedLoading(rawLoading);
 
 const amountMinCents = computed(() => yuanToCents(amountMinYuan.value));
 const amountMaxCents = computed(() => yuanToCents(amountMaxYuan.value));
@@ -168,15 +175,24 @@ function clearFilters() {
 
 // 复用交易列表列配置（日期/类型/分类/账户/商品备注/金额），结果只读（不传行菜单）；
 // 经 computed 构造：列名（t()）随语言切换即时重建。购买项展开（issue #1885 /
-// ADR-0138 决策 14）：商品名命中即整单呈现全部购买项行，与交易列表同一装配。
+// ADR-0138 决策 14）：商品名命中即整单呈现全部购买项行，与交易列表同一装配；
+// inputMode 接入金额/来源格输入轴分支（#2010）。
+const inputMode = useInputMode();
 const columns = computed<DataTableColumn<Transaction>[]>(() =>
-  buildTransactionColumns(reference, { expandPurchases: true }),
+  buildTransactionColumns({ expandPurchases: true, inputMode }),
 );
 
-// 展开显示行集（展开/合并接线唯一入口）：命中交易每购买项一行、订单级格 rowSpan
-// 纵向合并；删除本接线（:data 回退原始行集）即 SearchView 购买项测试变红——搜索
-// 不再逐购买项呈现。分页与「共 N 条」仍按交易计（后端 total，ADR-0008 口径不变）。
-const displayRows = computed(() => expandPurchaseRows(results.value));
+// 展开显示行集 + 单元格预计算（#2010 接线，与交易页同构）：命中交易每购买项一行、
+// 订单级格 rowSpan 纵向合并；删除本接线（:data 回退原始行集）即 SearchView 购买项
+// 测试变红——搜索不再逐购买项呈现。分页与「共 N 条」仍按交易计（后端 total，
+// ADR-0008 口径不变）。
+const displayRows = computed(() =>
+  withTransactionCells(expandPurchaseRows(results.value), reference, store.theme),
+);
+
+// 表格级行为委托（#2010 验收③）：与交易页同构（壳层单一 click 监听器 + 主题变量）。
+const onTableAction = useTransactionTableActions();
+const tableShellStyle = computed(() => transactionTableShellVars(store.theme));
 
 // scroll-x：列中所有固定列（有 width 的列，备注为弹性列不计入）宽度总和
 const scrollX = computed(() => sumFixedColumnWidths(columns.value));
@@ -250,18 +266,20 @@ const pagination = computed(() => ({
           @update:page="onPageChange"
         />
       </template>
-      <!-- 备注列为弹性列，表格铺满容器；窄窗口时备注先收缩，scroll-x（固定列宽总和）作为横向滚动下限 -->
-      <NDataTable
-        v-else
-        :columns="columns"
-        :data="displayRows"
-        :loading="loading"
-        :bordered="false"
-        size="small"
-        remote
-        :scroll-x="scrollX"
-        :pagination="pagination"
-      />
+      <!-- 桌面表格壳层（#2010）：行为委托单一监听器 + 主题 CSS 变量；备注列为弹性列，
+           表格铺满容器，窄窗口时备注先收缩，scroll-x（固定列宽总和）作为横向滚动下限 -->
+      <div v-else :style="tableShellStyle" @click="onTableAction">
+        <NDataTable
+          :columns="columns"
+          :data="displayRows"
+          :loading="loading"
+          :bordered="false"
+          size="small"
+          remote
+          :scroll-x="scrollX"
+          :pagination="pagination"
+        />
+      </div>
     </template>
     <NEmpty v-else :description="t('search.emptyPlaceholder')" />
   </NSpace>

@@ -36,7 +36,6 @@ import CategoryForm from "@/categories/CategoryForm.vue";
 import TransferForm from "@/transaction/TransferForm.vue";
 import RefundForm from "@/transaction/RefundForm.vue";
 import AddItemForm from "@/item/AddItemForm.vue";
-import MerchantLink from "@/merchants/MerchantLink.vue";
 import { useReferenceStore } from "@/stores/reference";
 import { formatAmount } from "@ledger/money";
 import { refCurrencies } from "@ledger/test-support/reference-stubs";
@@ -123,7 +122,7 @@ describe("TransactionsView 行右键菜单（issue #151）", () => {
     setTxnDb([makeTxn(1, "acc-1")]);
     const wrapper = await mountView();
     expect(bodyRows(wrapper)[0].text()).not.toContain("京东");
-    expect(wrapper.findAllComponents(MerchantLink).length).toBe(0);
+    expect(wrapper.findAll('[data-action="merchant"]').length).toBe(0);
   });
 
   it("软删商户后历史交易照常显示商户名（后端含软删列表，issue #189/#191）", async () => {
@@ -141,11 +140,12 @@ describe("TransactionsView 行右键菜单（issue #151）", () => {
   it("商户列可点击下钻：跳转 /transactions?merchant=<id>（issue #191）", async () => {
     setTxnDb([makeTxn(1, "acc-1", { merchant_id: "mch-1" })]);
     const wrapper = await mountView();
-    const link = wrapper.findAllComponents(MerchantLink)[0];
-    expect(link.exists()).toBe(true);
+    // #2010：商户下钻平替元素（真按钮 + data-action 委托，验收③）
+    const link = wrapper.findAll('[data-action="merchant"]')[0];
+    expect(link).toBeTruthy();
     expect(link.text()).toBe("京东");
     expect(link.attributes("title")).toBe("查看该商户的交易");
-    await link.find("button").trigger("click");
+    await link.trigger("click");
     expect(pushMock).toHaveBeenLastCalledWith({
       name: "transactions",
       query: { merchant: "mch-1" },

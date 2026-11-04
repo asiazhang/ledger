@@ -44,7 +44,9 @@ import {
 } from "@/transaction/transaction-row-menu";
 import { useCreateShortcuts, CREATE_KIND_KEYS } from "@/composables/useCreateShortcuts";
 import { useInputMode } from "@/composables/useInputMode";
+import { useDelayedLoading } from "@/composables/useDelayedLoading";
 import { usePaginationShortcuts } from "@/composables/usePaginationShortcuts";
+import { useAppStore } from "@/stores/app";
 import { useTimePeriodShortcuts, PERIOD_STEP_KEYS } from "@/composables/useTimePeriodShortcuts";
 import { useRowContextMenu } from "@ledger/row-context-menu";
 import { paginationHint, paginationRow } from "./TransactionsView.css.ts";
@@ -69,6 +71,8 @@ import {
   purchaseIndexOf,
   purchaseRowClass,
 } from "@/transaction/transaction-columns";
+import { transactionTableShellVars, withTransactionCells } from "@/transaction/transaction-cells";
+import { useTransactionTableActions } from "@/transaction/transaction-table-actions";
 import { sumFixedColumnWidths } from "@ledger/utils/table";
 import { PAGE_SIZE_OPTIONS } from "@ledger/utils/pagination";
 import { availableCreateKinds, isCreateKindAvailable } from "@ledger/utils/create-entry-kinds";
@@ -83,6 +87,8 @@ import {
 } from "@ledger/types";
 
 const reference = useReferenceStore();
+// 外观主题状态源（金额语义色随主题整表重算的依赖，#2010 预计算接线）
+const app = useAppStore();
 // 窗口分级（ADR-0088 决策 2 / 词汇表「窗口分级」）：断点双渲染判定——同一列表
 // 状态，桌面档表格（一字不动）/移动档卡片列表二选一；记一笔入口分档（FAB 仅
 // 移动档）。换档实时响应（媒体查询 change 驱动）。
@@ -100,6 +106,13 @@ const route = useRoute();
 const data = ref<Transaction[]>([]);
 const total = ref(0);
 const loading = ref(false);
+// 加载指示延迟整流（#2010 翻页体验收尾）：快加载（数毫秒往返）不显示指示器——
+// NDataTable/NSpin 的 loading 过场被拦断即是闪屏根源；空行集加载（首刷/删空重拉）
+// 维持立即显示（无内容可闪，真加载态）。原始 loading 仍归 load() 生命周期。
+const visibleLoading = useDelayedLoading(loading);
+const tableLoading = computed(
+  () => visibleLoading.value || (data.value.length === 0 && loading.value),
+);
 
 // 过滤状态机（ADR-0030）：「用户意图进、列表状态出」。filters / page / pageSize / 重拉版本号
 // 归 TransactionFilter 模块所有；手动筛选变更走 setFilter、清除筛选走 resetFilters、
@@ -529,19 +542,30 @@ function onPageSizeChange(size: number): void {
 
 // 列经 computed 构造：列名（t()）随语言切换即时重建（列宽总和随之联动）。
 // 传入 onRowMenuOpen 即追加常显「⋯」操作列（ADR-0088 决策 6 / issue #843）：
-// 与行右键共用同一行菜单编排工厂 open 入口，以点击坐标弹出（账户行先例）。
+// 与行右键共用同一行菜单编排工厂 open 入口，以点击坐标弹出（账户行先例）；
+// inputMode 接入金额/来源格的输入轴分支（#2010：指针轴纯元素、触控轴保留
+// AmountCell 气泡与类型小字）。
 const columns = computed<DataTableColumn<Transaction>[]>(() => [
-  ...buildTransactionColumns(reference, {
+  ...buildTransactionColumns({
     onRowMenuOpen: (e, row) => rowMenu.open(e, row),
     // 购买项展开（issue #1883 / ADR-0138 决策 13）：订单级列合并、分类逐行、备注一列两用
     expandPurchases: true,
+    inputMode,
   }),
 ]);
 
-// 展开显示行集（展开/合并接线唯一入口）：带购买项的交易每项一行，订单级格以
-// rowSpan 纵向合并（ADR-0138 决策 13）；删除本接线（:data 回退原始行集）即
-// purchase-read.test.ts 变红——列表不再逐购买项呈现。
-const displayRows = computed(() => expandPurchaseRows(data.value));
+// 展开显示行集 + 单元格预计算（#2010 接线唯一入口）：带购买项的交易每项一行（订单级格
+// rowSpan 纵向合并，ADR-0138 决策 13），每行每格文案/标注/色值在数据到达时一次算就
+// （依赖参考数据/语言/隐私模式/主题，任一变化整表重算）；删除本接线（:data 回退原始行集）
+// 即 purchase-read.test.ts 变红——列表不再逐购买项呈现，且预计算列渲染拋接线错误。
+const displayRows = computed(() =>
+  withTransactionCells(expandPurchaseRows(data.value), reference, app.theme),
+);
+
+// 表格级行为委托（#2010 验收③）：账户/商户/来源下钻与备注复制由壳层单一 click 监听器
+// 分发；壳层 div 同时携带主题 CSS 变量（链接强调色/悬停底色，随主题即时换色）。
+const onTableAction = useTransactionTableActions();
+const tableShellStyle = computed(() => transactionTableShellVars(app.theme));
 
 // scroll-x：列中所有固定列（有 width 的列，备注为弹性列不计入）宽度总和
 const scrollX = computed(() => sumFixedColumnWidths(columns.value));
@@ -788,7 +812,7 @@ function activateCard(row: Transaction): void {
     <!-- 断点双渲染（ADR-0088 决策 9，issue #846）：同一列表状态，移动档卡片列表
          （分页语义不变：20/页、页大小选择与桌面同一出口），桌面档表格一字不动 -->
     <template v-if="isMobile">
-      <NSpin :show="loading">
+      <NSpin :show="tableLoading">
         <TransactionCardList
           v-if="data.length > 0"
           :rows="data"
@@ -829,33 +853,36 @@ function activateCard(row: Transaction): void {
         </template>
       </NPagination>
     </template>
-    <!-- 备注列为弹性列（transaction-columns 中不设 width），表格始终铺满容器；
-         窄窗口时备注先收缩，scroll-x（固定列宽总和）作为横向滚动下限 -->
-    <NDataTable
-      v-else
-      :columns="columns"
-      :data="displayRows"
-      :row-key="displayRowKey"
-      :loading="loading"
-      :bordered="false"
-      size="small"
-      remote
-      :row-props="rowProps"
-      :scroll-x="scrollX"
-      :pagination="false"
-    >
-      <!-- 空态：过滤无结果时展示明确提示（与加载态区分：loading 时空态节点隐藏）；
-           无过滤时为默认「暂无数据」文案 -->
-      <template #empty>
-        <NEmpty :description="emptyDescription" size="small">
-          <template v-if="filtersActive" #extra>
-            <NButton size="tiny" quaternary type="primary" @click="resetFilters">
-              {{ t("transactions.filter.clear") }}
-            </NButton>
-          </template>
-        </NEmpty>
-      </template>
-    </NDataTable>
+    <!-- 桌面表格壳层（#2010）：单一 click 监听器承载单元格行为委托（账户/商户/来源下钻 +
+         备注复制），并携带主题 CSS 变量供 .tx-* 平替类消费（备注列为弹性列，
+         transaction-columns 中不设 width，表格始终铺满容器；窄窗口时备注先收缩，
+         scroll-x（固定列宽总和）作为横向滚动下限） -->
+    <div v-else :style="tableShellStyle" @click="onTableAction">
+      <NDataTable
+        :columns="columns"
+        :data="displayRows"
+        :row-key="displayRowKey"
+        :loading="tableLoading"
+        :bordered="false"
+        size="small"
+        remote
+        :row-props="rowProps"
+        :scroll-x="scrollX"
+        :pagination="false"
+      >
+        <!-- 空态：过滤无结果时展示明确提示（与加载态区分：loading 时空态节点隐藏）；
+             无过滤时为默认「暂无数据」文案 -->
+        <template #empty>
+          <NEmpty :description="emptyDescription" size="small">
+            <template v-if="filtersActive" #extra>
+              <NButton size="tiny" quaternary type="primary" @click="resetFilters">
+                {{ t("transactions.filter.clear") }}
+              </NButton>
+            </template>
+          </NEmpty>
+        </template>
+      </NDataTable>
+    </div>
     <!-- 桌面档外置分页（issue #1929）：内建分页无插槽是键位提示游离成独立行的根因，
          改用与移动档同款 NPagination 置于表格下方同一行右端，键位提示走 #suffix 槽
          两档同源（仅指针轴渲染，触控轴不渲染，ADR-0088）；翻页/页大小/跳页语义与

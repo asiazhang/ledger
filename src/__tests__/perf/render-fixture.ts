@@ -11,7 +11,7 @@
 // （AccountLink 等）需要的 router / 消息替身由消费方测试文件提供（vi.mock
 // 声明须留在测试文件，随 import 提升先行注册）。
 
-import { defineComponent, h, type PropType } from "vue";
+import { computed, defineComponent, h, type PropType } from "vue";
 import { NDataTable, type DataTableColumn } from "naive-ui";
 import {
   buildTransactionColumns,
@@ -19,8 +19,10 @@ import {
   expandPurchaseRows,
   purchaseRowClass,
 } from "@/transaction/transaction-columns";
+import { transactionTableShellVars, withTransactionCells } from "@/transaction/transaction-cells";
 import { sumFixedColumnWidths } from "@ledger/utils/table";
 import { useReferenceStore } from "@/stores/reference";
+import { useAppStore } from "@/stores/app";
 import { mount, type VueWrapper } from "@vue/test-utils";
 import { wireInvokeSeam, type InvokeSeamOverride } from "@ledger/test-support/invoke-mock";
 import { makeAccount, makeMerchant, makePurchase, makeTransaction } from "../factories";
@@ -185,9 +187,15 @@ export const EXPECTED_KIND_LABELS = {
   退款: 5,
 } as const;
 
-/** fixture 展开显示行集（消费方以本出口取表格 data，与视图接线同源）。 */
+/** fixture 展开显示行集（消费方以本出口取表格 data，与视图接线同源）：
+ * 展开购买项 + 单元格预计算（withTransactionCells，#2010 接线镜像——表格行集
+ * 未经预计算装配时列渲染拋接线错误）。主题取 app store（测试默认暗色）。 */
 export function fixtureDisplayRows(): Transaction[] {
-  return expandPurchaseRows(FIXTURE_TXNS);
+  return withTransactionCells(
+    expandPurchaseRows(FIXTURE_TXNS),
+    useReferenceStore(),
+    useAppStore().theme,
+  );
 }
 
 /** 布线 fixture 参考数据并预热参考 store（账户/商户覆写，分类/币种走接缝规范夹具）。 */
@@ -202,7 +210,8 @@ export async function wireRenderFixture(): Promise<void> {
   await seam.ready;
 }
 
-/** 桌面表格测试装配：镜像 TransactionsView 的 NDataTable 接线（见文件头注）。 */
+/** 桌面表格测试装配：镜像 TransactionsView 的 NDataTable 接线（见文件头注）——
+ * 含 #2010 桌面表格壳层（主题 CSS 变量；行为委托监听器对计数/计时无意义，替身省略）。 */
 export const DesktopRenderTable = defineComponent({
   name: "DesktopRenderTable",
   props: {
@@ -210,37 +219,49 @@ export const DesktopRenderTable = defineComponent({
       type: Array as PropType<DataTableColumn<Transaction>[]>,
       required: true,
     },
-    rows: { type: Array as PropType<Transaction[]>, required: true },
   },
   setup(props) {
+    // 行集 = 组件内 computed（镜像 TransactionsView：展开 + 预计算的依赖（参考数据/
+    // 语言/隐私模式/主题）被追踪，隐私开关置位即时重算——静态 props 不会重算，
+    // fixture 形态必须与视图同构才能守住「预计算依赖响应式」这一 #2010 等价约束）。
+    const reference = useReferenceStore();
+    const app = useAppStore();
+    const rows = computed(() =>
+      withTransactionCells(expandPurchaseRows(FIXTURE_TXNS), reference, app.theme),
+    );
+    const shellStyle = computed(() => transactionTableShellVars(app.theme));
     return () =>
-      h(NDataTable, {
-        columns: props.columns,
-        data: props.rows,
-        rowKey: displayRowKey,
-        rowProps: (row: Transaction) => ({ class: purchaseRowClass(row) }),
-        loading: false,
-        bordered: false,
-        size: "small",
-        remote: true,
-        scrollX: sumFixedColumnWidths(props.columns),
-        pagination: false as const,
-      });
+      h("div", { style: shellStyle.value }, [
+        h(NDataTable, {
+          columns: props.columns,
+          data: rows.value,
+          rowKey: displayRowKey,
+          rowProps: (row: Transaction) => ({ class: purchaseRowClass(row) }),
+          loading: false,
+          bordered: false,
+          size: "small",
+          remote: true,
+          scrollX: sumFixedColumnWidths(props.columns),
+          pagination: false as const,
+        }),
+      ]);
   },
 });
 
-/** 构建一份新的列数组（与视图同参：展开装配 + 行菜单入口）；重复调用产出新列对象，
- * 是「同一数据全表重渲染」计数窗口的触发形态（列对象引用更新 → 全部单元格重渲染）。 */
+/** 构建一份新的列数组（与视图同参：展开装配 + 行菜单入口 + 指针轴）；重复调用产出
+ * 新列对象，是「同一数据全表重渲染」计数窗口的触发形态（列对象引用更新 → 全部
+ * 单元格重渲染）。指针轴 = 计数/计时面向的桌面形态（测试默认媒体即指针轴）。 */
 export function buildFixtureColumns(): DataTableColumn<Transaction>[] {
-  return buildTransactionColumns(useReferenceStore(), {
+  return buildTransactionColumns({
     onRowMenuOpen: () => {},
     expandPurchases: true,
+    inputMode: computed(() => "pointer"),
   });
 }
 
 /** 挂载桌面表格（fixture 行集 + 生产列构造），返回 wrapper 供断言与计数。 */
 export function mountDesktopRenderTable(): VueWrapper {
   return mount(DesktopRenderTable, {
-    props: { columns: buildFixtureColumns(), rows: fixtureDisplayRows() },
+    props: { columns: buildFixtureColumns() },
   });
 }

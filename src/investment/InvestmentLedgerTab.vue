@@ -36,6 +36,7 @@ import { useRowContextMenu } from "@ledger/row-context-menu";
 import { useTransactionModalState } from "@ledger/transaction-modal-state";
 import { buildRowMenuOptions } from "@/transaction/transaction-row-menu";
 import { KIND_TAG_TYPE, rowActionsColumn } from "@/transaction/transaction-columns";
+import { transactionTableShellVars } from "@/transaction/transaction-cells";
 import { ledgerRowToModalRow } from "@/investment/ledger-row-modal";
 import { instrumentDisplayLabel } from "@/investment/instrument-display-label";
 import PinyinSelect from "@ledger/ui-kit/PinyinSelect.vue";
@@ -84,6 +85,9 @@ const LEDGER_TAB_KINDS: TransactionKind[] = ["buy", "sell", "convert", "split", 
 
 const session = useInvestmentsSessionStore();
 const reference = useReferenceStore();
+const app = useAppStore();
+// 表格壳层变量（#2010）：rowActionsColumn 平替按钮的 hover 底色/圆角随主题（与主列表同源）
+const tableShellStyle = computed(() => transactionTableShellVars(app.theme));
 
 const rows = ref<InvestmentTransactionRow[]>([]);
 const total = ref(0);
@@ -592,6 +596,7 @@ function onCreated() {
       :data="rows"
       :loading="loading"
       :bordered="false"
+      :style="tableShellStyle"
       size="small"
       remote
       :row-key="(r: InvestmentTransactionRow) => r.id"

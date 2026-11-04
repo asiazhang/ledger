@@ -12,7 +12,7 @@ import {
 } from "./common";
 import { wireInvokeSeam } from "@ledger/test-support/invoke-mock";
 import { clickDialogButton } from "@ledger/test-support/dom";
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { flushPromises } from "@vue/test-utils";
 import { NDataTable, NPagination } from "naive-ui";
 import { fireProp } from "@ledger/test-support/component-vm";
@@ -101,6 +101,38 @@ describe("TransactionsView 服务端分页", () => {
     resolveList({ items: [], total: 0 });
     await flushPromises();
     expect(wrapper.findComponent(NDataTable).props("loading")).toBe(false);
+  });
+
+  it("快翻页不闪加载指示器（#2010 体验收尾）：行集在场时 loading 延迟整流", async () => {
+    vi.useFakeTimers();
+    try {
+      const wrapper = await mountView(); // 常规布线：20 行在场
+      expect(bodyRows(wrapper).length).toBe(20);
+      // 接缝重布线：list_transactions 挂起（模拟慢往返），其余命令走规范夹具
+      let resolvePage2!: (v: unknown) => void;
+      wireInvokeSeam({
+        overrides: {
+          list_transactions: () =>
+            new Promise((resolve) => {
+              resolvePage2 = resolve;
+            }),
+        },
+      });
+      tablePagination(wrapper).onChange(2);
+      await flushPromises();
+      // 行集在场 + 加载未满出场延迟：不显示指示器（快加载零闪烁，被拦断的过场即闪屏源）
+      expect(wrapper.findComponent(NDataTable).props("loading")).toBe(false);
+      await vi.advanceTimersByTimeAsync(120);
+      expect(wrapper.findComponent(NDataTable).props("loading")).toBe(true);
+      resolvePage2({ items: [], total: 0 });
+      await vi.advanceTimersByTimeAsync(249);
+      // 已登场指示器补足最小驻留（过场完整淡出，不鬼影闪断）
+      expect(wrapper.findComponent(NDataTable).props("loading")).toBe(true);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(wrapper.findComponent(NDataTable).props("loading")).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
