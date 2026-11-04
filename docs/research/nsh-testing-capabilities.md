@@ -9,6 +9,7 @@
   - **【社区】** 上游 issue 报告者实测（含未获官方回应项，标注 issue 号）
   - **【推断】** 本报告基于一手事实的裁决推断，均显式标注
 - 版本基线：`nsh-core` / `nsh-testing` 0.4.0（2026-11-04 发布；`nsh-core` 0.1.0（10-17）→0.4.0 三周四版）【一手：[crates.io](https://crates.io/api/v1/crates/nsh-testing)】；文档与 issue 状态截至本报告日期
+- 回填记录：裁决结论已评论回填 [#2015](https://github.com/asiazhang/ledger/issues/2015#issuecomment-6635787987)
 
 ---
 
@@ -151,25 +152,26 @@ assert!(app.screen().texts().contains(&"1 item left"));
 - NSH 应用 crate 取 **lib + bin 双靶形态**：lib 导出根组件与装配入口（账本库路径等启动参数可注入），bin 只做薄启动。headless 测试经 `Root::of::<nsh_app::App>` + 注入测试库路径起真实视图树。
 - `nsh-engine` / `nsh-testing` 进 dev-dependencies 并随 workspace NSH 版本**精确锁定**（`=0.4.0` 式；官方文档示例 `"0.1"` 是版滞后写法，不效仿）。
 - 测试库用统一测试数据库工厂（`test_support`，ADR-0084）造数——组件测试与域单测同源造数，不另立。
+- **开工首验项**：headless 默认手机惯用语、桌面形态是全部快捷键/右键断言的硬前提（1.3 节）——#2017 落第一份 headless 测试时**第一步**先验证 `Environment` 桌面形态设置可编译且快捷键可派发；拼法对不上 docs.rs 即停下回报，本报告 3.2 / 3.3 的落点指引随此复核。
 
 ### 3.2 #2021 快捷键抑制接线断言
 
 - **落点**：NSH 应用 crate 集成测试（headless 组件测试）。
-- **形态**：`Environment` 置桌面形态（1.3 节硬前提）→ 测试库造 ≥2 页数据 → 打开任一注册抑制的弹层（如危险确认）→ `keyboard.press("[")` → **断言用户可见的页码指示 / 首行文本不变** → 关闭弹层（ESC / `back()`）→ 同键再按 → 断言翻页生效。两族快捷键共用闸门，翻页键为代表用例、周期键同形各一条。
+- **形态**：`Environment` 置桌面形态（1.3 节硬前提）→ 测试库造 ≥2 页数据 → 打开任一注册抑制的弹层（如危险确认）→ `keyboard.press("[")`（键位＝ADR-0140 裸键翻页；周期键 `,` / `.` 同理，ADR-0141）→ **断言用户可见的页码指示 / 首行文本不变** → 关闭弹层（ESC / `back()`）→ 同键再按 → 断言翻页生效。两族快捷键共用闸门，翻页键为代表用例、周期键同形各一条。
 - **「删除即红」负向条目**：删掉 keymap 处理器中的抑制检查 → 上述测试红（弹层下按键把页翻了）。断言对准用户可观察结果（页码文本），不对准函数调用形状。
 - 边界幂等 / 期间钳制的**决策半边**仍是纯 Rust 单测（步进逻辑），headless 只钉接线——与 ADR-0087 分层一致。
 
 ### 3.3 #2022 失效信号→列表重读接线断言
 
 - **落点**：同 crate 集成测试。
-- **形态**：列表呈现 N 行 → `right_click(行选择器)` → `choose_menu_item(删除)` → `on_dialog` 应答确认 → `wait_for_gone(该行文本选择器)` 或断言行 `count` 减一；同测补取消路径（应答取消 → 行仍在、库中仍在）。
+- **形态**：列表呈现 N 行 → `right_click(行选择器)` → `choose_menu_item(删除)` → `on_dialog` 应答确认 → `wait_for_gone(该行文本选择器)` 或断言行 `count` 减一；同测补取消路径——应答取消 → 断言行仍在（UI 可见性）且库中仍在（测试与被测应用同进程持有测试库路径，**直接调域读 API 核对行存在**——headless 断言原语无查库能力，库态核对走 Rust 测试本体，不经 UI）。
 - **「删除即红」负向条目**：删掉失效信号订阅接线 → 库中行已删而列表仍旧 → `wait_for_gone` 超时红。断言对准用户可见的刷新结果。
 - **纪律**：域写与重读在后台线程，呈现晚于步骤返回（1.2 节步骤语义）——异步结果一律 `wait_for`，不断言步骤后同步可见。
 
 ### 3.4 #2024 UI 冒烟条件项判定：**成立**
 
 - 首件＝headless 冒烟：起应用根 → `wait_for` 首屏关键文本（如「共 N 条」计数）。归入 NSH 应用 crate 集成测试，随既有 `cargo test --workspace` 泳道运行。
-- 真实窗口复跑（本地、不进 CI）：`nsh test <dir> --target linux`（`xvfb-run -a` + `dbus-run-session` 包裹，官方 CI 同款），结果记入 #2015 对表（2.3）。
+- 真实窗口复跑（本地、不进 CI，理由与包裹细节见 2.3）：`nsh test <dir> --target linux`，结果记入 #2015 对表。
 
 ### 3.5 通用纪律（迁移系列全部 UI 自动化测试）
 
@@ -179,7 +181,7 @@ assert!(app.screen().texts().contains(&"1 item left"));
 4. **异步**：后台线程结果一律 `wait_for` / `wait_for_gone`；禁用「步骤后立刻断言」。
 5. **时钟**：涉等待 / 动画用 `Clock::manual` + `run_for` / `fast_forward`，消除真实时间依赖。
 6. **断言面**：`texts()` / `count()` / `shows()` / `enabled()` / `value()` / `spanStyle()`（语义色）；不用像素断言（无此能力）。
-7. **性能门禁**（供后续性能票引用）：`--trace` / `EngineConfig.trace` 的 item/ops 计数做门禁——「Counts are deterministic; timings are not」，与 #2012 先例同哲学。
+7. **性能门禁**（供后续性能票引用）：`--trace` / `EngineConfig.trace` 的 item/ops 计数做门禁（1.5 节），与 #2012 先例同哲学。
 
 ---
 
@@ -188,4 +190,4 @@ assert!(app.screen().texts().contains(&"1 item left"));
 - **#917 / #881 修复与否不推翻裁决**：两者都有测试侧纪律兜底（3.5），且属上游活跃修复区（testing 是一等公民，官方 CI 全量自证）。
 - **0.x breaking**：版本精确锁定 + 升级显式成票（#2017 纪律）已覆盖；测试 API 变更的修复成本是升级票预算内工作。
 - **上游若让 headless 依赖平台后端**：与官方 core CI 自证（无平台后端、ubuntu 纯跑）矛盾，出现即值得单独评估——记为 revisit 触发条件。
-- **#2024 立桩验收时复核**：若真实窗口本地复跑暴露 headless 语义盲区（如 GTK4 转发层缺陷漏网），按「平台保真缺口已有归属」（0 节理由 4）归人工清单，不回卷接线断言形态。
+- **#2024 立桩验收时复核**：若真实窗口本地复跑暴露 headless 语义盲区（如 GTK4 转发层缺陷漏网），按 0 节理由 4 的既有归属处理，不回卷接线断言形态。
