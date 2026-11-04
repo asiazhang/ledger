@@ -31,6 +31,7 @@ Ledger 的领域词汇表按自然域拆分：本文件列出全部分域、各�
 | 13 | 多端同步 | [`docs/contexts/CONTEXT-sync.md`](docs/contexts/CONTEXT-sync.md) | Sync、Transport、OpLog、DomainCommand、Replay、DeviceId、TotalOrder、OccurrenceKey、ParkedOp、Checkpoint、SyncEnvelope、SyncBoundary（ADR-0091）、SyncDatabase（ADR-0139） |
 | 14 | 应用更新 | [`docs/contexts/CONTEXT-app-update.md`](docs/contexts/CONTEXT-app-update.md) | 自动更新（Auto Update）、更新检查、更新清单、更新工件、更新签名（ADR-0124） |
 | 15 | 储蓄目标 | [`docs/contexts/CONTEXT-savings-goal.md`](docs/contexts/CONTEXT-savings-goal.md) | 储蓄目标（SavingsGoal）、目标账户、蓄水进度、预计达成时间（ETA）、所需月存、达成与归档、养老测算 |
+| 16 | 应用壳 | [`docs/contexts/CONTEXT-app-shell.md`](docs/contexts/CONTEXT-app-shell.md) | 原生壳（Native Shell App）、双壳并存期（Dual-Shell Migration Window）（ADR-0145） |
 
 ## 域间关系
 
@@ -52,3 +53,4 @@ Ledger 的领域词汇表按自然域拆分：本文件列出全部分域、各�
 - **实物资产（单列小域）→ 核心交易（只消费不产流水）**：PhysicalAsset 是大件实物的估值档案，与物品域 Item 按「要不要跟踪市值」互斥分家；金额折算走核心域 Amount 接缝、币种复用核心域字典。估值机制、净资产口径与 MVP 边界见实物资产域词条（ADR-0064）。
 - **应用更新（单列小域）→ 壳层机制，与备份域相邻**：自动更新不持账本语义，后端与前端面归壳层（不立业务域 crate 与壳内域目录，ADR-0111 归位判据；决策集合见 ADR-0124）；安装前经备份域更新前备份，自动检查开关与提醒记忆是设备偏好（见参考设置域轻量设置项），提醒弹层消费界面域弹层编排；与多端同步域无交叉——更新分发应用本体，不分发账本数据。
 - **储蓄目标（单列小域）→ 核心交易 + 定时计划**：蓄水与取出是真实 `transfer` / `expense` 流水，进度即专属账户余额（ADR-0133）；月存节奏复用定时转账（ScheduledTransfer）形态，目标域零新写入路径；与预算互不扣减——预算管花、目标管攒；账户身份由绑定派生、不复用账户类型闭集（黑洞先例）。
+- **应用壳（单列小域）→ 消费全部业务域 crate、承载迁移编排**：原生壳是壳层的下一任承载者，依赖方向沿用分层纪律（ADR-0112）、不定义账本语义；双壳并存期 Tauri 壳保持唯一发版产品，平价核对基线＝命令清单＋BDD 场景清单；与界面状态与交互域相邻——交互语义（快捷键、弹层抑制、输入轴等）定义仍归界面域，原生壳只做跨栈保真不重定义；与应用更新域相邻——自动更新机制在切轨前仍由旧壳承载、随旧壳退役下线（ADR-0145）。
