@@ -1,14 +1,16 @@
 //! 事件发射：写入/产物变更后的粗粒度失效信号 + 非信号的带 payload 事件发射。
 //!
 //! 失效信号的事件名常量、`emit_*` 发射入口、`EVENT_APP` 镜像句柄、发射器接缝
-//! [`SignalEmitter`] 与主线程非阻塞投递 [`post_emit_with`] 机制收口于本模块；
+//! [`SignalEmitter`] 与主线程非阻塞投递（`post_emit_with`，tauri-emit 门内）机制收口于本模块；
 //! 「哪个写操作发哪个信号」的**知识**已收拢到信号映射单点 `signals::signals_for`
 //!（ADR-0044）：壳层经 `signals::emit_for` 判定后走到这里发射。发射一律经
-//! [`SignalEmitter::post`] / [`post_emit_with`] **投递到主线程事件循环队尾**
-//! 非阻塞执行（机理与死锁背景见其文档，spec #364 / ADR-0054）：IPC 壳、HTTP 壳
+//! [`SignalEmitter::post`] / `post_emit_with` **投递到主线程事件循环队尾**
+//! 非阻塞执行（tauri 类型件——`post_emit_with` / AppHandle 实现与
+//! `init_event_app` 注入入口——经 `tauri-emit` feature 门控，仅旧壳启用；NSH 原生壳
+//! 不链接 tauri，深路径发射槽经 [`init_deep_path_emitter`] 注册点注入，issue #2017）（机理与死锁背景见其文档，spec #364 / ADR-0054）：IPC 壳、HTTP 壳
 //! 与深路径镜像句柄三条失效信号发射路径共用这一处投递机制，一处改动全壳生效。
 //! 不经失效信号映射的带 payload 事件（标的同步进度 `ledger:instrument-sync-progress`，
-//! issue #897）只共用 [`post_emit_with`] 投递机制——其事件名常量与发射入口归
+//! issue #897）只共用主线程投递机制（`post_emit_with`，tauri-emit 门内）——其事件名常量与发射入口归
 //! 领域侧（`sync` 域的 `progress` 模块），本模块不承载其知识，
 //! 投递机制不另起第二套。发射器接缝（[`SignalEmitter`]，spec #366）是
 //! 「非阻塞」约定的类型化载体与回归测试注入点。
@@ -24,7 +26,8 @@
 //!   壳侧接线由两壳声明表 × 映射表交叉核对兜底（`signals_cross_check`）。
 //! - `ledger:backups-changed`（issue #129）：自动备份完成 / 受管备份清理成功后 emit，
 //!   与前者平行、同样无 payload；前端设置页订阅后自动刷新备份列表与自动备份状态。
-//!   深路径执行点拿不到 `AppHandle`，经 [`init_event_app`] 注入的镜像句柄发射。
+//!   深路径执行点拿不到 `AppHandle`，经启动注入的深路径发射器（见
+//!   [`init_deep_path_emitter`]；旧壳经门内 `init_event_app` 装入）发射。
 //! - `ledger:prices-changed`（ADR-0031，issue #236）：行情同步命令写入价格后 emit——
 //!   标的信息同步 `sync_instrument_info` 成功且实际写入（全量同步已随 ADR-0081 决策 3 退役，
 //!   issue #698）；与前者平行、同样无 payload，前端价格消费方
@@ -34,6 +37,9 @@
 
 use std::sync::OnceLock;
 
+// tauri 类型件（AppHandle 投递实现与深路径注入入口）经 tauri-emit 门编译
+// （issue #2017 / ADR-0145：仅旧壳启用，NSH 原生壳不链接 tauri）。
+#[cfg(feature = "tauri-emit")]
 use tauri::{AppHandle, Emitter};
 
 /// 通用参考数据失效信号事件名（前端订阅；无 payload）。
@@ -54,15 +60,18 @@ pub const BACKUPS_CHANGED: &str = "ledger:backups-changed";
 /// 各自订阅后重拉自身数据。
 pub const PRICES_CHANGED: &str = "ledger:prices-changed";
 
-/// 进程级应用句柄镜像：自动备份的深路径执行点（连接层写入口
-/// [`crate::db::write_locked`] 提交点的写时顺带检查，ADR-0032）只持有 `&Connection`，
-/// 拿不到 Tauri 的 `AppHandle`——启动时经 [`init_event_app`] 注入一次，深层执行点经
-/// [`emit_backups_changed_current`] 发射；未注入（单测环境）时静默跳过。
-static EVENT_APP: OnceLock<AppHandle> = OnceLock::new();
+/// 进程级深路径发射器（issue #2017 / ADR-0112 决策 5 注册点形态）：自动备份的
+/// 深路径执行点（连接层写入口 [`crate::db::write_locked`] 提交点的写时顺带检查，
+/// ADR-0032）只持有 `&Connection`，拿不到壳层发射器——启动时经
+/// [`init_deep_path_emitter`] 注入一次（实现由壳层提供：旧壳为 AppHandle 主线程
+/// 非阻塞投递，经门内 `init_event_app` 装入；NSH 原生壳无失效信号消费面，不注入），
+/// 深层执行点经 [`emit_backups_changed_current`] 发射；未注入（单测环境 / NSH 壳）
+/// 时静默跳过。
+static DEEP_EMITTER: OnceLock<Box<dyn SignalEmitter>> = OnceLock::new();
 
-/// 启动时注入应用句柄（仅 setup 调用一次；重复调用以首次为准）。
-pub fn init_event_app(app: &AppHandle) {
-    let _ = EVENT_APP.set(app.clone());
+/// 注入深路径发射器（仅壳层 setup 调用一次；重复调用以首次为准）。
+pub fn init_deep_path_emitter(emitter: Box<dyn SignalEmitter>) {
+    let _ = DEEP_EMITTER.set(emitter);
 }
 
 /// 机制收口单点（spec #364 / ADR-0054）：把「发射动作」闭包投递到
@@ -85,6 +94,7 @@ pub fn init_event_app(app: &AppHandle) {
 /// 投递失败（应用退出中事件循环已关）与发射本身失败一样静默忽略，不影响写
 /// 事务 / 同步结果（ADR-0044「发射失败静默」语义）。同一线程先后入队的动作
 /// 按入队顺序在主线程依次执行，事件间无乱序。
+#[cfg(feature = "tauri-emit")]
 pub fn post_emit_with<R: tauri::Runtime>(
     app: &AppHandle<R>,
     action: impl FnOnce() + Send + 'static,
@@ -104,10 +114,11 @@ pub trait SignalEmitter: Send + Sync {
 }
 
 /// 生产实现（spec #364 / ADR-0054）：主线程非阻塞投递——`post` 构造「emit 指定
-/// 事件」闭包交 [`post_emit_with`] 投递主线程队尾，调用即返回、不等发射完成。
+/// 事件」闭包交 `post_emit_with`（tauri-emit 门内）投递主线程队尾，调用即返回、不等发射完成。
 /// 失效信号的壳层发射入口（`signals::emit_for` / 深路径 `emit_backups_changed`）
 /// 全部汇聚于此。泛型于 Runtime（issue #862）：mock runtime 直调命令函数的
 /// 集成测试与生产 Wry 同一实现，行为零差异。
+#[cfg(feature = "tauri-emit")]
 impl<R: tauri::Runtime> SignalEmitter for AppHandle<R> {
     fn post(&self, event: &'static str) {
         let handle = self.clone();
@@ -119,18 +130,27 @@ impl<R: tauri::Runtime> SignalEmitter for AppHandle<R> {
 
 /// 发出 `ledger:backups-changed` 信号（无 payload）。经 [`SignalEmitter::post`]
 /// 投递主线程非阻塞执行（spec #364）；发射失败不影响写入结果，静默忽略。
+#[cfg(feature = "tauri-emit")]
 pub fn emit_backups_changed(app: &AppHandle) {
     app.post(BACKUPS_CHANGED);
 }
 
+/// 启动时注入应用句柄（仅 setup 调用一次；重复调用以首次为准）。tauri-emit 门内
+/// 形态（issue #2017）：把 AppHandle 的投递实现装入深路径发射槽——壳侧启用本
+/// feature 时编译，调用点（根包 setup）零改动。
+#[cfg(feature = "tauri-emit")]
+pub fn init_event_app(app: &tauri::AppHandle) {
+    init_deep_path_emitter(Box::new(app.clone()));
+}
+
 /// 深路径发射入口：经进程级镜像句柄发出 [`BACKUPS_CHANGED`] 信号，
 /// 句柄未注入时静默跳过。供拿不到 `AppHandle` 的深层执行点使用；
-/// 命令层持有真实句柄时应直接走 [`emit_backups_changed`]。
+/// 命令层持有真实句柄时应直接走门内 `emit_backups_changed`。
 /// 与 [`SignalEmitter`] 生产实现共用同一投递机制——深路径执行点（任意写线程）
 /// 同样不等回执、不持 `webviews_lock`（spec #364）。
 pub fn emit_backups_changed_current() {
-    if let Some(app) = EVENT_APP.get() {
-        emit_backups_changed(app);
+    if let Some(emitter) = DEEP_EMITTER.get() {
+        emitter.post(BACKUPS_CHANGED);
     }
 }
 
@@ -158,11 +178,11 @@ mod tests {
         assert!(PRICES_CHANGED.starts_with("ledger:"));
     }
 
-    /// 未注入句柄时深路径发射静默跳过，不 panic。
+    /// 未注入发射器时深路径发射静默跳过，不 panic。
     #[test]
-    fn emit_backups_changed_current_without_handle_is_silent() {
-        // OnceLock 进程内单次注入；在未初始化的测试环境无句柄可用即可重复调用。
-        if EVENT_APP.get().is_none() {
+    fn emit_backups_changed_current_without_emitter_is_silent() {
+        // OnceLock 进程内单次注入；在未初始化的测试环境无发射器可用即可重复调用。
+        if DEEP_EMITTER.get().is_none() {
             emit_backups_changed_current();
         }
     }

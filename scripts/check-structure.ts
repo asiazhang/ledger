@@ -984,6 +984,15 @@ function memberCrateDirs(srcTauriDir: string): string[] {
  * - infra `http` 投影门被摘（axum 裸依赖 / impl 无 cfg / default 含 http / 域侧
  *   成员启用 http）→ axum 无条件编入或域侧引入，本核对红。
  */
+/** 存量域→tauri 认许清单（issue #2017 / ADR-0145）：域 crate 声明 tauri 生产依赖
+ *  的既有宿主面——自动备份调度 / 行情车道 / 同步触发宿主的 AppHandle API 随
+ *  ADR-0145 迁移系列票退役；清单外的新域声明即红（防新增域→tauri 边）。 */
+const DOMAIN_TAURI_ALLOWED: readonly string[] = [
+  "ledger-backup",
+  "ledger-market-sync",
+  "ledger-sync-engine",
+];
+
 function checkCrateBoundaries(srcTauriDir: string): string[] {
   const problems: string[] = [];
   const repoRoot = dirname(srcTauriDir);
@@ -1307,6 +1316,46 @@ function checkCrateBoundaries(srcTauriDir: string): string[] {
     }
   }
 
+  // ⑧' tauri-emit 门（issue #2017 / ADR-0145 双壳并存期，与 ⑧ http 门同款形状）：
+  // 失效信号的 AppHandle 投递实现只被旧壳（根包）消费，tauri 改 optional、经
+  // `tauri-emit` feature 门控——NSH 原生壳进程不得链接 tauri（GTK3/WebKitGTK 与
+  // GTK4 同进程符号互踩，gtk_init_check 双双失效）。三处删除即变红——
+  // ① infra 的 tauri 依赖须声明 optional（裸依赖即无条件链接，NSH 图被污染）；
+  // ② infra [features] 须有 tauri-emit 转发 dep:tauri（门与依赖面绑死）；
+  // ③ 根包与 infra 的 [features] default 不得含 tauri-emit（默认 feature 即生产）。
+  const tauriEmitGateLabel = "tauri-emit 投影门";
+  if (infraManifest !== null) {
+    const tauriLine = infraManifest.split("\n").find((l) => /^\s*tauri\s*=/.test(l));
+    if (tauriLine === undefined) {
+      problems.push(`✗ ${tauriEmitGateLabel}：infra Cargo.toml 找不到 tauri 依赖声明`);
+    } else if (!tauriLine.includes("optional = true")) {
+      problems.push(
+        `✗ ${tauriEmitGateLabel}：infra Cargo.toml 的 tauri 依赖未声明 optional\n` +
+          `    ${tauriLine.trim()}\n` +
+          "    非 optional 即无条件链接 tauri（GTK3/WebKitGTK），NSH 原生壳进程被污染" +
+          "（issue #2017 / ADR-0145），加回 optional 即变绿",
+      );
+    }
+    const tauriEmitFeatureLine = manifestSection(infraManifest, "features")
+      ?.split("\n")
+      .find((l) => /^\s*tauri-emit\s*=/.test(l));
+    if (tauriEmitFeatureLine === undefined || !tauriEmitFeatureLine.includes("dep:tauri")) {
+      problems.push(
+        `✗ ${tauriEmitGateLabel}：infra Cargo.toml [features] 缺 \`tauri-emit = ["dep:tauri"]\`\n` +
+          "    门与依赖面绑死——feature 不转发 dep:tauri 即门形同虚设（issue #2017）",
+      );
+    }
+  }
+  for (const [manifest, where] of defaultFeatureManifests) {
+    if (defaultFeaturesInclude(manifest, "tauri-emit")) {
+      problems.push(
+        `✗ ${tauriEmitGateLabel}：${where} [features] default 包含 tauri-emit\n` +
+          "    默认 feature 在生产构建启用，等价于无条件链接 tauri" +
+          "（issue #2017 / ADR-0145），从 default 移除 tauri-emit 即变红",
+      );
+    }
+  }
+
   // ③' impl cfg 门：error.rs 的 IntoResponse impl 必须带 feature = "http" 的门。
   const errorRsPath = join(srcTauriDir, INFRA_SRC_REL, "error.rs");
   if (!existsSync(errorRsPath)) {
@@ -1353,6 +1402,43 @@ function checkCrateBoundaries(srcTauriDir: string): string[] {
         `✗ ${httpGateLabel}：域侧成员 ${crateDir} 生产依赖直接声明 axum\n` +
           "    域侧依赖不引入 axum——axum 只有壳层需要（ADR-0111 决策 5 / issue #1133），" +
           "移除该依赖即变红",
+      );
+    }
+    // ④' 域侧启用 tauri-emit / 直接声明 tauri 生产依赖 → 红（issue #2017 / ADR-0145）：
+    // tauri 只许旧壳（根包）与 DOMAIN_TAURI_ALLOWED 认许的存量宿主链接——其余
+    // 域侧引入会把 GTK3/WebKitGTK 编进域依赖图，NSH 原生壳（壳层、合法依赖域侧）
+    // 被传递污染。存量宿主（backup/market-sync/sync-engine 的调度 AppHandle API）
+    // 在 DOMAIN_TAURI_ALLOWED 认许（含其经 emit_for 消费投递实现所需的对
+    // ledger-infra 启用 tauri-emit），随迁移系列票退役；新声明即红。
+    // [dev-dependencies] 不在核对范围（测试专用边，先例同 axum）。
+    const memberEntry = CRATES.find((c) => c.dir === crateDir);
+    const isShell = memberEntry?.layer === CRATE_LAYER.SHELL;
+    const tauriHostAllowed = DOMAIN_TAURI_ALLOWED.includes(memberEntry?.name ?? "");
+    const tauriEmitLine = productionLedgerInfraEnablement(memberManifest, "tauri-emit");
+    if (tauriEmitLine !== null && !(isShell && crateDir === ".") && !tauriHostAllowed) {
+      problems.push(
+        `✗ ${tauriEmitGateLabel}：成员 ${crateDir}（${memberEntry?.layer ?? "未知层"}）生产依赖 ledger-infra 启用了 tauri-emit\n` +
+          `    ${tauriEmitLine}\n` +
+          "    tauri-emit 只许旧壳（根包）启用；其余成员启用即把 tauri（GTK3/WebKitGTK）编入" +
+          "自身依赖图，NSH 原生壳进程被传递污染（issue #2017 / ADR-0145），移除该 feature 即变红",
+      );
+    }
+    const declaresTauri = declaredProductionDependencyNames(memberManifest).includes("tauri");
+    if (declaresTauri && !isShell && !DOMAIN_TAURI_ALLOWED.includes(memberEntry?.name ?? "")) {
+      problems.push(
+        `✗ ${tauriEmitGateLabel}：域侧成员 ${crateDir} 生产依赖直接声明 tauri\n` +
+          "    域侧依赖不引入 tauri——tauri 只有旧壳需要（issue #2017 / ADR-0145）；" +
+          "存量宿主面在 DOMAIN_TAURI_ALLOWED 认许（随迁移系列票退役），新声明须先下沉" +
+          "注册点形态（ADR-0112 决策 5）或列入认许清单留痕",
+      );
+    }
+    // ⑤'' NSH 原生壳（非根包的壳层成员）生产依赖 tauri → 红：NSH 进程链接 tauri
+    // 即 GTK3/WebKitGTK 与 GTK4 同进程符号互踩（本门的存在理由，issue #2017）。
+    if (isShell && declaresTauri && crateDir !== ".") {
+      problems.push(
+        `✗ ${tauriEmitGateLabel}：壳层成员 ${crateDir} 生产依赖 tauri\n` +
+          "    NSH 原生壳进程不得链接 tauri（GTK3/WebKitGTK 与 GTK4 同进程符号互踩，" +
+          "issue #2017 / ADR-0145）——失效信号等壳层机制经注册点接线，不经 tauri",
       );
     }
   }
@@ -1992,7 +2078,8 @@ function main(): void {
       `· 当期入口调用方闭集 ${CONVERT_CURRENT_CALLERS.length} 成员全在册（白名单外即红，ADR-0011 / #1692）` +
       `· test_utils 生产编译门（cfg 门 + 生产依赖不启用 test-utils，#1132）` +
       `· 投资五节锚点生产编译门（cfg 门，#1185）` +
-      `· http 投影 feature 门（axum optional + impl cfg 门 + default 不含 http + 域侧不启用，#1133）`,
+      `· http 投影 feature 门（axum optional + impl cfg 门 + default 不含 http + 域侧不启用，#1133）` +
+      `· tauri-emit 门（tauri optional + feature 转发 + default 不含 + 域侧不启用，#2017）`,
   );
 }
 

@@ -7,7 +7,9 @@
 //! 二者同在 `ledger:*` 命名空间但互不替代，发射判定也不经 signals 映射单点
 //!（映射单点只裁决失效信号，ADR-0044）。事件名常量与发射入口归本域收口
 //!（与 `events` 模块的分工先例一致：不经失效信号映射的带 payload 事件只共用
-//! 其 [`ledger_infra::events::post_emit_with`] 投递机制，本模块不进映射、不另起第二套）。
+//! 主线程事件循环队尾非阻塞投递机制（`AppHandle::run_on_main_thread`——与
+//! [`ledger_infra::events`] 的生产投递同一机制，tauri-emit 门化后就地展开，
+//! issue #2017；本模块不进映射、不另起第二套投递）。
 //!
 //! 旧「标的全量同步」的进度事件（`sync-instruments:progress`）已随 ADR-0081
 //! 决策 3 整体退役；本事件是现役增量同步（InstrumentInfoSync）上的重建，
@@ -20,8 +22,6 @@
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Runtime};
-
-use ledger_infra::events::post_emit_with;
 
 /// 标的信息同步进度事件名（issue #897 / ADR-0095；带 payload，与无 payload 的
 /// 失效信号族同处 `ledger:*` 命名空间）。payload 见 [`SyncProgress`]。
@@ -82,6 +82,14 @@ impl FxSyncProgress {
 /// 仅事件名与载荷不同（[`FX_SYNC_PROGRESS`] / [`FxSyncProgress`]）。唯一实现约定
 /// 同前：**非阻塞**交接即返回；投递失败静默。独立 trait 而非复用 [`ProgressEmitter`]，
 /// 因为 `AppHandle` 只能有一个同名 trait 实现：汇率阶段推进才不会点亮标的信息
+/// 主线程非阻塞投递单点（原 `ledger_infra::events::post_emit_with` 的就地同形
+/// 展开，issue #2017：tauri-emit 门化后本 crate 的投递机制自持——编排运行在
+/// 写线程/阻塞线程池上，就地 emit 有 `webviews_lock` 跨线程死锁前科
+/// （spec #364 / ADR-0054），三个进度事件族共用这一处投递）。
+fn post_to_main<R: Runtime>(app: &AppHandle<R>, action: impl FnOnce() + Send + 'static) {
+    let _ = app.run_on_main_thread(action);
+}
+
 /// 同步的确定进度条，反之亦然。
 pub trait FxProgressEmitter: Send + Sync {
     /// 投递一次汇率阶段推进。实现必须非阻塞：交接即返回，不等送达。
@@ -92,7 +100,7 @@ pub trait FxProgressEmitter: Send + Sync {
 impl<R: Runtime> FxProgressEmitter for AppHandle<R> {
     fn emit_fx_progress(&self, progress: FxSyncProgress) {
         let handle = self.clone();
-        post_emit_with(self, move || {
+        post_to_main(self, move || {
             let _ = handle.emit(FX_SYNC_PROGRESS, progress);
         });
     }
@@ -127,13 +135,13 @@ pub trait ProgressEmitter: Send + Sync {
     fn emit_progress(&self, progress: SyncProgress);
 }
 
-/// 生产实现：payload 事件经 [`post_emit_with`] 投递**主线程事件循环队尾**非阻塞
+/// 生产实现：payload 事件经 `run_on_main_thread` 投递**主线程事件循环队尾**非阻塞
 /// 执行（spec #364 / ADR-0054 同一投递机制——编排运行在写线程/阻塞线程池上，
 /// 就地 emit 会走 `webviews_lock` 同步等待路径，有跨线程死锁前科）。
 impl<R: Runtime> ProgressEmitter for AppHandle<R> {
     fn emit_progress(&self, progress: SyncProgress) {
         let handle = self.clone();
-        post_emit_with(self, move || {
+        post_to_main(self, move || {
             let _ = handle.emit(INSTRUMENT_SYNC_PROGRESS, progress);
         });
     }
@@ -153,7 +161,7 @@ pub trait BackfillProgressEmitter: Send + Sync {
 impl<R: Runtime> BackfillProgressEmitter for AppHandle<R> {
     fn emit_backfill_progress(&self, progress: SyncProgress) {
         let handle = self.clone();
-        post_emit_with(self, move || {
+        post_to_main(self, move || {
             let _ = handle.emit(HISTORY_BACKFILL_PROGRESS, progress);
         });
     }

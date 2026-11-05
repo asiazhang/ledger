@@ -6,6 +6,10 @@ edition = "2024"
 publish = false
 
 [features]
+# Tauri IPC 发射投影（issue #2017 / ADR-0145）：失效信号发射的 AppHandle 实现
+# 面（events.rs 的 tauri 类型件）。仅壳侧（根包）启用；域侧与 NSH 原生壳不启用
+# ——NSH 进程不得链接 tauri（GTK3/WebKitGTK 与 GTK4 同进程符号互踩）。
+tauri-emit = ["dep:tauri"]
 # 测试器具可见性门（ADR-0111 决策 5 / issue #1132）：`test_utils` 模块默认不参与
 # 生产编译，仅 `cfg(test)` 与显式启用本 feature 的测试构建可见（根包测试目标经
 # dev-dependency 启用）。类型身份约束不变——模块始终住本 crate，不另立 crate。
@@ -26,7 +30,14 @@ rusqlite_migration = "2.6"
 chrono = { version = "0.4.45", features = ["serde"] }
 uuid = { version = "1.23", features = ["v7", "v5", "serde"] }
 thiserror = "2.0.18"
-tauri = { version = "2", features = ["tracing"] }
+# Tauri IPC 发射投影门（issue #2017 / ADR-0145 双壳并存期）：失效信号的
+# AppHandle 投递实现（`impl SignalEmitter for AppHandle`、`post_emit_with`、
+# 深路径句柄注入）只被旧壳（根包）消费——NSH 原生壳（crates/nsh）直调域栈，
+# 且 GTK4 与 tauri 传递的 GTK3/WebKitGTK 不可同进程共存（同符号互踩，
+# gtk_init_check 双双失效），故 tauri 改 optional、经 `tauri-emit` feature 门控，
+# 仅壳侧（根包）启用（与 #1133 的 http 门同款纪律）。孤儿规则要求该 impl 与
+# trait（本 crate）同 crate，故实现留此、依赖经门隔离，而非整体外迁。
+tauri = { version = "2", features = ["tracing"], optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # HTTP 错误响应投影（`impl IntoResponse for AppError`，issue #1088）：孤儿规则要求
@@ -39,7 +50,12 @@ tracing = "0.1"
 # 异步 DB 门面（ADR-0125 决策 1，issue #1408）：作业结果经 oneshot 回传。门面的
 # 线程与作业通道自建，不依赖 tokio 运行时——`tokio::sync` 的接收端可在任意执行器
 # 上 await（tauri 全局运行时即 tokio，依赖树中本已存在）。
-tokio = { version = "1", features = ["sync"] }
+# 异步 DB 门面（ADR-0125 决策 1，issue #1408）：作业结果经 oneshot 回传。门面的
+# 线程与作业通道自建，不依赖 tokio 运行时——`tokio::sync` 的接收端可在任意执行器
+# 上 await。`rt` 是 [`db::run_db`] 的 `tokio::task::spawn_blocking`（原 tauri
+# 全局运行时句柄，随 tauri-emit 门化改为就近运行时——调用面恒在 tokio 上下文内：
+# IPC 异步命令、HTTP 壳自建运行时、测试 block_on）。
+tokio = { version = "1", features = ["sync", "rt"] }
 # tracing-subscriber 仍被 test_utils（信号捕获 Layer，#1132 feature 门）与 db 单测
 # 消费，故留本 crate：test_utils 随 feature 编入 lib，对下游测试构建可见，
 # 依赖必须在常规 [dependencies]（dev-dependencies 不进下游闭包）。
@@ -73,6 +89,10 @@ objc2-foundation = { version = "0.3", default-features = false, features = [
 ] }
 
 [dev-dependencies]
+# 单测的异步驱动（`tauri::async_runtime::block_on`，db/tests 等）：tauri 随
+# tauri-emit 门化移出生产依赖，测试目标的既有驱动形态原样保留（dev-dependency
+# 只进测试构建，不影响下游依赖图）。
+tauri = { version = "2", features = ["tracing"] }
 # 门面测试并发驱动读写两作业（`tokio::join!`，钉住「读侧独立于写侧」）：`macros`
 # 只在测试目标需要，生产面零命中（`sync` 边见上）。
 tokio = { version = "1", features = ["macros"] }
