@@ -175,10 +175,11 @@ fn after_commit(conn: &Connection) {
 // 连接层统一 DB 调用 helper（形状乙，spec #498 / issue #501）
 // ---------------------------------------------------------------------------
 
-/// 连接层统一 DB 调用 helper：把 DB 闭包放到 tauri 全局运行时的阻塞线程池执行
-/// （显式句柄 [`tauri::async_runtime::spawn_blocking`]，从 HTTP 壳自建运行时调用
-/// 亦安全——返回的 JoinHandle 是跨运行时 future，生产先例
-/// `fetch_fund_quote_for_api`），事件循环线程与 tokio worker 不再被 DB 调用占用。
+/// 连接层统一 DB 调用 helper：把 DB 闭包放到当前 tokio 运行时的阻塞线程池执行
+/// （[`tokio::task::spawn_blocking`]；原为 tauri 全局运行时句柄，随 tauri-emit
+/// 门化改为就近运行时，issue #2017——调用面恒在 tokio 上下文内：IPC 异步命令
+/// （tauri 运行时即 tokio）、HTTP 壳自建运行时与测试 block_on），事件循环线程与
+/// tokio worker 不再被 DB 调用占用。
 ///
 /// - 闭包自带连接获取方式：读路径与免置脏直写（设置 KV、检查点快照一类）在
 ///   闭包内持锁执行；置脏语义的写路径不经本 helper——一律走异步 DB 门面的写
@@ -202,11 +203,9 @@ where
     // 命令：无）——两者都是线程局部，需显式带入阻塞线程。
     let dispatch = tracing::dispatcher::get_default(tracing::Dispatch::clone);
     let caller_span = tracing::Span::current();
-    tauri::async_runtime::spawn_blocking(move || {
-        with_caller_context(&dispatch, &caller_span, command, f)
-    })
-    .await
-    .map_err(|e| AppError::Io(format!("数据库任务执行失败: {e}")))?
+    tokio::task::spawn_blocking(move || with_caller_context(&dispatch, &caller_span, command, f))
+        .await
+        .map_err(|e| AppError::Io(format!("数据库任务执行失败: {e}")))?
 }
 
 /// 跨线程携带调用点上下文的执行单点（ADR-0069 决策 3）：在调用点 dispatcher 下、

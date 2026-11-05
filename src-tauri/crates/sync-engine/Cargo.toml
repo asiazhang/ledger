@@ -13,7 +13,11 @@ publish = false
 # 零生产依赖、对任何业务域零反向依赖。域→域方向均为上层消费下层的合法直呼
 # （ADR-0112 决策 2）；对根包（壳层）的反向引用由 cargo 依赖图编译期拒绝
 # （生产依赖面无根包，dev-dependency 环只覆盖测试目标）。
-ledger-infra = { path = "../infra" }
+# tauri-emit 启用留痕（issue #2017 / ADR-0145）：本 crate 的车道/触发编排经
+# `signals::emit_for(&AppHandle,…)` 消费 infra 的失效信号投递实现（ADR-0044
+# 信号映射单点形态）；本 crate 是 DOMAIN_TAURI_ALLOWED 认许的 tauri 存量宿主
+# （调度 AppHandle API，随迁移系列票退役），启用该 feature 不新增依赖面。
+ledger-infra = { path = "../infra", features = ["tauri-emit"] }
 ledger-sync-protocol = { path = "../sync-protocol" }
 ledger-transaction = { path = "../transaction" }
 ledger-accounts = { path = "../accounts" }

@@ -431,5 +431,9 @@
     "signature-invalid": "更新工件验签失败，已拒绝安装",
     "not-downloaded": "更新尚未下载完成，请先下载",
     "install-failed": "更新安装失败，请重试"
+  },
+  "nsh-shell": {
+    "book-missing": "账本库文件不存在：{0}（立桩期请传入已有账本的目录，不新建账本）",
+    "encrypted-unsupported": "密文库暂不支持：原生壳立桩只引导未加密账本库，解锁向导随迁移系列票补齐"
   }
 }

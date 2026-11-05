@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   CONVERT_CURRENT_CALLERS,
+  CRATE_LAYER,
   CRATE_MODULE_TARGETS,
   CRATES,
   INFRA_SRC_REL,
@@ -235,9 +236,11 @@ const INFRA_MANIFEST = [
   "[features]",
   "test-utils = []",
   'http = ["dep:axum"]',
+  'tauri-emit = ["dep:tauri"]',
   "",
   "[dependencies]",
   'axum = { version = "0.8", optional = true }',
+  'tauri = { version = "2", optional = true }',
   "",
   "[lints]",
   "workspace = true",
@@ -456,8 +459,10 @@ describe("check-structure（结构守门）", () => {
     expect(r.output).toContain(`crate 模块面 ${CRATE_MODULE_TARGETS.length} 份`);
     const domainCount = WHITELIST.filter((w) => w.layer === LAYER.DOMAIN).length;
     expect(r.output).toContain(`域目录 ${domainCount}`);
-    // 投影覆盖全等（防派生器静默丢成员）：每个非根包政策核成员恰有一份模块面。
-    const memberCrates = CRATES.filter((crate) => crate.dir !== ".");
+    // 投影覆盖全等（防派生器静默丢成员）：每个非壳层政策核成员恰有一份模块面
+    //（壳层成员不整册登记模块面——根包走 WHITELIST 政策条目表，nsh-app 双壳并存
+    // 期首块桩同理，issue #2017）。
+    const memberCrates = CRATES.filter((crate) => crate.layer !== CRATE_LAYER.SHELL);
     expect(CRATE_MODULE_TARGETS.length).toBe(memberCrates.length);
     expect([...CRATE_MODULE_TARGETS].map((t) => t.srcRel).sort()).toEqual(
       memberCrates.map((crate) => `${crate.dir}/src`).sort(),
@@ -708,8 +713,8 @@ describe("check-structure 跨 crate 依赖方向（#1596 cargo 退役 / ADR-0071
   /** infra 清单桩：带 http 投影门 features/axum 形态 + 给定 dev-dependency 行。 */
   const infraFixtureManifest = (devDeps: string): string =>
     '[package]\nname = "ledger-infra"\nversion = "0.6.0"\nedition = "2024"\n\n' +
-    '[features]\nhttp = ["dep:axum"]\n\n' +
-    '[dependencies]\naxum = { version = "0.8", optional = true }\n\n' +
+    '[features]\nhttp = ["dep:axum"]\ntauri-emit = ["dep:tauri"]\n\n' +
+    '[dependencies]\naxum = { version = "0.8", optional = true }\ntauri = { version = "2", optional = true }\n\n' +
     `[dev-dependencies]\n${devDeps}\n\n[lints]\nworkspace = true\n`;
 
   it("基础设施文件引用域模块 / 域 crate 模块引用壳层 → 文本扫描已退役（红源换为编译期）", () => {
@@ -1428,8 +1433,8 @@ describe("check-structure crate 边界核对（spec #1086 / issue #1087 门禁�
       memberManifests: {
         "crates/infra":
           '[package]\nname = "ledger-infra"\nversion = "0.6.0"\nedition = "2024"\n\n' +
-          '[features]\nhttp = ["dep:axum"]\n\n' +
-          '[dependencies]\naxum = { version = "0.8", optional = true }\n\n' +
+          '[features]\nhttp = ["dep:axum"]\ntauri-emit = ["dep:tauri"]\n\n' +
+          '[dependencies]\naxum = { version = "0.8", optional = true }\ntauri = { version = "2", optional = true }\n\n' +
           '[dev-dependencies]\ntauri-app = { path = "../.." }\n\n[lints]\nworkspace = true\n',
       },
     });
