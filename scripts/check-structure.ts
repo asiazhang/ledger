@@ -320,6 +320,14 @@ export const CRATES: readonly CrateEntry[] = [
     layer: CRATE_LAYER.DOMAIN,
   },
   {
+    // NSH 原生壳应用 crate（issue #2017 / ADR-0145 双壳并存期首块桩）：第二个壳层
+    // bin crate——依赖方向沿用壳→域→基础设施→协议，直调域栈、不经 IPC；旧壳
+    // （tauri-app）保持唯一发版产品，两壳同层互不依赖。
+    name: "nsh-app",
+    dir: "crates/nsh",
+    layer: CRATE_LAYER.SHELL,
+  },
+  {
     name: "tauri-app",
     dir: ".",
     layer: CRATE_LAYER.SHELL,
@@ -1087,6 +1095,21 @@ function checkCrateBoundaries(srcTauriDir: string): string[] {
         problems.push(
           `✗ crate 依赖方向：${crate.name}（${crate.layer}）依赖 ${target.name}（${target.layer}）\n` +
             "    分层规则：壳 → 域 → 基础设施单向；被依赖逻辑应下沉到更低层（spec #1086）",
+        );
+      }
+      // 双壳互不依赖（issue #2017 / ADR-0145 双壳并存期）：NSH 壳与 Tauri 壳是
+      // 两个独立壳层成员，同层互依会把另一壳（含其全部 UI 栈）编进本壳产物——
+      // 壳间共享逻辑应下沉域 crate 或基础设施；层秩核对看不见同层边，故显式拒绝。
+      if (
+        target &&
+        crate.layer === CRATE_LAYER.SHELL &&
+        target.layer === CRATE_LAYER.SHELL &&
+        crate.name !== target.name
+      ) {
+        problems.push(
+          `✗ crate 依赖方向：双壳互不依赖：${crate.name} 生产依赖另一壳层成员 ${target.name}\n` +
+            "    双壳并存期两壳各自独立（ADR-0145 决策 3）：旧壳保持唯一发版产品，" +
+            "NSH 壳直调域栈不经旧壳；壳间共享逻辑应下沉域 crate 或基础设施（issue #2017）",
         );
       }
     }

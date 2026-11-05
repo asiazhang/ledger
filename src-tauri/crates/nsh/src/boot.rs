@@ -1,0 +1,104 @@
+//! 域栈引导（issue #2017 / ADR-0145）：打开未加密账本库并读交易总数。
+//!
+//! 引导内核复用基础设施引导层（[`ledger_infra::db::boot`]）：库文件处置判定
+//! （[`classify_for_boot`] 的明文/外来形态/密文/损坏四态）与成对建连
+//! （[`open_db_in`]：写连接迁移先行 + 只读读连接，ADR-0117 决策 3）都是既有
+//! 单点，本模块只做壳侧编排——与旧壳 `boot_sequence` 的明文路径同形（含外来
+//! 形态明文库建连前归一化，issue #1453），不另立第二份判定。
+//!
+//! 立桩收窄（spec #2015「对未加密账本库引导启动，无解锁向导」）：
+//! - 密文库（AwaitUnlock）→ 码化错误 [`CODE_ENCRYPTED_UNSUPPORTED`]（解锁向导
+//!   属旧壳能力，原生壳随迁移系列票补齐）；
+//! - 库文件不存在（[`DB_FILE_NAME`] 缺席）→ 码化错误 [`CODE_BOOK_MISSING`]：
+//!   启动参数是显式账本目录，静默新建空库会把路径打错吞成「交易总数 0 条」，
+//!   fail loud 优于假空态；
+//! - 损坏残留（Unreadable）→ 沿用基础设施 [`BOOT_DB_UNREADABLE`] 码与文案
+//!   （与旧壳同码同文案，用户可见语义一致）。
+//!
+//! 界面文案仅 zh-CN（spec #2015 实施决策：i18n 框架级方案不在立桩票）；码化
+//! 错误的中文原样显示（NSH 壳无错误模板同步面——旧壳错误模板服务旧前端，本壳
+//! 消息随码走，i18n 方案票再收敛）。
+
+use std::path::Path;
+
+use ledger_infra::db::boot::{BOOT_DB_UNREADABLE, BootDisposition};
+use ledger_infra::db::data_location::DB_FILE_NAME;
+use ledger_infra::db::{DbState, open_db_in};
+use ledger_infra::error::{AppError, Result};
+
+use crate::wiring;
+
+/// 密文库不支持（立桩范围外）的稳定错误码。
+pub const CODE_ENCRYPTED_UNSUPPORTED: &str = "nsh-shell.encrypted-unsupported";
+
+/// 账本库文件缺失的稳定错误码。
+pub const CODE_BOOK_MISSING: &str = "nsh-shell.book-missing";
+
+/// 外来形态归一化失败的稳定错误码（与旧壳 `boot.db-normalize-failed` 同码，
+/// 基础设施 [`ledger_infra::db::boot::BOOT_DB_NORMALIZE_FAILED`]）。
+const BOOT_DB_NORMALIZE_FAILED: &str = ledger_infra::db::boot::BOOT_DB_NORMALIZE_FAILED;
+
+/// 引导域栈打开未加密账本库（spec #2015：启动参数给账本目录，无解锁向导）。
+///
+/// 序列与旧壳明文启动路径同形：接缝接线（先于任何建库，幂等）→ 处置判定 →
+/// （外来形态明文库先归一化，原库失败保持原样）→ 成对建连（迁移 + 只读连接 +
+/// 同步元数据库挂载，全部收在 [`open_db_in`] 单点）。
+pub fn boot_ledger(book_dir: &Path) -> Result<DbState> {
+    wiring::install_domain_seams();
+    let db_path = book_dir.join(DB_FILE_NAME);
+    if !db_path.is_file() {
+        return Err(AppError::codedp(
+            CODE_BOOK_MISSING,
+            format!(
+                "账本库文件不存在：{}（立桩期请传入已有账本的目录，不新建账本）",
+                db_path.display()
+            ),
+            &[&db_path.to_string_lossy()],
+        ));
+    }
+    match ledger_infra::db::boot::classify_for_boot(&db_path)? {
+        BootDisposition::OpenPlaintext => open_db_in(book_dir),
+        BootDisposition::NormalizePlaintext => {
+            normalize_foreign_plaintext(&db_path)?;
+            open_db_in(book_dir)
+        }
+        BootDisposition::AwaitUnlock => Err(AppError::coded(
+            CODE_ENCRYPTED_UNSUPPORTED,
+            "密文库暂不支持：原生壳立桩只引导未加密账本库，解锁向导随迁移系列票补齐",
+        )),
+        BootDisposition::Unreadable => Err(AppError::coded(
+            BOOT_DB_UNREADABLE,
+            "数据库文件无法打开（文件可能已损坏）",
+        )),
+    }
+}
+
+/// 外来形态明文库归一化（issue #1453）：失败映射为码化错误、原库保持原样——
+/// 与旧壳 `boot_sequence` 的同段同码同文案（本壳无失败恢复屏，窗口直接呈现）。
+fn normalize_foreign_plaintext(db_path: &Path) -> Result<()> {
+    ledger_infra::db::encryption::normalize_plaintext_db_file(db_path).map_err(|e| {
+        tracing::error!(error = %e, "外来形态明文库归一化失败，原库保持原样");
+        AppError::coded(
+            BOOT_DB_NORMALIZE_FAILED,
+            "账本库文件形态异常，无法自动修复；请重启应用重试，或从备份文件恢复",
+        )
+    })
+}
+
+/// 读取账本库交易总数（读路径直调域服务，ADR-0145 决策 4 的立桩靶标）。
+///
+/// 经核心交易域读路径 [`list_transactions`] 的 `total`（满足过滤条件的未删除
+/// 交易总数，空过滤 = 全库口径），`page_size = 1` 只取一行——计数语义不拉全量
+/// 行集；来源列等读时投影接缝已由 [`wiring::install_domain_seams`] 接线。
+/// 读连接是成对建连的只读侧（ADR-0117：读路径不进写者闸门）。
+pub fn transaction_total(db: &DbState) -> Result<i64> {
+    let filter = ledger_transaction::TransactionListFilter {
+        page_size: Some(1),
+        ..Default::default()
+    };
+    let conn = db
+        .read_conn
+        .lock()
+        .map_err(|e| AppError::Db(e.to_string()))?;
+    Ok(ledger_transaction::list_transactions(&conn, &filter)?.total)
+}

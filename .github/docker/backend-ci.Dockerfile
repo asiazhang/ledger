@@ -28,7 +28,9 @@ ENV LANG=C.UTF-8 \
 # - vendored C 编译：build-essential + perl——rusqlite 的
 #   bundled-sqlcipher-vendored-openssl 需 make/gcc/perl（openssl Configure 是
 #   perl 脚本），runner 镜像预装而裸 ubuntu 没有，必须显式带上；
-# - tauri 系统依赖 + mold：与改前 backend job 的 apt 清单一致。
+# - tauri 系统依赖 + mold：与改前 backend job 的 apt 清单一致；
+#   libgtk-4-dev = NSH 原生壳立桩（issue #2017 / ADR-0145）：nsh-platform-linux
+#   （GTK4 后端）经 gtk4-sys/pkg-config 发现系统库，旧壳的 libgtk-3-dev 不覆盖。
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
     ca-certificates \
@@ -39,6 +41,7 @@ RUN apt-get update \
     perl \
     libwebkit2gtk-4.1-dev \
     libgtk-3-dev \
+    libgtk-4-dev \
     libayatana-appindicator3-dev \
     librsvg2-dev \
     mold \

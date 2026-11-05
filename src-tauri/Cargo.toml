@@ -258,6 +258,17 @@ codegen-units = 1
 members = ["crates/*"]
 resolver = "3"
 
+# NSH（Native Shell）框架版本锁定（ADR-0145 决策 2 / issue #2017 AC）：上游 0.x
+# 三周四版连续 breaking，升级必须显式成票——全部精确版本（`=`）钉死于 workspace
+# 声明，成员经 `workspace = true` 消费，`cargo update` 不会漂入新版本。全部
+# default-features = false：Rust 模式不带 QuickJS VM（nsh-engine / nsh-platform-linux
+# 的 default 含 `js`，ADR-0145 决策 1），nsh-base 的 default 含代码高亮（syntect，
+# 立桩消费面用不到）；`nsh-testing` 0.4.0 的 default 不含 QuickJS，测试侧原样消费。
+[workspace.dependencies]
+nsh-core = { version = "=0.4.0" }
+nsh-engine = { version = "=0.4.0", default-features = false }
+nsh-platform-linux = { version = "=0.4.0", default-features = false }
+nsh-testing = { version = "=0.4.0", default-features = false }
 
 # 易 panic 构造六件套 deny 门禁（issue #432 / ADR-0060）：门禁约束生产路径；
 # 测试目标经 crate 根与集成/BDD 测试 crate 头部 cfg_attr(test, allow) 整体豁免，

@@ -79,7 +79,7 @@ jobs:
             rustfmt --version
             cargo clippy --version
             mold --version
-            pkg-config --modversion webkit2gtk-4.1 gtk+-3.0 ayatana-appindicator3-0.1 librsvg-2.0
+            pkg-config --modversion webkit2gtk-4.1 gtk+-3.0 gtk4 ayatana-appindicator3-0.1 librsvg-2.0
             git --version
           '
 

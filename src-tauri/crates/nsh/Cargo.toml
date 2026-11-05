@@ -1,0 +1,54 @@
+[package]
+name = "nsh-app"
+version = "0.11.2"
+description = "Ledger 原生壳骨架（NSH 立桩，issue #2017 / ADR-0145）：直调域栈打开账本库的 bin crate"
+edition = "2024"
+publish = false
+# 版本与根包锁步（仓库约定：workspace 各成员同为 0.11.2）。
+
+# bin 单测执行面排除（先例：根包 tauri-app 的 [[bin]] test = false，issue #1787）：
+# main.rs 是薄入口（启动参数注入 + 平台 run_app），bin 目标零单测，显式声明
+# test = false 免链免跑；bin 内若新增 #[test]，scripts/test-exec.ts 的源码扫描
+# 守门会变红。逻辑与测试住 lib（boot / wiring / app），经 lib 目标进并发测试入口。
+[[bin]]
+name = "nsh-app"
+path = "src/main.rs"
+test = false
+
+[dependencies]
+# NSH 框架经 workspace 精确锁定消费（ADR-0145 决策 2 / issue #2017 AC：0.x 连续
+# breaking，升级显式成票；default-features = false 关掉 QuickJS VM，Rust 模式）。
+# 平台后端按目标门禁（先例：根包窗口状态插件的 target 三元组条件）——立桩期
+# 仅 Linux（硬伤清单的战场）；macOS / Windows 随迁移系列票逐平台开门。
+nsh-core.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+nsh-platform-linux.workspace = true
+
+# 域栈直调面（壳 → 域 → 基础设施单向，ADR-0112）：立桩读路径（交易列表 total）
+# 与其全部读时投影接缝（来源列反查 / 出资视图 / 转换两腿）的实现注册侧。
+ledger-infra = { path = "../infra" }
+ledger-transaction = { path = "../transaction" }
+ledger-accounts = { path = "../accounts" }
+ledger-currencies = { path = "../currencies" }
+ledger-investment = { path = "../investment" }
+ledger-item = { path = "../item" }
+ledger-merchants = { path = "../merchants" }
+ledger-policy = { path = "../policy" }
+ledger-scheduled = { path = "../scheduled" }
+# 域栈日志面（tracing 是全仓日志基座，ADR-0006）；启动期 stderr 初始化，
+# RUST_LOG 环境变量过滤。
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dev-dependencies]
+# headless 组件测试接缝（docs/research/nsh-testing-capabilities.md 裁决 §2.1 /
+# §3.1）：进程内起真实视图树，无窗口无平台后端，进 cargo test 既有泳道；
+# 版本随 workspace NSH 锁定（default-features = false 不带 QuickJS）。
+nsh-engine.workspace = true
+nsh-testing.workspace = true
+
+# 六件套易 panic 构造门禁经 workspace 继承（ADR-0060 / spec #1086 门禁前置）：
+# 本行是继承接线，缺失即门禁静默消失，由 scripts/check-structure.ts 守门。
+[lints]
+workspace = true
