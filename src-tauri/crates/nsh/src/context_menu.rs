@@ -13,8 +13,6 @@
 //!    弹层的信号上报通道殊途同归）；
 //! 2. 在指定点弹出调用方给的菜单项（词表与业务动作归调用方，本封装零业务
 //!    语义）。
-//!
-//! 测试豁免（ADR-0060）：本模块测试经 crate 根 cfg(test) 整体放行六件套。
 
 use nsh_core::element::desktop::{MenuItem, popup_menu_at};
 use nsh_core::prelude::*;
@@ -33,13 +31,4 @@ pub fn open_context_menu(items: Vec<MenuItem>, at: Point<Points>) {
         let _ = answer.await;
         drop(token);
     });
-}
-
-#[cfg(test)]
-mod tests {
-    /// 抑制上报的接线语义归 headless 组件测试（tests/app_headless.rs 的抑制
-    /// 用例按「弹层确实注册了抑制」断言页码不动）；本模块无纯决策半边，仅
-    /// 以本占位测试声明测试面归属，防「零测试即无门禁」误读。
-    #[test]
-    fn wiring_is_pinned_by_headless_suppression_tests() {}
 }

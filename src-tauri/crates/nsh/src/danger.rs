@@ -235,23 +235,4 @@ mod tests {
             "两级警示句前景色可区分"
         );
     }
-
-    /// 内容闭集：spec 的全部文案段与确认/取消文案由调用方传入（本封装零
-    /// i18n、零业务词表）。
-    #[test]
-    fn spec_carries_caller_owned_texts() {
-        let spec = DangerConfirmSpec {
-            level: DangerLevel::Error,
-            title: "删除交易".to_owned(),
-            lead: Some("确认删除该条交易？".to_owned()),
-            strong_warning: Some("删除后不可恢复。".to_owned()),
-            detail: None,
-            confirm_label: "删除".to_owned(),
-            cancel_label: "取消".to_owned(),
-        };
-        assert_eq!(spec.title, "删除交易");
-        assert_eq!(spec.strong_warning.as_deref(), Some("删除后不可恢复。"));
-        assert_eq!(spec.confirm_label, "删除");
-        assert_eq!(spec.cancel_label, "取消");
-    }
 }

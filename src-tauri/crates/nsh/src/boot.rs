@@ -22,6 +22,7 @@
 //! 消息随码走，i18n 方案票再收敛）。
 
 use std::path::Path;
+use std::sync::{Mutex, MutexGuard};
 
 use ledger_categories::Category;
 use ledger_currencies::Currency;
@@ -46,6 +47,13 @@ pub const CODE_SESSION_MISSING: &str = "nsh-shell.session-missing";
 /// 外来形态归一化失败的稳定错误码（与旧壳 `boot.db-normalize-failed` 同码，
 /// 基础设施 [`ledger_infra::db::boot::BOOT_DB_NORMALIZE_FAILED`]）。
 const BOOT_DB_NORMALIZE_FAILED: &str = ledger_infra::db::boot::BOOT_DB_NORMALIZE_FAILED;
+
+/// 读路径共用的取锁守卫（七个读函数的 conn-lock 前奏收进单点）：读连接锁
+/// 中毒统一映射为码化 [`AppError::Db`]。泛型不点名连接类型——本壳不直依赖
+/// rusqlite，连接类型随 [`DbState`] 字段推断。
+fn conn_lock<T>(mutex: &Mutex<T>) -> ledger_infra::error::Result<MutexGuard<'_, T>> {
+    mutex.lock().map_err(|e| AppError::Db(e.to_string()))
+}
 
 /// 引导域栈打开未加密账本库（spec #2015：启动参数给账本目录，无解锁向导）。
 ///
@@ -116,10 +124,7 @@ pub fn transaction_page(
         to: range.map(|r| r.to.clone()),
         ..Default::default()
     };
-    let conn = db
-        .read_conn
-        .lock()
-        .map_err(|e| AppError::Db(e.to_string()))?;
+    let conn = conn_lock(&db.read_conn)?;
     ledger_transaction::list_transactions(&conn, &filter)
 }
 
@@ -133,10 +138,7 @@ pub fn transaction_page(
 /// 空查询的域语义是空结果，视图层的空输入＝列表态不调搜索（呈现切换住
 /// [`crate::app`]）。读连接是成对建连的只读侧（ADR-0117）。
 pub fn transaction_search(db: &DbState, query: &str, page: u32) -> Result<TransactionSearchResult> {
-    let conn = db
-        .read_conn
-        .lock()
-        .map_err(|e| AppError::Db(e.to_string()))?;
+    let conn = conn_lock(&db.read_conn)?;
     ledger_transaction::search_transactions(
         &conn,
         query,
@@ -165,10 +167,7 @@ pub fn delete_transaction(db: &DbState, id: &str) -> Result<()> {
 /// （单行聚合查询，成本可忽略；写路径落地后天然跟随数据外扩/收窄，
 /// 无需独立失效接线）。
 pub fn report_date_range(db: &DbState) -> Result<ledger_reports::DateRange> {
-    let conn = db
-        .read_conn
-        .lock()
-        .map_err(|e| AppError::Db(e.to_string()))?;
+    let conn = conn_lock(&db.read_conn)?;
     ledger_reports::query_report_date_range(&conn)
 }
 
@@ -176,10 +175,7 @@ pub fn report_date_range(db: &DbState) -> Result<ledger_reports::DateRange> {
 /// 展示参数（符号/小数位）来自本只读投影；随每页读一并刷新（字典行数小，
 /// 改名/改号后的重读成本可忽略）。
 pub fn currency_rows(db: &DbState) -> Result<Vec<Currency>> {
-    let conn = db
-        .read_conn
-        .lock()
-        .map_err(|e| AppError::Db(e.to_string()))?;
+    let conn = conn_lock(&db.read_conn)?;
     ledger_currencies::list_currencies(&conn)
 }
 
@@ -188,10 +184,7 @@ pub fn currency_rows(db: &DbState) -> Result<Vec<Currency>> {
 /// （reference store 口径），软删分类的历史交易引用在交易列表显示 `-`；随每页
 /// 读一并刷新（分类行数小，改名/改父后的重读成本可忽略）。
 pub fn category_rows(db: &DbState) -> Result<Vec<Category>> {
-    let conn = db
-        .read_conn
-        .lock()
-        .map_err(|e| AppError::Db(e.to_string()))?;
+    let conn = conn_lock(&db.read_conn)?;
     ledger_categories::list_categories(&conn, false)
 }
 
@@ -201,10 +194,7 @@ pub fn category_rows(db: &DbState) -> Result<Vec<Category>> {
 /// 按缺失归一资金侧）；随每页读一并刷新（账户行数小，改名/改类型后的重读成本
 /// 可忽略）。
 pub fn account_rows(db: &DbState) -> Result<Vec<ledger_accounts::Account>> {
-    let conn = db
-        .read_conn
-        .lock()
-        .map_err(|e| AppError::Db(e.to_string()))?;
+    let conn = conn_lock(&db.read_conn)?;
     ledger_accounts::list_accounts(&conn)
 }
 
@@ -213,9 +203,6 @@ pub fn account_rows(db: &DbState) -> Result<Vec<ledger_accounts::Account>> {
 /// 软删，历史交易显示共用，issue #191）；随每页读一并刷新（商户行数小，改名后
 /// 的重读成本可忽略）。
 pub fn merchant_rows(db: &DbState) -> Result<Vec<ledger_merchants::Merchant>> {
-    let conn = db
-        .read_conn
-        .lock()
-        .map_err(|e| AppError::Db(e.to_string()))?;
+    let conn = conn_lock(&db.read_conn)?;
     ledger_merchants::list_merchants(&conn, true)
 }

@@ -132,16 +132,27 @@ fn seed_cash_account(db: &ledger_infra::db::DbState) -> String {
     seed_account(db, "测试现金", AccountType::Cash)
 }
 
-/// 经域层公开写入口造一笔交易（用例共用的最小写面）。
-fn seed_transaction(
-    db: &ledger_infra::db::DbState,
-    account: &str,
+/// 一笔种子交易的具名入参（`seed_transaction` 的载荷）：转账双腿填
+/// [`TxnSeed::to_account`]，支出/收入留 `None`。
+struct TxnSeed<'a> {
+    /// 资金账户（支出/收入的记账账户，转账的转出侧）。
+    account: &'a str,
+    /// 转入侧账户（仅转账非空）。
+    to_account: Option<String>,
+    /// 交易类型。
     kind: TransactionKind,
+    /// 金额（整数分）。
     amount_cents: i64,
-    date: &str,
+    /// 日期（YYYY-MM-DD）。
+    date: &'a str,
+    /// 分类（可空）。
     category_id: Option<String>,
+    /// 备注（可空）。
     note: Option<String>,
-) {
+}
+
+/// 经域层公开写入口造一笔交易（用例共用的最小写面，载荷具名传递）。
+fn seed_transaction(db: &ledger_infra::db::DbState, seed: TxnSeed<'_>) {
     let conn = db
         .conn
         .lock()
@@ -150,22 +161,22 @@ fn seed_transaction(
     ledger_transaction::create(
         &conn,
         TransactionInput {
-            kind,
-            amount_cents,
+            kind: seed.kind,
+            amount_cents: seed.amount_cents,
             currency_code: "CNY".to_owned(),
-            account_id: Some(account.to_owned()),
-            to_account_id: None,
+            account_id: Some(seed.account.to_owned()),
+            to_account_id: seed.to_account,
             funding_account_id: None,
             funding: Vec::new(),
             purchases: Vec::new(),
-            category_id,
+            category_id: seed.category_id,
             merchant_id: None,
             merchant_name: None,
             policy_id: None,
             refund_of_transaction_id: None,
-            note,
+            note: seed.note,
             source_order_no: None,
-            date: date.to_owned(),
+            date: seed.date.to_owned(),
             instrument_id: None,
             quantity: None,
             price_cents: None,
@@ -185,58 +196,20 @@ fn seed_transaction(
 /// 经域层公开写入口在同一账户上造一列现金支出（每笔 ¥25，日期递增）。
 fn seed_expense_series(dir: &Path, count: usize) {
     let db = nsh_app::boot::boot_ledger(dir).unwrap();
-    let conn = db
-        .conn
-        .lock()
-        .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
-        .unwrap();
-    let account = ledger_accounts::create_account(
-        &conn,
-        AccountInput {
-            name: "测试现金".to_owned(),
-            kind: AccountType::Cash,
-            currency_code: "CNY".to_owned(),
-            initial_balance_cents: Some(0),
-            credit_limit_cents: None,
-            statement_day: None,
-            due_day: None,
-        },
-    )
-    .unwrap();
+    let account = seed_cash_account(&db);
     for index in 0..count {
-        ledger_transaction::create(
-            &conn,
-            TransactionInput {
+        seed_transaction(
+            &db,
+            TxnSeed {
+                account: &account,
+                to_account: None,
                 kind: TransactionKind::Expense,
                 amount_cents: 2_500,
-                currency_code: "CNY".to_owned(),
-                account_id: Some(account.clone()),
-                to_account_id: None,
-                funding_account_id: None,
-                funding: Vec::new(),
-                purchases: Vec::new(),
+                date: &test_date(index),
                 category_id: None,
-                merchant_id: None,
-                merchant_name: None,
-                policy_id: None,
-                refund_of_transaction_id: None,
                 note: Some(format!("造数第 {index} 笔")),
-                source_order_no: None,
-                date: test_date(index),
-                instrument_id: None,
-                quantity: None,
-                price_cents: None,
-                fee_cents: None,
-                to_instrument_id: None,
-                to_quantity: None,
-                out_amount_cents: None,
-                in_amount_cents: None,
-                origin: None,
-                fx_rate: None,
-                idempotency_key: None,
             },
-        )
-        .unwrap();
+        );
     }
 }
 
@@ -245,58 +218,20 @@ fn seed_expense_series(dir: &Path, count: usize) {
 /// 搜索关键词相交）。
 fn seed_expense_notes(dir: &Path, notes: &[&str]) {
     let db = nsh_app::boot::boot_ledger(dir).unwrap();
-    let conn = db
-        .conn
-        .lock()
-        .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
-        .unwrap();
-    let account = ledger_accounts::create_account(
-        &conn,
-        AccountInput {
-            name: "测试现金".to_owned(),
-            kind: AccountType::Cash,
-            currency_code: "CNY".to_owned(),
-            initial_balance_cents: Some(0),
-            credit_limit_cents: None,
-            statement_day: None,
-            due_day: None,
-        },
-    )
-    .unwrap();
+    let account = seed_cash_account(&db);
     for (index, note) in notes.iter().enumerate() {
-        ledger_transaction::create(
-            &conn,
-            TransactionInput {
+        seed_transaction(
+            &db,
+            TxnSeed {
+                account: &account,
+                to_account: None,
                 kind: TransactionKind::Expense,
                 amount_cents: 2_500,
-                currency_code: "CNY".to_owned(),
-                account_id: Some(account.clone()),
-                to_account_id: None,
-                funding_account_id: None,
-                funding: Vec::new(),
-                purchases: Vec::new(),
+                date: &test_date(index),
                 category_id: None,
-                merchant_id: None,
-                merchant_name: None,
-                policy_id: None,
-                refund_of_transaction_id: None,
                 note: Some((*note).to_owned()),
-                source_order_no: None,
-                date: test_date(index),
-                instrument_id: None,
-                quantity: None,
-                price_cents: None,
-                fee_cents: None,
-                to_instrument_id: None,
-                to_quantity: None,
-                out_amount_cents: None,
-                in_amount_cents: None,
-                origin: None,
-                fx_rate: None,
-                idempotency_key: None,
             },
-        )
-        .unwrap();
+        );
     }
 }
 
@@ -304,57 +239,19 @@ fn seed_expense_notes(dir: &Path, notes: &[&str]) {
 /// 与 lib 单测同纪律：建库走产品开库入口，造数经域公开写入口）。
 fn seed_expense_on_date(dir: &Path, date: &str, amount_cents: i64) {
     let db = nsh_app::boot::boot_ledger(dir).unwrap();
-    let conn = db
-        .conn
-        .lock()
-        .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
-        .unwrap();
-    let account = ledger_accounts::create_account(
-        &conn,
-        AccountInput {
-            name: "测试现金".to_owned(),
-            kind: AccountType::Cash,
-            currency_code: "CNY".to_owned(),
-            initial_balance_cents: Some(0),
-            credit_limit_cents: None,
-            statement_day: None,
-            due_day: None,
-        },
-    )
-    .unwrap();
-    ledger_transaction::create(
-        &conn,
-        TransactionInput {
+    let account = seed_cash_account(&db);
+    seed_transaction(
+        &db,
+        TxnSeed {
+            account: &account,
+            to_account: None,
             kind: TransactionKind::Expense,
             amount_cents,
-            currency_code: "CNY".to_owned(),
-            account_id: Some(account),
-            to_account_id: None,
-            funding_account_id: None,
-            funding: Vec::new(),
-            purchases: Vec::new(),
+            date,
             category_id: None,
-            merchant_id: None,
-            merchant_name: None,
-            policy_id: None,
-            refund_of_transaction_id: None,
             note: Some(format!("支出 {date}")),
-            source_order_no: None,
-            date: date.to_owned(),
-            instrument_id: None,
-            quantity: None,
-            price_cents: None,
-            fee_cents: None,
-            to_instrument_id: None,
-            to_quantity: None,
-            out_amount_cents: None,
-            in_amount_cents: None,
-            origin: None,
-            fx_rate: None,
-            idempotency_key: None,
         },
-    )
-    .unwrap();
+    );
 }
 
 /// 测试侧「今天」（本地时区，与被测应用的 now() 同源同口径）。
@@ -610,21 +507,27 @@ fn app_window_colors_amount_cells_by_kind_semantic() {
         let account = seed_cash_account(&db);
         seed_transaction(
             &db,
-            &account,
-            TransactionKind::Expense,
-            2_500,
-            "2026-01-15",
-            None,
-            None,
+            TxnSeed {
+                account: &account,
+                to_account: None,
+                kind: TransactionKind::Expense,
+                amount_cents: 2_500,
+                date: "2026-01-15",
+                category_id: None,
+                note: None,
+            },
         );
         seed_transaction(
             &db,
-            &account,
-            TransactionKind::Income,
-            1_000,
-            "2026-01-16",
-            None,
-            None,
+            TxnSeed {
+                account: &account,
+                to_account: None,
+                kind: TransactionKind::Income,
+                amount_cents: 1_000,
+                date: "2026-01-16",
+                category_id: None,
+                note: None,
+            },
         );
     }
 
@@ -697,21 +600,27 @@ fn app_window_renders_category_path_and_note_cells() {
         let account = seed_cash_account(&db);
         seed_transaction(
             &db,
-            &account,
-            TransactionKind::Expense,
-            2_500,
-            "2026-01-15",
-            Some(child),
-            Some("买咖啡".to_owned()),
+            TxnSeed {
+                account: &account,
+                to_account: None,
+                kind: TransactionKind::Expense,
+                amount_cents: 2_500,
+                date: "2026-01-15",
+                category_id: Some(child),
+                note: Some("买咖啡".to_owned()),
+            },
         );
         seed_transaction(
             &db,
-            &account,
-            TransactionKind::Expense,
-            1_000,
-            "2026-01-16",
-            None,
-            None,
+            TxnSeed {
+                account: &account,
+                to_account: None,
+                kind: TransactionKind::Expense,
+                amount_cents: 1_000,
+                date: "2026-01-16",
+                category_id: None,
+                note: None,
+            },
         );
     }
 
@@ -895,44 +804,18 @@ fn app_window_renders_lending_label_and_two_account_cell() {
         let db = nsh_app::boot::boot_ledger(&dir).unwrap();
         let cash = seed_account(&db, "测试现金", AccountType::Cash);
         let receivable = seed_account(&db, "应收款", AccountType::Receivable);
-        let conn = db
-            .conn
-            .lock()
-            .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
-            .unwrap();
-        ledger_transaction::create(
-            &conn,
-            TransactionInput {
+        seed_transaction(
+            &db,
+            TxnSeed {
+                account: &cash,
+                to_account: Some(receivable),
                 kind: TransactionKind::Transfer,
                 amount_cents: 5_000,
-                currency_code: "CNY".to_owned(),
-                account_id: Some(cash),
-                to_account_id: Some(receivable),
-                funding_account_id: None,
-                funding: Vec::new(),
-                purchases: Vec::new(),
+                date: "2026-01-15",
                 category_id: None,
-                merchant_id: None,
-                merchant_name: None,
-                policy_id: None,
-                refund_of_transaction_id: None,
                 note: None,
-                source_order_no: None,
-                date: "2026-01-15".to_owned(),
-                instrument_id: None,
-                quantity: None,
-                price_cents: None,
-                fee_cents: None,
-                to_instrument_id: None,
-                to_quantity: None,
-                out_amount_cents: None,
-                in_amount_cents: None,
-                origin: None,
-                fx_rate: None,
-                idempotency_key: None,
             },
-        )
-        .unwrap();
+        );
     }
 
     nsh_app::app::set_book_dir(dir);
@@ -1362,6 +1245,50 @@ fn row_context_menu_delete_escape_writes_nothing() {
     assert_eq!(dates.len(), 2, "ESC 路径不产生写入：{dates:?}");
 }
 
+/// 上下文菜单 ESC 收起（Spec 轴 #2 断言缺口）：右键开菜单 → ESC → 菜单消失、
+/// 行仍在、库无写入。headless 对原生菜单的 ESC 语义步是 [`Headless::close_menu`]
+/// （nsh-testing 注明的「as Escape or a click elsewhere closes it」：Linux 原生
+/// 菜单捕获键盘，ESC 不进应用事件流，只兑现 `Menu.popup` 的关闭 Answer——
+/// `press_key("escape")` / `back` 走 keymap 与弹层栈，触不到菜单），不是绕过
+/// 应用行为的假步。
+#[test]
+fn row_context_menu_escape_closes_menu_writes_nothing() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("menu-esc");
+    seed_expense_notes(&dir, &["要删除的一笔", "要留下的一笔"]);
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+
+    app.wait_for("text:共 2 条").unwrap();
+    app.right_click("text:2026-01-01").unwrap();
+    assert!(
+        app.menu()
+            .is_some_and(|items| items.iter().any(|e| e.label == "删除")),
+        "右键后菜单开且带「删除」项：{:?}",
+        app.menu()
+    );
+
+    // ESC（原生菜单语义步）→ 菜单收起、行集原样。
+    app.close_menu().unwrap();
+    app.settle();
+    assert!(app.menu().is_none(), "ESC 后菜单消失");
+    assert!(
+        app.shows("2026-01-01"),
+        "ESC 后行仍在屏：{:?}",
+        app.screen().texts()
+    );
+    assert!(
+        app.shows("共 2 条"),
+        "ESC 后总数不变：{:?}",
+        app.screen().texts()
+    );
+
+    let dates = book_transaction_dates(&dir);
+    assert_eq!(dates.len(), 2, "ESC 收起菜单不产生写入：{dates:?}");
+}
+
 /// 抑制接线——危险确认对话框（issue #2022 AC3，弹层闸门的第三个消费面）：
 /// 对话框开着按 `[` 不翻页（页码是用户可见的行集结果），取消关窗后同键翻页
 /// 生效。删掉 danger 对话框的抑制上报或 keymap 的闸门检查任一环本测红。
@@ -1411,24 +1338,12 @@ fn purchase_item_row_right_click_deletes_whole_transaction() {
     let dir = make_book("delete-order");
     {
         let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let account = seed_cash_account(&db);
         let conn = db
             .conn
             .lock()
             .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
             .unwrap();
-        let account = ledger_accounts::create_account(
-            &conn,
-            AccountInput {
-                name: "测试现金".to_owned(),
-                kind: AccountType::Cash,
-                currency_code: "CNY".to_owned(),
-                initial_balance_cents: Some(0),
-                credit_limit_cents: None,
-                statement_day: None,
-                due_day: None,
-            },
-        )
-        .unwrap();
         ledger_transaction::create(
             &conn,
             TransactionInput {
@@ -1478,12 +1393,15 @@ fn purchase_item_row_right_click_deletes_whole_transaction() {
         drop(conn);
         seed_transaction(
             &db,
-            &account,
-            TransactionKind::Expense,
-            2_500,
-            "2026-01-02",
-            None,
-            None,
+            TxnSeed {
+                account: &account,
+                to_account: None,
+                kind: TransactionKind::Expense,
+                amount_cents: 2_500,
+                date: "2026-01-02",
+                category_id: None,
+                note: None,
+            },
         );
     }
 

@@ -231,17 +231,10 @@ pub fn step_period(p: &NaturalPeriod, delta: i32) -> NaturalPeriod {
             year: p.year + delta,
             index: 0,
         },
-        PeriodUnit::Month => {
-            let per_year: i64 = 12;
-            let total = p.year as i64 * per_year + p.index as i64 + delta as i64;
-            NaturalPeriod {
-                unit: p.unit,
-                year: total.div_euclid(per_year) as i32,
-                index: total.rem_euclid(per_year) as u32,
-            }
-        }
-        PeriodUnit::Quarter => {
-            let per_year: i64 = 4;
+        // 月/季同一换算式，仅每年期数不同（月 12、季 4）：单臂以该常量参数化，
+        // 年界自然回绕共享同一数学。
+        PeriodUnit::Month | PeriodUnit::Quarter => {
+            let per_year: i64 = if p.unit == PeriodUnit::Month { 12 } else { 4 };
             let total = p.year as i64 * per_year + p.index as i64 + delta as i64;
             NaturalPeriod {
                 unit: p.unit,

@@ -51,6 +51,42 @@ fn amount_privacy_enabled() -> bool {
         .is_some_and(|raw| raw.trim() == "true")
 }
 
+/// 装载批次读侧载荷（[`assembly::RowContext`] 的读侧对称形态）：一次页读同
+/// 批取回的行集、总数与装配参考数据束。行集先落位、参考数据与边界逐臂补齐
+/// 的线穿以结构承载——新增同批读维度改本结构一处，不再嵌套扩元组。
+struct PageRead {
+    /// 本页交易行集（列表态与搜索态同一字段，搜索态即命中页）。
+    items: Vec<ledger_transaction::Transaction>,
+    /// 满足当前口径的总数（页与总数共用同一 WHERE）。
+    total: i64,
+    /// 数据期间边界（读失败退化为 None＝不钳制，旧壳 silent 同口径）。
+    date_range: Option<ledger_reports::DateRange>,
+    /// 币种字典行（金额展示参数的来源）。
+    currency_rows: Vec<ledger_currencies::Currency>,
+    /// 在用分类行（分类路径表来源）。
+    category_rows: Vec<ledger_categories::Category>,
+    /// 在用且未隐藏账户行（账户格与借贷派生来源）。
+    account_rows: Vec<ledger_accounts::Account>,
+    /// 含软删全量商户行（商户格来源）。
+    merchant_rows: Vec<ledger_merchants::Merchant>,
+}
+
+impl PageRead {
+    /// 行集与总数先落位，参考数据与边界随后逐臂补齐（币种读失败即整批
+    /// 失败，边界读失败保 None 不拖垮页呈现——顺序与错误传播语义不变）。
+    fn new(items: Vec<ledger_transaction::Transaction>, total: i64) -> Self {
+        Self {
+            items,
+            total,
+            date_range: None,
+            currency_rows: Vec::new(),
+            category_rows: Vec::new(),
+            account_rows: Vec::new(),
+            merchant_rows: Vec::new(),
+        }
+    }
+}
+
 /// 金额语义色值表（旧壳 `packages/theme/src/semantic-colors.ts`
 /// `KIND_SEMANTIC_COLORS` 的逐值镜像，亮/暗两态自适应——色值只在此处与旧壳
 /// 各出现一份，NSH 侧不另立第二份色板：色型闭集住装配层
@@ -411,48 +447,37 @@ fn TransactionsView() -> impl IntoElement {
             let outcome = blocking(move || {
                 let page_read = if query.is_empty() {
                     boot::transaction_page(&db, page_no, range.as_ref())
-                        .map(|result| (result.items, result.total))
+                        .map(|result| PageRead::new(result.items, result.total))
                 } else {
                     boot::transaction_search(&db, &query, page_no)
-                        .map(|result| (result.items, result.total))
+                        .map(|result| PageRead::new(result.items, result.total))
                 };
                 page_read
-                    .and_then(|(items, total)| {
-                        let date_range = boot::report_date_range(&db).ok();
-                        boot::currency_rows(&db)
-                            .map(|currency_rows| (items, total, date_range, currency_rows))
-                    })
-                    .and_then(|(items, total, date_range, currency_rows)| {
-                        boot::category_rows(&db)
-                            .map(|rows| (items, total, date_range, currency_rows, rows))
-                    })
-                    .and_then(|(items, total, date_range, currency_rows, category_rows)| {
-                        boot::account_rows(&db).map(|account_rows| {
-                            (
-                                items,
-                                total,
-                                date_range,
-                                currency_rows,
-                                category_rows,
-                                account_rows,
-                            )
+                    .and_then(|mut read| {
+                        read.date_range = boot::report_date_range(&db).ok();
+                        boot::currency_rows(&db).map(|rows| {
+                            read.currency_rows = rows;
+                            read
                         })
                     })
-                    .and_then(
-                        |(items, total, date_range, currency_rows, category_rows, account_rows)| {
-                            boot::merchant_rows(&db).map(|merchant_rows| {
-                                (
-                                    items,
-                                    total,
-                                    date_range,
-                                    currency_rows,
-                                    category_rows,
-                                    account_rows,
-                                    merchant_rows,
-                                )
-                            })
-                        },
-                    )
+                    .and_then(|mut read| {
+                        boot::category_rows(&db).map(|rows| {
+                            read.category_rows = rows;
+                            read
+                        })
+                    })
+                    .and_then(|mut read| {
+                        boot::account_rows(&db).map(|rows| {
+                            read.account_rows = rows;
+                            read
+                        })
+                    })
+                    .and_then(|mut read| {
+                        boot::merchant_rows(&db).map(|rows| {
+                            read.merchant_rows = rows;
+                            read
+                        })
+                    })
             })
             .await;
             // 过期装载不落位（后发已接管 rows/loading，先发不得回写）。
@@ -460,15 +485,15 @@ fn TransactionsView() -> impl IntoElement {
                 return;
             }
             match outcome {
-                Ok(Ok((
+                Ok(Ok(PageRead {
                     items,
-                    total_count,
+                    total: total_count,
                     date_range,
                     currency_rows,
                     category_rows,
                     account_rows,
                     merchant_rows,
-                ))) => {
+                })) => {
                     let currencies = CurrencyTable::from_currencies(&currency_rows);
                     let categories = assembly::CategoryTable::from_categories(&category_rows);
                     let accounts = AccountTable::from_accounts(&account_rows);
