@@ -1,4 +1,5 @@
-//! 域栈引导（issue #2017 / ADR-0145）：打开未加密账本库并读交易总数。
+//! 域栈引导（issue #2017 / ADR-0145）：打开未加密账本库，读交易列表页与币种
+//! 字典（issue #2018 交易表格首屏的读面）。
 //!
 //! 引导内核复用基础设施引导层（[`ledger_infra::db::boot`]）：库文件处置判定
 //! （[`classify_for_boot`] 的明文/外来形态/密文/损坏四态）与成对建连
@@ -21,11 +22,14 @@
 
 use std::path::Path;
 
+use ledger_currencies::Currency;
 use ledger_infra::db::boot::{BOOT_DB_UNREADABLE, BootDisposition};
 use ledger_infra::db::data_location::DB_FILE_NAME;
 use ledger_infra::db::{DbState, open_db_in};
 use ledger_infra::error::{AppError, Result};
+use ledger_transaction::TransactionListResult;
 
+use crate::assembly::PAGE_SIZE;
 use crate::wiring;
 
 /// 密文库不支持（立桩范围外）的稳定错误码。
@@ -85,20 +89,34 @@ fn normalize_foreign_plaintext(db_path: &Path) -> Result<()> {
     })
 }
 
-/// 读取账本库交易总数（读路径直调域服务，ADR-0145 决策 4 的立桩靶标）。
+/// 读取账本库交易列表页（读路径直调域服务，issue #2018 的立桩靶标）。
 ///
-/// 经核心交易域读路径 [`list_transactions`] 的 `total`（满足过滤条件的未删除
-/// 交易总数，空过滤 = 全库口径），`page_size = 1` 只取一行——计数语义不拉全量
-/// 行集；来源列等读时投影接缝已由 [`wiring::install_domain_seams`] 接线。
-/// 读连接是成对建连的只读侧（ADR-0117：读路径不进写者闸门）。
-pub fn transaction_total(db: &DbState) -> Result<i64> {
+/// 经核心交易域读路径 [`ledger_transaction::list_transactions`] 的服务端 offset
+/// 分页（ADR-0008 语义：页码从 1 起、`total` 与行集共用同一 WHERE 子句、排序
+/// date DESC, created_at DESC, id DESC），每页 [`PAGE_SIZE`] 行（100 行/页，
+/// 旧壳 50 行翻倍验证原生余量）；过滤为空 = 全库口径（立桩无筛选维度，搜索
+/// 随 #2023 接入）。来源列等读时投影接缝已由 [`crate::wiring`] 接线。读连接
+/// 是成对建连的只读侧（ADR-0117：读路径不进写者闸门）。
+pub fn transaction_page(db: &DbState, page: u32) -> Result<TransactionListResult> {
     let filter = ledger_transaction::TransactionListFilter {
-        page_size: Some(1),
+        page: Some(page.max(1) as usize),
+        page_size: Some(PAGE_SIZE),
         ..Default::default()
     };
     let conn = db
         .read_conn
         .lock()
         .map_err(|e| AppError::Db(e.to_string()))?;
-    Ok(ledger_transaction::list_transactions(&conn, &filter)?.total)
+    ledger_transaction::list_transactions(&conn, &filter)
+}
+
+/// 读取账本库币种字典（金额展示的参考数据面，issue #2018）：装配层的币种
+/// 展示参数（符号/小数位）来自本只读投影；随每页读一并刷新（字典行数小，
+/// 改名/改号后的重读成本可忽略）。
+pub fn currency_rows(db: &DbState) -> Result<Vec<Currency>> {
+    let conn = db
+        .read_conn
+        .lock()
+        .map_err(|e| AppError::Db(e.to_string()))?;
+    ledger_currencies::list_currencies(&conn)
 }

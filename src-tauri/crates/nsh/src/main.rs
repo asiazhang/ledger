@@ -28,7 +28,9 @@ fn main() -> impl std::process::Termination {
         platform::AppOptions {
             title: "Ledger 原生壳（立桩）".to_owned(),
             app_id: APP_ID.to_owned(),
-            size: (520, 360),
+            // 交易表格首屏（issue #2018）：三列表格 + 底栏（总数/分页条）的
+            // 常规桌面窗口尺寸。
+            size: (1024, 720),
             ..Default::default()
         },
     )

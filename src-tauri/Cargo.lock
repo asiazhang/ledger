@@ -4471,6 +4471,7 @@ dependencies = [
  "ledger-policy",
  "ledger-scheduled",
  "ledger-transaction",
+ "nsh-base",
  "nsh-core",
  "nsh-engine",
  "nsh-platform-linux",

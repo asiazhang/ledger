@@ -266,6 +266,7 @@ resolver = "3"
 # 立桩消费面用不到）；`nsh-testing` 0.4.0 的 default 不含 QuickJS，测试侧原样消费。
 [workspace.dependencies]
 nsh-core = { version = "=0.4.0" }
+nsh-base = { version = "=0.4.0", default-features = false }
 nsh-engine = { version = "=0.4.0", default-features = false }
 nsh-platform-linux = { version = "=0.4.0", default-features = false }
 nsh-testing = { version = "=0.4.0", default-features = false }
