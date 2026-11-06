@@ -1519,3 +1519,306 @@ fn purchase_item_row_right_click_deletes_whole_transaction() {
         "库中剩一笔：{dates:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// 立桩验收自动化件（issue #2024）：① headless 冒烟首件（AC3，#2016 裁决
+// §3.4 成立）；② ADR-0062 确定性性能数据集量级的计数型验证（AC2 可自动化
+// 半边）；③ 搜索 × 期间未定义组合的实际行为观察钉（AC1 备料）。
+// ---------------------------------------------------------------------------
+
+/// 冒烟首件（issue #2024 AC3 / research doc §3.4）：一条最小复合旅程——起根
+/// → 就绪 → 首屏计数（「共 N 条」）→ 翻页键可用。既有用例逐功能聚焦（首屏
+/// 用例只看 1 笔首屏、翻页用例带边界幂等细节），本测是裁决的「UI 冒烟自动
+/// 化首件」：以单条旅程证明应用能起、首屏数据可见、翻页链路活着；断言面
+/// 刻意最小，功能级细节归各专项用例，不做第二遍。
+#[test]
+fn app_smoke_boots_shows_first_screen_count_and_pages_by_key() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("smoke");
+    seed_expense_series(&dir, 150);
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+
+    // 就绪 + 首屏计数（100 行/页，150 笔 = 两页）。
+    app.wait_for("text:共 150 条").unwrap();
+    app.wait_for("text:2026-05-30").unwrap();
+
+    // 翻页键可用：`]` 翻末页，行集换血（与分页条同一读路径）。
+    app.press_key("]").unwrap();
+    app.wait_for("text:2026-02-19").unwrap();
+    app.wait_for_gone("text:2026-05-30", DEFAULT_WAIT).unwrap();
+}
+
+/// ADR-0062 确定性性能数据集生成器的 bin 路径（根包 tauri-app 的
+/// `src/bin/ledger-perf`，`cargo test --workspace` / scripts/test.sh 泳道随
+/// 构建一并产出）。跨包集成测试取不到 `CARGO_BIN_EXE_*`，按 workspace target
+/// 目录约定定位（manifest 相对，编译期注入；执行器等价性守门禁测试运行期读
+/// CARGO_* 环境变量，scripts/test-exec.ts 守门规则④）。
+fn ledger_perf_bin() -> std::path::PathBuf {
+    let exe =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/debug/ledger-perf");
+    assert!(
+        exe.is_file(),
+        "ledger-perf 二进制未构建（{}）：本测经 ADR-0062 生成器子进程造库，\
+         先 `cargo build --bin ledger-perf -p tauri-app`（scripts/test.sh 泳道自带）",
+        exe.display()
+    );
+    exe
+}
+
+/// 经 ADR-0062 生成器现场造一本确定性数据集库（复用唯一生成器，不另立第二
+/// 套造数——ADR-0062 决策 1/4）：`--transactions` 缩量适配测试泳道耗时（同
+/// 参数必出同库，账户/分类/商户/转账/退款/软删/购买项/投资/计划全画像都在），
+/// 输出落产品形态目录（ledger.db + sync.db，与 nsh-app boot 的开库形态一致）。
+/// 返回账本目录。
+fn generate_perf_book(transactions: u64) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!(
+        "ledger-test-nsh-perf-{}-{}",
+        transactions,
+        new_uuid()
+    ));
+    fs::create_dir_all(&dir).unwrap();
+    let out = dir.join("ledger.db");
+    let status = std::process::Command::new(ledger_perf_bin())
+        .args([
+            "generate",
+            "--transactions",
+            &transactions.to_string(),
+            "--out",
+            &out.to_string_lossy(),
+        ])
+        .status()
+        .unwrap();
+    assert!(
+        status.success(),
+        "ledger-perf generate 失败（--transactions {transactions}）"
+    );
+    dir
+}
+
+/// 生成库的计数事实（测试侧期望值的独立真源）。
+struct PerfBookFacts {
+    /// 未删除交易总数（「共 N 条」应呈的 N）。
+    total: i64,
+    /// 页数（`assembly::total_pages` 口径 = total 对页径向上取整；PAGE_SIZE
+    /// 住 crate 私有装配层，字面量与该单点同步维护）。
+    pages: u32,
+    /// 首页首行日期（数据集最新一笔，date DESC 首位）。
+    newest_date: String,
+    /// 第 2 页首行日期（翻页键一页后的落点）。
+    second_page_first_date: String,
+    /// 末页首行日期（数据集最旧一笔）。
+    oldest_date: String,
+    /// 首页末行日期（首页滚动到底的落点）。
+    first_page_last_date: String,
+}
+
+/// 经域读路径取计数事实：与被测应用同一函数同一过滤
+/// （`boot::transaction_page`，None 区间 = 「全部」默认态）——断言「UI == 域
+/// 读」而非幻数（确定性数据集的软删数随参数变化，钉死值会在参数调整时误红）。
+fn perf_book_facts(dir: &Path) -> PerfBookFacts {
+    let db = nsh_app::boot::boot_ledger(dir).unwrap();
+    let read_page = |no: u32| {
+        let result = nsh_app::boot::transaction_page(&db, no, None).unwrap();
+        assert!(
+            !result.items.is_empty(),
+            "第 {no} 页应有行集（数据集量级下不应有空页）"
+        );
+        result
+    };
+    let first = read_page(1);
+    // 100 = 装配层 PAGE_SIZE（100 行/页，#2018 起翻倍验证原生余量）。
+    let pages = (first.total.max(0) as u64).div_ceil(100) as u32;
+    let second = read_page(2);
+    let last = read_page(pages);
+    PerfBookFacts {
+        total: first.total,
+        pages,
+        newest_date: first.items[0].date.clone(),
+        second_page_first_date: second.items[0].date.clone(),
+        oldest_date: last.items[0].date.clone(),
+        first_page_last_date: first.items.last().unwrap().date.clone(),
+    }
+}
+
+/// ADR-0062 数据集量级下的计数型验证（issue #2024 AC2 可自动化半边）：经唯
+/// 一生成器造库 → NSH 起根 → 总数 / 页数 / 翻页落点 / 滚动落点与域读口径
+/// 逐项一致。「Counts are deterministic; timings are not」（research doc
+/// §1.5）：只断计数与落点，无任何时间断言；体感迟滞与滚动流畅度归真实窗口
+/// 人工对表（docs/research/nsh-stake-acceptance-checklist.md）。生成器缩量
+/// 到 2000 笔（约 20 页）适配测试泳道；50 万笔全量级的人工复跑命令见对表
+/// 手册（同一生成器，只换 --transactions）。
+#[test]
+fn perf_dataset_book_counts_match_domain_read_across_pages_and_scroll() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = generate_perf_book(2_000);
+    let facts = perf_book_facts(&dir);
+    assert!(
+        facts.pages >= 3,
+        "数据集量级应至少三页（缩量参数失配时先查生成器）：total={} pages={}",
+        facts.total,
+        facts.pages
+    );
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+
+    // 总数一致（UI == 域读，非幻数）；首页首行 = 最新一笔落进视口。
+    let total_text = format!("共 {} 条", facts.total);
+    let total_selector = format!("text:{total_text}");
+    let newest = format!("text:{}", facts.newest_date);
+    app.wait_for(&total_selector).unwrap();
+    app.wait_for(&newest).unwrap();
+
+    // 翻页键一页 → 第 2 页首行落点一致，首页最新行离屏（offset 分页换血）。
+    app.press_key("]").unwrap();
+    let second = format!("text:{}", facts.second_page_first_date);
+    app.wait_for(&second).unwrap();
+    app.wait_for_gone(&newest, DEFAULT_WAIT).unwrap();
+
+    // 页数一致：末页页码按钮存在且可点（页码按钮闭集即 total_pages 的用户
+    // 可见投影——按钮不存在时 press 即红），末页首行 = 最旧一笔。
+    let last_button = format!("role:button[{}]", facts.pages);
+    app.press(&last_button).unwrap();
+    let oldest = format!("text:{}", facts.oldest_date);
+    app.wait_for(&oldest).unwrap();
+    app.wait_for_gone(&second, DEFAULT_WAIT).unwrap();
+    assert!(
+        app.shows(&total_text),
+        "翻页后总数不变：{:?}",
+        app.screen().texts()
+    );
+
+    // 回首页滚动到底 → 首页末行（第 100 笔）可见、首行离屏。距离给足
+    // （headless scroll 钳到滚动终点）；虚拟化大表在数据集量级下撑得起
+    // 滚动本身就是计数面事实（滚动距离与行集体量一致才能到底）。
+    app.press("role:button[1]").unwrap();
+    app.wait_for(&newest).unwrap();
+    app.scroll("id:tx-table", Points(1_000_000.0)).unwrap();
+    let first_page_last = format!("text:{}", facts.first_page_last_date);
+    app.wait_for(&first_page_last).unwrap();
+    app.wait_for_gone(&newest, DEFAULT_WAIT).unwrap();
+    assert!(
+        app.shows(&total_text),
+        "滚动后总数不变：{:?}",
+        app.screen().texts()
+    );
+}
+
+/// 搜索 × 期间的未定义组合——实际行为观察钉（issue #2024 AC1 备料）：集成
+/// 分支合并时报告了两处未定义组合（搜索期间按 `,` / `.` 步进、搜索期间期间
+/// 标签显示），本测把 headless 可复现的**现状行为**记录下来，不设计新语义；
+/// #2015 对表以本测与真实窗口人工复核为凭。后续票若对组合语义作出裁决，
+/// 应有意更新本测（它翻红 = 语义有意变化，不是回归）。
+///
+/// 记录到的现状（`[` `]` `,` `.` 皆 When::Auto 裸键，可编辑焦点闸与 Overlay
+/// 抑制闸都先于派发）：
+/// - 组合②（标签显示）：期间标签在搜索态照常显示且不重置——搜索只换行集
+///   与计数词，不动期间快照；
+/// - 期间过滤对搜索命中面**不生效**（`boot::transaction_search` 无区间参数，
+///   `load` 按非空查询走搜索路径）：当月期间下搜索，上月备注照样命中；
+/// - 组合①（搜索期间按 `,` / `.`）分焦点两相：焦点在搜索框（输入后默认态）
+///   时，键被输入框吃掉（可编辑焦点闸不派发）——查询追加字符触发重搜，
+///   期间步进不发生；焦点不在输入框（回车提交后 BlurAndSubmit 失焦——单行
+///   输入回车 unfocus 是引擎缺省）时，键照常派发——期间快照步进、标签随之
+///   变化，行集与命中数原样（搜索重读不携期间，唯一可观察变化是标签）；
+///   逻辑点击不转移键盘焦点（headless press 是逻辑派发非物理命中），点击
+///   步进器在搜索态同样只换标签不动行集（点击路径孪生）。
+#[test]
+fn search_and_period_combo_keys_pins_actual_behavior() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("search-period");
+    seed_expense_on_date(&dir, &prev_month_mid().to_string(), 8_800);
+    seed_expense_on_date(&dir, &today().to_string(), 2_500);
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+
+    app.wait_for("text:共 2 条").unwrap();
+
+    // ---- 相 A：焦点在搜索框（输入后默认态，无游标）。----
+    app.type_text("id:tx-search", "支出").unwrap();
+    app.wait_for("text:命中 2 条").unwrap();
+    // 组合②：期间标签（「选择期间」召唤态）照常显示且不重置。
+    assert!(
+        app.shows("选择期间"),
+        "搜索期间期间标签应照常显示（现状 = 不重置）：{:?}",
+        app.screen().texts()
+    );
+    // 组合①焦点在框：`,` 不派发（可编辑焦点闸）——字符落入查询触发重搜，
+    // 期间标签与期间快照不动。
+    app.press_key(",").unwrap();
+    app.wait_for("text:命中 0 条").unwrap();
+    assert_eq!(
+        app.screen().input_text("id:tx-search").unwrap(),
+        Some("支出,"),
+        "焦点在搜索框时 `,` 应落进输入框（快捷键不派发）"
+    );
+    assert!(
+        app.shows("选择期间"),
+        "`,` 落框不改变期间标签：{:?}",
+        app.screen().texts()
+    );
+    // 清空回列表态（全部）：后续在列表态重新进入当月，再入搜索态。
+    app.clear("id:tx-search").unwrap();
+    app.wait_for("text:共 2 条").unwrap();
+
+    // ---- 相 B：游标当月 + 搜索态；焦点移出走回车提交失焦（下方 submit）。----
+    let t = today();
+    app.press("id:period-label").unwrap();
+    app.wait_for("id:period-chip-month").unwrap();
+    app.press("id:period-chip-month").unwrap();
+    app.wait_for_gone("id:period-chip-month", DEFAULT_WAIT)
+        .unwrap();
+    app.wait_for(&month_label(t.year(), t.month())).unwrap();
+    app.wait_for("text:共 1 条").unwrap();
+
+    app.type_text("id:tx-search", "支出").unwrap();
+    app.wait_for("text:命中 2 条").unwrap();
+    // 期间过滤对搜索不生效：当月期间下，上月备注照样命中。
+    app.wait_for("text:¥88").unwrap();
+    app.wait_for("text:¥25").unwrap();
+    // 组合②：当月标签照常显示，不因搜索重置。
+    assert!(
+        app.shows(&format!("{}年{}月", t.year(), t.month())),
+        "搜索期间期间标签应照常显示（现状 = 不重置）：{:?}",
+        app.screen().texts()
+    );
+
+    // 点击步进器 ‹（搜索态下步进只换标签不动行集——点击路径孪生；headless
+    // 逻辑点击不转移键盘焦点，失焦走下一步的回车提交）。
+    let p = prev_month_mid();
+    app.press("role:button[上一个周期]").unwrap();
+    app.wait_for(&month_label(p.year(), p.month())).unwrap();
+    app.wait_for("text:命中 2 条").unwrap();
+    app.wait_for("text:¥88").unwrap();
+    app.wait_for("text:¥25").unwrap();
+
+    // 回车提交（BlurAndSubmit：单行输入回车 unfocus，真实用户「回车搜索后
+    // 焦点离开输入框」的同形）→ 同结果重搜，焦点离开输入框。
+    app.submit("id:tx-search").unwrap();
+    app.wait_for("text:命中 2 条").unwrap();
+
+    // 组合①焦点在框外：`,` / `.` 照常派发——标签步进，行集与命中数原样。
+    app.press_key(".").unwrap();
+    app.wait_for(&month_label(t.year(), t.month())).unwrap();
+    app.wait_for("text:命中 2 条").unwrap();
+    app.wait_for("text:¥88").unwrap();
+    app.wait_for("text:¥25").unwrap();
+
+    app.press_key(",").unwrap();
+    app.wait_for(&month_label(p.year(), p.month())).unwrap();
+    app.wait_for("text:命中 2 条").unwrap();
+    app.wait_for("text:¥88").unwrap();
+    app.wait_for("text:¥25").unwrap();
+    // 失焦后查询原样（`,` / `.` 不再落框——派发面与编辑面互斥的镜像）。
+    assert_eq!(
+        app.screen().input_text("id:tx-search").unwrap(),
+        Some("支出"),
+        "焦点在框外时 `,` / `.` 不落输入框"
+    );
+}
