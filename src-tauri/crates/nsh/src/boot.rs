@@ -22,6 +22,7 @@
 
 use std::path::Path;
 
+use ledger_categories::Category;
 use ledger_currencies::Currency;
 use ledger_infra::db::boot::{BOOT_DB_UNREADABLE, BootDisposition};
 use ledger_infra::db::data_location::DB_FILE_NAME;
@@ -140,4 +141,16 @@ pub fn currency_rows(db: &DbState) -> Result<Vec<Currency>> {
         .lock()
         .map_err(|e| AppError::Db(e.to_string()))?;
     ledger_currencies::list_currencies(&conn)
+}
+
+/// 读取在用分类行集（分类路径解析的参考数据面，issue #2019）：装配层的分类
+/// 路径表来自本只读投影，**仅未删除**——旧壳路径函数消费在用分类行集
+/// （reference store 口径），软删分类的历史交易引用在交易列表显示 `-`；随每页
+/// 读一并刷新（分类行数小，改名/改父后的重读成本可忽略）。
+pub fn category_rows(db: &DbState) -> Result<Vec<Category>> {
+    let conn = db
+        .read_conn
+        .lock()
+        .map_err(|e| AppError::Db(e.to_string()))?;
+    ledger_categories::list_categories(&conn, false)
 }

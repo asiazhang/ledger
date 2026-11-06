@@ -1,19 +1,24 @@
-//! 装配层（spec #2015「装配层」/ issue #2018 立桩首版）：行集进入表格前的纯
-//! Rust view-model 装配——每行每格的最终展示文本与列定义在数据到达时一次性算就，
-//! 渲染期零格式化（单元格预计算的 NSH 形态，词汇表见界面域「单元格预计算」）。
+//! 装配层（spec #2015「装配层」/ issue #2018 立桩首版 / issue #2019 格文本格式
+//! 化全家桶）：行集进入表格前的纯 Rust view-model 装配——每行每格的最终展示
+//! 文本与列定义在数据到达时一次性算就，渲染期零格式化（单元格预计算的 NSH
+//! 形态，词汇表见界面域「单元格预计算」）。
 //!
 //! 纪律：
 //! - **纯 Rust、无 UI 依赖**（spec #2015：「装配层是纯 Rust、无 UI 依赖，以便
 //!   行/格预计算逻辑像域代码一样可单测」）：本模块只 import 域类型（核心交易域
-//!   行模型、币种参考数据）与 std，不 import `nsh_core` / `nsh_base`——评审与
-//!   单测共同守这条边界，UI 宿主映射住 [`crate::app`]；
+//!   行模型、币种 / 分类参考数据）与 std，不 import `nsh_core` / `nsh_base`——
+//!   评审与单测共同守这条边界，UI 宿主映射住 [`crate::app`]；
 //! - **口径单源不漂移**：金额展示锚点（转换行转出金额 / 份额调整无金额 / 其余
 //!   行本位币锚点）镜像旧壳交易域展示口径；金额换算以核心交易域为唯一真源
-//!   （整数分），本层只消费不另立；
-//! - **首版范围（#2018）**：类型标签按 kind 直译（借贷派生 transfer 与派生行
-//!   形态归 #2020 全家桶）；金额为基础格式化（隐私掩码、en-US 三位分组与金额
-//!   语义色归 #2019 全家桶）；列定义 = 日期 / 类型 / 金额最小集；
-//! - **界面文案仅 zh-CN**（spec #2015 实施决策：i18n 框架级方案不在立桩票）。
+//!   （整数分），本层只消费不另立；格文本与语义色的**文案与色值口径以旧壳为
+//!   对拍基准**（`formatAmount` / `categoryPath` / `kindSemanticColor` 及 i18n
+//!   zh-CN 词表），新旧壳并排打开同一账本库时同口径交易行格文本一致（#2019 AC）；
+//! - **范围（#2019 全家桶）**：数字分组、金额语义色、隐私模式遮蔽（掩码消费
+//!   设备轻量设置项，同一域来源）、分类路径、备注列、通用 kind 标签；借贷派生
+//!   transfer 专属文案与派生行形态（购买项 / 双账户 / 出资 / 来源）归 #2020；
+//! - **界面文案仅 zh-CN**（spec #2015 实施决策：i18n 框架级方案不在立桩票），
+//!   数字分组固定 zh-CN 四位一组（分组位数由界面语言隐含——NSH 无界面语言
+//!   切换，恒 zh；en-US 三位一组随 i18n 方案票再议）。
 
 use std::collections::BTreeMap;
 
@@ -48,7 +53,10 @@ pub struct ColumnDef {
     pub width: f32,
 }
 
-/// 列定义（#2018 最小集），列名与旧壳同文案。金额列末端对齐（数字惯例）。
+/// 列定义，列名与旧壳同文案（i18n zh-CN transactions.columns 词表）、列序与
+/// 旧壳桌面表格一致（旧壳列全集 = 日期/类型/分类/商户/账户/来源/备注/金额/操作，
+/// 商户/账户/来源/操作列随 #2020 接线）。金额列末端对齐（数字惯例）。备注列旧
+/// 壳不设固定宽（弹性列），此处给建议宽度供 UI 映射。
 pub const COLUMNS: &[ColumnDef] = &[
     ColumnDef {
         key: "date",
@@ -61,6 +69,18 @@ pub const COLUMNS: &[ColumnDef] = &[
         title: "类型",
         align: ColumnAlign::Start,
         width: 90.0,
+    },
+    ColumnDef {
+        key: "category",
+        title: "分类",
+        align: ColumnAlign::Start,
+        width: 140.0,
+    },
+    ColumnDef {
+        key: "note",
+        title: "备注",
+        align: ColumnAlign::Start,
+        width: 200.0,
     },
     ColumnDef {
         key: "amount",
@@ -78,10 +98,58 @@ pub struct RowCells {
     pub id: String,
     /// 日期列（ISO 原样，与旧壳同口径）。
     pub date: String,
-    /// 类型列（首版 = kind 直译标签）。
+    /// 类型列（kind 直译标签；借贷派生专属文案随 #2020 接线）。
     pub kind: String,
-    /// 金额列（基础格式化；无金额行渲染 `-`）。
+    /// 分类列（`父 > 子` 路径；未解析渲染 `-`）。
+    pub category: String,
+    /// 备注列（备注原文；无备注渲染 `-`）。
+    pub note: String,
+    /// 金额列（含隐私掩码与数字分组；无金额行渲染 `-`）。
     pub amount: String,
+    /// 金额列语义色型（UI 层映射为宿主颜色，色值住 [`crate::app`]）。
+    pub amount_semantic: AmountSemantic,
+}
+
+/// 金额语义色型（旧壳 `kindSemanticColor` 的输入闭集——九种交易类型各一专属
+/// 色，色值公式住旧壳 `packages/theme`，NSH 侧只持色型、不持色值）：每个 kind
+/// 恒有语义（表驱动穷尽，无色回退不存在，与旧壳同构）。借贷派生行（#2020）
+/// 复用 [`AmountSemantic::Transfer`]——旧壳借贷金额与普通转账同为紫色。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AmountSemantic {
+    /// 支出（红）。
+    Expense,
+    /// 收入（绿）。
+    Income,
+    /// 退款（蓝）。
+    Refund,
+    /// 转账（紫；借贷派生同型）。
+    Transfer,
+    /// 买入（粉）。
+    Buy,
+    /// 卖出（青）。
+    Sell,
+    /// 基金转换（琥珀）。
+    Convert,
+    /// 份额调整（靛蓝）。
+    Split,
+    /// 现金分红（青绿）。
+    Dividend,
+}
+
+/// kind → 金额语义色型（旧壳金额列着色口径：色是 kind 的纯函数，无金额行与
+/// 隐私掩码态照常着色——掩码隐藏数字，不隐藏方向，旧壳隐私保留项同口径）。
+pub fn amount_semantic(kind: TransactionKind) -> AmountSemantic {
+    match kind {
+        TransactionKind::Income => AmountSemantic::Income,
+        TransactionKind::Expense => AmountSemantic::Expense,
+        TransactionKind::Transfer => AmountSemantic::Transfer,
+        TransactionKind::Refund => AmountSemantic::Refund,
+        TransactionKind::Buy => AmountSemantic::Buy,
+        TransactionKind::Sell => AmountSemantic::Sell,
+        TransactionKind::Convert => AmountSemantic::Convert,
+        TransactionKind::Split => AmountSemantic::Split,
+        TransactionKind::Dividend => AmountSemantic::Dividend,
+    }
 }
 
 /// 类型标签（首版 = kind 直译，文案与旧壳 zh-CN 词表一致）：借贷派生 transfer
@@ -167,10 +235,67 @@ impl CurrencyTable {
     }
 }
 
-/// 金额基础格式化（`formatAmount` 首版）：分 → 元按币种小数位换算、去尾零
-/// （98.00→98、98.50→98.5，无损去零不涉舍入）、负号在最前、币符紧跟其后、
-/// 整数部分 zh-CN 每四位一组（词汇表「数字分组」，小数部分不分组）。
-/// 隐私掩码与界面语言分组变体归 #2019 全家桶。
+/// 分类路径条目（路径解析的消费面：名称 + 父引用）。
+#[derive(Debug, Clone, PartialEq)]
+struct CategoryEntry {
+    name: String,
+    parent_id: Option<String>,
+}
+
+/// 分类路径表（分类参考数据行集的只读投影，id → 路径文本）：路径口径镜像旧
+/// 壳 `categoryPath`（packages/utils）——顶级为自身名，子分类为「父 > 子」路径
+/// 名（单跳拼接，更深层截断为两级——旧壳实现即两级，分类实体亦两级为设计
+/// 形态）；父引用解析不到（孤儿引用）回退自身名；id 解析不到（软删分类的
+/// 历史引用等）返回 `None`，调用方渲染 `-`（旧壳 `categoryPath(id) || "-"`
+/// 同口径）。
+///
+/// 输入行集只收**在用分类**（软删不进路径表）：旧壳路径函数消费在用分类行集
+/// （reference store 口径），软删分类的历史交易引用照旧显示 `-`。
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct CategoryTable {
+    by_id: BTreeMap<String, CategoryEntry>,
+}
+
+impl CategoryTable {
+    /// 从分类参考数据行集投影。
+    pub fn from_categories<'a>(
+        rows: impl IntoIterator<Item = &'a ledger_categories::Category>,
+    ) -> Self {
+        Self {
+            by_id: rows
+                .into_iter()
+                .map(|c| {
+                    (
+                        c.id.clone(),
+                        CategoryEntry {
+                            name: c.name.clone(),
+                            parent_id: c.parent_id.clone(),
+                        },
+                    )
+                })
+                .collect(),
+        }
+    }
+
+    /// 分类 `id` 的路径文本；解析不到（无分类 / 软删分类）返回 `None`。
+    pub fn path_of(&self, id: Option<&str>) -> Option<String> {
+        let cat = self.by_id.get(id?)?;
+        let Some(parent_id) = cat.parent_id.as_deref() else {
+            return Some(cat.name.clone());
+        };
+        match self.by_id.get(parent_id) {
+            Some(parent) => Some(format!("{} > {}", parent.name, cat.name)),
+            None => Some(cat.name.clone()),
+        }
+    }
+}
+
+/// 金额基础格式化（`formatAmount` zh-CN 口径，issue #2019 全家桶的分组核）：
+/// 分 → 元按币种小数位换算、去尾零（98.00→98、98.50→98.5，无损去零不涉舍入）、
+/// 负号在最前、币符紧跟其后、整数部分 zh-CN 每四位一组（词汇表「数字分组」，
+/// 小数部分不分组）。隐私掩码在装配入口消费 [`RowContext::privacy_enabled`]
+/// 后收口（[`AMOUNT_PRIVACY_MASK`]，[`assemble_rows`]）；NSH 无界面语言切换，
+/// 分组恒 zh 四位一组（en-US 三位一组随 i18n 方案票再议）。
 ///
 /// 换算口径刻意镜像旧壳 JS（f64 除法 + 定点格式化，已对拍）：整数分在
 /// |分| < 2⁵³（约 ¥9×10¹³）内 f64 精确，定点格式化与 `toFixed` 在该量级内
@@ -217,22 +342,47 @@ fn join_groups(digits: &str, size: usize) -> String {
     groups.join(",")
 }
 
+/// 装配消费面（数据到达时随行集一并备齐的参考数据与开关）：装配函数的
+/// 唯一入参形态——参考数据表与设备开关随票增长收在此处，不散成位置参数。
+pub struct RowContext<'a> {
+    /// 币种展示参数表。
+    pub currencies: &'a CurrencyTable,
+    /// 分类路径表。
+    pub categories: &'a CategoryTable,
+    /// 金额隐私模式（设备轻量设置项；真源与水合见 [`crate::app`]）。
+    pub privacy_enabled: bool,
+}
+
+/// 金额隐私掩码（spec #564 掩码恒等性 / issue #566）：固定四点、无负号、无
+/// 币符、不随语言与数量级变化——与旧壳 `AMOUNT_PRIVACY_MASK` 同字面。
+pub const AMOUNT_PRIVACY_MASK: &str = "••••";
+
 /// 装配行集（数据到达时一次性产出全部格文本）：读路径行 → 表格行的唯一入口。
-pub fn assemble_rows(items: &[Transaction], currencies: &CurrencyTable) -> Vec<RowCells> {
+pub fn assemble_rows(items: &[Transaction], ctx: &RowContext) -> Vec<RowCells> {
     items
         .iter()
         .map(|row| {
             let amount = match amount_display_cents(row) {
                 None => "-".to_owned(),
+                // 隐私模式收口在金额格式化层（旧壳 formatAmount 同位）：调用点
+                // 零判断；`-`（份额调整无金额）是空值口径、不是金额，照旧渲染。
+                Some(_) if ctx.privacy_enabled => AMOUNT_PRIVACY_MASK.to_owned(),
                 Some(cents) => {
-                    format_amount_basic(cents, &currencies.format_of(&row.currency_code))
+                    format_amount_basic(cents, &ctx.currencies.format_of(&row.currency_code))
                 }
             };
+            let category = ctx
+                .categories
+                .path_of(row.category_id.as_deref())
+                .unwrap_or_else(|| "-".to_owned());
             RowCells {
                 id: row.id.clone(),
                 date: row.date.clone(),
                 kind: kind_label(row.kind).to_owned(),
+                category,
+                note: row.note.clone().unwrap_or_else(|| "-".to_owned()),
                 amount,
+                amount_semantic: amount_semantic(row.kind),
             }
         })
         .collect()
@@ -273,6 +423,97 @@ mod tests {
     use super::*;
 
     use ledger_transaction::ConvertFields;
+
+    #[test]
+    fn amount_semantics_cover_the_whole_kind_set() {
+        assert_eq!(
+            amount_semantic(TransactionKind::Income),
+            AmountSemantic::Income
+        );
+        assert_eq!(
+            amount_semantic(TransactionKind::Expense),
+            AmountSemantic::Expense
+        );
+        assert_eq!(
+            amount_semantic(TransactionKind::Transfer),
+            AmountSemantic::Transfer
+        );
+        assert_eq!(
+            amount_semantic(TransactionKind::Refund),
+            AmountSemantic::Refund
+        );
+        assert_eq!(amount_semantic(TransactionKind::Buy), AmountSemantic::Buy);
+        assert_eq!(amount_semantic(TransactionKind::Sell), AmountSemantic::Sell);
+        assert_eq!(
+            amount_semantic(TransactionKind::Convert),
+            AmountSemantic::Convert
+        );
+        assert_eq!(
+            amount_semantic(TransactionKind::Split),
+            AmountSemantic::Split
+        );
+        assert_eq!(
+            amount_semantic(TransactionKind::Dividend),
+            AmountSemantic::Dividend
+        );
+    }
+
+    /// 分类路径表（用例共用）：顶级 餐饮 + 子级 午餐 + 三级链 夜宵 + 孤儿父引用
+    /// （指向不存在的父）。软删分类不在此处——路径表只由在用分类行集投影
+    /// （boot 读 list_categories 在用口径），不在表中的 id 解析不到。
+    fn categories() -> CategoryTable {
+        let make = |id: &str, name: &str, parent: Option<&str>| ledger_categories::Category {
+            id: id.to_owned(),
+            name: name.to_owned(),
+            kind: "expense".to_owned(),
+            parent_id: parent.map(str::to_owned),
+            icon: None,
+            sort_order: 0,
+            created_at: String::new(),
+            updated_at: String::new(),
+            version: 1,
+            device_id: String::new(),
+            is_deleted: false,
+        };
+        CategoryTable::from_categories(&[
+            make("cat-food", "餐饮", None),
+            make("cat-lunch", "午餐", Some("cat-food")),
+            make("cat-mid", "夜宵", Some("cat-lunch")),
+            make("cat-orphan", "孤儿", Some("cat-gone")),
+        ])
+    }
+
+    #[allow(clippy::inconsistent_digit_grouping)]
+    #[test]
+    fn category_paths_follow_the_old_shell_rules() {
+        let table = categories();
+        assert_eq!(
+            table.path_of(Some("cat-food")),
+            Some("餐饮".to_owned()),
+            "顶级分类为自身名"
+        );
+        assert_eq!(
+            table.path_of(Some("cat-lunch")),
+            Some("餐饮 > 午餐".to_owned()),
+            "子分类为「父 > 子」路径"
+        );
+        assert_eq!(
+            table.path_of(Some("cat-mid")),
+            Some("午餐 > 夜宵".to_owned()),
+            "更深层截断为两级（旧壳实现即单跳拼接，分类实体两级为设计形态）"
+        );
+        assert_eq!(
+            table.path_of(Some("cat-orphan")),
+            Some("孤儿".to_owned()),
+            "父引用解析不到回退自身名"
+        );
+        assert_eq!(
+            table.path_of(Some("cat-gone")),
+            None,
+            "id 不在表中（软删分类等，投影输入只含在用行）解析不到"
+        );
+        assert_eq!(table.path_of(None), None, "无分类引用");
+    }
 
     /// 造一笔最小读模型行（只填金额口径相关字段，其余零值）。
     fn row(kind: TransactionKind, native_cents: i64, code: &str) -> Transaction {
@@ -324,11 +565,19 @@ mod tests {
     }
 
     #[test]
-    fn columns_are_the_minimal_zh_set() {
+    fn columns_match_the_old_shell_set_and_order() {
         let keys: Vec<_> = COLUMNS.iter().map(|c| c.key).collect();
-        assert_eq!(keys, ["date", "kind", "amount"], "列定义最小集与顺序");
+        assert_eq!(
+            keys,
+            ["date", "kind", "category", "note", "amount"],
+            "列定义与顺序同旧壳桌面表格（商户/账户/来源/操作随 #2020）"
+        );
         let titles: Vec<_> = COLUMNS.iter().map(|c| c.title).collect();
-        assert_eq!(titles, ["日期", "类型", "金额"], "列名 zh-CN 与旧壳同文案");
+        assert_eq!(
+            titles,
+            ["日期", "类型", "分类", "备注", "金额"],
+            "列名 zh-CN 与旧壳 transactions.columns 词表同文案"
+        );
         let amount = COLUMNS.iter().find(|c| c.key == "amount").unwrap();
         assert_eq!(amount.align, ColumnAlign::End, "金额列末端对齐");
     }
@@ -420,13 +669,24 @@ mod tests {
         );
     }
 
+    /// 装配上下文（用例共用）：币种表 + 分类路径表 + 隐私开关。
+    fn context(privacy: bool) -> RowContext<'static> {
+        RowContext {
+            currencies: Box::leak(Box::new(table())),
+            categories: Box::leak(Box::new(categories())),
+            privacy_enabled: privacy,
+        }
+    }
+
     #[test]
     fn assemble_rows_produce_final_cell_texts() {
         let mut split = row(TransactionKind::Split, 0, "CNY");
         split.id = "tx-split".to_owned();
         split.date = "2026-02-01".to_owned();
-        let expense = row(TransactionKind::Expense, 2_500, "CNY");
-        let rows = assemble_rows(&[expense, split], &table());
+        let mut expense = row(TransactionKind::Expense, 2_500, "CNY");
+        expense.category_id = Some("cat-lunch".to_owned());
+        expense.note = Some("午餐一顿".to_owned());
+        let rows = assemble_rows(&[expense, split], &context(false));
         assert_eq!(rows.len(), 2);
         assert_eq!(
             rows[0],
@@ -434,11 +694,69 @@ mod tests {
                 id: "tx-Expense-2500".to_owned(),
                 date: "2026-01-15".to_owned(),
                 kind: "支出".to_owned(),
+                category: "餐饮 > 午餐".to_owned(),
+                note: "午餐一顿".to_owned(),
                 amount: "¥25".to_owned(),
+                amount_semantic: AmountSemantic::Expense,
             }
         );
         assert_eq!(rows[1].amount, "-", "无金额行渲染 -");
         assert_eq!(rows[1].kind, "份额调整");
+        assert_eq!(rows[1].category, "-", "无分类引用渲染 -");
+        assert_eq!(rows[1].note, "-", "无备注渲染 -");
+        assert_eq!(rows[1].amount_semantic, AmountSemantic::Split);
+    }
+
+    /// 分类列：孤儿父引用回退自身名；不在表中的 id（软删分类等）落 `-`；
+    /// 备注列无备注同样 `-`。
+    #[test]
+    fn unresolved_category_and_absent_note_render_dash() {
+        let mut orphan = row(TransactionKind::Expense, 2_500, "CNY");
+        orphan.category_id = Some("cat-orphan".to_owned());
+        orphan.note = Some("带备注".to_owned());
+        let mut missing = row(TransactionKind::Expense, 1_000, "CNY");
+        missing.category_id = Some("cat-gone".to_owned());
+        let rows = assemble_rows(&[orphan, missing], &context(false));
+        assert_eq!(rows[0].category, "孤儿", "孤儿父引用回退自身名，不落 -");
+        assert_eq!(rows[0].note, "带备注");
+        assert_eq!(
+            rows[1].category, "-",
+            "路径表只收在用分类：软删分类的引用落 -（旧壳在用分类口径）"
+        );
+        assert_eq!(rows[1].note, "-");
+    }
+
+    /// 隐私掩码（issue #566 / spec #564 掩码恒等性）：开 = 全部金额同形
+    /// `••••`（正负、零、多币种一视同仁）；`-`（份额调整无金额）不是金额，
+    /// 照旧渲染；语义色照常保留（掩码隐藏数字，不隐藏方向——旧壳隐私保留项）；
+    /// 关 = 原格式化不变。
+    #[allow(clippy::inconsistent_digit_grouping)]
+    #[test]
+    fn privacy_mask_hides_every_amount_and_keeps_dash_and_semantics() {
+        let rows = [
+            row(TransactionKind::Expense, -12_345_6789, "CNY"),
+            row(TransactionKind::Income, 0, "CNY"),
+            row(TransactionKind::Dividend, 123_450, "JPY"),
+            row(TransactionKind::Split, 0, "CNY"),
+        ];
+        let masked = assemble_rows(&rows, &context(true));
+        assert_eq!(masked[0].amount, AMOUNT_PRIVACY_MASK, "负金额同形掩码");
+        assert_eq!(masked[1].amount, AMOUNT_PRIVACY_MASK, "零金额同形掩码");
+        assert_eq!(
+            masked[2].amount, AMOUNT_PRIVACY_MASK,
+            "多币种同形掩码（无币符）"
+        );
+        assert_eq!(masked[3].amount, "-", "空值口径不受掩码影响");
+        assert_eq!(
+            masked[0].amount_semantic,
+            AmountSemantic::Expense,
+            "掩码态语义色保留"
+        );
+        assert_eq!(masked[2].amount_semantic, AmountSemantic::Dividend);
+        let plain = assemble_rows(&rows, &context(false));
+        assert_eq!(plain[0].amount, "-¥123,4567.89");
+        assert_eq!(plain[1].amount, "¥0");
+        assert_eq!(plain[2].amount, "¥12,3450", "隐私关闭 = 原格式化");
     }
 
     #[test]

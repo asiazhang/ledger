@@ -39,6 +39,7 @@ ledger-transaction = { path = "../transaction" }
 # （旧壳 report_date_range 消费的同一域函数），期间步进的唯一边界来源。
 ledger-reports = { path = "../reports" }
 ledger-accounts = { path = "../accounts" }
+ledger-categories = { path = "../categories" }
 ledger-currencies = { path = "../currencies" }
 ledger-investment = { path = "../investment" }
 ledger-item = { path = "../item" }

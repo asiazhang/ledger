@@ -33,8 +33,10 @@ use std::time::Duration;
 
 use chrono::Datelike;
 use ledger_accounts::{AccountInput, AccountType};
+use ledger_categories::{CategoryInput, create_category};
 use ledger_infra::ids::new_uuid;
 use ledger_transaction::{TransactionInput, TransactionKind};
+use nsh_core::platform::ColorScheme;
 use nsh_engine::{EngineConfig, Environment, Idiom, Os, Points, Root, Size};
 use nsh_testing::Headless;
 
@@ -44,6 +46,20 @@ const DEFAULT_WAIT: Duration = Duration::from_secs(5);
 /// 串行锁：装配入口（`set_book_dir`）与会话句柄是进程级单例，用例间串行防串扰
 /// （与 lib 单测的 SERIAL 同形；两测试二进制是独立进程，互不串扰）。
 static SERIAL: Mutex<()> = Mutex::new(());
+
+/// 桌面形态 headless 配置（足够容纳表格与分页条的视口），带设备存储初值
+/// （金额隐私开关的轻量设置项面；`None` = 缺省空存储）。
+fn desktop_config_with_storage(entries: &[(&str, &str)]) -> EngineConfig {
+    EngineConfig {
+        storage: Some(nsh_testing::MemoryStorage::new(
+            entries
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect::<Vec<_>>(),
+        )),
+        ..desktop_config()
+    }
+}
 
 /// 桌面形态 headless 配置（足够容纳表格与分页条的视口）。
 fn desktop_config() -> EngineConfig {
@@ -85,6 +101,78 @@ fn test_date(index: usize) -> String {
             year += 1;
         }
     }
+}
+
+/// 造一个现金账户（用例共用）。
+fn seed_cash_account(db: &ledger_infra::db::DbState) -> String {
+    let conn = db
+        .conn
+        .lock()
+        .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
+        .unwrap();
+    ledger_accounts::create_account(
+        &conn,
+        AccountInput {
+            name: "测试现金".to_owned(),
+            kind: AccountType::Cash,
+            currency_code: "CNY".to_owned(),
+            initial_balance_cents: Some(0),
+            credit_limit_cents: None,
+            statement_day: None,
+            due_day: None,
+        },
+    )
+    .unwrap()
+}
+
+/// 经域层公开写入口造一笔交易（用例共用的最小写面）。
+fn seed_transaction(
+    db: &ledger_infra::db::DbState,
+    account: &str,
+    kind: TransactionKind,
+    amount_cents: i64,
+    date: &str,
+    category_id: Option<String>,
+    note: Option<String>,
+) {
+    let conn = db
+        .conn
+        .lock()
+        .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
+        .unwrap();
+    ledger_transaction::create(
+        &conn,
+        TransactionInput {
+            kind,
+            amount_cents,
+            currency_code: "CNY".to_owned(),
+            account_id: Some(account.to_owned()),
+            to_account_id: None,
+            funding_account_id: None,
+            funding: Vec::new(),
+            purchases: Vec::new(),
+            category_id,
+            merchant_id: None,
+            merchant_name: None,
+            policy_id: None,
+            refund_of_transaction_id: None,
+            note,
+            source_order_no: None,
+            date: date.to_owned(),
+            instrument_id: None,
+            quantity: None,
+            price_cents: None,
+            fee_cents: None,
+            to_instrument_id: None,
+            to_quantity: None,
+            out_amount_cents: None,
+            in_amount_cents: None,
+            origin: None,
+            fx_rate: None,
+            idempotency_key: None,
+        },
+    )
+    .unwrap();
 }
 
 /// 经域层公开写入口在同一账户上造一列现金支出（每笔 ¥25，日期递增）。
@@ -317,6 +405,165 @@ fn app_window_steps_back_by_previous_button() {
     app.wait_for_gone("text:2026-02-19", DEFAULT_WAIT).unwrap();
 }
 
+/// 金额隐私遮蔽接线（issue #2019）：设备轻量设置项 `amount_privacy_enabled`
+/// 置真（与旧壳同键同值形态），表格金额呈现恒形掩码 `••••`、明文金额不在屏；
+/// 类型标签等其余格照常。删掉设备态读取（`amount_privacy_enabled`）或装配
+/// 消费任一环，明文金额回到屏上即红。
+#[test]
+fn app_window_masks_amounts_when_device_privacy_enabled() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("privacy");
+    seed_expense_series(&dir, 1);
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config_with_storage(&[(
+        "amount_privacy_enabled",
+        "true",
+    )]))
+    .unwrap();
+
+    app.wait_for("text:••••").unwrap();
+    let texts = app.screen().texts();
+    assert!(
+        !texts.contains(&"¥25"),
+        "隐私开启后金额明文不在屏：{:?}",
+        texts
+    );
+    assert!(texts.contains(&"支出"), "掩码态其余格照常：{:?}", texts);
+}
+
+/// 金额语义色接线（issue #2019）：支出红 / 收入绿逐值镜像旧壳
+/// `kindSemanticColor`（packages/theme），亮暗两态随系统外观切换。删掉
+/// `render_cell` 接线或色值映射任一环即红。
+#[test]
+fn app_window_colors_amount_cells_by_kind_semantic() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("colors");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let account = seed_cash_account(&db);
+        seed_transaction(
+            &db,
+            &account,
+            TransactionKind::Expense,
+            2_500,
+            "2026-01-15",
+            None,
+            None,
+        );
+        seed_transaction(
+            &db,
+            &account,
+            TransactionKind::Income,
+            1_000,
+            "2026-01-16",
+            None,
+            None,
+        );
+    }
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+
+    app.wait_for("text:¥25").unwrap();
+    assert_eq!(
+        app.screen().span_style("text:¥25").unwrap().color,
+        nsh_core::Color(0xd03050ff),
+        "支出金额亮色 = 旧壳 expense light"
+    );
+    assert_eq!(
+        app.screen().span_style("text:¥10").unwrap().color,
+        nsh_core::Color(0x18a058ff),
+        "收入金额亮色 = 旧壳 income light"
+    );
+
+    // 系统切暗色（用户在外观设置切换）：金额色随旧壳暗色变体。
+    app.set_environment("dark mode", |env| env.color_scheme = ColorScheme::Dark)
+        .unwrap();
+    assert_eq!(
+        app.screen().span_style("text:¥25").unwrap().color,
+        nsh_core::Color(0xe88080ff),
+        "支出金额暗色 = 旧壳 expense dark"
+    );
+    assert_eq!(
+        app.screen().span_style("text:¥10").unwrap().color,
+        nsh_core::Color(0x63e2b7ff),
+        "收入金额暗色 = 旧壳 income dark"
+    );
+}
+
+/// 分类路径与备注列接线（issue #2019）：父子分类的支出行呈现「父 > 子」路径
+/// 与备注原文；无分类无备注行落 `-`。删掉分类读接缝、路径装配或列映射任一环
+/// 即红。
+#[test]
+fn app_window_renders_category_path_and_note_cells() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("category");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let conn = db
+            .conn
+            .lock()
+            .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
+            .unwrap();
+        let parent = create_category(
+            &conn,
+            CategoryInput {
+                name: "餐饮".to_owned(),
+                kind: "expense".to_owned(),
+                parent_id: None,
+                icon: None,
+            },
+        )
+        .unwrap();
+        let child = create_category(
+            &conn,
+            CategoryInput {
+                name: "午餐".to_owned(),
+                kind: "expense".to_owned(),
+                parent_id: Some(parent),
+                icon: None,
+            },
+        )
+        .unwrap();
+        drop(conn);
+        let account = seed_cash_account(&db);
+        seed_transaction(
+            &db,
+            &account,
+            TransactionKind::Expense,
+            2_500,
+            "2026-01-15",
+            Some(child),
+            Some("买咖啡".to_owned()),
+        );
+        seed_transaction(
+            &db,
+            &account,
+            TransactionKind::Expense,
+            1_000,
+            "2026-01-16",
+            None,
+            None,
+        );
+    }
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+
+    app.wait_for("text:餐饮 > 午餐").unwrap();
+    let texts = app.screen().texts();
+    for expected in ["分类", "备注", "买咖啡", "-"] {
+        assert!(
+            texts.contains(&expected),
+            "表格应呈现「{expected}」：{:?}",
+            texts
+        );
+    }
+}
 /// 翻页快捷键（issue #2021 / ADR-0140）：`]` 下一页 / `[` 上一页，语义等同
 /// 点击分页条（同一读路径、同一行集替换）；首页 `[` 越界幂等无操作。断言
 /// 对准用户可见结果（行集内容），删除 keymap 接线即红。
