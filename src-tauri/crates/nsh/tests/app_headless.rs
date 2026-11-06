@@ -1215,3 +1215,307 @@ fn suppression_gate_blocks_period_key_while_period_popup_open() {
     app.wait_for(&month_label(p.year(), p.month())).unwrap();
     app.wait_for("text:¥88").unwrap();
 }
+
+// ---------------------------------------------------------------------------
+// 行右键删除全链路（issue #2022）：右键菜单 → 危险确认 → 域公开写入口直调删除
+// → 进程内失效信号驱动列表重读。
+// ---------------------------------------------------------------------------
+
+/// 库态核对（不经 UI）：测试与被测应用同进程持有测试库路径，经产品开库入口
+/// 另起会话直调域读 API（headless 断言原语无查库能力，research doc §3.3）。
+fn book_transaction_dates(dir: &Path) -> Vec<String> {
+    let db = nsh_app::boot::boot_ledger(dir).unwrap();
+    let conn = db
+        .read_conn
+        .lock()
+        .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
+        .unwrap();
+    let filter = ledger_transaction::TransactionListFilter {
+        page: Some(1),
+        page_size: Some(100),
+        ..Default::default()
+    };
+    ledger_transaction::list_transactions(&conn, &filter)
+        .unwrap()
+        .items
+        .into_iter()
+        .map(|tx| tx.date)
+        .collect()
+}
+
+/// 删除全旅程（issue #2022 AC1）：行右键菜单选「删除」→ 危险确认（error 级，
+/// ADR-0078）→ 确认后交易删除生效且列表自动刷新（无需手动刷新）；总数减一、
+/// 库中该笔消失。异步纪律：域写与重读在后台线程，一律 wait_for（§3.5）。
+#[test]
+fn row_context_menu_delete_confirms_then_refreshes_list() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("delete");
+    seed_expense_notes(&dir, &["要删除的一笔", "要留下的一笔"]);
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+
+    app.wait_for("text:共 2 条").unwrap();
+
+    // 行右键 → 上下文菜单呈现（zh-CN 文案与旧壳 transactions.menu.delete 同词表）。
+    app.right_click("text:2026-01-01").unwrap();
+    let menu = app.menu().expect("右键应打开上下文菜单");
+    assert_eq!(
+        menu.iter().map(|e| e.label.as_str()).collect::<Vec<_>>(),
+        vec!["删除"],
+        "行菜单项闭集（立桩只接删除）：{menu:?}"
+    );
+    app.choose_menu_item("删除").unwrap();
+
+    // 危险确认对话框（error 级形态）：标题与说明段呈现，确认前不产生写入。
+    app.wait_for("text:删除交易").unwrap();
+    app.wait_for("text:删除后不可恢复。").unwrap();
+    {
+        let dates = book_transaction_dates(&dir);
+        assert_eq!(dates.len(), 2, "确认对话框开着时不产生写入：{dates:?}");
+    }
+
+    // 确认 → 后台删除 → 失效信号驱动列表重读：行离屏、总数减一（删「要删除的
+    // 一笔」（2026-01-01），留下的 2026-01-02 仍在屏）。删掉「失效信号→列表
+    // 重读」接线（signals 广播点）本 wait_for_gone 超时红（库中已删而列表仍旧）。
+    app.press("id:danger-confirm").unwrap();
+    app.wait_for_gone("text:2026-01-01", DEFAULT_WAIT).unwrap();
+    app.wait_for("text:共 1 条").unwrap();
+    assert!(
+        app.shows("2026-01-02"),
+        "未删除的行留在刷新后的列表：{:?}",
+        app.screen().texts()
+    );
+
+    // 库态核对（不经 UI）：被删笔软删生效，剩一笔。
+    let dates = book_transaction_dates(&dir);
+    assert_eq!(
+        dates,
+        vec!["2026-01-02".to_owned()],
+        "库中剩一笔：{dates:?}"
+    );
+}
+
+/// 取消路径（issue #2022 AC1）：确认对话框点「取消」不产生写入——行仍在屏、
+/// 库中仍在（域读 API 核对）。
+#[test]
+fn row_context_menu_delete_cancel_writes_nothing() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("delete-cancel");
+    seed_expense_notes(&dir, &["要删除的一笔", "要留下的一笔"]);
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+
+    app.wait_for("text:共 2 条").unwrap();
+    app.right_click("text:2026-01-01").unwrap();
+    app.choose_menu_item("删除").unwrap();
+    app.wait_for("text:删除交易").unwrap();
+
+    app.press("id:danger-cancel").unwrap();
+    app.wait_for_gone("text:删除交易", DEFAULT_WAIT).unwrap();
+    app.settle();
+    assert!(
+        app.shows("2026-01-01"),
+        "取消后行仍在屏：{:?}",
+        app.screen().texts()
+    );
+    assert!(
+        app.shows("共 2 条"),
+        "取消后总数不变：{:?}",
+        app.screen().texts()
+    );
+
+    let dates = book_transaction_dates(&dir);
+    assert_eq!(dates.len(), 2, "取消路径不产生写入：{dates:?}");
+}
+
+/// ESC 路径（issue #2022 AC1 / 用户故事 11）：ESC 按弹层关闭语义关闭确认对话
+/// 框，不产生写入。
+#[test]
+fn row_context_menu_delete_escape_writes_nothing() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("delete-esc");
+    seed_expense_notes(&dir, &["要删除的一笔", "要留下的一笔"]);
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+
+    app.wait_for("text:共 2 条").unwrap();
+    app.right_click("text:2026-01-01").unwrap();
+    app.choose_menu_item("删除").unwrap();
+    app.wait_for("text:删除交易").unwrap();
+
+    app.press_key("escape").unwrap();
+    app.wait_for_gone("text:删除交易", DEFAULT_WAIT).unwrap();
+    app.settle();
+    assert!(
+        app.shows("2026-01-01"),
+        "ESC 后行仍在屏：{:?}",
+        app.screen().texts()
+    );
+
+    let dates = book_transaction_dates(&dir);
+    assert_eq!(dates.len(), 2, "ESC 路径不产生写入：{dates:?}");
+}
+
+/// 抑制接线——危险确认对话框（issue #2022 AC3，弹层闸门的第三个消费面）：
+/// 对话框开着按 `[` 不翻页（页码是用户可见的行集结果），取消关窗后同键翻页
+/// 生效。删掉 danger 对话框的抑制上报或 keymap 的闸门检查任一环本测红。
+#[test]
+fn suppression_gate_blocks_pagination_key_while_danger_dialog_open() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("suppress-danger");
+    seed_expense_series(&dir, 150);
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+
+    app.wait_for("text:共 150 条").unwrap();
+    app.press_key("]").unwrap();
+    app.wait_for("text:2026-02-19").unwrap();
+
+    // 右键行 → 菜单 → 删除 → 危险确认对话框开（注册抑制的弹层）。
+    app.right_click("text:2026-02-19").unwrap();
+    app.choose_menu_item("删除").unwrap();
+    app.wait_for("text:删除交易").unwrap();
+
+    // 对话框开着 → `[` 不派发（第 2 页行集原样）。
+    app.press_key("[").unwrap();
+    app.settle();
+    assert!(
+        app.shows("2026-02-19") && !app.shows("2026-05-30"),
+        "危险确认对话框开着时 `[` 不得翻页：{:?}",
+        app.screen().texts()
+    );
+
+    // 取消关窗 → 同键翻页生效（第 1 页行集换血）。
+    app.press("id:danger-cancel").unwrap();
+    app.wait_for_gone("text:删除交易", DEFAULT_WAIT).unwrap();
+    app.press_key("[").unwrap();
+    app.wait_for("text:2026-05-30").unwrap();
+    app.wait_for_gone("text:2026-02-19", DEFAULT_WAIT).unwrap();
+}
+
+/// 删除按交易计（issue #2022 × ADR-0138）：购买项订单逐项成行，任一购买项
+/// 行右键删除的整笔交易——续行行文本离屏、订单级行离屏、库中该笔消失，
+/// 留底支出不受影响（行 id 同为交易本体 id 的固定目标语义）。
+#[test]
+fn purchase_item_row_right_click_deletes_whole_transaction() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("delete-order");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let conn = db
+            .conn
+            .lock()
+            .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
+            .unwrap();
+        let account = ledger_accounts::create_account(
+            &conn,
+            AccountInput {
+                name: "测试现金".to_owned(),
+                kind: AccountType::Cash,
+                currency_code: "CNY".to_owned(),
+                initial_balance_cents: Some(0),
+                credit_limit_cents: None,
+                statement_day: None,
+                due_day: None,
+            },
+        )
+        .unwrap();
+        ledger_transaction::create(
+            &conn,
+            TransactionInput {
+                kind: TransactionKind::Expense,
+                amount_cents: 3_000,
+                currency_code: "CNY".to_owned(),
+                account_id: Some(account.clone()),
+                to_account_id: None,
+                funding_account_id: None,
+                funding: Vec::new(),
+                purchases: vec![
+                    TransactionPurchaseInput {
+                        name: "猫粮".to_owned(),
+                        quantity: 2,
+                        category_id: None,
+                        unit_price_cents: None,
+                    },
+                    TransactionPurchaseInput {
+                        name: "洗衣液".to_owned(),
+                        quantity: 1,
+                        category_id: None,
+                        unit_price_cents: None,
+                    },
+                ],
+                category_id: None,
+                merchant_id: None,
+                merchant_name: None,
+                policy_id: None,
+                refund_of_transaction_id: None,
+                note: None,
+                source_order_no: None,
+                date: "2026-01-01".to_owned(),
+                instrument_id: None,
+                quantity: None,
+                price_cents: None,
+                fee_cents: None,
+                to_instrument_id: None,
+                to_quantity: None,
+                out_amount_cents: None,
+                in_amount_cents: None,
+                origin: None,
+                fx_rate: None,
+                idempotency_key: None,
+            },
+        )
+        .unwrap();
+        drop(conn);
+        seed_transaction(
+            &db,
+            &account,
+            TransactionKind::Expense,
+            2_500,
+            "2026-01-02",
+            None,
+            None,
+        );
+    }
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+
+    // 「共 N 条」按交易计：订单 1 笔 + 留底 1 笔（购买项行不虚增计数）。
+    app.wait_for("text:共 2 条").unwrap();
+
+    // 右键购买项**续行**（非首行）→ 菜单 → 删除 → 确认。
+    app.right_click("text:洗衣液 共 1 件").unwrap();
+    app.choose_menu_item("删除").unwrap();
+    app.wait_for("text:删除交易").unwrap();
+    app.press("id:danger-confirm").unwrap();
+
+    // 整笔离屏：订单级行与购买项行全消失，计数按交易减一。
+    app.wait_for_gone("text:洗衣液 共 1 件", DEFAULT_WAIT)
+        .unwrap();
+    app.wait_for_gone("text:猫粮 共 2 件", DEFAULT_WAIT)
+        .unwrap();
+    app.wait_for("text:共 1 条").unwrap();
+    assert!(
+        app.shows("2026-01-02"),
+        "留底支出不受影响：{:?}",
+        app.screen().texts()
+    );
+
+    // 库态核对（不经 UI）：被删整笔软删生效，剩留底一笔。
+    let dates = book_transaction_dates(&dir);
+    assert_eq!(
+        dates,
+        vec!["2026-01-02".to_owned()],
+        "库中剩一笔：{dates:?}"
+    );
+}

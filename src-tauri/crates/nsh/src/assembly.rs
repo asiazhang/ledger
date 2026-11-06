@@ -735,6 +735,22 @@ pub fn total_pages(total: i64) -> u32 {
     pages.max(1) as u32
 }
 
+/// 删除一行后的页码决策（旧壳 afterRowDelete / ADR-0045 的决策半边，#2022）：
+/// 输入删前快照（当前页码与总数），本页删后剩 0 条且当前页非第一页 → 回退一页
+/// （`Some`），其余一律保持当前页（`None`）。本页行数由总数与页码推算
+/// （`total - (page-1)×PAGE_SIZE` 钳到页径）；被删行必在当前页（行右键的行
+/// 就是屏上行），推算口径与旧壳「本页行数 - 1」同值。
+pub fn page_after_row_delete(page: u32, total_before: i64) -> Option<u32> {
+    let on_page = total_before
+        .saturating_sub((page.max(1) as i64 - 1) * PAGE_SIZE as i64)
+        .min(PAGE_SIZE as i64);
+    if on_page <= 1 && page > 1 {
+        Some(page - 1)
+    } else {
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1445,6 +1461,34 @@ mod tests {
         assert_eq!(total_pages(PAGE_SIZE as i64 + 1), 2, "末页不满一页也算一页");
         assert_eq!(total_pages(250), 3);
         assert_eq!(total_pages(-5), 1, "负值（不可达口径）钳到 1");
+    }
+
+    #[test]
+    fn page_after_row_delete_stays_and_falls_back_like_the_old_shell() {
+        // 旧壳 afterRowDelete（ADR-0045）的决策半边：本页删后剩 0 条且当前页
+        // 非第一页才回退一页，其余一律保持当前页（None）。
+        assert_eq!(page_after_row_delete(1, 100), None, "首页删一行不回退");
+        assert_eq!(page_after_row_delete(1, 1), None, "首页删空也停在首页");
+        assert_eq!(
+            page_after_row_delete(2, 150),
+            None,
+            "末页 50 行删一行剩 49 条：保持当前页"
+        );
+        assert_eq!(
+            page_after_row_delete(2, 101),
+            Some(1),
+            "第 2 页仅 1 行：删后本页空，回退到第 1 页"
+        );
+        assert_eq!(
+            page_after_row_delete(3, 201),
+            Some(2),
+            "第 3 页仅 1 行：删后回退"
+        );
+        assert_eq!(
+            page_after_row_delete(2, 200),
+            None,
+            "整页删一行剩 99 条：保持当前页"
+        );
     }
 
     #[test]

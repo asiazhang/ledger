@@ -650,3 +650,55 @@ fn run_startup_with_seeded_book_places_session_and_reads_first_page() {
     assert_eq!(page.total, 2, "会话句柄可直读首页（读路径直调域服务）");
     assert_eq!(page.items.len(), 2);
 }
+
+/// 删除写接缝（issue #2022）：[`crate::boot::delete_transaction`] 经核心交易域
+/// 公开删除入口直调（软删编排同处一个事务，余额重算由已接线接缝执行）——删
+/// 后读路径不再投影该笔；不存在的 id 报码化 NotFound（`transaction.not-found`）。
+/// 删除域语义归核心交易域单测，本用例只钉壳写接线的两个消费契约。
+#[test]
+fn delete_transaction_writes_via_domain_entry_and_reports_coded_not_found() {
+    use crate::boot::delete_transaction;
+    use ledger_infra::error::AppError;
+
+    let _guard = SERIAL.lock().unwrap();
+    let dir = scratch_book_dir("delete-write-seam");
+    create_empty_book_file(&dir);
+    seed_expense_notes(&dir, &["要删除的一笔", "要留下的一笔"]);
+    let db = boot_ledger(&dir).unwrap();
+    let gone_id = {
+        let conn = db
+            .conn
+            .lock()
+            .map_err(|e| AppError::Db(e.to_string()))
+            .unwrap();
+        ledger_transaction::list_transactions(
+            &conn,
+            &ledger_transaction::TransactionListFilter {
+                page: Some(1),
+                page_size: Some(100),
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .items
+        .into_iter()
+        .find(|tx| tx.note.as_deref() == Some("要删除的一笔"))
+        .expect("造数行集含要删除的一笔")
+        .id
+    };
+
+    delete_transaction(&db, &gone_id).expect("存在的 id 删除成功");
+
+    let page = transaction_page(&db, 1, None).unwrap();
+    assert_eq!(page.total, 1, "删除后 total = 未删除笔数");
+    assert!(
+        page.items.iter().all(|tx| tx.id != gone_id),
+        "软删行不在投影行集"
+    );
+
+    let err = delete_transaction(&db, "no-such-id").expect_err("不存在的 id 报错");
+    assert!(
+        err.is_code("transaction.not-found"),
+        "不存在 id 报码化 NotFound，实际：{err}"
+    );
+}

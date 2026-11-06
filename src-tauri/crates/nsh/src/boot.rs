@@ -40,6 +40,9 @@ pub const CODE_ENCRYPTED_UNSUPPORTED: &str = "nsh-shell.encrypted-unsupported";
 /// 账本库文件缺失的稳定错误码。
 pub const CODE_BOOK_MISSING: &str = "nsh-shell.book-missing";
 
+/// 账本库会话缺失的稳定错误码（写路径在会话就位前执行的不可达兜底）。
+pub const CODE_SESSION_MISSING: &str = "nsh-shell.session-missing";
+
 /// 外来形态归一化失败的稳定错误码（与旧壳 `boot.db-normalize-failed` 同码，
 /// 基础设施 [`ledger_infra::db::boot::BOOT_DB_NORMALIZE_FAILED`]）。
 const BOOT_DB_NORMALIZE_FAILED: &str = ledger_infra::db::boot::BOOT_DB_NORMALIZE_FAILED;
@@ -144,6 +147,16 @@ pub fn transaction_search(db: &DbState, query: &str, page: u32) -> Result<Transa
         None,
         None,
     )
+}
+
+/// 删除交易（域公开写入口直调，issue #2022 写路径立桩靶标；不经 IPC）：
+/// 经核心交易域行为层删除编排入口 [`ledger_transaction::delete`]——软删编排
+/// （持仓副作用回退 + 级联 + 主行软删）同处一个事务，余额重算由已接线的余额
+/// 刷新接缝（[`crate::wiring`]）在既有事务内执行。写连接是成对建连的写侧。
+/// 不存在的 id 返回码化 NotFound（并发已删的呈现面归视图层）。
+pub fn delete_transaction(db: &DbState, id: &str) -> Result<()> {
+    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    ledger_transaction::delete(&conn, id)
 }
 
 /// 读取账本库数据期间边界（issue #2021 / ADR-0141 期间步进的钳制输入）：

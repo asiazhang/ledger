@@ -21,10 +21,12 @@ use std::sync::{Mutex, MutexGuard};
 use std::time::Duration;
 
 use ledger_infra::db::DbState;
+use ledger_infra::error::AppError;
 use nsh_base::{
-    DataTableAlign, DataTableCell, DataTableClasses, DataTableColumn, DataTableRows, PopoverEvent,
-    button, data_table, input, pagination, popover,
+    DataTableAlign, DataTableCell, DataTableClasses, DataTableColumn, DataTableContextMenu,
+    DataTableRows, PopoverEvent, button, data_table, input, pagination, popover,
 };
+use nsh_core::element::desktop::MenuItem;
 use nsh_core::prelude::*;
 
 use crate::assembly::{
@@ -32,7 +34,7 @@ use crate::assembly::{
     RowContext,
 };
 use crate::boot;
-use crate::{overlay, period};
+use crate::{context_menu, danger, overlay, period, signals};
 
 /// 金额隐私模式开关的存储键（设备轻量设置项，与旧壳同键同值形态：旧壳
 /// `@ledger/money` 的 `AMOUNT_PRIVACY_STORAGE_KEY`，值为 JSON 布尔字面量
@@ -102,11 +104,13 @@ pub fn set_book_dir(dir: PathBuf) {
 
 /// 重置装配入口与会话句柄（headless 测试接缝）：同一进程内的多场景串行测试
 /// 先复位再注入各自的测试库路径（生产 bin 只注入一次，不消费本函数；串行
-/// 由测试侧的 SERIAL 锁保证，复位时上一场景的引擎已撤销）。
+/// 由测试侧的 SERIAL 锁保证，复位时上一场景的引擎已撤销）。失效信号订阅者
+/// 属同一批复位点（上一场景视图的订阅者不得响应下一场景的广播）。
 #[doc(hidden)]
 pub fn reset_book_assembly() {
     *book_dir_slot() = None;
     *db_slot() = None;
+    signals::reset_for_tests();
 }
 
 /// 启动结果三态（窗口呈现的全部状态）。
@@ -307,6 +311,10 @@ fn TransactionsView() -> impl IntoElement {
     let searched = signal(false);
     let search_seq = signal(0u64);
     let load_seq = signal(0u64);
+    // 行删除态（issue #2022）：待确认删除的交易 id（Some = 危险确认对话框开）
+    // 与删除失败呈现（码化错误文案，不静默；下次删除尝试开始时清空）。
+    let confirm_target = signal(None::<String>);
+    let delete_error = signal(None::<String>);
     // 时间维度行状态：期间快照（None = 全部）与数据期间边界原始日期对
     // （None = 在途/失败 → 钳制退化为不钳制，旧壳 silent 同口径）；快照区间
     // 是唯一事实源，游标不落状态（步进前从当前区间反推，ADR-0141 决策 2）。
@@ -318,6 +326,9 @@ fn TransactionsView() -> impl IntoElement {
     // 路径——受控关闭不产生 Popover 事件，只听事件会漏报），组件卸载时
     // Drop 自动撤销。
     let overlay_token = overlay::OverlayToken::new();
+    // 视图实例 owner（组件体运行时的 current）：删除任务经它挂到组件实例，
+    // 不随对话框子树卸载被取消（见 perform_delete 注）。
+    let view_owner = Owner::current();
 
     // 主题令牌（双态自适应，registry 缺省带主题双态令牌）；缺失时回退亮灰/
     // 中灰（缺省主题 registry 缺失时的可读兜底，非双态）。
@@ -479,6 +490,72 @@ fn TransactionsView() -> impl IntoElement {
             }
             loading.set(false);
         });
+    };
+
+    // 失效信号订阅（进程内失效信号→列表重读的接线点，#2022）：广播到达时
+    // 以删后页码决策（保持当前页 / 本页删空回退一页，旧壳 afterRowDelete
+    // ADR-0045 同语义）重读。订阅句柄随视图实例存亡；生产进程一视图一订阅。
+    let reload_after_delete = move || {
+        let target =
+            assembly::page_after_row_delete(page.get(), total.get()).unwrap_or_else(|| page.get());
+        page.set(target);
+        load(target);
+    };
+    // 订阅随组件实例存亡：组件体只跑一次、普通绑定不入 owner 图，体结束即
+    // 释放——订阅句柄直放 let 会在体结束时 Drop 撤销订阅、广播落空（库已删
+    // 而列表永不刷新）。与上方 overlay_token 同形：句柄移入 effect 闭包
+    // （effect 不追踪读、只跑一次，闭包被组件 owner 持有，随组件卸载释放、
+    // Drop 撤销订阅）。
+    let reload_subscription = signals::subscribe_transactions_changed(reload_after_delete);
+    effect(move || {
+        let _held_for_view_lifetime: &signals::TransactionsChangedSubscription =
+            &reload_subscription;
+    });
+
+    // 确认后的删除执行（域公开写入口直调，不经 IPC）：写连接侧在后台线程删
+    // 除（SQLite 阻塞 IO 不占引擎线程），成功即广播交易数据失效（进程内失效
+    // 信号——「失效信号→列表重读」的广播接线点，删除即红条目钉在
+    // tests/app_headless.rs）；失败呈现码化错误文案，不静默（对话框已随确认
+    // 关闭，错误在表格下方条位呈现，旧壳 toast 同语义）。
+    let perform_delete = move |id: String| {
+        delete_error.set(None);
+        let db = db_slot().clone();
+        // 任务挂视图实例 owner：确认 handler 运行在对话框子树的 owner 下
+        // （监听器随注册它的视图存亡），而关窗即卸载对话框子树——直呼 spawn
+        // 会把任务挂到子树 owner 上，随关窗被取消，写入静默蒸发（广播不发、
+        // 列表不刷、错误不呈现）。视图体捕获自身 Owner，经 [`Owner::run`] 让
+        // 任务归组件实例，存活到删除完成。
+        view_owner.run(move || {
+            spawn(async move {
+                let outcome = blocking(move || match db.as_ref() {
+                    Some(db) => boot::delete_transaction(db, &id),
+                    None => Err(AppError::coded(
+                        boot::CODE_SESSION_MISSING,
+                        "内部错误：账本库会话缺失",
+                    )),
+                })
+                .await;
+                match outcome {
+                    Ok(Ok(())) => signals::notify_transactions_invalidated(),
+                    Ok(Err(e)) => delete_error.set(Some(format!("删除失败: {e}"))),
+                    Err(_) => {
+                        delete_error.set(Some("删除失败: 内部错误：删除任务异常退出".to_owned()))
+                    }
+                }
+            })
+        });
+    };
+
+    // 危险确认结局（确认/取消/ESC 三路径）：关窗归一，确认才执行删除（删除
+    // 任务经 perform_delete 挂视图实例 owner，关窗卸载对话框子树不影响）。
+    let on_danger_outcome = move |outcome: danger::DangerOutcome| {
+        let id = confirm_target.get_untracked();
+        confirm_target.set(None);
+        if outcome == danger::DangerOutcome::Confirmed
+            && let Some(id) = id
+        {
+            perform_delete(id);
+        }
     };
 
     // 搜索输入调度（旧壳 scheduleSearch 同形）：文本变化 → 页码归 1 → 防抖后
@@ -703,6 +780,27 @@ fn TransactionsView() -> impl IntoElement {
                         .columns(table_columns())
                         .data(move || rows_to_data(&rows.get()))
                         .render_cell(render_cell(rows))
+                        // 行右键菜单（App* 封装族：上下文菜单，#2022）：目标行
+                        // 由右键所在行固定（fixed-target，旧壳同位）——派生行
+                        // （购买项续行）的 id 同为交易本体 id，任一行右键删除的
+                        // 都是整笔交易。菜单项闭集立桩只接「删除」（文案与旧壳
+                        // transactions.menu.delete 同词表）；弹出与抑制上报归
+                        // context_menu 封装，选中只回写确认目标（对话框呈现与
+                        // 写入执行在下方两单点）。
+                        .on_context_menu(move |e: &DataTableContextMenu| {
+                            let Some(row) = e.row else {
+                                return;
+                            };
+                            if let Some(id) = rows.get().get(row as usize).map(|r| r.id.clone()) {
+                                let confirm = confirm_target;
+                                context_menu::open_context_menu(
+                                    vec![MenuItem::new("删除").on_select(move || {
+                                        confirm.set(Some(id.clone()));
+                                    })],
+                                    Point::new(e.x, e.y),
+                                );
+                            }
+                        })
                         .loading(move || loading.get())
                         .loading_view(text("正在加载…").text_color(muted))
                         // 空态分型与旧壳同源：搜索态无命中「无匹配结果」
@@ -720,6 +818,44 @@ fn TransactionsView() -> impl IntoElement {
                         .classes(table_classes())
                         .flex_1(),
                 ),
+        )
+        .child(
+            // 删除失败呈现（#2022）：码化错误文案 zh-CN 原样，不静默；下次
+            // 删除尝试开始时清空（旧壳 toast 同语义的条位呈现）。
+            when(
+                move || delete_error.get().is_some(),
+                move || {
+                    text(move || {
+                        format!("删除失败: {}", delete_error.get().unwrap_or_default())
+                    })
+                    .text_size(px(12.0))
+                    .text_color(
+                        tokens
+                            .color("destructive")
+                            .unwrap_or_else(|| hsla(0.0, 0.0, 0.98, 1.0).into()),
+                    )
+                    .test_id("tx-delete-error")
+                    .app_class("px-4 py-1")
+                },
+            ),
+        )
+        .child(
+            // 危险确认对话框（App* 封装族首批件，ADR-0078 分级语义）：交易删除
+            // 不可逆（确认文案自述「删除后不可恢复」）→ error 级形态；抑制上报
+            // 与 ESC/遮罩语义归封装（danger_confirm），选中菜单只回写确认目标。
+            danger::danger_confirm(
+                move || confirm_target.get().is_some(),
+                danger::DangerConfirmSpec {
+                    level: danger::DangerLevel::Error,
+                    title: "删除交易".to_owned(),
+                    lead: Some("确认删除该条交易？".to_owned()),
+                    strong_warning: Some("删除后不可恢复。".to_owned()),
+                    detail: None,
+                    confirm_label: "删除".to_owned(),
+                    cancel_label: "取消".to_owned(),
+                },
+                on_danger_outcome,
+            ),
         )
         .child(
             // 底栏：读失败优先呈现错误；否则总数（搜索态「命中 N 条」、列表态
