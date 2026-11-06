@@ -21,6 +21,12 @@ test = false
 # 平台后端按目标门禁（先例：根包窗口状态插件的 target 三元组条件）——立桩期
 # 仅 Linux（硬伤清单的战场）；macOS / Windows 随迁移系列票逐平台开门。
 nsh-core.workspace = true
+# UI 组件集（issue #2018 首屏表格）：DataTable（虚拟化大表）与 Pagination（分页条）
+# 消费面；平台宿主缺省已注册同一组件集（nsh-platform-linux app.rs 缺省 ui_sets =
+# nsh_base::registry()），本依赖只是 Rust 侧的组件构造入口，不引入第二份注册。
+# headless 测试侧的 ui_sets 由测试显式传入同一 registry（nsh-testing 缺省不带
+# nsh-base）。
+nsh-base.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 nsh-platform-linux.workspace = true

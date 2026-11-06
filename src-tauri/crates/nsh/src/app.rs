@@ -1,4 +1,4 @@
-//! NSH 根组件与启动结果视图模型（issue #2017 / ADR-0145）。
+//! NSH 根组件与启动结果视图模型（issue #2017 骨架 / issue #2018 交易表格首屏）。
 //!
 //! 装配入口可注入（docs/research/nsh-testing-capabilities.md §3.1：lib + bin
 //! 双靶，bin 薄启动）：bin（`main.rs`）解析启动参数后经 [`set_book_dir`] 注入
@@ -6,23 +6,68 @@
 //! （`Root::of::<App>`），生产与测试同一条装配路径。
 //!
 //! 引导在组件任务的后台线程执行（`spawn` + `blocking`：SQLite 是阻塞 IO，不占
-//! 引擎线程）；呈现按启动结果三态（加载中 / 就绪 / 失败），文案仅 zh-CN
-//! （spec #2015 实施决策）。
+//! 引擎线程）；就绪态承载交易表格首屏——DataTable 渲染真实交易数据、分页条
+//! 点击翻页（100 行/页服务端 offset 分页，走域读路径）、忙碌指示与空态。行/格
+//! 文本由装配层（[`crate::assembly`]）在数据到达时一次性产出，渲染期零格式化；
+//! 会话句柄（`DbState`）住进程级单例 [`DB`]，页读复用成对建连的只读侧。
+//!
+//! 界面主题跟随系统深浅色（registry 缺省带主题双态令牌，ADR-0145 立桩验收
+//! 项）：文字色取令牌（裸 text 的默认前景是黑——暗色桌面不可见，先例 #2017
+//! 修复），表格部件经 Tailwind 类取主题令牌。文案仅 zh-CN（spec #2015 实施
+//! 决策）。
 
 use std::path::PathBuf;
-use std::sync::OnceLock;
+use std::sync::{Mutex, MutexGuard};
 
+use ledger_infra::db::DbState;
+use nsh_base::{
+    DataTableAlign, DataTableClasses, DataTableColumn, DataTableRows, data_table, pagination,
+};
 use nsh_core::prelude::*;
 
+use crate::assembly::{self, ColumnAlign, CurrencyTable, RowCells};
 use crate::boot;
 
-/// 启动装配入口：账本目录（bin 注入；headless 测试注入测试库路径）。
-static BOOK_DIR: OnceLock<PathBuf> = OnceLock::new();
+/// 启动装配入口：账本目录（bin 注入一次；headless 测试按场景注入）。槽位
+/// 形态的进程级单例（headless 多场景串行测试需可复位，见
+/// [`reset_book_assembly`]）。
+static BOOK_DIR: Mutex<Option<PathBuf>> = Mutex::new(None);
+
+/// 就绪后的账本库会话（成对建连，读页复用只读侧；进程级单例与 [`BOOK_DIR`]
+/// 同形——boot 成功先于 `StartupView::Ready` 呈现，视图读取时恒已就位）。
+static DB: Mutex<Option<std::sync::Arc<DbState>>> = Mutex::new(None);
+
+/// 装配槽位守卫（毒化时取回内值：槽位本身不含不变量，锁毒化不影响正确性）。
+fn book_dir_slot() -> MutexGuard<'static, Option<PathBuf>> {
+    BOOK_DIR.lock().unwrap_or_else(|p| p.into_inner())
+}
+
+fn db_slot() -> MutexGuard<'static, Option<std::sync::Arc<DbState>>> {
+    DB.lock().unwrap_or_else(|p| p.into_inner())
+}
+
+/// 会话句柄只读出口（crate 内消费：lib 测试的接线断言经它取句柄直读首页）。
+#[cfg(test)]
+pub(crate) fn session_handle() -> Option<std::sync::Arc<DbState>> {
+    db_slot().clone()
+}
 
 /// 注入账本目录（幂等：先注入者优先，与接缝注册点同形）。bin 启动时调用一次；
 /// 未注入时 [`App`] 呈现缺参失败态（不静默退窗，窗口即错误呈现面）。
 pub fn set_book_dir(dir: PathBuf) {
-    let _ = BOOK_DIR.set(dir);
+    let mut slot = book_dir_slot();
+    if slot.is_none() {
+        *slot = Some(dir);
+    }
+}
+
+/// 重置装配入口与会话句柄（headless 测试接缝）：同一进程内的多场景串行测试
+/// 先复位再注入各自的测试库路径（生产 bin 只注入一次，不消费本函数；串行
+/// 由测试侧的 SERIAL 锁保证，复位时上一场景的引擎已撤销）。
+#[doc(hidden)]
+pub fn reset_book_assembly() {
+    *book_dir_slot() = None;
+    *db_slot() = None;
 }
 
 /// 启动结果三态（窗口呈现的全部状态）。
@@ -32,35 +77,38 @@ pub enum StartupView {
     MissingArg,
     /// 引导中（域栈在后台线程打开账本库）。
     Loading,
-    /// 就绪：交易总数（读路径直调域服务的立桩靶标）。
-    Ready { total: i64 },
+    /// 就绪：交易表格首屏（读路径直调域服务的立桩靶标，issue #2018）。
+    Ready,
     /// 引导失败：码化错误的用户可见文案（zh-CN 原样呈现）。
     Failed { message: String },
 }
 
-/// 执行启动竖井（引导域栈 → 读交易总数），返回窗口呈现态。
+/// 执行启动竖井（引导域栈 → 会话就位），返回窗口呈现态。
 ///
-/// 阻塞（SQLite IO）；组件内在 `blocking` 任务里调用。会话句柄（`DbState`）
-/// 随计数完成即释放——立桩骨架只消费总数，列表页立桩票（spec #2015 后续票）
-/// 重构会话生命周期。
+/// 阻塞（SQLite IO）；组件内在 `blocking` 任务里调用。就绪时会话句柄进 [`DB`]
+/// 单例，列表页读经它复用只读连接（不随启动竖井释放）。
 pub fn run_startup() -> StartupView {
-    let Some(book_dir) = BOOK_DIR.get().cloned() else {
+    let Some(book_dir) = book_dir_slot().clone() else {
         return StartupView::MissingArg;
     };
-    match boot::boot_ledger(&book_dir).and_then(|db| boot::transaction_total(&db)) {
-        Ok(total) => StartupView::Ready { total },
+    match boot::boot_ledger(&book_dir) {
+        Ok(db) => {
+            *db_slot() = Some(std::sync::Arc::new(db));
+            StartupView::Ready
+        }
         Err(e) => StartupView::Failed {
             message: e.to_string(),
         },
     }
 }
 
-/// 主行文案（就绪 = 交易总数，立桩靶标；`text:` 选择器与 headless 断言锚点）。
+/// 启动竖井的呈现文案（缺参 / 引导中 / 失败三态；就绪态不走此路径——表格
+/// 视图承载，见 [`TransactionsView`]）。
 pub fn headline_text(view: &StartupView) -> String {
     match view {
         StartupView::MissingArg => "未指定账本库目录".to_owned(),
         StartupView::Loading => "正在打开账本库…".to_owned(),
-        StartupView::Ready { total } => format!("交易总数：{total} 条"),
+        StartupView::Ready => String::new(),
         StartupView::Failed { message } => format!("启动失败：{message}"),
     }
 }
@@ -69,14 +117,199 @@ pub fn headline_text(view: &StartupView) -> String {
 pub fn secondary_text(view: &StartupView) -> String {
     match view {
         StartupView::MissingArg => "用法：nsh-app <账本目录>".to_owned(),
-        _ => match BOOK_DIR.get() {
+        _ => match book_dir_slot().as_ref() {
             Some(dir) => dir.display().to_string(),
             None => String::new(),
         },
     }
 }
 
-/// 立桩根组件：居中呈现启动结果（三态主行 + 目录回显次行）。
+/// 总数文案（与旧壳 zh-CN 词表同文案：transactions.list.total）。
+fn total_text(total: i64) -> String {
+    format!("共 {total} 条")
+}
+
+/// 装配行集 → 宿主表格数据（按列装配，渲染期零格式化——格文本已是装配产物）。
+fn rows_to_data(rows: &[RowCells]) -> DataTableRows {
+    DataTableRows::new(rows.len())
+        .texts("date", rows.iter().map(|r| r.date.as_str()))
+        .texts("kind", rows.iter().map(|r| r.kind.as_str()))
+        .texts("amount", rows.iter().map(|r| r.amount.as_str()))
+}
+
+/// 列定义映射（装配层产物 → 宿主列）：UI 层只做映射、不产列。
+fn table_columns() -> Vec<DataTableColumn> {
+    assembly::COLUMNS
+        .iter()
+        .map(|def| {
+            let mut column = DataTableColumn::default();
+            column.key = def.key.into();
+            column.title = Some(def.title.into());
+            column.width = Some(Points(def.width));
+            column.align = match def.align {
+                ColumnAlign::Start => DataTableAlign::Start,
+                ColumnAlign::End => DataTableAlign::End,
+            };
+            column
+        })
+        .collect()
+}
+
+/// 表格部件主题（Tailwind 类取主题令牌，跟随系统深浅色）：文字色逐部件显式
+/// 带色（裸 text 默认前景黑，暗色桌面不可见——#2017 先例），行悬停与空态取
+/// 弱化面。
+fn table_classes() -> DataTableClasses {
+    let mut classes = DataTableClasses::default();
+    classes.root = Some("bg-background text-foreground".into());
+    classes.header_cell = Some("text-muted-foreground".into());
+    classes.cell = Some("text-foreground".into());
+    classes.row_hover = Some("bg-accent".into());
+    classes.empty = Some("text-muted-foreground".into());
+    classes
+}
+
+/// 交易表格首屏（issue #2018）：DataTable 渲染真实交易数据 + 分页条点击翻页
+/// （100 行/页服务端 offset 分页，走域读路径）+ 忙碌指示 + 空态。
+#[component]
+fn TransactionsView() -> impl IntoElement {
+    let page = signal(1u32);
+    let total = signal(0i64);
+    let rows = signal(Vec::<RowCells>::new());
+    let loading = signal(true);
+    let error = signal(None::<String>);
+
+    // 主题令牌（双态自适应，registry 缺省带主题双态令牌）；缺失时回退亮灰/
+    // 中灰（缺省主题 registry 缺失时的可读兜底，非双态）。
+    let tokens = nsh_core::element::tokens();
+    let fg = tokens
+        .color("foreground")
+        .unwrap_or_else(|| hsla(0.0, 0.0, 0.98, 1.0).into());
+    let muted = tokens
+        .color("muted-foreground")
+        .unwrap_or_else(|| hsla(0.0, 0.0, 0.45, 1.0).into());
+
+    // 装载一页（首屏与翻页共用一条路径）：阻塞读走后台线程（SQLite IO 不占
+    // 引擎线程）；分页条装载期间禁用（单飞——等待成功优于即刻失败，无并发页
+    // 读交错）。币种字典随页读一并刷新（装配层币种展示参数的唯一来源）。
+    let load = move |page_no: u32| {
+        loading.set(true);
+        error.set(None);
+        let db = db_slot().clone();
+        spawn(async move {
+            let Some(db) = db else {
+                error.set(Some("内部错误：账本库会话缺失".to_owned()));
+                loading.set(false);
+                return;
+            };
+            // 币种字典与行集同批读取：字典读失败不静默降级成无符号金额
+            //（用户无感知的错示比暂缓呈现更差），与行集一并走错误呈现。
+            let outcome = blocking(move || {
+                boot::transaction_page(&db, page_no).and_then(|result| {
+                    boot::currency_rows(&db).map(|currency_rows| (result, currency_rows))
+                })
+            })
+            .await;
+            match outcome {
+                Ok(Ok((page_data, currency_rows))) => {
+                    let table = CurrencyTable::from_currencies(&currency_rows);
+                    rows.set(assembly::assemble_rows(&page_data.items, &table));
+                    total.set(page_data.total);
+                }
+                Ok(Err(e)) => error.set(Some(e.to_string())),
+                Err(_) => error.set(Some("内部错误：读页任务异常退出".to_owned())),
+            }
+            loading.set(false);
+        });
+    };
+
+    // 首屏装载（组件任务运行一次；boot 成功先于本视图呈现，DB 恒已就位）。
+    load(1);
+
+    view()
+        .flex_1()
+        .flex_col()
+        .app_class("bg-background")
+        .child(
+            view()
+                .test_id("tx-table")
+                .flex_1()
+                .child(
+                    data_table()
+                        .columns(table_columns())
+                .data(move || rows_to_data(&rows.get()))
+                            .loading(move || loading.get())
+                            .loading_view(text("正在加载…").text_color(muted))
+                            .empty(text("暂无数据").text_color(muted))
+                            .classes(table_classes())
+                            .flex_1(),
+                ),
+        )
+        .child(
+            // 底栏：读失败优先呈现错误，否则总数 + 分页条（单页收起，分页条
+            // 点击与边界幂等归 Pagination 组件）。
+            when(
+                move || error.get().is_some() || total.get() > 0,
+                move || {
+                    view()
+                        .flex_row()
+                        .items_center()
+                        .gap_3()
+                        .px_4()
+                        .py_2()
+                        .app_class("border-t border-border")
+                        .child(
+                            when(
+                                move || error.get().is_some(),
+                                move || {
+                                    text(move || {
+                                        format!("加载失败：{}", error.get().unwrap_or_default())
+                                    })
+                                    .text_size(px(12.0))
+                                    .text_color(fg)
+                                    .test_id("tx-error")
+                                },
+                            )
+                            .otherwise(move || {
+                                text(move || total_text(total.get()))
+                                    .text_size(px(12.0))
+                                    .text_color(muted)
+                                    .test_id("tx-total")
+                            }),
+                        )
+                        .child(
+                            when(
+                                move || {
+                                    error.get().is_none()
+                                        && assembly::total_pages(total.get()) > 1
+                                },
+                                move || {
+                                    view().test_id("tx-pagination").flex_row().child(
+                                        pagination()
+                                        .accessibility_label("交易分页")
+                                        .previous_accessibility_label("上一页")
+                                        .next_accessibility_label("下一页")
+                                        .page(move || page.get())
+                                        .total_pages(move || assembly::total_pages(total.get()))
+                                        .disabled(move || loading.get())
+                                        .item_class(
+                                            "px-2 py-1 rounded-md text-foreground hover:bg-accent selected:bg-accent disabled:opacity-40",
+                                        )
+                                        .on_change(move |&picked: &u32| {
+                                            page.set(picked);
+                                            load(picked);
+                                        }),
+                                    )
+                                },
+                            )
+                            .otherwise(view),
+                        )
+                },
+            )
+            .otherwise(view),
+        )
+}
+
+/// 立桩根组件：就绪前居中呈现启动三态，就绪后承载交易表格首屏。
 #[component]
 pub fn App() -> impl IntoElement {
     let state = signal(StartupView::Loading);
@@ -106,20 +339,30 @@ pub fn App() -> impl IntoElement {
             });
         state.set(outcome);
     });
-    view()
-        .flex_1()
-        .items_center()
-        .justify_center()
-        .gap_2()
-        .child(
-            text(move || headline_text(&state.get()))
-                .text_size(px(24.0))
-                .text_color(fg)
-                .test_id("startup-headline"),
+    view().flex_1().flex_col().app_class("bg-background").child(
+        // 启动三态与表格首屏互斥呈现：就绪前居中三态，就绪后整窗表格。
+        // 单一分支承载 TransactionsView，不双挂（双实例即双页读与双底栏）。
+        when(
+            move || matches!(state.get(), StartupView::Ready),
+            transactions_view,
         )
-        .child(
-            text(move || secondary_text(&state.get()))
-                .text_size(px(12.0))
-                .text_color(muted),
-        )
+        .otherwise(move || {
+            view()
+                .flex_1()
+                .items_center()
+                .justify_center()
+                .gap_2()
+                .child(
+                    text(move || headline_text(&state.get()))
+                        .text_size(px(24.0))
+                        .text_color(fg)
+                        .test_id("startup-headline"),
+                )
+                .child(
+                    text(move || secondary_text(&state.get()))
+                        .text_size(px(12.0))
+                        .text_color(muted),
+                )
+        }),
+    )
 }
