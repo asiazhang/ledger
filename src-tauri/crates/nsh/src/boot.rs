@@ -1,6 +1,6 @@
-//! 域栈引导（issue #2017 / ADR-0145）：打开未加密账本库，读交易列表页与参考
-//! 数据（币种字典 / 在用分类 / 可见账户 / 含软删商户——交易表格首屏与派生行
-//! 形态的装配消费面）。
+//! 域栈引导（issue #2017 / ADR-0145）：打开未加密账本库，读交易列表页、交易
+//! 搜索与参考数据（币种字典 / 在用分类 / 可见账户 / 含软删商户——交易表格
+//! 首屏、issue #2023 搜索接入与派生行形态的装配消费面）。
 //!
 //! 引导内核复用基础设施引导层（[`ledger_infra::db::boot`]）：库文件处置判定
 //! （[`classify_for_boot`] 的明文/外来形态/密文/损坏四态）与成对建连
@@ -29,7 +29,7 @@ use ledger_infra::db::boot::{BOOT_DB_UNREADABLE, BootDisposition};
 use ledger_infra::db::data_location::DB_FILE_NAME;
 use ledger_infra::db::{DbState, open_db_in};
 use ledger_infra::error::{AppError, Result};
-use ledger_transaction::TransactionListResult;
+use ledger_transaction::{TransactionListResult, TransactionSearchResult};
 
 use crate::assembly::PAGE_SIZE;
 use crate::wiring;
@@ -91,18 +91,26 @@ fn normalize_foreign_plaintext(db_path: &Path) -> Result<()> {
     })
 }
 
-/// 读取账本库交易列表页（读路径直调域服务，issue #2018 的立桩靶标）。
+/// 读取账本库交易列表页（读路径直调域服务，issue #2018 立桩靶标；issue #2021
+/// 补日期区间维度）。
 ///
 /// 经核心交易域读路径 [`ledger_transaction::list_transactions`] 的服务端 offset
 /// 分页（ADR-0008 语义：页码从 1 起、`total` 与行集共用同一 WHERE 子句、排序
 /// date DESC, created_at DESC, id DESC），每页 [`PAGE_SIZE`] 行（100 行/页，
-/// 旧壳 50 行翻倍验证原生余量）；过滤为空 = 全库口径（立桩无筛选维度，搜索
-/// 随 #2023 接入）。来源列等读时投影接缝已由 [`crate::wiring`] 接线。读连接
-/// 是成对建连的只读侧（ADR-0117：读路径不进写者闸门）。
-pub fn transaction_page(db: &DbState, page: u32) -> Result<TransactionListResult> {
+/// 旧壳 50 行翻倍验证原生余量）；`range` 为期间快照（含边界，自然周期换算产物
+/// 见 [`crate::period`]），None = 「全部」无过滤（立桩搜索随 #2023 接入）。
+/// 来源列等读时投影接缝已由 [`crate::wiring`] 接线。读连接是成对建连的只读侧
+/// （ADR-0117：读路径不进写者闸门）。
+pub fn transaction_page(
+    db: &DbState,
+    page: u32,
+    range: Option<&crate::period::PeriodRange>,
+) -> Result<TransactionListResult> {
     let filter = ledger_transaction::TransactionListFilter {
         page: Some(page.max(1) as usize),
         page_size: Some(PAGE_SIZE),
+        from: range.map(|r| r.from.clone()),
+        to: range.map(|r| r.to.clone()),
         ..Default::default()
     };
     let conn = db
@@ -110,6 +118,45 @@ pub fn transaction_page(db: &DbState, page: u32) -> Result<TransactionListResult
         .lock()
         .map_err(|e| AppError::Db(e.to_string()))?;
     ledger_transaction::list_transactions(&conn, &filter)
+}
+
+/// 搜索账本库交易（读路径直调域服务，issue #2023）：经核心交易域统一模糊
+/// 搜索 [`ledger_transaction::search_transactions`]——词条间 AND、字段间 OR 的
+/// 原文命中（备注原文子串 ∨ 账户名 ∨ 商户名 ∨ 购买项名称，LIKE 折叠仅 ASCII），
+/// 服务端 offset 分页（命中总数与页行集共用同一 WHERE，排序 date DESC）。
+/// 与旧壳 `search_transactions` 命令消费同一域函数——同一账本库同结果（#2023
+/// AC1）；金额/日期筛选维度立桩不接（spec #2015 Out of Scope：TransactionFilter
+/// 深模块完整语义不做）。页大小沿 [`PAGE_SIZE`]（立桩分页页径与列表态一致）。
+/// 空查询的域语义是空结果，视图层的空输入＝列表态不调搜索（呈现切换住
+/// [`crate::app`]）。读连接是成对建连的只读侧（ADR-0117）。
+pub fn transaction_search(db: &DbState, query: &str, page: u32) -> Result<TransactionSearchResult> {
+    let conn = db
+        .read_conn
+        .lock()
+        .map_err(|e| AppError::Db(e.to_string()))?;
+    ledger_transaction::search_transactions(
+        &conn,
+        query,
+        page.max(1) as usize,
+        PAGE_SIZE,
+        None,
+        None,
+        None,
+        None,
+    )
+}
+
+/// 读取账本库数据期间边界（issue #2021 / ADR-0141 期间步进的钳制输入）：
+/// 报表域日期极值读路径 [`ledger_reports::query_report_date_range`]——旧壳
+/// report_date_range 消费的同一域函数；双 None = 空库。随每页读一并刷新
+/// （单行聚合查询，成本可忽略；写路径落地后天然跟随数据外扩/收窄，
+/// 无需独立失效接线）。
+pub fn report_date_range(db: &DbState) -> Result<ledger_reports::DateRange> {
+    let conn = db
+        .read_conn
+        .lock()
+        .map_err(|e| AppError::Db(e.to_string()))?;
+    ledger_reports::query_report_date_range(&conn)
 }
 
 /// 读取账本库币种字典（金额展示的参考数据面，issue #2018）：装配层的币种

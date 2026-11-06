@@ -18,11 +18,12 @@
 
 use std::path::PathBuf;
 use std::sync::{Mutex, MutexGuard};
+use std::time::Duration;
 
 use ledger_infra::db::DbState;
 use nsh_base::{
-    DataTableAlign, DataTableCell, DataTableClasses, DataTableColumn, DataTableRows, data_table,
-    pagination,
+    DataTableAlign, DataTableCell, DataTableClasses, DataTableColumn, DataTableRows, PopoverEvent,
+    button, data_table, input, pagination, popover,
 };
 use nsh_core::prelude::*;
 
@@ -31,6 +32,7 @@ use crate::assembly::{
     RowContext,
 };
 use crate::boot;
+use crate::{overlay, period};
 
 /// 金额隐私模式开关的存储键（设备轻量设置项，与旧壳同键同值形态：旧壳
 /// `@ledger/money` 的 `AMOUNT_PRIVACY_STORAGE_KEY`，值为 JSON 布尔字面量
@@ -166,6 +168,59 @@ fn total_text(total: i64) -> String {
     format!("共 {total} 条")
 }
 
+/// 搜索态总数文案（与旧壳 zh-CN 词表同文案：search.hitCount；列表态仍用
+/// [`total_text`]——搜索语义变了，计数词随之换，与旧壳两词并存同形）。
+fn hit_total_text(total: i64) -> String {
+    format!("命中 {total} 条")
+}
+
+/// 搜索输入防抖时长（毫秒）：与旧壳 `SEARCH_DEBOUNCE_MS`（issue #1402「搜索
+/// 输入防抖」跨域不变量）同值同语义——等待成功优于即刻失败（AGENTS.md 体验
+/// 取舍），快输入不逐键打库。
+const SEARCH_DEBOUNCE_MS: u64 = 300;
+
+/// 搜索框占位文案（与旧壳 search.keywordPlaceholder 同文案）。
+const SEARCH_PLACEHOLDER: &str = "输入关键字开始搜索（备注、账户名、商户名，支持多关键字）";
+
+/// 搜索无结果空态文案（与旧壳 search.noResults 同文案；列表态空库仍是
+/// 「暂无数据」——空态分型与旧壳两档同源同形）。
+const SEARCH_EMPTY_TEXT: &str = "无匹配结果";
+
+/// 「今天」（本地时区日历日，期间预设与边界抬升的相对点，与旧壳本地
+/// 日历同口径）。非响应式：跨期翻转随下次重算呈现（分钟级时钟不立桩）。
+fn today() -> chrono::NaiveDate {
+    chrono::Local::now().date_naive()
+}
+
+/// 期间标签文案（旧壳 quickTimeRange.periodLabel 同词表）：有游标呈期间，
+/// 无游标（「全部」）呈「选择期间」（弹层入口的召唤文案）。
+fn period_label_text(cursor: Option<crate::period::NaturalPeriod>) -> String {
+    cursor
+        .as_ref()
+        .map(period::format_period_label)
+        .unwrap_or_else(|| "选择期间".to_owned())
+}
+
+/// 芯片点亮判定（UI 侧适配：读快照区间 → 高亮派生）。
+fn match_preset_now(range: Option<period::PeriodRange>, preset: period::Preset) -> bool {
+    let (from, to) = match range {
+        Some(r) => (Some(r.from), Some(r.to)),
+        None => (None, None),
+    };
+    period::match_preset(from.as_deref(), to.as_deref(), today()) == Some(preset)
+}
+
+/// 芯片稳定锚点（headless 选择器用 id: 前缀，research doc §3.5）。
+fn preset_test_id(preset: period::Preset) -> &'static str {
+    match preset {
+        period::Preset::All => "period-chip-all",
+        period::Preset::Month => "period-chip-month",
+        period::Preset::Quarter => "period-chip-quarter",
+        period::Preset::Year => "period-chip-year",
+        period::Preset::LastYear => "period-chip-last-year",
+    }
+}
+
 /// 装配行集 → 宿主表格数据（按列装配，渲染期零格式化——格文本已是装配产物）。
 fn rows_to_data(rows: &[RowCells]) -> DataTableRows {
     DataTableRows::new(rows.len())
@@ -229,6 +284,14 @@ fn table_classes() -> DataTableClasses {
 
 /// 交易表格首屏（issue #2018）：DataTable 渲染真实交易数据 + 分页条点击翻页
 /// （100 行/页服务端 offset 分页，走域读路径）+ 忙碌指示 + 空态。
+///
+/// 时间维度行（issue #2021 / ADR-0141）：期间步进器 `< 期间标签 >` + 期间
+/// 选择弹层。期间状态 = 日期区间快照（None = 「全部」默认态，与旧壳同）；
+/// 步进/芯片换算与钳制归 [`period`] 纯决策单点，UI 只消费；翻页与周期步进
+/// 两族快捷键（ADR-0140/0141 裸键 `[` `]` `,` `.`）语义等同点击对应控件、
+/// 共用 Overlay Suppression 闸门（[`overlay`]，弹层开着不派发；可编辑焦点
+/// 闸由引擎 keymap `When::Auto` 承担——四键皆为文本编辑键，输入焦点期间不
+/// 派发；桌面立桩无触控轴）。
 #[component]
 fn TransactionsView() -> impl IntoElement {
     let page = signal(1u32);
@@ -236,6 +299,25 @@ fn TransactionsView() -> impl IntoElement {
     let rows = signal(Vec::<RowCells>::new());
     let loading = signal(true);
     let error = signal(None::<String>);
+    // 搜索态：输入文本（受控）、结果呈现态（旧壳 searched 语义——搜索结果落位
+    // 后才切搜索态呈现，键入中底栏仍呈上一装载态）、防抖调度序号（新输入作废
+    // 在途定时器）与装载序号（后发作废先发，与旧壳 Loadable invalidate 同义：
+    // 竞态后发覆盖先发，迟到结果不落位）。
+    let search_text = signal(String::new());
+    let searched = signal(false);
+    let search_seq = signal(0u64);
+    let load_seq = signal(0u64);
+    // 时间维度行状态：期间快照（None = 全部）与数据期间边界原始日期对
+    // （None = 在途/失败 → 钳制退化为不钳制，旧壳 silent 同口径）；快照区间
+    // 是唯一事实源，游标不落状态（步进前从当前区间反推，ADR-0141 决策 2）。
+    let range = signal(None::<period::PeriodRange>);
+    let boundary_dates = signal(None::<(Option<String>, Option<String>)>);
+    let period_open = signal(false);
+    // 弹层开合上报注册表（Overlay Suppression，ADR-0035 原生壳重建）：token
+    // 实例作用域持有，随 open 信号显式上报（effect 追踪信号，覆盖全部关闭
+    // 路径——受控关闭不产生 Popover 事件，只听事件会漏报），组件卸载时
+    // Drop 自动撤销。
+    let overlay_token = overlay::OverlayToken::new();
 
     // 主题令牌（双态自适应，registry 缺省带主题双态令牌）；缺失时回退亮灰/
     // 中灰（缺省主题 registry 缺失时的可读兜底，非双态）。
@@ -247,16 +329,64 @@ fn TransactionsView() -> impl IntoElement {
         .color("muted-foreground")
         .unwrap_or_else(|| hsla(0.0, 0.0, 0.45, 1.0).into());
 
-    // 装载一页（首屏与翻页共用一条路径）：阻塞读走后台线程（SQLite IO 不占
-    // 引擎线程）；分页条装载期间禁用（单飞——等待成功优于即刻失败，无并发页
-    // 读交错）。币种字典与在用分类随页读一并刷新（装配层币种展示参数与分类
-    // 路径表的唯一来源）；金额隐私开关随装载取设备态（轻量设置项，存储读是
-    // 同步操作，组件任务内直读）。
+    // 期间派生（纯函数单点，UI 只消费）：游标、当前游标单位下的边界、步进
+    // 可达性。
+    let cursor = computed(move || {
+        let r = range.get();
+        period::range_to_period(
+            r.as_ref().map(|p| p.from.as_str()),
+            r.as_ref().map(|p| p.to.as_str()),
+        )
+    });
+    let boundary = computed(move || {
+        let unit = cursor.get()?.unit;
+        let (min, max) = boundary_dates.get()?;
+        Some(period::derive_boundary(
+            unit,
+            min.as_deref(),
+            max.as_deref(),
+            today(),
+        ))
+    });
+    let can_step_prev = computed(move || {
+        let r = range.get();
+        period::can_step_current(
+            r.as_ref().map(|p| p.from.as_str()),
+            r.as_ref().map(|p| p.to.as_str()),
+            -1,
+            boundary.get().as_ref(),
+        )
+    });
+    let can_step_next = computed(move || {
+        let r = range.get();
+        period::can_step_current(
+            r.as_ref().map(|p| p.from.as_str()),
+            r.as_ref().map(|p| p.to.as_str()),
+            1,
+            boundary.get().as_ref(),
+        )
+    });
+
+    // 装载一页（首屏、翻页、换期间与搜索共用一条路径）：输入 trim 后判态
+    // ——空 = 列表态读交易页（携期间快照，全库或期间过滤口径），非空 = 搜索
+    // 态直调域统一模糊搜索（与旧壳 `search_transactions` 命令同一域函数，
+    // 不经 IPC）；两态分页与总数语义同旧壳（页码重置、服务端 offset 分页、
+    // total = 满足口径的总数）。阻塞读走后台线程（SQLite IO 不占引擎线程）；
+    // 分页条装载期间禁用（单飞——等待成功优于即刻失败，无并发页读交错）。
+    // 币种字典、在用分类与数据期间边界随装载一并刷新（字典行数小、分类小
+    // 表、边界是单行聚合，重读成本可忽略；写路径落地后天然跟随数据外扩/收
+    // 窄）；金额隐私开关随装载取设备态（轻量设置项，存储读是同步操作，组件
+    // 任务内直读）。
     let load = move |page_no: u32| {
         loading.set(true);
         error.set(None);
+        load_seq.update(|seq| *seq += 1);
+        let seq = load_seq.get();
+        let query = search_text.get().trim().to_owned();
+        let searching = !query.is_empty();
         let privacy = amount_privacy_enabled();
         let db = db_slot().clone();
+        let range = range.get();
         spawn(async move {
             let Some(db) = db else {
                 error.set(Some("内部错误：账本库会话缺失".to_owned()));
@@ -265,35 +395,69 @@ fn TransactionsView() -> impl IntoElement {
             };
             // 币种字典、在用分类、可见账户、含软删商户与行集同批读取：字典读失败
             // 不静默降级成无符号金额（用户无感知的错示比暂缓呈现更差），与行集
-            // 一并走错误呈现。
+            // 一并走错误呈现。数据期间边界读失败不拖垮页呈现：钳制退化为不钳制
+            // （旧壳 silent 同口径），保留旧值到下次成功替换。
             let outcome = blocking(move || {
-                boot::transaction_page(&db, page_no)
-                    .and_then(|result| {
-                        boot::currency_rows(&db).map(|currency_rows| (result, currency_rows))
+                let page_read = if query.is_empty() {
+                    boot::transaction_page(&db, page_no, range.as_ref())
+                        .map(|result| (result.items, result.total))
+                } else {
+                    boot::transaction_search(&db, &query, page_no)
+                        .map(|result| (result.items, result.total))
+                };
+                page_read
+                    .and_then(|(items, total)| {
+                        let date_range = boot::report_date_range(&db).ok();
+                        boot::currency_rows(&db)
+                            .map(|currency_rows| (items, total, date_range, currency_rows))
                     })
-                    .and_then(|(result, currency_rows)| {
-                        boot::category_rows(&db).map(|rows| (result, currency_rows, rows))
+                    .and_then(|(items, total, date_range, currency_rows)| {
+                        boot::category_rows(&db)
+                            .map(|rows| (items, total, date_range, currency_rows, rows))
                     })
-                    .and_then(|(result, currency_rows, category_rows)| {
+                    .and_then(|(items, total, date_range, currency_rows, category_rows)| {
                         boot::account_rows(&db).map(|account_rows| {
-                            (result, currency_rows, category_rows, account_rows)
-                        })
-                    })
-                    .and_then(|(result, currency_rows, category_rows, account_rows)| {
-                        boot::merchant_rows(&db).map(|merchant_rows| {
                             (
-                                result,
+                                items,
+                                total,
+                                date_range,
                                 currency_rows,
                                 category_rows,
                                 account_rows,
-                                merchant_rows,
                             )
                         })
                     })
+                    .and_then(
+                        |(items, total, date_range, currency_rows, category_rows, account_rows)| {
+                            boot::merchant_rows(&db).map(|merchant_rows| {
+                                (
+                                    items,
+                                    total,
+                                    date_range,
+                                    currency_rows,
+                                    category_rows,
+                                    account_rows,
+                                    merchant_rows,
+                                )
+                            })
+                        },
+                    )
             })
             .await;
+            // 过期装载不落位（后发已接管 rows/loading，先发不得回写）。
+            if load_seq.get() != seq {
+                return;
+            }
             match outcome {
-                Ok(Ok((page_data, currency_rows, category_rows, account_rows, merchant_rows))) => {
+                Ok(Ok((
+                    items,
+                    total_count,
+                    date_range,
+                    currency_rows,
+                    category_rows,
+                    account_rows,
+                    merchant_rows,
+                ))) => {
                     let currencies = CurrencyTable::from_currencies(&currency_rows);
                     let categories = assembly::CategoryTable::from_categories(&category_rows);
                     let accounts = AccountTable::from_accounts(&account_rows);
@@ -305,8 +469,10 @@ fn TransactionsView() -> impl IntoElement {
                         merchants: &merchants,
                         privacy_enabled: privacy,
                     };
-                    rows.set(assembly::assemble_rows(&page_data.items, &ctx));
-                    total.set(page_data.total);
+                    rows.set(assembly::assemble_rows(&items, &ctx));
+                    total.set(total_count);
+                    boundary_dates.set(date_range.map(|dr| (dr.min_date, dr.max_date)));
+                    searched.set(searching);
                 }
                 Ok(Err(e)) => error.set(Some(e.to_string())),
                 Err(_) => error.set(Some("内部错误：读页任务异常退出".to_owned())),
@@ -315,13 +481,219 @@ fn TransactionsView() -> impl IntoElement {
         });
     };
 
+    // 搜索输入调度（旧壳 scheduleSearch 同形）：文本变化 → 页码归 1 → 防抖后
+    // 装载第一页；期间再输入则序号失配、在途定时器自弃（与旧壳 clearTimeout
+    // 同义）。回车立即装载（on_submit，旧壳 onEnter 同语义——不等防抖）。
+    let schedule_search = move |text: &str| {
+        search_text.set(text.to_owned());
+        page.set(1);
+        search_seq.update(|seq| *seq += 1);
+        let seq = search_seq.get();
+        set_timeout(Duration::from_millis(SEARCH_DEBOUNCE_MS), move || {
+            if search_seq.get() == seq {
+                load(1);
+            }
+        });
+    };
+
+    // 翻页动作单点（快捷键语义走同一决策半边，ADR-0140 决策 2）：分页条点击
+    // 不走本入口（点击无抑制闸门——快捷键三闸门只辖键盘派发面）；越界由
+    // [`assembly::next_page`] 决策半边幂等拦截。
+    let flip_page = move |step: assembly::PageStep| {
+        // Overlay Suppression 闸门（两族快捷键共用）：弹层开着不派发。
+        // 「删除即红」负向条目钉在 headless 抑制测试（tests/app_headless.rs）。
+        if overlay::has_open_overlay() {
+            return;
+        }
+        let Some(target) =
+            assembly::next_page(page.get(), assembly::total_pages(total.get()), step)
+        else {
+            return;
+        };
+        page.set(target);
+        load(target);
+    };
+
+    // 周期步进动作（ADR-0141 决策 2：游标反推、边界钳制、越界幂等全在
+    // [`period::step_current`] 单点；换期间后回第 1 页）。点击路径（步进器
+    // 按钮）无抑制闸门（三闸门只辖键盘派发面，先例分页条点击）；快捷键路径
+    // 在下方 step_period 内先行闸检。
+    let apply_step = move |delta: i32| {
+        let r = range.get();
+        let Some(next) = period::step_current(
+            r.as_ref().map(|p| p.from.as_str()),
+            r.as_ref().map(|p| p.to.as_str()),
+            delta,
+            boundary.get().as_ref(),
+        ) else {
+            return;
+        };
+        range.set(Some(next));
+        page.set(1);
+        load(1);
+    };
+    let step_period = move |delta: i32| {
+        // Overlay Suppression 闸门（与翻页族共用同一判定，删除任一处即红）。
+        if overlay::has_open_overlay() {
+            return;
+        }
+        apply_step(delta);
+    };
+
+    // 预设选择动作单点（弹层芯片点击）：写精确自然周期快照并关弹层，回
+    // 第 1 页（「全部」= 无过滤区间；离开无过滤默认态仅在确认选定后发生）。
+    let apply_preset = move |preset: period::Preset| {
+        range.set(period::preset_range(preset, today()));
+        page.set(1);
+        load(1);
+        period_open.set(false);
+    };
+
+    // 两族快捷键（ADR-0140 / ADR-0141 裸键闭集）：裸键语义 = 拒绝一切修饰键
+    // （引擎 keystroke 精确匹配含修饰位，`shift+[` 等不命中）；`When::Auto`
+    // 缺省（四键皆文本编辑键，输入焦点期间引擎不派发——可编辑焦点闸）；
+    // 处理器体即「闸门 → 决策 → 派发」三步，决策半边在纯函数单点。
+    on_key("[", move |_| flip_page(assembly::PageStep::Prev));
+    on_key("]", move |_| flip_page(assembly::PageStep::Next));
+    on_key(",", move |_| step_period(-1));
+    on_key(".", move |_| step_period(1));
+
     // 首屏装载（组件任务运行一次；boot 成功先于本视图呈现，DB 恒已就位）。
     load(1);
+
+    // 弹层开合上报（注册表单一通道：追踪受控 open 信号，全路径覆盖）。
+    effect(move || {
+        let open = period_open.get();
+        overlay_token.report(open);
+    });
+
+    // 时间维度行（issue #2021 / ADR-0141）：期间步进器 `< 期间标签 >`，标签
+    // 点击打开期间选择弹层（预设闭集；直达日历面板随迁移系列票补齐）。步进
+    // 按钮置灰 = 无游标或越出数据期间边界（可达性在 computed 单点）；键位
+    // 字符内嵌步进按钮（ADR-0141 决策 5 修订形态）。
+    let period_row = view()
+        .flex_row()
+        .items_center()
+        .gap_2()
+        .px_4()
+        .py_2()
+        .app_class("border-b border-border")
+        .child(
+            button()
+                .disabled(move || !can_step_prev.get())
+                .accessibility_label("上一个周期")
+                .app_class(
+                    "px-2 py-1 rounded-md text-foreground hover:bg-accent disabled:opacity-40",
+                )
+                .flex_row()
+                .items_center()
+                .gap_1()
+                .on_press({
+                    let apply = apply_step;
+                    move || apply(-1)
+                })
+                .child(text("‹").text_color(fg))
+                .child(text(",").text_size(px(11.0)).text_color(muted)),
+        )
+        .child(
+            // 期间标签 → 期间选择弹层（Overlay Suppression 的注册弹层：
+            // on_open_change 只回写受控 open 信号，注册表上报由上方 effect
+            // 单通道承担；token 随组件卸载撤销）。
+            popover()
+                .open(move || Some(period_open.get()))
+                .on_open_change(move |e: &PopoverEvent| {
+                    // 只做信号回写（开合上报住上方 effect）。
+                    if let PopoverEvent::OpenChange(open, _) = *e {
+                        period_open.set(open);
+                    }
+                })
+                .popup_class("bg-background border border-border rounded-md shadow-md p-1")
+                .trigger(
+                    // test_id 载体视图（组件元素无 test_id 槽，先例 tx-pagination 的
+                    // 载体形态）；headless 经 id: 锚点命中载体、物理命中到内层按钮。
+                    view().test_id("period-label").child(
+                        button()
+                            .app_class("px-2 py-1 rounded-md text-foreground hover:bg-accent")
+                            .flex_row()
+                            .items_center()
+                            .gap_1()
+                            .child(text(move || period_label_text(cursor.get())).text_color(fg))
+                            .child(text("▾").text_size(px(11.0)).text_color(muted)),
+                    ),
+                )
+                .child(
+                    // 芯片 test_id 落在按钮内文本上（headless press 只认可按元素
+                    // 本身或其内部文本，包裹视图不命中，nsh-testing Screen::pressable）。
+                    view()
+                        .flex_col()
+                        .gap_1()
+                        .children(period::PRESETS.iter().copied().map(|preset| {
+                            button()
+                                .selected(move || match_preset_now(range.get(), preset))
+                                .app_class(
+                                    "px-2 py-1 rounded-md text-foreground hover:bg-accent selected:bg-accent",
+                                )
+                                .child(text(period::preset_label(preset)).test_id(preset_test_id(preset)))
+                                .on_press({
+                                    let apply = apply_preset;
+                                    move || apply(preset)
+                                })
+                        })),
+                ),
+        )
+        .child(
+            button()
+                .disabled(move || !can_step_next.get())
+                .accessibility_label("下一个周期")
+                .app_class(
+                    "px-2 py-1 rounded-md text-foreground hover:bg-accent disabled:opacity-40",
+                )
+                .flex_row()
+                .items_center()
+                .gap_1()
+                .on_press({
+                    let apply = apply_step;
+                    move || apply(1)
+                })
+                .child(text("›").text_color(fg))
+                .child(text(".").text_size(px(11.0)).text_color(muted)),
+        );
 
     view()
         .flex_1()
         .flex_col()
         .app_class("bg-background")
+        .child(period_row)
+        .child(
+            // 搜索框（issue #2023）：标准可编辑文本输入控件（nsh_core `Input`，
+            // Linux 宿主为 GTK 原生输入，天然经 GTK IME 管线——中文候选框/焦点
+            // 行为归平台输入法栈，#2023 人工验收面；headless 断言面只覆盖搜索
+            // 行为本身）。placeholder 与回车立即搜索与旧壳搜索页同形。
+            view()
+                .flex_row()
+                .px_4()
+                .py_2()
+                .app_class("border-b border-border")
+                .child(
+                    input()
+                        .test_id("tx-search")
+                        .value(move || search_text.get())
+                        .placeholder(SEARCH_PLACEHOLDER)
+                        .optional_label("搜索交易")
+                        .text_color(fg)
+                        .app_class(
+                            "flex-1 bg-background rounded-md border border-border px-2 py-1 \
+                             placeholder:text-muted-foreground",
+                        )
+                        .on_change(schedule_search)
+                        .on_submit(move |_: &str| {
+                            // 作废在途防抖（序号失配自弃）后立即装载。
+                            search_seq.update(|seq| *seq += 1);
+                            page.set(1);
+                            load(1);
+                        }),
+                ),
+        )
         .child(
             view()
                 .test_id("tx-table")
@@ -333,16 +705,30 @@ fn TransactionsView() -> impl IntoElement {
                         .render_cell(render_cell(rows))
                         .loading(move || loading.get())
                         .loading_view(text("正在加载…").text_color(muted))
-                        .empty(text("暂无数据").text_color(muted))
+                        // 空态分型与旧壳同源：搜索态无命中「无匹配结果」
+                        //（search.noResults），列表态空库「暂无数据」（list.empty）。
+                        .empty(
+                            text(move || {
+                                if searched.get() {
+                                    SEARCH_EMPTY_TEXT
+                                } else {
+                                    "暂无数据"
+                                }
+                            })
+                            .text_color(muted),
+                        )
                         .classes(table_classes())
                         .flex_1(),
                 ),
         )
         .child(
-            // 底栏：读失败优先呈现错误，否则总数 + 分页条（单页收起，分页条
-            // 点击与边界幂等归 Pagination 组件）。
+            // 底栏：读失败优先呈现错误；否则总数（搜索态「命中 N 条」、列表态
+            // 「共 N 条」——旧壳搜索页与交易页同形）+ 分页条（单页收起，分页条
+            // 点击与边界幂等归 Pagination 组件；搜索态翻页携关键词重搜，同
+            // load 模式感知路径）。搜索态即使 0 命中也呈现总数（旧壳搜索页
+            // searched 即显示 hitCount）。
             when(
-                move || error.get().is_some() || total.get() > 0,
+                move || error.get().is_some() || searched.get() || total.get() > 0,
                 move || {
                     view()
                         .flex_row()
@@ -364,10 +750,16 @@ fn TransactionsView() -> impl IntoElement {
                                 },
                             )
                             .otherwise(move || {
-                                text(move || total_text(total.get()))
-                                    .text_size(px(12.0))
-                                    .text_color(muted)
-                                    .test_id("tx-total")
+                                text(move || {
+                                    if searched.get() {
+                                        hit_total_text(total.get())
+                                    } else {
+                                        total_text(total.get())
+                                    }
+                                })
+                                .text_size(px(12.0))
+                                .text_color(muted)
+                                .test_id("tx-total")
                             }),
                         )
                         .child(
@@ -459,4 +851,34 @@ pub fn App() -> impl IntoElement {
                 )
         }),
     )
+}
+
+#[cfg(test)]
+mod shortcut_binding_tests {
+    use nsh_core::keymap::{KeyBinding, Keystroke, When};
+
+    /// 可编辑焦点闸（ADR-0141 决策 4 三闸门之一）的绑定侧钉子：四个裸键皆为
+    /// 文本编辑键，`When::Auto` 缺省绑定的 `in_text = false`——文本输入持有
+    /// 键盘焦点期间引擎不派发（keymap.find 的 editing 判定）。本测钉住本壳
+    /// 「以 Auto 绑定」的选择；UI 级证明（搜索框焦点期间快捷键静默）随 #2023
+    /// 搜索接入落地。裸键语义（拒绝一切修饰键）由引擎 keystroke 精确匹配
+    /// （含修饰位）承担，一并钉住。
+    #[test]
+    fn bare_shortcut_bindings_do_not_fire_while_editing() {
+        for text in ["[", "]", ",", "."] {
+            let stroke = Keystroke::parse_with(text, false).unwrap();
+            assert!(
+                stroke.edits_text(),
+                "{text} 是文本编辑键（输入焦点期间抑制的前提）"
+            );
+            let binding = KeyBinding::new(0, stroke, When::Auto, false);
+            assert!(!binding.in_text, "When::Auto 绑定不在编辑中派发：{text}");
+            let mut with_modifier = stroke;
+            with_modifier.modifiers.shift = true;
+            assert_ne!(
+                with_modifier, stroke,
+                "带修饰键的同名键是另一 keystroke，不命中"
+            );
+        }
+    }
 }
