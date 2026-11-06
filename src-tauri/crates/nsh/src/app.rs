@@ -80,6 +80,22 @@ pub fn secondary_text(view: &StartupView) -> String {
 #[component]
 pub fn App() -> impl IntoElement {
     let state = signal(StartupView::Loading);
+    // 主行/次行前景取主题令牌（双态自适应，registry 缺省带主题双态令牌）：
+    // 裸 text 的默认前景是黑（ResolvedTextStyle::default 的 React Native
+    // 惯例），暗色桌面上黑字贴暗底不可见——窗口文字必须显式带色。令牌缺失
+    // 时回退亮灰/中灰（缺省主题 registry 缺失时的可读兜底，非双态）。
+    let tokens = nsh_core::element::tokens();
+    tracing::debug!(
+        foreground = ?tokens.color("foreground"),
+        muted = ?tokens.color("muted-foreground"),
+        "启动视图主题令牌"
+    );
+    let fg = tokens
+        .color("foreground")
+        .unwrap_or_else(|| hsla(0.0, 0.0, 0.98, 1.0).into());
+    let muted = tokens
+        .color("muted-foreground")
+        .unwrap_or_else(|| hsla(0.0, 0.0, 0.45, 1.0).into());
     spawn(async move {
         // blocking 的 JoinHandle：启动竖井不 panic（失败走 Result）；JoinError 仅在
         // 任务异常退出时出现，归入失败态呈现（不 panic 引擎线程）。
@@ -98,11 +114,12 @@ pub fn App() -> impl IntoElement {
         .child(
             text(move || headline_text(&state.get()))
                 .text_size(px(24.0))
+                .text_color(fg)
                 .test_id("startup-headline"),
         )
         .child(
             text(move || secondary_text(&state.get()))
                 .text_size(px(12.0))
-                .text_color(hsla(0.0, 0.0, 0.45, 1.0)),
+                .text_color(muted),
         )
 }
