@@ -238,6 +238,29 @@ pub fn assemble_rows(items: &[Transaction], currencies: &CurrencyTable) -> Vec<R
         .collect()
 }
 
+/// 翻页方向（快捷键语义的纯半边，ADR-0140）：上一页 / 下一页。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PageStep {
+    /// 上一页。
+    Prev,
+    /// 下一页。
+    Next,
+}
+
+/// 翻页决策单点（旧壳翻页快捷键与分页条 on_change 共用的步进半边，
+/// ADR-0140 决策 2）：以当前页码为基准步进一页，首/末页越界返回 None
+/// （幂等无操作，不提示不抖动）；页码由调用方在读派发前现取（「以最新
+/// 页码状态为基准」——快捷键只是页码状态的又一个触发面）。
+pub fn next_page(current: u32, total_pages: u32, step: PageStep) -> Option<u32> {
+    match step {
+        PageStep::Prev => current.checked_sub(1).filter(|p| *p >= 1),
+        PageStep::Next => {
+            let next = current + 1;
+            (next <= total_pages.max(1)).then_some(next)
+        }
+    }
+}
+
 /// 总页数（offset 分页，ADR-0008）：末页不满一页也算一页；`total = 0` 恒 1
 /// （分页条在单页时由 UI 层收起，见 [`crate::app`]）。
 pub fn total_pages(total: i64) -> u32 {
@@ -426,5 +449,25 @@ mod tests {
         assert_eq!(total_pages(PAGE_SIZE as i64 + 1), 2, "末页不满一页也算一页");
         assert_eq!(total_pages(250), 3);
         assert_eq!(total_pages(-5), 1, "负值（不可达口径）钳到 1");
+    }
+
+    #[test]
+    fn next_page_is_idempotent_at_both_ends() {
+        // 首页上一页 / 末页下一页：越界幂等无操作（None）。
+        assert_eq!(next_page(1, 3, PageStep::Prev), None, "首页上一页无操作");
+        assert_eq!(next_page(3, 3, PageStep::Next), None, "末页下一页无操作");
+        // 中间页双向步进。
+        assert_eq!(next_page(2, 3, PageStep::Prev), Some(1));
+        assert_eq!(next_page(2, 3, PageStep::Next), Some(3));
+        // 单页：双向皆无操作。
+        assert_eq!(next_page(1, 1, PageStep::Prev), None);
+        assert_eq!(next_page(1, 1, PageStep::Next), None);
+        // 页码越界（不可达口径）钳到总页数口径内判定。
+        assert_eq!(
+            next_page(2, 1, PageStep::Prev),
+            Some(1),
+            "越界页码回退仍合法"
+        );
+        assert_eq!(next_page(9, 1, PageStep::Next), None);
     }
 }

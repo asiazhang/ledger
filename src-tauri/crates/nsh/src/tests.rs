@@ -67,38 +67,72 @@ fn seed_expense_series(dir: &Path, count: usize) {
     for index in 0..count {
         ledger_transaction::create(
             &conn,
-            TransactionInput {
-                kind: TransactionKind::Expense,
-                amount_cents: 2_500,
-                currency_code: "CNY".to_owned(),
-                account_id: Some(account.clone()),
-                to_account_id: None,
-                funding_account_id: None,
-                funding: Vec::new(),
-                purchases: Vec::new(),
-                category_id: None,
-                merchant_id: None,
-                merchant_name: None,
-                policy_id: None,
-                refund_of_transaction_id: None,
-                note: Some(format!("造数第 {index} 笔")),
-                source_order_no: None,
-                date: test_date(index),
-                instrument_id: None,
-                quantity: None,
-                price_cents: None,
-                fee_cents: None,
-                to_instrument_id: None,
-                to_quantity: None,
-                out_amount_cents: None,
-                in_amount_cents: None,
-                origin: None,
-                fx_rate: None,
-                idempotency_key: None,
-            },
+            expense_input(
+                &account,
+                &test_date(index),
+                2_500,
+                &format!("造数第 {index} 笔"),
+            ),
         )
         .unwrap();
     }
+}
+
+/// 一笔现金支出输入（公开写入口的最小载荷，日期与金额可指定）。
+fn expense_input(account: &str, date: &str, amount_cents: i64, note: &str) -> TransactionInput {
+    TransactionInput {
+        kind: TransactionKind::Expense,
+        amount_cents,
+        currency_code: "CNY".to_owned(),
+        account_id: Some(account.to_owned()),
+        to_account_id: None,
+        funding_account_id: None,
+        funding: Vec::new(),
+        purchases: Vec::new(),
+        category_id: None,
+        merchant_id: None,
+        merchant_name: None,
+        policy_id: None,
+        refund_of_transaction_id: None,
+        note: Some(note.to_owned()),
+        source_order_no: None,
+        date: date.to_owned(),
+        instrument_id: None,
+        quantity: None,
+        price_cents: None,
+        fee_cents: None,
+        to_instrument_id: None,
+        to_quantity: None,
+        out_amount_cents: None,
+        in_amount_cents: None,
+        origin: None,
+        fx_rate: None,
+        idempotency_key: None,
+    }
+}
+
+/// 在指定日期造一笔指定金额的现金支出（期间维度读路径的造数入口）。
+fn seed_expense_on_date(dir: &Path, date: &str, amount_cents: i64, note: &str) {
+    let db = boot_ledger(dir).unwrap();
+    let conn = db
+        .conn
+        .lock()
+        .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
+        .unwrap();
+    let account = ledger_accounts::create_account(
+        &conn,
+        AccountInput {
+            name: "测试现金".to_owned(),
+            kind: AccountType::Cash,
+            currency_code: "CNY".to_owned(),
+            initial_balance_cents: Some(0),
+            credit_limit_cents: None,
+            statement_day: None,
+            due_day: None,
+        },
+    )
+    .unwrap();
+    ledger_transaction::create(&conn, expense_input(&account, date, amount_cents, note)).unwrap();
 }
 
 /// 造数日期：2026-01-01 起（平年月份表逐日推进，插入序 = 日期升序）。
@@ -124,7 +158,7 @@ fn test_date(index: usize) -> String {
 /// 首页读断言（空库与造数库共用）：total 与当前页行集。
 fn assert_first_page(dir: &Path, expected_total: i64, expected_rows: usize) {
     let db = boot_ledger(dir).unwrap();
-    let page = transaction_page(&db, 1).unwrap();
+    let page = transaction_page(&db, 1, None).unwrap();
     assert_eq!(
         page.total, expected_total,
         "total = 满足过滤条件的未删除总数"
@@ -151,7 +185,7 @@ fn boot_reads_seeded_transactions_via_domain_write_entries() {
     create_empty_book_file(&dir);
     seed_expense_series(&dir, 3);
     let db = boot_ledger(&dir).unwrap();
-    let page = transaction_page(&db, 1).unwrap();
+    let page = transaction_page(&db, 1, None).unwrap();
     assert_eq!(
         page.total, 3,
         "total = 公开写入口写入的未删除笔数（读路径直调域服务）"
@@ -172,7 +206,7 @@ fn page_reads_offset_paging_boundaries_with_deterministic_order() {
     seed_expense_series(&dir, 250);
     let db = boot_ledger(&dir).unwrap();
 
-    let page1 = transaction_page(&db, 1).unwrap();
+    let page1 = transaction_page(&db, 1, None).unwrap();
     assert_eq!(page1.total, 250, "total 与页无关：满足过滤条件的总数");
     assert_eq!(page1.items.len(), 100, "首页整 100 行");
     assert_eq!(
@@ -186,7 +220,7 @@ fn page_reads_offset_paging_boundaries_with_deterministic_order() {
         "首页末行 = 第 151 笔写入序"
     );
 
-    let page2 = transaction_page(&db, 2).unwrap();
+    let page2 = transaction_page(&db, 2, None).unwrap();
     assert_eq!(page2.items.len(), 100);
     assert_eq!(
         page2.items[0].date,
@@ -195,14 +229,80 @@ fn page_reads_offset_paging_boundaries_with_deterministic_order() {
     );
     assert_eq!(page2.items[99].date, test_date(50));
 
-    let last = transaction_page(&db, 3).unwrap();
+    let last = transaction_page(&db, 3, None).unwrap();
     assert_eq!(last.items.len(), 50, "末页 50 行（250 = 100 + 100 + 50）");
     assert_eq!(last.items[0].date, test_date(49));
     assert_eq!(last.items[49].date, test_date(0), "末页末行最早");
 
-    let beyond = transaction_page(&db, 4).unwrap();
+    let beyond = transaction_page(&db, 4, None).unwrap();
     assert_eq!(beyond.items.len(), 0, "越界页空行集");
     assert_eq!(beyond.total, 250, "越界页 total 仍返回");
+}
+
+/// 期间限定读路径（issue #2021）：日期区间过滤进 TransactionListFilter 的
+/// from/to（含边界字典序），total 与行集同 WHERE；自然周期区间换算归
+/// period 纯函数（本测锚定读路径的过滤半边）。
+#[test]
+fn page_reads_filter_by_period_range_with_inclusive_bounds() {
+    let _guard = SERIAL.lock().unwrap();
+    let dir = scratch_book_dir("period-filter");
+    create_empty_book_file(&dir);
+    seed_expense_on_date(&dir, "2026-01-31", 1_100, "一月末");
+    seed_expense_on_date(&dir, "2026-03-01", 2_200, "三月初");
+    seed_expense_on_date(&dir, "2026-03-31", 3_300, "三月末");
+    seed_expense_on_date(&dir, "2026-04-01", 4_400, "四月初");
+    let db = boot_ledger(&dir).unwrap();
+
+    // 2026 年 3 月自然月（含边界）：只命中三月两笔，边界日期在内。
+    let march = crate::boot::transaction_page(
+        &db,
+        1,
+        Some(&crate::period::PeriodRange {
+            from: "2026-03-01".to_owned(),
+            to: "2026-03-31".to_owned(),
+        }),
+    )
+    .unwrap();
+    assert_eq!(march.total, 2, "total 与行集共用同一 WHERE 子句");
+    assert_eq!(
+        march
+            .items
+            .iter()
+            .map(|t| t.note.as_deref())
+            .collect::<Vec<_>>(),
+        [Some("三月末"), Some("三月初")],
+        "期间内按 date DESC 排序"
+    );
+
+    // 「全部」（None）：不过滤。
+    let all = crate::boot::transaction_page(&db, 1, None).unwrap();
+    assert_eq!(all.total, 4);
+}
+
+/// 数据期间边界读路径（issue #2021 / ADR-0141 钳制输入）：报表域日期极值，
+/// 空库双 None；与旧壳 report_date_range 同一域函数。
+#[test]
+fn report_date_range_spans_seeded_data() {
+    let _guard = SERIAL.lock().unwrap();
+    let dir = scratch_book_dir("date-range");
+    create_empty_book_file(&dir);
+    let db = boot_ledger(&dir).unwrap();
+    let empty = crate::boot::report_date_range(&db).unwrap();
+    assert_eq!(
+        (empty.min_date.as_deref(), empty.max_date.as_deref()),
+        (None, None),
+        "空库双 None"
+    );
+    drop(db);
+    seed_expense_on_date(&dir, "2025-08-15", 5_500, "历史");
+    seed_expense_on_date(&dir, "2026-02-20", 6_600, "最新");
+    let db = boot_ledger(&dir).unwrap();
+    let range = crate::boot::report_date_range(&db).unwrap();
+    assert_eq!(
+        (range.min_date.as_deref(), range.max_date.as_deref()),
+        (Some("2025-08-15"), Some("2026-02-20")),
+        "起点为最早流水日期，终点为最新流水日期"
+    );
 }
 
 #[test]
@@ -235,7 +335,7 @@ fn page_reads_assemble_into_cell_texts_across_page_boundaries() {
     let currencies = crate::assembly::CurrencyTable::from_currencies(&currency_rows(&db).unwrap());
 
     let first =
-        crate::assembly::assemble_rows(&transaction_page(&db, 1).unwrap().items, &currencies);
+        crate::assembly::assemble_rows(&transaction_page(&db, 1, None).unwrap().items, &currencies);
     assert_eq!(first.len(), crate::assembly::PAGE_SIZE);
     assert_eq!(first[0].date, test_date(249));
     assert_eq!(first[0].kind, "支出", "类型标签首版 = kind 直译");
@@ -246,7 +346,7 @@ fn page_reads_assemble_into_cell_texts_across_page_boundaries() {
     assert_eq!(first[99].date, test_date(150), "首页末行边界");
 
     let last =
-        crate::assembly::assemble_rows(&transaction_page(&db, 3).unwrap().items, &currencies);
+        crate::assembly::assemble_rows(&transaction_page(&db, 3, None).unwrap().items, &currencies);
     assert_eq!(last.len(), 50, "末页 50 行");
     assert_eq!(last[0].date, test_date(49));
     assert_eq!(last[49].date, test_date(0), "末页末行 = 最早一笔");
@@ -326,7 +426,7 @@ fn run_startup_with_seeded_book_places_session_and_reads_first_page() {
     set_book_dir(dir.clone());
     assert_eq!(run_startup(), StartupView::Ready, "引导成功呈现就绪态");
     let db = nsh_app_session();
-    let page = crate::boot::transaction_page(&db, 1).unwrap();
+    let page = crate::boot::transaction_page(&db, 1, None).unwrap();
     assert_eq!(page.total, 2, "会话句柄可直读首页（读路径直调域服务）");
     assert_eq!(page.items.len(), 2);
 }

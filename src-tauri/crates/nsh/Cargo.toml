@@ -35,6 +35,9 @@ nsh-platform-linux.workspace = true
 # 与其全部读时投影接缝（来源列反查 / 出资视图 / 转换两腿）的实现注册侧。
 ledger-infra = { path = "../infra" }
 ledger-transaction = { path = "../transaction" }
+# 数据期间边界（issue #2021 / ADR-0141 钳制输入）：报表域日期极值读路径
+# （旧壳 report_date_range 消费的同一域函数），期间步进的唯一边界来源。
+ledger-reports = { path = "../reports" }
 ledger-accounts = { path = "../accounts" }
 ledger-currencies = { path = "../currencies" }
 ledger-investment = { path = "../investment" }
@@ -42,6 +45,9 @@ ledger-item = { path = "../item" }
 ledger-merchants = { path = "../merchants" }
 ledger-policy = { path = "../policy" }
 ledger-scheduled = { path = "../scheduled" }
+# 本地日历（期间数学的自然月/季/年边界与「今天」，issue #2021）：域栈多 crate
+# 同版本的既有直接依赖（workspace 未收 workspace.dependencies，各成员同版本声明）。
+chrono = "0.4.45"
 # 域栈日志面（tracing 是全仓日志基座，ADR-0006）；启动期 stderr 初始化，
 # RUST_LOG 环境变量过滤。
 tracing = "0.1"

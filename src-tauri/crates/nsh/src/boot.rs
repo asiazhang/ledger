@@ -89,18 +89,26 @@ fn normalize_foreign_plaintext(db_path: &Path) -> Result<()> {
     })
 }
 
-/// 读取账本库交易列表页（读路径直调域服务，issue #2018 的立桩靶标）。
+/// 读取账本库交易列表页（读路径直调域服务，issue #2018 立桩靶标；issue #2021
+/// 补日期区间维度）。
 ///
 /// 经核心交易域读路径 [`ledger_transaction::list_transactions`] 的服务端 offset
 /// 分页（ADR-0008 语义：页码从 1 起、`total` 与行集共用同一 WHERE 子句、排序
 /// date DESC, created_at DESC, id DESC），每页 [`PAGE_SIZE`] 行（100 行/页，
-/// 旧壳 50 行翻倍验证原生余量）；过滤为空 = 全库口径（立桩无筛选维度，搜索
-/// 随 #2023 接入）。来源列等读时投影接缝已由 [`crate::wiring`] 接线。读连接
-/// 是成对建连的只读侧（ADR-0117：读路径不进写者闸门）。
-pub fn transaction_page(db: &DbState, page: u32) -> Result<TransactionListResult> {
+/// 旧壳 50 行翻倍验证原生余量）；`range` 为期间快照（含边界，自然周期换算产物
+/// 见 [`crate::period`]），None = 「全部」无过滤（立桩搜索随 #2023 接入）。
+/// 来源列等读时投影接缝已由 [`crate::wiring`] 接线。读连接是成对建连的只读侧
+/// （ADR-0117：读路径不进写者闸门）。
+pub fn transaction_page(
+    db: &DbState,
+    page: u32,
+    range: Option<&crate::period::PeriodRange>,
+) -> Result<TransactionListResult> {
     let filter = ledger_transaction::TransactionListFilter {
         page: Some(page.max(1) as usize),
         page_size: Some(PAGE_SIZE),
+        from: range.map(|r| r.from.clone()),
+        to: range.map(|r| r.to.clone()),
         ..Default::default()
     };
     let conn = db
@@ -108,6 +116,19 @@ pub fn transaction_page(db: &DbState, page: u32) -> Result<TransactionListResult
         .lock()
         .map_err(|e| AppError::Db(e.to_string()))?;
     ledger_transaction::list_transactions(&conn, &filter)
+}
+
+/// 读取账本库数据期间边界（issue #2021 / ADR-0141 期间步进的钳制输入）：
+/// 报表域日期极值读路径 [`ledger_reports::query_report_date_range`]——旧壳
+/// report_date_range 消费的同一域函数；双 None = 空库。随每页读一并刷新
+/// （单行聚合查询，成本可忽略；写路径落地后天然跟随数据外扩/收窄，
+/// 无需独立失效接线）。
+pub fn report_date_range(db: &DbState) -> Result<ledger_reports::DateRange> {
+    let conn = db
+        .read_conn
+        .lock()
+        .map_err(|e| AppError::Db(e.to_string()))?;
+    ledger_reports::query_report_date_range(&conn)
 }
 
 /// 读取账本库币种字典（金额展示的参考数据面，issue #2018）：装配层的币种
