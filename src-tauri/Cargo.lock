@@ -4463,6 +4463,7 @@ name = "nsh-app"
 version = "0.11.2"
 dependencies = [
  "ledger-accounts",
+ "ledger-categories",
  "ledger-currencies",
  "ledger-infra",
  "ledger-investment",
