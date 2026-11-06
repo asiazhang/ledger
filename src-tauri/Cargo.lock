@@ -4462,13 +4462,16 @@ dependencies = [
 name = "nsh-app"
 version = "0.11.2"
 dependencies = [
+ "chrono",
  "ledger-accounts",
+ "ledger-categories",
  "ledger-currencies",
  "ledger-infra",
  "ledger-investment",
  "ledger-item",
  "ledger-merchants",
  "ledger-policy",
+ "ledger-reports",
  "ledger-scheduled",
  "ledger-transaction",
  "nsh-base",
