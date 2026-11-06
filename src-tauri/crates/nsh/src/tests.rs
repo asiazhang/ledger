@@ -23,8 +23,8 @@ use ledger_transaction::{TransactionInput, TransactionKind};
 
 use crate::app::{StartupView, headline_text, run_startup, set_book_dir};
 use crate::boot::{
-    CODE_BOOK_MISSING, CODE_ENCRYPTED_UNSUPPORTED, boot_ledger, currency_rows, transaction_page,
-    transaction_search,
+    CODE_BOOK_MISSING, CODE_ENCRYPTED_UNSUPPORTED, boot_ledger, category_rows, currency_rows,
+    transaction_page, transaction_search,
 };
 
 /// 串行锁：接缝注册与 OnceLock 装配入口是进程级单例，用例间串行防串扰。
@@ -271,9 +271,14 @@ fn page_reads_assemble_into_cell_texts_across_page_boundaries() {
     seed_expense_series(&dir, 250);
     let db = boot_ledger(&dir).unwrap();
     let currencies = crate::assembly::CurrencyTable::from_currencies(&currency_rows(&db).unwrap());
+    let categories = crate::assembly::CategoryTable::default();
+    let ctx = crate::assembly::RowContext {
+        currencies: &currencies,
+        categories: &categories,
+        privacy_enabled: false,
+    };
 
-    let first =
-        crate::assembly::assemble_rows(&transaction_page(&db, 1).unwrap().items, &currencies);
+    let first = crate::assembly::assemble_rows(&transaction_page(&db, 1).unwrap().items, &ctx);
     assert_eq!(first.len(), crate::assembly::PAGE_SIZE);
     assert_eq!(first[0].date, test_date(249));
     assert_eq!(first[0].kind, "支出", "类型标签首版 = kind 直译");
@@ -283,12 +288,132 @@ fn page_reads_assemble_into_cell_texts_across_page_boundaries() {
     );
     assert_eq!(first[99].date, test_date(150), "首页末行边界");
 
-    let last =
-        crate::assembly::assemble_rows(&transaction_page(&db, 3).unwrap().items, &currencies);
+    let last = crate::assembly::assemble_rows(&transaction_page(&db, 3).unwrap().items, &ctx);
     assert_eq!(last.len(), 50, "末页 50 行");
     assert_eq!(last[0].date, test_date(49));
     assert_eq!(last[49].date, test_date(0), "末页末行 = 最早一笔");
     assert_eq!(last[49].amount, "¥25");
+}
+
+/// 分类路径 × DB 造数行集（issue #2019 分类路径 AC 的接线面）：经域公开写入口
+/// 建父子分类，支出行引用子分类，`category_rows` 读接缝（在用口径）+ 装配层
+/// 路径表产出「父 > 子」格文本；软删分类不在投影行集，引用落 `-`。删除读
+/// 接缝（`category_rows`）或装配消费任一环即红。
+#[test]
+fn category_rows_assemble_into_path_cells_active_only() {
+    let _guard = SERIAL.lock().unwrap();
+    let dir = scratch_book_dir("categories");
+    create_empty_book_file(&dir);
+    let db = boot_ledger(&dir).unwrap();
+    let conn = db
+        .conn
+        .lock()
+        .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
+        .unwrap();
+    let parent = ledger_categories::create_category(
+        &conn,
+        ledger_categories::CategoryInput {
+            name: "餐饮".to_owned(),
+            kind: "expense".to_owned(),
+            parent_id: None,
+            icon: None,
+        },
+    )
+    .unwrap();
+    let child = ledger_categories::create_category(
+        &conn,
+        ledger_categories::CategoryInput {
+            name: "午餐".to_owned(),
+            kind: "expense".to_owned(),
+            parent_id: Some(parent.clone()),
+            icon: None,
+        },
+    )
+    .unwrap();
+    let account = ledger_accounts::create_account(
+        &conn,
+        AccountInput {
+            name: "测试现金".to_owned(),
+            kind: AccountType::Cash,
+            currency_code: "CNY".to_owned(),
+            initial_balance_cents: Some(0),
+            credit_limit_cents: None,
+            statement_day: None,
+            due_day: None,
+        },
+    )
+    .unwrap();
+    let make_expense =
+        |date: &str, category_id: Option<String>, note: Option<String>| TransactionInput {
+            kind: TransactionKind::Expense,
+            amount_cents: 2_500,
+            currency_code: "CNY".to_owned(),
+            account_id: Some(account.clone()),
+            to_account_id: None,
+            funding_account_id: None,
+            funding: Vec::new(),
+            purchases: Vec::new(),
+            category_id,
+            merchant_id: None,
+            merchant_name: None,
+            policy_id: None,
+            refund_of_transaction_id: None,
+            note,
+            source_order_no: None,
+            date: date.to_owned(),
+            instrument_id: None,
+            quantity: None,
+            price_cents: None,
+            fee_cents: None,
+            to_instrument_id: None,
+            to_quantity: None,
+            out_amount_cents: None,
+            in_amount_cents: None,
+            origin: None,
+            fx_rate: None,
+            idempotency_key: None,
+        };
+    // 三笔各占一天（排序 date DESC：行序 = 写入序倒序，断言与 created_at
+    // 同秒无关）。
+    ledger_transaction::create(
+        &conn,
+        make_expense("2026-01-15", Some(child.clone()), Some("买咖啡".to_owned())),
+    )
+    .unwrap();
+    ledger_transaction::create(&conn, make_expense("2026-01-16", None, None)).unwrap();
+    // 软删分类：不在投影行集，历史引用落 `-`。
+    let gone = ledger_categories::create_category(
+        &conn,
+        ledger_categories::CategoryInput {
+            name: "已删分类".to_owned(),
+            kind: "expense".to_owned(),
+            parent_id: None,
+            icon: None,
+        },
+    )
+    .unwrap();
+    ledger_categories::delete_category(&conn, &gone).unwrap();
+    ledger_transaction::create(&conn, make_expense("2026-01-17", Some(gone.clone()), None))
+        .unwrap();
+    drop(conn);
+
+    let currencies = crate::assembly::CurrencyTable::from_currencies(&currency_rows(&db).unwrap());
+    let categories = crate::assembly::CategoryTable::from_categories(&category_rows(&db).unwrap());
+    let ctx = crate::assembly::RowContext {
+        currencies: &currencies,
+        categories: &categories,
+        privacy_enabled: false,
+    };
+    let rows = crate::assembly::assemble_rows(&transaction_page(&db, 1).unwrap().items, &ctx);
+    assert_eq!(rows.len(), 3);
+    assert_eq!(
+        rows[0].category, "-",
+        "软删分类的引用不在在用投影行集（最新一笔）"
+    );
+    assert_eq!(rows[1].category, "-", "无分类引用");
+    assert_eq!(rows[1].note, "-", "无备注");
+    assert_eq!(rows[2].category, "餐饮 > 午餐", "子分类为「父 > 子」路径");
+    assert_eq!(rows[2].note, "买咖啡");
 }
 
 #[test]

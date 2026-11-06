@@ -22,12 +22,46 @@ use std::time::Duration;
 
 use ledger_infra::db::DbState;
 use nsh_base::{
-    DataTableAlign, DataTableClasses, DataTableColumn, DataTableRows, data_table, input, pagination,
+    DataTableAlign, DataTableCell, DataTableClasses, DataTableColumn, DataTableRows, data_table,
+    input, pagination,
 };
 use nsh_core::prelude::*;
 
-use crate::assembly::{self, ColumnAlign, CurrencyTable, RowCells};
+use crate::assembly::{self, AmountSemantic, ColumnAlign, CurrencyTable, RowCells, RowContext};
 use crate::boot;
+
+/// 金额隐私模式开关的存储键（设备轻量设置项，与旧壳同键同值形态：旧壳
+/// `@ledger/money` 的 `AMOUNT_PRIVACY_STORAGE_KEY`，值为 JSON 布尔字面量
+/// `"true"` / `"false"`）。轻量设置项域语义见
+/// docs/contexts/CONTEXT-reference-settings.md「金额隐私模式」。
+const AMOUNT_PRIVACY_STORAGE_KEY: &str = "amount_privacy_enabled";
+
+/// 金额隐私开关的设备态读取（组件任务内同步读；解析镜像旧壳 `loadLocal`
+/// 的 JSON 布尔语义：缺失/非法归默认关）。立桩无设置面——开关的写入口随
+/// 设置面票接入（旧壳入口：侧栏标题行眼睛图标），本壳消费同一域来源、
+/// 同一存储键。
+fn amount_privacy_enabled() -> bool {
+    nsh_core::storage::Storage::get_item(AMOUNT_PRIVACY_STORAGE_KEY)
+        .is_some_and(|raw| raw.trim() == "true")
+}
+
+/// 金额语义色值表（旧壳 `packages/theme/src/semantic-colors.ts`
+/// `KIND_SEMANTIC_COLORS` 的逐值镜像，亮/暗两态自适应——色值只在此处与旧壳
+/// 各出现一份，NSH 侧不另立第二份色板：色型闭集住装配层
+/// [`assembly::AmountSemantic`]，色值映射住本函数）。
+fn amount_color(semantic: AmountSemantic) -> AdaptiveColor {
+    match semantic {
+        AmountSemantic::Expense => AdaptiveColor::new(rgb(0xd03050), rgb(0xe88080)),
+        AmountSemantic::Income => AdaptiveColor::new(rgb(0x18a058), rgb(0x63e2b7)),
+        AmountSemantic::Refund => AdaptiveColor::new(rgb(0x2080f0), rgb(0x63a8f2)),
+        AmountSemantic::Transfer => AdaptiveColor::new(rgb(0x722ed1), rgb(0xb37feb)),
+        AmountSemantic::Buy => AdaptiveColor::new(rgb(0xeb2f96), rgb(0xff85c0)),
+        AmountSemantic::Sell => AdaptiveColor::new(rgb(0x13c2c2), rgb(0x5cdbd3)),
+        AmountSemantic::Convert => AdaptiveColor::new(rgb(0xd48806), rgb(0xf0c060)),
+        AmountSemantic::Split => AdaptiveColor::new(rgb(0x2f54eb), rgb(0x85a5ff)),
+        AmountSemantic::Dividend => AdaptiveColor::new(rgb(0x0d9488), rgb(0x5eead4)),
+    }
+}
 
 /// 启动装配入口：账本目录（bin 注入一次；headless 测试按场景注入）。槽位
 /// 形态的进程级单例（headless 多场景串行测试需可复位，见
@@ -153,7 +187,26 @@ fn rows_to_data(rows: &[RowCells]) -> DataTableRows {
     DataTableRows::new(rows.len())
         .texts("date", rows.iter().map(|r| r.date.as_str()))
         .texts("kind", rows.iter().map(|r| r.kind.as_str()))
+        .texts("category", rows.iter().map(|r| r.category.as_str()))
+        .texts("note", rows.iter().map(|r| r.note.as_str()))
         .texts("amount", rows.iter().map(|r| r.amount.as_str()))
+}
+
+/// 自绘格（金额语义色，issue #2019）：金额列按行语义色型着色（旧壳金额列
+/// 着色口径），其余列平文——格文本仍取自数据（`cell.text`），本函数只补色。
+/// 掩码态照常着色（掩码隐藏数字，不隐藏方向，旧壳隐私保留项同口径）。
+fn render_cell(rows_signal: Signal<Vec<RowCells>>) -> impl Fn(&DataTableCell) -> Text {
+    move |cell: &DataTableCell| {
+        let semantic = rows_signal
+            .get()
+            .get(cell.row as usize)
+            .map(|r| r.amount_semantic);
+        let label = text(cell.text.clone());
+        match semantic {
+            Some(semantic) if cell.key == "amount" => label.text_color(amount_color(semantic)),
+            _ => label,
+        }
+    }
 }
 
 /// 列定义映射（装配层产物 → 宿主列）：UI 层只做映射、不产列。
@@ -220,8 +273,9 @@ fn TransactionsView() -> impl IntoElement {
     // `search_transactions` 命令同一域函数，不经 IPC）；两态分页与总数语义
     // 同旧壳（页码重置、服务端 offset 分页、total = 满足口径的总数）。阻塞读
     // 走后台线程（SQLite IO 不占引擎线程）；分页条装载期间禁用（单飞——等待
-    // 成功优于即刻失败，无并发页读交错）。币种字典随页读一并刷新（装配层币种
-    // 展示参数的唯一来源）。
+    // 成功优于即刻失败，无并发页读交错）。币种字典、在用分类与行集随装载一
+    // 并刷新（装配层币种展示参数与分类路径表的唯一来源）；金额隐私开关随
+    // 装载取设备态（轻量设置项，存储读是同步操作，组件任务内直读）。
     let load = move |page_no: u32| {
         loading.set(true);
         error.set(None);
@@ -229,6 +283,7 @@ fn TransactionsView() -> impl IntoElement {
         let seq = load_seq.get();
         let query = search_text.get().trim().to_owned();
         let searching = !query.is_empty();
+        let privacy = amount_privacy_enabled();
         let db = db_slot().clone();
         spawn(async move {
             let Some(db) = db else {
@@ -236,8 +291,8 @@ fn TransactionsView() -> impl IntoElement {
                 loading.set(false);
                 return;
             };
-            // 币种字典与行集同批读取：字典读失败不静默降级成无符号金额
-            //（用户无感知的错示比暂缓呈现更差），与行集一并走错误呈现。
+            // 币种字典、在用分类与行集同批读取：字典读失败不静默降级成无符号
+            //金额（用户无感知的错示比暂缓呈现更差），与行集一并走错误呈现。
             let outcome = blocking(move || {
                 let page_read = if query.is_empty() {
                     boot::transaction_page(&db, page_no).map(|result| (result.items, result.total))
@@ -245,9 +300,13 @@ fn TransactionsView() -> impl IntoElement {
                     boot::transaction_search(&db, &query, page_no)
                         .map(|result| (result.items, result.total))
                 };
-                page_read.and_then(|(items, total)| {
-                    boot::currency_rows(&db).map(|currency_rows| (items, total, currency_rows))
-                })
+                page_read
+                    .and_then(|(items, total)| {
+                        boot::currency_rows(&db).map(|currency_rows| (items, total, currency_rows))
+                    })
+                    .and_then(|(items, total, currency_rows)| {
+                        boot::category_rows(&db).map(|rows| (items, total, currency_rows, rows))
+                    })
             })
             .await;
             // 过期装载不落位（后发已接管 rows/loading，先发不得回写）。
@@ -255,9 +314,15 @@ fn TransactionsView() -> impl IntoElement {
                 return;
             }
             match outcome {
-                Ok(Ok((items, total_count, currency_rows))) => {
-                    let table = CurrencyTable::from_currencies(&currency_rows);
-                    rows.set(assembly::assemble_rows(&items, &table));
+                Ok(Ok((items, total_count, currency_rows, category_rows))) => {
+                    let currencies = CurrencyTable::from_currencies(&currency_rows);
+                    let categories = assembly::CategoryTable::from_categories(&category_rows);
+                    let ctx = RowContext {
+                        currencies: &currencies,
+                        categories: &categories,
+                        privacy_enabled: privacy,
+                    };
+                    rows.set(assembly::assemble_rows(&items, &ctx));
                     total.set(total_count);
                     searched.set(searching);
                 }
@@ -328,6 +393,7 @@ fn TransactionsView() -> impl IntoElement {
                     data_table()
                         .columns(table_columns())
                         .data(move || rows_to_data(&rows.get()))
+                        .render_cell(render_cell(rows))
                         .loading(move || loading.get())
                         .loading_view(text("正在加载…").text_color(muted))
                         // 空态分型与旧壳同源：搜索态无命中「无匹配结果」
