@@ -24,6 +24,7 @@ use ledger_transaction::{TransactionInput, TransactionKind};
 use crate::app::{StartupView, headline_text, run_startup, set_book_dir};
 use crate::boot::{
     CODE_BOOK_MISSING, CODE_ENCRYPTED_UNSUPPORTED, boot_ledger, currency_rows, transaction_page,
+    transaction_search,
 };
 
 /// 串行锁：接缝注册与 OnceLock 装配入口是进程级单例，用例间串行防串扰。
@@ -45,6 +46,16 @@ fn create_empty_book_file(dir: &Path) {
 /// 经域层公开写入口在同一账户上造一列支出（余额刷新接缝的行文证据；插入序
 /// = 日期升序，供分页排序断言）。
 fn seed_expense_series(dir: &Path, count: usize) {
+    let notes: Vec<String> = (0..count)
+        .map(|index| format!("造数第 {index} 笔"))
+        .collect();
+    let refs: Vec<&str> = notes.iter().map(String::as_str).collect();
+    seed_expense_notes(dir, &refs);
+}
+
+/// 经域层公开写入口造一列带指定中文备注的支出（同一账户「测试现金」，日期
+/// 递增；搜索读接线断言的原文命中造数面）。
+fn seed_expense_notes(dir: &Path, notes: &[&str]) {
     let db = boot_ledger(dir).unwrap();
     let conn = db
         .conn
@@ -64,7 +75,7 @@ fn seed_expense_series(dir: &Path, count: usize) {
         },
     )
     .unwrap();
-    for index in 0..count {
+    for (index, note) in notes.iter().enumerate() {
         ledger_transaction::create(
             &conn,
             TransactionInput {
@@ -81,7 +92,7 @@ fn seed_expense_series(dir: &Path, count: usize) {
                 merchant_name: None,
                 policy_id: None,
                 refund_of_transaction_id: None,
-                note: Some(format!("造数第 {index} 笔")),
+                note: Some((*note).to_owned()),
                 source_order_no: None,
                 date: test_date(index),
                 instrument_id: None,
@@ -203,6 +214,33 @@ fn page_reads_offset_paging_boundaries_with_deterministic_order() {
     let beyond = transaction_page(&db, 4).unwrap();
     assert_eq!(beyond.items.len(), 0, "越界页空行集");
     assert_eq!(beyond.total, 250, "越界页 total 仍返回");
+}
+
+/// 搜索读接线（issue #2023）：读路径直调核心交易域统一模糊搜索服务——中文
+/// 备注原文连续子串命中，与旧壳 `search_transactions` 命令同一域函数（同一
+/// 账本库同结果）。删除搜索读路径任一环（域函数调用 / 只读连接选择）即红。
+#[test]
+fn search_reads_hit_transactions_with_raw_text_semantics() {
+    let _guard = SERIAL.lock().unwrap();
+    let dir = scratch_book_dir("search");
+    create_empty_book_file(&dir);
+    seed_expense_notes(&dir, &["元旦火锅聚餐", "超市买菜"]);
+    let db = boot_ledger(&dir).unwrap();
+
+    let result = transaction_search(&db, "火锅", 1).unwrap();
+    assert_eq!(result.total, 1, "命中总数 = 备注原文命中的未删除笔数");
+    assert_eq!(result.items.len(), 1);
+    assert_eq!(
+        result.items[0].note.as_deref(),
+        Some("元旦火锅聚餐"),
+        "原文连续子串命中（非前缀、非全词）"
+    );
+
+    // 空查询走域空结果语义（视图层空输入 = 列表态不调搜索——呈现切换归
+    // headless 断言面，本用例只钉域函数自身的既有契约）。
+    let empty = transaction_search(&db, "", 1).unwrap();
+    assert_eq!(empty.total, 0);
+    assert!(empty.items.is_empty());
 }
 
 #[test]

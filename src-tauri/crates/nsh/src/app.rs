@@ -18,10 +18,11 @@
 
 use std::path::PathBuf;
 use std::sync::{Mutex, MutexGuard};
+use std::time::Duration;
 
 use ledger_infra::db::DbState;
 use nsh_base::{
-    DataTableAlign, DataTableClasses, DataTableColumn, DataTableRows, data_table, pagination,
+    DataTableAlign, DataTableClasses, DataTableColumn, DataTableRows, data_table, input, pagination,
 };
 use nsh_core::prelude::*;
 
@@ -129,6 +130,24 @@ fn total_text(total: i64) -> String {
     format!("共 {total} 条")
 }
 
+/// 搜索态总数文案（与旧壳 zh-CN 词表同文案：search.hitCount；列表态仍用
+/// [`total_text`]——搜索语义变了，计数词随之换，与旧壳两词并存同形）。
+fn hit_total_text(total: i64) -> String {
+    format!("命中 {total} 条")
+}
+
+/// 搜索输入防抖时长（毫秒）：与旧壳 `SEARCH_DEBOUNCE_MS`（issue #1402「搜索
+/// 输入防抖」跨域不变量）同值同语义——等待成功优于即刻失败（AGENTS.md 体验
+/// 取舍），快输入不逐键打库。
+const SEARCH_DEBOUNCE_MS: u64 = 300;
+
+/// 搜索框占位文案（与旧壳 search.keywordPlaceholder 同文案）。
+const SEARCH_PLACEHOLDER: &str = "输入关键字开始搜索（备注、账户名、商户名，支持多关键字）";
+
+/// 搜索无结果空态文案（与旧壳 search.noResults 同文案；列表态空库仍是
+/// 「暂无数据」——空态分型与旧壳两档同源同形）。
+const SEARCH_EMPTY_TEXT: &str = "无匹配结果";
+
 /// 装配行集 → 宿主表格数据（按列装配，渲染期零格式化——格文本已是装配产物）。
 fn rows_to_data(rows: &[RowCells]) -> DataTableRows {
     DataTableRows::new(rows.len())
@@ -177,6 +196,14 @@ fn TransactionsView() -> impl IntoElement {
     let rows = signal(Vec::<RowCells>::new());
     let loading = signal(true);
     let error = signal(None::<String>);
+    // 搜索态：输入文本（受控）、结果呈现态（旧壳 searched 语义——搜索结果落位
+    // 后才切搜索态呈现，键入中底栏仍呈上一装载态）、防抖调度序号（新输入作废
+    // 在途定时器）与装载序号（后发作废先发，与旧壳 Loadable invalidate 同义：
+    // 竞态后发覆盖先发，迟到结果不落位）。
+    let search_text = signal(String::new());
+    let searched = signal(false);
+    let search_seq = signal(0u64);
+    let load_seq = signal(0u64);
 
     // 主题令牌（双态自适应，registry 缺省带主题双态令牌）；缺失时回退亮灰/
     // 中灰（缺省主题 registry 缺失时的可读兜底，非双态）。
@@ -188,12 +215,20 @@ fn TransactionsView() -> impl IntoElement {
         .color("muted-foreground")
         .unwrap_or_else(|| hsla(0.0, 0.0, 0.45, 1.0).into());
 
-    // 装载一页（首屏与翻页共用一条路径）：阻塞读走后台线程（SQLite IO 不占
-    // 引擎线程）；分页条装载期间禁用（单飞——等待成功优于即刻失败，无并发页
-    // 读交错）。币种字典随页读一并刷新（装配层币种展示参数的唯一来源）。
+    // 装载一页（列表态与搜索态共用一条路径）：输入 trim 后判态——空 = 列表态
+    // 读交易页（全库口径），非空 = 搜索态直调域统一模糊搜索（与旧壳
+    // `search_transactions` 命令同一域函数，不经 IPC）；两态分页与总数语义
+    // 同旧壳（页码重置、服务端 offset 分页、total = 满足口径的总数）。阻塞读
+    // 走后台线程（SQLite IO 不占引擎线程）；分页条装载期间禁用（单飞——等待
+    // 成功优于即刻失败，无并发页读交错）。币种字典随页读一并刷新（装配层币种
+    // 展示参数的唯一来源）。
     let load = move |page_no: u32| {
         loading.set(true);
         error.set(None);
+        load_seq.update(|seq| *seq += 1);
+        let seq = load_seq.get();
+        let query = search_text.get().trim().to_owned();
+        let searching = !query.is_empty();
         let db = db_slot().clone();
         spawn(async move {
             let Some(db) = db else {
@@ -204,21 +239,47 @@ fn TransactionsView() -> impl IntoElement {
             // 币种字典与行集同批读取：字典读失败不静默降级成无符号金额
             //（用户无感知的错示比暂缓呈现更差），与行集一并走错误呈现。
             let outcome = blocking(move || {
-                boot::transaction_page(&db, page_no).and_then(|result| {
-                    boot::currency_rows(&db).map(|currency_rows| (result, currency_rows))
+                let page_read = if query.is_empty() {
+                    boot::transaction_page(&db, page_no).map(|result| (result.items, result.total))
+                } else {
+                    boot::transaction_search(&db, &query, page_no)
+                        .map(|result| (result.items, result.total))
+                };
+                page_read.and_then(|(items, total)| {
+                    boot::currency_rows(&db).map(|currency_rows| (items, total, currency_rows))
                 })
             })
             .await;
+            // 过期装载不落位（后发已接管 rows/loading，先发不得回写）。
+            if load_seq.get() != seq {
+                return;
+            }
             match outcome {
-                Ok(Ok((page_data, currency_rows))) => {
+                Ok(Ok((items, total_count, currency_rows))) => {
                     let table = CurrencyTable::from_currencies(&currency_rows);
-                    rows.set(assembly::assemble_rows(&page_data.items, &table));
-                    total.set(page_data.total);
+                    rows.set(assembly::assemble_rows(&items, &table));
+                    total.set(total_count);
+                    searched.set(searching);
                 }
                 Ok(Err(e)) => error.set(Some(e.to_string())),
                 Err(_) => error.set(Some("内部错误：读页任务异常退出".to_owned())),
             }
             loading.set(false);
+        });
+    };
+
+    // 搜索输入调度（旧壳 scheduleSearch 同形）：文本变化 → 页码归 1 → 防抖后
+    // 装载第一页；期间再输入则序号失配、在途定时器自弃（与旧壳 clearTimeout
+    // 同义）。回车立即装载（on_submit，旧壳 onEnter 同语义——不等防抖）。
+    let schedule_search = move |text: &str| {
+        search_text.set(text.to_owned());
+        page.set(1);
+        search_seq.update(|seq| *seq += 1);
+        let seq = search_seq.get();
+        set_timeout(Duration::from_millis(SEARCH_DEBOUNCE_MS), move || {
+            if search_seq.get() == seq {
+                load(1);
+            }
         });
     };
 
@@ -230,25 +291,69 @@ fn TransactionsView() -> impl IntoElement {
         .flex_col()
         .app_class("bg-background")
         .child(
+            // 搜索框（issue #2023）：标准可编辑文本输入控件（nsh_core `Input`，
+            // Linux 宿主为 GTK 原生输入，天然经 GTK IME 管线——中文候选框/焦点
+            // 行为归平台输入法栈，#2023 人工验收面；headless 断言面只覆盖搜索
+            // 行为本身）。placeholder 与回车立即搜索与旧壳搜索页同形。
+            view()
+                .flex_row()
+                .px_4()
+                .py_2()
+                .app_class("border-b border-border")
+                .child(
+                    input()
+                        .test_id("tx-search")
+                        .value(move || search_text.get())
+                        .placeholder(SEARCH_PLACEHOLDER)
+                        .optional_label("搜索交易")
+                        .text_color(fg)
+                        .app_class(
+                            "flex-1 bg-background rounded-md border border-border px-2 py-1 \
+                             placeholder:text-muted-foreground",
+                        )
+                        .on_change(schedule_search)
+                        .on_submit(move |_: &str| {
+                            // 作废在途防抖（序号失配自弃）后立即装载。
+                            search_seq.update(|seq| *seq += 1);
+                            page.set(1);
+                            load(1);
+                        }),
+                ),
+        )
+        .child(
             view()
                 .test_id("tx-table")
                 .flex_1()
                 .child(
                     data_table()
                         .columns(table_columns())
-                .data(move || rows_to_data(&rows.get()))
-                            .loading(move || loading.get())
-                            .loading_view(text("正在加载…").text_color(muted))
-                            .empty(text("暂无数据").text_color(muted))
-                            .classes(table_classes())
-                            .flex_1(),
+                        .data(move || rows_to_data(&rows.get()))
+                        .loading(move || loading.get())
+                        .loading_view(text("正在加载…").text_color(muted))
+                        // 空态分型与旧壳同源：搜索态无命中「无匹配结果」
+                        //（search.noResults），列表态空库「暂无数据」（list.empty）。
+                        .empty(
+                            text(move || {
+                                if searched.get() {
+                                    SEARCH_EMPTY_TEXT
+                                } else {
+                                    "暂无数据"
+                                }
+                            })
+                            .text_color(muted),
+                        )
+                        .classes(table_classes())
+                        .flex_1(),
                 ),
         )
         .child(
-            // 底栏：读失败优先呈现错误，否则总数 + 分页条（单页收起，分页条
-            // 点击与边界幂等归 Pagination 组件）。
+            // 底栏：读失败优先呈现错误；否则总数（搜索态「命中 N 条」、列表态
+            // 「共 N 条」——旧壳搜索页与交易页同形）+ 分页条（单页收起，分页条
+            // 点击与边界幂等归 Pagination 组件；搜索态翻页携关键词重搜，同
+            // load 模式感知路径）。搜索态即使 0 命中也呈现总数（旧壳搜索页
+            // searched 即显示 hitCount）。
             when(
-                move || error.get().is_some() || total.get() > 0,
+                move || error.get().is_some() || searched.get() || total.get() > 0,
                 move || {
                     view()
                         .flex_row()
@@ -270,10 +375,16 @@ fn TransactionsView() -> impl IntoElement {
                                 },
                             )
                             .otherwise(move || {
-                                text(move || total_text(total.get()))
-                                    .text_size(px(12.0))
-                                    .text_color(muted)
-                                    .test_id("tx-total")
+                                text(move || {
+                                    if searched.get() {
+                                        hit_total_text(total.get())
+                                    } else {
+                                        total_text(total.get())
+                                    }
+                                })
+                                .text_size(px(12.0))
+                                .text_color(muted)
+                                .test_id("tx-total")
                             }),
                         )
                         .child(

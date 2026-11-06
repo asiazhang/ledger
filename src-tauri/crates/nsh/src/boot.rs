@@ -1,5 +1,5 @@
-//! 域栈引导（issue #2017 / ADR-0145）：打开未加密账本库，读交易列表页与币种
-//! 字典（issue #2018 交易表格首屏的读面）。
+//! 域栈引导（issue #2017 / ADR-0145）：打开未加密账本库，读交易列表页、交易
+//! 搜索与币种字典（issue #2018 交易表格首屏与 issue #2023 搜索接入的读面）。
 //!
 //! 引导内核复用基础设施引导层（[`ledger_infra::db::boot`]）：库文件处置判定
 //! （[`classify_for_boot`] 的明文/外来形态/密文/损坏四态）与成对建连
@@ -27,7 +27,7 @@ use ledger_infra::db::boot::{BOOT_DB_UNREADABLE, BootDisposition};
 use ledger_infra::db::data_location::DB_FILE_NAME;
 use ledger_infra::db::{DbState, open_db_in};
 use ledger_infra::error::{AppError, Result};
-use ledger_transaction::TransactionListResult;
+use ledger_transaction::{TransactionListResult, TransactionSearchResult};
 
 use crate::assembly::PAGE_SIZE;
 use crate::wiring;
@@ -108,6 +108,32 @@ pub fn transaction_page(db: &DbState, page: u32) -> Result<TransactionListResult
         .lock()
         .map_err(|e| AppError::Db(e.to_string()))?;
     ledger_transaction::list_transactions(&conn, &filter)
+}
+
+/// 搜索账本库交易（读路径直调域服务，issue #2023）：经核心交易域统一模糊
+/// 搜索 [`ledger_transaction::search_transactions`]——词条间 AND、字段间 OR 的
+/// 原文命中（备注原文子串 ∨ 账户名 ∨ 商户名 ∨ 购买项名称，LIKE 折叠仅 ASCII），
+/// 服务端 offset 分页（命中总数与页行集共用同一 WHERE，排序 date DESC）。
+/// 与旧壳 `search_transactions` 命令消费同一域函数——同一账本库同结果（#2023
+/// AC1）；金额/日期筛选维度立桩不接（spec #2015 Out of Scope：TransactionFilter
+/// 深模块完整语义不做）。页大小沿 [`PAGE_SIZE`]（立桩分页页径与列表态一致）。
+/// 空查询的域语义是空结果，视图层的空输入＝列表态不调搜索（呈现切换住
+/// [`crate::app`]）。读连接是成对建连的只读侧（ADR-0117）。
+pub fn transaction_search(db: &DbState, query: &str, page: u32) -> Result<TransactionSearchResult> {
+    let conn = db
+        .read_conn
+        .lock()
+        .map_err(|e| AppError::Db(e.to_string()))?;
+    ledger_transaction::search_transactions(
+        &conn,
+        query,
+        page.max(1) as usize,
+        PAGE_SIZE,
+        None,
+        None,
+        None,
+        None,
+    )
 }
 
 /// 读取账本库币种字典（金额展示的参考数据面，issue #2018）：装配层的币种

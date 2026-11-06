@@ -144,6 +144,66 @@ fn seed_expense_series(dir: &Path, count: usize) {
     }
 }
 
+/// 经域层公开写入口在同一账户上造一列带指定中文备注的支出（搜索断言的
+/// 原文命中造数面：备注各不相同、日期递增；账户名固定「测试现金」不与
+/// 搜索关键词相交）。
+fn seed_expense_notes(dir: &Path, notes: &[&str]) {
+    let db = nsh_app::boot::boot_ledger(dir).unwrap();
+    let conn = db
+        .conn
+        .lock()
+        .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
+        .unwrap();
+    let account = ledger_accounts::create_account(
+        &conn,
+        AccountInput {
+            name: "测试现金".to_owned(),
+            kind: AccountType::Cash,
+            currency_code: "CNY".to_owned(),
+            initial_balance_cents: Some(0),
+            credit_limit_cents: None,
+            statement_day: None,
+            due_day: None,
+        },
+    )
+    .unwrap();
+    for (index, note) in notes.iter().enumerate() {
+        ledger_transaction::create(
+            &conn,
+            TransactionInput {
+                kind: TransactionKind::Expense,
+                amount_cents: 2_500,
+                currency_code: "CNY".to_owned(),
+                account_id: Some(account.clone()),
+                to_account_id: None,
+                funding_account_id: None,
+                funding: Vec::new(),
+                purchases: Vec::new(),
+                category_id: None,
+                merchant_id: None,
+                merchant_name: None,
+                policy_id: None,
+                refund_of_transaction_id: None,
+                note: Some((*note).to_owned()),
+                source_order_no: None,
+                date: test_date(index),
+                instrument_id: None,
+                quantity: None,
+                price_cents: None,
+                fee_cents: None,
+                to_instrument_id: None,
+                to_quantity: None,
+                out_amount_cents: None,
+                in_amount_cents: None,
+                origin: None,
+                fx_rate: None,
+                idempotency_key: None,
+            },
+        )
+        .unwrap();
+    }
+}
+
 /// 表格首屏（issue #2018 AC1）：就绪窗口呈现真实账本数据——列名、格文本
 /// （类型标签 / 金额 / 日期为装配层产物）与总数齐备。删掉接线（装配注入 /
 /// 引导 / 首页读 / 表格渲染任一环）即红。
@@ -208,6 +268,103 @@ fn app_window_flips_pages_by_pagination_bar_click() {
     // 最新行不再在屏。断言对准视口内的首行（表格按视口虚拟化，视口外的行不
     // 进视图树）；忙碌指示（loadingView 文案）是装载期间的时序性呈现——headless
     // 本地读毫秒级完成、屏幕不可观测，归人工验收清单（#2024 硬伤清单对表）。
+    app.press("role:button[2]").unwrap();
+    app.wait_for("text:2026-02-19").unwrap();
+    app.wait_for_gone("text:2026-05-30", DEFAULT_WAIT).unwrap();
+}
+
+/// 搜索命中（issue #2023 AC1）：中文关键词经服务端统一模糊搜索命中——原文
+/// 连续子串语义（「火锅」命中「元旦火锅聚餐」中部），与旧壳同一域函数同结果；
+/// 总数随搜索语义变化（共 2 条 → 命中 1 条），命中行在屏、未命中行离屏。
+#[test]
+fn app_window_searches_by_chinese_keyword_with_raw_text_hits() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("search");
+    seed_expense_notes(&dir, &["元旦火锅聚餐", "超市买菜"]);
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+
+    // 列表态基线：共 2 条，两行都在屏（date DESC：01-02 在前）。
+    app.wait_for("text:共 2 条").unwrap();
+    app.wait_for("text:2026-01-02").unwrap();
+    app.wait_for("text:2026-01-01").unwrap();
+
+    // 输入中文关键词 → 服务端搜索：总数切换「命中 1 条」，命中行（01-01）
+    // 在屏、未命中行（01-02）离屏。
+    app.type_text("id:tx-search", "火锅").unwrap();
+    app.wait_for("text:命中 1 条").unwrap();
+    app.wait_for("text:2026-01-01").unwrap();
+    app.wait_for_gone("text:2026-01-02", DEFAULT_WAIT).unwrap();
+}
+
+/// 搜索无结果空态（issue #2023 AC3）：无命中关键词呈现「无匹配结果」（与旧壳
+/// search.noResults 同文案）与「命中 0 条」（旧壳搜索页 searched 即显示
+/// hitCount 同形），表格不残留列表行。
+#[test]
+fn app_window_shows_empty_state_when_search_has_no_hits() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("search-empty");
+    seed_expense_notes(&dir, &["元旦火锅聚餐", "超市买菜"]);
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+
+    app.wait_for("text:共 2 条").unwrap();
+    app.type_text("id:tx-search", "不存在的关键词").unwrap();
+    app.wait_for("text:无匹配结果").unwrap();
+    app.wait_for("text:命中 0 条").unwrap();
+    app.wait_for_gone("text:2026-01-01", DEFAULT_WAIT).unwrap();
+    app.wait_for_gone("text:2026-01-02", DEFAULT_WAIT).unwrap();
+}
+
+/// 清空恢复列表（issue #2023）：搜索命中后清空输入框 → 回列表态——总数回
+/// 「共 2 条」、全部行回屏、搜索态文案离屏（搜索态与列表态双向可逆，与旧壳
+/// 空查询回占位同语义）。
+#[test]
+fn app_window_restores_list_when_search_cleared() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("search-clear");
+    seed_expense_notes(&dir, &["元旦火锅聚餐", "超市买菜"]);
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+
+    app.wait_for("text:共 2 条").unwrap();
+    app.type_text("id:tx-search", "火锅").unwrap();
+    app.wait_for("text:命中 1 条").unwrap();
+
+    app.clear("id:tx-search").unwrap();
+    app.wait_for("text:共 2 条").unwrap();
+    app.wait_for("text:2026-01-02").unwrap();
+    app.wait_for("text:2026-01-01").unwrap();
+    app.wait_for_gone("text:命中 1 条", DEFAULT_WAIT).unwrap();
+}
+
+/// 搜索态分页与总数（issue #2023）：搜索态沿用服务端 offset 分页语义（与旧壳
+/// 搜索页同形）——150 笔同备注命中总数 150、分页条两页；回车立即搜索（不等
+/// 防抖，旧壳 onEnter 同语义）后点击页码 2 翻末页（最旧 50 笔），首页最新行
+/// 离屏；搜索态总数与列表态同值不同词（命中 150 条）。
+#[test]
+fn app_window_paginates_search_hits_after_enter_search() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("search-paged");
+    seed_expense_notes(&dir, &["批量造数"; 150]);
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+
+    app.wait_for("text:共 150 条").unwrap();
+    app.type_text("id:tx-search", "批量造数").unwrap();
+    app.submit("id:tx-search").unwrap();
+    app.wait_for("text:命中 150 条").unwrap();
+
+    // 搜索态翻页：点击页码 2 → 末页（最旧 50 笔，2026-01-01..2026-02-19），
+    // 首页最新行不再在屏（断言对准视口内首行，与列表态翻页同口径）。
     app.press("role:button[2]").unwrap();
     app.wait_for("text:2026-02-19").unwrap();
     app.wait_for_gone("text:2026-05-30", DEFAULT_WAIT).unwrap();
