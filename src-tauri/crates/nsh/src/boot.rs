@@ -1,5 +1,6 @@
-//! 域栈引导（issue #2017 / ADR-0145）：打开未加密账本库，读交易列表页与币种
-//! 字典（issue #2018 交易表格首屏的读面）。
+//! 域栈引导（issue #2017 / ADR-0145）：打开未加密账本库，读交易列表页与参考
+//! 数据（币种字典 / 在用分类 / 可见账户 / 含软删商户——交易表格首屏与派生行
+//! 形态的装配消费面）。
 //!
 //! 引导内核复用基础设施引导层（[`ledger_infra::db::boot`]）：库文件处置判定
 //! （[`classify_for_boot`] 的明文/外来形态/密文/损坏四态）与成对建连
@@ -132,4 +133,29 @@ pub fn category_rows(db: &DbState) -> Result<Vec<Category>> {
         .lock()
         .map_err(|e| AppError::Db(e.to_string()))?;
     ledger_categories::list_categories(&conn, false)
+}
+
+/// 读取用户可见账户行集（账户格与借贷派生的参考数据面，#2020）：装配层的账户
+/// 表来自本只读投影，**在用且未隐藏**——旧壳 accountMap 消费 `list_accounts`
+/// 口径（排除软删与隐藏；黑洞/隐藏账户不在表中 → 账户格占位「-」、借贷派生
+/// 按缺失归一资金侧）；随每页读一并刷新（账户行数小，改名/改类型后的重读成本
+/// 可忽略）。
+pub fn account_rows(db: &DbState) -> Result<Vec<ledger_accounts::Account>> {
+    let conn = db
+        .read_conn
+        .lock()
+        .map_err(|e| AppError::Db(e.to_string()))?;
+    ledger_accounts::list_accounts(&conn)
+}
+
+/// 读取商户行集（商户格的参考数据面，#2020）：装配层的商户表来自本只读投影，
+/// **含软删全量**——旧壳 merchantMap 消费 `includeDeleted: true` 口径（在用 +
+/// 软删，历史交易显示共用，issue #191）；随每页读一并刷新（商户行数小，改名后
+/// 的重读成本可忽略）。
+pub fn merchant_rows(db: &DbState) -> Result<Vec<ledger_merchants::Merchant>> {
+    let conn = db
+        .read_conn
+        .lock()
+        .map_err(|e| AppError::Db(e.to_string()))?;
+    ledger_merchants::list_merchants(&conn, true)
 }

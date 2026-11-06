@@ -26,7 +26,10 @@ use nsh_base::{
 };
 use nsh_core::prelude::*;
 
-use crate::assembly::{self, AmountSemantic, ColumnAlign, CurrencyTable, RowCells, RowContext};
+use crate::assembly::{
+    self, AccountTable, AmountSemantic, ColumnAlign, CurrencyTable, MerchantTable, RowCells,
+    RowContext,
+};
 use crate::boot;
 
 /// 金额隐私模式开关的存储键（设备轻量设置项，与旧壳同键同值形态：旧壳
@@ -169,6 +172,9 @@ fn rows_to_data(rows: &[RowCells]) -> DataTableRows {
         .texts("date", rows.iter().map(|r| r.date.as_str()))
         .texts("kind", rows.iter().map(|r| r.kind.as_str()))
         .texts("category", rows.iter().map(|r| r.category.as_str()))
+        .texts("merchant", rows.iter().map(|r| r.merchant.as_str()))
+        .texts("account", rows.iter().map(|r| r.account.as_str()))
+        .texts("source", rows.iter().map(|r| r.source.as_str()))
         .texts("note", rows.iter().map(|r| r.note.as_str()))
         .texts("amount", rows.iter().map(|r| r.amount.as_str()))
 }
@@ -257,8 +263,9 @@ fn TransactionsView() -> impl IntoElement {
                 loading.set(false);
                 return;
             };
-            // 币种字典、在用分类与行集同批读取：字典读失败不静默降级成无符号
-            //金额（用户无感知的错示比暂缓呈现更差），与行集一并走错误呈现。
+            // 币种字典、在用分类、可见账户、含软删商户与行集同批读取：字典读失败
+            // 不静默降级成无符号金额（用户无感知的错示比暂缓呈现更差），与行集
+            // 一并走错误呈现。
             let outcome = blocking(move || {
                 boot::transaction_page(&db, page_no)
                     .and_then(|result| {
@@ -267,15 +274,35 @@ fn TransactionsView() -> impl IntoElement {
                     .and_then(|(result, currency_rows)| {
                         boot::category_rows(&db).map(|rows| (result, currency_rows, rows))
                     })
+                    .and_then(|(result, currency_rows, category_rows)| {
+                        boot::account_rows(&db).map(|account_rows| {
+                            (result, currency_rows, category_rows, account_rows)
+                        })
+                    })
+                    .and_then(|(result, currency_rows, category_rows, account_rows)| {
+                        boot::merchant_rows(&db).map(|merchant_rows| {
+                            (
+                                result,
+                                currency_rows,
+                                category_rows,
+                                account_rows,
+                                merchant_rows,
+                            )
+                        })
+                    })
             })
             .await;
             match outcome {
-                Ok(Ok((page_data, currency_rows, category_rows))) => {
+                Ok(Ok((page_data, currency_rows, category_rows, account_rows, merchant_rows))) => {
                     let currencies = CurrencyTable::from_currencies(&currency_rows);
                     let categories = assembly::CategoryTable::from_categories(&category_rows);
+                    let accounts = AccountTable::from_accounts(&account_rows);
+                    let merchants = MerchantTable::from_merchants(&merchant_rows);
                     let ctx = RowContext {
                         currencies: &currencies,
                         categories: &categories,
+                        accounts: &accounts,
+                        merchants: &merchants,
                         privacy_enabled: privacy,
                     };
                     rows.set(assembly::assemble_rows(&page_data.items, &ctx));

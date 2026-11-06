@@ -23,8 +23,8 @@ use ledger_transaction::{TransactionInput, TransactionKind};
 
 use crate::app::{StartupView, headline_text, run_startup, set_book_dir};
 use crate::boot::{
-    CODE_BOOK_MISSING, CODE_ENCRYPTED_UNSUPPORTED, boot_ledger, category_rows, currency_rows,
-    transaction_page,
+    CODE_BOOK_MISSING, CODE_ENCRYPTED_UNSUPPORTED, account_rows, boot_ledger, category_rows,
+    currency_rows, merchant_rows, transaction_page,
 };
 
 /// 串行锁：接缝注册与 OnceLock 装配入口是进程级单例，用例间串行防串扰。
@@ -238,6 +238,8 @@ fn page_reads_assemble_into_cell_texts_across_page_boundaries() {
     let ctx = crate::assembly::RowContext {
         currencies: &currencies,
         categories: &categories,
+        accounts: &crate::assembly::AccountTable::default(),
+        merchants: &crate::assembly::MerchantTable::default(),
         privacy_enabled: false,
     };
 
@@ -365,6 +367,8 @@ fn category_rows_assemble_into_path_cells_active_only() {
     let ctx = crate::assembly::RowContext {
         currencies: &currencies,
         categories: &categories,
+        accounts: &crate::assembly::AccountTable::from_accounts(&account_rows(&db).unwrap()),
+        merchants: &crate::assembly::MerchantTable::from_merchants(&merchant_rows(&db).unwrap()),
         privacy_enabled: false,
     };
     let rows = crate::assembly::assemble_rows(&transaction_page(&db, 1).unwrap().items, &ctx);
@@ -377,6 +381,63 @@ fn category_rows_assemble_into_path_cells_active_only() {
     assert_eq!(rows[1].note, "-", "无备注");
     assert_eq!(rows[2].category, "餐饮 > 午餐", "子分类为「父 > 子」路径");
     assert_eq!(rows[2].note, "买咖啡");
+}
+
+/// 账户与商户读接缝（#2020 账户格 / 借贷派生 / 商户格的参考数据面）：账户读
+/// **在用可见**口径（排除软删与隐藏——旧壳 accountMap 同口径），商户读**含软删
+/// 全量**（历史交易显示，issue #191）。删除读接缝（account_rows / merchant_rows）
+/// 或装配消费任一环即红（呈现侧断言归 headless 集成测试）。
+#[test]
+fn account_and_merchant_rows_read_with_reference_visibility_rules() {
+    let _guard = SERIAL.lock().unwrap();
+    let dir = scratch_book_dir("refs");
+    create_empty_book_file(&dir);
+    let db = boot_ledger(&dir).unwrap();
+    let conn = db
+        .conn
+        .lock()
+        .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
+        .unwrap();
+    let visible = ledger_accounts::create_account(
+        &conn,
+        AccountInput {
+            name: "现金".to_owned(),
+            kind: AccountType::Cash,
+            currency_code: "CNY".to_owned(),
+            initial_balance_cents: Some(0),
+            credit_limit_cents: None,
+            statement_day: None,
+            due_day: None,
+        },
+    )
+    .unwrap();
+    // 黑洞账户（隐藏，不在 list_accounts 投影）：域公开入口即建路径。
+    ledger_accounts::ensure_black_hole_account(&conn, "CNY").unwrap();
+    let merchant = ledger_merchants::create_merchant(
+        &conn,
+        ledger_merchants::MerchantInput {
+            name: "京东".to_owned(),
+        },
+    )
+    .unwrap();
+    ledger_merchants::delete_merchant(&conn, &merchant).unwrap();
+    drop(conn);
+
+    let accounts = account_rows(&db).unwrap();
+    assert_eq!(
+        accounts.iter().map(|a| a.id.as_str()).collect::<Vec<_>>(),
+        [visible.as_str()],
+        "账户投影只收在用且未隐藏（黑洞不在表）"
+    );
+    let merchants = merchant_rows(&db).unwrap();
+    assert_eq!(
+        merchants
+            .iter()
+            .map(|m| (m.id.as_str(), m.is_deleted))
+            .collect::<Vec<_>>(),
+        [(merchant.as_str(), true)],
+        "商户投影含软删全量（历史交易显示口径）"
+    );
 }
 
 #[test]

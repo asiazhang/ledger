@@ -34,7 +34,9 @@ use std::time::Duration;
 use ledger_accounts::{AccountInput, AccountType};
 use ledger_categories::{CategoryInput, create_category};
 use ledger_infra::ids::new_uuid;
-use ledger_transaction::{TransactionInput, TransactionKind};
+use ledger_transaction::{
+    TransactionFundingInput, TransactionInput, TransactionKind, TransactionPurchaseInput,
+};
 use nsh_core::platform::ColorScheme;
 use nsh_engine::{EngineConfig, Environment, Idiom, Os, Points, Root, Size};
 use nsh_testing::Headless;
@@ -102,8 +104,8 @@ fn test_date(index: usize) -> String {
     }
 }
 
-/// 造一个现金账户（用例共用）。
-fn seed_cash_account(db: &ledger_infra::db::DbState) -> String {
+/// 造一个账户（用例共用；类型与名称随参）。
+fn seed_account(db: &ledger_infra::db::DbState, name: &str, kind: AccountType) -> String {
     let conn = db
         .conn
         .lock()
@@ -112,8 +114,8 @@ fn seed_cash_account(db: &ledger_infra::db::DbState) -> String {
     ledger_accounts::create_account(
         &conn,
         AccountInput {
-            name: "测试现金".to_owned(),
-            kind: AccountType::Cash,
+            name: name.to_owned(),
+            kind,
             currency_code: "CNY".to_owned(),
             initial_balance_cents: Some(0),
             credit_limit_cents: None,
@@ -122,6 +124,11 @@ fn seed_cash_account(db: &ledger_infra::db::DbState) -> String {
         },
     )
     .unwrap()
+}
+
+/// 造一个现金账户（用例共用）。
+fn seed_cash_account(db: &ledger_infra::db::DbState) -> String {
+    seed_account(db, "测试现金", AccountType::Cash)
 }
 
 /// 经域层公开写入口造一笔交易（用例共用的最小写面）。
@@ -474,11 +481,318 @@ fn app_window_renders_category_path_and_note_cells() {
 
     app.wait_for("text:餐饮 > 午餐").unwrap();
     let texts = app.screen().texts();
-    for expected in ["分类", "备注", "买咖啡", "-"] {
+    for expected in ["分类", "商品 / 备注", "买咖啡", "-"] {
         assert!(
             texts.contains(&expected),
             "表格应呈现「{expected}」：{:?}",
             texts
         );
     }
+}
+
+/// 购买项订单展开（issue #2020 / ADR-0138 决策 13/14）：一个两购买项订单在新壳
+/// 呈现为两行——分类与商品逐行、订单级列（日期/类型/商户/账户/金额）只在首行
+/// 出现一次（DataTable 无纵向合并，首行带值镜像旧壳合并格），出资分解标注与
+/// 商户名在首行；「共 N 条」按交易计（2 行仍共 1 条）。删掉行展开装配任一环
+/// （展开 / 订单级留空 / 逐行分类与商品）即红。
+#[test]
+fn app_window_renders_purchase_order_rows_with_count_by_transaction() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("order");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let conn = db
+            .conn
+            .lock()
+            .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
+            .unwrap();
+        let food = create_category(
+            &conn,
+            CategoryInput {
+                name: "食品".to_owned(),
+                kind: "expense".to_owned(),
+                parent_id: None,
+                icon: None,
+            },
+        )
+        .unwrap();
+        let snack = create_category(
+            &conn,
+            CategoryInput {
+                name: "零食".to_owned(),
+                kind: "expense".to_owned(),
+                parent_id: Some(food),
+                icon: None,
+            },
+        )
+        .unwrap();
+        let daily = create_category(
+            &conn,
+            CategoryInput {
+                name: "日用".to_owned(),
+                kind: "expense".to_owned(),
+                parent_id: None,
+                icon: None,
+            },
+        )
+        .unwrap();
+        let care = create_category(
+            &conn,
+            CategoryInput {
+                name: "洗护".to_owned(),
+                kind: "expense".to_owned(),
+                parent_id: Some(daily),
+                icon: None,
+            },
+        )
+        .unwrap();
+        drop(conn);
+        let piggy = seed_account(&db, "小金库", AccountType::Ewallet);
+        let credit = seed_account(&db, "余额", AccountType::Credit);
+        let conn = db
+            .conn
+            .lock()
+            .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
+            .unwrap();
+        ledger_transaction::create(
+            &conn,
+            TransactionInput {
+                kind: TransactionKind::Expense,
+                amount_cents: 28_160,
+                currency_code: "CNY".to_owned(),
+                // 出资分解与 account_id 互斥（ADR-0138 决策 2）：分解行不带 account_id。
+                account_id: None,
+                to_account_id: None,
+                funding_account_id: None,
+                funding: vec![
+                    TransactionFundingInput {
+                        account_id: piggy,
+                        amount_cents: 2_853,
+                        label: None,
+                    },
+                    TransactionFundingInput {
+                        account_id: credit,
+                        amount_cents: 25_307,
+                        label: None,
+                    },
+                ],
+                purchases: vec![
+                    TransactionPurchaseInput {
+                        name: "猫粮".to_owned(),
+                        quantity: 2,
+                        category_id: Some(snack),
+                        unit_price_cents: None,
+                    },
+                    TransactionPurchaseInput {
+                        name: "洗衣液".to_owned(),
+                        quantity: 1,
+                        category_id: Some(care),
+                        unit_price_cents: None,
+                    },
+                ],
+                category_id: None,
+                merchant_id: None,
+                merchant_name: Some("京东".to_owned()),
+                policy_id: None,
+                refund_of_transaction_id: None,
+                note: None,
+                source_order_no: Some("JD-1001".to_owned()),
+                date: "2026-01-15".to_owned(),
+                instrument_id: None,
+                quantity: None,
+                price_cents: None,
+                fee_cents: None,
+                to_instrument_id: None,
+                to_quantity: None,
+                out_amount_cents: None,
+                in_amount_cents: None,
+                origin: None,
+                fx_rate: None,
+                idempotency_key: None,
+            },
+        )
+        .unwrap();
+    }
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+
+    // 「共 N 条」按交易计：两个购买项行仍共 1 条（决策 14，购买项行不虚增计数）。
+    app.wait_for("text:共 1 条").unwrap();
+    let texts = app.screen().texts();
+    for expected in [
+        "京东",
+        "小金库 等 2 账户",
+        "¥281.6",
+        "猫粮 共 2 件",
+        "洗衣液 共 1 件",
+        "食品 > 零食",
+        "日用 > 洗护",
+    ] {
+        assert!(
+            texts.contains(&expected),
+            "表格应呈现「{expected}」：{:?}",
+            texts
+        );
+    }
+    // 订单级格只在首行出现一次（旧壳合并格「内容只出现一次」的可观察镜像）。
+    let count = |needle: &str| texts.iter().filter(|t| ***t == *needle).count();
+    assert_eq!(count("支出"), 1, "类型列只在首行：{:?}", texts);
+    assert_eq!(count("2026-01-15"), 1, "日期列只在首行：{:?}", texts);
+    assert_eq!(count("¥281.6"), 1, "金额列只在首行：{:?}", texts);
+    assert_eq!(count("京东"), 1, "商户列只在首行：{:?}", texts);
+}
+
+/// 借贷派生标签与双账户标注（issue #2020）：资金账户 → 应收账户的转账呈现
+/// 「借出」专属文案与「转出 → 转入」双账户格（旧壳 kindLabel / accountCellView
+/// 同口径）。删掉借贷派生或账户格装配任一环即红。
+#[test]
+fn app_window_renders_lending_label_and_two_account_cell() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("lending");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let cash = seed_account(&db, "测试现金", AccountType::Cash);
+        let receivable = seed_account(&db, "应收款", AccountType::Receivable);
+        let conn = db
+            .conn
+            .lock()
+            .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
+            .unwrap();
+        ledger_transaction::create(
+            &conn,
+            TransactionInput {
+                kind: TransactionKind::Transfer,
+                amount_cents: 5_000,
+                currency_code: "CNY".to_owned(),
+                account_id: Some(cash),
+                to_account_id: Some(receivable),
+                funding_account_id: None,
+                funding: Vec::new(),
+                purchases: Vec::new(),
+                category_id: None,
+                merchant_id: None,
+                merchant_name: None,
+                policy_id: None,
+                refund_of_transaction_id: None,
+                note: None,
+                source_order_no: None,
+                date: "2026-01-15".to_owned(),
+                instrument_id: None,
+                quantity: None,
+                price_cents: None,
+                fee_cents: None,
+                to_instrument_id: None,
+                to_quantity: None,
+                out_amount_cents: None,
+                in_amount_cents: None,
+                origin: None,
+                fx_rate: None,
+                idempotency_key: None,
+            },
+        )
+        .unwrap();
+    }
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+
+    app.wait_for("text:借出").unwrap();
+    let texts = app.screen().texts();
+    assert!(
+        texts.contains(&"测试现金 → 应收款"),
+        "双账户格「转出 → 转入」：{:?}",
+        texts
+    );
+    assert!(
+        !texts.contains(&"转账"),
+        "借贷派生不落「转账」泛化文案：{:?}",
+        texts
+    );
+}
+
+/// 来源名与状态（issue #2020 / spec #704 来源列）：保单直挂交易呈现险种名；
+/// 软删保单的历史引用另带「已删除」状态标注（在用保单无状态标注）。删掉来源
+/// 反查接线的装配消费或状态标注任一环即红。
+#[test]
+fn app_window_renders_source_name_and_status() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("source");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let account = seed_cash_account(&db);
+        let conn = db
+            .conn
+            .lock()
+            .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
+            .unwrap();
+        let insurer = ledger_policy::create_insurer_by_name(&conn, "众安").unwrap();
+        let make_policy = |number: &str, product: &str| ledger_policy::PolicyInput {
+            insurer_id: insurer.clone(),
+            policy_number: number.to_owned(),
+            product_name: product.to_owned(),
+            start_date: "2026-01-01".to_owned(),
+            end_date: None,
+            coverage_amount_cents: None,
+            coverage_currency_code: None,
+            note: None,
+        };
+        let deleted =
+            ledger_policy::create_policy(&conn, make_policy("P-1", "医疗险"), &mut || {}).unwrap();
+        let alive =
+            ledger_policy::create_policy(&conn, make_policy("P-2", "重疾险"), &mut || {}).unwrap();
+        let make_expense = |date: &str, policy: String| TransactionInput {
+            kind: TransactionKind::Expense,
+            amount_cents: 2_500,
+            currency_code: "CNY".to_owned(),
+            account_id: Some(account.clone()),
+            to_account_id: None,
+            funding_account_id: None,
+            funding: Vec::new(),
+            purchases: Vec::new(),
+            category_id: None,
+            merchant_id: None,
+            merchant_name: None,
+            policy_id: Some(policy),
+            refund_of_transaction_id: None,
+            note: None,
+            source_order_no: None,
+            date: date.to_owned(),
+            instrument_id: None,
+            quantity: None,
+            price_cents: None,
+            fee_cents: None,
+            to_instrument_id: None,
+            to_quantity: None,
+            out_amount_cents: None,
+            in_amount_cents: None,
+            origin: None,
+            fx_rate: None,
+            idempotency_key: None,
+        };
+        ledger_transaction::create(&conn, make_expense("2026-01-15", deleted.clone())).unwrap();
+        ledger_transaction::create(&conn, make_expense("2026-01-16", alive)).unwrap();
+        // 软删保单：历史引用保留，来源列状态标注「已删除」。
+        ledger_policy::delete_policy(&conn, &deleted, &mut || {}).unwrap();
+        drop(conn);
+    }
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+
+    app.wait_for("text:医疗险 已删除").unwrap();
+    let texts = app.screen().texts();
+    assert!(
+        texts.contains(&"重疾险"),
+        "在用保单来源只呈现险种名：{:?}",
+        texts
+    );
+    assert!(
+        !texts.contains(&"医疗险"),
+        "软删保单的状态标注不缺席（无裸名形态）：{:?}",
+        texts
+    );
 }
