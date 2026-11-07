@@ -157,6 +157,54 @@ fn legacy_formula_cache_row_is_recomputed() {
     assert_eq!(overview.accounts_balance_cents, 700_000);
 }
 
+/// 缓存行跨基准币种设置变更不可信（issue #2008，变异测试 2026-10 首轮清理
+/// 遗留的反转变异守护）：指纹只含贡献表时间戳（`FINGERPRINT_SOURCES` 闭集）、
+/// 不含 `app_settings`，基准币种切换不推进指纹——读探针里「缓存行币种 =
+/// 当前基准币种」的一致性校验是旧币种缓存行的唯一守卫，校验反转（`==` →
+/// `!=`）后币种一致时弃缓存重算（恒正确、仅性能损失）、币种不一致时反而把
+/// 旧口径缓存行当新值读出（切币种后净资产显示旧币种终值，用户可见回归）。
+/// 守护场景：CNY 口径缓存回填后切 USD，断言总览按 USD 口径重算（
+/// `native_currency` 与终值双断言，任一旧值读出即红）。
+#[test]
+fn dashboard_cache_row_distrusted_after_base_currency_switch() {
+    let conn = open();
+    seed_account(&conn, "acc-switch-cny", "现金户", "cash", "CNY", 700_000);
+    seed_account(&conn, "acc-switch-usd", "美元户", "bank", "USD", 100_000);
+    // 汇率取 8.0：倒数 1/8 = 0.125 二进制精确，反查折算 700000×0.125 = 87500
+    // 无浮点误差（奇数汇率反查乘倒数会产生边界分误差）。
+    seed_exchange_rate(&conn, "USD", "CNY", 8.0);
+    ledger_accounts::balance::refresh_all_account_balances(&conn).unwrap();
+
+    let before = query_dashboard_overview(&conn).unwrap();
+    assert_eq!(
+        before.native_currency, "CNY",
+        "默认基准币种（种子缺省值）下首次读：实时重算并回填 CNY 口径缓存行"
+    );
+    assert_eq!(
+        before.net_worth_cents, 1_500_000,
+        "CNY 口径：700000 + 100000×8"
+    );
+
+    // 经币种域公开写入口切换基准币种（transaction crate amount 测试同形态）；
+    // 设置写入不推进指纹（贡献表闭集不含 app_settings），缓存行仍在、指纹仍配
+    // ——正因如此，币种一致性校验是旧缓存行的唯一守卫。
+    ledger_currencies::set_base_currency(&conn, "USD").unwrap();
+
+    let after = query_dashboard_overview(&conn).unwrap();
+    assert_eq!(
+        after.native_currency, "USD",
+        "旧币种缓存行必须被币种一致性校验拒绝：native_currency 必须是新基准币种"
+    );
+    assert_eq!(
+        after.net_worth_cents, 187_500,
+        "旧币种缓存行必须被拒绝后按 USD 口径重算：700000÷8 + 100000"
+    );
+    assert_eq!(
+        after.accounts_balance_cents, 187_500,
+        "余额腿同口径重算（无持仓与实物，两腿合计即总量）"
+    );
+}
+
 /// 净资产总量 = 三腿之和的第三腿击杀面（变异测试报告 2026-10 首轮：既有两
 /// 测试的实物腿均为 0，求和 `+` 的符号变异在 ±0 下不可区分）。实物腿非零时
 /// 总量必须计入实物估值，断言总量与三腿各自的具体数值。
