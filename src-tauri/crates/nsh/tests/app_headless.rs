@@ -4833,3 +4833,198 @@ fn purchase_form_edits_item_rows_backfill_add_delete() {
         "未改字段保持"
     );
 }
+
+/// 备份最小入口全旅程（issue #2038）：交易列表工具区「备份」入口 → 文件
+/// 保存对话框（headless 替身 `on_pick_save_path` 回答目标路径——生产与测试
+/// 同一条 `pick_save_path` 生产接缝，Linux 宿主为 GTK 原生保存对话框，原生
+/// 观感归人工对表子集）→ 域 backup 直调产出备份文件 + 成功反馈呈现（NSH 无
+/// toast，状态条呈现是旧壳 message.success 的条位对应物）。
+///
+/// 「删除即红」负向条目：删工具区按钮的备份流程接线（`begin_pick` 的
+/// begin_backup 的 spawn→对话框→备份调用链）或成功状态落位（status.set(Success)）任一环，
+/// 本测 wait_for 超时红；断言对准用户可见结果（成功文案 + 产物在盘），
+/// 不对准调用形状。
+#[test]
+fn backup_entry_full_journey_writes_zip_and_reports_success() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("backup-journey");
+    let backup_dir =
+        std::env::temp_dir().join(format!("ledger-test-nsh-backup-journey-{}", new_uuid()));
+    fs::create_dir_all(&backup_dir).unwrap();
+    let target = backup_dir.join("手动选择.zip");
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+
+    // 入口存在性：交易列表工具区「备份」按钮呈现（id 锚点，research doc §3.5）。
+    app.wait_for("id:tx-backup").unwrap();
+
+    // 保存对话框替身注入目标路径 → 按下入口。替身回答前，先核对发给平台
+    // 的对话框参数（用户可见面：默认名与旧壳 defaultBackupFileName 同格式
+    // ——空库指纹未固化退化无标识旧命名；标题与过滤器与旧壳另存为同词表）。
+    app.on_pick_save_path(Some(target.clone())).unwrap();
+    app.press("id:tx-backup").unwrap();
+    app.settle();
+    let requests = app.screen().file_requests();
+    let [nsh_core::file_dialog::FileRequest::SaveDialog(dialog)] = requests else {
+        panic!("应发出一个保存对话框请求：{requests:?}");
+    };
+    assert_eq!(dialog.title.as_deref(), Some("备份到…"), "标题同旧壳词表");
+    let name = dialog.file_name.as_deref().expect("默认文件名应在场");
+    assert_eq!(dialog.filters.len(), 1, "过滤器闭集：仅 zip 一组");
+    assert_eq!(dialog.filters[0].name, "开源记账备份");
+    assert_eq!(dialog.filters[0].extensions, ["zip"]);
+    assert!(
+        name.starts_with("ledger-backup-") && name.ends_with(".db.zip"),
+        "默认名同旧壳受管命名格式：{name}"
+    );
+
+    // 成功反馈呈现（标签 + 产物路径两个文本节点）。
+    app.wait_for("text:备份成功").unwrap();
+
+    // 产物在盘且非空（zip 结构与元数据语义归备份域单测——壳面只断用户可见
+    // 的「文件确实产生了」）。
+    let meta = fs::metadata(&target).unwrap();
+    assert!(meta.len() > 0, "备份产物非空：{}", target.display());
+}
+
+/// 覆盖确认守卫（issue #2038 AC：覆盖已有备份文件前有确认守卫，warning 级
+/// ADR-0078）：保存对话框替身回答**已存在**的目标路径 → 覆盖确认对话框
+/// 呈现，确认前旧文件原样（零写入），确认后备份执行、旧文件被替换、成功
+/// 反馈呈现。真实桌面 GTK 原生保存对话框自带覆盖确认（平台行为），本守卫
+/// 是应用内第二道（数据安全方向偏保守，headless 可测）。
+///
+/// 「删除即红」负向条目：删「已存在 → 开确认 → 确认后才备份」的守卫接线
+/// （存在分支直备）→ 本测在 wait_for 对话框标题处超时红（且旧文件在确认前
+/// 已被替换）。
+#[test]
+fn backup_overwrite_guard_confirms_before_replacing() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("backup-overwrite");
+    let backup_dir =
+        std::env::temp_dir().join(format!("ledger-test-nsh-backup-overwrite-{}", new_uuid()));
+    fs::create_dir_all(&backup_dir).unwrap();
+    let target = backup_dir.join("手动选择.zip");
+    // 预置旧备份文件（内容可辨：确认前不被替换、确认后被备份产物替换）。
+    const OLD_CONTENT: &[u8] = b"old-backup-content-marker";
+    fs::write(&target, OLD_CONTENT).unwrap();
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+
+    app.wait_for("id:tx-backup").unwrap();
+    app.on_pick_save_path(Some(target.clone())).unwrap();
+    app.press("id:tx-backup").unwrap();
+
+    // 覆盖确认对话框呈现（warning 级：后果与兜底说明，danger 封装两级的
+    // warning 构造面首个消费面）。
+    app.wait_for("text:覆盖备份文件").unwrap();
+    app.wait_for("text:覆盖后原文件内容将被替换，不可找回。")
+        .unwrap();
+
+    // 确认前零写入：旧文件原样（对话框开着时不产生备份）。
+    assert_eq!(fs::read(&target).unwrap(), OLD_CONTENT, "确认前旧文件原样");
+
+    // 确认 → 备份执行 → 旧文件被替换（zip 产物）+ 成功反馈。
+    app.press("id:danger-confirm").unwrap();
+    app.wait_for("text:备份成功").unwrap();
+    let new_content = fs::read(&target).unwrap();
+    assert_ne!(new_content, OLD_CONTENT, "确认后旧文件被备份产物替换");
+    assert!(!new_content.is_empty(), "备份产物非空");
+}
+
+/// 覆盖确认取消路径（issue #2038 取消行为）：确认对话框点「取消」不备份——
+/// 对话框关窗、旧文件原样、无成功反馈。ESC 同为放弃（danger 封装三关闭
+/// 路径语义，封装级抑制/ESC 测试见交易删除与 #2022 AC3）。
+#[test]
+fn backup_overwrite_guard_cancel_keeps_existing_file() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("backup-overwrite-cancel");
+    let backup_dir = std::env::temp_dir().join(format!(
+        "ledger-test-nsh-backup-overwrite-cancel-{}",
+        new_uuid()
+    ));
+    fs::create_dir_all(&backup_dir).unwrap();
+    let target = backup_dir.join("手动选择.zip");
+    const OLD_CONTENT: &[u8] = b"old-backup-content-marker";
+    fs::write(&target, OLD_CONTENT).unwrap();
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+
+    app.wait_for("id:tx-backup").unwrap();
+    app.on_pick_save_path(Some(target.clone())).unwrap();
+    app.press("id:tx-backup").unwrap();
+    app.wait_for("text:覆盖备份文件").unwrap();
+
+    // 取消 → 对话框关窗，无成功反馈、旧文件原样。
+    app.press("id:danger-cancel").unwrap();
+    app.wait_for_gone("text:覆盖备份文件", DEFAULT_WAIT)
+        .unwrap();
+    app.settle();
+    assert!(!app.shows("备份成功"), "取消后无成功反馈");
+    assert_eq!(fs::read(&target).unwrap(), OLD_CONTENT, "取消后旧文件原样");
+}
+
+/// 对话框失败反馈（issue #2038：成功/失败反馈要明确——数据安全路径不静默）：
+/// headless 缺省环境无文件对话框能力（`file_requests` 关，上游引擎对文件
+/// 请求即答错误），按下备份 → 失败呈现（码化包装文案，含「备份失败: 」前缀
+/// 与失败原因；正则锚定前缀段，平台错误原文随上游措辞）。
+///
+/// 「删除即红」负向条目：删对话框错误分支的状态落位（`Err` 臂 status.set）
+/// → 本测 wait_for 超时红（失败被静默吞掉）。
+#[test]
+fn backup_dialog_failure_reports_error() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("backup-dialog-error");
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+
+    app.wait_for("id:tx-backup").unwrap();
+    // 不注入替身：环境无文件对话框能力，保存请求即答错误（生产对应 Linux
+    // 缺文件选择 portal 的场景）。
+    app.press("id:tx-backup").unwrap();
+
+    app.wait_for("text:/备份失败: 文件对话框无法打开/").unwrap();
+    // 失败后按钮恢复可用（单飞状态已退出，可再次发起）。
+    assert!(
+        app.screen().enabled("id:tx-backup").unwrap(),
+        "失败后入口恢复可用"
+    );
+}
+
+/// 对话框取消路径（issue #2038：保存对话框取消 = 零副作用，旧壳 save 返回
+/// 空串即返回同语义）：替身回答 None → 无备份产物、无成功/失败反馈、无
+/// 覆盖确认对话框。
+#[test]
+fn backup_dialog_cancel_writes_nothing() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("backup-cancel");
+    let backup_dir =
+        std::env::temp_dir().join(format!("ledger-test-nsh-backup-cancel-{}", new_uuid()));
+    fs::create_dir_all(&backup_dir).unwrap();
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+
+    app.wait_for("id:tx-backup").unwrap();
+    app.on_pick_save_path(None).unwrap();
+    app.press("id:tx-backup").unwrap();
+
+    // 取消后无任何反馈（成功/失败/确认对话框都不呈现），备份目录空。
+    app.settle();
+    assert!(!app.shows("备份成功"), "取消后无成功反馈");
+    assert!(!app.shows("备份失败"), "取消后无失败反馈");
+    assert!(!app.shows("覆盖备份文件"), "取消后无覆盖确认对话框");
+    assert_eq!(
+        fs::read_dir(&backup_dir).unwrap().count(),
+        0,
+        "取消零写入：备份目录为空"
+    );
+}

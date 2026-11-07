@@ -49,6 +49,10 @@ ledger-scheduled = { path = "../scheduled" }
 # 预算域读写（#2033）：预算视图的进度 / 年度汇总读路径与创建 / 编辑 / 删除
 # 写路径直调面（旧壳 budget 族命令消费的同一域函数，不经 IPC）。
 ledger-budget = { path = "../budget" }
+# 备份域直调面（#2038）：手动备份（受管改道判定 + zip 快照）与账本指纹只读
+# 判定（旧壳 create_backup / get_book_fingerprint 命令消费的同一域函数，不经
+# IPC）。
+ledger-backup = { path = "../backup" }
 # 载荷序列化（导航界面状态的 JSON 形状与旧壳 view_state:* 同形同键，#2032；
 # workspace 已有同版本直接依赖，无收束面新增）。
 serde_json = "1"

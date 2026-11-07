@@ -36,8 +36,8 @@ use crate::assembly::{
 use crate::boot;
 use crate::nav_model::ViewName;
 use crate::{
-    context_menu, danger, modal, multi_select, nav, nav_model, overlay, period, pinyin_select,
-    popconfirm, sidebar, signals, tx_filter, txn_form, views,
+    backup_entry, context_menu, danger, modal, multi_select, nav, nav_model, overlay, period,
+    pinyin_select, popconfirm, sidebar, signals, tx_filter, txn_form, views,
 };
 
 /// 金额隐私模式开关的存储键（设备轻量设置项，与旧壳同键同值形态：旧壳
@@ -416,6 +416,9 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
     // 记收入；弹层开合上报 Overlay Suppression，期间弹层同形）。
     let add_menu_open = signal(false);
     let add_menu_token = overlay::OverlayToken::new();
+    // 备份最小入口（#2038）：入口状态束挂视图实例（工具区按钮 + 反馈状态
+    // 条 + 覆盖确认对话框共用同一信号束，backup_entry 模块注）。
+    let backup = backup_entry::BackupEntryState::new();
     // 时间维度行状态：期间快照住筛选会话态（#2037 起，旧壳 dateFrom/dateTo 同
     // 维度的会话内保留）；数据期间边界原始日期对（None = 在途/失败 → 钳制退化
     // 为不钳制，旧壳 silent 同口径）；快照区间是唯一事实源，游标不落状态（步进
@@ -1060,6 +1063,12 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
         )
         .child(view().flex_1())
         .child(
+            // 备份最小入口（#2038）：工具区次级动作（旧壳设置页备份卡「另存
+            // 为…」路径的最小化——NSH 无设置面，保存对话框是唯一落点选择
+            // 方式；备份流程与反馈归 backup_entry 模块）。
+            backup_entry::backup_button(backup, view_owner),
+        )
+        .child(
             // 「记一笔」入口（#2034）：按压即开类型菜单弹层（抑制上报由上方
             // effect 单通道承担）；菜单项点击落表单弹窗（kind 入口锁定）。
             popover()
@@ -1253,6 +1262,11 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
         .flex_col()
         .app_class("bg-background")
         .child(period_row)
+        .child(
+            // 备份入口弹层与反馈挂载面（#2038）：覆盖确认对话框 + 反馈状态
+            // 条（入口下方条位，仅在有反馈时呈现；同一状态束）。
+            backup_entry::backup_entry_overlays(backup, view_owner),
+        )
         .child(filter_row)
         .child(
             // 搜索框（issue #2023）：标准可编辑文本输入控件（nsh_core `Input`，

@@ -1168,3 +1168,40 @@ fn budget_create_surfaces_domain_validation_as_coded_error() {
         "域校验错误透传，实际：{err}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// 备份最小入口（#2038）：默认文件名生成面（旧壳 `defaultBackupFileName` 同
+// 格式的生成单点，backup_entry 模块）。格式闭集两态：指纹在场携标识段、
+// 缺失退化旧命名（ADR-0016 受管命名；前后端各持一份前缀常量的取舍下，本壳
+// 生成面与旧壳前端逐字同形，受管判定仍归备份域与旧壳前端）。
+// ---------------------------------------------------------------------------
+
+#[test]
+fn default_backup_file_name_carries_fingerprint_segment() {
+    use crate::backup_entry::default_backup_file_name;
+    use chrono::TimeZone;
+
+    let now = chrono::Local
+        .with_ymd_and_hms(2026, 11, 9, 14, 5, 9)
+        .unwrap();
+    assert_eq!(
+        default_backup_file_name(now, Some("fp-abc")),
+        "ledger-backup-20261109-140509-fp-abc.db.zip",
+        "指纹在场：时间戳后带标识段（旧壳 defaultBackupFileName 同格式）"
+    );
+}
+
+#[test]
+fn default_backup_file_name_degrades_without_fingerprint() {
+    use crate::backup_entry::default_backup_file_name;
+    use chrono::TimeZone;
+
+    let now = chrono::Local
+        .with_ymd_and_hms(2026, 11, 9, 14, 5, 9)
+        .unwrap();
+    assert_eq!(
+        default_backup_file_name(now, None),
+        "ledger-backup-20261109-140509.db.zip",
+        "指纹缺失（空库未固化）：退化为无标识旧命名"
+    );
+}
