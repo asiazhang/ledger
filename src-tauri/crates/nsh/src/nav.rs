@@ -214,6 +214,35 @@ pub fn take_intent() -> Option<NavIntent> {
     pending
 }
 
+/// 功能开关写路径（设置面「功能」卡，#2053；旧壳 feature-toggles store 的
+/// `setFeatureClosed` 重生：点选即写、立即持久化）。在册状态信号与侧栏、
+/// 容器页签、守卫快照共源（骨架票只读面 —— 本入口是它的唯一写司机）。
+/// 不可关项 no-op 不写（旧壳 isClosableFeature 过滤同语义，写入闭集由
+/// [`nav_model::normalize_closed_features`] 承担）；归一为可关清单序后落盘，
+/// 载荷形状与旧壳 `view_state:closed_features` 同形同值。
+pub fn set_feature_closed(name: ViewName, closed: bool) {
+    let s = store();
+    if !name.closable() {
+        return;
+    }
+    let mut next = s.closed.get_untracked();
+    let had = next.contains(&name);
+    if closed == had {
+        return;
+    }
+    if closed {
+        next.push(name);
+    } else {
+        next.retain(|kept| *kept != name);
+    }
+    let normalized = nav_model::normalize_closed_features(&next);
+    s.closed.set(normalized.clone());
+    write_value(
+        CLOSED_KEY,
+        &nav_model::closed_features_to_value(&normalized),
+    );
+}
+
 /// 右键排序写路径（点选即写：组内序重排 + 立即持久化）。边界 no-op 不写存储
 /// （保住「恢复默认 = 删 key」语义，旧壳 applySidebarSort 同纪律）。
 pub fn apply_sort(name: ViewName, action: SortAction) {

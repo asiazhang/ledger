@@ -9,11 +9,11 @@ use std::path::PathBuf;
 
 #[cfg(target_os = "linux")]
 fn main() -> impl std::process::Termination {
-    // 域栈日志面（tracing 基座，ADR-0006）：stderr + RUST_LOG 过滤；显式
-    // RUST_LOG 优先，缺省 info。重复初始化（如嵌入测试宿主）不视为失败。
-    let _ = tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-        .try_init();
+    // 域栈日志面（tracing 基座，ADR-0006；crate::logging 单点）：stderr +
+    // RUST_LOG 过滤（显式优先，缺省 info），可重载滤镜登记后设置卡调档立即
+    // 生效、库就绪后按持久化档位接管。重复初始化（如嵌入测试宿主）不视为
+    // 失败。
+    nsh_app::logging::init();
     // 启动参数：账本目录（身份即目录，内含固定名 ledger.db，ADR-0089）。缺参
     // 不退进程——窗口即呈现面（用法提示见 app::secondary_text）。UI 组件集走
     // 平台缺省（nsh_base registry，含主题双态令牌）。

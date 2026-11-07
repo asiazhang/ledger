@@ -18,6 +18,12 @@ use serde::de::DeserializeOwned;
 /// 供「表缺失自愈」兜底复用。
 const APP_SETTINGS_SQL: &str = include_str!("../../../migrations/V008__app_settings.sql");
 
+/// 日志档位闭集（指令字符串，由低到高五档；与旧壳
+/// `shell_support::logger::LogLevel` 的 directive 值同序同值——本常量是
+/// `logging.level` 值域的单点收口：设置接缝消费方（旧壳日志命令、原生壳设置
+/// 卡）按同一值域校验，闭集移位只改本清单）。
+pub const LOG_LEVEL_DIRECTIVES: [&str; 5] = ["error", "warn", "info", "debug", "trace"];
+
 /// 配置键枚举：唯一合法的 `app_settings.key` 来源，杜绝字符串字面量散落。
 /// 命名规范 `<feature>.<name>`。新增配置项的成本是加一个变体 + 默认值约定。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

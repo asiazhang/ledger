@@ -527,6 +527,33 @@ pub fn parse_containment_lists(
     result
 }
 
+/// 关闭集合序列化（旧壳 feature-toggles store `closedFeatures` 数组同形状：
+/// 可关九项的持久化名字数组；关闭集合写路径用，载荷形状与旧壳
+/// `view_state:closed_features` 同形同值）。不可关项不入载荷。
+pub fn closed_features_to_value(closed: &[ViewName]) -> serde_json::Value {
+    serde_json::Value::Array(
+        normalize_closed_features(closed)
+            .into_iter()
+            .map(|name| serde_json::Value::String(name.as_str().to_owned()))
+            .collect(),
+    )
+}
+
+/// 关闭集合归一（写路径的纯决策半边）：剔不可关项、去重，输出归一为
+/// [`CLOSABLE_FEATURES`] 可关清单序（与 read 路径的
+/// [`parse_closed_features`] 同一归一序，写出的集合稳定可复现）。
+pub fn normalize_closed_features(closed: &[ViewName]) -> Vec<ViewName> {
+    let present: Vec<ViewName> = closed
+        .iter()
+        .copied()
+        .filter(|view| view.closable())
+        .collect();
+    CLOSABLE_FEATURES
+        .into_iter()
+        .filter(|view| present.contains(view))
+        .collect()
+}
+
 /// 关闭集合解析（旧壳 `parseClosedFeatures` 同语义纯函数）：非数组整体回退
 /// 空集合（= 全开）；只留可关九项、去重；输出归一为可关清单序。
 pub fn parse_closed_features(raw: &serde_json::Value) -> Vec<ViewName> {
@@ -1304,6 +1331,32 @@ mod tests {
         );
     }
 
+    /// 关闭集合序列化与解析往返恒等（设置卡写路径的载荷形状）：写出的数组只
+    /// 含可关九项、顺序归一为可关清单序；解析回读一致（settings 卡写 → 重启
+    /// 读同形）。
+    #[test]
+    fn closed_features_round_trip_through_json_payload() {
+        // 乱序输入 → 归一为可关清单序。
+        assert_eq!(
+            normalize_closed_features(&[ViewName::Insurers, ViewName::Budget, ViewName::Reports,]),
+            vec![ViewName::Budget, ViewName::Reports, ViewName::Insurers,]
+        );
+        // 序列化 → 解析往返恒等。
+        let closed = [ViewName::Budget, ViewName::Items, ViewName::PhysicalAssets];
+        let value = closed_features_to_value(&closed);
+        assert_eq!(
+            value,
+            serde_json::json!(["budget", "items", "physicalAssets"])
+        );
+        assert_eq!(
+            parse_closed_features(&value),
+            normalize_closed_features(&closed)
+        );
+        // 不可关项不入载荷（写路径防御：闭集外输入不落盘）。
+        let value = closed_features_to_value(&[ViewName::Settings, ViewName::Accounts]);
+        assert_eq!(value, serde_json::json!([]));
+    }
+
     /// 载荷序列化与解析往返恒等（写 → 读一致；JSON 键 = 旧壳组 id 同词）。
     #[test]
     fn group_lists_round_trip_through_json_payload() {
@@ -1327,7 +1380,6 @@ mod tests {
             contained
         );
     }
-
     // -----------------------------------------------------------------------
     // 守卫落位裁决（旧壳 featureRouteGuard + groupMoreTabGuard +
     // resolveRestoredViewName 的进程内重生）。

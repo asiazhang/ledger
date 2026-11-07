@@ -9006,3 +9006,487 @@ fn scheduled_view_create_installment_journey() {
         app.screen().texts()
     );
 }
+
+// ---------------------------------------------------------------------------
+// 设置①通用卡（#2053）：页签容器（旧壳分域序闭集 + visited-once keep-mounted
+// 状态保留 + 「定时」页签随开关隐藏）、外观三态（存储往返）、日志档位（boot
+// 直调基建设置接缝 + 初读回显）、数据存储位置（信息聚合 / 更改提交通道 /
+// 二选一接管守卫 / 下次启动搬迁兑现）、功能开关管理面（nav closed 单点共源）。
+// 删任一接线即红的负向条目逐项写在各测试注释（ADR-0087 断言强度：断言对准
+// 用户可观察结果）。
+// ---------------------------------------------------------------------------
+
+/// 桌面形态配置（同一既有 helper 的共享存储版）：同一 `MemoryStorage` 实例在
+/// 两次 Headless 启动间承接「设备重启」的等价物（键值同形、进程隔离，设置卡
+/// 外观/开关的「写 → 下次启动读」往返由此承担）。
+fn storage_shard(entries: &[(&str, &str)]) -> std::sync::Arc<nsh_testing::MemoryStorage> {
+    nsh_testing::MemoryStorage::new(
+        entries
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect::<Vec<_>>(),
+    )
+}
+
+fn desktop_config_with_storage_shard(
+    storage: std::sync::Arc<nsh_testing::MemoryStorage>,
+) -> EngineConfig {
+    EngineConfig {
+        storage: Some(storage),
+        ..desktop_config()
+    }
+}
+
+/// 落位设置视图（设置用例共用）：侧栏「设置」固定项 → 点入 → 等设置首签卡
+/// 题到屏（外观卡即时装载，日志初读为异步）。
+fn open_settings(app: &mut Headless) {
+    app.wait_for("id:nav-settings").unwrap();
+    app.press("id:nav-settings").unwrap();
+    app.wait_for("text:设置").unwrap();
+    app.wait_for("text:主题模式").unwrap();
+}
+
+/// 页签骨架全量呈现（旧壳 SettingsView 分域序闭集平价）：七个分域页签字面各
+/// 在屏（id 锚点 = 页签内部文本：删除页签闭集任一即红）。默认首签 = 通用；
+/// 未到访页签不预载（show:lazy 的 lazy 半边：宿主内容缺席）。
+#[test]
+fn settings_view_lands_with_old_shell_tab_domains_and_general_cards() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("settings-lands");
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_settings(&mut app);
+
+    for tab in ["通用", "分类", "币种", "数据", "定时", "功能", "关于"] {
+        assert!(
+            app.shows(tab),
+            "分域页签「{tab}」应在屏：{:?}",
+            app.screen().texts()
+        );
+    }
+    // 默认首签（通用）内容在屏：外观卡 + 日志卡初读（默认 info 档位标签）。
+    for piece in [
+        "主题模式",
+        "显示主题",
+        "跟随系统",
+        "日志",
+        "日志等级",
+        "信息 (info)",
+    ] {
+        assert!(
+            app.shows(piece),
+            "通用卡「{piece}」应在屏：{:?}",
+            app.screen().texts()
+        );
+    }
+    // 未到访页签不预载：数据卡宿主内容缺席（删除 keep-mounted 的 visited 门
+    // 闸（改为全部预挂）即红）。
+    assert_eq!(
+        app.screen().count("id:loc-active-path").unwrap(),
+        0,
+        "未到访的「数据」页签不预载宿主内容"
+    );
+}
+
+/// keep-mounted（旧壳 show:lazy + 显式 key 的呈现本体）：先到访「数据」→ 切
+/// 「功能」→ 回「数据」：已访页签宿主常驻不卸载（display 隐藏）——宿主节点计
+/// 数守卫（删除 display 切换接线即红：切走即卸载 → 计数跌零、切回重挂）。
+#[test]
+fn settings_view_keeps_visited_panes_mounted_across_tab_switches() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("settings-keep");
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_settings(&mut app);
+
+    // 到访数据：位置卡装载（信息聚合 blocking，wait_for）+ 留下会话态印记：
+    // 点「复制路径」→ 状态条位反馈。
+    app.press("id:set-tab-data").unwrap();
+    app.wait_for("text:当前生效位置：").unwrap();
+    app.press("id:loc-copy-active").unwrap();
+    app.wait_for("text:已复制完整路径").unwrap();
+
+    // 切功能再切回：会话态印原样在屏（keep-mounted：切走时宿主 display 隐
+    // 藏不重挂、页内信号存活，切回即现——删除 display 切换接线（改回卸载重
+    // 建）即红：印记随卸载清零，切回后的 wait_for 超时报红）。
+    app.press("id:set-tab-features").unwrap();
+    app.wait_for("text:功能开关").unwrap();
+    // 非激活页签退出文档流（display 切换的呈现面）：数据卡标题不在屏——
+    //  display 接线拆除（两页签同时可见）即红。
+    assert!(
+        !app.shows("当前生效位置："),
+        "非激活页签不显示（display 切换接线）：{:?}",
+        app.screen().texts()
+    );
+    app.press("id:set-tab-data").unwrap();
+    app.wait_for("text:已复制完整路径").unwrap();
+
+    // 未到访的占位页签内容始终缺席（lazy 半边贯穿整页签闭集）。
+    assert!(
+        !app.screen().texts().contains(&"分类 · 迁移中"),
+        "未到访的「分类」占位页签不预载"
+    );
+}
+
+/// 外观（设备级轻量设置项平价 + NSH 框架增量开口「跟随系统」）：预置「浅色」
+/// → 卡初值随存储读路径（读半边，拆除即红）；选择「跟随系统」→ 存储落盘（键
+/// appearance、值 = 持久化名 JSON 字符串）——set_color_scheme 立即生效面归
+/// 人工子集（headless 无视觉环境）；「重启」等价（同存储实例再启）→ 触发件
+/// 随存储读回「跟随系统」。
+#[test]
+fn settings_view_appearance_reads_and_writes_device_storage() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("settings-appearance");
+    let storage = storage_shard(&[("appearance", "\"light\"")]);
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config_with_storage_shard(storage.clone())).unwrap();
+    open_settings(&mut app);
+
+    // 预置「浅色」被存储读路径拾起。
+    app.wait_for("text:主题模式").unwrap();
+    assert!(
+        app.shows("浅色"),
+        "外观初值跟随已存选择（浅色）：{:?}",
+        app.screen().texts()
+    );
+
+    // 选择「跟随系统」：开弹层 → 选项 → 选中即关 + 存储落盘。
+    app.press("id:set-appearance-trigger").unwrap();
+    app.wait_for("id:set-appearance-option").unwrap();
+    app.press("id:set-appearance-option >> text:跟随系统 >> nth=0")
+        .unwrap();
+    let entries = storage.entries();
+    assert_eq!(
+        entries.get("appearance").map(String::as_str),
+        Some("\"system\""),
+        "外观写入存储（同键同值形态）：{entries:?}"
+    );
+
+    // 「重启」等价（同存储再启）→ 初值读回「跟随系统」。
+    nsh_app::app::reset_book_assembly();
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config_with_storage_shard(storage)).unwrap();
+    open_settings(&mut app);
+    app.wait_for("text:主题模式").unwrap();
+    assert!(
+        app.shows("跟随系统"),
+        "外观跨启动读回：{:?}",
+        app.screen().texts()
+    );
+}
+
+/// 日志档位（boot 直调基建设置接缝：旧壳 get/set_log_level 命令同执行协议）：
+/// 初读默认 info；选「调试 (debug)」→ 触发件随写链更新（立即生效面归 stderr
+/// 人工子集）；离开设置再回 = 初读持久化档位（跨启动保留平价）。删除写链
+/// boot::set_log_level 直调 → 库内档位不落 → 回读仍旧 info → 红。
+#[test]
+fn settings_view_log_level_select_persists_across_remounts() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("settings-logs");
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_settings(&mut app);
+
+    // 切调试（选点即写：boot 单点校验落库 + 触发件回显）。
+    app.wait_for("text:信息 (info)").unwrap();
+    app.press("id:log-level-trigger").unwrap();
+    app.wait_for("id:log-level-option").unwrap();
+    app.press("id:log-level-option >> text:调试 (debug) >> nth=0")
+        .unwrap();
+    app.wait_for("text:调试 (debug)").unwrap();
+
+    // 落库面直接钉（boot 读写接缝与视图写链同一执行通道；闭集拒绝归 lib 单
+    // 测）：读侧直开库只读连接查 app_settings（rusqlite 测试依赖）。
+    {
+        let conn = rusqlite::Connection::open_with_flags(
+            dir.join("ledger.db"),
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+        )
+        .unwrap();
+        let stored: String = conn
+            .query_row(
+                "SELECT value FROM app_settings WHERE key = 'logging.level'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            stored, "\"debug\"",
+            "写链已落库（app_settings.logging.level）"
+        );
+    }
+
+    // 离开设置再回：初读持久化档位 = 调试。
+    app.press("id:nav-dashboard").unwrap();
+    app.press("id:nav-settings").unwrap();
+    app.wait_for("text:日志等级").unwrap();
+    app.wait_for("text:调试 (debug)").unwrap();
+}
+
+/// 位置卡信息聚合（boot::data_location_info 直调基建 gather_info_from_boot）：
+/// 生效位置 = 启动目录 + 原文回显；意图缺席 → 「恢复默认」禁用（契约不变量
+/// 直接投影，删除禁用接线即红）。更改入口 / 复制路径在屏。
+#[test]
+fn settings_view_data_location_lands_with_active_path_and_restore_gating() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("settings-loc-lands");
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_settings(&mut app);
+    app.press("id:set-tab-data").unwrap();
+    app.wait_for("text:当前生效位置：").unwrap();
+
+    let active = dir.to_string_lossy().to_string();
+    assert!(
+        app.shows(&active),
+        "生效位置路径原文在屏（活动账本目录原文，旧壳 active_dir 同口径）：{:?}",
+        app.screen().texts()
+    );
+    for piece in ["数据存储位置", "更改…", "恢复默认", "复制路径"] {
+        assert!(
+            app.shows(piece),
+            "位置卡「{piece}」应在屏：{:?}",
+            app.screen().texts()
+        );
+    }
+    // 意图缺席 → 「恢复默认」禁用。
+    let restore = app.screen().press_target("id:loc-restore").unwrap();
+    assert!(
+        restore.is_none(),
+        "无意图目录 = 恢复默认不可按（disabled 契约不变量投影）：{restore:?}"
+    );
+}
+
+/// 提交通道全旅程（旧壳 submitWithChoice 分支同形 + 下次启动兑现）：更改位
+/// 置 → 文件对话框（headless 替身，标题同旧壳 pickTitle 词表）→ intent 落盘
+///（引导文件 data_location.json 落启动目录指向目标）→ 待重启横幅（意图目录
+/// 原文）→ 「下次启动」（重置 + 同目录参数再启动）→ 引导消费注册表搬迁：生
+/// 效位置 = 目标目录 + 旧库原样保留。删除 plan_boot 接线（引导不消费注册
+/// 表，搬迁不发生）→ 第二段生效位置仍旧 → 红。
+#[test]
+fn settings_view_data_location_change_commits_and_relocates_on_next_start() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("settings-loc-change");
+    let storage = storage_shard(&[]);
+    let target = std::env::temp_dir().join(format!(
+        "ledger-test-nsh-loc-target-{}",
+        ledger_infra::ids::new_uuid()
+    ));
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config_with_storage_shard(storage.clone())).unwrap();
+    open_settings(&mut app);
+    app.press("id:set-tab-data").unwrap();
+    app.wait_for("text:当前生效位置：").unwrap();
+
+    // 更改位置：目录选择对话框（替身回答）→ 意图落盘。
+    use nsh_core::file_dialog::FileRequest;
+    app.on_pick_paths(vec![target.clone()]).unwrap();
+    app.press("id:loc-change").unwrap();
+    app.settle();
+    let requests = app.screen().file_requests();
+    let [FileRequest::OpenDialog(dialog)] = requests else {
+        panic!("应发出一个目录选择请求：{requests:?}");
+    };
+    assert_eq!(dialog.title.as_deref(), Some("选择数据存储位置"));
+
+    // 提交成功反馈 + 待重启横幅（意图目录原文）。
+    app.wait_for("text:更改已保存，将在下次启动时搬迁生效")
+        .unwrap();
+    app.wait_for("text:已更改，待重启生效").unwrap();
+    let texts = app.screen().texts();
+    assert!(
+        texts
+            .iter()
+            .any(|t| t.contains(target.to_string_lossy().as_ref())),
+        "待重启横幅呈现意图目录原文：{texts:?}"
+    );
+
+    // 引导文件（注册表）已写出并指向目标。
+    let pointer = dir.join("data_location.json");
+    assert!(pointer.is_file(), "引导文件应已落盘：{}", pointer.display());
+    let payload = fs::read_to_string(&pointer).unwrap();
+    assert!(
+        payload.contains(target.to_string_lossy().as_ref()),
+        "注册表应指向目标目录：{payload}"
+    );
+
+    // 「下次启动」等价：重置装配 + 同目录参数再启动 → 引导消费注册表搬迁。
+    nsh_app::app::reset_book_assembly();
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config_with_storage_shard(storage)).unwrap();
+    // 上次停留视图跟随恢复（导航界面状态同一存储）→ 设置页（数据页签为会话
+    // 态回首签——旧壳页签不持久化同口径）。
+    app.wait_for("text:主题模式").unwrap();
+    app.press("id:set-tab-data").unwrap();
+    app.wait_for("text:当前生效位置：").unwrap();
+    // 搬迁已兑现：生效位置 = 意图目录；待重启横幅消退（意图目录 = 生效目录，
+    // pending_restart 回常）。
+    app.wait_for_gone("text:已更改，待重启生效", DEFAULT_WAIT)
+        .unwrap();
+    assert!(
+        app.shows(target.to_string_lossy().as_ref()),
+        "下次启动搬迁生效：生效位置 = 意图目录：{:?}",
+        app.screen().texts()
+    );
+    assert!(
+        target.join("ledger.db").is_file(),
+        "目标目录已搬迁（库在意图位置）"
+    );
+    assert!(
+        dir.join("ledger.db").is_file(),
+        "原位置库文件永久保留（安全网语义）"
+    );
+}
+/// 功能开关管理面（可关九项 + 写路径 nav::set_feature_closed 单点共源）：
+/// 关「预算」→ 侧栏「预算」入口即隐（关闭只隐藏入口，重开回原位）+ 存储落
+/// 盘（closed_features 数组，可关清单序归一）；设置页「定时」页签随「定时」
+/// 关闭整行隐藏（旧壳 v-if 设置面联动）。不可关六项不出现行（旧壳同口径）。
+/// 删开关行的 nav 写链（feature_row on_change）→ 关闭集合不更新 → 侧栏入口
+/// 常在 + 存储缺写 → 红。
+#[test]
+fn settings_view_feature_toggles_feed_the_shared_closed_source() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("settings-toggles");
+    let storage = storage_shard(&[]);
+    {
+        nsh_app::app::set_book_dir(dir.clone());
+        let mut app = Headless::start(desktop_config_with_storage_shard(storage.clone())).unwrap();
+        open_settings(&mut app);
+
+        // 不可关六项不出现行（旧壳 FeatureToggleSettings 同口径：闭集之外的
+        // id 没有行面也不空行）。
+        for id in [
+            "dashboard",
+            "transactions",
+            "accounts",
+            "search",
+            "ai",
+            "settings",
+        ] {
+            assert_eq!(
+                app.screen()
+                    .count(&format!("id:feature-toggle-{id}"))
+                    .unwrap(),
+                0,
+                "不可关项「{id}」无开关行"
+            );
+        }
+        // 关「预算」：行按压极（行 testid → 最近的按压祖先 = 开关内部件）。
+        app.press("id:set-tab-features").unwrap();
+        app.wait_for("text:功能开关").unwrap();
+        app.press("id:feature-toggle-budget").unwrap();
+        app.wait_for_gone("id:nav-budget", DEFAULT_WAIT).unwrap();
+
+        // 存储落盘（数组形状，可关清单序归一）。
+        let entries = storage.entries();
+        assert_eq!(
+            entries
+                .get("view_state:closed_features")
+                .map(String::as_str),
+            Some("[\"budget\"]"),
+            "关闭集合写入存储：{entries:?}"
+        );
+
+        // 重开：入口回原位（关闭只隐藏入口不改写清单）。行按压再考一次
+        //（开关反演态：再按 = 打开）。
+        app.press("id:feature-toggle-budget").unwrap();
+        app.wait_for("id:nav-budget").unwrap();
+        assert_eq!(
+            storage
+                .entries()
+                .get("view_state:closed_features")
+                .map(String::as_str),
+            Some("[]"),
+            "重开清理（保留集空数组形状跨重启同全开）"
+        );
+    }
+
+    // 另一场景：独立存储 + 独立库（重置装配）里关「定时」→ 设置页「定时」
+    // 页签整行隐藏（旧壳 v-if 设置面联动，#1243 / ADR-0116 决策 4），其余分域
+    // 页签原位（关闭只隐藏入口，共一源）。
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("settings-toggles-hidden");
+    nsh_app::app::set_book_dir(dir.clone());
+    let storage = storage_shard(&[("view_state:closed_features", "[\"scheduled\"]")]);
+    let mut app = Headless::start(desktop_config_with_storage_shard(storage)).unwrap();
+    open_settings(&mut app);
+    app.wait_for("text:主题模式").unwrap();
+    assert!(
+        app.screen().count("id:set-tab-scheduled").unwrap() == 0,
+        "定时关闭 = 设置页「定时」页签整行隐藏：{:?}",
+        app.screen().texts()
+    );
+    // 其余分域页签原位不动（关闭只隐藏入口，不改写页签序）。
+    for tab in ["通用", "分类", "币种", "数据", "功能", "关于"] {
+        assert!(app.shows(tab), "页签「{tab}」原位保留");
+    }
+}
+
+/// 二选一接管守卫（旧壳 adoptConfirm 二选一 + danger warning 分级的首个消费
+/// 面）：目标目录已有同名库 → 提交挂起 + warning 级定校验弹窗（后果与兜底
+/// 文案）→ 「取消换位」零意图（指针文件不写）。删二选一分支（校验结果直落
+/// 意图）→ 弹窗不现 + 覆盖直接落盘 → 红。
+#[test]
+fn settings_view_data_location_target_conflict_needs_choice_guard() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("settings-loc-adopt");
+    let target = make_book("settings-loc-adopt-existing");
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_settings(&mut app);
+    app.press("id:set-tab-data").unwrap();
+    app.wait_for("text:当前生效位置：").unwrap();
+
+    // 更改位置 → 目标已有同名库 → 提交应挂起 + 接管弹窗。
+    app.on_pick_paths(vec![target.clone()]).unwrap();
+    app.press("id:loc-change").unwrap();
+    app.wait_for("text:接管已有账本库？").unwrap();
+    for piece in [
+        "目标目录已存在同名账本库（ledger.db）。",
+        "接管则把该库作为活动数据；取消换位则放弃本次更改（不做任何改动）。",
+        "接管该库",
+    ] {
+        assert!(app.shows(piece), "二选一弹窗文案「{piece}」应在屏");
+    }
+
+    // 确认前零写入：引导文件不该落（挂起态不写意图）。
+    assert!(
+        !dir.join("data_location.json").exists(),
+        "二选一悬置期间不写引导文件"
+    );
+
+    // 「取消换位」：放弃本次更改 → 弹窗关 + 状态回提示 + 引导文件仍缺席。
+    app.press("id:danger-cancel").unwrap();
+    app.wait_for("text:已取消更改，数据存储位置未变化").unwrap();
+    assert!(
+        !dir.join("data_location.json").exists(),
+        "取消后引导文件仍不写（零副作用）"
+    );
+
+    // 「接管该库」路径：重提交 → 挂起弹窗 → 确认 → 意图落盘（ adopt_existing
+    // = true 同一通道二次提交）+ 成功反馈 + 待重启横幅。
+    app.on_pick_paths(vec![target.clone()]).unwrap();
+    app.press("id:loc-change").unwrap();
+    app.wait_for("text:接管已有账本库？").unwrap();
+    app.press("id:danger-confirm").unwrap();
+    app.wait_for("text:更改已保存，将在下次启动时搬迁生效")
+        .unwrap();
+    let pointer = dir.join("data_location.json");
+    assert!(pointer.is_file(), "接管后意图已落盘");
+    let payload = fs::read_to_string(&pointer).unwrap();
+    assert!(
+        payload.contains(target.to_string_lossy().as_ref()),
+        "注册表应指向目标目录：{payload}"
+    );
+}

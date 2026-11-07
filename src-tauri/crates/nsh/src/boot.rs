@@ -1,7 +1,8 @@
 //! 域栈引导（issue #2017 / ADR-0145）：打开未加密账本库，读交易列表页、交易
 //! 搜索与参考数据（币种字典 / 在用分类 / 可见账户 / 含软删商户——交易表格
 //! 首屏、issue #2023 搜索接入与派生行形态的装配消费面），#2033 起兼预算
-//! 读写、#2034 起兼交易表单族参考数据与基础收支写路径。
+//! 读写、#2034 起兼交易表单族参考数据与基础收支写路径、#2053 起兼设置接缝
+//! （日志档位 / DataLocation 信息聚合与更改意图 / 引导记录）。
 //!
 //! 引导内核复用基础设施引导层（[`ledger_infra::db::boot`]）：库文件处置判定
 //! （[`classify_for_boot`] 的明文/外来形态/密文/损坏四态）与成对建连
@@ -34,7 +35,7 @@ use ledger_infra::error::{AppError, Result};
 use ledger_transaction::{TransactionListResult, TransactionSearchResult};
 
 use crate::assembly::PAGE_SIZE;
-use crate::wiring;
+use crate::{logging, wiring};
 
 /// 密文库不支持（立桩范围外）的稳定错误码。
 pub const CODE_ENCRYPTED_UNSUPPORTED: &str = "nsh-shell.encrypted-unsupported";
@@ -49,6 +50,11 @@ pub const CODE_SESSION_MISSING: &str = "nsh-shell.session-missing";
 /// 平台能力缺失；平台错误原文随文案透传，呈现面归视图层）。
 pub const CODE_FILE_DIALOG_FAILED: &str = "nsh-shell.file-dialog-failed";
 
+/// 日志档位非法（闭集外值）的稳定错误码（旧壳 `set_log_level` 命令同码，
+/// [`shell_support::logger::set_persisted_level`] 的错误模板；本壳同码同文案，
+/// 用户可见语义一致）。
+pub const CODE_LOG_LEVEL_INVALID: &str = "settings.log-level-invalid";
+
 /// 外来形态归一化失败的稳定错误码（与旧壳 `boot.db-normalize-failed` 同码，
 /// 基础设施 [`ledger_infra::db::boot::BOOT_DB_NORMALIZE_FAILED`]）。
 const BOOT_DB_NORMALIZE_FAILED: &str = ledger_infra::db::boot::BOOT_DB_NORMALIZE_FAILED;
@@ -62,12 +68,41 @@ fn conn_lock<T>(mutex: &Mutex<T>) -> ledger_infra::error::Result<MutexGuard<'_, 
 
 /// 引导域栈打开未加密账本库（spec #2015：启动参数给账本目录，无解锁向导）。
 ///
-/// 序列与旧壳明文启动路径同形：接缝接线（先于任何建库，幂等）→ 处置判定 →
-/// （外来形态明文库先归一化，原库失败保持原样）→ 成对建连（迁移 + 只读连接 +
-/// 同步元数据库挂载，全部收在 [`open_db_in`] 单点）。
+/// 序列与旧壳明文启动路径同形：接缝接线（先于任何建库，幂等）→
+/// [`ledger_infra::db::boot::plan_boot`] 引导记账世界（#2053 起：消费账本
+/// 注册表，搬迁意图在下次启动生效；未配置及出厂世界与实参目录一一对应）→
+/// 有效性预判（库文件缺席 fail loud）→ 处置判定 →（外来形态明文库先归
+/// 一化，原库失败保持原样）→ 成对建连（迁移 + 只读连接 + 同步元数据库挂
+/// 载，全部收在 [`open_db_in`] 单点）→ 引导记录入会话槽（设置卡数据位置
+/// 面的读源）。
+static BOOT_RECORD: Mutex<Option<ledger_infra::db::data_location::Boot>> = Mutex::new(None);
+
+/// 引导记录槽位守卫（毒化时取回内值：槽位本身不含不变量）。
+fn boot_record_slot() -> MutexGuard<'static, Option<ledger_infra::db::data_location::Boot>> {
+    BOOT_RECORD.lock().unwrap_or_else(|p| p.into_inner())
+}
+
+/// 引导记录会话快照（设置卡聚合用）；未登记（极端时序）回 None。
+#[doc(hidden)]
+pub fn boot_record() -> Option<ledger_infra::db::data_location::Boot> {
+    boot_record_slot().clone()
+}
+
+/// 复位引导记录槽（headless 测试接缝，[`crate::app::reset_book_assembly`] 消费）。
+#[doc(hidden)]
+pub fn reset_boot_record_for_tests() {
+    *boot_record_slot() = None;
+}
+
+/// 启动读路径共用的启动会话锚：本壳的「默认数据目录」 = 启动参数账本
+/// 目录（立桩契约的延续：身份即目录，目录即账本世界入口）；#2053 起
+/// [`ledger_infra::db::boot::plan_boot`] 在其上消费账本注册表——
+/// DataLocation 更改意图（搬迁 / 接管）在下次启动（同目录参数）生效，与
+/// 设置卡写出的意图同接缝（旧壳 plan_boot 消费面同形）。
 pub fn boot_ledger(book_dir: &Path) -> Result<DbState> {
     wiring::install_domain_seams();
-    let db_path = book_dir.join(DB_FILE_NAME);
+    let plan = ledger_infra::db::boot::plan_boot(book_dir);
+    let db_path = plan.boot.db_dir.join(DB_FILE_NAME);
     if !db_path.is_file() {
         return Err(AppError::codedp(
             CODE_BOOK_MISSING,
@@ -78,11 +113,19 @@ pub fn boot_ledger(book_dir: &Path) -> Result<DbState> {
             &[&db_path.to_string_lossy()],
         ));
     }
-    match ledger_infra::db::boot::classify_for_boot(&db_path)? {
-        BootDisposition::OpenPlaintext => open_db_in(book_dir),
+    let disposition = plan.disposition.map_err(|e| {
+        tracing::error!(error = %e, "入库前处置探测失败");
+        e
+    })?;
+    match disposition {
+        BootDisposition::OpenPlaintext => {
+            *boot_record_slot() = Some(plan.boot.clone());
+            open_db_in(&plan.boot.db_dir)
+        }
         BootDisposition::NormalizePlaintext => {
             normalize_foreign_plaintext(&db_path)?;
-            open_db_in(book_dir)
+            *boot_record_slot() = Some(plan.boot.clone());
+            open_db_in(&plan.boot.db_dir)
         }
         BootDisposition::AwaitUnlock => Err(AppError::coded(
             CODE_ENCRYPTED_UNSUPPORTED,
@@ -894,4 +937,94 @@ pub fn update_insurer(
 pub fn delete_insurer(db: &DbState, id: &str) -> Result<()> {
     let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
     ledger_policy::delete_insurer(&conn, id)
+}
+// ---------------------------------------------------------------------------
+// 设置接缝（#2053）：日志档位读写（基建 settings 共享接缝直调，运行期滤镜
+// 经 crate::logging 接管）与 DataLocation 信息聚合 / 更改意图（基础设施
+// data_location 直调——旧壳 get_log_level / set_log_level / get_data_location_
+// info / submit_data_location_change / restore_default_data_location 命令消费
+// 的同一域函数族，不经 IPC；码化错误沿旧壳同码同文案，用户可见语义一致）。
+// 读写接缝零新口径：档位值域闭集在基建常量单点，默认档位回退口径与旧壳
+// persisted_level 同形；DataLocation 校验三步 / 二选一/ 目录唯一性住基础设施
+// 引导层，本壳不自建守卫语义（默认数据目录 = 启动参数账本目录——身份即目录，
+// 立桩引导契约在设置面的延伸）。文件 IO 是阻塞面：调用方在 blocking 任务内
+// 消费（卡流程同交易表单/备份先例）。写连接是成对建连的写侧。
+// ---------------------------------------------------------------------------
+
+/// 读取持久化日志档位（旧壳 `get_log_level` 命令同一执行协议）：缺 key /
+/// 缺 `app_settings` 表（旧版本备份）回默认 info；库内残留闭集外字符串回
+/// 默认 info 并告警（读路径不因坏值上抛）。读连接是只读侧。
+pub fn log_level(db: &DbState) -> Result<String> {
+    Ok(logging::persisted_level(db))
+}
+
+/// 设置日志档位（旧壳 `set_log_level` 命令同一执行协议）：闭集校验（错误码
+/// [`CODE_LOG_LEVEL_INVALID`]〔旧壳同码同文案〕「日志等级非法：未知日志档位:
+/// `x`」，未落库、未接管）→ 基建设置接缝落库（settings 单点收口，设置 KV
+/// 不置脏——ADR-0032 豁免随接缝自带）→ 运行期滤镜接管（crate::logging，切档
+/// 立即生效）。写连接是成对建连的写侧。
+pub fn set_log_level(db: &DbState, level_str: &str) -> Result<()> {
+    if !ledger_infra::settings::LOG_LEVEL_DIRECTIVES.contains(&level_str) {
+        return Err(AppError::codedp(
+            CODE_LOG_LEVEL_INVALID,
+            format!("日志等级非法：未知日志档位: `{level_str}`"),
+            &[level_str],
+        ));
+    }
+    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    ledger_infra::settings::set(
+        &conn,
+        ledger_infra::settings::SettingKey::LogLevel,
+        &level_str,
+    )?;
+    // 闭集内指令恒可解析；解析失败走告警路径（滤镜未登记 / 换档失败不回写）。
+    if let Some(level) = logging::parse_directive(level_str) {
+        logging::set_level(level);
+    }
+    Ok(())
+}
+
+/// DataLocation 当前信息聚合（旧壳 `get_data_location_info` 命令同一执行协议
+/// [`data_location::gather_info_from_boot`]）：引导记录缺失时按出厂降级呈现
+/// 生效目录 = 默认目录（异常时序的诚实降级，旧壳同口径）。零库操作（意图读
+/// 取是文件 IO：默认目录下引导文件）。
+pub fn data_location_info(launch_dir: &Path) -> ledger_infra::db::data_location::DataLocationInfo {
+    ledger_infra::db::data_location::gather_info_from_boot(launch_dir, boot_record().as_ref())
+}
+
+/// 提交更改位置意图（旧壳 `submit_data_location_change` 命令同一执行协议）：
+/// 引导态预检（推迟搬迁窗口拦截）→ 三步校验与意图落盘全在基础设施
+/// [`data_location::validate_and_commit`] 单正文（自动建目录 / 试写探针 /
+/// 目标已有同名库二选一信号不做静默覆盖）。真实搬迁只发生在下次启动
+/// （plan_boot 消费意图），文案必须讲清「下次启动生效」。文件 IO（建目录 /
+/// 试写 / 落盘引导文件）为阻塞面。
+pub fn submit_data_location_change(
+    launch_dir: &Path,
+    target_dir: &str,
+    adopt_existing: bool,
+) -> Result<ledger_infra::db::data_location::DataLocationChangeOutcome> {
+    ledger_infra::db::data_location::ensure_relocation_settled(boot_record().as_ref())?;
+    let trimmed = target_dir.trim();
+    if trimmed.is_empty() {
+        return Err(AppError::coded(
+            "data-location.dir-required",
+            "目标目录不能为空",
+        ));
+    }
+    ledger_infra::db::data_location::validate_and_commit(
+        launch_dir,
+        Path::new(trimmed),
+        adopt_existing,
+    )
+}
+
+/// 恢复默认位置（旧壳 `restore_default_data_location` 命令同一执行协议）：
+/// 目标 = 本壳默认数据目录（启动参数目录），校验与写意图机制与更改完全相同
+/// （二选一信号 / 目录唯一性拒绝随同一入口）。
+pub fn restore_default_data_location(
+    launch_dir: &Path,
+    adopt_existing: bool,
+) -> Result<ledger_infra::db::data_location::DataLocationChangeOutcome> {
+    ledger_infra::db::data_location::ensure_relocation_settled(boot_record().as_ref())?;
+    ledger_infra::db::data_location::validate_and_commit(launch_dir, launch_dir, adopt_existing)
 }

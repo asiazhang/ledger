@@ -11,10 +11,11 @@
 //! 文本由装配层（[`crate::assembly`]）在数据到达时一次性产出，渲染期零格式化；
 //! 会话句柄（`DbState`）住进程级单例 [`DB`]，页读复用成对建连的只读侧。
 //!
-//! 界面主题跟随系统深浅色（registry 缺省带主题双态令牌，ADR-0145 立桩验收
-//! 项）：文字色取令牌（裸 text 的默认前景是黑——暗色桌面不可见，先例 #2017
-//! 修复），表格部件经 Tailwind 类取主题令牌。文案仅 zh-CN（spec #2015 实施
-//! 决策）。
+//! 显示主题跟随存储外观设置（registry 缺省带主题双态令牌，ADR-0145 立桩验收
+//! 项；#2053 起启动经 [`crate::settings::apply_startup_appearance`] 按存储
+//! 外观应用显色——出厂跟随系统，深浅色强指；文字色取令牌（裸 text 的默认前
+//! 景是黑——暗色桌面不可见，先例 #2017 修复），表格部件经 Tailwind 类取主
+//! 题令牌。文案仅 zh-CN（spec #2015 实施决策）。
 
 use std::path::PathBuf;
 use std::sync::{Mutex, MutexGuard};
@@ -37,9 +38,9 @@ use crate::boot;
 use crate::items::AddItemTarget;
 use crate::nav_model::ViewName;
 use crate::{
-    accounts, backup_entry, context_menu, danger, dashboard, items, modal, multi_select, nav,
-    nav_model, overlay, period_row, pinyin_select, popconfirm, reports, scheduled, search, sidebar,
-    signals, tx_filter, txn_form, views,
+    accounts, backup_entry, context_menu, danger, dashboard, items, logging, modal, multi_select,
+    nav, nav_model, overlay, period_row, pinyin_select, popconfirm, reports, scheduled, search,
+    settings, sidebar, signals, tx_filter, txn_form, views,
 };
 
 /// 金额隐私模式开关的存储键（设备轻量设置项，与旧壳同键同值形态：旧壳
@@ -152,6 +153,12 @@ pub fn set_book_dir(dir: PathBuf) {
     }
 }
 
+/// 启动账本目录会话快照（设置卡数据位置面的默认目录单点——身份即目录，
+/// 立桩启动契约的读侧；未注入 = None，卡的读写路径各按会话缺失分支呈现）。
+pub(crate) fn book_dir() -> Option<PathBuf> {
+    book_dir_slot().clone()
+}
+
 /// lib 测试的装配串行锁（跨模块共享）：装配入口、会话句柄、导航状态与失效
 /// 信号订阅者都是进程级单例——引擎类 lib 单测（tests / nav::tests /
 /// dashboard::tests）跨模块互斥防串扰（#2039 概览探针长用例与既有探针并行
@@ -204,6 +211,10 @@ pub fn run_startup() -> StartupView {
     };
     match boot::boot_ledger(&book_dir) {
         Ok(db) => {
+            // 日志档位接管（旧壳 boot_sequence 启动接线语义保持：RUST_LOG 显
+            // 式优先；接管失败仅告警不阻启动——排障档位不是启动位面，锁异常
+            // 按读路径容错同口径）。接管在 logging 单点内化，读路径消费面。
+            logging::apply_persisted(&db);
             *db_slot() = Some(std::sync::Arc::new(db));
             StartupView::Ready
         }
@@ -2257,8 +2268,8 @@ fn view_host(nav: nav::NavStore) -> impl IntoElement {
     let group_more = |gid: nav_model::GroupId| move || views::group_more_view(gid);
     // 分支序随迁移系列推进：交易列表 / 预算（#2033）/ 账户（#2041）/
     // 定时（#2042）/ 概览（#2039）/ 搜索（#2040）/ 物品（#2044）/ 报表
-    //（#2048）/ 储蓄目标（#2056）挂真实组件，三容器挂「更多」页签壳，
-    // 其余未迁移视图共享占位。
+    //（#2048）/ 储蓄目标（#2056）/ 设置（#2053）挂真实组件，三容器挂
+    //「更多」页签壳，其余未迁移视图共享占位。
     when(is(ViewName::Transactions), transactions_view).otherwise(move || {
         when(is(ViewName::Budget), budget_view).otherwise(move || {
             when(is(ViewName::Accounts), accounts::accounts_view).otherwise(move || {
@@ -2276,16 +2287,25 @@ fn view_host(nav: nav::NavStore) -> impl IntoElement {
                                                 )
                                                 .otherwise(move || {
                                                     when(
-                                                        is(ViewName::BookkeepingMore),
-                                                        group_more(nav_model::GroupId::Bookkeeping),
+                                                        is(ViewName::Settings),
+                                                        settings::settings_view,
                                                     )
                                                     .otherwise(move || {
                                                         when(
-                                                            is(ViewName::AssetsMore),
-                                                            group_more(nav_model::GroupId::Assets),
+                                                            is(ViewName::BookkeepingMore),
+                                                            group_more(
+                                                                nav_model::GroupId::Bookkeeping,
+                                                            ),
                                                         )
                                                         .otherwise(move || {
                                                             when(
+                                                                is(ViewName::AssetsMore),
+                                                                group_more(
+                                                                    nav_model::GroupId::Assets,
+                                                                ),
+                                                            )
+                                                            .otherwise(move || {
+                                                                when(
                                                                 is(ViewName::InsightsMore),
                                                                 group_more(
                                                                     nav_model::GroupId::Insights,
@@ -2304,6 +2324,7 @@ fn view_host(nav: nav::NavStore) -> impl IntoElement {
                                                                 views::placeholder_shell_current(
                                                                     focused,
                                                                 )
+                                                            })
                                                             })
                                                         })
                                                     })
@@ -2332,6 +2353,10 @@ pub fn App() -> impl IntoElement {
     // ——旧壳 reports-session 存活期 = 应用会话同语义）。
     reports::store();
     nav::bind_shortcuts();
+    // 显示主题启动钩（#2053）：按存储外观应用全局显色——三环接缝（存储读 /
+    // 解析 / 应用）在 settings::apply_startup_appearance 单点内的接线，拆除
+    // 即红（headless 外观探针）。
+    settings::apply_startup_appearance();
     let state = signal(StartupView::Loading);
     // 主行/次行前景取主题令牌（双态自适应，registry 缺省带主题双态令牌）：
     // 裸 text 的默认前景是黑（ResolvedTextStyle::default 的 React Native

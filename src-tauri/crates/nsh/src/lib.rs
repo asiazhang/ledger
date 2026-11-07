@@ -35,6 +35,14 @@
 //!   编辑（换关带出覆盖）/ 详情（自选参考日重算、本位币折算）/ 处置 / 软删
 //!   轻量确认、创建唯一入口提示与交易行菜单「加入物品」确认弹窗（ADR-0025）、
 //!   来源跳转行高亮；写路径直调域公开写入口 + 交易失效信号广播；
+//! - [`logging`]：域栈日志面（#2053）——stderr 初始化 + 档位闭集的运行期
+//!   滤镜接管（值域闭集单点在基建 settings 接缝；旧壳日志文件面 NSH 无对
+//!   应物）；
+//! - [`settings`]：设置视图（#2053）——页签容器（通用/分类/币种/数据/定时/
+//!   功能/关于，visited-once keep-mounted 状态保留）、外观卡（显示主题三态）、
+//!   日志档位卡、数据存储位置卡（查看 / 更改 / 恢复默认 + 二选一接管守卫）、
+//!   功能开关管理面（写路径归 [`nav::set_feature_closed`] 单点共源）；
+//!   备份 / 加密 / 同步 / 账本切换卡占位待设置②；
 //! - [`app`]：NSH 根组件与启动结果视图模型（装配入口可注入，headless 可测）；
 //! - [`nav`]：进程内导航 API 与导航状态（#2032 壳导航骨架）——单点入口
 //!   `open`（守卫裁决 → 落位 → 持久化）、下钻意图读一次消费、键位带派发、
@@ -159,6 +167,7 @@ pub mod dashboard;
 pub mod date_select;
 pub mod insurers;
 pub mod items;
+pub mod logging;
 pub mod modal;
 pub mod multi_select;
 pub mod nav;
@@ -179,6 +188,7 @@ pub mod scheduled_subscription;
 pub mod scheduled_transfer;
 pub mod search;
 pub mod select;
+pub mod settings;
 pub mod sidebar;
 pub mod signals;
 pub mod tx_filter;
