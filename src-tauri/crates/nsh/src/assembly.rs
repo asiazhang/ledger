@@ -3461,6 +3461,106 @@ pub fn partition_savings_goal_rows(
     (active, archived)
 }
 
+// ---------------------------------------------------------------------------
+// 保司管理视图装配族（#2051；旧壳 InsurerManager.vue 清单纯面的重生）：
+// 保司字典清单——域读序（name 升序）保持、双分区（在用 / 已删）、统一模糊
+// 搜索语义本地过滤（ADR-0027，消费核心交易域唯一定义点的 Rust 侧原语）。
+// ---------------------------------------------------------------------------
+
+/// 保司清单列（旧壳 policies.insurers.columns 同词表）：名称 / 操作。无金额、
+/// 无日期、无状态列——名字字典的平表形态（旧壳同口径：种子量级约 30 家，
+/// 无前端分页）。建议宽度供 UI 映射，富余宽度全给名称列。
+pub const INSURER_COLUMNS: &[ColumnDef] = &[
+    ColumnDef {
+        key: "name",
+        title: "名称",
+        align: ColumnAlign::Start,
+        width: 160.0,
+    },
+    ColumnDef {
+        key: "actions",
+        title: "操作",
+        align: ColumnAlign::Start,
+        width: 140.0,
+    },
+];
+
+/// 保司清单行装配产物：每列最终展示文本（字段与 [`INSURER_COLUMNS`] 逐列对
+/// 应；操作列恒由 UI 侧行内按钮自绘）。`is_deleted` 供已删标记（名称列尾部
+/// 「已删除」标签）与「已删行只读」分位的呈现面。
+#[derive(Debug, Clone, PartialEq)]
+pub struct InsurerRowCells {
+    /// 保司 id（行级操作目标的事实源）。
+    pub id: String,
+    /// 名称列（保司原名 / 当前名——改名即时生效，引用指向 id）。
+    pub name: String,
+    /// 是否已软删（已删行只读展示、带「已删除」标记，旧壳同样式）。
+    pub is_deleted: bool,
+}
+
+/// 装配保司清单行集（顺序保持域清单序 = name, created_at 升序，旧壳同口径）。
+pub fn assemble_insurer_rows(rows: &[ledger_policy::Insurer]) -> Vec<InsurerRowCells> {
+    rows.iter()
+        .map(|row| InsurerRowCells {
+            id: row.id.clone(),
+            name: row.name.clone(),
+            is_deleted: row.is_deleted,
+        })
+        .collect()
+}
+
+/// 双分区（旧壳 insurers / deletedInsurers 纯派生同口径）：在用进默认位、
+/// 已删进「显示已删」追加位；同一快照的纯派生，零加减零重排（分区内序保持
+/// 域读序）。
+pub fn partition_insurer_rows(
+    rows: &[InsurerRowCells],
+) -> (Vec<InsurerRowCells>, Vec<InsurerRowCells>) {
+    let mut active = Vec::new();
+    let mut deleted = Vec::new();
+    for row in rows {
+        if row.is_deleted {
+            deleted.push(row.clone());
+        } else {
+            active.push(row.clone());
+        }
+    }
+    (active, deleted)
+}
+
+/// 统一模糊搜索语义过滤（ADR-0027 唯一定义点的直接消费，pinyin_select 过滤
+/// 项同源）：按空白切词、词条间 AND，每词条对保司名判定「原文连续子串 ∨
+/// 拼音首字母子序列」。保序过滤（只隐藏未命中项，剩余项顺序不变——保护位
+/// 置记忆）；空查询恒全量（恢复完整列表）。纯函数、可离线单测。
+pub fn filter_insurer_rows(query: &str, rows: &[InsurerRowCells]) -> Vec<InsurerRowCells> {
+    let terms = ledger_transaction::split_terms(query);
+    if terms.is_empty() {
+        return rows.to_vec();
+    }
+    rows.iter()
+        .filter(|row| {
+            terms
+                .iter()
+                .all(|term| ledger_transaction::term_matches_text(term, &row.name))
+        })
+        .cloned()
+        .collect()
+}
+
+/// 展示行集（旧壳 displayRows 纯面重现）：(显示已删？在用 + 已删：仅在用)
+/// → 搜索过滤（filter 保序不重排）。纯函数、可离线单测。
+pub fn insurer_display_rows(
+    active: &[InsurerRowCells],
+    deleted: &[InsurerRowCells],
+    show_deleted: bool,
+    query: &str,
+) -> Vec<InsurerRowCells> {
+    let mut base = active.to_vec();
+    if show_deleted {
+        base.extend_from_slice(deleted);
+    }
+    filter_insurer_rows(query, &base)
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -6469,6 +6569,137 @@ mod tests {
             cells[0].projection[0],
             format!("手填 {AMOUNT_PRIVACY_MASK}/月"),
             "节奏行金额掩码、文案骨架保留"
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // 保司管理装配（#2051）：域读序保持 / 双分区 / 统一模糊搜索语义过滤
+    //（汉字原文与拼音首字母双路径）/ 展示面（显示已删叠加搜索）。
+    // -----------------------------------------------------------------
+
+    /// 造一条保司域行（字段审计面无关展示，全量填齐）。
+    fn insurer(id: &str, name: &str, is_deleted: bool) -> ledger_policy::Insurer {
+        ledger_policy::Insurer {
+            id: id.to_owned(),
+            name: name.to_owned(),
+            created_at: String::new(),
+            updated_at: String::new(),
+            version: 1,
+            device_id: String::new(),
+            is_deleted,
+        }
+    }
+
+    /// 造行便捷面（装配产物直接造，过滤测试用）。
+    fn cell(id: &str, name: &str, is_deleted: bool) -> InsurerRowCells {
+        InsurerRowCells {
+            id: id.to_owned(),
+            name: name.to_owned(),
+            is_deleted,
+        }
+    }
+
+    /// 域读序保持（name 升序不重排）+ 双分区：在用进默认位、已删追加位；
+    /// 列闭集 = 名称 / 操作 两列（名字字典平表，旧壳同口径）。
+    #[test]
+    fn insurer_rows_assemble_and_partition() {
+        let rows = vec![
+            insurer("i1", "中国人寿", false),
+            insurer("i2", "平安人寿", false),
+            insurer("i3", "海峡金桥", true),
+        ];
+        assert_eq!(INSURER_COLUMNS.len(), 2, "列闭集 = 旧壳名称/操作两列");
+        let cells = assemble_insurer_rows(&rows);
+        assert_eq!(
+            cells.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(),
+            ["中国人寿", "平安人寿", "海峡金桥"],
+            "装配保序：域读序保持不动"
+        );
+        let (active, deleted) = partition_insurer_rows(&cells);
+        assert_eq!(
+            active.iter().map(|c| c.id.as_str()).collect::<Vec<_>>(),
+            ["i1", "i2"],
+            "在用位不含已删行"
+        );
+        assert_eq!(
+            deleted.iter().map(|c| c.id.as_str()).collect::<Vec<_>>(),
+            ["i3"]
+        );
+    }
+
+    /// 统一模糊搜索语义（ADR-0027，pinyin_select 同源）：汉字原文子串、
+    /// 拼音首字母子序列（允许跳字）双路径命中；词条间 AND；保序不重排；
+    /// 空词与空白词恢复全量。
+    #[test]
+    fn insurer_rows_filter_matches_by_terms_and_preserves_order() {
+        let rows = vec![
+            cell("i1", "三家人寿", false),
+            cell("i2", "中国人寿", false),
+            cell("i3", "平安人寿", false),
+            cell("i4", "人保财险", false),
+        ];
+        // 汉字原文子串：「人寿」命中三个人寿行，保序不重排。
+        assert_eq!(
+            filter_insurer_rows("人寿", &rows)
+                .iter()
+                .map(|c| c.id.as_str())
+                .collect::<Vec<_>>(),
+            ["i1", "i2", "i3"],
+            "原文连续子串命中、保序"
+        );
+        // 拼音首字母入口（允许跳字）：三家人寿 = s(j)rs；「rs」子序列命中。
+        assert_eq!(
+            filter_insurer_rows("rs", &rows)
+                .iter()
+                .map(|c| c.id.as_str())
+                .collect::<Vec<_>>(),
+            ["i1", "i2", "i3"],
+            "首字母子序列命中（跳字），不误命中人保财险（rbca）"
+        );
+        // 词条间 AND：两词都要命中同一名称。
+        assert!(
+            filter_insurer_rows("寿 财", &rows).is_empty(),
+            "AND 无交集即空"
+        );
+        // 空词恒全量；空白切词后无词条 = 空词同义。
+        assert_eq!(filter_insurer_rows("", &rows).len(), 4);
+        assert_eq!(filter_insurer_rows("   ", &rows).len(), 4);
+        // 大小写不敏感（原文子串路径）。
+        assert_eq!(filter_insurer_rows("ABC", &rows).len(), 0);
+    }
+
+    /// 展示面（旧壳 displayRows 纯面重现）：仅在用 → 在用 + 已删追加（尾部）
+    /// → 搜索过滤；已删行同样受搜索词过滤。
+    #[test]
+    fn insurer_display_rows_layers_show_deleted_and_filter() {
+        let (active, deleted) = partition_insurer_rows(&assemble_insurer_rows(&[
+            insurer("i1", "中国人寿", false),
+            insurer("i2", "平安人寿", false),
+            insurer("i3", "海峡金桥", true),
+        ]));
+        // 默认（不显示已删）：已删行不占位。
+        assert_eq!(
+            insurer_display_rows(&active, &deleted, false, "")
+                .iter()
+                .map(|c| c.id.as_str())
+                .collect::<Vec<_>>(),
+            ["i1", "i2"],
+        );
+        // 显示已删：已删行追加在尾部。
+        assert_eq!(
+            insurer_display_rows(&active, &deleted, true, "")
+                .iter()
+                .map(|c| c.id.as_str())
+                .collect::<Vec<_>>(),
+            ["i1", "i2", "i3"],
+        );
+        // 搜索对已删行同样过滤（叠加形态）。
+        assert_eq!(
+            insurer_display_rows(&active, &deleted, true, "海峡")
+                .iter()
+                .map(|c| c.id.as_str())
+                .collect::<Vec<_>>(),
+            ["i3"],
         );
     }
 }

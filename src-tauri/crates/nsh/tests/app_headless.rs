@@ -6288,6 +6288,287 @@ fn savings_view_achieved_state_and_plan_hint_boundaries() {
     );
 }
 
+// ---------------------------------------------------------------------------
+// 保司管理视图（#2051）：保司清单双分区（在用/已删）、新增卡（名称）、拼音
+// 本地过滤（统一模糊搜索语义）、编辑改名单字段弹窗、软删轻量确认气泡与已删
+// 只读切换。删任一接线即红的负向条目逐项写在各测试注释（ADR-0087 断言强
+// 度：断言对准用户可观察结果）。
+// ---------------------------------------------------------------------------
+
+/// 从「资产·更多」容器点开保司页签（#2051 旅程用例共用）：保司清单卡在屏即
+/// 落位凭据。删 views.rs [group_more_view] 的 Insurers 挂载分支 → 本函数永远
+/// 等不到清单卡（落回迁移占位）。
+fn open_insurers(app: &mut Headless) {
+    app.wait_for("id:nav-more-assets").unwrap();
+    app.press("id:nav-more-assets").unwrap();
+    app.wait_for("id:more-tab-insurers").unwrap();
+    app.press("id:more-tab-insurers").unwrap();
+    app.wait_for("id:ins-table").unwrap();
+    app.wait_for("text:保险公司列表").unwrap();
+}
+
+/// 经域读路径反查保司 id（用例共用；行操作锚点嵌 id 用）。
+fn nsh_app_lib_insurer_id(dir: &std::path::Path, name: &str) -> String {
+    let db = nsh_app::boot::boot_ledger(dir).unwrap();
+    let conn = db
+        .read_conn
+        .lock()
+        .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
+        .unwrap();
+    ledger_policy::list_insurers(&conn, true)
+        .unwrap()
+        .into_iter()
+        .find(|i| i.name == name)
+        .map(|i| i.id)
+        .unwrap_or_else(|| panic!("未找到保司 {name}"))
+}
+
+/// 首屏装载（旧壳 InsurerManager onMounted 平价）：种子保司名称序在场，新增
+/// 卡 / 清单卡 / 搜索框 / 显示已删切换在屏。删 boot::insurer_rows 读接缝 /
+/// 装配 / 渲染爪任一环即红。
+#[test]
+fn insurers_view_lands_with_seed_rows_and_tools() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("insurers-land");
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_insurers(&mut app);
+    // 种子（V019）名称序行集在屏（可视前两行为种子保司；名称序位在底部
+    // 虚拟化裁行外的行不进断言面，代表性断言已在锚点计数完成）。
+    for text in [
+        "中华保险".to_owned(),
+        "中国人寿".to_owned(),
+        "新增保险公司".to_owned(),
+        "保险公司列表".to_owned(),
+        "名称".to_owned(),
+        "添加".to_owned(),
+        "☐ 显示已删".to_owned(),
+        "操作".to_owned(),
+    ] {
+        assert!(
+            app.shows(&text),
+            "应呈现「{text}」：{:?}",
+            app.screen().texts()
+        );
+    }
+    // 搜索框在屏（虚拟化列表之外的锚点计数形态）。
+    assert_eq!(
+        app.screen().count("id:ins-search").unwrap(),
+        1,
+        "搜索框在屏"
+    );
+}
+
+/// 创建旅程（旧壳 createInsurer 平价）：空名称拦截不写入；合法名称 → 行即现
+/// 与成功反馈、表单清空；重名（种子里已有人寿）→ 码化错误原样呈现、表单不
+/// 清空。删 boot::create_insurer 域直调接线 → 保存后永不出现新行且反馈条
+/// 份位静默。
+#[test]
+fn insurers_view_add_journey_with_empty_and_duplicate_guards() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("insurers-add");
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_insurers(&mut app);
+
+    // 空名称拦截：不写入（码化错误域同名文案；同口径提示在新增卡条位）。
+    app.press("id:ins-add").unwrap();
+    app.wait_for("id:ins-add-error").unwrap();
+    app.wait_for("text:请输入保险公司名称").unwrap();
+
+    // 合法名称 → 成功反馈 + 行即现（搜索定位：新行名称序位在虚拟化视口
+    // 之外，以过滤器把它拉回可视位）。
+    app.type_text("id:ins-add-name", "海峡金桥财产保险")
+        .unwrap();
+    app.press("id:ins-add").unwrap();
+    app.wait_for("text:已添加保险公司").unwrap();
+    app.type_text("id:ins-search", "海峡").unwrap();
+    app.wait_for("text:海峡金桥财产保险").unwrap();
+
+    // 重名（种子在用行「中国人寿」）：码化错误 zh 原样呈现，表单不清空。
+    app.type_text("id:ins-add-name", "中国人寿").unwrap();
+    app.press("id:ins-add").unwrap();
+    // 旧壳 addFailed 词表形态：「添加失败: {msg}」。
+    app.wait_for("text:添加失败: 保司已存在: 中国人寿").unwrap();
+}
+
+/// 编辑旅程（旧壳 updateInsurer 平价）：编辑弹窗回填原值（不改直接保存 =
+/// 空更新同义仍未空名校拒，证明回填在场）；改名即时生效；改名撞在用同名 →
+/// 码化错误、弹窗不关（内容不丢）。删编辑入口 / modal 保存接线 → 本测红。
+#[test]
+fn insurers_view_edit_backfill_and_rename_duplicate_guard() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("insurers-edit");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let conn = db
+            .conn
+            .lock()
+            .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
+            .unwrap();
+        ledger_policy::create_insurer(
+            &conn,
+            ledger_policy::InsurerInput {
+                name: "海峡金桥财产保险".to_owned(),
+            },
+        )
+        .unwrap();
+    }
+    let id = nsh_app_lib_insurer_id(&dir, "海峡金桥财产保险");
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_insurers(&mut app);
+    // 搜索定位（名称序位在虚拟化视口之外）：唯一命中行动作锚点以 id 内嵌。
+    app.type_text("id:ins-search", "海峡").unwrap();
+    app.wait_for("text:海峡金桥财产保险").unwrap();
+
+    // 不改直接保存：回填凭据（空值会被空名校拒，保存进说明回填在场）。
+    app.press(&format!("id:ins-edit-{id}")).unwrap();
+    app.wait_for("id:ins-edit-name").unwrap();
+    app.wait_for("text:编辑保险公司").unwrap();
+    app.press("id:ins-edit-save").unwrap();
+    app.wait_for("text:已更新保险公司").unwrap();
+    app.wait_for_gone("id:ins-edit-name", DEFAULT_WAIT).unwrap();
+    assert!(app.shows("海峡金桥财产保险"), "原值保持");
+
+    // 改名撞在用同名（种子「中国人寿」）：码化错误、弹窗不关（内容不丢）。
+    app.press(&format!("id:ins-edit-{id}")).unwrap();
+    app.wait_for("id:ins-edit-name").unwrap();
+    app.clear("id:ins-edit-name").unwrap();
+    app.type_text("id:ins-edit-name", "中国人寿").unwrap();
+    app.press("id:ins-edit-save").unwrap();
+    // 旧壳 updateFailed 词表形态：「更新失败: {msg}」。
+    app.wait_for("text:更新失败: 保司已存在: 中国人寿").unwrap();
+    assert_eq!(
+        app.screen().count("id:ins-edit-name").unwrap(),
+        1,
+        "弹窗不关"
+    );
+
+    // 改为合法新名：保存成功、弹窗关、新名即时在屏。
+    app.clear("id:ins-edit-name").unwrap();
+    app.type_text("id:ins-edit-name", "海峡金桥").unwrap();
+    app.press("id:ins-edit-save").unwrap();
+    app.wait_for_gone("id:ins-edit-name", DEFAULT_WAIT).unwrap();
+    app.wait_for("text:海峡金桥").unwrap();
+}
+
+/// 软删旅程（旧壳 deleteInsurer + AppPopconfirm 平价）：确认气泡 cancel 不写；
+/// confirm 软删后默认列表不含（行离场）；「显示已删」切换后已删行以标签行
+/// 追加、且只读（无编辑/删除操作，在用行操作不受影响）。删 popconfirm
+/// on_confirm 接线 → 本测红（气泡确认后行永不离场）。
+#[test]
+fn insurers_view_delete_popconfirm_softdeletes_and_readonly() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("insurers-delete");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let conn = db
+            .conn
+            .lock()
+            .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
+            .unwrap();
+        ledger_policy::create_insurer(
+            &conn,
+            ledger_policy::InsurerInput {
+                name: "海峡金桥财产保险".to_owned(),
+            },
+        )
+        .unwrap();
+    }
+    let id = nsh_app_lib_insurer_id(&dir, "海峡金桥财产保险");
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_insurers(&mut app);
+    // 搜索定位（名称序位在虚拟化视口之外）：唯一命中行动作锚点以 id 内嵌。
+    app.type_text("id:ins-search", "海峡").unwrap();
+    app.wait_for("text:海峡金桥财产保险").unwrap();
+
+    // 取消：气泡关闭、行保留、无写。
+    app.press(&format!("id:ins-delete-{id}")).unwrap();
+    app.wait_for("id:ins-delete-confirm").unwrap();
+    app.press("id:ins-delete-cancel").unwrap();
+    app.wait_for_gone("id:ins-delete-confirm", DEFAULT_WAIT)
+        .unwrap();
+    assert!(app.shows("海峡金桥财产保险"), "取消不写：行仍在");
+
+    // 确认：行离场（软删后默认列表不含）+ 成功反馈。
+    app.press(&format!("id:ins-delete-{id}")).unwrap();
+    app.wait_for("id:ins-delete-confirm").unwrap();
+    app.press("id:ins-delete-confirm").unwrap();
+    app.wait_for_gone("text:海峡金桥财产保险", DEFAULT_WAIT)
+        .unwrap();
+    app.wait_for("text:已删除保险公司").unwrap();
+
+    // 显示已删切换：已删行以「已删除」标签行追加（搜索叠加位顶）且只读
+    //（搜索输入已在删除前定位时持有「海峡」，先清回再键入）。
+    app.press("id:ins-show-deleted").unwrap();
+    app.clear("id:ins-search").unwrap();
+    app.type_text("id:ins-search", "海峡").unwrap();
+    app.wait_for("text:海峡金桥财产保险").unwrap();
+    assert_eq!(
+        app.screen().count("id:ins-deleted-tag").unwrap(),
+        1,
+        "已删行带「已删除」标记"
+    );
+    assert_eq!(
+        app.screen().count(&format!("id:ins-edit-{id}")).unwrap(),
+        0,
+        "已删行只读：无编辑操作"
+    );
+    assert_eq!(
+        app.screen().count(&format!("id:ins-delete-{id}")).unwrap(),
+        0,
+        "已删行只读：无删除操作"
+    );
+}
+
+/// 拼音本地过滤（旧壳 searchTerm + matchLabel 平价，统一模糊搜索语义）：
+/// 拼音首字母子序列命中（rs → 人寿行）与非命中项隐藏；清空恢复完整列表；
+/// 词条间 AND（汉字双词）。删除装配层 filter_insurer_rows 接线 → 行集永
+/// 不随搜索变化。
+#[test]
+fn insurers_view_search_filters_hits_and_clear_restores() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("insurers-search");
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_insurers(&mut app);
+    // 过滤前凭据：人保财险在屏（首屏可见行；过滤后消失才证过滤面）。
+    app.wait_for("text:人保财险").unwrap();
+
+    // 拼音首字母子序列：rs → 人寿行命中（中国人寿 s..末字母），原在屏的
+    // 人保财险（rbca）被过滤出屏（过滤面证明）。
+    app.type_text("id:ins-search", "rs").unwrap();
+    app.wait_for("text:中国人寿").unwrap();
+    app.wait_for_gone("text:人保财险", DEFAULT_WAIT).unwrap();
+
+    // 词条间 AND（汉字双词）：人保 + 财险 → 只人保财险（人保寿险 / 人保健康
+    // 同带人保首词、无财险尾词，不在命中面）。
+    app.clear("id:ins-search").unwrap();
+    app.type_text("id:ins-search", "人保 财险").unwrap();
+    app.wait_for("text:人保财险").unwrap();
+    assert!(
+        !app.shows("人保寿险"),
+        "只命中人保财险（AND 交集）：{:?}",
+        app.screen().texts()
+    );
+
+    // 清空恢复完整列表（非命中项回屏）。
+    app.clear("id:ins-search").unwrap();
+    app.wait_for("text:人保财险").unwrap();
+}
+
 /// 造一个带初始余额的现金账户（用例共用；金额经域公开写入口，初始余额在创建
 /// 协议内同事务落为 V017 余额缓存行——缓存读数的造数面）。
 fn seed_account_with_balance(
