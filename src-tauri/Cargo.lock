@@ -4475,6 +4475,7 @@ dependencies = [
  "ledger-merchants",
  "ledger-policy",
  "ledger-reports",
+ "ledger-savings-goal",
  "ledger-scheduled",
  "ledger-transaction",
  "nsh-base",

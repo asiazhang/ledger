@@ -52,6 +52,10 @@ ledger-budget = { path = "../budget" }
 # 净资产总览读（#2039）：概览净资产卡的后端单点取数面（旧壳 dashboard_overview
 # 命令消费的同一域读探针，多币种折算与三腿合计全在域内，不经 IPC）。
 ledger-dashboard = { path = "../dashboard" }
+# 储蓄目标域守卫与绑定集读（#2041）：账户删除 / 归档的目标域守卫与目标绑定
+# 集读直调面（旧壳 delete_account / archive_account 命令与 savingsGoalProgress
+# 命令消费的同一域函数，不经 IPC）。
+ledger-savings-goal = { path = "../savings-goal" }
 # 备份域直调面（#2038）：手动备份（受管改道判定 + zip 快照）与账本指纹只读
 # 判定（旧壳 create_backup / get_book_fingerprint 命令消费的同一域函数，不经
 # IPC）。

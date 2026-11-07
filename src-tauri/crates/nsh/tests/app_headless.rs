@@ -2312,8 +2312,8 @@ fn sidebar_renders_groups_fixed_items_and_hides_contained_members() {
     );
 }
 
-/// 点击导航：侧栏项 → 未迁移视图空态占位（屏名 + 迁移中反馈）；回到交易
-/// 项 → 表格内容区原样（骨架期行为零改动）。
+/// 点击导航：侧栏项 → 真实视图落位（账户 #2041 起不再占位）→ 回到交易
+/// 项 → 表格内容区原样（其余未迁移项的占位行为由各自迁移票接手）。
 #[test]
 fn clicking_sidebar_items_lands_placeholder_views_and_back() {
     let _guard = SERIAL.lock().unwrap();
@@ -2325,10 +2325,13 @@ fn clicking_sidebar_items_lands_placeholder_views_and_back() {
     let mut app = Headless::start(desktop_config()).unwrap();
     open_transactions(&mut app);
 
-    // 账户 → 占位（屏名 + 迁移中）。
+    // 账户 → 真实视图（#2041 迁入：新增账户卡在屏，占位不再）。
     app.press("id:nav-accounts").unwrap();
-    app.wait_for("text:账户").unwrap();
-    app.wait_for("id:placeholder-note").unwrap();
+    app.wait_for("text:新增账户").unwrap();
+    assert!(
+        app.screen().count("id:placeholder-note").unwrap() == 0,
+        "账户不再占位"
+    );
     // 概览 → 真实视图（净资产卡在屏，#2039 起不再是占位）。
     app.press("id:nav-dashboard").unwrap();
     app.wait_for("id:net-worth-card").unwrap();
@@ -2445,8 +2448,8 @@ fn closed_feature_exits_sidebar_and_key_band() {
     app.wait_for("text:账户").unwrap();
 }
 
-/// 启动恢复（上次视图持久化的读路径）：已存视图原样恢复（账户 → 占位）；
-/// 已关闭功能回出厂落点（骨架期 = 交易列表）；未知名回出厂落点。
+/// 启动恢复（上次视图持久化的读路径）：已存视图原样恢复（账户 → 真实账户
+/// 视图，#2041 迁入后为真实视图）；已关闭功能回出厂落点（骨架期 = 交易列表）；未知名回出厂落点。
 #[test]
 fn startup_restores_last_view_with_closed_and_unknown_fallbacks() {
     let _guard = SERIAL.lock().unwrap();
@@ -2461,11 +2464,11 @@ fn startup_restores_last_view_with_closed_and_unknown_fallbacks() {
         "\"accounts\"".to_owned(),
     )]);
     let mut app = Headless::start(desktop_config_with_backend(storage)).unwrap();
-    app.wait_for("id:placeholder-note").unwrap();
+    app.wait_for("text:新增账户").unwrap();
     assert_eq!(
         app.screen().count("text:账户").unwrap(),
         2,
-        "恢复到账户占位（侧栏 + 屏名）"
+        "恢复到账户视图（侧栏 + 屏名）"
     );
     drop(app);
 
@@ -2708,7 +2711,7 @@ fn move_back_menu_is_disabled_when_group_full() {
 }
 
 /// 界面状态持久化往返（写 → 重启 → 读一致）：导航落位 + 排序一并保持；
-/// 上次视图恢复到账户占位。
+/// 上次视图恢复到账户视图（#2041 迁入后为真实视图）。
 #[test]
 fn view_state_round_trips_across_restart() {
     let _guard = SERIAL.lock().unwrap();
@@ -2725,14 +2728,14 @@ fn view_state_round_trips_across_restart() {
     app.right_click("id:nav-items").unwrap();
     app.choose_menu_item("移到顶部").unwrap();
     app.press("id:nav-accounts").unwrap();
-    app.wait_for("text:账户").unwrap();
+    app.wait_for("text:新增账户").unwrap();
     drop(app);
 
     // 重启：上次视图 = 账户；物品已在资产组首位 → ⌘4（带内随动）落物品——两态都持久。
     nsh_app::app::reset_book_assembly();
     nsh_app::app::set_book_dir(dir.clone());
     let mut app = Headless::start(desktop_config_with_backend(storage)).unwrap();
-    app.wait_for("id:placeholder-note").unwrap();
+    app.wait_for("text:新增账户").unwrap();
     assert_eq!(
         app.screen().count("text:账户").unwrap(),
         2,
@@ -5772,7 +5775,8 @@ fn dashboard_investment_card_shows_empty_state_without_holdings() {
     app.wait_for("text:设置预算后解锁财务自由度").unwrap();
 }
 
-/// 净资产卡下钻（总览屏唯一动作）：点「查看账户明细」落账户视图。
+/// 净资产卡下钻（总览屏唯一动作）：点「查看账户明细」落账户视图（#2041 起
+/// 为真实视图，新增账户卡在屏）。
 /// 「删除即红」负向条目：删卡片内 nav::open 接线 → 本测红（停留概览）。
 #[test]
 fn net_worth_card_drills_down_to_accounts_view() {
@@ -5784,11 +5788,15 @@ fn net_worth_card_drills_down_to_accounts_view() {
     let mut app = Headless::start(desktop_config()).unwrap();
     app.wait_for("id:net-worth-card").unwrap();
     app.press("id:net-worth-view-accounts").unwrap();
-    app.wait_for("id:placeholder-note").unwrap();
+    app.wait_for("text:新增账户").unwrap();
     assert_eq!(
         app.screen().count("text:账户").unwrap(),
         2,
         "下钻落账户视图（侧栏 + 屏名）"
+    );
+    assert!(
+        app.screen().count("id:placeholder-note").unwrap() == 0,
+        "账户不再占位"
     );
 }
 
@@ -5851,4 +5859,578 @@ fn freedom_zero_denominator_guides_to_budget_view() {
     app.wait_for("id:freedom-zero-denominator").unwrap();
     app.press("id:freedom-go-budget").unwrap();
     app.wait_for("text:预算执行").unwrap();
+}
+
+// ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// 账户视图（#2041）：清单三分区与余额口径（V017 缓存读数）、新建/编辑/归档/
+// 恢复/删除/调整余额旅行、行菜单「⋯」与右键两入口同位、账户名下钻与金额隐私
+// 掩码。删任一接线即红的负向条目逐项写在各测试注释（ADR-0087 断言强度：断言
+// 对准用户可观察结果）。
+// ---------------------------------------------------------------------------
+
+/// 从侧栏点开账户视图（#2041 旅程用例共用）：新增卡主按钮在屏即落位凭据。
+fn open_accounts(app: &mut Headless) {
+    app.wait_for("id:nav-accounts").unwrap();
+    app.press("id:nav-accounts").unwrap();
+    app.wait_for("id:acct-add").unwrap();
+}
+
+/// 造一个带初始余额的现金账户（用例共用；金额经域公开写入口，初始余额在创建
+/// 协议内同事务落为 V017 余额缓存行——缓存读数的造数面）。
+fn seed_account_with_balance(
+    db: &ledger_infra::db::DbState,
+    name: &str,
+    initial_cents: i64,
+) -> String {
+    let conn = db
+        .conn
+        .lock()
+        .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
+        .unwrap();
+    ledger_accounts::create_account(
+        &conn,
+        AccountInput {
+            name: name.to_owned(),
+            kind: AccountType::Cash,
+            currency_code: "CNY".to_owned(),
+            initial_balance_cents: Some(initial_cents),
+            credit_limit_cents: None,
+            statement_day: None,
+            due_day: None,
+        },
+    )
+    .unwrap()
+}
+
+/// 首屏装载（旧壳 AccountsView onMounted 平价）：清单三分区卡（攒钱卡空集不渲染）、
+/// 主表列头与行格文本（类型标签 / 币种 / 余额 = V017 缓存读数）、已归档分区空集
+/// 不渲染。删除装配任一环（boot 余额读 / rows 装配 / 三分区派生 / 渲染爪）即红。
+#[test]
+fn accounts_view_lands_with_create_card_and_balance_rows() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("accounts-list");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        seed_account_with_balance(&db, "测试现金", 10_000);
+        seed_account(&db, "银行卡", AccountType::Bank);
+    }
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_accounts(&mut app);
+    // 异步装载纪律：先等主表行到屏（§3.5）再断格文本与列头。
+    app.wait_for("id:acct-table").unwrap();
+    app.wait_for("text:测试现金").unwrap();
+
+    // 新建卡与主表卡标题（旧壳 accounts.create/list 词表同文案）。
+    for text in ["新增账户", "账户列表", "名称", "类型", "币种", "余额"] {
+        assert!(
+            app.shows(text),
+            "应呈现「{text}」：{:?}",
+            app.screen().texts()
+        );
+    }
+    // 行格文本（装配层产物）：类型标签 / 币种 / V017 缓存余额。
+    for text in ["测试现金", "现金", "CNY", "¥100", "银行卡", "¥0"] {
+        assert!(
+            app.shows(text),
+            "应呈现「{text}」：{:?}",
+            app.screen().texts()
+        );
+    }
+    // 攒钱分区空集不渲染空卡；已归档分区空集不渲染（折叠钮缺席）。
+    assert!(
+        app.screen().count("id:acct-goal-table").unwrap() == 0,
+        "无目标绑定时攒钱卡不渲染"
+    );
+    assert!(
+        app.screen().count("id:acct-archived-toggle").unwrap() == 0,
+        "无已归档账户时分区不渲染"
+    );
+}
+
+/// 创建旅程（旧壳 create + message.success 平价）：空名称前置拦截不写入；填
+/// 名称 → 添加 → 行即现（余额 ¥0）且成功反馈在屏、表单复位。
+/// 删除「添加 → perform_create → reload」任一接线即红。
+#[test]
+fn accounts_view_create_account_journey() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("accounts-create");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        seed_cash_account(&db);
+    }
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_accounts(&mut app);
+
+    // 前置拦截：空名称点添加 → 错误条位，不产生空白行。
+    app.press("id:acct-add").unwrap();
+    app.wait_for("id:acct-create-error").unwrap();
+    app.wait_for("text:请输入账户名称").unwrap();
+
+    // 类型/币种为必填选项面（select clearable=false 参数化，#2041）：选中
+    // 态也不呈现 ✕ 清除钮（删除 select.rs 的 `clearable &&` 接线即红）。
+    assert!(
+        app.screen().count("id:acct-type-clear").unwrap() == 0,
+        "必填选项面无清除钮：{:?}",
+        app.screen().texts()
+    );
+
+    // 填名称 → 创建：行即现、成功反馈在屏、表单复位。
+    app.type_text("id:acct-create-name", "储蓄罐").unwrap();
+    app.press("id:acct-add").unwrap();
+    app.wait_for("text:储蓄罐").unwrap();
+    app.wait_for("text:已创建账户").unwrap();
+    assert_eq!(
+        app.screen().input_text("id:acct-create-name").unwrap(),
+        Some(""),
+        "创建成功后表单复位"
+    );
+    assert!(app.shows("¥0"), "新账户余额 ¥0 在屏");
+}
+
+/// 信用卡类型（旧壳 isCreditType v-if 平价）：选「信用卡」→ 档案三字段才出现；
+/// 带档案创建成功、行类型列「信用卡」、编辑弹窗回填资料与已保存的只读摘要。
+#[test]
+fn accounts_view_credit_type_reveals_profile_fields() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("accounts-credit");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        seed_cash_account(&db);
+    }
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_accounts(&mut app);
+
+    // 缺省类型（现金）不呈现档案字段。
+    assert!(
+        app.screen().count("id:acct-create-limit").unwrap() == 0,
+        "非信用卡不呈现信用额度字段"
+    );
+    // 选「信用卡」→ 三字段出现。
+    app.press("id:acct-type-trigger").unwrap();
+    app.wait_for("id:acct-type-option").unwrap();
+    app.press("id:acct-type-option >> text:信用卡 >> nth=0")
+        .unwrap();
+    app.wait_for("id:acct-create-limit").unwrap();
+    app.wait_for("id:acct-create-statement").unwrap();
+    app.wait_for("id:acct-create-due").unwrap();
+
+    // 带档案创建：行即现（类型列「信用卡」）。
+    app.type_text("id:acct-create-name", "白金卡").unwrap();
+    app.type_text("id:acct-create-limit", "50000").unwrap();
+    app.type_text("id:acct-create-statement", "1").unwrap();
+    app.type_text("id:acct-create-due", "10").unwrap();
+    app.press("id:acct-add").unwrap();
+    app.wait_for("text:白金卡").unwrap();
+    app.wait_for("text:已创建账户").unwrap();
+
+    // 编辑弹窗：额度按采购小数位回填「500」、只读摘要「使用率 0%」（余额为
+    // 零已用 0，低使用率不呈警示）。
+    let credit_id = nsh_app_lib_account_id(&dir, "白金卡");
+    app.press(&format!("id:acct-more-{credit_id}")).unwrap();
+    app.choose_menu_item("编辑").unwrap();
+    app.wait_for("text:编辑账户").unwrap();
+    assert_eq!(
+        app.screen().input_text("id:acct-edit-limit").unwrap(),
+        Some("50000"),
+        "额度按元回填（旧壳 centsToYuan 同口径）"
+    );
+    app.wait_for("id:acct-edit-usage").unwrap();
+    assert!(
+        app.screen().texts().iter().any(|t| t.contains("使用率 0%")),
+        "额度用量摘要（已保存行值）：{:?}",
+        app.screen().texts()
+    );
+}
+
+/// 「⋯」与右键两入口同位（旧壳 buildAccountRowMenuOptions 两入口同 options）：
+/// ⋯ 开菜单的菜单项闭集（编辑/调整余额/归档/删除）与编辑旅行；删除 open_edit
+/// 或表单回填接线即红。
+#[test]
+fn accounts_view_edit_renames_account() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("accounts-edit");
+    let cash_id;
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        cash_id = seed_cash_account(&db);
+    }
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_accounts(&mut app);
+
+    // ⋯ 开菜单 → 菜单闭集。
+    app.press(&format!("id:acct-more-{cash_id}")).unwrap();
+    let menu = app.menu().expect("「⋯」应打开行菜单");
+    assert_eq!(
+        menu.iter().map(|e| e.label.as_str()).collect::<Vec<_>>(),
+        vec!["编辑", "调整余额", "归档", "删除"],
+        "未归档行菜单项闭集：{menu:?}"
+    );
+    app.choose_menu_item("编辑").unwrap();
+
+    // 名称回填 → 改名保存 → 行更新（编辑即见）。
+    app.wait_for("text:编辑账户").unwrap();
+    assert_eq!(
+        app.screen().input_text("id:acct-edit-name").unwrap(),
+        Some("测试现金"),
+        "编辑弹窗名称回填"
+    );
+    app.clear("id:acct-edit-name").unwrap();
+    app.type_text("id:acct-edit-name", "钱包").unwrap();
+    app.press("id:acct-edit-save").unwrap();
+    app.wait_for("id:acct-status").unwrap();
+    app.wait_for("text:已保存").unwrap();
+    app.wait_for_gone("id:acct-edit-name", DEFAULT_WAIT)
+        .unwrap();
+    // 行更新（异步）：等改名后的行在屏再断言（§3.5）。
+    app.wait_for("text:钱包").unwrap();
+    assert!(app.shows("钱包"), "改名后的行在屏");
+    assert!(!app.shows("测试现金"), "旧名字离屏");
+}
+
+/// 删除确认守卫（旧壳 confirmDelete 二次确认 + ADR-0078 error 级形态）：右键
+/// 「删除」→ 确认框标题与后果句、取消不写；确认后行离屏 + 反馈在屏。
+/// 拆 danger_confirm / close_delete / perform_delete 任一环即红。
+#[test]
+fn accounts_view_delete_needs_confirmation_and_cancels_before_write() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("accounts-delete");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        seed_cash_account(&db);
+        seed_account(&db, "要留下的", AccountType::Cash);
+    }
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_accounts(&mut app);
+
+    // 右键开菜单（另一入口同位==原注释）→ 删除。
+    app.right_click("text:测试现金").unwrap();
+    app.choose_menu_item("删除").unwrap();
+    app.wait_for("text:删除账户").unwrap();
+    app.wait_for("text:删除后相关交易仍保留。").unwrap();
+    assert!(app.shows("测试现金"), "确认框开着时行仍在屏");
+
+    // 取消 → 不写，行集不变。
+    app.press("id:danger-cancel").unwrap();
+    app.settle();
+    assert!(app.shows("测试现金"), "取消后行仍主表在屏");
+
+    // 确认 → 行离屏 + 反馈在屏；另一行保留。
+    let cash_id = nsh_app_lib_account_id(&dir, "测试现金");
+    app.press(&format!("id:acct-more-{cash_id}")).unwrap();
+    app.choose_menu_item("删除").unwrap();
+    app.wait_for("text:删除账户").unwrap();
+    app.press("id:danger-confirm").unwrap();
+    app.wait_for("text:已删除").unwrap();
+    app.wait_for_gone("text:测试现金", DEFAULT_WAIT).unwrap();
+    assert!(app.shows("要留下的"), "另一行不动删除");
+}
+
+/// 归档 / 恢复（ADR-0142 平价：收纳态不改金额口径、确认框真话、幂等）：⋯「归
+/// 档」→ 警告级确认（余额为零无附句 → 单句通用正文）→ 行移入页底「已归档」
+/// 分区（折叠钮 + 数量合计在屏、主表行不再在屏）→ 展开分区 → 归档行菜单收
+/// 窄为「恢复」（ADR-0142 决策 2 闭集）→ 恢复回主表。拆分区或菜单收窄任一
+/// 接线即红。
+#[test]
+fn accounts_view_archives_and_restores() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("accounts-archive");
+    let cash_id;
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        // 余额非零（¥50）：归档确认把真话说清楚（#1955 真话矩阵——余额句）。
+        cash_id = seed_account_with_balance(&db, "测试现金", 5_000);
+        seed_account(&db, "要留下的", AccountType::Cash);
+    }
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_accounts(&mut app);
+
+    // 归档确认。
+    app.press(&format!("id:acct-more-{cash_id}")).unwrap();
+    app.choose_menu_item("归档").unwrap();
+    app.wait_for("text:归档账户").unwrap();
+    app.wait_for(
+        "text:确认归档账户「测试现金」？归档后它从主表移入下方的「已归档」分区，历史与流水仍可查。",
+    )
+    .unwrap();
+    app.press("id:danger-confirm").unwrap();
+    app.wait_for("text:账户已归档，历史与流水保留可查").unwrap();
+
+    // 分区呈现：折叠钮 + 数量合计在屏；主表行不再在屏（折叠即不挂载行）。
+    app.wait_for("id:acct-archived-toggle").unwrap();
+    app.wait_for("id:acct-archived-summary").unwrap();
+    assert!(
+        app.screen()
+            .texts()
+            .iter()
+            .any(|t| t.contains("1 个账户 · 合计 ¥50")),
+        "已归档数量合计在屏：{:?}",
+        app.screen().texts()
+    );
+    app.settle();
+    assert!(
+        !app.shows("测试现金"),
+        "折叠的归档分区不挂载行：{:?}",
+        app.screen().texts()
+    );
+
+    // 展开 → 归档行菜单收窄为「恢复」→ 恢复回主表。
+    app.press("id:acct-archived-toggle").unwrap();
+    app.wait_for("text:测试现金").unwrap();
+    app.press(&format!("id:acct-more-{cash_id}")).unwrap();
+    let menu = app.menu().expect("归档行「⋯」应出菜单");
+    assert_eq!(
+        menu.iter().map(|e| e.label.as_str()).collect::<Vec<_>>(),
+        vec!["恢复"],
+        "归档行动作集收窄为恢复（ADR-0142 决策 2）：{menu:?}"
+    );
+    app.choose_menu_item("恢复").unwrap();
+    app.wait_for("text:账户已恢复").unwrap();
+    app.wait_for("text:测试现金").unwrap();
+    assert!(
+        app.screen().count("id:acct-archived-toggle").unwrap() == 0,
+        "恢复后已归档分区空集不渲染"
+    );
+}
+
+/// 调整余额旅行（旧壳 adjustBalance + ADR-0026）：⋯「调整余额」→ 弹窗日叔
+/// 当前余额 → 目标差额实时呈现 → 确认后生成转账（失效信号广播）→ 交易列表
+/// 重读见转账行 + 余额更新。拆确认后 signals 广播或 reload 接线即红。
+#[test]
+fn accounts_view_adjust_balance_broadcasts_transactions_invalidated() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("accounts-adjust");
+    let cash_id;
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        cash_id = seed_cash_account(&db);
+        seed_transaction(
+            &db,
+            TxnSeed {
+                account: &cash_id,
+                to_account: None,
+                kind: TransactionKind::Expense,
+                amount_cents: 2_500,
+                date: "2026-01-01",
+                category_id: None,
+                merchant_id: None,
+                note: Some("花销".to_owned()),
+            },
+        );
+    }
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_accounts(&mut app);
+
+    // 调整弹窗：当前余额 -¥25（V017 缓存读数）。
+    app.press(&format!("id:acct-more-{cash_id}")).unwrap();
+    app.choose_menu_item("调整余额").unwrap();
+    app.wait_for("text:调整余额").unwrap();
+    app.wait_for("id:acct-adjust-current").unwrap();
+    app.wait_for("text:-¥25").unwrap();
+    app.wait_for("id:acct-adjust-target").unwrap();
+
+    // 目标差额实时呈现。
+    app.type_text("id:acct-adjust-target", "70").unwrap();
+    app.wait_for("text:将从「无」转入 ¥95（生成一笔与「无」的转账，删除该转账即撤销调整）")
+        .unwrap();
+
+    // 确认 → 反馈在屏 + 交易列表重读见转账行（失效信号广播落第点）。
+    app.press("id:acct-adjust-confirm").unwrap();
+    app.wait_for("text:余额已调整").unwrap();
+    app.wait_for("text:¥70").unwrap();
+    open_transactions(&mut app);
+    app.wait_for("text:共 2 条").unwrap();
+}
+
+/// 目标绑定账户（ADR-0133 决策 2 / issue #1752 平价）：攒钱分区独立成卡、
+/// 类型覆写「攒钱」；编辑弹窗名称随动只读（禁用）；删除被目标域守卫码化拒
+/// 绝（错误落反馈条位不静默）。拆 connect 接线（boot 目标读 / 装配覆写 /
+/// boot::delete_account 守卫任一环）即红。
+#[test]
+fn accounts_view_goal_partition_and_name_readonly_with_delete_guard() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("accounts-goal");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        seed_cash_account(&db);
+        let conn = db
+            .conn
+            .lock()
+            .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
+            .unwrap();
+        ledger_savings_goal::create_savings_goal(
+            &conn,
+            &ledger_savings_goal::SavingsGoalInput {
+                name: "旅行基金".to_owned(),
+                target_amount_cents: 50_000,
+                deadline: None,
+            },
+        )
+        .unwrap();
+    }
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_accounts(&mut app);
+
+    // 攒钱分区卡 + 类型覆写（主表保留普通账户）。
+    app.wait_for("id:acct-goal-table").unwrap();
+    app.wait_for("text:旅行基金").unwrap();
+    app.wait_for("text:攒钱").unwrap();
+
+    // 编辑弹窗名称随动只读（禁用输入）。
+    let goal_account_id = nsh_app_lib_account_id(&dir, "旅行基金");
+    app.press(&format!("id:acct-more-{goal_account_id}"))
+        .unwrap();
+    app.choose_menu_item("编辑").unwrap();
+    app.wait_for("text:编辑账户").unwrap();
+    app.wait_for("text:攒钱").unwrap();
+    assert!(
+        !app.screen().enabled("id:acct-edit-name").unwrap(),
+        "目标绑定账户名称随动只读"
+    );
+    app.press("id:acct-edit-cancel").unwrap();
+
+    // 删除被目标域守卫拒绝：确认后条位呈现码化文文（不静默），行仍在。
+    app.press(&format!("id:acct-more-{goal_account_id}"))
+        .unwrap();
+    app.choose_menu_item("删除").unwrap();
+    app.wait_for("text:删除账户").unwrap();
+    app.press("id:danger-confirm").unwrap();
+    app.wait_for_gone("text:删除账户", DEFAULT_WAIT).unwrap();
+    app.wait_for("id:acct-status").unwrap();
+    assert!(
+        app.screen().texts().iter().any(|t| t.contains("删除失败")),
+        "目标域守卫拒绝的码化错误在反馈条位：{:?}",
+        app.screen().texts()
+    );
+    assert!(app.shows("旅行基金"), "删除被拒后行仍在");
+}
+
+/// 金额隐私掩码（旧壳 formatAmount 含隐私掩码口径）：存储开关打开 → 余额列
+/// 掩码（¥xx 不再在屏）。拆掩码消费（装配入参 privacy_enabled）即红。
+#[test]
+fn accounts_view_amount_privacy_masks_balances() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("accounts-privacy");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        seed_account_with_balance(&db, "测试现金", 10_000);
+    }
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config_with_storage(&[(
+        "amount_privacy_enabled",
+        "true",
+    )]))
+    .unwrap();
+    open_accounts(&mut app);
+    app.wait_for("text:••••").unwrap();
+    assert!(
+        !app.shows("¥100"),
+        "隐私模式下金额掩码：{:?}",
+        app.screen().texts()
+    );
+}
+
+/// 账户名下钻（issue #96/#97 平价）：点名称 → 跳交易页带账户筛选下钻载荷
+/// （只过滤该账户的交易）；无交易的其它账户名字不涉。拆 drill_transactions
+/// 的 nav::open 接线即红（点击停留账户视图）。
+#[test]
+fn accounts_view_name_click_drills_to_transactions_filtered() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("accounts-drill");
+    let cash_id;
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        cash_id = seed_cash_account(&db);
+        let other = seed_account(&db, "太空", AccountType::Cash);
+        for (date, note) in [("2026-01-01", "现金笔一"), ("2026-01-02", "现金笔二")] {
+            seed_transaction(
+                &db,
+                TxnSeed {
+                    account: &cash_id,
+                    to_account: None,
+                    kind: TransactionKind::Expense,
+                    amount_cents: 2_500,
+                    date,
+                    category_id: None,
+                    merchant_id: None,
+                    note: Some(note.to_owned()),
+                },
+            );
+        }
+        seed_transaction(
+            &db,
+            TxnSeed {
+                account: &other,
+                to_account: None,
+                kind: TransactionKind::Expense,
+                amount_cents: 6_600,
+                date: "2026-01-03",
+                category_id: None,
+                merchant_id: None,
+                note: Some("另一账户笔".to_owned()),
+            },
+        );
+    }
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_accounts(&mut app);
+
+    // 点名称 → 交易页带账户筛选下钻：只剩现金账户两笔。「删除即红」负向条
+    // 目：删账下钻 nav::open 接线 → 点击后停留账户视图，本断言红。
+    app.press(&format!("id:acct-name-{cash_id}")).unwrap();
+    app.wait_for("id:tx-table").unwrap();
+    app.wait_for("text:共 2 条").unwrap();
+    assert!(
+        app.shows("现金笔一") && app.shows("现金笔二"),
+        "下钻筛选命中在屏"
+    );
+    assert!(
+        !app.shows("另一账户笔"),
+        "其它账户交易被下钻筛选排除：{:?}",
+        app.screen().texts()
+    );
+}
+
+/// 经域读路径反查账户 id（用例共用；弹窗/菜单目标 test_id 嵌 id 用）。
+fn nsh_app_lib_account_id(dir: &std::path::Path, name: &str) -> String {
+    let db = nsh_app::boot::boot_ledger(dir).unwrap();
+    let conn = db
+        .read_conn
+        .lock()
+        .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
+        .unwrap();
+    ledger_accounts::list_accounts_for_api(&conn)
+        .unwrap()
+        .into_iter()
+        .find(|a| a.name == name)
+        .map(|a| a.id)
+        .unwrap_or_else(|| panic!("未找到账户 {name}"))
 }

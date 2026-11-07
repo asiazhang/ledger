@@ -1362,6 +1362,7 @@ pub(crate) fn transaction_form_modal(
                                 move || policy_options.get(),
                                 state.policy_id,
                                 "选择保单（可选）",
+                                true,
                             )),
                     ),
                 FormFamily::Transfer => body
@@ -1541,6 +1542,7 @@ pub(crate) fn transaction_form_modal(
                                 move || policy_options.get(),
                                 state.policy_id,
                                 "选择保单（可选）",
+                                true,
                             )),
                     )
                     // 出资项子行区（多账户分摊：无主账户位——契约互斥；合计
@@ -1589,6 +1591,7 @@ pub(crate) fn transaction_form_modal(
                                 move || policy_options.get(),
                                 state.policy_id,
                                 "选择保单（可选）",
+                                true,
                             )),
                     )
                     // 商品行区（订单 + 商品行：逐行名称/件数/分类/单价，行小

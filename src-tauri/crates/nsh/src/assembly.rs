@@ -23,6 +23,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use chrono::Datelike;
+
 use ledger_accounts::AccountType;
 use ledger_currencies::Currency;
 use ledger_transaction::{
@@ -255,31 +257,52 @@ impl Default for CurrencyFormat {
 /// 币种展示参数表（账本币种字典的只读投影，code → 符号/小数位）。
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct CurrencyTable {
-    by_code: BTreeMap<String, CurrencyFormat>,
+    pub(crate) by_code: BTreeMap<String, CurrencyFormat>,
+    /// 币种字典读序条目（code + name）：表单下拉选项消费面——选项序保持域
+    /// 读序（不按 code 重排，旧壳 reference.currencies 序同口径）。
+    pub(crate) entries: Vec<(String, String)>,
 }
 
 impl CurrencyTable {
     /// 从币种参考数据行集投影。
     pub fn from_currencies<'a>(rows: impl IntoIterator<Item = &'a Currency>) -> Self {
-        Self {
-            by_code: rows
-                .into_iter()
-                .map(|c| {
-                    (
-                        c.code.clone(),
-                        CurrencyFormat {
-                            symbol: c.symbol.clone(),
-                            decimal_places: u32::try_from(c.decimal_places.max(0)).unwrap_or(2),
-                        },
-                    )
-                })
-                .collect(),
-        }
+        let rows: Vec<&'a Currency> = rows.into_iter().collect();
+        let by_code = rows
+            .iter()
+            .map(|&c| {
+                (
+                    c.code.clone(),
+                    CurrencyFormat {
+                        symbol: c.symbol.clone(),
+                        decimal_places: u32::try_from(c.decimal_places.max(0)).unwrap_or(2),
+                    },
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        // 读序条目自同行集投影（BTreeMap 上面的 by_code 已按 code 重排，表单
+        // 选项序不能从它拿）；code → 名与表同源。
+        let entries = rows
+            .iter()
+            .map(|c| (c.code.clone(), c.name.clone()))
+            .collect();
+        Self { by_code, entries }
     }
 
     /// 币种 `code` 的展示参数；未登记（币种被删等）走缺省，不静默换符号。
     pub fn format_of(&self, code: &str) -> CurrencyFormat {
         self.by_code.get(code).cloned().unwrap_or_default()
+    }
+
+    /// 币种选项表（账户表单币种下拉；label 镜像旧壳 `currencyOptions`
+    /// 「{name} ({code})」同形，条目序保持域读序、不按 code 重排）。
+    pub fn currency_options(&self) -> Vec<CategoryOption> {
+        self.entries
+            .iter()
+            .map(|(code, name)| CategoryOption {
+                id: code.clone(),
+                label: format!("{} ({})", name, code),
+            })
+            .collect()
     }
 }
 
@@ -2357,8 +2380,377 @@ pub const BUDGET_COLUMNS: &[ColumnDef] = &[
     },
 ];
 
+// ---------------------------------------------------------------------------
+// 账户视图装配族（#2041；旧壳 AccountsView 与 src/accounts/credit-card.ts、
+// src/scheduled/plan-usage.ts 纯函数的重生）：余额行装配、信用卡档案派生、
+// 三分区派生、已归档分区合计与计划引用计数。口径对拍旧壳。
+// ---------------------------------------------------------------------------
+
+/// 使用率警示阈值（%，spec #1327 / ADR-0119 判据）：达到或超过它时列表小字
+/// 用警示色。阈值只此一处，不做设置项（旧壳同值）。
+pub const CREDIT_UTILIZATION_WARNING_PERCENT: i64 = 90;
+
+/// 信用卡档案派生视图（账户列表使用率小字与编辑弹窗只读摘要共用的唯一形态，
+/// 旧壳 `creditProfile` 重生）。派生量不落库、不参与余额口径：已用额度由余额
+/// 派生（`max(0, −余额)`），与 `account_flow` 符号矩阵同源。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CreditProfile {
+    /// 信用额度（未设置 = None）。
+    pub limit_cents: Option<i64>,
+    /// 已用额度 = `max(0, −余额)`（余额为正即溢缴款，此时已用为 0）。
+    pub used_cents: i64,
+    /// 可用额度 = 额度 + 溢缴款 = **额度 + 余额**（`used + account_flow` 符号
+    /// 矩阵化简）；额度未设置时 `None`；超额使用时为负值（如实呈现不钳 0，
+    /// 与使用率 >100% 同口径）。
+    pub available_cents: Option<i64>,
+    /// 使用率 %（四舍五入取整）；额度未设置时 `None`。
+    pub utilization_percent: Option<i64>,
+    /// 下次账单日（ISO 短格式）；账单日未设置时 `None`。
+    pub next_statement_date: Option<String>,
+    /// 下次还款日（ISO 短格式）；还款日未设置时 `None`。
+    pub next_due_date: Option<String>,
+}
+
+/// 「下次某日」（旧壳 `nextOccurrenceOfDay` 重生）：从 `today` 起最近的该
+/// 「每月第 N 日」——当月没有该日取当月最后一天（31 日 → 2 月取 28/29，与
+/// 后端调度器月末钳制同口径；展示层钳制不落库）；今天就是该日取今天不跳下月；
+/// 日越界（1–31 外的脏值）不猜返回 `None`。
+pub fn next_occurrence_of_day(day: i64, today: chrono::NaiveDate) -> Option<String> {
+    if !(1..=31).contains(&day) {
+        return None;
+    }
+    let month_last = |y: i32, m: u32| {
+        let (ny, nm) = if m == 12 { (y + 1, 1) } else { (y, m + 1) };
+        chrono::NaiveDate::from_ymd_opt(ny, nm, 1)
+            .and_then(|first| first.pred_opt())
+            .map(|last| i64::from(last.day()))
+    };
+    let clamped = day.min(month_last(today.year(), today.month())?);
+    let (this_year, this_month) = (today.year(), today.month());
+    if i64::from(today.day()) <= clamped {
+        return chrono::NaiveDate::from_ymd_opt(this_year, this_month, clamped as u32)
+            .map(|d| d.to_string());
+    }
+    let (next_year, next_month) = if today.month() == 12 {
+        (today.year() + 1, 1)
+    } else {
+        (today.year(), today.month() + 1)
+    };
+    let next_clamped = day.min(month_last(next_year, next_month)?);
+    chrono::NaiveDate::from_ymd_opt(next_year, next_month, next_clamped as u32)
+        .map(|d| d.to_string())
+}
+
+/// 信用卡派生（唯一入口，旧壳 `creditProfile` 同判据，旧壳吃账户行、本函数
+/// 吃散字段——域行无 `Clone` 语义，壳侧行快照携带档案三键与余额）：非信用卡
+/// 账户返回 `None`——调用方据此分支，不散落 `kind == credit` 判断。
+pub fn credit_profile_fields(
+    kind: AccountType,
+    credit_limit_cents: Option<i64>,
+    statement_day: Option<i64>,
+    due_day: Option<i64>,
+    balance_cents: i64,
+    today: chrono::NaiveDate,
+) -> Option<CreditProfile> {
+    if kind != AccountType::Credit {
+        return None;
+    }
+    let used_cents = (-balance_cents).max(0);
+    Some(CreditProfile {
+        available_cents: credit_limit_cents.map(|limit| limit + balance_cents),
+        utilization_percent: credit_limit_cents
+            .filter(|limit| *limit > 0)
+            .map(|limit| (used_cents as f64 / limit as f64 * 100.0).round() as i64),
+        next_statement_date: statement_day.and_then(|d| next_occurrence_of_day(d, today)),
+        next_due_date: due_day.and_then(|d| next_occurrence_of_day(d, today)),
+        limit_cents: credit_limit_cents,
+        used_cents,
+    })
+}
+
+/// 「今天」（本地时区日历日）：账户使用率小字的「下次账单节点」派生的时间
+/// 基点（与旧壳 `new Date()` 本地日历日语义同形；派生随自然时间滚动，快照
+/// 进装配行不持久化）。
+fn today_date() -> chrono::NaiveDate {
+    chrono::Local::now().date_naive()
+}
+
+/// 账户余额清单列（旧壳 accounts.list.col* 同词表；余额列末端对齐）：名称 /
+/// 类型 / 币种 / 余额 / 操作。建议宽度供 UI 映射，富余宽度全给名称列（旧壳
+/// 名称列弹性，交易列表备注列先例同形）。
+pub const ACCOUNT_COLUMNS: &[ColumnDef] = &[
+    ColumnDef {
+        key: "name",
+        title: "名称",
+        align: ColumnAlign::Start,
+        width: 180.0,
+    },
+    ColumnDef {
+        key: "type",
+        title: "类型",
+        align: ColumnAlign::Start,
+        width: 100.0,
+    },
+    ColumnDef {
+        key: "currency",
+        title: "币种",
+        align: ColumnAlign::Start,
+        width: 90.0,
+    },
+    ColumnDef {
+        key: "balance",
+        title: "余额",
+        align: ColumnAlign::End,
+        width: 130.0,
+    },
+    ColumnDef {
+        key: "actions",
+        title: "操作",
+        align: ColumnAlign::Start,
+        width: 70.0,
+    },
+];
+
+/// 账户类型选项闭集（创建表单类型下拉；旧壳 ACCOUNT_TYPES 展示序同序、
+/// accounts.type.* 同词表）。
+pub fn account_type_options() -> Vec<CategoryOption> {
+    [
+        (AccountType::Cash, "现金"),
+        (AccountType::Bank, "银行卡"),
+        (AccountType::Credit, "信用卡"),
+        (AccountType::Ewallet, "电子钱包"),
+        (AccountType::Investment, "投资账户"),
+        (AccountType::Debt, "负债"),
+        (AccountType::Receivable, "借出款"),
+        (AccountType::Other, "其他"),
+    ]
+    .into_iter()
+    .map(|(kind, label)| CategoryOption {
+        id: kind.to_string(),
+        label: label.to_owned(),
+    })
+    .collect()
+}
+
+/// 账户类型标签（类型列与编辑弹窗只读类型位的普通类型渲染面；目标绑定账户
+/// 由装配覆写为「攒钱」，本函数只答普通类型）。
+pub fn account_type_label(kind: AccountType) -> &'static str {
+    match kind {
+        AccountType::Cash => "现金",
+        AccountType::Bank => "银行卡",
+        AccountType::Credit => "信用卡",
+        AccountType::Ewallet => "电子钱包",
+        AccountType::Investment => "投资账户",
+        AccountType::Debt => "负债",
+        AccountType::Receivable => "借出款",
+        AccountType::Other => "其他",
+    }
+}
+
+/// 账户清单行装配产物：每列最终展示文本（字段与 [`ACCOUNT_COLUMNS`] 逐列
+/// 对应；操作列恒空串，格内容由 UI 侧「⋯」触发件自绘）+ 行级附加形态
+/// （分区归属 / 目标绑定 / 信用卡使用率小字）。`id` 供行级操作定位（右键
+/// 菜单与「⋯」按钮的同位目标）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct AccountRowCells {
+    /// 账户 id（操作目标）。
+    pub id: String,
+    /// 名称列（账户原名；目标绑定账户名称随目标联动，账户侧只读不改写——
+    /// 此处只呈现读到的名字）。
+    pub name: String,
+    /// 类型列（目标绑定账户覆写为「攒钱」，旧壳 accountTypeLabel 同口径）。
+    pub type_label: String,
+    /// 币种列（ISO 原样）。
+    pub currency_code: String,
+    /// 余额列（formatAmount 含隐私掩码与数字分组；V017 缓存读数，本层只
+    /// 消费不另立算术）。
+    pub balance: String,
+    /// 信用卡使用率小字百分比（仅已用 > 0 且额度已设置；None = 不呈现）。
+    pub credit_percent: Option<i64>,
+    /// 使用率 ≥ 警示阈值的小字警示色判定（随 credit_percent 在场才有义）。
+    pub credit_warning: bool,
+    /// 已归档（分区归属与「已归档」分区呈现的消费面）。
+    pub archived: bool,
+    /// 目标绑定（分区三分派与编辑弹窗「名称随动只读」判定的同源标注）。
+    pub goal_bound: bool,
+}
+
+/// 账户行装配上下文：币种格式表、目标绑定集、隐私态（快照入参，纯函数）。
+#[derive(Debug, Clone)]
+pub struct AccountListContext<'a> {
+    pub currencies: &'a CurrencyTable,
+    pub goal_account_ids: &'a BTreeSet<String>,
+    pub privacy_enabled: bool,
+}
+
+/// 账户余额行装配入参 face（#2041）：域行 `ledger_accounts::AccountBalance`
+/// 无 `Clone` 语义，壳侧以可克隆行快照持有后按本 face 入参装配（字段全集
+/// 与域行一致，纯透传；Lifetime 以借用字段面拖尾——装配期零拷贝）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AccountRowFace<'a> {
+    pub id: &'a str,
+    pub name: &'a str,
+    pub kind: AccountType,
+    pub currency_code: &'a str,
+    pub archived: bool,
+    pub balance_cents: i64,
+    pub credit_limit_cents: Option<i64>,
+    pub statement_day: Option<i64>,
+    pub due_day: Option<i64>,
+}
+
+/// 装配账户余额行集（顺序保持域清单序 = created_at 升序，旧壳同口径；三分区
+/// 是同一快照的纯派生不做任何加减、重排——余额与合计读数不受分组影响，
+/// ADR-0133 决策 2 / ADR-0142 决策 1）。
+pub fn assemble_account_rows<'a>(
+    rows: &[AccountRowFace<'a>],
+    ctx: &AccountListContext<'_>,
+) -> Vec<AccountRowCells> {
+    rows.iter()
+        .map(|row| {
+            let goal_bound = ctx.goal_account_ids.contains(row.id);
+            let fmt = ctx.currencies.format_of(row.currency_code);
+            let (credit_percent, credit_warning) = match credit_profile_fields(
+                row.kind,
+                row.credit_limit_cents,
+                row.statement_day,
+                row.due_day,
+                row.balance_cents,
+                today_date(),
+            )
+            .filter(|profile| profile.used_cents > 0)
+            .and_then(|profile| profile.utilization_percent)
+            {
+                Some(percent) => (Some(percent), percent >= CREDIT_UTILIZATION_WARNING_PERCENT),
+                None => (None, false),
+            };
+            AccountRowCells {
+                id: row.id.to_owned(),
+                name: row.name.to_owned(),
+                type_label: if goal_bound {
+                    "攒钱".to_owned()
+                } else {
+                    account_type_label(row.kind).to_owned()
+                },
+                currency_code: row.currency_code.to_owned(),
+                balance: if ctx.privacy_enabled {
+                    AMOUNT_PRIVACY_MASK.to_owned()
+                } else {
+                    format_amount_basic(row.balance_cents, &fmt)
+                },
+                credit_percent,
+                credit_warning,
+                archived: row.archived,
+                goal_bound,
+            }
+        })
+        .collect()
+}
+
+/// 三分区（旧壳 goalBalances / normalBalances / archivedBalances 同口径纯
+/// 派生）：目标绑定（未归档）→「攒钱」组；未绑定且未归档 → 主表；已归档 →
+/// 页底已归档分区。同一快照派生，零加减零重排（组内序保持域清单序）。
+pub fn partition_account_rows(
+    rows: &[AccountRowCells],
+) -> (
+    Vec<AccountRowCells>,
+    Vec<AccountRowCells>,
+    Vec<AccountRowCells>,
+) {
+    let mut goals = Vec::new();
+    let mut normal = Vec::new();
+    let mut archived = Vec::new();
+    for row in rows {
+        if row.archived {
+            archived.push(row.clone());
+        } else if row.goal_bound {
+            goals.push(row.clone());
+        } else {
+            normal.push(row.clone());
+        }
+    }
+    (goals, normal, archived)
+}
+
+/// 已归档分区合计（旧壳 archivedSummary 同口径纯派生）：**按币种各算一份**
+/// 跨币种不相加（前端无汇率折算接缝，净资产折算归后端 dashboard_overview，
+/// ADR-0067）。计数与余额累加回到「已归档分行 × 余额快照」同一份快照
+/// （count 按币种分行数、total 按同币种已归档账户余额原值相加，同一快照直接
+/// 累加，与主表各自派生、互不重算，ADR-0142 决策 1）。金额经与主表同一金额
+/// 格式化口径（含隐私掩码）；单币种时只余一组，读法仍是一句。
+pub fn assemble_archived_summary<'a>(
+    archived: &[AccountRowCells],
+    rows: &[AccountRowFace<'a>],
+    currencies: &CurrencyTable,
+    privacy_enabled: bool,
+) -> String {
+    // 分组：count 按已归档分行、total 按同一份余额快照累加（Map 保快照行
+    // 首现顺序——域清单序 = created_at 升序，与旧壳固化首现序同形）。
+    let mut order: Vec<String> = Vec::new();
+    let mut counts: BTreeMap<String, usize> = BTreeMap::new();
+    for row in archived {
+        // entry 一次并行两件事（首现登记 + 累加）：counts 之前只读不写，
+        // get_mut 的「已登记」断言在首行必然落空——修复点（#2041 测试钉住）。
+        let registered = !counts.contains_key(&row.currency_code);
+        let count = counts.entry(row.currency_code.clone()).or_insert(0);
+        *count += 1;
+        if registered {
+            order.push(row.currency_code.clone());
+        }
+    }
+    let mut totals: BTreeMap<String, i64> = BTreeMap::new();
+    for face in rows {
+        if face.archived {
+            *totals.entry(face.currency_code.to_owned()).or_insert(0) += face.balance_cents;
+        }
+    }
+    let parts: Vec<String> = order
+        .iter()
+        .filter_map(|code| {
+            let count = *counts.get(code)?;
+            let total = totals.get(code).copied().unwrap_or(0);
+            let amount = if privacy_enabled {
+                AMOUNT_PRIVACY_MASK.to_owned()
+            } else {
+                format_amount_basic(total, &currencies.format_of(code))
+            };
+            Some(format!("{count} 个账户 · 合计 {amount}"))
+        })
+        .collect();
+    parts.join("；")
+}
+
+/// 计划行快照的引用 face（#2041）：域行 `ScheduledTransactionWithExt` 无
+/// `Clone` 语义，壳侧以可克隆快照持有后按本 face 入参——只携带引用计数的判
+/// 据字段。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlanLeadFace {
+    pub is_deleted: bool,
+    pub status: String,
+    pub account_id: String,
+    pub to_account_id: Option<String>,
+}
+
+/// 引用该账户的未结束计划数（旧壳 `countUnfinishedPlansUsingAccount` 重生）：
+/// `active` / `paused` 计入（仍持有该账户）；`cancelled` / `completed` 不计；
+/// 软删计划不计（读命令已滤但谓词独立自足，判据不依赖调用方行集形状）。
+/// 付款 / 转出（`account_id`）∪ 转入（`to_account_id`，仅定时转账恒有义）
+/// 两端取或，同一计划两端都指向该账户只计一次（谓词内的或，不是两次计数）。
+pub fn count_unfinished_plans(plans: &[PlanLeadFace], account_id: &str) -> usize {
+    plans
+        .iter()
+        .filter(|plan| {
+            !plan.is_deleted
+                && matches!(plan.status.as_str(), "active" | "paused")
+                && (plan.account_id == account_id
+                    || plan.to_account_id.as_deref() == Some(account_id))
+        })
+        .count()
+}
+
 #[cfg(test)]
 mod tests {
+
     use super::*;
 
     use ledger_transaction::ConvertFields;
@@ -4600,5 +4992,236 @@ mod tests {
         let masked = assemble_financial_freedom(&freedom, &cny_table(), true);
         assert_eq!(masked.numerator_line, "可投资资产 ••••");
         assert_eq!(masked.ratio_text, "37.5%");
+    }
+    // =====================================================================
+    // 账户视图装配族（#2041）：清单格文本与余额口径（V017 缓存读数只消费）。
+    // =====================================================================
+
+    /// 账户行快照（用例共用）：名称 / 类型 / 币种 / 余额 / 归档态随参。
+    fn account_row(
+        id: &'static str,
+        name: &'static str,
+        kind: AccountType,
+        code: &'static str,
+        balance_cents: i64,
+        archived: bool,
+        credit_limit_cents: Option<i64>,
+    ) -> crate::accounts::AccountRowSnap {
+        crate::accounts::AccountRowSnap {
+            id: id.to_owned(),
+            name: name.to_owned(),
+            kind,
+            currency_code: code.to_owned(),
+            is_archived: archived,
+            balance_cents,
+            credit_limit_cents,
+            statement_day: None,
+            due_day: None,
+        }
+    }
+
+    /// 账户 face 集映射（快照 → 装配入参面）。
+    fn faces<'a>(rows: &'a [crate::accounts::AccountRowSnap]) -> Vec<AccountRowFace<'a>> {
+        rows.iter()
+            .map(|row| AccountRowFace {
+                id: &row.id,
+                name: &row.name,
+                kind: row.kind,
+                currency_code: &row.currency_code,
+                archived: row.is_archived,
+                balance_cents: row.balance_cents,
+                credit_limit_cents: row.credit_limit_cents,
+                statement_day: row.statement_day,
+                due_day: row.due_day,
+            })
+            .collect()
+    }
+
+    /// 行装配与分区（旧壳三分区 filter 同口径）：目标绑定进「攒钱」、已归档
+    /// 进页底、普通留主表；格文本（类型标签 / 余额格式化 / 类型覆写）与列集
+    /// 逐列对拍。删任一装配分支即红（先例同形：删除即红负向条目——面在
+    /// 单测即函数分支本身）。
+    #[test]
+    fn account_rows_assemble_and_partition() {
+        let asset = account_row(
+            "a1",
+            "现金",
+            AccountType::Cash,
+            "CNY",
+            123_4567,
+            false,
+            None,
+        );
+        let goal = account_row(
+            "a2",
+            "旅行基金",
+            AccountType::Other,
+            "CNY",
+            1000,
+            false,
+            None,
+        );
+        let archived = account_row("a3", "旧户", AccountType::Bank, "CNY", 500, true, None);
+        let rows = vec![asset.clone(), goal.clone(), archived.clone()];
+
+        let ctx = AccountListContext {
+            currencies: Box::leak(Box::new(table())),
+            goal_account_ids: Box::leak(Box::new({
+                let mut set = std::collections::BTreeSet::new();
+                set.insert("a2".to_owned());
+                set
+            })),
+            privacy_enabled: false,
+        };
+        let cells = assemble_account_rows(&faces(&rows), &ctx);
+        assert_eq!(cells.len(), 3, "一行的输入一行装配（顺序保持域清单序）");
+        // 格文本：普通行 / 目标绑定覆写「攒钱」/ 余额格式化。
+        assert_eq!(cells[0].name, "现金");
+        assert_eq!(cells[0].type_label, "现金");
+        assert_eq!(cells[0].currency_code, "CNY");
+        assert_eq!(
+            cells[0].balance, "¥1,2345.67",
+            "V017 缓存读数经同一金额格式化（zh 四位一组，与列表同口径）"
+        );
+        assert_eq!(cells[1].type_label, "攒钱", "目标绑定账户类型覆写");
+        assert!(!cells[1].archived && cells[1].goal_bound);
+        assert_eq!(cells[2].type_label, "银行卡", "普通行不覆写");
+        assert!(cells[2].archived && !cells[2].goal_bound);
+
+        // 三分区：攒钱卡 / 主表 / 页底已归档（同快照纯派生零重排）。
+        let (goals, normal, archived) = partition_account_rows(&cells);
+        assert_eq!(
+            goals.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(),
+            vec!["旅行基金"]
+        );
+        assert_eq!(
+            normal.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(),
+            vec!["现金"]
+        );
+        assert_eq!(
+            archived.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(),
+            vec!["旧户"]
+        );
+    }
+
+    /// 隐私掩码在余额列与已归档合计收口（金额隐私同一装配入口）。
+    #[test]
+    fn account_rows_mask_balance_when_privacy_enabled() {
+        let asset = account_row(
+            "a1",
+            "现金",
+            AccountType::Cash,
+            "CNY",
+            123_4567,
+            false,
+            None,
+        );
+        let archived = account_row("a2", "旧户", AccountType::Bank, "CNY", 500, true, None);
+        let rows = vec![asset, archived];
+        let ctx = AccountListContext {
+            currencies: Box::leak(Box::new(table())),
+            goal_account_ids: Box::leak(Box::new(std::collections::BTreeSet::new())),
+            privacy_enabled: true,
+        };
+        let cells = assemble_account_rows(&faces(&rows), &ctx);
+        assert_eq!(cells[0].balance, AMOUNT_PRIVACY_MASK);
+        assert_eq!(cells[1].balance, AMOUNT_PRIVACY_MASK);
+        // 已归档合计同掩码（与主表同一格式化接缝）。
+        let summary = assemble_archived_summary(&cells[1..2], &faces(&rows), &table(), true);
+        assert!(
+            summary.contains(AMOUNT_PRIVACY_MASK),
+            "已归档合计掩码：{summary}"
+        );
+        assert!(summary.contains("1 个账户"), "计数并读法同旧壳");
+    }
+
+    /// 未结束计划数（旧壳 countUnfinishedPlansUsingAccount 重生）：付款 / 转出
+    /// 两端取或、同计划双端只计一次；软删与非在用状态不计。
+    #[test]
+    fn count_unfinished_plans_fuses_both_account_ends() {
+        let plan_face = |_id: &'static str,
+                         account_id: &str,
+                         to_account_id: Option<&str>,
+                         status: &str,
+                         deleted: bool| crate::assembly::PlanLeadFace {
+            is_deleted: deleted,
+            status: status.to_owned(),
+            account_id: account_id.to_owned(),
+            to_account_id: to_account_id.map(str::to_owned),
+        };
+        let plans = vec![
+            plan_face("p1", "a1", None, "active", false),
+            plan_face("p2", "a2", Some("a1"), "paused", false),
+            plan_face("p3", "a1", None, "cancelled", false),
+            plan_face("p4", "a1", None, "active", true),
+        ];
+        assert_eq!(
+            count_unfinished_plans(&plans, "a1"),
+            2,
+            "p1 命中 + p2 传入端命中；同计划取或不双计"
+        );
+    }
+
+    /// 信用卡使用率（旧壳 listUtilizationPercent 重生）：已用 > 0 且额度已设
+    /// 才呈现；已用 ≥ 90% 判警示。
+    #[test]
+    fn credit_profile_derives_utilization_and_warning() {
+        let money = account_row(
+            "a1",
+            "白金卡",
+            AccountType::Credit,
+            "CNY",
+            -15_000,
+            false,
+            Some(20_000),
+        );
+        let owned = [money.clone()];
+        let face = faces(&owned);
+        let profile = credit_profile_fields(
+            face[0].kind,
+            face[0].credit_limit_cents,
+            face[0].statement_day,
+            face[0].due_day,
+            face[0].balance_cents,
+            chrono::NaiveDate::from_ymd_opt(2026, 1, 15).unwrap(),
+        )
+        .expect("信用卡账户有档案派生");
+        assert_eq!(profile.used_cents, 15_000);
+        assert_eq!(profile.available_cents, Some(5_000));
+        assert_eq!(profile.utilization_percent, Some(75));
+        // 警示阈值两端（<90 正常 / ≥90 警示）。
+        let near = account_row(
+            "a2",
+            "刷爆卡",
+            AccountType::Credit,
+            "CNY",
+            -18_000,
+            false,
+            Some(20_000),
+        );
+        let near_owned = [near];
+        let near_face = faces(&near_owned);
+        let near_profile = credit_profile_fields(
+            near_face[0].kind,
+            near_face[0].credit_limit_cents,
+            near_face[0].statement_day,
+            near_face[0].due_day,
+            near_face[0].balance_cents,
+            chrono::NaiveDate::from_ymd_opt(2026, 1, 15).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(near_profile.utilization_percent, Some(90));
+        // 非信用卡账户无派生。
+        assert!(
+            credit_profile_fields(
+                AccountType::Cash,
+                None,
+                None,
+                None,
+                -1_000,
+                chrono::NaiveDate::from_ymd_opt(2026, 1, 15).unwrap(),
+            )
+            .is_none()
+        );
     }
 }

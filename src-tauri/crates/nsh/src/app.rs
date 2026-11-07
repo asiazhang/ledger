@@ -36,8 +36,9 @@ use crate::assembly::{
 use crate::boot;
 use crate::nav_model::ViewName;
 use crate::{
-    backup_entry, context_menu, danger, dashboard, modal, multi_select, nav, nav_model, overlay,
-    period_row, pinyin_select, popconfirm, search, sidebar, signals, tx_filter, txn_form, views,
+    accounts, backup_entry, context_menu, danger, dashboard, modal, multi_select, nav, nav_model,
+    overlay, period_row, pinyin_select, popconfirm, search, sidebar, signals, tx_filter, txn_form,
+    views,
 };
 
 /// 金额隐私模式开关的存储键（设备轻量设置项，与旧壳同键同值形态：旧壳
@@ -1417,7 +1418,7 @@ fn budget_period_radio(
 }
 
 /// 表单字段标签（弱化小字，旧壳 NFormItem label 的本壳形态）。
-fn field_label(label: &'static str, muted: AdaptiveColor) -> impl IntoElement {
+pub(crate) fn field_label(label: &'static str, muted: AdaptiveColor) -> impl IntoElement {
     text(label).text_size(px(12.0)).text_color(muted)
 }
 
@@ -2195,31 +2196,33 @@ fn view_host(nav: nav::NavStore) -> impl IntoElement {
     // 占位。
     when(is(ViewName::Transactions), transactions_view).otherwise(move || {
         when(is(ViewName::Budget), budget_view).otherwise(move || {
-            when(is(ViewName::Dashboard), dashboard::dashboard_view).otherwise(move || {
-                when(is(ViewName::Search), search::search_view).otherwise(move || {
-                    when(
-                        is(ViewName::BookkeepingMore),
-                        group_more(nav_model::GroupId::Bookkeeping),
-                    )
-                    .otherwise(move || {
+            when(is(ViewName::Accounts), accounts::accounts_view).otherwise(move || {
+                when(is(ViewName::Dashboard), dashboard::dashboard_view).otherwise(move || {
+                    when(is(ViewName::Search), search::search_view).otherwise(move || {
                         when(
-                            is(ViewName::AssetsMore),
-                            group_more(nav_model::GroupId::Assets),
+                            is(ViewName::BookkeepingMore),
+                            group_more(nav_model::GroupId::Bookkeeping),
                         )
                         .otherwise(move || {
                             when(
-                                is(ViewName::InsightsMore),
-                                group_more(nav_model::GroupId::Insights),
+                                is(ViewName::AssetsMore),
+                                group_more(nav_model::GroupId::Assets),
                             )
                             .otherwise(move || {
-                                // 未迁移视图反应式占位壳：标题随当前视图；意图
-                                // 消费时机 = 落位（effect 键 current，同轮落地）。
-                                let focused = signal(None::<nav::NavIntent>);
-                                effect(move || {
-                                    let _current = nav.current.get();
-                                    focused.set(nav::take_intent());
-                                });
-                                views::placeholder_shell_current(focused)
+                                when(
+                                    is(ViewName::InsightsMore),
+                                    group_more(nav_model::GroupId::Insights),
+                                )
+                                .otherwise(move || {
+                                    // 未迁移视图反应式占位壳：标题随当前视图；意图
+                                    // 消费时机 = 落位（effect 键 current，同轮落地）。
+                                    let focused = signal(None::<nav::NavIntent>);
+                                    effect(move || {
+                                        let _current = nav.current.get();
+                                        focused.set(nav::take_intent());
+                                    });
+                                    views::placeholder_shell_current(focused)
+                                })
                             })
                         })
                     })

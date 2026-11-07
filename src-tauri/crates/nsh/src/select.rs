@@ -30,11 +30,15 @@ pub(crate) const CLEAR_ID_SUFFIX: &str = "-clear";
 /// 静态常量调用点零改动）；`options` 是数据源闭包；`selected` 是选中值信号
 /// （调用方持有、读写皆可；None = 未选，等价旧壳 clearable 后的空值）；
 /// `placeholder` 是未选中时的触发件文案。
+/// `clearable` 是可清空开关（旧壳 `NSelect` clearable 属性的参数化：可清空
+/// 选项字段才呈现 ✕；分类/商户等可选字段传 `true`，类型/币种等必填短语传
+/// `false`——必填字段清空后无法回缺省，清空态只发生在调用方自担的语场）。
 pub fn app_select(
     id_prefix: impl Into<std::borrow::Cow<'static, str>>,
     options: impl Fn() -> Vec<CategoryOption> + Copy + 'static,
     selected: Signal<Option<String>>,
     placeholder: &'static str,
+    clearable: bool,
 ) -> impl IntoElement {
     let id_prefix = id_prefix.into();
     // 后缀拼接预派生（子行动态前缀：各 move 闭包捕获自己的 String）。
@@ -135,9 +139,10 @@ pub fn app_select(
                 )),
         )
         .child(
-            // 清除钮（可清空语义：选中时呈现；独立按压件，清除不开弹层）。
+            // 清除钮（可清空语义：`clearable` 开启且选中时呈现；独立按压件，
+            // 清除不开弹层）。
             when(
-                move || selected.get().is_some(),
+                move || clearable && selected.get().is_some(),
                 move || {
                     button()
                         .accessibility_label("清除")
