@@ -2084,12 +2084,12 @@ fn sort_menu_reorders_key_band_and_persists_across_restart() {
     let mut app = Headless::start(desktop_config_with_backend(storage.clone())).unwrap();
     app.wait_for("text:共 3 条").unwrap();
 
-    // 右键预算 → 移到顶部 → ⌘1 落预算（键位带内随动的用户可见凭据）。
+    // 右键预算 → 移到顶部 → ⌘1 落预算（键位带内随动的用户可见凭据；预算
+    // 视图已真实化，落位凭据 = 预算视图内容「新增预算」在屏，占位反馈离场）。
     app.right_click("id:nav-budget").unwrap();
     app.choose_menu_item("移到顶部").unwrap();
     app.press_key("mod+1").unwrap();
-    app.wait_for("text:预算").unwrap();
-    app.wait_for("id:placeholder-note").unwrap();
+    app.wait_for("text:新增预算").unwrap();
     drop(app);
 
     // 重启：顺序持久化（先离开到概览，再 ⌘1——派发面不再被同名幂等短路）。
@@ -2102,8 +2102,8 @@ fn sort_menu_reorders_key_band_and_persists_across_restart() {
     app.wait_for_within("text:预算", DEFAULT_WAIT).unwrap();
     assert_eq!(
         app.screen().count("text:预算").unwrap(),
-        2,
-        "重启后 ⌘1 落预算（顺序持久化：侧栏 + 屏名）"
+        3,
+        "重启后 ⌘1 落预算（顺序持久化：侧栏 + 屏名 + 预算视图表列头）"
     );
 
     // 恢复默认排序 → ⌘1 回交易（出厂序）。
@@ -2153,10 +2153,12 @@ fn context_menus_move_item_into_more_and_back() {
     // 侧栏预算回归（末位，⌘3 回预算：计数 2 = 侧栏 + 屏名）。
     app.press_key("mod+3").unwrap();
     app.wait_for_within("text:预算", DEFAULT_WAIT).unwrap();
+    // 预算视图已真实化（#2033）：落位凭据 = 侧栏项 + 屏名 + 预算执行表列头
+    // 「预算」三处（原占位期无列头为两处）。
     assert_eq!(
         app.screen().count("text:预算").unwrap(),
-        2,
-        "移回后 ⌘3 落预算"
+        3,
+        "移回后 ⌘3 落预算（侧栏 + 屏名 + 表列头）"
     );
     drop(app);
 
@@ -2242,4 +2244,415 @@ fn view_state_round_trips_across_restart() {
         2,
         "资产组首位 = 物品（⌘4，顺序持久化）"
     );
+}
+
+// ---------------------------------------------------------------------------
+// 预算视图（#2033 NSH 迁移②——封装族热身）：挂载导航骨架的预算分支，三封装
+// 件（PinyinSelect / Modal / Popconfirm）首消费旅程。造数经域公开写入口（预算
+// 经 boot 写接缝，与 lib 单测同纪律）；断言只写用户可见结果。
+// ---------------------------------------------------------------------------
+
+/// 造一个支出分类（可带父分类）。
+fn seed_category(db: &ledger_infra::db::DbState, name: &str, parent: Option<&str>) -> String {
+    let conn = db
+        .conn
+        .lock()
+        .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
+        .unwrap();
+    create_category(
+        &conn,
+        CategoryInput {
+            name: name.to_owned(),
+            kind: "expense".to_owned(),
+            parent_id: parent.map(str::to_owned),
+            icon: None,
+        },
+    )
+    .unwrap()
+}
+
+/// 经域公开写入口建一个预算（月度缺省；返回预算 id）。
+fn seed_budget(
+    db: &ledger_infra::db::DbState,
+    category_id: &str,
+    amount_cents: i64,
+    period: ledger_budget::BudgetPeriod,
+) -> String {
+    nsh_app::boot::create_budget(
+        db,
+        &ledger_budget::BudgetInput {
+            category_id: category_id.to_owned(),
+            period: Some(period),
+            amount_cents,
+            start_date: nsh_app::boot::today_string(),
+        },
+    )
+    .unwrap()
+}
+
+/// 本月一笔指定金额、指定分类的现金支出（进度口径的造数面）。锁纪律：写
+/// 连接锁不可重入——造账户与造交易各自走自带锁的助手，不持锁跨调用。
+fn seed_expense_this_month(db: &ledger_infra::db::DbState, category_id: &str, amount_cents: i64) {
+    let account = seed_cash_account(db);
+    let date = today().to_string();
+    seed_transaction(
+        db,
+        TxnSeed {
+            account: &account,
+            to_account: None,
+            kind: TransactionKind::Expense,
+            amount_cents,
+            date: &date,
+            category_id: Some(category_id.to_owned()),
+            note: Some("本月支出".to_owned()),
+        },
+    );
+}
+
+/// 预算视图首屏（AC：预算管理各分类预算 + 执行进度呈现）：新增预算表单卡、
+/// 年度汇总卡与预算执行表——格文本为装配层产物（路径名 / 按月 / 金额分组 /
+/// 状态词）。删除任一接线（导航分支挂载 / 装配 / 读路径 / 表格渲染）即红。
+#[test]
+fn budget_view_renders_create_form_summary_and_progress_table() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("budget-view");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let tea = seed_category(&db, "茶饮", None);
+        seed_budget(&db, &tea, 50_000, ledger_budget::BudgetPeriod::Monthly);
+        seed_expense_this_month(&db, &tea, 12_000);
+    }
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+    app.wait_for("text:共 1 条").unwrap();
+
+    // 侧栏预算项落位预算视图（占位「迁移中」反馈离场）。
+    app.press("id:nav-budget").unwrap();
+    for label in [
+        "新增预算",
+        "支出分类",
+        "按月",
+        "按年",
+        "金额",
+        "添加",
+        "本年度预算",
+        "年度预算总额",
+        "本年已支",
+        "预算执行",
+        "茶饮",
+        "按月",
+        "120",
+        "500",
+        "正常",
+        "编辑",
+        "删除",
+    ] {
+        app.wait_for(&format!("text:{label}")).unwrap();
+    }
+    // 汇总卡口径：年化总额 = 50000 × 12 = 600000 分 → 6000；本年已支 120。
+    app.wait_for("text:6000").unwrap();
+    // 进度百分比 24%（12000/50000 四舍五入）。
+    app.wait_for("text:24%").unwrap();
+    assert!(
+        app.screen().count("id:placeholder-note").unwrap() == 0,
+        "预算视图是真实组件，不再是占位"
+    );
+}
+
+/// 创建旅程（封装件 PinyinSelect 首消费）：触发件打开下拉 → 拼音首字母搜索
+/// 「午餐」（wc）→ 选中（触发件呈现「父 > 子」路径名）→ 输入金额 → 添加 →
+/// 新行落表（写路径 + 失效信号 + 订阅重读的接线旅程）。「删除即红」负向条目：
+/// 删 perform_create 里的 `notify_budgets_invalidated` 广播或视图订阅接线任一
+/// 环 → 本测红（表单清空但新行不出现）。
+#[test]
+fn budget_form_creates_budget_via_pinyin_search_and_refreshes_list() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("budget-create");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let tea = seed_category(&db, "茶饮", None);
+        seed_budget(&db, &tea, 10_000, ledger_budget::BudgetPeriod::Monthly);
+        let fresh = seed_category(&db, "鲜食", None);
+        seed_category(&db, "刺身", Some(&fresh));
+    }
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+    app.wait_for("id:nav-budget").unwrap();
+    app.press("id:nav-budget").unwrap();
+    app.wait_for("text:预算执行").unwrap();
+
+    // 打开拼音可搜下拉，首字母 cs 命中「鲜食 > 刺身」。
+    app.press("id:budget-category").unwrap();
+    app.wait_for("id:budget-category-search").unwrap();
+    app.type_text("id:budget-category-search", "cs").unwrap();
+    app.wait_for("text:鲜食 > 刺身").unwrap();
+    app.press("id:budget-category-option >> text:鲜食 > 刺身")
+        .unwrap();
+    // 选中后下拉关闭、触发件呈现路径名。
+    app.wait_for_gone("id:budget-category-search", DEFAULT_WAIT)
+        .unwrap();
+    assert_eq!(
+        app.screen().count("text:鲜食 > 刺身").unwrap(),
+        1,
+        "触发件呈现选中项路径名"
+    );
+
+    // 输入金额，添加。
+    app.type_text("id:budget-amount", "80").unwrap();
+    app.press("id:budget-add").unwrap();
+
+    // 失效信号驱动重读：新行落表（子分类路径名 + 金额 80），表单清空回占位。
+    app.wait_for_within("text:80", DEFAULT_WAIT).unwrap();
+    assert_eq!(
+        app.screen().count("text:鲜食 > 刺身").unwrap(),
+        1,
+        "表单回占位后路径名只在表行（新行以「父 > 子」路径名呈现）"
+    );
+    assert!(app.shows("支出分类"), "创建成功后表单清空");
+}
+
+/// 编辑旅程（封装件 Modal 首消费）：编辑按钮 → 弹窗呈现（分类只读名回填、
+/// 金额回填整数分换算元文本）→ 改金额保存 → 弹窗关闭、行与年度汇总同刻刷新
+/// （「删除即红」：删保存成功后的 notify 或弹窗关闭接线任一环即红）。
+#[test]
+fn budget_edit_modal_updates_amount_then_refreshes() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("budget-edit");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let tea = seed_category(&db, "茶饮", None);
+        seed_budget(&db, &tea, 50_000, ledger_budget::BudgetPeriod::Monthly);
+        seed_expense_this_month(&db, &tea, 12_000);
+    }
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+    app.wait_for("text:共 1 条").unwrap();
+    app.press("id:nav-budget").unwrap();
+    app.wait_for("text:500").unwrap();
+
+    // 打开编辑弹窗：标题 + 分类只读名 + 金额回填 500。
+    app.press("id:budget-edit").unwrap();
+    app.wait_for("id:app-modal").unwrap();
+    app.wait_for("text:编辑预算").unwrap();
+    app.wait_for("text:茶饮").unwrap();
+    let amount = app
+        .screen()
+        .input_text("id:budget-edit-amount")
+        .unwrap()
+        .unwrap_or_default();
+    assert_eq!(amount, "500", "编辑弹窗金额回填（整数分换算元文本）");
+
+    // 改金额保存：弹窗关闭，预算列与年化总额同刻刷新（600000→360000 → 3600）。
+    app.clear("id:budget-edit-amount").unwrap();
+    app.type_text("id:budget-edit-amount", "300").unwrap();
+    app.press("id:budget-save").unwrap();
+    app.wait_for_gone("id:app-modal", DEFAULT_WAIT).unwrap();
+    app.wait_for_within("text:300", DEFAULT_WAIT).unwrap();
+    app.wait_for("text:3600").unwrap();
+}
+
+/// 弹窗关闭语义（ESC / 取消 / ✕ 三路径关闭且不写——遮罩不关由封装内建，
+/// headless 盲区归人工对表）：关闭后行金额原样。
+#[test]
+fn budget_edit_modal_escape_cancel_and_close_button_write_nothing() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("budget-modal-close");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let tea = seed_category(&db, "茶饮", None);
+        seed_budget(&db, &tea, 50_000, ledger_budget::BudgetPeriod::Monthly);
+    }
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+    app.wait_for("id:nav-budget").unwrap();
+    app.press("id:nav-budget").unwrap();
+    app.wait_for("text:500").unwrap();
+
+    // ESC 关闭：弹窗离场、不写。
+    app.press("id:budget-edit").unwrap();
+    app.wait_for("id:app-modal").unwrap();
+    app.press_key("escape").unwrap();
+    app.wait_for_gone("id:app-modal", DEFAULT_WAIT).unwrap();
+    app.wait_for("text:500").unwrap();
+
+    // 取消关闭：同语义。
+    app.press("id:budget-edit").unwrap();
+    app.wait_for("id:app-modal").unwrap();
+    app.press("id:budget-cancel").unwrap();
+    app.wait_for_gone("id:app-modal", DEFAULT_WAIT).unwrap();
+    app.wait_for("text:500").unwrap();
+
+    // ✕ 关闭：同语义。
+    app.press("id:budget-edit").unwrap();
+    app.wait_for("id:app-modal").unwrap();
+    app.press("id:app-modal-close").unwrap();
+    app.wait_for_gone("id:app-modal", DEFAULT_WAIT).unwrap();
+    assert!(app.shows("500"), "三条关闭路径都不写，行金额原样");
+}
+
+/// 删除旅程（封装件 Popconfirm 首消费）：删除按钮 → 气泡「确认删除？」→ 取消
+/// 不写 → 再开确认 → 行离场（失效信号重读）。「删除即红」：删确认分支的
+/// notify 广播 → 本测红（气泡关闭但行不消失）。
+#[test]
+fn budget_delete_popconfirm_cancel_writes_nothing_confirm_refreshes() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("budget-delete");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let tea = seed_category(&db, "茶饮", None);
+        seed_budget(&db, &tea, 50_000, ledger_budget::BudgetPeriod::Monthly);
+    }
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+    app.wait_for("id:nav-budget").unwrap();
+    app.press("id:nav-budget").unwrap();
+    app.wait_for("text:500").unwrap();
+
+    // 打开气泡：说明文案 + 两键。
+    app.press("id:budget-delete").unwrap();
+    app.wait_for("text:确认删除？").unwrap();
+
+    // 取消：气泡关闭、行保留。
+    app.press("id:budget-del-cancel").unwrap();
+    app.wait_for_gone("text:确认删除？", DEFAULT_WAIT).unwrap();
+    assert!(app.shows("500"), "取消不写");
+
+    // 再开确认：行离场。
+    app.press("id:budget-delete").unwrap();
+    app.wait_for("text:确认删除？").unwrap();
+    app.press("id:budget-del-confirm").unwrap();
+    app.wait_for_gone("text:确认删除？", DEFAULT_WAIT).unwrap();
+    app.wait_for_gone("text:500", DEFAULT_WAIT).unwrap();
+    assert!(app.shows("暂无数据"), "删后空态");
+}
+
+/// 校验前置拦截（不发起写）：空表单添加 → 「请填写分类和金额」；选分类金额
+/// 0 → 「预算金额必须为正数」；两条都不落新行。
+#[test]
+fn budget_form_validates_required_and_positive_without_writing() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("budget-validate");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let tea = seed_category(&db, "茶饮", None);
+        seed_budget(&db, &tea, 50_000, ledger_budget::BudgetPeriod::Monthly);
+        let fresh = seed_category(&db, "鲜食", None);
+        seed_category(&db, "刺身", Some(&fresh));
+    }
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+    app.wait_for("id:nav-budget").unwrap();
+    app.press("id:nav-budget").unwrap();
+    app.wait_for("text:500").unwrap();
+
+    // 空表单：必填提示。
+    app.press("id:budget-add").unwrap();
+    app.wait_for("text:请填写分类和金额").unwrap();
+    assert!(app.shows("500"), "未发起写");
+
+    // 金额 0：正数提示（旧壳同词表）。选择走唯一子分类（首字母 cs）。
+    app.press("id:budget-category").unwrap();
+    app.wait_for("id:budget-category-search").unwrap();
+    app.type_text("id:budget-category-search", "cs").unwrap();
+    app.press("id:budget-category-option >> text:鲜食 > 刺身")
+        .unwrap();
+    app.wait_for_gone("id:budget-category-search", DEFAULT_WAIT)
+        .unwrap();
+    // 选中凭据：触发件呈现选中项路径名（唯一文本，与表行区分）。
+    assert_eq!(
+        app.screen().count("text:鲜食 > 刺身").unwrap(),
+        1,
+        "选中后触发件呈现分类名"
+    );
+    app.type_text("id:budget-amount", "0").unwrap();
+    app.press("id:budget-add").unwrap();
+    app.wait_for("text:预算金额必须为正数").unwrap();
+    assert_eq!(
+        app.screen().count("text:500").unwrap(),
+        1,
+        "未发起写：仍只有原预算行（行金额一处）"
+    );
+}
+
+/// 抑制闸门（封装件族共用注册表）：拼音下拉 / 编辑弹窗 / 删除气泡任一开着时
+/// ⌘2 不派发（停留预算视图），ESC 关闭后同键落位账户。「删除即红」负向条目：
+/// 删 modal.rs / popconfirm.rs / pinyin_select.rs 任一封装的 token.report 接线
+/// → 本测对应段红（弹层下按键切走）。
+#[test]
+fn suppression_gate_blocks_shortcuts_while_budget_popups_open() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("budget-suppress");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let tea = seed_category(&db, "茶饮", None);
+        seed_budget(&db, &tea, 50_000, ledger_budget::BudgetPeriod::Monthly);
+    }
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+    app.wait_for("id:nav-budget").unwrap();
+    app.press("id:nav-budget").unwrap();
+    app.wait_for("text:预算执行").unwrap();
+
+    // 拼音下拉开着：⌘2 不派发；ESC 关闭后落位账户。
+    app.press("id:budget-category").unwrap();
+    app.wait_for("id:budget-category-search").unwrap();
+    app.press_key("mod+2").unwrap();
+    app.settle();
+    assert!(
+        app.screen().count("id:budget-category-search").unwrap() >= 1
+            && app.screen().count("id:placeholder-note").unwrap() == 0,
+        "下拉开着时 ⌘2 不得切视图"
+    );
+    app.press_key("escape").unwrap();
+    app.wait_for_gone("id:budget-category-search", DEFAULT_WAIT)
+        .unwrap();
+    app.press_key("mod+2").unwrap();
+    app.wait_for("text:账户").unwrap();
+    app.press_key("mod+3").unwrap();
+    app.wait_for("text:预算执行").unwrap();
+
+    // 编辑弹窗开着：⌘2 不派发；ESC 关闭后落位账户。
+    app.press("id:budget-edit").unwrap();
+    app.wait_for("id:app-modal").unwrap();
+    app.press_key("mod+2").unwrap();
+    app.settle();
+    assert!(
+        app.screen().count("id:app-modal").unwrap() >= 1
+            && app.screen().count("id:placeholder-note").unwrap() == 0,
+        "弹窗开着时 ⌘2 不得切视图"
+    );
+    app.press_key("escape").unwrap();
+    app.wait_for_gone("id:app-modal", DEFAULT_WAIT).unwrap();
+    app.press_key("mod+2").unwrap();
+    app.wait_for_within("text:账户", DEFAULT_WAIT).unwrap();
+    app.press_key("mod+3").unwrap();
+    app.wait_for("text:预算执行").unwrap();
+
+    // 删除气泡开着：⌘2 不派发；ESC 关闭后落位账户。
+    app.press("id:budget-delete").unwrap();
+    app.wait_for("text:确认删除？").unwrap();
+    app.press_key("mod+2").unwrap();
+    app.settle();
+    assert!(
+        app.shows("确认删除？") && !app.shows("id:placeholder-note"),
+        "气泡开着时 ⌘2 不得切视图"
+    );
+    app.press_key("escape").unwrap();
+    app.wait_for_gone("text:确认删除？", DEFAULT_WAIT).unwrap();
+    app.press_key("mod+2").unwrap();
+    app.wait_for_within("text:账户", DEFAULT_WAIT).unwrap();
 }

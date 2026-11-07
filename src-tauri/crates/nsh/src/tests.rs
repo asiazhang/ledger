@@ -702,3 +702,139 @@ fn delete_transaction_writes_via_domain_entry_and_reports_coded_not_found() {
         "不存在 id 报码化 NotFound，实际：{err}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// 预算读写接缝（#2033）：读路径（进度 / 年度汇总）与写路径（创建 / 编辑 /
+// 删除）直调 `ledger-budget` 域入口，不经 IPC——删除任一环本组用例即红
+// （ADR-0087 接线断言）。预算域语义（口径 / 校验 / 同步命令）归域单测，本组
+// 只钉壳侧接线的消费契约：调用贯通、会话选择（写侧 conn）、码化错误透传。
+// ---------------------------------------------------------------------------
+
+/// 造一个支出分类（域公开写入口）。
+fn seed_expense_category(db: &ledger_infra::db::DbState, name: &str) -> String {
+    let conn = db
+        .conn
+        .lock()
+        .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
+        .unwrap();
+    ledger_categories::create_category(
+        &conn,
+        ledger_categories::CategoryInput {
+            name: name.to_owned(),
+            kind: "expense".to_owned(),
+            parent_id: None,
+            icon: None,
+        },
+    )
+    .unwrap()
+}
+
+#[test]
+fn budget_write_and_read_seams_round_trip_through_domain_entries() {
+    use crate::boot::{
+        budget_annual_summary, budget_progress, create_budget, delete_budget, update_budget,
+    };
+    use ledger_budget::{BudgetInput, BudgetPeriod};
+
+    let _guard = SERIAL.lock().unwrap();
+    let dir = scratch_book_dir("budget-seam");
+    create_empty_book_file(&dir);
+    let db = boot_ledger(&dir).unwrap();
+    let category = seed_expense_category(&db, "餐饮");
+
+    // 创建：域公开写入口贯通（写侧 conn）。
+    let id = create_budget(
+        &db,
+        &BudgetInput {
+            category_id: category.clone(),
+            period: Some(BudgetPeriod::Monthly),
+            amount_cents: 50_000,
+            start_date: crate::boot::today_string(),
+        },
+    )
+    .unwrap();
+
+    // 进度读：行集含该预算，分类名与金额直出（spent=0 无支出）。
+    let rows = budget_progress(&db).unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].budget.id, id);
+    assert_eq!(rows[0].budget.amount_cents, 50_000);
+    assert_eq!(rows[0].category_name, "餐饮");
+    assert_eq!(rows[0].spent_cents, 0);
+    assert!(!rows[0].over_budget);
+
+    // 本月一笔分类支出 → 进度与年度汇总同刻更新（读路径贯通）。
+    {
+        let conn = db
+            .conn
+            .lock()
+            .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
+            .unwrap();
+        let account = ledger_accounts::create_account(
+            &conn,
+            AccountInput {
+                name: "现金".to_owned(),
+                kind: AccountType::Cash,
+                currency_code: "CNY".to_owned(),
+                initial_balance_cents: Some(0),
+                credit_limit_cents: None,
+                statement_day: None,
+                due_day: None,
+            },
+        )
+        .unwrap();
+        let mut input = expense_input(&account, &crate::boot::today_string(), 12_000, "本月支出");
+        input.category_id = Some(category.clone());
+        ledger_transaction::create(&conn, input).unwrap();
+    }
+    let rows = budget_progress(&db).unwrap();
+    assert_eq!(rows[0].spent_cents, 12_000, "进度读路径贯通（本月净支出）");
+    assert!(!rows[0].over_budget, "12_000 < 50_000 未超支");
+
+    // 年度汇总：年化总额 = 50000 × 12，已支 = 本年累计。
+    let summary = budget_annual_summary(&db).unwrap();
+    assert_eq!(summary.annual_budget_total_cents, 600_000);
+    assert_eq!(summary.spent_cents, 12_000);
+    assert!(!summary.over_budget);
+
+    // 编辑：金额与周期一并落定（写接缝贯通）。
+    update_budget(&db, &id, 30_000, Some(BudgetPeriod::Yearly)).unwrap();
+    let rows = budget_progress(&db).unwrap();
+    assert_eq!(rows[0].budget.amount_cents, 30_000);
+    assert_eq!(rows[0].budget.period, BudgetPeriod::Yearly);
+
+    // 删除：软删后行集离场。
+    delete_budget(&db, &id).unwrap();
+    assert!(budget_progress(&db).unwrap().is_empty());
+
+    // 不存在的 id：域删除幂等（UPDATE 静默 0 行仍 Ok——预算域语义，壳侧透传）。
+    delete_budget(&db, "no-such-budget").unwrap();
+}
+
+#[test]
+fn budget_create_surfaces_domain_validation_as_coded_error() {
+    use crate::boot::create_budget;
+    use ledger_budget::{BudgetInput, BudgetPeriod};
+
+    let _guard = SERIAL.lock().unwrap();
+    let dir = scratch_book_dir("budget-seam-validate");
+    create_empty_book_file(&dir);
+    let db = boot_ledger(&dir).unwrap();
+    let category = seed_expense_category(&db, "文具");
+
+    // 金额非正：域校验拒绝，码化错误原样上抛（视图层呈现面）。
+    let err = create_budget(
+        &db,
+        &BudgetInput {
+            category_id: category,
+            period: Some(BudgetPeriod::Monthly),
+            amount_cents: 0,
+            start_date: crate::boot::today_string(),
+        },
+    )
+    .unwrap_err();
+    assert!(
+        err.to_string().contains("预算金额必须为正数"),
+        "域校验错误透传，实际：{err}"
+    );
+}

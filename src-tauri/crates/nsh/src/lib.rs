@@ -55,6 +55,13 @@
 //!   弹出 + 存续期间抑制上报；
 //! - [`danger`]：危险确认对话框封装（`App*` 封装族首批件，#2022）——
 //!   ADR-0078 error/warning 两级形态、遮罩不关/ESC 可关、抑制上报自含；
+//! - [`pinyin_select`]：拼音可搜下拉封装（`App*` 封装族，#2033 首建）——
+//!   触发件 + 搜索弹层 + 统一模糊搜索语义过滤（消费交易域 ADR-0027 唯一
+//!   定义点）+ 抑制上报自含；
+//! - [`modal`]：模态弹窗封装（`App*` 封装族，#2033 首建）——遮罩不关/ESC
+//!   可关、抑制上报自含的弹层容器；
+//! - [`popconfirm`]：轻量确认气泡封装（`App*` 封装族，#2033 首建）——锚定
+//!   触发件的确认/取消气泡、ESC/点外关闭、抑制上报自含；
 //! - [`signals`]：进程内失效信号——交易数据失效的订阅/广播单点，写路径
 //!   成功后广播、列表视图订阅重读（#2022；词汇表失效信号语义的壳内通道）；
 //! - [`boot`]：域栈引导——库文件处置判定（复用基础设施引导层）、成对建连、
@@ -72,10 +79,13 @@ pub mod app;
 pub mod boot;
 pub mod context_menu;
 pub mod danger;
+pub mod modal;
 pub mod nav;
 pub mod nav_model;
 pub mod overlay;
 pub mod period;
+pub mod pinyin_select;
+pub mod popconfirm;
 pub mod sidebar;
 pub mod signals;
 pub mod views;

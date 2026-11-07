@@ -751,6 +751,265 @@ pub fn page_after_row_delete(page: u32, total_before: i64) -> Option<u32> {
     }
 }
 
+// ---------------------------------------------------------------------------
+// 预算装配族（#2033）：预算视图的行格文本、进度口径与分类树选项——纯 Rust、
+// 无 UI 依赖，纪律同本模块头注。文案与口径以旧壳为对拍基准（budget i18n
+// zh-CN 词表 / formatAmount 无币种参数形态 / categoryPath 与 issue #356 路径
+// 名口径）；金额整数分，本层只做展示换算，不另立第二套舍入。
+// ---------------------------------------------------------------------------
+
+/// 预算周期 zh-CN 标签（旧壳 budget.period 词表）。
+pub fn budget_period_label(period: ledger_budget::BudgetPeriod) -> &'static str {
+    match period {
+        ledger_budget::BudgetPeriod::Monthly => "按月",
+        ledger_budget::BudgetPeriod::Yearly => "按年",
+    }
+}
+
+/// 预算执行进度百分比：消耗/上限封顶 100（旧壳 progressPercentage 同口径：
+/// 四舍五入、非正上限归 0）。
+pub fn budget_progress_percent(spent_cents: i64, amount_cents: i64) -> f32 {
+    if amount_cents <= 0 {
+        return 0.0;
+    }
+    ((spent_cents as f64 / amount_cents as f64) * 100.0)
+        .round()
+        .clamp(0.0, 100.0) as f32
+}
+
+/// 年度汇总卡进度百分比：本年已支 / 年度预算总额（年化口径），封顶 100
+/// （旧壳 summaryPercentage 同口径）。
+pub fn budget_summary_percent(spent_cents: i64, annual_total_cents: i64) -> f32 {
+    budget_progress_percent(spent_cents, annual_total_cents)
+}
+
+/// 预算金额文本（旧壳 formatAmount 无币种参数形态：无符号、两位小数、去尾零、
+/// zh 四位一组）；隐私开啓时与交易表格同掩码。预算金额是默认币种单币种口径
+/// （域模型定），展示不带币符与旧壳同。
+pub fn budget_amount_text(cents: i64, privacy: bool) -> String {
+    if privacy {
+        return AMOUNT_PRIVACY_MASK.to_owned();
+    }
+    format_amount_basic(cents, &CurrencyFormat::default())
+}
+
+/// 预算行状态标签（旧壳 budget.status 词表）。
+pub fn budget_status_text(over_budget: bool) -> &'static str {
+    if over_budget { "超支" } else { "正常" }
+}
+
+/// 年度汇总状态标签（旧壳 budget.summary 词表：「已超标」与行状态词不同）。
+pub fn budget_summary_status_text(over_budget: bool) -> &'static str {
+    if over_budget { "已超标" } else { "正常" }
+}
+
+/// 预算分类显示名（旧壳 categoryDisplayName issue #356 口径）：顶级为自身名，
+/// 子分类为「父 > 子」路径名；id 解析不到（守卫生效前的历史孤儿预算）回退
+/// 「未分类」，不报错。
+pub fn budget_category_display(categories: &CategoryTable, id: &str) -> String {
+    categories
+        .path_of(Some(id))
+        .unwrap_or_else(|| "未分类".to_owned())
+}
+
+/// 分类下拉选项（拼音可搜下拉的数据源条目）：id + 显示 label。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CategoryOption {
+    /// 分类 id（提交载荷）。
+    pub id: String,
+    /// 显示名（顶级自身名，子分类「父 > 子」路径名）。
+    pub label: String,
+}
+
+/// 支出分类树选项（旧壳 categoryOptions：`treeCategoryOptions("expense")`
+/// flatMap 同口径）：只收支出分类（顶级 + 子分类，收入分类被 kind 过滤排除），
+/// 父按 sort_order、子紧跟父且自身按 sort_order（子分类 label 用「父 > 子」
+/// 路径名，拼音可搜对 label 整体匹配，父名/子名拼音均可命中）。输入行集只
+/// 收在用分类（软删不进选项，[`crate::boot::category_rows`] 口径）。
+pub fn expense_category_options(rows: &[ledger_categories::Category]) -> Vec<CategoryOption> {
+    let mut roots: Vec<&ledger_categories::Category> = rows
+        .iter()
+        .filter(|c| c.kind == "expense" && c.parent_id.is_none())
+        .collect();
+    roots.sort_by_key(|c| c.sort_order);
+    let mut options = Vec::new();
+    for root in roots {
+        options.push(CategoryOption {
+            id: root.id.clone(),
+            label: root.name.clone(),
+        });
+        let mut children: Vec<&ledger_categories::Category> = rows
+            .iter()
+            .filter(|c| c.kind == "expense" && c.parent_id.as_deref() == Some(root.id.as_str()))
+            .collect();
+        children.sort_by_key(|c| c.sort_order);
+        for child in children {
+            options.push(CategoryOption {
+                id: child.id.clone(),
+                label: format!("{} > {}", root.name, child.name),
+            });
+        }
+    }
+    options
+}
+
+/// 元文本 → 整数分（旧壳 yuanToCents 同口径：十进制文本、四舍五入到分、拒绝
+/// 空白/非数/科学计数）。None = 解析失败（呈现面归调用方校验文案）。
+pub fn budget_yuan_to_cents(text: &str) -> Option<i64> {
+    let trimmed = text.trim();
+    if trimmed.is_empty()
+        || !trimmed
+            .chars()
+            .all(|ch| ch.is_ascii_digit() || ch == '.' || ch == '-')
+    {
+        return None;
+    }
+    let yuan: f64 = trimmed.parse().ok()?;
+    if !yuan.is_finite() {
+        return None;
+    }
+    let cents = (yuan * 100.0).round();
+    // i64 范围外的值拒绝（旧壳 Number.isSafeInteger 同意图）。
+    if cents.abs() >= 9.0e18 {
+        return None;
+    }
+    Some(cents as i64)
+}
+
+/// 整数分 → 元文本（编辑回填：旧壳 centsToYuan 后填入数字输入框的形态）。
+pub fn budget_cents_to_yuan_text(cents: i64) -> String {
+    let yuan = cents as f64 / 100.0;
+    if yuan == yuan.trunc() {
+        format!("{}", yuan as i64)
+    } else {
+        format!("{}", yuan)
+    }
+}
+
+/// 预算执行行的展示格（渲染期零格式化：文本已是一次性装配产物；金额分与
+/// 周期原值随行携带，供编辑弹窗回填——行为锚点，不参与渲染）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct BudgetRowCells {
+    /// 预算 id（编辑/删除的目标）。
+    pub id: String,
+    /// 分类显示名（「父 > 子」路径名或「未分类」回退）。
+    pub category: String,
+    /// 周期标签（按月/按年）。
+    pub period_label: &'static str,
+    /// 预算金额文本。
+    pub amount: String,
+    /// 已支出文本。
+    pub spent: String,
+    /// 进度百分比（0–100，封顶）。
+    pub percent: f32,
+    /// 是否超支（状态色的消费面）。
+    pub over_budget: bool,
+    /// 状态标签（超支/正常）。
+    pub status: &'static str,
+    /// 预算金额原值（编辑回填锚点，整数分）。
+    pub amount_cents: i64,
+    /// 周期原值（编辑回填锚点）。
+    pub period: ledger_budget::BudgetPeriod,
+}
+
+/// 预算进度行集 → 展示格行集（一次性装配，渲染期零格式化）。
+pub fn assemble_budget_rows(
+    rows: &[ledger_budget::BudgetProgress],
+    categories: &CategoryTable,
+    privacy: bool,
+) -> Vec<BudgetRowCells> {
+    rows.iter()
+        .map(|row| BudgetRowCells {
+            id: row.budget.id.clone(),
+            category: budget_category_display(categories, &row.budget.category_id),
+            period_label: budget_period_label(row.budget.period),
+            amount: budget_amount_text(row.budget.amount_cents, privacy),
+            spent: budget_amount_text(row.spent_cents, privacy),
+            percent: budget_progress_percent(row.spent_cents, row.budget.amount_cents),
+            over_budget: row.over_budget,
+            status: budget_status_text(row.over_budget),
+            amount_cents: row.budget.amount_cents,
+            period: row.budget.period,
+        })
+        .collect()
+}
+
+/// 年度汇总卡的展示格（渲染期零格式化）。
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct BudgetSummaryCells {
+    /// 年度预算总额文本。
+    pub annual_total: String,
+    /// 本年已支文本。
+    pub spent: String,
+    /// 进度百分比（0–100，封顶）。
+    pub percent: f32,
+    /// 是否超标（进度条状态色的消费面）。
+    pub over_budget: bool,
+    /// 状态标签（已超标/正常）。
+    pub status: &'static str,
+}
+
+/// 年度汇总 → 展示格（一次性装配，渲染期零格式化）。
+pub fn assemble_budget_summary(
+    summary: &ledger_budget::BudgetAnnualSummary,
+    privacy: bool,
+) -> BudgetSummaryCells {
+    BudgetSummaryCells {
+        annual_total: budget_amount_text(summary.annual_budget_total_cents, privacy),
+        spent: budget_amount_text(summary.spent_cents, privacy),
+        percent: budget_summary_percent(summary.spent_cents, summary.annual_budget_total_cents),
+        over_budget: summary.over_budget,
+        status: budget_summary_status_text(summary.over_budget),
+    }
+}
+
+/// 预算执行表列定义（键与列序同旧壳桌面档七列；进度列弹性吸收富余宽，UI 层
+/// 映射为宿主列）。
+pub const BUDGET_COLUMNS: &[ColumnDef] = &[
+    ColumnDef {
+        key: "category",
+        title: "分类",
+        align: ColumnAlign::Start,
+        width: 180.0,
+    },
+    ColumnDef {
+        key: "period",
+        title: "周期",
+        align: ColumnAlign::Start,
+        width: 80.0,
+    },
+    ColumnDef {
+        key: "amount",
+        title: "预算",
+        align: ColumnAlign::End,
+        width: 120.0,
+    },
+    ColumnDef {
+        key: "spent",
+        title: "已支出",
+        align: ColumnAlign::End,
+        width: 120.0,
+    },
+    ColumnDef {
+        key: "progress",
+        title: "进度",
+        align: ColumnAlign::Start,
+        width: 200.0,
+    },
+    ColumnDef {
+        key: "status",
+        title: "状态",
+        align: ColumnAlign::Start,
+        width: 80.0,
+    },
+    ColumnDef {
+        key: "actions",
+        title: "操作",
+        align: ColumnAlign::Start,
+        width: 130.0,
+    },
+];
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1509,5 +1768,240 @@ mod tests {
             "越界页码回退仍合法"
         );
         assert_eq!(next_page(9, 1, PageStep::Next), None);
+    }
+
+    // -----------------------------------------------------------------------
+    // 预算装配族（#2033）：预算视图的格文本与进度口径——渲染期零格式化纪律
+    // 同款：分类树选项（闭集与「父 > 子」路径名）、周期标签、进度百分比封顶、
+    // 金额文本（隐私遮蔽）与分类显示名回退（孤儿预算）。
+    // -----------------------------------------------------------------------
+
+    fn category(
+        id: &str,
+        name: &str,
+        kind: &str,
+        parent: Option<String>,
+        sort: i64,
+    ) -> ledger_categories::Category {
+        ledger_categories::Category {
+            id: id.to_owned(),
+            name: name.to_owned(),
+            kind: kind.to_owned(),
+            parent_id: parent,
+            icon: None,
+            sort_order: sort,
+            created_at: String::new(),
+            updated_at: String::new(),
+            version: 0,
+            device_id: String::new(),
+            is_deleted: false,
+        }
+    }
+
+    #[test]
+    fn budget_period_labels_use_zh_words() {
+        use ledger_budget::BudgetPeriod;
+        assert_eq!(budget_period_label(BudgetPeriod::Monthly), "按月");
+        assert_eq!(budget_period_label(BudgetPeriod::Yearly), "按年");
+    }
+
+    #[test]
+    fn budget_progress_percent_caps_at_hundred_and_guards_zero_amount() {
+        assert_eq!(budget_progress_percent(0, 50_000), 0.0);
+        assert_eq!(budget_progress_percent(25_000, 50_000), 50.0);
+        assert_eq!(
+            budget_progress_percent(12_345, 50_000),
+            25.0,
+            "四舍五入口径"
+        );
+        assert_eq!(
+            budget_progress_percent(60_000, 50_000),
+            100.0,
+            "超支封顶 100"
+        );
+        assert_eq!(budget_progress_percent(10, 0), 0.0, "零预算守卫");
+        assert_eq!(budget_progress_percent(10, -5), 0.0, "非正预算守卫");
+    }
+
+    #[test]
+    fn budget_summary_percent_caps_at_hundred() {
+        assert_eq!(budget_summary_percent(0, 600_000), 0.0);
+        assert_eq!(budget_summary_percent(300_000, 600_000), 50.0);
+        assert_eq!(budget_summary_percent(700_000, 600_000), 100.0, "封顶 100");
+        assert_eq!(budget_summary_percent(10, 0), 0.0, "零总额守卫");
+    }
+
+    #[test]
+    fn budget_amount_texts_group_and_mask() {
+        // 旧壳 formatAmount 无币种参数口径：无符号、两位小数、去尾零、zh 四位一组。
+        assert_eq!(budget_amount_text(50_000, false), "500");
+        assert_eq!(
+            budget_amount_text(123_456, false),
+            "1234.56",
+            "四位一组：4 位整数单组不插分隔"
+        );
+        assert_eq!(budget_amount_text(1_2345_6789, false), "123,4567.89");
+        assert_eq!(budget_amount_text(0, false), "0");
+        // 隐私遮蔽：与交易表格同掩码。
+        assert_eq!(budget_amount_text(50_000, true), "••••");
+    }
+
+    #[test]
+    fn budget_status_words_distinguish_row_and_summary() {
+        assert_eq!(budget_status_text(false), "正常");
+        assert_eq!(budget_status_text(true), "超支");
+        assert_eq!(budget_summary_status_text(false), "正常");
+        assert_eq!(budget_summary_status_text(true), "已超标");
+    }
+
+    #[test]
+    fn expense_category_options_follow_tree_order_with_path_labels() {
+        let rows = vec![
+            category("c1", "餐饮", "expense", None, 2),
+            category("c2", "交通", "expense", None, 1),
+            category("c3", "工资", "income", None, 0),
+            category("c4", "午餐", "expense", Some("c1".into()), 2),
+            category("c5", "火锅", "expense", Some("c1".into()), 1),
+            category("c6", "地铁", "expense", Some("c2".into()), 1),
+        ];
+        let options = expense_category_options(&rows);
+        let labels: Vec<&str> = options.iter().map(|o| o.label.as_str()).collect();
+        assert_eq!(
+            labels,
+            vec!["交通", "交通 > 地铁", "餐饮", "餐饮 > 火锅", "餐饮 > 午餐"],
+            "只收支出分类（收入排除）；父按 sort_order、子紧跟父且自身按 sort_order；子分类路径名"
+        );
+        assert_eq!(options[0].id, "c2");
+        assert_eq!(options[3].id, "c5");
+    }
+
+    #[test]
+    fn budget_category_display_falls_back_for_orphans() {
+        let rows = vec![
+            category("c1", "餐饮", "expense", None, 1),
+            category("c2", "午餐", "expense", Some("c1".into()), 1),
+        ];
+        let table = CategoryTable::from_categories(&rows);
+        assert_eq!(budget_category_display(&table, "c1"), "餐饮");
+        assert_eq!(budget_category_display(&table, "c2"), "餐饮 > 午餐");
+        assert_eq!(
+            budget_category_display(&table, "gone"),
+            "未分类",
+            "孤儿预算（分类已删）回退「未分类」（旧壳同词）"
+        );
+    }
+
+    #[test]
+    fn budget_yuan_cents_conversions_round_like_old_shell() {
+        assert_eq!(budget_yuan_to_cents("80"), Some(8_000));
+        assert_eq!(budget_yuan_to_cents("80.1"), Some(8_010));
+        assert_eq!(budget_yuan_to_cents("0.05"), Some(5));
+        assert_eq!(budget_yuan_to_cents("-3"), Some(-300));
+        assert_eq!(budget_yuan_to_cents("abc"), None, "非数拒绝");
+        assert_eq!(budget_yuan_to_cents(""), None);
+        assert_eq!(
+            budget_yuan_to_cents("1e3"),
+            None,
+            "科学计数拒绝（旧壳同口径）"
+        );
+        assert_eq!(budget_cents_to_yuan_text(50_000), "500");
+        assert_eq!(budget_cents_to_yuan_text(12345), "123.45");
+        assert_eq!(budget_cents_to_yuan_text(0), "0");
+    }
+
+    #[test]
+    fn budget_rows_assemble_into_display_cells() {
+        use ledger_budget::{Budget, BudgetPeriod, BudgetProgress};
+        let budget = |id: &str, amount: i64, period: BudgetPeriod| Budget {
+            id: id.to_owned(),
+            category_id: "c1".to_owned(),
+            period,
+            amount_cents: amount,
+            start_date: String::new(),
+            created_at: String::new(),
+            updated_at: String::new(),
+            version: 0,
+            device_id: String::new(),
+            is_deleted: false,
+        };
+        let rows = vec![
+            BudgetProgress {
+                budget: budget("b1", 50_000, BudgetPeriod::Monthly),
+                category_name: "餐饮".to_owned(),
+                spent_cents: 12_345,
+                over_budget: false,
+            },
+            BudgetProgress {
+                budget: budget("b2", 1_000, BudgetPeriod::Yearly),
+                category_name: "交通".to_owned(),
+                spent_cents: 2_000,
+                over_budget: true,
+            },
+        ];
+        let categories =
+            CategoryTable::from_categories(&[category("c1", "餐饮", "expense", None, 1)]);
+        let cells = assemble_budget_rows(&rows, &categories, false);
+        assert_eq!(cells.len(), 2);
+        assert_eq!(cells[0].id, "b1");
+        assert_eq!(cells[0].category, "餐饮");
+        assert_eq!(cells[0].period_label, "按月");
+        assert_eq!(cells[0].amount, "500");
+        assert_eq!(cells[0].spent, "123.45");
+        assert_eq!(cells[0].status, "正常");
+        assert!(!cells[0].over_budget);
+        assert_eq!(cells[0].amount_cents, 50_000, "编辑回填锚点（整数分）");
+        assert_eq!(cells[0].period, BudgetPeriod::Monthly);
+        assert_eq!(cells[1].amount, "10");
+        assert_eq!(cells[1].spent, "20");
+        assert_eq!(cells[1].status, "超支");
+        assert!(cells[1].over_budget);
+        assert_eq!(cells[1].period_label, "按年");
+        // 隐私态：金额文本遮蔽，口径字段照常。
+        let masked = assemble_budget_rows(&rows, &categories, true);
+        assert_eq!(masked[0].amount, "••••");
+        assert_eq!(masked[0].spent, "••••");
+        assert_eq!(masked[0].amount_cents, 50_000);
+        // 孤儿分类回退：路径解析不到落「未分类」。
+        let orphan = assemble_budget_rows(
+            &[BudgetProgress {
+                budget: budget("b3", 5_000, BudgetPeriod::Monthly),
+                category_name: "未分类".to_owned(),
+                spent_cents: 0,
+                over_budget: false,
+            }],
+            &CategoryTable::default(),
+            false,
+        );
+        assert_eq!(orphan[0].category, "未分类");
+    }
+
+    #[test]
+    fn budget_summary_assembles_into_display_cells() {
+        use ledger_budget::BudgetAnnualSummary;
+        let summary = BudgetAnnualSummary {
+            annual_budget_total_cents: 600_000,
+            spent_cents: 700_000,
+            over_budget: true,
+        };
+        let cells = assemble_budget_summary(&summary, false);
+        assert_eq!(cells.annual_total, "6000");
+        assert_eq!(cells.spent, "7000");
+        assert_eq!(cells.status, "已超标");
+        assert!(cells.over_budget);
+        assert_eq!(cells.percent, 100.0);
+        let normal = assemble_budget_summary(
+            &BudgetAnnualSummary {
+                annual_budget_total_cents: 600_000,
+                spent_cents: 12345,
+                over_budget: false,
+            },
+            true,
+        );
+        assert_eq!(normal.annual_total, "••••");
+        assert_eq!(normal.status, "正常");
+        assert_eq!(
+            normal.percent, 2.0,
+            "比例不遮蔽（12345/600000 → 2%，四舍五入）"
+        );
     }
 }
