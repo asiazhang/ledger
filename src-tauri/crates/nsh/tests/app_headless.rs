@@ -2312,8 +2312,8 @@ fn sidebar_renders_groups_fixed_items_and_hides_contained_members() {
     );
 }
 
-/// 点击导航：侧栏项 → 真实视图落位（账户 #2041 起不再占位）→ 回到交易
-/// 项 → 表格内容区原样（其余未迁移项的占位行为由各自迁移票接手）。
+/// 点击导航：侧栏项 → 真实视图落位（账户 #2041 / 攒钱 #2056 起不再占位）→
+/// 回到交易项 → 表格内容区原样（其余未迁移项的占位行为由各自迁移票接手）。
 #[test]
 fn clicking_sidebar_items_lands_placeholder_views_and_back() {
     let _guard = SERIAL.lock().unwrap();
@@ -2325,12 +2325,19 @@ fn clicking_sidebar_items_lands_placeholder_views_and_back() {
     let mut app = Headless::start(desktop_config()).unwrap();
     open_transactions(&mut app);
 
-    // 账户 → 真实视图（#2041 迁入：新增账户卡在屏，占位不再）。
+    // 账户 → 真实视图（新增账户卡在屏，占位不再）。
     app.press("id:nav-accounts").unwrap();
     app.wait_for("text:新增账户").unwrap();
     assert!(
         app.screen().count("id:placeholder-note").unwrap() == 0,
         "账户不再占位"
+    );
+    // 攒钱 → 真实视图（新建目标钮在屏，占位不再，#2056 迁入）。
+    app.press("id:nav-savingsGoals").unwrap();
+    app.wait_for("id:sg-new").unwrap();
+    assert!(
+        app.screen().count("id:placeholder-note").unwrap() == 0,
+        "攒钱不再占位"
     );
     // 概览 → 真实视图（净资产卡在屏，#2039 起不再是占位）。
     app.press("id:nav-dashboard").unwrap();
@@ -5874,6 +5881,410 @@ fn open_accounts(app: &mut Headless) {
     app.wait_for("id:nav-accounts").unwrap();
     app.press("id:nav-accounts").unwrap();
     app.wait_for("id:acct-add").unwrap();
+}
+
+// ---------------------------------------------------------------------------
+// 储蓄目标视图（#2056）：目标清单 / 蓄水进度（已存/还差/达成态）/ 表单弹层
+// （新建 + 编辑）/ 生命周期守卫（归档/取消归档/删除——余额非零码化拒绝）。
+// 删任一接线即红的负向条目逐项写在各测试注释（ADR-0087 断言强度：断言对准
+// 用户可观察结果）。
+// ---------------------------------------------------------------------------
+
+/// 从侧栏点开储蓄目标视图（#2056 旅程用例共用）：新建按钮在屏即落位凭据。
+fn open_savings(app: &mut Headless) {
+    app.wait_for("id:nav-savingsGoals").unwrap();
+    app.press("id:nav-savingsGoals").unwrap();
+    app.wait_for("id:sg-new").unwrap();
+}
+
+/// 造一个储蓄目标（用例共用；经域公开写入口——同事务自动建专属账户）。
+fn seed_savings_goal(
+    db: &ledger_infra::db::DbState,
+    name: &str,
+    target_cents: i64,
+    deadline: Option<&str>,
+) -> String {
+    let conn = db
+        .conn
+        .lock()
+        .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
+        .unwrap();
+    ledger_savings_goal::create_savings_goal(
+        &conn,
+        &ledger_savings_goal::SavingsGoalInput {
+            name: name.to_owned(),
+            target_amount_cents: target_cents,
+            deadline: deadline.map(|d| d.to_owned()),
+        },
+    )
+    .unwrap()
+}
+
+/// 首屏装载（旧壳 SavingsGoalsView onMounted 平价）：目标清单卡（列头与行格
+/// 文本：目标额 / 已存 / 还差 = 域读路径单点口径）、空态引导（无目标时）、
+/// 归档卡缺席。删除 boot 装载读接缝 / rows 装配 / 香2行分支任一环即红。
+#[test]
+fn savings_view_lands_with_progress_rows_and_empty_guide() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("savings-land");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        seed_savings_goal(&db, "买车基金", 20_000, None);
+    }
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_savings(&mut app);
+    // 异步装载纪律：先等行到屏（§3.5）再断格文本与列头。
+    app.wait_for("id:sg-table").unwrap();
+    app.wait_for("text:买车基金").unwrap();
+
+    // 列头与行格文本（装配层产物：目标额 / 已存 / 还差 / 状态 / 截止日）。
+    for text in [
+        "攒钱",
+        "新建目标",
+        "名称",
+        "目标金额",
+        "已存",
+        "还差",
+        "推算",
+        "截止日",
+        "状态",
+        "操作",
+        "买车基金",
+        "¥200",
+        "¥0",
+        "进行中",
+        "—",
+    ] {
+        assert!(
+            app.shows(text),
+            "应呈现「{text}」：{:?}",
+            app.screen().texts()
+        );
+    }
+    // 无归档目标时归档卡缺席（旧壳 v-if 同口径）。
+    assert!(
+        app.screen().count("id:sg-archived-table").unwrap() == 0,
+        "无归档目标时归档卡不渲染"
+    );
+}
+
+/// 零目标空态（旧壳 emptyGuide 同文案）：引导在场，行集零。
+#[test]
+fn savings_view_shows_empty_guide_without_goals() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("savings-empty");
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_savings(&mut app);
+    app.wait_for("id:sg-table").unwrap();
+    app.wait_for("text:还没有攒钱目标——新建一个，账本会为它自动开一个专属账户")
+        .unwrap();
+    assert_eq!(
+        app.screen().count("id:sg-edit").unwrap(),
+        0,
+        "零目标时无行操作钮"
+    );
+}
+
+/// 创建旅程（旧壳 create + message.success 平价）：空名称前置拦截不写入；
+/// 目标额非正拦截（客户端双保险防呆）；新建模式无计划月存字段（结构性只在
+/// 编辑模式出现）；填名称 + 目标额 → 保存 → 行即现与反馈条位、弹窗关闭。
+/// 删除「新建 → perform_save → reload」任一接线即红。
+#[test]
+fn savings_view_create_goal_journey() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("savings-create");
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_savings(&mut app);
+    app.press("id:sg-new").unwrap();
+    app.wait_for("id:sg-form-name").unwrap();
+    app.wait_for("text:新建攒钱目标").unwrap();
+
+    // 新建模式不出现计划月存字段（结构性只在编辑模式出现）。
+    assert_eq!(
+        app.screen().count("id:sg-form-planned").unwrap(),
+        0,
+        "新建模式无计划月存字段"
+    );
+
+    // 空名称拦截：不写入、弹窗不关。
+    app.press("id:sg-form-save").unwrap();
+    app.wait_for("id:sg-form-error").unwrap();
+    app.wait_for("text:请填写目标名称").unwrap();
+
+    // 目标额非正拦截：目标金额必须大于 0（客户端双保险，旧壳同口径）。
+    app.type_text("id:sg-form-name", "旅行基金").unwrap();
+    app.type_text("id:sg-form-amount", "0").unwrap();
+    app.press("id:sg-form-save").unwrap();
+    app.wait_for("text:目标金额必须大于 0").unwrap();
+
+    // 合法入参 → 保存：行即现、成功反馈在屏、弹窗关闭。
+    app.clear("id:sg-form-amount").unwrap();
+    app.type_text("id:sg-form-amount", "500").unwrap();
+    app.press("id:sg-form-save").unwrap();
+    app.wait_for("text:旅行基金").unwrap();
+    app.wait_for("text:目标已创建，专属账户已就位").unwrap();
+    app.wait_for_gone("id:sg-form-save", DEFAULT_WAIT).unwrap();
+    app.wait_for("id:sg-table").unwrap();
+    for text in ["¥500", "进行中"] {
+        assert!(
+            app.shows(text),
+            "应呈现「{text}」：{:?}",
+            app.screen().texts()
+        );
+    }
+}
+
+/// 编辑旅程（旧壳 update 四字段全量替换平价）：编辑弹层回填名称 / 目标额 /
+/// 计划月存（编辑模式字段在屏）；改名 + 改额 + 设置计划月存 → 保存 → 行格
+/// 刷出新名新额、成功反馈在屏。删除「编辑 → perform_save(update) → reload」
+/// 任一接线即红。
+#[test]
+fn savings_view_edits_goal_with_planned_monthly() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("savings-edit");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        seed_savings_goal(&db, "买车基金", 20_000, None);
+    }
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_savings(&mut app);
+    app.wait_for("text:买车基金").unwrap();
+
+    // 编辑模式字段闭集回填：名称 / 目标额原值（分转元）、计划月存空。
+    app.press("id:sg-edit").unwrap();
+    app.wait_for("id:sg-form-name").unwrap();
+    app.wait_for("text:编辑攒钱目标").unwrap();
+    assert_eq!(
+        app.screen().input_text("id:sg-form-name").unwrap(),
+        Some("买车基金"),
+        "名称回填原值"
+    );
+    assert_eq!(
+        app.screen().input_text("id:sg-form-amount").unwrap(),
+        Some("200"),
+        "目标额回填原值（分转元）"
+    );
+
+    // 改名 + 改额 + 计划月存 → 保存：行刷出新名 / 新额，反馈在屏
+    //（type_text 是追加键入，先 clear 清回填目值——键盘全选替换的对应形态）。
+    app.clear("id:sg-form-name").unwrap();
+    app.type_text("id:sg-form-name", "环游世界基金").unwrap();
+    app.clear("id:sg-form-amount").unwrap();
+    app.type_text("id:sg-form-amount", "300").unwrap();
+    // 截止日键入面（date_option_select 可清空日期封装件，#2056 随消费面
+    // 开门）：完整日期键入即落值，保存后截止日列呈现同日。
+    app.type_text("id:sg-form-deadline-input", "2027-06-30")
+        .unwrap();
+    app.type_text("id:sg-form-planned", "100").unwrap();
+    app.press("id:sg-form-save").unwrap();
+    app.wait_for_gone("id:sg-form-save", DEFAULT_WAIT).unwrap();
+    app.wait_for("text:环游世界基金").unwrap();
+    app.wait_for("text:目标已更新").unwrap();
+    for text in ["¥300", "手填 ¥100/月", "2027-06-30"] {
+        assert!(
+            app.shows(text),
+            "应呈现「{text}」：{:?}",
+            app.screen().texts()
+        );
+    }
+}
+
+/// 归档 / 取消归档 / 删除（旧壳 #1754 生命周期平价）：归档移入归档卡（退出
+/// 默认列表），取消归档回默认列表；删除经二次确认，取消不写入、确认后目标
+/// 从列表消失。删除归档 / 取消归档 / 确认接线任一环即红。
+#[test]
+fn savings_view_archives_unarchives_and_deletes_with_confirmation() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("savings-life");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        seed_savings_goal(&db, "买车基金", 10_000, None);
+    }
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_savings(&mut app);
+    app.wait_for("text:买车基金").unwrap();
+
+    // 归档：移入归档卡（归档卡在屏）与历史保留口径；成功反馈在屏。
+    app.press("id:sg-archive").unwrap();
+    app.wait_for("id:sg-archived-table").unwrap();
+    app.wait_for("text:目标已归档，历史与流水保留可查").unwrap();
+    // 归档卡行在（同一行名）且归档卡首行操作钮闭集（取消归档 / 删除）。
+    app.wait_for("text:已归档").unwrap();
+
+    // 取消归档：回默认列表（归档卡消失——旧壳 v-if 归档空不渲染同口径）。
+    app.press("id:sg-unarchive").unwrap();
+    app.wait_for_gone("id:sg-archived-table", DEFAULT_WAIT)
+        .unwrap();
+    app.wait_for("text:目标已恢复为进行中").unwrap();
+    app.wait_for("id:sg-edit").unwrap();
+
+    // 删除确认：取消不写入（确认框消失、目标仍在、无删除反馈）。
+    app.press("id:sg-delete").unwrap();
+    app.wait_for("text:删除攒钱目标").unwrap();
+    app.wait_for("text:确认删除「买车基金」？").unwrap();
+    app.wait_for("text:删除后目标与专属账户一并收起，历史交易保留可查；账户仍有余额时将被拒绝。")
+        .unwrap();
+    app.press("id:danger-cancel").unwrap();
+    app.wait_for_gone("text:删除攒钱目标", DEFAULT_WAIT)
+        .unwrap();
+    app.wait_for("id:sg-edit").unwrap();
+    assert!(
+        !app.shows("目标已删除"),
+        "取消不写入：{:?}",
+        app.screen().texts()
+    );
+
+    // 删除确认：目标从列表消失（含级联专属账户同一事务）。
+    app.press("id:sg-delete").unwrap();
+    app.wait_for("text:删除攒钱目标").unwrap();
+    app.press("id:danger-confirm").unwrap();
+    app.wait_for("text:目标已删除，专属账户一并收起，历史交易仍可查")
+        .unwrap();
+    assert_eq!(
+        app.screen().count("id:sg-edit").unwrap(),
+        0,
+        "删除后目标行从列表消失"
+    );
+}
+
+/// 删除守卫（旧壳 #1754 余额非零码化拒绝平价）：余额非零被域守卫
+/// 拒绝（引导先转出），错误落反馈条位且目标仍在。删除「boot 直调域写入口」
+/// 接线即红（守卫住在域单正文，本壳不自建）。
+#[test]
+fn savings_view_delete_guard_refuses_nonzero_balance() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("savings-guard");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let goal_id = seed_savings_goal(&db, "买车基金", 10_000, None);
+        // 余额非零：专属账户调整余额（域公开写入口，V017 缓存落到）。
+        let account_id = {
+            let conn = db
+                .conn
+                .lock()
+                .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
+                .unwrap();
+            ledger_savings_goal::list_savings_goal_progress(&conn, today())
+                .unwrap()
+                .into_iter()
+                .find(|row| row.goal.id == goal_id)
+                .unwrap()
+                .goal
+                .account_id
+                .clone()
+        };
+        let conn = db
+            .conn
+            .lock()
+            .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
+            .unwrap();
+        ledger_accounts::adjust_account_balance(
+            &conn,
+            &account_id,
+            &ledger_accounts::AccountBalanceAdjustInput {
+                target_balance_cents: 5_000,
+                date: today().to_string(),
+                note: None,
+            },
+        )
+        .unwrap();
+    }
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_savings(&mut app);
+    // 异步装载纪律：先等行到屏再断已存（V017 缓存读数）。
+    app.wait_for("id:sg-table").unwrap();
+    app.wait_for("text:买车基金").unwrap();
+    app.wait_for("text:¥50").unwrap();
+
+    // 删除经确认 → 写入口码化拒绝：错误落反馈条位，目标与专属账户仍在。
+    app.press("id:sg-delete").unwrap();
+    app.wait_for("text:删除攒钱目标").unwrap();
+    app.press("id:danger-confirm").unwrap();
+    app.wait_for("text:删除失败: 目标账户仍有余额，请先转出后再删除")
+        .unwrap();
+    app.wait_for("id:sg-edit").unwrap();
+    assert!(!app.shows("目标已删除"));
+}
+
+/// 达成态呈现（旧壳 achieved 渲染平价）：已存 = 目标额时状态列「已达成」
+///（读时派生纯展示态，推算整体退场）；无关联在用计划（手填节奏）时不给
+/// 关联计划提示（两域边界）。删除达成行状态覆写接线即红。
+#[test]
+fn savings_view_achieved_state_and_plan_hint_boundaries() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("savings-achieved");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let goal_id = seed_savings_goal(&db, "攒满目标", 5_000, None);
+        let account_id = {
+            let conn = db
+                .conn
+                .lock()
+                .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
+                .unwrap();
+            ledger_savings_goal::list_savings_goal_progress(&conn, today())
+                .unwrap()
+                .into_iter()
+                .find(|row| row.goal.id == goal_id)
+                .unwrap()
+                .goal
+                .account_id
+                .clone()
+        };
+        let conn = db
+            .conn
+            .lock()
+            .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
+            .unwrap();
+        ledger_accounts::adjust_account_balance(
+            &conn,
+            &account_id,
+            &ledger_accounts::AccountBalanceAdjustInput {
+                target_balance_cents: 5_000,
+                date: today().to_string(),
+                note: None,
+            },
+        )
+        .unwrap();
+    }
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_savings(&mut app);
+    app.wait_for("id:sg-table").unwrap();
+    app.wait_for("text:攒满目标").unwrap();
+    // 达成 = 已存 ≥ 目标额（读时派生）：状态列已达成、还差恒显 ¥0、推算退场。
+    for text in ["已达成", "¥0"] {
+        assert!(
+            app.shows(text),
+            "应呈现「{text}」：{:?}",
+            app.screen().texts()
+        );
+    }
+    // 无关联在用计划（装配面 plan_hint 判定True需 plan 节奏来源）：不显示关联
+    // 计划提示（lib 单测钉正向分支，headless 钉负向边界不需手模计划）。
+    assert_eq!(
+        app.screen().count("id:sg-plan-hint").unwrap(),
+        0,
+        "达成但无在用计划（手填节奏）：不显示关联计划提示"
+    );
 }
 
 /// 造一个带初始余额的现金账户（用例共用；金额经域公开写入口，初始余额在创建
