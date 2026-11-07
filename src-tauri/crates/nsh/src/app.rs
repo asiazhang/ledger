@@ -36,8 +36,8 @@ use crate::assembly::{
 use crate::boot;
 use crate::nav_model::ViewName;
 use crate::{
-    context_menu, danger, modal, nav, nav_model, overlay, period, pinyin_select, popconfirm,
-    sidebar, signals, txn_form, views,
+    context_menu, danger, modal, multi_select, nav, nav_model, overlay, period, pinyin_select,
+    popconfirm, sidebar, signals, tx_filter, txn_form, views,
 };
 
 /// 金额隐私模式开关的存储键（设备轻量设置项，与旧壳同键同值形态：旧壳
@@ -156,6 +156,7 @@ pub fn reset_book_assembly() {
     *db_slot() = None;
     signals::reset_for_tests();
     nav::reset_for_tests();
+    tx_filter::reset_for_tests();
 }
 
 /// 启动结果三态（窗口呈现的全部状态）。
@@ -230,10 +231,6 @@ const SEARCH_DEBOUNCE_MS: u64 = 300;
 
 /// 搜索框占位文案（与旧壳 search.keywordPlaceholder 同文案）。
 const SEARCH_PLACEHOLDER: &str = "输入关键字开始搜索（备注、账户名、商户名，支持多关键字）";
-
-/// 搜索无结果空态文案（与旧壳 search.noResults 同文案；列表态空库仍是
-/// 「暂无数据」——空态分型与旧壳两档同源同形）。
-const SEARCH_EMPTY_TEXT: &str = "无匹配结果";
 
 /// 「今天」（本地时区日历日，期间预设与边界抬升的相对点，与旧壳本地
 /// 日历同口径）。非响应式：跨期翻转随下次重算呈现（分钟级时钟不立桩）。
@@ -378,7 +375,6 @@ fn table_classes() -> DataTableClasses {
 /// 派发；桌面立桩无触控轴）。
 #[component]
 pub(crate) fn TransactionsView() -> impl IntoElement {
-    let page = signal(1u32);
     let total = signal(0i64);
     let rows = signal(Vec::<RowCells>::new());
     let loading = signal(true);
@@ -389,12 +385,20 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
     let columns = computed(move || elastic_columns(window().width.0 - sidebar::SIDEBAR_WIDTH));
     // 搜索态：输入文本（受控）、结果呈现态（旧壳 searched 语义——搜索结果落位
     // 后才切搜索态呈现，键入中底栏仍呈上一装载态）、防抖调度序号（新输入作废
-    // 在途定时器）与装载序号（后发作废先发，与旧壳 Loadable invalidate 同义：
-    // 竞态后发覆盖先发，迟到结果不落位）。
+    // 在途定时器；金额区间输入共用同一防抖——旧壳搜索页单防抖同形）与装载序号
+    //（后发作废先发，与旧壳 Loadable invalidate 同义：竞态后发覆盖先发，迟到
+    // 结果不落位）。
     let search_text = signal(String::new());
     let searched = signal(false);
     let search_seq = signal(0u64);
     let load_seq = signal(0u64);
+    // 筛选会话态（#2037）：进程级单例信号束（会话内保留——视图卸载重挂不丢，
+    // 旧壳 ADR-0094 同语义；零写盘，冷启动回默认）。金额区间输入属搜索面维度
+    //（旧壳搜索页同口径），组件本地态不进会话保留；文本元 → 分换算在装载时机
+    //（[assembly::amount_text_to_cents] 换算家族单点）。
+    let filters = tx_filter::store();
+    let amount_min_text = signal(String::new());
+    let amount_max_text = signal(String::new());
     // 行删除态（issue #2022）：待确认删除的交易 id（Some = 危险确认对话框开）
     // 与删除失败呈现（码化错误文案，不静默；下次删除尝试开始时清空）。
     let confirm_target = signal(None::<String>);
@@ -412,10 +416,10 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
     // 记收入；弹层开合上报 Overlay Suppression，期间弹层同形）。
     let add_menu_open = signal(false);
     let add_menu_token = overlay::OverlayToken::new();
-    // 时间维度行状态：期间快照（None = 全部）与数据期间边界原始日期对
-    // （None = 在途/失败 → 钳制退化为不钳制，旧壳 silent 同口径）；快照区间
-    // 是唯一事实源，游标不落状态（步进前从当前区间反推，ADR-0141 决策 2）。
-    let range = signal(None::<period::PeriodRange>);
+    // 时间维度行状态：期间快照住筛选会话态（#2037 起，旧壳 dateFrom/dateTo 同
+    // 维度的会话内保留）；数据期间边界原始日期对（None = 在途/失败 → 钳制退化
+    // 为不钳制，旧壳 silent 同口径）；快照区间是唯一事实源，游标不落状态（步进
+    // 前从当前区间反推，ADR-0141 决策 2）。
     let boundary_dates = signal(None::<(Option<String>, Option<String>)>);
     let period_open = signal(false);
     // 弹层开合上报注册表（Overlay Suppression，ADR-0035 原生壳重建）：token
@@ -440,7 +444,7 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
     // 期间派生（纯函数单点，UI 只消费）：游标、当前游标单位下的边界、步进
     // 可达性。
     let cursor = computed(move || {
-        let r = range.get();
+        let r = filters.range.get();
         period::range_to_period(
             r.as_ref().map(|p| p.from.as_str()),
             r.as_ref().map(|p| p.to.as_str()),
@@ -457,7 +461,7 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
         ))
     });
     let can_step_prev = computed(move || {
-        let r = range.get();
+        let r = filters.range.get();
         period::can_step_current(
             r.as_ref().map(|p| p.from.as_str()),
             r.as_ref().map(|p| p.to.as_str()),
@@ -466,7 +470,7 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
         )
     });
     let can_step_next = computed(move || {
-        let r = range.get();
+        let r = filters.range.get();
         period::can_step_current(
             r.as_ref().map(|p| p.from.as_str()),
             r.as_ref().map(|p| p.to.as_str()),
@@ -475,27 +479,34 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
         )
     });
 
-    // 装载一页（首屏、翻页、换期间与搜索共用一条路径）：输入 trim 后判态
-    // ——空 = 列表态读交易页（携期间快照，全库或期间过滤口径），非空 = 搜索
-    // 态直调域统一模糊搜索（与旧壳 `search_transactions` 命令同一域函数，
-    // 不经 IPC）；两态分页与总数语义同旧壳（页码重置、服务端 offset 分页、
-    // total = 满足口径的总数）。阻塞读走后台线程（SQLite IO 不占引擎线程）；
-    // 分页条装载期间禁用（单飞——等待成功优于即刻失败，无并发页读交错）。
-    // 币种字典、在用分类、可见账户、含软删商户、未删除保单与行集同批读取：
-    // 字典读失败不静默降级成无符号金额（用户无感知的错示比暂缓呈现更差），
-    // 与行集一并走错误呈现。数据期间边界读失败不拖垮页呈现：钳制退化为不钳制
-    // （旧壳 silent 同口径），保留旧值到下次成功替换。表单参考数据源与原始
-    // 行集随装载一并落位（#2034：编辑回填与选项面的同一事实源）。
+    // 装载一页（首屏、翻页、换期间、筛选与搜索共用一条路径）：判态——关键词
+    // 或金额区间任一在场 = 搜索态直调域统一模糊搜索（与旧壳 `search_transactions`
+    // 命令同一域函数，不经 IPC；携金额区间与期间快照），否则 = 列表态读交易页
+    //（携筛选全维度 + 期间快照，默认 kind 收窄）。两态分页与总数语义同旧壳
+    //（页码重置、服务端 offset 分页、total = 满足口径的总数）。阻塞读走后台
+    // 线程（SQLite IO 不占引擎线程）；分页条装载期间禁用（单飞——等待成功优于
+    // 即刻失败，无并发页读交错）。币种字典、在用分类、可见账户、含软删商户、
+    // 未删除保单与行集同批读取：字典读失败不静默降级成无符号金额（用户无感知
+    // 的错示比暂缓呈现更差），与行集一并走错误呈现。数据期间边界读失败不拖垮
+    // 页呈现：钳制退化为不钳制（旧壳 silent 同口径），保留旧值到下次成功替换。
+    // 表单参考数据源与原始行集随装载一并落位（#2034：编辑回填与选项面的同一
+    // 事实源）。
     let load = move |page_no: u32| {
         loading.set(true);
         error.set(None);
         load_seq.update(|seq| *seq += 1);
         let seq = load_seq.get();
         let query = search_text.get().trim().to_owned();
-        let searching = !query.is_empty();
+        let amount_min = assembly::amount_text_to_cents(&amount_min_text.get());
+        let amount_max = assembly::amount_text_to_cents(&amount_max_text.get());
+        // 搜索态判据：关键词或金额区间任一在场（旧壳搜索页 hasQuery 同口径）；
+        // 期间不判态——列表态的期间过滤照旧，搜索态下期间对命中面生效（搜索 ×
+        // 期间裁决，#2037）。筛选维度快照在调用时机取值（装载即以当下筛选态
+        // 读页——与旧壳 load 装配请求参数同形）。
+        let searching = !query.is_empty() || amount_min.is_some() || amount_max.is_some();
+        let state = filters.snapshot();
         let privacy = amount_privacy_enabled();
         let db = db_slot().clone();
-        let range = range.get();
         spawn(async move {
             let Some(db) = db else {
                 error.set(Some("内部错误：账本库会话缺失".to_owned()));
@@ -508,12 +519,41 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
             // （旧壳 silent 同口径），保留旧值到下次成功替换。表单参考数据源与原始
             // 行集随装载一并落位（#2034：编辑回填与选项面的同一事实源）。
             let outcome = blocking(move || {
-                let page_read = if query.is_empty() {
-                    boot::transaction_page(&db, page_no, range.as_ref())
-                        .map(|result| PageRead::new(result.items, result.total))
+                let page_read = if !searching {
+                    // 列表态：筛选维度 + 期间快照 + 默认 kind 收窄（投资 kind
+                    // 排除是读接缝单点，ADR-0135）。
+                    boot::transaction_page(
+                        &db,
+                        page_no,
+                        &boot::TxListQuery {
+                            range: state.range.clone(),
+                            kinds: tx_filter::resolve_request_kinds(state.kinds.as_deref()),
+                            involving_account_id: state.involving_account_id.clone(),
+                            merchant_id: state.merchant_id.clone(),
+                            category_id: state.category.as_ref().and_then(|c| match c {
+                                tx_filter::CategoryFilter::Exact(id) => Some(id.clone()),
+                                tx_filter::CategoryFilter::UncategorizedOnly => None,
+                            }),
+                            uncategorized_only: matches!(
+                                state.category,
+                                Some(tx_filter::CategoryFilter::UncategorizedOnly)
+                            ),
+                        },
+                    )
+                    .map(|result| PageRead::new(result.items, result.total))
                 } else {
-                    boot::transaction_search(&db, &query, page_no)
-                        .map(|result| PageRead::new(result.items, result.total))
+                    // 搜索态：关键词 + 金额区间 + 期间快照（裁决后期间对搜索
+                    // 命中面生效，旧壳搜索页同口径）；账户/商户/分类/类型维度
+                    // 不在搜索面（域读路径不支持，裁决定型为规格）。
+                    boot::transaction_search(
+                        &db,
+                        &query,
+                        page_no,
+                        amount_min,
+                        amount_max,
+                        state.range.as_ref(),
+                    )
+                    .map(|result| PageRead::new(result.items, result.total))
                 };
                 page_read
                     .and_then(|mut read| {
@@ -599,9 +639,9 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
     // 以删后页码决策（保持当前页 / 本页删空回退一页，旧壳 afterRowDelete
     // ADR-0045 同语义）重读。订阅句柄随视图实例存亡；生产进程一视图一订阅。
     let reload_after_delete = move || {
-        let target =
-            assembly::page_after_row_delete(page.get(), total.get()).unwrap_or_else(|| page.get());
-        page.set(target);
+        let target = assembly::page_after_row_delete(filters.page.get(), total.get())
+            .unwrap_or_else(|| filters.page.get());
+        filters.set_page(target);
         load(target);
     };
     // 订阅随组件实例存亡：组件体只跑一次、普通绑定不入 owner 图，体结束即
@@ -666,7 +706,7 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
     // 同义）。回车立即装载（on_submit，旧壳 onEnter 同语义——不等防抖）。
     let schedule_search = move |text: &str| {
         search_text.set(text.to_owned());
-        page.set(1);
+        filters.set_page(1);
         search_seq.update(|seq| *seq += 1);
         let seq = search_seq.get();
         set_timeout(Duration::from_millis(SEARCH_DEBOUNCE_MS), move || {
@@ -674,6 +714,29 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
                 load(1);
             }
         });
+    };
+
+    // 金额区间输入调度（搜索面维度，旧壳搜索页同形：关键词/金额/日期同一
+    // watcher 防抖查询）：文本变化 → 页码归 1 → 共用搜索防抖定时器（序号失配
+    // 自弃）。元 → 分换算在装载时机（[assembly::amount_text_to_cents] 单点）；
+    // 金额任一端在场即入搜索态（旧壳「无关键字仅筛选」同语义）。
+    let schedule_amount = move || {
+        filters.set_page(1);
+        search_seq.update(|seq| *seq += 1);
+        let seq = search_seq.get();
+        set_timeout(Duration::from_millis(SEARCH_DEBOUNCE_MS), move || {
+            if search_seq.get() == seq {
+                load(1);
+            }
+        });
+    };
+    let on_amount_min_change = move |text: &str| {
+        amount_min_text.set(text.to_owned());
+        schedule_amount();
+    };
+    let on_amount_max_change = move |text: &str| {
+        amount_max_text.set(text.to_owned());
+        schedule_amount();
     };
 
     // 翻页动作单点（快捷键语义走同一决策半边，ADR-0140 决策 2）：分页条点击
@@ -686,20 +749,21 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
             return;
         }
         let Some(target) =
-            assembly::next_page(page.get(), assembly::total_pages(total.get()), step)
+            assembly::next_page(filters.page.get(), assembly::total_pages(total.get()), step)
         else {
             return;
         };
-        page.set(target);
+        filters.set_page(target);
         load(target);
     };
 
     // 周期步进动作（ADR-0141 决策 2：游标反推、边界钳制、越界幂等全在
-    // [`period::step_current`] 单点；换期间后回第 1 页）。点击路径（步进器
-    // 按钮）无抑制闸门（三闸门只辖键盘派发面，先例分页条点击）；快捷键路径
-    // 在下方 step_period 内先行闸检。
+    // [`period::step_current`] 单点；换期间后回第 1 页——期间快照住筛选会话
+    // 态，搜索态下步进携新区间重搜，#2037 裁决）。点击路径（步进器按钮）无
+    // 抑制闸门（三闸门只辖键盘派发面，先例分页条点击）；快捷键路径在下方
+    // step_period 内先行闸检。
     let apply_step = move |delta: i32| {
-        let r = range.get();
+        let r = filters.range.get();
         let Some(next) = period::step_current(
             r.as_ref().map(|p| p.from.as_str()),
             r.as_ref().map(|p| p.to.as_str()),
@@ -708,8 +772,8 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
         ) else {
             return;
         };
-        range.set(Some(next));
-        page.set(1);
+        filters.range.set(Some(next));
+        filters.set_page(1);
         load(1);
     };
     let step_period = move |delta: i32| {
@@ -721,12 +785,134 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
     };
 
     // 预设选择动作单点（弹层芯片点击）：写精确自然周期快照并关弹层，回
-    // 第 1 页（「全部」= 无过滤区间；离开无过滤默认态仅在确认选定后发生）。
+    // 第 1 页（「全部」= 无过滤区间；同值守卫——同芯片重复点击不重读，旧壳
+    // setFilter 同值守卫同口径）。
     let apply_preset = move |preset: period::Preset| {
-        range.set(period::preset_range(preset, today()));
-        page.set(1);
-        load(1);
+        let next = period::preset_range(preset, today());
+        let changed = filters.range.get_untracked() != next;
+        filters.range.set(next);
+        filters.set_page(1);
+        if changed {
+            load(1);
+        }
         period_open.set(false);
+    };
+
+    // ----------------------------------------------------------------------
+    // 筛选条（#2037）：会话态 + 交互桥 + 类型/清除/ESC 处理器。
+    // ----------------------------------------------------------------------
+
+    // 下钻落位消费（#2037，骨架票导航接缝的第一个真实消费方）：挂载即读一次
+    // （读一次封闸归 [nav::take_intent]；页签往复/重复落位不重放）。筛选载荷
+    // 全量替换会话态（旧壳「新 query 全量替换旧 query」同构，[tx_filter::drilled]
+    // 纯决策单点）；focus 在交易列表无实体定位形态（旧壳无对应消费面），读一
+    // 次丢弃以防误投后续落位。消费须先于交互桥初始化与首屏装载——落位筛选与
+    // 首拉同轮生效。
+    if let Some(intent) = nav::take_intent()
+        && let Some(drill) = intent.tx_filters.as_ref()
+    {
+        filters.apply_drill(drill);
+    }
+
+    // 账户/商户下拉交互桥（挂载时自会话态初始化；改动经桥接 effect 归一）。
+    // 会话态信号是唯一事实源；交互桥是封装件（信号受控形态）的写入面——挂载
+    // 顺序：下钻消费 → 桥初始化（落位筛选直接呈现）。
+    let account_sel = signal(filters.account.get_untracked());
+    let merchant_sel = signal(filters.merchant.get_untracked());
+
+    // 类型多选读写面（回调受控封装，无中间信号）：读 = 会话态集合的**响应式**
+    // 查询（触发件回显与 ✕ 可见性随勾选即时刷新——封装内 when/文本闭包经本
+    // 闭包追踪会话态信号）；写 = 切换后归一（[tx_filter::normalize_kind_selection]，
+    // 空集/满选 ≡ 默认）+ 同值守卫 + 统一出口（翻页归零 + 重读第一页，旧壳
+    // setFilter 同形）。
+    let kind_selected = move |id: &str| {
+        ledger_transaction::TransactionKind::parse(id).is_ok_and(|kind| {
+            filters
+                .kinds
+                .get()
+                .is_some_and(|kinds| kinds.contains(&kind))
+        })
+    };
+    let on_kind_toggle = move |id: &str| {
+        let Ok(kind) = ledger_transaction::TransactionKind::parse(id) else {
+            return;
+        };
+        let mut next = filters.kinds.get_untracked().unwrap_or_default();
+        if next.contains(&kind) {
+            next.retain(|k| *k != kind);
+        } else {
+            next.push(kind);
+        }
+        let normalized = tx_filter::normalize_kind_selection(&next);
+        if filters.kinds.get_untracked() == normalized {
+            return;
+        }
+        filters.kinds.set(normalized);
+        filters.set_page(1);
+        load(1);
+    };
+    let on_kind_clear = move || {
+        if filters.kinds.get_untracked().is_none() {
+            return;
+        }
+        filters.kinds.set(None);
+        filters.set_page(1);
+        load(1);
+    };
+
+    // 桥接 effect（账户/商户两维）：交互桥信号 → 会话态 + 统一出口（翻页归零
+    // + 重读第一页）。同值不动作（信号等值守卫——挂载初始化不产生额外装载，
+    // 重置路径先归一会话态再归零桥时桥接跳过）。删除任一桥接即红：headless
+    // 账户/商户筛选旅程（设筛选 → 行集变化 → 清除）断言用户可见行集。
+    let bridge_account = move || {
+        effect(move || {
+            let value = account_sel.get();
+            if filters.account.get_untracked() != value {
+                filters.account.set(value);
+                filters.set_page(1);
+                load(1);
+            }
+        });
+    };
+    bridge_account();
+    let bridge_merchant = move || {
+        effect(move || {
+            let value = merchant_sel.get();
+            if filters.merchant.get_untracked() != value {
+                filters.merchant.set(value);
+                filters.set_page(1);
+                load(1);
+            }
+        });
+    };
+    bridge_merchant();
+
+    // 筛选激活判定（清除按钮禁用态与空态分型的判定输入；旧壳 filtersActive
+    // 同口径：页码不算筛选，金额输入属搜索面保留态一并计入）。响应式读
+    //（空态文案与按钮禁用随筛选变化即时刷新）。
+    let search_filters_active = move || {
+        tx_filter::filters_active(&tx_filter::TxFilterState {
+            kinds: filters.kinds.get(),
+            involving_account_id: filters.account.get(),
+            merchant_id: filters.merchant.get(),
+            category: filters.category.get(),
+            range: filters.range.get(),
+            page: filters.page.get_untracked(),
+        }) || !amount_min_text.get().trim().is_empty()
+            || !amount_max_text.get().trim().is_empty()
+    };
+
+    // 清除全部筛选（旧壳 resetFilters 同语义：清全部维度 + 页大小回默认[本壳
+    // 固定页径] + 翻页归零 + 重拉；金额输入与搜索桥一并归零——搜索桥归零经
+    // 桥接 effect 跳过同值动作）。幂等：无保留状态时按钮禁用不可达，ESC 路径
+    // 用下方守卫拦。
+    let reset_filters = move || {
+        account_sel.set(None);
+        merchant_sel.set(None);
+        amount_min_text.set(String::new());
+        amount_max_text.set(String::new());
+        filters.reset();
+        load(1);
     };
 
     // 两族快捷键（ADR-0140 / ADR-0141 裸键闭集）：裸键语义 = 拒绝一切修饰键
@@ -737,6 +923,23 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
     on_key("]", move |_| flip_page(assembly::PageStep::Next));
     on_key(",", move |_| step_period(-1));
     on_key(".", move |_| step_period(1));
+    // ESC 复位（旧壳 registerViewReset(resetFilters) 同语义：窗口行为守卫在
+    // 无弹层 ESC 时消费——本壳等价形态 = 抑制闸门 + 幂等守卫）。弹层开着时
+    // ESC 属弹层关闭面（闸门拦截，删除即红钉在 headless ESC 旅程测试）；无
+    // 保留状态（筛选全默认 + 第 1 页 + 金额输入空）时幂等无操作（旧壳
+    // isAtDefault 同口径，金额输入属搜索面保留态一并计入）。
+    on_key("escape", move |_| {
+        if overlay::has_open_overlay() {
+            return;
+        }
+        let at_default = tx_filter::is_at_default(&filters.snapshot())
+            && amount_min_text.get_untracked().trim().is_empty()
+            && amount_max_text.get_untracked().trim().is_empty();
+        if at_default {
+            return;
+        }
+        reset_filters();
+    });
 
     // 首屏装载（组件任务运行一次；boot 成功先于本视图呈现，DB 恒已就位）。
     load(1);
@@ -816,7 +1019,7 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
                         .gap_1()
                         .children(period::PRESETS.iter().copied().map(|preset| {
                             button()
-                                .selected(move || match_preset_now(range.get(), preset))
+                                .selected(move || match_preset_now(filters.range.get(), preset))
                                 .app_class(
                                     "px-2 py-1 rounded-md text-foreground hover:bg-accent selected:bg-accent",
                                 )
@@ -935,11 +1138,112 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
                 ),
         );
 
+    // 筛选条（#2037，旧壳交易页筛选行 + 搜索页金额输入的合流形态）：账户
+    //（拼音可搜，涉及账户语义，可清除）/ 商户（拼音可搜，含软删商户历史交易
+    // 口径，可清除）/ 类型（多选，可选集四通用 kind，空选满选归一默认）/
+    // 金额区间（元输入，搜索面维度）+ 清除筛选（禁用态随筛选激活判定）。
+    // 分类维度无手动控件（旧壳同口径，下钻只读入口）；隐藏投资相关开关属视图
+    // 偏好不入筛选（ADR-0136 偏好与筛选分家，随视图偏好面接入）。控件全部经
+    // 封装族消费（视图不直连框架基元，ADR-0118）；弹层抑制上报自含于封装。
+    let filter_row = view()
+        .flex_row()
+        .items_center()
+        .flex_wrap()
+        .gap_2()
+        .px_4()
+        .py_2()
+        .app_class("border-b border-border")
+        .child(pinyin_select::pinyin_select(
+            "tx-filter-account",
+            move || {
+                txn_form::pinned_account_options(
+                    &form_accounts.get().0,
+                    filters.account.get_untracked().as_deref(),
+                    |_| true,
+                )
+            },
+            account_sel,
+            "账户",
+            true,
+        ))
+        .child(pinyin_select::pinyin_select(
+            "tx-filter-merchant",
+            move || assembly::merchant_filter_options(&form_merchants.get().0),
+            merchant_sel,
+            "商户",
+            true,
+        ))
+        .child(multi_select::multi_select(
+            "tx-filter-kind",
+            assembly::kind_filter_options,
+            kind_selected,
+            on_kind_toggle,
+            on_kind_clear,
+            "类型",
+        ))
+        .child(
+            input()
+                .test_id("tx-amount-min")
+                .value(move || amount_min_text.get())
+                .placeholder("最低金额（元）")
+                .text_color(fg)
+                .w(px(130.0))
+                .app_class(
+                    "bg-background rounded-md border border-border px-2 py-1 \
+                     placeholder:text-muted-foreground",
+                )
+                .on_change(on_amount_min_change)
+                .on_submit(move |_: &str| {
+                    // 回车立即装载（旧壳搜索页 @keyup.enter 同语义）。
+                    filters.set_page(1);
+                    search_seq.update(|seq| *seq += 1);
+                    load(1);
+                }),
+        )
+        .child(
+            input()
+                .test_id("tx-amount-max")
+                .value(move || amount_max_text.get())
+                .placeholder("最高金额（元）")
+                .text_color(fg)
+                .w(px(130.0))
+                .app_class(
+                    "bg-background rounded-md border border-border px-2 py-1 \
+                     placeholder:text-muted-foreground",
+                )
+                .on_change(on_amount_max_change)
+                .on_submit(move |_: &str| {
+                    filters.set_page(1);
+                    search_seq.update(|seq| *seq += 1);
+                    load(1);
+                }),
+        )
+        .child(
+            // 清除筛选（旧壳 transactions.filter.clear 同词表）：禁用态随筛选
+            // 激活判定（无保留状态不可点——旧壳 disabled=!filtersActive 同位）。
+            // test_id 落在按钮内文本上（headless press/enabled 按 id 锚点命中
+            // 文本、物理命中到内层按钮，tx-form-submit 先例同形）。
+            button()
+                .disabled(move || !search_filters_active())
+                .accessibility_label("清除筛选")
+                .app_class(
+                    "px-2 py-1 rounded-md text-foreground hover:bg-accent disabled:opacity-40",
+                )
+                .child(
+                    text("清除筛选")
+                        .text_size(px(12.0))
+                        .text_color(fg)
+                        .test_id("tx-filter-clear"),
+                )
+                .on_press(move |_: &()| reset_filters()),
+        );
+
     view()
         .flex_1()
         .flex_col()
         .app_class("bg-background")
         .child(period_row)
+        .child(filter_row)
         .child(
             // 搜索框（issue #2023）：标准可编辑文本输入控件（nsh_core `Input`，
             // Linux 宿主为 GTK 原生输入，天然经 GTK IME 管线——中文候选框/焦点
@@ -965,7 +1269,7 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
                         .on_submit(move |_: &str| {
                             // 作废在途防抖（序号失配自弃）后立即装载。
                             search_seq.update(|seq| *seq += 1);
-                            page.set(1);
+                            filters.set_page(1);
                             load(1);
                         }),
                 ),
@@ -1065,15 +1369,14 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
                         })
                         .loading(move || loading.get())
                         .loading_view(text("正在加载…").text_color(muted))
-                        // 空态分型与旧壳同源：搜索态无命中「无匹配结果」
-                        //（search.noResults），列表态空库「暂无数据」（list.empty）。
+                        // 空态分型三档与旧壳同源（[assembly::list_empty_text]
+                        // 纯决策单点）：搜索态无命中「无匹配结果」
+                        //（search.noResults）；列表态筛选无结果「没有符合条件的
+                        // 交易」（list.emptyFiltered，#2037 筛选激活判定）；
+                        // 列表态空库「暂无数据」（list.empty）。
                         .empty(
                             text(move || {
-                                if searched.get() {
-                                    SEARCH_EMPTY_TEXT
-                                } else {
-                                    "暂无数据"
-                                }
+                                assembly::list_empty_text(searched.get(), search_filters_active())
                             })
                             .text_color(muted),
                         )
@@ -1188,14 +1491,14 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
                                         .accessibility_label("交易分页")
                                         .previous_accessibility_label("上一页")
                                         .next_accessibility_label("下一页")
-                                        .page(move || page.get())
+                                        .page(move || filters.page.get())
                                         .total_pages(move || assembly::total_pages(total.get()))
                                         .disabled(move || loading.get())
                                         .item_class(
                                             "px-2 py-1 rounded-md text-foreground hover:bg-accent selected:bg-accent disabled:opacity-40",
                                         )
                                         .on_change(move |&picked: &u32| {
-                                            page.set(picked);
+                                            filters.set_page(picked);
                                             load(picked);
                                         }),
                                     )
@@ -2063,9 +2366,11 @@ fn view_host(nav: nav::NavStore) -> impl IntoElement {
 /// 立桩根组件：就绪前居中呈现启动三态，就绪后承载导航骨架（侧栏 + 内容区）。
 #[component]
 pub fn App() -> impl IntoElement {
-    // 导航状态挂根组件实例（根永生，信号存活与进程同步；后续消费经同一句柄），
-    // 键位带绑定随根实例存亡（引擎线程派发，含抑制闸门）。
+    // 导航状态与筛选会话态挂根组件实例（根永生，信号存活与进程同步；后续消费
+    // 经同一句柄；筛选会话态「视图卸载不丢」依赖根实例所有权，#2037），键位带
+    // 绑定随根实例存亡（引擎线程派发，含抑制闸门）。
     let nav = nav::store();
+    tx_filter::store();
     nav::bind_shortcuts();
     let state = signal(StartupView::Loading);
     // 主行/次行前景取主题令牌（双态自适应，registry 缺省带主题双态令牌）：

@@ -103,26 +103,64 @@ fn normalize_foreign_plaintext(db_path: &Path) -> Result<()> {
     })
 }
 
+/// 交易列表页查询载荷（issue #2037 筛选读接缝）：筛选会话态快照的读路径投影。
+/// 默认构造 = 无筛选但显式携带四通用 kind（主列表排除投资 kind 的读接缝单点，
+/// ADR-0135——本壳立桩期未接筛选维度的缺口由此闭合）。
+#[derive(Clone, Debug)]
+pub struct TxListQuery {
+    /// 期间快照（「全部」= `None`）。
+    pub range: Option<crate::period::PeriodRange>,
+    /// 类型集合（显式携带，含默认态；空集合视为未携带不过滤）。
+    pub kinds: Vec<ledger_transaction::TransactionKind>,
+    /// 涉及账户（转出 ∪ 转入 ∪ 出资三端命中，issue #937）。
+    pub involving_account_id: Option<String>,
+    /// 商户（含软删商户历史交易口径，issue #191）。
+    pub merchant_id: Option<String>,
+    /// 分类精确过滤（issue #377）。
+    pub category_id: Option<String>,
+    /// 仅无分类（issue #377 三态之一）。
+    pub uncategorized_only: bool,
+}
+
+impl Default for TxListQuery {
+    fn default() -> Self {
+        Self {
+            range: None,
+            kinds: crate::tx_filter::MAIN_LIST_KINDS.to_vec(),
+            involving_account_id: None,
+            merchant_id: None,
+            category_id: None,
+            uncategorized_only: false,
+        }
+    }
+}
+
 /// 读取账本库交易列表页（读路径直调域服务，issue #2018 立桩靶标；issue #2021
-/// 补日期区间维度）。
+/// 补日期区间维度；issue #2037 补全筛选维度与默认 kind 收窄）。
 ///
 /// 经核心交易域读路径 [`ledger_transaction::list_transactions`] 的服务端 offset
 /// 分页（ADR-0008 语义：页码从 1 起、`total` 与行集共用同一 WHERE 子句、排序
 /// date DESC, created_at DESC, id DESC），每页 [`PAGE_SIZE`] 行（100 行/页，
-/// 旧壳 50 行翻倍验证原生余量）；`range` 为期间快照（含边界，自然周期换算产物
-/// 见 [`crate::period`]），None = 「全部」无过滤（立桩搜索随 #2023 接入）。
-/// 来源列等读时投影接缝已由 [`crate::wiring`] 接线。读连接是成对建连的只读侧
-/// （ADR-0117：读路径不进写者闸门）。
+/// 旧壳 50 行翻倍验证原生余量）；`query.range` 为期间快照（含边界，自然周期
+/// 换算产物见 [`crate::period`]），None = 「全部」无过滤；其余维度与类型集合
+/// 按域契约直传（维度间 AND、类型维度内取或）。来源列等读时投影接缝已由
+/// [`crate::wiring`] 接线。读连接是成对建连的只读侧（ADR-0117：读路径不进
+/// 写者闸门）。
 pub fn transaction_page(
     db: &DbState,
     page: u32,
-    range: Option<&crate::period::PeriodRange>,
+    query: &TxListQuery,
 ) -> Result<TransactionListResult> {
     let filter = ledger_transaction::TransactionListFilter {
         page: Some(page.max(1) as usize),
         page_size: Some(PAGE_SIZE),
-        from: range.map(|r| r.from.clone()),
-        to: range.map(|r| r.to.clone()),
+        from: query.range.as_ref().map(|r| r.from.clone()),
+        to: query.range.as_ref().map(|r| r.to.clone()),
+        involving_account_id: query.involving_account_id.clone(),
+        merchant_id: query.merchant_id.clone(),
+        category_id: query.category_id.clone(),
+        uncategorized_only: query.uncategorized_only.then_some(true),
+        kinds: (!query.kinds.is_empty()).then(|| query.kinds.clone()),
         ..Default::default()
     };
     let conn = conn_lock(&db.read_conn)?;
@@ -134,21 +172,30 @@ pub fn transaction_page(
 /// 原文命中（备注原文子串 ∨ 账户名 ∨ 商户名 ∨ 购买项名称，LIKE 折叠仅 ASCII），
 /// 服务端 offset 分页（命中总数与页行集共用同一 WHERE，排序 date DESC）。
 /// 与旧壳 `search_transactions` 命令消费同一域函数——同一账本库同结果（#2023
-/// AC1）；金额/日期筛选维度立桩不接（spec #2015 Out of Scope：TransactionFilter
-/// 深模块完整语义不做）。页大小沿 [`PAGE_SIZE`]（立桩分页页径与列表态一致）。
-/// 空查询的域语义是空结果，视图层的空输入＝列表态不调搜索（呈现切换住
-/// [`crate::app`]）。读连接是成对建连的只读侧（ADR-0117）。
-pub fn transaction_search(db: &DbState, query: &str, page: u32) -> Result<TransactionSearchResult> {
+/// AC1）；issue #2037 起接金额区间（整数分，本位币口径）与期间快照（搜索 ×
+/// 期间裁决：期间对搜索命中面生效，旧壳搜索页同口径）；账户/商户/分类/类型
+/// 维度不在搜索面（域读路径不支持，裁决定型为规格）。页大小沿 [`PAGE_SIZE`]
+/// （分页页径与列表态一致）。空查询无筛选的域语义是空结果；空查询 + 有筛选
+/// = 仅筛选查询（旧壳搜索页同语义，呈现态归视图层）。读连接是成对建连的
+/// 只读侧（ADR-0117）。
+pub fn transaction_search(
+    db: &DbState,
+    query: &str,
+    page: u32,
+    amount_min_cents: Option<i64>,
+    amount_max_cents: Option<i64>,
+    range: Option<&crate::period::PeriodRange>,
+) -> Result<TransactionSearchResult> {
     let conn = conn_lock(&db.read_conn)?;
     ledger_transaction::search_transactions(
         &conn,
         query,
         page.max(1) as usize,
         PAGE_SIZE,
-        None,
-        None,
-        None,
-        None,
+        amount_min_cents,
+        amount_max_cents,
+        range.map(|r| r.from.as_str()),
+        range.map(|r| r.to.as_str()),
     )
 }
 

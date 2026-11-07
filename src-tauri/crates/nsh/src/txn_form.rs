@@ -703,7 +703,7 @@ fn form_direction(direction: assembly::LendingDirection) -> assembly::LendingFor
 /// 种存量脏行时补回选项并标「已归档」，值原样保留，spec #1952 / ADR-0142 决
 /// 策 4）。`keep` 是形态过滤器：基础收支/转账转出恒真，借贷按方向侧别，转
 /// 账转入按币种收窄。
-fn pinned_account_options(
+pub(crate) fn pinned_account_options(
     rows: &[ledger_accounts::Account],
     selected: Option<&str>,
     keep: impl Fn(&ledger_accounts::Account) -> bool,

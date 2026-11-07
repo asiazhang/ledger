@@ -863,6 +863,49 @@ pub fn category_kind_options(
     options
 }
 
+/// 商户筛选下拉选项（issue #2037，旧壳 `merchantOptions` 同口径）：来自含软删
+/// 全量商户行集（[`crate::boot::merchant_rows`] 口径，issue #191——软删商户
+/// 仍有历史交易，需可被选中过滤），按名称排序保证稳定（旧壳 `localeCompare
+/// "zh"` 的本壳近似：字符串字节序，中文排序稳定性同诉求）。纯投影。
+pub fn merchant_filter_options(rows: &[ledger_merchants::Merchant]) -> Vec<CategoryOption> {
+    let mut merchants: Vec<&ledger_merchants::Merchant> = rows.iter().collect();
+    merchants.sort_by(|a, b| a.name.cmp(&b.name));
+    merchants
+        .into_iter()
+        .map(|m| CategoryOption {
+            id: m.id.clone(),
+            label: m.name.clone(),
+        })
+        .collect()
+}
+
+/// 类型筛选下拉选项（issue #2037，旧壳 `kindOptions` 同口径）：可选集 = 四通用
+/// kind（ADR-0135 主列表收窄，[`crate::tx_filter::MAIN_LIST_KINDS`] 单名单），
+/// label 经 [`kind_label`] 随闭集序渲染（旧壳决议 6：展示序 = 闭集序）。
+pub fn kind_filter_options() -> Vec<CategoryOption> {
+    crate::tx_filter::MAIN_LIST_KINDS
+        .iter()
+        .map(|kind| CategoryOption {
+            id: kind.as_str().to_owned(),
+            label: kind_label(*kind, LendingDirection::None).to_owned(),
+        })
+        .collect()
+}
+
+/// 列表空态文案分型（issue #2037，旧壳 `emptyDescription` 两档同源同形）：
+/// 搜索态无命中「无匹配结果」（search.noResults）；列表态筛选无结果
+/// 「没有符合条件的交易」（list.emptyFiltered）；列表态空库「暂无数据」
+/// （list.empty）。纯函数，headless 空态分型断言的对口。
+pub fn list_empty_text(searched: bool, filters_active: bool) -> &'static str {
+    if searched {
+        "无匹配结果"
+    } else if filters_active {
+        "没有符合条件的交易"
+    } else {
+        "暂无数据"
+    }
+}
+
 /// 元文本 → 整数分（旧壳 yuanToCents 同口径：十进制文本、四舍五入到分、拒绝
 /// 空白/非数/科学计数）。None = 解析失败（呈现面归调用方校验文案）。
 pub fn budget_yuan_to_cents(text: &str) -> Option<i64> {
@@ -2776,6 +2819,33 @@ mod tests {
         assert_eq!(budget_status_text(true), "超支");
         assert_eq!(budget_summary_status_text(false), "正常");
         assert_eq!(budget_summary_status_text(true), "已超标");
+    }
+
+    #[test]
+    fn kind_filter_options_follow_main_list_closed_set_order() {
+        let options = kind_filter_options();
+        assert_eq!(
+            options.iter().map(|o| o.id.as_str()).collect::<Vec<_>>(),
+            vec!["income", "expense", "transfer", "refund"],
+            "可选集 = 四通用 kind（ADR-0135 主列表收窄），闭集序"
+        );
+        assert_eq!(
+            options.iter().map(|o| o.label.as_str()).collect::<Vec<_>>(),
+            vec!["收入", "支出", "转账", "退款"],
+            "label 经 kind_label 同一词表"
+        );
+    }
+
+    #[test]
+    fn list_empty_text_covers_three_way_split() {
+        assert_eq!(list_empty_text(true, false), "无匹配结果", "搜索态无命中");
+        assert_eq!(list_empty_text(true, true), "无匹配结果", "搜索态优先");
+        assert_eq!(
+            list_empty_text(false, true),
+            "没有符合条件的交易",
+            "列表态筛选无结果（旧壳 list.emptyFiltered）"
+        );
+        assert_eq!(list_empty_text(false, false), "暂无数据", "列表态空库");
     }
 
     #[test]

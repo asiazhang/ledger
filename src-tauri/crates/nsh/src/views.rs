@@ -135,11 +135,15 @@ pub fn group_more_view(group: GroupId) -> impl IntoElement {
     });
 
     // 激活成员的下钻意图消费（落位与意图同轮落地；effect 键激活切换，读一次
-    // 语义由 [`nav::take_intent`] 封闸承担——页签往复不重放）。
+    // 语义由 [nav::take_intent] 封闸承担——页签往复不重放）。激活成员是交易
+    // 列表时本占位壳不抢消费（真实视图挂载自带落位消费，#2037 下钻接缝——
+    // 抢了即吞掉筛选落位意图）。
     let focused = signal(None::<NavIntent>);
     effect(move || {
-        let _current = active.get();
-        focused.set(nav::take_intent());
+        let current = active.get();
+        if current != Some(ViewName::Transactions) {
+            focused.set(nav::take_intent());
+        }
     });
 
     // 页签行（nsh-base Tabs 行为件：roving 焦点 + 无障碍页签列表；指示器取

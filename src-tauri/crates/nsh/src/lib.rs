@@ -60,6 +60,9 @@
 //!   定义点）+ 抑制上报自含，可清空形态随 #2034 消费面开门；
 //! - [`select`]：普通下拉选择封装（`App*` 封装族，#2034 首建）——触发件 +
 //!   选项列表弹层（无搜索小闭集直选）+ 可清空 + 抑制上报自含；
+//! - [`multi_select`]：多选下拉选择封装（`App*` 封装族，#2037 首建）——旧壳
+//!   `NSelect multiple` 对应件：勾选切换不关弹层 + 可清空 + 抑制上报自含，
+//!   选择态归调用方受控（归一规则归筛选层）；
 //! - [`combo_select`]：自由文本可搜输入封装（`App*` 封装族，#2034 首建）——
 //!   旧壳 PinyinSelect tag 形态对应件：文本输入 + 建议弹层，选定落 id、
 //!   键入退回自由文本（商户「选择或即建」双态值语义）；
@@ -75,6 +78,9 @@
 //! - [`txn_form`]：交易表单弹窗（`App*` 封装族消费面，#2034）——基础收支
 //!   新增/编辑（日期、类型、金额、分类、账户、备注与来源关联语义），编辑
 //!   复用同表单（回填初值）；写路径经域公开写入口直调、失效信号驱动刷新；
+//! - [`tx_filter`]：交易筛选会话态（#2037）——筛选维度闭集/类型归一/下钻
+//!   全量替换的纯决策半边 + 会话内保留的进程级信号单例（旧壳
+//!   `transactions-session` 的重生，零写盘）；
 //! - [`boot`]：域栈引导——库文件处置判定（复用基础设施引导层）、成对建连、
 //!   交易列表页与币种字典读取、交易删除（#2022）；
 //! - [`wiring`]：域接缝接线——读路径全部读时投影接缝 + 交易写入协议的余额刷新
@@ -93,6 +99,7 @@ pub mod context_menu;
 pub mod danger;
 pub mod date_select;
 pub mod modal;
+pub mod multi_select;
 pub mod nav;
 pub mod nav_model;
 pub mod overlay;
@@ -102,6 +109,7 @@ pub mod popconfirm;
 pub mod select;
 pub mod sidebar;
 pub mod signals;
+pub mod tx_filter;
 pub mod txn_form;
 pub mod views;
 pub mod wiring;

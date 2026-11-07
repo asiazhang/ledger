@@ -602,9 +602,9 @@ impl ScheduledFormTab {
 }
 
 /// 导航请求（进程内导航 API 的载荷单点）：目标视图 + 容器页签意图 + 定时形态
-/// 页签意图 + 实体定位参数。旧壳 URL query 的四个通道在此各归独立字段——
-/// 「容器 query.tab 归容器、形态页签叠加通道、focus 一名一义」的旧约定在
-/// 进程内不再有双写互踩面。
+/// 页签意图 + 实体定位参数 + 交易筛选下钻载荷。旧壳 URL query 的通道在此各归
+/// 独立字段——「容器 query.tab 归容器、形态页签叠加通道、focus 一名一义、
+/// 筛选参数归 URL 参数表」的旧约定在进程内不再有双写互踩面。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NavRequest {
     /// 落点目标（视图或组「更多」容器）。
@@ -616,6 +616,10 @@ pub struct NavRequest {
     /// 实体定位参数（引用判据：非空串在场；空串与缺席同义，旧壳
     /// `readFocusId` 空串语义同源）。
     pub focus: Option<String>,
+    /// 交易筛选下钻载荷（#2037）：目标为交易列表时以载荷为准全量替换筛选
+    /// 维度（旧壳 URL 参数表的进程内等价；载荷缺席 = 不动保留态，旧壳「无参
+    /// 裸导航回保留态」同口径）。
+    pub tx_filters: Option<crate::tx_filter::DrillFilters>,
 }
 
 impl NavRequest {
@@ -626,6 +630,7 @@ impl NavRequest {
             container_tab: None,
             form_tab: None,
             focus: None,
+            tx_filters: None,
         }
     }
 
@@ -653,6 +658,12 @@ impl NavRequest {
     /// 附容器页签意图（链式构造）。
     pub fn with_container_tab(mut self, tab: Option<ViewName>) -> Self {
         self.container_tab = tab;
+        self
+    }
+
+    /// 附交易筛选下钻载荷（链式构造，#2037 下钻接缝的筛选通道）。
+    pub fn with_tx_filters(mut self, filters: crate::tx_filter::DrillFilters) -> Self {
+        self.tx_filters = Some(filters);
         self
     }
 }
@@ -744,6 +755,7 @@ pub fn resolve_landing(mut req: NavRequest, facts: &NavFacts) -> Landing {
                     container_tab: None,
                     form_tab: req.form_tab.take(),
                     focus: req.focus.take(),
+                    tx_filters: req.tx_filters.take(),
                 };
                 continue;
             }
@@ -779,6 +791,7 @@ pub fn resolve_landing(mut req: NavRequest, facts: &NavFacts) -> Landing {
                 container_tab: Some(req.target),
                 form_tab: req.form_tab.take(),
                 focus: req.focus.take(),
+                tx_filters: req.tx_filters.take(),
             };
             continue;
         }
@@ -871,6 +884,7 @@ pub fn resolve_source_jump(
             container_tab: Some(view),
             form_tab,
             focus: (!entity_id.is_empty()).then(|| entity_id.to_owned()),
+            tx_filters: None,
         };
     }
     NavRequest {
@@ -878,6 +892,7 @@ pub fn resolve_source_jump(
         container_tab: None,
         form_tab,
         focus: (!entity_id.is_empty()).then(|| entity_id.to_owned()),
+        tx_filters: None,
     }
 }
 

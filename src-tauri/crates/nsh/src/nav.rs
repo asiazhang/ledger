@@ -11,9 +11,9 @@
 //! → 状态落位 → 持久化；后续视图票只消费不自建（下钻/跳转经
 //! [`nav_model::resolve_source_jump`] 造 [`NavRequest`] 后调 [`open`]，消费
 //! 侧在视图挂载时 [`take_intent`] 读一次）。等价旧壳 URL query 语义的映射：
-//! 容器页签 / 定时形态页签 / focus 定位参数各归 [`NavRequest`] 独立字段（进程
-//! 内无双写互踩），focus 的「读一次、不持久化、消费时机归视图」由
-//! [`take_intent`] 单点实现。
+//! 容器页签 / 定时形态页签 / focus 定位参数 / 交易筛选下钻载荷（#2037）各归
+//! [`NavRequest`] 独立字段（进程内无双写互踩），意图的「读一次、不持久化、
+//! 消费时机归视图」由 [`take_intent`] 单点实现。
 //!
 //! 界面状态持久化 = NSH 自建等价物：`nsh_core::storage::Storage` 平台文件侧
 //! KV（金额隐私开关同款先例），键与值形状镜像旧壳 `view_state:*` 族（同键同
@@ -46,8 +46,9 @@ const CONTAINMENT_KEY: &str = "view_state:sidebar_containment";
 const CLOSED_KEY: &str = "view_state:closed_features";
 
 /// 下钻接缝的意图载荷（[`NavRequest`] 落位后待投递的部分）：实体定位参数 +
-/// 定时形态页签。消费语义 = 读一次（[`take_intent`]），不持久化（重启即失，
-/// 等价旧壳 focus 不写回、刷新重投在进程内的对应物 = 重新导航重新投递）。
+/// 定时形态页签 + 交易筛选下钻载荷（#2037）。消费语义 = 读一次
+/// （[take_intent]），不持久化（重启即失，等价旧壳 focus 不写回、刷新重投在
+/// 进程内的对应物 = 重新导航重新投递）。
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct NavIntent {
     /// 实体定位参数（引用判据的载体；消费视图决定定位形态——开弹窗 / 滚动
@@ -55,6 +56,9 @@ pub struct NavIntent {
     pub focus: Option<String>,
     /// 定时形态页签意图（目标为定时——直达或引用——时有义）。
     pub form_tab: Option<ScheduledFormTab>,
+    /// 交易筛选下钻载荷（目标为交易列表时有义；全量替换语义归
+    /// [tx_filter::drilled] 纯决策单点）。
+    pub tx_filters: Option<crate::tx_filter::DrillFilters>,
 }
 
 /// 导航反应式状态句柄（Copy；信号挂首次 [`store`] 调用所在组件实例——生产
@@ -183,6 +187,7 @@ pub fn open(request: NavRequest) {
         NavIntent {
             focus: request.focus,
             form_tab: request.form_tab,
+            tx_filters: request.tx_filters,
         }
     } else {
         NavIntent::default()
