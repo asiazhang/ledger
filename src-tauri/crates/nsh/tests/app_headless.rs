@@ -49,7 +49,8 @@ const DEFAULT_WAIT: Duration = Duration::from_secs(5);
 /// （与 lib 单测的 SERIAL 同形；两测试二进制是独立进程，互不串扰）。
 static SERIAL: Mutex<()> = Mutex::new(());
 
-/// 桌面形态 headless 配置（足够容纳表格与分页条的视口），带设备存储初值
+/// 桌面形态 headless 配置（足够容纳侧栏 + 表格全部建议列宽的视口：内容区
+/// 1104pt ≥ 列宽总和 1090pt，导航骨架起侧栏不裁列），带设备存储初值
 /// （金额隐私开关的轻量设置项面；`None` = 缺省空存储）。
 fn desktop_config_with_storage(entries: &[(&str, &str)]) -> EngineConfig {
     EngineConfig {
@@ -63,10 +64,10 @@ fn desktop_config_with_storage(entries: &[(&str, &str)]) -> EngineConfig {
     }
 }
 
-/// 桌面形态 headless 配置（足够容纳表格与分页条的视口）。
+/// 桌面形态 headless 配置（1280×720：侧栏 176 + 表格建议列宽 1090）。
 fn desktop_config() -> EngineConfig {
     EngineConfig {
-        viewport: Size::new(Points(1024.0), Points(720.0)),
+        viewport: Size::new(Points(1280.0), Points(720.0)),
         environment: Environment {
             os: Os::Linux,
             idiom: Idiom::Desktop,
@@ -147,6 +148,8 @@ struct TxnSeed<'a> {
     date: &'a str,
     /// 分类（可空）。
     category_id: Option<String>,
+    /// 商户（可空；#2037 商户维度筛选的造数面）。
+    merchant_id: Option<String>,
     /// 备注（可空）。
     note: Option<String>,
 }
@@ -170,7 +173,7 @@ fn seed_transaction(db: &ledger_infra::db::DbState, seed: TxnSeed<'_>) {
             funding: Vec::new(),
             purchases: Vec::new(),
             category_id: seed.category_id,
-            merchant_id: None,
+            merchant_id: seed.merchant_id,
             merchant_name: None,
             policy_id: None,
             refund_of_transaction_id: None,
@@ -207,6 +210,7 @@ fn seed_expense_series(dir: &Path, count: usize) {
                 amount_cents: 2_500,
                 date: &test_date(index),
                 category_id: None,
+                merchant_id: None,
                 note: Some(format!("造数第 {index} 笔")),
             },
         );
@@ -229,6 +233,7 @@ fn seed_expense_notes(dir: &Path, notes: &[&str]) {
                 amount_cents: 2_500,
                 date: &test_date(index),
                 category_id: None,
+                merchant_id: None,
                 note: Some((*note).to_owned()),
             },
         );
@@ -249,6 +254,7 @@ fn seed_expense_on_date(dir: &Path, date: &str, amount_cents: i64) {
             amount_cents,
             date,
             category_id: None,
+            merchant_id: None,
             note: Some(format!("支出 {date}")),
         },
     );
@@ -514,6 +520,7 @@ fn app_window_colors_amount_cells_by_kind_semantic() {
                 amount_cents: 2_500,
                 date: "2026-01-15",
                 category_id: None,
+                merchant_id: None,
                 note: None,
             },
         );
@@ -526,6 +533,7 @@ fn app_window_colors_amount_cells_by_kind_semantic() {
                 amount_cents: 1_000,
                 date: "2026-01-16",
                 category_id: None,
+                merchant_id: None,
                 note: None,
             },
         );
@@ -607,6 +615,7 @@ fn app_window_renders_category_path_and_note_cells() {
                 amount_cents: 2_500,
                 date: "2026-01-15",
                 category_id: Some(child),
+                merchant_id: None,
                 note: Some("买咖啡".to_owned()),
             },
         );
@@ -619,6 +628,7 @@ fn app_window_renders_category_path_and_note_cells() {
                 amount_cents: 1_000,
                 date: "2026-01-16",
                 category_id: None,
+                merchant_id: None,
                 note: None,
             },
         );
@@ -813,6 +823,7 @@ fn app_window_renders_lending_label_and_two_account_cell() {
                 amount_cents: 5_000,
                 date: "2026-01-15",
                 category_id: None,
+                merchant_id: None,
                 note: None,
             },
         );
@@ -1141,13 +1152,14 @@ fn row_context_menu_delete_confirms_then_refreshes_list() {
 
     app.wait_for("text:共 2 条").unwrap();
 
-    // 行右键 → 上下文菜单呈现（zh-CN 文案与旧壳 transactions.menu.delete 同词表）。
+    // 行右键 → 上下文菜单呈现（zh-CN 文案与旧壳 transactions.menu.delete 同词
+    // 表；#2035 起支出行带退款项）。
     app.right_click("text:2026-01-01").unwrap();
     let menu = app.menu().expect("右键应打开上下文菜单");
     assert_eq!(
         menu.iter().map(|e| e.label.as_str()).collect::<Vec<_>>(),
-        vec!["删除"],
-        "行菜单项闭集（立桩只接删除）：{menu:?}"
+        vec!["编辑", "退款", "删除"],
+        "行菜单项闭集（#2034 起支出行带编辑项，#2035 起带退款项，删除殿后）：{menu:?}"
     );
     app.choose_menu_item("删除").unwrap();
 
@@ -1400,6 +1412,7 @@ fn purchase_item_row_right_click_deletes_whole_transaction() {
                 amount_cents: 2_500,
                 date: "2026-01-02",
                 category_id: None,
+                merchant_id: None,
                 note: None,
             },
         );
@@ -1539,7 +1552,7 @@ struct PerfBookFacts {
 fn perf_book_facts(dir: &Path) -> PerfBookFacts {
     let db = nsh_app::boot::boot_ledger(dir).unwrap();
     let read_page = |no: u32| {
-        let result = nsh_app::boot::transaction_page(&db, no, None).unwrap();
+        let result = nsh_app::boot::transaction_page(&db, no, &Default::default()).unwrap();
         assert!(
             !result.items.is_empty(),
             "第 {no} 页应有行集（数据集量级下不应有空页）"
@@ -1626,27 +1639,27 @@ fn perf_dataset_book_counts_match_domain_read_across_pages_and_scroll() {
     );
 }
 
-/// 搜索 × 期间的未定义组合——实际行为观察钉（issue #2024 AC1 备料）：集成
-/// 分支合并时报告了两处未定义组合（搜索期间按 `,` / `.` 步进、搜索期间期间
-/// 标签显示），本测把 headless 可复现的**现状行为**记录下来，不设计新语义；
-/// #2015 对表以本测与真实窗口人工复核为凭。后续票若对组合语义作出裁决，
-/// 应有意更新本测（它翻红 = 语义有意变化，不是回归）。
+/// 「搜索 × 期间」组合语义钉（issue #2037 裁决定型；前身 = #2024 备料交付②
+/// 的现状观察钉——立桩期两处未定义组合按引擎现状记录，本票裁决后**有意更新
+/// 本钉**，翻红 = 裁决落地而非回归）。裁决结论（三处同步：父 spec / 本测 /
+/// docs/research/nsh-stake-acceptance-checklist.md §4）：
+/// - **裁决一（期间标签显示）**：期间标签在搜索态照常显示且不重置——搜索的
+///   进入/退出不动期间快照（立桩现状定型为规格）；
+/// - **裁决二（期间对搜索命中面生效）**：期间快照对搜索命中面**生效**——
+///   搜索读路径携期间区间（平价旧壳搜索页 QuickTimeRange：期间写入搜索过滤，
+///   域搜索读路径 date_from/date_to 直传）；当月期间下搜索，上月备注**不再**
+///   命中，步进期间 = 命中面随动。账户/商户/分类/类型维度不在搜索面（域读
+///   路径不支持，裁决定型为规格）；
+/// - **裁决三（焦点按键派发）**：引擎可编辑焦点闸定型——焦点在搜索框时
+///   `,`/`.`/`[`/`]` 落框不派发（查询追加字符触发重搜，期间不动）；焦点在
+///   框外（回车提交 BlurAndSubmit 失焦后）照常派发——翻页换搜索页、`,`/`.`
+///   步进期间并按新区间重搜（命中数与行集随之）。
 ///
-/// 记录到的现状（`[` `]` `,` `.` 皆 When::Auto 裸键，可编辑焦点闸与 Overlay
-/// 抑制闸都先于派发）：
-/// - 组合②（标签显示）：期间标签在搜索态照常显示且不重置——搜索只换行集
-///   与计数词，不动期间快照；
-/// - 期间过滤对搜索命中面**不生效**（`boot::transaction_search` 无区间参数，
-///   `load` 按非空查询走搜索路径）：当月期间下搜索，上月备注照样命中；
-/// - 组合①（搜索期间按 `,` / `.`）分焦点两相：焦点在搜索框（输入后默认态）
-///   时，键被输入框吃掉（可编辑焦点闸不派发）——查询追加字符触发重搜，
-///   期间步进不发生；焦点不在输入框（回车提交后 BlurAndSubmit 失焦——单行
-///   输入回车 unfocus 是引擎缺省）时，键照常派发——期间快照步进、标签随之
-///   变化，行集与命中数原样（搜索重读不携期间，唯一可观察变化是标签）；
-///   逻辑点击不转移键盘焦点（headless press 是逻辑派发非物理命中），点击
-///   步进器在搜索态同样只换标签不动行集（点击路径孪生）。
+/// 「删除即红」：删读路径的搜索携期间（boot::transaction_search range 参数）
+/// → 相 B 当月命中 2 条（上月照样命中）即红；删引擎可编辑焦点闸由引擎侧
+/// 承担（不属本壳接线面）。
 #[test]
-fn search_and_period_combo_keys_pins_actual_behavior() {
+fn search_and_period_combo_semantics_adjudicated() {
     let _guard = SERIAL.lock().unwrap();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("search-period");
@@ -1661,13 +1674,13 @@ fn search_and_period_combo_keys_pins_actual_behavior() {
     // ---- 相 A：焦点在搜索框（输入后默认态，无游标）。----
     app.type_text("id:tx-search", "支出").unwrap();
     app.wait_for("text:命中 2 条").unwrap();
-    // 组合②：期间标签（「选择期间」召唤态）照常显示且不重置。
+    // 裁决一：期间标签（「选择期间」召唤态）照常显示且不因搜索重置。
     assert!(
         app.shows("选择期间"),
-        "搜索期间期间标签应照常显示（现状 = 不重置）：{:?}",
+        "搜索期间期间标签应照常显示：{:?}",
         app.screen().texts()
     );
-    // 组合①焦点在框：`,` 不派发（可编辑焦点闸）——字符落入查询触发重搜，
+    // 裁决三焦点在框：`,` 不派发（可编辑焦点闸）——字符落入查询触发重搜，
     // 期间标签与期间快照不动。
     app.press_key(",").unwrap();
     app.wait_for("text:命中 0 条").unwrap();
@@ -1696,47 +1709,3322 @@ fn search_and_period_combo_keys_pins_actual_behavior() {
     app.wait_for("text:共 1 条").unwrap();
 
     app.type_text("id:tx-search", "支出").unwrap();
-    app.wait_for("text:命中 2 条").unwrap();
-    // 期间过滤对搜索不生效：当月期间下，上月备注照样命中。
-    app.wait_for("text:¥88").unwrap();
+    // 裁决二：期间对搜索命中面生效——当月期间下只有本月一笔命中，上月备注
+    // 不再命中（删读路径的搜索携期间即红：命中 2 条 = 立桩现状回归）。
+    app.wait_for("text:命中 1 条").unwrap();
     app.wait_for("text:¥25").unwrap();
-    // 组合②：当月标签照常显示，不因搜索重置。
+    assert!(
+        !app.shows("¥88"),
+        "当月期间下搜索不得命中上月备注：{:?}",
+        app.screen().texts()
+    );
+    // 裁决一：当月标签照常显示，不因搜索重置。
     assert!(
         app.shows(&format!("{}年{}月", t.year(), t.month())),
-        "搜索期间期间标签应照常显示（现状 = 不重置）：{:?}",
+        "搜索期间期间标签应照常显示：{:?}",
         app.screen().texts()
     );
 
-    // 点击步进器 ‹（搜索态下步进只换标签不动行集——点击路径孪生；headless
-    // 逻辑点击不转移键盘焦点，失焦走下一步的回车提交）。
+    // 点击步进器 ‹（搜索态下步进携新区间重搜——点击路径与快捷键路径同出口；
+    // headless 逻辑点击不转移键盘焦点，失焦走下一步的回车提交）。
     let p = prev_month_mid();
     app.press("role:button[上一个周期]").unwrap();
     app.wait_for(&month_label(p.year(), p.month())).unwrap();
-    app.wait_for("text:命中 2 条").unwrap();
+    // 上月期间下命中面随动：只剩上月一笔。
+    app.wait_for("text:命中 1 条").unwrap();
     app.wait_for("text:¥88").unwrap();
-    app.wait_for("text:¥25").unwrap();
+    assert!(
+        !app.shows("¥25"),
+        "上月期间下搜索不得命中本月备注：{:?}",
+        app.screen().texts()
+    );
 
     // 回车提交（BlurAndSubmit：单行输入回车 unfocus，真实用户「回车搜索后
     // 焦点离开输入框」的同形）→ 同结果重搜，焦点离开输入框。
     app.submit("id:tx-search").unwrap();
-    app.wait_for("text:命中 2 条").unwrap();
+    app.wait_for("text:命中 1 条").unwrap();
 
-    // 组合①焦点在框外：`,` / `.` 照常派发——标签步进，行集与命中数原样。
+    // 裁决三焦点在框外：`,` / `.` 照常派发——期间快照步进、标签随之变化，
+    // 搜索按新区间重读（命中面随之：`.` 回当月换回本月笔，`,` 再回上月）。
     app.press_key(".").unwrap();
     app.wait_for(&month_label(t.year(), t.month())).unwrap();
-    app.wait_for("text:命中 2 条").unwrap();
-    app.wait_for("text:¥88").unwrap();
+    app.wait_for("text:命中 1 条").unwrap();
     app.wait_for("text:¥25").unwrap();
+    assert!(!app.shows("¥88"), "当月期间下搜索不得命中上月备注");
 
     app.press_key(",").unwrap();
     app.wait_for(&month_label(p.year(), p.month())).unwrap();
-    app.wait_for("text:命中 2 条").unwrap();
+    app.wait_for("text:命中 1 条").unwrap();
     app.wait_for("text:¥88").unwrap();
-    app.wait_for("text:¥25").unwrap();
+    assert!(!app.shows("¥25"), "上月期间下搜索不得命中本月备注");
     // 失焦后查询原样（`,` / `.` 不再落框——派发面与编辑面互斥的镜像）。
     assert_eq!(
         app.screen().input_text("id:tx-search").unwrap(),
         Some("支出"),
         "焦点在框外时 `,` / `.` 不落输入框"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 交易列表筛选补全（issue #2037，spec #2031 拆票②⑥）：TransactionFilter 完
+// 整语义（账户/商户/类型/金额区间 + 会话保留 + 清除/ESC）与下钻落位消费。
+// 环境：Environment{os: Linux, idiom: Desktop}（desktop_config）。
+// 搜索 × 期间裁决钉见 search_and_period_combo_semantics_adjudicated。
+// ---------------------------------------------------------------------------
+
+/// 造一个商户（用例共用；商户维度筛选的造数面，含软删口径由 boot::merchant_rows
+/// 承担——本测只用在用商户）。
+fn seed_merchant(db: &ledger_infra::db::DbState, name: &str) -> String {
+    let conn = db
+        .conn
+        .lock()
+        .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
+        .unwrap();
+    ledger_merchants::create_merchant(
+        &conn,
+        ledger_merchants::MerchantInput {
+            name: name.to_owned(),
+        },
+    )
+    .unwrap()
+}
+
+/// 筛选旅程（#2037 AC）：账户/商户下拉设筛选 → 行集变化（翻页归零 + 维度
+/// AND 组合）→ 清除筛选一键复位。删除任一接线即红：删账户/商户桥接 effect
+/// （下拉写不落会话态）→ 行集不变红；删清除按钮 handler → 行集不复原红。
+#[test]
+fn filter_bar_account_and_merchant_selects_filter_rows_and_clear_restores() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("filter-dims");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let cash = seed_account(&db, "测试现金", AccountType::Cash);
+        let bank = seed_account(&db, "银行卡", AccountType::Bank);
+        let merchant = seed_merchant(&db, "链商超");
+        seed_transaction(
+            &db,
+            TxnSeed {
+                account: &cash,
+                to_account: None,
+                kind: TransactionKind::Expense,
+                amount_cents: 2_500,
+                date: "2026-01-05",
+                category_id: None,
+                merchant_id: None,
+                note: Some("现金笔".to_owned()),
+            },
+        );
+        seed_transaction(
+            &db,
+            TxnSeed {
+                account: &bank,
+                to_account: None,
+                kind: TransactionKind::Expense,
+                amount_cents: 6_600,
+                date: "2026-01-06",
+                category_id: None,
+                merchant_id: None,
+                note: Some("银行卡笔".to_owned()),
+            },
+        );
+        seed_transaction(
+            &db,
+            TxnSeed {
+                account: &bank,
+                to_account: None,
+                kind: TransactionKind::Expense,
+                amount_cents: 8_800,
+                date: "2026-01-07",
+                category_id: None,
+                merchant_id: Some(merchant),
+                note: Some("商户笔".to_owned()),
+            },
+        );
+    }
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+    app.wait_for("text:共 3 条").unwrap();
+
+    // 账户筛选（拼音可搜下拉）：选「银行卡」→ 只剩银行卡两笔。
+    app.press("id:tx-filter-account").unwrap();
+    app.wait_for("id:tx-filter-account-search").unwrap();
+    app.type_text("id:tx-filter-account-search", "银行卡")
+        .unwrap();
+    app.press("id:tx-filter-account-option >> text:银行卡 >> nth=0")
+        .unwrap();
+    app.wait_for("text:共 2 条").unwrap();
+    app.wait_for("text:¥66").unwrap();
+    assert!(
+        !app.shows("¥25"),
+        "账户筛选后现金笔离屏：{:?}",
+        app.screen().texts()
+    );
+
+    // 商户筛选叠加（维度 AND）：银行卡 ∩ 链商超 → 只剩商户笔。
+    app.press("id:tx-filter-merchant").unwrap();
+    app.wait_for("id:tx-filter-merchant-search").unwrap();
+    app.type_text("id:tx-filter-merchant-search", "链商超")
+        .unwrap();
+    app.press("id:tx-filter-merchant-option >> text:链商超 >> nth=0")
+        .unwrap();
+    app.wait_for("text:共 1 条").unwrap();
+    app.wait_for("text:¥88").unwrap();
+    assert!(
+        !app.shows("¥66"),
+        "商户维度 AND 组合后银行卡笔离屏：{:?}",
+        app.screen().texts()
+    );
+
+    // 清除筛选一键复位：回全量 3 笔；按钮禁用态随筛选激活判定翻转。
+    app.press("id:tx-filter-clear").unwrap();
+    app.wait_for("text:共 3 条").unwrap();
+    app.wait_for("text:¥25").unwrap();
+    app.wait_for("text:¥66").unwrap();
+    app.wait_for("text:¥88").unwrap();
+    assert!(
+        !app.screen().enabled("id:tx-filter-clear").unwrap(),
+        "无保留状态时清除筛选禁用（旧壳 disabled=!filtersActive 同位）"
+    );
+}
+
+/// 类型多选（#2037）：勾选切换（弹层不关、行集即时变化）→ 满选归一默认
+/// （ADR-0135：满选 ≡ 不过滤）→ ✕ 清除复位。删除类型读写面（toggle handler
+/// 的归一/装载接线）即红。
+#[test]
+fn filter_bar_kind_multiselect_toggles_normalize_and_clear() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("filter-kinds");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let cash = seed_cash_account(&db);
+        let bank = seed_account(&db, "银行卡", AccountType::Bank);
+        seed_transaction(
+            &db,
+            TxnSeed {
+                account: &cash,
+                to_account: None,
+                kind: TransactionKind::Expense,
+                amount_cents: 2_500,
+                date: "2026-01-05",
+                category_id: None,
+                merchant_id: None,
+                note: Some("支出笔".to_owned()),
+            },
+        );
+        seed_transaction(
+            &db,
+            TxnSeed {
+                account: &bank,
+                to_account: None,
+                kind: TransactionKind::Income,
+                amount_cents: 8_800,
+                date: "2026-01-06",
+                category_id: None,
+                merchant_id: None,
+                note: Some("收入笔".to_owned()),
+            },
+        );
+        seed_transaction(
+            &db,
+            TxnSeed {
+                account: &cash,
+                to_account: Some(bank),
+                kind: TransactionKind::Transfer,
+                amount_cents: 1_000,
+                date: "2026-01-07",
+                category_id: None,
+                merchant_id: None,
+                note: Some("转账笔".to_owned()),
+            },
+        );
+    }
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+    app.wait_for("text:共 3 条").unwrap();
+
+    // 类型弹层：勾「支出」→ 弹层不关（multiple 语义）、行集只剩支出笔。
+    // 勾「支出」→ 行集只剩支出笔。headless 逻辑点击按引擎 press-outside 判定
+    // 关弹层（#881 类限制：逻辑派发不携带命中坐标，弹层内选项点击亦被判外）
+    // ——「弹层内切换不关弹层」的真实交互语义归人工对表；headless 以「重开
+    // 弹层续勾」承载多选切换，勾选状态本身是断言面。
+    app.press("id:tx-filter-kind-value").unwrap();
+    app.wait_for("id:tx-filter-kind-option").unwrap();
+    app.press("id:tx-filter-kind-option >> text:支出 >> nth=0")
+        .unwrap();
+    app.wait_for("text:共 1 条").unwrap();
+    app.wait_for("text:¥25").unwrap();
+    assert!(
+        !app.shows("¥88"),
+        "类型筛选后收入笔离屏：{:?}",
+        app.screen().texts()
+    );
+
+    // 重开弹层再勾「收入」→ 维度内取或：支出 + 收入两笔。
+    app.press("id:tx-filter-kind-value").unwrap();
+    app.wait_for("id:tx-filter-kind-option").unwrap();
+    app.press("id:tx-filter-kind-option >> text:收入 >> nth=0")
+        .unwrap();
+    app.wait_for("text:共 2 条").unwrap();
+
+    // 再勾「转账」「退款」→ 满选四通用 kind 归一默认（ADR-0135：满选 ≡
+    // 不过滤）——行集回全量、封装 ✕ 消失（无选中态）、清除筛选禁用。
+    app.press("id:tx-filter-kind-value").unwrap();
+    app.wait_for("id:tx-filter-kind-option").unwrap();
+    app.press("id:tx-filter-kind-option >> text:转账 >> nth=0")
+        .unwrap();
+    app.wait_for("text:共 3 条").unwrap();
+    app.press("id:tx-filter-kind-value").unwrap();
+    app.wait_for("id:tx-filter-kind-option").unwrap();
+    app.press("id:tx-filter-kind-option >> text:退款 >> nth=0")
+        .unwrap();
+    app.wait_for("text:共 3 条").unwrap();
+    assert_eq!(
+        app.screen().count("id:tx-filter-kind-clear").unwrap(),
+        0,
+        "满选归一默认后多选 ✕ 消失（无选中态）"
+    );
+    assert!(
+        !app.screen().enabled("id:tx-filter-clear").unwrap(),
+        "满选归一默认后清除筛选禁用（类型维度已回默认）"
+    );
+
+    // ✕ 清除路径：单选态下 ✕ 复位类型维度。
+    app.press("id:tx-filter-kind-value").unwrap();
+    app.wait_for("id:tx-filter-kind-option").unwrap();
+    app.press("id:tx-filter-kind-option >> text:支出 >> nth=0")
+        .unwrap();
+    app.wait_for("text:共 1 条").unwrap();
+    app.press("id:tx-filter-kind-clear").unwrap();
+    app.wait_for("text:共 3 条").unwrap();
+    assert_eq!(
+        app.screen().count("id:tx-filter-kind-clear").unwrap(),
+        0,
+        "✕ 清除后无选中态（多选封装 ✕ 消失）"
+    );
+}
+
+/// 金额区间（搜索面维度，#2037）：仅金额、无关键词即入搜索态（旧壳搜索页
+/// 「无关键字仅筛选」同语义——域仅筛选查询），命中计数词切换 + 行集按区间
+/// 过滤；「全部」清除回列表态。
+#[test]
+fn filter_bar_amount_range_engages_search_surface_without_keyword() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("filter-amount");
+    seed_expense_on_date(&dir, "2026-01-05", 1_100);
+    seed_expense_on_date(&dir, "2026-01-06", 8_800);
+    seed_expense_on_date(&dir, "2026-01-07", 4_400);
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+    app.wait_for("text:共 3 条").unwrap();
+
+    // 仅最低金额 → 搜索态（命中 N 条计数词）+ 区间过滤（20 元 = 2000 分：
+    // ¥88/¥44 命中，¥11 排除）。
+    app.type_text("id:tx-amount-min", "20").unwrap();
+    app.wait_for("text:命中 2 条").unwrap();
+    app.wait_for("text:¥88").unwrap();
+    app.wait_for("text:¥44").unwrap();
+    assert!(
+        !app.shows("¥11"),
+        "金额区间过滤后小额离屏：{:?}",
+        app.screen().texts()
+    );
+
+    // 清除筛选（金额属搜索面保留态，一并复位）→ 回列表态「共 N 条」。
+    app.press("id:tx-filter-clear").unwrap();
+    app.wait_for("text:共 3 条").unwrap();
+    app.wait_for("text:¥11").unwrap();
+}
+
+/// ESC 复位 + 抑制闸门（#2037）：筛选在场时 ESC 一键复位（旧壳
+/// registerViewReset 同语义）；弹层开着时 ESC 属弹层关闭面，筛选不动
+/// （Overlay Suppression 闸门——删除闸门检查即红）。删除 on_key("escape")
+/// 接线 → 复位段红。
+#[test]
+fn esc_resets_filters_and_gated_while_overlay_open() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("filter-esc");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let cash = seed_account(&db, "测试现金", AccountType::Cash);
+        let bank = seed_account(&db, "银行卡", AccountType::Bank);
+        seed_transaction(
+            &db,
+            TxnSeed {
+                account: &cash,
+                to_account: None,
+                kind: TransactionKind::Expense,
+                amount_cents: 2_500,
+                date: "2026-01-05",
+                category_id: None,
+                merchant_id: None,
+                note: Some("现金笔".to_owned()),
+            },
+        );
+        seed_transaction(
+            &db,
+            TxnSeed {
+                account: &bank,
+                to_account: None,
+                kind: TransactionKind::Expense,
+                amount_cents: 6_600,
+                date: "2026-01-06",
+                category_id: None,
+                merchant_id: None,
+                note: Some("银行卡笔".to_owned()),
+            },
+        );
+    }
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+    app.wait_for("text:共 2 条").unwrap();
+
+    // 设账户筛选（行集收窄）。
+    app.press("id:tx-filter-account").unwrap();
+    app.wait_for("id:tx-filter-account-search").unwrap();
+    app.type_text("id:tx-filter-account-search", "银行卡")
+        .unwrap();
+    app.press("id:tx-filter-account-option >> text:银行卡 >> nth=0")
+        .unwrap();
+    app.wait_for("text:共 1 条").unwrap();
+
+    // 弹层开着：ESC 只关弹层，筛选保留（闸门拦截——删 overlay::has_open_overlay
+    // 检查即红：筛选被误复位、共 1 条变共 2 条）。
+    app.press("id:period-label").unwrap();
+    app.wait_for("id:period-chip-all").unwrap();
+    app.press_key("escape").unwrap();
+    app.wait_for_gone("id:period-chip-all", DEFAULT_WAIT)
+        .unwrap();
+    app.wait_for("text:共 1 条").unwrap();
+
+    // 弹层已关：ESC 复位全部筛选 → 回全量行集 + 按钮禁用（无保留状态）。
+    app.press_key("escape").unwrap();
+    app.wait_for("text:共 2 条").unwrap();
+    app.wait_for("text:¥25").unwrap();
+    assert!(
+        !app.screen().enabled("id:tx-filter-clear").unwrap(),
+        "ESC 复位后无保留状态（幂等守卫的可见凭据）"
+    );
+}
+
+/// 会话内保留（#2037，旧壳 ADR-0094 同语义）：筛选态住进程级单例（根实例
+/// 所有）——切走再切回，筛选原样、行集按保留筛选呈现。删除会话态单例接线
+/// （筛选态随视图卸载重置）即红：切回后行集回全量。
+#[test]
+fn filters_survive_view_switch_session_retained() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("filter-retain");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let cash = seed_account(&db, "测试现金", AccountType::Cash);
+        let bank = seed_account(&db, "银行卡", AccountType::Bank);
+        seed_transaction(
+            &db,
+            TxnSeed {
+                account: &cash,
+                to_account: None,
+                kind: TransactionKind::Expense,
+                amount_cents: 2_500,
+                date: "2026-01-05",
+                category_id: None,
+                merchant_id: None,
+                note: Some("现金笔".to_owned()),
+            },
+        );
+        seed_transaction(
+            &db,
+            TxnSeed {
+                account: &bank,
+                to_account: None,
+                kind: TransactionKind::Expense,
+                amount_cents: 6_600,
+                date: "2026-01-06",
+                category_id: None,
+                merchant_id: None,
+                note: Some("银行卡笔".to_owned()),
+            },
+        );
+    }
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+    app.wait_for("text:共 2 条").unwrap();
+
+    app.press("id:tx-filter-account").unwrap();
+    app.wait_for("id:tx-filter-account-search").unwrap();
+    app.type_text("id:tx-filter-account-search", "银行卡")
+        .unwrap();
+    app.press("id:tx-filter-account-option >> text:银行卡 >> nth=0")
+        .unwrap();
+    app.wait_for("text:共 1 条").unwrap();
+
+    // 切走（预算）再切回：筛选原样呈现（触发件回显选中项 + 行集按保留筛选）。
+    app.press("id:nav-budget").unwrap();
+    app.wait_for_gone("text:共 1 条", DEFAULT_WAIT).unwrap();
+    app.press("id:nav-transactions").unwrap();
+    app.wait_for("text:共 1 条").unwrap();
+    app.wait_for("text:¥66").unwrap();
+    assert!(
+        !app.shows("¥25"),
+        "切回后保留筛选仍生效：{:?}",
+        app.screen().texts()
+    );
+}
+
+/// 抑制闸门覆盖新弹层（#2037）：类型多选弹层开着时 `[` 不派发（封装自含
+/// 抑制上报——删除 multi_select 的 token 上报即红：翻页发生、行集换血）。
+#[test]
+fn suppression_gate_blocks_shortcuts_while_kind_popup_open() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("filter-suppress");
+    seed_expense_series(&dir, 120);
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+    app.wait_for("text:共 120 条").unwrap();
+
+    // 翻页可观察凭据（虚拟滚动下取视口行）：第 1 页首行 = 最新一笔（造数第
+    // 119 笔）；`]` 翻到第 2 页后首行 = 第 19 笔、第 119 笔离屏。
+    app.wait_for("text:造数第 119 笔").unwrap();
+
+    // 类型弹层开着 → `]` 不派发（第 2 页首笔不得在屏、首页首行不离屏）。
+    app.press("id:tx-filter-kind-value").unwrap();
+    app.wait_for("id:tx-filter-kind-option").unwrap();
+    app.press_key("]").unwrap();
+    app.settle();
+    // 凭据：第 2 页首笔不在屏 = 未翻页（翻页若发生，视口必换血到第 2 页行集）。
+    // 「删除即红」负向验证：删 multi_select 的 token 上报 → `]` 翻页发生、
+    // 第 19 笔上屏，本断言红（已实拆验证）。
+    assert!(
+        !app.shows("text:造数第 19 笔"),
+        "弹层开着时 `]` 不得翻页：{:?}",
+        app.screen().texts()
+    );
+
+    // 关弹层 → 同键翻页生效（第 2 页首行在屏、首页首行离屏）。
+    app.press_key("escape").unwrap();
+    app.wait_for_gone("id:tx-filter-kind-option", DEFAULT_WAIT)
+        .unwrap();
+    app.press_key("]").unwrap();
+    app.wait_for("text:造数第 19 笔").unwrap();
+    app.wait_for_gone("text:造数第 119 笔", DEFAULT_WAIT)
+        .unwrap();
+}
+
+// ---------------------------------------------------------------------------
+// 壳导航骨架（issue #2032，spec #2031 拆票②①）：侧栏三组、键位带派发、
+// 功能开关守卫、组「更多」容器、右键排序/移入移回与界面状态持久化。
+// 环境前提：Environment{os: Linux, idiom: Desktop}（desktop_config）。
+// ---------------------------------------------------------------------------
+
+use nsh_testing::MemoryStorage;
+use std::sync::Arc;
+
+/// 桌面形态配置（复用同一存储后端——重启模拟：同一 MemoryStorage 实例起
+/// 第二个引擎，写路径已落后端的界面状态在重启后可读）。
+fn desktop_config_with_backend(storage: Arc<MemoryStorage>) -> EngineConfig {
+    EngineConfig {
+        storage: Some(storage),
+        ..desktop_config()
+    }
+}
+
+/// 骨架呈现：侧栏品牌行、固定项（概览/AI/设置）、三组（记账/资产/洞察）与
+/// 出厂主项；收纳成员不入侧栏（入组「更多」容器）；「更多」链接仅在收纳
+/// 清单非空的组渲染（洞察出厂无成员）。
+#[test]
+fn sidebar_renders_groups_fixed_items_and_hides_contained_members() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("nav-skeleton");
+    seed_expense_series(&dir, 3);
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+
+    // 交易列表为骨架首个挂载视图（出厂落点）。
+    app.wait_for("text:共 3 条").unwrap();
+    // 品牌行 + 固定项 + 三组标题。
+    for label in ["开源记账", "概览", "AI", "设置", "记账", "资产", "洞察"] {
+        app.wait_for(&format!("text:{label}")).unwrap();
+    }
+    // 出厂主项全在侧栏（导航项 test_id = 视图持久化名）。
+    for id in [
+        "nav-transactions",
+        "nav-accounts",
+        "nav-budget",
+        "nav-investments",
+        "nav-items",
+        "nav-savingsGoals",
+        "nav-reports",
+        "nav-search",
+    ] {
+        app.wait_for(&format!("id:{id}")).unwrap();
+    }
+    // 收纳成员不入侧栏（表格列头同名文本在屏上属内容区，不属导航面——
+    // 断言对准导航项 test_id 的缺席）；「更多」链接只在有收纳清单的组渲染。
+    assert!(
+        app.screen().count("id:nav-scheduled").unwrap() == 0,
+        "出厂收纳成员（定时）不入侧栏"
+    );
+    assert!(
+        app.screen().count("id:nav-merchants").unwrap() == 0,
+        "出厂收纳成员（商户）不入侧栏"
+    );
+    assert!(
+        app.screen().count("id:nav-more-bookkeeping").unwrap() == 1,
+        "记账组有收纳清单，「更多」链接渲染"
+    );
+    assert!(
+        app.screen().count("id:nav-more-assets").unwrap() == 1,
+        "资产组有收纳清单，「更多」链接渲染"
+    );
+    assert!(
+        app.screen().count("id:nav-more-insights").unwrap() == 0,
+        "洞察组出厂无收纳成员，「更多」链接不渲染"
+    );
+}
+
+/// 点击导航：侧栏项 → 未迁移视图空态占位（屏名 + 迁移中反馈）；回到交易
+/// 项 → 表格内容区原样（骨架期行为零改动）。
+#[test]
+fn clicking_sidebar_items_lands_placeholder_views_and_back() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("nav-click");
+    seed_expense_series(&dir, 3);
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+    app.wait_for("text:共 3 条").unwrap();
+
+    // 账户 → 占位（屏名 + 迁移中）。
+    app.press("id:nav-accounts").unwrap();
+    app.wait_for("text:账户").unwrap();
+    app.wait_for("id:placeholder-note").unwrap();
+    // 概览 → 占位（内容区标题计数 2 = 侧栏 + 屏名）。
+    app.press("id:nav-dashboard").unwrap();
+    app.wait_for_within("text:概览", DEFAULT_WAIT).unwrap();
+    assert_eq!(app.screen().count("text:概览").unwrap(), 2, "概览落位");
+    // 交易 → 表格内容区（首屏原样）。
+    app.press("id:nav-transactions").unwrap();
+    app.wait_for("text:共 3 条").unwrap();
+}
+
+/// 键位带派发（⌘ 键位带，ADR-0065 固定组带）：⌘4 投资、⌘` 概览、⌘0 AI、
+/// ⌘, 设置、⌘2 账户、⌘1 回交易；同名视图重复派发幂等（停留原地）。
+/// 「删除即红」负向条目钉在 dispatch_key 的 open 接线（删除 → 本测红）。
+#[test]
+fn shortcut_band_keys_land_views() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("nav-keys");
+    seed_expense_series(&dir, 3);
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+    app.wait_for("text:共 3 条").unwrap();
+
+    app.press_key("mod+4").unwrap();
+    app.wait_for_gone("text:共 3 条", DEFAULT_WAIT).unwrap();
+    app.wait_for("id:placeholder-note").unwrap();
+    // 落位凭据 = 内容区标题随视图切换（计数 2 = 侧栏项 + 占位屏名；侧栏项
+    // 恒在屏，单凭文本在场不构成落位证据）。
+    app.press_key("mod+`").unwrap();
+    app.wait_for_within("text:概览", DEFAULT_WAIT).unwrap();
+    assert_eq!(app.screen().count("text:概览").unwrap(), 2, "⌘` 落概览");
+    app.press_key("mod+0").unwrap();
+    assert_eq!(app.screen().count("text:AI").unwrap(), 2, "⌘0 落 AI");
+    app.press_key("mod+,").unwrap();
+    assert_eq!(app.screen().count("text:设置").unwrap(), 2, "⌘, 落设置");
+    app.press_key("mod+2").unwrap();
+    assert_eq!(app.screen().count("text:账户").unwrap(), 2, "⌘2 落账户");
+    // 回交易：表格内容区原样。
+    app.press_key("mod+1").unwrap();
+    app.wait_for("text:共 3 条").unwrap();
+    // 同名幂等：再按 ⌘1 不重挂（表格行集原样）。
+    app.press_key("mod+1").unwrap();
+    app.wait_for("text:共 3 条").unwrap();
+}
+
+/// 抑制闸门——键位带（Overlay Suppression 消费面 #12）：注册抑制的弹层
+/// （期间选择弹层）开着时 ⌘2 不派发（停留交易表格），关闭后同键落位账户。
+/// 「删除即红」负向条目：删 dispatch_key 中的 `overlay::has_open_overlay`
+/// 检查 → 本测红（弹层下按键切换视图）。
+#[test]
+fn suppression_gate_blocks_shortcut_band_while_period_popup_open() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("nav-suppress");
+    seed_expense_series(&dir, 3);
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+    app.wait_for("text:共 3 条").unwrap();
+
+    // 打开注册抑制的弹层 → ⌘2 不派发（表格原样）。
+    app.press("id:period-label").unwrap();
+    app.wait_for("id:period-chip-all").unwrap();
+    app.press_key("mod+2").unwrap();
+    app.settle();
+    assert!(
+        !app.shows("id:placeholder-note") && app.shows("共 3 条"),
+        "弹层开着时 ⌘2 不得切视图：{:?}",
+        app.screen().texts()
+    );
+    // 关弹层 → 同键落位账户。
+    app.press_key("escape").unwrap();
+    app.wait_for_gone("id:period-chip-all", DEFAULT_WAIT)
+        .unwrap();
+    app.press_key("mod+2").unwrap();
+    app.wait_for("text:账户").unwrap();
+}
+
+/// 功能开关关闭面（守卫语义的可见侧）：种子关闭预算 → 侧栏入口消失、⌘3
+/// 空键待命（不派发、不跨组压缩——账户仍 ⌘2、交易仍 ⌘1）、收纳清单保留
+/// （记账组「更多」链接仍在）。
+#[test]
+fn closed_feature_exits_sidebar_and_key_band() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("nav-closed");
+    seed_expense_series(&dir, 3);
+
+    nsh_app::app::set_book_dir(dir);
+    let storage = MemoryStorage::new(vec![(
+        "view_state:closed_features".to_owned(),
+        "[\"budget\"]".to_owned(),
+    )]);
+    let mut app = Headless::start(desktop_config_with_backend(storage)).unwrap();
+    app.wait_for("text:共 3 条").unwrap();
+
+    assert!(
+        app.screen().count("id:nav-budget").unwrap() == 0,
+        "关闭功能入口消失"
+    );
+    assert!(
+        app.screen().count("id:nav-more-bookkeeping").unwrap() == 1,
+        "关闭只筛入口不改收纳清单（记账组「更多」链接保留）"
+    );
+    // ⌘3 空键待命：不派发（停留交易表格）。
+    app.press_key("mod+3").unwrap();
+    app.settle();
+    assert!(app.shows("共 3 条"), "关闭功能键位空置不派发");
+    // 带内不压缩：账户仍 ⌘2。
+    app.press_key("mod+2").unwrap();
+    app.wait_for("text:账户").unwrap();
+}
+
+/// 启动恢复（上次视图持久化的读路径）：已存视图原样恢复（账户 → 占位）；
+/// 已关闭功能回出厂落点（骨架期 = 交易列表）；未知名回出厂落点。
+#[test]
+fn startup_restores_last_view_with_closed_and_unknown_fallbacks() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("nav-restore");
+    seed_expense_series(&dir, 3);
+
+    nsh_app::app::set_book_dir(dir.clone());
+    // 已存合法视图 → 恢复账户占位。
+    let storage = MemoryStorage::new(vec![(
+        "view_state:route".to_owned(),
+        "\"accounts\"".to_owned(),
+    )]);
+    let mut app = Headless::start(desktop_config_with_backend(storage)).unwrap();
+    app.wait_for("id:placeholder-note").unwrap();
+    assert_eq!(
+        app.screen().count("text:账户").unwrap(),
+        2,
+        "恢复到账户占位（侧栏 + 屏名）"
+    );
+    drop(app);
+
+    // 已关闭功能的上次视图 → 出厂落点（交易表格）。
+    nsh_app::app::reset_book_assembly();
+    nsh_app::app::set_book_dir(dir.clone());
+    let storage = MemoryStorage::new(vec![
+        ("view_state:route".to_owned(), "\"budget\"".to_owned()),
+        (
+            "view_state:closed_features".to_owned(),
+            "[\"budget\"]".to_owned(),
+        ),
+    ]);
+    let mut app = Headless::start(desktop_config_with_backend(storage)).unwrap();
+    app.wait_for("text:共 3 条").unwrap();
+    drop(app);
+
+    // 未知名 → 出厂落点（交易表格）。
+    nsh_app::app::reset_book_assembly();
+    nsh_app::app::set_book_dir(dir.clone());
+    let storage = MemoryStorage::new(vec![("view_state:route".to_owned(), "\"nope\"".to_owned())]);
+    let mut app = Headless::start(desktop_config_with_backend(storage)).unwrap();
+    app.wait_for("text:共 3 条").unwrap();
+}
+
+/// 组「更多」容器：链接落位容器页签壳（页签 = 收纳清单序）；页签点击切换
+/// 内容（会话槽）；页签态不跨启动持久化（重启回默认首签）。
+#[test]
+fn group_more_container_tabs_follow_session_state_not_restart() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("nav-more");
+    seed_expense_series(&dir, 3);
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let storage = MemoryStorage::new(Vec::new());
+    let mut app = Headless::start(desktop_config_with_backend(storage.clone())).unwrap();
+    app.wait_for("text:共 3 条").unwrap();
+
+    // 资产组「更多」：页签 = 出厂清单序（保单/实物资产/保险公司），默认首签
+    // 保单（内容区标题「保单」×2：页签 + 占位屏名）。
+    app.press("id:nav-more-assets").unwrap();
+    app.wait_for("id:more-tab-policies").unwrap();
+    app.wait_for("id:more-tab-physicalAssets").unwrap();
+    app.wait_for("id:more-tab-insurers").unwrap();
+    assert_eq!(
+        app.screen().count("text:保单").unwrap(),
+        2,
+        "默认首签 = 清单首位（页签 + 占位屏名）"
+    );
+    // 页签点击 → 内容切换（实物资产 ×2：页签 + 占位屏名；保单回 1）。
+    app.press("id:more-tab-physicalAssets").unwrap();
+    app.wait_for("text:实物资产").unwrap();
+    assert_eq!(
+        app.screen().count("text:实物资产").unwrap(),
+        2,
+        "页签点击切换内容"
+    );
+    assert_eq!(
+        app.screen().count("text:保单").unwrap(),
+        1,
+        "页签切换后旧内容卸载"
+    );
+    drop(app);
+
+    // 重启：页签态不跨启动持久化，回默认首签保单。
+    nsh_app::app::reset_book_assembly();
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config_with_backend(storage)).unwrap();
+    app.wait_for("id:more-tab-policies").unwrap();
+    assert_eq!(
+        app.screen().count("text:保单").unwrap(),
+        2,
+        "重启回默认首签（页签态会话内有效）"
+    );
+}
+
+/// 已关闭功能的容器页签剔除：种子关闭商户 → 记账组容器页签只剩定时
+/// （关闭只筛页签入口、收纳清单保留——重开即回原位）。
+#[test]
+fn closed_feature_tab_is_filtered_from_group_more_container() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("nav-more-closed");
+    seed_expense_series(&dir, 3);
+
+    nsh_app::app::set_book_dir(dir);
+    let storage = MemoryStorage::new(vec![(
+        "view_state:closed_features".to_owned(),
+        "[\"merchants\"]".to_owned(),
+    )]);
+    let mut app = Headless::start(desktop_config_with_backend(storage)).unwrap();
+    app.wait_for("text:共 3 条").unwrap();
+
+    app.press("id:nav-more-bookkeeping").unwrap();
+    app.wait_for("id:more-tab-scheduled").unwrap();
+    app.settle();
+    assert!(
+        app.screen().count("id:more-tab-merchants").unwrap() == 0,
+        "已关闭功能不进组「更多」页签"
+    );
+}
+
+/// 右键排序菜单：移到顶部 → 组内序重排 + 键位带内随动（⌘1 落预算）+ 点选
+/// 即写（重启后顺序保持——持久化往返）；恢复默认排序 → 回出厂（⌘1 回交易）。
+#[test]
+fn sort_menu_reorders_key_band_and_persists_across_restart() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("nav-sort");
+    seed_expense_series(&dir, 3);
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let storage = MemoryStorage::new(Vec::new());
+    let mut app = Headless::start(desktop_config_with_backend(storage.clone())).unwrap();
+    app.wait_for("text:共 3 条").unwrap();
+
+    // 右键预算 → 移到顶部 → ⌘1 落预算（键位带内随动的用户可见凭据；预算
+    // 视图已真实化，落位凭据 = 预算视图内容「新增预算」在屏，占位反馈离场）。
+    app.right_click("id:nav-budget").unwrap();
+    app.choose_menu_item("移到顶部").unwrap();
+    app.press_key("mod+1").unwrap();
+    app.wait_for("text:新增预算").unwrap();
+    drop(app);
+
+    // 重启：顺序持久化（先离开到概览，再 ⌘1——派发面不再被同名幂等短路）。
+    nsh_app::app::reset_book_assembly();
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config_with_backend(storage)).unwrap();
+    app.press_key("mod+`").unwrap();
+    app.wait_for_within("text:概览", DEFAULT_WAIT).unwrap();
+    app.press_key("mod+1").unwrap();
+    app.wait_for_within("text:预算", DEFAULT_WAIT).unwrap();
+    assert_eq!(
+        app.screen().count("text:预算").unwrap(),
+        3,
+        "重启后 ⌘1 落预算（顺序持久化：侧栏 + 屏名 + 预算视图表列头）"
+    );
+
+    // 恢复默认排序 → ⌘1 回交易（出厂序）。
+    app.right_click("id:nav-budget").unwrap();
+    app.choose_menu_item("恢复默认排序").unwrap();
+    app.press_key("mod+1").unwrap();
+    app.wait_for("text:共 3 条").unwrap();
+}
+
+/// 移入更多 / 页签右键移回：右键预算「移入更多」→ 侧栏项消失、⌘3 空置、
+/// 记账组容器出现预算页签；容器页签右键「移回侧栏」（组未满）→ 页签消失、
+/// 侧栏项回归末位（⌘3 回预算）。
+#[test]
+fn context_menus_move_item_into_more_and_back() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("nav-into-more");
+    seed_expense_series(&dir, 3);
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let storage = MemoryStorage::new(Vec::new());
+    let mut app = Headless::start(desktop_config_with_backend(storage.clone())).unwrap();
+    app.wait_for("text:共 3 条").unwrap();
+
+    // 移入更多：侧栏预算消失、⌘3 空键待命。
+    app.right_click("id:nav-budget").unwrap();
+    app.choose_menu_item("移入更多").unwrap();
+    app.settle();
+    assert!(
+        !app.screen().texts().contains(&"预算"),
+        "移入更多后侧栏项消失"
+    );
+    app.press_key("mod+3").unwrap();
+    app.settle();
+    assert!(app.shows("共 3 条"), "⌘3 空键待命不派发");
+
+    // 容器出现预算页签；页签右键移回（记账组主项 2 项未满 3，可移回）。
+    app.press("id:nav-more-bookkeeping").unwrap();
+    app.wait_for("id:more-tab-budget").unwrap();
+    app.right_click("id:more-tab-budget").unwrap();
+    app.choose_menu_item("移回侧栏").unwrap();
+    app.settle();
+    assert!(
+        app.screen().count("id:more-tab-budget").unwrap() == 0,
+        "移回后页签消失"
+    );
+    // 侧栏预算回归（末位，⌘3 回预算：计数 2 = 侧栏 + 屏名）。
+    app.press_key("mod+3").unwrap();
+    app.wait_for_within("text:预算", DEFAULT_WAIT).unwrap();
+    // 预算视图已真实化（#2033）：落位凭据 = 侧栏项 + 屏名 + 预算执行表列头
+    // 「预算」三处（原占位期无列头为两处）。
+    assert_eq!(
+        app.screen().count("text:预算").unwrap(),
+        3,
+        "移回后 ⌘3 落预算（侧栏 + 屏名 + 表列头）"
+    );
+    drop(app);
+
+    // 重启：移入/移回的持久化往返（侧栏预算在册、容器页签无预算）。
+    nsh_app::app::reset_book_assembly();
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config_with_backend(storage)).unwrap();
+    app.press_key("mod+3").unwrap();
+    app.wait_for("text:预算").unwrap();
+}
+
+/// 组满拒写（上限可见可学习）：记账组出厂主项 3 项已满，容器页签右键菜单
+/// 「移回侧栏」置灰并附提示项；点选无效（页签保留）。
+#[test]
+fn move_back_menu_is_disabled_when_group_full() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("nav-full");
+    seed_expense_series(&dir, 3);
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+    app.wait_for("text:共 3 条").unwrap();
+
+    app.press("id:nav-more-bookkeeping").unwrap();
+    app.wait_for("id:more-tab-scheduled").unwrap();
+    app.right_click("id:more-tab-scheduled").unwrap();
+    let menu = app.menu().expect("右键应弹出菜单");
+    let back = menu
+        .iter()
+        .find(|e| e.label == "移回侧栏")
+        .expect("菜单含「移回侧栏」");
+    assert!(back.disabled, "组满 3 主项，「移回侧栏」置灰（上限可见）");
+    assert!(
+        menu.iter()
+            .any(|e| e.label == "本组主项已满 3 项，先移出一个主项腾位"),
+        "附提示项（可学习）"
+    );
+    // 置灰点选无效：页签保留。
+    let _ = app.choose_menu_item("移回侧栏");
+    app.settle();
+    assert!(
+        app.screen().count("id:more-tab-scheduled").unwrap() == 1,
+        "组满拒写：页签保留在容器"
+    );
+}
+
+/// 界面状态持久化往返（写 → 重启 → 读一致）：导航落位 + 排序一并保持；
+/// 上次视图恢复到账户占位。
+#[test]
+fn view_state_round_trips_across_restart() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("nav-roundtrip");
+    seed_expense_series(&dir, 3);
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let storage = MemoryStorage::new(Vec::new());
+    let mut app = Headless::start(desktop_config_with_backend(storage.clone())).unwrap();
+    app.wait_for("text:共 3 条").unwrap();
+
+    // 排序（物品移到资产组顶部）+ 导航到账户。
+    app.right_click("id:nav-items").unwrap();
+    app.choose_menu_item("移到顶部").unwrap();
+    app.press("id:nav-accounts").unwrap();
+    app.wait_for("text:账户").unwrap();
+    drop(app);
+
+    // 重启：上次视图 = 账户；物品已在资产组首位 → ⌘4（带内随动）落物品——两态都持久。
+    nsh_app::app::reset_book_assembly();
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config_with_backend(storage)).unwrap();
+    app.wait_for("id:placeholder-note").unwrap();
+    assert_eq!(
+        app.screen().count("text:账户").unwrap(),
+        2,
+        "上次视图恢复到账户（侧栏 + 屏名）"
+    );
+    app.press_key("mod+4").unwrap();
+    app.wait_for_within("text:物品", DEFAULT_WAIT).unwrap();
+    assert_eq!(
+        app.screen().count("text:物品").unwrap(),
+        2,
+        "资产组首位 = 物品（⌘4，顺序持久化）"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 预算视图（#2033 NSH 迁移②——封装族热身）：挂载导航骨架的预算分支，三封装
+// 件（PinyinSelect / Modal / Popconfirm）首消费旅程。造数经域公开写入口（预算
+// 经 boot 写接缝，与 lib 单测同纪律）；断言只写用户可见结果。
+// ---------------------------------------------------------------------------
+
+/// 造一个支出分类（可带父分类）。
+fn seed_category(db: &ledger_infra::db::DbState, name: &str, parent: Option<&str>) -> String {
+    let conn = db
+        .conn
+        .lock()
+        .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
+        .unwrap();
+    create_category(
+        &conn,
+        CategoryInput {
+            name: name.to_owned(),
+            kind: "expense".to_owned(),
+            parent_id: parent.map(str::to_owned),
+            icon: None,
+        },
+    )
+    .unwrap()
+}
+
+/// 经域公开写入口建一个预算（月度缺省；返回预算 id）。
+fn seed_budget(
+    db: &ledger_infra::db::DbState,
+    category_id: &str,
+    amount_cents: i64,
+    period: ledger_budget::BudgetPeriod,
+) -> String {
+    nsh_app::boot::create_budget(
+        db,
+        &ledger_budget::BudgetInput {
+            category_id: category_id.to_owned(),
+            period: Some(period),
+            amount_cents,
+            start_date: nsh_app::boot::today_string(),
+        },
+    )
+    .unwrap()
+}
+
+/// 本月一笔指定金额、指定分类的现金支出（进度口径的造数面）。锁纪律：写
+/// 连接锁不可重入——造账户与造交易各自走自带锁的助手，不持锁跨调用。
+fn seed_expense_this_month(db: &ledger_infra::db::DbState, category_id: &str, amount_cents: i64) {
+    let account = seed_cash_account(db);
+    let date = today().to_string();
+    seed_transaction(
+        db,
+        TxnSeed {
+            account: &account,
+            to_account: None,
+            kind: TransactionKind::Expense,
+            amount_cents,
+            date: &date,
+            category_id: Some(category_id.to_owned()),
+            merchant_id: None,
+            note: Some("本月支出".to_owned()),
+        },
+    );
+}
+
+/// 预算视图首屏（AC：预算管理各分类预算 + 执行进度呈现）：新增预算表单卡、
+/// 年度汇总卡与预算执行表——格文本为装配层产物（路径名 / 按月 / 金额分组 /
+/// 状态词）。删除任一接线（导航分支挂载 / 装配 / 读路径 / 表格渲染）即红。
+#[test]
+fn budget_view_renders_create_form_summary_and_progress_table() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("budget-view");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let tea = seed_category(&db, "茶饮", None);
+        seed_budget(&db, &tea, 50_000, ledger_budget::BudgetPeriod::Monthly);
+        seed_expense_this_month(&db, &tea, 12_000);
+    }
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+    app.wait_for("text:共 1 条").unwrap();
+
+    // 侧栏预算项落位预算视图（占位「迁移中」反馈离场）。
+    app.press("id:nav-budget").unwrap();
+    for label in [
+        "新增预算",
+        "支出分类",
+        "按月",
+        "按年",
+        "金额",
+        "添加",
+        "本年度预算",
+        "年度预算总额",
+        "本年已支",
+        "预算执行",
+        "茶饮",
+        "按月",
+        "120",
+        "500",
+        "正常",
+        "编辑",
+        "删除",
+    ] {
+        app.wait_for(&format!("text:{label}")).unwrap();
+    }
+    // 汇总卡口径：年化总额 = 50000 × 12 = 600000 分 → 6000；本年已支 120。
+    app.wait_for("text:6000").unwrap();
+    // 进度百分比 24%（12000/50000 四舍五入）。
+    app.wait_for("text:24%").unwrap();
+    assert!(
+        app.screen().count("id:placeholder-note").unwrap() == 0,
+        "预算视图是真实组件，不再是占位"
+    );
+}
+
+/// 创建旅程（封装件 PinyinSelect 首消费）：触发件打开下拉 → 拼音首字母搜索
+/// 「午餐」（wc）→ 选中（触发件呈现「父 > 子」路径名）→ 输入金额 → 添加 →
+/// 新行落表（写路径 + 失效信号 + 订阅重读的接线旅程）。「删除即红」负向条目：
+/// 删 perform_create 里的 `notify_budgets_invalidated` 广播或视图订阅接线任一
+/// 环 → 本测红（表单清空但新行不出现）。
+#[test]
+fn budget_form_creates_budget_via_pinyin_search_and_refreshes_list() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("budget-create");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let tea = seed_category(&db, "茶饮", None);
+        seed_budget(&db, &tea, 10_000, ledger_budget::BudgetPeriod::Monthly);
+        let fresh = seed_category(&db, "鲜食", None);
+        seed_category(&db, "刺身", Some(&fresh));
+    }
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+    app.wait_for("id:nav-budget").unwrap();
+    app.press("id:nav-budget").unwrap();
+    app.wait_for("text:预算执行").unwrap();
+
+    // 打开拼音可搜下拉，首字母 cs 命中「鲜食 > 刺身」。
+    app.press("id:budget-category").unwrap();
+    app.wait_for("id:budget-category-search").unwrap();
+    app.type_text("id:budget-category-search", "cs").unwrap();
+    app.wait_for("text:鲜食 > 刺身").unwrap();
+    app.press("id:budget-category-option >> text:鲜食 > 刺身")
+        .unwrap();
+    // 选中后下拉关闭、触发件呈现路径名。
+    app.wait_for_gone("id:budget-category-search", DEFAULT_WAIT)
+        .unwrap();
+    assert_eq!(
+        app.screen().count("text:鲜食 > 刺身").unwrap(),
+        1,
+        "触发件呈现选中项路径名"
+    );
+
+    // 输入金额，添加。
+    app.type_text("id:budget-amount", "80").unwrap();
+    app.press("id:budget-add").unwrap();
+
+    // 失效信号驱动重读：新行落表（子分类路径名 + 金额 80），表单清空回占位。
+    app.wait_for_within("text:80", DEFAULT_WAIT).unwrap();
+    assert_eq!(
+        app.screen().count("text:鲜食 > 刺身").unwrap(),
+        1,
+        "表单回占位后路径名只在表行（新行以「父 > 子」路径名呈现）"
+    );
+    assert!(app.shows("支出分类"), "创建成功后表单清空");
+}
+
+/// 编辑旅程（封装件 Modal 首消费）：编辑按钮 → 弹窗呈现（分类只读名回填、
+/// 金额回填整数分换算元文本）→ 改金额保存 → 弹窗关闭、行与年度汇总同刻刷新
+/// （「删除即红」：删保存成功后的 notify 或弹窗关闭接线任一环即红）。
+#[test]
+fn budget_edit_modal_updates_amount_then_refreshes() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("budget-edit");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let tea = seed_category(&db, "茶饮", None);
+        seed_budget(&db, &tea, 50_000, ledger_budget::BudgetPeriod::Monthly);
+        seed_expense_this_month(&db, &tea, 12_000);
+    }
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+    app.wait_for("text:共 1 条").unwrap();
+    app.press("id:nav-budget").unwrap();
+    app.wait_for("text:500").unwrap();
+
+    // 打开编辑弹窗：标题 + 分类只读名 + 金额回填 500。
+    app.press("id:budget-edit").unwrap();
+    app.wait_for("id:app-modal").unwrap();
+    app.wait_for("text:编辑预算").unwrap();
+    app.wait_for("text:茶饮").unwrap();
+    let amount = app
+        .screen()
+        .input_text("id:budget-edit-amount")
+        .unwrap()
+        .unwrap_or_default();
+    assert_eq!(amount, "500", "编辑弹窗金额回填（整数分换算元文本）");
+
+    // 改金额保存：弹窗关闭，预算列与年化总额同刻刷新（600000→360000 → 3600）。
+    app.clear("id:budget-edit-amount").unwrap();
+    app.type_text("id:budget-edit-amount", "300").unwrap();
+    app.press("id:budget-save").unwrap();
+    app.wait_for_gone("id:app-modal", DEFAULT_WAIT).unwrap();
+    app.wait_for_within("text:300", DEFAULT_WAIT).unwrap();
+    app.wait_for("text:3600").unwrap();
+}
+
+/// 弹窗关闭语义（ESC / 取消 / ✕ 三路径关闭且不写——遮罩不关由封装内建，
+/// headless 盲区归人工对表）：关闭后行金额原样。
+#[test]
+fn budget_edit_modal_escape_cancel_and_close_button_write_nothing() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("budget-modal-close");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let tea = seed_category(&db, "茶饮", None);
+        seed_budget(&db, &tea, 50_000, ledger_budget::BudgetPeriod::Monthly);
+    }
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+    app.wait_for("id:nav-budget").unwrap();
+    app.press("id:nav-budget").unwrap();
+    app.wait_for("text:500").unwrap();
+
+    // ESC 关闭：弹窗离场、不写。
+    app.press("id:budget-edit").unwrap();
+    app.wait_for("id:app-modal").unwrap();
+    app.press_key("escape").unwrap();
+    app.wait_for_gone("id:app-modal", DEFAULT_WAIT).unwrap();
+    app.wait_for("text:500").unwrap();
+
+    // 取消关闭：同语义。
+    app.press("id:budget-edit").unwrap();
+    app.wait_for("id:app-modal").unwrap();
+    app.press("id:budget-cancel").unwrap();
+    app.wait_for_gone("id:app-modal", DEFAULT_WAIT).unwrap();
+    app.wait_for("text:500").unwrap();
+
+    // ✕ 关闭：同语义。
+    app.press("id:budget-edit").unwrap();
+    app.wait_for("id:app-modal").unwrap();
+    app.press("id:app-modal-close").unwrap();
+    app.wait_for_gone("id:app-modal", DEFAULT_WAIT).unwrap();
+    assert!(app.shows("500"), "三条关闭路径都不写，行金额原样");
+}
+
+/// 删除旅程（封装件 Popconfirm 首消费）：删除按钮 → 气泡「确认删除？」→ 取消
+/// 不写 → 再开确认 → 行离场（失效信号重读）。「删除即红」：删确认分支的
+/// notify 广播 → 本测红（气泡关闭但行不消失）。
+#[test]
+fn budget_delete_popconfirm_cancel_writes_nothing_confirm_refreshes() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("budget-delete");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let tea = seed_category(&db, "茶饮", None);
+        seed_budget(&db, &tea, 50_000, ledger_budget::BudgetPeriod::Monthly);
+    }
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+    app.wait_for("id:nav-budget").unwrap();
+    app.press("id:nav-budget").unwrap();
+    app.wait_for("text:500").unwrap();
+
+    // 打开气泡：说明文案 + 两键。
+    app.press("id:budget-delete").unwrap();
+    app.wait_for("text:确认删除？").unwrap();
+
+    // 取消：气泡关闭、行保留。
+    app.press("id:budget-del-cancel").unwrap();
+    app.wait_for_gone("text:确认删除？", DEFAULT_WAIT).unwrap();
+    assert!(app.shows("500"), "取消不写");
+
+    // 再开确认：行离场。
+    app.press("id:budget-delete").unwrap();
+    app.wait_for("text:确认删除？").unwrap();
+    app.press("id:budget-del-confirm").unwrap();
+    app.wait_for_gone("text:确认删除？", DEFAULT_WAIT).unwrap();
+    app.wait_for_gone("text:500", DEFAULT_WAIT).unwrap();
+    assert!(app.shows("暂无数据"), "删后空态");
+}
+
+/// 校验前置拦截（不发起写）：空表单添加 → 「请填写分类和金额」；选分类金额
+/// 0 → 「预算金额必须为正数」；两条都不落新行。
+#[test]
+fn budget_form_validates_required_and_positive_without_writing() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("budget-validate");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let tea = seed_category(&db, "茶饮", None);
+        seed_budget(&db, &tea, 50_000, ledger_budget::BudgetPeriod::Monthly);
+        let fresh = seed_category(&db, "鲜食", None);
+        seed_category(&db, "刺身", Some(&fresh));
+    }
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+    app.wait_for("id:nav-budget").unwrap();
+    app.press("id:nav-budget").unwrap();
+    app.wait_for("text:500").unwrap();
+
+    // 空表单：必填提示。
+    app.press("id:budget-add").unwrap();
+    app.wait_for("text:请填写分类和金额").unwrap();
+    assert!(app.shows("500"), "未发起写");
+
+    // 金额 0：正数提示（旧壳同词表）。选择走唯一子分类（首字母 cs）。
+    app.press("id:budget-category").unwrap();
+    app.wait_for("id:budget-category-search").unwrap();
+    app.type_text("id:budget-category-search", "cs").unwrap();
+    app.press("id:budget-category-option >> text:鲜食 > 刺身")
+        .unwrap();
+    app.wait_for_gone("id:budget-category-search", DEFAULT_WAIT)
+        .unwrap();
+    // 选中凭据：触发件呈现选中项路径名（唯一文本，与表行区分）。
+    assert_eq!(
+        app.screen().count("text:鲜食 > 刺身").unwrap(),
+        1,
+        "选中后触发件呈现分类名"
+    );
+    app.type_text("id:budget-amount", "0").unwrap();
+    app.press("id:budget-add").unwrap();
+    app.wait_for("text:预算金额必须为正数").unwrap();
+    assert_eq!(
+        app.screen().count("text:500").unwrap(),
+        1,
+        "未发起写：仍只有原预算行（行金额一处）"
+    );
+}
+
+/// 抑制闸门（封装件族共用注册表）：拼音下拉 / 编辑弹窗 / 删除气泡任一开着时
+/// ⌘2 不派发（停留预算视图），ESC 关闭后同键落位账户。「删除即红」负向条目：
+/// 删 modal.rs / popconfirm.rs / pinyin_select.rs 任一封装的 token.report 接线
+/// → 本测对应段红（弹层下按键切走）。
+#[test]
+fn suppression_gate_blocks_shortcuts_while_budget_popups_open() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("budget-suppress");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let tea = seed_category(&db, "茶饮", None);
+        seed_budget(&db, &tea, 50_000, ledger_budget::BudgetPeriod::Monthly);
+    }
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+    app.wait_for("id:nav-budget").unwrap();
+    app.press("id:nav-budget").unwrap();
+    app.wait_for("text:预算执行").unwrap();
+
+    // 拼音下拉开着：⌘2 不派发；ESC 关闭后落位账户。
+    app.press("id:budget-category").unwrap();
+    app.wait_for("id:budget-category-search").unwrap();
+    app.press_key("mod+2").unwrap();
+    app.settle();
+    assert!(
+        app.screen().count("id:budget-category-search").unwrap() >= 1
+            && app.screen().count("id:placeholder-note").unwrap() == 0,
+        "下拉开着时 ⌘2 不得切视图"
+    );
+    app.press_key("escape").unwrap();
+    app.wait_for_gone("id:budget-category-search", DEFAULT_WAIT)
+        .unwrap();
+    app.press_key("mod+2").unwrap();
+    app.wait_for("text:账户").unwrap();
+    app.press_key("mod+3").unwrap();
+    app.wait_for("text:预算执行").unwrap();
+
+    // 编辑弹窗开着：⌘2 不派发；ESC 关闭后落位账户。
+    app.press("id:budget-edit").unwrap();
+    app.wait_for("id:app-modal").unwrap();
+    app.press_key("mod+2").unwrap();
+    app.settle();
+    assert!(
+        app.screen().count("id:app-modal").unwrap() >= 1
+            && app.screen().count("id:placeholder-note").unwrap() == 0,
+        "弹窗开着时 ⌘2 不得切视图"
+    );
+    app.press_key("escape").unwrap();
+    app.wait_for_gone("id:app-modal", DEFAULT_WAIT).unwrap();
+    app.press_key("mod+2").unwrap();
+    app.wait_for_within("text:账户", DEFAULT_WAIT).unwrap();
+    app.press_key("mod+3").unwrap();
+    app.wait_for("text:预算执行").unwrap();
+
+    // 删除气泡开着：⌘2 不派发；ESC 关闭后落位账户。
+    app.press("id:budget-delete").unwrap();
+    app.wait_for("text:确认删除？").unwrap();
+    app.press_key("mod+2").unwrap();
+    app.settle();
+    assert!(
+        app.shows("确认删除？") && !app.shows("id:placeholder-note"),
+        "气泡开着时 ⌘2 不得切视图"
+    );
+    app.press_key("escape").unwrap();
+    app.wait_for_gone("text:确认删除？", DEFAULT_WAIT).unwrap();
+    app.press_key("mod+2").unwrap();
+    app.wait_for_within("text:账户", DEFAULT_WAIT).unwrap();
+}
+
+// ---------------------------------------------------------------------------
+// 交易表单族（#2034 NSH 迁移③表单①基础收支）：新增/编辑旅程、校验呈现、
+// 弹层抑制、日期键入。断言只写用户可观察结果（列表刷新、回填文本、错误条
+// 位、键派发）；「写→失效信号→列表重读」与「弹层抑制」的接线删除即红条
+// 目注明在各测试内。
+// ---------------------------------------------------------------------------
+
+/// 打开「记一笔」表单弹窗（入口菜单 → 指定类型项），等待标题落屏。
+fn open_create_form(app: &mut Headless, item_id: &str, title: &str) {
+    app.press("id:tx-add").unwrap();
+    app.wait_for(item_id).unwrap();
+    app.press(item_id).unwrap();
+    app.wait_for_within(&format!("text:{title}"), DEFAULT_WAIT)
+        .unwrap();
+}
+
+/// 在账户下拉中选中唯一候选（造数面保证单账户；选项行锚点 + 行内文本
+/// 命中可按压件——budget-category-option 同形选择器）。
+fn pick_only_account(app: &mut Headless) {
+    app.press("id:tx-form-account").unwrap();
+    app.wait_for("id:tx-form-account-option").unwrap();
+    app.press("id:tx-form-account-option >> text:测试现金")
+        .unwrap();
+    app.settle();
+}
+
+/// 新增支出全旅程（用户故事 1/6）：记一笔 → 记支出 → 填金额、选账户 →
+/// 保存 → 弹窗关、列表即刻刷新（新行与总数落屏）。删掉表单提交成功分支
+/// 的失效信号广播（txn_form::perform_submit 内 notify 接线）本测试
+/// wait_for("text:¥12.5") 超时红（库中已写而列表仍旧）。
+#[test]
+fn form_creates_expense_and_refreshes_list() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("form-create");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        seed_cash_account(&db);
+    }
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    app.wait_for("text:暂无数据").unwrap();
+
+    open_create_form(&mut app, "id:tx-add-expense", "记一笔 · 支出");
+    app.type_text("id:tx-form-amount", "12.50").unwrap();
+    pick_only_account(&mut app);
+    app.press("id:tx-form-submit").unwrap();
+
+    // 写后可观察结果：弹窗关、列表即刻刷新（金额按展示口径裁尾零：12.50 → ¥12.5）。
+    app.wait_for_gone("text:记一笔 · 支出", DEFAULT_WAIT)
+        .unwrap();
+    app.wait_for("text:共 1 条").unwrap();
+    let today = chrono::Local::now().date_naive().to_string();
+    app.wait_for_within(&format!("text:{today}"), DEFAULT_WAIT)
+        .unwrap();
+    app.wait_for("text:¥12.5").unwrap();
+    assert!(
+        app.shows("测试现金"),
+        "新行账户格呈现：{:?}",
+        app.screen().texts()
+    );
+
+    // 库态核对（不经 UI）：域读路径确认写入与币种随账户推导。
+    let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+    let conn = db
+        .read_conn
+        .lock()
+        .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
+        .unwrap();
+    let filter = ledger_transaction::TransactionListFilter::default();
+    let rows = ledger_transaction::list_transactions(&conn, &filter).unwrap();
+    assert_eq!(rows.total, 1);
+    assert_eq!(
+        rows.items[0].amount_cents, 1_250,
+        "元转分收口（整数分落库）"
+    );
+    assert_eq!(rows.items[0].currency_code, "CNY", "记账币种 = 账户币种");
+    assert_eq!(
+        rows.items[0].kind,
+        ledger_transaction::TransactionKind::Expense
+    );
+}
+
+/// 新增收入旅程 + kind 选项面分域（用户故事 1/3）：记收入表单的分类候选只
+/// 收收入分类（收入分类可选中；支出分类不在候选）；保存后行类型标签「收入」。
+#[test]
+fn form_creates_income_with_income_only_category_candidates() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("form-income");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        seed_cash_account(&db);
+        let conn = db
+            .conn
+            .lock()
+            .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
+            .unwrap();
+        ledger_categories::create_category(
+            &conn,
+            ledger_categories::CategoryInput {
+                name: "工资".to_owned(),
+                kind: "income".to_owned(),
+                parent_id: None,
+                icon: None,
+            },
+        )
+        .unwrap();
+        ledger_categories::create_category(
+            &conn,
+            ledger_categories::CategoryInput {
+                name: "餐饮".to_owned(),
+                kind: "expense".to_owned(),
+                parent_id: None,
+                icon: None,
+            },
+        )
+        .unwrap();
+    }
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    app.wait_for("text:暂无数据").unwrap();
+
+    open_create_form(&mut app, "id:tx-add-income", "记一笔 · 收入");
+    app.type_text("id:tx-form-amount", "8000").unwrap();
+    pick_only_account(&mut app);
+
+    // 分类候选面随 kind 分域：打开分类下拉只呈现收入分类（支出分类被过滤；
+    // 内置收入分类树的根「工资」与子分类路径共享子串，取第 0 命中 = 根）。
+    app.press("id:tx-form-category").unwrap();
+    app.wait_for("id:tx-form-category-option").unwrap();
+    assert!(
+        app.shows("工资") && !app.shows("餐饮"),
+        "收入表单的分类候选只收收入分类：{:?}",
+        app.screen().texts()
+    );
+    app.press("id:tx-form-category-option >> text:工资 >> nth=0")
+        .unwrap();
+    app.settle();
+
+    app.press("id:tx-form-submit").unwrap();
+    app.wait_for_gone("text:记一笔 · 收入", DEFAULT_WAIT)
+        .unwrap();
+    app.wait_for("text:共 1 条").unwrap();
+    app.wait_for("text:¥8000").unwrap();
+    assert!(
+        app.shows("收入"),
+        "行类型标签「收入」：{:?}",
+        app.screen().texts()
+    );
+    assert!(
+        app.shows("工资"),
+        "分类格呈现收入分类名：{:?}",
+        app.screen().texts()
+    );
+}
+
+/// 编辑回填与保存旅程（用户故事 5/6）：右键收入/支出行 → 编辑 → 弹窗回填
+/// 全部业务字段（金额文本 / 日期 / 备注 / 商户口名）→ 改金额保存 → 列表
+/// 刷新呈现新值。删掉编辑提交成功分支的失效信号广播（txn_form::
+/// perform_submit 内 notify 接线）本测试 wait_for("text:¥30") 超时红。
+#[test]
+fn form_edits_expense_with_backfill_and_refreshes() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("form-edit");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let account = seed_cash_account(&db);
+        seed_transaction(
+            &db,
+            TxnSeed {
+                account: &account,
+                to_account: None,
+                kind: TransactionKind::Expense,
+                amount_cents: 2_500,
+                date: "2026-01-01",
+                category_id: None,
+                merchant_id: None,
+                note: Some("要编辑的一笔".to_owned()),
+            },
+        );
+    }
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    app.wait_for("text:共 1 条").unwrap();
+
+    app.right_click("text:2026-01-01").unwrap();
+    app.choose_menu_item("编辑").unwrap();
+    app.wait_for("text:编辑交易").unwrap();
+
+    // 回填断言（编辑复用同表单；金额分→元文本按行币种小数位，日期 ISO 原样）。
+    assert_eq!(
+        app.screen().input_text("id:tx-form-amount").unwrap(),
+        Some("25"),
+        "金额回填：2500 分 → 25 元文本"
+    );
+    assert_eq!(
+        app.screen().input_text("id:tx-form-date-input").unwrap(),
+        Some("2026-01-01"),
+        "日期回填：行上 ISO 原样"
+    );
+    assert_eq!(
+        app.screen().input_text("id:tx-form-note").unwrap(),
+        Some("要编辑的一笔"),
+        "备注回填"
+    );
+    assert_eq!(
+        app.screen()
+            .input_text("id:tx-form-merchant-input")
+            .unwrap(),
+        Some(""),
+        "无商户行回填空文本"
+    );
+
+    // 改金额保存 → 弹窗关、列表刷新呈现新金额（旧值离屏）。
+    app.clear("id:tx-form-amount").unwrap();
+    app.type_text("id:tx-form-amount", "30").unwrap();
+    app.press("id:tx-form-submit").unwrap();
+    app.wait_for_gone("text:编辑交易", DEFAULT_WAIT).unwrap();
+    app.wait_for("text:¥30").unwrap();
+    app.wait_for_gone("text:¥25", DEFAULT_WAIT).unwrap();
+    assert!(app.shows("共 1 条"), "总数不变：{:?}", app.screen().texts());
+
+    // 库态核对：全字段替换落库（金额 3000 分，其余字段不变）。
+    let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+    let conn = db
+        .read_conn
+        .lock()
+        .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
+        .unwrap();
+    let filter = ledger_transaction::TransactionListFilter::default();
+    let rows = ledger_transaction::list_transactions(&conn, &filter).unwrap();
+    assert_eq!(rows.items[0].amount_cents, 3_000);
+    assert_eq!(rows.items[0].note.as_deref(), Some("要编辑的一笔"));
+    assert_eq!(rows.items[0].date, "2026-01-01");
+}
+
+/// 校验呈现（用户故事 7/8）：空金额直接提交 → 错误条位可纠正文案；非法
+/// 金额文本（判定错误 + 已标记）→ 提交禁用；账户未选 → 「请选择账户」；
+/// 修正后可提交成功。断言对准用户可观察结果（文案与按钮可用性），不对准
+/// 内部状态形状。
+#[test]
+fn form_blocks_invalid_submission_with_visible_errors() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("form-invalid");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        seed_cash_account(&db);
+    }
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    app.wait_for("text:暂无数据").unwrap();
+
+    open_create_form(&mut app, "id:tx-add-expense", "记一笔 · 支出");
+
+    // 全空直接提交：装配器 fail fast 以账户先于金额（旧壳 submit 校验序同形）
+    // → 「请选择账户」错误条位（不产生写入）。
+    app.press("id:tx-form-submit").unwrap();
+    app.wait_for("id:tx-form-error").unwrap();
+    assert!(
+        app.shows("请选择账户"),
+        "账户未选错误条位：{:?}",
+        app.screen().texts()
+    );
+
+    // 非法金额文本：判定错误红态 → 提交禁用（红框 + 提交禁用两件同发，
+    // ADR-0058；headless 断言可用性，红框归人工子集）。
+    app.type_text("id:tx-form-amount", "abc").unwrap();
+    app.settle();
+    assert!(
+        !app.screen().enabled("id:tx-form-submit").unwrap(),
+        "非法金额文本下提交禁用"
+    );
+
+    // 负数金额（判定可解析、业务校验拦截；账户已选）→ 「请输入金额」。
+    app.clear("id:tx-form-amount").unwrap();
+    app.type_text("id:tx-form-amount", "-3").unwrap();
+    pick_only_account(&mut app);
+    app.press("id:tx-form-submit").unwrap();
+    app.wait_for("text:请输入金额").unwrap();
+
+    // 全部修正 → 提交成功（错误条位清空、弹窗关、列表刷新）。
+    app.clear("id:tx-form-amount").unwrap();
+    app.type_text("id:tx-form-amount", "12.50").unwrap();
+    app.press("id:tx-form-submit").unwrap();
+    app.wait_for_gone("text:记一笔 · 支出", DEFAULT_WAIT)
+        .unwrap();
+    app.wait_for("text:共 1 条").unwrap();
+}
+
+/// 弹层抑制（#2032 抑制闸门 + #2034 表单弹层共用）：表单弹窗开着时翻页键
+/// 不派发，ESC 关窗后生效。删掉 modal 封装的抑制上报（token.report 接线）
+/// 或 keymap 闸门检查任一环，本测试红（弹窗开着时翻页键穿透）。
+#[test]
+fn form_modal_suppresses_pagination_shortcut_while_open() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("form-suppress");
+    seed_expense_series(&dir, 105);
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    app.wait_for("text:共 105 条").unwrap();
+    // 第 1 页首行 = 日期最大一笔（test_date(104) = 2026-04-14）。
+    assert!(
+        app.shows("2026-04-14"),
+        "第 1 页首行在屏：{:?}",
+        app.screen().texts()
+    );
+
+    open_create_form(&mut app, "id:tx-add-expense", "记一笔 · 支出");
+    app.press_key("]").unwrap();
+    app.settle();
+    assert!(
+        app.shows("2026-04-14") && !app.shows("2026-01-01"),
+        "表单弹窗开着时翻页键不派发（抑制）：{:?}",
+        app.screen().texts()
+    );
+
+    // ESC 关窗（弹层关闭语义）→ 同键生效翻到第 2 页（首行 = 2026-01-01）。
+    app.press_key("escape").unwrap();
+    app.wait_for_gone("text:记一笔 · 支出", DEFAULT_WAIT)
+        .unwrap();
+    app.press_key("]").unwrap();
+    app.wait_for_within("text:2026-01-01", DEFAULT_WAIT)
+        .unwrap();
+    assert!(
+        app.shows("共 105 条"),
+        "翻页不改总数口径：{:?}",
+        app.screen().texts()
+    );
+}
+
+/// 日期键入（用户故事 2 headless 面）：清空缺省值后键入完整日期落值，保存
+/// 后行日期随键入值；残缺文本不落值（触发件文本原样保留）。日历点选的原生
+/// 观感归人工子集（headless 无像素断言）。
+#[test]
+fn form_date_field_accepts_typed_date_and_lands_on_row() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("form-date");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        seed_cash_account(&db);
+    }
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    app.wait_for("text:暂无数据").unwrap();
+
+    open_create_form(&mut app, "id:tx-add-expense", "记一笔 · 支出");
+    // 缺省 = 今天。
+    let today = chrono::Local::now().date_naive().to_string();
+    assert_eq!(
+        app.screen().input_text("id:tx-form-date-input").unwrap(),
+        Some(today.as_str()),
+        "日期缺省今天（旧壳 NDatePicker 缺省同语义）"
+    );
+
+    // 键入完整日期落值（回显归一）。
+    app.clear("id:tx-form-date-input").unwrap();
+    app.type_text("id:tx-form-date-input", "2026-03-15")
+        .unwrap();
+    app.settle();
+    assert_eq!(
+        app.screen().input_text("id:tx-form-date-input").unwrap(),
+        Some("2026-03-15"),
+        "完整日期落值并回显"
+    );
+
+    app.type_text("id:tx-form-amount", "5").unwrap();
+    pick_only_account(&mut app);
+    app.press("id:tx-form-submit").unwrap();
+    app.wait_for_gone("text:记一笔 · 支出", DEFAULT_WAIT)
+        .unwrap();
+    app.wait_for("text:共 1 条").unwrap();
+    app.wait_for("text:2026-03-15").unwrap();
+    app.wait_for("text:¥5").unwrap();
+}
+
+/// 来源关联语义·保单（用户故事 7 / 旧壳「挂单可改挂与清除」平价）：普通下拉
+/// 选中保单 → 保存落 policy_id；清除（✕）→ 保存落 None（改挂与清除两态）。
+/// 域权威（挂单准入 / unchanged 语义）在域层既有测试，壳层钉选项面与提交面。
+#[test]
+fn form_attaches_policy_and_clears_it() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("form-policy");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        seed_cash_account(&db);
+        let conn = db
+            .conn
+            .lock()
+            .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
+            .unwrap();
+        let insurer_id = ledger_policy::create_insurer_by_name(&conn, "测试保司").unwrap();
+        ledger_policy::create_policy(
+            &conn,
+            ledger_policy::PolicyInput {
+                insurer_id: insurer_id.clone(),
+                policy_number: "P-2026-001".to_owned(),
+                product_name: "百万医疗".to_owned(),
+                start_date: "2026-01-01".to_owned(),
+                end_date: None,
+                coverage_amount_cents: None,
+                coverage_currency_code: None,
+                note: None,
+            },
+            &mut || {},
+        )
+        .unwrap();
+    }
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    app.wait_for("text:暂无数据").unwrap();
+
+    // 挂单：保单选项呈现「保单号（险种名）」词表，选中后保存落 policy_id。
+    open_create_form(&mut app, "id:tx-add-expense", "记一笔 · 支出");
+    app.type_text("id:tx-form-amount", "200").unwrap();
+    pick_only_account(&mut app);
+    app.press("id:tx-form-policy-trigger").unwrap();
+    app.wait_for("id:tx-form-policy-option").unwrap();
+    app.press("id:tx-form-policy-option >> text:P-2026-001（百万医疗）")
+        .unwrap();
+    app.settle();
+    app.press("id:tx-form-submit").unwrap();
+    app.wait_for_gone("text:记一笔 · 支出", DEFAULT_WAIT)
+        .unwrap();
+    app.wait_for("text:共 1 条").unwrap();
+
+    let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+    let conn = db
+        .read_conn
+        .lock()
+        .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
+        .unwrap();
+    let rows = ledger_transaction::list_transactions(&conn, &Default::default()).unwrap();
+    let policy_id = rows.items[0].policy_id.clone();
+    assert!(policy_id.is_some(), "挂单保存落 policy_id");
+
+    // 清除：编辑面清除按钮（✕）落 None——「挂单可清除」语义。
+    app.right_click("text:¥200").unwrap(); // 金额格文本寻址该行（单行账本）
+    app.choose_menu_item("编辑").unwrap();
+    app.wait_for("text:编辑交易").unwrap();
+    app.press("id:tx-form-policy-clear").unwrap();
+    app.settle();
+    app.press("id:tx-form-submit").unwrap();
+    app.wait_for_gone("text:编辑交易", DEFAULT_WAIT).unwrap();
+
+    let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+    let conn = db
+        .read_conn
+        .lock()
+        .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
+        .unwrap();
+    let rows = ledger_transaction::list_transactions(&conn, &Default::default()).unwrap();
+    assert_eq!(rows.items[0].policy_id, None, "清除后保存落 None");
+}
+
+/// 来源关联语义·商户（旧壳 PinyinSelect tag「输入即建」平价）：自由文本提交
+/// 走 merchant_name 域语义（精确匹配在用名复用、未命中即建——域内单点，壳
+/// 不另立解析）；选定建议项走 merchant_id。域权威在域层既有测试，壳层钉
+/// 双态值语义的提交面。
+#[test]
+fn form_merchant_free_text_creates_merchant_via_domain_semantics() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("form-merchant");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        seed_cash_account(&db);
+    }
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    app.wait_for("text:暂无数据").unwrap();
+
+    open_create_form(&mut app, "id:tx-add-expense", "记一笔 · 支出");
+    app.type_text("id:tx-form-amount", "99").unwrap();
+    pick_only_account(&mut app);
+    // 自由文本输入（不在建议中选）→ 提交 merchant_name。
+    app.type_text("id:tx-form-merchant-input", "红旗超市")
+        .unwrap();
+    app.press_key("escape").unwrap(); // 关建议弹层（弹层关闭语义），表单仍在
+    app.settle();
+    app.press("id:tx-form-submit").unwrap();
+    app.wait_for_gone("text:记一笔 · 支出", DEFAULT_WAIT)
+        .unwrap();
+    app.wait_for("text:共 1 条").unwrap();
+    assert!(app.shows("红旗超市"), "列表商户格呈现即建商户名");
+
+    // 库态核对：域语义即建在用商户并挂到交易行。
+    let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+    let conn = db
+        .read_conn
+        .lock()
+        .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
+        .unwrap();
+    let rows = ledger_transaction::list_transactions(&conn, &Default::default()).unwrap();
+    let merchant_id = rows.items[0].merchant_id.clone();
+    assert!(merchant_id.is_some(), "merchant_name 语义即建并挂引用");
+    let merchants = ledger_merchants::list_merchants(&conn, false).unwrap();
+    assert!(
+        merchants.iter().any(|m| m.name == "红旗超市"),
+        "商户字典即建在用行：{:?}",
+        merchants
+            .iter()
+            .map(|m| m.name.as_str())
+            .collect::<Vec<_>>()
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 交易表单②（#2035 NSH 迁移④表单②转账·借出·退款）：多账户形态的新增/编辑
+// 旅程。断言只写用户可观察结果（菜单项、回填文本、候选面分侧、行格文案、
+// 库态核对）；「写→失效信号→列表重读」接线删除即红条目注明在测试内。
+// ---------------------------------------------------------------------------
+
+/// 在指定下拉（锚点前缀）中选中候选行内文本命中的选项。
+fn pick_option(app: &mut Headless, prefix: &str, label: &str) {
+    app.press(&format!("id:{prefix}")).unwrap();
+    app.wait_for(&format!("id:{prefix}-option")).unwrap();
+    app.press(&format!("id:{prefix}-option >> text:{label}"))
+        .unwrap();
+    app.settle();
+}
+
+/// 断言拼音下拉触发件当前显示指定 label（回填断言面：触发件文本呈现选中项）。
+fn assert_select_shows(app: &mut Headless, prefix: &str, label: &str) {
+    app.wait_for_within(&format!("id:{prefix} >> text:{label}"), DEFAULT_WAIT)
+        .unwrap();
+}
+
+/// 新增转账全旅程（用户故事 1）：记一笔 → 记转账 → 填金额、选转出/转入 →
+/// 保存 → 弹窗关、列表即刻刷新（双账户行格「转出 → 转入」）。删掉表单提交
+/// 成功分支的失效信号广播（txn_form::perform_submit 内 notify 接线）本测试
+/// wait_for("text:共 1 条") 超时红（库中已写而列表仍旧）。
+#[test]
+fn transfer_form_creates_transfer_and_refreshes_list() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("transfer-create");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        seed_account(&db, "测试现金", AccountType::Cash);
+        seed_account(&db, "测试银行", AccountType::Bank);
+    }
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    app.wait_for("text:暂无数据").unwrap();
+
+    open_create_form(&mut app, "id:tx-add-transfer", "记一笔 · 转账");
+    app.type_text("id:tx-form-amount", "300").unwrap();
+    pick_option(&mut app, "tx-form-account", "测试现金");
+    pick_option(&mut app, "tx-form-to-account", "测试银行");
+    app.press("id:tx-form-submit").unwrap();
+
+    // 写后可观察结果：弹窗关、列表刷新（转账行格双账户口径 + 类型标签）。
+    app.wait_for_gone("text:记一笔 · 转账", DEFAULT_WAIT)
+        .unwrap();
+    app.wait_for("text:共 1 条").unwrap();
+    app.wait_for("text:¥300").unwrap();
+    app.wait_for("text:测试现金 → 测试银行").unwrap();
+    assert!(
+        app.shows("转账"),
+        "行类型标签「转账」：{:?}",
+        app.screen().texts()
+    );
+
+    // 库态核对（不经 UI）：kind=transfer 双账户落位、币种随转出账户推导。
+    let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+    let conn = db
+        .read_conn
+        .lock()
+        .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
+        .unwrap();
+    let rows = ledger_transaction::list_transactions(&conn, &Default::default()).unwrap();
+    assert_eq!(rows.total, 1);
+    assert_eq!(rows.items[0].kind, TransactionKind::Transfer);
+    assert_eq!(
+        rows.items[0].amount_cents, 30_000,
+        "元转分收口（整数分落库）"
+    );
+    assert_eq!(rows.items[0].currency_code, "CNY");
+    let cash = ledger_accounts::list_accounts(&conn).unwrap();
+    let from = cash.iter().find(|a| a.name == "测试现金").unwrap();
+    let to = cash.iter().find(|a| a.name == "测试银行").unwrap();
+    assert_eq!(rows.items[0].account_id.as_deref(), Some(from.id.as_str()));
+    assert_eq!(rows.items[0].to_account_id.as_deref(), Some(to.id.as_str()));
+}
+
+/// 转账校验呈现（旧壳 submit 守卫序平价）：空提交 → 「请选择转出账户」；
+/// 只选转出 → 「请选择转入账户」；两端同账户 → 「转出账户和转入账户不能
+/// 相同」；非法金额文本 → 提交禁用；修正后提交成功。
+#[test]
+fn transfer_form_blocks_incomplete_submission_with_visible_errors() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("transfer-invalid");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        seed_account(&db, "测试现金", AccountType::Cash);
+        seed_account(&db, "测试银行", AccountType::Bank);
+    }
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    app.wait_for("text:暂无数据").unwrap();
+
+    open_create_form(&mut app, "id:tx-add-transfer", "记一笔 · 转账");
+
+    // 全空提交：转出账户缺失先于一切（旧壳守卫序同形）。
+    app.press("id:tx-form-submit").unwrap();
+    app.wait_for("id:tx-form-error").unwrap();
+    assert!(app.shows("请选择转出账户"), "{:?}", app.screen().texts());
+
+    // 只选转出：转入缺失的专属文案（不与基础收支「请选择账户」混词）。
+    pick_option(&mut app, "tx-form-account", "测试现金");
+    app.type_text("id:tx-form-amount", "300").unwrap();
+    app.press("id:tx-form-submit").unwrap();
+    app.wait_for("text:请选择转入账户").unwrap();
+
+    // 转入选转出同账户：同账户专属文案。
+    pick_option(&mut app, "tx-form-to-account", "测试现金");
+    app.press("id:tx-form-submit").unwrap();
+    app.wait_for("text:转出账户和转入账户不能相同").unwrap();
+
+    // 非法金额文本：判定错误红态 → 提交禁用（红框 + 提交禁用两件同发，
+    // ADR-0058；headless 断言可用性，红框归人工子集）。
+    app.clear("id:tx-form-amount").unwrap();
+    app.type_text("id:tx-form-amount", "abc").unwrap();
+    app.settle();
+    assert!(
+        !app.screen().enabled("id:tx-form-submit").unwrap(),
+        "非法金额文本下提交禁用"
+    );
+
+    // 全部修正 → 提交成功（错误条位清空、弹窗关、列表刷新）。
+    app.clear("id:tx-form-amount").unwrap();
+    app.type_text("id:tx-form-amount", "300").unwrap();
+    pick_option(&mut app, "tx-form-to-account", "测试银行");
+    app.press("id:tx-form-submit").unwrap();
+    app.wait_for_gone("text:记一笔 · 转账", DEFAULT_WAIT)
+        .unwrap();
+    app.wait_for("text:共 1 条").unwrap();
+}
+
+/// 编辑既有转账（用户故事 4/5）：右键转出行 → 编辑 → 回填金额/日期/备注与
+/// 两端账户（触发件呈现选中账户名）→ 改金额保存 → 列表刷新、转入侧保持。
+/// 删掉编辑提交成功分支的失效信号广播本测试 wait_for("text:¥80") 超时红。
+#[test]
+fn transfer_form_edits_with_dual_account_backfill() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("transfer-edit");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let cash = seed_account(&db, "测试现金", AccountType::Cash);
+        let bank = seed_account(&db, "测试银行", AccountType::Bank);
+        seed_transaction(
+            &db,
+            TxnSeed {
+                account: &cash,
+                to_account: Some(bank),
+                kind: TransactionKind::Transfer,
+                amount_cents: 5_000,
+                date: "2026-01-01",
+                category_id: None,
+                merchant_id: None,
+                note: Some("过桥".to_owned()),
+            },
+        );
+    }
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    app.wait_for("text:共 1 条").unwrap();
+
+    app.right_click("text:2026-01-01").unwrap();
+    app.choose_menu_item("编辑").unwrap();
+    app.wait_for("text:编辑交易").unwrap();
+
+    // 回填断言：金额/日期/备注 + 两端账户触发件呈现选中名。
+    assert_eq!(
+        app.screen().input_text("id:tx-form-amount").unwrap(),
+        Some("50"),
+        "金额回填：5000 分 → 50 元文本"
+    );
+    assert_eq!(
+        app.screen().input_text("id:tx-form-date-input").unwrap(),
+        Some("2026-01-01")
+    );
+    assert_eq!(
+        app.screen().input_text("id:tx-form-note").unwrap(),
+        Some("过桥")
+    );
+    assert_select_shows(&mut app, "tx-form-account", "测试现金");
+    assert_select_shows(&mut app, "tx-form-to-account", "测试银行");
+
+    // 改金额保存 → 列表刷新呈现新金额；两端账户保持（库态核对）。
+    app.clear("id:tx-form-amount").unwrap();
+    app.type_text("id:tx-form-amount", "80").unwrap();
+    app.press("id:tx-form-submit").unwrap();
+    app.wait_for_gone("text:编辑交易", DEFAULT_WAIT).unwrap();
+    app.wait_for("text:¥80").unwrap();
+
+    let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+    let conn = db
+        .read_conn
+        .lock()
+        .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
+        .unwrap();
+    let rows = ledger_transaction::list_transactions(&conn, &Default::default()).unwrap();
+    assert_eq!(rows.items[0].amount_cents, 8_000);
+    assert_eq!(rows.items[0].kind, TransactionKind::Transfer);
+    assert!(
+        rows.items[0].account_id.is_some() && rows.items[0].to_account_id.is_some(),
+        "全字段替换下双账户保持"
+    );
+    assert_eq!(rows.items[0].note.as_deref(), Some("过桥"));
+}
+
+/// 新增借出（用户故事 2）：记一笔 → 借出 → 借贷变体表单（方向切换钮四向 +
+/// 商户输入位），账户候选按方向分侧——转出侧只收资金账户、转入侧只收借出款
+/// 账户。保存后行类型标签「借出」（借贷派生文案）。
+#[test]
+fn lending_form_creates_lend_with_side_filtered_candidates() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("lending-create");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        seed_account(&db, "测试现金", AccountType::Cash);
+        seed_account(&db, "借出·张三", AccountType::Receivable);
+    }
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    app.wait_for("text:暂无数据").unwrap();
+
+    open_create_form(&mut app, "id:tx-add-lend", "记一笔 · 借出");
+    // 借贷变体特征面：方向切换钮四向（旧壳 LENDING_FORM_DIRECTIONS 键序）。
+    assert!(
+        app.shows("方向") && app.shows("收回") && app.shows("借入") && app.shows("还款"),
+        "方向切换钮四向呈现：{:?}",
+        app.screen().texts()
+    );
+
+    // 转出侧候选 = 资金账户（应收账户不进新选择）。
+    app.press("id:tx-form-account").unwrap();
+    app.wait_for("id:tx-form-account-option").unwrap();
+    assert!(
+        app.shows("测试现金") && !app.shows("借出·张三"),
+        "转出侧候选只收资金账户：{:?}",
+        app.screen().texts()
+    );
+    app.press_key("escape").unwrap();
+    app.settle();
+
+    // 转入侧候选 = 借出款账户（资金账户不进新选择）。
+    app.press("id:tx-form-to-account").unwrap();
+    app.wait_for("id:tx-form-to-account-option").unwrap();
+    assert!(
+        app.shows("借出·张三") && !app.shows("测试现金"),
+        "转入侧候选只收借出款账户：{:?}",
+        app.screen().texts()
+    );
+    app.press("id:tx-form-to-account-option >> text:借出·张三")
+        .unwrap();
+    app.settle();
+
+    pick_option(&mut app, "tx-form-account", "测试现金");
+    app.type_text("id:tx-form-amount", "100").unwrap();
+    app.press("id:tx-form-submit").unwrap();
+
+    app.wait_for_gone("text:记一笔 · 借出", DEFAULT_WAIT)
+        .unwrap();
+    app.wait_for("text:共 1 条").unwrap();
+    assert!(
+        app.shows("借出"),
+        "行类型标签「借出」（借贷派生文案）：{:?}",
+        app.screen().texts()
+    );
+    app.wait_for("text:测试现金 → 借出·张三").unwrap();
+
+    // 库态核对：提交产物与转账同构（kind=transfer，两端落位）。
+    let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+    let conn = db
+        .read_conn
+        .lock()
+        .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
+        .unwrap();
+    let rows = ledger_transaction::list_transactions(&conn, &Default::default()).unwrap();
+    assert_eq!(rows.items[0].kind, TransactionKind::Transfer);
+    let accounts = ledger_accounts::list_accounts(&conn).unwrap();
+    let cash = accounts.iter().find(|a| a.name == "测试现金").unwrap();
+    let recv = accounts.iter().find(|a| a.name == "借出·张三").unwrap();
+    assert_eq!(rows.items[0].account_id.as_deref(), Some(cash.id.as_str()));
+    assert_eq!(
+        rows.items[0].to_account_id.as_deref(),
+        Some(recv.id.as_str())
+    );
+}
+
+/// 编辑既有借出（用户故事 4）：借贷是 transfer 派生视角——编辑形态按两端
+/// 账户类型派生方向进借贷变体（方向行 + 商户输入位呈现，普通转账表单无
+/// 商户位），回填两端账户与金额；改备注保存后两端保持。
+#[test]
+fn lending_form_edit_derives_direction_and_backfills() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("lending-edit");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let cash = seed_account(&db, "测试现金", AccountType::Cash);
+        let recv = seed_account(&db, "借出·张三", AccountType::Receivable);
+        seed_transaction(
+            &db,
+            TxnSeed {
+                account: &cash,
+                to_account: Some(recv),
+                kind: TransactionKind::Transfer,
+                amount_cents: 10_000,
+                date: "2026-02-01",
+                category_id: None,
+                merchant_id: None,
+                note: Some("借出张三".to_owned()),
+            },
+        );
+    }
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    app.wait_for("text:共 1 条").unwrap();
+
+    app.right_click("text:2026-02-01").unwrap();
+    app.choose_menu_item("编辑").unwrap();
+    app.wait_for("text:编辑交易").unwrap();
+
+    // 借贷变体特征面：方向行 + 商户输入位（普通转账表单不渲染商户位）。
+    assert!(
+        app.shows("方向"),
+        "借贷变体呈现方向行：{:?}",
+        app.screen().texts()
+    );
+    assert!(
+        app.screen()
+            .input_text("id:tx-form-merchant-input")
+            .unwrap()
+            .is_some(),
+        "借贷变体呈现商户输入位"
+    );
+    // 回填断言：两端账户触发件呈现选中名 + 金额。
+    assert_select_shows(&mut app, "tx-form-account", "测试现金");
+    assert_select_shows(&mut app, "tx-form-to-account", "借出·张三");
+    assert_eq!(
+        app.screen().input_text("id:tx-form-amount").unwrap(),
+        Some("100")
+    );
+
+    // 改备注保存 → 库态核对：备注更新、kind 与两端保持。
+    app.clear("id:tx-form-note").unwrap();
+    app.type_text("id:tx-form-note", "借出张三·改").unwrap();
+    app.press("id:tx-form-submit").unwrap();
+    app.wait_for_gone("text:编辑交易", DEFAULT_WAIT).unwrap();
+    app.wait_for("text:共 1 条").unwrap();
+
+    let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+    let conn = db
+        .read_conn
+        .lock()
+        .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
+        .unwrap();
+    let rows = ledger_transaction::list_transactions(&conn, &Default::default()).unwrap();
+    assert_eq!(rows.items[0].kind, TransactionKind::Transfer);
+    assert_eq!(rows.items[0].note.as_deref(), Some("借出张三·改"));
+    assert_eq!(rows.items[0].amount_cents, 10_000, "未改金额保持");
+    let accounts = ledger_accounts::list_accounts(&conn).unwrap();
+    let cash = accounts.iter().find(|a| a.name == "测试现金").unwrap();
+    let recv = accounts.iter().find(|a| a.name == "借出·张三").unwrap();
+    assert_eq!(rows.items[0].account_id.as_deref(), Some(cash.id.as_str()));
+    assert_eq!(
+        rows.items[0].to_account_id.as_deref(),
+        Some(recv.id.as_str())
+    );
+}
+
+/// 经域层公开写入口造一笔交易并返回 id（退款/菜单面测试的造数面；载荷全字
+/// 段显式——TransactionInput 无 Default）。
+fn seed_tx_with_id(db: &ledger_infra::db::DbState, input: TransactionInput) -> String {
+    let conn = db
+        .conn
+        .lock()
+        .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
+        .unwrap();
+    ledger_transaction::create(&conn, input).unwrap().id
+}
+
+/// 最小通用 kind 写入载荷（现金账户、CNY；可选原支出引用与备注）。
+fn minimal_input(
+    kind: TransactionKind,
+    account: &str,
+    amount_cents: i64,
+    date: &str,
+    refund_of: Option<String>,
+    note: Option<String>,
+) -> TransactionInput {
+    TransactionInput {
+        kind,
+        amount_cents,
+        currency_code: "CNY".to_owned(),
+        account_id: Some(account.to_owned()),
+        to_account_id: None,
+        funding_account_id: None,
+        funding: Vec::new(),
+        purchases: Vec::new(),
+        category_id: None,
+        merchant_id: None,
+        merchant_name: None,
+        policy_id: None,
+        refund_of_transaction_id: refund_of,
+        note,
+        source_order_no: None,
+        date: date.to_owned(),
+        instrument_id: None,
+        quantity: None,
+        price_cents: None,
+        fee_cents: None,
+        to_instrument_id: None,
+        to_quantity: None,
+        out_amount_cents: None,
+        in_amount_cents: None,
+        origin: None,
+        fx_rate: None,
+        idempotency_key: None,
+    }
+}
+
+/// 行内退款全旅程（用户故事 3）：支出行右键 → 退款 → 表单锁定呈现继承面
+/// （原交易快照行 / 账户锁定 / 币种继承），金额缺省回填原交易金额（「金额
+/// 钳制」的入口形态——缺省随原交易、可改部分退款；超额不做壳层钳制，继承
+/// 与口径以域为唯一真源）→ 保存 → 列表刷新（退款行「退款」标签）。
+/// 删掉提交成功分支的失效信号广播本测试 wait_for("text:共 2 条") 超时红。
+#[test]
+fn refund_form_creates_refund_from_row_with_default_amount() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("refund-create");
+    let expense_id = {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let conn = db
+            .conn
+            .lock()
+            .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
+            .unwrap();
+        let food = create_category(
+            &conn,
+            CategoryInput {
+                name: "食品".to_owned(),
+                kind: "expense".to_owned(),
+                parent_id: None,
+                icon: None,
+            },
+        )
+        .unwrap();
+        drop(conn);
+        let cash = seed_account(&db, "测试现金", AccountType::Cash);
+        let mut expense = minimal_input(
+            TransactionKind::Expense,
+            &cash,
+            2_500,
+            "2026-01-01",
+            None,
+            Some("午餐".to_owned()),
+        );
+        expense.category_id = Some(food);
+        seed_tx_with_id(&db, expense)
+    };
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    app.wait_for("text:共 1 条").unwrap();
+
+    app.right_click("text:2026-01-01").unwrap();
+    app.choose_menu_item("退款").unwrap();
+    app.wait_for("text:记一笔 · 退款").unwrap();
+
+    // 继承面锁定呈现：原交易快照行（日期 · 金额 · 分类路径 · 账户）+ 账户
+    // 锁定 + 币种继承；金额缺省回填原交易金额。
+    app.wait_for("text:原交易：2026-01-01 · ¥25 · 食品 · 测试现金")
+        .unwrap();
+    assert_eq!(
+        app.screen().input_text("id:tx-form-amount").unwrap(),
+        Some("25"),
+        "金额缺省 = 原交易金额（钳制入口形态）"
+    );
+    app.wait_for_within("id:tx-form-refund-account >> text:测试现金", DEFAULT_WAIT)
+        .unwrap();
+    app.wait_for_within("id:tx-form-currency >> text:CNY", DEFAULT_WAIT)
+        .unwrap();
+
+    // 部分退款：改金额保存 → 列表刷新（退款行「退款」标签）。
+    app.clear("id:tx-form-amount").unwrap();
+    app.type_text("id:tx-form-amount", "10").unwrap();
+    app.press("id:tx-form-submit").unwrap();
+    app.wait_for_gone("text:原交易：2026-01-01", DEFAULT_WAIT)
+        .unwrap();
+    app.wait_for("text:共 2 条").unwrap();
+    assert!(
+        app.shows("退款"),
+        "行类型标签「退款」：{:?}",
+        app.screen().texts()
+    );
+
+    // 库态核对：kind=refund、原支出引用指向右键所在行、金额整数分落库。
+    let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+    let conn = db
+        .read_conn
+        .lock()
+        .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
+        .unwrap();
+    let rows = ledger_transaction::list_transactions(&conn, &Default::default()).unwrap();
+    assert_eq!(rows.total, 2);
+    let refund = rows
+        .items
+        .iter()
+        .find(|t| t.kind == TransactionKind::Refund)
+        .expect("退款行落库");
+    assert_eq!(refund.amount_cents, 1_000, "部分退款 10 元 → 1000 分");
+    assert_eq!(
+        refund.refund_of_transaction_id.as_deref(),
+        Some(expense_id.as_str())
+    );
+    // 继承语义归域：账户/币种/分类随原支出（壳层不另立）。
+    let expense = rows
+        .items
+        .iter()
+        .find(|t| t.kind == TransactionKind::Expense)
+        .expect("原支出行保持");
+    assert_eq!(refund.account_id, expense.account_id, "账户继承原支出");
+    assert_eq!(
+        refund.currency_code, expense.currency_code,
+        "币种继承原支出"
+    );
+    assert_eq!(refund.category_id, expense.category_id, "分类继承原支出");
+}
+
+/// 编辑既有退款（用户故事 4，本票扩展开放面）：退款行右键 → 编辑 → 回填
+/// 金额/备注与锁定账户 → 改金额保存 → 原支出引用透传保持（关联语义不被编
+/// 辑破坏——旧壳 refund 行不开放编辑的顾虑由透传解除）。
+#[test]
+fn refund_form_edit_preserves_original_link() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("refund-edit");
+    let (expense_id, refund_id) = {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let cash = seed_account(&db, "测试现金", AccountType::Cash);
+        let expense_id = seed_tx_with_id(
+            &db,
+            minimal_input(
+                TransactionKind::Expense,
+                &cash,
+                2_500,
+                "2026-01-01",
+                None,
+                Some("午餐".to_owned()),
+            ),
+        );
+        let refund_id = seed_tx_with_id(
+            &db,
+            minimal_input(
+                TransactionKind::Refund,
+                &cash,
+                2_000,
+                "2026-01-05",
+                Some(expense_id.clone()),
+                Some("部分退款".to_owned()),
+            ),
+        );
+        (expense_id, refund_id)
+    };
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    app.wait_for("text:共 2 条").unwrap();
+
+    app.right_click("text:2026-01-05").unwrap();
+    app.choose_menu_item("编辑").unwrap();
+    app.wait_for("text:编辑交易").unwrap();
+
+    // 回填断言：金额/备注 + 锁定账户；原交易快照行不渲染（编辑面原支出行
+    // 多半不在当前页，引用由透传承载）。
+    assert_eq!(
+        app.screen().input_text("id:tx-form-amount").unwrap(),
+        Some("20"),
+        "金额回填：2000 分 → 20 元文本"
+    );
+    assert_eq!(
+        app.screen().input_text("id:tx-form-note").unwrap(),
+        Some("部分退款")
+    );
+    app.wait_for_within("id:tx-form-refund-account >> text:测试现金", DEFAULT_WAIT)
+        .unwrap();
+    assert!(
+        !app.shows("原交易："),
+        "编辑面不渲染原交易快照行：{:?}",
+        app.screen().texts()
+    );
+
+    // 改金额保存 → 库态核对：金额更新、引用与备注保持。
+    app.clear("id:tx-form-amount").unwrap();
+    app.type_text("id:tx-form-amount", "15").unwrap();
+    app.press("id:tx-form-submit").unwrap();
+    app.wait_for_gone("text:编辑交易", DEFAULT_WAIT).unwrap();
+    app.wait_for("text:共 2 条").unwrap();
+
+    let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+    let conn = db
+        .read_conn
+        .lock()
+        .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
+        .unwrap();
+    let rows = ledger_transaction::list_transactions(&conn, &Default::default()).unwrap();
+    let refund = rows
+        .items
+        .iter()
+        .find(|t| t.id == refund_id)
+        .expect("退款行保持");
+    assert_eq!(refund.amount_cents, 1_500, "改金额 15 元 → 1500 分");
+    assert_eq!(
+        refund.refund_of_transaction_id.as_deref(),
+        Some(expense_id.as_str()),
+        "原支出引用透传保持（关联不被编辑破坏）"
+    );
+    assert_eq!(refund.note.as_deref(), Some("部分退款"), "未改字段保持");
+}
+
+/// 行菜单开放面（#2036）：分解行/购买项行随表单③子行编辑能力开放编辑（
+/// #2035 子行守卫解除；分解行不开放退款——旧壳 #1861 口径，退款表单未支持
+/// 显式分解覆盖）；退款行开放编辑（#2035 扩展，链接透传保关联）不带退款项；
+/// 普通支出行三项齐备。购买项行保留退款（新建独立行不触碰原行子行）。
+#[test]
+fn row_menu_open_face_follows_kind_and_subrows() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("menu-face");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let cash = seed_account(&db, "测试现金", AccountType::Cash);
+        let credit = seed_account(&db, "测试信用", AccountType::Credit);
+        let expense_id = seed_tx_with_id(
+            &db,
+            minimal_input(
+                TransactionKind::Expense,
+                &cash,
+                2_500,
+                "2026-01-01",
+                None,
+                Some("普通支出".to_owned()),
+            ),
+        );
+        // 出资分解行（分解与 account_id 互斥，ADR-0138 决策 2）。
+        let mut decomposed = minimal_input(
+            TransactionKind::Expense,
+            &cash,
+            5_000,
+            "2026-01-02",
+            None,
+            Some("分解支出".to_owned()),
+        );
+        decomposed.account_id = None;
+        decomposed.funding = vec![
+            TransactionFundingInput {
+                account_id: cash.clone(),
+                amount_cents: 2_000,
+                label: None,
+            },
+            TransactionFundingInput {
+                account_id: credit,
+                amount_cents: 3_000,
+                label: None,
+            },
+        ];
+        seed_tx_with_id(&db, decomposed);
+        // 退款行（关联普通支出）。
+        seed_tx_with_id(
+            &db,
+            minimal_input(
+                TransactionKind::Refund,
+                &cash,
+                1_000,
+                "2026-01-03",
+                Some(expense_id),
+                None,
+            ),
+        );
+    }
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    app.wait_for("text:共 3 条").unwrap();
+
+    // 普通支出行：编辑 + 退款 + 删除。
+    app.right_click("text:2026-01-01").unwrap();
+    let menu = app.menu().expect("右键应打开上下文菜单");
+    assert_eq!(
+        menu.iter().map(|e| e.label.as_str()).collect::<Vec<_>>(),
+        vec!["编辑", "退款", "删除"],
+        "普通支出行菜单：{menu:?}"
+    );
+    app.press_key("escape").unwrap();
+    app.settle();
+
+    // 出资分解行：编辑开放（表单③子行编辑；进出资分解族回填）+ 不开放退
+    // 款（#1861 口径）+ 删除。
+    app.right_click("text:2026-01-02").unwrap();
+    let menu = app.menu().expect("右键应打开上下文菜单");
+    assert_eq!(
+        menu.iter().map(|e| e.label.as_str()).collect::<Vec<_>>(),
+        vec!["编辑", "删除"],
+        "分解行开放编辑、不开放退款：{menu:?}"
+    );
+    app.press_key("escape").unwrap();
+    app.settle();
+
+    // 退款行：编辑（本票扩展）+ 删除，不带退款项（退款入口只对支出行）。
+    app.right_click("text:2026-01-03").unwrap();
+    let menu = app.menu().expect("右键应打开上下文菜单");
+    assert_eq!(
+        menu.iter().map(|e| e.label.as_str()).collect::<Vec<_>>(),
+        vec!["编辑", "删除"],
+        "退款行开放编辑（链接透传保关联）：{menu:?}"
+    );
+    app.press_key("escape").unwrap();
+    app.settle();
+}
+
+// ---------------------------------------------------------------------------
+// 出资分解 / 购买项下单（#2036 表单③）：录入旅程 + 编辑回填 + 开放面扩展。
+// ---------------------------------------------------------------------------
+
+/// 在行内账户下拉中选中指定账户（出资分解行选择器；选项行锚点 + 行内文本
+/// 命中，pick_only_account 同形）。
+fn pick_funding_account(app: &mut Headless, row: usize, label: &str) {
+    app.press(&format!("id:tx-form-fund-account-{row}"))
+        .unwrap();
+    app.wait_for(&format!("id:tx-form-fund-account-{row}-option"))
+        .unwrap();
+    app.press(&format!(
+        "id:tx-form-fund-account-{row}-option >> text:{label}"
+    ))
+    .unwrap();
+    app.settle();
+}
+
+/// 出资分解创建全旅程（用户故事 1）：记一笔 → 出资分解 → 主金额、逐行账户/
+/// 金额/标签、加行 → 合计行一致呈现 → 保存 → 弹窗关、列表即刻刷新（分解行
+/// 账户格「首条 + 等 N 账户」标注与总数落屏）。删掉表单提交成功分支的失效
+/// 信号广播（txn_form::perform_submit 内 notify 接线）本测试
+/// wait_for("text:等 2 账户") 超时红（库中已写而列表仍旧）。
+#[test]
+fn funding_form_creates_split_expense_and_refreshes_list() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("funding-create");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        seed_account(&db, "测试现金", AccountType::Cash);
+        seed_account(&db, "测试信用", AccountType::Credit);
+    }
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    app.wait_for("text:暂无数据").unwrap();
+
+    open_create_form(&mut app, "id:tx-add-funding", "记一笔 · 出资分解");
+    app.type_text("id:tx-form-amount", "50").unwrap();
+    // 行 0（初始单行）：现金 20。
+    pick_funding_account(&mut app, 0, "测试现金");
+    app.type_text("id:tx-form-fund-amount-0", "20").unwrap();
+    // 加行 → 行 1：信用 30 + 扣款标签。
+    app.press("id:tx-form-funding-add").unwrap();
+    app.wait_for("id:tx-form-fund-row-1").unwrap();
+    pick_funding_account(&mut app, 1, "测试信用");
+    app.type_text("id:tx-form-fund-amount-1", "30").unwrap();
+    app.type_text("id:tx-form-fund-label-1", "尾款").unwrap();
+    // 合计行一致呈现（Σ == 交易金额）。
+    app.wait_for("text:出资合计 ¥50 · 交易金额 ¥50").unwrap();
+
+    app.press("id:tx-form-submit").unwrap();
+    app.wait_for_gone("text:记一笔 · 出资分解", DEFAULT_WAIT)
+        .unwrap();
+    app.wait_for("text:共 1 条").unwrap();
+    // 分解行账户格：首条 + 「等 2 账户」（旧壳 accountCellView 同口径）。
+    app.wait_for("text:测试现金 等 2 账户").unwrap();
+    app.wait_for("text:¥50").unwrap();
+
+    // 库态核对（不经 UI）：分解两条落库、主账户恒缺省（契约互斥）。
+    let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+    let conn = db
+        .read_conn
+        .lock()
+        .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
+        .unwrap();
+    let rows = ledger_transaction::list_transactions(&conn, &Default::default()).unwrap();
+    assert_eq!(rows.total, 1);
+    let tx = &rows.items[0];
+    assert_eq!(tx.amount_cents, 5_000, "主金额元转分收口");
+    assert_eq!(tx.account_id, None, "分解行主账户恒缺省（ADR-0138 决策 2）");
+    assert_eq!(tx.fundings.len(), 2, "逐条落库");
+    assert_eq!(
+        tx.fundings[0].account_id,
+        rows.items[0].fundings[0].account_id
+    );
+    assert_eq!(tx.fundings[0].amount_cents, 2_000);
+    assert_eq!(tx.fundings[0].label, None, "空标签落 None");
+    assert_eq!(tx.fundings[1].amount_cents, 3_000);
+    assert_eq!(
+        tx.fundings[1].label.as_deref(),
+        Some("尾款"),
+        "扣款标签随行（同账户多笔/预售尾款区分语义）"
+    );
+}
+
+/// 合计不一致明确阻拦（用户故事 2）：Σ 出资项 ≠ 交易金额时提交被阻拦，
+/// 错误条位呈现 zh-CN 文案、弹窗不关、不写库。
+#[test]
+fn funding_form_blocks_mismatched_total_with_visible_error() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("funding-mismatch");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        seed_account(&db, "测试现金", AccountType::Cash);
+        seed_account(&db, "测试信用", AccountType::Credit);
+    }
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    app.wait_for("text:暂无数据").unwrap();
+
+    open_create_form(&mut app, "id:tx-add-funding", "记一笔 · 出资分解");
+    app.type_text("id:tx-form-amount", "50").unwrap();
+    pick_funding_account(&mut app, 0, "测试现金");
+    app.type_text("id:tx-form-fund-amount-0", "20").unwrap();
+    app.press("id:tx-form-funding-add").unwrap();
+    app.wait_for("id:tx-form-fund-row-1").unwrap();
+    pick_funding_account(&mut app, 1, "测试信用");
+    app.type_text("id:tx-form-fund-amount-1", "25").unwrap();
+    // 合计行不一致红显（45 ≠ 50）。
+    app.wait_for("text:出资合计 ¥45 · 交易金额 ¥50").unwrap();
+
+    app.press("id:tx-form-submit").unwrap();
+    app.wait_for("text:出资合计与交易金额不一致").unwrap();
+    assert!(
+        app.shows("记一笔 · 出资分解"),
+        "阻拦后弹窗不关：{:?}",
+        app.screen().texts()
+    );
+
+    // 不写库。
+    let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+    let conn = db
+        .read_conn
+        .lock()
+        .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
+        .unwrap();
+    let rows = ledger_transaction::list_transactions(&conn, &Default::default()).unwrap();
+    assert_eq!(rows.total, 0, "合计不一致不落库");
+}
+
+/// 分解行编辑开放面与全形态回填（用户故事 5）：右键分解行 → 「编辑」在列
+/// （#2035 子行守卫随表单③解除）→ 出资分解族回填（主金额 + 逐行账户/金额/
+/// 标签）→ 改主金额与一行出资保存 → 列表刷新 + 库态核对（全字段替换下子行
+/// 更新、主账户仍缺省）。删掉 open_edit 的出资项子行回填（txn_form::open_edit
+/// Funding 族分支）本测试金额回填断言红；删掉 app.rs 编辑开放面分支（还原子
+/// 行守卫）菜单断言红。
+#[test]
+fn funding_form_edits_split_backfill_and_refreshes() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("funding-edit");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let cash = seed_account(&db, "测试现金", AccountType::Cash);
+        let credit = seed_account(&db, "测试信用", AccountType::Credit);
+        let mut input = minimal_input(
+            TransactionKind::Expense,
+            &cash,
+            5_000,
+            "2026-01-02",
+            None,
+            Some("分解支出".to_owned()),
+        );
+        input.account_id = None;
+        input.funding = vec![
+            TransactionFundingInput {
+                account_id: cash,
+                amount_cents: 2_000,
+                label: None,
+            },
+            TransactionFundingInput {
+                account_id: credit,
+                amount_cents: 3_000,
+                label: Some("尾款".to_owned()),
+            },
+        ];
+        seed_tx_with_id(&db, input);
+    }
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    app.wait_for("text:共 1 条").unwrap();
+
+    // 菜单形状：分解行开放编辑（子行守卫解除）+ 不开放退款（#1861 口径）。
+    app.right_click("text:2026-01-02").unwrap();
+    let menu = app.menu().expect("右键应打开上下文菜单");
+    let labels: Vec<_> = menu.iter().map(|e| e.label.as_str()).collect();
+    assert!(labels.contains(&"编辑"), "分解行开放编辑：{labels:?}");
+    assert!(
+        !labels.contains(&"退款"),
+        "分解行不开放退款（#1861 口径）：{labels:?}"
+    );
+    app.choose_menu_item("编辑").unwrap();
+    app.wait_for("text:编辑交易").unwrap();
+
+    // 回填断言（主金额 + 逐行账户/金额/标签）。
+    assert_eq!(
+        app.screen().input_text("id:tx-form-amount").unwrap(),
+        Some("50"),
+        "主金额回填：5000 分 → 50 元文本"
+    );
+    app.wait_for_within("id:tx-form-fund-row-0 >> text:测试现金", DEFAULT_WAIT)
+        .unwrap();
+    assert_eq!(
+        app.screen().input_text("id:tx-form-fund-amount-0").unwrap(),
+        Some("20"),
+        "出资行 0 金额回填"
+    );
+    app.wait_for_within("id:tx-form-fund-row-1 >> text:测试信用", DEFAULT_WAIT)
+        .unwrap();
+    assert_eq!(
+        app.screen().input_text("id:tx-form-fund-amount-1").unwrap(),
+        Some("30"),
+        "出资行 1 金额回填"
+    );
+    assert_eq!(
+        app.screen().input_text("id:tx-form-fund-label-1").unwrap(),
+        Some("尾款"),
+        "扣款标签回填"
+    );
+
+    // 改主金额与一行出资保存（合计保持一致：50→55、30→35）。
+    app.clear("id:tx-form-amount").unwrap();
+    app.type_text("id:tx-form-amount", "55").unwrap();
+    app.clear("id:tx-form-fund-amount-1").unwrap();
+    app.type_text("id:tx-form-fund-amount-1", "35").unwrap();
+    app.press("id:tx-form-submit").unwrap();
+    app.wait_for_gone("text:编辑交易", DEFAULT_WAIT).unwrap();
+    app.wait_for("text:¥55").unwrap();
+
+    // 库态核对：金额更新、子行全量替换落库、主账户仍缺省。
+    let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+    let conn = db
+        .read_conn
+        .lock()
+        .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
+        .unwrap();
+    let rows = ledger_transaction::list_transactions(&conn, &Default::default()).unwrap();
+    assert_eq!(rows.total, 1);
+    let tx = &rows.items[0];
+    assert_eq!(tx.amount_cents, 5_500, "改主金额 55 元 → 5500 分");
+    assert_eq!(tx.account_id, None, "主账户仍缺省（契约互斥保持）");
+    assert_eq!(tx.fundings.len(), 2);
+    assert_eq!(tx.fundings[0].amount_cents, 2_000, "未改行保持");
+    assert_eq!(tx.fundings[1].amount_cents, 3_500, "改出资行落库");
+    assert_eq!(tx.fundings[1].label.as_deref(), Some("尾款"), "标签保持");
+    assert_eq!(tx.note.as_deref(), Some("分解支出"), "未改字段保持");
+}
+
+/// 订单创建全旅程（用户故事 3/4）：记一笔 → 购买项下单 → 主金额/账户 +
+/// 逐行商品（名称/件数/单价）→ 行小计呈现 → 保存 → 列表刷新（购买项逐项
+/// 行 + 计数按交易）+ 库态核对（purchases 逐条落库、仅 expense 契约）。删
+/// 掉失效信号广播本测试 wait_for("text:共 1 条") 超时红（同创建旅程接线）。
+#[test]
+fn purchase_form_creates_order_rows_and_refreshes_list() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("purchase-create");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        seed_cash_account(&db);
+    }
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    app.wait_for("text:暂无数据").unwrap();
+
+    open_create_form(&mut app, "id:tx-add-purchase", "记一笔 · 购买项下单");
+    app.type_text("id:tx-form-amount", "100").unwrap();
+    pick_only_account(&mut app);
+    // 行 0：洗衣液 × 2，单价 39.9（行小计呈现 ¥79.8）。
+    app.type_text("id:tx-form-purchase-name-0", "洗衣液")
+        .unwrap();
+    app.type_text("id:tx-form-purchase-qty-0", "2").unwrap();
+    app.type_text("id:tx-form-purchase-price-0", "39.9")
+        .unwrap();
+    app.wait_for("text:小计 ¥79.8").unwrap();
+    // 加行 → 行 1：纸巾 × 1，无单价（价格可空）。
+    app.press("id:tx-form-purchase-add").unwrap();
+    app.wait_for("id:tx-form-purchase-row-1").unwrap();
+    app.type_text("id:tx-form-purchase-name-1", "纸巾").unwrap();
+    app.type_text("id:tx-form-purchase-qty-1", "1").unwrap();
+
+    app.press("id:tx-form-submit").unwrap();
+    app.wait_for_gone("text:记一笔 · 购买项下单", DEFAULT_WAIT)
+        .unwrap();
+    // 计数按交易计（购买项行不虚增，ADR-0138 决策 14）。
+    app.wait_for("text:共 1 条").unwrap();
+    // 购买项逐项行：备注列一列两用（名称 + 件数）。
+    app.wait_for("text:洗衣液 共 2 件").unwrap();
+    app.wait_for("text:纸巾 共 1 件").unwrap();
+
+    // 库态核对：purchases 逐条落库（数组序、单价整数分、可空落 None）。
+    let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+    let conn = db
+        .read_conn
+        .lock()
+        .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
+        .unwrap();
+    let rows = ledger_transaction::list_transactions(&conn, &Default::default()).unwrap();
+    assert_eq!(rows.total, 1);
+    let tx = &rows.items[0];
+    assert_eq!(tx.kind, TransactionKind::Expense, "仅 expense 可带购买项");
+    assert_eq!(tx.amount_cents, 10_000, "订单实付元转分收口");
+    assert_eq!(
+        tx.account_id.as_deref(),
+        Some("测试现金").map(|_| tx.account_id.as_deref().unwrap()),
+        "主账户落库（订单单账户形态）"
+    );
+    assert_eq!(tx.purchases.len(), 2);
+    assert_eq!(tx.purchases[0].name, "洗衣液");
+    assert_eq!(tx.purchases[0].quantity, 2);
+    assert_eq!(tx.purchases[0].unit_price_cents, Some(3_990));
+    assert_eq!(tx.purchases[1].name, "纸巾");
+    assert_eq!(tx.purchases[1].quantity, 1);
+    assert_eq!(
+        tx.purchases[1].unit_price_cents, None,
+        "价格可空（存而不显示、不进金额口径）"
+    );
+}
+
+/// 订单编辑旅程（用户故事 4/5）：右键购买项行 → 编辑 → 商品行回填 → 删一
+/// 行 + 改件数 + 加一行保存 → 列表刷新 + 库态核对（增删改全形态）。删掉
+/// open_edit 的商品行回填（txn_form::backfill_purchase_rows 接线）本测试
+/// 回填断言红；删掉 app.rs 编辑开放面分支菜单断言红。
+#[test]
+fn purchase_form_edits_item_rows_backfill_add_delete() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("purchase-edit");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let cash = seed_cash_account(&db);
+        let mut input = minimal_input(
+            TransactionKind::Expense,
+            &cash,
+            10_000,
+            "2026-01-02",
+            None,
+            Some("网购订单".to_owned()),
+        );
+        input.purchases = vec![
+            TransactionPurchaseInput {
+                name: "洗衣液".to_owned(),
+                quantity: 2,
+                category_id: None,
+                unit_price_cents: Some(3_990),
+            },
+            TransactionPurchaseInput {
+                name: "纸巾".to_owned(),
+                quantity: 1,
+                category_id: None,
+                unit_price_cents: None,
+            },
+        ];
+        seed_tx_with_id(&db, input);
+    }
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    app.wait_for("text:共 1 条").unwrap();
+
+    app.right_click("text:2026-01-02").unwrap();
+    let menu = app.menu().expect("右键应打开上下文菜单");
+    let labels: Vec<_> = menu.iter().map(|e| e.label.as_str()).collect();
+    assert!(
+        labels.contains(&"编辑"),
+        "购买项行开放编辑（子行守卫解除）：{labels:?}"
+    );
+    assert!(
+        labels.contains(&"退款"),
+        "购买项行保留退款（新建独立行不触碰原行子行）：{labels:?}"
+    );
+    app.choose_menu_item("编辑").unwrap();
+    app.wait_for("text:编辑交易").unwrap();
+
+    // 回填断言（主金额 + 两行商品）。
+    assert_eq!(
+        app.screen().input_text("id:tx-form-amount").unwrap(),
+        Some("100"),
+        "主金额回填：10000 分 → 100 元文本"
+    );
+    assert_eq!(
+        app.screen()
+            .input_text("id:tx-form-purchase-name-0")
+            .unwrap(),
+        Some("洗衣液"),
+        "商品行 0 名称回填"
+    );
+    assert_eq!(
+        app.screen()
+            .input_text("id:tx-form-purchase-qty-0")
+            .unwrap(),
+        Some("2"),
+        "商品行 0 件数回填"
+    );
+    assert_eq!(
+        app.screen()
+            .input_text("id:tx-form-purchase-price-0")
+            .unwrap(),
+        Some("39.9"),
+        "商品行 0 单价回填：3990 分 → 39.9 元文本"
+    );
+    assert_eq!(
+        app.screen()
+            .input_text("id:tx-form-purchase-name-1")
+            .unwrap(),
+        Some("纸巾"),
+        "商品行 1 名称回填"
+    );
+    assert_eq!(
+        app.screen()
+            .input_text("id:tx-form-purchase-price-1")
+            .unwrap(),
+        Some(""),
+        "可空单价回填空文本"
+    );
+
+    // 删行 0（洗衣液）→ 改纸巾件数 1→3 → 加一行（电池 ×2 单价 5）保存。
+    app.press("id:tx-form-purchase-remove-0").unwrap();
+    app.wait_for_gone("id:tx-form-purchase-row-0", DEFAULT_WAIT)
+        .unwrap();
+    app.clear("id:tx-form-purchase-qty-1").unwrap();
+    app.type_text("id:tx-form-purchase-qty-1", "3").unwrap();
+    app.press("id:tx-form-purchase-add").unwrap();
+    app.wait_for("id:tx-form-purchase-row-2").unwrap();
+    app.type_text("id:tx-form-purchase-name-2", "电池").unwrap();
+    app.type_text("id:tx-form-purchase-qty-2", "2").unwrap();
+    app.type_text("id:tx-form-purchase-price-2", "5").unwrap();
+    app.press("id:tx-form-submit").unwrap();
+    app.wait_for_gone("text:编辑交易", DEFAULT_WAIT).unwrap();
+    app.wait_for("text:纸巾 共 3 件").unwrap();
+    app.wait_for("text:电池 共 2 件").unwrap();
+
+    // 库态核对：删改加全形态落库（数组序 = 对账单顺序）。
+    let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+    let conn = db
+        .read_conn
+        .lock()
+        .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
+        .unwrap();
+    let rows = ledger_transaction::list_transactions(&conn, &Default::default()).unwrap();
+    assert_eq!(rows.total, 1);
+    let purchases = &rows.items[0].purchases;
+    assert_eq!(purchases.len(), 2, "删一加一后两行");
+    assert_eq!(purchases[0].name, "纸巾", "删除后剩余行保持原序位");
+    assert_eq!(purchases[0].quantity, 3, "改件数落库");
+    assert_eq!(purchases[1].name, "电池", "新增行落库");
+    assert_eq!(purchases[1].quantity, 2);
+    assert_eq!(purchases[1].unit_price_cents, Some(500));
+    assert_eq!(
+        rows.items[0].note.as_deref(),
+        Some("网购订单"),
+        "未改字段保持"
+    );
+}
+
+/// 备份最小入口全旅程（issue #2038）：交易列表工具区「备份」入口 → 文件
+/// 保存对话框（headless 替身 `on_pick_save_path` 回答目标路径——生产与测试
+/// 同一条 `pick_save_path` 生产接缝，Linux 宿主为 GTK 原生保存对话框，原生
+/// 观感归人工对表子集）→ 域 backup 直调产出备份文件 + 成功反馈呈现（NSH 无
+/// toast，状态条呈现是旧壳 message.success 的条位对应物）。
+///
+/// 「删除即红」负向条目：删工具区按钮的备份流程接线（`begin_pick` 的
+/// begin_backup 的 spawn→对话框→备份调用链）或成功状态落位（status.set(Success)）任一环，
+/// 本测 wait_for 超时红；断言对准用户可见结果（成功文案 + 产物在盘），
+/// 不对准调用形状。
+#[test]
+fn backup_entry_full_journey_writes_zip_and_reports_success() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("backup-journey");
+    let backup_dir =
+        std::env::temp_dir().join(format!("ledger-test-nsh-backup-journey-{}", new_uuid()));
+    fs::create_dir_all(&backup_dir).unwrap();
+    let target = backup_dir.join("手动选择.zip");
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+
+    // 入口存在性：交易列表工具区「备份」按钮呈现（id 锚点，research doc §3.5）。
+    app.wait_for("id:tx-backup").unwrap();
+
+    // 保存对话框替身注入目标路径 → 按下入口。替身回答前，先核对发给平台
+    // 的对话框参数（用户可见面：默认名与旧壳 defaultBackupFileName 同格式
+    // ——空库指纹未固化退化无标识旧命名；标题与过滤器与旧壳另存为同词表）。
+    app.on_pick_save_path(Some(target.clone())).unwrap();
+    app.press("id:tx-backup").unwrap();
+    app.settle();
+    let requests = app.screen().file_requests();
+    let [nsh_core::file_dialog::FileRequest::SaveDialog(dialog)] = requests else {
+        panic!("应发出一个保存对话框请求：{requests:?}");
+    };
+    assert_eq!(dialog.title.as_deref(), Some("备份到…"), "标题同旧壳词表");
+    let name = dialog.file_name.as_deref().expect("默认文件名应在场");
+    assert_eq!(dialog.filters.len(), 1, "过滤器闭集：仅 zip 一组");
+    assert_eq!(dialog.filters[0].name, "开源记账备份");
+    assert_eq!(dialog.filters[0].extensions, ["zip"]);
+    assert!(
+        name.starts_with("ledger-backup-") && name.ends_with(".db.zip"),
+        "默认名同旧壳受管命名格式：{name}"
+    );
+
+    // 成功反馈呈现（标签 + 产物路径两个文本节点）。
+    app.wait_for("text:备份成功").unwrap();
+
+    // 产物在盘且非空（zip 结构与元数据语义归备份域单测——壳面只断用户可见
+    // 的「文件确实产生了」）。
+    let meta = fs::metadata(&target).unwrap();
+    assert!(meta.len() > 0, "备份产物非空：{}", target.display());
+}
+
+/// 覆盖确认守卫（issue #2038 AC：覆盖已有备份文件前有确认守卫，warning 级
+/// ADR-0078）：保存对话框替身回答**已存在**的目标路径 → 覆盖确认对话框
+/// 呈现，确认前旧文件原样（零写入），确认后备份执行、旧文件被替换、成功
+/// 反馈呈现。真实桌面 GTK 原生保存对话框自带覆盖确认（平台行为），本守卫
+/// 是应用内第二道（数据安全方向偏保守，headless 可测）。
+///
+/// 「删除即红」负向条目：删「已存在 → 开确认 → 确认后才备份」的守卫接线
+/// （存在分支直备）→ 本测在 wait_for 对话框标题处超时红（且旧文件在确认前
+/// 已被替换）。
+#[test]
+fn backup_overwrite_guard_confirms_before_replacing() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("backup-overwrite");
+    let backup_dir =
+        std::env::temp_dir().join(format!("ledger-test-nsh-backup-overwrite-{}", new_uuid()));
+    fs::create_dir_all(&backup_dir).unwrap();
+    let target = backup_dir.join("手动选择.zip");
+    // 预置旧备份文件（内容可辨：确认前不被替换、确认后被备份产物替换）。
+    const OLD_CONTENT: &[u8] = b"old-backup-content-marker";
+    fs::write(&target, OLD_CONTENT).unwrap();
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+
+    app.wait_for("id:tx-backup").unwrap();
+    app.on_pick_save_path(Some(target.clone())).unwrap();
+    app.press("id:tx-backup").unwrap();
+
+    // 覆盖确认对话框呈现（warning 级：后果与兜底说明，danger 封装两级的
+    // warning 构造面首个消费面）。
+    app.wait_for("text:覆盖备份文件").unwrap();
+    app.wait_for("text:覆盖后原文件内容将被替换，不可找回。")
+        .unwrap();
+
+    // 确认前零写入：旧文件原样（对话框开着时不产生备份）。
+    assert_eq!(fs::read(&target).unwrap(), OLD_CONTENT, "确认前旧文件原样");
+
+    // 确认 → 备份执行 → 旧文件被替换（zip 产物）+ 成功反馈。
+    app.press("id:danger-confirm").unwrap();
+    app.wait_for("text:备份成功").unwrap();
+    let new_content = fs::read(&target).unwrap();
+    assert_ne!(new_content, OLD_CONTENT, "确认后旧文件被备份产物替换");
+    assert!(!new_content.is_empty(), "备份产物非空");
+}
+
+/// 覆盖确认取消路径（issue #2038 取消行为）：确认对话框点「取消」不备份——
+/// 对话框关窗、旧文件原样、无成功反馈。ESC 同为放弃（danger 封装三关闭
+/// 路径语义，封装级抑制/ESC 测试见交易删除与 #2022 AC3）。
+#[test]
+fn backup_overwrite_guard_cancel_keeps_existing_file() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("backup-overwrite-cancel");
+    let backup_dir = std::env::temp_dir().join(format!(
+        "ledger-test-nsh-backup-overwrite-cancel-{}",
+        new_uuid()
+    ));
+    fs::create_dir_all(&backup_dir).unwrap();
+    let target = backup_dir.join("手动选择.zip");
+    const OLD_CONTENT: &[u8] = b"old-backup-content-marker";
+    fs::write(&target, OLD_CONTENT).unwrap();
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+
+    app.wait_for("id:tx-backup").unwrap();
+    app.on_pick_save_path(Some(target.clone())).unwrap();
+    app.press("id:tx-backup").unwrap();
+    app.wait_for("text:覆盖备份文件").unwrap();
+
+    // 取消 → 对话框关窗，无成功反馈、旧文件原样。
+    app.press("id:danger-cancel").unwrap();
+    app.wait_for_gone("text:覆盖备份文件", DEFAULT_WAIT)
+        .unwrap();
+    app.settle();
+    assert!(!app.shows("备份成功"), "取消后无成功反馈");
+    assert_eq!(fs::read(&target).unwrap(), OLD_CONTENT, "取消后旧文件原样");
+}
+
+/// 对话框失败反馈（issue #2038：成功/失败反馈要明确——数据安全路径不静默）：
+/// headless 缺省环境无文件对话框能力（`file_requests` 关，上游引擎对文件
+/// 请求即答错误），按下备份 → 失败呈现（码化包装文案，含「备份失败: 」前缀
+/// 与失败原因；正则锚定前缀段，平台错误原文随上游措辞）。
+///
+/// 「删除即红」负向条目：删对话框错误分支的状态落位（`Err` 臂 status.set）
+/// → 本测 wait_for 超时红（失败被静默吞掉）。
+#[test]
+fn backup_dialog_failure_reports_error() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("backup-dialog-error");
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+
+    app.wait_for("id:tx-backup").unwrap();
+    // 不注入替身：环境无文件对话框能力，保存请求即答错误（生产对应 Linux
+    // 缺文件选择 portal 的场景）。
+    app.press("id:tx-backup").unwrap();
+
+    app.wait_for("text:/备份失败: 文件对话框无法打开/").unwrap();
+    // 失败后按钮恢复可用（单飞状态已退出，可再次发起）。
+    assert!(
+        app.screen().enabled("id:tx-backup").unwrap(),
+        "失败后入口恢复可用"
+    );
+}
+
+/// 对话框取消路径（issue #2038：保存对话框取消 = 零副作用，旧壳 save 返回
+/// 空串即返回同语义）：替身回答 None → 无备份产物、无成功/失败反馈、无
+/// 覆盖确认对话框。
+#[test]
+fn backup_dialog_cancel_writes_nothing() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("backup-cancel");
+    let backup_dir =
+        std::env::temp_dir().join(format!("ledger-test-nsh-backup-cancel-{}", new_uuid()));
+    fs::create_dir_all(&backup_dir).unwrap();
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+
+    app.wait_for("id:tx-backup").unwrap();
+    app.on_pick_save_path(None).unwrap();
+    app.press("id:tx-backup").unwrap();
+
+    // 取消后无任何反馈（成功/失败/确认对话框都不呈现），备份目录空。
+    app.settle();
+    assert!(!app.shows("备份成功"), "取消后无成功反馈");
+    assert!(!app.shows("备份失败"), "取消后无失败反馈");
+    assert!(!app.shows("覆盖备份文件"), "取消后无覆盖确认对话框");
+    assert_eq!(
+        fs::read_dir(&backup_dir).unwrap().count(),
+        0,
+        "取消零写入：备份目录为空"
     );
 }

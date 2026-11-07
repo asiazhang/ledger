@@ -79,10 +79,19 @@ fn open_overlays_slot() -> std::sync::MutexGuard<'static, BTreeSet<u64>> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Mutex;
+
     use super::*;
+
+    /// 串行锁：四个用例共用进程级全局注册表（OPEN_OVERLAYS），并行执行时
+    /// 「未上报不拦」前置断言会被另一用例的在册 token 击穿（首发现于 #2032
+    /// 期间：lib 测试默认并行、偶发 report_open_and_close_is_idempotent 红，
+    /// 旧代码同样可复现）。与 tests.rs / tests/app_headless.rs 的 SERIAL 同形。
+    static SERIAL: Mutex<()> = Mutex::new(());
 
     #[test]
     fn report_open_and_close_is_idempotent() {
+        let _guard = SERIAL.lock().unwrap();
         let token = OverlayToken::new();
         assert!(!has_open_overlay(), "未上报不拦快捷键");
         token.report(true);
@@ -97,6 +106,7 @@ mod tests {
 
     #[test]
     fn multiple_tokens_require_all_closed() {
+        let _guard = SERIAL.lock().unwrap();
         let a = OverlayToken::new();
         let b = OverlayToken::new();
         a.report(true);
@@ -110,6 +120,7 @@ mod tests {
 
     #[test]
     fn drop_withdraws_the_report() {
+        let _guard = SERIAL.lock().unwrap();
         let token = OverlayToken::new();
         token.report(true);
         assert!(has_open_overlay());
@@ -119,6 +130,7 @@ mod tests {
 
     #[test]
     fn tokens_are_per_instance_and_never_collide() {
+        let _guard = SERIAL.lock().unwrap();
         let a = OverlayToken::new();
         let b = OverlayToken::new();
         assert_ne!(

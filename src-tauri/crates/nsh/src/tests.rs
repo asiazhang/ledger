@@ -117,6 +117,71 @@ fn expense_input(account: &str, date: &str, amount_cents: i64, note: &str) -> Tr
     }
 }
 
+/// 一笔收入输入（维度筛选读路径的造数入口：无分类无商户）。
+fn income_input(account: &str, date: &str, amount_cents: i64, note: &str) -> TransactionInput {
+    TransactionInput {
+        kind: TransactionKind::Income,
+        amount_cents,
+        currency_code: "CNY".to_owned(),
+        account_id: Some(account.to_owned()),
+        note: Some(note.to_owned()),
+        date: date.to_owned(),
+        ..expense_input(account, date, amount_cents, note)
+    }
+}
+
+/// 一笔转账输入（转出 → 转入双腿，维度筛选读路径的造数入口）。
+fn transfer_input(
+    from: &str,
+    to: &str,
+    date: &str,
+    amount_cents: i64,
+    note: &str,
+) -> TransactionInput {
+    TransactionInput {
+        kind: TransactionKind::Transfer,
+        amount_cents,
+        currency_code: "CNY".to_owned(),
+        account_id: Some(from.to_owned()),
+        to_account_id: Some(to.to_owned()),
+        note: Some(note.to_owned()),
+        date: date.to_owned(),
+        ..expense_input(from, date, amount_cents, note)
+    }
+}
+
+/// 一笔退款输入（指向原支出行，维度筛选读路径的造数入口）。
+fn refund_input(
+    account: &str,
+    date: &str,
+    amount_cents: i64,
+    refund_of: &str,
+    note: &str,
+) -> TransactionInput {
+    TransactionInput {
+        kind: TransactionKind::Refund,
+        refund_of_transaction_id: Some(refund_of.to_owned()),
+        ..expense_input(account, date, amount_cents, note)
+    }
+}
+
+/// 一笔买入输入（投资 kind，默认载荷排除断言的造数入口；非 DB 夹具语义与
+/// 域测试 `make_buy_input` 同形）。
+fn buy_input(account: &str, instrument_id: &str, date: &str) -> TransactionInput {
+    TransactionInput {
+        kind: TransactionKind::Buy,
+        amount_cents: 0,
+        currency_code: "USD".to_owned(),
+        account_id: Some(account.to_owned()),
+        instrument_id: Some(instrument_id.to_owned()),
+        quantity: Some(1.0),
+        price_cents: Some(10_000),
+        fee_cents: Some(0),
+        date: date.to_owned(),
+        ..expense_input(account, date, 0, "买入")
+    }
+}
+
 /// 在指定日期造一笔指定金额的现金支出（期间维度读路径的造数入口）。
 fn seed_expense_on_date(dir: &Path, date: &str, amount_cents: i64, note: &str) {
     let db = boot_ledger(dir).unwrap();
@@ -164,7 +229,7 @@ fn test_date(index: usize) -> String {
 /// 首页读断言（空库与造数库共用）：total 与当前页行集。
 fn assert_first_page(dir: &Path, expected_total: i64, expected_rows: usize) {
     let db = boot_ledger(dir).unwrap();
-    let page = transaction_page(&db, 1, None).unwrap();
+    let page = transaction_page(&db, 1, &crate::boot::TxListQuery::default()).unwrap();
     assert_eq!(
         page.total, expected_total,
         "total = 满足过滤条件的未删除总数"
@@ -191,7 +256,7 @@ fn boot_reads_seeded_transactions_via_domain_write_entries() {
     create_empty_book_file(&dir);
     seed_expense_series(&dir, 3);
     let db = boot_ledger(&dir).unwrap();
-    let page = transaction_page(&db, 1, None).unwrap();
+    let page = transaction_page(&db, 1, &crate::boot::TxListQuery::default()).unwrap();
     assert_eq!(
         page.total, 3,
         "total = 公开写入口写入的未删除笔数（读路径直调域服务）"
@@ -212,7 +277,7 @@ fn page_reads_offset_paging_boundaries_with_deterministic_order() {
     seed_expense_series(&dir, 250);
     let db = boot_ledger(&dir).unwrap();
 
-    let page1 = transaction_page(&db, 1, None).unwrap();
+    let page1 = transaction_page(&db, 1, &crate::boot::TxListQuery::default()).unwrap();
     assert_eq!(page1.total, 250, "total 与页无关：满足过滤条件的总数");
     assert_eq!(page1.items.len(), 100, "首页整 100 行");
     assert_eq!(
@@ -226,7 +291,7 @@ fn page_reads_offset_paging_boundaries_with_deterministic_order() {
         "首页末行 = 第 151 笔写入序"
     );
 
-    let page2 = transaction_page(&db, 2, None).unwrap();
+    let page2 = transaction_page(&db, 2, &crate::boot::TxListQuery::default()).unwrap();
     assert_eq!(page2.items.len(), 100);
     assert_eq!(
         page2.items[0].date,
@@ -235,12 +300,12 @@ fn page_reads_offset_paging_boundaries_with_deterministic_order() {
     );
     assert_eq!(page2.items[99].date, test_date(50));
 
-    let last = transaction_page(&db, 3, None).unwrap();
+    let last = transaction_page(&db, 3, &crate::boot::TxListQuery::default()).unwrap();
     assert_eq!(last.items.len(), 50, "末页 50 行（250 = 100 + 100 + 50）");
     assert_eq!(last.items[0].date, test_date(49));
     assert_eq!(last.items[49].date, test_date(0), "末页末行最早");
 
-    let beyond = transaction_page(&db, 4, None).unwrap();
+    let beyond = transaction_page(&db, 4, &crate::boot::TxListQuery::default()).unwrap();
     assert_eq!(beyond.items.len(), 0, "越界页空行集");
     assert_eq!(beyond.total, 250, "越界页 total 仍返回");
 }
@@ -256,7 +321,7 @@ fn search_reads_hit_transactions_with_raw_text_semantics() {
     seed_expense_notes(&dir, &["元旦火锅聚餐", "超市买菜"]);
     let db = boot_ledger(&dir).unwrap();
 
-    let result = transaction_search(&db, "火锅", 1).unwrap();
+    let result = transaction_search(&db, "火锅", 1, None, None, None).unwrap();
     assert_eq!(result.total, 1, "命中总数 = 备注原文命中的未删除笔数");
     assert_eq!(result.items.len(), 1);
     assert_eq!(
@@ -267,7 +332,7 @@ fn search_reads_hit_transactions_with_raw_text_semantics() {
 
     // 空查询走域空结果语义（视图层空输入 = 列表态不调搜索——呈现切换归
     // headless 断言面，本用例只钉域函数自身的既有契约）。
-    let empty = transaction_search(&db, "", 1).unwrap();
+    let empty = transaction_search(&db, "", 1, None, None, None).unwrap();
     assert_eq!(empty.total, 0);
     assert!(empty.items.is_empty());
 }
@@ -290,10 +355,13 @@ fn page_reads_filter_by_period_range_with_inclusive_bounds() {
     let march = crate::boot::transaction_page(
         &db,
         1,
-        Some(&crate::period::PeriodRange {
-            from: "2026-03-01".to_owned(),
-            to: "2026-03-31".to_owned(),
-        }),
+        &crate::boot::TxListQuery {
+            range: Some(crate::period::PeriodRange {
+                from: "2026-03-01".to_owned(),
+                to: "2026-03-31".to_owned(),
+            }),
+            ..Default::default()
+        },
     )
     .unwrap();
     assert_eq!(march.total, 2, "total 与行集共用同一 WHERE 子句");
@@ -308,8 +376,256 @@ fn page_reads_filter_by_period_range_with_inclusive_bounds() {
     );
 
     // 「全部」（None）：不过滤。
-    let all = crate::boot::transaction_page(&db, 1, None).unwrap();
+    let all = crate::boot::transaction_page(&db, 1, &crate::boot::TxListQuery::default()).unwrap();
     assert_eq!(all.total, 4);
+}
+
+/// 维度筛选读路径（issue #2037）：涉及账户/商户/分类（含「仅无分类」三态）/
+/// 类型集合逐维过滤进 TransactionListFilter（维度间 AND、维度内取或），默认
+/// 载荷显式携带四通用 kind（投资 kind 的排除是本读接缝单点，ADR-0135）。
+/// 删除任一维度投影（含 kinds 默认）即红。
+#[test]
+fn page_reads_filter_dimensions_and_defaults_to_main_kinds() {
+    let _guard = SERIAL.lock().unwrap();
+    let dir = scratch_book_dir("dim-filter");
+    create_empty_book_file(&dir);
+    let db = boot_ledger(&dir).unwrap();
+    let (cash, bank, invest, merchant, category) = {
+        let conn = db
+            .conn
+            .lock()
+            .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
+            .unwrap();
+        let cash = ledger_accounts::create_account(
+            &conn,
+            AccountInput {
+                name: "现金".to_owned(),
+                kind: AccountType::Cash,
+                currency_code: "CNY".to_owned(),
+                initial_balance_cents: Some(0),
+                credit_limit_cents: None,
+                statement_day: None,
+                due_day: None,
+            },
+        )
+        .unwrap();
+        let bank = ledger_accounts::create_account(
+            &conn,
+            AccountInput {
+                name: "银行卡".to_owned(),
+                kind: AccountType::Bank,
+                currency_code: "CNY".to_owned(),
+                initial_balance_cents: Some(0),
+                credit_limit_cents: None,
+                statement_day: None,
+                due_day: None,
+            },
+        )
+        .unwrap();
+        // 投资账户（买入的账户类型守卫要求投资账户：trade.buy-account-not-investment）。
+        let invest = ledger_accounts::create_account(
+            &conn,
+            AccountInput {
+                name: "证券户".to_owned(),
+                kind: AccountType::Investment,
+                currency_code: "CNY".to_owned(),
+                initial_balance_cents: Some(0),
+                credit_limit_cents: None,
+                statement_day: None,
+                due_day: None,
+            },
+        )
+        .unwrap();
+        let merchant = ledger_merchants::create_merchant(
+            &conn,
+            ledger_merchants::MerchantInput {
+                name: "链商超".to_owned(),
+            },
+        )
+        .unwrap();
+        let category = ledger_categories::create_category(
+            &conn,
+            ledger_categories::CategoryInput {
+                name: "餐饮".to_owned(),
+                kind: "expense".to_owned(),
+                parent_id: None,
+                icon: None,
+            },
+        )
+        .unwrap();
+        let expense = ledger_transaction::create(&conn, {
+            let mut input = expense_input(&cash, "2026-01-05", 1_100, "超市买菜");
+            input.merchant_id = Some(merchant.clone());
+            input.category_id = Some(category.clone());
+            input
+        })
+        .unwrap();
+        ledger_transaction::create(&conn, income_input(&bank, "2026-01-06", 9_000, "工资"))
+            .unwrap();
+        ledger_transaction::create(
+            &conn,
+            transfer_input(&cash, &bank, "2026-01-07", 2_000, "转存"),
+        )
+        .unwrap();
+        ledger_transaction::create(
+            &conn,
+            refund_input(&cash, "2026-01-08", 500, &expense.id, "部分退款"),
+        )
+        .unwrap();
+        // 投资 kind（买入）：不在主列表口径，默认载荷必须排除（ADR-0135）。
+        let instrument = ledger_investment::create_instrument(
+            &conn,
+            ledger_investment::InstrumentInput {
+                symbol: "TEST".to_owned(),
+                kind: ledger_investment::InstrumentType::Stock,
+                name: Some("测试标的".to_owned()),
+                currency_code: "USD".to_owned(),
+                market: None,
+            },
+        )
+        .unwrap();
+        ledger_transaction::create(&conn, buy_input(&invest, &instrument, "2026-01-09")).unwrap();
+        (cash, bank, invest, merchant, category)
+    };
+
+    // 默认载荷：四通用 kind（买入排除）→ 4 笔。
+    let default = transaction_page(&db, 1, &crate::boot::TxListQuery::default()).unwrap();
+    assert_eq!(default.total, 4, "投资 kind 不进主列表（默认载荷显式排除）");
+
+    // 类型子集：维度内取或。
+    let expense_only = transaction_page(
+        &db,
+        1,
+        &crate::boot::TxListQuery {
+            kinds: vec![TransactionKind::Expense],
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(expense_only.total, 1);
+
+    // 涉及账户：转出 ∪ 转入 ∪ 出资三端命中；与默认 kind 排除 AND（银行卡
+    // 上的买入不因账户命中而进主列表）。
+    let involving_cash = transaction_page(
+        &db,
+        1,
+        &crate::boot::TxListQuery {
+            involving_account_id: Some(cash.clone()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(involving_cash.total, 3, "现金：支出 + 转账转出 + 退款");
+    let involving_bank = transaction_page(
+        &db,
+        1,
+        &crate::boot::TxListQuery {
+            involving_account_id: Some(bank.clone()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        involving_bank.total, 2,
+        "银行卡：收入 + 转账转入（买入被默认 kind 排除）"
+    );
+
+    // 显式类型集合与账户维度组合（AND）：银行卡上的买入可见。
+    let invest_buys = transaction_page(
+        &db,
+        1,
+        &crate::boot::TxListQuery {
+            involving_account_id: Some(invest),
+            kinds: vec![TransactionKind::Buy],
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(invest_buys.total, 1, "显式携带投资 kind 时买入可见");
+
+    // 商户维度。
+    let merchant_rows = transaction_page(
+        &db,
+        1,
+        &crate::boot::TxListQuery {
+            merchant_id: Some(merchant),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        merchant_rows.total, 2,
+        "支出 + 退款（退款继承原商户，域语义）"
+    );
+
+    // 分类维度三态。
+    let categorized = transaction_page(
+        &db,
+        1,
+        &crate::boot::TxListQuery {
+            category_id: Some(category),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        categorized.total, 2,
+        "支出 + 退款（退款继承原分类，域语义）"
+    );
+    let uncategorized = transaction_page(
+        &db,
+        1,
+        &crate::boot::TxListQuery {
+            uncategorized_only: true,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        uncategorized.total, 2,
+        "收入 + 转账无分类（退款继承原分类不算无分类）"
+    );
+}
+
+/// 搜索读路径的金额/期间筛选（issue #2037 搜索 × 期间裁决的读接缝半边）：
+/// 关键词与金额区间/期间区间 AND 组合（域统一模糊搜索的可选筛选直传）；
+/// 空关键词 + 仅有筛选 = 仅筛选查询（旧壳搜索页「无关键字仅筛选」同语义）。
+#[test]
+fn search_reads_with_amount_and_period_filters() {
+    let _guard = SERIAL.lock().unwrap();
+    let dir = scratch_book_dir("search-filter");
+    create_empty_book_file(&dir);
+    seed_expense_on_date(&dir, "2026-01-05", 1_100, "一月火锅");
+    seed_expense_on_date(&dir, "2026-02-05", 8_800, "二月火锅");
+    seed_expense_on_date(&dir, "2026-03-05", 4_400, "三月火锅");
+    let db = boot_ledger(&dir).unwrap();
+
+    // 关键词 × 金额区间（含边界）。
+    let ranged = transaction_search(&db, "火锅", 1, Some(4_400), Some(8_800), None).unwrap();
+    assert_eq!(
+        ranged.total, 2,
+        "金额下下含边界：8800 与 4400 命中，1100 排除"
+    );
+
+    // 关键词 × 期间：裁决后期间对搜索命中面生效（旧壳搜索页同口径）。
+    let february = transaction_search(
+        &db,
+        "火锅",
+        1,
+        None,
+        None,
+        Some(&crate::period::PeriodRange {
+            from: "2026-02-01".to_owned(),
+            to: "2026-02-28".to_owned(),
+        }),
+    )
+    .unwrap();
+    assert_eq!(february.total, 1, "期间快照过滤搜索命中面");
+
+    // 空关键词 + 仅金额筛选 = 仅筛选查询（全部支出里按金额过滤）。
+    let filter_only = transaction_search(&db, "", 1, Some(5_000), None, None).unwrap();
+    assert_eq!(filter_only.total, 1);
+    assert_eq!(filter_only.items[0].note.as_deref(), Some("二月火锅"));
 }
 
 /// 数据期间边界读路径（issue #2021 / ADR-0141 钳制输入）：报表域日期极值，
@@ -375,8 +691,12 @@ fn page_reads_assemble_into_cell_texts_across_page_boundaries() {
         privacy_enabled: false,
     };
 
-    let first =
-        crate::assembly::assemble_rows(&transaction_page(&db, 1, None).unwrap().items, &ctx);
+    let first = crate::assembly::assemble_rows(
+        &transaction_page(&db, 1, &crate::boot::TxListQuery::default())
+            .unwrap()
+            .items,
+        &ctx,
+    );
     assert_eq!(first.len(), crate::assembly::PAGE_SIZE);
     assert_eq!(first[0].date, test_date(249));
     assert_eq!(first[0].kind, "支出", "类型标签首版 = kind 直译");
@@ -386,7 +706,12 @@ fn page_reads_assemble_into_cell_texts_across_page_boundaries() {
     );
     assert_eq!(first[99].date, test_date(150), "首页末行边界");
 
-    let last = crate::assembly::assemble_rows(&transaction_page(&db, 3, None).unwrap().items, &ctx);
+    let last = crate::assembly::assemble_rows(
+        &transaction_page(&db, 3, &crate::boot::TxListQuery::default())
+            .unwrap()
+            .items,
+        &ctx,
+    );
     assert_eq!(last.len(), 50, "末页 50 行");
     assert_eq!(last[0].date, test_date(49));
     assert_eq!(last[49].date, test_date(0), "末页末行 = 最早一笔");
@@ -504,7 +829,12 @@ fn category_rows_assemble_into_path_cells_active_only() {
         merchants: &crate::assembly::MerchantTable::from_merchants(&merchant_rows(&db).unwrap()),
         privacy_enabled: false,
     };
-    let rows = crate::assembly::assemble_rows(&transaction_page(&db, 1, None).unwrap().items, &ctx);
+    let rows = crate::assembly::assemble_rows(
+        &transaction_page(&db, 1, &crate::boot::TxListQuery::default())
+            .unwrap()
+            .items,
+        &ctx,
+    );
     assert_eq!(rows.len(), 3);
     assert_eq!(
         rows[0].category, "-",
@@ -646,7 +976,7 @@ fn run_startup_with_seeded_book_places_session_and_reads_first_page() {
     set_book_dir(dir.clone());
     assert_eq!(run_startup(), StartupView::Ready, "引导成功呈现就绪态");
     let db = nsh_app_session();
-    let page = crate::boot::transaction_page(&db, 1, None).unwrap();
+    let page = crate::boot::transaction_page(&db, 1, &crate::boot::TxListQuery::default()).unwrap();
     assert_eq!(page.total, 2, "会话句柄可直读首页（读路径直调域服务）");
     assert_eq!(page.items.len(), 2);
 }
@@ -689,7 +1019,7 @@ fn delete_transaction_writes_via_domain_entry_and_reports_coded_not_found() {
 
     delete_transaction(&db, &gone_id).expect("存在的 id 删除成功");
 
-    let page = transaction_page(&db, 1, None).unwrap();
+    let page = transaction_page(&db, 1, &crate::boot::TxListQuery::default()).unwrap();
     assert_eq!(page.total, 1, "删除后 total = 未删除笔数");
     assert!(
         page.items.iter().all(|tx| tx.id != gone_id),
@@ -700,5 +1030,178 @@ fn delete_transaction_writes_via_domain_entry_and_reports_coded_not_found() {
     assert!(
         err.is_code("transaction.not-found"),
         "不存在 id 报码化 NotFound，实际：{err}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 预算读写接缝（#2033）：读路径（进度 / 年度汇总）与写路径（创建 / 编辑 /
+// 删除）直调 `ledger-budget` 域入口，不经 IPC——删除任一环本组用例即红
+// （ADR-0087 接线断言）。预算域语义（口径 / 校验 / 同步命令）归域单测，本组
+// 只钉壳侧接线的消费契约：调用贯通、会话选择（写侧 conn）、码化错误透传。
+// ---------------------------------------------------------------------------
+
+/// 造一个支出分类（域公开写入口）。
+fn seed_expense_category(db: &ledger_infra::db::DbState, name: &str) -> String {
+    let conn = db
+        .conn
+        .lock()
+        .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
+        .unwrap();
+    ledger_categories::create_category(
+        &conn,
+        ledger_categories::CategoryInput {
+            name: name.to_owned(),
+            kind: "expense".to_owned(),
+            parent_id: None,
+            icon: None,
+        },
+    )
+    .unwrap()
+}
+
+#[test]
+fn budget_write_and_read_seams_round_trip_through_domain_entries() {
+    use crate::boot::{
+        budget_annual_summary, budget_progress, create_budget, delete_budget, update_budget,
+    };
+    use ledger_budget::{BudgetInput, BudgetPeriod};
+
+    let _guard = SERIAL.lock().unwrap();
+    let dir = scratch_book_dir("budget-seam");
+    create_empty_book_file(&dir);
+    let db = boot_ledger(&dir).unwrap();
+    let category = seed_expense_category(&db, "餐饮");
+
+    // 创建：域公开写入口贯通（写侧 conn）。
+    let id = create_budget(
+        &db,
+        &BudgetInput {
+            category_id: category.clone(),
+            period: Some(BudgetPeriod::Monthly),
+            amount_cents: 50_000,
+            start_date: crate::boot::today_string(),
+        },
+    )
+    .unwrap();
+
+    // 进度读：行集含该预算，分类名与金额直出（spent=0 无支出）。
+    let rows = budget_progress(&db).unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].budget.id, id);
+    assert_eq!(rows[0].budget.amount_cents, 50_000);
+    assert_eq!(rows[0].category_name, "餐饮");
+    assert_eq!(rows[0].spent_cents, 0);
+    assert!(!rows[0].over_budget);
+
+    // 本月一笔分类支出 → 进度与年度汇总同刻更新（读路径贯通）。
+    {
+        let conn = db
+            .conn
+            .lock()
+            .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
+            .unwrap();
+        let account = ledger_accounts::create_account(
+            &conn,
+            AccountInput {
+                name: "现金".to_owned(),
+                kind: AccountType::Cash,
+                currency_code: "CNY".to_owned(),
+                initial_balance_cents: Some(0),
+                credit_limit_cents: None,
+                statement_day: None,
+                due_day: None,
+            },
+        )
+        .unwrap();
+        let mut input = expense_input(&account, &crate::boot::today_string(), 12_000, "本月支出");
+        input.category_id = Some(category.clone());
+        ledger_transaction::create(&conn, input).unwrap();
+    }
+    let rows = budget_progress(&db).unwrap();
+    assert_eq!(rows[0].spent_cents, 12_000, "进度读路径贯通（本月净支出）");
+    assert!(!rows[0].over_budget, "12_000 < 50_000 未超支");
+
+    // 年度汇总：年化总额 = 50000 × 12，已支 = 本年累计。
+    let summary = budget_annual_summary(&db).unwrap();
+    assert_eq!(summary.annual_budget_total_cents, 600_000);
+    assert_eq!(summary.spent_cents, 12_000);
+    assert!(!summary.over_budget);
+
+    // 编辑：金额与周期一并落定（写接缝贯通）。
+    update_budget(&db, &id, 30_000, Some(BudgetPeriod::Yearly)).unwrap();
+    let rows = budget_progress(&db).unwrap();
+    assert_eq!(rows[0].budget.amount_cents, 30_000);
+    assert_eq!(rows[0].budget.period, BudgetPeriod::Yearly);
+
+    // 删除：软删后行集离场。
+    delete_budget(&db, &id).unwrap();
+    assert!(budget_progress(&db).unwrap().is_empty());
+
+    // 不存在的 id：域删除幂等（UPDATE 静默 0 行仍 Ok——预算域语义，壳侧透传）。
+    delete_budget(&db, "no-such-budget").unwrap();
+}
+
+#[test]
+fn budget_create_surfaces_domain_validation_as_coded_error() {
+    use crate::boot::create_budget;
+    use ledger_budget::{BudgetInput, BudgetPeriod};
+
+    let _guard = SERIAL.lock().unwrap();
+    let dir = scratch_book_dir("budget-seam-validate");
+    create_empty_book_file(&dir);
+    let db = boot_ledger(&dir).unwrap();
+    let category = seed_expense_category(&db, "文具");
+
+    // 金额非正：域校验拒绝，码化错误原样上抛（视图层呈现面）。
+    let err = create_budget(
+        &db,
+        &BudgetInput {
+            category_id: category,
+            period: Some(BudgetPeriod::Monthly),
+            amount_cents: 0,
+            start_date: crate::boot::today_string(),
+        },
+    )
+    .unwrap_err();
+    assert!(
+        err.to_string().contains("预算金额必须为正数"),
+        "域校验错误透传，实际：{err}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 备份最小入口（#2038）：默认文件名生成面（旧壳 `defaultBackupFileName` 同
+// 格式的生成单点，backup_entry 模块）。格式闭集两态：指纹在场携标识段、
+// 缺失退化旧命名（ADR-0016 受管命名；前后端各持一份前缀常量的取舍下，本壳
+// 生成面与旧壳前端逐字同形，受管判定仍归备份域与旧壳前端）。
+// ---------------------------------------------------------------------------
+
+#[test]
+fn default_backup_file_name_carries_fingerprint_segment() {
+    use crate::backup_entry::default_backup_file_name;
+    use chrono::TimeZone;
+
+    let now = chrono::Local
+        .with_ymd_and_hms(2026, 11, 9, 14, 5, 9)
+        .unwrap();
+    assert_eq!(
+        default_backup_file_name(now, Some("fp-abc")),
+        "ledger-backup-20261109-140509-fp-abc.db.zip",
+        "指纹在场：时间戳后带标识段（旧壳 defaultBackupFileName 同格式）"
+    );
+}
+
+#[test]
+fn default_backup_file_name_degrades_without_fingerprint() {
+    use crate::backup_entry::default_backup_file_name;
+    use chrono::TimeZone;
+
+    let now = chrono::Local
+        .with_ymd_and_hms(2026, 11, 9, 14, 5, 9)
+        .unwrap();
+    assert_eq!(
+        default_backup_file_name(now, None),
+        "ledger-backup-20261109-140509.db.zip",
+        "指纹缺失（空库未固化）：退化为无标识旧命名"
     );
 }

@@ -102,7 +102,9 @@ pub struct PeriodBoundary {
 }
 
 /// YYYY-MM-DD 解析（非法格式 / 不存在日期返回 None）。
-fn parse_iso_date(s: &str) -> Option<NaiveDate> {
+/// ISO 日期解析（本 crate 内筛选载荷与期间换算共用的同一口径；公开给
+/// [`crate::tx_filter`] 的下钻日期合法性判定）。
+pub(crate) fn parse_iso_date(s: &str) -> Option<NaiveDate> {
     NaiveDate::parse_from_str(s, "%Y-%m-%d").ok()
 }
 

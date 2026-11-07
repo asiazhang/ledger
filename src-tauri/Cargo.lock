@@ -4464,6 +4464,8 @@ version = "0.11.2"
 dependencies = [
  "chrono",
  "ledger-accounts",
+ "ledger-backup",
+ "ledger-budget",
  "ledger-categories",
  "ledger-currencies",
  "ledger-infra",
@@ -4479,6 +4481,7 @@ dependencies = [
  "nsh-engine",
  "nsh-platform-linux",
  "nsh-testing",
+ "serde_json",
  "tracing",
  "tracing-subscriber",
 ]
