@@ -507,131 +507,141 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
         let state = filters.snapshot();
         let privacy = amount_privacy_enabled();
         let db = db_slot().clone();
-        spawn(async move {
-            let Some(db) = db else {
-                error.set(Some("内部错误：账本库会话缺失".to_owned()));
-                loading.set(false);
-                return;
-            };
-            // 币种字典、在用分类、可见账户、含软删商户、未删除保单与行集同批读取：
-            // 字典读失败不静默降级成无符号金额（用户无感知的错示比暂缓呈现更差），
-            // 与行集一并走错误呈现。数据期间边界读失败不拖垮页呈现：钳制退化为不钳制
-            // （旧壳 silent 同口径），保留旧值到下次成功替换。表单参考数据源与原始
-            // 行集随装载一并落位（#2034：编辑回填与选项面的同一事实源）。
-            let outcome = blocking(move || {
-                let page_read = if !searching {
-                    // 列表态：筛选维度 + 期间快照 + 默认 kind 收窄（投资 kind
-                    // 排除是读接缝单点，ADR-0135）。
-                    boot::transaction_page(
-                        &db,
-                        page_no,
-                        &boot::TxListQuery {
-                            range: state.range.clone(),
-                            kinds: tx_filter::resolve_request_kinds(state.kinds.as_deref()),
-                            involving_account_id: state.involving_account_id.clone(),
-                            merchant_id: state.merchant_id.clone(),
-                            category_id: state.category.as_ref().and_then(|c| match c {
-                                tx_filter::CategoryFilter::Exact(id) => Some(id.clone()),
-                                tx_filter::CategoryFilter::UncategorizedOnly => None,
-                            }),
-                            uncategorized_only: matches!(
-                                state.category,
-                                Some(tx_filter::CategoryFilter::UncategorizedOnly)
-                            ),
-                        },
-                    )
-                    .map(|result| PageRead::new(result.items, result.total))
-                } else {
-                    // 搜索态：关键词 + 金额区间 + 期间快照（裁决后期间对搜索
-                    // 命中面生效，旧壳搜索页同口径）；账户/商户/分类/类型维度
-                    // 不在搜索面（域读路径不支持，裁决定型为规格）。
-                    boot::transaction_search(
-                        &db,
-                        &query,
-                        page_no,
-                        amount_min,
-                        amount_max,
-                        state.range.as_ref(),
-                    )
-                    .map(|result| PageRead::new(result.items, result.total))
+        // 任务挂视图实例 owner（perform_delete 先例同形）：处理器可能运行在
+        // 即将卸载的子树 owner 下——筛选条清除钮/弹层选项按下后随状态翻转即
+        // 时卸载（#2037 起多了一类「按下即自卸载」的触发面），直呼 spawn 会
+        // 把装载任务挂到子树 owner 上，随卸载被取消——装载静默蒸发、loading
+        // 永不落位（修复前 headless 清除旅程曾确定性复现本竞态）。经
+        // [`Owner::run`] 让任务归组件实例，存活到装载完成；本包裹属竞态消除
+        // 而非「删除即红」型接线——删除后的复现取决于引擎调度时序（任务是否
+        // 赢得卸载前的执行窗口），不设拆除断言。
+        view_owner.run(move || {
+            spawn(async move {
+                let Some(db) = db else {
+                    error.set(Some("内部错误：账本库会话缺失".to_owned()));
+                    loading.set(false);
+                    return;
                 };
-                page_read
-                    .and_then(|mut read| {
-                        read.date_range = boot::report_date_range(&db).ok();
-                        boot::currency_rows(&db).map(|rows| {
-                            read.currency_rows = rows;
-                            read
-                        })
-                    })
-                    .and_then(|mut read| {
-                        boot::category_rows(&db).map(|rows| {
-                            read.category_rows = rows;
-                            read
-                        })
-                    })
-                    .and_then(|mut read| {
-                        boot::account_rows(&db).map(|rows| {
-                            read.account_rows = rows;
-                            read
-                        })
-                    })
-                    .and_then(|mut read| {
-                        boot::merchant_rows(&db).map(|rows| {
-                            read.merchant_rows = rows;
-                            read
-                        })
-                    })
-                    .and_then(|mut read| {
-                        boot::policy_rows(&db).map(|rows| {
-                            read.policy_rows = rows;
-                            read
-                        })
-                    })
-            })
-            .await;
-            // 过期装载不落位（后发已接管 rows/loading，先发不得回写）。
-            if load_seq.get() != seq {
-                return;
-            }
-            match outcome {
-                Ok(Ok(PageRead {
-                    items,
-                    total: total_count,
-                    date_range,
-                    currency_rows,
-                    category_rows,
-                    account_rows,
-                    merchant_rows,
-                    policy_rows,
-                })) => {
-                    // 表单参考数据源与编辑回填锚点（原始行集）随装载落位
-                    //（#2034：与列表同一读批的同一事实源）。
-                    tx_items.set(txn_form::TxItems(items.clone()));
-                    form_accounts.set(txn_form::FormAccounts(account_rows.clone()));
-                    form_categories.set(txn_form::FormCategories(category_rows.clone()));
-                    form_merchants.set(txn_form::FormMerchants(merchant_rows.clone()));
-                    form_policies.set(txn_form::FormPolicies(policy_rows));
-                    let currencies = CurrencyTable::from_currencies(&currency_rows);
-                    form_currencies.set(currencies.clone());
-                    let categories = assembly::CategoryTable::from_categories(&category_rows);
-                    let accounts = AccountTable::from_accounts(&account_rows);
-                    let merchants = MerchantTable::from_merchants(&merchant_rows);
-                    let ctx = RowContext {
-                        currencies: &currencies,
-                        categories: &categories,
-                        accounts: &accounts,
-                        merchants: &merchants,
-                        privacy_enabled: privacy,
+                // 币种字典、在用分类、可见账户、含软删商户、未删除保单与行集同批读取：
+                // 字典读失败不静默降级成无符号金额（用户无感知的错示比暂缓呈现更差），
+                // 与行集一并走错误呈现。数据期间边界读失败不拖垮页呈现：钳制退化为不钳制
+                // （旧壳 silent 同口径），保留旧值到下次成功替换。表单参考数据源与原始
+                // 行集随装载一并落位（#2034：编辑回填与选项面的同一事实源）。
+                let outcome = blocking(move || {
+                    let page_read = if !searching {
+                        // 列表态：筛选维度 + 期间快照 + 默认 kind 收窄（投资 kind
+                        // 排除是读接缝单点，ADR-0135）。
+                        boot::transaction_page(
+                            &db,
+                            page_no,
+                            &boot::TxListQuery {
+                                range: state.range.clone(),
+                                kinds: tx_filter::resolve_request_kinds(state.kinds.as_deref()),
+                                involving_account_id: state.involving_account_id.clone(),
+                                merchant_id: state.merchant_id.clone(),
+                                category_id: state.category.as_ref().and_then(|c| match c {
+                                    tx_filter::CategoryFilter::Exact(id) => Some(id.clone()),
+                                    tx_filter::CategoryFilter::UncategorizedOnly => None,
+                                }),
+                                uncategorized_only: matches!(
+                                    state.category,
+                                    Some(tx_filter::CategoryFilter::UncategorizedOnly)
+                                ),
+                            },
+                        )
+                        .map(|result| PageRead::new(result.items, result.total))
+                    } else {
+                        // 搜索态：关键词 + 金额区间 + 期间快照（裁决后期间对搜索
+                        // 命中面生效，旧壳搜索页同口径）；账户/商户/分类/类型维度
+                        // 不在搜索面（域读路径不支持，裁决定型为规格）。
+                        boot::transaction_search(
+                            &db,
+                            &query,
+                            page_no,
+                            amount_min,
+                            amount_max,
+                            state.range.as_ref(),
+                        )
+                        .map(|result| PageRead::new(result.items, result.total))
                     };
-                    rows.set(assembly::assemble_rows(&items, &ctx));
-                    total.set(total_count);
-                    boundary_dates.set(date_range.map(|dr| (dr.min_date, dr.max_date)));
-                    searched.set(searching);
+                    page_read
+                        .and_then(|mut read| {
+                            read.date_range = boot::report_date_range(&db).ok();
+                            boot::currency_rows(&db).map(|rows| {
+                                read.currency_rows = rows;
+                                read
+                            })
+                        })
+                        .and_then(|mut read| {
+                            boot::category_rows(&db).map(|rows| {
+                                read.category_rows = rows;
+                                read
+                            })
+                        })
+                        .and_then(|mut read| {
+                            boot::account_rows(&db).map(|rows| {
+                                read.account_rows = rows;
+                                read
+                            })
+                        })
+                        .and_then(|mut read| {
+                            boot::merchant_rows(&db).map(|rows| {
+                                read.merchant_rows = rows;
+                                read
+                            })
+                        })
+                        .and_then(|mut read| {
+                            boot::policy_rows(&db).map(|rows| {
+                                read.policy_rows = rows;
+                                read
+                            })
+                        })
+                })
+                .await;
+                // 过期装载不落位（后发已接管 rows/loading，先发不得回写）。
+                if load_seq.get() != seq {
+                    return;
                 }
-                Ok(Err(e)) => error.set(Some(e.to_string())),
-                Err(_) => error.set(Some("内部错误：读页任务异常退出".to_owned())),
-            }
-            loading.set(false);
+                match outcome {
+                    Ok(Ok(PageRead {
+                        items,
+                        total: total_count,
+                        date_range,
+                        currency_rows,
+                        category_rows,
+                        account_rows,
+                        merchant_rows,
+                        policy_rows,
+                    })) => {
+                        // 表单参考数据源与编辑回填锚点（原始行集）随装载落位
+                        //（#2034：与列表同一读批的同一事实源）。
+                        tx_items.set(txn_form::TxItems(items.clone()));
+                        form_accounts.set(txn_form::FormAccounts(account_rows.clone()));
+                        form_categories.set(txn_form::FormCategories(category_rows.clone()));
+                        form_merchants.set(txn_form::FormMerchants(merchant_rows.clone()));
+                        form_policies.set(txn_form::FormPolicies(policy_rows));
+                        let currencies = CurrencyTable::from_currencies(&currency_rows);
+                        form_currencies.set(currencies.clone());
+                        let categories = assembly::CategoryTable::from_categories(&category_rows);
+                        let accounts = AccountTable::from_accounts(&account_rows);
+                        let merchants = MerchantTable::from_merchants(&merchant_rows);
+                        let ctx = RowContext {
+                            currencies: &currencies,
+                            categories: &categories,
+                            accounts: &accounts,
+                            merchants: &merchants,
+                            privacy_enabled: privacy,
+                        };
+                        rows.set(assembly::assemble_rows(&items, &ctx));
+                        total.set(total_count);
+                        boundary_dates.set(date_range.map(|dr| (dr.min_date, dr.max_date)));
+                        searched.set(searching);
+                    }
+                    Ok(Err(e)) => error.set(Some(e.to_string())),
+                    Err(_) => error.set(Some("内部错误：读页任务异常退出".to_owned())),
+                }
+                loading.set(false);
+            });
         });
     };
 
