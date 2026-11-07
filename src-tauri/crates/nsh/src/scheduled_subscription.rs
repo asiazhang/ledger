@@ -1,6 +1,13 @@
 //! 订阅页签（issue #2042；旧壳 `SubscriptionsPane.vue` 的重生——计划清单 +
 //! 计划表单 + 花费面板 + 计划详情弹层的订阅形态薄适配）。
 //!
+//! 定时②（#2043）起兼**兄弟页签的共享件落点**：[`account_options_of`]（账户
+//! 下拉与归档补值）、[`currency_of_account`] / [`derive_currency_text`]（币
+//! 种随账户推导，ADR-0134 决策 5）、[`merchant_ref_of`] /
+//! [`merchant_options_active`]（商户五分支语义与在用选项面）与
+//! [`field_label`] / [`form_row`] / [`action_button`]（表单行与行操作按钮
+//! 形态）归本模块单点，分期 / 定时转账页签消费不自建。
+//!
 //! 实现明细见各区块注释；整体职责边界（按旧壳核实平价）：
 //! - **清单**：订阅计划行集（域读路径过滤订阅形态）+ 逐行详情读出「下期
 //!   扣款 = 最早 pending 期次」（仅选取不现场推算日期，旧壳
@@ -114,7 +121,7 @@ fn sub_row_snap_of(
 /// 账户下拉选项（旧壳 accountOptions / usePinnedAccountOptions 同口径）：
 /// 可选择账户排除归档（归档不进新选择），编辑面按「这份草稿的当前值」补值
 /// ——pinned 账户即使已归档也回选项面（spec #1952 / ADR-0142 决策 4）。
-fn account_options_of(
+pub(crate) fn account_options_of(
     accounts: &[ledger_accounts::Account],
     pinned: Option<&str>,
 ) -> Vec<CategoryOption> {
@@ -129,7 +136,10 @@ fn account_options_of(
 }
 
 /// 账户 id → 币种（币种随账户推导的取数单点；未选择 = 无币种文案）。
-fn currency_of_account(account_id: &str, accounts: &[ledger_accounts::Account]) -> Option<String> {
+pub(crate) fn currency_of_account(
+    account_id: &str,
+    accounts: &[ledger_accounts::Account],
+) -> Option<String> {
     accounts
         .iter()
         .find(|a| a.id == account_id)
@@ -138,7 +148,10 @@ fn currency_of_account(account_id: &str, accounts: &[ledger_accounts::Account]) 
 
 /// 币种随账户推导的展示文本（未选择账户时占位空串；旧壳 disabled AppSelect
 /// 空值同口径）。
-fn derive_currency_text(account_id: Option<&str>, accounts: &[ledger_accounts::Account]) -> String {
+pub(crate) fn derive_currency_text(
+    account_id: Option<&str>,
+    accounts: &[ledger_accounts::Account],
+) -> String {
     account_id
         .and_then(|id| currency_of_account(id, accounts))
         .unwrap_or_default()
@@ -1132,7 +1145,7 @@ pub(crate) fn subscriptions_pane(pending_focus: Signal<Option<String>>) -> impl 
 
 /// 表单字段标签（弱化小字，交易表单同行形态）。空标签 = 占位空（错误条位
 /// 不配标签——与行位对齐）。
-fn field_label(
+pub(crate) fn field_label(
     label: &'static str,
     muted: nsh_core::element::AdaptiveColor,
 ) -> nsh_core::element::AnyElement {
@@ -1149,7 +1162,7 @@ fn field_label(
 }
 
 /// 表单行（标签 + 控件；标签宽固定，控件端对齐——交易表单先行例同形）。
-fn form_row(
+pub(crate) fn form_row(
     label: &'static str,
     muted: nsh_core::element::AdaptiveColor,
     control: impl IntoElement,
@@ -1163,7 +1176,7 @@ fn form_row(
 }
 
 /// 行操作小按钮（动作文案 + 行级锚点；按压回调归调用方动作单点）。
-fn action_button(
+pub(crate) fn action_button(
     label: &'static str,
     anchor: String,
     on_press: impl Fn() + Clone + 'static,

@@ -8180,11 +8180,12 @@ fn first_pending_occurrence_id(dir: &std::path::Path, plan_id: &str) -> String {
         .unwrap_or_else(|| panic!("计划无 pending 期次"))
 }
 
-/// 落位与页签骨架（旧壳 scheduled.tab 三形态页签平价）：三页签在屏（订阅
-/// 挂真实清单，分期 / 定时转账占位）、行格十列装配产物（备注/商户/金额/周
-/// 期/状态/下期扣款）、行操作按钮与状态过滤、花费面板统计口径。删 view_host
-/// 的定时分支挂载 → 本测红（「迁移中」占位）；删 make_action_renderer 的行
-/// 操作接线 → 暂停钮缺席红。
+/// 落位与页签骨架（旧壳 scheduled.tab 三形态页签平价）：三页签在屏且均挂真
+/// 实清单（订阅 = #2042；分期 / 定时转账 = #2043 真实组件迁入）、行格十列装
+/// 配产物（备注/商户/金额/周期/状态/下期扣款）、行操作按钮与状态过滤、花费
+/// 面板统计口径。删 view_host 的定时分支挂载 → 本测红（「迁移中」占位）；
+/// 删 make_action_renderer 的行操作接线 → 暂停钮缺席红；分期 / 定时转账真
+/// 实分支拆除（scheduled.rs 容器分支退回占位）→ 点页签后真实锚点缺席红。
 #[test]
 fn scheduled_view_lands_with_panes_and_subscription_rows() {
     let _guard = SERIAL.lock().unwrap();
@@ -8210,14 +8211,17 @@ fn scheduled_view_lands_with_panes_and_subscription_rows() {
             app.screen().texts()
         );
     }
-    // 分期页签占位（旧壳「迁移中」同位）；点回订阅页签清单回来（会话槽
-    // 写路径，删除页签点击写 session 槽接线即红）。
+    // 兄弟页签真实组件（#2043 迁入）：分期清单 / 定时转账清单表挂载（删
+    // scheduled.rs 容器真实分支接线即红——退回「迁移中」占位，「分期」
+    // 「定时转账」页签词表本身仍在，锚点换位）。点回订阅页签清单回来
+    //（会话槽写路径，删除页签点击写 session 槽接线即红）。
     app.press("id:more-tab-scheduled").unwrap();
     app.press("id:scheduled-tab-installments").unwrap();
-    app.wait_for("id:scheduled-installments-placeholder")
-        .unwrap();
+    app.wait_for("id:inst-table").unwrap();
+    app.wait_for("text:分期清单").unwrap();
     app.press("id:scheduled-tab-transfers").unwrap();
-    app.wait_for("id:scheduled-transfers-placeholder").unwrap();
+    app.wait_for("id:transfer-table").unwrap();
+    app.wait_for("text:定时转账清单").unwrap();
     app.press("id:scheduled-tab-subscriptions").unwrap();
     app.wait_for("text:订阅清单").unwrap();
     app.wait_for(&format!("id:sub-next-{plan_id}")).unwrap();
@@ -8516,8 +8520,7 @@ fn scheduled_view_lands_without_detail_modal_when_no_focus() {
     // 页签往复不复开（读一次封闸 + 页签切换不复位的会话槽；旧壳
     // usePlanFocusLanding 的时序平价——无意图时页签往复零弹层）。
     app.press("id:scheduled-tab-installments").unwrap();
-    app.wait_for("id:scheduled-installments-placeholder")
-        .unwrap();
+    app.wait_for("id:inst-table").unwrap();
     app.press("id:scheduled-tab-subscriptions").unwrap();
     app.wait_for("id:sub-table").unwrap();
     app.settle();
@@ -8560,4 +8563,446 @@ fn scheduled_view_lands_directly_when_moved_to_sidebar() {
     app.press("id:nav-scheduled").unwrap();
     app.wait_for("id:sub-table").unwrap();
     app.wait_for(&format!("id:sub-next-{plan_id}")).unwrap();
+}
+
+// ---------------------------------------------------------------------------
+// 定时视图②转账与分期页签（#2043）：定时转账（清单/新建/行操作）与分期
+// （清单进度呈现/新建含 floor 口径预览）两页签 CRUD 与执行落库旅程。删任一
+// 接线即红的负向条目逐项写在各测试注释（ADR-0087 断言强度：断言对准用户可
+// 观察结果）。
+// ---------------------------------------------------------------------------
+
+/// 造一个进行中的定时转账计划（用例共用；域公开写入口 create_plan——期次预
+/// 生成协议在域内，下期转账列都吃它）。金额 ¥30、月付、转出/转入同币种、开
+/// 始日 = 今天（最早 pending 期次日 = 开始日，断言确定性）；total_occurrences
+/// = Some(n) 时金额格带「× n期」尾饰。
+fn seed_transfer_plan(
+    db: &ledger_infra::db::DbState,
+    from: &str,
+    to: &str,
+    note: Option<&str>,
+    total_occurrences: Option<i64>,
+) -> String {
+    let conn = db
+        .conn
+        .lock()
+        .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
+        .unwrap();
+    ledger_scheduled::create_plan(
+        &conn,
+        ledger_scheduled::CreateScheduledInput {
+            kind: ledger_scheduled::ScheduledKind::ScheduledTransfer,
+            account_id: from.to_owned(),
+            category_id: None,
+            amount_cents: 3_000,
+            currency_code: "CNY".to_owned(),
+            recurrence_type: ledger_scheduled::RecurrenceType::Monthly,
+            recurrence_interval: 1,
+            recurrence_day: None,
+            start_date: today().to_string(),
+            note: note.map(str::to_owned),
+            merchant_id: None,
+            policy_id: None,
+            total_amount_cents: None,
+            total_occurrences,
+            to_account_id: Some(to.to_owned()),
+        },
+    )
+    .unwrap()
+}
+
+/// 造一个进行中的分期计划（用例共用；域公开写入口 create_plan）。总金额
+/// ¥300 / 3 期（每期 ¥100 整除）、月付、开始日 = 今天。
+fn seed_installment_plan(
+    db: &ledger_infra::db::DbState,
+    account: &str,
+    note: Option<&str>,
+) -> String {
+    let conn = db
+        .conn
+        .lock()
+        .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
+        .unwrap();
+    ledger_scheduled::create_plan(
+        &conn,
+        ledger_scheduled::CreateScheduledInput {
+            kind: ledger_scheduled::ScheduledKind::Installment,
+            account_id: account.to_owned(),
+            category_id: None,
+            amount_cents: 10_000,
+            currency_code: "CNY".to_owned(),
+            recurrence_type: ledger_scheduled::RecurrenceType::Monthly,
+            recurrence_interval: 1,
+            recurrence_day: None,
+            start_date: today().to_string(),
+            note: note.map(str::to_owned),
+            merchant_id: None,
+            policy_id: None,
+            total_amount_cents: Some(30_000),
+            total_occurrences: Some(3),
+            to_account_id: None,
+        },
+    )
+    .unwrap()
+}
+
+/// 落位定时转账页签（定时用例共用）：订阅落地 → 点「定时转账」页签 → 等
+/// 清单表挂载。
+fn open_transfers_pane(app: &mut Headless) {
+    open_scheduled(app);
+    app.press("id:scheduled-tab-transfers").unwrap();
+    app.wait_for("id:transfer-table").unwrap();
+}
+
+/// 落位分期页签（定时用例共用）：订阅落地 → 点「分期」页签 → 等清单表挂载。
+fn open_installments_pane(app: &mut Headless) {
+    open_scheduled(app);
+    app.press("id:scheduled-tab-installments").unwrap();
+    app.wait_for("id:inst-table").unwrap();
+}
+
+/// 定时转账页签落地平价（旧壳 TransfersPane 桌面档九列 + WITH_COMPLETED 过
+/// 滤键集 + 生命周期行操作闭集）：行格装配产物（转出/转入/金额 × N期尾饰/
+/// 周期/下期转账）、状态过滤四键、行操作（期次/暂停/取消，无编辑——编辑是
+/// 订阅适配器自建描述符 ADR-0041 决策 7）。删 scheduled.rs 容器真实分支或
+/// make_action_renderer 行操作接线任一即红。
+#[test]
+fn scheduled_view_transfers_pane_lands_with_rows() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("scheduled-transfers-landing");
+    let plan_id;
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let from = seed_account_with_balance(&db, "测试现金", 10_000);
+        let to = seed_account_with_balance(&db, "储蓄罐", 0);
+        plan_id = seed_transfer_plan(&db, &from, &to, Some("月度储蓄"), Some(3));
+    }
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_transfers_pane(&mut app);
+
+    // 行即现（异步装载纪律：先等行锚点再断格文本，§3.5）。
+    app.wait_for(&format!("id:transfer-next-{plan_id}"))
+        .unwrap();
+    for text in [
+        "定时转账清单",
+        "月度储蓄",
+        "测试现金",
+        "储蓄罐",
+        "¥30 × 3期",
+        "每月",
+        "进行中",
+    ] {
+        assert!(
+            app.shows(text),
+            "转账清单应呈现「{text}」：{:?}",
+            app.screen().texts()
+        );
+    }
+    // 状态过滤四键（WITH_COMPLETED 键集——订阅三键集的差异面，#309 口径）。
+    for anchor in [
+        "id:transfer-filter-active",
+        "id:transfer-filter-paused",
+        "id:transfer-filter-cancelled",
+        "id:transfer-filter-completed",
+    ] {
+        assert!(app.screen().count(anchor).unwrap() > 0, "{anchor} 在屏");
+    }
+    // 行操作（生命周期闭集：期次/暂停/取消，无编辑）。
+    for anchor in [
+        format!("id:transfer-detail-{plan_id}"),
+        format!("id:transfer-pause-{plan_id}"),
+        format!("id:transfer-cancel-{plan_id}"),
+    ] {
+        assert!(app.screen().count(&anchor).unwrap() > 0, "{anchor} 在屏");
+    }
+    assert!(
+        app.screen()
+            .count(&format!("id:transfer-edit-{plan_id}"))
+            .unwrap()
+            == 0,
+        "转账行无编辑动作（编辑是订阅适配器自建描述符）"
+    );
+}
+
+/// 创建定时转账旅程（旧壳校验面 + toast 反馈平价）：空转出账户前置拦截不
+/// 写入；填齐（备注 / 转出 / 币种随账户推导 / 转入同币种 / 金额 / 总期数三
+/// 态的有限期数支）→ 创建 → 反馈 + 行即现（金额格 × N期尾饰 + 下期转账）。
+/// 删 perform_create 写接缝（create_scheduled_plan 直调）或币种推导、转入
+/// 候选过滤、总期数语义任一接线即红。
+#[test]
+fn scheduled_view_create_transfer_journey() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("scheduled-transfer-create");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        seed_account_with_balance(&db, "测试现金", 10_000);
+        seed_account_with_balance(&db, "储蓄罐", 0);
+    }
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_transfers_pane(&mut app);
+
+    // 打开新建弹窗。
+    app.press("id:transfer-create-open").unwrap();
+    app.wait_for("id:app-modal").unwrap();
+    app.wait_for("text:新建定时转账").unwrap();
+
+    // 前置拦截：无转出账户点提交 → 错误条位，不写入。
+    app.press("id:transfer-create").unwrap();
+    app.wait_for("id:transfer-create-error").unwrap();
+    app.wait_for("text:创建失败: 请选择转出账户").unwrap();
+
+    // 填备注 + 转出账户（拼音可搜下拉，#2033 封装）。
+    app.type_text("id:transfer-note", "月度储蓄").unwrap();
+    app.press("id:transfer-from-account").unwrap();
+    app.wait_for("id:transfer-from-account-search").unwrap();
+    app.press("id:transfer-from-account-option >> text:测试现金 >> nth=0")
+        .unwrap();
+    // 币种随转出账户推导（只读展示；拆 derive_currency_text 即红）。
+    app.wait_for("text:CNY").unwrap();
+    // 转入账户（候选同币种过滤 + 排除转出本身：候选面只剩储蓄罐）。
+    app.press("id:transfer-to-account").unwrap();
+    app.wait_for("id:transfer-to-account-search").unwrap();
+    app.press("id:transfer-to-account-option >> text:储蓄罐 >> nth=0")
+        .unwrap();
+    app.type_text("id:transfer-amount", "30").unwrap();
+    // 总期数三态：填 3 = 有限期数（金额格带「× 3期」尾饰）。
+    app.type_text("id:transfer-total-occurrences", "3").unwrap();
+    app.press("id:transfer-create").unwrap();
+
+    // 反馈 + 行即现（金额/转入/下期转账随行）。
+    app.wait_for("text:已创建定时转账").unwrap();
+    app.wait_for("text:月度储蓄").unwrap();
+    assert!(
+        app.screen().texts().iter().any(|t| t.contains("¥30 × 3期")),
+        "金额格 × N期尾饰（有限总期数）：{:?}",
+        app.screen().texts()
+    );
+    assert!(
+        app.screen().texts().iter().any(|t| t.contains("· ¥30")),
+        "下期转账 = 期次日期 · ¥30（预生成期次）：{:?}",
+        app.screen().texts()
+    );
+}
+
+/// 定时转账行操作旅程（暂停/恢复/取消气泡写路径平价，旧壳
+/// transferCancelConfirm 文案同位）：暂停 → 行离「进行中」进「已暂停」+ 恢
+/// 复钮在；恢复 → 行回「进行中」；取消走确认气泡，取消键不写、确定键写成
+/// 功。删 perform_status 写接缝（update_scheduled_plan_status 直调）或气泡
+/// 确认接线任一环即红。
+#[test]
+fn scheduled_view_transfer_row_actions_pause_resume_cancel() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("scheduled-transfer-actions");
+    let plan_id;
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let from = seed_account_with_balance(&db, "测试现金", 10_000);
+        let to = seed_account_with_balance(&db, "储蓄罐", 0);
+        plan_id = seed_transfer_plan(&db, &from, &to, Some("月度储蓄"), None);
+    }
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_transfers_pane(&mut app);
+
+    // 暂停：行随状态过滤离「进行中」视图（纯前端过滤，旧壳 filteredRows 平
+    // 价；先钉行锚点消失再换过滤）。
+    app.press(&format!("id:transfer-pause-{plan_id}")).unwrap();
+    app.wait_for_gone(&format!("id:transfer-next-{plan_id}"), DEFAULT_WAIT)
+        .unwrap();
+    app.press("id:transfer-filter-paused").unwrap();
+    app.wait_for(&format!("id:transfer-next-{plan_id}"))
+        .unwrap();
+
+    // 恢复：行随状态过滤离「已暂停」视图，回「进行中」过滤后暂停钮回行。
+    app.press(&format!("id:transfer-resume-{plan_id}")).unwrap();
+    app.wait_for_gone(&format!("id:transfer-resume-{plan_id}"), DEFAULT_WAIT)
+        .unwrap();
+    app.press("id:transfer-filter-active").unwrap();
+    app.wait_for(&format!("id:transfer-pause-{plan_id}"))
+        .unwrap();
+
+    // 取消确认气泡（旧壳 transferCancelConfirm 同文案同位）：打开气泡看文
+    // 案 → 先点气泡取消键（不写）→ 重新打开点确定（写成功）。
+    app.press(&format!("id:transfer-cancel-{plan_id}")).unwrap();
+    app.wait_for("text:取消后不再自动转账，已生成的交易与历史期次保留。确认取消？")
+        .unwrap();
+    app.press("id:transfer-cancel-cancel").unwrap();
+    app.wait_for_gone(
+        "text:取消后不再自动转账，已生成的交易与历史期次保留。确认取消？",
+        DEFAULT_WAIT,
+    )
+    .unwrap();
+    app.press(&format!("id:transfer-cancel-{plan_id}")).unwrap();
+    app.wait_for("text:取消后不再自动转账，已生成的交易与历史期次保留。确认取消？")
+        .unwrap();
+    app.press("id:transfer-cancel-confirm").unwrap();
+    // 已取消行离激活过滤（进行中）——行锚点消失，「已取消」过滤下回归。
+    app.wait_for_gone(&format!("id:transfer-next-{plan_id}"), DEFAULT_WAIT)
+        .unwrap();
+    app.press("id:transfer-filter-cancelled").unwrap();
+    app.wait_for(&format!("id:transfer-next-{plan_id}"))
+        .unwrap();
+    assert!(
+        !app.screen().texts().contains(&"暂停"),
+        "已取消计划行操作收窄（仅期次）"
+    );
+}
+
+/// 分期页签落地平价（旧壳 InstallmentsPane 桌面档十列 + 进度呈现）：行格装
+/// 配产物（商户/分类/扣款账户/总金额/进度）、期数维度进度条锚点、已还汇总
+/// 文案（实时汇总来自既有详情命令 completed_*，执行一期的落库路径消费——
+/// 域 execute_occurrence 公开写入口）。删 scheduled.rs 容器真实分支、进度
+/// 条自绘接线或行操作接线任一即红。
+#[test]
+fn scheduled_view_installments_pane_lands_with_progress_rows() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("scheduled-installments-landing");
+    let plan_id;
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let account = seed_account_with_balance(&db, "测试现金", 10_000);
+        plan_id = seed_installment_plan(&db, &account, Some("手机分期"));
+    }
+    // 执行一期（域公开写入口，进度汇总的落库路径）：已完成期次数 1、已还
+    // 金额 ¥100——清集成一个已还金额分位，断言确定性。
+    let occ_id = first_pending_occurrence_id(&dir, &plan_id);
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let conn = db
+            .conn
+            .lock()
+            .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
+            .unwrap();
+        ledger_scheduled::execute_occurrence(&conn, &occ_id).unwrap();
+    }
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_installments_pane(&mut app);
+
+    // 行即现 + 进度呈现（进度列 = 已还汇总文案 + 期数维度进度条行级锚点）。
+    app.wait_for(&format!("id:inst-progress-{plan_id}"))
+        .unwrap();
+    for text in [
+        "分期清单",
+        "手机分期",
+        "¥300",
+        "已还 ¥100 / ¥300 · 1/3 期",
+        "每月",
+        "进行中",
+    ] {
+        assert!(
+            app.shows(text),
+            "分期清单应呈现「{text}」：{:?}",
+            app.screen().texts()
+        );
+    }
+    // 状态过滤四键（WITH_COMPLETED 键集）。
+    for anchor in [
+        "id:inst-filter-active",
+        "id:inst-filter-paused",
+        "id:inst-filter-cancelled",
+        "id:inst-filter-completed",
+    ] {
+        assert!(app.screen().count(anchor).unwrap() > 0, "{anchor} 在屏");
+    }
+    // 行操作（生命周期闭集：期次/暂停/取消，无编辑；操作列得在 1280 视口
+    // 全宽在屏——列建议宽已收紧，见 INST_COLUMNS）。
+    for anchor in [
+        format!("id:inst-detail-{plan_id}"),
+        format!("id:inst-pause-{plan_id}"),
+        format!("id:inst-cancel-{plan_id}"),
+    ] {
+        assert!(
+            app.screen().count(&anchor).unwrap() > 0,
+            "{anchor} 在屏：{:?}",
+            app.screen().texts()
+        );
+    }
+    assert!(
+        app.screen()
+            .count(&format!("id:inst-edit-{plan_id}"))
+            .unwrap()
+            == 0,
+        "分期行无编辑动作（编辑是订阅适配器自建描述符）"
+    );
+}
+
+/// 创建分期旅程（旧壳校验面 + floor 口径预览 + toast 反馈平价）：空账户/
+/// 总额小于期数两条前置拦截都不写入；填齐后每期金额预览（100 分 / 3 期 =
+/// 33/33/34 →「每期 ¥33.33 · 末期 ¥33.34（含尾差）」，口径单点
+/// installment_schedule）→ 创建 → 反馈 + 行即现（进度 0/3）。删 perform_
+/// create 写接缝或预览接线任一环即红（预览文案缺席）。
+#[test]
+fn scheduled_view_create_installment_journey() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("scheduled-installment-create");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        seed_account_with_balance(&db, "测试现金", 10_000);
+    }
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_installments_pane(&mut app);
+
+    // 打开新建弹窗。
+    app.press("id:inst-create-open").unwrap();
+    app.wait_for("id:app-modal").unwrap();
+    app.wait_for("text:新建分期").unwrap();
+
+    // 前置拦截一：无账户点提交 → 错误条位，不写入。
+    app.press("id:inst-create").unwrap();
+    app.wait_for("id:inst-create-error").unwrap();
+    app.wait_for("text:创建失败: 请选择扣款账户").unwrap();
+
+    // 选账户（拼音可搜下拉，#2033 封装）。
+    app.press("id:inst-account").unwrap();
+    app.wait_for("id:inst-account-search").unwrap();
+    app.press("id:inst-account-option >> text:测试现金 >> nth=0")
+        .unwrap();
+    // 币种随账户推导（只读展示）。
+    app.wait_for("text:CNY").unwrap();
+
+    // 前置拦截二：总额 < 期数（每期至少 1 分）→ 前端先行同文案拦截
+    //（¥0.03 = 3 分 < 5 期）。
+    app.type_text("id:inst-total", "0.03").unwrap();
+    app.type_text("id:inst-periods", "5").unwrap();
+    app.press("id:inst-create").unwrap();
+    app.wait_for("text:创建失败: 总金额不能小于期数（每期至少 1 分）")
+        .unwrap();
+
+    // 每期金额预览（floor 均分 + 尾差进最后一期；装配层预览接线：
+    // ¥100 / 3 期 = 33/33/34 →「每期 ¥33.33 · 末期 ¥33.34（含尾差）」）。
+    app.clear("id:inst-total").unwrap();
+    app.type_text("id:inst-total", "100").unwrap();
+    app.clear("id:inst-periods").unwrap();
+    app.type_text("id:inst-periods", "3").unwrap();
+    app.wait_for("text:每期 ¥33.33 · 末期 ¥33.34（含尾差）")
+        .unwrap();
+
+    app.type_text("id:inst-note", "手机分期").unwrap();
+    app.press("id:inst-create").unwrap();
+
+    // 反馈 + 行即现（进度 0/3）。
+    app.wait_for("text:已创建分期计划").unwrap();
+    app.wait_for("text:手机分期").unwrap();
+    assert!(
+        app.screen()
+            .texts()
+            .iter()
+            .any(|t| t.contains("已还 ¥0 / ¥100 · 0/3 期")),
+        "进度 = 已还汇总（实时面）：{:?}",
+        app.screen().texts()
+    );
 }
