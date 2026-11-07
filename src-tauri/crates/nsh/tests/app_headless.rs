@@ -7352,6 +7352,405 @@ fn item_id_by_name(dir: &std::path::Path, name: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------
+// 商户管理视图（#2052）：字典 + 新增表单卡 + 清单卡（统一模糊搜索 / 显示已删 /
+// 条数排序 / 条数下钻 / 客户端分页）+ 编辑弹窗与软删轻量确认；写路径直调域，
+// 写成功后广播交易失效信号（交易列表商户来源重读）。删任一接线即红的负向
+// 条目逐项写在各测试注释（ADR-0087：断言对准用户可观察结果）。
+// ---------------------------------------------------------------------------
+
+/// 经记账组「更多」容器点开商户页签（#2052 旅程用例共用）：清单卡片在屏即
+/// 落位凭据（容器页签到达路径的“到达”半边——删容器页签分支或挂载分支即红）。
+fn open_merchants(app: &mut Headless) {
+    app.wait_for("id:nav-more-bookkeeping").unwrap();
+    app.press("id:nav-more-bookkeeping").unwrap();
+    app.wait_for("id:more-tab-merchants").unwrap();
+    app.press("id:more-tab-merchants").unwrap();
+    app.wait_for("id:merchant-table").unwrap();
+    app.wait_for("text:商户列表").unwrap();
+}
+
+/// 经域读路径反查商户 id（用例共用；弹窗/气泡目标 test_id 嵌 id 用）。
+fn nsh_app_lib_merchant_id(dir: &std::path::Path, name: &str) -> String {
+    let db = nsh_app::boot::boot_ledger(dir).unwrap();
+    let conn = db
+        .conn
+        .lock()
+        .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
+        .unwrap();
+    ledger_merchants::list_merchants(&conn, true)
+        .unwrap()
+        .into_iter()
+        .find(|row| row.name == name)
+        .map(|row| row.id)
+        .unwrap_or_default()
+}
+
+/// 首屏装载（旧壳 MerchantManager onMounted 平价）：两卡（新增/列表）+ 列
+/// 头与行格文本（名称 / 关联交易计数）。删除清单读接缝（boot::merchant_rows
+/// / merchant_transaction_counts）或装配分支即红。
+#[test]
+fn merchants_view_lands_with_cards_and_counted_rows() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("merchants-list");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let account = seed_cash_account(&db);
+        let jd = seed_merchant(&db, "京东");
+        let mt = seed_merchant(&db, "美团");
+        for merchant in [jd, mt] {
+            seed_transaction(
+                &db,
+                TxnSeed {
+                    account: &account,
+                    to_account: None,
+                    kind: TransactionKind::Expense,
+                    amount_cents: 10_00,
+                    date: &test_date(0),
+                    category_id: None,
+                    merchant_id: Some(merchant),
+                    note: None,
+                },
+            );
+        }
+    }
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_merchants(&mut app);
+
+    // 两卡（新增表单卡 + 清单卡）。
+    assert!(
+        app.shows("新增商户"),
+        "新增表单卡在屏：{:?}",
+        app.screen().texts()
+    );
+    assert!(app.shows("商户列表"), "清单卡在屏");
+    // 列头与行格文本（装配层产物）：名称 / 关联交易（毛笔数）。
+    for text in ["名称", "关联交易", "操作"] {
+        assert!(
+            app.shows(text),
+            "列头应呈现「{text}」：{:?}",
+            app.screen().texts()
+        );
+    }
+    assert!(app.shows("京东"), "在用行在屏：{:?}", app.screen().texts());
+    assert!(app.shows("美团"), "在用行在屏");
+    assert!(app.shows("1"), "每商户毛笔数 1：{:?}", app.screen().texts());
+    // 总数条（旧壳 pagination.prefix 同词表）。
+    app.wait_for("text:共 2 条").unwrap();
+}
+
+/// 新增旅程（旧壳 addMerchant 平价）：空名前置拦截不写，添加成功反馈 + 行即
+/// 现；重名被域守卫码化拒绝，错误在卡内呈现且表单不清空。删 boot::
+/// create_merchant 写接缝即红（成功旅程行不到屏）。
+#[test]
+fn merchants_view_create_journey_and_duplicate_rejection() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("merchants-create");
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_merchants(&mut app);
+
+    // 空名前置拦截：提示 + 不写库。
+    app.press("id:merchant-add").unwrap();
+    app.wait_for("text:请输入商户名称").unwrap();
+    assert!(
+        nsh_app_lib_merchant_id(&dir, "京东").is_empty(),
+        "前置拦截不写库（空库无商户）"
+    );
+    app.wait_for("text:共 0 条").unwrap();
+
+    // 成功旅程：输入名称 → 添加 → 反馈 + 行即现（写入成功广播交易失效，
+    // 本视图订阅重读——转已删/软删计数随重读跟随）。
+    app.type_text("id:merchant-create-name", "京东").unwrap();
+    app.press("id:merchant-add").unwrap();
+    app.wait_for("text:已添加商户").unwrap();
+    app.wait_for("text:京东").unwrap();
+    app.wait_for("text:共 1 条").unwrap();
+    assert_eq!(
+        app.screen().input_text("id:merchant-create-name").unwrap(),
+        Some(""),
+        "成功后表单清空"
+    );
+
+    // 重名拒绝：域码化错误（「商户已存在: 京东」）在卡内呈现，表单不清空。
+    app.type_text("id:merchant-create-name", "京东").unwrap();
+    app.press("id:merchant-add").unwrap();
+    app.wait_for("text:添加失败: 商户已存在: 京东").unwrap();
+    assert_eq!(
+        app.screen().count("text:共 1 条").unwrap(),
+        1,
+        "重名未写入（仍 1 条）"
+    );
+    assert_eq!(
+        app.screen().input_text("id:merchant-create-name").unwrap(),
+        Some("京东"),
+        "失败不清空表单（可直接修正）"
+    );
+}
+
+/// 编辑改名（旧壳 MerchantEditModal 平价）：行内「编辑」→ 弹窗预填 → 保存
+/// → 反馈 + 行更新；交易列表来源列新名即现（失效信号广播驱动的重读——删除
+/// signals::notify_transactions_invalidated 接线即红：列表落位重读是读时的，
+/// 广播是被删的语义锚）。删除 boot::update_merchant 写接缝即红（行不更新）。
+#[test]
+fn merchants_view_edit_renames_and_updates_source_column() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("merchants-edit");
+    let jd;
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let account = seed_cash_account(&db);
+        jd = seed_merchant(&db, "京东");
+        seed_transaction(
+            &db,
+            TxnSeed {
+                account: &account,
+                to_account: None,
+                kind: TransactionKind::Expense,
+                amount_cents: 10_00,
+                date: &test_date(0),
+                category_id: None,
+                merchant_id: Some(jd.clone()),
+                note: None,
+            },
+        );
+    }
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_merchants(&mut app);
+    app.wait_for("text:京东").unwrap();
+
+    // 编辑弹窗预填（旧壳 watch immediate 同果）。
+    app.press(&format!("id:merchant-edit-{jd}")).unwrap();
+    app.wait_for("text:编辑商户").unwrap();
+    assert_eq!(
+        app.screen().input_text("id:merchant-edit-name").unwrap(),
+        Some("京东"),
+        "预填原名"
+    );
+
+    // 空名前置拦截（旧壳 nameRequired 同词表；错误条位带词表前缀）。
+    app.clear("id:merchant-edit-name").unwrap();
+    app.press("id:merchant-edit-save").unwrap();
+    app.wait_for("text:更新失败: 请输入商户名称").unwrap();
+
+    // 保存 → 反馈 + 行更新。
+    app.type_text("id:merchant-edit-name", "京东商城").unwrap();
+    app.press("id:merchant-edit-save").unwrap();
+    app.wait_for("text:已更新商户").unwrap();
+    app.wait_for("text:京东商城").unwrap();
+
+    // 交易列表来源列新名（广播 → 列表重读）。
+    open_transactions(&mut app);
+    app.wait_for("text:京东商城").unwrap();
+}
+
+/// 软删两相（旧壳 AppPopconfirm 平价）：取消不写；确认后行离席（在用清单），
+/// rename 延伸显示已删后仍以已删行呈现。删 boot::delete_merchant 写接缝即红
+///（确认后行不离席）。
+#[test]
+fn merchants_view_delete_needs_confirmation_and_cancels_before_write() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("merchants-delete");
+    let jd;
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        jd = seed_merchant(&db, "京东");
+    }
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_merchants(&mut app);
+    app.wait_for("text:京东").unwrap();
+
+    // 气泡文案（旧壳 deleteConfirm 同词表）与取消键。
+    app.press(&format!("id:merchant-delete-{jd}")).unwrap();
+    app.wait_for("text:确认删除该商户？历史交易仍会显示它的名字。")
+        .unwrap();
+    // 取消：行仍在。
+    app.press("id:merchant-delete-cancel").unwrap();
+    app.wait_for("text:京东").unwrap();
+
+    // 确认：行离席（在用清单）+ 反馈。
+    app.press(&format!("id:merchant-delete-{jd}")).unwrap();
+    app.wait_for("text:确认删除该商户？历史交易仍会显示它的名字。")
+        .unwrap();
+    app.press("id:merchant-delete-confirm").unwrap();
+    app.wait_for("text:已删除商户").unwrap();
+    app.wait_for_gone("text:京东", DEFAULT_WAIT).unwrap();
+
+    // 显示已删开启 → 已删行追加在尾（只读，带「已删除」标记）。
+    app.press("id:merchant-show-deleted").unwrap();
+    app.wait_for("text:京东").unwrap();
+    app.wait_for("text:已删除").unwrap();
+    app.wait_for(&format!("id:merchant-deleted-tag-{jd}"))
+        .unwrap();
+}
+
+/// 显示已删与搜索（旧壳 issue #447/#447 平价）：默认已删行不显示；开关开启
+/// 后已删行追加（带标记无操作）；统一模糊搜索本地过滤（拼音首字母命中），
+/// 清空恢复完整列表。删搜索接线或开关即红（断言对准在屏行集）。
+#[test]
+fn merchants_view_search_and_show_deleted_toggle_readonly_rows() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("merchants-filter");
+    let bogus;
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        seed_merchant(&db, "京东");
+        bogus = seed_merchant(&db, "京东旧");
+    }
+    {
+        // 软删「京东旧」（经域公开写入口域行 is_deleted=1）。
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let conn = db
+            .conn
+            .lock()
+            .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
+            .unwrap();
+        ledger_merchants::delete_merchant(&conn, &bogus).unwrap();
+    }
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_merchants(&mut app);
+
+    // 默认只显示在用。
+    app.wait_for("text:京东").unwrap();
+    assert!(
+        !app.shows("已删除"),
+        "默认无已删标记：{:?}",
+        app.screen().texts()
+    );
+    assert!(
+        app.screen()
+            .count(&format!("id:merchant-deleted-tag-{bogus}"))
+            .unwrap()
+            == 0,
+        "已删行默认不呈现（标记锚点不在屏）"
+    );
+
+    // 显示已删开启：已删行追加在尾，带「已删除」标记（在用行仍在前）。
+    app.press("id:merchant-show-deleted").unwrap();
+    app.wait_for("text:京东").unwrap();
+    app.wait_for(&format!("id:merchant-deleted-tag-{bogus}"))
+        .unwrap();
+    app.wait_for("text:已删除").unwrap();
+    app.wait_for("text:共 2 条").unwrap();
+
+    // 搜索（拼音首字母命中）过滤未命中项：两行都含「京东」→ 两条。
+    app.type_text("id:merchant-search", "jd").unwrap();
+    app.wait_for("text:共 2 条").unwrap();
+    // 限定「旧」→ 只剩已删行（在京旧，标记行）。
+    app.clear("id:merchant-search").unwrap();
+    app.type_text("id:merchant-search", "旧").unwrap();
+    app.wait_for("text:共 1 条").unwrap();
+    // 清空恢复完整列表（过滤意图页码归零不回退总数）。
+    app.clear("id:merchant-search").unwrap();
+    app.wait_for("text:共 2 条").unwrap();
+}
+
+/// 移回侧栏直达（旧壳侧栏仓位语义平价）：存储种子把商户移出记账收纳清单、
+/// 挂主项仓位 → 侧栏商户项直达真实视图。删 view_host 的商户分支挂载 → 本测
+/// 红（「迁移中」占位——容器分支不经过本路径，负向条目独立于容器到达）。
+#[test]
+fn merchants_view_lands_directly_when_moved_to_sidebar() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("merchants-direct");
+
+    // 侧栏序存储种子：「商户」移回侧栏（收纳清单同步剔除，就地移回豁免
+    // 同形的存储侧清面）。
+    let mut app = Headless::start(desktop_config_with_storage(&[
+        (
+            "view_state:sidebar_containment",
+            r#"{"bookkeeping":["scheduled"],"assets":["policies","physicalAssets","insurers"],"insights":[]}"#,
+        ),
+        (
+            "view_state:sidebar_order",
+            r#"{"bookkeeping":["transactions","accounts","merchants","budget"],"assets":["investments","items","savingsGoals"],"insights":["reports","search"]}"#,
+        ),
+    ]))
+    .unwrap();
+    nsh_app::app::set_book_dir(dir);
+    app.wait_for("id:nav-merchants").unwrap();
+    app.press("id:nav-merchants").unwrap();
+    app.wait_for("id:merchant-table").unwrap();
+    app.wait_for("text:商户列表").unwrap();
+}
+
+/// 条数下钻（issue #446 平价）：点条数 → 交易列表带商户过滤落位。删
+/// nav::open 下钻接线即红（点击后停留商户视图）。
+#[test]
+fn merchants_view_count_click_drills_to_transactions_filtered() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("merchants-drill");
+    let jd;
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let account = seed_cash_account(&db);
+        jd = seed_merchant(&db, "京东");
+        for (date, note) in [("2026-01-01", "京东笔一"), ("2026-01-02", "京东笔二")] {
+            seed_transaction(
+                &db,
+                TxnSeed {
+                    account: &account,
+                    to_account: None,
+                    kind: TransactionKind::Expense,
+                    amount_cents: 10_00,
+                    date,
+                    category_id: None,
+                    merchant_id: Some(jd.clone()),
+                    note: Some(note.to_owned()),
+                },
+            );
+        }
+        // 无商户的另一笔（被下钻筛选排除）。
+        seed_transaction(
+            &db,
+            TxnSeed {
+                account: &account,
+                to_account: None,
+                kind: TransactionKind::Expense,
+                amount_cents: 10_00,
+                date: "2026-01-03",
+                category_id: None,
+                merchant_id: None,
+                note: Some("无商户笔".to_owned()),
+            },
+        );
+    }
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_merchants(&mut app);
+    app.wait_for("text:京东").unwrap();
+
+    // 点条数 → 交易列表落位带商户过滤：只剩两笔京东交易。
+    app.press(&format!("id:merchant-count-{jd}")).unwrap();
+    app.wait_for("id:tx-table").unwrap();
+    app.wait_for("text:共 2 条").unwrap();
+    assert!(
+        app.shows("京东笔一") && app.shows("京东笔二"),
+        "下钻筛选命中在屏"
+    );
+    assert!(
+        !app.shows("无商户笔"),
+        "其它交易被下钻筛选排除：{:?}",
+        app.screen().texts()
+    );
+}
+
+// ---------------------------------------------------------------------------
 // 报表视图（#2048）：bar 图自绘三卡（期间口径统一）。造数经域公开写入口，
 // 断言只写用户可见结果；接线删除即红（负向验证条目见交付报告）。
 // ---------------------------------------------------------------------------

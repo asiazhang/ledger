@@ -137,14 +137,18 @@ pub fn group_more_view(group: GroupId) -> impl IntoElement {
 
     // 激活成员的下钻意图消费（落位与意图同轮落地；effect 键激活切换，读一次
     // 语义由 [nav::take_intent] 封闸承担——页签往复不重放）。激活成员是已迁
-    // 移的真实视图（交易列表 #2037 / 定时 #2042 / 物品 #2044）时本占位壳不
-    // 抢消费（真实视图挂载自带落位消费——抢了即吞掉筛选 / focus 落位意图）。
+    // 移的真实视图（交易列表 #2037 / 定时 #2042 / 物品 #2044 / 商户 #2052）时
+    // 本占位壳不抢消费（真实视图挂载自带落位消费——抢了即吞掉筛选 / focus
+    // 落位意图）。
     let focused = signal(None::<NavIntent>);
     effect(move || {
         let current = active.get();
         if !matches!(
             current,
-            Some(ViewName::Transactions) | Some(ViewName::Scheduled) | Some(ViewName::Items)
+            Some(ViewName::Transactions)
+                | Some(ViewName::Scheduled)
+                | Some(ViewName::Items)
+                | Some(ViewName::Merchants)
         ) {
             focused.set(nav::take_intent());
         }
@@ -170,8 +174,8 @@ pub fn group_more_view(group: GroupId) -> impl IntoElement {
         );
 
     // 被收视图整体装载（容器零业务逻辑）：已迁移的真实视图（交易列表 /
-    // 定时 #2042 / 物品 #2044）挂真实组件，其余挂激活页签的占位（标题随
-    // 激活成员响应式，意图消费归上方 effect）。
+    // 定时 #2042 / 物品 #2044 / 商户 #2052）挂真实组件，其余挂激活页签的占位
+    //（标题随激活成员响应式，意图消费归上方 effect）。
     let content = when(
         move || active.get() == Some(ViewName::Transactions),
         transactions_view,
@@ -187,16 +191,22 @@ pub fn group_more_view(group: GroupId) -> impl IntoElement {
                 items::items_view,
             )
             .otherwise(move || {
-                placeholder_shell(
-                    move || {
-                        active
-                            .get()
-                            .map(|v| v.label().to_owned())
-                            .unwrap_or_default()
-                    },
-                    focused,
-                    palette,
+                when(
+                    move || active.get() == Some(ViewName::Merchants),
+                    crate::merchants::merchants_view,
                 )
+                .otherwise(move || {
+                    placeholder_shell(
+                        move || {
+                            active
+                                .get()
+                                .map(|v| v.label().to_owned())
+                                .unwrap_or_default()
+                        },
+                        focused,
+                        palette,
+                    )
+                })
             })
         })
     });
