@@ -399,3 +399,62 @@ pub fn delete_budget(db: &DbState, id: &str) -> Result<()> {
     let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
     ledger_budget::crud::delete_budget(&conn, id)
 }
+
+// ---------------------------------------------------------------------------
+// 概览视图读接缝（#2039）：四卡取数直调域入口——与旧壳 dashboard_overview /
+// monthly_summary / list_holdings / cumulative_pnl_native_total /
+// financial_freedom 命令消费的同一域函数，不经 IPC。各卡各一个读闭包：
+// 折算与多语句同屏口径的同一读事务收口在域内单点（dashboard 读探针与
+// financial_freedom 域内 ensure_transaction，tx_scope 快照纪律），本壳不另立
+// 第二份口径表达式。
+// ---------------------------------------------------------------------------
+
+/// 净资产总览（dashboard 域读探针直调，旧壳 `dashboard_overview` 命令同一
+/// 执行协议）：三腿合计（账户余额含投资现金 / 持仓市值 / 实物资产）与多币
+/// 种折算全在后端单点（ADR-0131 同思路：总览屏不出现第二份口径表达式）。
+/// **走写连接**（旧壳同款只读甄别收口，ADR-0117 代价 3）：域读探针内含缓存
+/// 自愈写（指纹失配实时重算并 UPSERT 净资产缓存），只读读连接会在只读约束
+/// 上报错。
+pub fn dashboard_overview(db: &DbState) -> Result<ledger_dashboard::DashboardOverview> {
+    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    ledger_dashboard::query_dashboard_overview(&conn)
+}
+
+/// 月度收支行集（报表域读路径直调，旧壳 `monthly_summary` 命令同一执行协议）：
+/// 指定年份逐月行（income_net / 毛支出 / 退款），当月行由视图按本月键拾取。
+/// 读连接是成对建连的只读侧（ADR-0117）。
+pub fn monthly_summary_rows(
+    db: &DbState,
+    year: i64,
+) -> Result<Vec<ledger_reports::MonthlySummary>> {
+    let conn = conn_lock(&db.read_conn)?;
+    ledger_reports::monthly_summary_rows(&conn, year, None, None)
+}
+
+/// 当前持仓行集（投资域读路径直调，旧壳 `list_holdings` 命令同一执行协议）：
+/// `v_holdings` 行 + 账户币逐行当期汇率软折算（`native_*_cents` 行级空值
+/// 语义——缺现价或缺折算汇率行不计入合计，呈现面显式可见）。投资概览卡与
+/// 财务自由度分子（持仓市值腿）同源不漂移。读连接是成对建连的只读侧。
+pub fn portfolio_rows(db: &DbState) -> Result<Vec<ledger_investment::Holding>> {
+    let conn = conn_lock(&db.read_conn)?;
+    ledger_investment::list_holdings(&conn)
+}
+
+/// 累计收益·折本位币单值（投资域读路径直调，旧壳 `cumulative_pnl_native_total`
+/// 命令同一执行协议）：三腿逐行当期汇率折全局默认币种后求和（缺汇率码化
+/// 上抛，域内同事务收口）。读连接是成对建连的只读侧（ADR-0117）。
+pub fn cumulative_pnl_native_total(
+    db: &DbState,
+) -> Result<ledger_investment::CumulativePnlNativeTotal> {
+    let conn = conn_lock(&db.read_conn)?;
+    ledger_investment::query_cumulative_pnl_native_total(&conn)
+}
+
+/// 财务自由度总览（投资域读路径直调，旧壳 `financial_freedom` 命令同一执行
+/// 协议）：分子（可投资资产两腿折算）与分母（预算域年化）跨表多语句，域内
+/// `ensure_transaction` 同一读事务（分子分母恒同时点，tx_scope 快照纪律）。
+/// 读连接是成对建连的只读侧（ADR-0117）。
+pub fn financial_freedom(db: &DbState) -> Result<ledger_investment::FinancialFreedomOverview> {
+    let conn = conn_lock(&db.read_conn)?;
+    ledger_investment::query_financial_freedom(&conn)
+}

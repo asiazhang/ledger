@@ -8,19 +8,18 @@
 //! → 探针红（无回显）；删占位组件的 [`crate::nav::take_intent`] 消费 → 探针
 //! 红（回显不出现）；删容器页签落位 → 页签切换探针红。
 
-use std::sync::Mutex;
-
 use nsh_core::prelude::*;
 use nsh_engine::{EngineConfig, Environment, Idiom, Os, Root};
 use nsh_testing::Headless;
 
+use std::sync::Mutex;
+
+use crate::app::test_assembly_guard;
 use crate::nav::{self, NavStore};
 use crate::nav_model::{self, GroupId, NavRequest, SourceKind, ViewName};
 use crate::views;
 
 const WAIT: std::time::Duration = std::time::Duration::from_secs(5);
-
-static SERIAL: Mutex<()> = Mutex::new(());
 
 /// 探针根组件：引擎线程内走真实导航生产路径，渲染落位状态与真实占位组件。
 /// 「换到实物资产页签」按钮产生容器页签意图（引擎线程真实点击路径的等价
@@ -105,7 +104,7 @@ fn probe_config() -> EngineConfig {
 /// 挂载消费回显 → 页签切换重挂不重放）。删除任一接线即红（见模块注释）。
 #[test]
 fn seam_delivers_focus_once_and_container_tab_intents_land() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = test_assembly_guard();
     crate::app::reset_book_assembly();
     let mut app = Headless::start(probe_config()).unwrap();
 
@@ -181,7 +180,7 @@ fn GuardProbeApp() -> impl IntoElement {
 
 #[test]
 fn seam_guard_decides_closed_bare_reference_and_container_tab_landing() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = test_assembly_guard();
     crate::app::reset_book_assembly();
     let config = EngineConfig {
         storage: Some(nsh_testing::MemoryStorage::new(vec![(
@@ -241,7 +240,7 @@ fn seam_drill_filters_land_on_real_transactions_view() {
     use ledger_accounts::{AccountInput, AccountType};
     use ledger_transaction::{TransactionInput, TransactionKind};
 
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = test_assembly_guard();
     crate::app::reset_book_assembly();
 
     // 造数（两账户各一笔支出；账户 id 经载荷槽注入探针）。账本目录落唯一

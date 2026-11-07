@@ -806,16 +806,16 @@ pub fn resolve_landing(mut req: NavRequest, facts: &NavFacts) -> Landing {
     }
 }
 
-/// 出厂落点（骨架期 = 交易列表，唯一已迁移视图）：无记录/未知名/已关闭的
-/// 启动恢复与出厂落点同归此处。旧壳出厂落点是概览；概览迁入后由概览票把
-/// 本常量改回概览（届时它同时是守卫回退的安全落点）。
-pub const DEFAULT_VIEW: ViewName = ViewName::Transactions;
+/// 出厂落点（概览——旧壳默认路由第一屏）：无记录/未知名/已关闭的启动恢复与
+/// 出厂落点同归此处。骨架期曾落交易列表（唯一已迁移视图的安全兑底，#2032）；
+/// 概览迁入后由 #2039 改回概览——它同时是守卫回退的安全落点（概览不可关），
+/// 与旧壳「关闭恢复/未知名回概览」语义自然重合。
+pub const DEFAULT_VIEW: ViewName = ViewName::Dashboard;
 
 /// 启动恢复裁决（旧壳 `resolveRestoredViewName` + 路由守卫两道接线的合并）：
 /// 已存名先过守卫（被收纳视图落容器，与裸访问同路径）；未知名回出厂落点；
-/// 关闭视图的恢复不落概览而落出厂落点——骨架期概览尚未迁入（占位），安全
-/// 落点 = 唯一已迁移视图；概览迁入后 `DEFAULT_VIEW` 即概览，本分支自然退化
-/// 为旧壳同语义（关闭 → 概览）。
+/// 关闭视图的恢复落守卫改道后的概览（出厂落点与守卫安全落点同为概览，本
+/// 分支即旧壳同语义：关闭 → 概览）。
 pub fn resolve_restored(saved: Option<&str>, facts: &NavFacts) -> ViewName {
     let Some(view) = saved.and_then(ViewName::parse) else {
         return DEFAULT_VIEW;
@@ -1450,19 +1450,17 @@ mod tests {
     }
 
     /// 启动恢复裁决（旧壳 resolveRestoredViewName + 路由守卫两条路径的合并）：
-    /// 无记录/未知名 → 出厂落点（骨架期 = 交易列表，唯一已迁移视图）；已关闭
-    /// → 出厂落点；开放态走守卫（被收纳的定时 → 组「更多」页签）。
+    /// 无记录/未知名 → 出厂落点（概览——旧壳默认路由第一屏，#2039 改回）；
+    /// 已关闭 → 守卫回概览（出厂落点与守卫安全落点重合）；开放态走守卫
+    /// （被收纳的定时 → 组「更多」页签）。
     #[test]
     fn restore_resolves_unknown_closed_and_contained_last_views() {
         let facts = facts_with_closed(&[ViewName::Budget]);
-        assert_eq!(resolve_restored(None, &facts), ViewName::Transactions);
-        assert_eq!(
-            resolve_restored(Some("nope"), &facts),
-            ViewName::Transactions
-        );
+        assert_eq!(resolve_restored(None, &facts), ViewName::Dashboard);
+        assert_eq!(resolve_restored(Some("nope"), &facts), ViewName::Dashboard);
         assert_eq!(
             resolve_restored(Some("budget"), &facts),
-            ViewName::Transactions
+            ViewName::Dashboard
         );
         assert_eq!(
             resolve_restored(Some("accounts"), &facts),

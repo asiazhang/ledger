@@ -36,8 +36,8 @@ use crate::assembly::{
 use crate::boot;
 use crate::nav_model::ViewName;
 use crate::{
-    backup_entry, context_menu, danger, modal, multi_select, nav, nav_model, overlay, period,
-    pinyin_select, popconfirm, sidebar, signals, tx_filter, txn_form, views,
+    backup_entry, context_menu, danger, dashboard, modal, multi_select, nav, nav_model, overlay,
+    period, pinyin_select, popconfirm, sidebar, signals, tx_filter, txn_form, views,
 };
 
 /// 金额隐私模式开关的存储键（设备轻量设置项，与旧壳同键同值形态：旧壳
@@ -49,8 +49,8 @@ const AMOUNT_PRIVACY_STORAGE_KEY: &str = "amount_privacy_enabled";
 /// 金额隐私开关的设备态读取（组件任务内同步读；解析镜像旧壳 `loadLocal`
 /// 的 JSON 布尔语义：缺失/非法归默认关）。立桩无设置面——开关的写入口随
 /// 设置面票接入（旧壳入口：侧栏标题行眼睛图标），本壳消费同一域来源、
-/// 同一存储键。
-fn amount_privacy_enabled() -> bool {
+/// 同一存储键。crate 内消费面：交易/预算/概览视图的装配入口（#2039）。
+pub(crate) fn amount_privacy_enabled() -> bool {
     nsh_core::storage::Storage::get_item(AMOUNT_PRIVACY_STORAGE_KEY)
         .is_some_and(|raw| raw.trim() == "true")
 }
@@ -98,7 +98,7 @@ impl PageRead {
 /// `KIND_SEMANTIC_COLORS` 的逐值镜像，亮/暗两态自适应——色值只在此处与旧壳
 /// 各出现一份，NSH 侧不另立第二份色板：色型闭集住装配层
 /// [`assembly::AmountSemantic`]，色值映射住本函数）。
-fn amount_color(semantic: AmountSemantic) -> AdaptiveColor {
+pub(crate) fn amount_color(semantic: AmountSemantic) -> AdaptiveColor {
     match semantic {
         AmountSemantic::Expense => AdaptiveColor::new(rgb(0xd03050), rgb(0xe88080)),
         AmountSemantic::Income => AdaptiveColor::new(rgb(0x18a058), rgb(0x63e2b7)),
@@ -146,10 +146,24 @@ pub fn set_book_dir(dir: PathBuf) {
     }
 }
 
+/// lib 测试的装配串行锁（跨模块共享）：装配入口、会话句柄、导航状态与失效
+/// 信号订阅者都是进程级单例——引擎类 lib 单测（tests / nav::tests /
+/// dashboard::tests）跨模块互斥防串扰（#2039 概览探针长用例与既有探针并行
+/// 即互踩装配单例，收口单锁）。毒化取回内值（槽位本身不含不变量，测试
+/// panic 后续用例照常串行）。headless 集成测试目标有独立 SERIAL，两个测试
+/// 二进制互不串扰。
+#[doc(hidden)]
+#[cfg(test)]
+pub(crate) fn test_assembly_guard() -> MutexGuard<'static, ()> {
+    static LOCK: Mutex<()> = Mutex::new(());
+    LOCK.lock().unwrap_or_else(|p| p.into_inner())
+}
+
 /// 重置装配入口与会话句柄（headless 测试接缝）：同一进程内的多场景串行测试
 /// 先复位再注入各自的测试库路径（生产 bin 只注入一次，不消费本函数；串行
-/// 由测试侧的 SERIAL 锁保证，复位时上一场景的引擎已撤销）。失效信号订阅者
-/// 与导航状态属同一批复位点（上一场景视图的订阅者不得响应下一场景的广播）。
+/// 由 [`test_assembly_guard`] 保证，复位时上一场景的引擎已撤销）。失效信号
+/// 订阅者与导航状态属同一批复位点（上一场景视图的订阅者不得响应下一场景
+/// 的广播）。
 #[doc(hidden)]
 pub fn reset_book_assembly() {
     *book_dir_slot() = None;
@@ -2355,31 +2369,35 @@ fn view_host(nav: nav::NavStore) -> impl IntoElement {
     let current = nav.current;
     let is = move |name: ViewName| move || current.get() == name;
     let group_more = |gid: nav_model::GroupId| move || views::group_more_view(gid);
+    // 分支序随迁移系列推进：交易列表 / 预算（#2033）/ 概览（#2039，冻结点
+    // 三视图齐）挂真实组件，三容器挂「更多」页签壳，其余未迁移视图共享占位。
     when(is(ViewName::Transactions), transactions_view).otherwise(move || {
         when(is(ViewName::Budget), budget_view).otherwise(move || {
-            when(
-                is(ViewName::BookkeepingMore),
-                group_more(nav_model::GroupId::Bookkeeping),
-            )
-            .otherwise(move || {
+            when(is(ViewName::Dashboard), dashboard::dashboard_view).otherwise(move || {
                 when(
-                    is(ViewName::AssetsMore),
-                    group_more(nav_model::GroupId::Assets),
+                    is(ViewName::BookkeepingMore),
+                    group_more(nav_model::GroupId::Bookkeeping),
                 )
                 .otherwise(move || {
                     when(
-                        is(ViewName::InsightsMore),
-                        group_more(nav_model::GroupId::Insights),
+                        is(ViewName::AssetsMore),
+                        group_more(nav_model::GroupId::Assets),
                     )
                     .otherwise(move || {
-                        // 未迁移视图反应式占位壳：标题随当前视图；意图
-                        // 消费时机 = 落位（effect 键 current，同轮落地）。
-                        let focused = signal(None::<nav::NavIntent>);
-                        effect(move || {
-                            let _current = nav.current.get();
-                            focused.set(nav::take_intent());
-                        });
-                        views::placeholder_shell_current(focused)
+                        when(
+                            is(ViewName::InsightsMore),
+                            group_more(nav_model::GroupId::Insights),
+                        )
+                        .otherwise(move || {
+                            // 未迁移视图反应式占位壳：标题随当前视图；意图
+                            // 消费时机 = 落位（effect 键 current，同轮落地）。
+                            let focused = signal(None::<nav::NavIntent>);
+                            effect(move || {
+                                let _current = nav.current.get();
+                                focused.set(nav::take_intent());
+                            });
+                            views::placeholder_shell_current(focused)
+                        })
                     })
                 })
             })

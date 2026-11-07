@@ -297,7 +297,7 @@ fn app_window_renders_transaction_table_of_seeded_book() {
     nsh_app::app::set_book_dir(dir.clone());
     let mut app = Headless::start(desktop_config()).unwrap();
 
-    app.wait_for("text:共 1 条").unwrap();
+    open_transactions(&mut app);
     let texts = app.screen().texts();
     for expected in ["日期", "类型", "金额", "2026-01-01", "支出", "¥25"] {
         assert!(
@@ -318,6 +318,8 @@ fn app_window_shows_empty_state_for_empty_book() {
 
     nsh_app::app::set_book_dir(dir);
     let mut app = Headless::start(desktop_config()).unwrap();
+
+    open_transactions(&mut app);
 
     app.wait_for("text:暂无数据").unwrap();
     let texts = app.screen().texts();
@@ -341,7 +343,7 @@ fn app_window_flips_pages_by_pagination_bar_click() {
     let mut app = Headless::start(desktop_config()).unwrap();
 
     // 首页（最新 100 笔）：总数与首页首行（第 150 笔，2026-05-30）在屏。
-    app.wait_for("text:共 150 条").unwrap();
+    open_transactions(&mut app);
     app.wait_for("text:2026-05-30").unwrap();
 
     // 点击页码 2 → 末页行集替换（最旧 50 笔，2026-01-01..2026-02-19），首页
@@ -367,7 +369,7 @@ fn app_window_searches_by_chinese_keyword_with_raw_text_hits() {
     let mut app = Headless::start(desktop_config()).unwrap();
 
     // 列表态基线：共 2 条，两行都在屏（date DESC：01-02 在前）。
-    app.wait_for("text:共 2 条").unwrap();
+    open_transactions(&mut app);
     app.wait_for("text:2026-01-02").unwrap();
     app.wait_for("text:2026-01-01").unwrap();
 
@@ -392,10 +394,10 @@ fn app_window_shows_empty_state_when_search_has_no_hits() {
     nsh_app::app::set_book_dir(dir);
     let mut app = Headless::start(desktop_config()).unwrap();
 
-    app.wait_for("text:共 2 条").unwrap();
+    open_transactions(&mut app);
     app.type_text("id:tx-search", "不存在的关键词").unwrap();
     app.wait_for("text:无匹配结果").unwrap();
-    app.wait_for("text:命中 0 条").unwrap();
+    open_transactions(&mut app);
     app.wait_for_gone("text:2026-01-01", DEFAULT_WAIT).unwrap();
     app.wait_for_gone("text:2026-01-02", DEFAULT_WAIT).unwrap();
 }
@@ -413,9 +415,9 @@ fn app_window_restores_list_when_search_cleared() {
     nsh_app::app::set_book_dir(dir);
     let mut app = Headless::start(desktop_config()).unwrap();
 
-    app.wait_for("text:共 2 条").unwrap();
+    open_transactions(&mut app);
     app.type_text("id:tx-search", "火锅").unwrap();
-    app.wait_for("text:命中 1 条").unwrap();
+    open_transactions(&mut app);
 
     app.clear("id:tx-search").unwrap();
     app.wait_for("text:共 2 条").unwrap();
@@ -438,10 +440,10 @@ fn app_window_paginates_search_hits_after_enter_search() {
     nsh_app::app::set_book_dir(dir);
     let mut app = Headless::start(desktop_config()).unwrap();
 
-    app.wait_for("text:共 150 条").unwrap();
+    open_transactions(&mut app);
     app.type_text("id:tx-search", "批量造数").unwrap();
     app.submit("id:tx-search").unwrap();
-    app.wait_for("text:命中 150 条").unwrap();
+    open_transactions(&mut app);
 
     // 搜索态翻页：点击页码 2 → 末页（最旧 50 笔，2026-01-01..2026-02-19），
     // 首页最新行不再在屏（断言对准视口内首行，与列表态翻页同口径）。
@@ -462,7 +464,7 @@ fn app_window_steps_back_by_previous_button() {
     nsh_app::app::set_book_dir(dir);
     let mut app = Headless::start(desktop_config()).unwrap();
 
-    app.wait_for("text:共 150 条").unwrap();
+    open_transactions(&mut app);
     app.press("role:button[2]").unwrap();
     app.wait_for("text:2026-02-19").unwrap();
 
@@ -490,6 +492,9 @@ fn app_window_masks_amounts_when_device_privacy_enabled() {
     )]))
     .unwrap();
 
+    // 交易列表落位后断言（首屏概览的预算卡同样掩码——概览卡面的掩码呈现
+    // 由概览测试覆盖，本测断言面是交易表格）。
+    open_transactions(&mut app);
     app.wait_for("text:••••").unwrap();
     let texts = app.screen().texts();
     assert!(
@@ -541,6 +546,8 @@ fn app_window_colors_amount_cells_by_kind_semantic() {
 
     nsh_app::app::set_book_dir(dir);
     let mut app = Headless::start(desktop_config()).unwrap();
+
+    open_transactions(&mut app);
 
     app.wait_for("text:¥25").unwrap();
     assert_eq!(
@@ -636,6 +643,8 @@ fn app_window_renders_category_path_and_note_cells() {
 
     nsh_app::app::set_book_dir(dir);
     let mut app = Headless::start(desktop_config()).unwrap();
+
+    open_transactions(&mut app);
 
     app.wait_for("text:餐饮 > 午餐").unwrap();
     let texts = app.screen().texts();
@@ -777,7 +786,7 @@ fn app_window_renders_purchase_order_rows_with_count_by_transaction() {
     let mut app = Headless::start(desktop_config()).unwrap();
 
     // 「共 N 条」按交易计：两个购买项行仍共 1 条（决策 14，购买项行不虚增计数）。
-    app.wait_for("text:共 1 条").unwrap();
+    open_transactions(&mut app);
     let texts = app.screen().texts();
     for expected in [
         "京东",
@@ -831,6 +840,8 @@ fn app_window_renders_lending_label_and_two_account_cell() {
 
     nsh_app::app::set_book_dir(dir);
     let mut app = Headless::start(desktop_config()).unwrap();
+
+    open_transactions(&mut app);
 
     app.wait_for("text:借出").unwrap();
     let texts = app.screen().texts();
@@ -916,6 +927,8 @@ fn app_window_renders_source_name_and_status() {
     nsh_app::app::set_book_dir(dir);
     let mut app = Headless::start(desktop_config()).unwrap();
 
+    open_transactions(&mut app);
+
     app.wait_for("text:医疗险 已删除").unwrap();
     let texts = app.screen().texts();
     assert!(
@@ -943,7 +956,7 @@ fn pagination_shortcut_keys_flip_pages_and_stay_idempotent_at_ends() {
     nsh_app::app::set_book_dir(dir);
     let mut app = Headless::start(desktop_config()).unwrap();
 
-    app.wait_for("text:共 150 条").unwrap();
+    open_transactions(&mut app);
     app.wait_for("text:2026-05-30").unwrap();
 
     // `]` 下一页 → 末页行集（与分页条点击同一读路径，同 #2018 点击用例断言）。
@@ -982,7 +995,7 @@ fn period_shortcut_keys_and_stepper_click_step_and_clamp_at_boundary() {
     nsh_app::app::set_book_dir(dir);
     let mut app = Headless::start(desktop_config()).unwrap();
 
-    app.wait_for("text:共 2 条").unwrap();
+    open_transactions(&mut app);
 
     // 经期间选择弹层进入「当月」：标签 = 本月，行集只剩本月一笔（¥88 不在屏）。
     let t = today();
@@ -1040,7 +1053,7 @@ fn suppression_gate_blocks_pagination_key_while_period_popup_open() {
     nsh_app::app::set_book_dir(dir);
     let mut app = Headless::start(desktop_config()).unwrap();
 
-    app.wait_for("text:共 150 条").unwrap();
+    open_transactions(&mut app);
     app.press_key("]").unwrap();
     app.wait_for("text:2026-02-19").unwrap();
 
@@ -1078,7 +1091,7 @@ fn suppression_gate_blocks_period_key_while_period_popup_open() {
     nsh_app::app::set_book_dir(dir);
     let mut app = Headless::start(desktop_config()).unwrap();
 
-    app.wait_for("text:共 2 条").unwrap();
+    open_transactions(&mut app);
 
     // 进入「当月」（有游标、有可步进空间——闸门拦截才是可观察的差异）。
     let t = today();
@@ -1150,7 +1163,7 @@ fn row_context_menu_delete_confirms_then_refreshes_list() {
     nsh_app::app::set_book_dir(dir.clone());
     let mut app = Headless::start(desktop_config()).unwrap();
 
-    app.wait_for("text:共 2 条").unwrap();
+    open_transactions(&mut app);
 
     // 行右键 → 上下文菜单呈现（zh-CN 文案与旧壳 transactions.menu.delete 同词
     // 表；#2035 起支出行带退款项）。
@@ -1204,7 +1217,7 @@ fn row_context_menu_delete_cancel_writes_nothing() {
     nsh_app::app::set_book_dir(dir.clone());
     let mut app = Headless::start(desktop_config()).unwrap();
 
-    app.wait_for("text:共 2 条").unwrap();
+    open_transactions(&mut app);
     app.right_click("text:2026-01-01").unwrap();
     app.choose_menu_item("删除").unwrap();
     app.wait_for("text:删除交易").unwrap();
@@ -1239,7 +1252,7 @@ fn row_context_menu_delete_escape_writes_nothing() {
     nsh_app::app::set_book_dir(dir.clone());
     let mut app = Headless::start(desktop_config()).unwrap();
 
-    app.wait_for("text:共 2 条").unwrap();
+    open_transactions(&mut app);
     app.right_click("text:2026-01-01").unwrap();
     app.choose_menu_item("删除").unwrap();
     app.wait_for("text:删除交易").unwrap();
@@ -1273,7 +1286,7 @@ fn row_context_menu_escape_closes_menu_writes_nothing() {
     nsh_app::app::set_book_dir(dir.clone());
     let mut app = Headless::start(desktop_config()).unwrap();
 
-    app.wait_for("text:共 2 条").unwrap();
+    open_transactions(&mut app);
     app.right_click("text:2026-01-01").unwrap();
     assert!(
         app.menu()
@@ -1314,7 +1327,7 @@ fn suppression_gate_blocks_pagination_key_while_danger_dialog_open() {
     nsh_app::app::set_book_dir(dir);
     let mut app = Headless::start(desktop_config()).unwrap();
 
-    app.wait_for("text:共 150 条").unwrap();
+    open_transactions(&mut app);
     app.press_key("]").unwrap();
     app.wait_for("text:2026-02-19").unwrap();
 
@@ -1422,7 +1435,7 @@ fn purchase_item_row_right_click_deletes_whole_transaction() {
     let mut app = Headless::start(desktop_config()).unwrap();
 
     // 「共 N 条」按交易计：订单 1 笔 + 留底 1 笔（购买项行不虚增计数）。
-    app.wait_for("text:共 2 条").unwrap();
+    open_transactions(&mut app);
 
     // 右键购买项**续行**（非首行）→ 菜单 → 删除 → 确认。
     app.right_click("text:洗衣液 共 1 件").unwrap();
@@ -1472,8 +1485,11 @@ fn app_smoke_boots_shows_first_screen_count_and_pages_by_key() {
     nsh_app::app::set_book_dir(dir);
     let mut app = Headless::start(desktop_config()).unwrap();
 
-    // 就绪 + 首屏计数（100 行/页，150 笔 = 两页）。
-    app.wait_for("text:共 150 条").unwrap();
+    // 就绪 + 首屏概览（出厂落点，#2039）：净资产主数字在屏。
+    app.wait_for("id:net-worth-value").unwrap();
+
+    // 交易列表页（100 行/页，150 笔 = 两页）首行在屏；翻页键可用。
+    open_transactions(&mut app);
     app.wait_for("text:2026-05-30").unwrap();
 
     // 翻页键可用：`]` 翻末页，行集换血（与分页条同一读路径）。
@@ -1598,6 +1614,8 @@ fn perf_dataset_book_counts_match_domain_read_across_pages_and_scroll() {
     let mut app = Headless::start(desktop_config()).unwrap();
 
     // 总数一致（UI == 域读，非幻数）；首页首行 = 最新一笔落进视口。
+    // （出厂落点是概览，#2039：先显式落位交易列表再断言。）
+    open_transactions(&mut app);
     let total_text = format!("共 {} 条", facts.total);
     let total_selector = format!("text:{total_text}");
     let newest = format!("text:{}", facts.newest_date);
@@ -1669,7 +1687,7 @@ fn search_and_period_combo_semantics_adjudicated() {
     nsh_app::app::set_book_dir(dir);
     let mut app = Headless::start(desktop_config()).unwrap();
 
-    app.wait_for("text:共 2 条").unwrap();
+    open_transactions(&mut app);
 
     // ---- 相 A：焦点在搜索框（输入后默认态，无游标）。----
     app.type_text("id:tx-search", "支出").unwrap();
@@ -1845,7 +1863,7 @@ fn filter_bar_account_and_merchant_selects_filter_rows_and_clear_restores() {
 
     nsh_app::app::set_book_dir(dir);
     let mut app = Headless::start(desktop_config()).unwrap();
-    app.wait_for("text:共 3 条").unwrap();
+    open_transactions(&mut app);
 
     // 账户筛选（拼音可搜下拉）：选「银行卡」→ 只剩银行卡两笔。
     app.press("id:tx-filter-account").unwrap();
@@ -1944,7 +1962,7 @@ fn filter_bar_kind_multiselect_toggles_normalize_and_clear() {
 
     nsh_app::app::set_book_dir(dir);
     let mut app = Headless::start(desktop_config()).unwrap();
-    app.wait_for("text:共 3 条").unwrap();
+    open_transactions(&mut app);
 
     // 类型弹层：勾「支出」→ 弹层不关（multiple 语义）、行集只剩支出笔。
     // 勾「支出」→ 行集只剩支出笔。headless 逻辑点击按引擎 press-outside 判定
@@ -2021,7 +2039,7 @@ fn filter_bar_amount_range_engages_search_surface_without_keyword() {
 
     nsh_app::app::set_book_dir(dir);
     let mut app = Headless::start(desktop_config()).unwrap();
-    app.wait_for("text:共 3 条").unwrap();
+    open_transactions(&mut app);
 
     // 仅最低金额 → 搜索态（命中 N 条计数词）+ 区间过滤（20 元 = 2000 分：
     // ¥88/¥44 命中，¥11 排除）。
@@ -2084,7 +2102,7 @@ fn esc_resets_filters_and_gated_while_overlay_open() {
 
     nsh_app::app::set_book_dir(dir);
     let mut app = Headless::start(desktop_config()).unwrap();
-    app.wait_for("text:共 2 条").unwrap();
+    open_transactions(&mut app);
 
     // 设账户筛选（行集收窄）。
     app.press("id:tx-filter-account").unwrap();
@@ -2156,7 +2174,7 @@ fn filters_survive_view_switch_session_retained() {
 
     nsh_app::app::set_book_dir(dir);
     let mut app = Headless::start(desktop_config()).unwrap();
-    app.wait_for("text:共 2 条").unwrap();
+    open_transactions(&mut app);
 
     app.press("id:tx-filter-account").unwrap();
     app.wait_for("id:tx-filter-account-search").unwrap();
@@ -2190,7 +2208,7 @@ fn suppression_gate_blocks_shortcuts_while_kind_popup_open() {
 
     nsh_app::app::set_book_dir(dir);
     let mut app = Headless::start(desktop_config()).unwrap();
-    app.wait_for("text:共 120 条").unwrap();
+    open_transactions(&mut app);
 
     // 翻页可观察凭据（虚拟滚动下取视口行）：第 1 页首行 = 最新一笔（造数第
     // 119 笔）；`]` 翻到第 2 页后首行 = 第 19 笔、第 119 笔离屏。
@@ -2252,7 +2270,7 @@ fn sidebar_renders_groups_fixed_items_and_hides_contained_members() {
     let mut app = Headless::start(desktop_config()).unwrap();
 
     // 交易列表为骨架首个挂载视图（出厂落点）。
-    app.wait_for("text:共 3 条").unwrap();
+    open_transactions(&mut app);
     // 品牌行 + 固定项 + 三组标题。
     for label in ["开源记账", "概览", "AI", "设置", "记账", "资产", "洞察"] {
         app.wait_for(&format!("text:{label}")).unwrap();
@@ -2305,16 +2323,15 @@ fn clicking_sidebar_items_lands_placeholder_views_and_back() {
 
     nsh_app::app::set_book_dir(dir);
     let mut app = Headless::start(desktop_config()).unwrap();
-    app.wait_for("text:共 3 条").unwrap();
+    open_transactions(&mut app);
 
     // 账户 → 占位（屏名 + 迁移中）。
     app.press("id:nav-accounts").unwrap();
     app.wait_for("text:账户").unwrap();
     app.wait_for("id:placeholder-note").unwrap();
-    // 概览 → 占位（内容区标题计数 2 = 侧栏 + 屏名）。
+    // 概览 → 真实视图（净资产卡在屏，#2039 起不再是占位）。
     app.press("id:nav-dashboard").unwrap();
-    app.wait_for_within("text:概览", DEFAULT_WAIT).unwrap();
-    assert_eq!(app.screen().count("text:概览").unwrap(), 2, "概览落位");
+    app.wait_for("id:net-worth-card").unwrap();
     // 交易 → 表格内容区（首屏原样）。
     app.press("id:nav-transactions").unwrap();
     app.wait_for("text:共 3 条").unwrap();
@@ -2332,16 +2349,19 @@ fn shortcut_band_keys_land_views() {
 
     nsh_app::app::set_book_dir(dir);
     let mut app = Headless::start(desktop_config()).unwrap();
-    app.wait_for("text:共 3 条").unwrap();
+    open_transactions(&mut app);
 
     app.press_key("mod+4").unwrap();
     app.wait_for_gone("text:共 3 条", DEFAULT_WAIT).unwrap();
     app.wait_for("id:placeholder-note").unwrap();
-    // 落位凭据 = 内容区标题随视图切换（计数 2 = 侧栏项 + 占位屏名；侧栏项
-    // 恒在屏，单凭文本在场不构成落位证据）。
+    // 落位凭据 = 内容区随视图切换（概览是真实视图，净资产卡在屏即证据；
+    // #2039 起概览不再是占位）。
     app.press_key("mod+`").unwrap();
-    app.wait_for_within("text:概览", DEFAULT_WAIT).unwrap();
-    assert_eq!(app.screen().count("text:概览").unwrap(), 2, "⌘` 落概览");
+    app.wait_for("id:net-worth-card").unwrap();
+    assert!(
+        app.screen().count("id:placeholder-note").unwrap() == 0,
+        "⌘` 落真实概览"
+    );
     app.press_key("mod+0").unwrap();
     assert_eq!(app.screen().count("text:AI").unwrap(), 2, "⌘0 落 AI");
     app.press_key("mod+,").unwrap();
@@ -2369,7 +2389,7 @@ fn suppression_gate_blocks_shortcut_band_while_period_popup_open() {
 
     nsh_app::app::set_book_dir(dir);
     let mut app = Headless::start(desktop_config()).unwrap();
-    app.wait_for("text:共 3 条").unwrap();
+    open_transactions(&mut app);
 
     // 打开注册抑制的弹层 → ⌘2 不派发（表格原样）。
     app.press("id:period-label").unwrap();
@@ -2405,6 +2425,7 @@ fn closed_feature_exits_sidebar_and_key_band() {
         "[\"budget\"]".to_owned(),
     )]);
     let mut app = Headless::start(desktop_config_with_backend(storage)).unwrap();
+    open_transactions(&mut app);
     app.wait_for("text:共 3 条").unwrap();
 
     assert!(
@@ -2459,15 +2480,17 @@ fn startup_restores_last_view_with_closed_and_unknown_fallbacks() {
         ),
     ]);
     let mut app = Headless::start(desktop_config_with_backend(storage)).unwrap();
-    app.wait_for("text:共 3 条").unwrap();
+    // 出厂落点 = 概览（#2039 改回，与旧壳「关闭恢复回概览」重合）：真实概览
+    // 在屏（净资产卡），不再是交易表格也不再是占位。
+    app.wait_for("id:net-worth-card").unwrap();
     drop(app);
 
-    // 未知名 → 出厂落点（交易表格）。
+    // 未知名 → 出厂落点（概览）。
     nsh_app::app::reset_book_assembly();
     nsh_app::app::set_book_dir(dir.clone());
     let storage = MemoryStorage::new(vec![("view_state:route".to_owned(), "\"nope\"".to_owned())]);
     let mut app = Headless::start(desktop_config_with_backend(storage)).unwrap();
-    app.wait_for("text:共 3 条").unwrap();
+    app.wait_for("id:net-worth-card").unwrap();
 }
 
 /// 组「更多」容器：链接落位容器页签壳（页签 = 收纳清单序）；页签点击切换
@@ -2482,7 +2505,7 @@ fn group_more_container_tabs_follow_session_state_not_restart() {
     nsh_app::app::set_book_dir(dir.clone());
     let storage = MemoryStorage::new(Vec::new());
     let mut app = Headless::start(desktop_config_with_backend(storage.clone())).unwrap();
-    app.wait_for("text:共 3 条").unwrap();
+    open_transactions(&mut app);
 
     // 资产组「更多」：页签 = 出厂清单序（保单/实物资产/保险公司），默认首签
     // 保单（内容区标题「保单」×2：页签 + 占位屏名）。
@@ -2537,7 +2560,7 @@ fn closed_feature_tab_is_filtered_from_group_more_container() {
         "[\"merchants\"]".to_owned(),
     )]);
     let mut app = Headless::start(desktop_config_with_backend(storage)).unwrap();
-    app.wait_for("text:共 3 条").unwrap();
+    open_transactions(&mut app);
 
     app.press("id:nav-more-bookkeeping").unwrap();
     app.wait_for("id:more-tab-scheduled").unwrap();
@@ -2560,7 +2583,7 @@ fn sort_menu_reorders_key_band_and_persists_across_restart() {
     nsh_app::app::set_book_dir(dir.clone());
     let storage = MemoryStorage::new(Vec::new());
     let mut app = Headless::start(desktop_config_with_backend(storage.clone())).unwrap();
-    app.wait_for("text:共 3 条").unwrap();
+    open_transactions(&mut app);
 
     // 右键预算 → 移到顶部 → ⌘1 落预算（键位带内随动的用户可见凭据；预算
     // 视图已真实化，落位凭据 = 预算视图内容「新增预算」在屏，占位反馈离场）。
@@ -2604,7 +2627,7 @@ fn context_menus_move_item_into_more_and_back() {
     nsh_app::app::set_book_dir(dir.clone());
     let storage = MemoryStorage::new(Vec::new());
     let mut app = Headless::start(desktop_config_with_backend(storage.clone())).unwrap();
-    app.wait_for("text:共 3 条").unwrap();
+    open_transactions(&mut app);
 
     // 移入更多：侧栏预算消失、⌘3 空键待命。
     app.right_click("id:nav-budget").unwrap();
@@ -2659,7 +2682,7 @@ fn move_back_menu_is_disabled_when_group_full() {
 
     nsh_app::app::set_book_dir(dir);
     let mut app = Headless::start(desktop_config()).unwrap();
-    app.wait_for("text:共 3 条").unwrap();
+    open_transactions(&mut app);
 
     app.press("id:nav-more-bookkeeping").unwrap();
     app.wait_for("id:more-tab-scheduled").unwrap();
@@ -2696,7 +2719,7 @@ fn view_state_round_trips_across_restart() {
     nsh_app::app::set_book_dir(dir.clone());
     let storage = MemoryStorage::new(Vec::new());
     let mut app = Headless::start(desktop_config_with_backend(storage.clone())).unwrap();
-    app.wait_for("text:共 3 条").unwrap();
+    open_transactions(&mut app);
 
     // 排序（物品移到资产组顶部）+ 导航到账户。
     app.right_click("id:nav-items").unwrap();
@@ -2805,7 +2828,7 @@ fn budget_view_renders_create_form_summary_and_progress_table() {
 
     nsh_app::app::set_book_dir(dir);
     let mut app = Headless::start(desktop_config()).unwrap();
-    app.wait_for("text:共 1 条").unwrap();
+    open_transactions(&mut app);
 
     // 侧栏预算项落位预算视图（占位「迁移中」反馈离场）。
     app.press("id:nav-budget").unwrap();
@@ -2911,7 +2934,7 @@ fn budget_edit_modal_updates_amount_then_refreshes() {
 
     nsh_app::app::set_book_dir(dir);
     let mut app = Headless::start(desktop_config()).unwrap();
-    app.wait_for("text:共 1 条").unwrap();
+    open_transactions(&mut app);
     app.press("id:nav-budget").unwrap();
     app.wait_for("text:500").unwrap();
 
@@ -3178,6 +3201,8 @@ fn form_creates_expense_and_refreshes_list() {
 
     nsh_app::app::set_book_dir(dir.clone());
     let mut app = Headless::start(desktop_config()).unwrap();
+    open_transactions(&mut app);
+
     app.wait_for("text:暂无数据").unwrap();
 
     open_create_form(&mut app, "id:tx-add-expense", "记一笔 · 支出");
@@ -3259,6 +3284,8 @@ fn form_creates_income_with_income_only_category_candidates() {
 
     nsh_app::app::set_book_dir(dir.clone());
     let mut app = Headless::start(desktop_config()).unwrap();
+    open_transactions(&mut app);
+
     app.wait_for("text:暂无数据").unwrap();
 
     open_create_form(&mut app, "id:tx-add-income", "记一笔 · 收入");
@@ -3324,7 +3351,7 @@ fn form_edits_expense_with_backfill_and_refreshes() {
 
     nsh_app::app::set_book_dir(dir.clone());
     let mut app = Headless::start(desktop_config()).unwrap();
-    app.wait_for("text:共 1 条").unwrap();
+    open_transactions(&mut app);
 
     app.right_click("text:2026-01-01").unwrap();
     app.choose_menu_item("编辑").unwrap();
@@ -3393,6 +3420,8 @@ fn form_blocks_invalid_submission_with_visible_errors() {
 
     nsh_app::app::set_book_dir(dir.clone());
     let mut app = Headless::start(desktop_config()).unwrap();
+    open_transactions(&mut app);
+
     app.wait_for("text:暂无数据").unwrap();
 
     open_create_form(&mut app, "id:tx-add-expense", "记一笔 · 支出");
@@ -3444,8 +3473,9 @@ fn form_modal_suppresses_pagination_shortcut_while_open() {
 
     nsh_app::app::set_book_dir(dir.clone());
     let mut app = Headless::start(desktop_config()).unwrap();
-    app.wait_for("text:共 105 条").unwrap();
+    open_transactions(&mut app);
     // 第 1 页首行 = 日期最大一笔（test_date(104) = 2026-04-14）。
+    app.wait_for("text:2026-04-14").unwrap();
     assert!(
         app.shows("2026-04-14"),
         "第 1 页首行在屏：{:?}",
@@ -3490,6 +3520,8 @@ fn form_date_field_accepts_typed_date_and_lands_on_row() {
 
     nsh_app::app::set_book_dir(dir.clone());
     let mut app = Headless::start(desktop_config()).unwrap();
+    open_transactions(&mut app);
+
     app.wait_for("text:暂无数据").unwrap();
 
     open_create_form(&mut app, "id:tx-add-expense", "记一笔 · 支出");
@@ -3558,6 +3590,8 @@ fn form_attaches_policy_and_clears_it() {
 
     nsh_app::app::set_book_dir(dir.clone());
     let mut app = Headless::start(desktop_config()).unwrap();
+    open_transactions(&mut app);
+
     app.wait_for("text:暂无数据").unwrap();
 
     // 挂单：保单选项呈现「保单号（险种名）」词表，选中后保存落 policy_id。
@@ -3619,6 +3653,8 @@ fn form_merchant_free_text_creates_merchant_via_domain_semantics() {
 
     nsh_app::app::set_book_dir(dir.clone());
     let mut app = Headless::start(desktop_config()).unwrap();
+    open_transactions(&mut app);
+
     app.wait_for("text:暂无数据").unwrap();
 
     open_create_form(&mut app, "id:tx-add-expense", "记一笔 · 支出");
@@ -3694,6 +3730,8 @@ fn transfer_form_creates_transfer_and_refreshes_list() {
 
     nsh_app::app::set_book_dir(dir.clone());
     let mut app = Headless::start(desktop_config()).unwrap();
+    open_transactions(&mut app);
+
     app.wait_for("text:暂无数据").unwrap();
 
     open_create_form(&mut app, "id:tx-add-transfer", "记一笔 · 转账");
@@ -3752,6 +3790,8 @@ fn transfer_form_blocks_incomplete_submission_with_visible_errors() {
 
     nsh_app::app::set_book_dir(dir.clone());
     let mut app = Headless::start(desktop_config()).unwrap();
+    open_transactions(&mut app);
+
     app.wait_for("text:暂无数据").unwrap();
 
     open_create_form(&mut app, "id:tx-add-transfer", "记一笔 · 转账");
@@ -3821,7 +3861,7 @@ fn transfer_form_edits_with_dual_account_backfill() {
 
     nsh_app::app::set_book_dir(dir.clone());
     let mut app = Headless::start(desktop_config()).unwrap();
-    app.wait_for("text:共 1 条").unwrap();
+    open_transactions(&mut app);
 
     app.right_click("text:2026-01-01").unwrap();
     app.choose_menu_item("编辑").unwrap();
@@ -3883,6 +3923,8 @@ fn lending_form_creates_lend_with_side_filtered_candidates() {
 
     nsh_app::app::set_book_dir(dir.clone());
     let mut app = Headless::start(desktop_config()).unwrap();
+    open_transactions(&mut app);
+
     app.wait_for("text:暂无数据").unwrap();
 
     open_create_form(&mut app, "id:tx-add-lend", "记一笔 · 借出");
@@ -3978,7 +4020,7 @@ fn lending_form_edit_derives_direction_and_backfills() {
 
     nsh_app::app::set_book_dir(dir.clone());
     let mut app = Headless::start(desktop_config()).unwrap();
-    app.wait_for("text:共 1 条").unwrap();
+    open_transactions(&mut app);
 
     app.right_click("text:2026-02-01").unwrap();
     app.choose_menu_item("编辑").unwrap();
@@ -4126,7 +4168,7 @@ fn refund_form_creates_refund_from_row_with_default_amount() {
 
     nsh_app::app::set_book_dir(dir.clone());
     let mut app = Headless::start(desktop_config()).unwrap();
-    app.wait_for("text:共 1 条").unwrap();
+    open_transactions(&mut app);
 
     app.right_click("text:2026-01-01").unwrap();
     app.choose_menu_item("退款").unwrap();
@@ -4230,7 +4272,7 @@ fn refund_form_edit_preserves_original_link() {
 
     nsh_app::app::set_book_dir(dir.clone());
     let mut app = Headless::start(desktop_config()).unwrap();
-    app.wait_for("text:共 2 条").unwrap();
+    open_transactions(&mut app);
 
     app.right_click("text:2026-01-05").unwrap();
     app.choose_menu_item("编辑").unwrap();
@@ -4346,7 +4388,7 @@ fn row_menu_open_face_follows_kind_and_subrows() {
 
     nsh_app::app::set_book_dir(dir.clone());
     let mut app = Headless::start(desktop_config()).unwrap();
-    app.wait_for("text:共 3 条").unwrap();
+    open_transactions(&mut app);
 
     // 普通支出行：编辑 + 退款 + 删除。
     app.right_click("text:2026-01-01").unwrap();
@@ -4419,6 +4461,8 @@ fn funding_form_creates_split_expense_and_refreshes_list() {
 
     nsh_app::app::set_book_dir(dir.clone());
     let mut app = Headless::start(desktop_config()).unwrap();
+    open_transactions(&mut app);
+
     app.wait_for("text:暂无数据").unwrap();
 
     open_create_form(&mut app, "id:tx-add-funding", "记一笔 · 出资分解");
@@ -4485,6 +4529,8 @@ fn funding_form_blocks_mismatched_total_with_visible_error() {
 
     nsh_app::app::set_book_dir(dir.clone());
     let mut app = Headless::start(desktop_config()).unwrap();
+    open_transactions(&mut app);
+
     app.wait_for("text:暂无数据").unwrap();
 
     open_create_form(&mut app, "id:tx-add-funding", "记一笔 · 出资分解");
@@ -4558,7 +4604,7 @@ fn funding_form_edits_split_backfill_and_refreshes() {
 
     nsh_app::app::set_book_dir(dir.clone());
     let mut app = Headless::start(desktop_config()).unwrap();
-    app.wait_for("text:共 1 条").unwrap();
+    open_transactions(&mut app);
 
     // 菜单形状：分解行开放编辑（子行守卫解除）+ 不开放退款（#1861 口径）。
     app.right_click("text:2026-01-02").unwrap();
@@ -4642,6 +4688,8 @@ fn purchase_form_creates_order_rows_and_refreshes_list() {
 
     nsh_app::app::set_book_dir(dir.clone());
     let mut app = Headless::start(desktop_config()).unwrap();
+    open_transactions(&mut app);
+
     app.wait_for("text:暂无数据").unwrap();
 
     open_create_form(&mut app, "id:tx-add-purchase", "记一笔 · 购买项下单");
@@ -4737,7 +4785,7 @@ fn purchase_form_edits_item_rows_backfill_add_delete() {
 
     nsh_app::app::set_book_dir(dir.clone());
     let mut app = Headless::start(desktop_config()).unwrap();
-    app.wait_for("text:共 1 条").unwrap();
+    open_transactions(&mut app);
 
     app.right_click("text:2026-01-02").unwrap();
     let menu = app.menu().expect("右键应打开上下文菜单");
@@ -4858,6 +4906,8 @@ fn backup_entry_full_journey_writes_zip_and_reports_success() {
     let mut app = Headless::start(desktop_config()).unwrap();
 
     // 入口存在性：交易列表工具区「备份」按钮呈现（id 锚点，research doc §3.5）。
+    open_transactions(&mut app);
+
     app.wait_for("id:tx-backup").unwrap();
 
     // 保存对话框替身注入目标路径 → 按下入口。替身回答前，先核对发给平台
@@ -4914,6 +4964,8 @@ fn backup_overwrite_guard_confirms_before_replacing() {
     nsh_app::app::set_book_dir(dir);
     let mut app = Headless::start(desktop_config()).unwrap();
 
+    open_transactions(&mut app);
+
     app.wait_for("id:tx-backup").unwrap();
     app.on_pick_save_path(Some(target.clone())).unwrap();
     app.press("id:tx-backup").unwrap();
@@ -4955,6 +5007,8 @@ fn backup_overwrite_guard_cancel_keeps_existing_file() {
     nsh_app::app::set_book_dir(dir);
     let mut app = Headless::start(desktop_config()).unwrap();
 
+    open_transactions(&mut app);
+
     app.wait_for("id:tx-backup").unwrap();
     app.on_pick_save_path(Some(target.clone())).unwrap();
     app.press("id:tx-backup").unwrap();
@@ -4985,6 +5039,8 @@ fn backup_dialog_failure_reports_error() {
     nsh_app::app::set_book_dir(dir);
     let mut app = Headless::start(desktop_config()).unwrap();
 
+    open_transactions(&mut app);
+
     app.wait_for("id:tx-backup").unwrap();
     // 不注入替身：环境无文件对话框能力，保存请求即答错误（生产对应 Linux
     // 缺文件选择 portal 的场景）。
@@ -5013,6 +5069,8 @@ fn backup_dialog_cancel_writes_nothing() {
     nsh_app::app::set_book_dir(dir);
     let mut app = Headless::start(desktop_config()).unwrap();
 
+    open_transactions(&mut app);
+
     app.wait_for("id:tx-backup").unwrap();
     app.on_pick_save_path(None).unwrap();
     app.press("id:tx-backup").unwrap();
@@ -5027,4 +5085,334 @@ fn backup_dialog_cancel_writes_nothing() {
         0,
         "取消零写入：备份目录为空"
     );
+}
+
+// ---------------------------------------------------------------------------
+// 概览视图（#2039）：冻结点三视图的最后一屏——净资产 / 本月收支 / 投资概览 /
+// 财务自由度 / 预算年度摘要五卡、口径说明弹层、净资产卡下钻、失效信号重读
+// 与出厂落点改回概览的可见侧。
+// ---------------------------------------------------------------------------
+
+/// 造一个指定币种指定类型的账户（概览造数入口；返回账户 id）。
+fn seed_account_with_currency(
+    db: &ledger_infra::db::DbState,
+    name: &str,
+    kind: AccountType,
+    currency_code: &str,
+    initial_balance_cents: i64,
+) -> String {
+    let conn = db
+        .conn
+        .lock()
+        .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
+        .unwrap();
+    ledger_accounts::create_account(
+        &conn,
+        AccountInput {
+            name: name.to_owned(),
+            kind,
+            currency_code: currency_code.to_owned(),
+            initial_balance_cents: Some(initial_balance_cents),
+            credit_limit_cents: None,
+            statement_day: None,
+            due_day: None,
+        },
+    )
+    .unwrap()
+}
+
+/// 造标的 + 现价（概览投资卡造数面；价格刻度万分之一元，ADR-0038）。
+fn seed_instrument_with_price(
+    db: &ledger_infra::db::DbState,
+    symbol: &str,
+    price_wan: i64,
+) -> String {
+    let conn = db
+        .conn
+        .lock()
+        .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
+        .unwrap();
+    let id = ledger_investment::create_instrument(
+        &conn,
+        ledger_investment::InstrumentInput {
+            symbol: symbol.to_owned(),
+            kind: ledger_investment::InstrumentType::Stock,
+            name: Some(format!("{symbol} 标的")),
+            currency_code: "CNY".to_owned(),
+            market: None,
+        },
+    )
+    .unwrap();
+    ledger_investment::create_market_price(
+        &conn,
+        ledger_investment::MarketPriceInput {
+            instrument_id: id.clone(),
+            price_cents: price_wan,
+            currency_code: "CNY".to_owned(),
+            priced_at: today().to_string(),
+            source: Some("manual".to_owned()),
+        },
+    )
+    .unwrap();
+    id
+}
+
+/// 造一笔买入（现金腿恰由账户期初余额覆盖；金额/日期随参）。
+fn seed_buy(db: &ledger_infra::db::DbState, account: &str, instrument: &str, date: &str) {
+    // 买入带标的/数量/价格三维（域 lib 测试 buy_input 同形，CNY 载荷）。
+    let conn = db
+        .conn
+        .lock()
+        .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
+        .unwrap();
+    ledger_transaction::create(
+        &conn,
+        TransactionInput {
+            kind: TransactionKind::Buy,
+            amount_cents: 0,
+            currency_code: "CNY".to_owned(),
+            account_id: Some(account.to_owned()),
+            to_account_id: None,
+            funding_account_id: None,
+            funding: Vec::new(),
+            purchases: Vec::new(),
+            category_id: None,
+            merchant_id: None,
+            merchant_name: None,
+            policy_id: None,
+            refund_of_transaction_id: None,
+            note: Some("买入".to_owned()),
+            source_order_no: None,
+            date: date.to_owned(),
+            instrument_id: Some(instrument.to_owned()),
+            quantity: Some(1.0),
+            price_cents: Some(10_000),
+            fee_cents: Some(0),
+            to_instrument_id: None,
+            to_quantity: None,
+            out_amount_cents: None,
+            in_amount_cents: None,
+            origin: None,
+            fx_rate: None,
+            idempotency_key: None,
+        },
+    )
+    .unwrap();
+}
+
+/// 概览全景账本（五卡断言的统一造数面，数字全部取整十刻度）：
+/// - 现金账户期初 0，本月收入 +50_000、支出 −20_000 → 净资产现金腿 30_000、
+///   本月收支 500/200/300、本年已支 200；
+/// - 月度预算「餐饮」3_125 → 年化总额 375（自由度分母 37_500）；
+/// - 投资账户期初 100（恰覆买入现金腿），标的现价 1_000_000（=¥100）+ 买入
+///   1 份@¥1 → 持仓市值 10_000、未实现 9_900、累计收益 9_900、自由度分子
+///   10_000（现金腿归零）；
+/// - 净资产 = 现金 30_000 + 持仓市值 10_000 = 40_000（实物腿 0）。
+fn seed_dashboard_book(tag: &str) -> std::path::PathBuf {
+    let dir = make_book(tag);
+    let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+    let cash = seed_account_with_currency(&db, "现金", AccountType::Cash, "CNY", 0);
+    let today = today().to_string();
+    seed_transaction(
+        &db,
+        TxnSeed {
+            account: &cash,
+            to_account: None,
+            kind: TransactionKind::Income,
+            amount_cents: 50_000,
+            date: &today,
+            category_id: None,
+            merchant_id: None,
+            note: Some("本月收入".to_owned()),
+        },
+    );
+    let food = seed_category(&db, "餐饮", None);
+    seed_transaction(
+        &db,
+        TxnSeed {
+            account: &cash,
+            to_account: None,
+            kind: TransactionKind::Expense,
+            amount_cents: 20_000,
+            date: &today,
+            category_id: Some(food.clone()),
+            merchant_id: None,
+            note: Some("本月支出".to_owned()),
+        },
+    );
+    seed_budget(&db, &food, 3_125, ledger_budget::BudgetPeriod::Monthly);
+    let invest = seed_account_with_currency(&db, "证券", AccountType::Investment, "CNY", 100);
+    let instrument = seed_instrument_with_price(&db, "TST", 1_000_000);
+    seed_buy(&db, &invest, &instrument, &today);
+    dir
+}
+
+/// 落位交易列表（出厂落点改回概览后的显式导航面，#2039 起首屏是概览）：等
+/// 侧栏就绪 → 点侧栏交易项 → 等表格挂载。各用例的交易/表单/筛选断言先经本
+/// 助手落位；概览视图自身的断言不经本助手。
+fn open_transactions(app: &mut Headless) {
+    app.wait_for("id:nav-transactions").unwrap();
+    app.press("id:nav-transactions").unwrap();
+    app.wait_for("id:tx-table").unwrap();
+}
+
+/// 启动即概览（出厂落点改回裁决的可见侧，#2039）：五卡全部呈现真实读数、
+/// 不再是迁移占位。净资产 = 现金 30_000 + 持仓市值 10_000 = ¥400（域单点
+/// 折算，装配层只消费）；「删除即红」负向条目钉在 view_host 的概览分支挂载
+/// 与 nav_model::DEFAULT_VIEW（改回交易列表即红）。
+#[test]
+fn startup_lands_on_dashboard_with_all_five_cards() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = seed_dashboard_book("dashboard-first-screen");
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+    // 第一屏凭据：净资产主数字（域单点折算值）+ 各卡标题。
+    app.wait_for("id:net-worth-value").unwrap();
+    app.wait_for("text:¥400").unwrap();
+    for anchor in [
+        "id:monthly-income",
+        "text:500",
+        "text:200",
+        "text:300",
+        "id:dashboard-total-market-value",
+        "text:¥100",
+        "text:¥99",
+        "id:financial-freedom-ratio",
+        "text:0.8%",
+        "text:积累期",
+        "text:可投资资产 ¥100",
+        "text:年度预算总额 ¥375",
+        "text:可覆盖 0.3 年",
+        "id:dashboard-budget-total",
+        "text:375",
+        "text:200",
+        "text:正常",
+    ] {
+        app.wait_for(anchor).unwrap();
+    }
+    assert!(
+        app.screen().count("id:placeholder-note").unwrap() == 0,
+        "概览是真实视图，不再是占位"
+    );
+}
+
+/// 投资概览卡空态：无持仓账本呈现「暂无持仓」，三卡不呈现。
+#[test]
+fn dashboard_investment_card_shows_empty_state_without_holdings() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("dashboard-empty-invest");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let cash = seed_cash_account(&db);
+        seed_transaction(
+            &db,
+            TxnSeed {
+                account: &cash,
+                to_account: None,
+                kind: TransactionKind::Expense,
+                amount_cents: 2_500,
+                date: &today().to_string(),
+                category_id: None,
+                merchant_id: None,
+                note: Some("本月支出".to_owned()),
+            },
+        );
+    }
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+    app.wait_for("text:暂无持仓").unwrap();
+    assert!(
+        app.screen()
+            .count("id:dashboard-total-market-value")
+            .unwrap()
+            == 0,
+        "空态下三卡不呈现"
+    );
+    // 零分母（未设预算）：自由度卡占位引导，不回退实际支出。
+    app.wait_for("text:设置预算后解锁财务自由度").unwrap();
+}
+
+/// 净资产卡下钻（总览屏唯一动作）：点「查看账户明细」落账户视图。
+/// 「删除即红」负向条目：删卡片内 nav::open 接线 → 本测红（停留概览）。
+#[test]
+fn net_worth_card_drills_down_to_accounts_view() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = seed_dashboard_book("dashboard-drill");
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+    app.wait_for("id:net-worth-card").unwrap();
+    app.press("id:net-worth-view-accounts").unwrap();
+    app.wait_for("id:placeholder-note").unwrap();
+    assert_eq!(
+        app.screen().count("text:账户").unwrap(),
+        2,
+        "下钻落账户视图（侧栏 + 屏名）"
+    );
+}
+
+/// 口径说明弹层（NSH popover 封装件首消费）：点按 ⓘ 开、ESC 关；自由度卡
+/// 四行口径齐现。「删除即红」负向条目：删封装件的触发/开合接线或视图的
+/// ⓘ 消费任一环 → 本测红。
+#[test]
+fn caliber_popovers_open_and_close_on_dashboard() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = seed_dashboard_book("dashboard-popover");
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+    app.wait_for("id:net-worth-card").unwrap();
+    // 净资产口径：点开 → 说明在场 → ESC 关。
+    app.press("id:net-worth-info").unwrap();
+    app.wait_for("id:net-worth-info-message").unwrap();
+    app.press_key("escape").unwrap();
+    app.wait_for_gone("id:net-worth-info-message", DEFAULT_WAIT)
+        .unwrap();
+    // 自由度口径：四行同源（formula / 两腿拆解 / 提取率）。
+    app.press("id:financial-freedom-info").unwrap();
+    app.wait_for("id:financial-freedom-info-message").unwrap();
+    app.wait_for("text:自由度 = 可投资资产 × 3% ÷ 年度预算总额")
+        .unwrap();
+    app.wait_for("text:分子 = 持仓市值 + 投资账户余额（折算为本位币，生活现金与负债不计入）")
+        .unwrap();
+    app.press_key("escape").unwrap();
+    app.wait_for_gone("id:financial-freedom-info-message", DEFAULT_WAIT)
+        .unwrap();
+}
+
+/// 零分母引导：占位态「去设置预算」按钮落预算视图（守卫接缝裸访问同路径）。
+#[test]
+fn freedom_zero_denominator_guides_to_budget_view() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("dashboard-freedom-guide");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let cash = seed_cash_account(&db);
+        seed_transaction(
+            &db,
+            TxnSeed {
+                account: &cash,
+                to_account: None,
+                kind: TransactionKind::Expense,
+                amount_cents: 2_500,
+                date: &today().to_string(),
+                category_id: None,
+                merchant_id: None,
+                note: Some("本月支出".to_owned()),
+            },
+        );
+    }
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+    app.wait_for("id:freedom-zero-denominator").unwrap();
+    app.press("id:freedom-go-budget").unwrap();
+    app.wait_for("text:预算执行").unwrap();
 }

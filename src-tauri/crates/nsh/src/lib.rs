@@ -39,6 +39,10 @@
 //!   重生）与移动纯函数；
 //! - [`sidebar`]：侧栏（#2032）——品牌行、固定项、三组导航、组「更多」链接、
 //!   键位提示与右键排序菜单；
+//! - [`dashboard`]：概览视图（#2039）——净资产总览 / 本月收支 / 投资概览 /
+//!   财务自由度 / 预算年度摘要五卡（取数口径单点在域，装配层只消费不另立）、
+//!   口径说明弹层、净资产卡下钻与按卡片消费面分的失效信号重读；本票落地即
+//!   功能冻结点达成（ADR-0145 修订注记）；
 //! - [`views`]：壳内视图层（#2032）——未迁移视图空态占位（下钻接缝示范消费
 //!   面）与组「更多」容器页签壳；
 //! - [`assembly`]：装配层——行集进入表格前产出每行每格最终展示文本与列定义
@@ -73,6 +77,8 @@
 //!   可关、抑制上报自含的弹层容器；
 //! - [`popconfirm`]：轻量确认气泡封装（`App*` 封装族，#2033 首建）——锚定
 //!   触发件的确认/取消气泡、ESC/点外关闭、抑制上报自含；
+//! - [`popover`]：口径说明气泡封装（`App*` 封装族，#2039 首建）——触发件
+//!   点按开合的多行说明气泡（旧壳口径 tooltip 的点按形态）、抑制上报自含；
 //! - [`signals`]：进程内失效信号——交易数据失效的订阅/广播单点，写路径
 //!   成功后广播、列表视图订阅重读（#2022；词汇表失效信号语义的壳内通道）；
 //! - [`txn_form`]：交易表单弹窗（`App*` 封装族消费面，#2034）——基础收支
@@ -102,6 +108,7 @@ pub mod boot;
 pub mod combo_select;
 pub mod context_menu;
 pub mod danger;
+pub mod dashboard;
 pub mod date_select;
 pub mod modal;
 pub mod multi_select;
@@ -111,6 +118,7 @@ pub mod overlay;
 pub mod period;
 pub mod pinyin_select;
 pub mod popconfirm;
+pub mod popover;
 pub mod select;
 pub mod sidebar;
 pub mod signals;

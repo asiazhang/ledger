@@ -12,14 +12,13 @@
 //! 暂存目录（infra 身份工厂发 UUID，测试互不串库），进程退出由 OS 回收
 //! （骨架测试无 ScratchDir 需求——不建库则无文件，与 BDD 世界持久目录同容忍）。
 
-use std::fs;
-use std::path::{Path, PathBuf};
-use std::sync::Mutex;
-
+use chrono::Datelike;
 use ledger_accounts::{AccountInput, AccountType};
 use ledger_currencies::Currency;
 use ledger_infra::ids::new_uuid;
 use ledger_transaction::{TransactionInput, TransactionKind};
+use std::fs;
+use std::path::{Path, PathBuf};
 
 use crate::app::{StartupView, headline_text, run_startup, set_book_dir};
 use crate::boot::{
@@ -27,8 +26,12 @@ use crate::boot::{
     currency_rows, merchant_rows, transaction_page, transaction_search,
 };
 
-/// 串行锁：接缝注册与 OnceLock 装配入口是进程级单例，用例间串行防串扰。
-static SERIAL: Mutex<()> = Mutex::new(());
+/// 串行锁：接缝注册与 OnceLock 装配入口是进程级单例，用例间串行防串扰
+/// （crate 级共享锁 [`crate::app::test_assembly_guard`]，与 nav::tests /
+/// dashboard::tests 探针互斥——装配单例跨模块唯一）。
+fn serial_guard() -> std::sync::MutexGuard<'static, ()> {
+    crate::app::test_assembly_guard()
+}
 
 /// 唯一暂存账本目录。
 fn scratch_book_dir(tag: &str) -> PathBuf {
@@ -243,7 +246,7 @@ fn assert_first_page(dir: &Path, expected_total: i64, expected_rows: usize) {
 
 #[test]
 fn boot_opens_empty_book_and_reads_first_page_empty() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_guard();
     let dir = scratch_book_dir("empty");
     create_empty_book_file(&dir);
     assert_first_page(&dir, 0, 0);
@@ -251,7 +254,7 @@ fn boot_opens_empty_book_and_reads_first_page_empty() {
 
 #[test]
 fn boot_reads_seeded_transactions_via_domain_write_entries() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_guard();
     let dir = scratch_book_dir("seeded");
     create_empty_book_file(&dir);
     seed_expense_series(&dir, 3);
@@ -271,7 +274,7 @@ fn boot_reads_seeded_transactions_via_domain_write_entries() {
 
 #[test]
 fn page_reads_offset_paging_boundaries_with_deterministic_order() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_guard();
     let dir = scratch_book_dir("paged");
     create_empty_book_file(&dir);
     seed_expense_series(&dir, 250);
@@ -315,7 +318,7 @@ fn page_reads_offset_paging_boundaries_with_deterministic_order() {
 /// 账本库同结果）。删除搜索读路径任一环（域函数调用 / 只读连接选择）即红。
 #[test]
 fn search_reads_hit_transactions_with_raw_text_semantics() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_guard();
     let dir = scratch_book_dir("search");
     create_empty_book_file(&dir);
     seed_expense_notes(&dir, &["元旦火锅聚餐", "超市买菜"]);
@@ -342,7 +345,7 @@ fn search_reads_hit_transactions_with_raw_text_semantics() {
 /// period 纯函数（本测锚定读路径的过滤半边）。
 #[test]
 fn page_reads_filter_by_period_range_with_inclusive_bounds() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_guard();
     let dir = scratch_book_dir("period-filter");
     create_empty_book_file(&dir);
     seed_expense_on_date(&dir, "2026-01-31", 1_100, "一月末");
@@ -386,7 +389,7 @@ fn page_reads_filter_by_period_range_with_inclusive_bounds() {
 /// 删除任一维度投影（含 kinds 默认）即红。
 #[test]
 fn page_reads_filter_dimensions_and_defaults_to_main_kinds() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_guard();
     let dir = scratch_book_dir("dim-filter");
     create_empty_book_file(&dir);
     let db = boot_ledger(&dir).unwrap();
@@ -592,7 +595,7 @@ fn page_reads_filter_dimensions_and_defaults_to_main_kinds() {
 /// 空关键词 + 仅有筛选 = 仅筛选查询（旧壳搜索页「无关键字仅筛选」同语义）。
 #[test]
 fn search_reads_with_amount_and_period_filters() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_guard();
     let dir = scratch_book_dir("search-filter");
     create_empty_book_file(&dir);
     seed_expense_on_date(&dir, "2026-01-05", 1_100, "一月火锅");
@@ -632,7 +635,7 @@ fn search_reads_with_amount_and_period_filters() {
 /// 空库双 None；与旧壳 report_date_range 同一域函数。
 #[test]
 fn report_date_range_spans_seeded_data() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_guard();
     let dir = scratch_book_dir("date-range");
     create_empty_book_file(&dir);
     let db = boot_ledger(&dir).unwrap();
@@ -656,7 +659,7 @@ fn report_date_range_spans_seeded_data() {
 
 #[test]
 fn currency_dict_reads_seeded_reference_data() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_guard();
     let dir = scratch_book_dir("currencies");
     create_empty_book_file(&dir);
     let db = boot_ledger(&dir).unwrap();
@@ -676,7 +679,7 @@ fn currency_dict_reads_seeded_reference_data() {
 /// 重复。
 #[test]
 fn page_reads_assemble_into_cell_texts_across_page_boundaries() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_guard();
     let dir = scratch_book_dir("assembled");
     create_empty_book_file(&dir);
     seed_expense_series(&dir, 250);
@@ -724,7 +727,7 @@ fn page_reads_assemble_into_cell_texts_across_page_boundaries() {
 /// 接缝（`category_rows`）或装配消费任一环即红。
 #[test]
 fn category_rows_assemble_into_path_cells_active_only() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_guard();
     let dir = scratch_book_dir("categories");
     create_empty_book_file(&dir);
     let db = boot_ledger(&dir).unwrap();
@@ -852,7 +855,7 @@ fn category_rows_assemble_into_path_cells_active_only() {
 /// 或装配消费任一环即红（呈现侧断言归 headless 集成测试）。
 #[test]
 fn account_and_merchant_rows_read_with_reference_visibility_rules() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_guard();
     let dir = scratch_book_dir("refs");
     create_empty_book_file(&dir);
     let db = boot_ledger(&dir).unwrap();
@@ -905,7 +908,7 @@ fn account_and_merchant_rows_read_with_reference_visibility_rules() {
 
 #[test]
 fn boot_missing_book_file_fails_coded() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_guard();
     let dir = scratch_book_dir("missing");
     let err = match boot_ledger(&dir) {
         Ok(_) => panic!("库文件缺失应报错，实际引导成功"),
@@ -919,7 +922,7 @@ fn boot_missing_book_file_fails_coded() {
 
 #[test]
 fn boot_page_aligned_foreign_header_fails_as_encrypted_unsupported() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_guard();
     let dir = scratch_book_dir("locked");
     // 两整页非明文魔数字节（页对齐 = 基础设施「密文库落盘形态」判别）：
     // 引导层分类为 AwaitUnlock，立桩收窄为码化错误（无解锁向导）。
@@ -939,7 +942,7 @@ fn boot_page_aligned_foreign_header_fails_as_encrypted_unsupported() {
 /// 接线归 `tests/app_headless.rs`。
 #[test]
 fn run_startup_without_book_dir_renders_usage() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_guard();
     // 缺席路径显式复位（headless 集成测试与本文件内的注入用例都可能先行运行，
     // 进程级槽位必须回到空态，缺席断言才与用例顺序无关）。
     crate::app::reset_book_assembly();
@@ -969,7 +972,7 @@ fn nsh_app_session() -> std::sync::Arc<ledger_infra::db::DbState> {
 /// 断言；窗口呈现侧的对应断言归 `tests/app_headless.rs`）。
 #[test]
 fn run_startup_with_seeded_book_places_session_and_reads_first_page() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_guard();
     let dir = scratch_book_dir("startup");
     create_empty_book_file(&dir);
     seed_expense_series(&dir, 2);
@@ -990,7 +993,7 @@ fn delete_transaction_writes_via_domain_entry_and_reports_coded_not_found() {
     use crate::boot::delete_transaction;
     use ledger_infra::error::AppError;
 
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_guard();
     let dir = scratch_book_dir("delete-write-seam");
     create_empty_book_file(&dir);
     seed_expense_notes(&dir, &["要删除的一笔", "要留下的一笔"]);
@@ -1066,7 +1069,7 @@ fn budget_write_and_read_seams_round_trip_through_domain_entries() {
     };
     use ledger_budget::{BudgetInput, BudgetPeriod};
 
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_guard();
     let dir = scratch_book_dir("budget-seam");
     create_empty_book_file(&dir);
     let db = boot_ledger(&dir).unwrap();
@@ -1146,7 +1149,7 @@ fn budget_create_surfaces_domain_validation_as_coded_error() {
     use crate::boot::create_budget;
     use ledger_budget::{BudgetInput, BudgetPeriod};
 
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_guard();
     let dir = scratch_book_dir("budget-seam-validate");
     create_empty_book_file(&dir);
     let db = boot_ledger(&dir).unwrap();
@@ -1204,4 +1207,178 @@ fn default_backup_file_name_degrades_without_fingerprint() {
         "ledger-backup-20261109-140509.db.zip",
         "指纹缺失（空库未固化）：退化为无标识旧命名"
     );
+}
+
+// ---------------------------------------------------------------------------
+// 概览视图读接缝（#2039）：净资产总览（dashboard 域单点取数）、本月收支
+// （报表域月度汇总）、投资概览（投资域持仓行 + 累计收益折本位币单值）与
+// 财务自由度（投资域聚合，分子分母同事务）直调域入口——与旧壳
+// dashboard_overview / monthly_summary / list_holdings /
+// cumulative_pnl_native_total / financial_freedom 命令消费的同一域函数，
+// 不经 IPC。建库走产品开库入口、造数经域公开写入口（模块头造数纪律）。
+// ---------------------------------------------------------------------------
+
+/// 造一个指定币种指定类型的账户（概览读接缝的造数入口；返回账户 id）。
+fn seed_account_with_currency(
+    db: &ledger_infra::db::DbState,
+    name: &str,
+    kind: AccountType,
+    currency_code: &str,
+    initial_balance_cents: i64,
+) -> String {
+    let conn = db
+        .conn
+        .lock()
+        .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
+        .unwrap();
+    ledger_accounts::create_account(
+        &conn,
+        AccountInput {
+            name: name.to_owned(),
+            kind,
+            currency_code: currency_code.to_owned(),
+            initial_balance_cents: Some(initial_balance_cents),
+            credit_limit_cents: None,
+            statement_day: None,
+            due_day: None,
+        },
+    )
+    .unwrap()
+}
+
+#[test]
+fn dashboard_overview_and_monthly_seams_read_seeded_book() {
+    use crate::boot::{dashboard_overview, monthly_summary_rows};
+
+    let _guard = serial_guard();
+    let dir = scratch_book_dir("dashboard-seam");
+    create_empty_book_file(&dir);
+    let db = boot_ledger(&dir).unwrap();
+
+    // 净资产 = Σ 折本位币余额（现金腿）。期初 100_000 分 + 本月收入 5_000 −
+    // 本月支出 2_000 = 103_000（月初余额经期初余额进账，折算 CNY 恒等）。
+    let cash = seed_account_with_currency(&db, "现金", AccountType::Cash, "CNY", 100_000);
+    let today = crate::boot::today_string();
+    {
+        let conn = db.conn.lock().unwrap();
+        ledger_transaction::create(&conn, income_input(&cash, &today, 5_000, "收入")).unwrap();
+        ledger_transaction::create(&conn, expense_input(&cash, &today, 2_000, "支出")).unwrap();
+    }
+
+    // 净资产总览（dashboard 域读探针直调；缓存指纹命中与否对读数无感）。
+    let overview = dashboard_overview(&db).unwrap();
+    assert_eq!(overview.native_currency, "CNY");
+    assert_eq!(
+        overview.net_worth_cents, 103_000,
+        "净资产 = 账户折本位币余额合计（含期初余额）"
+    );
+    assert_eq!(overview.accounts_balance_cents, 103_000);
+    assert_eq!(overview.holdings_market_value_cents, 0);
+    assert_eq!(overview.physical_assets_value_cents, 0);
+
+    // 本月收支（报表域月度汇总直调，当年行集含当月）：收入 5_000 / 毛支出
+    // 2_000 / 退款 0——展示层净支出 = 毛支出 − 退款（装配层推导，域行集不重复）。
+    let year = chrono::Local::now().year();
+    let rows = monthly_summary_rows(&db, i64::from(year)).unwrap();
+    let month_key = format!("{year}-{}", chrono::Local::now().format("%m"));
+    let current = rows.iter().find(|row| row.month == month_key);
+    let current = current.unwrap_or_else(|| panic!("当年行集含当月 {month_key}"));
+    assert_eq!(current.income_cents, 5_000);
+    assert_eq!(current.expense_cents, 2_000);
+    assert_eq!(current.refund_cents, 0);
+}
+
+#[test]
+fn portfolio_and_freedom_seams_read_holdings_and_budget() {
+    use crate::boot::{cumulative_pnl_native_total, financial_freedom, portfolio_rows};
+    use ledger_investment::{InstrumentInput, InstrumentType, MarketPriceInput};
+
+    let _guard = serial_guard();
+    let dir = scratch_book_dir("portfolio-seam");
+    create_empty_book_file(&dir);
+    let db = boot_ledger(&dir).unwrap();
+
+    // 投资账户 + 标的 + 现价 + 买入：价格刻度万分之一元（ADR-0038）——现价
+    // 1_000_000 = ¥100，1 份持仓市值 = 10_000 分；买入价 10_000 = ¥1（成本腿
+    // 100 分，未实现盈亏 9_900 分，累计收益读数随之钉住）。期初现金 100 分
+    // 恰好覆盖买入现金腿（买入后余额归零——可投资资产现金腿 0，不拖累分子）。
+    let invest = seed_account_with_currency(&db, "证券", AccountType::Investment, "CNY", 100);
+    let today = crate::boot::today_string();
+    let instrument = {
+        let conn = db.conn.lock().unwrap();
+        let id = ledger_investment::create_instrument(
+            &conn,
+            InstrumentInput {
+                symbol: "TST".to_owned(),
+                kind: InstrumentType::Stock,
+                name: Some("测试标的".to_owned()),
+                currency_code: "CNY".to_owned(),
+                market: None,
+            },
+        )
+        .unwrap();
+        ledger_investment::create_market_price(
+            &conn,
+            MarketPriceInput {
+                instrument_id: id.clone(),
+                price_cents: 1_000_000,
+                currency_code: "CNY".to_owned(),
+                priced_at: today.clone(),
+                source: Some("manual".to_owned()),
+            },
+        )
+        .unwrap();
+        id
+    };
+    {
+        let conn = db.conn.lock().unwrap();
+        ledger_transaction::create(&conn, buy_input(&invest, &instrument, &today)).unwrap();
+    }
+
+    // 持仓行集（v_holdings 直调，逐行折本位币软形态已算）。
+    let holdings = portfolio_rows(&db).unwrap();
+    assert_eq!(holdings.len(), 1, "持仓行集贯通");
+    assert_eq!(holdings[0].quantity, 1.0);
+    assert_eq!(holdings[0].market_value_cents, Some(10_000));
+    assert_eq!(
+        holdings[0].native_market_value_cents,
+        Some(10_000),
+        "CNY 账户当期恒等折算"
+    );
+
+    // 累计收益（未实现腿 9_900 = 市值 10_000 − 成本 100；折本位币单值 + 基准币种）。
+    let cumulative = cumulative_pnl_native_total(&db).unwrap();
+    assert_eq!(cumulative.native_currency, "CNY");
+    assert_eq!(cumulative.total_cents, 9_900);
+
+    // 财务自由度：月度预算 3_125（年化分母 37_500），分子 = 投资账户现金 0
+    // + 持仓市值 10_000 = 10_000；比例 = 分子×3%÷分母×100 = 0.8（恰在一位
+    // 小数刻度上，无舍入边）。
+    let category = seed_expense_category(&db, "餐饮");
+    {
+        use ledger_budget::{BudgetInput, BudgetPeriod};
+        let conn = db.conn.lock().unwrap();
+        ledger_budget::crud::create_budget(
+            &conn,
+            &BudgetInput {
+                category_id: category,
+                period: Some(BudgetPeriod::Monthly),
+                amount_cents: 3_125,
+                start_date: today,
+            },
+        )
+        .unwrap();
+    }
+    let freedom = financial_freedom(&db).unwrap();
+    assert_eq!(
+        freedom.numerator_cents, 10_000,
+        "分子 = 持仓市值腿（现金腿已归零）"
+    );
+    assert_eq!(freedom.denominator_cents, 37_500, "分母 = 月预算 ×12");
+    assert!(
+        (freedom.ratio - 0.8).abs() < 1e-9,
+        "比例一位小数刻度，实值 {:?}",
+        freedom.ratio
+    );
+    assert_eq!(freedom.native_currency, "CNY");
 }

@@ -1930,6 +1930,311 @@ pub fn assemble_budget_summary(
     }
 }
 
+// ---------------------------------------------------------------------------
+// 概览视图四卡格（#2039）：净资产 / 本月收支 / 投资三卡 / 财务自由度——旧壳
+// DashboardView 装配层的重生（一次装配、渲染期零格式化）。折算与多币种合计
+// 以域为唯一真源（域行集已带折本位币单值），本层只消费域行集产展示文本，
+// 不另立第二份口径表达式。
+// ---------------------------------------------------------------------------
+
+/// 盈亏涨跌色消费面（旧壳 pnlSemanticColor 同语义：红涨绿跌，与交易类型
+/// 语义色正交——两族色值当前同相属巧合，不互相引用；色值归视图层映射）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PnlSemantic {
+    /// 涨（正收益含零）。
+    Gain,
+    /// 跌（负收益）。
+    Loss,
+}
+
+/// 财务自由度阶段（ADR-0048 决策 5：阈值与文案归 UI 层，不做后端枚举）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FreedomStage {
+    /// <30% 积累期。
+    Accumulation,
+    /// 30–100% 接近自由。
+    Approaching,
+    /// ≥100% 财务自由。
+    Free,
+}
+
+impl FreedomStage {
+    /// 阶段标签（旧壳 dashboard.freedom.stage* 词表）。
+    pub fn label(self) -> &'static str {
+        match self {
+            FreedomStage::Accumulation => "积累期",
+            FreedomStage::Approaching => "接近自由",
+            FreedomStage::Free => "财务自由",
+        }
+    }
+}
+
+/// JS 数字字面文本（一位小数刻度值的展示形态）：整数刻度不拖尾零（40 →
+/// "40"），非整数一位小数（37.5 → "37.5"）——旧壳模板插值 `{{ ratio }}%`
+/// 的 JS 数字字符串化同形态。
+fn js_number_text(value: f64) -> String {
+    if value.fract() == 0.0 {
+        format!("{}", value as i64)
+    } else {
+        format!("{value:.1}")
+    }
+}
+
+/// 净资产卡格（置顶主数字：本位币单一主数字 + 币符）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct NetWorthCells {
+    /// 净资产主数字（本位币，隐私态掩码）。
+    pub net_worth: String,
+}
+
+/// 净资产总览 → 展示格：后端 `dashboard_overview` 单点折算的单一主数字
+///（旧壳只呈现 net_worth_cents 一数，组成腿在口径说明弹层交代）。
+pub fn assemble_net_worth(
+    overview: &ledger_dashboard::DashboardOverview,
+    currencies: &CurrencyTable,
+    privacy: bool,
+) -> NetWorthCells {
+    let net_worth = if privacy {
+        AMOUNT_PRIVACY_MASK.to_owned()
+    } else {
+        format_amount_basic(
+            overview.net_worth_cents,
+            &currencies.format_of(&overview.native_currency),
+        )
+    };
+    NetWorthCells { net_worth }
+}
+
+/// 本月收支卡格（收入 / 净支出 / 结余，默认币种单币种无符号形态）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct MonthlyFlowCells {
+    /// 收入（后端净收入列 income_net 直出）。
+    pub income: String,
+    /// 净支出 = 毛支出 − 退款（退款不单列，与预算消耗口径一致）。
+    pub net_expense: String,
+    /// 结余 = 收入 − 净支出。
+    pub balance: String,
+}
+
+/// 月度汇总当月行 → 展示格：行缺失（当月无交易）三格归零（旧壳 `?? 0`
+/// 同口径）。
+pub fn assemble_monthly_flow(
+    month: Option<&ledger_reports::MonthlySummary>,
+    privacy: bool,
+) -> MonthlyFlowCells {
+    let (income, net_expense) = match month {
+        Some(row) => (row.income_cents, row.expense_cents - row.refund_cents),
+        None => (0, 0),
+    };
+    let balance = income - net_expense;
+    MonthlyFlowCells {
+        income: budget_amount_text(income, privacy),
+        net_expense: budget_amount_text(net_expense, privacy),
+        balance: budget_amount_text(balance, privacy),
+    }
+}
+
+/// 投资概览单卡格（三卡各一份）：缺料三态显式分离（旧壳 NativeTotal 同形）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct PortfolioStatCells {
+    /// 折本位币单值文本（`None` = 无可计入行或缺折算汇率 → 呈现「-」）；
+    /// 隐私态掩码。
+    pub text: Option<String>,
+    /// 整卡警告文案（缺折算汇率行在场或命令报错）：置位即警告态，不给半截数字。
+    pub warning: Option<String>,
+    /// 缺现价未计入计数小字（警告态不重复交代，旧壳同规则）。
+    pub missing_price_note: Option<String>,
+    /// 盈亏涨跌色消费面（`None` = 中性：市值卡恒中性，无可计入值不者色）。
+    pub pnl: Option<PnlSemantic>,
+}
+
+/// 投资概览三卡格 + 空态消费面。
+#[derive(Debug, Clone, PartialEq)]
+pub struct PortfolioStatsCells {
+    /// 总市值（中性）。
+    pub market_value: PortfolioStatCells,
+    /// 持仓收益（未实现盈亏，涨跌色）。
+    pub unrealized_pnl: PortfolioStatCells,
+    /// 累计收益（涨跌色；全账本口径，命令透传单值）。
+    pub cumulative_pnl: PortfolioStatCells,
+    /// 有无持仓行（空态「暂无持仓」的消费面，三卡不呈现）。
+    pub has_holdings: bool,
+}
+
+/// 缺折算汇率整卡警告文案（旧壳 investments.statsCards.rateMissing 同词表）。
+const RATE_MISSING_WARNING: &str = "部分持仓缺折算汇率，合计暂不可计。";
+
+/// 持仓行集单列（市值或未实现盈亏）→ 缺料三态合计（旧壳 nativeRowTotal 同
+/// 语义：缺现价行计数不计入、缺折算汇率行整卡警告、其余行同币求和；行级
+/// 折本位币已由域读路径完成，本层不另立折算）。
+fn portfolio_column_total(rows: &[(Option<i64>, Option<i64>)]) -> (Option<i64>, usize, usize) {
+    let mut cents = None;
+    let mut missing_price_count = 0usize;
+    let mut rate_missing_count = 0usize;
+    for (raw, native) in rows {
+        match (raw, native) {
+            (None, _) => missing_price_count += 1,
+            (Some(_), None) => rate_missing_count += 1,
+            (Some(_), Some(value)) => cents = Some(cents.unwrap_or(0) + value),
+        }
+    }
+    // 缺折算汇率行在场即不给半截数字。
+    if rate_missing_count > 0 {
+        cents = None;
+    }
+    (cents, missing_price_count, rate_missing_count)
+}
+
+/// 投资概览卡装配：持仓行集（域逐行软折算产物）与累计收益命令透传 → 三卡格。
+/// `cumulative_error` 是累计收益命令的码化错误文案（缺汇率上抛 → 累计卡警告
+/// 与重试消费面）。`native_currency` 为累计命令透传的折算基准币种，`None` 时
+/// 取缺省格式（旧壳 reference.getCurrency("") 降级裸数字同口径）。
+pub fn assemble_portfolio_stats(
+    holdings: &[ledger_investment::Holding],
+    cumulative: Option<&ledger_investment::CumulativePnlNativeTotal>,
+    cumulative_error: Option<String>,
+    currencies: &CurrencyTable,
+    privacy: bool,
+) -> PortfolioStatsCells {
+    let format_of = |code: Option<&str>| code.map(|c| currencies.format_of(c)).unwrap_or_default();
+    // 传入币种优先取累计命令的基准币种（旧壳 nativeCurrency 透传同源）；命令
+    // 未就绪时缺省格式。
+    let native_code = cumulative.map(|c| c.native_currency.as_str());
+    let fmt = format_of(native_code);
+    let stat = |rows: &[(Option<i64>, Option<i64>)], pnl: bool| {
+        let (cents, missing_price_count, rate_missing_count) = portfolio_column_total(rows);
+        let warning = (rate_missing_count > 0).then_some(RATE_MISSING_WARNING.to_owned());
+        let text = if privacy {
+            cents.is_some().then(|| AMOUNT_PRIVACY_MASK.to_owned())
+        } else {
+            cents.map(|c| format_amount_basic(c, &fmt))
+        };
+        let missing_price_note = (warning.is_none() && missing_price_count > 0)
+            .then(|| format!("{missing_price_count} 只持仓因缺现价未计入。"));
+        let pnl = (pnl && cents.is_some()).then(|| {
+            if cents.unwrap_or(0) >= 0 {
+                PnlSemantic::Gain
+            } else {
+                PnlSemantic::Loss
+            }
+        });
+        PortfolioStatCells {
+            text,
+            warning,
+            missing_price_note,
+            pnl,
+        }
+    };
+    let market_rows: Vec<(Option<i64>, Option<i64>)> = holdings
+        .iter()
+        .map(|h| (h.market_value_cents, h.native_market_value_cents))
+        .collect();
+    let unreal_rows: Vec<(Option<i64>, Option<i64>)> = holdings
+        .iter()
+        .map(|h| (h.unrealized_pnl_cents, h.native_unrealized_pnl_cents))
+        .collect();
+    let cumulative_cells = match (cumulative_error, cumulative) {
+        // 命令报错优先：整卡警告 + 文案透传，不给半截数字（旧壳 error 优先同序）。
+        (Some(error), _) => PortfolioStatCells {
+            text: None,
+            warning: Some(error),
+            missing_price_note: None,
+            pnl: None,
+        },
+        (None, Some(total)) => {
+            let text = if privacy {
+                Some(AMOUNT_PRIVACY_MASK.to_owned())
+            } else {
+                Some(format_amount_basic(total.total_cents, &fmt))
+            };
+            PortfolioStatCells {
+                text,
+                warning: None,
+                missing_price_note: None,
+                pnl: Some(if total.total_cents >= 0 {
+                    PnlSemantic::Gain
+                } else {
+                    PnlSemantic::Loss
+                }),
+            }
+        }
+        // 命令未就绪（装载中）：空值待装，不提前报错。
+        (None, None) => PortfolioStatCells {
+            text: None,
+            warning: None,
+            missing_price_note: None,
+            pnl: None,
+        },
+    };
+    PortfolioStatsCells {
+        market_value: stat(&market_rows, false),
+        unrealized_pnl: stat(&unreal_rows, true),
+        cumulative_pnl: cumulative_cells,
+        has_holdings: !holdings.is_empty(),
+    }
+}
+
+/// 财务自由度卡格（比例 / 阶段 / 进度 / 口径两行 / 覆盖年数 / 零分母占位态）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct FreedomCells {
+    /// 比例文本（一位小数去尾零，如 "37.5%" / "100%"；零分母占位态为 "0%"）。
+    pub ratio_text: String,
+    /// 比例数值（进度条消费面，封顶在视图层）。
+    pub percent: f32,
+    /// 阶段（零分母占位态 `None`——不回退实际支出，旧壳同规则）。
+    pub stage: Option<FreedomStage>,
+    /// 「可投资资产 {amount}」口径行。
+    pub numerator_line: String,
+    /// 「年度预算总额 {amount}」口径行。
+    pub denominator_line: String,
+    /// 「可覆盖 {years} 年」行。
+    pub coverage_line: String,
+    /// 零分母（未设预算）：占位引导态（去预算页设置），口径不回退实际支出。
+    pub zero_denominator: bool,
+}
+
+/// 财务自由度总览 → 展示格（域聚合唯一真源；阶段阈值 ADR-0048 决策 5 归 UI）。
+pub fn assemble_financial_freedom(
+    freedom: &ledger_investment::FinancialFreedomOverview,
+    currencies: &CurrencyTable,
+    privacy: bool,
+) -> FreedomCells {
+    let fmt = currencies.format_of(&freedom.native_currency);
+    let zero_denominator = freedom.denominator_cents == 0;
+    let stage = if zero_denominator {
+        None
+    } else if freedom.ratio >= 100.0 {
+        Some(FreedomStage::Free)
+    } else if freedom.ratio >= 30.0 {
+        Some(FreedomStage::Approaching)
+    } else {
+        Some(FreedomStage::Accumulation)
+    };
+    FreedomCells {
+        ratio_text: format!("{}%", js_number_text(freedom.ratio)),
+        percent: freedom.ratio as f32,
+        stage,
+        numerator_line: format!(
+            "可投资资产 {}",
+            if privacy {
+                AMOUNT_PRIVACY_MASK.to_owned()
+            } else {
+                format_amount_basic(freedom.numerator_cents, &fmt)
+            }
+        ),
+        denominator_line: format!(
+            "年度预算总额 {}",
+            if privacy {
+                AMOUNT_PRIVACY_MASK.to_owned()
+            } else {
+                format_amount_basic(freedom.denominator_cents, &fmt)
+            }
+        ),
+        coverage_line: format!("可覆盖 {} 年", js_number_text(freedom.coverage_years)),
+        zero_denominator,
+    }
+}
+
 /// 预算执行表列定义（键与列序同旧壳桌面档七列；进度列弹性吸收富余宽，UI 层
 /// 映射为宿主列）。
 pub const BUDGET_COLUMNS: &[ColumnDef] = &[
@@ -3901,5 +4206,245 @@ mod tests {
             ),
             (Some("cash".to_owned()), Some("recv".to_owned())),
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // 概览视图四卡格（#2039）：净资产 / 本月收支 / 投资三卡 / 财务自由度——
+    // 旧壳 DashboardView 装配层的重生（一次装配、渲染期零格式化）；金额换算
+    // 与折算口径以域为唯一真源，本层只消费域行集产展示文本。
+    // -----------------------------------------------------------------------
+
+    fn cny_table() -> CurrencyTable {
+        CurrencyTable::from_currencies(std::iter::once(&currency("CNY", "¥", 2)))
+    }
+
+    fn currency(code: &str, symbol: &str, places: i64) -> Currency {
+        Currency {
+            code: code.to_owned(),
+            symbol: symbol.to_owned(),
+            decimal_places: places,
+            name: code.to_owned(),
+        }
+    }
+
+    #[test]
+    fn net_worth_card_assembles_native_main_number_with_symbol_and_privacy() {
+        let overview = ledger_dashboard::DashboardOverview {
+            native_currency: "CNY".to_owned(),
+            net_worth_cents: 1_234_567_890,
+            accounts_balance_cents: 0,
+            holdings_market_value_cents: 0,
+            physical_assets_value_cents: 0,
+        };
+        let cells = assemble_net_worth(&overview, &cny_table(), false);
+        assert_eq!(
+            cells.net_worth, "¥1234,5678.9",
+            "本位币主数字带币符、zh 四位一组"
+        );
+        let masked = assemble_net_worth(&overview, &cny_table(), true);
+        assert_eq!(masked.net_worth, "••••", "隐私态同表格掩码");
+        // 基准币种未登记（字典缺行）→ 缺省格式（无符号两位小数），不静默换符号。
+        let unknown = assemble_net_worth(&overview, &CurrencyTable::default(), false);
+        assert_eq!(unknown.net_worth, "1234,5678.9");
+    }
+
+    #[test]
+    fn monthly_flow_card_derives_net_expense_and_balance_with_refund() {
+        let month = ledger_reports::MonthlySummary {
+            month: "2026-03".to_owned(),
+            income_cents: 50_000,
+            expense_cents: 30_000,
+            refund_cents: 5_000,
+        };
+        let cells = assemble_monthly_flow(Some(&month), false);
+        assert_eq!(cells.income, "500", "收入直用后端净收入列");
+        assert_eq!(
+            cells.net_expense, "250",
+            "净支出 = 毛支出 − 退款（退款不单列）"
+        );
+        assert_eq!(cells.balance, "250", "结余 = 收入 − 净支出");
+        // 当月无行 → 三零（旧壳 ?? 0 同口径）。
+        let empty = assemble_monthly_flow(None, false);
+        assert_eq!(
+            (
+                empty.income.as_str(),
+                empty.net_expense.as_str(),
+                empty.balance.as_str()
+            ),
+            ("0", "0", "0")
+        );
+        // 隐私态三格同掩码。
+        let masked = assemble_monthly_flow(Some(&month), true);
+        assert_eq!(masked.income, "••••");
+        assert_eq!(masked.net_expense, "••••");
+        assert_eq!(masked.balance, "••••");
+    }
+
+    fn holding(
+        market: Option<i64>,
+        native_market: Option<i64>,
+        unreal: Option<i64>,
+        native_unreal: Option<i64>,
+    ) -> ledger_investment::Holding {
+        ledger_investment::Holding {
+            id: "h".to_owned(),
+            account_id: "a".to_owned(),
+            instrument_id: "i".to_owned(),
+            quantity: 1.0,
+            cost_basis_cents: 0,
+            cost_currency_code: "CNY".to_owned(),
+            latest_price_cents: None,
+            latest_price_currency_code: None,
+            latest_nav_date: None,
+            market_value_cents: market,
+            unrealized_pnl_cents: unreal,
+            native_market_value_cents: native_market,
+            native_unrealized_pnl_cents: native_unreal,
+            updated_at: "2026-03-14T09:26:53Z".to_owned(),
+        }
+    }
+
+    #[test]
+    fn portfolio_stats_cards_sum_native_values_and_surface_missing_states() {
+        let rows = vec![
+            holding(Some(10_000), Some(10_000), Some(1_000), Some(1_000)),
+            holding(Some(20_000), Some(20_000), Some(-2_000), Some(-2_000)),
+        ];
+        let cumulative = ledger_investment::CumulativePnlNativeTotal {
+            total_cents: 3_000,
+            native_currency: "CNY".to_owned(),
+        };
+        let cells = assemble_portfolio_stats(&rows, Some(&cumulative), None, &cny_table(), false);
+        assert!(cells.has_holdings);
+        assert_eq!(cells.market_value.text.as_deref(), Some("¥300"));
+        assert_eq!(
+            cells.unrealized_pnl.text.as_deref(),
+            Some("-¥10"),
+            "负号在最前、币符随后"
+        );
+        assert_eq!(
+            cells.unrealized_pnl.pnl,
+            Some(PnlSemantic::Loss),
+            "跌色消费面"
+        );
+        assert_eq!(cells.market_value.pnl, None, "市值卡中性（涨跌色不外溢）");
+        assert_eq!(cells.cumulative_pnl.text.as_deref(), Some("¥30"));
+        assert_eq!(cells.cumulative_pnl.pnl, Some(PnlSemantic::Gain));
+        assert!(cells.market_value.warning.is_none());
+
+        // 缺料三态显式分离：缺现价行 → 计数小字；缺折算汇率行 → 整卡警告不给半截数字。
+        let mixed = vec![
+            holding(Some(10_000), Some(10_000), Some(1_000), Some(1_000)),
+            holding(None, None, None, None),
+            holding(Some(30_000), None, Some(3_000), None),
+        ];
+        let cells = assemble_portfolio_stats(&mixed, Some(&cumulative), None, &cny_table(), false);
+        assert_eq!(
+            cells.market_value.text, None,
+            "缺折算汇率行在场即不给半截合计"
+        );
+        assert_eq!(
+            cells.market_value.warning.as_deref(),
+            Some("部分持仓缺折算汇率，合计暂不可计。")
+        );
+        assert!(
+            cells.market_value.missing_price_note.is_none(),
+            "警告态不重复交代缺价"
+        );
+        // 未实现列同样含缺折算汇率行 → 同样整卡警告、计数小字不重复交代。
+        assert_eq!(
+            cells.unrealized_pnl.warning.as_deref(),
+            Some("部分持仓缺折算汇率，合计暂不可计。")
+        );
+        assert!(cells.unrealized_pnl.missing_price_note.is_none());
+
+        // 只有缺现价（无缺汇率行）→ 计数小字随数值态呈现。
+        let price_only = vec![
+            holding(Some(10_000), Some(10_000), Some(1_000), Some(1_000)),
+            holding(None, None, None, None),
+        ];
+        let cells =
+            assemble_portfolio_stats(&price_only, Some(&cumulative), None, &cny_table(), false);
+        assert_eq!(cells.market_value.text.as_deref(), Some("¥100"));
+        assert!(cells.market_value.warning.is_none());
+        assert_eq!(
+            cells.market_value.missing_price_note.as_deref(),
+            Some("1 只持仓因缺现价未计入。")
+        );
+
+        // 累计收益命令报错（如缺汇率码化上抛）→ 累计卡整卡警告 + 文案透传。
+        let err = assemble_portfolio_stats(
+            &rows,
+            None,
+            Some("汇率缺失".to_owned()),
+            &cny_table(),
+            false,
+        );
+        assert_eq!(err.cumulative_pnl.warning.as_deref(), Some("汇率缺失"));
+        assert_eq!(err.cumulative_pnl.text, None);
+
+        // 无持仓 → 空态消费面（「暂无持仓」），三卡不呈现。
+        let empty = assemble_portfolio_stats(&[], Some(&cumulative), None, &cny_table(), false);
+        assert!(!empty.has_holdings);
+    }
+
+    #[test]
+    fn freedom_card_formats_ratio_stage_and_caliber_lines() {
+        use ledger_investment::FinancialFreedomOverview;
+        let freedom = FinancialFreedomOverview {
+            ratio: 37.5,
+            numerator_cents: 300_000,
+            denominator_cents: 240_000,
+            coverage_years: 12.5,
+            native_currency: "CNY".to_owned(),
+        };
+        let cells = assemble_financial_freedom(&freedom, &cny_table(), false);
+        assert_eq!(cells.ratio_text, "37.5%", "一位小数去尾零（JS 数字同形态）");
+        assert_eq!(
+            cells.stage,
+            Some(FreedomStage::Approaching),
+            "30–100 接近自由"
+        );
+        assert_eq!(cells.percent, 37.5);
+        assert_eq!(cells.numerator_line, "可投资资产 ¥3000");
+        assert_eq!(cells.denominator_line, "年度预算总额 ¥2400");
+        assert_eq!(cells.coverage_line, "可覆盖 12.5 年");
+        assert!(!cells.zero_denominator);
+
+        // 阈值两端（<30 积累期 / ≥100 财务自由）与整数刻度去尾零。
+        let low = FinancialFreedomOverview {
+            ratio: 0.0,
+            coverage_years: 0.0,
+            numerator_cents: 0,
+            ..freedom.clone()
+        };
+        assert_eq!(
+            assemble_financial_freedom(&low, &cny_table(), false).stage,
+            Some(FreedomStage::Accumulation)
+        );
+        let reached = FinancialFreedomOverview {
+            ratio: 100.0,
+            coverage_years: 12.0,
+            ..freedom.clone()
+        };
+        let reached_cells = assemble_financial_freedom(&reached, &cny_table(), false);
+        assert_eq!(reached_cells.stage, Some(FreedomStage::Free));
+        assert_eq!(reached_cells.ratio_text, "100%", "整数刻度不拖尾零");
+        assert_eq!(reached_cells.coverage_line, "可覆盖 12 年");
+
+        // 零分母（未设预算）：占位态，阶段与口径行不呈现（不回退实际支出）。
+        let zero = FinancialFreedomOverview {
+            ratio: 0.0,
+            denominator_cents: 0,
+            ..freedom.clone()
+        };
+        let zero_cells = assemble_financial_freedom(&zero, &cny_table(), false);
+        assert!(zero_cells.zero_denominator);
+        assert_eq!(zero_cells.stage, None);
+
+        // 金额行隐私掩码；比例与年数不遮蔽（非金额量）。
+        let masked = assemble_financial_freedom(&freedom, &cny_table(), true);
+        assert_eq!(masked.numerator_line, "可投资资产 ••••");
+        assert_eq!(masked.ratio_text, "37.5%");
     }
 }
