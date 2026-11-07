@@ -37,8 +37,8 @@ use crate::boot;
 use crate::nav_model::ViewName;
 use crate::{
     accounts, backup_entry, context_menu, danger, dashboard, modal, multi_select, nav, nav_model,
-    overlay, period_row, pinyin_select, popconfirm, search, sidebar, signals, tx_filter, txn_form,
-    views,
+    overlay, period_row, pinyin_select, popconfirm, scheduled, search, sidebar, signals, tx_filter,
+    txn_form, views,
 };
 
 /// 金额隐私模式开关的存储键（设备轻量设置项，与旧壳同键同值形态：旧壳
@@ -172,6 +172,7 @@ pub fn reset_book_assembly() {
     signals::reset_for_tests();
     nav::reset_for_tests();
     tx_filter::reset_for_tests();
+    scheduled::reset_for_tests();
 }
 
 /// 启动结果三态（窗口呈现的全部状态）。
@@ -2191,37 +2192,39 @@ fn view_host(nav: nav::NavStore) -> impl IntoElement {
     let current = nav.current;
     let is = move |name: ViewName| move || current.get() == name;
     let group_more = |gid: nav_model::GroupId| move || views::group_more_view(gid);
-    // 分支序随迁移系列推进：交易列表 / 预算（#2033）/ 概览（#2039）/
-    // 搜索（#2040）挂真实组件，三容器挂「更多」页签壳，其余未迁移视图共享
-    // 占位。
+    // 分支序随迁移系列推进：交易列表 / 预算（#2033）/ 账户（#2041）/ 定时
+    //（#2042）/ 概览（#2039）/ 搜索（#2040）挂真实组件，三容器挂「更多」
+    // 页签壳，其余未迁移视图共享占位。
     when(is(ViewName::Transactions), transactions_view).otherwise(move || {
         when(is(ViewName::Budget), budget_view).otherwise(move || {
             when(is(ViewName::Accounts), accounts::accounts_view).otherwise(move || {
-                when(is(ViewName::Dashboard), dashboard::dashboard_view).otherwise(move || {
-                    when(is(ViewName::Search), search::search_view).otherwise(move || {
-                        when(
-                            is(ViewName::BookkeepingMore),
-                            group_more(nav_model::GroupId::Bookkeeping),
-                        )
-                        .otherwise(move || {
+                when(is(ViewName::Scheduled), scheduled::scheduled_view).otherwise(move || {
+                    when(is(ViewName::Dashboard), dashboard::dashboard_view).otherwise(move || {
+                        when(is(ViewName::Search), search::search_view).otherwise(move || {
                             when(
-                                is(ViewName::AssetsMore),
-                                group_more(nav_model::GroupId::Assets),
+                                is(ViewName::BookkeepingMore),
+                                group_more(nav_model::GroupId::Bookkeeping),
                             )
                             .otherwise(move || {
                                 when(
-                                    is(ViewName::InsightsMore),
-                                    group_more(nav_model::GroupId::Insights),
+                                    is(ViewName::AssetsMore),
+                                    group_more(nav_model::GroupId::Assets),
                                 )
                                 .otherwise(move || {
-                                    // 未迁移视图反应式占位壳：标题随当前视图；意图
-                                    // 消费时机 = 落位（effect 键 current，同轮落地）。
-                                    let focused = signal(None::<nav::NavIntent>);
-                                    effect(move || {
-                                        let _current = nav.current.get();
-                                        focused.set(nav::take_intent());
-                                    });
-                                    views::placeholder_shell_current(focused)
+                                    when(
+                                        is(ViewName::InsightsMore),
+                                        group_more(nav_model::GroupId::Insights),
+                                    )
+                                    .otherwise(move || {
+                                        // 未迁移视图反应式占位壳：标题随当前视图；意图
+                                        // 消费时机 = 落位（effect 键 current，同轮落地）。
+                                        let focused = signal(None::<nav::NavIntent>);
+                                        effect(move || {
+                                            let _current = nav.current.get();
+                                            focused.set(nav::take_intent());
+                                        });
+                                        views::placeholder_shell_current(focused)
+                                    })
                                 })
                             })
                         })

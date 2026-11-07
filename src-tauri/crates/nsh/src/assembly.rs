@@ -450,7 +450,7 @@ impl AccountTable {
     }
 
     /// 账户 `id` 的名称；不在表中（隐藏/软删/缺失引用）返回 `None`（渲染 `-`）。
-    fn name_of(&self, id: Option<&str>) -> Option<&str> {
+    pub(crate) fn name_of(&self, id: Option<&str>) -> Option<&str> {
         self.by_id.get(id?).map(|e| e.name.as_str())
     }
 
@@ -481,7 +481,7 @@ impl MerchantTable {
     }
 
     /// 商户 `id` 的名称；不在表中返回 `None`（渲染 `-`）。
-    fn name_of(&self, id: Option<&str>) -> Option<&str> {
+    pub(crate) fn name_of(&self, id: Option<&str>) -> Option<&str> {
         self.by_id.get(id?).map(String::as_str)
     }
 }

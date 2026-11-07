@@ -77,6 +77,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # 版本随 workspace NSH 锁定（default-features = false 不带 QuickJS）。
 nsh-engine.workspace = true
 nsh-testing.workspace = true
+# 期次状态造数（#2042 headless）：failed 期次前置的构造面（域测试同款
+# set_status 语义）需要余额库连接上直接改期次状态——rusqlite 与域栈同版本。
+rusqlite = { version = "0.40", features = ["bundled-sqlcipher-vendored-openssl", "trace"] }
 
 # 六件套易 panic 构造门禁经 workspace 继承（ADR-0060 / spec #1086 门禁前置）：
 # 本行是继承接线，缺失即门禁静默消失，由 scripts/check-structure.ts 守门。

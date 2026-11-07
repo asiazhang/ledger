@@ -6434,3 +6434,457 @@ fn nsh_app_lib_account_id(dir: &std::path::Path, name: &str) -> String {
         .map(|a| a.id)
         .unwrap_or_else(|| panic!("未找到账户 {name}"))
 }
+
+// ---------------------------------------------------------------------------
+// 定时视图①订阅页签（#2042）：落位与页签骨架（会话保留）、计划创建旅程
+// （含商户输入即建 / 校验条位）、行操作旅程（暂停/恢复/取消气泡）、编辑旅
+// 程、期次详情弹层（重试落交易失效广播 / 展开期次）、花费面板口径。删任一
+// 接线即红的负向条目逐项写在各测试注释（ADR-0087 断言强度：断言对准用户可
+// 观察结果）。
+// ---------------------------------------------------------------------------
+
+/// 落位定时视图（定时用例共用）：定时在记账组「更多」容器——等侧栏就绪 →
+/// 点「更多」入口 → 点「定时」页签 → 等订阅清单表挂载。
+fn open_scheduled(app: &mut Headless) {
+    app.wait_for("id:nav-more-bookkeeping").unwrap();
+    app.press("id:nav-more-bookkeeping").unwrap();
+    app.wait_for("id:more-tab-scheduled").unwrap();
+    app.press("id:more-tab-scheduled").unwrap();
+    app.wait_for("id:sub-table").unwrap();
+}
+
+/// 造一个进行中的订阅计划（用例共用；域公开写入口 create_plan——期次预生
+/// 成协议在域内，本月花费口径与下期扣款列都吃它）。金额 ¥30、月付、开始日
+/// = 今天（最早 pending 期次日 = 开始日，断言确定性）。
+fn seed_subscription_plan(
+    db: &ledger_infra::db::DbState,
+    account: &str,
+    merchant: Option<&str>,
+    note: Option<&str>,
+) -> String {
+    let conn = db
+        .conn
+        .lock()
+        .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
+        .unwrap();
+    ledger_scheduled::create_plan(
+        &conn,
+        ledger_scheduled::CreateScheduledInput {
+            kind: ledger_scheduled::ScheduledKind::Subscription,
+            account_id: account.to_owned(),
+            category_id: None,
+            amount_cents: 3_000,
+            currency_code: "CNY".to_owned(),
+            recurrence_type: ledger_scheduled::RecurrenceType::Monthly,
+            recurrence_interval: 1,
+            recurrence_day: None,
+            start_date: today().to_string(),
+            note: note.map(str::to_owned),
+            merchant_id: merchant.map(str::to_owned),
+            policy_id: None,
+            total_amount_cents: None,
+            total_occurrences: None,
+            to_account_id: None,
+        },
+    )
+    .unwrap()
+}
+
+/// 经域读路径反查计划的最早 pending 期次 id（重试目标的造数定位）。
+fn first_pending_occurrence_id(dir: &std::path::Path, plan_id: &str) -> String {
+    let db = nsh_app::boot::boot_ledger(dir).unwrap();
+    let conn = db
+        .read_conn
+        .lock()
+        .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
+        .unwrap();
+    ledger_scheduled::get_plan_detail(&conn, plan_id)
+        .unwrap()
+        .pending_occurrences
+        .into_iter()
+        .next()
+        .map(|o| o.id)
+        .unwrap_or_else(|| panic!("计划无 pending 期次"))
+}
+
+/// 落位与页签骨架（旧壳 scheduled.tab 三形态页签平价）：三页签在屏（订阅
+/// 挂真实清单，分期 / 定时转账占位）、行格十列装配产物（备注/商户/金额/周
+/// 期/状态/下期扣款）、行操作按钮与状态过滤、花费面板统计口径。删 view_host
+/// 的定时分支挂载 → 本测红（「迁移中」占位）；删 make_action_renderer 的行
+/// 操作接线 → 暂停钮缺席红。
+#[test]
+fn scheduled_view_lands_with_panes_and_subscription_rows() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("scheduled-landing");
+    let plan_id;
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let account = seed_account_with_balance(&db, "测试现金", 10_000);
+        let merchant = seed_merchant(&db, "视频平台");
+        plan_id = seed_subscription_plan(&db, &account, Some(&merchant), Some("视频会员"));
+    }
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_scheduled(&mut app);
+
+    // 三形态页签（旧壳 scheduled.tab.* 同词表）。
+    for text in ["订阅", "分期", "定时转账"] {
+        assert!(
+            app.shows(text),
+            "形态页签「{text}」在屏：{:?}",
+            app.screen().texts()
+        );
+    }
+    // 分期页签占位（旧壳「迁移中」同位）；点回订阅页签清单回来（会话槽
+    // 写路径，删除页签点击写 session 槽接线即红）。
+    app.press("id:more-tab-scheduled").unwrap();
+    app.press("id:scheduled-tab-installments").unwrap();
+    app.wait_for("id:scheduled-installments-placeholder")
+        .unwrap();
+    app.press("id:scheduled-tab-transfers").unwrap();
+    app.wait_for("id:scheduled-transfers-placeholder").unwrap();
+    app.press("id:scheduled-tab-subscriptions").unwrap();
+    app.wait_for("text:订阅清单").unwrap();
+    app.wait_for(&format!("id:sub-next-{plan_id}")).unwrap();
+
+    // 行即现（异步装载纪律：先等行锚点再断格文本，§3.5）；下期扣款行级
+    // 锚点（最早 pending 期次日期 · 金额；起始日 = 今天，最早一期在今日）。
+    app.wait_for(&format!("id:sub-next-{plan_id}")).unwrap();
+    for text in ["视频会员", "视频平台", "¥30", "每月", "进行中"] {
+        assert!(
+            app.shows(text),
+            "订阅清单应呈现「{text}」：{:?}",
+            app.screen().texts()
+        );
+    }
+    // 行操作（旧壳 PlanRowActions 状态矩阵：active 行有 期次/暂停/取消/编辑）。
+    for anchor in [
+        format!("id:sub-detail-{plan_id}"),
+        format!("id:sub-pause-{plan_id}"),
+        format!("id:sub-edit-{plan_id}"),
+    ] {
+        assert!(app.screen().count(&anchor).unwrap() > 0, "{anchor} 在屏");
+    }
+    // 状态过滤（订阅无「已完成」键集——#309 现状，不越权补齐）。
+    for anchor in [
+        "id:sub-filter-active",
+        "id:sub-filter-paused",
+        "id:sub-filter-cancelled",
+    ] {
+        assert!(app.screen().count(anchor).unwrap() > 0, "{anchor} 在屏");
+    }
+    // 花费面板（本月实际花费等统计锚点在屏；未执行只读 ¥0 与推算说明同屏）。
+    app.wait_for("id:spend-this-month").unwrap();
+    for anchor in [
+        "id:spend-this-year",
+        "id:spend-projected-month",
+        "id:spend-projected-year",
+    ] {
+        assert!(app.screen().count(anchor).unwrap() > 0, "{anchor} 在屏");
+    }
+}
+
+/// 创建旅程（旧壳校验面 + toast 反馈平价）：空账户前置拦截不写入；填齐
+/// （账户拼音下拉 / 分类 / 商户输入即建 / 金额）→ 创建 → 反馈 + 行即现 +
+/// 花费面板刷新。删 perform_create 写接缝（create_scheduled_plan 直调）或
+/// reload 接线任一环即红。
+#[test]
+fn scheduled_view_create_subscription_journey() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("scheduled-create");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        seed_account_with_balance(&db, "测试现金", 10_000);
+        seed_category(&db, "茶饮", None);
+    }
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_scheduled(&mut app);
+
+    // 打开新建弹窗。
+    app.press("id:sub-create-open").unwrap();
+    app.wait_for("id:app-modal").unwrap();
+    app.wait_for("text:新建订阅").unwrap();
+
+    // 前置拦截：无账户点提交 → 错误条位，不写入。
+    app.press("id:sub-create").unwrap();
+    app.wait_for("id:sub-create-error").unwrap();
+    app.wait_for("text:创建失败: 请选择扣款账户").unwrap();
+
+    // 填备注 + 账户（拼音可搜下拉，#2033 封装）。
+    app.type_text("id:sub-note", "流媒体会员").unwrap();
+    app.press("id:sub-account").unwrap();
+    app.wait_for("id:sub-account-search").unwrap();
+    app.press("id:sub-account-option >> text:测试现金 >> nth=0")
+        .unwrap();
+    // 币种随账户推导（只读展示；拆 derive_currency_text 即红）。
+    app.wait_for("text:CNY").unwrap();
+    // 分类（可搜下拉可清空，表单①先例同件）：拼音搜索过滤后选中。
+    app.press("id:sub-category").unwrap();
+    app.wait_for("id:sub-category-search").unwrap();
+    app.type_text("id:sub-category-search", "茶").unwrap();
+    app.press("id:sub-category-option >> text:茶饮 >> nth=0")
+        .unwrap();
+    // 商户输入即建（自由文本，提交走按名 find-or-create 单点）。
+    app.type_text("id:sub-merchant-input", "旗新品牌").unwrap();
+    app.type_text("id:sub-amount", "30").unwrap();
+    app.press("id:sub-create").unwrap();
+
+    // 反馈 + 行即现（金额/周期/下期扣款随行）。
+    app.wait_for("text:已创建订阅").unwrap();
+    app.wait_for("text:流媒体会员").unwrap();
+    app.wait_for("text:旗新品牌").unwrap();
+    assert!(
+        app.screen().texts().iter().any(|t| t.contains("· ¥30")),
+        "下期扣款 = 期次日期 · ¥30（预生成期次）：{:?}",
+        app.screen().texts()
+    );
+}
+
+/// 行操作旅程（暂停 / 恢复 / 取消气泡写路径平价）：暂停 → 行离「进行中」
+/// 进「已暂停」+ 恢复钮在；恢复 → 行回「进行中」；取消走确认气泡（旧壳
+/// confirm 文案），取消键不写、确定键写成功。删 perform_status 写接缝或
+/// reload 接线任一环即红。
+#[test]
+fn scheduled_view_row_actions_pause_resume_cancel() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("scheduled-actions");
+    let plan_id;
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let account = seed_account_with_balance(&db, "测试现金", 10_000);
+        plan_id = seed_subscription_plan(&db, &account, None, Some("会员扣款"));
+    }
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_scheduled(&mut app);
+
+    // 暂停：行随状态过滤离「进行中」视图（纯前端过滤，旧壳 filteredRows 平价；
+    // 操作反馈与恢复钮下一过滤断——先钉行锚点消失再换过滤）。
+    app.press(&format!("id:sub-pause-{plan_id}")).unwrap();
+    app.wait_for_gone(&format!("id:sub-next-{plan_id}"), DEFAULT_WAIT)
+        .unwrap();
+    app.press("id:sub-filter-paused").unwrap();
+    app.wait_for(&format!("id:sub-next-{plan_id}")).unwrap();
+
+    // 恢复：行随状态过滤离「已暂停」视图（恢复钮消失），回「进行中」过
+    // 滤后暂停钮回到行（active 专属动作集回归）。
+    app.press(&format!("id:sub-resume-{plan_id}")).unwrap();
+    app.wait_for_gone(&format!("id:sub-resume-{plan_id}"), DEFAULT_WAIT)
+        .unwrap();
+    app.press("id:sub-filter-active").unwrap();
+    app.wait_for(&format!("id:sub-pause-{plan_id}")).unwrap();
+
+    // 取消确认气泡（旧壳 subscriptionCancelConfirm 同文案同位）：打开气泡
+    // 看文案 → 先点气泡取消键（不写）→ 重新打开点确定（写成功）。
+    app.press(&format!("id:sub-cancel-{plan_id}")).unwrap();
+    app.wait_for("text:取消后不再扣款，已生成的交易与历史期次保留。确认取消？")
+        .unwrap();
+    app.press("id:sub-cancel-cancel").unwrap();
+    app.wait_for_gone(
+        "text:取消后不再扣款，已生成的交易与历史期次保留。确认取消？",
+        DEFAULT_WAIT,
+    )
+    .unwrap();
+    app.press(&format!("id:sub-cancel-{plan_id}")).unwrap();
+    app.wait_for("text:取消后不再扣款，已生成的交易与历史期次保留。确认取消？")
+        .unwrap();
+    app.press("id:sub-cancel-confirm").unwrap();
+    // 已取消行离激活过滤（进行中）——行锚点消失 + 「已暂停」过滤也不在。
+    app.wait_for_gone(&format!("id:sub-next-{plan_id}"), DEFAULT_WAIT)
+        .unwrap();
+    app.press("id:sub-filter-paused").unwrap();
+    app.wait_for_gone(&format!("id:sub-next-{plan_id}"), DEFAULT_WAIT)
+        .unwrap();
+    app.press("id:sub-filter-cancelled").unwrap();
+    app.wait_for(&format!("id:sub-next-{plan_id}")).unwrap();
+    assert!(
+        !app.screen().texts().contains(&"暂停"),
+        "已取消计划行操作收窄（仅期次）"
+    );
+}
+
+/// 编辑旅程（ADR-0023 决策三平价：仅非金额字段）：编辑弹窗回填（备注 / 商
+/// 户），改备注保存 → 反馈 + 行随改。删 open_edit 回填接线或编辑写接缝
+///（update_scheduled_subscription 直调）即红。
+#[test]
+fn scheduled_view_edit_subscription_updates_fields() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("scheduled-edit");
+    let plan_id;
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let account = seed_account_with_balance(&db, "测试现金", 10_000);
+        plan_id = seed_subscription_plan(&db, &account, None, Some("旧备注名"));
+    }
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_scheduled(&mut app);
+
+    app.press(&format!("id:sub-edit-{plan_id}")).unwrap();
+    app.wait_for("id:app-modal").unwrap();
+    app.wait_for("text:编辑订阅").unwrap();
+    assert_eq!(
+        app.screen().input_text("id:sub-edit-note").unwrap(),
+        Some("旧备注名"),
+        "编辑弹窗备注回填"
+    );
+    app.clear("id:sub-edit-note").unwrap();
+    app.type_text("id:sub-edit-note", "新备注名").unwrap();
+    app.press("id:sub-edit-save").unwrap();
+    app.wait_for("text:已保存").unwrap();
+    app.wait_for("text:新备注名").unwrap();
+    assert!(!app.shows("旧备注名"), "旧备注离屏");
+}
+
+/// 期次详情弹层（三页签通用件首消费不平价即红）：「期次」行动作开弹层 →
+/// 计划摘要（备注 + 总期数）与期次行（状态列）在屏；failed 期次「重试」→
+/// 命令成功反馈 + 同弹重拉；「展开更多期次」→ 反馈。删弹层开窗装载 effect
+/// 或重试写接缝（execute_scheduled_occurrence 直调）任一环即红。
+#[test]
+fn scheduled_view_plan_detail_modal_retries_failed_occurrence() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("scheduled-detail");
+    let plan_id;
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let account = seed_account_with_balance(&db, "测试现金", 10_000);
+        plan_id = seed_subscription_plan(&db, &account, None, Some("会员扣款"));
+    }
+    // 造 failed 期次（域单测 set_status 同构造）：最早 pending 期次置 failed，
+    // 重试写路径的目标。
+    let occ_id = first_pending_occurrence_id(&dir, &plan_id);
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let conn = db
+            .conn
+            .lock()
+            .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
+            .unwrap();
+        conn.execute(
+            "UPDATE scheduled_transaction_occurrences SET status='failed' WHERE id=?1",
+            rusqlite::params![occ_id],
+        )
+        .unwrap();
+    }
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_scheduled(&mut app);
+
+    // 开弹层：标题 + 计划备注摘要 + 期次表。
+    app.press(&format!("id:sub-detail-{plan_id}")).unwrap();
+    app.wait_for("id:occ-table").unwrap();
+    app.wait_for("text:会员扣款").unwrap();
+    app.wait_for(&format!("id:occ-retry-{occ_id}")).unwrap();
+
+    // 重试（failed 期次唯一入口）：命令直调成功反馈（旧壳 detail.retrySuccess
+    // 同词表）。
+    app.press(&format!("id:occ-retry-{occ_id}")).unwrap();
+    app.wait_for("text:重试成功，交易已入账").unwrap();
+
+    // 失效刷新（自回调重拉线）：弹窗外的清单与花费面板同步重拉——期次执
+    // 行落交易行后，花费面板的本月/本年实际花费与逐订阅行从「¥0」变「¥30」
+    //（执行期次按计划日入账，本月口径变化）。整屏再无「¥0」残留——删
+    // reload_after_change 的 reload 接线即红（¥0 残留、其余不变）；信号
+    // 广播线（notify_transactions_invalidated）的共享目的地（交易列表）
+    // 另有 #2022 删除刷新旅程钉点（删除该广播点即红）。
+    app.wait_for_gone("text:¥0", DEFAULT_WAIT).unwrap();
+
+    // 展开更多期次（active 计划恒可展开：无限循环无上限）→ 反馈条位在屏。
+    app.press("id:occ-expand").unwrap();
+    app.wait_for("id:occ-note").unwrap();
+    assert!(
+        app.screen().texts().iter().any(|t| t.contains("已生成")),
+        "展开反馈「已生成 n 期」在屏：{:?}",
+        app.screen().texts()
+    );
+
+    // 计划执行产生的交易在交易列表在屏（旧壳「计划执行落交易行列表可
+    // 见」平价；重试写接缝拆除时本断言亦红——交易不落库）。
+    app.press("id:app-modal-close").unwrap();
+    open_transactions(&mut app);
+    app.wait_for("text:共 1 条").unwrap();
+    assert!(app.shows("会员扣款"), "重试落地的交易行重读在屏");
+}
+
+/// 计划来源落点占位钉点（无消费面不预建）：交易来源列跳转产线仍未建立，
+/// 本测只钉「直接落位不误开详情」——落位无 focus 时详情弹层不挂载。删
+/// pending_focus 暂存清闸接线（focus 残留）→ 二次进视图误开弹层红。
+#[test]
+fn scheduled_view_lands_without_detail_modal_when_no_focus() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("scheduled-no-focus");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let account = seed_account_with_balance(&db, "测试现金", 10_000);
+        seed_subscription_plan(&db, &account, None, Some("会员扣款"));
+    }
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_scheduled(&mut app);
+    app.settle();
+    assert!(
+        app.screen().count("id:occ-table").unwrap() == 0,
+        "无 focus 落位不开详情弹层"
+    );
+
+    // 页签往复不复开（读一次封闸 + 页签切换不复位的会话槽；旧壳
+    // usePlanFocusLanding 的时序平价——无意图时页签往复零弹层）。
+    app.press("id:scheduled-tab-installments").unwrap();
+    app.wait_for("id:scheduled-installments-placeholder")
+        .unwrap();
+    app.press("id:scheduled-tab-subscriptions").unwrap();
+    app.wait_for("id:sub-table").unwrap();
+    app.settle();
+    assert!(
+        app.screen().count("id:occ-table").unwrap() == 0,
+        "页签往复不复开详情弹层"
+    );
+}
+
+/// 直落分支（view_host 定时分支；「移回侧栏」后主项直达）：侧栏序存储种
+/// 子把定时移回记账组主项（收纳清单同步剔除）→ 侧栏定时项直达订阅页签。
+/// 拆 view_host 的 Scheduled 分支挂载 → 本测红（落回迁移占位）。
+#[test]
+fn scheduled_view_lands_directly_when_moved_to_sidebar() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("scheduled-direct");
+    let plan_id;
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let account = seed_account_with_balance(&db, "测试现金", 10_000);
+        plan_id = seed_subscription_plan(&db, &account, None, Some("会员扣款"));
+    }
+
+    // 侧栏序存储种子：「定时」移回侧栏（收纳清单同步剔除，就地移回豁免
+    // 同形的存储侧清面——parse_containment_lists 移回豁免口径一致）。
+    let mut app = Headless::start(desktop_config_with_storage(&[
+        (
+            "view_state:sidebar_containment",
+            r#"{"bookkeeping":["merchants"],"assets":["policies","physicalAssets","insurers"],"insights":[]}"#,
+        ),
+        (
+            "view_state:sidebar_order",
+            r#"{"bookkeeping":["transactions","accounts","scheduled","budget"],"assets":["investments","items","savingsGoals"],"insights":["reports","search"]}"#,
+        ),
+    ]))
+    .unwrap();
+    nsh_app::app::set_book_dir(dir);
+    app.wait_for("id:nav-scheduled").unwrap();
+    app.press("id:nav-scheduled").unwrap();
+    app.wait_for("id:sub-table").unwrap();
+    app.wait_for(&format!("id:sub-next-{plan_id}")).unwrap();
+}

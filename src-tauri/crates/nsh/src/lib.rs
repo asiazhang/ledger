@@ -98,6 +98,17 @@
 //! - [`boot`]：域栈引导——库文件处置判定（复用基础设施引导层）、成对建连、
 //!   交易列表页与币种字典读取、交易删除（#2022）、手动备份与账本指纹
 //!   （#2038）；
+//! - [`scheduled`]：定时视图壳（#2042）——订阅 / 分期 / 定时转账三形态页签
+//!   容器（会话槽保留语义）、计划来源落点意图消费与订阅计划清单装配（状态 /
+//!   期次状态 / 周期标签词表、行操作矩阵、行格文本）；分期 / 定时转账页
+//!   签占位随定时②（#2043）迁入；
+//! - [`scheduled_subscription`]：订阅页签本体（#2042）——订阅清单、新建 / 编辑
+//!   计划表单、行操作（暂停 / 恢复 / 取消带确认气泡）与花费面板 / 详情弹层的
+//!   薄适配；商户「输入即建」走按名 find-or-create 接缝；
+//! - [`scheduled_plan_detail`]：期次详情弹层（#2042）——三页签通用的期次历
+//!   史呈现、failed 期次重试与「展开更多期次」；
+//! - [`scheduled_spend`]：订阅花费面板（#2042）——双口径呈现（实际花费 + 推
+//!   算成本）与 12 月自绘趋势柱，花费口径归域、装配层只消费；
 //! - [`accounts`]：账户视图（#2041）——余额清单三分区（攒钱/主表/已归档）、
 //!   新建表单卡、编辑与余额调整弹窗、行操作（右键 / 「⋯」同位）与账户名下钻；
 //!   余额读 V017 持久化缓存（ADR-0067）只消费不另立算术；
@@ -129,6 +140,10 @@ pub mod period_row;
 pub mod pinyin_select;
 pub mod popconfirm;
 pub mod popover;
+pub mod scheduled;
+pub mod scheduled_plan_detail;
+pub mod scheduled_spend;
+pub mod scheduled_subscription;
 pub mod search;
 pub mod select;
 pub mod sidebar;
