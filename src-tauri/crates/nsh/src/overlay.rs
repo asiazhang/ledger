@@ -81,8 +81,20 @@ fn open_overlays_slot() -> std::sync::MutexGuard<'static, BTreeSet<u64>> {
 mod tests {
     use super::*;
 
+    /// 串行锁：`OPEN_OVERLAYS` 是进程级全局注册表，lib 测试二进制内用例并行
+    /// 跑——任一用例「中间态持开」都会踩坏其他用例的全局空/非空终态断言
+    /// （先例：nsh crate tests.rs 的 SERIAL）。锁先声明（局部变量逆序释放，
+    /// 锁最后释放）且用例内显式关闭 token：交锁时刻注册表必为空。
+    static SERIAL: Mutex<()> = Mutex::new(());
+
+    /// 注册表槽位守卫的同形毒化取回：串行锁不因单次 panic 毒化连锁红后续用例。
+    fn serial_lock() -> std::sync::MutexGuard<'static, ()> {
+        SERIAL.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
     #[test]
     fn report_open_and_close_is_idempotent() {
+        let _guard = serial_lock();
         let token = OverlayToken::new();
         assert!(!has_open_overlay(), "未上报不拦快捷键");
         token.report(true);
@@ -97,6 +109,7 @@ mod tests {
 
     #[test]
     fn multiple_tokens_require_all_closed() {
+        let _guard = serial_lock();
         let a = OverlayToken::new();
         let b = OverlayToken::new();
         a.report(true);
@@ -110,6 +123,7 @@ mod tests {
 
     #[test]
     fn drop_withdraws_the_report() {
+        let _guard = serial_lock();
         let token = OverlayToken::new();
         token.report(true);
         assert!(has_open_overlay());
@@ -119,6 +133,7 @@ mod tests {
 
     #[test]
     fn tokens_are_per_instance_and_never_collide() {
+        let _guard = serial_lock();
         let a = OverlayToken::new();
         let b = OverlayToken::new();
         assert_ne!(
@@ -128,5 +143,10 @@ mod tests {
         a.report(true);
         b.report(false);
         assert!(has_open_overlay(), "另一 token 的关闭不撤销本 token 的打开");
+        // 显式交出终态双保险：局部变量逆序释放已保证 a 在锁前 Drop，显式关
+        // 闭再排除「Drop 在交锁后才生效」的依赖（Drop 时机变动即红）。
+        a.report(false);
+        drop(a);
+        drop(b);
     }
 }
