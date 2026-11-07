@@ -28,6 +28,19 @@
 //!
 //! 模块地图：
 //! - [`app`]：NSH 根组件与启动结果视图模型（装配入口可注入，headless 可测）；
+//! - [`nav`]：进程内导航 API 与导航状态（#2032 壳导航骨架）——单点入口
+//!   `open`（守卫裁决 → 落位 → 持久化）、下钻意图读一次消费、键位带派发、
+//!   侧栏序/收纳清单/关闭集合/上次视图的存储读写（`nsh_core::storage::Storage`
+//!   平台文件侧 KV，键值形状镜像旧壳 `view_state:*` 族、不与旧壳共享、不进
+//!   SQLite）；
+//! - [`nav_model`]：导航纯模型（#2032）——视图/分组闭集与词表、侧栏出厂定义、
+//!   持久化载荷解析防御（旧壳 parse 家族重生）、键位带推导（ADR-0065 固定组
+//!   带）、守卫落位裁决（旧壳路由守卫族重生）、跳转目标计算（旧壳 source-jump
+//!   重生）与移动纯函数；
+//! - [`sidebar`]：侧栏（#2032）——品牌行、固定项、三组导航、组「更多」链接、
+//!   键位提示与右键排序菜单；
+//! - [`views`]：壳内视图层（#2032）——未迁移视图空态占位（下钻接缝示范消费
+//!   面）与组「更多」容器页签壳；
 //! - [`assembly`]：装配层——行集进入表格前产出每行每格最终展示文本与列定义
 //!   （纯 Rust、无 UI 依赖；#2019 全家桶：数字分组、金额语义色、隐私遮蔽、
 //!   分类路径、备注列、通用 kind 标签；#2020 派生行形态：购买项逐项行与订单级
@@ -59,9 +72,13 @@ pub mod app;
 pub mod boot;
 pub mod context_menu;
 pub mod danger;
+pub mod nav;
+pub mod nav_model;
 pub mod overlay;
 pub mod period;
+pub mod sidebar;
 pub mod signals;
+pub mod views;
 pub mod wiring;
 
 mod assembly;

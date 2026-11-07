@@ -34,7 +34,8 @@ use crate::assembly::{
     RowContext,
 };
 use crate::boot;
-use crate::{context_menu, danger, overlay, period, signals};
+use crate::nav_model::ViewName;
+use crate::{context_menu, danger, nav, nav_model, overlay, period, sidebar, signals, views};
 
 /// 金额隐私模式开关的存储键（设备轻量设置项，与旧壳同键同值形态：旧壳
 /// `@ledger/money` 的 `AMOUNT_PRIVACY_STORAGE_KEY`，值为 JSON 布尔字面量
@@ -141,12 +142,13 @@ pub fn set_book_dir(dir: PathBuf) {
 /// 重置装配入口与会话句柄（headless 测试接缝）：同一进程内的多场景串行测试
 /// 先复位再注入各自的测试库路径（生产 bin 只注入一次，不消费本函数；串行
 /// 由测试侧的 SERIAL 锁保证，复位时上一场景的引擎已撤销）。失效信号订阅者
-/// 属同一批复位点（上一场景视图的订阅者不得响应下一场景的广播）。
+/// 与导航状态属同一批复位点（上一场景视图的订阅者不得响应下一场景的广播）。
 #[doc(hidden)]
 pub fn reset_book_assembly() {
     *book_dir_slot() = None;
     *db_slot() = None;
     signals::reset_for_tests();
+    nav::reset_for_tests();
 }
 
 /// 启动结果三态（窗口呈现的全部状态）。
@@ -327,7 +329,8 @@ fn table_columns() -> Vec<DataTableColumn> {
 /// 留空——首屏实测金额列右侧约 1/3 空黑，读感「金额列过宽」），在应用侧
 /// 分配：富余宽度全给备注列（旧壳备注列即弹性列，[`assembly::COLUMNS`]
 /// 注释同口径），其余列按装配建议宽度。`width` 是表格可用宽（pt，取窗口
-/// 内容宽）；窄于建议总宽时全列取建议值（横向滚动语义不变）。
+/// 内容宽——导航骨架起扣侧栏宽）；窄于建议总宽时全列取建议值（横向滚动语义
+/// 不变）。
 fn elastic_columns(width: f32) -> Vec<DataTableColumn> {
     let mut columns = table_columns();
     let suggested: f32 = assembly::COLUMNS.iter().map(|def| def.width).sum();
@@ -367,16 +370,16 @@ fn table_classes() -> DataTableClasses {
 /// 闸由引擎 keymap `When::Auto` 承担——四键皆为文本编辑键，输入焦点期间不
 /// 派发；桌面立桩无触控轴）。
 #[component]
-fn TransactionsView() -> impl IntoElement {
+pub(crate) fn TransactionsView() -> impl IntoElement {
     let page = signal(1u32);
     let total = signal(0i64);
     let rows = signal(Vec::<RowCells>::new());
     let loading = signal(true);
     let error = signal(None::<String>);
-    // 响应式列集：表格可用宽取窗口内容宽（根布局无水平 padding，表格区横向
-    // 即窗口宽；ambient::window 随窗口缩放重算）——备注列吸收富余宽（弹性
-    // 列，旧壳同语义），其余列按装配建议宽度。
-    let columns = computed(move || elastic_columns(window().width.0));
+    // 响应式列集：表格可用宽取窗口内容宽（导航骨架起扣侧栏宽；ambient::window
+    // 随窗口缩放重算）——备注列吸收富余宽（弹性列，旧壳同语义），其余列按
+    // 装配建议宽度。
+    let columns = computed(move || elastic_columns(window().width.0 - sidebar::SIDEBAR_WIDTH));
     // 搜索态：输入文本（受控）、结果呈现态（旧壳 searched 语义——搜索结果落位
     // 后才切搜索态呈现，键入中底栏仍呈上一装载态）、防抖调度序号（新输入作废
     // 在途定时器）与装载序号（后发作废先发，与旧壳 Loadable invalidate 同义：
@@ -994,9 +997,51 @@ fn TransactionsView() -> impl IntoElement {
         )
 }
 
-/// 立桩根组件：就绪前居中呈现启动三态，就绪后承载交易表格首屏。
+/// 视图宿主（导航骨架的内容区，#2032）：已迁移的交易列表挂真实组件，三容器
+/// 挂「更多」页签壳，其余未迁移视图共享反应式占位壳（标题随当前视图，下钻
+/// 意图消费键落位；迁移票以自己的真实组件替换对应分支）。
+fn view_host(nav: nav::NavStore) -> impl IntoElement {
+    // 当前视图信号（Copy 句柄移入分支谓词闭包，'static 无借用逃逸）。
+    let current = nav.current;
+    let is = move |name: ViewName| move || current.get() == name;
+    let group_more = |gid: nav_model::GroupId| move || views::group_more_view(gid);
+    when(is(ViewName::Transactions), transactions_view).otherwise(move || {
+        when(
+            is(ViewName::BookkeepingMore),
+            group_more(nav_model::GroupId::Bookkeeping),
+        )
+        .otherwise(move || {
+            when(
+                is(ViewName::AssetsMore),
+                group_more(nav_model::GroupId::Assets),
+            )
+            .otherwise(move || {
+                when(
+                    is(ViewName::InsightsMore),
+                    group_more(nav_model::GroupId::Insights),
+                )
+                .otherwise(move || {
+                    // 未迁移视图反应式占位壳：标题随当前视图；意图
+                    // 消费时机 = 落位（effect 键 current，同轮落地）。
+                    let focused = signal(None::<nav::NavIntent>);
+                    effect(move || {
+                        let _current = nav.current.get();
+                        focused.set(nav::take_intent());
+                    });
+                    views::placeholder_shell_current(focused)
+                })
+            })
+        })
+    })
+}
+
+/// 立桩根组件：就绪前居中呈现启动三态，就绪后承载导航骨架（侧栏 + 内容区）。
 #[component]
 pub fn App() -> impl IntoElement {
+    // 导航状态挂根组件实例（根永生，信号存活与进程同步；后续消费经同一句柄），
+    // 键位带绑定随根实例存亡（引擎线程派发，含抑制闸门）。
+    let nav = nav::store();
+    nav::bind_shortcuts();
     let state = signal(StartupView::Loading);
     // 主行/次行前景取主题令牌（双态自适应，registry 缺省带主题双态令牌）：
     // 裸 text 的默认前景是黑（ResolvedTextStyle::default 的 React Native
@@ -1025,11 +1070,17 @@ pub fn App() -> impl IntoElement {
         state.set(outcome);
     });
     view().flex_1().flex_col().app_class("bg-background").child(
-        // 启动三态与表格首屏互斥呈现：就绪前居中三态，就绪后整窗表格。
-        // 单一分支承载 TransactionsView，不双挂（双实例即双页读与双底栏）。
+        // 启动三态与导航骨架互斥呈现：就绪前居中三态，就绪后侧栏 + 内容区。
+        // 单一分支承载内容区（侧栏与视图宿主同分支），不双挂。
         when(
             move || matches!(state.get(), StartupView::Ready),
-            transactions_view,
+            move || {
+                view()
+                    .flex_1()
+                    .flex_row()
+                    .child(sidebar::sidebar_view())
+                    .child(view_host(nav))
+            },
         )
         .otherwise(move || {
             view()

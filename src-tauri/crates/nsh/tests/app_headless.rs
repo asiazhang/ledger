@@ -49,7 +49,8 @@ const DEFAULT_WAIT: Duration = Duration::from_secs(5);
 /// （与 lib 单测的 SERIAL 同形；两测试二进制是独立进程，互不串扰）。
 static SERIAL: Mutex<()> = Mutex::new(());
 
-/// 桌面形态 headless 配置（足够容纳表格与分页条的视口），带设备存储初值
+/// 桌面形态 headless 配置（足够容纳侧栏 + 表格全部建议列宽的视口：内容区
+/// 1104pt ≥ 列宽总和 1090pt，导航骨架起侧栏不裁列），带设备存储初值
 /// （金额隐私开关的轻量设置项面；`None` = 缺省空存储）。
 fn desktop_config_with_storage(entries: &[(&str, &str)]) -> EngineConfig {
     EngineConfig {
@@ -63,10 +64,10 @@ fn desktop_config_with_storage(entries: &[(&str, &str)]) -> EngineConfig {
     }
 }
 
-/// 桌面形态 headless 配置（足够容纳表格与分页条的视口）。
+/// 桌面形态 headless 配置（1280×720：侧栏 176 + 表格建议列宽 1090）。
 fn desktop_config() -> EngineConfig {
     EngineConfig {
-        viewport: Size::new(Points(1024.0), Points(720.0)),
+        viewport: Size::new(Points(1280.0), Points(720.0)),
         environment: Environment {
             os: Os::Linux,
             idiom: Idiom::Desktop,
@@ -1738,5 +1739,507 @@ fn search_and_period_combo_keys_pins_actual_behavior() {
         app.screen().input_text("id:tx-search").unwrap(),
         Some("支出"),
         "焦点在框外时 `,` / `.` 不落输入框"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 壳导航骨架（issue #2032，spec #2031 拆票②①）：侧栏三组、键位带派发、
+// 功能开关守卫、组「更多」容器、右键排序/移入移回与界面状态持久化。
+// 环境前提：Environment{os: Linux, idiom: Desktop}（desktop_config）。
+// ---------------------------------------------------------------------------
+
+use nsh_testing::MemoryStorage;
+use std::sync::Arc;
+
+/// 桌面形态配置（复用同一存储后端——重启模拟：同一 MemoryStorage 实例起
+/// 第二个引擎，写路径已落后端的界面状态在重启后可读）。
+fn desktop_config_with_backend(storage: Arc<MemoryStorage>) -> EngineConfig {
+    EngineConfig {
+        storage: Some(storage),
+        ..desktop_config()
+    }
+}
+
+/// 骨架呈现：侧栏品牌行、固定项（概览/AI/设置）、三组（记账/资产/洞察）与
+/// 出厂主项；收纳成员不入侧栏（入组「更多」容器）；「更多」链接仅在收纳
+/// 清单非空的组渲染（洞察出厂无成员）。
+#[test]
+fn sidebar_renders_groups_fixed_items_and_hides_contained_members() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("nav-skeleton");
+    seed_expense_series(&dir, 3);
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+
+    // 交易列表为骨架首个挂载视图（出厂落点）。
+    app.wait_for("text:共 3 条").unwrap();
+    // 品牌行 + 固定项 + 三组标题。
+    for label in ["开源记账", "概览", "AI", "设置", "记账", "资产", "洞察"] {
+        app.wait_for(&format!("text:{label}")).unwrap();
+    }
+    // 出厂主项全在侧栏（导航项 test_id = 视图持久化名）。
+    for id in [
+        "nav-transactions",
+        "nav-accounts",
+        "nav-budget",
+        "nav-investments",
+        "nav-items",
+        "nav-savingsGoals",
+        "nav-reports",
+        "nav-search",
+    ] {
+        app.wait_for(&format!("id:{id}")).unwrap();
+    }
+    // 收纳成员不入侧栏（表格列头同名文本在屏上属内容区，不属导航面——
+    // 断言对准导航项 test_id 的缺席）；「更多」链接只在有收纳清单的组渲染。
+    assert!(
+        app.screen().count("id:nav-scheduled").unwrap() == 0,
+        "出厂收纳成员（定时）不入侧栏"
+    );
+    assert!(
+        app.screen().count("id:nav-merchants").unwrap() == 0,
+        "出厂收纳成员（商户）不入侧栏"
+    );
+    assert!(
+        app.screen().count("id:nav-more-bookkeeping").unwrap() == 1,
+        "记账组有收纳清单，「更多」链接渲染"
+    );
+    assert!(
+        app.screen().count("id:nav-more-assets").unwrap() == 1,
+        "资产组有收纳清单，「更多」链接渲染"
+    );
+    assert!(
+        app.screen().count("id:nav-more-insights").unwrap() == 0,
+        "洞察组出厂无收纳成员，「更多」链接不渲染"
+    );
+}
+
+/// 点击导航：侧栏项 → 未迁移视图空态占位（屏名 + 迁移中反馈）；回到交易
+/// 项 → 表格内容区原样（骨架期行为零改动）。
+#[test]
+fn clicking_sidebar_items_lands_placeholder_views_and_back() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("nav-click");
+    seed_expense_series(&dir, 3);
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+    app.wait_for("text:共 3 条").unwrap();
+
+    // 账户 → 占位（屏名 + 迁移中）。
+    app.press("id:nav-accounts").unwrap();
+    app.wait_for("text:账户").unwrap();
+    app.wait_for("id:placeholder-note").unwrap();
+    // 概览 → 占位（内容区标题计数 2 = 侧栏 + 屏名）。
+    app.press("id:nav-dashboard").unwrap();
+    app.wait_for_within("text:概览", DEFAULT_WAIT).unwrap();
+    assert_eq!(app.screen().count("text:概览").unwrap(), 2, "概览落位");
+    // 交易 → 表格内容区（首屏原样）。
+    app.press("id:nav-transactions").unwrap();
+    app.wait_for("text:共 3 条").unwrap();
+}
+
+/// 键位带派发（⌘ 键位带，ADR-0065 固定组带）：⌘4 投资、⌘` 概览、⌘0 AI、
+/// ⌘, 设置、⌘2 账户、⌘1 回交易；同名视图重复派发幂等（停留原地）。
+/// 「删除即红」负向条目钉在 dispatch_key 的 open 接线（删除 → 本测红）。
+#[test]
+fn shortcut_band_keys_land_views() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("nav-keys");
+    seed_expense_series(&dir, 3);
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+    app.wait_for("text:共 3 条").unwrap();
+
+    app.press_key("mod+4").unwrap();
+    app.wait_for_gone("text:共 3 条", DEFAULT_WAIT).unwrap();
+    app.wait_for("id:placeholder-note").unwrap();
+    // 落位凭据 = 内容区标题随视图切换（计数 2 = 侧栏项 + 占位屏名；侧栏项
+    // 恒在屏，单凭文本在场不构成落位证据）。
+    app.press_key("mod+`").unwrap();
+    app.wait_for_within("text:概览", DEFAULT_WAIT).unwrap();
+    assert_eq!(app.screen().count("text:概览").unwrap(), 2, "⌘` 落概览");
+    app.press_key("mod+0").unwrap();
+    assert_eq!(app.screen().count("text:AI").unwrap(), 2, "⌘0 落 AI");
+    app.press_key("mod+,").unwrap();
+    assert_eq!(app.screen().count("text:设置").unwrap(), 2, "⌘, 落设置");
+    app.press_key("mod+2").unwrap();
+    assert_eq!(app.screen().count("text:账户").unwrap(), 2, "⌘2 落账户");
+    // 回交易：表格内容区原样。
+    app.press_key("mod+1").unwrap();
+    app.wait_for("text:共 3 条").unwrap();
+    // 同名幂等：再按 ⌘1 不重挂（表格行集原样）。
+    app.press_key("mod+1").unwrap();
+    app.wait_for("text:共 3 条").unwrap();
+}
+
+/// 抑制闸门——键位带（Overlay Suppression 消费面 #12）：注册抑制的弹层
+/// （期间选择弹层）开着时 ⌘2 不派发（停留交易表格），关闭后同键落位账户。
+/// 「删除即红」负向条目：删 dispatch_key 中的 `overlay::has_open_overlay`
+/// 检查 → 本测红（弹层下按键切换视图）。
+#[test]
+fn suppression_gate_blocks_shortcut_band_while_period_popup_open() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("nav-suppress");
+    seed_expense_series(&dir, 3);
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+    app.wait_for("text:共 3 条").unwrap();
+
+    // 打开注册抑制的弹层 → ⌘2 不派发（表格原样）。
+    app.press("id:period-label").unwrap();
+    app.wait_for("id:period-chip-all").unwrap();
+    app.press_key("mod+2").unwrap();
+    app.settle();
+    assert!(
+        !app.shows("id:placeholder-note") && app.shows("共 3 条"),
+        "弹层开着时 ⌘2 不得切视图：{:?}",
+        app.screen().texts()
+    );
+    // 关弹层 → 同键落位账户。
+    app.press_key("escape").unwrap();
+    app.wait_for_gone("id:period-chip-all", DEFAULT_WAIT)
+        .unwrap();
+    app.press_key("mod+2").unwrap();
+    app.wait_for("text:账户").unwrap();
+}
+
+/// 功能开关关闭面（守卫语义的可见侧）：种子关闭预算 → 侧栏入口消失、⌘3
+/// 空键待命（不派发、不跨组压缩——账户仍 ⌘2、交易仍 ⌘1）、收纳清单保留
+/// （记账组「更多」链接仍在）。
+#[test]
+fn closed_feature_exits_sidebar_and_key_band() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("nav-closed");
+    seed_expense_series(&dir, 3);
+
+    nsh_app::app::set_book_dir(dir);
+    let storage = MemoryStorage::new(vec![(
+        "view_state:closed_features".to_owned(),
+        "[\"budget\"]".to_owned(),
+    )]);
+    let mut app = Headless::start(desktop_config_with_backend(storage)).unwrap();
+    app.wait_for("text:共 3 条").unwrap();
+
+    assert!(
+        app.screen().count("id:nav-budget").unwrap() == 0,
+        "关闭功能入口消失"
+    );
+    assert!(
+        app.screen().count("id:nav-more-bookkeeping").unwrap() == 1,
+        "关闭只筛入口不改收纳清单（记账组「更多」链接保留）"
+    );
+    // ⌘3 空键待命：不派发（停留交易表格）。
+    app.press_key("mod+3").unwrap();
+    app.settle();
+    assert!(app.shows("共 3 条"), "关闭功能键位空置不派发");
+    // 带内不压缩：账户仍 ⌘2。
+    app.press_key("mod+2").unwrap();
+    app.wait_for("text:账户").unwrap();
+}
+
+/// 启动恢复（上次视图持久化的读路径）：已存视图原样恢复（账户 → 占位）；
+/// 已关闭功能回出厂落点（骨架期 = 交易列表）；未知名回出厂落点。
+#[test]
+fn startup_restores_last_view_with_closed_and_unknown_fallbacks() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("nav-restore");
+    seed_expense_series(&dir, 3);
+
+    nsh_app::app::set_book_dir(dir.clone());
+    // 已存合法视图 → 恢复账户占位。
+    let storage = MemoryStorage::new(vec![(
+        "view_state:route".to_owned(),
+        "\"accounts\"".to_owned(),
+    )]);
+    let mut app = Headless::start(desktop_config_with_backend(storage)).unwrap();
+    app.wait_for("id:placeholder-note").unwrap();
+    assert_eq!(
+        app.screen().count("text:账户").unwrap(),
+        2,
+        "恢复到账户占位（侧栏 + 屏名）"
+    );
+    drop(app);
+
+    // 已关闭功能的上次视图 → 出厂落点（交易表格）。
+    nsh_app::app::reset_book_assembly();
+    nsh_app::app::set_book_dir(dir.clone());
+    let storage = MemoryStorage::new(vec![
+        ("view_state:route".to_owned(), "\"budget\"".to_owned()),
+        (
+            "view_state:closed_features".to_owned(),
+            "[\"budget\"]".to_owned(),
+        ),
+    ]);
+    let mut app = Headless::start(desktop_config_with_backend(storage)).unwrap();
+    app.wait_for("text:共 3 条").unwrap();
+    drop(app);
+
+    // 未知名 → 出厂落点（交易表格）。
+    nsh_app::app::reset_book_assembly();
+    nsh_app::app::set_book_dir(dir.clone());
+    let storage = MemoryStorage::new(vec![("view_state:route".to_owned(), "\"nope\"".to_owned())]);
+    let mut app = Headless::start(desktop_config_with_backend(storage)).unwrap();
+    app.wait_for("text:共 3 条").unwrap();
+}
+
+/// 组「更多」容器：链接落位容器页签壳（页签 = 收纳清单序）；页签点击切换
+/// 内容（会话槽）；页签态不跨启动持久化（重启回默认首签）。
+#[test]
+fn group_more_container_tabs_follow_session_state_not_restart() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("nav-more");
+    seed_expense_series(&dir, 3);
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let storage = MemoryStorage::new(Vec::new());
+    let mut app = Headless::start(desktop_config_with_backend(storage.clone())).unwrap();
+    app.wait_for("text:共 3 条").unwrap();
+
+    // 资产组「更多」：页签 = 出厂清单序（保单/实物资产/保险公司），默认首签
+    // 保单（内容区标题「保单」×2：页签 + 占位屏名）。
+    app.press("id:nav-more-assets").unwrap();
+    app.wait_for("id:more-tab-policies").unwrap();
+    app.wait_for("id:more-tab-physicalAssets").unwrap();
+    app.wait_for("id:more-tab-insurers").unwrap();
+    assert_eq!(
+        app.screen().count("text:保单").unwrap(),
+        2,
+        "默认首签 = 清单首位（页签 + 占位屏名）"
+    );
+    // 页签点击 → 内容切换（实物资产 ×2：页签 + 占位屏名；保单回 1）。
+    app.press("id:more-tab-physicalAssets").unwrap();
+    app.wait_for("text:实物资产").unwrap();
+    assert_eq!(
+        app.screen().count("text:实物资产").unwrap(),
+        2,
+        "页签点击切换内容"
+    );
+    assert_eq!(
+        app.screen().count("text:保单").unwrap(),
+        1,
+        "页签切换后旧内容卸载"
+    );
+    drop(app);
+
+    // 重启：页签态不跨启动持久化，回默认首签保单。
+    nsh_app::app::reset_book_assembly();
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config_with_backend(storage)).unwrap();
+    app.wait_for("id:more-tab-policies").unwrap();
+    assert_eq!(
+        app.screen().count("text:保单").unwrap(),
+        2,
+        "重启回默认首签（页签态会话内有效）"
+    );
+}
+
+/// 已关闭功能的容器页签剔除：种子关闭商户 → 记账组容器页签只剩定时
+/// （关闭只筛页签入口、收纳清单保留——重开即回原位）。
+#[test]
+fn closed_feature_tab_is_filtered_from_group_more_container() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("nav-more-closed");
+    seed_expense_series(&dir, 3);
+
+    nsh_app::app::set_book_dir(dir);
+    let storage = MemoryStorage::new(vec![(
+        "view_state:closed_features".to_owned(),
+        "[\"merchants\"]".to_owned(),
+    )]);
+    let mut app = Headless::start(desktop_config_with_backend(storage)).unwrap();
+    app.wait_for("text:共 3 条").unwrap();
+
+    app.press("id:nav-more-bookkeeping").unwrap();
+    app.wait_for("id:more-tab-scheduled").unwrap();
+    app.settle();
+    assert!(
+        app.screen().count("id:more-tab-merchants").unwrap() == 0,
+        "已关闭功能不进组「更多」页签"
+    );
+}
+
+/// 右键排序菜单：移到顶部 → 组内序重排 + 键位带内随动（⌘1 落预算）+ 点选
+/// 即写（重启后顺序保持——持久化往返）；恢复默认排序 → 回出厂（⌘1 回交易）。
+#[test]
+fn sort_menu_reorders_key_band_and_persists_across_restart() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("nav-sort");
+    seed_expense_series(&dir, 3);
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let storage = MemoryStorage::new(Vec::new());
+    let mut app = Headless::start(desktop_config_with_backend(storage.clone())).unwrap();
+    app.wait_for("text:共 3 条").unwrap();
+
+    // 右键预算 → 移到顶部 → ⌘1 落预算（键位带内随动的用户可见凭据）。
+    app.right_click("id:nav-budget").unwrap();
+    app.choose_menu_item("移到顶部").unwrap();
+    app.press_key("mod+1").unwrap();
+    app.wait_for("text:预算").unwrap();
+    app.wait_for("id:placeholder-note").unwrap();
+    drop(app);
+
+    // 重启：顺序持久化（先离开到概览，再 ⌘1——派发面不再被同名幂等短路）。
+    nsh_app::app::reset_book_assembly();
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config_with_backend(storage)).unwrap();
+    app.press_key("mod+`").unwrap();
+    app.wait_for_within("text:概览", DEFAULT_WAIT).unwrap();
+    app.press_key("mod+1").unwrap();
+    app.wait_for_within("text:预算", DEFAULT_WAIT).unwrap();
+    assert_eq!(
+        app.screen().count("text:预算").unwrap(),
+        2,
+        "重启后 ⌘1 落预算（顺序持久化：侧栏 + 屏名）"
+    );
+
+    // 恢复默认排序 → ⌘1 回交易（出厂序）。
+    app.right_click("id:nav-budget").unwrap();
+    app.choose_menu_item("恢复默认排序").unwrap();
+    app.press_key("mod+1").unwrap();
+    app.wait_for("text:共 3 条").unwrap();
+}
+
+/// 移入更多 / 页签右键移回：右键预算「移入更多」→ 侧栏项消失、⌘3 空置、
+/// 记账组容器出现预算页签；容器页签右键「移回侧栏」（组未满）→ 页签消失、
+/// 侧栏项回归末位（⌘3 回预算）。
+#[test]
+fn context_menus_move_item_into_more_and_back() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("nav-into-more");
+    seed_expense_series(&dir, 3);
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let storage = MemoryStorage::new(Vec::new());
+    let mut app = Headless::start(desktop_config_with_backend(storage.clone())).unwrap();
+    app.wait_for("text:共 3 条").unwrap();
+
+    // 移入更多：侧栏预算消失、⌘3 空键待命。
+    app.right_click("id:nav-budget").unwrap();
+    app.choose_menu_item("移入更多").unwrap();
+    app.settle();
+    assert!(
+        !app.screen().texts().contains(&"预算"),
+        "移入更多后侧栏项消失"
+    );
+    app.press_key("mod+3").unwrap();
+    app.settle();
+    assert!(app.shows("共 3 条"), "⌘3 空键待命不派发");
+
+    // 容器出现预算页签；页签右键移回（记账组主项 2 项未满 3，可移回）。
+    app.press("id:nav-more-bookkeeping").unwrap();
+    app.wait_for("id:more-tab-budget").unwrap();
+    app.right_click("id:more-tab-budget").unwrap();
+    app.choose_menu_item("移回侧栏").unwrap();
+    app.settle();
+    assert!(
+        app.screen().count("id:more-tab-budget").unwrap() == 0,
+        "移回后页签消失"
+    );
+    // 侧栏预算回归（末位，⌘3 回预算：计数 2 = 侧栏 + 屏名）。
+    app.press_key("mod+3").unwrap();
+    app.wait_for_within("text:预算", DEFAULT_WAIT).unwrap();
+    assert_eq!(
+        app.screen().count("text:预算").unwrap(),
+        2,
+        "移回后 ⌘3 落预算"
+    );
+    drop(app);
+
+    // 重启：移入/移回的持久化往返（侧栏预算在册、容器页签无预算）。
+    nsh_app::app::reset_book_assembly();
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config_with_backend(storage)).unwrap();
+    app.press_key("mod+3").unwrap();
+    app.wait_for("text:预算").unwrap();
+}
+
+/// 组满拒写（上限可见可学习）：记账组出厂主项 3 项已满，容器页签右键菜单
+/// 「移回侧栏」置灰并附提示项；点选无效（页签保留）。
+#[test]
+fn move_back_menu_is_disabled_when_group_full() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("nav-full");
+    seed_expense_series(&dir, 3);
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+    app.wait_for("text:共 3 条").unwrap();
+
+    app.press("id:nav-more-bookkeeping").unwrap();
+    app.wait_for("id:more-tab-scheduled").unwrap();
+    app.right_click("id:more-tab-scheduled").unwrap();
+    let menu = app.menu().expect("右键应弹出菜单");
+    let back = menu
+        .iter()
+        .find(|e| e.label == "移回侧栏")
+        .expect("菜单含「移回侧栏」");
+    assert!(back.disabled, "组满 3 主项，「移回侧栏」置灰（上限可见）");
+    assert!(
+        menu.iter()
+            .any(|e| e.label == "本组主项已满 3 项，先移出一个主项腾位"),
+        "附提示项（可学习）"
+    );
+    // 置灰点选无效：页签保留。
+    let _ = app.choose_menu_item("移回侧栏");
+    app.settle();
+    assert!(
+        app.screen().count("id:more-tab-scheduled").unwrap() == 1,
+        "组满拒写：页签保留在容器"
+    );
+}
+
+/// 界面状态持久化往返（写 → 重启 → 读一致）：导航落位 + 排序一并保持；
+/// 上次视图恢复到账户占位。
+#[test]
+fn view_state_round_trips_across_restart() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("nav-roundtrip");
+    seed_expense_series(&dir, 3);
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let storage = MemoryStorage::new(Vec::new());
+    let mut app = Headless::start(desktop_config_with_backend(storage.clone())).unwrap();
+    app.wait_for("text:共 3 条").unwrap();
+
+    // 排序（物品移到资产组顶部）+ 导航到账户。
+    app.right_click("id:nav-items").unwrap();
+    app.choose_menu_item("移到顶部").unwrap();
+    app.press("id:nav-accounts").unwrap();
+    app.wait_for("text:账户").unwrap();
+    drop(app);
+
+    // 重启：上次视图 = 账户；物品已在资产组首位 → ⌘4（带内随动）落物品——两态都持久。
+    nsh_app::app::reset_book_assembly();
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config_with_backend(storage)).unwrap();
+    app.wait_for("id:placeholder-note").unwrap();
+    assert_eq!(
+        app.screen().count("text:账户").unwrap(),
+        2,
+        "上次视图恢复到账户（侧栏 + 屏名）"
+    );
+    app.press_key("mod+4").unwrap();
+    app.wait_for_within("text:物品", DEFAULT_WAIT).unwrap();
+    assert_eq!(
+        app.screen().count("text:物品").unwrap(),
+        2,
+        "资产组首位 = 物品（⌘4，顺序持久化）"
     );
 }

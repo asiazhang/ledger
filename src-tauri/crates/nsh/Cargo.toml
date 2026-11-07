@@ -46,6 +46,9 @@ ledger-item = { path = "../item" }
 ledger-merchants = { path = "../merchants" }
 ledger-policy = { path = "../policy" }
 ledger-scheduled = { path = "../scheduled" }
+# 载荷序列化（导航界面状态的 JSON 形状与旧壳 view_state:* 同形同键，#2032；
+# workspace 已有同版本直接依赖，无收束面新增）。
+serde_json = "1"
 # 本地日历（期间数学的自然月/季/年边界与「今天」，issue #2021）：域栈多 crate
 # 同版本的既有直接依赖（workspace 未收 workspace.dependencies，各成员同版本声明）。
 chrono = "0.4.45"
