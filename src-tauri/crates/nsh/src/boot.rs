@@ -839,6 +839,55 @@ pub fn create_merchant_by_name(db: &DbState, name: &str) -> Result<String> {
     ledger_merchants::create_merchant_by_name(&conn, name)
 }
 
+// ---------------------------------------------------------------------------
+// 商户字典管理读写接缝（#2052）：旧壳 MerchantManager 消费的 createMerchant /
+// updateMerchant / deleteMerchant / listMerchantTransactionCounts 命令的同一域
+// 函数直调，不经 IPC。商户域写语义零改动（Out of Scope：只迁 UI），唯一性
+// 守卫 / 软删 / 历史引用保留全在域内单正文；读接缝复用 [`merchant_rows`]
+// 全量投影不另立（清单在用 / 已删分区在装配层划分）。写成功后由视图广播
+// [`crate::signals`] 交易失效信号（交易列表来源列展示商户名 / 表单商户源 /
+// 筛选商户下拉——旧壳 ledger:changed 参考失效信号的壳内等价物；引用计数
+// 读失败静默保留旧值是旧壳 listMerchantTransactionCounts 消费面同口径）。
+// ---------------------------------------------------------------------------
+
+/// 创建商户（域公开写入口直调，旧壳 `createMerchant` 命令同一执行协议）：
+/// 在用重名被域守卫码化拒绝（`merchant.already-exists`），零落库。返回新商户
+/// id。写连接是成对建连的写侧。
+pub fn create_merchant(db: &DbState, input: ledger_merchants::MerchantInput) -> Result<String> {
+    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    ledger_merchants::create_merchant(&conn, input)
+}
+
+/// 改名商户（域公开写入口直调，旧壳 `updateMerchant` 命令同一执行协议）：
+/// trim 归一 / 空名与在用撞名由域守卫码化拒绝，改名即时生效（交易以
+/// merchant_id 引用，不回刷历史交易行——ADR-0028）。写连接是成对建连的写侧。
+pub fn update_merchant(
+    db: &DbState,
+    id: &str,
+    input: ledger_merchants::MerchantUpdateInput,
+) -> Result<()> {
+    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    ledger_merchants::update_merchant(&conn, id, input)
+}
+
+/// 软删商户（域公开写入口直调，旧壳 `deleteMerchant` 命令同一执行协议）：
+/// 历史交易引用照常显示（软删商户不可再被新交易选择）；不存在的 id 报码化
+/// NotFound。写连接是成对建连的写侧。
+pub fn delete_merchant(db: &DbState, id: &str) -> Result<()> {
+    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    ledger_merchants::delete_merchant(&conn, id)
+}
+
+/// 读取商户关联交易计数（旧壳 `listMerchantTransactionCounts` 命令消费的同一
+/// 域函数）：每商户被未删流水引用的毛笔数（含软删行、LEFT JOIN 全字典、缺失
+/// 补 0 在域内），实时推导不落库。读连接是成对建连的只读侧。
+pub fn merchant_transaction_counts(
+    db: &DbState,
+) -> Result<Vec<ledger_merchants::MerchantTransactionCount>> {
+    let conn = conn_lock(&db.read_conn)?;
+    ledger_merchants::transaction_counts(&conn)
+}
+
 // 储蓄目标视图读写接缝（#2056）：蓄水进度读直调域读路径（旧壳
 // savingsGoalProgress 命令消费的同一域函数，#2041 账户视图绑集读同点消费），目标写路径
 // （创建 / 编辑 / 归档 / 取消归档 / 删除）直调域公开写入口——与旧壳
@@ -892,6 +941,59 @@ pub fn unarchive_savings_goal(db: &DbState, id: &str) -> Result<()> {
 pub fn delete_savings_goal(db: &DbState, id: &str) -> Result<()> {
     let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
     ledger_savings_goal::delete_savings_goal(&conn, id)
+}
+
+// 保单视图读写接缝（#2050）：保单清单 / 保单视角统计 / 保司字典（含软删显示
+// 映射面）直调 `ledger-policy` 域入口——与旧壳 list_policies / list_policy_stats
+// / create / update / delete_policy 与保司（resolve-insurer 的 create_insurer
+// 消费面）命令消费的同一域函数，不经 IPC。保单写路径的校验（保司在用、保单号
+// / 险种非空、期间、保额币种成对）与失效信号回调注入全在域内，本壳不自建语义。
+// 写连接是成对建连的写侧，读连接是只读侧（ADR-0117）。
+// ---------------------------------------------------------------------------
+
+/// 保单视角统计行集（旧壳 `list_policy_stats` 命令消费的同一域函数，逐保单
+/// 合计 + 下期扣款日 + 到期态实时推导不落库，issue #363）。多语句读闭包的
+/// 同事务收口在域内 `ensure_transaction`（#1702 tx_scope 纪律），本壳只消费
+/// 不另立口径。`today` 取本地日历日与旧壳命令层注入同口径。读连接是成对建
+/// 连的只读侧。
+pub fn policy_stats_rows(db: &DbState) -> Result<Vec<ledger_policy::PolicyStats>> {
+    let conn = conn_lock(&db.read_conn)?;
+    ledger_policy::policy_stats(&conn, chrono::Local::now().date_naive())
+}
+
+/// 创建保单（域公开写入口直调，旧壳 `create_policy` 命令同一执行协议）：校验
+/// 与归一化（保单号 / 险种非空、期间可解析且止日不早于起日、保额币种成对）
+/// 在域内，码化错误原样上抛（呈现面归视图层）。写连接是成对建连的写侧。
+pub fn create_policy(db: &DbState, input: ledger_policy::PolicyInput) -> Result<String> {
+    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    ledger_policy::create_policy(&conn, input, &mut || {})
+}
+
+/// 按 id 编辑保单静态要素（域公开写入口直调，旧壳 `update_policy` 命令同一
+/// 执行协议）：全量替换；保司「保持历史引用」语义（携带保司与既有相同 = 跳过
+/// 在用校验，软删保司的历史保单仍可编辑其他要素）在域内单点。写连接是成对
+/// 建连的写侧。
+pub fn update_policy(db: &DbState, id: &str, input: ledger_policy::PolicyInput) -> Result<()> {
+    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    ledger_policy::update_policy(&conn, id, input, &mut || {})
+}
+
+/// 软删除保单（域公开写入口直调，旧壳 `delete_policy` 命令同一执行协议）：
+/// `is_deleted=1` 不物理移除，库内行与历史引用保留不置空（ADR-0051 决策 5）。
+/// 写连接是成对建连的写侧。
+pub fn delete_policy(db: &DbState, id: &str) -> Result<()> {
+    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    ledger_policy::delete_policy(&conn, id, &mut || {})
+}
+
+/// 保司按名 find-or-create（域公开直调，旧壳 `createInsurer` 命令的重名兜底
+/// 同义——`create_insurer_by_name` 的「输入名精确命中在用保司复用 / 未命中
+/// 即建」语义在域内单点，重名陈旧态竞态不再前端逐层兜底；本壳保存时数据
+/// 现读，无 store 缓存竞态面）。保单表单「输入即建」路径消费面。写连接是
+/// 成对建连的写侧。
+pub fn create_insurer_by_name(db: &DbState, name: &str) -> Result<String> {
+    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    ledger_policy::create_insurer_by_name(&conn, name)
 }
 
 // ---------------------------------------------------------------------------

@@ -19,8 +19,6 @@ use crate::nav::{self, NavStore};
 use crate::nav_model::{self, GroupId, NavRequest, SourceKind, ViewName};
 use crate::views;
 
-const WAIT: std::time::Duration = std::time::Duration::from_secs(5);
-
 /// 探针根组件：引擎线程内走真实导航生产路径，渲染落位状态与真实占位组件。
 /// 「换到实物资产页签」按钮产生容器页签意图（引擎线程真实点击路径的等价
 /// 形态，用于验证读一次语义在页签切换重挂后不重放）。
@@ -100,8 +98,10 @@ fn probe_config() -> EngineConfig {
     }
 }
 
-/// 下钻接缝全链（生产路径投递 → 守卫落位容器页签 → 意图投递 → 真实占位
-/// 挂载消费回显 → 页签切换重挂不重放）。删除任一接线即红（见模块注释）。
+/// 下钻接缝全链（生产路径投递 → 守卫落位容器页签 → 意图投递 → **真实视图**
+/// 消费即封闸（#2050 迁入后保单页签不再占位；消费回显见 policy_seam_focus
+/// 探针的行高亮凭据）→ 页签切换重挂不重放）。删除任一接线即红（见模块注
+/// 释）。
 #[test]
 fn seam_delivers_focus_once_and_container_tab_intents_land() {
     let _guard = test_assembly_guard();
@@ -111,17 +111,24 @@ fn seam_delivers_focus_once_and_container_tab_intents_land() {
     // 落位资产组容器、页签意图 = 保单（收纳分流守卫的落位凭据）。
     app.wait_for("id:probe-current").unwrap();
     app.wait_for("text:落位:资产 · 更多 页签:保单").unwrap();
-    // 意图投递：真实占位组件挂载消费，回显定位目标（用户可见凭据）。
-    app.wait_for("id:focus-target").unwrap();
-    app.wait_for("text:已记录定位目标 p-9").unwrap();
+    // 意图投递：#2050 迁入后保单页签挂**真实保单视图**消费（读一次，无
+    // 回显——占位回显面只剩真实视图不消费的其他成员）。断言回显缺席（消
+    // 费即封闸；真实视图试演见 policy_seam_focus 探针）。
+    app.settle();
+    assert!(
+        !app.shows("已记录定位目标"),
+        "意图被真实保单视图消费，无占位回显：{:?}",
+        app.screen().texts()
+    );
 
     // 页签切换（无意图落位）：实物资产占位重挂——不重放上一意图。
     app.press("id:probe-switch").unwrap();
     app.wait_for("text:落位:资产 · 更多 页签:实物资产").unwrap();
     app.wait_for("text:实物资产").unwrap();
-    app.wait_for_gone("id:focus-target", WAIT).unwrap();
+    app.settle();
+    assert!(!app.shows("已记录定位目标"), "不重放上一意图");
 
-    // 切回保单页签（重挂占位）：读一次语义——意图已耗，不重放。
+    // 切回保单页签（重挂真实视图）：读一次语义——意图已耗，不重放。
     app.press("id:probe-back").unwrap();
     app.wait_for("text:落位:资产 · 更多 页签:保单").unwrap();
     app.settle();
@@ -464,4 +471,110 @@ fn item_seam_focus_lands_on_real_items_view() {
 /// 探针侧装配注入（headless 测试接缝 [`crate::app::set_book_dir`]）。
 fn nsh_app_set_dir_probe(dir: &std::path::Path) {
     crate::app::set_book_dir(dir.to_path_buf());
+}
+
+/// 保单视图下钻接缝消费探针（#2050）：真实生产投递路径
+///（[`nav_model::resolve_source_jump`] → [`nav::open`]）→ **真实保单视图**
+/// 消费（收纳态落资产「更多」保单页签 + 行高亮锚点 `policy-row-focus` 呈
+/// 现；删除任一环即红——删投递、删容器壳对保单的意图转发（views.rs 排除
+/// 表）或删保单视图的 [`nav::take_intent`] 消费或删锚点渲染本测都红）。
+static POLICIES_SEAM_FOCUS: Mutex<Option<String>> = Mutex::new(None);
+
+#[component]
+fn PoliciesSeamProbeApp() -> impl IntoElement {
+    // 会话就位（测试探针直呼组件体；量产路径在 App 启动竖井，先例同形）。
+    assert_eq!(crate::app::run_startup(), crate::app::StartupView::Ready);
+    let id = POLICIES_SEAM_FOCUS
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .clone()
+        .unwrap_or_default();
+    let facts = nav_model::NavFacts::factory();
+    // 真实生产路径：来源跳转目标计算（保单，出厂收纳态）→ 导航接缝（focus
+    // 意图投递 + 容器页签落位）。
+    nav::open(nav_model::resolve_source_jump(
+        nav_model::SourceKind::Policy,
+        &id,
+        |v| facts.is_contained(v),
+        |v| facts.is_closed(v),
+    ));
+    view()
+        .flex_1()
+        .flex_col()
+        .app_class("bg-background")
+        .child(views::group_more_view(GroupId::Assets))
+}
+
+#[test]
+fn policy_seam_focus_lands_container_tab_and_highlights_row() {
+    let _guard = test_assembly_guard();
+    crate::app::reset_book_assembly();
+    // 保单探针需要真实清单（高亮锚点挂在险种格上）：同纪律建库造数（产品
+    // 开库入口 + 域公开写入口）。
+    let dir = crate::tests::scratch_book_dir("nav-policies-seam");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("ledger.db"), b"").unwrap();
+    {
+        let db = crate::boot::boot_ledger(&dir).unwrap();
+        let conn = db
+            .conn
+            .lock()
+            .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
+            .unwrap();
+        let insurer = ledger_policy::create_insurer_by_name(&conn, "探针保司").unwrap();
+        let policy_id = ledger_policy::create_policy(
+            &conn,
+            ledger_policy::PolicyInput {
+                insurer_id: insurer.clone(),
+                policy_number: "P-SEAM".to_owned(),
+                product_name: "跳转险种".to_owned(),
+                start_date: "2026-01-01".to_owned(),
+                end_date: None,
+                coverage_amount_cents: None,
+                coverage_currency_code: None,
+                note: None,
+            },
+            &mut || {},
+        )
+        .unwrap();
+        let second = ledger_policy::create_policy(
+            &conn,
+            ledger_policy::PolicyInput {
+                insurer_id: insurer,
+                policy_number: "P-SEAM-2".to_owned(),
+                product_name: "陪跑险种".to_owned(),
+                start_date: "2026-01-01".to_owned(),
+                end_date: None,
+                coverage_amount_cents: None,
+                coverage_currency_code: None,
+                note: None,
+            },
+            &mut || {},
+        )
+        .unwrap();
+        *POLICIES_SEAM_FOCUS
+            .lock()
+            .unwrap_or_else(|p| p.into_inner()) = Some(policy_id);
+        let _ = second;
+    }
+    crate::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(EngineConfig {
+        viewport: nsh_engine::Size::new(nsh_engine::Points(1280.0), nsh_engine::Points(720.0)),
+        environment: Environment {
+            os: Os::Linux,
+            idiom: Idiom::Desktop,
+            ..Environment::default()
+        },
+        ui_sets: vec![nsh_base::registry()],
+        ..EngineConfig::new(Root::of::<PoliciesSeamProbeApp>())
+    })
+    .unwrap();
+
+    // 容器壳落保单页签 + 保单视图真实装载（清单卡在屏）+ 关注行高亮锚点
+    //（用户可见凭据 = 高亮行在屏；陪跑行无锚）。
+    app.wait_for("id:policy-table").unwrap();
+    app.wait_for("text:跳转险种").unwrap();
+    app.wait_for("text:陪跑险种").unwrap();
+    app.wait_for("id:policy-row-focus").unwrap();
+    crate::app::reset_book_assembly();
 }

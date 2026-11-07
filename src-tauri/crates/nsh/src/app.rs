@@ -186,6 +186,7 @@ pub fn reset_book_assembly() {
     tx_filter::reset_for_tests();
     reports::reset_for_tests();
     scheduled::reset_for_tests();
+    crate::cross_book::reset_default_data_dir();
 }
 
 /// 启动结果三态（窗口呈现的全部状态）。
@@ -2260,7 +2261,6 @@ pub(crate) fn BudgetView() -> impl IntoElement {
 
 /// 视图宿主（导航骨架的内容区，#2032）：已迁移的交易列表与预算视图挂真实
 /// 组件，三容器挂「更多」页签壳，其余未迁移视图共享反应式占位壳（标题随
-/// 当前视图，下钻意图消费键落位；迁移票以自己的真实组件替换对应分支）。
 fn view_host(nav: nav::NavStore) -> impl IntoElement {
     // 当前视图信号（Copy 句柄移入分支谓词闭包，'static 无借用逃逸）。
     let current = nav.current;
@@ -2268,72 +2268,114 @@ fn view_host(nav: nav::NavStore) -> impl IntoElement {
     let group_more = |gid: nav_model::GroupId| move || views::group_more_view(gid);
     // 分支序随迁移系列推进：交易列表 / 预算（#2033）/ 账户（#2041）/
     // 定时（#2042）/ 概览（#2039）/ 搜索（#2040）/ 物品（#2044）/ 报表
-    //（#2048）/ 储蓄目标（#2056）/ 设置（#2053）挂真实组件，三容器挂
-    //「更多」页签壳，其余未迁移视图共享占位。
-    when(is(ViewName::Transactions), transactions_view).otherwise(move || {
-        when(is(ViewName::Budget), budget_view).otherwise(move || {
-            when(is(ViewName::Accounts), accounts::accounts_view).otherwise(move || {
-                when(is(ViewName::Scheduled), scheduled::scheduled_view).otherwise(move || {
-                    when(is(ViewName::Items), items::items_view).otherwise(move || {
-                        when(is(ViewName::Dashboard), dashboard::dashboard_view).otherwise(
-                            move || {
-                                when(is(ViewName::Search), search::search_view).otherwise(
-                                    move || {
-                                        when(is(ViewName::Reports), reports::reports_view)
+    //（#2048）/ 储蓄目标（#2056）/ 设置（#2053）/ 保单（#2050）/ 商户
+    //（#2052）/ 跨账本汇总与 AI 提示词（#2055）挂真实组件，三容器挂「更多」
+    // 页签壳，其余未迁移视图共享占位。
+    when(
+    is(ViewName::Transactions),
+    transactions_view,
+)
+.otherwise(move || {
+    when(
+        is(ViewName::Budget),
+        budget_view,
+    )
+    .otherwise(move || {
+        when(
+            is(ViewName::Accounts),
+            accounts::accounts_view,
+        )
+        .otherwise(move || {
+            when(
+                is(ViewName::Scheduled),
+                scheduled::scheduled_view,
+            )
+            .otherwise(move || {
+                when(
+                    is(ViewName::Items),
+                    items::items_view,
+                )
+                .otherwise(move || {
+                    when(
+                        is(ViewName::Dashboard),
+                        dashboard::dashboard_view,
+                    )
+                    .otherwise(move || {
+                        when(
+                            is(ViewName::Search),
+                            search::search_view,
+                        )
+                        .otherwise(move || {
+                            when(
+                                is(ViewName::Reports),
+                                reports::reports_view,
+                            )
+                            .otherwise(move || {
+                                when(
+                                    is(ViewName::SavingsGoals),
+                                    crate::savings::savings_goals_view,
+                                )
+                                .otherwise(move || {
+                                    when(
+                                        is(ViewName::Settings),
+                                        settings::settings_view,
+                                    )
+                                    .otherwise(move || {
+                                        when(
+                                            is(ViewName::Policies),
+                                            crate::policies::policies_view,
+                                        )
+                                        .otherwise(move || {
+                                            when(
+                                                is(ViewName::Merchants),
+                                                crate::merchants::merchants_view,
+                                            )
                                             .otherwise(move || {
                                                 when(
-                                                    is(ViewName::SavingsGoals),
-                                                    crate::savings::savings_goals_view,
+                                                    is(ViewName::Ai),
+                                                    crate::ai_prompt::ai_prompt_view,
                                                 )
                                                 .otherwise(move || {
                                                     when(
-                                                        is(ViewName::Settings),
-                                                        settings::settings_view,
+                                                        is(ViewName::CrossBookSummary),
+                                                        crate::cross_book::cross_book_summary_view,
                                                     )
                                                     .otherwise(move || {
                                                         when(
                                                             is(ViewName::BookkeepingMore),
-                                                            group_more(
-                                                                nav_model::GroupId::Bookkeeping,
-                                                            ),
+                                                            group_more(nav_model::GroupId::Bookkeeping),
                                                         )
                                                         .otherwise(move || {
                                                             when(
                                                                 is(ViewName::AssetsMore),
-                                                                group_more(
-                                                                    nav_model::GroupId::Assets,
-                                                                ),
+                                                                group_more(nav_model::GroupId::Assets),
                                                             )
                                                             .otherwise(move || {
                                                                 when(
-                                                                is(ViewName::InsightsMore),
-                                                                group_more(
-                                                                    nav_model::GroupId::Insights,
-                                                                ),
-                                                            )
-                                                            .otherwise(move || {
-                                                                // 未迁移视图反应式占位壳：标题随当前视图；意图消费时机 = 落位
-                                                                //（effect 键 current，同轮落地）。
-                                                                let focused =
-                                                                    signal(None::<nav::NavIntent>);
-                                                                effect(move || {
-                                                                    let _current =
-                                                                        nav.current.get();
-                                                                    focused.set(nav::take_intent());
-                                                                });
-                                                                views::placeholder_shell_current(
-                                                                    focused,
+                                                                    is(ViewName::InsightsMore),
+                                                                    group_more(nav_model::GroupId::Insights),
                                                                 )
-                                                            })
+                                                                .otherwise(move || {
+                                                                        // 未迁移视图反应式占位壳：标题随当前视图；意图消费时机 = 落位
+                                                                        //（effect 键 current，同轮落地）。
+                                                                        let focused = signal(None::<nav::NavIntent>);
+                                                                        effect(move || {
+                                                                        let _current = nav.current.get();
+                                                                        focused.set(nav::take_intent());
+                                                                        });
+                                                                        views::placeholder_shell_current(focused)
+                                                                    })
+                                                                })
                                                             })
                                                         })
                                                     })
                                                 })
                                             })
-                                    },
-                                )
-                            },
-                        )
+                                        })
+                                    })
+                                })
+                            })
+                        })
                     })
                 })
             })

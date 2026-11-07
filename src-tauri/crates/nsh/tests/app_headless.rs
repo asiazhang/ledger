@@ -2373,7 +2373,8 @@ fn shortcut_band_keys_land_views() {
         "⌘` 落真实概览"
     );
     app.press_key("mod+0").unwrap();
-    assert_eq!(app.screen().count("text:AI").unwrap(), 2, "⌘0 落 AI");
+    // ⌘0 落 AI：#2055 起提示词页为真实组件（此前是占位屏名 count 钉）。
+    app.wait_for("id:ai-prompt-view").unwrap();
     app.press_key("mod+,").unwrap();
     assert_eq!(app.screen().count("text:设置").unwrap(), 2, "⌘, 落设置");
     app.press_key("mod+2").unwrap();
@@ -2518,15 +2519,15 @@ fn group_more_container_tabs_follow_session_state_not_restart() {
     open_transactions(&mut app);
 
     // 资产组「更多」：页签 = 出厂清单序（保单/实物资产/保险公司），默认首签
-    // 保单（内容区标题「保单」×2：页签 + 占位屏名）。
+    // 保单——#2050 迁入后首签内容 = 真实保单视图（清单卡在屏，占位不再）。
     app.press("id:nav-more-assets").unwrap();
     app.wait_for("id:more-tab-policies").unwrap();
     app.wait_for("id:more-tab-physicalAssets").unwrap();
     app.wait_for("id:more-tab-insurers").unwrap();
-    assert_eq!(
-        app.screen().count("text:保单").unwrap(),
-        2,
-        "默认首签 = 清单首位（页签 + 占位屏名）"
+    app.wait_for("id:policy-table").unwrap();
+    assert!(
+        app.screen().count("id:placeholder-note").unwrap() == 0,
+        "保单页签不再占位（#2050 迁入）"
     );
     // 页签点击 → 内容切换（实物资产 ×2：页签 + 占位屏名；保单回 1）。
     app.press("id:more-tab-physicalAssets").unwrap();
@@ -7633,6 +7634,405 @@ fn item_id_by_name(dir: &std::path::Path, name: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------
+// 商户管理视图（#2052）：字典 + 新增表单卡 + 清单卡（统一模糊搜索 / 显示已删 /
+// 条数排序 / 条数下钻 / 客户端分页）+ 编辑弹窗与软删轻量确认；写路径直调域，
+// 写成功后广播交易失效信号（交易列表商户来源重读）。删任一接线即红的负向
+// 条目逐项写在各测试注释（ADR-0087：断言对准用户可观察结果）。
+// ---------------------------------------------------------------------------
+
+/// 经记账组「更多」容器点开商户页签（#2052 旅程用例共用）：清单卡片在屏即
+/// 落位凭据（容器页签到达路径的“到达”半边——删容器页签分支或挂载分支即红）。
+fn open_merchants(app: &mut Headless) {
+    app.wait_for("id:nav-more-bookkeeping").unwrap();
+    app.press("id:nav-more-bookkeeping").unwrap();
+    app.wait_for("id:more-tab-merchants").unwrap();
+    app.press("id:more-tab-merchants").unwrap();
+    app.wait_for("id:merchant-table").unwrap();
+    app.wait_for("text:商户列表").unwrap();
+}
+
+/// 经域读路径反查商户 id（用例共用；弹窗/气泡目标 test_id 嵌 id 用）。
+fn nsh_app_lib_merchant_id(dir: &std::path::Path, name: &str) -> String {
+    let db = nsh_app::boot::boot_ledger(dir).unwrap();
+    let conn = db
+        .conn
+        .lock()
+        .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
+        .unwrap();
+    ledger_merchants::list_merchants(&conn, true)
+        .unwrap()
+        .into_iter()
+        .find(|row| row.name == name)
+        .map(|row| row.id)
+        .unwrap_or_default()
+}
+
+/// 首屏装载（旧壳 MerchantManager onMounted 平价）：两卡（新增/列表）+ 列
+/// 头与行格文本（名称 / 关联交易计数）。删除清单读接缝（boot::merchant_rows
+/// / merchant_transaction_counts）或装配分支即红。
+#[test]
+fn merchants_view_lands_with_cards_and_counted_rows() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("merchants-list");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let account = seed_cash_account(&db);
+        let jd = seed_merchant(&db, "京东");
+        let mt = seed_merchant(&db, "美团");
+        for merchant in [jd, mt] {
+            seed_transaction(
+                &db,
+                TxnSeed {
+                    account: &account,
+                    to_account: None,
+                    kind: TransactionKind::Expense,
+                    amount_cents: 10_00,
+                    date: &test_date(0),
+                    category_id: None,
+                    merchant_id: Some(merchant),
+                    note: None,
+                },
+            );
+        }
+    }
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_merchants(&mut app);
+
+    // 两卡（新增表单卡 + 清单卡）。
+    assert!(
+        app.shows("新增商户"),
+        "新增表单卡在屏：{:?}",
+        app.screen().texts()
+    );
+    assert!(app.shows("商户列表"), "清单卡在屏");
+    // 列头与行格文本（装配层产物）：名称 / 关联交易（毛笔数）。
+    for text in ["名称", "关联交易", "操作"] {
+        assert!(
+            app.shows(text),
+            "列头应呈现「{text}」：{:?}",
+            app.screen().texts()
+        );
+    }
+    assert!(app.shows("京东"), "在用行在屏：{:?}", app.screen().texts());
+    assert!(app.shows("美团"), "在用行在屏");
+    assert!(app.shows("1"), "每商户毛笔数 1：{:?}", app.screen().texts());
+    // 总数条（旧壳 pagination.prefix 同词表）。
+    app.wait_for("text:共 2 条").unwrap();
+}
+
+/// 新增旅程（旧壳 addMerchant 平价）：空名前置拦截不写，添加成功反馈 + 行即
+/// 现；重名被域守卫码化拒绝，错误在卡内呈现且表单不清空。删 boot::
+/// create_merchant 写接缝即红（成功旅程行不到屏）。
+#[test]
+fn merchants_view_create_journey_and_duplicate_rejection() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("merchants-create");
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_merchants(&mut app);
+
+    // 空名前置拦截：提示 + 不写库。
+    app.press("id:merchant-add").unwrap();
+    app.wait_for("text:请输入商户名称").unwrap();
+    assert!(
+        nsh_app_lib_merchant_id(&dir, "京东").is_empty(),
+        "前置拦截不写库（空库无商户）"
+    );
+    app.wait_for("text:共 0 条").unwrap();
+
+    // 成功旅程：输入名称 → 添加 → 反馈 + 行即现（写入成功广播交易失效，
+    // 本视图订阅重读——转已删/软删计数随重读跟随）。
+    app.type_text("id:merchant-create-name", "京东").unwrap();
+    app.press("id:merchant-add").unwrap();
+    app.wait_for("text:已添加商户").unwrap();
+    app.wait_for("text:京东").unwrap();
+    app.wait_for("text:共 1 条").unwrap();
+    assert_eq!(
+        app.screen().input_text("id:merchant-create-name").unwrap(),
+        Some(""),
+        "成功后表单清空"
+    );
+
+    // 重名拒绝：域码化错误（「商户已存在: 京东」）在卡内呈现，表单不清空。
+    app.type_text("id:merchant-create-name", "京东").unwrap();
+    app.press("id:merchant-add").unwrap();
+    app.wait_for("text:添加失败: 商户已存在: 京东").unwrap();
+    assert_eq!(
+        app.screen().count("text:共 1 条").unwrap(),
+        1,
+        "重名未写入（仍 1 条）"
+    );
+    assert_eq!(
+        app.screen().input_text("id:merchant-create-name").unwrap(),
+        Some("京东"),
+        "失败不清空表单（可直接修正）"
+    );
+}
+
+/// 编辑改名（旧壳 MerchantEditModal 平价）：行内「编辑」→ 弹窗预填 → 保存
+/// → 反馈 + 行更新；交易列表来源列新名即现（失效信号广播驱动的重读——删除
+/// signals::notify_transactions_invalidated 接线即红：列表落位重读是读时的，
+/// 广播是被删的语义锚）。删除 boot::update_merchant 写接缝即红（行不更新）。
+#[test]
+fn merchants_view_edit_renames_and_updates_source_column() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("merchants-edit");
+    let jd;
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let account = seed_cash_account(&db);
+        jd = seed_merchant(&db, "京东");
+        seed_transaction(
+            &db,
+            TxnSeed {
+                account: &account,
+                to_account: None,
+                kind: TransactionKind::Expense,
+                amount_cents: 10_00,
+                date: &test_date(0),
+                category_id: None,
+                merchant_id: Some(jd.clone()),
+                note: None,
+            },
+        );
+    }
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_merchants(&mut app);
+    app.wait_for("text:京东").unwrap();
+
+    // 编辑弹窗预填（旧壳 watch immediate 同果）。
+    app.press(&format!("id:merchant-edit-{jd}")).unwrap();
+    app.wait_for("text:编辑商户").unwrap();
+    assert_eq!(
+        app.screen().input_text("id:merchant-edit-name").unwrap(),
+        Some("京东"),
+        "预填原名"
+    );
+
+    // 空名前置拦截（旧壳 nameRequired 同词表；错误条位带词表前缀）。
+    app.clear("id:merchant-edit-name").unwrap();
+    app.press("id:merchant-edit-save").unwrap();
+    app.wait_for("text:更新失败: 请输入商户名称").unwrap();
+
+    // 保存 → 反馈 + 行更新。
+    app.type_text("id:merchant-edit-name", "京东商城").unwrap();
+    app.press("id:merchant-edit-save").unwrap();
+    app.wait_for("text:已更新商户").unwrap();
+    app.wait_for("text:京东商城").unwrap();
+
+    // 交易列表来源列新名（广播 → 列表重读）。
+    open_transactions(&mut app);
+    app.wait_for("text:京东商城").unwrap();
+}
+
+/// 软删两相（旧壳 AppPopconfirm 平价）：取消不写；确认后行离席（在用清单），
+/// rename 延伸显示已删后仍以已删行呈现。删 boot::delete_merchant 写接缝即红
+///（确认后行不离席）。
+#[test]
+fn merchants_view_delete_needs_confirmation_and_cancels_before_write() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("merchants-delete");
+    let jd;
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        jd = seed_merchant(&db, "京东");
+    }
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_merchants(&mut app);
+    app.wait_for("text:京东").unwrap();
+
+    // 气泡文案（旧壳 deleteConfirm 同词表）与取消键。
+    app.press(&format!("id:merchant-delete-{jd}")).unwrap();
+    app.wait_for("text:确认删除该商户？历史交易仍会显示它的名字。")
+        .unwrap();
+    // 取消：行仍在。
+    app.press("id:merchant-delete-cancel").unwrap();
+    app.wait_for("text:京东").unwrap();
+
+    // 确认：行离席（在用清单）+ 反馈。
+    app.press(&format!("id:merchant-delete-{jd}")).unwrap();
+    app.wait_for("text:确认删除该商户？历史交易仍会显示它的名字。")
+        .unwrap();
+    app.press("id:merchant-delete-confirm").unwrap();
+    app.wait_for("text:已删除商户").unwrap();
+    app.wait_for_gone("text:京东", DEFAULT_WAIT).unwrap();
+
+    // 显示已删开启 → 已删行追加在尾（只读，带「已删除」标记）。
+    app.press("id:merchant-show-deleted").unwrap();
+    app.wait_for("text:京东").unwrap();
+    app.wait_for("text:已删除").unwrap();
+    app.wait_for(&format!("id:merchant-deleted-tag-{jd}"))
+        .unwrap();
+}
+
+/// 显示已删与搜索（旧壳 issue #447/#447 平价）：默认已删行不显示；开关开启
+/// 后已删行追加（带标记无操作）；统一模糊搜索本地过滤（拼音首字母命中），
+/// 清空恢复完整列表。删搜索接线或开关即红（断言对准在屏行集）。
+#[test]
+fn merchants_view_search_and_show_deleted_toggle_readonly_rows() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("merchants-filter");
+    let bogus;
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        seed_merchant(&db, "京东");
+        bogus = seed_merchant(&db, "京东旧");
+    }
+    {
+        // 软删「京东旧」（经域公开写入口域行 is_deleted=1）。
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let conn = db
+            .conn
+            .lock()
+            .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
+            .unwrap();
+        ledger_merchants::delete_merchant(&conn, &bogus).unwrap();
+    }
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_merchants(&mut app);
+
+    // 默认只显示在用。
+    app.wait_for("text:京东").unwrap();
+    assert!(
+        !app.shows("已删除"),
+        "默认无已删标记：{:?}",
+        app.screen().texts()
+    );
+    assert!(
+        app.screen()
+            .count(&format!("id:merchant-deleted-tag-{bogus}"))
+            .unwrap()
+            == 0,
+        "已删行默认不呈现（标记锚点不在屏）"
+    );
+
+    // 显示已删开启：已删行追加在尾，带「已删除」标记（在用行仍在前）。
+    app.press("id:merchant-show-deleted").unwrap();
+    app.wait_for("text:京东").unwrap();
+    app.wait_for(&format!("id:merchant-deleted-tag-{bogus}"))
+        .unwrap();
+    app.wait_for("text:已删除").unwrap();
+    app.wait_for("text:共 2 条").unwrap();
+
+    // 搜索（拼音首字母命中）过滤未命中项：两行都含「京东」→ 两条。
+    app.type_text("id:merchant-search", "jd").unwrap();
+    app.wait_for("text:共 2 条").unwrap();
+    // 限定「旧」→ 只剩已删行（在京旧，标记行）。
+    app.clear("id:merchant-search").unwrap();
+    app.type_text("id:merchant-search", "旧").unwrap();
+    app.wait_for("text:共 1 条").unwrap();
+    // 清空恢复完整列表（过滤意图页码归零不回退总数）。
+    app.clear("id:merchant-search").unwrap();
+    app.wait_for("text:共 2 条").unwrap();
+}
+
+/// 移回侧栏直达（旧壳侧栏仓位语义平价）：存储种子把商户移出记账收纳清单、
+/// 挂主项仓位 → 侧栏商户项直达真实视图。删 view_host 的商户分支挂载 → 本测
+/// 红（「迁移中」占位——容器分支不经过本路径，负向条目独立于容器到达）。
+#[test]
+fn merchants_view_lands_directly_when_moved_to_sidebar() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("merchants-direct");
+
+    // 侧栏序存储种子：「商户」移回侧栏（收纳清单同步剔除，就地移回豁免
+    // 同形的存储侧清面）。
+    let mut app = Headless::start(desktop_config_with_storage(&[
+        (
+            "view_state:sidebar_containment",
+            r#"{"bookkeeping":["scheduled"],"assets":["policies","physicalAssets","insurers"],"insights":[]}"#,
+        ),
+        (
+            "view_state:sidebar_order",
+            r#"{"bookkeeping":["transactions","accounts","merchants","budget"],"assets":["investments","items","savingsGoals"],"insights":["reports","search"]}"#,
+        ),
+    ]))
+    .unwrap();
+    nsh_app::app::set_book_dir(dir);
+    app.wait_for("id:nav-merchants").unwrap();
+    app.press("id:nav-merchants").unwrap();
+    app.wait_for("id:merchant-table").unwrap();
+    app.wait_for("text:商户列表").unwrap();
+}
+
+/// 条数下钻（issue #446 平价）：点条数 → 交易列表带商户过滤落位。删
+/// nav::open 下钻接线即红（点击后停留商户视图）。
+#[test]
+fn merchants_view_count_click_drills_to_transactions_filtered() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("merchants-drill");
+    let jd;
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let account = seed_cash_account(&db);
+        jd = seed_merchant(&db, "京东");
+        for (date, note) in [("2026-01-01", "京东笔一"), ("2026-01-02", "京东笔二")] {
+            seed_transaction(
+                &db,
+                TxnSeed {
+                    account: &account,
+                    to_account: None,
+                    kind: TransactionKind::Expense,
+                    amount_cents: 10_00,
+                    date,
+                    category_id: None,
+                    merchant_id: Some(jd.clone()),
+                    note: Some(note.to_owned()),
+                },
+            );
+        }
+        // 无商户的另一笔（被下钻筛选排除）。
+        seed_transaction(
+            &db,
+            TxnSeed {
+                account: &account,
+                to_account: None,
+                kind: TransactionKind::Expense,
+                amount_cents: 10_00,
+                date: "2026-01-03",
+                category_id: None,
+                merchant_id: None,
+                note: Some("无商户笔".to_owned()),
+            },
+        );
+    }
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_merchants(&mut app);
+    app.wait_for("text:京东").unwrap();
+
+    // 点条数 → 交易列表落位带商户过滤：只剩两笔京东交易。
+    app.press(&format!("id:merchant-count-{jd}")).unwrap();
+    app.wait_for("id:tx-table").unwrap();
+    app.wait_for("text:共 2 条").unwrap();
+    assert!(
+        app.shows("京东笔一") && app.shows("京东笔二"),
+        "下钻筛选命中在屏"
+    );
+    assert!(
+        !app.shows("无商户笔"),
+        "其它交易被下钻筛选排除：{:?}",
+        app.screen().texts()
+    );
+}
+
+// ---------------------------------------------------------------------------
 // 报表视图（#2048）：bar 图自绘三卡（期间口径统一）。造数经域公开写入口，
 // 断言只写用户可见结果；接线删除即红（负向验证条目见交付报告）。
 // ---------------------------------------------------------------------------
@@ -9004,6 +9404,811 @@ fn scheduled_view_create_installment_journey() {
             .any(|t| t.contains("已还 ¥0 / ¥100 · 0/3 期")),
         "进度 = 已还汇总（实时面）：{:?}",
         app.screen().texts()
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 保单视图（#2050）：资产「更多」容器页签到达路径、清单与统计（挂单保费同
+// 源快照）、新建（保司即建 + 协议区）、编辑与软删确认、删除即红负向条目逐
+// 项写在各测试注释（ADR-0087 断言强度：断言对准用户可观察结果）。
+// ---------------------------------------------------------------------------
+
+/// 造一个保司（按名 find-or-create，域公开写入口）。
+fn seed_insurer(db: &ledger_infra::db::DbState, name: &str) -> String {
+    let conn = db
+        .conn
+        .lock()
+        .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
+        .unwrap();
+    ledger_policy::create_insurer_by_name(&conn, name).unwrap()
+}
+
+/// 造一张保单（域公开写入口；coverage = (保额分, 币种)）。
+fn seed_policy(
+    db: &ledger_infra::db::DbState,
+    insurer_id: &str,
+    number: &str,
+    product: &str,
+    start: &str,
+    end: Option<&str>,
+    coverage: Option<(i64, Option<&str>)>,
+) -> String {
+    let conn = db
+        .conn
+        .lock()
+        .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
+        .unwrap();
+    ledger_policy::create_policy(
+        &conn,
+        ledger_policy::PolicyInput {
+            insurer_id: insurer_id.to_owned(),
+            policy_number: number.to_owned(),
+            product_name: product.to_owned(),
+            start_date: start.to_owned(),
+            end_date: end.map(str::to_owned),
+            coverage_amount_cents: coverage.map(|(cents, _)| cents),
+            coverage_currency_code: coverage.and_then(|(_, code)| code.map(str::to_owned)),
+            note: None,
+        },
+        &mut || {},
+    )
+    .unwrap()
+}
+
+/// 造一笔挂医保单的保费支出（保单视角统计的挂单流水面，域公开写入口）。
+fn seed_policy_expense(
+    db: &ledger_infra::db::DbState,
+    account_id: &str,
+    policy_id: &str,
+    amount_cents: i64,
+) {
+    let conn = db
+        .conn
+        .lock()
+        .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
+        .unwrap();
+    let mut input = ledger_transaction::TransactionInput {
+        kind: ledger_transaction::TransactionKind::Expense,
+        amount_cents,
+        currency_code: "CNY".to_owned(),
+        account_id: Some(account_id.to_owned()),
+        to_account_id: None,
+        funding_account_id: None,
+        funding: Vec::new(),
+        purchases: Vec::new(),
+        category_id: None,
+        merchant_id: None,
+        merchant_name: None,
+        policy_id: Some(policy_id.to_owned()),
+        refund_of_transaction_id: None,
+        note: Some("保费扣款".to_owned()),
+        source_order_no: None,
+        date: "2026-01-05".to_owned(),
+        instrument_id: None,
+        quantity: None,
+        price_cents: None,
+        fee_cents: None,
+        to_instrument_id: None,
+        to_quantity: None,
+        out_amount_cents: None,
+        in_amount_cents: None,
+        origin: None,
+        fx_rate: None,
+        idempotency_key: None,
+    };
+    input.policy_id = Some(policy_id.to_owned());
+    ledger_transaction::create(&conn, input).unwrap();
+}
+
+/// 库态核对（不经 UI）：保单号与软删标志——软删行在域标准清单缺席，
+/// 直查表的 is_deleted 标志是对「软删不物理移除」的存在性凭据。
+fn book_policy_numbers(dir: &Path) -> Vec<(String, i64)> {
+    let db = nsh_app::boot::boot_ledger(dir).unwrap();
+    let conn = db.conn.lock().unwrap();
+    let mut stmt = conn
+        .prepare("SELECT policy_number, is_deleted FROM policies ORDER BY created_at")
+        .unwrap();
+    stmt.query_map([], |row| {
+        Ok((
+            row.get::<_, String>(0).unwrap(),
+            row.get::<_, i64>(1).unwrap(),
+        ))
+    })
+    .unwrap()
+    .collect::<Result<Vec<_>, _>>()
+    .unwrap()
+}
+
+/// 库态核对：保单名下订阅协议（含保单指针与金额）。
+fn book_agreements(dir: &Path, policy_id: &str) -> Vec<i64> {
+    let db = nsh_app::boot::boot_ledger(dir).unwrap();
+    let conn = db.read_conn.lock().unwrap();
+    ledger_scheduled::list_plans(&conn)
+        .unwrap()
+        .into_iter()
+        .filter(|plan| plan.policy_id.as_deref() == Some(policy_id))
+        .map(|plan| plan.core.amount_cents)
+        .collect()
+}
+
+/// 从侧栏点开资产组「更多」容器的保单页签（#2050 到达路径共用）。
+fn open_policies(app: &mut Headless) {
+    app.wait_for("id:nav-more-assets").unwrap();
+    app.press("id:nav-more-assets").unwrap();
+    app.wait_for("id:more-tab-policies").unwrap();
+    app.wait_for("id:policy-table").unwrap();
+}
+
+/// 装载（旧壳 onMounted 平价，容器页签到达）：清单卡列头与行格（保司显示
+/// 映射 / 期间 / 保障中 / 保额自带币种 / 统计三列同源快照 + 无活跃协议占
+/// 位「—」）。删除 boot 装载读接缝 / 行装配 / 容器挂载任一环即红。
+#[test]
+fn policy_view_lands_with_rows_stats_and_columns() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("policy-land");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let account = seed_cash_account(&db);
+        let insurer = seed_insurer(&db, "众安");
+        seed_policy(
+            &db,
+            &insurer,
+            "P-001",
+            "长期重疾险",
+            "2024-01-01",
+            None,
+            None,
+        );
+        let second = seed_policy(
+            &db,
+            &insurer,
+            "P-002",
+            "医疗险",
+            "2024-06-01",
+            Some("2025-12-31"),
+            Some((12_345, Some("USD"))),
+        );
+        seed_policy_expense(&db, &account, &second, 12_00);
+    }
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_policies(&mut app);
+    app.wait_for("text:长期重疾险").unwrap();
+
+    for text in [
+        "保单",
+        "新建保单",
+        "保单列表",
+        "保险公司",
+        "险种名称",
+        "保单号",
+        "保障期间",
+        "保额",
+        "累计已缴",
+        "累计流入",
+        "下期扣款日",
+        "长期重疾险",
+    ] {
+        assert!(
+            app.shows(text),
+            "应呈现「{text}」：{:?}",
+            app.screen().texts()
+        );
+    }
+    for text in [
+        "众安",
+        "P-001",
+        "2024-01-01 ~ 长期",
+        "保障中",
+        "医疗险",
+        "P-002",
+    ] {
+        assert!(
+            app.shows(text),
+            "行格应呈现「{text}」：{:?}",
+            app.screen().texts()
+        );
+    }
+    // 统计同源快照（挂单保费本位币合计）+ 无活跃协议占位（下期扣款「—」）。
+    for text in ["¥12", "—"] {
+        assert!(
+            app.shows(text),
+            "统计应呈现「{text}」：{:?}",
+            app.screen().texts()
+        );
+    }
+    // 已到期（止日早于今天）与保额自带币种不折算（USD 原样）。
+    assert!(app.shows("已到期"), "止日已过应呈已到期");
+    assert!(app.shows("$123.45"), "保额应按自带币种原样呈现");
+    // 到期列双态语义色锚点（test_id 计数而非字面）不参与断言——色面归人工
+    // 对表子集。
+}
+
+/// 新建旅程（旧壳 create + 输入即建保司平价）：空名与必填拦两步（保司空 →
+/// 拦；保单号空 → 拦）；输入新保司名 + 必填项 → 保存 → 行即现 + 反馈条位 +
+/// 弹窗关；保司即建（库中在册）。删除「新建 → perform_save → reload」任一
+/// 接线即红。
+#[test]
+fn policy_view_create_journey_with_new_insurer() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("policy-create");
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_policies(&mut app);
+
+    app.press("id:policy-new").unwrap();
+    app.wait_for("id:policy-form-number").unwrap();
+    app.wait_for("text:新建保单").unwrap();
+
+    // 保司未选未输 → 拦截（弹窗不关）。
+    app.press("id:policy-form-save").unwrap();
+    app.wait_for("id:policy-form-error").unwrap();
+    app.wait_for("text:保存失败: 请选择或输入保险公司").unwrap();
+
+    // 保司即键入新名；保单号留空 → 拦截。
+    app.type_text("id:policy-form-insurer-input", "新增保司")
+        .unwrap();
+    app.press("id:policy-form-save").unwrap();
+    app.wait_for("text:保存失败: 保单号不能为空").unwrap();
+
+    // 补齐必填 → 保存成功：行即现、反馈在屏、弹窗关；保司在库。
+    app.type_text("id:policy-form-number", "P-101").unwrap();
+    app.type_text("id:policy-form-product", "百万医疗").unwrap();
+    app.press("id:policy-form-save").unwrap();
+    app.wait_for("text:保单已创建").unwrap();
+    app.wait_for_gone("id:policy-form-save", DEFAULT_WAIT)
+        .unwrap();
+    app.wait_for("id:policy-table").unwrap();
+    app.wait_for("text:百万医疗").unwrap();
+    assert!(app.shows("P-101"), "新保单行在屏");
+    assert!(app.shows("新增保司"), "即建保司显示映射在屏");
+    let numbers = book_policy_numbers(&dir);
+    assert!(
+        numbers
+            .iter()
+            .any(|(number, deletion)| number == "P-101" && *deletion == 0),
+        "新保单落库在册：{:?}",
+        numbers
+    );
+}
+
+/// 新建带缴费协议（旧壳 PolicyFormModal 协议区平价）：开关默认关；开启后
+/// 字段组可见；扣款账户下拉选择唯一候选 → 保存 → 保单落库 + 订阅形态协议
+/// 落库（携带保单引用、金额与频次）。删除「协议区开关 → 字段组 → 保存建
+/// 协议」任一接线即红。
+#[test]
+fn policy_view_create_with_agreement_creates_plan() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("policy-agreement");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        seed_cash_account(&db);
+    }
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_policies(&mut app);
+
+    app.press("id:policy-new").unwrap();
+    app.wait_for("id:policy-form-number").unwrap();
+    // 开关默认关：字段组默认不呈现（test_id 计数）；开启后可见。
+    assert_eq!(
+        app.screen().count("id:policy-agreement-amount").unwrap(),
+        0,
+        "关闭态不呈现协议字段组"
+    );
+    app.press("id:policy-agreement-toggle").unwrap();
+    app.wait_for("id:policy-agreement-amount").unwrap();
+
+    app.type_text("id:policy-form-insurer-input", "协议保司")
+        .unwrap();
+    app.type_text("id:policy-form-number", "P-201").unwrap();
+    app.type_text("id:policy-form-product", "保费协议险")
+        .unwrap();
+    app.type_text("id:policy-agreement-amount", "60").unwrap();
+    app.press("id:policy-agreement-account").unwrap();
+    app.wait_for("id:policy-agreement-account-option").unwrap();
+    app.press("id:policy-agreement-account-option >> text:测试现金")
+        .unwrap();
+    app.settle();
+
+    app.press("id:policy-form-save").unwrap();
+    app.wait_for("text:保单已创建").unwrap();
+    app.wait_for_gone("id:policy-form-save", DEFAULT_WAIT)
+        .unwrap();
+    app.wait_for("id:policy-table").unwrap();
+    app.wait_for("text:保费协议险").unwrap();
+
+    // 库态：协议以保单引用落库（订阅形态，¥60 = 6000 分）。
+    let conn = nsh_app::boot::boot_ledger(&dir).unwrap();
+    let read_conn = conn.read_conn.lock().unwrap();
+    let policies = ledger_policy::list_policies(&read_conn).unwrap();
+    let target = policies
+        .iter()
+        .find(|policy| policy.policy_number == "P-201")
+        .unwrap()
+        .clone();
+    drop(read_conn);
+    let plan_dir = &dir;
+    let plan_ids = book_agreements(plan_dir, &target.id);
+    assert_eq!(
+        plan_ids,
+        [6_000],
+        "协议金额随保单引用落库（¥60 = 6000 分）：{plan_ids:?}"
+    );
+}
+
+/// 编辑旅程（旧壳 update 全量替换平价）：编辑弹层回填保单号 / 险种原值 →
+/// 改保单号保存 → 行刷新新号（同 syn 快照）。删除「编辑 → perform_save
+/// (update) → reload」任一接线即红。
+#[test]
+fn policy_view_edit_updates_fields() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("policy-edit");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let insurer = seed_insurer(&db, "编辑保司");
+        seed_policy(&db, &insurer, "P-301", "编辑险种", "2025-01-01", None, None);
+    }
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_policies(&mut app);
+    app.wait_for("text:编辑险种").unwrap();
+
+    // 打开编辑：回填原值（保单号输入框原文本）。
+    let policy_id = {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let conn = db.read_conn.lock().unwrap();
+        ledger_policy::list_policies(&conn)
+            .unwrap()
+            .into_iter()
+            .find(|policy| policy.policy_number == "P-301")
+            .unwrap()
+            .id
+    };
+    app.press(&format!("id:policy-edit-{policy_id}")).unwrap();
+    app.wait_for("id:policy-form-number").unwrap();
+    app.wait_for("text:编辑保单").unwrap();
+    assert_eq!(
+        app.screen().input_text("id:policy-form-number").unwrap(),
+        Some("P-301"),
+        "编辑弹层回填原保单号"
+    );
+    assert_eq!(
+        app.screen().input_text("id:policy-form-product").unwrap(),
+        Some("编辑险种"),
+        "编辑弹层回填原险种"
+    );
+
+    // 改号保存：行刷新 + 反馈在屏。
+    app.clear("id:policy-form-number").unwrap();
+    app.type_text("id:policy-form-number", "P-302").unwrap();
+    app.press("id:policy-form-save").unwrap();
+    app.wait_for("text:保单已保存").unwrap();
+    app.wait_for_gone("id:policy-form-save", DEFAULT_WAIT)
+        .unwrap();
+    app.wait_for("id:policy-table").unwrap();
+    app.wait_for("text:P-302").unwrap();
+    assert!(!app.shows("P-301"), "旧号离屏");
+}
+
+/// 软删确认守卫（旧壳 AppPopconfirm 平价）：删除按钮开确认气泡（确认文案
+/// 在屏）→ 取消不动（行仍在）→ 再开确认 → 行移除（软删不进标准清单，库
+/// 中行保留）。删除 popconfirm 开合接线 → 「确认文案永不呈现」本测红。
+#[test]
+fn policy_view_delete_guard_and_soft_delete() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("policy-delete");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let insurer = seed_insurer(&db, "删保司");
+        let policy_id = seed_policy(&db, &insurer, "P-401", "删除险种", "2025-01-01", None, None);
+        // 一个不删除的对照（确认软删只落到目标行）。
+        seed_policy(&db, &insurer, "P-402", "保留险种", "2025-01-01", None, None);
+        let _ = policy_id;
+    }
+    let policy_id = {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let conn = db.read_conn.lock().unwrap();
+        ledger_policy::list_policies(&conn)
+            .unwrap()
+            .into_iter()
+            .find(|policy| policy.policy_number == "P-401")
+            .unwrap()
+            .id
+    };
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_policies(&mut app);
+    app.wait_for("text:删除险种").unwrap();
+
+    // 打开确认气泡（确认文案在屏）→ 取消：行仍在。
+    app.press(&format!("id:policy-delete-{policy_id}")).unwrap();
+    app.wait_for("id:policy-delete-message").unwrap();
+    app.wait_for("text:删除后不再显示在列表，历史记录保留。确认删除该保单？")
+        .unwrap();
+    app.press("id:policy-delete-cancel").unwrap();
+    app.wait_for_gone("id:policy-delete-message", DEFAULT_WAIT)
+        .unwrap();
+    assert!(app.shows("删除险种"), "取消后行不移除");
+
+    // 再开确认：行移除 + 反馈在屏 + 软删不进标准清单（库中行保留）。
+    app.press(&format!("id:policy-delete-{policy_id}")).unwrap();
+    app.wait_for("id:policy-delete-message").unwrap();
+    app.press("id:policy-delete-confirm").unwrap();
+    app.wait_for("text:保单已删除").unwrap();
+    app.wait_for_gone("text:删除险种", DEFAULT_WAIT).unwrap();
+    assert!(app.shows("保留险种"), "对照行不受波及");
+    let numbers = book_policy_numbers(&dir);
+    assert!(
+        numbers
+            .iter()
+            .any(|(number, deletion)| number == "P-401" && *deletion == 1),
+        "软删保留库行（is_deleted=1，不物理移除）：{:?}",
+        numbers
+    );
+}
+
+/// 空库空态（旧壳 empty guide 同文案）：无保单呈现建档引导。
+#[test]
+fn policy_view_empty_book_shows_guide() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("policy-empty");
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_policies(&mut app);
+    app.wait_for("id:policy-empty-guide").unwrap();
+    assert!(
+        app.shows("暂无保单：点击「新建保单」建立第一份合同档案。"),
+        "空态引导文案（旧壳 emptyGuide 同词表）"
+    );
+}
+
+/// 编辑模式协议历史区（旧壳 PolicyAgreementSection 平价）：分段表（含活跃
+/// 段）与改价入口在屏；改价字段组预填旧协议频率（每 1 年）。删除「协议历史
+/// 装载 → 分段呈现 → 改价入口」任一接线即红。
+#[test]
+fn policy_view_edit_shows_agreement_segments_and_rebuild_entry() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("policy-agg-segments");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let account = seed_cash_account(&db);
+        let insurer = seed_insurer(&db, "分段保司");
+        let policy_id = seed_policy(&db, &insurer, "P-501", "分段险种", "2025-01-01", None, None);
+        // 造一段活跃订阅协议（域公开写入口，带保单引用）。
+        let conn = db
+            .conn
+            .lock()
+            .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
+            .unwrap();
+        ledger_scheduled::create_plan(
+            &conn,
+            ledger_scheduled::CreateScheduledInput {
+                kind: ledger_scheduled::ScheduledKind::Subscription,
+                account_id: account,
+                category_id: None,
+                amount_cents: 5_000,
+                currency_code: "CNY".to_owned(),
+                recurrence_type: ledger_scheduled::RecurrenceType::Yearly,
+                recurrence_interval: 1,
+                recurrence_day: None,
+                start_date: "2025-01-01".to_owned(),
+                note: Some("分段险种".to_owned()),
+                merchant_id: None,
+                policy_id: Some(policy_id.clone()),
+                total_amount_cents: None,
+                total_occurrences: None,
+                to_account_id: None,
+            },
+        )
+        .unwrap();
+    }
+
+    let policy_id = {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let conn = db.read_conn.lock().unwrap();
+        ledger_policy::list_policies(&conn)
+            .unwrap()
+            .into_iter()
+            .find(|policy| policy.policy_number == "P-501")
+            .unwrap()
+            .id
+    };
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_policies(&mut app);
+    app.wait_for("text:分段险种").unwrap();
+
+    // 编辑弹层：协议历史分段表（金额 · 周期 · 起始日 · 状态）与改价入口。
+    app.press(&format!("id:policy-edit-{policy_id}")).unwrap();
+    app.wait_for("id:policy-agreement-segments").unwrap();
+    app.wait_for("text:¥50 · 每年 · 2025-01-01 · 进行中")
+        .unwrap();
+    app.wait_for("id:policy-agreement-rebuild-open").unwrap();
+    assert!(
+        app.screen().count("id:policy-agreement-add").unwrap() == 0,
+        "有活跃段呈现改价而非添加"
+    );
+
+    // 改价入口打开字段组：金额要求显式输入（空），频次预填 1。
+    app.press("id:policy-agreement-rebuild-open").unwrap();
+    app.wait_for("id:policy-sec-form").unwrap();
+    assert_eq!(
+        app.screen().input_text("id:policy-sec-interval").unwrap(),
+        Some("1"),
+        "改价字段组频次预填旧段"
+    );
+}
+// ---------------------------------------------------------------------------
+// 跨账本投资汇总与 AI 提示词（#2055）：多本只读合计（折算/逐本状态口径标注、
+// 概念说明弹层）、随投资开关联动的守卫、AI 提示词的复制与反馈。
+// 现场口径：注册表数据根与活动本目录按用例注入（bin 生产面同序——main.rs
+// 解析后注入，headless 测试直接给槽位值）。
+// ---------------------------------------------------------------------------
+
+use ledger_currencies::ExchangeRateInput;
+use ledger_infra::db::book_registry::{Book, BookRegistry, RegistryOrigin, write_registry};
+use std::path::PathBuf;
+
+/// 唯一暂存注册表数据根（跨账本注册表所在的<XDG 数据根>面：目录名即生产
+/// 同构面，identifier 拼接语义由常量见证）。
+fn make_data_root(tag: &str) -> PathBuf {
+    let root = std::env::temp_dir().join(format!("ledger-test-nsh-xbook-{tag}-{}", new_uuid()));
+    fs::create_dir_all(&root).unwrap();
+    root
+}
+
+/// 落盘注册表：单活动本 + 追加他本（文件现场；活动本指向 active 目录）。
+fn seed_registry(root: &Path, active: &Path, others: &[(&str, &str, &Path)]) {
+    let mut books = vec![Book {
+        id: "b1".to_owned(),
+        name: "活动账本".to_owned(),
+        dir: active.to_path_buf(),
+    }];
+    for (id, name, dir) in others {
+        books.push(Book {
+            id: (*id).to_owned(),
+            name: (*name).to_owned(),
+            dir: dir.to_path_buf(),
+        });
+    }
+    write_registry(
+        root,
+        &BookRegistry {
+            books,
+            active_id: "b1".to_owned(),
+            pending_relocation: None,
+            origin: RegistryOrigin::NewFormat,
+        },
+    )
+    .unwrap();
+}
+
+/// 在指定库内造一个投资账户（现金腿；跨账本合计的可投资资产读）。
+fn seed_investment_cash(db: &ledger_infra::db::DbState, name: &str, currency: &str, cents: i64) {
+    seed_account_with_currency(db, name, AccountType::Investment, currency, cents);
+}
+
+/// 跨账本汇总渲染（#2055 折算 + 四态逐本 + 概念说明弹层）：活动本 CNY 现金
+/// 2000 元、他本 USD 现金 1000 元（当期汇率 7）→ 可投资资产 ¥9000、折算口
+/// 径标注、未计入本警示与逐本状态；说明弹层挂跨本作用域句。删除视图装载
+/// 接线（reload）→ 渲染用例红（「删除即红」负向条目，实拆见交付报告）。
+#[test]
+fn cross_book_summary_renders_converted_totals_books_and_concept_tip() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let root = make_data_root("render");
+    let dir_active = make_book("x-active");
+    nsh_app::app::set_book_dir(dir_active.clone());
+    nsh_app::cross_book::set_default_data_dir(root.clone());
+
+    // 活动本：投资账户 CNY 现金 2000 元 + 当期汇率 USD→CNY = 7。
+    {
+        let db = nsh_app::boot::boot_ledger(&dir_active).unwrap();
+        seed_investment_cash(&db, "证券", "CNY", 200_000);
+        let conn = db.conn.lock().unwrap();
+        ledger_investment::create_exchange_rate(
+            &conn,
+            ExchangeRateInput {
+                base_code: "USD".to_owned(),
+                quote_code: "CNY".to_owned(),
+                rate: 7.0,
+                priced_at: today().to_string(),
+                source: None,
+            },
+        )
+        .unwrap();
+    }
+
+    // 他本：USD 现金 1000 元（折算腿）：本内本位币基准设为 USD（app_settings
+    // 键值 JSON 形状，旧壳集成场景同款接缝）——本内无折算，跨本折算落活动本
+    // 汇率表（被测路径）。
+    let dir_usd = make_book("x-usd");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir_usd).unwrap();
+        seed_investment_cash(&db, "美元证券", "USD", 100_000);
+        db.conn
+            .lock()
+            .unwrap()
+            .execute(
+                "INSERT INTO app_settings(key, value) VALUES('ledger.base_currency', '\"USD\"') \
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                [],
+            )
+            .unwrap();
+    }
+
+    // 密文本（未解锁、未计入）。
+    let dir_locked = make_book("x-locked");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir_locked).unwrap();
+        drop(db);
+        ledger_infra::db::encryption::enable_encryption_for_file(
+            &dir_locked.join("ledger.db"),
+            "测试口令",
+        )
+        .unwrap();
+    }
+
+    // 未建库本（只登记、无库文件）。
+    let dir_missing =
+        std::env::temp_dir().join(format!("ledger-test-nsh-xbook-missing-{}", new_uuid()));
+    fs::create_dir_all(&dir_missing).unwrap();
+
+    seed_registry(
+        &root,
+        &dir_active,
+        &[
+            ("b2", "美元账本", &dir_usd),
+            ("b3", "密码本", &dir_locked),
+            ("b4", "空账本", &dir_missing),
+        ],
+    );
+
+    // 启动即恢复跨账本汇总（路由存储面；无侧栏入口——入口=账本切换弹层，
+    // ㉓设置②的挂接面）。
+    let storage = MemoryStorage::new(vec![(
+        "view_state:route".to_owned(),
+        "\"cross-book-summary\"".to_owned(),
+    )]);
+    let mut app = Headless::start(desktop_config_with_backend(storage)).unwrap();
+
+    app.wait_for("id:cross-book-summary").unwrap();
+    // 四口径卡：市值/持仓收益/累计收益为零、可投资资产 = 2000 + 1000 × 7。
+    for amount in ["¥0", "¥9000"] {
+        app.wait_for(&format!("text:{amount}")).unwrap();
+    }
+    // 口径标注：折算句（尾部小字）与部分合计警示并存。
+    app.wait_for("text:部分账本未计入，以下合计为部分合计")
+        .unwrap();
+    app.wait_for("text:各账本位币不一致，已按当期汇率折算为 CNY；历史汇率仅属走势曲线")
+        .unwrap();
+    // 逐本状态：密文本、未建库本排除可见；活动本恒计入。
+    app.wait_for("text:未解锁、未计入").unwrap();
+    app.wait_for("text:尚未初始化、未计入").unwrap();
+    app.wait_for("text:已计入").unwrap();
+    // 逐本行：注册表登记名 + 「当前」标签只挂活动本行。
+    for book_name in ["活动账本", "美元账本", "密码本", "空账本"] {
+        app.wait_for(&format!("text:{book_name}")).unwrap();
+    }
+    assert!(
+        app.screen().count("id:summary-book-active-b1").unwrap() == 1,
+        "活动本行挂「当前」"
+    );
+    assert!(
+        app.screen().count("id:summary-book-active-b2").unwrap() == 0,
+        "非活动计入本不挂「当前」（本壳正位，见交付报告）"
+    );
+
+    // 概念说明弹层：可投资资产卡挂跨本作用域句（旧壳 scopeCrossBook 同词）。
+    app.press("id:cross-book-investableAssets-info").unwrap();
+    app.wait_for("id:cross-book-investableAssets-info-message")
+        .unwrap();
+    let texts = app.screen().texts();
+    assert!(
+        texts
+            .iter()
+            .any(|t| t.contains("未解锁或未建库的账本不计入")),
+        "跨本作用域句在位：{:?}",
+        texts
+    );
+}
+
+/// 开关联动守卫（#2055，ADR-0114 决策 6）：投资关闭时跨账本汇总裸访问/
+/// 启动恢复回概览（旧壳 featureRouteGuard("investments") 同语义）；投资开
+/// 放时落自有路由。「删除即红」负向条目：删 nav_model 的 guard_feature 映
+/// 射 → 关闭态恢复直接落汇总，本测红。
+#[test]
+fn cross_book_summary_closure_follows_investments_toggle() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("x-guard");
+    seed_expense_series(&dir, 1);
+    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::cross_book::set_default_data_dir(make_data_root("guard"));
+
+    // 关闭投资 → 恢复落概览（净资产卡），不落汇总。
+    let storage = MemoryStorage::new(vec![
+        (
+            "view_state:route".to_owned(),
+            "\"cross-book-summary\"".to_owned(),
+        ),
+        (
+            "view_state:closed_features".to_owned(),
+            "[\"investments\"]".to_owned(),
+        ),
+    ]);
+    let mut app = Headless::start(desktop_config_with_backend(storage)).unwrap();
+    app.wait_for("id:net-worth-card").unwrap();
+    assert_eq!(
+        app.screen().count("id:cross-book-summary").unwrap(),
+        0,
+        "投资关闭 → 汇总随行关闭（守卫回概览）"
+    );
+    drop(app);
+
+    // 投资开放 → 恢复落自有路由。
+    nsh_app::app::reset_book_assembly();
+    nsh_app::app::set_book_dir(dir);
+    nsh_app::cross_book::set_default_data_dir(make_data_root("guard-open"));
+    let storage = MemoryStorage::new(vec![(
+        "view_state:route".to_owned(),
+        "\"cross-book-summary\"".to_owned(),
+    )]);
+    let mut app = Headless::start(desktop_config_with_backend(storage)).unwrap();
+    app.wait_for("id:cross-book-summary").unwrap();
+}
+
+/// AI 提示词页（#2055）：⌘0 键位落真实视图；展示契约全文（编译期嵌入 =
+/// 旧壳 include 同一文件）；复制按钮写剪贴板、回读校验成功并呈现反馈。
+/// 「删除即红」负向条目：删复制接线（perform_copy 的写/回读）→ 剪贴板
+/// 断言与反馈文案两处即红。
+#[test]
+fn ai_view_renders_prompt_and_copy_reports_into_clipboard() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("ai");
+    seed_expense_series(&dir, 1);
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+    // 等侧栏就绪再派发键位（既有键位上用例同序——就绪窗口内键位绑定已挂）。
+    app.wait_for("id:nav-ai").unwrap();
+
+    app.press_key("mod+0").unwrap();
+    app.wait_for("id:ai-prompt-view").unwrap();
+    // 正文整段单文本节点（markdown 原文）：锚点 id + 包含断言（exact 键不适用）。
+    app.wait_for("id:prompt-body").unwrap();
+    let texts = app.screen().texts();
+    assert!(
+        texts.iter().any(|t| t.contains("# Ledger API 入口提示词"))
+            && texts.iter().any(|t| t.contains("GET /api/v1/contract")),
+        "契约全文在屏：{:?}",
+        texts
+    );
+    // 复制前剪贴板为空（headless 现场无写入）。
+    assert!(app.screen().clipboard().is_none(), "复制前无剪贴板文本");
+
+    app.press("id:ai-copy").unwrap();
+    app.wait_for("text:已复制到剪贴板").unwrap();
+    // 剪贴板与契约模板同文（include_str! 同一文件指针——内容两壳同源）。
+    assert_eq!(
+        app.screen().clipboard(),
+        Some(include_str!("../../../prompts/ledger-api.md")),
+        "复制内容 = 提示词全文"
     );
 }
 
