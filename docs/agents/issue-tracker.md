@@ -44,7 +44,8 @@ GitHub 的 issue 和 PR 共享编号空间，单独的 `#42` 可能是任一类�
   ```
 - 若 sub-issue 功能不可用（API 返回 404/501），回退为：子 ticket 正文顶部写 `Part of #<parent>`，并在父 spec 正文维护任务列表。
 - 同一 spec 下的多个 ticket 也互为 sub-issue 关系。
-- **阻塞关系必须用 GitHub 原生 blocked-by**（不要只写在正文里）：存在先后依赖时，用下文 Wayfinding 操作的「阻塞关系」命令添加原生依赖。原生依赖可被 `/wayfinder` 与查询自动识别（`issue_dependencies_summary.blocked_by`），正文文本 `Blocked by: #<n>` 只在原生依赖功能不可用（API 返回 404/501）时作为回退。
+- **阻塞关系必须用 GitHub 原生 blocked-by**（不要只写在正文里）：存在先后依赖时，用下文 Wayfinding 操作的「阻塞关系」命令添加原生依赖。原生依赖可由下文「前沿查询」批量判定，正文文本 `Blocked by: #<n>` 只在原生依赖功能不可用（API 返回 404/501）时作为回退。
+- **多票集成系列的进度与恢复真源**：集成分支的 PR 正文维护票链勾选清单（每票一行 `- [ ]`），逐合入逐勾——勾选框是「已合入」的进度真源。系列中断后恢复先查三处再动手：PR 勾选框（合入进度）、`git worktree list` 加未合 ticket 分支（实施现场）、集成分支 tip（基点）；前沿用「前沿查询」重算，不靠记忆链序。
 - **检查既有依赖**：`gh api graphql -f query='query{repository(owner:"<owner>",name:"<repo>"){issue(number:<n>){blockedBy(first:50){nodes{number title}} blocking(first:50){nodes{number title}}}}}' `。
 
 ## 开发认领（开发中标记）
@@ -71,7 +72,11 @@ issue 进入实际开发（`/implement` 开工）时必须先认领，使「open
   gh api --method POST repos/<owner>/<repo>/issues/<child>/dependencies/blocked_by \
     --input <(echo "{\"issue_id\": $blocker_id}")
   ```
-  **坑：必须发 JSON body（`--input`）。** 不要用 `-F issue_id=...`（form 编码），端点会返回误导性的 `404 Not Found`——并非功能不可用，仅是传参方式错误；排障时先 `GET .../dependencies/blocked_by` 探测端点（存在则返回 `[]`）。GitHub 通过 `issue_dependencies_summary.blocked_by` 报告（仅统计 open 的阻塞者）。若端点确实不存在（GET 也 404），在子 issue 正文顶部使用 `Blocked by: #<n>, #<n>` 作为回退。当所有阻塞者都关闭时，ticket 才解除阻塞。
-- **前沿查询**: 列出地图的 open 子 issue（`gh issue list --state open`，范围限定为地图的 sub-issues / 任务列表），剔除仍有 open 阻塞者（`issue_dependencies_summary.blocked_by > 0`，或 `Blocked by` 行中有 open issue）或已有负责人的项；按地图顺序取第一个。
+  **坑：必须发 JSON body（`--input`）。** 不要用 `-F issue_id=...`（form 编码），端点会返回误导性的 `404 Not Found`——并非功能不可用，仅是传参方式错误；排障时先 `GET .../dependencies/blocked_by` 探测端点（存在则返回 `[]`）。若端点确实不存在（GET 也 404），在子 issue 正文顶部使用 `Blocked by: #<n>, #<n>` 作为回退。阻塞解除只看 open 阻塞者：任一阻塞者 CLOSED 即从依赖集合消失，全数 CLOSED 时 ticket 解除阻塞。
+- **前沿查询**: 列出地图的 open 子 issue，剔除仍有 open 阻塞者或已有负责人的项；按地图顺序取第一个。批量判定用 sub-issue 图查询（2026-11 实测；单个 issue 的依赖用上文「检查既有依赖」）：
+  ```bash
+  gh api graphql -f query='query{repository(owner:"<owner>",name:"<repo>"){issue(number:<map>){subIssues(first:50){nodes{number state title assignees(first:3){nodes{login}} blockedBy(first:10){nodes{number state}}}}}}}'
+  ```
+  前沿节点 = `OPEN` 且无 assignee 且 `blockedBy.nodes` 为空或全 `CLOSED`。
 - **认领**: `gh issue edit <n> --add-assignee @me` —— 这是会话中的第一次写入。
 - **解决**: `gh issue comment <n> --body "<answer>"`，然后 `gh issue close <n>`，再将上下文指针（gist + 链接）追加到地图的 Decisions-so-far。
