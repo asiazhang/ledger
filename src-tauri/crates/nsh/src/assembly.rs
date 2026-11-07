@@ -386,6 +386,24 @@ pub fn format_amount_basic(cents: i64, fmt: &CurrencyFormat) -> String {
     format!("{sign}{}{}", fmt.symbol, group_number_string(trimmed, 4))
 }
 
+/// 金额基础格式化·小数分变形（formatAmount 的小数分消费面，issue #2044）：
+/// 域口径的**小数分**量（物品域 `per_day_cents` 分/天小数）沿用同一换算与去
+/// 零口径（f64 除法 + 定点格式化，与 [`format_amount_basic`] 同源）；熟悉
+/// 量级内定点格式化与旧壳 toFixed 逐位同形（平价锁定例见单测）。
+pub fn format_amount_f64(cents: f64, fmt: &CurrencyFormat) -> String {
+    let sign = if cents < 0.0 { "-" } else { "" };
+    let value = cents.abs() / 10f64.powi(fmt.decimal_places as i32);
+    let fixed = format!("{:.*}", fmt.decimal_places as usize, value);
+    // 只去零、不做舍入；小数部分全空时连小数点一起去掉（与 [`format_amount_basic`]
+    // 同序）。
+    let trimmed = if fmt.decimal_places > 0 {
+        fixed.trim_end_matches('0').trim_end_matches('.')
+    } else {
+        fixed.as_str()
+    };
+    format!("{sign}{}{}", fmt.symbol, group_number_string(trimmed, 4))
+}
+
 /// 纯数字字符串按四位一组切组：从右向左每 `size` 位一组、半角逗号分隔；
 /// 负号保留在最前，小数部分连续输出不插分隔符（词汇表「数字分组」）。
 fn group_number_string(num_str: &str, size: usize) -> String {
@@ -2729,6 +2747,121 @@ pub struct PlanLeadFace {
     pub status: String,
     pub account_id: String,
     pub to_account_id: Option<String>,
+}
+
+// ---------------------------------------------------------------------------
+// 物品视图装配族（#2044；旧壳 ItemsView.vue 列构造纯函数的重生）：物品清单
+// 装配——每列最终展示文本在数据到达时一次算就，渲染期零格式化。
+// ---------------------------------------------------------------------------
+
+/// 物品清单列（旧壳 items.columns 同词表；金额两列末端对齐）：名称 / 购买日期 /
+/// 状态 / 总成本 / 已用天数 / 每天成本 / 操作。建议宽度供 UI 映射，富余宽度全给
+/// 名称列（旧壳名称列弹性，交易列备注列先例同形）。
+pub const ITEM_COLUMNS: &[ColumnDef] = &[
+    ColumnDef {
+        key: "name",
+        title: "名称",
+        align: ColumnAlign::Start,
+        width: 160.0,
+    },
+    ColumnDef {
+        key: "purchase_date",
+        title: "购买日期",
+        align: ColumnAlign::Start,
+        width: 110.0,
+    },
+    ColumnDef {
+        key: "status",
+        title: "状态",
+        align: ColumnAlign::Start,
+        width: 150.0,
+    },
+    ColumnDef {
+        key: "total_cost",
+        title: "总成本",
+        align: ColumnAlign::End,
+        width: 110.0,
+    },
+    ColumnDef {
+        key: "used_days",
+        title: "已用天数",
+        align: ColumnAlign::End,
+        width: 90.0,
+    },
+    ColumnDef {
+        key: "per_day_cost",
+        title: "每天成本",
+        align: ColumnAlign::End,
+        width: 110.0,
+    },
+    ColumnDef {
+        key: "actions",
+        title: "操作",
+        align: ColumnAlign::Start,
+        width: 200.0,
+    },
+];
+
+/// 物品清单行装配产物：每列最终展示文本（字段与 [`ITEM_COLUMNS`] 逐列对应；
+/// 操作列恒空串，格内容由 UI 侧行内按钮自绘）。`id` 供行级操作与行来源跳转
+/// 的 focus 定位消费。
+#[derive(Debug, Clone, PartialEq)]
+pub struct ItemRowCells {
+    /// 物品 id（行级操作目标 / 定位参数的事实源）。
+    pub id: String,
+    /// 名称列（物品原名）。
+    pub name: String,
+    /// 购买日期列（YYYY-MM-DD 原样）。
+    pub purchase_date: String,
+    /// 状态列（在用 / 已处置 {date}，旧壳 items.status 同词表）。
+    pub status_label: String,
+    /// 总成本列（formatAmount 原始币种整数分）。物品域无金额隐私面（旧壳同口径）。
+    pub total_cost: String,
+    /// 已用天数列（整数天数，含购买当日——`item::cost` 接缝口径只消费不另立）。
+    pub used_days_text: String,
+    /// 每天成本列（formatAmount **小数分**——域口径 per_day_cents 是分/天小数，
+    /// 展示换算沿用金额格式化的定点去零口径）。
+    pub per_day_cost: String,
+}
+
+/// 物品清单行装配上下文：币种格式表（快照入参，纯函数）。
+#[derive(Debug, Clone)]
+pub struct ItemListContext<'a> {
+    pub currencies: &'a CurrencyTable,
+}
+
+/// 物品状态标签（旧壳 items.status 词表的普通状态渲染面；已处置行由调用方
+/// 携处置日期的行装配覆写，本函数只答「在用」）。
+pub fn item_status_in_use() -> &'static str {
+    "在用"
+}
+
+/// 装配物品清单行集（顺序保持域清单序 = created_at 升序，旧壳同口径）。
+pub fn assemble_item_rows(
+    rows: &[ledger_item::ItemWithDailyCost],
+    ctx: &ItemListContext<'_>,
+) -> Vec<ItemRowCells> {
+    rows.iter()
+        .map(|row| {
+            let currency = row.item.currency_code.clone();
+            let fmt = ctx.currencies.format_of(&currency);
+            ItemRowCells {
+                id: row.item.id.clone(),
+                name: row.item.name.clone(),
+                purchase_date: row.item.purchase_date.clone(),
+                status_label: match row.item.status {
+                    ledger_item::ItemStatus::InUse => item_status_in_use().to_owned(),
+                    ledger_item::ItemStatus::Disposed => format!(
+                        "已处置 {}",
+                        row.item.disposal_date.as_deref().unwrap_or_default()
+                    ),
+                },
+                total_cost: format_amount_basic(row.item.total_cost_cents, &fmt),
+                used_days_text: row.used_days.to_string(),
+                per_day_cost: format_amount_f64(row.per_day_cents, &fmt),
+            }
+        })
+        .collect()
 }
 
 /// 引用该账户的未结束计划数（旧壳 `countUnfinishedPlansUsingAccount` 重生）：
@@ -5222,6 +5355,109 @@ mod tests {
                 chrono::NaiveDate::from_ymd_opt(2026, 1, 15).unwrap(),
             )
             .is_none()
+        );
+    }
+
+    /// 物品清单行装配（旧壳 ItemsView 列构造平价）：在用 / 已处置两行逐列
+    /// 对拍（状态标签、金额两列格式化、天数原样）。删任一装配分支即红
+    /// （面在单测即函数分支本身）。
+    #[test]
+    fn item_rows_assemble_with_status_and_costs() {
+        let mk = |id: &str,
+                  name: &str,
+                  status: ledger_item::ItemStatus,
+                  disposal_date: Option<&str>,
+                  used_days: i64,
+                  per_day_cents: f64| ledger_item::ItemWithDailyCost {
+            item: ledger_item::Item {
+                id: id.to_owned(),
+                name: name.to_owned(),
+                purchase_date: "2026-01-01".to_owned(),
+                total_cost_cents: 100_000,
+                currency_code: "CNY".to_owned(),
+                cost_native_cents: 100_000,
+                status,
+                disposal_date: disposal_date.map(str::to_owned),
+                residual_value_cents: None,
+                purchase_transaction_id: None,
+                note: None,
+                created_at: String::new(),
+                updated_at: String::new(),
+                version: 1,
+                device_id: String::new(),
+                is_deleted: false,
+            },
+            used_days,
+            numerator_cents: 100_000,
+            per_day_cents,
+        };
+        let rows = vec![
+            mk(
+                "i1",
+                "显示器",
+                ledger_item::ItemStatus::InUse,
+                None,
+                10,
+                10_000.0,
+            ),
+            mk(
+                "i2",
+                "手机",
+                ledger_item::ItemStatus::Disposed,
+                Some("2026-01-10"),
+                9,
+                3333.33,
+            ),
+        ];
+        let cells = assemble_item_rows(
+            &rows,
+            &ItemListContext {
+                currencies: &table(),
+            },
+        );
+        // 逐列对拍（旧壳 items.columns 词表 + formatAmount 口径）。
+        assert_eq!(cells[0].name, "显示器");
+        assert_eq!(cells[0].purchase_date, "2026-01-01");
+        assert_eq!(cells[0].status_label, "在用");
+        assert_eq!(cells[0].total_cost, "¥1000");
+        assert_eq!(cells[0].used_days_text, "10");
+        assert_eq!(cells[0].per_day_cost, "¥100");
+        // 已处置行：状态带处置日期；小数分每天成本去零同为同一格式化接缝。
+        assert_eq!(cells[1].status_label, "已处置 2026-01-10");
+        assert_eq!(cells[1].per_day_cost, "¥33.33");
+        // 列定义键序同旧壳列序（金额列末端对齐）。
+        let keys: Vec<&str> = ITEM_COLUMNS.iter().map(|def| def.key).collect();
+        assert_eq!(
+            keys,
+            vec![
+                "name",
+                "purchase_date",
+                "status",
+                "total_cost",
+                "used_days",
+                "per_day_cost",
+                "actions"
+            ]
+        );
+    }
+
+    /// 小数分格式化（format_amount_f64 平价锁定例）：整数面去零、两位小数、
+    /// 四位一组、零值不加冗余。
+    #[test]
+    fn format_amount_f64_trims_and_groups_like_to_fixed() {
+        assert_eq!(
+            format_amount_f64(10_000.0, &table().format_of("CNY")),
+            "¥100"
+        );
+        assert_eq!(
+            format_amount_f64(3333.33, &table().format_of("CNY")),
+            "¥33.33"
+        );
+        assert_eq!(format_amount_f64(0.0, &table().format_of("CNY")), "¥0");
+        assert_eq!(
+            format_amount_f64(100_000_000.0, &table().format_of("CNY")),
+            "¥100,0000",
+            "zh 四位一组（小数分消费面同接缝）"
         );
     }
 }

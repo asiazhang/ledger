@@ -34,7 +34,8 @@ fn serial_guard() -> std::sync::MutexGuard<'static, ()> {
 }
 
 /// 唯一暂存账本目录。
-fn scratch_book_dir(tag: &str) -> PathBuf {
+#[cfg(test)]
+pub(crate) fn scratch_book_dir(tag: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("nsh-app-test-{tag}-{}", new_uuid()));
     fs::create_dir_all(&dir).unwrap();
     dir
@@ -88,7 +89,12 @@ fn seed_expense_notes(dir: &Path, notes: &[&str]) {
 }
 
 /// 一笔现金支出输入（公开写入口的最小载荷，日期与金额可指定）。
-fn expense_input(account: &str, date: &str, amount_cents: i64, note: &str) -> TransactionInput {
+pub(crate) fn expense_input(
+    account: &str,
+    date: &str,
+    amount_cents: i64,
+    note: &str,
+) -> TransactionInput {
     TransactionInput {
         kind: TransactionKind::Expense,
         amount_cents,

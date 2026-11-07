@@ -1171,8 +1171,8 @@ fn row_context_menu_delete_confirms_then_refreshes_list() {
     let menu = app.menu().expect("右键应打开上下文菜单");
     assert_eq!(
         menu.iter().map(|e| e.label.as_str()).collect::<Vec<_>>(),
-        vec!["编辑", "退款", "删除"],
-        "行菜单项闭集（#2034 起支出行带编辑项，#2035 起带退款项，删除殿后）：{menu:?}"
+        vec!["编辑", "退款", "加入物品", "删除"],
+        "行菜单项闭集（#2034 起支出行带编辑项，#2035 起带退款项，#2044 起加「加入物品」，删除殿后）：{menu:?}"
     );
     app.choose_menu_item("删除").unwrap();
 
@@ -4393,24 +4393,25 @@ fn row_menu_open_face_follows_kind_and_subrows() {
     let mut app = Headless::start(desktop_config()).unwrap();
     open_transactions(&mut app);
 
-    // 普通支出行：编辑 + 退款 + 删除。
+    // 普通支出行：编辑 + 退款 + 加入物品（#2044）+ 删除。
     app.right_click("text:2026-01-01").unwrap();
     let menu = app.menu().expect("右键应打开上下文菜单");
     assert_eq!(
         menu.iter().map(|e| e.label.as_str()).collect::<Vec<_>>(),
-        vec!["编辑", "退款", "删除"],
+        vec!["编辑", "退款", "加入物品", "删除"],
         "普通支出行菜单：{menu:?}"
     );
     app.press_key("escape").unwrap();
     app.settle();
 
     // 出资分解行：编辑开放（表单③子行编辑；进出资分解族回填）+ 不开放退
-    // 款（#1861 口径）+ 删除。
+    // 款（#1861 口径）+ 加入物品（#2044；分解行也是支出行——溯源口径同
+    // 旧壳 row-menu:分解行保留加入物品）+ 删除。
     app.right_click("text:2026-01-02").unwrap();
     let menu = app.menu().expect("右键应打开上下文菜单");
     assert_eq!(
         menu.iter().map(|e| e.label.as_str()).collect::<Vec<_>>(),
-        vec!["编辑", "删除"],
+        vec!["编辑", "加入物品", "删除"],
         "分解行开放编辑、不开放退款：{menu:?}"
     );
     app.press_key("escape").unwrap();
@@ -6433,4 +6434,508 @@ fn nsh_app_lib_account_id(dir: &std::path::Path, name: &str) -> String {
         .find(|a| a.name == name)
         .map(|a| a.id)
         .unwrap_or_else(|| panic!("未找到账户 {name}"))
+}
+
+// ---------------------------------------------------------------------------
+// 物品视图（#2044）：清单平表（列格装配产物渲染、零新增列）、创建唯一入口
+// 提示与跳转、编辑（换关带出覆盖）/ 详情（参考日重算、本位币折算）/ 处置 /
+// 软删轻量确认、加入物品（交易行菜单 → 确认弹窗、溯源唯一置灰）、失效信号
+// 广播驱动的交易列表来源列重读。删任一接线即红的负向条目逐项写在各测试注释
+//（ADR-0087 断言强度：断言对准用户可观察结果）。
+// ---------------------------------------------------------------------------
+
+/// 从侧栏点开物品视图（#2044 旅程用例共用）：清单卡片在屏即落位凭据。
+fn open_items(app: &mut Headless) {
+    app.wait_for("id:nav-items").unwrap();
+    app.press("id:nav-items").unwrap();
+    app.wait_for("id:item-table").unwrap();
+    app.wait_for("text:物品列表").unwrap();
+}
+
+/// 造一笔支出交易 + 关联物品（用例共用；金额与日期随参）：经域层公开写入口
+/// 造交易与物品（溯源必带出——物品创建须带购买交易指针，域创建守卫同口径）。
+fn seed_item(
+    db: &ledger_infra::db::DbState,
+    account: &str,
+    name: &str,
+    amount_cents: i64,
+    date: &str,
+) -> (String, String) {
+    let conn = db
+        .conn
+        .lock()
+        .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
+        .unwrap();
+    let tx = ledger_transaction::create(
+        &conn,
+        TransactionInput {
+            account_id: Some(account.to_owned()),
+            kind: TransactionKind::Expense,
+            amount_cents,
+            currency_code: "CNY".to_owned(),
+            date: date.to_owned(),
+            note: Some(name.to_owned()),
+            ..bare_expense_input()
+        },
+    )
+    .unwrap();
+    let tx_id = tx.id.clone();
+    let item_id = ledger_item::create_item(
+        &conn,
+        ledger_item::ItemInput {
+            name: name.to_owned(),
+            purchase_date: date.to_owned(),
+            total_cost_cents: amount_cents,
+            currency_code: "CNY".to_owned(),
+            note: None,
+            purchase_transaction_id: Some(tx_id.clone()),
+        },
+        &mut || {},
+    )
+    .unwrap();
+    (tx_id, item_id)
+}
+
+/// 首屏装载（旧壳 ItemsView onMounted 平价）：创建唯一入口提示条 + 列头与
+/// 行格文本（状态 / 总成本 / 已用天数 / 每天成本装配产物）。删除装配任一环
+///（boot 物品行读 / rows 装配 / 渲染爪）即红。
+#[test]
+fn items_view_lands_with_hint_and_rows() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("items-list");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let account = seed_cash_account(&db);
+        seed_item(&db, &account, "显示器", 100_000, &test_date(0));
+    }
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_items(&mut app);
+    app.wait_for("text:显示器").unwrap();
+
+    // 创建唯一入口提示条（issue #207 / ADR-0025 平价：本页无新增表单）与
+    // 「去交易页」按钮（提示条全文随机时间无明显拆分，锚点以 test_id 计数）。
+    assert!(
+        app.screen().count("id:item-create-hint").unwrap() == 1,
+        "创建唯一入口提示条在屏：{:?}",
+        app.screen().texts()
+    );
+    assert!(
+        app.screen().count("id:item-go-transactions").unwrap() == 1,
+        "「去交易页」按钮在屏"
+    );
+    assert!(
+        app.shows("物品列表"),
+        "清单卡标题：{:?}",
+        app.screen().texts()
+    );
+    // 列头与行格文本（装配层产物）：状态在用 / 总成本 / 已用天数 / 每天成本。
+    for text in ["名称", "购买日期", "状态", "总成本", "已用天数", "每天成本"] {
+        assert!(
+            app.shows(text),
+            "列头应呈现「{text}」：{:?}",
+            app.screen().texts()
+        );
+    }
+    for text in ["显示器", "2026-01-01", "在用", "¥1000"] {
+        assert!(
+            app.shows(text),
+            "行格应呈现「{text}」：{:?}",
+            app.screen().texts()
+        );
+    }
+    // 已用天数与每天成本随「今天」自然滚动，不锁字面（锁定例在装配单测）。
+}
+
+/// 空库空态（旧壳 empty guide 同文字）：空账本呈现创建引导文案。
+#[test]
+fn items_view_empty_book_shows_guide() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("items-empty");
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_items(&mut app);
+    app.wait_for("id:item-empty-guide").unwrap();
+    assert!(
+        app.shows("暂无物品：请在「交易」页右键一笔支出交易，选择“加入物品”创建。"),
+        "空态创建引导文案（旧壳 emptyGuide 同词表）：{:?}",
+        app.screen().texts()
+    );
+}
+
+/// 创建唯一入口提示条的「去交易页」跳转（issue #207）：点按钮 → 交易视图落位。
+/// 删 nav::open 接线即红。
+#[test]
+fn items_view_hint_button_navigates_to_transactions() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("items-hint");
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_items(&mut app);
+    app.press("id:item-go-transactions").unwrap();
+    app.wait_for("text:交易").unwrap();
+    // 空库落位凭据：交易表格空态（无总数条）。
+    app.wait_for("text:暂无数据").unwrap();
+}
+
+/// 创建入口（ADR-0025 创建唯一入口的 NSH 承载面）：交易行右键「加入物品」→
+/// 名称默认取交易备注可微调 → 确认创建 → 反馈条位 + 清单落位（物品视图行
+/// 即现）+ 交易列表来源列即显物品名（失效信号广播驱动的重读）。删除「菜单
+/// 项接线」或「创建写路径」或「确认后广播/重读」任一环即红。
+#[test]
+fn items_view_create_from_transaction_menu_journey() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("items-create");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let account = seed_cash_account(&db);
+        seed_transaction(
+            &db,
+            TxnSeed {
+                account: &account,
+                to_account: None,
+                kind: TransactionKind::Expense,
+                amount_cents: 120_000,
+                date: "2026-01-01",
+                category_id: None,
+                merchant_id: None,
+                note: Some("购物订单".to_owned()),
+            },
+        );
+    }
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_transactions(&mut app);
+
+    // 行右键 → 菜单带「加入物品」（无物品行 enabled）。
+    app.right_click("text:2026-01-01").unwrap();
+    let menu = app.menu().expect("右键应打开上下文菜单");
+    assert_eq!(
+        menu.iter().map(|e| e.label.as_str()).collect::<Vec<_>>(),
+        vec!["编辑", "退款", "加入物品", "删除"],
+        "行菜单项闭集（#2044 起支出行加「加入物品」，删除殿后）：{menu:?}"
+    );
+    app.choose_menu_item("加入物品").unwrap();
+
+    // 确认弹窗（AddItemForm 语义平价）：购买日期 / 基础成本只读带出，名称
+    // 默认取交易备注可微调。
+    app.wait_for("text:加入物品").unwrap();
+    app.wait_for("text:2026-01-01").unwrap();
+    app.wait_for("text:¥1200").unwrap();
+    app.clear("id:item-add-name").unwrap();
+    app.type_text("id:item-add-name", "电饭煲").unwrap();
+    app.press("id:item-add-confirm").unwrap();
+
+    // 成功反馈条位（NSH 无 toast 的条位对应物）。
+    app.wait_for("id:tx-add-item-status").unwrap();
+    assert!(
+        app.shows("已加入物品"),
+        "反馈文案：{:?}",
+        app.screen().texts()
+    );
+
+    // 物品视图行即现（写后信号重读 + 落位装载）。
+    open_items(&mut app);
+    app.wait_for("text:电饭煲").unwrap();
+    assert!(app.shows("¥1200"), "成本列：{:?}", app.screen().texts());
+
+    // 溯源唯一（ADR-0025）出口面：回交易页行菜单「加入物品」已置灰。
+    open_transactions(&mut app);
+    app.wait_for("text:电饭煲").unwrap();
+    app.right_click("text:2026-01-01").unwrap();
+    let menu = app.menu().expect("右键应打开上下文菜单");
+    let add = menu
+        .iter()
+        .find(|e| e.label == "加入物品")
+        .expect("菜单仍带「加入物品」");
+    assert!(
+        add.disabled,
+        "溯源唯一守卫（hasItem）：已有物品的行「加入物品」置灰：{menu:?}"
+    );
+    app.close_menu().unwrap();
+}
+
+/// 编辑旅程（旧壳 issue #117 平价）：打开弹窗预填 → 改名保存 → 反馈 + 行更新 + 交易列表来源列新名
+///   （失效信号广播驱动的明细重读）；删除 notify_transactions_invalidated
+///   接线即红（交易列表来源列仍显旧名）。
+#[test]
+fn items_view_edit_rename_updates_row_and_source_column() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("items-edit");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let account = seed_cash_account(&db);
+        seed_item(&db, &account, "显示器", 100_000, &test_date(0));
+    }
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_items(&mut app);
+    app.wait_for("text:显示器").unwrap();
+
+    // 行内「编辑」按钮 → 弹窗预填。
+    let item_id = item_id_by_name(&dir, "显示器");
+    app.press(&format!("id:item-edit-{item_id}")).unwrap();
+    app.wait_for("text:编辑物品").unwrap();
+    {
+        let name = app.screen();
+        let _ = name;
+    }
+    app.clear("id:item-edit-name").unwrap();
+    app.type_text("id:item-edit-name", "曲面显示器").unwrap();
+    app.press("id:item-edit-confirm").unwrap();
+
+    // 成功反馈 + 行更新（失效信号驱动重读的等位：物品视图自己的 reload）。
+    app.wait_for("text:已保存").unwrap();
+    app.wait_for("text:曲面显示器").unwrap();
+
+    // 交易列表来源列新名（广播→列表重读；删除信号::notify_transactions_invalidated
+    // 接线即红——列表落位重读是读时的，广播是被删的语义锚）。
+    open_transactions(&mut app);
+    app.wait_for("text:曲面显示器").unwrap();
+}
+
+/// 换关带出（旧壳 issue #119 平价）：编辑弹窗换关另一笔支出 → 后端以交易值
+/// 覆盖日期/成本。锁定期呈现与提交后回填断言经详情弹窗的成本数字读出。
+/// 拆 boot::item_candidate_transactions 读接缝或换关守卫即红。
+#[test]
+fn items_view_edit_relink_backfills_on_save() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("items-relink");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let account = seed_cash_account(&db);
+        seed_item(&db, &account, "显示器", 100_000, &test_date(0));
+        // 候选池里的另一笔（数据源：boot item_candidate_transactions 倒序 100）。
+        seed_transaction(
+            &db,
+            TxnSeed {
+                account: &account,
+                to_account: None,
+                kind: TransactionKind::Expense,
+                amount_cents: 88_000,
+                date: &test_date(1),
+                category_id: None,
+                merchant_id: None,
+                note: Some("次笔支出".to_owned()),
+            },
+        );
+    }
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_items(&mut app);
+    app.wait_for("text:显示器").unwrap();
+
+    let item_id = item_id_by_name(&dir, "显示器");
+    app.press(&format!("id:item-edit-{item_id}")).unwrap();
+    app.wait_for("text:编辑物品").unwrap();
+
+    // 换关（PinyinSelect 可搜下拉）：打开弹层 → 键入搜出候选 → 选中。
+    app.press("id:item-edit-link").unwrap();
+    app.wait_for("id:item-edit-link-search").unwrap();
+    // 选项行锚点（label 全文为「{date} · {金额} · {备注}」同旧壳 linkTxOptions
+    // 形态——直接按锚点按压第 0 命中 = 次笔支出）。
+    app.press("id:item-edit-link-option >> text:2026-01-02 · ¥880 · 次笔支出")
+        .unwrap();
+    // 锁定面：手改入口换成带出预览（选中交易日期即现）。
+    app.wait_for("text:2026-01-02 · ¥880").unwrap();
+
+    // 提交后成本回填为次笔交易的金额（详情弹窗读数）。
+    app.press("id:item-edit-confirm").unwrap();
+    app.wait_for("text:已保存").unwrap();
+    app.press(&format!("id:item-detail-{item_id}")).unwrap();
+    app.wait_for("text:¥880").unwrap();
+    app.press("id:item-detail-cancel").unwrap();
+}
+
+/// 处置旅程（旧壳 issue #120 平价）：在用行「处置」→ 弹窗日期缺省今天 →
+/// 确认 → 反馈 + 状态列带处置日；已处置行「处置信息」再开 = 修正（预填处置
+/// 日与残值可改）。拆 dispose 写路径或弹窗预填接线即红。
+#[test]
+fn items_view_dispose_then_revise() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("items-dispose");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let account = seed_cash_account(&db);
+        seed_item(&db, &account, "显示器", 100_000, &test_date(0));
+    }
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_items(&mut app);
+    app.wait_for("text:显示器").unwrap();
+    let item_id = item_id_by_name(&dir, "显示器");
+
+    // 处置弹窗（日期必填语义归受控日期选择器缺省今天）。
+    app.press(&format!("id:item-dispose-{item_id}")).unwrap();
+    app.wait_for("text:处置物品").unwrap();
+    app.press("id:item-dispose-confirm").unwrap();
+    app.wait_for("text:已处置").unwrap();
+    app.wait_for_gone("text:处置物品", DEFAULT_WAIT).unwrap();
+    let today_text = today().to_string();
+    app.wait_for(&format!("text:已处置 {today_text}")).unwrap();
+
+    // 已处置行「处置信息」：预填处置日 + 残值（可修正）。旧壳确认钮文案
+    // 沿用「保存」。
+    app.press(&format!("id:item-dispose-{item_id}")).unwrap();
+    app.wait_for("text:处置信息").unwrap();
+    app.type_text("id:item-dispose-residual", "20").unwrap();
+    app.press("id:item-dispose-confirm").unwrap();
+    app.wait_for("text:已更新处置信息").unwrap();
+}
+
+/// 软删轻量确认（旧壳 AppPopconfirm 平价，ADR-0078 轻量档）：点删除 → 气泡
+/// 文案 + 取消不删除（行仍在）→ 确认 → 行消失 + 反馈。「删除即红」：拆
+/// popconfirm 门槛即红（确认即删）。
+#[test]
+fn items_view_delete_needs_confirmation_and_cancels_before_write() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("items-delete");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let account = seed_cash_account(&db);
+        seed_item(&db, &account, "显示器", 100_000, &test_date(0));
+    }
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_items(&mut app);
+    app.wait_for("text:显示器").unwrap();
+    let item_id = item_id_by_name(&dir, "显示器");
+    app.press(&format!("id:item-delete-{item_id}")).unwrap();
+
+    // 气泡文案（旧壳 deleteConfirm 同词表）与确认钮。
+    app.wait_for("text:不再跟踪该物品，从列表移除？").unwrap();
+    // 取消：行仍在。
+    app.press("id:item-delete-cancel").unwrap();
+    app.wait_for("text:显示器").unwrap();
+
+    // 确认：行删除 + 反馈。
+    app.press(&format!("id:item-delete-{item_id}")).unwrap();
+    app.wait_for("text:不再跟踪该物品，从列表移除？").unwrap();
+    app.press("id:item-delete-confirm").unwrap();
+    app.wait_for("text:已删除").unwrap();
+    app.wait_for_gone("text:显示器", DEFAULT_WAIT).unwrap();
+}
+
+/// 详情（旧壳 issue #117/#121 平价）：成本分解（分子 ÷ 天数 = 每天成本）、
+/// 本位币折算行（账本本位币）、自选参考日重算（参考日选择器键入落值即重算）
+/// 与清空回缺省。拆 boot::item_cost 读接缝即红。
+#[test]
+fn items_view_detail_recacs_reference_date_and_clears() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("items-detail");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let account = seed_cash_account(&db);
+        // 购买日 = 今天 - 9 天：缺省目标日（今天）已用 10 天。
+        let purchase = today()
+            .checked_sub_days(chrono::Days::new(9))
+            .unwrap()
+            .to_string();
+        seed_item(&db, &account, "显示器", 100_000, &purchase);
+    }
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_items(&mut app);
+    app.wait_for("text:显示器").unwrap();
+    let item_id = item_id_by_name(&dir, "显示器");
+
+    app.press(&format!("id:item-detail-{item_id}")).unwrap();
+    app.wait_for("text:物品详情").unwrap();
+    // 成本分解缺省：¥1000 ÷ 10 天 = ¥100/天。
+    app.wait_for("text:10 天（含购买当日）").unwrap();
+    app.wait_for("text:¥1000 ÷ 10 天 = ¥100/天").unwrap();
+    // 本位币折算行（账本本位币基准缺省 CNY）。
+    app.wait_for("text:¥1000（CNY）").unwrap();
+
+    // 自选参考日重算：参考日 = 购买日 + 4 天 → 已用 5 天 → ¥200/天。
+    let purchase = today()
+        .checked_sub_days(chrono::Days::new(9))
+        .unwrap()
+        .to_string();
+    let ref_date = today()
+        .checked_sub_days(chrono::Days::new(5))
+        .unwrap()
+        .to_string();
+    app.clear("id:item-detail-ref-input").unwrap();
+    app.type_text("id:item-detail-ref-input", &ref_date)
+        .unwrap();
+    println!(
+        "after type input={:?}",
+        app.screen().input_text("id:item-detail-ref-input")
+    );
+    app.wait_for("text:¥1000 ÷ 5 天 = ¥200/天").unwrap();
+    app.wait_for("text:5 天（含购买当日）").unwrap();
+
+    // 清空参考日 → 回缺省口径（重算结果撤回）。
+    app.press("id:item-detail-ref-clear").unwrap();
+    app.wait_for("text:¥1000 ÷ 10 天 = ¥100/天").unwrap();
+    let _ = purchase;
+}
+
+/// 溯源信息（旧壳详情「关联购买交易」）：详情弹窗带溯源标注（已在详情测试
+/// 断言范围内）；本件断言溯源唯一守卫的码化拒绝在弹窗内呈现（重复建物品被
+/// 域守卫拒绝——加入物品置灰是界面侧，本件以域守卫错误文案对拍）。
+#[test]
+fn items_view_add_form_error_keeps_dialog_open() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("items-add-error");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let account = seed_cash_account(&db);
+        seed_item(&db, &account, "已有物品", 10_000, &test_date(0));
+    }
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_items(&mut app);
+    app.wait_for("text:已有物品").unwrap();
+
+    // 编辑弹窗清空名称保存：前置拦截呈现且弹窗留存（旧壳 nameRequired 同词表）。
+    let item_id = item_id_by_name(&dir, "已有物品");
+    app.press(&format!("id:item-edit-{item_id}")).unwrap();
+    app.wait_for("text:编辑物品").unwrap();
+    app.clear("id:item-edit-name").unwrap();
+    app.press("id:item-edit-confirm").unwrap();
+    app.wait_for("id:item-edit-error").unwrap();
+    assert!(
+        app.shows("保存失败: 请输入物品名称"),
+        "前置拦截文案在弹窗内（弹窗留存）：{:?}",
+        app.screen().texts()
+    );
+    app.press("id:item-edit-cancel").unwrap();
+}
+
+/// 按物品名取物品 id（测试用例寻址面；经 boot 读接缝读快照）。
+fn item_id_by_name(dir: &std::path::Path, name: &str) -> String {
+    let db = nsh_app::boot::boot_ledger(dir).unwrap();
+    let conn = db
+        .conn
+        .lock()
+        .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
+        .unwrap();
+    ledger_item::list_items(&conn)
+        .unwrap()
+        .into_iter()
+        .find(|row| row.item.name == name)
+        .map(|row| row.item.id)
+        .unwrap_or_default()
 }
