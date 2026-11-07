@@ -1288,6 +1288,101 @@ fn dashboard_overview_and_monthly_seams_read_seeded_book() {
     assert_eq!(current.refund_cents, 0);
 }
 
+// ---------------------------------------------------------------------------
+// 报表视图读接缝（#2048）：期间口径三张报表直调报表域入口——与旧壳
+// monthly_summary / category_shares / merchant_shares 命令的 from/to 期间
+// 形态消费的同一域函数，不经 IPC。建库走产品开库入口、造数经域公开写入口
+// （模块头造数纪律）。
+// ---------------------------------------------------------------------------
+
+#[test]
+fn report_period_seams_read_seeded_book() {
+    use crate::boot::{category_shares_rows, merchant_shares_report, monthly_summary_for_period};
+    use crate::period::PeriodRange;
+
+    let _guard = serial_guard();
+    let dir = scratch_book_dir("report-seam");
+    create_empty_book_file(&dir);
+    let db = boot_ledger(&dir).unwrap();
+    let cash = ledger_accounts::create_account(
+        &db.conn
+            .lock()
+            .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
+            .unwrap(),
+        AccountInput {
+            name: "现金".to_owned(),
+            kind: AccountType::Cash,
+            currency_code: "CNY".to_owned(),
+            initial_balance_cents: Some(0),
+            credit_limit_cents: None,
+            statement_day: None,
+            due_day: None,
+        },
+    )
+    .unwrap();
+    let merchant = ledger_merchants::create_merchant(
+        &db.conn
+            .lock()
+            .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
+            .unwrap(),
+        ledger_merchants::MerchantInput {
+            name: "甲城".to_owned(),
+        },
+    )
+    .unwrap();
+
+    // 2026 固定日期两月（期间口径口径面：双月按月分组、期间过滤只含期内）。
+    {
+        let conn = db.conn.lock().unwrap();
+        ledger_transaction::create(&conn, expense_input(&cash, "2026-03-05", 4_000, "午餐"))
+            .unwrap();
+        ledger_transaction::create(&conn, expense_input(&cash, "2026-03-06", 800, "通勤")).unwrap();
+        ledger_transaction::create(&conn, income_input(&cash, "2026-03-07", 8_000, "进账"))
+            .unwrap();
+        let mut input = expense_input(&cash, "2026-01-20", 2_500, "追加");
+        input.merchant_id = Some(merchant);
+        ledger_transaction::create(&conn, input).unwrap();
+    }
+
+    let range = PeriodRange {
+        from: "2026-03-01".to_owned(),
+        to: "2026-03-31".to_owned(),
+    };
+
+    // 月度汇总（期间内按月分布）：单行 3 月，收入 8000 / 毛支出 4800 / 退款 0。
+    let monthly = monthly_summary_for_period(&db, &range).unwrap();
+    assert_eq!(monthly.len(), 1, "1 月行不进期间口径");
+    assert_eq!(monthly[0].month, "2026-03");
+    assert_eq!(monthly[0].income_cents, 8_000);
+    assert_eq!(monthly[0].expense_cents, 4_800);
+
+    // 分类份额（未分类匡入同口径）：期间内单行「未分类」4800（本测试
+    // 造数不带分类——结构与数值由 headless 分类旅程另钉）。
+    let shares = category_shares_rows(&db, &range).unwrap();
+    assert_eq!(shares.len(), 1);
+    assert_eq!(shares[0].category_id, "");
+    assert_eq!(shares[0].category_name, "未分类");
+    assert_eq!(shares[0].amount_cents, 4_800);
+
+    // 商户排行（期间 + topN）：商户交易在 1 月、不在 3 月期间 → 空集 + 合计 0。
+    let report = merchant_shares_report(&db, &range, Some(5)).unwrap();
+    assert!(
+        report.rows.is_empty(),
+        "期间过滤商户排行：{:?}",
+        report.rows
+    );
+    assert_eq!(report.total_cents, 0);
+    let q1 = PeriodRange {
+        from: "2026-01-01".to_owned(),
+        to: "2026-01-31".to_owned(),
+    };
+    let report_q1 = merchant_shares_report(&db, &q1, Some(5)).unwrap();
+    assert_eq!(report_q1.rows.len(), 1);
+    assert_eq!(report_q1.rows[0].merchant_name, "甲城");
+    assert_eq!(report_q1.rows[0].amount_cents, 2_500);
+    assert_eq!(report_q1.total_cents, 2_500, "全量合计与 topN 截断无关");
+}
+
 #[test]
 fn portfolio_and_freedom_seams_read_holdings_and_budget() {
     use crate::boot::{cumulative_pnl_native_total, financial_freedom, portfolio_rows};

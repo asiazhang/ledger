@@ -6434,3 +6434,479 @@ fn nsh_app_lib_account_id(dir: &std::path::Path, name: &str) -> String {
         .map(|a| a.id)
         .unwrap_or_else(|| panic!("未找到账户 {name}"))
 }
+
+// ---------------------------------------------------------------------------
+// 报表视图（#2048）：bar 图自绘三卡（期间口径统一）。造数经域公开写入口，
+// 断言只写用户可见结果；接线删除即红（负向验证条目见交付报告）。
+// ---------------------------------------------------------------------------
+
+/// 当前自然月内第 `instance` 个偶数日（月初锚定，跨用例稳定；日期恒落当前
+/// 自然月——期间「当年」「当月」两档的成员日）。
+fn reports_month_day(instance: usize) -> String {
+    let t = today();
+    let day = 1 + (instance as u32) * 2;
+    chrono::NaiveDate::from_ymd_opt(t.year(), t.month(), day.min(28))
+        .unwrap()
+        .to_string()
+}
+
+/// 当前自然月键（YYYY-MM，月度图 x 轴行标断言用）。
+fn reports_month_key() -> String {
+    let t = today();
+    format!("{}-{:02}", t.year(), t.month())
+}
+
+/// 报表造数簿：账户 + 两段分类（午饭挂餐饮根 + 通勤根）+ 商户 × 7 + 当月
+/// 一组交易（收入/支出/退款、分类/未分类、两主力商户 + 五笔小额）——三张
+/// 报表的期间口径、下钻两段与 TopN 档位共用同一簿（旅程间无交叉写）。
+fn seed_reports_book(tag: &str) -> std::path::PathBuf {
+    let dir = make_book(tag);
+    let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+    let cash = seed_cash_account(&db);
+
+    let food = seed_category(&db, "餐饮", None);
+    let lunch = seed_category(&db, "午饭", Some(&food));
+    let commute = seed_category(&db, "通勤", None);
+
+    let jia = seed_merchant(&db, "甲城");
+    let yi = seed_merchant(&db, "乙街");
+    // 五家小额商户、金额各不相同（TopN 截断在排序之后应用，位次闭集
+    // 稳定可断：丙 1200 / 丁 1800 / 戊 1500 / 己 300 / 庚 700）。
+    for (name, amount) in [
+        ("丙铺", 1_200),
+        ("丁仓", 1_800),
+        ("戊厂", 1_500),
+        ("己站", 300),
+        ("庚点", 700),
+    ] {
+        let merchant = seed_merchant(&db, name);
+        seed_transaction(
+            &db,
+            TxnSeed {
+                account: &cash,
+                to_account: None,
+                kind: TransactionKind::Expense,
+                amount_cents: amount,
+                date: &reports_month_day(9),
+                category_id: None,
+                merchant_id: Some(merchant),
+                note: Some("小笔".to_owned()),
+            },
+        );
+    }
+
+    let date = reports_month_day(1);
+    seed_transaction(
+        &db,
+        TxnSeed {
+            account: &cash,
+            to_account: None,
+            kind: TransactionKind::Expense,
+            amount_cents: 4_000,
+            date: &date,
+            category_id: Some(lunch.clone()),
+            merchant_id: Some(jia.clone()),
+            note: Some("午饭一笔".to_owned()),
+        },
+    );
+    let refund_target = seed_tx_with_id(
+        &db,
+        minimal_input(
+            TransactionKind::Expense,
+            &cash,
+            300,
+            &date,
+            None,
+            Some("退款本体小笔".to_owned()),
+        ),
+    );
+    seed_transaction(
+        &db,
+        TxnSeed {
+            account: &cash,
+            to_account: None,
+            kind: TransactionKind::Expense,
+            amount_cents: 2_500,
+            date: &date,
+            category_id: None,
+            merchant_id: Some(jia),
+            note: Some("未分类一笔".to_owned()),
+        },
+    );
+    seed_transaction(
+        &db,
+        TxnSeed {
+            account: &cash,
+            to_account: None,
+            kind: TransactionKind::Expense,
+            amount_cents: 800,
+            date: &date,
+            category_id: Some(commute),
+            merchant_id: Some(yi),
+            note: Some("通勤一笔".to_owned()),
+        },
+    );
+    seed_transaction(
+        &db,
+        TxnSeed {
+            account: &cash,
+            to_account: None,
+            kind: TransactionKind::Income,
+            amount_cents: 8_000,
+            date: &date,
+            category_id: None,
+            merchant_id: None,
+            note: Some("月内进账".to_owned()),
+        },
+    );
+    // 退款（关联原支出；同月内冲减进月度图退款列）。
+    seed_tx_with_id(
+        &db,
+        minimal_input(
+            TransactionKind::Refund,
+            &cash,
+            500,
+            &date,
+            Some(refund_target),
+            Some("月内退款".to_owned()),
+        ),
+    );
+    dir
+}
+
+/// 从侧栏点开报表视图（旅程用例共用：屏名在屏即落位凭据）。
+fn open_reports(app: &mut Headless) {
+    app.wait_for("id:nav-reports").unwrap();
+    app.press("id:nav-reports").unwrap();
+    app.wait_for("id:reports-monthly-card").unwrap();
+}
+
+/// 等三卡装载完成（月度月份行标 + 商户行到屏；§3.5 异步装载纪律）。
+fn wait_reports_loaded(app: &mut Headless) {
+    let ym = reports_month_key();
+    app.wait_for(&format!("text:{ym}")).unwrap();
+    // 商户榜首行占比（甲 6500 / 全量合计 12800 → 51%）到屏即行集装载完成。
+    app.wait_for("text:51%").unwrap();
+}
+
+/// 报表首屏（AC：三卡齐备 + 期间默认「当年」+ 数值口径平价——金额无币符/
+/// 两位小数去尾零、占比分母 = 全量合计）。删除任一装配接线（导航分支挂载 /
+/// 期间行 / 月度读 / 分类读 / 商户读）即红。
+#[test]
+fn reports_view_lands_with_three_cards_and_defaults() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = seed_reports_book("reports-lands");
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_reports(&mut app);
+    wait_reports_loaded(&mut app);
+
+    // 三卡标题 + TopN 档位默认 Top 5。
+    for text in [
+        "月度收支",
+        "支出分类构成",
+        "商户消费排行",
+        "Top 5",
+        "Top 10",
+    ] {
+        assert!(
+            app.shows(text),
+            "应呈现「{text}」：{:?}",
+            app.screen().texts()
+        );
+    }
+    // 期间芯片闭集：四枚（无「全部」，ADR-0057）——芯片在弹层内，开启断言后关回。
+    app.press("id:reports-period-label").unwrap();
+    app.wait_for("text:当月").unwrap();
+    for chip in ["当月", "当季", "当年", "去年"] {
+        assert!(app.shows(chip), "应呈现日期芯片「{chip}」");
+    }
+    // 期间闭集无「全部」（期间必有界，导航同下无全选入口）。
+    assert!(
+        !app.shows("全部"),
+        "日期芯片闭集无「全部」：{:?}",
+        app.screen().texts()
+    );
+    app.press("id:reports-period-label").unwrap();
+    app.wait_for_gone("text:当月", DEFAULT_WAIT).unwrap();
+    // 月度图月份行标（本月键）在屏。
+    assert!(app.shows(&reports_month_key()), "月度图 x 轴行标");
+    // 分类图行（净额降序）：餐饮 / 未分类 / 通勤行名在屏（柱尾金额归 tooltip）。
+    for text in ["餐饮", "未分类", "通勤"] {
+        assert!(app.shows(text), "分类行名在屏：{:?}", app.screen().texts());
+    }
+    // 商户排行（Top 5 默认，排序与截断在后端）：位次闭集稳定可断（小额
+    // 金额各不相同）——Top5 = 甲 6500 / 丁 1800 / 戊 1500 / 丙 1200 / 乙 800。
+    for name in ["甲城", "乙街", "丁仓", "丙铺"] {
+        assert!(app.shows(name), "商户榜行「{name}」在屏");
+    }
+    assert!(
+        !app.shows("己站") && !app.shows("庚点"),
+        "Top 5 截断：第 6、7 名不呈现"
+    );
+}
+
+/// 月度图说明气泡（旧壳 tooltip 平价）：按月柱弹出三列毛值 + 净额行
+///（净额 = 收入 − 支出 + 退款，旧壳 afterBody 同公式同词表）。
+#[test]
+fn reports_view_monthly_bar_tooltip_shows_gross_and_net() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = seed_reports_book("reports-monthly-tip");
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_reports(&mut app);
+    let ym = reports_month_key();
+    app.wait_for(&format!("id:reports-month-{ym}-0")).unwrap();
+
+    // 按月柱弹出说明：收入/支出/退款 + 净额四行（数值 = 装配层本位币文本；
+    // 全支出参与口径：午餐 4000 + 未分类 2500 + 通勤 800 + 小额五笔 5500 +
+    // 退款本体 300 = 13100 → 131；净额 = 收入 80 − 支出 131 + 退款 5 = −46）。
+    app.press(&format!("id:reports-month-{ym}-0")).unwrap();
+    app.wait_for("text:净额: -46").unwrap();
+    for line in ["收入: 80", "支出: 131", "退款: 5", "净额: -46"] {
+        assert!(
+            app.shows(line),
+            "弹出说明「{line}」在屏：{:?}",
+            app.screen().texts()
+        );
+    }
+    // 再按另一柱：说明同月同界（旧壳按行弹说明同态）。
+    app.press(&format!("id:reports-month-{ym}-2")).unwrap();
+    app.wait_for("text:净额: -46").unwrap();
+    assert!(app.shows("退款: 5"), "退款柱弹出同样呈现行说明");
+}
+
+/// 支出分类构成两段下钻（#379/#380）：点一级柱行 → 下钻态（二级子分类 +
+/// 直挂行 + 面包屑）→ 二级行直达该分类交易列表；点面包屑根回基础态。
+#[test]
+fn reports_view_category_drilldown_breadcrumb_and_row_jump() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = seed_reports_book("reports-drilldown");
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_reports(&mut app);
+    wait_reports_loaded(&mut app);
+
+    // 点行名（一级归并行「餐饮」）→ 图内下钻：面包屑出现（全部分类 › 餐饮），
+    // 同日二级行「午饭」（直挂行因根上无直挂交易净额 0 不进图）。
+    app.press("text:餐饮").unwrap();
+    app.wait_for("id:reports-breadcrumb-root").unwrap();
+    assert!(
+        app.shows("全部分类") && app.shows("›") && app.shows("餐饮"),
+        "下钻态面包屑：{:?}",
+        app.screen().texts()
+    );
+    // 下钻态行名「午饭」→ 直达按该分类过滤的交易列表（跳转载荷 = 分类 +
+    // 期间 + 支出退款类型集合——列表净值与柱值一致）。删除 nav::open 接线
+    // 即红（点击停留报表视图）。
+    app.press("text:午饭").unwrap();
+    app.wait_for("id:tx-table").unwrap();
+    app.wait_for("text:共 1 条").unwrap();
+    assert!(app.shows("午饭一笔"), "分类下钻命中在屏");
+    assert!(
+        !app.shows("未分类一笔") && !app.shows("通勤一笔"),
+        "其它分类被下钻载荷排除：{:?}",
+        app.screen().texts()
+    );
+}
+
+/// 点面包屑根（全部分类）回基础态（#379 面包屑回退）。
+#[test]
+fn reports_view_breadcrumb_root_returns_to_base() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = seed_reports_book("reports-breadcrumb");
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_reports(&mut app);
+    wait_reports_loaded(&mut app);
+
+    app.press("text:餐饮").unwrap();
+    app.wait_for("id:reports-breadcrumb-root").unwrap();
+    // 点根「全部分类」→ 回基础态（面包屑消失，基础态三行复原）。
+    app.press("id:reports-breadcrumb-root").unwrap();
+    app.wait_for_gone("id:reports-breadcrumb-root", DEFAULT_WAIT)
+        .unwrap();
+    assert!(
+        app.shows("未分类"),
+        "基础态未分类柱复原：{:?}",
+        app.screen().texts()
+    );
+}
+
+/// 未分类柱直达「仅无分类」列表（#379/#380 同裁决：未分类无子结构，
+/// 是柱不是层级；载荷 = 仅无分类 + 期间 + 支出退款类型集合）。删除
+/// nav::open 接线即红。
+#[test]
+fn reports_view_uncategorized_bar_jumps_to_transactions_filtered() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = seed_reports_book("reports-uncat-jump");
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_reports(&mut app);
+    wait_reports_loaded(&mut app);
+
+    app.press("text:未分类").unwrap();
+    app.wait_for("id:tx-table").unwrap();
+    // 仅无分类成员：未分类一笔 + 五笔小额 + 退款本体 + 月内退款 = 8 条
+    //（退款继承原无分类、类型集合含 refund）。
+    app.wait_for("text:共 8 条").unwrap();
+    assert!(app.shows("未分类一笔"), "仅无分类命中在屏");
+    assert!(
+        !app.shows("午饭一笔") && !app.shows("通勤一笔"),
+        "有分类交易被排除：{:?}",
+        app.screen().texts()
+    );
+}
+
+/// 商户排行 TopN 档位切换与行名下钻（#588/#589）：Top 5 默认 → Top 10 全量
+/// 呈现；点商户名 → 直达按该商户过滤的交易列表。删除 TopN 重拉接线（改档
+/// 不发读者）或 nav::open 接线任一即红。
+#[test]
+fn reports_view_merchant_top_n_switch_and_row_jump() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = seed_reports_book("reports-merchant");
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_reports(&mut app);
+    wait_reports_loaded(&mut app);
+
+    // Top 5 默认：甲乙在内，己/庚（第 6、7 名）不在屏。
+    assert!(app.shows("甲城") && app.shows("乙街"));
+    assert!(!app.shows("己站") && !app.shows("庚点"));
+
+    // 切 Top 10 → 全量七行呈现（仅商户卡重拉，其余两卡不受牵连——月度图与
+    // 分类行保持）。
+    app.press("id:reports-topn-10").unwrap();
+    app.wait_for("text:己站").unwrap();
+    assert!(app.shows("甲城") && app.shows("庚点"), "Top 10 全量在屏");
+    assert!(app.shows(&reports_month_key()), "TopN 切换不牵连月度卡");
+
+    // 点商户名「乙」→ 直达按该商户过滤的交易列表（共 1 条）。
+    app.press("text:乙街").unwrap();
+    app.wait_for("id:tx-table").unwrap();
+    app.wait_for("text:共 1 条").unwrap();
+    assert!(app.shows("通勤一笔"), "商户下钻命中在屏");
+    assert!(
+        !app.shows("午饭一笔"),
+        "他商户交易被下钻载荷排除：{:?}",
+        app.screen().texts()
+    );
+}
+
+/// 期间切换复位图内下钻 + 空期间两态（旧壳 setPeriod 内化规则平价）：
+/// 下钻态切「去年」→ 面包屑消失（下钻悬在旧期间上，切期间回基础态）→
+/// 空期间三卡空态（本期暂无数据 / 暂无支出数据 / 本期暂无商户消费）。
+/// 删除 on_apply 复位接线或任一读取接线即红。
+#[test]
+fn reports_view_period_switch_resets_drilldown_and_shows_empty_states() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = seed_reports_book("reports-period-reset");
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_reports(&mut app);
+    wait_reports_loaded(&mut app);
+
+    // 先下钻：面包屑在屏。
+    app.press("text:餐饮").unwrap();
+    app.wait_for("id:reports-breadcrumb-root").unwrap();
+
+    // 切「去年」（种子全在当前月）→ 面包屑消失（复位下钻）+ 三卡空态。
+    // 期间芯片在弹层内：先开「选择期间」弹层再点芯片（选择后弹层自关）。
+    app.press("id:reports-period-label").unwrap();
+    app.press("id:reports-period-chip-last-year").unwrap();
+    app.wait_for_gone("id:reports-breadcrumb-root", DEFAULT_WAIT)
+        .unwrap();
+    for empty in ["本期暂无数据", "暂无支出数据", "本期暂无商户消费"] {
+        assert!(
+            app.shows(empty),
+            "空期间空态「{empty}」在屏：{:?}",
+            app.screen().texts()
+        );
+    }
+    assert!(
+        !app.shows(&reports_month_key()) && !app.shows("甲"),
+        "空期间不残留上个期间的图行：{:?}",
+        app.screen().texts()
+    );
+}
+
+/// 会话内保留（旧壳 reports-session 平价）：下钻态 + 期间改选 + Top 10 →
+/// 切走再回来 = 回到离开时的样子（视图重挂重拉但会话态不丢）。
+#[test]
+fn reports_view_state_survives_view_switch() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = seed_reports_book("reports-retained");
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_reports(&mut app);
+    wait_reports_loaded(&mut app);
+
+    // 留下状态印记：下钻餐饮 + 切 Top 10（期间不动——默认当年）。
+    app.press("text:餐饮").unwrap();
+    app.wait_for("id:reports-breadcrumb-root").unwrap();
+    app.press("id:reports-topn-10").unwrap();
+    app.wait_for("text:己站").unwrap();
+
+    // 切走（概览）再回来：面包屑与 Top 10 档位原样。
+    app.press("id:nav-dashboard").unwrap();
+    app.wait_for("id:net-worth-card").unwrap();
+    app.press("id:nav-reports").unwrap();
+    app.wait_for("id:reports-monthly-card").unwrap();
+    wait_reports_loaded(&mut app);
+    assert!(
+        app.screen().count("id:reports-breadcrumb-root").unwrap() == 1,
+        "下钻态跨视图保留：{:?}",
+        app.screen().texts()
+    );
+    assert!(
+        app.shows("己站") && app.shows("庚点"),
+        "TopN 档位跨视图保留（Top 10 全量）"
+    );
+}
+
+/// ESC 复位出口（#894 同语义平价）：期间/下钻/TopN 有保留态时按 ESC →
+/// 全部回默认（期间回当年、下钻回基础态、TopN 回默认档）；无保留态（全
+/// 默认）幂等无操作。删除复位接线（on_key 或守卫任一）即红。
+#[test]
+fn reports_view_escape_resets_to_defaults() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = seed_reports_book("reports-esc");
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_reports(&mut app);
+    wait_reports_loaded(&mut app);
+
+    // 留下保留态：下钻（期间保持默认当年——排除期间切换复位下钻的既有接线
+    // 干扰）+ Top 10。
+    app.press("text:餐饮").unwrap();
+    app.wait_for("id:reports-breadcrumb-root").unwrap();
+    app.press("id:reports-topn-10").unwrap();
+    app.wait_for("text:己站").unwrap();
+
+    // ESC → 复位出口：下钻回基础态（面包屑消失，纯投影）+ Top 5 档位回归
+    //（己/庚不呈现——TopN 回默认档）。
+    app.press_key("escape").unwrap();
+    app.wait_for_gone("id:reports-breadcrumb-root", DEFAULT_WAIT)
+        .unwrap();
+
+    app.wait_for("text:甲城").unwrap();
+    assert!(!app.shows("己"), "TopN 回默认档（Top 5 截断）");
+}

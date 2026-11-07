@@ -359,6 +359,27 @@ impl CategoryTable {
             None => Some(cat.name.clone()),
         }
     }
+
+    /// 一级根分类解析（旧壳 categoryRoot 的重生，#2048 分类归并/下钻守卫的消费面）：
+    /// 沿父链上溯至顶级，返回（根 id, 根名）。孤儿链（父引用解析不到）停在
+    /// 当前节点（旧壳 while break 同语义）；id 不在表中返回 `None`。
+    pub fn category_root(&self, id: &str) -> Option<(String, String)> {
+        let mut cat = self.by_id.get(id)?;
+        let mut cat_id = id.to_owned();
+        while let Some(parent_id) = cat.parent_id.as_deref() {
+            let Some(parent) = self.by_id.get(parent_id) else {
+                break;
+            };
+            cat = parent;
+            cat_id = parent_id.to_owned();
+        }
+        Some((cat_id, cat.name.clone()))
+    }
+
+    /// 分类名直查（面包屑与下钻行名的消费面）；id 不在表中返回 `None`。
+    pub fn name_of(&self, id: &str) -> Option<String> {
+        self.by_id.get(id).map(|c| c.name.clone())
+    }
 }
 
 /// 金额基础格式化（`formatAmount` zh-CN 口径，issue #2019 全家桶的分组核）：
@@ -2130,6 +2151,264 @@ pub fn assemble_monthly_flow(
         net_expense: budget_amount_text(net_expense, privacy),
         balance: budget_amount_text(balance, privacy),
     }
+}
+
+/// 报表金额文本（#2048 报表域读模型行集的本位币单币种口径：与预算同款无符号
+/// 两位小数分组格式 + 隐私掩码，消费者单一入口——不另立第二份换算）。
+pub fn report_amount_text(cents: i64, privacy: bool) -> String {
+    budget_amount_text(cents, privacy)
+}
+
+/// 报表分类色板长度（色值与顺序住封装层 [`crate::bar_chart`]，此处只定槽位数；
+/// 两处一致性由封装层单测钉住）。
+pub const REPORT_PALETTE_LEN: usize = 12;
+
+/// 分类 id 稳定取色槽位（旧壳 category-chart FNV-1a 32 位散列的逐字重写：
+/// 同 id 恒同槽位，与数据序/层级/年份无关）。
+pub fn category_palette_index(id: &str) -> usize {
+    let mut hash: u32 = 0x811c_9dc5;
+    for byte in id.as_bytes() {
+        hash ^= u32::from(*byte);
+        hash = hash.wrapping_mul(0x0100_0193);
+    }
+    (hash as usize) % REPORT_PALETTE_LEN
+}
+
+/// 占比%（整数）：分母 = 调用方声明的合计口径；分母 0（无柱或正负相抵）归 0
+/// 不除零；负值照实。取整镜像旧壳 JS `Math.round((value/total)*100)`
+/// （半值向 +∞，负值同式）——报表域占比的单一来源（分类 tooltip / 商户排行
+/// 同一取整口径）。
+pub fn report_share_percent(value: i64, total: i64) -> i64 {
+    if total == 0 {
+        return 0;
+    }
+    ((value as f64 / total as f64) * 100.0 + 0.5).floor() as i64
+}
+/// tooltip 标签「金额 · 占比%」（旧壳 barTooltipLabel 重生）：分母 0 只呈金额。
+pub fn report_bar_tooltip_label(value: i64, total: i64, privacy: bool) -> String {
+    if total == 0 {
+        return report_amount_text(value, privacy);
+    }
+    format!(
+        "{} · {}%",
+        report_amount_text(value, privacy),
+        report_share_percent(value, total)
+    )
+}
+
+/// 分类构成横向柱单行格（#2048）：根归并（或未分类/孤儿叶子）后的图行。
+/// 配色只出槽位索引（未分类无槽位），色值映射在封装层 [`crate::bar_chart`]。
+#[derive(Debug, Clone, PartialEq)]
+pub struct CategoryBarCells {
+    /// 根分类 id；`None` = 未分类。
+    pub id: Option<String>,
+    pub name: String,
+    pub amount_cents: i64,
+    /// 柱尾金额文本（隐私掩码口径内）。
+    pub amount_text: String,
+    /// 弹出说明标签「金额 · 占比%」（分母随层级，由调用层函数的输入合计决定）。
+    pub tooltip_label: String,
+    /// 色板槽位（`None` = 未分类中性灰）。
+    pub palette_index: Option<usize>,
+}
+
+/// 归并结果收口：净额降序（负值沉底、同额保持后端序）+ 槽位取色（未分类无槽位）。
+fn assemble_category_bars_of(
+    entries: impl Iterator<Item = (Option<String>, String, i64)>,
+    privacy: bool,
+) -> Vec<CategoryBarCells> {
+    let mut rows: Vec<(Option<String>, String, i64)> = entries.collect();
+    rows.sort_by_key(|a| std::cmp::Reverse(a.2));
+    let total: i64 = rows.iter().map(|r| r.2).sum();
+    rows.into_iter()
+        .map(|(id, name, cents)| CategoryBarCells {
+            palette_index: id.as_deref().map(category_palette_index),
+            amount_text: report_amount_text(cents, privacy),
+            tooltip_label: report_bar_tooltip_label(cents, total, privacy),
+            id,
+            name,
+            amount_cents: cents,
+        })
+        .collect()
+}
+
+/// 分类构成图行（基础态，issue #378 同口径）：叶子份额按 [`CategoryTable::category_root`]
+/// 归并到一级根分类、未分类单列一柱；净额降序（负值沉底、同额保持后端序）；
+/// 净额 0 不进图；参考数据已不在表中的分类（软删等）叶子自成一行、按自身 id 取槽位。
+pub fn assemble_category_bars(
+    shares: &[ledger_reports::CategoryShare],
+    table: &CategoryTable,
+    privacy: bool,
+) -> Vec<CategoryBarCells> {
+    // 首现序保持 + 同键累加（份额行数小，线性扫描聚合；同额保持后端序由
+    // 末段稳定排序承担）。
+    let mut agg: Vec<(Option<String>, String, i64)> = Vec::new();
+    for s in shares {
+        if s.amount_cents == 0 {
+            continue;
+        }
+        let (key, name) = if s.category_id.is_empty() {
+            (None, "未分类".to_owned())
+        } else {
+            match table.category_root(&s.category_id) {
+                Some((root_id, root_name)) => (Some(root_id), root_name),
+                None => (Some(s.category_id.clone()), s.category_name.clone()),
+            }
+        };
+        match agg.iter_mut().find(|(existing, _, _)| *existing == key) {
+            Some((_, _, existing_value)) => *existing_value += s.amount_cents,
+            None => agg.push((key, name, s.amount_cents)),
+        }
+    }
+    assemble_category_bars_of(agg.into_iter(), privacy)
+}
+
+/// 分类构成图行（图内下钻态，issue #379 同口径）：某一级分类的二级构成——
+/// 二级子分类行 + 该一级自身直挂行，各柱合计恒等于父柱金额；净额降序（负值
+/// 沉底、同额保持后端序）；净额 0 不进图；根链断裂的行不进任何下钻。
+pub fn assemble_category_drilldown_bars(
+    shares: &[ledger_reports::CategoryShare],
+    table: &CategoryTable,
+    root_id: &str,
+    privacy: bool,
+) -> Vec<CategoryBarCells> {
+    // 直挂行名 = 本地化「直挂」标记 + 根名（旧壳 directName 词表同形，在此
+    // 单点拼出，纯函数不接 i18n）；首现序保持 + 同键累加（同基础态线性扫描）。
+    let mut agg: Vec<(String, String, i64)> = Vec::new();
+    for s in shares {
+        if s.amount_cents == 0 || s.category_id.is_empty() {
+            continue;
+        }
+        let Some((root_id_found, _root_name)) = table.category_root(&s.category_id) else {
+            continue;
+        };
+        if root_id_found != root_id {
+            continue;
+        }
+        let direct = s.category_id == root_id;
+        let key = if direct {
+            root_id.to_owned()
+        } else {
+            s.category_id.clone()
+        };
+        let name = if direct {
+            table
+                .name_of(root_id)
+                .map(|n| format!("{n}（直挂）"))
+                .unwrap_or_else(|| s.category_name.clone())
+        } else {
+            table
+                .name_of(&key)
+                .unwrap_or_else(|| s.category_name.clone())
+        };
+        match agg.iter_mut().find(|(existing, _, _)| *existing == key) {
+            Some((_, _, existing_value)) => *existing_value += s.amount_cents,
+            None => agg.push((key, name, s.amount_cents)),
+        }
+    }
+    assemble_category_bars_of(
+        agg.into_iter()
+            .map(|(k, name, value)| (Some(k), name, value)),
+        privacy,
+    )
+}
+
+/// 月度收支图中组行格（#2048）：按月一行，三柱毛值 + 弹出说明（旧壳 tooltip
+/// callbacks 的预装配形态——渲染期零格式化）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct MonthlyBarGroupCells {
+    /// 月份键（旧壳 labels 直用 month 字符串同形：YYYY-MM）。
+    pub month: String,
+    pub income_cents: i64,
+    pub expense_cents: i64,
+    pub refund_cents: i64,
+    /// 弹出说明完整内容：三列「收入/支出/退款: 金额」 + 「净额: 金额」
+    /// （净额公式 = income − expense + refund，与旧壳 afterBody 同公式）。
+    pub lines: Vec<String>,
+}
+
+/// 月度汇总结行集 → 图组格：行缺失（无月份）不成行（期间聚合口径：期间内无
+/// 流水的月份不成行，域读路径承担）。
+pub fn assemble_monthly_bar_groups(
+    rows: &[ledger_reports::MonthlySummary],
+    privacy: bool,
+) -> Vec<MonthlyBarGroupCells> {
+    rows.iter()
+        .map(|row| MonthlyBarGroupCells {
+            month: row.month.clone(),
+            income_cents: row.income_cents,
+            expense_cents: row.expense_cents,
+            refund_cents: row.refund_cents,
+            lines: vec![
+                format!("收入: {}", report_amount_text(row.income_cents, privacy)),
+                format!("支出: {}", report_amount_text(row.expense_cents, privacy)),
+                format!("退款: {}", report_amount_text(row.refund_cents, privacy)),
+                format!(
+                    "净额: {}",
+                    report_amount_text(
+                        row.income_cents - row.expense_cents + row.refund_cents,
+                        privacy
+                    )
+                ),
+            ],
+        })
+        .collect()
+}
+
+/// 商户消费排行表格单行格（issue #618 表格化的装配层重写）：后端返回序即行序。
+/// 名次色由视图按行序取封装层色板（色值住封装层，本层零色彩依赖）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct MerchantRankingCells {
+    pub merchant_id: String,
+    pub name: String,
+    pub amount_cents: i64,
+    pub amount_text: String,
+    /// 占比%（整数）文本，分母 = 载荷全量合计。
+    pub share_text: String,
+    pub count_text: String,
+    /// 内嵌条长百分数（0..100，两位小数）= 金额 ÷ 显示区最大正金额（topN 下
+    /// 即第一名）；
+    /// 负净额与 0 归 0（不画条），全负/全零行集除零防护同归 0。
+    pub bar_pct: f64,
+}
+
+/// 商户排行载荷 → 表格行格：排序与截断已收口后端，本层零口径逻辑（后端返回序
+/// 一一映射，不重排不过滤——旧壳 merchantTableRows 同款零口径逻辑）。
+pub fn assemble_merchant_ranking_rows(
+    report: &ledger_reports::MerchantSharesReport,
+    privacy: bool,
+) -> Vec<MerchantRankingCells> {
+    let max_positive = report
+        .rows
+        .iter()
+        .map(|row| row.amount_cents)
+        .fold(0i64, i64::max);
+    report
+        .rows
+        .iter()
+        .map(|row| {
+            let bar_pct = if max_positive > 0 {
+                // 两位小数内收口（浮点尾数不进呈现，旧壳同式）。
+                ((row.amount_cents.clamp(0, max_positive) as f64 / max_positive as f64) * 10_000.0)
+                    .round()
+                    / 100.0
+            } else {
+                0.0
+            };
+            MerchantRankingCells {
+                merchant_id: row.merchant_id.clone(),
+                name: row.merchant_name.clone(),
+                amount_cents: row.amount_cents,
+                amount_text: report_amount_text(row.amount_cents, privacy),
+                share_text: format!(
+                    "{}%",
+                    report_share_percent(row.amount_cents, report.total_cents)
+                ),
+                count_text: row.transaction_count.to_string(),
+                bar_pct,
+            }
+        })
+        .collect()
 }
 
 /// 投资概览单卡格（三卡各一份）：缺料三态显式分离（旧壳 NativeTotal 同形）。
@@ -5223,5 +5502,223 @@ mod tests {
             )
             .is_none()
         );
+    }
+
+    // -----------------------------------------------------------------
+    // 报表统计口径（#2048：月度收支 / 分类构成 / 商户排行 + 期间联动）。
+    // -----------------------------------------------------------------
+
+    /// 报表分类表（根 + 二级，软删缺席）。
+    fn report_categories() -> CategoryTable {
+        let make = |id: &str, name: &str, parent: Option<&str>| ledger_categories::Category {
+            id: id.to_owned(),
+            name: name.to_owned(),
+            kind: "expense".to_owned(),
+            parent_id: parent.map(str::to_owned),
+            icon: None,
+            sort_order: 0,
+            created_at: String::new(),
+            updated_at: String::new(),
+            version: 1,
+            device_id: String::new(),
+            is_deleted: false,
+        };
+        CategoryTable::from_categories(&[
+            make("r-food", "餐饮", None),
+            make("r-lunch", "午饭", Some("r-food")),
+            make("r-commute", "通勤", None),
+        ])
+    }
+
+    fn report_share(id: Option<&str>, name: &str, cents: i64) -> ledger_reports::CategoryShare {
+        ledger_reports::CategoryShare {
+            category_id: id.unwrap_or_default().to_owned(),
+            category_name: name.to_owned(),
+            amount_cents: cents,
+        }
+    }
+
+    fn report_merchant(
+        id: &str,
+        name: &str,
+        cents: i64,
+        count: i64,
+    ) -> ledger_reports::MerchantShare {
+        ledger_reports::MerchantShare {
+            merchant_id: id.to_owned(),
+            merchant_name: name.to_owned(),
+            amount_cents: cents,
+            transaction_count: count,
+        }
+    }
+
+    #[test]
+    fn report_category_table_walks_root_chain_and_names() {
+        let table = report_categories();
+        // 一级根解析：叶子归并到根（旧壳 categoryRoot 同口径）。
+        assert_eq!(
+            table.category_root("r-food"),
+            Some(("r-food".into(), "餐饮".into()))
+        );
+        assert_eq!(
+            table.category_root("r-lunch"),
+            Some(("r-food".into(), "餐饮".into())),
+            "二级分类归并到一级根"
+        );
+        // 参考数据中不存在的分类解析不到（下钻守卫的消费面）。
+        assert_eq!(table.category_root("r-gone"), None);
+        // 名称直查（面包屑与下钻行名消费面）。
+        assert_eq!(table.name_of("r-lunch"), Some("午饭".into()));
+        assert_eq!(table.name_of("r-gone"), None);
+    }
+
+    #[test]
+    fn category_bars_merge_to_roots_desc_with_uncategorized_gray() {
+        let table = report_categories();
+        let shares = vec![
+            report_share(Some("r-lunch"), "午饭", 4_000),
+            report_share(None, "", 2_500),
+            report_share(Some("r-food"), "餐饮", 1_000),
+            report_share(Some("r-commute"), "通勤", 0),
+            // 孤儿叶子（根链断裂/根已删）：自成一行、按自身 id 配色（旧壳同口径）。
+            report_share(Some("r-orphan"), "已删子类", 700),
+        ];
+        let bars = assemble_category_bars(&shares, &table, false);
+        // 净额降序（5000 > 2500 > 1000 > 700）；净额 0 不进图；叶子归并到根；
+        // 未分类单列（旧壳 toBars 同口径）。
+        let ids: Vec<Option<&str>> = bars.iter().map(|b| b.id.as_deref()).collect();
+        assert_eq!(ids, vec![Some("r-food"), None, Some("r-orphan")]);
+        assert_eq!(bars[0].amount_cents, 5_000, "根柱 = 子并父直挂合计");
+        assert_eq!(bars[0].name, "餐饮");
+        assert_eq!(bars[1].name, "未分类", "未分类柱名固定");
+        assert_eq!(bars[2].name, "已删子类", "孤儿叶子用份额自带名");
+        // 配色槽位：分类按 id 稳定取色（与数据序无关），未分类无槽位（中性灰）。
+        assert_eq!(
+            bars[0].palette_index,
+            Some(category_palette_index("r-food"))
+        );
+        assert_eq!(bars[1].palette_index, None);
+        assert_eq!(
+            bars[2].palette_index,
+            Some(category_palette_index("r-orphan"))
+        );
+        // 金额文本（本位币口径 zh 四位一组）。
+        assert_eq!(bars[0].amount_text, "50");
+        assert_eq!(bars[1].amount_text, "25");
+        // tooltip 标签：分母 = 基础态全柱合计 8200 → 5000 ≈ 61%、2500 ≈ 30%。
+        assert_eq!(
+            bars[0].tooltip_label, "50 · 61%",
+            "占比 = JS round(值/合计×100)"
+        );
+        assert_eq!(bars[1].tooltip_label, "25 · 30%");
+    }
+
+    #[test]
+    fn category_bars_privacy_masks_text_but_keeps_shape() {
+        let table = report_categories();
+        let shares = vec![report_share(Some("r-food"), "餐饮", 5_000)];
+        let bars = assemble_category_bars(&shares, &table, true);
+        assert_eq!(
+            bars[0].amount_text, "••••",
+            "隐私态同旧壳 formatAmount 隐私掩码"
+        );
+        assert_eq!(
+            bars[0].tooltip_label, "•••• · 100%",
+            "掩码只隐藏数值，占比照常"
+        );
+        assert_eq!(bars[0].amount_cents, 5_000, "柱形比例不受掩码影响");
+    }
+
+    #[test]
+    fn category_drilldown_bars_split_subs_and_direct_same_color() {
+        let table = report_categories();
+        let shares = vec![
+            report_share(Some("r-lunch"), "午饭", 4_000),
+            report_share(Some("r-food"), "餐饮", 1_000),
+            report_share(Some("r-commute"), "通勤", 9_000),
+            report_share(None, "", 3_000),
+        ];
+        let bars = assemble_category_drilldown_bars(&shares, &table, "r-food", false);
+        // 二级子分类行 + 父直挂行；净额 0 不进图；他根行不进（旧壳同口径）。
+        let ids: Vec<Option<&str>> = bars.iter().map(|b| b.id.as_deref()).collect();
+        assert_eq!(ids, vec![Some("r-lunch"), Some("r-food")], "净额降序");
+        assert_eq!(bars[0].name, "午饭");
+        assert_eq!(bars[1].name, "餐饮（直挂）", "直挂行沿用图标词表");
+        assert_eq!(
+            bars[1].palette_index,
+            Some(category_palette_index("r-food")),
+            "直挂行沿用父分类 id（同分类同色——父柱与直挂柱同槽位）"
+        );
+        // 二级合计恒等于父柱金额（词条「各柱合计恒等于父柱金额」）。
+        let total: i64 = bars.iter().map(|b| b.amount_cents).sum();
+        assert_eq!(total, 5_000);
+        // tooltip 分母随层级：二级合计 5000 → 4000 占 80%。
+        assert_eq!(bars[0].tooltip_label, "40 · 80%");
+    }
+
+    #[test]
+    fn report_tooltip_label_handles_zero_denominator_and_negatives() {
+        // 分母 0（无柱或正负相抵）只显示金额，不出现除零（旧壳同口径）。
+        assert_eq!(report_bar_tooltip_label(1_500, 0, false), "15");
+        // 负值照实（退款大于支出）；JS round 半值向上取整的负数语义照搬。
+        assert_eq!(report_amount_text(-300, false), "-3");
+        assert_eq!(report_bar_tooltip_label(-300, 1_000, false), "-3 · -30%");
+    }
+
+    #[test]
+    fn monthly_bar_groups_emit_lines_with_net_formula() {
+        let rows = vec![ledger_reports::MonthlySummary {
+            month: "2026-02".to_owned(),
+            income_cents: 8_000,
+            expense_cents: 30_000,
+            refund_cents: 5_000,
+        }];
+        let groups = assemble_monthly_bar_groups(&rows, false);
+        assert_eq!(groups.len(), 1);
+        let g = &groups[0];
+        assert_eq!(g.month, "2026-02");
+        assert_eq!(
+            g.lines,
+            vec!["收入: 80", "支出: 300", "退款: 50", "净额: -170"],
+            // 净额 = income − expense + refund = 8000 − 30000 + 5000 = −17000。
+            "弹出说明 = 三列毛值 + 净额（income − expense + refund，旧壳 tooltip 同公式）"
+        );
+    }
+
+    #[test]
+    fn merchant_ranking_rows_compute_ratio_share_and_count() {
+        let report = ledger_reports::MerchantSharesReport {
+            rows: vec![
+                report_merchant("m-a", "甲", 10_000, 3),
+                report_merchant("m-b", "乙", 4_000, 1),
+                report_merchant("m-c", "丙", -1_000, 2),
+            ],
+            total_cents: 13_000,
+        };
+        let rows = assemble_merchant_ranking_rows(&report, false);
+        assert_eq!(rows.len(), 3, "后端返回序一一映射、不重排不过滤");
+        assert_eq!(rows[0].merchant_id, "m-a");
+        assert_eq!(rows[0].name, "甲");
+        assert_eq!(rows[0].amount_text, "100");
+        assert_eq!(
+            rows[0].share_text, "77%",
+            "占比分母 = 全量合计（与截断无关）"
+        );
+        assert_eq!(rows[0].count_text, "3");
+        assert_eq!(
+            rows[0].bar_pct, 100.0,
+            "内嵌条长 ∝ 该行金额 ÷ 显示区最大正金额（两位小数"
+        );
+        assert_eq!(rows[1].bar_pct, 40.0);
+        assert_eq!(
+            rows[2].bar_pct, 0.0,
+            "负净额不画条（比例归 0），金额与占比照实"
+        );
+        assert_eq!(rows[2].amount_text, "-10");
+        assert_eq!(rows[2].share_text, "-8%");
+        // 隐私态：金额掩码；占比整数与笔数照常（旧壳同口径）。
+        let masked = assemble_merchant_ranking_rows(&report, true);
+        assert_eq!(masked[0].amount_text, "••••");
+        assert_eq!(masked[0].share_text, "77%");
     }
 }

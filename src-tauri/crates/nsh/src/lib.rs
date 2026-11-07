@@ -50,6 +50,13 @@
 //!   分类路径、备注列、通用 kind 标签；#2020 派生行形态：购买项逐项行与订单级
 //!   格首行语义、双账户/出资分解标注、来源名与状态、借贷派生标签、商户名；
 //!   #2022 删后页码决策）；
+//! - [`bar_chart`]：bar 图自绘周长件（`App*` 封装族，#2048 首建，ADR-0145
+//!   决策 5 的封装层落点）——纵向分组柱（月度收支）与横向单柱行（分类构成）
+//!   两形态，逐根说明气泡（旧壳 tooltip 的点按形态）自含抑制上报，本件零
+//!   统计语义；
+//! - [`reports`]：报表视图（#2048）——期间口径三卡（月度收支 / 分类构成两段
+//!   下钻 / 商户排行 TopN），会话态进程级单例、「期间切换复位下钻」与 ESC
+//!   复位出口内化，跳转下钻消费导航单点接缝不自建；
 //! - [`period`]：时间维度行——期间游标/步进/预设/边界钳制的纯决策逻辑
 //!   （旧壳 time-period.ts 的重生，#2021 / ADR-0141）；
 //! - [`period_row`]：共用期间行（#2040 起自交易视图抽出）——步进器与期间
@@ -113,6 +120,7 @@
 pub mod accounts;
 pub mod app;
 pub mod backup_entry;
+pub mod bar_chart;
 pub mod boot;
 pub mod combo_select;
 pub mod context_menu;
@@ -129,6 +137,7 @@ pub mod period_row;
 pub mod pinyin_select;
 pub mod popconfirm;
 pub mod popover;
+pub mod reports;
 pub mod search;
 pub mod select;
 pub mod sidebar;

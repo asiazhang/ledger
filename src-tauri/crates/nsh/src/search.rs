@@ -231,6 +231,7 @@ pub(crate) fn SearchView() -> impl IntoElement {
     let (period_row_view, _unused_step) = period_row::period_row(
         "search-period",
         false,
+        true,
         search_range,
         boundary_dates,
         move |changed: bool| {
