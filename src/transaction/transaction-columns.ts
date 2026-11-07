@@ -348,8 +348,9 @@ export function buildTransactionColumns(
       key: "source",
       width: 140,
       ...merged,
-      // 来源格平替（语义与 SourceLink 组件同一 sourceCellView 单源）；无来源留空
-      // （手动/AI 导入口径）；不设列级 ellipsis（账户列同款理由），超长由链接自身省略兜底。
+      // 来源格平替（语义与 SourceLink 组件同一 sourceCellView 单源）；无来源显示 "-"
+      // （与商户/分类列同款占位惯例，#2030：原注释写「留空」与渲染不符，按可验证行为修正）；
+      // 不设列级 ellipsis（账户列同款理由），超长由链接自身省略兜底。
       render: (row) => {
         const source = cellsOf(row).source;
         return source ? renderSourceCellFast(source, options.inputMode?.value === "touch") : "-";
