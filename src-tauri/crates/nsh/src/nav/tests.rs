@@ -237,8 +237,9 @@ fn TxFilterDrillProbeApp() -> impl IntoElement {
 /// 视图挂载消费（[`nav::take_intent`]）→ 落位筛选不生效，行集回全量即红。
 #[test]
 fn seam_drill_filters_land_on_real_transactions_view() {
-    use ledger_accounts::{AccountInput, AccountType};
     use ledger_transaction::{TransactionInput, TransactionKind};
+
+    use ledger_accounts::{AccountInput, AccountType};
 
     let _guard = test_assembly_guard();
     crate::app::reset_book_assembly();
@@ -357,4 +358,110 @@ fn seam_drill_filters_land_on_real_transactions_view() {
     );
 
     let _ = (cash, bank);
+}
+
+/// 物品视图下钻接缝消费探针（#2044）：真实生产投递路径
+///（[`nav_model::resolve_source_jump`] → [`nav::open`]）→ **真实物品视图**
+/// 消费（关注行高亮锚点 `item-row-focus` 呈现；删除任一环即红——删投递、
+/// 删物品视图的 [`nav::take_intent`] 消费或删除锚点渲染本测都红）。
+static ITEMS_SEAM_FOCUS: Mutex<Option<String>> = Mutex::new(None);
+
+#[component]
+fn ItemsSeamProbeApp() -> impl IntoElement {
+    // 会话就位（测试探针直呼组件体；量产路径在 App 启动竖井，先例同形）。
+    assert_eq!(crate::app::run_startup(), crate::app::StartupView::Ready);
+    let id = ITEMS_SEAM_FOCUS
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .clone()
+        .unwrap_or_default();
+    let facts = nav_model::NavFacts::factory();
+    // 真实生产路径：来源跳转目标计算（物品）→ 导航接缝（focus 意图投递）。
+    nav::open(nav_model::resolve_source_jump(
+        nav_model::SourceKind::Item,
+        &id,
+        |v| facts.is_contained(v),
+        |v| facts.is_closed(v),
+    ));
+    // 落位投递后直接挂真实物品视图（消费面）。
+    crate::items::items_view()
+}
+
+fn items_seam_probe_config() -> EngineConfig {
+    EngineConfig {
+        viewport: nsh_engine::Size::new(nsh_engine::Points(800.0), nsh_engine::Points(600.0)),
+        environment: Environment {
+            os: Os::Linux,
+            idiom: Idiom::Desktop,
+            ..Environment::default()
+        },
+        ui_sets: vec![nsh_base::registry()],
+        ..EngineConfig::new(Root::of::<ItemsSeamProbeApp>())
+    }
+}
+
+#[test]
+fn item_seam_focus_lands_on_real_items_view() {
+    let _guard = test_assembly_guard();
+    crate::app::reset_book_assembly();
+    // 物品探针需要真实清单（高亮锚点挂在行上）：同纪律建库造数（产品开库
+    // 入口 + 域公开写入口）。
+    use ledger_accounts::{AccountInput, AccountType};
+    let dir = crate::tests::scratch_book_dir("nav-items-seam");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("ledger.db"), b"").unwrap();
+    {
+        let db = crate::boot::boot_ledger(&dir).unwrap();
+        let conn = db
+            .conn
+            .lock()
+            .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
+            .unwrap();
+        let account = ledger_accounts::create_account(
+            &conn,
+            AccountInput {
+                name: "测试现金".to_owned(),
+                kind: AccountType::Cash,
+                currency_code: "CNY".to_owned(),
+                initial_balance_cents: Some(0),
+                credit_limit_cents: None,
+                statement_day: None,
+                due_day: None,
+            },
+        )
+        .unwrap();
+        let tx = ledger_transaction::create(
+            &conn,
+            crate::tests::expense_input(&account, "2026-01-01", 10_000, "跳转来源一笔"),
+        )
+        .unwrap();
+        let item_id = ledger_item::create_item(
+            &conn,
+            ledger_item::ItemInput {
+                name: "跳转物品".to_owned(),
+                purchase_date: "2026-01-01".to_owned(),
+                total_cost_cents: 10_000,
+                currency_code: "CNY".to_owned(),
+                note: None,
+                purchase_transaction_id: Some(tx.id.clone()),
+            },
+            &mut || {},
+        )
+        .unwrap();
+        *ITEMS_SEAM_FOCUS.lock().unwrap_or_else(|p| p.into_inner()) = Some(item_id);
+    }
+
+    nsh_app_set_dir_probe(&dir);
+    let mut app = Headless::start(items_seam_probe_config()).unwrap();
+
+    // 落位物品视图 + 关注行高亮锚点（用户可见凭据 = 高亮行在屏）。
+    app.wait_for("id:item-table").unwrap();
+    app.wait_for("text:跳转物品").unwrap();
+    app.wait_for("id:item-row-focus").unwrap();
+    crate::app::reset_book_assembly();
+}
+
+/// 探针侧装配注入（headless 测试接缝 [`crate::app::set_book_dir`]）。
+fn nsh_app_set_dir_probe(dir: &std::path::Path) {
+    crate::app::set_book_dir(dir.to_path_buf());
 }

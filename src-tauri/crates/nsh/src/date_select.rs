@@ -100,6 +100,108 @@ pub fn date_select(id: &'static str, selected: Signal<chrono::NaiveDate>) -> imp
         )
 }
 
+/// 可清空日期选择器（#2056 首建）：`selected` 是可选日信号（调用方持有；
+/// `None` = 未选，旧壳 NDatePicker clearable 同形态——清空钮 ✕ + 键入空白即
+/// 清除）。日历点选与键入形成完整落值都写 `Some`，空串 / 残缺不落值（键入
+/// 中文本原样保留），清空钮与空白键入写 `None`。其余纪律同 [`date_select`]。
+pub fn date_option_select(
+    id: &'static str,
+    selected: Signal<Option<chrono::NaiveDate>>,
+) -> impl IntoElement {
+    let open = signal(false);
+    // 键入中的原样文本（键入中的残缺文本不被程序化置值覆盖；选中日变化时
+    // 回显归一）。
+    let typed = signal(selected.get().map(|d| d.to_string()).unwrap_or_default());
+    // 主题令牌（双态自适应；令牌缺失回退亮灰/中灰可读兜底，先例同形）。
+    let tokens = nsh_core::element::tokens();
+    let fg = tokens
+        .color("foreground")
+        .unwrap_or_else(|| hsla(0.0, 0.0, 0.98, 1.0).into());
+    let muted = tokens
+        .color("muted-foreground")
+        .unwrap_or_else(|| hsla(0.0, 0.0, 0.45, 1.0).into());
+
+    let token = overlay::OverlayToken::new();
+    effect(move || {
+        let shown = open.get();
+        token.report(shown);
+    });
+
+    // 键入落值：完整日期 → Some；空白 → None（可空列的键入面清除，旧壳
+    // AppDatePicker clearable 空值同语义）；残缺不落值、文本原样保留。
+    let on_type = move |value: &str| {
+        typed.set(value.to_owned());
+        if value.trim().is_empty() {
+            selected.set(None);
+        } else if let Some(date) = parse_date_text(value) {
+            selected.set(Some(date));
+        }
+    };
+    // 清空钮：显式动作写 None（防呆入口与键入空白等义，旧壳 clearable ✕ 同位）。
+    let clear = move || selected.set(None);
+    // 选中日 → 触发件回显（日历点选 / 程序化置值 / 清空钮三路径归一；键入
+    // 中路径不动已在文本，避免打断输入）。
+    effect(move || {
+        let wanted = selected.get().map(|d| d.to_string()).unwrap_or_default();
+        if typed.get() != wanted {
+            typed.set(wanted);
+        }
+    });
+
+    date_picker()
+        // 受控值：选中日走 Controlled（日历网格跟随），未选走 Uncontrolled
+        //（nsh-base 无「 空 Controlled」形态；触发件文本归 typed，面板首造任
+        // 意内部值不外泄——未选态的本意就是不显选中日）。
+        .value(move || {
+            selected
+                .get()
+                .map(|d| DatePickerValue::Controlled(d.into()))
+                .unwrap_or(DatePickerValue::Uncontrolled)
+        })
+        .open(move || Some(open.get()))
+        .on_open_change(move |e: &nsh_base::DatePickerEvent| {
+            if let nsh_base::DatePickerEvent::OpenChange(shown, _) = *e {
+                open.set(shown);
+            }
+        })
+        .on_change(move |picked: &nsh_base::PickedDate| {
+            if let Some(at) = picked.value.start() {
+                selected.set(Some(at.date()));
+            }
+        })
+        .trigger(
+            view()
+                .flex_row()
+                .items_center()
+                .min_w(px(160.0))
+                .child(
+                    input()
+                        .test_id(format!("{id}-input").as_str())
+                        .value(move || typed.get())
+                        .optional_label("截止日期")
+                        .placeholder("YYYY-MM-DD")
+                        .text_color(fg)
+                        .app_class(
+                            "w-full bg-background rounded-md border border-border px-2 py-1 \
+                             placeholder:text-muted-foreground",
+                        )
+                        .on_change(on_type),
+                )
+                .child(when(
+                    move || selected.get().is_some(),
+                    move || {
+                        view().on_press(move |_: &PressEvent| clear()).child(
+                            text("✕")
+                                .text_size(px(11.0))
+                                .text_color(muted)
+                                .test_id(format!("{id}-clear").as_str()),
+                        )
+                    },
+                ))
+                .child(text("▾").text_size(px(11.0)).text_color(muted)),
+        )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

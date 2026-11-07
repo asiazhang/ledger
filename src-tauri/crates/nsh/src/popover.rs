@@ -25,9 +25,11 @@ use crate::overlay;
 pub(crate) const MESSAGE_ID_SUFFIX: &str = "-message";
 
 /// 口径说明气泡：触发件点按开合，`lines` 逐行呈现（调用方持词表与行序）。
-/// 触发件外包一层按压视图（开气泡的按压源，锚定与命中区以它为准）。
+/// 触发件外包一层按压视图（开气泡的按压源，锚定与命中区以它为准）。`id`
+/// 允许动态键（#2048 bar 图逐柱锚点：柱 id 为运行期数据，非 &'static 闭集
+/// ——presto headless 锚点互不串扰即可）。
 pub fn popover_tip(
-    id_prefix: &'static str,
+    id_prefix: impl Into<String>,
     lines: Vec<String>,
     trigger: impl IntoElement,
 ) -> impl IntoElement {
@@ -40,6 +42,7 @@ pub fn popover_tip(
     effect(move || {
         token.report(open_for_effect.get());
     });
+    let id_prefix = id_prefix.into();
     let message_id = format!("{}{}", id_prefix, MESSAGE_ID_SUFFIX);
     popover()
         .open(move || Some(open.get()))
@@ -53,7 +56,7 @@ pub fn popover_tip(
             view()
                 // test_id 落在按压包裹视图上（headless id: 锚点须命中可按压
                 // 件，period-label 先例同形）；内层触发件归调用方自饰。
-                .test_id(id_prefix)
+                .test_id(id_prefix.as_str())
                 .on_press(move |_: &PressEvent| {
                     open.set(!open.get_untracked());
                 })

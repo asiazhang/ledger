@@ -34,11 +34,12 @@ use crate::assembly::{
     RowContext,
 };
 use crate::boot;
+use crate::items::AddItemTarget;
 use crate::nav_model::ViewName;
 use crate::{
-    accounts, backup_entry, context_menu, danger, dashboard, modal, multi_select, nav, nav_model,
-    overlay, period_row, pinyin_select, popconfirm, scheduled, search, sidebar, signals, tx_filter,
-    txn_form, views,
+    accounts, backup_entry, context_menu, danger, dashboard, items, modal, multi_select, nav,
+    nav_model, overlay, period_row, pinyin_select, popconfirm, reports, scheduled, search, sidebar,
+    signals, tx_filter, txn_form, views,
 };
 
 /// 金额隐私模式开关的存储键（设备轻量设置项，与旧壳同键同值形态：旧壳
@@ -62,6 +63,9 @@ pub(crate) fn amount_privacy_enabled() -> bool {
 struct PageRead {
     /// 本页交易行集（列表态与搜索态同一字段，搜索态即命中页）。
     items: Vec<ledger_transaction::Transaction>,
+    /// 未删除物品行集（#2044 「加入物品」行菜单项的溯源唯一准入判定面；
+    /// 装载批同批读取，物品写后由失效信号广播驱动重读）。
+    item_rows: Vec<ledger_item::ItemWithDailyCost>,
     /// 满足当前口径的总数（页与总数共用同一 WHERE）。
     total: i64,
     /// 数据期间边界（读失败退化为 None＝不钳制，旧壳 silent 同口径）。
@@ -84,6 +88,7 @@ impl PageRead {
     fn new(items: Vec<ledger_transaction::Transaction>, total: i64) -> Self {
         Self {
             items,
+            item_rows: Vec::new(),
             total,
             date_range: None,
             currency_rows: Vec::new(),
@@ -172,6 +177,7 @@ pub fn reset_book_assembly() {
     signals::reset_for_tests();
     nav::reset_for_tests();
     tx_filter::reset_for_tests();
+    reports::reset_for_tests();
     scheduled::reset_for_tests();
 }
 
@@ -387,6 +393,13 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
     // 与删除失败呈现（码化错误文案，不静默；下次删除尝试开始时清空）。
     let confirm_target = signal(None::<String>);
     let delete_error = signal(None::<String>);
+    // 物品快照（#2044）：装载批同批读取——「加入物品」行菜单项的溯源唯一
+    // 准入判定面（hasItem 按溯源指针比对，旧壳 items store 同口径）。
+    let items_snap = signal(items::ItemsSnap::default());
+    // 加入物品弹窗目标交易（None = 不呈现）与成功反馈条位（NSH 无 toast 的
+    // 条位对应物）。
+    let add_item_target = signal(AddItemTarget::default());
+    let item_feedback = signal(None::<String>);
     // 交易表单族（#2034）：表单信号束与参考数据源（与列表装载共享同一读批；
     // 编辑回填锚点：当前页原始行集——弹窗开合与字段状态住表单信号束）。
     let form = txn_form::TxnFormState::new();
@@ -418,6 +431,8 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
     let fg = tokens
         .color("foreground")
         .unwrap_or_else(|| hsla(0.0, 0.0, 0.98, 1.0).into());
+    // 加入物品成功反馈条位的前景色（#2044；tokens 绑定后取值）。
+    let item_feedback_fg = fg;
     let muted = tokens
         .color("muted-foreground")
         .unwrap_or_else(|| hsla(0.0, 0.0, 0.45, 1.0).into());
@@ -539,6 +554,12 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
                                 read
                             })
                         })
+                        .and_then(|mut read| {
+                            boot::item_rows(&db).map(|rows| {
+                                read.item_rows = rows;
+                                read
+                            })
+                        })
                 })
                 .await;
                 // 过期装载不落位（后发已接管 rows/loading，先发不得回写）。
@@ -548,6 +569,7 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
                 match outcome {
                     Ok(Ok(PageRead {
                         items,
+                        item_rows,
                         total: total_count,
                         date_range,
                         currency_rows,
@@ -559,6 +581,7 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
                         // 表单参考数据源与编辑回填锚点（原始行集）随装载落位
                         //（#2034：与列表同一读批的同一事实源）。
                         tx_items.set(txn_form::TxItems(items.clone()));
+                        items_snap.set(items::ItemsSnap(item_rows));
                         form_accounts.set(txn_form::FormAccounts(account_rows.clone()));
                         form_categories.set(txn_form::FormCategories(category_rows.clone()));
                         form_merchants.set(txn_form::FormMerchants(merchant_rows.clone()));
@@ -716,6 +739,7 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
     // 与行内按钮共用；步进与弹层开合的抑制上报归 period_row 模块。
     let (period_row_view, step_period) = period_row::period_row(
         "period",
+        true,
         true,
         filters.range,
         boundary_dates,
@@ -1208,6 +1232,9 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
                                         );
                                     }));
                                 }
+                                // 加入物品目标随右键所在行固定（克隆在退款分支
+                                // 之前——退款菜单闭包 move 持有 tx 的先例同位）。
+                                let item_tx = tx.clone();
                                 // 退款（#2035）：无分解支出行开放（分解行不开放——
                                 // 退款表单未支持分解，旧壳 #1861 口径；购买项行保留——
                                 // 退款新建独立行不触碰原行子行）。原交易随右键所在行
@@ -1220,6 +1247,26 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
                                     items.push(MenuItem::new("退款").on_select(move || {
                                         form.open_create_refund(&tx, &currencies.get());
                                     }));
+                                }
+                                // 加入物品（#2044 / 旧壳 transactions.menu.addItem
+                                // 同词表）：仅 expense 行（溯源必为支出购买；
+                                // ADR-0025 创建唯一入口）。hasItem（旧壳 items
+                                // store 溯源指针比对同口径）：快照内存在指向本
+                                // 行交易的物品 → 置灰（溯源唯一的入口侧呈现，
+                                // 禁令事实源在域创建守卫）。
+                                if matches!(
+                                    item_tx.kind,
+                                    ledger_transaction::TransactionKind::Expense
+                                ) {
+                                    let has_item =
+                                        items::has_item_for_tx(&items_snap.get().0, &item_tx.id);
+                                                                        items.push(
+                                        MenuItem::new("加入物品")
+                                            .disabled(has_item)
+                                            .on_select(move || {
+                                                add_item_target.set(AddItemTarget(Some(item_tx.clone())));
+                                            }),
+                                    );
                                 }
                                 let confirm = confirm_target;
                                 items.push(MenuItem::new("删除").on_select(move || {
@@ -1244,6 +1291,21 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
                         .classes(table_classes())
                         .flex_1(),
                 ),
+        )
+        .child(
+            // 加入物品成功反馈条位（#2044）：旧壳 message.success 的条位对应
+            // 物（NSH 无 toast——#2038 裁决）；物品来源列呈现由失效信号驱动
+            // 列表重读承担。
+            when(
+                move || item_feedback.get().is_some(),
+                move || {
+                    text(move || item_feedback.get().unwrap_or_default())
+                        .text_size(px(12.0))
+                        .text_color(item_feedback_fg)
+                        .test_id("tx-add-item-status")
+                        .app_class("px-4 py-1")
+                },
+            ),
         )
         .child(
             // 删除失败呈现（#2022）：码化错误文案 zh-CN 原样，不静默；下次
@@ -1299,6 +1361,7 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
                 view_owner,
             ),
         )
+        .child(items::add_item_modal(add_item_target, form_currencies, item_feedback))
         .child(
             // 底栏：读失败优先呈现错误；否则总数（搜索态「命中 N 条」、列表态
             // 「共 N 条」——旧壳搜索页与交易页同形）+ 分页条（单页收起，分页条
@@ -2192,42 +2255,64 @@ fn view_host(nav: nav::NavStore) -> impl IntoElement {
     let current = nav.current;
     let is = move |name: ViewName| move || current.get() == name;
     let group_more = |gid: nav_model::GroupId| move || views::group_more_view(gid);
-    // 分支序随迁移系列推进：交易列表 / 预算（#2033）/ 账户（#2041）/ 定时
-    //（#2042）/ 概览（#2039）/ 搜索（#2040）挂真实组件，三容器挂「更多」
-    // 页签壳，其余未迁移视图共享占位。
+    // 分支序随迁移系列推进：交易列表 / 预算（#2033）/ 账户（#2041）/
+    // 定时（#2042）/ 概览（#2039）/ 搜索（#2040）/ 物品（#2044）/ 报表
+    //（#2048）/ 储蓄目标（#2056）挂真实组件，三容器挂「更多」页签壳，
+    // 其余未迁移视图共享占位。
     when(is(ViewName::Transactions), transactions_view).otherwise(move || {
         when(is(ViewName::Budget), budget_view).otherwise(move || {
             when(is(ViewName::Accounts), accounts::accounts_view).otherwise(move || {
                 when(is(ViewName::Scheduled), scheduled::scheduled_view).otherwise(move || {
-                    when(is(ViewName::Dashboard), dashboard::dashboard_view).otherwise(move || {
-                        when(is(ViewName::Search), search::search_view).otherwise(move || {
-                            when(
-                                is(ViewName::BookkeepingMore),
-                                group_more(nav_model::GroupId::Bookkeeping),
-                            )
-                            .otherwise(move || {
-                                when(
-                                    is(ViewName::AssetsMore),
-                                    group_more(nav_model::GroupId::Assets),
+                    when(is(ViewName::Items), items::items_view).otherwise(move || {
+                        when(is(ViewName::Dashboard), dashboard::dashboard_view).otherwise(
+                            move || {
+                                when(is(ViewName::Search), search::search_view).otherwise(
+                                    move || {
+                                        when(is(ViewName::Reports), reports::reports_view)
+                                            .otherwise(move || {
+                                                when(
+                                                    is(ViewName::SavingsGoals),
+                                                    crate::savings::savings_goals_view,
+                                                )
+                                                .otherwise(move || {
+                                                    when(
+                                                        is(ViewName::BookkeepingMore),
+                                                        group_more(nav_model::GroupId::Bookkeeping),
+                                                    )
+                                                    .otherwise(move || {
+                                                        when(
+                                                            is(ViewName::AssetsMore),
+                                                            group_more(nav_model::GroupId::Assets),
+                                                        )
+                                                        .otherwise(move || {
+                                                            when(
+                                                                is(ViewName::InsightsMore),
+                                                                group_more(
+                                                                    nav_model::GroupId::Insights,
+                                                                ),
+                                                            )
+                                                            .otherwise(move || {
+                                                                // 未迁移视图反应式占位壳：标题随当前视图；意图消费时机 = 落位
+                                                                //（effect 键 current，同轮落地）。
+                                                                let focused =
+                                                                    signal(None::<nav::NavIntent>);
+                                                                effect(move || {
+                                                                    let _current =
+                                                                        nav.current.get();
+                                                                    focused.set(nav::take_intent());
+                                                                });
+                                                                views::placeholder_shell_current(
+                                                                    focused,
+                                                                )
+                                                            })
+                                                        })
+                                                    })
+                                                })
+                                            })
+                                    },
                                 )
-                                .otherwise(move || {
-                                    when(
-                                        is(ViewName::InsightsMore),
-                                        group_more(nav_model::GroupId::Insights),
-                                    )
-                                    .otherwise(move || {
-                                        // 未迁移视图反应式占位壳：标题随当前视图；意图
-                                        // 消费时机 = 落位（effect 键 current，同轮落地）。
-                                        let focused = signal(None::<nav::NavIntent>);
-                                        effect(move || {
-                                            let _current = nav.current.get();
-                                            focused.set(nav::take_intent());
-                                        });
-                                        views::placeholder_shell_current(focused)
-                                    })
-                                })
-                            })
-                        })
+                            },
+                        )
                     })
                 })
             })
@@ -2243,6 +2328,9 @@ pub fn App() -> impl IntoElement {
     // 绑定随根实例存亡（引擎线程派发，含抑制闸门）。
     let nav = nav::store();
     tx_filter::store();
+    // 报表页会话态（#2048）同样挂根实例（首调初始化；离开报表视图重挂不丢
+    // ——旧壳 reports-session 存活期 = 应用会话同语义）。
+    reports::store();
     nav::bind_shortcuts();
     let state = signal(StartupView::Loading);
     // 主行/次行前景取主题令牌（双态自适应，registry 缺省带主题双态令牌）：

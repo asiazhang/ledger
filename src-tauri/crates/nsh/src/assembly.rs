@@ -359,6 +359,27 @@ impl CategoryTable {
             None => Some(cat.name.clone()),
         }
     }
+
+    /// 一级根分类解析（旧壳 categoryRoot 的重生，#2048 分类归并/下钻守卫的消费面）：
+    /// 沿父链上溯至顶级，返回（根 id, 根名）。孤儿链（父引用解析不到）停在
+    /// 当前节点（旧壳 while break 同语义）；id 不在表中返回 `None`。
+    pub fn category_root(&self, id: &str) -> Option<(String, String)> {
+        let mut cat = self.by_id.get(id)?;
+        let mut cat_id = id.to_owned();
+        while let Some(parent_id) = cat.parent_id.as_deref() {
+            let Some(parent) = self.by_id.get(parent_id) else {
+                break;
+            };
+            cat = parent;
+            cat_id = parent_id.to_owned();
+        }
+        Some((cat_id, cat.name.clone()))
+    }
+
+    /// 分类名直查（面包屑与下钻行名的消费面）；id 不在表中返回 `None`。
+    pub fn name_of(&self, id: &str) -> Option<String> {
+        self.by_id.get(id).map(|c| c.name.clone())
+    }
 }
 
 /// 金额基础格式化（`formatAmount` zh-CN 口径，issue #2019 全家桶的分组核）：
@@ -378,6 +399,24 @@ pub fn format_amount_basic(cents: i64, fmt: &CurrencyFormat) -> String {
     let value = abs / 10f64.powi(fmt.decimal_places as i32);
     let fixed = format!("{:.*}", fmt.decimal_places as usize, value);
     // 只去零、不做舍入；小数部分全空时连小数点一起去掉（与旧壳 replace 同序）。
+    let trimmed = if fmt.decimal_places > 0 {
+        fixed.trim_end_matches('0').trim_end_matches('.')
+    } else {
+        fixed.as_str()
+    };
+    format!("{sign}{}{}", fmt.symbol, group_number_string(trimmed, 4))
+}
+
+/// 金额基础格式化·小数分变形（formatAmount 的小数分消费面，issue #2044）：
+/// 域口径的**小数分**量（物品域 `per_day_cents` 分/天小数）沿用同一换算与去
+/// 零口径（f64 除法 + 定点格式化，与 [`format_amount_basic`] 同源）；熟悉
+/// 量级内定点格式化与旧壳 toFixed 逐位同形（平价锁定例见单测）。
+pub fn format_amount_f64(cents: f64, fmt: &CurrencyFormat) -> String {
+    let sign = if cents < 0.0 { "-" } else { "" };
+    let value = cents.abs() / 10f64.powi(fmt.decimal_places as i32);
+    let fixed = format!("{:.*}", fmt.decimal_places as usize, value);
+    // 只去零、不做舍入；小数部分全空时连小数点一起去掉（与 [`format_amount_basic`]
+    // 同序）。
     let trimmed = if fmt.decimal_places > 0 {
         fixed.trim_end_matches('0').trim_end_matches('.')
     } else {
@@ -2132,6 +2171,264 @@ pub fn assemble_monthly_flow(
     }
 }
 
+/// 报表金额文本（#2048 报表域读模型行集的本位币单币种口径：与预算同款无符号
+/// 两位小数分组格式 + 隐私掩码，消费者单一入口——不另立第二份换算）。
+pub fn report_amount_text(cents: i64, privacy: bool) -> String {
+    budget_amount_text(cents, privacy)
+}
+
+/// 报表分类色板长度（色值与顺序住封装层 [`crate::bar_chart`]，此处只定槽位数；
+/// 两处一致性由封装层单测钉住）。
+pub const REPORT_PALETTE_LEN: usize = 12;
+
+/// 分类 id 稳定取色槽位（旧壳 category-chart FNV-1a 32 位散列的逐字重写：
+/// 同 id 恒同槽位，与数据序/层级/年份无关）。
+pub fn category_palette_index(id: &str) -> usize {
+    let mut hash: u32 = 0x811c_9dc5;
+    for byte in id.as_bytes() {
+        hash ^= u32::from(*byte);
+        hash = hash.wrapping_mul(0x0100_0193);
+    }
+    (hash as usize) % REPORT_PALETTE_LEN
+}
+
+/// 占比%（整数）：分母 = 调用方声明的合计口径；分母 0（无柱或正负相抵）归 0
+/// 不除零；负值照实。取整镜像旧壳 JS `Math.round((value/total)*100)`
+/// （半值向 +∞，负值同式）——报表域占比的单一来源（分类 tooltip / 商户排行
+/// 同一取整口径）。
+pub fn report_share_percent(value: i64, total: i64) -> i64 {
+    if total == 0 {
+        return 0;
+    }
+    ((value as f64 / total as f64) * 100.0 + 0.5).floor() as i64
+}
+/// tooltip 标签「金额 · 占比%」（旧壳 barTooltipLabel 重生）：分母 0 只呈金额。
+pub fn report_bar_tooltip_label(value: i64, total: i64, privacy: bool) -> String {
+    if total == 0 {
+        return report_amount_text(value, privacy);
+    }
+    format!(
+        "{} · {}%",
+        report_amount_text(value, privacy),
+        report_share_percent(value, total)
+    )
+}
+
+/// 分类构成横向柱单行格（#2048）：根归并（或未分类/孤儿叶子）后的图行。
+/// 配色只出槽位索引（未分类无槽位），色值映射在封装层 [`crate::bar_chart`]。
+#[derive(Debug, Clone, PartialEq)]
+pub struct CategoryBarCells {
+    /// 根分类 id；`None` = 未分类。
+    pub id: Option<String>,
+    pub name: String,
+    pub amount_cents: i64,
+    /// 柱尾金额文本（隐私掩码口径内）。
+    pub amount_text: String,
+    /// 弹出说明标签「金额 · 占比%」（分母随层级，由调用层函数的输入合计决定）。
+    pub tooltip_label: String,
+    /// 色板槽位（`None` = 未分类中性灰）。
+    pub palette_index: Option<usize>,
+}
+
+/// 归并结果收口：净额降序（负值沉底、同额保持后端序）+ 槽位取色（未分类无槽位）。
+fn assemble_category_bars_of(
+    entries: impl Iterator<Item = (Option<String>, String, i64)>,
+    privacy: bool,
+) -> Vec<CategoryBarCells> {
+    let mut rows: Vec<(Option<String>, String, i64)> = entries.collect();
+    rows.sort_by_key(|a| std::cmp::Reverse(a.2));
+    let total: i64 = rows.iter().map(|r| r.2).sum();
+    rows.into_iter()
+        .map(|(id, name, cents)| CategoryBarCells {
+            palette_index: id.as_deref().map(category_palette_index),
+            amount_text: report_amount_text(cents, privacy),
+            tooltip_label: report_bar_tooltip_label(cents, total, privacy),
+            id,
+            name,
+            amount_cents: cents,
+        })
+        .collect()
+}
+
+/// 分类构成图行（基础态，issue #378 同口径）：叶子份额按 [`CategoryTable::category_root`]
+/// 归并到一级根分类、未分类单列一柱；净额降序（负值沉底、同额保持后端序）；
+/// 净额 0 不进图；参考数据已不在表中的分类（软删等）叶子自成一行、按自身 id 取槽位。
+pub fn assemble_category_bars(
+    shares: &[ledger_reports::CategoryShare],
+    table: &CategoryTable,
+    privacy: bool,
+) -> Vec<CategoryBarCells> {
+    // 首现序保持 + 同键累加（份额行数小，线性扫描聚合；同额保持后端序由
+    // 末段稳定排序承担）。
+    let mut agg: Vec<(Option<String>, String, i64)> = Vec::new();
+    for s in shares {
+        if s.amount_cents == 0 {
+            continue;
+        }
+        let (key, name) = if s.category_id.is_empty() {
+            (None, "未分类".to_owned())
+        } else {
+            match table.category_root(&s.category_id) {
+                Some((root_id, root_name)) => (Some(root_id), root_name),
+                None => (Some(s.category_id.clone()), s.category_name.clone()),
+            }
+        };
+        match agg.iter_mut().find(|(existing, _, _)| *existing == key) {
+            Some((_, _, existing_value)) => *existing_value += s.amount_cents,
+            None => agg.push((key, name, s.amount_cents)),
+        }
+    }
+    assemble_category_bars_of(agg.into_iter(), privacy)
+}
+
+/// 分类构成图行（图内下钻态，issue #379 同口径）：某一级分类的二级构成——
+/// 二级子分类行 + 该一级自身直挂行，各柱合计恒等于父柱金额；净额降序（负值
+/// 沉底、同额保持后端序）；净额 0 不进图；根链断裂的行不进任何下钻。
+pub fn assemble_category_drilldown_bars(
+    shares: &[ledger_reports::CategoryShare],
+    table: &CategoryTable,
+    root_id: &str,
+    privacy: bool,
+) -> Vec<CategoryBarCells> {
+    // 直挂行名 = 本地化「直挂」标记 + 根名（旧壳 directName 词表同形，在此
+    // 单点拼出，纯函数不接 i18n）；首现序保持 + 同键累加（同基础态线性扫描）。
+    let mut agg: Vec<(String, String, i64)> = Vec::new();
+    for s in shares {
+        if s.amount_cents == 0 || s.category_id.is_empty() {
+            continue;
+        }
+        let Some((root_id_found, _root_name)) = table.category_root(&s.category_id) else {
+            continue;
+        };
+        if root_id_found != root_id {
+            continue;
+        }
+        let direct = s.category_id == root_id;
+        let key = if direct {
+            root_id.to_owned()
+        } else {
+            s.category_id.clone()
+        };
+        let name = if direct {
+            table
+                .name_of(root_id)
+                .map(|n| format!("{n}（直挂）"))
+                .unwrap_or_else(|| s.category_name.clone())
+        } else {
+            table
+                .name_of(&key)
+                .unwrap_or_else(|| s.category_name.clone())
+        };
+        match agg.iter_mut().find(|(existing, _, _)| *existing == key) {
+            Some((_, _, existing_value)) => *existing_value += s.amount_cents,
+            None => agg.push((key, name, s.amount_cents)),
+        }
+    }
+    assemble_category_bars_of(
+        agg.into_iter()
+            .map(|(k, name, value)| (Some(k), name, value)),
+        privacy,
+    )
+}
+
+/// 月度收支图中组行格（#2048）：按月一行，三柱毛值 + 弹出说明（旧壳 tooltip
+/// callbacks 的预装配形态——渲染期零格式化）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct MonthlyBarGroupCells {
+    /// 月份键（旧壳 labels 直用 month 字符串同形：YYYY-MM）。
+    pub month: String,
+    pub income_cents: i64,
+    pub expense_cents: i64,
+    pub refund_cents: i64,
+    /// 弹出说明完整内容：三列「收入/支出/退款: 金额」 + 「净额: 金额」
+    /// （净额公式 = income − expense + refund，与旧壳 afterBody 同公式）。
+    pub lines: Vec<String>,
+}
+
+/// 月度汇总结行集 → 图组格：行缺失（无月份）不成行（期间聚合口径：期间内无
+/// 流水的月份不成行，域读路径承担）。
+pub fn assemble_monthly_bar_groups(
+    rows: &[ledger_reports::MonthlySummary],
+    privacy: bool,
+) -> Vec<MonthlyBarGroupCells> {
+    rows.iter()
+        .map(|row| MonthlyBarGroupCells {
+            month: row.month.clone(),
+            income_cents: row.income_cents,
+            expense_cents: row.expense_cents,
+            refund_cents: row.refund_cents,
+            lines: vec![
+                format!("收入: {}", report_amount_text(row.income_cents, privacy)),
+                format!("支出: {}", report_amount_text(row.expense_cents, privacy)),
+                format!("退款: {}", report_amount_text(row.refund_cents, privacy)),
+                format!(
+                    "净额: {}",
+                    report_amount_text(
+                        row.income_cents - row.expense_cents + row.refund_cents,
+                        privacy
+                    )
+                ),
+            ],
+        })
+        .collect()
+}
+
+/// 商户消费排行表格单行格（issue #618 表格化的装配层重写）：后端返回序即行序。
+/// 名次色由视图按行序取封装层色板（色值住封装层，本层零色彩依赖）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct MerchantRankingCells {
+    pub merchant_id: String,
+    pub name: String,
+    pub amount_cents: i64,
+    pub amount_text: String,
+    /// 占比%（整数）文本，分母 = 载荷全量合计。
+    pub share_text: String,
+    pub count_text: String,
+    /// 内嵌条长百分数（0..100，两位小数）= 金额 ÷ 显示区最大正金额（topN 下
+    /// 即第一名）；
+    /// 负净额与 0 归 0（不画条），全负/全零行集除零防护同归 0。
+    pub bar_pct: f64,
+}
+
+/// 商户排行载荷 → 表格行格：排序与截断已收口后端，本层零口径逻辑（后端返回序
+/// 一一映射，不重排不过滤——旧壳 merchantTableRows 同款零口径逻辑）。
+pub fn assemble_merchant_ranking_rows(
+    report: &ledger_reports::MerchantSharesReport,
+    privacy: bool,
+) -> Vec<MerchantRankingCells> {
+    let max_positive = report
+        .rows
+        .iter()
+        .map(|row| row.amount_cents)
+        .fold(0i64, i64::max);
+    report
+        .rows
+        .iter()
+        .map(|row| {
+            let bar_pct = if max_positive > 0 {
+                // 两位小数内收口（浮点尾数不进呈现，旧壳同式）。
+                ((row.amount_cents.clamp(0, max_positive) as f64 / max_positive as f64) * 10_000.0)
+                    .round()
+                    / 100.0
+            } else {
+                0.0
+            };
+            MerchantRankingCells {
+                merchant_id: row.merchant_id.clone(),
+                name: row.merchant_name.clone(),
+                amount_cents: row.amount_cents,
+                amount_text: report_amount_text(row.amount_cents, privacy),
+                share_text: format!(
+                    "{}%",
+                    report_share_percent(row.amount_cents, report.total_cents)
+                ),
+                count_text: row.transaction_count.to_string(),
+                bar_pct,
+            }
+        })
+        .collect()
+}
+
 /// 投资概览单卡格（三卡各一份）：缺料三态显式分离（旧壳 NativeTotal 同形）。
 #[derive(Debug, Clone, PartialEq)]
 pub struct PortfolioStatCells {
@@ -2731,6 +3028,121 @@ pub struct PlanLeadFace {
     pub to_account_id: Option<String>,
 }
 
+// ---------------------------------------------------------------------------
+// 物品视图装配族（#2044；旧壳 ItemsView.vue 列构造纯函数的重生）：物品清单
+// 装配——每列最终展示文本在数据到达时一次算就，渲染期零格式化。
+// ---------------------------------------------------------------------------
+
+/// 物品清单列（旧壳 items.columns 同词表；金额两列末端对齐）：名称 / 购买日期 /
+/// 状态 / 总成本 / 已用天数 / 每天成本 / 操作。建议宽度供 UI 映射，富余宽度全给
+/// 名称列（旧壳名称列弹性，交易列备注列先例同形）。
+pub const ITEM_COLUMNS: &[ColumnDef] = &[
+    ColumnDef {
+        key: "name",
+        title: "名称",
+        align: ColumnAlign::Start,
+        width: 160.0,
+    },
+    ColumnDef {
+        key: "purchase_date",
+        title: "购买日期",
+        align: ColumnAlign::Start,
+        width: 110.0,
+    },
+    ColumnDef {
+        key: "status",
+        title: "状态",
+        align: ColumnAlign::Start,
+        width: 150.0,
+    },
+    ColumnDef {
+        key: "total_cost",
+        title: "总成本",
+        align: ColumnAlign::End,
+        width: 110.0,
+    },
+    ColumnDef {
+        key: "used_days",
+        title: "已用天数",
+        align: ColumnAlign::End,
+        width: 90.0,
+    },
+    ColumnDef {
+        key: "per_day_cost",
+        title: "每天成本",
+        align: ColumnAlign::End,
+        width: 110.0,
+    },
+    ColumnDef {
+        key: "actions",
+        title: "操作",
+        align: ColumnAlign::Start,
+        width: 200.0,
+    },
+];
+
+/// 物品清单行装配产物：每列最终展示文本（字段与 [`ITEM_COLUMNS`] 逐列对应；
+/// 操作列恒空串，格内容由 UI 侧行内按钮自绘）。`id` 供行级操作与行来源跳转
+/// 的 focus 定位消费。
+#[derive(Debug, Clone, PartialEq)]
+pub struct ItemRowCells {
+    /// 物品 id（行级操作目标 / 定位参数的事实源）。
+    pub id: String,
+    /// 名称列（物品原名）。
+    pub name: String,
+    /// 购买日期列（YYYY-MM-DD 原样）。
+    pub purchase_date: String,
+    /// 状态列（在用 / 已处置 {date}，旧壳 items.status 同词表）。
+    pub status_label: String,
+    /// 总成本列（formatAmount 原始币种整数分）。物品域无金额隐私面（旧壳同口径）。
+    pub total_cost: String,
+    /// 已用天数列（整数天数，含购买当日——`item::cost` 接缝口径只消费不另立）。
+    pub used_days_text: String,
+    /// 每天成本列（formatAmount **小数分**——域口径 per_day_cents 是分/天小数，
+    /// 展示换算沿用金额格式化的定点去零口径）。
+    pub per_day_cost: String,
+}
+
+/// 物品清单行装配上下文：币种格式表（快照入参，纯函数）。
+#[derive(Debug, Clone)]
+pub struct ItemListContext<'a> {
+    pub currencies: &'a CurrencyTable,
+}
+
+/// 物品状态标签（旧壳 items.status 词表的普通状态渲染面；已处置行由调用方
+/// 携处置日期的行装配覆写，本函数只答「在用」）。
+pub fn item_status_in_use() -> &'static str {
+    "在用"
+}
+
+/// 装配物品清单行集（顺序保持域清单序 = created_at 升序，旧壳同口径）。
+pub fn assemble_item_rows(
+    rows: &[ledger_item::ItemWithDailyCost],
+    ctx: &ItemListContext<'_>,
+) -> Vec<ItemRowCells> {
+    rows.iter()
+        .map(|row| {
+            let currency = row.item.currency_code.clone();
+            let fmt = ctx.currencies.format_of(&currency);
+            ItemRowCells {
+                id: row.item.id.clone(),
+                name: row.item.name.clone(),
+                purchase_date: row.item.purchase_date.clone(),
+                status_label: match row.item.status {
+                    ledger_item::ItemStatus::InUse => item_status_in_use().to_owned(),
+                    ledger_item::ItemStatus::Disposed => format!(
+                        "已处置 {}",
+                        row.item.disposal_date.as_deref().unwrap_or_default()
+                    ),
+                },
+                total_cost: format_amount_basic(row.item.total_cost_cents, &fmt),
+                used_days_text: row.used_days.to_string(),
+                per_day_cost: format_amount_f64(row.per_day_cents, &fmt),
+            }
+        })
+        .collect()
+}
+
 /// 引用该账户的未结束计划数（旧壳 `countUnfinishedPlansUsingAccount` 重生）：
 /// `active` / `paused` 计入（仍持有该账户）；`cancelled` / `completed` 不计；
 /// 软删计划不计（读命令已滤但谓词独立自足，判据不依赖调用方行集形状）。
@@ -2746,6 +3158,307 @@ pub fn count_unfinished_plans(plans: &[PlanLeadFace], account_id: &str) -> usize
                     || plan.to_account_id.as_deref() == Some(account_id))
         })
         .count()
+}
+
+// ---------------------------------------------------------------------------
+// 储蓄目标视图格（#2056）：蓄水进度行装配——旧壳 SavingsGoalsView 装配面的
+// 重生（一次装配、渲染期零格式化）。进度读数（已存 / 还差 / 达成态）与双向推
+// 算（ETA / 所需月存 / 落后超前）由域读路径 [`ledger_savings_goal::list_savings
+// _goal_progress`] 单点产出，本层只消费域行集产展示文本，不另立算术（词汇
+// 表「蓄水进度」：只输出金额差值、无百分比口径）。
+// ---------------------------------------------------------------------------
+
+/// 储蓄目标列定义（列名与旧壳 savingsGoals.columns zh-CN 词表同文案；金额列
+/// 末端对齐）。
+pub const SAVINGS_GOAL_COLUMNS: &[ColumnDef] = &[
+    ColumnDef {
+        key: "name",
+        title: "名称",
+        align: ColumnAlign::Start,
+        width: 140.0,
+    },
+    ColumnDef {
+        key: "target",
+        title: "目标金额",
+        align: ColumnAlign::End,
+        width: 105.0,
+    },
+    ColumnDef {
+        key: "saved",
+        title: "已存",
+        align: ColumnAlign::End,
+        width: 105.0,
+    },
+    ColumnDef {
+        key: "remaining",
+        title: "还差",
+        align: ColumnAlign::End,
+        width: 105.0,
+    },
+    ColumnDef {
+        key: "projection",
+        title: "推算",
+        align: ColumnAlign::Start,
+        width: 230.0,
+    },
+    ColumnDef {
+        key: "deadline",
+        title: "截止日",
+        align: ColumnAlign::Start,
+        width: 100.0,
+    },
+    ColumnDef {
+        key: "status",
+        title: "状态",
+        align: ColumnAlign::Start,
+        width: 110.0,
+    },
+    ColumnDef {
+        key: "actions",
+        title: "操作",
+        align: ColumnAlign::Start,
+        width: 130.0,
+    },
+];
+
+/// 储蓄目标已归档列定义（旧壳 archivedColumns 同闭集：名称 / 目标金额 / 已存 /
+/// 操作）。
+pub const SAVINGS_GOAL_ARCHIVED_COLUMNS: &[ColumnDef] = &[
+    ColumnDef {
+        key: "name",
+        title: "名称",
+        align: ColumnAlign::Start,
+        width: 140.0,
+    },
+    ColumnDef {
+        key: "target",
+        title: "目标金额",
+        align: ColumnAlign::End,
+        width: 105.0,
+    },
+    ColumnDef {
+        key: "saved",
+        title: "已存",
+        align: ColumnAlign::End,
+        width: 105.0,
+    },
+    ColumnDef {
+        key: "actions",
+        title: "操作",
+        align: ColumnAlign::Start,
+        width: 130.0,
+    },
+];
+
+/// 一行蓄水进度的装配产物（字段与 [`SAVINGS_GOAL_COLUMNS`] 逐列对应）：
+/// 金额与推算在到达时一次性成文本，渲染期零格式化；行上的原值字段
+///（目标金额分 / 手填计划月存 / 截止目 / 币种）供编辑回填与删除点名消费
+///（域行无 Clone 语义外的另一路面板——快照内单点反查）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct SavingsGoalRowCells {
+    /// 目标 id（操作目标）。
+    pub goal_id: String,
+    /// 名称列（目标原名）。
+    pub name: String,
+    /// 目标金额列（formatAmount 含隐私掩码与数字分组）。
+    pub target: String,
+    /// 已存列（专属账户余额 = V017 缓存读数，本层只消费）。
+    pub saved: String,
+    /// 还差列（带符号差值恒显；超额存入后为负）。
+    pub remaining: String,
+    /// 推算列逐行文本（节奏 / ETA / 所需月存 / 落后超前各自成行，不拼连
+    /// 续一行；达成态整体退场 = 空集）。
+    pub projection: Vec<String>,
+    /// 截止日列（缺席 = 占位破折号，旧壳 `deadline ?? "—"` 同口径）。
+    pub deadline: String,
+    /// 状态列标签（已达成 / 进行中）。
+    pub status: &'static str,
+    /// 达成态（状态色与计划提示判定的消费面）。
+    pub achieved: bool,
+    /// 已归档（双分区判定的同源标记；分区在装配产物上做，不回读域行）。
+    pub is_archived: bool,
+    // ---- 原值字段（编辑回填 / 删除点名的消费面，渲染不消费）----
+    /// 目标金额原值（整数分）。
+    pub target_cents: i64,
+    /// 手填计划月存原值（整数分，可空）。
+    pub planned_monthly_cents: Option<i64>,
+    /// 截止日原值（可空，`YYYY-MM-DD`）。
+    pub deadline_raw: Option<String>,
+    /// 币种原值（回填小数位查询面）。
+    pub currency_code: String,
+    /// 达成 + 关联计划仍在执行的提示行（旧壳 achievedPlanHint 同口径：
+    /// 只提示用户去计划页处理，计划状态不由目标域改动）。
+    pub plan_hint: bool,
+}
+
+/// 蓄水进度金额文本（含隐私掩码的消费面：推算行内的金额同一口径）。
+fn savings_amount_text(cents: i64, fmt: &CurrencyFormat, privacy: bool) -> String {
+    if privacy {
+        AMOUNT_PRIVACY_MASK.to_owned()
+    } else {
+        format_amount_basic(cents, fmt)
+    }
+}
+
+/// 推算列装配入参 face：域蓄水进度行的推算字段全集投影（借用目视面板，
+/// 装配期零拷贝）；`savings_goal_projection_lines` 三参数化收口（clippy
+/// too_many_arguments 口径，参数闭集一个结构体收齐）。
+struct ProjectionFace<'a> {
+    /// 达成态（纯展示态，达成即整体退场）。
+    achieved: bool,
+    /// 节奏金额（整数分，可空 = 节奏为零）。
+    pace_monthly_cents: Option<i64>,
+    /// 节奏来源闭集二值。
+    pace_source: Option<ledger_savings_goal::SavingsGoalPaceSource>,
+    /// 截止日（可空）。
+    deadline: Option<&'a str>,
+    /// 正推月数（域读数）。
+    eta_months: Option<i64>,
+    /// 正推年月（域读数）。
+    eta_month: Option<&'a str>,
+    /// 反推所需月存（域读数）。
+    required_monthly_cents: Option<i64>,
+    /// 反推节奏差值（域读数）。
+    pace_delta_cents: Option<i64>,
+}
+
+/// 蓄水进度推算列逐行文本（旧壳 projection 渲染器的重生，算术归域读数，
+/// 本层只按读数组合文案）：达成态整体退场；节奏行来源闭集二值随行可见；
+/// 无截止正推（还差 N 个月 / 预计年月）与设置引导；有截止反推（每月需存 +
+/// 落后 / 超前差值）与对比引导；截止已过只给一句话，不虚构时点。
+fn savings_goal_projection_lines(
+    face: ProjectionFace<'_>,
+    fmt: &CurrencyFormat,
+    privacy: bool,
+) -> Vec<String> {
+    let ProjectionFace {
+        achieved,
+        pace_monthly_cents,
+        pace_source,
+        deadline,
+        eta_months,
+        eta_month,
+        required_monthly_cents,
+        pace_delta_cents,
+    } = face;
+    if achieved {
+        // 达成 = 读时派生纯展示态：时点已无意义，推算整体退场（状态列
+        // 表达达成）。
+        return Vec::new();
+    }
+    let mut lines = Vec::new();
+    if let Some(pace) = pace_monthly_cents {
+        let amount = savings_amount_text(pace, fmt, privacy);
+        lines.push(match pace_source {
+            Some(ledger_savings_goal::SavingsGoalPaceSource::Plan) => {
+                format!("按计划 {amount}/月")
+            }
+            Some(ledger_savings_goal::SavingsGoalPaceSource::Manual) => {
+                format!("手填 {amount}/月")
+            }
+            // 节奏在场但来源缺席（读数契约外形态）：退化为无来源标签金额行。
+            None => format!("{amount}/月"),
+        });
+    }
+    if deadline.is_none() {
+        // 无截止正推：还差 N 个月 / 预计年月；节奏为零 → 设置引导（不虚构
+        // 时点）。
+        match eta_months {
+            Some(months) => {
+                lines.push(format!("还差 {months} 个月"));
+                if let Some(ym) = eta_month {
+                    lines.push(format!("预计 {ym} 攒够"));
+                }
+            }
+            None => lines.push("设置计划月存或挂一条自动转账计划，这里显示推算".to_owned()),
+        }
+    } else if let Some(required) = required_monthly_cents {
+        // 有截止反推：每月需存 + 落后 / 超前差值（差值缺席给对比引导）。
+        lines.push(format!(
+            "每月需存 {}",
+            savings_amount_text(required, fmt, privacy)
+        ));
+        match pace_delta_cents {
+            Some(delta) => {
+                let amount = savings_amount_text(delta.abs(), fmt, privacy);
+                lines.push(if delta >= 0 {
+                    format!("超前 {amount}/月")
+                } else {
+                    format!("落后 {amount}/月")
+                });
+            }
+            None => lines.push("设置计划月存或挂一条自动转账计划，与所需月存对比".to_owned()),
+        }
+    } else {
+        // 截止日已过：不反推所需月存、不虚构时点。
+        lines.push("已过截止日".to_owned());
+    }
+    lines
+}
+
+/// 域蓄水进度行集 → 展示格行集（一次性装配，渲染期零格式化；序保持域读序）。
+pub fn assemble_savings_goal_rows(
+    rows: &[ledger_savings_goal::SavingsGoalProgress],
+    currencies: &CurrencyTable,
+    privacy: bool,
+) -> Vec<SavingsGoalRowCells> {
+    rows.iter()
+        .map(|row| {
+            let fmt = currencies.format_of(&row.currency_code);
+            SavingsGoalRowCells {
+                goal_id: row.goal.id.clone(),
+                name: row.goal.name.clone(),
+                target: savings_amount_text(row.goal.target_amount_cents, &fmt, privacy),
+                saved: savings_amount_text(row.saved_cents, &fmt, privacy),
+                remaining: savings_amount_text(row.remaining_cents, &fmt, privacy),
+                projection: savings_goal_projection_lines(
+                    ProjectionFace {
+                        achieved: row.achieved,
+                        pace_monthly_cents: row.pace_monthly_cents,
+                        pace_source: row.pace_source,
+                        deadline: row.goal.deadline.as_deref(),
+                        eta_months: row.eta_months,
+                        eta_month: row.eta_month.as_deref(),
+                        required_monthly_cents: row.required_monthly_cents,
+                        pace_delta_cents: row.pace_delta_cents,
+                    },
+                    &fmt,
+                    privacy,
+                ),
+                deadline: row.goal.deadline.clone().unwrap_or_else(|| "—".to_owned()),
+                status: if row.achieved {
+                    "已达成"
+                } else {
+                    "进行中"
+                },
+                achieved: row.achieved,
+                is_archived: row.goal.status == ledger_savings_goal::SavingsGoalStatus::Archived,
+                target_cents: row.goal.target_amount_cents,
+                planned_monthly_cents: row.goal.planned_monthly_cents,
+                deadline_raw: row.goal.deadline.clone(),
+                currency_code: row.currency_code.clone(),
+                plan_hint: row.achieved
+                    && row.pace_source == Some(ledger_savings_goal::SavingsGoalPaceSource::Plan),
+            }
+        })
+        .collect()
+}
+
+/// 双分区（旧壳 activeGoals / archivedGoals 纯派生同口径）：进行中进默认卡、
+/// 已归档进归档卡；同一快照的纯派生，零加减零重排（分区内序保持域读序）。
+pub fn partition_savings_goal_rows(
+    rows: &[SavingsGoalRowCells],
+) -> (Vec<SavingsGoalRowCells>, Vec<SavingsGoalRowCells>) {
+    let mut active = Vec::new();
+    let mut archived = Vec::new();
+    for row in rows {
+        if row.is_archived {
+            archived.push(row.clone());
+        } else {
+            active.push(row.clone());
+        }
+    }
+    (active, archived)
 }
 
 #[cfg(test)]
@@ -5222,6 +5935,540 @@ mod tests {
                 chrono::NaiveDate::from_ymd_opt(2026, 1, 15).unwrap(),
             )
             .is_none()
+        );
+    }
+
+    /// 物品清单行装配（旧壳 ItemsView 列构造平价）：在用 / 已处置两行逐列
+    /// 对拍（状态标签、金额两列格式化、天数原样）。删任一装配分支即红
+    /// （面在单测即函数分支本身）。
+    #[test]
+    fn item_rows_assemble_with_status_and_costs() {
+        let mk = |id: &str,
+                  name: &str,
+                  status: ledger_item::ItemStatus,
+                  disposal_date: Option<&str>,
+                  used_days: i64,
+                  per_day_cents: f64| ledger_item::ItemWithDailyCost {
+            item: ledger_item::Item {
+                id: id.to_owned(),
+                name: name.to_owned(),
+                purchase_date: "2026-01-01".to_owned(),
+                total_cost_cents: 100_000,
+                currency_code: "CNY".to_owned(),
+                cost_native_cents: 100_000,
+                status,
+                disposal_date: disposal_date.map(str::to_owned),
+                residual_value_cents: None,
+                purchase_transaction_id: None,
+                note: None,
+                created_at: String::new(),
+                updated_at: String::new(),
+                version: 1,
+                device_id: String::new(),
+                is_deleted: false,
+            },
+            used_days,
+            numerator_cents: 100_000,
+            per_day_cents,
+        };
+        let rows = vec![
+            mk(
+                "i1",
+                "显示器",
+                ledger_item::ItemStatus::InUse,
+                None,
+                10,
+                10_000.0,
+            ),
+            mk(
+                "i2",
+                "手机",
+                ledger_item::ItemStatus::Disposed,
+                Some("2026-01-10"),
+                9,
+                3333.33,
+            ),
+        ];
+        let cells = assemble_item_rows(
+            &rows,
+            &ItemListContext {
+                currencies: &table(),
+            },
+        );
+        // 逐列对拍（旧壳 items.columns 词表 + formatAmount 口径）。
+        assert_eq!(cells[0].name, "显示器");
+        assert_eq!(cells[0].purchase_date, "2026-01-01");
+        assert_eq!(cells[0].status_label, "在用");
+        assert_eq!(cells[0].total_cost, "¥1000");
+        assert_eq!(cells[0].used_days_text, "10");
+        assert_eq!(cells[0].per_day_cost, "¥100");
+        // 已处置行：状态带处置日期；小数分每天成本去零同为同一格式化接缝。
+        assert_eq!(cells[1].status_label, "已处置 2026-01-10");
+        assert_eq!(cells[1].per_day_cost, "¥33.33");
+        // 列定义键序同旧壳列序（金额列末端对齐）。
+        let keys: Vec<&str> = ITEM_COLUMNS.iter().map(|def| def.key).collect();
+        assert_eq!(
+            keys,
+            vec![
+                "name",
+                "purchase_date",
+                "status",
+                "total_cost",
+                "used_days",
+                "per_day_cost",
+                "actions"
+            ]
+        );
+    }
+
+    /// 小数分格式化（format_amount_f64 平价锁定例）：整数面去零、两位小数、
+    /// 四位一组、零值不加冗余。
+    #[test]
+    fn format_amount_f64_trims_and_groups_like_to_fixed() {
+        assert_eq!(
+            format_amount_f64(10_000.0, &table().format_of("CNY")),
+            "¥100"
+        );
+        assert_eq!(
+            format_amount_f64(3333.33, &table().format_of("CNY")),
+            "¥33.33"
+        );
+        assert_eq!(format_amount_f64(0.0, &table().format_of("CNY")), "¥0");
+        assert_eq!(
+            format_amount_f64(100_000_000.0, &table().format_of("CNY")),
+            "¥100,0000",
+            "zh 四位一组（小数分消费面同接缝）"
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // 报表统计口径（#2048：月度收支 / 分类构成 / 商户排行 + 期间联动）。
+    // -----------------------------------------------------------------
+
+    /// 报表分类表（根 + 二级，软删缺席）。
+    fn report_categories() -> CategoryTable {
+        let make = |id: &str, name: &str, parent: Option<&str>| ledger_categories::Category {
+            id: id.to_owned(),
+            name: name.to_owned(),
+            kind: "expense".to_owned(),
+            parent_id: parent.map(str::to_owned),
+            icon: None,
+            sort_order: 0,
+            created_at: String::new(),
+            updated_at: String::new(),
+            version: 1,
+            device_id: String::new(),
+            is_deleted: false,
+        };
+        CategoryTable::from_categories(&[
+            make("r-food", "餐饮", None),
+            make("r-lunch", "午饭", Some("r-food")),
+            make("r-commute", "通勤", None),
+        ])
+    }
+
+    fn report_share(id: Option<&str>, name: &str, cents: i64) -> ledger_reports::CategoryShare {
+        ledger_reports::CategoryShare {
+            category_id: id.unwrap_or_default().to_owned(),
+            category_name: name.to_owned(),
+            amount_cents: cents,
+        }
+    }
+
+    fn report_merchant(
+        id: &str,
+        name: &str,
+        cents: i64,
+        count: i64,
+    ) -> ledger_reports::MerchantShare {
+        ledger_reports::MerchantShare {
+            merchant_id: id.to_owned(),
+            merchant_name: name.to_owned(),
+            amount_cents: cents,
+            transaction_count: count,
+        }
+    }
+
+    #[test]
+    fn report_category_table_walks_root_chain_and_names() {
+        let table = report_categories();
+        // 一级根解析：叶子归并到根（旧壳 categoryRoot 同口径）。
+        assert_eq!(
+            table.category_root("r-food"),
+            Some(("r-food".into(), "餐饮".into()))
+        );
+        assert_eq!(
+            table.category_root("r-lunch"),
+            Some(("r-food".into(), "餐饮".into())),
+            "二级分类归并到一级根"
+        );
+        // 参考数据中不存在的分类解析不到（下钻守卫的消费面）。
+        assert_eq!(table.category_root("r-gone"), None);
+        // 名称直查（面包屑与下钻行名消费面）。
+        assert_eq!(table.name_of("r-lunch"), Some("午饭".into()));
+        assert_eq!(table.name_of("r-gone"), None);
+    }
+
+    #[test]
+    fn category_bars_merge_to_roots_desc_with_uncategorized_gray() {
+        let table = report_categories();
+        let shares = vec![
+            report_share(Some("r-lunch"), "午饭", 4_000),
+            report_share(None, "", 2_500),
+            report_share(Some("r-food"), "餐饮", 1_000),
+            report_share(Some("r-commute"), "通勤", 0),
+            // 孤儿叶子（根链断裂/根已删）：自成一行、按自身 id 配色（旧壳同口径）。
+            report_share(Some("r-orphan"), "已删子类", 700),
+        ];
+        let bars = assemble_category_bars(&shares, &table, false);
+        // 净额降序（5000 > 2500 > 1000 > 700）；净额 0 不进图；叶子归并到根；
+        // 未分类单列（旧壳 toBars 同口径）。
+        let ids: Vec<Option<&str>> = bars.iter().map(|b| b.id.as_deref()).collect();
+        assert_eq!(ids, vec![Some("r-food"), None, Some("r-orphan")]);
+        assert_eq!(bars[0].amount_cents, 5_000, "根柱 = 子并父直挂合计");
+        assert_eq!(bars[0].name, "餐饮");
+        assert_eq!(bars[1].name, "未分类", "未分类柱名固定");
+        assert_eq!(bars[2].name, "已删子类", "孤儿叶子用份额自带名");
+        // 配色槽位：分类按 id 稳定取色（与数据序无关），未分类无槽位（中性灰）。
+        assert_eq!(
+            bars[0].palette_index,
+            Some(category_palette_index("r-food"))
+        );
+        assert_eq!(bars[1].palette_index, None);
+        assert_eq!(
+            bars[2].palette_index,
+            Some(category_palette_index("r-orphan"))
+        );
+        // 金额文本（本位币口径 zh 四位一组）。
+        assert_eq!(bars[0].amount_text, "50");
+        assert_eq!(bars[1].amount_text, "25");
+        // tooltip 标签：分母 = 基础态全柱合计 8200 → 5000 ≈ 61%、2500 ≈ 30%。
+        assert_eq!(
+            bars[0].tooltip_label, "50 · 61%",
+            "占比 = JS round(值/合计×100)"
+        );
+        assert_eq!(bars[1].tooltip_label, "25 · 30%");
+    }
+
+    #[test]
+    fn category_bars_privacy_masks_text_but_keeps_shape() {
+        let table = report_categories();
+        let shares = vec![report_share(Some("r-food"), "餐饮", 5_000)];
+        let bars = assemble_category_bars(&shares, &table, true);
+        assert_eq!(
+            bars[0].amount_text, "••••",
+            "隐私态同旧壳 formatAmount 隐私掩码"
+        );
+        assert_eq!(
+            bars[0].tooltip_label, "•••• · 100%",
+            "掩码只隐藏数值，占比照常"
+        );
+        assert_eq!(bars[0].amount_cents, 5_000, "柱形比例不受掩码影响");
+    }
+
+    #[test]
+    fn category_drilldown_bars_split_subs_and_direct_same_color() {
+        let table = report_categories();
+        let shares = vec![
+            report_share(Some("r-lunch"), "午饭", 4_000),
+            report_share(Some("r-food"), "餐饮", 1_000),
+            report_share(Some("r-commute"), "通勤", 9_000),
+            report_share(None, "", 3_000),
+        ];
+        let bars = assemble_category_drilldown_bars(&shares, &table, "r-food", false);
+        // 二级子分类行 + 父直挂行；净额 0 不进图；他根行不进（旧壳同口径）。
+        let ids: Vec<Option<&str>> = bars.iter().map(|b| b.id.as_deref()).collect();
+        assert_eq!(ids, vec![Some("r-lunch"), Some("r-food")], "净额降序");
+        assert_eq!(bars[0].name, "午饭");
+        assert_eq!(bars[1].name, "餐饮（直挂）", "直挂行沿用图标词表");
+        assert_eq!(
+            bars[1].palette_index,
+            Some(category_palette_index("r-food")),
+            "直挂行沿用父分类 id（同分类同色——父柱与直挂柱同槽位）"
+        );
+        // 二级合计恒等于父柱金额（词条「各柱合计恒等于父柱金额」）。
+        let total: i64 = bars.iter().map(|b| b.amount_cents).sum();
+        assert_eq!(total, 5_000);
+        // tooltip 分母随层级：二级合计 5000 → 4000 占 80%。
+        assert_eq!(bars[0].tooltip_label, "40 · 80%");
+    }
+
+    #[test]
+    fn report_tooltip_label_handles_zero_denominator_and_negatives() {
+        // 分母 0（无柱或正负相抵）只显示金额，不出现除零（旧壳同口径）。
+        assert_eq!(report_bar_tooltip_label(1_500, 0, false), "15");
+        // 负值照实（退款大于支出）；JS round 半值向上取整的负数语义照搬。
+        assert_eq!(report_amount_text(-300, false), "-3");
+        assert_eq!(report_bar_tooltip_label(-300, 1_000, false), "-3 · -30%");
+    }
+
+    #[test]
+    fn monthly_bar_groups_emit_lines_with_net_formula() {
+        let rows = vec![ledger_reports::MonthlySummary {
+            month: "2026-02".to_owned(),
+            income_cents: 8_000,
+            expense_cents: 30_000,
+            refund_cents: 5_000,
+        }];
+        let groups = assemble_monthly_bar_groups(&rows, false);
+        assert_eq!(groups.len(), 1);
+        let g = &groups[0];
+        assert_eq!(g.month, "2026-02");
+        assert_eq!(
+            g.lines,
+            vec!["收入: 80", "支出: 300", "退款: 50", "净额: -170"],
+            // 净额 = income − expense + refund = 8000 − 30000 + 5000 = −17000。
+            "弹出说明 = 三列毛值 + 净额（income − expense + refund，旧壳 tooltip 同公式）"
+        );
+    }
+
+    #[test]
+    fn merchant_ranking_rows_compute_ratio_share_and_count() {
+        let report = ledger_reports::MerchantSharesReport {
+            rows: vec![
+                report_merchant("m-a", "甲", 10_000, 3),
+                report_merchant("m-b", "乙", 4_000, 1),
+                report_merchant("m-c", "丙", -1_000, 2),
+            ],
+            total_cents: 13_000,
+        };
+        let rows = assemble_merchant_ranking_rows(&report, false);
+        assert_eq!(rows.len(), 3, "后端返回序一一映射、不重排不过滤");
+        assert_eq!(rows[0].merchant_id, "m-a");
+        assert_eq!(rows[0].name, "甲");
+        assert_eq!(rows[0].amount_text, "100");
+        assert_eq!(
+            rows[0].share_text, "77%",
+            "占比分母 = 全量合计（与截断无关）"
+        );
+        assert_eq!(rows[0].count_text, "3");
+        assert_eq!(
+            rows[0].bar_pct, 100.0,
+            "内嵌条长 ∝ 该行金额 ÷ 显示区最大正金额（两位小数"
+        );
+        assert_eq!(rows[1].bar_pct, 40.0);
+        assert_eq!(
+            rows[2].bar_pct, 0.0,
+            "负净额不画条（比例归 0），金额与占比照实"
+        );
+        assert_eq!(rows[2].amount_text, "-10");
+        assert_eq!(rows[2].share_text, "-8%");
+        // 隐私态：金额掩码；占比整数与笔数照常（旧壳同口径）。
+        let masked = assemble_merchant_ranking_rows(&report, true);
+        assert_eq!(masked[0].amount_text, "••••");
+        assert_eq!(masked[0].share_text, "77%");
+    }
+
+    // -----------------------------------------------------------------
+    // 储蓄目标视图格（#2056）：进度行装配 / 双分区 / 金额文本
+    // -----------------------------------------------------------------
+
+    use ledger_savings_goal::{
+        SavingsGoal, SavingsGoalPaceSource, SavingsGoalProgress, SavingsGoalStatus,
+    };
+
+    /// 目标进度行（用例共用）：目标面 + 进度读数随参（币种恒 CNY）；
+    /// 归档态 / 截止日 / 节奏字段由调用点就地赋值（行构造器窄参收口）。
+    fn goal_row(
+        id: &'static str,
+        name: &'static str,
+        target_cents: i64,
+        saved_cents: i64,
+    ) -> SavingsGoalProgress {
+        let remaining = target_cents - saved_cents;
+        SavingsGoalProgress {
+            goal: SavingsGoal {
+                id: id.to_owned(),
+                name: name.to_owned(),
+                target_amount_cents: target_cents,
+                deadline: None,
+                status: SavingsGoalStatus::Active,
+                planned_monthly_cents: None,
+                account_id: format!("acct-{id}"),
+                created_at: "2027-03-04T05:06:07Z".to_owned(),
+                updated_at: "2027-03-04T05:06:07Z".to_owned(),
+                version: 1,
+                device_id: "d".to_owned(),
+                is_deleted: false,
+            },
+            saved_cents,
+            remaining_cents: remaining,
+            achieved: saved_cents >= target_cents,
+            currency_code: "CNY".to_owned(),
+            pace_monthly_cents: None,
+            pace_source: None,
+            eta_months: None,
+            eta_month: None,
+            required_monthly_cents: None,
+            pace_delta_cents: None,
+        }
+    }
+
+    #[test]
+    fn savings_goal_rows_assemble_and_partition() {
+        let mut g1 = goal_row("g1", "买车基金", 20_000, 5_000);
+        g1.pace_monthly_cents = Some(100_000);
+        g1.pace_source = Some(SavingsGoalPaceSource::Manual);
+        let mut g2 = goal_row("g2", "已存满的目标", 10_000, 40_000);
+        g2.pace_monthly_cents = Some(100_000);
+        g2.pace_source = Some(SavingsGoalPaceSource::Plan);
+        let g3 = {
+            let mut row = goal_row("g3", "已归档的目标", 10_000, 1_000);
+            row.goal.status = SavingsGoalStatus::Archived;
+            row
+        };
+        let rows = vec![g1, g2, g3];
+        let currencies = CurrencyTable::default();
+        let (active, archived);
+        {
+            let cells = assemble_savings_goal_rows(&rows, &currencies, false);
+            assert_eq!(SAVINGS_GOAL_COLUMNS.len(), 8, "列闭集 = 旧壳主表 8 列");
+            assert_eq!(
+                SAVINGS_GOAL_ARCHIVED_COLUMNS.len(),
+                4,
+                "归档列闭集 = 旧壳归档卡 4 列"
+            );
+            assert_eq!(cells.len(), 3);
+            assert_eq!(cells[0].name, "买车基金");
+            // 缺省币种表（未知 code 走缺省缺省参：无币符、两位小数去零）。
+            assert_eq!(cells[0].target, "200");
+            assert_eq!(cells[0].saved, "50");
+            assert_eq!(cells[0].remaining, "150");
+            // 推算列（旧壳 projection 渲染器同文案）：非达成行首行 = 节奏行
+            //（来源闭集二值随行首可见），无截止正推 = ETA 行。
+            // 推算列（旧壳 projection 渲染器同文案）：非达成行首行 = 节奏行
+            //（来源闭集二值随行可见）。缺省币幅无币符：手填 1000/月。
+            assert_eq!(
+                cells[0].projection,
+                vec![
+                    "手填 1000/月".to_owned(),
+                    "设置计划月存或挂一条自动转账计划，这里显示推算".to_owned()
+                ],
+                "节奏行（来源闭集二值随行可见）在；读数未给 ETA 时给设置引导而非虚构时点"
+            );
+            // status 列已初始化。达成行:推算整体退场,计划提示在。删任一
+            // 分支即红(面在单测即函数分支本身)。
+            assert_eq!(cells[1].status, "已达成");
+            assert!(cells[1].projection.is_empty(), "达成态推算整体退场");
+            assert!(cells[1].plan_hint, "达成 + 计划节奏 = 关联计划提示在场");
+            assert_eq!(cells[0].status, "进行中");
+            assert!(!cells[0].plan_hint);
+            // 截止日缺席 = 占位破折号（旧壳 deadline ?? "—" 同口径）。
+            assert_eq!(cells[0].deadline, "—");
+            assert_eq!(cells[1].remaining, "-300");
+            // 分区：进行中二行 / 归档一行，分区内序保持域序。
+            let (a, ar) = partition_savings_goal_rows(&cells);
+            (active, archived) = (a, ar);
+        }
+        assert_eq!(active.len(), 2);
+        assert_eq!(archived.len(), 1);
+        assert_eq!(archived[0].name, "已归档的目标");
+    }
+
+    /// 双向推算的有截止反推与截止已过分支（词汇表 ETA / 所需月存）：
+    /// 每月需存行 + 落后 / 超前差值行（差值缺席给对比引导）；截止日已过
+    /// 只给一句话，不反推不虚构；手填 / 计划节奏来源闭集二值随行可见。
+    #[test]
+    fn savings_goal_projection_lines_cover_deadline_branches() {
+        use ledger_savings_goal::SavingsGoalPaceSource as Pace;
+        let fmt = CurrencyFormat::default();
+        // 有截止 + 反推字段（域读数单点产出）：每月需存 + 落后差值。
+        let lines = savings_goal_projection_lines(
+            ProjectionFace {
+                achieved: false,
+                pace_monthly_cents: Some(10_000),
+                pace_source: Some(Pace::Plan),
+                deadline: Some("2027-01-31"),
+                eta_months: None,
+                eta_month: None,
+                required_monthly_cents: Some(20_000),
+                pace_delta_cents: Some(-8_000),
+            },
+            &fmt,
+            false,
+        );
+        assert_eq!(
+            lines,
+            vec![
+                "按计划 100/月".to_owned(),
+                "每月需存 200".to_owned(),
+                "落后 80/月".to_owned()
+            ],
+            "节奏来源闭集二值 + 反推所需月存 + 落后差值逐行"
+        );
+        // 反推 + 差值缺席：给对比引导（不虚构方向）。
+        let lines = savings_goal_projection_lines(
+            ProjectionFace {
+                achieved: false,
+                pace_monthly_cents: Some(10_000),
+                pace_source: Some(Pace::Manual),
+                deadline: Some("2027-01-31"),
+                eta_months: None,
+                eta_month: None,
+                required_monthly_cents: Some(20_000),
+                pace_delta_cents: None,
+            },
+            &fmt,
+            false,
+        );
+        assert_eq!(
+            lines,
+            vec![
+                "手填 100/月".to_owned(),
+                "每月需存 200".to_owned(),
+                "设置计划月存或挂一条自动转账计划，与所需月存对比".to_owned()
+            ]
+        );
+        // 截止日已过：既不反推所需月存、也不虚构时点。
+        let lines = savings_goal_projection_lines(
+            ProjectionFace {
+                achieved: false,
+                pace_monthly_cents: None,
+                pace_source: None,
+                deadline: Some("2020-01-31"),
+                eta_months: None,
+                eta_month: None,
+                required_monthly_cents: None,
+                pace_delta_cents: None,
+            },
+            &fmt,
+            false,
+        );
+        assert_eq!(lines, vec!["已过截止日".to_owned()]);
+        // 超前差值行（反推 + 节奏充足）。
+        let lines = savings_goal_projection_lines(
+            ProjectionFace {
+                achieved: false,
+                pace_monthly_cents: Some(50_000),
+                pace_source: Some(Pace::Plan),
+                deadline: Some("2027-01-31"),
+                eta_months: None,
+                eta_month: None,
+                required_monthly_cents: Some(20_000),
+                pace_delta_cents: Some(30_000),
+            },
+            &fmt,
+            false,
+        );
+        assert_eq!(lines.last(), Some(&"超前 300/月".to_owned()));
+    }
+
+    /// 蓄水进度金额隐私掩码（旧壳 formatAmount 隐私口径随行生效）：目标额 /
+    /// 已存 / 还差 / 推算行金额全部掩码，文案行骨架保留。
+    #[test]
+    fn savings_goal_rows_mask_amounts_when_privacy_enabled() {
+        let mut row = goal_row("g1", "买车基金", 20_000, 5_000);
+        row.pace_monthly_cents = Some(100_000);
+        row.pace_source = Some(SavingsGoalPaceSource::Manual);
+        let rows = vec![row];
+        let cells = assemble_savings_goal_rows(&rows, &CurrencyTable::default(), true);
+        assert_eq!(cells[0].target, AMOUNT_PRIVACY_MASK);
+        assert_eq!(cells[0].saved, AMOUNT_PRIVACY_MASK);
+        assert_eq!(cells[0].remaining, AMOUNT_PRIVACY_MASK);
+        assert_eq!(
+            cells[0].projection[0],
+            format!("手填 {AMOUNT_PRIVACY_MASK}/月"),
+            "节奏行金额掩码、文案骨架保留"
         );
     }
 }

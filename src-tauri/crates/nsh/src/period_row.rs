@@ -64,9 +64,11 @@ fn preset_test_suffix(preset: period::Preset) -> &'static str {
 /// 时间维度行（步进器 + 期间选择弹层）。
 ///
 /// - `prefix`：弹层与芯片 test_id 前缀（交易列表 `"period"`、搜索视图
-///   `"search-period"`——headless 锚点互不串扰）。
+///   `"search-period"`、报表视图 `"reports-period"`——headless 锚点互不串扰）。
 /// - `key_hints`：步进按钮内嵌键位字符（交易列表 `","`/`"."`，ADR-0141；
-///   搜索视图无快捷键传 `false`）。
+///   搜索/报表视图无快捷键传 `false`）。
+/// - `include_all`：预设闭集是否含「全部」（报表页日期闭集无全部——期间必有
+///   界，ADR-0057；交易/搜索含全部 = 默认态哨兵）。
 /// - `range`：期间快照信号（唯一事实源，调用方持有）。
 /// - `boundary_dates`：数据期间边界原始日期对（None = 在途/失败 → 钳制退化
 ///   为不钳制，旧壳 silent 同口径）。
@@ -75,9 +77,11 @@ fn preset_test_suffix(preset: period::Preset) -> &'static str {
 ///
 /// 返回 `(行视图, 步进动作)`：步进动作供外部快捷键与按钮共用同一决策半边
 /// （无抑制闸门——闸门归键盘派发路径，按钮点击无闸门，先例分页条点击）。
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn period_row(
     prefix: &'static str,
     key_hints: bool,
+    include_all: bool,
     range: Signal<Option<period::PeriodRange>>,
     boundary_dates: Signal<Option<(Option<String>, Option<String>)>>,
     on_apply: impl Fn(bool) + Copy + 'static,
@@ -218,7 +222,7 @@ pub(crate) fn period_row(
                     view()
                         .flex_col()
                         .gap_1()
-                        .children(period::PRESETS.iter().copied().map(|preset| {
+                        .children(period::PRESETS.iter().copied().filter(|p| include_all || *p != period::Preset::All).map(|preset| {
                             button()
                                 .selected(move || match_preset_now(range.get(), preset))
                                 .app_class(
