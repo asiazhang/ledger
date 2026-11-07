@@ -191,15 +191,15 @@ pub fn amount_semantic(kind: TransactionKind) -> AmountSemantic {
 
 /// 类型标签（文案与旧壳 zh-CN 词表一致）：借贷是 transfer 的派生视角——方向由
 /// 两端账户类型派生（[`derive_lending_direction`]，旧壳 `kindLabel` 同一判定单
-/// 点），借出/收回/借入/还款专属文案；普通转账恒「转账」；非 transfer kind 按
-/// 自身 kind 标签。
+/// 点），借出/收回/借入/还款专属文案与借贷表单方向标签（[`lending_word`]）
+/// 同词表单点；普通转账恒「转账」；非 transfer kind 按自身 kind 标签。
 pub fn kind_label(kind: TransactionKind, lending: LendingDirection) -> &'static str {
     if kind == TransactionKind::Transfer {
         return match lending {
-            LendingDirection::Lend => "借出",
-            LendingDirection::Collect => "收回",
-            LendingDirection::Borrow => "借入",
-            LendingDirection::Repay => "还款",
+            LendingDirection::Lend => lending_word(LendingFormDirection::Lend),
+            LendingDirection::Collect => lending_word(LendingFormDirection::Collect),
+            LendingDirection::Borrow => lending_word(LendingFormDirection::Borrow),
+            LendingDirection::Repay => lending_word(LendingFormDirection::Repay),
             LendingDirection::None => "转账",
         };
     }
@@ -1114,6 +1114,325 @@ pub fn assemble_basic_transaction(
         },
         policy_id: submit.policy_id,
         refund_of_transaction_id: None,
+        note: (!submit.note.trim().is_empty()).then(|| submit.note.clone()),
+        source_order_no: submit.source_order_no,
+        date: submit.date.to_string(),
+        instrument_id: None,
+        quantity: None,
+        price_cents: None,
+        fee_cents: None,
+        to_instrument_id: None,
+        to_quantity: None,
+        out_amount_cents: None,
+        in_amount_cents: None,
+        origin: None,
+        fx_rate: None,
+        idempotency_key: None,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// 转账 / 借贷 / 退款表单装配器（#2035；旧壳 transaction-input.ts
+// buildTransferInput / buildRefundInput 与 useLendingForm 的重生）：表单②三
+// 形态的表单状态 → 完整 TransactionInput 的装配接缝。纪律同基础收支装配器：
+// 同步纯函数、校验 fail fast 显式报错、金额换算与日期转换在此收口；per-kind
+// 矩阵落位（转账双账户 / 退款原交易引用）。借贷是 transfer 的派生视角
+// （ADR-0053），提交产物与转账同构，仅方向状态与账户侧别过滤不同。
+// ---------------------------------------------------------------------------
+
+/// 借贷表单方向闭集（表单状态；普通转账 none 只在方向派生
+/// [`LendingDirection`] 时出现，不是表单状态——旧壳 LendingFormDirection 同
+/// 闭集）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LendingFormDirection {
+    /// 借出（资金 → 应收）。
+    Lend,
+    /// 收回（应收 → 资金）。
+    Collect,
+    /// 借入（负债 → 资金）。
+    Borrow,
+    /// 还款（资金 → 负债）。
+    Repay,
+}
+
+/// 借贷方向 zh-CN 词（旧壳 transactions.lending 词表单点）：表单方向切换钮、
+/// 提交钮「记{dir}」与列表类型标签（[`kind_label`] 借贷分支）同词表，多处
+/// 消费不重复书写。
+fn lending_word(direction: LendingFormDirection) -> &'static str {
+    match direction {
+        LendingFormDirection::Lend => "借出",
+        LendingFormDirection::Collect => "收回",
+        LendingFormDirection::Borrow => "借入",
+        LendingFormDirection::Repay => "还款",
+    }
+}
+
+/// 借贷表单方向标签（方向切换钮与提交钮「记{dir}」的文案源）。
+pub fn lending_direction_label(direction: LendingFormDirection) -> &'static str {
+    lending_word(direction)
+}
+
+/// 账户在借贷语境下的侧别（表单账户选择器过滤闭集，旧壳 LendingAccountSide
+/// 同形）：资金账户 / 借出款（receivable）/ 负债（debt）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LendingAccountSide {
+    /// 资金账户（cash/bank/credit/ewallet/investment/other）。
+    Fund,
+    /// 借出款（receivable）。
+    Receivable,
+    /// 负债（debt）。
+    Debt,
+}
+
+/// 各方向允许的（转出侧，转入侧）账户侧别——借贷表单账户选择器过滤的唯一
+/// 依据，与方向派生 [`derive_lending_direction`] 同源共表（「过滤哪侧账户」
+/// 与「识别什么方向」永不漂移，旧壳 LENDING_DIRECTION_SIDES 同表）：借出/收回
+/// 是「资金账户 ↔ 借出款」，借入/还款是「负债 ↔ 资金账户」。
+pub fn lending_direction_sides(
+    direction: LendingFormDirection,
+) -> (LendingAccountSide, LendingAccountSide) {
+    match direction {
+        LendingFormDirection::Lend => (LendingAccountSide::Fund, LendingAccountSide::Receivable),
+        LendingFormDirection::Collect => (LendingAccountSide::Receivable, LendingAccountSide::Fund),
+        LendingFormDirection::Borrow => (LendingAccountSide::Debt, LendingAccountSide::Fund),
+        LendingFormDirection::Repay => (LendingAccountSide::Fund, LendingAccountSide::Debt),
+    }
+}
+
+/// 账户类型是否属于某侧别：receivable/debt 之外的资金类归资金侧；**账户类型
+/// 缺失（黑洞占位/已删/不可查）不命中任何侧**（旧壳 accountMatchesSide 同
+/// 语义——表单过滤比方向派生严格：缺失账户不进新选择；方向派生的缺失归一
+/// 另见私有 [`lending_side`]）。
+pub fn account_matches_side(kind: Option<AccountType>, side: LendingAccountSide) -> bool {
+    match kind {
+        Some(AccountType::Receivable) => side == LendingAccountSide::Receivable,
+        Some(AccountType::Debt) => side == LendingAccountSide::Debt,
+        Some(_) => side == LendingAccountSide::Fund,
+        None => false,
+    }
+}
+
+/// 方向切换的已选账户处置（旧壳 useLendingForm.setDirection 决策半边的纯
+/// 函数形态）：反向方向的既有两端贴合新方向 → 交换两端（借出 ↔ 收回 /
+/// 借入 ↔ 还款，不丢已选账户）；其余情况保留仍属允许侧别的选择、清掉越侧
+/// 的（账户类型缺失不命中任何侧 → 清除），不存在中间态残留。`type_of` 是
+/// 账户 id → 类型解析器（调用方从账户行集注入）。
+pub fn lending_direction_swap(
+    current: LendingFormDirection,
+    next: LendingFormDirection,
+    from_id: Option<&str>,
+    to_id: Option<&str>,
+    type_of: impl Fn(&str) -> Option<AccountType>,
+) -> (Option<String>, Option<String>) {
+    let (owned_from, owned_to) = (from_id.map(str::to_owned), to_id.map(str::to_owned));
+    if current == next {
+        return (owned_from, owned_to);
+    }
+    let (from_side, to_side) = lending_direction_sides(next);
+    let fits = |id: Option<&str>, side: LendingAccountSide| {
+        id.is_some_and(|id| account_matches_side(type_of(id), side))
+    };
+    if fits(to_id, from_side) && fits(from_id, to_side) {
+        // 反向方向贴合：交换两端。
+        return (owned_to, owned_from);
+    }
+    let keep_from = fits(from_id, from_side);
+    let keep_to = fits(to_id, to_side);
+    (
+        keep_from.then(|| owned_from.unwrap_or_default()),
+        keep_to.then(|| owned_to.unwrap_or_default()),
+    )
+}
+
+/// 转账 / 借贷表单提交状态（提交时点的业务字段；日期已是本地日历日）。
+/// 借贷变体的提交产物与转账同构（kind=transfer + 双账户），仅商户输入面
+/// 不同（普通转账表单无输入位，编辑原样携带——ADR-0092 决策 5）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct TransferFormSubmit {
+    /// 金额原始文本（判定族消费的原样输入；换算在装配器内收口）。
+    pub amount_text: String,
+    /// 转出账户（必选）。
+    pub account_id: Option<String>,
+    /// 转入账户（必选；域 Writer 守卫要求两端账户币种一致且等于交易币种）。
+    pub to_account_id: Option<String>,
+    /// 商户语义（见 [`MerchantRef`]）：借贷变体可关联商户（ADR-0092）；普通
+    /// 转账编辑原样携带（Keep），创建恒 None。
+    pub merchant: MerchantRef,
+    /// 备注（空串落 None）。
+    pub note: String,
+    /// 交易日期（本地日历日语义）。
+    pub date: chrono::NaiveDate,
+    /// 来源订单号（表单无输入位：创建 None，编辑透传行上原值）。
+    pub source_order_no: Option<String>,
+}
+
+/// 转账表单校验错误（壳层呈现词表的载体；错误条位呈现，旧壳 toast 同位）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransferFormError {
+    /// 转出账户未选（旧壳 transactions.form.warnSelectFromAccount 词表）。
+    FromAccountRequired,
+    /// 转入账户未选（旧壳 transactions.form.warnSelectToAccount 词表）。
+    ToAccountRequired,
+    /// 两端同账户（旧壳 transactions.form.warnSameAccount 词表）。
+    SameAccount,
+    /// 金额非正数（旧壳 transactions.form.warnAmount 词表；业务类校验保留
+    /// 提交通道文案，ADR-0058）。
+    AmountNotPositive,
+    /// 金额换算失败（判定放行、换算拒绝的兑底位；正常流不可达）。
+    AmountInvalid,
+}
+
+impl TransferFormError {
+    /// 错误条位文案（zh-CN 词表）。
+    pub fn as_text(self) -> &'static str {
+        match self {
+            Self::FromAccountRequired => "请选择转出账户",
+            Self::ToAccountRequired => "请选择转入账户",
+            Self::SameAccount => "转出账户和转入账户不能相同",
+            Self::AmountNotPositive => "请输入金额",
+            Self::AmountInvalid => "金额无效，请输入不超过两位小数的金额",
+        }
+    }
+}
+
+/// 转账 / 借贷表单状态 → 完整 TransactionInput（旧壳 buildTransferInput 同名
+/// 接缝）：校验 fail fast（序镜像旧壳 submit：转出 → 转入 → 同账户 → 金额）
+/// → 金额换算 → per-kind 矩阵落位。`currency_code` 由调用方随转出账户推导
+/// 传入（记账币种 = 转出账户币种，ADR-0134 决策 5；两端一致的守卫归域
+/// Writer，壳层候选面过滤是第一道防线）。
+pub fn assemble_transfer_transaction(
+    submit: TransferFormSubmit,
+    currency_code: String,
+) -> Result<ledger_transaction::TransactionInput, TransferFormError> {
+    let Some(account_id) = submit.account_id.filter(|id| !id.trim().is_empty()) else {
+        return Err(TransferFormError::FromAccountRequired);
+    };
+    let Some(to_account_id) = submit.to_account_id.filter(|id| !id.trim().is_empty()) else {
+        return Err(TransferFormError::ToAccountRequired);
+    };
+    if account_id == to_account_id {
+        return Err(TransferFormError::SameAccount);
+    }
+    let Some(amount_cents) = amount_text_to_cents(&submit.amount_text) else {
+        return Err(TransferFormError::AmountInvalid);
+    };
+    if amount_cents <= 0 {
+        return Err(TransferFormError::AmountNotPositive);
+    }
+    Ok(ledger_transaction::TransactionInput {
+        kind: TransactionKind::Transfer,
+        amount_cents,
+        currency_code,
+        account_id: Some(account_id),
+        to_account_id: Some(to_account_id),
+        funding_account_id: None,
+        funding: Vec::new(),
+        purchases: Vec::new(),
+        category_id: None,
+        merchant_id: match &submit.merchant {
+            MerchantRef::None | MerchantRef::NewName(_) => None,
+            MerchantRef::Keep(id) | MerchantRef::Selected(id) => Some(id.clone()),
+        },
+        merchant_name: match &submit.merchant {
+            MerchantRef::NewName(name) => Some(name.clone()),
+            _ => None,
+        },
+        policy_id: None,
+        refund_of_transaction_id: None,
+        note: (!submit.note.trim().is_empty()).then(|| submit.note.clone()),
+        source_order_no: submit.source_order_no,
+        date: submit.date.to_string(),
+        instrument_id: None,
+        quantity: None,
+        price_cents: None,
+        fee_cents: None,
+        to_instrument_id: None,
+        to_quantity: None,
+        out_amount_cents: None,
+        in_amount_cents: None,
+        origin: None,
+        fx_rate: None,
+        idempotency_key: None,
+    })
+}
+
+/// 退款表单提交状态（提交时点的业务字段；日期已是本地日历日）。原交易引用
+/// 与金额钳制语义（继承原支出账户/币种/分类/商户）以核心交易域为唯一真源
+/// （writer::normalize），装配层只消费表单状态、不另立第二份继承。
+#[derive(Debug, Clone, PartialEq)]
+pub struct RefundFormSubmit {
+    /// 退款金额原始文本（缺省回填原交易金额——「金额钳制」的入口形态：初始
+    /// 值随原交易，可改；域不做超额钳制，壳层不另立）。
+    pub amount_text: String,
+    /// 原支出交易引用（必选；fixed-target 入口随行固定，编辑面透传行上原值
+    /// ——关联语义不可被编辑破坏）。
+    pub refund_of_transaction_id: Option<String>,
+    /// 原支出账户（表单随目标带出；域再继承，调用方传什么校验什么）。
+    pub account_id: Option<String>,
+    /// 备注（空串落 None）。
+    pub note: String,
+    /// 退款日期（本地日历日语义）。
+    pub date: chrono::NaiveDate,
+    /// 来源订单号（表单无输入位：创建 None，编辑透传行上原值）。
+    pub source_order_no: Option<String>,
+}
+
+/// 退款表单校验错误（壳层呈现词表的载体）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RefundFormError {
+    /// 原支出交易未定（旧壳 transactions.refund.warnNoTarget 词表）。
+    TargetRequired,
+    /// 退款金额非正数（旧壳 transactions.refund.warnNoAmount 词表）。
+    AmountNotPositive,
+    /// 金额换算失败（判定放行、换算拒绝的兑底位；正常流不可达）。
+    AmountInvalid,
+}
+
+impl RefundFormError {
+    /// 错误条位文案（zh-CN 词表）。
+    pub fn as_text(self) -> &'static str {
+        match self {
+            Self::TargetRequired => "请选择要退款的原始支出交易",
+            Self::AmountNotPositive => "请输入退款金额",
+            Self::AmountInvalid => "金额无效，请输入不超过两位小数的金额",
+        }
+    }
+}
+
+/// 退款表单状态 → 完整 TransactionInput（旧壳 buildRefundInput 同名接缝）：
+/// 校验 fail fast（目标先于金额，旧壳 submit 守卫序同形）→ 金额换算 →
+/// per-kind 矩阵落位（分类/商户/保单全部继承原支出，表单不携带——域
+/// writer::normalize 忽略调用方填值；不挂保单是准入集拒绝，ADR-0051 决策 4）。
+pub fn assemble_refund_transaction(
+    submit: RefundFormSubmit,
+    currency_code: String,
+) -> Result<ledger_transaction::TransactionInput, RefundFormError> {
+    let Some(refund_of_transaction_id) = submit
+        .refund_of_transaction_id
+        .filter(|id| !id.trim().is_empty())
+    else {
+        return Err(RefundFormError::TargetRequired);
+    };
+    let Some(amount_cents) = amount_text_to_cents(&submit.amount_text) else {
+        return Err(RefundFormError::AmountInvalid);
+    };
+    if amount_cents <= 0 {
+        return Err(RefundFormError::AmountNotPositive);
+    }
+    Ok(ledger_transaction::TransactionInput {
+        kind: TransactionKind::Refund,
+        amount_cents,
+        currency_code,
+        account_id: submit.account_id.filter(|id| !id.trim().is_empty()),
+        to_account_id: None,
+        funding_account_id: None,
+        funding: Vec::new(),
+        purchases: Vec::new(),
+        category_id: None,
+        merchant_id: None,
+        merchant_name: None,
+        policy_id: None,
+        refund_of_transaction_id: Some(refund_of_transaction_id),
         note: (!submit.note.trim().is_empty()).then(|| submit.note.clone()),
         source_order_no: submit.source_order_no,
         date: submit.date.to_string(),
@@ -2504,6 +2823,338 @@ mod tests {
             BasicFormError::AmountInvalid.as_text(),
             "金额无效，请输入不超过两位小数的金额",
             "码化面归视图词表：换算拒绝时给可纠正文案"
+        );
+    }
+
+    // -------------------------------------------------------------------
+    // 转账 / 借贷表单装配器（#2035）
+    // -------------------------------------------------------------------
+
+    fn transfer_submit() -> TransferFormSubmit {
+        TransferFormSubmit {
+            amount_text: "3000".to_owned(),
+            account_id: Some("a-cash".to_owned()),
+            to_account_id: Some("a-bank".to_owned()),
+            merchant: MerchantRef::None,
+            note: String::new(),
+            date: chrono::NaiveDate::from_ymd_opt(2026, 3, 1).unwrap(),
+            source_order_no: None,
+        }
+    }
+
+    #[test]
+    fn transfer_assembler_builds_dual_account_wire() {
+        let input = assemble_transfer_transaction(transfer_submit(), "CNY".to_owned()).unwrap();
+        assert_eq!(input.kind, TransactionKind::Transfer);
+        assert_eq!(input.amount_cents, 300_000, "元转分收口（整数分落库）");
+        assert_eq!(input.account_id.as_deref(), Some("a-cash"), "转出侧落位");
+        assert_eq!(input.to_account_id.as_deref(), Some("a-bank"), "转入侧落位");
+        assert_eq!(input.category_id, None, "转账不携带分类（编排入口拒绝）");
+        assert_eq!(input.policy_id, None, "转账不挂保单");
+        assert_eq!(input.refund_of_transaction_id, None);
+        assert!(input.funding.is_empty() && input.purchases.is_empty());
+        assert_eq!(input.date, "2026-03-01", "本地日历日 → ISO 文本");
+        assert_eq!(input.note, None, "空备注落 None");
+    }
+
+    #[test]
+    fn transfer_assembler_carries_merchant_and_note_and_order_no() {
+        let mut s = transfer_submit();
+        s.merchant = MerchantRef::Selected("m1".to_owned());
+        s.note = "过桥".to_owned();
+        s.source_order_no = Some("JD-1".to_owned());
+        let input = assemble_transfer_transaction(s, "CNY".to_owned()).unwrap();
+        assert_eq!(input.merchant_id.as_deref(), Some("m1"));
+        assert_eq!(input.merchant_name, None);
+        assert_eq!(input.note.as_deref(), Some("过桥"));
+        assert_eq!(input.source_order_no.as_deref(), Some("JD-1"));
+
+        // 借贷变体自由文本即建：merchant_name 落 wire（域内单点解析）。
+        let mut s = transfer_submit();
+        s.merchant = MerchantRef::NewName("张三".to_owned());
+        let input = assemble_transfer_transaction(s, "CNY".to_owned()).unwrap();
+        assert_eq!(input.merchant_id, None);
+        assert_eq!(input.merchant_name.as_deref(), Some("张三"));
+    }
+
+    #[test]
+    fn transfer_assembler_fails_fast_in_old_shell_guard_order() {
+        // 校验序镜像旧壳 submit：转出 → 转入 → 同账户 → 金额换算 → 非正。
+        let mut s = transfer_submit();
+        s.account_id = None;
+        assert_eq!(
+            assemble_transfer_transaction(s, "CNY".to_owned()).map(|_| ()),
+            Err(TransferFormError::FromAccountRequired),
+            "转出账户缺失先于一切金额校验"
+        );
+        let mut s = transfer_submit();
+        s.to_account_id = None;
+        assert_eq!(
+            assemble_transfer_transaction(s, "CNY".to_owned()).map(|_| ()),
+            Err(TransferFormError::ToAccountRequired)
+        );
+        let mut s = transfer_submit();
+        s.to_account_id = s.account_id.clone();
+        assert_eq!(
+            assemble_transfer_transaction(s, "CNY".to_owned()).map(|_| ()),
+            Err(TransferFormError::SameAccount)
+        );
+        let mut s = transfer_submit();
+        s.amount_text = "abc".to_owned();
+        assert_eq!(
+            assemble_transfer_transaction(s, "CNY".to_owned()).map(|_| ()),
+            Err(TransferFormError::AmountInvalid)
+        );
+        for bad in ["0", "-3"] {
+            let mut s = transfer_submit();
+            s.amount_text = bad.to_owned();
+            assert_eq!(
+                assemble_transfer_transaction(s, "CNY".to_owned()).map(|_| ()),
+                Err(TransferFormError::AmountNotPositive),
+                "纯零/负数保留提交通道文案（ADR-0058 业务不成立不属字段错误态）"
+            );
+        }
+    }
+
+    #[test]
+    fn transfer_error_texts_are_the_zh_cn_vocabulary() {
+        assert_eq!(
+            TransferFormError::FromAccountRequired.as_text(),
+            "请选择转出账户"
+        );
+        assert_eq!(
+            TransferFormError::ToAccountRequired.as_text(),
+            "请选择转入账户"
+        );
+        assert_eq!(
+            TransferFormError::SameAccount.as_text(),
+            "转出账户和转入账户不能相同"
+        );
+        assert_eq!(TransferFormError::AmountNotPositive.as_text(), "请输入金额");
+        assert_eq!(
+            TransferFormError::AmountInvalid.as_text(),
+            "金额无效，请输入不超过两位小数的金额"
+        );
+    }
+
+    // -------------------------------------------------------------------
+    // 退款表单装配器（#2035）
+    // -------------------------------------------------------------------
+
+    fn refund_submit() -> RefundFormSubmit {
+        RefundFormSubmit {
+            amount_text: "25".to_owned(),
+            refund_of_transaction_id: Some("t-orig".to_owned()),
+            account_id: Some("a-cash".to_owned()),
+            note: String::new(),
+            date: chrono::NaiveDate::from_ymd_opt(2026, 4, 5).unwrap(),
+            source_order_no: None,
+        }
+    }
+
+    #[test]
+    fn refund_assembler_builds_linked_refund_wire() {
+        let input = assemble_refund_transaction(refund_submit(), "CNY".to_owned()).unwrap();
+        assert_eq!(input.kind, TransactionKind::Refund);
+        assert_eq!(input.amount_cents, 2_500);
+        assert_eq!(
+            input.refund_of_transaction_id.as_deref(),
+            Some("t-orig"),
+            "原支出引用落 wire（继承与钳制语义以域为唯一真源）"
+        );
+        assert_eq!(
+            input.account_id.as_deref(),
+            Some("a-cash"),
+            "原支出账户随行带出"
+        );
+        assert_eq!(
+            input.category_id, None,
+            "分类/商户/保单全部继承原支出，表单不携带"
+        );
+        assert_eq!(input.merchant_id, None);
+        assert_eq!(input.merchant_name, None);
+        assert_eq!(input.policy_id, None, "退款不挂保单（ADR-0051 决策 4）");
+        assert!(input.funding.is_empty() && input.purchases.is_empty());
+        assert_eq!(input.date, "2026-04-05");
+    }
+
+    #[test]
+    fn refund_assembler_requires_target_and_positive_amount() {
+        let mut s = refund_submit();
+        s.refund_of_transaction_id = None;
+        assert_eq!(
+            assemble_refund_transaction(s, "CNY".to_owned()).map(|_| ()),
+            Err(RefundFormError::TargetRequired),
+            "目标缺失先于金额校验（旧壳 submit 守卫序同形）"
+        );
+        let mut s = refund_submit();
+        s.amount_text = "-1".to_owned();
+        assert_eq!(
+            assemble_refund_transaction(s, "CNY".to_owned()).map(|_| ()),
+            Err(RefundFormError::AmountNotPositive)
+        );
+        let mut s = refund_submit();
+        s.amount_text = "1.2.3".to_owned();
+        assert_eq!(
+            assemble_refund_transaction(s, "CNY".to_owned()).map(|_| ()),
+            Err(RefundFormError::AmountInvalid)
+        );
+    }
+
+    #[test]
+    fn refund_error_texts_are_the_zh_cn_vocabulary() {
+        assert_eq!(
+            RefundFormError::TargetRequired.as_text(),
+            "请选择要退款的原始支出交易"
+        );
+        assert_eq!(
+            RefundFormError::AmountNotPositive.as_text(),
+            "请输入退款金额"
+        );
+        assert_eq!(
+            RefundFormError::AmountInvalid.as_text(),
+            "金额无效，请输入不超过两位小数的金额"
+        );
+    }
+
+    // -------------------------------------------------------------------
+    // 借贷方向族（#2035）：侧别表 / 标签 / 方向切换处置——与方向派生
+    // [`derive_lending_direction`] 同源共表。
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn lending_direction_sides_follow_the_domain_table() {
+        assert_eq!(
+            lending_direction_sides(LendingFormDirection::Lend),
+            (LendingAccountSide::Fund, LendingAccountSide::Receivable)
+        );
+        assert_eq!(
+            lending_direction_sides(LendingFormDirection::Collect),
+            (LendingAccountSide::Receivable, LendingAccountSide::Fund)
+        );
+        assert_eq!(
+            lending_direction_sides(LendingFormDirection::Borrow),
+            (LendingAccountSide::Debt, LendingAccountSide::Fund)
+        );
+        assert_eq!(
+            lending_direction_sides(LendingFormDirection::Repay),
+            (LendingAccountSide::Fund, LendingAccountSide::Debt)
+        );
+    }
+
+    #[test]
+    fn account_matches_side_excludes_unknown_types() {
+        assert!(account_matches_side(
+            Some(AccountType::Cash),
+            LendingAccountSide::Fund
+        ));
+        assert!(account_matches_side(
+            Some(AccountType::Bank),
+            LendingAccountSide::Fund
+        ));
+        assert!(account_matches_side(
+            Some(AccountType::Receivable),
+            LendingAccountSide::Receivable
+        ));
+        assert!(account_matches_side(
+            Some(AccountType::Debt),
+            LendingAccountSide::Debt
+        ));
+        assert!(!account_matches_side(
+            Some(AccountType::Cash),
+            LendingAccountSide::Receivable
+        ));
+        assert!(!account_matches_side(
+            Some(AccountType::Credit),
+            LendingAccountSide::Debt
+        ));
+        // 账户类型缺失（黑洞/已删占位）不命中任何侧（旧壳 accountMatchesSide 同语义）。
+        assert!(!account_matches_side(None, LendingAccountSide::Fund));
+        assert!(!account_matches_side(None, LendingAccountSide::Receivable));
+    }
+
+    #[test]
+    fn lending_direction_labels_share_one_vocabulary_with_kind_label() {
+        for (direction, lending) in [
+            (LendingFormDirection::Lend, LendingDirection::Lend),
+            (LendingFormDirection::Collect, LendingDirection::Collect),
+            (LendingFormDirection::Borrow, LendingDirection::Borrow),
+            (LendingFormDirection::Repay, LendingDirection::Repay),
+        ] {
+            assert_eq!(
+                lending_direction_label(direction),
+                kind_label(TransactionKind::Transfer, lending),
+                "表单方向标签与列表类型标签同词表：{}",
+                lending_direction_label(direction)
+            );
+        }
+    }
+
+    #[test]
+    fn direction_switch_swaps_reverse_pair_and_clears_out_of_side() {
+        let types = |id: &str| match id {
+            "cash" => Some(AccountType::Cash),
+            "recv" => Some(AccountType::Receivable),
+            "debt" => Some(AccountType::Debt),
+            _ => None,
+        };
+        // 反向方向（借出 ↔ 收回）：两端贴合新方向 → 交换两端，不丢已选账户
+        // （旧壳 setDirection 同语义）。
+        assert_eq!(
+            lending_direction_swap(
+                LendingFormDirection::Lend,
+                LendingFormDirection::Collect,
+                Some("cash"),
+                Some("recv"),
+                types,
+            ),
+            (Some("recv".to_owned()), Some("cash".to_owned())),
+        );
+        // 其余情况：保留仍属允许侧别的选择、清掉越侧的。
+        assert_eq!(
+            lending_direction_swap(
+                LendingFormDirection::Lend,
+                LendingFormDirection::Repay,
+                Some("cash"),
+                Some("recv"),
+                types,
+            ),
+            (Some("cash".to_owned()), None),
+            "转出侧贴合新方向保留，转入侧越侧清除"
+        );
+        assert_eq!(
+            lending_direction_swap(
+                LendingFormDirection::Lend,
+                LendingFormDirection::Borrow,
+                Some("cash"),
+                Some("recv"),
+                types,
+            ),
+            (None, None),
+            "两端都越侧 → 双清"
+        );
+        // 账户类型缺失不命中任何侧 → 清除（防御：不残留越侧选择；缺失账户
+        // 永不贴合反向侧，不会触发交换）。
+        assert_eq!(
+            lending_direction_swap(
+                LendingFormDirection::Lend,
+                LendingFormDirection::Repay,
+                Some("cash"),
+                Some("ghost"),
+                types,
+            ),
+            (Some("cash".to_owned()), None),
+        );
+        // 同向切换是调用方守卫的 no-op（原样返回，不重置已选）。
+        assert_eq!(
+            lending_direction_swap(
+                LendingFormDirection::Lend,
+                LendingFormDirection::Lend,
+                Some("cash"),
+                Some("recv"),
+                types,
+            ),
+            (Some("cash".to_owned()), Some("recv".to_owned())),
         );
     }
 }

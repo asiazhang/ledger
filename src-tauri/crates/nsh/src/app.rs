@@ -869,26 +869,49 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
                     ),
                 )
                 .child(
-                    view().flex_col().gap_1().children(
-                        [
-                            (ledger_transaction::TransactionKind::Expense, "记支出"),
-                            (ledger_transaction::TransactionKind::Income, "记收入"),
-                        ]
-                        .map(|(kind, label)| {
-                            button()
-                                .app_class(
-                                    "w-full px-2 py-1 rounded-md text-left text-foreground hover:bg-accent",
-                                )
-                                .child(text(label).test_id(match kind {
-                                    ledger_transaction::TransactionKind::Expense => "tx-add-expense",
-                                    _ => "tx-add-income",
-                                }))
-                                .on_press(move |_: &()| {
-                                    add_menu_open.set(false);
-                                    form.open_create(kind);
-                                })
-                        }),
-                    ),
+                    // 类型菜单五项（#2035 表单②）：记支出/记收入/记转账 + 分隔线
+                    // + 借出/借入（借贷入口预置方向，表单内可切四向——旧壳
+                    // LENDING_CREATE_DIRECTIONS 闭集同形；退款不入菜单，入口由
+                    // 交易条目右键菜单承接，旧壳同口径）。
+                    view()
+                        .flex_col()
+                        .gap_1()
+                        .children(
+                            [
+                                (txn_form::CreateEntry::Expense, "记支出", "tx-add-expense"),
+                                (txn_form::CreateEntry::Income, "记收入", "tx-add-income"),
+                                (txn_form::CreateEntry::Transfer, "记转账", "tx-add-transfer"),
+                            ]
+                            .map(|(entry, label, anchor)| {
+                                button()
+                                    .app_class(
+                                        "w-full px-2 py-1 rounded-md text-left text-foreground hover:bg-accent",
+                                    )
+                                    .child(text(label).test_id(anchor))
+                                    .on_press(move |_: &()| {
+                                        add_menu_open.set(false);
+                                        form.open_create(entry);
+                                    })
+                            }),
+                        )
+                        .child(view().h(px(1.0)).w_full().app_class("bg-border"))
+                        .children(
+                            [
+                                (txn_form::CreateEntry::Lend, "借出", "tx-add-lend"),
+                                (txn_form::CreateEntry::Borrow, "借入", "tx-add-borrow"),
+                            ]
+                            .map(|(entry, label, anchor)| {
+                                button()
+                                    .app_class(
+                                        "w-full px-2 py-1 rounded-md text-left text-foreground hover:bg-accent",
+                                    )
+                                    .child(text(label).test_id(anchor))
+                                    .on_press(move |_: &()| {
+                                        add_menu_open.set(false);
+                                        form.open_create(entry);
+                                    })
+                            }),
+                        ),
                 ),
         );
 
@@ -963,17 +986,31 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
                             {
                                 let id = tx.id.clone();
                                 let mut items = Vec::new();
-                                // 编辑（#2034）：仅收入/支出行开放——表单①闭集；
-                                // 转账/退款随表单②、投资形态随表单③扩展。目标
-                                // 行随右键固定（fixed-target，旧壳同位）。
-                                if matches!(
-                                    tx.kind,
+                                // 编辑（#2034 基础收支，#2035 扩展开放面）：收入/
+                                // 支出/转账/退款行开放——转账行按两端账户类型派生
+                                // 借贷方向进借贷变体（旧壳 TransactionForm 分派同
+                                // 语义；退款行编辑随本票开放：链接透传保关联，旧壳
+                                // 仅删除的顾虑由透传解除）。带出资分解或购买项子行
+                                // 的行不开放——全字段替换会静默清空子行（旧壳
+                                // supportsRowEdit 同口径；退款行的分解是读侧派生不
+                                // 落库，无静默清空面）。目标行随右键固定。
+                                let has_stored_subrows =
+                                    !tx.fundings.is_empty() || !tx.purchases.is_empty();
+                                let editable = match tx.kind {
                                     ledger_transaction::TransactionKind::Income
-                                        | ledger_transaction::TransactionKind::Expense
-                                ) {
+                                    | ledger_transaction::TransactionKind::Expense
+                                    | ledger_transaction::TransactionKind::Transfer => {
+                                        !has_stored_subrows
+                                    }
+                                    ledger_transaction::TransactionKind::Refund => true,
+                                    _ => false,
+                                };
+                                if editable {
                                     let form = form;
                                     let currencies = form_currencies;
                                     let merchants = form_merchants;
+                                    let accounts = form_accounts;
+                                    let tx = tx.clone();
                                     items.push(MenuItem::new("编辑").on_select(move || {
                                         let label = merchants
                                             .get()
@@ -981,7 +1018,25 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
                                             .iter()
                                             .find(|m| Some(&m.id) == tx.merchant_id.as_ref())
                                             .map(|m| m.name.clone());
-                                        form.open_edit(&tx, &currencies.get(), label);
+                                        form.open_edit(
+                                            &tx,
+                                            &currencies.get(),
+                                            label,
+                                            &accounts.get().0,
+                                        );
+                                    }));
+                                }
+                                // 退款（#2035）：无分解支出行开放（分解行不开放——
+                                // 退款表单未支持分解，旧壳 #1861 口径；购买项行保留——
+                                // 退款新建独立行不触碰原行子行）。原交易随右键所在行
+                                // 固定（fixed-target，旧壳同位）。
+                                if tx.kind == ledger_transaction::TransactionKind::Expense
+                                    && tx.fundings.is_empty()
+                                {
+                                    let form = form;
+                                    let currencies = form_currencies;
+                                    items.push(MenuItem::new("退款").on_select(move || {
+                                        form.open_create_refund(&tx, &currencies.get());
                                     }));
                                 }
                                 let confirm = confirm_target;
@@ -1058,6 +1113,7 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
                     categories: form_categories,
                     merchants: form_merchants,
                     policies: form_policies,
+                    currencies: form_currencies,
                 },
                 view_owner,
             ),
