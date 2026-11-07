@@ -283,7 +283,21 @@ fn render_cell(rows_signal: Signal<Vec<RowCells>>) -> impl Fn(&DataTableCell) ->
             .get()
             .get(cell.row as usize)
             .map(|r| r.amount_semantic);
-        let label = text(cell.text.clone());
+        // 末端对齐列文本右对齐：表格对自绘格返回元素强制 `.flex_1()`（撑满
+        // 整格），格容器的 `justify_end`（列 align=End）随之失效——文本贴格
+        // 左沿，金额列读感为「列过宽」。文本对齐在自绘侧补齐（列头走组件
+        // 缺省路径，不受此影响）。
+        let align_end = assembly::COLUMNS
+            .iter()
+            .find(|def| cell.key == def.key)
+            .is_some_and(|def| def.align == ColumnAlign::End);
+        // 单行截断（对齐 nsh-base 默认格路径的单行约束，view.rs 默认分支
+        // `.number_of_lines(1)`；自绘格路径组件只补 flex/min_w，不自动加）：
+        // DataTable 固定行高虚拟滚动，长文本自动换行即溢出行框，叠到相邻行
+        // 难以阅读（首屏实测：来源列派生文本与下一行重叠）。截断语义随组件
+        // 缺省：单行、末端省略号。
+        let label = text(cell.text.clone()).number_of_lines(1);
+        let label = if align_end { label.text_right() } else { label };
         match semantic {
             Some(semantic) if cell.key == "amount" => label.text_color(amount_color(semantic)),
             _ => label,
@@ -309,14 +323,34 @@ fn table_columns() -> Vec<DataTableColumn> {
         .collect()
 }
 
+/// 弹性列宽分配：列组件无弹性列机制（列宽恒取建议值，总宽不足行宽时右侧
+/// 留空——首屏实测金额列右侧约 1/3 空黑，读感「金额列过宽」），在应用侧
+/// 分配：富余宽度全给备注列（旧壳备注列即弹性列，[`assembly::COLUMNS`]
+/// 注释同口径），其余列按装配建议宽度。`width` 是表格可用宽（pt，取窗口
+/// 内容宽）；窄于建议总宽时全列取建议值（横向滚动语义不变）。
+fn elastic_columns(width: f32) -> Vec<DataTableColumn> {
+    let mut columns = table_columns();
+    let suggested: f32 = assembly::COLUMNS.iter().map(|def| def.width).sum();
+    let extra = (width - suggested).max(0.0);
+    if extra > 0.0
+        && let Some(note) = columns.iter_mut().find(|col| col.key == "note")
+        && let Some(w) = note.width
+    {
+        note.width = Some(Points(w.0 + extra));
+    }
+    columns
+}
+
 /// 表格部件主题（Tailwind 类取主题令牌，跟随系统深浅色）：文字色逐部件显式
 /// 带色（裸 text 默认前景黑，暗色桌面不可见——#2017 先例），行悬停与空态取
 /// 弱化面。
 fn table_classes() -> DataTableClasses {
     let mut classes = DataTableClasses::default();
     classes.root = Some("bg-background text-foreground".into());
-    classes.header_cell = Some("text-muted-foreground".into());
-    classes.cell = Some("text-foreground".into());
+    // 单元格水平留白（组件缺省零 padding，金额列值贴窗口右缘、日期列贴左
+    // 缘——首屏实测）：列头与格各 px-3，两侧呼吸感同源。
+    classes.header_cell = Some("text-muted-foreground px-3".into());
+    classes.cell = Some("text-foreground px-3".into());
     classes.row_hover = Some("bg-accent".into());
     classes.empty = Some("text-muted-foreground".into());
     classes
@@ -339,6 +373,10 @@ fn TransactionsView() -> impl IntoElement {
     let rows = signal(Vec::<RowCells>::new());
     let loading = signal(true);
     let error = signal(None::<String>);
+    // 响应式列集：表格可用宽取窗口内容宽（根布局无水平 padding，表格区横向
+    // 即窗口宽；ambient::window 随窗口缩放重算）——备注列吸收富余宽（弹性
+    // 列，旧壳同语义），其余列按装配建议宽度。
+    let columns = computed(move || elastic_columns(window().width.0));
     // 搜索态：输入文本（受控）、结果呈现态（旧壳 searched 语义——搜索结果落位
     // 后才切搜索态呈现，键入中底栏仍呈上一装载态）、防抖调度序号（新输入作废
     // 在途定时器）与装载序号（后发作废先发，与旧壳 Loadable invalidate 同义：
@@ -802,7 +840,7 @@ fn TransactionsView() -> impl IntoElement {
                 .flex_1()
                 .child(
                     data_table()
-                        .columns(table_columns())
+                        .columns(columns)
                         .data(move || rows_to_data(&rows.get()))
                         .render_cell(render_cell(rows))
                         // 行右键菜单（App* 封装族：上下文菜单，#2022）：目标行
