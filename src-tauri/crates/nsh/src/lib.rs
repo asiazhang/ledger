@@ -52,6 +52,11 @@
 //!   #2022 删后页码决策）；
 //! - [`period`]：时间维度行——期间游标/步进/预设/边界钳制的纯决策逻辑
 //!   （旧壳 time-period.ts 的重生，#2021 / ADR-0141）；
+//! - [`period_row`]：共用期间行（#2040 起自交易视图抽出）——步进器与期间
+//!   选择弹层的呈现与交互桥，交易列表与搜索视图共消费；
+//! - [`search`]：交易搜索视图（#2040）——关键词防抖自动搜索、期间快捷
+//!   筛选、金额区间、只读结果分页与占位/无命中两态空态；延迟出场加载指示
+//!   整流（#2010 收尾件语义）住本模块；
 //! - [`overlay`]：Overlay Suppression 注册表——弹层开合显式上报、快捷键
 //!   派发前的共用闸门（旧壳 ADR-0035 语义的原生壳重建，#2021；#2022 上下文
 //!   菜单与危险确认对话框消费）；
@@ -116,9 +121,11 @@ pub mod nav;
 pub mod nav_model;
 pub mod overlay;
 pub mod period;
+pub mod period_row;
 pub mod pinyin_select;
 pub mod popconfirm;
 pub mod popover;
+pub mod search;
 pub mod select;
 pub mod sidebar;
 pub mod signals;

@@ -906,6 +906,81 @@ pub fn list_empty_text(searched: bool, filters_active: bool) -> &'static str {
     }
 }
 
+// ---------------------------------------------------------------------------
+// 搜索视图装配家族（#2040）：查询判定 / 筛选激活判定 / 已应用筛选描述拼接 /
+// 空态文案分型（旧壳 SearchView 同名 computed 的纯函数化，离线单测对口；
+// 金额口径沿换算家族单点 [`amount_text_to_cents`]，展示格式沿缺省币种格式
+// ——预算视图先例同口径，见 [`crate::search`] 模块注）。
+// ---------------------------------------------------------------------------
+
+/// 查询具备判定（旧壳搜索页 hasQuery 同口径）：关键词非空或任一筛选在场
+/// ——仅筛选也可出结果（无关键字仅筛选查询）。纯函数。
+pub fn search_has_query(
+    keyword: &str,
+    amount_min_cents: Option<i64>,
+    amount_max_cents: Option<i64>,
+    date_from: Option<&str>,
+    date_to: Option<&str>,
+) -> bool {
+    !keyword.trim().is_empty()
+        || search_filters_active(amount_min_cents, amount_max_cents, date_from, date_to)
+}
+
+/// 筛选激活判定（旧壳搜索页 filtersActive 同口径：金额任一端或期间任一端
+/// 在场；关键词不算筛选——清除按钮只清筛选不清关键词）。纯函数。
+pub fn search_filters_active(
+    amount_min_cents: Option<i64>,
+    amount_max_cents: Option<i64>,
+    date_from: Option<&str>,
+    date_to: Option<&str>,
+) -> bool {
+    amount_min_cents.is_some()
+        || amount_max_cents.is_some()
+        || date_from.is_some()
+        || date_to.is_some()
+}
+
+/// 已应用筛选描述拼接（旧壳 activeFilterDescriptions 同词表同序：金额双端
+/// 「金额 x ~ y」→ 金额单端「最低/最高 x」→ 期间「起始/结束 d」；金额以
+/// 缺省币种格式展示，分隔符「、」）。纯函数，装配层单测对口。
+pub fn search_filter_descriptions(
+    amount_min_cents: Option<i64>,
+    amount_max_cents: Option<i64>,
+    date_from: Option<&str>,
+    date_to: Option<&str>,
+) -> Vec<String> {
+    let fmt = CurrencyFormat::default();
+    let mut parts = Vec::new();
+    match (amount_min_cents, amount_max_cents) {
+        (Some(min), Some(max)) => parts.push(format!(
+            "金额 {} ~ {}",
+            format_amount_basic(min, &fmt),
+            format_amount_basic(max, &fmt)
+        )),
+        (Some(min), None) => parts.push(format!("最低 {}", format_amount_basic(min, &fmt))),
+        (None, Some(max)) => parts.push(format!("最高 {}", format_amount_basic(max, &fmt))),
+        (None, None) => {}
+    }
+    if let Some(from) = date_from {
+        parts.push(format!("起始 {from}"));
+    }
+    if let Some(to) = date_to {
+        parts.push(format!("结束 {to}"));
+    }
+    parts
+}
+
+/// 搜索视图空态文案分型（旧壳搜索页两态同源同形）：未搜索「输入关键字或
+/// 设置筛选开始搜索」（search.emptyPlaceholder，占位与空结果的区分门）；
+/// 已搜索无命中「无匹配结果」（search.noResults）。纯函数。
+pub fn search_empty_text(searched: bool) -> &'static str {
+    if searched {
+        "无匹配结果"
+    } else {
+        "输入关键字或设置筛选开始搜索"
+    }
+}
+
 /// 元文本 → 整数分（旧壳 yuanToCents 同口径：十进制文本、四舍五入到分、拒绝
 /// 空白/非数/科学计数）。None = 解析失败（呈现面归调用方校验文案）。
 pub fn budget_yuan_to_cents(text: &str) -> Option<i64> {
@@ -3151,6 +3226,85 @@ mod tests {
             "列表态筛选无结果（旧壳 list.emptyFiltered）"
         );
         assert_eq!(list_empty_text(false, false), "暂无数据", "列表态空库");
+    }
+
+    // ---- 搜索视图装配家族（#2040，旧壳 SearchView 同名 computed 的纯函数
+    // 化）：查询判定 / 筛选激活 / 描述拼接 / 空态分型。 ----
+
+    #[test]
+    fn search_has_query_requires_keyword_or_any_filter() {
+        // 全空：无查询。
+        assert!(!search_has_query("", None, None, None, None));
+        assert!(
+            !search_has_query("   ", None, None, None, None),
+            "纯空白同空"
+        );
+        // 仅关键词。
+        assert!(search_has_query("火锅", None, None, None, None));
+        // 仅筛选（无关键字仅筛选查询，旧壳 hasQuery 同口径）。
+        assert!(search_has_query("", Some(10_000), None, None, None));
+        assert!(search_has_query("", None, Some(10_000), None, None));
+        assert!(search_has_query("", None, None, Some("2026-01-01"), None));
+        assert!(search_has_query("", None, None, None, Some("2026-01-31")));
+    }
+
+    #[test]
+    fn search_filters_active_excludes_keyword_and_page_ideas() {
+        assert!(!search_filters_active(None, None, None, None));
+        assert!(search_filters_active(Some(1), None, None, None));
+        assert!(search_filters_active(None, Some(1), None, None));
+        assert!(search_filters_active(None, None, Some("2026-01-01"), None));
+        assert!(search_filters_active(None, None, None, Some("2026-01-31")));
+    }
+
+    #[test]
+    fn search_filter_descriptions_follow_old_shell_wording_and_order() {
+        // 双端金额：区间形态（缺省币种格式：无币符、两位小数、zh 四位一组
+        // ——千位内不插分隔符）。
+        assert_eq!(
+            search_filter_descriptions(Some(100_000), Some(500_000), None, None),
+            vec!["金额 1000 ~ 5000"]
+        );
+        // 单端：最低/最高形态。
+        assert_eq!(
+            search_filter_descriptions(Some(100_000), None, None, None),
+            vec!["最低 1000"]
+        );
+        assert_eq!(
+            search_filter_descriptions(None, Some(50_500), None, None),
+            vec!["最高 505"]
+        );
+        // 期间：起始/结束两描述（QuickTimeRange 产出闭集为双端有界或双空，
+        // 单端在 UI 不可达但拼接面保留逐端描述——旧壳同口径）。
+        assert_eq!(
+            search_filter_descriptions(None, None, Some("2026-01-01"), Some("2026-01-31")),
+            vec!["起始 2026-01-01", "结束 2026-01-31"]
+        );
+        // 全量：金额在前、期间在后（旧壳 parts 拼接序）。
+        assert_eq!(
+            search_filter_descriptions(
+                Some(100_000),
+                Some(500_000),
+                Some("2026-01-01"),
+                Some("2026-01-31")
+            ),
+            vec!["金额 1000 ~ 5000", "起始 2026-01-01", "结束 2026-01-31"]
+        );
+        // 全空：无描述。
+        assert_eq!(
+            search_filter_descriptions(None, None, None, None),
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn search_empty_text_splits_placeholder_and_no_hits() {
+        assert_eq!(
+            search_empty_text(false),
+            "输入关键字或设置筛选开始搜索",
+            "未搜索占位（旧壳 search.emptyPlaceholder）"
+        );
+        assert_eq!(search_empty_text(true), "无匹配结果", "已搜索无命中");
     }
 
     #[test]

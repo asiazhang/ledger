@@ -37,7 +37,7 @@ use crate::boot;
 use crate::nav_model::ViewName;
 use crate::{
     backup_entry, context_menu, danger, dashboard, modal, multi_select, nav, nav_model, overlay,
-    period, pinyin_select, popconfirm, sidebar, signals, tx_filter, txn_form, views,
+    period_row, pinyin_select, popconfirm, search, sidebar, signals, tx_filter, txn_form, views,
 };
 
 /// 金额隐私模式开关的存储键（设备轻量设置项，与旧壳同键同值形态：旧壳
@@ -234,55 +234,21 @@ fn total_text(total: i64) -> String {
 
 /// 搜索态总数文案（与旧壳 zh-CN 词表同文案：search.hitCount；列表态仍用
 /// [`total_text`]——搜索语义变了，计数词随之换，与旧壳两词并存同形）。
-fn hit_total_text(total: i64) -> String {
+pub(crate) fn hit_total_text(total: i64) -> String {
     format!("命中 {total} 条")
 }
 
 /// 搜索输入防抖时长（毫秒）：与旧壳 `SEARCH_DEBOUNCE_MS`（issue #1402「搜索
 /// 输入防抖」跨域不变量）同值同语义——等待成功优于即刻失败（AGENTS.md 体验
-/// 取舍），快输入不逐键打库。
-const SEARCH_DEBOUNCE_MS: u64 = 300;
+/// 取舍），快输入不逐键打库。交易列表与搜索视图（#2040）同一时长单源。
+pub(crate) const SEARCH_DEBOUNCE_MS: u64 = 300;
 
 /// 搜索框占位文案（与旧壳 search.keywordPlaceholder 同文案）。
-const SEARCH_PLACEHOLDER: &str = "输入关键字开始搜索（备注、账户名、商户名，支持多关键字）";
-
-/// 「今天」（本地时区日历日，期间预设与边界抬升的相对点，与旧壳本地
-/// 日历同口径）。非响应式：跨期翻转随下次重算呈现（分钟级时钟不立桩）。
-fn today() -> chrono::NaiveDate {
-    chrono::Local::now().date_naive()
-}
-
-/// 期间标签文案（旧壳 quickTimeRange.periodLabel 同词表）：有游标呈期间，
-/// 无游标（「全部」）呈「选择期间」（弹层入口的召唤文案）。
-fn period_label_text(cursor: Option<crate::period::NaturalPeriod>) -> String {
-    cursor
-        .as_ref()
-        .map(period::format_period_label)
-        .unwrap_or_else(|| "选择期间".to_owned())
-}
-
-/// 芯片点亮判定（UI 侧适配：读快照区间 → 高亮派生）。
-fn match_preset_now(range: Option<period::PeriodRange>, preset: period::Preset) -> bool {
-    let (from, to) = match range {
-        Some(r) => (Some(r.from), Some(r.to)),
-        None => (None, None),
-    };
-    period::match_preset(from.as_deref(), to.as_deref(), today()) == Some(preset)
-}
-
-/// 芯片稳定锚点（headless 选择器用 id: 前缀，research doc §3.5）。
-fn preset_test_id(preset: period::Preset) -> &'static str {
-    match preset {
-        period::Preset::All => "period-chip-all",
-        period::Preset::Month => "period-chip-month",
-        period::Preset::Quarter => "period-chip-quarter",
-        period::Preset::Year => "period-chip-year",
-        period::Preset::LastYear => "period-chip-last-year",
-    }
-}
+pub(crate) const SEARCH_PLACEHOLDER: &str =
+    "输入关键字开始搜索（备注、账户名、商户名，支持多关键字）";
 
 /// 装配行集 → 宿主表格数据（按列装配，渲染期零格式化——格文本已是装配产物）。
-fn rows_to_data(rows: &[RowCells]) -> DataTableRows {
+pub(crate) fn rows_to_data(rows: &[RowCells]) -> DataTableRows {
     DataTableRows::new(rows.len())
         .texts("date", rows.iter().map(|r| r.date.as_str()))
         .texts("kind", rows.iter().map(|r| r.kind.as_str()))
@@ -296,8 +262,9 @@ fn rows_to_data(rows: &[RowCells]) -> DataTableRows {
 
 /// 自绘格（金额语义色，issue #2019）：金额列按行语义色型着色（旧壳金额列
 /// 着色口径），其余列平文——格文本仍取自数据（`cell.text`），本函数只补色。
-/// 掩码态照常着色（掩码隐藏数字，不隐藏方向，旧壳隐私保留项同口径）。
-fn render_cell(rows_signal: Signal<Vec<RowCells>>) -> impl Fn(&DataTableCell) -> Text {
+/// 掩码态照常着色（掩码隐藏数字，不隐藏方向，旧壳隐私保留项同口径）。交易
+/// 列表与搜索视图（#2040）共用。
+pub(crate) fn render_cell(rows_signal: Signal<Vec<RowCells>>) -> impl Fn(&DataTableCell) -> Text {
     move |cell: &DataTableCell| {
         let semantic = rows_signal
             .get()
@@ -349,7 +316,7 @@ fn table_columns() -> Vec<DataTableColumn> {
 /// 注释同口径），其余列按装配建议宽度。`width` 是表格可用宽（pt，取窗口
 /// 内容宽——导航骨架起扣侧栏宽）；窄于建议总宽时全列取建议值（横向滚动语义
 /// 不变）。
-fn elastic_columns(width: f32) -> Vec<DataTableColumn> {
+pub(crate) fn elastic_columns(width: f32) -> Vec<DataTableColumn> {
     let mut columns = table_columns();
     let suggested: f32 = assembly::COLUMNS.iter().map(|def| def.width).sum();
     let extra = (width - suggested).max(0.0);
@@ -364,8 +331,9 @@ fn elastic_columns(width: f32) -> Vec<DataTableColumn> {
 
 /// 表格部件主题（Tailwind 类取主题令牌，跟随系统深浅色）：文字色逐部件显式
 /// 带色（裸 text 默认前景黑，暗色桌面不可见——#2017 先例），行悬停与空态取
-/// 弱化面。
-fn table_classes() -> DataTableClasses {
+/// 弱化面。交易列表与搜索视图（#2040）共用同一套表格映射（列集 / 自绘格 /
+/// 弹性列宽 / 部件主题）。
+pub(crate) fn table_classes() -> DataTableClasses {
     let mut classes = DataTableClasses::default();
     classes.root = Some("bg-background text-foreground".into());
     // 单元格水平留白（组件缺省零 padding，金额列值贴窗口右缘、日期列贴左
@@ -438,12 +406,6 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
     // 为不钳制，旧壳 silent 同口径）；快照区间是唯一事实源，游标不落状态（步进
     // 前从当前区间反推，ADR-0141 决策 2）。
     let boundary_dates = signal(None::<(Option<String>, Option<String>)>);
-    let period_open = signal(false);
-    // 弹层开合上报注册表（Overlay Suppression，ADR-0035 原生壳重建）：token
-    // 实例作用域持有，随 open 信号显式上报（effect 追踪信号，覆盖全部关闭
-    // 路径——受控关闭不产生 Popover 事件，只听事件会漏报），组件卸载时
-    // Drop 自动撤销。
-    let overlay_token = overlay::OverlayToken::new();
     // 视图实例 owner（组件体运行时的 current）：删除任务经它挂到组件实例，
     // 不随对话框子树卸载被取消（见 perform_delete 注）。
     let view_owner = Owner::current();
@@ -457,44 +419,6 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
     let muted = tokens
         .color("muted-foreground")
         .unwrap_or_else(|| hsla(0.0, 0.0, 0.45, 1.0).into());
-
-    // 期间派生（纯函数单点，UI 只消费）：游标、当前游标单位下的边界、步进
-    // 可达性。
-    let cursor = computed(move || {
-        let r = filters.range.get();
-        period::range_to_period(
-            r.as_ref().map(|p| p.from.as_str()),
-            r.as_ref().map(|p| p.to.as_str()),
-        )
-    });
-    let boundary = computed(move || {
-        let unit = cursor.get()?.unit;
-        let (min, max) = boundary_dates.get()?;
-        Some(period::derive_boundary(
-            unit,
-            min.as_deref(),
-            max.as_deref(),
-            today(),
-        ))
-    });
-    let can_step_prev = computed(move || {
-        let r = filters.range.get();
-        period::can_step_current(
-            r.as_ref().map(|p| p.from.as_str()),
-            r.as_ref().map(|p| p.to.as_str()),
-            -1,
-            boundary.get().as_ref(),
-        )
-    });
-    let can_step_next = computed(move || {
-        let r = filters.range.get();
-        period::can_step_current(
-            r.as_ref().map(|p| p.from.as_str()),
-            r.as_ref().map(|p| p.to.as_str()),
-            1,
-            boundary.get().as_ref(),
-        )
-    });
 
     // 装载一页（首屏、翻页、换期间、筛选与搜索共用一条路径）：判态——关键词
     // 或金额区间任一在场 = 搜索态直调域统一模糊搜索（与旧壳 `search_transactions`
@@ -784,46 +708,22 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
         load(target);
     };
 
-    // 周期步进动作（ADR-0141 决策 2：游标反推、边界钳制、越界幂等全在
-    // [`period::step_current`] 单点；换期间后回第 1 页——期间快照住筛选会话
-    // 态，搜索态下步进携新区间重搜，#2037 裁决）。点击路径（步进器按钮）无
-    // 抑制闸门（三闸门只辖键盘派发面，先例分页条点击）；快捷键路径在下方
-    // step_period 内先行闸检。
-    let apply_step = move |delta: i32| {
-        let r = filters.range.get();
-        let Some(next) = period::step_current(
-            r.as_ref().map(|p| p.from.as_str()),
-            r.as_ref().map(|p| p.to.as_str()),
-            delta,
-            boundary.get().as_ref(),
-        ) else {
-            return;
-        };
-        filters.range.set(Some(next));
-        filters.set_page(1);
-        load(1);
-    };
-    let step_period = move |delta: i32| {
-        // Overlay Suppression 闸门（与翻页族共用同一判定，删除任一处即红）。
-        if overlay::has_open_overlay() {
-            return;
-        }
-        apply_step(delta);
-    };
-
-    // 预设选择动作单点（弹层芯片点击）：写精确自然周期快照并关弹层，回
-    // 第 1 页（「全部」= 无过滤区间；同值守卫——同芯片重复点击不重读，旧壳
-    // setFilter 同值守卫同口径）。
-    let apply_preset = move |preset: period::Preset| {
-        let next = period::preset_range(preset, today());
-        let changed = filters.range.get_untracked() != next;
-        filters.range.set(next);
-        filters.set_page(1);
-        if changed {
-            load(1);
-        }
-        period_open.set(false);
-    };
+    // 时间维度行（共用形态抽离 `period_row`，#2040）：期间快照住筛选会话态
+    //（#2037 起），应用回调 = 翻页归零 + 重读第一页（同值守卫的 changed
+    // 才重读——旧壳 setFilter 同值守卫同口径）。步进动作给 `,`/`.` 快捷键
+    // 与行内按钮共用；步进与弹层开合的抑制上报归 period_row 模块。
+    let (period_row_view, step_period) = period_row::period_row(
+        "period",
+        true,
+        filters.range,
+        boundary_dates,
+        move |changed: bool| {
+            filters.set_page(1);
+            if changed {
+                load(1);
+            }
+        },
+    );
 
     // ----------------------------------------------------------------------
     // 筛选条（#2037）：会话态 + 交互桥 + 类型/清除/ESC 处理器。
@@ -948,8 +848,19 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
     // 处理器体即「闸门 → 决策 → 派发」三步，决策半边在纯函数单点。
     on_key("[", move |_| flip_page(assembly::PageStep::Prev));
     on_key("]", move |_| flip_page(assembly::PageStep::Next));
-    on_key(",", move |_| step_period(-1));
-    on_key(".", move |_| step_period(1));
+    on_key(",", move |_| {
+        // Overlay Suppression 闸门（与翻页族共用同一判定，删除任一处即红）。
+        if overlay::has_open_overlay() {
+            return;
+        }
+        step_period(-1);
+    });
+    on_key(".", move |_| {
+        if overlay::has_open_overlay() {
+            return;
+        }
+        step_period(1);
+    });
     // ESC 复位（旧壳 registerViewReset(resetFilters) 同语义：窗口行为守卫在
     // 无弹层 ESC 时消费——本壳等价形态 = 抑制闸门 + 幂等守卫）。弹层开着时
     // ESC 属弹层关闭面（闸门拦截，删除即红钉在 headless ESC 旅程测试）；无
@@ -971,110 +882,20 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
     // 首屏装载（组件任务运行一次；boot 成功先于本视图呈现，DB 恒已就位）。
     load(1);
 
-    // 弹层开合上报（注册表单一通道：追踪受控 open 信号，全路径覆盖）。两弹
-    // 层各自上报：期间选择弹层与「记一笔」类型菜单（#2034 表单入口）。
-    effect(move || {
-        let open = period_open.get();
-        overlay_token.report(open);
-    });
+    // 弹层开合上报（注册表单一通道：追踪受控 open 信号，全路径覆盖）。
+    // 「记一笔」类型菜单（#2034 表单入口）；期间弹层的上报已随共用期间行
+    // 收进 period_row 模块。
     effect(move || {
         let open = add_menu_open.get();
         add_menu_token.report(open);
     });
 
-    // 时间维度行（issue #2021 / ADR-0141）：期间步进器 `< 期间标签 >`，标签
-    // 点击打开期间选择弹层（预设闭集；直达日历面板随迁移系列票补齐）。步进
-    // 按钮置灰 = 无游标或越出数据期间边界（可达性在 computed 单点）；键位
-    // 字符内嵌步进按钮（ADR-0141 决策 5 修订形态）。行尾「记一笔」入口
-    // （#2034）：类型由入口单点表达——弹层两项（记支出/记收入），弹窗内不
-    // 提供切换（旧壳 #150 同语义；转账/借出/退款随表单②、投资随表单③）。
-    let period_row = view()
-        .flex_row()
-        .items_center()
-        .gap_2()
-        .px_4()
-        .py_2()
-        .app_class("border-b border-border")
-        .child(
-            button()
-                .disabled(move || !can_step_prev.get())
-                .accessibility_label("上一个周期")
-                .app_class(
-                    "px-2 py-1 rounded-md text-foreground hover:bg-accent disabled:opacity-40",
-                )
-                .flex_row()
-                .items_center()
-                .gap_1()
-                .on_press({
-                    let apply = apply_step;
-                    move || apply(-1)
-                })
-                .child(text("‹").text_color(fg))
-                .child(text(",").text_size(px(11.0)).text_color(muted)),
-        )
-        .child(
-            // 期间标签 → 期间选择弹层（Overlay Suppression 的注册弹层：
-            // on_open_change 只回写受控 open 信号，注册表上报由上方 effect
-            // 单通道承担；token 随组件卸载撤销）。
-            popover()
-                .open(move || Some(period_open.get()))
-                .on_open_change(move |e: &PopoverEvent| {
-                    // 只做信号回写（开合上报住上方 effect）。
-                    if let PopoverEvent::OpenChange(open, _) = *e {
-                        period_open.set(open);
-                    }
-                })
-                .popup_class("bg-background border border-border rounded-md shadow-md p-1")
-                .trigger(
-                    // test_id 载体视图（组件元素无 test_id 槽，先例 tx-pagination 的
-                    // 载体形态）；headless 经 id: 锚点命中载体、物理命中到内层按钮。
-                    view().test_id("period-label").child(
-                        button()
-                            .app_class("px-2 py-1 rounded-md text-foreground hover:bg-accent")
-                            .flex_row()
-                            .items_center()
-                            .gap_1()
-                            .child(text(move || period_label_text(cursor.get())).text_color(fg))
-                            .child(text("▾").text_size(px(11.0)).text_color(muted)),
-                    ),
-                )
-                .child(
-                    // 芯片 test_id 落在按钮内文本上（headless press 只认可按元素
-                    // 本身或其内部文本，包裹视图不命中，nsh-testing Screen::pressable）。
-                    view()
-                        .flex_col()
-                        .gap_1()
-                        .children(period::PRESETS.iter().copied().map(|preset| {
-                            button()
-                                .selected(move || match_preset_now(filters.range.get(), preset))
-                                .app_class(
-                                    "px-2 py-1 rounded-md text-foreground hover:bg-accent selected:bg-accent",
-                                )
-                                .child(text(period::preset_label(preset)).test_id(preset_test_id(preset)))
-                                .on_press({
-                                    let apply = apply_preset;
-                                    move || apply(preset)
-                                })
-                        })),
-                ),
-        )
-        .child(
-            button()
-                .disabled(move || !can_step_next.get())
-                .accessibility_label("下一个周期")
-                .app_class(
-                    "px-2 py-1 rounded-md text-foreground hover:bg-accent disabled:opacity-40",
-                )
-                .flex_row()
-                .items_center()
-                .gap_1()
-                .on_press({
-                    let apply = apply_step;
-                    move || apply(1)
-                })
-                .child(text("›").text_color(fg))
-                .child(text(".").text_size(px(11.0)).text_color(muted)),
-        )
+    // 时间维度行（共用期间行，#2040 起抽离 `period_row` 模块）：步进器 +
+    // 期间选择弹层（预设闭集；直达日历面板随迁移系列票补齐）。快照住筛选
+    // 会话态，应用回调见上方 builder 接线；行尾「记一笔」入口（#2034）：
+    // 类型由入口单点表达——弹层两项（记支出/记收入），弹窗内不提供切换
+    //（旧壳 #150 同语义；转账/借出/退款随表单②、投资随表单③）。
+    let period_row = period_row_view
         .child(view().flex_1())
         .child(
             // 备份最小入口（#2038）：工具区次级动作（旧壳设置页备份卡「另存
@@ -2369,34 +2190,37 @@ fn view_host(nav: nav::NavStore) -> impl IntoElement {
     let current = nav.current;
     let is = move |name: ViewName| move || current.get() == name;
     let group_more = |gid: nav_model::GroupId| move || views::group_more_view(gid);
-    // 分支序随迁移系列推进：交易列表 / 预算（#2033）/ 概览（#2039，冻结点
-    // 三视图齐）挂真实组件，三容器挂「更多」页签壳，其余未迁移视图共享占位。
+    // 分支序随迁移系列推进：交易列表 / 预算（#2033）/ 概览（#2039）/
+    // 搜索（#2040）挂真实组件，三容器挂「更多」页签壳，其余未迁移视图共享
+    // 占位。
     when(is(ViewName::Transactions), transactions_view).otherwise(move || {
         when(is(ViewName::Budget), budget_view).otherwise(move || {
             when(is(ViewName::Dashboard), dashboard::dashboard_view).otherwise(move || {
-                when(
-                    is(ViewName::BookkeepingMore),
-                    group_more(nav_model::GroupId::Bookkeeping),
-                )
-                .otherwise(move || {
+                when(is(ViewName::Search), search::search_view).otherwise(move || {
                     when(
-                        is(ViewName::AssetsMore),
-                        group_more(nav_model::GroupId::Assets),
+                        is(ViewName::BookkeepingMore),
+                        group_more(nav_model::GroupId::Bookkeeping),
                     )
                     .otherwise(move || {
                         when(
-                            is(ViewName::InsightsMore),
-                            group_more(nav_model::GroupId::Insights),
+                            is(ViewName::AssetsMore),
+                            group_more(nav_model::GroupId::Assets),
                         )
                         .otherwise(move || {
-                            // 未迁移视图反应式占位壳：标题随当前视图；意图
-                            // 消费时机 = 落位（effect 键 current，同轮落地）。
-                            let focused = signal(None::<nav::NavIntent>);
-                            effect(move || {
-                                let _current = nav.current.get();
-                                focused.set(nav::take_intent());
-                            });
-                            views::placeholder_shell_current(focused)
+                            when(
+                                is(ViewName::InsightsMore),
+                                group_more(nav_model::GroupId::Insights),
+                            )
+                            .otherwise(move || {
+                                // 未迁移视图反应式占位壳：标题随当前视图；意图
+                                // 消费时机 = 落位（effect 键 current，同轮落地）。
+                                let focused = signal(None::<nav::NavIntent>);
+                                effect(move || {
+                                    let _current = nav.current.get();
+                                    focused.set(nav::take_intent());
+                                });
+                                views::placeholder_shell_current(focused)
+                            })
                         })
                     })
                 })

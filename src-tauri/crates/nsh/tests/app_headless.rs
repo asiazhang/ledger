@@ -5256,6 +5256,442 @@ fn open_transactions(app: &mut Headless) {
     app.wait_for("id:tx-table").unwrap();
 }
 
+/// 落位搜索视图（#2040）：等侧栏就绪 → 点侧栏搜索项 → 等关键词输入框挂载。
+/// 各搜索视图用例经本助手落位后再操作。
+fn open_search(app: &mut Headless) {
+    app.wait_for("id:nav-search").unwrap();
+    app.press("id:nav-search").unwrap();
+    app.wait_for("id:search-keyword").unwrap();
+}
+
+/// 最小支出输入骨架（购买项/出资造数面的填充底座，其余字段随 struct
+/// update 覆写；金额/日期/备注等必填字段由调用方带）。
+fn bare_expense_input() -> TransactionInput {
+    TransactionInput {
+        kind: TransactionKind::Expense,
+        amount_cents: 0,
+        currency_code: "CNY".to_owned(),
+        account_id: None,
+        to_account_id: None,
+        funding_account_id: None,
+        funding: Vec::new(),
+        purchases: Vec::new(),
+        category_id: None,
+        merchant_id: None,
+        merchant_name: None,
+        policy_id: None,
+        refund_of_transaction_id: None,
+        note: None,
+        source_order_no: None,
+        date: String::new(),
+        instrument_id: None,
+        quantity: None,
+        price_cents: None,
+        fee_cents: None,
+        to_instrument_id: None,
+        to_quantity: None,
+        out_amount_cents: None,
+        in_amount_cents: None,
+        origin: None,
+        fx_rate: None,
+        idempotency_key: None,
+    }
+}
+
+/// 搜索视图首屏占位（issue #2040）：侧栏搜索项落真实视图——屏名、关键词/
+/// 金额输入与期间行控件齐备，未搜索呈现占位空态（旧壳 search.emptyPlaceholder
+/// 同文案），不再是「迁移中」占位。「删除即红」负向条目：删 view_host 的搜索
+/// 分支挂载 → 本测红（落回迁移占位）。
+#[test]
+fn search_view_lands_with_placeholder_and_controls() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("search-view");
+    seed_expense_notes(&dir, &["元旦火锅聚餐"]);
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+
+    open_search(&mut app);
+
+    assert_eq!(
+        app.screen().input_text("id:search-keyword").unwrap(),
+        Some(""),
+        "关键词输入框挂载为空"
+    );
+    for anchor in [
+        "text:搜索",
+        "text:输入关键字或设置筛选开始搜索",
+        "id:search-amount-min",
+        "id:search-amount-max",
+        "id:search-period-label",
+    ] {
+        app.wait_for(anchor).unwrap();
+    }
+    assert!(
+        app.screen().count("id:placeholder-note").unwrap() == 0,
+        "搜索视图是真实视图，不再是迁移占位：{:?}",
+        app.screen().texts()
+    );
+    // 未搜索不呈现结果面与命中计数（旧壳 searched 门控同口径）。
+    assert!(
+        app.screen().count("id:search-total").unwrap() == 0,
+        "未搜索不呈现命中计数：{:?}",
+        app.screen().texts()
+    );
+}
+
+/// 搜索视图关键词防抖自动搜索（issue #2040 AC1）：输入关键词后**不按按钮**
+/// 即得结果（防抖到期自动重查）——命中计数换词（命中 1 条）、命中行在屏、
+/// 未命中行离屏。「删除即红」负向条目：删关键词 on_change → 统一出口
+/// （react_to_change）接线 → 本测红（输入后永远停留占位态）。
+#[test]
+fn search_view_keyword_debounced_search_shows_hits() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("search-view-keyword");
+    seed_expense_notes(&dir, &["元旦火锅聚餐", "超市买菜"]);
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+
+    open_search(&mut app);
+    // 首屏占位态，无结果面。
+    app.wait_for("text:输入关键字或设置筛选开始搜索").unwrap();
+
+    // 输入关键词 → 防抖到期自动搜索：命中 1 条 + 命中行在屏、未命中行离屏。
+    app.type_text("id:search-keyword", "火锅").unwrap();
+    app.wait_for("text:命中 1 条").unwrap();
+    app.wait_for("text:2026-01-01").unwrap();
+    app.wait_for_gone("text:2026-01-02", DEFAULT_WAIT).unwrap();
+    // 占位空态离场（搜索态已开）。
+    app.wait_for_gone("text:输入关键字或设置筛选开始搜索", DEFAULT_WAIT)
+        .unwrap();
+}
+
+/// 搜索视图金额区间筛选（issue #2040 AC3，无关键字仅筛选）：金额任一端
+/// 在场即入搜索态（旧壳搜索页 hasQuery 同口径）——结果按区间过滤，命中计数
+/// 随语义变化。「删除即红」负向条目：删金额 on_change → 统一出口接线 →
+/// 本测红（输入金额后停留占位态）。
+#[test]
+fn search_view_amount_range_filters_without_keyword() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("search-view-amount");
+    seed_expense_on_date(&dir, &today().to_string(), 2_500);
+    seed_expense_on_date(&dir, &today().to_string(), 88_000);
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+
+    open_search(&mut app);
+    app.wait_for("text:输入关键字或设置筛选开始搜索").unwrap();
+
+    // 仅输入最低金额（无关键字）→ 仅筛选查询：金额 < ¥100 的行被滤除。
+    app.type_text("id:search-amount-min", "100").unwrap();
+    app.wait_for("text:命中 1 条").unwrap();
+    app.wait_for("text:¥880").unwrap();
+    assert!(
+        !app.shows("¥25"),
+        "区间下界外的行不得在屏：{:?}",
+        app.screen().texts()
+    );
+    // 已应用筛选描述随激活呈现（金额单端描述）。
+    app.wait_for("id:search-applied-filters").unwrap();
+    assert!(
+        app.shows("已应用筛选：最低 100"),
+        "已应用筛选应含金额下界描述：{:?}",
+        app.screen().texts()
+    );
+}
+
+/// 搜索视图期间快捷筛选（issue #2040 AC2 / #2037 搜索×期间裁决平价）：点
+/// 「当月」芯片 → 期间对搜索命中面**生效**（当月备注命中、上月备注不再命中），
+/// 期间标签随芯片点亮；期间与关键词同面生效。再次点「全部」回无期间
+///（命中面回到全时间，计数同值不同词）。「删除即红」负向条目：删搜索装载
+/// 搒期间快照（`search_range` 不传域读路径）→ 本测红（上月备注仍命中）。
+#[test]
+fn search_view_period_chip_filters_hits() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("search-view-period");
+    seed_expense_on_date(&dir, &prev_month_mid().to_string(), 8_800);
+    seed_expense_on_date(&dir, &today().to_string(), 2_500);
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+
+    open_search(&mut app);
+    // 关键词同时命中两行（日期在备注里，两行备注同词）。
+    app.type_text("id:search-keyword", "支出").unwrap();
+    app.wait_for("text:命中 2 条").unwrap();
+
+    // 点「当月」芯片 → 期间对命中面生效：只剩本月一行。
+    app.press("id:search-period-label").unwrap();
+    app.wait_for("id:search-period-chip-month").unwrap();
+    app.press("id:search-period-chip-month").unwrap();
+    let t = today();
+    app.wait_for(&month_label(t.year(), t.month())).unwrap();
+    app.wait_for("text:命中 1 条").unwrap();
+    app.wait_for("text:¥25").unwrap();
+    assert!(
+        !app.shows("¥88"),
+        "当月期间下搜索不得命中上月备注：{:?}",
+        app.screen().texts()
+    );
+
+    // 回「全部」→ 无期间，两行重回命中面（命中计数回升）。
+    app.press("id:search-period-label").unwrap();
+    app.wait_for("id:search-period-chip-all").unwrap();
+    app.press("id:search-period-chip-all").unwrap();
+    app.wait_for("text:命中 2 条").unwrap();
+}
+
+/// 搜索视图清除筛选与空查询回占位（issue #2040 AC，旧壳 clearFilters /
+/// resetResults 同语义）：清除筛选只清金额与期间、关键词不动（结果随防抖
+/// 重查）；再清关键词 → 无查询 → 回占位空态（结果面收起、命中计数离场）。
+/// 「删除即红」负向条目：删清除按钮的 clear_filters 接线 → 本测红（描述
+/// 与筛选不消失）；删统一出口的无查询分支 → 清词后停留无匹配空态。
+#[test]
+fn search_view_clear_filters_then_clear_keyword_returns_placeholder() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("search-view-clear");
+    seed_expense_on_date(&dir, &today().to_string(), 2_500);
+    seed_expense_on_date(&dir, &today().to_string(), 88_000);
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+
+    open_search(&mut app);
+    // 关键词 + 金额下界同时在场：两行备注同词，金额滤除小额行。
+    app.type_text("id:search-keyword", "支出").unwrap();
+    app.wait_for("text:命中 2 条").unwrap();
+    app.type_text("id:search-amount-min", "100").unwrap();
+    app.wait_for("text:命中 1 条").unwrap();
+    app.wait_for("id:search-applied-filters").unwrap();
+
+    // 清除筛选：金额归零、关键词保留 → 防抖重查回两行，描述离场。
+    app.press("id:search-clear-filters").unwrap();
+    app.wait_for("text:命中 2 条").unwrap();
+    app.wait_for_gone("id:search-applied-filters", DEFAULT_WAIT)
+        .unwrap();
+    app.wait_for("text:¥25").unwrap();
+
+    // 清关键词：无查询 → 占位空态回归，结果面收起。
+    app.clear("id:search-keyword").unwrap();
+    app.wait_for("text:输入关键字或设置筛选开始搜索").unwrap();
+    app.wait_for_gone("text:命中 2 条", DEFAULT_WAIT).unwrap();
+}
+
+/// 搜索视图结果分页（issue #2040 AC）：同备注 150 笔命中两页，点击页码
+/// 「2」翻末页（最旧 50 笔在屏、首页最新行离屏）；翻页携关键词与筛选重搜
+///（服务端 offset 分页，旧壳搜索页同形）。「删除即红」负向条目：删分页条
+/// on_change 的翻页装载接线 → 本测红（页码不翻、行集不变）。
+#[test]
+fn search_view_paginates_hits() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("search-view-paged");
+    seed_expense_notes(&dir, &["批量造数"; 150]);
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+
+    open_search(&mut app);
+    app.type_text("id:search-keyword", "批量造数").unwrap();
+    app.wait_for("text:命中 150 条").unwrap();
+    app.wait_for("id:search-pagination").unwrap();
+
+    // 点击页码 2 → 末页行集（最旧 50 笔，2026-01-01..2026-02-19），首页
+    // 最新行离屏（断言对准视口内首行，交易列表分页同口径）。
+    app.press("role:button[2]").unwrap();
+    app.wait_for("text:2026-02-19").unwrap();
+    app.wait_for_gone("text:2026-05-30", DEFAULT_WAIT).unwrap();
+}
+
+/// 搜索结果只读形态（issue #2040 AC6，旧壳搜索页同口径）：命中行右键**不**
+/// 弹出行菜单（无编辑/删除入口，编辑走交易列表/表单）；命中面无「记一笔」
+/// 等写入口控件。「删除即红」负向条目：给搜索视图表格接上 on_context_menu
+/// → 本测红（菜单重现）。
+#[test]
+fn search_view_results_are_read_only_no_row_menu() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("search-view-readonly");
+    seed_expense_notes(&dir, &["元旦火锅聚餐"]);
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+
+    open_search(&mut app);
+    app.type_text("id:search-keyword", "火锅").unwrap();
+    app.wait_for("text:命中 1 条").unwrap();
+
+    // 命中行右键：无上下文菜单弹出（交易列表同路径右键有「编辑/退款/删除」
+    // 三项——搜索页是只读结果面，无此形态）。
+    app.right_click("text:2026-01-01").unwrap();
+    app.settle();
+    assert!(
+        app.menu().is_none(),
+        "搜索结果右键不得弹出行菜单：{:?}",
+        app.menu()
+    );
+    // 无任何写入口控件（记一笔 / 编辑 / 删除均不在屏）。
+    for forbidden in ["记一笔", "编辑", "删除"] {
+        assert!(
+            !app.shows(forbidden),
+            "搜索视图不得出现写入口「{forbidden}」：{:?}",
+            app.screen().texts()
+        );
+    }
+}
+
+/// 购买项命中整单展开（issue #2040，旧壳搜索页 expandPurchases 同口径）：
+/// 关键词命中**购买项名称**时整单呈现全部购买项行（与交易列表同一装配
+/// [`assembly::assemble_rows`]）——商品名「洗衣液」命中，订单两购买项行
+/// 齐现（商品名 + 件数），命中计数按交易计（命中 1 条，ADR-0008 口径）。
+#[test]
+fn search_view_purchase_name_hit_expands_order_rows() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("search-view-purchase");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let account = seed_cash_account(&db);
+        let conn = db
+            .conn
+            .lock()
+            .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
+            .unwrap();
+        ledger_transaction::create(
+            &conn,
+            TransactionInput {
+                kind: TransactionKind::Expense,
+                amount_cents: 3_000,
+                currency_code: "CNY".to_owned(),
+                account_id: Some(account),
+                purchases: vec![
+                    TransactionPurchaseInput {
+                        name: "猫粮".to_owned(),
+                        quantity: 2,
+                        category_id: None,
+                        unit_price_cents: None,
+                    },
+                    TransactionPurchaseInput {
+                        name: "洗衣液".to_owned(),
+                        quantity: 1,
+                        category_id: None,
+                        unit_price_cents: None,
+                    },
+                ],
+                date: "2026-01-01".to_owned(),
+                ..bare_expense_input()
+            },
+        )
+        .unwrap();
+    }
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+
+    open_search(&mut app);
+    // 购买项名称命中 → 整单展开：两购买项行齐现（猫粮 ×2 / 洗衣液 ×1），
+    // 命中计数按交易计（订单一笔）。
+    app.type_text("id:search-keyword", "洗衣液").unwrap();
+    app.wait_for("text:命中 1 条").unwrap();
+    app.wait_for("text:洗衣液 共 1 件").unwrap();
+    app.wait_for("text:猫粮 共 2 件").unwrap();
+}
+
+/// 连续快速修改关键词 → 结果始终对应当前输入（issue #2040 AC4，旧壳
+/// Loadable 竞态后发覆盖先发同义）：命中「火锅」结果落位后再清词重输
+/// 「超市」，最终行集对应最后一次输入（超市买菜行在屏、火锅行离屏、
+/// 命中计数随最后一次语义）。后发作废先发由装载序号 latest-wins 守卫
+/// 承担（与旧壳 Loadable invalidate 同义）；守卫属调度时序消除，不设
+/// 拆除断言（交易视图先例同口径）。
+#[test]
+fn search_view_rapid_keyword_changes_show_latest_input_results() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("search-view-race");
+    seed_expense_notes(&dir, &["元旦火锅聚餐", "超市买菜"]);
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+
+    open_search(&mut app);
+    app.type_text("id:search-keyword", "火锅").unwrap();
+    app.wait_for("text:命中 1 条").unwrap();
+    app.wait_for("text:2026-01-01").unwrap();
+
+    // 连续快速修改：清词 + 重输不等防抖间隔（同一事件序列内完成）。
+    app.clear("id:search-keyword").unwrap();
+    app.type_text("id:search-keyword", "超市").unwrap();
+
+    // 最终结果对应最后一次输入：超市行在屏、火锅行离屏。
+    app.wait_for("text:命中 1 条").unwrap();
+    app.wait_for("text:2026-01-02").unwrap();
+    app.wait_for_gone("text:2026-01-01", DEFAULT_WAIT).unwrap();
+}
+
+/// 搜索视图状态不跨导航保留（issue #2040 / ADR-0070 决策 3：状态源视图
+/// 本地、会话内保留明确不做）：搜出结果后切走再切回 → 全新占位态（关键词
+/// 空、结果面收起、命中计数离场）——旧壳离开搜索页再回同口径，与交易
+/// 列表的筛选会话保留（tx_filter）刻意不同。
+#[test]
+fn search_view_state_resets_after_leaving_and_returning() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("search-view-reset");
+    seed_expense_notes(&dir, &["元旦火锅聚餐"]);
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+
+    open_search(&mut app);
+    app.type_text("id:search-keyword", "火锅").unwrap();
+    app.wait_for("text:命中 1 条").unwrap();
+
+    // 切走（交易列表）再切回：全新占位态。
+    open_transactions(&mut app);
+    open_search(&mut app);
+    app.wait_for("text:输入关键字或设置筛选开始搜索").unwrap();
+    assert_eq!(
+        app.screen().input_text("id:search-keyword").unwrap(),
+        Some(""),
+        "关键词不保留"
+    );
+    app.wait_for_gone("text:命中 1 条", DEFAULT_WAIT).unwrap();
+}
+
+/// 搜索无命中空态（issue #2040，旧壳搜索页 searched 即显示 hitCount 同形）：
+/// 无命中关键词呈现「命中 0 条」与「无匹配结果」，表格不残留列表行；
+/// 占位文案离场（已入搜索态）。
+#[test]
+fn search_view_shows_no_hits_empty_state() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("search-view-no-hits");
+    seed_expense_notes(&dir, &["元旦火锅聚餐"]);
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+
+    open_search(&mut app);
+    app.type_text("id:search-keyword", "不存在的关键词")
+        .unwrap();
+    app.wait_for("text:命中 0 条").unwrap();
+    app.wait_for("text:无匹配结果").unwrap();
+    app.wait_for_gone("text:输入关键字或设置筛选开始搜索", DEFAULT_WAIT)
+        .unwrap();
+    assert!(
+        !app.shows("2026-01-01"),
+        "无命中时行集不残留：{:?}",
+        app.screen().texts()
+    );
+}
+
 /// 启动即概览（出厂落点改回裁决的可见侧，#2039）：五卡全部呈现真实读数、
 /// 不再是迁移占位。净资产 = 现金 30_000 + 持仓市值 10_000 = ¥400（域单点
 /// 折算，装配层只消费）；「删除即红」负向条目钉在 view_host 的概览分支挂载
