@@ -52,12 +52,14 @@ pub fn filter_options(query: &str, options: &[CategoryOption]) -> Vec<CategoryOp
 /// 拼音可搜下拉：`id_prefix` 是 headless 锚点前缀（搜索框
 /// `{prefix}-search`、选项行 `{prefix}-option`）；`options` 是数据源闭包；
 /// `selected` 是选中值信号（调用方持有、读写皆可）；`placeholder` 是未选中时
-/// 的触发件文案。选中后写 `selected` 并关闭弹层。
+/// 的触发件文案；`clearable` 开启可清空形态（选中时触发件右侧渲染 ✕——独立
+/// 按压件，清除落 None 不开弹层；分类等可选字段的「无选择」语义，#2034）。
 pub fn pinyin_select(
     id_prefix: &'static str,
     options: impl Fn() -> Vec<CategoryOption> + Copy + 'static,
     selected: Signal<Option<String>>,
     placeholder: &'static str,
+    clearable: bool,
 ) -> impl IntoElement {
     let open = signal(false);
     let query = signal(String::new());
@@ -97,7 +99,7 @@ pub fn pinyin_select(
         query.set(String::new());
     };
 
-    popover()
+    let body = popover()
         .open(move || Some(open.get()))
         .on_open_change(move |e: &PopoverEvent| {
             if let PopoverEvent::OpenChange(shown, _) = *e {
@@ -192,7 +194,26 @@ pub fn pinyin_select(
                     )
                     .otherwise(view),
                 ),
+        );
+
+    // 可清空形态（#2034）：选中时触发件右侧渲染 ✕（独立按压件，清除落 None
+    // 不开弹层；与 select.rs / date_select 的清除形态同位）。
+    if clearable {
+        view().flex_row().items_center().gap_1().child(body).child(
+            nsh_base::button()
+                .accessibility_label("清除")
+                .app_class("px-1 py-0.5 rounded-md text-muted-foreground hover:bg-accent")
+                .child(
+                    text("✕")
+                        .text_size(px(11.0))
+                        .text_color(muted)
+                        .test_id(format!("{}{}", id_prefix, "-clear").as_str()),
+                )
+                .on_press(move |_: &()| selected.set(None)),
         )
+    } else {
+        view().child(body)
+    }
 }
 
 #[cfg(test)]

@@ -37,7 +37,7 @@ use crate::boot;
 use crate::nav_model::ViewName;
 use crate::{
     context_menu, danger, modal, nav, nav_model, overlay, period, pinyin_select, popconfirm,
-    sidebar, signals, views,
+    sidebar, signals, txn_form, views,
 };
 
 /// 金额隐私模式开关的存储键（设备轻量设置项，与旧壳同键同值形态：旧壳
@@ -70,9 +70,11 @@ struct PageRead {
     /// 在用分类行（分类路径表来源）。
     category_rows: Vec<ledger_categories::Category>,
     /// 在用且未隐藏账户行（账户格与借贷派生来源）。
-    account_rows: Vec<ledger_accounts::Account>,
+    pub(crate) account_rows: Vec<ledger_accounts::Account>,
     /// 含软删全量商户行（商户格来源）。
-    merchant_rows: Vec<ledger_merchants::Merchant>,
+    pub(crate) merchant_rows: Vec<ledger_merchants::Merchant>,
+    /// 未删除保单行（#2034 表单保单选项面）。
+    pub(crate) policy_rows: Vec<ledger_policy::Policy>,
 }
 
 impl PageRead {
@@ -87,6 +89,7 @@ impl PageRead {
             category_rows: Vec::new(),
             account_rows: Vec::new(),
             merchant_rows: Vec::new(),
+            policy_rows: Vec::new(),
         }
     }
 }
@@ -123,7 +126,8 @@ fn book_dir_slot() -> MutexGuard<'static, Option<PathBuf>> {
     BOOK_DIR.lock().unwrap_or_else(|p| p.into_inner())
 }
 
-fn db_slot() -> MutexGuard<'static, Option<std::sync::Arc<DbState>>> {
+/// 会话句柄槽位守卫（crate 内消费：交易表单写任务与 lib 测试经它取句柄）。
+pub(crate) fn db_slot() -> MutexGuard<'static, Option<std::sync::Arc<DbState>>> {
     DB.lock().unwrap_or_else(|p| p.into_inner())
 }
 
@@ -395,6 +399,19 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
     // 与删除失败呈现（码化错误文案，不静默；下次删除尝试开始时清空）。
     let confirm_target = signal(None::<String>);
     let delete_error = signal(None::<String>);
+    // 交易表单族（#2034）：表单信号束与参考数据源（与列表装载共享同一读批；
+    // 编辑回填锚点：当前页原始行集——弹窗开合与字段状态住表单信号束）。
+    let form = txn_form::TxnFormState::new();
+    let tx_items = signal(txn_form::TxItems(Vec::new()));
+    let form_accounts = signal(txn_form::FormAccounts(Vec::new()));
+    let form_categories = signal(txn_form::FormCategories(Vec::new()));
+    let form_merchants = signal(txn_form::FormMerchants(Vec::new()));
+    let form_policies = signal(txn_form::FormPolicies(Vec::new()));
+    let form_currencies = signal(assembly::CurrencyTable::default());
+    // 「记一笔」类型菜单弹层开合（入口单点表达 kind：弹层两项——记支出/
+    // 记收入；弹层开合上报 Overlay Suppression，期间弹层同形）。
+    let add_menu_open = signal(false);
+    let add_menu_token = overlay::OverlayToken::new();
     // 时间维度行状态：期间快照（None = 全部）与数据期间边界原始日期对
     // （None = 在途/失败 → 钳制退化为不钳制，旧壳 silent 同口径）；快照区间
     // 是唯一事实源，游标不落状态（步进前从当前区间反推，ADR-0141 决策 2）。
@@ -464,10 +481,11 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
     // 不经 IPC）；两态分页与总数语义同旧壳（页码重置、服务端 offset 分页、
     // total = 满足口径的总数）。阻塞读走后台线程（SQLite IO 不占引擎线程）；
     // 分页条装载期间禁用（单飞——等待成功优于即刻失败，无并发页读交错）。
-    // 币种字典、在用分类与数据期间边界随装载一并刷新（字典行数小、分类小
-    // 表、边界是单行聚合，重读成本可忽略；写路径落地后天然跟随数据外扩/收
-    // 窄）；金额隐私开关随装载取设备态（轻量设置项，存储读是同步操作，组件
-    // 任务内直读）。
+    // 币种字典、在用分类、可见账户、含软删商户、未删除保单与行集同批读取：
+    // 字典读失败不静默降级成无符号金额（用户无感知的错示比暂缓呈现更差），
+    // 与行集一并走错误呈现。数据期间边界读失败不拖垮页呈现：钳制退化为不钳制
+    // （旧壳 silent 同口径），保留旧值到下次成功替换。表单参考数据源与原始
+    // 行集随装载一并落位（#2034：编辑回填与选项面的同一事实源）。
     let load = move |page_no: u32| {
         loading.set(true);
         error.set(None);
@@ -484,10 +502,11 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
                 loading.set(false);
                 return;
             };
-            // 币种字典、在用分类、可见账户、含软删商户与行集同批读取：字典读失败
-            // 不静默降级成无符号金额（用户无感知的错示比暂缓呈现更差），与行集
-            // 一并走错误呈现。数据期间边界读失败不拖垮页呈现：钳制退化为不钳制
-            // （旧壳 silent 同口径），保留旧值到下次成功替换。
+            // 币种字典、在用分类、可见账户、含软删商户、未删除保单与行集同批读取：
+            // 字典读失败不静默降级成无符号金额（用户无感知的错示比暂缓呈现更差），
+            // 与行集一并走错误呈现。数据期间边界读失败不拖垮页呈现：钳制退化为不钳制
+            // （旧壳 silent 同口径），保留旧值到下次成功替换。表单参考数据源与原始
+            // 行集随装载一并落位（#2034：编辑回填与选项面的同一事实源）。
             let outcome = blocking(move || {
                 let page_read = if query.is_empty() {
                     boot::transaction_page(&db, page_no, range.as_ref())
@@ -522,6 +541,12 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
                             read
                         })
                     })
+                    .and_then(|mut read| {
+                        boot::policy_rows(&db).map(|rows| {
+                            read.policy_rows = rows;
+                            read
+                        })
+                    })
             })
             .await;
             // 过期装载不落位（后发已接管 rows/loading，先发不得回写）。
@@ -537,8 +562,17 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
                     category_rows,
                     account_rows,
                     merchant_rows,
+                    policy_rows,
                 })) => {
+                    // 表单参考数据源与编辑回填锚点（原始行集）随装载落位
+                    //（#2034：与列表同一读批的同一事实源）。
+                    tx_items.set(txn_form::TxItems(items.clone()));
+                    form_accounts.set(txn_form::FormAccounts(account_rows.clone()));
+                    form_categories.set(txn_form::FormCategories(category_rows.clone()));
+                    form_merchants.set(txn_form::FormMerchants(merchant_rows.clone()));
+                    form_policies.set(txn_form::FormPolicies(policy_rows));
                     let currencies = CurrencyTable::from_currencies(&currency_rows);
+                    form_currencies.set(currencies.clone());
                     let categories = assembly::CategoryTable::from_categories(&category_rows);
                     let accounts = AccountTable::from_accounts(&account_rows);
                     let merchants = MerchantTable::from_merchants(&merchant_rows);
@@ -707,16 +741,23 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
     // 首屏装载（组件任务运行一次；boot 成功先于本视图呈现，DB 恒已就位）。
     load(1);
 
-    // 弹层开合上报（注册表单一通道：追踪受控 open 信号，全路径覆盖）。
+    // 弹层开合上报（注册表单一通道：追踪受控 open 信号，全路径覆盖）。两弹
+    // 层各自上报：期间选择弹层与「记一笔」类型菜单（#2034 表单入口）。
     effect(move || {
         let open = period_open.get();
         overlay_token.report(open);
+    });
+    effect(move || {
+        let open = add_menu_open.get();
+        add_menu_token.report(open);
     });
 
     // 时间维度行（issue #2021 / ADR-0141）：期间步进器 `< 期间标签 >`，标签
     // 点击打开期间选择弹层（预设闭集；直达日历面板随迁移系列票补齐）。步进
     // 按钮置灰 = 无游标或越出数据期间边界（可达性在 computed 单点）；键位
-    // 字符内嵌步进按钮（ADR-0141 决策 5 修订形态）。
+    // 字符内嵌步进按钮（ADR-0141 决策 5 修订形态）。行尾「记一笔」入口
+    // （#2034）：类型由入口单点表达——弹层两项（记支出/记收入），弹窗内不
+    // 提供切换（旧壳 #150 同语义；转账/借出/退款随表单②、投资随表单③）。
     let period_row = view()
         .flex_row()
         .items_center()
@@ -803,6 +844,52 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
                 })
                 .child(text("›").text_color(fg))
                 .child(text(".").text_size(px(11.0)).text_color(muted)),
+        )
+        .child(view().flex_1())
+        .child(
+            // 「记一笔」入口（#2034）：按压即开类型菜单弹层（抑制上报由上方
+            // effect 单通道承担）；菜单项点击落表单弹窗（kind 入口锁定）。
+            popover()
+                .open(move || Some(add_menu_open.get()))
+                .on_open_change(move |e: &PopoverEvent| {
+                    if let PopoverEvent::OpenChange(open, _) = *e {
+                        add_menu_open.set(open);
+                    }
+                })
+                .popup_class("bg-background border border-border rounded-md shadow-md p-1")
+                .trigger(
+                    view().test_id("tx-add").child(
+                        button()
+                            .app_class("px-3 py-1.5 rounded-md bg-primary hover:opacity-90")
+                            .flex_row()
+                            .items_center()
+                            .gap_1()
+                            .child(text("记一笔").text_size(px(13.0)).text_color(rgb(0xffffff)))
+                            .child(text("▾").text_size(px(11.0)).text_color(rgb(0xffffff))),
+                    ),
+                )
+                .child(
+                    view().flex_col().gap_1().children(
+                        [
+                            (ledger_transaction::TransactionKind::Expense, "记支出"),
+                            (ledger_transaction::TransactionKind::Income, "记收入"),
+                        ]
+                        .map(|(kind, label)| {
+                            button()
+                                .app_class(
+                                    "w-full px-2 py-1 rounded-md text-left text-foreground hover:bg-accent",
+                                )
+                                .child(text(label).test_id(match kind {
+                                    ledger_transaction::TransactionKind::Expense => "tx-add-expense",
+                                    _ => "tx-add-income",
+                                }))
+                                .on_press(move |_: &()| {
+                                    add_menu_open.set(false);
+                                    form.open_create(kind);
+                                })
+                        }),
+                    ),
+                ),
         );
 
     view()
@@ -860,14 +947,48 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
                             let Some(row) = e.row else {
                                 return;
                             };
-                            if let Some(id) = rows.get().get(row as usize).map(|r| r.id.clone()) {
+                            // 行寻址经装配行 id（派生行——购买项续行——id 同为
+                            // 交易本体 id，任一行右键编辑/删除的都是整笔交易），
+                            // 再按 id 反查原始行供编辑回填。
+                            let assembled = rows.get();
+                            let Some(cell) = assembled.get(row as usize) else {
+                                return;
+                            };
+                            if let Some(tx) = tx_items
+                                .get()
+                                .0
+                                .iter()
+                                .find(|t| t.id == cell.id)
+                                .cloned()
+                            {
+                                let id = tx.id.clone();
+                                let mut items = Vec::new();
+                                // 编辑（#2034）：仅收入/支出行开放——表单①闭集；
+                                // 转账/退款随表单②、投资形态随表单③扩展。目标
+                                // 行随右键固定（fixed-target，旧壳同位）。
+                                if matches!(
+                                    tx.kind,
+                                    ledger_transaction::TransactionKind::Income
+                                        | ledger_transaction::TransactionKind::Expense
+                                ) {
+                                    let form = form;
+                                    let currencies = form_currencies;
+                                    let merchants = form_merchants;
+                                    items.push(MenuItem::new("编辑").on_select(move || {
+                                        let label = merchants
+                                            .get()
+                                            .0
+                                            .iter()
+                                            .find(|m| Some(&m.id) == tx.merchant_id.as_ref())
+                                            .map(|m| m.name.clone());
+                                        form.open_edit(&tx, &currencies.get(), label);
+                                    }));
+                                }
                                 let confirm = confirm_target;
-                                context_menu::open_context_menu(
-                                    vec![MenuItem::new("删除").on_select(move || {
-                                        confirm.set(Some(id.clone()));
-                                    })],
-                                    Point::new(e.x, e.y),
-                                );
+                                items.push(MenuItem::new("删除").on_select(move || {
+                                    confirm.set(Some(id.clone()));
+                                }));
+                                context_menu::open_context_menu(items, Point::new(e.x, e.y));
                             }
                         })
                         .loading(move || loading.get())
@@ -924,6 +1045,21 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
                     cancel_label: "取消".to_owned(),
                 },
                 on_danger_outcome,
+            ),
+        )
+        .child(
+            // 交易表单弹窗（#2034）：新增/编辑共用同表单语义；信号束住视图
+            // 实例，写任务经视图 owner 挂载（弹窗子树卸载不取消）；成功广播
+            // 交易失效信号（列表重读）。
+            txn_form::transaction_form_modal(
+                form,
+                txn_form::TxnFormSources {
+                    accounts: form_accounts,
+                    categories: form_categories,
+                    merchants: form_merchants,
+                    policies: form_policies,
+                },
+                view_owner,
             ),
         )
         .child(
@@ -1461,6 +1597,7 @@ pub(crate) fn BudgetView() -> impl IntoElement {
                     move || options.get(),
                     category_id,
                     "支出分类",
+                    false,
                 )),
         )
         .child(

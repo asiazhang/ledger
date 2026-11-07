@@ -1,6 +1,7 @@
 //! 域栈引导（issue #2017 / ADR-0145）：打开未加密账本库，读交易列表页、交易
 //! 搜索与参考数据（币种字典 / 在用分类 / 可见账户 / 含软删商户——交易表格
-//! 首屏、issue #2023 搜索接入与派生行形态的装配消费面）。
+//! 首屏、issue #2023 搜索接入与派生行形态的装配消费面），#2033 起兼预算
+//! 读写、#2034 起兼交易表单族参考数据与基础收支写路径。
 //!
 //! 引导内核复用基础设施引导层（[`ledger_infra::db::boot`]）：库文件处置判定
 //! （[`classify_for_boot`] 的明文/外来形态/密文/损坏四态）与成对建连
@@ -159,6 +160,49 @@ pub fn transaction_search(db: &DbState, query: &str, page: u32) -> Result<Transa
 pub fn delete_transaction(db: &DbState, id: &str) -> Result<()> {
     let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
     ledger_transaction::delete(&conn, id)
+}
+
+// ---------------------------------------------------------------------------
+// 交易表单族读写接缝（#2034）：表单保单选项面（未删除保单）与基础收支写路径
+// （创建 / 修改）直调域入口——与旧壳 create_transaction / update_transaction
+// 及保单 store 消费的同一域函数，不经 IPC。商户 / 账户 / 分类选项面消费列表
+// 装载的既有参考数据行集（boot::merchant_rows 等全量投影，在用口径在表单源
+// 处过滤），不另立第二份读接缝。写成功后由视图广播 [`crate::signals`] 交易
+// 失效信号（列表重读；即建商户证据经列表重读的商户行集刷新自然覆盖，旧壳
+// write_entry 的参考失效信号在壳内等价物）。
+// ---------------------------------------------------------------------------
+
+/// 创建交易（域公开写入口直调，旧壳 `create_transaction` 命令同一执行协议）：
+/// 创建编排入口 [`ledger_transaction::create`]——守卫 / 折算 / 落库 / op 产出
+/// 在域内单正文（自持事务，中途失败整体回滚），余额重算由已接线的余额刷新
+/// 接缝在既有事务内执行。返回写入证据（id + 是否即建商户）。写连接是成对
+/// 建连的写侧。
+pub fn create_transaction(
+    db: &DbState,
+    input: ledger_transaction::TransactionInput,
+) -> Result<ledger_transaction::TransactionWrite> {
+    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    ledger_transaction::create(&conn, input)
+}
+
+/// 按 id 全字段替换交易（域公开写入口直调，旧壳 `update_transaction` 命令
+/// 同一执行协议；与 HTTP `PUT /api/v1/transactions/{id}` 同一行为层权威）：
+/// 修改编排入口 [`ledger_transaction::update`]。返回「是否即建商户」证据。
+/// 不存在的 id 报码化 NotFound。写连接是成对建连的写侧。
+pub fn update_transaction(
+    db: &DbState,
+    id: &str,
+    input: ledger_transaction::TransactionInput,
+) -> Result<ledger_infra::signals::WriteEvidence> {
+    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    ledger_transaction::update(&conn, id, input)
+}
+
+/// 读取未删除保单行集（表单保单下拉的数据源面，#2034）：旧壳保单 store 消费
+/// `list_policies` 口径（软删不可再被新选择）。读连接是成对建连的只读侧。
+pub fn policy_rows(db: &DbState) -> Result<Vec<ledger_policy::Policy>> {
+    let conn = conn_lock(&db.read_conn)?;
+    ledger_policy::list_policies(&conn)
 }
 
 /// 读取账本库数据期间边界（issue #2021 / ADR-0141 期间步进的钳制输入）：

@@ -821,15 +821,25 @@ pub struct CategoryOption {
     pub label: String,
 }
 
-/// 支出分类树选项（旧壳 categoryOptions：`treeCategoryOptions("expense")`
+/// 分类下拉选项（旧壳 categoryOptions：`treeCategoryOptions("expense")`
 /// flatMap 同口径）：只收支出分类（顶级 + 子分类，收入分类被 kind 过滤排除），
 /// 父按 sort_order、子紧跟父且自身按 sort_order（子分类 label 用「父 > 子」
 /// 路径名，拼音可搜对 label 整体匹配，父名/子名拼音均可命中）。输入行集只
 /// 收在用分类（软删不进选项，[`crate::boot::category_rows`] 口径）。
 pub fn expense_category_options(rows: &[ledger_categories::Category]) -> Vec<CategoryOption> {
+    category_kind_options("expense", rows)
+}
+
+/// 指定 kind 的分类下拉选项（表单族泛化，#2034）：[`expense_category_options`
+/// 的 kind 参数化形态——支出/收入两表单共享同一树序与路径名口径，kind 字面
+/// 量是分类实体自身的 kind 列闭集（`expense` / `income`）。其余同上。
+pub fn category_kind_options(
+    kind: &str,
+    rows: &[ledger_categories::Category],
+) -> Vec<CategoryOption> {
     let mut roots: Vec<&ledger_categories::Category> = rows
         .iter()
-        .filter(|c| c.kind == "expense" && c.parent_id.is_none())
+        .filter(|c| c.kind == kind && c.parent_id.is_none())
         .collect();
     roots.sort_by_key(|c| c.sort_order);
     let mut options = Vec::new();
@@ -840,7 +850,7 @@ pub fn expense_category_options(rows: &[ledger_categories::Category]) -> Vec<Cat
         });
         let mut children: Vec<&ledger_categories::Category> = rows
             .iter()
-            .filter(|c| c.kind == "expense" && c.parent_id.as_deref() == Some(root.id.as_str()))
+            .filter(|c| c.kind == kind && c.parent_id.as_deref() == Some(root.id.as_str()))
             .collect();
         children.sort_by_key(|c| c.sort_order);
         for child in children {
@@ -884,6 +894,241 @@ pub fn budget_cents_to_yuan_text(cents: i64) -> String {
     } else {
         format!("{}", yuan)
     }
+}
+
+// ---------------------------------------------------------------------------
+// 交易表单族（#2034）：金额文本判定 / 换算家族（旧壳 packages/utils field-error
+// 判定族与 packages/money 换算族的重生，两段口径各自镜像：判定放行超精度尾部
+// 小数点的宽松形状、换算拒绝——与旧壳「判定拦红态、装配器 fail fast 掓回」
+// 两段语义一致）。渲染期零格式化纪律不变：换算只在表单提交/回填时机调用。
+// ---------------------------------------------------------------------------
+
+/// 金额文本判定（旧壳 judgeAmountText 同口径）：输入是输入框中原样保留的原始
+/// 文本（不拦截口径）。空串/纯空白 → `Empty`；形状非法 → `ParseError`；形状
+/// 合法但超两位小数 → `OverPrecision`；合法 → `Ok` 携带元的数值（负数可解析，
+/// 业务类校验留提交通道）。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum AmountJudgment {
+    /// 必填为空（是否红由呈现按时机判定）。
+    Empty,
+    /// 形状非法（非数 / 双小数点 / 科学计数等）。
+    ParseError,
+    /// 形状合法但超两位小数（金额以整数分表达）。
+    OverPrecision,
+    /// 合法，携带元的数值。
+    Ok(f64),
+}
+
+/// 金额文本判定（旧壳 field-error 判定族的重生）：形状 = 可选负号 +（整数部分
+/// + 可选小数点及小数）或（纯小数）——`12.` 合法、`1.2.3` 非法；两端空白容差。
+pub fn judge_amount_text(text: &str) -> AmountJudgment {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return AmountJudgment::Empty;
+    }
+    let shape_ok = {
+        let body = trimmed.strip_prefix('-').unwrap_or(trimmed);
+        match body.split_once('.') {
+            Some((int_part, frac_part)) => {
+                (int_part.chars().all(|ch| ch.is_ascii_digit())
+                    || (int_part.is_empty()
+                        && !frac_part.is_empty()
+                        && frac_part.chars().all(|ch| ch.is_ascii_digit())))
+                    && frac_part.chars().all(|ch| ch.is_ascii_digit())
+            }
+            None => !body.is_empty() && body.chars().all(|ch| ch.is_ascii_digit()),
+        }
+    };
+    if !shape_ok {
+        return AmountJudgment::ParseError;
+    }
+    let dot = trimmed.find('.');
+    if let Some(dot) = dot
+        && trimmed.len() - dot - 1 > 2
+    {
+        return AmountJudgment::OverPrecision;
+    }
+    trimmed
+        .parse::<f64>()
+        .ok()
+        .filter(|yuan| yuan.is_finite())
+        .map(AmountJudgment::Ok)
+        .unwrap_or(AmountJudgment::ParseError)
+}
+
+/// 金额文本 → 整数分（旧壳 yuanToCents 单点换算口径的重生，元转分全仓壳侧
+/// 只此一处）：十进制文本、四舍五入到分、拒绝空白 / 尾随小数点 / 非数 /
+/// 科学计数 / 非有限值与 i64 范围外。None = 解析失败（呈现面归调用方校验文案）。
+pub fn amount_text_to_cents(text: &str) -> Option<i64> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    // 形状：可选负号，（整数部分 + 可选小数点 + 至少一位小数）或（纯小数）或
+    // （纯整数）——`12.` 在换算口径拒绝（旧壳 yuanToCents 同口径）。
+    let body = trimmed.strip_prefix('-').unwrap_or(trimmed);
+    let (int_part, frac_part) = match body.split_once('.') {
+        Some((i, f)) => (i, Some(f)),
+        None => (body, None),
+    };
+    let int_ok = !int_part.is_empty() && int_part.chars().all(|ch| ch.is_ascii_digit());
+    let frac_ok = match frac_part {
+        Some(f) => !f.is_empty() && f.chars().all(|ch| ch.is_ascii_digit()),
+        None => true,
+    };
+    if !int_ok || !frac_ok {
+        return None;
+    }
+    let yuan: f64 = trimmed.parse().ok()?;
+    if !yuan.is_finite() {
+        return None;
+    }
+    let cents = (yuan * 100.0).round();
+    // i64 范围外的值拒绝（旧壳 Number.isSafeInteger 同意图）。
+    if cents.abs() >= 9.0e18 {
+        return None;
+    }
+    Some(cents as i64)
+}
+
+/// 整数分 → 金额输入回填文本（旧壳 `String(centsToYuan(cents, currency))`
+/// 同形：按币种小数位换算，整数裁零）。回填锚点：合法整数分至多产生币种
+/// 小数位的小数，判定必为 `Ok`，不显红态。
+pub fn cents_to_amount_text(cents: i64, decimal_places: u32) -> String {
+    let yuan = cents as f64 / 10f64.powi(decimal_places as i32);
+    if yuan == yuan.trunc() {
+        format!("{}", yuan as i64)
+    } else {
+        format!("{}", yuan)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 基础收支表单装配器（#2034；旧壳 transaction-input.ts「TransactionInput 装配
+// 器」的重生）：表单状态 → 完整 TransactionInput 的唯一装配接缝——同步纯函数，
+// per-kind 字段矩阵、元转分与日期转换在此收口，新增表单形态只改矩阵。非法输
+// 入 fail fast 显式报错、不静默兜底（旧壳同一原则）。商户解析不在此接缝另立
+// 第二份「匹配即建」（域写入协议自带 merchant_name 单点），装配器只消费表单层
+// 已成语义闭集的选择器状态。
+// ---------------------------------------------------------------------------
+
+/// 商户输入语义闭集（表单选择器状态 → wire 字段）：旧壳 resolveMerchantRef
+/// 五分支的收口形态——id 与自由文本二选一，编辑面原值保留单列一个变体。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MerchantRef {
+    /// 不挂商户。
+    None,
+    /// 编辑面原样保留（提交值与行上原值相同：后端 existing_merchant_id
+    /// unchanged 语义跳过在用校验，软删商户的历史引用原样保留）。
+    Keep(String),
+    /// 用户选定在用商户（id 提交）。
+    Selected(String),
+    /// 自由文本（merchant_name 落 wire：后端精确匹配在用名复用、未命中即建）。
+    NewName(String),
+}
+
+/// 基础收支表单提交状态（提交时点的业务字段；日期已是本地日历日）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct BasicFormSubmit {
+    /// 交易类型（本票闭集：支出 / 收入）。
+    pub kind: TransactionKind,
+    /// 金额原始文本（判定族消费的原样输入；换算在装配器内收口）。
+    pub amount_text: String,
+    /// 账户（必选）。
+    pub account_id: Option<String>,
+    /// 分类（可选；None = 无分类交易）。
+    pub category_id: Option<String>,
+    /// 商户语义（见 [`MerchantRef`]）。
+    pub merchant: MerchantRef,
+    /// 可选保单引用（支出/收入可挂）。
+    pub policy_id: Option<String>,
+    /// 备注（空串落 None）。
+    pub note: String,
+    /// 交易日期（本地日历日语义，旧壳 toLocalDateISO 单点同口径）。
+    pub date: chrono::NaiveDate,
+    /// 来源订单号（表单无输入位：创建路径 None，编辑路径透传行上原值——
+    /// 全字段替换下缺省即静默清除订单锚点，旧壳同语义）。
+    pub source_order_no: Option<String>,
+}
+
+/// 基础收支表单校验错误（壳层呈现词表的载体；错误条位呈现，旧壳 toast 同位）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BasicFormError {
+    /// 账户未选（旧壳 settings.categories.msg.accountRequired 词表）。
+    AccountRequired,
+    /// 金额非正数（旧壳 settings.categories.msg.amountRequired 词表：业务类
+    /// 校验保留提交通道文案，不动红态拦截——ADR-0058 业务不成立不属字段错误态）。
+    AmountNotPositive,
+    /// 金额换算失败（判定放行、换算拒绝的兜底位；正常流不可达）。
+    AmountInvalid,
+}
+
+impl BasicFormError {
+    /// 错误条位文案（zh-CN 词表）。
+    pub fn as_text(self) -> &'static str {
+        match self {
+            Self::AccountRequired => "请选择账户",
+            Self::AmountNotPositive => "请输入金额",
+            Self::AmountInvalid => "金额无效，请输入不超过两位小数的金额",
+        }
+    }
+}
+
+/// 基础收支表单状态 → 完整 TransactionInput（旧壳 buildExpenseIncomeInput
+/// 同名接缝）：校验 fail fast → 金额换算 → per-kind 矩阵落位 → 表单承载字段
+/// 覆写。`currency_code` 由调用方随所选账户推导传入（币种一致性写入不变量的
+/// 前端等价：记账币种 = 账户币种，ADR-0134 决策 5）。
+pub fn assemble_basic_transaction(
+    submit: BasicFormSubmit,
+    currency_code: String,
+) -> Result<ledger_transaction::TransactionInput, BasicFormError> {
+    // 校验段（fail fast 顺序镜像旧壳：账户先于金额业务校验）。
+    let Some(account_id) = submit.account_id.filter(|id| !id.trim().is_empty()) else {
+        return Err(BasicFormError::AccountRequired);
+    };
+    let Some(amount_cents) = amount_text_to_cents(&submit.amount_text) else {
+        return Err(BasicFormError::AmountInvalid);
+    };
+    if amount_cents <= 0 {
+        return Err(BasicFormError::AmountNotPositive);
+    }
+    // per-kind 字段矩阵（income / expense 行，旧壳 KIND_FIELD_MATRIX 同形）：
+    // 基础收支不携带的字段全部空位。
+    Ok(ledger_transaction::TransactionInput {
+        kind: submit.kind,
+        amount_cents,
+        currency_code,
+        account_id: Some(account_id),
+        to_account_id: None,
+        funding_account_id: None,
+        funding: Vec::new(),
+        purchases: Vec::new(),
+        category_id: submit.category_id,
+        merchant_id: match &submit.merchant {
+            MerchantRef::None | MerchantRef::NewName(_) => None,
+            MerchantRef::Keep(id) | MerchantRef::Selected(id) => Some(id.clone()),
+        },
+        merchant_name: match &submit.merchant {
+            MerchantRef::NewName(name) => Some(name.clone()),
+            _ => None,
+        },
+        policy_id: submit.policy_id,
+        refund_of_transaction_id: None,
+        note: (!submit.note.trim().is_empty()).then(|| submit.note.clone()),
+        source_order_no: submit.source_order_no,
+        date: submit.date.to_string(),
+        instrument_id: None,
+        quantity: None,
+        price_cents: None,
+        fee_cents: None,
+        to_instrument_id: None,
+        to_quantity: None,
+        out_amount_cents: None,
+        in_amount_cents: None,
+        origin: None,
+        fx_rate: None,
+        idempotency_key: None,
+    })
 }
 
 /// 预算执行行的展示格（渲染期零格式化：文本已是一次性装配产物；金额分与
@@ -2002,6 +2247,263 @@ mod tests {
         assert_eq!(
             normal.percent, 2.0,
             "比例不遮蔽（12345/600000 → 2%，四舍五入）"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // 交易表单族（#2034）：金额文本判定 / 换算（旧壳 field-error + money 家族
+    // 的重生）、分类选项 kind 泛化（收入表单消费面）、基础收支装配器（旧壳
+    // transaction-input.ts 的 TransactionInput 装配器重生）。
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn amount_text_judgment_mirrors_old_shell_field_error() {
+        use AmountJudgment::*;
+        assert_eq!(judge_amount_text(""), Empty, "空串必填为空");
+        assert_eq!(judge_amount_text("   "), Empty, "纯空白必填为空");
+        assert_eq!(
+            judge_amount_text("abc"),
+            ParseError,
+            "形状非法（旧壳 parse-error）"
+        );
+        assert_eq!(
+            judge_amount_text("1.2.3"),
+            ParseError,
+            "双小数点非法（旧壳 parse-error）"
+        );
+        assert_eq!(
+            judge_amount_text("1e3"),
+            ParseError,
+            "科学计数拒绝（旧壳 parse-error）"
+        );
+        assert_eq!(
+            judge_amount_text("12.345"),
+            OverPrecision,
+            "超两位小数（旧壳 over-precision）"
+        );
+        assert_eq!(
+            judge_amount_text("25"),
+            Ok(25.0),
+            "整数合法（携带元的数值）"
+        );
+        assert_eq!(judge_amount_text("12.34"), Ok(12.34));
+        assert_eq!(
+            judge_amount_text("12."),
+            Ok(12.0),
+            "尾随小数点合法（判定口径）"
+        );
+        assert_eq!(judge_amount_text(".5"), Ok(0.5), "省略整数部分合法");
+        assert_eq!(
+            judge_amount_text("-3"),
+            Ok(-3.0),
+            "负数可解析（业务类校验留提交通道，旧壳同口径）"
+        );
+        assert_eq!(
+            judge_amount_text(" 80 "),
+            Ok(80.0),
+            "两端空白容差（trim 后判定）"
+        );
+    }
+
+    #[test]
+    fn amount_text_to_cents_is_the_single_conversion_point() {
+        assert_eq!(amount_text_to_cents("80"), Some(8_000));
+        assert_eq!(amount_text_to_cents("80.1"), Some(8_010));
+        assert_eq!(amount_text_to_cents("0.05"), Some(5));
+        assert_eq!(
+            amount_text_to_cents("12.345"),
+            Some(1_235),
+            "判定拦截超精度在前；换算自身四舍五入到分（旧壳 yuanToCents 同口径）"
+        );
+        assert_eq!(amount_text_to_cents("-3"), Some(-300), "负数可解析");
+        assert_eq!(amount_text_to_cents(""), None, "空串拒绝");
+        assert_eq!(amount_text_to_cents("abc"), None, "非数拒绝");
+        assert_eq!(
+            amount_text_to_cents("12."),
+            None,
+            "尾随小数点在换算口径拒绝（旧壳 yuanToCents 同口径；判定放行、换算拦回，与装配器 fail fast 语义一致）"
+        );
+        assert_eq!(
+            amount_text_to_cents("1e3"),
+            None,
+            "科学计数拒绝（旧壳同口径）"
+        );
+    }
+
+    #[test]
+    fn cents_to_amount_text_backfills_with_currency_decimals() {
+        assert_eq!(
+            cents_to_amount_text(2_500, 2),
+            "25",
+            "整数裁零（旧壳 String(centsToYuan) 同形）"
+        );
+        assert_eq!(cents_to_amount_text(12_345, 2), "123.45");
+        assert_eq!(cents_to_amount_text(0, 2), "0");
+        assert_eq!(cents_to_amount_text(255, 1), "25.5", "一位小数币种");
+        assert_eq!(cents_to_amount_text(2_500, 0), "2500", "零小数位币种");
+    }
+
+    #[test]
+    fn category_kind_options_filters_by_income_kind_with_path_labels() {
+        let rows = vec![
+            category("c1", "餐饮", "expense", None, 2),
+            category("c2", "工资", "income", None, 1),
+            category("c3", "奖金", "income", None, 2),
+            category("c4", "年终奖", "income", Some("c3".into()), 1),
+        ];
+        let options = category_kind_options("income", &rows);
+        let labels: Vec<&str> = options.iter().map(|o| o.label.as_str()).collect();
+        assert_eq!(
+            labels,
+            vec!["工资", "奖金", "奖金 > 年终奖"],
+            "只收收入分类；父按 sort_order、子紧跟父且自身按 sort_order；子分类路径名"
+        );
+        // 泛化不改变支出面：同函数收支出分类与既有 expense_category_options 同序。
+        let expense = category_kind_options("expense", &rows);
+        assert_eq!(
+            expense.iter().map(|o| o.label.as_str()).collect::<Vec<_>>(),
+            vec!["餐饮"],
+        );
+    }
+
+    fn submit() -> BasicFormSubmit {
+        BasicFormSubmit {
+            kind: TransactionKind::Expense,
+            amount_text: "25".to_owned(),
+            account_id: Some("a1".to_owned()),
+            category_id: Some("c1".to_owned()),
+            merchant: MerchantRef::None,
+            policy_id: None,
+            note: String::new(),
+            date: chrono::NaiveDate::from_ymd_opt(2026, 3, 15).unwrap(),
+            source_order_no: None,
+        }
+    }
+
+    #[test]
+    fn basic_assembler_fills_per_kind_matrix_nulls_and_wire_fields() {
+        let input = assemble_basic_transaction(submit(), "CNY".to_owned()).unwrap();
+        assert_eq!(input.kind, TransactionKind::Expense);
+        assert_eq!(
+            input.amount_cents, 2_500,
+            "元转分收口（amount_text_to_cents 单点）"
+        );
+        assert_eq!(input.currency_code, "CNY");
+        assert_eq!(input.account_id.as_deref(), Some("a1"));
+        assert_eq!(input.category_id.as_deref(), Some("c1"));
+        assert_eq!(
+            input.date, "2026-03-15",
+            "本地日历日语义（NaiveDate 原样落 ISO）"
+        );
+        assert_eq!(
+            input.note, None,
+            "空备注落 None（旧壳 note || null 同口径）"
+        );
+        assert_eq!(input.source_order_no, None, "创建路径不携带来源订单号");
+        // per-kind 矩阵：基础收支不携带的字段全空（旧壳 KIND_FIELD_MATRIX 行同形）。
+        assert_eq!(input.to_account_id, None);
+        assert_eq!(input.funding_account_id, None);
+        assert!(input.funding.is_empty());
+        assert!(input.purchases.is_empty());
+        assert_eq!(input.refund_of_transaction_id, None);
+        assert_eq!(input.instrument_id, None);
+        assert_eq!(
+            input.idempotency_key, None,
+            "表单不携带幂等键（编辑保留行上原值）"
+        );
+    }
+
+    #[test]
+    fn basic_assembler_carries_optional_relations() {
+        let mut s = submit();
+        s.note = "午餐".to_owned();
+        s.policy_id = Some("p1".to_owned());
+        s.source_order_no = Some("SO-1".to_owned());
+        let input = assemble_basic_transaction(s, "CNY".to_owned()).unwrap();
+        assert_eq!(input.note.as_deref(), Some("午餐"));
+        assert_eq!(input.policy_id.as_deref(), Some("p1"));
+        assert_eq!(
+            input.source_order_no.as_deref(),
+            Some("SO-1"),
+            "编辑透传行上原值"
+        );
+    }
+
+    #[test]
+    fn basic_assembler_maps_merchant_semantics_to_wire_fields() {
+        // 不挂商户。
+        let input = assemble_basic_transaction(submit(), "CNY".to_owned()).unwrap();
+        assert_eq!(input.merchant_id, None);
+        assert_eq!(input.merchant_name, None);
+
+        // 编辑面原样保留（含软删商户历史引用；后端 unchanged 语义跳过在用校验）。
+        let mut s = submit();
+        s.merchant = MerchantRef::Keep("m-kept".to_owned());
+        let input = assemble_basic_transaction(s, "CNY".to_owned()).unwrap();
+        assert_eq!(input.merchant_id.as_deref(), Some("m-kept"));
+        assert_eq!(input.merchant_name, None);
+
+        // 选定在用商户（id 提交）。
+        let mut s = submit();
+        s.merchant = MerchantRef::Selected("m1".to_owned());
+        let input = assemble_basic_transaction(s, "CNY".to_owned()).unwrap();
+        assert_eq!(input.merchant_id.as_deref(), Some("m1"));
+
+        // 自由文本：merchant_name 落 wire（后端精确匹配在用名复用、未命中即建——
+        // 域内单点，壳不另立第二份解析）。
+        let mut s = submit();
+        s.merchant = MerchantRef::NewName("新商户".to_owned());
+        let input = assemble_basic_transaction(s, "CNY".to_owned()).unwrap();
+        assert_eq!(input.merchant_id, None);
+        assert_eq!(input.merchant_name.as_deref(), Some("新商户"));
+    }
+
+    #[test]
+    fn basic_assembler_rejects_invalid_submissions_fail_fast() {
+        // 账户必选（旧壳 settings.categories.msg.accountRequired 词表）。
+        let mut s = submit();
+        s.account_id = None;
+        assert_eq!(
+            assemble_basic_transaction(s, "CNY".to_owned()).map(|_| ()),
+            Err(BasicFormError::AccountRequired),
+        );
+        // 金额非正数（旧壳 amountRequired「请输入金额」词表）。
+        let mut s = submit();
+        s.amount_text = "-3".to_owned();
+        assert_eq!(
+            assemble_basic_transaction(s, "CNY".to_owned()).map(|_| ()),
+            Err(BasicFormError::AmountNotPositive),
+        );
+        let mut s = submit();
+        s.amount_text = "0".to_owned();
+        assert_eq!(
+            assemble_basic_transaction(s, "CNY".to_owned()).map(|_| ()),
+            Err(BasicFormError::AmountNotPositive),
+        );
+        // 换算兜底（"12." 判定放行、换算拒绝——旧壳装配器 fail fast 同位）。
+        let mut s = submit();
+        s.amount_text = "12.".to_owned();
+        assert_eq!(
+            assemble_basic_transaction(s, "CNY".to_owned()).map(|_| ()),
+            Err(BasicFormError::AmountInvalid),
+        );
+        // 空金额（按钮禁用是第一道防线；装配器兜底同位拦截）。
+        let mut s = submit();
+        s.amount_text = "  ".to_owned();
+        assert_eq!(
+            assemble_basic_transaction(s, "CNY".to_owned()).map(|_| ()),
+            Err(BasicFormError::AmountInvalid),
+        );
+    }
+
+    #[test]
+    fn basic_form_error_texts_are_the_zh_cn_vocabulary() {
+        assert_eq!(BasicFormError::AccountRequired.as_text(), "请选择账户");
+        assert_eq!(BasicFormError::AmountNotPositive.as_text(), "请输入金额");
+        assert_eq!(
+            BasicFormError::AmountInvalid.as_text(),
+            "金额无效，请输入不超过两位小数的金额",
+            "码化面归视图词表：换算拒绝时给可纠正文案"
         );
     }
 }

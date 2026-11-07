@@ -57,13 +57,24 @@
 //!   ADR-0078 error/warning 两级形态、遮罩不关/ESC 可关、抑制上报自含；
 //! - [`pinyin_select`]：拼音可搜下拉封装（`App*` 封装族，#2033 首建）——
 //!   触发件 + 搜索弹层 + 统一模糊搜索语义过滤（消费交易域 ADR-0027 唯一
-//!   定义点）+ 抑制上报自含；
+//!   定义点）+ 抑制上报自含，可清空形态随 #2034 消费面开门；
+//! - [`select`]：普通下拉选择封装（`App*` 封装族，#2034 首建）——触发件 +
+//!   选项列表弹层（无搜索小闭集直选）+ 可清空 + 抑制上报自含；
+//! - [`combo_select`]：自由文本可搜输入封装（`App*` 封装族，#2034 首建）——
+//!   旧壳 PinyinSelect tag 形态对应件：文本输入 + 建议弹层，选定落 id、
+//!   键入退回自由文本（商户「选择或即建」双态值语义）；
+//! - [`date_select`]：日期选择器封装（`App*` 封装族，#2034 首建）——可键入
+//!   触发件 + 日历弹层（消费 nsh-base DatePicker 行为件，ADR-0145 决策 5 的
+//!   封装层落点）+ 抑制上报自含；
 //! - [`modal`]：模态弹窗封装（`App*` 封装族，#2033 首建）——遮罩不关/ESC
 //!   可关、抑制上报自含的弹层容器；
 //! - [`popconfirm`]：轻量确认气泡封装（`App*` 封装族，#2033 首建）——锚定
 //!   触发件的确认/取消气泡、ESC/点外关闭、抑制上报自含；
 //! - [`signals`]：进程内失效信号——交易数据失效的订阅/广播单点，写路径
 //!   成功后广播、列表视图订阅重读（#2022；词汇表失效信号语义的壳内通道）；
+//! - [`txn_form`]：交易表单弹窗（`App*` 封装族消费面，#2034）——基础收支
+//!   新增/编辑（日期、类型、金额、分类、账户、备注与来源关联语义），编辑
+//!   复用同表单（回填初值）；写路径经域公开写入口直调、失效信号驱动刷新；
 //! - [`boot`]：域栈引导——库文件处置判定（复用基础设施引导层）、成对建连、
 //!   交易列表页与币种字典读取、交易删除（#2022）；
 //! - [`wiring`]：域接缝接线——读路径全部读时投影接缝 + 交易写入协议的余额刷新
@@ -77,8 +88,10 @@
 
 pub mod app;
 pub mod boot;
+pub mod combo_select;
 pub mod context_menu;
 pub mod danger;
+pub mod date_select;
 pub mod modal;
 pub mod nav;
 pub mod nav_model;
@@ -86,8 +99,10 @@ pub mod overlay;
 pub mod period;
 pub mod pinyin_select;
 pub mod popconfirm;
+pub mod select;
 pub mod sidebar;
 pub mod signals;
+pub mod txn_form;
 pub mod views;
 pub mod wiring;
 
