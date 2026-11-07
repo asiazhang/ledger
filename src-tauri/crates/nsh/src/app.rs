@@ -2275,17 +2275,30 @@ fn view_host(nav: nav::NavStore) -> impl IntoElement {
                                                     crate::savings::savings_goals_view,
                                                 )
                                                 .otherwise(move || {
+                                                    // 保单（#2050，自有路由带收纳分流）：被收纳 + 分流
+                                                    // 配置时落资产「更多」对应页签（views.rs 容器分支内
+                                                    // 挂真实组件），仅自由路由（「移回侧栏」主项态与关闭
+                                                    // 态带 focus 放行）落本分支。
                                                     when(
-                                                        is(ViewName::BookkeepingMore),
-                                                        group_more(nav_model::GroupId::Bookkeeping),
+                                                        is(ViewName::Policies),
+                                                        crate::policies::policies_view,
                                                     )
                                                     .otherwise(move || {
                                                         when(
-                                                            is(ViewName::AssetsMore),
-                                                            group_more(nav_model::GroupId::Assets),
+                                                            is(ViewName::BookkeepingMore),
+                                                            group_more(
+                                                                nav_model::GroupId::Bookkeeping,
+                                                            ),
                                                         )
                                                         .otherwise(move || {
                                                             when(
+                                                                is(ViewName::AssetsMore),
+                                                                group_more(
+                                                                    nav_model::GroupId::Assets,
+                                                                ),
+                                                            )
+                                                            .otherwise(move || {
+                                                                when(
                                                                 is(ViewName::InsightsMore),
                                                                 group_more(
                                                                     nav_model::GroupId::Insights,
@@ -2304,6 +2317,7 @@ fn view_host(nav: nav::NavStore) -> impl IntoElement {
                                                                 views::placeholder_shell_current(
                                                                     focused,
                                                                 )
+                                                            })
                                                             })
                                                         })
                                                     })

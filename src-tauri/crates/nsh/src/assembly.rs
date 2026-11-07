@@ -3461,6 +3461,197 @@ pub fn partition_savings_goal_rows(
     (active, archived)
 }
 
+// ---------------------------------------------------------------------------
+// 保单视图格（#2050）：保单清单行装配——旧壳 PoliciesView 装配面的重生（一次
+// 装配、渲染期零格式化）。保司显示映射（含软删保司，ADR-0082）、保障期间与
+// 到期文案全在本层单点；视图零自算。保单视角统计是读时投影（issue #363：
+// 实时推导不落库，同源同途），本层只按保单 id 组合文案，无本地二次聚合（词
+// 汇表「保单视角统计」）；保额纯展示按自带币种原样格式化，不折算、不进任何
+// 金额口径（ADR-0051）。
+// ---------------------------------------------------------------------------
+
+/// 保单清单列定义（列名与旧壳 policies.columns zh-CN 词表同文案；金额列
+/// 末端对齐）。总宽 1035pt 不超出内容区实测可用宽（装配建议值转述，弹性
+/// 富余宽给险种列），尾列缺席即操作钮灭失——储蓄目标视图门户重排先例。窄
+/// 窗横向滚动下限（旧壳 issue #849 / ADR-0088 决策 11）归系列尾部窄窗横切
+/// 票。
+pub const POLICY_COLUMNS: &[ColumnDef] = &[
+    ColumnDef {
+        key: "insurer",
+        title: "保险公司",
+        align: ColumnAlign::Start,
+        width: 95.0,
+    },
+    ColumnDef {
+        key: "product_name",
+        title: "险种名称",
+        align: ColumnAlign::Start,
+        width: 115.0,
+    },
+    ColumnDef {
+        key: "policy_number",
+        title: "保单号",
+        align: ColumnAlign::Start,
+        width: 95.0,
+    },
+    ColumnDef {
+        key: "period",
+        title: "保障期间",
+        align: ColumnAlign::Start,
+        width: 160.0,
+    },
+    ColumnDef {
+        key: "expiry",
+        title: "状态",
+        align: ColumnAlign::Start,
+        width: 65.0,
+    },
+    ColumnDef {
+        key: "coverage",
+        title: "保额",
+        align: ColumnAlign::End,
+        width: 85.0,
+    },
+    ColumnDef {
+        key: "paid",
+        title: "累计已缴",
+        align: ColumnAlign::End,
+        width: 90.0,
+    },
+    ColumnDef {
+        key: "inflow",
+        title: "累计流入",
+        align: ColumnAlign::End,
+        width: 90.0,
+    },
+    ColumnDef {
+        key: "next_charge",
+        title: "下期扣款日",
+        align: ColumnAlign::Start,
+        width: 100.0,
+    },
+    ColumnDef {
+        key: "actions",
+        title: "操作",
+        align: ColumnAlign::Start,
+        width: 140.0,
+    },
+];
+
+/// 一行保单的装配产物（字段与 [`POLICY_COLUMNS`] 逐列对应）：金额与期间在到
+/// 达时一次性成文本，渲染期零格式化。行上的原值字段（保单域行、保司显示映射
+/// 消费面由调用方另行持有快照）不在此重持——编辑回填经行快照内的域行身份字段。
+#[derive(Debug, Clone, PartialEq)]
+pub struct PolicyRowCells {
+    /// 保单 id（行级操作目标 / 行来源跳转的 focus 定位消费）。
+    pub id: String,
+    /// 保司列（保司显示映射解析，含软删保司——存量保单照常显示，引用解析
+    /// 不到回「—」，旧壳 `insurerMap.get(id)?.name ?? "—"` 同口径）。
+    pub insurer: String,
+    /// 险种名称列（保单原名）。
+    pub product_name: String,
+    /// 保单号列。
+    pub policy_number: String,
+    /// 保障期间列（「{start} ~ {end}」 / 「{start} ~ 长期」，旧壳 period.
+    /// range / lifetime 同词表）。
+    pub period: String,
+    /// 状态列（保障中 / 已到期：优先消费统计同源 is_expired（issue #363 与
+    /// BDD 口径一致），统计行未加载时回落本地推导——同一规则：止日非空且早
+    /// 于今天 → 已到期；止日空 = 长期/终身恒保障中；可推导的状态不落库）。
+    pub expiry: String,
+    /// 保额列（保额缺省或币种缺失 → 「—」；按自带币种原样格式化不折算）。
+    pub coverage: String,
+    /// 累计已缴列（本位币，统计同源快照；统计行未加载窗口显示「—」占位）。
+    pub paid: String,
+    /// 累计流入列（本位币，同上）。
+    pub inflow: String,
+    /// 下期扣款日列（无活跃协议或无 pending 期次 = 「—」，旧壳同占位）。
+    pub next_charge: String,
+}
+
+/// 保障期间文案（旧壳 period.range / lifetime 同词表的单点）。
+fn policy_period_text(start_date: &str, end_date: Option<&str>) -> String {
+    match end_date {
+        Some(end) => format!("{start_date} ~ {end}"),
+        None => format!("{start_date} ~ 长期"),
+    }
+}
+
+/// 到期态推导（旧壳 isExpired / expiredState 的本地回落分支单点）：止日非空
+/// 且早于今天 → 已到期；止日空 = 长期/终身 → 恒 false。`today` 是
+/// YYYY-MM-DD 文本（字典序即时间序）。
+fn policy_is_expired_local(end_date: Option<&str>, today: &str) -> bool {
+    end_date.is_some_and(|end| end < today)
+}
+
+/// 装配保单清单行集（顺序保持域清单序 = created_at, id，旧壳 list_policies
+/// 同口径）。
+pub fn assemble_policy_rows(
+    rows: &[ledger_policy::Policy],
+    stats: &[ledger_policy::PolicyStats],
+    insurers: &[ledger_policy::Insurer],
+    currencies: &CurrencyTable,
+    today: &str,
+) -> Vec<PolicyRowCells> {
+    // 保司显示映射（含软删）：保险域自有字典的 id → 名映射（读序不重排，
+    // 软删行照常映射，ADR-0082）。
+    let insurer_names: std::collections::HashMap<&str, &str> = insurers
+        .iter()
+        .map(|insurer| (insurer.id.as_str(), insurer.name.as_str()))
+        .collect();
+    let stat_by_id: std::collections::HashMap<&str, &ledger_policy::PolicyStats> =
+        stats.iter().map(|s| (s.policy_id.as_str(), s)).collect();
+    rows.iter()
+        .map(|row| {
+            let stat = stat_by_id.get(row.id.as_str()).copied();
+            let expired = stat
+                .map(|s| s.is_expired)
+                .unwrap_or_else(|| policy_is_expired_local(row.end_date.as_deref(), today));
+            // 统计合计按自带折算基准币种展示，统计行未加载时占位（旧壳
+            // policyStatAmountText 同口径，无本地二次聚合）。
+            let native_fmt = stat
+                .map(|s| currencies.format_of(&s.native_currency))
+                .unwrap_or_default();
+            let native_text = |cents: i64| {
+                if stat.is_some() {
+                    format_amount_basic(cents, &native_fmt)
+                } else {
+                    "—".to_owned()
+                }
+            };
+            // 保额纯展示：按自带币种原样格式化，不折算（ADR-0051）；金额与
+            // 币种成对，缺任一 → 「—」。
+            let coverage = match (
+                row.coverage_amount_cents,
+                row.coverage_currency_code.as_deref(),
+            ) {
+                (Some(cents), Some(code)) => {
+                    format_amount_basic(cents, &currencies.format_of(code))
+                }
+                _ => "—".to_owned(),
+            };
+            PolicyRowCells {
+                id: row.id.clone(),
+                insurer: insurer_names
+                    .get(row.insurer_id.as_str())
+                    .copied()
+                    .unwrap_or("—")
+                    .to_owned(),
+                product_name: row.product_name.clone(),
+                policy_number: row.policy_number.clone(),
+                period: policy_period_text(&row.start_date, row.end_date.as_deref()),
+                expiry: if expired { "已到期" } else { "保障中" }.to_owned(),
+                coverage,
+                paid: native_text(stat.map(|s| s.total_paid_native_cents).unwrap_or(0)),
+                inflow: native_text(stat.map(|s| s.total_inflow_native_cents).unwrap_or(0)),
+                next_charge: stat
+                    .and_then(|s| s.next_charge_date.clone())
+                    .unwrap_or_else(|| "—".to_owned()),
+            }
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -6470,5 +6661,176 @@ mod tests {
             format!("手填 {AMOUNT_PRIVACY_MASK}/月"),
             "节奏行金额掩码、文案骨架保留"
         );
+    }
+
+    // -------------------------------------------------------------------
+    // 保单清单格（#2050）：清单格文本 / 保司显示映射（含软删）/ 期间与到期
+    // 文案 / 保额纯展示（不折算）/ 统计口径（快照同源、未加载占位、下期扣款
+    // 占位、本地到期回落）。
+    // -------------------------------------------------------------------
+
+    /// 保单行 + 保司字典行（用例共用；域行全量形状，审计字段占位零语义）。
+    fn policy_rows_fixture() -> Vec<ledger_policy::Policy> {
+        let make =
+            |id: &str,
+             insurer: &str,
+             product: &str,
+             number: &str,
+             start: &str,
+             end: Option<&str>,
+             coverage: Option<(i64, Option<&str>)>| ledger_policy::Policy {
+                id: id.to_owned(),
+                insurer_id: insurer.to_owned(),
+                policy_number: number.to_owned(),
+                product_name: product.to_owned(),
+                start_date: start.to_owned(),
+                end_date: end.map(str::to_owned),
+                coverage_amount_cents: coverage.map(|(cents, _)| cents),
+                coverage_currency_code: coverage.and_then(|(_, code)| code.map(str::to_owned)),
+                note: None,
+                created_at: String::new(),
+                updated_at: String::new(),
+                version: 1,
+                device_id: String::new(),
+                is_deleted: false,
+            };
+        vec![
+            make("p1", "i1", "重疾险", "P-001", "2024-01-01", None, None),
+            make(
+                "p2",
+                "i2",
+                "医疗险",
+                "P-002",
+                "2024-06-01",
+                Some("2025-12-31"),
+                Some((12_345, Some("USD"))),
+            ),
+            // 保额与币种成对。半挂（只有币种）不产生金额。
+            make(
+                "p3",
+                "i1",
+                "意外险",
+                "P-003",
+                "2025-01-01",
+                None,
+                Some((0, Some("CNY"))),
+            ),
+        ]
+    }
+
+    fn insurers_fixture() -> Vec<ledger_policy::Insurer> {
+        let make = |id: &str, name: &str| ledger_policy::Insurer {
+            id: id.to_owned(),
+            name: name.to_owned(),
+            created_at: String::new(),
+            updated_at: String::new(),
+            version: 1,
+            device_id: String::new(),
+            is_deleted: false,
+        };
+        vec![
+            make("i1", "众安"),
+            make("i2", "平安"),
+            make("i3", "已删保司"),
+        ]
+    }
+
+    fn stats_fixture() -> Vec<ledger_policy::PolicyStats> {
+        let make = |id: &str, paid: i64, inflow: i64, next: Option<&str>, expired: bool| {
+            ledger_policy::PolicyStats {
+                policy_id: id.to_owned(),
+                native_currency: "CNY".to_owned(),
+                total_paid_native_cents: paid,
+                total_inflow_native_cents: inflow,
+                next_charge_date: next.map(str::to_owned),
+                is_expired: expired,
+            }
+        };
+        vec![make("p1", 12_00, 0, Some("2026-03-01"), false)]
+    }
+
+    #[test]
+    fn policy_rows_assemble_period_insurer_and_coverage() {
+        let currencies = CurrencyTable::from_currencies(&[
+            ledger_currencies::Currency {
+                code: "CNY".to_owned(),
+                name: "人民币".to_owned(),
+                symbol: "¥".to_owned(),
+                decimal_places: 2,
+            },
+            ledger_currencies::Currency {
+                code: "USD".to_owned(),
+                name: "美元".to_owned(),
+                symbol: "$".to_owned(),
+                decimal_places: 2,
+            },
+        ]);
+        let rows = assemble_policy_rows(
+            &policy_rows_fixture(),
+            &stats_fixture(),
+            &insurers_fixture(),
+            &currencies,
+            "2026-01-01",
+        );
+        assert_eq!(POLICY_COLUMNS.len(), 10, "列闭集 = 旧壳主表 10 列");
+        assert_eq!(POLICY_COLUMNS.iter().map(|d| d.width).sum::<f32>(), 1035.0);
+        // 保司显示映射（含软删照常映射）；保额纯展示按自带币种（不折算为
+        // 本位币口径——USD 保留美元符号）。
+        assert_eq!(rows[0].insurer, "众安");
+        assert_eq!(rows[1].insurer, "平安");
+        assert_eq!(rows[1].coverage, "$123.45");
+        // 期间文案：止日空 = 长期。
+        assert_eq!(rows[0].period, "2024-01-01 ~ 长期");
+        assert_eq!(rows[1].period, "2024-06-01 ~ 2025-12-31");
+        // 保单号透传、统计的同源快照（本位币）。
+        assert_eq!(rows[0].policy_number, "P-001");
+        assert_eq!(rows[0].paid, "¥12");
+        assert_eq!(rows[0].inflow, "¥0");
+        assert_eq!(rows[0].next_charge, "2026-03-01");
+    }
+
+    #[test]
+    fn policy_rows_stats_missing_falls_back_to_local_derivations() {
+        let rows = assemble_policy_rows(
+            &policy_rows_fixture(),
+            &[],
+            &insurers_fixture(),
+            &CurrencyTable::default(),
+            "2026-01-01",
+        );
+        // 统计行未加载窗口：合计两列与下期扣款日占位「—」；到期态回落本地
+        // 推导（止日巳过 → 已到期；止日空 → 保障中）。
+        for row in &rows {
+            assert_eq!(row.paid, "—");
+            assert_eq!(row.inflow, "—");
+            assert_eq!(row.next_charge, "—");
+        }
+        assert_eq!(rows[0].expiry, "保障中", "止日空 = 长期/终身（永不判到期）");
+        assert_eq!(rows[1].expiry, "已到期", "止日巳过 = 已到期");
+        // 保司不含在字典内（引用解析不到）→ 「—」。
+        let orphan = ledger_policy::Policy {
+            id: "p9".to_owned(),
+            insurer_id: "missing".to_owned(),
+            policy_number: "P-9".to_owned(),
+            product_name: "孤儿险".to_owned(),
+            start_date: "2025-01-01".to_owned(),
+            end_date: None,
+            coverage_amount_cents: Some(5_00),
+            coverage_currency_code: Some("CNY".to_owned()),
+            note: None,
+            created_at: String::new(),
+            updated_at: String::new(),
+            version: 1,
+            device_id: String::new(),
+            is_deleted: false,
+        };
+        let rows = assemble_policy_rows(
+            &[orphan],
+            &stats_fixture(),
+            &insurers_fixture(),
+            &CurrencyTable::default(),
+            "2026-01-01",
+        );
+        assert_eq!(rows[0].insurer, "—");
     }
 }

@@ -2518,15 +2518,15 @@ fn group_more_container_tabs_follow_session_state_not_restart() {
     open_transactions(&mut app);
 
     // 资产组「更多」：页签 = 出厂清单序（保单/实物资产/保险公司），默认首签
-    // 保单（内容区标题「保单」×2：页签 + 占位屏名）。
+    // 保单——#2050 迁入后首签内容 = 真实保单视图（清单卡在屏，占位不再）。
     app.press("id:nav-more-assets").unwrap();
     app.wait_for("id:more-tab-policies").unwrap();
     app.wait_for("id:more-tab-physicalAssets").unwrap();
     app.wait_for("id:more-tab-insurers").unwrap();
-    assert_eq!(
-        app.screen().count("text:保单").unwrap(),
-        2,
-        "默认首签 = 清单首位（页签 + 占位屏名）"
+    app.wait_for("id:policy-table").unwrap();
+    assert!(
+        app.screen().count("id:placeholder-note").unwrap() == 0,
+        "保单页签不再占位（#2050 迁入）"
     );
     // 页签点击 → 内容切换（实物资产 ×2：页签 + 占位屏名；保单回 1）。
     app.press("id:more-tab-physicalAssets").unwrap();
@@ -8279,4 +8279,551 @@ fn scheduled_view_lands_directly_when_moved_to_sidebar() {
     app.press("id:nav-scheduled").unwrap();
     app.wait_for("id:sub-table").unwrap();
     app.wait_for(&format!("id:sub-next-{plan_id}")).unwrap();
+}
+
+// ---------------------------------------------------------------------------
+// 保单视图（#2050）：资产「更多」容器页签到达路径、清单与统计（挂单保费同
+// 源快照）、新建（保司即建 + 协议区）、编辑与软删确认、删除即红负向条目逐
+// 项写在各测试注释（ADR-0087 断言强度：断言对准用户可观察结果）。
+// ---------------------------------------------------------------------------
+
+/// 造一个保司（按名 find-or-create，域公开写入口）。
+fn seed_insurer(db: &ledger_infra::db::DbState, name: &str) -> String {
+    let conn = db
+        .conn
+        .lock()
+        .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
+        .unwrap();
+    ledger_policy::create_insurer_by_name(&conn, name).unwrap()
+}
+
+/// 造一张保单（域公开写入口；coverage = (保额分, 币种)）。
+fn seed_policy(
+    db: &ledger_infra::db::DbState,
+    insurer_id: &str,
+    number: &str,
+    product: &str,
+    start: &str,
+    end: Option<&str>,
+    coverage: Option<(i64, Option<&str>)>,
+) -> String {
+    let conn = db
+        .conn
+        .lock()
+        .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
+        .unwrap();
+    ledger_policy::create_policy(
+        &conn,
+        ledger_policy::PolicyInput {
+            insurer_id: insurer_id.to_owned(),
+            policy_number: number.to_owned(),
+            product_name: product.to_owned(),
+            start_date: start.to_owned(),
+            end_date: end.map(str::to_owned),
+            coverage_amount_cents: coverage.map(|(cents, _)| cents),
+            coverage_currency_code: coverage.and_then(|(_, code)| code.map(str::to_owned)),
+            note: None,
+        },
+        &mut || {},
+    )
+    .unwrap()
+}
+
+/// 造一笔挂医保单的保费支出（保单视角统计的挂单流水面，域公开写入口）。
+fn seed_policy_expense(
+    db: &ledger_infra::db::DbState,
+    account_id: &str,
+    policy_id: &str,
+    amount_cents: i64,
+) {
+    let conn = db
+        .conn
+        .lock()
+        .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
+        .unwrap();
+    let mut input = ledger_transaction::TransactionInput {
+        kind: ledger_transaction::TransactionKind::Expense,
+        amount_cents,
+        currency_code: "CNY".to_owned(),
+        account_id: Some(account_id.to_owned()),
+        to_account_id: None,
+        funding_account_id: None,
+        funding: Vec::new(),
+        purchases: Vec::new(),
+        category_id: None,
+        merchant_id: None,
+        merchant_name: None,
+        policy_id: Some(policy_id.to_owned()),
+        refund_of_transaction_id: None,
+        note: Some("保费扣款".to_owned()),
+        source_order_no: None,
+        date: "2026-01-05".to_owned(),
+        instrument_id: None,
+        quantity: None,
+        price_cents: None,
+        fee_cents: None,
+        to_instrument_id: None,
+        to_quantity: None,
+        out_amount_cents: None,
+        in_amount_cents: None,
+        origin: None,
+        fx_rate: None,
+        idempotency_key: None,
+    };
+    input.policy_id = Some(policy_id.to_owned());
+    ledger_transaction::create(&conn, input).unwrap();
+}
+
+/// 库态核对（不经 UI）：保单号与软删标志——软删行在域标准清单缺席，
+/// 直查表的 is_deleted 标志是对「软删不物理移除」的存在性凭据。
+fn book_policy_numbers(dir: &Path) -> Vec<(String, i64)> {
+    let db = nsh_app::boot::boot_ledger(dir).unwrap();
+    let conn = db.conn.lock().unwrap();
+    let mut stmt = conn
+        .prepare("SELECT policy_number, is_deleted FROM policies ORDER BY created_at")
+        .unwrap();
+    stmt.query_map([], |row| {
+        Ok((
+            row.get::<_, String>(0).unwrap(),
+            row.get::<_, i64>(1).unwrap(),
+        ))
+    })
+    .unwrap()
+    .collect::<Result<Vec<_>, _>>()
+    .unwrap()
+}
+
+/// 库态核对：保单名下订阅协议（含保单指针与金额）。
+fn book_agreements(dir: &Path, policy_id: &str) -> Vec<i64> {
+    let db = nsh_app::boot::boot_ledger(dir).unwrap();
+    let conn = db.read_conn.lock().unwrap();
+    ledger_scheduled::list_plans(&conn)
+        .unwrap()
+        .into_iter()
+        .filter(|plan| plan.policy_id.as_deref() == Some(policy_id))
+        .map(|plan| plan.core.amount_cents)
+        .collect()
+}
+
+/// 从侧栏点开资产组「更多」容器的保单页签（#2050 到达路径共用）。
+fn open_policies(app: &mut Headless) {
+    app.wait_for("id:nav-more-assets").unwrap();
+    app.press("id:nav-more-assets").unwrap();
+    app.wait_for("id:more-tab-policies").unwrap();
+    app.wait_for("id:policy-table").unwrap();
+}
+
+/// 装载（旧壳 onMounted 平价，容器页签到达）：清单卡列头与行格（保司显示
+/// 映射 / 期间 / 保障中 / 保额自带币种 / 统计三列同源快照 + 无活跃协议占
+/// 位「—」）。删除 boot 装载读接缝 / 行装配 / 容器挂载任一环即红。
+#[test]
+fn policy_view_lands_with_rows_stats_and_columns() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("policy-land");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let account = seed_cash_account(&db);
+        let insurer = seed_insurer(&db, "众安");
+        seed_policy(
+            &db,
+            &insurer,
+            "P-001",
+            "长期重疾险",
+            "2024-01-01",
+            None,
+            None,
+        );
+        let second = seed_policy(
+            &db,
+            &insurer,
+            "P-002",
+            "医疗险",
+            "2024-06-01",
+            Some("2025-12-31"),
+            Some((12_345, Some("USD"))),
+        );
+        seed_policy_expense(&db, &account, &second, 12_00);
+    }
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_policies(&mut app);
+    app.wait_for("text:长期重疾险").unwrap();
+
+    for text in [
+        "保单",
+        "新建保单",
+        "保单列表",
+        "保险公司",
+        "险种名称",
+        "保单号",
+        "保障期间",
+        "保额",
+        "累计已缴",
+        "累计流入",
+        "下期扣款日",
+        "长期重疾险",
+    ] {
+        assert!(
+            app.shows(text),
+            "应呈现「{text}」：{:?}",
+            app.screen().texts()
+        );
+    }
+    for text in [
+        "众安",
+        "P-001",
+        "2024-01-01 ~ 长期",
+        "保障中",
+        "医疗险",
+        "P-002",
+    ] {
+        assert!(
+            app.shows(text),
+            "行格应呈现「{text}」：{:?}",
+            app.screen().texts()
+        );
+    }
+    // 统计同源快照（挂单保费本位币合计）+ 无活跃协议占位（下期扣款「—」）。
+    for text in ["¥12", "—"] {
+        assert!(
+            app.shows(text),
+            "统计应呈现「{text}」：{:?}",
+            app.screen().texts()
+        );
+    }
+    // 已到期（止日早于今天）与保额自带币种不折算（USD 原样）。
+    assert!(app.shows("已到期"), "止日已过应呈已到期");
+    assert!(app.shows("$123.45"), "保额应按自带币种原样呈现");
+    // 到期列双态语义色锚点（test_id 计数而非字面）不参与断言——色面归人工
+    // 对表子集。
+}
+
+/// 新建旅程（旧壳 create + 输入即建保司平价）：空名与必填拦两步（保司空 →
+/// 拦；保单号空 → 拦）；输入新保司名 + 必填项 → 保存 → 行即现 + 反馈条位 +
+/// 弹窗关；保司即建（库中在册）。删除「新建 → perform_save → reload」任一
+/// 接线即红。
+#[test]
+fn policy_view_create_journey_with_new_insurer() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("policy-create");
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_policies(&mut app);
+
+    app.press("id:policy-new").unwrap();
+    app.wait_for("id:policy-form-number").unwrap();
+    app.wait_for("text:新建保单").unwrap();
+
+    // 保司未选未输 → 拦截（弹窗不关）。
+    app.press("id:policy-form-save").unwrap();
+    app.wait_for("id:policy-form-error").unwrap();
+    app.wait_for("text:保存失败: 请选择或输入保险公司").unwrap();
+
+    // 保司即键入新名；保单号留空 → 拦截。
+    app.type_text("id:policy-form-insurer-input", "新增保司")
+        .unwrap();
+    app.press("id:policy-form-save").unwrap();
+    app.wait_for("text:保存失败: 保单号不能为空").unwrap();
+
+    // 补齐必填 → 保存成功：行即现、反馈在屏、弹窗关；保司在库。
+    app.type_text("id:policy-form-number", "P-101").unwrap();
+    app.type_text("id:policy-form-product", "百万医疗").unwrap();
+    app.press("id:policy-form-save").unwrap();
+    app.wait_for("text:保单已创建").unwrap();
+    app.wait_for_gone("id:policy-form-save", DEFAULT_WAIT)
+        .unwrap();
+    app.wait_for("id:policy-table").unwrap();
+    app.wait_for("text:百万医疗").unwrap();
+    assert!(app.shows("P-101"), "新保单行在屏");
+    assert!(app.shows("新增保司"), "即建保司显示映射在屏");
+    let numbers = book_policy_numbers(&dir);
+    assert!(
+        numbers
+            .iter()
+            .any(|(number, deletion)| number == "P-101" && *deletion == 0),
+        "新保单落库在册：{:?}",
+        numbers
+    );
+}
+
+/// 新建带缴费协议（旧壳 PolicyFormModal 协议区平价）：开关默认关；开启后
+/// 字段组可见；扣款账户下拉选择唯一候选 → 保存 → 保单落库 + 订阅形态协议
+/// 落库（携带保单引用、金额与频次）。删除「协议区开关 → 字段组 → 保存建
+/// 协议」任一接线即红。
+#[test]
+fn policy_view_create_with_agreement_creates_plan() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("policy-agreement");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        seed_cash_account(&db);
+    }
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_policies(&mut app);
+
+    app.press("id:policy-new").unwrap();
+    app.wait_for("id:policy-form-number").unwrap();
+    // 开关默认关：字段组默认不呈现（test_id 计数）；开启后可见。
+    assert_eq!(
+        app.screen().count("id:policy-agreement-amount").unwrap(),
+        0,
+        "关闭态不呈现协议字段组"
+    );
+    app.press("id:policy-agreement-toggle").unwrap();
+    app.wait_for("id:policy-agreement-amount").unwrap();
+
+    app.type_text("id:policy-form-insurer-input", "协议保司")
+        .unwrap();
+    app.type_text("id:policy-form-number", "P-201").unwrap();
+    app.type_text("id:policy-form-product", "保费协议险")
+        .unwrap();
+    app.type_text("id:policy-agreement-amount", "60").unwrap();
+    app.press("id:policy-agreement-account").unwrap();
+    app.wait_for("id:policy-agreement-account-option").unwrap();
+    app.press("id:policy-agreement-account-option >> text:测试现金")
+        .unwrap();
+    app.settle();
+
+    app.press("id:policy-form-save").unwrap();
+    app.wait_for("text:保单已创建").unwrap();
+    app.wait_for_gone("id:policy-form-save", DEFAULT_WAIT)
+        .unwrap();
+    app.wait_for("id:policy-table").unwrap();
+    app.wait_for("text:保费协议险").unwrap();
+
+    // 库态：协议以保单引用落库（订阅形态，¥60 = 6000 分）。
+    let conn = nsh_app::boot::boot_ledger(&dir).unwrap();
+    let read_conn = conn.read_conn.lock().unwrap();
+    let policies = ledger_policy::list_policies(&read_conn).unwrap();
+    let target = policies
+        .iter()
+        .find(|policy| policy.policy_number == "P-201")
+        .unwrap()
+        .clone();
+    drop(read_conn);
+    let plan_dir = &dir;
+    let plan_ids = book_agreements(plan_dir, &target.id);
+    assert_eq!(
+        plan_ids,
+        [6_000],
+        "协议金额随保单引用落库（¥60 = 6000 分）：{plan_ids:?}"
+    );
+}
+
+/// 编辑旅程（旧壳 update 全量替换平价）：编辑弹层回填保单号 / 险种原值 →
+/// 改保单号保存 → 行刷新新号（同 syn 快照）。删除「编辑 → perform_save
+/// (update) → reload」任一接线即红。
+#[test]
+fn policy_view_edit_updates_fields() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("policy-edit");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let insurer = seed_insurer(&db, "编辑保司");
+        seed_policy(&db, &insurer, "P-301", "编辑险种", "2025-01-01", None, None);
+    }
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_policies(&mut app);
+    app.wait_for("text:编辑险种").unwrap();
+
+    // 打开编辑：回填原值（保单号输入框原文本）。
+    let policy_id = {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let conn = db.read_conn.lock().unwrap();
+        ledger_policy::list_policies(&conn)
+            .unwrap()
+            .into_iter()
+            .find(|policy| policy.policy_number == "P-301")
+            .unwrap()
+            .id
+    };
+    app.press(&format!("id:policy-edit-{policy_id}")).unwrap();
+    app.wait_for("id:policy-form-number").unwrap();
+    app.wait_for("text:编辑保单").unwrap();
+    assert_eq!(
+        app.screen().input_text("id:policy-form-number").unwrap(),
+        Some("P-301"),
+        "编辑弹层回填原保单号"
+    );
+    assert_eq!(
+        app.screen().input_text("id:policy-form-product").unwrap(),
+        Some("编辑险种"),
+        "编辑弹层回填原险种"
+    );
+
+    // 改号保存：行刷新 + 反馈在屏。
+    app.clear("id:policy-form-number").unwrap();
+    app.type_text("id:policy-form-number", "P-302").unwrap();
+    app.press("id:policy-form-save").unwrap();
+    app.wait_for("text:保单已保存").unwrap();
+    app.wait_for_gone("id:policy-form-save", DEFAULT_WAIT)
+        .unwrap();
+    app.wait_for("id:policy-table").unwrap();
+    app.wait_for("text:P-302").unwrap();
+    assert!(!app.shows("P-301"), "旧号离屏");
+}
+
+/// 软删确认守卫（旧壳 AppPopconfirm 平价）：删除按钮开确认气泡（确认文案
+/// 在屏）→ 取消不动（行仍在）→ 再开确认 → 行移除（软删不进标准清单，库
+/// 中行保留）。删除 popconfirm 开合接线 → 「确认文案永不呈现」本测红。
+#[test]
+fn policy_view_delete_guard_and_soft_delete() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("policy-delete");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let insurer = seed_insurer(&db, "删保司");
+        let policy_id = seed_policy(&db, &insurer, "P-401", "删除险种", "2025-01-01", None, None);
+        // 一个不删除的对照（确认软删只落到目标行）。
+        seed_policy(&db, &insurer, "P-402", "保留险种", "2025-01-01", None, None);
+        let _ = policy_id;
+    }
+    let policy_id = {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let conn = db.read_conn.lock().unwrap();
+        ledger_policy::list_policies(&conn)
+            .unwrap()
+            .into_iter()
+            .find(|policy| policy.policy_number == "P-401")
+            .unwrap()
+            .id
+    };
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_policies(&mut app);
+    app.wait_for("text:删除险种").unwrap();
+
+    // 打开确认气泡（确认文案在屏）→ 取消：行仍在。
+    app.press(&format!("id:policy-delete-{policy_id}")).unwrap();
+    app.wait_for("id:policy-delete-message").unwrap();
+    app.wait_for("text:删除后不再显示在列表，历史记录保留。确认删除该保单？")
+        .unwrap();
+    app.press("id:policy-delete-cancel").unwrap();
+    app.wait_for_gone("id:policy-delete-message", DEFAULT_WAIT)
+        .unwrap();
+    assert!(app.shows("删除险种"), "取消后行不移除");
+
+    // 再开确认：行移除 + 反馈在屏 + 软删不进标准清单（库中行保留）。
+    app.press(&format!("id:policy-delete-{policy_id}")).unwrap();
+    app.wait_for("id:policy-delete-message").unwrap();
+    app.press("id:policy-delete-confirm").unwrap();
+    app.wait_for("text:保单已删除").unwrap();
+    app.wait_for_gone("text:删除险种", DEFAULT_WAIT).unwrap();
+    assert!(app.shows("保留险种"), "对照行不受波及");
+    let numbers = book_policy_numbers(&dir);
+    assert!(
+        numbers
+            .iter()
+            .any(|(number, deletion)| number == "P-401" && *deletion == 1),
+        "软删保留库行（is_deleted=1，不物理移除）：{:?}",
+        numbers
+    );
+}
+
+/// 空库空态（旧壳 empty guide 同文案）：无保单呈现建档引导。
+#[test]
+fn policy_view_empty_book_shows_guide() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("policy-empty");
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_policies(&mut app);
+    app.wait_for("id:policy-empty-guide").unwrap();
+    assert!(
+        app.shows("暂无保单：点击「新建保单」建立第一份合同档案。"),
+        "空态引导文案（旧壳 emptyGuide 同词表）"
+    );
+}
+
+/// 编辑模式协议历史区（旧壳 PolicyAgreementSection 平价）：分段表（含活跃
+/// 段）与改价入口在屏；改价字段组预填旧协议频率（每 1 年）。删除「协议历史
+/// 装载 → 分段呈现 → 改价入口」任一接线即红。
+#[test]
+fn policy_view_edit_shows_agreement_segments_and_rebuild_entry() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("policy-agg-segments");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let account = seed_cash_account(&db);
+        let insurer = seed_insurer(&db, "分段保司");
+        let policy_id = seed_policy(&db, &insurer, "P-501", "分段险种", "2025-01-01", None, None);
+        // 造一段活跃订阅协议（域公开写入口，带保单引用）。
+        let conn = db
+            .conn
+            .lock()
+            .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
+            .unwrap();
+        ledger_scheduled::create_plan(
+            &conn,
+            ledger_scheduled::CreateScheduledInput {
+                kind: ledger_scheduled::ScheduledKind::Subscription,
+                account_id: account,
+                category_id: None,
+                amount_cents: 5_000,
+                currency_code: "CNY".to_owned(),
+                recurrence_type: ledger_scheduled::RecurrenceType::Yearly,
+                recurrence_interval: 1,
+                recurrence_day: None,
+                start_date: "2025-01-01".to_owned(),
+                note: Some("分段险种".to_owned()),
+                merchant_id: None,
+                policy_id: Some(policy_id.clone()),
+                total_amount_cents: None,
+                total_occurrences: None,
+                to_account_id: None,
+            },
+        )
+        .unwrap();
+    }
+
+    let policy_id = {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let conn = db.read_conn.lock().unwrap();
+        ledger_policy::list_policies(&conn)
+            .unwrap()
+            .into_iter()
+            .find(|policy| policy.policy_number == "P-501")
+            .unwrap()
+            .id
+    };
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_policies(&mut app);
+    app.wait_for("text:分段险种").unwrap();
+
+    // 编辑弹层：协议历史分段表（金额 · 周期 · 起始日 · 状态）与改价入口。
+    app.press(&format!("id:policy-edit-{policy_id}")).unwrap();
+    app.wait_for("id:policy-agreement-segments").unwrap();
+    app.wait_for("text:¥50 · 每年 · 2025-01-01 · 进行中")
+        .unwrap();
+    app.wait_for("id:policy-agreement-rebuild-open").unwrap();
+    assert!(
+        app.screen().count("id:policy-agreement-add").unwrap() == 0,
+        "有活跃段呈现改价而非添加"
+    );
+
+    // 改价入口打开字段组：金额要求显式输入（空），频次预填 1。
+    app.press("id:policy-agreement-rebuild-open").unwrap();
+    app.wait_for("id:policy-sec-form").unwrap();
+    assert_eq!(
+        app.screen().input_text("id:policy-sec-interval").unwrap(),
+        Some("1"),
+        "改价字段组频次预填旧段"
+    );
 }
