@@ -2200,28 +2200,34 @@ fn view_host(nav: nav::NavStore) -> impl IntoElement {
                 when(is(ViewName::Dashboard), dashboard::dashboard_view).otherwise(move || {
                     when(is(ViewName::Search), search::search_view).otherwise(move || {
                         when(
-                            is(ViewName::BookkeepingMore),
-                            group_more(nav_model::GroupId::Bookkeeping),
+                            is(ViewName::SavingsGoals),
+                            crate::savings::savings_goals_view,
                         )
                         .otherwise(move || {
                             when(
-                                is(ViewName::AssetsMore),
-                                group_more(nav_model::GroupId::Assets),
+                                is(ViewName::BookkeepingMore),
+                                group_more(nav_model::GroupId::Bookkeeping),
                             )
                             .otherwise(move || {
                                 when(
-                                    is(ViewName::InsightsMore),
-                                    group_more(nav_model::GroupId::Insights),
+                                    is(ViewName::AssetsMore),
+                                    group_more(nav_model::GroupId::Assets),
                                 )
                                 .otherwise(move || {
-                                    // 未迁移视图反应式占位壳：标题随当前视图；意图
-                                    // 消费时机 = 落位（effect 键 current，同轮落地）。
-                                    let focused = signal(None::<nav::NavIntent>);
-                                    effect(move || {
-                                        let _current = nav.current.get();
-                                        focused.set(nav::take_intent());
-                                    });
-                                    views::placeholder_shell_current(focused)
+                                    when(
+                                        is(ViewName::InsightsMore),
+                                        group_more(nav_model::GroupId::Insights),
+                                    )
+                                    .otherwise(move || {
+                                        // 未迁移视图反应式占位壳：标题随当前视图；意图
+                                        // 消费时机 = 落位（effect 键 current，同轮落地）。
+                                        let focused = signal(None::<nav::NavIntent>);
+                                        effect(move || {
+                                            let _current = nav.current.get();
+                                            focused.set(nav::take_intent());
+                                        });
+                                        views::placeholder_shell_current(focused)
+                                    })
                                 })
                             })
                         })
