@@ -3561,6 +3561,106 @@ pub fn insurer_display_rows(
     filter_insurer_rows(query, &base)
 }
 
+// ---------------------------------------------------------------------------
+// 跨账本汇总装配（#2055）：四口径合计卡（标签/金额/概念说明行集）、折算口径
+// 标注、部分合计警示判定与逐本状态词表——旧壳 crossBook.* zh-CN 词表与
+// investments.concepts.{concept}Tip + scopeCrossBook 拼接面（tipTemplate
+// {body}{scope}）的字面承载；金额 = 域编排出数 + [format_amount_basic]
+//（formatAmount 同式），装配零算术。
+// ---------------------------------------------------------------------------
+
+/// 跨本作用域句（旧壳 investments.concepts.scopeCrossBook 同词）：逐本折算到
+/// 主账本本位币、未解锁/未建库的账本不计入——四卡说明同一段、跨本语境差异
+/// 只写在本句（同名概念不写第二份措辞，#1369 语义）。
+const XBOOK_SCOPE_SENTENCE: &str =
+    "逐本取数后按查看时的当期汇率折算到主账本本位币；未解锁或未建库的账本不计入。";
+
+/// 四口径概念正文（旧壳 investments.concepts.{key}Tip 同词；键 = 卡 key）。
+fn cross_book_concept_tip(key: &str) -> &'static str {
+    match key {
+        "marketValue" => {
+            "各持仓按「数量 × 最新价格」计算市值的合计；缺现价或缺汇率的持仓不计入；不含投资账户里的现金。"
+        }
+        "unrealizedPnl" => {
+            "当前市值减去持仓成本（FIFO 批次成本，含买入手续费）的未实现盈亏，随行情变动；卖出后才转为已实现盈亏。"
+        }
+        "cumulativePnl" => "持仓收益（未实现）＋已实现盈亏＋累计分红。",
+        _ => {
+            "投资账户现金 + 持仓市值；隐藏账户与负债都不计入，缺现价的持仓跳过；它是财务自由度的分子。"
+        }
+    }
+}
+
+/// 四口径合计卡格：键（视图 test_id 与旧壳一致）、标签（crossBook.totals.*
+/// 同词）、金额（format_amount_basic 同式）与说明（正文 + 跨本作用域句拼接，
+/// tipTemplate {body}{scope} 同形）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct CrossBookTotalCells {
+    /// 卡 key（旧壳 test id 同词）。
+    pub key: &'static str,
+    /// 表位标签（跨本页展示词：与投资页「总市值」不同名）。
+    pub label: &'static str,
+    /// 金额文本（域合计出数 + formatAmount 同式）。
+    pub amount: String,
+    /// 口径说明（正文 + 跨本作用域句）。
+    pub tip: String,
+}
+
+/// 汇总载荷 → 四口径卡格（顺序与列位：市值、持仓收益、累计收益、可投资资产）。
+pub fn assemble_cross_book_totals(
+    summary: &crate::cross_book::CrossBookInvestmentSummary,
+    currencies: &CurrencyTable,
+) -> Vec<CrossBookTotalCells> {
+    let fmt = currencies.format_of(&summary.target_currency);
+    [
+        ("marketValue", "持仓市值", summary.market_value_cents),
+        ("unrealizedPnl", "持仓收益", summary.unrealized_pnl_cents),
+        ("cumulativePnl", "累计收益", summary.cumulative_pnl_cents),
+        (
+            "investableAssets",
+            "可投资资产",
+            summary.investable_assets_cents,
+        ),
+    ]
+    .into_iter()
+    .map(|(key, label, cents)| CrossBookTotalCells {
+        key,
+        label,
+        amount: format_amount_basic(cents, &fmt),
+        tip: format!("{}{}", cross_book_concept_tip(key), XBOOK_SCOPE_SENTENCE),
+    })
+    .collect()
+}
+
+/// 折算口径标注（旧壳 crossBook.convertedNote / sameCurrencyNote 同词表）：
+/// 发生过折算（含位币不一致的口径事实）显式说明，位币一致时说明直接相加。
+pub fn cross_book_currency_note(converted: bool, target_currency: &str) -> String {
+    if converted {
+        format!("各账本位币不一致，已按当期汇率折算为 {target_currency}；历史汇率仅属走势曲线")
+    } else {
+        format!("各账本位币一致，直接相加（{target_currency}）")
+    }
+}
+
+/// 部分合计警示判定（ADR-0114 决策 5 界面义务）：存在未计入本才警示。
+pub fn cross_book_has_excluded(summary: &crate::cross_book::CrossBookInvestmentSummary) -> bool {
+    summary
+        .books
+        .iter()
+        .any(|book| book.status != crate::cross_book::CrossBookBookStatus::Included)
+}
+
+/// 逐本状态词表（旧壳 crossBook.status.* 同值表，五态闭集）。
+pub fn cross_book_status_label(status: crate::cross_book::CrossBookBookStatus) -> &'static str {
+    match status {
+        crate::cross_book::CrossBookBookStatus::Included => "已计入",
+        crate::cross_book::CrossBookBookStatus::Locked => "未解锁、未计入",
+        crate::cross_book::CrossBookBookStatus::NotInitialized => "尚未初始化、未计入",
+        crate::cross_book::CrossBookBookStatus::SchemaMismatch => "版本不一致、未计入",
+        crate::cross_book::CrossBookBookStatus::Unreadable => "读取失败、未计入",
+    }
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -6701,5 +6801,141 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["i3"],
         );
+    }
+
+    // -------------------------------------------------------------
+    // 跨账本汇总装配（#2055）：四口径合计卡 / 折算与部分合计口径标注 /
+    // 逐本状态词表。金额 = formatAmount 同式（域合计出数，装配只消费）。
+    // -------------------------------------------------------------
+
+    /// 造一条跨本汇总载荷（域编排出数面；金额/币种/状态随参面）。
+    fn xbook_row(
+        name: &str,
+        status: crate::cross_book::CrossBookBookStatus,
+        active: bool,
+    ) -> crate::cross_book::CrossBookBookRow {
+        crate::cross_book::CrossBookBookRow {
+            id: name.to_owned(),
+            name: name.to_owned(),
+            status,
+            is_active: active,
+        }
+    }
+
+    fn xbook_summary(
+        converted: bool,
+        excluded: bool,
+    ) -> crate::cross_book::CrossBookInvestmentSummary {
+        crate::cross_book::CrossBookInvestmentSummary {
+            target_currency: "CNY".into(),
+            converted,
+            market_value_cents: 120_000,
+            unrealized_pnl_cents: 20_000,
+            cumulative_pnl_cents: 45_000,
+            investable_assets_cents: 190_000,
+            books: if excluded {
+                vec![
+                    xbook_row(
+                        "默认账本",
+                        crate::cross_book::CrossBookBookStatus::Included,
+                        true,
+                    ),
+                    xbook_row(
+                        "美股账本",
+                        crate::cross_book::CrossBookBookStatus::Included,
+                        false,
+                    ),
+                    xbook_row(
+                        "密码本",
+                        crate::cross_book::CrossBookBookStatus::Locked,
+                        false,
+                    ),
+                    xbook_row(
+                        "空账本",
+                        crate::cross_book::CrossBookBookStatus::NotInitialized,
+                        false,
+                    ),
+                ]
+            } else {
+                vec![xbook_row(
+                    "默认账本",
+                    crate::cross_book::CrossBookBookStatus::Included,
+                    true,
+                )]
+            },
+        }
+    }
+
+    /// 四口径卡：标签与旧壳 crossBook.totals.* 同词、金额同 formatAmount 形态、
+    /// 每卡说明 = 概念正文 + 跨本作用域句拼接（旧壳 tipTemplate 同形——删掉
+    /// 任一拼接即红钉住归纳面）。
+    #[test]
+    fn cross_book_totals_assemble_with_concept_scope_tips() {
+        let table = CurrencyTable::from_currencies(&[Currency {
+            code: "CNY".into(),
+            name: "人民币".into(),
+            symbol: "¥".into(),
+            decimal_places: 2,
+        }]);
+        let cards = assemble_cross_book_totals(&xbook_summary(true, false), &table);
+        assert_eq!(
+            cards.iter().map(|c| (c.key, c.label)).collect::<Vec<_>>(),
+            vec![
+                ("marketValue", "持仓市值"),
+                ("unrealizedPnl", "持仓收益"),
+                ("cumulativePnl", "累计收益"),
+                ("investableAssets", "可投资资产"),
+            ]
+        );
+        assert_eq!(cards[0].amount, "¥1200");
+        assert_eq!(cards[1].amount, "¥200");
+        assert_eq!(cards[2].amount, "¥450");
+        assert_eq!(cards[3].amount, "¥1900");
+        // 可投资资产的跨本句指明隐藏账本不计入与未计入本；说明=正文+作用域句。
+        assert!(cards[3].tip.contains("隐藏账户与负债都不计入"));
+        assert!(cards[3].tip.contains("未解锁或未建库的账本不计入"));
+    }
+
+    /// 折算口径标注：converted=true 同旧壳 convertedNote 同词表；位币一致时
+    /// 直接相加句（币种拼入文案由装配承载）。
+    #[test]
+    fn cross_book_currency_note_follows_conversion_state() {
+        assert_eq!(
+            cross_book_currency_note(true, "CNY"),
+            "各账本位币不一致，已按当期汇率折算为 CNY；历史汇率仅属走势曲线"
+        );
+        assert_eq!(
+            cross_book_currency_note(false, "CNY"),
+            "各账本位币一致，直接相加（CNY）"
+        );
+    }
+
+    /// 部分合计警示与逐本状态词表：存在未计入本才警示；五态标签逐条同词
+    ///（旧壳 crossBook.status.* 同值表；删本表即缺标签（视图测试同钉）。
+    #[test]
+    fn cross_book_partial_note_and_status_labels_cover_closure() {
+        assert!(cross_book_has_excluded(&xbook_summary(true, true)));
+        assert!(!cross_book_has_excluded(&xbook_summary(true, false)));
+        for (status, word) in [
+            (crate::cross_book::CrossBookBookStatus::Included, "已计入"),
+            (
+                crate::cross_book::CrossBookBookStatus::Locked,
+                "未解锁、未计入",
+            ),
+            (
+                crate::cross_book::CrossBookBookStatus::NotInitialized,
+                "尚未初始化、未计入",
+            ),
+            (
+                crate::cross_book::CrossBookBookStatus::SchemaMismatch,
+                "版本不一致、未计入",
+            ),
+            (
+                crate::cross_book::CrossBookBookStatus::Unreadable,
+                "读取失败、未计入",
+            ),
+        ] {
+            assert_eq!(cross_book_status_label(status), word);
+        }
     }
 }

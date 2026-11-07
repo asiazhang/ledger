@@ -179,6 +179,7 @@ pub fn reset_book_assembly() {
     tx_filter::reset_for_tests();
     reports::reset_for_tests();
     scheduled::reset_for_tests();
+    crate::cross_book::reset_default_data_dir();
 }
 
 /// 启动结果三态（窗口呈现的全部状态）。
@@ -2257,8 +2258,8 @@ fn view_host(nav: nav::NavStore) -> impl IntoElement {
     let group_more = |gid: nav_model::GroupId| move || views::group_more_view(gid);
     // 分支序随迁移系列推进：交易列表 / 预算（#2033）/ 账户（#2041）/
     // 定时（#2042）/ 概览（#2039）/ 搜索（#2040）/ 物品（#2044）/ 报表
-    //（#2048）/ 储蓄目标（#2056）挂真实组件，三容器挂「更多」页签壳，
-    // 其余未迁移视图共享占位。
+    //（#2048）/ 储蓄目标（#2056）/ 跨账本汇总与 AI 提示词（#2055）挂真实
+    // 组件，三容器挂「更多」页签壳，其余未迁移视图共享占位。
     when(is(ViewName::Transactions), transactions_view).otherwise(move || {
         when(is(ViewName::Budget), budget_view).otherwise(move || {
             when(is(ViewName::Accounts), accounts::accounts_view).otherwise(move || {
@@ -2276,22 +2277,32 @@ fn view_host(nav: nav::NavStore) -> impl IntoElement {
                                                 )
                                                 .otherwise(move || {
                                                     when(
-                                                        is(ViewName::BookkeepingMore),
-                                                        group_more(nav_model::GroupId::Bookkeeping),
+                                                        is(ViewName::Ai),
+                                                        crate::ai_prompt::ai_prompt_view,
                                                     )
                                                     .otherwise(move || {
                                                         when(
-                                                            is(ViewName::AssetsMore),
-                                                            group_more(nav_model::GroupId::Assets),
+                                                            is(ViewName::CrossBookSummary),
+                                                            crate::cross_book::cross_book_summary_view,
                                                         )
                                                         .otherwise(move || {
                                                             when(
-                                                                is(ViewName::InsightsMore),
-                                                                group_more(
-                                                                    nav_model::GroupId::Insights,
-                                                                ),
+                                                                is(ViewName::BookkeepingMore),
+                                                                group_more(nav_model::GroupId::Bookkeeping),
                                                             )
                                                             .otherwise(move || {
+                                                                when(
+                                                                    is(ViewName::AssetsMore),
+                                                                    group_more(nav_model::GroupId::Assets),
+                                                                )
+                                                                .otherwise(move || {
+                                                                    when(
+                                                                        is(ViewName::InsightsMore),
+                                                                        group_more(
+                                                                            nav_model::GroupId::Insights,
+                                                                        ),
+                                                                    )
+                                                                    .otherwise(move || {
                                                                 // 未迁移视图反应式占位壳：标题随当前视图；意图消费时机 = 落位
                                                                 //（effect 键 current，同轮落地）。
                                                                 let focused =
@@ -2309,6 +2320,8 @@ fn view_host(nav: nav::NavStore) -> impl IntoElement {
                                                     })
                                                 })
                                             })
+                                                })
+                                                })
                                     },
                                 )
                             },

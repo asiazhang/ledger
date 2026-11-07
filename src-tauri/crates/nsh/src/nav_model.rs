@@ -708,8 +708,28 @@ impl NavFacts {
     }
 }
 
+/// 路由守卫的开关挂靠（旧壳路由表 beforeEnter featureRouteGuard 参数面的
+/// 镜像，#2055）：某视图并入的功能自有路由——守卫按挂靠功能的关闭态裁决
+///（旧壳 cross-book-summary 路由调 featureRouteGuard("investments")：投资
+/// 汇总随投资开关随行关闭，ADR-0114 决策 6）。无挂靠视图返回 None（守卫只
+/// 看自身可关态与收纳分流）。
+fn guard_feature(view: ViewName) -> Option<ViewName> {
+    match view {
+        ViewName::CrossBookSummary => Some(ViewName::Investments),
+        _ => None,
+    }
+}
+
+/// 守卫的生效关闭态（旧壳 featureRouteGuard 的参数挂靠：挂靠功能关闭 =
+/// 宿主路由关闭；复用原判语义：不可关项恒 false［closable 闭集内联在
+/// is_closed］，挂靠面只看可关九项自身）。
+fn effectively_closed(view: ViewName, facts: &NavFacts) -> bool {
+    facts.is_closed(view) || guard_feature(view).is_some_and(|feature| facts.is_closed(feature))
+}
+
 /// 守卫裁决落位（最终落点）：目标视图 + 容器页签意图（目标为容器时有义，
 /// 非法或不可见页签归 None = 容器默认首签）。
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Landing {
     /// 最终落位视图。
@@ -768,8 +788,9 @@ pub fn resolve_landing(mut req: NavRequest, facts: &NavFacts) -> Landing {
                 container_tab: tab,
             };
         }
-        // 功能守卫裁决一：关闭态——裸回概览、引用放行。
-        if facts.is_closed(req.target) {
+        // 功能守卫裁决一：关闭态——裸回概览、引用放行（关闭态含挂靠面：
+        // 投资关闭时投资汇总随行关闭，#2055）。
+        if effectively_closed(req.target, facts) {
             return if req.focus.is_some() {
                 Landing {
                     view: req.target,
@@ -1387,6 +1408,32 @@ mod tests {
         assert_eq!(
             resolve_landing(NavRequest::focus(ViewName::Budget, ""), &facts).view,
             ViewName::Dashboard
+        );
+    }
+
+    /// 路由守卫的开关挂靠（旧壳路由表 beforeEnter 的 featureRouteGuard("investments")
+    /// 参数面，#2055）：投资汇总随投资开关随行关闭——投资关闭时汇总裸开回概览、
+    /// 启动恢复同守卫；投资关闭时撤销守卫映射判据（映射删除即红，测试在
+    /// headless 与本表双承载）。汇总自身不可关（不入可关九项），关闭面只挂
+    /// 映射功能。
+    #[test]
+    fn cross_book_summary_closure_follows_investments_feature() {
+        let facts = facts_with_closed(&[ViewName::Investments]);
+        // 关闭投资 → 汇总裸开回概览。
+        assert_eq!(
+            resolve_landing(NavRequest::bare(ViewName::CrossBookSummary), &facts).view,
+            ViewName::Dashboard
+        );
+        // 关闭投资 → 汇总恢复也落概览（旧壳「关闭恢复回概览」重合）。
+        assert_eq!(
+            resolve_restored(Some("cross-book-summary"), &facts),
+            ViewName::Dashboard
+        );
+        // 投资开放 → 汇总落自有路由。
+        let facts = facts_with_closed(&[]);
+        assert_eq!(
+            resolve_landing(NavRequest::bare(ViewName::CrossBookSummary), &facts).view,
+            ViewName::CrossBookSummary
         );
     }
 

@@ -16,6 +16,10 @@ path = "src/main.rs"
 test = false
 
 [dependencies]
+# 跨账本汇总编排的连接类型面（#2055）：逐本只读建连与读事务链路上的
+# `&Connection` 形面——infra/域栈同版本（0.40）联合特性已由 workspace 成员
+# 统一，本依赖只显式给类型名引用，不引入第二份编译面。
+rusqlite = "0.40"
 # NSH 框架经 workspace 精确锁定消费（ADR-0145 决策 2 / issue #2017 AC：0.x 连续
 # breaking，升级显式成票；default-features = false 关掉 QuickJS VM，Rust 模式）。
 # 平台后端按目标门禁（先例：根包窗口状态插件的 target 三元组条件）——立桩期

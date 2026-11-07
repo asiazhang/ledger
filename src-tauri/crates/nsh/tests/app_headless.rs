@@ -2373,7 +2373,8 @@ fn shortcut_band_keys_land_views() {
         "⌘` 落真实概览"
     );
     app.press_key("mod+0").unwrap();
-    assert_eq!(app.screen().count("text:AI").unwrap(), 2, "⌘0 落 AI");
+    // ⌘0 落 AI：#2055 起提示词页为真实组件（此前是占位屏名 count 钉）。
+    app.wait_for("id:ai-prompt-view").unwrap();
     app.press_key("mod+,").unwrap();
     assert_eq!(app.screen().count("text:设置").unwrap(), 2, "⌘, 落设置");
     app.press_key("mod+2").unwrap();
@@ -9004,5 +9005,264 @@ fn scheduled_view_create_installment_journey() {
             .any(|t| t.contains("已还 ¥0 / ¥100 · 0/3 期")),
         "进度 = 已还汇总（实时面）：{:?}",
         app.screen().texts()
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 跨账本投资汇总与 AI 提示词（#2055）：多本只读合计（折算/逐本状态口径标注、
+// 概念说明弹层）、随投资开关联动的守卫、AI 提示词的复制与反馈。
+// 现场口径：注册表数据根与活动本目录按用例注入（bin 生产面同序——main.rs
+// 解析后注入，headless 测试直接给槽位值）。
+// ---------------------------------------------------------------------------
+
+use ledger_currencies::ExchangeRateInput;
+use ledger_infra::db::book_registry::{Book, BookRegistry, RegistryOrigin, write_registry};
+use std::path::PathBuf;
+
+/// 唯一暂存注册表数据根（跨账本注册表所在的<XDG 数据根>面：目录名即生产
+/// 同构面，identifier 拼接语义由常量见证）。
+fn make_data_root(tag: &str) -> PathBuf {
+    let root = std::env::temp_dir().join(format!("ledger-test-nsh-xbook-{tag}-{}", new_uuid()));
+    fs::create_dir_all(&root).unwrap();
+    root
+}
+
+/// 落盘注册表：单活动本 + 追加他本（文件现场；活动本指向 active 目录）。
+fn seed_registry(root: &Path, active: &Path, others: &[(&str, &str, &Path)]) {
+    let mut books = vec![Book {
+        id: "b1".to_owned(),
+        name: "活动账本".to_owned(),
+        dir: active.to_path_buf(),
+    }];
+    for (id, name, dir) in others {
+        books.push(Book {
+            id: (*id).to_owned(),
+            name: (*name).to_owned(),
+            dir: dir.to_path_buf(),
+        });
+    }
+    write_registry(
+        root,
+        &BookRegistry {
+            books,
+            active_id: "b1".to_owned(),
+            pending_relocation: None,
+            origin: RegistryOrigin::NewFormat,
+        },
+    )
+    .unwrap();
+}
+
+/// 在指定库内造一个投资账户（现金腿；跨账本合计的可投资资产读）。
+fn seed_investment_cash(db: &ledger_infra::db::DbState, name: &str, currency: &str, cents: i64) {
+    seed_account_with_currency(db, name, AccountType::Investment, currency, cents);
+}
+
+/// 跨账本汇总渲染（#2055 折算 + 四态逐本 + 概念说明弹层）：活动本 CNY 现金
+/// 2000 元、他本 USD 现金 1000 元（当期汇率 7）→ 可投资资产 ¥9000、折算口
+/// 径标注、未计入本警示与逐本状态；说明弹层挂跨本作用域句。删除视图装载
+/// 接线（reload）→ 渲染用例红（「删除即红」负向条目，实拆见交付报告）。
+#[test]
+fn cross_book_summary_renders_converted_totals_books_and_concept_tip() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let root = make_data_root("render");
+    let dir_active = make_book("x-active");
+    nsh_app::app::set_book_dir(dir_active.clone());
+    nsh_app::cross_book::set_default_data_dir(root.clone());
+
+    // 活动本：投资账户 CNY 现金 2000 元 + 当期汇率 USD→CNY = 7。
+    {
+        let db = nsh_app::boot::boot_ledger(&dir_active).unwrap();
+        seed_investment_cash(&db, "证券", "CNY", 200_000);
+        let conn = db.conn.lock().unwrap();
+        ledger_investment::create_exchange_rate(
+            &conn,
+            ExchangeRateInput {
+                base_code: "USD".to_owned(),
+                quote_code: "CNY".to_owned(),
+                rate: 7.0,
+                priced_at: today().to_string(),
+                source: None,
+            },
+        )
+        .unwrap();
+    }
+
+    // 他本：USD 现金 1000 元（折算腿）：本内本位币基准设为 USD（app_settings
+    // 键值 JSON 形状，旧壳集成场景同款接缝）——本内无折算，跨本折算落活动本
+    // 汇率表（被测路径）。
+    let dir_usd = make_book("x-usd");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir_usd).unwrap();
+        seed_investment_cash(&db, "美元证券", "USD", 100_000);
+        db.conn
+            .lock()
+            .unwrap()
+            .execute(
+                "INSERT INTO app_settings(key, value) VALUES('ledger.base_currency', '\"USD\"') \
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                [],
+            )
+            .unwrap();
+    }
+
+    // 密文本（未解锁、未计入）。
+    let dir_locked = make_book("x-locked");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir_locked).unwrap();
+        drop(db);
+        ledger_infra::db::encryption::enable_encryption_for_file(
+            &dir_locked.join("ledger.db"),
+            "测试口令",
+        )
+        .unwrap();
+    }
+
+    // 未建库本（只登记、无库文件）。
+    let dir_missing =
+        std::env::temp_dir().join(format!("ledger-test-nsh-xbook-missing-{}", new_uuid()));
+    fs::create_dir_all(&dir_missing).unwrap();
+
+    seed_registry(
+        &root,
+        &dir_active,
+        &[
+            ("b2", "美元账本", &dir_usd),
+            ("b3", "密码本", &dir_locked),
+            ("b4", "空账本", &dir_missing),
+        ],
+    );
+
+    // 启动即恢复跨账本汇总（路由存储面；无侧栏入口——入口=账本切换弹层，
+    // ㉓设置②的挂接面）。
+    let storage = MemoryStorage::new(vec![(
+        "view_state:route".to_owned(),
+        "\"cross-book-summary\"".to_owned(),
+    )]);
+    let mut app = Headless::start(desktop_config_with_backend(storage)).unwrap();
+
+    app.wait_for("id:cross-book-summary").unwrap();
+    // 四口径卡：市值/持仓收益/累计收益为零、可投资资产 = 2000 + 1000 × 7。
+    for amount in ["¥0", "¥9000"] {
+        app.wait_for(&format!("text:{amount}")).unwrap();
+    }
+    // 口径标注：折算句（尾部小字）与部分合计警示并存。
+    app.wait_for("text:部分账本未计入，以下合计为部分合计")
+        .unwrap();
+    app.wait_for("text:各账本位币不一致，已按当期汇率折算为 CNY；历史汇率仅属走势曲线")
+        .unwrap();
+    // 逐本状态：密文本、未建库本排除可见；活动本恒计入。
+    app.wait_for("text:未解锁、未计入").unwrap();
+    app.wait_for("text:尚未初始化、未计入").unwrap();
+    app.wait_for("text:已计入").unwrap();
+    // 逐本行：注册表登记名 + 「当前」标签只挂活动本行。
+    for book_name in ["活动账本", "美元账本", "密码本", "空账本"] {
+        app.wait_for(&format!("text:{book_name}")).unwrap();
+    }
+    assert!(
+        app.screen().count("id:summary-book-active-b1").unwrap() == 1,
+        "活动本行挂「当前」"
+    );
+    assert!(
+        app.screen().count("id:summary-book-active-b2").unwrap() == 0,
+        "非活动计入本不挂「当前」（本壳正位，见交付报告）"
+    );
+
+    // 概念说明弹层：可投资资产卡挂跨本作用域句（旧壳 scopeCrossBook 同词）。
+    app.press("id:cross-book-investableAssets-info").unwrap();
+    app.wait_for("id:cross-book-investableAssets-info-message")
+        .unwrap();
+    let texts = app.screen().texts();
+    assert!(
+        texts
+            .iter()
+            .any(|t| t.contains("未解锁或未建库的账本不计入")),
+        "跨本作用域句在位：{:?}",
+        texts
+    );
+}
+
+/// 开关联动守卫（#2055，ADR-0114 决策 6）：投资关闭时跨账本汇总裸访问/
+/// 启动恢复回概览（旧壳 featureRouteGuard("investments") 同语义）；投资开
+/// 放时落自有路由。「删除即红」负向条目：删 nav_model 的 guard_feature 映
+/// 射 → 关闭态恢复直接落汇总，本测红。
+#[test]
+fn cross_book_summary_closure_follows_investments_toggle() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("x-guard");
+    seed_expense_series(&dir, 1);
+    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::cross_book::set_default_data_dir(make_data_root("guard"));
+
+    // 关闭投资 → 恢复落概览（净资产卡），不落汇总。
+    let storage = MemoryStorage::new(vec![
+        (
+            "view_state:route".to_owned(),
+            "\"cross-book-summary\"".to_owned(),
+        ),
+        (
+            "view_state:closed_features".to_owned(),
+            "[\"investments\"]".to_owned(),
+        ),
+    ]);
+    let mut app = Headless::start(desktop_config_with_backend(storage)).unwrap();
+    app.wait_for("id:net-worth-card").unwrap();
+    assert_eq!(
+        app.screen().count("id:cross-book-summary").unwrap(),
+        0,
+        "投资关闭 → 汇总随行关闭（守卫回概览）"
+    );
+    drop(app);
+
+    // 投资开放 → 恢复落自有路由。
+    nsh_app::app::reset_book_assembly();
+    nsh_app::app::set_book_dir(dir);
+    nsh_app::cross_book::set_default_data_dir(make_data_root("guard-open"));
+    let storage = MemoryStorage::new(vec![(
+        "view_state:route".to_owned(),
+        "\"cross-book-summary\"".to_owned(),
+    )]);
+    let mut app = Headless::start(desktop_config_with_backend(storage)).unwrap();
+    app.wait_for("id:cross-book-summary").unwrap();
+}
+
+/// AI 提示词页（#2055）：⌘0 键位落真实视图；展示契约全文（编译期嵌入 =
+/// 旧壳 include 同一文件）；复制按钮写剪贴板、回读校验成功并呈现反馈。
+/// 「删除即红」负向条目：删复制接线（perform_copy 的写/回读）→ 剪贴板
+/// 断言与反馈文案两处即红。
+#[test]
+fn ai_view_renders_prompt_and_copy_reports_into_clipboard() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("ai");
+    seed_expense_series(&dir, 1);
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+    // 等侧栏就绪再派发键位（既有键位上用例同序——就绪窗口内键位绑定已挂）。
+    app.wait_for("id:nav-ai").unwrap();
+
+    app.press_key("mod+0").unwrap();
+    app.wait_for("id:ai-prompt-view").unwrap();
+    // 正文整段单文本节点（markdown 原文）：锚点 id + 包含断言（exact 键不适用）。
+    app.wait_for("id:prompt-body").unwrap();
+    let texts = app.screen().texts();
+    assert!(
+        texts.iter().any(|t| t.contains("# Ledger API 入口提示词"))
+            && texts.iter().any(|t| t.contains("GET /api/v1/contract")),
+        "契约全文在屏：{:?}",
+        texts
+    );
+    // 复制前剪贴板为空（headless 现场无写入）。
+    assert!(app.screen().clipboard().is_none(), "复制前无剪贴板文本");
+
+    app.press("id:ai-copy").unwrap();
+    app.wait_for("text:已复制到剪贴板").unwrap();
+    // 剪贴板与契约模板同文（include_str! 同一文件指针——内容两壳同源）。
+    assert_eq!(
+        app.screen().clipboard(),
+        Some(include_str!("../../../prompts/ledger-api.md")),
+        "复制内容 = 提示词全文"
     );
 }

@@ -138,6 +138,12 @@
 //!   进度呈现（已存/还差/达成态与双向推算，进度算术归域读数）、新建/编辑
 //!   共表单弹层、生命周期动作（归档/取消归档/删除——删除经 danger 二确认，
 //!   守卫语义住域写入口单正文）与达成态计划提示；
+//! - [`cross_book`]：跨账本投资汇总（#2055）——旧壳壳层编排（根包
+//!   cross_book_summary，ADR-0114）的重生：逐本只读探测分派（四态闭集）、
+//!   内存合并与当期汇率折算（域读函数/折算入口单点消费）+ 只读合计视图
+//!   （四口径卡带概念说明、口径标注、逐本计入状态；随投资开关联动关闭）；
+//! - [`ai_prompt`]：AI 提示词页（#2055）——AI 导入入口提示词全文展示与
+//!   复制（提示词模板与旧壳同一契约文件的编译期嵌入，两壳同源零副本）；
 //! - [`wiring`]：域接缝接线——读路径全部读时投影接缝 + 交易写入协议的余额刷新
 //!   接缝，与旧壳启动接线同形（ADR-0112 决策 5）。
 //!
@@ -148,12 +154,14 @@
 //! 重复。
 
 pub mod accounts;
+pub mod ai_prompt;
 pub mod app;
 pub mod backup_entry;
 pub mod bar_chart;
 pub mod boot;
 pub mod combo_select;
 pub mod context_menu;
+pub mod cross_book;
 pub mod danger;
 pub mod dashboard;
 pub mod date_select;

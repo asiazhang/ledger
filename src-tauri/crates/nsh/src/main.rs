@@ -20,6 +20,11 @@ fn main() -> impl std::process::Termination {
     if let Some(dir) = std::env::args().nth(1).map(PathBuf::from) {
         nsh_app::app::set_book_dir(dir);
     }
+    // 跨账本注册表数据根（#2055）：与旧壳同一数据根（XDG 拼 identifier，
+    //Linux 平台语义）；解析失败不阻断启动（汇总读取码化拒绝同码呈现）。
+    if let Some(dir) = nsh_app::cross_book::default_data_dir_from_env() {
+        nsh_app::cross_book::set_default_data_dir(dir);
+    }
     // Linux 平台后端（GTK4 原生控件）：Rust 模式根组件直调域栈，无 JS VM。
     use nsh_platform_linux as platform;
     const APP_ID: &str = "com.zhangheng.ledger.nsh";
