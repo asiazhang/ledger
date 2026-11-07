@@ -2285,20 +2285,25 @@ fn view_host(nav: nav::NavStore) -> impl IntoElement {
                                                     )
                                                     .otherwise(move || {
                                                         when(
-                                                            is(ViewName::BookkeepingMore),
-                                                            group_more(
-                                                                nav_model::GroupId::Bookkeeping,
-                                                            ),
+                                                            is(ViewName::Merchants),
+                                                            crate::merchants::merchants_view,
                                                         )
                                                         .otherwise(move || {
                                                             when(
-                                                                is(ViewName::AssetsMore),
+                                                                is(ViewName::BookkeepingMore),
                                                                 group_more(
-                                                                    nav_model::GroupId::Assets,
+                                                                    nav_model::GroupId::Bookkeeping,
                                                                 ),
                                                             )
                                                             .otherwise(move || {
                                                                 when(
+                                                                    is(ViewName::AssetsMore),
+                                                                    group_more(
+                                                                        nav_model::GroupId::Assets,
+                                                                    ),
+                                                                )
+                                                                .otherwise(move || {
+                                                                    when(
                                                                 is(ViewName::InsightsMore),
                                                                 group_more(
                                                                     nav_model::GroupId::Insights,
@@ -2318,6 +2323,7 @@ fn view_host(nav: nav::NavStore) -> impl IntoElement {
                                                                     focused,
                                                                 )
                                                             })
+                                                                })
                                                             })
                                                         })
                                                     })

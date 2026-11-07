@@ -3444,6 +3444,116 @@ pub fn assemble_savings_goal_rows(
         .collect()
 }
 
+// ---------------------------------------------------------------------------
+// 商户管理清单装配族（#2052；旧壳 MerchantManager.vue 列构造纯函数的重生）：
+// 字典是名子字典（issue #223：只处理名称，无图标/颜色列），清单三列——
+// 名称（已删行带「已删除」标记）/ 关联交易（毛笔数，issue #445）/ 操作。
+// ---------------------------------------------------------------------------
+
+/// 商户管理清单列（旧壳 settings.merchants.columns 同词表）：名称 / 关联交易
+/// / 操作。建议宽度供 UI 映射，富余宽度全给名称列（商品族先例同形）。
+pub const MERCHANT_COLUMNS: &[ColumnDef] = &[
+    ColumnDef {
+        key: "name",
+        title: "名称",
+        align: ColumnAlign::Start,
+        width: 200.0,
+    },
+    ColumnDef {
+        key: "transaction_count",
+        title: "关联交易",
+        align: ColumnAlign::End,
+        width: 110.0,
+    },
+    ColumnDef {
+        key: "actions",
+        title: "操作",
+        align: ColumnAlign::Start,
+        width: 140.0,
+    },
+];
+
+/// 商户管理清单行装配产物：每列最终展示文本（字段与 [`MERCHANT_COLUMNS`]
+/// 逐列对应；操作列恒空串，格内容由 UI 侧行内按钮自绘）。`id` 供行级操作
+/// 与条数下钻的消费；`is_deleted` 是已删行只读呈现（无操作、名称带标记）
+/// 与条数照常可下钻的判据面。本表无金额（数量列走 [`format_quantity_text`]）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct MerchantRowCells {
+    /// 商户 id（行级操作目标 / 条数下钻的请求载荷事实源）。
+    pub id: String,
+    /// 名称列（商户原名，软删行也原样）。
+    pub name: String,
+    /// 软删表（已删行只读呈现的判据面——旧壳 `m.is_deleted` 分支同门）。
+    pub is_deleted: bool,
+    /// 关联交易列（毛笔数展示文本，formatQuantity 同语境——匿名数字分组）。
+    pub transaction_count_text: String,
+    /// 关联交易原值（整数笔数；列排序与下钻只读消费、渲染不消费——排序
+    /// 归 UI 会话态按本值排，渲染零格式化）。
+    pub transaction_count: i64,
+}
+
+/// 商户清单行装配上下文：引用计数表（快照入参，纯函数）+ 金额隐私开关
+///（数量列与金额列同一隐私口径——旧壳 formatQuantity 消费 amountPrivacyEnabled
+/// 同门；总数条「共 N 条」不打码，旧壳 prefix 直接消费原值同口径）。
+#[derive(Debug, Clone, Default)]
+pub struct MerchantListContext {
+    /// 引用计数表（merchant_id → 毛笔数；[`crate::boot::merchant_transaction_counts`]
+    /// 口径，读失败静默保留旧值由视图承担——本层只见投射后的表）。
+    pub counts: BTreeMap<String, i64>,
+    /// 金额隐私开关（数量列打码消费面）。
+    pub privacy_enabled: bool,
+}
+
+/// 毛笔数展示文本（旧壳 `formatQuantity` 的 NSH 同语境变形）：整数笔数、
+/// zh 四位一组、隐私掩码后置——分组位数恒 zh 与金额同源（词汇表「数字分组」）。
+pub fn format_quantity_text(count: i64, privacy_enabled: bool) -> String {
+    if privacy_enabled {
+        return AMOUNT_PRIVACY_MASK.to_owned();
+    }
+    let sign = if count < 0 { "-" } else { "" };
+    format!("{sign}{}", group_number_string(&count.abs().to_string(), 4))
+}
+
+/// 装配商户管理清单行集（**含软删全量**——旧壳 merchantMap includeDeleted 口径，
+/// issue #191；顺序保持域清单序 = name, created_at 升序，在用与软删同序混排，
+/// 在用优先 / 已删追加的呈现顺序归 UI 分区消费（旧壳 rows + deletedRows
+/// concatenate 同形）；计数缺失补 0（旧壳 toRow 同语义）。
+pub fn assemble_merchant_rows(
+    rows: &[ledger_merchants::Merchant],
+    ctx: &MerchantListContext,
+) -> Vec<MerchantRowCells> {
+    rows.iter()
+        .map(|row| {
+            let count = ctx.counts.get(&row.id).copied().unwrap_or(0);
+            MerchantRowCells {
+                id: row.id.clone(),
+                name: row.name.clone(),
+                is_deleted: row.is_deleted,
+                transaction_count_text: format_quantity_text(count, ctx.privacy_enabled),
+                transaction_count: count,
+            }
+        })
+        .collect()
+}
+
+/// 商户清单呈现序分区（旧壳 rows / deletedRows 纯派生同口径）：在用行集在
+/// 前、已删行集（显示已删开启时）追加在尾；同一装配快照的纯派生，零加减零重排
+///（分区内序保持域读序 = 名称序）。
+pub fn partition_merchant_rows(
+    rows: &[MerchantRowCells],
+) -> (Vec<MerchantRowCells>, Vec<MerchantRowCells>) {
+    let mut in_use = Vec::new();
+    let mut deleted = Vec::new();
+    for row in rows {
+        if row.is_deleted {
+            deleted.push(row.clone());
+        } else {
+            in_use.push(row.clone());
+        }
+    }
+    (in_use, deleted)
+}
+
 /// 双分区（旧壳 activeGoals / archivedGoals 纯派生同口径）：进行中进默认卡、
 /// 已归档进归档卡；同一快照的纯派生，零加减零重排（分区内序保持域读序）。
 pub fn partition_savings_goal_rows(
@@ -6226,6 +6336,58 @@ mod tests {
                 chrono::NaiveDate::from_ymd_opt(2026, 1, 15).unwrap(),
             )
             .is_none()
+        );
+    }
+
+    /// 商户清单行装配（旧壳 MerchantManager 列构造平价）：在用 / 已删两行逐
+    /// 列对拍（计数缺失补 0、已删标记、隐私掩码、zh 四位一组）。删任一装配
+    /// 分支即红（面在单测即函数分支本身）。
+    #[test]
+    fn merchant_rows_assemble_with_counts_and_deleted_flag() {
+        let mk = |id: &str, name: &str, is_deleted: bool| ledger_merchants::Merchant {
+            id: id.to_owned(),
+            name: name.to_owned(),
+            created_at: String::new(),
+            updated_at: String::new(),
+            version: 1,
+            device_id: String::new(),
+            is_deleted,
+        };
+        let rows = vec![mk("m1", "京东", false), mk("m2", "旧店", true)];
+        let mut counts = std::collections::BTreeMap::new();
+        counts.insert("m1".to_owned(), 10_002i64);
+        // m2 无引用：补 0（旧壳 toRow 同语义）。
+        let cells = assemble_merchant_rows(
+            &rows,
+            &MerchantListContext {
+                counts,
+                privacy_enabled: false,
+            },
+        );
+        assert_eq!(cells[0].name, "京东");
+        assert_eq!(cells[0].transaction_count_text, "1,0002");
+        assert_eq!(cells[0].transaction_count, 10_002);
+        assert!(!cells[0].is_deleted);
+        assert_eq!(cells[1].name, "旧店");
+        assert_eq!(cells[1].transaction_count_text, "0");
+        assert!(cells[1].is_deleted);
+        // 隐私掩码口径与金额列同源。
+        assert_eq!(
+            format_quantity_text(5, true),
+            AMOUNT_PRIVACY_MASK.to_owned()
+        );
+        // 列定义键序同旧壳列序。
+        let keys: Vec<&str> = MERCHANT_COLUMNS.iter().map(|def| def.key).collect();
+        assert_eq!(keys, vec!["name", "transaction_count", "actions"]);
+        // 呈现序分区：在用在前、已删追加在尾（分区内序保持域读序）。
+        let (in_use, deleted) = partition_merchant_rows(&cells);
+        assert_eq!(
+            in_use.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(),
+            vec!["m1"]
+        );
+        assert_eq!(
+            deleted.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(),
+            vec!["m2"]
         );
     }
 
