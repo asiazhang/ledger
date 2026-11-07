@@ -2881,6 +2881,307 @@ pub fn count_unfinished_plans(plans: &[PlanLeadFace], account_id: &str) -> usize
         .count()
 }
 
+// ---------------------------------------------------------------------------
+// 储蓄目标视图格（#2056）：蓄水进度行装配——旧壳 SavingsGoalsView 装配面的
+// 重生（一次装配、渲染期零格式化）。进度读数（已存 / 还差 / 达成态）与双向推
+// 算（ETA / 所需月存 / 落后超前）由域读路径 [`ledger_savings_goal::list_savings
+// _goal_progress`] 单点产出，本层只消费域行集产展示文本，不另立算术（词汇
+// 表「蓄水进度」：只输出金额差值、无百分比口径）。
+// ---------------------------------------------------------------------------
+
+/// 储蓄目标列定义（列名与旧壳 savingsGoals.columns zh-CN 词表同文案；金额列
+/// 末端对齐）。
+pub const SAVINGS_GOAL_COLUMNS: &[ColumnDef] = &[
+    ColumnDef {
+        key: "name",
+        title: "名称",
+        align: ColumnAlign::Start,
+        width: 140.0,
+    },
+    ColumnDef {
+        key: "target",
+        title: "目标金额",
+        align: ColumnAlign::End,
+        width: 105.0,
+    },
+    ColumnDef {
+        key: "saved",
+        title: "已存",
+        align: ColumnAlign::End,
+        width: 105.0,
+    },
+    ColumnDef {
+        key: "remaining",
+        title: "还差",
+        align: ColumnAlign::End,
+        width: 105.0,
+    },
+    ColumnDef {
+        key: "projection",
+        title: "推算",
+        align: ColumnAlign::Start,
+        width: 230.0,
+    },
+    ColumnDef {
+        key: "deadline",
+        title: "截止日",
+        align: ColumnAlign::Start,
+        width: 100.0,
+    },
+    ColumnDef {
+        key: "status",
+        title: "状态",
+        align: ColumnAlign::Start,
+        width: 110.0,
+    },
+    ColumnDef {
+        key: "actions",
+        title: "操作",
+        align: ColumnAlign::Start,
+        width: 130.0,
+    },
+];
+
+/// 储蓄目标已归档列定义（旧壳 archivedColumns 同闭集：名称 / 目标金额 / 已存 /
+/// 操作）。
+pub const SAVINGS_GOAL_ARCHIVED_COLUMNS: &[ColumnDef] = &[
+    ColumnDef {
+        key: "name",
+        title: "名称",
+        align: ColumnAlign::Start,
+        width: 140.0,
+    },
+    ColumnDef {
+        key: "target",
+        title: "目标金额",
+        align: ColumnAlign::End,
+        width: 105.0,
+    },
+    ColumnDef {
+        key: "saved",
+        title: "已存",
+        align: ColumnAlign::End,
+        width: 105.0,
+    },
+    ColumnDef {
+        key: "actions",
+        title: "操作",
+        align: ColumnAlign::Start,
+        width: 130.0,
+    },
+];
+
+/// 一行蓄水进度的装配产物（字段与 [`SAVINGS_GOAL_COLUMNS`] 逐列对应）：
+/// 金额与推算在到达时一次性成文本，渲染期零格式化；行上的原值字段
+///（目标金额分 / 手填计划月存 / 截止目 / 币种）供编辑回填与删除点名消费
+///（域行无 Clone 语义外的另一路面板——快照内单点反查）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct SavingsGoalRowCells {
+    /// 目标 id（操作目标）。
+    pub goal_id: String,
+    /// 名称列（目标原名）。
+    pub name: String,
+    /// 目标金额列（formatAmount 含隐私掩码与数字分组）。
+    pub target: String,
+    /// 已存列（专属账户余额 = V017 缓存读数，本层只消费）。
+    pub saved: String,
+    /// 还差列（带符号差值恒显；超额存入后为负）。
+    pub remaining: String,
+    /// 推算列逐行文本（节奏 / ETA / 所需月存 / 落后超前各自成行，不拼连
+    /// 续一行；达成态整体退场 = 空集）。
+    pub projection: Vec<String>,
+    /// 截止日列（缺席 = 占位破折号，旧壳 `deadline ?? "—"` 同口径）。
+    pub deadline: String,
+    /// 状态列标签（已达成 / 进行中）。
+    pub status: &'static str,
+    /// 达成态（状态色与计划提示判定的消费面）。
+    pub achieved: bool,
+    /// 已归档（双分区判定的同源标记；分区在装配产物上做，不回读域行）。
+    pub is_archived: bool,
+    // ---- 原值字段（编辑回填 / 删除点名的消费面，渲染不消费）----
+    /// 目标金额原值（整数分）。
+    pub target_cents: i64,
+    /// 手填计划月存原值（整数分，可空）。
+    pub planned_monthly_cents: Option<i64>,
+    /// 截止日原值（可空，`YYYY-MM-DD`）。
+    pub deadline_raw: Option<String>,
+    /// 币种原值（回填小数位查询面）。
+    pub currency_code: String,
+    /// 达成 + 关联计划仍在执行的提示行（旧壳 achievedPlanHint 同口径：
+    /// 只提示用户去计划页处理，计划状态不由目标域改动）。
+    pub plan_hint: bool,
+}
+
+/// 蓄水进度金额文本（含隐私掩码的消费面：推算行内的金额同一口径）。
+fn savings_amount_text(cents: i64, fmt: &CurrencyFormat, privacy: bool) -> String {
+    if privacy {
+        AMOUNT_PRIVACY_MASK.to_owned()
+    } else {
+        format_amount_basic(cents, fmt)
+    }
+}
+
+/// 推算列装配入参 face：域蓄水进度行的推算字段全集投影（借用目视面板，
+/// 装配期零拷贝）；`savings_goal_projection_lines` 三参数化收口（clippy
+/// too_many_arguments 口径，参数闭集一个结构体收齐）。
+struct ProjectionFace<'a> {
+    /// 达成态（纯展示态，达成即整体退场）。
+    achieved: bool,
+    /// 节奏金额（整数分，可空 = 节奏为零）。
+    pace_monthly_cents: Option<i64>,
+    /// 节奏来源闭集二值。
+    pace_source: Option<ledger_savings_goal::SavingsGoalPaceSource>,
+    /// 截止日（可空）。
+    deadline: Option<&'a str>,
+    /// 正推月数（域读数）。
+    eta_months: Option<i64>,
+    /// 正推年月（域读数）。
+    eta_month: Option<&'a str>,
+    /// 反推所需月存（域读数）。
+    required_monthly_cents: Option<i64>,
+    /// 反推节奏差值（域读数）。
+    pace_delta_cents: Option<i64>,
+}
+
+/// 蓄水进度推算列逐行文本（旧壳 projection 渲染器的重生，算术归域读数，
+/// 本层只按读数组合文案）：达成态整体退场；节奏行来源闭集二值随行可见；
+/// 无截止正推（还差 N 个月 / 预计年月）与设置引导；有截止反推（每月需存 +
+/// 落后 / 超前差值）与对比引导；截止已过只给一句话，不虚构时点。
+fn savings_goal_projection_lines(
+    face: ProjectionFace<'_>,
+    fmt: &CurrencyFormat,
+    privacy: bool,
+) -> Vec<String> {
+    let ProjectionFace {
+        achieved,
+        pace_monthly_cents,
+        pace_source,
+        deadline,
+        eta_months,
+        eta_month,
+        required_monthly_cents,
+        pace_delta_cents,
+    } = face;
+    if achieved {
+        // 达成 = 读时派生纯展示态：时点已无意义，推算整体退场（状态列
+        // 表达达成）。
+        return Vec::new();
+    }
+    let mut lines = Vec::new();
+    if let Some(pace) = pace_monthly_cents {
+        let amount = savings_amount_text(pace, fmt, privacy);
+        lines.push(match pace_source {
+            Some(ledger_savings_goal::SavingsGoalPaceSource::Plan) => {
+                format!("按计划 {amount}/月")
+            }
+            Some(ledger_savings_goal::SavingsGoalPaceSource::Manual) => {
+                format!("手填 {amount}/月")
+            }
+            // 节奏在场但来源缺席（读数契约外形态）：退化为无来源标签金额行。
+            None => format!("{amount}/月"),
+        });
+    }
+    if deadline.is_none() {
+        // 无截止正推：还差 N 个月 / 预计年月；节奏为零 → 设置引导（不虚构
+        // 时点）。
+        match eta_months {
+            Some(months) => {
+                lines.push(format!("还差 {months} 个月"));
+                if let Some(ym) = eta_month {
+                    lines.push(format!("预计 {ym} 攒够"));
+                }
+            }
+            None => lines.push("设置计划月存或挂一条自动转账计划，这里显示推算".to_owned()),
+        }
+    } else if let Some(required) = required_monthly_cents {
+        // 有截止反推：每月需存 + 落后 / 超前差值（差值缺席给对比引导）。
+        lines.push(format!(
+            "每月需存 {}",
+            savings_amount_text(required, fmt, privacy)
+        ));
+        match pace_delta_cents {
+            Some(delta) => {
+                let amount = savings_amount_text(delta.abs(), fmt, privacy);
+                lines.push(if delta >= 0 {
+                    format!("超前 {amount}/月")
+                } else {
+                    format!("落后 {amount}/月")
+                });
+            }
+            None => lines.push("设置计划月存或挂一条自动转账计划，与所需月存对比".to_owned()),
+        }
+    } else {
+        // 截止日已过：不反推所需月存、不虚构时点。
+        lines.push("已过截止日".to_owned());
+    }
+    lines
+}
+
+/// 域蓄水进度行集 → 展示格行集（一次性装配，渲染期零格式化；序保持域读序）。
+pub fn assemble_savings_goal_rows(
+    rows: &[ledger_savings_goal::SavingsGoalProgress],
+    currencies: &CurrencyTable,
+    privacy: bool,
+) -> Vec<SavingsGoalRowCells> {
+    rows.iter()
+        .map(|row| {
+            let fmt = currencies.format_of(&row.currency_code);
+            SavingsGoalRowCells {
+                goal_id: row.goal.id.clone(),
+                name: row.goal.name.clone(),
+                target: savings_amount_text(row.goal.target_amount_cents, &fmt, privacy),
+                saved: savings_amount_text(row.saved_cents, &fmt, privacy),
+                remaining: savings_amount_text(row.remaining_cents, &fmt, privacy),
+                projection: savings_goal_projection_lines(
+                    ProjectionFace {
+                        achieved: row.achieved,
+                        pace_monthly_cents: row.pace_monthly_cents,
+                        pace_source: row.pace_source,
+                        deadline: row.goal.deadline.as_deref(),
+                        eta_months: row.eta_months,
+                        eta_month: row.eta_month.as_deref(),
+                        required_monthly_cents: row.required_monthly_cents,
+                        pace_delta_cents: row.pace_delta_cents,
+                    },
+                    &fmt,
+                    privacy,
+                ),
+                deadline: row.goal.deadline.clone().unwrap_or_else(|| "—".to_owned()),
+                status: if row.achieved {
+                    "已达成"
+                } else {
+                    "进行中"
+                },
+                achieved: row.achieved,
+                is_archived: row.goal.status == ledger_savings_goal::SavingsGoalStatus::Archived,
+                target_cents: row.goal.target_amount_cents,
+                planned_monthly_cents: row.goal.planned_monthly_cents,
+                deadline_raw: row.goal.deadline.clone(),
+                currency_code: row.currency_code.clone(),
+                plan_hint: row.achieved
+                    && row.pace_source == Some(ledger_savings_goal::SavingsGoalPaceSource::Plan),
+            }
+        })
+        .collect()
+}
+
+/// 双分区（旧壳 activeGoals / archivedGoals 纯派生同口径）：进行中进默认卡、
+/// 已归档进归档卡；同一快照的纯派生，零加减零重排（分区内序保持域读序）。
+pub fn partition_savings_goal_rows(
+    rows: &[SavingsGoalRowCells],
+) -> (Vec<SavingsGoalRowCells>, Vec<SavingsGoalRowCells>) {
+    let mut active = Vec::new();
+    let mut archived = Vec::new();
+    for row in rows {
+        if row.is_archived {
+            archived.push(row.clone());
+        } else {
+            active.push(row.clone());
+        }
+    }
+    (active, archived)
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -5458,6 +5759,219 @@ mod tests {
             format_amount_f64(100_000_000.0, &table().format_of("CNY")),
             "¥100,0000",
             "zh 四位一组（小数分消费面同接缝）"
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // 储蓄目标视图格（#2056）：进度行装配 / 双分区 / 金额文本
+    // -----------------------------------------------------------------
+
+    use ledger_savings_goal::{
+        SavingsGoal, SavingsGoalPaceSource, SavingsGoalProgress, SavingsGoalStatus,
+    };
+
+    /// 目标进度行（用例共用）：目标面 + 进度读数随参（币种恒 CNY）；
+    /// 归档态 / 截止日 / 节奏字段由调用点就地赋值（行构造器窄参收口）。
+    fn goal_row(
+        id: &'static str,
+        name: &'static str,
+        target_cents: i64,
+        saved_cents: i64,
+    ) -> SavingsGoalProgress {
+        let remaining = target_cents - saved_cents;
+        SavingsGoalProgress {
+            goal: SavingsGoal {
+                id: id.to_owned(),
+                name: name.to_owned(),
+                target_amount_cents: target_cents,
+                deadline: None,
+                status: SavingsGoalStatus::Active,
+                planned_monthly_cents: None,
+                account_id: format!("acct-{id}"),
+                created_at: "2027-03-04T05:06:07Z".to_owned(),
+                updated_at: "2027-03-04T05:06:07Z".to_owned(),
+                version: 1,
+                device_id: "d".to_owned(),
+                is_deleted: false,
+            },
+            saved_cents,
+            remaining_cents: remaining,
+            achieved: saved_cents >= target_cents,
+            currency_code: "CNY".to_owned(),
+            pace_monthly_cents: None,
+            pace_source: None,
+            eta_months: None,
+            eta_month: None,
+            required_monthly_cents: None,
+            pace_delta_cents: None,
+        }
+    }
+
+    #[test]
+    fn savings_goal_rows_assemble_and_partition() {
+        let mut g1 = goal_row("g1", "买车基金", 20_000, 5_000);
+        g1.pace_monthly_cents = Some(100_000);
+        g1.pace_source = Some(SavingsGoalPaceSource::Manual);
+        let mut g2 = goal_row("g2", "已存满的目标", 10_000, 40_000);
+        g2.pace_monthly_cents = Some(100_000);
+        g2.pace_source = Some(SavingsGoalPaceSource::Plan);
+        let g3 = {
+            let mut row = goal_row("g3", "已归档的目标", 10_000, 1_000);
+            row.goal.status = SavingsGoalStatus::Archived;
+            row
+        };
+        let rows = vec![g1, g2, g3];
+        let currencies = CurrencyTable::default();
+        let (active, archived);
+        {
+            let cells = assemble_savings_goal_rows(&rows, &currencies, false);
+            assert_eq!(SAVINGS_GOAL_COLUMNS.len(), 8, "列闭集 = 旧壳主表 8 列");
+            assert_eq!(
+                SAVINGS_GOAL_ARCHIVED_COLUMNS.len(),
+                4,
+                "归档列闭集 = 旧壳归档卡 4 列"
+            );
+            assert_eq!(cells.len(), 3);
+            assert_eq!(cells[0].name, "买车基金");
+            // 缺省币种表（未知 code 走缺省缺省参：无币符、两位小数去零）。
+            assert_eq!(cells[0].target, "200");
+            assert_eq!(cells[0].saved, "50");
+            assert_eq!(cells[0].remaining, "150");
+            // 推算列（旧壳 projection 渲染器同文案）：非达成行首行 = 节奏行
+            //（来源闭集二值随行首可见），无截止正推 = ETA 行。
+            // 推算列（旧壳 projection 渲染器同文案）：非达成行首行 = 节奏行
+            //（来源闭集二值随行可见）。缺省币幅无币符：手填 1000/月。
+            assert_eq!(
+                cells[0].projection,
+                vec![
+                    "手填 1000/月".to_owned(),
+                    "设置计划月存或挂一条自动转账计划，这里显示推算".to_owned()
+                ],
+                "节奏行（来源闭集二值随行可见）在；读数未给 ETA 时给设置引导而非虚构时点"
+            );
+            // status 列已初始化。达成行:推算整体退场,计划提示在。删任一
+            // 分支即红(面在单测即函数分支本身)。
+            assert_eq!(cells[1].status, "已达成");
+            assert!(cells[1].projection.is_empty(), "达成态推算整体退场");
+            assert!(cells[1].plan_hint, "达成 + 计划节奏 = 关联计划提示在场");
+            assert_eq!(cells[0].status, "进行中");
+            assert!(!cells[0].plan_hint);
+            // 截止日缺席 = 占位破折号（旧壳 deadline ?? "—" 同口径）。
+            assert_eq!(cells[0].deadline, "—");
+            assert_eq!(cells[1].remaining, "-300");
+            // 分区：进行中二行 / 归档一行，分区内序保持域序。
+            let (a, ar) = partition_savings_goal_rows(&cells);
+            (active, archived) = (a, ar);
+        }
+        assert_eq!(active.len(), 2);
+        assert_eq!(archived.len(), 1);
+        assert_eq!(archived[0].name, "已归档的目标");
+    }
+
+    /// 双向推算的有截止反推与截止已过分支（词汇表 ETA / 所需月存）：
+    /// 每月需存行 + 落后 / 超前差值行（差值缺席给对比引导）；截止日已过
+    /// 只给一句话，不反推不虚构；手填 / 计划节奏来源闭集二值随行可见。
+    #[test]
+    fn savings_goal_projection_lines_cover_deadline_branches() {
+        use ledger_savings_goal::SavingsGoalPaceSource as Pace;
+        let fmt = CurrencyFormat::default();
+        // 有截止 + 反推字段（域读数单点产出）：每月需存 + 落后差值。
+        let lines = savings_goal_projection_lines(
+            ProjectionFace {
+                achieved: false,
+                pace_monthly_cents: Some(10_000),
+                pace_source: Some(Pace::Plan),
+                deadline: Some("2027-01-31"),
+                eta_months: None,
+                eta_month: None,
+                required_monthly_cents: Some(20_000),
+                pace_delta_cents: Some(-8_000),
+            },
+            &fmt,
+            false,
+        );
+        assert_eq!(
+            lines,
+            vec![
+                "按计划 100/月".to_owned(),
+                "每月需存 200".to_owned(),
+                "落后 80/月".to_owned()
+            ],
+            "节奏来源闭集二值 + 反推所需月存 + 落后差值逐行"
+        );
+        // 反推 + 差值缺席：给对比引导（不虚构方向）。
+        let lines = savings_goal_projection_lines(
+            ProjectionFace {
+                achieved: false,
+                pace_monthly_cents: Some(10_000),
+                pace_source: Some(Pace::Manual),
+                deadline: Some("2027-01-31"),
+                eta_months: None,
+                eta_month: None,
+                required_monthly_cents: Some(20_000),
+                pace_delta_cents: None,
+            },
+            &fmt,
+            false,
+        );
+        assert_eq!(
+            lines,
+            vec![
+                "手填 100/月".to_owned(),
+                "每月需存 200".to_owned(),
+                "设置计划月存或挂一条自动转账计划，与所需月存对比".to_owned()
+            ]
+        );
+        // 截止日已过：既不反推所需月存、也不虚构时点。
+        let lines = savings_goal_projection_lines(
+            ProjectionFace {
+                achieved: false,
+                pace_monthly_cents: None,
+                pace_source: None,
+                deadline: Some("2020-01-31"),
+                eta_months: None,
+                eta_month: None,
+                required_monthly_cents: None,
+                pace_delta_cents: None,
+            },
+            &fmt,
+            false,
+        );
+        assert_eq!(lines, vec!["已过截止日".to_owned()]);
+        // 超前差值行（反推 + 节奏充足）。
+        let lines = savings_goal_projection_lines(
+            ProjectionFace {
+                achieved: false,
+                pace_monthly_cents: Some(50_000),
+                pace_source: Some(Pace::Plan),
+                deadline: Some("2027-01-31"),
+                eta_months: None,
+                eta_month: None,
+                required_monthly_cents: Some(20_000),
+                pace_delta_cents: Some(30_000),
+            },
+            &fmt,
+            false,
+        );
+        assert_eq!(lines.last(), Some(&"超前 300/月".to_owned()));
+    }
+
+    /// 蓄水进度金额隐私掩码（旧壳 formatAmount 隐私口径随行生效）：目标额 /
+    /// 已存 / 还差 / 推算行金额全部掩码，文案行骨架保留。
+    #[test]
+    fn savings_goal_rows_mask_amounts_when_privacy_enabled() {
+        let mut row = goal_row("g1", "买车基金", 20_000, 5_000);
+        row.pace_monthly_cents = Some(100_000);
+        row.pace_source = Some(SavingsGoalPaceSource::Manual);
+        let rows = vec![row];
+        let cells = assemble_savings_goal_rows(&rows, &CurrencyTable::default(), true);
+        assert_eq!(cells[0].target, AMOUNT_PRIVACY_MASK);
+        assert_eq!(cells[0].saved, AMOUNT_PRIVACY_MASK);
+        assert_eq!(cells[0].remaining, AMOUNT_PRIVACY_MASK);
+        assert_eq!(
+            cells[0].projection[0],
+            format!("手填 {AMOUNT_PRIVACY_MASK}/月"),
+            "节奏行金额掩码、文案骨架保留"
         );
     }
 }

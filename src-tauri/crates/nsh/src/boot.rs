@@ -649,3 +649,59 @@ pub fn adjust_account_balance(
     let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
     ledger_accounts::adjust_account_balance(&conn, id, input)
 }
+
+// ---------------------------------------------------------------------------
+// 储蓄目标视图读写接缝（#2056）：蓄水进度读直调域读路径（旧壳
+// savingsGoalProgress 命令消费的同一域函数，#2041 账户视图绑集读同点消费），目标写路径
+// （创建 / 编辑 / 归档 / 取消归档 / 删除）直调域公开写入口——与旧壳
+// create/update/archive/unarchive/delete_savings_goal 命令同一执行协议，不经
+// IPC。生命周期守卫（余额非零拒绝删除、归档不删数据）住域单正文，本壳不自
+// 建守卫语义（spec #2056：生命周期守卫语义以域为唯一真源）。删除级联软删
+// 专属账户随域同一事务。写连接是成对建连的写侧。
+// ---------------------------------------------------------------------------
+
+/// 创建储蓄目标（域公开写入口直调，旧壳 create_savings_goal 命令同一执行
+/// 协议）：目标金额正数守卫在域内码化拒绝；同一事务经账户域公开写入口自动
+/// 建专属账户（1:1 绑定）。返回目标 id。写连接是成对建连的写侧。
+pub fn create_savings_goal(
+    db: &DbState,
+    input: &ledger_savings_goal::SavingsGoalInput,
+) -> Result<String> {
+    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    ledger_savings_goal::create_savings_goal(&conn, input)
+}
+
+/// 编辑储蓄目标（四字段全量替换，域公开写入口直调，旧壳 update_savings_goal
+/// 命令同一执行协议）：名称变化联动专属账户名（目标名权威），非法输入
+///（目标额非正 / 空名 / 计划月存非正）由域守卫码化拒绝零落库。写连接是成对
+/// 建连的写侧。
+pub fn update_savings_goal(
+    db: &DbState,
+    id: &str,
+    input: &ledger_savings_goal::SavingsGoalUpdateInput,
+) -> Result<()> {
+    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    ledger_savings_goal::update_savings_goal(&conn, id, input)
+}
+
+/// 归档储蓄目标（域入口直调，旧壳 archive_savings_goal 命令同一执行协议）：
+/// 退出默认列表，账户 / 流水 / 关联计划原样保留。写连接是成对建连的写侧。
+pub fn archive_savings_goal(db: &DbState, id: &str) -> Result<()> {
+    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    ledger_savings_goal::archive_savings_goal(&conn, id)
+}
+
+/// 取消归档储蓄目标（域入口直调，旧壳 unarchive_savings_goal 命令同一执行
+/// 协议）：恢复 active 回默认列表。写连接是成对建连的写侧。
+pub fn unarchive_savings_goal(db: &DbState, id: &str) -> Result<()> {
+    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    ledger_savings_goal::unarchive_savings_goal(&conn, id)
+}
+
+/// 删除储蓄目标（域公开写入口直调，旧壳 delete_savings_goal 命令同一执行
+/// 协议）：余额非零被域守卫码化拒绝（引导先转出），余额为零时域内同一事务
+/// 目标软删 + 级联软删专属账户（历史流水保留可查）。写连接是成对建连的写侧。
+pub fn delete_savings_goal(db: &DbState, id: &str) -> Result<()> {
+    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    ledger_savings_goal::delete_savings_goal(&conn, id)
+}

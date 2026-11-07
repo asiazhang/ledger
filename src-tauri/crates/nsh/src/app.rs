@@ -2253,8 +2253,8 @@ fn view_host(nav: nav::NavStore) -> impl IntoElement {
     let is = move |name: ViewName| move || current.get() == name;
     let group_more = |gid: nav_model::GroupId| move || views::group_more_view(gid);
     // 分支序随迁移系列推进：交易列表 / 预算（#2033）/ 概览（#2039）/
-    // 搜索（#2040）/ 账户（#2041）/ 物品（#2044）挂真实组件，三容器挂
-    // 「更多」页签壳，其余未迁移视图共享占位。
+    // 搜索（#2040）/ 账户（#2041）/ 物品（#2044）/ 储蓄目标（#2056）挂
+    // 真实组件，三容器挂「更多」页签壳，其余未迁移视图共享占位。
     when(is(ViewName::Transactions), transactions_view).otherwise(move || {
         when(is(ViewName::Budget), budget_view).otherwise(move || {
             when(is(ViewName::Accounts), accounts::accounts_view).otherwise(move || {
@@ -2262,29 +2262,36 @@ fn view_host(nav: nav::NavStore) -> impl IntoElement {
                     when(is(ViewName::Dashboard), dashboard::dashboard_view).otherwise(move || {
                         when(is(ViewName::Search), search::search_view).otherwise(move || {
                             when(
-                                is(ViewName::BookkeepingMore),
-                                group_more(nav_model::GroupId::Bookkeeping),
+                                is(ViewName::SavingsGoals),
+                                crate::savings::savings_goals_view,
                             )
                             .otherwise(move || {
                                 when(
-                                    is(ViewName::AssetsMore),
-                                    group_more(nav_model::GroupId::Assets),
+                                    is(ViewName::BookkeepingMore),
+                                    group_more(nav_model::GroupId::Bookkeeping),
                                 )
                                 .otherwise(move || {
                                     when(
-                                        is(ViewName::InsightsMore),
-                                        group_more(nav_model::GroupId::Insights),
+                                        is(ViewName::AssetsMore),
+                                        group_more(nav_model::GroupId::Assets),
                                     )
                                     .otherwise(move || {
-                                        // 未迁移视图反应式占位壳：标题随当前
-                                        // 视图；意图消费时机 = 落位
-                                        //（effect 键 current，同轮落地）。
-                                        let focused = signal(None::<nav::NavIntent>);
-                                        effect(move || {
-                                            let _current = nav.current.get();
-                                            focused.set(nav::take_intent());
-                                        });
-                                        views::placeholder_shell_current(focused)
+                                        when(
+                                            is(ViewName::InsightsMore),
+                                            group_more(nav_model::GroupId::Insights),
+                                        )
+                                        .otherwise(
+                                            move || {
+                                                // 未迁移视图反应式占位壳：标题随当前视图；意图
+                                                // 消费时机 = 落位（effect 键 current，同轮落地）。
+                                                let focused = signal(None::<nav::NavIntent>);
+                                                effect(move || {
+                                                    let _current = nav.current.get();
+                                                    focused.set(nav::take_intent());
+                                                });
+                                                views::placeholder_shell_current(focused)
+                                            },
+                                        )
                                     })
                                 })
                             })
