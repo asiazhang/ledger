@@ -3444,6 +3444,116 @@ pub fn assemble_savings_goal_rows(
         .collect()
 }
 
+// ---------------------------------------------------------------------------
+// 商户管理清单装配族（#2052；旧壳 MerchantManager.vue 列构造纯函数的重生）：
+// 字典是名子字典（issue #223：只处理名称，无图标/颜色列），清单三列——
+// 名称（已删行带「已删除」标记）/ 关联交易（毛笔数，issue #445）/ 操作。
+// ---------------------------------------------------------------------------
+
+/// 商户管理清单列（旧壳 settings.merchants.columns 同词表）：名称 / 关联交易
+/// / 操作。建议宽度供 UI 映射，富余宽度全给名称列（商品族先例同形）。
+pub const MERCHANT_COLUMNS: &[ColumnDef] = &[
+    ColumnDef {
+        key: "name",
+        title: "名称",
+        align: ColumnAlign::Start,
+        width: 200.0,
+    },
+    ColumnDef {
+        key: "transaction_count",
+        title: "关联交易",
+        align: ColumnAlign::End,
+        width: 110.0,
+    },
+    ColumnDef {
+        key: "actions",
+        title: "操作",
+        align: ColumnAlign::Start,
+        width: 140.0,
+    },
+];
+
+/// 商户管理清单行装配产物：每列最终展示文本（字段与 [`MERCHANT_COLUMNS`]
+/// 逐列对应；操作列恒空串，格内容由 UI 侧行内按钮自绘）。`id` 供行级操作
+/// 与条数下钻的消费；`is_deleted` 是已删行只读呈现（无操作、名称带标记）
+/// 与条数照常可下钻的判据面。本表无金额（数量列走 [`format_quantity_text`]）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct MerchantRowCells {
+    /// 商户 id（行级操作目标 / 条数下钻的请求载荷事实源）。
+    pub id: String,
+    /// 名称列（商户原名，软删行也原样）。
+    pub name: String,
+    /// 软删表（已删行只读呈现的判据面——旧壳 `m.is_deleted` 分支同门）。
+    pub is_deleted: bool,
+    /// 关联交易列（毛笔数展示文本，formatQuantity 同语境——匿名数字分组）。
+    pub transaction_count_text: String,
+    /// 关联交易原值（整数笔数；列排序与下钻只读消费、渲染不消费——排序
+    /// 归 UI 会话态按本值排，渲染零格式化）。
+    pub transaction_count: i64,
+}
+
+/// 商户清单行装配上下文：引用计数表（快照入参，纯函数）+ 金额隐私开关
+///（数量列与金额列同一隐私口径——旧壳 formatQuantity 消费 amountPrivacyEnabled
+/// 同门；总数条「共 N 条」不打码，旧壳 prefix 直接消费原值同口径）。
+#[derive(Debug, Clone, Default)]
+pub struct MerchantListContext {
+    /// 引用计数表（merchant_id → 毛笔数；[`crate::boot::merchant_transaction_counts`]
+    /// 口径，读失败静默保留旧值由视图承担——本层只见投射后的表）。
+    pub counts: BTreeMap<String, i64>,
+    /// 金额隐私开关（数量列打码消费面）。
+    pub privacy_enabled: bool,
+}
+
+/// 毛笔数展示文本（旧壳 `formatQuantity` 的 NSH 同语境变形）：整数笔数、
+/// zh 四位一组、隐私掩码后置——分组位数恒 zh 与金额同源（词汇表「数字分组」）。
+pub fn format_quantity_text(count: i64, privacy_enabled: bool) -> String {
+    if privacy_enabled {
+        return AMOUNT_PRIVACY_MASK.to_owned();
+    }
+    let sign = if count < 0 { "-" } else { "" };
+    format!("{sign}{}", group_number_string(&count.abs().to_string(), 4))
+}
+
+/// 装配商户管理清单行集（**含软删全量**——旧壳 merchantMap includeDeleted 口径，
+/// issue #191；顺序保持域清单序 = name, created_at 升序，在用与软删同序混排，
+/// 在用优先 / 已删追加的呈现顺序归 UI 分区消费（旧壳 rows + deletedRows
+/// concatenate 同形）；计数缺失补 0（旧壳 toRow 同语义）。
+pub fn assemble_merchant_rows(
+    rows: &[ledger_merchants::Merchant],
+    ctx: &MerchantListContext,
+) -> Vec<MerchantRowCells> {
+    rows.iter()
+        .map(|row| {
+            let count = ctx.counts.get(&row.id).copied().unwrap_or(0);
+            MerchantRowCells {
+                id: row.id.clone(),
+                name: row.name.clone(),
+                is_deleted: row.is_deleted,
+                transaction_count_text: format_quantity_text(count, ctx.privacy_enabled),
+                transaction_count: count,
+            }
+        })
+        .collect()
+}
+
+/// 商户清单呈现序分区（旧壳 rows / deletedRows 纯派生同口径）：在用行集在
+/// 前、已删行集（显示已删开启时）追加在尾；同一装配快照的纯派生，零加减零重排
+///（分区内序保持域读序 = 名称序）。
+pub fn partition_merchant_rows(
+    rows: &[MerchantRowCells],
+) -> (Vec<MerchantRowCells>, Vec<MerchantRowCells>) {
+    let mut in_use = Vec::new();
+    let mut deleted = Vec::new();
+    for row in rows {
+        if row.is_deleted {
+            deleted.push(row.clone());
+        } else {
+            in_use.push(row.clone());
+        }
+    }
+    (in_use, deleted)
+}
+
 /// 双分区（旧壳 activeGoals / archivedGoals 纯派生同口径）：进行中进默认卡、
 /// 已归档进归档卡；同一快照的纯派生，零加减零重排（分区内序保持域读序）。
 pub fn partition_savings_goal_rows(
@@ -3659,6 +3769,196 @@ pub fn cross_book_status_label(status: crate::cross_book::CrossBookBookStatus) -
         crate::cross_book::CrossBookBookStatus::SchemaMismatch => "版本不一致、未计入",
         crate::cross_book::CrossBookBookStatus::Unreadable => "读取失败、未计入",
     }
+}
+
+// 保单视图格（#2050）：保单清单行装配——旧壳 PoliciesView 装配面的重生（一次
+// 装配、渲染期零格式化）。保司显示映射（含软删保司，ADR-0082）、保障期间与
+// 到期文案全在本层单点；视图零自算。保单视角统计是读时投影（issue #363：
+// 实时推导不落库，同源同途），本层只按保单 id 组合文案，无本地二次聚合（词
+// 汇表「保单视角统计」）；保额纯展示按自带币种原样格式化，不折算、不进任何
+// 金额口径（ADR-0051）。
+// ---------------------------------------------------------------------------
+
+/// 保单清单列定义（列名与旧壳 policies.columns zh-CN 词表同文案；金额列
+/// 末端对齐）。总宽 1035pt 不超出内容区实测可用宽（装配建议值转述，弹性
+/// 富余宽给险种列），尾列缺席即操作钮灭失——储蓄目标视图门户重排先例。窄
+/// 窗横向滚动下限（旧壳 issue #849 / ADR-0088 决策 11）归系列尾部窄窗横切
+/// 票。
+pub const POLICY_COLUMNS: &[ColumnDef] = &[
+    ColumnDef {
+        key: "insurer",
+        title: "保险公司",
+        align: ColumnAlign::Start,
+        width: 95.0,
+    },
+    ColumnDef {
+        key: "product_name",
+        title: "险种名称",
+        align: ColumnAlign::Start,
+        width: 115.0,
+    },
+    ColumnDef {
+        key: "policy_number",
+        title: "保单号",
+        align: ColumnAlign::Start,
+        width: 95.0,
+    },
+    ColumnDef {
+        key: "period",
+        title: "保障期间",
+        align: ColumnAlign::Start,
+        width: 160.0,
+    },
+    ColumnDef {
+        key: "expiry",
+        title: "状态",
+        align: ColumnAlign::Start,
+        width: 65.0,
+    },
+    ColumnDef {
+        key: "coverage",
+        title: "保额",
+        align: ColumnAlign::End,
+        width: 85.0,
+    },
+    ColumnDef {
+        key: "paid",
+        title: "累计已缴",
+        align: ColumnAlign::End,
+        width: 90.0,
+    },
+    ColumnDef {
+        key: "inflow",
+        title: "累计流入",
+        align: ColumnAlign::End,
+        width: 90.0,
+    },
+    ColumnDef {
+        key: "next_charge",
+        title: "下期扣款日",
+        align: ColumnAlign::Start,
+        width: 100.0,
+    },
+    ColumnDef {
+        key: "actions",
+        title: "操作",
+        align: ColumnAlign::Start,
+        width: 140.0,
+    },
+];
+
+/// 一行保单的装配产物（字段与 [`POLICY_COLUMNS`] 逐列对应）：金额与期间在到
+/// 达时一次性成文本，渲染期零格式化。行上的原值字段（保单域行、保司显示映射
+/// 消费面由调用方另行持有快照）不在此重持——编辑回填经行快照内的域行身份字段。
+#[derive(Debug, Clone, PartialEq)]
+pub struct PolicyRowCells {
+    /// 保单 id（行级操作目标 / 行来源跳转的 focus 定位消费）。
+    pub id: String,
+    /// 保司列（保司显示映射解析，含软删保司——存量保单照常显示，引用解析
+    /// 不到回「—」，旧壳 `insurerMap.get(id)?.name ?? "—"` 同口径）。
+    pub insurer: String,
+    /// 险种名称列（保单原名）。
+    pub product_name: String,
+    /// 保单号列。
+    pub policy_number: String,
+    /// 保障期间列（「{start} ~ {end}」 / 「{start} ~ 长期」，旧壳 period.
+    /// range / lifetime 同词表）。
+    pub period: String,
+    /// 状态列（保障中 / 已到期：优先消费统计同源 is_expired（issue #363 与
+    /// BDD 口径一致），统计行未加载时回落本地推导——同一规则：止日非空且早
+    /// 于今天 → 已到期；止日空 = 长期/终身恒保障中；可推导的状态不落库）。
+    pub expiry: String,
+    /// 保额列（保额缺省或币种缺失 → 「—」；按自带币种原样格式化不折算）。
+    pub coverage: String,
+    /// 累计已缴列（本位币，统计同源快照；统计行未加载窗口显示「—」占位）。
+    pub paid: String,
+    /// 累计流入列（本位币，同上）。
+    pub inflow: String,
+    /// 下期扣款日列（无活跃协议或无 pending 期次 = 「—」，旧壳同占位）。
+    pub next_charge: String,
+}
+
+/// 保障期间文案（旧壳 period.range / lifetime 同词表的单点）。
+fn policy_period_text(start_date: &str, end_date: Option<&str>) -> String {
+    match end_date {
+        Some(end) => format!("{start_date} ~ {end}"),
+        None => format!("{start_date} ~ 长期"),
+    }
+}
+
+/// 到期态推导（旧壳 isExpired / expiredState 的本地回落分支单点）：止日非空
+/// 且早于今天 → 已到期；止日空 = 长期/终身 → 恒 false。`today` 是
+/// YYYY-MM-DD 文本（字典序即时间序）。
+fn policy_is_expired_local(end_date: Option<&str>, today: &str) -> bool {
+    end_date.is_some_and(|end| end < today)
+}
+
+/// 装配保单清单行集（顺序保持域清单序 = created_at, id，旧壳 list_policies
+/// 同口径）。
+pub fn assemble_policy_rows(
+    rows: &[ledger_policy::Policy],
+    stats: &[ledger_policy::PolicyStats],
+    insurers: &[ledger_policy::Insurer],
+    currencies: &CurrencyTable,
+    today: &str,
+) -> Vec<PolicyRowCells> {
+    // 保司显示映射（含软删）：保险域自有字典的 id → 名映射（读序不重排，
+    // 软删行照常映射，ADR-0082）。
+    let insurer_names: std::collections::HashMap<&str, &str> = insurers
+        .iter()
+        .map(|insurer| (insurer.id.as_str(), insurer.name.as_str()))
+        .collect();
+    let stat_by_id: std::collections::HashMap<&str, &ledger_policy::PolicyStats> =
+        stats.iter().map(|s| (s.policy_id.as_str(), s)).collect();
+    rows.iter()
+        .map(|row| {
+            let stat = stat_by_id.get(row.id.as_str()).copied();
+            let expired = stat
+                .map(|s| s.is_expired)
+                .unwrap_or_else(|| policy_is_expired_local(row.end_date.as_deref(), today));
+            // 统计合计按自带折算基准币种展示，统计行未加载时占位（旧壳
+            // policyStatAmountText 同口径，无本地二次聚合）。
+            let native_fmt = stat
+                .map(|s| currencies.format_of(&s.native_currency))
+                .unwrap_or_default();
+            let native_text = |cents: i64| {
+                if stat.is_some() {
+                    format_amount_basic(cents, &native_fmt)
+                } else {
+                    "—".to_owned()
+                }
+            };
+            // 保额纯展示：按自带币种原样格式化，不折算（ADR-0051）；金额与
+            // 币种成对，缺任一 → 「—」。
+            let coverage = match (
+                row.coverage_amount_cents,
+                row.coverage_currency_code.as_deref(),
+            ) {
+                (Some(cents), Some(code)) => {
+                    format_amount_basic(cents, &currencies.format_of(code))
+                }
+                _ => "—".to_owned(),
+            };
+            PolicyRowCells {
+                id: row.id.clone(),
+                insurer: insurer_names
+                    .get(row.insurer_id.as_str())
+                    .copied()
+                    .unwrap_or("—")
+                    .to_owned(),
+                product_name: row.product_name.clone(),
+                policy_number: row.policy_number.clone(),
+                period: policy_period_text(&row.start_date, row.end_date.as_deref()),
+                expiry: if expired { "已到期" } else { "保障中" }.to_owned(),
+                coverage,
+                paid: native_text(stat.map(|s| s.total_paid_native_cents).unwrap_or(0)),
+                inflow: native_text(stat.map(|s| s.total_inflow_native_cents).unwrap_or(0)),
+                next_charge: stat
+                    .and_then(|s| s.next_charge_date.clone())
+                    .unwrap_or_else(|| "—".to_owned()),
+            }
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -6138,6 +6438,58 @@ mod tests {
         );
     }
 
+    /// 商户清单行装配（旧壳 MerchantManager 列构造平价）：在用 / 已删两行逐
+    /// 列对拍（计数缺失补 0、已删标记、隐私掩码、zh 四位一组）。删任一装配
+    /// 分支即红（面在单测即函数分支本身）。
+    #[test]
+    fn merchant_rows_assemble_with_counts_and_deleted_flag() {
+        let mk = |id: &str, name: &str, is_deleted: bool| ledger_merchants::Merchant {
+            id: id.to_owned(),
+            name: name.to_owned(),
+            created_at: String::new(),
+            updated_at: String::new(),
+            version: 1,
+            device_id: String::new(),
+            is_deleted,
+        };
+        let rows = vec![mk("m1", "京东", false), mk("m2", "旧店", true)];
+        let mut counts = std::collections::BTreeMap::new();
+        counts.insert("m1".to_owned(), 10_002i64);
+        // m2 无引用：补 0（旧壳 toRow 同语义）。
+        let cells = assemble_merchant_rows(
+            &rows,
+            &MerchantListContext {
+                counts,
+                privacy_enabled: false,
+            },
+        );
+        assert_eq!(cells[0].name, "京东");
+        assert_eq!(cells[0].transaction_count_text, "1,0002");
+        assert_eq!(cells[0].transaction_count, 10_002);
+        assert!(!cells[0].is_deleted);
+        assert_eq!(cells[1].name, "旧店");
+        assert_eq!(cells[1].transaction_count_text, "0");
+        assert!(cells[1].is_deleted);
+        // 隐私掩码口径与金额列同源。
+        assert_eq!(
+            format_quantity_text(5, true),
+            AMOUNT_PRIVACY_MASK.to_owned()
+        );
+        // 列定义键序同旧壳列序。
+        let keys: Vec<&str> = MERCHANT_COLUMNS.iter().map(|def| def.key).collect();
+        assert_eq!(keys, vec!["name", "transaction_count", "actions"]);
+        // 呈现序分区：在用在前、已删追加在尾（分区内序保持域读序）。
+        let (in_use, deleted) = partition_merchant_rows(&cells);
+        assert_eq!(
+            in_use.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(),
+            vec!["m1"]
+        );
+        assert_eq!(
+            deleted.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(),
+            vec!["m2"]
+        );
+    }
+
     /// 物品清单行装配（旧壳 ItemsView 列构造平价）：在用 / 已处置两行逐列
     /// 对拍（状态标签、金额两列格式化、天数原样）。删任一装配分支即红
     /// （面在单测即函数分支本身）。
@@ -6672,6 +7024,176 @@ mod tests {
         );
     }
 
+    // -------------------------------------------------------------------
+    // 保单清单格（#2050）：清单格文本 / 保司显示映射（含软删）/ 期间与到期
+    // 文案 / 保额纯展示（不折算）/ 统计口径（快照同源、未加载占位、下期扣款
+    // 占位、本地到期回落）。
+    // -------------------------------------------------------------------
+
+    /// 保单行 + 保司字典行（用例共用；域行全量形状，审计字段占位零语义）。
+    fn policy_rows_fixture() -> Vec<ledger_policy::Policy> {
+        let make =
+            |id: &str,
+             insurer: &str,
+             product: &str,
+             number: &str,
+             start: &str,
+             end: Option<&str>,
+             coverage: Option<(i64, Option<&str>)>| ledger_policy::Policy {
+                id: id.to_owned(),
+                insurer_id: insurer.to_owned(),
+                policy_number: number.to_owned(),
+                product_name: product.to_owned(),
+                start_date: start.to_owned(),
+                end_date: end.map(str::to_owned),
+                coverage_amount_cents: coverage.map(|(cents, _)| cents),
+                coverage_currency_code: coverage.and_then(|(_, code)| code.map(str::to_owned)),
+                note: None,
+                created_at: String::new(),
+                updated_at: String::new(),
+                version: 1,
+                device_id: String::new(),
+                is_deleted: false,
+            };
+        vec![
+            make("p1", "i1", "重疾险", "P-001", "2024-01-01", None, None),
+            make(
+                "p2",
+                "i2",
+                "医疗险",
+                "P-002",
+                "2024-06-01",
+                Some("2025-12-31"),
+                Some((12_345, Some("USD"))),
+            ),
+            // 保额与币种成对。半挂（只有币种）不产生金额。
+            make(
+                "p3",
+                "i1",
+                "意外险",
+                "P-003",
+                "2025-01-01",
+                None,
+                Some((0, Some("CNY"))),
+            ),
+        ]
+    }
+
+    fn insurers_fixture() -> Vec<ledger_policy::Insurer> {
+        let make = |id: &str, name: &str| ledger_policy::Insurer {
+            id: id.to_owned(),
+            name: name.to_owned(),
+            created_at: String::new(),
+            updated_at: String::new(),
+            version: 1,
+            device_id: String::new(),
+            is_deleted: false,
+        };
+        vec![
+            make("i1", "众安"),
+            make("i2", "平安"),
+            make("i3", "已删保司"),
+        ]
+    }
+
+    fn stats_fixture() -> Vec<ledger_policy::PolicyStats> {
+        let make = |id: &str, paid: i64, inflow: i64, next: Option<&str>, expired: bool| {
+            ledger_policy::PolicyStats {
+                policy_id: id.to_owned(),
+                native_currency: "CNY".to_owned(),
+                total_paid_native_cents: paid,
+                total_inflow_native_cents: inflow,
+                next_charge_date: next.map(str::to_owned),
+                is_expired: expired,
+            }
+        };
+        vec![make("p1", 12_00, 0, Some("2026-03-01"), false)]
+    }
+
+    #[test]
+    fn policy_rows_assemble_period_insurer_and_coverage() {
+        let currencies = CurrencyTable::from_currencies(&[
+            ledger_currencies::Currency {
+                code: "CNY".to_owned(),
+                name: "人民币".to_owned(),
+                symbol: "¥".to_owned(),
+                decimal_places: 2,
+            },
+            ledger_currencies::Currency {
+                code: "USD".to_owned(),
+                name: "美元".to_owned(),
+                symbol: "$".to_owned(),
+                decimal_places: 2,
+            },
+        ]);
+        let rows = assemble_policy_rows(
+            &policy_rows_fixture(),
+            &stats_fixture(),
+            &insurers_fixture(),
+            &currencies,
+            "2026-01-01",
+        );
+        assert_eq!(POLICY_COLUMNS.len(), 10, "列闭集 = 旧壳主表 10 列");
+        assert_eq!(POLICY_COLUMNS.iter().map(|d| d.width).sum::<f32>(), 1035.0);
+        // 保司显示映射（含软删照常映射）；保额纯展示按自带币种（不折算为
+        // 本位币口径——USD 保留美元符号）。
+        assert_eq!(rows[0].insurer, "众安");
+        assert_eq!(rows[1].insurer, "平安");
+        assert_eq!(rows[1].coverage, "$123.45");
+        // 期间文案：止日空 = 长期。
+        assert_eq!(rows[0].period, "2024-01-01 ~ 长期");
+        assert_eq!(rows[1].period, "2024-06-01 ~ 2025-12-31");
+        // 保单号透传、统计的同源快照（本位币）。
+        assert_eq!(rows[0].policy_number, "P-001");
+        assert_eq!(rows[0].paid, "¥12");
+        assert_eq!(rows[0].inflow, "¥0");
+        assert_eq!(rows[0].next_charge, "2026-03-01");
+    }
+
+    #[test]
+    fn policy_rows_stats_missing_falls_back_to_local_derivations() {
+        let rows = assemble_policy_rows(
+            &policy_rows_fixture(),
+            &[],
+            &insurers_fixture(),
+            &CurrencyTable::default(),
+            "2026-01-01",
+        );
+        // 统计行未加载窗口：合计两列与下期扣款日占位「—」；到期态回落本地
+        // 推导（止日巳过 → 已到期；止日空 → 保障中）。
+        for row in &rows {
+            assert_eq!(row.paid, "—");
+            assert_eq!(row.inflow, "—");
+            assert_eq!(row.next_charge, "—");
+        }
+        assert_eq!(rows[0].expiry, "保障中", "止日空 = 长期/终身（永不判到期）");
+        assert_eq!(rows[1].expiry, "已到期", "止日巳过 = 已到期");
+        // 保司不含在字典内（引用解析不到）→ 「—」。
+        let orphan = ledger_policy::Policy {
+            id: "p9".to_owned(),
+            insurer_id: "missing".to_owned(),
+            policy_number: "P-9".to_owned(),
+            product_name: "孤儿险".to_owned(),
+            start_date: "2025-01-01".to_owned(),
+            end_date: None,
+            coverage_amount_cents: Some(5_00),
+            coverage_currency_code: Some("CNY".to_owned()),
+            note: None,
+            created_at: String::new(),
+            updated_at: String::new(),
+            version: 1,
+            device_id: String::new(),
+            is_deleted: false,
+        };
+        let rows = assemble_policy_rows(
+            &[orphan],
+            &stats_fixture(),
+            &insurers_fixture(),
+            &CurrencyTable::default(),
+            "2026-01-01",
+        );
+        assert_eq!(rows[0].insurer, "—");
+    }
     // -----------------------------------------------------------------
     // 保司管理装配（#2051）：域读序保持 / 双分区 / 统一模糊搜索语义过滤
     //（汉字原文与拼音首字母双路径）/ 展示面（显示已删叠加搜索）。

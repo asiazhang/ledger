@@ -14,7 +14,8 @@
 //! 接缝（[`nav::open`] 携容器页签意图，守卫裁决归一）；页签右键「移回侧栏」
 //! （组满置灰 + 提示，上限可见可学习）；成员全关闭 = 零页签（收纳清单保留，
 //! 侧栏「更多」链接随之消失）。容器零业务逻辑：被收视图整体装载——已迁移
-//! 的交易列表（#2037）与定时视图（#2042）挂真实组件，其余挂占位。
+//! 的交易列表（#2037）、定时视图（#2042）与物品（#2044）、保单（#2050）挂
+//! 真实组件，其余挂占位。
 //!
 //! 测试豁免（ADR-0060）：本模块测试经 crate 根 cfg(test) 整体放行六件套。
 
@@ -28,6 +29,7 @@ use crate::insurers;
 use crate::items;
 use crate::nav::{self, NavIntent};
 use crate::nav_model::{self, GroupId, NavRequest, ViewName};
+use crate::policies;
 
 /// 视图令牌便捷面（前景/弱化，双态自适应；令牌缺失回退亮灰/中灰可读兜底，
 /// app.rs 先例同形）。
@@ -138,9 +140,9 @@ pub fn group_more_view(group: GroupId) -> impl IntoElement {
 
     // 激活成员的下钻意图消费（落位与意图同轮落地；effect 键激活切换，读一次
     // 语义由 [nav::take_intent] 封闸承担——页签往复不重放）。激活成员是已迁
-    // 移的真实视图（交易列表 #2037 / 定时 #2042 / 物品 #2044 / 保司 #2051）
-    // 时本占位壳不抢消费（真实视图挂载自带落位消费——抢了即吞掉筛选 /
-    // focus 落位意图）。
+    // 移的真实视图（交易列表 #2037 / 定时 #2042 / 物品 #2044 / 保单 #2050 /
+    // 商户 #2052 / 保司 #2051）时本占位壳不抢占消费（真实视图挂载自带落位
+    // 消费——抢了即吞掉筛选 / focus 落位意图）。
     let focused = signal(None::<NavIntent>);
     effect(move || {
         let current = active.get();
@@ -149,6 +151,8 @@ pub fn group_more_view(group: GroupId) -> impl IntoElement {
             Some(ViewName::Transactions)
                 | Some(ViewName::Scheduled)
                 | Some(ViewName::Items)
+                | Some(ViewName::Policies)
+                | Some(ViewName::Merchants)
                 | Some(ViewName::Insurers)
         ) {
             focused.set(nav::take_intent());
@@ -175,8 +179,8 @@ pub fn group_more_view(group: GroupId) -> impl IntoElement {
         );
 
     // 被收视图整体装载（容器零业务逻辑）：已迁移的真实视图（交易列表 /
-    // 定时 #2042 / 物品 #2044 / 保司 #2051）挂真实组件，其余挂激活页签的
-    // 占位（标题随激活成员响应式，意图消费归上方 effect）。
+    // 定时 #2042 / 物品 #2044 / 商户 #2052 / 保司 #2051）挂真实组件，其余挂
+    // 激活页签的占位（标题随激活成员响应式，意图消费归上方 effect）。
     let content = when(
         move || active.get() == Some(ViewName::Transactions),
         transactions_view,
@@ -193,20 +197,32 @@ pub fn group_more_view(group: GroupId) -> impl IntoElement {
             )
             .otherwise(move || {
                 when(
-                    move || active.get() == Some(ViewName::Insurers),
-                    insurers::insurers_view,
+                    move || active.get() == Some(ViewName::Policies),
+                    policies::policies_view,
                 )
                 .otherwise(move || {
-                    placeholder_shell(
-                        move || {
-                            active
-                                .get()
-                                .map(|v| v.label().to_owned())
-                                .unwrap_or_default()
-                        },
-                        focused,
-                        palette,
+                    when(
+                        move || active.get() == Some(ViewName::Merchants),
+                        crate::merchants::merchants_view,
                     )
+                    .otherwise(move || {
+                        when(
+                            move || active.get() == Some(ViewName::Insurers),
+                            insurers::insurers_view,
+                        )
+                        .otherwise(move || {
+                            placeholder_shell(
+                                move || {
+                                    active
+                                        .get()
+                                        .map(|v| v.label().to_owned())
+                                        .unwrap_or_default()
+                                },
+                                focused,
+                                palette,
+                            )
+                        })
+                    })
                 })
             })
         })
