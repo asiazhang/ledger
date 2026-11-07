@@ -26,15 +26,22 @@ pub(crate) const OPTION_ID_SUFFIX: &str = "-option";
 pub(crate) const CLEAR_ID_SUFFIX: &str = "-clear";
 
 /// 普通下拉选择：`id_prefix` 是 headless 锚点前缀（触发件 `{prefix}-trigger`、
-/// 选项行 `{prefix}-option`、清除钮 `{prefix}-clear`）；`options` 是数据源闭包；
-/// `selected` 是选中值信号（调用方持有、读写皆可；None = 未选，等价旧壳
-/// clearable 后的空值）；`placeholder` 是未选中时的触发件文案。
+/// 选项行 `{prefix}-option`、清除钮 `{prefix}-clear`；动态前缀以 `Cow` 承载，
+/// 静态常量调用点零改动）；`options` 是数据源闭包；`selected` 是选中值信号
+/// （调用方持有、读写皆可；None = 未选，等价旧壳 clearable 后的空值）；
+/// `placeholder` 是未选中时的触发件文案。
 pub fn app_select(
-    id_prefix: &'static str,
+    id_prefix: impl Into<std::borrow::Cow<'static, str>>,
     options: impl Fn() -> Vec<CategoryOption> + Copy + 'static,
     selected: Signal<Option<String>>,
     placeholder: &'static str,
 ) -> impl IntoElement {
+    let id_prefix = id_prefix.into();
+    // 后缀拼接预派生（子行动态前缀：各 move 闭包捕获自己的 String）。
+    let prefix_trigger = format!("{}{}", id_prefix, TRIGGER_ID_SUFFIX);
+    let prefix_value = format!("{}-value", id_prefix);
+    let prefix_option = format!("{}{}", id_prefix, OPTION_ID_SUFFIX);
+    let prefix_clear = format!("{}{}", id_prefix, CLEAR_ID_SUFFIX);
     let open = signal(false);
     // 主题令牌（双态自适应；令牌缺失回退亮灰/中灰可读兜底，先例同形）。
     let tokens = nsh_core::element::tokens();
@@ -80,56 +87,50 @@ pub fn app_select(
                 })
                 .popup_class("bg-background border border-border rounded-md shadow-md p-1")
                 .trigger(
-                    view()
-                        .test_id(format!("{}{}", id_prefix, TRIGGER_ID_SUFFIX).as_str())
-                        .child(
-                            button()
-                                .app_class(
-                                    "px-2 py-1 rounded-md border border-border hover:bg-accent",
-                                )
-                                .flex_row()
-                                .items_center()
-                                .gap_1()
-                                .min_w(px(160.0))
-                                .on_press(move |_: &()| open.set(true))
-                                .child(
-                                    text(move || {
-                                        selected_label().unwrap_or_else(|| placeholder.to_owned())
-                                    })
-                                    .text_size(px(13.0))
-                                    .text_color(move || {
-                                        if selected_label().is_some() {
-                                            fg
-                                        } else {
-                                            muted
-                                        }
-                                    })
-                                    .number_of_lines(1)
-                                    .test_id(format!("{}{}", id_prefix, "-value").as_str()),
-                                )
-                                .child(text("▾").text_size(px(11.0)).text_color(muted)),
-                        ),
+                    view().test_id(prefix_trigger.as_str()).child(
+                        button()
+                            .app_class("px-2 py-1 rounded-md border border-border hover:bg-accent")
+                            .flex_row()
+                            .items_center()
+                            .gap_1()
+                            .min_w(px(160.0))
+                            .on_press(move |_: &()| open.set(true))
+                            .child(
+                                text(move || {
+                                    selected_label().unwrap_or_else(|| placeholder.to_owned())
+                                })
+                                .text_size(px(13.0))
+                                .text_color(move || {
+                                    if selected_label().is_some() {
+                                        fg
+                                    } else {
+                                        muted
+                                    }
+                                })
+                                .number_of_lines(1)
+                                .test_id(prefix_value.as_str()),
+                            )
+                            .child(text("▾").text_size(px(11.0)).text_color(muted)),
+                    ),
                 )
                 .child(each(
                     options,
                     |o: &CategoryOption| o.id.clone(),
                     move |item: ReadSignal<CategoryOption>, _index: ReadSignal<usize>| {
                         let option = item.get();
-                        view()
-                            .test_id(format!("{}{}", id_prefix, OPTION_ID_SUFFIX).as_str())
-                            .child(
-                                button()
-                                    .app_class(
-                                        "w-full px-2 py-1 rounded-md text-left text-foreground \
+                        view().test_id(prefix_option.as_str()).child(
+                            button()
+                                .app_class(
+                                    "w-full px-2 py-1 rounded-md text-left text-foreground \
                                          hover:bg-accent selected:bg-accent",
-                                    )
-                                    .child(
-                                        text(option.label.clone())
-                                            .text_size(px(13.0))
-                                            .text_color(fg),
-                                    )
-                                    .on_press(move |_: &()| choose(option.clone())),
-                            )
+                                )
+                                .child(
+                                    text(option.label.clone())
+                                        .text_size(px(13.0))
+                                        .text_color(fg),
+                                )
+                                .on_press(move |_: &()| choose(option.clone())),
+                        )
                     },
                 )),
         )
@@ -145,7 +146,7 @@ pub fn app_select(
                             text("✕")
                                 .text_size(px(11.0))
                                 .text_color(muted)
-                                .test_id(format!("{}{}", id_prefix, CLEAR_ID_SUFFIX).as_str()),
+                                .test_id(prefix_clear.as_str()),
                         )
                         .on_press(move |_: &()| selected.set(None))
                 },

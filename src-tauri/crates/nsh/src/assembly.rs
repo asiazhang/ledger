@@ -1450,6 +1450,366 @@ pub fn assemble_refund_transaction(
     })
 }
 
+// ---------------------------------------------------------------------------
+// 出资分解 / 购买项下单表单装配器（#2036 表单③；域契约唯一真源 =
+// ledger_transaction::write::funding_items / purchase_items）：表单③两形态
+// 的表单状态 → 完整 TransactionInput 的装配接缝。纪律同前三装配器：同步纯
+// 函数、校验 fail fast 显式报错、金额换算与日期转换在此收口；分解行的主账
+// 户恒缺省（契约互斥，ADR-0138 决策 2），订单行主账户必选；合计一致性
+// （Σ == 交易金额）在本层先行阻拦，域 Writer 守卫是契约兑底。
+// ---------------------------------------------------------------------------
+
+/// 购买项行提交状态（表单③两族共用的商品行；件数/单价以原始文本承载，换
+/// 算在装配器内收口）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PurchaseRowSubmit {
+    /// 商品名称（必填，trim 后非空）。
+    pub name: String,
+    /// 件数原始文本（正整数）。
+    pub quantity_text: String,
+    /// 商品分类（可选，明细指针；不承载统计口径——报表按交易行分类整单计入，
+    /// ADR-0138 决策 11）。
+    pub category_id: Option<String>,
+    /// 单价原始文本（可空；携带时非负，ADR-0138 决策 10：存而不显示、不进
+    /// 金额口径）。
+    pub price_text: String,
+}
+
+/// 购买项行校验错误（两族共用的行级词表）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PurchaseRowError {
+    /// 商品名称缺失。
+    NameRequired,
+    /// 件数非正整数。
+    QuantityInvalid,
+    /// 单价形状/精度非法。
+    PriceInvalid,
+    /// 单价为负（0 是合法标价——赠品）。
+    PriceNegative,
+}
+
+impl PurchaseRowError {
+    /// 错误条位文案（zh-CN 词表）。
+    pub fn as_text(self) -> &'static str {
+        match self {
+            Self::NameRequired => "请输入商品名称",
+            Self::QuantityInvalid => "件数必须为正整数",
+            Self::PriceInvalid => "商品单价无效，请输入不超过两位小数的金额",
+            Self::PriceNegative => "商品单价不能为负数",
+        }
+    }
+}
+
+/// 购买项行装配（行状态 → 域购买项输入；件数与单价换算在此收口）。纯函数，
+/// 出资分解族与购买项族两装配器共用同一行语义（分解行叠加购买项的编辑形态
+/// 与订单族同一契约）。
+fn assemble_purchase_row(
+    row: PurchaseRowSubmit,
+) -> Result<ledger_transaction::TransactionPurchaseInput, PurchaseRowError> {
+    let name = row.name.trim().to_owned();
+    if name.is_empty() {
+        return Err(PurchaseRowError::NameRequired);
+    }
+    let Ok(quantity) = row.quantity_text.trim().parse::<i64>() else {
+        return Err(PurchaseRowError::QuantityInvalid);
+    };
+    if quantity <= 0 {
+        return Err(PurchaseRowError::QuantityInvalid);
+    }
+    let unit_price_cents = if row.price_text.trim().is_empty() {
+        None
+    } else {
+        if !matches!(judge_amount_text(&row.price_text), AmountJudgment::Ok(_)) {
+            return Err(PurchaseRowError::PriceInvalid);
+        }
+        let cents = amount_text_to_cents(&row.price_text).ok_or(PurchaseRowError::PriceInvalid)?;
+        if cents < 0 {
+            return Err(PurchaseRowError::PriceNegative);
+        }
+        Some(cents)
+    };
+    Ok(ledger_transaction::TransactionPurchaseInput {
+        name,
+        quantity,
+        category_id: row.category_id.filter(|id| !id.trim().is_empty()),
+        unit_price_cents,
+    })
+}
+
+/// 出资项行提交状态（账户 / 金额 / 扣款标签；金额以原始文本承载）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FundingRowSubmit {
+    /// 出资账户（必选；允许同一账户多条——预售定金 + 尾款靠标签区分）。
+    pub account_id: Option<String>,
+    /// 出资金额原始文本（正数）。
+    pub amount_text: String,
+    /// 扣款标签（可选自由文本，上限 50 字——域同款契约，壳层先行同文案语义）。
+    pub label: String,
+}
+
+/// 出资分解表单提交状态（提交时点的业务字段；分解行的主账户在域契约下恒
+/// 缺省，表单无主账户位）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct FundingFormSubmit {
+    /// 交易类型（本族闭集：支出 / 收入——仅 expense/income 可带分解）。
+    pub kind: TransactionKind,
+    /// 交易金额（主行）原始文本。
+    pub amount_text: String,
+    /// 出资项子行（数组序即顺序位）。
+    pub rows: Vec<FundingRowSubmit>,
+    /// 叠加购买项（分解行可同时携带购买项——AI 导入多出资多商品订单的编辑
+    /// 形态，ADR-0138 决策 15 呈现形态；创建入口默认空）。
+    pub purchases: Vec<PurchaseRowSubmit>,
+    /// 交易行分类（统计归属）。
+    pub category_id: Option<String>,
+    /// 商户语义（见 [`MerchantRef`]）。
+    pub merchant: MerchantRef,
+    /// 可选保单引用。
+    pub policy_id: Option<String>,
+    /// 备注（空串落 None）。
+    pub note: String,
+    /// 交易日期。
+    pub date: chrono::NaiveDate,
+    /// 来源订单号（编辑路径透传行上原值；创建路径 None）。
+    pub source_order_no: Option<String>,
+}
+
+/// 出资分解表单校验错误。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FundingFormError {
+    /// 主行金额非正数。
+    AmountNotPositive,
+    /// 主行金额换算失败。
+    AmountInvalid,
+    /// 分解为空（本族无主账户位，域契约 funding 空 ⇒ account_id 必填，不可
+    /// 提交；纠错走改用普通支出表单）。
+    RowsEmpty,
+    /// 出资行账户未选。
+    RowAccountRequired,
+    /// 出资行金额非正。
+    RowAmountNotPositive,
+    /// 出资行金额换算失败。
+    RowAmountInvalid,
+    /// 扣款标签超长。
+    LabelTooLong,
+    /// 合计不一致（Σ 出资项 ≠ 交易金额；用户故事 2 明确阻拦不错记）。
+    TotalMismatch,
+    /// 叠加购买项行错误（行级词表见 [`PurchaseRowError`]）。
+    Row(PurchaseRowError),
+}
+
+impl FundingFormError {
+    /// 错误条位文案（zh-CN 词表）。
+    pub fn as_text(self) -> &'static str {
+        match self {
+            Self::AmountNotPositive => "请输入金额",
+            Self::AmountInvalid => "金额无效，请输入不超过两位小数的金额",
+            Self::RowsEmpty => "请至少添加一条出资项",
+            Self::RowAccountRequired => "请选择出资账户",
+            Self::RowAmountNotPositive => "请输入出资金额",
+            Self::RowAmountInvalid => "出资金额无效，请输入不超过两位小数的金额",
+            Self::LabelTooLong => "扣款标签不能超过 50 字",
+            Self::TotalMismatch => "出资合计与交易金额不一致",
+            Self::Row(e) => e.as_text(),
+        }
+    }
+}
+
+/// 出资分解表单状态 → 完整 TransactionInput：主金额换算 → 逐行守卫（账户 /
+/// 金额 / 标签）→ 合计一致性 → 购买项行 → 契约互斥落位（account_id 恒
+/// None）。`currency_code` 由调用方随出资账户推导传入（首行账户币种，域准
+/// 入要求逐条与交易币种一致，多账户跨币种不做）。
+pub fn assemble_funding_transaction(
+    submit: FundingFormSubmit,
+    currency_code: String,
+) -> Result<ledger_transaction::TransactionInput, FundingFormError> {
+    // 主金额（形状换算先行，业务正性随后——与基础收支同序）。
+    let Some(amount_cents) = amount_text_to_cents(&submit.amount_text) else {
+        return Err(FundingFormError::AmountInvalid);
+    };
+    if amount_cents <= 0 {
+        return Err(FundingFormError::AmountNotPositive);
+    }
+    if submit.rows.is_empty() {
+        return Err(FundingFormError::RowsEmpty);
+    }
+    // 逐行守卫（fail fast：账户 → 金额换算 → 正性 → 标签长度）。
+    let mut funding = Vec::with_capacity(submit.rows.len());
+    let mut total_cents = 0i64;
+    for row in submit.rows {
+        let Some(account_id) = row.account_id.filter(|id| !id.trim().is_empty()) else {
+            return Err(FundingFormError::RowAccountRequired);
+        };
+        let Some(row_cents) = amount_text_to_cents(&row.amount_text) else {
+            return Err(FundingFormError::RowAmountInvalid);
+        };
+        if row_cents <= 0 {
+            return Err(FundingFormError::RowAmountNotPositive);
+        }
+        if row.label.chars().count() > 50 {
+            return Err(FundingFormError::LabelTooLong);
+        }
+        total_cents += row_cents;
+        funding.push(ledger_transaction::TransactionFundingInput {
+            account_id,
+            amount_cents: row_cents,
+            label: (!row.label.trim().is_empty()).then(|| row.label.trim().to_owned()),
+        });
+    }
+    // 合计一致性（Σ == 交易金额；域同款守卫在 writer::normalize，本层先行
+    // 阻拦给出可纠正呈现位）。
+    if total_cents != amount_cents {
+        return Err(FundingFormError::TotalMismatch);
+    }
+    // 叠加购买项行（行级词表共用）。
+    let mut purchases = Vec::with_capacity(submit.purchases.len());
+    for row in submit.purchases {
+        purchases.push(assemble_purchase_row(row).map_err(FundingFormError::Row)?);
+    }
+    Ok(ledger_transaction::TransactionInput {
+        kind: submit.kind,
+        amount_cents,
+        currency_code,
+        // 契约互斥（ADR-0138 决策 2）：非空分解 ⇒ 主账户恒缺省。
+        account_id: None,
+        to_account_id: None,
+        funding_account_id: None,
+        funding,
+        purchases,
+        category_id: submit.category_id,
+        merchant_id: match &submit.merchant {
+            MerchantRef::None | MerchantRef::NewName(_) => None,
+            MerchantRef::Keep(id) | MerchantRef::Selected(id) => Some(id.clone()),
+        },
+        merchant_name: match &submit.merchant {
+            MerchantRef::NewName(name) => Some(name.clone()),
+            _ => None,
+        },
+        policy_id: submit.policy_id,
+        refund_of_transaction_id: None,
+        note: (!submit.note.trim().is_empty()).then(|| submit.note.clone()),
+        source_order_no: submit.source_order_no,
+        date: submit.date.to_string(),
+        instrument_id: None,
+        quantity: None,
+        price_cents: None,
+        fee_cents: None,
+        to_instrument_id: None,
+        to_quantity: None,
+        out_amount_cents: None,
+        in_amount_cents: None,
+        origin: None,
+        fx_rate: None,
+        idempotency_key: None,
+    })
+}
+
+/// 购买项下单表单提交状态（订单形态：主账户必选 + 商品行；仅 expense）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct PurchaseFormSubmit {
+    /// 订单实付金额（主行）原始文本。
+    pub amount_text: String,
+    /// 付款账户（必选——订单是单账户支出，与分解族互斥形态）。
+    pub account_id: Option<String>,
+    /// 商品行（数组序即对账单顺序；空行集合法 = 无明细的普通支出）。
+    pub rows: Vec<PurchaseRowSubmit>,
+    /// 交易行分类（统计归属——报表按单归一类，ADR-0138 决策 11）。
+    pub category_id: Option<String>,
+    /// 商户语义（见 [`MerchantRef`]）。
+    pub merchant: MerchantRef,
+    /// 可选保单引用。
+    pub policy_id: Option<String>,
+    /// 备注（空串落 None）。
+    pub note: String,
+    /// 交易日期。
+    pub date: chrono::NaiveDate,
+    /// 来源订单号（手动录入自然为空——ADR-0138 决策 9 口径；编辑路径透传行
+    /// 上原值）。
+    pub source_order_no: Option<String>,
+}
+
+/// 购买项下单表单校验错误。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PurchaseFormError {
+    /// 账户未选。
+    AccountRequired,
+    /// 主行金额非正数。
+    AmountNotPositive,
+    /// 主行金额换算失败。
+    AmountInvalid,
+    /// 商品行错误（行级词表见 [`PurchaseRowError`]）。
+    Row(PurchaseRowError),
+}
+
+impl PurchaseFormError {
+    /// 错误条位文案（zh-CN 词表）。
+    pub fn as_text(self) -> &'static str {
+        match self {
+            Self::AccountRequired => "请选择账户",
+            Self::AmountNotPositive => "请输入金额",
+            Self::AmountInvalid => "金额无效，请输入不超过两位小数的金额",
+            Self::Row(e) => e.as_text(),
+        }
+    }
+}
+
+/// 购买项下单表单状态 → 完整 TransactionInput：账户 → 主金额 → 商品行，
+/// kind 恒 expense（仅 expense 可带购买项，ADR-0138 决策 9）。`currency_code`
+/// 由调用方随所选账户推导传入。
+pub fn assemble_purchase_transaction(
+    submit: PurchaseFormSubmit,
+    currency_code: String,
+) -> Result<ledger_transaction::TransactionInput, PurchaseFormError> {
+    let Some(account_id) = submit.account_id.filter(|id| !id.trim().is_empty()) else {
+        return Err(PurchaseFormError::AccountRequired);
+    };
+    let Some(amount_cents) = amount_text_to_cents(&submit.amount_text) else {
+        return Err(PurchaseFormError::AmountInvalid);
+    };
+    if amount_cents <= 0 {
+        return Err(PurchaseFormError::AmountNotPositive);
+    }
+    let mut purchases = Vec::with_capacity(submit.rows.len());
+    for row in submit.rows {
+        purchases.push(assemble_purchase_row(row).map_err(PurchaseFormError::Row)?);
+    }
+    Ok(ledger_transaction::TransactionInput {
+        kind: TransactionKind::Expense,
+        amount_cents,
+        currency_code,
+        account_id: Some(account_id),
+        to_account_id: None,
+        funding_account_id: None,
+        funding: Vec::new(),
+        purchases,
+        category_id: submit.category_id,
+        merchant_id: match &submit.merchant {
+            MerchantRef::None | MerchantRef::NewName(_) => None,
+            MerchantRef::Keep(id) | MerchantRef::Selected(id) => Some(id.clone()),
+        },
+        merchant_name: match &submit.merchant {
+            MerchantRef::NewName(name) => Some(name.clone()),
+            _ => None,
+        },
+        policy_id: submit.policy_id,
+        refund_of_transaction_id: None,
+        note: (!submit.note.trim().is_empty()).then(|| submit.note.clone()),
+        source_order_no: submit.source_order_no,
+        date: submit.date.to_string(),
+        instrument_id: None,
+        quantity: None,
+        price_cents: None,
+        fee_cents: None,
+        to_instrument_id: None,
+        to_quantity: None,
+        out_amount_cents: None,
+        in_amount_cents: None,
+        origin: None,
+        fx_rate: None,
+        idempotency_key: None,
+    })
+}
+
 /// 预算执行行的展示格（渲染期零格式化：文本已是一次性装配产物；金额分与
 /// 周期原值随行携带，供编辑弹窗回填——行为锚点，不参与渲染）。
 #[derive(Debug, Clone, PartialEq)]
@@ -3014,6 +3374,321 @@ mod tests {
         assert_eq!(
             RefundFormError::AmountInvalid.as_text(),
             "金额无效，请输入不超过两位小数的金额"
+        );
+    }
+
+    // -------------------------------------------------------------------
+    // 出资分解 / 购买项表单装配器（#2036 表单③）
+    // -------------------------------------------------------------------
+
+    /// 出资分解提交载荷（合法基线：两条出资、一条叠加购买项、挂分类与商户）。
+    fn funding_submit() -> FundingFormSubmit {
+        FundingFormSubmit {
+            kind: TransactionKind::Expense,
+            amount_text: "50".to_owned(),
+            rows: vec![
+                FundingRowSubmit {
+                    account_id: Some("a-cash".to_owned()),
+                    amount_text: "20".to_owned(),
+                    label: String::new(),
+                },
+                FundingRowSubmit {
+                    account_id: Some("a-credit".to_owned()),
+                    amount_text: "30".to_owned(),
+                    label: "尾款".to_owned(),
+                },
+            ],
+            purchases: vec![PurchaseRowSubmit {
+                name: "洗衣液".to_owned(),
+                quantity_text: "2".to_owned(),
+                category_id: None,
+                price_text: String::new(),
+            }],
+            category_id: Some("cat-daily".to_owned()),
+            merchant: MerchantRef::NewName("超市".to_owned()),
+            policy_id: None,
+            note: "组合支付".to_owned(),
+            date: chrono::NaiveDate::from_ymd_opt(2026, 4, 5).unwrap(),
+            source_order_no: None,
+        }
+    }
+
+    #[test]
+    fn funding_assembler_builds_split_wire_with_matching_total() {
+        let input = assemble_funding_transaction(funding_submit(), "CNY".to_owned()).unwrap();
+        assert_eq!(input.kind, TransactionKind::Expense);
+        assert_eq!(input.amount_cents, 5_000, "主行金额元转分收口");
+        assert_eq!(
+            input.account_id, None,
+            "分解行主账户恒缺省（契约互斥，ADR-0138 决策 2）"
+        );
+        assert_eq!(
+            input.funding,
+            vec![
+                ledger_transaction::TransactionFundingInput {
+                    account_id: "a-cash".to_owned(),
+                    amount_cents: 2_000,
+                    label: None,
+                },
+                ledger_transaction::TransactionFundingInput {
+                    account_id: "a-credit".to_owned(),
+                    amount_cents: 3_000,
+                    label: Some("尾款".to_owned()),
+                },
+            ],
+            "出资项逐条落 wire（整数分、空标签落 None、数组序即顺序位）"
+        );
+        assert_eq!(
+            input.purchases,
+            vec![ledger_transaction::TransactionPurchaseInput {
+                name: "洗衣液".to_owned(),
+                quantity: 2,
+                category_id: None,
+                unit_price_cents: None,
+            }],
+            "叠加购买项随分解行同单提交（分解行可携带购买项，ADR-0138 决策 15 呈现形态）"
+        );
+        assert_eq!(input.category_id.as_deref(), Some("cat-daily"));
+        assert_eq!(input.merchant_name.as_deref(), Some("超市"));
+        assert_eq!(input.note.as_deref(), Some("组合支付"));
+        assert_eq!(input.date, "2026-04-05");
+    }
+
+    #[test]
+    fn funding_assembler_fails_fast_on_amount_rows_and_total() {
+        // 主金额形状 → 空分解 → 逐行守卫 → 合计一致，fail fast 有序。
+        let mut s = funding_submit();
+        s.amount_text = "1.2.3".to_owned();
+        assert_eq!(
+            assemble_funding_transaction(s, "CNY".to_owned()).map(|_| ()),
+            Err(FundingFormError::AmountInvalid)
+        );
+        let mut s = funding_submit();
+        s.amount_text = "0".to_owned();
+        assert_eq!(
+            assemble_funding_transaction(s, "CNY".to_owned()).map(|_| ()),
+            Err(FundingFormError::AmountNotPositive)
+        );
+        let mut s = funding_submit();
+        s.rows.clear();
+        assert_eq!(
+            assemble_funding_transaction(s, "CNY".to_owned()).map(|_| ()),
+            Err(FundingFormError::RowsEmpty),
+            "本族无主账户位，空分解不可提交（域契约 funding 空 ⇒ account_id 必填）"
+        );
+        let mut s = funding_submit();
+        s.rows[0].account_id = None;
+        assert_eq!(
+            assemble_funding_transaction(s, "CNY".to_owned()).map(|_| ()),
+            Err(FundingFormError::RowAccountRequired)
+        );
+        let mut s = funding_submit();
+        s.rows[0].amount_text = "abc".to_owned();
+        assert_eq!(
+            assemble_funding_transaction(s, "CNY".to_owned()).map(|_| ()),
+            Err(FundingFormError::RowAmountInvalid)
+        );
+        let mut s = funding_submit();
+        s.rows[0].amount_text = "-1".to_owned();
+        assert_eq!(
+            assemble_funding_transaction(s, "CNY".to_owned()).map(|_| ()),
+            Err(FundingFormError::RowAmountNotPositive)
+        );
+        let mut s = funding_submit();
+        s.rows[1].label = "x".repeat(51);
+        assert_eq!(
+            assemble_funding_transaction(s, "CNY".to_owned()).map(|_| ()),
+            Err(FundingFormError::LabelTooLong),
+            "扣款标签 ≤50 字（域 LABEL_MAX_CHARS 同口径，壳层先行）"
+        );
+        let mut s = funding_submit();
+        s.rows[1].amount_text = "35".to_owned();
+        assert_eq!(
+            assemble_funding_transaction(s, "CNY".to_owned()).map(|_| ()),
+            Err(FundingFormError::TotalMismatch),
+            "Σ 出资项 ≠ 交易金额阻拦提交（用户故事 2：明确阻拦不错记）"
+        );
+    }
+
+    #[test]
+    fn funding_assembler_rejects_purchase_row_errors_via_shared_vocabulary() {
+        let mut s = funding_submit();
+        s.purchases[0].name = "  ".to_owned();
+        assert_eq!(
+            assemble_funding_transaction(s, "CNY".to_owned()).map(|_| ()),
+            Err(FundingFormError::Row(PurchaseRowError::NameRequired))
+        );
+    }
+
+    #[test]
+    fn funding_error_texts_are_the_zh_cn_vocabulary() {
+        assert_eq!(FundingFormError::AmountNotPositive.as_text(), "请输入金额");
+        assert_eq!(
+            FundingFormError::AmountInvalid.as_text(),
+            "金额无效，请输入不超过两位小数的金额"
+        );
+        assert_eq!(
+            FundingFormError::RowsEmpty.as_text(),
+            "请至少添加一条出资项"
+        );
+        assert_eq!(
+            FundingFormError::RowAccountRequired.as_text(),
+            "请选择出资账户"
+        );
+        assert_eq!(
+            FundingFormError::RowAmountNotPositive.as_text(),
+            "请输入出资金额"
+        );
+        assert_eq!(
+            FundingFormError::RowAmountInvalid.as_text(),
+            "出资金额无效，请输入不超过两位小数的金额"
+        );
+        assert_eq!(
+            FundingFormError::LabelTooLong.as_text(),
+            "扣款标签不能超过 50 字"
+        );
+        assert_eq!(
+            FundingFormError::TotalMismatch.as_text(),
+            "出资合计与交易金额不一致"
+        );
+    }
+
+    /// 购买项下单提交载荷（合法基线：两行商品、主行挂分类/商户/保单）。
+    fn purchase_submit() -> PurchaseFormSubmit {
+        PurchaseFormSubmit {
+            amount_text: "100".to_owned(),
+            account_id: Some("a-cash".to_owned()),
+            rows: vec![
+                PurchaseRowSubmit {
+                    name: "洗衣液".to_owned(),
+                    quantity_text: "2".to_owned(),
+                    category_id: Some("cat-daily".to_owned()),
+                    price_text: "39.9".to_owned(),
+                },
+                PurchaseRowSubmit {
+                    name: "纸巾".to_owned(),
+                    quantity_text: "1".to_owned(),
+                    category_id: None,
+                    price_text: String::new(),
+                },
+            ],
+            category_id: Some("cat-daily".to_owned()),
+            merchant: MerchantRef::Selected("m-shop".to_owned()),
+            policy_id: None,
+            note: "网购订单".to_owned(),
+            date: chrono::NaiveDate::from_ymd_opt(2026, 4, 5).unwrap(),
+            source_order_no: None,
+        }
+    }
+
+    #[test]
+    fn purchase_assembler_builds_order_wire() {
+        let input = assemble_purchase_transaction(purchase_submit(), "CNY".to_owned()).unwrap();
+        assert_eq!(
+            input.kind,
+            TransactionKind::Expense,
+            "仅 expense 可带购买项"
+        );
+        assert_eq!(input.amount_cents, 10_000, "订单实付元转分收口");
+        assert_eq!(
+            input.account_id.as_deref(),
+            Some("a-cash"),
+            "订单有单一付款账户（与分解族互斥形态）"
+        );
+        assert_eq!(
+            input.purchases,
+            vec![
+                ledger_transaction::TransactionPurchaseInput {
+                    name: "洗衣液".to_owned(),
+                    quantity: 2,
+                    category_id: Some("cat-daily".to_owned()),
+                    unit_price_cents: Some(3_990),
+                },
+                ledger_transaction::TransactionPurchaseInput {
+                    name: "纸巾".to_owned(),
+                    quantity: 1,
+                    category_id: None,
+                    unit_price_cents: None,
+                },
+            ],
+            "商品行逐条落 wire（单价可空、整数分、数组序即对账单顺序）"
+        );
+        assert!(input.funding.is_empty());
+        assert_eq!(input.merchant_id.as_deref(), Some("m-shop"));
+        assert_eq!(input.note.as_deref(), Some("网购订单"));
+    }
+
+    #[test]
+    fn purchase_assembler_allows_empty_rows_and_fails_fast_on_guards() {
+        // 零商品行合法（= 无明细的普通支出，增行是可选增强不强制）。
+        let mut s = purchase_submit();
+        s.rows.clear();
+        let input = assemble_purchase_transaction(s, "CNY".to_owned()).unwrap();
+        assert!(input.purchases.is_empty());
+
+        let mut s = purchase_submit();
+        s.account_id = None;
+        assert_eq!(
+            assemble_purchase_transaction(s, "CNY".to_owned()).map(|_| ()),
+            Err(PurchaseFormError::AccountRequired)
+        );
+        let mut s = purchase_submit();
+        s.amount_text = "0".to_owned();
+        assert_eq!(
+            assemble_purchase_transaction(s, "CNY".to_owned()).map(|_| ()),
+            Err(PurchaseFormError::AmountNotPositive)
+        );
+        let mut s = purchase_submit();
+        s.rows[0].name = String::new();
+        assert_eq!(
+            assemble_purchase_transaction(s, "CNY".to_owned()).map(|_| ()),
+            Err(PurchaseFormError::Row(PurchaseRowError::NameRequired))
+        );
+        let mut s = purchase_submit();
+        s.rows[0].quantity_text = "0".to_owned();
+        assert_eq!(
+            assemble_purchase_transaction(s, "CNY".to_owned()).map(|_| ()),
+            Err(PurchaseFormError::Row(PurchaseRowError::QuantityInvalid)),
+            "件数为正整数（域契约 quantity > 0，壳层先行）"
+        );
+        let mut s = purchase_submit();
+        s.rows[0].price_text = "-5".to_owned();
+        assert_eq!(
+            assemble_purchase_transaction(s, "CNY".to_owned()).map(|_| ()),
+            Err(PurchaseFormError::Row(PurchaseRowError::PriceNegative)),
+            "单价非负（0 是合法标价——赠品）"
+        );
+        let mut s = purchase_submit();
+        s.rows[0].price_text = "1.234".to_owned();
+        assert_eq!(
+            assemble_purchase_transaction(s, "CNY".to_owned()).map(|_| ()),
+            Err(PurchaseFormError::Row(PurchaseRowError::PriceInvalid))
+        );
+    }
+
+    #[test]
+    fn purchase_error_texts_are_the_zh_cn_vocabulary() {
+        assert_eq!(PurchaseFormError::AccountRequired.as_text(), "请选择账户");
+        assert_eq!(PurchaseFormError::AmountNotPositive.as_text(), "请输入金额");
+        assert_eq!(
+            PurchaseFormError::AmountInvalid.as_text(),
+            "金额无效，请输入不超过两位小数的金额"
+        );
+        assert_eq!(
+            PurchaseFormError::Row(PurchaseRowError::NameRequired).as_text(),
+            "请输入商品名称"
+        );
+        assert_eq!(
+            PurchaseFormError::Row(PurchaseRowError::QuantityInvalid).as_text(),
+            "件数必须为正整数"
+        );
+        assert_eq!(
+            PurchaseFormError::Row(PurchaseRowError::PriceInvalid).as_text(),
+            "商品单价无效，请输入不超过两位小数的金额"
+        );
+        assert_eq!(
+            PurchaseFormError::Row(PurchaseRowError::PriceNegative).as_text(),
+            "商品单价不能为负数"
         );
     }
 

@@ -872,7 +872,9 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
                     // 类型菜单五项（#2035 表单②）：记支出/记收入/记转账 + 分隔线
                     // + 借出/借入（借贷入口预置方向，表单内可切四向——旧壳
                     // LENDING_CREATE_DIRECTIONS 闭集同形；退款不入菜单，入口由
-                    // 交易条目右键菜单承接，旧壳同口径）。
+                    // 交易条目右键菜单承接，旧壳同口径）+ 分隔线 + 出资分解/
+                    // 购买项下单（表单③首建入口——旧壳创建菜单闭集五项无此
+                    // 两项，spec #2031 表单③纵切授权在新壳首发录入形态）。
                     view()
                         .flex_col()
                         .gap_1()
@@ -899,6 +901,24 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
                             [
                                 (txn_form::CreateEntry::Lend, "借出", "tx-add-lend"),
                                 (txn_form::CreateEntry::Borrow, "借入", "tx-add-borrow"),
+                            ]
+                            .map(|(entry, label, anchor)| {
+                                button()
+                                    .app_class(
+                                        "w-full px-2 py-1 rounded-md text-left text-foreground hover:bg-accent",
+                                    )
+                                    .child(text(label).test_id(anchor))
+                                    .on_press(move |_: &()| {
+                                        add_menu_open.set(false);
+                                        form.open_create(entry);
+                                    })
+                            }),
+                        )
+                        .child(view().h(px(1.0)).w_full().app_class("bg-border"))
+                        .children(
+                            [
+                                (txn_form::CreateEntry::Funding, "出资分解", "tx-add-funding"),
+                                (txn_form::CreateEntry::Purchase, "购买项下单", "tx-add-purchase"),
                             ]
                             .map(|(entry, label, anchor)| {
                                 button()
@@ -986,25 +1006,22 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
                             {
                                 let id = tx.id.clone();
                                 let mut items = Vec::new();
-                                // 编辑（#2034 基础收支，#2035 扩展开放面）：收入/
-                                // 支出/转账/退款行开放——转账行按两端账户类型派生
-                                // 借贷方向进借贷变体（旧壳 TransactionForm 分派同
-                                // 语义；退款行编辑随本票开放：链接透传保关联，旧壳
-                                // 仅删除的顾虑由透传解除）。带出资分解或购买项子行
-                                // 的行不开放——全字段替换会静默清空子行（旧壳
-                                // supportsRowEdit 同口径；退款行的分解是读侧派生不
-                                // 落库，无静默清空面）。目标行随右键固定。
-                                let has_stored_subrows =
-                                    !tx.fundings.is_empty() || !tx.purchases.is_empty();
-                                let editable = match tx.kind {
+                                // 编辑（#2034 基础收支，#2035 转账/借出/退款，
+                                // #2036 出资分解/购买项行全量开放）：目标行随右
+                                // 键固定。编辑开放面（#2036 表单③后全量开放）：
+                                // 收入/支出/转账/退款行开放——#2035 的子行守卫
+                                // （分解/购买项行不开放）随表单③子行编辑能力解
+                                // 除：分解行进出资分解族、购买项行进购买项族、
+                                // 并存行进出资分解族叠加购买项区（edit_dispatch
+                                // 单点分派，旧壳 supportsRowEdit 口径的更新在平
+                                // 价核对表留痕）。界面只读 kind 仍不开放。
+                                let editable = matches!(
+                                    tx.kind,
                                     ledger_transaction::TransactionKind::Income
-                                    | ledger_transaction::TransactionKind::Expense
-                                    | ledger_transaction::TransactionKind::Transfer => {
-                                        !has_stored_subrows
-                                    }
-                                    ledger_transaction::TransactionKind::Refund => true,
-                                    _ => false,
-                                };
+                                        | ledger_transaction::TransactionKind::Expense
+                                        | ledger_transaction::TransactionKind::Transfer
+                                        | ledger_transaction::TransactionKind::Refund
+                                );
                                 if editable {
                                     let form = form;
                                     let currencies = form_currencies;

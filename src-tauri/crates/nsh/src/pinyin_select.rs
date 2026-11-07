@@ -50,17 +50,25 @@ pub fn filter_options(query: &str, options: &[CategoryOption]) -> Vec<CategoryOp
 }
 
 /// 拼音可搜下拉：`id_prefix` 是 headless 锚点前缀（搜索框
-/// `{prefix}-search`、选项行 `{prefix}-option`）；`options` 是数据源闭包；
+/// `{prefix}-search`、选项行 `{prefix}-option`）；动态前缀（表单③子行逐行锚
+/// 点）以 `Cow` 承载，静态常量调用点零改动。`options` 是数据源闭包；
 /// `selected` 是选中值信号（调用方持有、读写皆可）；`placeholder` 是未选中时
 /// 的触发件文案；`clearable` 开启可清空形态（选中时触发件右侧渲染 ✕——独立
 /// 按压件，清除落 None 不开弹层；分类等可选字段的「无选择」语义，#2034）。
 pub fn pinyin_select(
-    id_prefix: &'static str,
+    id_prefix: impl Into<std::borrow::Cow<'static, str>>,
     options: impl Fn() -> Vec<CategoryOption> + Copy + 'static,
     selected: Signal<Option<String>>,
     placeholder: &'static str,
     clearable: bool,
 ) -> impl IntoElement {
+    let id_prefix = id_prefix.into();
+    // 后缀拼接预派生（子行动态前缀：各 move 闭包捕获自己的 String，不共用
+    // 一个非 Copy 值避免 move 冲突）。
+    let prefix_search = format!("{}{}", id_prefix, SEARCH_ID_SUFFIX);
+    let prefix_option = format!("{}{}", id_prefix, OPTION_ID_SUFFIX);
+    let prefix_empty = format!("{}-empty", id_prefix);
+    let prefix_clear = format!("{}-clear", id_prefix);
     let open = signal(false);
     let query = signal(String::new());
     // 主题令牌（双态自适应；令牌缺失回退亮灰/中灰可读兜底，app.rs 先例同形）。
@@ -113,7 +121,7 @@ pub fn pinyin_select(
         .popup_class("bg-background border border-border rounded-md shadow-md p-1")
         .trigger(
             view()
-                .test_id(id_prefix)
+                .test_id(id_prefix.as_ref())
                 .flex_row()
                 .items_center()
                 .gap_1()
@@ -145,7 +153,7 @@ pub fn pinyin_select(
                     // 搜索框（自动聚焦：打开即输入——旧壳 NSelect filterable 的
                     // 触发件内输入在本壳的弹层内等价形态）。
                     input()
-                        .test_id(format!("{}{}", id_prefix, SEARCH_ID_SUFFIX).as_str())
+                        .test_id(prefix_search.as_str())
                         .auto_focus(true)
                         .value(move || query.get())
                         .placeholder("输入关键字或拼音首字母")
@@ -163,21 +171,19 @@ pub fn pinyin_select(
                         let option = item.get();
                         // 选项载体视图（组件元素无 test_id 槽，period-label 先例
                         // 同形）：载体持稳定锚点，headless 按序号命中行。
-                        view()
-                            .test_id(format!("{}{}", id_prefix, OPTION_ID_SUFFIX).as_str())
-                            .child(
-                                button()
-                                    .app_class(
-                                        "w-full px-2 py-1 rounded-md text-left text-foreground \
+                        view().test_id(prefix_option.as_str()).child(
+                            button()
+                                .app_class(
+                                    "w-full px-2 py-1 rounded-md text-left text-foreground \
                                          hover:bg-accent selected:bg-accent",
-                                    )
-                                    .child(
-                                        text(option.label.clone())
-                                            .text_size(px(13.0))
-                                            .text_color(fg),
-                                    )
-                                    .on_press(move |_: &()| choose(option.clone())),
-                            )
+                                )
+                                .child(
+                                    text(option.label.clone())
+                                        .text_size(px(13.0))
+                                        .text_color(fg),
+                                )
+                                .on_press(move |_: &()| choose(option.clone())),
+                        )
                     },
                 ))
                 .child(
@@ -188,7 +194,7 @@ pub fn pinyin_select(
                             text("无数据")
                                 .text_size(px(12.0))
                                 .text_color(muted)
-                                .test_id(format!("{}{}", id_prefix, "-empty").as_str())
+                                .test_id(prefix_empty.as_str())
                                 .app_class("px-2 py-1")
                         },
                     )
@@ -207,7 +213,7 @@ pub fn pinyin_select(
                     text("✕")
                         .text_size(px(11.0))
                         .text_color(muted)
-                        .test_id(format!("{}{}", id_prefix, "-clear").as_str()),
+                        .test_id(prefix_clear.as_str()),
                 )
                 .on_press(move |_: &()| selected.set(None)),
         )

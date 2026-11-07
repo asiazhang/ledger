@@ -1,16 +1,24 @@
 //! 交易表单弹窗（issue #2034 表单①基础收支 + issue #2035 表单②转账·借出·
-//! 退款）：同一表单语义承载四形态——基础收支（单账户收入/支出）、转账（双账
-//! 户对转）、借贷（transfer 的派生视角，方向切换）、退款（关联原支出，继承
-//! 与金额钳制语义以域为唯一真源）。kind 切换字段族重排，编辑回填复用同表单。
+//! 退款 + issue #2036 表单③出资分解·购买项下单）：同一表单语义承载六形态
+//! ——基础收支（单账户收入/支出）、转账（双账户对转）、借贷（transfer 的
+//! 派生视角，方向切换）、退款（关联原支出，继承与金额钳制语义以域为唯一真
+//! 源）、出资分解（多账户分摊出资，Σ == 交易金额，契约互斥无主账户位）、
+//! 购买项下单（订单 + 商品行，仅 expense）。kind 切换字段族重排，编辑回填
+//! 复用同表单（含子行回填）。
 //!
-//! **形态裁决**：弹窗挂交易列表视图入口（工具行「记一笔」类型菜单五项——记
-//! 支出/记收入/记转账/借出/借入，借贷入口预置方向、表单内可切四向；行右键
-//! 「编辑」开放面 = 收入/支出/转账/退款行且无出资分解·购买项子行——全字段
-//! 替换会静默清空子行，不开放残缺表单入口；退款行的分解是读侧派生不落库，
-//! 编辑无静默清空面、随本票开放（旧壳 refund 行仅删除，链接透传保关联）；
-//! 行右键「退款」仅对无分解的支出行开放——旧壳 #1861 口径；投资形态随表单③
-//! 就位时扩展）。呈现用 [`crate::modal`] 编辑类模态（新增与编辑同形态，编辑
-//! 回填初值——旧壳「编辑复用同表单」语义）。
+//! **形态裁决**：弹窗挂交易列表视图入口（工具行「记一笔」类型菜单七项——
+//! 记支出/记收入/记转账 + 分隔 + 借出/借入 + 分隔 + 出资分解/购买项下单；
+//! 借贷入口预置方向、表单内可切四向。后两项是表单③首建入口——旧壳创建菜
+//! 单闭集五项、无此两入口（录入侧未做，分解/购买项行纠错 = 删除重建或
+//! HTTP 契约重导），本票按 spec #2031 表单③纵切授权在新壳首发录入形态）；
+//! 行右键「编辑」开放面 = 收入/支出/转账/退款行全量开放（#2035 仅无子行行
+//! 开放；表单③支持子行编辑后子行守卫解除：分解行进出资分解族、购买项行进
+//! 购买项族、并存行进出资分解族叠加购买项区——旧壳 supportsRowEdit 口径的
+//! 更新在平价核对表留痕；退款行的分解是读侧派生不落库，编辑无静默清空面、
+//! 随本票开放，旧壳 refund 行仅删除、链接透传保关联）；行右键「退款」仅对
+//! 无分解的支出行开放——旧壳 #1861 口径（退款表单未支持显式分解覆盖；投资
+//! 形态随投资票扩展）。呈现用 [`crate::modal`] 编辑类模态（新增与编辑同形
+//! 态，编辑回填初值——旧壳「编辑复用同表单」语义）。
 //!
 //! 状态与所有权：表单信号束住调用方视图实例（与预算视图表单态同形），本模
 //! 块只提供信号束、开关动作与弹窗挂载面；写路径经 [`crate::boot`] 域公开写
@@ -19,13 +27,15 @@
 //! [`crate::signals`] 交易失效信号（列表重读——「写→失效信号→列表重读」的
 //! 广播接线点，删除即红条目钉在 tests/app_headless.rs）。
 //!
-//! 装配纪律：wire 字段拼装按形态收口 [`crate::assembly`] 三装配器单点（基础
-//! 收支 / 转账借贷 / 退款，per-kind 矩阵 / 元转分 / 日期转换不散表单）；金
-//! 额红态走判定族 [`crate::assembly::judge_amount_text`]（红框 + 提交禁用，
-//! ADR-0058 两件同发）；业务类校验（账户未选 / 同账户 / 金额非正 / 换算兜
-//! 底）与域码化错误走错误条位（旧壳 toast 同语义的条位呈现）。币种随所选
-//! 账户推导锁定只读（转账 = 转出账户币种，ADR-0134 决策 5；退款 = 原支出币
-//! 种，域继承）。
+//! 装配纪律：wire 字段拼装按形态收口 [`crate::assembly`] 五装配器单点（基础
+//! 收支 / 转账借贷 / 退款 / 出资分解 / 购买项下单，per-kind 矩阵 / 元转分 /
+//! 日期转换 / 合计一致性不散表单）；金额红态走判定族
+//! [`crate::assembly::judge_amount_text`]（红框 + 提交禁用，ADR-0058 两件同
+//! 发）；业务类校验（账户未选 / 同账户 / 金额非正 / 换算兜底 / 合计不一致）
+//! 与域码化错误走错误条位（旧壳 toast 同语义的条位呈现）。币种随所选账户
+//! 推导锁定只读（转账 = 转出账户币种，ADR-0134 决策 5；退款 = 原支出币种，
+//! 域继承；出资分解 = 首条出资账户币种——域准入要求逐条与交易币种一致；购
+//! 买项下单 = 付款账户币种）。
 //!
 //! 测试豁免（ADR-0060）：本模块测试经 crate 根 cfg(test) 整体放行六件套。
 
@@ -59,6 +69,27 @@ const REFUND_ACCOUNT_ID: &str = "tx-form-refund-account";
 /// 转账两端币种不一致的错误条位锚点（存量脏行编辑回填态）。
 const TO_CURRENCY_ERROR_ID: &str = "tx-form-to-currency-error";
 
+/// 出资项子行区锚点前缀（表单③；行内锚点 = 前缀 + 行键 + 后缀，键随进程
+/// 内递增计数器分配、删除不重排）。
+const FUND_ACCOUNT_PREFIX: &str = "tx-form-fund-account";
+const FUND_AMOUNT_PREFIX: &str = "tx-form-fund-amount";
+const FUND_LABEL_PREFIX: &str = "tx-form-fund-label";
+const FUND_REMOVE_PREFIX: &str = "tx-form-fund-remove";
+/// 加行钮 / 行容器 / 合计行锚点。
+const FUNDING_ADD_ID: &str = "tx-form-funding-add";
+const FUND_ROW_ID_PREFIX: &str = "tx-form-fund-row";
+const FUNDING_TOTAL_ID: &str = "tx-form-funding-total";
+
+/// 购买项商品行区锚点前缀（形态同出资项子行区）。
+const PURCHASE_NAME_PREFIX: &str = "tx-form-purchase-name";
+const PURCHASE_QTY_PREFIX: &str = "tx-form-purchase-qty";
+const PURCHASE_CAT_PREFIX: &str = "tx-form-purchase-cat";
+const PURCHASE_PRICE_PREFIX: &str = "tx-form-purchase-price";
+const PURCHASE_REMOVE_PREFIX: &str = "tx-form-purchase-remove";
+const PURCHASE_ADD_ID: &str = "tx-form-purchase-add";
+const PURCHASE_ROW_ID_PREFIX: &str = "tx-form-purchase-row";
+const PURCHASE_SUBTOTAL_PREFIX: &str = "tx-form-purchase-subtotal";
+
 /// 表单形态族（字段族重排的选择器）：kind 切换 = 关闭重开（入口单点表达，
 /// 旧壳 #150 同语义），族随入口/编辑分派锁定，表单存续期恒定——借贷变体的
 /// 方向切换是族内状态，不改族。
@@ -72,10 +103,17 @@ pub(crate) enum FormFamily {
     Lending,
     /// 退款（关联原支出，继承语义归域）。
     Refund,
+    /// 出资分解（多账户分摊出资，Σ == 交易金额；无主账户位——契约互斥，
+    /// ADR-0138 决策 2；可叠加购买项区承载并存行编辑）。
+    Funding,
+    /// 购买项下单（订单 + 商品行，仅 expense；主账户必选，与分解族互斥形态）。
+    Purchase,
 }
 
-/// 「记一笔」入口闭集（类型菜单五项的载荷；借贷入口预置方向——旧壳
-/// LENDING_CREATE_DIRECTIONS = 借出/借入，收回/还款经表单内方向切换到达）。
+/// 「记一笔」入口闭集（类型菜单七项的载荷；借贷入口预置方向——旧壳
+/// LENDING_CREATE_DIRECTIONS = 借出/借入，收回/还款经表单内方向切换到达；
+/// 出资分解/购买项下单是表单③首建入口，spec #2031 授权——旧壳创建菜单无
+/// 此两项）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CreateEntry {
     /// 记支出。
@@ -88,6 +126,58 @@ pub(crate) enum CreateEntry {
     Lend,
     /// 借入（预置方向）。
     Borrow,
+    /// 出资分解（表单③；kind 锁定支出，字段族无主账户位）。
+    Funding,
+    /// 购买项下单（表单③；kind 锁定支出，订单 + 商品行）。
+    Purchase,
+}
+
+/// 出资项子行状态（每行独立信号束；删除 = 从行集移除、行键恒定不重排——
+/// 渲染 keyed 随键卸载，headless 锚点随行键稳定寻址）。
+#[derive(Clone)]
+pub(crate) struct FundingRowState {
+    /// 行键（进程内递增；渲染 keyed 与 headless 锚点共用）。
+    pub key: u64,
+    /// 出资账户。
+    pub account_id: Signal<Option<String>>,
+    /// 出资金额原始文本。
+    pub amount_text: Signal<String>,
+    /// 扣款标签。
+    pub label: Signal<String>,
+}
+
+impl PartialEq for FundingRowState {
+    fn eq(&self, other: &Self) -> bool {
+        self.key == other.key
+            && self.account_id.get() == other.account_id.get()
+            && self.amount_text.get() == other.amount_text.get()
+            && self.label.get() == other.label.get()
+    }
+}
+
+/// 购买项商品行状态（每行独立信号束；形态同 [`FundingRowState`]）。
+#[derive(Clone)]
+pub(crate) struct PurchaseRowState {
+    /// 行键（进程内递增；渲染 keyed 与 headless 锚点共用）。
+    pub key: u64,
+    /// 商品名称。
+    pub name: Signal<String>,
+    /// 件数原始文本。
+    pub quantity_text: Signal<String>,
+    /// 商品分类（可选）。
+    pub category_id: Signal<Option<String>>,
+    /// 单价原始文本（可空）。
+    pub price_text: Signal<String>,
+}
+
+impl PartialEq for PurchaseRowState {
+    fn eq(&self, other: &Self) -> bool {
+        self.key == other.key
+            && self.name.get() == other.name.get()
+            && self.quantity_text.get() == other.quantity_text.get()
+            && self.category_id.get() == other.category_id.get()
+            && self.price_text.get() == other.price_text.get()
+    }
 }
 
 /// 退款目标快照（原支出行的呈现面快照，fixed-target 入口随行携带）：编辑面
@@ -257,6 +347,12 @@ pub(crate) struct TxnFormState {
     pub refund_target: Signal<RefundTarget>,
     /// 退款币种（继承原支出——创建随目标、编辑随行，只读呈现）。
     pub refund_currency: Signal<String>,
+    /// 出资项子行（表单③出资分解族；创建入口默认单行、编辑随行回填）。
+    pub funding_rows: Signal<Vec<FundingRowState>>,
+    /// 购买项商品行（表单③购买项族默认空行集；出资分解族编辑并存行时回填）。
+    pub purchase_rows: Signal<Vec<PurchaseRowState>>,
+    /// 子行键计数器（递增不回收；两区共用）。
+    pub row_seq: Signal<u64>,
     /// 提交错误条位（业务校验与域码化错误同位呈现；下次尝试开始时清空）。
     pub error: Signal<Option<String>>,
 }
@@ -301,7 +397,36 @@ impl TxnFormState {
             refund_of_id: signal(None),
             refund_target: signal(RefundTarget(None)),
             refund_currency: signal("CNY".to_owned()),
+            funding_rows: signal(Vec::new()),
+            purchase_rows: signal(Vec::new()),
+            row_seq: signal(0),
             error: signal(None),
+        }
+    }
+
+    /// 新出资项空行（键取递增计数器；缺省金额空、账户未选）。
+    fn new_funding_row(&self) -> FundingRowState {
+        let key = self.row_seq.get();
+        self.row_seq.set(key + 1);
+        FundingRowState {
+            key,
+            account_id: signal(None),
+            amount_text: signal(String::new()),
+            label: signal(String::new()),
+        }
+    }
+
+    /// 新购买项空行（键取递增计数器；各字段空初值——与表单其他字段一致，
+    /// 忘填由装配器 fail fast 阻拦）。
+    fn new_purchase_row(&self) -> PurchaseRowState {
+        let key = self.row_seq.get();
+        self.row_seq.set(key + 1);
+        PurchaseRowState {
+            key,
+            name: signal(String::new()),
+            quantity_text: signal(String::new()),
+            category_id: signal(None),
+            price_text: signal(String::new()),
         }
     }
 
@@ -328,6 +453,8 @@ impl TxnFormState {
         self.refund_of_id.set(None);
         self.refund_target.set(RefundTarget(None));
         self.refund_currency.set("CNY".to_owned());
+        self.funding_rows.set(Vec::new());
+        self.purchase_rows.set(Vec::new());
         self.error.set(None);
     }
 
@@ -360,6 +487,22 @@ impl TxnFormState {
                 self.entry_label.set(assembly::lending_direction_label(
                     assembly::LendingFormDirection::Borrow,
                 ));
+            }
+            CreateEntry::Funding => {
+                // 出资分解（表单③）：kind 锁定支出，初始单行（直接填两账户
+                // 分摊只需一次加行）。
+                self.family.set(FormFamily::Funding);
+                self.entry_label.set("出资分解");
+                let row = self.new_funding_row();
+                self.funding_rows.set(vec![row]);
+            }
+            CreateEntry::Purchase => {
+                // 购买项下单（表单③）：kind 锁定支出，初始单行（打开即录商
+                // 品；删至零行保存 = 无明细的普通支出，增删行是自由形态）。
+                self.family.set(FormFamily::Purchase);
+                self.entry_label.set("购买项下单");
+                let row = self.new_purchase_row();
+                self.purchase_rows.set(vec![row]);
             }
         }
         self.open.set(true);
@@ -429,7 +572,7 @@ impl TxnFormState {
         );
         self.family.set(family);
         self.to_account_id.set(tx.to_account_id.clone());
-        // 商户随行保留（普通转账表单无输入位；基础收支与借贷变体回填输入位）。
+        // 商户随行保留（普通转账表单无输入位；基础收支/分解/订单族回填输入位）。
         self.merchant_selected.set(tx.merchant_id.clone());
         self.merchant_typed.set(merchant_label.unwrap_or_default());
         match family {
@@ -453,9 +596,59 @@ impl TxnFormState {
                 self.refund_of_id.set(tx.refund_of_transaction_id.clone());
                 self.refund_currency.set(tx.currency_code.clone());
             }
+            FormFamily::Funding => {
+                // 出资项子行回填（逐行账户/金额/标签；金额分→元文本按行币种
+                // 小数位）；并存购买项一并回填（分解行可携带购买项，ADR-0138
+                // 决策 15 呈现形态）；分类/保单随行。
+                self.category_id.set(tx.category_id.clone());
+                self.policy_id.set(tx.policy_id.clone());
+                self.funding_rows.set(
+                    tx.fundings
+                        .iter()
+                        .map(|f| {
+                            let row = self.new_funding_row();
+                            row.account_id.set(Some(f.account_id.clone()));
+                            row.amount_text.set(assembly::cents_to_amount_text(
+                                f.amount_cents,
+                                fmt.decimal_places,
+                            ));
+                            row.label.set(f.label.clone().unwrap_or_default());
+                            row
+                        })
+                        .collect(),
+                );
+                self.backfill_purchase_rows(tx, fmt.decimal_places);
+            }
+            FormFamily::Purchase => {
+                // 订单族：主账户/分类/商户/保单随行，商品行逐行回填。
+                self.category_id.set(tx.category_id.clone());
+                self.policy_id.set(tx.policy_id.clone());
+                self.backfill_purchase_rows(tx, fmt.decimal_places);
+            }
         }
         self.error.set(None);
         self.open.set(true);
+    }
+
+    /// 商品行回填（表单③两族共用；空行集不建行）。
+    fn backfill_purchase_rows(&self, tx: &ledger_transaction::Transaction, decimal_places: u32) {
+        self.purchase_rows.set(
+            tx.purchases
+                .iter()
+                .map(|p| {
+                    let row = self.new_purchase_row();
+                    row.name.set(p.name.clone());
+                    row.quantity_text.set(p.quantity.to_string());
+                    row.category_id.set(p.category_id.clone());
+                    row.price_text.set(
+                        p.unit_price_cents
+                            .map(|cents| assembly::cents_to_amount_text(cents, decimal_places))
+                            .unwrap_or_default(),
+                    );
+                    row
+                })
+                .collect(),
+        );
     }
 
     /// 关窗（ESC / ✕ / 取消 / 成功四路径归一）。
@@ -465,17 +658,27 @@ impl TxnFormState {
 }
 
 /// 编辑分派（纯函数，旧壳 TransactionForm 形态识别的单点重生）：交易行 +
-/// 账户表 →（形态族，借贷方向预置）。收入/支出进基础族；转账按两端账户类型
+/// 账户表 →（形态族，借贷方向预置）。收入/支出按子行形态分流——分解行进
+/// 出资分解族、购买项行进购买项族、并存行进出资分解族（叠加购买项区）、无
+/// 子行进基础族（表单③开放子行编辑后的全形态分派）；转账按两端账户类型
 /// 派生借贷方向——派生非 none 进借贷变体（方向随派生），否则普通转账族；
-/// 退款进退款族；界面只读 kind 返回 None（入口开放面守卫的镜像，防御双落
-/// 点——调用方不开窗）。
+/// 退款进退款族（读侧派生分解不落库，无静默清空面）；界面只读 kind 返回
+/// None（入口开放面守卫的镜像，防御双落点——调用方不开窗）。
 fn edit_dispatch(
     tx: &ledger_transaction::Transaction,
     accounts: &assembly::AccountTable,
 ) -> Option<(FormFamily, Option<assembly::LendingFormDirection>)> {
     use ledger_transaction::TransactionKind as K;
     match tx.kind {
-        K::Income | K::Expense => Some((FormFamily::Basic, None)),
+        K::Income | K::Expense => {
+            if !tx.fundings.is_empty() {
+                Some((FormFamily::Funding, None))
+            } else if !tx.purchases.is_empty() {
+                Some((FormFamily::Purchase, None))
+            } else {
+                Some((FormFamily::Basic, None))
+            }
+        }
         K::Transfer => match assembly::derive_lending_direction(tx, accounts) {
             assembly::LendingDirection::None => Some((FormFamily::Transfer, None)),
             derived => Some((FormFamily::Lending, Some(form_direction(derived)))),
@@ -634,7 +837,70 @@ fn assemble_input(
             assembly::assemble_refund_transaction(submit, currency)
                 .map_err(|e| e.as_text().to_owned())
         }
+        FormFamily::Funding => {
+            let submit = assembly::FundingFormSubmit {
+                kind: state.kind.get(),
+                amount_text: state.amount_text.get(),
+                rows: state
+                    .funding_rows
+                    .get()
+                    .iter()
+                    .map(|row| assembly::FundingRowSubmit {
+                        account_id: row.account_id.get(),
+                        amount_text: row.amount_text.get(),
+                        label: row.label.get(),
+                    })
+                    .collect(),
+                purchases: purchase_submits(state),
+                category_id: state.category_id.get(),
+                merchant: merchant_ref(
+                    state.editing_merchant_id.get().as_deref(),
+                    state.merchant_selected.get().as_deref(),
+                    &state.merchant_typed.get(),
+                ),
+                policy_id: state.policy_id.get(),
+                note: state.note.get(),
+                date: state.date.get(),
+                source_order_no: state.source_order_no.get(),
+            };
+            assembly::assemble_funding_transaction(submit, currency)
+                .map_err(|e| e.as_text().to_owned())
+        }
+        FormFamily::Purchase => {
+            let submit = assembly::PurchaseFormSubmit {
+                amount_text: state.amount_text.get(),
+                account_id: state.account_id.get(),
+                rows: purchase_submits(state),
+                category_id: state.category_id.get(),
+                merchant: merchant_ref(
+                    state.editing_merchant_id.get().as_deref(),
+                    state.merchant_selected.get().as_deref(),
+                    &state.merchant_typed.get(),
+                ),
+                policy_id: state.policy_id.get(),
+                note: state.note.get(),
+                date: state.date.get(),
+                source_order_no: state.source_order_no.get(),
+            };
+            assembly::assemble_purchase_transaction(submit, currency)
+                .map_err(|e| e.as_text().to_owned())
+        }
     }
+}
+
+/// 商品行表单状态 → 提交载荷（表单③两族共用）。
+fn purchase_submits(state: &TxnFormState) -> Vec<assembly::PurchaseRowSubmit> {
+    state
+        .purchase_rows
+        .get()
+        .iter()
+        .map(|row| assembly::PurchaseRowSubmit {
+            name: row.name.get(),
+            quantity_text: row.quantity_text.get(),
+            category_id: row.category_id.get(),
+            price_text: row.price_text.get(),
+        })
+        .collect()
 }
 
 /// 提交执行（前置校验 → 域公开写入口直调 → 成功广播失效信号；失败错误条位）。
@@ -699,13 +965,21 @@ fn perform_submit(
     }
 }
 
-/// 币种随所选账户推导（基础收支记账币种 = 账户币种；转账记账币种 = 转出
-/// 账户币种，ADR-0134 决策 5；无账户缺省 CNY——默认币种缺 key 回默认 CNY
-/// 同口径，有账户上下文的提交必选账户）。
+/// 币种随所选账户推导（基础收支/订单记账币种 = 账户币种；转账记账币种 = 转
+/// 出账户币种，ADR-0134 决策 5；出资分解 = 首条出资账户币种——域准入要求逐
+/// 条与交易币种一致，多账户跨币种不做；无账户缺省 CNY——默认币种缺 key 回默
+/// 认 CNY 同口径，有账户上下文的提交必选账户）。
 fn selected_currency(state: &TxnFormState, sources: &TxnFormSources) -> String {
-    state
-        .account_id
-        .get()
+    let account_id = if state.family.get() == FormFamily::Funding {
+        state
+            .funding_rows
+            .get()
+            .first()
+            .and_then(|row| row.account_id.get())
+    } else {
+        state.account_id.get()
+    };
+    account_id
         .as_deref()
         .and_then(|id| {
             sources
@@ -754,6 +1028,8 @@ fn submit_label(
         FormFamily::Transfer => "记转账".to_owned(),
         FormFamily::Lending => format!("记{}", assembly::lending_direction_label(direction)),
         FormFamily::Refund => "记退款".to_owned(),
+        FormFamily::Funding => "记支出".to_owned(),
+        FormFamily::Purchase => "记订单".to_owned(),
     }
 }
 
@@ -1234,6 +1510,90 @@ pub(crate) fn transaction_form_modal(
                                 ),
                             ),
                     ),
+                FormFamily::Funding => body
+                    // 分类（可搜下拉、可清空——无分类交易合法；交易行分类是
+                    // 统计归属，报表按单归一类）。
+                    .child(
+                        view()
+                            .flex_row()
+                            .items_center()
+                            .gap_2()
+                            .child(field_label("分类", muted))
+                            .child(pinyin_select::pinyin_select(
+                                CATEGORY_PREFIX,
+                                move || category_options.get(),
+                                state.category_id,
+                                "选择分类",
+                                true,
+                            )),
+                    )
+                    // 商户 + 编辑态商户锚点 + 保单（与基础收支族同款）。
+                    .child(merchant_row(state, merchant_options, fg, muted))
+                    .child(merchant_label_row(merchant_label, muted))
+                    .child(
+                        view()
+                            .flex_row()
+                            .items_center()
+                            .gap_2()
+                            .child(field_label("保单", muted))
+                            .child(select::app_select(
+                                POLICY_PREFIX,
+                                move || policy_options.get(),
+                                state.policy_id,
+                                "选择保单（可选）",
+                            )),
+                    )
+                    // 出资项子行区（多账户分摊：无主账户位——契约互斥；合计
+                    // 一致性实时红显，提交阻拦在装配器）。
+                    .child(funding_rows_section(state, sources, muted, fg)),
+                FormFamily::Purchase => body
+                    // 账户（订单付款账户，主账户必选——与分解族互斥形态）。
+                    .child(
+                        view()
+                            .flex_row()
+                            .items_center()
+                            .gap_2()
+                            .child(field_label("账户", muted))
+                            .child(pinyin_select::pinyin_select(
+                                ACCOUNT_PREFIX,
+                                move || account_options.get(),
+                                state.account_id,
+                                "选择账户",
+                                false,
+                            )),
+                    )
+                    .child(
+                        view()
+                            .flex_row()
+                            .items_center()
+                            .gap_2()
+                            .child(field_label("分类", muted))
+                            .child(pinyin_select::pinyin_select(
+                                CATEGORY_PREFIX,
+                                move || category_options.get(),
+                                state.category_id,
+                                "选择分类",
+                                true,
+                            )),
+                    )
+                    .child(merchant_row(state, merchant_options, fg, muted))
+                    .child(merchant_label_row(merchant_label, muted))
+                    .child(
+                        view()
+                            .flex_row()
+                            .items_center()
+                            .gap_2()
+                            .child(field_label("保单", muted))
+                            .child(select::app_select(
+                                POLICY_PREFIX,
+                                move || policy_options.get(),
+                                state.policy_id,
+                                "选择保单（可选）",
+                            )),
+                    )
+                    // 商品行区（订单 + 商品行：逐行名称/件数/分类/单价，行小
+                    // 计呈现；价格存而不显示在列表——小计只在表单内提示）。
+                    .child(purchase_rows_section(state, sources, muted, fg)),
             };
             body
                 // 日期（可键入 + 日历点选）。
@@ -1318,6 +1678,289 @@ pub(crate) fn transaction_form_modal(
                 )
         },
     )
+}
+
+/// 出资项子行区（表单③出资分解族）：区标题 + 逐行（账户下拉 / 金额 / 标签 /
+/// 删除）+ 合计行（Σ 与交易金额不一致红显）+ 加行钮。行键稳定不重排（删除
+/// 中间行其余行锚点不变）；每行账户候选 = 可见账户 − 归档 + 行内补值（编辑
+/// 面已存归档账户标「已归档」——与主账户选择器同口径）。
+fn funding_rows_section(
+    state: TxnFormState,
+    sources: TxnFormSources,
+    muted: AdaptiveColor,
+    fg: AdaptiveColor,
+) -> View {
+    // 合计行文本（Σ 出资项与主金额；主金额换算失败按 0 呈现，红态已由金额
+    // 红框表达；不一致红显——提交阻拦在装配器 fail fast）。
+    let total = computed(move || {
+        let rows = state.funding_rows.get();
+        let sum: i64 = rows
+            .iter()
+            .filter_map(|row| assembly::amount_text_to_cents(&row.amount_text.get()))
+            .sum();
+        let main = assembly::amount_text_to_cents(&state.amount_text.get()).unwrap_or(0);
+        let fmt = sources
+            .currencies
+            .get()
+            .format_of(&selected_currency(&state, &sources));
+        (
+            format!(
+                "出资合计 {} · 交易金额 {}",
+                assembly::format_amount_basic(sum, &fmt),
+                assembly::format_amount_basic(main, &fmt)
+            ),
+            sum != main,
+        )
+    });
+    // 行集 keyed 渲染（键 = 行键，删除中间行其余行不重挂——锚点随键稳定，
+    // headless 断言按行键寻址）。
+    let rows_view = each(
+        move || state.funding_rows.get(),
+        |row: &FundingRowState| row.key,
+        move |item: ReadSignal<FundingRowState>, _index: ReadSignal<usize>| {
+            let row = item.get();
+            // 行内账户候选（每行独立补值：已存值不在可见面时补回并标「已归档」）。
+            let row_for_options = row.clone();
+            let account_options = move || {
+                pinned_account_options(
+                    &sources.accounts.get().0,
+                    row_for_options.account_id.get().as_deref(),
+                    |_| true,
+                )
+            };
+            let row_for_remove = row.clone();
+            let rows_for_remove = state;
+            view()
+                .flex_row()
+                .items_center()
+                .gap_1()
+                .test_id(format!("{}-{}", FUND_ROW_ID_PREFIX, row.key).as_str())
+                .child(pinyin_select::pinyin_select(
+                    format!("{}-{}", FUND_ACCOUNT_PREFIX, row.key),
+                    account_options,
+                    row.account_id,
+                    "出资账户",
+                    false,
+                ))
+                .child(
+                    input()
+                        .test_id(format!("{}-{}", FUND_AMOUNT_PREFIX, row.key).as_str())
+                        .value(move || row.amount_text.get())
+                        .placeholder("金额")
+                        .optional_label("出资金额")
+                        .text_color(fg)
+                        .w(px(110.0))
+                        .app_class(
+                            "bg-background rounded-md border border-border px-2 py-1 \
+                             placeholder:text-muted-foreground",
+                        )
+                        .on_change(move |value: &str| row.amount_text.set(value.to_owned())),
+                )
+                .child(
+                    input()
+                        .test_id(format!("{}-{}", FUND_LABEL_PREFIX, row.key).as_str())
+                        .value(move || row.label.get())
+                        .placeholder("标签（可选）")
+                        .optional_label("扣款标签")
+                        .text_color(fg)
+                        .w(px(110.0))
+                        .app_class(
+                            "bg-background rounded-md border border-border px-2 py-1 \
+                             placeholder:text-muted-foreground",
+                        )
+                        .on_change(move |value: &str| row.label.set(value.to_owned())),
+                )
+                .child(
+                    nsh_base::button()
+                        .accessibility_label("删除出资项")
+                        .app_class("px-1 py-0.5 rounded-md text-muted-foreground hover:bg-accent")
+                        .child(text("✕").text_size(px(11.0)).text_color(muted).test_id(
+                            format!("{}-{}", FUND_REMOVE_PREFIX, row_for_remove.key).as_str(),
+                        ))
+                        .on_press(move |_: &()| {
+                            let key = row_for_remove.key;
+                            rows_for_remove
+                                .funding_rows
+                                .update(|list| list.retain(|r| r.key != key));
+                        }),
+                )
+        },
+    );
+    view()
+        .flex_col()
+        .gap_1()
+        .child(field_label("出资项", muted))
+        .child(rows_view)
+        .child(
+            // 合计行（一致中性 / 不一致红——可纠错的即时呈现，提交阻拦在装配
+            // 器 fail fast 的错误条位）。
+            text(move || total.get().0)
+                .text_size(px(11.0))
+                .test_id(format!("{}-text", FUNDING_TOTAL_ID).as_str())
+                .text_color(move || {
+                    if total.get().1 {
+                        tokens()
+                            .color("destructive")
+                            .unwrap_or_else(|| hsla(0.0, 0.0, 0.98, 1.0).into())
+                    } else {
+                        muted
+                    }
+                }),
+        )
+        .child(
+            nsh_base::button()
+                .app_class(
+                    "px-2 py-1 rounded-md border border-border text-foreground hover:bg-accent",
+                )
+                .child(
+                    text("添加出资项")
+                        .text_size(px(12.0))
+                        .text_color(fg)
+                        .test_id(FUNDING_ADD_ID),
+                )
+                .on_press(move |_: &()| {
+                    let row = state.new_funding_row();
+                    state.funding_rows.update(|list| list.push(row));
+                }),
+        )
+}
+
+/// 购买项商品行区（表单③购买项族）：区标题 + 逐行（名称 / 件数 / 分类 /
+/// 单价 / 行小计 / 删除）+ 加行钮。行键稳定不重排；行小计 = 单价 × 件数
+/// （价格可空——ADR-0138 决策 10：价格存而不显示、不进金额口径，小计只在
+/// 表单内提示，不与订单实付勾稽）。
+fn purchase_rows_section(
+    state: TxnFormState,
+    sources: TxnFormSources,
+    muted: AdaptiveColor,
+    fg: AdaptiveColor,
+) -> View {
+    // 商品行 keyed 渲染（键 = 行键，同出资项区——锚点随键稳定）。
+    let rows_view = each(
+        move || state.purchase_rows.get(),
+        |row: &PurchaseRowState| row.key,
+        move |item: ReadSignal<PurchaseRowState>, _index: ReadSignal<usize>| {
+            let row = item.get();
+            // 行小计（单价与件数均合法才有值；解析失败不呈现，提交阻拦在装
+            // 配器 fail fast 的错误条位）。
+            let row_for_subtotal = row.clone();
+            let subtotal = move || {
+                let price = assembly::amount_text_to_cents(&row_for_subtotal.price_text.get())?;
+                let qty: i64 = row_for_subtotal.quantity_text.get().trim().parse().ok()?;
+                if qty <= 0 {
+                    return None;
+                }
+                let fmt = sources
+                    .currencies
+                    .get()
+                    .format_of(&selected_currency(&state, &sources));
+                Some(format!(
+                    "小计 {}",
+                    assembly::format_amount_basic(price * qty, &fmt)
+                ))
+            };
+            // 商品分类候选（支出树；行内独立选择器）。
+            let category_options =
+                move || assembly::category_kind_options("expense", &sources.categories.get().0);
+            let row_for_remove = row.clone();
+            let rows_for_remove = state;
+            view()
+                .flex_row()
+                .items_center()
+                .gap_1()
+                .test_id(format!("{}-{}", PURCHASE_ROW_ID_PREFIX, row.key).as_str())
+                .child(
+                    input()
+                        .test_id(format!("{}-{}", PURCHASE_NAME_PREFIX, row.key).as_str())
+                        .value(move || row.name.get())
+                        .placeholder("商品名称")
+                        .optional_label("商品名称")
+                        .text_color(fg)
+                        .w(px(140.0))
+                        .app_class(
+                            "bg-background rounded-md border border-border px-2 py-1 \
+                             placeholder:text-muted-foreground",
+                        )
+                        .on_change(move |value: &str| row.name.set(value.to_owned())),
+                )
+                .child(
+                    input()
+                        .test_id(format!("{}-{}", PURCHASE_QTY_PREFIX, row.key).as_str())
+                        .value(move || row.quantity_text.get())
+                        .placeholder("件数")
+                        .optional_label("商品件数")
+                        .text_color(fg)
+                        .w(px(60.0))
+                        .app_class(
+                            "bg-background rounded-md border border-border px-2 py-1 \
+                             placeholder:text-muted-foreground",
+                        )
+                        .on_change(move |value: &str| row.quantity_text.set(value.to_owned())),
+                )
+                .child(pinyin_select::pinyin_select(
+                    format!("{}-{}", PURCHASE_CAT_PREFIX, row.key),
+                    category_options,
+                    row.category_id,
+                    "分类（可选）",
+                    true,
+                ))
+                .child(
+                    input()
+                        .test_id(format!("{}-{}", PURCHASE_PRICE_PREFIX, row.key).as_str())
+                        .value(move || row.price_text.get())
+                        .placeholder("单价（可选）")
+                        .optional_label("商品单价")
+                        .text_color(fg)
+                        .w(px(90.0))
+                        .app_class(
+                            "bg-background rounded-md border border-border px-2 py-1 \
+                             placeholder:text-muted-foreground",
+                        )
+                        .on_change(move |value: &str| row.price_text.set(value.to_owned())),
+                )
+                .child(
+                    text(move || subtotal().unwrap_or_default())
+                        .text_size(px(11.0))
+                        .text_color(muted)
+                        .test_id(format!("{}-{}", PURCHASE_SUBTOTAL_PREFIX, row.key).as_str()),
+                )
+                .child(
+                    nsh_base::button()
+                        .accessibility_label("删除商品")
+                        .app_class("px-1 py-0.5 rounded-md text-muted-foreground hover:bg-accent")
+                        .child(text("✕").text_size(px(11.0)).text_color(muted).test_id(
+                            format!("{}-{}", PURCHASE_REMOVE_PREFIX, row_for_remove.key).as_str(),
+                        ))
+                        .on_press(move |_: &()| {
+                            let key = row_for_remove.key;
+                            rows_for_remove
+                                .purchase_rows
+                                .update(|list| list.retain(|r| r.key != key));
+                        }),
+                )
+        },
+    );
+    view()
+        .flex_col()
+        .gap_1()
+        .child(field_label("商品", muted))
+        .child(rows_view)
+        .child(
+            nsh_base::button()
+                .app_class(
+                    "px-2 py-1 rounded-md border border-border text-foreground hover:bg-accent",
+                )
+                .child(
+                    text("添加商品")
+                        .text_size(px(12.0))
+                        .text_color(fg)
+                        .test_id(PURCHASE_ADD_ID),
+                )
+                .on_press(move |_: &()| {
+                    let row = state.new_purchase_row();
+                    state.purchase_rows.update(|list| list.push(row));
+                }),
+        )
 }
 
 /// 商户输入行（基础收支与借贷变体共用；自由文本可搜输入）。
