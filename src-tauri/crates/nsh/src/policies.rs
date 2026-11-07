@@ -625,7 +625,7 @@ pub(crate) fn PoliciesView() -> impl IntoElement {
                 let outcome = blocking(move || -> PolicyLoads {
                     let rows = boot::policy_rows(&db)?;
                     let stats = boot::policy_stats_rows(&db)?;
-                    let insurer_list = boot::insurer_rows(&db)?;
+                    let insurer_list = boot::insurer_rows(&db, true)?;
                     let currency_list = boot::currency_rows(&db)?;
                     let account_list = boot::account_rows(&db)?;
                     let base = boot::base_currency_code(&db)
