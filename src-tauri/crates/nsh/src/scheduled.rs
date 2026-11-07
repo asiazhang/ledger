@@ -1,24 +1,26 @@
-//! 定时视图（issue #2042 NSH 迁移⑪；spec #2031 系列 11/26；旧壳
-//! `ScheduledView.vue` 三形态页签容器与 `SubscriptionsPane` 订阅页签的重生）。
+//! 定时视图（issue #2042 NSH 迁移⑪ + issue #2043 定时②；spec #2031 系列
+//! 11/26 + 12/26；旧壳 `ScheduledView.vue` 三形态页签容器的重生）。
 //!
 //! 实现明细见各区块注释；整体职责边界（按旧壳核实平价）：
 //! - **页签骨架**：订阅 / 分期 / 定时转账三形态页签（旧壳 `ScheduledFormTab`
-//!   同词表）本票立起；订阅页签挂真实组件，分期 / 定时转账页签占位（随定时
-//!   ② #2043 迁入）。页签状态 = 会话槽（进程级信号单例，会话内保留——离开
+//!   同词表），三页签均挂真实组件（订阅 = [#2042]；分期 / 定时转账 = 定时②
+//!   #2043 迁入）。页签状态 = 会话槽（进程级信号单例，会话内保留——离开
 //!   定时视图再回原页签不丢；不跨启动持久化、零写盘，旧壳 query.tab 的进程
 //!   内等价物；[`nav::NavRequest::form_tab`] 意图落位时的消费面）；
 //! - **计划来源落点**：落位意图读一次消费（[`crate::nav::take_intent`] 单点
-//!   封闸）——形态页签写会话槽、focus（计划 id）暂存给形态页签（订阅页签
-//!   挂载时开计划详情弹窗、开即回报清闸，弹窗按 id 独立取数不受清单状态
-//!   过滤影响——已取消计划照常可开，旧壳 usePlanFocusLanding 时序的等价
-//!   收口）；
+//!   封闸）——形态页签写会话槽、focus（计划 id）暂存给形态页签（页签挂载时
+//!   开计划详情弹窗、开即回报清闸，弹窗按 id 独立取数不受清单状态过滤
+//!   影响——已取消计划照常可开，旧壳 usePlanFocusLanding 时序的等价收口）；
+//!   当前激活页签消费 focus（默认订阅页签；页签切换后由新挂载的页签消费）。
 //! - **写路径**：直调域公开写入口（[`crate::boot`]，不经 IPC，旧壳 scheduled
 //!   族命令同一执行协议）；期次执行落交易行后由视图层手动广播交易失效信号
 //!   （交易列表重读）；清单与花费面板的重拉归动作回调（旧壳「计划写入刻意
 //!   零信号、消费面按回调刷新」同口径）。
 //!
 //! 兄弟模块：[`crate::scheduled_subscription`]（订阅页签本体）、
-//! [`crate::scheduled_plan_detail`]（期次详情弹层，三页签通用，⑫复用）、
+//! [`crate::scheduled_installment`]（分期页签本体，定时②）、
+//! [`crate::scheduled_transfer`]（定时转账页签本体，定时②）、
+//! [`crate::scheduled_plan_detail`]（期次详情弹层，三页签通用）、
 //! [`crate::scheduled_spend`]（订阅花费面板）。
 //!
 //! 界面文案仅 zh-CN（spec #2015 实施决策）；码化错误 zh 原样呈现。
@@ -183,6 +185,23 @@ pub(crate) fn subscription_status_filters() -> Vec<(&'static str, String)> {
         ("active", "进行中"),
         ("paused", "已暂停"),
         ("cancelled", "已取消"),
+    ]
+    .into_iter()
+    .map(|(key, _)| (key, status_label(key)))
+    .collect()
+}
+
+/// 定时转账 / 分期页签状态过滤选项（旧壳 `STATUS_FILTER_KEYS.scheduled_transfer`
+/// / `installment` = WITH_COMPLETED 键集：定时转账一次性执行后 completed、
+/// 分期按 Plan Lifecycle 自然完成计划恢复可见可查——#309 显式可见变化之二。
+/// 标签经 [`status_label`] 单源；订阅无「已完成」键集走
+/// [`subscription_status_filters`]，不用本集越权补齐）。
+pub(crate) fn plan_status_filters() -> Vec<(&'static str, String)> {
+    [
+        ("active", "进行中"),
+        ("paused", "已暂停"),
+        ("cancelled", "已取消"),
+        ("completed", "已完成"),
     ]
     .into_iter()
     .map(|(key, _)| (key, status_label(key)))
@@ -401,12 +420,23 @@ pub(crate) fn row_actions_of(status: &str) -> SubRowActions {
     }
 }
 
+/// 定时转账 / 分期页签行操作投影（旧壳 scheduled-plan-list `rowActions` 的
+/// 生命周期闭集：期次恒可用、暂停限 active、恢复限 paused、取消限「未结束」
+/// ——**编辑是订阅适配器自建描述符**（ADR-0041 决策 7），清单模块闭集不
+/// 含编辑，故 can_edit 恒 false）。
+pub(crate) fn lifecycle_actions_of(status: &str) -> SubRowActions {
+    SubRowActions {
+        can_edit: false,
+        ..row_actions_of(status)
+    }
+}
+
 // ---------------------------------------------------------------------------
 // 视图组件
 // ---------------------------------------------------------------------------
 
 /// 定时视图（导航 / 容器的定时落位本体）：三形态页签 + 会话槽 + 意图消费 +
-/// 订阅页签真实组件；分期 / 定时转账占位（随定时②迁入）。
+/// 三页签均挂真实组件（订阅 = ⑪，分期 / 定时转账 = ⑫ 定时②迁入）。
 #[component]
 pub(crate) fn ScheduledView() -> impl IntoElement {
     let session = scheduled_session();
@@ -482,16 +512,16 @@ pub(crate) fn ScheduledView() -> impl IntoElement {
             )
     };
 
-    // 页签内容：订阅页签挂真实组件；分期 / 定时转账占位（页签形态切换 =
-    // 分支重建 → 真实视图重挂全新装载，旧壳 NTabPane 缺省 display-directive
-    // 「if」同口径）。
+    // 页签内容：三页签均挂真实组件（分期 / 定时转账由定时② #2043 迁入；
+    // 页签形态切换 = 分支重建 → 真实视图重挂全新装载，旧壳 NTabPane 缺省
+    // display-directive「if」同口径）。
     view()
         .flex_1()
         .flex_col()
         .app_class("bg-background")
         .child(tab_bar)
         .child(
-            // 订阅页签的 pending_focus 入参：无 #[component] 的普通函数形态
+            // 页签的 pending_focus 入参：无 #[component] 的普通函数形态
             //（视图组件带 props 的装配面归普通 fn，子组件生计由调用方持有）。
             when(
                 move || active.get() == ScheduledFormTab::Subscriptions,
@@ -500,37 +530,10 @@ pub(crate) fn ScheduledView() -> impl IntoElement {
             .otherwise(move || {
                 when(
                     move || active.get() == ScheduledFormTab::Installments,
-                    move || future_pane("分期", "scheduled-installments-placeholder", fg, muted),
+                    move || crate::scheduled_installment::installments_pane(pending_focus),
                 )
-                .otherwise(move || {
-                    future_pane("定时转账", "scheduled-transfers-placeholder", fg, muted)
-                })
+                .otherwise(move || crate::scheduled_transfer::transfers_pane(pending_focus))
             }),
-        )
-}
-
-/// 二期形态页签占位（分期 / 定时转账随 #2043 迁入；骨架期占位词表同形）。
-/// 锚点独立自容器占位（骨架占位 test_id 不在定时占位复用，headless 计数不
-/// 串扰）。
-fn future_pane(
-    title: &'static str,
-    pane_id: &'static str,
-    fg: nsh_core::element::AdaptiveColor,
-    muted: nsh_core::element::AdaptiveColor,
-) -> View {
-    view()
-        .flex_1()
-        .flex_col()
-        .items_center()
-        .justify_center()
-        .gap_2()
-        .app_class("bg-background")
-        .child(text(title).text_size(px(20.0)).text_color(fg))
-        .child(
-            text("迁移中，功能将随迁移系列票就位")
-                .text_size(px(12.0))
-                .text_color(muted)
-                .test_id(pane_id),
         )
 }
 
