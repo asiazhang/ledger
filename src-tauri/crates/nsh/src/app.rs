@@ -38,8 +38,8 @@ use crate::items::AddItemTarget;
 use crate::nav_model::ViewName;
 use crate::{
     accounts, backup_entry, context_menu, danger, dashboard, items, modal, multi_select, nav,
-    nav_model, overlay, period_row, pinyin_select, popconfirm, search, sidebar, signals, tx_filter,
-    txn_form, views,
+    nav_model, overlay, period_row, pinyin_select, popconfirm, reports, search, sidebar, signals,
+    tx_filter, txn_form, views,
 };
 
 /// 金额隐私模式开关的存储键（设备轻量设置项，与旧壳同键同值形态：旧壳
@@ -177,6 +177,7 @@ pub fn reset_book_assembly() {
     signals::reset_for_tests();
     nav::reset_for_tests();
     tx_filter::reset_for_tests();
+    reports::reset_for_tests();
 }
 
 /// 启动结果三态（窗口呈现的全部状态）。
@@ -737,6 +738,7 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
     // 与行内按钮共用；步进与弹层开合的抑制上报归 period_row 模块。
     let (period_row_view, step_period) = period_row::period_row(
         "period",
+        true,
         true,
         filters.range,
         boundary_dates,
@@ -2253,48 +2255,53 @@ fn view_host(nav: nav::NavStore) -> impl IntoElement {
     let is = move |name: ViewName| move || current.get() == name;
     let group_more = |gid: nav_model::GroupId| move || views::group_more_view(gid);
     // 分支序随迁移系列推进：交易列表 / 预算（#2033）/ 概览（#2039）/
-    // 搜索（#2040）/ 账户（#2041）/ 物品（#2044）/ 储蓄目标（#2056）挂
-    // 真实组件，三容器挂「更多」页签壳，其余未迁移视图共享占位。
+    // 搜索（#2040）/ 账户（#2041）/ 物品（#2044）/ 报表（#2048）/ 储蓄目标
+    //（#2056）挂真实组件，三容器挂「更多」页签壳，其余未迁移视图共享占位。
     when(is(ViewName::Transactions), transactions_view).otherwise(move || {
         when(is(ViewName::Budget), budget_view).otherwise(move || {
             when(is(ViewName::Accounts), accounts::accounts_view).otherwise(move || {
                 when(is(ViewName::Items), items::items_view).otherwise(move || {
                     when(is(ViewName::Dashboard), dashboard::dashboard_view).otherwise(move || {
                         when(is(ViewName::Search), search::search_view).otherwise(move || {
-                            when(
-                                is(ViewName::SavingsGoals),
-                                crate::savings::savings_goals_view,
-                            )
-                            .otherwise(move || {
-                                when(
-                                    is(ViewName::BookkeepingMore),
-                                    group_more(nav_model::GroupId::Bookkeeping),
-                                )
-                                .otherwise(move || {
+                            when(is(ViewName::Reports), reports::reports_view).otherwise(
+                                move || {
                                     when(
-                                        is(ViewName::AssetsMore),
-                                        group_more(nav_model::GroupId::Assets),
+                                        is(ViewName::SavingsGoals),
+                                        crate::savings::savings_goals_view,
                                     )
                                     .otherwise(move || {
                                         when(
-                                            is(ViewName::InsightsMore),
-                                            group_more(nav_model::GroupId::Insights),
+                                            is(ViewName::BookkeepingMore),
+                                            group_more(nav_model::GroupId::Bookkeeping),
                                         )
                                         .otherwise(
                                             move || {
-                                                // 未迁移视图反应式占位壳：标题随当前视图；意图
-                                                // 消费时机 = 落位（effect 键 current，同轮落地）。
-                                                let focused = signal(None::<nav::NavIntent>);
-                                                effect(move || {
-                                                    let _current = nav.current.get();
-                                                    focused.set(nav::take_intent());
-                                                });
-                                                views::placeholder_shell_current(focused)
+                                                when(
+                                                    is(ViewName::AssetsMore),
+                                                    group_more(nav_model::GroupId::Assets),
+                                                )
+                                                .otherwise(move || {
+                                                    when(
+                                                        is(ViewName::InsightsMore),
+                                                        group_more(nav_model::GroupId::Insights),
+                                                    )
+                                                    .otherwise(move || {
+                                                        // 未迁移视图反应式占位壳：标题随当前视图；意图
+                                                        // 消费时机 = 落位（effect 键 current，同轮落地）。
+                                                        let focused =
+                                                            signal(None::<nav::NavIntent>);
+                                                        effect(move || {
+                                                            let _current = nav.current.get();
+                                                            focused.set(nav::take_intent());
+                                                        });
+                                                        views::placeholder_shell_current(focused)
+                                                    })
+                                                })
                                             },
                                         )
                                     })
-                                })
-                            })
+                                },
+                            )
                         })
                     })
                 })
@@ -2311,6 +2318,9 @@ pub fn App() -> impl IntoElement {
     // 绑定随根实例存亡（引擎线程派发，含抑制闸门）。
     let nav = nav::store();
     tx_filter::store();
+    // 报表页会话态（#2048）同样挂根实例（首调初始化；离开报表视图重挂不丢
+    // ——旧壳 reports-session 存活期 = 应用会话同语义）。
+    reports::store();
     nav::bind_shortcuts();
     let state = signal(StartupView::Loading);
     // 主行/次行前景取主题令牌（双态自适应，registry 缺省带主题双态令牌）：
