@@ -204,14 +204,95 @@ impl TradeFormSources {
     }
 }
 
-/// 编辑装载批（阻塞批读四面 + 行快照；工装件，私密）。
-struct EditLoad {
-    tx: ledger_transaction::Transaction,
-    trade: ledger_investment::TransactionTrade,
+/// 参考四面装载批（编辑与创建两入口共用的同一阻塞批；工装件，私密）。
+struct FormReferences {
     accounts: Vec<ledger_accounts::Account>,
     instruments: Vec<ledger_investment::Instrument>,
     currencies: Vec<ledger_currencies::Currency>,
     goal_accounts: Vec<String>,
+}
+
+/// 编辑回填锚（[#TradeFormState::begin_edit] 的行载荷面）：交易列表原始
+/// 行与明细页签行适配投影同走这里（明细载荷只有行投影自己携带的回填锚
+/// 字段——消费面 = kind / 金额锚点 / 账户端 / 可选出资账户 / 备注 / 记账
+/// 币种 / 日期 / 来源订单号，旧壳 ledgerRowToModalRow 的重生同消费面）。
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct TradeEditAnchor {
+    pub(crate) id: String,
+    pub(crate) kind: ledger_transaction::TransactionKind,
+    pub(crate) amount_cents: i64,
+    pub(crate) currency_code: String,
+    pub(crate) account_id: Option<String>,
+    pub(crate) funding_account_id: Option<String>,
+    pub(crate) note: Option<String>,
+    pub(crate) source_order_no: Option<String>,
+    pub(crate) date: String,
+}
+
+impl From<&ledger_transaction::Transaction> for TradeEditAnchor {
+    fn from(tx: &ledger_transaction::Transaction) -> Self {
+        Self {
+            id: tx.id.clone(),
+            kind: tx.kind,
+            amount_cents: tx.amount_cents,
+            currency_code: tx.currency_code.clone(),
+            account_id: tx.account_id.clone(),
+            funding_account_id: tx.funding_account_id.clone(),
+            note: tx.note.clone(),
+            source_order_no: tx.source_order_no.clone(),
+            date: tx.date.clone(),
+        }
+    }
+}
+
+/// 编辑装载批（明细 + 行回填锚 + 参考四面；工装件，私密）。
+struct EditLoad {
+    trade: ledger_investment::TransactionTrade,
+    anchor: TradeEditAnchor,
+    references: FormReferences,
+}
+
+/// 阻塞批：参考四面一次装载（编辑与创建两入口共用）。
+fn load_form_references(
+    db: Option<&ledger_infra::db::DbState>,
+) -> ledger_infra::error::Result<FormReferences> {
+    let Some(db) = db else {
+        return Err(AppError::coded(
+            boot::CODE_SESSION_MISSING,
+            "内部错误：账本库会话缺失",
+        ));
+    };
+    let accounts = boot::account_rows(db)?;
+    let instruments = boot::instrument_rows(db)?;
+    let currencies = boot::currency_rows(db)?;
+    let goals = boot::savings_goal_progress_rows(db)?;
+    Ok(FormReferences {
+        accounts,
+        instruments,
+        currencies,
+        goal_accounts: goals.into_iter().map(|g| g.goal.account_id).collect(),
+    })
+}
+
+/// 阻塞批：编辑装载（买卖明细 + 参考四面 + 行回填锚）。
+fn load_edit_bundle(
+    db: Option<&ledger_infra::db::DbState>,
+    tx_id: &str,
+    anchor: TradeEditAnchor,
+) -> ledger_infra::error::Result<EditLoad> {
+    let Some(db) = db else {
+        return Err(AppError::coded(
+            boot::CODE_SESSION_MISSING,
+            "内部错误：账本库会话缺失",
+        ));
+    };
+    let trade = boot::transaction_trade(db, tx_id)?;
+    let references = load_form_references(Some(db))?;
+    Ok(EditLoad {
+        trade,
+        anchor,
+        references,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -302,46 +383,79 @@ impl TradeFormState {
     /// 打开编辑表单（**先取明细再开窗**：阻塞批读买卖明细 + 参考四面；成
     /// 功回填并开窗，失败不开窗 + [`Self::load_error`] 上抛交易列表条位。
     /// 取数任务挂 `view_owner`——调用方视图实例 owner，取数期间弹窗未挂
-    /// 载无取消竞态，旧壳「先取再开窗」同口径）。
+    /// 载无取消竞态，旧壳「先取再开窗」同口径）。交易列表原始行与明细页签
+    /// 行适配投影同走 [`TradeEditAnchor`]（明细页签行只有行投影自己携带的
+    /// 回填锚字段——弹窗行适配消费面同源）。
     pub(crate) fn begin_edit(
         self,
-        tx: &ledger_transaction::Transaction,
+        anchor: TradeEditAnchor,
         sources: TradeFormSources,
         view_owner: Owner,
     ) {
         self.load_error.set(None);
-        let tx_id = tx.id.clone();
-        let tx_snapshot = tx.clone();
+        let tx_id = anchor.id.clone();
         let db = crate::app::db_slot().clone();
         view_owner.run(move || {
             spawn(async move {
-                let outcome = blocking(move || -> ledger_infra::error::Result<EditLoad> {
-                    let Some(db) = db.as_ref() else {
-                        return Err(AppError::coded(
-                            boot::CODE_SESSION_MISSING,
-                            "内部错误：账本库会话缺失",
-                        ));
-                    };
-                    let trade = boot::transaction_trade(db, &tx_id)?;
-                    let accounts = boot::account_rows(db)?;
-                    let instruments = boot::instrument_rows(db)?;
-                    let currencies = boot::currency_rows(db)?;
-                    let goals = boot::savings_goal_progress_rows(db)?;
-                    Ok(EditLoad {
-                        tx: tx_snapshot,
-                        trade,
-                        accounts,
-                        instruments,
-                        currencies,
-                        goal_accounts: goals
-                            .into_iter()
-                            .map(|g| g.goal.account_id)
-                            .collect::<Vec<_>>(),
-                    })
-                })
-                .await;
+                let outcome =
+                    blocking(move || load_edit_bundle(db.clone().as_deref(), &tx_id, anchor)).await;
+                let bundle = match outcome {
+                    Ok(Ok(bundle)) => bundle,
+                    Ok(Err(e)) => {
+                        self.load_error
+                            .set(Some(format!("{LOAD_FAILED_PREFIX}{e}")));
+                        return;
+                    }
+                    Err(_) => {
+                        self.load_error.set(Some(format!(
+                            "{LOAD_FAILED_PREFIX}内部错误：读任务异常退出"
+                        )));
+                        return;
+                    }
+                };
+                let EditLoad {
+                    trade,
+                    anchor,
+                    references,
+                } = bundle;
+                // 行上币种决定金额/费用文本的换算小数位（账户币 = 记账币种
+                // ，旧壳 centsToYuan 同口径）——decimals 在参考四面仍 owned
+                // 时算好带回填，避免回填再读源信号的次序耦合。
+                let decimals = CurrencyTable::from_currencies(&references.currencies)
+                    .format_of(&anchor.currency_code)
+                    .decimal_places;
+                self.apply_references(references, sources);
+                self.backfill_edit(trade, anchor, decimals);
+            })
+        });
+    }
+
+    /// 打开创建表单（#2047 明细页签「记买入/记卖出」入口落位；kind 由入口
+    /// 单点表达、弹窗内无切换——旧壳 #150 同语义）。**参考先载再开窗**：参
+    /// 考四面（账户/标的/币种/储蓄目标绑定账户）与编辑装载同一个阻塞批、
+    /// 成功后开窗；失败不开窗 + [`Self::load_error`] 上抛明细页签条位（同
+    /// 旧壳 create 编排「弹窗组件明细取数不经视图」同口径——明细取数经本
+    /// 表单自身批装载，⑯ 消费面）。任务挂 `view_owner`——调用方视图实例
+    /// owner，取数期间弹窗未挂载无取消竞态。
+    pub(crate) fn open_create(
+        self,
+        kind: ledger_transaction::TransactionKind,
+        sources: TradeFormSources,
+        view_owner: Owner,
+    ) {
+        self.load_error.set(None);
+        self.kind.set(kind);
+        self.editing_id.set(None);
+        let db = crate::app::db_slot().clone();
+        view_owner.run(move || {
+            spawn(async move {
+                let outcome = blocking(move || load_form_references(db.clone().as_deref())).await;
                 match outcome {
-                    Ok(Ok(load)) => self.backfill_edit(load, sources),
+                    Ok(Ok(references)) => {
+                        self.apply_references(references, sources);
+                        self.error.set(None);
+                        self.open.set(true);
+                    }
                     Ok(Err(e)) => {
                         self.load_error
                             .set(Some(format!("{LOAD_FAILED_PREFIX}{e}")));
@@ -354,38 +468,40 @@ impl TradeFormState {
         });
     }
 
-    /// 编辑回填（issue #180 旧壳 useInvestmentForm 回填段同族）：全部业务
-    /// 字段随行；候选三面与目标绑定集同步进源信号束。数量/价格文本回填不
-    /// 显红态（存储值在本仓录入路径下必在各自精度口径内；极端历史数据如实
-    /// 红显），金额（基金形态）与费用同理。基金判定随明细带出类型锁定（不
-    /// 依赖候选面命中）——编辑回填后选择框直接显示「代码 · 名称」，不依赖
-    /// 远程搜索候选（旧壳同语义，候选面本就全集现成）。
-    fn backfill_edit(self, load: EditLoad, sources: TradeFormSources) {
-        sources.accounts.set(Accounts(load.accounts));
-        sources.instruments.set(Instruments(load.instruments));
+    /// 参考四面进源信号束（编辑与创建两入口的装载完成线；delete 删除接线
+    /// 即红钉 lib 探针——候选面为空则表单不可用）。
+    fn apply_references(self, references: FormReferences, sources: TradeFormSources) {
+        sources.accounts.set(Accounts(references.accounts));
+        sources.instruments.set(Instruments(references.instruments));
         sources
             .currencies
-            .set(CurrencyTable::from_currencies(&load.currencies));
-        sources.goal_accounts.set(GoalAccounts(load.goal_accounts));
-        let tx = load.tx;
-        // 行上币种决定金额/费用文本的换算小数位（账户币 = 记账币种，旧壳
-        // centsToYuan 同口径）。
-        let decimals = sources
-            .currencies
-            .get_untracked()
-            .format_of(&tx.currency_code)
-            .decimal_places;
+            .set(CurrencyTable::from_currencies(&references.currencies));
+        sources
+            .goal_accounts
+            .set(GoalAccounts(references.goal_accounts));
+    }
+
+    /// 编辑回填（issue #180 旧壳 useInvestmentForm 回填段同族）：全部业务
+    /// 字段随行。数量/价格文本回填不显红态（存储值在本仓录入路径下必在各
+    /// 自精度口径内；极端历史数据如实红显），金额（基金形态）与费用同理。
+    /// 基金判定随明细带出类型锁定（不依赖候选面命中）——编辑回填后选择框
+    /// 直接显示「代码 · 名称」，不依赖远程搜索候选（旧壳同语义，候选面本
+    /// 就全集现成）。
+    fn backfill_edit(
+        self,
+        trade: ledger_investment::TransactionTrade,
+        tx: TradeEditAnchor,
+        decimals: u32,
+    ) {
         self.kind.set(tx.kind);
         self.editing_id.set(Some(tx.id.clone()));
         self.source_order_no.set(tx.source_order_no.clone());
         self.account_id.set(tx.account_id.clone());
         self.funding_account_id.set(tx.funding_account_id.clone());
-        self.instrument_id
-            .set(Some(load.trade.instrument_id.clone()));
-        self.fund_locked
-            .set(Some(load.trade.instrument_type == "fund"));
-        self.quantity_text.set(format!("{}", load.trade.quantity));
-        if load.trade.instrument_type == "fund" {
+        self.instrument_id.set(Some(trade.instrument_id.clone()));
+        self.fund_locked.set(Some(trade.instrument_type == "fund"));
+        self.quantity_text.set(format!("{}", trade.quantity));
+        if trade.instrument_type == "fund" {
             // 基金形态：确认单金额是权威输入（回填行上金额），单价不回填
             // ——展示值由反算闭包按金额/份额/费用现算（存储同公式）。
             self.amount_text
@@ -396,10 +512,10 @@ impl TradeFormState {
             // 金额恒空（展示面自动计算）。
             self.amount_text.set(String::new());
             self.price_text
-                .set(assembly::price_cents_to_yuan_text(load.trade.price_cents));
+                .set(assembly::price_cents_to_yuan_text(trade.price_cents));
         }
         self.fee_text.set(
-            load.trade
+            trade
                 .fee_cents
                 .map(|cents| assembly::cents_to_amount_text(cents, decimals))
                 .unwrap_or_default(),
@@ -1184,7 +1300,7 @@ mod probe {
                         let db = crate::app::db_slot().clone();
                         let tx = db.as_ref().and_then(|db| list_buy_tx(db, &tx_id));
                         if let Some(tx) = tx {
-                            state.begin_edit(&tx, sources, Owner::detached());
+                            state.begin_edit((&tx).into(), sources, Owner::detached());
                         }
                     })
                     .child(text("开始编辑")),

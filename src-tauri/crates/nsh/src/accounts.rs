@@ -636,6 +636,7 @@ pub(crate) fn AccountsView() -> impl IntoElement {
                 account: Some(account_id),
                 ..tx_filter::DrillFilters::default()
             }),
+            investments_drill: None,
         });
     };
 

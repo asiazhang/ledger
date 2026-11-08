@@ -17,10 +17,10 @@
 //! 变新自动消失。检查失败静默降级为「不提示」（背景提示，宁可不提示也不误报，
 //! 旧壳 silent Loadable 同口径）。
 //!
-//! **「去同步」语义（偏差留痕）**：旧壳按钮切到标的库页签（⑯ 未迁，本壳
-//! 该页签缺席）；⑮ 内动作直达同步接缝（与持仓卡同步钮同入口同短路——两处
-//! 按钮看到完全相同的终态反馈）；⑯ 标的页签落位后订址回页签跳转（偏差
-//! 回写本票交付报告与父 spec 对表手册）。
+//! **「去同步」语义（旧壳同口径）**：按钮切到标的库页签——标的页签（⑯）
+//! 就是既有同步入口（按钮 + 进度条 + 结果消息复用同一接缝），不新增第二套
+//! 同步触发（#2046 ⑮ 的「动作直达同步接缝」临时形态随 ⑯ 落位退役，回到
+//! 旧壳页签跳转同口径；《父 spec 对表手册》偏差随 ⑯ 交付回写）。
 //!
 //! 界面文案仅 zh-CN（旧壳 investments.json staleness/sync 段词表直取）。
 //!
@@ -350,8 +350,15 @@ pub(crate) fn StalenessAlert() -> impl IntoElement {
                             .test_id("staleness-message"),
                         )
                         .child(
+                            // 「去同步」（旧壳 goSyncInstrumentInfo 同口径）：
+                            // 切到标的页签——页签的同步钮 + 进度条 + 结果行
+                            // 就是同一接缝的呈现位，不新增第二套同步触发。
                             view()
-                                .on_press(move |_: &PressEvent| trigger_sync())
+                                .on_press(move |_: &PressEvent| {
+                                    investments::store()
+                                        .tab
+                                        .set(investments::InvestmentsTab::Instruments);
+                                })
                                 .rounded_md()
                                 .px_2()
                                 .py_1()

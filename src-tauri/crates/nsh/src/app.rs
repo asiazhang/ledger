@@ -1249,7 +1249,11 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
                                     let trade_sources = trade_sources;
                                     let tx = tx.clone();
                                     items.push(MenuItem::new("编辑").on_select(move || {
-                                        trade_form.begin_edit(&tx, trade_sources, view_owner);
+                                        trade_form.begin_edit(
+                                        (&tx).into(),
+                                        trade_sources,
+                                        view_owner,
+                                    );
                                     }));
                                 } else if editable {
                                     let form = form;

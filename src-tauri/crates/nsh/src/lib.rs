@@ -72,6 +72,15 @@
 //!   金额权威/其余数量+单价权威分流、字段红框+提交禁用两件同发、先取
 //!   明细再开窗）；创建入口随⑯ 明细页签落位、编辑入口随交易列表右键接
 //!   线开放；
+//! - [`investments_ledger`]：投资明细页签本体（#2047 ⑯/投资 3/3）——五种
+//!   投资 kind 投影行（kind 形态格装配，渲染期零格式化）、服务端 offset 分页、
+//!   类型子集多选/涉及账户单选/标的深链维（旧壳 ?instrument= 同语义）与清除
+//!   筛选，行右键编辑（买卖表单族复用）/只读详情/删除与「记买入/记卖出」
+//!   创建入口落位；
+//! - [`investments_instruments`]：投资标的库页签本体（#2047 ⑯/投资 3/3）——
+//!   服务端检索浏览（统一模糊语义 + 市场折叠 + 只看持仓）、anchor 分页定位
+//!   （focus 下钻落点 + 行高亮）、行内录价（手动报价弹窗 + 两落点写路径 +
+//!   证据门广播）、添加投资标的六通道弹窗与自建标的删除；
 //! - [`investment_sync`]：投资同步接缝与价格过期提示（#2046 ⑮）——「同步
 //!   标的信息」接缝单例（进行中/进度/结果/降级四件状态，在途短路、成败
 //!   同判失效广播）与 staleness 本地水位提示条旧壳 usePriceStaleness
@@ -208,6 +217,8 @@ pub mod investment_sync;
 pub mod investments;
 pub mod investments_form;
 pub mod investments_holdings;
+pub mod investments_instruments;
+pub mod investments_ledger;
 pub mod items;
 pub mod logging;
 pub mod merchants;

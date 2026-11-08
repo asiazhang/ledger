@@ -738,6 +738,107 @@ pub fn transaction_trade(
     ledger_investment::get_transaction_trade(&conn, transaction_id)
 }
 
+/// 投资明细列表页（投资页「明细」页签读接缝，旧壳 `list_investment_transactions`
+/// 命令消费的同一域函数，不经 IPC）：五种投资 kind 行 + 四维过滤 + 服务端
+/// offset 分页（items 与 total 同快照——读闭包收进域内读事务）。本页签页
+/// 大小单点在壳（[`LEDGER_TAB_PAGE_SIZE`]），过滤维与页码由视图装配直传。
+/// 读连接是成对建连的只读侧（ADR-0117）。
+pub fn investment_transaction_page(
+    db: &DbState,
+    filter: &ledger_investment::InvestmentTransactionListFilter,
+) -> Result<ledger_investment::InvestmentTransactionListResult> {
+    let conn = conn_lock(&db.read_conn)?;
+    ledger_investment::list_investment_transactions(&conn, filter)
+}
+
+/// 明细页签页大小（旧壳 LEDGER_TAB_PAGE_SIZE_DEFAULT 同值同源：固定 20）。
+pub(crate) const LEDGER_TAB_PAGE_SIZE: usize = 20;
+
+/// 标的列表页（投资页「标的」页签读接缝，旧壳 `list_instruments` 命令消费
+/// 的同一域函数，不经 IPC）：搜索（统一模糊语义——锚点定位、COUNT 与 items
+/// 读闭包在域内收同一读事务）+ 市场精确匹配 + 只看持仓 + anchor 分页定位。
+/// 读连接是成对建连的只读侧（ADR-0117）。
+pub fn instrument_page(
+    db: &DbState,
+    filter: &ledger_investment::InstrumentListFilter,
+) -> Result<ledger_investment::InstrumentListResult> {
+    let conn = conn_lock(&db.read_conn)?;
+    ledger_investment::list_instruments(&conn, filter)
+}
+
+/// 手动报价（投资页「标的」页签行内「录价」写入的域直调面；旧壳
+/// `record_manual_price` 命令的写路径_segments经统一写入口的本壳等价半边，
+/// 不经 IPC）：一条通道两个落点（现价缓存 upsert + 价格历史周采样幂等覆盖
+/// ——回填旧价只沉淀历史，最新点映像规则在域）。NSH 不重演「实际写过即置
+/// 脏」空写作业（连接层提交点后置动作的宿主是备份域置脏接线，本壳不装线，
+/// [`crate::wiring`]），「是否广播」按写入见证（任一落点实际写入）由壳侧
+/// 裁决（信号映射判定单点在 infra signals；本壳投影到投资族信号通道）。
+/// 写连接是成对建连的写侧。
+pub fn record_manual_price(
+    db: &DbState,
+    input: &ledger_investment::ManualPriceInput,
+) -> Result<ledger_investment::ManualPriceResult> {
+    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    ledger_investment::record_manual_price(&conn, input)
+}
+
+/// 自建标的创建（旧壳 `create_instrument` 命令写路径的本壳等价半边，不经
+/// IPC）：手动创建入口守卫（类型白名单 + 名称必填，ADR-0036 决策 3）在域
+/// 写路径单正文，本地写编排（建档/复用改名 + op 追加）同收一事务。（代码，
+/// 类型）幂等：同键复用并只更新名称。创建恒零价格证据（不落现价）——
+/// 广播判定归调用方签名直接按零证据裁决（不广播，旧壳 Silent 写入口同判）。
+pub fn create_instrument(
+    db: &DbState,
+    input: ledger_investment::InstrumentInput,
+) -> Result<String> {
+    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    ledger_investment::create_instrument_manual(&conn, input)
+}
+
+/// 自建标的删除（旧壳 `delete_instrument` 命令写路径的本壳等价半边，不经
+/// IPC）：仅手动来源且无 buy/sell 流水引用（守卫在域写路径），同步来源与
+/// 被引用标的拒删（级联：现价缓存/价格历史 CASCADE、批次被守卫覆盖）。
+/// 删除是字典清理不是价格写入——零价格证据（不广播，旧壳 DeleteInstrument
+/// 信号映射 NO_SIGNALS 同判）。
+pub fn delete_instrument(db: &DbState, id: &str) -> Result<()> {
+    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    ledger_investment::delete_instrument(&conn, id)
+}
+
+/// 添加投资标的·场外基金通道（旧壳 `add_fund_by_code` 命令壳的本壳等价半
+/// 边，不经 IPC）：格式校验即刻拒绝（不发网络请求）→ 行情拉取在连接锁外
+/// await（单请求叠加限流冷却重试最长可达分钟级，任何形状下不进锁）→ 落库
+/// 经域公开写入口（拉取已完成，注入闭包同步回放结果——与旧壳/BDD 同一套
+/// 校验→拉取→落库实现）。落现价的证据随结果返回，广播判定归调用方签名。
+pub async fn add_fund_by_code(
+    db: &DbState,
+    code: &str,
+) -> Result<ledger_investment::AddFundResult> {
+    ledger_investment::validate_fund_code(code)?;
+    let quote = ledger_market_sync::fetch_fund_quote_production(code).await?;
+    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    let mut fetch = |_: &str, _: &str| Ok(quote.clone());
+    ledger_investment::add_fund_by_code_with(&conn, code, &mut fetch)
+}
+
+/// 添加投资标的·场内通道（沪/深/港/美股；旧壳 `add_instrument_by_code` 命
+/// 令壳的本壳等价半边，不经 IPC）：查询阶段在连接锁外 await（通道解析 →
+/// 查询单元解析 → 腾讯行情）→ 识别落库经同一接缝（类型自动识别，行情命
+/// 中 → stock、类型特征 → etf）。查询未命中与临时不可达以码化错误上抛。
+pub async fn add_instrument_by_code(
+    db: &DbState,
+    market: &str,
+    code: &str,
+) -> Result<ledger_investment::AddStockInstrumentResult> {
+    let mut fetch = |code: &str, route: ledger_investment::StockRoute| {
+        let code = code.to_string();
+        async move { ledger_market_sync::fetch_stock_quote_production(route, &code).await }
+    };
+    let quote = ledger_investment::fetch_stock_quote_for_add(market, code, &mut fetch).await?;
+    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    ledger_investment::add_stock_instrument_with_quote(&conn, &quote)
+}
+
 /// 持仓标的同步编排接缝（#2046；旧壳 `sync_instrument_info` IPC 命令壳的
 /// 本壳等价形，消费面在 [`crate::investment_sync`] 同步接缝，不经 IPC）：
 /// 门面写槽裸作业会话交给投资同步编排（旧壳命令消费的同一域编排入口

@@ -83,6 +83,12 @@ pub(crate) fn trend_caption(currency: &str) -> String {
 }
 
 pub(crate) const PNL_TAB_LABEL: &str = "盈亏";
+/// 明细页签名（旧壳 investments.tabs.ledger 同词表）。
+pub(crate) const LEDGER_TAB_LABEL: &str = "明细";
+/// 标的页签名（旧壳 investments.tabs.instruments 同词表）。
+pub(crate) const INSTRUMENTS_TAB_LABEL: &str = "标的";
+/// 明细页签 URL 值（旧壳 LEDGER_TAB_URL_VALUE 同词；下钻载荷 tab 值域锚）。
+pub(crate) const LEDGER_TAB_URL_VALUE: &str = "detail";
 pub(crate) const PNL_FILTER_ACCOUNT: &str = "全部账户";
 pub(crate) const PNL_FILTER_INSTRUMENT_PLACEHOLDER: &str = "搜索标的（代码/名称/拼音）";
 pub(crate) const PNL_BY_YEAR: &str = "按年度汇总";
@@ -120,6 +126,10 @@ pub(crate) enum InvestmentsTab {
     Pnl,
     /// 持仓（#2046）。
     Holdings,
+    /// 明细（#2047）。
+    Ledger,
+    /// 标的（#2047）。
+    Instruments,
 }
 
 impl InvestmentsTab {
@@ -129,6 +139,8 @@ impl InvestmentsTab {
             InvestmentsTab::Overview => "概览",
             InvestmentsTab::Pnl => PNL_TAB_LABEL,
             InvestmentsTab::Holdings => "持仓",
+            InvestmentsTab::Ledger => LEDGER_TAB_LABEL,
+            InvestmentsTab::Instruments => INSTRUMENTS_TAB_LABEL,
         }
     }
 
@@ -138,15 +150,19 @@ impl InvestmentsTab {
             InvestmentsTab::Overview => "overview",
             InvestmentsTab::Pnl => "pnl",
             InvestmentsTab::Holdings => "holdings",
+            InvestmentsTab::Ledger => "ledger",
+            InvestmentsTab::Instruments => "instruments",
         }
     }
 }
 
-/// 页签全集（顺序 = 旧壳 InvestmentsView 前三位；ledger/instruments 随⑯）。
-const TABS: [InvestmentsTab; 3] = [
+/// 页签全集（顺序 = 旧壳 InvestmentsView 五位全序；ledger/instruments 随 ⑯。
+const TABS: [InvestmentsTab; 5] = [
     InvestmentsTab::Overview,
     InvestmentsTab::Pnl,
     InvestmentsTab::Holdings,
+    InvestmentsTab::Ledger,
+    InvestmentsTab::Instruments,
 ];
 
 /// 走势预设区间闭集（旧壳 TREND_RANGE_PRESETS；1 月/3 月/1 年/3 年/5 年/全部）。
@@ -218,6 +234,17 @@ pub(crate) struct InvestmentsSession {
     pub holdings_sorter: Signal<Option<HoldingsSorter>>,
     /// 持仓·页码（1 起；客户端切片的展示切片状态）。
     pub holdings_page: Signal<usize>,
+    /// 明细·页码（1 起；服务端分页，⑯）。
+    pub detail_page: Signal<usize>,
+    /// 明细·类型子集（空集合 = 不过滤 = 默认态；闭集 = 五种投资 kind，⑯）。
+    pub detail_kinds: Signal<Vec<ledger_transaction::TransactionKind>>,
+    /// 明细·账户过滤（None = 全部默认态；涉及账户语义，⑯）。
+    pub detail_account_id: Signal<Option<String>>,
+    /// 明细·标的深链维（None = 默认态；仅下钻落点写入，无手动控件，⑯）。
+    pub detail_instrument_id: Signal<Option<String>>,
+    /// 标的页签·anchor 定位意图（None = 默认态；仅下钻落点写入，消费后即
+    /// 复位——读一次，⑯）。
+    pub instruments_focus: Signal<Option<String>>,
 }
 
 /// 持仓排序列闭集（旧壳 HoldingsSortColumn 同闭集）：市值 / 持仓收益（未实现
@@ -264,6 +291,11 @@ pub(crate) fn store() -> InvestmentsSession {
         holdings_account_id: signal(None),
         holdings_sorter: signal(None),
         holdings_page: signal(1),
+        detail_page: signal(1),
+        detail_kinds: signal(Vec::new()),
+        detail_account_id: signal(None),
+        detail_instrument_id: signal(None),
+        instruments_focus: signal(None),
     };
     *slot = Some(s);
     s
@@ -799,11 +831,36 @@ pub(crate) fn assemble_trend(trend: &ledger_investment::PortfolioValueTrend) -> 
 #[component]
 pub(crate) fn InvestmentsView() -> impl IntoElement {
     let session = store();
-    // 落位意图投递即弃（概览/盈亏无定位形态——旧壳投资路由读 focus 落持仓
-    // 高亮，属 ⑮/⑯ 射程；读一次封闸由 take_intent 单点承担）。
+    // 落位意图消费（读一次封闸由 take_intent 单点承担；#2047 起两道通道：
+    // investments_drill 持仓下钻 → 落明细页签 + 筛选维覆盖；focus 标的定位
+    // → 落标的页签 + anchor 定位意图。删除本接线即红：钉 headless 下钻定位
+    // 用例与 lib 探针）。effect 键当前视图——落位与意图同轮落地。
     effect(move || {
         let _landed = nav::store().current.get();
-        let _ = nav::take_intent();
+        let Some(intent) = nav::take_intent() else {
+            return;
+        };
+        if let Some(drill) = intent.investments_drill {
+            // 明细下钻：页签指向收窄（仅 detail 在场，旧壳 tab=detail 同词）；
+            // 筛选维在场永远赢、缺席维度保留保留态；翻页归零（筛选变化即换
+            // 页面集——旧壳 store 内化同口径）。
+            if drill.tab == LEDGER_TAB_URL_VALUE {
+                if drill.account_id.is_some() {
+                    session.detail_account_id.set(drill.account_id);
+                }
+                if drill.instrument_id.is_some() {
+                    session.detail_instrument_id.set(drill.instrument_id);
+                }
+                session.detail_page.set(1);
+                session.tab.set(InvestmentsTab::Ledger);
+            }
+        } else if let Some(focus) = intent.focus {
+            // 标的定位（spec #704 / #1907）：单标的走势退役后焦点面归标的
+            // 页签——anchor 分页定位让行必在当前页（无效 focus 在 anchor
+            // 查询内回落普通页码，不提供落空的跳转）。
+            session.instruments_focus.set(Some(focus));
+            session.tab.set(InvestmentsTab::Instruments);
+        }
     });
 
     // 到访标记（visited-once keep-mounted：先到的页签保持挂载，页签切换不
@@ -894,6 +951,10 @@ fn keep_mounted_pane(
                 InvestmentsTab::Pnl => pnl_pane().into_element(),
                 InvestmentsTab::Holdings => {
                     crate::investments_holdings::holdings_pane().into_element()
+                }
+                InvestmentsTab::Ledger => crate::investments_ledger::ledger_pane().into_element(),
+                InvestmentsTab::Instruments => {
+                    crate::investments_instruments::instruments_pane().into_element()
                 }
             };
             view()

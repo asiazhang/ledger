@@ -1163,6 +1163,29 @@ fn holdings_table_body(
         )
 }
 
+/// 标的代码下钻链接（持仓下钻，ADR-0135 决策 6 / 旧壳 InstrumentLink 的
+/// 重生）：点击跳投资明细页签按该账户该标的过滤（该账户该标的的投资交易
+/// 历史）；载荷 None = 缺码「-」纯文本不可点击。消费导航单点接缝（请求带
+/// investments_drill 载荷），删除接线即红钉 headless 持仓下钻用例。
+fn render_symbol_link(
+    drill: Option<crate::nav_model::InvestmentsDrill>,
+    label: String,
+    accent: nsh_core::element::AdaptiveColor,
+    fg: nsh_core::element::AdaptiveColor,
+) -> nsh_core::element::View {
+    match drill {
+        Some(drill) => view()
+            .on_press(move |_: &PressEvent| {
+                crate::nav::open(
+                    crate::nav_model::NavRequest::bare(crate::nav_model::ViewName::Investments)
+                        .with_investments_drill(drill.clone()),
+                );
+            })
+            .child(text(label).text_size(px(13.0)).text_color(accent)),
+        None => view().child(text(label).text_size(px(13.0)).text_color(fg)),
+    }
+}
+
 fn clamp_page(
     derived: Memo<Vec<HoldingRowSnap>>,
     session: investments::InvestmentsSession,
@@ -1198,6 +1221,11 @@ fn row_body(
 ) -> impl IntoElement {
     let fg = palette.fg;
     let muted = palette.muted;
+    // 下钻强调色（旧壳 InstrumentLink accentColor 同语义：主题 primary 令牌，
+    // 缺失回退橙色——accounts.rs 账户名下钻链接同款先例）。
+    let accent = nsh_core::element::tokens()
+        .color("primary")
+        .unwrap_or_else(|| hsla(0.11, 0.82, 0.60, 1.0).into());
     let gain = palette.gain;
     let loss = palette.loss;
     each(
@@ -1228,6 +1256,20 @@ fn row_body(
                             | ledger_investment::PriceChannel::FundNav
                     )
                 );
+            // 标的代码下钻链接（ADR-0135 决策 6 / 旧壳 InstrumentLink）：载荷
+            // 预派生（row 快照 owned 值 + 常量页签词），不持任何借用；缺码
+            // 无链接（纯「-」，不可点击）。
+            let link_drill = row
+                .symbol
+                .as_ref()
+                .map(|_| crate::nav_model::InvestmentsDrill {
+                    tab: investments::LEDGER_TAB_URL_VALUE,
+                    account_id: Some(row.account_id.clone()),
+                    instrument_id: Some(row.instrument_id.clone()),
+                });
+            let link_symbol_text = row.symbol.clone().unwrap_or_else(|| "-".to_owned());
+            let symbol_cell = render_symbol_link(link_drill, link_symbol_text, accent, fg)
+                .test_id(format!("holdings-row-{}-symbol", row_id).as_str());
             view()
                 .test_id(format!("holdings-row-{row_id}").as_str())
                 .flex_row()
@@ -1241,12 +1283,7 @@ fn row_body(
                         .w(px(SYMBOL_W))
                         .flex_col()
                         .gap_0p5()
-                        .child(
-                            text(row.symbol.clone().unwrap_or_else(|| "-".to_owned()))
-                                .text_size(px(13.0))
-                                .text_color(fg)
-                                .test_id(format!("holdings-row-{}-symbol", row_id).as_str()),
-                        )
+                        .child(symbol_cell)
                         .child(
                             text(
                                 row.instrument_name

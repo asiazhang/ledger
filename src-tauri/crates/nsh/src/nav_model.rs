@@ -647,6 +647,28 @@ pub struct NavRequest {
     /// 维度（旧壳 URL 参数表的进程内等价；载荷缺席 = 不动保留态，旧壳「无参
     /// 裸导航回保留态」同口径）。
     pub tx_filters: Option<crate::tx_filter::DrillFilters>,
+    /// 投资页下钻载荷（#2047 持仓下钻）：目标为投资视图时携带页签指向与明细
+    /// 筛选维（旧壳 `?tab=detail&account=&instrument=` URL 参数表的进程内等
+    /// 价；载荷缺席 = 不动保留态）。focus 字段承载的标的定位（标的页签
+    /// anchor 分页 + 高亮）走 focus 通道，本字段只承载「落明细页签 + 筛选维」
+    /// ——两通道各归独立字段，无双写互踩。
+    pub investments_drill: Option<InvestmentsDrill>,
+}
+
+/// 投资页下钻载荷（#2047 持仓下钻，ADR-0135 决策 6 的接缝通道）：目标页签
+/// （值域 = 投资页签 key，旧壳 `tab=detail` 既有词）+ 明细筛选维（账户 /
+/// 标的，二者均可缺席——缺席维度不动保留态，旧壳「参数在场永远赢、缺席
+/// 维度保留保留态」同口径）。纯数据、零业务判定：页签指向的合法性与消费
+/// （定位形式随页签闭集收窄）归投资视图侧。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InvestmentsDrill {
+    /// 目标页签（旧壳 URL `tab` 值同词：`detail` = 明细页签；其余值由消费
+    /// 侧视为不在场）。
+    pub tab: &'static str,
+    /// 明细筛选·账户维（缺席 = 不动保留态）。
+    pub account_id: Option<String>,
+    /// 明细筛选·标的维（缺席 = 不动保留态）。
+    pub instrument_id: Option<String>,
 }
 
 impl NavRequest {
@@ -658,6 +680,7 @@ impl NavRequest {
             form_tab: None,
             focus: None,
             tx_filters: None,
+            investments_drill: None,
         }
     }
 
@@ -691,6 +714,12 @@ impl NavRequest {
     /// 附交易筛选下钻载荷（链式构造，#2037 下钻接缝的筛选通道）。
     pub fn with_tx_filters(mut self, filters: crate::tx_filter::DrillFilters) -> Self {
         self.tx_filters = Some(filters);
+        self
+    }
+
+    /// 附投资页下钻载荷（链式构造，#2047 持仓下钻的接缝通道）。
+    pub fn with_investments_drill(mut self, drill: InvestmentsDrill) -> Self {
+        self.investments_drill = Some(drill);
         self
     }
 }
@@ -803,6 +832,7 @@ pub fn resolve_landing(mut req: NavRequest, facts: &NavFacts) -> Landing {
                     form_tab: req.form_tab.take(),
                     focus: req.focus.take(),
                     tx_filters: req.tx_filters.take(),
+                    investments_drill: req.investments_drill.take(),
                 };
                 continue;
             }
@@ -840,6 +870,7 @@ pub fn resolve_landing(mut req: NavRequest, facts: &NavFacts) -> Landing {
                 form_tab: req.form_tab.take(),
                 focus: req.focus.take(),
                 tx_filters: req.tx_filters.take(),
+                investments_drill: req.investments_drill.take(),
             };
             continue;
         }
@@ -933,6 +964,7 @@ pub fn resolve_source_jump(
             form_tab,
             focus: (!entity_id.is_empty()).then(|| entity_id.to_owned()),
             tx_filters: None,
+            investments_drill: None,
         };
     }
     NavRequest {
@@ -941,6 +973,7 @@ pub fn resolve_source_jump(
         form_tab,
         focus: (!entity_id.is_empty()).then(|| entity_id.to_owned()),
         tx_filters: None,
+        investments_drill: None,
     }
 }
 

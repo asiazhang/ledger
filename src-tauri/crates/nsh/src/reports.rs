@@ -450,6 +450,7 @@ pub(crate) fn ReportsView() -> impl IntoElement {
                     ledger_transaction::TransactionKind::Refund,
                 ]),
             }),
+            investments_drill: None,
         });
     };
 
@@ -472,6 +473,7 @@ pub(crate) fn ReportsView() -> impl IntoElement {
                 ]),
                 ..tx_filter::DrillFilters::default()
             }),
+            investments_drill: None,
         });
     };
 

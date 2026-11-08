@@ -59,6 +59,9 @@ pub struct NavIntent {
     /// 交易筛选下钻载荷（目标为交易列表时有义；全量替换语义归
     /// [tx_filter::drilled] 纯决策单点）。
     pub tx_filters: Option<crate::tx_filter::DrillFilters>,
+    /// 投资页下钻载荷（目标为投资视图时有义，#2047 持仓下钻：落明细页签 +
+    /// 明细筛选维；消费归投资视图，页签收窄与筛选维覆盖语义归消费侧单点）。
+    pub investments_drill: Option<nav_model::InvestmentsDrill>,
 }
 
 /// 导航反应式状态句柄（Copy；信号挂首次 [`store`] 调用所在组件实例——生产
@@ -188,6 +191,7 @@ pub fn open(request: NavRequest) {
             focus: request.focus,
             form_tab: request.form_tab,
             tx_filters: request.tx_filters,
+            investments_drill: request.investments_drill,
         }
     } else {
         NavIntent::default()
