@@ -62,8 +62,12 @@ ledger-dashboard = { path = "../dashboard" }
 ledger-savings-goal = { path = "../savings-goal" }
 # 备份域直调面（#2038）：手动备份（受管改道判定 + zip 快照）与账本指纹只读
 # 判定（旧壳 create_backup / get_book_fingerprint 命令消费的同一域函数，不经
-# IPC）。
+# IPC）。#2054 起兼备份管理面（列表 / 清理 / 自动备份状态 / 恢复）。
 ledger-backup = { path = "../backup" }
+# 多端同步域直调面（#2054）：同步状态 / 手动轮次 / 通道配置 / 检查点 / 引导
+#（旧壳 sync_channel 族命令消费的同一域函数，不经 IPC；壳只依赖域，同步协
+# 议 crate 面不直接依赖，ADR-0112）。
+ledger-sync-engine = { path = "../sync-engine" }
 # 载荷序列化（导航界面状态的 JSON 形状与旧壳 view_state:* 同形同键，#2032；
 # workspace 已有同版本直接依赖，无收束面新增）。
 serde_json = "1"

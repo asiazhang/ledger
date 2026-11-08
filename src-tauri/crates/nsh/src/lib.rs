@@ -209,6 +209,7 @@ pub mod scheduled_transfer;
 pub mod search;
 pub mod select;
 pub mod settings;
+pub mod settings_data;
 pub mod sidebar;
 pub mod signals;
 pub mod tx_filter;

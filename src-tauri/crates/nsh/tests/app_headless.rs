@@ -10695,3 +10695,557 @@ fn settings_view_data_location_target_conflict_needs_choice_guard() {
         "注册表应指向目标目录：{payload}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// 设置②数据安全与连接四卡（#2054）：备份管理 / 加密 / 多端同步 / 账本切换。
+// 守卫呈现与拦截断言对准用户可观察结果（文案 / 入口 / 状态不生效），接线型
+// 断言的「删除即红」条目逐项写在各测试注释（ADR-0087）。
+// ---------------------------------------------------------------------------
+
+/// 按压目标就绪等待（press_target Some = 非 disabled）。
+fn wait_pressable(app: &mut Headless, selector: &str) {
+    app.wait_until(
+        format!("{selector} pressable").as_str(),
+        DEFAULT_WAIT,
+        |screen| screen.press_target(selector).unwrap().is_some(),
+    )
+    .unwrap();
+}
+
+/// 落位设置数据页签（设置②用例共用）：设置 → 数据 → 备份卡题到屏。四卡
+/// 内容纵向超出常规视口（720pt 只见前两卡）——用例放大视口使整卡组在屏
+/// （headless 裁剪语义下，「shows」= 视口内呈现）。
+fn open_data_tab(app: &mut Headless) {
+    open_settings(app);
+    app.set_viewport(Size::new(Points(1280.0), Points(3000.0)))
+        .unwrap();
+    app.press("id:set-tab-data").unwrap();
+    app.wait_for("id:data-backup-once").unwrap();
+    app.wait_for("id:book-summary-entry").unwrap();
+}
+
+/// 四卡骨架全量呈现（旧壳数据 Tab 分卡序平价）：备份管理五卡题、加密卡、
+/// 多端同步卡、账本切换卡与跨账本汇总置顶入口各在屏。删 DataSafetyCards 挂
+/// 载接线（数据页签改挂占位卡）→ 全部卡面缺席 → 红。
+#[test]
+fn data_safety_cards_lands_with_backup_encryption_sync_books_cards() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("settings-data-cards");
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_data_tab(&mut app);
+
+    for piece in [
+        "备份",
+        "一键备份",
+        "另存为…",
+        "备份目录",
+        "自动备份",
+        "备份文件列表",
+        "恢复",
+        "从备份恢复…",
+        "加密",
+        "开启加密",
+        "多端同步",
+        "立即同步",
+        "通道配置",
+        "保存配置",
+        "测试连接",
+        "发布检查点到通道",
+        "账本切换",
+        "新建账本",
+        "全部账本（投资汇总）",
+    ] {
+        assert!(
+            app.shows(piece),
+            "数据安全卡「{piece}」应在屏：{:?}",
+            app.screen().texts()
+        );
+    }
+}
+
+/// 备份全量旅程（动作卡 + 列表卡 + 滚动清理 + 覆盖守卫）：备份目录预制
+/// （保留上限 1）→ 另存为（shadow 对话框替身）①→ 受管产物入列表 +
+/// 最近备份回显；②再备份 → 滚动清理触发（桶超额 1）→「已清理 1 个旧备
+/// 份」+ 列表回到 1 行；覆盖守卫：目标已存在 → warning 确认弹窗 + 取消零
+/// 写入（手工标记内容不变）→ 确认 → 替换成功。删备份写链 → 列表永远空 →
+/// 红；删滚动清理接线 → 清理反馈不现 → 红；删覆盖守卫分支（直接替换）→
+/// 弹窗不现 + 标记内容被替换 → 红。
+#[test]
+fn backup_full_journey_backs_up_lists_prunes_and_guards_overwrite() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("settings-backup-journey");
+    let backup_dir =
+        std::env::temp_dir().join(format!("ledger-test-nsh-data-backup-{}", new_uuid()));
+    fs::create_dir_all(&backup_dir).unwrap();
+    let storage = storage_shard(&[
+        (
+            "backup_dir",
+            format!("{:?}", backup_dir.to_string_lossy()).as_str(),
+        ),
+        ("backup_max_count", "1"),
+    ]);
+
+    // 种子一笔交易（指纹固化前置：空库无可归属产物，备份空库不产生列表行）。
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let account = seed_cash_account(&db);
+        seed_transaction(
+            &db,
+            TxnSeed {
+                account: &account,
+                to_account: None,
+                kind: TransactionKind::Expense,
+                amount_cents: 2_500,
+                date: &test_date(0),
+                category_id: None,
+                merchant_id: None,
+                note: Some("备份旅程种子".to_owned()),
+            },
+        );
+    }
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config_with_storage_shard(storage)).unwrap();
+    open_data_tab(&mut app);
+
+    // 备份①：另存为（对话框替身问到盘面）→ 行集 + 最近备份回显。
+    let target_a = backup_dir.join("ledger-backup-20260101-000000.db.zip");
+    app.on_pick_save_path(Some(target_a.clone())).unwrap();
+    app.press("id:data-backup-as").unwrap();
+    app.wait_for("id:data-last-backup").unwrap();
+    app.wait_for("id:data-backup-row-0-name").unwrap();
+    assert!(target_a.is_file(), "备份产物落盘");
+    assert!(
+        app.shows("最近备份："),
+        "最近备份标签在屏：{:?}",
+        app.screen().texts()
+    );
+
+    // 备份②：同目录新目标 → 桶超额 → 滚动清理确证书面反馈。
+    let target_b = backup_dir.join("ledger-backup-20260101-000100.db.zip");
+    app.on_pick_save_path(Some(target_b.clone())).unwrap();
+    app.press("id:data-backup-as").unwrap();
+    app.wait_for("text:已清理 1 个旧备份").unwrap();
+    app.wait_for_gone("id:data-backup-row-1-name", DEFAULT_WAIT)
+        .unwrap();
+    assert!(
+        !target_a.exists(),
+        "超额最旧产物应被清理：bucket = 本指纹 × 本设备"
+    );
+
+    // 覆盖守卫：目标已存在（手工预置带标记文件）→ warning 确认弹窗，取消
+    // 零写入；确认后替换成功。
+    let target_overwrite = backup_dir.join("ledger-backup-20260101-000200.db.zip");
+    fs::write(&target_overwrite, b"canary-bytes").unwrap();
+    app.on_pick_save_path(Some(target_overwrite.clone()))
+        .unwrap();
+    app.press("id:data-backup-as").unwrap();
+    app.wait_for("text:覆盖备份文件").unwrap();
+    app.press("id:danger-cancel").unwrap();
+    app.settle();
+    assert_eq!(
+        fs::read(&target_overwrite).unwrap(),
+        b"canary-bytes",
+        "守卫取消零写入（手工标记不变）"
+    );
+    app.on_pick_save_path(Some(target_overwrite.clone()))
+        .unwrap();
+    app.press("id:data-backup-as").unwrap();
+    app.wait_for("text:覆盖备份文件").unwrap();
+    app.press("id:danger-confirm").unwrap();
+    app.wait_for("id:data-last-backup").unwrap();
+    assert_ne!(
+        fs::read(&target_overwrite).unwrap(),
+        b"canary-bytes",
+        "确认后原文件内容被替换"
+    );
+    assert!(
+        !target_b.exists(),
+        "确认后的滚动清理同样按保留上限进行（桶内超额最旧产物被清）"
+    );
+}
+
+/// 恢复最高级危险确认与全旅程：两笔种子交易 → 备份包 → 删除两笔（当前数
+/// 据变空）→ 恢复该包：确认弹窗（后果警示 + 备份文件路径）→ 取消零替换
+/// → 再进确认 → 成功反馈 + 重启提示；「下次启动」等价重置重启后交易回到
+/// 两笔（替换已发生）。删恢复写链 → 重启后仍为零笔 → 红；删除确认分支
+/// （直接整库替换）→ 弹窗不现 → 红。
+#[test]
+fn restore_guard_replaces_data_across_restart() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("settings-restore-journey");
+    // 种子（域写入口造数，测试工厂纪律）：两笔现金支出。
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let account = seed_cash_account(&db);
+        for index in 0..2 {
+            seed_transaction(
+                &db,
+                TxnSeed {
+                    account: &account,
+                    to_account: None,
+                    kind: TransactionKind::Expense,
+                    amount_cents: 2_500,
+                    date: &test_date(index),
+                    category_id: None,
+                    merchant_id: None,
+                    note: Some(format!("恢复旅程第 {index} 笔")),
+                },
+            );
+        }
+    }
+    // 备份包（域直调同款执行协议，不经壳）。
+    let mut zip = std::env::temp_dir().join(format!("ledger-test-nsh-restore-{}", new_uuid()));
+    zip.set_extension("db.zip");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        nsh_app::boot::create_backup(&db, &zip, env!("CARGO_PKG_VERSION")).unwrap();
+    }
+    // 当前数据清空（软删两笔，语义上模拟「数据丢了才恢复」）。
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let conn = db.conn.lock().unwrap();
+        let ids: Vec<String> = ledger_transaction::list_transactions(
+            &conn,
+            &ledger_transaction::TransactionListFilter::default(),
+        )
+        .unwrap()
+        .items
+        .into_iter()
+        .map(|row| row.id)
+        .collect();
+        for id in ids {
+            ledger_transaction::delete(&conn, &id).unwrap();
+        }
+    }
+
+    // 应用数据根（恢复安全备份 RestoreSafetyBackup 的落点；headless 注入
+    // 临时目录——生产 bin 的注入单点在 main.rs）。
+    let data_root =
+        std::env::temp_dir().join(format!("ledger-test-nsh-restore-root-{}", new_uuid()));
+    fs::create_dir_all(&data_root).unwrap();
+    nsh_app::cross_book::set_default_data_dir(data_root);
+
+    let storage = storage_shard(&[]);
+    let storage2 = storage_shard(&[]);
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config_with_storage_shard(storage)).unwrap();
+    open_data_tab(&mut app);
+    app.on_pick_paths(vec![zip.clone()]).unwrap();
+    app.press("id:data-restore").unwrap();
+    // 确认弹窗（最高级危险确认）：后果警示与备份文件路径在屏。
+    app.wait_for("text:确认恢复").unwrap();
+    assert!(
+        app.shows(
+            "恢复将替换当前全部数据，且不可撤销。系统会在恢复前自动备份当前数据到应用数据目录。"
+        ),
+        "后果警示在屏：{:?}",
+        app.screen().texts()
+    );
+    // 取消 → 零替换（弹窗关，尚无成功反馈）。
+    app.press("id:data-restore-cancel").unwrap();
+    app.settle();
+    // 重进确认 → 替换 + 成功反馈重启提示。
+    app.on_pick_paths(vec![zip.clone()]).unwrap();
+    app.press("id:data-restore").unwrap();
+    app.wait_for("text:确认恢复").unwrap();
+    app.press("id:data-restore-confirm").unwrap();
+    app.wait_for(
+        "text:恢复成功，请重启应用进入新库（本壳无原位重引导：旧壳恢复后自动重启的偏差见交付报告）",
+    )
+    .unwrap();
+
+    // 「下次启动」等价重置重启：交易回到两笔（备份内容已换入）。
+    nsh_app::app::reset_book_assembly();
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config_with_storage_shard(storage2)).unwrap();
+    // 上次停留视图跟随恢复（导航界面状态同一存储）：呈现就绪即可（落位到
+    // 上次视图），数据断言直接读库。
+    app.settle();
+    let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+    let conn = db.read_conn.lock().unwrap();
+    let alive = ledger_transaction::list_transactions(
+        &conn,
+        &ledger_transaction::TransactionListFilter::default(),
+    )
+    .unwrap();
+    assert_eq!(
+        alive.items.len(),
+        2,
+        "恢复旅程后交易回到两笔：{:?}",
+        alive.items
+    );
+}
+
+/// 加密开启流守卫（error 级无后门确认 + ≥8 位 / 一致守卫）：短口令即时红
+/// 显 + 提交禁用；不一致红显；同向可用 → error 级确认弹窗（无后门后果说
+/// 明在屏）→ 取消零写（密码文件为明文）→ 再进确认 → 整库转换成功（文件
+/// 头探测密文）+ 本壳密文启动暂不支持的后果提示。删确认分支（直接转换）
+/// → 弹窗不现 → 红；删口令守卫（不校验即执行）→ 短口令禁用面消失 → 红。
+#[test]
+fn encryption_enable_guard_blocks_and_converts() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("settings-encrypt-journey");
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_data_tab(&mut app);
+
+    // 短口令：即时红显 + 提交禁用。
+    app.type_text("id:enc-passphrase", "短口令").unwrap();
+    app.type_text("id:enc-confirm", "短口令").unwrap();
+    app.wait_for("text:主口令至少需要 8 位").unwrap();
+    assert!(
+        app.screen()
+            .press_target("id:enc-enable")
+            .unwrap()
+            .is_none(),
+        "短口令下「开启加密」不可按（disabled 契约投影）"
+    );
+    // 两次输入不一致：红显。
+    app.clear("id:enc-confirm").unwrap();
+    app.type_text("id:enc-confirm", "另一个口令一一一贯不代表正确口令")
+        .unwrap();
+    app.wait_for("text:两次输入不一致").unwrap();
+
+    // 同向长口令：清两框重新输入（清 + 输是 headless 输入控件的替换语义，
+    // budget-edit-amount 先例同形）→ 提交可用 → error 级确认弹窗。
+    app.clear("id:enc-passphrase").unwrap();
+    app.type_text("id:enc-passphrase", "整库加密旅程口令X")
+        .unwrap();
+    app.clear("id:enc-confirm").unwrap();
+    app.type_text("id:enc-confirm", "整库加密旅程口令X")
+        .unwrap();
+    app.wait_until("enc-enable ready", Duration::from_secs(5), |screen| {
+        screen.press_target("id:enc-enable").unwrap().is_some()
+    })
+    .unwrap();
+    app.press("id:enc-enable").unwrap();
+    app.wait_for("text:开启加密？").unwrap();
+    for piece in [
+        "开启后，每次启动都需输入主口令。",
+        "主口令不会被保存、也无法找回——一旦忘记，这份账本的数据将无法再打开。",
+    ] {
+        assert!(app.shows(piece), "无后门后果说明「{piece}」应在屏");
+    }
+    // 取消 → 零转换（文件头保持明文）。
+    app.press("id:danger-cancel").unwrap();
+    app.settle();
+    assert!(
+        matches!(
+            ledger_infra::db::encryption::probe_file_kind(&dir.join("ledger.db")).unwrap(),
+            ledger_infra::db::encryption::DbFileKind::Plaintext,
+        ),
+        "取消后文件头保持明文（零转换）"
+    );
+    // 确认 → 整库转换（文件头密文）+ 本壳后果提示。
+    app.press("id:enc-enable").unwrap();
+    app.wait_for("text:开启加密？").unwrap();
+    app.press("id:danger-confirm").unwrap();
+    app.wait_for(
+        "text:加密已开启（整库转换完成）。本壳暂不支持密文库启动——解锁向导界外另票：请用旧壳打开此数据（下次启动本壳将呈现「密文库暂不支持」）。",
+    ).unwrap();
+    assert!(
+        matches!(
+            ledger_infra::db::encryption::probe_file_kind(&dir.join("ledger.db")).unwrap(),
+            ledger_infra::db::encryption::DbFileKind::Encrypted,
+        ),
+        "确认后整库转换为密文库（文件头探测）"
+    );
+}
+
+/// 同步卡守卫旅程：通道未配置 → 「立即同步」报未配置码化错误（轮次编排归
+/// 域，未配置早退不触网）；表单填全 → 保存 → 成功反馈 + 回显（已配置态）
+/// + 发布 / 引导入口解锁。删保存写链 → 库内无配置 → 回显不置换 → 红。
+#[test]
+fn sync_card_requires_configured_channel_then_saves_and_echoes() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("settings-sync-journey");
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_data_tab(&mut app);
+
+    // 未配置早退：不触网（无网络替身注入即断言失败到平台层——手上无替身
+    // 注入位，改用状态反馈断言；网络段归 #1219 域权威既有覆盖）。
+    app.press("id:sync-now").unwrap();
+    app.wait_for("text:同步失败: 同步通道尚未配置，请先在设置中填写同步通道信息")
+        .unwrap();
+    assert!(
+        app.screen()
+            .press_target("id:sync-publish-checkpoint")
+            .unwrap()
+            .is_none(),
+        "通道未配置「发布检查点」不可按（disabled 契约投影）"
+    );
+
+    // 表单填全（厂商预设预填经下拉在 option 装配期给端点模板——直接手填
+    // 端点走自建路径同构）→ 保存 → 成功反馈 + 发布 / 引导解锁。
+    app.type_text("id:sync-endpoint", "https://s3.example.com")
+        .unwrap();
+    app.type_text("id:sync-region", "cn-hangzhou").unwrap();
+    app.type_text("id:sync-bucket", "ledger-bucket").unwrap();
+    app.type_text("id:sync-access-key", "test-access").unwrap();
+    app.type_text("id:sync-secret-key", "test-secret").unwrap();
+    app.press("id:sync-save-channel").unwrap();
+    app.wait_for("text:通道配置已保存").unwrap();
+    app.settle();
+    // 通道配置入库（boot 接缝直读同一库：回显权威面）。
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let conn = db.read_conn.lock().unwrap();
+        let config = ledger_sync_engine::configured_channel(&conn).unwrap();
+        let config = config.expect("通道配置应已落库（boot 接缝 save 路径）");
+        assert_eq!(config.endpoint, "https://s3.example.com");
+        assert_eq!(config.bucket, "ledger-bucket");
+        assert_eq!(config.space_id, "default");
+    }
+    app.wait_until("sync-publish ready", Duration::from_secs(5), |screen| {
+        screen
+            .press_target("id:sync-publish-checkpoint")
+            .unwrap()
+            .is_some()
+    })
+    .unwrap();
+}
+
+/// 账本旅程：新建（弹窗提交 → 注册清单上屏 + 登记文件落盘）→ 改名 → 移除
+/// （气泡确认 → 摘登记，目录照常在盘）。删登记写链 → 清单不上新行 → 红；
+/// 删移除气泡确认（直接摘登记）→ 气泡不现 → 红。
+#[test]
+fn books_create_rename_and_remove_flow_registry() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("settings-books-journey");
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_data_tab(&mut app);
+
+    // 新建：弹窗提交 → 注册行上屏 + books/ 子目录落盘（只登记不建库）。
+    wait_pressable(&mut app, "id:book-create");
+    app.press("id:book-create").unwrap();
+    app.wait_for("text:新建账本").unwrap();
+    app.type_text("id:book-name-input", "旅程账本").unwrap();
+    wait_pressable(&mut app, "id:book-name-submit");
+    app.press("id:book-name-submit").unwrap();
+    app.wait_for("text:已创建账本「旅程账本」，进入即自动建库")
+        .unwrap();
+    let books_root = dir.join("books");
+    let registered: Vec<_> = fs::read_dir(&books_root).unwrap().collect();
+    assert_eq!(registered.len(), 1, "新建登记创建一个 books/<id> 子目录");
+
+    // 改名：行内改名 → 元数据更新（目录不变）。
+    let book = ledger_infra::db::book_registry::read_registry(&dir);
+    let registry_book = match book {
+        ledger_infra::db::book_registry::RegistryRead::Resolved(registry) => {
+            registry.books.last().unwrap().clone()
+        }
+        _ => panic!("注册表应已可读"),
+    };
+    wait_pressable(
+        &mut app,
+        format!("id:book-rename-{}", registry_book.id).as_str(),
+    );
+    app.press(format!("id:book-rename-{}", registry_book.id).as_str())
+        .unwrap();
+    app.wait_for("text:重命名账本").unwrap();
+    app.clear("id:book-name-input").unwrap();
+    app.type_text("id:book-name-input", "改名账本").unwrap();
+    wait_pressable(&mut app, "id:book-name-submit");
+    app.press("id:book-name-submit").unwrap();
+    app.wait_for("text:已重命名为「改名账本」").unwrap();
+
+    // 移除（气泡确认）：待确认文案在屏 → 确认 → 摘登记（目录照常在盘）。
+    app.wait_for(format!("id:book-remove-{}", registry_book.id).as_str())
+        .unwrap();
+    wait_pressable(
+        &mut app,
+        format!("id:book-remove-{}", registry_book.id).as_str(),
+    );
+    app.press(format!("id:book-remove-{}", registry_book.id).as_str())
+        .unwrap();
+    app.wait_for("text:移除后可随时重新登记找回，账本文件仍保留在磁盘。确定移除「改名账本」？")
+        .unwrap();
+    app.press("id:book-remove-confirm").unwrap();
+    app.wait_for("text:已移除账本「改名账本」，文件仍保留在磁盘")
+        .unwrap();
+    assert!(
+        registry_book.dir.is_dir(),
+        "移除仍保留账本目录（文件生命周期归用户）"
+    );
+}
+
+/// 账本切换全旅程（活动指针写链 + 主账本回显 + 跨重启体验动作差分）：
+/// 预登记副账本（可用含库文件）→ 行按压切换意图 → 轻量确认弹窗 → 确认 →
+/// 「已切换…」反馈 + 注册表 active 指针改写；「下次启动」等价重置后进入
+/// 副账本（其行的当前标记）。删切换写链 → 指针不写、重启仍在账本1 → 红。
+#[test]
+fn books_switch_journey_moves_active_pointer_across_restart() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("settings-books-switch");
+    // 预登记副账本（可用性：目录可创建 → 目标目录空库在首次进入建出，与
+    // 旧壳语义差分：本壳立桩引导只开已有库文件的目录，测试里补一个空库
+    // 文件 = 新装语义）。
+    let second = {
+        let book = ledger_infra::db::book_registry::create_book_entry(&dir, "副账本").unwrap();
+        fs::write(book.dir.join("ledger.db"), b"").unwrap();
+        book
+    };
+
+    let storage = storage_shard(&[]);
+    let storage2 = storage_shard(&[]);
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config_with_storage_shard(storage)).unwrap();
+    open_data_tab(&mut app);
+    // 清单两行（默认账本 + 副账本），副账本未标当前。
+    app.wait_for("id:book-row-0-name").unwrap();
+    wait_pressable(&mut app, format!("id:book-switch-{}", second.id).as_str());
+    app.press(format!("id:book-switch-{}", second.id).as_str())
+        .unwrap();
+    app.wait_for("text:切换账本").unwrap();
+    app.press("id:danger-confirm").unwrap();
+    app.wait_for("text:已切换到「副账本」，重启应用后进入新账本（旧壳自动重载的偏差见交付报告）")
+        .unwrap();
+    // 活动指针写链（读取注册表文件：active = 副账本 id）。
+    let registry = fs::read_to_string(dir.join("data_location.json")).unwrap();
+    assert!(
+        registry.contains(second.id.as_str()) && registry.contains("\"active\""),
+        "注册表活动指针应指向副账本：{registry}"
+    );
+
+    // 「下次启动」等价：重置 + 同目录参数再启动 → 引导消费注册表进副账本。
+    nsh_app::app::reset_book_assembly();
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config_with_storage_shard(storage2)).unwrap();
+    open_data_tab(&mut app);
+    app.wait_for(format!("id:book-switch-{}", second.id).as_str())
+        .unwrap();
+    assert!(
+        app.shows("副账本"),
+        "重启后副账本行在屏：{:?}",
+        app.screen().texts()
+    );
+    // 副账本的行标当前（清单序 = 登记序：默认账本 0、副账本 1）。
+    app.wait_for("id:book-row-1-current").unwrap();
+}
+
+/// 跨账本汇总置顶入口（导航接缝消费，旧壳 book-summary-entry 同位）：按压
+/// → 落位跨账本汇总视图（数据根未注入的 headless 现场呈现读失败重试态，
+/// 落位凭证以视图内确定文案为锚）。删导航接线（入口改空动作）→ 汇总视图
+/// 不落位 → 红。
+#[test]
+fn books_summary_entry_opens_cross_book_summary() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("settings-books-summary");
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_data_tab(&mut app);
+    app.press("id:book-summary-entry").unwrap();
+    app.wait_for("text:汇总读取失败").unwrap();
+}

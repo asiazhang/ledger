@@ -4477,6 +4477,7 @@ dependencies = [
  "ledger-reports",
  "ledger-savings-goal",
  "ledger-scheduled",
+ "ledger-sync-engine",
  "ledger-transaction",
  "nsh-base",
  "nsh-core",

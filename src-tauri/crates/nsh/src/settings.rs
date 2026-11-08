@@ -106,8 +106,6 @@ const ADOPT_CANCEL: &str = "取消换位";
 const CARD_FEATURES: &str = "功能开关";
 const FEATURES_INTRO: &str =
     "关闭只隐藏入口：数据不删，统计口径与后台行为照旧运行，随时可以重新打开。";
-const CARD_PENDING_23: &str = "备份与恢复 / 加密 / 多端同步 / 账本切换";
-const PENDING_23_NOTE: &str = "随设置②票（数据安全与连接）就位";
 const SESSION_MISSING: &str = "内部错误：账本库会话缺失";
 const READ_TASK_FAILED: &str = "内部错误：读任务异常退出";
 const WRITE_TASK_FAILED: &str = "内部错误：写入任务异常退出";
@@ -363,8 +361,9 @@ pub(crate) fn visible_tabs(closed: &[nav_model::ViewName]) -> Vec<SettingsTab> {
 // 卡共用，#2054 数据安全四卡复用）。
 // ---------------------------------------------------------------------------
 
-/// 卡容器（标题 + 竖排内容行）。
-fn card(title: &'static str, palette: views::ViewPalette, rows: Vec<View>) -> View {
+/// 卡容器（标题 + 竖排内容行）。pub(crate)：#2054 数据安全四卡（
+/// [`crate::settings_data`]）复用同一卡片宿主形态，单点不重建。
+pub(crate) fn card(title: &'static str, palette: views::ViewPalette, rows: Vec<View>) -> View {
     let mut body = view().flex_col().app_class("gap-2");
     for row in rows {
         body = body.child(row);
@@ -382,8 +381,8 @@ fn card(title: &'static str, palette: views::ViewPalette, rows: Vec<View>) -> Vi
 }
 
 /// 状态条位（卡内单行动作反馈：旧壳 message.* 的条位对应物，#2038 裁决；
-/// None = 无反馈行）。
-fn status_line(
+/// None = 无反馈行）。pub(crate)：#2054 数据安全四卡复用同一反馈条位。
+pub(crate) fn status_line(
     id: &'static str,
     status: Signal<Option<String>>,
     palette: views::ViewPalette,
@@ -708,22 +707,15 @@ fn log_card(palette: views::ViewPalette) -> View {
 // 同形）。
 // ---------------------------------------------------------------------------
 
-/// 数据页签：存储位置卡 + 设置② 占位说明。
+/// 数据页签：存储位置卡 + 设置② 数据安全四卡（备份 / 加密 / 多端同步 /
+/// 账本切换；[`crate::settings_data`]——卡片组住独立模块，页签容器面单点
+/// 不变）。
 fn data_pane(palette: views::ViewPalette) -> View {
-    view().flex_col().app_class("gap-3").children(vec![
-        location_card(palette),
-        card(
-            CARD_PENDING_23,
-            palette,
-            vec![
-                view().child(
-                    text(PENDING_23_NOTE)
-                        .text_size(px(12.0))
-                        .text_color(palette.muted),
-                ),
-            ],
-        ),
-    ])
+    view()
+        .flex_col()
+        .app_class("gap-3")
+        .child(location_card(palette))
+        .child(crate::settings_data::data_safety_cards())
 }
 
 /// 二选一挂起目标（接管确认对话框开着时的落点集：目标目录原文 + 通道是否

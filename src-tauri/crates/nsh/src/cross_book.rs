@@ -72,6 +72,13 @@ fn data_dir_slot() -> std::sync::MutexGuard<'static, Option<PathBuf>> {
     DATA_DIR.lock().unwrap_or_else(|p| p.into_inner())
 }
 
+/// 数据根槽位读取（#2054）：恢复安全备份（RestoreSafetyBackup）等「应用
+/// 数据根」面的消费点——与旧壳 `app_data_dir()` 同一语义的单点（汇总读取
+/// 同根）。未注入回 `None`（调用方码化拒绝，不静默落错位）。
+pub fn default_data_dir() -> Option<PathBuf> {
+    data_dir_slot().clone()
+}
+
 /// 注入注册表数据根（幂等：先注入者优先，与账本目录接缝同形）。生产 bin
 /// 启动时调用一次；未注入时汇总读取码化拒绝（注册表不可用同码）。
 pub fn set_default_data_dir(dir: PathBuf) {
