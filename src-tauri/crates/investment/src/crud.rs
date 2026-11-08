@@ -274,6 +274,21 @@ pub fn list_instruments(
     conn: &Connection,
     filter: &InstrumentListFilter,
 ) -> Result<InstrumentListResult> {
+    // 读快照一致性（#1699 / #1702 同根因的多语句读闭包，#2071 收口）：锚点定位
+    // 查询（anchor_id 在场时）与 COUNT 与 items 是多语句读闭包——同一 WHERE 行
+    // 集下的定位页码、满足条件的总数与本页行集必须同快照，否则来源跳转定位
+    // 「行必在返回页内」的前提失效。rollback journal 下语句之间无快照隔离，
+    // 写提交落在语句之间即锚点序号与行集错位；整体收进同一读事务（嵌套感知：
+    // 已在事务中则加入外层，回滚权归外层）。读快照探针测试见域单测
+    // `list_instruments_anchor_page_count_and_items_share_one_snapshot`。
+    ensure_transaction(conn, || list_instruments_inner(conn, filter))
+}
+
+/// [`list_instruments`] 主体（读事务闭包内一次执行；无独立快照语义）。
+fn list_instruments_inner(
+    conn: &Connection,
+    filter: &InstrumentListFilter,
+) -> Result<InstrumentListResult> {
     // 关键字过滤走统一模糊搜索语义（ADR-0027，复用全局搜索纯函数）：词条之间
     // AND，命中 = 原文连续子串 ∨ 拼音首字母子序列（大小写不敏感）。判定目标为
     // 「代码 · 名称」label 等价文本（instrument_match_label，与投资表单标的

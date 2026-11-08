@@ -6,8 +6,10 @@ use ledger_transaction::create_transaction_internal;
 use rusqlite::{Connection, params};
 
 use super::common::*;
+use tauri_app_lib::test_support::snapshot_probe::{self, InjectionOutcome};
 use tauri_app_lib::test_support::{
-    open, seed_account, seed_fx_history_weeks, seed_instrument, seed_market_price,
+    ScratchDir, open, open_file, seed_account, seed_fx_history_weeks, seed_instrument,
+    seed_market_price,
 };
 
 #[test]
@@ -177,6 +179,55 @@ fn search_all(conn: &Connection, search: &str) -> InstrumentListResult {
         },
     )
     .unwrap()
+}
+
+/// 锚点定位、COUNT 与 items 同快照（#1699 / #1702 同根因读闭包，#2071 收口）：
+/// 锚点定位查询（anchor_id 在场时，SQL 与语义匹配分支共用判定）与 COUNT 与
+/// items 是多语句读闭包——注入写落在锚点与 COUNT 之间时，读闭包无快照保护
+/// （红）：锚点序号按写前行集算、COUNT/items 按写后行集切页，锚点行落不在
+/// 返回页内，「行必在返回页内」的下钻前提落空；读闭包收进读事务（绿）：注入
+/// 写整体被挡在闭包外，三段同见一套数。探针在 COUNT 语句开始前由另一连接
+/// 提交按代码字母序排在锚点前的 INSERT（平移锚点所在页）。
+#[test]
+fn list_instruments_anchor_page_count_and_items_share_one_snapshot() {
+    let dir = ScratchDir::new("investment-instrument-anchor-snapshot");
+    let conn = open_file(dir.path());
+    seed_instrument(&conn, "inst-anc-1", "BBB", "锚点行一", "CNY", "unknown");
+    seed_instrument(&conn, "inst-anc-2", "CCC", "锚点行二", "CNY", "unknown");
+
+    // 探针：COUNT 语句开始前，另一连接提交按代码字母序排在锚点前的 INSERT。
+    snapshot_probe::arm(
+        &conn,
+        dir.path(),
+        "SELECT COUNT(*) FROM instruments i",
+        &["INSERT INTO instruments \
+          (id,symbol,instrument_type,name,currency_code,market,created_at,updated_at,version,device_id) \
+          VALUES ('inst-probe-new','AAA','stock','探针标的','CNY','unknown','2026-01-01','2026-01-01',1,'test')"],
+    );
+    let result = super::crud::list_instruments(
+        &conn,
+        &InstrumentListFilter {
+            page_size: Some(1),
+            anchor_id: Some("inst-anc-1".into()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let outcome = snapshot_probe::outcome();
+    assert!(
+        outcome != InjectionOutcome::NotFired,
+        "探针未命中 COUNT 语句（marker 漂移或未臂装），断言失去意义：{outcome:?}"
+    );
+    assert_eq!(
+        result.anchor_page,
+        Some(1),
+        "锚点序号与 COUNT/items 必须同快照（无快照保护时注入写平移锚点页码）"
+    );
+    assert!(
+        result.items.iter().any(|i| i.id == "inst-anc-1"),
+        "锚点行必在返回页内（无快照保护时页码与行集错位）"
+    );
+    assert_eq!(result.total, 2, "注入写应整体落在快照之外");
 }
 
 /// invested 派生字段：持仓中为 true，未投资 / 已清仓为 false（issue #102）。
