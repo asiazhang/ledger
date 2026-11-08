@@ -66,7 +66,7 @@ pub fn SidebarView() -> impl IntoElement {
             .text_color(fg),
         )
         .app_class("border-b border-border");
-    let fixed_item = |name: ViewName| nav_item(name, hint_of, fg, muted);
+    let fixed_item = |name: ViewName| nav_item(name, hint_of, fg, muted, NavSurface::Desktop);
 
     // 三组（组序固定）：组标题行（组名 + 「更多」链接）+ 组内成员（关闭只筛
     // 入口不改数据；收纳成员不入侧栏）。成员列表用响应式键控列表（`each`，
@@ -90,7 +90,7 @@ pub fn SidebarView() -> impl IntoElement {
                 },
                 |v| *v,
                 move |item: ReadSignal<ViewName>, _index: ReadSignal<usize>| {
-                    nav_item(item.get(), hint_of, fg, muted)
+                    nav_item(item.get(), hint_of, fg, muted, NavSurface::Desktop)
                 },
             ));
             view().flex_col().gap_1().child(header).child(members)
@@ -108,6 +108,16 @@ pub fn SidebarView() -> impl IntoElement {
         .child(fixed_item(ViewName::Settings))
 }
 
+/// 侧栏呈现面（桌面侧栏 / 导航抽屉同构消费导航状态，形态差异收口）。
+#[derive(Clone, Copy, PartialEq)]
+enum NavSurface {
+    /// 桌面侧栏：键位提示 + 右键排序菜单（决策 10 桌面专属管理动作）。
+    Desktop,
+    /// 导航抽屉（移动档）：无键位提示、无右键菜单（ADR-0088 决策 6/10 号响
+    /// ——触控轴快捷键退役渲染、桌面专属管理动作不上抽屉）。
+    Drawer,
+}
+
 /// 导航项（固定项与组内成员共用）：视图名 + 键位提示小字，当前视图高亮，
 /// 点击导航（[`nav::open`] 裸访问）；成员项的右键排序菜单在
 /// [`attach_sort_menu`] 按「侧栏在册」挂载（固定项不可排、无菜单）。
@@ -116,6 +126,7 @@ fn nav_item(
     hint_of: impl Fn(ViewName) -> Option<String> + Copy + 'static,
     fg: AdaptiveColor,
     muted: AdaptiveColor,
+    surface: NavSurface,
 ) -> View {
     let item = view()
         .test_id(format!("nav-{}", name.as_str()).as_str())
@@ -138,11 +149,76 @@ fn nav_item(
                 .number_of_lines(1),
         )
         .child(
-            text(move || hint_of(name).unwrap_or_default())
-                .text_size(px(10.0))
-                .text_color(muted),
+            // 键位提示（桌面侧栏带；抽屉不渲染——决策 6 移动档快捷键退役）。
+            text(move || {
+                if surface == NavSurface::Desktop {
+                    hint_of(name).unwrap_or_default()
+                } else {
+                    String::new()
+                }
+            })
+            .text_size(px(10.0))
+            .text_color(muted),
         );
-    attach_sort_menu(name, item)
+    if surface == NavSurface::Desktop {
+        attach_sort_menu(name, item)
+    } else {
+        item
+    }
+}
+
+/// 导航抽屉面板（移动档）：品牌行 + 固定项 + 三组（组标题行含「更多」链接）。
+/// 与桌面侧栏同一份导航状态与出厂定义（由 [`crate::adaptive::nav_drawer`]
+/// 拼装），差异仅在呈现面：无键位提示、无右键排序菜单（[NavSurface::Drawer]
+/// ——决策 6/10）。导航即关闭由抽屉层收口（落位驱使收起，本面板零变更）。
+pub(crate) fn drawer_panel() -> View {
+    let nav = nav::store();
+    let tokens = nsh_core::element::tokens();
+    let fg = tokens
+        .color("foreground")
+        .unwrap_or_else(|| hsla(0.0, 0.0, 0.98, 1.0).into());
+    let muted = tokens
+        .color("muted-foreground")
+        .unwrap_or_else(|| hsla(0.0, 0.0, 0.45, 1.0).into());
+    let no_hint = |_: ViewName| -> Option<String> { None };
+    let brand = view()
+        .flex_row()
+        .items_center()
+        .px_3()
+        .py_2()
+        .child(text("开源记账").text_size(px(14.0)).text_color(fg))
+        .app_class("border-b border-border");
+    let fixed_item = |name: ViewName| nav_item(name, no_hint, fg, muted, NavSurface::Drawer);
+    let group_rows = nav_model::GROUPS
+        .iter()
+        .copied()
+        .map(|gid| {
+            let header = group_header(nav, gid, fg, muted);
+            let members = view().flex_col().child(each(
+                move || {
+                    nav.orders
+                        .get()
+                        .get(gid)
+                        .iter()
+                        .copied()
+                        .filter(|v| !nav.closed.get().contains(v))
+                        .collect::<Vec<_>>()
+                },
+                |v| *v,
+                move |item: ReadSignal<ViewName>, _index: ReadSignal<usize>| {
+                    nav_item(item.get(), no_hint, fg, muted, NavSurface::Drawer)
+                },
+            ));
+            view().flex_col().gap_1().child(header).child(members)
+        })
+        .collect::<Vec<_>>();
+    view()
+        .flex_col()
+        .child(brand)
+        .child(fixed_item(ViewName::Dashboard).mt_2())
+        .children(group_rows)
+        .child(fixed_item(ViewName::Ai).mt_2())
+        .child(fixed_item(ViewName::Settings))
 }
 
 /// 右键排序菜单挂载（仅侧栏在册成员——含移回的种子成员；固定项与收纳成员

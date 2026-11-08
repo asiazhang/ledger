@@ -27,6 +27,7 @@
 use chrono::Datelike;
 use nsh_core::prelude::*;
 
+use crate::adaptive;
 use crate::app::{amount_privacy_enabled, db_slot};
 use crate::assembly::{self, CurrencyTable, FreedomStage, PnlSemantic};
 use crate::boot;
@@ -348,33 +349,38 @@ pub(crate) fn DashboardView() -> impl IntoElement {
             ),
         );
 
-    // ---- 本月收支卡（收入 / 净支出 / 结余三格；当月无行三零） ----
+    // ---- 本月收支卡（收入 / 净支出 / 结余三格；当月无行三零）——响应式统
+    // 计行（#2057：窄窗纵向堆叠，旧壳移动档 NGrid cols=1 同构）----
     let monthly_card = card(
         "本月收支",
-        view()
-            .flex_row()
-            .gap_8()
-            .child(amount_cell(
-                "收入",
-                move || monthly.get().income,
-                "monthly-income",
-                fg,
-                muted,
-            ))
-            .child(amount_cell(
-                "净支出",
-                move || monthly.get().net_expense,
-                "monthly-expense",
-                fg,
-                muted,
-            ))
-            .child(amount_cell(
-                "结余",
-                move || monthly.get().balance,
-                "monthly-balance",
-                fg,
-                muted,
-            )),
+        adaptive::responsive_row(32.0, move || {
+            vec![
+                amount_cell(
+                    "收入",
+                    move || monthly.get().income,
+                    "monthly-income",
+                    fg,
+                    muted,
+                )
+                .into_element(),
+                amount_cell(
+                    "净支出",
+                    move || monthly.get().net_expense,
+                    "monthly-expense",
+                    fg,
+                    muted,
+                )
+                .into_element(),
+                amount_cell(
+                    "结余",
+                    move || monthly.get().balance,
+                    "monthly-balance",
+                    fg,
+                    muted,
+                )
+                .into_element(),
+            ]
+        }),
     );
 
     // ---- 投资概览卡（三卡或空态；缺料三态显式分离） ----
@@ -384,11 +390,9 @@ pub(crate) fn DashboardView() -> impl IntoElement {
             view()
                 .flex_col()
                 .gap_2()
-                .child(
-                    view()
-                        .flex_row()
-                        .gap_8()
-                        .child(investment_stat(
+                .child(adaptive::responsive_row(32.0, move || {
+                    vec![
+                        investment_stat(
                             "总市值",
                             stats.read_only(),
                             |c| &c.market_value,
@@ -399,8 +403,9 @@ pub(crate) fn DashboardView() -> impl IntoElement {
                                 muted,
                                 danger: danger_fg,
                             },
-                        ))
-                        .child(investment_stat(
+                        )
+                        .into_element(),
+                        investment_stat(
                             "持仓收益",
                             stats.read_only(),
                             |c| &c.unrealized_pnl,
@@ -411,8 +416,9 @@ pub(crate) fn DashboardView() -> impl IntoElement {
                                 muted,
                                 danger: danger_fg,
                             },
-                        ))
-                        .child(investment_stat(
+                        )
+                        .into_element(),
+                        investment_stat(
                             "累计收益",
                             stats.read_only(),
                             |c| &c.cumulative_pnl,
@@ -423,8 +429,10 @@ pub(crate) fn DashboardView() -> impl IntoElement {
                                 muted,
                                 danger: danger_fg,
                             },
-                        )),
-                )
+                        )
+                        .into_element(),
+                    ]
+                }))
                 .child(
                     // 行集读失败警告（旧壳 toast 面的卡内等价呈现）+ 重试。
                     when(

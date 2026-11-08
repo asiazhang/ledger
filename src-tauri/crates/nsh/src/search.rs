@@ -31,7 +31,7 @@ use crate::assembly::{self, CurrencyTable, RowCells, RowContext};
 use crate::boot;
 use crate::nav;
 use crate::nav_model::ViewName;
-use crate::{app, period, period_row, sidebar};
+use crate::{adaptive, app, period, period_row, tx_cards};
 
 /// 搜索视图（导航骨架搜索分支的真实组件，#2040）：关键词防抖自动搜索 +
 /// 期间快捷筛选 + 金额区间 + 只读结果分页 + 占位/无命中两态空态。
@@ -286,7 +286,7 @@ pub(crate) fn SearchView() -> impl IntoElement {
 
     // 响应式列集（备注列吸收富余宽，交易列表同形）与延迟出场加载指示
     //（快搜索不闪指示器，旧壳 useDelayedLoading 语义重建）。
-    let columns = computed(move || app::elastic_columns(window().width.0 - sidebar::SIDEBAR_WIDTH));
+    let columns = computed(move || app::elastic_columns(adaptive::content_width()));
     let visible_loading = delayed_loading(loading);
 
     view()
@@ -399,7 +399,10 @@ pub(crate) fn SearchView() -> impl IntoElement {
         )
         .child(
             // 结果区（旧壳 searched 门控同口径：未搜索呈占位空态，搜索后呈
-            // 只读表格——无行右键菜单、无编辑入口）。
+            // 只读表格——无行右键菜单、无编辑入口）。断点双渲染（#2057 /
+            // ADR-0088 决策 9）：窄窗移动档 = 只读卡片形态（#846 移动档卡片
+            // 复用——与交易列表同构的 tx_cards::readonly_cards，格文本同一
+            // 装配产物、零写入口）；桌面档表格一字不动。空态同词表同判据。
             when(
                 move || searched.get(),
                 move || {
@@ -407,11 +410,32 @@ pub(crate) fn SearchView() -> impl IntoElement {
                         .flex_1()
                         .flex_col()
                         .child(
-                            view()
-                                .test_id("search-table")
-                                .flex_1()
-                                .child(
-                                    data_table()
+                            when(
+                                adaptive::is_narrow,
+                                move || {
+                                    when(
+                                        move || rows.get().is_empty(),
+                                        move || {
+                                            view()
+                                                .flex_1()
+                                                .items_center()
+                                                .justify_center()
+                                                .child(
+                                                    text(assembly::search_empty_text(true))
+                                                        .text_size(px(13.0))
+                                                        .text_color(muted),
+                                                )
+                                        },
+                                    )
+                                    .otherwise(move || tx_cards::readonly_cards(rows))
+                                },
+                            )
+                            .otherwise(move || {
+                                view()
+                                    .test_id("search-table")
+                                    .flex_1()
+                                    .child(
+                                        data_table()
                                         .columns(columns)
                                         .data(move || app::rows_to_data(&rows.get()))
                                         .render_cell(app::render_cell(rows))
@@ -425,7 +449,8 @@ pub(crate) fn SearchView() -> impl IntoElement {
                                         )
                                         .classes(app::table_classes())
                                         .flex_1(),
-                                ),
+                                    )
+                            }),
                         )
                         .child(
                             // 底栏（searched 分支内恒显，旧壳搜索页 searched 即显示

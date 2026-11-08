@@ -37,6 +37,7 @@ use nsh_base::{DataTableAlign, DataTableColumn, DataTableRows, button, data_tabl
 use nsh_core::element::{FontWeight, SharedString};
 use nsh_core::prelude::*;
 
+use crate::adaptive;
 use crate::app::{db_slot, field_label, table_classes};
 use crate::assembly::{self, CurrencyTable, POLICY_COLUMNS};
 use crate::boot;
@@ -47,7 +48,7 @@ use crate::nav_model::ViewName;
 use crate::pinyin_select;
 use crate::popconfirm;
 use crate::select;
-use crate::{nav, sidebar, signals};
+use crate::{nav, signals};
 use ledger_policy::{Policy, PolicyInput, PolicyStats};
 use ledger_scheduled::ScheduledTransactionWithExt;
 
@@ -1325,7 +1326,7 @@ pub(crate) fn PoliciesView() -> impl IntoElement {
 
     // ============================ 表格装配 ============================
     let columns = computed(move || {
-        let width = window().width.0 - sidebar::SIDEBAR_WIDTH;
+        let width = adaptive::content_width();
         policy_columns(width)
     });
     let row_classes = move || {

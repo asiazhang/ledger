@@ -21,6 +21,7 @@ use nsh_core::element::FontWeight;
 use nsh_core::element::desktop::MenuItem;
 use nsh_core::prelude::*;
 
+use crate::adaptive;
 use crate::app::{amount_color, amount_privacy_enabled, db_slot, field_label, table_classes};
 use crate::assembly::{
     self, ACCOUNT_COLUMNS, AccountListContext, AccountRowCells, ColumnAlign, CurrencyTable,
@@ -30,11 +31,11 @@ use crate::context_menu;
 use crate::danger::{self, DangerOutcome};
 use crate::date_select;
 use crate::modal;
+use crate::nav;
 use crate::nav_model::{NavRequest, ViewName};
 use crate::select;
 use crate::signals;
 use crate::tx_filter;
-use crate::{nav, sidebar};
 use ledger_infra::error::AppError;
 
 // ---------------------------------------------------------------------------
@@ -642,7 +643,7 @@ pub(crate) fn AccountsView() -> impl IntoElement {
 
     // 列定义映射（装配列 → 宿主列；富余宽全给名称列）。
     let columns = computed(move || {
-        let width = window().width.0 - sidebar::SIDEBAR_WIDTH;
+        let width = adaptive::content_width();
         account_columns(width)
     });
 

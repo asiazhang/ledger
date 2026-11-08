@@ -32,6 +32,7 @@
 
 use nsh_core::prelude::*;
 
+use crate::adaptive;
 use crate::app::{amount_color, amount_privacy_enabled, db_slot};
 use crate::assembly::{self, AmountSemantic, CategoryTable};
 use crate::bar_chart::{
@@ -41,7 +42,7 @@ use crate::bar_chart::{
 use crate::boot;
 use crate::nav;
 use crate::nav_model::{NavRequest, ViewName};
-use crate::{overlay, period, period_row, sidebar, tx_filter};
+use crate::{overlay, period, period_row, tx_filter};
 
 // ---------------------------------------------------------------------------
 // 会话状态（旧壳 reports-session store 的重生：进程级信号单例）
@@ -575,7 +576,7 @@ pub(crate) fn ReportsView() -> impl IntoElement {
 
     // ============================ 布局 ============================
     // 内容区行/条尺寸（窗口宽起扣侧栏与边距；分类表头引旧壳冷区宽形态）。
-    let content_width = move || window().width.0 - sidebar::SIDEBAR_WIDTH - 40.0;
+    let content_width = move || adaptive::content_width() - 40.0;
 
     // 分类图区高：行数超限高时容器滚动（全部分类不截断——旧壳 max-height 320
     // × 内部滚动同口径；下钻后行数变少高度收缩，纯视图投影）。

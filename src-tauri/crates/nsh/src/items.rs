@@ -45,6 +45,7 @@ use nsh_core::element::desktop::MenuItem;
 use nsh_core::element::{FontWeight, SharedString};
 use nsh_core::prelude::*;
 
+use crate::adaptive;
 use crate::app::{db_slot, field_label, table_classes};
 use crate::assembly::{self, ColumnAlign, CurrencyTable, ITEM_COLUMNS, ItemListContext};
 use crate::boot;
@@ -717,7 +718,7 @@ pub(crate) fn ItemsView() -> impl IntoElement {
 
     // 列定义映射（装配列 → 宿主列；富余宽全给名称列——旧壳同弹性）。
     let columns = computed(move || {
-        let width = window().width.0 - crate::sidebar::SIDEBAR_WIDTH;
+        let width = adaptive::content_width();
         item_columns(width)
     });
 

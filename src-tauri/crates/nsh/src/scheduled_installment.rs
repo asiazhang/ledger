@@ -47,6 +47,7 @@ use nsh_core::prelude::*;
 
 use ledger_scheduled::ScheduledStatus;
 
+use crate::adaptive;
 use crate::assembly::{
     self, AccountTable, CategoryTable, ColumnAlign, CurrencyTable, MerchantTable,
 };
@@ -63,7 +64,7 @@ use crate::scheduled_subscription::{
     field_label, form_row, merchant_options_active, merchant_ref_of,
 };
 use crate::signals;
-use crate::{nav, sidebar, txn_form};
+use crate::{nav, txn_form};
 
 // ---------------------------------------------------------------------------
 // 词表（旧壳 packages/i18n zh-CN scheduled.json 逐条平价；i18n 框架级方案不在
@@ -738,7 +739,7 @@ pub(crate) fn installments_pane(pending_focus: Signal<Option<String>>) -> impl I
 
     // ============================ 视图树 ============================
     // 列宿主映射（装配列 → nsh-base 列；富余宽全给备注列）。
-    let columns = computed(move || inst_columns(window().width.0 - sidebar::SIDEBAR_WIDTH));
+    let columns = computed(move || inst_columns(adaptive::content_width()));
 
     // 取消确认的目标计划 id（按行匹配的气泡一次只开一个）。
     let confirm_cancel = signal(None::<String>);

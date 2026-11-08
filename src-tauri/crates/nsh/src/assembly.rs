@@ -142,6 +142,10 @@ pub struct RowCells {
     /// 备注列（购买项行 = 商品名 + 「共 N 件」，其余行 = 备注原文；无备注渲染
     /// `-`；逐行不合并——一列两用，ADR-0138 决策 13）。
     pub note: String,
+    /// 购买项行标志（#2057 卡片形态装配的消费面：Some = 本行带购买项，值 =
+    /// 该购买项的商品名 + 件数行文本；None = 普通行（备注原文在 [`RowCells::note`]）。
+    /// 卡片形态用本面区分「购买项块行」与“备注原文”——与宽形态同源零口径漂移）。
+    pub item_note: Option<String>,
     /// 金额列（含隐私掩码与数字分组；无金额行渲染 `-`；订单级——订单实付
     /// 只在块首行出现一次）。
     pub amount: String,
@@ -728,6 +732,76 @@ fn expand_transaction_rows(tx: &Transaction, ctx: &RowContext) -> Vec<RowCells> 
     }
 }
 
+/// 卡片形态格块（#2057 卡片形态的装配产物，与宽形态同一行集展开同源）：一卡
+/// 一笔交易（旧壳 TransactionCardList 同口径），日期/类型/商户/账户/来源/金额
+/// 等订单级格取块首行（订单级列与宽形态同源同值），购买项块 = 该交易全部`
+/// 购买项行文本（[`RowCells::item_note`]）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct TransactionCard {
+    /// 交易 id（卡片操作目标）。
+    pub id: String,
+    /// 日期（ISO 原样，订单级）。
+    pub date: String,
+    /// 类型（kind 直译标签、借贷派生专属文案同 [`kind_label`]，订单级）。
+    pub kind: String,
+    /// 分类 · 商户（合并行，单一文本：双有 = 「分类 · 商户」、「 · 」分隔——
+    /// 单有 = 自身，双无 = “-”，与旧壳分类/商户合并行同口径）。
+    pub meta: String,
+    /// 账户（单账户 / 双账户「转出 → 转入」/ 出资分解标注，订单级）。
+    pub account: String,
+    /// 来源（来源名 + 状态标注，订单级）。
+    pub source: String,
+    /// 购买项块（逐项行文本，商品名 + 共 N 件；无购买项 = 空集不占行）。
+    pub purchases: Vec<String>,
+    /// 金额（含隐私掩码与数字分组，订单级）。
+    pub amount: String,
+    /// 金额语义色型（色值住 [`crate::app`]，宽形态同源）。
+    pub amount_semantic: AmountSemantic,
+}
+
+/// 装配行集 → 卡片形态格块集（同源唯一展开：[`assemble_rows`] 产出的行集内按
+/// 交易 id 相邻分块——派生行不跨交易交错，分块的分类载重与宽形态同一事实源）。
+pub fn transaction_cards(rows: &[RowCells]) -> Vec<TransactionCard> {
+    let mut cards: Vec<TransactionCard> = Vec::new();
+    for row in rows {
+        // 同 id 相邻同卡（派生行 id 同交易本体，订单级格只在块首带值——本函式
+        // 取块首非空订单级格）。跨交易（主体跳回）重开新卡（正常行序下不发生，
+        // 防御面：不并入不相邻同 id 的交易）。
+        match cards.last_mut() {
+            Some(card) if card.id == row.id => {
+                if let Some(line) = &row.item_note {
+                    card.purchases.push(line.clone());
+                }
+            }
+            _ => cards.push(TransactionCard {
+                id: row.id.clone(),
+                date: row.date.clone(),
+                kind: row.kind.clone(),
+                meta: card_meta_text(&row.category, &row.merchant),
+                account: row.account.clone(),
+                source: row.source.clone(),
+                purchases: row.item_note.iter().cloned().collect(),
+                amount: row.amount.clone(),
+                amount_semantic: row.amount_semantic,
+            }),
+        }
+    }
+    cards
+}
+
+/// 分类 · 商户合并行文本（旧壳 TransactionCardList 分类/商户行同口径：双有
+/// 「分类 · 商户」，单有自身，双无 “-”）。
+fn card_meta_text(category: &str, merchant: &str) -> String {
+    let has_category = category != "-" && !category.is_empty();
+    let has_merchant = merchant != "-" && !merchant.is_empty();
+    match (has_category, has_merchant) {
+        (true, true) => format!("{category} · {merchant}"),
+        (true, false) => category.to_owned(),
+        (false, true) => merchant.to_owned(),
+        (false, false) => "-".to_owned(),
+    }
+}
+
 /// 单个显示行的装配（购买项序位 `Some(i)` = 订单块内第 i 个购买项行；`None` =
 /// 无购买项行）：订单级列只在块首行带值、续行留空（旧壳 rowSpan 合并格的内容
 /// 只出现一次）；分类与备注列逐行。
@@ -753,6 +827,7 @@ fn derived_row(tx: &Transaction, purchase_index: Option<usize>, ctx: &RowContext
         Some(p) => format!("{} {}", p.name, purchase_qty_text(p.quantity)),
         None => tx.note.clone().unwrap_or_else(|| "-".to_owned()),
     };
+    let item_note = purchase.map(|p| format!("{} {}", p.name, purchase_qty_text(p.quantity)));
     RowCells {
         id: tx.id.clone(),
         date: order(tx.date.clone()),
@@ -762,6 +837,7 @@ fn derived_row(tx: &Transaction, purchase_index: Option<usize>, ctx: &RowContext
         account: order(account_cell_text(tx, ctx.accounts)),
         source: order(source_cell_text(tx)),
         note,
+        item_note,
         amount: order(amount),
         amount_semantic: amount_semantic(tx.kind),
     }
@@ -4650,6 +4726,7 @@ mod tests {
                 account: "-".to_owned(),
                 source: "-".to_owned(),
                 note: "午餐一顿".to_owned(),
+                item_note: None,
                 amount: "¥25".to_owned(),
                 amount_semantic: AmountSemantic::Expense,
             }
@@ -7834,6 +7911,116 @@ mod tests {
             ),
         ] {
             assert_eq!(cross_book_status_label(status), word);
+        }
+    }
+
+    /// 卡片形态装配（#2057）：同一行集分卡——订单级格取块首、派生行同 id 相
+    /// 邻同卡、购买项块 = 该交易全部购买项行文本；与宽形态同源（同名格文本
+    /// 同值）。「删除即红」面：删除 [`transaction_cards] 的 id 相邻分块接线，
+    /// 宽/卡零口径漂移即回归此象。
+    #[test]
+    fn transaction_cards_group_rows_by_transaction_with_same_texts() {
+        let expense = RowCells {
+            id: "tx-a".to_owned(),
+            date: "2026-02-10".to_owned(),
+            kind: "支出".to_owned(),
+            category: "餐饮 > 午餐".to_owned(),
+            merchant: "京东".to_owned(),
+            account: "-".to_owned(),
+            source: "-".to_owned(),
+            note: "午餐一顿".to_owned(),
+            item_note: None,
+            amount: "¥25".to_owned(),
+            amount_semantic: AmountSemantic::Expense,
+        };
+        // 购买项订单：块首行（订单级格）+ 两购买项续行（派生行同 id）。
+        let order_head = RowCells {
+            id: "tx-order".to_owned(),
+            date: "2026-02-11".to_owned(),
+            kind: "支出".to_owned(),
+            category: "宠物食品".to_owned(),
+            merchant: "天猫".to_owned(),
+            account: "现金 →".to_owned(),
+            source: "订单 JD-1001".to_owned(),
+            note: "猫粮 共 2 件".to_owned(),
+            item_note: Some("猫粮 共 2 件".to_owned()),
+            amount: "¥281.6".to_owned(),
+            amount_semantic: AmountSemantic::Expense,
+        };
+        let order_second = RowCells {
+            id: "tx-order".to_owned(),
+            date: String::new(),
+            kind: String::new(),
+            category: "家居清洁".to_owned(),
+            merchant: String::new(),
+            account: String::new(),
+            source: String::new(),
+            note: "洗衣液 共 1 件".to_owned(),
+            item_note: Some("洗衣液 共 1 件".to_owned()),
+            amount: String::new(),
+            amount_semantic: AmountSemantic::Expense,
+        };
+        // 转账行（账户格双向文本原样入卡）。
+        let transfer = RowCells {
+            id: "tx-tr".to_owned(),
+            date: "2026-02-12".to_owned(),
+            kind: "转账".to_owned(),
+            category: "-".to_owned(),
+            merchant: "-".to_owned(),
+            account: "现金 → 余额".to_owned(),
+            source: "-".to_owned(),
+            note: "-".to_owned(),
+            item_note: None,
+            amount: "¥100".to_owned(),
+            amount_semantic: AmountSemantic::Transfer,
+        };
+        let cards = transaction_cards(&[expense, order_head, order_second, transfer]);
+        assert_eq!(cards.len(), 3, "一笔一卡：订单多行并成单卡");
+        assert_eq!(cards[0].id, "tx-a");
+        assert_eq!(cards[0].meta, "餐饮 > 午餐 · 京东");
+        assert_eq!(
+            cards[0].purchases,
+            Vec::<String>::new(),
+            "普通行不产购买项块"
+        );
+        assert_eq!(cards[1].id, "tx-order");
+        assert_eq!(cards[1].date, "2026-02-11", "订单级格取块首");
+        assert_eq!(cards[1].purchases, vec!["猫粮 共 2 件", "洗衣液 共 1 件"]);
+        assert_eq!(cards[1].amount, "¥281.6");
+        assert_eq!(cards[2].id, "tx-tr");
+        assert_eq!(
+            cards[2].meta, "-",
+            "分类商户双无落 -（旧壳卡片合并行同口径）"
+        );
+        assert_eq!(cards[2].account, "现金 → 余额");
+        assert_eq!(cards[2].amount_semantic, AmountSemantic::Transfer);
+    }
+
+    /// 卡片形态装配的同 id 不相邻防御：乱序行集内同 id 跨卡不并入（分卡的
+    /// 相邻性同宽形态行序契约——派生行不跨交易交错）。
+    #[test]
+    fn transaction_cards_require_adjacent_rows_for_same_transaction() {
+        let head = row_of("tx-a", "块首");
+        let intro = row_of("tx-gap", "别的交易");
+        let tail = row_of("tx-a", "又见块首");
+        let cards = transaction_cards(&[head, intro, tail]);
+        assert_eq!(cards.len(), 3, "不相邻同 id 不合并");
+    }
+
+    /// 测试助手：最小卡片行（普通支出行，id 自定）。
+    fn row_of(id: &str, note: &str) -> RowCells {
+        RowCells {
+            id: id.to_owned(),
+            date: "2026-02-10".to_owned(),
+            kind: "支出".to_owned(),
+            category: "-".to_owned(),
+            merchant: "-".to_owned(),
+            account: "-".to_owned(),
+            source: "-".to_owned(),
+            note: note.to_owned(),
+            item_note: None,
+            amount: "¥1".to_owned(),
+            amount_semantic: AmountSemantic::Expense,
         }
     }
 }

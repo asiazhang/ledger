@@ -53,6 +53,7 @@ use nsh_core::prelude::*;
 use crate::scheduled::SubRowCells;
 use ledger_scheduled::ScheduledStatus;
 
+use crate::adaptive;
 use crate::assembly::{
     self, AccountTable, CategoryOption, CategoryTable, ColumnAlign, CurrencyTable, MerchantTable,
 };
@@ -70,7 +71,7 @@ use crate::scheduled::{
 };
 use crate::scheduled_spend::{SpendPanelState, assemble_spend, spend_panel};
 use crate::signals;
-use crate::{nav, sidebar, txn_form};
+use crate::{nav, txn_form};
 
 // ---------------------------------------------------------------------------
 // 装载批与快照容器（读闭包返回值，复杂度聚合单点；账户块先例同形）。
@@ -733,7 +734,7 @@ pub(crate) fn subscriptions_pane(pending_focus: Signal<Option<String>>) -> impl 
     // 列宿主映射（装配列 → nsh-base 列；富余宽全给备注列——旧壳备注列弹性
     // 同语义，账户表先例同形）。总宽不得超出表格实测可用宽（列总和超出视
     // 口时尾列缺席即行动作双入口灭失——#2041 账户列映射同条约束）。
-    let columns = computed(move || sub_columns(window().width.0 - sidebar::SIDEBAR_WIDTH));
+    let columns = computed(move || sub_columns(adaptive::content_width()));
 
     // 取消确认的目标计划 id（按行匹配的气泡一次只开一个，预算视图先例同形）。
     let confirm_cancel = signal(None::<String>);

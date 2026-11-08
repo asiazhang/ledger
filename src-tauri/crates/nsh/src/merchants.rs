@@ -43,6 +43,7 @@ use nsh_base::{
 use nsh_core::element::FontWeight;
 use nsh_core::prelude::*;
 
+use crate::adaptive;
 use crate::app::{amount_privacy_enabled, db_slot, field_label, table_classes};
 use crate::assembly::{self, ColumnAlign, MERCHANT_COLUMNS, MerchantListContext, MerchantRowCells};
 use crate::boot;
@@ -462,7 +463,7 @@ pub(crate) fn MerchantsView() -> impl IntoElement {
 
     // 列定义映射（装配列 → 宿主列；富余宽全给名称列——items 账户先例同形）。
     let columns = computed(move || {
-        let width = window().width.0 - crate::sidebar::SIDEBAR_WIDTH;
+        let width = adaptive::content_width();
         merchant_columns(width)
     });
     // 条数列排序开关（旧壳 sorter: transactionCount 的宿主映射）：标题排序按

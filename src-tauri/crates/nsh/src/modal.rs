@@ -56,42 +56,81 @@ pub fn app_modal(
             .inset_0()
             // 遮罩层：半透明黑，遮罩点击不关（吞掉点击，#252 弹层关闭语义）。
             .app_class("bg-black/50")
-            .flex_col()
-            .items_center()
-            .justify_center()
-            .on_press(move |_: &PressEvent| {})
             // ESC（弹层关闭语义）→ 关闭。
             .on_cancel(on_close)
+            .on_press(move |_: &PressEvent| {})
             .child(
-                view()
-                    .test_id(MODAL_ID)
-                    .flex_col()
-                    .gap_3()
-                    .w(px(420.0))
-                    .app_class("bg-background rounded-md border border-border shadow-lg p-4")
-                    .child(
+                // 弹窗窄窗全屏化分支（#2057 / ADR-0088 决策 8）：<840 移动档卡
+                // 片近全屏（遮罩四边呼吸边内填充，内容可滚）；桌面档保持
+                // cardSize sm 档 420pt 固定宽居中。标签上置/按钮行形态由调用
+                // 方内容承载（本壳表单弹窗内容本就是纵向排列，旧壳移动档
+                // label-placement 的等价形态零改动）。
+                when(crate::adaptive::is_narrow, move || {
+                    view().flex_1().flex_col().p_3().child(
                         view()
-                            .flex_row()
-                            .items_center()
-                            .justify_between()
-                            .child(
-                                text(title())
-                                    .text_size(px(16.0))
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .text_color(fg)
-                                    .test_id(MODAL_TITLE_ID),
+                            .test_id(MODAL_ID)
+                            .flex_col()
+                            .flex_1()
+                            .gap_3()
+                            .app_class(
+                                "bg-background rounded-md border border-border shadow-lg p-4",
                             )
-                            .child(
-                                button()
-                                    .accessibility_label("关闭")
-                                    .app_class(
-                                        "px-2 py-0.5 rounded-md text-muted-foreground hover:bg-accent",
-                                    )
-                                    .child(text("✕").text_size(px(13.0)).text_color(muted).test_id(MODAL_CLOSE_ID))
-                                    .on_press(on_close),
-                            ),
+                            .child(title_row(fg, muted, title, on_close))
+                            .child(scroll().flex_1().flex_col().child(content())),
                     )
-                    .child(content()),
+                })
+                .otherwise(move || {
+                    view()
+                        .flex_1()
+                        .flex_col()
+                        .items_center()
+                        .justify_center()
+                        .child(
+                            view()
+                                .test_id(MODAL_ID)
+                                .flex_col()
+                                .gap_3()
+                                .w(px(420.0))
+                                .app_class(
+                                    "bg-background rounded-md border border-border shadow-lg p-4",
+                                )
+                                .child(title_row(fg, muted, title, on_close))
+                                .child(content()),
+                        )
+                }),
             )
     })
+}
+
+/// 弹窗标题行（标题 + ✕；两档共用——全屏化分支与桌面档同一关闭通道：✕ /
+/// ESC / 调用方显式动作，遮罩不关语义不变）。
+fn title_row(
+    fg: AdaptiveColor,
+    muted: AdaptiveColor,
+    title: impl Fn() -> String + Copy + 'static,
+    on_close: impl Fn() + Copy + 'static,
+) -> View {
+    view()
+        .flex_row()
+        .items_center()
+        .justify_between()
+        .child(
+            text(title())
+                .text_size(px(16.0))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(fg)
+                .test_id(MODAL_TITLE_ID),
+        )
+        .child(
+            button()
+                .accessibility_label("关闭")
+                .app_class("px-2 py-0.5 rounded-md text-muted-foreground hover:bg-accent")
+                .child(
+                    text("✕")
+                        .text_size(px(13.0))
+                        .text_color(muted)
+                        .test_id(MODAL_CLOSE_ID),
+                )
+                .on_press(on_close),
+        )
 }

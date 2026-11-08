@@ -25,13 +25,14 @@ use nsh_base::{DataTableAlign, DataTableColumn, DataTableRows, button, data_tabl
 use nsh_core::element::FontWeight;
 use nsh_core::prelude::*;
 
+use crate::adaptive;
 use crate::app::{db_slot, field_label, table_classes};
 use crate::assembly::{self, INSURER_COLUMNS, InsurerRowCells};
 use crate::boot;
 use crate::modal;
+use crate::nav;
 use crate::nav_model::ViewName;
 use crate::popconfirm;
-use crate::{nav, sidebar};
 
 // ---------------------------------------------------------------------------
 // 词表（旧壳 policies.insurers.* zh-CN 词条原样；i18n 框架级方案不在本票，
@@ -657,7 +658,7 @@ const INSURERS_TABLE_WIDTH_PAD: f32 = 16.0 * 2.0 + 12.0 * 2.0 + 2.0;
 
 /// 内容可用宽（视口 - 侧栏；列宽计算输入，储蓄目标视图先例同口径）。
 fn table_width() -> f32 {
-    window().width.0 - sidebar::SIDEBAR_WIDTH
+    adaptive::content_width()
 }
 
 /// 装配列 → 宿主列（UI 层只做映射不产列；弹性宽度分配同储蓄目标视图先例

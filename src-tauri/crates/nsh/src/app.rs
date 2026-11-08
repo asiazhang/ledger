@@ -30,6 +30,7 @@ use nsh_base::{
 use nsh_core::element::desktop::MenuItem;
 use nsh_core::prelude::*;
 
+use crate::adaptive;
 use crate::assembly::{
     self, AccountTable, AmountSemantic, ColumnAlign, CurrencyTable, MerchantTable, RowCells,
     RowContext,
@@ -191,6 +192,8 @@ pub fn reset_book_assembly() {
     // 上一场景的接缝状态不得响应下一场景）。
     crate::investment_sync::reset_all_for_tests();
     crate::cross_book::reset_default_data_dir();
+    // #2057：移动档导航壳态同批复位（抽屉开态不跨场景残留）。
+    crate::adaptive::reset_for_tests();
 }
 
 /// 启动结果三态（窗口呈现的全部状态）。
@@ -388,7 +391,7 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
     // 响应式列集：表格可用宽取窗口内容宽（导航骨架起扣侧栏宽；ambient::window
     // 随窗口缩放重算）——备注列吸收富余宽（弹性列，旧壳同语义），其余列按
     // 装配建议宽度。
-    let columns = computed(move || elastic_columns(window().width.0 - sidebar::SIDEBAR_WIDTH));
+    let columns = computed(move || elastic_columns(crate::adaptive::content_width()));
     // 搜索态：输入文本（受控）、结果呈现态（旧壳 searched 语义——搜索结果落位
     // 后才切搜索态呈现，键入中底栏仍呈上一装载态）、防抖调度序号（新输入作废
     // 在途定时器；金额区间输入共用同一防抖——旧壳搜索页单防抖同形）与装载序号
@@ -1141,6 +1144,108 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
                 .on_press(move |_: &()| reset_filters()),
         );
 
+    // 行菜单单点（#2057 卡片形态与表格行右键共用同一菜接缝）：目标行随调用
+    // 固定（fixed-target，旧壳同位）——派生行（购买项续行）的 id 同为交易本体 id，
+    // 任一路径编辑/删除的都是整笔交易。载荷菜单项闭集（编辑/退款/加入物品/删除）
+    // 与写路径零改动，只把入口从表格右键扩为卡片「⋯」（菜单接缝复用）。
+    let open_row_menu = move |cell: &assembly::RowCells, at: Point<Points>| {
+        if let Some(tx) = tx_items.get().0.iter().find(|t| t.id == cell.id).cloned() {
+            let id = tx.id.clone();
+            let mut items = Vec::new();
+            // 编辑（#2034 基础收支，#2035 转账/借出/退款，
+            // #2036 出资分解/购买项行全量开放，#2046 投资买
+            // 卖行接缝）：目标行随右键固定。编辑开放面（#2036
+            // 表单③后全量开放）：收入/支出/转账/退款行开放
+            // ——#2035 的子行守卫（分解/购买项行不开放）随表
+            // 单③子行编辑能力解除：分解行进出资分解族、购买
+            // 项行进购买项族、并存行进出资分解族叠加购买项区
+            //（edit_dispatch 单点分派，旧壳 supportsRowEdit
+            // 口径的更新在平价核对表留痕）。界面只读 kind 仍
+            // 不开放。买入/卖出行的「编辑」进投资买卖族（旧
+            // 壳 issue #180 起 supportsRowEdit 同判定，主列
+            // 表 ADR-0135 默认排除 investment kind——入口
+            // 对用户即在投资明细页签（⑯ 装配），本分面为编
+            // 译可达的接缝面）。
+            let editable = matches!(
+                tx.kind,
+                ledger_transaction::TransactionKind::Income
+                    | ledger_transaction::TransactionKind::Expense
+                    | ledger_transaction::TransactionKind::Transfer
+                    | ledger_transaction::TransactionKind::Refund
+            );
+            if matches!(
+                tx.kind,
+                ledger_transaction::TransactionKind::Buy
+                    | ledger_transaction::TransactionKind::Sell
+            ) {
+                let trade_form = trade_form;
+                let trade_sources = trade_sources;
+                let tx = tx.clone();
+                items.push(MenuItem::new("编辑").on_select(move || {
+                    trade_form.begin_edit((&tx).into(), trade_sources, view_owner);
+                }));
+            } else if editable {
+                let form = form;
+                let currencies = form_currencies;
+                let merchants = form_merchants;
+                let accounts = form_accounts;
+                let tx = tx.clone();
+                items.push(MenuItem::new("编辑").on_select(move || {
+                    let label = merchants
+                        .get()
+                        .0
+                        .iter()
+                        .find(|m| Some(&m.id) == tx.merchant_id.as_ref())
+                        .map(|m| m.name.clone());
+                    form.open_edit(&tx, &currencies.get(), label, &accounts.get().0);
+                }));
+            }
+            // 加入物品目标随右键所在行固定（克隆在退款分支
+            // 之前——退款菜单闭包 move 持有 tx 的先例同位）。
+            let item_tx = tx.clone();
+            // 退款（#2035）：无分解支出行开放（分解行不开放——
+            // 退款表单未支持分解，旧壳 #1861 口径；购买项行保留——
+            // 退款新建独立行不触碰原行子行）。原交易随右键所在行
+            // 固定（fixed-target，旧壳同位）。
+            if tx.kind == ledger_transaction::TransactionKind::Expense && tx.fundings.is_empty() {
+                let form = form;
+                let currencies = form_currencies;
+                items.push(MenuItem::new("退款").on_select(move || {
+                    form.open_create_refund(&tx, &currencies.get());
+                }));
+            }
+            // 加入物品（#2044 / 旧壳 transactions.menu.addItem
+            // 同词表）：仅 expense 行（溯源必为支出购买；
+            // ADR-0025 创建唯一入口）。hasItem（旧壳 items
+            // store 溯源指针比对同口径）：快照内存在指向本
+            // 行交易的物品 →　置灰（溯源唯一的入口侧呈现，
+            // 禁令事实源在域创建守卫）。
+            if matches!(item_tx.kind, ledger_transaction::TransactionKind::Expense) {
+                let has_item = items::has_item_for_tx(&items_snap.get().0, &item_tx.id);
+                items.push(
+                    MenuItem::new("加入物品")
+                        .disabled(has_item)
+                        .on_select(move || {
+                            add_item_target.set(AddItemTarget(Some(item_tx.clone())));
+                        }),
+                );
+            }
+            let confirm = confirm_target;
+            items.push(MenuItem::new("删除").on_select(move || {
+                confirm.set(Some(id.clone()));
+            }));
+            context_menu::open_context_menu(items, at);
+        }
+    };
+    // 卡片菜单入口（窄窗卡片「⋯」→ 行菜单单点）：目标交易随卡片固定（id 反查
+    // 装配行首行——派生行同 id，任一行右键的语义同位）。
+    let card_menu = move |card: &assembly::TransactionCard, at: Point<Points>| {
+        let assembled = rows.get_untracked();
+        if let Some(cell) = assembled.iter().find(|r| r.id == card.id) {
+            open_row_menu(cell, at);
+        }
+    };
+
     view()
         .flex_1()
         .flex_col()
@@ -1183,140 +1288,50 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
                 ),
         )
         .child(
-            view()
-                .test_id("tx-table")
-                .flex_1()
+            // 断点双渲染（#2057 / ADR-0088 决策 9）：窄窗移动档 = 卡片形态
+            // （tx_cards::transaction_cards——卡片格文本与宽形态同一装配产
+            // 物，TransactionCardList 口径），桌面档表格一字不动（迁移系列
+            // 红线）。空态分型三档与表格同词表同判据（list_empty_text 单
+            // 点）；卡片「⋯」与行右键共用同一菜单单点 open_row_menu。
+            when(
+                crate::adaptive::is_narrow,
+                move || {
+                    when(
+                        move || rows.get().is_empty(),
+                        move || {
+                            view().flex_1().items_center().justify_center().child(
+                                text(assembly::list_empty_text(
+                                    searched.get(),
+                                    search_filters_active(),
+                                ))
+                                .text_size(px(13.0))
+                                .text_color(muted),
+                            )
+                        },
+                    )
+                    .otherwise(move || crate::tx_cards::transaction_cards(rows, card_menu))
+                },
+            )
+            .otherwise(move || {
+                view()
+                    .test_id("tx-table")
+                    .flex_1()
                 .child(
                     data_table()
                         .columns(columns)
                         .data(move || rows_to_data(&rows.get()))
                         .render_cell(render_cell(rows))
-                        // 行右键菜单（App* 封装族：上下文菜单，#2022）：目标行
-                        // 由右键所在行固定（fixed-target，旧壳同位）——派生行
-                        // （购买项续行）的 id 同为交易本体 id，任一行右键删除的
-                        // 都是整笔交易。菜单项闭集立桩只接「删除」（文案与旧壳
-                        // transactions.menu.delete 同词表）；弹出与抑制上报归
-                        // context_menu 封装，选中只回写确认目标（对话框呈现与
-                        // 写入执行在下方两单点）。
+                        // 行右键菜单（App* 封装族：上下文菜单，#2022）：菜单项
+                        // 闭集与写路径归 open_row_menu 单点（#2057 起与卡片
+                        // 「⋯」共用同一接缝）——目标行由右键所在行固定（fixed-
+                        // target，旧壳同位），派生行 id 同交易本体。
                         .on_context_menu(move |e: &DataTableContextMenu| {
                             let Some(row) = e.row else {
                                 return;
                             };
-                            // 行寻址经装配行 id（派生行——购买项续行——id 同为
-                            // 交易本体 id，任一行右键编辑/删除的都是整笔交易），
-                            // 再按 id 反查原始行供编辑回填。
                             let assembled = rows.get();
-                            let Some(cell) = assembled.get(row as usize) else {
-                                return;
-                            };
-                            if let Some(tx) = tx_items
-                                .get()
-                                .0
-                                .iter()
-                                .find(|t| t.id == cell.id)
-                                .cloned()
-                            {
-                                let id = tx.id.clone();
-                                let mut items = Vec::new();
-                                // 编辑（#2034 基础收支，#2035 转账/借出/退款，
-                                // 编辑（#2034 基础收支，#2035 转账/借出/退款，
-                                // #2036 出资分解/购买项行全量开放，#2046 投资买
-                                // 卖行接缝）：目标行随右键固定。编辑开放面（#2036
-                                // 表单③后全量开放）：收入/支出/转账/退款行开放
-                                // ——#2035 的子行守卫（分解/购买项行不开放）随表
-                                // 单③子行编辑能力解除：分解行进出资分解族、购买
-                                // 项行进购买项族、并存行进出资分解族叠加购买项区
-                                //（edit_dispatch 单点分派，旧壳 supportsRowEdit
-                                // 口径的更新在平价核对表留痕）。界面只读 kind 仍
-                                // 不开放。买入/卖出行的「编辑」进投资买卖族（旧
-                                // 壳 issue #180 起 supportsRowEdit 同判定，主列
-                                // 表 ADR-0135 默认排除 investment kind——入口
-                                // 对用户即在投资明细页签（⑯ 装配），本分面为编
-                                // 译可达的接缝面）。
-                                let editable = matches!(
-                                    tx.kind,
-                                    ledger_transaction::TransactionKind::Income
-                                        | ledger_transaction::TransactionKind::Expense
-                                        | ledger_transaction::TransactionKind::Transfer
-                                        | ledger_transaction::TransactionKind::Refund
-                                );
-                                if matches!(
-                                    tx.kind,
-                                    ledger_transaction::TransactionKind::Buy
-                                        | ledger_transaction::TransactionKind::Sell
-                                ) {
-                                    let trade_form = trade_form;
-                                    let trade_sources = trade_sources;
-                                    let tx = tx.clone();
-                                    items.push(MenuItem::new("编辑").on_select(move || {
-                                        trade_form.begin_edit(
-                                        (&tx).into(),
-                                        trade_sources,
-                                        view_owner,
-                                    );
-                                    }));
-                                } else if editable {
-                                    let form = form;
-                                    let currencies = form_currencies;
-                                    let merchants = form_merchants;
-                                    let accounts = form_accounts;
-                                    let tx = tx.clone();
-                                    items.push(MenuItem::new("编辑").on_select(move || {
-                                        let label = merchants
-                                            .get()
-                                            .0
-                                            .iter()
-                                            .find(|m| Some(&m.id) == tx.merchant_id.as_ref())
-                                            .map(|m| m.name.clone());
-                                        form.open_edit(
-                                            &tx,
-                                            &currencies.get(),
-                                            label,
-                                            &accounts.get().0,
-                                        );
-                                    }));
-                                }
-                                // 加入物品目标随右键所在行固定（克隆在退款分支
-                                // 之前——退款菜单闭包 move 持有 tx 的先例同位）。
-                                let item_tx = tx.clone();
-                                // 退款（#2035）：无分解支出行开放（分解行不开放——
-                                // 退款表单未支持分解，旧壳 #1861 口径；购买项行保留——
-                                // 退款新建独立行不触碰原行子行）。原交易随右键所在行
-                                // 固定（fixed-target，旧壳同位）。
-                                if tx.kind == ledger_transaction::TransactionKind::Expense
-                                    && tx.fundings.is_empty()
-                                {
-                                    let form = form;
-                                    let currencies = form_currencies;
-                                    items.push(MenuItem::new("退款").on_select(move || {
-                                        form.open_create_refund(&tx, &currencies.get());
-                                    }));
-                                }
-                                // 加入物品（#2044 / 旧壳 transactions.menu.addItem
-                                // 同词表）：仅 expense 行（溯源必为支出购买；
-                                // ADR-0025 创建唯一入口）。hasItem（旧壳 items
-                                // store 溯源指针比对同口径）：快照内存在指向本
-                                // 行交易的物品 → 置灰（溯源唯一的入口侧呈现，
-                                // 禁令事实源在域创建守卫）。
-                                if matches!(
-                                    item_tx.kind,
-                                    ledger_transaction::TransactionKind::Expense
-                                ) {
-                                    let has_item =
-                                        items::has_item_for_tx(&items_snap.get().0, &item_tx.id);
-                                                                        items.push(
-                                        MenuItem::new("加入物品")
-                                            .disabled(has_item)
-                                            .on_select(move || {
-                                                add_item_target.set(AddItemTarget(Some(item_tx.clone())));
-                                            }),
-                                    );
-                                }
-                                let confirm = confirm_target;
-                                items.push(MenuItem::new("删除").on_select(move || {
-                                    confirm.set(Some(id.clone()));
-                                }));
-                                context_menu::open_context_menu(items, Point::new(e.x, e.y));
+                            if let Some(cell) = assembled.get(row as usize) {
+                                open_row_menu(cell, Point::new(e.x, e.y));
                             }
                         })
                         .loading(move || loading.get())
@@ -1334,7 +1349,8 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
                         )
                         .classes(table_classes())
                         .flex_1(),
-                ),
+                    )
+            }),
         )
         .child(
             // 加入物品成功反馈条位（#2044）：旧壳 message.success 的条位对应
@@ -1916,9 +1932,10 @@ pub(crate) fn BudgetView() -> impl IntoElement {
             }
         };
 
-    // 预算执行表列（装配列定义 → 宿主列；进度列吸收富余宽）。
+    // 预算执行表列（装配列定义 → 宿主列；进度列吸收富余宽——内容区宽单点
+    // [`crate::adaptive::content_width`]，断点口径唯一）。
     let columns = computed(move || {
-        let width = window().width.0 - sidebar::SIDEBAR_WIDTH;
+        let width = adaptive::content_width();
         let mut columns: Vec<nsh_base::DataTableColumn> = assembly::BUDGET_COLUMNS
             .iter()
             .map(|def| {
@@ -2037,11 +2054,10 @@ pub(crate) fn BudgetView() -> impl IntoElement {
                         ),
                 )
                 .child(
-                    view()
-                        .flex_row()
-                        .items_end()
-                        .gap_8()
-                        .child(
+                    // 响应式统计行（#2057：窄窗纵向堆叠，旧壳移动档三分列收合
+                    // 同构；#2033 移动档偏差的本票支付面）。
+                    adaptive::responsive_row(32.0, move || {
+                        vec![
                             view()
                                 .flex_col()
                                 .child(text("年度预算总额").text_size(px(11.0)).text_color(muted))
@@ -2055,9 +2071,8 @@ pub(crate) fn BudgetView() -> impl IntoElement {
                                     .text_size(px(22.0))
                                     .text_color(fg)
                                     .test_id("budget-summary-total"),
-                                ),
-                        )
-                        .child(
+                                )
+                                .into_element(),
                             view()
                                 .flex_col()
                                 .child(text("本年已支").text_size(px(11.0)).text_color(muted))
@@ -2068,8 +2083,10 @@ pub(crate) fn BudgetView() -> impl IntoElement {
                                     .text_size(px(18.0))
                                     .text_color(fg)
                                     .test_id("budget-summary-spent"),
-                                ),
-                        ),
+                                )
+                                .into_element(),
+                        ]
+                    }),
                 )
                 .child(progress_bar(
                     move || summary.get().map(|c| c.percent).unwrap_or(0.0),
@@ -2491,11 +2508,27 @@ pub fn App() -> impl IntoElement {
         when(
             move || matches!(state.get(), StartupView::Ready),
             move || {
-                view()
-                    .flex_1()
-                    .flex_row()
-                    .child(sidebar::sidebar_view())
-                    .child(view_host(nav))
+                // 窗口分级分支（#2057 / ADR-0088 决策 2/4）：≥ 断点桌面档渲染
+                // 既有侧栏布局（宽屏主形态一字不动，迁移系列红线）；< 断点移
+                // 动档渲染导航壳（顶栏 + 导航抽屉——抽屉消费同一份导航状态，
+                // [`crate::nav`] ViewState 语义与存储零改动）。断点判定单点
+                // 住 [`crate::adaptive`]，形态分档只改布局分支、不复位任何
+                // 信号（导航/筛选/分页会话态两侧同源——断点切换平滑、状态不丢）。
+                when(crate::adaptive::is_narrow, move || {
+                    view()
+                        .flex_1()
+                        .flex_col()
+                        .child(crate::adaptive::top_bar(fg, muted))
+                        .child(view_host(nav))
+                        .child(crate::adaptive::nav_drawer())
+                })
+                .otherwise(move || {
+                    view()
+                        .flex_1()
+                        .flex_row()
+                        .child(sidebar::sidebar_view())
+                        .child(view_host(nav))
+                })
             },
         )
         .otherwise(move || {

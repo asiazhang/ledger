@@ -260,6 +260,15 @@ fn seed_expense_on_date(dir: &Path, date: &str, amount_cents: i64) {
     );
 }
 
+/// 移动档 headless 配置（#2057 窄窗自适应横切：600×720——< 断点 840 的窄窗口，
+/// 桌面形态环境原样保留；窄窗适配只吃宽度轴，输入轴恒桌面）。
+fn mobile_config() -> EngineConfig {
+    EngineConfig {
+        viewport: Size::new(Points(600.0), Points(720.0)),
+        ..desktop_config()
+    }
+}
+
 /// 测试侧「今天」（本地时区，与被测应用的 now() 同源同口径）。
 fn today() -> chrono::NaiveDate {
     chrono::Local::now().date_naive()
@@ -308,6 +317,49 @@ fn app_window_renders_transaction_table_of_seeded_book() {
     }
 }
 
+/// de: 窄窗自适应——交易卡片形态与移动档导航壳（#2057 / ADR-0088 决策 2/4/9）：<840
+/// 窄窗口侧栏替换为顶栏（汉堡 + 当前视图名）+ 导航抽屉（同一份导航状态，导航即
+/// 关闭），交易列表呈卡片形态（断点双渲染——桌面表格不挂载，格文本取装配层同一
+/// 产物）。删除窄窗分支挂载 / 卡片形态 / 抽屉导航接线任一环本用例即红。
+#[test]
+fn app_window_narrow_renders_mobile_shell_and_transaction_cards() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("narrow");
+    seed_expense_series(&dir, 1);
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(mobile_config()).unwrap();
+
+    // 窄窗移动档导航壳：侧栏不挂载（品牌行「开源记账」只属侧栏/抽屉），顶栏
+    // （汉堡入口 + 当前视图名概览）在屏。
+    app.wait_for("id:nav-topbar-open").unwrap();
+    assert!(!app.shows("开源记账"), "窄窗移动档不挂侧栏");
+    app.wait_for("text:概览").unwrap();
+
+    // 抽屉打开 → 同一份导航状态 → 点「交易」落位交易列表（导航即关闭）。
+    app.press("id:nav-topbar-open").unwrap();
+    app.wait_for("id:nav-transactions").unwrap();
+    app.press("id:nav-transactions").unwrap();
+    // 导航即关闭（导航抽屉随落位收起）：侧栏品牌行唯一词「开源记账」不再在屏。
+    app.wait_for_gone("id:nav-transactions", DEFAULT_WAIT)
+        .unwrap();
+    app.wait_for_gone("text:开源记账", DEFAULT_WAIT).unwrap();
+
+    // 卡片形态：断点双渲染（tx-cards 挂载、桌面表格不挂载），卡片呈现装配层
+    // 同源格文本（日期 / 类型 / 账户 / 金额掩码口径的展示文本）。
+    app.wait_for("id:tx-cards").unwrap();
+    assert!(!app.shows("id:tx-table"), "窄窗卡片形态不挂桌面表格");
+    let texts = app.screen().texts();
+    for expected in ["2026-01-01", "支出", "测试现金", "¥25"] {
+        assert!(
+            texts.contains(&expected),
+            "卡片应呈现「{expected}」：{:?}",
+            texts
+        );
+    }
+}
+
 /// 空库空态（issue #2018 AC1 三态之一）：空账本呈现「暂无数据」，不呈现总数
 /// 与分页条。
 #[test]
@@ -345,6 +397,9 @@ fn app_window_flips_pages_by_pagination_bar_click() {
     // 首页（最新 100 笔）：总数与首页首行（第 150 笔，2026-05-30）在屏。
     open_transactions(&mut app);
     app.wait_for("text:2026-05-30").unwrap();
+    // 首页行集在屏 = 装载已落位；分页条挂载等其条件回合（#2057 窄窗双渲染
+    // 起 tx-table 经断点分支挂载，落位批次差一拍——凡按压分页条前等挂载）。
+    app.wait_for("id:tx-pagination").unwrap();
 
     // 点击页码 2 → 末页行集替换（最旧 50 笔，2026-01-01..2026-02-19），首页
     // 最新行不再在屏。断言对准视口内的首行（表格按视口虚拟化，视口外的行不
@@ -447,6 +502,7 @@ fn app_window_paginates_search_hits_after_enter_search() {
 
     // 搜索态翻页：点击页码 2 → 末页（最旧 50 笔，2026-01-01..2026-02-19），
     // 首页最新行不再在屏（断言对准视口内首行，与列表态翻页同口径）。
+    app.wait_for("id:tx-pagination").unwrap();
     app.press("role:button[2]").unwrap();
     app.wait_for("text:2026-02-19").unwrap();
     app.wait_for_gone("text:2026-05-30", DEFAULT_WAIT).unwrap();
@@ -465,6 +521,8 @@ fn app_window_steps_back_by_previous_button() {
     let mut app = Headless::start(desktop_config()).unwrap();
 
     open_transactions(&mut app);
+    // 分页条挂载等其装载回合（#2057 起落位批次差一拍——按压前等挂载）。
+    app.wait_for("id:tx-pagination").unwrap();
     app.press("role:button[2]").unwrap();
     app.wait_for("text:2026-02-19").unwrap();
 
@@ -12397,4 +12455,192 @@ fn investments_view_instruments_search_and_manual_quote_journey() {
         assert_eq!(price, Some(12_345), "现价缓存按最新点映像规则 upsert");
         assert_eq!(history, 1, "价格历史周采样落库");
     }
+}
+
+// ---------------------------------------------------------------------------
+// 窄窗自适应横切（#2057 / ADR-0088 对表）：断点切换、卡片菜单与搜索只读卡片。
+// ---------------------------------------------------------------------------
+
+/// 落位交易视图（窄窗移动档）：等顶栏 → 开抽屉 → 点交易（同一份导航状态）→
+/// 卡片形态挂载。各窄窗交易用例经本助手落位。
+fn open_transactions_mobile(app: &mut Headless) {
+    app.wait_for("id:nav-topbar-open").unwrap();
+    app.press("id:nav-topbar-open").unwrap();
+    app.wait_for("id:nav-transactions").unwrap();
+    app.press("id:nav-transactions").unwrap();
+    app.wait_for("id:tx-cards").unwrap();
+}
+
+/// 断点切换平滑、状态不丢（#2057 AC）：1280 桌面档表格在屏 → 缩窗 600 移动
+/// 档卡片在屏、桌面表格卸挂且总数/分页会话态保留 → 放宽 1280 表格回位且同一
+/// 页数据仍在（读快照不重拉——总数与行集同一事实源）。删除窄窗分支（App 布局
+/// 分支或卡片挂载任一环）→ 本测窄窗段落红。
+#[test]
+fn app_window_breakpoint_flip_keeps_state_smooth() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("flip");
+    seed_expense_series(&dir, 1);
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_transactions(&mut app);
+    app.wait_for("text:共 1 条").unwrap();
+
+    // 缩窗进移动档：卡片形态替换表格，会话态（总数）不丢。
+    app.set_viewport(Size::new(Points(600.0), Points(720.0)))
+        .unwrap();
+    app.wait_for("id:tx-cards").unwrap();
+    app.wait_for_gone("id:tx-table", DEFAULT_WAIT).unwrap();
+    app.wait_for("text:共 1 条").unwrap();
+    app.wait_for("text:2026-01-01").unwrap();
+
+    // 放宽回桌面档：表格回位，同一份数据仍在屏（状态零重置）。
+    app.set_viewport(Size::new(Points(1280.0), Points(720.0)))
+        .unwrap();
+    app.wait_for("id:tx-table").unwrap();
+    app.wait_for("text:共 1 条").unwrap();
+    app.wait_for("text:2026-01-01").unwrap();
+}
+
+/// 窄窗卡片「⋯」与行右键共用同一菜单接缝（#2057）：交易卡呈现装配层同源格
+/// 文本（含购买项块），卡片「⋯」弹同一菜单项闭集，删除确认后整笔交易消失
+/// （同卡多购买项行的操作目标 = 交易本体）。删除卡片菜单接线即红。
+#[test]
+fn app_window_narrow_card_menu_shares_row_menu_and_deletes_transaction() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("narrow-delete");
+    let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+    let cash = seed_cash_account(&db);
+    let conn = db
+        .conn
+        .lock()
+        .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
+        .unwrap();
+    ledger_transaction::create(
+        &conn,
+        TransactionInput {
+            kind: TransactionKind::Expense,
+            amount_cents: 2_860,
+            currency_code: "CNY".to_owned(),
+            account_id: Some(cash.clone()),
+            to_account_id: None,
+            funding_account_id: None,
+            funding: Vec::new(),
+            purchases: vec![
+                TransactionPurchaseInput {
+                    name: "猫粮".to_owned(),
+                    quantity: 2,
+                    category_id: None,
+                    unit_price_cents: None,
+                },
+                TransactionPurchaseInput {
+                    name: "洗衣液".to_owned(),
+                    quantity: 1,
+                    category_id: None,
+                    unit_price_cents: None,
+                },
+            ],
+            category_id: None,
+            merchant_id: None,
+            merchant_name: Some("天猫".to_owned()),
+            policy_id: None,
+            refund_of_transaction_id: None,
+            note: None,
+            source_order_no: Some("TM-2002".to_owned()),
+            date: "2026-01-15".to_owned(),
+            instrument_id: None,
+            quantity: None,
+            price_cents: None,
+            fee_cents: None,
+            to_instrument_id: None,
+            to_quantity: None,
+            out_amount_cents: None,
+            in_amount_cents: None,
+            origin: None,
+            fx_rate: None,
+            idempotency_key: None,
+        },
+    )
+    .unwrap();
+    drop(conn);
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(mobile_config()).unwrap();
+    open_transactions_mobile(&mut app);
+
+    // 卡片呈现装配层同源格文本：购买项块逐项（商品名 + 共 N 件）。
+    for expected in ["支出", "天猫", "猫粮 共 2 件", "洗衣液 共 1 件", "¥28.6"] {
+        assert!(
+            app.shows(expected),
+            "卡片应呈现「{expected}」：{:?}",
+            app.screen().texts()
+        );
+    }
+
+    // 卡片「⋯」→ 同一菜单项闭集（编辑/退款/加入物品/删除，与桌面右键同源）。
+    app.press("id:tx-card-menu-0").unwrap();
+    let menu = app.menu().expect("卡片「⋯」应弹出行菜单");
+    assert_eq!(
+        menu.iter().map(|e| e.label.as_str()).collect::<Vec<_>>(),
+        vec!["编辑", "退款", "加入物品", "删除"],
+        "卡片行菜单闭集与桌面右键同源：{menu:?}"
+    );
+    // ESC（原生菜单语义步 = close_menu，Linux 原生菜单捕获键盘不进应用事件流）
+    app.close_menu().unwrap();
+    app.settle();
+    assert!(app.menu().is_none(), "ESC 后菜单收起：{:?}", app.menu());
+
+    // 确认删除危险对话框 → 整笔交易消失（同 id 多行派生只当一笔操作）。
+    app.press("id:tx-card-menu-0").unwrap();
+    app.choose_menu_item("删除").unwrap();
+    app.wait_for("text:删除交易").unwrap();
+    app.press("id:danger-confirm").unwrap();
+    app.wait_for_gone("id:tx-card", DEFAULT_WAIT).unwrap();
+    {
+        let dates = book_transaction_dates(&dir);
+        assert!(dates.is_empty(), "删除后库内该笔消失：{dates:?}");
+    }
+}
+
+/// 搜索结果窄窗只读卡片复用（#2040 移动档卡片 #846 / #2057）：同一卡片形态
+/// 挂载但无菜单无写入口（读-only），命中行文本同宽形态装配产物。
+#[test]
+fn app_window_narrow_search_results_reuse_readonly_cards() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("narrow-search");
+    seed_expense_notes(&dir, &["元旦火锅聚餐", "超市买菜"]);
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(mobile_config()).unwrap();
+    // 搜索视图经抽屉落位（同一份导航状态）。
+    app.wait_for("id:nav-topbar-open").unwrap();
+    app.press("id:nav-topbar-open").unwrap();
+    app.wait_for("id:nav-search").unwrap();
+    app.press("id:nav-search").unwrap();
+    app.wait_for("id:search-keyword").unwrap();
+
+    app.type_text("id:search-keyword", "火锅").unwrap();
+    app.wait_for("text:命中 1 条").unwrap();
+    app.wait_for("id:tx-cards").unwrap();
+    // 卡片字段与旧壳 TransactionCardList 同构（日期/类型/合并行/账户/金额，
+    // 备注原文不在卡片呈现——旧壳同口径；命中凭据 = 总数与卡片同屏）。
+    for expected in ["2026-01-01", "支出", "测试现金", "¥25"] {
+        assert!(
+            app.shows(expected),
+            "命中卡片应呈现「{expected}」：{:?}",
+            app.screen().texts()
+        );
+    }
+    assert!(
+        !app.shows("超市买菜"),
+        "未命中行不再在屏：{:?}",
+        app.screen().texts()
+    );
+    assert!(
+        app.press("id:tx-card-menu-0").is_err(),
+        "只读卡片不渲染「⋯」菜单（搜索结果无写入口）"
+    );
 }

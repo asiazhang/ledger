@@ -47,6 +47,7 @@
 use nsh_base::{input, pagination};
 use nsh_core::prelude::*;
 
+use crate::adaptive;
 use crate::assembly::{CategoryOption, CurrencyTable, PnlSemantic};
 use crate::investments::{HoldingsSortColumn, HoldingsSorter};
 use crate::{
@@ -929,30 +930,36 @@ fn holding_stats_cards(
                 }),
             )
     };
-    view()
-        .flex_row()
-        .gap_6()
-        .child(stat(
-            STATS_MARKET_VALUE_LABEL,
-            MARKET_VALUE_TIP,
-            STATS_SCOPE_FILTERED,
-            "holdings-total-market-value",
-            None,
-        ))
-        .child(stat(
-            STATS_UNREALIZED_PNL_LABEL,
-            UNREALIZED_PNL_TIP,
-            STATS_SCOPE_FILTERED,
-            "holdings-total-unrealized-pnl",
-            Some((gain, loss)),
-        ))
-        .child(stat(
-            "累计收益",
-            CUMULATIVE_PNL_TIP,
-            STATS_SCOPE_WHOLE_LEDGER,
-            "holdings-total-cumulative-pnl",
-            Some((gain, loss)),
-        ))
+    // 合计三卡 = 响应式统计行（#2057：窄窗纵向堆叠，旧壳 PortfolioStatsCards
+    // 移动档 NGrid cols=1 同构；子项两档共用同一构造器）。
+    adaptive::responsive_row(24.0, move || {
+        vec![
+            stat(
+                STATS_MARKET_VALUE_LABEL,
+                MARKET_VALUE_TIP,
+                STATS_SCOPE_FILTERED,
+                "holdings-total-market-value",
+                None,
+            )
+            .into_element(),
+            stat(
+                STATS_UNREALIZED_PNL_LABEL,
+                UNREALIZED_PNL_TIP,
+                STATS_SCOPE_FILTERED,
+                "holdings-total-unrealized-pnl",
+                Some((gain, loss)),
+            )
+            .into_element(),
+            stat(
+                "累计收益",
+                CUMULATIVE_PNL_TIP,
+                STATS_SCOPE_WHOLE_LEDGER,
+                "holdings-total-cumulative-pnl",
+                Some((gain, loss)),
+            )
+            .into_element(),
+        ]
+    })
 }
 
 /// 行表段（旧壳 NDataTable 列形态的等宽自绘：列头同构布局、列头点击排序的

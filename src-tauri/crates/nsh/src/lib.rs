@@ -201,6 +201,7 @@
 //! 重复。
 
 pub mod accounts;
+pub mod adaptive;
 pub mod ai_prompt;
 pub mod app;
 pub mod backup_entry;
@@ -248,6 +249,7 @@ pub mod settings;
 pub mod settings_data;
 pub mod sidebar;
 pub mod signals;
+pub mod tx_cards;
 pub mod tx_filter;
 pub mod txn_form;
 pub mod views;

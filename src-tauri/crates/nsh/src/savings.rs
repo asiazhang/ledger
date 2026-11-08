@@ -25,6 +25,7 @@ use nsh_base::{DataTableAlign, DataTableColumn, DataTableRows, button, data_tabl
 use nsh_core::element::FontWeight;
 use nsh_core::prelude::*;
 
+use crate::adaptive;
 use crate::app::{amount_color, amount_privacy_enabled, db_slot, field_label, table_classes};
 use crate::assembly::{
     self, CurrencyTable, SAVINGS_GOAL_ARCHIVED_COLUMNS, SAVINGS_GOAL_COLUMNS, SavingsGoalRowCells,
@@ -33,8 +34,8 @@ use crate::boot;
 use crate::danger::{self, DangerOutcome};
 use crate::date_select;
 use crate::modal;
+use crate::nav;
 use crate::nav_model::ViewName;
-use crate::{nav, sidebar};
 use ledger_infra::error::Result as InfraResult;
 
 // ---------------------------------------------------------------------------
@@ -385,18 +386,9 @@ pub(crate) fn SavingsGoalsView() -> impl IntoElement {
 
     // ============================ 列映射与渲染 ============================
     // 列定义映射（装配列 → 宿主列；富余宽全给名称列——账户视图先例同形）。
-    let columns = computed(move || {
-        map_columns(
-            SAVINGS_GOAL_COLUMNS,
-            window().width.0 - sidebar::SIDEBAR_WIDTH,
-        )
-    });
-    let archived_columns = computed(move || {
-        map_columns(
-            SAVINGS_GOAL_ARCHIVED_COLUMNS,
-            window().width.0 - sidebar::SIDEBAR_WIDTH,
-        )
-    });
+    let columns = computed(move || map_columns(SAVINGS_GOAL_COLUMNS, adaptive::content_width()));
+    let archived_columns =
+        computed(move || map_columns(SAVINGS_GOAL_ARCHIVED_COLUMNS, adaptive::content_width()));
 
     // 分区表数据 → 宿主表格数据（按列装配，格文本已是装配产物）。
     let data_of = move |partition: Memo<Vec<SavingsGoalRowCells>>, archived: bool| {
