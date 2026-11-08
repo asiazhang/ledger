@@ -37,6 +37,21 @@ thread_local! {
     static TRANSACTIONS_CHANGED: RefCell<Vec<Subscriber>> = const { RefCell::new(Vec::new()) };
 }
 
+// 预算数据失效的订阅者表（#2033，形态仿交易族同款——模块注「仿此形态另立」）：
+// 预算写路径（创建/编辑/删除）成功后广播，预算视图订阅重读。粗粒度、无 payload、
+// UI 线程契约同上。
+thread_local! {
+    static BUDGETS_CHANGED: RefCell<Vec<Subscriber>> = const { RefCell::new(Vec::new()) };
+}
+
+// 投资数据失效的订阅者表（#2039，形态仿前两族同款）：投资侧数据变化（持仓/
+// 价格/买卖）后广播，投资概览卡与财务自由度卡（分子含持仓市值）订阅重读。
+// 粗粒度、无 payload、UI 线程契约同上；广播接线随投资写路径迁移票落地
+//（NSH 现无投资写入口，注册点先立，消费面先行）。
+thread_local! {
+    static INVESTMENTS_CHANGED: RefCell<Vec<Subscriber>> = const { RefCell::new(Vec::new()) };
+}
+
 /// 订阅句柄发放计数器（进程级单调，每订阅一个）。
 static NEXT_SUBSCRIBER: AtomicU64 = AtomicU64::new(0);
 
@@ -53,6 +68,32 @@ impl Drop for TransactionsChangedSubscription {
     }
 }
 
+/// 预算数据失效的订阅句柄（[`TransactionsChangedSubscription`] 同形，撤销清
+/// 自己的族表）。
+#[derive(Debug)]
+pub struct BudgetsChangedSubscription {
+    id: u64,
+}
+
+impl Drop for BudgetsChangedSubscription {
+    fn drop(&mut self) {
+        BUDGETS_CHANGED.with_borrow_mut(|slot| slot.retain(|(id, _)| *id != self.id));
+    }
+}
+
+/// 投资数据失效的订阅句柄（[`TransactionsChangedSubscription`] 同形，撤销清
+/// 自己的族表）。
+#[derive(Debug)]
+pub struct InvestmentsChangedSubscription {
+    id: u64,
+}
+
+impl Drop for InvestmentsChangedSubscription {
+    fn drop(&mut self) {
+        INVESTMENTS_CHANGED.with_borrow_mut(|slot| slot.retain(|(id, _)| *id != self.id));
+    }
+}
+
 /// 订阅交易数据失效信号（视图装载时注册一次；返回句柄消亡即撤销订阅）。
 pub fn subscribe_transactions_changed(
     handler: impl Fn() + 'static,
@@ -60,6 +101,23 @@ pub fn subscribe_transactions_changed(
     let id = NEXT_SUBSCRIBER.fetch_add(1, Ordering::Relaxed);
     TRANSACTIONS_CHANGED.with_borrow_mut(|slot| slot.push((id, Rc::new(handler))));
     TransactionsChangedSubscription { id }
+}
+
+/// 订阅预算数据失效信号（预算视图装载时注册一次；返回句柄消亡即撤销订阅）。
+pub fn subscribe_budgets_changed(handler: impl Fn() + 'static) -> BudgetsChangedSubscription {
+    let id = NEXT_SUBSCRIBER.fetch_add(1, Ordering::Relaxed);
+    BUDGETS_CHANGED.with_borrow_mut(|slot| slot.push((id, Rc::new(handler))));
+    BudgetsChangedSubscription { id }
+}
+
+/// 订阅投资数据失效信号（概览视图投资/自由度卡装载时注册一次；返回句柄
+/// 消亡即撤销订阅）。
+pub fn subscribe_investments_changed(
+    handler: impl Fn() + 'static,
+) -> InvestmentsChangedSubscription {
+    let id = NEXT_SUBSCRIBER.fetch_add(1, Ordering::Relaxed);
+    INVESTMENTS_CHANGED.with_borrow_mut(|slot| slot.push((id, Rc::new(handler))));
+    InvestmentsChangedSubscription { id }
 }
 
 /// 广播交易数据失效（写入成功后调用；粗粒度、无 payload——消费方自行重拉）。
@@ -76,12 +134,42 @@ pub fn notify_transactions_invalidated() {
     }
 }
 
+/// 广播预算数据失效（预算写路径成功后调用；粗粒度、无 payload——消费方自行
+/// 重拉；两族信号互不串扰）。
+pub fn notify_budgets_invalidated() {
+    let handlers = BUDGETS_CHANGED.with(|slot| {
+        slot.borrow()
+            .iter()
+            .map(|(_, handler)| handler.clone())
+            .collect::<Vec<_>>()
+    });
+    for handler in handlers {
+        handler();
+    }
+}
+
+/// 广播投资数据失效（投资写路径成功后调用；粗粒度、无 payload——消费方自行
+/// 重拉；三族信号互不串扰。广播接线随投资写路径迁移票落地）。
+pub fn notify_investments_invalidated() {
+    let handlers = INVESTMENTS_CHANGED.with(|slot| {
+        slot.borrow()
+            .iter()
+            .map(|(_, handler)| handler.clone())
+            .collect::<Vec<_>>()
+    });
+    for handler in handlers {
+        handler();
+    }
+}
+
 /// 清空全部订阅（headless 多场景串行测试的复位接缝：上一场景的引擎已撤销，
 /// 其视图订阅者不得响应下一场景的广播；生产 bin 不消费）。与
-/// [`crate::app::reset_book_assembly`] 同一批复位点。
+/// [`crate::app::reset_book_assembly`] 同一批复位点。两族一并复位。
 #[doc(hidden)]
 pub fn reset_for_tests() {
     TRANSACTIONS_CHANGED.with_borrow_mut(|slot| slot.clear());
+    BUDGETS_CHANGED.with_borrow_mut(|slot| slot.clear());
+    INVESTMENTS_CHANGED.with_borrow_mut(|slot| slot.clear());
 }
 
 #[cfg(test)]
@@ -147,6 +235,98 @@ mod tests {
         drop(subscription);
         notify_transactions_invalidated();
         assert_eq!(hits.load(Ordering::Relaxed), 0, "复位后广播无人接收");
+        reset();
+    }
+
+    #[test]
+    fn budgets_notify_reaches_subscriber_and_reset_clears() {
+        reset();
+        let hits = Rc::new(AtomicUsize::new(0));
+        let subscription = subscribe_budgets_changed({
+            let hits = hits.clone();
+            move || {
+                hits.fetch_add(1, Ordering::Relaxed);
+            }
+        });
+        notify_budgets_invalidated();
+        assert_eq!(hits.load(Ordering::Relaxed), 1, "预算广播到达订阅者");
+        drop(subscription);
+        notify_budgets_invalidated();
+        assert_eq!(hits.load(Ordering::Relaxed), 1, "撤销后的订阅者不再被调用");
+        let held = subscribe_budgets_changed(|| {});
+        reset();
+        drop(held);
+        notify_budgets_invalidated();
+        // 复位后广播无再入路径可断（表已清空）；本用例以不 panic 收尾。
+    }
+
+    #[test]
+    fn transaction_broadcast_does_not_reach_budget_subscribers() {
+        reset();
+        let budget_hits = Rc::new(AtomicUsize::new(0));
+        let _budgets = subscribe_budgets_changed({
+            let hits = budget_hits.clone();
+            move || {
+                hits.fetch_add(1, Ordering::Relaxed);
+            }
+        });
+        notify_transactions_invalidated();
+        assert_eq!(
+            budget_hits.load(Ordering::Relaxed),
+            0,
+            "两族信号互不串扰：交易广播不触发预算订阅者"
+        );
+        notify_budgets_invalidated();
+        assert_eq!(
+            budget_hits.load(Ordering::Relaxed),
+            1,
+            "预算广播触发预算订阅者"
+        );
+        reset();
+    }
+
+    #[test]
+    fn investments_notify_reaches_subscriber_and_reset_clears() {
+        reset();
+        let hits = Rc::new(AtomicUsize::new(0));
+        let subscription = subscribe_investments_changed({
+            let hits = hits.clone();
+            move || {
+                hits.fetch_add(1, Ordering::Relaxed);
+            }
+        });
+        notify_investments_invalidated();
+        assert_eq!(hits.load(Ordering::Relaxed), 1, "投资广播到达订阅者");
+        drop(subscription);
+        notify_investments_invalidated();
+        assert_eq!(hits.load(Ordering::Relaxed), 1, "撤销后的订阅者不再被调用");
+        let held = subscribe_investments_changed(|| {});
+        reset();
+        drop(held);
+        notify_investments_invalidated();
+        // 复位后广播无再入路径可断（表已清空）；本用例以不 panic 收尾。
+    }
+
+    #[test]
+    fn investment_broadcast_is_isolated_from_transaction_and_budget_families() {
+        reset();
+        let investment_hits = Rc::new(AtomicUsize::new(0));
+        let _investments = subscribe_investments_changed({
+            let hits = investment_hits.clone();
+            move || {
+                hits.fetch_add(1, Ordering::Relaxed);
+            }
+        });
+        // 交易/预算广播不触发投资订阅者（三族互不串扰）。
+        notify_transactions_invalidated();
+        notify_budgets_invalidated();
+        assert_eq!(
+            investment_hits.load(Ordering::Relaxed),
+            0,
+            "交易/预算广播不触发投资订阅者"
+        );
+        notify_investments_invalidated();
+        assert_eq!(investment_hits.load(Ordering::Relaxed), 1);
         reset();
     }
 

@@ -435,6 +435,8 @@
   "nsh-shell": {
     "book-missing": "Ledger database file not found: {0}. Pass an existing book directory; the native shell stake does not create books.",
     "encrypted-unsupported": "Encrypted books are not supported yet: the native shell stake opens unencrypted ledgers only; the unlock wizard arrives with the migration series.",
-    "session-missing": "Internal error: the ledger database session is missing. Reopen the book."
+    "session-missing": "Internal error: the ledger database session is missing. Reopen the book.",
+    "policy-insurer-name-required": "The insurer name in the policy form must not be empty (the save gate catches it first; the domain guard is the fallback).",
+    "policy-rebuild-target-missing": "Internal error: rebuild target missing"
   }
 }

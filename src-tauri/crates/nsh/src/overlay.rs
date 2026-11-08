@@ -79,6 +79,8 @@ fn open_overlays_slot() -> std::sync::MutexGuard<'static, BTreeSet<u64>> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Mutex;
+
     use super::*;
 
     /// 串行锁：`OPEN_OVERLAYS` 是进程级全局注册表，lib 测试二进制内用例并行

@@ -11,10 +11,11 @@
 //! 文本由装配层（[`crate::assembly`]）在数据到达时一次性产出，渲染期零格式化；
 //! 会话句柄（`DbState`）住进程级单例 [`DB`]，页读复用成对建连的只读侧。
 //!
-//! 界面主题跟随系统深浅色（registry 缺省带主题双态令牌，ADR-0145 立桩验收
-//! 项）：文字色取令牌（裸 text 的默认前景是黑——暗色桌面不可见，先例 #2017
-//! 修复），表格部件经 Tailwind 类取主题令牌。文案仅 zh-CN（spec #2015 实施
-//! 决策）。
+//! 显示主题跟随存储外观设置（registry 缺省带主题双态令牌，ADR-0145 立桩验收
+//! 项；#2053 起启动经 [`crate::settings::apply_startup_appearance`] 按存储
+//! 外观应用显色——出厂跟随系统，深浅色强指；文字色取令牌（裸 text 的默认前
+//! 景是黑——暗色桌面不可见，先例 #2017 修复），表格部件经 Tailwind 类取主
+//! 题令牌。文案仅 zh-CN（spec #2015 实施决策）。
 
 use std::path::PathBuf;
 use std::sync::{Mutex, MutexGuard};
@@ -29,12 +30,19 @@ use nsh_base::{
 use nsh_core::element::desktop::MenuItem;
 use nsh_core::prelude::*;
 
+use crate::adaptive;
 use crate::assembly::{
     self, AccountTable, AmountSemantic, ColumnAlign, CurrencyTable, MerchantTable, RowCells,
     RowContext,
 };
 use crate::boot;
-use crate::{context_menu, danger, overlay, period, signals};
+use crate::items::AddItemTarget;
+use crate::nav_model::ViewName;
+use crate::{
+    accounts, backup_entry, context_menu, danger, dashboard, investments, investments_form, items,
+    logging, modal, multi_select, nav, nav_model, overlay, period_row, pinyin_select, popconfirm,
+    reports, scheduled, search, settings, sidebar, signals, tx_filter, txn_form, views,
+};
 
 /// 金额隐私模式开关的存储键（设备轻量设置项，与旧壳同键同值形态：旧壳
 /// `@ledger/money` 的 `AMOUNT_PRIVACY_STORAGE_KEY`，值为 JSON 布尔字面量
@@ -45,8 +53,8 @@ const AMOUNT_PRIVACY_STORAGE_KEY: &str = "amount_privacy_enabled";
 /// 金额隐私开关的设备态读取（组件任务内同步读；解析镜像旧壳 `loadLocal`
 /// 的 JSON 布尔语义：缺失/非法归默认关）。立桩无设置面——开关的写入口随
 /// 设置面票接入（旧壳入口：侧栏标题行眼睛图标），本壳消费同一域来源、
-/// 同一存储键。
-fn amount_privacy_enabled() -> bool {
+/// 同一存储键。crate 内消费面：交易/预算/概览视图的装配入口（#2039）。
+pub(crate) fn amount_privacy_enabled() -> bool {
     nsh_core::storage::Storage::get_item(AMOUNT_PRIVACY_STORAGE_KEY)
         .is_some_and(|raw| raw.trim() == "true")
 }
@@ -57,6 +65,9 @@ fn amount_privacy_enabled() -> bool {
 struct PageRead {
     /// 本页交易行集（列表态与搜索态同一字段，搜索态即命中页）。
     items: Vec<ledger_transaction::Transaction>,
+    /// 未删除物品行集（#2044 「加入物品」行菜单项的溯源唯一准入判定面；
+    /// 装载批同批读取，物品写后由失效信号广播驱动重读）。
+    item_rows: Vec<ledger_item::ItemWithDailyCost>,
     /// 满足当前口径的总数（页与总数共用同一 WHERE）。
     total: i64,
     /// 数据期间边界（读失败退化为 None＝不钳制，旧壳 silent 同口径）。
@@ -66,9 +77,11 @@ struct PageRead {
     /// 在用分类行（分类路径表来源）。
     category_rows: Vec<ledger_categories::Category>,
     /// 在用且未隐藏账户行（账户格与借贷派生来源）。
-    account_rows: Vec<ledger_accounts::Account>,
+    pub(crate) account_rows: Vec<ledger_accounts::Account>,
     /// 含软删全量商户行（商户格来源）。
-    merchant_rows: Vec<ledger_merchants::Merchant>,
+    pub(crate) merchant_rows: Vec<ledger_merchants::Merchant>,
+    /// 未删除保单行（#2034 表单保单选项面）。
+    pub(crate) policy_rows: Vec<ledger_policy::Policy>,
 }
 
 impl PageRead {
@@ -77,12 +90,14 @@ impl PageRead {
     fn new(items: Vec<ledger_transaction::Transaction>, total: i64) -> Self {
         Self {
             items,
+            item_rows: Vec::new(),
             total,
             date_range: None,
             currency_rows: Vec::new(),
             category_rows: Vec::new(),
             account_rows: Vec::new(),
             merchant_rows: Vec::new(),
+            policy_rows: Vec::new(),
         }
     }
 }
@@ -91,7 +106,7 @@ impl PageRead {
 /// `KIND_SEMANTIC_COLORS` 的逐值镜像，亮/暗两态自适应——色值只在此处与旧壳
 /// 各出现一份，NSH 侧不另立第二份色板：色型闭集住装配层
 /// [`assembly::AmountSemantic`]，色值映射住本函数）。
-fn amount_color(semantic: AmountSemantic) -> AdaptiveColor {
+pub(crate) fn amount_color(semantic: AmountSemantic) -> AdaptiveColor {
     match semantic {
         AmountSemantic::Expense => AdaptiveColor::new(rgb(0xd03050), rgb(0xe88080)),
         AmountSemantic::Income => AdaptiveColor::new(rgb(0x18a058), rgb(0x63e2b7)),
@@ -119,7 +134,8 @@ fn book_dir_slot() -> MutexGuard<'static, Option<PathBuf>> {
     BOOK_DIR.lock().unwrap_or_else(|p| p.into_inner())
 }
 
-fn db_slot() -> MutexGuard<'static, Option<std::sync::Arc<DbState>>> {
+/// 会话句柄槽位守卫（crate 内消费：交易表单写任务与 lib 测试经它取句柄）。
+pub(crate) fn db_slot() -> MutexGuard<'static, Option<std::sync::Arc<DbState>>> {
     DB.lock().unwrap_or_else(|p| p.into_inner())
 }
 
@@ -138,15 +154,46 @@ pub fn set_book_dir(dir: PathBuf) {
     }
 }
 
+/// 启动账本目录会话快照（设置卡数据位置面的默认目录单点——身份即目录，
+/// 立桩启动契约的读侧；未注入 = None，卡的读写路径各按会话缺失分支呈现）。
+pub(crate) fn book_dir() -> Option<PathBuf> {
+    book_dir_slot().clone()
+}
+
+/// lib 测试的装配串行锁（跨模块共享）：装配入口、会话句柄、导航状态与失效
+/// 信号订阅者都是进程级单例——引擎类 lib 单测（tests / nav::tests /
+/// dashboard::tests）跨模块互斥防串扰（#2039 概览探针长用例与既有探针并行
+/// 即互踩装配单例，收口单锁）。毒化取回内值（槽位本身不含不变量，测试
+/// panic 后续用例照常串行）。headless 集成测试目标有独立 SERIAL，两个测试
+/// 二进制互不串扰。
+#[doc(hidden)]
+#[cfg(test)]
+pub(crate) fn test_assembly_guard() -> MutexGuard<'static, ()> {
+    static LOCK: Mutex<()> = Mutex::new(());
+    LOCK.lock().unwrap_or_else(|p| p.into_inner())
+}
+
 /// 重置装配入口与会话句柄（headless 测试接缝）：同一进程内的多场景串行测试
 /// 先复位再注入各自的测试库路径（生产 bin 只注入一次，不消费本函数；串行
-/// 由测试侧的 SERIAL 锁保证，复位时上一场景的引擎已撤销）。失效信号订阅者
-/// 属同一批复位点（上一场景视图的订阅者不得响应下一场景的广播）。
+/// 由 [`test_assembly_guard`] 保证，复位时上一场景的引擎已撤销）。失效信号
+/// 订阅者与导航状态属同一批复位点（上一场景视图的订阅者不得响应下一场景
+/// 的广播）。
 #[doc(hidden)]
 pub fn reset_book_assembly() {
     *book_dir_slot() = None;
     *db_slot() = None;
     signals::reset_for_tests();
+    nav::reset_for_tests();
+    tx_filter::reset_for_tests();
+    reports::reset_for_tests();
+    scheduled::reset_for_tests();
+    investments::reset_for_tests();
+    // #2046：投资同步接缝与 staleness 单例（进程级信号束属同批复位点——
+    // 上一场景的接缝状态不得响应下一场景）。
+    crate::investment_sync::reset_all_for_tests();
+    crate::cross_book::reset_default_data_dir();
+    // #2057：移动档导航壳态同批复位（抽屉开态不跨场景残留）。
+    crate::adaptive::reset_for_tests();
 }
 
 /// 启动结果三态（窗口呈现的全部状态）。
@@ -172,6 +219,10 @@ pub fn run_startup() -> StartupView {
     };
     match boot::boot_ledger(&book_dir) {
         Ok(db) => {
+            // 日志档位接管（旧壳 boot_sequence 启动接线语义保持：RUST_LOG 显
+            // 式优先；接管失败仅告警不阻启动——排障档位不是启动位面，锁异常
+            // 按读路径容错同口径）。接管在 logging 单点内化，读路径消费面。
+            logging::apply_persisted(&db);
             *db_slot() = Some(std::sync::Arc::new(db));
             StartupView::Ready
         }
@@ -210,59 +261,21 @@ fn total_text(total: i64) -> String {
 
 /// 搜索态总数文案（与旧壳 zh-CN 词表同文案：search.hitCount；列表态仍用
 /// [`total_text`]——搜索语义变了，计数词随之换，与旧壳两词并存同形）。
-fn hit_total_text(total: i64) -> String {
+pub(crate) fn hit_total_text(total: i64) -> String {
     format!("命中 {total} 条")
 }
 
 /// 搜索输入防抖时长（毫秒）：与旧壳 `SEARCH_DEBOUNCE_MS`（issue #1402「搜索
 /// 输入防抖」跨域不变量）同值同语义——等待成功优于即刻失败（AGENTS.md 体验
-/// 取舍），快输入不逐键打库。
-const SEARCH_DEBOUNCE_MS: u64 = 300;
+/// 取舍），快输入不逐键打库。交易列表与搜索视图（#2040）同一时长单源。
+pub(crate) const SEARCH_DEBOUNCE_MS: u64 = 300;
 
 /// 搜索框占位文案（与旧壳 search.keywordPlaceholder 同文案）。
-const SEARCH_PLACEHOLDER: &str = "输入关键字开始搜索（备注、账户名、商户名，支持多关键字）";
-
-/// 搜索无结果空态文案（与旧壳 search.noResults 同文案；列表态空库仍是
-/// 「暂无数据」——空态分型与旧壳两档同源同形）。
-const SEARCH_EMPTY_TEXT: &str = "无匹配结果";
-
-/// 「今天」（本地时区日历日，期间预设与边界抬升的相对点，与旧壳本地
-/// 日历同口径）。非响应式：跨期翻转随下次重算呈现（分钟级时钟不立桩）。
-fn today() -> chrono::NaiveDate {
-    chrono::Local::now().date_naive()
-}
-
-/// 期间标签文案（旧壳 quickTimeRange.periodLabel 同词表）：有游标呈期间，
-/// 无游标（「全部」）呈「选择期间」（弹层入口的召唤文案）。
-fn period_label_text(cursor: Option<crate::period::NaturalPeriod>) -> String {
-    cursor
-        .as_ref()
-        .map(period::format_period_label)
-        .unwrap_or_else(|| "选择期间".to_owned())
-}
-
-/// 芯片点亮判定（UI 侧适配：读快照区间 → 高亮派生）。
-fn match_preset_now(range: Option<period::PeriodRange>, preset: period::Preset) -> bool {
-    let (from, to) = match range {
-        Some(r) => (Some(r.from), Some(r.to)),
-        None => (None, None),
-    };
-    period::match_preset(from.as_deref(), to.as_deref(), today()) == Some(preset)
-}
-
-/// 芯片稳定锚点（headless 选择器用 id: 前缀，research doc §3.5）。
-fn preset_test_id(preset: period::Preset) -> &'static str {
-    match preset {
-        period::Preset::All => "period-chip-all",
-        period::Preset::Month => "period-chip-month",
-        period::Preset::Quarter => "period-chip-quarter",
-        period::Preset::Year => "period-chip-year",
-        period::Preset::LastYear => "period-chip-last-year",
-    }
-}
+pub(crate) const SEARCH_PLACEHOLDER: &str =
+    "输入关键字开始搜索（备注、账户名、商户名，支持多关键字）";
 
 /// 装配行集 → 宿主表格数据（按列装配，渲染期零格式化——格文本已是装配产物）。
-fn rows_to_data(rows: &[RowCells]) -> DataTableRows {
+pub(crate) fn rows_to_data(rows: &[RowCells]) -> DataTableRows {
     DataTableRows::new(rows.len())
         .texts("date", rows.iter().map(|r| r.date.as_str()))
         .texts("kind", rows.iter().map(|r| r.kind.as_str()))
@@ -276,8 +289,9 @@ fn rows_to_data(rows: &[RowCells]) -> DataTableRows {
 
 /// 自绘格（金额语义色，issue #2019）：金额列按行语义色型着色（旧壳金额列
 /// 着色口径），其余列平文——格文本仍取自数据（`cell.text`），本函数只补色。
-/// 掩码态照常着色（掩码隐藏数字，不隐藏方向，旧壳隐私保留项同口径）。
-fn render_cell(rows_signal: Signal<Vec<RowCells>>) -> impl Fn(&DataTableCell) -> Text {
+/// 掩码态照常着色（掩码隐藏数字，不隐藏方向，旧壳隐私保留项同口径）。交易
+/// 列表与搜索视图（#2040）共用。
+pub(crate) fn render_cell(rows_signal: Signal<Vec<RowCells>>) -> impl Fn(&DataTableCell) -> Text {
     move |cell: &DataTableCell| {
         let semantic = rows_signal
             .get()
@@ -327,8 +341,9 @@ fn table_columns() -> Vec<DataTableColumn> {
 /// 留空——首屏实测金额列右侧约 1/3 空黑，读感「金额列过宽」），在应用侧
 /// 分配：富余宽度全给备注列（旧壳备注列即弹性列，[`assembly::COLUMNS`]
 /// 注释同口径），其余列按装配建议宽度。`width` 是表格可用宽（pt，取窗口
-/// 内容宽）；窄于建议总宽时全列取建议值（横向滚动语义不变）。
-fn elastic_columns(width: f32) -> Vec<DataTableColumn> {
+/// 内容宽——导航骨架起扣侧栏宽）；窄于建议总宽时全列取建议值（横向滚动语义
+/// 不变）。
+pub(crate) fn elastic_columns(width: f32) -> Vec<DataTableColumn> {
     let mut columns = table_columns();
     let suggested: f32 = assembly::COLUMNS.iter().map(|def| def.width).sum();
     let extra = (width - suggested).max(0.0);
@@ -343,8 +358,9 @@ fn elastic_columns(width: f32) -> Vec<DataTableColumn> {
 
 /// 表格部件主题（Tailwind 类取主题令牌，跟随系统深浅色）：文字色逐部件显式
 /// 带色（裸 text 默认前景黑，暗色桌面不可见——#2017 先例），行悬停与空态取
-/// 弱化面。
-fn table_classes() -> DataTableClasses {
+/// 弱化面。交易列表与搜索视图（#2040）共用同一套表格映射（列集 / 自绘格 /
+/// 弹性列宽 / 部件主题）。
+pub(crate) fn table_classes() -> DataTableClasses {
     let mut classes = DataTableClasses::default();
     classes.root = Some("bg-background text-foreground".into());
     // 单元格水平留白（组件缺省零 padding，金额列值贴窗口右缘、日期列贴左
@@ -367,39 +383,70 @@ fn table_classes() -> DataTableClasses {
 /// 闸由引擎 keymap `When::Auto` 承担——四键皆为文本编辑键，输入焦点期间不
 /// 派发；桌面立桩无触控轴）。
 #[component]
-fn TransactionsView() -> impl IntoElement {
-    let page = signal(1u32);
+pub(crate) fn TransactionsView() -> impl IntoElement {
     let total = signal(0i64);
     let rows = signal(Vec::<RowCells>::new());
     let loading = signal(true);
     let error = signal(None::<String>);
-    // 响应式列集：表格可用宽取窗口内容宽（根布局无水平 padding，表格区横向
-    // 即窗口宽；ambient::window 随窗口缩放重算）——备注列吸收富余宽（弹性
-    // 列，旧壳同语义），其余列按装配建议宽度。
-    let columns = computed(move || elastic_columns(window().width.0));
+    // 响应式列集：表格可用宽取窗口内容宽（导航骨架起扣侧栏宽；ambient::window
+    // 随窗口缩放重算）——备注列吸收富余宽（弹性列，旧壳同语义），其余列按
+    // 装配建议宽度。
+    let columns = computed(move || elastic_columns(crate::adaptive::content_width()));
     // 搜索态：输入文本（受控）、结果呈现态（旧壳 searched 语义——搜索结果落位
     // 后才切搜索态呈现，键入中底栏仍呈上一装载态）、防抖调度序号（新输入作废
-    // 在途定时器）与装载序号（后发作废先发，与旧壳 Loadable invalidate 同义：
-    // 竞态后发覆盖先发，迟到结果不落位）。
+    // 在途定时器；金额区间输入共用同一防抖——旧壳搜索页单防抖同形）与装载序号
+    //（后发作废先发，与旧壳 Loadable invalidate 同义：竞态后发覆盖先发，迟到
+    // 结果不落位）。
     let search_text = signal(String::new());
     let searched = signal(false);
     let search_seq = signal(0u64);
     let load_seq = signal(0u64);
+    // 筛选会话态（#2037）：进程级单例信号束（会话内保留——视图卸载重挂不丢，
+    // 旧壳 ADR-0094 同语义；零写盘，冷启动回默认）。金额区间输入属搜索面维度
+    //（旧壳搜索页同口径），组件本地态不进会话保留；文本元 → 分换算在装载时机
+    //（[assembly::amount_text_to_cents] 换算家族单点）。
+    let filters = tx_filter::store();
+    let amount_min_text = signal(String::new());
+    let amount_max_text = signal(String::new());
     // 行删除态（issue #2022）：待确认删除的交易 id（Some = 危险确认对话框开）
     // 与删除失败呈现（码化错误文案，不静默；下次删除尝试开始时清空）。
     let confirm_target = signal(None::<String>);
     let delete_error = signal(None::<String>);
-    // 时间维度行状态：期间快照（None = 全部）与数据期间边界原始日期对
-    // （None = 在途/失败 → 钳制退化为不钳制，旧壳 silent 同口径）；快照区间
-    // 是唯一事实源，游标不落状态（步进前从当前区间反推，ADR-0141 决策 2）。
-    let range = signal(None::<period::PeriodRange>);
+    // 物品快照（#2044）：装载批同批读取——「加入物品」行菜单项的溯源唯一
+    // 准入判定面（hasItem 按溯源指针比对，旧壳 items store 同口径）。
+    let items_snap = signal(items::ItemsSnap::default());
+    // 加入物品弹窗目标交易（None = 不呈现）与成功反馈条位（NSH 无 toast 的
+    // 条位对应物）。
+    let add_item_target = signal(AddItemTarget::default());
+    let item_feedback = signal(None::<String>);
+    // 交易表单族（#2034）：表单信号束与参考数据源（与列表装载共享同一读批；
+    // 编辑回填锚点：当前页原始行集——弹窗开合与字段状态住表单信号束）。
+    let form = txn_form::TxnFormState::new();
+    let tx_items = signal(txn_form::TxItems(Vec::new()));
+    let form_accounts = signal(txn_form::FormAccounts(Vec::new()));
+    let form_categories = signal(txn_form::FormCategories(Vec::new()));
+    let form_merchants = signal(txn_form::FormMerchants(Vec::new()));
+    let form_policies = signal(txn_form::FormPolicies(Vec::new()));
+    let form_currencies = signal(assembly::CurrencyTable::default());
+    // 投资记账表单·买卖族（#2046）：表单信号束与参考数据源独立成束（旧壳
+    // InvestmentForm 挂 TransactionForm 的同面本壳分件；明细取数随表单自身
+    // 装载批次，不入列表读批——明细域数据不同源）。入口归属见 investments_form
+    // 模块头：买入/卖出行编辑入口住户投资明细页签（⑯ 落位装配），此处挂载
+    // 弹窗 + 行菜单分流接缝先行（行集闭集不含 buy/sell 的死面注释保留）。
+    let trade_form = investments_form::TradeFormState::new();
+    let trade_sources = investments_form::TradeFormSources::new();
+    // 「记一笔」类型菜单弹层开合（入口单点表达 kind：弹层两项——记支出/
+    // 记收入；弹层开合上报 Overlay Suppression，期间弹层同形）。
+    let add_menu_open = signal(false);
+    let add_menu_token = overlay::OverlayToken::new();
+    // 备份最小入口（#2038）：入口状态束挂视图实例（工具区按钮 + 反馈状态
+    // 条 + 覆盖确认对话框共用同一信号束，backup_entry 模块注）。
+    let backup = backup_entry::BackupEntryState::new();
+    // 时间维度行状态：期间快照住筛选会话态（#2037 起，旧壳 dateFrom/dateTo 同
+    // 维度的会话内保留）；数据期间边界原始日期对（None = 在途/失败 → 钳制退化
+    // 为不钳制，旧壳 silent 同口径）；快照区间是唯一事实源，游标不落状态（步进
+    // 前从当前区间反推，ADR-0141 决策 2）。
     let boundary_dates = signal(None::<(Option<String>, Option<String>)>);
-    let period_open = signal(false);
-    // 弹层开合上报注册表（Overlay Suppression，ADR-0035 原生壳重建）：token
-    // 实例作用域持有，随 open 信号显式上报（effect 追踪信号，覆盖全部关闭
-    // 路径——受控关闭不产生 Popover 事件，只听事件会漏报），组件卸载时
-    // Drop 自动撤销。
-    let overlay_token = overlay::OverlayToken::new();
     // 视图实例 owner（组件体运行时的 current）：删除任务经它挂到组件实例，
     // 不随对话框子树卸载被取消（见 perform_delete 注）。
     let view_owner = Owner::current();
@@ -410,148 +457,183 @@ fn TransactionsView() -> impl IntoElement {
     let fg = tokens
         .color("foreground")
         .unwrap_or_else(|| hsla(0.0, 0.0, 0.98, 1.0).into());
+    // 加入物品成功反馈条位的前景色（#2044；tokens 绑定后取值）。
+    let item_feedback_fg = fg;
     let muted = tokens
         .color("muted-foreground")
         .unwrap_or_else(|| hsla(0.0, 0.0, 0.45, 1.0).into());
 
-    // 期间派生（纯函数单点，UI 只消费）：游标、当前游标单位下的边界、步进
-    // 可达性。
-    let cursor = computed(move || {
-        let r = range.get();
-        period::range_to_period(
-            r.as_ref().map(|p| p.from.as_str()),
-            r.as_ref().map(|p| p.to.as_str()),
-        )
-    });
-    let boundary = computed(move || {
-        let unit = cursor.get()?.unit;
-        let (min, max) = boundary_dates.get()?;
-        Some(period::derive_boundary(
-            unit,
-            min.as_deref(),
-            max.as_deref(),
-            today(),
-        ))
-    });
-    let can_step_prev = computed(move || {
-        let r = range.get();
-        period::can_step_current(
-            r.as_ref().map(|p| p.from.as_str()),
-            r.as_ref().map(|p| p.to.as_str()),
-            -1,
-            boundary.get().as_ref(),
-        )
-    });
-    let can_step_next = computed(move || {
-        let r = range.get();
-        period::can_step_current(
-            r.as_ref().map(|p| p.from.as_str()),
-            r.as_ref().map(|p| p.to.as_str()),
-            1,
-            boundary.get().as_ref(),
-        )
-    });
-
-    // 装载一页（首屏、翻页、换期间与搜索共用一条路径）：输入 trim 后判态
-    // ——空 = 列表态读交易页（携期间快照，全库或期间过滤口径），非空 = 搜索
-    // 态直调域统一模糊搜索（与旧壳 `search_transactions` 命令同一域函数，
-    // 不经 IPC）；两态分页与总数语义同旧壳（页码重置、服务端 offset 分页、
-    // total = 满足口径的总数）。阻塞读走后台线程（SQLite IO 不占引擎线程）；
-    // 分页条装载期间禁用（单飞——等待成功优于即刻失败，无并发页读交错）。
-    // 币种字典、在用分类与数据期间边界随装载一并刷新（字典行数小、分类小
-    // 表、边界是单行聚合，重读成本可忽略；写路径落地后天然跟随数据外扩/收
-    // 窄）；金额隐私开关随装载取设备态（轻量设置项，存储读是同步操作，组件
-    // 任务内直读）。
+    // 装载一页（首屏、翻页、换期间、筛选与搜索共用一条路径）：判态——关键词
+    // 或金额区间任一在场 = 搜索态直调域统一模糊搜索（与旧壳 `search_transactions`
+    // 命令同一域函数，不经 IPC；携金额区间与期间快照），否则 = 列表态读交易页
+    //（携筛选全维度 + 期间快照，默认 kind 收窄）。两态分页与总数语义同旧壳
+    //（页码重置、服务端 offset 分页、total = 满足口径的总数）。阻塞读走后台
+    // 线程（SQLite IO 不占引擎线程）；分页条装载期间禁用（单飞——等待成功优于
+    // 即刻失败，无并发页读交错）。币种字典、在用分类、可见账户、含软删商户、
+    // 未删除保单与行集同批读取：字典读失败不静默降级成无符号金额（用户无感知
+    // 的错示比暂缓呈现更差），与行集一并走错误呈现。数据期间边界读失败不拖垮
+    // 页呈现：钳制退化为不钳制（旧壳 silent 同口径），保留旧值到下次成功替换。
+    // 表单参考数据源与原始行集随装载一并落位（#2034：编辑回填与选项面的同一
+    // 事实源）。
     let load = move |page_no: u32| {
         loading.set(true);
         error.set(None);
         load_seq.update(|seq| *seq += 1);
         let seq = load_seq.get();
         let query = search_text.get().trim().to_owned();
-        let searching = !query.is_empty();
+        let amount_min = assembly::amount_text_to_cents(&amount_min_text.get());
+        let amount_max = assembly::amount_text_to_cents(&amount_max_text.get());
+        // 搜索态判据：关键词或金额区间任一在场（旧壳搜索页 hasQuery 同口径）；
+        // 期间不判态——列表态的期间过滤照旧，搜索态下期间对命中面生效（搜索 ×
+        // 期间裁决，#2037）。筛选维度快照在调用时机取值（装载即以当下筛选态
+        // 读页——与旧壳 load 装配请求参数同形）。
+        let searching = !query.is_empty() || amount_min.is_some() || amount_max.is_some();
+        let state = filters.snapshot();
         let privacy = amount_privacy_enabled();
         let db = db_slot().clone();
-        let range = range.get();
-        spawn(async move {
-            let Some(db) = db else {
-                error.set(Some("内部错误：账本库会话缺失".to_owned()));
-                loading.set(false);
-                return;
-            };
-            // 币种字典、在用分类、可见账户、含软删商户与行集同批读取：字典读失败
-            // 不静默降级成无符号金额（用户无感知的错示比暂缓呈现更差），与行集
-            // 一并走错误呈现。数据期间边界读失败不拖垮页呈现：钳制退化为不钳制
-            // （旧壳 silent 同口径），保留旧值到下次成功替换。
-            let outcome = blocking(move || {
-                let page_read = if query.is_empty() {
-                    boot::transaction_page(&db, page_no, range.as_ref())
-                        .map(|result| PageRead::new(result.items, result.total))
-                } else {
-                    boot::transaction_search(&db, &query, page_no)
-                        .map(|result| PageRead::new(result.items, result.total))
+        // 任务挂视图实例 owner（perform_delete 先例同形）：处理器可能运行在
+        // 即将卸载的子树 owner 下——筛选条清除钮/弹层选项按下后随状态翻转即
+        // 时卸载（#2037 起多了一类「按下即自卸载」的触发面），直呼 spawn 会
+        // 把装载任务挂到子树 owner 上，随卸载被取消——装载静默蒸发、loading
+        // 永不落位（修复前 headless 清除旅程曾确定性复现本竞态）。经
+        // [`Owner::run`] 让任务归组件实例，存活到装载完成；本包裹属竞态消除
+        // 而非「删除即红」型接线——删除后的复现取决于引擎调度时序（任务是否
+        // 赢得卸载前的执行窗口），不设拆除断言。
+        view_owner.run(move || {
+            spawn(async move {
+                let Some(db) = db else {
+                    error.set(Some("内部错误：账本库会话缺失".to_owned()));
+                    loading.set(false);
+                    return;
                 };
-                page_read
-                    .and_then(|mut read| {
-                        read.date_range = boot::report_date_range(&db).ok();
-                        boot::currency_rows(&db).map(|rows| {
-                            read.currency_rows = rows;
-                            read
-                        })
-                    })
-                    .and_then(|mut read| {
-                        boot::category_rows(&db).map(|rows| {
-                            read.category_rows = rows;
-                            read
-                        })
-                    })
-                    .and_then(|mut read| {
-                        boot::account_rows(&db).map(|rows| {
-                            read.account_rows = rows;
-                            read
-                        })
-                    })
-                    .and_then(|mut read| {
-                        boot::merchant_rows(&db).map(|rows| {
-                            read.merchant_rows = rows;
-                            read
-                        })
-                    })
-            })
-            .await;
-            // 过期装载不落位（后发已接管 rows/loading，先发不得回写）。
-            if load_seq.get() != seq {
-                return;
-            }
-            match outcome {
-                Ok(Ok(PageRead {
-                    items,
-                    total: total_count,
-                    date_range,
-                    currency_rows,
-                    category_rows,
-                    account_rows,
-                    merchant_rows,
-                })) => {
-                    let currencies = CurrencyTable::from_currencies(&currency_rows);
-                    let categories = assembly::CategoryTable::from_categories(&category_rows);
-                    let accounts = AccountTable::from_accounts(&account_rows);
-                    let merchants = MerchantTable::from_merchants(&merchant_rows);
-                    let ctx = RowContext {
-                        currencies: &currencies,
-                        categories: &categories,
-                        accounts: &accounts,
-                        merchants: &merchants,
-                        privacy_enabled: privacy,
+                // 币种字典、在用分类、可见账户、含软删商户、未删除保单与行集同批读取：
+                // 字典读失败不静默降级成无符号金额（用户无感知的错示比暂缓呈现更差），
+                // 与行集一并走错误呈现。数据期间边界读失败不拖垮页呈现：钳制退化为不钳制
+                // （旧壳 silent 同口径），保留旧值到下次成功替换。表单参考数据源与原始
+                // 行集随装载一并落位（#2034：编辑回填与选项面的同一事实源）。
+                let outcome = blocking(move || {
+                    let page_read = if !searching {
+                        // 列表态：筛选维度 + 期间快照 + 默认 kind 收窄（投资 kind
+                        // 排除是读接缝单点，ADR-0135）。
+                        boot::transaction_page(
+                            &db,
+                            page_no,
+                            &boot::TxListQuery {
+                                range: state.range.clone(),
+                                kinds: tx_filter::resolve_request_kinds(state.kinds.as_deref()),
+                                involving_account_id: state.involving_account_id.clone(),
+                                merchant_id: state.merchant_id.clone(),
+                                category_id: state.category.as_ref().and_then(|c| match c {
+                                    tx_filter::CategoryFilter::Exact(id) => Some(id.clone()),
+                                    tx_filter::CategoryFilter::UncategorizedOnly => None,
+                                }),
+                                uncategorized_only: matches!(
+                                    state.category,
+                                    Some(tx_filter::CategoryFilter::UncategorizedOnly)
+                                ),
+                            },
+                        )
+                        .map(|result| PageRead::new(result.items, result.total))
+                    } else {
+                        // 搜索态：关键词 + 金额区间 + 期间快照（裁决后期间对搜索
+                        // 命中面生效，旧壳搜索页同口径）；账户/商户/分类/类型维度
+                        // 不在搜索面（域读路径不支持，裁决定型为规格）。
+                        boot::transaction_search(
+                            &db,
+                            &query,
+                            page_no,
+                            amount_min,
+                            amount_max,
+                            state.range.as_ref(),
+                        )
+                        .map(|result| PageRead::new(result.items, result.total))
                     };
-                    rows.set(assembly::assemble_rows(&items, &ctx));
-                    total.set(total_count);
-                    boundary_dates.set(date_range.map(|dr| (dr.min_date, dr.max_date)));
-                    searched.set(searching);
+                    page_read
+                        .and_then(|mut read| {
+                            read.date_range = boot::report_date_range(&db).ok();
+                            boot::currency_rows(&db).map(|rows| {
+                                read.currency_rows = rows;
+                                read
+                            })
+                        })
+                        .and_then(|mut read| {
+                            boot::category_rows(&db).map(|rows| {
+                                read.category_rows = rows;
+                                read
+                            })
+                        })
+                        .and_then(|mut read| {
+                            boot::account_rows(&db).map(|rows| {
+                                read.account_rows = rows;
+                                read
+                            })
+                        })
+                        .and_then(|mut read| {
+                            boot::merchant_rows(&db).map(|rows| {
+                                read.merchant_rows = rows;
+                                read
+                            })
+                        })
+                        .and_then(|mut read| {
+                            boot::policy_rows(&db).map(|rows| {
+                                read.policy_rows = rows;
+                                read
+                            })
+                        })
+                        .and_then(|mut read| {
+                            boot::item_rows(&db).map(|rows| {
+                                read.item_rows = rows;
+                                read
+                            })
+                        })
+                })
+                .await;
+                // 过期装载不落位（后发已接管 rows/loading，先发不得回写）。
+                if load_seq.get() != seq {
+                    return;
                 }
-                Ok(Err(e)) => error.set(Some(e.to_string())),
-                Err(_) => error.set(Some("内部错误：读页任务异常退出".to_owned())),
-            }
-            loading.set(false);
+                match outcome {
+                    Ok(Ok(PageRead {
+                        items,
+                        item_rows,
+                        total: total_count,
+                        date_range,
+                        currency_rows,
+                        category_rows,
+                        account_rows,
+                        merchant_rows,
+                        policy_rows,
+                    })) => {
+                        // 表单参考数据源与编辑回填锚点（原始行集）随装载落位
+                        //（#2034：与列表同一读批的同一事实源）。
+                        tx_items.set(txn_form::TxItems(items.clone()));
+                        items_snap.set(items::ItemsSnap(item_rows));
+                        form_accounts.set(txn_form::FormAccounts(account_rows.clone()));
+                        form_categories.set(txn_form::FormCategories(category_rows.clone()));
+                        form_merchants.set(txn_form::FormMerchants(merchant_rows.clone()));
+                        form_policies.set(txn_form::FormPolicies(policy_rows));
+                        let currencies = CurrencyTable::from_currencies(&currency_rows);
+                        form_currencies.set(currencies.clone());
+                        let categories = assembly::CategoryTable::from_categories(&category_rows);
+                        let accounts = AccountTable::from_accounts(&account_rows);
+                        let merchants = MerchantTable::from_merchants(&merchant_rows);
+                        let ctx = RowContext {
+                            currencies: &currencies,
+                            categories: &categories,
+                            accounts: &accounts,
+                            merchants: &merchants,
+                            privacy_enabled: privacy,
+                        };
+                        rows.set(assembly::assemble_rows(&items, &ctx));
+                        total.set(total_count);
+                        boundary_dates.set(date_range.map(|dr| (dr.min_date, dr.max_date)));
+                        searched.set(searching);
+                    }
+                    Ok(Err(e)) => error.set(Some(e.to_string())),
+                    Err(_) => error.set(Some("内部错误：读页任务异常退出".to_owned())),
+                }
+                loading.set(false);
+            });
         });
     };
 
@@ -559,9 +641,9 @@ fn TransactionsView() -> impl IntoElement {
     // 以删后页码决策（保持当前页 / 本页删空回退一页，旧壳 afterRowDelete
     // ADR-0045 同语义）重读。订阅句柄随视图实例存亡；生产进程一视图一订阅。
     let reload_after_delete = move || {
-        let target =
-            assembly::page_after_row_delete(page.get(), total.get()).unwrap_or_else(|| page.get());
-        page.set(target);
+        let target = assembly::page_after_row_delete(filters.page.get(), total.get())
+            .unwrap_or_else(|| filters.page.get());
+        filters.set_page(target);
         load(target);
     };
     // 订阅随组件实例存亡：组件体只跑一次、普通绑定不入 owner 图，体结束即
@@ -626,7 +708,7 @@ fn TransactionsView() -> impl IntoElement {
     // 同义）。回车立即装载（on_submit，旧壳 onEnter 同语义——不等防抖）。
     let schedule_search = move |text: &str| {
         search_text.set(text.to_owned());
-        page.set(1);
+        filters.set_page(1);
         search_seq.update(|seq| *seq += 1);
         let seq = search_seq.get();
         set_timeout(Duration::from_millis(SEARCH_DEBOUNCE_MS), move || {
@@ -634,6 +716,29 @@ fn TransactionsView() -> impl IntoElement {
                 load(1);
             }
         });
+    };
+
+    // 金额区间输入调度（搜索面维度，旧壳搜索页同形：关键词/金额/日期同一
+    // watcher 防抖查询）：文本变化 → 页码归 1 → 共用搜索防抖定时器（序号失配
+    // 自弃）。元 → 分换算在装载时机（[assembly::amount_text_to_cents] 单点）；
+    // 金额任一端在场即入搜索态（旧壳「无关键字仅筛选」同语义）。
+    let schedule_amount = move || {
+        filters.set_page(1);
+        search_seq.update(|seq| *seq += 1);
+        let seq = search_seq.get();
+        set_timeout(Duration::from_millis(SEARCH_DEBOUNCE_MS), move || {
+            if search_seq.get() == seq {
+                load(1);
+            }
+        });
+    };
+    let on_amount_min_change = move |text: &str| {
+        amount_min_text.set(text.to_owned());
+        schedule_amount();
+    };
+    let on_amount_max_change = move |text: &str| {
+        amount_max_text.set(text.to_owned());
+        schedule_amount();
     };
 
     // 翻页动作单点（快捷键语义走同一决策半边，ADR-0140 决策 2）：分页条点击
@@ -646,47 +751,147 @@ fn TransactionsView() -> impl IntoElement {
             return;
         }
         let Some(target) =
-            assembly::next_page(page.get(), assembly::total_pages(total.get()), step)
+            assembly::next_page(filters.page.get(), assembly::total_pages(total.get()), step)
         else {
             return;
         };
-        page.set(target);
+        filters.set_page(target);
         load(target);
     };
 
-    // 周期步进动作（ADR-0141 决策 2：游标反推、边界钳制、越界幂等全在
-    // [`period::step_current`] 单点；换期间后回第 1 页）。点击路径（步进器
-    // 按钮）无抑制闸门（三闸门只辖键盘派发面，先例分页条点击）；快捷键路径
-    // 在下方 step_period 内先行闸检。
-    let apply_step = move |delta: i32| {
-        let r = range.get();
-        let Some(next) = period::step_current(
-            r.as_ref().map(|p| p.from.as_str()),
-            r.as_ref().map(|p| p.to.as_str()),
-            delta,
-            boundary.get().as_ref(),
-        ) else {
+    // 时间维度行（共用形态抽离 `period_row`，#2040）：期间快照住筛选会话态
+    //（#2037 起），应用回调 = 翻页归零 + 重读第一页（同值守卫的 changed
+    // 才重读——旧壳 setFilter 同值守卫同口径）。步进动作给 `,`/`.` 快捷键
+    // 与行内按钮共用；步进与弹层开合的抑制上报归 period_row 模块。
+    let (period_row_view, step_period) = period_row::period_row(
+        "period",
+        true,
+        true,
+        filters.range,
+        boundary_dates,
+        move |changed: bool| {
+            filters.set_page(1);
+            if changed {
+                load(1);
+            }
+        },
+    );
+
+    // ----------------------------------------------------------------------
+    // 筛选条（#2037）：会话态 + 交互桥 + 类型/清除/ESC 处理器。
+    // ----------------------------------------------------------------------
+
+    // 下钻落位消费（#2037，骨架票导航接缝的第一个真实消费方）：挂载即读一次
+    // （读一次封闸归 [nav::take_intent]；页签往复/重复落位不重放）。筛选载荷
+    // 全量替换会话态（旧壳「新 query 全量替换旧 query」同构，[tx_filter::drilled]
+    // 纯决策单点）；focus 在交易列表无实体定位形态（旧壳无对应消费面），读一
+    // 次丢弃以防误投后续落位。消费须先于交互桥初始化与首屏装载——落位筛选与
+    // 首拉同轮生效。
+    if let Some(intent) = nav::take_intent()
+        && let Some(drill) = intent.tx_filters.as_ref()
+    {
+        filters.apply_drill(drill);
+    }
+
+    // 账户/商户下拉交互桥（挂载时自会话态初始化；改动经桥接 effect 归一）。
+    // 会话态信号是唯一事实源；交互桥是封装件（信号受控形态）的写入面——挂载
+    // 顺序：下钻消费 → 桥初始化（落位筛选直接呈现）。
+    let account_sel = signal(filters.account.get_untracked());
+    let merchant_sel = signal(filters.merchant.get_untracked());
+
+    // 类型多选读写面（回调受控封装，无中间信号）：读 = 会话态集合的**响应式**
+    // 查询（触发件回显与 ✕ 可见性随勾选即时刷新——封装内 when/文本闭包经本
+    // 闭包追踪会话态信号）；写 = 切换后归一（[tx_filter::normalize_kind_selection]，
+    // 空集/满选 ≡ 默认）+ 同值守卫 + 统一出口（翻页归零 + 重读第一页，旧壳
+    // setFilter 同形）。
+    let kind_selected = move |id: &str| {
+        ledger_transaction::TransactionKind::parse(id).is_ok_and(|kind| {
+            filters
+                .kinds
+                .get()
+                .is_some_and(|kinds| kinds.contains(&kind))
+        })
+    };
+    let on_kind_toggle = move |id: &str| {
+        let Ok(kind) = ledger_transaction::TransactionKind::parse(id) else {
             return;
         };
-        range.set(Some(next));
-        page.set(1);
-        load(1);
-    };
-    let step_period = move |delta: i32| {
-        // Overlay Suppression 闸门（与翻页族共用同一判定，删除任一处即红）。
-        if overlay::has_open_overlay() {
+        let mut next = filters.kinds.get_untracked().unwrap_or_default();
+        if next.contains(&kind) {
+            next.retain(|k| *k != kind);
+        } else {
+            next.push(kind);
+        }
+        let normalized = tx_filter::normalize_kind_selection(&next);
+        if filters.kinds.get_untracked() == normalized {
             return;
         }
-        apply_step(delta);
+        filters.kinds.set(normalized);
+        filters.set_page(1);
+        load(1);
+    };
+    let on_kind_clear = move || {
+        if filters.kinds.get_untracked().is_none() {
+            return;
+        }
+        filters.kinds.set(None);
+        filters.set_page(1);
+        load(1);
     };
 
-    // 预设选择动作单点（弹层芯片点击）：写精确自然周期快照并关弹层，回
-    // 第 1 页（「全部」= 无过滤区间；离开无过滤默认态仅在确认选定后发生）。
-    let apply_preset = move |preset: period::Preset| {
-        range.set(period::preset_range(preset, today()));
-        page.set(1);
+    // 桥接 effect（账户/商户两维）：交互桥信号 → 会话态 + 统一出口（翻页归零
+    // + 重读第一页）。同值不动作（信号等值守卫——挂载初始化不产生额外装载，
+    // 重置路径先归一会话态再归零桥时桥接跳过）。删除任一桥接即红：headless
+    // 账户/商户筛选旅程（设筛选 → 行集变化 → 清除）断言用户可见行集。
+    let bridge_account = move || {
+        effect(move || {
+            let value = account_sel.get();
+            if filters.account.get_untracked() != value {
+                filters.account.set(value);
+                filters.set_page(1);
+                load(1);
+            }
+        });
+    };
+    bridge_account();
+    let bridge_merchant = move || {
+        effect(move || {
+            let value = merchant_sel.get();
+            if filters.merchant.get_untracked() != value {
+                filters.merchant.set(value);
+                filters.set_page(1);
+                load(1);
+            }
+        });
+    };
+    bridge_merchant();
+
+    // 筛选激活判定（清除按钮禁用态与空态分型的判定输入；旧壳 filtersActive
+    // 同口径：页码不算筛选，金额输入属搜索面保留态一并计入）。响应式读
+    //（空态文案与按钮禁用随筛选变化即时刷新）。
+    let search_filters_active = move || {
+        tx_filter::filters_active(&tx_filter::TxFilterState {
+            kinds: filters.kinds.get(),
+            involving_account_id: filters.account.get(),
+            merchant_id: filters.merchant.get(),
+            category: filters.category.get(),
+            range: filters.range.get(),
+            page: filters.page.get_untracked(),
+        }) || !amount_min_text.get().trim().is_empty()
+            || !amount_max_text.get().trim().is_empty()
+    };
+
+    // 清除全部筛选（旧壳 resetFilters 同语义：清全部维度 + 页大小回默认[本壳
+    // 固定页径] + 翻页归零 + 重拉；金额输入与搜索桥一并归零——搜索桥归零经
+    // 桥接 effect 跳过同值动作）。幂等：无保留状态时按钮禁用不可达，ESC 路径
+    // 用下方守卫拦。
+    let reset_filters = move || {
+        account_sel.set(None);
+        merchant_sel.set(None);
+        amount_min_text.set(String::new());
+        amount_max_text.set(String::new());
+        filters.reset();
         load(1);
-        period_open.set(false);
     };
 
     // 两族快捷键（ADR-0140 / ADR-0141 裸键闭集）：裸键语义 = 拒绝一切修饰键
@@ -695,115 +900,363 @@ fn TransactionsView() -> impl IntoElement {
     // 处理器体即「闸门 → 决策 → 派发」三步，决策半边在纯函数单点。
     on_key("[", move |_| flip_page(assembly::PageStep::Prev));
     on_key("]", move |_| flip_page(assembly::PageStep::Next));
-    on_key(",", move |_| step_period(-1));
-    on_key(".", move |_| step_period(1));
+    on_key(",", move |_| {
+        // Overlay Suppression 闸门（与翻页族共用同一判定，删除任一处即红）。
+        if overlay::has_open_overlay() {
+            return;
+        }
+        step_period(-1);
+    });
+    on_key(".", move |_| {
+        if overlay::has_open_overlay() {
+            return;
+        }
+        step_period(1);
+    });
+    // ESC 复位（旧壳 registerViewReset(resetFilters) 同语义：窗口行为守卫在
+    // 无弹层 ESC 时消费——本壳等价形态 = 抑制闸门 + 幂等守卫）。弹层开着时
+    // ESC 属弹层关闭面（闸门拦截，删除即红钉在 headless ESC 旅程测试）；无
+    // 保留状态（筛选全默认 + 第 1 页 + 金额输入空）时幂等无操作（旧壳
+    // isAtDefault 同口径，金额输入属搜索面保留态一并计入）。
+    on_key("escape", move |_| {
+        if overlay::has_open_overlay() {
+            return;
+        }
+        let at_default = tx_filter::is_at_default(&filters.snapshot())
+            && amount_min_text.get_untracked().trim().is_empty()
+            && amount_max_text.get_untracked().trim().is_empty();
+        if at_default {
+            return;
+        }
+        reset_filters();
+    });
 
     // 首屏装载（组件任务运行一次；boot 成功先于本视图呈现，DB 恒已就位）。
     load(1);
 
     // 弹层开合上报（注册表单一通道：追踪受控 open 信号，全路径覆盖）。
+    // 「记一笔」类型菜单（#2034 表单入口）；期间弹层的上报已随共用期间行
+    // 收进 period_row 模块。
     effect(move || {
-        let open = period_open.get();
-        overlay_token.report(open);
+        let open = add_menu_open.get();
+        add_menu_token.report(open);
     });
 
-    // 时间维度行（issue #2021 / ADR-0141）：期间步进器 `< 期间标签 >`，标签
-    // 点击打开期间选择弹层（预设闭集；直达日历面板随迁移系列票补齐）。步进
-    // 按钮置灰 = 无游标或越出数据期间边界（可达性在 computed 单点）；键位
-    // 字符内嵌步进按钮（ADR-0141 决策 5 修订形态）。
-    let period_row = view()
-        .flex_row()
-        .items_center()
-        .gap_2()
-        .px_4()
-        .py_2()
-        .app_class("border-b border-border")
+    // 时间维度行（共用期间行，#2040 起抽离 `period_row` 模块）：步进器 +
+    // 期间选择弹层（预设闭集；直达日历面板随迁移系列票补齐）。快照住筛选
+    // 会话态，应用回调见上方 builder 接线；行尾「记一笔」入口（#2034）：
+    // 类型由入口单点表达——弹层两项（记支出/记收入），弹窗内不提供切换
+    //（旧壳 #150 同语义；转账/借出/退款随表单②、投资随表单③）。
+    let period_row = period_row_view
+        .child(view().flex_1())
         .child(
-            button()
-                .disabled(move || !can_step_prev.get())
-                .accessibility_label("上一个周期")
-                .app_class(
-                    "px-2 py-1 rounded-md text-foreground hover:bg-accent disabled:opacity-40",
-                )
-                .flex_row()
-                .items_center()
-                .gap_1()
-                .on_press({
-                    let apply = apply_step;
-                    move || apply(-1)
-                })
-                .child(text("‹").text_color(fg))
-                .child(text(",").text_size(px(11.0)).text_color(muted)),
+            // 备份最小入口（#2038）：工具区次级动作（旧壳设置页备份卡「另存
+            // 为…」路径的最小化——NSH 无设置面，保存对话框是唯一落点选择
+            // 方式；备份流程与反馈归 backup_entry 模块）。
+            backup_entry::backup_button(backup, view_owner),
         )
         .child(
-            // 期间标签 → 期间选择弹层（Overlay Suppression 的注册弹层：
-            // on_open_change 只回写受控 open 信号，注册表上报由上方 effect
-            // 单通道承担；token 随组件卸载撤销）。
+            // 「记一笔」入口（#2034）：按压即开类型菜单弹层（抑制上报由上方
+            // effect 单通道承担）；菜单项点击落表单弹窗（kind 入口锁定）。
             popover()
-                .open(move || Some(period_open.get()))
+                .open(move || Some(add_menu_open.get()))
                 .on_open_change(move |e: &PopoverEvent| {
-                    // 只做信号回写（开合上报住上方 effect）。
                     if let PopoverEvent::OpenChange(open, _) = *e {
-                        period_open.set(open);
+                        add_menu_open.set(open);
                     }
                 })
                 .popup_class("bg-background border border-border rounded-md shadow-md p-1")
                 .trigger(
-                    // test_id 载体视图（组件元素无 test_id 槽，先例 tx-pagination 的
-                    // 载体形态）；headless 经 id: 锚点命中载体、物理命中到内层按钮。
-                    view().test_id("period-label").child(
+                    view().test_id("tx-add").child(
                         button()
-                            .app_class("px-2 py-1 rounded-md text-foreground hover:bg-accent")
+                            .app_class("px-3 py-1.5 rounded-md bg-primary hover:opacity-90")
                             .flex_row()
                             .items_center()
                             .gap_1()
-                            .child(text(move || period_label_text(cursor.get())).text_color(fg))
-                            .child(text("▾").text_size(px(11.0)).text_color(muted)),
+                            .child(text("记一笔").text_size(px(13.0)).text_color(rgb(0xffffff)))
+                            .child(text("▾").text_size(px(11.0)).text_color(rgb(0xffffff))),
                     ),
                 )
                 .child(
-                    // 芯片 test_id 落在按钮内文本上（headless press 只认可按元素
-                    // 本身或其内部文本，包裹视图不命中，nsh-testing Screen::pressable）。
+                    // 类型菜单五项（#2035 表单②）：记支出/记收入/记转账 + 分隔线
+                    // + 借出/借入（借贷入口预置方向，表单内可切四向——旧壳
+                    // LENDING_CREATE_DIRECTIONS 闭集同形；退款不入菜单，入口由
+                    // 交易条目右键菜单承接，旧壳同口径）+ 分隔线 + 出资分解/
+                    // 购买项下单（表单③首建入口——旧壳创建菜单闭集五项无此
+                    // 两项，spec #2031 表单③纵切授权在新壳首发录入形态）。
                     view()
                         .flex_col()
                         .gap_1()
-                        .children(period::PRESETS.iter().copied().map(|preset| {
-                            button()
-                                .selected(move || match_preset_now(range.get(), preset))
-                                .app_class(
-                                    "px-2 py-1 rounded-md text-foreground hover:bg-accent selected:bg-accent",
-                                )
-                                .child(text(period::preset_label(preset)).test_id(preset_test_id(preset)))
-                                .on_press({
-                                    let apply = apply_preset;
-                                    move || apply(preset)
-                                })
-                        })),
+                        .children(
+                            [
+                                (txn_form::CreateEntry::Expense, "记支出", "tx-add-expense"),
+                                (txn_form::CreateEntry::Income, "记收入", "tx-add-income"),
+                                (txn_form::CreateEntry::Transfer, "记转账", "tx-add-transfer"),
+                            ]
+                            .map(|(entry, label, anchor)| {
+                                button()
+                                    .app_class(
+                                        "w-full px-2 py-1 rounded-md text-left text-foreground hover:bg-accent",
+                                    )
+                                    .child(text(label).test_id(anchor))
+                                    .on_press(move |_: &()| {
+                                        add_menu_open.set(false);
+                                        form.open_create(entry);
+                                    })
+                            }),
+                        )
+                        .child(view().h(px(1.0)).w_full().app_class("bg-border"))
+                        .children(
+                            [
+                                (txn_form::CreateEntry::Lend, "借出", "tx-add-lend"),
+                                (txn_form::CreateEntry::Borrow, "借入", "tx-add-borrow"),
+                            ]
+                            .map(|(entry, label, anchor)| {
+                                button()
+                                    .app_class(
+                                        "w-full px-2 py-1 rounded-md text-left text-foreground hover:bg-accent",
+                                    )
+                                    .child(text(label).test_id(anchor))
+                                    .on_press(move |_: &()| {
+                                        add_menu_open.set(false);
+                                        form.open_create(entry);
+                                    })
+                            }),
+                        )
+                        .child(view().h(px(1.0)).w_full().app_class("bg-border"))
+                        .children(
+                            [
+                                (txn_form::CreateEntry::Funding, "出资分解", "tx-add-funding"),
+                                (txn_form::CreateEntry::Purchase, "购买项下单", "tx-add-purchase"),
+                            ]
+                            .map(|(entry, label, anchor)| {
+                                button()
+                                    .app_class(
+                                        "w-full px-2 py-1 rounded-md text-left text-foreground hover:bg-accent",
+                                    )
+                                    .child(text(label).test_id(anchor))
+                                    .on_press(move |_: &()| {
+                                        add_menu_open.set(false);
+                                        form.open_create(entry);
+                                    })
+                            }),
+                        ),
                 ),
+        );
+
+    // 筛选条（#2037，旧壳交易页筛选行 + 搜索页金额输入的合流形态）：账户
+    //（拼音可搜，涉及账户语义，可清除）/ 商户（拼音可搜，含软删商户历史交易
+    // 口径，可清除）/ 类型（多选，可选集四通用 kind，空选满选归一默认）/
+    // 金额区间（元输入，搜索面维度）+ 清除筛选（禁用态随筛选激活判定）。
+    // 分类维度无手动控件（旧壳同口径，下钻只读入口）；隐藏投资相关开关属视图
+    // 偏好不入筛选（ADR-0136 偏好与筛选分家，随视图偏好面接入）。控件全部经
+    // 封装族消费（视图不直连框架基元，ADR-0118）；弹层抑制上报自含于封装。
+    let filter_row = view()
+        .flex_row()
+        .items_center()
+        .flex_wrap()
+        .gap_2()
+        .px_4()
+        .py_2()
+        .app_class("border-b border-border")
+        .child(pinyin_select::pinyin_select(
+            "tx-filter-account",
+            move || {
+                txn_form::pinned_account_options(
+                    &form_accounts.get().0,
+                    filters.account.get_untracked().as_deref(),
+                    |_| true,
+                )
+            },
+            account_sel,
+            "账户",
+            true,
+        ))
+        .child(pinyin_select::pinyin_select(
+            "tx-filter-merchant",
+            move || assembly::merchant_filter_options(&form_merchants.get().0),
+            merchant_sel,
+            "商户",
+            true,
+        ))
+        .child(multi_select::multi_select(
+            "tx-filter-kind",
+            assembly::kind_filter_options,
+            kind_selected,
+            on_kind_toggle,
+            on_kind_clear,
+            "类型",
+        ))
+        .child(
+            input()
+                .test_id("tx-amount-min")
+                .value(move || amount_min_text.get())
+                .placeholder("最低金额（元）")
+                .text_color(fg)
+                .w(px(130.0))
+                .app_class(
+                    "bg-background rounded-md border border-border px-2 py-1 \
+                     placeholder:text-muted-foreground",
+                )
+                .on_change(on_amount_min_change)
+                .on_submit(move |_: &str| {
+                    // 回车立即装载（旧壳搜索页 @keyup.enter 同语义）。
+                    filters.set_page(1);
+                    search_seq.update(|seq| *seq += 1);
+                    load(1);
+                }),
         )
         .child(
+            input()
+                .test_id("tx-amount-max")
+                .value(move || amount_max_text.get())
+                .placeholder("最高金额（元）")
+                .text_color(fg)
+                .w(px(130.0))
+                .app_class(
+                    "bg-background rounded-md border border-border px-2 py-1 \
+                     placeholder:text-muted-foreground",
+                )
+                .on_change(on_amount_max_change)
+                .on_submit(move |_: &str| {
+                    filters.set_page(1);
+                    search_seq.update(|seq| *seq += 1);
+                    load(1);
+                }),
+        )
+        .child(
+            // 清除筛选（旧壳 transactions.filter.clear 同词表）：禁用态随筛选
+            // 激活判定（无保留状态不可点——旧壳 disabled=!filtersActive 同位）。
+            // test_id 落在按钮内文本上（headless press/enabled 按 id 锚点命中
+            // 文本、物理命中到内层按钮，tx-form-submit 先例同形）。
             button()
-                .disabled(move || !can_step_next.get())
-                .accessibility_label("下一个周期")
+                .disabled(move || !search_filters_active())
+                .accessibility_label("清除筛选")
                 .app_class(
                     "px-2 py-1 rounded-md text-foreground hover:bg-accent disabled:opacity-40",
                 )
-                .flex_row()
-                .items_center()
-                .gap_1()
-                .on_press({
-                    let apply = apply_step;
-                    move || apply(1)
-                })
-                .child(text("›").text_color(fg))
-                .child(text(".").text_size(px(11.0)).text_color(muted)),
+                .child(
+                    text("清除筛选")
+                        .text_size(px(12.0))
+                        .text_color(fg)
+                        .test_id("tx-filter-clear"),
+                )
+                .on_press(move |_: &()| reset_filters()),
         );
+
+    // 行菜单单点（#2057 卡片形态与表格行右键共用同一菜接缝）：目标行随调用
+    // 固定（fixed-target，旧壳同位）——派生行（购买项续行）的 id 同为交易本体 id，
+    // 任一路径编辑/删除的都是整笔交易。载荷菜单项闭集（编辑/退款/加入物品/删除）
+    // 与写路径零改动，只把入口从表格右键扩为卡片「⋯」（菜单接缝复用）。
+    let open_row_menu = move |cell: &assembly::RowCells, at: Point<Points>| {
+        if let Some(tx) = tx_items.get().0.iter().find(|t| t.id == cell.id).cloned() {
+            let id = tx.id.clone();
+            let mut items = Vec::new();
+            // 编辑（#2034 基础收支，#2035 转账/借出/退款，
+            // #2036 出资分解/购买项行全量开放，#2046 投资买
+            // 卖行接缝）：目标行随右键固定。编辑开放面（#2036
+            // 表单③后全量开放）：收入/支出/转账/退款行开放
+            // ——#2035 的子行守卫（分解/购买项行不开放）随表
+            // 单③子行编辑能力解除：分解行进出资分解族、购买
+            // 项行进购买项族、并存行进出资分解族叠加购买项区
+            //（edit_dispatch 单点分派，旧壳 supportsRowEdit
+            // 口径的更新在平价核对表留痕）。界面只读 kind 仍
+            // 不开放。买入/卖出行的「编辑」进投资买卖族（旧
+            // 壳 issue #180 起 supportsRowEdit 同判定，主列
+            // 表 ADR-0135 默认排除 investment kind——入口
+            // 对用户即在投资明细页签（⑯ 装配），本分面为编
+            // 译可达的接缝面）。
+            let editable = matches!(
+                tx.kind,
+                ledger_transaction::TransactionKind::Income
+                    | ledger_transaction::TransactionKind::Expense
+                    | ledger_transaction::TransactionKind::Transfer
+                    | ledger_transaction::TransactionKind::Refund
+            );
+            if matches!(
+                tx.kind,
+                ledger_transaction::TransactionKind::Buy
+                    | ledger_transaction::TransactionKind::Sell
+            ) {
+                let trade_form = trade_form;
+                let trade_sources = trade_sources;
+                let tx = tx.clone();
+                items.push(MenuItem::new("编辑").on_select(move || {
+                    trade_form.begin_edit((&tx).into(), trade_sources, view_owner);
+                }));
+            } else if editable {
+                let form = form;
+                let currencies = form_currencies;
+                let merchants = form_merchants;
+                let accounts = form_accounts;
+                let tx = tx.clone();
+                items.push(MenuItem::new("编辑").on_select(move || {
+                    let label = merchants
+                        .get()
+                        .0
+                        .iter()
+                        .find(|m| Some(&m.id) == tx.merchant_id.as_ref())
+                        .map(|m| m.name.clone());
+                    form.open_edit(&tx, &currencies.get(), label, &accounts.get().0);
+                }));
+            }
+            // 加入物品目标随右键所在行固定（克隆在退款分支
+            // 之前——退款菜单闭包 move 持有 tx 的先例同位）。
+            let item_tx = tx.clone();
+            // 退款（#2035）：无分解支出行开放（分解行不开放——
+            // 退款表单未支持分解，旧壳 #1861 口径；购买项行保留——
+            // 退款新建独立行不触碰原行子行）。原交易随右键所在行
+            // 固定（fixed-target，旧壳同位）。
+            if tx.kind == ledger_transaction::TransactionKind::Expense && tx.fundings.is_empty() {
+                let form = form;
+                let currencies = form_currencies;
+                items.push(MenuItem::new("退款").on_select(move || {
+                    form.open_create_refund(&tx, &currencies.get());
+                }));
+            }
+            // 加入物品（#2044 / 旧壳 transactions.menu.addItem
+            // 同词表）：仅 expense 行（溯源必为支出购买；
+            // ADR-0025 创建唯一入口）。hasItem（旧壳 items
+            // store 溯源指针比对同口径）：快照内存在指向本
+            // 行交易的物品 →　置灰（溯源唯一的入口侧呈现，
+            // 禁令事实源在域创建守卫）。
+            if matches!(item_tx.kind, ledger_transaction::TransactionKind::Expense) {
+                let has_item = items::has_item_for_tx(&items_snap.get().0, &item_tx.id);
+                items.push(
+                    MenuItem::new("加入物品")
+                        .disabled(has_item)
+                        .on_select(move || {
+                            add_item_target.set(AddItemTarget(Some(item_tx.clone())));
+                        }),
+                );
+            }
+            let confirm = confirm_target;
+            items.push(MenuItem::new("删除").on_select(move || {
+                confirm.set(Some(id.clone()));
+            }));
+            context_menu::open_context_menu(items, at);
+        }
+    };
+    // 卡片菜单入口（窄窗卡片「⋯」→ 行菜单单点）：目标交易随卡片固定（id 反查
+    // 装配行首行——派生行同 id，任一行右键的语义同位）。
+    let card_menu = move |card: &assembly::TransactionCard, at: Point<Points>| {
+        let assembled = rows.get_untracked();
+        if let Some(cell) = assembled.iter().find(|r| r.id == card.id) {
+            open_row_menu(cell, at);
+        }
+    };
 
     view()
         .flex_1()
         .flex_col()
         .app_class("bg-background")
         .child(period_row)
+        .child(
+            // 备份入口弹层与反馈挂载面（#2038）：覆盖确认对话框 + 反馈状态
+            // 条（入口下方条位，仅在有反馈时呈现；同一状态束）。
+            backup_entry::backup_entry_overlays(backup, view_owner),
+        )
+        .child(filter_row)
         .child(
             // 搜索框（issue #2023）：标准可编辑文本输入控件（nsh_core `Input`，
             // Linux 宿主为 GTK 原生输入，天然经 GTK IME 管线——中文候选框/焦点
@@ -829,58 +1282,90 @@ fn TransactionsView() -> impl IntoElement {
                         .on_submit(move |_: &str| {
                             // 作废在途防抖（序号失配自弃）后立即装载。
                             search_seq.update(|seq| *seq += 1);
-                            page.set(1);
+                            filters.set_page(1);
                             load(1);
                         }),
                 ),
         )
         .child(
-            view()
-                .test_id("tx-table")
-                .flex_1()
+            // 断点双渲染（#2057 / ADR-0088 决策 9）：窄窗移动档 = 卡片形态
+            // （tx_cards::transaction_cards——卡片格文本与宽形态同一装配产
+            // 物，TransactionCardList 口径），桌面档表格一字不动（迁移系列
+            // 红线）。空态分型三档与表格同词表同判据（list_empty_text 单
+            // 点）；卡片「⋯」与行右键共用同一菜单单点 open_row_menu。
+            when(
+                crate::adaptive::is_narrow,
+                move || {
+                    when(
+                        move || rows.get().is_empty(),
+                        move || {
+                            view().flex_1().items_center().justify_center().child(
+                                text(assembly::list_empty_text(
+                                    searched.get(),
+                                    search_filters_active(),
+                                ))
+                                .text_size(px(13.0))
+                                .text_color(muted),
+                            )
+                        },
+                    )
+                    .otherwise(move || crate::tx_cards::transaction_cards(rows, card_menu))
+                },
+            )
+            .otherwise(move || {
+                view()
+                    .test_id("tx-table")
+                    .flex_1()
                 .child(
                     data_table()
                         .columns(columns)
                         .data(move || rows_to_data(&rows.get()))
                         .render_cell(render_cell(rows))
-                        // 行右键菜单（App* 封装族：上下文菜单，#2022）：目标行
-                        // 由右键所在行固定（fixed-target，旧壳同位）——派生行
-                        // （购买项续行）的 id 同为交易本体 id，任一行右键删除的
-                        // 都是整笔交易。菜单项闭集立桩只接「删除」（文案与旧壳
-                        // transactions.menu.delete 同词表）；弹出与抑制上报归
-                        // context_menu 封装，选中只回写确认目标（对话框呈现与
-                        // 写入执行在下方两单点）。
+                        // 行右键菜单（App* 封装族：上下文菜单，#2022）：菜单项
+                        // 闭集与写路径归 open_row_menu 单点（#2057 起与卡片
+                        // 「⋯」共用同一接缝）——目标行由右键所在行固定（fixed-
+                        // target，旧壳同位），派生行 id 同交易本体。
                         .on_context_menu(move |e: &DataTableContextMenu| {
                             let Some(row) = e.row else {
                                 return;
                             };
-                            if let Some(id) = rows.get().get(row as usize).map(|r| r.id.clone()) {
-                                let confirm = confirm_target;
-                                context_menu::open_context_menu(
-                                    vec![MenuItem::new("删除").on_select(move || {
-                                        confirm.set(Some(id.clone()));
-                                    })],
-                                    Point::new(e.x, e.y),
-                                );
+                            let assembled = rows.get();
+                            if let Some(cell) = assembled.get(row as usize) {
+                                open_row_menu(cell, Point::new(e.x, e.y));
                             }
                         })
                         .loading(move || loading.get())
                         .loading_view(text("正在加载…").text_color(muted))
-                        // 空态分型与旧壳同源：搜索态无命中「无匹配结果」
-                        //（search.noResults），列表态空库「暂无数据」（list.empty）。
+                        // 空态分型三档与旧壳同源（[assembly::list_empty_text]
+                        // 纯决策单点）：搜索态无命中「无匹配结果」
+                        //（search.noResults）；列表态筛选无结果「没有符合条件的
+                        // 交易」（list.emptyFiltered，#2037 筛选激活判定）；
+                        // 列表态空库「暂无数据」（list.empty）。
                         .empty(
                             text(move || {
-                                if searched.get() {
-                                    SEARCH_EMPTY_TEXT
-                                } else {
-                                    "暂无数据"
-                                }
+                                assembly::list_empty_text(searched.get(), search_filters_active())
                             })
                             .text_color(muted),
                         )
                         .classes(table_classes())
                         .flex_1(),
-                ),
+                    )
+            }),
+        )
+        .child(
+            // 加入物品成功反馈条位（#2044）：旧壳 message.success 的条位对应
+            // 物（NSH 无 toast——#2038 裁决）；物品来源列呈现由失效信号驱动
+            // 列表重读承担。
+            when(
+                move || item_feedback.get().is_some(),
+                move || {
+                    text(move || item_feedback.get().unwrap_or_default())
+                        .text_size(px(12.0))
+                        .text_color(item_feedback_fg)
+                        .test_id("tx-add-item-status")
+                        .app_class("px-4 py-1")
+                },
+            ),
         )
         .child(
             // 删除失败呈现（#2022）：码化错误文案 zh-CN 原样，不静默；下次
@@ -919,6 +1404,43 @@ fn TransactionsView() -> impl IntoElement {
                 },
                 on_danger_outcome,
             ),
+        )
+        .child(
+            // 交易表单弹窗（#2034）：新增/编辑共用同表单语义；信号束住视图
+            // 实例，写任务经视图 owner 挂载（弹窗子树卸载不取消）；成功广播
+            // 交易失效信号（列表重读）。
+            txn_form::transaction_form_modal(
+                form,
+                txn_form::TxnFormSources {
+                    accounts: form_accounts,
+                    categories: form_categories,
+                    merchants: form_merchants,
+                    policies: form_policies,
+                    currencies: form_currencies,
+                },
+                view_owner,
+            ),
+        )
+        .child(items::add_item_modal(add_item_target, form_currencies, item_feedback))
+        .child(
+            // 投资记账表单·买卖族弹窗（#2046）：行右键「编辑」分流（入口归属
+            // 与先取明细再开窗的编排语义归 investments_form 模块头）；装载失
+            // 败条位（失败不开窗，旧壳「先取再开窗」同口径——NSH 无 toast 的
+            // 条位对应物）。
+            investments_form::trade_form_modal(trade_form, trade_sources, view_owner),
+        )
+        .child(
+            when(
+                move || trade_form.load_error.get().is_some(),
+                move || {
+                    text(move || trade_form.load_error.get().unwrap_or_default())
+                        .text_size(px(12.0))
+                        .text_color(item_feedback_fg)
+                        .test_id("tx-trade-edit-error")
+                        .app_class("px-4 py-1")
+                },
+            )
+            .otherwise(view),
         )
         .child(
             // 底栏：读失败优先呈现错误；否则总数（搜索态「命中 N 条」、列表态
@@ -973,14 +1495,14 @@ fn TransactionsView() -> impl IntoElement {
                                         .accessibility_label("交易分页")
                                         .previous_accessibility_label("上一页")
                                         .next_accessibility_label("下一页")
-                                        .page(move || page.get())
+                                        .page(move || filters.page.get())
                                         .total_pages(move || assembly::total_pages(total.get()))
                                         .disabled(move || loading.get())
                                         .item_class(
                                             "px-2 py-1 rounded-md text-foreground hover:bg-accent selected:bg-accent disabled:opacity-40",
                                         )
                                         .on_change(move |&picked: &u32| {
-                                            page.set(picked);
+                                            filters.set_page(picked);
                                             load(picked);
                                         }),
                                     )
@@ -994,9 +1516,971 @@ fn TransactionsView() -> impl IntoElement {
         )
 }
 
-/// 立桩根组件：就绪前居中呈现启动三态，就绪后承载交易表格首屏。
+// ---------------------------------------------------------------------------
+// 预算视图（#2033 NSH 迁移②——封装族热身）：预算管理各分类预算 + 执行进度
+// 呈现。域读写直调 `ledger-budget` 等域 crate 读路径（[`crate::boot`]，不经
+// IPC），失效信号接 [`crate::signals`] 预算族（写路径后广播、订阅重读）；
+// PinyinSelect / Modal / Popconfirm 三封装件首消费面（[`crate::pinyin_select`]
+// / [`crate::modal`] / [`crate::popconfirm`]，视图不直连框架基元，ADR-0118）。
+// 金额与进度口径归装配层预算族（[`crate::assembly`]，渲染期零格式化）。
+// ---------------------------------------------------------------------------
+
+/// 周期单选行（创建表单与编辑弹窗共用形态，词表旧壳 budget.period）：两个
+/// radio（nsh-base 行为件），锚点前缀由调用方给（headless 选择器用）。
+fn budget_period_radio(
+    id_prefix: &'static str,
+    period: Signal<ledger_budget::BudgetPeriod>,
+    fg: AdaptiveColor,
+) -> View {
+    let option =
+        |value: ledger_budget::BudgetPeriod, id_suffix: &'static str, label: &'static str| {
+            view().flex_row().items_center().gap_1().child(
+                nsh_base::radio()
+                    .checked(move || period.get() == value)
+                    .on_change(move |_: &bool| period.set(value))
+                    .child(
+                        text(label)
+                            .text_size(px(13.0))
+                            .text_color(fg)
+                            .test_id(format!("{}{}", id_prefix, id_suffix).as_str()),
+                    ),
+            )
+        };
+    view()
+        .flex_row()
+        .gap_3()
+        .child(option(
+            ledger_budget::BudgetPeriod::Monthly,
+            "-period-monthly",
+            "按月",
+        ))
+        .child(option(
+            ledger_budget::BudgetPeriod::Yearly,
+            "-period-yearly",
+            "按年",
+        ))
+}
+
+/// 表单字段标签（弱化小字，旧壳 NFormItem label 的本壳形态）。
+pub(crate) fn field_label(label: &'static str, muted: AdaptiveColor) -> impl IntoElement {
+    text(label).text_size(px(12.0)).text_color(muted)
+}
+
+/// 进度条（本视图自绘：轨道 + 按百分比宽度的指示条，颜色随超支红/正常绿——
+/// 旧壳 NProgress status 语义，色值取金额语义色表同源两值）。入参是响应式
+/// 闭包：宽度与颜色随信号重算（汇总卡信号驱动，表行按格重绘静态闭包）。
+fn progress_bar(
+    percent: impl Fn() -> f32 + Copy + 'static,
+    over_budget: impl Fn() -> bool + Copy + 'static,
+    show_label: bool,
+) -> View {
+    let color = move || {
+        if over_budget() {
+            amount_color(assembly::AmountSemantic::Expense)
+        } else {
+            amount_color(assembly::AmountSemantic::Income)
+        }
+    };
+    let bar = view().flex_row().items_center().gap_2().child(
+        view()
+            .w(px(160.0))
+            .h(px(6.0))
+            .rounded_full()
+            .bg(hsla(0.0, 0.0, 0.5, 0.15))
+            .child(
+                view()
+                    .h(px(6.0))
+                    .w(move || px(160.0 * (percent().clamp(0.0, 100.0) / 100.0)))
+                    .rounded_full()
+                    .bg(color),
+            ),
+    );
+    if show_label {
+        bar.child(
+            text(move || format!("{}%", percent() as i64))
+                .text_size(px(11.0))
+                .test_id("budget-progress-percent"),
+        )
+    } else {
+        bar
+    }
+}
+
+/// 预算视图（导航骨架预算分支的真实组件，#2033）：
+///
+/// - **新增预算卡**：分类（拼音可搜下拉，数据源 = 支出分类树选项）+ 周期
+///   （按月/按年单选，缺省月度与后端缺省一致）+ 金额（元输入，整数分落定）
+///   + 添加；必填与正数前置拦截（旧壳同词表），域码化错误条位呈现。
+/// - **年度汇总卡**：年化总额 / 本年已支 + 进度条 + 说明（旧壳 #1948 形态）。
+/// - **预算执行表**：分类（路径名或「未分类」回退）/ 周期 / 预算 / 已支出 /
+///   进度 / 状态 / 操作（编辑 + 删除，删除经确认气泡）。
+///
+/// 数据流：装载（进度 + 年度汇总 + 支出分类字典一次读齐）→ 装配层一次性产出
+/// 展示格；写路径（创建/编辑/删除）成功后广播预算失效信号，订阅重读——
+/// 「失效信号→列表重读」的消费接线点（删除即红条目钉在
+/// tests/app_headless.rs）。写重活走 blocking 后台线程，任务挂视图实例
+/// owner（弹窗子树卸载不取消，交易删除先例同形）。
+#[component]
+pub(crate) fn BudgetView() -> impl IntoElement {
+    let view_owner = Owner::current();
+    let loading = signal(true);
+    let error = signal(None::<String>);
+    // 装配产物（渲染期零格式化：行格文本已是一次性装配结果）。
+    let rows = signal(Vec::<assembly::BudgetRowCells>::new());
+    let summary = signal(None::<assembly::BudgetSummaryCells>);
+    // 支出分类树选项（拼音可搜下拉的数据源）。
+    let options = signal(Vec::<assembly::CategoryOption>::new());
+
+    // 创建表单态。
+    let category_id = signal(None::<String>);
+    let period = signal(ledger_budget::BudgetPeriod::Monthly);
+    let amount_text = signal(String::new());
+    let create_error = signal(None::<String>);
+    // 编辑弹窗态（目标行 + 回填字段；显示由「意图非空」派生，关闭统一置回
+    // None 终态——旧壳 ModalIntent 编排的本壳等价形态）。
+    let edit_target = signal(None::<assembly::BudgetRowCells>);
+    let edit_amount = signal(String::new());
+    let edit_period = signal(ledger_budget::BudgetPeriod::Monthly);
+    let edit_error = signal(None::<String>);
+    // 删除确认态（气泡目标预算 id；按行匹配的气泡一次只开一个）。
+    let confirm_id = signal(None::<String>);
+    let delete_error = signal(None::<String>);
+
+    // 主题令牌（双态自适应；令牌缺失回退亮灰/中灰可读兜底，先例同形）。
+    let tokens = nsh_core::element::tokens();
+    let fg = tokens
+        .color("foreground")
+        .unwrap_or_else(|| hsla(0.0, 0.0, 0.98, 1.0).into());
+    let muted = tokens
+        .color("muted-foreground")
+        .unwrap_or_else(|| hsla(0.0, 0.0, 0.45, 1.0).into());
+    let danger_fg = tokens
+        .color("destructive")
+        .unwrap_or_else(|| hsla(0.0, 0.0, 0.98, 1.0).into());
+
+    // 装载（首屏与失效信号重读共用一条路径）：进度行集 + 年度汇总 + 支出分类
+    // 字典一次读齐（小表聚合，重读成本可忽略）；金额隐私开关随装载取设备态
+    //（轻量设置项，同步读）。阻塞读走后台线程（SQLite IO 不占引擎线程）。
+    let load = move || {
+        loading.set(true);
+        error.set(None);
+        let db = db_slot().clone();
+        let privacy = amount_privacy_enabled();
+        spawn(async move {
+            let Some(db) = db else {
+                error.set(Some("内部错误：账本库会话缺失".to_owned()));
+                loading.set(false);
+                return;
+            };
+            let outcome = blocking(move || -> ledger_infra::error::Result<(
+                Vec<ledger_budget::BudgetProgress>,
+                ledger_budget::BudgetAnnualSummary,
+                Vec<ledger_categories::Category>,
+            )> {
+                let progress = boot::budget_progress(&db)?;
+                let annual = boot::budget_annual_summary(&db)?;
+                let categories = boot::category_rows(&db)?;
+                Ok((progress, annual, categories))
+            })
+            .await;
+            match outcome {
+                Ok(Ok((progress, annual, category_rows))) => {
+                    let table = assembly::CategoryTable::from_categories(&category_rows);
+                    rows.set(assembly::assemble_budget_rows(&progress, &table, privacy));
+                    summary.set(Some(assembly::assemble_budget_summary(&annual, privacy)));
+                    options.set(assembly::expense_category_options(&category_rows));
+                }
+                Ok(Err(e)) => error.set(Some(e.to_string())),
+                Err(_) => error.set(Some("内部错误：读任务异常退出".to_owned())),
+            }
+            loading.set(false);
+        });
+    };
+
+    // 失效信号订阅（预算写路径成功后广播 → 本视图重读）：订阅句柄随视图实例
+    // 存亡（句柄移入 effect 闭包，交易视图同形——直放 let 会在体结束时 Drop）。
+    let reload_subscription = signals::subscribe_budgets_changed(load);
+    effect(move || {
+        let _held_for_view_lifetime: &signals::BudgetsChangedSubscription = &reload_subscription;
+    });
+
+    // 下钻意图投递即弃（预算视图无定位形态——旧壳预算路由不读 focus 同语义；
+    // 读一次封闸语义由 take_intent 单点承担）。
+    effect(move || {
+        let _current_landed = nav::store().current.get();
+        let _ = nav::take_intent();
+    });
+
+    // 首屏装载（组件任务运行一次；boot 成功先于本视图呈现，DB 恒已就位）。
+    load();
+
+    // 创建预算（前置拦截 → 域公开写入口直调 → 成功广播失效信号并清表单）。
+    let perform_create = move || {
+        let cents = assembly::budget_yuan_to_cents(&amount_text.get());
+        let category = category_id.get();
+        let failure = match (category.as_ref(), cents) {
+            (None, _) | (_, None) => Some("请填写分类和金额".to_owned()),
+            (Some(_), Some(c)) if c <= 0 => Some("预算金额必须为正数".to_owned()),
+            _ => None,
+        };
+        if let Some(message) = failure {
+            create_error.set(Some(message));
+            return;
+        }
+        create_error.set(None);
+        let input = ledger_budget::BudgetInput {
+            category_id: category.unwrap_or_default(),
+            period: Some(period.get_untracked()),
+            amount_cents: cents.unwrap_or_default(),
+            start_date: boot::today_string(),
+        };
+        let db = db_slot().clone();
+        view_owner.run(move || {
+            spawn(async move {
+                let outcome = blocking(move || match db.as_ref() {
+                    Some(db) => boot::create_budget(db, &input),
+                    None => Err(AppError::coded(
+                        boot::CODE_SESSION_MISSING,
+                        "内部错误：账本库会话缺失",
+                    )),
+                })
+                .await;
+                match outcome {
+                    Ok(Ok(_)) => {
+                        category_id.set(None);
+                        amount_text.set(String::new());
+                        period.set(ledger_budget::BudgetPeriod::Monthly);
+                        // 失效信号广播（「写路径后刷新」的广播接线点，删除
+                        // 即红条目钉在 tests/app_headless.rs）。
+                        signals::notify_budgets_invalidated();
+                    }
+                    Ok(Err(e)) => create_error.set(Some(format!("创建失败: {e}"))),
+                    Err(_) => {
+                        create_error.set(Some("创建失败: 内部错误：创建任务异常退出".to_owned()))
+                    }
+                }
+            });
+        });
+    };
+
+    // 编辑保存（金额与周期一并提交；分类不可改，改法为删旧建新——旧壳同
+    // 语义；保存成功关窗 + 广播失效信号）。
+    let perform_update = move || {
+        let Some(target) = edit_target.get_untracked() else {
+            return;
+        };
+        let cents = assembly::budget_yuan_to_cents(&edit_amount.get());
+        let failure = match cents {
+            None => Some("预算金额必须为正数".to_owned()),
+            Some(c) if c <= 0 => Some("预算金额必须为正数".to_owned()),
+            Some(_) => None,
+        };
+        if let Some(message) = failure {
+            edit_error.set(Some(message));
+            return;
+        }
+        edit_error.set(None);
+        let next_period = edit_period.get_untracked();
+        let db = db_slot().clone();
+        view_owner.run(move || {
+            spawn(async move {
+                let outcome = blocking(move || match db.as_ref() {
+                    Some(db) => boot::update_budget(
+                        db,
+                        &target.id,
+                        cents.unwrap_or_default(),
+                        Some(next_period),
+                    ),
+                    None => Err(AppError::coded(
+                        boot::CODE_SESSION_MISSING,
+                        "内部错误：账本库会话缺失",
+                    )),
+                })
+                .await;
+                match outcome {
+                    Ok(Ok(())) => {
+                        edit_target.set(None);
+                        signals::notify_budgets_invalidated();
+                    }
+                    Ok(Err(e)) => edit_error.set(Some(format!("更新失败: {e}"))),
+                    Err(_) => {
+                        edit_error.set(Some("更新失败: 内部错误：保存任务异常退出".to_owned()))
+                    }
+                }
+            });
+        });
+    };
+
+    // 删除执行（气泡确认后；成功广播失效信号，失败条位呈现不静默）。
+    let perform_delete = move |id: String| {
+        delete_error.set(None);
+        let db = db_slot().clone();
+        view_owner.run(move || {
+            spawn(async move {
+                let outcome = blocking(move || match db.as_ref() {
+                    Some(db) => boot::delete_budget(db, &id),
+                    None => Err(AppError::coded(
+                        boot::CODE_SESSION_MISSING,
+                        "内部错误：账本库会话缺失",
+                    )),
+                })
+                .await;
+                match outcome {
+                    Ok(Ok(())) => signals::notify_budgets_invalidated(),
+                    Ok(Err(e)) => delete_error.set(Some(format!("删除失败: {e}"))),
+                    Err(_) => {
+                        delete_error.set(Some("删除失败: 内部错误：删除任务异常退出".to_owned()))
+                    }
+                }
+            });
+        });
+    };
+
+    // 表格自绘格（进度条 / 状态色 / 操作列）：格文本仍是装配产物，本闭包只
+    // 补形态与交互（编辑回填、删除目标回写）。行标识用 Arc<str>（Copy）——
+    // 封装件闭包界要求 Copy 捕获。
+    let render_budget_cell =
+        move |cell: &nsh_base::DataTableCell| -> nsh_core::element::AnyElement {
+            let row_index = cell.row as usize;
+            match cell.key.as_ref() {
+                "progress" => {
+                    let snapshot = rows.get_untracked();
+                    let row = snapshot.get(row_index);
+                    let percent = row.map(|r| r.percent).unwrap_or(0.0);
+                    let over = row.map(|r| r.over_budget).unwrap_or(false);
+                    progress_bar(move || percent, move || over, true).into_element()
+                }
+                "status" => {
+                    let snapshot = rows.get_untracked();
+                    let row = snapshot.get(row_index);
+                    let over = row.map(|r| r.over_budget).unwrap_or(false);
+                    let status = row.map(|r| r.status).unwrap_or("");
+                    text(status)
+                        .text_size(px(12.0))
+                        .text_color(if over {
+                            amount_color(assembly::AmountSemantic::Expense)
+                        } else {
+                            amount_color(assembly::AmountSemantic::Income)
+                        })
+                        .into_element()
+                }
+                "actions" => {
+                    let snapshot = rows.get_untracked();
+                    let Some(row) = snapshot.get(row_index) else {
+                        return view().into_element();
+                    };
+                    let row = row.clone();
+                    let row_id: std::rc::Rc<str> = row.id.as_str().into();
+                    let delete_id = row_id.clone();
+                    let open_id = row_id.clone();
+                    view()
+                        .flex_row()
+                        .gap_1()
+                        .child(
+                            nsh_base::button()
+                                .app_class("px-2 py-1 rounded-md text-foreground hover:bg-accent")
+                                .child(
+                                    text("编辑")
+                                        .text_size(px(12.0))
+                                        .text_color(fg)
+                                        .test_id("budget-edit"),
+                                )
+                                .on_press(move |_: &()| {
+                                    edit_amount
+                                        .set(assembly::budget_cents_to_yuan_text(row.amount_cents));
+                                    edit_period.set(row.period);
+                                    edit_error.set(None);
+                                    edit_target.set(Some(row.clone()));
+                                }),
+                        )
+                        .child(
+                            // 轻量确认气泡（App* 封装族 Popconfirm 首消费）：删除
+                            // 目标按行回写，气泡开合与确认归封装（抑制上报自含）。
+                            popconfirm::popconfirm(
+                                "budget-del",
+                                move || confirm_id.get().as_deref() == Some(&*open_id),
+                                move |open: bool| {
+                                    if open {
+                                        confirm_id.set(Some(row_id.to_string()));
+                                    } else {
+                                        confirm_id.set(None);
+                                    }
+                                },
+                                popconfirm::PopconfirmSpec {
+                                    message: "确认删除？".to_owned(),
+                                    confirm_label: "删除".to_owned(),
+                                    cancel_label: "取消".to_owned(),
+                                },
+                                // 触发件用纯视图（nsh-base Button 自含按压语义
+                                // 会吞掉外层按压——封装的按压源是外层包裹视图）。
+                                view()
+                                    .app_class(
+                                        "px-2 py-1 rounded-md text-foreground hover:bg-accent",
+                                    )
+                                    .child(
+                                        text("删除")
+                                            .text_size(px(12.0))
+                                            .text_color(fg)
+                                            .test_id("budget-delete"),
+                                    ),
+                                move || perform_delete(delete_id.to_string()),
+                            ),
+                        )
+                        .into_element()
+                }
+                _ => text(cell.text.clone()).number_of_lines(1).into_element(),
+            }
+        };
+
+    // 预算执行表列（装配列定义 → 宿主列；进度列吸收富余宽——内容区宽单点
+    // [`crate::adaptive::content_width`]，断点口径唯一）。
+    let columns = computed(move || {
+        let width = adaptive::content_width();
+        let mut columns: Vec<nsh_base::DataTableColumn> = assembly::BUDGET_COLUMNS
+            .iter()
+            .map(|def| {
+                let mut column = nsh_base::DataTableColumn::default();
+                column.key = def.key.into();
+                column.title = Some(def.title.into());
+                column.width = Some(Points(def.width));
+                column.align = match def.align {
+                    assembly::ColumnAlign::Start => nsh_base::DataTableAlign::Start,
+                    assembly::ColumnAlign::End => nsh_base::DataTableAlign::End,
+                };
+                column
+            })
+            .collect();
+        let suggested: f32 = assembly::BUDGET_COLUMNS.iter().map(|def| def.width).sum();
+        let extra = (width - suggested).max(0.0);
+        if extra > 0.0
+            && let Some(progress) = columns.iter_mut().find(|col| col.key == "progress")
+            && let Some(w) = progress.width
+        {
+            progress.width = Some(Points(w.0 + extra));
+        }
+        columns
+    });
+
+    // 创建表单行（分类 / 周期 / 金额 / 添加）。
+    let create_form = view()
+        .flex_row()
+        .items_center()
+        .gap_3()
+        .flex_wrap()
+        .child(
+            view()
+                .flex_row()
+                .items_center()
+                .gap_2()
+                .child(field_label("分类", muted))
+                .child(pinyin_select::pinyin_select(
+                    "budget-category",
+                    move || options.get(),
+                    category_id,
+                    "支出分类",
+                    false,
+                )),
+        )
+        .child(
+            view()
+                .flex_row()
+                .items_center()
+                .gap_2()
+                .child(field_label("周期", muted))
+                .child(budget_period_radio("budget", period, fg)),
+        )
+        .child(
+            view()
+                .flex_row()
+                .items_center()
+                .gap_2()
+                .child(field_label("金额", muted))
+                .child(
+                    input()
+                        .test_id("budget-amount")
+                        .value(move || amount_text.get())
+                        .placeholder("0.00")
+                        .optional_label("预算金额")
+                        .text_color(fg)
+                        .w(px(120.0))
+                        .app_class(
+                            "bg-background rounded-md border border-border px-2 py-1 \
+                             placeholder:text-muted-foreground",
+                        )
+                        .on_change(move |text: &str| amount_text.set(text.to_owned())),
+                ),
+        )
+        .child(
+            nsh_base::button()
+                .app_class("px-3 py-1.5 rounded-md bg-primary hover:opacity-90")
+                .child(
+                    text("添加")
+                        .text_size(px(13.0))
+                        .text_color(rgb(0xffffff))
+                        .test_id("budget-add"),
+                )
+                .on_press(move |_: &()| perform_create()),
+        );
+
+    // 年度汇总卡体（汇总在册才呈现——取数失败不渲染空卡，错误由条位呈现）。
+    let summary_card = when(
+        move || summary.get().is_some(),
+        move || {
+            view()
+                .flex_col()
+                .gap_2()
+                .app_class("rounded-md border border-border p-3")
+                .child(
+                    view()
+                        .flex_row()
+                        .items_center()
+                        .justify_between()
+                        .child(
+                            text("本年度预算")
+                                .text_size(px(13.0))
+                                .font_weight(nsh_core::element::FontWeight::SEMIBOLD)
+                                .text_color(fg),
+                        )
+                        .child(
+                            text(move || summary.get().map(|c| c.status).unwrap_or_default())
+                                .text_size(px(12.0))
+                                .text_color(move || {
+                                    if summary.get().map(|c| c.over_budget).unwrap_or(false) {
+                                        amount_color(assembly::AmountSemantic::Expense)
+                                    } else {
+                                        amount_color(assembly::AmountSemantic::Income)
+                                    }
+                                }),
+                        ),
+                )
+                .child(
+                    // 响应式统计行（#2057：窄窗纵向堆叠，旧壳移动档三分列收合
+                    // 同构；#2033 移动档偏差的本票支付面）。
+                    adaptive::responsive_row(32.0, move || {
+                        vec![
+                            view()
+                                .flex_col()
+                                .child(text("年度预算总额").text_size(px(11.0)).text_color(muted))
+                                .child(
+                                    text(move || {
+                                        summary
+                                            .get()
+                                            .map(|c| c.annual_total.clone())
+                                            .unwrap_or_default()
+                                    })
+                                    .text_size(px(22.0))
+                                    .text_color(fg)
+                                    .test_id("budget-summary-total"),
+                                )
+                                .into_element(),
+                            view()
+                                .flex_col()
+                                .child(text("本年已支").text_size(px(11.0)).text_color(muted))
+                                .child(
+                                    text(move || {
+                                        summary.get().map(|c| c.spent.clone()).unwrap_or_default()
+                                    })
+                                    .text_size(px(18.0))
+                                    .text_color(fg)
+                                    .test_id("budget-summary-spent"),
+                                )
+                                .into_element(),
+                        ]
+                    }),
+                )
+                .child(progress_bar(
+                    move || summary.get().map(|c| c.percent).unwrap_or(0.0),
+                    move || summary.get().map(|c| c.over_budget).unwrap_or(false),
+                    false,
+                ))
+                .child(
+                    text("月预算按 ×12 年化计入总额；未设预算的分类支出不计入已支。")
+                        .text_size(px(11.0))
+                        .text_color(muted),
+                )
+        },
+    )
+    .otherwise(view);
+
+    view()
+        .flex_1()
+        .flex_col()
+        .app_class("bg-background")
+        .child(
+            // 屏名（内容区标题，同容器壳形态）。
+            view().px_4().py_2().child(
+                text("预算")
+                    .text_size(px(16.0))
+                    .text_color(fg)
+                    .test_id("view-title"),
+            ),
+        )
+        .child(
+            // 装载失败条位（码化错误 zh-CN 原样，不静默）。
+            when(
+                move || error.get().is_some(),
+                move || {
+                    text(move || format!("加载失败：{}", error.get().unwrap_or_default()))
+                        .text_size(px(12.0))
+                        .text_color(fg)
+                        .test_id("budget-error")
+                        .app_class("px-4 py-1")
+                },
+            )
+            .otherwise(view),
+        )
+        .child(
+            // 内容（表卡占剩余高度——DataTable 虚拟化按自身高度裁行，不进
+            // 滚动容器；窄窗下的整页滚动随窄窗横切票）。
+            view()
+                .flex_1()
+                .flex_col()
+                .gap_3()
+                .p_4()
+                    .child(
+                        // 新增预算卡。
+                        view()
+                            .flex_col()
+                            .gap_2()
+                            .app_class("rounded-md border border-border p-3")
+                            .child(
+                                text("新增预算")
+                                    .text_size(px(13.0))
+                                    .font_weight(nsh_core::element::FontWeight::SEMIBOLD)
+                                    .text_color(fg),
+                            )
+                            .child(create_form)
+                            .child(
+                                // 创建错误/提示条位（前置拦截与域错误同位；下次
+                                // 尝试开始时清空）。
+                                when(
+                                    move || create_error.get().is_some(),
+                                    move || {
+                                        text(move || {
+                                            create_error.get().unwrap_or_default()
+                                        })
+                                        .text_size(px(12.0))
+                                        .text_color(danger_fg)
+                                        .test_id("budget-create-error")
+                                    },
+                                )
+                                .otherwise(view),
+                            ),
+                    )
+                    .child(summary_card)
+                    .child(
+                        // 预算执行卡：表格 + 删除失败条位 + 空态。
+                        view()
+                            .flex_1()
+                            .flex_col()
+                            .gap_2()
+                            .app_class("rounded-md border border-border p-3")
+                            .child(
+                                text("预算执行")
+                                    .text_size(px(13.0))
+                                    .font_weight(nsh_core::element::FontWeight::SEMIBOLD)
+                                    .text_color(fg),
+                            )
+                            .child(
+                                view()
+                                    .test_id("budget-table")
+                                    .flex_1()
+                                    .child(
+                                        data_table()
+                                            .columns(columns)
+                                            .data(move || {
+                                                let mut data = nsh_base::DataTableRows::new(rows.get().len());
+                                                data = data
+                                                    .texts("category", rows.get().iter().map(|r| r.category.as_str()))
+                                                    .texts("period", rows.get().iter().map(|r| r.period_label))
+                                                    .texts("amount", rows.get().iter().map(|r| r.amount.as_str()))
+                                                    .texts("spent", rows.get().iter().map(|r| r.spent.as_str()))
+                                                    .texts("progress", rows.get().iter().map(|_| ""))
+                                                    .texts("status", rows.get().iter().map(|_| ""))
+                                                    .texts("actions", rows.get().iter().map(|_| ""));
+                                                data
+                                            })
+                                            .render_cell(move |cell: &nsh_base::DataTableCell| {
+                                                render_budget_cell(cell)
+                                            })
+                                            .loading(move || loading.get())
+                                            .loading_view(text("正在加载…").text_color(muted))
+                                            .empty(text("暂无数据").text_color(muted))
+                                            .classes(table_classes())
+                                            .flex_1(),
+                                    ),
+                            )
+                            .child(
+                                when(
+                                    move || delete_error.get().is_some(),
+                                    move || {
+                                        text(move || delete_error.get().unwrap_or_default())
+                                        .text_size(px(12.0))
+                                        .text_color(danger_fg)
+                                        .test_id("budget-delete-error")
+                                    },
+                                )
+                                .otherwise(view),
+                            ),
+                    ),
+        )
+        .child(
+            // 编辑弹窗（App* 封装族 Modal 首消费）：分类只读行 + 周期 + 金额
+            // + 取消/保存；ESC / ✕ / 取消三路径关闭不写（弹层语义归封装）。
+            modal::app_modal(
+                move || edit_target.get().is_some(),
+                || "编辑预算".to_owned(),
+                move || {
+                    edit_target.set(None);
+                },
+                move || {
+                    let category = edit_target
+                        .get()
+                        .map(|row| row.category.clone())
+                        .unwrap_or_default();
+                    view()
+                        .flex_col()
+                        .gap_3()
+                        .child(
+                            view()
+                                .flex_row()
+                                .items_center()
+                                .gap_2()
+                                .child(field_label("分类", muted))
+                                // 分类只读（改法为删旧建新，旧壳同语义）。
+                                .child(text(category).text_size(px(13.0)).text_color(fg)),
+                        )
+                        .child(
+                            view()
+                                .flex_row()
+                                .items_center()
+                                .gap_2()
+                                .child(field_label("周期", muted))
+                                .child(budget_period_radio("budget-edit", edit_period, fg)),
+                        )
+                        .child(
+                            view()
+                                .flex_row()
+                                .items_center()
+                                .gap_2()
+                                .child(field_label("金额", muted))
+                                .child(
+                                    input()
+                                        .test_id("budget-edit-amount")
+                                        .value(move || edit_amount.get())
+                                        .placeholder("0.00")
+                                        .optional_label("预算金额")
+                                        .text_color(fg)
+                                        .w(px(160.0))
+                                        .app_class(
+                                            "bg-background rounded-md border border-border px-2 py-1 \
+                                             placeholder:text-muted-foreground",
+                                        )
+                                        .on_change(move |text: &str| {
+                                            edit_amount.set(text.to_owned())
+                                        }),
+                                ),
+                        )
+                        .child(
+                            when(
+                                move || edit_error.get().is_some(),
+                                move || {
+                                    text(move || edit_error.get().unwrap_or_default())
+                                        .text_size(px(12.0))
+                                        .text_color(danger_fg)
+                                        .test_id("budget-edit-error")
+                                },
+                            )
+                            .otherwise(view),
+                        )
+                        .child(
+                            view()
+                                .flex_row()
+                                .justify_end()
+                                .gap_2()
+                                .child(
+                                    nsh_base::button()
+                                        .app_class(
+                                            "px-3 py-1.5 rounded-md border border-border text-foreground hover:bg-accent",
+                                        )
+                                        .child(
+                                            text("取消")
+                                                .text_size(px(13.0))
+                                                .text_color(fg)
+                                                .test_id("budget-cancel"),
+                                        )
+                                        .on_press(move |_: &()| edit_target.set(None)),
+                                )
+                                .child(
+                                    nsh_base::button()
+                                        .app_class("px-3 py-1.5 rounded-md bg-primary hover:opacity-90")
+                                        .child(
+                                            text("保存")
+                                                .text_size(px(13.0))
+                                                .text_color(rgb(0xffffff))
+                                                .test_id("budget-save"),
+                                        )
+                                        .on_press(move |_: &()| perform_update()),
+                                ),
+                        )
+                },
+            ),
+        )
+}
+
+/// 视图宿主（导航骨架的内容区，#2032）：已迁移的交易列表与预算视图挂真实
+/// 组件，三容器挂「更多」页签壳，其余未迁移视图共享反应式占位壳（标题随
+fn view_host(nav: nav::NavStore) -> impl IntoElement {
+    // 当前视图信号（Copy 句柄移入分支谓词闭包，'static 无借用逃逸）。
+    let current = nav.current;
+    let is = move |name: ViewName| move || current.get() == name;
+    let group_more = |gid: nav_model::GroupId| move || views::group_more_view(gid);
+    // 分支序随迁移系列推进：交易列表 / 预算（#2033）/ 账户（#2041）/
+    // 定时（#2042）/ 概览（#2039）/ 搜索（#2040）/ 物品（#2044）/ 报表
+    //（#2048）/ 储蓄目标（#2056）/ 设置（#2053）/ 保单（#2050）/ 实物资产
+    //（#2049）/ 商户（#2052）/ 跨账本汇总与 AI 提示词（#2055）/ 概览与盈亏
+    // 两页签的投资视图（#2045，⑯ 收口前持仓/明细/标的页签由 #2045 视图内
+    // 占位待 ⑮/⑯）挂真实组件，三容器挂「更多」页签壳，其余未迁移视图共享占位。
+    when(
+    is(ViewName::Transactions),
+    transactions_view,
+)
+.otherwise(move || {
+    when(
+        is(ViewName::Budget),
+        budget_view,
+    )
+    .otherwise(move || {
+        when(
+            is(ViewName::Accounts),
+            accounts::accounts_view,
+        )
+        .otherwise(move || {
+            when(
+                is(ViewName::Scheduled),
+                scheduled::scheduled_view,
+            )
+            .otherwise(move || {
+                when(
+                    is(ViewName::Items),
+                    items::items_view,
+                )
+                .otherwise(move || {
+                    when(
+                        is(ViewName::Dashboard),
+                        dashboard::dashboard_view,
+                    )
+                    .otherwise(move || {
+                        when(
+                            is(ViewName::Search),
+                            search::search_view,
+                        )
+                        .otherwise(move || {
+                            when(
+                                is(ViewName::Reports),
+                                reports::reports_view,
+                            )
+                            .otherwise(move || {
+                                when(
+                                    is(ViewName::SavingsGoals),
+                                    crate::savings::savings_goals_view,
+                                )
+                                .otherwise(move || {
+                                    when(
+                                        is(ViewName::Settings),
+                                        settings::settings_view,
+                                    )
+                                    .otherwise(move || {
+                                        when(
+                                            is(ViewName::Policies),
+                                            crate::policies::policies_view,
+                                        )
+                                        .otherwise(move || {
+                                            when(
+                                                is(ViewName::PhysicalAssets),
+                                                crate::physical_assets::physical_assets_view,
+                                            )
+                                            .otherwise(move || {
+                                                when(
+                                                    is(ViewName::Merchants),
+                                                    crate::merchants::merchants_view,
+                                                )
+                                                .otherwise(move || {
+                                                when(
+                                                    is(ViewName::Ai),
+                                                    crate::ai_prompt::ai_prompt_view,
+                                                )
+                                                .otherwise(move || {
+                                                    when(
+                                                        is(ViewName::CrossBookSummary),
+                                                        crate::cross_book::cross_book_summary_view,
+                                                    )
+                                                    .otherwise(move || {
+                                                        when(
+                                                            is(ViewName::Investments),
+                                                            investments::investments_view,
+                                                        )
+                                                        .otherwise(move || {
+                                                            when(
+                                                            is(ViewName::BookkeepingMore),
+                                                            group_more(nav_model::GroupId::Bookkeeping),
+                                                        )
+                                                        .otherwise(move || {
+                                                            when(
+                                                                is(ViewName::AssetsMore),
+                                                                group_more(nav_model::GroupId::Assets),
+                                                            )
+                                                            .otherwise(move || {
+                                                                when(
+                                                                    is(ViewName::InsightsMore),
+                                                                    group_more(nav_model::GroupId::Insights),
+                                                                )
+                                                                .otherwise(move || {
+                                                                        // 未迁移视图反应式占位壳：标题随当前视图；意图消费时机 = 落位
+                                                                        //（effect 键 current，同轮落地）。
+                                                                        let focused = signal(None::<nav::NavIntent>);
+                                                                        effect(move || {
+                                                                        let _current = nav.current.get();
+                                                                        focused.set(nav::take_intent());
+                                                                        });
+                                                                        views::placeholder_shell_current(focused)
+                                                                    })
+                                                                })
+                                                            })
+                                                        })
+                                                    })
+                                                })
+                                            })
+                                        })
+                                    })
+                                })
+                            })
+                        })
+                    })
+                })
+            })
+        })
+    })
+})
+})
+}
+
+/// 立桩根组件：就绪前居中呈现启动三态，就绪后承载导航骨架（侧栏 + 内容区）。
 #[component]
 pub fn App() -> impl IntoElement {
+    // 导航状态与筛选会话态挂根组件实例（根永生，信号存活与进程同步；后续消费
+    // 经同一句柄；筛选会话态「视图卸载不丢」依赖根实例所有权，#2037），键位带
+    // 绑定随根实例存亡（引擎线程派发，含抑制闸门）。
+    let nav = nav::store();
+    tx_filter::store();
+    // 报表页会话态（#2048）同样挂根实例（首调初始化；离开报表视图重挂不丢
+    // ——旧壳 reports-session 存活期 = 应用会话同语义）。
+    reports::store();
+    nav::bind_shortcuts();
+    // 显示主题启动钩（#2053）：按存储外观应用全局显色——三环接缝（存储读 /
+    // 解析 / 应用）在 settings::apply_startup_appearance 单点内的接线，拆除
+    // 即红（headless 外观探针）。
+    settings::apply_startup_appearance();
     let state = signal(StartupView::Loading);
     // 主行/次行前景取主题令牌（双态自适应，registry 缺省带主题双态令牌）：
     // 裸 text 的默认前景是黑（ResolvedTextStyle::default 的 React Native
@@ -1025,11 +2509,33 @@ pub fn App() -> impl IntoElement {
         state.set(outcome);
     });
     view().flex_1().flex_col().app_class("bg-background").child(
-        // 启动三态与表格首屏互斥呈现：就绪前居中三态，就绪后整窗表格。
-        // 单一分支承载 TransactionsView，不双挂（双实例即双页读与双底栏）。
+        // 启动三态与导航骨架互斥呈现：就绪前居中三态，就绪后侧栏 + 内容区。
+        // 单一分支承载内容区（侧栏与视图宿主同分支），不双挂。
         when(
             move || matches!(state.get(), StartupView::Ready),
-            transactions_view,
+            move || {
+                // 窗口分级分支（#2057 / ADR-0088 决策 2/4）：≥ 断点桌面档渲染
+                // 既有侧栏布局（宽屏主形态一字不动，迁移系列红线）；< 断点移
+                // 动档渲染导航壳（顶栏 + 导航抽屉——抽屉消费同一份导航状态，
+                // [`crate::nav`] ViewState 语义与存储零改动）。断点判定单点
+                // 住 [`crate::adaptive`]，形态分档只改布局分支、不复位任何
+                // 信号（导航/筛选/分页会话态两侧同源——断点切换平滑、状态不丢）。
+                when(crate::adaptive::is_narrow, move || {
+                    view()
+                        .flex_1()
+                        .flex_col()
+                        .child(crate::adaptive::top_bar(fg, muted))
+                        .child(view_host(nav))
+                        .child(crate::adaptive::nav_drawer())
+                })
+                .otherwise(move || {
+                    view()
+                        .flex_1()
+                        .flex_row()
+                        .child(sidebar::sidebar_view())
+                        .child(view_host(nav))
+                })
+            },
         )
         .otherwise(move || {
             view()

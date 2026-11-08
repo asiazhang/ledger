@@ -1,7 +1,8 @@
 //! 多语句读闭包的快照一致性探针（issue #1699 / #1702）：写提交落在语句之间时，
 //! 同屏口径必须仍互相自洽——总量=分量和（realized_pnl）、分子分母同时点
 //! （financial_freedom）、多腿同屏（overview）、现金流集与期末市值同时点
-//! （mwr）、读数↔汇率折算同时点（组合走势）。探针机制见
+//! （mwr）、读数↔汇率折算同时点（组合走势；#2065 补登 list_holdings 行集与
+//! 逐行折算）。探针机制见
 //! `tauri_app_lib::test_support::snapshot_probe`。
 
 use ledger_transaction::create_transaction_internal;
@@ -473,5 +474,83 @@ fn portfolio_trend_prices_and_fx_share_one_snapshot() {
     assert_eq!(
         before.currency_code, after.currency_code,
         "折算基准币种不应漂移"
+    );
+}
+
+/// 持仓行集与逐行汇率折算必须同快照（issue #2065，#1699 纪律补登：SELECT
+/// `v_holdings` 行集与逐行当期汇率软折算是两次独立语句，读数↔汇率折算形态）。
+/// 探针在逐行折算的当期汇率读取（`SELECT rate FROM exchange_rates`，首行折算
+/// 开始时的第一条查询——marker 不得命中闭包首条语句，否则注入整体落在读锁
+/// 之前）开始前于另一连接把当期汇率翻倍——
+/// - 读闭包无快照保护（红）：行集读旧、折算汇率读新，折本位币列相对基线翻倍；
+/// - 读闭包收进读事务（绿）：注入写被挡住，折本位币列与基线逐位相等。
+///
+/// 现价与价格币种同账户币种（USD 账户 + USD 现价）：视图侧 `market_value_cents`
+/// 走同币种分支不读汇率，注入翻倍只影响逐行折本位币列，口径漂移可归因到折算腿。
+#[test]
+fn list_holdings_rows_and_fx_share_one_snapshot() {
+    let dir = ScratchDir::new("investment-holdings-read-snapshot");
+    let conn = open_file(dir.path());
+    seed_account(&conn, "acc-hfx", "美股账户", "investment", "USD", 0);
+    // 买入流水走写路径按周汇率折算（2026-01-10 → 当周周键），当期表另供当期折算。
+    seed_fx_history_weeks(&conn, "USD", "CNY", 7.0, &["2026-01-05"]);
+    seed_exchange_rate(&conn, "USD", "CNY", 7.0);
+    seed_instrument(&conn, "inst-hfx", "AAPL", "Apple", "USD", "unknown");
+    create_transaction_internal(
+        &conn,
+        make_buy_input("acc-hfx", "inst-hfx", 10.0, 1_000_000, 0),
+    )
+    .unwrap();
+    // 现价高出买入价 10%：市值与未实现盈亏均非 None，两条折算腿都有料。
+    seed_market_price(&conn, "inst-hfx", 1_100_000, "USD");
+
+    let before = list_holdings(&conn).unwrap();
+    assert_eq!(
+        before.len(),
+        1,
+        "种子应产出恰好一条持仓行（否则口径断言空转）"
+    );
+    assert_eq!(
+        before[0].market_value_cents,
+        Some(110_000),
+        "10 股 × 现价 11_000 分应为账户币市值 110_000 分（否则口径断言空转）"
+    );
+    assert_eq!(
+        before[0].native_market_value_cents,
+        Some(770_000),
+        "账户币市值 × 当期汇率 7 应得折本位币 770_000 分（否则口径断言空转）"
+    );
+    assert_eq!(
+        before[0].native_unrealized_pnl_cents,
+        Some(70_000),
+        "未实现盈亏 × 当期汇率 7 应得折本位币 70_000 分（否则口径断言空转）"
+    );
+
+    // 探针：逐行折算的当期汇率读取（首轮 try_convert_to_native_current 的
+    // 正查语句）开始前，另一连接提交汇率翻倍。
+    snapshot_probe::arm(
+        &conn,
+        dir.path(),
+        "SELECT rate FROM exchange_rates",
+        &["UPDATE exchange_rates SET rate = rate * 2"],
+    );
+    let after = list_holdings(&conn).unwrap();
+
+    let outcome = snapshot_probe::outcome();
+    assert!(
+        outcome != InjectionOutcome::NotFired,
+        "探针未命中逐行折算的汇率读取（marker 漂移或未臂装），断言失去意义：{outcome:?}"
+    );
+    assert_eq!(
+        after[0].market_value_cents, before[0].market_value_cents,
+        "账户币市值必须与基线同时点（同币种分支不读汇率，不应漂移）"
+    );
+    assert_eq!(
+        after[0].native_market_value_cents, before[0].native_market_value_cents,
+        "折本位币市值必须与基线同时点（金额读旧、汇率读新即漂移）"
+    );
+    assert_eq!(
+        after[0].native_unrealized_pnl_cents, before[0].native_unrealized_pnl_cents,
+        "折本位币未实现盈亏必须与基线同时点（金额读旧、汇率读新即漂移）"
     );
 }
