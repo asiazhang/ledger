@@ -1,18 +1,18 @@
-//! 投资视图·概览与盈亏两页签（issue #2045 NSH 迁移⑭；旧壳 `InvestmentsView.vue`
-//! 概览/盈亏两页签 + `InvestmentOverviewPanel.vue` + `PortfolioTrendPanel.vue`
-//! + `RealizedPnlPanel.vue` 的重生；spec #2031 系列 14/26，投资 1/3）。
+//! 投资视图（issue #2045 NSH 迁移⑭ + #2046 迁移⑮；旧壳 `InvestmentsView.vue`
+//! 页签容器：概览/盈亏随⑭已迁、持仓随⑮，ledger/instruments 随⑯）。
 //!
-//! 页签容器（旧壳 InvestmentsView 的前两页签——本票只迁概览/盈亏，持仓随
-//! ⑮、ledger/instruments 随 ⑯）：visited-once keep-mounted 页签容器单点重建
+//! 页签容器（旧壳 InvestmentsView 前三页签——ledger/instruments 随 ⑯）：
+//! visited-once keep-mounted 页签容器单点重建
 //!（同 [`crate::settings`] 形态）——旧壳 display-directive="show" + 页签 key
 //! 纪律的本壳对应物：已到访页签 display 隐藏保持挂载，切页签不重挂重拉；
 //! 删 display 切换接线即红（headless keep-mounted 探针）。
 //!
-//! 会话槽（旧壳 investments-session store 的重生子集：本票两页签射程内的
-//! 瞬态——当前页签 + 走势预设区间 + 盈亏两表页码）：进程级信号单例，同一
-//! 会话内离开投资视图再回来回原样；冷启动回默认（默认页签「概览」+ 走势
-//! 「1 年」+ 页码 1）；保留全程零写盘。持仓/明细/标的筛选三维与其页解随各自
-//! 页签的归属票就位（本票 Out of Scope，不扩会话槽形状）。
+//! 会话槽（旧壳 investments-session store 的重生子集：已迁三页签射程内的
+//! 瞬态——当前页签 + 走势预设区间 + 盈亏两表页码 + 持仓筛选三维与页码）：
+//! 进程级信号单例，同一会话内离开投资视图再回来回原样；冷启动回默认（默认
+//! 页签「概览」+ 走势「1 年」+ 页码 1）；保留全程零写盘。旧壳持仓筛选三维
+//! 与页码随 issue #1192 住会话 store，本壳会话槽同射程直接承载；明细/标的
+//! 筛选三维与其页解随各自页签的归属票就位（不扩射程之外的形状）。
 //!
 //! 读路径直调域公开读入口（[`crate::boot`]，不经 IPC——与旧壳
 //! investment_overview / realized_pnl_summary / portfolio_value_trend /
@@ -118,6 +118,8 @@ pub(crate) enum InvestmentsTab {
     Overview,
     /// 盈亏。
     Pnl,
+    /// 持仓（#2046）。
+    Holdings,
 }
 
 impl InvestmentsTab {
@@ -126,6 +128,7 @@ impl InvestmentsTab {
         match self {
             InvestmentsTab::Overview => "概览",
             InvestmentsTab::Pnl => PNL_TAB_LABEL,
+            InvestmentsTab::Holdings => "持仓",
         }
     }
 
@@ -134,12 +137,17 @@ impl InvestmentsTab {
         match self {
             InvestmentsTab::Overview => "overview",
             InvestmentsTab::Pnl => "pnl",
+            InvestmentsTab::Holdings => "holdings",
         }
     }
 }
 
-/// 页签全集（顺序 = 旧壳 InvestmentsView 前两位）。
-const TABS: [InvestmentsTab; 2] = [InvestmentsTab::Overview, InvestmentsTab::Pnl];
+/// 页签全集（顺序 = 旧壳 InvestmentsView 前三位；ledger/instruments 随⑯）。
+const TABS: [InvestmentsTab; 3] = [
+    InvestmentsTab::Overview,
+    InvestmentsTab::Pnl,
+    InvestmentsTab::Holdings,
+];
 
 /// 走势预设区间闭集（旧壳 TREND_RANGE_PRESETS；1 月/3 月/1 年/3 年/5 年/全部）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -200,7 +208,38 @@ pub(crate) struct InvestmentsSession {
     pub pnl_year_page: Signal<usize>,
     /// 盈亏·按账户汇总页码（1 起；与按年页码彼此独立）。
     pub pnl_account_page: Signal<usize>,
+    /// 持仓·搜索输入回显值（即时，未经防抖；旧壳 holdingsSearchInput 同射程）。
+    pub holdings_search_input: Signal<String>,
+    /// 持仓·搜索应用值（防抖后参与过滤；旧壳 holdingsSearch 同射程）。
+    pub holdings_search: Signal<String>,
+    /// 持仓·账户过滤（None = 全部默认态；旧壳 holdingsAccountId 同射程）。
+    pub holdings_account_id: Signal<Option<String>>,
+    /// 持仓·排序（None = 默认标的代码字母序；旧壳 holdingsSorter 同射程）。
+    pub holdings_sorter: Signal<Option<HoldingsSorter>>,
+    /// 持仓·页码（1 起；客户端切片的展示切片状态）。
+    pub holdings_page: Signal<usize>,
 }
+
+/// 持仓排序列闭集（旧壳 HoldingsSortColumn 同闭集）：市值 / 持仓收益（未实现
+/// 盈亏）两列。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum HoldingsSortColumn {
+    /// 市值列。
+    MarketValue,
+    /// 持仓收益列。
+    UnrealizedPnl,
+}
+
+/// 持仓排序状态（旧壳 HoldingsSorter 同形）：列 + 方向（descend = 降序）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct HoldingsSorter {
+    pub(crate) column: HoldingsSortColumn,
+    pub(crate) descend: bool,
+}
+
+/// 持仓页客户端切片页大小（旧壳 HOLDINGS_PAGE_SIZE 单源同值：固定 20 不设
+/// 选择器，issue #912）。
+pub(crate) const HOLDINGS_PAGE_SIZE: usize = 20;
 
 static SESSION: std::sync::Mutex<Option<InvestmentsSession>> = std::sync::Mutex::new(None);
 
@@ -220,6 +259,11 @@ pub(crate) fn store() -> InvestmentsSession {
         trend_preset: signal(TrendPreset::OneYear),
         pnl_year_page: signal(1),
         pnl_account_page: signal(1),
+        holdings_search_input: signal(String::new()),
+        holdings_search: signal(String::new()),
+        holdings_account_id: signal(None),
+        holdings_sorter: signal(None),
+        holdings_page: signal(1),
     };
     *slot = Some(s);
     s
@@ -749,8 +793,9 @@ pub(crate) fn assemble_trend(trend: &ledger_investment::PortfolioValueTrend) -> 
 // 视图
 // ---------------------------------------------------------------------------
 
-/// 投资视图（导航骨架投资分支的真实组件）：页签容器（概览/盈亏）+ 两页签
-/// 本体。「删除即红」负向条目钉在 tests/app_headless.rs 与 lib 探针。
+/// 投资视图（导航骨架投资分支的真实组件）：页签容器（概览/盈亏/持仓）+
+/// 价格过期提示条（#2046 视图层横切位，旧壳 InvestmentsView 告警位同位）
+/// + 三页签本体。「删除即红」负向条目钉在 tests/app_headless.rs 与 lib 探针。
 #[component]
 pub(crate) fn InvestmentsView() -> impl IntoElement {
     let session = store();
@@ -824,6 +869,12 @@ pub(crate) fn InvestmentsView() -> impl IntoElement {
             ),
         )
         .child(tab_bar)
+        .child(
+            // 价格过期提示条（#2046）：本地水位检查（零网络），有过期或持仓
+            // 缺现价才出场；同步实际写价后随失效信号自动消失（旧壳 staleness
+            // alert 同位同语义）。
+            crate::investment_sync::staleness_alert(),
+        )
         .child(content_host)
 }
 
@@ -841,6 +892,9 @@ fn keep_mounted_pane(
             let pane = match tab {
                 InvestmentsTab::Overview => overview_pane().into_element(),
                 InvestmentsTab::Pnl => pnl_pane().into_element(),
+                InvestmentsTab::Holdings => {
+                    crate::investments_holdings::holdings_pane().into_element()
+                }
             };
             view()
                 .flex_col()
@@ -863,19 +917,19 @@ fn hide_when_inactive(
 
 /// 主题令牌调色板（双态自适应；令牌缺失回退亮灰/中灰可读兜底，先例同形）。
 #[derive(Clone, Copy)]
-struct PanePalette {
-    fg: nsh_core::element::AdaptiveColor,
-    muted: nsh_core::element::AdaptiveColor,
-    danger: nsh_core::element::AdaptiveColor,
+pub(crate) struct PanePalette {
+    pub(crate) fg: nsh_core::element::AdaptiveColor,
+    pub(crate) muted: nsh_core::element::AdaptiveColor,
+    pub(crate) danger: nsh_core::element::AdaptiveColor,
     /// 盈亏涨跌色（红涨绿跌；dashboard investment_stat 同色值，红涨与交易
     /// 语义色正交——词汇表「盈亏涨跌色」）。
-    gain: nsh_core::element::AdaptiveColor,
-    loss: nsh_core::element::AdaptiveColor,
+    pub(crate) gain: nsh_core::element::AdaptiveColor,
+    pub(crate) loss: nsh_core::element::AdaptiveColor,
     /// 口径说明触发点信息蓝。
-    info: nsh_core::element::AdaptiveColor,
+    pub(crate) info: nsh_core::element::AdaptiveColor,
 }
 
-fn pane_palette() -> PanePalette {
+pub(crate) fn pane_palette() -> PanePalette {
     let tokens = nsh_core::element::tokens();
     PanePalette {
         fg: tokens
@@ -894,7 +948,7 @@ fn pane_palette() -> PanePalette {
 }
 
 /// 语义色 → 适配色（涨跌色消费面：涨/跌/中性三态归本单点，不外溢到市值）。
-fn pnl_color(
+pub(crate) fn pnl_color(
     semantic: Option<assembly::PnlSemantic>,
     palette: &PanePalette,
     neutral: &nsh_core::element::AdaptiveColor,
@@ -907,13 +961,13 @@ fn pnl_color(
 }
 
 /// 概念说明触发点（常驻 ⓘ 形态；文案归 popover_tip 调用方）。
-fn info_dot(info: nsh_core::element::AdaptiveColor) -> impl IntoElement {
+pub(crate) fn info_dot(info: nsh_core::element::AdaptiveColor) -> impl IntoElement {
     text("ⓘ").text_size(px(11.0)).text_color(info)
 }
 
 /// 卡容器（旧壳 NCard 的本壳等价形态：边框 + 圆角 + 内边距，reports.rs
 /// 先例同形）。
-fn card_container(test_id: &'static str) -> View {
+pub(crate) fn card_container(test_id: &'static str) -> View {
     view()
         .test_id(test_id)
         .flex_col()
@@ -927,7 +981,7 @@ fn card_container(test_id: &'static str) -> View {
 
 /// 卡内错误行 + 重试（重试 = 重发同一条读命令，不产生任何写入；旧壳卡内
 /// warning + retry 同语义）。
-fn retry_row(
+pub(crate) fn retry_row(
     message: impl Fn() -> String + Copy + 'static,
     error_id: &'static str,
     retry_id: &'static str,

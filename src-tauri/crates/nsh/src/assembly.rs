@@ -1184,6 +1184,354 @@ pub fn cents_to_amount_text(cents: i64, decimal_places: u32) -> String {
 }
 
 // ---------------------------------------------------------------------------
+// 数量 / 价格文本判定与换算（#2046 投资记账表单；旧壳 packages/utils
+// field-error 判定族的数量/价格变体与 packages/money yuanToPrice 的重生）：
+// 判定口径与金额同族（形状校验 + 四位小数精度），刻度按字段分流——数量录入
+// 粒度至多四位小数（issue #416）、价格万分之一元刻度（ADR-0038）。换算段
+// 判定之后调用，`12.`（判定放行的宽松中间态）在换算段拒绝（与金额「判定拦
+// 红态、装配器 fail fast 援回」两段语义一致）。渲染期零格式化纪律不变。
+// ---------------------------------------------------------------------------
+
+/// 小数文本判定内部共用闭集（数量/价格变体同族）：`Empty`（必填为空）/
+/// `ParseError`（形状非法，如 `4.3发`）/ `OverPrecision`（超四位小数）。
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum DecimalJudgment {
+    Empty,
+    ParseError,
+    OverPrecision,
+}
+
+/// 小数文本判定（形状校验 + 位数上限）：形状 = 可选负号 +（整数 + 可选小数点
+/// 及小数）或（纯小数）——`12.` 合法（宽松中间态，旧壳同判定）、`1.2.3` 非非法；
+/// 两端空白容差。合法且未超位时返回数值，否则返回判定。
+fn judge_decimal_text(text: &str, max_decimals: u32) -> Result<f64, DecimalJudgment> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return Err(DecimalJudgment::Empty);
+    }
+    // 形状：可选负号，（整数部分 + 可选小数点及小数）或（纯小数）。
+    let body = trimmed.strip_prefix('-').unwrap_or(trimmed);
+    let shape_ok = match body.split_once('.') {
+        Some((int_part, frac_part)) => {
+            (int_part.chars().all(|ch| ch.is_ascii_digit())
+                || (int_part.is_empty()
+                    && !frac_part.is_empty()
+                    && frac_part.chars().all(|ch| ch.is_ascii_digit())))
+                && frac_part.chars().all(|ch| ch.is_ascii_digit())
+        }
+        None => !body.is_empty() && body.chars().all(|ch| ch.is_ascii_digit()),
+    };
+    if !shape_ok {
+        return Err(DecimalJudgment::ParseError);
+    }
+    if let Some(dot) = trimmed.find('.')
+        && trimmed.len() - dot - 1 > max_decimals as usize
+    {
+        return Err(DecimalJudgment::OverPrecision);
+    }
+    // 判定放行 `12.`（宽松中间态）；解析端补齐（Rust f64 parse 与旧壳
+    // Number("12.") 都取整，显式规范化免别版本差异）。`-.5` 类纯小数前补 0。
+    let parse_text = trimmed.strip_suffix('.').unwrap_or(trimmed);
+    let parse_text = if parse_text.starts_with("-.") {
+        format!("-0{}", &parse_text[1..])
+    } else if parse_text.starts_with('.') {
+        format!("0{parse_text}")
+    } else {
+        parse_text.to_owned()
+    };
+    parse_text
+        .parse::<f64>()
+        .ok()
+        .filter(|value| value.is_finite())
+        .ok_or(DecimalJudgment::ParseError)
+}
+
+/// 数量文本判定闭集（旧壳 QuantityJudgment 同形：股数/份额，至多四位小数）。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum QuantityJudgment {
+    /// 必填为空（是否红由呈现按时机判定）。
+    Empty,
+    /// 形状非法。
+    ParseError,
+    /// 超出输入粒度（多于四位小数）。
+    OverPrecision,
+    /// 合法，携带数量的数值。
+    Ok(f64),
+}
+
+/// 数量文本判定（旧壳 judgeQuantityText 同口径）：输入是输入框中原样保留的
+/// 原始文本，输入粒度至多四位小数（issue #416 数量精度合同）。
+pub fn judge_quantity_text(text: &str) -> QuantityJudgment {
+    match judge_decimal_text(text, 4) {
+        Ok(quantity) => QuantityJudgment::Ok(quantity),
+        Err(DecimalJudgment::Empty) => QuantityJudgment::Empty,
+        Err(DecimalJudgment::ParseError) => QuantityJudgment::ParseError,
+        Err(DecimalJudgment::OverPrecision) => QuantityJudgment::OverPrecision,
+    }
+}
+
+/// 价格文本判定闭集（旧壳 PriceJudgment 同形：单价至多四位小数，万分之一元
+/// 刻度，ADR-0038）。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum PriceJudgment {
+    /// 必填为空（是否红由呈现按时机判定）。
+    Empty,
+    /// 形状非法。
+    ParseError,
+    /// 超出表示精度（多于四位小数）。
+    OverPrecision,
+    /// 合法，携带元的数值。
+    Ok(f64),
+}
+
+/// 价格文本判定（旧壳 judgePriceText 同口径）。
+pub fn judge_price_text(text: &str) -> PriceJudgment {
+    match judge_decimal_text(text, 4) {
+        Ok(yuan) => PriceJudgment::Ok(yuan),
+        Err(DecimalJudgment::Empty) => PriceJudgment::Empty,
+        Err(DecimalJudgment::ParseError) => PriceJudgment::ParseError,
+        Err(DecimalJudgment::OverPrecision) => PriceJudgment::OverPrecision,
+    }
+}
+
+/// 数量文本判定错误闭集 → 呈现比者面（红框激发由装载面消费）。
+impl QuantityJudgment {
+    pub fn has_error_at(self, marked: bool) -> bool {
+        !matches!(self, QuantityJudgment::Ok(_))
+            && (marked
+                || matches!(
+                    self,
+                    QuantityJudgment::ParseError | QuantityJudgment::OverPrecision
+                ))
+    }
+}
+
+/// 价格文本判定错误闭集 → 呈现比者面（纪律同数量）。
+impl PriceJudgment {
+    pub fn has_error_at(self, marked: bool) -> bool {
+        !matches!(self, PriceJudgment::Ok(_))
+            && (marked
+                || matches!(
+                    self,
+                    PriceJudgment::ParseError | PriceJudgment::OverPrecision
+                ))
+    }
+}
+
+/// 数量文本 → 数值（判定之后的换算段；`12.` 宽松中间态在此拒绝——换算需要
+/// 一个数）。
+pub fn quantity_text_to_f64(text: &str) -> Option<f64> {
+    judge_decimal_text(text, 4).ok()
+}
+
+/// 价格文本 → 万分之一元整数（旧壳 yuanToPrice 单点换算口径的重生）：四舍
+/// 五入到万分之一元（12.34505 → 123451）；i64 范围外拒绝（旧壳
+/// Number.isSafeInteger 同意图）。
+pub fn price_text_to_price_cents(text: &str) -> Option<i64> {
+    let yuan = judge_decimal_text(text, 4).ok()?;
+    let price = (yuan * 10000.0).round();
+    if price.abs() >= 9.0e18 {
+        return None;
+    }
+    Some(price as i64)
+}
+
+/// 数量展示文本（旧壳 formatQuantity 同口径）：至多 4 位小数、去尾零（份额为
+/// f64，可能带小数），整数部分 zh-CN 四位一组（词汇表「数字分组」）；隐私态
+/// 统一掩码（数量无金额符号，掩码消费同一域开关）。`-0` 位噪声归零不呈现
+/// 负号（旧壳 normalized 同口径）。
+pub fn format_quantity_text_f64(quantity: f64, privacy: bool) -> String {
+    if privacy {
+        return AMOUNT_PRIVACY_MASK.to_owned();
+    }
+    // 4 位小数定标（抹平 f64 位噪声）后去零与去小数点。
+    let fixed = format!("{:.4}", quantity);
+    let trimmed = fixed.trim_end_matches('0').trim_end_matches('.');
+    let normalized = if trimmed == "-0" { "0" } else { trimmed };
+    group_number_string(normalized, 4)
+}
+
+/// 价格展示文本（旧壳 formatPrice 同口径，价格列专用，万分之一元刻度）：
+/// 固定 4 位小数后裁零（1.2345 → 1.2345、15.00 → 15），币符紧跟其后、整数
+/// 部分四位一组；币种展示参数 = 数据源币种的字典投影。
+pub fn format_price_text(price_cents: i64, fmt: &CurrencyFormat) -> String {
+    let sign = if price_cents < 0 { "-" } else { "" };
+    let abs = (price_cents as i128).unsigned_abs() as f64 / 10000.0;
+    let fixed = format!("{:.4}", abs);
+    let trimmed = fixed.trim_end_matches('0').trim_end_matches('.');
+    format!("{sign}{}{}", fmt.symbol, group_number_string(trimmed, 4))
+}
+
+/// 万分之一元整数分 → 价格输入回填文本（旧壳 `String(priceToYuan(...))`
+/// 同形：固定 ÷10000、去尾零）。回填锚点：存储价格在本仓录入路径下必在四位
+/// 小数内，判定必为 `Ok`，不显红态。
+pub fn price_cents_to_yuan_text(price_cents: i64) -> String {
+    let yuan = price_cents as f64 / 10000.0;
+    let fixed = format!("{:.4}", yuan);
+    fixed.trim_end_matches('0').trim_end_matches('.').to_owned()
+}
+
+// ---------------------------------------------------------------------------
+// 投资买卖表单装配器（#2046；旧壳 transaction-input.ts buildTradeInput 的
+// 重生）：buy / sell 表单状态 → 完整 TransactionInput 的装配接缝。录入权威
+// 按标的类型分流（issue #302 / ADR-0038）：场外基金 = 确认单金额 + 份额
+//（amount 权威、单价由后端反算不落 wire）；其余 = 数量 + 单价（成交金额由
+// 后端按数量 × 单价 ± 费用重算）。校验 fail fast 顺序镜像旧壳 submit（格式
+// 类拦截在红框位、业务类校验保留提交通道文案）。新增投资表单形态只改本段。
+// ---------------------------------------------------------------------------
+
+/// 投资买卖表单提交状态（提交时点的业务字段；`is_fund` 决定录入权威分流，
+/// 日期已是本地日历日）。记账币种 = 所选投资账户币种（调用方随账户推导，
+/// ADR-0134 决策 5）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct TradeFormSubmit {
+    /// 交易 kind（buy / sell 闭集）。
+    pub kind: TransactionKind,
+    /// 是否场外基金标的（金额权威形态）。
+    pub is_fund: bool,
+    /// 记账币种（账户币种推导面，随账户传入）。
+    pub currency_code: String,
+    /// 投资账户（必选）。
+    pub account_id: Option<String>,
+    /// 标的（必选）。
+    pub instrument_id: Option<String>,
+    /// 可选出资账户（issue #936 / ADR-0096，buy/sell 对称）：None = 维持余额
+    /// 买卖语义（结算账户 = 投资账户）；编辑路径透传行上原值不静默丢失。
+    pub funding_account_id: Option<String>,
+    /// 确认单金额原始文本（基金形态权威输入；换算在装配器内收口）。
+    pub amount_text: String,
+    /// 数量/份额原始文本（判定族消费的原样输入）。
+    pub quantity_text: String,
+    /// 单价原始文本（非基金形态权威输入；基金恒空串——单价反算不落 wire）。
+    pub price_text: String,
+    /// 手续费原始文本（可空；空 = fee_cents 不填而非 0，旧壳同语义）。
+    pub fee_text: String,
+    /// 备注（空串落 None）。
+    pub note: String,
+    /// 交易日期（本地日历日语义）。
+    pub date: chrono::NaiveDate,
+    /// 来源订单号（表单无输入位：创建 None = 静默清除订单锚点，编辑透传
+    /// 行上原值——旧壳 #1862 同语义）。
+    pub source_order_no: Option<String>,
+}
+
+/// 投资买卖表单校验错误（壳层呈现词表的载体；错误条位呈现，旧壳 toast 同位；
+/// word 传「买入」/「卖出」作 kind 方向词，基金量词「份额」传 `quantity_word`
+/// ——两类词都由呈现面闭集闭授，不在装配器内别立第二份 kind → 文案映射）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TradeFormError {
+    /// 投资账户未选（旧壳 investments.form.selectAccount 词表）。
+    AccountRequired,
+    /// 标的未选（旧壳 investments.form.selectInstrument 词表）。
+    InstrumentRequired,
+    /// 基金形态确认单金额未填或非正（「请输入买入/卖出金额（以确认单为准）」）。
+    AmountRequired,
+    /// 数量/份额非正（基金给「请输入确认份额」，其余_给了 kind 分词）。
+    QuantityNotPositive,
+    /// 单价非正（非基金形态；「请输入买入/卖出单价」kind 分词）。
+    PriceNotPositive,
+    /// 数量/金额/单价换算失败（判定放行、换算拒绝的兑底位；正常流不可达）。
+    InvalidNumber,
+}
+
+impl TradeFormError {
+    /// 错误条位文案（zh-CN 词表；kind 方向词由呈现面传入）。
+    pub fn as_text(self, kind_word: &'static str, is_fund: bool) -> String {
+        match self {
+            Self::AccountRequired => "请选择投资账户".to_owned(),
+            Self::InstrumentRequired => "请选择标的".to_owned(),
+            Self::AmountRequired => match kind_word {
+                "买入" => "请输入买入金额（以确认单为准）",
+                _ => "请输入卖出金额（以确认单为准）",
+            }
+            .to_owned(),
+            Self::QuantityNotPositive if is_fund => "请输入确认份额".to_owned(),
+            Self::QuantityNotPositive => format!("请输入{kind_word}数量"),
+            Self::PriceNotPositive => format!("请输入{kind_word}单价"),
+            Self::InvalidNumber => "输入格式无效，请检查数量与单价".to_owned(),
+        }
+    }
+}
+
+/// 投资买卖表单状态 → 完整 TransactionInput（旧壳 buildTradeInput 同名接缝）:
+/// 分形态校验 fail fast（序镜像旧壳 submit：账户 → 标的 → 「金额/数量/单价」）
+/// → 判定换算 → per-kind 矩阵落位（旧壳 KIND_FIELD_MATRIX buy/sell 行：
+/// to_account_id / category_id / merchant_id / policy_id /
+/// refund_of_transaction_id 恒 null；amount_cents 占位由形态分派覆写，基金
+/// 落权威金额、其余落 0 由后端重算）。
+pub fn assemble_trade_transaction(
+    submit: TradeFormSubmit,
+) -> Result<ledger_transaction::TransactionInput, TradeFormError> {
+    let Some(account_id) = submit.account_id.filter(|id| !id.trim().is_empty()) else {
+        return Err(TradeFormError::AccountRequired);
+    };
+    let Some(instrument_id) = submit.instrument_id.filter(|id| !id.trim().is_empty()) else {
+        return Err(TradeFormError::InstrumentRequired);
+    };
+    // 数量（股数/份额）两形态共用：换算 fail fast + 非正提交通道。
+    let Some(quantity) = quantity_text_to_f64(&submit.quantity_text) else {
+        return Err(TradeFormError::InvalidNumber);
+    };
+    if quantity <= 0.0 {
+        return Err(TradeFormError::QuantityNotPositive);
+    }
+    let fee_cents = if submit.fee_text.trim().is_empty() {
+        None
+    } else {
+        Some(amount_text_to_cents(&submit.fee_text).ok_or(TradeFormError::InvalidNumber)?)
+    };
+    // 录入权威分流（issue #302 / ADR-0038）：基金 = 金额 + 份额、单价反算不落
+    // wire；其余 = 数量 + 单价、成交金额由后端重算。
+    let (amount_cents, price_cents) = if submit.is_fund {
+        let Some(amount) = amount_text_to_cents(&submit.amount_text) else {
+            return Err(TradeFormError::InvalidNumber);
+        };
+        if amount <= 0 {
+            return Err(TradeFormError::AmountRequired);
+        }
+        (amount, None)
+    } else {
+        let Some(price_cents) = price_text_to_price_cents(&submit.price_text) else {
+            return Err(TradeFormError::InvalidNumber);
+        };
+        if price_cents <= 0 {
+            return Err(TradeFormError::PriceNotPositive);
+        }
+        (0, Some(price_cents))
+    };
+    Ok(ledger_transaction::TransactionInput {
+        kind: submit.kind,
+        // 非基金形态成交金额占位恒 0（后端按数量 × 单价 ± 费用重算，旧壳同）。
+        amount_cents,
+        currency_code: submit.currency_code,
+        account_id: Some(account_id),
+        to_account_id: None,
+        funding_account_id: submit.funding_account_id,
+        funding: Vec::new(),
+        purchases: Vec::new(),
+        category_id: None,
+        merchant_id: None,
+        merchant_name: None,
+        policy_id: None,
+        refund_of_transaction_id: None,
+        note: (!submit.note.trim().is_empty()).then(|| submit.note.clone()),
+        source_order_no: submit.source_order_no,
+        date: submit.date.to_string(),
+        instrument_id: Some(instrument_id),
+        quantity: Some(quantity),
+        price_cents,
+        fee_cents,
+        to_instrument_id: None,
+        to_quantity: None,
+        out_amount_cents: None,
+        in_amount_cents: None,
+        origin: None,
+        fx_rate: None,
+        idempotency_key: None,
+    })
+}
+
+// ---------------------------------------------------------------------------
 // 基础收支表单装配器（#2034；旧壳 transaction-input.ts「TransactionInput 装配
 // 器」的重生）：表单状态 → 完整 TransactionInput 的唯一装配接缝——同步纯函数，
 // per-kind 字段矩阵、元转分与日期转换在此收口，新增表单形态只改矩阵。非法输
@@ -2491,6 +2839,39 @@ pub fn assemble_portfolio_stats(
     currencies: &CurrencyTable,
     privacy: bool,
 ) -> PortfolioStatsCells {
+    // 行集按两列拆为（市值，折本位币市值）对（旧壳 rowStatCardValues 输入同
+    // 形）；累计与误差随行透传。过滤子集口径（#2046 持仓页签合计区）消费
+    // 同一对列形态（assemble_portfolio_stats_for_pairs），本函数只是随行集
+    // 拆对的第一步。
+    let market_rows: Vec<(Option<i64>, Option<i64>)> = holdings
+        .iter()
+        .map(|h| (h.market_value_cents, h.native_market_value_cents))
+        .collect();
+    let unreal_rows: Vec<(Option<i64>, Option<i64>)> = holdings
+        .iter()
+        .map(|h| (h.unrealized_pnl_cents, h.native_unrealized_pnl_cents))
+        .collect();
+    assemble_portfolio_stats_for_pairs(
+        &market_rows,
+        &unreal_rows,
+        cumulative,
+        cumulative_error,
+        currencies,
+        privacy,
+    )
+}
+
+/// 投资概览卡装配（过滤子集口径，#2046 持仓页签合计区）：过滤后的两列对 +
+/// 累计与误差随包 → 三卡格。与 [`assemble_portfolio_stats`] 同一表达式
+/// （旧壳 rowStatCardValues 单点同源：全量口径与过滤子集不复制第二份）。
+pub fn assemble_portfolio_stats_for_pairs(
+    market_rows: &[(Option<i64>, Option<i64>)],
+    unreal_rows: &[(Option<i64>, Option<i64>)],
+    cumulative: Option<&ledger_investment::CumulativePnlNativeTotal>,
+    cumulative_error: Option<String>,
+    currencies: &CurrencyTable,
+    privacy: bool,
+) -> PortfolioStatsCells {
     let format_of = |code: Option<&str>| code.map(|c| currencies.format_of(c)).unwrap_or_default();
     // 传入币种优先取累计命令的基准币种（旧壳 nativeCurrency 透传同源）；命令
     // 未就绪时缺省格式。
@@ -2520,14 +2901,6 @@ pub fn assemble_portfolio_stats(
             pnl,
         }
     };
-    let market_rows: Vec<(Option<i64>, Option<i64>)> = holdings
-        .iter()
-        .map(|h| (h.market_value_cents, h.native_market_value_cents))
-        .collect();
-    let unreal_rows: Vec<(Option<i64>, Option<i64>)> = holdings
-        .iter()
-        .map(|h| (h.unrealized_pnl_cents, h.native_unrealized_pnl_cents))
-        .collect();
     let cumulative_cells = match (cumulative_error, cumulative) {
         // 命令报错优先：整卡警告 + 文案透传，不给半截数字（旧壳 error 优先同序）。
         (Some(error), _) => PortfolioStatCells {
@@ -2562,10 +2935,13 @@ pub fn assemble_portfolio_stats(
         },
     };
     PortfolioStatsCells {
-        market_value: stat(&market_rows, false),
-        unrealized_pnl: stat(&unreal_rows, true),
+        market_value: stat(market_rows, false),
+        unrealized_pnl: stat(unreal_rows, true),
         cumulative_pnl: cumulative_cells,
-        has_holdings: !holdings.is_empty(),
+        // 空态面在过滤子集口径是「过滤无命中共计卡不呈现」的事实源（旧壳
+        // holdings-page NEmpty filterNoMatch 同判定用 filteredRows 直推）：
+        // 两列对皆空 = 无行。
+        has_holdings: !market_rows.is_empty(),
     }
 }
 

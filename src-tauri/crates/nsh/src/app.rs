@@ -38,9 +38,9 @@ use crate::boot;
 use crate::items::AddItemTarget;
 use crate::nav_model::ViewName;
 use crate::{
-    accounts, backup_entry, context_menu, danger, dashboard, investments, items, logging, modal,
-    multi_select, nav, nav_model, overlay, period_row, pinyin_select, popconfirm, reports,
-    scheduled, search, settings, sidebar, signals, tx_filter, txn_form, views,
+    accounts, backup_entry, context_menu, danger, dashboard, investments, investments_form, items,
+    logging, modal, multi_select, nav, nav_model, overlay, period_row, pinyin_select, popconfirm,
+    reports, scheduled, search, settings, sidebar, signals, tx_filter, txn_form, views,
 };
 
 /// 金额隐私模式开关的存储键（设备轻量设置项，与旧壳同键同值形态：旧壳
@@ -187,6 +187,9 @@ pub fn reset_book_assembly() {
     reports::reset_for_tests();
     scheduled::reset_for_tests();
     investments::reset_for_tests();
+    // #2046：投资同步接缝与 staleness 单例（进程级信号束属同批复位点——
+    // 上一场景的接缝状态不得响应下一场景）。
+    crate::investment_sync::reset_all_for_tests();
     crate::cross_book::reset_default_data_dir();
 }
 
@@ -422,6 +425,13 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
     let form_merchants = signal(txn_form::FormMerchants(Vec::new()));
     let form_policies = signal(txn_form::FormPolicies(Vec::new()));
     let form_currencies = signal(assembly::CurrencyTable::default());
+    // 投资记账表单·买卖族（#2046）：表单信号束与参考数据源独立成束（旧壳
+    // InvestmentForm 挂 TransactionForm 的同面本壳分件；明细取数随表单自身
+    // 装载批次，不入列表读批——明细域数据不同源）。入口归属见 investments_form
+    // 模块头：买入/卖出行编辑入口住户投资明细页签（⑯ 落位装配），此处挂载
+    // 弹窗 + 行菜单分流接缝先行（行集闭集不含 buy/sell 的死面注释保留）。
+    let trade_form = investments_form::TradeFormState::new();
+    let trade_sources = investments_form::TradeFormSources::new();
     // 「记一笔」类型菜单弹层开合（入口单点表达 kind：弹层两项——记支出/
     // 记收入；弹层开合上报 Overlay Suppression，期间弹层同形）。
     let add_menu_open = signal(false);
@@ -1209,14 +1219,20 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
                                 let id = tx.id.clone();
                                 let mut items = Vec::new();
                                 // 编辑（#2034 基础收支，#2035 转账/借出/退款，
-                                // #2036 出资分解/购买项行全量开放）：目标行随右
-                                // 键固定。编辑开放面（#2036 表单③后全量开放）：
-                                // 收入/支出/转账/退款行开放——#2035 的子行守卫
-                                // （分解/购买项行不开放）随表单③子行编辑能力解
-                                // 除：分解行进出资分解族、购买项行进购买项族、
-                                // 并存行进出资分解族叠加购买项区（edit_dispatch
-                                // 单点分派，旧壳 supportsRowEdit 口径的更新在平
-                                // 价核对表留痕）。界面只读 kind 仍不开放。
+                                // 编辑（#2034 基础收支，#2035 转账/借出/退款，
+                                // #2036 出资分解/购买项行全量开放，#2046 投资买
+                                // 卖行接缝）：目标行随右键固定。编辑开放面（#2036
+                                // 表单③后全量开放）：收入/支出/转账/退款行开放
+                                // ——#2035 的子行守卫（分解/购买项行不开放）随表
+                                // 单③子行编辑能力解除：分解行进出资分解族、购买
+                                // 项行进购买项族、并存行进出资分解族叠加购买项区
+                                //（edit_dispatch 单点分派，旧壳 supportsRowEdit
+                                // 口径的更新在平价核对表留痕）。界面只读 kind 仍
+                                // 不开放。买入/卖出行的「编辑」进投资买卖族（旧
+                                // 壳 issue #180 起 supportsRowEdit 同判定，主列
+                                // 表 ADR-0135 默认排除 investment kind——入口
+                                // 对用户即在投资明细页签（⑯ 装配），本分面为编
+                                // 译可达的接缝面）。
                                 let editable = matches!(
                                     tx.kind,
                                     ledger_transaction::TransactionKind::Income
@@ -1224,7 +1240,18 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
                                         | ledger_transaction::TransactionKind::Transfer
                                         | ledger_transaction::TransactionKind::Refund
                                 );
-                                if editable {
+                                if matches!(
+                                    tx.kind,
+                                    ledger_transaction::TransactionKind::Buy
+                                        | ledger_transaction::TransactionKind::Sell
+                                ) {
+                                    let trade_form = trade_form;
+                                    let trade_sources = trade_sources;
+                                    let tx = tx.clone();
+                                    items.push(MenuItem::new("编辑").on_select(move || {
+                                        trade_form.begin_edit(&tx, trade_sources, view_owner);
+                                    }));
+                                } else if editable {
                                     let form = form;
                                     let currencies = form_currencies;
                                     let merchants = form_merchants;
@@ -1375,6 +1402,26 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
             ),
         )
         .child(items::add_item_modal(add_item_target, form_currencies, item_feedback))
+        .child(
+            // 投资记账表单·买卖族弹窗（#2046）：行右键「编辑」分流（入口归属
+            // 与先取明细再开窗的编排语义归 investments_form 模块头）；装载失
+            // 败条位（失败不开窗，旧壳「先取再开窗」同口径——NSH 无 toast 的
+            // 条位对应物）。
+            investments_form::trade_form_modal(trade_form, trade_sources, view_owner),
+        )
+        .child(
+            when(
+                move || trade_form.load_error.get().is_some(),
+                move || {
+                    text(move || trade_form.load_error.get().unwrap_or_default())
+                        .text_size(px(12.0))
+                        .text_color(item_feedback_fg)
+                        .test_id("tx-trade-edit-error")
+                        .app_class("px-4 py-1")
+                },
+            )
+            .otherwise(view),
+        )
         .child(
             // 底栏：读失败优先呈现错误；否则总数（搜索态「命中 N 条」、列表态
             // 「共 N 条」——旧壳搜索页与交易页同形）+ 分页条（单页收起，分页条

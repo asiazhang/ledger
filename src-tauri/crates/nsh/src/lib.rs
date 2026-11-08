@@ -61,12 +61,21 @@
 //!   功能冻结点达成（ADR-0145 修订注记）；
 //! - [`investments`]：投资视图·概览与盈亏两页签（#2045，spec #2031 系列
 //!   14/26）——visited-once keep-mounted 页签容器（旧壳 display-directive=
-//!   "show" + 页签 key 纪律的本壳对应物）、会话槽（当前页签/走势预设/盈亏
-//!   两表页码）、概览页签（可投资资产 Hero + 两腿构成比例条与图例 + 投资
-//!   合计三项 + 缺价/无账户说明）与组合走势卡（plot line 封装件首建 + 预设
-//!   区间 + 空态三态）、盈亏页签（账户/标的筛选 + 按年/按账户单值两表客户
-//!   端切片分页 + 资金加权收益率卡）；读路径直调域读入口，折算口径单点在
-//!   域、装配层只消费；
+//!   "show" + 页签 key 纪律的本壳对应物）、会话槽、概览页签、盈亏页签与
+//!   #2046 ⑮ 扩入的持仓页签容器位；读路径直调域读入口；
+//! - [`investments_holdings`]：投资持仓页签本体（#2046，⑮/投资 2/3）——
+//!   持仓卡（首个持仓行 + 搜索/账户/排序三维过滤 + 合计三卡（过滤子集）+
+//!   缺价行同步引导）、客户端切片分页与旧壳 useHoldingsFilter/usePortfolioOverview
+//!   的重生；同步入口、进度与结果消费 [`investment_sync`] 接缝；
+//! - [`investments_form`]：投资记账表单买卖族（#2046 ⑮）——旧壳
+//!   InvestmentForm 族的重生：buy/sell 创建与编辑同表单语义（场外基金
+//!   金额权威/其余数量+单价权威分流、字段红框+提交禁用两件同发、先取
+//!   明细再开窗）；创建入口随⑯ 明细页签落位、编辑入口随交易列表右键接
+//!   线开放；
+//! - [`investment_sync`]：投资同步接缝与价格过期提示（#2046 ⑮）——「同步
+//!   标的信息」接缝单例（进行中/进度/结果/降级四件状态，在途短路、成败
+//!   同判失效广播）与 staleness 本地水位提示条旧壳 usePriceStaleness
+//!   的重生，「去同步」入口语义偏差见模块头；
 //! - [`plot_line`]：line 图封装件（`App*` 封装族，#2045 走势卡首建，ADR-0145
 //!   决策 5 的封装层落点——NSH 内建 plot 的直消费单点，时间序列单线 + 缺值
 //!   点跨越，本件零统计语义零金额换算）；
@@ -195,7 +204,10 @@ pub mod danger;
 pub mod dashboard;
 pub mod date_select;
 pub mod insurers;
+pub mod investment_sync;
 pub mod investments;
+pub mod investments_form;
+pub mod investments_holdings;
 pub mod items;
 pub mod logging;
 pub mod merchants;

@@ -11871,3 +11871,337 @@ fn investments_view_reports_missing_price_count() {
     app.wait_for("text:另有 1 只持仓因缺现价或折算汇率未计入。")
         .unwrap();
 }
+
+// ---------------------------------------------------------------------------
+// 投资视图·持仓页签与记账表单（#2046）：持仓卡（同步入口 + 确定进度 +
+// 结果/降级反馈 + 三维过滤 + 合计三卡 + 行表客户端切片分页 + 缺价行同步
+// 引导 + staleness 本地水位提示条）与 buy/sell 编辑表单族。「删除即红」
+// 负向条目写在各测试注释（ADR-0087：断言对准用户可观察结果）。
+// ---------------------------------------------------------------------------
+
+/// 持仓页签全景（旧壳 HoldingsOverview 卡同构）：卡头同步入口在屏、合计
+/// 三卡（总市值/持仓收益/累计收益）、行格闭集（标的/账户/数量/成本/现价/
+/// 净值日期/市值/持仓收益/收益率）、单页分页收起、staleness 提示条缺席
+///（全部持仓有现价且水位新鲜）。「删除即红」：删 view_host 的 holdpanes
+/// 分支（keep_mounted_pane InvestmentsTab::Holdings 挂载）→ 落回空态（本
+/// 测红；删除接线断言见 lib 失效探针注释）。
+#[test]
+fn investments_view_holdings_tab_lands_rows_cards_and_stats() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = seed_investments_book("invest-holdings");
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+
+    open_investments(&mut app);
+    app.press("id:inv-tab-holdings").unwrap();
+
+    // 卡头（同步入口恒在——与行集无关；旧壳 card header-extra 同位）。
+    app.wait_for("id:holdings-card").unwrap();
+    app.wait_for("text:当前持仓").unwrap();
+    app.wait_for("text:同步标的信息").unwrap();
+    // 合计三卡（过滤子集口径下的市值/收益 + 全账本口径的累计收益；#2045
+    // 盈亏累计口径 = 已实现 + 分红 = ¥122.95）。
+    app.wait_for("id:holdings-total-market-value-value")
+        .unwrap();
+    app.wait_for_gone("id:holdings-total-market-value-warning", DEFAULT_WAIT)
+        .unwrap();
+    let texts = app.screen().texts();
+    assert!(
+        texts.iter().any(|t| t.contains("¥122.95")),
+        "累计收益 = -¥0.5 + ¥123.45：{:?}",
+        texts
+    );
+    // 行格闭集（数量 1、成本 ¥1、现价 ¥1、市值 ¥1、收益 ¥0）。
+    app.wait_for("id:holdings-table-head").unwrap();
+    app.wait_for("text:TST").unwrap();
+    app.wait_for("text:测试标的").unwrap();
+    let texts = app.screen().texts();
+    for expected in ["¥1", "¥0"] {
+        assert!(
+            texts.iter().any(|t| t.contains(expected)),
+            "行格金额面 {expected}：{:?}",
+            texts
+        );
+    }
+    // 单页收起分页条；无缺价说明（合计卡missing_note 缺席）与 staleness
+    // 提示缺席（水位新鲜 + 现价在场）。
+    assert_eq!(
+        app.screen().count("id:holdings-pagination").unwrap(),
+        0,
+        "单页收起分页条：{:?}",
+        app.screen().texts()
+    );
+    assert_eq!(
+        app.screen().count("id:staleness-alert").unwrap(),
+        0,
+        "无过期标的不出提示条（背景提示宁缺勿滥）"
+    );
+}
+
+/// 持仓三维过滤：账户单选收窄（无持仓账户 → 「筛选条件下无匹配持仓」行
+/// 空态 + 合计清零）与搜索（关键词无命中 → 同一空态；清除回全量）。「删
+/// 除即红」：删筛选写路径接线（应用值 effect）→ 行集不收窄（本测红）。
+#[test]
+fn investments_view_holdings_filters_narrow_rows() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = seed_investments_book("invest-holdings-filter");
+    // 无持仓的投资账户（筛选候选面在用账户）。
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let conn = db.conn.lock().unwrap();
+        ledger_accounts::create_account(
+            &conn,
+            AccountInput {
+                name: "闲置".to_owned(),
+                kind: AccountType::Investment,
+                currency_code: "CNY".to_owned(),
+                initial_balance_cents: Some(0),
+                credit_limit_cents: None,
+                statement_day: None,
+                due_day: None,
+            },
+        )
+        .unwrap();
+    }
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_investments(&mut app);
+    app.press("id:inv-tab-holdings").unwrap();
+    app.wait_for("text:TST").unwrap();
+
+    // 账户过滤收窄：闲置账户无持仓 → 行集收窄、两态空态可辨。
+    app.press("id:holdings-account-filter-select-trigger")
+        .unwrap();
+    app.wait_for("id:holdings-account-filter-select-option")
+        .unwrap();
+    app.press("text:闲置").unwrap();
+    app.wait_for("id:holdings-no-match").unwrap();
+    // 合计卡：过滤无命 = 无可计入行 → 「-」（旧壳 PortfolioStatsCards cents
+    // null → "-" 同口径；不给伪零）。
+    let texts = app.screen().texts();
+    assert!(texts.contains(&"-"), "合计卡无计入行展示「-」：{:?}", texts);
+    // 清空过滤（可清空形态 ✕）：行集回全量。
+    app.press("id:holdings-account-filter-select-clear")
+        .unwrap();
+    app.wait_for("text:TST").unwrap();
+
+    // 搜索无命中（防抖后应用值生效）→ 空态；清空回全量。
+    app.type_text("id:holdings-search", "ZZZ").unwrap();
+    app.wait_for("id:holdings-no-match").unwrap();
+    app.clear("id:holdings-search").unwrap();
+    app.press_key("enter").unwrap();
+    app.wait_for("text:TST").unwrap();
+}
+
+/// 持仓客户端切片分页（旧壳 HOLDINGS_PAGE_SIZE 固定 20 不设选择器）：
+/// 25 行持仓 → 第 1 页 20 行、第 2 页 5 行（默认标的代码字母序；分页条也
+/// 在屏）。「删除即红」：删分页条 on_change 页码写回接线 → 第 2 页不出现。
+#[test]
+fn investments_view_holdings_pagination_slices_rows() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("invest-holdings-pages");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        use ledger_investment::{InstrumentInput, InstrumentType};
+        let account = {
+            let conn = db.conn.lock().unwrap();
+            ledger_accounts::create_account(
+                &conn,
+                AccountInput {
+                    name: "证券".to_owned(),
+                    kind: AccountType::Investment,
+                    currency_code: "CNY".to_owned(),
+                    initial_balance_cents: Some(500_000),
+                    credit_limit_cents: None,
+                    statement_day: None,
+                    due_day: None,
+                },
+            )
+            .unwrap()
+        };
+        for i in 0..25 {
+            let conn = db.conn.lock().unwrap();
+            let instrument = ledger_investment::create_instrument(
+                &conn,
+                InstrumentInput {
+                    symbol: format!("S{i:02}"),
+                    kind: InstrumentType::Stock,
+                    name: Some(format!("标的{i:02}")),
+                    currency_code: "CNY".to_owned(),
+                    market: None,
+                },
+            )
+            .unwrap();
+            ledger_transaction::create(
+                &conn,
+                ledger_transaction::TransactionInput {
+                    kind: ledger_transaction::TransactionKind::Buy,
+                    amount_cents: 0,
+                    currency_code: "CNY".to_owned(),
+                    account_id: Some(account.clone()),
+                    instrument_id: Some(instrument),
+                    quantity: Some(1.0),
+                    price_cents: Some(2_000),
+                    fee_cents: Some(0),
+                    date: "2025-01-05".to_owned(),
+                    note: Some("买入".to_owned()),
+                    ..probe_investments_input()
+                },
+            )
+            .unwrap();
+        }
+    }
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_investments(&mut app);
+    app.press("id:inv-tab-holdings").unwrap();
+
+    // 第 1 页 20 行（默认代码字母序 S00..S19）；S24 不在第 1 页。
+    app.wait_for("id:holdings-table-head").unwrap();
+    app.settle();
+    let texts = app.screen().texts();
+    for sym in ["S00", "S19"] {
+        assert!(
+            texts.iter().any(|t| t.contains(sym)),
+            "第 1 页含 {sym}：{:?}",
+            texts
+        );
+    }
+    assert!(
+        !texts.iter().any(|t| t.contains("S24")),
+        "第 1 页不含末段 S24：{:?}",
+        texts
+    );
+    // 翻第 2 页：S20..S24 行出现。
+    app.press("role:button[2]").unwrap();
+    app.wait_for("text:S24").unwrap();
+
+    // 三维任一实际变化即翻页归零（ TValue-902；排序同为过滤签名维度）：
+    // 在第 2 页点击市值列头（排序态翻转 = 签名实际变化）→ 页码归 1 →
+    // S24 离屏、S19 回屏。「删除即红」条目：删翻页归零接线
+    //（session.holdings_page.set(1)）→ 排序后仍停第 2 页（S24 不离屏，
+    // 本测红）。
+    app.press("id:holdings-col-market-value").unwrap();
+    app.wait_for_gone("text:S24", DEFAULT_WAIT).unwrap();
+    app.wait_for("text:S19").unwrap();
+}
+
+/// 空账本的同步入口存在性（行集为空时卡头同步入口仍在——旧壳 card
+/// header-extra 同位）：按下 → 同步接缝在途→空库结果反馈（「暂无标的可
+/// 同步」）。「删除即红」：删卡头 on_press 的 trigger_sync 接线 → 结果
+/// 行永不出现（本测红）。空库不发起任何网络（通道在空标的分区无取数）。
+#[test]
+fn investments_view_holdings_sync_entry_reports_empty_book() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("invest-holdings-empty");
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+
+    open_investments(&mut app);
+    app.press("id:inv-tab-holdings").unwrap();
+    app.wait_for("text:当前持仓").unwrap();
+    app.press("id:holdings-sync-button").unwrap();
+    app.wait_for("id:investment-sync-result").unwrap();
+    assert!(
+        app.shows("暂无标的可同步"),
+        "空库同步结果反馈：{:?}",
+        app.screen().texts()
+    );
+}
+
+/// 缺价行引导与 staleness 提示条（#1193 / #1190）：行情通道标的缺现价 →
+/// 行内「同步」锚在屏（动作 = 同步触发，与卡头入口同一接缝单点）＋ staleness
+/// 提示条在屏（开场本地水位检查，持仓缺现价入选）。手动报价通道的「录价」
+/// 与页面级回执随⑯ 手动报价票落位（缺件留痕见模块头）。删 staleness 装载
+/// 接线（视图落位装载）→ 提示条永不出现（本测红；失效重查删除即红钉在
+/// lib staleness 探针）。
+#[test]
+fn investments_view_holdings_missing_price_guide_and_staleness_alert() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("invest-holdings-guide");
+    let (account_id, instrument_id) = {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        use ledger_investment::{InstrumentInput, InstrumentType};
+        let conn = db.conn.lock().unwrap();
+        let account = ledger_accounts::create_account(
+            &conn,
+            AccountInput {
+                name: "证券".to_owned(),
+                kind: AccountType::Investment,
+                currency_code: "CNY".to_owned(),
+                initial_balance_cents: Some(500_000),
+                credit_limit_cents: None,
+                statement_day: None,
+                due_day: None,
+            },
+        )
+        .unwrap();
+        let instrument = ledger_investment::create_instrument(
+            &conn,
+            InstrumentInput {
+                symbol: "600000".to_owned(),
+                kind: InstrumentType::Stock,
+                name: Some("无价标的".to_owned()),
+                currency_code: "CNY".to_owned(),
+                market: Some("sh".to_owned()),
+            },
+        )
+        .unwrap();
+        ledger_transaction::create(
+            &conn,
+            ledger_transaction::TransactionInput {
+                kind: ledger_transaction::TransactionKind::Buy,
+                amount_cents: 0,
+                currency_code: "CNY".to_owned(),
+                account_id: Some(account.clone()),
+                instrument_id: Some(instrument.clone()),
+                quantity: Some(10.0),
+                price_cents: Some(2_000),
+                fee_cents: Some(0),
+                date: today().to_string(),
+                note: Some("买入".to_owned()),
+                ..probe_investments_input()
+            },
+        )
+        .unwrap();
+        (account, instrument)
+    };
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_investments(&mut app);
+    app.press("id:inv-tab-holdings").unwrap();
+
+    // 缺价行：现价「-」+ 行内同步引导锚（行键 = 账户×标的，与旧壳
+    // priceGuideRowKey 同拼法）。
+    app.wait_for("text:600000").unwrap();
+    let guide_id = format!(
+        "id:holdings-row-{}-{}-missing-price-sync",
+        account_id, instrument_id
+    );
+    app.wait_for(&guide_id).unwrap();
+    // staleness 提示条（本地水位检查零网络；持仓缺现价入选）与「去同步」。
+    app.wait_for("id:staleness-alert").unwrap();
+    app.wait_for("id:staleness-go-sync").unwrap();
+    assert!(
+        app.shows("有 1 个标的的行情 / 净值可能已过期（超过 7 天未更新，或持仓缺现价）。"),
+        "提示主文案（count/days 装配）：{:?}",
+        app.screen().texts()
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 投资买卖表单旅程（#2046）由 lib 探针承载（investments_form.rs mod probe）：
+// 旧壳 buy/sell 行的编辑入口住户投资明细页签（ADR-0135 主列表默认排除投资
+// kind，NSH 同口径——主列表触不到 buy 行，headless 用户路径日落空）；探针
+// 在引擎内挂真实交易列表不可达入口不可行 → 探针直挂表单组件 + begin_edit
+// （引擎同面：回填 / 禁用 / 保存 / 库态由同一 #[component] 真实路径承载），
+// 「删除即红」条目随探针注释。#2046 交付偏差见票交付报告。
+// ---------------------------------------------------------------------------

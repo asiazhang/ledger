@@ -717,6 +717,80 @@ pub fn instrument_rows(db: &DbState) -> Result<Vec<ledger_investment::Instrument
     Ok(all)
 }
 
+/// 价格过期检查（#2046 持仓页签同步接缝的背景提示面；旧壳
+/// `instrument_price_staleness` 命令消费的同一域函数，不经 IPC）：本地
+/// 水位检查口径单点在域（计数与阈值都归域），本壳只搬运计数（旧壳
+/// usePriceStaleness 同纪律）。读连接是成对建连的只读侧（ADR-0117）。
+pub fn instrument_price_staleness(db: &DbState) -> Result<ledger_investment::PriceStaleness> {
+    let conn = conn_lock(&db.read_conn)?;
+    ledger_investment::instrument_price_staleness(&conn)
+}
+
+/// 读取一笔 buy/sell 交易的买卖明细（投资记账表单编辑回填，#2046；旧壳
+/// `get_transaction_trade` 命令消费的同一域函数，不经 IPC）：标的/数量/价格/
+/// 费用 + 标的字典带出字段（标的类型决定录入权威分流）。无明细（非 buy/sell）
+/// 码化 NotFound。读连接是成对建连的只读侧（ADR-0117）。
+pub fn transaction_trade(
+    db: &DbState,
+    transaction_id: &str,
+) -> Result<ledger_investment::TransactionTrade> {
+    let conn = conn_lock(&db.read_conn)?;
+    ledger_investment::get_transaction_trade(&conn, transaction_id)
+}
+
+/// 持仓标的同步编排接缝（#2046；旧壳 `sync_instrument_info` IPC 命令壳的
+/// 本壳等价形，消费面在 [`crate::investment_sync`] 同步接缝，不经 IPC）：
+/// 门面写槽裸作业会话交给投资同步编排（旧壳命令消费的同一域编排入口
+/// [`ledger_market_sync::do_incremental_sync_channels`]），进度回调由壳侧
+/// 注入（消费端把进度报到接缝信号的呈现位）。
+///
+/// 收尾裁决（旧壳 write_entry_segmented_async 的本壳等价半边）：跨分段写入
+/// 见证随结果必达（成败同判——失败 ≠ 未写过，中途失败已落库的写入仍生效，
+/// issue #1277）；NSH 不重演旧壳的「实际写过即置脏」空写作业：连接层提交点
+/// 后置动作的宿主是备份域置脏接线，NSH 骨架刻意不装线（[`crate::wiring`]），
+/// 空作业零副作用——「是否广播」直接按见证由壳侧裁决（信号映射判定单点在
+/// infra signals：SyncInstrumentInfo × 实际写过 → PRICES_CHANGED，本壳投影
+/// 到投资族信号通道）。进度不是失效信号（issue #897），只进呈现位。
+pub async fn sync_instrument_info(
+    db: &DbState,
+    mut progress: impl FnMut(ledger_market_sync::SyncProgress) + Send,
+) -> SyncInstrumentInfoOutcome {
+    let session =
+        ledger_market_sync::FacadeWriteSession::new(db.write_handle(), "sync_instrument_info");
+    // 通道束（旧壳 #1276 换装口径）：生产默认生产通道束（每次同步构造，与旧
+    // 壳整段形态同口径；NSH 无测试注入口——双壳并存期同步联调走旧壳）。
+    match ledger_market_sync::SyncFetchChannels::production() {
+        Ok(mut channels) => {
+            let mut witness = ledger_market_sync::WriteWitness::default();
+            let outcome = ledger_market_sync::do_incremental_sync_channels(
+                &session,
+                &mut channels,
+                &mut progress,
+                &mut witness,
+            )
+            .await;
+            let evidence = witness.any_written();
+            match outcome {
+                Ok(result) => SyncInstrumentInfoOutcome::Success(result, evidence),
+                Err(error) => SyncInstrumentInfoOutcome::Failed(error, evidence),
+            }
+        }
+        Err(error) => SyncInstrumentInfoOutcome::Failed(error, false),
+    }
+}
+
+/// 同步一次的终态归一（旧壳命令收尾裁决的投影面）：成功摘要 / 失败错误
+/// 二选一 + 跨分段累积的写入证据（成败同判的最小幸存事实）。
+#[derive(Debug)]
+pub enum SyncInstrumentInfoOutcome {
+    /// 编排成功终态：结果统计（同步 N 只 / 跳过 M 只 / 结果文案）+ 是否实际
+    /// 写过（信号广播消费面）。
+    Success(ledger_market_sync::SyncInstrumentInfoResult, bool),
+    /// 编排失败终态：错误原样（消费方呈现失败文案——旧壳失败错误在发射后
+    /// 原样上抛的同位）+ 是否实际写过（失败路径证据必达，issue #1277）。
+    Failed(ledger_infra::error::AppError, bool),
+}
+
 // ---------------------------------------------------------------------------
 // 账户视图读写接缝（#2041）：账户余额清单（V017 持久化缓存口径）与目标绑定
 // 集 / 计划引用集直调域入口——与旧壳 list_account_balances、

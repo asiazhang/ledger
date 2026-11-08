@@ -46,6 +46,9 @@ ledger-accounts = { path = "../accounts" }
 ledger-categories = { path = "../categories" }
 ledger-currencies = { path = "../currencies" }
 ledger-investment = { path = "../investment" }
+# 持仓标的同步接缝（#2046）：同步编排直调面（旧壳 sync_instrument_info 命令
+# 壳消费的同一域编排入口，不经 IPC；壳只依赖域，通道/进度/见证的类型面）。
+ledger-market-sync = { path = "../market-sync" }
 ledger-item = { path = "../item" }
 ledger-merchants = { path = "../merchants" }
 ledger-policy = { path = "../policy" }
