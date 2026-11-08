@@ -2421,7 +2421,9 @@ fn shortcut_band_keys_land_views() {
 
     app.press_key("mod+4").unwrap();
     app.wait_for_gone("text:共 3 条", DEFAULT_WAIT).unwrap();
-    app.wait_for("id:placeholder-note").unwrap();
+    // 投资视图已迁入（#2045）：落位凭据 = 概览页签锚点（占位不再——#2045
+    // 迁入时应同步的断言，本票范围外修复补齐）。
+    app.wait_for("id:inv-tab-overview").unwrap();
     // 落位凭据 = 内容区随视图切换（概览是真实视图，净资产卡在屏即证据；
     // #2039 起概览不再是占位）。
     app.press_key("mod+`").unwrap();
