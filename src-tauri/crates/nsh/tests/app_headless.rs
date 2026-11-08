@@ -12205,3 +12205,196 @@ fn investments_view_holdings_missing_price_guide_and_staleness_alert() {
 // （引擎同面：回填 / 禁用 / 保存 / 库态由同一 #[component] 真实路径承载），
 // 「删除即红」条目随探针注释。#2046 交付偏差见票交付报告。
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// 投资明细与标的库页签（#2047）：明细行投影像与服务端分页/类型筛选、持仓
+// 下钻（标的代码链接 → 明细页签 + 筛选）、标的库检索与 focus 锚定位高亮、
+// 手动报价旅程（两落点写路径 + 证据门广播 + 行内现价列灰刷。删除任一接线
+// 即红的负向条目逐项写在各测试注释；ADR-0087 断言强度：断言对准用户可观察
+// 结果。
+// ---------------------------------------------------------------------------
+
+/// 造一个自建债券标的（手动来源 + 手动报价通道——录价/删除双入口的准入
+/// 帮用例：价 channel 判定单点在后端）。
+fn seed_manual_bond_instrument(db: &ledger_infra::db::DbState, symbol: &str) -> String {
+    use ledger_investment::{InstrumentInput, InstrumentType};
+    let conn = db.conn.lock().unwrap();
+    ledger_investment::create_instrument_manual(
+        &conn,
+        InstrumentInput {
+            symbol: symbol.to_owned(),
+            kind: InstrumentType::Bond,
+            name: Some(format!("{symbol} 债券")),
+            currency_code: "CNY".to_owned(),
+            market: None,
+        },
+    )
+    .unwrap()
+}
+
+/// 明细页签全景：五 kind 行投影在屏（kind 分形态 + 标的格「代码 · 名称」
+/// 组列：数量/单价/费用/账户/出资账户），总数与日期倒序；删明细页签挂载
+/// 或列表读接线任一即红。
+
+#[test]
+fn investments_view_ledger_tab_lands_kind_rows_and_filters() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = seed_investments_book("invest-ledger-rows");
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_investments(&mut app);
+
+    // 落明细页签：三种形态行在屏（dividend 金额行、sell 单价行、convert 缺）
+    // 日期倒序（dividend 2026-03-05 在前）。删列表读接线（激活边装载）→
+    // 行集不呈现、本测红。
+    app.press("id:inv-tab-ledger").unwrap();
+    app.wait_for("id:ledger-title").unwrap();
+    app.wait_for("text:2026-03-05").unwrap();
+    assert!(
+        app.shows("共 3 条"),
+        "明细总数直出：{:?}",
+        app.screen().texts()
+    );
+    assert!(app.shows("买入"), "buy kind 行在屏");
+    assert!(app.shows("分红"), "dividend kind 行在屏");
+    assert!(app.shows("卖出"), "sell kind 行在屏");
+
+    // 类型子集筛选（多选）：只选「分红」→ 行集收窄到 1 行。删除筛选重拉
+    // 接线（tracked signature effect）→ 行集不刷新、本测红。
+    app.press("id:ledger-kind-trigger").unwrap();
+    app.press("id:ledger-kind-option >> text:分红 >> nth=0")
+        .unwrap();
+    app.wait_for("text:共 1 条").unwrap();
+    assert!(app.shows("2026-03-05"), "被筛选命中的 dividend 行保留");
+}
+
+/// 持仓下钻（ADR-0135 决策 6）：持仓行「标的代码」链接 → 落明细页签并按
+/// 账户+标的过滤（该账户该标的的投资交易历史）。删持仓代码的 nav::open
+/// 接线或 investments_drill 消费任一 → 点击后不换页签/不过滤，本测红。
+/// 持仓下钻（ADR-0135 决策 6）：持仓行「标的代码」链接 → 落明细页签并按
+/// 账户+标的过滤（该账户该标的的投资交易历史）。删持仓代码的 nav::open
+/// 接线或 investments_drill 消费任一 → 点击后不换页签/不过滤，本测红。
+#[test]
+fn investments_view_holdings_code_drills_to_ledger_filtered() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = seed_investments_book("invest-holdings-drill");
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    // 行键 = 账户 id + 标的 id（v_holdings 一行 = 一个账户一只标的；账
+    // 户/标的 id 经域读反查）。
+    let (account_id, instrument_id);
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let conn = db.conn.lock().unwrap();
+        account_id = conn
+            .query_row("SELECT id FROM accounts WHERE type='investment'", [], |r| {
+                r.get::<_, String>(0)
+            })
+            .unwrap();
+        instrument_id = conn
+            .query_row("SELECT id FROM instruments WHERE symbol='TST'", [], |r| {
+                r.get::<_, String>(0)
+            })
+            .unwrap();
+    }
+    open_investments(&mut app);
+    app.press("id:inv-tab-holdings").unwrap();
+    app.wait_for("id:holdings-title").unwrap();
+
+    // 点持仓行标的代码（TST 持仓行）→ 明细页签按账户+标的过滤：该账户该
+    // 标的三笔（buy/sell/dividend）全在列（dividend 行绑定同一账户与同一
+    // 标的），且落点是明细页签。「删除即红」负向条目：删持仓代码链接的
+    // nav::open 接线 → 点击后停留持仓页签，本断言红。
+    let symbol_anchor = format!("id:holdings-row-{}-{}-symbol", account_id, instrument_id);
+    app.press(&symbol_anchor).unwrap();
+    app.wait_for("id:ledger-title").unwrap();
+    app.wait_for("id:ledger-title").unwrap();
+    app.wait_for("text:共 3 条").unwrap();
+    assert!(
+        app.shows("2025-12-20") && app.shows("2025-12-30") && app.shows("2026-03-05"),
+        "该账户该标的三笔在列：{:?}",
+        app.screen().texts()
+    );
+}
+
+/// 标的库检索 + 手动报价旅程：浏览（服务端分页 50/页）、搜索收窄、手动
+/// 通道行「录价」入口、提交断言写路径两个落点与回执分型 + 投资失效信号
+/// 驱动行集原地重拉（现价列现值化）。删除价格失效信号订阅或「是否发」广
+/// 播门任一 → 现价列不刷新，本测红。
+#[test]
+fn investments_view_instruments_search_and_manual_quote_journey() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = seed_investments_book("invest-instruments-quote");
+    let dir_probe = dir.clone();
+    let bond_id;
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        bond_id = seed_manual_bond_instrument(&db, "BD01");
+    }
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_investments(&mut app);
+    app.press("id:inv-tab-instruments").unwrap();
+    app.wait_for("id:instruments-title").unwrap();
+
+    // 浏览：两个标的行（TST 与 BD01）都在屏；行情/净值通道标的（TST）无
+    // 录价入口、无来源行亦无。
+    let row_bond = format!("id:instruments-row-{}", bond_id);
+    app.wait_for(&row_bond).unwrap();
+    assert!(app.shows("TST"), "TST 行在屏：{:?}", app.screen().texts());
+
+    // 搜索收窄：输入「BD」→ 只剩 BD01 行（统一模糊语义同旧壳远程搜索）；
+    // 删除搜索重拉接线（tracked signature effect）→ 行集不收窄，本段红。
+    app.type_text("id:instruments-search", "BD").unwrap();
+
+    // 手动报价（金额 unit 面额按域刻度）：行内「录价」按下 → 弹窗（标题
+    // + 介绍 + 默认今天）; 录价 1.2345 元（= 12,345 万分之一元）→ 提交。
+    // 手动报价通道行独有的录价按钮（行情/净值/无来源行的行内「-」）。
+    app.press("id:instruments-quote").unwrap();
+    app.wait_for("id:manual-quote-price").unwrap();
+    app.type_text("id:manual-quote-price", "1.2345").unwrap();
+    app.press("id:submit-manual-quote").unwrap();
+    app.wait_for("text:已录价：BD01 现价更新为 1.2345").unwrap();
+
+    // 价格失效信号（实际写入任一落点即广播——零变化不广播）→ 行集原地重
+    // 拉：现价列从「-」变为「¥1.2345」。删「是否发」广播门或本 pane 订阅
+    // 任一 → 现价列不刷新，本断言红。
+    // DEBUG: db state first
+    {
+        let db = nsh_app::boot::boot_ledger(&dir_probe).unwrap();
+        let conn = db.conn.lock().unwrap();
+        let (price, history): (Option<i64>, i64) = conn
+            .query_row(
+                "SELECT (SELECT price_cents FROM market_prices WHERE instrument_id=?1), \
+                 (SELECT COUNT(*) FROM price_history WHERE instrument_id=?1)",
+                rusqlite::params![bond_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        eprintln!("DEBUG quote db state price={:?} history={}", price, history);
+    }
+    app.wait_for("text:¥1.2345").unwrap();
+
+    // 库态核对（两个落点）：现价缓存 upsert + 价格历史周采样行（source
+    // = manual）。写证据广播由信号订阅端呈现面承载，以上述重拉为准。
+    {
+        let db = nsh_app::boot::boot_ledger(&dir_probe).unwrap();
+        let conn = db.conn.lock().unwrap();
+        let (price, history): (Option<i64>, i64) = conn
+            .query_row(
+                "SELECT (SELECT price_cents FROM market_prices WHERE instrument_id=?1), \
+                 (SELECT COUNT(*) FROM price_history WHERE instrument_id=?1)",
+                rusqlite::params![bond_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(price, Some(12_345), "现价缓存按最新点映像规则 upsert");
+        assert_eq!(history, 1, "价格历史周采样落库");
+    }
+}

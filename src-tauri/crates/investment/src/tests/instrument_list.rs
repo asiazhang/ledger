@@ -184,10 +184,12 @@ fn search_all(conn: &Connection, search: &str) -> InstrumentListResult {
 /// 锚点定位、COUNT 与 items 同快照（#1699 / #1702 同根因读闭包，#2071 收口）：
 /// 锚点定位查询（anchor_id 在场时，SQL 与语义匹配分支共用判定）与 COUNT 与
 /// items 是多语句读闭包——注入写落在锚点与 COUNT 之间时，读闭包无快照保护
-/// （红）：锚点序号按写前行集算、COUNT/items 按写后行集切页，锚点行落不在
-/// 返回页内，「行必在返回页内」的下钻前提落空；读闭包收进读事务（绿）：注入
-/// 写整体被挡在闭包外，三段同见一套数。探针在 COUNT 语句开始前由另一连接
-/// 提交按代码字母序排在锚点前的 INSERT（平移锚点所在页）。
+/// （红）：锚点序号按写前行集算、COUNT/items 按写后行集切页——锚点行被写
+/// 改后落不在返回页内、「行必在返回页内」的下钻前提落空；读闭包收进读事务
+/// （绿）：注入写被整体挡在闭包外，三段同见一套数。探针在 COUNT 语句开始前
+/// 由另一连接提交锚点行改写（锚点 id + 代码一并迁移——新行插入服从工厂纪
+/// 律，本探针只改写两字段即可平移行集与锚点匹配）。
+
 #[test]
 fn list_instruments_anchor_page_count_and_items_share_one_snapshot() {
     let dir = ScratchDir::new("investment-instrument-anchor-snapshot");
@@ -195,14 +197,15 @@ fn list_instruments_anchor_page_count_and_items_share_one_snapshot() {
     seed_instrument(&conn, "inst-anc-1", "BBB", "锚点行一", "CNY", "unknown");
     seed_instrument(&conn, "inst-anc-2", "CCC", "锚点行二", "CNY", "unknown");
 
-    // 探针：COUNT 语句开始前，另一连接提交按代码字母序排在锚点前的 INSERT。
+    // 探针：COUNT 语句开始前，另一连接提交锚点行改写（id 与代码一并迁移
+    // ——改写后锚点行不再是其原有锚点 id：无快照保护时 items 取改写后的
+    // 行集，锚点行落不在返回页内；有快照保护时改写被整体挡在闭包外，三段
+    // 同见改写前一套数。夹具种子由 test_support 工厂造，本语句仅改写）。
     snapshot_probe::arm(
         &conn,
         dir.path(),
         "SELECT COUNT(*) FROM instruments i",
-        &["INSERT INTO instruments \
-          (id,symbol,instrument_type,name,currency_code,market,created_at,updated_at,version,device_id) \
-          VALUES ('inst-probe-new','AAA','stock','探针标的','CNY','unknown','2026-01-01','2026-01-01',1,'test')"],
+        &["UPDATE instruments SET id='inst-moved-after', symbol='AAA' WHERE id='inst-anc-1'"],
     );
     let result = super::crud::list_instruments(
         &conn,

@@ -837,6 +837,10 @@ pub(crate) fn InvestmentsView() -> impl IntoElement {
     // 用例与 lib 探针）。effect 键当前视图——落位与意图同轮落地。
     effect(move || {
         let _landed = nav::store().current.get();
+        // 意图通道为响应式触发源（进程内下钻不伴随视图切换——同视图展示
+        // 的页签落点，effect 必须随 intent 信号翻转重启；跨视图下钻仍由
+        // current 变化承担）。
+        let _intent_live = nav::store().intent.get();
         let Some(intent) = nav::take_intent() else {
             return;
         };

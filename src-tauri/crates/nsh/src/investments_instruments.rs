@@ -484,7 +484,7 @@ pub(crate) fn InstrumentsPane() -> impl IntoElement {
         let privacy_enabled = app::amount_privacy_enabled();
         let filter = ledger_investment::InstrumentListFilter {
             search: {
-                let trimmed = "".to_owned();
+                let trimmed = search.get_untracked().trim().to_owned();
                 (!trimmed.is_empty()).then_some(trimmed)
             },
             market: market.get_untracked(),
@@ -729,111 +729,105 @@ pub(crate) fn InstrumentsPane() -> impl IntoElement {
             move || rows.get(),
             |row: &InstrumentRowSnap| row.id.clone(),
             move |item: ReadSignal<InstrumentRowSnap>, _index: ReadSignal<usize>| {
-                let snap = item.get_untracked();
-                let focused = highlight_id.get_untracked().as_deref() == Some(snap.id.as_str());
-                // 行内录价（issue #291）：只对手动报价通道开放；其余「-」
-                //（行情/净值通道现价归同步——无来源行无入口）。
-                let quote_spot = if snap.quoteable {
-                    view()
-                        .test_id(format!("quote-{}", snap.symbol).as_str())
-                        .on_press({
-                            let target = snap.clone();
-                            move |_: &PressEvent| {
-                                quote_target.set(Some(target.clone()));
-                                quote_error.set(None);
-                                quote_message.set(None);
-                                quote_open.set(true);
-                            }
-                        })
-                        .rounded_sm()
-                        .px_2()
-                        .py_0p5()
-                        .app_class("hover:bg-accent")
-                        .child(
-                            text(QUOTE_ACTION)
-                                .text_size(px(11.0))
-                                .text_color(palette.fg),
-                        )
-                } else {
-                    view().child(text("-").text_size(px(13.0)).text_color(palette.muted))
+                let snap_head = item.get_untracked();
+                let row_id_head = snap_head.id.clone();
+                let focus_head = highlight_id.get_untracked();
+                // 行格随 item 信号绑定（each 键复用行节点，失效重拉的新值必
+                // 须穿过同一个行键——写路径后原行现场；格的聚焦态随行 id 与
+                // focus 信号现值变化）。行内录价/删除准入位经信号随行。
+                let quote_for_row = {
+                    move |_: &PressEvent| {
+                        let target = item.get_untracked();
+                        quote_target.set(Some(target));
+                        quote_error.set(None);
+                        quote_message.set(None);
+                        quote_open.set(true);
+                    }
                 };
-                // 行内删除（issue #292 / ADR-0036 决策 5）：仅手动来源行；
-                // 域守卫在域写路径（界面准入 + 后端双保险）。
-                let delete_spot = if snap.deletable {
-                    view()
-                        .test_id(format!("delete-instrument-{}", snap.symbol).as_str())
-                        .on_press({
-                            let target = snap.clone();
-                            move |_: &PressEvent| {
-                                delete_target.set(Some(target.clone()));
-                                delete_error.set(None);
-                                delete_message.set(None);
-                            }
-                        })
-                        .rounded_sm()
-                        .px_2()
-                        .py_0p5()
-                        .app_class("hover:bg-accent")
-                        .child(
-                            text(DELETE_ACTION)
-                                .text_size(px(11.0))
-                                .text_color(palette.danger),
-                        )
-                } else {
-                    view().child(text("-").text_size(px(13.0)).text_color(palette.muted))
+                let delete_for_row = {
+                    move |_: &PressEvent| {
+                        let target = item.get_untracked();
+                        delete_target.set(Some(target));
+                        delete_error.set(None);
+                        delete_message.set(None);
+                    }
                 };
                 view()
-                    .test_id(format!("instruments-row-{}", snap.id).as_str())
                     .flex_row()
                     .items_center()
                     .gap_1()
                     .min_h(px(36.0))
-                    .app_class(if focused { "bg-accent" } else { "" })
+                    .test_id(format!("instruments-row-{}", row_id_head).as_str())
+                    .app_class(if focus_head.as_deref() == Some(row_id_head.as_str()) {
+                        "bg-accent"
+                    } else {
+                        ""
+                    })
                     .child(
-                        text(snap.symbol.clone())
+                        text(move || item.get().symbol.clone())
                             .text_size(px(13.0))
                             .text_color(palette.fg)
-                            .w(px(SYMBOL_W)),
+                            .w(px(110.0)),
                     )
                     .child(
-                        text(snap.name_text.clone())
+                        text(move || item.get().name_text.clone())
                             .text_size(px(13.0))
                             .text_color(palette.fg)
-                            .w(px(NAME_W)),
+                            .w(px(200.0)),
                     )
                     .child(
-                        text(snap.price_channel_word)
+                        text(move || item.get().price_channel_word)
                             .text_size(px(13.0))
                             .text_color(palette.muted)
-                            .w(px(SOURCE_W)),
+                            .w(px(95.0)),
                     )
                     .child(
-                        text(snap.price_text.clone().unwrap_or_else(|| "-".to_owned()))
-                            .text_size(px(13.0))
-                            .text_color(palette.fg)
-                            .test_id(format!("instrument-price-{}", snap.symbol).as_str())
-                            .w(px(PRICE_W)),
+                        text(move || {
+                            item.get()
+                                .price_text
+                                .clone()
+                                .unwrap_or_else(|| "-".to_owned())
+                        })
+                        .text_size(px(13.0))
+                        .text_color(palette.fg)
+                        .test_id("instrument-price")
+                        .w(px(110.0)),
                     )
                     .child(
-                        text(snap.market_word.clone())
-                            .text_size(px(13.0))
-                            .text_color(palette.muted)
-                            .w(px(MARKET_W)),
-                    )
-                    .child(
-                        text(snap.type_word)
-                            .text_size(px(13.0))
-                            .text_color(palette.muted)
-                            .w(px(TYPE_W)),
-                    )
-                    .child(
-                        text(snap.currency_code.clone())
+                        text(move || item.get().market_word.clone())
                             .text_size(px(13.0))
                             .text_color(palette.muted)
-                            .w(px(CURRENCY_W)),
+                            .w(px(90.0)),
                     )
-                    .child(quote_spot)
-                    .child(view().w(px(INVESTED_W)).child(if snap.invested {
+                    .child(
+                        text(move || item.get().type_word)
+                            .text_size(px(13.0))
+                            .text_color(palette.muted)
+                            .w(px(90.0)),
+                    )
+                    .child(
+                        text(move || item.get().currency_code.clone())
+                            .text_size(px(13.0))
+                            .text_color(palette.muted)
+                            .w(px(70.0)),
+                    )
+                    .child(view().w(px(70.0)).child(if snap_head.quoteable {
+                        view()
+                            .test_id("instruments-quote")
+                            .on_press(quote_for_row)
+                            .rounded_sm()
+                            .px_2()
+                            .py_0p5()
+                            .app_class("hover:bg-accent")
+                            .child(
+                                text(QUOTE_ACTION)
+                                    .text_size(px(11.0))
+                                    .text_color(palette.fg),
+                            )
+                    } else {
+                        view().child(text("-").text_size(px(13.0)).text_color(palette.muted))
+                    }))
+                    .child(view().w(px(70.0)).child(if snap_head.invested {
                         text(COL_INVESTED_TAG)
                             .text_size(px(11.0))
                             .text_color(palette.fg)
@@ -844,7 +838,22 @@ pub(crate) fn InstrumentsPane() -> impl IntoElement {
                     } else {
                         text("-").text_size(px(13.0)).text_color(palette.muted)
                     }))
-                    .child(delete_spot)
+                    .child(view().w(px(70.0)).child(if snap_head.deletable {
+                        view()
+                            .test_id("instruments-delete")
+                            .on_press(delete_for_row)
+                            .rounded_sm()
+                            .px_2()
+                            .py_0p5()
+                            .app_class("hover:bg-accent")
+                            .child(
+                                text(DELETE_ACTION)
+                                    .text_size(px(11.0))
+                                    .text_color(palette.danger),
+                            )
+                    } else {
+                        view().child(text("-").text_size(px(13.0)).text_color(palette.muted))
+                    }))
             },
         )
     };

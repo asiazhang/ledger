@@ -304,13 +304,13 @@ fn assemble_detail_payload(
 /// 投影——旧壳价直接无边币；NSH 沿持仓现价格同口径带符号）。
 pub(crate) fn assemble_ledger_rows(
     rows: &[ledger_investment::InvestmentTransactionRow],
+    currencies: &crate::assembly::CurrencyTable,
     account_name_of: impl Fn(&str) -> Option<String> + Copy,
     privacy: bool,
 ) -> Vec<LedgerRowSnap> {
     rows.iter()
         .map(|row| {
-            let price_fmt =
-                crate::assembly::CurrencyTable::default().format_of(row.currency_code.as_str());
+            let price_fmt = currencies.format_of(row.currency_code.as_str());
             let price_text = row
                 .trade
                 .as_ref()
@@ -381,14 +381,8 @@ pub(crate) fn assemble_ledger_rows(
 
 /// 空态分型（旧壳 two 型同口径：默认空账本 / 筛选无匹配两端分类；筛选激
 /// 活判定含深链带入的标的维）。纯函数、headless 空态断言对口。
-pub(crate) fn ledger_empty_text(
-    total: i64,
-    first_page_present: bool,
-    filters_active: bool,
-) -> &'static str {
-    if filters_active {
-        LEDGER_EMPTY_FILTERED
-    } else if first_page_present && total == 0 {
+pub(crate) fn ledger_empty_text(total: i64, filters_active: bool) -> &'static str {
+    if total == 0 && !filters_active {
         LEDGER_EMPTY
     } else {
         LEDGER_EMPTY_FILTERED
@@ -606,17 +600,19 @@ pub(crate) fn LedgerPane() -> impl IntoElement {
                     (
                         ledger_investment::InvestmentTransactionListResult,
                         Vec<ledger_accounts::Account>,
+                        Vec<ledger_currencies::Currency>,
                     ),
                 > {
                     let page = boot::investment_transaction_page(&db, &filter)?;
                     let account_rows = boot::account_rows(&db)?;
-                    Ok((page, account_rows))
+                    let currencies = boot::currency_rows(&db)?;
+                    Ok((page, account_rows, currencies))
                 },
             )
             .await;
             loading.set(false);
             match outcome {
-                Ok(Ok((page, account_rows))) => {
+                Ok(Ok((page, account_rows, currency_rows))) => {
                     // 空页自愈（issue #893 同款）。
                     if page.items.is_empty()
                         && page.total > 0
@@ -631,6 +627,7 @@ pub(crate) fn LedgerPane() -> impl IntoElement {
                     accounts.set(investments_form::Accounts(account_rows));
                     rows.set(assemble_ledger_rows(
                         &page.items,
+                        &crate::assembly::CurrencyTable::from_currencies(&currency_rows),
                         account_name_of,
                         privacy_enabled,
                     ));
@@ -926,24 +923,24 @@ pub(crate) fn LedgerPane() -> impl IntoElement {
                 .otherwise(view),
             )
             .child(
-                // 明细表（DataTable；ρ列闭集 = 旧壳 columns 词表，唯一弹
-                // 性轴暂不分配——总宽 < 内容区。行右键菜单见 on_context_menu。
-                data_table()
-                    .columns(ledger_columns())
-                    .data(move || rows_to_data(&rows.get()))
-                    .render_cell(ledger_cell_renderer(rows, palette))
-                    .on_context_menu(on_context_menu)
-                    .loading(move || loading.get())
-                    .loading_view(text("正在加载…").text_color(palette.muted))
-                    .empty(
-                        text(move || {
-                            ledger_empty_text(total.get(), !rows.get().is_empty(), filters_active())
-                        })
-                        .text_color(palette.muted)
-                        .test_id("ledger-empty"),
-                    )
-                    .classes(table_classes())
-                    .flex_1(),
+                // 明细表（DataTable；列闭集 = 旧壳 columns 词表；行右键菜单
+                // 见 on_context_menu。视口限高：虚拟滚动组件按视口裁行）。
+                view().h(px(460.0)).child(
+                    data_table()
+                        .columns(ledger_columns())
+                        .data(move || rows_to_data(&rows.get()))
+                        .render_cell(ledger_cell_renderer(rows, palette))
+                        .on_context_menu(on_context_menu)
+                        .loading(move || loading.get())
+                        .loading_view(text("正在加载…").text_color(palette.muted))
+                        .empty(
+                            text(move || ledger_empty_text(total.get(), filters_active()))
+                                .text_color(palette.muted)
+                                .test_id("ledger-empty"),
+                        )
+                        .classes(table_classes())
+                        .flex_1(),
+                ),
             )
             .child(
                 // 服务端分页（旧壳 ADR-0008 同形：「共 N 条」前缀 + 分页条）。
@@ -1207,4 +1204,194 @@ fn detail_modal(
                 }))
         },
     )
+}
+
+// ---------------------------------------------------------------------------
+// lib 单测（词表纯函数与装配口径：五种 kind 行格投影（渲染期零格式化）、
+// 空态两型分型与检测；测试整体豁免 ADR-0060 经 crate 根放行）
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cny_table() -> crate::assembly::CurrencyTable {
+        let cny = ledger_currencies::Currency {
+            code: "CNY".to_owned(),
+            name: "人民币".to_owned(),
+            symbol: "¥".to_owned(),
+            decimal_places: 2,
+        };
+        crate::assembly::CurrencyTable::from_currencies([&cny])
+    }
+
+    fn trade_fields(
+        quantity: f64,
+        price_cents: i64,
+        fee_cents: i64,
+    ) -> Option<ledger_investment::InvestmentTradeFields> {
+        Some(ledger_investment::InvestmentTradeFields {
+            quantity,
+            price_cents,
+            fee_cents,
+        })
+    }
+
+    fn ledger_row(
+        id: &str,
+        kind: TransactionKind,
+        amount_cents: i64,
+        trade: Option<ledger_investment::InvestmentTradeFields>,
+        convert: Option<ledger_investment::InvestmentConvertFields>,
+        split: Option<ledger_investment::InvestmentSplitFields>,
+    ) -> ledger_investment::InvestmentTransactionRow {
+        ledger_investment::InvestmentTransactionRow {
+            id: id.to_owned(),
+            date: String::new(),
+            kind,
+            amount_cents,
+            account_id: "acc-1".to_owned(),
+            funding_account_id: None,
+            instrument_id: String::new(),
+            symbol: String::new(),
+            instrument_name: None,
+            instrument_type: String::new(),
+            trade,
+            convert,
+            split,
+            note: None,
+            currency_code: "CNY".to_owned(),
+            amount_native_cents: 0,
+            source_order_no: None,
+        }
+    }
+
+    fn account_name_of(id: &str) -> Option<String> {
+        if id == "acc-1" {
+            Some("证券".to_owned())
+        } else {
+            None
+        }
+    }
+
+    #[test]
+    fn trade_row_cells_follow_old_shell_projection() {
+        let rows = assemble_ledger_rows(
+            &[ledger_row(
+                "tx-1",
+                TransactionKind::Buy,
+                12_345,
+                trade_fields(2.0, 10_000, 345),
+                None,
+                None,
+            )],
+            &cny_table(),
+            account_name_of,
+            false,
+        );
+        assert_eq!(rows[0].kind_word, "买入");
+        assert_eq!(rows[0].quantity_text, "2");
+        assert_eq!(rows[0].amount_text.as_deref(), Some("123.45"));
+        assert_eq!(rows[0].price_text, "¥1");
+        assert_eq!(rows[0].fee_text, "3.45");
+        assert_eq!(rows[0].account_name, "证券");
+        assert_eq!(rows[0].funding_account_name, "-");
+        assert!(rows[0].editable);
+        assert!(rows[0].edit_anchor.is_some());
+        assert_eq!(rows[0].detail, None, "可编辑行不产生只读详情载荷");
+    }
+
+    #[test]
+    fn split_and_convert_rows_follow_payload_displays() {
+        let rows = assemble_ledger_rows(
+            &[
+                ledger_row(
+                    "tx-2",
+                    TransactionKind::Convert,
+                    9_876,
+                    None,
+                    Some(ledger_investment::InvestmentConvertFields {
+                        quantity: 2.0,
+                        to_instrument_id: "inst-b".to_owned(),
+                        to_symbol: "BD".to_owned(),
+                        to_quantity: 200.0,
+                        out_amount_cents: 500,
+                        in_amount_cents: 600,
+                    }),
+                    None,
+                ),
+                ledger_row(
+                    "tx-3",
+                    TransactionKind::Split,
+                    0,
+                    None,
+                    None,
+                    Some(ledger_investment::InvestmentSplitFields {
+                        delta_quantity: -25.5,
+                    }),
+                ),
+            ],
+            &cny_table(),
+            account_name_of,
+            false,
+        );
+        assert_eq!(rows[0].instrument_text, " → BD");
+        assert_eq!(rows[0].quantity_text, "2 → 200");
+        assert_eq!(
+            rows[0].amount_text.as_deref(),
+            Some("5"),
+            "金额读转出金额确认单权威"
+        );
+        assert_eq!(rows[0].price_text, "-", "convert 无成交单价");
+        // split：带符号 Δ 原样呈现（负值不出 +），金额格「-」（无现场现金
+        // 腿——不给半截数字不以 0 伪装）。
+        assert_eq!(rows[1].quantity_text, "-25.5");
+        assert_eq!(rows[1].amount_text, None);
+    }
+
+    #[test]
+    fn privacy_masks_amount_cells() {
+        let rows = assemble_ledger_rows(
+            &[ledger_row(
+                "tx-1",
+                TransactionKind::Buy,
+                12_345,
+                trade_fields(2.0, 10_000, 345),
+                None,
+                None,
+            )],
+            &cny_table(),
+            account_name_of,
+            true,
+        );
+        assert_eq!(
+            rows[0].amount_text.as_deref(),
+            Some(assembly::AMOUNT_PRIVACY_MASK)
+        );
+        assert_eq!(rows[0].quantity_text, assembly::AMOUNT_PRIVACY_MASK);
+        assert_eq!(rows[0].price_text, assembly::AMOUNT_PRIVACY_MASK);
+        assert_eq!(rows[0].fee_text, assembly::AMOUNT_PRIVACY_MASK);
+    }
+
+    #[test]
+    fn ledger_empty_text_two_shapes() {
+        assert_eq!(ledger_empty_text(0, false), LEDGER_EMPTY, "默认裸空账本");
+        assert_eq!(
+            ledger_empty_text(0, true),
+            LEDGER_EMPTY_FILTERED,
+            "筛选激活空集 → 筛选无匹配"
+        );
+        assert_eq!(
+            ledger_empty_text(25, false),
+            LEDGER_EMPTY_FILTERED,
+            "全集非第一页（空页自愈重拉的本响应不落数据）"
+        );
+    }
+
+    #[test]
+    fn ledger_total_pages_counts_partial_last_page() {
+        assert_eq!(ledger_total_pages(0), 1);
+        assert_eq!(ledger_total_pages(20), 1);
+        assert_eq!(ledger_total_pages(21), 2);
+    }
 }
