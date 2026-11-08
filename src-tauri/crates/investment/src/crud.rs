@@ -42,41 +42,48 @@ impl FromRow for HoldingRow {
 }
 
 pub fn list_holdings(conn: &Connection) -> Result<Vec<Holding>> {
-    let rows: Vec<HoldingRow> = query_all(
-        conn,
-        "SELECT v.id,v.account_id,v.instrument_id,v.quantity,v.cost_basis_cents,v.cost_currency_code, \
-         v.latest_price_cents,v.latest_price_currency_code,v.latest_nav_date,v.market_value_cents,v.unrealized_pnl_cents,v.updated_at, \
-         a.currency_code \
-         FROM v_holdings v \
-         JOIN accounts a ON a.id = v.account_id \
-         ORDER BY v.account_id, v.instrument_id",
-        [],
-    )?;
-    // 逐行折本位币（issue #1797，当期汇率软形态）：持仓页签合计三卡与首页投资
-    // 概览卡的折本位币单值消费面。单行缺账户币→本位币汇率降为行级 None（命令
-    // 不失败——表格的账户币展示不依赖折算），由展示面按「警告 + 重试」显式呈现。
-    // 账户行必存（视图聚合子查询已排除软删账户），JOIN 不减行；持仓行数远小于
-    // 交易量，逐列查表（每行至多两次索引点查）不做缓存优化。
-    let mut holdings = Vec::with_capacity(rows.len());
-    for row in rows {
-        let mut holding = row.holding;
-        // 市值与未实现盈亏的折算源同账户币；两列折算相互独立（成本腿缺失时
-        // 未实现为 None、市值仍可能有值），逐列软折算。
-        holding.native_market_value_cents = match holding.market_value_cents {
-            Some(cents) => {
-                amount::try_convert_to_native_current(conn, cents, &row.account_currency)?
-            }
-            None => None,
-        };
-        holding.native_unrealized_pnl_cents = match holding.unrealized_pnl_cents {
-            Some(cents) => {
-                amount::try_convert_to_native_current(conn, cents, &row.account_currency)?
-            }
-            None => None,
-        };
-        holdings.push(holding);
-    }
-    Ok(holdings)
+    // 多语句读闭包的快照纪律（issue #2065，#1699 同根因补登）：SELECT `v_holdings`
+    // 行集与逐行当期汇率折算是两次独立语句，rollback journal 下语句之间写事务可
+    // 提交时，行集取自快照 A、折算汇率读自快照 B，同屏「读数↔汇率折算」口径
+    // 自相矛盾。统一经嵌套感知读事务原语收口：autocommit 连接自闭读快照、已在外
+    // 层事务则加入。
+    ensure_transaction(conn, || {
+        let rows: Vec<HoldingRow> = query_all(
+            conn,
+            "SELECT v.id,v.account_id,v.instrument_id,v.quantity,v.cost_basis_cents,v.cost_currency_code, \
+             v.latest_price_cents,v.latest_price_currency_code,v.latest_nav_date,v.market_value_cents,v.unrealized_pnl_cents,v.updated_at, \
+             a.currency_code \
+             FROM v_holdings v \
+             JOIN accounts a ON a.id = v.account_id \
+             ORDER BY v.account_id, v.instrument_id",
+            [],
+        )?;
+        // 逐行折本位币（issue #1797，当期汇率软形态）：持仓页签合计三卡与首页投资
+        // 概览卡的折本位币单值消费面。单行缺账户币→本位币汇率降为行级 None（命令
+        // 不失败——表格的账户币展示不依赖折算），由展示面按「警告 + 重试」显式呈现。
+        // 账户行必存（视图聚合子查询已排除软删账户），JOIN 不减行；持仓行数远小于
+        // 交易量，逐列查表（每行至多两次索引点查）不做缓存优化。
+        let mut holdings = Vec::with_capacity(rows.len());
+        for row in rows {
+            let mut holding = row.holding;
+            // 市值与未实现盈亏的折算源同账户币；两列折算相互独立（成本腿缺失时
+            // 未实现为 None、市值仍可能有值），逐列软折算。
+            holding.native_market_value_cents = match holding.market_value_cents {
+                Some(cents) => {
+                    amount::try_convert_to_native_current(conn, cents, &row.account_currency)?
+                }
+                None => None,
+            };
+            holding.native_unrealized_pnl_cents = match holding.unrealized_pnl_cents {
+                Some(cents) => {
+                    amount::try_convert_to_native_current(conn, cents, &row.account_currency)?
+                }
+                None => None,
+            };
+            holdings.push(holding);
+        }
+        Ok(holdings)
+    })
 }
 
 pub fn list_exchange_rates(conn: &Connection) -> Result<Vec<ExchangeRate>> {
