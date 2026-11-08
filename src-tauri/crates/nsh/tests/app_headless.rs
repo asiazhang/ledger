@@ -11388,6 +11388,9 @@ fn backup_full_journey_backs_up_lists_prunes_and_guards_overwrite() {
     app.press("id:data-backup-as").unwrap();
     app.wait_for("text:覆盖备份文件").unwrap();
     app.press("id:danger-confirm").unwrap();
+    // last-backup 锚点在备份①②已置亮，此处 wait 无等待效果——settle 等
+    // 本次备份异步写收敛后再断言文件替换（否则偶发在写入落地前读旧内容）。
+    app.settle();
     app.wait_for("id:data-last-backup").unwrap();
     assert_ne!(
         fs::read(&target_overwrite).unwrap(),
