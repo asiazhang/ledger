@@ -63,6 +63,10 @@ ledger-dashboard = { path = "../dashboard" }
 # 集读直调面（旧壳 delete_account / archive_account 命令与 savingsGoalProgress
 # 命令消费的同一域函数，不经 IPC）。
 ledger-savings-goal = { path = "../savings-goal" }
+# 实物资产域读写（#2049）：实物资产视图的清单读 / 折算合计同源快照与建档 /
+# 编辑 / 更新估值 / 处置 / 软删除写路径直调面（旧壳 physicalAsset 域命令消费
+# 的同一域函数，不经 IPC；折算与在持合计、日期与金额币种成对守卫全在域内。
+ledger-physical-asset = { path = "../physical-asset" }
 # 备份域直调面（#2038）：手动备份（受管改道判定 + zip 快照）与账本指纹只读
 # 判定（旧壳 create_backup / get_book_fingerprint 命令消费的同一域函数，不经
 # IPC）。#2054 起兼备份管理面（列表 / 清理 / 自动备份状态 / 恢复）。

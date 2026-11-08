@@ -230,6 +230,7 @@ pub mod nav_model;
 pub mod overlay;
 pub mod period;
 pub mod period_row;
+pub mod physical_assets;
 pub mod pinyin_select;
 pub mod plot_line;
 pub mod policies;

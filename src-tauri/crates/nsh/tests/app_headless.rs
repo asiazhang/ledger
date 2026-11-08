@@ -35,6 +35,7 @@ use chrono::Datelike;
 use ledger_accounts::{AccountInput, AccountType};
 use ledger_categories::{CategoryInput, create_category};
 use ledger_infra::ids::new_uuid;
+use ledger_physical_asset::{PhysicalAssetDisposeInput, PhysicalAssetInput};
 use ledger_transaction::{
     TransactionFundingInput, TransactionInput, TransactionKind, TransactionPurchaseInput,
 };
@@ -10012,6 +10013,477 @@ fn policy_view_edit_shows_agreement_segments_and_rebuild_entry() {
         Some("1"),
         "改价字段组频次预填旧段"
     );
+}
+// ---------------------------------------------------------------------------
+// 实物资产视图（#2049 NSH 迁移⑱）：清单（在持合计卡 + 状态筛选 + 列头与
+// 行格）+ 新建/编辑表单 + 更新估值 + 处置 + 软删确认的 CRUD 旅程。删除任一
+// 接线即红的负向条目逐项写在各测试注释（ADR-0087 断言强度：断言对准用户
+// 可观察结果）。
+// ---------------------------------------------------------------------------
+
+/// 造一件实物资产（域公开写入口）：purchase = (购买日期, 金额，分, 币种)，
+/// None = 可选购买信息不填；首条估值必填（金额分 + 币种）。
+fn seed_physical_asset(
+    db: &ledger_infra::db::DbState,
+    name: &str,
+    purchase: Option<(&str, i64, &str)>,
+    valuation_cents: i64,
+    valuation_currency: &str,
+) -> String {
+    let conn = db
+        .conn
+        .lock()
+        .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
+        .unwrap();
+    ledger_physical_asset::create_physical_asset(
+        &conn,
+        PhysicalAssetInput {
+            name: name.to_owned(),
+            purchase_date: purchase.map(|(date, _, _)| date.to_owned()),
+            purchase_price_cents: purchase.map(|(_, cents, _)| cents),
+            purchase_currency_code: purchase.map(|(_, _, code)| code.to_owned()),
+            initial_valuation_cents: Some(valuation_cents),
+            initial_valuation_currency_code: Some(valuation_currency.to_owned()),
+            initial_valuation_date: None,
+        },
+        &mut || {},
+    )
+    .unwrap()
+}
+
+/// 库态核对（不经 UI）：资产行的软删标志与名称——软删行在域标准清单缺席
+/// （is_deleted=1 保留库行与估值历史），直查表是对「软删不物理移除」的
+/// 存在性凭据。
+fn book_asset_names_with_deleted(dir: &Path) -> Vec<(String, i64)> {
+    let db = nsh_app::boot::boot_ledger(dir).unwrap();
+    let conn = db.conn.lock().unwrap();
+    let mut stmt = conn
+        .prepare("SELECT name, is_deleted FROM physical_assets ORDER BY created_at")
+        .unwrap();
+    stmt.query_map([], |row| {
+        Ok((
+            row.get::<_, String>(0).unwrap(),
+            row.get::<_, i64>(1).unwrap(),
+        ))
+    })
+    .unwrap()
+    .collect::<Result<Vec<_>, _>>()
+    .unwrap()
+}
+
+/// 从侧栏点开资产组「更多」容器的实物资产页签（#2049 到达路径；容器默认
+/// 首签 = 保单，页签点击切换后才装载实物资产）。
+fn open_physical_assets(app: &mut Headless) {
+    app.wait_for("id:nav-more-assets").unwrap();
+    app.press("id:nav-more-assets").unwrap();
+    app.wait_for("id:more-tab-physicalAssets").unwrap();
+    app.press("id:more-tab-physicalAssets").unwrap();
+    app.wait_for("id:physical-asset-table").unwrap();
+}
+
+/// 装载（旧壳 onMounted 平价，容器页签到达）：在持合计卡（后端同源折算快
+/// 照）与清单卡列头行格（当前估值折本位币 / 估值日期 / 在持状态 / 处置信息
+/// 占位「—」）。删除 boot 装载读接缝 / 行装配 / 容器挂载任一环即红。
+#[test]
+fn physical_asset_view_lands_with_rows_total_and_columns() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("physical-asset-land");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        // 外币估值（当期汇率 7.2 折本位币）+ 本币估值（合计两腿相加）。
+        let conn = db.conn.lock().unwrap();
+        ledger_investment::create_exchange_rate(
+            &conn,
+            ExchangeRateInput {
+                base_code: "USD".to_owned(),
+                quote_code: "CNY".to_owned(),
+                rate: 7.2,
+                priced_at: today().to_string(),
+                source: None,
+            },
+        )
+        .unwrap();
+        drop(conn);
+        seed_physical_asset(&db, "海外车位", None, 10_000, "USD");
+        seed_physical_asset(&db, "国画", None, 30_000, "CNY");
+        // 已处置一件（默认清单缺席；处置档案回看面的造数）。
+        let disposed = seed_physical_asset(&db, "拆除资产", None, 5_000, "CNY");
+        let conn = db.conn.lock().unwrap();
+        ledger_physical_asset::dispose_physical_asset(
+            &conn,
+            &disposed,
+            PhysicalAssetDisposeInput {
+                disposal_date: Some("2026-08-01".to_owned()),
+                disposal_price_cents: Some(60_000),
+                disposal_currency_code: Some("CNY".to_owned()),
+            },
+            &mut || {},
+        )
+        .unwrap();
+    }
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_physical_assets(&mut app);
+
+    for text in [
+        "实物资产",
+        "新建资产",
+        "资产列表",
+        "在持估值合计：¥1020",
+        "名称",
+        "当前估值",
+        "估值日期",
+        "状态",
+        "处置信息",
+        "在持",
+    ] {
+        assert!(
+            app.shows(text),
+            "应呈现「{text}」：{:?}",
+            app.screen().texts()
+        );
+    }
+    // 在持两件（海外车位 USD 折本位币 + 国画本币，合计两腿相加）；已处置
+    // 一件不进默认清单、不进在持合计。text: 选择器是全节点精确匹配。
+    assert!(app.shows("¥720"), "外币估值折本位币呈现（当期 7.2）");
+    assert!(app.shows("¥300"), "本币估值原样呈现");
+    assert!(app.shows("国画"), "在持行在屏");
+    assert!(
+        !app.shows("拆除资产"),
+        "已处置退出默认清单：{:?}",
+        app.screen().texts()
+    );
+    // 切已处置筛选：档案回看（处置日期与处置价同格呈现，处置价按自带币
+    // 种）；合计口径恒算在持，回看已处置时不变。
+    app.press("id:physical-asset-filter-disposed").unwrap();
+    app.wait_for("text:拆除资产").unwrap();
+    assert!(
+        app.shows("2026-08-01 / ¥600"),
+        "已处置档案回看处置日期与处置价纯记录"
+    );
+    assert!(
+        app.shows("在持估值合计：¥1020"),
+        "回看已处置时在持合计口径不变（恒算在持）"
+    );
+    app.press("id:physical-asset-filter-holding").unwrap();
+    app.wait_for("text:国画").unwrap();
+}
+
+/// 移回侧栏直达（旧壳侧栏仓位语义平价，商户先例同形）：存储种子把实物资产
+/// 移出资产收纳清单、挂主项仓位 → 侧栏实物资产项直达真实视图。删 view_host
+/// 的实物资产分支挂载 → 本测红（「迁移中」占位——容器分支不经过本路径，
+/// 负向条目独立于容器到达）。
+#[test]
+fn physical_asset_view_lands_directly_when_moved_to_sidebar() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("physical-asset-direct");
+
+    // 侧栏序存储种子：「实物资产」移回侧栏（收纳清单同步剔除）。
+    let mut app = Headless::start(desktop_config_with_storage(&[
+        (
+            "view_state:sidebar_containment",
+            r#"{"bookkeeping":["scheduled"],"assets":["policies","insurers"],"insights":[]}"#,
+        ),
+        (
+            "view_state:sidebar_order",
+            r#"{"bookkeeping":["transactions","accounts","budget"],"assets":["investments","items","savingsGoals","physicalAssets"],"insights":["reports","search"]}"#,
+        ),
+    ]))
+    .unwrap();
+    nsh_app::app::set_book_dir(dir);
+    app.wait_for("id:nav-physicalAssets").unwrap();
+    app.press("id:nav-physicalAssets").unwrap();
+    app.wait_for("id:physical-asset-table").unwrap();
+    app.wait_for("text:资产列表").unwrap();
+    assert!(
+        app.screen().count("id:placeholder-note").unwrap() == 0,
+        "实物资产不再占位（#2049 迁入）"
+    );
+}
+
+/// 空库空态（旧壳 empty guide 同文案）：无资产呈现建档引导。
+#[test]
+fn physical_asset_view_empty_book_shows_guide() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("physical-asset-empty");
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_physical_assets(&mut app);
+    app.wait_for("id:physical-asset-empty-guide").unwrap();
+    assert!(
+        app.shows("还没有实物资产，点击「新建资产」为你的大件家当建立估值档案"),
+        "空态引导文案（旧壳 emptyGuide 同词表）"
+    );
+}
+
+/// 新建旅程（旧壳 create 平价）：名称空 → 拦截；估值空 → 拦截；补齐 →
+/// 保存成功（行即现 + 反馈条位 + 弹窗关 + 库检首条估值行 = 当前估值）。
+/// 删除「新建 → perform_save → reload」任一接线即红。
+#[test]
+fn physical_asset_view_create_journey_with_initial_valuation() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("physical-asset-create");
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_physical_assets(&mut app);
+
+    app.press("id:physical-asset-new").unwrap();
+    app.wait_for("id:physical-asset-name").unwrap();
+    app.wait_for("text:新建实物资产").unwrap();
+
+    // 名称留空 → 拦截（弹窗不关）。
+    app.press("id:physical-asset-form-save").unwrap();
+    app.wait_for("id:physical-asset-form-error").unwrap();
+    app.wait_for("text:保存失败: 请输入资产名称").unwrap();
+
+    // 补名称；估值留空 → 拦截。
+    app.type_text("id:physical-asset-name", "客厅油画").unwrap();
+    app.press("id:physical-asset-form-save").unwrap();
+    app.wait_for("text:保存失败: 请填写当前估值").unwrap();
+
+    // 补估值 → 选币种 → 保存成功：行即现、反馈在屏、弹窗关；首条估值行落库。
+    app.type_text("id:physical-asset-valuation", "50000")
+        .unwrap();
+    app.press("id:physical-asset-valuation-currency-trigger")
+        .unwrap();
+    app.wait_for("id:physical-asset-valuation-currency-option")
+        .unwrap();
+    app.press("text:人民币 (CNY)").unwrap();
+    app.press("id:physical-asset-form-save").unwrap();
+    app.wait_for("text:建档成功").unwrap();
+    app.wait_for_gone("id:physical-asset-name", DEFAULT_WAIT)
+        .unwrap();
+    app.wait_for("id:physical-asset-table").unwrap();
+    app.wait_for("text:客厅油画").unwrap();
+    let conn = nsh_app::boot::boot_ledger(&dir).unwrap();
+    let read_conn = conn.read_conn.lock().unwrap();
+    let list = ledger_physical_asset::list_physical_assets(&read_conn, None).unwrap();
+    assert_eq!(list.assets.len(), 1, "建档落库在册");
+    assert_eq!(list.assets[0].name, "客厅油画");
+    assert_eq!(
+        list.assets[0].current_valuation_cents, 5_000_000,
+        "首条估值行即当前估值（¥50000 = 5000000 分）"
+    );
+}
+
+/// 编辑旅程（旧壳 update 平价，编辑表单无估值字段）：编辑弹层回填名称 /
+/// 购买信息原值、估值字段结构性排除 → 改名保存 → 行刷新（估值不变，
+/// ADR-0064：估值只能经「更新估值」变更）。删除「编辑 → perform_save
+/// (update) → reload」任一接线即红。
+#[test]
+fn physical_asset_view_edit_updates_profile_without_valuation() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("physical-asset-edit");
+    let asset_id;
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        asset_id = seed_physical_asset(
+            &db,
+            "代步车",
+            Some(("2023-05-01", 120_000_000, "CNY")),
+            80_000_000,
+            "CNY",
+        );
+    }
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_physical_assets(&mut app);
+    app.wait_for("text:代步车").unwrap();
+
+    app.press(&format!("id:physical-asset-edit-{asset_id}"))
+        .unwrap();
+    app.wait_for("id:physical-asset-name").unwrap();
+    app.wait_for("text:编辑实物资产").unwrap();
+    assert_eq!(
+        app.screen().input_text("id:physical-asset-name").unwrap(),
+        Some("代步车"),
+        "编辑弹层回填原名称"
+    );
+    assert!(
+        app.screen().count("id:physical-asset-valuation").unwrap() == 0,
+        "编辑模式估值字段结构性排除（ADR-0064：估值只能在更新估值入口追加）"
+    );
+    // 改名保存：行刷新 + 反馈在屏 + 估值不变。
+    app.press("id:physical-asset-form-save").unwrap();
+    app.wait_for("text:保存成功").unwrap();
+    app.wait_for_gone("id:physical-asset-name", DEFAULT_WAIT)
+        .unwrap();
+    let conn = nsh_app::boot::boot_ledger(&dir).unwrap();
+    let read_conn = conn.read_conn.lock().unwrap();
+    let list = ledger_physical_asset::list_physical_assets(&read_conn, None).unwrap();
+    assert_eq!(
+        list.assets[0].current_valuation_cents, 80_000_000,
+        "估值不变"
+    );
+}
+
+/// 更新估值旅程（旧壳 valuation modal 平价）：金额空 → 拦截；日期缺省等价
+/// 「空 = 今天」（追加历史行）；保存成功行日新估值即屏。删除「更新估值 →
+/// perform_valuation → reload」任一接线即红。
+#[test]
+fn physical_asset_view_valuation_update_appends_history() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("physical-asset-valuation");
+    let asset_id;
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        asset_id = seed_physical_asset(&db, "客厅油画", None, 50_000_000, "CNY");
+    }
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_physical_assets(&mut app);
+    app.wait_for("text:客厅油画").unwrap();
+
+    app.press(&format!("id:physical-asset-valuation-{asset_id}"))
+        .unwrap();
+    app.wait_for("id:physical-asset-valuation-amount").unwrap();
+    app.wait_for("text:更新估值").unwrap();
+
+    // 金额留空 → 拦截。
+    app.press("id:physical-asset-valuation-save").unwrap();
+    app.wait_for("id:physical-asset-valuation-error").unwrap();
+    app.wait_for("text:保存失败: 请填写估值金额").unwrap();
+
+    // 补金额 → 保存：反馈在屏、弹窗关、当前估值刷新为最新一条（库检追加）。
+    app.type_text("id:physical-asset-valuation-amount", "60000")
+        .unwrap();
+    app.press("id:physical-asset-valuation-save").unwrap();
+    app.wait_for("text:估值已更新").unwrap();
+    app.wait_for_gone("id:physical-asset-valuation-amount", DEFAULT_WAIT)
+        .unwrap();
+    app.wait_for("text:¥6,0000").unwrap();
+    let conn = nsh_app::boot::boot_ledger(&dir).unwrap();
+    let read_conn = conn.read_conn.lock().unwrap();
+    let count: i64 = read_conn
+        .query_row(
+            "SELECT COUNT(*) FROM physical_asset_valuations WHERE asset_id = ?1",
+            [&asset_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(count, 2, "每次更新追加一条历史（旧值保留不覆盖）");
+}
+
+/// 处置旅程（旧壳 dispose modal 平价，处置与删除是分离的两个动作）：处置
+/// 日期缺省今天（状态标记），不填价即处置 → 已处置退出默认清单、在持合计
+/// 不含之；档案经「已处置」筛选回看。删除「处置 → perform_dispose →
+/// reload」任一接线即红。
+#[test]
+fn physical_asset_view_dispose_moves_mark_and_keeps_archive() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("physical-asset-dispose");
+    let asset_id;
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        asset_id = seed_physical_asset(&db, "代步车", None, 80_000_000, "CNY");
+        seed_physical_asset(&db, "国画", None, 5_000_000, "CNY");
+    }
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_physical_assets(&mut app);
+    app.wait_for("text:代步车").unwrap();
+
+    app.press(&format!("id:physical-asset-dispose-{asset_id}"))
+        .unwrap();
+    app.wait_for("id:physical-asset-dispose-date-input")
+        .unwrap();
+    app.wait_for("text:处置资产").unwrap();
+
+    // 处置（日期缺省今天 = 合法，不填处置价）：行离屏（reload 完成后退出
+    // 默认清单）与合计只剩国画（后端同源快照重读）。
+    app.press("id:physical-asset-dispose-save").unwrap();
+    app.wait_for("text:已处置").unwrap();
+    app.wait_for_gone("id:physical-asset-dispose-date-input", DEFAULT_WAIT)
+        .unwrap();
+    app.wait_for_gone("text:代步车", DEFAULT_WAIT).unwrap();
+    app.wait_for("text:在持估值合计：¥5,0000").unwrap();
+
+    // 已处置筛选回看档案（处置日期在格；状态标记在库）。
+    app.press("id:physical-asset-filter-disposed").unwrap();
+    app.wait_for("text:代步车").unwrap();
+    let conn = nsh_app::boot::boot_ledger(&dir).unwrap();
+    let read_conn = conn.read_conn.lock().unwrap();
+    let disposed = ledger_physical_asset::get_physical_asset(&read_conn, &asset_id).unwrap();
+    assert_eq!(
+        disposed.status,
+        ledger_physical_asset::PhysicalAssetStatus::Disposed,
+        "处置 = 状态标记（档案与估值历史保留）"
+    );
+    assert!(disposed.disposal_date.is_some());
+}
+
+/// 软删确认守卫（旧壳 AppPopconfirm 平价）：删除按钮开确认气泡（确认文案
+/// 在屏）→ 取消不动（行仍在）→ 再开确认 → 行移除（软删不进清单与合计，库
+/// 中行与估值历史保留）。删除 popconfirm 开合接线 → 「确认文案永不呈现」
+/// 本测红。
+#[test]
+fn physical_asset_view_delete_guard_and_soft_delete() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("physical-asset-delete");
+    let asset_id;
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        asset_id = seed_physical_asset(&db, "误录资产", None, 1_000_000, "CNY");
+        seed_physical_asset(&db, "拆除资产", None, 2_000_000, "CNY");
+    }
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_physical_assets(&mut app);
+    app.wait_for("text:误录资产").unwrap();
+
+    // 打开确认气泡（确认文案在屏）→ 取消：行仍在。
+    app.press(&format!("id:physical-asset-delete-{asset_id}"))
+        .unwrap();
+    app.wait_for("id:physical-asset-delete-message").unwrap();
+    app.wait_for("text:删除后资产将退出列表与合计，数据与估值历史保留（软删除），确认删除？")
+        .unwrap();
+    app.press("id:physical-asset-delete-cancel").unwrap();
+    app.wait_for_gone("id:physical-asset-delete-message", DEFAULT_WAIT)
+        .unwrap();
+    assert!(app.shows("误录资产"), "取消后行不移除");
+
+    // 再开确认：行移除 + 反馈在屏 + 软删保留库行（is_deleted=1，不物理移除）。
+    app.press(&format!("id:physical-asset-delete-{asset_id}"))
+        .unwrap();
+    app.wait_for("id:physical-asset-delete-message").unwrap();
+    app.press("id:physical-asset-delete-confirm").unwrap();
+    app.wait_for("text:已删除").unwrap();
+    app.wait_for_gone("text:误录资产", DEFAULT_WAIT).unwrap();
+    assert!(app.shows("拆除资产"), "对照行不受波及");
+    let rows = book_asset_names_with_deleted(&dir);
+    assert!(
+        rows.iter()
+            .any(|(name, deleted)| name == "误录资产" && *deleted == 1),
+        "软删保留库行（is_deleted=1，数据与估值历史保留）：{:?}",
+        rows
+    );
+    let conn = nsh_app::boot::boot_ledger(&dir).unwrap();
+    let read_conn = conn.read_conn.lock().unwrap();
+    let count: i64 = read_conn
+        .query_row(
+            "SELECT COUNT(*) FROM physical_asset_valuations v JOIN physical_assets a \
+             ON v.asset_id = a.id WHERE a.is_deleted = 1",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(count, 1, "软删后估值历史保留");
+    drop(read_conn);
 }
 // ---------------------------------------------------------------------------
 // 跨账本投资汇总与 AI 提示词（#2055）：多本只读合计（折算/逐本状态口径标注、

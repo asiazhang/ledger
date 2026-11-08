@@ -2337,10 +2337,10 @@ fn view_host(nav: nav::NavStore) -> impl IntoElement {
     let group_more = |gid: nav_model::GroupId| move || views::group_more_view(gid);
     // 分支序随迁移系列推进：交易列表 / 预算（#2033）/ 账户（#2041）/
     // 定时（#2042）/ 概览（#2039）/ 搜索（#2040）/ 物品（#2044）/ 报表
-    //（#2048）/ 储蓄目标（#2056）/ 设置（#2053）/ 保单（#2050）/ 商户
-    //（#2052）/ 跨账本汇总与 AI 提示词（#2055）/ 概览与盈亏两页签的投资
-    // 视图（#2045，⑯ 收口前持仓/明细/标的页签由 #2045 视图内占位待 ⑮/⑯）
-    // 挂真实组件，三容器挂「更多」页签壳，其余未迁移视图共享占位。
+    //（#2048）/ 储蓄目标（#2056）/ 设置（#2053）/ 保单（#2050）/ 实物资产
+    //（#2049）/ 商户（#2052）/ 跨账本汇总与 AI 提示词（#2055）/ 概览与盈亏
+    // 两页签的投资视图（#2045，⑯ 收口前持仓/明细/标的页签由 #2045 视图内
+    // 占位待 ⑮/⑯）挂真实组件，三容器挂「更多」页签壳，其余未迁移视图共享占位。
     when(
     is(ViewName::Transactions),
     transactions_view,
@@ -2397,10 +2397,15 @@ fn view_host(nav: nav::NavStore) -> impl IntoElement {
                                         )
                                         .otherwise(move || {
                                             when(
-                                                is(ViewName::Merchants),
-                                                crate::merchants::merchants_view,
+                                                is(ViewName::PhysicalAssets),
+                                                crate::physical_assets::physical_assets_view,
                                             )
                                             .otherwise(move || {
+                                                when(
+                                                    is(ViewName::Merchants),
+                                                    crate::merchants::merchants_view,
+                                                )
+                                                .otherwise(move || {
                                                 when(
                                                     is(ViewName::Ai),
                                                     crate::ai_prompt::ai_prompt_view,
@@ -2456,6 +2461,7 @@ fn view_host(nav: nav::NavStore) -> impl IntoElement {
             })
         })
     })
+})
 })
 }
 

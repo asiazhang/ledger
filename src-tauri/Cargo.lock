@@ -4474,6 +4474,7 @@ dependencies = [
  "ledger-item",
  "ledger-market-sync",
  "ledger-merchants",
+ "ledger-physical-asset",
  "ledger-policy",
  "ledger-reports",
  "ledger-savings-goal",

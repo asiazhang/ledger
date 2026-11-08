@@ -3613,6 +3613,125 @@ pub fn count_unfinished_plans(plans: &[PlanLeadFace], account_id: &str) -> usize
 }
 
 // ---------------------------------------------------------------------------
+// 实物资产视图装配族（#2049；旧壳 PhysicalAssetsView.vue 列构造纯函数的重
+// 生）：实物资产清单装配——每列最终展示文本在数据到达时一次算就，渲染期
+// 零格式化。金额口径全在域读路径单点（折本位币 / 在持合计），这里只消费
+// 域行集产展示文本，不另立算术（V017 / ADR-0067 纪律）。
+// ---------------------------------------------------------------------------
+
+/// 实物资产清单列（旧壳 physicalAssets.columns zh-CN 同词表）：名称 / 当前
+/// 估值（折本位币）/ 估值日期 / 状态 / 处置信息 / 操作。建议宽度供 UI 映射，
+/// 富余宽度全给名称列（旧壳名称列弹性，物品 / 保单先例同形）。
+pub const PHYSICAL_ASSET_COLUMNS: &[ColumnDef] = &[
+    ColumnDef {
+        key: "name",
+        title: "名称",
+        align: ColumnAlign::Start,
+        width: 140.0,
+    },
+    ColumnDef {
+        key: "valuation",
+        title: "当前估值",
+        align: ColumnAlign::End,
+        width: 100.0,
+    },
+    ColumnDef {
+        key: "valuation_date",
+        title: "估值日期",
+        align: ColumnAlign::Start,
+        width: 110.0,
+    },
+    ColumnDef {
+        key: "status",
+        title: "状态",
+        align: ColumnAlign::Start,
+        width: 65.0,
+    },
+    ColumnDef {
+        key: "disposal",
+        title: "处置信息",
+        align: ColumnAlign::Start,
+        width: 180.0,
+    },
+    ColumnDef {
+        key: "actions",
+        title: "操作",
+        align: ColumnAlign::Start,
+        width: 260.0,
+    },
+];
+
+/// 一行实物资产的装配产物（字段与 [`PHYSICAL_ASSET_COLUMNS`] 逐列对应）：
+/// 金额与处置信息在到达时一次成文本，渲染期零格式化。
+#[derive(Debug, Clone, PartialEq)]
+pub struct PhysicalAssetRowCells {
+    /// 资产 id（行级操作目标的事实源）。
+    pub id: String,
+    /// 名称列（资产原名）。
+    pub name: String,
+    /// 当前估值列（折本位币，后端同源快照；金额格式化走本位币口径——旧壳
+    /// currentValuationNative 同口径，跨币种可比）。在持行恒有值，已处置
+    /// 行不折算 → 「—」占位（域口径：已处置不进任何金额口径）。
+    pub valuation: String,
+    /// 估值日期列（YYYY-MM-DD 原样——「这个数是多久前估的」答句，旧壳同
+    /// 原样呈现）。
+    pub valuation_date: String,
+    /// 状态列（在持 / 已处置，旧壳 status.holding/disposed 同词表）。
+    pub status_label: String,
+    /// 处置信息列：已处置行 =「{处置日期} / {处置价}」（处置价按自带币种
+    /// 原样格式化不折算，缺币种回退本位币格式——旧壳 disposal 列同口径；
+    /// 处置价缺席 = 只处置日期），在持行恒「—」。
+    pub disposal: String,
+}
+
+/// 装配实物资产清单行集（顺序保持域清单序 = created_at 升序，旧壳同口径）。
+/// 上下文消费币种格式表（处置价按自带币种）与本位币格式（估值列）。
+pub fn assemble_physical_asset_rows(
+    rows: &[ledger_physical_asset::PhysicalAsset],
+    currencies: &CurrencyTable,
+) -> Vec<PhysicalAssetRowCells> {
+    rows.iter()
+        .map(|row| {
+            let native_fmt = currencies.format_of(&row.native_currency);
+            // 处置信息（旧壳 disposal 列 render 同口径）：已处置行 = 处置日期
+            // 与可选处置价（按自带币种原样格式化不折算，缺币种回落本位币格
+            // 式）；在持行恒「—」。处置价是纯记录，不折算、不进任何金额口径。
+            let disposal_text =
+                if row.status == ledger_physical_asset::PhysicalAssetStatus::Disposed {
+                    let date = row.disposal_date.as_deref().unwrap_or("—");
+                    match row.disposal_price_cents.map(|cents| {
+                        let fmt = currencies.format_of(
+                            row.disposal_currency_code
+                                .as_deref()
+                                .unwrap_or(&row.native_currency),
+                        );
+                        format_amount_basic(cents, &fmt)
+                    }) {
+                        Some(price) => format!("{date} / {price}"),
+                        None => date.to_owned(),
+                    }
+                } else {
+                    "—".to_owned()
+                };
+            PhysicalAssetRowCells {
+                id: row.id.clone(),
+                name: row.name.clone(),
+                valuation: row
+                    .current_valuation_native_cents
+                    .map(|cents| format_amount_basic(cents, &native_fmt))
+                    .unwrap_or_else(|| "—".to_owned()),
+                valuation_date: row.current_valuation_date.clone(),
+                status_label: match row.status {
+                    ledger_physical_asset::PhysicalAssetStatus::Holding => "在持".to_owned(),
+                    ledger_physical_asset::PhysicalAssetStatus::Disposed => "已处置".to_owned(),
+                },
+                disposal: disposal_text,
+            }
+        })
+        .collect()
+}
+
+// ---------------------------------------------------------------------------
 // 储蓄目标视图格（#2056）：蓄水进度行装配——旧壳 SavingsGoalsView 装配面的
 // 重生（一次装配、渲染期零格式化）。进度读数（已存 / 还差 / 达成态）与双向推
 // 算（ETA / 所需月存 / 落后超前）由域读路径 [`ledger_savings_goal::list_savings
