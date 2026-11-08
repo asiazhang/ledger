@@ -3800,6 +3800,7 @@ name = "ledger-dashboard"
 version = "0.11.2"
 dependencies = [
  "ledger-accounts",
+ "ledger-currencies",
  "ledger-infra",
  "ledger-physical-asset",
  "ledger-transaction",

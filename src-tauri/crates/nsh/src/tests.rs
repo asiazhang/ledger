@@ -11,19 +11,32 @@
 //! 引导接线（[`crate::wiring`]）。账本目录落 `std::env::temp_dir` 下的唯一
 //! 暂存目录（infra 身份工厂发 UUID，测试互不串库），进程退出由 OS 回收
 //! （骨架测试无 ScratchDir 需求——不建库则无文件，与 BDD 世界持久目录同容忍）。
+//!
+//! 造数形态（暂存目录、日期步进、账户与最小支出输入、支出系列入口）与
+//! headless 组件测试共享同一份 `tests/support/seed.rs`（两侧 `#[path]` 载入，
+//! issue #2027；本面薄壳只负责以 [`crate::boot::boot_ledger`] 开库）。
 
 use chrono::Datelike;
 use ledger_accounts::{AccountInput, AccountType};
 use ledger_currencies::Currency;
-use ledger_infra::ids::new_uuid;
 use ledger_transaction::{TransactionInput, TransactionKind};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crate::app::{StartupView, headline_text, run_startup, set_book_dir};
 use crate::boot::{
     CODE_BOOK_MISSING, CODE_ENCRYPTED_UNSUPPORTED, account_rows, boot_ledger, category_rows,
     currency_rows, merchant_rows, transaction_page, transaction_search,
+};
+
+/// 造数助手自共享 `tests/support/seed.rs`（issue #2027）载入；
+/// `scratch_book_dir` / `expense_input` 以 pub(crate) 再导出，供 nav 等模块
+/// 测试复用（原 pub(crate) 本地定义收拢后的接缝不变）。
+#[path = "../tests/support/seed.rs"]
+mod seed;
+
+pub(crate) use seed::{
+    create_empty_book_file, expense_input, make_book_dir as scratch_book_dir, test_date,
 };
 
 /// 串行锁：接缝注册与 OnceLock 装配入口是进程级单例，用例间串行防串扰
@@ -33,97 +46,19 @@ fn serial_guard() -> std::sync::MutexGuard<'static, ()> {
     crate::app::test_assembly_guard()
 }
 
-/// 唯一暂存账本目录。
-#[cfg(test)]
-pub(crate) fn scratch_book_dir(tag: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("nsh-app-test-{tag}-{}", new_uuid()));
-    fs::create_dir_all(&dir).unwrap();
-    dir
-}
-
-/// 建一个空账本库文件（0 字节：产品「新装」语义——已有文件上的空库，引导建连
-/// 即完成迁移）；不经 init_db（建库归产品开库入口，check-test-support 规则 1）。
-fn create_empty_book_file(dir: &Path) {
-    fs::write(dir.join("ledger.db"), b"").unwrap();
-}
-
 /// 经域层公开写入口在同一账户上造一列支出（余额刷新接缝的行文证据；插入序
-/// = 日期升序，供分页排序断言）。
+/// = 日期升序，供分页排序断言）。目录级薄壳：开库走本面产品入口，造数形态
+/// 归共享助手（[`seed`]，issue #2027）。
 fn seed_expense_series(dir: &Path, count: usize) {
-    let notes: Vec<String> = (0..count)
-        .map(|index| format!("造数第 {index} 笔"))
-        .collect();
-    let refs: Vec<&str> = notes.iter().map(String::as_str).collect();
-    seed_expense_notes(dir, &refs);
+    let db = boot_ledger(dir).unwrap();
+    seed::seed_expense_series(&db, count);
 }
 
 /// 经域层公开写入口造一列带指定中文备注的支出（同一账户「测试现金」，日期
 /// 递增；搜索读接线断言的原文命中造数面）。
 fn seed_expense_notes(dir: &Path, notes: &[&str]) {
     let db = boot_ledger(dir).unwrap();
-    let conn = db
-        .conn
-        .lock()
-        .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
-        .unwrap();
-    let account = ledger_accounts::create_account(
-        &conn,
-        AccountInput {
-            name: "测试现金".to_owned(),
-            kind: AccountType::Cash,
-            currency_code: "CNY".to_owned(),
-            initial_balance_cents: Some(0),
-            credit_limit_cents: None,
-            statement_day: None,
-            due_day: None,
-        },
-    )
-    .unwrap();
-    for (index, note) in notes.iter().enumerate() {
-        ledger_transaction::create(
-            &conn,
-            expense_input(&account, &test_date(index), 2_500, note),
-        )
-        .unwrap();
-    }
-}
-
-/// 一笔现金支出输入（公开写入口的最小载荷，日期与金额可指定）。
-pub(crate) fn expense_input(
-    account: &str,
-    date: &str,
-    amount_cents: i64,
-    note: &str,
-) -> TransactionInput {
-    TransactionInput {
-        kind: TransactionKind::Expense,
-        amount_cents,
-        currency_code: "CNY".to_owned(),
-        account_id: Some(account.to_owned()),
-        to_account_id: None,
-        funding_account_id: None,
-        funding: Vec::new(),
-        purchases: Vec::new(),
-        category_id: None,
-        merchant_id: None,
-        merchant_name: None,
-        policy_id: None,
-        refund_of_transaction_id: None,
-        note: Some(note.to_owned()),
-        source_order_no: None,
-        date: date.to_owned(),
-        instrument_id: None,
-        quantity: None,
-        price_cents: None,
-        fee_cents: None,
-        to_instrument_id: None,
-        to_quantity: None,
-        out_amount_cents: None,
-        in_amount_cents: None,
-        origin: None,
-        fx_rate: None,
-        idempotency_key: None,
-    }
+    seed::seed_expense_notes(&db, notes);
 }
 
 /// 一笔收入输入（维度筛选读路径的造数入口：无分类无商户）。
@@ -194,45 +129,7 @@ fn buy_input(account: &str, instrument_id: &str, date: &str) -> TransactionInput
 /// 在指定日期造一笔指定金额的现金支出（期间维度读路径的造数入口）。
 fn seed_expense_on_date(dir: &Path, date: &str, amount_cents: i64, note: &str) {
     let db = boot_ledger(dir).unwrap();
-    let conn = db
-        .conn
-        .lock()
-        .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
-        .unwrap();
-    let account = ledger_accounts::create_account(
-        &conn,
-        AccountInput {
-            name: "测试现金".to_owned(),
-            kind: AccountType::Cash,
-            currency_code: "CNY".to_owned(),
-            initial_balance_cents: Some(0),
-            credit_limit_cents: None,
-            statement_day: None,
-            due_day: None,
-        },
-    )
-    .unwrap();
-    ledger_transaction::create(&conn, expense_input(&account, date, amount_cents, note)).unwrap();
-}
-
-/// 造数日期：2026-01-01 起（平年月份表逐日推进，插入序 = 日期升序）。
-fn test_date(index: usize) -> String {
-    const MONTH_DAYS: [u32; 12] = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-    let mut year = 2026;
-    let mut month = 0usize;
-    let mut rest = index as u32;
-    loop {
-        let days = MONTH_DAYS[month];
-        if rest < days {
-            return format!("{year}-{:02}-{:02}", month + 1, rest + 1);
-        }
-        rest -= days;
-        month += 1;
-        if month == 12 {
-            month = 0;
-            year += 1;
-        }
-    }
+    seed::seed_expense_on_date(&db, date, amount_cents, note);
 }
 
 /// 首页读断言（空库与造数库共用）：total 与当前页行集。

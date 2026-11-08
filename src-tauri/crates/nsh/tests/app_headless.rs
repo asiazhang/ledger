@@ -4,7 +4,8 @@
 //! 进程内起真实视图树（`Root::of::<App>`，无窗口无平台后端），断言只写用户
 //! 可见结果：表格呈现真实账本数据（格文本来自装配层）、分页条点击翻页与空
 //! 态。装配入口注入测试库路径（生产与测试同一装配路径）；建库走产品
-//! 开库入口、造数经域层公开写入口（与 lib 单测同纪律）。域栈引导在组件任务的
+//! 开库入口、造数经域层公开写入口（与 lib 单测同纪律，造数形态共享
+//! `support/seed.rs`，两侧 `#[path]` 载入，issue #2027）。域栈引导在组件任务的
 //! 后台线程（blocking），呈现晚于步骤返回——一律 `wait_for`（§3.5 通用纪律 4）；
 //! 忙碌指示是装载期间的时序性呈现（本地读毫秒级完成、屏幕不可观测），归人工
 //! 验收清单（#2024 硬伤清单对表），不进自动化断言面。
@@ -43,6 +44,11 @@ use nsh_core::platform::ColorScheme;
 use nsh_engine::{EngineConfig, Environment, Idiom, Os, Points, Root, Size};
 use nsh_testing::Headless;
 
+#[path = "support/seed.rs"]
+mod seed;
+
+use seed::{seed_cash_account, test_date};
+
 /// 与 `wait_for` 缺省同一超时（nsh-testing 的 `wait_for_gone` 需显式超时）。
 const DEFAULT_WAIT: Duration = Duration::from_secs(5);
 
@@ -79,32 +85,12 @@ fn desktop_config() -> EngineConfig {
     }
 }
 
-/// 测试账本（产品开库入口建库：0 字节文件 = 新装语义）。
+/// 测试账本（产品开库入口建库：0 字节文件 = 新装语义；目录与空库文件形态归
+/// 共享助手 [`seed`]，issue #2027）。
 fn make_book(tag: &str) -> std::path::PathBuf {
-    let dir = std::env::temp_dir().join(format!("ledger-test-nsh-table-{tag}-{}", new_uuid()));
-    fs::create_dir_all(&dir).unwrap();
-    fs::write(dir.join("ledger.db"), b"").unwrap();
+    let dir = seed::make_book_dir(tag);
+    seed::create_empty_book_file(&dir);
     dir
-}
-
-/// 造数日期：2026-01-01 起（平年月份表逐日推进，插入序 = 日期升序）。
-fn test_date(index: usize) -> String {
-    const MONTH_DAYS: [u32; 12] = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-    let mut year = 2026;
-    let mut month = 0usize;
-    let mut rest = index as u32;
-    loop {
-        let days = MONTH_DAYS[month];
-        if rest < days {
-            return format!("{year}-{:02}-{:02}", month + 1, rest + 1);
-        }
-        rest -= days;
-        month += 1;
-        if month == 12 {
-            month = 0;
-            year += 1;
-        }
-    }
 }
 
 /// 造一个账户（用例共用；类型与名称随参）。
@@ -127,11 +113,6 @@ fn seed_account(db: &ledger_infra::db::DbState, name: &str, kind: AccountType) -
         },
     )
     .unwrap()
-}
-
-/// 造一个现金账户（用例共用）。
-fn seed_cash_account(db: &ledger_infra::db::DbState) -> String {
-    seed_account(db, "测试现金", AccountType::Cash)
 }
 
 /// 一笔种子交易的具名入参（`seed_transaction` 的载荷）：转账双腿填
@@ -197,25 +178,11 @@ fn seed_transaction(db: &ledger_infra::db::DbState, seed: TxnSeed<'_>) {
     .unwrap();
 }
 
-/// 经域层公开写入口在同一账户上造一列现金支出（每笔 ¥25，日期递增）。
+/// 经域层公开写入口在同一账户上造一列现金支出（每笔 ¥25，日期递增）。目录
+/// 级薄壳：开库走产品开库入口，造数形态归共享助手（[`seed`]，issue #2027）。
 fn seed_expense_series(dir: &Path, count: usize) {
     let db = nsh_app::boot::boot_ledger(dir).unwrap();
-    let account = seed_cash_account(&db);
-    for index in 0..count {
-        seed_transaction(
-            &db,
-            TxnSeed {
-                account: &account,
-                to_account: None,
-                kind: TransactionKind::Expense,
-                amount_cents: 2_500,
-                date: &test_date(index),
-                category_id: None,
-                merchant_id: None,
-                note: Some(format!("造数第 {index} 笔")),
-            },
-        );
-    }
+    seed::seed_expense_series(&db, count);
 }
 
 /// 经域层公开写入口在同一账户上造一列带指定中文备注的支出（搜索断言的
@@ -223,42 +190,13 @@ fn seed_expense_series(dir: &Path, count: usize) {
 /// 搜索关键词相交）。
 fn seed_expense_notes(dir: &Path, notes: &[&str]) {
     let db = nsh_app::boot::boot_ledger(dir).unwrap();
-    let account = seed_cash_account(&db);
-    for (index, note) in notes.iter().enumerate() {
-        seed_transaction(
-            &db,
-            TxnSeed {
-                account: &account,
-                to_account: None,
-                kind: TransactionKind::Expense,
-                amount_cents: 2_500,
-                date: &test_date(index),
-                category_id: None,
-                merchant_id: None,
-                note: Some((*note).to_owned()),
-            },
-        );
-    }
+    seed::seed_expense_notes(&db, notes);
 }
 
-/// 在指定日期造一笔指定金额的现金支出（期间维度读路径的造数入口，
-/// 与 lib 单测同纪律：建库走产品开库入口，造数经域公开写入口）。
+/// 在指定日期造一笔指定金额的现金支出（期间维度读路径的造数入口）。
 fn seed_expense_on_date(dir: &Path, date: &str, amount_cents: i64) {
     let db = nsh_app::boot::boot_ledger(dir).unwrap();
-    let account = seed_cash_account(&db);
-    seed_transaction(
-        &db,
-        TxnSeed {
-            account: &account,
-            to_account: None,
-            kind: TransactionKind::Expense,
-            amount_cents,
-            date,
-            category_id: None,
-            merchant_id: None,
-            note: Some(format!("支出 {date}")),
-        },
-    );
+    seed::seed_expense_on_date(&db, date, amount_cents, &format!("支出 {date}"));
 }
 
 /// 移动档 headless 配置（#2057 窄窗自适应横切：600×720——< 断点 840 的窄窗口，

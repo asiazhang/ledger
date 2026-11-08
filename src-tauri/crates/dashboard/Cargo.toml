@@ -38,6 +38,12 @@ serde = { version = "1", features = ["derive"] }
 # 生产依赖面承担（lib 目标解析不到 dev-dependency）。
 tauri-app = { path = "../.." }
 #
+# 基准币种切换（issue #2008）：缓存币种一致性守护测试经币种域公开写入口
+# `set_base_currency` 造「缓存行币种 ≠ 当前基准币种」前置（transaction crate
+# amount 测试同形态先例）。生产面不变：本域对币种域零生产依赖，默认币种口径
+# 仍只经 `transaction::amount` 间接消费。
+ledger-currencies = { path = "../currencies" }
+#
 # 六件套易 panic 构造门禁经 workspace 继承（ADR-0060 / spec #1086 门禁前置）：
 # 本行是继承接线，缺失即门禁静默消失，由 scripts/check-structure.ts 守门。
 [lints]

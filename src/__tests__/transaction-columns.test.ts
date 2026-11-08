@@ -177,7 +177,7 @@ describe("buildTransactionColumns 来源列", () => {
     expect(statusTag.children).toBe("已删除");
   });
 
-  it("无来源留空（占位符，手动/AI 导入口径）", () => {
+  it('无来源渲染占位符 "-"（手动/AI 导入口径，#2030 对齐可验证行为）', () => {
     expect(sourceCellOf(cellRows([makeTransaction({ id: "t3" })])[0])).toBe("-");
   });
 });
