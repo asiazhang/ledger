@@ -11249,3 +11249,625 @@ fn books_summary_entry_opens_cross_book_summary() {
     app.press("id:book-summary-entry").unwrap();
     app.wait_for("text:汇总读取失败").unwrap();
 }
+
+// ---------------------------------------------------------------------------
+// 投资视图（#2045）：概览/盈亏两页签（旧壳 InvestmentsView 前两位的迁移）——
+// 页签容器（visited-once keep-mounted + 会话槽）、概览读数（可投资资产 Hero +
+// 构成比例条与图例 + 投资合计三项 + 缺价/无账户说明）、组合走势卡（plot line
+// 封装件首建 + 预设区间 + 空态三态）、盈亏页签（账户/标的筛选 + 按年/按账户
+// 两张单值表客户端切片分页 + 资金加权收益率卡）。读路径直调域读入口；
+// 删任一接线（视图挂载分支 / 概览与盈亏装载 / 筛选写路径 / 分页条回调）即红
+// 的负向条目逐项写在各测试注释（ADR-0087 断言强度：断言对准用户可观察结果）。
+// ---------------------------------------------------------------------------
+
+/// 投资视图造数账本（概览/盈亏断言统一刻度）：投资账户期初 1000（¥1000 内
+/// 现金腿），标的现价万分位 10_000（=¥1），买入 1 份@¥1、卖出 1 份@¥0.8
+///（2025-12-30，已实现 -2000 分）、现金分红 12345 分（2026-03-05）——
+/// 可投资资产 = 990 现金腿 + 0 持仓腿（卖出清仓）= ¥9.9；盈亏按年 2026
+///（已实现 -2000 + 分红 12345 = 10345）与 2025（已实现 -2000）两行。
+fn seed_investments_book(tag: &str) -> std::path::PathBuf {
+    let dir = make_book(tag);
+    let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+    seed_investment_flow_book(&db, 1_000, 10_000);
+    dir
+}
+
+/// 投资流程造数主体（概览/盈亏分用例共用刻度；initial 分为投资账户期初现金，
+/// price_wan 为标的现价万分位刻度——买入按 price_fen 刻度挂真实成本）。
+fn seed_investment_flow_book(db: &ledger_infra::db::DbState, initial: i64, price_fen: i64) {
+    use ledger_investment::{InstrumentInput, InstrumentType, MarketPriceInput};
+    {
+        let conn = db.conn.lock().unwrap();
+        ledger_accounts::create_account(
+            &conn,
+            AccountInput {
+                name: "证券".to_owned(),
+                kind: AccountType::Investment,
+                currency_code: "CNY".to_owned(),
+                initial_balance_cents: Some(initial),
+                credit_limit_cents: None,
+                statement_day: None,
+                due_day: None,
+            },
+        )
+        .unwrap();
+    }
+    let instrument = {
+        let conn = db.conn.lock().unwrap();
+        let id = ledger_investment::create_instrument(
+            &conn,
+            InstrumentInput {
+                symbol: "TST".to_owned(),
+                kind: InstrumentType::Stock,
+                name: Some("测试标的".to_owned()),
+                currency_code: "CNY".to_owned(),
+                market: None,
+            },
+        )
+        .unwrap();
+        ledger_investment::create_market_price(
+            &conn,
+            MarketPriceInput {
+                instrument_id: id.clone(),
+                price_cents: price_fen,
+                currency_code: "CNY".to_owned(),
+                priced_at: today().to_string(),
+                source: Some("manual".to_owned()),
+            },
+        )
+        .unwrap();
+        id
+    };
+    // 买入 2 份@price_fen（2025-12-20；金额 = 数量 × 价格）。
+    {
+        let conn = db.conn.lock().unwrap();
+        ledger_transaction::create(
+            &conn,
+            ledger_transaction::TransactionInput {
+                kind: ledger_transaction::TransactionKind::Buy,
+                amount_cents: 0,
+                currency_code: "CNY".to_owned(),
+                account_id: Some(
+                    ledger_accounts::list_accounts(&conn)
+                        .unwrap()
+                        .into_iter()
+                        .find(|a| a.kind == AccountType::Investment)
+                        .map(|a| a.id)
+                        .unwrap(),
+                ),
+                instrument_id: Some(instrument.clone()),
+                quantity: Some(2.0),
+                price_cents: Some(price_fen),
+                fee_cents: Some(0),
+                date: "2025-12-20".to_owned(),
+                note: Some("买入".to_owned()),
+                ..probe_investments_input()
+            },
+        )
+        .unwrap();
+    }
+    let account_id: String = db
+        .conn
+        .lock()
+        .unwrap()
+        .query_row("SELECT id FROM accounts WHERE name='证券'", [], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    // 卖出 1 份@一半价（2025-12-30）：已实现 = 卖出净额 − FIFO 成本 = −1 份成本。
+    {
+        let conn = db.conn.lock().unwrap();
+        ledger_transaction::create(
+            &conn,
+            ledger_transaction::TransactionInput {
+                kind: ledger_transaction::TransactionKind::Sell,
+                amount_cents: 0,
+                currency_code: "CNY".to_owned(),
+                account_id: Some(account_id.clone()),
+                instrument_id: Some(instrument),
+                quantity: Some(1.0),
+                price_cents: Some(price_fen / 2),
+                fee_cents: Some(0),
+                date: "2025-12-30".to_owned(),
+                note: Some("卖出".to_owned()),
+                ..probe_investments_input()
+            },
+        )
+        .unwrap();
+    }
+    // 现金分红（2026-03-05；现金腿 12345 分）。
+    {
+        let conn = db.conn.lock().unwrap();
+        let instrument_id: String = conn
+            .query_row("SELECT id FROM instruments LIMIT 1", [], |r| r.get(0))
+            .unwrap();
+        ledger_transaction::create(
+            &conn,
+            ledger_transaction::TransactionInput {
+                kind: ledger_transaction::TransactionKind::Dividend,
+                amount_cents: 12_345,
+                currency_code: "CNY".to_owned(),
+                account_id: Some(account_id),
+                instrument_id: Some(instrument_id),
+                fee_cents: Some(0),
+                date: "2026-03-05".to_owned(),
+                note: Some("分红".to_owned()),
+                ..probe_investments_input()
+            },
+        )
+        .unwrap();
+    }
+}
+
+/// 探针造数交易输入的最小基座（具名字段覆盖，其余零值；dashboard/tests.rs
+/// 同形——两个测试二进制独立进程互不串扰，此处 headless 目标需要本地面）。
+fn probe_investments_input() -> ledger_transaction::TransactionInput {
+    ledger_transaction::TransactionInput {
+        kind: ledger_transaction::TransactionKind::Expense,
+        amount_cents: 0,
+        currency_code: String::new(),
+        account_id: None,
+        to_account_id: None,
+        funding_account_id: None,
+        funding: Vec::new(),
+        purchases: Vec::new(),
+        category_id: None,
+        merchant_id: None,
+        merchant_name: None,
+        policy_id: None,
+        refund_of_transaction_id: None,
+        note: None,
+        source_order_no: None,
+        date: String::new(),
+        instrument_id: None,
+        quantity: None,
+        price_cents: None,
+        fee_cents: None,
+        to_instrument_id: None,
+        to_quantity: None,
+        out_amount_cents: None,
+        in_amount_cents: None,
+        origin: None,
+        fx_rate: None,
+        idempotency_key: None,
+    }
+}
+
+/// 落位投资视图（投资用例共用）：侧栏「投资」项 → 点入 → 等概览页签卡挂载。
+fn open_investments(app: &mut Headless) {
+    app.wait_for("id:nav-investments").unwrap();
+    app.press("id:nav-investments").unwrap();
+    app.wait_for("id:inv-tab-overview").unwrap();
+}
+
+/// 投资视图全景呈现（概览默认首签）：两页签闭集在屏、可投资资产 Hero /
+/// 两腿图例 / 投资合计三项 / 缺价（本例无缺价）/ 构成比例条与图例、走势卡
+/// 空态说明与预设钮组齐备。「删除即红」负向条目：删 view_host 的 Investments
+/// 分支挂载 → 落回迁移占位（本测红）。
+#[test]
+fn investments_view_overview_lands_with_period_numbers() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = seed_investments_book("invest-overview");
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+
+    open_investments(&mut app);
+
+    // 页签闭集（旧壳 investments.tabs 前两位；持仓/标的/明细随 ⑮/⑯就位）。
+    for tab in ["概览", "盈亏"] {
+        assert!(
+            app.shows(tab),
+            "页签「{tab}」应在屏：{:?}",
+            app.screen().texts()
+        );
+    }
+    // Hero：可投资资产 = 990 现金腿 + 持仓市值腿 0（卖出清仓、分红不动持仓）
+    // = ¥9.9；本位币标注 = 域透传的 CNY。
+    app.wait_for("text:¥132.95").unwrap();
+    app.wait_for("id:overview-hero-value").unwrap();
+    app.wait_for("text:本位币 CNY").unwrap();
+    // 构成比例条与两腿图例（缺价说明缺席——全部持仓有现价）。
+    app.wait_for("id:overview-composition-bar").unwrap();
+    app.wait_for("text:投资账户现金 ¥131.95").unwrap();
+    app.wait_for("text:持仓市值 ¥1").unwrap();
+    assert_eq!(
+        app.screen().count("id:overview-missing-price").unwrap(),
+        0,
+        "无缺价持仓不出缺价说明"
+    );
+    // 投资合计三项：总市值 = 持仓 0（中性）、持仓收益 = 0、累计收益 =
+    // -2000 + 12345 = ¥103.45（盈亏色归人工对表，文本此处钉值）。
+    app.wait_for("text:投资合计").unwrap();
+    app.wait_for("id:overview-total-market-value-value")
+        .unwrap();
+    app.wait_for("id:overview-unrealized-pnl-value").unwrap();
+    let texts = app.screen().texts();
+    assert!(
+        texts.iter().any(|t| t.contains("¥122.95")),
+        "累计收益 = 0 - 50 + 12345 分折 ¥122.95：{:?}",
+        texts
+    );
+    // 走势卡：空态说明（无价格历史序列）与预设钮组齐备。
+    app.wait_for("id:overview-trend-card").unwrap();
+    app.wait_for("text:当前区间内暂无采样点，可尝试更长的区间。")
+        .unwrap();
+    for preset in ["1 月", "3 月", "1 年", "3 年", "5 年", "全部"] {
+        assert!(
+            app.shows(preset),
+            "预设「{preset}」在屏：{:?}",
+            app.screen().texts()
+        );
+    }
+    assert_eq!(
+        app.screen().count("id:placeholder-note").unwrap(),
+        0,
+        "投资视图是真实视图，不再是迁移占位"
+    );
+}
+
+/// 空账本引导：可投资资产 ¥0、构成条不渲染（空轨道不呈现）、无投资账户
+/// 引导句在屏（不隐藏功能，旧壳 overview.noAccount 同词）。删除 view_host
+/// 挂载分支即红（同上）。
+#[test]
+fn investments_view_guides_when_no_investment_account() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("invest-empty");
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+
+    open_investments(&mut app);
+
+    app.wait_for("id:overview-hero-value").unwrap();
+    app.wait_for("text:¥0").unwrap();
+    assert!(
+        !app.shows("overview-composition"),
+        "可投资资产 0 不渲染构成条（空轨道不呈现）"
+    );
+    app.wait_for("text:还没有投资账户；在「账户」页新建投资账户后，这里会显示你的可投资资产。")
+        .unwrap();
+}
+
+/// 金额隐私：开关开启 → 全部金额统一掩码、构成条一并隐藏（图形和金额同
+/// 严格口径，旧壳 spec #1684 的隐私裁量平整价）。
+#[test]
+fn investments_view_privacy_masks_amounts_and_hides_composition() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = seed_investments_book("invest-privacy");
+    let storage = nsh_testing::MemoryStorage::new(vec![(
+        "amount_privacy_enabled".to_owned(),
+        "true".to_owned(),
+    )]);
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(EngineConfig {
+        storage: Some(storage),
+        ..desktop_config()
+    })
+    .unwrap();
+
+    open_investments(&mut app);
+
+    let texts = app.screen().texts();
+    let masked = texts.iter().filter(|t| t.contains("••••")).count();
+    assert!(
+        masked >= 5,
+        "隐私态金额统一掩码（Hero/两腿/合计三项）：{:?}",
+        texts
+    );
+    assert!(
+        !texts.iter().any(|t| t.contains("¥")),
+        "掩码下不出现明文金额：{:?}",
+        texts
+    );
+}
+
+/// 盈亏页签：两张单值表行值（按年 2026 = -2000+12345 = 10345 / 2025 =
+/// -2000）、副行两腿拆解与 MWR 卡行在屏。「删除即红」负向条目：删盈亏
+/// 页签落位装载（load_summary 接线）→ 两表永不呈现（本测红）。
+#[test]
+fn investments_view_pnl_tab_tables_and_mwr_card() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = seed_investments_book("invest-pnl");
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+
+    open_investments(&mut app);
+    app.press("id:inv-tab-pnl").unwrap();
+
+    // 筛选行与折算口径披露句在屏。
+    app.wait_for("id:pnl-filter-account").unwrap();
+    app.wait_for("id:pnl-calibration-note").unwrap();
+    // 按年表 2026 行：主值 = 已实现 0 + 分红 12345，副行两腿拆解。
+    app.wait_for("id:pnl-year-table-value-2026").unwrap();
+    let texts = app.screen().texts();
+    assert!(
+        texts.iter().any(|t| t.contains("¥123.45"))
+            && texts
+                .iter()
+                .any(|t| t.contains("已实现盈亏 ¥0 · 现金分红 ¥123.45")),
+        "2026 行主值与两腿拆解：{:?}",
+        texts
+    );
+    // 2025 行（最新年在前）：卖 1 份@¥0.5 对 FIFO 成本 ¥1 → 已实现 -¥0.5。
+    app.wait_for("id:pnl-year-table-value-2025").unwrap();
+    let texts = app.screen().texts();
+    assert!(
+        texts.iter().any(|t| t.contains("-¥0.5"))
+            && texts
+                .iter()
+                .any(|t| t.contains("已实现盈亏 -¥0.5 · 现金分红 ¥0")),
+        "2025 行副行：{:?}",
+        texts
+    );
+    // 按账户表同名行（账户名 = 行名）。
+    app.wait_for("id:pnl-account-table-value-证券").unwrap();
+    // MWR 卡：账户行 + 全账行在屏（数值形态由域解出，文本不钉）。
+    app.wait_for("id:pnl-mwr-card").unwrap();
+    app.wait_for("text:全账").unwrap();
+}
+
+/// 盈亏页签账户筛选收窄：选择无交易的账户 → 两表行集随收窄（按账户行仅剩
+/// 该账户行；按年行只剩该账户年份）、MWR 账户行随收窄而全账行不收窄。
+/// 「删除即红」负向条目：删筛选写路径 effect（变化不重查）→ 两表仍旧本测红。
+#[test]
+fn investments_view_pnl_filters_narrow_tables() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = seed_investments_book("invest-filter");
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+
+    // 先造一个无交易的投资账户（「闲置」；筛选候选面在用投资账户）。
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let conn = db.conn.lock().unwrap();
+        ledger_accounts::create_account(
+            &conn,
+            AccountInput {
+                name: "闲置".to_owned(),
+                kind: AccountType::Investment,
+                currency_code: "CNY".to_owned(),
+                initial_balance_cents: Some(0),
+                credit_limit_cents: None,
+                statement_day: None,
+                due_day: None,
+            },
+        )
+        .unwrap();
+    }
+
+    open_investments(&mut app);
+    app.press("id:inv-tab-pnl").unwrap();
+    app.wait_for("id:pnl-year-table-value-2026").unwrap();
+
+    // 账户直选：触发件 → 选项行「闲置」。
+    app.press("id:pnl-account-filter-trigger").unwrap();
+    app.wait_for("id:pnl-account-filter-option").unwrap();
+    app.press("text:闲置").unwrap();
+
+    // 收窄：两表只剩「闲置」的空行集 → 按年表空态（闲置账户无已实现）。
+    app.wait_for("id:pnl-year-table-empty").unwrap();
+    app.wait_for("id:pnl-account-table-empty").unwrap();
+    // 清空筛选（可清空形态的 ✕，独立按压件）：行集恢复（clear 落 None 归
+    // 默认态，删除同值守卫不会静默锁死）。
+    app.press("id:pnl-account-filter-clear").unwrap();
+    app.wait_for("id:pnl-year-table-value-2026").unwrap();
+    app.wait_for_gone("id:pnl-year-table-empty", DEFAULT_WAIT)
+        .unwrap();
+}
+
+/// 页签状态保留（旧壳 display-directive="show" + key 的本壳对应物）：
+/// 未到访页签不预载（lazy 半边）+ 到访页签 display 隐藏保持挂载（切回回样）。
+/// 「删除即红」负向条目：删 keep-mount 的 display 切换接线（改回卸载重建）
+/// → 到访印记随卸载清零，本测红。
+#[test]
+fn investments_view_keeps_visited_panes_mounted_across_tab_switches() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = seed_investments_book("invest-keep");
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+
+    open_investments(&mut app);
+
+    // 未到访的盈亏页签不预载（宿主内容缺席）。
+    assert_eq!(
+        app.screen().count("id:pnl-calibration-note").unwrap(),
+        0,
+        "未到访页签不预载"
+    );
+
+    // 到访盈亏并留下视图印记：切到盈亏，等表挂载。
+    app.press("id:inv-tab-pnl").unwrap();
+    app.wait_for("id:pnl-calibration-note").unwrap();
+
+    // 非激活页签退出文档流（display 切换的呈现面）：概览 Hero 不在屏——
+    // 删除 display 接线（两页签同时可见）即红。
+    assert_eq!(
+        app.screen().count("id:overview-hero-value").unwrap(),
+        0,
+        "非激活页签不显示（display 切换接线）"
+    );
+
+    // 切回概览：页签回样（keep-mounted：切走时宿主隐藏不重挂）。
+    app.press("id:inv-tab-overview").unwrap();
+    app.wait_for("id:overview-hero-value").unwrap();
+    app.wait_for("text:¥132.95").unwrap();
+}
+
+/// 盈亏两表客户端切片分页（旧壳 PNL_PAGE_SIZE 8；第 1 页 = 最近年份）：
+/// 9 个年份行 → 分页条出现，第 2 页呈现最老年份行。「删除即红」负向条目：
+/// 删分页条的 on_change → 页码写回永不发生（本测红）。
+#[test]
+fn investments_view_pnl_pagination_slices_year_rows() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("invest-pages");
+    let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+    // 9 个年度各一批买入+卖出（2025–2033）：每年度 1 对交易 → 按年 9 行。
+    {
+        use ledger_investment::{InstrumentInput, InstrumentType};
+        let (account, instrument) = {
+            let conn = db.conn.lock().unwrap();
+            let account = ledger_accounts::create_account(
+                &conn,
+                AccountInput {
+                    name: "证券".to_owned(),
+                    kind: AccountType::Investment,
+                    currency_code: "CNY".to_owned(),
+                    initial_balance_cents: Some(500_000),
+                    credit_limit_cents: None,
+                    statement_day: None,
+                    due_day: None,
+                },
+            )
+            .unwrap();
+            let instrument = ledger_investment::create_instrument(
+                &conn,
+                InstrumentInput {
+                    symbol: "PGS".to_owned(),
+                    kind: InstrumentType::Stock,
+                    name: Some("分页标的".to_owned()),
+                    currency_code: "CNY".to_owned(),
+                    market: None,
+                },
+            )
+            .unwrap();
+            (account, instrument)
+        };
+        for year in 2025..2034 {
+            let buy_date = format!("{year}-01-05");
+            let sell_date = format!("{year}-06-15");
+            {
+                let conn = db.conn.lock().unwrap();
+                ledger_transaction::create(
+                    &conn,
+                    ledger_transaction::TransactionInput {
+                        kind: ledger_transaction::TransactionKind::Buy,
+                        amount_cents: 0,
+                        currency_code: "CNY".to_owned(),
+                        account_id: Some(account.clone()),
+                        instrument_id: Some(instrument.clone()),
+                        quantity: Some(1.0),
+                        price_cents: Some(2_000),
+                        fee_cents: Some(0),
+                        date: buy_date,
+                        note: Some("买入".to_owned()),
+                        ..probe_investments_input()
+                    },
+                )
+                .unwrap();
+                ledger_transaction::create(
+                    &conn,
+                    ledger_transaction::TransactionInput {
+                        kind: ledger_transaction::TransactionKind::Sell,
+                        amount_cents: 0,
+                        currency_code: "CNY".to_owned(),
+                        account_id: Some(account.clone()),
+                        instrument_id: Some(instrument.clone()),
+                        quantity: Some(1.0),
+                        price_cents: Some(3_000),
+                        fee_cents: Some(0),
+                        date: sell_date,
+                        note: Some("卖出".to_owned()),
+                        ..probe_investments_input()
+                    },
+                )
+                .unwrap();
+            }
+        }
+    }
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_investments(&mut app);
+    app.press("id:inv-tab-pnl").unwrap();
+
+    // 9 年行 → 2 页（8 行/页）：第 1 页呈现 2033–2026 的 8 行；分页条在屏。
+    app.wait_for("id:pnl-year-table-pagination").unwrap();
+    let texts = app.screen().texts();
+    for year in ["2033", "2032", "2027", "2026"] {
+        assert!(
+            texts.iter().any(|t| t.contains(year)),
+            "第 1 页含最新年份 {year}：{:?}",
+            texts
+        );
+    }
+    assert!(
+        !texts.iter().any(|t| t.contains("2025")),
+        "第 1 页不含最老年份 2025（8 行/页切片）：{:?}",
+        texts
+    );
+    // 翻第 2 页：2025 行出现（on_change 页码写回会话槽的接线）。
+    app.press("role:button[2]").unwrap();
+    let texts = app.screen().texts();
+    assert!(
+        texts.iter().any(|t| t.contains("2025")),
+        "第 2 页含最老年份 2025：{:?}",
+        texts
+    );
+}
+
+/// 缺价持仓的显式说明：未录价持仓 → 概览缺价计数行在屏（合计里不计入但
+/// 显式可见，旧壳 overview.missingPrice 同词）。
+#[test]
+fn investments_view_reports_missing_price_count() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("invest-missing-price");
+    let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+    {
+        use ledger_investment::{InstrumentInput, InstrumentType};
+        let conn = db.conn.lock().unwrap();
+        let account = ledger_accounts::create_account(
+            &conn,
+            AccountInput {
+                name: "证券".to_owned(),
+                kind: AccountType::Investment,
+                currency_code: "CNY".to_owned(),
+                initial_balance_cents: Some(0),
+                credit_limit_cents: None,
+                statement_day: None,
+                due_day: None,
+            },
+        )
+        .unwrap();
+        let instrument = ledger_investment::create_instrument(
+            &conn,
+            InstrumentInput {
+                symbol: "NOP".to_owned(),
+                kind: InstrumentType::Stock,
+                name: Some("无价标的".to_owned()),
+                currency_code: "CNY".to_owned(),
+                market: None,
+            },
+        )
+        .unwrap();
+        ledger_transaction::create(
+            &conn,
+            ledger_transaction::TransactionInput {
+                kind: ledger_transaction::TransactionKind::Buy,
+                amount_cents: 0,
+                currency_code: "CNY".to_owned(),
+                account_id: Some(account),
+                instrument_id: Some(instrument),
+                quantity: Some(1.0),
+                price_cents: Some(2_000),
+                fee_cents: Some(0),
+                date: today().to_string(),
+                note: Some("买入".to_owned()),
+                ..probe_investments_input()
+            },
+        )
+        .unwrap();
+    }
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+
+    open_investments(&mut app);
+    app.wait_for("text:另有 1 只持仓因缺现价或折算汇率未计入。")
+        .unwrap();
+}

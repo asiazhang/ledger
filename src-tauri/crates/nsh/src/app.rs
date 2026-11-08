@@ -38,9 +38,9 @@ use crate::boot;
 use crate::items::AddItemTarget;
 use crate::nav_model::ViewName;
 use crate::{
-    accounts, backup_entry, context_menu, danger, dashboard, items, logging, modal, multi_select,
-    nav, nav_model, overlay, period_row, pinyin_select, popconfirm, reports, scheduled, search,
-    settings, sidebar, signals, tx_filter, txn_form, views,
+    accounts, backup_entry, context_menu, danger, dashboard, investments, items, logging, modal,
+    multi_select, nav, nav_model, overlay, period_row, pinyin_select, popconfirm, reports,
+    scheduled, search, settings, sidebar, signals, tx_filter, txn_form, views,
 };
 
 /// 金额隐私模式开关的存储键（设备轻量设置项，与旧壳同键同值形态：旧壳
@@ -186,6 +186,7 @@ pub fn reset_book_assembly() {
     tx_filter::reset_for_tests();
     reports::reset_for_tests();
     scheduled::reset_for_tests();
+    investments::reset_for_tests();
     crate::cross_book::reset_default_data_dir();
 }
 
@@ -2269,8 +2270,9 @@ fn view_host(nav: nav::NavStore) -> impl IntoElement {
     // 分支序随迁移系列推进：交易列表 / 预算（#2033）/ 账户（#2041）/
     // 定时（#2042）/ 概览（#2039）/ 搜索（#2040）/ 物品（#2044）/ 报表
     //（#2048）/ 储蓄目标（#2056）/ 设置（#2053）/ 保单（#2050）/ 商户
-    //（#2052）/ 跨账本汇总与 AI 提示词（#2055）挂真实组件，三容器挂「更多」
-    // 页签壳，其余未迁移视图共享占位。
+    //（#2052）/ 跨账本汇总与 AI 提示词（#2055）/ 概览与盈亏两页签的投资
+    // 视图（#2045，⑯ 收口前持仓/明细/标的页签由 #2045 视图内占位待 ⑮/⑯）
+    // 挂真实组件，三容器挂「更多」页签壳，其余未迁移视图共享占位。
     when(
     is(ViewName::Transactions),
     transactions_view,
@@ -2342,6 +2344,11 @@ fn view_host(nav: nav::NavStore) -> impl IntoElement {
                                                     )
                                                     .otherwise(move || {
                                                         when(
+                                                            is(ViewName::Investments),
+                                                            investments::investments_view,
+                                                        )
+                                                        .otherwise(move || {
+                                                            when(
                                                             is(ViewName::BookkeepingMore),
                                                             group_more(nav_model::GroupId::Bookkeeping),
                                                         )
@@ -2381,6 +2388,7 @@ fn view_host(nav: nav::NavStore) -> impl IntoElement {
             })
         })
     })
+})
 }
 
 /// 立桩根组件：就绪前居中呈现启动三态，就绪后承载导航骨架（侧栏 + 内容区）。

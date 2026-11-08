@@ -2,7 +2,8 @@
 //! 搜索与参考数据（币种字典 / 在用分类 / 可见账户 / 含软删商户——交易表格
 //! 首屏、issue #2023 搜索接入与派生行形态的装配消费面），#2033 起兼预算
 //! 读写、#2034 起兼交易表单族参考数据与基础收支写路径、#2053 起兼设置接缝
-//! （日志档位 / DataLocation 信息聚合与更改意图 / 引导记录）。
+//! （日志档位 / DataLocation 信息聚合与更改意图 / 引导记录）、#2045 起兼投
+//! 资域读接缝（投资概览/盈亏页签与走势/收益率取数）。
 //!
 //! 引导内核复用基础设施引导层（[`ledger_infra::db::boot`]）：库文件处置判定
 //! （[`classify_for_boot`] 的明文/外来形态/密文/损坏四态）与成对建连
@@ -632,6 +633,88 @@ pub fn cumulative_pnl_native_total(
 pub fn financial_freedom(db: &DbState) -> Result<ledger_investment::FinancialFreedomOverview> {
     let conn = conn_lock(&db.read_conn)?;
     ledger_investment::query_financial_freedom(&conn)
+}
+
+/// 投资概览读数（投资页「概览」页签读接缝，旧壳 `investment_overview` 命令
+/// 消费的同一域函数，不经 IPC；ADR-0131 全页折本位币单值，装配层只消费不另
+/// 立口径）：可投资资产两腿 + 投资合计三项 + 缺价计数与引导判定多段取数，
+/// 域内 `ensure_transaction` 同一读事务（#1699 同快照纪律）。读连接是成对
+/// 建连的只读侧（ADR-0117）。
+pub fn investment_overview(db: &DbState) -> Result<ledger_investment::InvestmentOverview> {
+    let conn = conn_lock(&db.read_conn)?;
+    ledger_investment::query_investment_overview(&conn)
+}
+
+/// 已实现盈亏汇总（投资页「盈亏」页签读接缝，旧壳 `realized_pnl_summary` 命
+/// 令消费的同一域函数，不经 IPC；账户/标的筛选与两腿折算、`fx.rate-missing`
+/// 码化上抛全在域内）：按年与按账户两张单值表多语句 + 汇率装载，域内
+/// `ensure_transaction` 同一读事务（#1699 同快照纪律）。读连接是成对建连的
+/// 只读侧（ADR-0117）。
+pub fn realized_pnl_summary(
+    db: &DbState,
+    filter: &ledger_investment::PnlFilter,
+) -> Result<ledger_investment::RealizedPnlSummary> {
+    let conn = conn_lock(&db.read_conn)?;
+    ledger_investment::query_realized_pnl_summary(&conn, filter)
+}
+
+/// 组合市值走势（走势卡读接缝，旧壳 `portfolio_value_trend` 命令消费的同一
+/// 域函数，不经 IPC；区间裁剪与周采样全在域内，逐周数量×周线价×同期汇率
+/// 多语句读闭包在域内 `ensure_transaction` 收同一读事务）。读连接是成对建
+/// 连的只读侧（ADR-0117）。
+pub fn portfolio_value_trend(
+    db: &DbState,
+    range: &ledger_investment::TrendRange,
+) -> Result<ledger_investment::PortfolioValueTrend> {
+    let conn = conn_lock(&db.read_conn)?;
+    ledger_investment::query_portfolio_value_trend(&conn, range)
+}
+
+/// 资金加权收益率汇总（盈亏页收益率卡读接缝，旧壳
+/// `money_weighted_return_summary` 命令消费的同一域函数，不经 IPC；现金流集
+/// 与边界市值多语句读闭包在域内 `ensure_transaction` 收同一读事务）。旧壳
+/// 调用不传区间（缺省 = 自首笔流水起算、截至今日现值），本壳同口。读连接
+/// 是成对建连的只读侧（ADR-0117）。
+pub fn money_weighted_return_summary(
+    db: &DbState,
+) -> Result<ledger_investment::MoneyWeightedReturnSummary> {
+    let conn = conn_lock(&db.read_conn)?;
+    ledger_investment::query_money_weighted_return_summary(
+        &conn,
+        &ledger_investment::MwrRange::default(),
+    )
+}
+
+/// 标的全集（盈亏页标的筛选候选面）：旧壳盈亏筛选是远程搜索
+/// `list_instruments`（每输入一发命令），本壳一次分页循环装全集后经统一模糊
+/// 搜索语义本地过滤（[`crate::pinyin_select::filter_options`] 消费的同一域
+/// 函数 `list_instruments`，search 语义同源）——筛选语义平价、无远程竞态；
+/// 全集装载上限随 `page_size` 最大化并以 `total` 收核（半途即止会静默截断
+/// 候选面，不做）。读连接是成对建连的只读侧（ADR-0117）。
+pub fn instrument_rows(db: &DbState) -> Result<Vec<ledger_investment::Instrument>> {
+    let conn = conn_lock(&db.read_conn)?;
+    let page_size = ledger_investment::list_instruments(&conn, &Default::default())?
+        .total
+        .clamp(1, 500) as usize;
+    let mut all = Vec::new();
+    let mut page = 1usize;
+    loop {
+        let result = ledger_investment::list_instruments(
+            &conn,
+            &ledger_investment::InstrumentListFilter {
+                page: Some(page),
+                page_size: Some(page_size),
+                ..Default::default()
+            },
+        )?;
+        let fetched = result.items.len();
+        all.extend(result.items);
+        if all.len() >= result.total.max(0) as usize || fetched == 0 {
+            break;
+        }
+        page += 1;
+    }
+    Ok(all)
 }
 
 // ---------------------------------------------------------------------------

@@ -59,6 +59,17 @@
 //!   财务自由度 / 预算年度摘要五卡（取数口径单点在域，装配层只消费不另立）、
 //!   口径说明弹层、净资产卡下钻与按卡片消费面分的失效信号重读；本票落地即
 //!   功能冻结点达成（ADR-0145 修订注记）；
+//! - [`investments`]：投资视图·概览与盈亏两页签（#2045，spec #2031 系列
+//!   14/26）——visited-once keep-mounted 页签容器（旧壳 display-directive=
+//!   "show" + 页签 key 纪律的本壳对应物）、会话槽（当前页签/走势预设/盈亏
+//!   两表页码）、概览页签（可投资资产 Hero + 两腿构成比例条与图例 + 投资
+//!   合计三项 + 缺价/无账户说明）与组合走势卡（plot line 封装件首建 + 预设
+//!   区间 + 空态三态）、盈亏页签（账户/标的筛选 + 按年/按账户单值两表客户
+//!   端切片分页 + 资金加权收益率卡）；读路径直调域读入口，折算口径单点在
+//!   域、装配层只消费；
+//! - [`plot_line`]：line 图封装件（`App*` 封装族，#2045 走势卡首建，ADR-0145
+//!   决策 5 的封装层落点——NSH 内建 plot 的直消费单点，时间序列单线 + 缺值
+//!   点跨越，本件零统计语义零金额换算）；
 //! - [`views`]：壳内视图层（#2032）——未迁移视图空态占位（下钻接缝示范消费
 //!   面）与组「更多」容器页签壳；
 //! - [`assembly`]：装配层——行集进入表格前产出每行每格最终展示文本与列定义
@@ -184,6 +195,7 @@ pub mod danger;
 pub mod dashboard;
 pub mod date_select;
 pub mod insurers;
+pub mod investments;
 pub mod items;
 pub mod logging;
 pub mod merchants;
@@ -195,6 +207,7 @@ pub mod overlay;
 pub mod period;
 pub mod period_row;
 pub mod pinyin_select;
+pub mod plot_line;
 pub mod policies;
 pub mod popconfirm;
 pub mod popover;
