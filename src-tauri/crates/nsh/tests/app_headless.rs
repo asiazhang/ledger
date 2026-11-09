@@ -1500,21 +1500,14 @@ fn app_smoke_boots_shows_first_screen_count_and_pages_by_key() {
     app.wait_for_gone("text:2026-05-30", DEFAULT_WAIT).unwrap();
 }
 
-/// ADR-0062 确定性性能数据集生成器的 bin 路径（根包 tauri-app 的
-/// `src/bin/ledger-perf`，`cargo test --workspace` / scripts/test.sh 泳道随
-/// 构建一并产出）。跨包集成测试取不到 `CARGO_BIN_EXE_*`，按 workspace target
-/// 目录约定定位（manifest 相对，编译期注入；执行器等价性守门禁测试运行期读
-/// CARGO_* 环境变量，scripts/test-exec.ts 守门规则④）。
+/// ADR-0062 确定性性能数据集生成器的 bin 路径（nsh-app 同包 bin
+/// `src/bin/ledger-perf`，#2082 迁居）：cargo 为同包 bin 在集成测试编译期
+/// 注入 `CARGO_BIN_EXE_*` 并保证其先于测试构建——直跑 `cargo test -p nsh-app`
+/// 无需前置构建步骤，二进制缺失路径结构上不可能（#2064 级联假红的触发面
+/// 拆除；旧口径「先 `cargo build --bin ledger-perf -p tauri-app`」随迁居
+/// 退役）。
 fn ledger_perf_bin() -> std::path::PathBuf {
-    let exe =
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/debug/ledger-perf");
-    assert!(
-        exe.is_file(),
-        "ledger-perf 二进制未构建（{}）：本测经 ADR-0062 生成器子进程造库，\
-         先 `cargo build --bin ledger-perf -p tauri-app`（scripts/test.sh 泳道自带）",
-        exe.display()
-    );
-    exe
+    std::path::PathBuf::from(env!("CARGO_BIN_EXE_ledger-perf"))
 }
 
 /// 经 ADR-0062 生成器现场造一本确定性数据集库（复用唯一生成器，不另立第二
@@ -2238,6 +2231,264 @@ fn suppression_gate_blocks_shortcuts_while_kind_popup_open() {
     app.wait_for("text:造数第 19 笔").unwrap();
     app.wait_for_gone("text:造数第 119 笔", DEFAULT_WAIT)
         .unwrap();
+}
+
+// ---------------------------------------------------------------------------
+// 隐藏投资相关流水开关（issue #2062 / ADR-0136）：设备级视图偏好（偏好与筛选
+// 分家）+ 交易列表读路径携带 hide_investment_related + 分家语义。环境前
+// 提：Environment{os: Linux, idiom: Desktop}（desktop_config）。
+// ---------------------------------------------------------------------------
+
+/// #2062 用例共用造数：日常动线上被投资现金流刷屏的四行（ADR-0136 背景）——
+/// 银行卡日常支出（偏好开启后唯一在屏）、银行卡→投资户转账（充值，转入端
+/// 命中）、投资账户直接付费支出（转出端命中）、分解出资支出（出资端经
+/// fundings 子表命中）。全部通用 kind（默认 kind 收窄不排除），三端命中口径
+/// 由域读路径 SQL 承担（域单测已覆盖，本面只钉 NSH 旅程）。
+fn seed_investment_related_rows(db: &ledger_infra::db::DbState) {
+    let bank = seed_account(db, "银行卡", AccountType::Bank);
+    let investing = seed_account(db, "投资账户", AccountType::Investment);
+    seed_transaction(
+        db,
+        TxnSeed {
+            account: &bank,
+            to_account: None,
+            kind: TransactionKind::Expense,
+            amount_cents: 4_400,
+            date: "2026-01-05",
+            category_id: None,
+            merchant_id: None,
+            note: Some("银行卡日常".to_owned()),
+        },
+    );
+    seed_transaction(
+        db,
+        TxnSeed {
+            account: &bank,
+            to_account: Some(investing.clone()),
+            kind: TransactionKind::Transfer,
+            amount_cents: 10_000,
+            date: "2026-01-06",
+            category_id: None,
+            merchant_id: None,
+            note: Some("转入投资户".to_owned()),
+        },
+    );
+    seed_transaction(
+        db,
+        TxnSeed {
+            account: &investing,
+            to_account: None,
+            kind: TransactionKind::Expense,
+            amount_cents: 6_600,
+            date: "2026-01-07",
+            category_id: None,
+            merchant_id: None,
+            note: Some("投资户付费".to_owned()),
+        },
+    );
+    // 分解出资行（分解与 account_id 互斥，ADR-0138 决策 2）：出资端含投资户
+    // → 偏好开启后同样隐藏（fundings 子表命中臂）。
+    let mut decomposed = minimal_input(
+        TransactionKind::Expense,
+        "",
+        12_000,
+        "2026-01-08",
+        None,
+        Some("分解出资".to_owned()),
+    );
+    decomposed.account_id = None;
+    decomposed.funding = vec![
+        TransactionFundingInput {
+            account_id: bank.clone(),
+            amount_cents: 7_000,
+            label: None,
+        },
+        TransactionFundingInput {
+            account_id: investing,
+            amount_cents: 5_000,
+            label: None,
+        },
+    ];
+    seed_tx_with_id(db, decomposed);
+}
+
+/// 开关旅程（#2062 票面 2/3）：筛选栏开关切换 → 主列表行集隐藏/恢复投资
+/// 相关流水（三端任一端为投资类型账户，按账户不按分类；默认 kind 收窄不动）。
+/// 删除接线即红：删 `boot::transaction_page` 的 `hide_investment_related`
+/// 透传（域 filter 缺省不携带）或删装载闭包的偏好携带 → 开关切换行集不变、
+/// 共 1 条等不到。
+#[test]
+fn filter_bar_hide_investment_toggle_hides_and_restores_rows() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("hide-inv-toggle");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        seed_investment_related_rows(&db);
+    }
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_transactions(&mut app);
+
+    // 缺省（关）：四行全在屏（偏好缺省态行集与旧壳一致——本票不动的部分）。
+    app.wait_for("text:共 4 条").unwrap();
+    for amount in ["¥44", "¥100", "¥66", "¥120"] {
+        app.wait_for(&format!("text:{amount}")).unwrap();
+    }
+
+    // 开关开启：投资相关三行离屏（充值转账一并隐藏——三端口径），日常支
+    // 出保留；total 与行集同口径收窄（服务端分页，ADR-0008）。
+    app.press("id:tx-filter-hide-investment").unwrap();
+    app.wait_for("text:共 1 条").unwrap();
+    app.wait_for("text:¥44").unwrap();
+    for amount in ["¥100", "¥66", "¥120"] {
+        assert!(
+            !app.shows(amount),
+            "偏好开启后投资相关行离屏（{amount}）：{:?}",
+            app.screen().texts()
+        );
+    }
+
+    // 开关关闭：四行恢复（点选即重拉，偏好是行集先决收窄）。
+    app.press("id:tx-filter-hide-investment").unwrap();
+    app.wait_for("text:共 4 条").unwrap();
+    for amount in ["¥44", "¥100", "¥66", "¥120"] {
+        app.wait_for(&format!("text:{amount}")).unwrap();
+    }
+}
+
+/// 偏好跨重启保留（#2062 票面 1：设备级持久——`Storage` 平台文件侧 KV，
+/// 不进 SQLite、不与旧壳共享）：开启后重启（同一存储后端起第二/第三个引
+/// 擎），行集按持久偏好收窄、关闭态同样持久。删除接线即红：删开关写盘
+/// （on→set_item / off→remove_item）→ 重启后行集回全量红；删启动读路径
+/// （偏好信号初值不经存储）→ 重启后行集回全量红。
+#[test]
+fn hide_investment_preference_persists_across_restart() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("hide-inv-restart");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        seed_investment_related_rows(&db);
+    }
+    let storage = MemoryStorage::new(Vec::new());
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config_with_backend(storage.clone())).unwrap();
+    open_transactions(&mut app);
+    app.wait_for("text:共 4 条").unwrap();
+    app.press("id:tx-filter-hide-investment").unwrap();
+    app.wait_for("text:共 1 条").unwrap();
+    // 存储值形态（JSON 布尔字面量，与旧壳 view-state 家族同形不同存储）。
+    assert_eq!(
+        storage
+            .entries()
+            .get("view_state:hide_investment_related")
+            .map(String::as_str),
+        Some("true"),
+        "开启即持久化（默认态 = 无记录的写契约另一半由关闭臂断言）"
+    );
+    drop(app);
+
+    // 重启（开启态持久）：不经开关，行集即按偏好收窄。
+    nsh_app::app::reset_book_assembly();
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config_with_backend(storage.clone())).unwrap();
+    open_transactions(&mut app);
+    app.wait_for("text:共 1 条").unwrap();
+    assert!(
+        !app.shows("¥100"),
+        "重启后投资相关行仍隐藏：{:?}",
+        app.screen().texts()
+    );
+
+    // 关闭（删记录）→ 再重启：默认关持久，行集回全量。
+    app.press("id:tx-filter-hide-investment").unwrap();
+    app.wait_for("text:共 4 条").unwrap();
+    assert!(
+        !storage
+            .entries()
+            .contains_key("view_state:hide_investment_related"),
+        "关闭删记录（默认态 = 无记录，ADR-0116 家族同构）"
+    );
+    drop(app);
+    nsh_app::app::reset_book_assembly();
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config_with_backend(storage)).unwrap();
+    open_transactions(&mut app);
+    app.wait_for("text:共 4 条").unwrap();
+}
+
+/// 分家语义（#2062 票面 3 / ADR-0136 决策 1）：偏好是持久裁决不是筛选维度
+/// ——清除筛选与 ESC 复位不触达（复位后行集仍按偏好收窄），偏好也不参与
+/// 清除按钮禁用态（无保留状态即禁用，开了偏好 ≠ 有筛选）。删除接线即红：
+/// 让 reset_filters 复位偏好或让 filters_active 计入偏好，任一耦合本测即红。
+#[test]
+fn hide_investment_preference_not_touched_by_clear_or_escape() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("hide-inv-split");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        seed_investment_related_rows(&db);
+    }
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_transactions(&mut app);
+
+    // 开启偏好 + 设账户筛选：行集 = 偏好收窄 ∩ 筛选（唯一银行卡日常支出行）。
+    app.press("id:tx-filter-hide-investment").unwrap();
+    app.wait_for("text:共 1 条").unwrap();
+    app.press("id:tx-filter-account").unwrap();
+    app.wait_for("id:tx-filter-account-search").unwrap();
+    app.type_text("id:tx-filter-account-search", "银行卡")
+        .unwrap();
+    app.press("id:tx-filter-account-option >> text:银行卡 >> nth=0")
+        .unwrap();
+    app.wait_for("text:共 1 条").unwrap();
+
+    // 清除筛选：筛选维度归零，偏好原样（复位后行集仍是偏好收窄集，不是
+    // 全量四行）；清除按钮回禁用（偏好不计入激活判定）。
+    app.press("id:tx-filter-clear").unwrap();
+    app.settle();
+    app.wait_for("text:共 1 条").unwrap();
+    app.wait_for("text:¥44").unwrap();
+    assert!(
+        !app.shows("¥100"),
+        "清除筛选不触达偏好（投资相关行仍隐藏）：{:?}",
+        app.screen().texts()
+    );
+    assert!(
+        !app.screen().enabled("id:tx-filter-clear").unwrap(),
+        "偏好开启 ≠ 有筛选：清除按钮禁用态不计偏好（ADR-0136 决策 1）"
+    );
+
+    // 再设账户筛选后 ESC 复位：同语义不触达偏好。
+    app.press("id:tx-filter-account").unwrap();
+    app.wait_for("id:tx-filter-account-search").unwrap();
+    app.type_text("id:tx-filter-account-search", "银行卡")
+        .unwrap();
+    app.press("id:tx-filter-account-option >> text:银行卡 >> nth=0")
+        .unwrap();
+    app.wait_for("text:共 1 条").unwrap();
+    app.press_key("escape").unwrap();
+    app.settle();
+    app.wait_for("text:共 1 条").unwrap();
+    assert!(
+        !app.shows("¥100"),
+        "ESC 复位不触达偏好（投资相关行仍隐藏）：{:?}",
+        app.screen().texts()
+    );
+    assert!(
+        !app.screen().enabled("id:tx-filter-clear").unwrap(),
+        "ESC 复位后无保留状态（幂等守卫的可见凭据）"
+    );
+
+    // 开关关闭：回全量（分家语义下的开关仍随时可关，行集即时恢复）。
+    app.press("id:tx-filter-hide-investment").unwrap();
+    app.wait_for("text:共 4 条").unwrap();
 }
 
 // ---------------------------------------------------------------------------

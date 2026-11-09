@@ -283,8 +283,7 @@ pub(crate) fn eligible_account_ids(
 /// 报码化错误）、实时侧 [`balance::compute_all_balances_with_visibility`]；
 /// 任何漂移让量测作废（基准不许跑在坏缓存路径上）。
 ///
-/// 与共享断言库
-/// [`tauri_app_lib::test_support::assert_balance_cache_matches_realtime`]
+/// 与旧壳统一测试工厂的共享断言 `assert_balance_cache_matches_realtime`
 /// 的分工边界（issue #776 裁决，甲案不归一）：两份实现刻意不同、各自长期
 /// 存在，非漏收编——本函数属基准工具（开发侧基础设施，ADR-0062 不产生领域
 /// 术语）的正确性底线：Result 契约（失败给可读报告让量测作废，非 panic；bin

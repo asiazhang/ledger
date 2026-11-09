@@ -168,6 +168,12 @@ pub struct TxListQuery {
     pub category_id: Option<String>,
     /// 仅无分类（issue #377 三态之一）。
     pub uncategorized_only: bool,
+    /// 隐藏投资相关流水（#2062 / ADR-0136 视图偏好在读路径上的载荷，不是筛
+    /// 选维度）：`true` 时行集排除转出 / 转入 / 出资三端任一端为投资类型账户
+    /// 的行（域读路径三端 SQL 直传，按账户不按分类）；筛选会话态不携带，
+    /// 由偏好（[`crate::tx_view_preferences`]）在装载时机写入。默认 `false`
+    /// = 行为不变（域契约缺省不携带，只增）。
+    pub hide_investment_related: bool,
 }
 
 impl Default for TxListQuery {
@@ -179,6 +185,7 @@ impl Default for TxListQuery {
             merchant_id: None,
             category_id: None,
             uncategorized_only: false,
+            hide_investment_related: false,
         }
     }
 }
@@ -209,6 +216,7 @@ pub fn transaction_page(
         category_id: query.category_id.clone(),
         uncategorized_only: query.uncategorized_only.then_some(true),
         kinds: (!query.kinds.is_empty()).then(|| query.kinds.clone()),
+        hide_investment_related: query.hide_investment_related.then_some(true),
         ..Default::default()
     };
     let conn = conn_lock(&db.read_conn)?;

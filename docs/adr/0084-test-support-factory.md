@@ -74,7 +74,7 @@ grilling（2026-09-07，两轮）逐项复核评审数字与当前工作树一�
 - **共享物是「通道线格式契约」（字节级成帧），不是建库/种子/默认值集**：ADR-0086 决策 9 的分层互斥不破——BDD 侧仍不消费工厂的建库、种子与默认值；与 `test_support::webdav`（WebDAV 协议替身）同待遇。`CONTEXT-testing.md` 新增「通道线格式替身」词条锚定该形态。
 - **测试专用域间边 `test_support → sync_engine`**：本票新增。按 ADR-0071 决策 5「域间横向边显式化、逐条留痕」的口径，该边由**测试豁免路径**消费（`test_support` 的消费者全是测试）、不进产品依赖图，故在此登记为测试专用边而非产品横向边；与既有的 `test_support → accounts`（`assert.rs` 的对拍断言）同性质，同属测试专用放宽面。
 - **已知边界（本票不扩守门面）**：`scripts/check-structure.ts` 的 `INFRA_DOMAIN_ALLOWED_EDGES` 只对基础设施层生效，域→域边机器不可达——域间边（含测试专用边）靠评审与 ADR 登记兜底，不是守门覆盖面的缺口误判。
-- **守门新增规则 4**（`scripts/check-test-support.ts`）：测试代码禁手工构造通道段/清单（`SegmentEntry {` / `ChannelManifest {`），禁在引用了通道面的文件里自建摘要（`Sha256` / `sha2::`）；`test_support` 本体豁免。作用域限定（同文件出现 `ChannelManifest` / `SegmentEntry` / `EnvelopeMode` / `publish_raw_segment`）是为了不误伤与通道无关的摘要用法（`src/bin/ledger-perf/tests.rs` 的生成器确定性 DB 摘要，先例见本 ADR 迁移状态段的 #776 裁决）。
+- **守门新增规则 4**（`scripts/check-test-support.ts`）：测试代码禁手工构造通道段/清单（`SegmentEntry {` / `ChannelManifest {`），禁在引用了通道面的文件里自建摘要（`Sha256` / `sha2::`）；`test_support` 本体豁免。作用域限定（同文件出现 `ChannelManifest` / `SegmentEntry` / `EnvelopeMode` / `publish_raw_segment`）是为了不误伤与通道无关的摘要用法（`crates/nsh/src/bin/ledger-perf/tests.rs` 的生成器确定性 DB 摘要，先例见本 ADR 迁移状态段的 #776 裁决；#2082 迁居前住旧壳根包 `src/bin/ledger-perf`）。
 - **成因留痕**：两份夹具都把 `size`/`sha256` 算在 **payload** 上，产品算在 `envelope::seal` 的**输出**上；明文模式下二者恰好相等而长期掩盖。原票「摘要口径漂移致测试静默变绿」的风险陈述不成立（产品在拉取侧校验下载字节的尺寸与摘要，换算法会直接打红），真实风险是同一隐式假设被写了两遍。
 
 ## 修订注记（#1111 / ADR-0112，2026-09-13）：「独立测试 crate」否决前提已变——workspace 下 dev-dependency 环可解
