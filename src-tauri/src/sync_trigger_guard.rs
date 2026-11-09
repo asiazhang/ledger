@@ -231,11 +231,13 @@ fn session_envelope_writes_stay_in_closed_set_with_resume_write_first() {
     );
 }
 
-/// 分平台门收在 start_triggers 单点（ADR-0098 决策 4）：`#[cfg(desktop)]` 在
-/// 触发编排源码恰一处、贴在 start_triggers 内的调度线程拉起上、打开即同步
-/// （sync_on_start）在门外全平台无条件跑——门被搬回调用点、复制多份或打开即
-/// 同步从单点消失（#863 首两版各漏过门位与起点的真实回归形态）在此即红。
-/// 域本体已随 #1107 迁入 `ledger-sync-engine`，扫描目标随之改路径，断言不变。
+/// 分平台门收在触发编排单点（ADR-0098 决策 4）：`#[cfg(desktop)]` 在触发编排
+/// 源码恰一处、贴在编排单点内的调度线程拉起上、打开即同步（sync_on_start）在
+/// 门外全平台无条件跑——门被搬回调用点、复制多份或打开即同步从单点消失
+///（#863 首两版各漏过门位与起点的真实回归形态）在此即红。域本体已随 #1107
+/// 迁入 `ledger-sync-engine`，扫描目标随之改路径，断言不变；#2080 起编排单点
+/// 是平台中立宿主面 `start_triggers_with_host`（旧壳 tauri 面 `start_triggers`
+/// 与 NSH 壳都消费它，tauri 面变薄适配），钉点对准新形状，不变量不变。
 #[test]
 fn sync_desktop_gate_is_a_single_point_in_start_triggers_body() {
     let src = std::fs::read_to_string(
@@ -246,7 +248,7 @@ fn sync_desktop_gate_is_a_single_point_in_start_triggers_body() {
     assert_eq!(
         text.matches("#[cfg(desktop)]").count(),
         1,
-        "桌面分平台门（#[cfg(desktop)]）只能收在 start_triggers 一处——门回到调用点 \
+        "桌面分平台门（#[cfg(desktop)]）只能收在触发编排单点 start_triggers_with_host 一处——门回到调用点 \
          即重现「解锁路径漏门」回归（ADR-0098 决策 4：分平台分流只在本函数一处）"
     );
     let pos = |needle: &str| {
@@ -254,14 +256,14 @@ fn sync_desktop_gate_is_a_single_point_in_start_triggers_body() {
             .unwrap_or_else(|| panic!("触发编排源码缺 `{needle}`——分平台门形状漂移"))
     };
     let (fn_pos, cfg_pos, sched_pos, start_pos) = (
-        pos("fn start_triggers"),
+        pos("fn start_triggers_with_host"),
         pos("#[cfg(desktop)]"),
-        pos("start_sync_scheduler(app);"),
-        pos("sync_on_start(app);"),
+        pos("start_sync_scheduler_with_host(host, timings);"),
+        pos("sync_on_start_with_host(host);"),
     );
     assert!(
         fn_pos < cfg_pos && cfg_pos < sched_pos && sched_pos < start_pos,
-        "分平台门形状漂移：desktop 门应贴在 start_triggers 内的 start_sync_scheduler \
-         调用上，sync_on_start（打开即同步，Android 兜底语义）在门外全平台跑"
+        "分平台门形状漂移：desktop 门应贴在触发编排单点 start_triggers_with_host 内的 start_sync_scheduler_with_host \
+         调用上，sync_on_start_with_host（打开即同步，Android 兜底语义）在门外全平台跑"
     );
 }
