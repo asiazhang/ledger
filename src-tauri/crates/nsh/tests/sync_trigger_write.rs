@@ -34,6 +34,10 @@ use std::time::{Duration, Instant};
 use ledger_infra::settings::{self, SettingKey};
 use ledger_sync_engine::{TriggerTimings, build_channel, configured_channel};
 
+// 造数助手共享 seed.rs（issue #2027 纪律：只引用 crate 外符号，两侧 #[path]
+// 载入）；本二进制只消费其子集，按载入点放行 dead_code（各二进制各得一份副本
+// 的既定代价）。
+#[allow(dead_code)]
 #[path = "support/seed.rs"]
 mod seed;
 
@@ -45,7 +49,10 @@ mod test_support;
 
 /// 经设置域单点直落通道配置（桩是明文 http 端点，保存门只收 https——配置
 /// 面的保存/拒绝路径归 headless 同步卡旅程既有覆盖）。
-fn configure_channel(db: &ledger_infra::db::DbState, config: &ledger_sync_engine::SyncChannelConfig) {
+fn configure_channel(
+    db: &ledger_infra::db::DbState,
+    config: &ledger_sync_engine::SyncChannelConfig,
+) {
     let conn = db.conn.lock().unwrap();
     settings::set(&conn, SettingKey::SyncChannelConfig, config).unwrap();
 }
@@ -148,13 +155,9 @@ fn write_entry_enqueues_upload_via_scheduler() {
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
             let conn = db.read_conn.lock().unwrap();
-            let stamped = settings::get::<Option<String>>(
-                &conn,
-                SettingKey::SyncLastSyncAt,
-                None,
-            )
-            .unwrap()
-            .is_some();
+            let stamped = settings::get::<Option<String>>(&conn, SettingKey::SyncLastSyncAt, None)
+                .unwrap()
+                .is_some();
             drop(conn);
             if stamped {
                 break;

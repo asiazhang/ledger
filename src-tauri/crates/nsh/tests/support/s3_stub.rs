@@ -18,12 +18,18 @@
 //! `scan.rs` 是源码扫描守门的词法器具（掩码与花括号配对原语，std-only），
 //! 随本facade一并载入供 NSH 侧扫描守门消费。
 
+/// NSH 侧只消费根包子集（ScratchDir + spawn_s3_stub/通道读取面；观测/闸门/
+/// 故障注入等面归旧壳测试消费），按 facade 模块放行 dead_code——子集消费是
+/// 共享原文的既定代价（避免为 NSH 拆分根包文件）。
+#[allow(dead_code)]
 #[path = "../../../../src/test_support/scratch.rs"]
 pub mod scratch;
 
+#[allow(dead_code)]
 #[path = "../../../../src/test_support/s3.rs"]
 pub mod s3;
 
+#[allow(dead_code)]
 #[path = "../../../../src/test_support/scan.rs"]
 pub mod scan;
 

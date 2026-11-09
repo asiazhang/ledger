@@ -54,10 +54,10 @@ use ledger_infra::db::encryption::EncryptionGate;
 #[cfg(feature = "tauri-host")]
 use ledger_infra::db::DbState;
 use ledger_infra::db::now_iso;
-#[cfg(feature = "tauri-host")]
-use ledger_infra::signals::{WriteEvidence, WriteOp, emit_for};
 use ledger_infra::error::{AppError, Result};
 use ledger_infra::settings::{self, SettingKey};
+#[cfg(feature = "tauri-host")]
+use ledger_infra::signals::{WriteEvidence, WriteOp, emit_for};
 
 use super::channel::{SyncChannel, build_channel, configured_channel};
 use super::round_gate::{RoundStart, begin_round};

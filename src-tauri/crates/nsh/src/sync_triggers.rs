@@ -49,9 +49,7 @@ fn round_tx_slot() -> MutexGuard<'static, Option<mpsc::Sender<()>>> {
 /// 未装（排空任务缺席，如直接经域入口跑轮次的测试）时投递零动作——自动轮次
 /// 对壳层信号面无感，与旧壳「发射器缺席静默忽略」同口径。
 fn on_round_applied(applied: bool) {
-    if applied
-        && let Some(tx) = round_tx_slot().clone()
-    {
+    if applied && let Some(tx) = round_tx_slot().clone() {
         let _ = tx.send(());
     }
 }
@@ -193,7 +191,10 @@ mod guard_tests {
 
         for (path, src) in &sources {
             let text = production_text(src);
-            for entry in ["start_sync_scheduler_with_host(", "sync_on_start_with_host("] {
+            for entry in [
+                "start_sync_scheduler_with_host(",
+                "sync_on_start_with_host(",
+            ] {
                 assert!(
                     !text.contains(entry),
                     "{path} 直呼触发内部入口 `{entry}`——分平台门与触发时机编排只收在 \
@@ -218,7 +219,10 @@ mod guard_tests {
 
         for (entry, owner) in [
             ("sync_triggers::wire_sync_triggers_with(", "同步触发接线"),
-            ("sync_triggers::install_invalidation_drain(", "失效广播排空装载"),
+            (
+                "sync_triggers::install_invalidation_drain(",
+                "失效广播排空装载",
+            ),
         ] {
             let mut sites: Vec<&str> = sources
                 .iter()
@@ -236,22 +240,21 @@ mod guard_tests {
     }
 }
 
-/// 同步触发接线测试（旧壳 tests/commands/sync_trigger.rs 的语义在 NSH 侧重生，
-/// 票面测试决策）：真 S3 桩 + 产品开库入口 + 域公开写入口，断言对准用户可观察
-/// 结果——「上次成功同步时刻」落库 + 通道 manifest 上出现本机设备的段（另一端
-/// 可见的本机段），不对准线程或函数调用形状（CONTEXT-testing〈断言强度〉）。
-///
-/// 时机参数接缝（issue #959）：写后触发断言注入「短去抖 + 超长轮询」——接线
-/// 断掉（写信号删除）时低频轮询远水救不了近火，测试必须红；打开即同步断言
-/// 不拉调度线程（单次拉起守卫与写信号通道是进程级单例，本测试二进制内调度
-/// 线程归写后触发用例独占——旧壳同纪律）。低频轮询行为断言归域权威既有覆盖
-///（trigger/tests.rs），NSH 面不重复。
+/// 打开即同步域入口测试（旧壳 tests/commands/sync_trigger.rs 的域入口半边在
+/// NSH 侧重生，票面测试决策）：真 S3 桩 + 产品开库入口 + 域公开写入口，断言
+/// 对准用户可观察结果——「上次成功同步时刻」落库 + 通道 manifest 上出现本机
+/// 设备的非空段（另一端可见的本机段），不对准线程或函数调用形状
+///（CONTEXT-testing〈断言强度〉）。壳层接线半边（run_startup 接线点 + 写后
+/// 去抖 + 失效广播）归独立测试二进制：tests/sync_trigger.rs（旅程）与
+/// tests/sync_trigger_write.rs（写后接线，短时机注入）——调度线程单次拉起
+/// 守卫是进程级先到先得，各二进制唯一场景即首个 wire 调用方（旧壳分进程
+/// 同因）。低频轮询行为断言归域权威既有覆盖（trigger/tests.rs），NSH 面不
+/// 重复。
 #[cfg(test)]
 mod trigger_tests {
-    use crate::test_support::s3::{S3Addressing, S3Stub, S3StubConfig, spawn_s3_stub};
-    use crate::app::{db_slot, reset_book_assembly};
+    use crate::app::reset_book_assembly;
     use crate::boot::boot_ledger;
-    use crate::sync_triggers::wire_sync_triggers_with;
+    use crate::test_support::s3::{S3Addressing, S3Stub, S3StubConfig, spawn_s3_stub};
     use crate::tests::{
         create_empty_book_file, expense_input, scratch_book_dir, seed_cash_account, test_date,
     };
@@ -261,7 +264,7 @@ mod trigger_tests {
     use ledger_infra::db::boot::BootFailureGate;
     use ledger_infra::db::encryption::EncryptionGate;
     use ledger_infra::settings::{self, SettingKey};
-    use ledger_sync_engine::{TriggerHost, TriggerTimings, build_channel, configured_channel};
+    use ledger_sync_engine::{TriggerHost, build_channel, configured_channel};
 
     /// 场景通道桩（明文 http 端点——保存门只收 https，配置经设置域单点直落，
     /// 旧壳 configure_channel 同型）。
@@ -273,8 +276,12 @@ mod trigger_tests {
     /// 收 https——保存门的拒绝路径归 headless 同步卡旅程既有覆盖）。
     fn configure_channel(db: &ledger_infra::db::DbState, stub: &S3Stub) {
         let conn = db.conn.lock().unwrap();
-        settings::set(&conn, SettingKey::SyncChannelConfig, &stub.channel_config("family"))
-            .expect("通道配置应落库");
+        settings::set(
+            &conn,
+            SettingKey::SyncChannelConfig,
+            &stub.channel_config("family"),
+        )
+        .expect("通道配置应落库");
     }
 
     /// 等待自动轮次的用户可观察结果并断言（限时轮询，OS 线程执行）：①「上次
@@ -282,7 +289,10 @@ mod trigger_tests {
     /// 触发用例先等 on-start 空轮收尾再写，非空段只能是写信号触发的轮次发布
     /// 的——删除信号路径即红）。整段移出测试线程：S3 传输桥的真 HTTP 往返与
     /// 阻塞等待不得占用测试主线程（旧壳 wait_for_auto_round 同款现场形态）。
-    fn wait_for_auto_round(conn: Arc<std::sync::Mutex<rusqlite::Connection>>, space_id: &'static str) {
+    fn wait_for_auto_round(
+        conn: Arc<std::sync::Mutex<rusqlite::Connection>>,
+        space_id: &'static str,
+    ) {
         let worker = std::thread::spawn(move || {
             let deadline = Instant::now() + Duration::from_secs(10);
             let (mut stamped, mut segment) = (false, false);
@@ -372,5 +382,4 @@ mod trigger_tests {
 
         wait_for_auto_round(Arc::clone(&db.conn), "family");
     }
-
 }

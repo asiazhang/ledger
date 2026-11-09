@@ -32,6 +32,10 @@ use ledger_accounts::{AccountInput, AccountType};
 use nsh_engine::{EngineConfig, Environment, Idiom, Os, Points, Root, Size};
 use nsh_testing::Headless;
 
+// 造数助手共享 seed.rs（issue #2027 纪律：只引用 crate 外符号，两侧 #[path]
+// 载入）；本二进制只消费其子集，按载入点放行 dead_code（各二进制各得一份副本
+// 的既定代价）。
+#[allow(dead_code)]
 #[path = "support/seed.rs"]
 mod seed;
 
@@ -150,7 +154,10 @@ fn peer_publish_round(
 
 /// 配置通道到指定账本（经设置域单点直落：桩是明文 http 端点，保存门只收
 /// https——保存门的拒绝路径归 headless 同步卡旅程既有覆盖）。
-fn configure_channel(db: &ledger_infra::db::DbState, config: &ledger_sync_engine::SyncChannelConfig) {
+fn configure_channel(
+    db: &ledger_infra::db::DbState,
+    config: &ledger_sync_engine::SyncChannelConfig,
+) {
     let conn = db.conn.lock().unwrap();
     ledger_infra::settings::set(
         &conn,
@@ -206,7 +213,12 @@ fn sync_triggers_pull_peer_segments_and_reload_list() {
         let conn = peer_db.conn.lock().unwrap();
         ledger_transaction::create(
             &conn,
-            seed::expense_input(&peer_account, &seed::test_date(0), 2_500, "对端同步来的一笔"),
+            seed::expense_input(
+                &peer_account,
+                &seed::test_date(0),
+                2_500,
+                "对端同步来的一笔",
+            ),
         )
         .unwrap();
     }
@@ -234,7 +246,12 @@ fn sync_triggers_pull_peer_segments_and_reload_list() {
         let conn = peer_db.conn.lock().unwrap();
         ledger_transaction::create(
             &conn,
-            seed::expense_input(&peer_account, &seed::test_date(1), 2_600, "对端同步来的第二笔"),
+            seed::expense_input(
+                &peer_account,
+                &seed::test_date(1),
+                2_600,
+                "对端同步来的第二笔",
+            ),
         )
         .unwrap();
     }
@@ -246,7 +263,8 @@ fn sync_triggers_pull_peer_segments_and_reload_list() {
     app.type_text("id:tx-form-amount", "12.50").unwrap();
     pick_only_account(&mut app);
     app.press("id:tx-form-submit").unwrap();
-    app.wait_for_gone("text:记一笔 · 支出", DEFAULT_WAIT).unwrap();
+    app.wait_for_gone("text:记一笔 · 支出", DEFAULT_WAIT)
+        .unwrap();
 
     app.wait_for_within("text:对端同步来的第二笔", Duration::from_secs(12))
         .unwrap();
@@ -265,8 +283,5 @@ fn sync_triggers_pull_peer_segments_and_reload_list() {
         None,
     )
     .unwrap();
-    assert!(
-        last.is_some(),
-        "自动轮次应在整体裁决点落库上次成功同步时刻"
-    );
+    assert!(last.is_some(), "自动轮次应在整体裁决点落库上次成功同步时刻");
 }
