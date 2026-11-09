@@ -144,6 +144,10 @@
 //! - [`tx_filter`]：交易筛选会话态（#2037）——筛选维度闭集/类型归一/下钻
 //!   全量替换的纯决策半边 + 会话内保留的进程级信号单例（旧壳
 //!   `transactions-session` 的重生，零写盘）；
+//! - [`tx_view_preferences`]：交易页视图偏好（#2062 / ADR-0136 偏好与筛选
+//!   分家）——设备级持久行集裁决（「隐藏投资相关流水」开关）的唯一读写方
+//!   （旧壳 `transaction-view-preferences` store 的重生，平台文件侧 KV 同
+//!   键同值形态、不与旧壳共享）；
 //! - [`backup_entry`]：备份最小入口（#2038）——交易列表工具区一键备份：
 //!   文件保存对话框（NSH 壳能力直用）+ 域 backup 直调 + 成功/失败状态条
 //!   反馈；默认文件名生成面（旧壳 `defaultBackupFileName` 同格式）；
@@ -252,6 +256,7 @@ pub mod sidebar;
 pub mod signals;
 pub mod tx_cards;
 pub mod tx_filter;
+pub mod tx_view_preferences;
 pub mod txn_form;
 pub mod views;
 pub mod wiring;
