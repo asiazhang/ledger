@@ -16,6 +16,13 @@
 //! **读快照一致性**（#1699 同款纪律）：活动本读数与汇率折算同读事务
 //! （`ensure_transaction` 收口）；逐本读各收本内快照，跨库天然逐本时点。
 //!
+//! **bin 消费面（#2082）**：编排原语（[`read_book_investment`] /
+//! [`collect_other_books`] / [`merge_readings`]）与逐本状态闭集、逐本行、
+//! 单本读数、合并结果 `pub` 暴露，供同包工具 bin `src/bin/ledger-perf` 的
+//! 跨账本基准项消费同一编排/SQL 路径（旧壳根包 bench 消费
+//! `cross_book_summary` 的等价形态；`read_active_book_and_merge` 及汇总
+//! 载荷仍限本壳视图消费）。
+//!
 //! 测试豁免（ADR-0060）：本模块测试经 crate 根 cfg(test) 整体放行六件套。
 
 use std::path::{Path, PathBuf};
@@ -142,7 +149,7 @@ pub(crate) fn summary(db: &DbState) -> Result<CrossBookInvestmentSummary> {
 /// 纯函数合并器（旧壳 merge_readings 重生）：币种＝目标币种直接相加，否则折
 /// 算并置 converted；任一计入本的本位币≠目标币同样置 converted（位币不一致
 /// 是口径事实）；空值组跳过、不以零计入。
-pub(crate) fn merge_readings(
+pub fn merge_readings(
     readings: &[BookInvestmentReading],
     target_currency: &str,
     convert: &mut dyn FnMut(i64, &str) -> ledger_infra::error::Result<i64>,
@@ -194,7 +201,7 @@ pub(crate) fn merge_readings(
 
 /// 合并结果（折算后，目标币种口径）。
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct MergedTotals {
+pub struct MergedTotals {
     pub market_value_cents: i64,
     pub unrealized_pnl_cents: i64,
     pub cumulative_pnl_cents: i64,
@@ -204,7 +211,7 @@ pub(crate) struct MergedTotals {
 
 /// 单本投资口径原始读数（金额带币种，折算前）。
 #[derive(Debug, Clone, Default)]
-pub(crate) struct BookInvestmentReading {
+pub struct BookInvestmentReading {
     pub native_currency: String,
     pub holding_totals: Vec<ledger_investment::CurrencyHoldingTotals>,
     pub cumulative_pnl: Vec<ledger_investment::CurrencyCumulativePnl>,
@@ -230,7 +237,7 @@ pub(crate) struct CrossBookInvestmentSummary {
 /// 逐本可见、不静默少算）。zh 词表归装配层 `cross_book_status_label`
 ///（旧壳 crossBook.status.* 同值表），本枚举只承载判别面。
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum CrossBookBookStatus {
+pub enum CrossBookBookStatus {
     /// 计入。
     Included,
     /// 加密库且进程内未解锁（非活动密文本恒此态）。
@@ -247,7 +254,7 @@ pub(crate) enum CrossBookBookStatus {
 ///（旧壳载荷无此字段、非活动计入本被误标「当前」，本壳重生时正位——
 /// 旧壳缺陷另立 issue，见交付报告）。
 #[derive(Debug, Clone)]
-pub(crate) struct CrossBookBookRow {
+pub struct CrossBookBookRow {
     pub id: String,
     pub name: String,
     pub status: CrossBookBookStatus,
@@ -261,7 +268,7 @@ pub(crate) struct CrossBookBookRow {
 /// 感知）——写提交落在语句之间会让同屏合计与可投资资产不同时点。覆盖
 /// 活动本与非活动本两条调用路径；同接线的探针级证据住根包编排单测
 ///（`cross_book_summary` 测试权威，本重生同调用序、不再重镏）。
-pub(crate) fn read_book_investment(conn: &Connection) -> Result<BookInvestmentReading> {
+pub fn read_book_investment(conn: &Connection) -> Result<BookInvestmentReading> {
     ensure_transaction(conn, || {
         let holding_totals = ledger_investment::query_holdings_summary_by_currency(conn)?;
         let cumulative_pnl = ledger_investment::query_cumulative_pnl_summary(conn)?;
@@ -308,7 +315,7 @@ pub(crate) fn read_active_book_and_merge(
 
 /// 逐本探测与读取（非活动本）：返回注册表序的全量状态行与非活动本的可计
 /// 入读数。分派与降级逐条随 ADR-0114 决策 5（见 [`read_other_book`]）。
-pub(crate) fn collect_other_books(
+pub fn collect_other_books(
     books: &[Book],
     active_id: &str,
     active_schema_version: i64,
