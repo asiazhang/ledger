@@ -1,6 +1,12 @@
 //! 信号守门测试（ADR-0044 决策 3 修订 / ADR-0073 决策 5，spec #523）：信号映射单点
-//! × 两壳写路径接线的源码扫描核对。仅测试可见（lib.rs 以 `#[cfg(test)]` 挂载），
+//! × IPC 壳写路径接线的源码扫描核对。仅测试可见（lib.rs 以 `#[cfg(test)]` 挂载），
 //! 生产构建不含本模块。
+//!
+//! HTTP 半边已随 #2081 迁居 NSH（crates/nsh `api_server::guard`：handler 扫描、
+//! HTTP 派生声明、契约端点键核对、HTTP 反向守门与读侧锁仪式守门）——本模块
+//! 保留 IPC 半边与跨壳「孤儿身份」判定，HTTP 壳的声明集经 [`HTTP_SHELL_DECLARED_OPS`]
+//! 静态登记补入并集（逐条附端点动机；NSH 侧演进写端点时同步维护）。#2083 切轨
+//! 后本模块随旧壳退役，孤儿判定全集由 NSH guard 接管（其模块文档已留交接）。
 //!
 //! 手写声明表已消亡为源码扫描派生物（ADR-0073 决策 5）：从命令 / handler 函数体
 //! 扫描 `write_entry` 调用点提取（声明壳, 身份）派生表，配合例外白名单与反向守门，
@@ -29,10 +35,8 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::Path;
 
-use crate::api_server::ApiDoc;
 use crate::test_support::scan::{mask_non_code, matching_brace_end};
 use ledger_infra::signals::{Signal, WriteEvidence, WriteOp, signals_for};
-use utoipa::OpenApi;
 
 include!(concat!(env!("OUT_DIR"), "/commands_manifest.rs"));
 
@@ -41,8 +45,8 @@ include!(concat!(env!("OUT_DIR"), "/commands_manifest.rs"));
 // 词法掩码与花括号配对原语住 test_support::scan（issue #1433 单一维护点）
 // ---------------------------------------------------------------------------
 
-/// 一个命令 / handler 函数体的扫描单元：锚点属性（`#[tauri::command]` 或
-/// `#[utoipa::path(...)]`）起、下一锚点（或文件尾 / 测试模块）止。
+/// 一个命令函数体的扫描单元：锚点属性（`#[tauri::command]`）起、下一锚点
+/// （或文件尾 / 测试模块）止。
 struct Chunk {
     /// 函数名（块内首个 `pub [async] fn` 的标识符）。
     name: String,
@@ -217,21 +221,6 @@ fn write_entry_span(raw: &str) -> Option<String> {
     Some(rest[..end].to_string())
 }
 
-/// 从原文的 `#[utoipa::path(` 属性提取契约端点键（`METHOD /path`，与 OpenAPI
-/// 契约端点键同款形状）。
-fn handler_endpoint_key(raw: &str) -> Option<String> {
-    let pos = raw.find("#[utoipa::path(")? + "#[utoipa::path(".len();
-    let rest = raw[pos..].trim_start();
-    let method = ["get", "post", "put", "delete"]
-        .into_iter()
-        .find(|m| rest.starts_with(m))?;
-    let path_pos = raw[pos..].find("path = ")? + "path = ".len();
-    let rest = raw[pos + path_pos..].trim_start();
-    let rest = rest.strip_prefix('"')?;
-    let end = rest.find('"')?;
-    Some(format!("{} {}", method.to_uppercase(), &rest[..end]))
-}
-
 /// 目录下全部 .rs 文件的源文本（按文件名排序，输出确定）。
 fn read_sources(rel: &str) -> Vec<(String, String)> {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join(rel);
@@ -360,6 +349,32 @@ fn ipc_derived_declarations() -> Vec<(String, WriteOp)> {
     declared
 }
 
+/// HTTP 壳的写操作身份登记表（#2081 HTTP 半边迁居后的对面壳声明登记处）：
+/// HTTP 壳（NSH `api_server` handlers）的 `write_entry` 调用点已不可由本模块
+/// 派生（源码住 crates/nsh，派生扫描随 HTTP 半边迁居 `api_server::guard`），
+/// 跨壳「孤儿身份」判定（守门一）的并集改由本静态表补入——逐条附端点动机，
+/// NSH 侧演进写端点时同步维护。#2083 切轨后本表随旧壳守门整体退役
+/// （NSH guard 接管孤儿判定全集）。双壳并存期「HTTP 派生身份 ⊆ 本表」的
+/// 死条目方向由评审兜底（文本级跨 crate 提取不引入）。
+const HTTP_SHELL_DECLARED_OPS: &[WriteOp] = &[
+    // POST /api/v1/transactions/batch：AI 导入真实入口。
+    WriteOp::BatchCreateTransactions,
+    // PUT/DELETE /api/v1/transactions/{id}。
+    WriteOp::UpdateTransaction,
+    WriteOp::DeleteTransaction,
+    // PUT /api/v1/merchants/{id}。
+    WriteOp::UpdateMerchant,
+    // POST /api/v1/instruments。
+    WriteOp::CreateInstrument,
+    // POST /api/v1/categories、DELETE /api/v1/categories/{id}。
+    WriteOp::CreateCategory,
+    WriteOp::DeleteCategory,
+    // POST/PUT/DELETE /api/v1/accounts（与 IPC 同身份跨壳共享，合法）。
+    WriteOp::CreateAccount,
+    WriteOp::UpdateAccount,
+    WriteOp::DeleteAccount,
+];
+
 /// 扫描提取的身份标识符 → `WriteOp`（ADR-0102 决策 2）：改经宏同体派生的
 /// [`WriteOp::from_ident`] 映射，手写 `parse_write_op` 穷尽臂已消亡。映射臂集由
 /// 宏清单构造性保证完备；提取到非变体文本（扫描器具自身漂移）以断言失败报
@@ -373,73 +388,14 @@ fn resolve_write_op(ident: &str) -> WriteOp {
     })
 }
 
-/// HTTP 壳的 `#[utoipa::path(...)]` handler 函数体块（全 handler 文件）。
-fn http_handler_chunks() -> Vec<Chunk> {
-    let mut chunks = Vec::new();
-    for (_, src) in read_sources("src/api_server/handlers") {
-        chunks.extend(split_chunks(&src, "#[utoipa::path("));
-    }
-    chunks
-}
-
-/// HTTP 派生声明表：handler 块内 `write_entry` 调用点提取的（端点键, 身份）。
-/// 端点键取自 handler 自身的 `#[utoipa::path]` 契约注解（`METHOD /path`，与
-/// OpenAPI 同源派生）——注解漂移即键漂移，守门顺带核对。
-fn http_derived_declarations() -> Vec<(String, WriteOp)> {
-    let mut declared = Vec::new();
-    for chunk in http_handler_chunks() {
-        let call_sites = write_entry_call_count(&chunk.masked);
-        if call_sites == 0 {
-            continue;
-        }
-        let identities = write_op_identities(&chunk.masked);
-        assert_eq!(
-            call_sites, 1,
-            "HTTP handler {} 含 {call_sites} 处 write_entry 调用（应恰为一行调用）",
-            chunk.name
-        );
-        assert_eq!(
-            identities.len(),
-            1,
-            "HTTP handler {} 的 write_entry 块内身份不唯一：{identities:?}",
-            chunk.name
-        );
-        let endpoint_key = handler_endpoint_key(&chunk.raw)
-            .unwrap_or_else(|| panic!("HTTP handler {} 缺 #[utoipa::path] 端点注解", chunk.name));
-        let ident = identities.into_iter().next().expect("长度已断言为 1");
-        declared.push((endpoint_key, resolve_write_op(&ident)));
-    }
-    declared
-}
-
-/// OpenAPI 契约自描述的端点集（`"METHOD /path"` 形状）：HTTP 壳注册面真源，
-/// 与 `#[utoipa::path]` 注解同源派生。
-fn openapi_endpoints() -> HashSet<String> {
-    let doc = ApiDoc::openapi();
-    let mut endpoints = HashSet::new();
-    for (path, item) in doc.paths.paths.iter() {
-        for (method, op) in [
-            ("GET", &item.get),
-            ("POST", &item.post),
-            ("PUT", &item.put),
-            ("DELETE", &item.delete),
-        ] {
-            if op.is_some() {
-                endpoints.insert(format!("{method} {path}"));
-            }
-        }
-    }
-    endpoints
-}
-
-/// 两壳声明（IPC 派生 + 白名单、HTTP 派生）的 `Some` 身份并集（跨壳共享同一
-/// `WriteOp` 合法，如账户删除命令与 `DELETE /api/v1/accounts/{id}`）。
+/// 两壳声明（IPC 派生 + 白名单、HTTP 壳登记表）的 `Some` 身份并集（跨壳共享
+/// 同一 `WriteOp` 合法，如账户删除命令与 `DELETE /api/v1/accounts/{id}`）。
 fn declared_ops() -> HashSet<WriteOp> {
     ipc_derived_declarations()
         .iter()
         .map(|(_, op)| *op)
         .chain(IPC_WRITE_ENTRY_EXCEPTIONS.iter().map(|(_, op, _)| *op))
-        .chain(http_derived_declarations().iter().map(|(_, op)| *op))
+        .chain(HTTP_SHELL_DECLARED_OPS.iter().copied())
         .collect()
 }
 
@@ -470,24 +426,21 @@ fn every_mapped_write_op_is_declared_by_some_shell() {
 // 守门二：单壳身份唯一（#335 原样保留，声明源改为扫描派生 + 白名单）
 // ---------------------------------------------------------------------------
 
-/// 同一壳里两个命令/端点声明同一 `WriteOp` 视为复制粘贴错误（跨壳共享合法——
-/// 两壳写同一数据本就共享身份）。
+/// IPC 壳里两个命令声明同一 `WriteOp` 视为复制粘贴错误（跨壳共享合法——
+/// 两壳写同一数据本就共享身份；HTTP 壳的单壳唯一核对随 #2081 迁居
+/// `api_server::guard::write_op_is_declared_at_most_once_in_http_shell`）。
 #[test]
 fn write_op_is_declared_at_most_once_per_shell() {
-    for (shell, declared) in [
-        (
-            "IPC",
-            ipc_derived_declarations()
-                .into_iter()
-                .chain(
-                    IPC_WRITE_ENTRY_EXCEPTIONS
-                        .iter()
-                        .map(|(name, op, _)| ((*name).to_string(), *op)),
-                )
-                .collect::<Vec<_>>(),
-        ),
-        ("HTTP", http_derived_declarations()),
-    ] {
+    let declared: Vec<(String, WriteOp)> = ipc_derived_declarations()
+        .into_iter()
+        .chain(
+            IPC_WRITE_ENTRY_EXCEPTIONS
+                .iter()
+                .map(|(name, op, _)| ((*name).to_string(), *op)),
+        )
+        .collect();
+    {
+        let shell = "IPC";
         let mut seen: HashMap<WriteOp, &str> = HashMap::new();
         for (name, op) in &declared {
             let first = seen.insert(*op, name);
@@ -516,8 +469,8 @@ fn every_declared_write_op_is_mapped() {
             .iter()
             .map(|(name, op, _)| (*name, *op)),
     );
-    let http: Vec<(String, WriteOp)> = http_derived_declarations();
-    declared.extend(http.iter().map(|(key, op)| (key.as_str(), *op)));
+    // HTTP 壳派生声明的映射核对随 #2081 迁居 `api_server::guard::
+    // every_declared_write_op_is_mapped`；本守门保留 IPC 半边。
     for (name, op) in &declared {
         let signals = signals_for(*op, WriteEvidence::None);
         let known = matches!(signals, &[])
@@ -629,67 +582,6 @@ fn ipc_write_entry_exceptions_only_contain_registered_commands() {
 }
 
 // ---------------------------------------------------------------------------
-// 守门五：HTTP 反向守门 + 归因串/端点键核对 + 契约面耦合（ADR-0073 决策 5）
-// ---------------------------------------------------------------------------
-
-/// HTTP 反向守门：handler 函数体内出现 `db::write` / `.write(` / 发射调用而无
-/// `write_entry` 即红，「绕开入口写库」的回归被兜住。HTTP 壳无例外白名单——
-/// 9 个写端点全部经统一写入口（ADR-0073 决策 7）。
-#[test]
-fn http_write_calls_must_go_through_write_entry() {
-    for chunk in http_handler_chunks() {
-        let has_write_entry = write_entry_call_count(&chunk.masked) > 0;
-        if has_write_entry || !has_bypass_write_or_emit(&chunk.masked, true) {
-            continue;
-        }
-        panic!(
-            "HTTP handler {} 的函数体出现 db::write / 发射调用却未走 write_entry——\
-             绕开统一写入口的回归（ADR-0073）",
-            chunk.name
-        );
-    }
-}
-
-/// HTTP 归因串核对（ADR-0073 决策 4 顺带）：`write_entry` 归因串 == 契约端点键
-///（`METHOD /path`，取自 handler 自身的 `#[utoipa::path]` 注解），SQL 耗时日志
-/// 逐字节不漂（ADR-0009 / ADR-0068）。
-#[test]
-fn http_write_entry_span_matches_endpoint_key() {
-    for chunk in http_handler_chunks() {
-        if write_entry_call_count(&chunk.masked) == 0 {
-            continue;
-        }
-        let span = write_entry_span(&chunk.raw).unwrap_or_else(|| {
-            panic!(
-                "HTTP handler {} 的 write_entry 调用缺 span 归因串",
-                chunk.name
-            )
-        });
-        let endpoint_key = handler_endpoint_key(&chunk.raw)
-            .unwrap_or_else(|| panic!("HTTP handler {} 缺 #[utoipa::path] 端点注解", chunk.name));
-        assert_eq!(
-            span, endpoint_key,
-            "HTTP handler {} 的 write_entry 归因串与契约端点键漂移",
-            chunk.name
-        );
-    }
-}
-
-/// HTTP 派生端点键必须都在 OpenAPI 契约端点集上（契约自描述真源）：注解与
-/// 契约装配同源派生，本核对把该事实显式登记在测试面——扫描提取漂移或契约
-/// 漏记在此即红（接替旧「声明表 × OpenAPI」双向比对的写端点方向）。
-#[test]
-fn http_derived_endpoint_keys_are_in_openapi_contract() {
-    let endpoints = openapi_endpoints();
-    for (key, _) in http_derived_declarations() {
-        assert!(
-            endpoints.contains(&key),
-            "HTTP 派生端点键 {key} 不在 OpenAPI 契约端点集上——扫描提取漂移或契约漏记"
-        );
-    }
-}
-
-// ---------------------------------------------------------------------------
 // 守门六：读侧锁仪式反向守门（ADR-0104 决策 6，ADR-0073 决策 5 同形）
 // ---------------------------------------------------------------------------
 
@@ -769,25 +661,6 @@ fn ipc_lock_ritual_must_go_through_read_entry() {
     }
 }
 
-/// HTTP 反向守门（读侧，ADR-0104 决策 6）：handler 函数体内出现标准锁行而同
-/// 函数体无 `read_entry` / `write_entry` 即红。HTTP 壳无豁免清单——7 个读端点
-/// 全部迁入读入口（ADR-0104 决策 7），出现手写锁行即回归。
-#[test]
-fn http_lock_ritual_must_go_through_read_entry() {
-    for chunk in http_handler_chunks() {
-        let through_entry = count_token(&chunk.masked, "read_entry(") > 0
-            || write_entry_call_count(&chunk.masked) > 0;
-        if through_entry || !has_handwritten_lock(&chunk.masked) {
-            continue;
-        }
-        panic!(
-            "HTTP handler {} 的函数体出现手写标准锁行却未走 read_entry——\
-             锁仪式回潮（ADR-0104 决策 6）",
-            chunk.name
-        );
-    }
-}
-
 /// 建连线收口守门（issue #1280 / ADR-0117 决策 4）：壳层源码不得直接调 rusqlite
 /// 的连接构造器（`Connection::open` / `open_with_flags`）——建连一律经基础设施
 /// `db` 的收口函数（明文/密文、写形/只读形、内存库），连接生命周期不得绕开
@@ -821,7 +694,7 @@ fn shell_never_constructs_db_connections_directly() {
 ///   issue #601 前置修复，经槽级自由函数消费同一机制）。
 ///
 /// 扫描根 = 壳层 `src` 顶层 + `src/commands`（与建连守门同款非递归单层，
-/// `api_server`/`shell_support` 等子目录不在本守门范围，同款评审兜底边界）；
+/// `shell_support` 等子目录不在本守门范围，同款评审兜底边界）；
 /// 基础设施 `db` 内部（原语本体与同 crate 单测）不在扫描范围。读槽单槽换入
 /// 的编译期半边由 `replace_read_conn` 的 `pub(crate)` 收窄承担（issue #1303）。
 #[test]

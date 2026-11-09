@@ -96,7 +96,7 @@ fn sync_triggers_start_from_every_business_surface_via_single_entry() {
         // #[cfg(desktop)]（移动端「打开即同步」静默失效，ADR-0098 决策 4 的
         // 「加门」回归形态）是文本可查的。对 start_triggers（编排点体内）与
         // start_background_services（三起点）两个标识符都查——门搬去哪一层都红。
-        // 窗口贴身即不含远处合法的 desktop 门（lib.rs 的 api_server 等）；文本级
+        // 窗口贴身即不含远处合法的 desktop 门（lib.rs 的 updater 登记等）；文本级
         // 扫描的其余盲区（间接别名、远距包装）按 signals_cross_check 同款纪律
         // 靠评审兜底。
         for entry in ["start_triggers(", "start_background_services("] {

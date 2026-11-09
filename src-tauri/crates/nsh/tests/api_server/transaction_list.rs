@@ -1,7 +1,7 @@
 use axum::http::StatusCode;
 use ledger_investment::{InstrumentInput, InstrumentType, create_instrument};
-use tauri_app_lib::test_support;
-use tauri_app_lib::test_support::FIXED_NOW;
+use nsh_app::test_support;
+use nsh_app::test_support::FIXED_NOW;
 
 use crate::common::{
     batch_body, create_account_via_api, create_account_via_api_with_type, create_category_via_api,

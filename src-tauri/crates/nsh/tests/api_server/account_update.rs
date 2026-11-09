@@ -6,7 +6,7 @@ use tower::ServiceExt;
 use tracing_subscriber::layer::SubscriberExt;
 
 use ledger_infra::test_utils::{CaptureLayer, ensure_global_max_level};
-use tauri_app_lib::test_support;
+use nsh_app::test_support;
 
 use crate::common::{
     batch_body, body_to_bytes, create_account_json, create_account_via_api,

@@ -4463,7 +4463,9 @@ dependencies = [
 name = "nsh-app"
 version = "0.11.2"
 dependencies = [
+ "axum",
  "chrono",
+ "http-body-util",
  "ledger-accounts",
  "ledger-backup",
  "ledger-budget",
@@ -4482,15 +4484,22 @@ dependencies = [
  "ledger-scheduled",
  "ledger-sync-engine",
  "ledger-transaction",
+ "nsh-app",
  "nsh-base",
  "nsh-core",
  "nsh-engine",
  "nsh-platform-linux",
  "nsh-testing",
+ "regex",
  "rusqlite",
+ "serde",
  "serde_json",
+ "tokio",
+ "tower",
+ "tower-http 0.7.1",
  "tracing",
  "tracing-subscriber",
+ "utoipa",
 ]
 
 [[package]]
@@ -7080,7 +7089,6 @@ dependencies = [
  "axum",
  "chrono",
  "cucumber",
- "http-body-util",
  "ledger-accounts",
  "ledger-backup",
  "ledger-budget",
@@ -7100,7 +7108,6 @@ dependencies = [
  "ledger-sync-engine",
  "ledger-sync-protocol",
  "ledger-transaction",
- "regex",
  "rusqlite",
  "rusqlite_migration",
  "semver",
@@ -7116,13 +7123,10 @@ dependencies = [
  "tauri-plugin-updater",
  "tauri-plugin-window-state",
  "tokio",
- "tower",
- "tower-http 0.7.1",
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
  "url",
- "utoipa",
  "uuid",
  "zip",
 ]

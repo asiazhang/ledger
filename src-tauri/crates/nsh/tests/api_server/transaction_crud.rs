@@ -1,6 +1,6 @@
 use axum::http::StatusCode;
 
-use tauri_app_lib::test_support;
+use nsh_app::test_support;
 
 use crate::common::{
     balance_of, batch_body, count_active_transactions, create_account_via_api,

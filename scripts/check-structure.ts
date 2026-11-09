@@ -1209,6 +1209,7 @@ function checkCrateBoundaries(srcTauriDir: string): string[] {
   //   ③ 根包与 infra 的 `[features] default` 不得包含 test-utils（默认 feature 即生产）；
   //   ④ 投资五节标题锚点常量（issue #1185，住 `handlers/import.rs`）须带同一形态的门；
   //   ⑤ 锚点再导出（`api_server/mod.rs`）须带同一形态的门。
+  //   （api_server 随 #2081 迁居 NSH：crates/nsh/src/api_server，门路径随迁。）
   // （根包 `test_utils` 再导出面已随 #1108 清除——测试器具经 dev-dependency 以
   // `ledger_infra::test_utils` 直达，根包侧门条目随之退役；再引入无门再导出会被
   // 生产构建解析失败拦下。）
@@ -1224,7 +1225,7 @@ function checkCrateBoundaries(srcTauriDir: string): string[] {
     // 投资五节标题锚点（issue #1185）：#1121 常量结构锁与 #1123 API 集成锁的
     // 共享单一住处，仅测试构建编译——门摘掉即测试锚点静默进生产二进制。
     {
-      file: join(srcTauriDir, "src", "api_server", "handlers", "import.rs"),
+      file: join(srcTauriDir, "crates", "nsh", "src", "api_server", "handlers", "import.rs"),
       re: /^\s*pub\s+const\s+INVESTMENT_SECTION_HEADERS\b/,
       label: "pub const INVESTMENT_SECTION_HEADERS",
       gate: "投资五节锚点生产编译门",
@@ -1232,7 +1233,7 @@ function checkCrateBoundaries(srcTauriDir: string): string[] {
       productionArtifact: "测试锚点",
     },
     {
-      file: join(srcTauriDir, "src", "api_server", "mod.rs"),
+      file: join(srcTauriDir, "crates", "nsh", "src", "api_server", "mod.rs"),
       re: /^\s*pub\s+use\s+handlers::import::INVESTMENT_SECTION_HEADERS\s*;/,
       label: "pub use handlers::import::INVESTMENT_SECTION_HEADERS;",
       gate: "投资五节锚点生产编译门",
@@ -1469,11 +1470,17 @@ function checkCrateBoundaries(srcTauriDir: string): string[] {
     }
   }
 
-  // ⑤' 域侧成员启用 http → 红：http 只许壳侧（根包 tauri-app）启用，域侧启用
-  // 即把 axum 编入域依赖图，违背「域侧依赖不引入 axum」口径（issue #1133）。
+  // ⑤' 域侧成员启用 http → 红：http 只许壳侧启用（根包 tauri-app 与 NSH 壳
+  // crates/nsh——api_server 随 #2081 迁居后 NSH 是 axum 的合法消费方，ADR-0112
+  // 决策 5），域侧启用即把 axum 编入域依赖图，违背「域侧依赖不引入 axum」口径
+  //（issue #1133）。
   for (const crateDir of memberCrateDirs(srcTauriDir)) {
     if (crateDir === dirname(INFRA_SRC_REL)) continue; // infra 自身是门宿主，非消费方
     const memberManifest = readFileSync(join(srcTauriDir, crateDir, "Cargo.toml"), "utf8");
+    // 壳层成员（CRATES 登记为 SHELL）不在本门辖域：根包与 NSH 壳是 http/axum
+    // 的合法消费方（api_server 迁居后唯一壳成员是 nsh-app，#2081）。
+    const shellEntry = CRATES.find((c) => c.dir === crateDir);
+    if (shellEntry?.layer === CRATE_LAYER.SHELL) continue;
     const enableLine = productionLedgerInfraEnablement(memberManifest, "http");
     if (enableLine !== null) {
       problems.push(

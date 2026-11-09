@@ -26,8 +26,8 @@ use std::sync::{Arc, Mutex};
 use axum::http::StatusCode;
 use ledger_dashboard as dashboard;
 use ledger_investment::{Holding, PnlFilter, list_holdings, query_realized_pnl_summary};
+use nsh_app::test_support;
 use rusqlite::Connection;
-use tauri_app_lib::test_support;
 
 use crate::common::{
     FundStubHit, batch_body, get_json, post_batch, post_instrument, setup_app_with_fund_stub,

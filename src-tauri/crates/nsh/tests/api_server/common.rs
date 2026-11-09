@@ -12,10 +12,10 @@ use ledger_infra::error::AppError;
 use ledger_infra::events::SignalEmitter;
 use ledger_investment::prices::price_value_to_cents;
 use ledger_investment::{InstrumentType, Market, Quote, StockRoute};
-use tauri_app_lib::api_server::{
+use nsh_app::api_server::{
     ApiState, EmitterSlot, FundQuoteFetcher, QuoteFuture, StockQuoteFetcher, build_router,
 };
-use tauri_app_lib::test_support;
+use nsh_app::test_support;
 
 pub(crate) async fn body_to_bytes(body: Body) -> Vec<u8> {
     body.collect().await.unwrap().to_bytes().to_vec()

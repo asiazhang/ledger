@@ -12,7 +12,7 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use tower::ServiceExt;
 
-use tauri_app_lib::test_support;
+use nsh_app::test_support;
 
 use crate::common::{
     body_to_bytes, create_account_via_api, create_account_via_api_with_currency,

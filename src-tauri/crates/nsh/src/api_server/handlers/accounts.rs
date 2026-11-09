@@ -1,6 +1,6 @@
 //! 账户端点：列表（含黑洞账户）/ 幂等创建 / 编辑 / 软删除 / 实时余额。
 //!
-//! 写端点经壳层统一写入口 [`crate::shell_support::write_entry::write_entry`]（ADR-0073）：
+//! 写端点经壳层统一写入口 [`crate::shell_support::write_entry`]（ADR-0073）：
 //! 事务、置脏、信号内化单点；读端点经 `run_db`（形状乙）。
 
 use axum::Json;
@@ -9,8 +9,8 @@ use axum::http::StatusCode;
 
 use crate::api_server::error::ErrorResponse;
 use crate::api_server::state::{EmitterSlot, ReadConn};
-use crate::shell_support::read_entry::read_entry;
-use crate::shell_support::write_entry::{Outcome, write_entry};
+use crate::shell_support::read_entry;
+use crate::shell_support::{Outcome, write_entry};
 use ledger_accounts::{Account, AccountBalance, AccountInput, AccountUpdateInput};
 use ledger_infra::db::DbWriteHandle;
 use ledger_infra::error::AppError;

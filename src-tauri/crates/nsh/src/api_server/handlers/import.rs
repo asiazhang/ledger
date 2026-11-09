@@ -11,14 +11,14 @@ use axum::response::IntoResponse;
 /// 名称、一句话语义与「何时需要读」的触发，是按需取节的唯一陈述点（ADR-0110）。
 ///
 /// 内容维护在 `src-tauri/prompts/import-knowledge-base.md`，编译期嵌入（`include_str!`）。
-const BASE_KNOWLEDGE: &str = include_str!("../../../prompts/import-knowledge-base.md");
+const BASE_KNOWLEDGE: &str = include_str!("../../../../../prompts/import-knowledge-base.md");
 
 /// 投资节（投资交易 / 基金申赎 / 基金转换 / 份额调整 / 现金分红）。
 ///
 /// 内容维护在 `src-tauri/prompts/import-knowledge-investment.md`，编译期嵌入
 /// （`include_str!`）；投资五节正文只存在于此常量，基础侧不保留副本（#286 红线）。
 const INVESTMENT_KNOWLEDGE_SECTIONS: &str =
-    include_str!("../../../prompts/import-knowledge-investment.md");
+    include_str!("../../../../../prompts/import-knowledge-investment.md");
 
 /// 投资五节标题锚点（issue #1185 收敛为单一住处）：#1121 切分边界锚点、
 /// 「投资节正文只存在一处」的判定依据，也是 #1123 API 集成锁（基础知识

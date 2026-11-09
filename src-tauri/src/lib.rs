@@ -38,7 +38,6 @@ pub use ledger_reports;
 pub use ledger_scheduled;
 pub use ledger_sync_engine;
 pub use ledger_transaction;
-pub mod api_server;
 // 应用更新——检查路径（issue #1429 / ADR-0124 决策 4/7/8）：壳层机制（不进基础
 // 设施、不立业务域 crate 与壳内域目录），手动检查命令与启动延迟静默检查共用
 // 唯一 updater 调用点，自动检查开关为前端 localStorage 真源 + 运行期镜像。
@@ -307,19 +306,9 @@ pub fn run() {
             })?;
             let locked = app.state::<EncryptionGate>().is_locked();
             let boot_failed = app.state::<BootFailureGate>().is_failed();
-            // AI 导入 HTTP 服务仅桌面启动（issue #558 / ADR-0074 决策 6）：移动端无
-            // 消费方，顺带消除启动期端口绑定失败即崩的隐患；模块本体仍参与全平台
-            // 编译，不落在任何 #[tauri::command] 上，命令注册扫描器零改动（ADR-0047）。
-            // 传入 AppHandle：参考写入（HTTP 账号/分类 create/delete）成功后
-            // emit `ledger:changed`，前端 useReferenceStore 据此自动重拉参考表（issue #79）。
-            #[cfg(desktop)]
-            api_server::start_http_server(
-                app.handle().clone(),
-                app.state::<db::DbState>().conn.clone(),
-                app.state::<db::DbState>().read_conn.clone(),
-                EncryptionGate::clone(&app.state::<EncryptionGate>()),
-                BootFailureGate::clone(&app.state::<BootFailureGate>()),
-            );
+            // AI 导入 HTTP 服务已随 #2081 迁居 NSH（crates/nsh，run_startup 就绪
+            // 分支挂载；tauri 依赖经 EmitterSlot 抽象反转，ADR-0112 决策 5）——
+            // 旧壳挂载面机械移除，双壳并存期 AI 导入 HTTP 面仅 NSH 提供。
             // 自动备份（issue #125/#126）：目录镜像为进程级单例 [`ledger_backup::shared_prefs`]，
             // 轮询调度线程与连接层写入口提交点检查（ADR-0032）共享同一份；
             // 退出兜底挂在下方 run 事件的 RunEvent::Exit 分支。

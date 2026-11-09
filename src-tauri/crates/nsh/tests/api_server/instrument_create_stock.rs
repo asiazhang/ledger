@@ -20,7 +20,7 @@ use rusqlite::params;
 
 use ledger_infra::error::AppError;
 use ledger_investment::{InstrumentType, Market, Quote, StockRoute};
-use tauri_app_lib::api_server::StockQuoteFetcher;
+use nsh_app::api_server::StockQuoteFetcher;
 
 use crate::common::{StockStubHit, get_json, post_instrument, setup_app_with_stock_stub};
 

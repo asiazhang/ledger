@@ -16,7 +16,7 @@ use axum::http::StatusCode;
 use rusqlite::params;
 
 use ledger_infra::error::AppError;
-use tauri_app_lib::api_server::StockQuoteFetcher;
+use nsh_app::api_server::StockQuoteFetcher;
 
 use crate::common::{post_instrument, setup_app, setup_app_with_stock_fetch};
 

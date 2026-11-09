@@ -5,7 +5,6 @@ use std::sync::{Arc, Mutex};
 use axum::Router;
 use axum::routing::{delete, get, post, put};
 use rusqlite::Connection;
-use tauri::AppHandle;
 use tower_http::trace::TraceLayer;
 
 use super::contract::contract_handler;
@@ -27,7 +26,7 @@ use super::handlers::transactions::{
     update_transaction_handler,
 };
 use super::openapi::openapi_json_handler;
-use super::state::ApiState;
+use super::state::{ApiState, EmitterSlot};
 use axum::extract::State;
 use axum::http::Request;
 use axum::middleware::{self, Next};
@@ -118,7 +117,7 @@ async fn startup_gate_middleware(
 }
 
 pub fn start_http_server(
-    app: AppHandle,
+    emitter: EmitterSlot,
     state: Arc<Mutex<Connection>>,
     read_state: Arc<Mutex<Connection>>,
     lock_gate: EncryptionGate,
@@ -132,7 +131,9 @@ pub fn start_http_server(
             let router = build_router(ApiState {
                 conn: state,
                 read_conn: read_state,
-                emitter: Some(Arc::new(app)),
+                // 发射器接缝（ADR-0054 #367 修订泛化）：调用方注入生产发射器
+                //（NSH 泵发射器，ADR-0112 决策 5 壳层接线）；None 跳过发射分支。
+                emitter,
                 fund_fetch: None,
                 stock_fetch: None,
                 lock_gate,

@@ -20,6 +20,19 @@ test = false
 # `&Connection` 形面——infra/域栈同版本（0.40）联合特性已由 workspace 成员
 # 统一，本依赖只显式给类型名引用，不引入第二份编译面。
 rusqlite = "0.40"
+# AI 导入 HTTP 壳（api_server 随 #2081 迁居本壳）：axum 路由与服务器启动、
+# TraceLayer 请求 span（SQL 耗时归因沿 tower_http）、OpenAPI 契约装配（utoipa）
+# 与契约方言投影的正则（出处剥离）。版本与旧壳根包声明一致（双壳并存期
+# 同一依赖版本，切轨 #2083 后成为唯一消费方）。
+axum = "0.8"
+tower-http = { version = "0.7", features = ["trace"] }
+utoipa = { version = "5", features = ["axum_extras"] }
+regex = "1"
+serde = { version = "1", features = ["derive"] }
+# HTTP 壳启动期自建 Tokio 运行时（router.rs start_http_server，既有形态随
+# 模块迁入；feature 面与旧壳根包声明一致，另加 sync——http_host 失效信号
+# 泵的无界通道，#2081）。
+tokio = { version = "1", features = ["rt", "macros", "time", "sync"] }
 # NSH 框架经 workspace 精确锁定消费（ADR-0145 决策 2 / issue #2017 AC：0.x 连续
 # breaking，升级显式成票；default-features = false 关掉 QuickJS VM，Rust 模式）。
 # 平台后端按目标门禁（先例：根包窗口状态插件的 target 三元组条件）——立桩期
@@ -37,7 +50,10 @@ nsh-platform-linux.workspace = true
 
 # 域栈直调面（壳 → 域 → 基础设施单向，ADR-0112）：立桩读路径（交易列表 total）
 # 与其全部读时投影接缝（来源列反查 / 出资视图 / 转换两腿）的实现注册侧。
-ledger-infra = { path = "../infra" }
+# http feature（issue #1133 门纪律）：AI 导入 HTTP 壳随 #2081 迁居本壳，
+# `impl IntoResponse for AppError` 的 axum 投影面由本壳启用；tauri-emit 不启用
+#（NSH 进程零 tauri，GTK3/WebKitGTK 与 GTK4 同进程符号互踩）。
+ledger-infra = { path = "../infra", features = ["http"] }
 ledger-transaction = { path = "../transaction" }
 # 数据期间边界（issue #2021 / ADR-0141 钳制输入）：报表域日期极值读路径
 # （旧壳 report_date_range 消费的同一域函数），期间步进的唯一边界来源。
@@ -86,7 +102,18 @@ chrono = "0.4.45"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
+[features]
+# 测试器具可见性（ADR-0111 决策 5 / issue #1132，根包同款门随 #2081 迁居）：
+# 投资五节标题锚点等测试专用导出默认不进生产编译，测试目标经下面的自身
+# dev-dependency 启用本 feature 与 `ledger-infra/test-utils`；生产构建不激活
+# dev-dependency（resolver 3），故不编译测试器具。
+test-utils = ["ledger-infra/test-utils"]
+
 [dev-dependencies]
+# 测试器具（ADR-0111 决策 5 / issue #1132，根包同款）：自身 dev-dependency 仅对
+# 测试目标启用 `test-utils`，使投资五节锚点再导出与 `ledger_infra::test_utils`
+# （GatedEmitter，signal_delivery 集成验证）在测试构建中存在。
+nsh-app = { path = ".", features = ["test-utils"] }
 # headless 组件测试接缝（docs/research/nsh-testing-capabilities.md 裁决 §2.1 /
 # §3.1）：进程内起真实视图树，无窗口无平台后端，进 cargo test 既有泳道；
 # 版本随 workspace NSH 锁定（default-features = false 不带 QuickJS）。
@@ -95,6 +122,11 @@ nsh-testing.workspace = true
 # 期次状态造数（#2042 headless）：failed 期次前置的构造面（域测试同款
 # set_status 语义）需要余额库连接上直接改期次状态——rusqlite 与域栈同版本。
 rusqlite = { version = "0.40", features = ["bundled-sqlcipher-vendored-openssl", "trace"] }
+# AI 导入 API 集成测试（tests/api_server，#2081 随宿主迁居）：oneshot 驱动
+# axum Router（tower util）、响应体收集（http-body-util）、#[tokio::test]（macros）。
+# 版本与旧壳根包 dev-dependency 声明一致。
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"
 
 # 六件套易 panic 构造门禁经 workspace 继承（ADR-0060 / spec #1086 门禁前置）：
 # 本行是继承接线，缺失即门禁静默消失，由 scripts/check-structure.ts 守门。
