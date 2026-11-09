@@ -1379,6 +1379,71 @@ function checkCrateBoundaries(srcTauriDir: string): string[] {
     }
   }
 
+  // ⑧'' tauri-host 宿主门（issue #2074 / ADR-0145 双壳并存期，⑧' 同款形状推广到
+  // DOMAIN_TAURI_ALLOWED 三个存量宿主）：backup / market-sync / sync-engine 的
+  // AppHandle 宿主面（自动备份调度 / 行情车道与发射器生产实现 / 同步触发宿主）
+  // 只被旧壳（根包）消费——NSH 原生壳进程不得链接 tauri（GTK3/WebKitGTK 与
+  // GTK4 同进程符号互踩，gtk_init_check 双双失效）。四处删除即变红——
+  // ① 宿主清单声明了 tauri 即须 optional（裸依赖即无条件链接，NSH 图被污染）；
+  // ② 宿主 [features] 须有 tauri-host 转发 dep:tauri（门与依赖面绑死）；
+  // ③ market-sync / sync-engine 的门须同时转发 ledger-infra/tauri-emit
+  //   （车道/触发编排的失效信号投递经 infra AppHandle 实现）；
+  // ④ 宿主 [features] default 不得含 tauri-host（默认 feature 即生产）。
+  // 宿主清单未声明 tauri = 存量宿主已退役，非本门对象（旧壳启用门 feature
+  // 会由 cargo 拒绝：dep:tauri 无 optional 声明即清单错误）。
+  // 传递面的机器守门 = 命令型门 `cargo tree -p nsh-app -i tauri`（挂载登记
+  // scripts/gate-mounts.ts，check.sh 与 CI backend-lint job 同判）：任一路径把
+  // tauri 拖回 nsh-app 依赖图即红，与本门互补（本门辖清单形状，彼门辖全图）。
+  const tauriHostGateLabel = "tauri-host 宿主门";
+  const tauriHostGateCrates: ReadonlyArray<readonly [string, string, boolean]> = [
+    ["backup", "tauri-host", false],
+    ["market-sync", "tauri-host", true],
+    ["sync-engine", "tauri-host", true],
+  ];
+  for (const [crateDir, gateFeature, forwardsInfraEmit] of tauriHostGateCrates) {
+    const hostManifestPath = join(srcTauriDir, "crates", crateDir, "Cargo.toml");
+    if (!existsSync(hostManifestPath)) {
+      continue; // crate 不存在（如夹具工作区）即无门对象，跳过
+    }
+    const hostManifest = readFileSync(hostManifestPath, "utf8");
+    const hostWhere = `crates/${crateDir}/Cargo.toml`;
+    const hostTauriLine = hostManifest.split("\n").find((l) => /^\s*tauri\s*=/.test(l));
+    if (hostTauriLine === undefined) {
+      continue; // 未持 tauri = 存量宿主已退役，非本门对象
+    }
+    if (!hostTauriLine.includes("optional = true")) {
+      problems.push(
+        `✗ ${tauriHostGateLabel}：${hostWhere} 的 tauri 依赖未声明 optional\n` +
+          `    ${hostTauriLine.trim()}\n` +
+          "    非 optional 即无条件链接 tauri（GTK3/WebKitGTK），NSH 原生壳进程被污染" +
+          "（issue #2074 / ADR-0145），加回 optional 即变绿",
+      );
+    }
+    const gateFeatureLine = manifestSection(hostManifest, "features")
+      ?.split("\n")
+      .find((l) => new RegExp(`^\\s*${gateFeature}\\s*=`).test(l));
+    if (gateFeatureLine === undefined || !gateFeatureLine.includes("dep:tauri")) {
+      problems.push(
+        `✗ ${tauriHostGateLabel}：${hostWhere} [features] 缺 \`${gateFeature} = ["dep:tauri"]\`\n` +
+          "    门与依赖面绑死——feature 不转发 dep:tauri 即门形同虚设（issue #2074）",
+      );
+    } else if (forwardsInfraEmit && !gateFeatureLine.includes("ledger-infra/tauri-emit")) {
+      problems.push(
+        `✗ ${tauriHostGateLabel}：${hostWhere} 的 ${gateFeature} 门未转发 ledger-infra/tauri-emit\n` +
+          `    ${gateFeatureLine.trim()}\n` +
+          "    车道/触发编排的失效信号投递经 infra AppHandle 实现，门须同帧转发" +
+          "（issue #2074），加回转发即变绿",
+      );
+    }
+    if (defaultFeaturesInclude(hostManifest, gateFeature)) {
+      problems.push(
+        `✗ ${tauriHostGateLabel}：${hostWhere} [features] default 包含 ${gateFeature}\n` +
+          "    默认 feature 在生产构建启用，等价于无条件链接 tauri" +
+          "（issue #2074 / ADR-0145），从 default 移除即变红",
+      );
+    }
+  }
+
   // ③' impl cfg 门：error.rs 的 IntoResponse impl 必须带 feature = "http" 的门。
   const errorRsPath = join(srcTauriDir, INFRA_SRC_REL, "error.rs");
   if (!existsSync(errorRsPath)) {

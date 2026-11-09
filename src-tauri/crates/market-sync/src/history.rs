@@ -43,6 +43,9 @@ use std::sync::atomic::AtomicBool;
 
 use chrono::NaiveDate;
 use rusqlite::Connection;
+// tauri-host 门（issue #2074 / ADR-0145）：后台车道宿主 API 只被旧壳消费，
+// NSH 原生壳进程不得链接 tauri（GTK3/WebKitGTK 与 GTK4 同进程符号互踩）。
+#[cfg(feature = "tauri-host")]
 use tauri::{AppHandle, Runtime};
 
 use ledger_infra::error::Result;
@@ -59,8 +62,10 @@ use super::http::KlineBar;
 use super::incremental::{SyncInstrument, beijing_today, quote_code};
 use super::lane::{
     LaneChannelsSlot, LaneId, LaneRound, LaneRoundFuture, LaneTimings, progress_forwarder,
-    run_background_lane_round, start_daily_lane,
 };
+// 车道宿主接缝随 tauri-host 门（issue #2074）：两函数只被门内车道入口消费。
+#[cfg(feature = "tauri-host")]
+use super::lane::{run_background_lane_round, start_daily_lane};
 use super::model::WriteWitness;
 use super::progress::SyncProgress;
 use super::session::{FacadeWriteSession, ScopedSession};
@@ -439,13 +444,15 @@ impl LaneChannelsSlot for BackfillChannelsSlot {
 /// 价格历史后台补全的启动入口（壳层后台服务编排单点调用，issue #961 名单）：
 /// 进程级单次拉起与「启动延迟一轮 + 每自然日窗口一轮」的巡检循环归
 /// [`super::lane::start_daily_lane`] 域内单点（issue #1622），本模块只留每车道
-/// 一枚守卫标志与一轮编排 + 统计日志。
+/// 一枚守卫标志与一轮编排 + 统计日志。tauri-host 门（issue #2074）。
+#[cfg(feature = "tauri-host")]
 pub fn start_history_backfill<R: Runtime>(app: &AppHandle<R>) {
     start_history_backfill_with(app, LaneTimings::default());
 }
 
 /// 同 [`start_history_backfill`]，调度时机可注入（测试短时机先例
-/// `start_sync_scheduler_with`）。
+/// `start_sync_scheduler_with`）。tauri-host 门（issue #2074）。
+#[cfg(feature = "tauri-host")]
 pub fn start_history_backfill_with<R: Runtime>(app: &AppHandle<R>, timings: LaneTimings) {
     static SPAWNED: AtomicBool = AtomicBool::new(false);
     start_daily_lane(app, &SPAWNED, timings, |handle| {
@@ -455,9 +462,11 @@ pub fn start_history_backfill_with<R: Runtime>(app: &AppHandle<R>, timings: Lane
 
 /// 价格历史补全的编排（骨架的编排输入，issue #1426）：一轮排空
 ///（[`run_history_backfill_round`]），进度走静默计数事件面
-///（骨架按 [`LaneProgress::HistoryBackfill`] 接线）。
+///（骨架按 [`LaneProgress::HistoryBackfill`] 接线）。tauri-host 门（issue #2074）。
+#[cfg(feature = "tauri-host")]
 struct HistoryBackfillRound;
 
+#[cfg(feature = "tauri-host")]
 impl LaneRound for HistoryBackfillRound {
     type Stats = HistoryBackfillStats;
 
@@ -496,7 +505,8 @@ impl LaneRound for HistoryBackfillRound {
 /// 跑一轮补全（后台车道单轮骨架，issue #1426）：换装 / 会话 / 见证 / 裁决 / 发射 /
 /// 失败日志归 [`super::lane`] 单点（与每日现价刷新共用），本函数只留本车道的统计
 /// 日志。async 形态（ADR-0125 决策 7 / issue #1413）：编排直接在车道 async 任务上
-/// `await`，不再经全局运行时跨线程驱动。
+/// `await`，不再经全局运行时跨线程驱动。tauri-host 门（issue #2074）。
+#[cfg(feature = "tauri-host")]
 async fn run_backfill_round_gated<R: Runtime>(app: AppHandle<R>) {
     let result = run_background_lane_round::<R, BackfillChannelsSlot, _>(
         &app,

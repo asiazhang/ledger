@@ -307,6 +307,13 @@ jobs:
       - name: gate-off 编译门（ledger-infra 默认 feature）
         run: cargo check -p ledger-infra
 
+      # NSH 进程 tauri 零链接守门（issue #2074 / ADR-0145）：tauri 不在 nsh-app
+      # 依赖图 = cargo tree -i 报 did not match——grep 命中即绿；tauri 在图（要抓
+      # 的回归）或其他 cargo 失败 grep 不中即红（fail-closed，与本地 check.sh 同
+      # 一命令；删步骤即红：守门接线测试 scripts/gate-mounts.test.ts，issue #1682）。
+      - name: NSH 进程 tauri 零链接守门
+        run: cargo tree -p nsh-app -i tauri --edges normal 2>&1 | grep -q "did not match any packages"
+
       # 基础设施 rustdoc 门禁（issue #1139）：intra-doc link 漂移等 rustdoc 告警
       # 不被 clippy/fmt 拦截，单独用 cargo doc -D warnings 清零。范围锁定
       # ledger-infra（首装归零的 crate，--no-deps 只 rustdoc 本 crate，增量成本低）；

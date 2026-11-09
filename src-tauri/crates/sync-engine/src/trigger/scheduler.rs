@@ -34,6 +34,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use rusqlite::Connection;
+// tauri-host 门（issue #2074 / ADR-0145）：AppHandle 触发宿主 API 只被旧壳消费，
+// NSH 原生壳进程不得链接 tauri（GTK3/WebKitGTK 与 GTK4 同进程符号互踩）。
+#[cfg(feature = "tauri-host")]
 use tauri::{AppHandle, Manager, Runtime};
 
 use crate::channel::{
@@ -290,7 +293,8 @@ impl RoundConn for AutoRoundConn {
 ///
 /// 本函数**平台无关**（移动端也跑）：打开即同步是 Android 的兜底语义。签名对
 /// 运行时泛型（壳层命令同款）：业务可用起点的现场（真应用 / 测试 mock 应用）
-/// 都能调用（issue #959 接线测试）。
+/// 都能调用（issue #959 接线测试）。tauri-host 门（issue #2074）。
+#[cfg(feature = "tauri-host")]
 pub fn sync_on_start<R: Runtime>(app: &AppHandle<R>) {
     let conn = Arc::clone(&app.state::<DbState>().conn);
     let handle = app.clone();
@@ -308,7 +312,9 @@ pub fn sync_on_start<R: Runtime>(app: &AppHandle<R>) {
 ///   存活，承诺「后台同步」是空头支票（ADR-0091 决策 9）；用 `#[cfg(desktop)]`
 ///   在编译期剔除，与 ADR-0074 决策 6 的既有分平台先例同款。
 ///
-/// 两个调度各持单次拉起守卫，原位重引导/重复调用幂等。
+/// 两个调度各持单次拉起守卫，原位重引导/重复调用幂等。tauri-host 门
+///（issue #2074）。
+#[cfg(feature = "tauri-host")]
 pub fn start_triggers<R: Runtime>(app: &AppHandle<R>) {
     #[cfg(desktop)]
     start_sync_scheduler(app);
@@ -387,7 +393,9 @@ pub(crate) fn notify_write_signal(slot: &std::sync::OnceLock<std::sync::mpsc::Se
 ///
 /// 每轮门检锁定/启动失败期间空转（占位连接不是业务库）；轮次分段取锁（ADR-0120
 /// 决策 4）：拿不到连接锁的段放弃本轮（静默）；与在途轮次撞车同样放弃（在途
-/// 互斥，ADR-0120 决策 3）；失败静默记录，等下一轮重试。
+/// 互斥，ADR-0120 决策 3）；失败静默记录，等下一轮重试。tauri-host 门
+///（issue #2074）。
+#[cfg(feature = "tauri-host")]
 pub fn start_sync_scheduler<R: Runtime>(app: &AppHandle<R>) {
     start_sync_scheduler_with(app, TriggerTimings::default());
 }
@@ -395,7 +403,9 @@ pub fn start_sync_scheduler<R: Runtime>(app: &AppHandle<R>) {
 /// 调度线程拉起（显式时机参数版，[`start_sync_scheduler`] 的接缝本体）：轮询
 /// 周期与写后去抖窗口由调用方给定——生产传 [`TriggerTimings::default`]，触发
 /// 接线测试注入「短去抖 + 超长轮询」（写后触发断言只等去抖窗，不被低频轮询
-/// 救活，issue #959）。其余语义同 [`start_sync_scheduler`]。
+/// 救活，issue #959）。其余语义同 [`start_sync_scheduler`]。tauri-host 门
+///（issue #2074）。
+#[cfg(feature = "tauri-host")]
 pub fn start_sync_scheduler_with<R: Runtime>(app: &AppHandle<R>, timings: TriggerTimings) {
     static SPAWNED: AtomicBool = AtomicBool::new(false);
     if SPAWNED.swap(true, Ordering::SeqCst) {
@@ -438,7 +448,8 @@ pub fn start_sync_scheduler_with<R: Runtime>(app: &AppHandle<R>, timings: Trigge
 ///
 /// 失败静默（ADR-0091：同步失败不阻塞本地记账），记日志等下一轮。轮次分段
 /// 取锁（ADR-0120 决策 4）：数据库步骤经 [`AutoRoundConn`] 每段短取连接锁，
-/// 网络段与本地写、与其它命令并行。
+/// 网络段与本地写、与其它命令并行。tauri-host 门（issue #2074）。
+#[cfg(feature = "tauri-host")]
 fn run_auto_round_with_emit<R: Runtime>(
     app: &AppHandle<R>,
     conn: &Arc<Mutex<Connection>>,

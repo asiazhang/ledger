@@ -24,7 +24,18 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 zip = { version = "9", default-features = false, features = ["deflate"] }
 tracing = "0.1"
-tauri = { version = "2", features = ["tracing"] }
+# Tauri 自动备份调度宿主门（issue #2074 / ADR-0145 双壳并存期，与 infra tauri-emit
+# 门同款纪律）：`start_scheduler` / `exit_fallback` 的 AppHandle API 只被旧壳
+#（根包）消费——NSH 原生壳进程不得链接 tauri（GTK3/WebKitGTK 与 GTK4 同进程
+# 符号互踩，gtk_init_check 双双失效），故 tauri 改 optional、经 `tauri-host`
+# feature 门控，仅壳侧（根包）启用。备份引擎本体的读写路径（备份/恢复/指纹/
+# 清单/状态）零 tauri 类型，NSH 侧按默认 feature 消费。
+tauri = { version = "2", features = ["tracing"], optional = true }
+
+[features]
+# 门与依赖面绑死（infra ⑧' 门同款形状，check-structure 守门）：feature 不转发
+# dep:tauri 即门形同虚设；default 不得含本 feature（默认 feature 即生产）。
+tauri-host = ["dep:tauri"]
 
 [dev-dependencies]
 # 测试专用边（spec #1086 明文裁决「测试工厂与器具以 dev-dependency 环供各域

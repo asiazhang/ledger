@@ -14,20 +14,22 @@ publish = false
 # ADR-0103）——票面 AC 允许集四条全覆盖，域→域方向均为上层消费下层的合法直呼
 # （ADR-0112 决策 2）。对根包（壳层）零生产依赖，反向引用由 cargo 依赖图编译期
 # 拒绝（生产依赖面无根包，dev-dependency 环只覆盖测试目标）。
-# tauri-emit 启用留痕（issue #2017 / ADR-0145）：本 crate 的车道/触发编排经
-# `signals::emit_for(&AppHandle,…)` 消费 infra 的失效信号投递实现（ADR-0044
-# 信号映射单点形态）；本 crate 是 DOMAIN_TAURI_ALLOWED 认许的 tauri 存量宿主
-# （调度 AppHandle API，随迁移系列票退役），启用该 feature 不新增依赖面。
-ledger-infra = { path = "../infra", features = ["tauri-emit"] }
+# tauri-emit 启用随 tauri-host 门收进（issue #2074 / ADR-0145）：本 crate 的
+# 车道/触发编排经 `signals::emit_for(&AppHandle,…)` 消费 infra 的失效信号投递
+# 实现（ADR-0044 信号映射单点形态）；本 crate 是 DOMAIN_TAURI_ALLOWED 认许的
+# tauri 存量宿主（调度 AppHandle API，随迁移系列票退役）——NSH 原生壳进程
+# 不得链接 tauri（GTK3/WebKitGTK 与 GTK4 同进程符号互踩，gtk_init_check
+# 双双失效），故默认 feature 面零 tauri，门面见下方 [features] tauri-host。
+ledger-infra = { path = "../infra" }
 ledger-sync-protocol = { path = "../sync-protocol" }
 ledger-transaction = { path = "../transaction" }
 ledger-investment = { path = "../investment" }
 # 数据面惯用库：HTTP 抓取（reqwest 异步客户端，issue #1411 / ADR-0125 决策 5：
-# 不再自持运行时线程）、报文解析、连接与日志。`tauri` 只为进度发射器接缝的生产实现
-# （`ProgressEmitter for AppHandle`，由壳层传入的句柄投递主线程事件循环，ADR-0054 /
-# ADR-0095）与全局运行时异步执行器（两条后台车道的 `async_runtime::spawn`，
-# ADR-0125 决策 7 / issue #1413）——先例：ledger-backup 同持 `tauri`；本 crate
-# 不消费壳层 `commands` 面。
+# 不再自持运行时线程）、报文解析、连接与日志。`tauri`（optional，随 tauri-host
+# 门）只为进度发射器接缝的生产实现（`ProgressEmitter for AppHandle`，由壳层
+# 传入的句柄投递主线程事件循环，ADR-0054 / ADR-0095）与全局运行时异步执行器
+#（两条后台车道的 `async_runtime::spawn`，ADR-0125 决策 7 / issue #1413）——
+# 先例：ledger-backup 同持 `tauri`；本 crate 不消费壳层 `commands` 面。
 reqwest = { version = "0.13", default-features = false, features = ["json", "query", "rustls"] }
 # 异步互斥体（pacer 跨 `.await` 持有，ADR-0125 决策 6）与异步睡眠（限速 / 退避 /
 # 让行）。运行时由 tauri 全局运行时提供（本 crate 不自建运行时）。
@@ -42,10 +44,28 @@ quick-xml = "0.42"
 encoding_rs = "0.8"
 chrono = { version = "0.4.45", features = ["serde"] }
 rusqlite = { version = "0.40", features = ["bundled-sqlcipher-vendored-openssl", "trace"] }
-tauri = { version = "2", features = ["tracing"] }
+# Tauri 行情车道宿主门（issue #2074 / ADR-0145，与 infra tauri-emit 门同款纪律）：
+# AppHandle 生产实现（三个进度发射器 impl、后台车道启动）与 `async_runtime`
+# 全局执行器只被旧壳（根包）消费——NSH 原生壳进程不得链接 tauri（GTK3/
+# WebKitGTK 与 GTK4 同进程符号互踩），故 tauri 改 optional、经 `tauri-host`
+# feature 门控。抓取面（production 报价 / 增量同步编排 / 写入见证）零 tauri
+# 类型，NSH 侧按默认 feature 消费。
+tauri = { version = "2", features = ["tracing"], optional = true }
 tracing = "0.1"
 
+[features]
+# 门与依赖面绑死（infra ⑧' 门同款形状，check-structure 守门）：feature 不转发
+# dep:tauri 即门形同虚设；ledger-infra/tauri-emit 同门收进（车道触发编排的
+# 失效信号投递经 infra AppHandle 实现）；default 不得含本 feature（默认
+# feature 即生产）。
+tauri-host = ["dep:tauri", "ledger-infra/tauri-emit"]
+
 [dev-dependencies]
+# crate 自身测试的异步驱动（`tauri::async_runtime::block_on`，channels 测试）：
+# tauri 随 tauri-host 门化移出生产依赖后，测试目标的既有驱动形态原样保留
+#（先例：infra tauri-emit 门化同款，issue #2074）。dev-dependency 只进测试
+# 构建，不影响下游依赖图（nsh-app 无感）。
+tauri = { version = "2", features = ["tracing"] }
 # 测试专用边（spec #1086 明文裁决「测试工厂与器具以 dev-dependency 环供各域
 # 复用，Cargo 允许」）：随域迁入的域单测用根包的统一测试数据库工厂与共享断言
 # （test_support，ADR-0084）建库与种子。dev-dependency 环由 Cargo 允许——测试

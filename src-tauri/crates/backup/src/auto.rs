@@ -731,6 +731,11 @@ fn log_timed_outcome(trigger: &str, outcome: LockOutcome<()>) {
 /// 幂等（issue #644 / ADR-0080）：已在跑时本调用退化为无操作；每轮门检在
 /// 锁定/启动失败期间跳过备份与追补（占位连接不是业务库）——原位重引导把
 /// 门翻回锁定后，已存活的线程在门检处等待，解锁/恢复后自动继续。
+///
+/// tauri-host 门（issue #2074 / ADR-0145）：AppHandle 调度宿主 API 只被旧壳
+///（根包）消费，NSH 原生壳进程不得链接 tauri（GTK3/WebKitGTK 与 GTK4 同进程
+/// 符号互踩，gtk_init_check 双双失效）——摘门即结构守门红（check-structure）。
+#[cfg(feature = "tauri-host")]
 pub fn start_scheduler<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     use tauri::Manager;
     if SCHEDULER_SPAWNED.swap(true, Ordering::SeqCst) {
@@ -770,6 +775,8 @@ pub fn start_scheduler<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
 /// 则补一次备份（与到期入口同受日界门约束，issue #386）。连接取用走门面的限时
 /// 等待写槽裸作业（issue #1415）：排队等了 [`LOCK_TIMEOUT`] 仍拿不到就放弃——
 /// 只能在日志里留痕，退出后没有下一轮了。
+/// tauri-host 门同 [`start_scheduler`]（issue #2074）。
+#[cfg(feature = "tauri-host")]
 pub fn exit_fallback(app: &tauri::AppHandle) {
     use tauri::Manager;
     let conn = app.state::<DbState>().write_handle();

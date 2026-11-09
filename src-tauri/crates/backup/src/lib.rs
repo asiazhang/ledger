@@ -69,10 +69,15 @@ mod identity;
 pub use auto::{
     AUTO_BACKUP_PREFIX, AttemptOutcome, AutoBackupState, BackupDecision, FAILURE_ALERT_THRESHOLD,
     LOCK_TIMEOUT, PrefsState, SkipReason, after_commit_hook, auto_backup_file_name, due_decision,
-    exit_fallback, failure_alerting, get_state, install_after_commit_hook, lock_conn_with_timeout,
+    failure_alerting, get_state, install_after_commit_hook, lock_conn_with_timeout,
     lock_conn_within, occurrence_dirty_hook, register_catch_up_hook, reset, run_due_backup,
-    run_exit_backup, run_first_backup, set_state, shared_prefs, start_scheduler,
+    run_exit_backup, run_first_backup, set_state, shared_prefs,
 };
+// 调度宿主面（tauri-host 门，issue #2074 / ADR-0145）：AppHandle 调度 API 只被
+// 旧壳（根包）消费，NSH 原生壳进程不得链接 tauri（GTK3/WebKitGTK 与 GTK4
+// 同进程符号互踩）——摘门即结构守门红。
+#[cfg(feature = "tauri-host")]
+pub use auto::{exit_fallback, start_scheduler};
 pub use engine::{
     BackupFileInfo, BackupKind, BackupMetaSummary, BackupResult, BackupScope,
     PRE_UPDATE_BACKUP_FILE_NAME, PruneResult, RestoreResult, backup_db_to,

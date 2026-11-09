@@ -163,6 +163,10 @@ mod channels;
 /// #1563 接线逐只刷新与历史首刷、#1568 接线基金查询创建）与区间取数面（翻页 +
 /// 完整性核验，#1568 接线已终止基金存在性兜底）。
 mod csrc;
+/// 现价刷新的后台每日车道（ADR-0122 决策 3 / issue #1377）：车道宿主只被旧壳
+/// 消费——tauri-host 门（issue #2074 / ADR-0145），NSH 原生壳进程不得链接
+/// tauri，摘门即结构守门红。
+#[cfg(feature = "tauri-host")]
 mod daily_refresh;
 /// ECB 参考汇率取数单元（issue #1542）：单元本体与测试已就位，序列类型已由落库
 /// 单元（persist，#1543）消费；两个取数入口与交叉推导已由汇率同步编排
@@ -180,6 +184,9 @@ mod fx;
 /// 汇率每日自动增量同步的后台车道（ADR-0019 修订记录 / issue #1546）：启动
 /// 延迟补跑一次 + 每自然日窗口一次，经壳层后台服务编排单点拉起（issue #961
 /// 名单）；与手动入口共用 [`fx`] 编排，失败记日志可见、已有汇率不受影响。
+/// tauri-host 门（issue #2074 / ADR-0145）：车道宿主只被旧壳消费，NSH 原生壳
+/// 进程不得链接 tauri——摘门即结构守门红。
+#[cfg(feature = "tauri-host")]
 mod fx_daily;
 mod history;
 mod http;
@@ -223,6 +230,7 @@ pub use channels::{
     FetchFundName, FetchKline, FetchMoneyFundForm, FetchNavHistory, FetchQuotes, QuoteItem,
     QuoteQuery, SyncFetchChannels, do_incremental_sync_channels,
 };
+#[cfg(feature = "tauri-host")]
 pub use daily_refresh::{
     DailyPriceRefreshChannelsSlot, start_daily_price_refresh, start_daily_price_refresh_with,
 };
@@ -237,8 +245,14 @@ pub use fx::{
     FX_SYNC_GATE, FxSyncChannels, FxSyncGate, FxSyncReport, sync_fx_rates, sync_fx_rates_guarded,
     sync_fx_rates_with_progress,
 };
+// 车道宿主面（tauri-host 门，issue #2074 / ADR-0145）：AppHandle 车道启动与槽
+// 类型只被旧壳（根包）消费，NSH 原生壳进程不得链接 tauri（GTK3/WebKitGTK 与
+// GTK4 同进程符号互踩）——摘门即结构守门红。
+#[cfg(feature = "tauri-host")]
 pub use fx_daily::{DailyFxSyncChannelsSlot, start_daily_fx_sync, start_daily_fx_sync_with};
-pub use history::{BackfillChannelsSlot, start_history_backfill, start_history_backfill_with};
+pub use history::BackfillChannelsSlot;
+#[cfg(feature = "tauri-host")]
+pub use history::{start_history_backfill, start_history_backfill_with};
 pub use http::KlineBar;
 /// 三条后台车道共用的调度时机（issue #1622 收敛：三份同构 timing 类型并成一份）
 pub use lane::LaneTimings;

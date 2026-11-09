@@ -36,6 +36,10 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
+// tauri-host 门（issue #2074 / ADR-0145）：车道骨架的调度半边挂 AppHandle 与
+// tauri 全局运行时，只被旧壳消费——NSH 原生壳进程不得链接 tauri
+//（GTK3/WebKitGTK 与 GTK4 同进程符号互踩，gtk_init_check 双双失效）。
+#[cfg(feature = "tauri-host")]
 use tauri::{AppHandle, Manager, Runtime};
 
 use ledger_infra::db::DbState;
@@ -139,7 +143,8 @@ pub(super) fn progress_forwarder(
 ///   置脏一次 + 发既有价格失效信号；零写入不置脏不广播。置脏失败记日志不静默吞
 ///   运行结果（脏标记待下次写入补上）。
 /// - **日志**：本轮失败静默等下一窗口（无用户可报），在此按车道一次收尾；统计
-///   日志归各车道（骨架不解释统计字段）。
+///   日志归各车道（骨架不解释统计字段）。tauri-host 门（issue #2074）。
+#[cfg(feature = "tauri-host")]
 pub(super) async fn run_background_lane_round<R, S, L>(
     app: &AppHandle<R>,
     lane: LaneId,
@@ -255,7 +260,9 @@ impl Default for LaneTimings {
 ///   （写入全是幂等 upsert，中断无残留）。
 ///
 /// `round` 是本车道一轮的编排（收 handle 克隆，async 体归车道模块：走单轮骨架
-/// 还是自带最小轮次、以及统计日志，是车道自己的裁决面）。
+/// 还是自带最小轮次、以及统计日志，是车道自己的裁决面）。tauri-host 门
+///（issue #2074）。
+#[cfg(feature = "tauri-host")]
 pub(super) fn start_daily_lane<R, F, Fut>(
     app: &AppHandle<R>,
     spawned: &'static AtomicBool,

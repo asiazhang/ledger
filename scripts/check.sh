@@ -36,6 +36,15 @@ echo "▶ Rust clippy (--workspace --all-targets --all-features, -D warnings)"
 echo "▶ Rust gate-off 编译检查 (cargo check -p ledger-infra，默认 feature 不含 axum)"
 ( cd src-tauri && cargo check -p ledger-infra )
 
+# NSH 进程 tauri 零链接守门（issue #2074 / ADR-0145）：NSH 原生壳进程不得链接
+# tauri（GTK3/WebKitGTK 与 GTK4 同进程符号互踩，gtk_init_check 双双失效，#2017
+# 实证；存量宿主清单形状由 check-structure 的 tauri-host 宿主门辖，本门辖全图）。
+# 判定语义：tauri 不在 nsh-app 依赖图 = cargo tree -i 报 did not match——grep 命
+# 中即绿；tauri 在图（要抓的回归）或其他 cargo 失败（陈旧锁等）grep 不中即红
+#（fail-closed，单一命令两宿主同判：CI backend-lint 无 bun，故为命令型门）。
+echo "▶ NSH 进程 tauri 零链接守门 (cargo tree -p nsh-app -i tauri)"
+( cd src-tauri && cargo tree -p nsh-app -i tauri --edges normal 2>&1 | grep -q "did not match any packages" )
+
 echo "▶ Rust 格式检查 (cargo fmt --all --check)"
 ( cd src-tauri && cargo fmt --all -- --check )
 

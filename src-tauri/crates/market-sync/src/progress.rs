@@ -21,6 +21,9 @@
 //! 后台推进绝不点亮前端的手动同步进度条，反之亦然。
 
 use serde::Serialize;
+// tauri-host 门（issue #2074 / ADR-0145）：AppHandle 生产实现只被旧壳消费，
+// NSH 原生壳进程不得链接 tauri（GTK3/WebKitGTK 与 GTK4 同进程符号互踩）。
+#[cfg(feature = "tauri-host")]
 use tauri::{AppHandle, Emitter, Runtime};
 
 /// 标的信息同步进度事件名（issue #897 / ADR-0095；带 payload，与无 payload 的
@@ -86,6 +89,7 @@ impl FxSyncProgress {
 /// 展开，issue #2017：tauri-emit 门化后本 crate 的投递机制自持——编排运行在
 /// 写线程/阻塞线程池上，就地 emit 有 `webviews_lock` 跨线程死锁前科
 /// （spec #364 / ADR-0054），三个进度事件族共用这一处投递）。
+#[cfg(feature = "tauri-host")]
 fn post_to_main<R: Runtime>(app: &AppHandle<R>, action: impl FnOnce() + Send + 'static) {
     let _ = app.run_on_main_thread(action);
 }
@@ -97,6 +101,7 @@ pub trait FxProgressEmitter: Send + Sync {
 }
 
 /// 生产实现：与 [`ProgressEmitter for AppHandle`] 同一投递机制，事件名换本事件。
+#[cfg(feature = "tauri-host")]
 impl<R: Runtime> FxProgressEmitter for AppHandle<R> {
     fn emit_fx_progress(&self, progress: FxSyncProgress) {
         let handle = self.clone();
@@ -138,6 +143,7 @@ pub trait ProgressEmitter: Send + Sync {
 /// 生产实现：payload 事件经 `run_on_main_thread` 投递**主线程事件循环队尾**非阻塞
 /// 执行（spec #364 / ADR-0054 同一投递机制——编排运行在写线程/阻塞线程池上，
 /// 就地 emit 会走 `webviews_lock` 同步等待路径，有跨线程死锁前科）。
+#[cfg(feature = "tauri-host")]
 impl<R: Runtime> ProgressEmitter for AppHandle<R> {
     fn emit_progress(&self, progress: SyncProgress) {
         let handle = self.clone();
@@ -158,6 +164,7 @@ pub trait BackfillProgressEmitter: Send + Sync {
 }
 
 /// 生产实现：与 [`ProgressEmitter for AppHandle`] 同一投递机制，事件名换本事件。
+#[cfg(feature = "tauri-host")]
 impl<R: Runtime> BackfillProgressEmitter for AppHandle<R> {
     fn emit_backfill_progress(&self, progress: SyncProgress) {
         let handle = self.clone();

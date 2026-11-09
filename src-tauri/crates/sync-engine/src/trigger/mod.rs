@@ -30,8 +30,13 @@ pub use channel::{
 };
 pub use scheduler::{
     TriggerTimings, book_unavailable_error, install_after_write_hook, not_configured_error,
-    run_auto_round, run_round_once, start_sync_scheduler, start_sync_scheduler_with,
-    start_triggers, sync_after_write, sync_on_start,
+    run_auto_round, run_round_once, sync_after_write,
+};
+// 触发宿主面（tauri-host 门，issue #2074 / ADR-0145）：AppHandle 调度 API 只被
+// 旧壳消费，NSH 原生壳进程不得链接 tauri——摘门即结构守门红。
+#[cfg(feature = "tauri-host")]
+pub use scheduler::{
+    start_sync_scheduler, start_sync_scheduler_with, start_triggers, sync_on_start,
 };
 // 测试接缝：信号侧两个 helper 只被 `trigger/tests.rs` 经 `trigger::` 路径消费，
 // 故再导出仅测试构建存在（生产构建不引即触发 unused-imports）；可见性取

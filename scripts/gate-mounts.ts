@@ -154,6 +154,23 @@ export const GATE_MOUNTS: readonly GateMount[] = [
     ],
   },
   {
+    name: "NSH 进程 tauri 零链接守门（cargo tree）",
+    refs: "issue #2074 / ADR-0145",
+    hosts: [
+      {
+        file: CHECK_SH_FILE,
+        prefix: "( cd src-tauri && cargo tree -p nsh-app -i tauri",
+        where: "scripts/check.sh 质量门槛序列（infra gate-off 门后）",
+      },
+      {
+        file: CI_WORKFLOW_FILE,
+        prefix: "run: cargo tree -p nsh-app -i tauri",
+        where:
+          ".github/workflows/build.yml backend-lint job（cargo 宿主；backend-test 镜像无 bun，故为命令型门）",
+      },
+    ],
+  },
+  {
     name: "Rust 格式检查（cargo fmt）",
     refs: "issue #1087（--all 范围；门槛本体早于 issue 化）",
     hosts: [

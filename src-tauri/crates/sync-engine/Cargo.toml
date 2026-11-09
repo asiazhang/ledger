@@ -13,11 +13,13 @@ publish = false
 # 零生产依赖、对任何业务域零反向依赖。域→域方向均为上层消费下层的合法直呼
 # （ADR-0112 决策 2）；对根包（壳层）的反向引用由 cargo 依赖图编译期拒绝
 # （生产依赖面无根包，dev-dependency 环只覆盖测试目标）。
-# tauri-emit 启用留痕（issue #2017 / ADR-0145）：本 crate 的车道/触发编排经
-# `signals::emit_for(&AppHandle,…)` 消费 infra 的失效信号投递实现（ADR-0044
-# 信号映射单点形态）；本 crate 是 DOMAIN_TAURI_ALLOWED 认许的 tauri 存量宿主
-# （调度 AppHandle API，随迁移系列票退役），启用该 feature 不新增依赖面。
-ledger-infra = { path = "../infra", features = ["tauri-emit"] }
+# tauri-emit 启用随 tauri-host 门收进（issue #2074 / ADR-0145）：本 crate 的
+# 车道/触发编排经 `signals::emit_for(&AppHandle,…)` 消费 infra 的失效信号投递
+# 实现（ADR-0044 信号映射单点形态）；本 crate 是 DOMAIN_TAURI_ALLOWED 认许的
+# tauri 存量宿主（调度 AppHandle API，随迁移系列票退役）——NSH 原生壳进程
+# 不得链接 tauri（GTK3/WebKitGTK 与 GTK4 同进程符号互踩，gtk_init_check
+# 双双失效），故默认 feature 面零 tauri，门面见下方 [features] tauri-host。
+ledger-infra = { path = "../infra" }
 ledger-sync-protocol = { path = "../sync-protocol" }
 ledger-transaction = { path = "../transaction" }
 ledger-accounts = { path = "../accounts" }
@@ -49,7 +51,20 @@ sha2 = "0.11"
 tokio = { version = "1", features = ["rt", "macros", "time"] }
 tracing = "0.1"
 zip = { version = "9", default-features = false, features = ["deflate"] }
-tauri = { version = "2", features = ["tracing"] }
+# Tauri 同步触发宿主门（issue #2074 / ADR-0145，与 infra tauri-emit 门同款纪律）：
+# `start_sync_scheduler` 族与 `sync_on_start` 的 AppHandle 调度 API 只被旧壳
+#（根包）消费——NSH 原生壳进程不得链接 tauri（GTK3/WebKitGTK 与 GTK4 同进程
+# 符号互踩，gtk_init_check 双双失效），故 tauri 改 optional、经 `tauri-host`
+# feature 门控。通道配置 / 轮次引擎 / 停车场读路径零 tauri 类型，NSH 侧按
+# 默认 feature 消费。
+tauri = { version = "2", features = ["tracing"], optional = true }
+
+[features]
+# 门与依赖面绑死（infra ⑧' 门同款形状，check-structure 守门）：feature 不转发
+# dep:tauri 即门形同虚设；ledger-infra/tauri-emit 同门收进（触发编排的失效
+# 信号投递经 infra AppHandle 实现）；default 不得含本 feature（默认 feature
+# 即生产）。
+tauri-host = ["dep:tauri", "ledger-infra/tauri-emit"]
 
 [dev-dependencies]
 # 测试专用边（spec #1086 明文裁决「测试工厂与器具以 dev-dependency 环供各域

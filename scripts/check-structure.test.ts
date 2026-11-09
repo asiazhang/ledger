@@ -1783,6 +1783,99 @@ describe("check-structure http 投影 feature 门（ADR-0111 决策 5 / issue #1
     });
     expect(run(args).status).toBe(0);
   });
+
+  // ⑧'' tauri-host 宿主门（issue #2074 / ADR-0145）：DOMAIN_TAURI_ALLOWED 三个
+  // 存量宿主声明 tauri 即须 optional + feature 门；market-sync / sync-engine
+  // 的门须同帧转发 ledger-infra/tauri-emit；default 含门 feature 即生产链接。
+  // 传递面全图核对 = 命令型门 cargo tree（gate-mounts 挂载，无夹具形态）。
+  /** DOMAIN_TAURI_ALLOWED 宿主清单桩：完整 tauri-host 门形态（与真实仓库同形）。 */
+  const tauriHostFixtureManifest = (name: string, forwardsInfraEmit: boolean): string =>
+    '[package]\nname = "ledger-' +
+    name +
+    '"\nversion = "0.6.0"\nedition = "2024"\n\n' +
+    '[features]\ntauri-host = ["dep:tauri"' +
+    (forwardsInfraEmit ? ', "ledger-infra/tauri-emit"' : "") +
+    "]\n\n" +
+    '[dependencies]\ntauri = { version = "2", optional = true }\n\n[lints]\nworkspace = true\n';
+
+  it("三存量宿主完整 tauri-host 门形态 → 绿（issue #2074 基线）", () => {
+    const args = makeCrateFixture({
+      memberManifests: {
+        "crates/backup": tauriHostFixtureManifest("backup", false),
+        "crates/market-sync": tauriHostFixtureManifest("market-sync", true),
+        "crates/sync-engine": tauriHostFixtureManifest("sync-engine", true),
+      },
+    });
+    expect(run(args).status).toBe(0);
+  });
+
+  it("宿主 tauri 依赖未声明 optional → 红（裸依赖即无条件链接，NSH 图被污染）", () => {
+    const args = makeCrateFixture({
+      memberManifests: {
+        "crates/backup":
+          '[package]\nname = "ledger-backup"\nversion = "0.6.0"\nedition = "2024"\n\n' +
+          '[features]\ntauri-host = ["dep:tauri"]\n\n' +
+          '[dependencies]\ntauri = { version = "2" }\n\n[lints]\nworkspace = true\n',
+      },
+    });
+    const r = run(args);
+    expect(r.status).toBe(1);
+    expect(r.output).toContain("tauri-host 宿主门");
+    expect(r.output).toContain("optional");
+  });
+
+  it("宿主缺 tauri-host feature 转发 → 红（门与依赖面绑死）", () => {
+    const args = makeCrateFixture({
+      memberManifests: {
+        "crates/backup":
+          '[package]\nname = "ledger-backup"\nversion = "0.6.0"\nedition = "2024"\n\n' +
+          '[dependencies]\ntauri = { version = "2", optional = true }\n\n[lints]\nworkspace = true\n',
+      },
+    });
+    const r = run(args);
+    expect(r.status).toBe(1);
+    expect(r.output).toContain("tauri-host 宿主门");
+    expect(r.output).toContain("dep:tauri");
+  });
+
+  it("market-sync / sync-engine 门未转发 ledger-infra/tauri-emit → 红（失效信号投递同帧）", () => {
+    for (const dir of ["market-sync", "sync-engine"]) {
+      const args = makeCrateFixture({
+        memberManifests: {
+          [`crates/${dir}`]: tauriHostFixtureManifest(dir, false),
+        },
+      });
+      const r = run(args);
+      expect(r.status).toBe(1);
+      expect(r.output).toContain("tauri-host 宿主门");
+      expect(r.output).toContain("ledger-infra/tauri-emit");
+    }
+  });
+
+  it("宿主 [features] default 含 tauri-host → 红（默认 feature 即生产链接）", () => {
+    const args = makeCrateFixture({
+      memberManifests: {
+        "crates/backup":
+          '[package]\nname = "ledger-backup"\nversion = "0.6.0"\nedition = "2024"\n\n' +
+          '[features]\ndefault = ["tauri-host"]\ntauri-host = ["dep:tauri"]\n\n' +
+          '[dependencies]\ntauri = { version = "2", optional = true }\n\n[lints]\nworkspace = true\n',
+      },
+    });
+    const r = run(args);
+    expect(r.status).toBe(1);
+    expect(r.output).toContain("tauri-host 宿主门");
+    expect(r.output).toContain("default 包含 tauri-host");
+  });
+
+  it("宿主清单未声明 tauri → 绿（存量宿主已退役，非本门对象）", () => {
+    const args = makeCrateFixture({
+      memberManifests: {
+        "crates/backup":
+          '[package]\nname = "ledger-backup"\nversion = "0.6.0"\nedition = "2024"\n\n[lints]\nworkspace = true\n',
+      },
+    });
+    expect(run(args).status).toBe(0);
+  });
 });
 
 describe("check-structure 当期入口调用方闭集（ADR-0011 决策 3 + 2026-09-22 修订 ① / #1692）", () => {
