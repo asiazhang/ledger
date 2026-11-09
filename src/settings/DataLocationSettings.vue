@@ -2,7 +2,7 @@
 import { errorMessage } from "@ledger/utils/errors";
 import { NAlert, NButton, NCard, NSpace, NSpin, NText, useMessage } from "naive-ui";
 import { onMounted, ref } from "vue";
-import { open } from "@tauri-apps/plugin-dialog";
+import { open } from "@ledger/mock-backend/bridge/dialog";
 import { api } from "@ledger/api";
 import { t } from "@ledger/i18n";
 import AppDangerConfirmModal from "@ledger/ui-kit/AppDangerConfirmModal.vue";

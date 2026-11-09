@@ -1,0 +1,2048 @@
+//! 价格历史后台补全测试（ADR-0122 / issue #1375）：派生事实队列（有价格通道但
+//! 历史不完整，持仓优先）、一轮排空（进度序列、单只失败继续排空、零写入不置
+//! 见证）、队列随补全自然排空。编排经注入 mock 闭包驱动，不依赖真实网络；
+//! 断言对准用户可观察结果（抓取了谁、落了什么、进度怎么推进），不内省私有
+//! 队列结构。
+//!
+//! 基金历史回填单元（`backfill_one_fund_history`）的用例自
+//! `instrument_info_sync.rs` 迁入（issue #1377 现价与历史解耦）：历史回填不再经
+//! 手动同步编排，改为直接驱动逐只回填入口断言（首刷近两年、新浪单只全历史面
+//! 取数与本地窗口裁剪（issue #1566 换源）、水位次日增量、可信空不落库、单只
+//! 一事务原子）。首刷翻页的页级明细随 #1566 换源退场（全历史面单请求取整只，
+//! 无翻页长等待）。
+
+use chrono::{Datelike, Days, Duration as ChronoDuration, Months, NaiveDate};
+use rusqlite::{Connection, params};
+
+use std::sync::Mutex;
+
+use crate::SyncProgress;
+use crate::channels::{FetchFuture, QuoteQuery};
+use crate::fund_backfill::{BackfillOutcome, backfill_one_fund_history};
+use crate::fund_nav::FundIdentity;
+use crate::fund_nav::NavPoint;
+use crate::history::{HistoryBackfillStats, run_history_backfill_round};
+use crate::http::KlineBar;
+use crate::incremental::{SyncInstrument, beijing_today, daily_window_opens};
+use crate::model::WriteWitness;
+use crate::tests::insert_holding;
+use crate::weekly::week_monday;
+use ledger_infra::error::{AppError, Result};
+use ledger_investment::prices::{
+    EASTMONEY_PRICE_SOURCE, MarketPriceWrite, SINA_PRICE_SOURCE, TENCENT_PRICE_SOURCE,
+    price_value_to_cents, upsert_market_price, upsert_price_history,
+};
+use ledger_investment::{InstrumentType, Market, QuoteMarket, derive_price_channel};
+use nsh_app::test_support::seed_instrument;
+
+fn bar(date: &str, close: f64) -> KlineBar {
+    KlineBar {
+        date: date.to_string(),
+        close,
+    }
+}
+
+fn nav_point(date: &str, nav: f64) -> NavPoint {
+    NavPoint {
+        date: date.to_string(),
+        nav,
+    }
+}
+
+/// 空实现：既有用例不关心货基判定时注入（缺信号形态——不打标、照常回填）。
+/// 货基判定用例注入自己的确认桩（确认 / 缺信号 / 源不可信三态）。
+fn no_confirm(_: &str) -> FetchFuture<bool> {
+    Box::pin(std::future::ready(Ok(false)))
+}
+
+/// 直插一条无持仓标的（seed_instrument 固定 stock 类型；kind ≠ stock 时就地修正
+/// ——类型是通道派生的行为输入）。
+fn insert_plain_instrument(
+    conn: &Connection,
+    id: &str,
+    symbol: &str,
+    kind: &str,
+    currency: &str,
+    market: &str,
+) {
+    seed_instrument(
+        conn,
+        id,
+        symbol,
+        &format!("名称-{symbol}"),
+        currency,
+        market,
+    );
+    if kind != "stock" {
+        conn.execute(
+            "UPDATE instruments SET instrument_type=?1 WHERE id=?2",
+            params![kind, id],
+        )
+        .unwrap();
+    }
+}
+
+/// 给标的落一条历史周点 + 现价缓存（nav_date 兼任基金水位）。
+fn seed_history_point(conn: &Connection, instrument_id: &str, currency: &str, date: &str) {
+    let cents = price_value_to_cents(10.0);
+    upsert_price_history(
+        conn,
+        instrument_id,
+        date,
+        cents,
+        currency,
+        EASTMONEY_PRICE_SOURCE,
+    )
+    .unwrap();
+    upsert_market_price(
+        conn,
+        &MarketPriceWrite {
+            instrument_id,
+            price_cents: cents,
+            currency_code: currency,
+            priced_at: date,
+            nav_date: Some(date),
+            source: Some(EASTMONEY_PRICE_SOURCE),
+        },
+    )
+    .unwrap();
+}
+
+/// 相对今天偏移 N 天的 ISO 日期（缺周点判据的测试基线）。
+fn date_offset(days: i64) -> String {
+    (beijing_today() - ChronoDuration::days(days))
+        .format("%Y-%m-%d")
+        .to_string()
+}
+
+/// 逐周周线样本（每周一行、周五标签）：周行 = 该周最后一个有报价交易日的价格
+///（研究文档 §14.3 实测口径），起点所在周即有行——覆盖从首笔持仓周开始。
+fn weekly_series(start: NaiveDate, end: NaiveDate) -> Vec<KlineBar> {
+    let mut bars = Vec::new();
+    let mut week = week_monday(start);
+    while week <= end {
+        let friday = week + Days::new(4);
+        if friday <= end {
+            bars.push(bar(&friday.format("%Y-%m-%d").to_string(), 12.0));
+        }
+        week = week + Days::new(7);
+    }
+    bars
+}
+
+/// 直插一笔指定日期的买入流水（transactions + security_transactions 两行，不建
+/// 批次）：首笔持仓流水日的判据输入是流水腿本身（issue #1534），批次与持仓
+/// 视图不在判据内。
+fn seed_buy_transaction(
+    conn: &Connection,
+    account_id: &str,
+    instrument_id: &str,
+    currency: &str,
+    date: &str,
+) {
+    nsh_app::test_support::seed_account(
+        conn,
+        account_id,
+        &format!("账户-{account_id}"),
+        "investment",
+        currency,
+        0,
+    );
+    let txn_id = format!("txn-buy-{account_id}-{instrument_id}");
+    conn.execute(
+        "INSERT INTO transactions (id,kind,amount_cents,currency_code,amount_native_cents,account_id,date,created_at,updated_at,version,device_id) \
+         VALUES (?1,'buy',1000,?2,1000,?3,?4,?5,?5,1,'test')",
+        params![
+            txn_id,
+            currency,
+            account_id,
+            date,
+            format!("{date}T00:00:00Z")
+        ],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO security_transactions (transaction_id,instrument_id,action,quantity,price_cents,fee_cents) \
+         VALUES (?1,?2,'buy',10,100,0)",
+        params![txn_id, instrument_id],
+    )
+    .unwrap();
+}
+
+fn history_rows(conn: &Connection, instrument_id: &str) -> i64 {
+    conn.query_row(
+        "SELECT count(*) FROM price_history WHERE instrument_id=?1",
+        params![instrument_id],
+        |r| r.get(0),
+    )
+    .unwrap()
+}
+
+/// 一轮补全的注入桩集合：按「市场： 代码」/ 基金代码应答并记录「谁被抓取了」
+/// ——队列成员与排队顺序都经这份可观察日志断言。
+struct Harness {
+    /// 处理序日志：行情标的记 `kline:<市场>:<代码>`（不观数据源查询键形态，
+    /// issue #1556），基金全历史记 `history:<code>`（issue #1566 起单一全历史
+    /// 通道）。
+    log: Mutex<Vec<String>>,
+    /// 「市场:代码」→ 周线样本；未命中 = 空表（零有效周点）。
+    klines: Vec<(&'static str, Vec<KlineBar>)>,
+    /// 注入单只失败：命中该「市场:代码」键的周 K 请求返回 Err。
+    fail_kline: Option<&'static str>,
+    /// 基金代码 → 整只历史单位净值（新浪全历史面，wire 序任意：消费端
+    /// 降采样按日排序）；未收录 = 空序列（可信空）。
+    nav_history: Vec<(&'static str, Vec<NavPoint>)>,
+    /// 注入单只失败：命中该代码的全历史请求返回 Err（取数层不可信 / 网络失败）。
+    fail_nav_history: Option<&'static str>,
+}
+
+impl Harness {
+    fn new() -> Self {
+        Self {
+            log: Mutex::new(vec![]),
+            klines: vec![],
+            fail_kline: None,
+            nav_history: vec![],
+            fail_nav_history: None,
+        }
+    }
+
+    fn with_klines(mut self, klines: Vec<(&'static str, Vec<KlineBar>)>) -> Self {
+        self.klines = klines;
+        self
+    }
+
+    fn with_failing_kline(mut self, key: &'static str) -> Self {
+        self.fail_kline = Some(key);
+        self
+    }
+
+    fn with_nav_history(mut self, history: Vec<(&'static str, Vec<NavPoint>)>) -> Self {
+        self.nav_history = history;
+        self
+    }
+
+    fn with_failing_nav_history(mut self, code: &'static str) -> Self {
+        self.fail_nav_history = Some(code);
+        self
+    }
+
+    fn requested(&self) -> Vec<String> {
+        self.log.lock().unwrap().clone()
+    }
+
+    fn nav_history_hits(&self, code: &str) -> usize {
+        self.requested()
+            .iter()
+            .filter(|entry| entry.as_str() == format!("history:{code}").as_str())
+            .count()
+    }
+
+    fn kline_hits(&self, key: &str) -> usize {
+        self.requested()
+            .iter()
+            .filter(|entry| entry.as_str() == format!("kline:{key}").as_str())
+            .count()
+    }
+
+    fn fetch_kline(&self, query: &QuoteQuery) -> Result<Vec<KlineBar>> {
+        // 桩按自己的「市场:代码」形态路由（数据源查询键归通道内部构造，
+        // issue #1556）；断言对准「谁被抓取了」，不钉数据源键形态。
+        let key = format!("{}:{}", query.market, query.code);
+        self.log.lock().unwrap().push(format!("kline:{key}"));
+        if self.fail_kline.map(|f| f == key).unwrap_or(false) {
+            return Err(AppError::Io("周 K 抓取失败".into()));
+        }
+        Ok(self
+            .klines
+            .iter()
+            .find(|(stored, _)| *stored == key.as_str())
+            .map(|(_, bars)| bars.clone())
+            .unwrap_or_default())
+    }
+
+    fn fetch_nav_history(&self, code: &str) -> Result<Vec<NavPoint>> {
+        self.log.lock().unwrap().push(format!("history:{code}"));
+        if self.fail_nav_history.map(|f| f == code).unwrap_or(false) {
+            return Err(AppError::Parse("新浪基金历史净值响应不可解析".into()));
+        }
+        Ok(self
+            .nav_history
+            .iter()
+            .find(|(stored, _)| *stored == code)
+            .map(|(_, points)| points.clone())
+            .unwrap_or_default())
+    }
+}
+
+/// 驱动一轮补全：返回 (统计, 进度序列, 是否实际写过)。
+fn run_round(
+    conn: &Connection,
+    harness: &Harness,
+) -> (Result<HistoryBackfillStats>, Vec<SyncProgress>, bool) {
+    let progress_log: Mutex<Vec<SyncProgress>> = Mutex::new(vec![]);
+    let mut witness = WriteWitness::default();
+    let mut fetch_kline = |query: &QuoteQuery| super::ready(harness.fetch_kline(query));
+    let mut fetch_nav_history = |code: &str| super::ready(harness.fetch_nav_history(code));
+    let mut progress = |p: SyncProgress| progress_log.lock().unwrap().push(p);
+    let result = nsh_app::test_support::block_on(run_history_backfill_round(
+        conn,
+        &mut fetch_kline,
+        &mut fetch_nav_history,
+        &mut no_confirm,
+        &mut progress,
+        &mut witness,
+    ));
+    (
+        result,
+        progress_log.lock().unwrap().clone(),
+        witness.any_written(),
+    )
+}
+
+// ---------------------------------------------------------------------------
+// 队列 = 派生事实（有价格通道但历史不完整，持仓优先）
+// ---------------------------------------------------------------------------
+
+/// 队列成员与排队顺序：历史完整 / 水位新鲜的通道内标的不进队，手动报价与
+/// 无来源行不进队；持仓标的前于非持仓标的（symbol 更小也不插队），同级按
+/// symbol 升序。
+#[test]
+fn queue_keeps_only_incomplete_and_holding_comes_first() {
+    let conn = nsh_app::test_support::open();
+    let fresh = date_offset(2);
+    let stale = date_offset(14);
+
+    // ① 持仓股票、无历史（首刷 → 进队）。
+    insert_holding(&conn, "acc-1", "inst-held", "600519", "stock", "CNY", "sh");
+    // ② 非持仓股票、历史新鲜（不进队）。
+    insert_plain_instrument(&conn, "inst-fresh", "000002", "stock", "CNY", "sz");
+    seed_history_point(&conn, "inst-fresh", "CNY", &fresh);
+    // ③ 非持仓股票、历史缺周点（进队）。
+    insert_plain_instrument(&conn, "inst-stale", "000003", "stock", "CNY", "sz");
+    seed_history_point(&conn, "inst-stale", "CNY", &stale);
+    // ④ 非持仓基金、无历史（首刷 → 进队；symbol 最小但不插持仓的队）。
+    insert_plain_instrument(&conn, "inst-fund", "000001", "fund", "CNY", "unknown");
+    // ⑤ 基金、水位新鲜（不进队）。
+    insert_plain_instrument(&conn, "inst-fund-fresh", "000004", "fund", "CNY", "unknown");
+    seed_history_point(&conn, "inst-fund-fresh", "CNY", &fresh);
+    // ⑥ 基金、水位缺周点（进队）。
+    insert_plain_instrument(&conn, "inst-fund-stale", "000005", "fund", "CNY", "unknown");
+    seed_history_point(&conn, "inst-fund-stale", "CNY", &stale);
+    // ⑦ 手动报价通道（债券）与 ⑧ 无来源行（股票、市场未知）不进队。
+    insert_plain_instrument(&conn, "inst-bond", "BOND-X", "bond", "CNY", "unknown");
+    insert_plain_instrument(&conn, "inst-nosrc", "NO-MKT", "stock", "CNY", "unknown");
+
+    let harness = Harness::new()
+        .with_klines(vec![
+            ("sh:600519", vec![bar(&date_offset(1), 13.0)]),
+            ("sz:000003", vec![bar(&date_offset(1), 7.0)]),
+        ])
+        .with_nav_history(vec![
+            ("000001", vec![nav_point(&date_offset(1), 1.5)]),
+            ("000005", vec![nav_point(&date_offset(1), 2.5)]),
+        ]);
+
+    let (result, _progress, _written) = run_round(&conn, &harness);
+    let stats = result.unwrap();
+
+    // 队列成员 = 首刷持仓股 + 缺周点股 + 首刷基金 + 缺周点基金 = 4 只。
+    assert_eq!(stats.queued, 4, "只有历史不完整的通道内标的进队");
+    assert_eq!(stats.failed, 0);
+    // 排队顺序持仓优先：600519（持仓）先于全部非持仓标的（其中 000001 的
+    // symbol 最小也不插队），非持仓同级按 symbol 升序。基金首刷与缺周点补齐
+    // 同走新浪全历史通道（issue #1566：000001 与 000005 均为相邻单条 history:）。
+    assert_eq!(
+        harness.requested(),
+        vec![
+            "kline:sh:600519".to_string(),
+            "history:000001".to_string(),
+            "kline:sz:000003".to_string(),
+            "history:000005".to_string(),
+        ],
+        "抓取序 = 持仓优先 + symbol 升序"
+    );
+    // 全部落库（首刷一只一事务，issue #1373）：已有历史者新增本周邻域的新周点
+    // （种子周点仍在），首刷者从零落一根。
+    let latest = |id: &str| -> String {
+        conn.query_row(
+            "SELECT MAX(trade_date) FROM price_history WHERE instrument_id=?1",
+            params![id],
+            |r| r.get::<_, Option<String>>(0),
+        )
+        .unwrap()
+        .unwrap()
+    };
+    assert_eq!(history_rows(&conn, "inst-held"), 1);
+    assert_eq!(latest("inst-stale"), date_offset(1), "缺周点股补到新周点");
+    assert_eq!(history_rows(&conn, "inst-fund"), 1);
+    assert_eq!(
+        latest("inst-fund-stale"),
+        date_offset(1),
+        "缺周点基金补到新周点"
+    );
+}
+
+/// 基金「已是最新」的补全幂等：水位缺周点触发进队，但增量窗口内无新净值时
+/// 整只零落库、不计失败（处理完成照常推进，与手动同步同口径）。
+#[test]
+fn fund_with_no_new_nav_completes_without_writing() {
+    let conn = nsh_app::test_support::open();
+    let stale = date_offset(14);
+    insert_plain_instrument(&conn, "inst-fund", "000001", "fund", "CNY", "unknown");
+    seed_history_point(&conn, "inst-fund", "CNY", &stale);
+
+    // 增量窗口（水位次日 → 今天）内无新净值（可信空序列）：「窗口内确实无新净值」。
+    let harness = Harness::new().with_nav_history(vec![("000001", vec![])]);
+    let (result, progress, written) = run_round(&conn, &harness);
+    let stats = result.unwrap();
+    assert_eq!(stats.queued, 1);
+    assert_eq!(stats.failed, 0);
+    assert!(!written, "无新净值 = 零写入，不置见证（零变化不广播）");
+    assert_eq!(history_rows(&conn, "inst-fund"), 1, "原有历史不变");
+    assert_eq!(
+        progress,
+        vec![
+            SyncProgress::instrument(0, 1),
+            SyncProgress::instrument(1, 1),
+        ]
+    );
+}
+
+/// 队列随补全自然排空：本轮补齐（含深回填覆盖到首笔持仓周）的标的按派生事实
+/// 退出队列——再跑一轮零队列、零进度、零请求（「关掉应用再打开会接着补，而不
+/// 是每次从头来」的域内根据）。
+#[test]
+fn queue_drains_and_stays_empty_once_histories_complete() {
+    let conn = nsh_app::test_support::open();
+    insert_holding(&conn, "acc-1", "inst-held", "600519", "stock", "CNY", "sh");
+    // 持仓股的首笔买入在 2026-01-10（insert_lot 固定值，当周周一 2026-01-05）：
+    // 周线样本整段覆盖回首笔持仓周，深回填落齐后按派生事实退出队列。
+    let harness = Harness::new().with_klines(vec![(
+        "sh:600519",
+        weekly_series(
+            NaiveDate::from_ymd_opt(2026, 1, 5).expect("常量日期应可解析"),
+            beijing_today(),
+        ),
+    )]);
+
+    let (result, progress, written) = run_round(&conn, &harness);
+    result.unwrap();
+    assert_eq!(progress.len(), 2, "首轮 0/1、1/1 两格");
+    assert!(written, "首轮实际落库");
+
+    // 第二轮：最新周点已在本周邻域 → 队列空 → 零动作。
+    let (result, progress, _written) = run_round(&conn, &harness);
+    let stats = result.unwrap();
+    assert_eq!(stats.queued, 0, "补齐后按派生事实退出队列");
+    assert!(
+        progress.is_empty(),
+        "队列空零动作：不发进度（空转不伪装成推进）"
+    );
+    assert_eq!(
+        harness
+            .requested()
+            .iter()
+            .filter(|entry| entry.starts_with("kline:"))
+            .count(),
+        1,
+        "第二轮零周 K 请求"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 深回填：价格历史覆盖到首笔持仓流水日（issue #1534 基金 / #1906 起股票同行
+// 口）——队列「覆盖不足」判据辖净值与行情两通道，回填窗口起点放宽到首笔持
+// 仓周；无持仓流水维持近两年。
+// ---------------------------------------------------------------------------
+
+/// 队列「覆盖不足」判据（issue #1534 基金；#1906 起行情通道同口径）：已有近
+/// 两年历史、但首笔持仓流水早于覆盖起点的基金与股票都进队做深回填；覆盖已达
+/// 标的基金不进队。**删除判据的行情通道臂本用例红**（股票不再进队）。
+#[test]
+fn queue_enqueues_fund_and_stock_short_of_first_position() {
+    let conn = nsh_app::test_support::open();
+    // 基金：历史新鲜（不缺周点），但首笔买入早于覆盖起点 → 覆盖不足进队。
+    insert_plain_instrument(&conn, "inst-fund", "000025", "fund", "CNY", "unknown");
+    seed_history_point(&conn, "inst-fund", "CNY", &date_offset(2));
+    seed_buy_transaction(&conn, "acc-fund", "inst-fund", "CNY", &date_offset(400));
+    // 股票：同样的事实组合（历史新鲜 + 早期买入）→ 同一判据进队（#1906）。
+    insert_plain_instrument(&conn, "inst-stock", "600519", "stock", "CNY", "sh");
+    seed_history_point(&conn, "inst-stock", "CNY", &date_offset(2));
+    seed_buy_transaction(&conn, "acc-stock", "inst-stock", "CNY", &date_offset(400));
+    // 覆盖已达标的基金（最早周点与首笔买入同周）不进队。
+    insert_plain_instrument(&conn, "inst-deep", "000026", "fund", "CNY", "unknown");
+    seed_history_point(&conn, "inst-deep", "CNY", &date_offset(2));
+    seed_buy_transaction(&conn, "acc-deep", "inst-deep", "CNY", &date_offset(2));
+
+    let harness = Harness::new()
+        .with_nav_history(vec![("000025", vec![nav_point(&date_offset(1), 1.5)])])
+        .with_klines(vec![("sh:600519", vec![bar(&date_offset(1), 13.0)])]);
+    let (result, _progress, _written) = run_round(&conn, &harness);
+    let stats = result.unwrap();
+
+    assert_eq!(stats.queued, 2, "覆盖不足的基金与股票都进队");
+    assert_eq!(stats.failed, 0);
+    assert_eq!(
+        harness.requested(),
+        vec!["history:000025".to_string(), "kline:sh:600519".to_string(),],
+        "基金走全历史通道、股票走周 K 通道各一次深回填请求；覆盖达标者零请求"
+    );
+}
+
+/// 股票深回填（#1906 验收主场景）：已有近两年历史、首笔买入早于覆盖起点的
+/// 股票，周线通道一次请求取整段样本、本地裁剪到首笔持仓周整根补齐——最早周
+/// 点落在首笔持仓周内（PriceHistory 行覆盖到首笔持仓周）。删除队列判据的行情
+/// 通道臂或回填单元的窗口裁剪，本用例红。
+#[test]
+fn stock_deep_backfill_lands_history_back_to_first_position_week() {
+    let conn = nsh_app::test_support::open();
+    insert_plain_instrument(&conn, "inst-stock", "600519", "stock", "CNY", "sh");
+    seed_history_point(&conn, "inst-stock", "CNY", &date_offset(2));
+    let first_buy = date_offset(800);
+    seed_buy_transaction(&conn, "acc-stock", "inst-stock", "CNY", &first_buy);
+
+    // 周线通道整段样本（每周一行、起点早于首笔买入两周）。
+    let series = weekly_series(beijing_today() - ChronoDuration::days(820), beijing_today());
+    let harness = Harness::new().with_klines(vec![("sh:600519", series)]);
+    let (result, _progress, written) = run_round(&conn, &harness);
+    result.unwrap();
+
+    assert!(written, "深回填实际落库");
+    let rows = history_rows(&conn, "inst-stock");
+    assert!(rows > 100, "820 天 ≈ 117 个周点，实际 {rows}");
+    assert_earliest_row_within_first_position_week(&conn, "inst-stock", &first_buy);
+}
+
+/// 股票深回填的零新点幂等（#1906 / ADR-0122 长期行为）：覆盖不足进队但数据源
+/// 没有更深的点时，整只零落库、不置写入见证；每轮仍是一次周 K 请求（每窗口重
+/// 进队、fail-closed 自愈，与基金同款）。
+#[test]
+fn stock_deep_backfill_zero_new_points_writes_nothing() {
+    let conn = nsh_app::test_support::open();
+    insert_plain_instrument(&conn, "inst-stock", "600519", "stock", "CNY", "sh");
+    seed_history_point(&conn, "inst-stock", "CNY", &date_offset(2));
+    seed_buy_transaction(&conn, "acc-stock", "inst-stock", "CNY", &date_offset(400));
+
+    // 周线通道只有既有周点（同周同值），无更深样本：窗口非空但零新点。
+    let harness = Harness::new().with_klines(vec![("sh:600519", vec![bar(&date_offset(2), 10.0)])]);
+    let (result, _progress, written) = run_round(&conn, &harness);
+    let stats = result.unwrap();
+
+    assert_eq!(stats.queued, 1, "覆盖不足照常进队");
+    assert_eq!(stats.failed, 0);
+    assert!(!written, "零新点不置写入见证（不置脏不广播）");
+    assert_eq!(history_rows(&conn, "inst-stock"), 1, "既有历史不变");
+    assert_eq!(harness.kline_hits("sh:600519"), 1, "每轮至多一次请求");
+}
+
+/// 无持仓流水的建档股票维持近两年（#1906 深度判据后半）：整段周线样本喂入，
+/// 窗口裁剪丢弃两年前的样本——最早落库行不早于近两年窗口起点。
+#[test]
+fn stock_without_position_flows_keeps_two_year_window() {
+    let conn = nsh_app::test_support::open();
+    insert_plain_instrument(&conn, "inst-stock", "600519", "stock", "CNY", "sh");
+
+    // 周线通道整段样本（起点远早于两年窗口，≈171 周）。
+    let series = weekly_series(
+        beijing_today() - ChronoDuration::days(1200),
+        beijing_today(),
+    );
+    let harness = Harness::new().with_klines(vec![("sh:600519", series)]);
+    let (result, _progress, written) = run_round(&conn, &harness);
+    result.unwrap();
+
+    assert!(written, "首刷实际落库");
+    let rows = price_history_rows(&conn, "inst-stock");
+    assert!(
+        rows.len() > 95 && rows.len() < 110,
+        "裁剪后应只余近两年 ≈ 104 周，实际 {}",
+        rows.len()
+    );
+    let window_start = crate::incremental::two_years_ago(beijing_today())
+        .format("%Y-%m-%d")
+        .to_string();
+    let earliest = rows.first().map(|(d, _, _)| d.clone()).unwrap();
+    assert!(
+        earliest.as_str() >= window_start.as_str(),
+        "最早周点不得早于近两年窗口起点 {window_start}，实际 {earliest}"
+    );
+}
+
+/// 停牌整周无周行 → 该周无点、两侧周点照常落库（#1906 判据 5，与周采样口径
+/// 一致）：曲线跨越空档连续，缺周不补行。
+#[test]
+fn stock_weekly_gap_lands_no_point_for_the_missing_week() {
+    let conn = nsh_app::test_support::open();
+    insert_plain_instrument(&conn, "inst-stock", "600519", "stock", "CNY", "sh");
+
+    // 两根周行相隔两周（中间整周无行，如同停牌）。
+    let older = date_offset(15);
+    let newer = date_offset(1);
+    let harness = Harness::new().with_klines(vec![(
+        "sh:600519",
+        vec![bar(&older, 10.0), bar(&newer, 11.0)],
+    )]);
+    let (result, _progress, written) = run_round(&conn, &harness);
+    result.unwrap();
+
+    assert!(written);
+    assert_eq!(
+        history_rows(&conn, "inst-stock"),
+        2,
+        "缺周即无点，两侧各一根"
+    );
+    let dates: Vec<String> = price_history_rows(&conn, "inst-stock")
+        .into_iter()
+        .map(|(d, _, _)| d)
+        .collect();
+    assert_eq!(dates, vec![older, newer], "曲线跨越空档，缺周不补行");
+}
+
+/// 周 K 车道零现价写入（#1906 判据 6 后半）：回填只落 price_history，现价缓存
+/// 不被触碰（现价归批量取数面，ADR-0122 决策 2）。
+#[test]
+fn stock_backfill_writes_no_market_price() {
+    let conn = nsh_app::test_support::open();
+    insert_plain_instrument(&conn, "inst-stock", "600519", "stock", "CNY", "sh");
+    let harness = Harness::new().with_klines(vec![("sh:600519", vec![bar(&date_offset(1), 13.0)])]);
+    let (result, _progress, _written) = run_round(&conn, &harness);
+    result.unwrap();
+
+    let market_prices: i64 = conn
+        .query_row(
+            "SELECT count(*) FROM market_prices WHERE instrument_id='inst-stock'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(market_prices, 0, "周 K 车道不写现价缓存");
+}
+
+/// 首刷窗口放宽（issue #1534 验收）：首笔买入早于近两年的基金，首刷直接从
+/// 首笔持仓所在周起落周点——最早周点 ≤ 首笔买入所在周。
+#[test]
+fn fund_first_fill_covers_holding_period_when_first_buy_predates_window() {
+    let conn = nsh_app::test_support::open();
+    insert_plain_instrument(&conn, "inst-fund", "110022", "fund", "CNY", "unknown");
+    let fund = fund_instrument("inst-fund", "110022");
+
+    let first_buy = date_offset(800);
+    seed_buy_transaction(&conn, "acc-fund", "inst-fund", "CNY", &first_buy);
+    let series = daily_nav_series(beijing_today() - ChronoDuration::days(820), beijing_today());
+    let full = [(
+        "110022",
+        series
+            .iter()
+            .map(|(d, n)| nav_point(d, *n))
+            .collect::<Vec<_>>(),
+    )];
+    let requested = Mutex::new(Vec::new());
+    let mut nav = mock_nav_history(&full, &requested);
+
+    let outcome =
+        nsh_app::test_support::block_on(run_fund_backfill(&conn, &fund, &mut nav, &mut no_confirm))
+            .unwrap();
+
+    assert!(outcome.written);
+    assert_earliest_row_within_first_position_week(&conn, "inst-fund", &first_buy);
+}
+
+/// 深回填（issue #1534 现状缺口的主场景）：已有近两年历史、首笔买入早于覆盖
+/// 起点的基金，按覆盖目标整根补齐到首笔持仓周；现价仍是窗口内最新净值。
+#[test]
+fn fund_deep_backfill_lands_history_back_to_first_position_week() {
+    let conn = nsh_app::test_support::open();
+    insert_plain_instrument(&conn, "inst-fund", "110022", "fund", "CNY", "unknown");
+    let fund = fund_instrument("inst-fund", "110022");
+
+    let recent = date_offset(2);
+    seed_fund_price(&conn, "inst-fund", 30000, &recent, true);
+    let first_buy = date_offset(800);
+    seed_buy_transaction(&conn, "acc-fund", "inst-fund", "CNY", &first_buy);
+
+    let series = daily_nav_series(beijing_today() - ChronoDuration::days(820), beijing_today());
+    let latest = series.last().unwrap();
+    let full = [(
+        "110022",
+        series
+            .iter()
+            .map(|(d, n)| nav_point(d, *n))
+            .collect::<Vec<_>>(),
+    )];
+    let requested = Mutex::new(Vec::new());
+    let mut nav = mock_nav_history(&full, &requested);
+
+    let outcome =
+        nsh_app::test_support::block_on(run_fund_backfill(&conn, &fund, &mut nav, &mut no_confirm))
+            .unwrap();
+
+    assert!(outcome.written);
+    let rows = price_history_rows(&conn, "inst-fund");
+    assert!(rows.len() > 50, "400 天 ≈ 57 个周点，实际 {}", rows.len());
+    assert_earliest_row_within_first_position_week(&conn, "inst-fund", &first_buy);
+    assert_eq!(
+        fund_price_of(&conn, "inst-fund"),
+        Some((price_value_to_cents(latest.1), Some(latest.0.clone()))),
+        "深回填后现价 = 窗口内最新公布净值"
+    );
+}
+
+/// 幂等（issue #1534 验收）：覆盖不足进队但数据源没有更深的点时，重复补全
+/// 零新点——不落库、不置写入见证（零新点不置脏不广播）。
+#[test]
+fn fund_deep_backfill_zero_new_points_writes_nothing() {
+    let conn = nsh_app::test_support::open();
+    insert_plain_instrument(&conn, "inst-fund", "000001", "fund", "CNY", "unknown");
+    seed_history_point(&conn, "inst-fund", "CNY", &date_offset(2));
+    seed_buy_transaction(&conn, "acc-fund", "inst-fund", "CNY", &date_offset(400));
+
+    // 全历史面只有既有周点（同周同值）：窗口非空但零新点。
+    let harness =
+        Harness::new().with_nav_history(vec![("000001", vec![nav_point(&date_offset(2), 10.0)])]);
+    let (result, _progress, written) = run_round(&conn, &harness);
+    let stats = result.unwrap();
+
+    assert_eq!(stats.queued, 1, "覆盖不足照常进队");
+    assert_eq!(stats.failed, 0);
+    assert!(!written, "零新点不置写入见证（不置脏不广播）");
+    assert_eq!(history_rows(&conn, "inst-fund"), 1, "既有历史不变");
+    assert_eq!(harness.nav_history_hits("000001"), 1, "每轮至多一次请求");
+}
+
+/// 覆盖达标后退出队列：深回填落齐后，重复补全不再进队（派生事实自然排空）。
+#[test]
+fn queue_drains_after_deep_backfill_completes_coverage() {
+    let conn = nsh_app::test_support::open();
+    insert_plain_instrument(&conn, "inst-fund", "000025", "fund", "CNY", "unknown");
+    seed_history_point(&conn, "inst-fund", "CNY", &date_offset(2));
+    let first_buy = date_offset(800);
+    seed_buy_transaction(&conn, "acc-fund", "inst-fund", "CNY", &first_buy);
+
+    let series = daily_nav_series(beijing_today() - ChronoDuration::days(820), beijing_today());
+    let harness = Harness::new().with_nav_history(vec![(
+        "000025",
+        series
+            .iter()
+            .map(|(d, n)| nav_point(d, *n))
+            .collect::<Vec<_>>(),
+    )]);
+
+    let (result, _progress, written) = run_round(&conn, &harness);
+    result.unwrap();
+    assert!(written, "首轮深回填实际落库");
+    assert_earliest_row_within_first_position_week(&conn, "inst-fund", &first_buy);
+
+    // 第二轮：覆盖已达标 → 队列空零动作。
+    let (result, progress, _written) = run_round(&conn, &harness);
+    let stats = result.unwrap();
+    assert_eq!(stats.queued, 0, "覆盖达标后按派生事实退出队列");
+    assert!(progress.is_empty());
+    assert_eq!(harness.nav_history_hits("000025"), 1, "第二轮零请求");
+}
+
+/// 断言辅助：最早周点落在首笔持仓流水日所在周内（issue #1534 验收判据）。
+fn assert_earliest_row_within_first_position_week(
+    conn: &Connection,
+    instrument_id: &str,
+    first_buy: &str,
+) {
+    let first = NaiveDate::parse_from_str(first_buy, "%Y-%m-%d").unwrap();
+    let monday = week_monday(first);
+    let week_end = (monday + Days::new(6)).format("%Y-%m-%d").to_string();
+    let rows = price_history_rows(conn, instrument_id);
+    let earliest = rows.first().map(|(d, _, _)| d.clone()).unwrap_or_default();
+    assert!(
+        earliest >= monday.format("%Y-%m-%d").to_string() && earliest <= week_end,
+        "最早周点应落在首笔持仓周 [{}, {}] 内，实际 {earliest}",
+        monday.format("%Y-%m-%d"),
+        week_end
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 一轮排空的可观察行为
+// ---------------------------------------------------------------------------
+
+/// 进度序列：收集完成立即发 {0, total}，此后逐只推进到 {total, total}。
+#[test]
+fn round_emits_instrument_level_progress_sequence() {
+    let conn = nsh_app::test_support::open();
+    insert_plain_instrument(&conn, "inst-a", "000002", "stock", "CNY", "sz");
+    insert_plain_instrument(&conn, "inst-b", "000003", "stock", "CNY", "sz");
+    let harness = Harness::new().with_klines(vec![
+        ("sz:000002", vec![bar(&date_offset(1), 5.0)]),
+        ("sz:000003", vec![bar(&date_offset(1), 6.0)]),
+    ]);
+    let (result, progress, _written) = run_round(&conn, &harness);
+    result.unwrap();
+    assert_eq!(
+        progress,
+        vec![
+            SyncProgress::instrument(0, 2),
+            SyncProgress::instrument(1, 2),
+            SyncProgress::instrument(2, 2),
+        ]
+    );
+}
+
+/// 单只失败不中断本轮：第一只的周 K 抓取失败，第二只照常补齐、进度照常推进、
+/// 实际写过照常入见证（成败同判的证据源）。
+#[test]
+fn round_continues_after_single_instrument_failure() {
+    let conn = nsh_app::test_support::open();
+    insert_plain_instrument(&conn, "inst-a", "000002", "stock", "CNY", "sz");
+    insert_plain_instrument(&conn, "inst-b", "000003", "stock", "CNY", "sz");
+    let harness = Harness::new()
+        .with_failing_kline("sz:000002")
+        .with_klines(vec![("sz:000003", vec![bar(&date_offset(1), 6.0)])]);
+    let (result, progress, written) = run_round(&conn, &harness);
+    let stats = result.unwrap();
+    assert_eq!(stats.queued, 2);
+    assert_eq!(stats.failed, 1, "失败单只记入统计，本轮继续");
+    assert_eq!(history_rows(&conn, "inst-a"), 0, "失败者零落库");
+    assert_eq!(history_rows(&conn, "inst-b"), 1, "后续标的照常补齐");
+    assert!(written, "成功单只的写入入见证");
+    assert_eq!(
+        progress.last(),
+        Some(&SyncProgress::instrument(2, 2)),
+        "进度推进到队列排空"
+    );
+}
+
+/// 基金历史取数失败的单只容错（round 级）：全历史通道 Err 计入 failed、进度
+/// 照常推进、失败者零落库（与股票臂同口径，issue #1377 / #1566）。
+#[test]
+fn round_continues_after_fund_history_failure() {
+    let conn = nsh_app::test_support::open();
+    insert_plain_instrument(&conn, "inst-fund", "000001", "fund", "CNY", "unknown");
+    let harness = Harness::new().with_failing_nav_history("000001");
+    let (result, progress, written) = run_round(&conn, &harness);
+    let stats = result.unwrap();
+    assert_eq!((stats.queued, stats.failed), (1, 1), "失败单只记入统计");
+    assert_eq!(harness.nav_history_hits("000001"), 1, "一次全历史请求");
+    assert_eq!(history_rows(&conn, "inst-fund"), 0, "失败者零落库");
+    assert!(!written, "零写入不置见证");
+    assert_eq!(
+        progress.last(),
+        Some(&SyncProgress::instrument(1, 1)),
+        "进度推进到队列排空"
+    );
+}
+
+/// 全部无新点的重采（停牌/退市股持续在队的每日形态）：周 K 返回与库内完全
+/// 相同的周点 → 零写入、不置见证（收尾裁决口径「全部无新点不置脏不广播」，
+/// ADR-0122）；返回同周不同值或新增周点 → 照常落库并置见证。
+#[test]
+fn stock_unchanged_kline_writes_nothing_but_changed_value_rewrites() {
+    let conn = nsh_app::test_support::open();
+    let stale = date_offset(14);
+    insert_plain_instrument(&conn, "inst-a", "000002", "stock", "CNY", "sz");
+    seed_history_point(&conn, "inst-a", "CNY", &stale);
+
+    // ① 同日同值：零写入、零见证。
+    let harness = Harness::new().with_klines(vec![("sz:000002", vec![bar(&stale, 10.0)])]);
+    let (result, _progress, written) = run_round(&conn, &harness);
+    let stats = result.unwrap();
+    assert_eq!((stats.queued, stats.failed), (1, 0));
+    assert!(!written, "全部无新点不置见证");
+
+    // ② 同周不同值：有新值 → 照常落库（整周覆盖幂等）并置见证。
+    let harness = Harness::new().with_klines(vec![("sz:000002", vec![bar(&stale, 10.5)])]);
+    let (result, _progress, written) = run_round(&conn, &harness);
+    result.unwrap();
+    assert!(written, "同周新值应重写并置见证");
+    let stored: i64 = conn
+        .query_row(
+            "SELECT price_cents FROM price_history WHERE instrument_id='inst-a' AND trade_date=?1",
+            params![stale],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(stored, price_value_to_cents(10.5));
+
+    // ③ 新增周点：照常落库。
+    let fresh = date_offset(1);
+    let harness = Harness::new().with_klines(vec![(
+        "sz:000002",
+        vec![bar(&stale, 10.5), bar(&fresh, 11.0)],
+    )]);
+    let (result, _progress, written) = run_round(&conn, &harness);
+    result.unwrap();
+    assert!(written);
+    assert_eq!(history_rows(&conn, "inst-a"), 2);
+}
+
+/// 空 K 线（窗口内无有效样本）：单只处理完成但零落库，不置见证（零写入不广播）。
+#[test]
+fn empty_kline_completes_without_writing() {
+    let conn = nsh_app::test_support::open();
+    insert_plain_instrument(&conn, "inst-a", "000002", "stock", "CNY", "sz");
+    let harness = Harness::new(); // kline 未命中 = 空表
+    let (result, _progress, written) = run_round(&conn, &harness);
+    let stats = result.unwrap();
+    assert_eq!(stats.queued, 1);
+    assert_eq!(stats.failed, 0);
+    assert!(!written, "零有效周点 = 零写入");
+    assert_eq!(history_rows(&conn, "inst-a"), 0);
+}
+
+/// 「替换通道实现即换源」负向接线证明（issue #1556）：历史补全编排只递
+/// 「市场 + 代码」，周 K 查询键由通道在内部构造——本用例注入一个按自己形态
+///（模拟换源）路由查询的通道实现，历史照常落库。
+///
+/// 把查询键构造挪回编排（编排先拼出数据源键 `sh600519` 再当查询单元的代码
+/// 交给通道）后，本桩拿到的 `code` 是数据源键形态而非裸代码 `600519`，路由不中
+/// → 无周线样本 → 无周点可落，本用例变红。
+#[test]
+fn swapping_kline_channel_keeps_history_landing_without_source_key_in_orchestration() {
+    let conn = nsh_app::test_support::open();
+    insert_holding(&conn, "acc-1", "inst-held", "600519", "stock", "CNY", "sh");
+
+    // 换源形态的通道桩：自己把（市场，代码）编成自己的查询键，只应答自己的形态。
+    let mut fetch_kline = |query: &QuoteQuery| {
+        let bars = if query.market == QuoteMarket::Sh && query.code == "600519" {
+            vec![bar(&date_offset(1), 13.0)]
+        } else {
+            vec![]
+        };
+        super::ready(Ok(bars))
+    };
+    let mut fetch_nav_history = |_: &str| super::ready(Ok(vec![]));
+    let mut progress = |_: SyncProgress| {};
+    let mut witness = WriteWitness::default();
+    let stats = nsh_app::test_support::block_on(run_history_backfill_round(
+        &conn,
+        &mut fetch_kline,
+        &mut fetch_nav_history,
+        &mut no_confirm,
+        &mut progress,
+        &mut witness,
+    ))
+    .unwrap();
+
+    assert_eq!(stats.queued, 1);
+    assert_eq!(stats.failed, 0);
+    assert_eq!(
+        history_rows(&conn, "inst-held"),
+        1,
+        "换一个自己构造查询键的通道实现，历史照常落库（编排不含数据源键）"
+    );
+}
+
+/// 生产补全通道的周 K 接线证明（issue #1561 接线；#1906 起周粒度）：驱动
+/// **生产后台车道束的周 K 闭包**跑一轮补全——沪深港美四类标的的周 K 都真的打到
+/// 腾讯 `fqkline/get`（查询键、整段周线窗口与 1200 根数帽由通道内部构造，新浪
+/// K 线对港美返回空，这条接线是港美能补到历史的根据），周点照常落库。本地 HTTP
+/// 服务替换腾讯主机应答周线形态报文，断言先对准可观察结果（队列取到价、库里
+/// 有周点），再钉住请求形态（腾讯端点 + 腾讯查询键 + `week` 周期 + 深起点区间
+/// 与根数帽）。删除 / 换回这条接线（回到东财查询键与东财取数路径）后，注入的
+/// 本地主机不再被使用——请求落到那套已经失效的东财端点上，队列取不到价、
+/// `price_history` 零行（实测：单只计入失败）；把周期换回 `day` 或东财的
+/// `YYYYMMDD` 形态同样被请求形态断言拦下。
+#[test]
+fn production_backfill_channel_lands_history_via_tencent_kline() {
+    use crate::channels::{Lane, SyncFetchChannels, SyncFetchHosts};
+
+    let conn = nsh_app::test_support::open();
+    // 沪深港美四类标的各一只（场上市场闭集的代表，其余市场同一路由单点）。
+    insert_plain_instrument(&conn, "inst-sh", "600519", "stock", "CNY", "sh");
+    insert_plain_instrument(&conn, "inst-sz", "000001", "stock", "CNY", "sz");
+    insert_plain_instrument(&conn, "inst-hk", "00700", "stock", "HKD", "hk");
+    insert_plain_instrument(&conn, "inst-us", "AAPL", "stock", "USD", "nasdaq");
+
+    // 腾讯周 K 报文（周线行形态与日线同、响应键 `week`，研究文档 §14.3：
+    // `data[查询键].week` 每行 `[日期, 开, 收, 高, 低, 量]`，收盘价在下标 2），
+    // 日期取近端交易日使周点落在当前周；美股查询键带交易所后缀。
+    let day = date_offset(1);
+    let entry = |symbol: &str| {
+        format!(
+            r#""{symbol}":{{"week":[["{day}","1262.990","1257.120","1265.880","1256.100","24891.000"]]}}"#
+        )
+    };
+    let body = format!(
+        r#"{{"code":0,"msg":"","data":{{{},{},{},{}}}}}"#,
+        entry("sh600519"),
+        entry("sz000001"),
+        entry("hk00700"),
+        entry("usAAPL.OQ"),
+    );
+    let (url, heads) = super::spawn_header_capture_server(body);
+
+    // 只取生产束的周 K 闭包（接线本体）；汇率 / 净值通道用空桩，避免本用例
+    // 触发与接线无关的真实网络。
+    let channels = SyncFetchChannels::production_lane_on_pacer(
+        Lane::Backfill,
+        SyncFetchHosts {
+            quote: vec![],
+            kline: vec![url],
+            fund_batch: vec![],
+            fund_history: vec![],
+            disclosure: vec![],
+        },
+        super::zero_pacer(),
+    )
+    .expect("生产后台车道束应可构造");
+    let mut fetch_kline = channels.fetch_kline;
+    let mut fetch_nav_history = |_: &str| super::ready(Ok(vec![]));
+    let mut confirm = no_confirm;
+    let mut progress = |_: SyncProgress| {};
+    let mut witness = WriteWitness::default();
+    let stats = nsh_app::test_support::block_on(run_history_backfill_round(
+        &conn,
+        &mut fetch_kline,
+        &mut fetch_nav_history,
+        &mut confirm,
+        &mut progress,
+        &mut witness,
+    ))
+    .unwrap();
+
+    assert_eq!((stats.queued, stats.failed), (4, 0));
+    for id in ["inst-sh", "inst-sz", "inst-hk", "inst-us"] {
+        assert_eq!(
+            history_rows(&conn, id),
+            1,
+            "{id} 的周 K 打到腾讯端点后周点照常落库"
+        );
+    }
+    // 场内历史补全的来源标记与实际取数源一致（ADR-0130 决策 7 / issue #1560）：
+    // 日 K 改走腾讯后不再写存量的 `eastmoney`。
+    let source: String = conn
+        .query_row(
+            "SELECT source FROM price_history WHERE instrument_id='inst-us'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(source, TENCENT_PRICE_SOURCE, "历史补全来源标记为新来源值");
+
+    // 请求形态：腾讯端点 + 腾讯查询键（美股带交易所后缀）+ `week` 周期 + 整段
+    // 周线区间（深起点常量到北京今天）+ 根数 1200。换回 `day` 周期、东财
+    // `YYYYMMDD` 窗口或东财查询键即红。
+    let today = beijing_today();
+    let beg = crate::tencent_kline::KLINE_BEG;
+    let end = today.format("%Y-%m-%d").to_string();
+    let heads = heads.lock().unwrap().clone();
+    for symbol in ["sh600519", "sz000001", "hk00700", "usAAPL.OQ"] {
+        let expected =
+            format!("/appstock/app/fqkline/get?param={symbol}%2Cweek%2C{beg}%2C{end}%2C1200%2C");
+        assert!(
+            heads.iter().any(|head| head.contains(&expected)),
+            "周 K 请求须为腾讯 fqkline/get 且带腾讯查询键与整段周线区间，缺 {expected}，实际：{heads:?}"
+        );
+    }
+}
+
+/// 生产补全通道的基金历史接线证明（issue #1566）：驱动**生产后台车道束的新浪
+/// 单只全历史闭包**跑一轮补全——基金的历史净值真的打到新浪
+/// `CaihuiFundInfoService.getNav`（单请求取整只、含已终止基金，这条接线是基金
+/// 走势能补到近两年、已终止基金也能补齐历史的根据），周点照常落库且来源标记
+/// 为新浪。本地 HTTP 服务替换新浪主机应答真实形态报文，断言先对准可观察结果
+///（队列取到净值、库里有周点），再钉住请求形态（全历史端点 + 基金代码 +
+/// `num=10000` 单请求取全）。删除 / 换回这条接线（回到东财取数路径）后，注入
+/// 的本地主机不再被使用——请求落到已退役的东财端点上，队列取不到净值、
+/// `price_history` 零行（实测：单只计入失败）。
+#[test]
+fn production_backfill_channel_lands_fund_history_via_sina() {
+    use crate::channels::{Lane, SyncFetchChannels, SyncFetchHosts};
+
+    let conn = nsh_app::test_support::open();
+    insert_plain_instrument(&conn, "inst-fund", "110022", "fund", "CNY", "unknown");
+
+    // 新浪全历史报文（形状与 `tests/sina_fund.rs` 真实 fixture 同：`fbrq` 带
+    // ` 00:00:00` 后缀、`jjjz` 数字字符串、`total_num` 自洽），近端净值日使周点
+    // 落在当前周；更早的历史点验证窗口内多点整根回填。
+    let day = date_offset(1);
+    let body = format!(
+        r#"{{"result":{{"status":{{"code":0}},"data":{{"data":[
+            {{"fbrq":"{day} 00:00:00","jjjz":"3.348","ljjz":"3.906"}},
+            {{"fbrq":"2026-01-28 00:00:00","jjjz":"3.293","ljjz":"3.871"}}
+        ],"total_num":"2"}}}}}}"#
+    );
+    let (url, heads) = super::spawn_header_capture_server(body);
+
+    // 只取生产束的全历史闭包（接线本体）；周 K / 汇率通道用空桩，避免本用例
+    // 触发与接线无关的真实网络。
+    let channels = SyncFetchChannels::production_lane_on_pacer(
+        Lane::Backfill,
+        SyncFetchHosts {
+            quote: vec![],
+            kline: vec![],
+            fund_batch: vec![],
+            fund_history: vec![url],
+            disclosure: vec![],
+        },
+        super::zero_pacer(),
+    )
+    .expect("生产后台车道束应可构造");
+    let mut fetch_kline = |_: &QuoteQuery| super::ready(Ok(vec![]));
+    let mut fetch_nav_history = channels.fetch_nav_history;
+    let mut confirm = no_confirm;
+    let mut progress = |_: SyncProgress| {};
+    let mut witness = WriteWitness::default();
+    let stats = nsh_app::test_support::block_on(run_history_backfill_round(
+        &conn,
+        &mut fetch_kline,
+        &mut fetch_nav_history,
+        &mut confirm,
+        &mut progress,
+        &mut witness,
+    ))
+    .unwrap();
+
+    assert_eq!((stats.queued, stats.failed), (1, 0));
+    assert_eq!(
+        history_rows(&conn, "inst-fund"),
+        2,
+        "基金历史打到新浪端点后周点照常落库"
+    );
+    // 基金历史补全的来源标记与实际取数源一致（ADR-0130 决策 7 / issue #1566）：
+    // 历史净值改走新浪后不再写存量的 `eastmoney`。
+    let source: String = conn
+        .query_row(
+            "SELECT source FROM price_history WHERE instrument_id='inst-fund'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(source, SINA_PRICE_SOURCE, "历史补全来源标记为新来源值");
+
+    // 请求形态：新浪全历史端点 + 基金代码 + 单请求取全（num=10000；窗口参数
+    // 不传——首刷近两年 / 水位次日增量的窗口语义由消费方本地裁剪）。换回东财
+    // 端点或改动取数语义即红。
+    let heads = heads.lock().unwrap().clone();
+    let expected = "/fundInfo/api/openapi.php/CaihuiFundInfoService.getNav?";
+    assert!(
+        heads.iter().any(|head| head.contains(expected)
+            && head.contains("symbol=110022")
+            && head.contains("num=10000")),
+        "历史净值请求须为新浪全历史端点且带基金代码与单请求取全参数，实际：{heads:?}"
+    );
+}
+
+/// 缺周点判据的边界自证：6 天前的周点按 ISO 周差至多落后一周（≤ 7 天），
+/// 不进队列——常态跨周不触发补采；14 天前必然跨两周，进队列。
+#[test]
+fn staleness_window_requires_iso_week_gap_over_seven_days() {
+    let today = beijing_today();
+    let near_gap = (week_monday(today)
+        - week_monday(chrono::NaiveDate::parse_from_str(&date_offset(6), "%Y-%m-%d").unwrap()))
+    .num_days();
+    let stale_gap = (week_monday(today)
+        - week_monday(chrono::NaiveDate::parse_from_str(&date_offset(14), "%Y-%m-%d").unwrap()))
+    .num_days();
+
+    let conn = nsh_app::test_support::open();
+    insert_plain_instrument(&conn, "inst-near", "000002", "stock", "CNY", "sz");
+    seed_history_point(&conn, "inst-near", "CNY", &date_offset(6));
+    insert_plain_instrument(&conn, "inst-stale", "000003", "stock", "CNY", "sz");
+    seed_history_point(&conn, "inst-stale", "CNY", &date_offset(14));
+    let harness = Harness::new();
+    let (result, _progress, _written) = run_round(&conn, &harness);
+    let stats = result.unwrap();
+    assert_eq!(
+        (near_gap > 7, stale_gap > 7),
+        (false, true),
+        "测试基线的周差形态：6 天前 ≤ 7、14 天前 > 7"
+    );
+    assert_eq!(
+        stats.queued,
+        if near_gap > 7 { 2 } else { 1 },
+        "6 天前的周点不缺周点（不进队），14 天前的进队"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 车道机制（issue #1375 额度让路）
+// ---------------------------------------------------------------------------
+
+/// 让行语义（车道机制单元面）：前台在途守卫生效期间，后台让行等待不放行；
+/// 守卫释放（RAII）后放行。删除前台计数（守卫不计数）本测试红——等待永不过
+/// 界却立即放行。
+#[test]
+fn background_lane_yields_while_foreground_in_flight() {
+    use std::sync::mpsc;
+    use std::thread;
+    use std::time::Duration;
+
+    let foreground = crate::http::ForegroundGuard::enter();
+    let (done_tx, done_rx) = mpsc::channel();
+    let waiter = thread::spawn(move || {
+        nsh_app::test_support::block_on(crate::http::wait_foreground_idle());
+        done_tx.send(()).expect("放行通知应可送达");
+    });
+    // 前台在途：给后台足够时间误判归零，仍未放行即让行成立。
+    thread::sleep(Duration::from_millis(150));
+    assert!(
+        done_rx.recv_timeout(Duration::from_millis(50)).is_err(),
+        "前台在途期间后台不得放行"
+    );
+    drop(foreground);
+    waiter.join().expect("等待线程不应 panic");
+    done_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("前台离场后后台应放行");
+}
+
+/// 共享限速器为进程级单例：两条车道束（手动同步 / 后台补全各自构造）拿到的
+/// 是同一份 Pacer——「与前台共享同一全局限速器」的机制前提。
+#[test]
+fn shared_pacer_is_process_wide_singleton() {
+    use std::sync::Arc;
+    assert!(Arc::ptr_eq(
+        &crate::http::shared_pacer(),
+        &crate::http::shared_pacer(),
+    ));
+}
+
+// ---------------------------------------------------------------------------
+// 基金历史回填单元（backfill_one_fund_history，issue #1377 自
+// instrument_info_sync.rs 迁入）：首刷近两年、新浪单只全历史面取数与本地窗口
+// 裁剪（issue #1566 换源）、水位次日增量、同周整周覆盖幂等、取数失败零落库、
+// 单只一事务原子。原经手动同步编排的 synced/skipped 统计断言改为直接断言
+// BackfillOutcome 与库内行（price_history / market_prices）。
+// ---------------------------------------------------------------------------
+
+/// 基金标的的同步投影（直驱 [`backfill_one_fund_history`] 的入参构造）：场外
+/// 基金常态 CNY + 市场未知，通道由投资域单点派生。
+fn fund_instrument(id: &str, code: &str) -> SyncInstrument {
+    SyncInstrument {
+        instrument_id: id.to_string(),
+        symbol: code.to_string(),
+        market: Market::Unknown,
+        kind: InstrumentType::Fund,
+        constant_unit_price: None,
+        currency: "CNY".to_string(),
+        channel: derive_price_channel(InstrumentType::Fund, Market::Unknown, code, None),
+    }
+}
+
+/// 直驱逐只回填（页级推进回调已随 #1566 换源退场——全历史面单请求取整只，
+/// 无翻页推进），判定确认默认缺信号（不打标、照常回填；货基用例注入确认桩），
+/// 返回结局。
+async fn run_fund_backfill<H, C>(
+    conn: &Connection,
+    fund: &SyncInstrument,
+    fetch_nav_history: &mut H,
+    confirm_money_fund: &mut C,
+) -> Result<BackfillOutcome>
+where
+    H: FnMut(&str) -> FetchFuture<Vec<NavPoint>> + Send,
+    C: FnMut(&str) -> FetchFuture<bool> + Send,
+{
+    backfill_one_fund_history(
+        conn,
+        &FundIdentity::from_instrument(fund),
+        fetch_nav_history,
+        confirm_money_fund,
+    )
+    .await
+}
+
+/// 模拟新浪单只全历史通道：按代码返回整只基金的**全部历史**单位净值（wire 序
+/// 按真实报文形态：净值日期降序、先新后旧——消费端降采样按日排序，序无关），
+/// 并记录请求的代码（断言每只一次请求）。
+fn mock_nav_history<'a>(
+    history_by_code: &'a [(&'a str, Vec<NavPoint>)],
+    requested: &'a Mutex<Vec<String>>,
+) -> impl FnMut(&str) -> FetchFuture<Vec<NavPoint>> + Send + 'a {
+    move |code: &str| {
+        requested.lock().unwrap().push(code.to_string());
+        let mut points = history_by_code
+            .iter()
+            .find(|(c, _)| *c == code)
+            .map(|(_, points)| points.clone())
+            .unwrap_or_default();
+        points.reverse();
+        super::ready(Ok(points))
+    }
+}
+
+/// 逐交易日净值序列（周一至周五各一条、日期升序、单位净值温和上抬）：真实净值
+/// 按日公布，周线回填的覆盖深度由降采样后每周一点体现。
+fn daily_nav_series(start: NaiveDate, end: NaiveDate) -> Vec<(String, f64)> {
+    let mut series = Vec::new();
+    let mut nav = 1.0_f64;
+    let mut day = start;
+    while day <= end {
+        if day.weekday().num_days_from_monday() < 5 {
+            nav += 0.001;
+            series.push((day.format("%Y-%m-%d").to_string(), nav));
+        }
+        day = day.succ_opt().unwrap();
+    }
+    series
+}
+
+/// 近两年首刷窗口起点（与 nav_window 同式，测试侧独立重算）。
+fn expected_first_sync_start() -> String {
+    beijing_today()
+        .checked_sub_months(Months::new(24))
+        .unwrap()
+        .format("%Y-%m-%d")
+        .to_string()
+}
+
+/// 基金现价缓存的 (price_cents, nav_date)（无行返回 None）。
+fn fund_price_of(conn: &Connection, instrument_id: &str) -> Option<(i64, Option<String>)> {
+    conn.query_row(
+        "SELECT price_cents, nav_date FROM market_prices WHERE instrument_id=?1",
+        params![instrument_id],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )
+    .ok()
+}
+
+/// 查询某标的的周采样价格历史（trade_date, price_cents, currency_code），按日期升序。
+fn price_history_rows(conn: &Connection, instrument_id: &str) -> Vec<(String, i64, String)> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT trade_date, price_cents, currency_code FROM price_history \
+             WHERE instrument_id=?1 ORDER BY trade_date",
+        )
+        .unwrap();
+    let rows = stmt
+        .query_map(params![instrument_id], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, i64>(1)?,
+                r.get::<_, String>(2)?,
+            ))
+        })
+        .unwrap();
+    rows.map(|r| r.unwrap()).collect()
+}
+
+/// 注入「第 3 个周点（2026-01-19 当周）写入失败」的测试侧故障，供 ADR-0122
+/// 决策 8 / issue #1373 的负向判据共用：`BEFORE INSERT` 触发器
+/// `RAISE(ABORT)`，产品代码零 hook。降采样按周升序落库，故前两个周点先写、
+/// 第三个失败——逐周点提交会留下前两行，整只一次提交回滚后零行。
+fn inject_week_write_failure(conn: &Connection) {
+    conn.execute_batch(
+        "CREATE TRIGGER inject_week_write_failure BEFORE INSERT ON price_history \
+         WHEN NEW.trade_date='2026-01-19' \
+         BEGIN SELECT RAISE(ABORT, '注入周点写入失败'); END;",
+    )
+    .unwrap();
+}
+
+/// 种下「添加基金路径的产物」现场：现价缓存有净值日期（水位），PriceHistory
+/// 可选带一根历史点（issue #1059 的现场表达）。
+fn seed_fund_price(
+    conn: &Connection,
+    instrument_id: &str,
+    price_cents: i64,
+    nav_date: &str,
+    with_history: bool,
+) {
+    upsert_market_price(
+        conn,
+        &MarketPriceWrite {
+            instrument_id,
+            price_cents,
+            currency_code: "CNY",
+            priced_at: nav_date,
+            nav_date: Some(nav_date),
+            source: Some(EASTMONEY_PRICE_SOURCE),
+        },
+    )
+    .unwrap();
+    if with_history {
+        upsert_price_history(
+            conn,
+            instrument_id,
+            nav_date,
+            price_cents,
+            "CNY",
+            EASTMONEY_PRICE_SOURCE,
+        )
+        .unwrap();
+    }
+}
+
+/// 首刷（无任何历史序列）：新浪全历史面一次请求取整只历史，本地裁剪到近两年
+/// 窗口——窗口外更早的点被裁剪掉，覆盖深度 = 近两年周线。返回序列按真实 wire
+/// 形态降序注入，落库仍按日升序采样（序无关）。
+#[test]
+fn fund_first_sync_backfills_two_years_from_full_history() {
+    let conn = nsh_app::test_support::open();
+    insert_plain_instrument(&conn, "inst-fund", "110022", "fund", "CNY", "unknown");
+    let fund = fund_instrument("inst-fund", "110022");
+
+    let window_start = beijing_today().checked_sub_months(Months::new(24)).unwrap();
+    let five_years_ago = beijing_today().checked_sub_months(Months::new(60)).unwrap();
+    let series = daily_nav_series(five_years_ago, beijing_today());
+    let full_by_code = [(
+        "110022",
+        series
+            .iter()
+            .map(|(d, n)| nav_point(d, *n))
+            .collect::<Vec<_>>(),
+    )];
+    let requested = Mutex::new(Vec::new());
+    let mut nav = mock_nav_history(&full_by_code, &requested);
+
+    let outcome =
+        nsh_app::test_support::block_on(run_fund_backfill(&conn, &fund, &mut nav, &mut no_confirm))
+            .unwrap();
+
+    assert!(outcome.written);
+    assert!(!outcome.inconclusive);
+    assert_eq!(requested.lock().unwrap().len(), 1, "首刷每次一条请求取整只");
+    assert_eq!(requested.lock().unwrap()[0], "110022", "按基金代码取全量");
+
+    // 落库覆盖深度 = 近两年周线；窗口外更早的点被裁剪掉。
+    let rows = price_history_rows(&conn, "inst-fund");
+    assert!(
+        rows.len() >= 100,
+        "近两年应有约 104 个周点，实际 {}",
+        rows.len()
+    );
+    let earliest = rows.first().unwrap().0.as_str();
+    let expected_start = expected_first_sync_start();
+    let first_week_end = (window_start + Days::new(6)).format("%Y-%m-%d").to_string();
+    assert!(
+        earliest >= expected_start.as_str() && earliest <= first_week_end.as_str(),
+        "最早周点应落在两年窗口首周内（窗口外点被裁剪）：{earliest} ∉ [{expected_start}, {first_week_end}]"
+    );
+
+    // 现价 = 窗口内最新公布单位净值，priced_at = nav_date = 净值日期（下次水位）；
+    // 来源标记 = 实际取数源（ADR-0130 决策 7 / issue #1566：新浪）。
+    let latest = series.last().unwrap();
+    assert_eq!(
+        fund_price_of(&conn, "inst-fund"),
+        Some((price_value_to_cents(latest.1), Some(latest.0.clone()))),
+    );
+    let source: String = conn
+        .query_row(
+            "SELECT source FROM market_prices WHERE instrument_id='inst-fund'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(source, SINA_PRICE_SOURCE, "历史补全来源标记为新来源值");
+}
+
+/// 首刷判据 = 磁盘上没有任何历史序列，不是「现价缓存无净值日期」（issue
+/// #1059）：添加基金 / AI 导入已把最新净值日期写进现价缓存（水位有值）而
+/// PriceHistory 为空，首刷仍回填近两年——若以水位作增量起点，窗口只剩
+/// 「水位次日」、近两年回填静默落空。
+#[test]
+fn fund_with_nav_date_but_no_history_backfills_two_years() {
+    let conn = nsh_app::test_support::open();
+    insert_plain_instrument(&conn, "inst-fund", "110022", "fund", "CNY", "unknown");
+    let fund = fund_instrument("inst-fund", "110022");
+
+    // 添加基金路径的产物：现价缓存有净值日期（水位），PriceHistory 为空。
+    let watermark = date_offset(1);
+    seed_fund_price(&conn, "inst-fund", 35000, &watermark, false);
+    assert_eq!(
+        price_history_rows(&conn, "inst-fund"),
+        vec![],
+        "前置：无任何历史序列（水位冒充已回填的现场）"
+    );
+
+    // 近两年逐交易日净值序列：起点若按水位增量取，窗口会被压成一天、几乎采
+    // 不到净值点（现价也就不再更新）。
+    let start = beijing_today().checked_sub_months(Months::new(24)).unwrap();
+    let series = daily_nav_series(start, beijing_today());
+    let full_by_code = [(
+        "110022",
+        series
+            .iter()
+            .map(|(d, n)| nav_point(d, *n))
+            .collect::<Vec<_>>(),
+    )];
+    let requested = Mutex::new(Vec::new());
+    let mut nav = mock_nav_history(&full_by_code, &requested);
+    let outcome =
+        nsh_app::test_support::block_on(run_fund_backfill(&conn, &fund, &mut nav, &mut no_confirm))
+            .unwrap();
+
+    assert!(outcome.written);
+    assert!(!outcome.inconclusive);
+    assert_eq!(
+        requested.lock().unwrap().len(),
+        1,
+        "首刷判据按历史序列判定：走全历史通道"
+    );
+
+    // 回填后可查询到的净值周点覆盖深度 = 近两年（约 104 周），而不是「水位之后
+    // 的那几天」——断言对准周点覆盖深度，不对准函数或调用形状。
+    let rows = price_history_rows(&conn, "inst-fund");
+    assert!(
+        rows.len() >= 100,
+        "首刷应回填近两年周线，实际只有 {} 个周点",
+        rows.len()
+    );
+    let earliest = rows.first().unwrap().0.as_str();
+    let window_start = expected_first_sync_start();
+    let first_week_end = (start + Days::new(6)).format("%Y-%m-%d").to_string();
+    assert!(
+        earliest >= window_start.as_str() && earliest <= first_week_end.as_str(),
+        "最早周点应落在两年窗口的首周内：{earliest} ∉ [{window_start}, {first_week_end}]"
+    );
+
+    // 现价 = 窗口内最新公布净值（序列末点），与 #301 添加基金同形。
+    let latest = series.last().unwrap();
+    assert_eq!(
+        fund_price_of(&conn, "inst-fund"),
+        Some((price_value_to_cents(latest.1), Some(latest.0.clone()))),
+    );
+}
+
+/// 首刷查无窗口内净值（全历史为空 / 已终止基金的末点在近两年窗口外）：结局
+/// 确定（无数据）、零落库不报错——已终止基金的历史能取回（新浪全历史面含
+/// 已终止基金），末点落在窗口内的照常整根回填（AC：已终止基金也能补齐历史）。
+#[test]
+fn fund_first_sync_without_window_points_lands_nothing() {
+    let conn = nsh_app::test_support::open();
+    insert_plain_instrument(&conn, "inst-fund", "110022", "fund", "CNY", "unknown");
+    insert_plain_instrument(&conn, "inst-old", "002503", "fund", "CNY", "unknown");
+    let fund = fund_instrument("inst-fund", "110022");
+    let terminated = fund_instrument("inst-old", "002503");
+
+    // ① 全历史为空（查无此码 / 新基金未公布首期）：可信空。
+    let requested = Mutex::new(Vec::new());
+    let mut nav = mock_nav_history(&[], &requested);
+    let outcome =
+        nsh_app::test_support::block_on(run_fund_backfill(&conn, &fund, &mut nav, &mut no_confirm))
+            .unwrap();
+    assert_eq!(
+        outcome,
+        BackfillOutcome {
+            written: false,
+            inconclusive: false
+        },
+        "可信空：结局确定（无数据），非「窗口不完整」"
+    );
+    assert_eq!(price_history_rows(&conn, "inst-fund"), vec![]);
+    assert_eq!(fund_price_of(&conn, "inst-fund"), None, "查无净值不写现价");
+
+    // ② 已终止基金、末点在窗口外（多年前的历史照常取回）：窗口裁剪后为空，
+    // 同样结局确定；窗口内有点的已终止基金由首刷全量用例同路覆盖。
+    let stale = vec![nav_point("2010-08-20", 1.0)];
+    let full_by_code = [("002503", stale)];
+    let requested = Mutex::new(Vec::new());
+    let mut nav = mock_nav_history(&full_by_code, &requested);
+    let outcome = nsh_app::test_support::block_on(run_fund_backfill(
+        &conn,
+        &terminated,
+        &mut nav,
+        &mut no_confirm,
+    ))
+    .unwrap();
+    assert_eq!(
+        requested.lock().unwrap().len(),
+        1,
+        "已终止基金同样发起全历史请求"
+    );
+    assert_eq!(
+        outcome,
+        BackfillOutcome {
+            written: false,
+            inconclusive: false
+        },
+        "窗口外点：结局确定（无数据），不在窗口内凭空造点"
+    );
+    assert_eq!(price_history_rows(&conn, "inst-old"), vec![]);
+    assert_eq!(fund_price_of(&conn, "inst-old"), None);
+}
+
+/// 已终止基金、末点在窗口内（近期清盘）：全历史照常取回、整根落库到末点——
+/// AC「已终止基金也能补齐历史」的直接钉（新浪全历史面含已终止基金，末点与
+/// 官方披露一致，调研 13.4 节实测）。
+#[test]
+fn fund_first_sync_terminated_fund_within_window_backfills_to_last_point() {
+    let conn = nsh_app::test_support::open();
+    insert_plain_instrument(&conn, "inst-term", "019852", "fund", "CNY", "unknown");
+    let fund = fund_instrument("inst-term", "019852");
+
+    // 近期清盘：末点 = 30 天前（近两年窗口内），此后无新净值。
+    let last = date_offset(30);
+    let history = [(
+        "019852",
+        vec![nav_point(&date_offset(40), 1.1), nav_point(&last, 1.08)],
+    )];
+    let requested = Mutex::new(Vec::new());
+    let mut nav = mock_nav_history(&history, &requested);
+    let outcome =
+        nsh_app::test_support::block_on(run_fund_backfill(&conn, &fund, &mut nav, &mut no_confirm))
+            .unwrap();
+
+    assert!(outcome.written);
+    assert!(!outcome.inconclusive);
+    assert_eq!(
+        price_history_rows(&conn, "inst-term").len(),
+        2,
+        "末点在窗口内的已终止基金整根回填"
+    );
+    assert_eq!(
+        fund_price_of(&conn, "inst-term"),
+        Some((price_value_to_cents(1.08), Some(last))),
+        "现价 = 末点净值（清盘前最后公布）"
+    );
+}
+
+/// 取数失败（网络失败 / 报文不可信——新浪层的截断、自报失败、非 JSON 一律
+/// Err）fail-closed：单只上抛、零落库、不把不可信结果当「无净值」——下一窗口
+/// 按派生事实自然重试（被拦截 ≠ 数据源没有可采序列，issue #1059 语义保留）。
+#[test]
+fn fund_history_fetch_failure_propagates_without_writing() {
+    let conn = nsh_app::test_support::open();
+    insert_plain_instrument(&conn, "inst-fund", "110022", "fund", "CNY", "unknown");
+    let fund = fund_instrument("inst-fund", "110022");
+
+    let watermark = date_offset(7);
+    seed_fund_price(&conn, "inst-fund", 30000, &watermark, true);
+
+    let mut nav =
+        |_: &str| super::ready(Err(AppError::Parse("新浪基金历史净值响应不可解析".into())));
+    let err =
+        nsh_app::test_support::block_on(run_fund_backfill(&conn, &fund, &mut nav, &mut no_confirm))
+            .expect_err("不可信响应应上抛，不按「无净值」计成功");
+    assert!(
+        err.to_string().contains("不可解析"),
+        "取数层错误原样上抛：{err}"
+    );
+    assert_eq!(
+        price_history_rows(&conn, "inst-fund").len(),
+        1,
+        "零落库：既有历史点原样保留"
+    );
+    assert_eq!(
+        fund_price_of(&conn, "inst-fund"),
+        Some((30000, Some(watermark.clone()))),
+        "失败不动现价、水位不前进"
+    );
+}
+
+/// 增量窗口从**水位次日**起（水位当日不重拉）：全历史序列里水位日及其之前的
+/// 点按事实在场，裁剪把窗口外的点全部排除——水位日若被重拉（裁剪缺失），
+/// 其另一报价会经整周覆盖重写该周采样与现价，本用例变红。
+#[test]
+fn fund_incremental_never_repulls_watermark_day() {
+    let conn = nsh_app::test_support::open();
+    insert_plain_instrument(&conn, "inst-fund", "110022", "fund", "CNY", "unknown");
+    let fund = fund_instrument("inst-fund", "110022");
+
+    // 水位 = 2026-01-30（周五，当周采样日已落）。窗口起点 = 水位次日 01-31。
+    seed_fund_price(&conn, "inst-fund", 30000, "2026-01-30", true);
+
+    // 全历史桩把水位日携带**另一报价**（3.348 ≠ 库内 3.0）：裁剪缺失即被采信。
+    let history = [("110022", vec![nav_point("2026-01-30", 3.348)])];
+    let requested = Mutex::new(Vec::new());
+    let mut nav = mock_nav_history(&history, &requested);
+    let outcome =
+        nsh_app::test_support::block_on(run_fund_backfill(&conn, &fund, &mut nav, &mut no_confirm))
+            .unwrap();
+
+    assert_eq!(
+        outcome,
+        BackfillOutcome {
+            written: false,
+            inconclusive: false
+        },
+        "窗口内（水位次日之后）无新净值：结局确定且零写入"
+    );
+    assert_eq!(requested.lock().unwrap().len(), 1, "常态增量每只一次请求");
+    assert_eq!(
+        price_history_rows(&conn, "inst-fund"),
+        vec![("2026-01-30".into(), 30000, "CNY".into())],
+        "水位当日不重拉：既有周点与取值原样保留"
+    );
+    assert_eq!(
+        fund_price_of(&conn, "inst-fund"),
+        Some((30000, Some("2026-01-30".into()))),
+        "无新净值不动现价"
+    );
+}
+
+/// 增量补齐：有历史序列的基金以现价缓存的净值日期为水位，水位次日之后的新
+/// 净值照常落库；新点与水位同周时该周采样整周覆盖为最新净值日；窗口外的
+/// 既有点（含更早周与水位日）不受影响。
+#[test]
+fn fund_incremental_fetches_from_watermark_and_overwrites_same_week() {
+    let conn = nsh_app::test_support::open();
+    insert_plain_instrument(&conn, "inst-fund", "110022", "fund", "CNY", "unknown");
+    let fund = fund_instrument("inst-fund", "110022");
+
+    // 水位 = 现价缓存的净值日期 01-28（周三），上一轮已把该周采样写到周三；
+    // 更早一周的历史点应原样保留（增量不回看）。
+    seed_fund_price(&conn, "inst-fund", 30000, "2026-01-28", true);
+    upsert_price_history(
+        &conn,
+        "inst-fund",
+        "2026-01-23",
+        31000,
+        "CNY",
+        EASTMONEY_PRICE_SOURCE,
+    )
+    .unwrap();
+
+    // 全历史序列（wire 形态：含水位于内的已消费点 + 水位次日起的新点）。
+    let history = [(
+        "110022",
+        vec![
+            nav_point("2026-01-23", 3.1),
+            nav_point("2026-01-28", 3.0),
+            nav_point("2026-01-29", 3.42),
+            nav_point("2026-01-30", 3.348),
+        ],
+    )];
+    let requested = Mutex::new(Vec::new());
+    let mut nav = mock_nav_history(&history, &requested);
+    let outcome =
+        nsh_app::test_support::block_on(run_fund_backfill(&conn, &fund, &mut nav, &mut no_confirm))
+            .unwrap();
+
+    assert!(outcome.written);
+    assert!(!outcome.inconclusive);
+    assert_eq!(requested.lock().unwrap().len(), 1, "常态增量每只一次请求");
+
+    assert_eq!(
+        price_history_rows(&conn, "inst-fund"),
+        vec![
+            ("2026-01-23".into(), 31000, "CNY".into()),
+            ("2026-01-30".into(), 33480, "CNY".into()),
+        ],
+        "水位当日不重拉；同周新净值整周覆盖采样日；更早周原样保留"
+    );
+    assert_eq!(
+        fund_price_of(&conn, "inst-fund"),
+        Some((33480, Some("2026-01-30".into()))),
+        "现价 = 窗口内最新公布净值，nav_date 兼任下次水位"
+    );
+}
+
+/// 增量「已是最新」：水位缺周点触发进队，但增量窗口内无新净值时整只零落库、
+/// 不计失败（处理完成照常推进，与手动同步同口径）。
+#[test]
+fn fund_incremental_up_to_date_counts_synced_without_write() {
+    let conn = nsh_app::test_support::open();
+    insert_plain_instrument(&conn, "inst-fund", "110022", "fund", "CNY", "unknown");
+    let fund = fund_instrument("inst-fund", "110022");
+
+    // 水位较新（一周内）；全历史序列末点 = 水位日，窗口内无新净值。
+    let watermark = date_offset(7);
+    seed_fund_price(&conn, "inst-fund", 30000, &watermark, true);
+    let history = [("110022", vec![nav_point(&watermark, 3.0)])];
+    let requested = Mutex::new(Vec::new());
+    let mut nav = mock_nav_history(&history, &requested);
+    let outcome =
+        nsh_app::test_support::block_on(run_fund_backfill(&conn, &fund, &mut nav, &mut no_confirm))
+            .unwrap();
+
+    assert_eq!(
+        outcome,
+        BackfillOutcome {
+            written: false,
+            inconclusive: false
+        },
+        "已是最新：结局确定且零写入"
+    );
+    assert_eq!(
+        fund_price_of(&conn, "inst-fund"),
+        Some((30000, Some(watermark))),
+        "无新净值不动现价"
+    );
+    assert_eq!(
+        price_history_rows(&conn, "inst-fund").len(),
+        1,
+        "无新净值零落库：既有历史点原样保留（水位增量语义，issue #1059）"
+    );
+}
+
+#[test]
+fn fund_backfill_write_failure_leaves_no_history() {
+    // ADR-0122 决策 8 负向条目（issue #1373）：单只回填整只一次提交——第 N 个周点
+    // 写入失败时整只回滚，磁盘上不留半根历史，下次运行仍是首刷重新采集。
+    // 失败注入见 [`inject_week_write_failure`]；逐周点提交会留下前两个周点使本例变红。
+    let conn = nsh_app::test_support::open();
+    insert_plain_instrument(&conn, "inst-fund", "110022", "fund", "CNY", "unknown");
+    let fund = fund_instrument("inst-fund", "110022");
+    inject_week_write_failure(&conn);
+
+    // 全历史通道返回跨四周的单位净值序列（升序）：第 3 周写入触发注入失败。
+    let series = vec![
+        nav_point("2026-01-05", 1.000),
+        nav_point("2026-01-12", 1.100),
+        nav_point("2026-01-19", 1.200),
+        nav_point("2026-01-30", 1.300),
+    ];
+    let full = [("110022", series)];
+    let requested = Mutex::new(Vec::new());
+    let mut nav = mock_nav_history(&full, &requested);
+    let err =
+        nsh_app::test_support::block_on(run_fund_backfill(&conn, &fund, &mut nav, &mut no_confirm))
+            .unwrap_err();
+
+    assert!(
+        err.to_string().contains("注入周点写入失败"),
+        "注入的写入失败应原样上抛：{err}"
+    );
+    assert_eq!(
+        price_history_rows(&conn, "inst-fund"),
+        vec![],
+        "第 N 个周点写入失败时整只回滚，不留半根历史（下次运行仍按首刷重新采集）"
+    );
+    assert_eq!(
+        fund_price_of(&conn, "inst-fund"),
+        None,
+        "整只一次提交：现价与历史同事务，回滚后不留现价"
+    );
+
+    // 「且下次运行会重新采集它」（AC 第二条）：解除注入后重跑，仍按首刷全量通道
+    // 把整只历史补回——零行 → 首刷判据为真，正是原子性要保住的等价。
+    conn.execute_batch("DROP TRIGGER inject_week_write_failure;")
+        .unwrap();
+    let full_retry = [(
+        "110022",
+        vec![
+            nav_point("2026-01-05", 1.000),
+            nav_point("2026-01-12", 1.100),
+            nav_point("2026-01-19", 1.200),
+            nav_point("2026-01-30", 1.300),
+        ],
+    )];
+    let mut nav_retry = mock_nav_history(&full_retry, &requested);
+    let retry = nsh_app::test_support::block_on(run_fund_backfill(
+        &conn,
+        &fund,
+        &mut nav_retry,
+        &mut no_confirm,
+    ))
+    .unwrap();
+    assert!(
+        retry.written,
+        "解除注入后重跑按首刷重新采集（原断言 synced=1）"
+    );
+    assert!(!retry.inconclusive);
+    assert_eq!(
+        price_history_rows(&conn, "inst-fund").len(),
+        4,
+        "下次运行补回整只历史（4 个周点）"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 恒定价格标的（ADR-0126 / issue #1450 / #1563）：队列不收恒定通道标的——它的走势由
+// 读侧按常量合成，历史行不带来任何信息；打标后净值水位已清空，仍按净值通道
+// 收集会让它每窗口整根重采。首刷撞上官方披露自报形态（单位净值为空、万份收益
+// 与七日年化有值）即打标 + 兜底建档常量价，不落平坦历史。
+// ---------------------------------------------------------------------------
+
+/// 队列豁免：恒定标的即使「无历史（首刷判据必中）」也不进队、零请求
+/// （删除豁免 → 货基重新入队，本用例变红）。
+#[test]
+fn queue_excludes_constant_price_instruments() {
+    let conn = nsh_app::test_support::open();
+    insert_plain_instrument(&conn, "inst-const", "000198", "fund", "CNY", "unknown");
+    conn.execute(
+        "UPDATE instruments SET constant_unit_price = 10000 WHERE id = 'inst-const'",
+        [],
+    )
+    .unwrap();
+
+    let harness = Harness::new();
+    let (result, progress, written) = run_round(&conn, &harness);
+    let stats = result.unwrap();
+    assert_eq!(stats.queued, 0, "恒定标的不进补全队列");
+    assert!(progress.is_empty(), "队列空零动作：不发进度、零网络请求");
+    assert!(!written);
+}
+
+/// 首刷撞上官方披露自报形态：确认即打标 + 兜底建档常量价（净值日期空），
+/// 不落平坦历史行（读侧按常量取值），且**零净值抓取请求**——万份收益不得经
+/// 取数面冒充单位净值（#1342）。
+/// **负向接线证明（ADR-0087）**：删除 `backfill_one_fund_history` 的判定门
+///（确认即打标收尾），货基按普通基金回填——历史行与现价被写成万份收益 0.2229
+/// → 本用例断言变红（市值口径回归 #1342 的错法）。
+#[test]
+fn fund_first_sync_money_shape_marks_and_lands_no_flat_rows() {
+    let conn = nsh_app::test_support::open();
+    insert_plain_instrument(&conn, "inst-money", "000905", "fund", "CNY", "unknown");
+    let fund = fund_instrument("inst-money", "000905");
+
+    // 取数面的事实透传形态（判定口径退役后）：取值位是万份收益——判定门必须
+    // 拦在落库前。
+    let nav_calls = Mutex::new(0usize);
+    let mut nav = income_value_nav_history(&nav_calls);
+
+    let confirm_calls = Mutex::new(0usize);
+    let mut confirm = confirm_true_counting(&confirm_calls);
+    let outcome =
+        nsh_app::test_support::block_on(run_fund_backfill(&conn, &fund, &mut nav, &mut confirm))
+            .unwrap();
+
+    // 建档常价是实际价格写入（现价缓存首落按价格写入广播）。
+    assert!(outcome.written);
+    assert!(!outcome.inconclusive);
+    let cents: Option<i64> = conn
+        .query_row(
+            "SELECT constant_unit_price FROM instruments WHERE id = 'inst-money'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(cents, Some(10_000), "官方披露自报形态确认即打标");
+    assert_eq!(
+        fund_price_of(&conn, "inst-money"),
+        Some((10_000, None)),
+        "建档常量价 1.0000 落现价缓存、净值日期为空"
+    );
+    assert!(
+        price_history_rows(&conn, "inst-money").is_empty(),
+        "确认即收尾：平坦历史行不再生长（读侧按常量取值）"
+    );
+    assert_eq!(*confirm_calls.lock().unwrap(), 1, "一次确认请求");
+    assert_eq!(*nav_calls.lock().unwrap(), 0, "确认即收尾：零净值抓取请求");
+}
+
+/// 排队后才被并行刷新打标（竞态窗，issue #1711）：队列项携带的通道是收集时点
+/// 投影（净值通道），执行前该行已被别的通道打标——**这道判定门承接它**：判定
+/// 信号取官方披露而非本地标记，确认即打标收尾、零净值抓取。已删的恒定通道短路
+/// 臂要求投影通道为恒定，恒不成立（收集侧排除恒定通道行），**不是**本竞态的
+/// 承接者。**负向接线证明（ADR-0087）**：删除判定门（确认即打标收尾）→ 本用例
+/// 与 `fund_first_sync_money_shape_marks_and_lands_no_flat_rows` 一起变红
+///（竞态窗无人收尾，货基被写成万份收益）。
+#[test]
+fn fund_backfill_gate_finishes_instrument_marked_constant_after_enqueue() {
+    let conn = nsh_app::test_support::open();
+    insert_plain_instrument(&conn, "inst-money", "000905", "fund", "CNY", "unknown");
+    // 排队时点的投影：恒定单位价格为空 ⇒ 净值通道；执行前被并行刷新打标：
+    // 数据库行已带恒定单位价格。
+    let fund = fund_instrument("inst-money", "000905");
+    conn.execute(
+        "UPDATE instruments SET constant_unit_price = 10000 WHERE id = 'inst-money'",
+        [],
+    )
+    .unwrap();
+
+    let nav_calls = Mutex::new(0usize);
+    let mut nav = empty_nav_history_counting(&nav_calls);
+    let confirm_calls = Mutex::new(0usize);
+    let mut confirm = confirm_true_counting(&confirm_calls);
+    let outcome =
+        nsh_app::test_support::block_on(run_fund_backfill(&conn, &fund, &mut nav, &mut confirm))
+            .unwrap();
+
+    assert!(outcome.written);
+    assert!(!outcome.inconclusive);
+    assert_eq!(*nav_calls.lock().unwrap(), 0, "判定门在抓取前收尾");
+    assert_eq!(*confirm_calls.lock().unwrap(), 1, "一次确认请求");
+    let cents: Option<i64> = conn
+        .query_row(
+            "SELECT constant_unit_price FROM instruments WHERE id = 'inst-money'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(cents, Some(10_000), "既有标记不被清空");
+    assert_eq!(
+        fund_price_of(&conn, "inst-money"),
+        Some((10_000, None)),
+        "兜底建档常量价 1.0000 落现价缓存、净值日期为空"
+    );
+    assert!(
+        price_history_rows(&conn, "inst-money").is_empty(),
+        "确认即收尾：平坦历史行不生长"
+    );
+}
+
+/// 首刷时官方披露源不可信（响应异常）：本轮整只不落、按不可信结局待重试——
+/// 信号缺席时落取值位，万份收益就回冒充单位净值（#1342）。
+#[test]
+fn fund_first_sync_disclosure_unavailable_is_inconclusive_and_lands_nothing() {
+    let conn = nsh_app::test_support::open();
+    insert_plain_instrument(&conn, "inst-money", "000905", "fund", "CNY", "unknown");
+    let fund = fund_instrument("inst-money", "000905");
+
+    let nav_calls = Mutex::new(0usize);
+    let mut nav = empty_nav_history_counting(&nav_calls);
+    let mut confirm: fn(&str) -> FetchFuture<bool> = |_| {
+        Box::pin(std::future::ready(Err(AppError::coded(
+            "sync.disclosure-source-malformed",
+            "基金官方披露数据源返回了无法解析的内容，请稍后重试同步",
+        ))))
+    };
+    let outcome =
+        nsh_app::test_support::block_on(run_fund_backfill(&conn, &fund, &mut nav, &mut confirm))
+            .unwrap();
+
+    assert!(!outcome.written);
+    assert!(outcome.inconclusive, "披露源不可信 = 待重试，不是无数据");
+    assert_eq!(
+        fund_price_of(&conn, "inst-money"),
+        None,
+        "本轮整只不落：万份收益不得经取数面冒充单位净值"
+    );
+    assert!(price_history_rows(&conn, "inst-money").is_empty());
+    let cents: Option<i64> = conn
+        .query_row(
+            "SELECT constant_unit_price FROM instruments WHERE id = 'inst-money'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(cents, None, "披露源不可信不打标");
+    assert_eq!(*nav_calls.lock().unwrap(), 0, "判定门在抓取前收尾");
+}
+
+/// 确认桩（Ok(true) 计数）：首刷货基判定用例注入。
+fn confirm_true_counting(calls: &Mutex<usize>) -> impl FnMut(&str) -> FetchFuture<bool> + '_ {
+    move |_: &str| {
+        *calls.lock().unwrap() += 1;
+        Box::pin(std::future::ready(Ok(true)))
+    }
+}
+
+/// 空全历史桩（计数）：判定门在抓取前的断言面。
+fn empty_nav_history_counting(
+    calls: &Mutex<usize>,
+) -> impl FnMut(&str) -> FetchFuture<Vec<NavPoint>> + '_ {
+    move |_: &str| {
+        *calls.lock().unwrap() += 1;
+        super::ready(Ok(vec![]))
+    }
+}
+
+/// 全历史通道桩（计数，取值位携带万份收益 0.2229）：删除判定门即红——
+/// 货基按普通基金回填时历史行与现价被写成万份收益。
+fn income_value_nav_history(
+    calls: &Mutex<usize>,
+) -> impl FnMut(&str) -> FetchFuture<Vec<NavPoint>> + '_ {
+    move |_: &str| {
+        *calls.lock().unwrap() += 1;
+        super::ready(Ok(vec![NavPoint {
+            date: "2026-09-17".into(),
+            nav: 0.2229,
+        }]))
+    }
+}
+
+// 自然日窗口规则（ADR-0122 决策 3）：两条后台车道（每日现价刷新 / 价格历史补全）
+// 共用 `daily_window_opens`。规则在本层直接钉住——同日不开、跨日开、首轮开——
+// 集成侧不再靠「睡够一段时间看计数没变」来反推规则（那种写法既慢又把时间猜测
+// 带进判据：轮次变慢时第二轮的缺席会静默变成假绿）。
+// ---------------------------------------------------------------------------
+
+#[test]
+fn daily_window_opens_only_once_per_beijing_calendar_day() {
+    let day1 = NaiveDate::from_ymd_opt(2026, 1, 30).unwrap();
+    let day2 = NaiveDate::from_ymd_opt(2026, 1, 31).unwrap();
+
+    assert!(
+        daily_window_opens(None, day1),
+        "从未跑过（启动补跑）：窗口应开"
+    );
+    assert!(
+        !daily_window_opens(Some(day1), day1),
+        "同一自然日已跑过：巡检再到期不得重开窗口（同日只跑一轮）"
+    );
+    assert!(
+        daily_window_opens(Some(day1), day2),
+        "跨到下一个北京日历日：窗口重新打开"
+    );
+}

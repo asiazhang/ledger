@@ -1,0 +1,1087 @@
+//! 通道层（issue #859 / ADR-0091 决策 1/8/9）：哑通道上的目录布局、清单
+//! （manifest）与同步轮次——把本域已有的引擎接缝（op 产出/幂等重放/位点/
+//! Checkpoint）接到对象存储字节世界上。
+//!
+//! 目录布局（wiki §7.3，按设备分流 + 分段追加 + 小 manifest）：
+//!
+//! ```text
+//! <同步根>/book-<账本ID>/            # 每账本一份独立世界（ADR-0089 延伸）
+//! ├── manifest.json                 # 各流段清单（序号区间+hash）+ Checkpoint 双指针
+//! ├── checkpoint/cp-<代>.enc        # 检查点业务件，按代独立文件，写新换指针
+//! ├── checkpoint/cp-<代>-sync.enc   # 检查点同步元数据件（双文件成对，ADR-0139
+//!                                   # 决策 5；旧形态单文件产物无此文件）
+//! └── streams/<DeviceId>/seg-<起>-<止>.enc
+//!                                   # 每来源设备一流，仅该设备可写，其余端只读
+//! ```
+//!
+//! 一致性纪律（对象存储无跨设备文件锁）：
+//! - **按设备分流是正确性要求**：并发写冲突在物理上被流归属排除——每端只写
+//!   自己 `streams/<DeviceId>/` 下的文件，对他人目录只读；段文件按内容时钟
+//!   区间命名、永不覆盖他人段（op 只增不改，重传同段内容确定等同）。
+//! - **manifest 是唯一小而整体替换的文件**：读最新远端 → 归并（自己流以本地
+//!   为权威、他人流原样保留）→ 整体替换写入；并发整体替换的丢失更新由下一
+//!   轮次再发布自愈。段/检查点条目携带尺寸与 SHA-256，下载后校验（内容自
+//!   校验兜底弱原子性），不依赖锁；清单自身无副本回退——撕裂写被 JSON 解析
+//!   拦下（`manifest-corrupt` 显性失败，不静默按空清单处理），修复路径 = 删
+//!   清单文件后各端下轮重发布自愈（自己流重传内容确定等同，他人流随其下轮
+//!   归并回归）。
+//! - **拉取粒度为整段**（设计补充「段内偏移续读」的显性偏离）：信封是整包
+//!   AEAD，密文分段解密无法验证完整性——偏移续读与信封认证不相容；位点落
+//!   在段中间（挂起 op 钉住）时整段重拉、靠引擎幂等重放跳过已应用 op，多传
+//!   字节以段容量为界（单文件永远有界）。
+//! - **轮次顺序**：先发布（他人尽早可见，网络中断时已上传进度不回退）后拉取
+//!   （按本端位点跳过已覆盖段）；manifest 只在归并结果变化时写回。
+//!
+//! 加密（ADR-0091 决策 8）：段与检查点逐文件封包（SyncEnvelope，[`envelope`]），
+//! 模式由调用方按本库加密形态决定（复用备份域加密模式/主口令；#862 壳层
+//! 接线）；未开加密模式为明文直通并在轮次报告中标记（界面显著提示依据）。
+//! manifest 本身是纯元数据（设备 id、序号区间、密文 hash），两个模式下都不
+//! 封包，保证弱原子性下的归并始终可读。
+//!
+//! 调用契约（同步轮次，#1339 / ADR-0120 决策 2/3/4）：轮次**分段取锁**——连接锁
+//! 只盖数据库步骤（读段：DeviceId/位点/待发布 op/位点声明；重放段：逐段下载
+//! 后的逐条事务重放；落库段：「上次成功同步时刻」+ 截断安全水位检查），经
+//! [`RoundConn`] 接缝每段各自短取一次；网络段（manifest 读/写、段上传/下载、
+//! 封包与解封含 KDF）在连接锁外完成，任何形状下不得进锁（ADR-0069 决策 4）。
+//! 同端轮次顺序性由域内轮次在途互斥承接（`trigger` 的轮次在途互斥单点，同端
+//! 同库任一时刻至多一轮在途），manifest 的读-改-写由它独占；通道层既有的
+//! 「并发整体替换由下一轮归并自愈」保留为纵深兜底。失败语义按 ADR-0120 决策 6
+//! 三分：已上传段原子（内容确定等同、重传幂等）、已重放 op 逐条原子、manifest
+//! 回写失败由下一轮归并续作；「上次成功同步时刻」只在整轮成功后的整体裁决点
+//! 落库（`trigger` 编排单点）。
+//!
+//! 截断义务（ADR-0139 决策 8，#1874，推翻 #857「v1 永不截断」）：轮次回写
+//! manifest 时顺带声明本机对各流的已应用位点（[`declare_applied_positions`]）；
+//! 整轮成功的落库段按安全水位（各端声明最小值，并以当前对端可达 Checkpoint 的
+//! 位点覆盖为上界校正）截断自己的流（[`truncate_own_stream_to_watermark`]）——
+//! 无用户开关、无保留期；单端 / 未配同步世界水位不可证即不截。
+//!
+//! 调用契约：检查点发布两段式——产出段 [`checkpoint::create_checkpoint`] 须在
+//! 单连接互斥锁内调用（位点/快照同刻成对约束）；发布段 [`upload_checkpoint`]
+//! 只消费已定格的快照字节与通道（封包 KDF + 网络往返），不消费连接，在连接锁
+//! 外调用（#1284；判据同 ADR-0120——网络等待出锁，连接锁只盖数据库步骤）。
+
+use std::collections::{BTreeMap, BTreeSet};
+
+use rusqlite::Connection;
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+
+use ledger_infra::db::now_iso;
+use ledger_infra::error::{AppError, Result};
+
+use ledger_sync_protocol::device;
+use ledger_sync_protocol::position as positions;
+
+use super::checkpoint::Checkpoint;
+use super::engine;
+use super::envelope::{self, EnvelopeMode, EnvelopeParams};
+use super::model::SyncOp;
+use super::ops;
+use super::transport::Transport;
+
+/// manifest 当前版本（未知更高版本拒绝解析：旧端收到新形态清单，提示升级）。
+const MANIFEST_VERSION: u32 = 1;
+
+/// 通道布局：按账本隔离的全部路径单点。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChannelLayout {
+    /// `book-<id>` 目录名（id 清洗为 URL 安全字符）。
+    book_dir: String,
+}
+
+impl ChannelLayout {
+    /// 从同步空间标识构造布局（`book-<space>`；空间是跨端共识的世界身份，
+    /// 见多端同步域 Transport 词条——issue #862）：非法字符清洗，清洗后为空
+    /// 拒绝（用户可见错误，文案对齐设置页「同步空间」字段语义）。
+    pub fn new(book_id: &str) -> Result<Self> {
+        let sanitized: String = book_id
+            .to_lowercase()
+            .chars()
+            .filter(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == '-')
+            .collect();
+        if sanitized.is_empty() {
+            return Err(AppError::coded(
+                "sync-channel.book-id-invalid",
+                "同步空间非法（仅限小写字母、数字与短横线），无法构造同步目录",
+            ));
+        }
+        Ok(Self {
+            book_dir: format!("book-{sanitized}"),
+        })
+    }
+
+    /// 账本目录（`book-<id>`）。
+    pub fn book_dir(&self) -> String {
+        self.book_dir.clone()
+    }
+
+    /// manifest 路径。
+    pub fn manifest_path(&self) -> String {
+        format!("{}/manifest.json", self.book_dir)
+    }
+
+    /// 连通性探针对象路径（issue #1219 保存前「测试连接」）：同步轮次从不写它，
+    /// 是一枚保留的只读探针键——放在同步空间目录下，探测读到的权限范围才与真实
+    /// 轮次一致（最小权限子账号只授权该目录即可通过）。
+    pub fn probe_path(&self) -> String {
+        format!("{}/probe/connectivity", self.book_dir)
+    }
+
+    /// 检查点目录。
+    pub fn checkpoint_dir(&self) -> String {
+        format!("{}/checkpoint", self.book_dir)
+    }
+
+    /// 设备流根目录。
+    pub fn streams_dir(&self) -> String {
+        format!("{}/streams", self.book_dir)
+    }
+
+    /// 指定来源设备的流目录（仅该设备可写，其余端只读）。
+    pub fn stream_dir(&self, device_id: &str) -> String {
+        format!("{}/{}", self.streams_dir(), device_id)
+    }
+
+    /// 流目录下指定文件路径（manifest 段名 → 通道地址的单一出口）。
+    pub fn stream_file_path(&self, device_id: &str, file: &str) -> String {
+        format!("{}/{}", self.stream_dir(device_id), file)
+    }
+
+    /// 段文件路径（按 op 序号区间命名，永不与他人段重名冲突）。
+    pub fn segment_path(&self, device_id: &str, first_clock: i64, last_clock: i64) -> String {
+        self.stream_file_path(device_id, &segment_file_name(first_clock, last_clock))
+    }
+
+    /// 检查点目录下指定文件路径（manifest 指针 → 通道地址的单一出口）。
+    pub fn checkpoint_file_path(&self, file: &str) -> String {
+        format!("{}/{}", self.checkpoint_dir(), file)
+    }
+
+    /// 检查点文件路径（按代独立文件）。
+    pub fn checkpoint_path(&self, generation: i64) -> String {
+        format!(
+            "{}/{}",
+            self.checkpoint_dir(),
+            checkpoint_file_name(generation)
+        )
+    }
+
+    /// 同步元数据件文件路径（双文件成对，ADR-0139 决策 5；manifest 双指针的
+    /// sync 件字段 → 通道地址的单一出口）。
+    pub fn checkpoint_sync_path(&self, generation: i64) -> String {
+        format!(
+            "{}/{}",
+            self.checkpoint_dir(),
+            checkpoint_sync_file_name(generation)
+        )
+    }
+}
+
+/// 段文件名：`seg-<起>:010>-<止:010>.enc`。
+fn segment_file_name(first_clock: i64, last_clock: i64) -> String {
+    format!("seg-{first_clock:010}-{last_clock:010}.enc")
+}
+
+/// 检查点文件名：`cp-<代:06>.enc`。
+fn checkpoint_file_name(generation: i64) -> String {
+    format!("cp-{generation:06}.enc")
+}
+
+/// 同步元数据件文件名：`cp-<代:06>-sync.enc`（与业务件同代成对）。
+fn checkpoint_sync_file_name(generation: i64) -> String {
+    format!("cp-{generation:06}-sync.enc")
+}
+
+/// 通道清单（manifest.json）：各流段清单 + 当前 Checkpoint 指针。
+///
+/// 设备列表即各流条目的 `device_id` 集合（不单列设备清单：空流设备对拉取
+/// 不可见，单列徒增一种待归并状态）。字段仅通道元数据——设备 id、序号区间、
+/// 密文 hash——不含账本数据，明文存放。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChannelManifest {
+    /// 清单格式版本。
+    pub version: u32,
+    /// 各来源设备的流清单（按 device_id 稳定序）。
+    pub streams: Vec<StreamManifest>,
+    /// 当前检查点指针（尚未发布过检查点时为空）。
+    pub checkpoint: Option<CheckpointPointer>,
+}
+
+impl Default for ChannelManifest {
+    fn default() -> Self {
+        Self {
+            version: MANIFEST_VERSION,
+            streams: Vec::new(),
+            checkpoint: None,
+        }
+    }
+}
+
+impl ChannelManifest {
+    /// 从通道字节解析（缺失/损坏/版本未知均有明确码化错误，不静默按空处理）。
+    fn parse(bytes: &[u8]) -> Result<Self> {
+        let manifest: Self =
+            serde_json::from_slice(bytes).map_err(|e| manifest_corrupt_error(&e.to_string()))?;
+        if manifest.version != MANIFEST_VERSION {
+            return Err(AppError::codedp(
+                "sync-channel.manifest-version-newer",
+                format!(
+                    "同步清单来自更新版本的应用（清单版本 {}），请升级后再同步",
+                    manifest.version
+                ),
+                &[manifest.version.to_string().as_str()],
+            ));
+        }
+        Ok(manifest.normalize())
+    }
+
+    /// 序列化为通道字节（pretty JSON：弱原子性下便于人读排障）。
+    fn serialize(&self) -> Result<Vec<u8>> {
+        serde_json::to_vec_pretty(self)
+            .map_err(|e| AppError::Invalid(format!("清单序列化失败: {e}")))
+    }
+
+    /// 稳定序归一：流按 device_id 升序、段按起始时钟升序（比较与写回同形，
+    /// 避免顺序漂移触发无谓的整体替换）。
+    fn normalize(mut self) -> Self {
+        self.streams.sort_by(|a, b| a.device_id.cmp(&b.device_id));
+        for stream in &mut self.streams {
+            stream.segments.sort_by_key(|s| s.first_clock);
+        }
+        self
+    }
+}
+
+/// 单个来源设备的流清单。
+///
+/// 各流条目除段清单外还承载**位点声明**（ADR-0139 决策 8）：`applied_positions`
+/// 记录各报告端（键）对该流（值 = 已应用时钟）的声明，随报告端每轮回写
+/// manifest 顺带更新；声明归报告端所有，流属主的段覆写（本地权威）不得清除
+/// 他人声明。旧清单无此字段（缺省空），旧版端忽略新字段、通道互操作不破坏
+///（旧版端回写会丢弃声明，水位按声明缺失冻结，安全侧保守）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StreamManifest {
+    /// 来源设备标识。
+    pub device_id: String,
+    /// 已上传段清单（按起始时钟序）。
+    pub segments: Vec<SegmentEntry>,
+    /// 各端对本流的已应用位点声明（报告端 device_id → 该流已应用时钟）。
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub applied_positions: BTreeMap<String, i64>,
+}
+
+impl StreamManifest {
+    /// 流上已上传到的最大时钟（空流为 0——发布位点的通道视图）。
+    fn uploaded_through(&self) -> i64 {
+        self.segments.last().map(|s| s.last_clock).unwrap_or(0)
+    }
+}
+
+/// 单个段文件的通道条目（内容自校验：尺寸 + SHA-256 兜底弱原子性）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SegmentEntry {
+    /// 段文件名（含 `seg-<起>-<止>.enc` 区间信息）。
+    pub file: String,
+    /// 段内最小 op 时钟。
+    pub first_clock: i64,
+    /// 段内最大 op 时钟。
+    pub last_clock: i64,
+    /// 密文字节数。
+    pub size: u64,
+    /// 密文 SHA-256（hex）。
+    pub sha256: String,
+}
+
+/// 检查点指针（manifest 中当前代的引用）。
+///
+/// 双文件成对（ADR-0139 决策 5）：原字段组指向业务件，新增 `sync_*` 字段组
+/// 指向同步元数据件。旧形态单文件指针无 `sync_*` 字段（缺省 None）——旧版
+/// 端忽略新增字段、新版端容忍旧字段缺席，通道互操作双向不破坏。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CheckpointPointer {
+    /// 检查点文件名（业务件）。
+    pub file: String,
+    /// 检查点代数（单调递增，自当前指针 +1）。
+    pub generation: i64,
+    /// 密文字节数（业务件）。
+    pub size: u64,
+    /// 密文 SHA-256（hex；业务件）。
+    pub sha256: String,
+    /// 产出时刻（ISO；产出端本地事实，仅供排障展示）。
+    pub created_at: String,
+    /// 同步元数据件文件名（双文件成对；旧形态单文件指针缺省 None）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sync_file: Option<String>,
+    /// 同步元数据件密文字节数（随 sync_file 成对在位）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sync_size: Option<u64>,
+    /// 同步元数据件密文 SHA-256（hex；随 sync_file 成对在位）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sync_sha256: Option<String>,
+    /// 该检查点内已并入的各流位点（产出端快照时刻的位点表，键 = 来源设备）：
+    /// 「水位之前的 op 已并入对端可达 Checkpoint」的 manifest 可读证据，截断
+    /// 安全水位的覆盖校正上界（ADR-0139 决策 8）。旧形态指针无此字段（缺省
+    /// 空 = 覆盖不可证，截断冻结，安全侧保守），下一次检查点发布自然补齐。
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub applied_positions: BTreeMap<String, i64>,
+}
+
+/// 轮次内消费连接的数据库段闭集（ADR-0120 决策 2 的表格承载）：连接锁只盖
+/// 这三类步骤，每处各自短取一次。新增轮次步骤必须显式归类——数据库段加入
+/// 本闭集，网络段（manifest 读/写、段上传/下载、封包与解封含 KDF）不进取锁
+/// 路径——分类缺失即 ADR-0069 决策 4 的旧退化路径重现（ADR-0120「后果」）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConnSegment {
+    /// 读段：本机 DeviceId、位点、自己流待发布 op 的读取。
+    Read,
+    /// 重放段：逐段下载后对已解封 op 的重放（逐条事务在闭包内逐条提交）。
+    Replay,
+    /// 落库段：整轮成功后的整体裁决点——「上次成功同步时刻」的设置写入与
+    /// 截断安全水位检查（按水位截断自己的流，ADR-0139 决策 8）。
+    Bookkeep,
+}
+
+/// 轮次连接取用接缝（ADR-0120 决策 2/4）：轮次协议对连接的全部消费都经本接缝，
+/// 每次短暂取用一次、用完即还——分钟级网络等待结构上不可能持在锁内。取锁口径
+/// 由实现决定：壳层手动入口经分段写入口的 `SegmentLock` 适配（阻塞等待，锁失败
+/// 映射与写入口同形）；调度侧自动入口经连接锁等待单点短取，任一段拿不到锁即
+/// 放弃本轮（既有「拿不到锁就跳过本轮」口径）；测试与进程内工具用
+/// [`DirectConn`] 直通已持连接。
+pub trait RoundConn {
+    /// 取用一次连接执行一个数据库段（[`ConnSegment`] 闭集之外的步骤不得消费连接）。
+    fn with_connection<R, F>(&self, segment: ConnSegment, use_connection: F) -> Result<R>
+    where
+        F: FnOnce(&Connection) -> Result<R>;
+
+    /// 轮次身份键（同端同库判据，ADR-0120 决策 3）：同键轮次经在途互斥串行
+    /// （任一时刻至多一轮在途），异键并行。生产实现以连接互斥体地址为键。
+    fn round_key(&self) -> u64;
+}
+
+/// 连接互斥体的轮次身份键单点（[`RoundConn::round_key`] 的生产口径）：共享句柄
+/// 指向同一互斥体即同端同库（壳层与调度侧持同一 [`DbState`](ledger_infra::db::DbState)
+/// 句柄的克隆，键恒同）；原位换连在互斥体内换槽，地址不变，身份连续。
+pub fn connection_round_key(conn: &std::sync::Mutex<Connection>) -> u64 {
+    std::ptr::from_ref(conn) as u64
+}
+
+/// 直通连接源：调用方已持有连接（域单测、e2e 步骤与进程内工具形态）。
+/// 每段直接复用该连接，不取锁、不给放弃口径——「拿不到锁即放弃」的语义归生产
+/// 实现策。轮次身份键取连接对象地址（互斥体内槽），与生产实现的互斥体地址
+/// 不是同一身份空间；同一连接上的全部直通轮次天然同键，勿与生产连接源混用。
+pub struct DirectConn<'a> {
+    conn: &'a Connection,
+}
+
+impl<'a> DirectConn<'a> {
+    /// 包一份已持有的连接（构造参数经解引用强转适配守卫形态）。
+    pub fn new(conn: &'a Connection) -> Self {
+        Self { conn }
+    }
+}
+
+impl RoundConn for DirectConn<'_> {
+    fn with_connection<R, F>(&self, _segment: ConnSegment, use_connection: F) -> Result<R>
+    where
+        F: FnOnce(&Connection) -> Result<R>,
+    {
+        use_connection(self.conn)
+    }
+
+    fn round_key(&self) -> u64 {
+        std::ptr::from_ref(self.conn) as u64
+    }
+}
+
+/// 单个同步轮次的共享上下文（恒结伴参数的聚合）。连接消费一律经
+/// [`RoundConn`] 接缝分段短取（ADR-0120 决策 2）。
+struct RoundCtx<'a, 'p, S: RoundConn> {
+    locks: &'a S,
+    transport: &'a dyn Transport,
+    layout: &'a ChannelLayout,
+    mode: &'a EnvelopeMode<'p>,
+    options: &'a ChannelOptions,
+}
+
+/// 通道轮次选项（段容量与封包参数；生产走默认值）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ChannelOptions {
+    /// 单段最大 op 数（单文件永远有界，对通道单文件限制与断点续传友好）。
+    pub segment_max_ops: usize,
+    /// 信封封包参数（KDF 迭代次数；见 [`envelope::EnvelopeParams`]）。
+    pub envelope: EnvelopeParams,
+}
+
+impl Default for ChannelOptions {
+    fn default() -> Self {
+        Self {
+            segment_max_ops: 2000,
+            envelope: EnvelopeParams::default(),
+        }
+    }
+}
+
+/// 一次同步轮次的报告（触发编排与同步状态的消费形态，#862/#863 接线）。
+///
+/// `plaintext_mode` 为明文模式的显性标记：未开加密模式时界面须显著提示
+/// （ADR-0091 决策 8；提示呈现归壳层）。Serialize 为 IPC wire 形态（#862
+/// `sync_now` 响应体，前端据此轻量提示轮次结果）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize)]
+pub struct SyncRoundReport {
+    /// 本轮上传段数。
+    pub uploaded_segments: usize,
+    /// 本轮上传 op 数。
+    pub uploaded_ops: usize,
+    /// 本轮下载并应用的段数。
+    pub downloaded_segments: usize,
+    /// 重放归宿计数：应用 / 期次去重 / LWW 压制 / 已知跳过 / 挂起。
+    pub applied: usize,
+    pub deduped: usize,
+    pub superseded: usize,
+    pub skipped: usize,
+    pub parked: usize,
+    /// 明文模式标记（界面显著提示依据）。
+    pub plaintext_mode: bool,
+}
+
+/// 执行一次同步轮次（默认选项）：发布自己流新 op + 拉取他人流增量。
+///
+/// 分段取锁（ADR-0120 决策 2）：连接只经 [`RoundConn`] 接缝按数据库段短取
+/// （读段 / 重放段 / 落库段），manifest 读/写、段上传/下载、封包与解封全部
+/// 在连接外完成。失败即整体报错返回（凭据/网络/损坏均有码化错误），不产生
+/// 部分静默状态；已上传的段与已应用的重放各自原子（重试轮次幂等续作），
+/// 本地记账不受影响（失败语义三分重述见模块文档）。
+pub fn run_round<S: RoundConn>(
+    locks: &S,
+    transport: &dyn Transport,
+    layout: &ChannelLayout,
+    mode: &EnvelopeMode<'_>,
+) -> Result<SyncRoundReport> {
+    run_round_with(locks, transport, layout, mode, &ChannelOptions::default())
+}
+
+/// 执行一次同步轮次（显式选项；测试注入低 KDF 迭代与段容量）。
+pub fn run_round_with<S: RoundConn>(
+    locks: &S,
+    transport: &dyn Transport,
+    layout: &ChannelLayout,
+    mode: &EnvelopeMode<'_>,
+    options: &ChannelOptions,
+) -> Result<SyncRoundReport> {
+    // 读段：本机 DeviceId（首用生成并持久化）。
+    let device_id = locks.with_connection(ConnSegment::Read, device::device_id)?;
+    transport.ensure_dir(&layout.book_dir())?;
+    transport.ensure_dir(&layout.checkpoint_dir())?;
+    transport.ensure_dir(&layout.streams_dir())?;
+
+    let ctx = RoundCtx {
+        locks,
+        transport,
+        layout,
+        mode,
+        options,
+    };
+    let remote = read_manifest(transport, layout)?;
+    let mut report = SyncRoundReport {
+        plaintext_mode: mode.is_plaintext(),
+        ..SyncRoundReport::default()
+    };
+
+    // 发布：自己流新 op → 段（封包 → PUT）→ manifest 归并（自己流本地权威）。
+    let mut manifest = remote.clone();
+    publish_own_ops(&ctx, &device_id, &remote, &mut manifest, &mut report)?;
+
+    // 位点声明：本机对各流的已应用位点随本轮 manifest 回写顺带上报（读段短取；
+    // ADR-0139 决策 8）。**负向判据（ADR-0087）**：删除本调用，声明写接线
+    // 即断——「manifest 位点声明的写」域单测红（水位无证据，截断全冻结）。
+    declare_applied_positions(&ctx, &device_id, &mut manifest)?;
+
+    // manifest 变化才整体替换写回（读侧轮次零写入：段与声明都无变化的空闲
+    // 轮次仍零写入）。
+    if manifest != remote {
+        transport.write_file(&layout.manifest_path(), &manifest.serialize()?)?;
+    }
+
+    // 拉取：他人流按本端位点跳过已覆盖段（manifest 视图），逐段下载（网络段）
+    // → 逐段重放（重放段，交错粒度保持逐段下载 → 逐段重放：内存以段为界，
+    // ADR-0120 决策 5）。
+    pull_foreign_streams(&ctx, &device_id, &manifest, &mut report)?;
+
+    // 落库段（整轮成功后的最后一步，失败轮次中途返回不达此处）：按安全水位
+    // 截断自己的流（ADR-0139 决策 8，截断放开）。**负向判据（ADR-0087）**：
+    // 删除本调用，「达到安全水位自动截断」域单测红。
+    truncate_own_stream_to_watermark(&ctx, &manifest, &device_id);
+    Ok(report)
+}
+
+/// 位点声明（写接线，ADR-0139 决策 8）：读段短取本机对各流的已应用位点，
+/// 顺带写进本轮 manifest 各流条目的声明面（键 = 本端）。只对有位点行的流
+/// 声明——从未拉取的流不伪造 0 声明（声明缺席在他端按冻结计，安全侧同向）。
+/// 声明采集在轮回写点（拉取段之前）：本轮拉取推进的位点在下一轮回写时声明
+/// （一轮滞后，安全侧保守）。位点只随重放推进、本轮内此后不变（同端至多
+/// 一轮在途，本地写不触位点）。
+fn declare_applied_positions<S: RoundConn>(
+    ctx: &RoundCtx<'_, '_, S>,
+    device_id: &str,
+    manifest: &mut ChannelManifest,
+) -> Result<()> {
+    let own: BTreeMap<String, i64> = ctx.locks.with_connection(ConnSegment::Read, |conn| {
+        Ok(position_map(&positions::list(conn)?))
+    })?;
+    for stream in &mut manifest.streams {
+        if let Some(applied) = own.get(&stream.device_id) {
+            stream
+                .applied_positions
+                .insert(device_id.to_string(), *applied);
+        }
+    }
+    Ok(())
+}
+
+/// 位点表 → manifest 声明/覆盖面（报告端或来源设备 → 已应用时钟）的单点投影。
+fn position_map(rows: &[ledger_sync_protocol::position::StreamPosition]) -> BTreeMap<String, i64> {
+    rows.iter()
+        .map(|p| (p.device_id.clone(), p.applied_through))
+        .collect()
+}
+
+/// 本端自己流的截断安全水位（读接线，ADR-0139 决策 8；三硬约束的「只删位点
+/// 之前」上界）：
+///
+/// - **各端声明最小值**：本流条目声明面上、除本端外全部参与端的声明最小值。
+///   参与端闭集 = 流清单来源设备 ∪ 各流声明的报告端（不含本端——本端自己流
+///   位点恒为自己时钟头，不得自证截断：单端世界与「尚未上传的 op 不被截」都
+///   靠它排除）。任一参与端声明缺失按 0 计——离线端 / 旧版端水位冻结，截断
+///   延迟（安全侧保守，只影响瘦身及时性）。
+/// - **Checkpoint 可达覆盖校正（上界）**：水位不得超过当前对端可达 Checkpoint
+///   对本流的位点覆盖——覆盖内的 op 已并入对端可取的检查点文件，manifest 若
+///   因损坏走「删除重发布」自愈，被截前缀仍可由检查点 + 其后 op 重建（新端
+///   引导契约「Checkpoint + 其后 op = 一致状态」不被截断破坏）。指针缺席或
+///   旧形态指针（无位点字段）即覆盖不可证，不截。
+///
+/// 任一半不可证（无对端声明 / 无并入 Checkpoint 证据）返回 `None`——水位
+/// 不可证即不删。
+fn own_stream_watermark(manifest: &ChannelManifest, device_id: &str) -> Option<i64> {
+    let mut participants: BTreeSet<&str> = manifest
+        .streams
+        .iter()
+        .map(|s| s.device_id.as_str())
+        .collect();
+    for stream in &manifest.streams {
+        participants.extend(stream.applied_positions.keys().map(String::as_str));
+    }
+    participants.remove(device_id);
+    if participants.is_empty() {
+        return None;
+    }
+    let own = manifest.streams.iter().find(|s| s.device_id == device_id)?;
+    // 参与端非空已验（上放空检）：fold 取最小，无缺省分支。
+    let declared_min = participants
+        .iter()
+        .map(|p| own.applied_positions.get(*p).copied().unwrap_or(0))
+        .fold(i64::MAX, i64::min);
+    let covered = manifest
+        .checkpoint
+        .as_ref()?
+        .applied_positions
+        .get(device_id)
+        .copied()?;
+    let watermark = declared_min.min(covered);
+    (watermark > 0).then_some(watermark)
+}
+
+/// 落库段顺带义务（ADR-0139 决策 8）：整轮成功后按安全水位截断自己的流——
+/// 无用户开关、无保留期；三硬约束由 [`crate::checkpoint::truncate_stream_before`]
+/// 承接（owner 门 + 时钟上界 + 挂起 op 天然豁免）。截断是瘦身义务、顺带于
+/// 同步：失败不失败整轮（warn 留痕，下一轮水位重证后幂等重试）。
+fn truncate_own_stream_to_watermark<S: RoundConn>(
+    ctx: &RoundCtx<'_, '_, S>,
+    manifest: &ChannelManifest,
+    device_id: &str,
+) {
+    let Some(watermark) = own_stream_watermark(manifest, device_id) else {
+        return;
+    };
+    match ctx.locks.with_connection(ConnSegment::Bookkeep, |conn| {
+        super::checkpoint::truncate_stream_before(conn, device_id, watermark)
+    }) {
+        Ok(deleted) if deleted > 0 => tracing::info!(
+            device = %device_id,
+            watermark,
+            deleted,
+            "轮次落库段按安全水位截断本机日志流"
+        ),
+        Ok(_) => {}
+        Err(error) => tracing::warn!(error = %error, watermark, "截断失败（下一轮重试）"),
+    }
+}
+
+/// 读取并解析通道 manifest（不存在按空清单；损坏/版本未知报码化错误）。
+fn read_manifest(transport: &dyn Transport, layout: &ChannelLayout) -> Result<ChannelManifest> {
+    match transport.read_file(&layout.manifest_path())? {
+        None => Ok(ChannelManifest::default()),
+        Some(bytes) => ChannelManifest::parse(&bytes),
+    }
+}
+
+/// 发布自己流：自 manifest 上传位点（通道视图）之后的本机 op，按容量切段，
+/// 逐段封包上传并归并进 manifest。
+///
+/// 上传位点取自 manifest 而非本地表——「清单写回失败」后重传同段内容确定
+/// 等同（op 只增不改），天然幂等；本地不为此新增状态。
+fn publish_own_ops<S: RoundConn>(
+    ctx: &RoundCtx<'_, '_, S>,
+    device_id: &str,
+    remote: &ChannelManifest,
+    manifest: &mut ChannelManifest,
+    report: &mut SyncRoundReport,
+) -> Result<()> {
+    let remote_own = remote
+        .streams
+        .iter()
+        .find(|s| s.device_id == device_id)
+        .cloned()
+        .unwrap_or_else(|| StreamManifest {
+            device_id: device_id.to_string(),
+            segments: Vec::new(),
+            applied_positions: BTreeMap::new(),
+        });
+    // 读段：自通道上传位点之后的本机 op 一次读出（短取锁）；此后的切段、封包
+    // （KDF）与上传都是网络段，不消费连接。发布位点的通道视图取自 manifest 而
+    // 非本地表——「清单写回失败」后重传同段内容确定等同（op 只增不改），天然
+    // 幂等；本地不为此新增状态。
+    let own_ops = ctx.locks.with_connection(ConnSegment::Read, |conn| {
+        ops::read_own_since(conn, device_id, remote_own.uploaded_through())
+    })?;
+    if own_ops.is_empty() {
+        return Ok(());
+    }
+    // 归并基线：远端自己流段（同文件名幂等跳过）+ 本轮新增段。
+    let mut segments: BTreeMap<String, SegmentEntry> = remote_own
+        .segments
+        .iter()
+        .map(|s| (s.file.clone(), s.clone()))
+        .collect();
+    ctx.transport
+        .ensure_dir(&ctx.layout.stream_dir(device_id))?;
+    for chunk in split_chunks(&own_ops, ctx.options.segment_max_ops) {
+        let first = chunk.first().map(|o| o.clock).unwrap_or(0);
+        let last = chunk.last().map(|o| o.clock).unwrap_or(0);
+        let file = segment_file_name(first, last);
+        if segments.contains_key(&file) {
+            continue;
+        }
+        let payload = serde_json::to_vec(&chunk)
+            .map_err(|e| AppError::Invalid(format!("段载荷序列化失败: {e}")))?;
+        let sealed = envelope::seal(&payload, ctx.mode, &ctx.options.envelope)?;
+        ctx.transport
+            .write_file(&ctx.layout.segment_path(device_id, first, last), &sealed)?;
+        segments.insert(
+            file.clone(),
+            SegmentEntry {
+                file,
+                first_clock: first,
+                last_clock: last,
+                size: sealed.len() as u64,
+                sha256: sha256_hex(&sealed),
+            },
+        );
+        report.uploaded_segments += 1;
+        report.uploaded_ops += chunk.len();
+    }
+    // 自己流以本地权威覆写（他人流在归并外原样保留）；他人对本流的位点声明
+    // 归报告端所有，段覆写不得清除（ADR-0139 决策 8 声明面纪律）。
+    let entry = StreamManifest {
+        device_id: device_id.to_string(),
+        segments: segments.into_values().collect(),
+        applied_positions: remote_own.applied_positions.clone(),
+    };
+    match manifest
+        .streams
+        .iter_mut()
+        .find(|s| s.device_id == device_id)
+    {
+        Some(slot) => *slot = entry,
+        None => manifest.streams.push(entry),
+    }
+    *manifest = manifest.clone().normalize();
+    Ok(())
+}
+
+/// 拉取他人流：按本端位点跳过已覆盖段；段下载后校验尺寸与 hash，解封解析，
+/// 经同步引擎幂等重放（LWW / 挂起 / 去重语义全在引擎，通道不重复裁决）。
+fn pull_foreign_streams<S: RoundConn>(
+    ctx: &RoundCtx<'_, '_, S>,
+    device_id: &str,
+    manifest: &ChannelManifest,
+    report: &mut SyncRoundReport,
+) -> Result<()> {
+    let passphrase = match ctx.mode {
+        EnvelopeMode::Encrypted { passphrase } => Some(*passphrase),
+        EnvelopeMode::Plaintext => None,
+    };
+    // 读段：全部他人流的位点一次短取（位点在本轮内不变——位点只随重放推进，
+    // 重放只发生在本轮：同端同库至多一轮在途，本地写不触位点）。
+    let positions: std::collections::BTreeMap<String, i64> =
+        ctx.locks.with_connection(ConnSegment::Read, |conn| {
+            manifest
+                .streams
+                .iter()
+                .filter(|stream| stream.device_id != device_id)
+                .map(|stream| {
+                    Ok((
+                        stream.device_id.clone(),
+                        positions::position_of(conn, &stream.device_id)?.unwrap_or(0),
+                    ))
+                })
+                .collect()
+        })?;
+    for stream in &manifest.streams {
+        if stream.device_id == device_id {
+            continue;
+        }
+        let position = positions[&stream.device_id];
+        for segment in &stream.segments {
+            if segment.last_clock <= position {
+                continue; // 位点已覆盖整段：无需下载。
+            }
+            // 网络段：段下载 + 校验 + 解封（含 KDF）不消费连接。
+            let path = ctx
+                .layout
+                .stream_file_path(&stream.device_id, &segment.file);
+            let bytes = ctx
+                .transport
+                .read_file(&path)?
+                .ok_or_else(|| segment_missing_error(&path))?;
+            if bytes.len() as u64 != segment.size || sha256_hex(&bytes) != segment.sha256 {
+                return Err(segment_corrupt_error(&path));
+            }
+            let payload = envelope::open(&bytes, passphrase)?;
+            let incoming: Vec<SyncOp> = serde_json::from_slice(&payload)
+                .map_err(|e| segment_corrupt_error(&format!("{path}: {}", e)))?;
+            // 防御：段内 op 必须属于该流（错流即损坏，零丢失不允许串流）。
+            if incoming.iter().any(|op| op.device_id != stream.device_id) {
+                return Err(segment_corrupt_error(&path));
+            }
+            // 重放段：本段重放短取一次锁（逐条事务在引擎内逐条提交，逐条原子）。
+            let reports = ctx.locks.with_connection(ConnSegment::Replay, |conn| {
+                engine::apply_ops(conn, &incoming)
+            })?;
+            for item in reports {
+                match item.outcome {
+                    super::OpOutcome::Applied => report.applied += 1,
+                    super::OpOutcome::Deduped => report.deduped += 1,
+                    super::OpOutcome::Superseded => report.superseded += 1,
+                    super::OpOutcome::Skipped => report.skipped += 1,
+                    super::OpOutcome::Parked { .. } => report.parked += 1,
+                }
+            }
+            report.downloaded_segments += 1;
+        }
+    }
+    Ok(())
+}
+
+/// 发布检查点——发布段：快照字节 + 位点成对封包上通道，manifest 换指针（写新
+/// 文件 → 完整上传 → 原子换指针；并发发布的代数撞号由 hash 校验兜底）。
+///
+/// 只消费已定格的快照字节（产出段 [`checkpoint::create_checkpoint`]，须在单
+/// 连接互斥锁内调用完成位点与快照同刻成对）；本段封包（KDF）与网络往返不
+/// 消费连接——在连接锁外调用（#1284，判据同 ADR-0120）。
+pub fn upload_checkpoint(
+    transport: &dyn Transport,
+    layout: &ChannelLayout,
+    mode: &EnvelopeMode<'_>,
+    checkpoint: &Checkpoint,
+) -> Result<CheckpointPointer> {
+    upload_checkpoint_with(
+        transport,
+        layout,
+        mode,
+        checkpoint,
+        &ChannelOptions::default(),
+    )
+}
+
+/// 发布检查点——发布段（显式选项；两段式分界见 [`upload_checkpoint`]）。
+pub fn upload_checkpoint_with(
+    transport: &dyn Transport,
+    layout: &ChannelLayout,
+    mode: &EnvelopeMode<'_>,
+    checkpoint: &Checkpoint,
+    options: &ChannelOptions,
+) -> Result<CheckpointPointer> {
+    transport.ensure_dir(&layout.checkpoint_dir())?;
+
+    let remote = read_manifest(transport, layout)?;
+    let generation = remote
+        .checkpoint
+        .as_ref()
+        .map(|p| p.generation)
+        .unwrap_or(0)
+        + 1;
+    // 业务件（既有形态不变）……
+    let sealed = envelope::seal(
+        &frame_checkpoint_bundle(checkpoint)?,
+        mode,
+        &options.envelope,
+    )?;
+    transport.write_file(&layout.checkpoint_path(generation), &sealed)?;
+    // ……同步元数据件（双文件成对，ADR-0139 决策 5）：同刻定格的快照字节独立
+    // 封包成第二个通道文件，manifest 双指针在件齐后最后原子换——同步件为空的
+    // 旧形态 Checkpoint（票 04 前产物 / 测试替身）不写 sync 件、指针退化为旧
+    // 形态单文件指针（无 sync_* 字段），旧版端照常消费。
+    let (sync_file, sync_size, sync_sha256) = if checkpoint.sync_snapshot.is_empty() {
+        (None, None, None)
+    } else {
+        let sync_sealed = envelope::seal(&checkpoint.sync_snapshot, mode, &options.envelope)?;
+        transport.write_file(&layout.checkpoint_sync_path(generation), &sync_sealed)?;
+        (
+            Some(checkpoint_sync_file_name(generation)),
+            Some(sync_sealed.len() as u64),
+            Some(sha256_hex(&sync_sealed)),
+        )
+    };
+    let pointer = CheckpointPointer {
+        file: checkpoint_file_name(generation),
+        generation,
+        size: sealed.len() as u64,
+        sha256: sha256_hex(&sealed),
+        created_at: now_iso(),
+        sync_file,
+        sync_size,
+        sync_sha256,
+        // 位点覆盖随指针上 manifest（明文元数据）：截断水位的「已并入对端可达
+        // Checkpoint」证据面（ADR-0139 决策 8），各端按此上界校正水位。
+        applied_positions: position_map(&checkpoint.positions),
+    };
+    let mut manifest = remote.clone();
+    manifest.checkpoint = Some(pointer.clone());
+    if manifest != remote {
+        transport.write_file(&layout.manifest_path(), &manifest.serialize()?)?;
+    }
+    tracing::info!(
+        book = %layout.book_dir(),
+        generation,
+        size = pointer.size,
+        streams = checkpoint.positions.len(),
+        "检查点已发布到同步通道"
+    );
+    Ok(pointer)
+}
+
+/// 拉取所得的检查点：检查点本体 + 通道快照的封包形态标记。
+///
+/// `sealed` 为真表示通道上的快照是密文信封（源库为加密形态）——引导端据此
+/// 对齐本库加密形态：明文库引导密文快照后若不转换为本机密文库，后续轮次
+/// 便无法开封通道上的密文段（信封形态全通道一致是隐含契约）；对齐动作归
+/// 壳层引导编排（issue #864，复用备份域整库加密转换）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FetchedCheckpoint {
+    /// 检查点本体（快照 + 位点）。
+    pub checkpoint: Checkpoint,
+    /// 通道快照是否为密文信封。
+    pub sealed: bool,
+    /// 采纳的检查点代数（manifest 指针，向导展示与日志用）。
+    pub generation: i64,
+    /// 快照密文字节数。
+    pub size: u64,
+}
+
+/// 读取通道上的当前检查点指针（不下载快照体；新端引导前的预检接缝，
+/// 壳层向导据此区分「通道上还没有检查点」与「发现检查点可引导」）。
+pub fn peek_checkpoint_pointer(
+    transport: &dyn Transport,
+    layout: &ChannelLayout,
+) -> Result<Option<CheckpointPointer>> {
+    Ok(read_manifest(transport, layout)?.checkpoint)
+}
+
+/// 拉取通道上的当前检查点（新端引导的取件接缝；解封凭主口令，明文模式免口令）。
+///
+/// 返回的 [`FetchedCheckpoint`] 交给 [`checkpoint::bootstrap_from_checkpoint`] 完成
+/// 整库换入（引导流程编排归壳层加入向导，issue #864）。
+pub fn fetch_checkpoint(
+    transport: &dyn Transport,
+    layout: &ChannelLayout,
+    passphrase: Option<&str>,
+) -> Result<FetchedCheckpoint> {
+    let manifest = read_manifest(transport, layout)?;
+    let pointer = manifest.checkpoint.ok_or_else(|| {
+        AppError::coded("sync-channel.checkpoint-none", "同步通道上还没有检查点快照")
+    })?;
+    let path = layout.checkpoint_file_path(&pointer.file);
+    let bytes = transport
+        .read_file(&path)?
+        .ok_or_else(|| checkpoint_missing_error(&path))?;
+    if bytes.len() as u64 != pointer.size || sha256_hex(&bytes) != pointer.sha256 {
+        return Err(checkpoint_corrupt_error(&path));
+    }
+    // 封包形态先于开封判定（`is_sealed` 按文件自身魔数，自描述）：引导端
+    // 据此对齐本库加密形态，见 [`FetchedCheckpoint::sealed`]。
+    let sealed = envelope::is_sealed(&bytes);
+    let bundle = envelope::open(&bytes, passphrase)?;
+    let mut checkpoint =
+        unframe_checkpoint_bundle(&bundle).map_err(|_| checkpoint_corrupt_error(&path))?;
+    // 同步元数据件（双文件成对，ADR-0139 决策 5）：双指针在位才拉取；旧形态
+    // 单文件指针（无 sync_* 字段）按旧形态归一（同步件为空，引导按单库形态
+    // 分支）。尺寸与 hash 校验同业务件（通道条目自校验）。
+    if let (Some(sync_file), Some(sync_size), Some(sync_sha256)) =
+        (&pointer.sync_file, pointer.sync_size, &pointer.sync_sha256)
+    {
+        let sync_path = layout.checkpoint_file_path(sync_file);
+        let sync_bytes = transport
+            .read_file(&sync_path)?
+            .ok_or_else(|| checkpoint_missing_error(&sync_path))?;
+        if sync_bytes.len() as u64 != sync_size || sha256_hex(&sync_bytes) != *sync_sha256 {
+            return Err(checkpoint_corrupt_error(&sync_path));
+        }
+        checkpoint.sync_snapshot = envelope::open(&sync_bytes, passphrase)?;
+    }
+    Ok(FetchedCheckpoint {
+        checkpoint,
+        sealed,
+        generation: pointer.generation,
+        size: pointer.size,
+    })
+}
+
+/// 检查点通道载荷组帧：头（位点 JSON，4 字节 LE 长度前缀）+ 快照字节。
+///
+/// 位点与快照随信封整体封包——引导所需的两半必须同刻成对到达，不依赖
+/// manifest（manifest 是明文元数据，不承载位点数据面）。
+///
+/// `#[doc(hidden)] pub` 而非私有（issue #956 / #1107 的 [`sha256_hex`] 同款先例）：
+/// 测试支持域的旧形态检查点替身（`nsh_app::test_support::channel`，
+/// 票 07）据本单点成帧，测试侧不再自建第二份成帧口径；产品路径的消费者
+/// 仍只有本模块。
+#[doc(hidden)]
+pub fn frame_checkpoint_bundle(checkpoint: &Checkpoint) -> Result<Vec<u8>> {
+    let header = serde_json::json!({
+        "positions": checkpoint
+            .positions
+            .iter()
+            .map(|p| {
+                serde_json::json!({
+                    "device_id": p.device_id,
+                    "applied_through": p.applied_through,
+                })
+            })
+            .collect::<Vec<_>>(),
+    });
+    let header_bytes = serde_json::to_vec(&header)
+        .map_err(|e| AppError::Invalid(format!("检查点头序列化失败: {e}")))?;
+    let mut bundle = Vec::with_capacity(4 + header_bytes.len() + checkpoint.snapshot.len());
+    bundle.extend_from_slice(&(header_bytes.len() as u32).to_le_bytes());
+    bundle.extend_from_slice(&header_bytes);
+    bundle.extend_from_slice(&checkpoint.snapshot);
+    Ok(bundle)
+}
+
+/// 检查点通道载荷拆帧（组帧的逆；损坏报错由调用方归并为检查点损坏）。
+fn unframe_checkpoint_bundle(bundle: &[u8]) -> std::result::Result<Checkpoint, ()> {
+    if bundle.len() < 4 {
+        return Err(());
+    }
+    let header_len = u32::from_le_bytes(bundle[..4].try_into().map_err(|_| ())?) as usize;
+    let header_end = 4usize.checked_add(header_len).ok_or(())?;
+    if header_end > bundle.len() {
+        return Err(());
+    }
+    let header: serde_json::Value =
+        serde_json::from_slice(&bundle[4..header_end]).map_err(|_| ())?;
+    let positions = header
+        .get("positions")
+        .and_then(|v| v.as_array())
+        .ok_or(())?
+        .iter()
+        .map(|p| -> std::result::Result<super::StreamPosition, ()> {
+            Ok(super::StreamPosition {
+                device_id: p
+                    .get("device_id")
+                    .and_then(|v| v.as_str())
+                    .ok_or(())?
+                    .to_string(),
+                applied_through: p
+                    .get("applied_through")
+                    .and_then(|v| v.as_i64())
+                    .ok_or(())?,
+            })
+        })
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    Ok(Checkpoint {
+        positions,
+        snapshot: bundle[header_end..].to_vec(),
+        // 业务件捆绑格式自票 04 起不变；同步元数据件走独立通道文件
+        //（manifest 双指针的 sync 件字段），不经本捆绑——旧形态捆绑
+        //（票 04 前产物）与新形态捆绑在此统一解出空同步件，形态归一。
+        sync_snapshot: Vec::new(),
+    })
+}
+
+/// op 序列按容量切连续段（容量下界 1，防零除/空步进）。
+fn split_chunks(ops: &[SyncOp], max_ops: usize) -> Vec<&[SyncOp]> {
+    ops.chunks(max_ops.max(1)).collect()
+}
+
+/// SHA-256 hex 摘要（通道条目自校验单点）。
+///
+/// `#[doc(hidden)] pub` 而非私有（issue #956 / #1107）：测试支持域的「通道线
+/// 格式替身」（`nsh_app::test_support::channel`）据本单点成帧，使测试侧
+/// 不再自建第二份摘要口径。这是测试专用放宽（ADR-0084 决策 2 同款：
+/// `test_support` 本身即测试专用放宽面），产品路径的消费者仍只有本模块。
+#[doc(hidden)]
+pub fn sha256_hex(bytes: &[u8]) -> String {
+    let digest = Sha256::digest(bytes);
+    let mut hex = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        hex.push_str(&format!("{byte:02x}"));
+    }
+    hex
+}
+
+/// 清单损坏码化错误单点。
+fn manifest_corrupt_error(detail: &str) -> AppError {
+    AppError::codedp(
+        "sync-channel.manifest-corrupt",
+        format!("同步清单损坏或无法解析: {detail}"),
+        &[detail],
+    )
+}
+
+/// 段缺失码化错误单点（通道清单先行/文件未到齐；可重试）。
+fn segment_missing_error(path: &str) -> AppError {
+    AppError::codedp(
+        "sync-channel.segment-missing",
+        format!("同步段文件在通道上缺失（通道可能尚未同步完成），请稍后重试: {path}"),
+        &[path],
+    )
+}
+
+/// 段损坏码化错误单点（hash/尺寸不符或载荷不可解析；可重试重拉）。
+fn segment_corrupt_error(detail: &str) -> AppError {
+    AppError::codedp(
+        "sync-channel.segment-corrupt",
+        format!("同步段文件校验失败（可能未完整上传或已损坏），请重试同步: {detail}"),
+        &[detail],
+    )
+}
+
+/// 检查点缺失码化错误单点。
+fn checkpoint_missing_error(path: &str) -> AppError {
+    AppError::codedp(
+        "sync-channel.checkpoint-missing",
+        format!("同步通道上的检查点文件缺失，请重新发布检查点: {path}"),
+        &[path],
+    )
+}
+
+/// 检查点损坏码化错误单点。
+fn checkpoint_corrupt_error(path: &str) -> AppError {
+    AppError::codedp(
+        "sync-channel.checkpoint-corrupt",
+        format!("检查点快照校验失败（可能未完整上传或已损坏），请重新发布检查点: {path}"),
+        &[path],
+    )
+}

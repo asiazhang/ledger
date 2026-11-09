@@ -71,8 +71,11 @@ export default defineConfig({
     //   接缝包不反向依赖应用壳的包化反转）。
     // - packages（node）：纯类型/纯逻辑包内测试的默认落点（测试跟随被测包，
     //   spec #1148 用户故事 10），不付 jsdom 每文件创建成本；同一 setup 经
-    //   环境守卫自适应，接缝定义不随环境分裂。DOM 依存的包内测试移出本 project
-    //   （并入 packages-dom），新落位的纯逻辑包自动进 node，无需登记。
+    //   环境守卫自适应，接缝定义不随环境分裂；桥替身装配同挂（消费接缝的
+    //   包内测试照常行使）。mock-backend 包内测试移出本 project（并入
+    //   mock-backend project——替身包的自测要行使真实实现，全局桥 mock 会把
+    //   它打成空壳）；DOM 依存的包内测试移出本 project（并入 packages-dom），
+    //   新落位的纯逻辑包自动进 node，无需登记。
     // - packages-dom（jsdom）：DOM 依存包内测试的显式登记处（组件挂载或
     //   Storage.prototype 平台语义需 jsdom；原「组件型包测试落位时再扩 jsdom
     //   project」的预定扩位，issue #1151 起 @ledger/i18n / @ledger/storage
@@ -82,7 +85,11 @@ export default defineConfig({
         test: {
           name: "app",
           environment: "jsdom",
-          setupFiles: ["./packages/test-support/src/setup.ts", "./src/__tests__/app-setup.ts"],
+          setupFiles: [
+            "./packages/test-support/src/setup.ts",
+            "./packages/test-support/src/bridge-mock-setup.ts",
+            "./src/__tests__/app-setup.ts",
+          ],
           include: ["src/__tests__/**/*.test.ts"],
         },
       },
@@ -90,16 +97,37 @@ export default defineConfig({
         test: {
           name: "packages",
           environment: "node",
-          setupFiles: ["./packages/test-support/src/setup.ts"],
+          setupFiles: [
+            "./packages/test-support/src/setup.ts",
+            "./packages/test-support/src/bridge-mock-setup.ts",
+          ],
           include: ["packages/**/*.test.ts"],
-          exclude: [...configDefaults.exclude, ...DOM_PACKAGE_TEST_GLOBS],
+          exclude: [
+            ...configDefaults.exclude,
+            ...DOM_PACKAGE_TEST_GLOBS,
+            "packages/mock-backend/**/*.test.ts",
+          ],
+        },
+      },
+      {
+        // mock-backend 替身包自测（#2083 切轨后新增 project）：替身实现行为
+        // 测试行使真实桥面（登记表、信号、对话框），不挂 bridge-mock-setup。
+        test: {
+          name: "mock-backend",
+          environment: "node",
+          setupFiles: ["./packages/test-support/src/setup.ts"],
+          include: ["packages/mock-backend/**/*.test.ts"],
+          exclude: [...configDefaults.exclude],
         },
       },
       {
         test: {
           name: "packages-dom",
           environment: "jsdom",
-          setupFiles: ["./packages/test-support/src/setup.ts"],
+          setupFiles: [
+            "./packages/test-support/src/setup.ts",
+            "./packages/test-support/src/bridge-mock-setup.ts",
+          ],
           include: [...DOM_PACKAGE_TEST_GLOBS],
         },
       },

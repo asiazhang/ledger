@@ -35,15 +35,15 @@ const DEFAULT_TEST_SH = [
   "# 入口自检先行（真实 scripts/test.sh 同址接线）",
   "bun scripts/test-exec.ts check",
   "bun scripts/test-exec.ts",
-  "( cd src-tauri && cargo test --workspace --test e2e )",
-  "( cd src-tauri && cargo test --workspace --doc )",
+  "( cd src-app && cargo test --workspace --test e2e )",
+  "( cd src-app && cargo test --workspace --doc )",
   "",
 ].join("\n");
 
 function makeFixture(overrides: FixtureOverrides = {}): string {
   const root = mkdtempSync(join(tmpdir(), "test-exec-"));
   tempDirs.push(root);
-  const srcTauri = join(root, "src-tauri");
+  const srcTauri = join(root, "src-app");
   const alpha = join(srcTauri, "crates", "alpha");
   mkdirSync(join(alpha, "src"), { recursive: true });
   mkdirSync(join(alpha, "tests"), { recursive: true });
@@ -112,10 +112,10 @@ const ROOT_WITH_TEST_FALSE_BIN = [
   "",
 ].join("\n");
 
-/** 豁免登记匹配用根 manifest：包名 = tauri-app（EXEMPT_BINS 的 package 名）。 */
-const ROOT_NAMED_TAURI_APP = [
+/** 豁免登记匹配用根 manifest：包名 = nsh-app（EXEMPT_BINS 的 package 名，#2082 迁居后）。 */
+const ROOT_NAMED_NSH_APP = [
   "[package]",
-  'name = "tauri-app"',
+  'name = "nsh-app"',
   'version = "0.0.0"',
   'edition = "2021"',
   "",
@@ -142,7 +142,7 @@ describe("测试执行器两入口覆盖守门（issue #1112）", () => {
       "check",
       "--root",
       makeFixture({
-        files: { "src-tauri/crates/alpha/tests/alpha.rs": "#[test]\nfn same_name() {}\n" },
+        files: { "src-app/crates/alpha/tests/alpha.rs": "#[test]\nfn same_name() {}\n" },
       }),
     ]);
     expect(r.status).toBe(0);
@@ -174,7 +174,7 @@ describe("测试执行器两入口覆盖守门（issue #1112）", () => {
           "harness = false",
           "",
         ].join("\n"),
-        files: { "src-tauri/crates/alpha/tests/custom.rs": "fn main() {}\n" },
+        files: { "src-app/crates/alpha/tests/custom.rs": "fn main() {}\n" },
       }),
     ]);
     expect(r.status).toBe(1);
@@ -191,7 +191,7 @@ describe("测试执行器两入口覆盖守门（issue #1112）", () => {
           "#!/bin/sh",
           "set -eu",
           "bun scripts/test-exec.ts",
-          "( cd src-tauri && cargo test --workspace --doc )",
+          "( cd src-app && cargo test --workspace --doc )",
           "",
         ].join("\n"),
       }),
@@ -210,9 +210,9 @@ describe("测试执行器两入口覆盖守门（issue #1112）", () => {
           "#!/bin/sh",
           "set -eu",
           "bun scripts/test-exec.ts",
-          "( cd src-tauri && cargo test --workspace --test e2e )",
-          "( cd src-tauri && cargo test --workspace --test api )",
-          "( cd src-tauri && cargo test --workspace --doc )",
+          "( cd src-app && cargo test --workspace --test e2e )",
+          "( cd src-app && cargo test --workspace --test api )",
+          "( cd src-app && cargo test --workspace --doc )",
           "",
         ].join("\n"),
       }),
@@ -231,7 +231,7 @@ describe("测试执行器两入口覆盖守门（issue #1112）", () => {
           "#!/bin/sh",
           "set -eu",
           "bun scripts/test-exec.ts",
-          "( cd src-tauri && cargo test --workspace --test e2e )",
+          "( cd src-app && cargo test --workspace --test e2e )",
           "",
         ].join("\n"),
       }),
@@ -251,8 +251,8 @@ describe("测试执行器两入口覆盖守门（issue #1112）", () => {
           "#!/bin/sh",
           "set -eu",
           "bun scripts/test-exec.ts",
-          "( cd src-tauri && cargo test --workspace --test e2e )",
-          "( cd src-tauri && cargo test --doc )",
+          "( cd src-app && cargo test --workspace --test e2e )",
+          "( cd src-app && cargo test --doc )",
           "",
         ].join("\n"),
       }),
@@ -268,7 +268,7 @@ describe("测试执行器两入口覆盖守门（issue #1112）", () => {
       "--root",
       makeFixture({
         files: {
-          "src-tauri/src/reads_manifest.rs":
+          "src-app/src/reads_manifest.rs":
             'pub fn root() -> String { std::env::var("CARGO_MANIFEST_DIR").unwrap_or_default() }\n',
         },
       }),
@@ -284,7 +284,7 @@ describe("测试执行器两入口覆盖守门（issue #1112）", () => {
       "--root",
       makeFixture({
         files: {
-          "src-tauri/src/notes.rs":
+          "src-app/src/notes.rs":
             '// 约定：测试运行期不得写 std::env::var("CARGO_MANIFEST_DIR")\n' +
             '/// 同上：env::var("OUT_DIR")\n' +
             "pub fn ok() {}\n",
@@ -326,8 +326,8 @@ describe("测试执行器两入口覆盖守门（issue #1112）", () => {
         testSh: [
           "#!/bin/sh",
           "set -eu",
-          "( cd src-tauri && cargo test --workspace --test e2e )",
-          "( cd src-tauri && cargo test --workspace --doc )",
+          "( cd src-app && cargo test --workspace --test e2e )",
+          "( cd src-app && cargo test --workspace --doc )",
           "",
         ].join("\n"),
       }),
@@ -350,8 +350,8 @@ describe("测试执行器两入口覆盖守门（issue #1112）", () => {
           "set -eu",
           "bun scripts/test-exec.ts check",
           'echo "bun scripts/test-exec.ts"',
-          'echo "( cd src-tauri && cargo test --workspace --test e2e )"',
-          'echo "( cd src-tauri && cargo test --workspace --doc )"',
+          'echo "( cd src-app && cargo test --workspace --test e2e )"',
+          'echo "( cd src-app && cargo test --workspace --doc )"',
           "",
         ].join("\n"),
       }),
@@ -373,8 +373,8 @@ describe("测试执行器两入口覆盖守门（issue #1112）", () => {
           "set -eu",
           "bun scripts/test-exec.ts check",
           'echo "bun scripts/test-exec.ts"',
-          "( cd src-tauri && cargo test --workspace --test e2e )",
-          "( cd src-tauri && cargo test --workspace --doc )",
+          "( cd src-app && cargo test --workspace --test e2e )",
+          "( cd src-app && cargo test --workspace --doc )",
           "",
         ].join("\n"),
       }),
@@ -397,8 +397,8 @@ describe("测试执行器两入口覆盖守门（issue #1112）", () => {
             "#!/bin/sh",
             "set -eu",
             parallelLine,
-            "( cd src-tauri && cargo test --workspace --test e2e )",
-            "( cd src-tauri && cargo test --workspace --doc )",
+            "( cd src-app && cargo test --workspace --test e2e )",
+            "( cd src-app && cargo test --workspace --doc )",
             "",
           ].join("\n"),
         }),
@@ -416,8 +416,8 @@ describe("测试执行器两入口覆盖守门（issue #1112）", () => {
           "#!/bin/sh",
           "set -eu",
           "bun scripts/test-exec.ts",
-          "( cd src-tauri && cargo test --workspace --test e2e )",
-          "( cd src-tauri && cargo test --all --doc )",
+          "( cd src-app && cargo test --workspace --test e2e )",
+          "( cd src-app && cargo test --all --doc )",
           "",
         ].join("\n"),
       }),
@@ -476,7 +476,7 @@ describe("测试执行器两入口覆盖守门（issue #1112）", () => {
       "--root",
       makeFixture({
         rootManifest: ROOT_WITH_TEST_FALSE_BIN,
-        files: { "src-tauri/src/main.rs": "fn main() {}\n" },
+        files: { "src-app/src/main.rs": "fn main() {}\n" },
       }),
     ]);
     expect(r.status).toBe(0);
@@ -492,7 +492,7 @@ describe("测试执行器两入口覆盖守门（issue #1112）", () => {
       makeFixture({
         rootManifest: ROOT_WITH_TEST_FALSE_BIN,
         files: {
-          "src-tauri/src/main.rs": "#[test]\nfn stray() {}\n\nfn main() {}\n",
+          "src-app/src/main.rs": "#[test]\nfn stray() {}\n\nfn main() {}\n",
         },
       }),
     ]);
@@ -508,7 +508,7 @@ describe("测试执行器两入口覆盖守门（issue #1112）", () => {
       makeFixture({
         rootManifest: ROOT_WITH_TEST_FALSE_BIN,
         files: {
-          "src-tauri/src/main.rs": "// 不要在 bin 里加 #[test] 或 #[cfg(test)]\nfn main() {}\n",
+          "src-app/src/main.rs": "// 不要在 bin 里加 #[test] 或 #[cfg(test)]\nfn main() {}\n",
         },
       }),
     ]);
@@ -520,7 +520,7 @@ describe("测试执行器两入口覆盖守门（issue #1112）", () => {
       "check",
       "--root",
       makeFixture({
-        files: { "src-tauri/src/main.rs": "#[test]\nfn unit() {}\n\nfn main() {}\n" },
+        files: { "src-app/src/main.rs": "#[test]\nfn unit() {}\n\nfn main() {}\n" },
       }),
     ]);
     expect(r.status).toBe(1);
@@ -528,14 +528,19 @@ describe("测试执行器两入口覆盖守门（issue #1112）", () => {
     expect(r.output).toContain("root-app::root-app");
   });
 
-  it("豁免登记命中（tauri-app::ledger-perf）→ 出并发入口，summary 标注承接入口", () => {
+  it("豁免登记命中（nsh-app::ledger-perf）→ 出并发入口，summary 标注承接入口", () => {
     const r = run([
       "check",
       "--root",
       makeFixture({
-        rootManifest: ROOT_NAMED_TAURI_APP,
+        rootManifest: ROOT_NAMED_NSH_APP,
         files: {
-          "src-tauri/src/bin/ledger-perf/main.rs": "#[test]\nfn gen() {}\n\nfn main() {}\n",
+          // #2082 迁居形态：ledger-perf 为 nsh-app 同包 bin（成员 crate 自带
+          // manifest，bin 源文件经 src/bin/<name>/main.rs 自动发现）。
+          "src-app/crates/nsh/Cargo.toml":
+            '[package]\nname = "nsh-app"\nversion = "0.0.0"\nedition = "2021"\n',
+          "src-app/crates/nsh/src/bin/ledger-perf/main.rs":
+            "#[test]\nfn gen() {}\n\nfn main() {}\n",
         },
       }),
     ]);
@@ -548,7 +553,7 @@ describe("测试执行器两入口覆盖守门（issue #1112）", () => {
   it("bin 删除后残留的死登记 → 不红（无副作用，summary 不再展示）", () => {
     // 守门方向是「发现的 test = true bin 都必须登记」：bin 删除后登记无匹配对象，
     // 不拖累任何工作区（含夹具）；删登记才红（bin 回到并发入口被未登记检查拦住）。
-    const r = run(["check", "--root", makeFixture({ rootManifest: ROOT_NAMED_TAURI_APP })]);
+    const r = run(["check", "--root", makeFixture({ rootManifest: ROOT_NAMED_NSH_APP })]);
     expect(r.status).toBe(0);
     expect(r.output).not.toContain("bin 单测豁免");
   });

@@ -9,7 +9,7 @@ import { gateScript, runGateScript } from "./run-gate-script.test-helper.ts";
 // 脚本以 Bun 运行时执行（ADR-0083）：runGateScript 以 spawnSync('bun') 与门槛
 // 调用同款拉起，测的就是门槛路径。
 // 按测试决策只测外部可观察结果——进程退出码与输出，通过位置参数把扫描目标指向
-// 临时夹具目录（形状同构 src-tauri：migrations/ + crates/infra/src/）。
+// 临时夹具目录（形状同构 src-app：migrations/ + crates/infra/src/）。
 const script = gateScript("check-infra-dml.ts");
 const run = (args: string[] = []) => runGateScript(script, args);
 
@@ -18,9 +18,9 @@ afterAll(() => {
   for (const dir of tempDirs) rmSync(dir, { recursive: true, force: true });
 });
 
-/** 迁移 SQL 夹具：账本数据表 + 机制表（形状同构 src-tauri/migrations 的 CREATE TABLE 清单）。 */
+/** 迁移 SQL 夹具：账本数据表 + 机制表（形状同构 src-app/migrations 的 CREATE TABLE 清单）。 */
 const MIGRATION_SQL = [
-  "-- 测试夹具：迁移链（形状同构 src-tauri/migrations）",
+  "-- 测试夹具：迁移链（形状同构 src-app/migrations）",
   "CREATE TABLE transactions (id TEXT PRIMARY KEY, amount INTEGER);",
   "CREATE TABLE accounts (id TEXT PRIMARY KEY, balance INTEGER);",
   "CREATE TABLE budgets (id TEXT PRIMARY KEY);",
@@ -40,7 +40,7 @@ const DEFAULT_INFRA_FILES: Record<string, string> = {
   "crates/infra/src/db/schema_guard.rs": "pub fn guard() {}",
 };
 
-/** 建夹具目录（形状同构 src-tauri：migrations/ 与免扫文件必在；值为 null 表示
+/** 建夹具目录（形状同构 src-app：migrations/ 与免扫文件必在；值为 null 表示
  *  刻意省略该默认文件——清单漂移负向样本用）。返回目录路径。 */
 function makeFixture(
   files: Record<string, string | null>,

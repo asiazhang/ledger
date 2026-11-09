@@ -10,8 +10,9 @@
 #   先跑 `bun scripts/test-exec.ts check` 核入口接线：新增测试目标不会被静默漏跑，
 #   入口命令被 echo/注释/删除时立刻非零退出，不再静默退出 0 却一条测试都没跑
 #   （#1112 第三轮审查 P1）。
-# 入口② 非并发（cargo 自有 runner，两条命令）：e2e（cucumber，`harness = false`）
-#   与 doc-test 不纳并发调度，仍由 cargo 驱动，形态与拆 workspace 前一致。
+# 入口② 非并发（cargo 自有 runner）：doc-test 不纳并发调度，仍由 cargo 驱动。
+#   e2e（cucumber，`harness = false`）入口随 BDD e2e 于 #2083 随旧壳退役而移除
+#   （ADR-0145 决策 6：不做 1:1 移植，牺牲项显式化）。
 #
 # 显式 --workspace：非虚拟 workspace 下 cargo 默认只作用于根包，缺范围参数会
 # 静默漏跑成员 crate（spec #1086 / issue #1087）。
@@ -30,8 +31,5 @@ bun scripts/test-exec.ts check
 # 入口①：并发执行单元测试与集成测试（构建一次 + 全二进制并发，e2e 除外）
 bun scripts/test-exec.ts
 
-# 非并发入口：e2e（cucumber，harness = false）仍走既有入口
-( cd src-tauri && cargo test --workspace --test e2e )
-
 # 非并发入口：doc-test 由 rustdoc 生成测试二进制，不进并发执行器，仍由 cargo 驱动
-( cd src-tauri && cargo test --workspace --doc )
+( cd src-app && cargo test --workspace --doc )

@@ -14,7 +14,9 @@ import { ISSUES_URL, PROJECT_HOME_URL } from "@/settings/app-links";
 
 const writeText = vi.fn().mockResolvedValue(undefined);
 const openUrl = vi.fn().mockResolvedValue(undefined);
-vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn((url: string) => openUrl(url)) }));
+vi.mock("@ledger/mock-backend/bridge/opener", () => ({
+  openUrl: vi.fn((url: string) => openUrl(url)),
+}));
 
 // 固定值注入全局常量：生产环境由 vite define 注入，测试用 stubGlobal 等价注入
 const FULL_SHA = "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0";

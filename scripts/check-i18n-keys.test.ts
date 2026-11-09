@@ -57,7 +57,7 @@ afterAll(() => {
 
 describe("i18n key 全等校验（check.sh 质量门槛）", () => {
   it("真实仓库默认通过：两语言 key 全等且码化错误模板全覆盖（现行仓库绿）", () => {
-    // 无位置参数 = 真实仓库默认路径（locales 随 @ledger/i18n 包走 + src-tauri 扫描根）。
+    // 无位置参数 = 真实仓库默认路径（locales 随 @ledger/i18n 包走 + src-app 扫描根）。
     // 随守门测试挂载进 CI（issue #1473 引入挂载；#1991 起运行口径 = bun test
     // scripts/）：真实仓违规即红，不再只靠本地
     // 自觉跑 check.sh。两条成功行都携带动态计数/规则名——对应规则被删除时该行

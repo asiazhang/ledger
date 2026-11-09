@@ -1,0 +1,50 @@
+[package]
+name = "ledger-backup"
+version = "0.11.2"
+description = "Ledger 备份域 crate：备份/恢复引擎与自动备份调度（Backup / Restore / AutoBackup）"
+edition = "2024"
+publish = false
+# 版本与根包锁步（仓库约定：workspace 各成员同为 0.6.0）——after_commit_hook 以
+# 编译期 env!("CARGO_PKG_VERSION") 落备份元数据的 app_version 字段，升版须同步。
+
+[dependencies]
+# 备份域 crate（spec #1086 / issue #1091，首个拆出的业务域 crate）：依赖面只有
+# 基础设施（db / settings / events / error / fs_util）与数据面惯用库——对根包
+# （壳层）与任何业务域零依赖。迁移前对定时计划域的两条引用（追补触发直调、
+# 置脏实现的接线函数）已按注册点反转收敛（挂载点①/④，ADR-0112 决策 5）：
+# 备份域只定义注册点，实现由定时计划域/接线在壳层完成。
+ledger-infra = { path = "../infra" }
+# 设备标识（ADR-0144 决策 5，#1984）：产物元数据的来源设备水印取多端同步域
+# DeviceId（安装实例级，ADR-0091）。域 → 协议是合法方向（AGENTS.md「协议」节；
+# 先例：transaction / savings-goal / merchants 等）。
+ledger-sync-protocol = { path = "../sync-protocol" }
+rusqlite = { version = "0.40", features = ["bundled-sqlcipher-vendored-openssl", "trace"] }
+chrono = { version = "0.4.45", features = ["serde"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+zip = { version = "9", default-features = false, features = ["deflate"] }
+tracing = "0.1"
+
+[dev-dependencies]
+# 测试专用边（spec #1086 明文裁决「测试工厂与器具以 dev-dependency 环供各域
+# 复用，Cargo 允许」）：域单测用根包的统一测试数据库工厂与共享断言
+# （test_support，ADR-0084）与账户域余额口径（恢复往返对拍）。dev-dependency
+# 环由 Cargo 允许——测试目标与生产依赖图分离，不构成生产环；结构守门的依赖
+# 方向核对只辖生产依赖（本 crate 声明壳 crate 为生产依赖即红，负向夹具见
+# check-structure.test.ts）。由于该环，本 crate 不能像协议 crate 那样以
+# `use nsh_app::…` 的 compile_fail 文档用例承载反向引用负向例
+# （dev-dependency 对 doctest 可见，会击穿该形态）——反向引用的编译期拒绝
+# 由生产依赖面承担（lib 目标解析不到 dev-dependency），机器面负向核对住
+# 结构守门的 crate 依赖方向。test-utils feature 打开根包 test_support 门。
+nsh-app = { path = "../..", features = ["test-utils"] }
+# 账户域余额口径（恢复往返对拍）：#1108 起根包别名再导出清除，跨域引用以
+# crate 本名直呼（单实例，直呼与经根包再导出同一实例）。
+ledger-accounts = { path = "../accounts" }
+# 域单测经 test-utils feature 消费基础设施测试器具（外来形态明文库夹具，
+# issue #1453/#1454；cfg 门与消费先例见 transaction / accounts crate）。
+ledger-infra = { path = "../infra", features = ["test-utils"] }
+
+# 六件套易 panic 构造门禁经 workspace 继承（ADR-0060 / spec #1086 门禁前置）：
+# 本行是继承接线，缺失即门禁静默消失，由 scripts/check-structure.ts 守门。
+[lints]
+workspace = true

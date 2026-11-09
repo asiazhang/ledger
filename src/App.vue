@@ -136,7 +136,7 @@ watch(
   currentLocale,
   async () => {
     try {
-      const { getCurrentWindow } = await import("@tauri-apps/api/window");
+      const { getCurrentWindow } = await import("@ledger/mock-backend/bridge/window");
       void getCurrentWindow().setTitle(t("common.app.name"));
     } catch {
       /* 非 Tauri 环境 */

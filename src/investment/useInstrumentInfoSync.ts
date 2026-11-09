@@ -1,5 +1,5 @@
 import { ref } from "vue";
-import { listen } from "@tauri-apps/api/event";
+import { listen } from "@ledger/mock-backend/bridge/events";
 import { api } from "@ledger/api";
 import { t } from "@ledger/i18n";
 import type { InstrumentSyncProgress, SyncInstrumentInfoResult } from "@ledger/types";

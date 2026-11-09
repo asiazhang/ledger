@@ -8,9 +8,11 @@
 // #1593 的「手写 × 派生并行核对」期随之退役（#1595），#1589 的清单拆行/定序工件
 // 一并清除——同域串行票（建模块文件 + `lib.rs` 加 `mod` + 写文件头）不再触碰本脚本。
 //
-// 分层规则：壳 → 域 → 基础设施，域永不依赖壳。`WHITELIST` 是「已验证对壳层零
-// 依赖」的**政策条目表**（根包 `src` 面），不是模块全册登记——从根包 `src/lib.rs`
-// 投影会把 `commands/`、`shell_support/`、`main.rs` 拉进扫描面，语义就变了。
+// 分层规则：壳 → 域 → 基础设施，域永不依赖壳。壳 = 根包 nsh-app（#2083 切轨后
+// 唯一壳，CRATES 以 dir "." 登记）；壳层模块面不整册登记（SHELL 层模块分层不
+// 投影，域/基建/协议 crate 的模块面由各自 lib.rs 投影）。旧壳 tauri-app 条目、
+// 根包 src 白名单与 tauri-emit / tauri-host 门已随切轨退役；「全仓无 tauri」
+// 形状面（Cargo 清单 + 前端死路径）由 scripts/check-no-tauri.ts 独立辖。
 //
 // 测试豁免（ADR-0056 决策 5）：外挂测试模块/目录（tests.rs 文件、tests/ 目录）
 // 不参与守门——BDD/单元 fixture 合法引用壳层入口，不制造虚假违规；内联
@@ -42,14 +44,16 @@
 // 生产依赖图分离，cargo 放行）：基础设施对更高层 workspace crate 的
 // `[dev-dependencies]` 逐条留痕于 INFRA_DOMAIN_ALLOWED_EDGES（目标 crate + 成因 +
 // ADR 指针），清单之外的声明即红——方向禁令的判定载体自 #1596 起收成声明面。
-// 同 crate 内的方向规则照旧文本扫描（cargo 看不见）：壳层反向依赖（白名单根 src
-// 面——test_support 与 commands 同居根包，属 crate 内引用）与基础设施块间禁边
-//（原语 ← db ← boot 单向，db 不得引用 boot / signals；ADR-0111 决策 4，认许边逐条
-// 留痕 INFRA_BLOCK_ALLOWED_EDGES）。
+// 同 crate 内的方向规则只剩基础设施块间禁边（原语 ← db ← boot 单向，db 不得引用
+// boot / signals；ADR-0111 决策 4，认许边逐条留痕 INFRA_BLOCK_ALLOWED_EDGES）；
+// 旧壳白名单面的壳层反向依赖扫描随白名单退役（#2083，壳 src 现由模块投影豁免
+// 同款政策辖——SHELL 层不投影模块面）。
 //
 // 符号调用方闭集（ADR-0011 决策 3 + 2026-09-22 修订 ① / #1692）：当期入口
 // `convert_to_native_current`（含 `try_` 软形态，issue #1797）的生产调用方白名单
-// CONVERT_CURRENT_CALLERS 逐条留痕（9 个读路径消费面 + 压测工具注记），白名单外调用即红；
+// CONVERT_CURRENT_CALLERS 逐条留痕（9 个读路径消费面；压测工具注记已随
+// #2082 ledger-perf 迁居 nsh-app 同包 bin 摘除——SHELL 层 crate 模块面不在
+// 本扫描范围，与 nsh cross_book.rs 同规），白名单外调用即红；
 // 测试代码按 `/tests/` 路径约定豁免（ADR-0056 决策 5 同规），`fn` 定义面与注释/
 // 字符串提及经掩码与定义判定排除；在册成员文件缺失或零调用同样红（清单漂移
 // fail loud、拒绝空集假绿）。别名改写等文本不可达形态靠评审兜底（同壳层扫描
@@ -77,12 +81,14 @@
 // workspace 下默认只作用于根包，缺范围参数会静默漏检成员；`--all-targets` 等 `--all*`
 // 旗标不算范围）；引号内的命令字样是说明文字不算命令面，宿主里一条命令都核不到即红
 // （空集假绿）。另核 test_utils 生产编译门（ADR-0111 决策 5 / #1132）、投资五节锚点
-// 门（#1185）与 http 投影 feature 门（ADR-0111 决策 5 / #1133）。
+// 门（#1185）与 http 投影 feature 门（ADR-0111 决策 5 / #1133）。tauri 面不在本门
+// （清单形状 + 前端死路径归 scripts/check-no-tauri.ts、依赖全图归 cargo tree 命令
+// 门，#2083 切轨后 tauri-emit / tauri-host 门与 DOMAIN_TAURI_ALLOWED 整体退役）。
 //
 // TypeScript 化 + Bun 运行时（issue #734 / ADR-0083）：类型经 tsconfig.scripts.json
 // 门槛检查；调用方式 `bun scripts/check-structure.ts`。
 // 默认校验本仓库；测试可传位置参数指向夹具：
-// bun scripts/check-structure.ts [src-dir] [src-tauri-dir]
+// bun scripts/check-structure.ts [src-dir] [src-app-dir]
 
 import { existsSync, readFileSync, statSync, type Stats } from "node:fs";
 import { dirname, join } from "node:path";
@@ -100,8 +106,8 @@ import {
   type WalkedFile,
 } from "./gate-primitives.ts";
 
-/** 白名单条目（ADR-0056 决策 4）：路径 + 分层；注记归模块文件头（ADR-0113 决策 5）。 */
-export interface WhitelistEntry {
+/** 模块扫描条目（crate 派生模块面共用，ADR-0056 决策 4）：路径 + 分层。 */
+export interface ModuleEntry {
   path: string;
   layer: Layer;
 }
@@ -115,15 +121,7 @@ export const LAYER = {
 
 export type Layer = (typeof LAYER)[keyof typeof LAYER];
 
-/**
- * 守门白名单（ADR-0056 决策 4）：路径相对 src-tauri/src，条目 = 「已验证对壳层
- * 零依赖」的**政策条目表**（不是模块全册登记——见文件头）。今仅测试支持域一条；
- * 域与基础设施整体归 crate 后，crate 模块面由各 crate `lib.rs` 投影（#1595），
- * 根包 src 面（壳层反向依赖，同 crate 引用）由本表单独辖。
- */
-export const WHITELIST: readonly WhitelistEntry[] = [{ path: "test_support", layer: LAYER.DOMAIN }];
-
-/** 基础设施 crate 的模块根（相对 src-tauri）：`CRATES` 的 ledger-infra.dir + /src。 */
+/** 基础设施 crate 的模块根（相对 src-app）：`CRATES` 的 ledger-infra.dir + /src。 */
 export const INFRA_SRC_REL = "crates/infra/src";
 
 /** 交易域 crate 四区词汇（ADR-0113 决策 2/3）：区级层序判向共用，字面量单一来源。 */
@@ -210,7 +208,7 @@ const CRATE_LAYER_RANK: Record<CrateLayer, number> = {
   [CRATE_LAYER.INFRA]: 0,
 };
 
-/** crate 政策核条目（spec #1086 / issue #1087，ADR-0112 决策 4 修订）：dir 相对 src-tauri。 */
+/** crate 政策核条目（spec #1086 / issue #1087，ADR-0112 决策 4 修订）：dir 相对 src-app；根包（壳）以 dir "." 登记。 */
 export interface CrateEntry {
   name: string;
   dir: string;
@@ -320,15 +318,10 @@ export const CRATES: readonly CrateEntry[] = [
     layer: CRATE_LAYER.DOMAIN,
   },
   {
-    // NSH 原生壳应用 crate（issue #2017 / ADR-0145 双壳并存期首块桩）：第二个壳层
-    // bin crate——依赖方向沿用壳→域→基础设施→协议，直调域栈、不经 IPC；旧壳
-    // （tauri-app）保持唯一发版产品，两壳同层互不依赖。
+    // NSH 原生壳 = workspace 根包（issue #2017 / ADR-0145；#2083 切轨后唯一壳）：
+    // 依赖方向沿用壳→域→基础设施→协议，直调域栈、不经 IPC。dir "." 即 workspace
+    // 根（src-app/Cargo.toml），[workspace] 段与根包同册（成员 glob crates/*）。
     name: "nsh-app",
-    dir: "crates/nsh",
-    layer: CRATE_LAYER.SHELL,
-  },
-  {
-    name: "tauri-app",
     dir: ".",
     layer: CRATE_LAYER.SHELL,
   },
@@ -340,12 +333,13 @@ const MEMBER_DIR_GLOB = "crates/*";
 /**
  * crate 模块扫描目标（#1595）：模块面的分层自 crate 政策核投影（`CRATES` 每
  * crate 一条 layer），模块清单 expected 由各 crate `lib.rs` 的 `mod` 声明投影。
- * 根包（壳层）不整册登记模块面——`WHITELIST` 是根 `src` 的政策条目表，单独扫描。
+ * 壳层（根包 nsh-app，dir "."）不整册登记模块面（moduleLayerOf 对 SHELL 返回
+ * null）——壳层模块自由视图组住址，无模块级分层政策。
  */
 export interface CrateModuleTarget {
   /** crate 名（报文定位用；与 Cargo.toml 包名一致由 crate 边界核对保证） */
   crate: string;
-  /** 模块根（相对 src-tauri） */
+  /** 模块根（相对 src-app） */
   srcRel: string;
   /** 模块路径分层（自 crate layer 投影：域 → 域目录，基础设施 → 基础设施，协议 → 协议） */
   layer: Layer;
@@ -398,7 +392,7 @@ const CARGO_SUBCOMMANDS = ["clippy", "test", "fmt"] as const;
 
 /**
  * shell / YAML 引号与注释掩码（逐行，不跨行）：把解释性文字换成空格、保留列位置。
- * 引号里的 `cargo test …` 是说明文字（`echo "( cd src-tauri && cargo test … )"`），
+ * 引号里的 `cargo test …` 是说明文字（`echo "( cd src-app && cargo test … )"`），
  * `#` 之后是注释，都不构成命令面；不掩码会把 echo 字符串当成命令，把三条真命令全包成
  * echo 后核对仍然全绿（#1112 第三轮审查 P1）。逐行做也保证一个未闭合引号不会吞掉
  * 后续行。`.ts` 宿主不掩码——那里的命令面恰恰是字符串字面量。
@@ -518,9 +512,6 @@ function checkTsCargoArrays(rel: string, source: string, problems: string[]): nu
   return hits;
 }
 
-/** 壳层依赖形态：模块路径引用（crate::commands::x / commands::x）与别名引入 */
-const SHELL_DEP_PATTERN = /\bcommands\s*::|\bcommands\s+as\b/;
-
 /** 认许边条目（#1596 换载体）：目标 workspace crate 名 + 成因留痕 */
 interface InfraDevDepEdge {
   crate: string;
@@ -540,9 +531,9 @@ interface InfraDevDepEdge {
  */
 const INFRA_DOMAIN_ALLOWED_EDGES: readonly InfraDevDepEdge[] = [
   {
-    crate: "tauri-app",
+    crate: "nsh-app",
     reason:
-      "ADR-0084 迁移状态段 + ADR-0071 决策 6：内联 cfg(test) 测试经测试支持域 test_support 建库/取常量与种子（#758 收口），测试专用边、非产品依赖",
+      "ADR-0084 迁移状态段 + ADR-0071 决策 6：内联 cfg(test) 测试经根包统一测试工厂 test_support 建库/取常量与种子（#758 收口；#2083 切轨后根包 = nsh-app），测试专用边、非产品依赖",
   },
   {
     crate: "ledger-backup",
@@ -604,7 +595,7 @@ const INFRA_BLOCK_ALLOWED_EDGES: readonly InfraBlockEdge[] = [
   },
 ];
 
-/** 当期入口闭集条目：生产调用方文件（相对 src-tauri）+ 成因留痕 */
+/** 当期入口闭集条目：生产调用方文件（相对 src-app）+ 成因留痕 */
 interface SymbolCallerEntry {
   file: string;
   reason: string;
@@ -659,13 +650,14 @@ export const CONVERT_CURRENT_CALLERS: readonly SymbolCallerEntry[] = [
       "读路径：储蓄目标关联计划节奏的当期折算（#1753，订阅花费 spend.rs 同款先例——计划金额折算本位币再乘周期系数；计划币种即专属账户币种=本位币，正常数据零汇率读取）",
   },
   {
-    file: "src/cross_book_summary.rs",
+    file: "src/cross_book.rs",
     reason:
-      "读路径：跨账本汇总的当期折算（活动本读数合并单点 read_active_book_and_merge，#1699 自壳层命令闭包抽出；ADR-0114 跨本唯一例外）",
+      "读路径：跨账本汇总的当期折算（活动本读数合并单点 read_active_book_and_merge，#1699 自壳层命令闭包抽出；ADR-0114 跨本唯一例外）——#2083 切轨后住 NSH 壳 src/cross_book.rs",
   },
   {
     file: "src/bin/ledger-perf/bench.rs",
-    reason: "压测工具（ledger-perf bench）非生产路径，显式列入注记（#1692）",
+    reason:
+      "读路径：性能基准的当期折算基线（ledger-perf bench 查询面；#2082 迁居 nsh-app 同包 bin，#2083 切轨后随根包 src 入扫描范围）",
   },
 ];
 
@@ -691,7 +683,7 @@ function convertCurrentCallHits(source: string): ScanHit[] {
 }
 
 /** 规则①形态：全局模型模块路径（全局目录已消亡，任何引用即残留） */
-const GLOBAL_MODEL_PATH_PATTERN = /\b(?:crate|tauri_app_lib)\s*::\s*models\b/;
+const GLOBAL_MODEL_PATH_PATTERN = /\bcrate\s*::\s*models\b/;
 
 /** 规则②形态：模型模块的 glob 再导出——域接缝 `pub use model::*` 与
  *  跨域/旧目录同名拍平 `pub use …::models::*`；逐类型花括号列举不命中 */
@@ -763,14 +755,9 @@ interface ScanHit {
 }
 
 /** 扫描单个 Rust 文本（掩码注释与字符串/char 字面量）：返回命中指定形态的
- *  行号（1 起算）与原文；形态缺省为壳层依赖（白名单分层检查的既有行为）。
- *  `keepLiterals=true` 保留字符串/char 字面量内容、只掩码注释——靶形态落在
- *  字符串里的扫描（原生事务语句，issue #1014） */
-function scanRustSource(
-  text: string,
-  pattern: RegExp = SHELL_DEP_PATTERN,
-  keepLiterals = false,
-): ScanHit[] {
+ *  行号（1 起算）与原文。`keepLiterals=true` 保留字符串/char 字面量内容、只掩码
+ *  注释——靶形态落在字符串里的扫描（原生事务语句，issue #1014） */
+function scanRustSource(text: string, pattern: RegExp, keepLiterals = false): ScanHit[] {
   const hits: ScanHit[] = [];
   const masked = maskNonCode(text, keepLiterals);
   const maskedLines = masked.split("\n");
@@ -966,7 +953,7 @@ function defaultFeaturesInclude(manifest: string, feature: string): boolean {
   return false;
 }
 
-/** `crates/` 下含 Cargo.toml 的成员 crate 目录（相对 src-tauri，排序保证输出确定）。 */
+/** `crates/` 下含 Cargo.toml 的成员 crate 目录（相对 src-app，排序保证输出确定）。 */
 function memberCrateDirs(srcTauriDir: string): string[] {
   const cratesDir = join(srcTauriDir, "crates");
   if (!existsSync(cratesDir)) return [];
@@ -992,15 +979,6 @@ function memberCrateDirs(srcTauriDir: string): string[] {
  * - infra `http` 投影门被摘（axum 裸依赖 / impl 无 cfg / default 含 http / 域侧
  *   成员启用 http）→ axum 无条件编入或域侧引入，本核对红。
  */
-/** 存量域→tauri 认许清单（issue #2017 / ADR-0145）：域 crate 声明 tauri 生产依赖
- *  的既有宿主面——自动备份调度 / 行情车道 / 同步触发宿主的 AppHandle API 随
- *  ADR-0145 迁移系列票退役；清单外的新域声明即红（防新增域→tauri 边）。 */
-const DOMAIN_TAURI_ALLOWED: readonly string[] = [
-  "ledger-backup",
-  "ledger-market-sync",
-  "ledger-sync-engine",
-];
-
 function checkCrateBoundaries(srcTauriDir: string): string[] {
   const problems: string[] = [];
   const repoRoot = dirname(srcTauriDir);
@@ -1015,7 +993,7 @@ function checkCrateBoundaries(srcTauriDir: string): string[] {
   const workspaceSection = manifestSection(rootManifest, "workspace");
   if (workspaceSection === null) {
     problems.push(
-      "✗ crate 边界：src-tauri/Cargo.toml 缺 [workspace] 段——Rust 根须为 workspace 根（spec #1086）",
+      "✗ crate 边界：src-app/Cargo.toml 缺 [workspace] 段——Rust 根须为 workspace 根（spec #1086）",
     );
   } else if (!workspaceSection.includes(`"${MEMBER_DIR_GLOB}"`)) {
     problems.push(
@@ -1097,21 +1075,6 @@ function checkCrateBoundaries(srcTauriDir: string): string[] {
             "    分层规则：壳 → 域 → 基础设施单向；被依赖逻辑应下沉到更低层（spec #1086）",
         );
       }
-      // 双壳互不依赖（issue #2017 / ADR-0145 双壳并存期）：NSH 壳与 Tauri 壳是
-      // 两个独立壳层成员，同层互依会把另一壳（含其全部 UI 栈）编进本壳产物——
-      // 壳间共享逻辑应下沉域 crate 或基础设施；层秩核对看不见同层边，故显式拒绝。
-      if (
-        target &&
-        crate.layer === CRATE_LAYER.SHELL &&
-        target.layer === CRATE_LAYER.SHELL &&
-        crate.name !== target.name
-      ) {
-        problems.push(
-          `✗ crate 依赖方向：双壳互不依赖：${crate.name} 生产依赖另一壳层成员 ${target.name}\n` +
-            "    双壳并存期两壳各自独立（ADR-0145 决策 3）：旧壳保持唯一发版产品，" +
-            "NSH 壳直调域栈不经旧壳；壳间共享逻辑应下沉域 crate 或基础设施（issue #2017）",
-        );
-      }
     }
     // 同级域 crate 的同步禁边（ADR-0101 决策 4b / #1107）：多端同步域是全部业务域
     // 的消费方，业务域只可依赖同步协议 crate；业务域声明 `ledger-sync-engine`
@@ -1131,7 +1094,7 @@ function checkCrateBoundaries(srcTauriDir: string): string[] {
     // 基础设施→域 dev-dependency（ADR-0071 决策 6 修订注记 / #1596 换载体）：
     // 生产依赖越界由上方层秩核对拦下、未声明依赖即编译失败；cargo 对
     // dev-dependency 环放行（测试目标与生产依赖图分离），是唯一盲区——基础设施
-    // 对域层 crate（含承载 WHITELIST 域条目的根包）的 `[dev-dependencies]` 逐条
+    // 对域层 crate 的 `[dev-dependencies]` 逐条
     // 留痕于 INFRA_DOMAIN_ALLOWED_EDGES，清单之外的声明即红。协议层不在本规则
     // 辖下（退役的原 infra→域文本扫描同样不辖），其生产方向仍归层秩核对。
     if (crate.layer === CRATE_LAYER.INFRA) {
@@ -1209,6 +1172,7 @@ function checkCrateBoundaries(srcTauriDir: string): string[] {
   //   ③ 根包与 infra 的 `[features] default` 不得包含 test-utils（默认 feature 即生产）；
   //   ④ 投资五节标题锚点常量（issue #1185，住 `handlers/import.rs`）须带同一形态的门；
   //   ⑤ 锚点再导出（`api_server/mod.rs`）须带同一形态的门。
+  //   （api_server 随 #2081 迁居 NSH；#2083 切轨后 NSH 升根包，门路径 src/api_server。）
   // （根包 `test_utils` 再导出面已随 #1108 清除——测试器具经 dev-dependency 以
   // `ledger_infra::test_utils` 直达，根包侧门条目随之退役；再引入无门再导出会被
   // 生产构建解析失败拦下。）
@@ -1281,7 +1245,7 @@ function checkCrateBoundaries(srcTauriDir: string): string[] {
     problems.push(`✗ 生产编译 feature 门：${dirname(INFRA_SRC_REL)}/Cargo.toml 不存在`);
   }
   const defaultFeatureManifests: ReadonlyArray<readonly [string, string]> = [
-    [rootManifest, "src-tauri/Cargo.toml"],
+    [rootManifest, "src-app/Cargo.toml"],
     ...(infraManifest !== null
       ? [[infraManifest, `${dirname(INFRA_SRC_REL)}/Cargo.toml`] as const]
       : []),
@@ -1339,111 +1303,6 @@ function checkCrateBoundaries(srcTauriDir: string): string[] {
     }
   }
 
-  // ⑧' tauri-emit 门（issue #2017 / ADR-0145 双壳并存期，与 ⑧ http 门同款形状）：
-  // 失效信号的 AppHandle 投递实现只被旧壳（根包）消费，tauri 改 optional、经
-  // `tauri-emit` feature 门控——NSH 原生壳进程不得链接 tauri（GTK3/WebKitGTK 与
-  // GTK4 同进程符号互踩，gtk_init_check 双双失效）。三处删除即变红——
-  // ① infra 的 tauri 依赖须声明 optional（裸依赖即无条件链接，NSH 图被污染）；
-  // ② infra [features] 须有 tauri-emit 转发 dep:tauri（门与依赖面绑死）；
-  // ③ 根包与 infra 的 [features] default 不得含 tauri-emit（默认 feature 即生产）。
-  const tauriEmitGateLabel = "tauri-emit 投影门";
-  if (infraManifest !== null) {
-    const tauriLine = infraManifest.split("\n").find((l) => /^\s*tauri\s*=/.test(l));
-    if (tauriLine === undefined) {
-      problems.push(`✗ ${tauriEmitGateLabel}：infra Cargo.toml 找不到 tauri 依赖声明`);
-    } else if (!tauriLine.includes("optional = true")) {
-      problems.push(
-        `✗ ${tauriEmitGateLabel}：infra Cargo.toml 的 tauri 依赖未声明 optional\n` +
-          `    ${tauriLine.trim()}\n` +
-          "    非 optional 即无条件链接 tauri（GTK3/WebKitGTK），NSH 原生壳进程被污染" +
-          "（issue #2017 / ADR-0145），加回 optional 即变绿",
-      );
-    }
-    const tauriEmitFeatureLine = manifestSection(infraManifest, "features")
-      ?.split("\n")
-      .find((l) => /^\s*tauri-emit\s*=/.test(l));
-    if (tauriEmitFeatureLine === undefined || !tauriEmitFeatureLine.includes("dep:tauri")) {
-      problems.push(
-        `✗ ${tauriEmitGateLabel}：infra Cargo.toml [features] 缺 \`tauri-emit = ["dep:tauri"]\`\n` +
-          "    门与依赖面绑死——feature 不转发 dep:tauri 即门形同虚设（issue #2017）",
-      );
-    }
-  }
-  for (const [manifest, where] of defaultFeatureManifests) {
-    if (defaultFeaturesInclude(manifest, "tauri-emit")) {
-      problems.push(
-        `✗ ${tauriEmitGateLabel}：${where} [features] default 包含 tauri-emit\n` +
-          "    默认 feature 在生产构建启用，等价于无条件链接 tauri" +
-          "（issue #2017 / ADR-0145），从 default 移除 tauri-emit 即变红",
-      );
-    }
-  }
-
-  // ⑧'' tauri-host 宿主门（issue #2074 / ADR-0145 双壳并存期，⑧' 同款形状推广到
-  // DOMAIN_TAURI_ALLOWED 三个存量宿主）：backup / market-sync / sync-engine 的
-  // AppHandle 宿主面（自动备份调度 / 行情车道与发射器生产实现 / 同步触发宿主）
-  // 只被旧壳（根包）消费——NSH 原生壳进程不得链接 tauri（GTK3/WebKitGTK 与
-  // GTK4 同进程符号互踩，gtk_init_check 双双失效）。四处删除即变红——
-  // ① 宿主清单声明了 tauri 即须 optional（裸依赖即无条件链接，NSH 图被污染）；
-  // ② 宿主 [features] 须有 tauri-host 转发 dep:tauri（门与依赖面绑死）；
-  // ③ market-sync / sync-engine 的门须同时转发 ledger-infra/tauri-emit
-  //   （车道/触发编排的失效信号投递经 infra AppHandle 实现）；
-  // ④ 宿主 [features] default 不得含 tauri-host（默认 feature 即生产）。
-  // 宿主清单未声明 tauri = 存量宿主已退役，非本门对象（旧壳启用门 feature
-  // 会由 cargo 拒绝：dep:tauri 无 optional 声明即清单错误）。
-  // 传递面的机器守门 = 命令型门 `cargo tree -p nsh-app -i tauri`（挂载登记
-  // scripts/gate-mounts.ts，check.sh 与 CI backend-lint job 同判）：任一路径把
-  // tauri 拖回 nsh-app 依赖图即红，与本门互补（本门辖清单形状，彼门辖全图）。
-  const tauriHostGateLabel = "tauri-host 宿主门";
-  const tauriHostGateCrates: ReadonlyArray<readonly [string, string, boolean]> = [
-    ["backup", "tauri-host", false],
-    ["market-sync", "tauri-host", true],
-    ["sync-engine", "tauri-host", true],
-  ];
-  for (const [crateDir, gateFeature, forwardsInfraEmit] of tauriHostGateCrates) {
-    const hostManifestPath = join(srcTauriDir, "crates", crateDir, "Cargo.toml");
-    if (!existsSync(hostManifestPath)) {
-      continue; // crate 不存在（如夹具工作区）即无门对象，跳过
-    }
-    const hostManifest = readFileSync(hostManifestPath, "utf8");
-    const hostWhere = `crates/${crateDir}/Cargo.toml`;
-    const hostTauriLine = hostManifest.split("\n").find((l) => /^\s*tauri\s*=/.test(l));
-    if (hostTauriLine === undefined) {
-      continue; // 未持 tauri = 存量宿主已退役，非本门对象
-    }
-    if (!hostTauriLine.includes("optional = true")) {
-      problems.push(
-        `✗ ${tauriHostGateLabel}：${hostWhere} 的 tauri 依赖未声明 optional\n` +
-          `    ${hostTauriLine.trim()}\n` +
-          "    非 optional 即无条件链接 tauri（GTK3/WebKitGTK），NSH 原生壳进程被污染" +
-          "（issue #2074 / ADR-0145），加回 optional 即变绿",
-      );
-    }
-    const gateFeatureLine = manifestSection(hostManifest, "features")
-      ?.split("\n")
-      .find((l) => new RegExp(`^\\s*${gateFeature}\\s*=`).test(l));
-    if (gateFeatureLine === undefined || !gateFeatureLine.includes("dep:tauri")) {
-      problems.push(
-        `✗ ${tauriHostGateLabel}：${hostWhere} [features] 缺 \`${gateFeature} = ["dep:tauri"]\`\n` +
-          "    门与依赖面绑死——feature 不转发 dep:tauri 即门形同虚设（issue #2074）",
-      );
-    } else if (forwardsInfraEmit && !gateFeatureLine.includes("ledger-infra/tauri-emit")) {
-      problems.push(
-        `✗ ${tauriHostGateLabel}：${hostWhere} 的 ${gateFeature} 门未转发 ledger-infra/tauri-emit\n` +
-          `    ${gateFeatureLine.trim()}\n` +
-          "    车道/触发编排的失效信号投递经 infra AppHandle 实现，门须同帧转发" +
-          "（issue #2074），加回转发即变绿",
-      );
-    }
-    if (defaultFeaturesInclude(hostManifest, gateFeature)) {
-      problems.push(
-        `✗ ${tauriHostGateLabel}：${hostWhere} [features] default 包含 ${gateFeature}\n` +
-          "    默认 feature 在生产构建启用，等价于无条件链接 tauri" +
-          "（issue #2074 / ADR-0145），从 default 移除即变红",
-      );
-    }
-  }
-
   // ③' impl cfg 门：error.rs 的 IntoResponse impl 必须带 feature = "http" 的门。
   const errorRsPath = join(srcTauriDir, INFRA_SRC_REL, "error.rs");
   if (!existsSync(errorRsPath)) {
@@ -1469,11 +1328,16 @@ function checkCrateBoundaries(srcTauriDir: string): string[] {
     }
   }
 
-  // ⑤' 域侧成员启用 http → 红：http 只许壳侧（根包 tauri-app）启用，域侧启用
-  // 即把 axum 编入域依赖图，违背「域侧依赖不引入 axum」口径（issue #1133）。
+  // ⑤' 域侧成员启用 http → 红：http 只许壳侧启用（根包 nsh-app——api_server
+  // 随 #2081 迁居后壳是 axum 的唯一合法消费方，ADR-0112 决策 5），域侧启用即把
+  // axum 编入域依赖图，违背「域侧依赖不引入 axum」口径（issue #1133）。
   for (const crateDir of memberCrateDirs(srcTauriDir)) {
     if (crateDir === dirname(INFRA_SRC_REL)) continue; // infra 自身是门宿主，非消费方
     const memberManifest = readFileSync(join(srcTauriDir, crateDir, "Cargo.toml"), "utf8");
+    // 壳层成员（CRATES 登记为 SHELL）不在本门辖域：根包 nsh-app（唯一壳成员）
+    // 是 http/axum 的合法消费方（api_server 迁居，#2081）。
+    const shellEntry = CRATES.find((c) => c.dir === crateDir);
+    if (shellEntry?.layer === CRATE_LAYER.SHELL) continue;
     const enableLine = productionLedgerInfraEnablement(memberManifest, "http");
     if (enableLine !== null) {
       problems.push(
@@ -1490,43 +1354,6 @@ function checkCrateBoundaries(srcTauriDir: string): string[] {
         `✗ ${httpGateLabel}：域侧成员 ${crateDir} 生产依赖直接声明 axum\n` +
           "    域侧依赖不引入 axum——axum 只有壳层需要（ADR-0111 决策 5 / issue #1133），" +
           "移除该依赖即变红",
-      );
-    }
-    // ④' 域侧启用 tauri-emit / 直接声明 tauri 生产依赖 → 红（issue #2017 / ADR-0145）：
-    // tauri 只许旧壳（根包）与 DOMAIN_TAURI_ALLOWED 认许的存量宿主链接——其余
-    // 域侧引入会把 GTK3/WebKitGTK 编进域依赖图，NSH 原生壳（壳层、合法依赖域侧）
-    // 被传递污染。存量宿主（backup/market-sync/sync-engine 的调度 AppHandle API）
-    // 在 DOMAIN_TAURI_ALLOWED 认许（含其经 emit_for 消费投递实现所需的对
-    // ledger-infra 启用 tauri-emit），随迁移系列票退役；新声明即红。
-    // [dev-dependencies] 不在核对范围（测试专用边，先例同 axum）。
-    const memberEntry = CRATES.find((c) => c.dir === crateDir);
-    const isShell = memberEntry?.layer === CRATE_LAYER.SHELL;
-    const tauriHostAllowed = DOMAIN_TAURI_ALLOWED.includes(memberEntry?.name ?? "");
-    const tauriEmitLine = productionLedgerInfraEnablement(memberManifest, "tauri-emit");
-    if (tauriEmitLine !== null && !(isShell && crateDir === ".") && !tauriHostAllowed) {
-      problems.push(
-        `✗ ${tauriEmitGateLabel}：成员 ${crateDir}（${memberEntry?.layer ?? "未知层"}）生产依赖 ledger-infra 启用了 tauri-emit\n` +
-          `    ${tauriEmitLine}\n` +
-          "    tauri-emit 只许旧壳（根包）启用；其余成员启用即把 tauri（GTK3/WebKitGTK）编入" +
-          "自身依赖图，NSH 原生壳进程被传递污染（issue #2017 / ADR-0145），移除该 feature 即变红",
-      );
-    }
-    const declaresTauri = declaredProductionDependencyNames(memberManifest).includes("tauri");
-    if (declaresTauri && !isShell && !DOMAIN_TAURI_ALLOWED.includes(memberEntry?.name ?? "")) {
-      problems.push(
-        `✗ ${tauriEmitGateLabel}：域侧成员 ${crateDir} 生产依赖直接声明 tauri\n` +
-          "    域侧依赖不引入 tauri——tauri 只有旧壳需要（issue #2017 / ADR-0145）；" +
-          "存量宿主面在 DOMAIN_TAURI_ALLOWED 认许（随迁移系列票退役），新声明须先下沉" +
-          "注册点形态（ADR-0112 决策 5）或列入认许清单留痕",
-      );
-    }
-    // ⑤'' NSH 原生壳（非根包的壳层成员）生产依赖 tauri → 红：NSH 进程链接 tauri
-    // 即 GTK3/WebKitGTK 与 GTK4 同进程符号互踩（本门的存在理由，issue #2017）。
-    if (isShell && declaresTauri && crateDir !== ".") {
-      problems.push(
-        `✗ ${tauriEmitGateLabel}：壳层成员 ${crateDir} 生产依赖 tauri\n` +
-          "    NSH 原生壳进程不得链接 tauri（GTK3/WebKitGTK 与 GTK4 同进程符号互踩，" +
-          "issue #2017 / ADR-0145）——失效信号等壳层机制经注册点接线，不经 tauri",
       );
     }
   }
@@ -1916,7 +1743,7 @@ function checkConvertCurrentCallers(srcDir: string, srcTauriDir: string): string
   for (const entry of CONVERT_CURRENT_CALLERS) {
     if (!files.some((f) => f.rel === entry.file)) {
       problems.push(
-        `✗ 当期入口调用方闭集：在册成员文件不存在：${entry.file}（相对 src-tauri）\n` +
+        `✗ 当期入口调用方闭集：在册成员文件不存在：${entry.file}（相对 src-app）\n` +
           `    清单漂移 fail loud（规则见 ADR-0011 决策 3 / 2026-09-22 修订 ①，#1692）：` +
           `文件移动 / 删除后须同步本脚本 CONVERT_CURRENT_CALLERS`,
       );
@@ -1924,7 +1751,7 @@ function checkConvertCurrentCallers(srcDir: string, srcTauriDir: string): string
     }
     if (!hitsByFile.has(entry.file)) {
       problems.push(
-        `✗ 当期入口调用方闭集：在册成员零调用：${entry.file}（相对 src-tauri）\n` +
+        `✗ 当期入口调用方闭集：在册成员零调用：${entry.file}（相对 src-app）\n` +
           `    文件存在但扫不到 ${CONVERT_CURRENT_CALL_SYMBOL} 生产调用——拒绝空集假绿` +
           `（规则见 ADR-0011 决策 3 / 2026-09-22 修订 ①，#1692）：调用已移除即从 CONVERT_CURRENT_CALLERS 摘除该成员`,
       );
@@ -1934,29 +1761,12 @@ function checkConvertCurrentCallers(srcDir: string, srcTauriDir: string): string
 }
 
 /**
- * 单个非测试 Rust 文件的分层与方向扫描（白名单政策项与 crate 模块面共用）：
- * 壳层反向依赖（`options.scanShellRefs` 开启时——只有根包 src 白名单面开，
- * 同 crate 引用 cargo 看不见，属 #1596 退役后仅存的源码方向规则）；基础设施
- * 条目另核 crate 内块间反向依赖（ADR-0111 决策 4 / #1134）。跨 crate 方向不在
- * 本扫描面（#1596：声明面 + 编译期）。报文只给定位 + 分层 + 规则指针（T2-2）。
+ * 单个非测试 Rust 文件的分层与方向扫描（crate 模块面）：基础设施条目核 crate 内
+ * 块间反向依赖（ADR-0111 决策 4 / #1134）。跨 crate 方向不在本扫描面（#1596：
+ * 声明面 + 编译期；壳层白名单面已随 #2083 切轨退役）。报文只给定位 + 规则指针（T2-2）。
  */
-function scanModuleFile(
-  file: WalkedFile,
-  layer: Layer,
-  problems: string[],
-  options: { scanShellRefs: boolean; context: string },
-): void {
+function scanModuleFile(file: WalkedFile, layer: Layer, problems: string[]): void {
   const source = readFileSync(file.abs, "utf8");
-  if (options.scanShellRefs) {
-    for (const hit of scanRustSource(source)) {
-      problems.push(
-        `✗ 反向依赖：${file.rel}:${hit.line}（${options.context}）引用壳层（${hit.match}）\n` +
-          `    ${hit.text}\n` +
-          `    分层规则：壳 → 域 → 基础设施，域永不依赖壳（规则见 ADR-0056 决策 4）——` +
-          `被依赖逻辑应下沉到域目录或基础设施`,
-      );
-    }
-  }
   if (layer === LAYER.INFRA) {
     // crate 内块间反向依赖（ADR-0111 决策 4 / #1134）：db 不得引用 boot / signals
     //（shell_support 已随 #1108 迁出根包）；认许边逐条留痕，清单之外即红。
@@ -1982,15 +1792,15 @@ function scanModuleFile(
 }
 
 /**
- * 条目化扫描（ADR-0056 决策 4）：白名单政策项与 crate 派生模块面共用——条目
- * 必须存在且扫得到非测试 Rust 文件（漂移 fail loud），逐文件交 scanModuleFile。
- * 返回扫到的非测试文件数；返回 0 由调用方统一拒绝（拒绝以空集假绿通过）。
+ * 条目化扫描（ADR-0056 决策 4）：crate 派生模块面共用——条目必须存在且扫得到
+ * 非测试 Rust 文件（漂移 fail loud），逐文件交 scanModuleFile。返回扫到的非测试
+ * 文件数；返回 0 由调用方统一拒绝（拒绝以空集假绿通过）。
  */
 function scanModuleEntries(
-  entries: readonly WhitelistEntry[],
+  entries: readonly ModuleEntry[],
   baseDir: string,
   problems: string[],
-  options: { scanShellRefs: boolean; context: string },
+  options: { context: string },
 ): number {
   let scanned = 0;
   for (const w of entries) {
@@ -2019,7 +1829,7 @@ function scanModuleEntries(
       continue;
     }
     scanned += files.length;
-    for (const f of files) scanModuleFile(f, w.layer, problems, options);
+    for (const f of files) scanModuleFile(f, w.layer, problems);
   }
   return scanned;
 }
@@ -2034,25 +1844,23 @@ function scanCrateModules(
   srcTauriDir: string,
   problems: string[],
 ): number {
-  const entries: WhitelistEntry[] = derived.map((path) => ({
+  const entries: ModuleEntry[] = derived.map((path) => ({
     path,
     layer: target.layer,
   }));
   return scanModuleEntries(entries, join(srcTauriDir, target.srcRel), problems, {
     // crate 模块面不做源码方向扫描（#1596：跨 crate 方向归声明面 + 编译期）；
     // 条目存在性与非测试文件核对、基础设施块间禁边照旧。
-    scanShellRefs: false,
     context: `${target.crate} / ${target.layer}`,
   });
 }
 
 function main(): void {
   const repoRoot = fileURLToPath(new URL("..", import.meta.url));
-  const srcDir = process.argv[2] ?? join(repoRoot, "src-tauri", "src");
-  const srcTauriDir = process.argv[3] ?? join(repoRoot, "src-tauri");
+  const srcDir = process.argv[2] ?? join(repoRoot, "src-app", "src");
+  const srcTauriDir = process.argv[3] ?? join(repoRoot, "src-app");
   const problems: string[] = [];
   let scannedFiles = 0;
-  const domainCount = WHITELIST.filter((w) => w.layer === LAYER.DOMAIN).length;
 
   // 模型域化禁令（规则①/②）+ 原生事务语句禁令（规则③）：全树扫描（壳、域、
   // 基础设施、顶层文件），残留引用可出现在任何层；collectRustFiles 自带测试
@@ -2110,16 +1918,9 @@ function main(): void {
     }
   }
 
-  // 模块面扫描（#1595）：WHITELIST 政策项相对根 src 扫描（壳层反向依赖——同
-  // crate 引用，cargo 看不见）；crate 模块面 expected 由各 crate `lib.rs` 的
+  // 模块面扫描（#1595）：crate 模块面 expected 由各 crate `lib.rs` 的
   // `mod` 声明投影（含声明↔磁盘双向全等），逐条做条目核对与基础设施块间禁边，
-  // 源码方向扫描随 #1596 退役给声明面 + 编译期——基础设施模块自 #1088 全量归位
-  // 起不再住根 src（ADR-0056「白名单即规格」与决策 4 修订注记不变）。
-  scannedFiles += scanModuleEntries(WHITELIST, srcDir, problems, {
-    // 壳层反向依赖是仅存的源码方向规则（同 crate 引用，cargo 看不见，#1596）。
-    scanShellRefs: true,
-    context: "白名单政策项（根 src）",
-  });
+  // 源码方向扫描随 #1596 退役给声明面 + 编译期（壳层白名单面随 #2083 切轨退役）。
   for (const target of CRATE_MODULE_TARGETS) {
     const derived = deriveCrateModules(target, srcTauriDir, problems);
     scannedFiles += scanCrateModules(target, derived, srcTauriDir, problems);
@@ -2127,7 +1928,7 @@ function main(): void {
 
   if (scannedFiles === 0) {
     problems.push(
-      "✗ 全部白名单条目扫不到任何非测试 Rust 文件——src 目录指错或白名单整体漂移，拒绝以空集假绿通过",
+      "✗ crate 模块面扫不到任何非测试 Rust 文件——src-app 目录指错或 CRATES 整体漂移，拒绝以空集假绿通过",
     );
   }
 
@@ -2153,8 +1954,8 @@ function main(): void {
     process.exit(1);
   }
   console.log(
-    `✓ 结构守门：白名单 ${WHITELIST.length} 项（域目录 ${domainCount}）` +
-      `· 白名单面非测试文件 ${scannedFiles} 个 · 对壳层零依赖` +
+    `✓ 结构守门：壳 = 根包 nsh-app（dir "."，#2083 切轨后唯一壳）` +
+      `· crate 模块面非测试文件 ${scannedFiles} 个 · 对壳层零依赖` +
       `· crate 模块面 ${CRATE_MODULE_TARGETS.length} 份（expected 由 crate 根 lib.rs 的 mod 声明投影 + 磁盘双向全等，#1595）` +
       `· 跨 crate 依赖方向：声明面判定（层秩 + 业务域→多端同步域禁令），未声明依赖归编译期（#1596 / ADR-0071·ADR-0101 修订注记）` +
       `· 基础设施 dev-dependency 方向零未留痕声明（认许边 ${INFRA_DOMAIN_ALLOWED_EDGES.length} 条，ADR-0071 决策 6）` +
@@ -2166,8 +1967,7 @@ function main(): void {
       `· 当期入口调用方闭集 ${CONVERT_CURRENT_CALLERS.length} 成员全在册（白名单外即红，ADR-0011 / #1692）` +
       `· test_utils 生产编译门（cfg 门 + 生产依赖不启用 test-utils，#1132）` +
       `· 投资五节锚点生产编译门（cfg 门，#1185）` +
-      `· http 投影 feature 门（axum optional + impl cfg 门 + default 不含 http + 域侧不启用，#1133）` +
-      `· tauri-emit 门（tauri optional + feature 转发 + default 不含 + 域侧不启用，#2017）`,
+      `· http 投影 feature 门（axum optional + impl cfg 门 + default 不含 http + 域侧不启用，#1133）`,
   );
 }
 

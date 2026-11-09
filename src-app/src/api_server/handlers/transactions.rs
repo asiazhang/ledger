@@ -1,0 +1,230 @@
+//! 交易端点：列表（过滤 + 分页 + HTTP 缺省上限）/ 批量创建（默认去重）/ 全字段替换 / 软删除。
+//!
+//! 写端点经壳层统一写入口 [`crate::shell_support::write_entry`]（ADR-0073）：
+//! 事务、置脏、信号内化单点，「即建商户」证据随闭包返回必达；读端点经
+//! `run_db`（形状乙）。
+//!
+//! 列表读端点的 HTTP 缺省上限（issue #1631）：缺省不再返回全部，等价注入
+//! `page_size = 上限`（`page` 缺省 1）——显式 `page_size` / `limit` 超上限或负值报 400 码化错误。校验住本层，
+//! 与 IPC 共用的域实现（`list_transactions_internal`）零改动——IPC 缺省全量
+//! 语义不变（ADR-0008 原决策辖 IPC；HTTP 半边修订见其修订注记）。
+
+use axum::Json;
+use axum::extract::{Path, Query, State};
+use axum::http::StatusCode;
+
+use crate::api_server::error::ErrorResponse;
+use crate::api_server::state::{EmitterSlot, ReadConn};
+use crate::shell_support::read_entry;
+use crate::shell_support::{Outcome, write_entry};
+use ledger_infra::db::DbWriteHandle;
+use ledger_infra::error::AppError;
+use ledger_infra::signals::WriteOp;
+use ledger_transaction::amount::TransactionKind;
+use ledger_transaction::{
+    CreateTransactionResult, Transaction, TransactionBatchInput, TransactionListFilter,
+    TransactionListResult, UpdateTransactionInput,
+};
+
+/// HTTP 列表单请求行数上限：缺省分页大小与显式 `page_size` / `limit` 共用同一
+/// 上限（issue #1631）。取值对齐既有上限口径——标的搜索端点「上限收敛 100」
+/// （AI 上下文预算可控）与前端页大小闭集 10/20/50/100 的最大值。
+const HTTP_MAX_PAGE_SIZE: usize = 100;
+
+/// HTTP 列表入参行数守卫（issue #1631，只辖 HTTP）：缺省（`page_size` 与
+/// `limit` 均未携带）注入 `page_size = 上限`（`page` 缺省 1，故缺省即首页；
+/// 已携 `page` 时返回该页 × 上限），不再整表序列化；显式超上限或
+/// 负值 `limit`（SQLite 负值无上限语义仅限 IPC）报 400 码化错误——拒绝而非
+/// 静默截断，截断会造成读回少行不自知，AI 导入按码自纠（ADR-0050）。只携
+/// `limit` 时不注入缺省页（保留「取前 N 条」与分页互斥的既有语义，ADR-0008）。
+fn enforce_http_page_bounds(
+    mut filter: TransactionListFilter,
+) -> Result<TransactionListFilter, AppError> {
+    if let Some(page_size) = filter.page_size {
+        if page_size > HTTP_MAX_PAGE_SIZE {
+            let requested = page_size.to_string();
+            let cap = HTTP_MAX_PAGE_SIZE.to_string();
+            return Err(AppError::codedp(
+                "transaction.page-size-over-cap",
+                format!("page_size {requested} 超过单页上限 {cap}"),
+                &[&requested, &cap],
+            ));
+        }
+    } else if filter.limit.is_none() {
+        filter.page_size = Some(HTTP_MAX_PAGE_SIZE);
+    }
+    if let Some(limit) = filter.limit
+        && (limit < 0 || limit > HTTP_MAX_PAGE_SIZE as i64)
+    {
+        let requested = limit.to_string();
+        let cap = HTTP_MAX_PAGE_SIZE.to_string();
+        return Err(AppError::codedp(
+            "transaction.limit-out-of-range",
+            format!("limit {requested} 超出允许范围（0 到 {cap}，负值无上限仅限 IPC）"),
+            &[&requested, &cap],
+        ));
+    }
+    Ok(filter)
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/transactions",
+    tag = "transactions",
+    summary = "列出交易（可按日期/账户/类型过滤 + 服务端分页）",
+    description = "读回/列表唯一入口：返回 `{items, total}`，过滤参数（from/to、account_id、\
+                  involving_account_id、merchant_id、category_id、instrument_id、kinds、\
+                  uncategorized_only、hide_investment_related、limit、page/page_size）全部可选；默认按日期倒序稳定排序。\
+                  HTTP 单请求行数上限 100：缺省不再返回全部（等价 page_size=100），\
+                  读全部须按 total 翻页取齐；超限或负值报 400 码化错误。\
+                  读回核对与参数语义见导入知识「对账完成判定」节；行携带 `source` 来源字段（读时反查推导），\
+                  无来源交易为`null`。",
+    params(
+        ("from" = Option<String>, Query, description = "起始日期（含），YYYY-MM-DD"),
+        ("to" = Option<String>, Query, description = "结束日期（含），YYYY-MM-DD"),
+        ("account_id" = Option<String>, Query, description = "按转出账户过滤"),
+        ("involving_account_id" = Option<String>, Query, description = "涉及账户过滤（account_id、to_account_id 或出资账户 funding_account_id 任一命中即算：含转账两侧与带出资账户买卖的出资端）"),
+        ("merchant_id" = Option<String>, Query, description = "按商户过滤（含软删商户的历史交易）"),
+        ("category_id" = Option<String>, Query, description = "按分类精确过滤（不含子分类，含软删分类的历史交易）"),
+        ("uncategorized_only" = Option<bool>, Query, description = "true 时仅返回无分类交易；与 category_id 同携按 AND 组合"),
+        ("hide_investment_related" = Option<bool>, Query, description = "true 时隐藏投资相关流水：转出 / 转入 / 出资三端任一端为投资类型账户的行被排除（按账户不按分类，ADR-0136）；与其余维度 AND 组合，缺省或 false 行为不变"),
+        ("instrument_id" = Option<String>, Query, description = "按标的过滤（ADR-0107）：命中证券交易扩展表中该标的的 buy/sell 行，convert 任一腿命中即算（转入腿同算）；与其余维度 AND 组合"),
+        ("kinds" = Option<Vec<TransactionKind>>, Query, description = "交易类型集合过滤（唯一类型维度，手动多选与下钻共用）：逗号分隔单参数如 expense,refund（同时承担单值与多值，取代原单值 kind 参数），命中 kind IN (...)；与其余维度 AND 组合，非法值 4xx"),
+        ("limit" = Option<i64>, Query, description = "取前 N 条，须在 0 到 100 之间，超范围报 400；与 page_size 互斥，仅携 limit 时按 limit 截取"),
+        ("page" = Option<usize>, Query, description = "页码，从 1 开始，默认 1"),
+        ("page_size" = Option<usize>, Query, description = "每页条数，上限 100，超过报 400 码化错误；缺省等价 page_size=100（total 恒返回）")
+    ),
+    responses(
+        (status = 200, description = "交易分页结果 {items, total}", body = TransactionListResult),
+        (status = 400, description = "分页参数超上限：page_size > 100（transaction.page-size-over-cap）或 limit 超范围/负值（transaction.limit-out-of-range）", body = ErrorResponse),
+        (status = 500, description = "数据库错误", body = ErrorResponse)
+    )
+)]
+pub async fn list_transactions_handler(
+    State(read): State<ReadConn>,
+    Query(query): Query<TransactionListFilter>,
+) -> Result<Json<TransactionListResult>, AppError> {
+    let query = enforce_http_page_bounds(query)?;
+    read_entry("GET /api/v1/transactions", read.0, move |conn| {
+        let result = ledger_transaction::list_transactions_internal(conn, &query)?;
+        Ok(Json(result))
+    })
+    .await
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/v1/transactions/batch",
+    tag = "transactions",
+    summary = "批量创建交易（默认去重）",
+    description = "批量创建交易（`dedup` 默认 true）：幂等键优先、内容哈希兜底去重；\
+                  单行校验失败返回 `success: false` 附中文 `error`、不影响其余行；非法 `kind` \
+                  属请求体格式错误、整批 4xx。去重与幂等键规则见导入知识「幂等与去重」节。",
+    request_body = TransactionBatchInput,
+    responses(
+        (status = 200, description = "逐条创建结果（含 duplicate 标记）", body = [CreateTransactionResult]),
+        (status = 400, description = "请求体格式错误", body = ErrorResponse),
+        (status = 500, description = "数据库错误", body = ErrorResponse)
+    )
+)]
+pub async fn batch_create_transactions_handler(
+    State(conn): State<DbWriteHandle>,
+    State(emitter): State<EmitterSlot>,
+    Json(body): Json<TransactionBatchInput>,
+) -> Result<Json<Vec<CreateTransactionResult>>, AppError> {
+    // 批次事务由 run 自持（issue #245），提交点置脏/到期检查单点；整批回滚不置脏
+    // 由写入口闭包失败语义保证。批内任一行即建商户才发参考失效信号
+    //（修复 HTTP 导入即建商户后前端商户字典陈旧，issue #331）。
+    let results = write_entry(
+        "POST /api/v1/transactions/batch",
+        conn,
+        emitter.as_deref(),
+        WriteOp::BatchCreateTransactions,
+        move |conn| {
+            ledger_transaction::TransactionBatch::run(conn, body.transactions, body.dedup)
+                .map(|outcome| Outcome::Evidenced(outcome.results, outcome.evidence))
+        },
+    )
+    .await?;
+    Ok(Json(results))
+}
+
+#[utoipa::path(
+    put,
+    path = "/api/v1/transactions/{id}",
+    tag = "transactions",
+    summary = "按 id 全字段替换交易（编辑）",
+    description = "按 id 全字段替换交易（幂等键不可编辑，校验与创建一致）；\
+                  已有部分卖出的买入拒绝修改；不存在的 id 返回 404。纠错纪律见导入知识「对账纠错」节。",
+    request_body = UpdateTransactionInput,
+    params(
+        ("id" = String, Path, description = "交易 ID")
+    ),
+    responses(
+        (status = 200, description = "更新后的完整交易", body = Transaction),
+        (status = 400, description = "参数错误（如转账缺目标账户、部分卖出的买入、买卖标的不存在）", body = ErrorResponse),
+        (status = 404, description = "交易不存在", body = ErrorResponse),
+        (status = 500, description = "数据库错误", body = ErrorResponse)
+    )
+)]
+pub async fn update_transaction_handler(
+    State(conn): State<DbWriteHandle>,
+    State(emitter): State<EmitterSlot>,
+    Path(id): Path<String>,
+    Json(input): Json<UpdateTransactionInput>,
+) -> Result<Json<Transaction>, AppError> {
+    // 修改与读回同一写闭包，提交点置脏/检查单点；仅即建商户发参考失效信号
+    //（证据随闭包返回必达，ADR-0073）。
+    let updated = write_entry(
+        "PUT /api/v1/transactions/{id}",
+        conn,
+        emitter.as_deref(),
+        WriteOp::UpdateTransaction,
+        move |conn| {
+            let evidence =
+                ledger_transaction::update_transaction_internal(conn, &id, input.into())?;
+            let updated = ledger_transaction::get_transaction_internal(conn, &id)?;
+            Ok(Outcome::Evidenced(updated, evidence))
+        },
+    )
+    .await?;
+    Ok(Json(updated))
+}
+
+#[utoipa::path(
+    delete,
+    path = "/api/v1/transactions/{id}",
+    tag = "transactions",
+    summary = "删除交易（软删除）",
+    description = "按 `id` 软删除交易（`is_deleted=1`）。buy 交易同步清理关联持仓\
+                  （`security_lots` / `security_transactions`）；部分卖出的买入改为级联删除：\
+                  其持仓批次的在用 sell 一并软删除（持仓扣减回补，issue #940）；\
+                  sell 删除回补持仓扣减并清空卖出匹配。\
+                  删除后该交易不再占用去重位，重跑批量导入会重新写入（`duplicate: false`）。\
+                  不存在的 id 返回 404。成功返回 204 No Content。",
+    params(
+        ("id" = String, Path, description = "交易 ID")
+    ),
+    responses(
+        (status = 204, description = "删除成功（无响应体；buy 的级联软删不额外返回被删列表）"),
+        (status = 404, description = "交易不存在", body = ErrorResponse),
+        (status = 500, description = "数据库错误", body = ErrorResponse)
+    )
+)]
+pub async fn delete_transaction_handler(
+    State(conn): State<DbWriteHandle>,
+    State(emitter): State<EmitterSlot>,
+    Path(id): Path<String>,
+) -> Result<StatusCode, AppError> {
+    // 零信号写端点同样经统一写入口并传发射槽（ADR-0073 决策 3）：映射单点
+    // 当前判定零信号、发射循环自然零次，未来补信号时天然生效。
+    write_entry(
+        "DELETE /api/v1/transactions/{id}",
+        conn,
+        emitter.as_deref(),
+        WriteOp::DeleteTransaction,
+        move |conn| ledger_transaction::delete_transaction_internal(conn, &id).map(Outcome::Silent),
+    )
+    .await?;
+    Ok(StatusCode::NO_CONTENT)
+}

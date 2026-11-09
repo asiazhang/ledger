@@ -3,7 +3,7 @@ import { installmentSchedule } from "../installment";
 
 /**
  * 分期每期金额预览纯函数（issue #204）。
- * 口径与后端一致（src-tauri/src/scheduled_transactions/engine.rs expand_occurrences）：
+ * 口径与后端一致（src-app/crates/scheduled/src/engine.rs expand_occurrences）：
  * floor 均分、尾差进最后一期——不造第二套金额口径。
  */
 describe("installmentSchedule 分期每期金额预览", () => {

@@ -1,11 +1,11 @@
-import { onBackButtonPress } from "@tauri-apps/api/app";
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { onBackButtonPress } from "@ledger/mock-backend/bridge/app";
+import { getCurrentWindow } from "@ledger/mock-backend/bridge/window";
 import { vi, type Mock } from "vitest";
 
 /**
  * 测试侧系统返回桥接 mock 的统一入口（单一事实源，与 listen-mock 同纪律）。
  *
- * 布线（setup.ts）：vi.mock 替换 '@tauri-apps/api/app' 与 '@tauri-apps/api/window'
+ * 布线（setup.ts）：vi.mock 替换 '@ledger/mock-backend/bridge/app' 与 '@ledger/mock-backend/bridge/window'
  * 两模块；beforeEach 复位后装默认实现（注册即成功、unregister 为 no-op）。
  * 需要驱动返回键或断言注册/撤销/销毁的用例经本文件助手安装捕获实现。
  *

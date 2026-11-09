@@ -11,7 +11,7 @@
 //
 // 混合输入（如「招zsyh」）无需特判：含汉字的词条对纯 ASCII 首字母串的
 // 子序列匹配必然失败，自然落到原文子串路径，两条路径任一命中即算。
-// 后端 Rust 侧同规格实现在 `src-tauri/src/commands/search/text.rs`。
+// 后端 Rust 侧同规格实现在 `src-app/crates/transaction/src/shared/search_text.rs`。
 
 import { pinyin } from "pinyin-pro";
 import type { SelectOption } from "naive-ui";

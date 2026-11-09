@@ -1,7 +1,7 @@
 /**
  * 分期每期金额预览（issue #204）。
  *
- * 口径唯一来源是后端分期期次生成（src-tauri/src/scheduled_transactions/engine.rs
+ * 口径唯一来源是后端分期期次生成（src-app/crates/scheduled/src/engine.rs
  * expand_occurrences 的 installment 分支）：floor 均分、尾差进最后一期。
  * 本函数只是把同一口径搬到前端做实时预览，禁止在此之外再写第二套分期金额表达式。
  */

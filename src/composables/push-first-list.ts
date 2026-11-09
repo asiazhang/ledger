@@ -1,6 +1,6 @@
 import { ref } from "vue";
 import type { Ref } from "vue";
-import { listen } from "@tauri-apps/api/event";
+import { listen } from "@ledger/mock-backend/bridge/events";
 import { createLatestWins, type LatestWinsToken } from "@ledger/latest-wins";
 
 /**

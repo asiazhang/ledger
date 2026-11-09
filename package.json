@@ -14,8 +14,7 @@
     "test:watch": "vitest",
     "lint": "oxlint --deny-warnings",
     "format": "oxfmt .",
-    "format:check": "oxfmt --check .",
-    "tauri": "tauri"
+    "format:check": "oxfmt --check ."
   },
   "dependencies": {
     "@ledger/api": "workspace:*",
@@ -35,9 +34,6 @@
     "@ledger/ui-kit": "workspace:*",
     "@ledger/utils": "workspace:*",
     "@ledger/window-tier": "workspace:*",
-    "@tauri-apps/api": "^2.11.1",
-    "@tauri-apps/plugin-dialog": "^2.7.3",
-    "@tauri-apps/plugin-opener": "^2.5.5",
     "@vanilla-extract/css": "^1.21.2",
     "@vicons/ionicons5": "^0.13.0",
     "@vue/devtools-api": "^8.2.1",
@@ -56,7 +52,6 @@
     "@stryker-mutator/core": "10.0.0",
     "@stryker-mutator/typescript-checker": "10.0.0",
     "@stryker-mutator/vitest-runner": "10.0.0",
-    "@tauri-apps/cli": "^2.11.4",
     "@types/node": "^22.20.1",
     "@vanilla-extract/vite-plugin": "^5.2.6",
     "@vitejs/plugin-vue": "^6.0.8",

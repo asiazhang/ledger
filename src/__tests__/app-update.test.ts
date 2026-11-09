@@ -14,7 +14,9 @@ import {
 
 // 发布页引导走 opener 插件（系统默认浏览器），测试以模块替身断言调用事实。
 const openUrl = vi.fn().mockResolvedValue(undefined);
-vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn((url: string) => openUrl(url)) }));
+vi.mock("@ledger/mock-backend/bridge/opener", () => ({
+  openUrl: vi.fn((url: string) => openUrl(url)),
+}));
 
 let handlers: CapturedListener[] = [];
 

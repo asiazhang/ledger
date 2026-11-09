@@ -21,7 +21,7 @@
  * 不存在（与解锁屏同理，见 UnlockScreen 注释）。
  */
 import { NAlert, NButton, NCard, NSpace, NText, useMessage } from "naive-ui";
-import { openUrl } from "@tauri-apps/plugin-opener";
+import { openUrl } from "@ledger/mock-backend/bridge/opener";
 import { computed, ref } from "vue";
 import AppModal from "@ledger/ui-kit/AppModal.vue";
 import RestoreConfirmModal from "@/backup/RestoreConfirmModal.vue";

@@ -7,14 +7,14 @@
 “受影响域”包括：修改代码所在域、调用到的域、数据模型所属域，以及用户可见行为所属域。
 
 - **业务规则、领域术语或跨域改动**：先读 `CONTEXT-MAP.md`，再读所有受影响域的 `docs/contexts/CONTEXT-*.md` 与相关 ADR。
-- **后端分层与归位（壳 / 域 / 基础设施 / crate 内部组织，含 triage 判定）**：读 ADR-0112、ADR-0113、ADR-0111；根包目录白名单见 `scripts/check-structure.ts`。
+- **后端分层与归位（壳 / 域 / 基础设施 / crate 内部组织，含 triage 判定）**：读 ADR-0112、ADR-0113、ADR-0111；crate 政策核（成员 / 分层 / 依赖方向）见 `scripts/check-structure.ts` 的 `CRATES`。
 - **后端易 panic 构造（unwrap/expect/panic!/todo!/unimplemented!/unreachable!）或其豁免**：读 `docs/adr/0060-backend-panic-construction-gate.md`。
 - **金额或交易写入改动**：先读 `docs/contexts/CONTEXT-core.md` 和相关 ADR，再以当前金额与写入接缝为唯一实现依据。
 - **前端状态、界面交互或弹层**：读 `docs/contexts/CONTEXT-reference-settings.md`、`docs/contexts/CONTEXT-ui-interaction.md` 及相关 ADR。
 - **用户可见文案或错误**：读相关域词汇表、ADR-0049/0050 和现有 i18n 实现。
 - **schema、migration 或数据模型改动**：读 `docs/model/README.md`、相关 migration 和 ADR，并检查发布边界。
 - **编写或修改领域词汇表、模型文档或 ADR**：先读 `docs/agents/domain.md`，遵守文档分层、术语唯一和代码坐标规则（ADR 坐标收敛到域 / crate 级；标尺见 `CONTEXT-MAP.md`「结构约定」）。
-- **AI 导入**：读 `docs/contexts/CONTEXT-ai-import.md`、`src-tauri/prompts/ledger-api.md` 和实际 API 契约。
+- **AI 导入**：读 `docs/contexts/CONTEXT-ai-import.md`、`src-app/prompts/ledger-api.md` 和实际 API 契约。
 - **HTTP 端点**：读实际路由、对应 API 契约和 API 集成测试；仅在属于 AI 导入时读取 AI 导入文档。
 - **Issue、PR、triage 或依赖关系**：按需读 `docs/agents/issue-tracker.md` 与 `docs/agents/triage-labels.md`。
 - **依赖升级、工具链 bump 或发布打 tag**：升级读 `docs/agents/dependency-upgrades.md`；发布用 `/run-release`，版本元数据与 `CHANGELOG.md` 由该流程更新。
@@ -28,17 +28,17 @@
 
 ## 后端分层
 
-Rust 根（`src-tauri/`）是 workspace：根包仍是 tauri 应用包（壳层、命令注册扫描与集成测试入口），成员 crate 集中在 `src-tauri/crates/`（glob 纳入，新 crate 落入即自动成为成员）。目标依赖方向是 **壳 → 域 → 基础设施 → 协议**，域不依赖壳；拆分轴、正交判据（无环且方向单一）、破环方式与门禁保底见 ADR-0112。业务域按 spec #1086 逐域拆出 crate；拆出前业务语义进入根包内以域命名的顶层域目录，模型随域归位（ADR-0059）；新代码不得扩大壳层业务语义。
+Rust 根（`src-app/`）是 workspace：根包就是壳（NSH 原生壳，#2083 切轨后唯一产品壳；Tauri 旧壳已退役），成员 crate 集中在 `src-app/crates/`（glob 纳入，新 crate 落入即自动成为成员）。目标依赖方向是 **壳 → 域 → 基础设施 → 协议**，域不依赖壳；拆分轴、正交判据（无环且方向单一）、破环方式与门禁保底见 ADR-0112。全仓不得再出现 tauri 依赖（清单形状与前端死路径归 `scripts/check-no-tauri.ts`、依赖全图归 `cargo tree --workspace -i tauri` 命令门）；新壳能力走「下层定义注册点、上层注册实现、壳层启动时接线」，不引入壳层业务语义。
 
 业务域 crate 内部按消费面分四区（共享语义 / 跨域接缝 / 写路径 / 读路径），依赖方向单向（写读 → 接缝 → 共享语义），模块清单双向全等与区级反向依赖由结构守门断言，见 ADR-0113；拆出后的域内重排受该 ADR 管辖，不属拆 crate 迁移纪律（ADR-0112 决策 1 的限缩见其修订注记）。
 
 下层不直调上层的路径内副作用：写路径副作用挂载点（置脏触发、余额重算、计划来源解析）按「下层定义注册点、上层注册实现、壳层启动时接线」反转，不为消除合法依赖引入端口/事件反转（ADR-0112 决策 5）；合法依赖（上层依赖下层）直呼。
 
-基础设施（`ledger-infra`，`src-tauri/crates/infra/`）只承诺两条：不依赖任何域 crate、不定义账本数据的口径与规则（账本数据的语义与算术一律归域，基础设施不得对账本数据表执行 DML）；跨层共享机制、引导层不变量、单点收口用的闭集与键名表在此合法（ADR-0111）。crate 内分三区：原语（顶层单文件）、db（库与连接机制）、boot（引导层）；events、signals、settings 为共享接缝。内部依赖方向：原语 ← db ← boot 单向。壳层统一读写入口、载荷脱敏与日志初始化住根包 `src-tauri/src/shell_support/`（#1108 迁出正住址，暂住安排退役，见 ADR-0111 修订注记）——壳层机制不进基础设施，新只被壳层消费的机制直接归壳层。
+基础设施（`ledger-infra`，`src-app/crates/infra/`）只承诺两条：不依赖任何域 crate、不定义账本数据的口径与规则（账本数据的语义与算术一律归域，基础设施不得对账本数据表执行 DML）；跨层共享机制、引导层不变量、单点收口用的闭集与键名表在此合法（ADR-0111）。crate 内分三区：原语（顶层单文件）、db（库与连接机制）、boot（引导层）；events、signals、settings 为共享接缝。内部依赖方向：原语 ← db ← boot 单向。壳层机制（统一读写入口、载荷脱敏、日志初始化）住根包 `src-app/src/shell_support.rs`——壳层机制不进基础设施，新只被壳层消费的机制直接归壳层。
 
 协议（`ledger-sync-protocol`）：多端同步的最底层共享协议，内容清单见 `check-structure.ts` 的 CRATES；业务域只依赖协议 crate，不依赖多端同步域。
 
-门禁保底：clippy 六件套唯一声明处在 workspace 级 `[workspace.lints.clippy]`，成员必须显式 `[lints] workspace = true` 继承；静态检查与测试命令显式 `--workspace` 覆盖全部成员。结构边界由 `bun scripts/check-structure.ts` 守门（守门脚本运行时 = Bun，ADR-0083）：crate 边界**政策核**是脚本内 `CRATES` 清单（成员登记、分层、允许依赖方向），模块级白名单与认许边继续辖编译器看不见的规则，逐条留痕在脚本内（ADR-0056 决策 4、ADR-0071 修订注记）；守门数据按「事实有权威源就投影，政策无源就显式」分界（#1591 定案，实施 #1593–#1595：模块清单由各 crate `lib.rs` 的 `mod` 声明投影、注记归 crate `//!` 与模块文件头、cargo 编译期已拒绝的方向退役给编译期）。
+门禁保底：clippy 六件套唯一声明处在 workspace 级 `[workspace.lints.clippy]`，成员必须显式 `[lints] workspace = true` 继承；静态检查与测试命令显式 `--workspace` 覆盖全部成员。结构边界由 `bun scripts/check-structure.ts` 守门（守门脚本运行时 = Bun，ADR-0083）：crate 边界**政策核**是脚本内 `CRATES` 清单（成员登记、分层、允许依赖方向），认许边（基础设施 dev-dep 环、块间禁边等）继续辖编译器看不见的规则，逐条留痕在脚本内（ADR-0056 决策 4、ADR-0071 修订注记；切轨后无模块级白名单）；守门数据按「事实有权威源就投影，政策无源就显式」分界（#1591 定案，实施 #1593–#1595：模块清单由各 crate `lib.rs` 的 `mod` 声明投影、注记归 crate `//!` 与模块文件头、cargo 编译期已拒绝的方向退役给编译期）。
 
 ## 数据与交易
 
@@ -49,15 +49,17 @@ Rust 根（`src-tauri/`）是 workspace：根包仍是 tauri 应用包（壳层�
 
 ## 前端与入口
 
+- 产品壳 = NSH（Linux 桌面）：视图直调域 crate 公开读写入口，不经任何 IPC 命令边界——新壳能力只经「域公开接缝 + 壳层接线」消费，不得重建命令层；壳→域→基础设施→协议方向不变（ADR-0112 / ADR-0145）。
+- Web 参照前端（`src/` + `packages/*`）是非产品形态的布局活体对照物：仅经浏览器开发模式（`pnpm dev:mock`）跑 mock 后端，不连真实数据、不作发版产品；保持可编译、可 lint、可测试；前端内不得再出现 tauri 依赖与 `@tauri-apps` 引用（全仓无 tauri 门辖）。
 - 参考数据、设备偏好、后端设置和运行时状态遵循各自领域的单一来源与归口规则。
-- 会影响快捷键抑制的交互层通过现有 `App*` 封装或 `useAppDialog` 接入 Overlay Suppression；新增形态先补对应封装和注册表接线。
-- 新增 IPC 命令：放入已声明并扁平再导出的命令模块，由构建扫描器生成注册表，再同步前端 API/类型并运行一致性检查。新增 HTTP-only 端点走 API 契约与 API 集成测试，不增加无关 IPC 调用面。
-- 用户可见文案经 i18n；后端用户可见错误使用码化错误构造器，并同步错误模板。
-- naive-ui 页签组含 `display-directive="show"` / `"show:lazy"` 页签（预取/状态保留语义依赖组件实例身份）时，该组全部 `NTabPane` 必须带 `key`（= 页签名）：无 key 时 Vue 按位置就地复用同类型 pane 组件，切页签即插槽换血重挂重拉，`show` 语义失效（先例：投资页概览→盈亏切换重挂重拉，机制注释与回归测试见 `src/views/InvestmentsView.vue`、`src/__tests__/InvestmentsView.test.ts`）。
+- 会影响快捷键抑制的交互层通过现有壳内弹层封装族接入 Overlay Suppression；新增形态先补对应封装和注册表接线。
+- AI 导入 HTTP 端点走 API 契约与 API 集成测试；新增端点同步契约文档与测试，不另开调用面。
+- 用户可见文案：NSH 现状 zh-CN 硬编码（框架级 i18n 方案另票收敛）；后端用户可见错误使用码化错误构造器。Web 参照前端文案经 i18n，后端错误同步错误模板。
+- naive-ui 页签组含 `display-directive="show"` / `"show:lazy"` 页签（预取/状态保留语义依赖组件实例身份）时，该组全部 `NTabPane` 必须带 `key`（= 页签名）：无 key 时 Vue 按位置就地复用同类型 pane 组件，切页签即插槽换血重挂重拉，`show` 语义失效（先例：投资页概览→盈亏切换重挂重拉，机制注释与回归测试见 `src/views/InvestmentsView.vue`、`src/__tests__/InvestmentsView.test.ts`；条款辖 Web 参照前端）。
 
 ## 测试、工作流与发布
 
-- Rust 侧测试三层各有权威：域行为归域单测、壳行为归 API 集成测试、跨模块用户旅程归 e2e BDD；前端逻辑补 Vitest，BDD world 只保存跨步骤读写的状态。断言归属判据、壳三件套与接线证明见 `docs/contexts/CONTEXT-testing.md`。
+- Rust 侧测试三层各有权威：域行为归域单测、壳行为归根包 lib 单测与 headless 组件测试（`cargo test -p nsh-app`）、HTTP 契约归 axum API 集成测试（`src-app/tests/api_server/`）；前端逻辑补 Vitest。BDD e2e 已随 Tauri 壳退役（ADR-0145 决策 6，牺牲项显式化）。断言归属判据与接线证明见 `docs/contexts/CONTEXT-testing.md`。
 - 改动引入「所有入口都必须遵循」的约束（成对调用、必须接线、必须带门、必须清理）时，用 `rg` 枚举全部调用点并逐一核对，交付报告附核对清单；修复缺陷后，用 `rg` 检索同一根因的其他实例并核对每处命中。
 - 拆票或补验收判据时，接线 / 时机 / 入口型 ticket（核心价值是某调用必须在某时机出现在某位置）的验收判据必须含「删除即变红」负向条目：删除 `<接线调用点>` → 至少一条测试变红，断言对准用户可观察结果，不对准线程或函数调用形状（ADR-0087 断言强度）；领域逻辑型不加，避免形式主义；接线在本机 CI 不构建的分支内时以源码扫描守门替代（先例 #959、#961）。
 - 编译加速归口 kache：热回路（编辑后重跑 `cargo test`）由仓库根 `.kache.toml` 的 `preserve_incremental` 保住 rustc 增量，冷构建（新 worktree 首次构建）由 kache 共享 store 承担；需要提速构建时直接依赖这套设置，不要另行配置 `RUSTC_WRAPPER`、`KACHE_DISABLED` 等环境变量方案。

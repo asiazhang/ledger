@@ -1,7 +1,7 @@
 import { computed, onMounted, onUnmounted, ref } from "vue";
 import { useMessage } from "naive-ui";
-import { open, save } from "@tauri-apps/plugin-dialog";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { open, save } from "@ledger/mock-backend/bridge/dialog";
+import { listen, type UnlistenFn } from "@ledger/mock-backend/bridge/events";
 import { useAppStore } from "@/stores/app";
 import { formatIsoMinute } from "@ledger/utils/datetime";
 import { api } from "@ledger/api";

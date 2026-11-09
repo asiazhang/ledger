@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "@ledger/mock-backend/bridge/command";
 import { flushPromises, mount } from "@vue/test-utils";
 import { defineComponent, h, onUnmounted } from "vue";
 import { getActivePinia } from "pinia";

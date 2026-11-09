@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { listen, type UnlistenFn } from "@ledger/mock-backend/bridge/events";
 import { NButton, NButtonGroup, NIcon, NSpace, useThemeVars } from "naive-ui";
 import { ChevronBack, ChevronDown, ChevronForward } from "@vicons/ionicons5";
 import AppDatePicker from "@ledger/ui-kit/AppDatePicker.vue";

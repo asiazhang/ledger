@@ -9,7 +9,7 @@ import {
   NText,
   useMessage,
 } from "naive-ui";
-import { openUrl } from "@tauri-apps/plugin-opener";
+import { openUrl } from "@ledger/mock-backend/bridge/opener";
 import { useLoadable } from "@ledger/loadable";
 import { gitShaFull, gitVersionLabel } from "@ledger/utils/git-info";
 import { t } from "@ledger/i18n";

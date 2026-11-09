@@ -6,8 +6,8 @@ import type {
   TransactionTrade,
 } from "@ledger/types";
 import { installMockBackend } from "./index";
-import { invoke } from "./tauri/core";
-import { listen } from "./tauri/event";
+import { invoke } from "./bridge/command";
+import { listen } from "./bridge/events";
 
 /**
  * 投资明细与交易扩展投影域替身行为测试（issue #1970 / spec #1964 / ADR-0143）：

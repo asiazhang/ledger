@@ -240,7 +240,7 @@ export function compareLocalesDir(localesDir: string): CompareResult {
 function main(): void {
   const localesDir =
     process.argv[2] ?? fileURLToPath(new URL("../packages/i18n/src/locales", import.meta.url));
-  const rustRoot = process.argv[3] ?? fileURLToPath(new URL("../src-tauri", import.meta.url));
+  const rustRoot = process.argv[3] ?? fileURLToPath(new URL("../src-app", import.meta.url));
   const { sourceLocale, locales, failures } = compareLocalesDir(localesDir);
   if (failures.length === 0) {
     console.log(

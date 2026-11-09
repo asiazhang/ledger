@@ -1,6 +1,6 @@
 import { computed, ref } from "vue";
-import { listen } from "@tauri-apps/api/event";
-import { openUrl } from "@tauri-apps/plugin-opener";
+import { listen } from "@ledger/mock-backend/bridge/events";
+import { openUrl } from "@ledger/mock-backend/bridge/opener";
 import { api } from "@ledger/api";
 import { errorMessage } from "@ledger/utils/errors";
 import type { UpdateSurface } from "@ledger/types";

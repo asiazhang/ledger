@@ -1,0 +1,186 @@
+//! 账户端点：列表（含黑洞账户）/ 幂等创建 / 编辑 / 软删除 / 实时余额。
+//!
+//! 写端点经壳层统一写入口 [`crate::shell_support::write_entry`]（ADR-0073）：
+//! 事务、置脏、信号内化单点；读端点经 `run_db`（形状乙）。
+
+use axum::Json;
+use axum::extract::{Path, State};
+use axum::http::StatusCode;
+
+use crate::api_server::error::ErrorResponse;
+use crate::api_server::state::{EmitterSlot, ReadConn};
+use crate::shell_support::read_entry;
+use crate::shell_support::{Outcome, write_entry};
+use ledger_accounts::{Account, AccountBalance, AccountInput, AccountUpdateInput};
+use ledger_infra::db::DbWriteHandle;
+use ledger_infra::error::AppError;
+use ledger_infra::signals::WriteOp;
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/accounts",
+    tag = "accounts",
+    summary = "列出所有账户",
+    description = "返回账户完整列表，**包含预置黑洞账户**（`is_hidden=true`）。\
+                  AI 可把 `资金账户=无` 的交易映射到对应币种的黑洞账户。",
+    responses(
+        (status = 200, description = "账户列表（含黑洞账户）", body = [Account]),
+        (status = 500, description = "数据库错误", body = ErrorResponse)
+    )
+)]
+pub async fn list_accounts_handler(
+    State(read): State<ReadConn>,
+) -> Result<Json<Vec<Account>>, AppError> {
+    read_entry("GET /api/v1/accounts", read.0, move |conn| {
+        let accounts = ledger_accounts::list_accounts_for_api(conn)?;
+        Ok(Json(accounts))
+    })
+    .await
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/v1/accounts",
+    tag = "accounts",
+    summary = "创建账户（按自然键幂等）",
+    description = "按 `name` + `type` + `currency_code` 幂等创建账户：已存在同名同类型同币种且未删除的账户时，\
+                  直接返回已有账户的 `id`，不重复插入、不报错。",
+    request_body = AccountInput,
+    responses(
+        (status = 201, description = "创建成功，返回账户 ID", body = String),
+        (status = 400, description = "参数错误", body = ErrorResponse),
+        (status = 500, description = "数据库错误", body = ErrorResponse)
+    )
+)]
+pub async fn create_account_handler(
+    State(conn): State<DbWriteHandle>,
+    State(emitter): State<EmitterSlot>,
+    Json(input): Json<AccountInput>,
+) -> Result<(StatusCode, Json<String>), AppError> {
+    // 壳层统一写入口（ADR-0073）：置脏、信号内化单点；发射器 None 跳过
+    //（集成测试态语义），端点键作 SQL 归因串逐字节不变。
+    let id = write_entry(
+        "POST /api/v1/accounts",
+        conn,
+        emitter.as_deref(),
+        WriteOp::CreateAccount,
+        move |conn| ledger_accounts::create_account_idempotent(conn, input).map(Outcome::Silent),
+    )
+    .await?;
+    Ok((StatusCode::CREATED, Json(id)))
+}
+
+#[utoipa::path(
+    put,
+    path = "/api/v1/accounts/{id}",
+    tag = "accounts",
+    summary = "编辑账户（改名/改币种）",
+    description = "按 `id` 编辑账户，可选字段未传保持原值。`type` 不可改（参与余额符号归属）；\
+                  `currency_code` 仅无交易账户可改（有交易时后端拒绝，避免历史折算口径错乱）。\
+                  `is_archived` 为可选归档键：缺席 = 不改，`true` / `false` = 落定归档 / 恢复\
+                  （绑定储蓄目标的账户拒绝归档，指向归档目标本身）。\
+                  余额校准不走本端点：创建一笔与黑洞账户的转账即可（余额 = 期初 + Σ 流水）。\
+                  不存在的 id 返回 404。成功返回 200 与更新后的完整账户。",
+    request_body = AccountUpdateInput,
+    params(
+        ("id" = String, Path, description = "账户 ID")
+    ),
+    responses(
+        (status = 200, description = "更新后的完整账户", body = Account),
+        (status = 400, description = "参数错误（如名称为空、有交易改币种、未知币种）", body = ErrorResponse),
+        (status = 404, description = "账户不存在", body = ErrorResponse),
+        (status = 500, description = "数据库错误", body = ErrorResponse)
+    )
+)]
+pub async fn update_account_handler(
+    State(conn): State<DbWriteHandle>,
+    State(emitter): State<EmitterSlot>,
+    Path(id): Path<String>,
+    Json(input): Json<AccountUpdateInput>,
+) -> Result<Json<Account>, AppError> {
+    // 修改与读回同一写闭包，提交点置脏/检查单点。
+    let updated = write_entry(
+        "PUT /api/v1/accounts/{id}",
+        conn,
+        emitter.as_deref(),
+        WriteOp::UpdateAccount,
+        move |conn| {
+            // 归档可选键（spec #1952 / ADR-0142 决策 5）：缺席 = 不改、true/false
+            // 落定，由账户编辑入口统一解出（同一事务内追加一次归档动作）。归档
+            // 方向的目标绑定守卫住壳层编排（账户域不反向依赖目标域，ADR-0133
+            // 决策 4；恢复方向不拦——不涉及两套收纳语义），与 `archive_account`
+            // 命令同一守卫。
+            if input.is_archived == Some(true) {
+                ledger_savings_goal::ensure_account_can_archive(conn, &id)?;
+            }
+            ledger_accounts::update_account(conn, &id, input)?;
+            let updated = ledger_accounts::get_account(conn, &id)?;
+            Ok(Outcome::Silent(updated))
+        },
+    )
+    .await?;
+    Ok(Json(updated))
+}
+
+#[utoipa::path(
+    delete,
+    path = "/api/v1/accounts/{id}",
+    tag = "accounts",
+    summary = "删除账户（软删除）",
+    description = "按 `id` 软删除账户（`is_deleted=1`）。**不校验引用**（与 UI 行为一致：删除有交易的账户后历史交易仍保留）。\
+                  不存在的 id 返回 404。成功返回 204 No Content。",
+    params(
+        ("id" = String, Path, description = "账户 ID")
+    ),
+    responses(
+        (status = 204, description = "删除成功（无响应体）"),
+        (status = 404, description = "账户不存在", body = ErrorResponse),
+        (status = 500, description = "数据库错误", body = ErrorResponse)
+    )
+)]
+pub async fn delete_account_handler(
+    State(conn): State<DbWriteHandle>,
+    State(emitter): State<EmitterSlot>,
+    Path(id): Path<String>,
+) -> Result<StatusCode, AppError> {
+    write_entry(
+        "DELETE /api/v1/accounts/{id}",
+        conn,
+        emitter.as_deref(),
+        WriteOp::DeleteAccount,
+        move |conn| {
+            // 壳层编排守卫（issue #1754 / ADR-0133 决策 4）：与 IPC 删除账户命令
+            // 同构——在用目标的专属账户先经目标域校验，命中即码化拒绝。
+            ledger_savings_goal::ensure_account_not_goal_bound(conn, &id)?;
+            ledger_accounts::delete_account(conn, &id).map(Outcome::Silent)
+        },
+    )
+    .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/accounts/balances",
+    tag = "accounts",
+    summary = "列出全部未删除账户的余额（含黑洞账户）",
+    description = "返回 `{account, balance_cents}[]`，与 AI 侧账户列表一致**包含 `is_hidden` 黑洞账户**。\
+                  余额口径 = 初始余额 + Σ `account_flow`（各 kind 符号归属见核心交易域 Transaction Kind Mapping），\
+                  **以账户币种计**（`account.currency_code`，即现金腿原币金额），非本位币折算值——\
+                  本位币折算仅用于净资产等全局口径。\
+                  读持久化余额缓存（ADR-0067，与用户侧同源不漂移；漂移经余额缓存审计修复）。\
+                  软删除账户不在列表中。转账分别计入转出与转入账户。",
+    responses(
+        (status = 200, description = "账户余额列表（含黑洞账户）", body = [AccountBalance]),
+        (status = 500, description = "数据库错误", body = ErrorResponse)
+    )
+)]
+pub async fn list_account_balances_handler(
+    State(read): State<ReadConn>,
+) -> Result<Json<Vec<AccountBalance>>, AppError> {
+    read_entry("GET /api/v1/accounts/balances", read.0, move |conn| {
+        let balances = ledger_accounts::list_account_balances_for_api(conn)?;
+        Ok(Json(balances))
+    })
+    .await
+}

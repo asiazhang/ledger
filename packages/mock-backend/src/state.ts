@@ -49,7 +49,7 @@ import {
   fixtureSubscriptionPlans,
   fixtureTransactions,
 } from "./fixtures";
-import { emitMockEvent } from "./tauri/event";
+import { emitMockEvent } from "./bridge/events";
 
 /**
  * 替身后端的共享内存状态与跨域助手（issue #1965，自 ledger.ts 下沉）：

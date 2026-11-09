@@ -61,7 +61,7 @@ export function appBuildInfo(): AppBuildInfo {
   return { version: MOCK_APP_VERSION, platform: "macos", arch: "aarch64" };
 }
 
-/** 真源是 src-tauri/prompts/ledger-api.md（AI 记账入口提示词）；替身答短字面量钉形状。 */
+/** 真源是 src-app/prompts/ledger-api.md（AI 记账入口提示词）；替身答短字面量钉形状。 */
 export function getAiPrompt(): string {
   return (
     "# Ledger API 入口提示词（浏览器开发模式替身）\n\n" +

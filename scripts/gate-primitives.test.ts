@@ -28,7 +28,7 @@ afterAll(() => {
 });
 
 describe("maskNonCode 双源防漂移语料（issue #1433）", () => {
-  // 与 Rust 侧唯一实现（src-tauri/src/test_support/scan.rs 的 mask_non_code）
+  // 与 Rust 侧唯一实现（src-app/src/test_support/scan.rs 的 mask_non_code）
   // 消费同一夹具：语料输入 + 期望输出双文件共享，任一侧单独改词法规则即
   // 本测或 Rust 语料测试红。（bun test 下取进程 cwd = 仓库根定位夹具，同上款先例）
   const corpusPath = join(process.cwd(), "scripts", "fixtures", "rust-mask-corpus.rs");
@@ -140,7 +140,8 @@ describe("maskComments（TS/Vue 注释掩码库语义）", () => {
 // import 并回退为本地副本（或共享模块定义被移除），下面的断言至少一条变红；
 // 只在真实仓行为层（exit code / output）保持绿无法单独锚定「同一出口」这条接线。
 describe("单源收敛：maskComments 只有一份实现（issue #1481，#1680 并入 gate-primitives）", () => {
-  const consumers = ["check-frontend-structure.ts", "check-commands.ts"] as const;
+  // check-commands 消费方随 #2083 命令层退役移出名单。
+  const consumers = ["check-frontend-structure.ts", "check-no-tauri.ts"] as const;
 
   for (const file of consumers) {
     it(`${file} 从共享库消费 maskComments 且不本地重定义`, () => {
@@ -221,18 +222,16 @@ describe("一层目录列举 readDirEntries + 点扩展名匹配 hasExtension（
 // Rust 词法掩码单源收敛（#1680）：maskNonCode 的 TS 消费名单锁定——任一消费方摘掉
 // 库 import、回退本地副本（或新脚本绕开库自建第四份实现），下面的断言即红；
 // 语料期望只锁规则本身，名单把「谁在消费同一实现」也钉住，防分歧潜伏。
-// #1741 起名单含两份弱形态注释处理器的收口方：check-commands（命令注解腿，
-// 原自持逐行 stripLineComment）、check-i18n-keys（码化构造点提取腿，原自持
-// stripRustComments）——摘掉 import 即红；弱形态回潮的守门在两门各自的
+// #1741 起名单含弱形态注释处理器的收口方：check-i18n-keys（码化构造点提取腿，
+// 原自持 stripRustComments）——摘掉 import 即红；弱形态回潮的守门在两门各自的
 // 包装夹具（掩码权威形态旧红新绿），本名单只钉「谁在消费同一实现」。
+// check-commands / check-background-services 消费方随 #2083 壳退役移出名单。
 describe("单源收敛：Rust 词法掩码只有一份实现（#1680 / #1741）", () => {
   const consumers = [
     "check-structure.ts",
     "check-infra-dml.ts",
-    "check-background-services.ts",
     "test-exec.ts",
     "check-test-support.ts",
-    "check-commands.ts",
     "check-i18n-keys.ts",
   ] as const;
 

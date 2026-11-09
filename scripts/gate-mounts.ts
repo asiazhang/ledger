@@ -11,7 +11,7 @@
 // 判定语义 = per-host 行首前缀：登记条目按宿主声明 {file, prefix, where}，宿主
 // 文件的非注释行 trim 后行首匹配该前缀。echo 展示行行首是 `echo "▶`，永不可能
 // 命中执行形态——echo 假绿免疫是判定语义的结构后果（#1112 第三轮审查实测教训）。
-// 同一门在两宿主的命令文本实差（`( cd src-tauri && …)` 包裹 vs `working-directory`
+// 同一门在两宿主的命令文本实差（`( cd src-app && …)` 包裹 vs `working-directory`
 // / 裸命令、`-- --check` vs `--check`）由 per-host prefix 显式表达。
 //
 // 新增守门的登记动作（story 5）：在 GATE_MOUNTS 追加一条——唯一名称、issue/ADR
@@ -127,7 +127,7 @@ export const GATE_MOUNTS: readonly GateMount[] = [
       {
         file: CHECK_SH_FILE,
         prefix:
-          "( cd src-tauri && cargo clippy --workspace --all-targets --all-features -- -D warnings )",
+          "( cd src-app && cargo clippy --workspace --all-targets --all-features -- -D warnings )",
         where: "scripts/check.sh 质量门槛序列",
       },
       {
@@ -143,7 +143,7 @@ export const GATE_MOUNTS: readonly GateMount[] = [
     hosts: [
       {
         file: CHECK_SH_FILE,
-        prefix: "( cd src-tauri && cargo check -p ledger-infra )",
+        prefix: "( cd src-app && cargo check -p ledger-infra )",
         where: "scripts/check.sh 质量门槛序列",
       },
       {
@@ -154,19 +154,35 @@ export const GATE_MOUNTS: readonly GateMount[] = [
     ],
   },
   {
-    name: "NSH 进程 tauri 零链接守门（cargo tree）",
-    refs: "issue #2074 / ADR-0145",
+    name: "全仓无 tauri 守门（cargo tree，依赖图面）",
+    refs: "issue #2083 / ADR-0145 决策 4/7（#2074 零链接门升级）",
     hosts: [
       {
         file: CHECK_SH_FILE,
-        prefix: "( cd src-tauri && cargo tree -p nsh-app -i tauri",
+        prefix: "( cd src-app && cargo tree --workspace -i tauri",
         where: "scripts/check.sh 质量门槛序列（infra gate-off 门后）",
       },
       {
         file: CI_WORKFLOW_FILE,
-        prefix: "run: cargo tree -p nsh-app -i tauri",
+        prefix: "run: cargo tree --workspace -i tauri",
         where:
           ".github/workflows/build.yml backend-lint job（cargo 宿主；backend-test 镜像无 bun，故为命令型门）",
+      },
+    ],
+  },
+  {
+    name: "全仓无 tauri 守门（check-no-tauri，清单形状 + 前端死路径面）",
+    refs: "issue #2083 / ADR-0145 决策 4/7",
+    hosts: [
+      {
+        file: CHECK_SH_FILE,
+        prefix: "bun scripts/check-no-tauri.ts",
+        where: "scripts/check.sh 质量门槛序列（文档一致性检查后）",
+      },
+      {
+        file: CI_WORKFLOW_FILE,
+        prefix: "run: bun scripts/check-no-tauri.ts",
+        where: ".github/workflows/build.yml frontend job",
       },
     ],
   },
@@ -176,7 +192,7 @@ export const GATE_MOUNTS: readonly GateMount[] = [
     hosts: [
       {
         file: CHECK_SH_FILE,
-        prefix: "( cd src-tauri && cargo fmt --all -- --check )",
+        prefix: "( cd src-app && cargo fmt --all -- --check )",
         where: "scripts/check.sh 质量门槛序列",
       },
       {
@@ -192,8 +208,7 @@ export const GATE_MOUNTS: readonly GateMount[] = [
     hosts: [
       {
         file: CHECK_SH_FILE,
-        prefix:
-          "( cd src-tauri && RUSTDOCFLAGS='-D warnings' cargo doc -p ledger-infra --no-deps )",
+        prefix: "( cd src-app && RUSTDOCFLAGS='-D warnings' cargo doc -p ledger-infra --no-deps )",
         where: "scripts/check.sh 质量门槛序列",
       },
       {
@@ -215,22 +230,6 @@ export const GATE_MOUNTS: readonly GateMount[] = [
       {
         file: CI_WORKFLOW_FILE,
         prefix: "run: ./scripts/check-docs.sh",
-        where: ".github/workflows/build.yml frontend job",
-      },
-    ],
-  },
-  {
-    name: "命令注册一致性检查（check-commands）",
-    refs: "issue #315 / ADR-0047 / #1398",
-    hosts: [
-      {
-        file: CHECK_SH_FILE,
-        prefix: "bun scripts/check-commands.ts",
-        where: "scripts/check.sh 质量门槛序列",
-      },
-      {
-        file: CI_WORKFLOW_FILE,
-        prefix: "run: bun scripts/check-commands.ts",
         where: ".github/workflows/build.yml frontend job",
       },
     ],
@@ -312,22 +311,6 @@ export const GATE_MOUNTS: readonly GateMount[] = [
         file: CI_WORKFLOW_FILE,
         prefix: "run: bun scripts/check-eastmoney-residue.ts",
         where: ".github/workflows/build.yml frontend job（issue #1682 CI 补齐）",
-      },
-    ],
-  },
-  {
-    name: "后台服务成对拉起守门（check-background-services）",
-    refs: "issue #961",
-    hosts: [
-      {
-        file: CHECK_SH_FILE,
-        prefix: "bun scripts/check-background-services.ts",
-        where: "scripts/check.sh 质量门槛序列",
-      },
-      {
-        file: CI_WORKFLOW_FILE,
-        prefix: "run: bun scripts/check-background-services.ts",
-        where: ".github/workflows/build.yml frontend job",
       },
     ],
   },

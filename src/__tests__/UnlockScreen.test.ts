@@ -6,13 +6,13 @@ import { findButton, findButtonByTestId, findBodyButtonByTestId } from "@ledger/
 // 文件选择与重启单点 mock（先例 StartupFailureScreen.test.ts；restartAppShortly
 // 内含延时，测试断言调用而非计时）。恢复流只需 open；confirm 已随 issue #652
 // 退役，不再 mock。
-vi.mock("@tauri-apps/plugin-dialog", () => ({
+vi.mock("@ledger/mock-backend/bridge/dialog", () => ({
   open: vi.fn(),
 }));
 const restartAppShortly = vi.fn();
 vi.mock("@/backup/restart", () => ({ restartAppShortly: () => restartAppShortly() }));
 
-import { open } from "@tauri-apps/plugin-dialog";
+import { open } from "@ledger/mock-backend/bridge/dialog";
 import UnlockScreen from "@/backup/UnlockScreen.vue";
 import { AUTO_UNLOCK_TIMEOUT_MS, useEncryptionGate } from "@/backup/useEncryptionGate";
 import { useAppStore } from "@/stores/app";

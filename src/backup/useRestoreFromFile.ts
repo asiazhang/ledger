@@ -1,5 +1,5 @@
 import { ref } from "vue";
-import { open } from "@tauri-apps/plugin-dialog";
+import { open } from "@ledger/mock-backend/bridge/dialog";
 import { useMessage } from "naive-ui";
 import { api } from "@ledger/api";
 import type { BackupMetaSummary } from "@ledger/types";

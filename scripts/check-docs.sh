@@ -7,19 +7,16 @@
 #   ② 术语全库唯一：分域词汇表条目标题（^## ）按括号前主干归一后比对，重复即报错
 #   ③ 导航一致：AGENTS.md 与 CONTEXT-MAP.md 引用的仓库内文件/目录必须存在（导航指向已删除文件即报错）
 #   ④ ADR 编号唯一：docs/adr/ 下文件名前缀编号不得重复（同号不同义会误导读者与 AI 助手）
-#   ⑤ 代码坐标：分域词汇表与模型文档不得出现实现坐标（src-tauri/src/、src/ 路径式引用
+#   ⑤ 代码坐标：分域词汇表与模型文档不得出现实现坐标（src-app/src/、src/ 路径式引用
 #      及 .rs/.ts/.vue 文件名）——「代码可查事实不进文档」三层标尺的守门（标尺见
 #      CONTEXT-MAP「结构约定」；扫描范围不含 ADR / agents / api 文档；ADR 按同节
 #      「坐标收敛到域 / crate 级」人工评审，不扩扫描，#1262 方式②未采纳）
-#   ⑥ 快照分组组数一致：CONTEXT-testing.md 快照分组词条与 ADR-0086 决策 6 记载的
-#      组数，必须与 e2e world 实际快照分组数全等——「新快照必须归入既有分组」
-#      纪律的守门，防止新组绕过规格修订静默入场（issue #955）
 #   ⑦ ADR 索引完整：docs/adr/ 下每个现行 ADR 文件编号都必须在 docs/adr/README.md
 #      有一条索引条目行——「新 ADR 落盘须同步入索引」纪律的守门，补④只查重复
 #      不查遗漏的方向；判据取条目行而非「编号出现」，他行交叉引用不算（issue #1027）
 #   ⑧ ADR 索引反查：README 现行条目的编号必须有对应文件——⑦ 的反方向，防「ADR 已
 #      删除却仍留在现行索引」。tombstone 段用 `- **编号**` 形态，与现行条目天然区分
-#   ⑨ Migration 索引全等：src-tauri/migrations/ 下每个迁移文件都必须在
+#   ⑨ Migration 索引全等：src-app/migrations/ 下每个迁移文件都必须在
 #      docs/model/README.md 的 Migration 索引有一表行，索引表行也必须有对应迁移
 #      文件——「迁移目录 ↔ README 索引」双向全等（与⑦⑧ ADR 索引同形），防新
 #      迁移落盘后索引漂移（issue #1624：V027 / V028 合入后索引停在 V026）
@@ -118,9 +115,9 @@ done
 
 # ── ⑤ 代码坐标扫描（分域词汇表与模型文档禁止实现坐标） ──────────────────
 # 「代码可查事实不进文档」三层标尺（甲删乙留丙留，详见 CONTEXT-MAP「结构约定」）：
-# 甲类实现坐标——src-tauri/src/、src/ 路径式引用与 .rs/.ts/.vue 文件名——出现即失败；
+# 甲类实现坐标——src-app/src/、src/ 路径式引用与 .rs/.ts/.vue 文件名——出现即失败；
 # 术语专名（表名/视图名/信号名/接缝名）不在扫描范围。白名单刻意留空：清理完成后应零豁免通过。
-coord_re='(src-tauri/)?src/[A-Za-z0-9_./-]+|[A-Za-z0-9_-]+\.(rs|ts|vue)\b'
+coord_re='(src-app/)?src/[A-Za-z0-9_./-]+|[A-Za-z0-9_-]+\.(rs|ts|vue)\b'
 coord_whitelist=''  # 豁免文件清单（空格分隔仓库相对路径），当前留空
 for f in $(find "$CTX_DIR" docs/model -type f -name '*.md' 2>/dev/null | sort); do
   case " $coord_whitelist " in
@@ -134,40 +131,6 @@ for f in $(find "$CTX_DIR" docs/model -type f -name '*.md' 2>/dev/null | sort); 
     err "代码坐标：$f:$lineno 出现实现坐标（甲类删，标尺见 CONTEXT-MAP 结构约定）：$text"
   done
 done
-
-# ── ⑥ 快照分组组数一致（testing 词条 / ADR-0086 决策 6 / e2e world 实际分组） ─
-world_file=src-tauri/tests/e2e/world.rs
-cn_to_num() {
-  case "$1" in
-    一) echo 1 ;; 二|两) echo 2 ;; 三) echo 3 ;; 四) echo 4 ;; 五) echo 5 ;;
-    六) echo 6 ;; 七) echo 7 ;; 八) echo 8 ;; 九) echo 9 ;; 十) echo 10 ;;
-    *) echo 0 ;;
-  esac
-}
-if [ ! -f "$world_file" ]; then
-  err "快照分组：world 文件不存在：$world_file"
-  world_groups=-1
-else
-  world_groups=$(grep -cE '^    pub [a-z][a-z_]*: [A-Za-z]+Group,' "$world_file" || true)
-fi
-testing_entry=docs/contexts/CONTEXT-testing.md
-testing_num=$(sed -n '/^## 快照分组/,/^## /p' "$testing_entry" | grep -oE '[一二两三四五六七八九十]+组' | head -n 1 | sed 's/组$//')
-if [ -z "$testing_num" ]; then
-  err "快照分组：$testing_entry 快照分组词条未找到「N组」计数"
-else
-  testing_groups=$(cn_to_num "$testing_num")
-  [ "$testing_groups" = "$world_groups" ] || \
-    err "快照分组：$testing_entry 词条记 $testing_num（$testing_groups 组），world 实际 $world_groups 组，不一致"
-fi
-adr_group_file=docs/adr/0086-bdd-step-shared-layer-deepening.md
-adr_num=$(grep -oE '[一二两三四五六七八九十]+分组' "$adr_group_file" | head -n 1 | sed 's/分组$//; s/组$//')
-if [ -z "$adr_num" ]; then
-  err "快照分组：$adr_group_file 未找到「N分组」计数"
-else
-  adr_groups=$(cn_to_num "$adr_num")
-  [ "$adr_groups" = "$world_groups" ] || \
-    err "快照分组：$adr_group_file 决策记 $adr_num（$adr_groups 组），world 实际 $world_groups 组，不一致"
-fi
 
 # ── ⑦ ADR 索引完整（docs/adr/ 下每个现行 ADR 文件须有 README 索引条目行） ──────
 # 与④编号唯一对偶的遗漏方向：新 ADR 落盘却忘记入 docs/adr/README.md 时，读者与 AI
@@ -197,7 +160,7 @@ if [ -f "$adr_readme" ]; then
   done
 fi
 
-# ── ⑨ Migration 索引全等（src-tauri/migrations/ ↔ docs/model/README.md）──────────────
+# ── ⑨ Migration 索引全等（src-app/migrations/ ↔ docs/model/README.md）──────────────
 # 模型文档约定「表结构唯一事实来源是 migration，索引见文末」——新迁移落盘却忘记补
 # Migration 索引行时，读者与 AI 会照索引漏读 schema（实测漂移：V027 / V028 合入后
 # 索引停在 V026，issue #1624）。与⑦⑧ ADR 索引同形，双向都查：
@@ -205,7 +168,7 @@ fi
 # 文件（迁移删除 / 改名后索引残留即红）。判据取「以 | `文件名` 开头的表行」，
 # 正文散文提及不算；V005 已移除的编号只住在脚注叙述，不落表行，天然不参与比对。
 model_readme=docs/model/README.md
-mig_dir=src-tauri/migrations
+mig_dir=src-app/migrations
 if [ ! -f "$model_readme" ]; then
   err "Migration 索引：$model_readme 不存在"
 elif [ ! -d "$mig_dir" ]; then
@@ -231,4 +194,4 @@ if [ -s "$tmp" ]; then
   echo "❌ 文档一致性检查失败：$(wc -l <"$tmp" | tr -d ' ') 处问题（见上方 ✗ 列表）"
   exit 1
 fi
-echo "  ✓ 地图完整、术语唯一、导航一致、ADR 编号唯一、词汇表与模型文档坐标清零、快照分组组数一致、ADR 索引完整且可反查、Migration 索引双向全等"
+echo "  ✓ 地图完整、术语唯一、导航一致、ADR 编号唯一、词汇表与模型文档坐标清零、ADR 索引完整且可反查、Migration 索引双向全等"

@@ -9,7 +9,7 @@
   },
   "devDependencies": {
     "@ledger/types": "workspace:*",
-    "@tauri-apps/api": "^2.11.1",
+    "@ledger/mock-backend": "workspace:*",
     "@vanilla-extract/css": "^1.21.2",
     "@vue/test-utils": "^2.5.0",
     "naive-ui": "^2.45.3",

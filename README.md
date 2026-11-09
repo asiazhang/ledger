@@ -1,13 +1,13 @@
 # 开源记账（OpenLedger）
 
-开源、本地优先的个人记账应用：把收入、支出、转账、投资和预算全部收进一个私密的本地账本。所有数据保存在你自己的设备上，不上传云端；可选整库加密，也能在多台设备间通过你自有的对象存储保持同步。桌面（macOS / Windows / Linux）与 Android 手机共用同一套功能。
+开源、本地优先的个人记账应用：把收入、支出、转账、投资和预算全部收进一个私密的本地账本。所有数据保存在你自己的设备上，不上传云端；也能在多台设备间通过你自有的对象存储保持同步。当前产品形态是 Linux 桌面应用（原生 GTK 壳，#2083 切轨：跨平台 WebView 壳与 Android 端已退役）。
 
 当前处于早期快速迭代阶段，功能持续更新中。
 
 ## 为什么用开源记账
 
 - **数据私有**：账本以本地文件形式存储，离线可用，不依赖任何云端服务。
-- **可选加密**：整库加密 + 主口令，支持 Touch ID 自动解锁与忘记口令重置；另有金额隐私模式一键掩码全应用金额。
+- **可选加密**：整库加密 + 主口令；另有金额隐私模式一键掩码全应用金额。（加密支持在切换原生壳后暂未恢复，密文账本打开会得到明确报错；恢复方案见 ADR-0145。）
 - **多端同步**：自备 S3 兼容对象存储桶即可在多台设备间同步，打开应用即同步、记账后自动上传，新设备凭快照一键引导加入；同步包可选加密上云。
 - **多账本**：个人、家庭等多本账独立记账，跨账本投资汇总合并只读总览。
 - **多币种账户**：支持现金、银行卡、信用卡、电子钱包、投资账户、负债、借出款等多种账户，余额实时计算。
@@ -94,32 +94,42 @@
 
 > 注：股票行情同步入口在投资页「标的」子视图（同步持仓价格）；标的全量同步已退役，标的录入走「添加投资标的」按代码查询。设置页不提供同步入口。
 
-## 桌面与移动
+## 桌面
 
-- 桌面窗口收窄到移动档宽度时自动切换为移动布局（顶栏 + 导航抽屉），交易、报表、投资、预算等页面均有窄屏适配
-- Android 与桌面共享同一套功能与数据口径：触屏交互、系统返回手势、安全区适配，配置同一对象存储通道即可加入多端同步
+- NSH 壳是原生 GTK 应用：无内嵌 WebView，界面即桌面窗口（详见 ADR-0145）
+- 另保留一个非产品形态的 Web 参照前端（浏览器开发模式，见下「从源码构建」），仅作布局与交互的对照物，不连接真实数据
 
 ## 安装
 
-从 [GitHub Releases](https://github.com/asiazhang/ledger/releases) 下载对应平台的安装包：
+当前发布形态是 **Linux x64 release 二进制**（原生壳，免安装、解包即用）：
 
-- **macOS（Apple Silicon）**：`.dmg`，拖入「应用程序」即可。已用 Developer ID 证书签名并经 Apple 公证，Gatekeeper 正常放行。
-- **Windows（x64）**：`.exe`（NSIS 安装器），双击按向导安装。未签名：SmartScreen 出现「已保护你的电脑」时点「更多信息 → 仍要运行」。
-- **Linux（x64）**：`.deb`（Debian/Ubuntu 系，`sudo dpkg -i` 安装）或 `.AppImage`（`chmod +x` 后直接运行）。
-- **Android（arm64 APK）**：`.apk` 下载到真机直接安装（覆盖 arm64-v8a，2016 年后的绝大多数 Android 手机）；系统提示未知来源时，在「设置 → 应用 → 特殊访问权限 → 安装未知应用」中放行对应浏览器/文件管理器即可，升级同样直装新版本覆盖。
+1. 从 [GitHub Releases](https://github.com/asiazhang/ledger/releases) 下载 `nsh-app`（Linux x64 二进制）。
+2. 放到你喜欢的位置（如 `~/.local/bin/`）并加执行权限：`chmod +x nsh-app`。
+3. （可选）安装桌面入口：把仓库附带的 `.desktop` 模板复制到 `~/.local/share/applications/` 并按注释改二进制路径与图标路径（说明见仓库 `docs/` 的发布说明），之后即可从应用列表启动。
 
-> macOS 安装包已用 Developer ID 证书签名并经 Apple 公证；Windows 安装包未签名，Android APK 已用发布密钥签名；Linux 生态无统一代码签名机制。Windows 与 Linux 版本发布初期未经真机验证，遇到问题请到 [Issues](https://github.com/asiazhang/ledger/issues) 反馈（决策记录见 [ADR-0066](docs/adr/0066-cross-platform-release.md) 与 [ADR-0074](docs/adr/0074-android-release.md)）。
+依赖：GLib/GTK4 运行时（主流发行版默认自带；极简镜像需 `gtk4` 包）。
+
+> 自动更新已随切轨下线（ADR-0124 / ADR-0145 决策 7）：升级请重新下载新 release 二进制覆盖。macOS / Windows / Android 产物与对应安装器矩阵已随跨平台壳退役；Linux 打包（AppImage / deb / .desktop 自动装配）另行规划。
 
 ## 从源码构建
+
+构建桌面应用（NSH 原生壳）：
 
 ```bash
 git clone git@github.com:asiazhang/ledger.git
 cd ledger
-pnpm install
-pnpm run tauri build
+cd src-app
+cargo build --release
 ```
 
-构建产物输出到 `src-tauri/target/release/bundle/`。
+产物是 `src-app/target/release/nsh-app` 单个二进制，直接运行即可（需要本机装有 Rust 工具链与 GTK4 开发库 `libgtk-4-dev`）。
+
+运行 Web 参照前端（浏览器开发模式，mock 内存后端）：
+
+```bash
+pnpm install
+pnpm run dev:mock   # http://localhost:1420
+```
 
 > 需要本机装有 Rust 工具链、Node.js 与 pnpm（版本由 `package.json` 的 `packageManager` 字段锁定，可用 corepack 或 pnpm 官方安装脚本安装对应版本）。更多技术细节、开发命令与架构约定，请见 [AGENTS.md](AGENTS.md) 与 [docs/](docs/) 开发文档。
 
