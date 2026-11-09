@@ -53,7 +53,7 @@ pub fn open() -> rusqlite::Connection {
 #[path = "../tests/support/s3_stub.rs"]
 mod s3_facade;
 
-pub use s3_facade::{s3, scan, scratch, ScratchDir};
+pub use s3_facade::{ScratchDir, s3, scan, scratch};
 
 // 迁入集成测试消费的种子闭集：根包 seed.rs 原文载入（零复制——种子 SQL 与
 // 根包工厂同源；簿记戳经上方 FIXED_NOW 以 `super::FIXED_NOW` 定位）。只消费
@@ -63,6 +63,6 @@ pub use s3_facade::{s3, scan, scratch, ScratchDir};
 pub mod seed;
 
 pub use seed::{
-    seed_account, seed_exchange_rate, seed_fx_rate_history, seed_fx_history_weeks,
-    seed_instrument, seed_investment_setup,
+    seed_account, seed_exchange_rate, seed_fx_history_weeks, seed_fx_rate_history, seed_instrument,
+    seed_investment_setup,
 };
