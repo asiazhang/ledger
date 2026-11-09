@@ -31,7 +31,7 @@ Ledger 的领域词汇表按自然域拆分：本文件列出全部分域、各�
 | 13 | 多端同步 | [`docs/contexts/CONTEXT-sync.md`](docs/contexts/CONTEXT-sync.md) | Sync、Transport、OpLog、DomainCommand、Replay、DeviceId、TotalOrder、OccurrenceKey、ParkedOp、Checkpoint、SyncEnvelope、SyncBoundary（ADR-0091）、SyncDatabase（ADR-0139） |
 | 14 | 应用更新 | [`docs/contexts/CONTEXT-app-update.md`](docs/contexts/CONTEXT-app-update.md) | 自动更新（Auto Update）、更新检查、更新清单、更新工件、更新签名（ADR-0124） |
 | 15 | 储蓄目标 | [`docs/contexts/CONTEXT-savings-goal.md`](docs/contexts/CONTEXT-savings-goal.md) | 储蓄目标（SavingsGoal）、目标账户、蓄水进度、预计达成时间（ETA）、所需月存、达成与归档、养老测算 |
-| 16 | 应用壳 | [`docs/contexts/CONTEXT-app-shell.md`](docs/contexts/CONTEXT-app-shell.md) | 原生壳（Native Shell App）、双壳并存期（Dual-Shell Migration Window）（ADR-0145） |
+| 16 | 应用壳 | [`docs/contexts/CONTEXT-app-shell.md`](docs/contexts/CONTEXT-app-shell.md) | 原生壳（Native Shell App）、双壳并存期（Dual-Shell Migration Window）、Web 参照前端（Web Reference Frontend）（ADR-0145） |
 
 ## 域间关系
 
