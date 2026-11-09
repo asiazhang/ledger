@@ -32,7 +32,7 @@ use chrono::{DateTime, Local, Offset, TimeZone, Utc};
 use rusqlite::Connection;
 
 use ledger_infra::db::LockOutcome;
-use ledger_infra::db::{self, DbState};
+use ledger_infra::db::{self, DbWriteHandle};
 use ledger_infra::error::{self, AppError};
 use ledger_infra::settings::{self, SettingKey};
 
@@ -588,6 +588,12 @@ pub fn run_first_backup(
 /// `State<PrefsState>`，经本单例读取目录镜像，避免把 AppHandle 一路下传到写路径。
 static SHARED_PREFS: OnceLock<Arc<PrefsState>> = OnceLock::new();
 
+/// 偏好镜像的测试串行锁（进程级共享态：调度内核线程测试与改道判定测试并行
+/// 时互抢镜像，各自以本锁串行 + 收尾复位，先例 `tests.rs` 本地 PREFS_LOCK
+/// 随 #2078 两测试共用提升为共享单点）。
+#[cfg(test)]
+pub(crate) static SHARED_PREFS_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// 共享偏好镜像（lib.rs 启动即初始化一次；未显式 `set_dir` 时目录为 None——
 /// 所有触发入口静默跳过）。
 pub fn shared_prefs() -> Arc<PrefsState> {
@@ -628,6 +634,14 @@ impl PrefsState {
     /// 认领本会话的首次兜底机会：返回 true 表示尚未做过、由本次认领。
     pub fn claim_first_fallback(&self) -> bool {
         !self.first_fallback_claimed.swap(true, Ordering::SeqCst)
+    }
+
+    /// 复位「首次兜底」认领态（headless 多场景串行测试的复位接缝：上一场景
+    /// 的认领不得吞掉下一场景的首次兜底；生产宿主不消费）。与
+    /// `crate::signals::reset_for_tests` 同一批复位点形态。
+    #[doc(hidden)]
+    pub fn reset_first_fallback_claim_for_tests(&self) {
+        self.first_fallback_claimed.store(false, Ordering::SeqCst);
     }
 }
 
@@ -735,31 +749,93 @@ fn log_timed_outcome(trigger: &str, outcome: LockOutcome<()>) {
 /// tauri-host 门（issue #2074 / ADR-0145）：AppHandle 调度宿主 API 只被旧壳
 ///（根包）消费，NSH 原生壳进程不得链接 tauri（GTK3/WebKitGTK 与 GTK4 同进程
 /// 符号互踩，gtk_init_check 双双失效）——摘门即结构守门红（check-structure）。
+/// 门内形态只是宿主状态的提取器：连接句柄、两扇门与版本号取自 AppHandle
+/// 后委托平台中立内核 [`start_scheduler_with`]（#2078 注册点反转，签名与
+/// 行为不变，旧壳消费面零改动）。
 #[cfg(feature = "tauri-host")]
 pub fn start_scheduler<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     use tauri::Manager;
-    if SCHEDULER_SPAWNED.swap(true, Ordering::SeqCst) {
-        return;
-    }
-    let conn = app.state::<DbState>().write_handle();
+    let conn = app.state::<ledger_infra::db::DbState>().write_handle();
     let gate = ledger_infra::db::encryption::EncryptionGate::clone(
         &app.state::<ledger_infra::db::encryption::EncryptionGate>(),
     );
     let boot_gate = ledger_infra::db::boot::BootFailureGate::clone(
         &app.state::<ledger_infra::db::boot::BootFailureGate>(),
     );
+    let version = app.package_info().version.to_string();
+    start_scheduler_with(
+        conn,
+        version,
+        // 旧壳的每轮业务可用性判定：锁定 / 启动失败期间不触碰占位连接
+        //（issue #644 / ADR-0080，判定本体住两扇门，与 IPC/HTTP 门禁同源）。
+        Arc::new(move || !(gate.is_locked() || boot_gate.is_failed())),
+    );
+}
+
+/// 每轮业务可用性判定（#2078 注册点反转的承接面）：调度线程每轮醒来先问
+/// 「本会话业务是否可用」，不可用则空转本轮。实现由宿主壳提供——旧壳闭包
+/// 收两扇门（[`start_scheduler`]）；NSH 原生壳立桩只引导明文库，会话即业务
+/// 可用（引导失败即无会话无调度、无锁定/失败占位形态），注册恒真闭包。
+/// 加密支持随迁移系列票开门时 NSH 换供自己的门判定，注册点形状不变。
+pub type BusinessAvailability = Arc<dyn Fn() -> bool + Send + Sync>;
+
+/// 平台中立调度内核（#2078 注册点反转）：启动自动备份轮询线程——**下层
+///（本域）定义平台中立入口，上层（宿主壳）注册实现**（ADR-0112 决策 5）。
+/// 门内 [`start_scheduler`]（旧壳）提取 AppHandle 状态后委托本函数；NSH 原生
+/// 壳经公开宿主面直呼本函数，调度节奏与单轮语义逐字同源（无 tauri 类型）。
+///
+/// 单一 tick 双判定（issue #307 / ADR-0042）：每轮先做自动备份到期判定，再做
+/// 定时计划追补判定（[`run_catch_up_hook`]，实现由定时计划域提供、壳层接线）；
+/// 线程只做周期调用——备份决策全在纯函数到期判定，追补决策全在钩子实现。
+///
+/// 每轮的连接取用走门面的**限时等待写槽裸作业**（ADR-0125 决策 8 豁免台账退役，
+/// issue #1415）：排队中超过 [`LOCK_TIMEOUT`] 未开始执行即放弃本轮（作业体零执行、
+/// 零副作用），保留脏标记待下个周期重试——与原「try_lock + 轮询 + 时限」的
+/// 「取不到就放弃本轮」语义等价，取用独占收进门面。
+///
+/// 幂等（issue #644 / ADR-0080）：已在跑时本调用退化为无操作；每轮门检在
+/// 锁定/启动失败期间跳过备份与追补（占位连接不是业务库）——原位重引导把
+/// 门翻回锁定后，已存活的线程在门检处等待，解锁/恢复后自动继续。目录镜像
+/// 是进程级单例 [`shared_prefs`]：重引导换连对线程透明，目录推送随时生效。
+pub fn start_scheduler_with(
+    conn: DbWriteHandle,
+    version: String,
+    business_available: BusinessAvailability,
+) {
+    start_scheduler_with_tick(
+        conn,
+        version,
+        business_available,
+        Duration::from_secs(CHECK_INTERVAL_SECS),
+    );
+}
+
+/// [`start_scheduler_with`] 的轮询周期可注入形态（spec #1086 / issue #1514
+/// 的 [`lock_conn_within`] 同款取舍）：语义逐字相同，只是把轮询周期开放为参数。
+/// 存在的理由是**让「周期醒来 → 到期判定 → 产物落盘」的线程语义可被快速验证**：
+/// 测试以极短周期注入，不必实等 10 分钟产品节奏。产品路径一律用
+/// [`start_scheduler_with`]（[`CHECK_INTERVAL_SECS`]），本参数不改变任何产品默认值。
+pub fn start_scheduler_with_tick(
+    conn: DbWriteHandle,
+    version: String,
+    business_available: BusinessAvailability,
+    tick: Duration,
+) {
+    if SCHEDULER_SPAWNED.swap(true, Ordering::SeqCst) {
+        return;
+    }
     let dir_mirror = Arc::clone(&shared_prefs().dir);
-    let handle = app.clone();
     std::thread::spawn(move || {
         loop {
-            std::thread::sleep(Duration::from_secs(CHECK_INTERVAL_SECS));
-            // 每轮门检（issue #644 / ADR-0080）：锁定/启动失败期间不触碰占位连接。
-            if gate.is_locked() || boot_gate.is_failed() {
+            std::thread::sleep(tick);
+            // 每轮业务可用性门检（issue #644 / ADR-0080）：不可用期间空转，
+            // 不触碰占位连接（判定实现由宿主注册，见 [`BusinessAvailability`]）。
+            if !business_available() {
                 continue;
             }
-            let version = handle.package_info().version.to_string();
             let outcome = conn.run_raw_blocking_within("backup.scheduler-round", LOCK_TIMEOUT, {
                 let dir_mirror = Arc::clone(&dir_mirror);
+                let version = version.clone();
                 move |conn| {
                     let dir = dir_mirror.lock().unwrap_or_else(|e| e.into_inner()).clone();
                     run_scheduled_round(conn, dir.as_deref(), &version);
@@ -772,16 +848,24 @@ pub fn start_scheduler<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
 }
 
 /// 应用退出兜底入口：挂在 `RunEvent::Exit` 上，退出前若脏且当天尚未自动备份过
-/// 则补一次备份（与到期入口同受日界门约束，issue #386）。连接取用走门面的限时
-/// 等待写槽裸作业（issue #1415）：排队等了 [`LOCK_TIMEOUT`] 仍拿不到就放弃——
-/// 只能在日志里留痕，退出后没有下一轮了。
-/// tauri-host 门同 [`start_scheduler`]（issue #2074）。
+/// 则补一次备份（与到期入口同受日界门约束，issue #386）。tauri-host 门内形态
+/// 只是宿主状态提取器（#2078 同 [`start_scheduler`]）：连接句柄与版本号取自
+/// AppHandle 后委托平台中立内核 [`exit_fallback_with`]。
 #[cfg(feature = "tauri-host")]
 pub fn exit_fallback(app: &tauri::AppHandle) {
     use tauri::Manager;
-    let conn = app.state::<DbState>().write_handle();
-    let dir = shared_prefs().snapshot_dir();
+    let conn = app.state::<ledger_infra::db::DbState>().write_handle();
     let version = app.package_info().version.to_string();
+    exit_fallback_with(&conn, &version);
+}
+
+/// 平台中立退出兜底内核（#2078 注册点反转）：退出前若脏且当天尚未自动备份过
+/// 则补一次备份。连接取用走门面的限时等待写槽裸作业（issue #1415）：排队等了
+/// [`LOCK_TIMEOUT`] 仍拿不到就放弃——只能在日志里留痕，退出后没有下一轮了。
+/// 目录镜像读进程级单例 [`shared_prefs`]（与调度线程、写入口提交点共享）。
+pub fn exit_fallback_with(conn: &DbWriteHandle, version: &str) {
+    let dir = shared_prefs().snapshot_dir();
+    let version = version.to_owned();
     let outcome = conn.run_raw_blocking_within("backup.exit-fallback", LOCK_TIMEOUT, move |conn| {
         run_exit_backup(conn, dir.as_deref(), &version, Utc::now());
         Ok(())
@@ -1640,6 +1724,105 @@ mod scheduler_tests {
                 .dirty,
             "成功备份应复位脏标记"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // 平台中立调度内核线程（#2078）：周期醒来 → 业务可用门检 → 单轮双判定。
+    // 轮询周期经 [`start_scheduler_with_tick`] 注入短值，免实等 10 分钟产品节奏
+    // （[`lock_conn_within`] 的可注入取舍同款：等待时长不含信息量）。两阶段共用
+    // 一条线程：调度拉起是进程级单次守卫（issue #644），多线程形态在本进程内
+    // 不可重复，门检语义用可翻转的可用性闭包承载。
+    // -----------------------------------------------------------------------
+
+    /// 内核线程端到端（两阶段）：宿主注册的可用性闭包为假 → 线程空转不备份、
+    /// 脏标记保留（旧壳锁定/失败期间门检同口径）；翻真 → 线程自发轮内落下产物
+    /// 并清真（用户可观察结果 = 备份产物在盘）。删线程体任一环（sleep / 门检 /
+    /// 单轮）或删宿主可用性注册的消费点 → 对应阶段红。
+    #[test]
+    fn kernel_scheduler_thread_rounds_follow_business_availability() {
+        // 偏好镜像是进程级共享态：与改道判定测试互斥（锁点注释见
+        // [`SHARED_PREFS_TEST_LOCK`]）。
+        let _prefs_guard = SHARED_PREFS_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let c = conn();
+        let dir = temp_dir("kernel-thread");
+        let state = scheduled_state(c);
+        {
+            let conn = state.conn.lock().expect("测试自持写槽");
+            mark_dirty(&conn).expect("置脏");
+        }
+        shared_prefs().set_dir(Some(dir.to_str().expect("合法路径").to_owned()));
+        let available = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let gate = Arc::clone(&available);
+        start_scheduler_with_tick(
+            state.write_handle(),
+            "0.2.0".to_owned(),
+            Arc::new(move || gate.load(Ordering::SeqCst)),
+            Duration::from_millis(20),
+        );
+        // 阶段一：业务不可用 → 空转不备份（脏标记保留给可用后的下一轮）。
+        std::thread::sleep(Duration::from_millis(300));
+        assert!(
+            fs::read_dir(&dir).expect("列目录").next().is_none(),
+            "业务不可用期间线程不得备份"
+        );
+        assert!(
+            get_state(&state.conn.lock().expect("取回写槽"))
+                .expect("读状态")
+                .dirty,
+            "门检跳过保留脏标记（下轮可用时重试）"
+        );
+        // 阶段二：可用性翻真 → 线程自发轮内产物落盘（轮询节奏域内，宿主壳不驱动）。
+        // 产物落设备子目录一层（ADR-0144 决策 6，域受管写入口径），递归找。
+        available.store(true, Ordering::SeqCst);
+        // 只认终态产物：写路径的原子临时同兄弟（`.ledger-auto-…atomic-*`）
+        // 不匹配前缀，轮询不误拾中途产物（headless 旅程同款过滤）。
+        fn find_product(dir: &Path) -> Option<std::path::PathBuf> {
+            std::fs::read_dir(dir).ok()?.flatten().find_map(|entry| {
+                let path = entry.path();
+                let name = path.file_name().and_then(|n| n.to_str());
+                let is_product = name.is_some_and(|n| n.starts_with("ledger-auto-"));
+                if is_product {
+                    Some(path)
+                } else if path.is_dir() {
+                    find_product(&path)
+                } else {
+                    None
+                }
+            })
+        }
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut product = None;
+        while Instant::now() < deadline {
+            if let Some(entry) = find_product(&dir) {
+                product = Some(entry);
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let product = product.expect("可用后内核线程应在短周期内落下自动备份产物");
+        assert_eq!(
+            Path::new(&product)
+                .file_name()
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .split('-')
+                .next()
+                .expect("文件名非空"),
+            "ledger",
+            "产物为自动命名前缀族（受管命名沿用）"
+        );
+        assert!(
+            !get_state(&state.conn.lock().expect("取回写槽"))
+                .expect("读状态")
+                .dirty,
+            "成功备份应清真"
+        );
+        // 清理进程级目录镜像：线程存活到进程结束，镜像置空后每轮在门检处
+        // 静默跳过（DirMissing），不污染同进程后续用例的目录断言。
+        shared_prefs().set_dir(None);
     }
 }
 

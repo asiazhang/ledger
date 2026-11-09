@@ -221,6 +221,7 @@ pub mod adaptive;
 pub mod ai_prompt;
 pub mod app;
 pub mod backup_entry;
+pub mod backup_host;
 pub mod bar_chart;
 pub mod boot;
 pub mod combo_select;

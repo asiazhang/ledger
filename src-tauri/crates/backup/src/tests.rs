@@ -2118,11 +2118,13 @@ fn restore_works_from_both_layouts() {
 
 /// 命令写侧改道：目标在当前备份目录（进程内偏好镜像）内且为受管命名 →
 /// 设备子目录落点；另存为到目录之外 / 非受管命名 / 镜像未配置 → 原样落盘。
-/// 偏好镜像为进程级共享态：本组用例以互斥锁串行，收尾复位。
+/// 偏好镜像为进程级共享态：本用例与调度内核线程测试（#2078）以共享串行锁
+/// 互斥（[`super::auto::SHARED_PREFS_TEST_LOCK`]），收尾复位。
 #[test]
 fn command_target_retargets_only_inside_backup_dir() {
-    static PREFS_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-    let _guard = PREFS_LOCK.lock().unwrap();
+    let _guard = super::auto::SHARED_PREFS_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let prefs = super::auto::shared_prefs();
     let dir = ScratchDir::new("backup-test-retarget");
     let conn = tauri_app_lib::test_support::open();
