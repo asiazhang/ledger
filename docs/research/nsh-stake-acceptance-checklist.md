@@ -16,8 +16,9 @@
 ( cd src-tauri && cargo build -p nsh-app )
 
 # 性能数据集（ADR-0062 唯一确定性生成器；默认 50 万笔，几十秒；
-# 同参数必出同库；默认输出在 target 下，--out 指到专用目录更顺手）
-( cd src-tauri && cargo run --bin ledger-perf -- generate --out /tmp/nsh-acceptance/ledger.db )
+# 同参数必出同库；默认输出在 target 下，--out 指到专用目录更顺手；
+# #2082 迁居后 ledger-perf 为 nsh-app 同包 bin）
+( cd src-tauri && cargo run --bin ledger-perf -p nsh-app -- generate --out /tmp/nsh-acceptance/ledger.db )
 
 # 启动立桩应用（启动参数 = 账本目录，目录内含 ledger.db；无解锁向导/设置页）
 ./src-tauri/target/debug/nsh-app /tmp/nsh-acceptance

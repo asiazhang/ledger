@@ -44,7 +44,7 @@ use ledger_transaction::amount;
 use ledger_transaction::{
     TransactionListFilter, list_transactions_internal, search_transactions_internal,
 };
-use tauri_app_lib::cross_book_summary::{
+use nsh_app::cross_book::{
     CrossBookBookStatus, collect_other_books, merge_readings, read_book_investment,
 };
 

@@ -45,7 +45,7 @@
 //!   功能/关于，visited-once keep-mounted 状态保留）、外观卡（显示主题三态）、
 //!   日志档位卡、数据存储位置卡（查看 / 更改 / 恢复默认 + 二选一接管守卫）、
 //!   功能开关管理面（写路径归 [`nav::set_feature_closed`] 单点共源）；
-//!   备份 / 加密 / 同步 / 账本切换卡占位待设置②；
+//!   备份 / 加密 / 同步 / 账本切换卡已随设置②（#2054）落位（[`settings_data`]）；
 //! - [`app`]：NSH 根组件与启动结果视图模型（装配入口可注入，headless 可测）；
 //! - [`nav`]：进程内导航 API 与导航状态（#2032 壳导航骨架）——单点入口
 //!   `open`（守卫裁决 → 落位 → 持久化）、下钻意图读一次消费、键位带派发、
@@ -147,6 +147,10 @@
 //! - [`tx_filter`]：交易筛选会话态（#2037）——筛选维度闭集/类型归一/下钻
 //!   全量替换的纯决策半边 + 会话内保留的进程级信号单例（旧壳
 //!   `transactions-session` 的重生，零写盘）；
+//! - [`tx_view_preferences`]：交易页视图偏好（#2062 / ADR-0136 偏好与筛选
+//!   分家）——设备级持久行集裁决（「隐藏投资相关流水」开关）的唯一读写方
+//!   （旧壳 `transaction-view-preferences` store 的重生，平台文件侧 KV 同
+//!   键同值形态、不与旧壳共享）；
 //! - [`backup_entry`]：备份最小入口（#2038）——交易列表工具区一键备份：
 //!   文件保存对话框（NSH 壳能力直用）+ 域 backup 直调 + 成功/失败状态条
 //!   反馈；默认文件名生成面（旧壳 `defaultBackupFileName` 同格式）；
@@ -202,6 +206,10 @@
 //! （窗口呈现）归 headless 组件测试（`tests/app_headless.rs`,
 //! docs/research/nsh-testing-capabilities.md §3.1）；域语义归各域单测，不在本壳
 //! 重复。
+//!
+//! 包内第二 bin（#2082）：`src/bin/ledger-perf`（性能基准工具，ADR-0062 唯一
+//! 生成器，spec #458）随本包构建——headless 集成测试经 `CARGO_BIN_EXE_ledger-perf`
+//! 消费，工具单测归 perf-bench.yml 每日基准承接（test-exec.ts EXEMPT_BINS 登记）。
 
 pub mod accounts;
 pub mod adaptive;
@@ -256,6 +264,7 @@ pub mod sidebar;
 pub mod signals;
 pub mod tx_cards;
 pub mod tx_filter;
+pub mod tx_view_preferences;
 pub mod txn_form;
 pub mod views;
 pub mod wiring;

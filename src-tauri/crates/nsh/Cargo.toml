@@ -5,11 +5,19 @@ description = "Ledger 原生壳骨架（NSH 立桩，issue #2017 / ADR-0145）�
 edition = "2024"
 publish = false
 # 版本与根包锁步（仓库约定：workspace 各成员同为 0.11.2）。
+# 默认可执行文件（#2082 起包内第二 bin）：`cargo run -p nsh-app` 不带 --bin
+# 时指向壳本体，与旧壳根包 default-run 同款约定。
+default-run = "nsh-app"
 
 # bin 单测执行面排除（先例：根包 tauri-app 的 [[bin]] test = false，issue #1787）：
 # main.rs 是薄入口（启动参数注入 + 平台 run_app），bin 目标零单测，显式声明
 # test = false 免链免跑；bin 内若新增 #[test]，scripts/test-exec.ts 的源码扫描
 # 守门会变红。逻辑与测试住 lib（boot / wiring / app），经 lib 目标进并发测试入口。
+#
+# 包内第二 bin（#2082 迁居）：性能基准工具 `src/bin/ledger-perf/`（目录型自动
+# 发现，保留单测，归 perf-bench.yml 每日基准承接——test-exec.ts 的 EXEMPT_BINS
+# 登记）；headless 集成测试经 cargo 注入的 CARGO_BIN_EXE_ledger-perf 消费，
+# 同包 bin 由 cargo 随测试构建自带，二进制缺失路径结构上不可能（#2064 触发面）。
 [[bin]]
 name = "nsh-app"
 path = "src/main.rs"
@@ -81,6 +89,10 @@ serde_json = "1"
 # 本地日历（期间数学的自然月/季/年边界与「今天」，issue #2021）：域栈多 crate
 # 同版本的既有直接依赖（workspace 未收 workspace.dependencies，各成员同版本声明）。
 chrono = "0.4.45"
+# 性能工具 bin 的确定性摘要（#2082 迁居：src/bin/ledger-perf 的 rng 模块以
+# SHA-256 为可种子化 PRNG 的派生熵源；与 infra / sync-engine / transaction
+# 同款直接依赖版本，workspace 未收束）。
+sha2 = "0.11"
 # 域栈日志面（tracing 是全仓日志基座，ADR-0006）；启动期 stderr + 日滚文件
 # 双输出，RUST_LOG 环境变量过滤。tracing-appender 是日滚与 non_blocking
 # WorkerGuard 的载体（#2077 文件面平价，与旧壳同版本）。
