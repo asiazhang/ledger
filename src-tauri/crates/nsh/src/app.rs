@@ -18,7 +18,7 @@
 //! 题令牌。文案仅 zh-CN（spec #2015 实施决策）。
 
 use std::path::PathBuf;
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
 use ledger_infra::db::DbState;
@@ -32,8 +32,8 @@ use nsh_core::prelude::*;
 
 use crate::adaptive;
 use crate::assembly::{
-    self, AccountTable, AmountSemantic, ColumnAlign, CurrencyTable, MerchantTable, RowCells,
-    RowContext,
+    self, AccountAtom, AccountAtoms, AccountTable, AmountSemantic, ColumnAlign, CurrencyTable,
+    MerchantTable, RowCells, RowContext, SourceJump,
 };
 use crate::boot;
 use crate::items::AddItemTarget;
@@ -171,7 +171,12 @@ pub(crate) fn book_dir() -> Option<PathBuf> {
 #[cfg(test)]
 pub(crate) fn test_assembly_guard() -> MutexGuard<'static, ()> {
     static LOCK: Mutex<()> = Mutex::new(());
-    LOCK.lock().unwrap_or_else(|p| p.into_inner())
+    let guard = LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    // 车道测试现场同批复位（#2079）：武装位 / 注入槽 / 反馈对不跨用例残留——
+    // 守卫获取即解除武装，业务用例的 run_startup 成功分支零车道零网络；车道
+    // 接线用例在守卫内显式重装（enable_for_tests + 注入桩）。
+    crate::market_lanes::reset_for_tests();
+    guard
 }
 
 /// 重置装配入口与会话句柄（headless 测试接缝）：同一进程内的多场景串行测试
@@ -199,6 +204,9 @@ pub fn reset_book_assembly() {
     crate::cross_book::reset_default_data_dir();
     // #2057：移动档导航壳态同批复位（抽屉开态不跨场景残留）。
     crate::adaptive::reset_for_tests();
+    // #2079：行情车道测试现场同批复位（武装位 / 注入槽 / 反馈对——上一场景
+    // 的车道武装与桩束不得响应下一场景）。
+    crate::market_lanes::reset_for_tests();
 }
 
 /// 启动结果三态（窗口呈现的全部状态）。
@@ -252,6 +260,12 @@ pub fn run_startup_with_trigger_timings(
             // 钉住（sync_triggers guard_tests），删接线即 headless 旅程与触发
             // 接线测试红（ADR-0087）。
             sync_triggers::wire_sync_triggers_with(timings);
+            // 行情车道启动接线（issue #2079）：三条行情后台车道（价格历史补
+            // 全 / 每日现价刷新 / 每日汇率增量同步）在业务可用起点一并挂载
+            //（旧壳 start_background_services 挂载闭集平价，lib.rs:153-155）。
+            // 删除本行即车道接线测试红（tests/market_*_lane.rs + 本模块
+            // market_lanes::probe 探针）。
+            crate::market_lanes::start_market_lanes();
             StartupView::Ready
         }
         Err(e) => StartupView::Failed {
@@ -315,12 +329,72 @@ pub(crate) fn rows_to_data(rows: &[RowCells]) -> DataTableRows {
         .texts("amount", rows.iter().map(|r| r.amount.as_str()))
 }
 
-/// 自绘格（金额语义色，issue #2019）：金额列按行语义色型着色（旧壳金额列
-/// 着色口径），其余列平文——格文本仍取自数据（`cell.text`），本函数只补色。
-/// 掩码态照常着色（掩码隐藏数字，不隐藏方向，旧壳隐私保留项同口径）。交易
-/// 列表与搜索视图（#2040）共用。
-pub(crate) fn render_cell(rows_signal: Signal<Vec<RowCells>>) -> impl Fn(&DataTableCell) -> Text {
+/// 来源格跳转分发闭包（载荷形态别名，消 type-complexity）。
+type SourceJumpDispatch = Arc<dyn Fn(ledger_transaction::TransactionSourceKind, &str)>;
+
+/// 表格级行为委托处理器闭集（#2061 的分发端；旧壳 transaction-table-actions
+/// 的本壳对应形态——装配行带交互载荷，自绘格按格键命中、载荷分发）：视图
+/// 装配一次传入 [`render_cell`]；只读消费方（搜索视图，模块注「先平价只读」）
+/// 传 None——自绘格退回纯文本形态，不渲染可点样式、不挂空接缝。
+#[derive(Clone)]
+pub(crate) struct CellActions {
+    /// 账户原子下钻（账户 id）。
+    pub account: Arc<dyn Fn(&str)>,
+    /// 商户下钻（商户 id）。
+    pub merchant: Arc<dyn Fn(&str)>,
+    /// 来源跳转（来源种类 + 实体 id）。
+    pub source: SourceJumpDispatch,
+    /// 备注复制（备注原文）。
+    pub copy_note: Arc<dyn Fn(&str)>,
+}
+
+/// 可点原子色（主题强调色；accounts/merchants 可点格先例同源——primary 令牌
+/// 缺失回退亮橙可读兑底）。
+fn accent_color() -> AdaptiveColor {
+    nsh_core::element::tokens()
+        .color("primary")
+        .unwrap_or_else(|| hsla(0.11, 0.82, 0.60, 1.0).into())
+}
+
+/// 来源种类 → 导航域种类（装配载荷是域闭集，跳转目标计算吃导航域闭集——
+/// 映射归 UI 层，与列对齐枚举映射同形）。
+fn source_nav_kind(kind: ledger_transaction::TransactionSourceKind) -> nav_model::SourceKind {
+    match kind {
+        ledger_transaction::TransactionSourceKind::InstallmentPlan => {
+            nav_model::SourceKind::InstallmentPlan
+        }
+        ledger_transaction::TransactionSourceKind::Subscription => {
+            nav_model::SourceKind::Subscription
+        }
+        ledger_transaction::TransactionSourceKind::ScheduledTransfer => {
+            nav_model::SourceKind::ScheduledTransfer
+        }
+        ledger_transaction::TransactionSourceKind::Policy => nav_model::SourceKind::Policy,
+        ledger_transaction::TransactionSourceKind::Item => nav_model::SourceKind::Item,
+        ledger_transaction::TransactionSourceKind::Instrument => nav_model::SourceKind::Instrument,
+    }
+}
+
+/// 自绘格（金额语义色，issue #2019；格级交互格，#2061）：金额列按行语义色型
+/// 着色（旧壳金额列着色口径），账户/商户/来源/备注四格在委托处理器在场时按
+/// 装配载荷渲染可点原子（accent 色文本 + test_id + on_press 分发——accounts
+/// 视图可点格先例同形），其余列平文——格文本仍取自数据（`cell.text`），本函数
+/// 只补色与交互。只读消费方（actions None）或载荷缺席 → 纯文本形态（与既有
+/// 呈现零差异）。掩码态照常着色（掩码隐藏数字，不隐藏方向，旧壳隐私保留项
+/// 同口径）。交易列表（交互）与搜索视图（只读）共用。
+pub(crate) fn render_cell(
+    rows_signal: Signal<Vec<RowCells>>,
+    actions: Option<CellActions>,
+) -> impl Fn(&DataTableCell) -> nsh_core::element::AnyElement {
+    let accent = accent_color();
     move |cell: &DataTableCell| {
+        // 交互格（#2061）：委托处理器在场且装配行带载荷才走可点形态；命中
+        // 失败（只读视图 / 占位「-」/ 续行空格）落回纯文本路径。
+        if let Some(actions) = actions.as_ref()
+            && let Some(element) = interactive_cell(cell, &rows_signal, actions, accent)
+        {
+            return element;
+        }
         let semantic = rows_signal
             .get()
             .get(cell.row as usize)
@@ -341,9 +415,133 @@ pub(crate) fn render_cell(rows_signal: Signal<Vec<RowCells>>) -> impl Fn(&DataTa
         let label = text(cell.text.clone()).number_of_lines(1);
         let label = if align_end { label.text_right() } else { label };
         match semantic {
-            Some(semantic) if cell.key == "amount" => label.text_color(amount_color(semantic)),
-            _ => label,
+            Some(semantic) if cell.key == "amount" => {
+                label.text_color(amount_color(semantic)).into_element()
+            }
+            _ => label.into_element(),
         }
+    }
+}
+
+/// 交互格渲染（#2061）：命中可点载荷 → 可点原子元素（accent 色文本 +
+/// test_id + on_press 分发；accounts 视图名称列先例同形）；未命中（该格无
+/// 载荷：占位「-」/ 续行空格）返回 None → 纯文本路径。单行截断与纯文本路径
+/// 同纪律（虚拟滚动固定行高，长文本不换行）。
+fn interactive_cell(
+    cell: &DataTableCell,
+    rows_signal: &Signal<Vec<RowCells>>,
+    actions: &CellActions,
+    accent: AdaptiveColor,
+) -> Option<nsh_core::element::AnyElement> {
+    let row = rows_signal.get().get(cell.row as usize)?.clone();
+    // 分发闭集按格键取 Arc 克隆（on_press 闭包 'static——挂到元素随存活）。
+    let dispatch = actions.clone();
+    // 账户原子元素：带 id（可下钻）= accent 色可点件；占位「-」= 平文。
+    let account_atom_element = |atom: &AccountAtom| -> nsh_core::element::AnyElement {
+        match &atom.account_id {
+            Some(id) => {
+                let id = id.clone();
+                let account = dispatch.account.clone();
+                view()
+                    .test_id(format!("tx-cell-account-{id}").as_str())
+                    .on_press(move |_: &PressEvent| account(&id))
+                    .child(
+                        text(atom.text.clone())
+                            .text_color(accent)
+                            .number_of_lines(1),
+                    )
+                    .into_element()
+            }
+            None => text(atom.text.clone()).number_of_lines(1).into_element(),
+        }
+    };
+    match cell.key.as_ref() {
+        "account" => {
+            let atoms = row.account_atoms?;
+            Some(match atoms {
+                // 单占位（无 id）不走交互形态：落回纯文本路径（与既有呈现零差异）。
+                AccountAtoms::Single(ref atom) if atom.account_id.is_none() => return None,
+                atoms => match atoms {
+                    AccountAtoms::Single(atom) => account_atom_element(&atom),
+                    AccountAtoms::Two { from, to } => view()
+                        .flex_row()
+                        .items_center()
+                        .gap_1()
+                        .child(account_atom_element(&from))
+                        .child(text("→").number_of_lines(1))
+                        .child(account_atom_element(&to))
+                        .into_element(),
+                    AccountAtoms::Funding { first, marker } => view()
+                        .flex_row()
+                        .items_center()
+                        .child(account_atom_element(&first))
+                        .child(text(marker).number_of_lines(1))
+                        .into_element(),
+                },
+            })
+        }
+        "merchant" => {
+            let id = row.merchant_id?;
+            let press_id = id.clone();
+            let merchant = dispatch.merchant.clone();
+            Some(
+                view()
+                    .test_id(format!("tx-cell-merchant-{id}").as_str())
+                    .on_press(move |_: &PressEvent| merchant(&press_id))
+                    .child(
+                        text(cell.text.to_string())
+                            .text_color(accent)
+                            .number_of_lines(1),
+                    )
+                    .into_element(),
+            )
+        }
+        "source" => {
+            let jump = row.source_jump?;
+            let SourceJump {
+                kind,
+                entity_id,
+                name,
+                status,
+            } = jump;
+            let press_entity = entity_id.clone();
+            let source = dispatch.source.clone();
+            Some(
+                view()
+                    .flex_row()
+                    .items_center()
+                    .child(
+                        view()
+                            .test_id(format!("tx-cell-source-{entity_id}").as_str())
+                            .on_press(move |_: &PressEvent| source(kind, &press_entity))
+                            .child(text(name).text_color(accent).number_of_lines(1)),
+                    )
+                    // 状态标注不可点（文本尾段，旧壳状态徽章平铺镜像同位）。
+                    .children(status.map(|label| text(format!(" {label}")).number_of_lines(1)))
+                    .into_element(),
+            )
+        }
+        "note" => {
+            let note = row.copy_note?;
+            let press_note = note;
+            let copy_note = dispatch.copy_note.clone();
+            Some(
+                view()
+                    .flex_row()
+                    .items_center()
+                    .gap_2()
+                    .child(text(cell.text.to_string()).number_of_lines(1))
+                    .child(
+                        view()
+                            .test_id("tx-cell-copy-note")
+                            .optional_label("复制备注")
+                            .on_press(move |_: &PressEvent| copy_note(&press_note))
+                            .child(text("复制").text_size(px(12.0)).text_color(accent)),
+                    )
+                    .into_element(),
+            )
+        }
+        _ => None,
     }
 }
 
@@ -445,6 +643,9 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
     // 与删除失败呈现（码化错误文案，不静默；下次删除尝试开始时清空）。
     let confirm_target = signal(None::<String>);
     let delete_error = signal(None::<String>);
+    // 备注复制反馈（#2061）：成功/失败两态文案（None = 无反馈；ai_prompt 先例
+    // 同形——旧壳 toast 的条位等价，#2038 裁决）。
+    let copy_feedback = signal(None::<String>);
     // 物品快照（#2044）：装载批同批读取——「加入物品」行菜单项的溯源唯一
     // 准入判定面（hasItem 按溯源指针比对，旧壳 items store 同口径）。
     let items_snap = signal(items::ItemsSnap::default());
@@ -907,6 +1108,79 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
         });
     };
     bridge_merchant();
+
+    // —— 格级行为委托（#2061）：装配载荷 → 用户可观察行为的分发闭集 ——
+
+    // 账户/商户格自下钻：下钻载荷全量替换会话态（[tx_filter::drilled] 单点——
+    // 旧壳 URL query「新 query 全量替换旧 query」同构），筛选下拉呈现随落位
+    // 同步（挂载下钻消费 = apply_drill 后桥自会话态初始化；本路径显式回写桥
+    // 信号，同值守卫兑底不重装载）；搜索态（关键词/金额，组件本地态）随下钻
+    // 归零——旧壳下钻落交易列表页即弃搜索态；装载由本路径直呼（不经防抖）。
+    let self_drill = move |drill: tx_filter::DrillFilters| {
+        search_text.set(String::new());
+        amount_min_text.set(String::new());
+        amount_max_text.set(String::new());
+        filters.apply_drill(&drill);
+        account_sel.set(drill.account.clone());
+        merchant_sel.set(drill.merchant.clone());
+        load(1);
+    };
+
+    // 来源格跳转：目标计算收口导航域深模块（收纳/关闭两轴谓词由导航状态注入
+    // ——旧壳 sidebar-order / feature-toggles 两 store 注入同位），落位经导航
+    // 单点入口（下钻/跳转经 resolve_source_jump 造 NavRequest 后调 open 的
+    // 既有接缝，消费不自建）。
+    let jump_source = move |kind: ledger_transaction::TransactionSourceKind, entity_id: &str| {
+        let store = nav::store();
+        nav::open(nav_model::resolve_source_jump(
+            source_nav_kind(kind),
+            entity_id,
+            |v| store.is_view_contained(v),
+            |v| store.is_closed(v),
+        ));
+    };
+
+    // 备注复制：剪贴板显式写 + 回读校验两态反馈（ai_prompt 先例同形——同一
+    // 应用进程的自写自读；旧壳 NoteCopyButton 语义迁移，成功词表
+    // transactions.list.copyNoteOk 同文案）。
+    let copy_note = {
+        let owner = view_owner;
+        move |note: &str| {
+            let note = note.to_owned();
+            owner.run(move || {
+                spawn(async move {
+                    set_clipboard(&note);
+                    let readback = clipboard_string().await;
+                    let matched = readback == note;
+                    if !matched {
+                        tracing::warn!("剪贴板回读与备注原文不一致，复制反馈呈现失败态");
+                    }
+                    copy_feedback.set(Some(if matched {
+                        "备注已复制".to_owned()
+                    } else {
+                        "复制失败".to_owned()
+                    }));
+                });
+            });
+        }
+    };
+
+    let cell_actions = CellActions {
+        account: Arc::new(move |id: &str| {
+            self_drill(tx_filter::DrillFilters {
+                account: Some(id.to_owned()),
+                ..tx_filter::DrillFilters::default()
+            })
+        }),
+        merchant: Arc::new(move |id: &str| {
+            self_drill(tx_filter::DrillFilters {
+                merchant: Some(id.to_owned()),
+                ..tx_filter::DrillFilters::default()
+            })
+        }),
+        source: Arc::new(jump_source),
+        copy_note: Arc::new(copy_note),
+    };
 
     // 筛选激活判定（清除按钮禁用态与空态分型的判定输入；旧壳 filtersActive
     // 同口径：页码不算筛选，金额输入属搜索面保留态一并计入）。响应式读
@@ -1403,7 +1677,10 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
                     data_table()
                         .columns(columns)
                         .data(move || rows_to_data(&rows.get()))
-                        .render_cell(render_cell(rows))
+                        // 格级行为委托（#2061）：自绘格按装配载荷分发（账户/商户
+                        // 自下钻、来源跳转、备注复制）；删除本接线即红——headless
+                        // 四动作旅程测试逐项断言用户可观察结果。
+                        .render_cell(render_cell(rows, Some(cell_actions.clone())))
                         // 行右键菜单（App* 封装族：上下文菜单，#2022）：菜单项
                         // 闭集与写路径归 open_row_menu 单点（#2057 起与卡片
                         // 「⋯」共用同一接缝）——目标行由右键所在行固定（fixed-
@@ -1467,6 +1744,21 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
                     )
                     .test_id("tx-delete-error")
                     .app_class("px-4 py-1")
+                },
+            ),
+        )
+        .child(
+            // 备注复制反馈条位（#2061）：旧壳 message.success/error 的条位对应
+            // 物（ai_prompt 先例同形）；反馈驻留至下次复制（无自动消失——
+            // NSH 无 toast 超时机制，驻留条位是既有先例口径）。
+            when(
+                move || copy_feedback.get().is_some(),
+                move || {
+                    text(move || copy_feedback.get().unwrap_or_default())
+                        .text_size(px(12.0))
+                        .text_color(item_feedback_fg)
+                        .test_id("tx-copy-note-status")
+                        .app_class("px-4 py-1")
                 },
             ),
         )
@@ -2571,6 +2863,10 @@ pub fn App() -> impl IntoElement {
     // ——调度线程的轮次回调只投递，回引擎线程才广播（signals 线程契约）。唯一
     // 装载点由源码扫描守门钉住（sync_triggers guard_tests）。
     sync_triggers::install_invalidation_drain();
+    // 车道反馈泵（#2079）：引擎线程任务、根实例所有 = 进程寿命——行情车道
+    // 线程把进度与实际写入投进程级队列，本任务排空（进度进接缝信号、写入
+    // 广播投资失效）。删除本行即车道反馈探针红（market_lanes::probe）。
+    crate::market_lanes::install_feedback_pump();
     let state = signal(StartupView::Loading);
     // 主行/次行前景取主题令牌（双态自适应，registry 缺省带主题双态令牌）：
     // 裸 text 的默认前景是黑（ResolvedTextStyle::default 的 React Native

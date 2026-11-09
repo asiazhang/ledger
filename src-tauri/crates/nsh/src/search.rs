@@ -438,7 +438,10 @@ pub(crate) fn SearchView() -> impl IntoElement {
                                         data_table()
                                         .columns(columns)
                                         .data(move || app::rows_to_data(&rows.get()))
-                                        .render_cell(app::render_cell(rows))
+                                        // 只读平价（#2040 模块注：行点击/下钻委托属表格级
+                                        // 发送端 #2061，交易列表先行；本视图不挂委托，
+                                        // 自绘格退回纯文本形态）。
+                                        .render_cell(app::render_cell(rows, None))
                                         .loading(move || visible_loading.get())
                                         .loading_view(
                                             text("正在加载…").text_color(muted),

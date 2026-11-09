@@ -787,7 +787,10 @@ fn app_window_renders_purchase_order_rows_with_count_by_transaction() {
     let texts = app.screen().texts();
     for expected in [
         "京东",
-        "小金库 等 2 账户",
+        // #2061 交互原子化后账户格文本节点随原子拆分（首条原子 + 标注尾段，
+        // 旧壳平替元素同形）——首名与标注各自成节点。
+        "小金库",
+        " 等 2 账户",
         "¥281.6",
         "猫粮 共 2 件",
         "洗衣液 共 1 件",
@@ -842,9 +845,11 @@ fn app_window_renders_lending_label_and_two_account_cell() {
 
     app.wait_for("text:借出").unwrap();
     let texts = app.screen().texts();
+    // #2061 交互原子化后双账户格两段各成可点原子（转出/转入独立载荷，旧壳
+    // 双平替元素同形）——两段名各自成节点、箭头居间。
     assert!(
-        texts.contains(&"测试现金 → 应收款"),
-        "双账户格「转出 → 转入」：{:?}",
+        texts.contains(&"测试现金") && texts.contains(&"应收款"),
+        "双账户格两段名在屏：{:?}",
         texts
     );
     assert!(
@@ -2487,6 +2492,452 @@ fn hide_investment_preference_not_touched_by_clear_or_escape() {
 }
 
 // ---------------------------------------------------------------------------
+// 表格级点击委托（#2061；旧壳 transaction-table-actions 四动作的本壳重生）：
+// 账户/商户格自下钻（筛选会话态全量替换）、转账行双原子各下钻对应侧、来源格
+// 跳转（导航单点）、备注复制（剪贴板 + 条位反馈）。删格级点击委托接线
+//（render_cell 交互格分发）即红的负向条目逐项写在各测试注释（ADR-0087
+// 断言强度：断言对准用户可观察结果）。
+// ---------------------------------------------------------------------------
+
+/// 账户格下钻（#2061）：点账户原子 → 筛选会话态全量替换（商户维度复位——
+/// 旧壳「新 query 全量替换旧 query」同构），行集按涉及账户收窄。判别性证据：
+/// 商户筛选在场时先只剩交集行，点账户原子后非交集的同账户行回屏（若误为
+/// 维度 AND 叠加则仍只剩交集）。删格级点击委托接线（账户原子分发）即红：
+/// 点击无效果，行集维持商户交集不变。
+#[test]
+fn tx_table_account_cell_click_self_drills_with_full_replacement() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("tx-cell-account");
+    let cash_id;
+    let merchant_id;
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        cash_id = seed_cash_account(&db);
+        let bank = seed_account(&db, "银行卡", AccountType::Bank);
+        merchant_id = seed_merchant(&db, "链商超");
+        // 现金三笔：一笔带商户（命中商户筛选），两笔不带（全量替换后才回屏）。
+        for (date, amount, merchant, note) in [
+            (
+                "2026-01-01",
+                2_500,
+                Some(merchant_id.clone()),
+                "现金带商户笔",
+            ),
+            ("2026-01-02", 2_600, None, "现金笔二"),
+            ("2026-01-03", 2_700, None, "现金笔三"),
+        ] {
+            seed_transaction(
+                &db,
+                TxnSeed {
+                    account: &cash_id,
+                    to_account: None,
+                    kind: TransactionKind::Expense,
+                    amount_cents: amount,
+                    date,
+                    category_id: None,
+                    merchant_id: merchant.clone(),
+                    note: Some(note.to_owned()),
+                },
+            );
+        }
+        seed_transaction(
+            &db,
+            TxnSeed {
+                account: &bank,
+                to_account: None,
+                kind: TransactionKind::Expense,
+                amount_cents: 6_600,
+                date: "2026-01-04",
+                category_id: None,
+                merchant_id: Some(merchant_id),
+                note: Some("银行带商户笔".to_owned()),
+            },
+        );
+    }
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_transactions(&mut app);
+    app.wait_for("text:共 4 条").unwrap();
+
+    // 商户筛选先在场（链商超 → 交集 2 笔：现金带商户笔 + 银行带商户笔）。
+    app.press("id:tx-filter-merchant").unwrap();
+    app.wait_for("id:tx-filter-merchant-search").unwrap();
+    app.type_text("id:tx-filter-merchant-search", "链商超")
+        .unwrap();
+    app.press("id:tx-filter-merchant-option >> text:链商超 >> nth=0")
+        .unwrap();
+    app.wait_for("text:共 2 条").unwrap();
+    assert!(!app.shows("现金笔三"), "商户筛选后非交集行离屏");
+
+    // 点现金账户原子 → 全量替换：商户维度复位 + 账户维度落位 → 现金三笔
+    //（无商户的两笔回屏 = 全量替换的判别性证据；维度 AND 叠加只剩交集 1 笔）。
+    app.press(&format!("id:tx-cell-account-{cash_id} >> nth=0"))
+        .unwrap();
+    app.wait_for("text:共 3 条").unwrap();
+    assert!(app.shows("现金笔三"), "非交集同账户行回屏（全量替换）");
+    assert!(!app.shows("银行带商户笔"), "他账户行被下钻筛选排除");
+
+    // 落位态走正常筛选通道（清除按钮回全量 4 笔）。
+    app.press("id:tx-filter-clear").unwrap();
+    app.wait_for("text:共 4 条").unwrap();
+}
+
+/// 转账行双原子（#2061 平价；旧壳 accountCellSkeleton 双原子各带独立载荷）：
+/// 转出/转入两段各自可点、各下钻对应账户侧。删双原子任一侧分发即红：点击
+/// 后行集不按该侧账户收窄。
+#[test]
+fn tx_table_transfer_row_two_account_atoms_drill_to_each_side() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("tx-cell-transfer");
+    let cash_id;
+    let bank_id;
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        cash_id = seed_cash_account(&db);
+        bank_id = seed_account(&db, "银行卡", AccountType::Bank);
+        // 转账一笔（双向原子）+ 两账户各自的独立支出。
+        for (account, amount, date, note) in [
+            (&cash_id, 5_000, "2026-01-01", "转账笔"),
+            (&cash_id, 2_500, "2026-01-02", "现金笔"),
+            (&bank_id, 6_600, "2026-01-03", "银行笔"),
+        ] {
+            seed_transaction(
+                &db,
+                TxnSeed {
+                    account,
+                    to_account: (note == "转账笔").then(|| bank_id.clone()),
+                    kind: if note == "转账笔" {
+                        TransactionKind::Transfer
+                    } else {
+                        TransactionKind::Expense
+                    },
+                    amount_cents: amount,
+                    date,
+                    category_id: None,
+                    merchant_id: None,
+                    note: Some(note.to_owned()),
+                },
+            );
+        }
+    }
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_transactions(&mut app);
+    app.wait_for("text:共 3 条").unwrap();
+
+    // 点转出侧原子 → 涉及账户收窄到现金（转账 + 现金笔；银行笔排除）。
+    app.press(&format!("id:tx-cell-account-{cash_id} >> nth=0"))
+        .unwrap();
+    app.wait_for("text:共 2 条").unwrap();
+    assert!(app.shows("转账笔") && app.shows("现金笔"));
+    assert!(!app.shows("银行笔"), "转出侧下钻排除他账户行");
+
+    // 转账行仍在屏（涉及账户维度），点转入侧原子 → 收窄到银行。
+    app.press(&format!("id:tx-cell-account-{bank_id} >> nth=0"))
+        .unwrap();
+    app.wait_for("text:共 2 条").unwrap();
+    assert!(app.shows("转账笔") && app.shows("银行笔"));
+    assert!(!app.shows("现金笔"), "转入侧下钻排除转出侧独立行");
+}
+
+/// 商户格下钻（#2061）：点商户名 → 商户维度全量替换落位。删商户原子分发
+/// 即红：点击后行集不按商户收窄。
+#[test]
+fn tx_table_merchant_cell_click_drills_to_merchant_filtered() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("tx-cell-merchant");
+    let merchant_id;
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let cash = seed_cash_account(&db);
+        merchant_id = seed_merchant(&db, "链商超");
+        seed_transaction(
+            &db,
+            TxnSeed {
+                account: &cash,
+                to_account: None,
+                kind: TransactionKind::Expense,
+                amount_cents: 2_500,
+                date: "2026-01-01",
+                category_id: None,
+                merchant_id: Some(merchant_id.clone()),
+                note: Some("商户笔".to_owned()),
+            },
+        );
+        seed_transaction(
+            &db,
+            TxnSeed {
+                account: &cash,
+                to_account: None,
+                kind: TransactionKind::Expense,
+                amount_cents: 6_600,
+                date: "2026-01-02",
+                category_id: None,
+                merchant_id: None,
+                note: Some("无商户笔".to_owned()),
+            },
+        );
+    }
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_transactions(&mut app);
+    app.wait_for("text:共 2 条").unwrap();
+
+    app.press(&format!("id:tx-cell-merchant-{merchant_id} >> nth=0"))
+        .unwrap();
+    app.wait_for("text:共 1 条").unwrap();
+    assert!(app.shows("商户笔"));
+    assert!(!app.shows("无商户笔"), "商户下钻排除无商户行");
+}
+
+/// 来源格跳转（#2061）：点来源名 → 经导航单点（resolve_source_jump → open）
+/// 落来源视图（保单——出厂收纳态落资产「更多」容器）。软删来源无跳转载荷
+///（旧壳 clickable 同口径）：点不存在原子（软删行）落空报错、停留交易列表。
+/// 删来源分发即红：点击停留交易列表，保单视图不落位。
+#[test]
+fn tx_table_source_cell_click_jumps_to_policy_view() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("tx-cell-source");
+    let alive_policy;
+    let deleted_policy;
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let account = seed_cash_account(&db);
+        let conn = db
+            .conn
+            .lock()
+            .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
+            .unwrap();
+        let insurer = ledger_policy::create_insurer_by_name(&conn, "众安").unwrap();
+        let make_policy = |number: &str, product: &str| ledger_policy::PolicyInput {
+            insurer_id: insurer.clone(),
+            policy_number: number.to_owned(),
+            product_name: product.to_owned(),
+            start_date: "2026-01-01".to_owned(),
+            end_date: None,
+            coverage_amount_cents: None,
+            coverage_currency_code: None,
+            note: None,
+        };
+        deleted_policy =
+            ledger_policy::create_policy(&conn, make_policy("P-1", "医疗险"), &mut || {}).unwrap();
+        alive_policy =
+            ledger_policy::create_policy(&conn, make_policy("P-2", "重疾险"), &mut || {}).unwrap();
+        let make_expense = |date: &str, policy: String| TransactionInput {
+            kind: TransactionKind::Expense,
+            amount_cents: 2_500,
+            currency_code: "CNY".to_owned(),
+            account_id: Some(account.clone()),
+            to_account_id: None,
+            funding_account_id: None,
+            funding: Vec::new(),
+            purchases: Vec::new(),
+            category_id: None,
+            merchant_id: None,
+            merchant_name: None,
+            policy_id: Some(policy),
+            refund_of_transaction_id: None,
+            note: None,
+            source_order_no: None,
+            date: date.to_owned(),
+            instrument_id: None,
+            quantity: None,
+            price_cents: None,
+            fee_cents: None,
+            to_instrument_id: None,
+            to_quantity: None,
+            out_amount_cents: None,
+            in_amount_cents: None,
+            origin: None,
+            fx_rate: None,
+            idempotency_key: None,
+        };
+        ledger_transaction::create(&conn, make_expense("2026-01-15", deleted_policy.clone()))
+            .unwrap();
+        ledger_transaction::create(&conn, make_expense("2026-01-16", alive_policy.clone()))
+            .unwrap();
+        // 软删保单：历史引用保留，来源格状态标注「已删除」且不可点。
+        ledger_policy::delete_policy(&conn, &deleted_policy, &mut || {}).unwrap();
+        drop(conn);
+    }
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_transactions(&mut app);
+    app.wait_for("text:医疗险 已删除").unwrap();
+
+    // 软删来源不可点：无原子（点击落空）。
+    assert!(
+        app.press(&format!("id:tx-cell-source-{deleted_policy}"))
+            .is_err(),
+        "软删保单无跳转原子（点击落空）"
+    );
+
+    // 点在用保单来源名 → 落保单视图（出厂收纳态：资产「更多」容器页签）。
+    app.press(&format!("id:tx-cell-source-{alive_policy}"))
+        .unwrap();
+    app.wait_for("id:policy-table").unwrap();
+}
+
+/// 备注复制（#2061；旧壳 NoteCopyButton 语义迁移）：点复制 → 剪贴板呈现备注
+/// 原文 + 成功反馈条。购买项行与无备注行不渲染复制通道（旧壳复制通道同
+/// 口径）。删复制分发即红：剪贴板断言与反馈文案两处即红（ai_view 同形）。
+#[test]
+fn tx_table_note_copy_writes_clipboard_with_feedback() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("tx-cell-copy");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let cash = seed_cash_account(&db);
+        let conn = db
+            .conn
+            .lock()
+            .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
+            .unwrap();
+        // 备注行（复制通道唯一持有者）。
+        ledger_transaction::create(
+            &conn,
+            TransactionInput {
+                kind: TransactionKind::Expense,
+                amount_cents: 2_500,
+                currency_code: "CNY".to_owned(),
+                account_id: Some(cash.clone()),
+                to_account_id: None,
+                funding_account_id: None,
+                funding: Vec::new(),
+                purchases: Vec::new(),
+                category_id: None,
+                merchant_id: None,
+                merchant_name: None,
+                policy_id: None,
+                refund_of_transaction_id: None,
+                note: Some("复制我这条备注".to_owned()),
+                source_order_no: None,
+                date: "2026-01-01".to_owned(),
+                instrument_id: None,
+                quantity: None,
+                price_cents: None,
+                fee_cents: None,
+                to_instrument_id: None,
+                to_quantity: None,
+                out_amount_cents: None,
+                in_amount_cents: None,
+                origin: None,
+                fx_rate: None,
+                idempotency_key: None,
+            },
+        )
+        .unwrap();
+        // 购买项行（一列两用显示商品名，无复制通道）。
+        ledger_transaction::create(
+            &conn,
+            TransactionInput {
+                kind: TransactionKind::Expense,
+                amount_cents: 6_600,
+                currency_code: "CNY".to_owned(),
+                account_id: Some(cash.clone()),
+                to_account_id: None,
+                funding_account_id: None,
+                funding: Vec::new(),
+                purchases: vec![TransactionPurchaseInput {
+                    name: "猫粮".to_owned(),
+                    quantity: 2,
+                    category_id: None,
+                    unit_price_cents: None,
+                }],
+                category_id: None,
+                merchant_id: None,
+                merchant_name: None,
+                policy_id: None,
+                refund_of_transaction_id: None,
+                note: None,
+                source_order_no: None,
+                date: "2026-01-02".to_owned(),
+                instrument_id: None,
+                quantity: None,
+                price_cents: None,
+                fee_cents: None,
+                to_instrument_id: None,
+                to_quantity: None,
+                out_amount_cents: None,
+                in_amount_cents: None,
+                origin: None,
+                fx_rate: None,
+                idempotency_key: None,
+            },
+        )
+        .unwrap();
+        // 无备注行（同一写连接守卫内直造，避免二次加锁死等）。
+        ledger_transaction::create(
+            &conn,
+            TransactionInput {
+                kind: TransactionKind::Expense,
+                amount_cents: 8_800,
+                currency_code: "CNY".to_owned(),
+                account_id: Some(cash.clone()),
+                to_account_id: None,
+                funding_account_id: None,
+                funding: Vec::new(),
+                purchases: Vec::new(),
+                category_id: None,
+                merchant_id: None,
+                merchant_name: None,
+                policy_id: None,
+                refund_of_transaction_id: None,
+                note: None,
+                source_order_no: None,
+                date: "2026-01-03".to_owned(),
+                instrument_id: None,
+                quantity: None,
+                price_cents: None,
+                fee_cents: None,
+                to_instrument_id: None,
+                to_quantity: None,
+                out_amount_cents: None,
+                in_amount_cents: None,
+                origin: None,
+                fx_rate: None,
+                idempotency_key: None,
+            },
+        )
+        .unwrap();
+        drop(conn);
+    }
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_transactions(&mut app);
+    app.wait_for("text:共 3 条").unwrap();
+
+    // 复制通道唯一持有者 = 备注行（购买项与无备注行不渲染「复制」）。
+    let copies = app
+        .screen()
+        .texts()
+        .iter()
+        .copied()
+        .filter(|t| *t == "复制")
+        .count();
+    assert_eq!(copies, 1, "仅备注行带复制通道：{:?}", app.screen().texts());
+    // 复制前剪贴板为空。
+    assert!(app.screen().clipboard().is_none(), "复制前无剪贴板文本");
+    app.press("id:tx-cell-copy-note").unwrap();
+    app.wait_for("text:备注已复制").unwrap();
+    assert_eq!(
+        app.screen().clipboard(),
+        Some("复制我这条备注"),
+        "剪贴板内容 = 备注原文"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // 壳导航骨架（issue #2032，spec #2031 拆票②①）：侧栏三组、键位带派发、
 // 功能开关守卫、组「更多」容器、右键排序/移入移回与界面状态持久化。
 // 环境前提：Environment{os: Linux, idiom: Desktop}（desktop_config）。
@@ -4006,7 +4457,9 @@ fn transfer_form_creates_transfer_and_refreshes_list() {
         .unwrap();
     app.wait_for("text:共 1 条").unwrap();
     app.wait_for("text:¥300").unwrap();
-    app.wait_for("text:测试现金 → 测试银行").unwrap();
+    // #2061 交互原子化后双账户格两段名各自成节点（旧壳双平替元素同形）。
+    app.wait_for("text:测试现金").unwrap();
+    app.wait_for("text:测试银行").unwrap();
     assert!(
         app.shows("转账"),
         "行类型标签「转账」：{:?}",
@@ -4231,7 +4684,9 @@ fn lending_form_creates_lend_with_side_filtered_candidates() {
         "行类型标签「借出」（借贷派生文案）：{:?}",
         app.screen().texts()
     );
-    app.wait_for("text:测试现金 → 借出·张三").unwrap();
+    // #2061 交互原子化后双账户格两段名各自成节点（旧壳双平替元素同形）。
+    app.wait_for("text:测试现金").unwrap();
+    app.wait_for("text:借出·张三").unwrap();
 
     // 库态核对：提交产物与转账同构（kind=transfer，两端落位）。
     let db = nsh_app::boot::boot_ledger(&dir).unwrap();
@@ -4746,7 +5201,9 @@ fn funding_form_creates_split_expense_and_refreshes_list() {
         .unwrap();
     app.wait_for("text:共 1 条").unwrap();
     // 分解行账户格：首条 + 「等 2 账户」（旧壳 accountCellView 同口径）。
-    app.wait_for("text:测试现金 等 2 账户").unwrap();
+    // #2061 交互原子化后首名与标注各自成节点（匹配器按节点 trim 全等）。
+    app.wait_for("text:测试现金").unwrap();
+    app.wait_for("text:等 2 账户").unwrap();
     app.wait_for("text:¥50").unwrap();
 
     // 库态核对（不经 UI）：分解两条落库、主账户恒缺省（契约互斥）。
