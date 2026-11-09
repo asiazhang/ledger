@@ -300,7 +300,7 @@ pub(crate) const FLAGS: &[FlagSpec<GenerateCli>] = &[
     },
     FlagSpec {
         flag: "--out <PATH>",
-        help: "输出库文件路径（默认 src-tauri/target/ledger-perf/ledger-perf.db；已存在会先删除再重建）",
+        help: "输出库文件路径（默认 <仓库根>/target/ledger-perf/ledger-perf.db；已存在会先删除再重建）",
         apply: |cli, _flag, v| {
             cli.out = PathBuf::from(v);
             Ok(())

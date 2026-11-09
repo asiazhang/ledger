@@ -62,8 +62,9 @@
 //!   根目录在主库文件同级、每次生成先清后建；每本由基础种子派生自己的种子
 //!   （seed+1+序号），主库确定性不受影响。这是跨账本投资汇总基准（bench，
 //!   ADR-0114）的消费夹具：删除本目录 → 该基准项前置探测失败、bench 运行红。
-//! - 默认输出 `<src-tauri>/target/ledger-perf/ledger-perf.db`（构建目标目录下，
-//!   天然被版本控制忽略、与真实用户库物理隔离，`--out` 可改为任意文件路径）。
+//! - 默认输出 `<仓库根>/target/ledger-perf/ledger-perf.db`（workspace 构建
+//!   目标目录下，天然被版本控制忽略、与真实用户库物理隔离，`--out` 可改为
+//!   任意文件路径）。
 //!   目标文件已存在时先删除再重建（保证从空库迁移 + 幂等重建）。
 //! - 零新增依赖：随机数用手写可种子化 PRNG（本 bin `rng` 模块），参数用手写解析。
 //! - 生成耗时采用一次性事务 + 关闭 fsync 的连接级 PRAGMA（`synchronous=OFF`、
@@ -195,13 +196,12 @@ pub(crate) const DEFAULT_TRANSACTIONS: u64 = 500_000;
 /// 默认锚定结束日期（刻意不锚定「今天」，避免数据随墙钟漂移）。
 pub(crate) const DEFAULT_END_DATE: &str = "2025-12-31";
 
-/// 默认输出路径：构建目标目录下（`src-tauri/target/ledger-perf/`），
-/// 编译期常量拼接，天然被版本控制忽略、与真实用户库物理隔离。#2082 迁居
-/// 后 manifest 在 workspace 成员目录（crates/nsh/），回推两级即 workspace
-/// 构建目标目录（ADR-0062 决策 3 输出坐标不变）。
+/// 默认输出路径：workspace 构建目标目录下（`<仓库根>/target/ledger-perf/`），
+/// 编译期常量拼接，天然被版本控制忽略、与真实用户库物理隔离。#2083 升根后
+/// manifest 在根包目录（`src-app/`），回推一级即仓库根（= workspace 构建
+/// 目标目录所在，ADR-0062 决策 3 输出坐标不变）。
 pub(crate) fn default_out() -> PathBuf {
     let mut dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    dir.pop();
     dir.pop();
     dir.join("target/ledger-perf/ledger-perf.db")
 }

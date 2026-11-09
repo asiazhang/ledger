@@ -717,9 +717,9 @@ generate OPTIONS:
     --transactions <N>        生成笔数（默认 500000）
     --end-date <YYYY-MM-DD>   数据窗口锚定结束日期（默认 2025-12-31，不锚定「今
                               天」）
-    --out <PATH>              输出库文件路径（默认
-                              src-tauri/target/ledger-perf/ledger-perf.db；已存
-                              在会先删除再重建）
+    --out <PATH>              输出库文件路径（默认 <仓库根>
+                              /target/ledger-perf/ledger-perf.db；已存在会先删除
+                              再重建）
     -h, --help                打印本说明"#;
 
 #[test]
@@ -889,7 +889,7 @@ fn generate_help_pins_default_values() {
     assert!(
         d.out
             .to_string_lossy()
-            .ends_with("src-tauri/target/ledger-perf/ledger-perf.db"),
+            .ends_with("target/ledger-perf/ledger-perf.db"),
         "--out 默认路径应为构建目标目录下的 ledger-perf.db，实际：{}",
         d.out.display()
     );
@@ -899,10 +899,7 @@ fn generate_help_pins_default_values() {
             ("--seed <N>", "默认 42"),
             ("--transactions <N>", "默认 500000"),
             ("--end-date <YYYY-MM-DD>", "默认 2025-12-31"),
-            (
-                "--out <PATH>",
-                "src-tauri/target/ledger-perf/ledger-perf.db",
-            ),
+            ("--out <PATH>", "target/ledger-perf/ledger-perf.db"),
         ],
     );
 }
