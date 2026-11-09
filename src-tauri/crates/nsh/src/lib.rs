@@ -250,6 +250,7 @@ pub mod settings;
 pub mod settings_data;
 pub mod sidebar;
 pub mod signals;
+pub mod sync_triggers;
 pub mod tx_cards;
 pub mod tx_filter;
 pub mod txn_form;
@@ -257,6 +258,15 @@ pub mod views;
 pub mod wiring;
 
 mod assembly;
+
+// 源码扫描守门与触发接线测试的词法器具/S3 桩 facade（模块名必须是
+// test_support：s3.rs 内 `use crate::test_support::ScratchDir` 以 crate 根定位，
+// 见 tests/support/s3_stub.rs 头注）。只随测试目标编译，产品构建不触碰；
+// doc(hidden) pub 与根包 test_support 同形（pub 使桩的未消费面不报 dead_code）。
+#[cfg(test)]
+#[doc(hidden)]
+#[path = "../tests/support/s3_stub.rs"]
+pub mod test_support;
 
 #[cfg(test)]
 mod tests;

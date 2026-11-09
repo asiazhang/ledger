@@ -95,6 +95,12 @@ nsh-testing.workspace = true
 # 期次状态造数（#2042 headless）：failed 期次前置的构造面（域测试同款
 # set_status 语义）需要余额库连接上直接改期次状态——rusqlite 与域栈同版本。
 rusqlite = { version = "0.40", features = ["bundled-sqlcipher-vendored-openssl", "trace"] }
+# 同步触发接线测试的 S3 桩（#2080）：真 HTTP 轮次现场的本地服务——根包
+# test_support/s3.rs 经 tests/support/s3_stub.rs facade 原文载入，只依赖
+# std + axum + tokio（不链 tauri，NSH 零 tauri 门不受影响）。特性集对齐根包
+# 同款（rt/net/macros/time：桩的 current_thread runtime + TcpListener::from_std）。
+axum = "0.8"
+tokio = { version = "1", features = ["rt", "net", "macros", "time"] }
 
 # 六件套易 panic 构造门禁经 workspace 继承（ADR-0060 / spec #1086 门禁前置）：
 # 本行是继承接线，缺失即门禁静默消失，由 scripts/check-structure.ts 守门。

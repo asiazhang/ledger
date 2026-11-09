@@ -29,11 +29,13 @@ pub use channel::{
     SyncChannel, SyncChannelConfig, build_channel, configured_channel, probe_channel,
 };
 pub use scheduler::{
-    TriggerTimings, book_unavailable_error, install_after_write_hook, not_configured_error,
-    run_auto_round, run_round_once, sync_after_write,
+    TriggerHost, TriggerTimings, book_unavailable_error, install_after_write_hook,
+    not_configured_error, run_auto_round, run_round_once, start_sync_scheduler_with_host,
+    start_triggers_with_host, sync_after_write, sync_on_start_with_host,
 };
 // 触发宿主面（tauri-host 门，issue #2074 / ADR-0145）：AppHandle 调度 API 只被
-// 旧壳消费，NSH 原生壳进程不得链接 tauri——摘门即结构守门红。
+// 旧壳消费，NSH 原生壳进程不得链接 tauri——摘门即结构守门红。NSH 经上方的
+// 平台中立宿主面（TriggerHost / *_with_host）接线，不走本门。
 #[cfg(feature = "tauri-host")]
 pub use scheduler::{
     start_sync_scheduler, start_sync_scheduler_with, start_triggers, sync_on_start,

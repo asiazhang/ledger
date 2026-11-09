@@ -41,7 +41,8 @@ use crate::nav_model::ViewName;
 use crate::{
     accounts, backup_entry, context_menu, danger, dashboard, investments, investments_form, items,
     logging, modal, multi_select, nav, nav_model, overlay, period_row, pinyin_select, popconfirm,
-    reports, scheduled, search, settings, sidebar, signals, tx_filter, txn_form, views,
+    reports, scheduled, search, settings, sidebar, signals, sync_triggers, tx_filter, txn_form,
+    views,
 };
 
 /// 金额隐私模式开关的存储键（设备轻量设置项，与旧壳同键同值形态：旧壳
@@ -191,6 +192,9 @@ pub fn reset_book_assembly() {
     // #2046：投资同步接缝与 staleness 单例（进程级信号束属同批复位点——
     // 上一场景的接缝状态不得响应下一场景）。
     crate::investment_sync::reset_all_for_tests();
+    // #2080：同步触发失效广播的投递通道属同批复位点（上一场景的排空任务随
+    // 其引擎撤销，通道退役——下一场景的 App 重装 fresh 通道与排空任务）。
+    crate::sync_triggers::reset_for_tests();
     crate::cross_book::reset_default_data_dir();
     // #2057：移动档导航壳态同批复位（抽屉开态不跨场景残留）。
     crate::adaptive::reset_for_tests();
@@ -214,6 +218,17 @@ pub enum StartupView {
 /// 阻塞（SQLite IO）；组件内在 `blocking` 任务里调用。就绪时会话句柄进 [`DB`]
 /// 单例，列表页读经它复用只读连接（不随启动竖井释放）。
 pub fn run_startup() -> StartupView {
+    run_startup_with_trigger_timings(ledger_sync_engine::TriggerTimings::default())
+}
+
+/// 启动竖井（显式触发时机版，[`run_startup`] 的接缝本体，issue #2080）：引导
+/// 与会话装配完全同形，只有同步触发接线的时机参数不同——生产走默认常量，
+/// 触发接线测试注入「短去抖 + 超长轮询」（写后触发断言只等去抖窗，不被低频
+/// 轮询救活，issue #959 显式参数接缝先例；调度线程的正常输入，不是测试后门）。
+#[doc(hidden)]
+pub fn run_startup_with_trigger_timings(
+    timings: ledger_sync_engine::TriggerTimings,
+) -> StartupView {
     let Some(book_dir) = book_dir_slot().clone() else {
         return StartupView::MissingArg;
     };
@@ -224,6 +239,13 @@ pub fn run_startup() -> StartupView {
             // 按读路径容错同口径）。接管在 logging 单点内化，读路径消费面。
             logging::apply_persisted(&db);
             *db_slot() = Some(std::sync::Arc::new(db));
+            // 多端同步触发接线（issue #2080）：旧壳 setup 的 start_triggers 对应
+            // 面——写后即时同步钩子随域栈引导接线（wiring），触发闭集（打开即
+            // 同步 + 桌面低频轮询）随本调用拉起。旧壳「锁定/失败不拉起」同口径：
+            // 只在引导成功分支（占位连接不是业务库）。唯一接线点由源码扫描守门
+            // 钉住（sync_triggers guard_tests），删接线即 headless 旅程与触发
+            // 接线测试红（ADR-0087）。
+            sync_triggers::wire_sync_triggers_with(timings);
             StartupView::Ready
         }
         Err(e) => StartupView::Failed {
@@ -2481,6 +2503,10 @@ pub fn App() -> impl IntoElement {
     // 解析 / 应用）在 settings::apply_startup_appearance 单点内的接线，拆除
     // 即红（headless 外观探针）。
     settings::apply_startup_appearance();
+    // 多端同步轮次的失效广播排空任务（issue #2080）：挂根组件实例（根永生）
+    // ——调度线程的轮次回调只投递，回引擎线程才广播（signals 线程契约）。唯一
+    // 装载点由源码扫描守门钉住（sync_triggers guard_tests）。
+    sync_triggers::install_invalidation_drain();
     let state = signal(StartupView::Loading);
     // 主行/次行前景取主题令牌（双态自适应，registry 缺省带主题双态令牌）：
     // 裸 text 的默认前景是黑（ResolvedTextStyle::default 的 React Native

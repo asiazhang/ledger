@@ -36,7 +36,8 @@ use crate::boot::{
 mod seed;
 
 pub(crate) use seed::{
-    create_empty_book_file, expense_input, make_book_dir as scratch_book_dir, test_date,
+    create_empty_book_file, expense_input, make_book_dir as scratch_book_dir, seed_cash_account,
+    test_date,
 };
 
 /// 串行锁：接缝注册与 OnceLock 装配入口是进程级单例，用例间串行防串扰

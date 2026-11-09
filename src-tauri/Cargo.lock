@@ -4463,6 +4463,7 @@ dependencies = [
 name = "nsh-app"
 version = "0.11.2"
 dependencies = [
+ "axum",
  "chrono",
  "ledger-accounts",
  "ledger-backup",
@@ -4489,6 +4490,7 @@ dependencies = [
  "nsh-testing",
  "rusqlite",
  "serde_json",
+ "tokio",
  "tracing",
  "tracing-subscriber",
 ]
