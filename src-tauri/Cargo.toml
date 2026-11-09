@@ -36,7 +36,6 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = ["tracing"] }
 tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
-regex = "1"
 serde_json = "1"
 # 加密引擎基座（issue #569 / ADR-0075 决策 1）：SQLCipher 4 静态编译（bundled-sqlcipher），
 # OpenSSL 一并 vendored 静态编译，三平台产物自包含；加密参数用 SQLCipher 4 默认值不调参。
@@ -46,6 +45,8 @@ chrono = { version = "0.4.45", features = ["serde"] }
 uuid = { version = "1.23", features = ["v7", "v5", "serde"] }
 tauri-plugin-dialog = "2"
 tokio = { version = "1", features = ["rt", "macros", "time"] }
+# AI 导入 HTTP 壳（api_server）已随 #2081 迁居 NSH；axum 留给测试面的 S3 兼容
+# stub 服务器（test_support/s3.rs，多端同步集成测试的假对象存储）。
 axum = "0.8"
 # reqwest 不在本包依赖里：行情 HTTP 面住 ledger-market-sync（reqwest async，
 # issue #1411 / ADR-0125 决策 5），壳层对数据源零直连；阻塞形态的依赖声明
@@ -56,20 +57,19 @@ tracing = "0.1"
 # 故无需额外开启 feature，直接使用 `tracing_subscriber::reload`。
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-appender = "0.2"
-tower-http = { version = "0.7", features = ["trace"] }
 sha2 = "0.11"
 zip = { version = "9", default-features = false, features = ["deflate"] }
-utoipa = { version = "5", features = ["axum_extras"] }
 # 基础设施 crate（spec #1086 / issue #1087–#1088）：workspace 成员，承载无域语义、
 # 被所有层消费的能力。数据库、错误、设置、文件工具、日志、事件、信号、闭集与
 # 壳层统一读写入口已全量归位（#1088）；根包以再导出形态保留 `crate::db` 等原
 # 引用路径，域与壳层调用点零改动。
 # HTTP 错误响应投影门（issue #1133）：`impl IntoResponse for AppError` 随错误类型
-# 住 infra（孤儿规则），axum 依赖经其 `http` feature 门控——仅壳侧（本包）启用。
+# 住 infra（孤儿规则），axum 依赖经其 `http` feature 门控——AI 导入 HTTP 壳随
+# #2081 迁居 NSH 后由 nsh 侧启用，本包消费面清零、feature 随之摘除。
 # Tauri IPC 发射投影门（issue #2017 / ADR-0145）：失效信号的 AppHandle 投递实现
 # 面（events.rs tauri 件）同样仅旧壳消费，同一门控纪律——tauri-emit 仅本包启用，
 # NSH 原生壳（crates/nsh）不链接 tauri（GTK3/WebKitGTK 与 GTK4 同进程符号互踩）。
-ledger-infra = { path = "crates/infra", features = ["http", "tauri-emit"] }
+ledger-infra = { path = "crates/infra", features = ["tauri-emit"] }
 # 同步协议 crate（spec #1086 / issue #1089）：多端同步的最底层共享协议（设备
 # 标识、领域命令契约、op 本地记录与读取、位点）——业务域与 sync_engine 共同
 # 底座，依赖方向由 cargo 依赖图强制，sync_engine ↔ 业务域环依赖就此断开。
@@ -223,11 +223,9 @@ test-utils = ["ledger-infra/test-utils"]
 # `cargo build` 生产构建不激活 dev-dependency，故不编译测试器具（resolver 3）。
 tauri-app = { path = ".", features = ["test-utils"] }
 cucumber = "0.23"
-tower = { version = "0.5", features = ["util"] }
 # 迁移脚步驱动（`tests/e2e/startup_failure_steps.rs`：手工逐版跑迁移以构造启动
 # 失败态）：只被集成测试消费，故住 dev-dependencies。
 rusqlite_migration = "2.6"
-http-body-util = "0.1"
 zip = { version = "9", default-features = false, features = ["deflate"] }
 tauri = { version = "2", features = ["test"] }
 

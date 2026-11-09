@@ -1,6 +1,6 @@
 //! 商户端点：在用商户列表 + 改名（AI 导入契约，issue #194 / ADR-0028 / #884）。
 //!
-//! 写端点经壳层统一写入口 [`crate::shell_support::write_entry::write_entry`]（ADR-0073）：
+//! 写端点经壳层统一写入口 [`crate::shell_support::write_entry`]（ADR-0073）：
 //! 事务、置脏、信号内化单点（与 IPC `update_merchant` 共享 `WriteOp::UpdateMerchant`，
 //! 参考数据写入静态映射发参考失效信号）；读端点经 `run_db`（形状乙）。
 
@@ -9,8 +9,8 @@ use axum::extract::{Path, State};
 
 use crate::api_server::error::ErrorResponse;
 use crate::api_server::state::{EmitterSlot, ReadConn};
-use crate::shell_support::read_entry::read_entry;
-use crate::shell_support::write_entry::{Outcome, write_entry};
+use crate::shell_support::read_entry;
+use crate::shell_support::{Outcome, write_entry};
 use ledger_infra::db::DbWriteHandle;
 use ledger_infra::error::AppError;
 use ledger_infra::signals::WriteOp;

@@ -13921,3 +13921,92 @@ fn app_window_narrow_search_results_reuse_readonly_cards() {
         "只读卡片不渲染「⋯」菜单（搜索结果无写入口）"
     );
 }
+
+/// 手写极简 HTTP/1.1 请求（接线断言专用；Connection: close 单往返，无状态
+/// 复用）：返回（状态码，响应体全文）。
+fn raw_http_request(
+    method: &str,
+    path: &str,
+    body: Option<&str>,
+) -> std::io::Result<(u16, String)> {
+    use std::io::{Read, Write};
+    let mut stream = std::net::TcpStream::connect("127.0.0.1:9527")?;
+    let body = body.unwrap_or("");
+    let request = format!(
+        "{method} {path} HTTP/1.1\r\nHost: 127.0.0.1:9527\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+        body.len()
+    );
+    stream.write_all(request.as_bytes())?;
+    let mut response = String::new();
+    stream.read_to_string(&mut response)?;
+    let status: u16 = response
+        .split_whitespace()
+        .nth(1)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+    let body = response
+        .split_once("\r\n\r\n")
+        .map(|(_, b)| b.to_string())
+        .unwrap_or_default();
+    Ok((status, body))
+}
+
+/// AI 导入 HTTP 壳挂载与失效信号泵接线断言（#2081，删除即红；ADR-0087 断言
+/// 强度：对准用户可观察结果，不对准函数调用形状）。两半边各自独立成立：
+/// - **挂载半边**：删除 `app.rs` run_startup 就绪分支的 `http_host::mount`
+///   接线 → 端口无服务，本用例限时内收不到契约自举端点应答即红；
+/// - **泵半边**：删除组件层 `http_host::spawn_pump` 接线（或泵的族广播映射）
+///   → 失效事件不再广播进壳内 transactions 族信号 → 视图不重读、新行不出现
+///   即红。
+///
+/// 覆盖链路（旧壳「失效信号 → 前端 store 重拉」本壳等价形的 NSH 新增段）：
+/// 「HTTP 写端点 → emitter.post」的端到端已被 `tests/api_server/
+/// signal_delivery.rs` 钉住（断言随迁未动）；本用例补 NSH 侧两段——服务可用
+/// 性（契约自举端点不触 DB，与库无关）与「泵 → 族广播 → 视图重读」（事件经
+/// `post_invalidation_for_tests` 注入泵通道，造数行走域公开写入口、写库不
+/// 广播——headless 多场景的服务库槽可能归属首个挂载场景，写端点路径在并行
+/// 下不自洽，见 http_host 模块文档生命周期裁决）。
+#[test]
+fn http_api_server_mounts_and_pumps_invalidation_to_views() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("http-mount");
+    seed_expense_series(&dir, 1);
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_transactions(&mut app);
+    app.wait_for("text:¥25").unwrap();
+
+    // 挂载半边：契约自举端点限时可用（服务是进程级设施，起过一次即常驻）。
+    let mut contract = String::new();
+    let mut mounted = false;
+    for _ in 0..50 {
+        if let Ok(result) = raw_http_request("GET", "/api/v1/contract", None) {
+            let (status, body) = result;
+            assert_eq!(status, 200, "契约自举端点应 200：{status} {body}");
+            contract = body;
+            mounted = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    assert!(
+        mounted,
+        "HTTP 服务应在启动后限时可用（run_startup 挂载接线断言，127.0.0.1:9527）"
+    );
+    // 紧凑契约方言（issue #839）的路径是去 /api/v1 前缀的相对形状（base 承载前缀）。
+    assert!(
+        contract.contains("transactions/batch"),
+        "契约面应承载 AI 导入端点：{}",
+        contract.chars().take(400).collect::<String>()
+    );
+
+    // 泵半边：域公开写入口直写本场景库一笔更新日期的支出（写库不广播——NSH
+    // 壳内广播是调用方接线，非域入口行为），此时视图仍持旧行集；经泵通道注入
+    // 一条参考失效事件 → 泵广播进壳内 transactions 族 → 视图订阅重读 → 新行
+    // 在屏。删除泵接线（spawn / 换装 / 族映射任一环）本 wait_for 超时红。
+    seed_expense_on_date(&dir, "2026-06-01", 777);
+    nsh_app::http_host::post_invalidation_for_tests(ledger_infra::events::LEDGER_CHANGED);
+    app.wait_for("text:2026-06-01").unwrap();
+}

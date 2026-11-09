@@ -10,8 +10,8 @@ use crate::api_server::error::ErrorResponse;
 use crate::api_server::handlers::funds::fetch_fund_quote_for_api;
 use crate::api_server::handlers::stocks::fetch_stock_quote_for_api;
 use crate::api_server::state::{ApiState, ReadConn};
-use crate::shell_support::read_entry::read_entry;
-use crate::shell_support::write_entry::{Outcome, write_entry};
+use crate::shell_support::read_entry;
+use crate::shell_support::{Outcome, write_entry};
 use ledger_infra::error::AppError;
 use ledger_infra::signals::{WriteEvidence, WriteOp};
 use ledger_investment::{

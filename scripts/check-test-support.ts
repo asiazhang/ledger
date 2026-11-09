@@ -436,7 +436,15 @@ function scanFiles(
   for (const file of files.sort()) {
     const rel = relative(srcTauri, file).split("\\").join("/");
     const segments = rel.split("/");
-    const underTestSupport = segments[0] === "src" && segments[1] === "test_support";
+    // 工厂本体 = 根包 test_support（唯一登记处）；#2081 起 NSH 对应面
+    // （crates/nsh/src/test_support.rs，api_server 随迁带来的建库/种子闭集副本）
+    // 同享工厂豁免——双壳并存期两侧同构（ADR-0145 代价条），#2077 统一时收拢单点。
+    const underTestSupport =
+      (segments[0] === "src" && segments[1] === "test_support") ||
+      (segments[0] === "crates" &&
+        segments[1] === "nsh" &&
+        segments[2] === "src" &&
+        segments[3] === "test_support.rs");
     // tests/e2e 分层形态（#764）：规则 1 不辖（工厂不入 BDD 层，建库走产品开库
     // 入口，见文件头规则 1 范围边界）；规则 2/3 整目录覆盖，例外经严格相等校验。
     const inE2e = rel.startsWith("tests/e2e/");

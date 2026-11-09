@@ -6,7 +6,7 @@ use crate::common::{body_to_bytes, get_json, setup_app};
 // 投资五节标题锚点（issue #1185）：与 handler 常量结构锁同源——唯一住处在
 // lib 侧 `handlers::import`，经 `test-utils` feature 门控再导出；基础知识端点
 // 响应的排他断言、投资端点响应的存在断言，都以节标题为锚（issue #1123 分级自足）。
-use tauri_app_lib::api_server::INVESTMENT_SECTION_HEADERS;
+use nsh_app::api_server::INVESTMENT_SECTION_HEADERS;
 
 #[tokio::test]
 async fn test_openapi_doc_covers_delete_transaction_endpoint() {

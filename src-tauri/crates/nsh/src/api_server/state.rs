@@ -37,7 +37,9 @@ pub type StockQuoteFetcher = Arc<dyn Fn(StockRoute, &str) -> QuoteFuture + Send 
 /// 失效信号发射槽（壳层 handler 的提取形状，ADR-0054 #367 修订）：写事务提交
 /// 成功后经信号映射单点发射失效信号的机制槽位，收口于发射器接缝
 /// `events::SignalEmitter`（spec #366 固化）。`None` = 集成测试跳过发射分支；
-/// 生产注入 `AppHandle`（主线程非阻塞投递实现）经未尺寸化强转装入。
+/// 生产由宿主注入 `SignalEmitter` 的生产实现——NSH 泵发射器
+///（`crate::http_host` 接线，#2081 迁居后的壳层接线，ADR-0112 决策 5）；
+/// 旧壳的 `AppHandle` 投递实现随切轨退役。
 pub type EmitterSlot = Option<Arc<dyn SignalEmitter>>;
 
 /// HTTP 服务器状态：数据库连接 + 失效信号发射槽 + 可选基金行情接缝 + 加密锁定门。

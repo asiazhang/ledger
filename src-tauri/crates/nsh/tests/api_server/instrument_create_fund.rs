@@ -15,7 +15,7 @@ use axum::http::StatusCode;
 use rusqlite::params;
 
 use ledger_infra::error::AppError;
-use tauri_app_lib::api_server::FundQuoteFetcher;
+use nsh_app::api_server::FundQuoteFetcher;
 
 use crate::common::{FundStubHit, post_instrument, setup_app_with_fund_stub};
 

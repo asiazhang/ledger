@@ -219,6 +219,10 @@
 pub mod accounts;
 pub mod adaptive;
 pub mod ai_prompt;
+// AI 导入 HTTP 壳（axum api_server，#2081 随宿主迁居）：路由 / 契约 / handler
+// 与其集成测试套件的本壳正住址，tauri 依赖经 EmitterSlot 抽象反转（ADR-0112
+// 决策 5），生产发射器由 http_host 接线；契约（路由、载荷、错误码）零演进。
+pub mod api_server;
 pub mod app;
 pub mod backup_entry;
 pub mod backup_host;
@@ -230,6 +234,9 @@ pub mod cross_book;
 pub mod danger;
 pub mod dashboard;
 pub mod date_select;
+// AI 导入 HTTP 壳的生产挂载与失效信号泵（#2081）：api_server 迁居后的启动
+// 接线面——旧壳 lib.rs setup 内挂载的本壳对应物（ADR-0112 决策 5 壳层接线）。
+pub mod http_host;
 pub mod insurers;
 pub mod investment_sync;
 pub mod investments;
@@ -267,6 +274,7 @@ pub mod search;
 pub mod select;
 pub mod settings;
 pub mod settings_data;
+pub mod shell_support;
 pub mod sidebar;
 pub mod signals;
 pub mod sync_triggers;
@@ -279,13 +287,13 @@ pub mod wiring;
 
 mod assembly;
 
-// 源码扫描守门与触发接线测试的词法器具/S3 桩 facade（模块名必须是
-// test_support：s3.rs 内 `use crate::test_support::ScratchDir` 以 crate 根定位，
-// 见 tests/support/s3_stub.rs 头注）。只随测试目标编译，产品构建不触碰；
-// doc(hidden) pub 与根包 test_support 同形（pub 使桩的未消费面不报 dead_code）。
-#[cfg(test)]
+// NSH 测试器具（#2081 随 api_server 迁居；ADR-0111 决策 5 / issue #1132 门，
+// 根包同款）：集成测试链接非 cfg(test) 构建的 lib，故以 cfg(any(test,
+// feature = "test-utils")) 声明，默认不进生产编译；#[doc(hidden)] 不进文档。
+// #2077/#2080 的词法器具与 S3 桩 facade（s3_stub）随迁并入本模块
+// （crate::test_support::{ScratchDir, s3, scan, scratch} 引用面不变）。
+#[cfg(any(test, feature = "test-utils"))]
 #[doc(hidden)]
-#[path = "../tests/support/s3_stub.rs"]
 pub mod test_support;
 
 #[cfg(test)]

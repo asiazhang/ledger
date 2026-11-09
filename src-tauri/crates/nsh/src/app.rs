@@ -254,6 +254,11 @@ pub fn run_startup_with_trigger_timings(
             // 挂载（旧壳 `start_background_services` 的本壳对应编排点；装载期
             // 的偏好推送与深路径发射器在 [`backup_host::install_shell_side`]）。
             backup_host::start_session_host(&db);
+            // AI 导入 HTTP 壳挂载（#2081）：库就绪即挂，旧壳 setup 内
+            // start_http_server 挂载语义保持（端口 127.0.0.1:9527、进程级
+            // 一次）；生产发射器与门注入在 http_host 内化（ADR-0112 决策 5）。
+            // 删除本接线即 headless 挂载断言红（tests/app_headless.rs）。
+            crate::http_host::mount(&db);
             *db_slot() = Some(std::sync::Arc::new(db));
             // 多端同步触发接线（issue #2080）：旧壳 setup 的 start_triggers 对应
             // 面——写后即时同步钩子随域栈引导接线（wiring），触发闭集（打开即
@@ -2898,6 +2903,13 @@ pub fn App() -> impl IntoElement {
             .unwrap_or_else(|_| StartupView::Failed {
                 message: "内部错误：启动任务异常退出".to_owned(),
             });
+        // AI 导入 HTTP 壳的泵任务接线（#2081）：挂载在 run_startup 竖井内
+        // （blocking 后台线程），泵需引擎线程投递壳内族广播（crate::signals
+        // thread_local 订阅者表线程契约），在此竖井 await 回引擎后接线。
+        // 删除本接线即 headless 泵断言红（tests/app_headless.rs）。
+        if outcome == StartupView::Ready {
+            crate::http_host::spawn_pump();
+        }
         state.set(outcome);
     });
     view().flex_1().flex_col().app_class("bg-background").child(

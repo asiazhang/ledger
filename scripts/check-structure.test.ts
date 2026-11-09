@@ -361,19 +361,20 @@ function makeCrateFixture(overrides: CrateFixtureOverrides = {}): string[] {
   }
 
   // 根包壳层面：lib.rs、白名单政策项（test_support）与投资五节锚点（#1185）。
+  // 锚点门桩随 api_server 迁居 NSH（#2081）：crates/nsh/src/api_server。
   mkdirSync(join(srcTauri, "src", "test_support"), { recursive: true });
   writeFileSync(join(srcTauri, "src", "lib.rs"), "pub fn stub() {}\n");
   writeFileSync(join(srcTauri, "src", "test_support", "mod.rs"), STUB);
-  mkdirSync(join(srcTauri, "src", "api_server", "handlers"), { recursive: true });
+  mkdirSync(join(srcTauri, "crates", "nsh", "src", "api_server", "handlers"), { recursive: true });
   writeFileSync(
-    join(srcTauri, "src", "api_server", "handlers", "import.rs"),
+    join(srcTauri, "crates", "nsh", "src", "api_server", "handlers", "import.rs"),
     overrides.apiServerImportRs ??
       '#[cfg(any(test, feature = "test-utils"))]\n' +
         "#[doc(hidden)]\n" +
         'pub const INVESTMENT_SECTION_HEADERS: [&str; 5] = ["## 节"];\n',
   );
   writeFileSync(
-    join(srcTauri, "src", "api_server", "mod.rs"),
+    join(srcTauri, "crates", "nsh", "src", "api_server", "mod.rs"),
     overrides.apiServerModRs ??
       '#[cfg(any(test, feature = "test-utils"))]\n' +
         "#[doc(hidden)]\n" +

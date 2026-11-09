@@ -5,7 +5,7 @@ use axum::extract::State;
 
 use crate::api_server::error::ErrorResponse;
 use crate::api_server::state::ReadConn;
-use crate::shell_support::read_entry::read_entry;
+use crate::shell_support::read_entry;
 use ledger_currencies::Currency;
 use ledger_infra::error::AppError;
 
