@@ -1495,21 +1495,14 @@ fn app_smoke_boots_shows_first_screen_count_and_pages_by_key() {
     app.wait_for_gone("text:2026-05-30", DEFAULT_WAIT).unwrap();
 }
 
-/// ADR-0062 确定性性能数据集生成器的 bin 路径（根包 tauri-app 的
-/// `src/bin/ledger-perf`，`cargo test --workspace` / scripts/test.sh 泳道随
-/// 构建一并产出）。跨包集成测试取不到 `CARGO_BIN_EXE_*`，按 workspace target
-/// 目录约定定位（manifest 相对，编译期注入；执行器等价性守门禁测试运行期读
-/// CARGO_* 环境变量，scripts/test-exec.ts 守门规则④）。
+/// ADR-0062 确定性性能数据集生成器的 bin 路径（nsh-app 同包 bin
+/// `src/bin/ledger-perf`，#2082 迁居）：cargo 为同包 bin 在集成测试编译期
+/// 注入 `CARGO_BIN_EXE_*` 并保证其先于测试构建——直跑 `cargo test -p nsh-app`
+/// 无需前置构建步骤，二进制缺失路径结构上不可能（#2064 级联假红的触发面
+/// 拆除；旧口径「先 `cargo build --bin ledger-perf -p tauri-app`」随迁居
+/// 退役）。
 fn ledger_perf_bin() -> std::path::PathBuf {
-    let exe =
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/debug/ledger-perf");
-    assert!(
-        exe.is_file(),
-        "ledger-perf 二进制未构建（{}）：本测经 ADR-0062 生成器子进程造库，\
-         先 `cargo build --bin ledger-perf -p tauri-app`（scripts/test.sh 泳道自带）",
-        exe.display()
-    );
-    exe
+    std::path::PathBuf::from(env!("CARGO_BIN_EXE_ledger-perf"))
 }
 
 /// 经 ADR-0062 生成器现场造一本确定性数据集库（复用唯一生成器，不另立第二

@@ -1,10 +1,12 @@
 //! 生成器正确性单测（issue #459 验收项：写在 bin 模块内部、随常规测试循环运行）。
 //!
 //! 断言接缝（spec #458 测试决策）：标准连接工厂
-//! （[`ledger_infra::db::open_connection`] 打开生成的文件库、统一测试工厂
-//! `test_support::open()` 对照产品迁移路径）+ 现有查询函数层（accounts / categories /
-//! merchants / transaction 读取接口）；仅 schema 级事实（user_version / foreign_key_check）
-//! 与无既有读 API 的画像事实（fx_rate_history 行数）用 PRAGMA / 原生 SQL。
+//! （[`ledger_infra::db::open_connection`] 打开生成的文件库）与现有查询函数层
+//! （accounts / categories / merchants / transaction 读取接口）；内存对照库走
+//! 本文件自持镜像 [`open_memory_baseline`]（#2082 迁居后 bin 不依赖旧壳壳层
+//! 测试工厂，两行序同形：进程接线单点与 infra `open_in_memory_initialized`）；
+//! 仅 schema 级事实（user_version / foreign_key_check）与无既有读 API 的画像
+//! 事实（fx_rate_history 行数）用 PRAGMA / 原生 SQL。
 //! 测试一律用小规模参数（数百至数千笔），50 万笔默认规模只在手动验证时跑。
 
 use std::collections::BTreeMap;
@@ -18,7 +20,7 @@ use ledger_accounts as accounts;
 use ledger_budget as budget;
 use ledger_categories as categories;
 use ledger_currencies as currencies;
-use ledger_infra::db::{open_connection, open_connection_in};
+use ledger_infra::db::{new_uuid, open_connection, open_connection_in, open_in_memory_initialized};
 use ledger_investment as investment;
 use ledger_investment::InstrumentListFilter;
 use ledger_merchants as merchants;
@@ -27,7 +29,6 @@ use ledger_transaction::TransactionListFilter;
 use ledger_transaction::amount::TransactionKind;
 use ledger_transaction::read::{get_transaction, list_transactions};
 use ledger_transaction::search_transactions_internal;
-use tauri_app_lib::test_support::{self, FIXED_NOW};
 
 use super::bench::{self, BenchCli, BenchConfig, BenchMetrics};
 use super::bench_common::{self, Outcome, Parsed};
@@ -43,7 +44,6 @@ use super::generate::{
     parse_generate_args, purchase_name_pool,
 };
 use ledger_accounts::{Account, AccountType};
-use ledger_backup as backup_domain;
 use ledger_transaction::compute_dedup_hash;
 
 /// 解析并取 bench 运行参数（帮助请求在该测试套件中不该出现；
@@ -446,6 +446,11 @@ fn bench_import_rows_are_deterministic_dedup_unique_and_distribution_shaped() {
     }
 }
 
+/// 夹具簿记戳（Account 字面量的 created_at/updated_at，非行为输入列，
+/// ADR-0084 决策 5 语义）：#2082 迁居后 bin 不依赖旧壳壳层测试工厂，此处
+/// 自持固定值；刻意不同于工厂登记值（#752 禁令字面量闭集外），只作簿记。
+const FIXTURE_BOOKKEEPING_STAMP: &str = "2026-06-01T00:00:00Z";
+
 /// 手工构造账户行（只带筛选相关字段的全字段字面量）。
 fn acct(id: &str, kind: AccountType, ccy: &str) -> Account {
     Account {
@@ -454,8 +459,8 @@ fn acct(id: &str, kind: AccountType, ccy: &str) -> Account {
         kind,
         currency_code: ccy.to_string(),
         initial_balance_cents: 0,
-        created_at: FIXED_NOW.to_string(),
-        updated_at: FIXED_NOW.to_string(),
+        created_at: FIXTURE_BOOKKEEPING_STAMP.to_string(),
+        updated_at: FIXTURE_BOOKKEEPING_STAMP.to_string(),
         version: 1,
         device_id: "test".to_string(),
         is_deleted: false,
@@ -469,7 +474,7 @@ fn acct(id: &str, kind: AccountType, ccy: &str) -> Account {
 
 #[test]
 fn bench_import_eligible_accounts_filter_excludes_investment_and_foreign() {
-    let conn = test_support::open();
+    let conn = open_memory_baseline();
     let all = vec![
         acct("a-cny-cash", AccountType::Cash, "CNY"),
         acct("a-cny-inv", AccountType::Investment, "CNY"),
@@ -1340,23 +1345,71 @@ fn user_version(conn: &Connection) -> Result<i64, String> {
 /// 小规模画像测试的生成笔数（确定性：分布断言的容差按此规模校准）。
 const PROFILE_N: u64 = 4000;
 
+/// 内存对照库（旧壳壳层测试工厂 `test_support::open` 的 bin 自持镜像，
+/// #2082 迁居）：两行序同形——进程接线单点（[`crate::install_process_wiring`]，
+/// 与 main()/build() 同一函数、幂等）+ infra `open_in_memory_initialized`
+/// （迁移 + 种子 + 建连收尾）。建库知识不另立第二源：迁移与种子都在基础设施
+/// 同一入口，接线同 bin 生产面。
+fn open_memory_baseline() -> Connection {
+    crate::install_process_wiring();
+    open_in_memory_initialized().expect("打开并初始化内存测试库")
+}
+
+/// 测试暂存目录 guard（旧壳壳层 `ScratchDir` 的 bin 自持镜像，#2082 迁居，
+/// issue #1645 语义同款）：构造即建 `temp_dir()/ledger-test-{tag}-{uuid}/`，
+/// drop（含 panic unwind）整棵删除；前缀闭集 `ledger-test-` 保持 /tmp 残留
+/// 可一条 rm 识别清理。
+struct ScratchDir {
+    root: PathBuf,
+}
+
+impl ScratchDir {
+    fn new(tag: &str) -> Self {
+        let root = std::env::temp_dir().join(format!("ledger-test-{tag}-{}", new_uuid()));
+        std::fs::create_dir_all(&root).expect("创建测试暂存目录");
+        Self { root }
+    }
+}
+
+impl std::ops::Deref for ScratchDir {
+    type Target = Path;
+
+    fn deref(&self) -> &Path {
+        &self.root
+    }
+}
+
+impl AsRef<Path> for ScratchDir {
+    fn as_ref(&self) -> &Path {
+        &self.root
+    }
+}
+
+impl Drop for ScratchDir {
+    fn drop(&mut self) {
+        // 清理失败静默吸收（`let _ =`）：清理失败不得变成测试失败的噪声源；
+        // panic unwind 时照常 drop，红测不留残留。
+        let _ = std::fs::remove_dir_all(&self.root);
+    }
+}
+
 /// 暂存目录（ScratchDir guard，issue #1645）：库目录随元组交调用方持有，
 /// 用例结束（含 panic）整棵删除——perf 单测曾是 /tmp 残留的最大来源。
-fn temp_db(tag: &str) -> (tauri_app_lib::test_support::ScratchDir, PathBuf) {
-    let dir = tauri_app_lib::test_support::ScratchDir::new(&format!("perf-test-{tag}"));
+fn temp_db(tag: &str) -> (ScratchDir, PathBuf) {
+    let dir = ScratchDir::new(&format!("perf-test-{tag}"));
     // 库文件名用产品常量：build 经 open_connection_in（按目录打开 ledger.db）建库。
     let db = dir.join(ledger_infra::db::data_location::DB_FILE_NAME);
     (dir, db)
 }
 
 /// 经完整路径生成小库：产品建连缝打开（open_connection_in = 打开 + init_db）
-/// → 生成；内存对照库经统一测试工厂（spec #728 / issue #754 / ADR-0084 决策 7，
-/// 文件库不入工厂，迁移知识仍单一来源）。
+/// → 生成；内存对照库走本文件自持镜像 [`open_memory_baseline`]（#2082 迁居
+/// 后 bin 不依赖旧壳壳层测试工厂；两行序同形，迁移知识仍单一来源）。
 fn build(path: &Path, transactions: u64, end_date: NaiveDate) -> GenCounts {
     // 进程级接缝接线：经 crate 单点 [`install_process_wiring`]（与本 bin main()
     // 同一函数、幂等）——本套件多个用例直接经读接缝消费生成库（列表/搜索的
-    // 来源列计划反查），单独运行时没有其它测试经 `test_support::open` 代装，
-    // 接线必须由建库单点自带，否则单测顺序决定成败（ADR-0112 决策 5）。
+    // 来源列计划反查），单独运行时没有其它测试经 [`open_memory_baseline`]
+    // 代装，接线必须由建库单点自带，否则单测顺序决定成败（ADR-0112 决策 5）。
     crate::install_process_wiring();
     let mut conn = open_connection_in(path.parent().expect("临时库目录")).unwrap();
     generate_into(
@@ -1396,8 +1449,8 @@ fn generated_schema_matches_product_migration_path() {
     build(&path, 300, NaiveDate::from_ymd_opt(2025, 12, 31).unwrap());
 
     let conn = open_connection(&path).unwrap();
-    // 基线 = 产品迁移路径产出的内存库（建库经统一测试工厂，含默认种子）。
-    let mem = test_support::open();
+    // 基线 = 产品迁移路径产出的内存库（建库经 bin 自持镜像，含默认种子）。
+    let mem = open_memory_baseline();
 
     // user_version 与产品迁移路径产出的内存库一致（建库不复制 DDL 的直接证据）。
     let file_version = user_version(&conn).unwrap();
@@ -1428,9 +1481,9 @@ fn profile_matches_spec_counts() {
     );
     let conn = open_connection(&path).unwrap();
 
-    // 基线 = 产品迁移路径产出的内存库（建库经统一测试工厂，种子数不硬编码）：
+    // 基线 = 产品迁移路径产出的内存库（建库经 bin 自持镜像，种子数不硬编码）：
     // 文件库各参考数据量 = 基线 + 生成量。
-    let mem = test_support::open();
+    let mem = open_memory_baseline();
 
     // 账户：生成 50 个（与 list_accounts 同口径，不含隐藏黑洞种子）。
     let mem_accounts = accounts::list_accounts(&mem).unwrap().len();
@@ -2670,17 +2723,12 @@ fn bench_sync_wire_form_roundtrips_to_identical_ops() {
 /// 位点归宿，任何非 Applied 归宿都让量测作废）。
 #[test]
 fn bench_sync_smoke_runs_matrix_and_produces_all_metrics() {
-    // 写路径接缝接线（与 bin main() 同形，OnceLock 注册幂等）：重放路径触达
-    // 余额刷新与本位币读取等接缝，缺席即码化拒绝（壳层启动接线缺失）——
-    // 本测试独立过滤运行（cargo test --bin ledger-perf <过滤器>）时无其它
-    // 测试先行接线，故自装；全量跑时与先行测试的注册幂等共存。
-    ledger_accounts::balance::install_balance_refresh_hook();
-    ledger_scheduled::install_plan_source_hook();
-    ledger_scheduled::auto_run::register_after_occurrence_hook(
-        backup_domain::occurrence_dirty_hook,
-    );
-    backup_domain::register_catch_up_hook(ledger_scheduled::auto_run::catch_up_hook);
-    tauri_app_lib::transaction_wiring::install_all();
+    // 写路径接缝接线：经 crate 单点 [`crate::install_process_wiring`]（与 bin
+    // main()/build() 同一函数，OnceLock 注册幂等）：重放路径触达余额刷新、
+    // 本位币读取与六向接缝，缺席即码化拒绝（壳层启动接线缺失）——本测试
+    // 独立过滤运行（cargo test --bin ledger-perf <过滤器>）时无其它测试先行
+    // 接线，故自装；全量跑时与先行测试的注册幂等共存。
+    crate::install_process_wiring();
 
     let (_dir, path) = temp_db("bench-sync-smoke");
     build(&path, 2_000, NaiveDate::from_ymd_opt(2025, 12, 31).unwrap());

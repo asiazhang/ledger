@@ -199,6 +199,10 @@
 //! （窗口呈现）归 headless 组件测试（`tests/app_headless.rs`,
 //! docs/research/nsh-testing-capabilities.md §3.1）；域语义归各域单测，不在本壳
 //! 重复。
+//!
+//! 包内第二 bin（#2082）：`src/bin/ledger-perf`（性能基准工具，ADR-0062 唯一
+//! 生成器，spec #458）随本包构建——headless 集成测试经 `CARGO_BIN_EXE_ledger-perf`
+//! 消费，工具单测归 perf-bench.yml 每日基准承接（test-exec.ts EXEMPT_BINS 登记）。
 
 pub mod accounts;
 pub mod adaptive;
