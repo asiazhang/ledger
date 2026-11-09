@@ -22,7 +22,7 @@ vi.mock("vue-router", () => ({
 
 // issue #86：端到端整合验证 + 组件层反应性测试。
 // 场景骨架：外部 AI 经本地 HTTP API 写入参考数据（账户/分类）→ 后端成功 emit `ledger:changed`
-// （issue #79 的薄胶，见 src-tauri/src/events.rs / api_server.rs）→ useReferenceStore 收到事件
+// （issue #79 的薄胶，现住信号投递面：src-app/src/http_host.rs 与 src-app/tests/api_server/）→ useReferenceStore 收到事件
 // 重拉三表（stale-while-revalidate）→ 已挂载的视图/表单经响应式状态自动呈现新数据。
 // 测试主缝与 spec #76 一致：`invoke`（数据访问）与 `listen`（事件订阅），无需真实 Tauri/HTTP。
 

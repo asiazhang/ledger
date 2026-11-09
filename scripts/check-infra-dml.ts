@@ -52,7 +52,7 @@ import {
 } from "./gate-primitives.ts";
 import { INFRA_SRC_REL } from "./check-structure.ts";
 
-const DEFAULT_SRC_TAURI = join(fileURLToPath(import.meta.url), "..", "..", "src-app");
+const DEFAULT_SRC_APP = join(fileURLToPath(import.meta.url), "..", "..", "src-app");
 
 function fail(message: string): never {
   console.error(`✗ 基础设施账本数据表 DML 禁令：${message}`);
@@ -141,9 +141,9 @@ const CREATE_TABLE_RE =
  * db/migrate.rs）提取 CREATE TABLE 全量清单，扣除机制表即禁 DML 集合。
  * 提不出任何表名即红（拒绝以空集假绿通过）。
  */
-export function deriveBannedTables(srcTauriDir: string): { inventory: string[]; banned: string[] } {
+export function deriveBannedTables(rustRootDir: string): { inventory: string[]; banned: string[] } {
   const sources: string[] = [];
-  const migrationsDir = join(srcTauriDir, "migrations");
+  const migrationsDir = join(rustRootDir, "migrations");
   if (existsSync(migrationsDir)) {
     // 列举机制归家族共享单点 readDirEntries（#1742 收口）：排序归一为 localeCompare
     // （原 plain sort 实树对拍全等）；.sql 是迁移链扫描边界政策（单消费、无副本可
@@ -153,7 +153,7 @@ export function deriveBannedTables(srcTauriDir: string): { inventory: string[]; 
         sources.push(readFileSync(join(migrationsDir, entry.name), "utf8"));
     }
   }
-  const migrateRs = join(srcTauriDir, INFRA_SRC_REL, "db", "migrate.rs");
+  const migrateRs = join(rustRootDir, INFRA_SRC_REL, "db", "migrate.rs");
   if (existsSync(migrateRs)) sources.push(readFileSync(migrateRs, "utf8"));
 
   const inventory = new Set<string>();
@@ -227,11 +227,11 @@ function isTestPath(relSegments: string[]): boolean {
 /** 扫描面：Rust 源文件扩展名闭集——消费库 RUST_EXTENSIONS（#1680 收口全等副本） */
 
 function main(): void {
-  const srcTauri = process.argv[2] ? resolve(process.argv[2]) : DEFAULT_SRC_TAURI;
-  const infraSrcDir = join(srcTauri, INFRA_SRC_REL);
+  const srcAppDir = process.argv[2] ? resolve(process.argv[2]) : DEFAULT_SRC_APP;
+  const infraSrcDir = join(srcAppDir, INFRA_SRC_REL);
   if (!existsSync(infraSrcDir)) fail(`基础设施 crate 源目录不存在：${infraSrcDir}`);
 
-  const { inventory, banned } = deriveBannedTables(srcTauri);
+  const { inventory, banned } = deriveBannedTables(srcAppDir);
 
   // 免扫清单自证：登记文件必须存在（清单漂移 fail loud，不放任守门空转）
   const problems: string[] = [];

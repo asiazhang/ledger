@@ -69,8 +69,8 @@ import {
   walkTextFiles,
 } from "./gate-primitives.ts";
 
-/** 根包（Rust workspace 根 = tauri 应用包）目录名，相对仓库根。 */
-const SRC_TAURI_DIR_NAME = "src-app";
+/** Rust workspace 根（= NSH 壳根包，#2083 切轨后住 src-app/）目录名，相对仓库根。 */
+const RUST_ROOT_DIR_NAME = "src-app";
 
 /** 两个测试入口的宿主脚本（覆盖守门读取其命令行）。 */
 const TEST_SH_REL = join("scripts", "test.sh");
@@ -373,7 +373,7 @@ function stemName(file: string): string {
 
 /** 展开 `[workspace] members`：只支持「前缀 + 尾随 `*`」的单层 glob 与裸目录。 */
 function expandMemberGlobs(
-  srcTauriDir: string,
+  rustRootDir: string,
   patterns: string[],
 ): { dirs: string[]; problems: string[] } {
   const dirs: string[] = [];
@@ -381,7 +381,7 @@ function expandMemberGlobs(
   for (const pattern of patterns) {
     if (pattern.endsWith("/*")) {
       const base = pattern.slice(0, -2);
-      const baseDir = join(srcTauriDir, base);
+      const baseDir = join(rustRootDir, base);
       if (!isDirectory(baseDir)) {
         problems.push(`✗ 目标发现：members glob 基目录不存在：${base}（${pattern}）`);
         continue;
@@ -398,7 +398,7 @@ function expandMemberGlobs(
       );
       continue;
     }
-    const dir = join(srcTauriDir, pattern);
+    const dir = join(rustRootDir, pattern);
     if (!existsSync(join(dir, "Cargo.toml"))) {
       problems.push(`✗ 目标发现：members 目录缺 Cargo.toml：${pattern}`);
       continue;
@@ -570,34 +570,34 @@ function discoverPackage(dir: string, rel: string, tables: ManifestTables): Pack
 
 /** 发现工作区全部测试目标（口径 = `cargo test` 默认执行面）。 */
 export function discoverTargets(rootDir: string): Discovery {
-  const srcTauriDir = join(rootDir, SRC_TAURI_DIR_NAME);
+  const rustRootDir = join(rootDir, RUST_ROOT_DIR_NAME);
   const problems: string[] = [];
   const targets: DiscoveredTarget[] = [];
   const outOfFace: string[] = [];
   const testFalseBins: TestFalseBin[] = [];
 
-  const rootTables = readManifest(srcTauriDir);
+  const rootTables = readManifest(rustRootDir);
   if (rootTables === null) {
     return {
       targets,
-      problems: [`✗ 目标发现：Rust 根 manifest 不存在：${SRC_TAURI_DIR_NAME}/Cargo.toml`],
+      problems: [`✗ 目标发现：Rust 根 manifest 不存在：${RUST_ROOT_DIR_NAME}/Cargo.toml`],
       outOfFace,
       testFalseBins,
     };
   }
   const packageDirs: { dir: string; rel: string }[] = [];
   if (rootTables.package.name !== undefined) {
-    packageDirs.push({ dir: srcTauriDir, rel: SRC_TAURI_DIR_NAME });
+    packageDirs.push({ dir: rustRootDir, rel: RUST_ROOT_DIR_NAME });
   }
   const memberPatterns = rootTables.workspace.members;
   if (memberPatterns === undefined) {
     if (packageDirs.length === 0) {
       problems.push(
-        `✗ 目标发现：${SRC_TAURI_DIR_NAME}/Cargo.toml 既无 [package] 也无 [workspace] members`,
+        `✗ 目标发现：${RUST_ROOT_DIR_NAME}/Cargo.toml 既无 [package] 也无 [workspace] members`,
       );
     }
   } else {
-    const expanded = expandMemberGlobs(srcTauriDir, memberPatterns);
+    const expanded = expandMemberGlobs(rustRootDir, memberPatterns);
     problems.push(...expanded.problems);
     for (const dir of expanded.dirs) {
       packageDirs.push({ dir, rel: relative(rootDir, dir) });
@@ -833,7 +833,7 @@ const CARGO_RUNTIME_ENV_PATTERN = /\benv::var(?:_os)?\s*\(\s*"(CARGO_[A-Z0-9_]+|
 
 function cargoRuntimeEnvProblems(rootDir: string): string[] {
   const problems: string[] = [];
-  const scanRoot = join(rootDir, SRC_TAURI_DIR_NAME);
+  const scanRoot = join(rootDir, RUST_ROOT_DIR_NAME);
   if (!isDirectory(scanRoot)) return problems;
   // 遍历机制归守门家族共享单点 walkTextFiles（#1680 收口）：target/ 剪枝经 options
   // 注入，build.rs 豁免是本守门扫描边界政策、walk 后按文件名过滤。
@@ -1049,7 +1049,7 @@ function parseCargoMessage(line: string): CargoMessage | null {
 
 async function buildTestBinaries(
   cargo: string,
-  srcTauriDir: string,
+  rustRootDir: string,
 ): Promise<{ executables: Map<string, string>; problems: string[]; ms: number }> {
   const start = Date.now();
   // CI PR 口径（build.yml）：--lib --test '*' 排除 bin 单测（issue #1787 热点 2）。
@@ -1065,7 +1065,7 @@ async function buildTestBinaries(
       "--no-run",
       "--message-format=json-render-diagnostics",
     ],
-    { cwd: srcTauriDir, streamStderr: true },
+    { cwd: rustRootDir, streamStderr: true },
   );
   const ms = Date.now() - start;
   const problems: string[] = [];
@@ -1179,13 +1179,13 @@ async function runAll(options: RunOptions): Promise<number> {
   if (coverage.problems.length > 0) printProblems(coverage.problems, "❌ 测试执行覆盖守门失败");
   else console.log(summarizeCoverage(coverage));
 
-  const srcTauriDir = join(rootDir, SRC_TAURI_DIR_NAME);
+  const rustRootDir = join(rootDir, RUST_ROOT_DIR_NAME);
   const cargo = process.env.CARGO ?? "cargo";
   console.log(
     `▶ 构建测试二进制（一次构建全部 target）：cargo test --workspace --lib --test '*' --no-run` +
       `（CI PR 口径同款，bin 单测不入面；缓存命中时秒级返回；冷构建的编译耗时见 cargo 输出）`,
   );
-  const build = await buildTestBinaries(cargo, srcTauriDir);
+  const build = await buildTestBinaries(cargo, rustRootDir);
   console.log(`  · 构建阶段 ${formatSeconds(build.ms)}`);
   if (build.ms > FRESH_RELINK_HINT_MS) {
     console.log(
