@@ -31,7 +31,7 @@
 //
 // 边界（#1466/#1433 划界声明，自 ts-comment-mask.ts 头部迁入）：maskComments 只
 // 承载 TS/Vue 注释掩码。面向 Rust 源码的词法掩码，本模块 maskNonCode 是 TS 侧
-// 载体，与 Rust 侧唯一实现 `src-tauri/src/test_support/scan.rs` 的
+// 载体，与 Rust 侧唯一实现 `src-app/src/test_support/scan.rs` 的
 // `mask_non_code` 是同一条词法规则的两个运行时载体（双源登记，规则改动必须两侧
 // 同步）；防漂移断言消费共享语料夹具 `scripts/fixtures/rust-mask-corpus.rs`
 // （gate-primitives.test.ts 与 Rust 测试双侧消费，任一侧单独改规则即红）。
@@ -156,7 +156,7 @@ function rawStringOpenQuoteAt(text: string, i: number): number | null {
  * 处理器随 #1741 收口并入）。
  *
  * **双源登记**（issue #1433）：本函数与 Rust 侧唯一实现
- * `src-tauri/src/test_support/scan.rs` 的 `mask_non_code` 是同一条词法掩码规则
+ * `src-app/src/test_support/scan.rs` 的 `mask_non_code` 是同一条词法掩码规则
  * 的两个运行时载体，规则改动必须两侧同步；防漂移断言消费共享语料夹具
  * `scripts/fixtures/rust-mask-corpus.rs`（gate-primitives.test.ts 与 Rust 测试
  * 双侧消费，任一侧单独改规则即红）。TS 侧消费面：check-structure、check-infra-dml、

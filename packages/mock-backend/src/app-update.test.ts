@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { installMockBackend } from "./index";
-import { invoke } from "./tauri/core";
+import { invoke } from "./bridge/command";
 
 /**
  * 应用更新域替身测试（issue #1966 / spec #1964 / ADR-0143 决策 1）：环境壳不

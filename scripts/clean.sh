@@ -7,6 +7,6 @@ echo "▶ 清理前端产物 (dist, .vite)"
 rm -rf dist dist-ssr .vite
 
 echo "▶ 清理 Rust target (cargo clean)"
-( cd src-tauri && cargo clean )
+( cd src-app && cargo clean )
 
 echo "✅ 清理完成"

@@ -95,7 +95,7 @@ import {
   updateScheduledSubscription,
   updateScheduledTransactionStatus,
 } from "./scheduled";
-import { registerMockCommand } from "./tauri/core";
+import { registerMockCommand } from "./bridge/command";
 import {
   cumulativePnlNativeTotal,
   cumulativePnlSummary,

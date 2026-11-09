@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { installMockBackend } from "./index";
-import { invoke } from "./tauri/core";
+import { invoke } from "./bridge/command";
 
 /**
  * 设置域替身行为测试（issue #1965 / spec #1964 / ADR-0143）：接缝 = 应用所见

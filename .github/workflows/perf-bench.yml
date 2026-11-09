@@ -100,34 +100,30 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: 安装 Linux 系统依赖（tauri 编译所需）
+      - name: 安装 Linux 系统依赖（NSH 壳 GTK4）
         run: |
           sudo apt-get update
-          sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \
-            libgtk-3-dev \
-            libayatana-appindicator3-dev \
-            librsvg2-dev
+          sudo apt-get install -y libgtk-4-dev
 
       - uses: dtolnay/rust-toolchain@stable
 
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: src-tauri
+          workspaces: src-app
           # 失败也存缓存：门禁红（或其它失败）时下次 run 仍能命中依赖产物，
           # 避免冷跑失败白费一次全量编译。
           cache-on-failure: true
 
       - name: 生成器正确性单测（自 build.yml 迁入；先于基准运行，工具链坏则早失败）
-        working-directory: src-tauri
+        working-directory: src-app
         run: cargo test --bin ledger-perf
 
       - name: 编译 ledger-perf（release）
-        working-directory: src-tauri
+        working-directory: src-app
         run: cargo build --release --bin ledger-perf
 
       - name: 现场生成 50 万笔基准库（generate，seed 42）
-        working-directory: src-tauri
+        working-directory: src-app
         run: |
           START=$(date +%s)
           ./target/release/ledger-perf generate
@@ -135,7 +131,7 @@ jobs:
 
       - name: 运行查询基准（bench，16 项 × min/avg/p95 + 门禁 p95 ≤ 200ms）
         id: bench
-        working-directory: src-tauri
+        working-directory: src-app
         shell: bash
         run: |
           set -o pipefail
@@ -147,7 +143,7 @@ jobs:
 
       - name: 运行批量导入写基准（bench-import，最大档 200 行 × 两分布，只记录不判定）
         id: bench-import
-        working-directory: src-tauri
+        working-directory: src-app
         shell: bash
         run: |
           set -o pipefail
@@ -162,7 +158,7 @@ jobs:
 
       - name: 运行同步重放写基准（bench-sync，最大档 2000 op × 两分布 × 两入口，剥网络，只记录不判定）
         id: bench-sync
-        working-directory: src-tauri
+        working-directory: src-app
         shell: bash
         run: |
           set -o pipefail
@@ -183,7 +179,7 @@ jobs:
 
       - name: 运行行情/价格历史批量 upsert 写基准（bench-market，最大档 5200 点 × 两分布，剥网络，只记录不判定）
         id: bench-market
-        working-directory: src-tauri
+        working-directory: src-app
         shell: bash
         run: |
           set -o pipefail
@@ -213,8 +209,8 @@ jobs:
               echo "- 门禁：❌ 失败 —— 存在基准 p95 超各自阈值（ADR-0068），超标清单见报告尾部门禁行"
             fi
             echo
-            if [ -f src-tauri/bench-report.txt ]; then
-              ./scripts/perf-summary.sh src-tauri/bench-report.txt
+            if [ -f src-app/bench-report.txt ]; then
+              ./scripts/perf-summary.sh src-app/bench-report.txt
             else
               echo '> ⚠️ bench 未产出报告（bench 步骤失败，详见上方日志）'
             fi
@@ -227,8 +223,8 @@ jobs:
               echo "- 观测：❌ 未完成 —— bench-import 步骤失败（详见上方日志）"
             fi
             echo
-            if [ -f src-tauri/bench-import-report.txt ]; then
-              ./scripts/perf-summary.sh src-tauri/bench-import-report.txt "ledger-perf bench-import stdout"
+            if [ -f src-app/bench-import-report.txt ]; then
+              ./scripts/perf-summary.sh src-app/bench-import-report.txt "ledger-perf bench-import stdout"
             else
               echo '> ⚠️ bench-import 未产出报告（步骤失败，详见上方日志）'
             fi
@@ -241,8 +237,8 @@ jobs:
               echo "- 观测：❌ 未完成 —— bench-sync 步骤失败（详见上方日志）"
             fi
             echo
-            if [ -f src-tauri/bench-sync-report.txt ]; then
-              ./scripts/perf-summary.sh src-tauri/bench-sync-report.txt "ledger-perf bench-sync stdout"
+            if [ -f src-app/bench-sync-report.txt ]; then
+              ./scripts/perf-summary.sh src-app/bench-sync-report.txt "ledger-perf bench-sync stdout"
             else
               echo '> ⚠️ bench-sync 未产出报告（步骤失败，详见上方日志）'
             fi
@@ -255,8 +251,8 @@ jobs:
               echo "- 观测：❌ 未完成 —— bench-market 步骤失败（详见上方日志）"
             fi
             echo
-            if [ -f src-tauri/bench-market-report.txt ]; then
-              ./scripts/perf-summary.sh src-tauri/bench-market-report.txt "ledger-perf bench-market stdout"
+            if [ -f src-app/bench-market-report.txt ]; then
+              ./scripts/perf-summary.sh src-app/bench-market-report.txt "ledger-perf bench-market stdout"
             else
               echo '> ⚠️ bench-market 未产出报告（步骤失败，详见上方日志）'
             fi

@@ -23,10 +23,10 @@ function collectFiles(dir: string, acc: string[] = []): string[] {
   return acc;
 }
 
-/** import 子句（含静态与动态 import()）中是否从 plugin-dialog 引入 confirm。 */
-function importsConfirmFromPluginDialog(code: string): boolean {
+/** import 子句（含静态与动态 import()）中是否从 bridge/dialog 引入 confirm。 */
+function importsConfirmFromBridgeDialog(code: string): boolean {
   // 静态 import 子句：具名导入中出现 confirm 标识符即候选（含换行形态）
-  const moduleSpec = ["@tauri-apps", "plugin-dialog"].join("/");
+  const moduleSpec = "@ledger/mock-backend/bridge/dialog";
   const staticRe = /import\s*\{[^}]*\bconfirm\b[^}]*\}\s*from\s*['"]([\w@/-]+)['"]/g;
   // 动态：import 该模块后解构 confirm 属潜在旁路，一并拦截
   // （测试文件对 open 的动态引入不含 confirm，不误伤）。
@@ -43,12 +43,12 @@ function importsConfirmFromPluginDialog(code: string): boolean {
 }
 
 describe("原生 confirm 清零（issue #652 / ADR-0078 决策 1）", () => {
-  it("src/ 全树不再从 @tauri-apps/plugin-dialog 引入 confirm（open/save 不受影响）", () => {
+  it("src/ 全树不再从 @ledger/mock-backend/bridge/dialog 引入 confirm（open/save 不受影响）", () => {
     const offenders = collectFiles(SRC_ROOT)
       .map((path) => ({ path, code: readFileSync(path, "utf8") }))
-      .filter(({ code }) => importsConfirmFromPluginDialog(code))
+      .filter(({ code }) => importsConfirmFromBridgeDialog(code))
       .map(({ path }) => path);
-    expect(offenders, `以下文件仍从 plugin-dialog 引入 confirm：${offenders.join(", ")}`).toEqual(
+    expect(offenders, `以下文件仍从 bridge/dialog 引入 confirm：${offenders.join(", ")}`).toEqual(
       [],
     );
   });

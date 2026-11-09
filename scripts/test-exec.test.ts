@@ -35,15 +35,15 @@ const DEFAULT_TEST_SH = [
   "# 入口自检先行（真实 scripts/test.sh 同址接线）",
   "bun scripts/test-exec.ts check",
   "bun scripts/test-exec.ts",
-  "( cd src-tauri && cargo test --workspace --test e2e )",
-  "( cd src-tauri && cargo test --workspace --doc )",
+  "( cd src-app && cargo test --workspace --test e2e )",
+  "( cd src-app && cargo test --workspace --doc )",
   "",
 ].join("\n");
 
 function makeFixture(overrides: FixtureOverrides = {}): string {
   const root = mkdtempSync(join(tmpdir(), "test-exec-"));
   tempDirs.push(root);
-  const srcTauri = join(root, "src-tauri");
+  const srcTauri = join(root, "src-app");
   const alpha = join(srcTauri, "crates", "alpha");
   mkdirSync(join(alpha, "src"), { recursive: true });
   mkdirSync(join(alpha, "tests"), { recursive: true });
@@ -142,7 +142,7 @@ describe("测试执行器两入口覆盖守门（issue #1112）", () => {
       "check",
       "--root",
       makeFixture({
-        files: { "src-tauri/crates/alpha/tests/alpha.rs": "#[test]\nfn same_name() {}\n" },
+        files: { "src-app/crates/alpha/tests/alpha.rs": "#[test]\nfn same_name() {}\n" },
       }),
     ]);
     expect(r.status).toBe(0);
@@ -174,7 +174,7 @@ describe("测试执行器两入口覆盖守门（issue #1112）", () => {
           "harness = false",
           "",
         ].join("\n"),
-        files: { "src-tauri/crates/alpha/tests/custom.rs": "fn main() {}\n" },
+        files: { "src-app/crates/alpha/tests/custom.rs": "fn main() {}\n" },
       }),
     ]);
     expect(r.status).toBe(1);
@@ -268,7 +268,7 @@ describe("测试执行器两入口覆盖守门（issue #1112）", () => {
       "--root",
       makeFixture({
         files: {
-          "src-tauri/src/reads_manifest.rs":
+          "src-app/src/reads_manifest.rs":
             'pub fn root() -> String { std::env::var("CARGO_MANIFEST_DIR").unwrap_or_default() }\n',
         },
       }),
@@ -284,7 +284,7 @@ describe("测试执行器两入口覆盖守门（issue #1112）", () => {
       "--root",
       makeFixture({
         files: {
-          "src-tauri/src/notes.rs":
+          "src-app/src/notes.rs":
             '// 约定：测试运行期不得写 std::env::var("CARGO_MANIFEST_DIR")\n' +
             '/// 同上：env::var("OUT_DIR")\n' +
             "pub fn ok() {}\n",
@@ -476,7 +476,7 @@ describe("测试执行器两入口覆盖守门（issue #1112）", () => {
       "--root",
       makeFixture({
         rootManifest: ROOT_WITH_TEST_FALSE_BIN,
-        files: { "src-tauri/src/main.rs": "fn main() {}\n" },
+        files: { "src-app/src/main.rs": "fn main() {}\n" },
       }),
     ]);
     expect(r.status).toBe(0);
@@ -492,7 +492,7 @@ describe("测试执行器两入口覆盖守门（issue #1112）", () => {
       makeFixture({
         rootManifest: ROOT_WITH_TEST_FALSE_BIN,
         files: {
-          "src-tauri/src/main.rs": "#[test]\nfn stray() {}\n\nfn main() {}\n",
+          "src-app/src/main.rs": "#[test]\nfn stray() {}\n\nfn main() {}\n",
         },
       }),
     ]);
@@ -508,7 +508,7 @@ describe("测试执行器两入口覆盖守门（issue #1112）", () => {
       makeFixture({
         rootManifest: ROOT_WITH_TEST_FALSE_BIN,
         files: {
-          "src-tauri/src/main.rs": "// 不要在 bin 里加 #[test] 或 #[cfg(test)]\nfn main() {}\n",
+          "src-app/src/main.rs": "// 不要在 bin 里加 #[test] 或 #[cfg(test)]\nfn main() {}\n",
         },
       }),
     ]);
@@ -520,7 +520,7 @@ describe("测试执行器两入口覆盖守门（issue #1112）", () => {
       "check",
       "--root",
       makeFixture({
-        files: { "src-tauri/src/main.rs": "#[test]\nfn unit() {}\n\nfn main() {}\n" },
+        files: { "src-app/src/main.rs": "#[test]\nfn unit() {}\n\nfn main() {}\n" },
       }),
     ]);
     expect(r.status).toBe(1);
@@ -537,9 +537,9 @@ describe("测试执行器两入口覆盖守门（issue #1112）", () => {
         files: {
           // #2082 迁居形态：ledger-perf 为 nsh-app 同包 bin（成员 crate 自带
           // manifest，bin 源文件经 src/bin/<name>/main.rs 自动发现）。
-          "src-tauri/crates/nsh/Cargo.toml":
+          "src-app/crates/nsh/Cargo.toml":
             '[package]\nname = "nsh-app"\nversion = "0.0.0"\nedition = "2021"\n',
-          "src-tauri/crates/nsh/src/bin/ledger-perf/main.rs":
+          "src-app/crates/nsh/src/bin/ledger-perf/main.rs":
             "#[test]\nfn gen() {}\n\nfn main() {}\n",
         },
       }),

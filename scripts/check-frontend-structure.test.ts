@@ -357,7 +357,7 @@ describe("check-frontend-structure（前端 workspace 结构守门）", () => {
         {
           name: "@ledger/api",
           dir: "packages/api",
-          deps: ["@ledger/types"],
+          deps: ["@ledger/mock-backend", "@ledger/types"],
           note: expect.any(String),
         },
         {
@@ -381,7 +381,7 @@ describe("check-frontend-structure（前端 workspace 结构守门）", () => {
         {
           name: "@ledger/test-support",
           dir: "packages/test-support",
-          deps: ["@ledger/types"],
+          deps: ["@ledger/mock-backend", "@ledger/types"],
           testSupport: true,
           note: expect.any(String),
         },

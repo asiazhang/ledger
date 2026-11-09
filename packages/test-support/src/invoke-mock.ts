@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "@ledger/mock-backend/bridge/command";
 import { expect, vi, type Mock } from "vitest";
 import { REFERENCE_DEFAULTS } from "./reference-stubs";
 

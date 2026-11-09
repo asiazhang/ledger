@@ -80,8 +80,8 @@ export const PACKAGES: readonly PackageEntry[] = [
   {
     name: "@ledger/api",
     dir: "packages/api",
-    deps: ["@ledger/types"],
-    note: "IPC 传输层包（issue #1155）：统一 invoke 封装与 globalBusy 唯一生产消费方归位同包，@ledger 范围内只依赖 @ledger/types；不依赖 composables / stores / components / views",
+    deps: ["@ledger/mock-backend", "@ledger/types"],
+    note: "IPC 传输层包（issue #1155）：统一 invoke 封装与 globalBusy 唯一生产消费方归位同包；invoke 底座落 @ledger/mock-backend/bridge/command（#2083 切轨后 mock 是 Web 参照前端唯一后端，ADR-0145 决策 1 修订），@ledger 范围内依赖 mock-backend 与 types；不依赖 composables / stores / components / views",
   },
   {
     name: "@ledger/storage",
@@ -104,9 +104,9 @@ export const PACKAGES: readonly PackageEntry[] = [
   {
     name: "@ledger/test-support",
     dir: "packages/test-support",
-    deps: ["@ledger/types"],
+    deps: ["@ledger/mock-backend", "@ledger/types"],
     testSupport: true,
-    note: "共享测试支持包（issue #1152）：全局测试接缝（invoke/message/matchMedia/listen/返回桥替身 + 每测清理）唯一宿主，消费只经 devDependency（testSupport 标志 → 规则⑤）；参考数据夹具类型边 @ledger/types 显式放行；toast sink 假件 makeFakeSink/resetToastSink 唯一定义点随包（#1354），复位通过调用方传入 @ledger/loadable 的注册接口完成，避免测试支持包反向依赖被测包造成 workspace 环",
+    note: "共享测试支持包（issue #1152）：全局测试接缝（invoke/message/matchMedia/listen/返回桥替身 + 每测清理）唯一宿主，消费只经 devDependency（testSupport 标志 → 规则⑤）；参考数据夹具类型边 @ledger/types 显式放行；invoke/listen/返回桥替身经 vi.mock 钉住 @ledger/mock-backend/bridge/* 模块（#2083 切轨后传输面唯一实现随包，devDependencies 消费）；toast sink 假件 makeFakeSink/resetToastSink 唯一定义点随包（#1354），复位通过调用方传入 @ledger/loadable 的注册接口完成，避免测试支持包反向依赖被测包造成 workspace 环",
   },
   {
     name: "@ledger/modal-intent",
@@ -193,7 +193,7 @@ export const PACKAGES: readonly PackageEntry[] = [
     name: "@ledger/mock-backend",
     dir: "packages/mock-backend",
     deps: ["@ledger/loadable", "@ledger/types"],
-    note: "浏览器开发模式替身后端（issue #1962 / ADR-0143）：与 @ledger/test-support 分家（后者绑定 vitest，本包消费面是 vite 应用构建，非 testSupport——自身 dependencies 非空合法）；内存状态替身 + 确定性夹具，未实现命令运行时报错（含命令名，console + toast 双出口，toast 经 @ledger/loadable 的基础设施出口 toastError 复用应用统一 sink）；tauri/ 子目录只经 vite.config mockModeAliases 按文件路径替换（非包名深导入面），唯一生产消费点是 main.ts 的 mode 分支动态 import（生产构建静态消除，接线由 src/__tests__/mock-mode-wiring.test.ts 守门）；方向表与实际 import 全等（loadable / types）",
+    note: "Web 参照前端的替身后端（issue #1962 / ADR-0143；#2083 切轨后 mock 是唯一后端）：与 @ledger/test-support 分家（后者绑定 vitest，本包消费面是 vite 应用构建，非 testSupport——自身 dependencies 非空合法）；内存状态替身 + 确定性夹具，未实现命令运行时报错（含命令名，console + toast 双出口，toast 经 @ledger/loadable 的基础设施出口 toastError 复用应用统一 sink）；bridge/ 子目录是参照前端唯一传输面（invoke/事件/窗口/对话框/外链），经 exports 子路径暴露（规则④辖），包根入口仅 main.ts 安装面消费（接线由 src/__tests__/mock-backend-wiring.test.ts 守门）；方向表与实际 import 全等（loadable / types）",
   },
 ];
 

@@ -91,7 +91,7 @@
 //
 // TypeScript 化 + Bun 运行时（issue #734 / ADR-0083）：类型经 tsconfig.scripts.json
 // 门槛检查；调用方式 `bun scripts/check-test-support.ts`。
-// 默认校验本仓库；测试可传位置参数指向夹具：bun scripts/check-test-support.ts [src-tauri-dir]
+// 默认校验本仓库；测试可传位置参数指向夹具：bun scripts/check-test-support.ts [src-app-dir]
 // workspace 成员（crates/*/src 与 crates/*/tests）同在该扫描范围内（spec #1086 /
 // issue #1087）——拆 crate 后测试守门不得因目录随迁而静默漏扫。
 // 包装测试 scripts/check-test-support.test.ts（#1158 归位）。
@@ -232,36 +232,6 @@ const RULE4_CHANNEL_SURFACE = [
   /\bpublish_raw_segment\b/,
 ];
 
-// tests/e2e 已登记例外（#764 裁决；登记处 = ADR-0086 修订注记，代码处附动机
-// 注释）：文件 + 规则 + 预期命中数 + 动机一句话。规则 1 无 e2e 例外（不辖，
-// 见文件头规则 1 范围边界）。
-interface E2eException {
-  file: string;
-  rule: Rule;
-  count: number;
-  why: string;
-}
-const E2E_REGISTERED_EXCEPTIONS: readonly E2eException[] = [
-  {
-    file: "tests/e2e/instruments_steps.rs",
-    rule: 2,
-    count: 3,
-    why: "存量同步行夹具：公开创建入口只产 manual 行，来源随行终身不变（ADR-0036），同步来源拒删/upsert 来源不改写的被测前提依赖直置",
-  },
-  {
-    file: "tests/e2e/investment_trend_steps.rs",
-    rule: 2,
-    count: 1,
-    why: "汇率历史周采样无公开落库入口：唯一写入点 sync 持久化为 pub(super) 模块私有（采集通道需 HTTP），域层无公开入口",
-  },
-  {
-    file: "tests/e2e/transactions_query_steps.rs",
-    rule: 3,
-    count: 4,
-    why: "两处直置行 SQL（同日批量导入 ×1、播种 8 类 ×1）各含 created_at/updated_at 同值字面量两次：同 created_at 平局是被测前提（确定性排序 id tiebreaker），行为层逐行发放秒级时钟、跨秒即失去平局，前提无法确定性构造",
-  },
-];
-
 interface Hit {
   rule: Rule;
   line: number;
@@ -388,30 +358,29 @@ function main(): void {
   // 默认住址在 main 内求值而非模块加载期：vitest 转换下 import.meta.url 非 file:
   // scheme（run-gate-script.test-helper.ts 头注同款观察），加载期求值会使包装测试
   // 无法 import 本模块的导出常量（#1468 夹具派生接缝）。
-  const srcTauri = process.argv[2]
+  const srcApp = process.argv[2]
     ? resolve(process.argv[2])
-    : join(fileURLToPath(import.meta.url), "..", "..", "src-tauri");
-  const srcDir = join(srcTauri, "src");
-  const testsDir = join(srcTauri, "tests");
-  if (!existsSync(srcDir)) fail(`src-tauri 目录不存在：${srcTauri}`);
+    : join(fileURLToPath(import.meta.url), "..", "..", "src-app");
+  const srcDir = join(srcApp, "src");
+  const testsDir = join(srcApp, "tests");
+  if (!existsSync(srcDir)) fail(`src-app 目录不存在：${srcApp}`);
 
   const bannedTables = extractSeedTables(join(srcDir, "test_support", "seed.rs"));
-  const fixedNowValues = extractFixedNowValues(join(srcTauri, FIXED_NOW_REGISTRY_REL));
+  const fixedNowValues = extractFixedNowValues(join(srcApp, FIXED_NOW_REGISTRY_REL));
 
   const files = [
     ...walkRustFiles(srcDir),
     ...(existsSync(testsDir) ? walkRustFiles(testsDir) : []),
-    ...memberCrateRustRoots(srcTauri).flatMap((dir) => walkRustFiles(dir)),
+    ...memberCrateRustRoots(srcApp).flatMap((dir) => walkRustFiles(dir)),
   ];
-  const { countByFile, hits } = scanFiles(files, srcTauri, bannedTables, fixedNowValues);
-  const scanned = new Set(files.map((f) => relative(srcTauri, f).split("\\").join("/")));
-  const problems = violations(countByFile, hits, scanned);
+  const { countByFile, hits } = scanFiles(files, srcApp, bannedTables, fixedNowValues);
+  const problems = violations(countByFile, hits);
   if (problems.length > 0) {
     console.error(
       `✗ Rust 测试守门：发现 ${problems.length} 处违规（纯禁令，无白名单；` +
         `禁用种子表：${bannedTables.join(" ")}；禁用时刻值：${fixedNowValues.join(" ")}）\n` +
         problems.join("\n") +
-        `\n建库/种子/断言唯一入口：src-tauri/src/test_support/（spec #728 / issue #751，ADR-0084）`,
+        `\n建库/种子/断言唯一入口：src-app/src/test_support/（spec #728 / issue #751，ADR-0084）`,
     );
     process.exit(1);
   }
@@ -419,8 +388,7 @@ function main(): void {
   console.log(
     `✅ Rust 测试守门通过（纯禁令：白名单机制已随 #758 收口移除；` +
       `禁用种子表 ${bannedTables.length} 张：${bannedTables.join(" ")}；` +
-      `禁用时刻值 ${fixedNowValues.length} 个：${fixedNowValues.join(" ")}；` +
-      `tests/e2e 已登记例外 ${E2E_REGISTERED_EXCEPTIONS.length} 条，严格相等校验）`,
+      `禁用时刻值 ${fixedNowValues.length} 个：${fixedNowValues.join(" ")}）`,
   );
 }
 
@@ -436,18 +404,9 @@ function scanFiles(
   for (const file of files.sort()) {
     const rel = relative(srcTauri, file).split("\\").join("/");
     const segments = rel.split("/");
-    // 工厂本体 = 根包 test_support（唯一登记处）；#2081 起 NSH 对应面
-    // （crates/nsh/src/test_support.rs，api_server 随迁带来的建库/种子闭集副本）
-    // 同享工厂豁免——双壳并存期两侧同构（ADR-0145 代价条），#2077 统一时收拢单点。
-    const underTestSupport =
-      (segments[0] === "src" && segments[1] === "test_support") ||
-      (segments[0] === "crates" &&
-        segments[1] === "nsh" &&
-        segments[2] === "src" &&
-        segments[3] === "test_support.rs");
-    // tests/e2e 分层形态（#764）：规则 1 不辖（工厂不入 BDD 层，建库走产品开库
-    // 入口，见文件头规则 1 范围边界）；规则 2/3 整目录覆盖，例外经严格相等校验。
-    const inE2e = rel.startsWith("tests/e2e/");
+    // 工厂本体 = 根包 test_support（唯一登记处；#2083 切轨后 NSH 升根包，
+    // 双壳并存期的 crates/nsh 副本面随宿主退役收拢单点）。
+    const underTestSupport = segments[0] === "src" && segments[1] === "test_support";
     const source = readFileSync(file, "utf8");
     const masked = maskNonCode(source, true);
 
@@ -470,7 +429,6 @@ function scanFiles(
       )) {
         // 规则豁免：test_support 是工厂本体，四条规则全部合法
         if (underTestSupport) continue;
-        if (inE2e && hit.rule === 1) continue; // 规则 1 不辖 e2e（分层形态，文件头范围边界）
         if (hit.rule === 2 && isThinShell(segments)) continue; // 薄皮种子合法（准入规则，ADR-0084 决策 1）
         if (!countByFile.has(rel)) countByFile.set(rel, new Map());
         const byRule = countByFile.get(rel)!;
@@ -482,13 +440,11 @@ function scanFiles(
   return { countByFile, hits };
 }
 
-/** 纯禁令判定（#758 收口，白名单机制已移除）：src 树任一命中即违规；tests/e2e
- *  命中对照已登记例外表严格相等校验（#764；「已收敛」零命中校验只在被扫文件
- *  实际存在时生效——例外表只辖本仓 e2e 树，不辖测试夹具），返回违规清单。 */
+/** 纯禁令判定（#758 收口，白名单机制已移除）：扫描树任一命中即违规，返回违规
+ *  清单。原 tests/e2e 例外表随 BDD e2e 于 #2083 退役（目录已不存在，机制随之移除）。 */
 function violations(
   countByFile: Map<string, Map<Rule, number>>,
   hits: Array<{ rel: string } & Hit>,
-  scanned: Set<string>,
 ): string[] {
   const problems: string[] = [];
   const RULE_NAMES = {
@@ -505,43 +461,10 @@ function violations(
         .filter((h) => h.rel === file && h.rule === rule)
         .map((h) => h.line)
         .sort((a, b) => a - b);
-      // tests/e2e：对照已登记例外表严格相等校验（登记处 ADR-0086 修订注记）
-      if (file.startsWith("tests/e2e/")) {
-        const registered = E2E_REGISTERED_EXCEPTIONS.find(
-          (e) => e.file === file && e.rule === rule,
-        );
-        if (registered === undefined) {
-          problems.push(
-            `  ${file}:${lines.join(":")}\n` +
-              `      规则 ${rule}（${RULE_NAMES[rule]}）命中 ${actual} 处——未登记例外（登记处 ADR-0086 修订注记）：` +
-              `公开入口存在则收敛，不存在则代码处附动机注释并登记后恢复扫描`,
-          );
-        } else if (actual !== registered.count) {
-          problems.push(
-            `  ${file}:${lines.join(":")}\n` +
-              `      规则 ${rule}（${RULE_NAMES[rule]}）实际命中 ${actual} 处 ≠ 登记的 ${registered.count} 处` +
-              `（${registered.why}）——命中数漂移即例外失真，请复核后同步更新代码注释、例外表与 ADR 登记`,
-          );
-        }
-        continue;
-      }
       problems.push(
         `  ${file}:${lines.join(":")}\n` +
           `      规则 ${rule}（${RULE_NAMES[rule]}）命中 ${actual} 处——纯禁令（白名单已移除），` +
           `收敛到 test_support 工厂/种子或域薄皮（ADR-0084）`,
-      );
-    }
-  }
-  // 严格相等的另一侧：例外已收敛（命中清零）的登记条目红——例外表不允许
-  // 滞留已失效条目（失效登记是第二份事实）
-  for (const e of E2E_REGISTERED_EXCEPTIONS) {
-    if (!scanned.has(e.file)) continue; // 被扫树无此文件（测试夹具）：例外表不辖
-    const actual = countByFile.get(e.file)?.get(e.rule) ?? 0;
-    if (actual === 0) {
-      problems.push(
-        `  ${e.file}\n` +
-          `      规则 ${e.rule}（${RULE_NAMES[e.rule]}）已登记例外 ${e.count} 处实际命中 0 处——例外已收敛，` +
-          `请同步删除例外表条目、代码处注释与 ADR 登记`,
       );
     }
   }

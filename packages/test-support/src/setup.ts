@@ -1,16 +1,14 @@
 import { vi, beforeEach, afterEach } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
 import { enableAutoUnmount } from "@vue/test-utils";
-import { invoke } from "@tauri-apps/api/core";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import { setFileScope } from "@vanilla-extract/css/fileScope";
-// 共享测试支持包的 setup 入口（issue #1152）：全局测试接缝自 src/__tests__/setup.ts
-// 下沉至此，供 app（jsdom）与 packages（node）两个 vitest project 共用——DOM 依存
-// 段经环境守卫自适应，接缝定义不随环境分裂（node 下 matchMedia/document 段自然
-// 不生效，invoke/message/listen/返回桥/Pinia 清理照常装配）。
-import { mockInvoke, unexpectedInvoke } from "./invoke-mock";
-import { mockListen } from "./listen-mock";
-import { mockOnBackButtonPress } from "./back-mock";
+// 共享测试支持包的 setup 入口（issue #1152）：环境级接缝自 src/__tests__/setup.ts
+// 下沉至此，供 app（jsdom）、packages（node）与 packages-dom（jsdom）三个 vitest
+// project 共用——DOM 依存段经环境守卫自适应，接缝定义不随环境分裂（node 下
+// matchMedia/document 段自然不生效，Pinia/存储/消息清理照常装配）。
+// 桥替身装配（invoke/listen/返回桥/窗口，#2083 前曾同居本文件）拆至
+// bridge-mock-setup.ts：仅 app 与 packages-dom 工程挂载——packages 工程
+// 含 mock-backend 包内测试，全局模块 mock 会把真实替身实现打成空壳。
 import { fakeMatchMedia, resetFakeMedia } from "./media-mock";
 import { messageApi, resetMessageApi } from "./message-mock";
 
@@ -45,26 +43,6 @@ if (typeof localStorage === "undefined" || localStorage === null) {
   };
   Object.defineProperty(globalThis, "localStorage", { value: mockStorage });
 }
-
-// Mock Tauri IPC invoke - 所有测试共享同一 mock
-vi.mock("@tauri-apps/api/core", () => ({
-  invoke: vi.fn(),
-}));
-
-// Mock Tauri event listener
-vi.mock("@tauri-apps/api/event", () => ({
-  listen: vi.fn().mockResolvedValue(vi.fn()),
-}));
-
-// Mock Tauri app/window 模块（issue #845 系统返回桥接）：注册/撤销与窗口销毁
-// 经同目录 back-mock 助手装配；默认实现为「注册即成功、销毁为 no-op」。App.vue
-// 的 setTitle 动态导入在 mock 下拿到裸 vi.fn()，返回 undefined 由其 try/catch 吸收。
-vi.mock("@tauri-apps/api/app", () => ({
-  onBackButtonPress: vi.fn(),
-}));
-vi.mock("@tauri-apps/api/window", () => ({
-  getCurrentWindow: vi.fn(),
-}));
 
 // jsdom 缺少 matchMedia：挂媒体查询测试接缝（issue #841）——可编程假 matchMedia
 // 取代早期「一律 false」静态桩，测试经同目录 media-mock 的 setFakeMedia 设定
@@ -106,17 +84,10 @@ vi.mock("naive-ui", async (importOriginal) => {
 });
 
 // —— 全局清理基座（清理四件套，issue #746 / ADR-0085 决策 2，对全部测试文件生效） ——
-// 每测自动执行：桩复位后重挂未命中报错基座、状态容器（Pinia）重置、本地存储
-// 清空、消息接口清零；随同自动执行的还有组件卸载（上方 enableAutoUnmount）
-// 与文档体清空（下方 afterEach）。
+// 每测自动执行：状态容器（Pinia）重置、本地存储清空、消息接口清零；随同自动
+// 执行的还有组件卸载（上方 enableAutoUnmount）与文档体清空（下方 afterEach）。
+// 桥替身桩复位住 bridge-mock-setup.ts（仅挂桥面的两个工程生效）。
 beforeEach(() => {
-  mockInvoke.mockReset();
-  mockInvoke.mockImplementation(unexpectedInvoke as typeof invoke);
-  mockListen.mockReset();
-  mockListen.mockResolvedValue(vi.fn());
-  mockOnBackButtonPress.mockReset();
-  mockOnBackButtonPress.mockResolvedValue({ unregister: () => Promise.resolve() });
-  vi.mocked(getCurrentWindow).mockReset();
   setActivePinia(createPinia());
   localStorage.clear();
   resetMessageApi();

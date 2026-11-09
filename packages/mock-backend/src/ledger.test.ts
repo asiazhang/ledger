@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { installMockBackend } from "./index";
-import { invoke } from "./tauri/core";
-import { emitMockEvent, listen } from "./tauri/event";
+import { invoke } from "./bridge/command";
+import { emitMockEvent, listen } from "./bridge/events";
 import type { Transaction, TransactionListResult } from "@ledger/types";
 
 /**

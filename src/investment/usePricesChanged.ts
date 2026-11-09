@@ -1,5 +1,5 @@
 import { onUnmounted } from "vue";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { listen, type UnlistenFn } from "@ledger/mock-backend/bridge/events";
 
 /**
  * 价格失效信号（issue #237 / ADR-0031）：后端价格写入路径（增量同步

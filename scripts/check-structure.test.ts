@@ -8,10 +8,8 @@ import {
   CRATE_MODULE_TARGETS,
   CRATES,
   INFRA_SRC_REL,
-  LAYER,
   TRANSACTION_ZONE_ALLOWED_EDGES,
   TRANSACTION_ZONE_BY_DIR,
-  WHITELIST,
 } from "../scripts/check-structure.ts";
 import { gateScript, runGateScript } from "./run-gate-script.test-helper.ts";
 
@@ -45,10 +43,6 @@ const CONVERT_CALL_STUB =
   '    amount::convert_to_native_current(conn, 1, "CNY")\n' +
   "}\n";
 
-/** 夹具用现存的壳层引用形态（商户壳层命令）：参考数据三域 #404 归位后账户壳层已无
- *  `*_internal` 下沉函数，夹具文本取现存壳层命令与实际结构保持一致。 */
-const shellUse = "use crate::commands::merchants::list_merchants;\npub fn x() {}\n";
-
 /**
  * 用例夹具的显式 crate 模块面声明（#1595 T2-3）：`libRs` 是 crate 根 `lib.rs` 的
  * 声明文本，`files` 是相对 crate `src` 的模块文件与内容——合成声明面与合成磁盘
@@ -57,7 +51,7 @@ const shellUse = "use crate::commands::merchants::list_merchants;\npub fn x() {}
 interface CrateCase {
   /** crate 名（与 CRATES 政策核成员一致；报文定位用） */
   crate: string;
-  /** crate 目录（相对 src-tauri） */
+  /** crate 目录（相对 src-app） */
   dir: string;
   /** crate 根 lib.rs 内容（mod 声明面；空串=无模块的声明面） */
   libRs: string;
@@ -169,7 +163,7 @@ function protocolCase(files: Record<string, string> = {}): CrateCase {
 /** workspace 骨架夹具的可覆盖面（缺省为一份全绿的骨架）。 */
 interface CrateFixtureOverrides {
   rootManifest?: string;
-  /** 覆盖成员 crate 的 Cargo.toml：crate 目录（相对 src-tauri）→ 清单文本 */
+  /** 覆盖成员 crate 的 Cargo.toml：crate 目录（相对 src-app）→ 清单文本 */
   memberManifests?: Record<string, string>;
   /** 覆盖 `crates/infra/src/lib.rs` 内容（test_utils cfg 门负向夹具） */
   infraLibRs?: string;
@@ -218,7 +212,7 @@ function memberManifest(name: string): string {
     'edition = "2024"',
     "",
     "[dev-dependencies]",
-    'tauri-app = { path = "../.." }',
+    'nsh-app = { path = "../..", features = ["test-utils"] }',
     "",
     "[lints]",
     "workspace = true",
@@ -236,11 +230,9 @@ const INFRA_MANIFEST = [
   "[features]",
   "test-utils = []",
   'http = ["dep:axum"]',
-  'tauri-emit = ["dep:tauri"]',
   "",
   "[dependencies]",
   'axum = { version = "0.8", optional = true }',
-  'tauri = { version = "2", optional = true }',
   "",
   "[lints]",
   "workspace = true",
@@ -255,22 +247,22 @@ function writeCrateFile(srcTauri: string, dir: string, rel: string, content: str
 }
 
 /**
- * 建 workspace 骨架夹具：`<root>/src-tauri/{Cargo.toml,src,crates/*}` + 仓库根门槛
+ * 建 workspace 骨架夹具：`<root>/src-app/{Cargo.toml,src,crates/*}` + 仓库根门槛
  * 宿主（scripts/check.sh、scripts/test.sh、.github/workflows/build.yml）。成员清单
  * 自 `CRATES` 政策核（成员登记核对的唯一对象），模块面自用例声明的 `{crate, dir,
- * libRs, files}`（#1595 T2-3）。返回脚本参数 `[src-dir, src-tauri-dir]`。
+ * libRs, files}`（#1595 T2-3）。返回脚本参数 `[src-dir, src-app-dir]`。
  */
 function makeCrateFixture(overrides: CrateFixtureOverrides = {}): string[] {
   const root = mkdtempSync(join(tmpdir(), "check-structure-crate-"));
   tempDirs.push(root);
-  const srcTauri = join(root, "src-tauri");
+  const srcTauri = join(root, "src-app");
   mkdirSync(srcTauri, { recursive: true });
 
   const rootManifest =
     overrides.rootManifest ??
     [
       "[package]",
-      'name = "tauri-app"',
+      'name = "nsh-app"',
       'version = "0.6.0"',
       'edition = "2024"',
       "",
@@ -289,7 +281,7 @@ function makeCrateFixture(overrides: CrateFixtureOverrides = {}): string[] {
       LINT_DENIES,
       "",
       "[dev-dependencies]",
-      'tauri-app = { path = ".", features = ["test-utils"] }',
+      'nsh-app = { path = ".", features = ["test-utils"] }',
       "",
       "[lints]",
       "workspace = true",
@@ -360,21 +352,19 @@ function makeCrateFixture(overrides: CrateFixtureOverrides = {}): string[] {
     writeFileSync(join(srcTauri, INFRA_SRC_REL, "error.rs"), overrides.infraErrorRs);
   }
 
-  // 根包壳层面：lib.rs、白名单政策项（test_support）与投资五节锚点（#1185）。
-  // 锚点门桩随 api_server 迁居 NSH（#2081）：crates/nsh/src/api_server。
-  mkdirSync(join(srcTauri, "src", "test_support"), { recursive: true });
+  // 根包壳层面：lib.rs 与投资五节锚点（#1185）。
+  // 锚点门桩住根包 src/api_server（#2081 迁居 + #2083 升根包）。
+  mkdirSync(join(srcTauri, "src", "api_server", "handlers"), { recursive: true });
   writeFileSync(join(srcTauri, "src", "lib.rs"), "pub fn stub() {}\n");
-  writeFileSync(join(srcTauri, "src", "test_support", "mod.rs"), STUB);
-  mkdirSync(join(srcTauri, "crates", "nsh", "src", "api_server", "handlers"), { recursive: true });
   writeFileSync(
-    join(srcTauri, "crates", "nsh", "src", "api_server", "handlers", "import.rs"),
+    join(srcTauri, "src", "api_server", "handlers", "import.rs"),
     overrides.apiServerImportRs ??
       '#[cfg(any(test, feature = "test-utils"))]\n' +
         "#[doc(hidden)]\n" +
         'pub const INVESTMENT_SECTION_HEADERS: [&str; 5] = ["## 节"];\n',
   );
   writeFileSync(
-    join(srcTauri, "crates", "nsh", "src", "api_server", "mod.rs"),
+    join(srcTauri, "src", "api_server", "mod.rs"),
     overrides.apiServerModRs ??
       '#[cfg(any(test, feature = "test-utils"))]\n' +
         "#[doc(hidden)]\n" +
@@ -406,17 +396,17 @@ function makeCrateFixture(overrides: CrateFixtureOverrides = {}): string[] {
   writeFileSync(
     join(root, "scripts", "check.sh"),
     overrides.checkSh ??
-      "( cd src-tauri && cargo clippy --workspace --all-targets --all-features -- -D warnings )\n" +
-        "( cd src-tauri && cargo fmt --all -- --check )\n",
+      "( cd src-app && cargo clippy --workspace --all-targets --all-features -- -D warnings )\n" +
+        "( cd src-app && cargo fmt --all -- --check )\n",
   );
   writeFileSync(
     join(root, "scripts", "test.sh"),
-    overrides.testSh ?? "( cd src-tauri && cargo test --workspace )\n",
+    overrides.testSh ?? "( cd src-app && cargo test --workspace )\n",
   );
   writeFileSync(
     join(root, "scripts", "lint-fix.sh"),
     overrides.lintFixSh ??
-      "( cd src-tauri && cargo fmt --all && cargo clippy --fix --workspace --all-targets --all-features --allow-dirty --allow-staged )\n",
+      "( cd src-app && cargo fmt --all && cargo clippy --fix --workspace --all-targets --all-features --allow-dirty --allow-staged )\n",
   );
   writeFileSync(
     join(root, "scripts", "test-exec.ts"),
@@ -451,18 +441,15 @@ function fixtureWith(caseSpec: CrateCase, overrides: CrateFixtureOverrides = {})
 }
 
 describe("check-structure（结构守门）", () => {
-  it("真实仓库默认通过：模块面由 lib.rs 声明投影 + 白名单对壳层零依赖（T2-3 判据①）", () => {
+  it("真实仓库默认通过：模块面由 lib.rs 声明投影（T2-3 判据①）", () => {
     // 真实仓库自检绿是唯一能发现「派生器认不出仓库实际形态」的测试。
     const r = run([]);
     expect(r.status).toBe(0);
     expect(r.output).toContain("零依赖");
-    expect(r.output).toContain(`白名单 ${WHITELIST.length} 项`);
     expect(r.output).toContain(`crate 模块面 ${CRATE_MODULE_TARGETS.length} 份`);
-    const domainCount = WHITELIST.filter((w) => w.layer === LAYER.DOMAIN).length;
-    expect(r.output).toContain(`域目录 ${domainCount}`);
     // 投影覆盖全等（防派生器静默丢成员）：每个非壳层政策核成员恰有一份模块面
-    //（壳层成员不整册登记模块面——根包走 WHITELIST 政策条目表，nsh-app 双壳并存
-    // 期首块桩同理，issue #2017）。
+    //（壳层 = 根包 nsh-app 不整册登记模块面；#2083 切轨后白名单政策条目表随
+    // 旧壳退役）。
     const memberCrates = CRATES.filter((crate) => crate.layer !== CRATE_LAYER.SHELL);
     expect(CRATE_MODULE_TARGETS.length).toBe(memberCrates.length);
     expect([...CRATE_MODULE_TARGETS].map((t) => t.srcRel).sort()).toEqual(
@@ -474,75 +461,6 @@ describe("check-structure（结构守门）", () => {
     const r = run(makeCrateFixture());
     expect(r.status).toBe(0);
     expect(r.output).toContain("零依赖");
-  });
-
-  it("白名单政策项代码引用壳层 → 失败并定位文件行号", () => {
-    // 全部业务域 crate 化后，根包仅余测试支持域（test_support）一条政策项。
-    const args = makeCrateFixture();
-    writeCrateFile(args[1], ".", "test_support/crud.rs", shellUse);
-    const r = run(args);
-    expect(r.status).toBe(1);
-    expect(r.output).toContain("反向依赖");
-    expect(r.output).toContain("test_support/crud.rs:1");
-  });
-
-  it("注释与字符串中的 commands:: 不误报（掩码边界）", () => {
-    const args = makeCrateFixture();
-    writeCrateFile(
-      args[1],
-      "src",
-      "test_support/cost.rs",
-      [
-        "/// 消费 `commands::item` 接缝（文档注释不算依赖）",
-        "// 见 commands::foo 说明",
-        'let url = "http://127.0.0.1:9527/commands::x";',
-        'let re = r#"commands::\\d+"#;',
-        "pub fn f<'a>(x: &'a str) -> &str { x }",
-        "",
-      ].join("\n"),
-    );
-    expect(run(args).status).toBe(0);
-  });
-
-  it("外挂测试模块/目录豁免：tests.rs 与 tests/ 引用壳层不红（ADR-0056 决策 5）", () => {
-    const args = makeCrateFixture();
-    writeCrateFile(args[1], ".", "test_support/tests.rs", shellUse);
-    writeCrateFile(args[1], ".", "test_support/tests/scaffold.rs", shellUse);
-    writeCrateFile(args[1], ".", "test_support/helper/tests/fixture.rs", shellUse);
-    expect(run(args).status).toBe(0);
-  });
-
-  it("别名引入（use … as）同样识别为依赖（根 src 白名单面）", () => {
-    // 跨 crate 面（如 ledger-infra 内的 `crate::commands`）自 #1596 起归编译期；
-    // 仅存的壳层反向依赖文本扫描面 = 根包 src 白名单（test_support 与 commands
-    // 同居根包，属同 crate 引用）。
-    const args = makeCrateFixture();
-    writeCrateFile(
-      args[1],
-      ".",
-      "test_support/cost.rs",
-      "use crate::commands as shell;\npub fn y() {}\n",
-    );
-    const r = run(args);
-    expect(r.status).toBe(1);
-    expect(r.output).toContain("commands as");
-  });
-
-  it("白名单政策项路径缺失（政策项漂移）→ fail loud", () => {
-    const args = makeCrateFixture();
-    rmSync(join(args[1], "src", "test_support"), { recursive: true, force: true });
-    const r = run(args);
-    expect(r.status).toBe(1);
-    expect(r.output).toContain("条目路径不存在：test_support");
-  });
-
-  it("白名单条目只剩测试豁免文件（扫不到非测试文件）→ fail loud，拒绝假绿", () => {
-    const args = makeCrateFixture();
-    rmSync(join(args[1], "src", "test_support", "mod.rs"));
-    writeCrateFile(args[1], ".", "test_support/tests.rs", shellUse);
-    const r = run(args);
-    expect(r.status).toBe(1);
-    expect(r.output).toContain("扫不到非测试");
   });
 });
 
@@ -714,13 +632,13 @@ describe("check-structure 跨 crate 依赖方向（#1596 cargo 退役 / ADR-0071
   /** infra 清单桩：带 http 投影门 features/axum 形态 + 给定 dev-dependency 行。 */
   const infraFixtureManifest = (devDeps: string): string =>
     '[package]\nname = "ledger-infra"\nversion = "0.6.0"\nedition = "2024"\n\n' +
-    '[features]\nhttp = ["dep:axum"]\ntauri-emit = ["dep:tauri"]\n\n' +
-    '[dependencies]\naxum = { version = "0.8", optional = true }\ntauri = { version = "2", optional = true }\n\n' +
+    '[features]\nhttp = ["dep:axum"]\n\n' +
+    '[dependencies]\naxum = { version = "0.8", optional = true }\n\n' +
     `[dev-dependencies]\n${devDeps}\n\n[lints]\nworkspace = true\n`;
 
   it("基础设施文件引用域模块 / 域 crate 模块引用壳层 → 文本扫描已退役（红源换为编译期）", () => {
     // `crate::test_support` 在 ledger-infra 内即 `ledger_infra::test_support`——不存在；
-    // 即便写成 `tauri_app_lib::test_support`，dev-dependency 也只对测试目标可见，
+    // 即便写成 `nsh_app::test_support`，dev-dependency 也只对测试目标可见，
     // 生产面编译失败。原文扫描已无靶向价值。
     expect(
       run(
@@ -729,7 +647,9 @@ describe("check-structure 跨 crate 依赖方向（#1596 cargo 退役 / ADR-0071
         ),
       ).status,
     ).toBe(0);
-    const account = fixtureWith(accountsCase({ "core.rs": shellUse }));
+    const account = fixtureWith(
+      accountsCase({ "core.rs": "use crate::commands as shell;\npub fn y() {}\n" }),
+    );
     expect(run(account).status).toBe(0);
   });
 
@@ -768,7 +688,7 @@ describe("check-structure 跨 crate 依赖方向（#1596 cargo 退役 / ADR-0071
     const args = makeCrateFixture({
       memberManifests: {
         "crates/infra": infraFixtureManifest(
-          'tauri-app = { path = "../.." }\nledger-transaction = { path = "../transaction" }',
+          'nsh-app = { path = "../..", features = ["test-utils"] }\nledger-transaction = { path = "../transaction" }',
         ),
       },
     });
@@ -808,7 +728,7 @@ describe("check-structure 跨 crate 依赖方向（#1596 cargo 退役 / ADR-0071
       memberManifests: {
         "crates/sync-protocol": crateManifest(
           "ledger-sync-protocol",
-          'ledger-transaction = { path = "../transaction" }\ntauri-app = { path = "../.." }',
+          'ledger-transaction = { path = "../transaction" }\nnsh-app = { path = "../..", features = ["test-utils"] }',
         ),
       },
     });
@@ -817,7 +737,7 @@ describe("check-structure 跨 crate 依赖方向（#1596 cargo 退役 / ADR-0071
     expect(r.output).toContain("crate 依赖方向");
     expect(r.output).toContain("ledger-sync-protocol");
     expect(r.output).toContain("ledger-transaction");
-    expect(r.output).toContain("tauri-app");
+    expect(r.output).toContain("nsh-app");
   });
 
   it("账户域 crate 生产依赖核心交易域 crate → 绿（域→域合法上层依赖，ADR-0071 决策 5）", () => {
@@ -934,19 +854,6 @@ describe("check-structure 模型域化禁令（ADR-0059 决策 6 / #424 T7 收�
     expect(r.output).toContain("core.rs:1");
   });
 
-  it("规则①：tauri_app_lib::models 形态同样识别 → 红（根 src 全树扫描）", () => {
-    const args = makeCrateFixture();
-    writeCrateFile(
-      args[1],
-      ".",
-      "commands/transactions.rs",
-      "let t: tauri_app_lib::models::Transaction;\n",
-    );
-    const r = run(args);
-    expect(r.status).toBe(1);
-    expect(r.output).toContain("全局模型路径残留");
-  });
-
   it("规则①：注释与字符串中的 models 路径不误报（掩码边界）", () => {
     const args = makeCrateFixture();
     writeCrateFile(
@@ -970,7 +877,7 @@ describe("check-structure 模型域化禁令（ADR-0059 决策 6 / #424 T7 收�
       args[1],
       ".",
       "test_support/tests/scaffold.rs",
-      "use tauri_app_lib::models::Transaction;\n",
+      "use crate::models::Transaction;\n",
     );
     expect(run(args).status).toBe(0);
   });
@@ -1120,7 +1027,7 @@ describe("check-structure 交易域区级层序（ADR-0113 决策 7 / #1181 / #1
     // 常量表核对无法经夹具红，用双向全等锚替代（同登记面长度锚先例）：新增 /
     // 删除区目录而 zone 表不同步 → 本断言红；zone 表悬空行同理。真实仓库自检
     //（run([])）同样照 zone 表判向，两侧互为见证。
-    const srcDir = join(process.cwd(), "src-tauri", "crates", "transaction", "src");
+    const srcDir = join(process.cwd(), "src-app", "crates", "transaction", "src");
     const dirs = readdirSync(srcDir, { withFileTypes: true })
       .filter((e) => e.isDirectory() && e.name !== "tests")
       .map((e) => e.name)
@@ -1292,7 +1199,7 @@ describe("check-structure crate 边界核对（spec #1086 / issue #1087 门禁�
     const args = makeCrateFixture({
       rootManifest: [
         "[package]",
-        'name = "tauri-app"',
+        'name = "nsh-app"',
         'version = "0.6.0"',
         'edition = "2024"',
         "",
@@ -1322,7 +1229,7 @@ describe("check-structure crate 边界核对（spec #1086 / issue #1087 门禁�
     const args = makeCrateFixture({
       rootManifest: [
         "[package]",
-        'name = "tauri-app"',
+        'name = "nsh-app"',
         'version = "0.6.0"',
         'edition = "2024"',
         "",
@@ -1344,7 +1251,7 @@ describe("check-structure crate 边界核对（spec #1086 / issue #1087 门禁�
   });
 
   it("静态检查/测试命令缺 --workspace → 红（命令覆盖全成员删除即变红）", () => {
-    const args = makeCrateFixture({ testSh: "( cd src-tauri && cargo test )\n" });
+    const args = makeCrateFixture({ testSh: "( cd src-app && cargo test )\n" });
     const r = run(args);
     expect(r.status).toBe(1);
     expect(r.output).toContain("缺 --workspace");
@@ -1388,7 +1295,7 @@ describe("check-structure crate 边界核对（spec #1086 / issue #1087 门禁�
 
   it("命令被 echo 包成说明文字 → 红（引号内不是命令面，拒绝空集假绿，#1112 P1）", () => {
     const args = makeCrateFixture({
-      testSh: 'echo "( cd src-tauri && cargo test --workspace )"\n',
+      testSh: 'echo "( cd src-app && cargo test --workspace )"\n',
     });
     const r = run(args);
     expect(r.status).toBe(1);
@@ -1399,7 +1306,7 @@ describe("check-structure crate 边界核对（spec #1086 / issue #1087 门禁�
   it("`--all-targets` 等 `--all*` 旗标不算 workspace 范围 → 红（防假绿回归）", () => {
     const args = makeCrateFixture({
       lintFixSh:
-        "( cd src-tauri && cargo clippy --fix --all-targets --all-features --allow-dirty --allow-staged )\n",
+        "( cd src-app && cargo clippy --fix --all-targets --all-features --allow-dirty --allow-staged )\n",
     });
     const r = run(args);
     expect(r.status).toBe(1);
@@ -1408,7 +1315,7 @@ describe("check-structure crate 边界核对（spec #1086 / issue #1087 门禁�
   });
 
   it("cargo fmt 缺 --all → 红（fmt 的 workspace 别名是 --all）", () => {
-    const args = makeCrateFixture({ checkSh: "( cd src-tauri && cargo fmt -- --check )\n" });
+    const args = makeCrateFixture({ checkSh: "( cd src-app && cargo fmt -- --check )\n" });
     const r = run(args);
     expect(r.status).toBe(1);
     expect(r.output).toContain("缺 --workspace");
@@ -1420,7 +1327,7 @@ describe("check-structure crate 边界核对（spec #1086 / issue #1087 门禁�
       memberManifests: {
         "crates/infra":
           '[package]\nname = "ledger-infra"\nversion = "0.6.0"\nedition = "2024"\n\n' +
-          '[dependencies]\ntauri-app = { path = "../.." }\n\n[lints]\nworkspace = true\n',
+          '[dependencies]\nnsh-app = { path = "../..", features = ["test-utils"] }\n\n[lints]\nworkspace = true\n',
       },
     });
     const r = run(args);
@@ -1434,9 +1341,9 @@ describe("check-structure crate 边界核对（spec #1086 / issue #1087 门禁�
       memberManifests: {
         "crates/infra":
           '[package]\nname = "ledger-infra"\nversion = "0.6.0"\nedition = "2024"\n\n' +
-          '[features]\nhttp = ["dep:axum"]\ntauri-emit = ["dep:tauri"]\n\n' +
-          '[dependencies]\naxum = { version = "0.8", optional = true }\ntauri = { version = "2", optional = true }\n\n' +
-          '[dev-dependencies]\ntauri-app = { path = "../.." }\n\n[lints]\nworkspace = true\n',
+          '[features]\nhttp = ["dep:axum"]\n\n' +
+          '[dependencies]\naxum = { version = "0.8", optional = true }\n\n' +
+          '[dev-dependencies]\nnsh-app = { path = "../..", features = ["test-utils"] }\n\n[lints]\nworkspace = true\n',
       },
     });
     expect(run(args).status).toBe(0);
@@ -1447,7 +1354,7 @@ describe("check-structure crate 边界核对（spec #1086 / issue #1087 门禁�
       memberManifests: {
         "crates/accounts":
           '[package]\nname = "ledger-accounts"\nversion = "0.6.0"\nedition = "2024"\n\n' +
-          '[dependencies]\ntauri-app = { path = "../.." }\n\n[lints]\nworkspace = true\n',
+          '[dependencies]\nnsh-app = { path = "../..", features = ["test-utils"] }\n\n[lints]\nworkspace = true\n',
       },
     });
     const r = run(args);
@@ -1462,7 +1369,7 @@ describe("check-structure crate 边界核对（spec #1086 / issue #1087 门禁�
         "crates/accounts":
           '[package]\nname = "ledger-accounts"\nversion = "0.6.0"\nedition = "2024"\n\n' +
           '[dependencies]\nledger-transaction = { path = "../transaction" }\n\n' +
-          '[dev-dependencies]\ntauri-app = { path = "../.." }\n\n[lints]\nworkspace = true\n',
+          '[dev-dependencies]\nnsh-app = { path = "../..", features = ["test-utils"] }\n\n[lints]\nworkspace = true\n',
       },
     });
     expect(run(args).status).toBe(0);
@@ -1475,7 +1382,7 @@ describe("check-structure crate 边界核对（spec #1086 / issue #1087 门禁�
       if (crate.dir === ".") continue; // 根包即壳层自身
       const manifest =
         `[package]\nname = "${crate.name}"\nversion = "0.6.0"\nedition = "2024"\n\n` +
-        '[dependencies]\ntauri-app = { path = "../.." }\n\n[lints]\nworkspace = true\n';
+        '[dependencies]\nnsh-app = { path = "../..", features = ["test-utils"] }\n\n[lints]\nworkspace = true\n';
       const args = makeCrateFixture({ memberManifests: { [crate.dir]: manifest } });
       const r = run(args);
       expect(r.status, `${crate.name} 生产依赖壳层未变红`).toBe(1);
@@ -1490,7 +1397,7 @@ describe("check-structure crate 边界核对（spec #1086 / issue #1087 门禁�
         "crates/accounts":
           '[package]\nname = "ledger-accounts"\nversion = "0.6.0"\nedition = "2024"\n\n' +
           '[dependencies]\nledger-sync-engine = { path = "../sync-engine" }\n\n' +
-          '[dev-dependencies]\ntauri-app = { path = "../.." }\n\n[lints]\nworkspace = true\n',
+          '[dev-dependencies]\nnsh-app = { path = "../..", features = ["test-utils"] }\n\n[lints]\nworkspace = true\n',
       },
     });
     const r = run(args);
@@ -1780,99 +1687,6 @@ describe("check-structure http 投影 feature 门（ADR-0111 决策 5 / issue #1
           '[package]\nname = "ledger-sync-protocol"\nversion = "0.6.0"\nedition = "2024"\n\n' +
           '[dependencies]\nledger-infra = { path = "../infra" }\n\n' +
           '[dev-dependencies]\naxum = "0.8"\n\n[lints]\nworkspace = true\n',
-      },
-    });
-    expect(run(args).status).toBe(0);
-  });
-
-  // ⑧'' tauri-host 宿主门（issue #2074 / ADR-0145）：DOMAIN_TAURI_ALLOWED 三个
-  // 存量宿主声明 tauri 即须 optional + feature 门；market-sync / sync-engine
-  // 的门须同帧转发 ledger-infra/tauri-emit；default 含门 feature 即生产链接。
-  // 传递面全图核对 = 命令型门 cargo tree（gate-mounts 挂载，无夹具形态）。
-  /** DOMAIN_TAURI_ALLOWED 宿主清单桩：完整 tauri-host 门形态（与真实仓库同形）。 */
-  const tauriHostFixtureManifest = (name: string, forwardsInfraEmit: boolean): string =>
-    '[package]\nname = "ledger-' +
-    name +
-    '"\nversion = "0.6.0"\nedition = "2024"\n\n' +
-    '[features]\ntauri-host = ["dep:tauri"' +
-    (forwardsInfraEmit ? ', "ledger-infra/tauri-emit"' : "") +
-    "]\n\n" +
-    '[dependencies]\ntauri = { version = "2", optional = true }\n\n[lints]\nworkspace = true\n';
-
-  it("三存量宿主完整 tauri-host 门形态 → 绿（issue #2074 基线）", () => {
-    const args = makeCrateFixture({
-      memberManifests: {
-        "crates/backup": tauriHostFixtureManifest("backup", false),
-        "crates/market-sync": tauriHostFixtureManifest("market-sync", true),
-        "crates/sync-engine": tauriHostFixtureManifest("sync-engine", true),
-      },
-    });
-    expect(run(args).status).toBe(0);
-  });
-
-  it("宿主 tauri 依赖未声明 optional → 红（裸依赖即无条件链接，NSH 图被污染）", () => {
-    const args = makeCrateFixture({
-      memberManifests: {
-        "crates/backup":
-          '[package]\nname = "ledger-backup"\nversion = "0.6.0"\nedition = "2024"\n\n' +
-          '[features]\ntauri-host = ["dep:tauri"]\n\n' +
-          '[dependencies]\ntauri = { version = "2" }\n\n[lints]\nworkspace = true\n',
-      },
-    });
-    const r = run(args);
-    expect(r.status).toBe(1);
-    expect(r.output).toContain("tauri-host 宿主门");
-    expect(r.output).toContain("optional");
-  });
-
-  it("宿主缺 tauri-host feature 转发 → 红（门与依赖面绑死）", () => {
-    const args = makeCrateFixture({
-      memberManifests: {
-        "crates/backup":
-          '[package]\nname = "ledger-backup"\nversion = "0.6.0"\nedition = "2024"\n\n' +
-          '[dependencies]\ntauri = { version = "2", optional = true }\n\n[lints]\nworkspace = true\n',
-      },
-    });
-    const r = run(args);
-    expect(r.status).toBe(1);
-    expect(r.output).toContain("tauri-host 宿主门");
-    expect(r.output).toContain("dep:tauri");
-  });
-
-  it("market-sync / sync-engine 门未转发 ledger-infra/tauri-emit → 红（失效信号投递同帧）", () => {
-    for (const dir of ["market-sync", "sync-engine"]) {
-      const args = makeCrateFixture({
-        memberManifests: {
-          [`crates/${dir}`]: tauriHostFixtureManifest(dir, false),
-        },
-      });
-      const r = run(args);
-      expect(r.status).toBe(1);
-      expect(r.output).toContain("tauri-host 宿主门");
-      expect(r.output).toContain("ledger-infra/tauri-emit");
-    }
-  });
-
-  it("宿主 [features] default 含 tauri-host → 红（默认 feature 即生产链接）", () => {
-    const args = makeCrateFixture({
-      memberManifests: {
-        "crates/backup":
-          '[package]\nname = "ledger-backup"\nversion = "0.6.0"\nedition = "2024"\n\n' +
-          '[features]\ndefault = ["tauri-host"]\ntauri-host = ["dep:tauri"]\n\n' +
-          '[dependencies]\ntauri = { version = "2", optional = true }\n\n[lints]\nworkspace = true\n',
-      },
-    });
-    const r = run(args);
-    expect(r.status).toBe(1);
-    expect(r.output).toContain("tauri-host 宿主门");
-    expect(r.output).toContain("default 包含 tauri-host");
-  });
-
-  it("宿主清单未声明 tauri → 绿（存量宿主已退役，非本门对象）", () => {
-    const args = makeCrateFixture({
-      memberManifests: {
-        "crates/backup":
-          '[package]\nname = "ledger-backup"\nversion = "0.6.0"\nedition = "2024"\n\n[lints]\nworkspace = true\n',
       },
     });
     expect(run(args).status).toBe(0);

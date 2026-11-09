@@ -1,5 +1,5 @@
 import { ref } from "vue";
-import { listen } from "@tauri-apps/api/event";
+import { listen } from "@ledger/mock-backend/bridge/events";
 import type { InstrumentSyncProgress } from "@ledger/types";
 
 /**

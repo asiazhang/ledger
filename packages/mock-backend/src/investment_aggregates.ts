@@ -16,7 +16,7 @@ import type {
 } from "@ledger/types";
 import { accountBalanceCents } from "./ledger";
 import { argsOf, db, obj } from "./state";
-import { emitMockEvent } from "./tauri/event";
+import { emitMockEvent } from "./bridge/events";
 
 /**
  * 投资聚合读数域替身（issue #1971 / spec #1964 / ADR-0143）：投资页「持仓」

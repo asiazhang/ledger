@@ -28,33 +28,33 @@ echo "▶ 前端格式检查 (pnpm exec oxfmt --check)"
 pnpm exec oxfmt --check .
 
 echo "▶ Rust clippy (--workspace --all-targets --all-features, -D warnings)"
-( cd src-tauri && cargo clippy --workspace --all-targets --all-features -- -D warnings )
+( cd src-app && cargo clippy --workspace --all-targets --all-features -- -D warnings )
 
 # infra 默认 feature 编译门（issue #1133）：clippy 走 --all-features（http 门恒开、
 # axum 恒在），门内 cfg 恒被编译——gate-off 形态（默认 feature 不含 axum）只有这
 # 里核到：error.rs 在无 axum 依赖图下必须独立成立，误在门外引用 axum 即红。
 echo "▶ Rust gate-off 编译检查 (cargo check -p ledger-infra，默认 feature 不含 axum)"
-( cd src-tauri && cargo check -p ledger-infra )
+( cd src-app && cargo check -p ledger-infra )
 
-# NSH 进程 tauri 零链接守门（issue #2074 / ADR-0145）：NSH 原生壳进程不得链接
-# tauri（GTK3/WebKitGTK 与 GTK4 同进程符号互踩，gtk_init_check 双双失效，#2017
-# 实证；存量宿主清单形状由 check-structure 的 tauri-host 宿主门辖，本门辖全图）。
-# 判定语义：tauri 不在 nsh-app 依赖图 = cargo tree -i 报 did not match——grep 命
-# 中即绿；tauri 在图（要抓的回归）或其他 cargo 失败（陈旧锁等）grep 不中即红
+# 全仓无 tauri 守门（issue #2083 / ADR-0145 决策 4/7，#2074 零链接门升级）：
+# Tauri 壳退役后全仓（workspace 全成员、全依赖种类）不得出现 tauri——清单形状
+# 与前端死路径面由 check-no-tauri 辖，本门辖解析后的依赖全图（含传递边）。
+# 判定语义：tauri 不在任何成员依赖图 = cargo tree -i 报 did not match——grep
+# 命中即绿；tauri 在图（要抓的回归）或其他 cargo 失败（陈旧锁等）grep 不中即红
 #（fail-closed，单一命令两宿主同判：CI backend-lint 无 bun，故为命令型门）。
-echo "▶ NSH 进程 tauri 零链接守门 (cargo tree -p nsh-app -i tauri)"
-( cd src-tauri && cargo tree -p nsh-app -i tauri --edges normal 2>&1 | grep -q "did not match any packages" )
+echo "▶ 全仓无 tauri 守门 (cargo tree --workspace -i tauri)"
+( cd src-app && cargo tree --workspace -i tauri --edges normal 2>&1 | grep -q "did not match any packages" )
 
 echo "▶ Rust 格式检查 (cargo fmt --all --check)"
-( cd src-tauri && cargo fmt --all -- --check )
+( cd src-app && cargo fmt --all -- --check )
 
 echo "▶ 基础设施 rustdoc 门禁 (cargo doc -p ledger-infra --no-deps, -D warnings)"
-( cd src-tauri && RUSTDOCFLAGS='-D warnings' cargo doc -p ledger-infra --no-deps )
+( cd src-app && RUSTDOCFLAGS='-D warnings' cargo doc -p ledger-infra --no-deps )
 
 ./scripts/check-docs.sh
 
-echo "▶ 命令注册一致性检查 (bun scripts/check-commands.ts)"
-bun scripts/check-commands.ts
+echo "▶ 全仓无 tauri 守门 (bun scripts/check-no-tauri.ts)"
+bun scripts/check-no-tauri.ts
 
 echo "▶ 版本元数据一致性检查 (bun scripts/check-versions.ts)"
 bun scripts/check-versions.ts
@@ -70,9 +70,6 @@ bun scripts/check-infra-dml.ts
 
 echo "▶ 东财行情面端点零残留源码扫描 (bun scripts/check-eastmoney-residue.ts)"
 bun scripts/check-eastmoney-residue.ts
-
-echo "▶ 后台服务成对拉起守门 (bun scripts/check-background-services.ts)"
-bun scripts/check-background-services.ts
 
 echo "▶ 样式块守门检查 (bun scripts/check-style-blocks.ts)"
 bun scripts/check-style-blocks.ts

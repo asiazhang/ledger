@@ -13,12 +13,12 @@ import CategoryManager from "@/categories/CategoryManager.vue";
 import { captureLastListener, mockListen } from "@ledger/test-support/listen-mock";
 import { getSavedClosedFeatures } from "@ledger/utils/view-state";
 
-vi.mock("@tauri-apps/plugin-dialog", () => ({
+vi.mock("@ledger/mock-backend/bridge/dialog", () => ({
   open: vi.fn(),
   save: vi.fn(),
 }));
 
-import { open, save } from "@tauri-apps/plugin-dialog";
+import { open, save } from "@ledger/mock-backend/bridge/dialog";
 
 const mockOpen = vi.mocked(open);
 const mockSave = vi.mocked(save);

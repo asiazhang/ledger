@@ -5,17 +5,17 @@ import { mount, flushPromises } from "@vue/test-utils";
 import StartupFailureScreen from "@/backup/StartupFailureScreen.vue";
 import { useEncryptionGate } from "@/backup/useEncryptionGate";
 import { RELEASE_PAGE_URL } from "@/composables/useAppUpdate";
-import { open } from "@tauri-apps/plugin-dialog";
-import { openUrl } from "@tauri-apps/plugin-opener";
+import { open } from "@ledger/mock-backend/bridge/dialog";
+import { openUrl } from "@ledger/mock-backend/bridge/opener";
 
 // 文件选择与重启单点 mock（先例 useBackup.test.ts；restartAppShortly 内含
 // 800ms 延时，测试断言调用而非计时）。
-vi.mock("@tauri-apps/plugin-dialog", () => ({
+vi.mock("@ledger/mock-backend/bridge/dialog", () => ({
   open: vi.fn(),
   save: vi.fn(),
   confirm: vi.fn(),
 }));
-vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn() }));
+vi.mock("@ledger/mock-backend/bridge/opener", () => ({ openUrl: vi.fn() }));
 const restartAppShortly = vi.fn();
 vi.mock("@/backup/restart", () => ({ restartAppShortly: () => restartAppShortly() }));
 const mockOpen = vi.mocked(open);

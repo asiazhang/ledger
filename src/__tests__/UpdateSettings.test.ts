@@ -10,7 +10,9 @@ import { resetAppBuildInfoForTest } from "@/settings/useAppBuildInfo";
 
 // 发布页引导走 opener 插件，测试以模块替身断言调用事实。
 const openUrl = vi.fn().mockResolvedValue(undefined);
-vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn((url: string) => openUrl(url)) }));
+vi.mock("@ledger/mock-backend/bridge/opener", () => ({
+  openUrl: vi.fn((url: string) => openUrl(url)),
+}));
 
 /** 壳层构建元信息的契约快照（issue #1957）：「当前版本号」取它的 version，
  *  与「关于」Tab 同源——不再读前端 package.json。 */

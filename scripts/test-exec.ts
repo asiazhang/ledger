@@ -70,7 +70,7 @@ import {
 } from "./gate-primitives.ts";
 
 /** 根包（Rust workspace 根 = tauri 应用包）目录名，相对仓库根。 */
-const SRC_TAURI_DIR_NAME = "src-tauri";
+const SRC_TAURI_DIR_NAME = "src-app";
 
 /** 两个测试入口的宿主脚本（覆盖守门读取其命令行）。 */
 const TEST_SH_REL = join("scripts", "test.sh");

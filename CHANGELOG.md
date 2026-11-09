@@ -2,6 +2,17 @@
 
 本文件记录开源记账（OpenLedger）各版本对使用者可见的变更，格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/)，版本号遵循[语义化版本](https://semver.org/lang/zh-CN/)规则。
 
+## [Unreleased]
+
+### Breaking
+
+- **壳切换（一体切轨）**：产品壳从跨平台 WebView 壳切换为原生 GTK 壳（NSH），仓库目录随之改名 `src-tauri/` → `src-app/`（spec #2075 / issue #2083 / ADR-0145）。对使用者可见的取舍：
+  - **平台收缩为 Linux 桌面**（x64）：macOS、Windows 与 Android 版本随旧壳退役，后续是否恢复待另行裁决；发布形态改为单个 release 二进制 + `.desktop` 直跑（仓库 `src-app/packaging/` 附模板与说明），AppImage / deb 打包另行规划。
+  - **应用内自动更新下线**（原更新器依赖旧壳体系，ADR-0124 / ADR-0145 决策 7）：升级改为重新下载新 release 二进制覆盖；旧版弹出的「检查更新」入口不再存在。
+  - **整库加密暂不可用**：密文账本打开得到明确报错（`boot.encrypted-unsupported`），明文账本不受影响；加密支持待原生壳补齐门判定后恢复（ADR-0145 决策 2）。
+  - **多端同步、备份、AI 导入 HTTP 端点不受影响**：同一批域引擎原样随迁，口径与既有契约不变。
+  - 移动布局与触屏适配随 Android 端退役不再发布；Web 参照前端（浏览器 mock 模式）保留为非产品形态的布局对照物（`pnpm dev:mock`）。
+
 ## [0.11.2] - 2026-11-01
 
 ### Added

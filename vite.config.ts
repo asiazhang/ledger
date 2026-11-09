@@ -9,7 +9,7 @@ import { fileURLToPath, URL } from "node:url";
 // WINDOW_TIER_BREAKPOINT_PX（ADR-0088 决策 2；#1315 起包化为 @ledger/window-tier，
 // ADR-0118 决策 5：构建期契约保留，只换收口点坐标）。本配置以源码为唯一事实源运行时
 // 提取：不静态 import 包源码（避免把产品源码拉进 tsconfig.node.json 的类型工程边界），
-// 且收口漂移在构建期 fail-loud——收口点改名或移位而不修此提取，tauri dev/build 立即报错。
+// 且收口漂移在构建期 fail-loud——收口点改名或移位而不修此提取，vite build 立即报错。
 export const WINDOW_TIER_BREAKPOINT_PX = readWindowTierBreakpointPx();
 
 function readWindowTierBreakpointPx(): number {
@@ -28,9 +28,7 @@ function readWindowTierBreakpointPx(): number {
   return Number(m[1]);
 }
 
-const host = process.env.TAURI_DEV_HOST;
-
-// 构建期 Git 版本信息（tauri dev / tauri build 均经此配置生效），
+// 构建期 Git 版本信息（vite 构建经此配置生效），
 // 消费方见 packages/utils/src/git-info.ts（#1314 起随 @ledger/utils 成包）；非 Git 目录（如源码包构建）降级为空值。
 function gitSha(): string {
   try {
@@ -76,30 +74,8 @@ function windowTierBreakpointCss(): Plugin {
   };
 }
 
-/**
- * 浏览器开发模式的 tauri API 面模块替身别名（issue #1962 / ADR-0143 决策 5）：
- * 仅 mock mode 下把 tauri API 面整体替换为 @ledger/mock-backend 的进程内替身，
- * 全部散用直连点（事件 listen、文件对话框、外链打开、系统返回）一字不动；
- * 其余 mode 返回空——生产构建引用真模块，替身模块图不可达（静态消除的第二
- * 道构造条件，第一道是 main.ts 仅存的 mode 分支动态 import；接线由
- * src/__tests__/mock-mode-wiring.test.ts 守门）。
- */
-export function mockModeAliases(mode: string): Array<{ find: string; replacement: string }> {
-  if (mode !== "mock") return [];
-  const mockTauri = (file: string): string =>
-    fileURLToPath(new URL(`./packages/mock-backend/src/tauri/${file}`, import.meta.url));
-  return [
-    { find: "@tauri-apps/api/core", replacement: mockTauri("core.ts") },
-    { find: "@tauri-apps/api/event", replacement: mockTauri("event.ts") },
-    { find: "@tauri-apps/api/window", replacement: mockTauri("window.ts") },
-    { find: "@tauri-apps/api/app", replacement: mockTauri("app.ts") },
-    { find: "@tauri-apps/plugin-dialog", replacement: mockTauri("plugin-dialog.ts") },
-    { find: "@tauri-apps/plugin-opener", replacement: mockTauri("plugin-opener.ts") },
-  ];
-}
-
 // https://vite.dev/config/
-export default defineConfig(async ({ mode }) => ({
+export default defineConfig(async () => ({
   // vanilla-extract 插件（issue #888 / ADR-0093）：构建期把 *.css.ts 编译为
   // 静态 CSS，无 codegen 产物目录；置于 vue 插件之前（官方推荐顺序）。
   // 惰性动态导入：本模块被 src/__tests__/window-tier-build-contract.test.ts 直接
@@ -121,31 +97,18 @@ export default defineConfig(async ({ mode }) => ({
         find: "@",
         replacement: fileURLToPath(new URL("./src", import.meta.url)),
       },
-      // 浏览器开发模式（ADR-0143）：mock mode 下 tauri API 面整体模块替身；其余
-      // mode 空表——真模块引用原样解析，替身不进生产包
-      ...mockModeAliases(mode),
     ],
   },
 
-  // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
-  //
   // 1. prevent Vite from obscuring rust errors
   clearScreen: false,
-  // 2. tauri expects a fixed port, fail if that port is not available
+  // 2. 固定端口（沿用原 Tauri dev 约定端口）：端口被占即失败，不静默换端口
   server: {
     port: 1420,
     strictPort: true,
-    host: host || false,
-    hmr: host
-      ? {
-          protocol: "ws",
-          host,
-          port: 1421,
-        }
-      : undefined,
     watch: {
-      // 3. tell Vite to ignore watching `src-tauri`
-      ignored: ["**/src-tauri/**"],
+      // 3. Rust 源树不属前端构建，不参与 watch
+      ignored: ["**/src-app/**"],
     },
   },
 }));

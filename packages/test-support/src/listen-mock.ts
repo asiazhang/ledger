@@ -1,4 +1,4 @@
-import { listen } from "@tauri-apps/api/event";
+import { listen } from "@ledger/mock-backend/bridge/events";
 import { vi, type Mock } from "vitest";
 
 /**

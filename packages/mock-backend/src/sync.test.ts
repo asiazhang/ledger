@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { installMockBackend } from "./index";
-import { invoke } from "./tauri/core";
+import { invoke } from "./bridge/command";
 import type { SyncChannelConfig, SyncRoundReport, SyncStatus } from "@ledger/types";
 
 /**

@@ -1,7 +1,7 @@
 import { onScopeDispose, watch } from "vue";
 import { useRouter } from "vue-router";
-import { onBackButtonPress } from "@tauri-apps/api/app";
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { onBackButtonPress } from "@ledger/mock-backend/bridge/app";
+import { getCurrentWindow } from "@ledger/mock-backend/bridge/window";
 import { closeTopOverlay, hasOpenOverlay } from "@ledger/ui-kit/overlayRegistry";
 import { useWindowTier } from "@ledger/window-tier";
 import { createLatestWins } from "@ledger/latest-wins";
@@ -12,7 +12,7 @@ import { createLatestWins } from "@ledger/latest-wins";
  *
  * **到达方式（Tauri v2 官方接线点，纯前端、零原生代码）**：tauri 2.11 Android
  * 层内置 AppPlugin 的 OnBackPressedCallback——JS 侧经 `onBackButtonPress`
- * （@tauri-apps/api/app）注册监听后，返回键不再走「WebView goBack / Activity
+ * （@ledger/mock-backend/bridge/app）注册监听后，返回键不再走「WebView goBack / Activity
  * finish」默认分支，而是携带 `canGoBack` 载荷派发本事件；权限
  * `core:app:allow-register-listener` 已含于 core:default，零权限改动。
  *

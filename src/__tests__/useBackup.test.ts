@@ -2,10 +2,10 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { lastInvokeArgs, mockInvoke, wireInvokeSeam } from "@ledger/test-support/invoke-mock";
 import { mount, flushPromises } from "@vue/test-utils";
 import { defineComponent } from "vue";
-import { type UnlistenFn } from "@tauri-apps/api/event";
+import { type UnlistenFn } from "@ledger/mock-backend/bridge/events";
 import type { AutoBackupState } from "@ledger/types";
 
-vi.mock("@tauri-apps/plugin-dialog", () => ({
+vi.mock("@ledger/mock-backend/bridge/dialog", () => ({
   open: vi.fn(),
   save: vi.fn(),
   confirm: vi.fn(),
@@ -288,7 +288,7 @@ describe("useBackup 加密语义（issue #572 / ADR-0075 决策 7）", () => {
         get_encryption_status: { locked: false, file_encrypted: true },
       },
     });
-    const { open } = await import("@tauri-apps/plugin-dialog");
+    const { open } = await import("@ledger/mock-backend/bridge/dialog");
     vi.mocked(open).mockResolvedValue("/Users/me/backups/enc.db.zip");
 
     const { backup } = mountHost();
@@ -312,7 +312,7 @@ describe("useBackup 加密语义（issue #572 / ADR-0075 决策 7）", () => {
         get_backup_meta: () => Promise.reject(new Error("bad zip")),
       },
     });
-    const { open } = await import("@tauri-apps/plugin-dialog");
+    const { open } = await import("@ledger/mock-backend/bridge/dialog");
     vi.mocked(open).mockResolvedValue("/Users/me/backups/broken.zip");
 
     const { backup } = mountHost();
@@ -332,7 +332,7 @@ describe("useBackup 加密语义（issue #572 / ADR-0075 决策 7）", () => {
         get_encryption_status: () => Promise.reject(new Error("status unavailable")),
       },
     });
-    const { open } = await import("@tauri-apps/plugin-dialog");
+    const { open } = await import("@ledger/mock-backend/bridge/dialog");
     vi.mocked(open).mockResolvedValue("/Users/me/backups/plain.db.zip");
 
     const { backup } = mountHost();
@@ -354,7 +354,7 @@ describe("useBackup 加密语义（issue #572 / ADR-0075 决策 7）", () => {
         restore_backup: { schema_version: 12, restored_at: "2026-02-17T00:00:00Z" },
       },
     });
-    const { open } = await import("@tauri-apps/plugin-dialog");
+    const { open } = await import("@ledger/mock-backend/bridge/dialog");
     vi.mocked(open).mockResolvedValue("/Users/me/backups/enc.db.zip");
 
     const { backup } = mountHost();
@@ -384,7 +384,7 @@ describe("useBackup 加密语义（issue #572 / ADR-0075 决策 7）", () => {
         restore_backup: { schema_version: 12, restored_at: "2026-02-17T00:00:00Z" },
       },
     });
-    const { open } = await import("@tauri-apps/plugin-dialog");
+    const { open } = await import("@ledger/mock-backend/bridge/dialog");
     vi.mocked(open).mockResolvedValue("/Users/me/backups/plain.db.zip");
 
     const { backup } = mountHost();
@@ -413,7 +413,7 @@ describe("useBackup 加密语义（issue #572 / ADR-0075 决策 7）", () => {
         restore_backup: { schema_version: 12, restored_at: "2026-02-17T00:00:00Z" },
       },
     });
-    const { open } = await import("@tauri-apps/plugin-dialog");
+    const { open } = await import("@ledger/mock-backend/bridge/dialog");
     vi.mocked(open).mockResolvedValue("/Users/me/backups/lied-plain.db.zip");
 
     const { backup } = mountHost();
@@ -445,7 +445,7 @@ describe("useBackup 加密语义（issue #572 / ADR-0075 决策 7）", () => {
           }),
       },
     });
-    const { open } = await import("@tauri-apps/plugin-dialog");
+    const { open } = await import("@ledger/mock-backend/bridge/dialog");
     vi.mocked(open).mockResolvedValue("/Users/me/backups/enc.db.zip");
 
     const { backup } = mountHost();
@@ -594,7 +594,7 @@ describe("useBackup 手动备份按账本分域（issue #836）", () => {
 
   it("一键备份默认名携带账本指纹（产物互不覆盖，issue #1985）", async () => {
     makeStub([]);
-    const { save } = await import("@tauri-apps/plugin-dialog");
+    const { save } = await import("@ledger/mock-backend/bridge/dialog");
     vi.mocked(save).mockResolvedValue(
       "/Users/me/backups/ledger-backup-20260217-093005-fp-book-a.db.zip",
     );
@@ -638,7 +638,7 @@ describe("useBackup 手动备份按账本分域（issue #836）", () => {
         },
       },
     });
-    const { save } = await import("@tauri-apps/plugin-dialog");
+    const { save } = await import("@ledger/mock-backend/bridge/dialog");
     vi.mocked(save).mockResolvedValue("/Users/me/backups/ledger-backup-20260217-093005.db.zip");
 
     const { backup } = mountHost();

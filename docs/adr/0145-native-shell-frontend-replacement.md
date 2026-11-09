@@ -96,3 +96,13 @@ Linux 打包自建（AppImage / deb 工具链接入既有 CI 矩阵），macOS /
 - **决策 7（打包与更新器）**：Linux 打包自建（AppImage / deb 工具链接入 CI）**裁掉**，发版以 release 二进制＋.desktop 直跑；浏览器开发模式与替身后端（ADR-0143）**保留**——Web 参照前端的唯一运行形态；自动更新（ADR-0124）随旧壳退役下线不变。
 
 动机：web 前端作为界面参照仍有活体对照价值，按原定「整体退役」处理会销毁对照物；布局与旧 web 界面的差异从未系统盘点，肌肉记忆有断层风险，保真口径需落在可对照的维度（布局靠拢、控件原生、语义不变）上。切轨实施、退役闭集与发布边界见 spec #2075。
+
+## 修订注记（切轨实施，2026-11-11，issue #2083）：一体切轨落地
+
+上两条修订注记的裁决定案后，本票完成实施。落地形态与裁决的偏差面（均已在裁决射程内，无新增决策）：
+
+- **目录与根包**：`src-tauri/` 更名 `src-app/`，旧 Tauri 壳整体删除；`crates/nsh` 升为 workspace 根包（包名 `nsh-app`，dir = 仓库根 `src-app/`），原 nsh crate 随宿主消失。依赖方向 壳→域→基础设施→协议 不变。
+- **退役闭集**：155 个 IPC 命令及命令注册扫描（build.rs + check-commands）、tauri-host / tauri-emit 门化面与 AppHandle 包装 API（`*_with` 内核与宿主 trait 保留）、自动更新（ADR-0124 面）、BDD e2e 456 场景与 `tests/e2e/`（不移植，词汇表留档）、命令层测试与 API 集成测试中的命令装配面（HTTP 契约测试随 api_server 迁居保留）、Android gen 树、tauri 图标/能力/打包配置。前端 `@tauri-apps/*` 引用清零，桥面收敛为 `@ledger/mock-backend/bridge/*`（Web 参照前端唯一传输面）。
+- **守门与 CI**：零链接门升级为全仓无 tauri 门（`cargo tree --workspace -i tauri` + 新脚本 `scripts/check-no-tauri.ts` 三面：Cargo 清单、前端 import、package.json 键）；gate-mounts 登记收缩；check.sh 退役 check-commands / check-background-services 两个挂载点；CI 矩阵收缩为 check + Linux 构建（产物 = release 二进制 artifact）；perf-bench 路径随迁。结构守门退役双壳规则与 tauri 特免面（check-structure 的 CRATES 政策核以 `nsh-app` dir "." 登记）。
+- **保留面**：`src-app/src/test_support/` 工厂与器具全量随迁（含源码扫描掩码、读快照探针、op 写失败注入等）；原 Tauri 壳 12 个遗留集成测试 disposition——HTTP 契约/信号投递等随 api_server 迁居保留，纯命令装配面退役（逐条清单见 #2083 交付报告）。
+- **发布形态**：release 二进制 + `.desktop` 直跑（`src-app/packaging/` 模板）；加密开门、Linux 打包工具链、NSH 自动化回归能力为后续票。

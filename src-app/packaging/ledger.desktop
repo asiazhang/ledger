@@ -1,0 +1,17 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+# 模板：安装时把 Exec 改为你的 nsh-app 二进制绝对路径（见同目录 README.md）
+Exec=/usr/local/bin/nsh-app
+# 模板：安装时把 Icon 改为 ledger.png 的实际安装路径（见同目录 README.md）
+Icon=ledger
+Name=开源记账
+Name[en]=OpenLedger
+GenericName=个人记账
+GenericName[en]=Personal Ledger
+Comment=本地优先的个人记账：收支、转账、投资与预算
+Comment[en]=Local-first personal ledger: income, expense, transfer, investment and budget
+Categories=Office;Finance;GTK;
+Keywords=ledger;accounting;money;finance;记账;账本;
+StartupWMClass=nsh-app
+Terminal=false

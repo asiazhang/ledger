@@ -5,12 +5,12 @@ import { findButton, findButtonByTestId, findBodyButtonByTestId } from "@ledger/
 import { mount, flushPromises } from "@vue/test-utils";
 import type { DataLocationChangeOutcome, DataLocationInfo } from "@ledger/types";
 
-vi.mock("@tauri-apps/plugin-dialog", () => ({
+vi.mock("@ledger/mock-backend/bridge/dialog", () => ({
   open: vi.fn(),
   save: vi.fn(),
 }));
 
-import { open } from "@tauri-apps/plugin-dialog";
+import { open } from "@ledger/mock-backend/bridge/dialog";
 import DataLocationSettings from "@/settings/DataLocationSettings.vue";
 import AppDangerConfirmModal from "@ledger/ui-kit/AppDangerConfirmModal.vue";
 

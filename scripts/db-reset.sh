@@ -29,7 +29,7 @@ esac
 
 REGISTRY_FILE="$DEFAULT_DIR/data_location.json"
 
-# 与 src-tauri/src/db/book_registry.rs 的读取校验同构。输出三种形态之一：
+# 与 src-app/crates/infra/src/boot/book_registry.rs 的读取校验同构。输出三种形态之一：
 #   {"kind":"corrupt"}（视同未配置）
 #   {"kind":"pointer","dir":…}（旧格式指针）
 #   {"kind":"registry","active_dir":…,"other_dirs":[…]}（新格式注册表）

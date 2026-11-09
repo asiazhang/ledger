@@ -35,7 +35,7 @@
 //
 // TypeScript 化 + Bun 运行时（issue #734 / ADR-0083）：类型经 tsconfig.scripts.json
 // 门槛检查；调用方式 `bun scripts/check-infra-dml.ts`。
-// 默认校验本仓库；测试可传位置参数指向夹具：bun scripts/check-infra-dml.ts [src-tauri-dir]
+// 默认校验本仓库；测试可传位置参数指向夹具：bun scripts/check-infra-dml.ts [src-app-dir]
 // 包装测试 scripts/check-infra-dml.test.ts（#1158 归位）。
 // 行号定位与目录遍历消费 gate-primitives.ts（#1680 库归库、门归门）导出的家族共享原语
 // （lineAt / walkTextFiles，issue #1625）；禁令形态与豁免面属本守门政策，自持。
@@ -52,7 +52,7 @@ import {
 } from "./gate-primitives.ts";
 import { INFRA_SRC_REL } from "./check-structure.ts";
 
-const DEFAULT_SRC_TAURI = join(fileURLToPath(import.meta.url), "..", "..", "src-tauri");
+const DEFAULT_SRC_TAURI = join(fileURLToPath(import.meta.url), "..", "..", "src-app");
 
 function fail(message: string): never {
   console.error(`✗ 基础设施账本数据表 DML 禁令：${message}`);
