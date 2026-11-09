@@ -151,6 +151,80 @@ pub struct RowCells {
     pub amount: String,
     /// 金额列语义色型（UI 层映射为宿主颜色，色值住 [`crate::app`]）。
     pub amount_semantic: AmountSemantic,
+    // —— 格级交互载荷（#2061 表格级点击委托的装配面；None = 该格不可点；
+    // 可点口径以旧壳为对拍基准）——
+    /// 账户格交互原子（三形态与 [`RowCells::account`] 文本同源；订单级——
+    /// 购买项续行 None）。
+    pub account_atoms: Option<AccountAtoms>,
+    /// 商户格下钻载荷（商户 id；含软删商户历史引用——商户表全量口径；无引用
+    /// 或解析不到 None，渲染「-」不可点）。
+    pub merchant_id: Option<String>,
+    /// 来源格跳转载荷（软删来源 None——旧壳 clickable 同口径；订单级——购买
+    /// 项续行 None）。
+    pub source_jump: Option<SourceJump>,
+    /// 备注复制载荷（备注原文；购买项行与空备注 None——旧壳复制通道同口径）。
+    pub copy_note: Option<String>,
+}
+
+/// 账户格可点原子（#2061 交互载荷；旧壳 `accountAtom` 的载荷镜像）：可见
+/// 账户显名带 id（可下钻），黑洞/隐藏/软删账户占位「-」不带 id（不可点，
+/// 旧壳 link=false 同口径）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct AccountAtom {
+    /// 显示文本（可见账户名或「-」占位）。
+    pub text: String,
+    /// 下钻载荷（账户 id；None = 占位不可点）。
+    pub account_id: Option<String>,
+}
+
+/// 账户格交互形态（旧壳 `accountCellView` 三形态的载荷镜像，与格文本同源
+/// 装配——文本从原子组合，不另立第二份拼接口径）。
+#[derive(Debug, Clone, PartialEq)]
+pub enum AccountAtoms {
+    /// 单账户（或不可解析占位）。
+    Single(AccountAtom),
+    /// 双账户（转账「转出 → 转入」；买入/卖出「资金流出方 → 资金流入方」）。
+    Two {
+        /// 转出侧（买入行 = 资金流出方）。
+        from: AccountAtom,
+        /// 转入侧（卖出行 = 资金流出方）。
+        to: AccountAtom,
+    },
+    /// 出资分解：首条出资账户原子 + 尾标注（标注不可点，文本尾部平铺——
+    /// 旧壳第二行标注的平铺镜像同口径）。
+    Funding {
+        /// 首条出资账户。
+        first: AccountAtom,
+        /// 尾标注（「等 N 账户」/「同账户 N 笔」/「按比例自动分解」，可空串）。
+        marker: String,
+    },
+}
+
+impl AccountAtoms {
+    /// 账户格文本（单源组合——文本与原子同源装配，不另立第二份拼接口径）。
+    pub fn text(&self) -> String {
+        match self {
+            AccountAtoms::Single(atom) => atom.text.clone(),
+            AccountAtoms::Two { from, to } => format!("{} → {}", from.text, to.text),
+            AccountAtoms::Funding { first, marker } => format!("{}{}", first.text, marker),
+        }
+    }
+}
+
+/// 来源格跳转载荷（#2061 交互载荷；旧壳 `sourceCellView` 可点击面的镜像）：
+/// 名段可点（经导航域跳转目标计算落来源视图），状态标注不可点（文本尾段）；
+/// 软删来源不可点（旧壳 clickable 同口径——软删保单不在列表、无详情面，不
+/// 提供落空的跳转）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct SourceJump {
+    /// 来源种类（跳转目标计算载荷；种类名与状态标注同源）。
+    pub kind: TransactionSourceKind,
+    /// 来源实体 id。
+    pub entity_id: String,
+    /// 来源名（可点段文本；展示名空串按来源类型名兜底，与格文本同源）。
+    pub name: String,
+    /// 状态标注（不可点尾段；None = 无状态）。
+    pub status: Option<String>,
 }
 
 /// 金额语义色型（旧壳 `kindSemanticColor` 的输入闭集——九种交易类型各一专属
@@ -612,18 +686,27 @@ fn purchase_qty_text(quantity: i64) -> String {
     format!("共 {quantity} 件")
 }
 
-/// 账户格原子（旧壳 `accountAtom` 文本镜像）：可见账户显名；黑洞/隐藏/软删
-/// 账户（不在账户表）占位「-」。
-fn account_atom(accounts: &AccountTable, id: Option<&str>) -> String {
-    accounts.name_of(id).unwrap_or("-").to_owned()
+/// 账户格可点原子（#2061 载荷镜像；文本口径与旧壳 `accountAtom` 文本镜像
+/// 一致）：可见账户显名带 id（可下钻）；黑洞/隐藏/软删账户（不在账户表）
+/// 占位「-」无 id（不可点）。
+fn account_cell_atom(accounts: &AccountTable, id: Option<&str>) -> AccountAtom {
+    match (id, accounts.name_of(id)) {
+        (Some(id), Some(name)) => AccountAtom {
+            text: name.to_owned(),
+            account_id: Some(id.to_owned()),
+        },
+        _ => AccountAtom {
+            text: "-".to_owned(),
+            account_id: None,
+        },
+    }
 }
 
-/// 账户格文本（旧壳 `accountCellView` 三形态的文本镜像）：出资分解行（出资子行
-/// 在场，词汇表「出资项」读侧口径）= 首条出资账户 + 标注（多账户「等 N 账户」/
-/// 同账户多条「同账户 N 笔」/ 单条无标注），refund 派生分解另带「按比例自动分解」
-/// （旧壳第二行标注的平铺镜像）；转账 = 「转出 → 转入」；buy/sell = 双账户
-/// （资金流出方在前，ADR-0096 决策 6）；其余 = 单账户。
-fn account_cell_text(tx: &Transaction, accounts: &AccountTable) -> String {
+/// 账户格交互原子（旧壳 `accountCellView` 三形态的单源装配，格文本由
+/// [`AccountAtoms::text`] 组合）：出资分解行（出资子行在场，词汇表「出资项」
+/// 读侧口径）= 首条出资账户原子 + 标注；转账 = 双原子「转出 → 转入」；
+/// buy/sell = 双原子（资金流出方在前，ADR-0096 决策 6）；其余 = 单原子。
+fn account_cell_atoms(tx: &Transaction, accounts: &AccountTable) -> AccountAtoms {
     if let Some(first) = tx.fundings.first() {
         let distinct = tx
             .fundings
@@ -631,34 +714,46 @@ fn account_cell_text(tx: &Transaction, accounts: &AccountTable) -> String {
             .map(|f| f.account_id.as_str())
             .collect::<BTreeSet<_>>()
             .len();
-        let mut text = account_atom(accounts, Some(&first.account_id));
+        let mut marker = String::new();
         if distinct > 1 {
-            text.push_str(&format!(" 等 {distinct} 账户"));
+            marker.push_str(&format!(" 等 {distinct} 账户"));
         } else if tx.fundings.len() > 1 {
-            text.push_str(&format!(" 同账户 {} 笔", tx.fundings.len()));
+            marker.push_str(&format!(" 同账户 {} 笔", tx.fundings.len()));
         }
         if tx.fundings.iter().any(|f| f.derived) {
-            text.push_str(" 按比例自动分解");
+            marker.push_str(" 按比例自动分解");
         }
-        return text;
+        return AccountAtoms::Funding {
+            first: account_cell_atom(accounts, Some(&first.account_id)),
+            marker,
+        };
     }
-    let single = account_atom(accounts, tx.account_id.as_deref());
+    let single = account_cell_atom(accounts, tx.account_id.as_deref());
     if tx.kind == TransactionKind::Transfer
         && let Some(to) = tx.to_account_id.as_deref()
     {
-        return format!("{single} → {}", account_atom(accounts, Some(to)));
+        return AccountAtoms::Two {
+            from: single,
+            to: account_cell_atom(accounts, Some(to)),
+        };
     }
     if tx.kind == TransactionKind::Buy
         && let Some(funding) = tx.funding_account_id.as_deref()
     {
-        return format!("{} → {single}", account_atom(accounts, Some(funding)));
+        return AccountAtoms::Two {
+            from: account_cell_atom(accounts, Some(funding)),
+            to: single,
+        };
     }
     if tx.kind == TransactionKind::Sell
         && let Some(funding) = tx.funding_account_id.as_deref()
     {
-        return format!("{single} → {}", account_atom(accounts, Some(funding)));
+        return AccountAtoms::Two {
+            from: single,
+            to: account_cell_atom(accounts, Some(funding)),
+        };
     }
-    single
+    AccountAtoms::Single(single)
 }
 
 /// 商户格文本（旧壳商户格口径）：商户映射命中（含软删商户历史引用）显名；
@@ -670,22 +765,34 @@ fn merchant_cell_text(tx: &Transaction, merchants: &MerchantTable) -> String {
         .to_owned()
 }
 
-/// 来源格文本（旧壳 `sourceCellView` 的文本镜像，spec #704 词汇表「来源列」）：
-/// 展示名空串按来源类型名兜底；状态标注随名空格拼接（旧壳状态徽章的平铺镜像）；
-/// 无来源行渲染「-」（旧壳来源列同口径）。
-fn source_cell_text(tx: &Transaction) -> String {
+/// 来源格文本与跳转载荷（旧壳 `sourceCellView` 的单源装配，spec #704 词汇表
+/// 「来源列」）：展示名空串按来源类型名兜底；状态标注随名空格拼接（旧壳状态
+/// 徽章的平铺镜像）；无来源行渲染「-」；软删来源不产跳转载荷（旧壳 clickable
+/// 同口径）。
+fn source_cell(tx: &Transaction) -> (String, Option<SourceJump>) {
     let Some(source) = tx.source.as_ref() else {
-        return "-".to_owned();
+        return ("-".to_owned(), None);
     };
     let name = if source.display_name.is_empty() {
         source_kind_label(source.kind)
     } else {
         source.display_name.as_str()
     };
-    match source.status {
-        Some(status) => format!("{name} {}", source_status_label(status)),
+    let status = source.status.map(source_status_label);
+    let text = match status {
+        Some(label) => format!("{name} {label}"),
         None => name.to_owned(),
-    }
+    };
+    let jump = match source.status {
+        Some(TransactionSourceStatus::Deleted) => None,
+        _ => Some(SourceJump {
+            kind: source.kind,
+            entity_id: source.entity_id.clone(),
+            name: name.to_owned(),
+            status: status.map(str::to_owned),
+        }),
+    };
+    (text, jump)
 }
 
 /// 装配消费面（数据到达时随行集一并备齐的参考数据与开关）：装配函数的
@@ -828,18 +935,37 @@ fn derived_row(tx: &Transaction, purchase_index: Option<usize>, ctx: &RowContext
         None => tx.note.clone().unwrap_or_else(|| "-".to_owned()),
     };
     let item_note = purchase.map(|p| format!("{} {}", p.name, purchase_qty_text(p.quantity)));
+    // 格级交互载荷（#2061）：与格文本同源装配。订单级三载荷（账户/商户/来源）
+    // 随订单级格只在块首行带值（续行格无文本亦无可点面）；备注复制逐行
+    //（备注列一列两用，购买项行的复制通道不适用商品名）。
+    let account_atoms = account_cell_atoms(tx, ctx.accounts);
+    let (source_text, source_jump) = source_cell(tx);
+    let order_payload = |payload: Option<String>| if order_level { payload } else { None };
+    let order_jump = |payload: Option<SourceJump>| if order_level { payload } else { None };
     RowCells {
         id: tx.id.clone(),
         date: order(tx.date.clone()),
         kind: order(kind_label(tx.kind, derive_lending_direction(tx, ctx.accounts)).to_owned()),
         category,
         merchant: order(merchant_cell_text(tx, ctx.merchants)),
-        account: order(account_cell_text(tx, ctx.accounts)),
-        source: order(source_cell_text(tx)),
+        account: order(account_atoms.text()),
+        source: order(source_text),
         note,
         item_note,
         amount: order(amount),
         amount_semantic: amount_semantic(tx.kind),
+        account_atoms: order_level.then_some(account_atoms),
+        merchant_id: order_payload(
+            tx.merchant_id
+                .clone()
+                .filter(|id| ctx.merchants.name_of(Some(id.as_str())).is_some()),
+        ),
+        source_jump: order_jump(source_jump),
+        copy_note: purchase
+            .is_none()
+            .then(|| tx.note.clone())
+            .flatten()
+            .filter(|note| !note.is_empty()),
     }
 }
 
@@ -4848,6 +4974,13 @@ mod tests {
                 item_note: None,
                 amount: "¥25".to_owned(),
                 amount_semantic: AmountSemantic::Expense,
+                account_atoms: Some(AccountAtoms::Single(AccountAtom {
+                    text: "-".to_owned(),
+                    account_id: None,
+                })),
+                merchant_id: None,
+                source_jump: None,
+                copy_note: Some("午餐一顿".to_owned()),
             }
         );
         assert_eq!(rows[1].amount, "-", "无金额行渲染 -");
@@ -5061,6 +5194,193 @@ mod tests {
         assert_eq!(rows[0].source, "-", "无来源渲染 -");
         assert_eq!(rows[0].note, "转账备注");
         assert_eq!(rows[0].amount, "¥50");
+    }
+
+    // ---- 格级交互载荷（#2061 表格级点击委托的装配面）：文本与载荷同源，
+    // None = 不可点。可点口径以旧壳为对拍基准（accountAtom link / sourceCellView
+    // clickable / NoteCellView 复制通道）。
+
+    /// 账户原子三形态：单账户 / 转账双原子（转出、转入各带 id）/ 出资分解首条
+    /// + 标注（标注不进原子）。格文本与载荷同源（文本口径零漂移）。
+    #[test]
+    fn account_atom_payloads_follow_all_three_cell_forms() {
+        let mut single = row(TransactionKind::Expense, 2_500, "CNY");
+        single.account_id = Some("acc-cash".to_owned());
+        let mut transfer = row(TransactionKind::Transfer, 5_000, "CNY");
+        transfer.account_id = Some("acc-cash".to_owned());
+        transfer.to_account_id = Some("acc-bank".to_owned());
+        let mut funding_tx = row(TransactionKind::Expense, 28_160, "CNY");
+        funding_tx.fundings = vec![
+            funding("acc-cash", 2_853, false),
+            funding("acc-bank", 25_307, false),
+        ];
+        let rows = assemble_rows(&[single, transfer, funding_tx], &context(false));
+        assert_eq!(rows[0].account, "现金");
+        assert_eq!(
+            rows[0].account_atoms,
+            Some(AccountAtoms::Single(AccountAtom {
+                text: "现金".to_owned(),
+                account_id: Some("acc-cash".to_owned()),
+            }))
+        );
+        assert_eq!(rows[1].account, "现金 → 银行");
+        assert_eq!(
+            rows[1].account_atoms,
+            Some(AccountAtoms::Two {
+                from: AccountAtom {
+                    text: "现金".to_owned(),
+                    account_id: Some("acc-cash".to_owned()),
+                },
+                to: AccountAtom {
+                    text: "银行".to_owned(),
+                    account_id: Some("acc-bank".to_owned()),
+                },
+            })
+        );
+        assert_eq!(rows[2].account, "现金 等 2 账户");
+        assert_eq!(
+            rows[2].account_atoms,
+            Some(AccountAtoms::Funding {
+                first: AccountAtom {
+                    text: "现金".to_owned(),
+                    account_id: Some("acc-cash".to_owned()),
+                },
+                marker: " 等 2 账户".to_owned(),
+            }),
+            "标注不在原子内（不可点）"
+        );
+    }
+
+    /// 黑洞/隐藏/软删账户（不在账户表）：占位「-」无下钻载荷（旧壳
+    /// accountAtom link=false 同口径）。
+    #[test]
+    fn unresolvable_account_atom_is_placeholder_without_payload() {
+        let mut tx = row(TransactionKind::Expense, 2_500, "CNY");
+        tx.account_id = Some("acc-void".to_owned());
+        let rows = assemble_rows(&[tx], &context(false));
+        assert_eq!(rows[0].account, "-");
+        assert_eq!(
+            rows[0].account_atoms,
+            Some(AccountAtoms::Single(AccountAtom {
+                text: "-".to_owned(),
+                account_id: None,
+            }))
+        );
+    }
+
+    /// 商户下钻载荷：在用与软删商户历史引用都可下钻（商户表含软删全量，
+    /// issue #191 口径）；无引用或解析不到无载荷。
+    #[test]
+    fn merchant_payload_covers_soft_deleted_but_absent_without_reference() {
+        let mut named = row(TransactionKind::Expense, 2_500, "CNY");
+        named.merchant_id = Some("m-jd".to_owned());
+        let mut soft_deleted = row(TransactionKind::Expense, 2_600, "CNY");
+        soft_deleted.merchant_id = Some("m-gone".to_owned());
+        let none = row(TransactionKind::Expense, 2_700, "CNY");
+        let mut unresolvable = row(TransactionKind::Expense, 2_800, "CNY");
+        unresolvable.merchant_id = Some("m-void".to_owned());
+        let rows = assemble_rows(&[named, soft_deleted, none, unresolvable], &context(false));
+        assert_eq!(rows[0].merchant_id.as_deref(), Some("m-jd"));
+        assert_eq!(
+            rows[1].merchant_id.as_deref(),
+            Some("m-gone"),
+            "软删商户历史引用照常可下钻"
+        );
+        assert_eq!(rows[2].merchant_id, None, "无引用无载荷");
+        assert_eq!(rows[3].merchant, "-", "解析不到渲染 -");
+        assert_eq!(rows[3].merchant_id, None, "解析不到无载荷");
+    }
+
+    /// 来源跳转载荷随可点口径（旧壳 clickable = status !== "deleted"）：在用
+    /// 与已取消/已处置可跳；软删不可跳且文本照常带状态标注；展示名空串按
+    /// 来源类型名兜底。
+    #[test]
+    fn source_jump_payload_follows_clickable_status() {
+        let mut alive = row(TransactionKind::Expense, 2_500, "CNY");
+        alive.source = Some(source(TransactionSourceKind::Policy, "重疾险", None));
+        let mut cancelled = row(TransactionKind::Expense, 2_600, "CNY");
+        cancelled.source = Some(source(
+            TransactionSourceKind::Item,
+            "物品甲",
+            Some(TransactionSourceStatus::Cancelled),
+        ));
+        let mut deleted = row(TransactionKind::Expense, 2_700, "CNY");
+        deleted.source = Some(source(
+            TransactionSourceKind::Policy,
+            "医疗险",
+            Some(TransactionSourceStatus::Deleted),
+        ));
+        let mut fallback = row(TransactionKind::Expense, 2_800, "CNY");
+        fallback.source = Some(source(TransactionSourceKind::Policy, "", None));
+        let missing = row(TransactionKind::Expense, 2_900, "CNY");
+        let rows = assemble_rows(
+            &[alive, cancelled, deleted, fallback, missing],
+            &context(false),
+        );
+        assert_eq!(
+            rows[0].source_jump,
+            Some(SourceJump {
+                kind: TransactionSourceKind::Policy,
+                entity_id: "ent-1".to_owned(),
+                name: "重疾险".to_owned(),
+                status: None,
+            })
+        );
+        assert_eq!(
+            rows[1].source_jump.as_ref().map(|j| j.name.as_str()),
+            Some("物品甲"),
+            "已取消来源照常可跳转"
+        );
+        assert_eq!(rows[2].source_jump, None, "软删来源不可跳（无详情面）");
+        assert_eq!(
+            rows[2].source, "医疗险 已删除",
+            "不可跳格文本照常带状态标注"
+        );
+        assert_eq!(
+            rows[3].source_jump.as_ref().map(|j| j.name.as_str()),
+            Some("保单"),
+            "展示名空串按来源类型名兜底"
+        );
+        assert_eq!(rows[4].source, "-");
+        assert_eq!(rows[4].source_jump, None);
+    }
+
+    /// 备注复制载荷：普通备注行带原文；购买项行（一列两用显示商品名）、
+    /// 无备注与空串备注不带（旧壳 NoteCellView 复制通道同口径）。
+    #[test]
+    fn copy_note_payload_only_for_plain_note_rows() {
+        let mut noted = row(TransactionKind::Expense, 2_500, "CNY");
+        noted.note = Some("备注原文".to_owned());
+        let mut purchased = row(TransactionKind::Expense, 2_600, "CNY");
+        purchased.purchases = vec![purchase("猫粮", 2, None)];
+        let empty = row(TransactionKind::Expense, 2_700, "CNY");
+        let mut blank = row(TransactionKind::Expense, 2_800, "CNY");
+        blank.note = Some(String::new());
+        let rows = assemble_rows(&[noted, purchased, empty, blank], &context(false));
+        assert_eq!(rows[0].copy_note.as_deref(), Some("备注原文"));
+        assert_eq!(rows[1].copy_note, None, "购买项行复制通道不适用商品名");
+        assert_eq!(rows[2].copy_note, None);
+        assert_eq!(rows[3].copy_note, None, "空串备注同旧壳 falsy 口径不复制");
+    }
+
+    /// 购买项续行：订单级交互载荷随订单级格留空（续行格无文本亦无可点面）；
+    /// 备注复制载荷逐行（续行是购买项行，本就不带）。
+    #[test]
+    fn continuation_rows_carry_no_order_level_payloads() {
+        let mut tx = row(TransactionKind::Expense, 28_160, "CNY");
+        tx.merchant_id = Some("m-jd".to_owned());
+        tx.source = Some(source(TransactionSourceKind::Policy, "重疾险", None));
+        tx.fundings = vec![funding("acc-cash", 28_160, false)];
+        tx.purchases = vec![purchase("猫粮", 2, None), purchase("洗衣液", 1, None)];
+        let rows = assemble_rows(&[tx], &context(false));
+        assert_eq!(rows.len(), 2);
+        assert!(rows[0].account_atoms.is_some());
+        assert!(rows[0].merchant_id.is_some());
+        assert!(rows[0].source_jump.is_some());
+        assert_eq!(rows[1].account_atoms, None, "续行订单级交互载荷留空");
+        assert_eq!(rows[1].merchant_id, None);
+        assert_eq!(rows[1].source_jump, None);
+        assert_eq!(rows[1].copy_note, None);
     }
 
     /// 出资分解标注三态 + 派生标注（词汇表「出资项」读侧）：多账户「等 N 账户」/
@@ -8051,6 +8371,10 @@ mod tests {
             item_note: None,
             amount: "¥25".to_owned(),
             amount_semantic: AmountSemantic::Expense,
+            account_atoms: None,
+            merchant_id: None,
+            source_jump: None,
+            copy_note: None,
         };
         // 购买项订单：块首行（订单级格）+ 两购买项续行（派生行同 id）。
         let order_head = RowCells {
@@ -8065,6 +8389,10 @@ mod tests {
             item_note: Some("猫粮 共 2 件".to_owned()),
             amount: "¥281.6".to_owned(),
             amount_semantic: AmountSemantic::Expense,
+            account_atoms: None,
+            merchant_id: None,
+            source_jump: None,
+            copy_note: None,
         };
         let order_second = RowCells {
             id: "tx-order".to_owned(),
@@ -8078,6 +8406,10 @@ mod tests {
             item_note: Some("洗衣液 共 1 件".to_owned()),
             amount: String::new(),
             amount_semantic: AmountSemantic::Expense,
+            account_atoms: None,
+            merchant_id: None,
+            source_jump: None,
+            copy_note: None,
         };
         // 转账行（账户格双向文本原样入卡）。
         let transfer = RowCells {
@@ -8092,6 +8424,10 @@ mod tests {
             item_note: None,
             amount: "¥100".to_owned(),
             amount_semantic: AmountSemantic::Transfer,
+            account_atoms: None,
+            merchant_id: None,
+            source_jump: None,
+            copy_note: None,
         };
         let cards = transaction_cards(&[expense, order_head, order_second, transfer]);
         assert_eq!(cards.len(), 3, "一笔一卡：订单多行并成单卡");
@@ -8140,6 +8476,10 @@ mod tests {
             item_note: None,
             amount: "¥1".to_owned(),
             amount_semantic: AmountSemantic::Expense,
+            account_atoms: None,
+            merchant_id: None,
+            source_jump: None,
+            copy_note: None,
         }
     }
 }
