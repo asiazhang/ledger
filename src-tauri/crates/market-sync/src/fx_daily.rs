@@ -21,44 +21,62 @@
 //! ——不产同步 op、不置脏、不发失效信号（ADR-0019 修订记录，与手动入口
 //! 同一裁决），本模块自带「换装 → 会话 → 编排 → 日志」的最小轮次。
 //!
-//! 调度与启动接线（[`start_daily_fx_sync`]）与两条行情后台车道共用域内单点：
-//! 进程级单次拉起守卫（原位重引导重复调用幂等，ADR-0080）、每轮门检（锁定 /
-//! 启动失败期间不触碰占位连接）、自然日窗口比对北京日历日，循环收口在
-//! [`super::lane::start_daily_lane`]（issue #1622）；启动接线收进壳层后台服务
-//! 编排单点（issue #961 名单，`scripts/check-background-services.ts` 守门）。
-//! 挂全局运行时的 async 任务（ADR-0125 决策 7 / issue #1413），异步定时承载
-//! 启动延迟与自然日窗口。
+//! 调度与启动接线与两条行情后台车道共用域内单点：进程级单次拉起守卫（原位
+//! 重引导重复调用幂等，ADR-0080）、每轮门检（锁定 / 启动失败期间不触碰占位
+//! 连接）、自然日窗口比对北京日历日，循环收口在 [`super::lane`] 内核（旧壳
+//! tauri-host 门内入口 [`start_daily_fx_sync`]，issue #1622 收敛；非 tauri
+//! 宿主面 [`start_daily_fx_sync_for_host`]，issue #2079）；启动接线收进壳层
+//! 后台服务编排单点（旧壳 issue #961 名单 + `scripts/check-background-services.ts`
+//! 守门；NSH 住 `run_startup` 成功分支）。挂异步运行时的 async 任务（ADR-0125
+//! 决策 7 / issue #1413；非 tauri 宿主经 [`super::lane::LaneHost`] 供给执行器）。
 
+// 槽类型随 tauri-host 门（issue #2074）。
+#[cfg(feature = "tauri-host")]
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
+// tauri-host 门（issue #2074 / ADR-0145）：门内启动入口只被旧壳消费——NSH
+// 原生壳进程不得链接 tauri（GTK3/WebKitGTK 与 GTK4 同进程符号互踩）。非门
+// 宿主面（[`start_daily_fx_sync_for_host`]）不经 tauri。
+#[cfg(feature = "tauri-host")]
 use tauri::{AppHandle, Manager, Runtime};
 
-use ledger_infra::db::DbState;
+use ledger_infra::db::facade_handles::DbWriteHandle;
 use ledger_infra::error::Result;
+// 门内包装的状态槽解析随 tauri-host 门（issue #2074）。
+#[cfg(feature = "tauri-host")]
+use ledger_infra::db::DbState;
 
 use super::fx::{FX_SYNC_GATE, FxSyncChannels, FxSyncReport, sync_fx_rates_guarded};
-use super::lane::{LaneTimings, start_daily_lane};
+use super::lane::{LaneHost, LaneTimings, start_daily_lane_kernel};
+// 门内车道宿主接缝随 tauri-host 门（issue #2074）：只被门内车道入口消费。
+#[cfg(feature = "tauri-host")]
+use super::lane::start_daily_lane;
 use super::session::FacadeWriteSession;
 
 /// 后台每日汇率同步的通道注入接缝（先例：后台补全 `BackfillChannelsSlot` /
 /// 每日现价刷新 `DailyPriceRefreshChannelsSlot`）：生产**不管理**本状态（每轮
 /// 建生产通道束），集成测试 manage 本状态并装入门控桩束，使「每日汇率同步
 /// 真实在途」可确定复现。异步互斥体：通道束引用在 `.await` 之间存活（与
-/// 既有槽接缝同款，issue #1412 通道束闭包 async 化）。
+/// 既有槽接缝同款，issue #1412 通道束闭包 async 化）。槽接缝消费面（门内
+/// 包装）随 tauri-host 门（issue #2074）；非门宿主面经 [`super::lane::LaneHost`]
+/// 注入槽。
+#[cfg(feature = "tauri-host")]
 pub struct DailyFxSyncChannelsSlot(pub Arc<tokio::sync::Mutex<FxSyncChannels>>);
 
-/// 后台每日汇率同步的启动入口（壳层后台服务编排单点调用，issue #961 名单）：
+/// 后台每日汇率同步的启动入口（旧壳壳层后台服务编排单点调用，issue #961 名单）：
 /// 进程级单次拉起与「启动延迟补跑一次 + 每自然日窗口一次」的巡检循环归
-/// [`super::lane::start_daily_lane`] 域内单点（issue #1622），本模块只留每车道
-/// 一枚守卫标志与一轮编排 + 统计日志（async 任务挂全局运行时，ADR-0125 决策 7 /
-/// issue #1413）。
+/// [`super::lane`] 内核单点（tauri-host 包装，issue #1622 收敛），本模块只留每车道
+/// 一枚守卫标志与一轮编排 + 统计日志（async 任务挂 tauri 全局运行时，ADR-0125 决策 7 /
+/// issue #1413）。tauri-host 门（issue #2074）。
+#[cfg(feature = "tauri-host")]
 pub fn start_daily_fx_sync<R: Runtime>(app: &AppHandle<R>) {
     start_daily_fx_sync_with(app, LaneTimings::default());
 }
 
 /// 同 [`start_daily_fx_sync`]，调度时机可注入（测试短时机先例
-/// `start_daily_price_refresh_with`）。
+/// `start_daily_price_refresh_with`）。tauri-host 门（issue #2074）。
+#[cfg(feature = "tauri-host")]
 pub fn start_daily_fx_sync_with<R: Runtime>(app: &AppHandle<R>, timings: LaneTimings) {
     static SPAWNED: AtomicBool = AtomicBool::new(false);
     start_daily_lane(app, &SPAWNED, timings, |handle| {
@@ -66,20 +84,82 @@ pub fn start_daily_fx_sync_with<R: Runtime>(app: &AppHandle<R>, timings: LaneTim
     });
 }
 
+/// 后台每日汇率同步的非门启动入口（issue #2079 注册点）：非 tauri 宿主（NSH
+/// 原生壳）经公开宿主面接线——门检 / 执行器 / 会话解析 / 通道束注入槽由宿主束
+///（[`super::lane::LaneHost`]）装配，巡检循环同走门外内核。本车道可重建缓存
+///（无见证 / 无置脏 / 无失效信号），宿主束的进度 / 广播字段本车道不消费。
+/// 进程级单次拉起守卫与门内入口各自独立（双壳并存期同进程互不相干）。
+pub fn start_daily_fx_sync_for_host(host: &LaneHost, timings: LaneTimings) {
+    static SPAWNED: AtomicBool = AtomicBool::new(false);
+    let host = host.clone();
+    start_daily_lane_kernel(
+        &SPAWNED,
+        timings,
+        host.ready.clone(),
+        host.spawn.clone(),
+        move || {
+            let host = host.clone();
+            Box::pin(run_daily_fx_sync_round_for_host(host))
+        },
+    );
+}
+
+/// 跑一轮每日汇率同步（非门宿主面，issue #2079）：换装（宿主注入槽优先、
+/// 生产通道束兑底）→ 门面写槽裸作业会话 → [`sync_fx_rates`] 编排 → 统计 /
+/// 失败日志——与门内 [`run_daily_fx_sync_round`] 同形。会话缺失轮次空转。
+async fn run_daily_fx_sync_round_for_host(host: LaneHost) {
+    let Some(write) = (host.session)() else {
+        tracing::debug!("账本会话未就位，本轮空转");
+        return;
+    };
+    let result = match (host.fx_channels)() {
+        Some(shared) => {
+            let mut channels = shared.lock().await;
+            drive_round(&write, &mut channels).await
+        }
+        None => match FxSyncChannels::production() {
+            Ok(mut channels) => drive_round(&write, &mut channels).await,
+            // 建生产束失败按本轮失败处置（取数未发生即零写入，与编排失败同路）。
+            Err(error) => Err(error),
+        },
+    };
+    match result {
+        // 零痕迹跳过与「已是最新」都落在这里：无用户在场，低声记一笔即可。
+        Ok(report) if report.persist.points == 0 => {
+            tracing::debug!("每日汇率同步完成：零落库点（零痕迹跳过或数据已是最新）");
+        }
+        Ok(report) => tracing::info!(
+            full_backfilled = report.full_backfilled,
+            pairs = report.persist.pairs,
+            points = report.persist.points,
+            earliest = report.persist.earliest.as_deref().unwrap_or("-"),
+            manual_protected = report.persist.manual_protected,
+            "后台每日汇率同步完成"
+        ),
+        // 失败可见（issue #1546 AC3）：记 warn 供检索，不静默冒充成功；已有
+        // 汇率不受影响（取数在落库之前，失败即零写入），重试等下一自然日窗口。
+        Err(error) => {
+            tracing::warn!(%error, "后台每日汇率同步失败（已有汇率不受影响，静默等下一自然日窗口）")
+        }
+    }
+}
+
 /// 跑一轮每日汇率同步：换装（管理态桩槽优先、生产通道束兜底）→ 门面写槽
 /// 裸作业会话 → [`sync_fx_rates`] 编排 → 统计 / 失败日志。不经后台车道单轮
 /// 骨架（[`super::lane`]）的原因见模块文档（可重建缓存：无见证、无置脏、
 /// 无失效信号）。async 形态（ADR-0125 决策 7 / issue #1413）：编排直接在
-/// 车道 async 任务上 `await`。
+/// 车道 async 任务上 `await`。tauri-host 门（issue #2074）。
+#[cfg(feature = "tauri-host")]
 async fn run_daily_fx_sync_round<R: Runtime>(app: AppHandle<R>) {
+    let write = app.state::<DbState>().write_handle();
     let result = match app.try_state::<DailyFxSyncChannelsSlot>() {
         Some(slot) => {
             let shared = slot.0.clone();
             let mut channels = shared.lock().await;
-            drive_round(&app, &mut channels).await
+            drive_round(&write, &mut channels).await
         }
         None => match FxSyncChannels::production() {
-            Ok(mut channels) => drive_round(&app, &mut channels).await,
+            Ok(mut channels) => drive_round(&write, &mut channels).await,
             // 建生产束失败按本轮失败处置（取数未发生即零写入，与编排失败同路）。
             Err(error) => Err(error),
         },
@@ -106,13 +186,11 @@ async fn run_daily_fx_sync_round<R: Runtime>(app: AppHandle<R>) {
 }
 
 /// 一轮的会话接线：门面写槽裸作业会话交给汇率同步编排（与手动入口同款会话
-/// 形态；网络等待在会话之外以 await 表达，慢闭包纪律）。
-async fn drive_round<R: Runtime>(
-    app: &AppHandle<R>,
-    channels: &mut FxSyncChannels,
-) -> Result<FxSyncReport> {
-    let write = app.state::<DbState>().write_handle();
-    let session = FacadeWriteSession::new(write, "daily_fx_sync");
+/// 形态；网络等待在会话之外以 await 表达，慢闭包纪律）。写槽句柄由调用方
+/// 解析（门内包装自 AppHandle 状态槽，非门宿主面自宿主束，issue #2079），
+/// 两条触发面共用本单点。
+async fn drive_round(write: &DbWriteHandle, channels: &mut FxSyncChannels) -> Result<FxSyncReport> {
+    let session = FacadeWriteSession::new(write.clone(), "daily_fx_sync");
     // 在途互斥（issue #1762）：与手动入口共用进程级单例门；撞车时本轮即以
     // 码化错误收尾（记 warn 日志可见，静默等下一自然日窗口）。每日路径不发阶段
     // 事件（无 UI 消费）。

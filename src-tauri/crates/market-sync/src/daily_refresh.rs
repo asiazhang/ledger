@@ -17,29 +17,43 @@
 //! 共用 [`super::lane`] 单点（issue #1426）：本模块只留编排（[`DailyRefreshRound`]）
 //! 与统计日志。
 //!
-//! 调度与启动接线（[`start_daily_price_refresh`]）与价格历史后台补全调度
-//!（[`super::history::start_history_backfill`]）共用域内单点：进程级单次拉起
+//! 调度与启动接线与价格历史后台补全调度共用域内单点：进程级单次拉起
 //! 守卫（原位重引导幂等，ADR-0080）、每轮门检（锁定/启动失败期间不触碰占位
-//! 连接）、自然日窗口比对北京日历日，循环收口在
-//! [`super::lane::start_daily_lane`]（issue #1622）；启动接线收进壳层后台服务
-//! 编排单点（issue #961 名单，`scripts/check-background-services.ts` 守门）。
-//! 车道为挂全局运行时的 async 任务（ADR-0125 决策 7 / issue #1413），异步定时
-//! 承载启动延迟与自然日窗口。
+//! 连接）、自然日窗口比对北京日历日，循环收口在 [`super::lane`] 内核（旧壳
+//! tauri-host 门内入口 [`start_daily_price_refresh`]，issue #1622 收敛；非
+//! tauri 宿主面 [`start_daily_price_refresh_for_host`]，issue #2079）；启动
+//! 接线收进壳层后台服务编排单点（旧壳 issue #961 名单 +
+//! `scripts/check-background-services.ts` 守门；NSH 住 `run_startup` 成功分支）。
+//! 车道为挂异步运行时的 async 任务（ADR-0125 决策 7 / issue #1413；非 tauri
+//! 宿主经 [`super::lane::LaneHost`] 供给执行器），异步定时承载启动延迟与自然
+//! 日窗口。
 //!
 //! 首刷与历史采集不归本任务：现价刷新不落单点（无历史序列者落单点会冒充
 //! 「历史完整」，破坏首刷判据），历史归价格历史后台补全（[`super::history`]）。
 
+// 槽类型随 tauri-host 门（issue #2074）。
+#[cfg(feature = "tauri-host")]
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
+// tauri-host 门（issue #2074 / ADR-0145）：门内启动入口只被旧壳消费——NSH
+// 原生壳进程不得链接 tauri（GTK3/WebKitGTK 与 GTK4 同进程符号互踩）。非门
+// 宿主面（[`start_daily_price_refresh_for_host`]）不经 tauri。
+#[cfg(feature = "tauri-host")]
 use tauri::{AppHandle, Runtime};
 
 use super::channels::SyncFetchChannels;
 use super::channels::do_incremental_sync_channels;
 use super::lane::{
-    LaneChannelsSlot, LaneId, LaneRound, LaneRoundFuture, LaneTimings, progress_forwarder,
-    run_background_lane_round, start_daily_lane,
+    LaneHost, LaneId, LaneRound, LaneRoundFuture, LaneTimings, progress_forwarder,
+    run_lane_round_kernel, start_daily_lane_kernel,
 };
+// 槽类型与槽接缝消费面随 tauri-host 门（issue #2074）。
+#[cfg(feature = "tauri-host")]
+use super::lane::LaneChannelsSlot;
+// 门内车道宿主接缝随 tauri-host 门（issue #2074）：两函数只被门内车道入口消费。
+#[cfg(feature = "tauri-host")]
+use super::lane::{run_background_lane_round, start_daily_lane};
 use super::model::{SyncInstrumentInfoResult, WriteWitness};
 use super::progress::SyncProgress;
 use super::session::FacadeWriteSession;
@@ -48,32 +62,93 @@ use super::session::FacadeWriteSession;
 /// `BackfillChannelsSlot`）：生产**不管理**本状态（每轮建后台车道生产束），
 /// 集成测试 manage 本状态并装入门控桩束，使「每日刷新真实在途」可确定复现。
 /// 异步互斥体：通道束引用在 `.await` 之间存活（issue #1412 通道束闭包 async 化）。
+/// 槽接缝消费面（门内包装）随 tauri-host 门（issue #2074）。
+#[cfg(feature = "tauri-host")]
 pub struct DailyPriceRefreshChannelsSlot(pub Arc<tokio::sync::Mutex<SyncFetchChannels>>);
 
 /// 槽接缝实现（骨架定义接缝、车道就地提供槽类型，issue #1426）：骨架按同一形状
 /// 解包本状态，不反向认识本车道。
+#[cfg(feature = "tauri-host")]
 impl LaneChannelsSlot for DailyPriceRefreshChannelsSlot {
     fn shared(&self) -> Arc<tokio::sync::Mutex<SyncFetchChannels>> {
         self.0.clone()
     }
 }
 
-/// 后台每日现价刷新的启动入口（壳层后台服务编排单点调用，issue #961 名单）：
+/// 后台每日现价刷新的启动入口（旧壳壳层后台服务编排单点调用，issue #961 名单）：
 /// 进程级单次拉起与「启动延迟补跑一次 + 每自然日窗口一次」的巡检循环归
-/// [`super::lane::start_daily_lane`] 域内单点（issue #1622），本模块只留每车道
-/// 一枚守卫标志与一轮编排 + 统计日志（async 任务挂全局运行时，ADR-0125 决策 7 /
-/// issue #1413）。
+/// [`super::lane`] 内核单点（tauri-host 包装，issue #1622 收敛），本模块只留每车道
+/// 一枚守卫标志与一轮编排 + 统计日志（async 任务挂 tauri 全局运行时，ADR-0125 决策 7 /
+/// issue #1413）。tauri-host 门（issue #2074）。
+#[cfg(feature = "tauri-host")]
 pub fn start_daily_price_refresh<R: Runtime>(app: &AppHandle<R>) {
     start_daily_price_refresh_with(app, LaneTimings::default());
 }
 
 /// 同 [`start_daily_price_refresh`]，调度时机可注入（测试短时机先例
-/// `start_history_backfill_with`）。
+/// `start_history_backfill_with`）。tauri-host 门（issue #2074）。
+#[cfg(feature = "tauri-host")]
 pub fn start_daily_price_refresh_with<R: Runtime>(app: &AppHandle<R>, timings: LaneTimings) {
     static SPAWNED: AtomicBool = AtomicBool::new(false);
     start_daily_lane(app, &SPAWNED, timings, |handle| {
         run_daily_refresh_round(handle)
     });
+}
+
+/// 后台每日现价刷新的非门启动入口（issue #2079 注册点）：非 tauri 宿主（NSH
+/// 原生壳）经公开宿主面接线——门检 / 执行器 / 会话解析 / 通道束注入槽 / 进度
+/// 发射 / 价格失效广播由宿主束（[`super::lane::LaneHost`]）装配，巡检循环与
+/// 单轮骨架同走门外内核；单轮编排与门内入口共用 [`DailyRefreshRound`]。
+/// 进程级单次拉起守卫与门内入口各自独立（双壳并存期同进程互不相干）。
+pub fn start_daily_price_refresh_for_host(host: &LaneHost, timings: LaneTimings) {
+    static SPAWNED: AtomicBool = AtomicBool::new(false);
+    let host = host.clone();
+    start_daily_lane_kernel(
+        &SPAWNED,
+        timings,
+        host.ready.clone(),
+        host.spawn.clone(),
+        move || {
+            let host = host.clone();
+            Box::pin(run_daily_refresh_round_for_host(host))
+        },
+    );
+}
+
+/// 跑一轮每日现价刷新（非门宿主面，issue #2079）：会话解析 / 通道束换装 /
+/// 见证 / 收尾裁决 / 发射 / 失败日志归 [`super::lane`] 内核（宿主束供给
+/// AppHandle 等价件），本函数只留本车道的统计日志——与门内
+/// [`run_daily_refresh_round`] 同形。会话缺失轮次空转。
+async fn run_daily_refresh_round_for_host(host: LaneHost) {
+    let Some(write) = (host.session)() else {
+        tracing::debug!("账本会话未就位，本轮空转");
+        return;
+    };
+    let progress = host.refresh_progress.clone();
+    let mut sink = move |update: SyncProgress| progress(update);
+    let result = run_lane_round_kernel(
+        write,
+        LaneId::DailyPriceRefresh,
+        DailyRefreshRound,
+        &mut sink,
+        &*host.price_written,
+        (host.refresh_channels)(),
+    )
+    .await;
+    match result {
+        Ok(stats) if stats.written == 0 && stats.renamed == 0 => {
+            tracing::debug!("每日现价刷新完成：全部已是最新，零写入");
+        }
+        Ok(stats) => tracing::info!(
+            synced = stats.synced,
+            written = stats.written,
+            renamed = stats.renamed,
+            skipped = stats.skipped,
+            "后台每日现价刷新完成"
+        ),
+        // 失败已由内核按车道记日志（静默等下一窗口），此处不重复。
+        Err(_) => {}
+    }
 }
 
 /// 每日现价刷新的编排（骨架的编排输入，issue #1426）：与手动同步**同一编排入口**
@@ -104,6 +179,8 @@ impl LaneRound for DailyRefreshRound {
 /// 裁决 / 发射 / 失败日志归 [`super::lane`] 单点（与价格历史后台补全共用），本
 /// 函数只留本车道的统计日志。async 形态（ADR-0125 决策 7 / issue #1413）：编排
 /// 直接在车道 async 任务上 `await`，不再经全局运行时跨线程驱动。
+/// tauri-host 门（issue #2074）。
+#[cfg(feature = "tauri-host")]
 async fn run_daily_refresh_round<R: Runtime>(app: AppHandle<R>) {
     let result = run_background_lane_round::<R, DailyPriceRefreshChannelsSlot, _>(
         &app,

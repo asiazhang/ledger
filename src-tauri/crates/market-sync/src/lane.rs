@@ -29,6 +29,15 @@
 //! `daily_refresh::DailyPriceRefreshChannelsSlot` /
 //! `fx_daily::DailyFxSyncChannelsSlot`）、进度事件名、置脏 / 失效信号口径与调度
 //! 时机（[`STARTUP_DELAY`] / [`WINDOW_POLL_INTERVAL`]）逐字保持。
+//!
+//! **非 tauri 宿主面**（issue #2079，NSH 切轨④）：巡检循环与单轮骨架的宿主
+//! 无关内核（[`start_daily_lane_kernel`] / [`run_lane_round_kernel`])住门外——
+//! 宿主差异（门检、执行器、会话解析、通道束注入槽、进度发射、价格失效广播）
+//! 收进公开宿主接缝 [`LaneHost`]，非 tauri 宿主（NSH 原生壳）启动接线时装配
+//! （下层定义注册点、上层注册实现、壳层启动时接线，ADR-0112 决策 5）；门内
+//! 启动入口（[`start_daily_lane`] / [`run_background_lane_round`]）签名与行为
+//! 不变（旧壳继续工作），就地把自己的宿主件（两扇门 clone、tauri 全局运行时、
+//! 状态槽、进度事件、`emit_for`）交给同一内核。
 
 use std::future::Future;
 use std::pin::Pin;
@@ -42,16 +51,27 @@ use std::time::Duration;
 #[cfg(feature = "tauri-host")]
 use tauri::{AppHandle, Manager, Runtime};
 
+// 门内包装的 AppHandle 件随 tauri-host 门（issue #2074）：状态槽解析、两扇门
+// clone 与价格失效信号只被门内包装消费。
+#[cfg(feature = "tauri-host")]
 use ledger_infra::db::DbState;
+#[cfg(feature = "tauri-host")]
 use ledger_infra::db::boot::BootFailureGate;
+#[cfg(feature = "tauri-host")]
 use ledger_infra::db::encryption::EncryptionGate;
+use ledger_infra::db::facade_handles::DbWriteHandle;
 use ledger_infra::error::Result;
+#[cfg(feature = "tauri-host")]
 use ledger_infra::signals::{WriteEvidence, WriteOp, emit_for};
 
 use super::channels::SyncFetchChannels;
+use super::fx::FxSyncChannels;
 use super::incremental::{beijing_today, daily_window_opens};
 use super::model::WriteWitness;
-use super::progress::{BackfillProgressEmitter, ProgressEmitter, SyncProgress};
+use super::progress::SyncProgress;
+// 门内包装的进度事件面随 tauri-host 门（issue #2074）。
+#[cfg(feature = "tauri-host")]
+use super::progress::{BackfillProgressEmitter, ProgressEmitter};
 use super::session::FacadeWriteSession;
 
 /// 后台车道一轮的 future 装箱形态（编排借用的现场：会话 / 通道束 / 进度回调 /
@@ -100,11 +120,14 @@ impl LaneId {
 /// 实现住**各车道自己的模块**（`for BackfillChannelsSlot` 住 `history`、`for
 /// DailyPriceRefreshChannelsSlot` 住 `daily_refresh`）：接缝由骨架定义、槽类型由
 /// 车道提供，依赖方向单向（车道 → 骨架），骨架不反向认识自己的消费者。
+///
+/// 消费面（门内包装 [`run_background_lane_round`]）随 tauri-host 门
+///（issue #2074）——非门宿主面经 [`LaneHost`] 通道束注入槽，不走本 trait。
+#[cfg(feature = "tauri-host")]
 pub(super) trait LaneChannelsSlot: Send + Sync + 'static {
     /// 槽内共享的通道束（克隆共享句柄，不取走管理态）。
     fn shared(&self) -> Arc<tokio::sync::Mutex<SyncFetchChannels>>;
 }
-
 /// 后台车道的单轮编排（骨架的编排输入）：只回答「这一轮怎么跑」——持已换装的
 /// 通道束驱动本车道编排，并在每个实际写入点标记写入见证（成败同判的证据源）。
 pub(super) trait LaneRound: Send {
@@ -131,19 +154,11 @@ pub(super) fn progress_forwarder(
     |update| sink(update)
 }
 
-/// 后台车道单轮骨架（issue #1426）：换装 → 会话 → 见证 → 编排 → 收尾裁决 → 日志。
-///
-/// - **换装**：管理态桩槽（[`LaneChannelsSlot`]）优先——集成测试注入门控桩束，
-///   使「车道真实在途」可确定复现；未管理时每轮建后台车道生产束
-///   （[`SyncFetchChannels::production_backfill`]：同一进程级全局限速器、前台请求
-///   在途时让行，ADR-0122 决策 6）。
-/// - **会话**：门面写槽裸作业会话（[`FacadeWriteSession`]，issue #1412 async
-///   形态），span 归因串由本函数统一接线。
-/// - **裁决**（issue #1277 成败同判）：本轮实际写过（见证跨失败存活）→ 提交点
-///   置脏一次 + 发既有价格失效信号；零写入不置脏不广播。置脏失败记日志不静默吞
-///   运行结果（脏标记待下次写入补上）。
-/// - **日志**：本轮失败静默等下一窗口（无用户可报），在此按车道一次收尾；统计
-///   日志归各车道（骨架不解释统计字段）。tauri-host 门（issue #2074）。
+/// 后台车道单轮骨架的 tauri-host 包装（issue #1426）：AppHandle 件解析（写槽 /
+/// 进度事件面 / 注入状态槽 / 价格失效信号）后全部交给门外内核
+/// [`run_lane_round_kernel`]（issue #2079），换装 / 会话 / 见证 / 裁决 / 发射 /
+/// 失败日志语义在内核单点，行为与签名不变（旧壳继续工作）。tauri-host 门
+///（issue #2074）。
 #[cfg(feature = "tauri-host")]
 pub(super) async fn run_background_lane_round<R, S, L>(
     app: &AppHandle<R>,
@@ -155,22 +170,102 @@ where
     S: LaneChannelsSlot,
     L: LaneRound,
 {
-    let span = lane.span();
     let write = app.state::<DbState>().write_handle();
-    let session = FacadeWriteSession::new(write.clone(), span);
-    let mut witness = WriteWitness::default();
     // 进度事件与手动同步同形（同一 payload 形状），事件名按车道选择；前端接缝
     // 只在手动同步在途时消费进度条事件，后台推进不点亮进度条。
-    let mut progress = |progress: SyncProgress| match lane {
-        LaneId::DailyPriceRefresh => ProgressEmitter::emit_progress(app, progress),
-        LaneId::HistoryBackfill => app.emit_backfill_progress(progress),
+    let progress_app = app.clone();
+    let mut progress = move |update: SyncProgress| match lane {
+        LaneId::DailyPriceRefresh => ProgressEmitter::emit_progress(&progress_app, update),
+        LaneId::HistoryBackfill => progress_app.emit_backfill_progress(update),
     };
-    let result = match app.try_state::<S>() {
-        Some(slot) => {
-            let shared = slot.shared();
+    let injected = app.try_state::<S>().map(|slot| slot.shared());
+    let signal_app = app.clone();
+    let price_written = move || {
+        emit_for(
+            &signal_app,
+            WriteOp::SyncInstrumentInfo,
+            WriteEvidence::PriceWritten(true),
+        );
+    };
+    run_lane_round_kernel(write, lane, round, &mut progress, &price_written, injected).await
+}
+
+// ---------------------------------------------------------------------------
+// 非 tauri 宿主接缝（issue #2079）：宿主件闭集与两条内核
+// ---------------------------------------------------------------------------
+
+/// 车道 async 任务的装箱形态（宿主执行器接缝的载荷：宿主自择执行现场——门内
+/// 挂 tauri 全局运行时，非 tauri 宿主挂自有异步运行时）。
+pub type LaneTask = Pin<Box<dyn Future<Output = ()> + Send + 'static>>;
+
+/// 共享同步通道束句柄（现价刷新与价格历史补全的注入槽形态，与门内
+/// `try_state` 槽位内部同形）。
+pub type SharedSyncChannels = Arc<tokio::sync::Mutex<SyncFetchChannels>>;
+
+/// 共享汇率通道束句柄（每日汇率同步的注入槽形态，与门内
+/// `DailyFxSyncChannelsSlot` 内部同形）。
+pub type SharedFxChannels = Arc<tokio::sync::Mutex<FxSyncChannels>>;
+
+/// 非 tauri 车道宿主接缝（issue #2079 注册点）：宿主启动接线时装配的车道运行
+/// 环境。下层定义注册点、上层注册实现、壳层启动时接线（ADR-0112 决策 5）——
+/// 门内入口不经本面（AppHandle 就地解析同等件），非 tauri 宿主（NSH 原生壳）
+/// 经三个 `_for_host` 入口消费（历史补全 / 每日现价刷新 / 每日汇率同步各自
+/// 取用本束的相关字段）。全部回调约定**非阻塞**：车道在后台运行时上跑，宿主
+/// 回调阻塞即拖慢巡检节奏（进度发射器契约同源）。
+#[derive(Clone)]
+pub struct LaneHost {
+    /// 每轮门检（锁定 / 启动失败期间不触碰会话的宿主等价判定；旧壳 = 两扇门
+    /// clone 判定，NSH = 账本会话在场——无占位连接形态，引导失败无会话即空转）。
+    pub ready: Arc<dyn Fn() -> bool + Send + Sync + 'static>,
+    /// 车道 async 任务的执行器（ADR-0125 决策 7 的非 tauri 等价形：门内 =
+    /// `tauri::async_runtime::spawn`，NSH = 自有异步运行时现场；任务退出随
+    /// 进程硬停，写入全是幂等 upsert，中断无残留）。
+    pub spawn: Arc<dyn Fn(LaneTask) + Send + Sync + 'static>,
+    /// 每轮解析门面写槽句柄（旧壳 = `app.state::<DbState>()`；`None` = 无会话，
+    /// 轮次空转——会话可在启动后消失，每轮重解析不缓存）。
+    pub session: Arc<dyn Fn() -> Option<DbWriteHandle> + Send + Sync + 'static>,
+    /// 每日现价刷新的通道束注入槽（测试接缝，对准门内 `try_state` 槽位；
+    /// `None` = 域内每轮建生产束兜底，生产不管理）。
+    pub refresh_channels: Arc<dyn Fn() -> Option<SharedSyncChannels> + Send + Sync + 'static>,
+    /// 价格历史补全的通道束注入槽（同上）。
+    pub backfill_channels: Arc<dyn Fn() -> Option<SharedSyncChannels> + Send + Sync + 'static>,
+    /// 每日汇率同步的通道束注入槽（同上；汇率束与同步束类型不同，分槽注入）。
+    pub fx_channels: Arc<dyn Fn() -> Option<SharedFxChannels> + Send + Sync + 'static>,
+    /// 现价刷新进度发射（`ledger:instrument-sync-progress` 事件面的宿主实现；
+    /// 非阻塞交接即返回，投递失败静默）。
+    pub refresh_progress: Arc<dyn Fn(SyncProgress) + Send + Sync + 'static>,
+    /// 价格历史补全进度发射（`ledger:history-backfill-progress` 静默计数事件
+    /// 面；非阻塞交接即返回）。
+    pub backfill_progress: Arc<dyn Fn(SyncProgress) + Send + Sync + 'static>,
+    /// 价格失效广播（收尾裁决「实际写过」半边的宿主实现——旧壳 =
+    /// `emit_for(SyncInstrumentInfo, PriceWritten)`；宿主自行决定信号通道投影）。
+    pub price_written: Arc<dyn Fn() + Send + Sync + 'static>,
+}
+
+/// 后台车道单轮内核（issue #2079 自 [`run_background_lane_round`] 门口外移）：
+/// 换装（宿主注入槽优先、生产束兜底）→ 会话 → 见证 → 编排 → 收尾裁决
+///（置脏 + 宿主价格失效广播，成败同判）→ 日志。门内包装与本内核的分工：
+/// 包装解析 AppHandle 件（写槽 / 进度事件 / 失效信号 / 状态槽）后全部交给本
+/// 内核，用户可见语义零变化。
+pub(super) async fn run_lane_round_kernel<L>(
+    write: DbWriteHandle,
+    lane: LaneId,
+    round: L,
+    progress: &mut (dyn FnMut(SyncProgress) + Send),
+    price_written: &(dyn Fn() + Send + Sync),
+    injected_channels: Option<SharedSyncChannels>,
+) -> Result<L::Stats>
+where
+    L: LaneRound,
+{
+    let span = lane.span();
+    let session = FacadeWriteSession::new(write.clone(), span);
+    let mut witness = WriteWitness::default();
+    let result = match injected_channels {
+        Some(shared) => {
             let mut channels = shared.lock().await;
             round
-                .run(&session, &mut channels, &mut progress, &mut witness)
+                .run(&session, &mut channels, progress, &mut witness)
                 .await
         }
         None => match SyncFetchChannels::production_backfill() {
@@ -178,7 +273,7 @@ where
                 let channels = tokio::sync::Mutex::new(channels);
                 let mut guard = channels.lock().await;
                 round
-                    .run(&session, &mut guard, &mut progress, &mut witness)
+                    .run(&session, &mut guard, progress, &mut witness)
                     .await
             }
             // 建生产束失败按本轮失败处置（与编排失败同路：不置脏、不发射、一次 warn）。
@@ -195,11 +290,7 @@ where
                 lane.name()
             );
         }
-        emit_for(
-            app,
-            WriteOp::SyncInstrumentInfo,
-            WriteEvidence::PriceWritten(true),
-        );
+        price_written();
     }
     if let Err(error) = &result {
         tracing::warn!(%error, lane = %span, "{}失败（静默等下一窗口）", lane.name());
@@ -242,26 +333,11 @@ impl Default for LaneTimings {
     }
 }
 
-/// 后台车道调度循环单点（issue #1622）：进程级单次拉起 → 启动延迟 →
-/// 「门检 → 自然日窗口判定 → 标记已跑 + 跑一轮 → 巡检 sleep」的巡检任务。
-///
-/// - **单次拉起**（原位重引导重复调用幂等，ADR-0080）：`spawned` 是各车道自己
-///   的进程级标志——每车道一枚、声明住车道入口函数体（不能收进本函数体：泛型
-///   函数体内的 `static` 是全体实例化共享的一枚，三条车道会互相顶掉），本函数
-///   只收口 `swap` 判定与「第二次调用直接返回」的语义。
-/// - **每轮门检**（先例：自动备份调度，issue #644 / ADR-0080）：锁定/启动失败
-///   期间不触碰占位连接；门开后首个到达的自然日窗口即补跑——启动轮即当天的
-///   窗口（「启动后延迟一次 + 此后每日各一次」）。
-/// - **同日只开一次窗口**（规则单点见 `incremental::daily_window_opens`）：循环
-///   只负责把判定接上「标记已跑 + 跑一轮」的副作用；失败不回拨标记——重试等
-///   下一自然日窗口（即时补救走手动入口）。
-/// - **执行器**（ADR-0125 决策 7 / issue #1413）：挂全局运行时的 async 任务，
-///   启动延迟与自然日窗口用异步定时；应用退出即任务随进程硬停，无需优雅关闭
-///   （写入全是幂等 upsert，中断无残留）。
-///
-/// `round` 是本车道一轮的编排（收 handle 克隆，async 体归车道模块：走单轮骨架
-/// 还是自带最小轮次、以及统计日志，是车道自己的裁决面）。tauri-host 门
-///（issue #2074）。
+/// 后台车道调度循环的 tauri-host 包装（issue #1622）：进程级单次拉起 + 两扇门
+/// clone 门检 + tauri 全局运行时执行器解析后交给门外内核
+/// [`start_daily_lane_kernel`]（issue #2079），巡检语义在内核单点。tauri-host
+/// 门（issue #2074）。`round` 是本车道一轮的编排（收 handle 克隆，async 体归
+/// 车道模块：走单轮骨架还是自带最小轮次、以及统计日志，是车道自己的裁决面）。
 #[cfg(feature = "tauri-host")]
 pub(super) fn start_daily_lane<R, F, Fut>(
     app: &AppHandle<R>,
@@ -273,25 +349,61 @@ pub(super) fn start_daily_lane<R, F, Fut>(
     F: Fn(AppHandle<R>) -> Fut + Send + 'static,
     Fut: Future<Output = ()> + Send + 'static,
 {
+    let gate = EncryptionGate::clone(&app.state::<EncryptionGate>());
+    let boot_gate = BootFailureGate::clone(&app.state::<BootFailureGate>());
+    let ready: Arc<dyn Fn() -> bool + Send + Sync> =
+        Arc::new(move || !gate.is_locked() && !boot_gate.is_failed());
+    let executor: Arc<dyn Fn(LaneTask) + Send + Sync> = Arc::new(|task| {
+        tauri::async_runtime::spawn(task);
+    });
+    let handle = app.clone();
+    start_daily_lane_kernel(spawned, timings, ready, executor, move || {
+        let handle = handle.clone();
+        Box::pin(round(handle))
+    });
+}
+
+/// 后台车道调度循环内核（issue #1622 单点，issue #2079 自 [`start_daily_lane`]
+/// 门口外移）：进程级单次拉起 → 启动延迟 →「门检 → 自然日窗口判定 →
+/// 标记已跑 + 跑一轮 → 巡检 sleep」的巡检任务。门检与执行器由宿主接缝注入
+///（门内包装解析 AppHandle 件后同走本内核），其余语义逐字不变：
+///
+/// - **单次拉起**（原位重引导重复调用幂等，ADR-0080）：`spawned` 是各车道自己
+///   的进程级标志——每车道一枚、声明住车道入口函数体（不能收进本函数体：泛型
+///   函数体内的 `static` 是全体实例化共享的一枚，三条车道会互相顶掉），本函数
+///   只收口 `swap` 判定与「第二次调用直接返回」的语义。
+/// - **每轮门检**（先例：自动备份调度，issue #644 / ADR-0080）：宿主 ready 判定
+///   为假期间不触碰会话；门开后首个到达的自然日窗口即补跑——启动轮即当天的
+///   窗口（「启动后延迟一次 + 此后每日各一次」）。
+/// - **同日只开一次窗口**（规则单点见 `incremental::daily_window_opens`）：循环
+///   只负责把判定接上「标记已跑 + 跑一轮」的副作用；失败不回拨标记——重试等
+///   下一自然日窗口（即时补救走手动入口）。
+/// - **执行器与定时**（ADR-0125 决策 7 / issue #1413）：宿主执行器拉起的 async
+///   任务 + 异步定时，启动延迟与自然日窗口用 `tokio::time::sleep`；应用退出即
+///   任务随进程硬停，无需优雅关闭（写入全是幂等 upsert，中断无残留）。
+pub(super) fn start_daily_lane_kernel(
+    spawned: &'static AtomicBool,
+    timings: LaneTimings,
+    ready: Arc<dyn Fn() -> bool + Send + Sync + 'static>,
+    executor: Arc<dyn Fn(LaneTask) + Send + Sync + 'static>,
+    round: impl Fn() -> LaneTask + Send + 'static,
+) {
     if spawned.swap(true, Ordering::SeqCst) {
         return;
     }
-    let gate = EncryptionGate::clone(&app.state::<EncryptionGate>());
-    let boot_gate = BootFailureGate::clone(&app.state::<BootFailureGate>());
-    let handle = app.clone();
-    tauri::async_runtime::spawn(async move {
+    executor(Box::pin(async move {
         // 启动延迟：让出启动期再补跑当天首轮。
         tokio::time::sleep(timings.startup_delay).await;
         let mut last_round_date: Option<chrono::NaiveDate> = None;
         loop {
-            if !gate.is_locked() && !boot_gate.is_failed() {
+            if ready() {
                 let today = beijing_today();
                 if daily_window_opens(last_round_date, today) {
                     last_round_date = Some(today);
-                    round(handle.clone()).await;
+                    round().await;
                 }
             }
             tokio::time::sleep(timings.window_poll).await;
         }
-    });
+    }));
 }
