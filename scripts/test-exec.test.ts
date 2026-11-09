@@ -112,10 +112,10 @@ const ROOT_WITH_TEST_FALSE_BIN = [
   "",
 ].join("\n");
 
-/** 豁免登记匹配用根 manifest：包名 = tauri-app（EXEMPT_BINS 的 package 名）。 */
-const ROOT_NAMED_TAURI_APP = [
+/** 豁免登记匹配用根 manifest：包名 = nsh-app（EXEMPT_BINS 的 package 名，#2082 迁居后）。 */
+const ROOT_NAMED_NSH_APP = [
   "[package]",
-  'name = "tauri-app"',
+  'name = "nsh-app"',
   'version = "0.0.0"',
   'edition = "2021"',
   "",
@@ -528,14 +528,19 @@ describe("测试执行器两入口覆盖守门（issue #1112）", () => {
     expect(r.output).toContain("root-app::root-app");
   });
 
-  it("豁免登记命中（tauri-app::ledger-perf）→ 出并发入口，summary 标注承接入口", () => {
+  it("豁免登记命中（nsh-app::ledger-perf）→ 出并发入口，summary 标注承接入口", () => {
     const r = run([
       "check",
       "--root",
       makeFixture({
-        rootManifest: ROOT_NAMED_TAURI_APP,
+        rootManifest: ROOT_NAMED_NSH_APP,
         files: {
-          "src-tauri/src/bin/ledger-perf/main.rs": "#[test]\nfn gen() {}\n\nfn main() {}\n",
+          // #2082 迁居形态：ledger-perf 为 nsh-app 同包 bin（成员 crate 自带
+          // manifest，bin 源文件经 src/bin/<name>/main.rs 自动发现）。
+          "src-tauri/crates/nsh/Cargo.toml":
+            '[package]\nname = "nsh-app"\nversion = "0.0.0"\nedition = "2021"\n',
+          "src-tauri/crates/nsh/src/bin/ledger-perf/main.rs":
+            "#[test]\nfn gen() {}\n\nfn main() {}\n",
         },
       }),
     ]);
@@ -548,7 +553,7 @@ describe("测试执行器两入口覆盖守门（issue #1112）", () => {
   it("bin 删除后残留的死登记 → 不红（无副作用，summary 不再展示）", () => {
     // 守门方向是「发现的 test = true bin 都必须登记」：bin 删除后登记无匹配对象，
     // 不拖累任何工作区（含夹具）；删登记才红（bin 回到并发入口被未登记检查拦住）。
-    const r = run(["check", "--root", makeFixture({ rootManifest: ROOT_NAMED_TAURI_APP })]);
+    const r = run(["check", "--root", makeFixture({ rootManifest: ROOT_NAMED_NSH_APP })]);
     expect(r.status).toBe(0);
     expect(r.output).not.toContain("bin 单测豁免");
   });

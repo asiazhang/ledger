@@ -4,8 +4,9 @@ version = "0.11.2"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2024"
-# 包内第二个 bin（性能基准工具 src/bin/ledger-perf，spec #458 / ADR-0062）出现后，
-# 显式指定默认可执行文件，保证 `cargo run` 与 tauri dev 仍指向主程序。
+# 显式指定默认可执行文件，保证 `cargo run` 与 tauri dev 仍指向主程序
+# （性能基准工具 src/bin/ledger-perf 曾为包内第二 bin，spec #458 / ADR-0062；
+# #2082 迁居后包内回归单 bin，default-run 保留不改）。
 default-run = "tauri-app"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -20,8 +21,9 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 # bin 单测执行面排除（issue #1787 热点 2）：main.rs 是薄入口（逻辑住 lib 与各域
 # crate），bin 目标零单测，但 `cargo test --workspace` 仍为它链接测试二进制并空转
 # 启动。显式声明 test = false 免链免跑；bin 内若新增 #[test]，scripts/test-exec.ts
-# 的 test = false 源码扫描守门会变红，防测试静默漏跑。ledger-perf bin 不在此列：
-# 保留单测，归 perf-bench.yml 每日基准承接（test-exec.ts 的 EXEMPT_BINS 登记）。
+# 的 test = false 源码扫描守门会变红，防测试静默漏跑。（ledger-perf bin 曾是
+# 「不在此列」的例外：#2082 已迁居 nsh-app 同包 bin，其单测仍归 perf-bench.yml
+# 每日基准承接，EXEMPT_BINS 登记随迁。）
 [[bin]]
 name = "tauri-app"
 path = "src/main.rs"
