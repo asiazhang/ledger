@@ -47,7 +47,7 @@
 //! `check-structure.test.ts` 负向夹具）。
 //!
 //! **测试实例纪律（dev-dependency 环双实例）**：`cargo test -p ledger-accounts`
-//! 的依赖图内存在本 crate 的两份实例——被测本实例与根包图内实例（tauri-app 经
+//! 的依赖图内存在本 crate 的两份实例——被测本实例与根包图内实例（nsh-app 经
 //! 生产依赖携带，静态与类型身份分离，ledger-backup/ledger-transaction 同款）。
 //! 接缝注册静态由测试工厂（`nsh_app::test_support::open`）接在根包图实例
 //! 上，故走接缝的行为路径测试经 `nsh_app::ledger_accounts::…` 驱动

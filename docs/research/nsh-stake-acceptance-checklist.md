@@ -13,22 +13,20 @@
 
 ```sh
 # 构建立桩应用（bin = nsh-app，Linux 平台后端 GTK4）
-( cd src-tauri && cargo build -p nsh-app )
+( cd src-app && cargo build -p nsh-app )
 
 # 性能数据集（ADR-0062 唯一确定性生成器；默认 50 万笔，几十秒；
-# 同参数必出同库；默认输出在 target 下，--out 指到专用目录更顺手；
-# #2082 迁居后 ledger-perf 为 nsh-app 同包 bin）
-( cd src-tauri && cargo run --bin ledger-perf -p nsh-app -- generate --out /tmp/nsh-acceptance/ledger.db )
+# 同参数必出同库；默认输出 <仓库根>/target/ledger-perf/ledger-perf.db，
+# --out 指到专用目录更顺手；ledger-perf 为 nsh-app 同包 bin）
+( cd src-app && cargo run --bin ledger-perf -p nsh-app -- generate --out /tmp/nsh-acceptance/ledger.db )
 
 # 启动立桩应用（启动参数 = 账本目录，目录内含 ledger.db；无解锁向导/设置页）
-./src-tauri/target/debug/nsh-app /tmp/nsh-acceptance
-
-# 旧壳对照（日常开发形态；打开库的方式以旧壳当时启动参数为准）
-pnpm tauri dev
+./src-app/target/debug/nsh-app /tmp/nsh-acceptance
 ```
 
+- 旧壳对照（`pnpm tauri dev`）已随 #2083 切轨不可执行：Tauri 旧壳整体退役，
+  旧壳相关对表项只剩 NSH 单侧数值，对照基线 = #2010/#2015 留档的历史数据。
 - 生成器输出的摘要行（accounts/transactions/软删数/购买项行数等）是数据规模记录槽，对表时原样誊入 #2015 记录。
-- 常驻内存对照优先两壳开**同一本库**（规模相同才有对照意义）；若旧壳无法指向生成库，则两壳各开同量级库并在记录中注明规模差异。
 - 自动化侧已在 2000 笔缩量数据集（同一生成器，约 20 页）上核过计数一致性（§5）；体感面必须用全量级库实测。
 
 ## 2. 逐项对表操作
@@ -53,17 +51,19 @@ pnpm tauri dev
 - 记录：键入回显即时性（体感分级）；composing 期间有无卡顿；与 ⑥ 合并记录 IME 侧观察。
 - 判据：「无可感知延迟」为体感结论，执行人记录。
 
-### ④ 常驻内存与旧壳对照
+### ④ 常驻内存（#2083 切轨后旧壳退役，单侧记录）
 
-- 步骤：两壳各开同一本 50 万笔库，静置 1 分钟后与连续翻页 20 次后各记一次常驻内存：
+- 步骤：打开 50 万笔库，静置 1 分钟后与连续翻页 20 次后各记一次常驻内存：
 
   ```sh
-  grep VmRSS /proc/$(pgrep -xf '目标进程名')/status
+  grep VmRSS /proc/$(pgrep -xf 'nsh-app')/status
   ```
 
-  NSH 侧进程 = `nsh-app`；旧壳在 `tauri dev` 下是多进程，取承载主窗口的进程（`ps aux` 辅以系统监视器判别）。
-- 记录：四个数值（NSH/旧壳 × 静置/翻页后，KB）+ 库规模 + 桌面环境。若旧壳只能开日常库，记录其库规模并在结论中注明不可完全同口径。
-- 判读：给出两壳数值与倍率即可，阈值由执行人结合 #2010 语境判读。
+  NSH 侧进程 = `nsh-app`。旧壳实时对照不可执行（#2083 切轨整体退役），
+  对照基线 = #2010/#2015 留档的历史数值。
+- 记录：两个数值（静置/翻页后，KB）+ 库规模 + 桌面环境。
+- 判读：给出单侧数值与 #2010 历史基线的对照印象即可，阈值由执行人结合
+  #2010 语境判读。
 
 ### ⑤ 无闪烁 / 字体 / 分数缩放缺陷
 
@@ -85,7 +85,7 @@ pnpm tauri dev
 - 命令模板（有 TSX 镜像用例后）：
 
   ```sh
-  xvfb-run -a dbus-run-session -- nsh test src-tauri/crates/nsh --target linux
+  xvfb-run -a dbus-run-session -- nsh test src-app --target linux
   ```
 
 - 现状（§0）：无 TSX 镜像 → 无断言面；执行人如实记录「复跑未执行/无镜像用例」，体感面走 §2 人工路径（AC1 主路径）。
@@ -123,4 +123,4 @@ pnpm tauri dev
 
 - 冒烟首件（#2024 AC3 / #2016 裁决 §3.4）：`app_smoke_boots_shows_first_screen_count_and_pages_by_key`——起根 → 就绪 → 首屏计数 → 翻页键可用的单条最小旅程。
 - 数据集计数型验证（#2024 AC2 可自动化半边）：`perf_dataset_book_counts_match_domain_read_across_pages_and_scroll`——经 ADR-0062 唯一生成器造库（2000 笔缩量，约 20 页），断言总数 / 页数 / 翻页落点 / 滚动落点与域读口径一致；无时间断言。50 万笔全量级 = 同一生成器换 `--transactions`（§1 命令），体感实测归 §2 ②。
-- 既有功能面 23 件（#2017–#2023 交付）＋筛选补全面 7 件（#2037 交付：筛选维度旅程 / 类型多选 / 金额区间 / ESC 复位与闸门 / 会话保留 / 新弹层抑制 / 搜索×期间裁决钉），见 `src-tauri/crates/nsh/tests/app_headless.rs`。
+- 既有功能面 23 件（#2017–#2023 交付）＋筛选补全面 7 件（#2037 交付：筛选维度旅程 / 类型多选 / 金额区间 / ESC 复位与闸门 / 会话保留 / 新弹层抑制 / 搜索×期间裁决钉），见 `src-app/tests/app_headless.rs`。

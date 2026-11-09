@@ -4,9 +4,10 @@
 //! （24 字段 `TransactionInput`）与支出系列三入口（按笔数 / 按备注 / 按日期）。
 //!
 //! 为什么住 `tests/` 豁免区、两侧 `#[path]` 载入（票内三选一裁决）：
-//! - 根包 `test_support` 统一工厂链接 tauri（GTK3），与 NSH 的 GTK4 同进程
-//!   符号互踩（`src-tauri/Cargo.toml` 头注），本 crate 不可消费（#2018 提交
-//!   信息已记录该偏离）——「通用能力上收测试辅助层」在本 crate 不可达；
+//! - 根包 `test_support` 统一工厂立桩时链接旧壳 tauri（GTK3，与 NSH 的 GTK4
+//!   同进程符号互踩，`src-app/Cargo.toml` 头注），当时本 crate 不可消费（#2018
+//!   提交信息已记录该偏离）；#2083 切轨后互踩消失，「建库走产品开库入口」的
+//!   既有分层纪律保留——「通用能力上收测试辅助层」仍不适用；
 //! - lib 的 `#[cfg(test)]` 模块对外挂集成测试不可见，crate 不能 dev-depend
 //!   自己；立在 crate 内的 `#[doc(hidden)]` 支撑模块会把测试代码带进产品 bin
 //!   （LTO 前），与「测试代码不进产品构建」的既有形态（bin `test = false`、

@@ -17,7 +17,7 @@ publish = false
 # 实物资产域两项系维护者修订票面 AC 后授权（实物资产腿自 #469 起既有，初版
 # 票面遗漏，修订评论留痕）。本域是纯读模型、无同步命令，对同步协议 crate 亦
 # 零生产依赖；无接缝无注册点、壳层启动零接线。对根包（壳层）与同步域零直接
-# 依赖，反向引用由 cargo 依赖图编译期拒绝（本 crate 声明 tauri-app 为生产依赖
+# 依赖，反向引用由 cargo 依赖图编译期拒绝（本 crate 声明 nsh-app 为生产依赖
 # 即红，负向夹具见 check-structure.test.ts）。
 ledger-infra = { path = "../infra" }
 ledger-accounts = { path = "../accounts" }

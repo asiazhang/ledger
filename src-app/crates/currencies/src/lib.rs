@@ -38,7 +38,7 @@
 //!
 //! **测试实例纪律（dev-dependency 环双实例，ledger-transaction/#1092 同款）**：
 //! `cargo test -p ledger-currencies` 的依赖图内存在本 crate 的两份实例——被测
-//! 本实例与根包图内实例（tauri-app 经生产依赖携带）。本域测试不消费交易域接缝
+//! 本实例与根包图内实例（nsh-app 经生产依赖携带）。本域测试不消费交易域接缝
 //! 注册静态（清单查询、本位币读写与校验均为直驱路径；唯一接缝供给面
 //! [`install_base_currency_hook`] 不在域单测覆盖内，由壳层接线
 //! 点 `transaction_wiring` 与交易域消费路径的既有测试守卫），全部用例直接驱动

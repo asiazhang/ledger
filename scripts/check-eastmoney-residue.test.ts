@@ -59,7 +59,7 @@ describe("check-eastmoney-residue（东财行情面端点零残留守门，issue
 
   it("负向判据：未登记文件出现东财端点域名即红并定位到 文件:行", () => {
     const dir = makeFixture({
-      "src-tauri/crates/market-sync/src/rogue.rs": [
+      "src-app/crates/market-sync/src/rogue.rs": [
         "// 测试夹具：重新引入东财通道（应被守门拦下）",
         'pub const HOSTS: &[&str] = &["https://push2.eastmoney.com"];',
         "const REFERER = 'https://fund.eastmoney.com/';",
@@ -67,7 +67,7 @@ describe("check-eastmoney-residue（东财行情面端点零残留守门，issue
     });
     const r = run([dir]);
     expect(r.status).toBe(1);
-    expect(r.output).toContain("src-tauri/crates/market-sync/src/rogue.rs:2");
+    expect(r.output).toContain("src-app/crates/market-sync/src/rogue.rs:2");
     expect(r.output).toContain("eastmoney.com");
     expect(r.output).toContain("ADR-0130");
   });
@@ -83,11 +83,11 @@ describe("check-eastmoney-residue（东财行情面端点零残留守门，issue
 
   it("收紧后的判据：原 FX 腿主机池文件（http.rs）再出现东财域名即未登记残留红", () => {
     const dir = makeFixture({
-      "src-tauri/crates/market-sync/src/http.rs": RETIRED_FX_HOST_POOL,
+      "src-app/crates/market-sync/src/http.rs": RETIRED_FX_HOST_POOL,
     });
     const r = run([dir]);
     expect(r.status).toBe(1);
-    expect(r.output).toContain("src-tauri/crates/market-sync/src/http.rs:3");
+    expect(r.output).toContain("src-app/crates/market-sync/src/http.rs:3");
     expect(r.output).toContain("eastmoney.com");
     expect(r.output).toContain("ADR-0130");
   });

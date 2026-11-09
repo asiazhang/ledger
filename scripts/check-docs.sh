@@ -7,7 +7,7 @@
 #   ② 术语全库唯一：分域词汇表条目标题（^## ）按括号前主干归一后比对，重复即报错
 #   ③ 导航一致：AGENTS.md 与 CONTEXT-MAP.md 引用的仓库内文件/目录必须存在（导航指向已删除文件即报错）
 #   ④ ADR 编号唯一：docs/adr/ 下文件名前缀编号不得重复（同号不同义会误导读者与 AI 助手）
-#   ⑤ 代码坐标：分域词汇表与模型文档不得出现实现坐标（src-tauri/src/、src-app/、src/ 路径式引用
+#   ⑤ 代码坐标：分域词汇表与模型文档不得出现实现坐标（src-app/src/、src/ 路径式引用
 #      及 .rs/.ts/.vue 文件名）——「代码可查事实不进文档」三层标尺的守门（标尺见
 #      CONTEXT-MAP「结构约定」；扫描范围不含 ADR / agents / api 文档；ADR 按同节
 #      「坐标收敛到域 / crate 级」人工评审，不扩扫描，#1262 方式②未采纳）
@@ -16,7 +16,7 @@
 #      不查遗漏的方向；判据取条目行而非「编号出现」，他行交叉引用不算（issue #1027）
 #   ⑧ ADR 索引反查：README 现行条目的编号必须有对应文件——⑦ 的反方向，防「ADR 已
 #      删除却仍留在现行索引」。tombstone 段用 `- **编号**` 形态，与现行条目天然区分
-#   ⑨ Migration 索引全等：src-tauri/migrations/ 下每个迁移文件都必须在
+#   ⑨ Migration 索引全等：src-app/migrations/ 下每个迁移文件都必须在
 #      docs/model/README.md 的 Migration 索引有一表行，索引表行也必须有对应迁移
 #      文件——「迁移目录 ↔ README 索引」双向全等（与⑦⑧ ADR 索引同形），防新
 #      迁移落盘后索引漂移（issue #1624：V027 / V028 合入后索引停在 V026）
@@ -115,9 +115,9 @@ done
 
 # ── ⑤ 代码坐标扫描（分域词汇表与模型文档禁止实现坐标） ──────────────────
 # 「代码可查事实不进文档」三层标尺（甲删乙留丙留，详见 CONTEXT-MAP「结构约定」）：
-# 甲类实现坐标——src-tauri/src/、src/ 路径式引用与 .rs/.ts/.vue 文件名——出现即失败；
+# 甲类实现坐标——src-app/src/、src/ 路径式引用与 .rs/.ts/.vue 文件名——出现即失败；
 # 术语专名（表名/视图名/信号名/接缝名）不在扫描范围。白名单刻意留空：清理完成后应零豁免通过。
-coord_re='(src-tauri/)?src/[A-Za-z0-9_./-]+|[A-Za-z0-9_-]+\.(rs|ts|vue)\b'
+coord_re='(src-app/)?src/[A-Za-z0-9_./-]+|[A-Za-z0-9_-]+\.(rs|ts|vue)\b'
 coord_whitelist=''  # 豁免文件清单（空格分隔仓库相对路径），当前留空
 for f in $(find "$CTX_DIR" docs/model -type f -name '*.md' 2>/dev/null | sort); do
   case " $coord_whitelist " in
@@ -160,7 +160,7 @@ if [ -f "$adr_readme" ]; then
   done
 fi
 
-# ── ⑨ Migration 索引全等（src-tauri/migrations/ ↔ docs/model/README.md）──────────────
+# ── ⑨ Migration 索引全等（src-app/migrations/ ↔ docs/model/README.md）──────────────
 # 模型文档约定「表结构唯一事实来源是 migration，索引见文末」——新迁移落盘却忘记补
 # Migration 索引行时，读者与 AI 会照索引漏读 schema（实测漂移：V027 / V028 合入后
 # 索引停在 V026，issue #1624）。与⑦⑧ ADR 索引同形，双向都查：

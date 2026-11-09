@@ -10,7 +10,7 @@ import { gateScript, runGateScript } from "./run-gate-script.test-helper.ts";
 // 脚本以 Bun 运行时执行（ADR-0083）：runGateScript 以 spawnSync('bun') 与门槛
 // 调用同款拉起，测的就是门槛路径。
 // 按测试决策只测外部可观察结果——进程退出码与输出，通过位置参数把扫描目标指向
-// 临时夹具目录（形状同构 src-tauri：src/ + tests/）。纯禁令下无白名单常量可注入，
+// 临时夹具目录（形状同构 src-app：src/ + tests/）。纯禁令下无白名单常量可注入，
 // 全部判定均可经进程接缝覆盖，无需静态导入例外（check-structure.test.ts 先例随
 // 白名单机制一并移除，#758 收口）。规则 3 的固定时刻登记处夹具自脚本导出的
 // FIXED_NOW_REGISTRY_REL 派生登记处位置（#1468：夹具与守门共亢单一来源，无双源
@@ -40,7 +40,7 @@ const SEED_RS = [
   'pub fn seed_instrument() { let _ = "INSERT INTO instruments"; }',
 ].join("\n");
 
-/** 建夹具目录（形状同构 src-tauri：src/test_support/{mod.rs,seed.rs} 必在，登记处
+/** 建夹具目录（形状同构 src-app：src/test_support/{mod.rs,seed.rs} 必在，登记处
  *  住址自脚本导出常量派生）。registry 缺省写现值登记处；传字符串模拟登记处改值；
  *  传 null 模拟登记处缺失（fail loud 用例）。返回目录路径。 */
 function makeFixture(

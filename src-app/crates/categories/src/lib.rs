@@ -43,7 +43,7 @@
 //! 击穿该形态（先例说明见 ledger-backup / ledger-transaction crate 根文档）。
 //!
 //! **测试实例纪律（dev-dependency 环双实例）**：`cargo test -p ledger-categories`
-//! 的依赖图内存在本 crate 的两份实例——被测本实例与根包图内实例（tauri-app 经
+//! 的依赖图内存在本 crate 的两份实例——被测本实例与根包图内实例（nsh-app 经
 //! 生产依赖携带，静态与类型身份分离，ledger-transaction 先例同款）。本域无
 //! 接缝、无注册点静态（op 产出直呼协议面 `record_local`，协议 crate 在依赖图
 //! 内单实例共享），带类型签名的钩子不存在，两份实例行为不可区分——域行为测试

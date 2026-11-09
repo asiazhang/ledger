@@ -28,7 +28,7 @@ afterAll(() => {
 });
 
 describe("maskNonCode 双源防漂移语料（issue #1433）", () => {
-  // 与 Rust 侧唯一实现（src-tauri/src/test_support/scan.rs 的 mask_non_code）
+  // 与 Rust 侧唯一实现（src-app/src/test_support/scan.rs 的 mask_non_code）
   // 消费同一夹具：语料输入 + 期望输出双文件共享，任一侧单独改词法规则即
   // 本测或 Rust 语料测试红。（bun test 下取进程 cwd = 仓库根定位夹具，同上款先例）
   const corpusPath = join(process.cwd(), "scripts", "fixtures", "rust-mask-corpus.rs");

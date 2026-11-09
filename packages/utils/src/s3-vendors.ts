@@ -11,7 +11,8 @@
  *
  * 档位标注（`verified`）默认全部 false——目前没有任何厂商跑过真实桶，逐家结论的
  * **唯一翻转点就是本表 `verified` 字段**，不在别处复制一份档位表。真桶验收的跑法、
- * 前置与结论回写步骤见 `src-tauri/tests/real_bucket_acceptance.rs` 的模块文档：按它
+ * 前置与结论回写步骤原住 `src-tauri/tests/real_bucket_acceptance.rs`（#2083 切轨随旧壳
+ * 退役），协议替身面经根包测试辅助层 `src-app/src/test_support/` 的 `s3_stub` 保留；
  * 跑通某一家后，把该家的 `verified` 改成 true，界面标注随之改变。
  */
 

@@ -24,6 +24,7 @@
 //         正常弹出、验证通过后读出）。
 //
 // service 与产品条目（com.zhangheng.ledger，见
+// src-app/crates/infra/src/boot/（主口令缓存现住址，切轨前住
 // src-tauri/src/db/passphrase_cache.rs）刻意隔离，本 PoC 不触碰真实主口令缓存。
 
 import Foundation
