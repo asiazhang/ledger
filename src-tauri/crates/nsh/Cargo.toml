@@ -81,10 +81,12 @@ serde_json = "1"
 # 本地日历（期间数学的自然月/季/年边界与「今天」，issue #2021）：域栈多 crate
 # 同版本的既有直接依赖（workspace 未收 workspace.dependencies，各成员同版本声明）。
 chrono = "0.4.45"
-# 域栈日志面（tracing 是全仓日志基座，ADR-0006）；启动期 stderr 初始化，
-# RUST_LOG 环境变量过滤。
+# 域栈日志面（tracing 是全仓日志基座，ADR-0006）；启动期 stderr + 日滚文件
+# 双输出，RUST_LOG 环境变量过滤。tracing-appender 是日滚与 non_blocking
+# WorkerGuard 的载体（#2077 文件面平价，与旧壳同版本）。
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-appender = "0.2"
 
 [dev-dependencies]
 # headless 组件测试接缝（docs/research/nsh-testing-capabilities.md 裁决 §2.1 /
