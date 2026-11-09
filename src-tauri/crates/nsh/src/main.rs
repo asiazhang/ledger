@@ -28,7 +28,10 @@ fn main() -> impl std::process::Termination {
     // Linux 平台后端（GTK4 原生控件）：Rust 模式根组件直调域栈，无 JS VM。
     use nsh_platform_linux as platform;
     const APP_ID: &str = "com.zhangheng.ledger.nsh";
-    platform::run_app(
+    // 自动备份退出兜底（issue #2078）：平台事件循环返回 = 窗口关闭的正常退出
+    // 路径（nsh-platform-linux 0.4.0 无 RunEvent::Exit 等价物，裁决见
+    // backup_host 模块文档）——退出前若脏且当天尚未自动备份过则补一次。
+    let exit_code = platform::run_app(
         platform::AppSource::Rust(platform::Root::of::<nsh_app::app::App>().app_id(APP_ID)),
         platform::AppOptions {
             title: "Ledger 原生壳（立桩）".to_owned(),
@@ -38,7 +41,9 @@ fn main() -> impl std::process::Termination {
             size: (1024, 720),
             ..Default::default()
         },
-    )
+    );
+    nsh_app::backup_host::exit_fallback();
+    exit_code
 }
 
 #[cfg(not(target_os = "linux"))]

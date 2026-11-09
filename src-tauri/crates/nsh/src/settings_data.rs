@@ -54,7 +54,7 @@ use crate::danger::{DangerConfirmSpec, DangerLevel, DangerOutcome, danger_confir
 use crate::modal::app_modal;
 use crate::nav_model::NavRequest;
 use crate::popconfirm;
-use crate::{backup_entry, boot, nav, nav_model, select, settings, signals, views};
+use crate::{backup_entry, backup_host, boot, nav, nav_model, select, settings, signals, views};
 
 // ---------------------------------------------------------------------------
 // 词表（旧壳 settings.data.* / books.* zh-CN 词条原样；i18n 框架级方案不在
@@ -89,7 +89,6 @@ const AUTO_SWITCH_LABEL: &str = "开启后每 24 小时检查一次，数据有�
 const AUTO_LAST_LABEL: &str = "上次自动备份：";
 const AUTO_LAST_NEVER: &str = "从未";
 const AUTO_NEED_DIR: &str = "设置备份目录后自动备份生效";
-const AUTO_HOST_HINT: &str = "本壳暂未拉起自动备份调度（宿主机制随宿主票接线）：设置照常保存并跨启动保留，调度生效面的偏差见 #2054 交付报告。";
 const AUTO_FAIL_ALERT_PREFIX: &str = "自动备份已连续失败 ";
 const AUTO_FAIL_ALERT_SUFFIX: &str = " 次，数据保护网可能未生效。请检查备份目录是否可用、磁盘空间是否充足；备份成功后本提示自动消失。";
 const LIST_HINT: &str = "仅显示当前账本的备份；其他账本的产物互不可见，各自参与滚动清理。";
@@ -1347,6 +1346,17 @@ fn backup_cards(palette: views::ViewPalette) -> View {
     // 接线 → 对应卡面假默认 → 红）。
     refresh_rows_task(owner, state);
     refresh_auto_backup_state(owner, state);
+    // 备份产物失效订阅（#2078）：自动备份完成 / 受管清理后，深路径发射经
+    // pending 桥 + 泵换 [`crate::signals`] 广播，此处重读行集与自动状态（旧壳
+    // `ledger:backups-changed` 订阅刷新同语义）。订阅随视图实例存亡（句柄移入
+    // effect 闭包，交易列表同形）。
+    let backups_subscription = signals::subscribe_backups_changed(move || {
+        refresh_rows_task(owner, state);
+        refresh_auto_backup_state(owner, state);
+    });
+    effect(move || {
+        let _held_for_view_lifetime: &signals::BackupsChangedSubscription = &backups_subscription;
+    });
     {
         owner.run(move || {
             spawn(async move {
@@ -1502,6 +1512,10 @@ fn backup_cards(palette: views::ViewPalette) -> View {
                                 {
                                     let dir: String = String::from(dir.to_string_lossy().as_ref());
                                     store_backup_dir(&dir);
+                                    // 设备偏好推送（#2078）：目录镜像更新（旧壳
+                                    // watch immediate 推送同位；首次兜底认领机会已
+                                    // 被启动推送消费，此处镜像更新即时生效）。
+                                    backup_host::push_backup_dir(&dir);
                                     state.backup_dir.set(dir);
                                     state.status.set(Some(MSG_DIR_SET.to_owned()));
                                     refresh_rows_task(owner, state);
@@ -1524,6 +1538,9 @@ fn backup_cards(palette: views::ViewPalette) -> View {
                                 )
                                 .on_press(move |_: &()| {
                                     store_backup_dir("");
+                                    // 设备偏好推送（#2078）：空串推送 = 目录镜像置空，
+                                    // 触发入口回到未配置静默跳过（旧壳同语义）。
+                                    backup_host::push_backup_dir("");
                                     state.backup_dir.set(String::new());
                                     state.rows.set(Vec::new());
                                     state.rows_error.set(None);
@@ -1652,12 +1669,6 @@ fn backup_cards(palette: views::ViewPalette) -> View {
                         },
                     )
                     .otherwise(view),
-                ),
-                view().child(
-                    text(AUTO_HOST_HINT)
-                        .text_size(px(11.0))
-                        .text_color(palette.muted)
-                        .test_id("data-auto-host-hint"),
                 ),
             ],
         )

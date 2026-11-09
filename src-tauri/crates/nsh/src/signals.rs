@@ -9,7 +9,10 @@
 //!
 //! 线程契约：订阅与广播都发生在引擎的 UI 线程（订阅者持有信号句柄，信号与
 //! 视图层同线程；写路径的重活经 `blocking` 在后台线程执行，完成后回到 UI 线程
-//! 才广播）——订阅者表因此住 thread_local，不做跨线程投递。
+//! 才广播）——订阅者表因此住 thread_local，不做跨线程投递。唯一例外是备份族
+//! 的深路径发射（#2078）：发射点在任意写线程（调度线程 / 连接层写线程），经
+//! 进程级 pending 计数（[`BACKUPS_PENDING`]）解耦后由 UI 线程泵换广播——
+//! 机制差异留痕在此，语义（粗粒度、无 payload）不变。
 //!
 //! 接线形态（ADR-0112 决策 5 的壳内等价形）：本模块只定义注册点（订阅 /
 //! 广播单点），重读实现由视图（[`crate::app::TransactionsView`]）注册，写路径
@@ -24,7 +27,7 @@
 use std::{
     cell::RefCell,
     rc::Rc,
-    sync::atomic::{AtomicU64, Ordering},
+    sync::atomic::{AtomicU64, AtomicUsize, Ordering},
 };
 
 /// 订阅者表条目（订阅 id + 处理器）。
@@ -51,6 +54,24 @@ thread_local! {
 thread_local! {
     static INVESTMENTS_CHANGED: RefCell<Vec<Subscriber>> = const { RefCell::new(Vec::new()) };
 }
+
+// 备份产物失效的订阅者表（#2078，形态仿前三族同款）：自动备份完成 / 受管备份
+// 清理等改变备份列表的动作成功后广播（旧壳 `ledger:backups-changed` 的壳内对应
+// 物，消费面 = 设置卡备份列表与自动备份状态重读）。粗粒度、无 payload；广播
+// 到达前的深路径发射先落进程级 pending 计数（见 [`BACKUPS_PENDING`]），UI 线程
+// 泵消费计数后换广播——深路径发射点（调度线程 / 连接层写线程）不满足本表
+// thread_local 的 UI 线程契约，投递经计数解耦。
+thread_local! {
+    static BACKUPS_CHANGED: RefCell<Vec<Subscriber>> = const { RefCell::new(Vec::new()) };
+}
+
+/// 备份产物变更的进程级 pending 计数（#2078 跨线程桥的落点）：深路径发射
+/// （[`ledger_infra::events::emit_backups_changed_current`]，任意写线程）经
+/// 深路径发射器桥接置数；引擎线程泵（[`crate::backup_host`] 装载）消费计数
+/// 后在本线程广播 [`notify_backups_invalidated`]。计数无场景态（进程级原子），
+/// 桥接与消费两侧任意场景顺序下语义不变。发射可丢失旧壳 payload 同款：粗粒
+/// 度失效信号只表达「备份列表变过」，消费方重拉即得最新全量。
+static BACKUPS_PENDING: AtomicUsize = AtomicUsize::new(0);
 
 /// 订阅句柄发放计数器（进程级单调，每订阅一个）。
 static NEXT_SUBSCRIBER: AtomicU64 = AtomicU64::new(0);
@@ -110,14 +131,34 @@ pub fn subscribe_budgets_changed(handler: impl Fn() + 'static) -> BudgetsChanged
     BudgetsChangedSubscription { id }
 }
 
-/// 订阅投资数据失效信号（概览视图投资/自由度卡装载时注册一次；返回句柄
-/// 消亡即撤销订阅）。
+/// 订阅投资数据失效信号（概览视图投资/自由度卡装载时注册一次；返回句柄消亡即撤销订阅）。
 pub fn subscribe_investments_changed(
     handler: impl Fn() + 'static,
 ) -> InvestmentsChangedSubscription {
     let id = NEXT_SUBSCRIBER.fetch_add(1, Ordering::Relaxed);
     INVESTMENTS_CHANGED.with_borrow_mut(|slot| slot.push((id, Rc::new(handler))));
     InvestmentsChangedSubscription { id }
+}
+
+/// 订阅备份产物失效信号（设置卡备份列表/自动备份状态装载时注册一次；返回
+/// 句柄消亡即撤销订阅）。
+pub fn subscribe_backups_changed(handler: impl Fn() + 'static) -> BackupsChangedSubscription {
+    let id = NEXT_SUBSCRIBER.fetch_add(1, Ordering::Relaxed);
+    BACKUPS_CHANGED.with_borrow_mut(|slot| slot.push((id, Rc::new(handler))));
+    BackupsChangedSubscription { id }
+}
+
+/// 备份产物失效的订阅句柄（[`TransactionsChangedSubscription`] 同形，撤销清
+/// 自己的族表）。
+#[derive(Debug)]
+pub struct BackupsChangedSubscription {
+    id: u64,
+}
+
+impl Drop for BackupsChangedSubscription {
+    fn drop(&mut self) {
+        BACKUPS_CHANGED.with_borrow_mut(|slot| slot.retain(|(id, _)| *id != self.id));
+    }
 }
 
 /// 广播交易数据失效（写入成功后调用；粗粒度、无 payload——消费方自行重拉）。
@@ -162,14 +203,45 @@ pub fn notify_investments_invalidated() {
     }
 }
 
+/// 广播备份产物失效（设置卡备份列表与自动备份状态重读；粗粒度、无 payload，
+/// 四族信号互不串扰）。只在引擎线程调用（深路径发射的跨线程投递经
+/// [`record_backups_pending`] + 泵消费，不直呼本函数）。
+pub fn notify_backups_invalidated() {
+    let handlers = BACKUPS_CHANGED.with(|slot| {
+        slot.borrow()
+            .iter()
+            .map(|(_, handler)| handler.clone())
+            .collect::<Vec<_>>()
+    });
+    for handler in handlers {
+        handler();
+    }
+}
+
+/// 深路径发射落点（任意写线程；infra 深路径发射器桥接实现消费）：置一次
+/// 备份产物变更 pending。非阻塞、无锁争用面（原子加计）——发射失败静默语义
+/// 沿 ADR-0044（本落点不可失败）。
+pub fn record_backups_pending() {
+    BACKUPS_PENDING.fetch_add(1, Ordering::Relaxed);
+}
+
+/// 消费备份产物变更 pending（UI 线程泵消费点）：有待消费置数则清零并返回
+/// true，泵据此广播 [`notify_backups_invalidated`]。
+pub fn take_backups_pending() -> bool {
+    BACKUPS_PENDING.swap(0, Ordering::Relaxed) > 0
+}
+
 /// 清空全部订阅（headless 多场景串行测试的复位接缝：上一场景的引擎已撤销，
 /// 其视图订阅者不得响应下一场景的广播；生产 bin 不消费）。与
-/// [`crate::app::reset_book_assembly`] 同一批复位点。两族一并复位。
+/// [`crate::app::reset_book_assembly`] 同一批复位点。四族一并复位；备份族
+/// 的 pending 计数同点清零（跨场景残留会令下一场景首帧就广播一次）。
 #[doc(hidden)]
 pub fn reset_for_tests() {
     TRANSACTIONS_CHANGED.with_borrow_mut(|slot| slot.clear());
     BUDGETS_CHANGED.with_borrow_mut(|slot| slot.clear());
     INVESTMENTS_CHANGED.with_borrow_mut(|slot| slot.clear());
+    BACKUPS_CHANGED.with_borrow_mut(|slot| slot.clear());
+    BACKUPS_PENDING.store(0, Ordering::Relaxed);
 }
 
 #[cfg(test)]
@@ -373,6 +445,35 @@ mod tests {
         );
         drop(first);
         drop(joining);
+        reset();
+    }
+
+    /// 备份族（#2078）：广播到达订阅者、跨族不串扰、pending 计数置/取对称
+    /// （深路径落点 → 泵消费 → 广播的手工重演：落点任意线程可调，本测在测试
+    /// 线程直呼验证计数语义；泵接线归 backup_host 装载，headless 旅程钉住）。
+    #[test]
+    fn backups_notify_reaches_subscriber_and_pending_round_trips() {
+        reset();
+        let hits = Rc::new(AtomicUsize::new(0));
+        let subscription = subscribe_backups_changed({
+            let hits = hits.clone();
+            move || {
+                hits.fetch_add(1, Ordering::Relaxed);
+            }
+        });
+        record_backups_pending();
+        record_backups_pending();
+        assert!(take_backups_pending(), "有待消费 pending 应取到 true");
+        assert!(!take_backups_pending(), "消费即清零，第二次取应为 false");
+        notify_backups_invalidated();
+        assert_eq!(hits.load(Ordering::Relaxed), 1, "广播到达订阅者");
+        // 跨族互不串扰：交易广播不触发备份订阅者。
+        notify_transactions_invalidated();
+        assert_eq!(hits.load(Ordering::Relaxed), 1);
+        drop(subscription);
+        reset();
+        notify_backups_invalidated();
+        assert_eq!(hits.load(Ordering::Relaxed), 1, "复位后广播无人接收");
         reset();
     }
 }

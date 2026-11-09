@@ -39,9 +39,10 @@ use crate::boot;
 use crate::items::AddItemTarget;
 use crate::nav_model::ViewName;
 use crate::{
-    accounts, backup_entry, context_menu, danger, dashboard, investments, investments_form, items,
-    logging, modal, multi_select, nav, nav_model, overlay, period_row, pinyin_select, popconfirm,
-    reports, scheduled, search, settings, sidebar, signals, tx_filter, txn_form, views,
+    accounts, backup_entry, backup_host, context_menu, danger, dashboard, investments,
+    investments_form, items, logging, modal, multi_select, nav, nav_model, overlay, period_row,
+    pinyin_select, popconfirm, reports, scheduled, search, settings, sidebar, signals, tx_filter,
+    txn_form, views,
 };
 
 /// 金额隐私模式开关的存储键（设备轻量设置项，与旧壳同键同值形态：旧壳
@@ -194,6 +195,9 @@ pub fn reset_book_assembly() {
     crate::cross_book::reset_default_data_dir();
     // #2057：移动档导航壳态同批复位（抽屉开态不跨场景残留）。
     crate::adaptive::reset_for_tests();
+    // #2078：自动备份宿主的进程级单例态同批复位（目录镜像 / 首次兜底认领
+    // 与待跑标志——上一场景的备份目录不得泄入下一场景）。
+    backup_host::reset_shell_side_for_tests();
 }
 
 /// 启动结果三态（窗口呈现的全部状态）。
@@ -223,6 +227,10 @@ pub fn run_startup() -> StartupView {
             // 式优先；接管失败仅告警不阻启动——排障档位不是启动位面，锁异常
             // 按读路径容错同口径）。接管在 logging 单点内化，读路径消费面。
             logging::apply_persisted(&db);
+            // 自动备份调度宿主接线（issue #2078）：会话首次兜底补跑 + 调度线程
+            // 挂载（旧壳 `start_background_services` 的本壳对应编排点；装载期
+            // 的偏好推送与深路径发射器在 [`backup_host::install_shell_side`]）。
+            backup_host::start_session_host(&db);
             *db_slot() = Some(std::sync::Arc::new(db));
             StartupView::Ready
         }
@@ -2481,6 +2489,10 @@ pub fn App() -> impl IntoElement {
     // 解析 / 应用）在 settings::apply_startup_appearance 单点内的接线，拆除
     // 即红（headless 外观探针）。
     settings::apply_startup_appearance();
+    // 自动备份宿主装载期接线（#2078）：设备偏好推送（备份目录镜像）+ 深路径
+    // 发射器注入 + 失效信号泵（进程级发射器先装者优先；目录镜像就位早于任何
+    // 调度轮）。调度线程挂载在启动竖井成功分支（backup_host::start_session_host）。
+    backup_host::install_shell_side();
     let state = signal(StartupView::Loading);
     // 主行/次行前景取主题令牌（双态自适应，registry 缺省带主题双态令牌）：
     // 裸 text 的默认前景是黑（ResolvedTextStyle::default 的 React Native

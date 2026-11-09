@@ -1567,8 +1567,8 @@ pub fn auto_backup_failure_alerting(consecutive_failures: u32) -> bool {
 
 /// 设置自动备份开关（旧壳 `set_auto_backup_enabled` 命令同一执行协议）：写
 /// `app_settings` 经基建设置接缝（设置 KV 置脏豁免，ADR-0032 随接缝自带）。
-/// 本壳不拉自动备份调度线程（骨架决策，宿主机制随宿主落地），开关写入是
-/// 跨壳共享的库内状态（旧壳调度照常消费）。
+/// 开关由自动备份调度消费（宿主已随 #2078 落地：调度线程每轮读库内状态，
+/// 关闭即静默跳过，三触发入口统一尊重），写入是跨壳共享的库内状态。
 pub fn set_auto_backup_enabled(db: &DbState, enabled: bool) -> Result<()> {
     let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
     ledger_infra::settings::set(

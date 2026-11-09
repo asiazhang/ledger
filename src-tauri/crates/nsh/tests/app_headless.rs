@@ -11259,8 +11259,19 @@ fn backup_full_journey_backs_up_lists_prunes_and_guards_overwrite() {
     ]);
 
     // 种子一笔交易（指纹固化前置：空库无可归属产物，备份空库不产生列表行）。
+    // 自动备份开关预置关（#2078 起配置目录 + 空列表的会话会触发首次兜底自动
+    // 备份；本旅程是手动备份/清理/恢复面，预置关让目录内容断言只及手动产物）。
     {
         let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        {
+            let conn = db.conn.lock().unwrap();
+            ledger_infra::settings::set(
+                &conn,
+                ledger_infra::settings::SettingKey::AutoBackupEnabled,
+                &false,
+            )
+            .unwrap();
+        }
         let account = seed_cash_account(&db);
         seed_transaction(
             &db,
@@ -11281,13 +11292,29 @@ fn backup_full_journey_backs_up_lists_prunes_and_guards_overwrite() {
     let mut app = Headless::start(desktop_config_with_storage_shard(storage)).unwrap();
     open_data_tab(&mut app);
 
-    // 备份①：另存为（对话框替身问到盘面）→ 行集 + 最近备份回显。
+    // 本机设备标识（#2078 起目录镜像随装载期推送就位：落在镜像目录内的受管
+    // 命名另存为按域受管改道语义落设备子目录——旧壳配置目录后的同款行为；
+    // 改道不改名，只多一层设备目录）。
+    let device = {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let conn = db.read_conn.lock().unwrap();
+        ledger_backup::source_device_id(&conn).expect("种子库可取设备标识")
+    };
+    let device_dir = backup_dir.join(&device);
+
+    // 备份①：另存为（对话框替身问到盘面）→ 行集 + 最近备份回显。落点断言
+    // 对准改道后的实际产物位（<镜像目录>/<设备>/<原名>）。
     let target_a = backup_dir.join("ledger-backup-20260101-000000.db.zip");
+    let landed_a = device_dir.join("ledger-backup-20260101-000000.db.zip");
     app.on_pick_save_path(Some(target_a.clone())).unwrap();
     app.press("id:data-backup-as").unwrap();
     app.wait_for("id:data-last-backup").unwrap();
     app.wait_for("id:data-backup-row-0-name").unwrap();
-    assert!(target_a.is_file(), "备份产物落盘");
+    assert!(
+        landed_a.is_file(),
+        "备份产物落盘（受管改道设备子目录）：{}",
+        landed_a.display()
+    );
     assert!(
         app.shows("最近备份："),
         "最近备份标签在屏：{:?}",
@@ -11296,19 +11323,24 @@ fn backup_full_journey_backs_up_lists_prunes_and_guards_overwrite() {
 
     // 备份②：同目录新目标 → 桶超额 → 滚动清理确证书面反馈。
     let target_b = backup_dir.join("ledger-backup-20260101-000100.db.zip");
+    let landed_b = device_dir.join("ledger-backup-20260101-000100.db.zip");
     app.on_pick_save_path(Some(target_b.clone())).unwrap();
     app.press("id:data-backup-as").unwrap();
     app.wait_for("text:已清理 1 个旧备份").unwrap();
     app.wait_for_gone("id:data-backup-row-1-name", DEFAULT_WAIT)
         .unwrap();
     assert!(
-        !target_a.exists(),
+        !landed_a.exists(),
         "超额最旧产物应被清理：bucket = 本指纹 × 本设备"
     );
 
     // 覆盖守卫：目标已存在（手工预置带标记文件）→ warning 确认弹窗，取消
-    // 零写入；确认后替换成功。
+    // 零写入；确认后替换成功。存在性判定与确认面板对准对话框回答路径（壳
+    // 守卫面）；确认后的实际写入落设备子目录（域改道语义），断言对准产物
+    // 落点的新内容与扁平旧文件的零改动（旧壳同款组合行为：守卫在回答路径、
+    // 写入在改道路径）。
     let target_overwrite = backup_dir.join("ledger-backup-20260101-000200.db.zip");
+    let landed_overwrite = device_dir.join("ledger-backup-20260101-000200.db.zip");
     fs::write(&target_overwrite, b"canary-bytes").unwrap();
     app.on_pick_save_path(Some(target_overwrite.clone()))
         .unwrap();
@@ -11330,13 +11362,28 @@ fn backup_full_journey_backs_up_lists_prunes_and_guards_overwrite() {
     // 本次备份异步写收敛后再断言文件替换（否则偶发在写入落地前读旧内容）。
     app.settle();
     app.wait_for("id:data-last-backup").unwrap();
-    assert_ne!(
+    assert_eq!(
         fs::read(&target_overwrite).unwrap(),
         b"canary-bytes",
-        "确认后原文件内容被替换"
+        "扁平回答路径零改动（写入按域改道落设备子目录，旧壳同款组合行为）"
+    );
+    assert_eq!(
+        fs::read(&target_overwrite).unwrap(),
+        b"canary-bytes",
+        "扁平回答路径零改动（写入按域改道落设备子目录，旧壳同款组合行为）"
     );
     assert!(
-        !target_b.exists(),
+        landed_overwrite.is_file(),
+        "确认后产物落点有新备份：{}",
+        landed_overwrite.display()
+    );
+    assert_ne!(
+        fs::read(&landed_overwrite).unwrap(),
+        b"canary-bytes",
+        "确认后产物落点内容被新备份替换"
+    );
+    assert!(
+        !landed_b.exists(),
         "确认后的滚动清理同样按保留上限进行（桶内超额最旧产物被清）"
     );
 }
@@ -11452,6 +11499,113 @@ fn restore_guard_replaces_data_across_restart() {
         "恢复旅程后交易回到两笔：{:?}",
         alive.items
     );
+}
+
+/// 自动备份首次兜底全旅程（issue #2078 接线断言；backup 域既有语义零新口径）：
+/// 配置备份目录偏好（设备存储）→ 应用装载期推送目录镜像（旧壳
+/// DevicePreferenceSyncHost 启动 immediate 推送同位）→ 启动竖井成功分支执行
+/// 会话首次兜底（受管备份列表为空即备份一次，与脏标记无关）→ 产物落盘 +
+/// 设置卡自动备份状态刷新为时刻回显。
+///
+/// 「删除即红」（ADR-0087 接线，断言对准用户可观察结果 = 自动备份产物在盘）：
+/// 删装载期壳侧接线（`backup_host::install_shell_side`：镜像不推送 → 触发
+/// 入口静默跳过）或删启动竖井宿主接线（`backup_host::start_session_host`：
+/// 首次兜底不跑、调度不挂载）任一环 → 产物不出、状态不刷新 → 本测红。
+/// 调度轮询线程的周期语义（10 分钟节奏、日界门、每轮门检）归备份域内核测
+/// 试（start_scheduler_with_tick 短周期注入）；本测钉壳侧接线的端到端结果。
+#[test]
+fn auto_backup_first_fallback_backs_up_at_session_start_and_card_refreshes() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("auto-backup-host");
+    let backup_dir =
+        std::env::temp_dir().join(format!("ledger-test-nsh-auto-backup-{}", new_uuid()));
+    fs::create_dir_all(&backup_dir).unwrap();
+    let storage = storage_shard(&[(
+        "backup_dir",
+        format!("{:?}", backup_dir.to_string_lossy()).as_str(),
+    )]);
+
+    // 种子一笔交易（首次兜底与脏标记无关——列表为空即兜底；种子固化账本指纹，
+    // 产物按本账归属，设备子目录一层随域语义）。
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let account = seed_cash_account(&db);
+        seed_transaction(
+            &db,
+            TxnSeed {
+                account: &account,
+                to_account: None,
+                kind: TransactionKind::Expense,
+                amount_cents: 2_500,
+                date: &test_date(0),
+                category_id: None,
+                merchant_id: None,
+                note: Some("自动备份首次兜底种子".to_owned()),
+            },
+        );
+    }
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config_with_storage_shard(storage)).unwrap();
+
+    // 首次兜底在后台线程执行（不阻塞启动竖井）：产物落盘 = 用户可观察的
+    // 「自动备份发生」（受管自动命名沿用 backup 域规则）。
+    let deadline = std::time::Instant::now() + DEFAULT_WAIT;
+    let product = loop {
+        if let Some(found) = find_first_auto_product(&backup_dir) {
+            break found;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "启动后应发生首次兜底自动备份（产物落盘），实际目录内容：{:?}",
+            fs::read_dir(&backup_dir)
+                .map(|entries| entries.flatten().map(|e| e.path()).collect::<Vec<_>>())
+                .unwrap_or_default()
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    let name = product
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap()
+        .to_owned();
+    assert!(
+        name.starts_with("ledger-auto-") && name.ends_with(".db.zip"),
+        "产物为受管自动命名：{name}"
+    );
+    assert!(
+        fs::metadata(&product).unwrap().len() > 0,
+        "产物非空：{}",
+        product.display()
+    );
+
+    // 设置卡自动备份状态刷新（深路径发射 → pending 桥 → 泵广播 → 卡片重读；
+    // 兜底先于卡片装载完成时初始读即时刻，断言同样成立）。
+    open_data_tab(&mut app);
+    app.wait_for("id:data-auto-last").unwrap();
+    app.wait_for_gone("text:上次自动备份：从未", DEFAULT_WAIT)
+        .unwrap();
+}
+
+/// 递归找目录下首个自动备份产物（自动产物落设备子目录一层，域语义沿用）。
+/// 只认受管自动命名终态：写路径的原子临时同兄弟（`.ledger-auto-…atomic-*`，
+/// `fs_util::temp_sibling`）不匹配前缀，轮询不误拾中途产物。
+fn find_first_auto_product(dir: &Path) -> Option<std::path::PathBuf> {
+    fs::read_dir(dir).ok()?.flatten().find_map(|entry| {
+        let path = entry.path();
+        let is_product = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|name| name.starts_with("ledger-auto-") && name.ends_with(".db.zip"));
+        if is_product {
+            Some(path)
+        } else if path.is_dir() {
+            find_first_auto_product(&path)
+        } else {
+            None
+        }
+    })
 }
 
 /// 加密开启流守卫（error 级无后门确认 + ≥8 位 / 一致守卫）：短口令即时红
