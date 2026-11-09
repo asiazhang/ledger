@@ -49,7 +49,9 @@
 //
 // 符号调用方闭集（ADR-0011 决策 3 + 2026-09-22 修订 ① / #1692）：当期入口
 // `convert_to_native_current`（含 `try_` 软形态，issue #1797）的生产调用方白名单
-// CONVERT_CURRENT_CALLERS 逐条留痕（9 个读路径消费面 + 压测工具注记），白名单外调用即红；
+// CONVERT_CURRENT_CALLERS 逐条留痕（9 个读路径消费面；压测工具注记已随
+// #2082 ledger-perf 迁居 nsh-app 同包 bin 摘除——SHELL 层 crate 模块面不在
+// 本扫描范围，与 nsh cross_book.rs 同规），白名单外调用即红；
 // 测试代码按 `/tests/` 路径约定豁免（ADR-0056 决策 5 同规），`fn` 定义面与注释/
 // 字符串提及经掩码与定义判定排除；在册成员文件缺失或零调用同样红（清单漂移
 // fail loud、拒绝空集假绿）。别名改写等文本不可达形态靠评审兜底（同壳层扫描
@@ -662,10 +664,6 @@ export const CONVERT_CURRENT_CALLERS: readonly SymbolCallerEntry[] = [
     file: "src/cross_book_summary.rs",
     reason:
       "读路径：跨账本汇总的当期折算（活动本读数合并单点 read_active_book_and_merge，#1699 自壳层命令闭包抽出；ADR-0114 跨本唯一例外）",
-  },
-  {
-    file: "src/bin/ledger-perf/bench.rs",
-    reason: "压测工具（ledger-perf bench）非生产路径，显式列入注记（#1692）",
   },
 ];
 

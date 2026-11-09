@@ -41,8 +41,8 @@ use crate::nav_model::ViewName;
 use crate::{
     accounts, backup_entry, context_menu, danger, dashboard, investments, investments_form, items,
     logging, modal, multi_select, nav, nav_model, overlay, period_row, pinyin_select, popconfirm,
-    reports, scheduled, search, settings, sidebar, signals, sync_triggers, tx_filter, txn_form,
-    views,
+    reports, scheduled, search, settings, sidebar, signals, sync_triggers, tx_filter,
+    tx_view_preferences, txn_form, views,
 };
 
 /// 金额隐私模式开关的存储键（设备轻量设置项，与旧壳同键同值形态：旧壳
@@ -186,6 +186,7 @@ pub fn reset_book_assembly() {
     signals::reset_for_tests();
     nav::reset_for_tests();
     tx_filter::reset_for_tests();
+    tx_view_preferences::reset_for_tests();
     reports::reset_for_tests();
     scheduled::reset_for_tests();
     investments::reset_for_tests();
@@ -428,6 +429,11 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
     //（旧壳搜索页同口径），组件本地态不进会话保留；文本元 → 分换算在装载时机
     //（[assembly::amount_text_to_cents] 换算家族单点）。
     let filters = tx_filter::store();
+    // 隐藏投资相关流水（#2062 / ADR-0136 视图偏好）：设备级持久行集裁决的
+    // 会话镜像（真源在存储，读写单点归 [`crate::tx_view_preferences`]；不入
+    // 筛选会话态——清除筛选与 ESC 复位不触达）。列表态装载时机读值（搜索
+    // 态不携带：域搜索读路径无此维度，ADR-0136 决策 4 搜索面不动）。
+    let hide_investment = tx_view_preferences::store();
     let amount_min_text = signal(String::new());
     let amount_max_text = signal(String::new());
     // 行删除态（issue #2022）：待确认删除的交易 id（Some = 危险确认对话框开）
@@ -512,6 +518,9 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
         let searching = !query.is_empty() || amount_min.is_some() || amount_max.is_some();
         let state = filters.snapshot();
         let privacy = amount_privacy_enabled();
+        // 视图偏好值在引擎线程先取（blocking 任务内不得触碰信号，隐私开关
+        // 同纪律）：列表态载荷携带，搜索态不携带（ADR-0136 决策 4）。
+        let hide_investment_related = hide_investment.get_untracked();
         let db = db_slot().clone();
         // 任务挂视图实例 owner（perform_delete 先例同形）：处理器可能运行在
         // 即将卸载的子树 owner 下——筛选条清除钮/弹层选项按下后随状态翻转即
@@ -553,6 +562,12 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
                                     state.category,
                                     Some(tx_filter::CategoryFilter::UncategorizedOnly)
                                 ),
+                                // 视图偏好先决收窄（ADR-0136 决策 1/3）：偏好不是筛选
+                                // 维度，不入会话态（snapshot 不含它）、不参与清除/ESC；
+                                // 行集 = 偏好收窄 ∩ 既有筛选，下钻不让位（服务端
+                                // total 同口径）。删除本行即红：开关切换行集不变
+                                // （headless 旅程测试）。
+                                hide_investment_related,
                             },
                         )
                         .map(|result| PageRead::new(result.items, result.total))
@@ -916,6 +931,17 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
         load(1);
     };
 
+    // 视图偏好切换（#2062 / ADR-0136）：写偏好单点（落盘 + 信号镜像，与筛选
+    // 会话态分家——不入 filters、清除/ESC 不触达）+ 重拉行集（行集 = 偏好收窄
+    // ∩ 既有筛选；旧壳 onHideInvestmentChange 走 refresh 统一出口同构：翻页归
+    // 零 + 重拉）。开关受控态与按压替身两写面同源（settings 开关行同形，不另
+    // 立第二笔写路径）。
+    let toggle_hide_investment = move |next: bool| {
+        tx_view_preferences::set(next);
+        filters.set_page(1);
+        load(1);
+    };
+
     // 两族快捷键（ADR-0140 / ADR-0141 裸键闭集）：裸键语义 = 拒绝一切修饰键
     // （引擎 keystroke 精确匹配含修饰位，`shift+[` 等不命中）；`When::Auto`
     // 缺省（四键皆文本编辑键，输入焦点期间引擎不派发——可编辑焦点闸）；
@@ -1069,10 +1095,11 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
     // 筛选条（#2037，旧壳交易页筛选行 + 搜索页金额输入的合流形态）：账户
     //（拼音可搜，涉及账户语义，可清除）/ 商户（拼音可搜，含软删商户历史交易
     // 口径，可清除）/ 类型（多选，可选集四通用 kind，空选满选归一默认）/
-    // 金额区间（元输入，搜索面维度）+ 清除筛选（禁用态随筛选激活判定）。
-    // 分类维度无手动控件（旧壳同口径，下钻只读入口）；隐藏投资相关开关属视图
-    // 偏好不入筛选（ADR-0136 偏好与筛选分家，随视图偏好面接入）。控件全部经
-    // 封装族消费（视图不直连框架基元，ADR-0118）；弹层抑制上报自含于封装。
+    // 金额区间（元输入，搜索面维度）+ 隐藏投资相关流水开关（#2062：视图
+    // 偏好不入筛选，ADR-0136 偏好与筛选分家——写偏好单点而非会话态，清除
+    // 筛选与 ESC 复位不触达，也不参与清除按钮禁用态）+ 清除筛选（禁用态随
+    // 筛选激活判定）。分类维度无手动控件（旧壳同口径，下钻只读入口）。控件
+    // 全部经封装族消费（视图不直连框架基元，ADR-0118）；弹层抑制上报自含于封装。
     let filter_row = view()
         .flex_row()
         .items_center()
@@ -1145,6 +1172,35 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
                     search_seq.update(|seq| *seq += 1);
                     load(1);
                 }),
+        )
+        .child(
+            // 视图偏好开关（#2062 / ADR-0136）：设备级持久裁决落筛选栏（旧壳
+            // NSwitch + 文案 span 同位）。行 test_id = headless 按压替身
+            //（switch 行为件本体不暴露 testid 面，settings 开关行先例同形）
+            //——替身按压写向 toggle_hide_investment 同一执行通道，与开关
+            // on_change 同源。无障碍：开关名即文案，行按钮名同（rows 无障碍
+            // 读法平价）。
+            view()
+                .test_id("tx-filter-hide-investment")
+                .role(nsh_core::AccessibilityRole::Button)
+                .optional_label("隐藏投资相关流水")
+                .app_class("flex items-center gap-1.5 rounded-md")
+                .on_press(move |_: &PressEvent| {
+                    let next = !hide_investment.get_untracked();
+                    toggle_hide_investment(next);
+                })
+                .child(
+                    view()
+                        .flex_row()
+                        .app_class("items-center gap-1.5")
+                        .child(
+                            nsh_base::switch()
+                                .accessibility_label("隐藏投资相关流水")
+                                .checked(move || hide_investment.get())
+                                .on_change(move |value: &bool| toggle_hide_investment(*value)),
+                        )
+                        .child(text("隐藏投资相关流水").text_size(px(12.0)).text_color(fg)),
+                ),
         )
         .child(
             // 清除筛选（旧壳 transactions.filter.clear 同词表）：禁用态随筛选
@@ -2495,6 +2551,9 @@ pub fn App() -> impl IntoElement {
     // 绑定随根实例存亡（引擎线程派发，含抑制闸门）。
     let nav = nav::store();
     tx_filter::store();
+    // 交易页视图偏好（#2062）信号同挂根实例：首调若落在交易视图体，断点翻转
+    // 重挂视图（owner 释放）后装载读信号即崩——与筛选会话态同一条所有权契约。
+    tx_view_preferences::store();
     // 报表页会话态（#2048）同样挂根实例（首调初始化；离开报表视图重挂不丢
     // ——旧壳 reports-session 存活期 = 应用会话同语义）。
     reports::store();

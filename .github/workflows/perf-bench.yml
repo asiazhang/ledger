@@ -33,7 +33,8 @@
 # 最大档观测约占 20 分钟，bench-market 最大档观测约占数分钟——单元为少量
 # 事务的批量 upsert，显著低于 bench-sync 的逐条事务形态），回归由
 # 每日基线与性能批合入后的手动触发拦截。
-# 生成器正确性单测（src/bin/ledger-perf/tests.rs，issue #459 验收项）原随
+# 生成器正确性单测（crates/nsh/src/bin/ledger-perf/tests.rs，issue #459 验收
+# 项；#2082 迁居后住 nsh-app 同包 bin）原随
 # build.yml 的 cargo test --all 运行，2026-09 起迁入本 workflow：bin 测试
 # target 不再占用 PR CI 编译与执行，工具链回归随每日基准一并拦截。
 # ADR-0009 的 100ms 慢查询告警线（SQL 级观测）保留不动，与本门禁（基准

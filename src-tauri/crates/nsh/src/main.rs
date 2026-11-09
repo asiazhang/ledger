@@ -9,21 +9,23 @@ use std::path::PathBuf;
 
 #[cfg(target_os = "linux")]
 fn main() -> impl std::process::Termination {
+    // 跨账本注册表数据根（#2055）：与旧壳同一数据根（XDG 拼 identifier，
+    //Linux 平台语义）；解析失败不阻断启动（汇总读取码化拒绝同码呈现）。
+    // 先于日志初始化（#2077）：日志文件面的目录解析消费数据根槽位，槽位未
+    // 注入时文件面降级为仅 stderr（接线顺序由 src/tests.rs 源码扫描钉住）。
+    if let Some(dir) = nsh_app::cross_book::default_data_dir_from_env() {
+        nsh_app::cross_book::set_default_data_dir(dir);
+    }
     // 域栈日志面（tracing 基座，ADR-0006；crate::logging 单点）：stderr +
-    // RUST_LOG 过滤（显式优先，缺省 info），可重载滤镜登记后设置卡调档立即
-    // 生效、库就绪后按持久化档位接管。重复初始化（如嵌入测试宿主）不视为
-    // 失败。
+    // 日滚文件双输出（数据根下 logs 目录，按天滚动 7 天保留）+ RUST_LOG 过滤
+    //（显式优先，缺省 info），可重载滤镜登记后设置卡调档立即生效、库就绪后
+    // 按持久化档位接管。重复初始化（如嵌入测试宿主）不视为失败。
     nsh_app::logging::init();
     // 启动参数：账本目录（身份即目录，内含固定名 ledger.db，ADR-0089）。缺参
     // 不退进程——窗口即呈现面（用法提示见 app::secondary_text）。UI 组件集走
     // 平台缺省（nsh_base registry，含主题双态令牌）。
     if let Some(dir) = std::env::args().nth(1).map(PathBuf::from) {
         nsh_app::app::set_book_dir(dir);
-    }
-    // 跨账本注册表数据根（#2055）：与旧壳同一数据根（XDG 拼 identifier，
-    //Linux 平台语义）；解析失败不阻断启动（汇总读取码化拒绝同码呈现）。
-    if let Some(dir) = nsh_app::cross_book::default_data_dir_from_env() {
-        nsh_app::cross_book::set_default_data_dir(dir);
     }
     // Linux 平台后端（GTK4 原生控件）：Rust 模式根组件直调域栈，无 JS VM。
     use nsh_platform_linux as platform;

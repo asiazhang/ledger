@@ -134,7 +134,8 @@ export interface ExemptBinDecl {
  */
 export const EXEMPT_BINS: ExemptBinDecl[] = [
   {
-    package: "tauri-app",
+    // #2082 迁居：ledger-perf 自旧壳根包迁入 nsh-app 同包 bin（自动发现）。
+    package: "nsh-app",
     target: "ledger-perf",
     // owner 文案勿写成完整命令形状（如 cargo test --bin …）：workspace 命令覆盖
     // 守门会把它当真命令扫（缺 --workspace 即红，ADR-0056）。
