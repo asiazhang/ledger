@@ -170,7 +170,12 @@ pub(crate) fn book_dir() -> Option<PathBuf> {
 #[cfg(test)]
 pub(crate) fn test_assembly_guard() -> MutexGuard<'static, ()> {
     static LOCK: Mutex<()> = Mutex::new(());
-    LOCK.lock().unwrap_or_else(|p| p.into_inner())
+    let guard = LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    // 车道测试现场同批复位（#2079）：武装位 / 注入槽 / 反馈对不跨用例残留——
+    // 守卫获取即解除武装，业务用例的 run_startup 成功分支零车道零网络；车道
+    // 接线用例在守卫内显式重装（enable_for_tests + 注入桩）。
+    crate::market_lanes::reset_for_tests();
+    guard
 }
 
 /// 重置装配入口与会话句柄（headless 测试接缝）：同一进程内的多场景串行测试
@@ -194,6 +199,9 @@ pub fn reset_book_assembly() {
     crate::cross_book::reset_default_data_dir();
     // #2057：移动档导航壳态同批复位（抽屉开态不跨场景残留）。
     crate::adaptive::reset_for_tests();
+    // #2079：行情车道测试现场同批复位（武装位 / 注入槽 / 反馈对——上一场景
+    // 的车道武装与桩束不得响应下一场景）。
+    crate::market_lanes::reset_for_tests();
 }
 
 /// 启动结果三态（窗口呈现的全部状态）。
@@ -224,6 +232,12 @@ pub fn run_startup() -> StartupView {
             // 按读路径容错同口径）。接管在 logging 单点内化，读路径消费面。
             logging::apply_persisted(&db);
             *db_slot() = Some(std::sync::Arc::new(db));
+            // 行情车道启动接线（issue #2079）：三条行情后台车道（价格历史补
+            // 全 / 每日现价刷新 / 每日汇率增量同步）在业务可用起点一并挂载
+            //（旧壳 start_background_services 挂载闭集平价，lib.rs:153-155）。
+            // 删除本行即车道接线测试红（tests/market_*_lane.rs + 本模块
+            // market_lanes::probe 探针）。
+            crate::market_lanes::start_market_lanes();
             StartupView::Ready
         }
         Err(e) => StartupView::Failed {
@@ -2481,6 +2495,10 @@ pub fn App() -> impl IntoElement {
     // 解析 / 应用）在 settings::apply_startup_appearance 单点内的接线，拆除
     // 即红（headless 外观探针）。
     settings::apply_startup_appearance();
+    // 车道反馈泵（#2079）：引擎线程任务、根实例所有 = 进程寿命——行情车道
+    // 线程把进度与实际写入投进程级队列，本任务排空（进度进接缝信号、写入
+    // 广播投资失效）。删除本行即车道反馈探针红（market_lanes::probe）。
+    crate::market_lanes::install_feedback_pump();
     let state = signal(StartupView::Loading);
     // 主行/次行前景取主题令牌（双态自适应，registry 缺省带主题双态令牌）：
     // 裸 text 的默认前景是黑（ResolvedTextStyle::default 的 React Native

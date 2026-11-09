@@ -38,6 +38,8 @@
 //! ADR-0019 修订记录；随 #1551 与东财汇率腿一并退役的「汇率 K 线同期补齐」
 //! 不再存在）。
 
+// 槽类型随 tauri-host 门（issue #2074）。
+#[cfg(feature = "tauri-host")]
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
@@ -61,9 +63,13 @@ use super::fund_nav::{FundIdentity, NavPoint};
 use super::http::KlineBar;
 use super::incremental::{SyncInstrument, beijing_today, quote_code};
 use super::lane::{
-    LaneChannelsSlot, LaneId, LaneRound, LaneRoundFuture, LaneTimings, progress_forwarder,
+    LaneHost, LaneId, LaneRound, LaneRoundFuture, LaneTimings, progress_forwarder,
+    run_lane_round_kernel, start_daily_lane_kernel,
 };
-// 车道宿主接缝随 tauri-host 门（issue #2074）：两函数只被门内车道入口消费。
+// 槽类型与槽接缝消费面随 tauri-host 门（issue #2074）。
+#[cfg(feature = "tauri-host")]
+use super::lane::LaneChannelsSlot;
+// 门内车道宿主接缝随 tauri-host 门（issue #2074）：两函数只被门内车道入口消费。
 #[cfg(feature = "tauri-host")]
 use super::lane::{run_background_lane_round, start_daily_lane};
 use super::model::WriteWitness;
@@ -430,11 +436,15 @@ where
 /// 后台补全通道注入接缝（issue #1375，先例：命令壳 `SyncChannelsSlot`）：生产
 /// **不管理**本状态（每轮建后台车道生产束），集成测试 manage 本状态并装入
 /// 门控桩束，使「后台补全真实在途」可确定复现。异步互斥体：通道束引用在
-/// `.await` 之间存活（issue #1412 通道束闭包 async 化）。
+/// `.await` 之间存活（issue #1412 通道束闭包 async 化）。槽接缝消费面（门内
+/// 包装）随 tauri-host 门（issue #2074）；非门宿主面经 [`super::lane::LaneHost`]
+/// 注入槽。
+#[cfg(feature = "tauri-host")]
 pub struct BackfillChannelsSlot(pub Arc<tokio::sync::Mutex<SyncFetchChannels>>);
 
 /// 槽接缝实现（骨架定义接缝、车道就地提供槽类型，issue #1426）：骨架按同一形状
 /// 解包本状态，不反向认识本车道。
+#[cfg(feature = "tauri-host")]
 impl LaneChannelsSlot for BackfillChannelsSlot {
     fn shared(&self) -> Arc<tokio::sync::Mutex<SyncFetchChannels>> {
         self.0.clone()
@@ -460,13 +470,65 @@ pub fn start_history_backfill_with<R: Runtime>(app: &AppHandle<R>, timings: Lane
     });
 }
 
+/// 价格历史后台补全的非门启动入口（issue #2079 注册点）：非 tauri 宿主（NSH
+/// 原生壳）经公开宿主面接线——门检 / 执行器 / 会话解析 / 通道束注入槽 / 进度
+/// 发射 / 价格失效广播由宿主束（[`super::lane::LaneHost`]）装配，巡检循环与
+/// 单轮骨架同走门外内核；单轮编排与门内入口共用 [`HistoryBackfillRound`]，
+/// 统计日志同形。进程级单次拉起守卫与门内入口各自独立（双壳并存期同进程
+/// 互不相干）。
+pub fn start_history_backfill_for_host(host: &LaneHost, timings: LaneTimings) {
+    static SPAWNED: AtomicBool = AtomicBool::new(false);
+    let host = host.clone();
+    start_daily_lane_kernel(
+        &SPAWNED,
+        timings,
+        host.ready.clone(),
+        host.spawn.clone(),
+        move || {
+            let host = host.clone();
+            Box::pin(run_backfill_round_for_host(host))
+        },
+    );
+}
+
+/// 跑一轮补全（非门宿主面，issue #2079）：会话解析 / 通道束换装 / 见证 / 收尾
+/// 裁决 / 进度发射 / 失败日志归 [`super::lane`] 内核（宿主束供给 AppHandle
+/// 等价件），本函数只留本车道的统计日志——与门内 [`run_backfill_round_gated`]
+/// 同形。会话缺失轮次空转（宿主无占位连接形态：引导失败无会话，等下一窗口）。
+async fn run_backfill_round_for_host(host: LaneHost) {
+    let Some(write) = (host.session)() else {
+        tracing::debug!("账本会话未就位，本轮空转");
+        return;
+    };
+    let progress = host.backfill_progress.clone();
+    let mut sink = move |update: SyncProgress| progress(update);
+    let result = run_lane_round_kernel(
+        write,
+        LaneId::HistoryBackfill,
+        HistoryBackfillRound,
+        &mut sink,
+        &*host.price_written,
+        (host.backfill_channels)(),
+    )
+    .await;
+    match result {
+        Ok(stats) if stats.queued == 0 => tracing::debug!("历史补全队列空，本轮零动作"),
+        Ok(stats) => tracing::info!(
+            queued = stats.queued,
+            failed = stats.failed,
+            "价格历史后台补全一轮完成"
+        ),
+        // 失败已由内核按车道记日志（静默等下一窗口），此处不重复。
+        Err(_) => {}
+    }
+}
+
 /// 价格历史补全的编排（骨架的编排输入，issue #1426）：一轮排空
 ///（[`run_history_backfill_round`]），进度走静默计数事件面
-///（骨架按 [`LaneProgress::HistoryBackfill`] 接线）。tauri-host 门（issue #2074）。
-#[cfg(feature = "tauri-host")]
+///（骨架按 [`LaneProgress::HistoryBackfill`] 接线）。编排体零 tauri，门内外
+/// 两条启动入口共用（issue #2079）。
 struct HistoryBackfillRound;
 
-#[cfg(feature = "tauri-host")]
 impl LaneRound for HistoryBackfillRound {
     type Stats = HistoryBackfillStats;
 

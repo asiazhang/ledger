@@ -163,10 +163,10 @@ mod channels;
 /// #1563 接线逐只刷新与历史首刷、#1568 接线基金查询创建）与区间取数面（翻页 +
 /// 完整性核验，#1568 接线已终止基金存在性兜底）。
 mod csrc;
-/// 现价刷新的后台每日车道（ADR-0122 决策 3 / issue #1377）：车道宿主只被旧壳
-/// 消费——tauri-host 门（issue #2074 / ADR-0145），NSH 原生壳进程不得链接
-/// tauri，摘门即结构守门红。
-#[cfg(feature = "tauri-host")]
+/// 现价刷新的后台每日车道（ADR-0122 决策 3 / issue #1377）：启动后延迟补跑
+/// 一次 + 每自然日窗口一次，与手动同步同形同取数面。门内启动入口随 tauri-host
+/// 门（issue #2074 / ADR-0145，只被旧壳消费）；非门宿主面（NSH 原生壳）经
+/// [`daily_refresh::start_daily_price_refresh_for_host`]，issue #2079。
 mod daily_refresh;
 /// ECB 参考汇率取数单元（issue #1542）：单元本体与测试已就位，序列类型已由落库
 /// 单元（persist，#1543）消费；两个取数入口与交叉推导已由汇率同步编排
@@ -182,11 +182,11 @@ mod fund_price_refresh;
 /// fx.source-malformed 透传）已就位。
 mod fx;
 /// 汇率每日自动增量同步的后台车道（ADR-0019 修订记录 / issue #1546）：启动
-/// 延迟补跑一次 + 每自然日窗口一次，经壳层后台服务编排单点拉起（issue #961
-/// 名单）；与手动入口共用 [`fx`] 编排，失败记日志可见、已有汇率不受影响。
-/// tauri-host 门（issue #2074 / ADR-0145）：车道宿主只被旧壳消费，NSH 原生壳
-/// 进程不得链接 tauri——摘门即结构守门红。
-#[cfg(feature = "tauri-host")]
+/// 延迟补跑一次 + 每自然日窗口一次，经壳层后台服务编排单点拉起（旧壳 issue
+/// #961 名单，NSH 住 `run_startup` 成功分支）；与手动入口共用 [`fx`] 编排，
+/// 失败记日志可见、已有汇率不受影响。门内启动入口随 tauri-host 门（issue
+/// #2074 / ADR-0145，只被旧壳消费）；非门宿主面经
+/// [`fx_daily::start_daily_fx_sync_for_host`]，issue #2079。
 mod fx_daily;
 mod history;
 mod http;
@@ -231,9 +231,12 @@ pub use channels::{
     QuoteQuery, SyncFetchChannels, do_incremental_sync_channels,
 };
 #[cfg(feature = "tauri-host")]
-pub use daily_refresh::{
-    DailyPriceRefreshChannelsSlot, start_daily_price_refresh, start_daily_price_refresh_with,
-};
+pub use daily_refresh::{start_daily_price_refresh, start_daily_price_refresh_with};
+// 非门车道宿主面（issue #2079）：非门启动入口零 tauri，NSH 原生壳经它接线；
+// 槽类型（门内 try_state 注入接缝）随消费面走门（issue #2074）。
+#[cfg(feature = "tauri-host")]
+pub use daily_refresh::DailyPriceRefreshChannelsSlot;
+pub use daily_refresh::start_daily_price_refresh_for_host;
 // 通道束载荷 DTO（issue #1276）：通道束是壳层注入接缝的公开面，桩实现方需要
 // 能命名与构造应答形状（QuoteItem 可构造；Kline/Nav 形状测试回空表即可命名；
 // EcbDayRates 同理——FxSyncChannels 两条取数腿的应答形状，#1546 每日车道
@@ -245,17 +248,25 @@ pub use fx::{
     FX_SYNC_GATE, FxSyncChannels, FxSyncGate, FxSyncReport, sync_fx_rates, sync_fx_rates_guarded,
     sync_fx_rates_with_progress,
 };
-// 车道宿主面（tauri-host 门，issue #2074 / ADR-0145）：AppHandle 车道启动与槽
-// 类型只被旧壳（根包）消费，NSH 原生壳进程不得链接 tauri（GTK3/WebKitGTK 与
-// GTK4 同进程符号互踩）——摘门即结构守门红。
+// 车道宿主面（tauri-host 门，issue #2074 / ADR-0145）：AppHandle 车道启动入口
+// 只被旧壳（根包）消费，NSH 原生壳进程不得链接 tauri（GTK3/WebKitGTK 与
+// GTK4 同进程符号互踩）——摘门即结构守门红。槽类型随门内 try_state 消费面。
 #[cfg(feature = "tauri-host")]
-pub use fx_daily::{DailyFxSyncChannelsSlot, start_daily_fx_sync, start_daily_fx_sync_with};
+pub use fx_daily::DailyFxSyncChannelsSlot;
+pub use fx_daily::start_daily_fx_sync_for_host;
+#[cfg(feature = "tauri-host")]
+pub use fx_daily::{start_daily_fx_sync, start_daily_fx_sync_with};
+#[cfg(feature = "tauri-host")]
 pub use history::BackfillChannelsSlot;
+pub use history::start_history_backfill_for_host;
 #[cfg(feature = "tauri-host")]
 pub use history::{start_history_backfill, start_history_backfill_with};
 pub use http::KlineBar;
 /// 三条后台车道共用的调度时机（issue #1622 收敛：三份同构 timing 类型并成一份）
 pub use lane::LaneTimings;
+/// 非 tauri 车道宿主接缝（issue #2079）：宿主件闭集与任务装箱（NSH 壳等
+/// 非 tauri 宿主经三个 `_for_host` 入口消费）
+pub use lane::{LaneHost, LaneTask};
 pub use model::{SyncInstrumentInfoResult, WriteWitness};
 pub use persist::FxPersistReport;
 pub use progress::{

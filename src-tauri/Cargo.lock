@@ -4489,6 +4489,7 @@ dependencies = [
  "nsh-testing",
  "rusqlite",
  "serde_json",
+ "tokio",
  "tracing",
  "tracing-subscriber",
 ]

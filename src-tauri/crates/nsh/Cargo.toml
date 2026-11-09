@@ -78,6 +78,10 @@ ledger-sync-engine = { path = "../sync-engine" }
 # 载荷序列化（导航界面状态的 JSON 形状与旧壳 view_state:* 同形同键，#2032；
 # workspace 已有同版本直接依赖，无收束面新增）。
 serde_json = "1"
+# 行情车道任务的自持异步运行时（#2079）：车道线程用当前线程运行时驱动域
+# async 编排（取数腿 tokio IO + 巡检异步定时），反馈桥用无界通道（车道线程
+# → 引擎线程泵）；版本随 workspace，特性面只取本壳直接消费的三件。
+tokio = { version = "1", features = ["rt", "sync", "time"] }
 # 本地日历（期间数学的自然月/季/年边界与「今天」，issue #2021）：域栈多 crate
 # 同版本的既有直接依赖（workspace 未收 workspace.dependencies，各成员同版本声明）。
 chrono = "0.4.45"

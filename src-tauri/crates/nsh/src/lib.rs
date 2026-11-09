@@ -191,6 +191,11 @@
 //!   折叠可选、编辑模式分段史与改价——订阅既有语义直调计划域接缝）、软删
 //!   轻量确认与来源跳转行高亮；交易失效订阅/广播（旧壳 ledger:changed 族
 //!   语义的壳内对应物）；
+//! - [`market_lanes`]：行情车道宿主面（#2079）——三条行情后台车道（价格历史
+//!   补全 / 每日现价刷新 / 每日汇率增量同步）的启动接线（`run_startup` 成功
+//!   分支单点，旧壳 `start_background_services` 挂载闭集平价）：域公开宿主面
+//!   注册点（`LaneHost`）装配 + 跨线程反馈桥（进度进接缝信号、实际写入广播
+//!   投资失效）；
 //! - [`wiring`]：域接缝接线——读路径全部读时投影接缝 + 交易写入协议的余额刷新
 //!   接缝，与旧壳启动接线同形（ADR-0112 决策 5）。
 //!
@@ -222,6 +227,7 @@ pub mod investments_instruments;
 pub mod investments_ledger;
 pub mod items;
 pub mod logging;
+pub mod market_lanes;
 pub mod merchants;
 pub mod modal;
 pub mod multi_select;
