@@ -1,4 +1,10 @@
-//! 性能基准工具（ledger-perf）——后端包内 CLI，spec #458 / issue #459。
+//! 性能基准工具（ledger-perf）——nsh-app 同包 bin，spec #458 / issue #459；
+//! #2082 迁居自旧壳根包 `src/bin/ledger-perf`（后端包内 CLI 形态与功能语义不变）。
+//!
+//! #2082 迁居注记：跨账本编排消费面随壳走（nsh_app::cross_book 单点，ADR-0114
+//! 编排住壳层）；进程接线消费 nsh 壳侧域接缝单点（nsh_app::wiring，ADR-0112
+//! 决策 5）。headless 集成测试经 `CARGO_BIN_EXE_ledger-perf` 消费本 bin——
+//! 同包 bin 由 cargo 随测试构建自带，二进制缺失路径结构上不可能。
 
 // 测试整体豁免（ADR-0060，与 lib.rs 同款）：clippy 六件套 deny 仅约束生产路径；
 // 本 bin 的 #[cfg(test)] 模块（含 tests.rs）经 crate 根 cfg(test) 整体放行，
@@ -190,9 +196,14 @@ pub(crate) const DEFAULT_TRANSACTIONS: u64 = 500_000;
 pub(crate) const DEFAULT_END_DATE: &str = "2025-12-31";
 
 /// 默认输出路径：构建目标目录下（`src-tauri/target/ledger-perf/`），
-/// 编译期常量拼接，天然被版本控制忽略、与真实用户库物理隔离。
+/// 编译期常量拼接，天然被版本控制忽略、与真实用户库物理隔离。#2082 迁居
+/// 后 manifest 在 workspace 成员目录（crates/nsh/），回推两级即 workspace
+/// 构建目标目录（ADR-0062 决策 3 输出坐标不变）。
 pub(crate) fn default_out() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/ledger-perf/ledger-perf.db")
+    let mut dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    dir.pop();
+    dir.pop();
+    dir.join("target/ledger-perf/ledger-perf.db")
 }
 
 /// 子命令登记（dispatch 表驱动，issue #1696）：子命令名、简介、flag 表投影
@@ -274,17 +285,17 @@ fn print_usage() {
 /// 交易域写入协议，余额刷新实现须先注册；注册点在下层（核心交易域/定时计划域/
 /// 备份域），实现由账户域/定时计划域/备份域提供；期次落账置脏与追补触发两条
 /// 接缝同形对装（#1091）。交易域接缝接线（issue #1092 / #1180）：六向实现经
-/// 组合入口一次装入。测试侧（tests::build 建库单点）必须经本单点接线——
-/// 同形复制多处会让「新增钩子只装一处」的漂移重新引入顺序依赖 flake
-///（与壳层启动、test_support::open、BDD world 各自的单点同款纪律）。
+/// 壳侧单点一次装入（#2082 起消费 nsh 壳侧等价面 `nsh_app::wiring`——六向
+/// 组合 + 计划来源解析 + 余额刷新与旧壳聚合面两侧同构）。测试侧
+/// （tests::build 建库单点）必须经本单点接线——同形复制多处会让「新增钩子
+/// 只装一处」的漂移重新引入顺序依赖 flake（与壳层启动、BDD world 各自的
+/// 单点同款纪律）。
 pub(crate) fn install_process_wiring() {
-    ledger_accounts::balance::install_balance_refresh_hook();
-    ledger_scheduled::install_plan_source_hook();
+    nsh_app::wiring::install_domain_seams();
     ledger_scheduled::auto_run::register_after_occurrence_hook(
         ledger_backup::occurrence_dirty_hook,
     );
     ledger_backup::register_catch_up_hook(ledger_scheduled::auto_run::catch_up_hook);
-    tauri_app_lib::transaction_wiring::install_all();
 }
 
 fn main() -> ExitCode {

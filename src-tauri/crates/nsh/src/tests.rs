@@ -36,7 +36,8 @@ use crate::boot::{
 mod seed;
 
 pub(crate) use seed::{
-    create_empty_book_file, expense_input, make_book_dir as scratch_book_dir, test_date,
+    create_empty_book_file, expense_input, make_book_dir as scratch_book_dir, seed_cash_account,
+    test_date,
 };
 
 /// 串行锁：接缝注册与 OnceLock 装配入口是进程级单例，用例间串行防串扰
@@ -1379,4 +1380,23 @@ fn portfolio_and_freedom_seams_read_holdings_and_budget() {
         freedom.ratio
     );
     assert_eq!(freedom.native_currency, "CNY");
+}
+
+/// bin 启动接线钉（#2077，源码扫描守门：main 不进 headless 测试进程，删接线
+/// 或换序扫描即红——#959/#961 先例形态）：`logging::init` 的文件日志面解析日
+/// 志目录消费跨账本数据根槽位，main 必须先注入数据根再初始化日志，且两处
+/// 接线调用都在。
+#[test]
+fn main_wires_data_root_before_logging_init() {
+    let main_rs = include_str!("main.rs");
+    let data_root_pos = main_rs
+        .find("cross_book::default_data_dir_from_env()")
+        .expect("main 应注入跨账本注册表数据根");
+    let logging_pos = main_rs
+        .find("logging::init()")
+        .expect("main 应接线日志初始化（stderr + 日滚文件双输出）");
+    assert!(
+        data_root_pos < logging_pos,
+        "数据根注入必须先于日志初始化（文件日志目录解析消费数据根槽位）"
+    );
 }

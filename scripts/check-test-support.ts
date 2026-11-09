@@ -54,7 +54,7 @@
 // 明文模式下恰好相等而掩盖）。
 // 「引用了通道面」的判定：同文件出现 `ChannelManifest` / `SegmentEntry` /
 // `EnvelopeMode` / `publish_raw_segment` 任一标识。此作用域限定是为了不误伤
-// 与通道无关的摘要用法（如 `src/bin/ledger-perf/tests.rs` 的生成器确定性 DB
+// 与通道无关的摘要用法（如 `crates/nsh/src/bin/ledger-perf/tests.rs` 的生成器确定性 DB
 // 摘要——它自带 sha2 但是另一件事）。
 //
 // tests/e2e 已登记例外（#764 裁决，登记处 = ADR-0086 修订注记）：e2e 侧无法
