@@ -12316,6 +12316,132 @@ fn find_first_auto_product(dir: &Path) -> Option<std::path::PathBuf> {
     })
 }
 
+/// 自动备份写触发全旅程（issue #2087 接线断言；backup 域既有语义零新口径）：
+/// 预置手动受管产物挡住首次兜底（受管列表非空 → ListNotEmpty 跳过——首兜底
+/// 不发生、不清日界锚，本日的自动备份机会留给写触发）→ 应用启动（装载期
+/// 目录镜像就位、调度挂载）→ 用户写路径（行菜单删除交易，壳写函数族经统一
+/// 写入口）→ 连接层写入口提交点钩子（置脏 + 写时顺带到期检查，ADR-0032）
+/// → 自动备份产物落盘 + 设置卡「上次自动备份」从「从未」刷新为时刻回显。
+/// 列表重读（「共 1 条」）随行钉住既有信号链不回退。
+///
+/// 「删除即红」（ADR-0087 接线，断言对准用户可观察结果 = 产物在盘）：壳写
+/// 函数族改回直锁（不经 shell_support::write_entry_locked / 连接层写入口）
+/// 或删备份域提交点接线（wiring::install_after_commit_hook）任一环 → 写后
+/// 不置脏、写时到期检查不发生 → 产物不出、状态不刷新 → 本测红。
+#[test]
+fn auto_backup_triggers_after_shell_write_and_card_refreshes() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("auto-backup-write-trigger");
+    let backup_dir =
+        std::env::temp_dir().join(format!("ledger-test-nsh-auto-backup-write-{}", new_uuid()));
+    fs::create_dir_all(&backup_dir).unwrap();
+
+    // 种子两笔（域直调造数，不经壳写入口——造数段不触发备份的对照语义）+
+    // 手动受管产物一枚（合法受管命名）：首兜底受管列表非空跳过、不清日界锚。
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let account = seed_cash_account(&db);
+        seed_transaction(
+            &db,
+            TxnSeed {
+                account: &account,
+                to_account: None,
+                kind: TransactionKind::Expense,
+                amount_cents: 2_500,
+                date: &test_date(0),
+                category_id: None,
+                merchant_id: None,
+                note: Some("要删除的一笔".to_owned()),
+            },
+        );
+        seed_transaction(
+            &db,
+            TxnSeed {
+                account: &account,
+                to_account: None,
+                kind: TransactionKind::Expense,
+                amount_cents: 1_800,
+                date: &test_date(1),
+                category_id: None,
+                merchant_id: None,
+                note: Some("要留下的一笔".to_owned()),
+            },
+        );
+        nsh_app::boot::create_backup(
+            &db,
+            &backup_dir.join("ledger-backup-20200101-000000.db.zip"),
+            "test",
+        )
+        .expect("预置手动受管产物（挡首次兜底，不清日界锚）");
+    }
+    assert!(
+        find_first_auto_product(&backup_dir).is_none(),
+        "预置段不得产生自动产物"
+    );
+
+    let storage = storage_shard(&[(
+        "backup_dir",
+        format!("{:?}", backup_dir.to_string_lossy()).as_str(),
+    )]);
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config_with_storage_shard(storage)).unwrap();
+    open_transactions(&mut app);
+    app.settle();
+    // 首兜底被受管列表挡住：启动期零自动产物（本日的备份机会留给写触发）。
+    assert!(
+        find_first_auto_product(&backup_dir).is_none(),
+        "首次兜底应被预置受管产物挡住（启动期零自动产物），实际目录：{:?}",
+        fs::read_dir(&backup_dir)
+            .map(|entries| entries.flatten().map(|e| e.path()).collect::<Vec<_>>())
+            .unwrap_or_default()
+    );
+
+    // 用户写路径：行右键 → 删除 → 确认（壳写函数族经统一写入口 → 提交点
+    // 置脏 + 写时顺带到期检查 → BackupNow）。
+    app.right_click("text:2026-01-01").unwrap();
+    app.choose_menu_item("删除").unwrap();
+    app.wait_for("text:删除交易").unwrap();
+    app.press("id:danger-confirm").unwrap();
+    app.wait_for("text:共 1 条").unwrap();
+
+    // 写触发的自动备份产物落盘（用户可观察结果；受管自动命名沿用域规则）。
+    let deadline = std::time::Instant::now() + DEFAULT_WAIT;
+    let product = loop {
+        if let Some(found) = find_first_auto_product(&backup_dir) {
+            break found;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "用户写交易后应触发自动备份（产物落盘），实际目录内容：{:?}",
+            fs::read_dir(&backup_dir)
+                .map(|entries| entries.flatten().map(|e| e.path()).collect::<Vec<_>>())
+                .unwrap_or_default()
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    let name = product
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap()
+        .to_owned();
+    assert!(
+        name.starts_with("ledger-auto-") && name.ends_with(".db.zip"),
+        "产物为受管自动命名：{name}"
+    );
+    assert!(
+        fs::metadata(&product).unwrap().len() > 0,
+        "产物非空：{}",
+        product.display()
+    );
+
+    // 设置卡自动备份状态刷新（深路径发射 → pending 桥 → 泵广播 → 卡片重读）。
+    open_data_tab(&mut app);
+    app.wait_for("id:data-auto-last").unwrap();
+    app.wait_for_gone("text:上次自动备份：从未", DEFAULT_WAIT)
+        .unwrap();
+}
+
 /// 加密开启流守卫（error 级无后门确认 + ≥8 位 / 一致守卫）：短口令即时红
 /// 显 + 提交禁用；不一致红显；同向可用 → error 级确认弹窗（无后门后果说
 /// 明在屏）→ 取消零写（密码文件为明文）→ 再进确认 → 整库转换成功（文件

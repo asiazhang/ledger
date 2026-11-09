@@ -23,6 +23,13 @@
 //! 界面文案仅 zh-CN（spec #2015 实施决策：i18n 框架级方案不在立桩票）；码化
 //! 错误的中文原样显示（NSH 壳无错误模板同步面——旧壳错误模板服务旧前端，本壳
 //! 消息随码走，i18n 方案票再收敛）。
+//!
+//! 写路径收口（issue #2087）：写函数族（交易 / 预算 / 账户 / 物品 / 商户 /
+//! 计划 / 储蓄目标 / 保单 / 保司 / 实物资产 / 投资手动写）一律经
+//! [`crate::shell_support::write_entry_locked`]（壳层统一写入口直锁形态）——
+//! 连接层写入口提交点钩子（备份域置脏 + 写时顺带到期检查，ADR-0032）由此
+//! 结构性生效；豁免与旧壳同口径（设置 KV 写、备份快照、恢复路径、同步编排
+//! 段接缝不经写入口）。
 
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
@@ -36,6 +43,7 @@ use ledger_infra::error::{AppError, Result};
 use ledger_transaction::{TransactionListResult, TransactionSearchResult};
 
 use crate::assembly::PAGE_SIZE;
+use crate::shell_support::write_entry_locked;
 use crate::{logging, wiring};
 
 /// 密文库不支持（立桩范围外）的稳定错误码。
@@ -258,11 +266,11 @@ pub fn transaction_search(
 /// 删除交易（域公开写入口直调，issue #2022 写路径立桩靶标；不经 IPC）：
 /// 经核心交易域行为层删除编排入口 [`ledger_transaction::delete`]——软删编排
 /// （持仓副作用回退 + 级联 + 主行软删）同处一个事务，余额重算由已接线的余额
-/// 刷新接缝（[`crate::wiring`]）在既有事务内执行。写连接是成对建连的写侧。
+/// 刷新接缝（[`crate::wiring`]）在既有事务内执行。写经壳层统一写入口直锁
+/// 形态（[`crate::shell_support::write_entry_locked`]，提交点置脏，#2087）。
 /// 不存在的 id 返回码化 NotFound（并发已删的呈现面归视图层）。
 pub fn delete_transaction(db: &DbState, id: &str) -> Result<()> {
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    ledger_transaction::delete(&conn, id)
+    write_entry_locked(db, |conn| ledger_transaction::delete(conn, id))
 }
 
 // ---------------------------------------------------------------------------
@@ -302,29 +310,30 @@ pub fn item_cost(
 /// 卫（创建必带购买交易指针）/ 带出 / 折算 / op 产出在域内单正文。写连接是
 /// 成对建连的写侧。
 pub fn create_item(db: &DbState, input: ledger_item::ItemInput) -> Result<String> {
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    ledger_item::create_item(&conn, input, &mut || {})
+    write_entry_locked(db, |conn| ledger_item::create_item(conn, input, &mut || {}))
 }
 
 /// 按 id 修改物品（域公开写入口直调，旧壳 `update_item` 命令同一执行协议）：
-/// 换关带出 / 不可达状态守卫在域内。写连接是成对建连的写侧。
+/// 换关带出 / 不可达状态守卫在域内。写连接是成对建连的写侧，写经统一写入口
+/// 直锁形态（提交点置脏，issue #2087）。
 pub fn update_item(db: &DbState, id: &str, input: ledger_item::ItemInput) -> Result<()> {
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    ledger_item::update_item(&conn, id, input, &mut || {})
+    write_entry_locked(db, |conn| {
+        ledger_item::update_item(conn, id, input, &mut || {})
+    })
 }
 
 /// 处置物品（域公开写入口直调，旧壳 `dispose_item` 命令同一执行协议）：日期
 /// / 残值守卫在域内；已处置再次处置 = 修正处置信息。写连接是成对建连的写侧。
 pub fn dispose_item(db: &DbState, id: &str, input: ledger_item::ItemDisposeInput) -> Result<()> {
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    ledger_item::dispose_item(&conn, id, input, &mut || {})
+    write_entry_locked(db, |conn| {
+        ledger_item::dispose_item(conn, id, input, &mut || {})
+    })
 }
 
 /// 软删物品（域公开写入口直调，旧壳 `delete_item` 命令同一执行协议）。写连
 /// 接是成对建连的写侧。
 pub fn delete_item(db: &DbState, id: &str) -> Result<()> {
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    ledger_item::delete_item(&conn, id, &mut || {})
+    write_entry_locked(db, |conn| ledger_item::delete_item(conn, id, &mut || {}))
 }
 
 /// 关联购买交易候选（旧壳 ItemsView onMounted `listTransactions({ kinds:
@@ -405,27 +414,25 @@ pub fn book_fingerprint(db: &DbState) -> Option<String> {
 /// 创建交易（域公开写入口直调，旧壳 `create_transaction` 命令同一执行协议）：
 /// 创建编排入口 [`ledger_transaction::create`]——守卫 / 折算 / 落库 / op 产出
 /// 在域内单正文（自持事务，中途失败整体回滚），余额重算由已接线的余额刷新
-/// 接缝在既有事务内执行。返回写入证据（id + 是否即建商户）。写连接是成对
-/// 建连的写侧。
+/// 接缝在既有事务内执行。写经壳层统一写入口直锁形态（提交点置脏，#2087）。
+/// 返回写入证据（id + 是否即建商户）。写连接是成对建连的写侧。
 pub fn create_transaction(
     db: &DbState,
     input: ledger_transaction::TransactionInput,
 ) -> Result<ledger_transaction::TransactionWrite> {
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    ledger_transaction::create(&conn, input)
+    write_entry_locked(db, |conn| ledger_transaction::create(conn, input))
 }
 
 /// 按 id 全字段替换交易（域公开写入口直调，旧壳 `update_transaction` 命令
 /// 同一执行协议；与 HTTP `PUT /api/v1/transactions/{id}` 同一行为层权威）：
 /// 修改编排入口 [`ledger_transaction::update`]。返回「是否即建商户」证据。
-/// 不存在的 id 报码化 NotFound。写连接是成对建连的写侧。
+/// 不存在的 id 报码化 NotFound。写经壳层统一写入口直锁形态（#2087）。
 pub fn update_transaction(
     db: &DbState,
     id: &str,
     input: ledger_transaction::TransactionInput,
 ) -> Result<ledger_infra::signals::WriteEvidence> {
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    ledger_transaction::update(&conn, id, input)
+    write_entry_locked(db, |conn| ledger_transaction::update(conn, id, input))
 }
 
 /// 读取未删除保单行集（表单保单下拉的数据源面，#2034）：旧壳保单 store 消费
@@ -515,8 +522,7 @@ pub fn budget_annual_summary(db: &DbState) -> Result<ledger_budget::BudgetAnnual
 /// / 支出分类 / 「分类 + 周期」唯一校验在域内，码化错误原样上抛（呈现面归
 /// 视图层）。写连接是成对建连的写侧；op 随写事务提交/回滚（域编排内单点）。
 pub fn create_budget(db: &DbState, input: &ledger_budget::BudgetInput) -> Result<String> {
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    ledger_budget::crud::create_budget(&conn, input)
+    write_entry_locked(db, |conn| ledger_budget::crud::create_budget(conn, input))
 }
 
 /// 编辑预算金额与周期（域公开写入口直调，旧壳 `update_budget` 命令同一执行
@@ -527,16 +533,16 @@ pub fn update_budget(
     amount_cents: i64,
     period: Option<ledger_budget::BudgetPeriod>,
 ) -> Result<()> {
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    ledger_budget::crud::update_budget(&conn, id, amount_cents, period)
+    write_entry_locked(db, |conn| {
+        ledger_budget::crud::update_budget(conn, id, amount_cents, period)
+    })
 }
 
 /// 删除预算（软删；域公开写入口直调，旧壳 `delete_budget` 命令同一执行协议）。
 /// 不存在的 id 报码化 NotFound（并发已删的呈现面归视图层）。写连接是成对建连
 /// 的写侧。
 pub fn delete_budget(db: &DbState, id: &str) -> Result<()> {
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    ledger_budget::crud::delete_budget(&conn, id)
+    write_entry_locked(db, |conn| ledger_budget::crud::delete_budget(conn, id))
 }
 
 // ---------------------------------------------------------------------------
@@ -775,19 +781,19 @@ pub fn instrument_page(
 }
 
 /// 手动报价（投资页「标的」页签行内「录价」写入的域直调面；旧壳
-/// `record_manual_price` 命令的写路径_segments经统一写入口的本壳等价半边，
-/// 不经 IPC）：一条通道两个落点（现价缓存 upsert + 价格历史周采样幂等覆盖
-/// ——回填旧价只沉淀历史，最新点映像规则在域）。NSH 不重演「实际写过即置
-/// 脏」空写作业（连接层提交点后置动作的宿主是备份域置脏接线，本壳不装线，
-/// [`crate::wiring`]），「是否广播」按写入见证（任一落点实际写入）由壳侧
-/// 裁决（信号映射判定单点在 infra signals；本壳投影到投资族信号通道）。
-/// 写连接是成对建连的写侧。
+/// `record_manual_price` 命令写路径的本壳等价半边，不经 IPC）：一条通道两个
+/// 落点（现价缓存 upsert + 价格历史周采样幂等覆盖——回填旧价只沉淀历史，
+/// 最新点映像规则在域）。写入经统一写入口直锁形态（issue #2087）：实际写入
+/// 的提交点置脏由连接层单点结构性生效（整段形态，无需旧壳分段收尾的空写作
+/// 业）；「是否广播」按写入见证（任一落点实际写入）由壳侧裁决（信号映射判
+/// 定单点在 infra signals；本壳投影到投资族信号通道）。写连接是成对建连的写侧。
 pub fn record_manual_price(
     db: &DbState,
     input: &ledger_investment::ManualPriceInput,
 ) -> Result<ledger_investment::ManualPriceResult> {
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    ledger_investment::record_manual_price(&conn, input)
+    write_entry_locked(db, |conn| {
+        ledger_investment::record_manual_price(conn, input)
+    })
 }
 
 /// 自建标的创建（旧壳 `create_instrument` 命令写路径的本壳等价半边，不经
@@ -799,8 +805,9 @@ pub fn create_instrument(
     db: &DbState,
     input: ledger_investment::InstrumentInput,
 ) -> Result<String> {
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    ledger_investment::create_instrument_manual(&conn, input)
+    write_entry_locked(db, |conn| {
+        ledger_investment::create_instrument_manual(conn, input)
+    })
 }
 
 /// 自建标的删除（旧壳 `delete_instrument` 命令写路径的本壳等价半边，不经
@@ -809,8 +816,7 @@ pub fn create_instrument(
 /// 删除是字典清理不是价格写入——零价格证据（不广播，旧壳 DeleteInstrument
 /// 信号映射 NO_SIGNALS 同判）。
 pub fn delete_instrument(db: &DbState, id: &str) -> Result<()> {
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    ledger_investment::delete_instrument(&conn, id)
+    write_entry_locked(db, |conn| ledger_investment::delete_instrument(conn, id))
 }
 
 /// 添加投资标的·场外基金通道（旧壳 `add_fund_by_code` 命令壳的本壳等价半
@@ -824,9 +830,10 @@ pub async fn add_fund_by_code(
 ) -> Result<ledger_investment::AddFundResult> {
     ledger_investment::validate_fund_code(code)?;
     let quote = ledger_market_sync::fetch_fund_quote_production(code).await?;
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    let mut fetch = |_: &str, _: &str| Ok(quote.clone());
-    ledger_investment::add_fund_by_code_with(&conn, code, &mut fetch)
+    write_entry_locked(db, |conn| {
+        let mut fetch = |_: &str, _: &str| Ok(quote.clone());
+        ledger_investment::add_fund_by_code_with(conn, code, &mut fetch)
+    })
 }
 
 /// 添加投资标的·场内通道（沪/深/港/美股；旧壳 `add_instrument_by_code` 命
@@ -843,8 +850,9 @@ pub async fn add_instrument_by_code(
         async move { ledger_market_sync::fetch_stock_quote_production(route, &code).await }
     };
     let quote = ledger_investment::fetch_stock_quote_for_add(market, code, &mut fetch).await?;
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    ledger_investment::add_stock_instrument_with_quote(&conn, &quote)
+    write_entry_locked(db, |conn| {
+        ledger_investment::add_stock_instrument_with_quote(conn, &quote)
+    })
 }
 
 /// 持仓标的同步编排接缝（#2046；旧壳 `sync_instrument_info` IPC 命令壳的
@@ -855,11 +863,11 @@ pub async fn add_instrument_by_code(
 ///
 /// 收尾裁决（旧壳 write_entry_segmented_async 的本壳等价半边）：跨分段写入
 /// 见证随结果必达（成败同判——失败 ≠ 未写过，中途失败已落库的写入仍生效，
-/// issue #1277）；NSH 不重演旧壳的「实际写过即置脏」空写作业：连接层提交点
-/// 后置动作的宿主是备份域置脏接线，NSH 骨架刻意不装线（[`crate::wiring`]），
-/// 空作业零副作用——「是否广播」直接按见证由壳侧裁决（信号映射判定单点在
-/// infra signals：SyncInstrumentInfo × 实际写过 → PRICES_CHANGED，本壳投影
-/// 到投资族信号通道）。进度不是失效信号（issue #897），只进呈现位。
+/// issue #1277）；分段裸作业不经写入口，旧壳「实际写过即置脏」的空写作业
+/// 收尾本壳不重演（分段面置脏接通属设计裁决，偏差留痕见 #2087 交付报告）
+/// ——「是否广播」直接按见证由壳侧裁决（信号映射判定单点在 infra signals：
+/// SyncInstrumentInfo × 实际写过 → PRICES_CHANGED，本壳投影到投资族信号通
+/// 道）。进度不是失效信号（issue #897），只进呈现位。
 pub async fn sync_instrument_info(
     db: &DbState,
     mut progress: impl FnMut(ledger_market_sync::SyncProgress) + Send,
@@ -944,8 +952,7 @@ pub fn plan_rows(db: &DbState) -> Result<Vec<ledger_scheduled::ScheduledTransact
 /// 编排入口 [`ledger_accounts::create_account`]——落库 + 缓存行 + op 产出在域
 /// 内单正文（自持事务，中途失败整体回滚）。写连接是成对建连的写侧。
 pub fn create_account(db: &DbState, input: ledger_accounts::AccountInput) -> Result<String> {
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    ledger_accounts::create_account(&conn, input)
+    write_entry_locked(db, |conn| ledger_accounts::create_account(conn, input))
 }
 
 /// 按 id 全字段替换账户编辑面（域公开写入口直调，旧壳 `update_account` 命令
@@ -957,11 +964,12 @@ pub fn update_account(
     id: &str,
     input: ledger_accounts::AccountUpdateInput,
 ) -> Result<()> {
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    if input.is_archived == Some(true) {
-        ledger_savings_goal::ensure_account_can_archive(&conn, id)?;
-    }
-    ledger_accounts::update_account(&conn, id, input)
+    write_entry_locked(db, |conn| {
+        if input.is_archived == Some(true) {
+            ledger_savings_goal::ensure_account_can_archive(conn, id)?;
+        }
+        ledger_accounts::update_account(conn, id, input)
+    })
 }
 
 /// 删除账户（软删；域公开写入口直调，旧壳 `delete_account` 命令同一执行协议）：
@@ -969,25 +977,28 @@ pub fn update_account(
 /// 域不反向依赖目标域，ADR-0133 决策 4）：在用目标的专属账户被码化拒绝，普通
 /// 账户照常放行。写连接是成对建连的写侧。
 pub fn delete_account(db: &DbState, id: &str) -> Result<()> {
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    ledger_savings_goal::ensure_account_not_goal_bound(&conn, id)?;
-    ledger_accounts::delete_account(&conn, id)
+    write_entry_locked(db, |conn| {
+        ledger_savings_goal::ensure_account_not_goal_bound(conn, id)?;
+        ledger_accounts::delete_account(conn, id)
+    })
 }
 
 /// 归档账户（幂等；域入口直调，旧壳 `archive_account` 命令同一执行协议）：
 /// 绑定目标的账户被码化拒绝（守卫住目标域，旧壳命令壳同位）。写连接是成对
 /// 建连的写侧。
 pub fn archive_account(db: &DbState, id: &str) -> Result<()> {
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    ledger_savings_goal::ensure_account_can_archive(&conn, id)?;
-    ledger_accounts::set_account_archived(&conn, id, true)
+    write_entry_locked(db, |conn| {
+        ledger_savings_goal::ensure_account_can_archive(conn, id)?;
+        ledger_accounts::set_account_archived(conn, id, true)
+    })
 }
 
 /// 恢复账户（归档的唯一回退动作；域入口直调，旧壳 `unarchive_account` 命令
 /// 同一执行协议）。写连接是成对建连的写侧。
 pub fn unarchive_account(db: &DbState, id: &str) -> Result<()> {
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    ledger_accounts::set_account_archived(&conn, id, false)
+    write_entry_locked(db, |conn| {
+        ledger_accounts::set_account_archived(conn, id, false)
+    })
 }
 
 /// 余额调整（域公开写入口直调，旧壳 `adjust_account_balance` 命令同一执行
@@ -1000,8 +1011,9 @@ pub fn adjust_account_balance(
     id: &str,
     input: &ledger_accounts::AccountBalanceAdjustInput,
 ) -> Result<(String, bool)> {
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    ledger_accounts::adjust_account_balance(&conn, id, input)
+    write_entry_locked(db, |conn| {
+        ledger_accounts::adjust_account_balance(conn, id, input)
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -1050,8 +1062,7 @@ pub fn create_scheduled_plan(
     db: &DbState,
     input: ledger_scheduled::CreateScheduledInput,
 ) -> Result<String> {
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    ledger_scheduled::create_plan(&conn, input)
+    write_entry_locked(db, |conn| ledger_scheduled::create_plan(conn, input))
 }
 
 /// 变更计划状态（域公开写入口直调，旧壳 `updateScheduledTransactionStatus`
@@ -1062,8 +1073,9 @@ pub fn update_scheduled_plan_status(
     id: &str,
     new_status: ledger_scheduled::ScheduledStatus,
 ) -> Result<()> {
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    ledger_scheduled::update_plan_status(&conn, id, new_status)
+    write_entry_locked(db, |conn| {
+        ledger_scheduled::update_plan_status(conn, id, new_status)
+    })
 }
 
 /// 编辑订阅计划的非金额字段（域公开写入口直调，旧壳
@@ -1074,8 +1086,9 @@ pub fn update_scheduled_subscription(
     db: &DbState,
     input: ledger_scheduled::UpdateSubscriptionInput,
 ) -> Result<()> {
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    ledger_scheduled::update_subscription(&conn, input)
+    write_entry_locked(db, |conn| {
+        ledger_scheduled::update_subscription(conn, input)
+    })
 }
 
 /// 执行一条 pending / failed 期次（域公开写入口直调，旧壳
@@ -1083,16 +1096,16 @@ pub fn update_scheduled_subscription(
 /// 落交易行、回填期次、计划完成检查全在域内单正文（事务自持）。返回落地
 /// 交易 id。写连接是成对建连的写侧。
 pub fn execute_scheduled_occurrence(db: &DbState, occurrence_id: &str) -> Result<String> {
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    ledger_scheduled::execute_occurrence(&conn, occurrence_id)
+    write_entry_locked(db, |conn| {
+        ledger_scheduled::execute_occurrence(conn, occurrence_id)
+    })
 }
 
 /// 预生成下一批期次（域公开写入口直调，旧壳 `expandScheduledOccurrences`
 /// 命令同一执行协议）：返回本次新生成的期次 id 列表。写连接是成对建连的
 /// 写侧。
 pub fn expand_scheduled_occurrences(db: &DbState, id: &str) -> Result<Vec<String>> {
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    ledger_scheduled::expand_occurrences(&conn, id)
+    write_entry_locked(db, |conn| ledger_scheduled::expand_occurrences(conn, id))
 }
 
 /// 按名即建商户（域公开按名 find-or-create 直调，旧壳 `createMerchant`
@@ -1101,8 +1114,9 @@ pub fn expand_scheduled_occurrences(db: &DbState, id: &str) -> Result<Vec<String
 ///「输入即建」的自由文本提交路径消费面（旧壳 resolveMerchantRef 的 NSH
 /// 等价路径 收口在装配单点）。写连接是成对建连的写侧。
 pub fn create_merchant_by_name(db: &DbState, name: &str) -> Result<String> {
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    ledger_merchants::create_merchant_by_name(&conn, name)
+    write_entry_locked(db, |conn| {
+        ledger_merchants::create_merchant_by_name(conn, name)
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -1120,8 +1134,7 @@ pub fn create_merchant_by_name(db: &DbState, name: &str) -> Result<String> {
 /// 在用重名被域守卫码化拒绝（`merchant.already-exists`），零落库。返回新商户
 /// id。写连接是成对建连的写侧。
 pub fn create_merchant(db: &DbState, input: ledger_merchants::MerchantInput) -> Result<String> {
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    ledger_merchants::create_merchant(&conn, input)
+    write_entry_locked(db, |conn| ledger_merchants::create_merchant(conn, input))
 }
 
 /// 改名商户（域公开写入口直调，旧壳 `updateMerchant` 命令同一执行协议）：
@@ -1132,16 +1145,16 @@ pub fn update_merchant(
     id: &str,
     input: ledger_merchants::MerchantUpdateInput,
 ) -> Result<()> {
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    ledger_merchants::update_merchant(&conn, id, input)
+    write_entry_locked(db, |conn| {
+        ledger_merchants::update_merchant(conn, id, input)
+    })
 }
 
 /// 软删商户（域公开写入口直调，旧壳 `deleteMerchant` 命令同一执行协议）：
 /// 历史交易引用照常显示（软删商户不可再被新交易选择）；不存在的 id 报码化
 /// NotFound。写连接是成对建连的写侧。
 pub fn delete_merchant(db: &DbState, id: &str) -> Result<()> {
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    ledger_merchants::delete_merchant(&conn, id)
+    write_entry_locked(db, |conn| ledger_merchants::delete_merchant(conn, id))
 }
 
 /// 读取商户关联交易计数（旧壳 `listMerchantTransactionCounts` 命令消费的同一
@@ -1170,8 +1183,9 @@ pub fn create_savings_goal(
     db: &DbState,
     input: &ledger_savings_goal::SavingsGoalInput,
 ) -> Result<String> {
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    ledger_savings_goal::create_savings_goal(&conn, input)
+    write_entry_locked(db, |conn| {
+        ledger_savings_goal::create_savings_goal(conn, input)
+    })
 }
 
 /// 编辑储蓄目标（四字段全量替换，域公开写入口直调，旧壳 update_savings_goal
@@ -1183,30 +1197,34 @@ pub fn update_savings_goal(
     id: &str,
     input: &ledger_savings_goal::SavingsGoalUpdateInput,
 ) -> Result<()> {
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    ledger_savings_goal::update_savings_goal(&conn, id, input)
+    write_entry_locked(db, |conn| {
+        ledger_savings_goal::update_savings_goal(conn, id, input)
+    })
 }
 
 /// 归档储蓄目标（域入口直调，旧壳 archive_savings_goal 命令同一执行协议）：
 /// 退出默认列表，账户 / 流水 / 关联计划原样保留。写连接是成对建连的写侧。
 pub fn archive_savings_goal(db: &DbState, id: &str) -> Result<()> {
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    ledger_savings_goal::archive_savings_goal(&conn, id)
+    write_entry_locked(db, |conn| {
+        ledger_savings_goal::archive_savings_goal(conn, id)
+    })
 }
 
 /// 取消归档储蓄目标（域入口直调，旧壳 unarchive_savings_goal 命令同一执行
 /// 协议）：恢复 active 回默认列表。写连接是成对建连的写侧。
 pub fn unarchive_savings_goal(db: &DbState, id: &str) -> Result<()> {
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    ledger_savings_goal::unarchive_savings_goal(&conn, id)
+    write_entry_locked(db, |conn| {
+        ledger_savings_goal::unarchive_savings_goal(conn, id)
+    })
 }
 
 /// 删除储蓄目标（域公开写入口直调，旧壳 delete_savings_goal 命令同一执行
 /// 协议）：余额非零被域守卫码化拒绝（引导先转出），余额为零时域内同一事务
 /// 目标软删 + 级联软删专属账户（历史流水保留可查）。写连接是成对建连的写侧。
 pub fn delete_savings_goal(db: &DbState, id: &str) -> Result<()> {
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    ledger_savings_goal::delete_savings_goal(&conn, id)
+    write_entry_locked(db, |conn| {
+        ledger_savings_goal::delete_savings_goal(conn, id)
+    })
 }
 
 // 保单视图读写接缝（#2050）：保单清单 / 保单视角统计 / 保司字典（含软删显示
@@ -1231,8 +1249,9 @@ pub fn policy_stats_rows(db: &DbState) -> Result<Vec<ledger_policy::PolicyStats>
 /// 与归一化（保单号 / 险种非空、期间可解析且止日不早于起日、保额币种成对）
 /// 在域内，码化错误原样上抛（呈现面归视图层）。写连接是成对建连的写侧。
 pub fn create_policy(db: &DbState, input: ledger_policy::PolicyInput) -> Result<String> {
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    ledger_policy::create_policy(&conn, input, &mut || {})
+    write_entry_locked(db, |conn| {
+        ledger_policy::create_policy(conn, input, &mut || {})
+    })
 }
 
 /// 按 id 编辑保单静态要素（域公开写入口直调，旧壳 `update_policy` 命令同一
@@ -1240,16 +1259,18 @@ pub fn create_policy(db: &DbState, input: ledger_policy::PolicyInput) -> Result<
 /// 在用校验，软删保司的历史保单仍可编辑其他要素）在域内单点。写连接是成对
 /// 建连的写侧。
 pub fn update_policy(db: &DbState, id: &str, input: ledger_policy::PolicyInput) -> Result<()> {
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    ledger_policy::update_policy(&conn, id, input, &mut || {})
+    write_entry_locked(db, |conn| {
+        ledger_policy::update_policy(conn, id, input, &mut || {})
+    })
 }
 
 /// 软删除保单（域公开写入口直调，旧壳 `delete_policy` 命令同一执行协议）：
 /// `is_deleted=1` 不物理移除，库内行与历史引用保留不置空（ADR-0051 决策 5）。
 /// 写连接是成对建连的写侧。
 pub fn delete_policy(db: &DbState, id: &str) -> Result<()> {
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    ledger_policy::delete_policy(&conn, id, &mut || {})
+    write_entry_locked(db, |conn| {
+        ledger_policy::delete_policy(conn, id, &mut || {})
+    })
 }
 
 /// 保司按名 find-or-create（域公开直调，旧壳 `createInsurer` 命令的重名兜底
@@ -1258,8 +1279,7 @@ pub fn delete_policy(db: &DbState, id: &str) -> Result<()> {
 /// 现读，无 store 缓存竞态面）。保单表单「输入即建」路径消费面。写连接是
 /// 成对建连的写侧。
 pub fn create_insurer_by_name(db: &DbState, name: &str) -> Result<String> {
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    ledger_policy::create_insurer_by_name(&conn, name)
+    write_entry_locked(db, |conn| ledger_policy::create_insurer_by_name(conn, name))
 }
 
 // ---------------------------------------------------------------------------
@@ -1283,8 +1303,7 @@ pub fn insurer_rows(db: &DbState, include_deleted: bool) -> Result<Vec<ledger_po
 /// trim 归一、空名拒绝与在用行同名码化拒绝（`insurer.already-exists`）在
 /// 域内单正文（自持事务）。返回新保司 id。写连接是成对建连的写侧。
 pub fn create_insurer(db: &DbState, input: ledger_policy::InsurerInput) -> Result<String> {
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    ledger_policy::create_insurer(&conn, input)
+    write_entry_locked(db, |conn| ledger_policy::create_insurer(conn, input))
 }
 
 /// 改名保司（域公开写入口直调，旧壳 `update_insurer` 命令同一执行协议）：
@@ -1295,16 +1314,14 @@ pub fn update_insurer(
     id: &str,
     input: ledger_policy::InsurerUpdateInput,
 ) -> Result<()> {
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    ledger_policy::update_insurer(&conn, id, input)
+    write_entry_locked(db, |conn| ledger_policy::update_insurer(conn, id, input))
 }
 
 /// 软删除保司（域公开写入口直调，旧壳 `delete_insurer` 命令同一执行协议）：
 /// 软删不占名字、存量保单引用照常显示（软删不可再被新选择由消费方校验）。
 /// 不存在的 id → 码化 NotFound。写连接是成对建连的写侧。
 pub fn delete_insurer(db: &DbState, id: &str) -> Result<()> {
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    ledger_policy::delete_insurer(&conn, id)
+    write_entry_locked(db, |conn| ledger_policy::delete_insurer(conn, id))
 }
 
 // ---------------------------------------------------------------------------
@@ -1338,8 +1355,9 @@ pub fn create_physical_asset(
     db: &DbState,
     input: ledger_physical_asset::PhysicalAssetInput,
 ) -> Result<String> {
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    ledger_physical_asset::create_physical_asset(&conn, input, &mut || {})
+    write_entry_locked(db, |conn| {
+        ledger_physical_asset::create_physical_asset(conn, input, &mut || {})
+    })
 }
 
 /// 编辑实物资产档案（域公开写入口直调，旧壳 `updatePhysicalAsset` 命令同
@@ -1350,8 +1368,9 @@ pub fn update_physical_asset(
     id: &str,
     input: ledger_physical_asset::PhysicalAssetUpdateInput,
 ) -> Result<()> {
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    ledger_physical_asset::update_physical_asset(&conn, id, input, &mut || {})
+    write_entry_locked(db, |conn| {
+        ledger_physical_asset::update_physical_asset(conn, id, input, &mut || {})
+    })
 }
 
 /// 追加估值历史行（域公开写入口直调，旧壳 `updatePhysicalAssetValuation`
@@ -1361,8 +1380,9 @@ pub fn update_physical_asset_valuation(
     id: &str,
     input: ledger_physical_asset::PhysicalAssetValuationInput,
 ) -> Result<()> {
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    ledger_physical_asset::update_physical_asset_valuation(&conn, id, input, &mut || {})
+    write_entry_locked(db, |conn| {
+        ledger_physical_asset::update_physical_asset_valuation(conn, id, input, &mut || {})
+    })
 }
 
 /// 处置实物资产（域公开写入口直调，旧壳 `disposePhysicalAsset` 命令同一
@@ -1373,15 +1393,17 @@ pub fn dispose_physical_asset(
     id: &str,
     input: ledger_physical_asset::PhysicalAssetDisposeInput,
 ) -> Result<()> {
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    ledger_physical_asset::dispose_physical_asset(&conn, id, input, &mut || {})
+    write_entry_locked(db, |conn| {
+        ledger_physical_asset::dispose_physical_asset(conn, id, input, &mut || {})
+    })
 }
 
 /// 软删除实物资产（域公开写入口直调，旧壳 `deletePhysicalAsset` 命令同一
 /// 执行协议）：`is_deleted=1` 保留库行与估值历史，不进清单与合计。
 pub fn delete_physical_asset(db: &DbState, id: &str) -> Result<()> {
-    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-    ledger_physical_asset::delete_physical_asset(&conn, id, &mut || {})
+    write_entry_locked(db, |conn| {
+        ledger_physical_asset::delete_physical_asset(conn, id, &mut || {})
+    })
 }
 
 // ---------------------------------------------------------------------------

@@ -940,6 +940,91 @@ fn delete_transaction_writes_via_domain_entry_and_reports_coded_not_found() {
     );
 }
 
+/// 壳写路径置脏接线（issue #2087）：壳写函数族经壳层统一写入口直锁形态
+/// （[`crate::shell_support::write_entry_locked`] → 连接层 [`ledger_infra::db::write_locked`]
+/// 已持锁形态）执行，备份域提交点钩子（置脏 + 写时顺带到期检查，ADR-0032）
+/// 结构性生效。对照组钉住判定面：同闭包形状的域直调（不经写入口）不置脏——
+/// 置脏宿主是写入口单点，不是任意写。删除写入口收拢（boot 写函数改回直锁）
+/// 或删备份域接线（[`crate::wiring`] 的 `install_after_commit_hook`）任一环
+/// → 脏标记不翻转 → 本测红（ADR-0087 接线断言）。余额刷新回归断言随行：
+/// 写入 / 删除后 V017 缓存行跟随（写路径接缝行为不因收拢回退）。
+#[test]
+fn shell_transaction_writes_reach_after_commit_dirty_marker() {
+    use crate::boot::{account_balance_rows, create_transaction, transaction_page};
+    use ledger_infra::error::AppError;
+
+    let _guard = serial_guard();
+    let dir = scratch_book_dir("write-entry-dirty");
+    create_empty_book_file(&dir);
+    let db = boot_ledger(&dir).unwrap();
+    // 测试隔离：目录镜像置空——写时顺带到期检查因目录未配置静默跳过（不清
+    // 脏），本测只钉置脏面；lib 测试进程内镜像本就未配置，显式置空防泄漏。
+    ledger_backup::shared_prefs().set_dir(None);
+    let account = seed_cash_account(&db);
+    let dirty = |db: &ledger_infra::db::DbState| {
+        let conn = db
+            .read_conn
+            .lock()
+            .map_err(|e| AppError::Db(e.to_string()))
+            .unwrap();
+        ledger_backup::get_state(&conn).unwrap().dirty
+    };
+
+    // 对照组：域直调（同闭包形状，不经壳写入口）——不置脏。
+    {
+        let conn = db
+            .conn
+            .lock()
+            .map_err(|e| AppError::Db(e.to_string()))
+            .unwrap();
+        ledger_transaction::create(
+            &conn,
+            expense_input(&account, &test_date(0), 100, "域直调对照"),
+        )
+        .unwrap();
+    }
+    assert!(!dirty(&db), "域直调（不经写入口）不应置脏");
+
+    // 壳写入口：create → 提交点置脏翻转。
+    create_transaction(&db, expense_input(&account, &test_date(1), 200, "壳写入口"))
+        .expect("壳写路径创建成功");
+    assert!(dirty(&db), "壳写路径应经写入口提交点置脏（备份域钩子生效）");
+
+    // 删除路径同接线：先显式清脏（消除 create 段遗留标记，删除后置脏才可判
+    // 定），再经壳写入口删除——脏标记重新翻转（清脏后不重翻即删入口脱线）。
+    let id = transaction_page(&db, 1, &crate::boot::TxListQuery::default())
+        .unwrap()
+        .items
+        .into_iter()
+        .find(|tx| tx.note.as_deref() == Some("壳写入口"))
+        .expect("行集含壳写入口一笔")
+        .id;
+    {
+        let conn = db
+            .conn
+            .lock()
+            .map_err(|e| AppError::Db(e.to_string()))
+            .unwrap();
+        ledger_infra::settings::set(
+            &conn,
+            ledger_infra::settings::SettingKey::AutoBackupDirty,
+            &false,
+        )
+        .unwrap();
+    }
+    assert!(!dirty(&db), "前置清脏应生效");
+    crate::boot::delete_transaction(&db, &id).expect("壳写路径删除成功");
+    assert!(dirty(&db), "删除路径同经写入口提交点置脏");
+
+    // 余额刷新回归：V017 缓存行 = 0 − 100（直调）+ 200（壳写）− 200（壳删）。
+    let rows = account_balance_rows(&db).unwrap();
+    assert_eq!(rows.len(), 1, "单账户行集");
+    assert_eq!(
+        rows[0].balance_cents, -100,
+        "余额刷新接缝不因写入口收拢回退"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // 预算读写接缝（#2033）：读路径（进度 / 年度汇总）与写路径（创建 / 编辑 /
 // 删除）直调 `ledger-budget` 域入口，不经 IPC——删除任一环本组用例即红

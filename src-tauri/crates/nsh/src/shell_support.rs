@@ -9,10 +9,12 @@
 //!
 //! 只迁 **api_server 消费的形态**：整段写入口 [`write_entry`]（事务、提交点置
 //! 脏、信号内化单点，ADR-0073）+ [`Outcome`] 证据包装（ADR-0073 决策 2）+ 整段
-//! 读入口 [`read_entry`]（ADR-0104）。旧壳的分段形态（`write_entry_segmented(_async)`
-//! / `SegmentLock`，同步轮次长任务编排专用）在本壳无消费面——本壳同步编排的
-//! 收尾裁决已有自己的等价半边（[`crate::boot::sync_instrument_info`]，
-//! `FacadeWriteSession`），不引入第二份分段机制。
+//! 读入口 [`read_entry`]（ADR-0104）+ 直锁形态写入口 [`write_entry_locked`]
+//! （issue #2087：boot 写函数族的收拢面）。旧壳的分段形态
+//! （`write_entry_segmented(_async)` / `SegmentLock`，同步轮次长任务编排专用）
+//! 在本壳无消费面——本壳同步编排的收尾裁决已有自己的等价半边
+//! （[`crate::boot::sync_instrument_info`]，`FacadeWriteSession`），不引入第二
+//! 份分段机制。
 //!
 //! 语义锚（与旧壳逐字节一致，详见旧壳 `shell_support/write_entry.rs` 模块文档）：
 //! - **发射时序**：事务提交成功后发射（写失败早退不发）；发射走
@@ -31,8 +33,8 @@
 
 use rusqlite::Connection;
 
-use ledger_infra::db::{DbReadHandle, DbWriteHandle};
-use ledger_infra::error::Result;
+use ledger_infra::db::{DbReadHandle, DbState, DbWriteHandle};
+use ledger_infra::error::{AppError, Result};
 use ledger_infra::events::SignalEmitter;
 use ledger_infra::signals::{WriteEvidence, WriteOp, emit_for};
 
@@ -80,6 +82,31 @@ where
         emit_for(emitter, op, evidence);
     }
     Ok(value)
+}
+
+/// 壳层统一写入口 · 直锁形态（issue #2087，本壳视图写路径的收拢面）：取写
+/// 连接槽锁 → 连接层统一写入口的「已持锁」形态（[`ledger_infra::db::write_locked`]：
+/// 执行闭包 → 闭包成功且已回到提交点 → 单点执行置脏 + 写时顺带到期检查，
+/// ADR-0032）。本壳 boot 写函数族（交易 / 预算 / 账户 / 物品 / 商户 / 计划 /
+/// 储蓄目标 / 保单 / 保司 / 实物资产 / 投资手动写）一律经本函数收拢：直锁
+/// 作业不经门面写线程（ADR-0125 决策 8 直锁半边的既有形态，#2077 对账结论），
+/// 但提交点后置动作必须经连接层单点生效——备份域置脏接线（[`crate::wiring`]）
+/// 挂在写入口上，绕开写入口 = 置脏结构性不生效（#2078 偏差①的本票修正）。
+///
+/// 与整段形态 [`write_entry`] 的分工：本形态零信号内化（「发不发」由视图层
+/// 按域函数返回的证据自行广播 [`crate::signals`]，NSH 既有契约），闭包在调用
+/// 线程执行（不迁移门面写线程）；事务边界、提交点置脏与写时到期检查与整段
+/// 形态同源（同一 [`ledger_infra::db::write_locked`] 单点，旧壳写命令经门面
+/// 写作业到达的同一实现）。锁中毒归一化与既有取锁守卫同口径（`AppError::Db`）。
+/// 豁免清单与旧壳同口径：设置 KV 写（日志档位 /
+/// 自动备份开关 / 同步通道配置，ADR-0032 豁免随接缝自带）、备份快照
+/// （VACUUM INTO 只读作业）与恢复路径不经本形态。
+pub fn write_entry_locked<T, F>(db: &DbState, f: F) -> Result<T>
+where
+    F: FnOnce(&Connection) -> Result<T>,
+{
+    let conn = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    ledger_infra::db::write_locked(&conn, f)
 }
 
 /// 壳层统一读入口（ADR-0104 决策 2，旧壳同款）：把读闭包交给门面读句柄，在
