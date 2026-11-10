@@ -12712,6 +12712,121 @@ fn books_summary_entry_opens_cross_book_summary() {
 }
 
 // ---------------------------------------------------------------------------
+// 启动账本目录解析链（ADR-0146 决策 1 / spec #2090 T1，issue #2091）：无参
+// 启动（发布形态 .desktop 直跑，点图标即可用）按「argv 显式 > 账本注册表
+// 活动指针 > 默认数据目录」解析。现场矩阵（数据根经既有环境隔离夹具注入，
+// 账本目录槽位保持缺省 = 无 argv 现场）：A=已配置+活动本有库直开；B=未配置
+// +默认目录有库直开（升级无感）；D=注册表损坏回退默认目录，回退告示可见且
+// 不阻断打开；「未配置且无库」保持既有缺参用法提示（首启引导随 T2，本票不
+// 提前做界面）。argv 显式行为原样（既有启动用例全绿即契约）。删缺参分支的
+// 解析链接线（恢复缺参无条件 MissingArg）→ 现场 A/B 与活动本缺库 fail loud
+// 用例红（「删除即变红」负向条目，ADR-0087：断言对准屏幕可见结果）。
+// ---------------------------------------------------------------------------
+
+/// 现场 A（已配置 + 活动本有库）：无参启动直开注册表活动本——主界面呈现，
+/// 活动本内的种子交易可见，缺参用法提示退场。删解析链接线 → 用法提示常驻、
+/// 主界面不落位 → 红。
+#[test]
+fn startup_without_book_dir_opens_registry_active_book() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let root = make_data_root("shaft-registry");
+    let active = make_book("shaft-active");
+    seed_expense_notes(&active, &["解析链活动本"]);
+    seed_registry(&root, &active, &[]);
+    // 关键现场：只注入数据根，不注入 book_dir（发布形态点图标无 argv）。
+    nsh_app::cross_book::set_default_data_dir(root);
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_transactions(&mut app);
+    app.wait_for("text:共 1 条").unwrap();
+    app.wait_for("text:解析链活动本").unwrap();
+    assert!(
+        !app.shows("用法：nsh-app <账本目录>"),
+        "缺参用法提示应退场：{:?}",
+        app.screen().texts()
+    );
+}
+
+/// 现场 B（未配置 + 默认数据目录有库）：无注册表文件（未配置）、默认目录
+/// 已有存量库（旧壳升级现场）→ 无参启动直接打开该库，升级无感。
+#[test]
+fn startup_without_book_dir_opens_unconfigured_default_book() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let root = make_data_root("shaft-default");
+    // 默认数据目录已有存量库（0 字节文件 = 新装语义，产品开库入口建出）。
+    seed::create_empty_book_file(&root);
+    seed_expense_notes(&root, &["默认目录存量库"]);
+    nsh_app::cross_book::set_default_data_dir(root);
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_transactions(&mut app);
+    app.wait_for("text:共 1 条").unwrap();
+    app.wait_for("text:默认目录存量库").unwrap();
+    assert!(
+        !app.shows("用法：nsh-app <账本目录>"),
+        "缺参用法提示应退场：{:?}",
+        app.screen().texts()
+    );
+}
+
+/// 现场 D（注册表损坏）：回退默认数据目录打开库（不阻断），回退告示可见
+///（设置卡回退行同款：标题 + 原因）。删告示呈现接线 → 库照开但告示缺席 → 红。
+#[test]
+fn startup_registry_corrupt_falls_back_to_default_dir_with_notice() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let root = make_data_root("shaft-corrupt");
+    seed::create_empty_book_file(&root);
+    seed_expense_notes(&root, &["回退直开"]);
+    // 注册表损坏现场：非法 JSON。
+    fs::write(
+        root.join(ledger_infra::db::book_registry::REGISTRY_FILE_NAME),
+        "not-json{{",
+    )
+    .unwrap();
+    nsh_app::cross_book::set_default_data_dir(root);
+    let mut app = Headless::start(desktop_config()).unwrap();
+    // 不阻断打开：默认目录的库照常打开（主界面 + 种子交易可见）。
+    open_transactions(&mut app);
+    app.wait_for("text:共 1 条").unwrap();
+    app.wait_for("text:回退直开").unwrap();
+    // 回退告示可见：标题 + 基础设施回退原因（机器写出的注册表损坏走出厂
+    // 逃生舱的原因原文）。
+    app.wait_for("text:已回退到默认位置").unwrap();
+    app.wait_for("text:/数据位置指针文件无法解析/").unwrap();
+}
+
+/// 现场「未配置且无库」（数据根已注入，注册表与库文件皆缺）：既有缺参用法
+/// 提示原样保持（首启引导随 T2 落地，本票不提前做界面）——本用例是保留行为
+/// 的回归钉（改前改后都绿，防解析链接线把缺参提示吞掉）。
+#[test]
+fn startup_unconfigured_without_book_renders_usage_hint() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    nsh_app::cross_book::set_default_data_dir(make_data_root("shaft-empty"));
+    let mut app = Headless::start(desktop_config()).unwrap();
+    app.wait_for("text:未指定账本库目录").unwrap();
+    app.wait_for("text:用法：nsh-app <账本目录>").unwrap();
+}
+
+/// 现场「已配置 + 活动本无库」（注册表落点非默认目录）：book-missing 维持
+/// fail loud 错误态（ADR-0146 决策 4 保留的内核——防假空态；错误态增挂目录
+/// 选择器归 T4，文案重写亦归 T4，本票断言只锚定稳定片段「账本库文件不存在」）。
+#[test]
+fn startup_configured_active_book_missing_fails_loud() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let root = make_data_root("shaft-missing");
+    // 活动本目录不存在且无库文件（登记在册但落点无库）。
+    let active =
+        std::env::temp_dir().join(format!("ledger-test-nsh-book-shaft-miss-{}", new_uuid()));
+    seed_registry(&root, &active, &[]);
+    nsh_app::cross_book::set_default_data_dir(root);
+    let mut app = Headless::start(desktop_config()).unwrap();
+    app.wait_for("text:/启动失败：账本库文件不存在/").unwrap();
+}
+
+// ---------------------------------------------------------------------------
 // 投资视图（#2045）：概览/盈亏两页签（旧壳 InvestmentsView 前两位的迁移）——
 // 页签容器（visited-once keep-mounted + 会话槽）、概览读数（可投资资产 Hero +
 // 构成比例条与图例 + 投资合计三项 + 缺价/无账户说明）、组合走势卡（plot line

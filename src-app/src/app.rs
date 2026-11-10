@@ -27,6 +27,7 @@ use nsh_base::{
     DataTableAlign, DataTableCell, DataTableClasses, DataTableColumn, DataTableContextMenu,
     DataTableRows, PopoverEvent, button, data_table, input, pagination, popover,
 };
+use nsh_core::element::FontWeight;
 use nsh_core::element::desktop::MenuItem;
 use nsh_core::prelude::*;
 
@@ -188,6 +189,9 @@ pub(crate) fn test_assembly_guard() -> MutexGuard<'static, ()> {
 pub fn reset_book_assembly() {
     *book_dir_slot() = None;
     *db_slot() = None;
+    // 引导记录槽同批复位（#2091）：上一场景的回退原因 / 引导目录不得泄入
+    // 下一场景——解析链现场 D 的回退告示读本槽，残留即污染后续场景呈现。
+    boot::reset_boot_record_for_tests();
     signals::reset_for_tests();
     nav::reset_for_tests();
     tx_filter::reset_for_tests();
@@ -241,11 +245,22 @@ pub fn run_startup() -> StartupView {
 pub fn run_startup_with_trigger_timings(
     timings: ledger_sync_engine::TriggerTimings,
 ) -> StartupView {
-    let Some(book_dir) = book_dir_slot().clone() else {
-        return StartupView::MissingArg;
+    // 启动账本目录解析链（ADR-0146 决策 1）：argv 显式 > 账本注册表活动指针
+    // > 默认数据目录。argv 臂行为原样（身份即目录）；缺参臂经数据根消费
+    // 注册表（发布形态 .desktop 直跑无 argv 的产品主路径；`Ok(None)` = 未
+    // 配置且无库，保持既有缺参用法提示——首启引导随 T2 落地）。数据根未
+    // 注入（headless 测试态）同样保持缺参提示。删缺参臂的解析链接线（恢复
+    // 缺参无条件 MissingArg）即 headless 现场 A/B 与活动本缺库 fail loud
+    // 用例红（ADR-0087 接线断言）。
+    let booted = match book_dir_slot().clone() {
+        Some(book_dir) => boot::boot_ledger(&book_dir).map(Some),
+        None => match crate::cross_book::default_data_dir() {
+            Some(data_root) => boot::boot_ledger_via_registry(&data_root),
+            None => Ok(None),
+        },
     };
-    match boot::boot_ledger(&book_dir) {
-        Ok(db) => {
+    match booted {
+        Ok(Some(db)) => {
             // 日志档位接管（旧壳 boot_sequence 启动接线语义保持：RUST_LOG 显
             // 式优先；接管失败仅告警不阻启动——排障档位不是启动位面，锁异常
             // 按读路径容错同口径）。接管在 logging 单点内化，读路径消费面。
@@ -275,6 +290,7 @@ pub fn run_startup_with_trigger_timings(
             crate::market_lanes::start_market_lanes();
             StartupView::Ready
         }
+        Ok(None) => StartupView::MissingArg,
         Err(e) => StartupView::Failed {
             message: e.to_string(),
         },
@@ -2918,13 +2934,21 @@ pub fn App() -> impl IntoElement {
         when(
             move || matches!(state.get(), StartupView::Ready),
             move || {
+                // 引导回退告示（ADR-0146 决策 1 现场 D）：注册表损坏 / 活动
+                // 目录不可用回退默认数据目录时，主界面照常打开，顶部告示条
+                // 显著提示回退原因（boot 记录先于就绪态落槽，呈现时恒已就位；
+                // 无回退零呈现，既有视觉不变）——老壳「失败恢复屏显著提示」
+                // 语义的窗口承载；设置卡回退行（loc-fallback）同源同款式。
+                let fallback = boot::boot_record().and_then(|record| record.fallback_reason);
+                let has_fallback = fallback.is_some();
+                let reason = fallback.unwrap_or_default();
                 // 窗口分级分支（#2057 / ADR-0088 决策 2/4）：≥ 断点桌面档渲染
                 // 既有侧栏布局（宽屏主形态一字不动，迁移系列红线）；< 断点移
                 // 动档渲染导航壳（顶栏 + 导航抽屉——抽屉消费同一份导航状态，
                 // [`crate::nav`] ViewState 语义与存储零改动）。断点判定单点
                 // 住 [`crate::adaptive`]，形态分档只改布局分支、不复位任何
                 // 信号（导航/筛选/分页会话态两侧同源——断点切换平滑、状态不丢）。
-                when(crate::adaptive::is_narrow, move || {
+                let body = when(crate::adaptive::is_narrow, move || {
                     view()
                         .flex_1()
                         .flex_col()
@@ -2938,7 +2962,38 @@ pub fn App() -> impl IntoElement {
                         .flex_row()
                         .child(sidebar::sidebar_view())
                         .child(view_host(nav))
-                })
+                });
+                view()
+                    .flex_1()
+                    .flex_col()
+                    .child(
+                        when(
+                            move || has_fallback,
+                            move || {
+                                view()
+                                    .flex_col()
+                                    .app_class(
+                                        "rounded-md border border-destructive/30 bg-destructive/10 p-2 gap-1",
+                                    )
+                                    .child(
+                                        text(settings::LOCATION_FALLBACK_TITLE)
+                                            .text_size(px(12.0))
+                                            .font_weight(FontWeight::SEMIBOLD)
+                                            .text_color(fg)
+                                            .test_id("boot-fallback-title"),
+                                    )
+                                    .child({
+                                        let reason = reason.clone();
+                                        text(move || reason.clone())
+                                            .text_size(px(12.0))
+                                            .text_color(muted)
+                                            .test_id("boot-fallback")
+                                    })
+                            },
+                        )
+                        .otherwise(view),
+                    )
+                    .child(body)
             },
         )
         .otherwise(move || {

@@ -103,25 +103,65 @@ pub fn reset_boot_record_for_tests() {
     *boot_record_slot() = None;
 }
 
-/// 启动读路径共用的启动会话锚：本壳的「默认数据目录」 = 启动参数账本
-/// 目录（立桩契约的延续：身份即目录，目录即账本世界入口）；#2053 起
-/// [`ledger_infra::db::boot::plan_boot`] 在其上消费账本注册表——
+/// 启动读路径共用的启动会话锚（argv 显式臂）：本臂的「默认数据目录」 =
+/// 启动参数账本目录（立桩契约的延续：身份即目录，目录即账本世界入口）；
+/// #2053 起 [`ledger_infra::db::boot::plan_boot`] 在其上消费账本注册表——
 /// DataLocation 更改意图（搬迁 / 接管）在下次启动（同目录参数）生效，与
-/// 设置卡写出的意图同接缝（旧壳 plan_boot 消费面同形）。
+/// 设置卡写出的意图同接缝（旧壳 plan_boot 消费面同形）。解析链总序
+///（argv 显式 > 注册表活动指针 > 默认数据目录）见 [`boot_ledger_via_registry`]。
+/// 库文件缺失 fail loud（决策 4 保留的内核，防假空态）。
 pub fn boot_ledger(book_dir: &Path) -> Result<DbState> {
     wiring::install_domain_seams();
     let plan = ledger_infra::db::boot::plan_boot(book_dir);
     let db_path = plan.boot.db_dir.join(DB_FILE_NAME);
     if !db_path.is_file() {
-        return Err(AppError::codedp(
-            CODE_BOOK_MISSING,
-            format!(
-                "账本库文件不存在：{}（立桩期请传入已有账本的目录，不新建账本）",
-                db_path.display()
-            ),
-            &[&db_path.to_string_lossy()],
-        ));
+        return Err(book_missing_error(&db_path));
     }
+    boot_ledger_by_plan(plan)
+}
+
+/// 启动解析链缺参入口（ADR-0146 决策 1）：以数据根为注册表根引导——账本
+/// 注册表活动指针 > 默认数据目录（argv 显式臂是 [`boot_ledger`]，优先级
+/// 由调用方在缺参之前分流，不经本函数）。返回 `Ok(None)` = 解析落点即默认
+/// 数据目录且库文件缺失（未配置无库 / 注册表损坏回退后无库——首启引导
+/// 现场，T2 接管；调用方呈现既有缺参用法提示）；注册表已解析活动本缺库
+///（落点非默认目录）不在其列，仍走 book-missing fail loud（决策 4）。
+/// 「argv 打错」与「注册表落点无库」的文案与失败态出口区分归 T4 重写，
+/// 本票两臂同文案。回退原因（[`ledger_infra::db::data_location::Boot`]
+/// 的 `fallback_reason`）随引导记录落槽，呈现面经 [`boot_record`] 消费
+///（现场 D 的回退告示）。
+pub fn boot_ledger_via_registry(default_dir: &Path) -> Result<Option<DbState>> {
+    wiring::install_domain_seams();
+    let plan = ledger_infra::db::boot::plan_boot(default_dir);
+    let db_path = plan.boot.db_dir.join(DB_FILE_NAME);
+    if !db_path.is_file() {
+        if plan.boot.db_dir == default_dir {
+            // 解析落点即默认数据目录且无库：未配置 / 损坏回退后无库——
+            // 首启引导现场（T2 接管），不 fail loud 也不静默新建。
+            return Ok(None);
+        }
+        return Err(book_missing_error(&db_path));
+    }
+    boot_ledger_by_plan(plan).map(Some)
+}
+
+/// 库文件缺失的码化错误（fail loud 单点；argv 打错与注册表落点无库两臂
+/// 共用同码同文案，重写归 T4）。
+fn book_missing_error(db_path: &Path) -> AppError {
+    AppError::codedp(
+        CODE_BOOK_MISSING,
+        format!(
+            "账本库文件不存在：{}（立桩期请传入已有账本的目录，不新建账本）",
+            db_path.display()
+        ),
+        &[&db_path.to_string_lossy()],
+    )
+}
+
+/// 引导计划的处置执行（argv 臂与解析链臂共用）：库文件有效性已由调用方
+/// 预判，此处四态分流——明文直开 / 外来形态先归一化 / 密文与损坏残留码化
+/// 失败；成功时引导记录落槽（设置卡数据位置面的读源，回退告示的呈现源）。
+fn boot_ledger_by_plan(plan: ledger_infra::db::boot::BootPlan) -> Result<DbState> {
     let disposition = plan.disposition.map_err(|e| {
         tracing::error!(error = %e, "入库前处置探测失败");
         e
@@ -132,7 +172,7 @@ pub fn boot_ledger(book_dir: &Path) -> Result<DbState> {
             open_db_in(&plan.boot.db_dir)
         }
         BootDisposition::NormalizePlaintext => {
-            normalize_foreign_plaintext(&db_path)?;
+            normalize_foreign_plaintext(&plan.boot.db_dir.join(DB_FILE_NAME))?;
             *boot_record_slot() = Some(plan.boot.clone());
             open_db_in(&plan.boot.db_dir)
         }
