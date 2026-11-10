@@ -12717,10 +12717,11 @@ fn books_summary_entry_opens_cross_book_summary() {
 // 活动指针 > 默认数据目录」解析。现场矩阵（数据根经既有环境隔离夹具注入，
 // 账本目录槽位保持缺省 = 无 argv 现场）：A=已配置+活动本有库直开；B=未配置
 // +默认目录有库直开（升级无感）；D=注册表损坏回退默认目录，回退告示可见且
-// 不阻断打开；「未配置且无库」保持既有缺参用法提示（首启引导随 T2，本票不
-// 提前做界面）。argv 显式行为原样（既有启动用例全绿即契约）。删缺参分支的
-// 解析链接线（恢复缺参无条件 MissingArg）→ 现场 A/B 与活动本缺库 fail loud
-// 用例红（「删除即变红」负向条目，ADR-0087：断言对准屏幕可见结果）。
+// 不阻断打开；「未配置且无库」呈现首启引导（ADR-0146 决策 2，T2 #2092——
+// T1 期间的缺参用法提示回归钉已由引导呈现钉有意取代）。argv 显式行为原样
+//（既有启动用例全绿即契约）。删缺参分支的解析链接线（恢复缺参无条件
+// MissingArg）→ 现场 A/B 与引导态用例红（「删除即变红」负向条目，ADR-0087：
+// 断言对准屏幕可见结果）。
 // ---------------------------------------------------------------------------
 
 /// 现场 A（已配置 + 活动本有库）：无参启动直开注册表活动本——主界面呈现，
@@ -12796,17 +12797,194 @@ fn startup_registry_corrupt_falls_back_to_default_dir_with_notice() {
     app.wait_for("text:/数据位置指针文件无法解析/").unwrap();
 }
 
-/// 现场「未配置且无库」（数据根已注入，注册表与库文件皆缺）：既有缺参用法
-/// 提示原样保持（首启引导随 T2 落地，本票不提前做界面）——本用例是保留行为
-/// 的回归钉（改前改后都绿，防解析链接线把缺参提示吞掉）。
+/// 现场「未配置且无库」（数据根已注入，注册表与库文件皆缺）：首启引导界面
+/// 呈现（ADR-0146 决策 2，T2 #2092）——欢迎标题与提示在屏、新建动作可用、
+/// 缺参用法提示退场（本用例是 T1 缺参提示回归钉的有意翻转：引导取代死路
+/// 提示）。删引导呈现接线（引导态回退两行死路呈现）→ 新建动作缺席 → 红。
 #[test]
-fn startup_unconfigured_without_book_renders_usage_hint() {
+fn startup_unconfigured_without_book_renders_first_run_onboarding() {
     let _guard = SERIAL.lock().unwrap();
     nsh_app::app::reset_book_assembly();
-    nsh_app::cross_book::set_default_data_dir(make_data_root("shaft-empty"));
+    let root = make_data_root("shaft-onboarding");
+    nsh_app::cross_book::set_default_data_dir(root.clone());
     let mut app = Headless::start(desktop_config()).unwrap();
-    app.wait_for("text:未指定账本库目录").unwrap();
-    app.wait_for("text:用法：nsh-app <账本目录>").unwrap();
+    app.wait_for("text:欢迎使用 Ledger").unwrap();
+    app.wait_for("text:尚未找到账本库，新建一本账即可开始记账。")
+        .unwrap();
+    wait_pressable(&mut app, "id:onboarding-create");
+    assert!(
+        !app.shows("用法：nsh-app <账本目录>"),
+        "缺参用法提示应退场：{:?}",
+        app.screen().texts()
+    );
+    // 引导态不静默建库：确认前默认目录无库文件、无注册表（对旧壳静默新建
+    // 的有意偏离，ADR-0146 理由段）。
+    assert!(!root.join("ledger.db").exists(), "确认前不建库");
+    assert!(
+        !root
+            .join(ledger_infra::db::book_registry::REGISTRY_FILE_NAME)
+            .exists(),
+        "确认前不写注册表"
+    );
+}
+
+/// 新建确认对话明示完整路径（ADR-0146 决策 2 / ADR-0078 分级基准）：按新建
+/// 动作 → 确认对话在屏且将创建的默认数据目录完整路径可见。删确认对话接线
+/// （按压直建或无对话）→ 路径明示缺席 → 红。
+#[test]
+fn onboarding_create_dialog_shows_full_creation_path() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let root = make_data_root("shaft-dialog");
+    nsh_app::cross_book::set_default_data_dir(root.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    wait_pressable(&mut app, "id:onboarding-create");
+    app.press("id:onboarding-create").unwrap();
+    app.wait_for("id:danger-dialog").unwrap();
+    // 完整路径明示（知情内核）：路径原文在对话内可见（路径随警示句同节点，
+    // 按包含断言）。
+    let path_text = root.to_string_lossy().to_string();
+    assert!(
+        app.screen().texts().iter().any(|t| t.contains(&path_text)),
+        "确认对话应明示将创建的完整路径：{:?}",
+        app.screen().texts()
+    );
+    app.wait_for("text:创建账本").unwrap();
+}
+
+/// 确认取消：不建库、不写注册表、留在引导（零副作用；动作可再次触发）。
+#[test]
+fn onboarding_create_cancel_keeps_onboarding_without_provisioning() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let root = make_data_root("shaft-cancel");
+    nsh_app::cross_book::set_default_data_dir(root.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    wait_pressable(&mut app, "id:onboarding-create");
+    app.press("id:onboarding-create").unwrap();
+    app.wait_for("id:danger-confirm").unwrap();
+    app.press("id:danger-cancel").unwrap();
+    app.wait_for_gone("id:danger-dialog", DEFAULT_WAIT).unwrap();
+    // 留在引导：欢迎标题仍在屏。
+    app.wait_for("text:欢迎使用 Ledger").unwrap();
+    // 零副作用：库文件与注册表皆未落盘。
+    assert!(!root.join("ledger.db").exists(), "取消不建库");
+    assert!(
+        !root
+            .join(ledger_infra::db::book_registry::REGISTRY_FILE_NAME)
+            .exists(),
+        "取消不写注册表"
+    );
+    // 动作可再次触发：再按新建 → 对话再次在屏。
+    wait_pressable(&mut app, "id:onboarding-create");
+    app.press("id:onboarding-create").unwrap();
+    app.wait_for("id:danger-dialog").unwrap();
+}
+
+/// 确认后（验收判据 3）：库建于默认数据目录、注册表落盘「默认账本」+
+/// 活动指针、本次启动即进主界面（引导不回归）。删新建核心接线（确认后无
+/// 动作）→ 主界面不落位 / 注册表缺席 → 红；删登记或置指针任一环 → 对应
+/// 文件内容断言红。
+#[test]
+fn onboarding_create_confirm_provisions_default_book_and_enters_main_view() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let root = make_data_root("shaft-confirm");
+    nsh_app::cross_book::set_default_data_dir(root.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    wait_pressable(&mut app, "id:onboarding-create");
+    app.press("id:onboarding-create").unwrap();
+    app.wait_for("id:danger-confirm").unwrap();
+    app.press("id:danger-confirm").unwrap();
+    // 本次启动即进主界面：侧栏就绪、交易页空态（空账本呈现「暂无数据」，
+    // issue #2018 AC1 空态口径），引导退场。
+    app.wait_for("id:nav-transactions").unwrap();
+    open_transactions(&mut app);
+    app.wait_for("text:暂无数据").unwrap();
+    assert!(
+        !app.shows("欢迎使用 Ledger"),
+        "选定进主界面后引导不再回归：{:?}",
+        app.screen().texts()
+    );
+    // 库建于默认数据目录（建连入口自建全新库，迁移随建连链）。
+    assert!(root.join("ledger.db").is_file(), "确认后库建于默认数据目录");
+    // 注册表落盘「默认账本」条目 + 活动指针（即时落盘；读文件验内容）。
+    let registry =
+        fs::read_to_string(root.join(ledger_infra::db::book_registry::REGISTRY_FILE_NAME))
+            .expect("注册表文件应已落盘");
+    assert!(
+        registry.contains("默认账本"),
+        "注册表含默认账本条目：{registry}"
+    );
+    let resolved = match ledger_infra::db::book_registry::read_registry(&root) {
+        ledger_infra::db::book_registry::RegistryRead::Resolved(registry) => registry,
+        other => panic!("注册表应可解析，实际：{other:?}"),
+    };
+    assert_eq!(resolved.books.len(), 1, "首本唯一：默认账本折叠形态");
+    assert_eq!(resolved.books[0].name, "默认账本");
+    assert_eq!(
+        resolved.books[0].dir, root,
+        "首本直落默认数据目录（决策 5）"
+    );
+    assert_eq!(
+        resolved.active_id, resolved.books[0].id,
+        "活动指针指向默认账本"
+    );
+}
+
+/// 二次启动直接打开账本（验收判据 4）：即时落盘的可观察验证——新建确认后
+/// 重启（同数据根、无 argv），不经引导直进主界面。若登记非即时落盘
+///（「意图下次生效」形态）→ 重启后仍在引导 → 红。
+#[test]
+fn onboarding_created_book_opens_directly_on_next_start() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let root = make_data_root("shaft-restart");
+    nsh_app::cross_book::set_default_data_dir(root.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    wait_pressable(&mut app, "id:onboarding-create");
+    app.press("id:onboarding-create").unwrap();
+    app.wait_for("id:danger-confirm").unwrap();
+    app.press("id:danger-confirm").unwrap();
+    app.wait_for("id:nav-transactions").unwrap();
+
+    // 二次启动（「下次启动」等价重置 + 同数据根再启动，账本切换旅程同型）。
+    nsh_app::app::reset_book_assembly();
+    nsh_app::cross_book::set_default_data_dir(root.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    app.wait_for("id:nav-transactions").unwrap();
+    open_transactions(&mut app);
+    app.wait_for("text:暂无数据").unwrap();
+    assert!(
+        !app.shows("欢迎使用 Ledger"),
+        "二次启动不经引导：{:?}",
+        app.screen().texts()
+    );
+}
+
+/// 损坏回退且无库的引导现场带损坏告示（验收判据 5）：回退标题与基础设施
+/// 回退原因在引导界面可见（告示不阻断新建动作在屏）。删告示呈现接线 →
+/// 引导在但告示缺席 → 红。
+#[test]
+fn onboarding_corrupt_fallback_without_book_shows_corruption_notice() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let root = make_data_root("shaft-onboard-corrupt");
+    // 注册表损坏现场（非法 JSON）且默认目录无库：引导态 + 损坏告示。
+    fs::write(
+        root.join(ledger_infra::db::book_registry::REGISTRY_FILE_NAME),
+        "not-json{{",
+    )
+    .unwrap();
+    nsh_app::cross_book::set_default_data_dir(root);
+    let mut app = Headless::start(desktop_config()).unwrap();
+    app.wait_for("text:欢迎使用 Ledger").unwrap();
+    // 损坏告示可见：标题 + 基础设施回退原因原文（与就绪态回退告示同源：
+    // boot_record.fallback_reason；设置卡回退行同款式）。
+    app.wait_for("text:已回退到默认位置").unwrap();
+    app.wait_for("text:/数据位置指针文件无法解析/").unwrap();
+    // 告示不阻断动作：新建按钮仍在屏（知情后可继续完成账本指定）。
+    wait_pressable(&mut app, "id:onboarding-create");
 }
 
 /// 现场「已配置 + 活动本无库」（注册表落点非默认目录）：book-missing 维持

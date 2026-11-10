@@ -124,12 +124,12 @@ pub fn boot_ledger(book_dir: &Path) -> Result<DbState> {
 /// 注册表活动指针 > 默认数据目录（argv 显式臂是 [`boot_ledger`]，优先级
 /// 由调用方在缺参之前分流，不经本函数）。返回 `Ok(None)` = 解析落点即默认
 /// 数据目录且库文件缺失（未配置无库 / 注册表损坏回退后无库——首启引导
-/// 现场，T2 接管；调用方呈现既有缺参用法提示）；注册表已解析活动本缺库
+/// 现场，呈现面据此呈现引导态，ADR-0146 决策 2）；注册表已解析活动本缺库
 ///（落点非默认目录）不在其列，仍走 book-missing fail loud（决策 4）。
 /// 「argv 打错」与「注册表落点无库」的文案与失败态出口区分归 T4 重写，
-/// 本票两臂同文案。回退原因（[`ledger_infra::db::data_location::Boot`]
-/// 的 `fallback_reason`）随引导记录落槽，呈现面经 [`boot_record`] 消费
-///（现场 D 的回退告示）。
+/// 本票两臂同文案。引导现场的引导计划随返回落槽（含回退原因
+/// `fallback_reason`），呈现面经 [`boot_record`] 消费（引导态损坏告示与
+/// 现场 D 的就绪回退告示同源）。
 pub fn boot_ledger_via_registry(default_dir: &Path) -> Result<Option<DbState>> {
     wiring::install_domain_seams();
     let plan = ledger_infra::db::boot::plan_boot(default_dir);
@@ -137,12 +137,44 @@ pub fn boot_ledger_via_registry(default_dir: &Path) -> Result<Option<DbState>> {
     if !db_path.is_file() {
         if plan.boot.db_dir == default_dir {
             // 解析落点即默认数据目录且无库：未配置 / 损坏回退后无库——
-            // 首启引导现场（T2 接管），不 fail loud 也不静默新建。
+            // 首启引导现场（ADR-0146 决策 2），不 fail loud 也不静默新建；
+            // 引导计划落槽（回退原因随槽，呈现面经 boot_record 消费——
+            // 与就绪分支的回退告示同源同款式）。
+            *boot_record_slot() = Some(plan.boot);
             return Ok(None);
         }
         return Err(book_missing_error(&db_path));
     }
     boot_ledger_by_plan(plan).map(Some)
+}
+
+/// 首启新建账本核心（ADR-0146 决策 2/5，spec #2090 T2 #2092）：在指定目录
+/// **建库 + 登记「默认账本」条目 + 置活动指针**（即时落盘），三步全部复用
+/// 既有基础设施入口，不新建造库 / 登记逻辑：
+/// 1. 建库 = [`open_db_in`]（缺文件建连即建全新库，迁移收口在写连接建连
+///    路径内——绕开缺库报错、不绕开迁移）；
+/// 2. 登记 + 活动指针 = `write_registry(single_default(dir))`——首本直落
+///    目录本身（决策 5：与 infra 单本默认语义、词汇表「存量目录折叠为唯一
+///    默认账本」升级路径一致；非 `books/<uuid>` 子目录形态），原子写即
+///    即时落盘，活动指针随 `single_default` 同条目就位。
+///
+/// 注册表损坏现场（引导回退后无库的告示现场）：损坏指针文件被显式确认的
+/// 新建覆盖——告示与确认对话（明示完整路径）已提供知情，且结果与出厂逃生
+/// 舱（「恢复默认位置」折叠语义）同向：默认目录成为唯一默认账本；在册库
+/// 文件不受影响（本函数不触碰任何既有库文件）。
+///
+/// 复用面：首启引导「新建账本」（本票）与后续选择器现场的无库新建腿
+///（ADR-0146 决策 3 ③ / 决策 4 出口）共享本核心。会话开启不在本函数内——
+/// 调用方经各自解析链臂开启（首启确认后重走启动竖井，本次启动即进主
+/// 界面）。
+pub fn create_default_book(dir: &Path) -> Result<()> {
+    wiring::install_domain_seams();
+    std::fs::create_dir_all(dir)?;
+    open_db_in(dir)?;
+    ledger_infra::db::book_registry::write_registry(
+        dir,
+        &ledger_infra::db::book_registry::BookRegistry::single_default(dir),
+    )
 }
 
 /// 库文件缺失的码化错误（fail loud 单点；argv 打错与注册表落点无库两臂

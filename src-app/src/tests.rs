@@ -868,6 +868,62 @@ fn run_startup_without_book_dir_renders_usage() {
     );
 }
 
+/// 首启引导现场（ADR-0146 决策 2，spec #2090 T2 #2092）：数据根已注入、
+/// 注册表未配置且解析落点（默认数据目录）无库 → 启动竖井呈现引导态（非
+/// 缺参态），且**不静默建库**——建库必须经用户确认（对旧壳静默新建的有意
+/// 偏离）。删缺参臂的引导映射（`Ok(None)` 回退 MissingArg）→ 本用例红
+///（「删除即变红」，ADR-0087）。
+#[test]
+fn run_startup_unconfigured_without_book_renders_onboarding() {
+    let _guard = serial_guard();
+    crate::app::reset_book_assembly();
+    let root = scratch_book_dir("onboarding");
+    crate::cross_book::set_default_data_dir(root.clone());
+    let view = run_startup();
+    assert_eq!(
+        view,
+        StartupView::Onboarding {
+            fallback_reason: None
+        },
+        "未配置且无库呈现首启引导态（干净出厂现场无回退原因）"
+    );
+    assert!(
+        !root.join("ledger.db").exists(),
+        "引导态不静默建库（建库须经确认对话）"
+    );
+    assert_eq!(headline_text(&view), "欢迎使用 Ledger");
+    assert_eq!(
+        crate::app::secondary_text(&view),
+        "尚未找到账本库，新建一本账即可开始记账。"
+    );
+}
+
+/// 损坏回退且无库的引导现场（ADR-0146 决策 2）：注册表损坏回退默认目录、
+/// 落点无库 → 引导态携带回退原因（引导界面损坏告示的呈现源；缺参态与干净
+/// 出厂现场均不带）。删引导记录落槽（回退原因不随 `Ok(None)` 落槽）→ 本
+/// 用例红。
+#[test]
+fn run_startup_corrupt_registry_without_book_onboarding_carries_fallback_reason() {
+    let _guard = serial_guard();
+    crate::app::reset_book_assembly();
+    let root = scratch_book_dir("onboarding-corrupt");
+    fs::write(
+        root.join(ledger_infra::db::book_registry::REGISTRY_FILE_NAME),
+        "not-json{{",
+    )
+    .unwrap();
+    crate::cross_book::set_default_data_dir(root);
+    match run_startup() {
+        StartupView::Onboarding {
+            fallback_reason: Some(reason),
+        } => assert!(
+            !reason.is_empty(),
+            "回退原因随引导态携带（告示数据源）：{reason}"
+        ),
+        other => panic!("损坏回退无库应呈现带告示的引导态，实际：{other:?}"),
+    }
+}
+
 /// 会话句柄读取（app 槽位的 crate 内测试出口，随头注可见性）。
 fn nsh_app_session() -> std::sync::Arc<ledger_infra::db::DbState> {
     crate::app::session_handle().expect("就绪时会话句柄已就位")

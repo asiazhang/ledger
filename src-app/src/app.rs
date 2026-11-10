@@ -216,15 +216,19 @@ pub fn reset_book_assembly() {
     backup_host::reset_shell_side_for_tests();
 }
 
-/// 启动结果三态（窗口呈现的全部状态）。
+/// 启动结果闭集（窗口呈现的全部状态）。
 #[derive(Clone, Debug, PartialEq)]
 pub enum StartupView {
-    /// 未指定账本目录（bin 缺参）：呈现用法。
+    /// 未指定账本目录且数据根未注入（headless 测试态）：呈现用法。
     MissingArg,
     /// 引导中（域栈在后台线程打开账本库）。
     Loading,
     /// 就绪：交易表格首屏（读路径直调域服务的立桩靶标，issue #2018）。
     Ready,
+    /// 首启引导（ADR-0146 决策 2）：注册表未配置（含损坏回退）且解析落点
+    ///（默认数据目录）无账本库。`fallback_reason` = 注册表损坏回退原因
+    ///（`Some` 时引导界面带损坏告示；`None` = 未配置的干净出厂现场）。
+    Onboarding { fallback_reason: Option<String> },
     /// 引导失败：码化错误的用户可见文案（zh-CN 原样呈现）。
     Failed { message: String },
 }
@@ -247,11 +251,10 @@ pub fn run_startup_with_trigger_timings(
 ) -> StartupView {
     // 启动账本目录解析链（ADR-0146 决策 1）：argv 显式 > 账本注册表活动指针
     // > 默认数据目录。argv 臂行为原样（身份即目录）；缺参臂经数据根消费
-    // 注册表（发布形态 .desktop 直跑无 argv 的产品主路径；`Ok(None)` = 未
-    // 配置且无库，保持既有缺参用法提示——首启引导随 T2 落地）。数据根未
-    // 注入（headless 测试态）同样保持缺参提示。删缺参臂的解析链接线（恢复
-    // 缺参无条件 MissingArg）即 headless 现场 A/B 与活动本缺库 fail loud
-    // 用例红（ADR-0087 接线断言）。
+    // 注册表（发布形态 .desktop 直跑无 argv 的产品主路径）；`Ok(None)` = 未
+    // 配置（含损坏回退）且无库——首启引导现场（决策 2，T2 #2092）。数据根
+    // 未注入（headless 测试态）保持缺参提示。删缺参臂的解析链接线（恢复缺
+    // 参无条件 MissingArg）即 headless 现场 A/B 与引导态用例红（ADR-0087）。
     let booted = match book_dir_slot().clone() {
         Some(book_dir) => boot::boot_ledger(&book_dir).map(Some),
         None => match crate::cross_book::default_data_dir() {
@@ -290,20 +293,32 @@ pub fn run_startup_with_trigger_timings(
             crate::market_lanes::start_market_lanes();
             StartupView::Ready
         }
-        Ok(None) => StartupView::MissingArg,
+        // 首启引导现场（ADR-0146 决策 2，T2 #2092）：数据根已注入且解析落点
+        //（默认数据目录）无库。回退原因随引导记录落槽（boot_ledger_via_registry），
+        // 呈现面带损坏告示；干净出厂现场无告示。数据根未注入（headless 测试
+        // 态）保持缺参用法提示。删本臂引导映射（回退无条件 MissingArg）→
+        // app_headless 引导态用例全红（「删除即变红」已实证，ADR-0087）。
+        Ok(None) => match crate::cross_book::default_data_dir() {
+            Some(_) => StartupView::Onboarding {
+                fallback_reason: boot::boot_record().and_then(|record| record.fallback_reason),
+            },
+            None => StartupView::MissingArg,
+        },
         Err(e) => StartupView::Failed {
             message: e.to_string(),
         },
     }
 }
 
-/// 启动竖井的呈现文案（缺参 / 引导中 / 失败三态；就绪态不走此路径——表格
-/// 视图承载，见 [`TransactionsView`]）。
+/// 启动竖井的呈现文案（缺参 / 引导中 / 首启引导 / 失败四态；就绪态不走此路
+/// 径——表格视图承载，见 [`TransactionsView`]）。首启引导的标题/提示单源在
+/// 此（引导面板与 lib 文案断言同源）。
 pub fn headline_text(view: &StartupView) -> String {
     match view {
         StartupView::MissingArg => "未指定账本库目录".to_owned(),
         StartupView::Loading => "正在打开账本库…".to_owned(),
         StartupView::Ready => String::new(),
+        StartupView::Onboarding { .. } => ONBOARDING_HEADLINE.to_owned(),
         StartupView::Failed { message } => format!("启动失败：{message}"),
     }
 }
@@ -312,12 +327,29 @@ pub fn headline_text(view: &StartupView) -> String {
 pub fn secondary_text(view: &StartupView) -> String {
     match view {
         StartupView::MissingArg => "用法：nsh-app <账本目录>".to_owned(),
+        StartupView::Onboarding { .. } => ONBOARDING_HINT.to_owned(),
         _ => match book_dir_slot().as_ref() {
             Some(dir) => dir.display().to_string(),
             None => String::new(),
         },
     }
 }
+
+/// 首启引导词表（zh-CN 硬编码；ADR-0146 决策 2，T2 #2092）。「打开已有账
+/// 本」动作位随 T3 补——本票不渲染占位（无动作的死按钮不入屏）。
+pub(crate) const ONBOARDING_HEADLINE: &str = "欢迎使用 Ledger";
+const ONBOARDING_HINT: &str = "尚未找到账本库，新建一本账即可开始记账。";
+const ONBOARDING_CREATE_LABEL: &str = "新建账本";
+
+/// 新建确认对话词表（warning 级，ADR-0078 分级基准：新建非破坏但有知情必
+/// 要——完整路径明示在警示句内）。既有库目录场景（选择器复用）不动既有库。
+const ONBOARDING_CREATE_TITLE: &str = "新建账本";
+const ONBOARDING_CREATE_LEAD: &str = "这是一本新账，创建后立即打开。";
+const ONBOARDING_CREATE_WARNING_PREFIX: &str = "确认后将在以下位置创建全新的账本库：";
+const ONBOARDING_CREATE_DETAIL: &str =
+    "账本库是该目录下的 ledger.db 文件；目录中已有账本库时将直接打开，不会覆盖。";
+const ONBOARDING_CREATE_CONFIRM: &str = "创建账本";
+const ONBOARDING_CREATE_CANCEL: &str = "取消";
 
 /// 总数文案（与旧壳 zh-CN 词表同文案：transactions.list.total）。
 fn total_text(total: i64) -> String {
@@ -2895,6 +2927,75 @@ pub fn App() -> impl IntoElement {
     // 调度轮）。调度线程挂载在启动竖井成功分支（backup_host::start_session_host）。
     backup_host::install_shell_side();
     let state = signal(StartupView::Loading);
+    // 首启引导的新建确认（ADR-0146 决策 2 / ADR-0078 warning 级，T2 #2092）：
+    // 开着 = 待确认新建在场；结局回写关窗先行（settings.rs 二选一确认先例）。
+    // 确认后任务挂根组件 owner（根永生）——状态翻转到就绪时引导子树卸载，
+    // 直呼 spawn 会把创建任务挂到子树 owner 上随卸载被取消（视图装载竞态
+    // 先例：app.rs 视图装载的 Owner::run 注）。路径明示取构建期数据根
+    //（Onboarding 现场数据根恒已注入；槽位先注入者优先，生命周期 = 进程）。
+    let app_owner = Owner::current();
+    let onboarding_dir = crate::cross_book::default_data_dir();
+    let create_open = signal(false);
+    let creating = signal(false);
+    let create_error = signal(Option::<String>::None);
+    let create_dialog = danger::danger_confirm(
+        move || create_open.get(),
+        danger::DangerConfirmSpec {
+            level: danger::DangerLevel::Warning,
+            title: ONBOARDING_CREATE_TITLE.to_owned(),
+            lead: Some(ONBOARDING_CREATE_LEAD.to_owned()),
+            strong_warning: Some(format!(
+                "{ONBOARDING_CREATE_WARNING_PREFIX}{}",
+                onboarding_dir
+                    .as_ref()
+                    .map(|dir| dir.display().to_string())
+                    .unwrap_or_default()
+            )),
+            detail: Some(ONBOARDING_CREATE_DETAIL.to_owned()),
+            confirm_label: ONBOARDING_CREATE_CONFIRM.to_owned(),
+            cancel_label: ONBOARDING_CREATE_CANCEL.to_owned(),
+        },
+        move |outcome| {
+            create_open.set(false);
+            match outcome {
+                // 取消 / ESC：留在引导，零副作用（不建库、不写注册表）。
+                danger::DangerOutcome::Dismissed => {}
+                danger::DangerOutcome::Confirmed => {
+                    let Some(target) = crate::cross_book::default_data_dir() else {
+                        return;
+                    };
+                    if creating.get_untracked() {
+                        return; // 在途防重入：创建中的二次确认不入队
+                    }
+                    creating.set(true);
+                    create_error.set(None);
+                    app_owner.run(move || {
+                        spawn(async move {
+                            // 建库 + 登记 + 置指针（复用面核心，boot::create_default_book）
+                            // 成功后重走启动竖井：解析链打开新账本，日志/备份宿主/
+                            // HTTP 壳/同步触发/行情车道等就绪分支接线一次性完成——
+                            // 本次启动直接进主界面，引导不再回归。
+                            let outcome = blocking(move || {
+                                match boot::create_default_book(&target) {
+                                    Ok(()) => Ok(run_startup()),
+                                    Err(e) => Err(e.to_string()),
+                                }
+                            })
+                            .await
+                            .unwrap_or_else(|_| Err("内部错误：创建账本任务异常退出".to_owned()));
+                            creating.set(false);
+                            match outcome {
+                                Ok(view) => state.set(view),
+                                // 创建失败留在引导（错误随面板呈现，可重试）；
+                                // 建库成功但竖井失败走既有失败态呈现。
+                                Err(message) => create_error.set(Some(message)),
+                            }
+                        });
+                    });
+                }
+            }
+        },
+    );
     // 主行/次行前景取主题令牌（双态自适应，registry 缺省带主题双态令牌）：
     // 裸 text 的默认前景是黑（ResolvedTextStyle::default 的 React Native
     // 惯例），暗色桌面上黑字贴暗底不可见——窗口文字必须显式带色。令牌缺失
@@ -2997,24 +3098,129 @@ pub fn App() -> impl IntoElement {
             },
         )
         .otherwise(move || {
-            view()
-                .flex_1()
-                .items_center()
-                .justify_center()
-                .gap_2()
-                .child(
-                    text(move || headline_text(&state.get()))
-                        .text_size(px(24.0))
-                        .text_color(fg)
-                        .test_id("startup-headline"),
-                )
-                .child(
-                    text(move || secondary_text(&state.get()))
-                        .text_size(px(12.0))
-                        .text_color(muted),
-                )
+            // 首启引导（ADR-0146 决策 2，T2 #2092）：引导态呈现引导面板
+            //（欢迎 + 新建动作；损坏告示与确认对话见下），其余非就绪态
+            //（缺参 / 引导中 / 失败）保持既有两行呈现。文案单点在
+            // headline_text / secondary_text（Onboarding 臂）。
+            when(
+                move || matches!(state.get(), StartupView::Onboarding { .. }),
+                move || {
+                    view()
+                        .flex_1()
+                        .items_center()
+                        .justify_center()
+                        .gap_2()
+                        .test_id("onboarding-panel")
+                        .child(
+                            text(move || headline_text(&state.get()))
+                                .text_size(px(24.0))
+                                .text_color(fg)
+                                .test_id("startup-headline"),
+                        )
+                        .child(
+                            text(move || secondary_text(&state.get()))
+                                .text_size(px(12.0))
+                                .text_color(muted)
+                                .test_id("onboarding-hint"),
+                        )
+                        // 损坏告示（ADR-0146 决策 2）：注册表损坏回退后无库的
+                        // 引导现场，回退原因随引导记录落槽（boot_ledger_via_registry），
+                        // 与就绪态回退告示（现场 D）同源同款式、设置卡回退行同词；
+                        // 干净出厂现场零呈现。告示知情后可继续完成账本指定（新建
+                        // 动作照常可用；确认后 write_registry 覆盖损坏指针文件——
+                        // 与出厂逃生舱折叠语义同向）。
+                        .child({
+                            let fallback = boot::boot_record().and_then(|record| record.fallback_reason);
+                            let has_fallback = fallback.is_some();
+                            let reason = fallback.unwrap_or_default();
+                            when(
+                                move || has_fallback,
+                                move || {
+                                    view()
+                                        .flex_col()
+                                        .app_class(
+                                            "rounded-md border border-destructive/30 bg-destructive/10 p-2 gap-1",
+                                        )
+                                        .child(
+                                            text(settings::LOCATION_FALLBACK_TITLE)
+                                                .text_size(px(12.0))
+                                                .font_weight(FontWeight::SEMIBOLD)
+                                                .text_color(fg)
+                                                .test_id("onboarding-fallback-title"),
+                                        )
+                                        .child({
+                                            let reason = reason.clone();
+                                            text(move || reason.clone())
+                                                .text_size(px(12.0))
+                                                .text_color(muted)
+                                                .test_id("onboarding-fallback")
+                                        })
+                                },
+                            )
+                            .otherwise(view)
+                        })
+                        .child(
+                            // 「新建账本」动作（决策 2 双动作之一；「打开已有账
+                            // 本」动作位随 T3 补，本票不渲染无动作占位）。按 press
+                            // 开确认对话（明示完整路径），确认后建库+登记+置指针
+                            // 并重走启动竖井（接线在 create_dialog 结局处）。
+                            button()
+                                .app_class("px-3 py-1.5 rounded-md bg-primary hover:opacity-90")
+                                .child(
+                                    text(ONBOARDING_CREATE_LABEL)
+                                        .text_size(px(13.0))
+                                        .text_color(rgb(0xffffff))
+                                        .test_id("onboarding-create"),
+                                )
+                                .on_press(move || create_open.set(true)),
+                        )
+                        // 创建失败留在引导（错误可读、动作可重试；成功路径不经此）。
+                        .child(
+                            when(
+                                move || create_error.get().is_some(),
+                                move || {
+                                    text(move || create_error.get().unwrap_or_default())
+                                        .text_size(px(12.0))
+                                        .text_color(
+                                            nsh_core::element::tokens()
+                                                .color("destructive")
+                                                .unwrap_or(AdaptiveColor::new(
+                                                    rgb(0xd03050),
+                                                    rgb(0xe88080),
+                                                )),
+                                        )
+                                        .test_id("onboarding-error")
+                                },
+                            )
+                            .otherwise(view),
+                        )
+                },
+            )
+            .otherwise(move || {
+                view()
+                    .flex_1()
+                    .items_center()
+                    .justify_center()
+                    .gap_2()
+                    .child(
+                        text(move || headline_text(&state.get()))
+                            .text_size(px(24.0))
+                            .text_color(fg)
+                            .test_id("startup-headline"),
+                    )
+                    .child(
+                        text(move || secondary_text(&state.get()))
+                            .text_size(px(12.0))
+                            .text_color(muted),
+                    )
+            })
         }),
     )
+    // 新建确认对话挂在启动容器外层（关窗时零渲染；开时遮罩 inset_0 覆盖全
+    // 窗——危险确认封装：遮罩不关、ESC 可关、开合上报 Overlay Suppression，
+    // 快捷键抑制经封装族单通道接入）。元素非 Copy，不能移入面板 Fn 闭包，
+    // 故挂组件体这一层（OpenDialog 只从引导面板按钮开启）。
+    .child(create_dialog)
 }
 
 #[cfg(test)]
