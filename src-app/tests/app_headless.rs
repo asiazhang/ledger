@@ -14825,6 +14825,86 @@ fn onboarding_pick_corrupt_dir_reports_coded_error() {
     onboarding_pick_bad_book_dir_reports_coded_error(&[0xABu8; 20], "text:/数据库文件无法打开/");
 }
 
+/// F2 分支②：损坏注册表的引导现场（回退告示在屏）选「有库未登记」目录 →
+/// 按未注册容错：登记新条目 + 置活动指针 + 打开（损坏文件被写入覆盖，不再
+/// 停在「请先在数据设置中恢复默认位置」的不可达死路，ADR-0146 决策 3）。
+/// 容错退回查册上抛 → 选择器后错误屏而非主界面 → 红。
+#[test]
+fn onboarding_corrupt_registry_pick_unregistered_book_dir_registers_and_opens() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let root = make_data_root("t3-corrupt-b2");
+    let picked = make_book("t3-corrupt-unregistered");
+    // 注册表损坏现场（非法 JSON）且默认目录无库：引导态 + 损坏告示。
+    fs::write(
+        root.join(ledger_infra::db::book_registry::REGISTRY_FILE_NAME),
+        "not-json{{",
+    )
+    .unwrap();
+    nsh_app::cross_book::set_default_data_dir(root.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    app.wait_for("text:欢迎使用 Ledger").unwrap();
+    app.wait_for("text:已回退到默认位置").unwrap();
+    wait_pressable(&mut app, "id:onboarding-pick-book-dir");
+
+    app.on_pick_paths(vec![picked.clone()]).unwrap();
+    app.press("id:onboarding-pick-book-dir").unwrap();
+    app.wait_for("id:nav-transactions").unwrap();
+    use ledger_infra::db::book_registry::{RegistryRead, read_registry};
+    let RegistryRead::Resolved(registry) = read_registry(&root) else {
+        panic!("登记写入应覆盖损坏文件，注册表可解析")
+    };
+    assert_eq!(
+        registry.active_dir(),
+        Some(picked.as_path()),
+        "选中目录登记为活动本"
+    );
+
+    // 「下次启动」等价：重置再启动（无 argv）→ 直接打开登记的活动本。
+    nsh_app::app::reset_book_assembly();
+    nsh_app::cross_book::set_default_data_dir(root);
+    let mut app = Headless::start(desktop_config()).unwrap();
+    app.wait_for("id:nav-transactions").unwrap();
+}
+
+/// F2 分支③：损坏注册表的引导现场选空目录 → 新建意图确认对话 → 确认后
+/// 建库 + 折叠登记（损坏文件被覆盖，注册表可解析）+ 打开。
+#[test]
+fn onboarding_corrupt_registry_pick_empty_dir_confirms_create_and_opens() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let root = make_data_root("t3-corrupt-b3");
+    let picked = seed::make_book_dir("t3-corrupt-create");
+    fs::write(
+        root.join(ledger_infra::db::book_registry::REGISTRY_FILE_NAME),
+        "not-json{{",
+    )
+    .unwrap();
+    nsh_app::cross_book::set_default_data_dir(root.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    app.wait_for("text:欢迎使用 Ledger").unwrap();
+    wait_pressable(&mut app, "id:onboarding-pick-book-dir");
+
+    app.on_pick_paths(vec![picked.clone()]).unwrap();
+    app.press("id:onboarding-pick-book-dir").unwrap();
+    app.wait_for("text:新建账本").unwrap();
+    app.press("id:danger-confirm").unwrap();
+    app.wait_for("id:nav-transactions").unwrap();
+    assert!(
+        picked.join("ledger.db").is_file(),
+        "确认后建库（建连迁移单点）"
+    );
+    use ledger_infra::db::book_registry::{RegistryRead, read_registry};
+    let RegistryRead::Resolved(registry) = read_registry(&root) else {
+        panic!("登记写入应覆盖损坏文件，注册表可解析")
+    };
+    assert_eq!(
+        registry.active_dir(),
+        Some(picked.as_path()),
+        "登记 + 活动指针即时落盘"
+    );
+}
+
 /// 选择器层取消：留引导界面零写入，动作可再次触发（再次选定即打开）。
 #[test]
 fn onboarding_pick_cancel_keeps_onboarding_and_action_retriggerable() {

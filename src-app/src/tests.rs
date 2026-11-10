@@ -1063,6 +1063,69 @@ fn picked_corrupt_dir_reports_coded_error_without_registry_change() {
     assert_eq!(active_book_of(&root).id, "b1", "注册表零写入");
 }
 
+/// F2（ADR-0146 决策 3，分支②在损坏现场的容错）：注册表损坏时查册按
+/// 「未注册」容错——有库未登记目录 → 登记新条目 + 置活动 + 判开，写覆盖
+/// 损坏文件（与首启新建腿 create_default_book「告示知情后覆盖损坏指针」
+/// 裁决同向：引导回退告示已提供知情）。查册损坏上抛（registry-corrupt
+/// 死路文案指不可达的设置面）→ 本用例红。
+#[test]
+fn picked_dir_at_corrupt_registry_tolerates_as_unregistered_and_opens() {
+    let _guard = serial_guard();
+    let root = scratch_book_dir("t4-corrupt-root");
+    fs::write(
+        root.join(ledger_infra::db::book_registry::REGISTRY_FILE_NAME),
+        "not-json{{",
+    )
+    .unwrap();
+    let picked = scratch_book_dir("t4-corrupt-picked");
+    create_empty_book_file(&picked);
+    assert!(
+        matches!(
+            resolve_picked_book_dir(&root, &picked).unwrap(),
+            PickedBookDisposition::Open
+        ),
+        "损坏现场有库未登记目录：登记 + 判开"
+    );
+    let book = active_book_of(&root);
+    assert_eq!(book.dir, picked, "损坏文件被覆盖：选中目录登记为活动本");
+    assert_eq!(
+        book.name,
+        picked.file_name().unwrap().to_string_lossy().to_string(),
+        "展示名取目录名"
+    );
+}
+
+/// F2（ADR-0146 决策 3，分支③在损坏现场的容错）：损坏根 + 空目录 → 新建
+/// 意图 → 确认后折叠登记（默认目录折叠为「默认账本」条目，同未配置根）+
+/// 建库打开。确认后注册表可解析（损坏文件被覆盖）。
+#[test]
+fn picked_empty_dir_at_corrupt_registry_confirms_create_folds_default_book() {
+    let _guard = serial_guard();
+    let root = scratch_book_dir("t4-corrupt-fold");
+    fs::write(
+        root.join(ledger_infra::db::book_registry::REGISTRY_FILE_NAME),
+        "not-json{{",
+    )
+    .unwrap();
+    // 空目录即损坏根自身（默认数据目录无库，引导回退现场）。
+    assert!(
+        matches!(
+            resolve_picked_book_dir(&root, &root).unwrap(),
+            PickedBookDisposition::ConfirmCreate(ref path) if path == &root,
+        ),
+        "损坏根无库：新建意图"
+    );
+    confirm_create_picked_book(&root, &root).unwrap();
+    assert!(root.join("ledger.db").is_file(), "确认后建库");
+    let folded = active_book_of(&root);
+    assert_eq!(folded.dir, root, "折叠登记指向默认目录");
+    assert_eq!(
+        folded.name,
+        ledger_infra::db::book_registry::DEFAULT_BOOK_NAME,
+        "损坏现场折叠为「默认账本」条目（与出厂逃生舱折叠语义同向）"
+    );
+}
+
 /// 立桩竖井的端到端视图态（装配入口注入 → 引导 → 会话就位 → 首页读）：headless
 /// 组件测试的前置语义在 lib 侧先钉一半（startup 装配与三态文案），窗口呈现
 /// 接线归 `tests/app_headless.rs`。

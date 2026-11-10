@@ -240,13 +240,19 @@ fn boot_ledger_by_plan(plan: ledger_infra::db::boot::BootPlan) -> Result<DbState
 ///
 /// 分流闭集（判定序即闭集序）：
 /// ① 注册表在册（含活动本自身，目录身份物理折叠）→ 切活动指针（已是活动
-///    本幂等零写入）→ [`PickedBookDisposition::Open`]（在册优先于文件处置：
-///    在册目录即使密文/损坏也先切指针，打开步按启动语义呈现对应失败态）；
+///    本幂等零写入）→ [`PickedBookDisposition::Open`]；
 /// ②③ 未在册：无库文件 → [`PickedBookDisposition::ConfirmCreate`]（新建
 ///    意图，调用方呈现确认对话明示完整路径后经 [`confirm_create_picked_book`]
 ///    完成）；有库 → 登记 + 置活动 → `Open`；
 /// ④⑤ 未在册且库文件为密文 / 损坏残留 → 既有码化错误原样上抛，注册表零
 ///    写入，不自动换目录重试。
+///
+/// 损坏注册表按「未注册」容错（ADR-0146 决策 3）：查册失败且原因是损坏
+///（[`ledger_infra::db::book_registry::REGISTRY_CORRUPT`]）→ 视为未在册走
+/// 文件分类路径，登记写入覆盖损坏文件（与首启新建腿「告示知情后覆盖损坏
+/// 指针」裁决同向，[`register_or_switch_book_dir`] 同款容错）——损坏告示
+/// 现场的选择器不再停在「请先在数据设置中恢复默认位置」的不可达死路。
+/// 密文库与损坏**库文件**的分类错误（④⑤）不受影响，原样上抛。
 ///
 /// 返回 `Open` 后的「打开」归调用方（失败态按钮按启动臂重跑启动竖井，引导
 /// 动作按引导现场打开），本函数只保证注册表已就位。
@@ -264,7 +270,14 @@ pub fn resolve_picked_book_dir(
     picked_dir: &Path,
 ) -> Result<PickedBookDisposition> {
     use ledger_infra::db::book_registry::{register_or_switch_book_dir, registered_book_at_dir};
-    if registered_book_at_dir(registry_root, picked_dir)?.is_none() {
+    let registered = match registered_book_at_dir(registry_root, picked_dir) {
+        Ok(found) => found,
+        // 损坏注册表按「未注册」容错（ADR-0146 决策 3，见函数文档）；其他
+        // 查册失败原样上抛。
+        Err(e) if e.is_code(ledger_infra::db::book_registry::REGISTRY_CORRUPT) => None,
+        Err(e) => return Err(e),
+    };
+    if registered.is_none() {
         // 未在册：库文件处置分流（与启动引导同源判定 classify_for_boot，
         // 不另立第二份判定）。
         let db_path = picked_dir.join(DB_FILE_NAME);

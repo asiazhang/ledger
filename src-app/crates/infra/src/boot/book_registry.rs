@@ -58,6 +58,10 @@ pub const REGISTRY_FILE_NAME: &str = "data_location.json";
 /// 新格式注册表的格式版本。读取时携带其它版本的注册表按损坏回退（不猜测语义）。
 pub const REGISTRY_FORMAT_VERSION: u32 = 1;
 
+/// 账本注册表损坏的稳定错误码（变更拒绝与只读查册共用；目录选择现场闭集
+/// 以此码判定「损坏回退」容错，ADR-0146 决策 3）。
+pub const REGISTRY_CORRUPT: &str = "book.registry-corrupt";
+
 /// 旧格式折叠出的唯一默认账本展示名（随首次登记写入落盘；改名命令可改）。
 pub const DEFAULT_BOOK_NAME: &str = "默认账本";
 
@@ -443,7 +447,7 @@ pub fn write_registry(default_dir: &Path, registry: &BookRegistry) -> Result<()>
 /// 引导态预检与文件态读取共用，防同码消息漂移；原因随参数携带）。
 pub(crate) fn registry_corrupt_error(reason: &str) -> crate::error::AppError {
     crate::error::AppError::codedp(
-        "book.registry-corrupt",
+        REGISTRY_CORRUPT,
         format!("账本注册表损坏，已回退默认账本；请先在数据设置中恢复默认位置（{reason}）"),
         &[reason],
     )
@@ -567,8 +571,23 @@ fn find_book_at_dir(registry: &BookRegistry, dir: &Path) -> Option<Book> {
 /// 动指针」、分支②「有库未登记→登记+置活动」与分支③确认新建后的登记共用
 /// 本入口。展示名取目录名（无名的极端目录沿「默认账本」兜底）；只登记不建
 /// 库——库文件由调用方的建连路径建出/打开（[`crate::db::connection::open_db_in`]）。
+///
+/// 损坏注册表按「未注册」容错（区别于命令面 [`read_for_mutation`] 的拒绝
+/// 写入）：目录选择现场的损坏告示（引导回退告示）已提供知情，登记写入覆盖
+/// 损坏文件——与首启新建腿（`write_registry` 直写覆盖）同向：结果与出厂
+/// 逃生舱「恢复默认位置」折叠语义一致（默认目录折叠为唯一默认账本），在册
+/// 库文件不受影响（本函数不触碰任何既有库文件）。折叠态无搬迁意图，意图
+/// 守卫自然放行。
 pub fn register_or_switch_book_dir(default_dir: &Path, dir: &Path) -> Result<Book> {
-    let mut registry = read_for_mutation(default_dir)?;
+    let mut registry = match read_registry(default_dir) {
+        RegistryRead::Resolved(registry) => registry,
+        // 未配置折叠出厂默认账本（首次登记落新格式）；损坏同折叠（写入覆
+        // 盖损坏文件，见函数文档）——目录选择现场闭集专有的容错，命令面
+        // 变更内核不在此列。
+        RegistryRead::Unconfigured | RegistryRead::Corrupt(_) => {
+            BookRegistry::single_default(default_dir)
+        }
+    };
     // 可用性与切换同口径：目录可创建即可用（在册判定与建条目都需要实目录）。
     ensure_dir_available(dir)?;
     if let Some(book) = find_book_at_dir(&registry, dir) {
