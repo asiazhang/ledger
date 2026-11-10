@@ -14644,6 +14644,33 @@ fn startup_picker_corrupt_dir_reports_coded_error_without_picker() {
     );
 }
 
+/// F3（决策 3④ + 决策 4）：选中**在册但**密文的本 → 先分类后切指针：码化
+/// 错误呈现且注册表活动指针未变（旧序先切指针再打开失败会把指针移走，该
+/// 失败态又无选择器出口——应用内不可恢复）。删分类前置（退回在册直切）→
+/// 指针被切走 → 指针断言红。
+#[test]
+fn startup_picker_registered_encrypted_dir_reports_coded_error_pointer_unchanged() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let root = make_data_root("t4-f3-registered-encrypted");
+    let active = seed::make_book_dir("t4-active-missing");
+    let other = make_book("t4-registered-encrypted");
+    // 在册兄弟本 b2 的库文件为密文（页对齐密文形态）。
+    fs::write(other.join("ledger.db"), vec![0u8; 8_192]).unwrap();
+    seed_registry(&root, &active, &[("b2", "备用账本", &other)]);
+    nsh_app::cross_book::set_default_data_dir(root.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    app.wait_for("text:/账本库文件不存在/").unwrap();
+    app.on_pick_paths(vec![other]).unwrap();
+    app.press("id:startup-pick-book-dir").unwrap();
+    app.wait_for("text:/密文库暂不支持/").unwrap();
+    use ledger_infra::db::book_registry::{RegistryRead, read_registry};
+    let RegistryRead::Resolved(registry) = read_registry(&root) else {
+        panic!("注册表应可解析")
+    };
+    assert_eq!(registry.active_id, "b1", "注册表零写入：活动指针未变");
+}
+
 // —— 首启引导「打开已有账本」（ADR-0146 决策 3 / spec #2090 T3）：——
 // —— 引导界面选择器动作 + 现场闭集处置单点（resolve_picked_book_dir）——
 // —— 的窗口呈现旅程。 ——

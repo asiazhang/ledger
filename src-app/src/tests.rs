@@ -926,24 +926,34 @@ fn picked_registered_dir_switches_active_pointer_and_is_idempotent() {
     assert_eq!(active_book_of(&root).id, "b2", "幂等重选不改写指针");
 }
 
-/// 闭集判定序（①在册优先于库文件处置）：在册目录即使密文形态也先切指针，
-/// 不做文件处置分流——打开步按启动语义呈现对应失败态（headless 负向断言）。
+/// F3（ADR-0146 决策 3④⑤ + 决策 4）：选中**在册但**密文/损坏的本 → 先分类
+/// 后切指针：码化错误上抛且注册表零写入（先切指针再打开失败会把指针移走，
+/// 该失败态又无选择器出口——应用内不可恢复）。旧序「在册优先于文件处置」
+/// 钉死用例随语义翻转改造：断言错误呈现 + 注册表内容不变。
 #[test]
-fn picked_registered_dir_takes_precedence_over_file_disposition() {
+fn picked_registered_corrupt_dir_reports_coded_error_without_registry_change() {
     let _guard = serial_guard();
     let root = scratch_book_dir("t4-root");
     let active = scratch_book_dir("t4-active");
     let other = scratch_book_dir("t4-other");
+    // 损坏残留夹具：非魔数且非页对齐（probe 计密文形态、无密文落盘形态 →
+    // Unreadable）。
     fs::write(other.join("ledger.db"), vec![0xABu8; 20]).unwrap();
     seed_two_book_registry(&root, &active, ("b2", &other));
+    let err = resolve_picked_book_dir(&root, &other).unwrap_err();
     assert!(
-        matches!(
-            resolve_picked_book_dir(&root, &other).unwrap(),
-            PickedBookDisposition::Open
-        ),
-        "在册优先：损坏形态不走文件处置分流"
+        err.is_code(ledger_infra::db::boot::BOOT_DB_UNREADABLE),
+        "在册损坏残留报既有损坏码化错误，实际：{err}"
     );
-    assert_eq!(active_book_of(&root).id, "b2");
+    assert_eq!(active_book_of(&root).id, "b1", "注册表零写入：指针未切");
+    // 在册密文本同序：码化错误 + 零写入。
+    fs::write(other.join("ledger.db"), vec![0u8; 8_192]).unwrap();
+    let err = resolve_picked_book_dir(&root, &other).unwrap_err();
+    assert!(
+        err.is_code(CODE_ENCRYPTED_UNSUPPORTED),
+        "在册密文本报既有码化错误，实际：{err}"
+    );
+    assert_eq!(active_book_of(&root).id, "b1", "注册表零写入：指针未切");
 }
 
 /// 现场闭集②（有库未登记）：登记新条目（uuid、展示名取目录名）+ 置活动。

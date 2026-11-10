@@ -244,8 +244,8 @@ fn boot_ledger_by_plan(plan: ledger_infra::db::boot::BootPlan) -> Result<DbState
 /// ②③ 未在册：无库文件 → [`PickedBookDisposition::ConfirmCreate`]（新建
 ///    意图，调用方呈现确认对话明示完整路径后经 [`confirm_create_picked_book`]
 ///    完成）；有库 → 登记 + 置活动 → `Open`；
-/// ④⑤ 未在册且库文件为密文 / 损坏残留 → 既有码化错误原样上抛，注册表零
-///    写入，不自动换目录重试。
+/// ④⑤ 库文件为密文 / 损坏残留 → 既有码化错误原样上抛，注册表零写入，
+///    不自动换目录重试（在册与否同一判定序，F3 先分类后切指针）。
 ///
 /// 损坏注册表按「未注册」容错（ADR-0146 决策 3）：查册失败且原因是损坏
 ///（[`ledger_infra::db::book_registry::REGISTRY_CORRUPT`]）→ 视为未在册走
@@ -270,6 +270,19 @@ pub fn resolve_picked_book_dir(
     picked_dir: &Path,
 ) -> Result<PickedBookDisposition> {
     use ledger_infra::db::book_registry::{register_or_switch_book_dir, registered_book_at_dir};
+    // 先分类后切指针（F3 / ADR-0146 决策 3④⑤ + 决策 4）：库文件在场即先做
+    // 处置判定（与启动引导同源 classify_for_boot，不另立第二份判定；在册与
+    // 否同一判定序）——密文/损坏码化错误上抛、注册表零写入；选中在册密文/
+    // 损坏本不再先切指针再失败（指针已移走 + 该失败态无选择器 = 应用内
+    // 不可恢复）。明文/归一化继续在册/登记分流，分类通过的打开行为不变。
+    let db_path = picked_dir.join(DB_FILE_NAME);
+    if db_path.is_file() {
+        match ledger_infra::db::boot::classify_for_boot(&db_path)? {
+            BootDisposition::AwaitUnlock => return Err(encrypted_unsupported_error()),
+            BootDisposition::Unreadable => return Err(db_unreadable_error()),
+            BootDisposition::OpenPlaintext | BootDisposition::NormalizePlaintext => {}
+        }
+    }
     let registered = match registered_book_at_dir(registry_root, picked_dir) {
         Ok(found) => found,
         // 损坏注册表按「未注册」容错（ADR-0146 决策 3，见函数文档）；其他
@@ -278,18 +291,12 @@ pub fn resolve_picked_book_dir(
         Err(e) => return Err(e),
     };
     if registered.is_none() {
-        // 未在册：库文件处置分流（与启动引导同源判定 classify_for_boot，
-        // 不另立第二份判定）。
-        let db_path = picked_dir.join(DB_FILE_NAME);
+        // 未在册：无库文件 → 新建意图（调用方呈现确认对话明示完整路径后经
+        // [`confirm_create_picked_book`] 完成）。
         if !db_path.is_file() {
             return Ok(PickedBookDisposition::ConfirmCreate(
                 picked_dir.to_path_buf(),
             ));
-        }
-        match ledger_infra::db::boot::classify_for_boot(&db_path)? {
-            BootDisposition::AwaitUnlock => return Err(encrypted_unsupported_error()),
-            BootDisposition::Unreadable => return Err(db_unreadable_error()),
-            BootDisposition::OpenPlaintext | BootDisposition::NormalizePlaintext => {}
         }
     }
     register_or_switch_book_dir(registry_root, picked_dir)?;
