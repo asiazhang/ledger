@@ -79,7 +79,7 @@ const LOG_LEVEL_DEBUG: &str = "调试 (debug)";
 const LOG_LEVEL_TRACE: &str = "追踪 (trace)";
 const CARD_LOCATION: &str = "数据存储位置";
 const LOCATION_HINT: &str = "当前账本的数据库所在目录。更改位置后，应用将在下次启动时把当前账本的数据库完整搬迁到新位置，原位置库文件永久保留作为安全网；其他账本不受影响，恢复默认走同一流程。";
-const LOCATION_FALLBACK_TITLE: &str = "已回退到默认位置";
+pub(crate) const LOCATION_FALLBACK_TITLE: &str = "已回退到默认位置";
 const LOCATION_FALLBACK_PREFIX: &str = "配置的位置不可用：";
 const LOCATION_FALLBACK_SUFFIX: &str =
     "。已自动回退到默认位置，原库仍在原地未动，可重新更改位置或保持现状。";
