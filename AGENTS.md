@@ -51,7 +51,6 @@ Rust 根（`src-app/`）是 workspace：根包就是壳（NSH 原生壳，#2083 
 
 - 产品壳 = NSH（Linux 桌面）：视图直调域 crate 公开读写入口，不经任何 IPC 命令边界——新壳能力只经「域公开接缝 + 壳层接线」消费，不得重建命令层；壳→域→基础设施→协议方向不变（ADR-0112 / ADR-0145）。
 - Web 参照前端（`src/` + `packages/*`）是非产品形态的布局活体对照物：仅经浏览器开发模式（`pnpm dev:mock`）跑 mock 后端，不连真实数据、不作发版产品；保持可编译、可 lint、可测试；前端内不得再出现 tauri 依赖与 `@tauri-apps` 引用（全仓无 tauri 门辖）。
-- 开发期调试：NSH 壳走 NSH dev server 回路——应用目录内 `nsh run` 启动：保存 Rust 编辑（含其路径依赖 crate）即重建并重启应用，日志与构建错误直接进终端（`-v` 全量输出、`--trace` 提交耗时）；参数与目标细节以 NSH 官方文档 nsh.dev/zh-CN/docs/dev-server-and-debugging 为准。
 - 参考数据、设备偏好、后端设置和运行时状态遵循各自领域的单一来源与归口规则。
 - 会影响快捷键抑制的交互层通过现有壳内弹层封装族接入 Overlay Suppression；新增形态先补对应封装和注册表接线。
 - AI 导入 HTTP 端点走 API 契约与 API 集成测试；新增端点同步契约文档与测试，不另开调用面。
@@ -61,7 +60,6 @@ Rust 根（`src-app/`）是 workspace：根包就是壳（NSH 原生壳，#2083 
 ## 测试、工作流与发布
 
 - Rust 侧测试三层各有权威：域行为归域单测、壳行为归根包 lib 单测与 headless 组件测试（`cargo test -p nsh-app`）、HTTP 契约归 axum API 集成测试（`src-app/tests/api_server/`）；前端逻辑补 Vitest。BDD e2e 已随 Tauri 壳退役（ADR-0145 决策 6，牺牲项显式化）。断言归属判据与接线证明见 `docs/contexts/CONTEXT-testing.md`。
-- NSH headless 组件测试写法与 trace 语义（选择器与步骤、MemoryStorage / StubNetwork / 手动时钟、`EngineConfig::trace` 与 mount 批次 `perf` 行）以 NSH 官方文档 nsh.dev/zh-CN/docs/testing-and-trace 为准；读 trace 守性能时信 ops / mount item 计数（确定性），不信单次微秒（随机器频率状态浮动）。
 - 改动引入「所有入口都必须遵循」的约束（成对调用、必须接线、必须带门、必须清理）时，用 `rg` 枚举全部调用点并逐一核对，交付报告附核对清单；修复缺陷后，用 `rg` 检索同一根因的其他实例并核对每处命中。
 - 拆票或补验收判据时，接线 / 时机 / 入口型 ticket（核心价值是某调用必须在某时机出现在某位置）的验收判据必须含「删除即变红」负向条目：删除 `<接线调用点>` → 至少一条测试变红，断言对准用户可观察结果，不对准线程或函数调用形状（ADR-0087 断言强度）；领域逻辑型不加，避免形式主义；接线在本机 CI 不构建的分支内时以源码扫描守门替代（先例 #959、#961）。
 - 编译加速归口 kache：热回路（编辑后重跑 `cargo test`）由仓库根 `.kache.toml` 的 `preserve_incremental` 保住 rustc 增量，冷构建（新 worktree 首次构建）由 kache 共享 store 承担；需要提速构建时直接依赖这套设置，不要另行配置 `RUSTC_WRAPPER`、`KACHE_DISABLED` 等环境变量方案。
