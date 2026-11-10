@@ -303,13 +303,15 @@ pub fn resolve_picked_book_dir(
     Ok(PickedBookDisposition::Open)
 }
 
-/// 确认新建后的完成动作（决策 3 分支③）：登记（未配置根折叠为「默认账本」
-/// 条目，否则铸新条目置活动，ADR-0146 决策 5）+ 建库（[`open_db_in`] 建连
-/// 迁移单点，缺文件即新装语义；登记先行，建连失败重试经分支②自动登记+打
-/// 开，无悬死现场）。
+/// 确认新建后的完成动作（决策 3 分支③）：先建库（[`open_db_in`] 建连迁移
+/// 单点，缺文件即新装语义；目录不存在先建目录）后登记（未配置根折叠为
+/// 「默认账本」条目，否则铸新条目置活动，ADR-0146 决策 5）。建库失败 →
+/// 注册表零写入：确认对话可重试或换目录重选，不留「已登记但无库」的悬死
+/// 现场（旧序「登记先行」的失败重试宣称失实，F4 换序后宣称成立）。
 pub fn confirm_create_picked_book(registry_root: &Path, picked_dir: &Path) -> Result<()> {
-    ledger_infra::db::book_registry::register_or_switch_book_dir(registry_root, picked_dir)?;
+    std::fs::create_dir_all(picked_dir)?;
     open_db_in(picked_dir)?;
+    ledger_infra::db::book_registry::register_or_switch_book_dir(registry_root, picked_dir)?;
     Ok(())
 }
 

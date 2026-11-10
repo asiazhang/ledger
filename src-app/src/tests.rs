@@ -1105,6 +1105,23 @@ fn picked_dir_at_corrupt_registry_tolerates_as_unregistered_and_opens() {
     );
 }
 
+/// F4（决策 3 分支③完成动作换序）：先建库后登记——建库失败 → 注册表零
+/// 写入（确认对话可重试或换目录重选，不留「已登记但无库」的悬死现场）。
+/// 旧序「登记先行」下建库失败已写注册表 → 本用例红。
+#[test]
+fn confirm_create_failed_open_leaves_registry_untouched() {
+    let _guard = serial_guard();
+    let root = scratch_book_dir("t4-f4-root");
+    let picked = scratch_book_dir("t4-f4-picked");
+    // 建库必败现场：ledger.db 是目录（Connection::open 拒绝打开目录）。
+    fs::create_dir(picked.join("ledger.db")).unwrap();
+    assert!(confirm_create_picked_book(&root, &picked).is_err());
+    assert!(
+        !root.join("data_location.json").exists(),
+        "建库失败注册表零写入"
+    );
+}
+
 /// F2（ADR-0146 决策 3，分支③在损坏现场的容错）：损坏根 + 空目录 → 新建
 /// 意图 → 确认后折叠登记（默认目录折叠为「默认账本」条目，同未配置根）+
 /// 建库打开。确认后注册表可解析（损坏文件被覆盖）。
