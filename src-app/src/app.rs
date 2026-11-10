@@ -262,9 +262,16 @@ pub fn run_startup_with_trigger_timings(
     // 配置（含损坏回退）且无库——首启引导现场（决策 2，T2 #2092）。数据根
     // 未注入（headless 测试态）保持缺参提示。删缺参臂的解析链接线（恢复缺
     // 参无条件 MissingArg）即 headless 现场 A/B 与引导态用例红（ADR-0087）。
+    // 数据根取一次（缺参臂判定与引导臂共用同一份，F5：不重复解析）。
+    let argv_arm = book_dir_slot().is_some();
+    let data_root = if argv_arm {
+        None
+    } else {
+        crate::cross_book::default_data_dir()
+    };
     let booted = match book_dir_slot().clone() {
         Some(book_dir) => boot::boot_ledger(&book_dir).map(Some),
-        None => match crate::cross_book::default_data_dir() {
+        None => match data_root.clone() {
             Some(data_root) => boot::boot_ledger_via_registry(&data_root),
             None => Ok(None),
         },
@@ -308,7 +315,7 @@ pub fn run_startup_with_trigger_timings(
         // 出厂现场无告示。数据根未注入（headless 测试态）保持缺参用法提示。
         // 删本臂引导映射（回退无条件 MissingArg）→ app_headless 引导态用例
         // 全红（「删除即变红」已实证，ADR-0087）。
-        Ok(None) => match crate::cross_book::default_data_dir() {
+        Ok(None) => match data_root {
             Some(_) => StartupView::Onboarding {
                 fallback_reason: boot::boot_record().and_then(|record| record.fallback_reason),
             },
@@ -354,14 +361,13 @@ const CREATE_BOOK_CONFIRM_DETAIL: &str =
 const CREATE_BOOK_CONFIRM_CONFIRM: &str = "新建并打开";
 const CREATE_BOOK_CONFIRM_CANCEL: &str = "取消";
 
-/// 失败态选择器的注册表根与臂判定（与启动竖井解析链同序，ADR-0146 决策 1：
-/// argv 显式 > 数据根）：`Some((argv 臂, 注册表根))`；两者皆缺（headless 未
-/// 注入数据根的缺参态）为 None——该现场不走失败态，调用方零动作兜底。
+/// 失败态出口与新建意图确认的注册表根与臂判定（ADR-0146 决策 1）：注册表
+/// 根统一取默认数据根——登记与活动指针只写数据根的注册表，argv 目录是
+/// 「打错」的可能现场，不作注册表根写入（F5）；第二分量 = argv 显式臂
+///（打开时重指装配入口）。数据根未注入（headless 缺参态）为 None——该现
+/// 场不走选择器恢复，调用方零动作兜底。
 fn launch_registry_root() -> Option<(bool, PathBuf)> {
-    match book_dir_slot().clone() {
-        Some(dir) => Some((true, dir)),
-        None => crate::cross_book::default_data_dir().map(|root| (false, root)),
-    }
+    crate::cross_book::default_data_dir().map(|root| (book_dir_slot().is_some(), root))
 }
 
 /// 失败态恢复路径的装配入口重指（argv 臂）：先注入者优先只约束幂等注入

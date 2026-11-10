@@ -14526,6 +14526,45 @@ fn startup_picker_cancel_keeps_failed_state_and_button_retriggerable() {
     app.wait_for("id:nav-transactions").unwrap();
 }
 
+/// F5：argv 臂失败态选择器的注册表根统一默认数据根——登记与活动指针写
+/// 数据根的注册表；打错的 argv 目录不作注册表根，data_location.json 不落
+/// 该处。注册表根退回 argv 目录 → 登记写错位 → 数据根注册表断言红。
+#[test]
+fn startup_argv_picker_registers_into_default_data_root_not_argv_dir() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let root = make_data_root("t4-f5-root");
+    let active = make_book("t4-f5-active");
+    seed_registry(&root, &active, &[]);
+    // argv 打错路径（目录在但无库 → book-missing 失败态）；数据根照常注入。
+    let bad = seed::make_book_dir("t4-f5-bad-argv");
+    nsh_app::app::set_book_dir(bad.clone());
+    nsh_app::cross_book::set_default_data_dir(root.clone());
+    let picked = make_book("t4-f5-picked");
+
+    let mut app = Headless::start(desktop_config()).unwrap();
+    app.wait_for("text:/账本库文件不存在/").unwrap();
+    app.on_pick_paths(vec![picked.clone()]).unwrap();
+    app.press("id:startup-pick-book-dir").unwrap();
+    app.wait_for("id:nav-transactions").unwrap();
+    // argv 臂重指直开选定目录（失败态出口语义不变）；注册表写数据根。
+    use ledger_infra::db::book_registry::{RegistryRead, read_registry};
+    let RegistryRead::Resolved(registry) = read_registry(&root) else {
+        panic!("数据根注册表应可解析")
+    };
+    let entry = registry
+        .books
+        .iter()
+        .find(|book| book.dir == picked)
+        .expect("选中目录已登记进数据根注册表");
+    assert_eq!(registry.active_id, entry.id, "新条目即数据根注册表的活动本");
+    // 负向：打错的 argv 目录不被写入注册表。
+    assert!(
+        !bad.join(ledger_infra::db::book_registry::REGISTRY_FILE_NAME).exists(),
+        "argv 目录不作注册表根：data_location.json 不落该处"
+    );
+}
+
 /// 平台不支持（headless 无应答替身 = 生产「无 portal」同投影）：既有
 /// `nsh-shell.file-dialog-failed` 码化呈现，出口保持在场可重试（#2038 先例）。
 #[test]
