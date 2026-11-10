@@ -340,6 +340,36 @@ fn failed_view(error: &AppError) -> StartupView {
     }
 }
 
+/// 回退告示呈现块（单一出处，两处调用，F8 收口）：标题（设置卡回退行同词
+/// [`settings::LOCATION_FALLBACK_TITLE`]）+ 回退原因两行的 destructive 款式
+/// 条——就绪臂（boot-fallback-*）与引导面板（onboarding-fallback-*）同款
+/// 式，test_id 由消费面传入保持各自现值。呈现条件（has_fallback）与数据源
+///（boot_record.fallback_reason）归消费面的 when 分支，本函数只承载款式。
+fn fallback_notice_view(
+    reason: String,
+    title_id: &'static str,
+    body_id: &'static str,
+    fg: AdaptiveColor,
+    muted: AdaptiveColor,
+) -> View {
+    view()
+        .flex_col()
+        .app_class("rounded-md border border-destructive/30 bg-destructive/10 p-2 gap-1")
+        .child(
+            text(settings::LOCATION_FALLBACK_TITLE)
+                .text_size(px(12.0))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(fg)
+                .test_id(title_id),
+        )
+        .child(
+            text(move || reason.clone())
+                .text_size(px(12.0))
+                .text_color(muted)
+                .test_id(body_id),
+        )
+}
+
 /// 启动任务异常退出（JoinError）的失败态（内部错误；出口保持在场——用户
 /// 仍可另指账本库目录）。
 fn startup_task_aborted_view() -> StartupView {
@@ -361,13 +391,25 @@ const CREATE_BOOK_CONFIRM_DETAIL: &str =
 const CREATE_BOOK_CONFIRM_CONFIRM: &str = "新建并打开";
 const CREATE_BOOK_CONFIRM_CANCEL: &str = "取消";
 
-/// 失败态出口与新建意图确认的注册表根与臂判定（ADR-0146 决策 1）：注册表
-/// 根统一取默认数据根——登记与活动指针只写数据根的注册表，argv 目录是
-/// 「打错」的可能现场，不作注册表根写入（F5）；第二分量 = argv 显式臂
-///（打开时重指装配入口）。数据根未注入（headless 缺参态）为 None——该现
-/// 场不走选择器恢复，调用方零动作兜底。
-fn launch_registry_root() -> Option<(bool, PathBuf)> {
-    crate::cross_book::default_data_dir().map(|root| (book_dir_slot().is_some(), root))
+/// 选择器恢复现场的启动上下文（注册表根与臂判定的具名形态，F8 收口）：
+/// 元组 `(bool, PathBuf)` 的语义自明化——argv 臂只保留「打开时重指装配入口」
+/// 语义，注册表根统一默认数据根（F5：登记与活动指针只写数据根的注册表）。
+#[derive(Clone, Debug)]
+struct PickerLaunchContext {
+    /// argv 显式臂：装配入口已注入账本目录（打开时重指选定目录）。
+    argv_arm: bool,
+    /// 注册表根（默认数据根；登记与活动指针的写入位置）。
+    registry_root: PathBuf,
+}
+
+/// 失败态出口与新建意图确认的选择器启动上下文解析（ADR-0146 决策 1）。数
+/// 据根未注入（headless 缺参态）为 None——该现场不走选择器恢复，调用方零
+/// 动作兜底。
+fn launch_registry_root() -> Option<PickerLaunchContext> {
+    crate::cross_book::default_data_dir().map(|registry_root| PickerLaunchContext {
+        argv_arm: book_dir_slot().is_some(),
+        registry_root,
+    })
 }
 
 /// 失败态恢复路径的装配入口重指（argv 臂）：先注入者优先只约束幂等注入
@@ -393,8 +435,6 @@ async fn open_picked_book_dir(state: Signal<StartupView>, argv_arm: bool, picked
     state.set(outcome);
 }
 
-/// 启动竖井的呈现文案（缺参 / 引导中 / 失败三态；就绪态不走此路径——表格
-/// 视图承载，见 [`TransactionsView`]）。
 /// 启动竖井的呈现文案（缺参 / 引导中 / 首启引导 / 失败四态；就绪态不走此路
 /// 径——表格视图承载，见 [`TransactionsView`]）。首启引导的标题/提示单源在
 /// 此（引导面板与 lib 文案断言同源）。
@@ -3126,7 +3166,7 @@ pub fn App() -> impl IntoElement {
                             let Some(picked) = paths.into_iter().next() else {
                                 return;
                             };
-                            let Some((argv_arm, registry_root)) = launch_registry_root() else {
+                            let Some(ctx) = launch_registry_root() else {
                                 return;
                             };
                             // 现场闭集处置单点（决策 3，与首启引导「打开已有
@@ -3134,6 +3174,7 @@ pub fn App() -> impl IntoElement {
                             // 上屏（出口自动消失——缺的是解锁与诊断）。
                             let resolved = {
                                 let picked = picked.clone();
+                                let registry_root = ctx.registry_root.clone();
                                 match blocking(move || {
                                     boot::resolve_picked_book_dir(&registry_root, &picked)
                                 })
@@ -3149,7 +3190,7 @@ pub fn App() -> impl IntoElement {
                             match resolved {
                                 Err(e) => state.set(failed_view(&e)),
                                 Ok(boot::PickedBookDisposition::Open) => {
-                                    open_picked_book_dir(state, argv_arm, picked).await;
+                                    open_picked_book_dir(state, ctx.argv_arm, picked).await;
                                 }
                                 Ok(boot::PickedBookDisposition::ConfirmCreate(dir)) => {
                                     create_confirm.set(Some(dir));
@@ -3170,15 +3211,16 @@ pub fn App() -> impl IntoElement {
             if outcome == danger::DangerOutcome::Confirmed
                 && let Some(dir) = picked
             {
-                let Some((argv_arm, registry_root)) = launch_registry_root() else {
+                let Some(ctx) = launch_registry_root() else {
                     return;
                 };
                 owner.run(move || {
                     spawn(async move {
-                        // 登记 + 建库（决策 3 分支③完成动作）；建连失败重试
-                        // 经分支②自动登记+打开，无悬死现场。
+                        // 建库 + 登记（决策 3 分支③完成动作，F4 换序：先建
+                        // 库后登记——建库失败注册表零写入，确认对话可重试）。
                         let created = {
                             let dir = dir.clone();
+                            let registry_root = ctx.registry_root.clone();
                             match blocking(move || {
                                 boot::confirm_create_picked_book(&registry_root, &dir)
                             })
@@ -3193,7 +3235,7 @@ pub fn App() -> impl IntoElement {
                         };
                         match created {
                             Err(e) => state.set(failed_view(&e)),
-                            Ok(()) => open_picked_book_dir(state, argv_arm, dir).await,
+                            Ok(()) => open_picked_book_dir(state, ctx.argv_arm, dir).await,
                         }
                     })
                 });
@@ -3278,25 +3320,7 @@ pub fn App() -> impl IntoElement {
                         when(
                             move || has_fallback,
                             move || {
-                                view()
-                                    .flex_col()
-                                    .app_class(
-                                        "rounded-md border border-destructive/30 bg-destructive/10 p-2 gap-1",
-                                    )
-                                    .child(
-                                        text(settings::LOCATION_FALLBACK_TITLE)
-                                            .text_size(px(12.0))
-                                            .font_weight(FontWeight::SEMIBOLD)
-                                            .text_color(fg)
-                                            .test_id("boot-fallback-title"),
-                                    )
-                                    .child({
-                                        let reason = reason.clone();
-                                        text(move || reason.clone())
-                                            .text_size(px(12.0))
-                                            .text_color(muted)
-                                            .test_id("boot-fallback")
-                                    })
+                                fallback_notice_view(reason.clone(), "boot-fallback-title", "boot-fallback", fg, muted)
                             },
                         )
                         .otherwise(view),
@@ -3344,25 +3368,7 @@ pub fn App() -> impl IntoElement {
                             when(
                                 move || has_fallback,
                                 move || {
-                                    view()
-                                        .flex_col()
-                                        .app_class(
-                                            "rounded-md border border-destructive/30 bg-destructive/10 p-2 gap-1",
-                                        )
-                                        .child(
-                                            text(settings::LOCATION_FALLBACK_TITLE)
-                                                .text_size(px(12.0))
-                                                .font_weight(FontWeight::SEMIBOLD)
-                                                .text_color(fg)
-                                                .test_id("onboarding-fallback-title"),
-                                        )
-                                        .child({
-                                            let reason = reason.clone();
-                                            text(move || reason.clone())
-                                                .text_size(px(12.0))
-                                                .text_color(muted)
-                                                .test_id("onboarding-fallback")
-                                        })
+                                    fallback_notice_view(reason.clone(), "onboarding-fallback-title", "onboarding-fallback", fg, muted)
                                 },
                             )
                             .otherwise(view)

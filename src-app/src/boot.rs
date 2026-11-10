@@ -167,18 +167,28 @@ pub fn boot_ledger_via_registry(default_dir: &Path) -> Result<Option<DbState>> {
 /// 舱（「恢复默认位置」折叠语义）同向：默认目录成为唯一默认账本；在册库
 /// 文件不受影响（本函数不触碰任何既有库文件）。
 ///
-/// 复用面：首启引导「新建账本」（本票）与后续选择器现场的无库新建腿
-///（ADR-0146 决策 3 ③ / 决策 4 出口）共享本核心。会话开启不在本函数内——
-/// 调用方经各自解析链臂开启（首启确认后重走启动竖井，本次启动即进主
-/// 界面）。
+/// 复用面（T4 分叉后的现实，F8 改述）：新建两腿各自登记策略、共享建库
+/// 单点（[`provision_book_db`]）——本腿（首启引导「新建账本」）登记折叠为
+/// 「默认账本」直写 `write_registry`；选择器新建腿（[`confirm_create_picked_book`]，
+/// ADR-0146 决策 3 ③）登记经 `register_or_switch_book_dir` 铸条目置活动
+///（损坏容错折叠与本腿同向）。会话开启不在本函数内——调用方经各自解析链
+/// 臂开启（首启确认后重走启动竖井，本次启动即进主界面）。
 pub fn create_default_book(dir: &Path) -> Result<()> {
     wiring::install_domain_seams();
-    std::fs::create_dir_all(dir)?;
-    open_db_in(dir)?;
+    provision_book_db(dir)?;
     ledger_infra::db::book_registry::write_registry(
         dir,
         &ledger_infra::db::book_registry::BookRegistry::single_default(dir),
     )
+}
+
+/// 建库单点（新建两腿共享，F8 收口）：确保目录存在后经建连迁移单点
+///（[`open_db_in`]，缺文件建连即建全新库）建出库文件；登记策略归调用方
+///（两腿各自不同，见 [`create_default_book`] doc 复用面）。
+fn provision_book_db(dir: &Path) -> Result<()> {
+    std::fs::create_dir_all(dir)?;
+    open_db_in(dir)?;
+    Ok(())
 }
 
 /// 库文件缺失的码化错误（fail loud 单点；argv 打错与注册表落点无库两臂
@@ -309,8 +319,7 @@ pub fn resolve_picked_book_dir(
 /// 注册表零写入：确认对话可重试或换目录重选，不留「已登记但无库」的悬死
 /// 现场（旧序「登记先行」的失败重试宣称失实，F4 换序后宣称成立）。
 pub fn confirm_create_picked_book(registry_root: &Path, picked_dir: &Path) -> Result<()> {
-    std::fs::create_dir_all(picked_dir)?;
-    open_db_in(picked_dir)?;
+    provision_book_db(picked_dir)?;
     ledger_infra::db::book_registry::register_or_switch_book_dir(registry_root, picked_dir)?;
     Ok(())
 }
