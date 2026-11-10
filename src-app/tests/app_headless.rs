@@ -14251,3 +14251,249 @@ fn http_api_server_mounts_and_pumps_invalidation_to_views() {
     nsh_app::http_host::post_invalidation_for_tests(ledger_infra::events::LEDGER_CHANGED);
     app.wait_for("text:2026-06-01").unwrap();
 }
+
+// —— book-missing 失败态的显式出口（ADR-0146 决策 4 / spec #2090 T4）：——
+// —— 失败态按钮 + 目录选择现场闭集处置（决策 3 单点）的窗口呈现旅程。 ——
+
+/// 注册表根 + 活动本缺库的失败态现场（本段用例共用前置）：注册表已配置、
+/// 活动本 b1 目录无 ledger.db → 启动落 book-missing 失败态（决策 4 保留的
+/// fail loud 内核），出口按钮在场。
+fn start_failed_state_with_picker() -> (std::path::PathBuf, Headless) {
+    nsh_app::app::reset_book_assembly();
+    let root = make_data_root("t4-failed");
+    let active = seed::make_book_dir("t4-active-missing");
+    seed_registry(&root, &active, &[]);
+    nsh_app::cross_book::set_default_data_dir(root.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    app.wait_for("text:/账本库文件不存在/").unwrap();
+    app.wait_for("id:startup-pick-book-dir").unwrap();
+    (root, app)
+}
+
+/// 主现场（已配置 + 活动本缺库）：失败态呈现按钮 → 选中注册表在册其他本 →
+/// 切活动指针打开（主界面就位、指针落盘）→「下次启动」直接打开新活动本。
+/// 删按钮接线 → 失败态断言红（ADR-0087 接线断言，实证见交付报告）。
+#[test]
+fn startup_book_missing_failed_state_offers_dir_picker_and_opens_registered_book() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let root = make_data_root("t4-main");
+    let active = seed::make_book_dir("t4-active-missing");
+    let other = make_book("t4-other");
+    seed_registry(&root, &active, &[("b2", "备用账本", &other)]);
+    nsh_app::cross_book::set_default_data_dir(root.clone());
+
+    let mut app = Headless::start(desktop_config()).unwrap();
+    app.wait_for("text:/账本库文件不存在/").unwrap();
+    // 文案重写（决策 4）：呈现不再出现立桩表述。
+    let texts = app.screen().texts();
+    assert!(
+        texts.iter().all(|t| !t.contains("立桩")),
+        "失败态呈现无立桩表述：{texts:?}"
+    );
+    app.wait_for("id:startup-pick-book-dir").unwrap();
+
+    // 选中在册其他本 → 切活动指针 → 本次启动直接打开。
+    app.on_pick_paths(vec![other.clone()]).unwrap();
+    app.press("id:startup-pick-book-dir").unwrap();
+    app.wait_for("id:nav-transactions").unwrap();
+    use ledger_infra::db::book_registry::{RegistryRead, read_registry};
+    let RegistryRead::Resolved(registry) = read_registry(&root) else {
+        panic!("注册表应可解析")
+    };
+    assert_eq!(registry.active_id, "b2", "活动指针切至选中的在册其他本");
+
+    // 「下次启动」等价：重置再启动（无 argv）→ 解析链直接打开新活动本。
+    nsh_app::app::reset_book_assembly();
+    nsh_app::cross_book::set_default_data_dir(root);
+    let mut app = Headless::start(desktop_config()).unwrap();
+    app.wait_for("id:nav-transactions").unwrap();
+}
+
+/// 现场「argv 打错路径缺库」：同一失败态与按钮可用（解析链 argv 臂，T1 收敛
+/// 的 book_missing_error 单点同文案同出口）。
+#[test]
+fn startup_argv_missing_book_shows_same_failed_state_with_picker() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let bad = seed::make_book_dir("t4-argv-missing");
+    nsh_app::app::set_book_dir(bad);
+    let mut app = Headless::start(desktop_config()).unwrap();
+    app.wait_for("text:/账本库文件不存在/").unwrap();
+    app.wait_for("id:startup-pick-book-dir").unwrap();
+}
+
+/// 取消选择：留原失败态、按钮可再次触发（误触零后果——取消零改向零写入）。
+#[test]
+fn startup_picker_cancel_keeps_failed_state_and_button_retriggerable() {
+    let _guard = SERIAL.lock().unwrap();
+    let (root, mut app) = start_failed_state_with_picker();
+    let other = make_book("t4-cancel-other");
+
+    // 用户取消（应答空 = Ok(None)）：原失败态与出口原样保留。
+    app.on_pick_paths(vec![]).unwrap();
+    app.press("id:startup-pick-book-dir").unwrap();
+    app.settle();
+    app.wait_for("text:/账本库文件不存在/").unwrap();
+    app.wait_for("id:startup-pick-book-dir").unwrap();
+    use ledger_infra::db::book_registry::{RegistryRead, read_registry};
+    let RegistryRead::Resolved(registry) = read_registry(&root) else {
+        panic!("注册表应可解析")
+    };
+    assert_eq!(registry.active_id, "b1", "取消零改向");
+
+    // 可再次触发：再选在册其他本 → 打开。
+    app.on_pick_paths(vec![other]).unwrap();
+    app.press("id:startup-pick-book-dir").unwrap();
+    app.wait_for("id:nav-transactions").unwrap();
+}
+
+/// 平台不支持（headless 无应答替身 = 生产「无 portal」同投影）：既有
+/// `nsh-shell.file-dialog-failed` 码化呈现，出口保持在场可重试（#2038 先例）。
+#[test]
+fn startup_picker_unavailable_reports_coded_error_and_stays_retryable() {
+    let _guard = SERIAL.lock().unwrap();
+    let (_root, mut app) = start_failed_state_with_picker();
+    // 不注入 on_pick_paths 替身 → pick_paths Err。
+    app.press("id:startup-pick-book-dir").unwrap();
+    app.wait_for("text:/文件对话框无法打开/").unwrap();
+    app.wait_for("id:startup-pick-book-dir").unwrap();
+}
+
+/// 现场闭集②（有库未登记）：选中未登记库目录 → 自动登记 + 置活动 + 打开。
+#[test]
+fn startup_picker_unregistered_book_dir_registers_switches_and_opens() {
+    let _guard = SERIAL.lock().unwrap();
+    let (root, mut app) = start_failed_state_with_picker();
+    let picked = make_book("t4-unregistered");
+
+    app.on_pick_paths(vec![picked.clone()]).unwrap();
+    app.press("id:startup-pick-book-dir").unwrap();
+    app.wait_for("id:nav-transactions").unwrap();
+    use ledger_infra::db::book_registry::{RegistryRead, read_registry};
+    let RegistryRead::Resolved(registry) = read_registry(&root) else {
+        panic!("注册表应可解析")
+    };
+    let entry = registry
+        .books
+        .iter()
+        .find(|book| book.dir == picked)
+        .expect("选中目录已登记");
+    assert_eq!(registry.active_id, entry.id, "新条目即活动本");
+}
+
+/// 现场闭集③（无库 → 新建意图）：确认对话明示完整路径；取消零写入留原态；
+/// 确认后建库登记并打开。
+#[test]
+fn startup_picker_empty_dir_create_intent_confirms_and_opens() {
+    let _guard = SERIAL.lock().unwrap();
+    let (root, mut app) = start_failed_state_with_picker();
+    let picked = seed::make_book_dir("t4-create");
+
+    // 新建意图：确认对话明示完整路径（ADR-0146 决策 2/3）。
+    app.on_pick_paths(vec![picked.clone()]).unwrap();
+    app.press("id:startup-pick-book-dir").unwrap();
+    app.wait_for("text:新建账本").unwrap();
+    app.wait_for(&format!(
+        "text:将在所选目录新建账本库：{}",
+        picked.display()
+    ))
+    .unwrap();
+
+    // 取消：零写入（无库文件），留原失败态可再触发。
+    app.press("id:danger-cancel").unwrap();
+    app.wait_for_gone("id:danger-dialog", DEFAULT_WAIT).unwrap();
+    assert!(!picked.join("ledger.db").exists(), "取消零写入");
+    app.wait_for("id:startup-pick-book-dir").unwrap();
+
+    // 再触发 → 确认：建库 + 登记 + 打开。
+    app.on_pick_paths(vec![picked.clone()]).unwrap();
+    app.press("id:startup-pick-book-dir").unwrap();
+    app.wait_for("text:新建账本").unwrap();
+    app.press("id:danger-confirm").unwrap();
+    app.wait_for("id:nav-transactions").unwrap();
+    assert!(
+        picked.join("ledger.db").is_file(),
+        "确认后建库（建连迁移单点）"
+    );
+    use ledger_infra::db::book_registry::{RegistryRead, read_registry};
+    let RegistryRead::Resolved(registry) = read_registry(&root) else {
+        panic!("注册表应可解析")
+    };
+    assert_eq!(
+        registry.active_dir(),
+        Some(picked.as_path()),
+        "登记 + 活动指针即时落盘"
+    );
+}
+
+/// 密文/损坏选中目录的失败呈现（闭集④⑤共用流程、夹具分场）：既有码化错
+/// 误上屏，失败态不挂选择器出口（缺的是解锁与诊断，不是目录，决策 4）。
+fn pick_bad_book_dir_reports_coded_error_without_picker(bad_bytes: &[u8], expect: &str) {
+    nsh_app::app::reset_book_assembly();
+    let root = make_data_root("t4-bad-pick");
+    let active = seed::make_book_dir("t4-active-missing");
+    seed_registry(&root, &active, &[]);
+    nsh_app::cross_book::set_default_data_dir(root);
+    let picked = seed::make_book_dir("t4-bad");
+    fs::write(picked.join("ledger.db"), bad_bytes).unwrap();
+    let mut app = Headless::start(desktop_config()).unwrap();
+    app.wait_for("text:/账本库文件不存在/").unwrap();
+    app.on_pick_paths(vec![picked]).unwrap();
+    app.press("id:startup-pick-book-dir").unwrap();
+    app.wait_for(expect).unwrap();
+    assert_eq!(
+        app.screen().count("id:startup-pick-book-dir").unwrap(),
+        0,
+        "密文/损坏失败态不挂选择器出口"
+    );
+}
+
+/// 现场闭集④（密文库）：既有 `nsh-shell.encrypted-unsupported` 呈现 + 无出口。
+#[test]
+fn startup_picker_encrypted_dir_reports_coded_error_without_picker() {
+    let _guard = SERIAL.lock().unwrap();
+    pick_bad_book_dir_reports_coded_error_without_picker(&[0u8; 8_192], "text:/密文库暂不支持/");
+}
+
+/// 现场闭集⑤（损坏残留）：既有损坏码呈现 + 无出口（不自动换目录重试）。
+#[test]
+fn startup_picker_corrupt_dir_reports_coded_error_without_picker() {
+    let _guard = SERIAL.lock().unwrap();
+    pick_bad_book_dir_reports_coded_error_without_picker(
+        &[0xABu8; 20],
+        "text:/数据库文件无法打开/",
+    );
+}
+
+/// 引导期密文库 / 损坏残留失败态不挂选择器出口（决策 4 负向断言；argv 臂
+/// 同规则——failed_view 单点派生两臂共用）。
+#[test]
+fn startup_encrypted_and_corrupt_boot_failed_states_have_no_picker() {
+    let _guard = SERIAL.lock().unwrap();
+    // 密文库：页对齐密文形态（基础设施「密文库落盘形态」判别）。
+    nsh_app::app::reset_book_assembly();
+    let encrypted = seed::make_book_dir("t4-boot-encrypted");
+    fs::write(encrypted.join("ledger.db"), vec![0u8; 8_192]).unwrap();
+    nsh_app::app::set_book_dir(encrypted);
+    let mut app = Headless::start(desktop_config()).unwrap();
+    app.wait_for("text:/密文库暂不支持/").unwrap();
+    assert_eq!(
+        app.screen().count("id:startup-pick-book-dir").unwrap(),
+        0,
+        "密文库失败态不挂选择器出口"
+    );
+
+    // 损坏残留：非魔数且非页对齐。
+    nsh_app::app::reset_book_assembly();
+    let corrupt = seed::make_book_dir("t4-boot-corrupt");
+    fs::write(corrupt.join("ledger.db"), vec![0xABu8; 20]).unwrap();
+    nsh_app::app::set_book_dir(corrupt);
+    let mut app = Headless::start(desktop_config()).unwrap();
+    app.wait_for("text:/数据库文件无法打开/").unwrap();
+    assert_eq!(
+        app.screen().count("id:startup-pick-book-dir").unwrap(),
+        0,
+        "损坏残留失败态不挂选择器出口"
+    );
+}

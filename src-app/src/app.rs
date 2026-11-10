@@ -29,6 +29,7 @@ use nsh_base::{
 };
 use nsh_core::element::FontWeight;
 use nsh_core::element::desktop::MenuItem;
+use nsh_core::file_dialog::OpenDialog;
 use nsh_core::prelude::*;
 
 use crate::adaptive;
@@ -226,7 +227,13 @@ pub enum StartupView {
     /// 就绪：交易表格首屏（读路径直调域服务的立桩靶标，issue #2018）。
     Ready,
     /// 引导失败：码化错误的用户可见文案（zh-CN 原样呈现）。
-    Failed { message: String },
+    Failed {
+        message: String,
+        /// 失败态是否挂「选择账本库目录…」出口（ADR-0146 决策 4：密文库与
+        /// 损坏残留失败态缺的是解锁与诊断，不是目录——不挂；其余失败态保持
+        /// 出口在场，用户可重试或另指目录）。派生单点见 [`failed_view`]。
+        can_pick_book_dir: bool,
+    },
 }
 
 /// 执行启动竖井（引导域栈 → 会话就位），返回窗口呈现态。
@@ -291,10 +298,77 @@ pub fn run_startup_with_trigger_timings(
             StartupView::Ready
         }
         Ok(None) => StartupView::MissingArg,
-        Err(e) => StartupView::Failed {
-            message: e.to_string(),
-        },
+        Err(e) => failed_view(&e),
     }
+}
+
+/// 引导失败的失败态构造单点（错误 → 呈现态，含「选择账本库目录…」出口的
+/// 挂载判定，ADR-0146 决策 4 的负向闭集）：密文库与损坏残留（含无法自动修
+/// 复的外来形态）缺的是解锁与诊断，不是目录——不挂；其余失败（book-missing
+/// 本尊、文件对话框、注册表族、IO 与建连失败）保持出口在场，可重试或另指
+/// 目录。启动任务与失败态选择器恢复路径共用。
+fn failed_view(error: &AppError) -> StartupView {
+    let diagnosis_only = error.is_code(boot::CODE_ENCRYPTED_UNSUPPORTED)
+        || error.is_code(ledger_infra::db::boot::BOOT_DB_UNREADABLE)
+        || error.is_code(ledger_infra::db::boot::BOOT_DB_NORMALIZE_FAILED);
+    StartupView::Failed {
+        message: error.to_string(),
+        can_pick_book_dir: !diagnosis_only,
+    }
+}
+
+/// 启动任务异常退出（JoinError）的失败态（内部错误；出口保持在场——用户
+/// 仍可另指账本库目录）。
+fn startup_task_aborted_view() -> StartupView {
+    StartupView::Failed {
+        message: "内部错误：启动任务异常退出".to_owned(),
+        can_pick_book_dir: true,
+    }
+}
+
+/// 失败态出口与新建意图确认的词表（ADR-0146 决策 3/4；zh-CN 硬编码现状，
+/// 框架级 i18n 方案另票收敛）。
+const PICK_BOOK_DIR_BUTTON: &str = "选择账本库目录…";
+const PICK_BOOK_DIR_TITLE: &str = "选择账本库目录";
+const CREATE_BOOK_CONFIRM_TITLE: &str = "新建账本";
+const CREATE_BOOK_CONFIRM_LEAD: &str = "将在所选目录新建账本库：";
+const CREATE_BOOK_CONFIRM_STRONG: &str = "目录中没有账本库：确认后将新建一本空账并设为当前账本。";
+const CREATE_BOOK_CONFIRM_DETAIL: &str =
+    "路径有误请取消后重新选择；新建不会改动其他目录中的任何文件。";
+const CREATE_BOOK_CONFIRM_CONFIRM: &str = "新建并打开";
+const CREATE_BOOK_CONFIRM_CANCEL: &str = "取消";
+
+/// 失败态选择器的注册表根与臂判定（与启动竖井解析链同序，ADR-0146 决策 1：
+/// argv 显式 > 数据根）：`Some((argv 臂, 注册表根))`；两者皆缺（headless 未
+/// 注入数据根的缺参态）为 None——该现场不走失败态，调用方零动作兜底。
+fn launch_registry_root() -> Option<(bool, PathBuf)> {
+    match book_dir_slot().clone() {
+        Some(dir) => Some((true, dir)),
+        None => crate::cross_book::default_data_dir().map(|root| (false, root)),
+    }
+}
+
+/// 失败态恢复路径的装配入口重指（argv 臂）：先注入者优先只约束幂等注入
+///（bin 注入一次），不约束显式重指——用户在失败态明确选定新落点（决策 4
+/// 的「打开」），重指后 argv 臂启动即打开选定目录。
+fn repoint_book_dir(dir: PathBuf) {
+    *book_dir_slot() = Some(dir);
+}
+
+/// 失败态出口的恢复打开步骤（直选打开与确认新建打开共用）：argv 臂把装配
+/// 入口重指选定目录后重跑启动竖井；注册表臂直接重跑（解析链打开新活动本，
+/// 引导记录随重跑落槽）。就绪后的泵接线与启动任务同口径（Ready 臂同形）。
+async fn open_picked_book_dir(state: Signal<StartupView>, argv_arm: bool, picked: PathBuf) {
+    if argv_arm {
+        repoint_book_dir(picked);
+    }
+    let outcome = blocking(run_startup)
+        .await
+        .unwrap_or_else(|_| startup_task_aborted_view());
+    if outcome == StartupView::Ready {
+        crate::http_host::spawn_pump();
+    }
+    state.set(outcome);
 }
 
 /// 启动竖井的呈现文案（缺参 / 引导中 / 失败三态；就绪态不走此路径——表格
@@ -304,7 +378,7 @@ pub fn headline_text(view: &StartupView) -> String {
         StartupView::MissingArg => "未指定账本库目录".to_owned(),
         StartupView::Loading => "正在打开账本库…".to_owned(),
         StartupView::Ready => String::new(),
-        StartupView::Failed { message } => format!("启动失败：{message}"),
+        StartupView::Failed { message, .. } => format!("启动失败：{message}"),
     }
 }
 
@@ -2911,14 +2985,134 @@ pub fn App() -> impl IntoElement {
     let muted = tokens
         .color("muted-foreground")
         .unwrap_or_else(|| hsla(0.0, 0.0, 0.45, 1.0).into());
+    // 失败态出口（ADR-0146 决策 4）与新建意图确认（决策 3 分支③）的现场：
+    // 挂起新建目录信号、选择器任务与对话结局处理（组件期一次构造，信号驱动
+    // 开合）。
+    let owner = Owner::current();
+    let create_confirm: Signal<Option<PathBuf>> = signal(None);
+    let pick_book_dir_task = {
+        move |_: &()| {
+            owner.run(move || {
+                spawn(async move {
+                    // 目录选择对话框（#2038 接缝）：Err = 平台能力缺失 → 既有
+                    // nsh-shell.file-dialog-failed 码化呈现；Ok(None) = 取消 →
+                    // 原失败态原样保留（误触零后果，出口可再触发）。
+                    let answer = pick_paths(OpenDialog::folders().title(PICK_BOOK_DIR_TITLE)).await;
+                    match answer {
+                        Err(err) => state.set(StartupView::Failed {
+                            message: AppError::coded(
+                                boot::CODE_FILE_DIALOG_FAILED,
+                                format!("文件对话框无法打开：{err}"),
+                            )
+                            .to_string(),
+                            can_pick_book_dir: true,
+                        }),
+                        Ok(None) => {}
+                        Ok(Some(paths)) => {
+                            let Some(picked) = paths.into_iter().next() else {
+                                return;
+                            };
+                            let Some((argv_arm, registry_root)) = launch_registry_root() else {
+                                return;
+                            };
+                            // 现场闭集处置单点（决策 3，与首启引导「打开已有
+                            // 账本」同函数）；密文/损坏残留错误经 failed_view
+                            // 上屏（出口自动消失——缺的是解锁与诊断）。
+                            let resolved = {
+                                let picked = picked.clone();
+                                match blocking(move || {
+                                    boot::resolve_picked_book_dir(&registry_root, &picked)
+                                })
+                                .await
+                                {
+                                    Ok(resolved) => resolved,
+                                    Err(_) => {
+                                        state.set(startup_task_aborted_view());
+                                        return;
+                                    }
+                                }
+                            };
+                            match resolved {
+                                Err(e) => state.set(failed_view(&e)),
+                                Ok(boot::PickedBookDisposition::Open) => {
+                                    open_picked_book_dir(state, argv_arm, picked).await;
+                                }
+                                Ok(boot::PickedBookDisposition::ConfirmCreate(dir)) => {
+                                    create_confirm.set(Some(dir));
+                                }
+                            }
+                        }
+                    }
+                })
+            });
+        }
+    };
+    let create_book_outcome = {
+        move |outcome: danger::DangerOutcome| {
+            let picked = create_confirm.get_untracked();
+            // 关窗先行（设置面接管确认同形）；取消/ESC 同为放弃——原失败态
+            // 原样保留，出口可再触发。
+            create_confirm.set(None);
+            if outcome == danger::DangerOutcome::Confirmed
+                && let Some(dir) = picked
+            {
+                let Some((argv_arm, registry_root)) = launch_registry_root() else {
+                    return;
+                };
+                owner.run(move || {
+                    spawn(async move {
+                        // 登记 + 建库（决策 3 分支③完成动作）；建连失败重试
+                        // 经分支②自动登记+打开，无悬死现场。
+                        let created = {
+                            let dir = dir.clone();
+                            match blocking(move || {
+                                boot::confirm_create_picked_book(&registry_root, &dir)
+                            })
+                            .await
+                            {
+                                Ok(created) => created,
+                                Err(_) => {
+                                    state.set(startup_task_aborted_view());
+                                    return;
+                                }
+                            }
+                        };
+                        match created {
+                            Err(e) => state.set(failed_view(&e)),
+                            Ok(()) => open_picked_book_dir(state, argv_arm, dir).await,
+                        }
+                    })
+                });
+            }
+        }
+    };
+    let create_book_dialog = when(
+        move || create_confirm.get().is_some(),
+        move || {
+            // 对话框随挂起路径重建（明示路径随选定变化）；开合追踪与抑制上
+            // 报由封装按 open 闭包承担。
+            let dir = create_confirm.get_untracked().unwrap_or_default();
+            danger::danger_confirm(
+                move || create_confirm.get().is_some(),
+                danger::DangerConfirmSpec {
+                    level: danger::DangerLevel::Warning,
+                    title: CREATE_BOOK_CONFIRM_TITLE.to_owned(),
+                    lead: Some(format!("{CREATE_BOOK_CONFIRM_LEAD}{}", dir.display())),
+                    strong_warning: Some(CREATE_BOOK_CONFIRM_STRONG.to_owned()),
+                    detail: Some(CREATE_BOOK_CONFIRM_DETAIL.to_owned()),
+                    confirm_label: CREATE_BOOK_CONFIRM_CONFIRM.to_owned(),
+                    cancel_label: CREATE_BOOK_CONFIRM_CANCEL.to_owned(),
+                },
+                create_book_outcome,
+            )
+        },
+    );
     spawn(async move {
         // blocking 的 JoinHandle：启动竖井不 panic（失败走 Result）；JoinError 仅在
         // 任务异常退出时出现，归入失败态呈现（不 panic 引擎线程）。
         let outcome = blocking(run_startup)
             .await
-            .unwrap_or_else(|_| StartupView::Failed {
-                message: "内部错误：启动任务异常退出".to_owned(),
-            });
+            .unwrap_or_else(|_| startup_task_aborted_view());
         // AI 导入 HTTP 壳的泵任务接线（#2081）：挂载在 run_startup 竖井内
         // （blocking 后台线程），泵需引擎线程投递壳内族广播（crate::signals
         // thread_local 订阅者表线程契约），在此竖井 await 回引擎后接线。
@@ -3013,8 +3207,40 @@ pub fn App() -> impl IntoElement {
                         .text_size(px(12.0))
                         .text_color(muted),
                 )
+                .child(
+                    // book-missing 失败态的显式出口（ADR-0146 决策 4）：仅密文
+                    // 与损坏残留失败态不挂（can_pick_book_dir = false，
+                    // failed_view 单点派生）。删本接线即 headless 失败态断言红
+                    //（ADR-0087 接线断言）。
+                    when(
+                        move || {
+                            matches!(
+                                state.get(),
+                                StartupView::Failed {
+                                    can_pick_book_dir: true,
+                                    ..
+                                }
+                            )
+                        },
+                        move || {
+                            button()
+                                .app_class(
+                                    "px-3 py-1.5 rounded-md border border-border text-foreground hover:bg-accent",
+                                )
+                                .child(
+                                    text(PICK_BOOK_DIR_BUTTON)
+                                        .text_size(px(13.0))
+                                        .text_color(fg)
+                                        .test_id("startup-pick-book-dir"),
+                                )
+                                .on_press(pick_book_dir_task)
+                        },
+                    )
+                    .otherwise(view),
+                )
         }),
-    )
+        )
+        .child(create_book_dialog)
 }
 
 #[cfg(test)]

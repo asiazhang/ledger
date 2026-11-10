@@ -146,16 +146,33 @@ pub fn boot_ledger_via_registry(default_dir: &Path) -> Result<Option<DbState>> {
 }
 
 /// 库文件缺失的码化错误（fail loud 单点；argv 打错与注册表落点无库两臂
-/// 共用同码同文案，重写归 T4）。
+/// 共用同码同文案）。文案随立桩收窄解除重写为正式呈现（ADR-0146 决策 4）；
+/// #2015 防假空态内核保留——不自动新建的立场写进文案，出口交给失败态的
+/// 「选择账本库目录…」按钮。
 fn book_missing_error(db_path: &Path) -> AppError {
     AppError::codedp(
         CODE_BOOK_MISSING,
         format!(
-            "账本库文件不存在：{}（立桩期请传入已有账本的目录，不新建账本）",
+            "账本库文件不存在：{}。应用不会自动新建账本库（防止误指向空目录造成空账假象）；请确认目录后重试，或选择其他账本库目录。",
             db_path.display()
         ),
         &[&db_path.to_string_lossy()],
     )
+}
+
+/// 密文库不支持的码化错误（文案单点：启动引导与目录选择闭集分支④共用，
+/// 解锁向导归 #2088）。
+fn encrypted_unsupported_error() -> AppError {
+    AppError::coded(
+        CODE_ENCRYPTED_UNSUPPORTED,
+        "密文库暂不支持：当前版本仅支持打开未加密账本库，解锁功能将在后续版本提供",
+    )
+}
+
+/// 损坏残留的码化错误（文案单点：与启动引导同码同文案，目录选择闭集分支⑤
+/// 复用；不自动换目录重试的语义随呈现面表达）。
+fn db_unreadable_error() -> AppError {
+    AppError::coded(BOOT_DB_UNREADABLE, "数据库文件无法打开（文件可能已损坏）")
 }
 
 /// 引导计划的处置执行（argv 臂与解析链臂共用）：库文件有效性已由调用方
@@ -176,15 +193,68 @@ fn boot_ledger_by_plan(plan: ledger_infra::db::boot::BootPlan) -> Result<DbState
             *boot_record_slot() = Some(plan.boot.clone());
             open_db_in(&plan.boot.db_dir)
         }
-        BootDisposition::AwaitUnlock => Err(AppError::coded(
-            CODE_ENCRYPTED_UNSUPPORTED,
-            "密文库暂不支持：原生壳立桩只引导未加密账本库，解锁向导随迁移系列票补齐",
-        )),
-        BootDisposition::Unreadable => Err(AppError::coded(
-            BOOT_DB_UNREADABLE,
-            "数据库文件无法打开（文件可能已损坏）",
-        )),
+        BootDisposition::AwaitUnlock => Err(encrypted_unsupported_error()),
+        BootDisposition::Unreadable => Err(db_unreadable_error()),
     }
+}
+
+/// 选中目录的现场闭集处置（ADR-0146 决策 3 单点）：book-missing 失败态的
+/// 「选择账本库目录…」按钮与首启引导「打开已有账本」（T3）两个消费面共用
+/// 同一函数——现场分流语义只有这一份。
+///
+/// 分流闭集（判定序即闭集序）：
+/// ① 注册表在册（含活动本自身，目录身份物理折叠）→ 切活动指针（已是活动
+///    本幂等零写入）→ [`PickedBookDisposition::Open`]（在册优先于文件处置：
+///    在册目录即使密文/损坏也先切指针，打开步按启动语义呈现对应失败态）；
+/// ②③ 未在册：无库文件 → [`PickedBookDisposition::ConfirmCreate`]（新建
+///    意图，调用方呈现确认对话明示完整路径后经 [`confirm_create_picked_book`]
+///    完成）；有库 → 登记 + 置活动 → `Open`；
+/// ④⑤ 未在册且库文件为密文 / 损坏残留 → 既有码化错误原样上抛，注册表零
+///    写入，不自动换目录重试。
+///
+/// 返回 `Open` 后的「打开」归调用方（失败态按钮按启动臂重跑启动竖井，引导
+/// 动作按引导现场打开），本函数只保证注册表已就位。
+#[derive(Debug, PartialEq, Eq)]
+pub enum PickedBookDisposition {
+    /// 注册表已就位（切指针 / 登记+置活动 / 已是活动本幂等），调用方打开。
+    Open,
+    /// 目录无库：按新建意图处理，待确认对话后经 [`confirm_create_picked_book`]
+    /// 完成（携带明示路径用的目录）。
+    ConfirmCreate(PathBuf),
+}
+
+pub fn resolve_picked_book_dir(
+    registry_root: &Path,
+    picked_dir: &Path,
+) -> Result<PickedBookDisposition> {
+    use ledger_infra::db::book_registry::{register_or_switch_book_dir, registered_book_at_dir};
+    if registered_book_at_dir(registry_root, picked_dir)?.is_none() {
+        // 未在册：库文件处置分流（与启动引导同源判定 classify_for_boot，
+        // 不另立第二份判定）。
+        let db_path = picked_dir.join(DB_FILE_NAME);
+        if !db_path.is_file() {
+            return Ok(PickedBookDisposition::ConfirmCreate(
+                picked_dir.to_path_buf(),
+            ));
+        }
+        match ledger_infra::db::boot::classify_for_boot(&db_path)? {
+            BootDisposition::AwaitUnlock => return Err(encrypted_unsupported_error()),
+            BootDisposition::Unreadable => return Err(db_unreadable_error()),
+            BootDisposition::OpenPlaintext | BootDisposition::NormalizePlaintext => {}
+        }
+    }
+    register_or_switch_book_dir(registry_root, picked_dir)?;
+    Ok(PickedBookDisposition::Open)
+}
+
+/// 确认新建后的完成动作（决策 3 分支③）：登记（未配置根折叠为「默认账本」
+/// 条目，否则铸新条目置活动，ADR-0146 决策 5）+ 建库（[`open_db_in`] 建连
+/// 迁移单点，缺文件即新装语义；登记先行，建连失败重试经分支②自动登记+打
+/// 开，无悬死现场）。
+pub fn confirm_create_picked_book(registry_root: &Path, picked_dir: &Path) -> Result<()> {
+    ledger_infra::db::book_registry::register_or_switch_book_dir(registry_root, picked_dir)?;
+    open_db_in(picked_dir)?;
+    Ok(())
 }
 
 /// 外来形态明文库归一化（issue #1453）：失败映射为码化错误、原库保持原样——

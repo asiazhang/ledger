@@ -27,8 +27,9 @@ use std::path::Path;
 
 use crate::app::{StartupView, headline_text, run_startup, set_book_dir};
 use crate::boot::{
-    CODE_BOOK_MISSING, CODE_ENCRYPTED_UNSUPPORTED, account_rows, boot_ledger, category_rows,
-    currency_rows, merchant_rows, transaction_page, transaction_search,
+    CODE_BOOK_MISSING, CODE_ENCRYPTED_UNSUPPORTED, PickedBookDisposition, account_rows,
+    boot_ledger, category_rows, confirm_create_picked_book, currency_rows, merchant_rows,
+    resolve_picked_book_dir, transaction_page, transaction_search,
 };
 
 /// 造数助手自共享 `tests/support/seed.rs`（issue #2027）载入；
@@ -824,6 +825,18 @@ fn boot_missing_book_file_fails_coded() {
         err.is_code(CODE_BOOK_MISSING),
         "库文件缺失报码化错误，实际：{err}"
     );
+    // 文案重写（ADR-0146 决策 4）：正式呈现文案，立桩期表述清零；防假空态
+    // 内核保留（不自动新建的立场写进文案），路径随参数透出。
+    let message = err.to_string();
+    assert!(
+        message.contains(dir.join("ledger.db").to_string_lossy().as_ref()),
+        "缺失路径随文案透出：{message}"
+    );
+    assert!(
+        message.contains("不会自动新建账本库"),
+        "防假空态内核在文案：{message}"
+    );
+    assert!(!message.contains("立桩"), "立桩表述已清零：{message}");
 }
 
 #[test]
@@ -834,13 +847,220 @@ fn boot_page_aligned_foreign_header_fails_as_encrypted_unsupported() {
     // 引导层分类为 AwaitUnlock，立桩收窄为码化错误（无解锁向导）。
     fs::write(dir.join("ledger.db"), vec![0u8; 8_192]).unwrap();
     let err = match boot_ledger(&dir) {
-        Ok(_) => panic!("密文库应报立桩范围外错误，实际引导成功"),
+        Ok(_) => panic!("密文库应报不支持错误，实际引导成功"),
         Err(e) => e,
     };
     assert!(
         err.is_code(CODE_ENCRYPTED_UNSUPPORTED),
-        "密文库报立桩范围外码化错误，实际：{err}"
+        "密文库报不支持码化错误，实际：{err}"
     );
+    // 文案重写（ADR-0146：立桩收窄解除，呈现不出现立桩表述）。
+    let message = err.to_string();
+    assert!(message.contains("密文库"), "密文库语义在文案：{message}");
+    assert!(!message.contains("立桩"), "立桩表述已清零：{message}");
+}
+
+// —— 选中目录现场闭集处置（ADR-0146 决策 3 单点；分支语义归本层，UI 接线归
+// headless 旅程——删任一层断言各自变红，两层断言不重复对准同一实现形状）。——
+
+/// 两本注册表现场（活动本 b1 + 追加他本；目录选择闭集用例的共用前置）。
+fn seed_two_book_registry(root: &Path, active_dir: &Path, other: (&str, &Path)) {
+    use ledger_infra::db::book_registry::{Book, BookRegistry, RegistryOrigin, write_registry};
+    write_registry(
+        root,
+        &BookRegistry {
+            books: vec![
+                Book {
+                    id: "b1".to_owned(),
+                    name: "活动账本".to_owned(),
+                    dir: active_dir.to_path_buf(),
+                },
+                Book {
+                    id: other.0.to_owned(),
+                    name: "备用账本".to_owned(),
+                    dir: other.1.to_path_buf(),
+                },
+            ],
+            active_id: "b1".to_owned(),
+            pending_relocation: None,
+            origin: RegistryOrigin::NewFormat,
+        },
+    )
+    .unwrap();
+}
+
+/// 注册表活动本读取（用例断言助手；解析失败即 panic）。
+fn active_book_of(root: &Path) -> ledger_infra::db::book_registry::Book {
+    use ledger_infra::db::book_registry::{RegistryRead, read_registry};
+    match read_registry(root) {
+        RegistryRead::Resolved(registry) => registry.active().unwrap().clone(),
+        other => panic!("注册表应可解析，实际：{other:?}"),
+    }
+}
+
+/// 现场闭集①（注册表在册其他本）：切活动指针，直接判开；已是活动本幂等
+/// （零改写零错误）。
+#[test]
+fn picked_registered_dir_switches_active_pointer_and_is_idempotent() {
+    let _guard = serial_guard();
+    let root = scratch_book_dir("t4-root");
+    let active = scratch_book_dir("t4-active");
+    let other = scratch_book_dir("t4-other");
+    create_empty_book_file(&other);
+    seed_two_book_registry(&root, &active, ("b2", &other));
+    assert!(
+        matches!(
+            resolve_picked_book_dir(&root, &other).unwrap(),
+            PickedBookDisposition::Open
+        ),
+        "在册目录直接判开，不问新建"
+    );
+    assert_eq!(active_book_of(&root).id, "b2", "活动指针切至在册其他本");
+    assert!(
+        matches!(
+            resolve_picked_book_dir(&root, &other).unwrap(),
+            PickedBookDisposition::Open
+        ),
+        "已是活动本再选同目录幂等判开"
+    );
+    assert_eq!(active_book_of(&root).id, "b2", "幂等重选不改写指针");
+}
+
+/// 闭集判定序（①在册优先于库文件处置）：在册目录即使密文形态也先切指针，
+/// 不做文件处置分流——打开步按启动语义呈现对应失败态（headless 负向断言）。
+#[test]
+fn picked_registered_dir_takes_precedence_over_file_disposition() {
+    let _guard = serial_guard();
+    let root = scratch_book_dir("t4-root");
+    let active = scratch_book_dir("t4-active");
+    let other = scratch_book_dir("t4-other");
+    fs::write(other.join("ledger.db"), vec![0xABu8; 20]).unwrap();
+    seed_two_book_registry(&root, &active, ("b2", &other));
+    assert!(
+        matches!(
+            resolve_picked_book_dir(&root, &other).unwrap(),
+            PickedBookDisposition::Open
+        ),
+        "在册优先：损坏形态不走文件处置分流"
+    );
+    assert_eq!(active_book_of(&root).id, "b2");
+}
+
+/// 现场闭集②（有库未登记）：登记新条目（uuid、展示名取目录名）+ 置活动。
+#[test]
+fn picked_unregistered_book_dir_registers_and_activates() {
+    let _guard = serial_guard();
+    let root = scratch_book_dir("t4-root");
+    let active = scratch_book_dir("t4-active");
+    let picked = scratch_book_dir("t4-picked");
+    create_empty_book_file(&picked);
+    let other = scratch_book_dir("t4-other");
+    seed_two_book_registry(&root, &active, ("b2", &other));
+    assert!(
+        matches!(
+            resolve_picked_book_dir(&root, &picked).unwrap(),
+            PickedBookDisposition::Open
+        ),
+        "有库未登记判开"
+    );
+    use ledger_infra::db::book_registry::RegistryRead;
+    let RegistryRead::Resolved(registry) = ledger_infra::db::book_registry::read_registry(&root)
+    else {
+        panic!("注册表应可解析")
+    };
+    assert_eq!(registry.books.len(), 3, "新条目已登记");
+    let picked_name = picked.file_name().unwrap().to_string_lossy().to_string();
+    let entry = registry
+        .books
+        .iter()
+        .find(|book| book.dir == picked)
+        .expect("新条目指向选中目录");
+    assert_eq!(entry.name, picked_name, "展示名取目录名");
+    assert_eq!(registry.active_id, entry.id, "新条目即活动本");
+}
+
+/// 现场闭集③（无库 → 新建意图）：确认前零写入；确认完成动作建库（建连
+/// 迁移单点）+ 登记（未配置根折叠为「默认账本」条目，ADR-0146 决策 5）。
+#[test]
+fn picked_dir_without_book_asks_create_then_confirm_creates_and_registers() {
+    let _guard = serial_guard();
+    let root = scratch_book_dir("t4-root");
+    let picked = scratch_book_dir("t4-new");
+    assert!(
+        matches!(
+            resolve_picked_book_dir(&root, &picked).unwrap(),
+            PickedBookDisposition::ConfirmCreate(ref path) if path == &picked,
+        ),
+        "无库目录返回新建意图并明示路径"
+    );
+    assert!(!picked.join("ledger.db").exists(), "确认前零写入");
+    assert!(
+        !root.join("data_location.json").exists(),
+        "确认前注册表零写入"
+    );
+    confirm_create_picked_book(&root, &picked).unwrap();
+    assert!(
+        picked.join("ledger.db").is_file(),
+        "建库走建连迁移单点（新装语义）"
+    );
+    let book = active_book_of(&root);
+    assert_eq!(book.dir, picked, "登记指向新建目录");
+    assert_eq!(
+        book.name,
+        picked.file_name().unwrap().to_string_lossy().to_string(),
+        "任意目录登记展示名取目录名"
+    );
+    // 决策 5 的首本形态：选中目录即注册表根本身（未配置）→ 折叠为「默认账
+    // 本」条目（与词汇表存量折叠路径同形，id 稳定派生）。
+    let root2 = scratch_book_dir("t4-root2");
+    confirm_create_picked_book(&root2, &root2).unwrap();
+    assert!(root2.join("ledger.db").is_file(), "默认目录建库");
+    let folded = active_book_of(&root2);
+    assert_eq!(folded.dir, root2);
+    assert_eq!(
+        folded.name,
+        ledger_infra::db::book_registry::DEFAULT_BOOK_NAME,
+        "未配置根折叠为「默认账本」条目（决策 5）"
+    );
+}
+
+/// 现场闭集④（密文库）：既有码化错误，注册表零写入（不自动换目录重试）。
+#[test]
+fn picked_encrypted_dir_reports_coded_error_without_registry_change() {
+    let _guard = serial_guard();
+    let root = scratch_book_dir("t4-root");
+    let active = scratch_book_dir("t4-active");
+    let picked = scratch_book_dir("t4-encrypted");
+    fs::write(picked.join("ledger.db"), vec![0u8; 8_192]).unwrap();
+    let other = scratch_book_dir("t4-other");
+    seed_two_book_registry(&root, &active, ("b2", &other));
+    let err = resolve_picked_book_dir(&root, &picked).unwrap_err();
+    assert!(
+        err.is_code(CODE_ENCRYPTED_UNSUPPORTED),
+        "密文库报既有码化错误，实际：{err}"
+    );
+    assert_eq!(active_book_of(&root).id, "b1", "注册表零写入");
+}
+
+/// 现场闭集⑤（损坏残留）：既有损坏码化错误，注册表零写入（不自动换目录
+/// 重试）。
+#[test]
+fn picked_corrupt_dir_reports_coded_error_without_registry_change() {
+    let _guard = serial_guard();
+    let root = scratch_book_dir("t4-root");
+    let active = scratch_book_dir("t4-active");
+    let picked = scratch_book_dir("t4-corrupt");
+    // 损坏残留夹具：非魔数且非页对齐（probe 计密文形态、无密文落盘形态 →
+    // Unreadable；短字节串会落 Empty=新装语义，不构成损坏残留）。
+    fs::write(picked.join("ledger.db"), vec![0xABu8; 20]).unwrap();
+    let other = scratch_book_dir("t4-other");
+    seed_two_book_registry(&root, &active, ("b2", &other));
+    let err = resolve_picked_book_dir(&root, &picked).unwrap_err();
+    assert!(
+        err.is_code(ledger_infra::db::boot::BOOT_DB_UNREADABLE),
+        "损坏残留报既有损坏码化错误，实际：{err}"
+    );
+    assert_eq!(active_book_of(&root).id, "b1", "注册表零写入");
 }
 
 /// 立桩竖井的端到端视图态（装配入口注入 → 引导 → 会话就位 → 首页读）：headless
@@ -862,7 +1082,8 @@ fn run_startup_without_book_dir_renders_usage() {
     );
     assert_eq!(
         headline_text(&StartupView::Failed {
-            message: "账本库文件不存在".to_owned()
+            message: "账本库文件不存在".to_owned(),
+            can_pick_book_dir: false,
         }),
         "启动失败：账本库文件不存在"
     );

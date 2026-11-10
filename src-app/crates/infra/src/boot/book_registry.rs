@@ -537,6 +537,66 @@ pub fn switch_active_book(default_dir: &Path, id: &str) -> Result<Book> {
     Ok(book)
 }
 
+/// 按目录查在册账本（只读；目录选择现场闭集的分支判定读，ADR-0146 决策 3）。
+/// 路径身份按物理位置折叠（与目录查重同口径）；未配置
+/// 折叠出厂默认账本（与变更内核同一读取语义）；损坏沿变更拒绝同一码化错误
+/// 上抛（回退现场为只读态）。选中目录不存在时折叠原样比较（视为未在册——
+/// 新建意图分支的目录可尚不存在）。
+pub fn registered_book_at_dir(default_dir: &Path, dir: &Path) -> Result<Option<Book>> {
+    let registry = match read_registry(default_dir) {
+        RegistryRead::Resolved(registry) => registry,
+        RegistryRead::Unconfigured => BookRegistry::single_default(default_dir),
+        RegistryRead::Corrupt(reason) => return Err(registry_corrupt_error(&reason)),
+    };
+    Ok(find_book_at_dir(&registry, dir))
+}
+
+/// 目录身份折叠查找（物理位置同径即同本，双端 best-effort canonicalize，
+/// 与目录查重 `ensure_dir_not_registered` 同口径）。
+fn find_book_at_dir(registry: &BookRegistry, dir: &Path) -> Option<Book> {
+    let canonical = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
+    registry
+        .books
+        .iter()
+        .find(|book| book.dir.canonicalize().unwrap_or_else(|_| book.dir.clone()) == canonical)
+        .cloned()
+}
+
+/// 把既有目录登记为新账本并置为活动；已在册时只保证活动指针（幂等零写入）。
+/// 目录选择现场闭集的登记内核（ADR-0146 决策 3）：分支①「在册其他本→切活
+/// 动指针」、分支②「有库未登记→登记+置活动」与分支③确认新建后的登记共用
+/// 本入口。展示名取目录名（无名的极端目录沿「默认账本」兜底）；只登记不建
+/// 库——库文件由调用方的建连路径建出/打开（[`crate::db::connection::open_db_in`]）。
+pub fn register_or_switch_book_dir(default_dir: &Path, dir: &Path) -> Result<Book> {
+    let mut registry = read_for_mutation(default_dir)?;
+    // 可用性与切换同口径：目录可创建即可用（在册判定与建条目都需要实目录）。
+    ensure_dir_available(dir)?;
+    if let Some(book) = find_book_at_dir(&registry, dir) {
+        // 已是活动本且注册表已是新格式 → 幂等零写入；折叠现场（未配置/旧格式
+        // 指针）写入即落新格式——登记即时落盘（ADR-0146 决策 2/5）与词汇表
+        // 「首次写入注册表时才落新格式」升级路径同形。
+        if registry.active_id != book.id || registry.origin == RegistryOrigin::LegacyPointer {
+            ensure_dir_available(&book.dir)?;
+            registry.active_id = book.id.clone();
+            write_registry(default_dir, &registry)?;
+        }
+        return Ok(book);
+    }
+    let book = Book {
+        id: crate::ids::new_uuid(),
+        name: dir
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .filter(|name| !name.trim().is_empty())
+            .unwrap_or_else(|| DEFAULT_BOOK_NAME.to_owned()),
+        dir: dir.to_path_buf(),
+    };
+    registry.books.push(book.clone());
+    registry.active_id = book.id.clone();
+    write_registry(default_dir, &registry)?;
+    Ok(book)
+}
+
 /// 改账本展示名：只动注册表元数据，目录与库文件零变化。返回更新后的条目。
 pub fn rename_book_entry(default_dir: &Path, id: &str, name: &str) -> Result<Book> {
     let name = required_name(name)?;
