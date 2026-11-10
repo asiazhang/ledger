@@ -14560,7 +14560,8 @@ fn startup_argv_picker_registers_into_default_data_root_not_argv_dir() {
     assert_eq!(registry.active_id, entry.id, "新条目即数据根注册表的活动本");
     // 负向：打错的 argv 目录不被写入注册表。
     assert!(
-        !bad.join(ledger_infra::db::book_registry::REGISTRY_FILE_NAME).exists(),
+        !bad.join(ledger_infra::db::book_registry::REGISTRY_FILE_NAME)
+            .exists(),
         "argv 目录不作注册表根：data_location.json 不落该处"
     );
 }

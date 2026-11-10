@@ -1273,9 +1273,7 @@ fn run_startup_configured_active_book_at_default_dir_missing_fails_loud() {
             );
             assert!(can_pick_book_dir, "book-missing 失败态挂目录选择出口");
         }
-        other => panic!(
-            "已配置+活动本=默认目录+缺库应 fail loud，实际：{other:?}"
-        ),
+        other => panic!("已配置+活动本=默认目录+缺库应 fail loud，实际：{other:?}"),
     }
 }
 
