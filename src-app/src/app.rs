@@ -412,10 +412,12 @@ pub fn secondary_text(view: &StartupView) -> String {
 }
 
 /// 首启引导词表（zh-CN 硬编码；ADR-0146 决策 2，T2 #2092）。「打开已有账
-/// 本」动作位随 T3 补——本票不渲染占位（无动作的死按钮不入屏）。
+/// 本」动作随 T3 #2093 入屏——动作接线在引导面板按钮（onboarding-pick），
+/// 现场分流语义零新写（复用失败态选择器同一任务与闭集单点）。
 pub(crate) const ONBOARDING_HEADLINE: &str = "欢迎使用 Ledger";
 const ONBOARDING_HINT: &str = "尚未找到账本库，新建一本账即可开始记账。";
 const ONBOARDING_CREATE_LABEL: &str = "新建账本";
+const ONBOARDING_PICK_LABEL: &str = "打开已有账本";
 
 /// 新建确认对话词表（warning 级，ADR-0078 分级基准：新建非破坏但有知情必
 /// 要——完整路径明示在警示句内）。既有库目录场景（选择器复用）不动既有库。
@@ -3357,8 +3359,7 @@ pub fn App() -> impl IntoElement {
                             .otherwise(view)
                         })
                         .child(
-                            // 「新建账本」动作（决策 2 双动作之一；「打开已有账
-                            // 本」动作位随 T3 补，本票不渲染无动作占位）。按 press
+                            // 「新建账本」动作（决策 2 双动作之一）。按 press
                             // 开确认对话（明示完整路径），确认后建库+登记+置指针
                             // 并重走启动竖井（接线在 create_dialog 结局处）。
                             button()
@@ -3370,6 +3371,24 @@ pub fn App() -> impl IntoElement {
                                         .test_id("onboarding-create"),
                                 )
                                 .on_press(move || create_open.set(true)),
+                        )
+                        .child(
+                            // 「打开已有账本」动作（决策 2 双动作之二，T3 #2093）：
+                            // 按压开目录选择器，选定目录交 T4 现场闭集处置单点
+                            //（resolve_picked_book_dir，与失败态出口同一任务
+                            // pick_book_dir_task——现场分流语义只有一份）：①②
+                            // 直接打开、③转新建确认对话（create_confirm 信号驱
+                            // 动，组件体挂载）、④⑤码化错误呈现；取消零副作用留
+                            // 引导。删本接线即 headless 引导选择器用例红（ADR-0087）。
+                            button()
+                                .app_class("px-3 py-1.5 rounded-md border border-border text-foreground hover:bg-accent")
+                                .child(
+                                    text(ONBOARDING_PICK_LABEL)
+                                        .text_size(px(13.0))
+                                        .text_color(fg)
+                                        .test_id("onboarding-pick-book-dir"),
+                                )
+                                .on_press(pick_book_dir_task),
                         )
                         // 创建失败留在引导（错误可读、动作可重试；成功路径不经此）。
                         .child(
