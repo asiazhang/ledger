@@ -14648,27 +14648,37 @@ fn startup_picker_corrupt_dir_reports_coded_error_without_picker() {
 // —— 引导界面选择器动作 + 现场闭集处置单点（resolve_picked_book_dir）——
 // —— 的窗口呈现旅程。 ——
 
-/// 分支①主现场：注册表活动本指向默认数据目录自身且无库（引导现场，库被
-/// 外部删除的升级现场）→ 选中注册表在册其他本 → 切活动指针 → 本次启动
-/// 直接打开（主界面就位、指针落盘）→「下次启动」直接打开新活动本。删引导
-/// 选择器接线（引导态挂「打开已有账本」的那次接线）→ 按压零动作 → 主界面
-/// 不落位 → 红（ADR-0087 接线断言，实证见交付报告）。
+/// F1 现场（ADR-0146 决策 2/4 分界）：注册表已配置 + 活动本指向默认数据目录
+/// 自身 + 缺库 → book-missing 失败态（出口按钮在场），**不出现首启引导
+/// 面板**——引导现场仅限未配置/损坏回退（决策 2），已解析活动条目缺库一律
+/// fail loud（决策 4）。随后走失败态选择器面：选中在册兄弟本 → 切活动指针
+/// 直开 →「下次启动」直接打开新活动本（T3 分支①「选另一在册本切指针直开」
+/// 旅程的权威落点：该现场在引导面已不可构造，迁移到失败态选择器面）。
+/// 删注册表状态信号分流（退回路径等值判定）→ 引导面板误现 → 负向断言红
+///（ADR-0087 断言对准屏幕可见结果）。
 #[test]
-fn onboarding_pick_registered_book_switches_pointer_and_opens() {
+fn startup_configured_active_book_at_default_dir_missing_fails_with_picker_and_switches_pointer() {
     let _guard = SERIAL.lock().unwrap();
     nsh_app::app::reset_book_assembly();
-    let root = make_data_root("t3-onboard-b1");
+    let root = make_data_root("t3-at-default");
     let other = make_book("t3-other");
-    // 活动本 b1 = 默认目录自身（无库 → 引导态），在册其他本 b2 有库。
+    // 活动本 b1 = 默认目录自身（无库），在册其他本 b2 有库。
     seed_registry(&root, &root, &[("b2", "备用账本", &other)]);
     nsh_app::cross_book::set_default_data_dir(root.clone());
     let mut app = Headless::start(desktop_config()).unwrap();
-    app.wait_for("text:欢迎使用 Ledger").unwrap();
-    wait_pressable(&mut app, "id:onboarding-pick-book-dir");
+    // 失败态在屏（fail loud），首启引导面板不出现（负向断言：决策 2/4 分界）。
+    app.wait_for("text:/账本库文件不存在/").unwrap();
+    app.wait_for("id:startup-pick-book-dir").unwrap();
+    assert_eq!(
+        app.screen().count("id:onboarding-panel").unwrap(),
+        0,
+        "已配置+活动本=默认目录+缺库不呈现首启引导面板：{:?}",
+        app.screen().texts()
+    );
 
-    // 选中在册其他本 → 切活动指针 → 本次启动直接打开。
+    // 失败态选择器：选中在册其他本 → 切活动指针 → 本次启动直接打开。
     app.on_pick_paths(vec![other.clone()]).unwrap();
-    app.press("id:onboarding-pick-book-dir").unwrap();
+    app.press("id:startup-pick-book-dir").unwrap();
     app.wait_for("id:nav-transactions").unwrap();
     use ledger_infra::db::book_registry::{RegistryRead, read_registry};
     let RegistryRead::Resolved(registry) = read_registry(&root) else {

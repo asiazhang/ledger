@@ -122,28 +122,32 @@ pub fn boot_ledger(book_dir: &Path) -> Result<DbState> {
 
 /// 启动解析链缺参入口（ADR-0146 决策 1）：以数据根为注册表根引导——账本
 /// 注册表活动指针 > 默认数据目录（argv 显式臂是 [`boot_ledger`]，优先级
-/// 由调用方在缺参之前分流，不经本函数）。返回 `Ok(None)` = 解析落点即默认
-/// 数据目录且库文件缺失（未配置无库 / 注册表损坏回退后无库——首启引导
-/// 现场，呈现面据此呈现引导态，ADR-0146 决策 2）；注册表已解析活动本缺库
-///（落点非默认目录）不在其列，仍走 book-missing fail loud（决策 4）。
-/// 「argv 打错」与「注册表落点无库」的文案与失败态出口区分归 T4 重写，
-/// 本票两臂同文案。引导现场的引导计划随返回落槽（含回退原因
-/// `fallback_reason`），呈现面经 [`boot_record`] 消费（引导态损坏告示与
-/// 现场 D 的就绪回退告示同源）。
+/// 由调用方在缺参之前分流，不经本函数）。返回 `Ok(None)` = 注册表未配置
+///（含损坏回退）且解析落点无库——首启引导现场，呈现面据此呈现引导态
+///（ADR-0146 决策 2）；现场分流以 [`ledger_infra::db::data_location::RegistryBootState`]
+/// 状态信号判定（未配置/损坏回退 vs 已解析活动条目），不以路径比较判定。
+/// 注册表已解析活动条目时库文件缺失——无论活动本指向哪个目录——一律
+/// book-missing fail loud（决策 4；失败态自带「选择账本库目录…」出口）。
+/// 引导现场的引导计划随返回落槽（含回退原因 `fallback_reason`），呈现面经
+/// [`boot_record`] 消费（引导态损坏告示与现场 D 的就绪回退告示同源）。
 pub fn boot_ledger_via_registry(default_dir: &Path) -> Result<Option<DbState>> {
     wiring::install_domain_seams();
     let plan = ledger_infra::db::boot::plan_boot(default_dir);
     let db_path = plan.boot.db_dir.join(DB_FILE_NAME);
     if !db_path.is_file() {
-        if plan.boot.db_dir == default_dir {
-            // 解析落点即默认数据目录且无库：未配置 / 损坏回退后无库——
-            // 首启引导现场（ADR-0146 决策 2），不 fail loud 也不静默新建；
-            // 引导计划落槽（回退原因随槽，呈现面经 boot_record 消费——
-            // 与就绪分支的回退告示同源同款式）。
-            *boot_record_slot() = Some(plan.boot);
-            return Ok(None);
+        use ledger_infra::db::data_location::RegistryBootState;
+        match plan.boot.registry_state {
+            // 未配置 / 损坏回退且落点无库：首启引导现场（ADR-0146 决策 2），
+            // 不 fail loud 也不静默新建；引导计划落槽（回退原因随槽，呈现面
+            // 经 boot_record 消费——与就绪分支的回退告示同源同款式）。
+            RegistryBootState::Unconfigured | RegistryBootState::Corrupt => {
+                *boot_record_slot() = Some(plan.boot);
+                return Ok(None);
+            }
+            // 已解析活动条目缺库：fail loud（决策 4；含活动本指向默认目录
+            // 自身的现场——路径等值不能区分「未配置」与「已配置」）。
+            RegistryBootState::Resolved => return Err(book_missing_error(&db_path)),
         }
-        return Err(book_missing_error(&db_path));
     }
     boot_ledger_by_plan(plan).map(Some)
 }

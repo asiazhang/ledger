@@ -320,6 +320,7 @@ fn mutable_registry_follows_write_timing_contract() {
     // 注册表损坏（registry None）→ registry-corrupt，原因随参数携带。
     let corrupt = Boot {
         db_dir: PathBuf::from("/data/default"),
+        registry_state: RegistryBootState::Corrupt,
         fallback_reason: Some("损坏".into()),
         deferred_relocation: None,
         registry: None,
@@ -398,6 +399,7 @@ fn gather_book_list_follows_boot_states() {
     // 推迟搬迁窗口（直接构造引导态，聚合只消费 Boot 字段）：清单可展示，但变更被禁。
     let boot = Boot {
         db_dir: PathBuf::from("/data/source"),
+        registry_state: RegistryBootState::Resolved,
         fallback_reason: None,
         deferred_relocation: Some(PathBuf::from("/data/target")),
         registry: Some(BookRegistry::single_default(Path::new("/data/source"))),

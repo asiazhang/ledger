@@ -300,11 +300,14 @@ pub fn run_startup_with_trigger_timings(
             crate::market_lanes::start_market_lanes();
             StartupView::Ready
         }
-        // 首启引导现场（ADR-0146 决策 2，T2 #2092）：数据根已注入且解析落点
-        //（默认数据目录）无库。回退原因随引导记录落槽（boot_ledger_via_registry），
-        // 呈现面带损坏告示；干净出厂现场无告示。数据根未注入（headless 测试
-        // 态）保持缺参用法提示。删本臂引导映射（回退无条件 MissingArg）→
-        // app_headless 引导态用例全红（「删除即变红」已实证，ADR-0087）。
+        // 首启引导现场（ADR-0146 决策 2，T2 #2092）：数据根已注入且注册表
+        // 未配置（含损坏回退）且解析落点无库——分流信号在
+        // boot_ledger_via_registry 内按注册表状态（RegistryBootState）判定，
+        // 已解析活动条目缺库在彼处 fail loud（决策 4），不经本臂。回退原因随
+        // 引导记录落槽（boot_ledger_via_registry），呈现面带损坏告示；干净
+        // 出厂现场无告示。数据根未注入（headless 测试态）保持缺参用法提示。
+        // 删本臂引导映射（回退无条件 MissingArg）→ app_headless 引导态用例
+        // 全红（「删除即变红」已实证，ADR-0087）。
         Ok(None) => match crate::cross_book::default_data_dir() {
             Some(_) => StartupView::Onboarding {
                 fallback_reason: boot::boot_record().and_then(|record| record.fallback_reason),

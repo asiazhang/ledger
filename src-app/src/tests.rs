@@ -1145,6 +1145,50 @@ fn run_startup_corrupt_registry_without_book_onboarding_carries_fallback_reason(
     }
 }
 
+/// F1 现场（ADR-0146 决策 4）：注册表已配置且活动本指向默认数据目录自身、
+/// 库文件缺失（库被外部删除的升级现场）→ book-missing 失败态（带目录选择
+/// 出口），**不进首启引导**——引导现场 = 注册表未配置（含损坏回退）且解析
+/// 落点无库（决策 2）；已解析活动条目缺库一律 fail loud（决策 4）。删
+/// `boot_ledger_via_registry` 的注册表状态信号分流（退回路径等值判定）→
+/// 本用例呈现引导态即红。
+#[test]
+fn run_startup_configured_active_book_at_default_dir_missing_fails_loud() {
+    let _guard = serial_guard();
+    crate::app::reset_book_assembly();
+    let root = scratch_book_dir("onboarding-at-default");
+    // 注册表已配置：唯一活动本指向默认数据目录自身，库文件缺失。
+    ledger_infra::db::book_registry::write_registry(
+        &root,
+        &ledger_infra::db::book_registry::BookRegistry {
+            books: vec![ledger_infra::db::book_registry::Book {
+                id: "b1".to_owned(),
+                name: "活动账本".to_owned(),
+                dir: root.clone(),
+            }],
+            active_id: "b1".to_owned(),
+            pending_relocation: None,
+            origin: ledger_infra::db::book_registry::RegistryOrigin::NewFormat,
+        },
+    )
+    .unwrap();
+    crate::cross_book::set_default_data_dir(root);
+    match run_startup() {
+        StartupView::Failed {
+            message,
+            can_pick_book_dir,
+        } => {
+            assert!(
+                message.contains("账本库文件不存在"),
+                "book-missing 失败态呈现：{message}"
+            );
+            assert!(can_pick_book_dir, "book-missing 失败态挂目录选择出口");
+        }
+        other => panic!(
+            "已配置+活动本=默认目录+缺库应 fail loud，实际：{other:?}"
+        ),
+    }
+}
+
 /// 会话句柄读取（app 槽位的 crate 内测试出口，随头注可见性）。
 fn nsh_app_session() -> std::sync::Arc<ledger_infra::db::DbState> {
     crate::app::session_handle().expect("就绪时会话句柄已就位")

@@ -39,11 +39,32 @@ pub use crate::db::connection::DB_FILE_NAME;
 /// 文件即回到出厂行为（未配置 → 默认目录）。解析双格式兼容收口 [`book_registry`]。
 pub const POINTER_FILE_NAME: &str = book_registry::REGISTRY_FILE_NAME;
 
+/// 注册表引导状态（ADR-0146 决策 2/4 的引导现场判定信号）：[`RegistryRead`]
+/// 三分支在引导结果上的投影——注册表「未配置 / 损坏回退 / 已解析出活动条
+/// 目」。消费面：壳层启动解析链缺参臂的首启引导现场分流（引导态 vs
+/// book-missing 失败态），以状态信号分流、不以路径比较判定。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RegistryBootState {
+    /// 注册表文件缺失：未配置（出厂形态）。
+    Unconfigured,
+    /// 注册表损坏回退（含活动指针不可解析的防御回退）：变更登记被禁止
+    ///（[`Boot::registry`] 为 `None`）。
+    Corrupt,
+    /// 注册表解析出活动条目（旧格式指针折叠与新格式解析同态；含活动目录
+    /// 不可用回退等现场——登记信息仍可展示）。
+    Resolved,
+}
+
 /// 启动期 DataLocation 引导结果。
 #[derive(Clone)]
 pub struct Boot {
     /// 活动账本的库文件目录（建连在此进行）。
     pub db_dir: PathBuf,
+    /// 注册表引导状态（[`RegistryBootState`]）：引导现场判定的注册表侧信号
+    ///（ADR-0146 决策 2/4——引导现场 = 未配置/损坏回退且解析落点无库；已
+    /// 解析活动条目缺库一律 fail loud）。与 [`Boot::registry`] 对应：`Corrupt`
+    /// ⇔ `registry` 为 `None`。
+    pub registry_state: RegistryBootState,
     /// 引导期发生回退（注册表损坏 / 活动目录不可用）时的人类可读原因，
     /// 供界面显著提示；`None` 表示正常定位，未发生回退。
     pub fallback_reason: Option<String>,
@@ -64,12 +85,14 @@ pub fn boot(default_dir: &Path) -> Boot {
     match read_registry(default_dir) {
         RegistryRead::Unconfigured => Boot {
             db_dir: default_dir.to_path_buf(),
+            registry_state: RegistryBootState::Unconfigured,
             fallback_reason: None,
             deferred_relocation: None,
             registry: Some(BookRegistry::single_default(default_dir)),
         },
         RegistryRead::Corrupt(reason) => Boot {
             db_dir: default_dir.to_path_buf(),
+            registry_state: RegistryBootState::Corrupt,
             fallback_reason: Some(reason),
             deferred_relocation: None,
             // 注册表损坏：登记信息不可用，且变更登记被禁止（写入时机契约）。
@@ -91,6 +114,7 @@ fn enter_registry(default_dir: &Path, mut registry: BookRegistry) -> Boot {
         tracing::error!("注册表已解析但活动账本指针不可解析，按损坏回退默认目录");
         return Boot {
             db_dir: default_dir.to_path_buf(),
+            registry_state: RegistryBootState::Corrupt,
             fallback_reason: Some("账本注册表活动账本指针无法解析，已回退默认位置".into()),
             deferred_relocation: None,
             registry: None,
@@ -110,6 +134,7 @@ fn enter_registry(default_dir: &Path, mut registry: BookRegistry) -> Boot {
                 None => match ensure_target_dir(&target) {
                     Ok(()) => Boot {
                         db_dir: target,
+                        registry_state: RegistryBootState::Resolved,
                         fallback_reason: None,
                         deferred_relocation: None,
                         registry: Some(registry),
@@ -123,6 +148,7 @@ fn enter_registry(default_dir: &Path, mut registry: BookRegistry) -> Boot {
                         // 注册表本身可读：登记信息仍可展示，用户可经切换命令回到默认账本。
                         Boot {
                             db_dir: default_dir.to_path_buf(),
+                            registry_state: RegistryBootState::Resolved,
                             fallback_reason: Some(reason),
                             deferred_relocation: None,
                             registry: Some(registry),
@@ -161,6 +187,7 @@ fn enter_pending_relocation(
             registry.pending_relocation = None;
             Boot {
                 db_dir: target.to_path_buf(),
+                registry_state: RegistryBootState::Resolved,
                 fallback_reason: None,
                 deferred_relocation: None,
                 registry: Some(registry),
@@ -178,6 +205,7 @@ fn enter_pending_relocation(
             registry.pending_relocation = Some(pending);
             Boot {
                 db_dir: source,
+                registry_state: RegistryBootState::Resolved,
                 fallback_reason: None,
                 deferred_relocation: Some(target.to_path_buf()),
                 registry: Some(registry),
@@ -195,6 +223,7 @@ fn enter_pending_relocation(
             registry.pending_relocation = Some(pending);
             Boot {
                 db_dir: source,
+                registry_state: RegistryBootState::Resolved,
                 fallback_reason: Some(reason),
                 deferred_relocation: None,
                 registry: Some(registry),
@@ -211,6 +240,7 @@ fn relocate_or_adopt(default_dir: &Path, target: &Path, mut registry: BookRegist
     match enter_target_with_source(default_dir, target) {
         Ok(()) => Boot {
             db_dir: target.to_path_buf(),
+            registry_state: RegistryBootState::Resolved,
             fallback_reason: None,
             deferred_relocation: None,
             registry: Some(registry),
@@ -226,6 +256,7 @@ fn relocate_or_adopt(default_dir: &Path, target: &Path, mut registry: BookRegist
             registry.redirect_default_book(default_dir);
             Boot {
                 db_dir: default_dir.to_path_buf(),
+                registry_state: RegistryBootState::Resolved,
                 fallback_reason: None,
                 deferred_relocation: Some(target.to_path_buf()),
                 registry: Some(registry),
@@ -240,6 +271,7 @@ fn relocate_or_adopt(default_dir: &Path, target: &Path, mut registry: BookRegist
             // 指针可解析（登记信息可展示）；搬迁失败不禁止登记变更（切走即脱困）。
             Boot {
                 db_dir: default_dir.to_path_buf(),
+                registry_state: RegistryBootState::Resolved,
                 fallback_reason: Some(reason),
                 deferred_relocation: None,
                 registry: Some(registry),
