@@ -141,6 +141,9 @@
 //!   触发件的确认/取消气泡、ESC/点外关闭、抑制上报自含；
 //! - [`popover`]：口径说明气泡封装（`App*` 封装族，#2039 首建）——触发件
 //!   点按开合的多行说明气泡（旧壳口径 tooltip 的点按形态）、抑制上报自含；
+//! - [`keep_mounted`]：visited-once keep-mounted 页签宿主封装（#2073 自设置
+//!   /投资双实现收拢）——已到访页签 display 隐藏保持挂载（切页签不重挂重拉）、
+//!   未到访不预载；到访标记与到访 effect 同点；设置页与投资页页签容器消费；
 //! - [`signals`]：进程内失效信号——交易数据失效的订阅/广播单点，写路径
 //!   成功后广播、列表视图订阅重读（#2022；词汇表失效信号语义的壳内通道）；
 //! - [`txn_form`]：交易表单弹窗（`App*` 封装族消费面，#2034）——基础收支
@@ -254,6 +257,7 @@ pub mod investments_holdings;
 pub mod investments_instruments;
 pub mod investments_ledger;
 pub mod items;
+pub mod keep_mounted;
 pub mod logging;
 pub mod market_lanes;
 pub mod merchants;
