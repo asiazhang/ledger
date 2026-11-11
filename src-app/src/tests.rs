@@ -27,8 +27,8 @@ use std::path::Path;
 
 use crate::app::{StartupView, headline_text, run_startup, set_book_dir};
 use crate::boot::{
-    CODE_BOOK_MISSING, CODE_ENCRYPTED_UNSUPPORTED, PickedBookDisposition, account_rows,
-    boot_ledger, category_rows, confirm_create_picked_book, currency_rows, merchant_rows,
+    CODE_AWAITING_UNLOCK, CODE_BOOK_MISSING, PickedBookDisposition, account_rows, boot_ledger,
+    category_rows, confirm_create_picked_book, currency_rows, merchant_rows,
     resolve_picked_book_dir, transaction_page, transaction_search,
 };
 
@@ -867,24 +867,31 @@ fn boot_missing_book_file_fails_coded() {
 }
 
 #[test]
-fn boot_page_aligned_foreign_header_fails_as_encrypted_unsupported() {
+fn boot_page_aligned_foreign_header_lands_awaiting_unlock_and_locks_gate() {
     let _guard = serial_guard();
     let dir = scratch_book_dir("locked");
     // 两整页非明文魔数字节（页对齐 = 基础设施「密文库落盘形态」判别）：
-    // 引导层分类为 AwaitUnlock，立桩收窄为码化错误（无解锁向导）。
+    // 引导层分类为 AwaitUnlock，产出等待解锁码化信号（呈现层落锁定视图）。
     fs::write(dir.join("ledger.db"), vec![0u8; 8_192]).unwrap();
     let err = match boot_ledger(&dir) {
-        Ok(_) => panic!("密文库应报不支持错误，实际引导成功"),
+        Ok(_) => panic!("密文库应落等待解锁信号，实际引导成功"),
         Err(e) => e,
     };
     assert!(
-        err.is_code(CODE_ENCRYPTED_UNSUPPORTED),
-        "密文库报不支持码化错误，实际：{err}"
+        err.is_code(CODE_AWAITING_UNLOCK),
+        "密文库报等待解锁码化信号，实际：{err}"
     );
-    // 文案重写（ADR-0146：立桩收窄解除，呈现不出现立桩表述）。
-    let message = err.to_string();
-    assert!(message.contains("密文库"), "密文库语义在文案：{message}");
-    assert!(!message.contains("立桩"), "立桩表述已清零：{message}");
+    // 引导记录落槽（解锁 / 重置编排的路径读源）+ 锁定门置锁（呈现层据码落
+    // 锁定视图；备份调度 / 同步触发的门检在锁定期间空转）。
+    let record = crate::boot::boot_record().expect("密文库引导记录应落槽");
+    assert_eq!(record.db_dir, dir, "引导记录登记密文库目录");
+    assert!(
+        crate::boot::encryption_locked(),
+        "密文库引导后锁定门应置锁"
+    );
+    // 复位门槽，不泄入后续用例（串行守卫内手动复位；headless 场景经
+    // reset_book_assembly 同批复位）。
+    crate::boot::reset_encryption_gate_for_tests();
 }
 
 // —— 选中目录现场闭集处置（ADR-0146 决策 3 单点；分支语义归本层，UI 接线归
@@ -953,10 +960,11 @@ fn picked_registered_dir_switches_active_pointer_and_is_idempotent() {
     assert_eq!(active_book_of(&root).id, "b2", "幂等重选不改写指针");
 }
 
-/// F3（ADR-0146 决策 3④⑤ + 决策 4）：选中**在册但**密文/损坏的本 → 先分类
-/// 后切指针：码化错误上抛且注册表零写入（先切指针再打开失败会把指针移走，
-/// 该失败态又无选择器出口——应用内不可恢复）。旧序「在册优先于文件处置」
-/// 钉死用例随语义翻转改造：断言错误呈现 + 注册表内容不变。
+/// F3（ADR-0146 决策 3⑤ + 决策 4；④随 #2088 反转为登记+打开，修订注记在
+/// ADR）：选中**在册但**损坏残留的本 → 先分类后切指针：码化错误上抛且注册
+/// 表零写入（先切指针再打开失败会把指针移走，该失败态无选择器出口——应用
+/// 内不可恢复）。旧序「在册优先于文件处置」钉死用例随语义翻转改造：断言
+/// 错误呈现 + 注册表内容不变。
 #[test]
 fn picked_registered_corrupt_dir_reports_coded_error_without_registry_change() {
     let _guard = serial_guard();
@@ -971,14 +979,6 @@ fn picked_registered_corrupt_dir_reports_coded_error_without_registry_change() {
     assert!(
         err.is_code(ledger_infra::db::boot::BOOT_DB_UNREADABLE),
         "在册损坏残留报既有损坏码化错误，实际：{err}"
-    );
-    assert_eq!(active_book_of(&root).id, "b1", "注册表零写入：指针未切");
-    // 在册密文本同序：码化错误 + 零写入。
-    fs::write(other.join("ledger.db"), vec![0u8; 8_192]).unwrap();
-    let err = resolve_picked_book_dir(&root, &other).unwrap_err();
-    assert!(
-        err.is_code(CODE_ENCRYPTED_UNSUPPORTED),
-        "在册密文本报既有码化错误，实际：{err}"
     );
     assert_eq!(active_book_of(&root).id, "b1", "注册表零写入：指针未切");
 }
@@ -1061,9 +1061,11 @@ fn picked_dir_without_book_asks_create_then_confirm_creates_and_registers() {
     );
 }
 
-/// 现场闭集④（密文库）：既有码化错误，注册表零写入（不自动换目录重试）。
+/// 现场闭集④（密文库，#2088 反转后语义）：登记新条目 + 置活动指针 + 判开
+///（调用方打开后引导落锁定视图解锁——旧「码化错误 + 零写入」用例随解锁路
+/// 径落地改造）。删登记换入（退回码化拦截）→ 判开断言红。
 #[test]
-fn picked_encrypted_dir_reports_coded_error_without_registry_change() {
+fn picked_encrypted_dir_registers_and_activates_then_lands_awaiting_unlock() {
     let _guard = serial_guard();
     let root = scratch_book_dir("t4-root");
     let active = scratch_book_dir("t4-active");
@@ -1071,12 +1073,27 @@ fn picked_encrypted_dir_reports_coded_error_without_registry_change() {
     fs::write(picked.join("ledger.db"), vec![0u8; 8_192]).unwrap();
     let other = scratch_book_dir("t4-other");
     seed_two_book_registry(&root, &active, ("b2", &other));
-    let err = resolve_picked_book_dir(&root, &picked).unwrap_err();
     assert!(
-        err.is_code(CODE_ENCRYPTED_UNSUPPORTED),
-        "密文库报既有码化错误，实际：{err}"
+        matches!(
+            resolve_picked_book_dir(&root, &picked).unwrap(),
+            PickedBookDisposition::Open
+        ),
+        "密文库目录判开（登记 + 置活动）"
     );
-    assert_eq!(active_book_of(&root).id, "b1", "注册表零写入");
+    assert_ne!(
+        active_book_of(&root).id, "b1",
+        "活动指针已切至新登记的密文本"
+    );
+    // 打开后的引导：等待解锁信号 + 门置锁（呈现层落锁定视图）。
+    let err = match boot_ledger(&picked) {
+        Ok(_) => panic!("密文库应落等待解锁信号，实际引导成功"),
+        Err(e) => e,
+    };
+    assert!(
+        err.is_code(CODE_AWAITING_UNLOCK),
+        "密文库报等待解锁码化信号，实际：{err}"
+    );
+    crate::boot::reset_encryption_gate_for_tests();
 }
 
 /// 现场闭集⑤（损坏残留）：既有损坏码化错误，注册表零写入（不自动换目录

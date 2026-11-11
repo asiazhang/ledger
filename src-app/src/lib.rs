@@ -305,6 +305,7 @@ pub mod tx_cards;
 pub mod tx_filter;
 pub mod tx_view_preferences;
 pub mod txn_form;
+pub mod unlock;
 pub mod views;
 pub mod wiring;
 

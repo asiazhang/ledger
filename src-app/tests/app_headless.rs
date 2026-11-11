@@ -14645,8 +14645,8 @@ fn startup_picker_empty_dir_create_intent_confirms_and_opens() {
     );
 }
 
-/// 密文/损坏选中目录的失败呈现（闭集④⑤共用流程、夹具分场）：既有码化错
-/// 误上屏，失败态不挂选择器出口（缺的是解锁与诊断，不是目录，决策 4）。
+/// 损坏残留选中目录的失败呈现（闭集⑤）：码化错误上屏，失败态不挂选择器
+/// 出口（缺的是诊断，不是目录，决策 4）。
 fn pick_bad_book_dir_reports_coded_error_without_picker(bad_bytes: &[u8], expect: &str) {
     nsh_app::app::reset_book_assembly();
     let root = make_data_root("t4-bad-pick");
@@ -14663,15 +14663,41 @@ fn pick_bad_book_dir_reports_coded_error_without_picker(bad_bytes: &[u8], expect
     assert_eq!(
         app.screen().count("id:startup-pick-book-dir").unwrap(),
         0,
-        "密文/损坏失败态不挂选择器出口"
+        "损坏残留失败态不挂选择器出口"
     );
 }
 
-/// 现场闭集④（密文库）：既有 `nsh-shell.encrypted-unsupported` 呈现 + 无出口。
+/// 现场闭集④（密文库，#2088 反转后语义）：选中密文库目录 → 登记 + 置活动
+/// + 判开 → 引导落锁定视图（解锁面板在屏），无选择器出口（锁定态不是失败
+/// 态，无目录出口）。
 #[test]
-fn startup_picker_encrypted_dir_reports_coded_error_without_picker() {
+fn startup_picker_encrypted_dir_lands_locked_view() {
     let _guard = SERIAL.lock().unwrap();
-    pick_bad_book_dir_reports_coded_error_without_picker(&[0u8; 8_192], "text:/密文库暂不支持/");
+    nsh_app::app::reset_book_assembly();
+    let root = make_data_root("t4-encrypted-pick");
+    let active = seed::make_book_dir("t4-active-missing");
+    seed_registry(&root, &active, &[]);
+    nsh_app::cross_book::set_default_data_dir(root.clone());
+    let picked = seed::make_book_dir("t4-encrypted");
+    fs::write(picked.join("ledger.db"), vec![0u8; 8_192]).unwrap();
+    let mut app = Headless::start(desktop_config()).unwrap();
+    app.wait_for("text:/账本库文件不存在/").unwrap();
+    app.on_pick_paths(vec![picked]).unwrap();
+    app.press("id:startup-pick-book-dir").unwrap();
+    // 锁定视图（解锁面板 + 解锁入口在屏），无选择器出口。
+    app.wait_for("id:locked-panel").unwrap();
+    app.wait_for("id:unlock-passphrase").unwrap();
+    assert_eq!(
+        app.screen().count("id:startup-pick-book-dir").unwrap(),
+        0,
+        "锁定视图不挂选择器出口"
+    );
+    // 活动指针已切至密文本（登记 + 置活动，重启后同本直接落锁定视图）。
+    use ledger_infra::db::book_registry::{RegistryRead, read_registry};
+    let RegistryRead::Resolved(registry) = read_registry(&root) else {
+        panic!("注册表应可解析")
+    };
+    assert_ne!(registry.active_id, "b1", "活动指针已切至新登记的密文本");
 }
 
 /// 现场闭集⑤（损坏残留）：既有损坏码呈现 + 无出口（不自动换目录重试）。
@@ -14684,26 +14710,26 @@ fn startup_picker_corrupt_dir_reports_coded_error_without_picker() {
     );
 }
 
-/// F3（决策 3④ + 决策 4）：选中**在册但**密文的本 → 先分类后切指针：码化
-/// 错误呈现且注册表活动指针未变（旧序先切指针再打开失败会把指针移走，该
-/// 失败态又无选择器出口——应用内不可恢复）。删分类前置（退回在册直切）→
-/// 指针被切走 → 指针断言红。
+/// F3（决策 3⑤ 保留；④随 #2088 反转）：选中**在册但**损坏残留的本 → 先
+/// 分类后切指针失败：码化错误呈现且注册表活动指针未变。（④ 密文库的指针
+/// 断言并入 startup_picker_encrypted_dir_lands_locked_view。）删分类前置
+///（退回在册直切）→ 指针被切走 → 指针断言红。
 #[test]
-fn startup_picker_registered_encrypted_dir_reports_coded_error_pointer_unchanged() {
+fn startup_picker_registered_corrupt_dir_reports_coded_error_pointer_unchanged() {
     let _guard = SERIAL.lock().unwrap();
     nsh_app::app::reset_book_assembly();
-    let root = make_data_root("t4-f3-registered-encrypted");
+    let root = make_data_root("t4-f3-registered-corrupt");
     let active = seed::make_book_dir("t4-active-missing");
-    let other = make_book("t4-registered-encrypted");
-    // 在册兄弟本 b2 的库文件为密文（页对齐密文形态）。
-    fs::write(other.join("ledger.db"), vec![0u8; 8_192]).unwrap();
+    let other = make_book("t4-registered-corrupt");
+    // 在册兄弟本 b2 的库文件为损坏残留（非魔数且非页对齐）。
+    fs::write(other.join("ledger.db"), vec![0xABu8; 20]).unwrap();
     seed_registry(&root, &active, &[("b2", "备用账本", &other)]);
     nsh_app::cross_book::set_default_data_dir(root.clone());
     let mut app = Headless::start(desktop_config()).unwrap();
     app.wait_for("text:/账本库文件不存在/").unwrap();
     app.on_pick_paths(vec![other]).unwrap();
     app.press("id:startup-pick-book-dir").unwrap();
-    app.wait_for("text:/密文库暂不支持/").unwrap();
+    app.wait_for("text:/数据库文件无法打开/").unwrap();
     use ledger_infra::db::book_registry::{RegistryRead, read_registry};
     let RegistryRead::Resolved(registry) = read_registry(&root) else {
         panic!("注册表应可解析")
@@ -14852,9 +14878,9 @@ fn onboarding_pick_empty_dir_create_intent_confirms_and_opens() {
     );
 }
 
-/// 引导态选中密文 / 损坏目录的失败呈现（闭集④⑤共用流程、夹具分场）：既有
-/// 码化错误上屏，引导退场；失败态不挂选择器出口（缺的是解锁与诊断，不是
-/// 目录，决策 4）——不自动换目录重试的呈现面。
+/// 引导态选中损坏残留目录的失败呈现（闭集⑤）：码化错误上屏，引导退场；
+/// 失败态不挂选择器出口（缺的是诊断，不是目录，决策 4）——不自动换目录
+/// 重试的呈现面。（④ 密文库随 #2088 落锁定视图，用例独立。）
 fn onboarding_pick_bad_book_dir_reports_coded_error(bad_bytes: &[u8], expect: &str) {
     nsh_app::app::reset_book_assembly();
     let root = make_data_root("t3-onboard-bad");
@@ -14869,7 +14895,7 @@ fn onboarding_pick_bad_book_dir_reports_coded_error(bad_bytes: &[u8], expect: &s
     assert_eq!(
         app.screen().count("id:startup-pick-book-dir").unwrap(),
         0,
-        "密文/损坏失败态不挂选择器出口（无自动换目录重试）"
+        "损坏残留失败态不挂选择器出口（无自动换目录重试）"
     );
     assert_eq!(
         app.screen().count("id:onboarding-pick-book-dir").unwrap(),
@@ -14878,11 +14904,27 @@ fn onboarding_pick_bad_book_dir_reports_coded_error(bad_bytes: &[u8], expect: &s
     );
 }
 
-/// 现场闭集④（密文库）：既有 `nsh-shell.encrypted-unsupported` 呈现。
+/// 现场闭集④（密文库，#2088 反转后语义）：引导态选中密文库目录 → 登记 +
+/// 置活动 + 判开 → 引导落锁定视图（解锁面板在屏）。
 #[test]
-fn onboarding_pick_encrypted_dir_reports_coded_error() {
+fn onboarding_pick_encrypted_dir_lands_locked_view() {
     let _guard = SERIAL.lock().unwrap();
-    onboarding_pick_bad_book_dir_reports_coded_error(&[0u8; 8_192], "text:/密文库暂不支持/");
+    nsh_app::app::reset_book_assembly();
+    let root = make_data_root("t3-onboard-encrypted");
+    let picked = seed::make_book_dir("t3-encrypted-pick");
+    fs::write(picked.join("ledger.db"), vec![0u8; 8_192]).unwrap();
+    nsh_app::cross_book::set_default_data_dir(root);
+    let mut app = Headless::start(desktop_config()).unwrap();
+    app.wait_for("text:欢迎使用 Ledger").unwrap();
+    app.on_pick_paths(vec![picked]).unwrap();
+    app.press("id:onboarding-pick-book-dir").unwrap();
+    app.wait_for("id:locked-panel").unwrap();
+    app.wait_for("id:unlock-passphrase").unwrap();
+    assert_eq!(
+        app.screen().count("id:onboarding-pick-book-dir").unwrap(),
+        0,
+        "锁定视图下引导面板退场"
+    );
 }
 
 /// 现场闭集⑤（损坏残留）：既有损坏码呈现，无自动重试循环。
@@ -15002,25 +15044,26 @@ fn onboarding_pick_cancel_keeps_onboarding_and_action_retriggerable() {
     app.wait_for("id:nav-transactions").unwrap();
 }
 
-/// 引导期密文库 / 损坏残留失败态不挂选择器出口（决策 4 负向断言；argv 臂
-/// 同规则——failed_view 单点派生两臂共用）。
+/// 引导期密文库锁定态不挂选择器出口（#2088：密文库落锁定视图而非失败态）、
+/// 损坏残留失败态不挂选择器出口（决策 4 负向断言；argv 臂同规则——
+/// failed_view 单点派生两臂共用）。
 #[test]
-fn startup_encrypted_and_corrupt_boot_failed_states_have_no_picker() {
+fn startup_locked_and_corrupt_boot_states_have_no_picker() {
     let _guard = SERIAL.lock().unwrap();
-    // 密文库：页对齐密文形态（基础设施「密文库落盘形态」判别）。
+    // 密文库：页对齐密文形态（基础设施「密文库落盘形态」判别）→ 锁定视图。
     nsh_app::app::reset_book_assembly();
     let encrypted = seed::make_book_dir("t4-boot-encrypted");
     fs::write(encrypted.join("ledger.db"), vec![0u8; 8_192]).unwrap();
     nsh_app::app::set_book_dir(encrypted);
     let mut app = Headless::start(desktop_config()).unwrap();
-    app.wait_for("text:/密文库暂不支持/").unwrap();
+    app.wait_for("id:locked-panel").unwrap();
     assert_eq!(
         app.screen().count("id:startup-pick-book-dir").unwrap(),
         0,
-        "密文库失败态不挂选择器出口"
+        "锁定视图不挂选择器出口"
     );
 
-    // 损坏残留：非魔数且非页对齐。
+    // 损坏残留：非魔数且非页对齐 → 失败态不挂选择器出口。
     nsh_app::app::reset_book_assembly();
     let corrupt = seed::make_book_dir("t4-boot-corrupt");
     fs::write(corrupt.join("ledger.db"), vec![0xABu8; 20]).unwrap();
@@ -15031,5 +15074,145 @@ fn startup_encrypted_and_corrupt_boot_failed_states_have_no_picker() {
         app.screen().count("id:startup-pick-book-dir").unwrap(),
         0,
         "损坏残留失败态不挂选择器出口"
+    );
+}
+
+/// 造密文库夹具（明文造数 → 整库转换）：解锁 / 重置旅程共用。种子一笔
+/// 交易（换连后主界面呈现真实数据的用户可观察锚点）。
+fn make_encrypted_book(tag: &str, passphrase: &str) -> std::path::PathBuf {
+    let dir = make_book(tag);
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let account = seed_cash_account(&db);
+        seed_transaction(
+            &db,
+            TxnSeed {
+                account: &account,
+                to_account: None,
+                kind: TransactionKind::Expense,
+                amount_cents: 2_500,
+                date: &test_date(0),
+                category_id: None,
+                merchant_id: None,
+                note: Some("密文会话数据".to_owned()),
+            },
+        );
+    }
+    ledger_infra::db::encryption::enable_encryption_for_file(&dir.join("ledger.db"), passphrase)
+        .unwrap();
+    dir
+}
+
+/// 密文库解锁全旅程（issue #2088 交付①）：密文库引导落锁定视图（不是失
+/// 败态）→ 错误口令「口令错误或文件损坏」合并口径就地重试（可无限重试，
+/// 不误报损坏）→ 正确口令解锁进业务会话（换连编排：主界面呈现真实数据 =
+/// 成对只读连接读换连后新世界的用户可观察结果；readonly_connection 的 NSH
+/// 自动化回归同链）。
+///
+/// 「删除即红」负向条目：删解锁面板挂载（locked 分支）或解锁任务接线
+///（run_unlock 的 spawn 链）→ 锁定视图不入屏 / 解锁后不进主界面 → 本测
+/// wait_for 红；断言对准用户可见结果（锁定面板、错误行、解锁后的交易行）。
+#[test]
+fn encrypted_book_unlock_journey_enters_session_with_seeded_data() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    const PASS: &str = "解锁旅程口令X";
+    let dir = make_encrypted_book("unlock-journey", PASS);
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+
+    // 锁定视图：标题 + 口令框 + 自动解锁平台注记（Linux 不支持平价）。
+    app.wait_for("id:locked-panel").unwrap();
+    app.wait_for("text:账本已加密").unwrap();
+    app.wait_for("id:unlock-auto-unlock-note").unwrap();
+    assert!(
+        app.screen()
+            .press_target("id:unlock-confirm")
+            .unwrap()
+            .is_none(),
+        "空口令下「解锁」不可按（disabled 契约投影）"
+    );
+
+    // 错误口令：合并口径错误行就地呈现，仍留锁定视图可重试。
+    app.type_text("id:unlock-passphrase", "错误口令一一贯不代表正确口令")
+        .unwrap();
+    app.press("id:unlock-confirm").unwrap();
+    app.wait_for("text:口令错误或文件损坏，请重试").unwrap();
+    assert!(
+        app.screen().count("id:locked-panel").unwrap() > 0,
+        "解锁失败仍留锁定视图（fail-closed 可无限重试）"
+    );
+
+    // 正确口令：解锁进业务会话，主界面呈现真实数据（换连后的读路径）。
+    app.clear("id:unlock-passphrase").unwrap();
+    app.type_text("id:unlock-passphrase", PASS).unwrap();
+    app.press("id:unlock-confirm").unwrap();
+    app.wait_for("id:nav-transactions").unwrap();
+    open_transactions(&mut app);
+    app.wait_for(&format!("text:{}", test_date(0))).unwrap();
+}
+
+/// 锁定视图忘口令重置全旅程（issue #2088 交付③）：常驻入口 → error 级无后
+/// 门后果确认（ADR-0078 分级）→ infra 逃生门全语义（旧密文库保留 .bak 密
+/// 文副本、原位新建明文空库、sync.db 配对移位）→ 原位换连进全新明文会话
+///（无需重启，旧壳 reset_after_forgotten_passphrase 同语义）。
+///
+/// 「删除即红」负向条目：删忘口令入口或重置任务接线 → 确认弹窗不入屏 /
+/// 重置后不进主界面 → 本测 wait_for 红；确认前零写入（旧库原样）对准
+/// 文件级可观察结果。
+#[test]
+fn locked_view_forgot_passphrase_resets_to_fresh_plaintext_session() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_encrypted_book("forgot-reset-journey", "原口令 journeyX");
+    let db_path = dir.join("ledger.db");
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+    app.wait_for("id:locked-panel").unwrap();
+
+    // 忘口令入口 → error 级确认弹窗（无后门后果说明在屏）。
+    app.press("id:unlock-forgot").unwrap();
+    app.wait_for("text:重置为全新空库？").unwrap();
+    app.wait_for("text:/主口令没有任何后门或找回手段/").unwrap();
+
+    // 取消：零写入（旧密文库原样、锁定态原样）。
+    app.press("id:danger-cancel").unwrap();
+    app.settle();
+    assert!(
+        matches!(
+            ledger_infra::db::encryption::probe_file_kind(&db_path).unwrap(),
+            ledger_infra::db::encryption::DbFileKind::Encrypted,
+        ),
+        "取消后旧密文库原样"
+    );
+    assert_eq!(
+        app.screen().count("id:locked-panel").unwrap(),
+        1,
+        "取消后仍留锁定视图"
+    );
+
+    // 确认：逃生门全语义 —— 旧密文库保留 .bak 密文副本、新明文空库就位、
+    // 原位换连进全新明文会话（交易列表空、无锁定面板）。
+    app.press("id:unlock-forgot").unwrap();
+    app.wait_for("text:重置为全新空库？").unwrap();
+    app.press("id:danger-confirm").unwrap();
+    app.wait_for("id:nav-transactions").unwrap();
+    open_transactions(&mut app);
+    app.wait_for("text:暂无数据").unwrap();
+    use ledger_infra::db::encryption::DbFileKind;
+    assert!(
+        matches!(
+            ledger_infra::db::encryption::probe_file_kind(&db_path).unwrap(),
+            DbFileKind::Plaintext,
+        ),
+        "重置后原位为全新明文空库"
+    );
+    let bak = db_path.with_extension("db.bak");
+    assert!(
+        matches!(
+            ledger_infra::db::encryption::probe_file_kind(&bak).unwrap(),
+            DbFileKind::Encrypted
+        ),
+        "旧密文库保留为 .bak 密文副本（无口令不可读，日后想起口令仍可救回）"
     );
 }
