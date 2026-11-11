@@ -479,7 +479,7 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
     // 投资记账表单·买卖族（#2046）：表单信号束与参考数据源独立成束（旧壳
     // InvestmentForm 挂 TransactionForm 的同面本壳分件；明细取数随表单自身
     // 装载批次，不入列表读批——明细域数据不同源）。入口归属见 investments_form
-    // 模块头：买入/卖出行编辑入口住户投资明细页签（⑯ 落位装配），此处挂载
+    // 模块头：买入/卖出行编辑入口住户投资明细页签（#2047 ⑯ 装配），此处挂载
     // 弹窗 + 行菜单分流接缝先行（行集闭集不含 buy/sell 的死面注释保留）。
     let trade_form = investments_form::TradeFormState::new();
     let trade_sources = investments_form::TradeFormSources::new();
@@ -1337,7 +1337,7 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
             // 不开放。买入/卖出行的「编辑」进投资买卖族（旧
             // 壳 issue #180 起 supportsRowEdit 同判定，主列
             // 表 ADR-0135 默认排除 investment kind——入口
-            // 对用户即在投资明细页签（⑯ 装配），本分面为编
+            // 对用户即在投资明细页签（#2047 ⑯ 装配），本分面为编
             // 译可达的接缝面）。
             let editable = matches!(
                 tx.kind,
