@@ -49,6 +49,7 @@ use nsh_core::prelude::*;
 
 use crate::adaptive;
 use crate::assembly::{CategoryOption, CurrencyTable, PnlSemantic};
+use crate::design::font_size;
 use crate::investments::{HoldingsSortColumn, HoldingsSorter};
 use crate::{
     app, assembly, boot, investment_sync, investments, popover, select, signals, transactions,
@@ -602,7 +603,7 @@ pub(crate) fn HoldingsPane() -> impl IntoElement {
         .justify_between()
         .child(
             text(HOLDINGS_TITLE)
-                .text_size(px(15.0))
+                .text_size(px(font_size::LEADING))
                 .text_color(palette.fg)
                 .test_id("holdings-title"),
         )
@@ -622,8 +623,8 @@ pub(crate) fn HoldingsPane() -> impl IntoElement {
                             investment_sync::SYNC_LABEL
                         }
                     })
-                    .text_size(px(12.0))
-                    .text_color(rgb(0xffffff))
+                    .text_size(px(font_size::CAPTION))
+                    .text_color(crate::theme::color("primary-foreground"))
                     .test_id("holdings-sync-button"),
                 ),
         );
@@ -646,7 +647,7 @@ pub(crate) fn HoldingsPane() -> impl IntoElement {
             move || rows.get().is_none(),
             move || {
                 text("正在加载持仓…")
-                    .text_size(px(12.0))
+                    .text_size(px(font_size::CAPTION))
                     .text_color(palette.muted)
                     .test_id("holdings-loading")
             },
@@ -846,7 +847,11 @@ fn holding_stats_cards(
                     .flex_row()
                     .items_center()
                     .gap_1()
-                    .child(text(label).text_size(px(12.0)).text_color(muted))
+                    .child(
+                        text(label)
+                            .text_size(px(font_size::CAPTION))
+                            .text_color(muted),
+                    )
                     .child(popover::popover_tip(
                         format!("{test_id}-info"),
                         vec![format!("{tip_body}{scope}")],
@@ -865,7 +870,7 @@ fn holding_stats_cards(
                             .gap_2()
                             .child(
                                 text(move || cell_of(label).warning.unwrap_or_default())
-                                    .text_size(px(12.0))
+                                    .text_size(px(font_size::CAPTION))
                                     .text_color(danger)
                                     .test_id(format!("{test_id}-warning").as_str()),
                             )
@@ -878,7 +883,7 @@ fn holding_stats_cards(
                                     .app_class("hover:bg-accent")
                                     .child(
                                         text("重试")
-                                            .text_size(px(12.0))
+                                            .text_size(px(font_size::CAPTION))
                                             .text_color(muted)
                                             .test_id(format!("{test_id}-retry").as_str()),
                                     ),
@@ -896,7 +901,7 @@ fn holding_stats_cards(
                                     .clone()
                                     .unwrap_or_else(|| "-".to_owned())
                             })
-                            .text_size(px(18.0))
+                            .text_size(px(font_size::LEADING))
                             .text_color(move || match (cell_of(label).pnl, pnl) {
                                 (Some(PnlSemantic::Gain), Some((gain_c, _))) => gain_c,
                                 (Some(PnlSemantic::Loss), Some((_, loss_c))) => loss_c,
@@ -911,7 +916,7 @@ fn holding_stats_cards(
                                     text(move || {
                                         cell_of(label).missing_price_note.unwrap_or_default()
                                     })
-                                    .text_size(px(11.0))
+                                    .text_size(px(font_size::CAPTION))
                                     .text_color(muted)
                                     .test_id(format!("{test_id}-missing-price").as_str())
                                 },
@@ -966,7 +971,7 @@ fn holdings_table_section(
     let bare = move || holdings_table_all(derived, session).0;
     when(bare, move || {
         text(HOLDINGS_EMPTY)
-            .text_size(px(13.0))
+            .text_size(px(font_size::SECONDARY))
             .text_color(palette.muted)
             .test_id("holdings-empty")
     })
@@ -975,7 +980,7 @@ fn holdings_table_section(
             move || derived.get().is_empty(),
             move || {
                 text(HOLDINGS_FILTER_NO_MATCH)
-                    .text_size(px(13.0))
+                    .text_size(px(font_size::SECONDARY))
                     .text_color(palette.muted)
                     .test_id("holdings-no-match")
             },
@@ -1027,7 +1032,11 @@ fn holdings_table_body(
                 .items_center()
                 .gap_1()
                 .w(px(width))
-                .child(text(label).text_size(px(12.0)).text_color(muted))
+                .child(
+                    text(label)
+                        .text_size(px(font_size::CAPTION))
+                        .text_color(muted),
+                )
                 .child(popover::popover_tip(
                     format!("{test_id}-info"),
                     vec![tip_body.to_owned()],
@@ -1036,7 +1045,7 @@ fn holdings_table_body(
         };
     let head_text = move |label: &'static str, width: f32| {
         text(label)
-            .text_size(px(12.0))
+            .text_size(px(font_size::CAPTION))
             .text_color(muted)
             .w(px(width))
     };
@@ -1074,7 +1083,7 @@ fn holdings_table_body(
             .w(px(width))
             .child(
                 text(move || format!("{label}{}", sorter_indicator(column)))
-                    .text_size(px(12.0))
+                    .text_size(px(font_size::CAPTION))
                     .text_color(move || if selected() { fg } else { muted }),
             )
     };
@@ -1179,8 +1188,16 @@ fn render_symbol_link(
                         .with_investments_drill(drill.clone()),
                 );
             })
-            .child(text(label).text_size(px(13.0)).text_color(accent)),
-        None => view().child(text(label).text_size(px(13.0)).text_color(fg)),
+            .child(
+                text(label)
+                    .text_size(px(font_size::SECONDARY))
+                    .text_color(accent),
+            ),
+        None => view().child(
+            text(label)
+                .text_size(px(font_size::SECONDARY))
+                .text_color(fg),
+        ),
     }
 }
 
@@ -1219,11 +1236,10 @@ fn row_body(
 ) -> impl IntoElement {
     let fg = palette.fg;
     let muted = palette.muted;
-    // 下钻强调色（旧壳 InstrumentLink accentColor 同语义：主题 primary 令牌，
-    // 缺失回退橙色——accounts.rs 账户名下钻链接同款先例）。
-    let accent = nsh_core::element::tokens()
-        .color("primary")
-        .unwrap_or_else(|| hsla(0.11, 0.82, 0.60, 1.0).into());
+    // 下钻强调色（旧壳 InstrumentLink accentColor 同语义：主题 primary 令牌
+    // 经 theme::color 单点消费，缺失落可读兑底——accounts.rs 账户名下钻链接
+    // 同款先例）。
+    let accent = crate::theme::color("primary");
     let gain = palette.gain;
     let loss = palette.loss;
     each(
@@ -1288,26 +1304,26 @@ fn row_body(
                                     .clone()
                                     .unwrap_or_else(|| "-".to_owned()),
                             )
-                            .text_size(px(11.0))
+                            .text_size(px(font_size::CAPTION))
                             .text_color(muted)
                             .test_id(format!("holdings-row-{}-name", row_id).as_str()),
                         ),
                 )
                 .child(
                     text(row.account_name.clone().unwrap_or_else(|| "-".to_owned()))
-                        .text_size(px(13.0))
+                        .text_size(px(font_size::SECONDARY))
                         .text_color(fg)
                         .w(px(ACCOUNT_W)),
                 )
                 .child(
                     text(row.quantity_text.clone())
-                        .text_size(px(13.0))
+                        .text_size(px(font_size::SECONDARY))
                         .text_color(fg)
                         .w(px(QUANTITY_W)),
                 )
                 .child(
                     text(row.cost_text.clone())
-                        .text_size(px(13.0))
+                        .text_size(px(font_size::SECONDARY))
                         .text_color(fg)
                         .w(px(COST_W)),
                 )
@@ -1322,7 +1338,7 @@ fn row_body(
                         .gap_1()
                         .child(
                             text(row.price_text.clone().unwrap_or_else(|| "-".to_owned()))
-                                .text_size(px(13.0))
+                                .text_size(px(font_size::SECONDARY))
                                 .text_color(fg),
                         )
                         .child(
@@ -1339,7 +1355,7 @@ fn row_body(
                                         .app_class("hover:bg-accent")
                                         .child(
                                             text(MISSING_PRICE_SYNC)
-                                                .text_size(px(11.0))
+                                                .text_size(px(font_size::CAPTION))
                                                 .text_color(palette.info)
                                                 .test_id(guide_id.as_str()),
                                         )
@@ -1350,7 +1366,7 @@ fn row_body(
                 )
                 .child(
                     text(row.nav_date_text.clone())
-                        .text_size(px(13.0))
+                        .text_size(px(font_size::SECONDARY))
                         .text_color(muted)
                         .w(px(NAV_DATE_W)),
                 )
@@ -1360,7 +1376,7 @@ fn row_body(
                             .clone()
                             .unwrap_or_else(|| "-".to_owned()),
                     )
-                    .text_size(px(13.0))
+                    .text_size(px(font_size::SECONDARY))
                     .text_color(fg)
                     .w(px(MARKET_VALUE_W)),
                 )
@@ -1371,7 +1387,7 @@ fn row_body(
                             .clone()
                             .unwrap_or_else(|| "-".to_owned()),
                     )
-                    .text_size(px(13.0))
+                    .text_size(px(font_size::SECONDARY))
                     .text_color(match row.unrealized_pnl_semantic {
                         Some(PnlSemantic::Gain) => gain,
                         Some(PnlSemantic::Loss) => loss,
@@ -1383,7 +1399,7 @@ fn row_body(
                     // 收益率：可计算着涨跌色 + 未年化角标（含义归列头说明）；
                     // 无解「无法计算」中性不猜解。
                     text(row.mwr_text.clone())
-                        .text_size(px(13.0))
+                        .text_size(px(font_size::SECONDARY))
                         .text_color(semantic_color)
                         .test_id(format!("holdings-row-{}-mwr", row_id).as_str())
                         .w(px(MWR_W)),

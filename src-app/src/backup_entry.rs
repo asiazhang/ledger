@@ -250,11 +250,11 @@ pub(crate) fn backup_button(state: BackupEntryState, owner: Owner) -> impl IntoE
         .disabled(move || state.backing_up.get())
         .accessibility_label("备份账本")
         .app_class(
-            "px-3 py-1.5 rounded-md border border-border text-foreground hover:bg-accent disabled:opacity-40",
+            "h-8 px-3 rounded-(--radius) border border-border text-foreground hover:bg-accent disabled:opacity-40",
         )
         .child(
             text("备份")
-                .text_size(px(13.0))
+                .text_sm()
                 .text_color(palette.fg)
                 .test_id("tx-backup"),
         )
@@ -287,7 +287,7 @@ pub(crate) fn backup_status_line(state: BackupEntryState) -> impl IntoElement {
                         move || matches!(status.get(), Some(BackupStatus::InProgress)),
                         move || {
                             text("正在备份…")
-                                .text_size(px(12.0))
+                                .text_xs()
                                 .text_color(palette.muted)
                                 .test_id("tx-backup-in-progress")
                         },
@@ -306,7 +306,7 @@ pub(crate) fn backup_status_line(state: BackupEntryState) -> impl IntoElement {
                                 .gap_2()
                                 .child(
                                     text("备份成功")
-                                        .text_size(px(12.0))
+                                        .text_xs()
                                         .text_color(palette.fg)
                                         .test_id("tx-backup-success"),
                                 )
@@ -315,7 +315,7 @@ pub(crate) fn backup_status_line(state: BackupEntryState) -> impl IntoElement {
                                         Some(BackupStatus::Success { path }) => path,
                                         _ => String::new(),
                                     })
-                                    .text_size(px(12.0))
+                                    .text_xs()
                                     .text_color(palette.muted)
                                     .test_id("tx-backup-success-path"),
                                 )
@@ -332,7 +332,7 @@ pub(crate) fn backup_status_line(state: BackupEntryState) -> impl IntoElement {
                                 Some(BackupStatus::Failed { message }) => message,
                                 _ => String::new(),
                             })
-                            .text_size(px(12.0))
+                            .text_xs()
                             .text_color(danger_color)
                             .test_id("tx-backup-failed")
                         },
