@@ -2059,18 +2059,26 @@ fn refresh_encryption_status(owner: Owner, state: EncryptionState) {
     });
 }
 
-/// 开启加密执行任务（确认弹窗先关再执行——确认弹窗不是重试现场；整库转换
-/// 直调基建单点，失败原库原样保留）：成功后原位换连本会话继续可用
-///（旧壳自动重启的本壳替代口径，见 boot::enable_encryption）。
-fn run_enable_encryption(owner: Owner, state: EncryptionState) {
-    let passphrase = state.pass.get_untracked();
+/// 加密卡三动作的共享任务编排（busy 单飞 → 根 owner blocking 任务直调
+/// boot 写面，db 槽缺失补 SESSION_MISSING 码化错误——旧壳命令层同守卫闭
+/// 集）：终态三分支收口状态条——成功先走 `on_success` 清表单并按动作续接
+/// （刷新状态读取 / 换连后续接），失败携动作前缀，任务异常携统一文案。
+fn run_encryption_action(
+    owner: Owner,
+    state: EncryptionState,
+    ok_hint: &'static str,
+    failed_prefix: &'static str,
+    on_success: impl Fn(Owner, EncryptionState) + Copy + Send + 'static,
+    invoke: impl Fn(&ledger_infra::db::DbState) -> ledger_infra::error::Result<()>
+        + Send
+        + 'static,
+) {
     state.busy.set(true);
     owner.run(move || {
         spawn(async move {
             let db = crate::app::db_slot().clone();
-            let pass = passphrase;
             let outcome = blocking(move || match db.as_ref() {
-                Some(db) => boot::enable_encryption(db, &pass),
+                Some(db) => invoke(db),
                 None => Err(ledger_infra::error::AppError::coded(
                     boot::CODE_SESSION_MISSING,
                     SESSION_MISSING,
@@ -2080,20 +2088,35 @@ fn run_enable_encryption(owner: Owner, state: EncryptionState) {
             state.busy.set(false);
             match outcome {
                 Ok(Ok(())) => {
-                    state.pass.set(String::new());
-                    state.confirm.set(String::new());
-                    state.status.set(Some(ENCRYPT_OK_HOST_HINT.to_owned()));
-                    refresh_encryption_status(owner, state);
+                    on_success(owner, state);
+                    state.status.set(Some(ok_hint.to_owned()));
                 }
-                Ok(Err(e)) => state
-                    .status
-                    .set(Some(format!("{ENCRYPT_FAILED_PREFIX}{e}"))),
+                Ok(Err(e)) => state.status.set(Some(format!("{failed_prefix}{e}"))),
                 Err(_) => state
                     .status
-                    .set(Some(format!("{ENCRYPT_FAILED_PREFIX}{WRITE_TASK_FAILED}"))),
+                    .set(Some(format!("{failed_prefix}{WRITE_TASK_FAILED}"))),
             }
         })
     });
+}
+
+/// 开启加密执行任务（确认弹窗先关再执行——确认弹窗不是重试现场）：成功
+/// 后原位换连本会话继续可用（旧壳自动重启的本壳替代口径，见
+/// boot::enable_encryption）。
+fn run_enable_encryption(owner: Owner, state: EncryptionState) {
+    let passphrase = state.pass.get_untracked();
+    run_encryption_action(
+        owner,
+        state,
+        ENCRYPT_OK_HOST_HINT,
+        ENCRYPT_FAILED_PREFIX,
+        |owner, state| {
+            state.pass.set(String::new());
+            state.confirm.set(String::new());
+            refresh_encryption_status(owner, state);
+        },
+        move |db| boot::enable_encryption(db, &passphrase),
+    );
 }
 
 /// 修改主口令执行任务（旧壳 `change_encryption_passphrase` 消费面；成功后
@@ -2101,67 +2124,35 @@ fn run_enable_encryption(owner: Owner, state: EncryptionState) {
 fn run_change_encryption(owner: Owner, state: EncryptionState) {
     let current = state.change_current.get_untracked();
     let new = state.change_new.get_untracked();
-    state.busy.set(true);
-    owner.run(move || {
-        spawn(async move {
-            let db = crate::app::db_slot().clone();
-            let outcome = blocking(move || match db.as_ref() {
-                Some(db) => boot::change_encryption_passphrase(db, &current, &new),
-                None => Err(ledger_infra::error::AppError::coded(
-                    boot::CODE_SESSION_MISSING,
-                    SESSION_MISSING,
-                )),
-            })
-            .await;
-            state.busy.set(false);
-            match outcome {
-                Ok(Ok(())) => {
-                    state.change_current.set(String::new());
-                    state.change_new.set(String::new());
-                    state.change_confirm.set(String::new());
-                    state.status.set(Some(CHANGE_OK_HOST_HINT.to_owned()));
-                }
-                Ok(Err(e)) => state.status.set(Some(format!("{CHANGE_FAILED_PREFIX}{e}"))),
-                Err(_) => state
-                    .status
-                    .set(Some(format!("{CHANGE_FAILED_PREFIX}{WRITE_TASK_FAILED}"))),
-            }
-        })
-    });
+    run_encryption_action(
+        owner,
+        state,
+        CHANGE_OK_HOST_HINT,
+        CHANGE_FAILED_PREFIX,
+        |_, state| {
+            state.change_current.set(String::new());
+            state.change_new.set(String::new());
+            state.change_confirm.set(String::new());
+        },
+        move |db| boot::change_encryption_passphrase(db, &current, &new),
+    );
 }
 
 /// 关闭加密执行任务（旧壳 `disable_encryption` 消费面；成功后原位换连到
 /// 明文新世界本会话继续可用）。
 fn run_disable_encryption(owner: Owner, state: EncryptionState) {
     let current = state.disable_current.get_untracked();
-    state.busy.set(true);
-    owner.run(move || {
-        spawn(async move {
-            let db = crate::app::db_slot().clone();
-            let outcome = blocking(move || match db.as_ref() {
-                Some(db) => boot::disable_encryption(db, &current),
-                None => Err(ledger_infra::error::AppError::coded(
-                    boot::CODE_SESSION_MISSING,
-                    SESSION_MISSING,
-                )),
-            })
-            .await;
-            state.busy.set(false);
-            match outcome {
-                Ok(Ok(())) => {
-                    state.disable_current.set(String::new());
-                    state.status.set(Some(DISABLE_OK_HOST_HINT.to_owned()));
-                    refresh_encryption_status(owner, state);
-                }
-                Ok(Err(e)) => state
-                    .status
-                    .set(Some(format!("{DISABLE_FAILED_PREFIX}{e}"))),
-                Err(_) => state
-                    .status
-                    .set(Some(format!("{DISABLE_FAILED_PREFIX}{WRITE_TASK_FAILED}"))),
-            }
-        })
-    });
+    run_encryption_action(
+        owner,
+        state,
+        DISABLE_OK_HOST_HINT,
+        DISABLE_FAILED_PREFIX,
+        |owner, state| {
+            state.disable_current.set(String::new());
+            refresh_encryption_status(owner, state);
+        },
+        move |db| boot::disable_encryption(db, &current),
+    );
 }
 
 fn encryption_card(palette: views::ViewPalette) -> View {
