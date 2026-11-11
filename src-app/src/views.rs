@@ -39,8 +39,7 @@ pub(crate) fn field_label(label: &'static str, muted: AdaptiveColor) -> impl Int
     text(label).text_sm().text_color(muted)
 }
 
-/// 视图令牌便捷面（前景/弱化，双态自适应；令牌缺失回退亮灰/中灰可读兜底，
-/// app.rs 先例同形）。
+/// 视图令牌便捷面（前景/弱化，双态自适应；缺失兜底统一归 crate::theme 单点）。
 #[derive(Clone, Copy)]
 pub(crate) struct ViewPalette {
     /// 前景。
@@ -51,14 +50,9 @@ pub(crate) struct ViewPalette {
 
 /// 取视图令牌。
 pub(crate) fn view_palette() -> ViewPalette {
-    let tokens = nsh_core::element::tokens();
     ViewPalette {
-        fg: tokens
-            .color("foreground")
-            .unwrap_or_else(|| hsla(0.0, 0.0, 0.98, 1.0).into()),
-        muted: tokens
-            .color("muted-foreground")
-            .unwrap_or_else(|| hsla(0.0, 0.0, 0.45, 1.0).into()),
+        fg: crate::theme::color("foreground"),
+        muted: crate::theme::color("muted-foreground"),
     }
 }
 

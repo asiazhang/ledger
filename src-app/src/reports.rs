@@ -236,20 +236,11 @@ pub(crate) fn ReportsView() -> impl IntoElement {
     let main_seq = signal(0u64);
     let merchant_seq = signal(0u64);
 
-    // 主题令牌（双态自适应；令牌缺失回退亮灰/中灰可读兜底，先例同形）。
-    let tokens = nsh_core::element::tokens();
-    let fg = tokens
-        .color("foreground")
-        .unwrap_or_else(|| hsla(0.0, 0.0, 0.98, 1.0).into());
-    let muted = tokens
-        .color("muted-foreground")
-        .unwrap_or_else(|| hsla(0.0, 0.0, 0.45, 1.0).into());
-    let accent = tokens
-        .color("primary")
-        .unwrap_or_else(|| hsla(0.11, 0.82, 0.60, 1.0).into());
-    let danger_fg = tokens
-        .color("destructive")
-        .unwrap_or_else(|| hsla(0.0, 0.0, 0.98, 1.0).into());
+    // 主题令牌（双态自适应；缺失兜底统一归 crate::theme 单点）。
+    let fg = crate::theme::color("foreground");
+    let muted = crate::theme::color("muted-foreground");
+    let accent = crate::theme::color("primary");
+    let danger_fg = crate::theme::color("destructive");
     // 月度图三柱语义色（与交易列表同类金额同源，色值单源 transactions::amount_color）。
     let income_color = amount_color(AmountSemantic::Income);
     let expense_color = amount_color(AmountSemantic::Expense);

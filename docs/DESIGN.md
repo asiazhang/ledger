@@ -18,7 +18,7 @@
 - **一切颜色走主题令牌**（ADR-0147 决策 1）：颜色按语义角色从主题表解析，消费面走 `crate::theme::color(..)`（Rust）与令牌类（`bg-primary`、`text-expense` 等）。应用界面不出现裸 hex / `rgb()` / `hsl()` / 调色板类名（`bg-amber-500`）；缺角色先补主题表再用。
 - **令牌闭集**（`src-app/theme.json`，shadcn cssVars 格式，亮暗双态）：
   - shadcn 标准 UI 语义名：`background`/`foreground`、`card`、`popover`、`primary`、`secondary`、`muted`、`accent`、`destructive`（+ 本仓补 `destructive-foreground`）、`border`、`input`、`ring`、sidebar 八件族、chart-1…5（未定制，沿用出厂）；
-  - 本仓自有令牌：金额语义色九档 `expense`/`income`/`refund`/`transfer`/`buy`/`sell`/`convert`/`split`/`dividend`；`warning`（+ `warning-foreground`）；走势主色 `line`；图表系列 `chart-series-1…12` 与 `chart-uncategorized`；圆角阶四档（见 §4）。
+  - 本仓自有令牌：金额语义色九档 `expense`/`income`/`refund`/`transfer`/`buy`/`sell`/`convert`/`split`/`dividend`；`warning`（+ `warning-foreground`）；`success`（亮 `#18a058` / 暗 `#63e2b7`，达标/成功态）；走势主色 `line`；图表系列 `chart-series-1…12` 与 `chart-uncategorized`；圆角阶四档（见 §4）。
 - **分层正交**：主题表答「出厂观感是什么」；设备级亮暗强指（外观设置，#2053 接缝）答「这台设备用亮还是暗」——清单不设 `appearance` 键，两层互不取代。
 - **强调克制**：每屏一个主操作（primary）；警示色（destructive/warning/expense）保持稀缺；金额语义色只用于金额与其直接载体。
 
@@ -76,7 +76,7 @@
 | 弹层遮罩压暗（`bg-black/50` 模态、`bg-black/30` 非模态抽屉） | 遮罩半透明黑是压暗 scrim 惯例值；主题表暂无 scrim 档，立档后收编令牌 | 待收编（待主题表立 scrim 档） |
 | 存量裸值（`text_size(px(..))` 643 处、调色板类 431 处、实色按钮白字等） | expand–contract 序列的 contract 半边：#2101–#2107 逐视图收口 | 已收口（#2101–#2107；守门随 #2108 挂入） |
 | 密集表格行高/密度微调 | 表格行高若需偏离 §6 档位，落地时在本表挂账并说明密度依据 | 未发生 |
-| 主题表与兜底常量 | 裸色值的唯一合法住所：`src-app/theme.json` 与 `crate::theme` 缺失兜底 | 已收编（#2100） |
+| 主题表与兜底常量 | 裸色值的唯一合法住所：`src-app/theme.json` 与 `crate::theme` 缺失兜底（`theme::color` 单点内） | 已收编（#2100；视图层散落兜底随 #2104 与 review 收编清零） |
 
 ## 8. 验收与对表
 

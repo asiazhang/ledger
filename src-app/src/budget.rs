@@ -143,7 +143,7 @@ pub(crate) fn BudgetView() -> impl IntoElement {
     let confirm_id = signal(None::<String>);
     let delete_error = signal(None::<String>);
 
-    // 主题令牌（双态自适应；令牌缺失回退亮灰/中灰可读兜底，先例同形）。
+    // 主题令牌（双态自适应；缺失兜底统一归 crate::theme 单点）。
     let fg = crate::theme::color("foreground");
     let muted = crate::theme::color("muted-foreground");
     let danger_fg = crate::theme::color("destructive");

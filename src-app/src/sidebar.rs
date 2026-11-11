@@ -31,13 +31,8 @@ pub(crate) const SIDEBAR_WIDTH: f32 = 176.0;
 pub fn SidebarView() -> impl IntoElement {
     let nav = nav::store();
     // 主题令牌（双态自适应；裸 text 默认前景黑——暗色桌面不可见，#2017 先例）。
-    let tokens = nsh_core::element::tokens();
-    let fg = tokens
-        .color("foreground")
-        .unwrap_or_else(|| hsla(0.0, 0.0, 0.98, 1.0).into());
-    let muted = tokens
-        .color("muted-foreground")
-        .unwrap_or_else(|| hsla(0.0, 0.0, 0.45, 1.0).into());
+    let fg = crate::theme::color("foreground");
+    let muted = crate::theme::color("muted-foreground");
     // 键位提示符号（⌘ / ⌃）：平台判定一次（bin 当前仅 Linux；macOS 随平台票）。
     let apple = os() == Os::MacOs;
     // 键位带现推导（组内序/关闭集合响应式随动：重排即带内重排、关闭即退出）。
@@ -174,13 +169,8 @@ fn nav_item(
 /// ——决策 6/10）。导航即关闭由抽屉层收口（落位驱使收起，本面板零变更）。
 pub(crate) fn drawer_panel() -> View {
     let nav = nav::store();
-    let tokens = nsh_core::element::tokens();
-    let fg = tokens
-        .color("foreground")
-        .unwrap_or_else(|| hsla(0.0, 0.0, 0.98, 1.0).into());
-    let muted = tokens
-        .color("muted-foreground")
-        .unwrap_or_else(|| hsla(0.0, 0.0, 0.45, 1.0).into());
+    let fg = crate::theme::color("foreground");
+    let muted = crate::theme::color("muted-foreground");
     let no_hint = |_: ViewName| -> Option<String> { None };
     let brand = view()
         .flex_row()
@@ -312,9 +302,7 @@ fn group_header(nav: NavStore, gid: GroupId, fg: AdaptiveColor, muted: AdaptiveC
         )
 }
 
-/// 当前视图高亮底色（弱化面；令牌缺失回退中灰可读兜底）。
+/// 当前视图高亮底色（弱化面，accent 令牌经 [`crate::theme::color`] 单点）。
 fn accent_background() -> AdaptiveColor {
-    nsh_core::element::tokens()
-        .color("accent")
-        .unwrap_or_else(|| hsla(0.0, 0.0, 0.5, 0.35).into())
+    crate::theme::color("accent")
 }

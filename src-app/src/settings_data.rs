@@ -617,7 +617,8 @@ pub(crate) fn store_keep_limit(n: u32) {
 // 共用呈现件（密文输入行 / 破坏色便捷面 / 表单字段行）。
 // ---------------------------------------------------------------------------
 
-/// 破坏色便捷面（主题令牌缺失回退亮灰可读兜底，backup_entry 同款口径）。
+/// 破坏色便捷面（destructive 令牌经 [`crate::theme::color`] 单点消费，
+/// backup_entry 同款口径）。
 fn danger_fg() -> AdaptiveColor {
     crate::theme::color("destructive")
 }

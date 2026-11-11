@@ -95,24 +95,19 @@ pub(crate) fn DashboardView() -> impl IntoElement {
     let budget_error = signal(None::<String>);
     let currencies = signal(CurrencyTable::default());
 
-    // 主题令牌（双态自适应；令牌缺失回退亮灰/中灰可读兜底，先例同形）。
-    let tokens = nsh_core::element::tokens();
-    let fg = tokens
-        .color("foreground")
-        .unwrap_or_else(|| hsla(0.0, 0.0, 0.98, 1.0).into());
-    let muted = tokens
-        .color("muted-foreground")
-        .unwrap_or_else(|| hsla(0.0, 0.0, 0.45, 1.0).into());
-    let danger_fg = tokens
-        .color("destructive")
-        .unwrap_or_else(|| hsla(0.0, 0.0, 0.98, 1.0).into());
-    let info_fg = AdaptiveColor::new(rgb(0x2080f0), rgb(0x63a8f2));
+    // 主题令牌（双态自适应；缺失兜底统一归 theme.rs 唯一住所）。
+    let fg = crate::theme::color("foreground");
+    let muted = crate::theme::color("muted-foreground");
+    let danger_fg = crate::theme::color("destructive");
+    // 走势/接近态蓝（接近自由阶段的普通态；色值与旧壳同源，经令牌 line 单点）。
+    let info_fg = crate::theme::color("line");
     // 进度条正常色（#2033 预算视图同款取舍：正常态用账本语义绿，超标才交给
     // 错误色——旧壳强调色琥珀在 NSH 无对应令牌）。
     let bar_fg = crate::transactions::amount_color(assembly::AmountSemantic::Income);
-    // 盈亏涨跌色（红涨绿跌，与交易类型语义色正交；色值随旧壳 PNL_COLORS）。
-    let gain_fg = AdaptiveColor::new(rgb(0xd03050), rgb(0xe88080));
-    let loss_fg = AdaptiveColor::new(rgb(0x18a058), rgb(0x63e2b7));
+    // 盈亏涨跌色（红涨绿跌，与交易类型语义色正交；色值与旧壳 PNL_COLORS 同值，
+    // 现经 theme::color 单点消费 expense/income 同值档，亮暗双态随表）。
+    let gain_fg = crate::theme::color("expense");
+    let loss_fg = crate::theme::color("income");
 
     // 各卡装载（首屏与失效重读共用一条路径；阻塞读走后台线程，SQLite IO 不占
     // 引擎线程）。每卡一读闭包，域单点取数；币种字典随卡读取（小表，成本可
@@ -623,7 +618,9 @@ pub(crate) fn DashboardView() -> impl IntoElement {
                                         .child(
                                             text("去设置预算")
                                                 .text_size(px(font_size::SECONDARY))
-                                                .text_color(rgb(0xffffff)),
+                                                .text_color(crate::theme::color(
+                                                    "primary-foreground",
+                                                )),
                                         ),
                                 ),
                             )
@@ -731,21 +728,14 @@ pub(crate) fn DashboardView() -> impl IntoElement {
 
 /// 卡片壳（标题 + 内容体的统一容器；旧壳 NCard size=small 的本壳等价形态）。
 fn card(title: &'static str, body: impl IntoElement) -> impl IntoElement {
-    let tokens = nsh_core::element::tokens();
-    let fg = tokens
-        .color("foreground")
-        .unwrap_or_else(|| hsla(0.0, 0.0, 0.98, 1.0).into());
+    let fg = crate::theme::color("foreground");
     view()
         .flex_col()
         .gap_2()
         .rounded_lg()
         .p_4()
         .app_class("border border-border bg-background")
-        .child(
-            text(title)
-                .text_size(px(font_size::SECONDARY))
-                .text_color(fg),
-        )
+        .child(text(title).text_size(px(font_size::TITLE)).text_color(fg))
         .child(body)
 }
 
@@ -956,7 +946,7 @@ fn progress_bar(
             .w(px(240.0))
             .h(px(6.0))
             .rounded_full()
-            .bg(hsla(0.0, 0.0, 0.5, 0.15))
+            .app_class("bg-muted-foreground/15")
             .child(
                 view()
                     .h(px(6.0))

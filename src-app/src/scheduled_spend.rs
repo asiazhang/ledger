@@ -163,18 +163,11 @@ impl SpendPanelState {
 /// 零独立读路径（旧壳 onMounted reload 的对应物 = 页签装载批携带本面板
 /// 数据）。
 pub(crate) fn spend_panel(state: Signal<SpendPanelState>) -> impl IntoElement {
-    let tokens = nsh_core::element::tokens();
-    let fg = tokens
-        .color("foreground")
-        .unwrap_or_else(|| hsla(0.0, 0.0, 0.98, 1.0).into());
-    let muted = tokens
-        .color("muted-foreground")
-        .unwrap_or_else(|| hsla(0.0, 0.0, 0.45, 1.0).into());
+    let fg = crate::theme::color("foreground");
+    let muted = crate::theme::color("muted-foreground");
     // 趋势柱色 = 走势主色 line 令牌（theme.json 单值档，亮暗同值）；令牌缺失
     // 落可读灰兜底（消费方零本地色纪律，fg/muted 同款先例）。
-    let bar_color = nsh_core::element::tokens()
-        .color("line")
-        .unwrap_or_else(|| hsla(0.0, 0.0, 0.45, 1.0).into());
+    let bar_color = crate::theme::color("line");
 
     when(
         move || state.get().failed,
@@ -348,9 +341,7 @@ fn bar_row(
     state: Signal<SpendPanelState>,
     bar_color: nsh_core::element::AdaptiveColor,
 ) -> impl IntoElement {
-    let muted = nsh_core::element::tokens()
-        .color("muted-foreground")
-        .unwrap_or_else(|| hsla(0.0, 0.0, 0.45, 1.0).into());
+    let muted = crate::theme::color("muted-foreground");
     each(
         move || {
             state

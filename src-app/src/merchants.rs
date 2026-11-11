@@ -174,7 +174,7 @@ pub(crate) fn MerchantsView() -> impl IntoElement {
             &reload_subscription;
     });
 
-    // 主题令牌（双态自适应；令牌缺失回退亮灰/中灰可读兜底，先例同形）。
+    // 主题令牌（双态自适应；缺失兜底统一归 crate::theme 单点）。
     let fg = crate::theme::color("foreground");
     let muted = crate::theme::color("muted-foreground");
     let accent = crate::theme::color("primary");

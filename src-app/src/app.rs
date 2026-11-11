@@ -633,22 +633,18 @@ pub fn App() -> impl IntoElement {
             }
         },
     );
-    // 主行/次行前景取主题令牌（双态自适应，registry 缺省带主题双态令牌）：
-    // 裸 text 的默认前景是黑（ResolvedTextStyle::default 的 React Native
-    // 惯例），暗色桌面上黑字贴暗底不可见——窗口文字必须显式带色。令牌缺失
-    // 时回退亮灰/中灰（缺省主题 registry 缺失时的可读兜底，非双态）。
+    // 主行/次行前景取主题令牌（双态自适应）：裸 text 的默认前景是黑
+    // （ResolvedTextStyle::default 的 React Native 惯例），暗色桌面上黑字贴
+    // 暗底不可见——窗口文字必须显式带色。消费面走 crate::theme 单点（缺失
+    // 兜底归 theme.rs）；启动诊断日志另读 registry 原始在册状态。
     let tokens = nsh_core::element::tokens();
     tracing::debug!(
         foreground = ?tokens.color("foreground"),
         muted = ?tokens.color("muted-foreground"),
         "启动视图主题令牌"
     );
-    let fg = tokens
-        .color("foreground")
-        .unwrap_or_else(|| hsla(0.0, 0.0, 0.98, 1.0).into());
-    let muted = tokens
-        .color("muted-foreground")
-        .unwrap_or_else(|| hsla(0.0, 0.0, 0.45, 1.0).into());
+    let fg = crate::theme::color("foreground");
+    let muted = crate::theme::color("muted-foreground");
     // 失败态出口（ADR-0146 决策 4）与新建意图确认（决策 3 分支③）的现场：
     // 挂起新建目录信号、选择器任务与对话结局处理（组件期一次构造，信号驱动
     // 开合）。
@@ -927,12 +923,7 @@ pub fn App() -> impl IntoElement {
                                     text(move || create_error.get().unwrap_or_default())
                                         .text_xs()
                                         .text_color(
-                                            nsh_core::element::tokens()
-                                                .color("destructive")
-                                                .unwrap_or(AdaptiveColor::new(
-                                                    rgb(0xd03050),
-                                                    rgb(0xe88080),
-                                                )),
+                                            crate::theme::color("destructive"),
                                         )
                                         .test_id("onboarding-error")
                                 },

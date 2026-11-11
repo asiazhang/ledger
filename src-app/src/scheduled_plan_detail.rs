@@ -541,16 +541,9 @@ fn detail_palette() -> (
     nsh_core::element::AdaptiveColor,
     nsh_core::element::AdaptiveColor,
 ) {
-    let tokens = nsh_core::element::tokens();
     (
-        tokens
-            .color("foreground")
-            .unwrap_or_else(|| hsla(0.0, 0.0, 0.98, 1.0).into()),
-        tokens
-            .color("muted-foreground")
-            .unwrap_or_else(|| hsla(0.0, 0.0, 0.45, 1.0).into()),
-        tokens
-            .color("destructive")
-            .unwrap_or_else(|| hsla(0.0, 0.0, 0.98, 1.0).into()),
+        crate::theme::color("foreground"),
+        crate::theme::color("muted-foreground"),
+        crate::theme::color("destructive"),
     )
 }
