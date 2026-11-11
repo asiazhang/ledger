@@ -22,15 +22,25 @@
 //! 唯一真源（[`crate::assembly`] 概览卡格家族只消费域行集）；隐私掩码与交易
 //! /预算视图同源（设备轻量设置项，装载时机读取）。文案仅 zh-CN。
 //!
+//! 视觉收口（issue #2105，ADR-0147 决策 3/4）：字号全部来自
+//! [`crate::design::font_size`] 字阶常量——存量 11pt 升 CAPTION（阅读下限）、
+//! 12pt = CAPTION、13pt 升 SECONDARY（次要正文：空态/按钮/链接）、卡题保持
+//! SECONDARY（页题 16 在上，卡题不反超页题层级）、数值格 = TITLE；净资产/
+//! 自由度主数字 28pt 裸值收 TITLE 档并以 SEMIBOLD 字重承旧壳强调（层级靠
+//! 字阶 + 字重）；内联小按点圆角取半档（rounded-sm 4pt）、实按钮取控件基档
+//! （rounded-lg 8pt），间距档位原已合规不动。
+//!
 //! 测试豁免（ADR-0060）：本模块测试经 crate 根 cfg(test) 整体放行六件套。
 
 use chrono::Datelike;
+use nsh_core::element::FontWeight;
 use nsh_core::prelude::*;
 
 use crate::adaptive;
 use crate::app::db_slot;
 use crate::assembly::{self, CurrencyTable, FreedomStage, PnlSemantic};
 use crate::boot;
+use crate::design::font_size;
 use crate::nav;
 use crate::nav_model::{NavRequest, ViewName};
 use crate::popover::popover_tip;
@@ -309,7 +319,11 @@ pub(crate) fn DashboardView() -> impl IntoElement {
                 .flex_row()
                 .items_center()
                 .gap_1()
-                .child(text("净资产").text_size(px(12.0)).text_color(muted))
+                .child(
+                    text("净资产")
+                        .text_size(px(font_size::CAPTION))
+                        .text_color(muted),
+                )
                 .child(popover_tip(
                     "net-worth-info",
                     vec![NET_WORTH_TIP.to_owned()],
@@ -323,7 +337,8 @@ pub(crate) fn DashboardView() -> impl IntoElement {
                 move || net_worth.get().is_some(),
                 move || {
                     text(move || net_worth.get().map(|c| c.net_worth).unwrap_or_default())
-                        .text_size(px(28.0))
+                        .text_size(px(font_size::TITLE))
+                        .font_weight(FontWeight::SEMIBOLD)
                         .text_color(fg)
                         .test_id("net-worth-value")
                 },
@@ -342,11 +357,15 @@ pub(crate) fn DashboardView() -> impl IntoElement {
                 view()
                     .test_id("net-worth-view-accounts")
                     .on_press(move |_: &()| nav::open(NavRequest::bare(ViewName::Accounts)))
-                    .rounded_md()
+                    .rounded_sm()
                     .px_1()
                     .py_0p5()
                     .app_class("hover:bg-accent")
-                    .child(text("查看账户明细").text_size(px(13.0)).text_color(fg)),
+                    .child(
+                        text("查看账户明细")
+                            .text_size(px(font_size::SECONDARY))
+                            .text_color(fg),
+                    ),
             ),
         );
 
@@ -455,7 +474,7 @@ pub(crate) fn DashboardView() -> impl IntoElement {
     )
     .otherwise(move || {
         text("暂无持仓")
-            .text_size(px(13.0))
+            .text_size(px(font_size::SECONDARY))
             .text_color(muted)
             .test_id("investment-empty")
     });
@@ -506,7 +525,7 @@ pub(crate) fn DashboardView() -> impl IntoElement {
                     .child(
                         // 状态标签（已超标错误色 / 正常绿；装载中空位）。
                         text(move || budget.get().map(|c| c.status).unwrap_or_default())
-                            .text_size(px(12.0))
+                            .text_size(px(font_size::CAPTION))
                             .text_color(move || match budget.get() {
                                 Some(c) if c.over_budget => danger_fg,
                                 Some(_) => loss_fg,
@@ -532,7 +551,7 @@ pub(crate) fn DashboardView() -> impl IntoElement {
             )
             .child(
                 text(BUDGET_SUMMARY_NOTE)
-                    .text_size(px(12.0))
+                    .text_size(px(font_size::CAPTION))
                     .text_color(muted),
             )
     });
@@ -551,7 +570,11 @@ pub(crate) fn DashboardView() -> impl IntoElement {
                 .flex_row()
                 .items_center()
                 .justify_between()
-                .child(text("财务自由度").text_size(px(14.0)).text_color(fg))
+                .child(
+                    text("财务自由度")
+                        .text_size(px(font_size::SECONDARY))
+                        .text_color(fg),
+                )
                 .child(popover_tip(
                     "financial-freedom-info",
                     FREEDOM_TIP_LINES.iter().map(|s| (*s).to_owned()).collect(),
@@ -582,7 +605,7 @@ pub(crate) fn DashboardView() -> impl IntoElement {
                             .gap_2()
                             .child(
                                 text("设置预算后解锁财务自由度")
-                                    .text_size(px(13.0))
+                                    .text_size(px(font_size::SECONDARY))
                                     .text_color(muted)
                                     .test_id("freedom-zero-denominator"),
                             )
@@ -593,13 +616,13 @@ pub(crate) fn DashboardView() -> impl IntoElement {
                                         .on_press(move |_: &()| {
                                             nav::open(NavRequest::bare(ViewName::Budget))
                                         })
-                                        .rounded_md()
+                                        .rounded_lg()
                                         .px_2()
                                         .py_1()
                                         .app_class("bg-primary hover:opacity-90")
                                         .child(
                                             text("去设置预算")
-                                                .text_size(px(13.0))
+                                                .text_size(px(font_size::SECONDARY))
                                                 .text_color(rgb(0xffffff)),
                                         ),
                                 ),
@@ -619,7 +642,8 @@ pub(crate) fn DashboardView() -> impl IntoElement {
                                     text(move || {
                                         freedom.get().map(|c| c.ratio_text).unwrap_or_default()
                                     })
-                                    .text_size(px(28.0))
+                                    .text_size(px(font_size::TITLE))
+                                    .font_weight(FontWeight::SEMIBOLD)
                                     .text_color(fg)
                                     .test_id("financial-freedom-ratio"),
                                 )
@@ -631,7 +655,7 @@ pub(crate) fn DashboardView() -> impl IntoElement {
                                             .map(|s| s.label())
                                             .unwrap_or_default()
                                     })
-                                    .text_size(px(12.0))
+                                    .text_size(px(font_size::CAPTION))
                                     .text_color(move || match freedom.get().and_then(|c| c.stage) {
                                         Some(FreedomStage::Free) => loss_fg,
                                         Some(FreedomStage::Approaching) => info_fg,
@@ -661,7 +685,7 @@ pub(crate) fn DashboardView() -> impl IntoElement {
                             text(move || {
                                 freedom.get().map(|c| c.numerator_line).unwrap_or_default()
                             })
-                            .text_size(px(12.0))
+                            .text_size(px(font_size::CAPTION))
                             .text_color(muted),
                         )
                         .child(
@@ -671,14 +695,14 @@ pub(crate) fn DashboardView() -> impl IntoElement {
                                     .map(|c| c.denominator_line)
                                     .unwrap_or_default()
                             })
-                            .text_size(px(12.0))
+                            .text_size(px(font_size::CAPTION))
                             .text_color(muted),
                         )
                         .child(
                             text(move || {
                                 freedom.get().map(|c| c.coverage_line).unwrap_or_default()
                             })
-                            .text_size(px(12.0))
+                            .text_size(px(font_size::CAPTION))
                             .text_color(muted),
                         )
                 })
@@ -717,13 +741,19 @@ fn card(title: &'static str, body: impl IntoElement) -> impl IntoElement {
         .rounded_lg()
         .p_4()
         .app_class("border border-border bg-background")
-        .child(text(title).text_size(px(14.0)).text_color(fg))
+        .child(
+            text(title)
+                .text_size(px(font_size::SECONDARY))
+                .text_color(fg),
+        )
         .child(body)
 }
 
 /// 口径说明触发点（ⓘ 小字；说明文案与开合归 [`popover_tip`]）。
 fn info_dot(muted: AdaptiveColor) -> impl IntoElement {
-    text("ⓘ").text_size(px(12.0)).text_color(muted)
+    text("ⓘ")
+        .text_size(px(font_size::CAPTION))
+        .text_color(muted)
 }
 
 /// 金额格（标签小字 + 数值；旧壳 NText depth=3 + strong 同形态）。
@@ -737,10 +767,14 @@ fn amount_cell(
     view()
         .flex_col()
         .gap_1()
-        .child(text(label).text_size(px(12.0)).text_color(muted))
+        .child(
+            text(label)
+                .text_size(px(font_size::CAPTION))
+                .text_color(muted),
+        )
         .child(
             text(value)
-                .text_size(px(20.0))
+                .text_size(px(font_size::TITLE))
                 .text_color(fg)
                 .test_id(test_id),
         )
@@ -800,7 +834,11 @@ fn investment_stat(
                 .flex_row()
                 .items_center()
                 .gap_1()
-                .child(text(label).text_size(px(12.0)).text_color(palette.muted))
+                .child(
+                    text(label)
+                        .text_size(px(font_size::CAPTION))
+                        .text_color(palette.muted),
+                )
                 .child(popover_tip(
                     info_id,
                     vec![investment_tip(tip_body)],
@@ -830,13 +868,13 @@ fn investment_stat(
                                     .and_then(|c| c.warning.clone())
                                     .unwrap_or_default()
                             })
-                            .text_size(px(12.0))
+                            .text_size(px(font_size::CAPTION))
                             .text_color(palette.danger)
                             .test_id(format!("{test_id}-warning").as_str()),
                         )
                         .child(
                             text("重试")
-                                .text_size(px(12.0))
+                                .text_size(px(font_size::CAPTION))
                                 .text_color(palette.muted)
                                 .test_id(format!("{test_id}-retry").as_str()),
                         )
@@ -855,7 +893,7 @@ fn investment_stat(
                                 .and_then(|c| c.text.clone())
                                 .unwrap_or_else(|| "-".to_owned())
                         })
-                        .text_size(px(20.0))
+                        .text_size(px(font_size::TITLE))
                         .text_color(move || {
                             if stats
                                 .get()
@@ -888,7 +926,7 @@ fn investment_stat(
                                         .and_then(|c| c.missing_price_note.clone())
                                         .unwrap_or_default()
                                 })
-                                .text_size(px(11.0))
+                                .text_size(px(font_size::CAPTION))
                                 .text_color(palette.muted)
                                 .test_id(format!("{test_id}-missing-price").as_str())
                             },
@@ -936,7 +974,7 @@ fn error_line(
     danger_fg: AdaptiveColor,
 ) -> impl IntoElement {
     text(message)
-        .text_size(px(12.0))
+        .text_size(px(font_size::CAPTION))
         .text_color(danger_fg)
         .test_id(test_id)
 }
@@ -959,13 +997,13 @@ fn retry_line(
         .child(
             view()
                 .on_press(move |_: &()| retry())
-                .rounded_md()
+                .rounded_sm()
                 .px_1()
                 .py_0p5()
                 .app_class("hover:bg-accent")
                 .child(
                     text("重试")
-                        .text_size(px(12.0))
+                        .text_size(px(font_size::CAPTION))
                         .text_color(muted)
                         .test_id(retry_id),
                 ),

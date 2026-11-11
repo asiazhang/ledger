@@ -21,12 +21,19 @@
 //! 方落信号（reports.rs 装载产物），本件只消费——行/柱经 `each` 键控，
 //! 行内内容随行信号响应式（键不变数据变、键变即重建两通道全覆盖）。
 //!
+//! 视觉收口（issue #2105，ADR-0147 决策 3/4）：字号全部来自
+//! [`crate::design::font_size`] 字阶常量——存量 11pt 升 CAPTION（阅读下限，
+//! x 轴行标）、12pt = CAPTION（说明行/柱尾标注）、13pt 升 SECONDARY（行名，
+//! 表格行文章）；说明气泡弹层圆角取控件基档（rounded-lg 8pt）；柱体厚、
+//! 绘制高等图形几何不在控件规格面（DESIGN.md §6 例外挂账），不动。
+//!
 //! 测试豁免（ADR-0060）：本模块测试经 crate 根 cfg(test) 整体放行六件套。
 
 use nsh_base::{PopoverEvent, popover};
 use nsh_core::prelude::*;
 
 use crate::assembly::{REPORT_PALETTE_LEN, category_palette_index};
+use crate::design::font_size;
 use crate::overlay;
 
 /// 分类柱色板（issue #2100 收编）：色值住 theme.json 令牌表（`chart-series-1`
@@ -97,7 +104,7 @@ fn bar_popover(
                 open.set(shown);
             }
         })
-        .popup_class("bg-background border border-border rounded-md shadow-md p-3")
+        .popup_class("bg-background border border-border rounded-lg shadow-md p-3")
         .trigger(
             // 锚点载体 = 按压源（headless id: 命中可按压件，period_label 先例同形）。
             view()
@@ -116,7 +123,7 @@ fn bar_popover(
             |s: &String| s.clone(),
             move |item: ReadSignal<String>, _index: ReadSignal<usize>| {
                 text(item.get())
-                    .text_size(px(12.0))
+                    .text_size(px(font_size::CAPTION))
                     .text_color(foreground())
             },
         )))
@@ -200,7 +207,7 @@ fn group_column(
         )))
         .child(
             text(move || item.get().label)
-                .text_size(px(11.0))
+                .text_size(px(font_size::CAPTION))
                 .text_color(muted_foreground())
                 .number_of_lines(1)
                 .test_id(label_id().as_str()),
@@ -318,7 +325,7 @@ fn horizontal_row(
                 .w(px(HBAR_NAME_WIDTH))
                 .child(
                     text(move || item.get().name)
-                        .text_size(px(13.0))
+                        .text_size(px(font_size::SECONDARY))
                         .text_color(foreground())
                         .number_of_lines(1),
                 ),
@@ -338,7 +345,7 @@ fn horizontal_row(
         .child(
             // 柱尾金额标注（旧壳 barEndAmountPlugin 标在条端右侧同位）。
             text(end_label)
-                .text_size(px(12.0))
+                .text_size(px(font_size::CAPTION))
                 .text_color(muted_foreground())
                 .number_of_lines(1),
         )
