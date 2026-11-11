@@ -337,8 +337,10 @@ fn app_window_flips_pages_by_pagination_bar_click() {
     open_transactions(&mut app);
     app.wait_for("text:2026-05-30").unwrap();
     // 首页行集在屏 = 装载已落位；分页条挂载等其条件回合（#2057 窄窗双渲染
-    // 起 tx-table 经断点分支挂载，落位批次差一拍——凡按压分页条前等挂载）。
+    // 起 tx-table 经断点分支挂载，落位批次差一拍），再等目标页码按钮本身
+    // ——容器先行挂载、按钮行再落一拍（#2072），不等则 press 落进空窗。
     app.wait_for("id:tx-pagination").unwrap();
+    app.wait_for("role:button[2]").unwrap();
 
     // 点击页码 2 → 末页行集替换（最旧 50 笔，2026-01-01..2026-02-19），首页
     // 最新行不再在屏。断言对准视口内的首行（表格按视口虚拟化，视口外的行不
@@ -438,10 +440,16 @@ fn app_window_paginates_search_hits_after_enter_search() {
     app.type_text("id:tx-search", "批量造数").unwrap();
     app.submit("id:tx-search").unwrap();
     open_transactions(&mut app);
+    // 重进交易页携关键词重载——行集落屏即装载完成（分页按钮 disabled(loading)
+    // 同回合解除，#2072），按压分页条前先等行集。
+    app.wait_for("text:2026-05-30").unwrap();
 
     // 搜索态翻页：点击页码 2 → 末页（最旧 50 笔，2026-01-01..2026-02-19），
     // 首页最新行不再在屏（断言对准视口内首行，与列表态翻页同口径）。
     app.wait_for("id:tx-pagination").unwrap();
+    // 容器先行挂载、按钮行再落一拍（#2072 同 #2057 批次差一拍）——按压前
+    // 等目标页码按钮本身。
+    app.wait_for("role:button[2]").unwrap();
     app.press("role:button[2]").unwrap();
     app.wait_for("text:2026-02-19").unwrap();
     app.wait_for_gone("text:2026-05-30", DEFAULT_WAIT).unwrap();
@@ -460,8 +468,10 @@ fn app_window_steps_back_by_previous_button() {
     let mut app = Headless::start(desktop_config()).unwrap();
 
     open_transactions(&mut app);
-    // 分页条挂载等其装载回合（#2057 起落位批次差一拍——按压前等挂载）。
+    // 分页条挂载等其装载回合（#2057 起落位批次差一拍）；容器先行挂载、
+    // 按钮行再落一拍（#2072 间歇红根因）——按压前等目标页码按钮本身。
     app.wait_for("id:tx-pagination").unwrap();
+    app.wait_for("role:button[2]").unwrap();
     app.press("role:button[2]").unwrap();
     app.wait_for("text:2026-02-19").unwrap();
 
@@ -1624,8 +1634,10 @@ fn perf_dataset_book_counts_match_domain_read_across_pages_and_scroll() {
     app.wait_for_gone(&newest, DEFAULT_WAIT).unwrap();
 
     // 页数一致：末页页码按钮存在且可点（页码按钮闭集即 total_pages 的用户
-    // 可见投影——按钮不存在时 press 即红），末页首行 = 最旧一笔。
+    // 可见投影——按钮不存在时 press 即红），末页首行 = 最旧一笔。按钮行
+    // 比行集晚一拍落位（#2072）——按压前等按钮本身。
     let last_button = format!("role:button[{}]", facts.pages);
+    app.wait_for(&last_button).unwrap();
     app.press(&last_button).unwrap();
     let oldest = format!("text:{}", facts.oldest_date);
     app.wait_for(&oldest).unwrap();
@@ -6223,7 +6235,9 @@ fn search_view_paginates_hits() {
     app.wait_for("id:search-pagination").unwrap();
 
     // 点击页码 2 → 末页行集（最旧 50 笔，2026-01-01..2026-02-19），首页
-    // 最新行离屏（断言对准视口内首行，交易列表分页同口径）。
+    // 最新行离屏（断言对准视口内首行，交易列表分页同口径）。容器先行
+    // 挂载、按钮行再落一拍（#2072）——按压前等目标页码按钮本身。
+    app.wait_for("role:button[2]").unwrap();
     app.press("role:button[2]").unwrap();
     app.wait_for("text:2026-02-19").unwrap();
     app.wait_for_gone("text:2026-05-30", DEFAULT_WAIT).unwrap();
@@ -13219,7 +13233,8 @@ fn investments_view_overview_lands_with_period_numbers() {
 
     open_investments(&mut app);
 
-    // 页签闭集（旧壳 investments.tabs 前两位；持仓/标的/明细随 ⑮/⑯就位）。
+    // 页签闭集（旧壳 investments.tabs 前两位；持仓/标的/明细已随 #2046 ⑮ /
+    // #2047 ⑯ 就位）。
     for tab in ["概览", "盈亏"] {
         assert!(
             app.shows(tab),
@@ -13566,7 +13581,9 @@ fn investments_view_pnl_pagination_slices_year_rows() {
         "第 1 页不含最老年份 2025（8 行/页切片）：{:?}",
         texts
     );
-    // 翻第 2 页：2025 行出现（on_change 页码写回会话槽的接线）。
+    // 翻第 2 页：2025 行出现（on_change 页码写回会话槽的接线）。按钮行
+    // 比分页容器晚一拍落位（#2072）——按压前等按钮本身。
+    app.wait_for("role:button[2]").unwrap();
     app.press("role:button[2]").unwrap();
     let texts = app.screen().texts();
     assert!(
@@ -13842,7 +13859,9 @@ fn investments_view_holdings_pagination_slices_rows() {
         "第 1 页不含末段 S24：{:?}",
         texts
     );
-    // 翻第 2 页：S20..S24 行出现。
+    // 翻第 2 页：S20..S24 行出现。分页按钮行比表头晚一拍落位（#2072 同型
+    // 空窗）——按压前等按钮本身。
+    app.wait_for("role:button[2]").unwrap();
     app.press("role:button[2]").unwrap();
     app.wait_for("text:S24").unwrap();
 
@@ -13882,8 +13901,9 @@ fn investments_view_holdings_sync_entry_reports_empty_book() {
 
 /// 缺价行引导与 staleness 提示条（#1193 / #1190）：行情通道标的缺现价 →
 /// 行内「同步」锚在屏（动作 = 同步触发，与卡头入口同一接缝单点）＋ staleness
-/// 提示条在屏（开场本地水位检查，持仓缺现价入选）。手动报价通道的「录价」
-/// 与页面级回执随⑯ 手动报价票落位（缺件留痕见模块头）。删 staleness 装载
+/// 提示条在屏（开场本地水位检查，持仓缺现价入选）。手动报价通道行内不设
+/// 引导（录价入口住标的库页签，#2047 ⑯；分流见 holdings 模块头）。删
+/// staleness 装载
 /// 接线（视图落位装载）→ 提示条永不出现（本测红；失效重查删除即红钉在
 /// lib staleness 探针）。
 #[test]

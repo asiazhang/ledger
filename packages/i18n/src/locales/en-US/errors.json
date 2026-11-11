@@ -433,7 +433,7 @@
     "install-failed": "The update could not be installed. Try again."
   },
   "nsh-shell": {
-    "book-missing": "Ledger database file not found: {0}. Pass an existing book directory; the native shell stake does not create books.",
+    "book-missing": "Ledger database file not found: {0}. The app does not create a new ledger database automatically (to avoid a misleading empty book when pointing at the wrong directory); check the directory and try again, or choose another ledger directory.",
     "awaiting-unlock": "This ledger is encrypted. Enter the master passphrase to unlock it.",
     "session-missing": "Internal error: the ledger database session is missing. Reopen the book.",
     "policy-insurer-name-required": "The insurer name in the policy form must not be empty (the save gate catches it first; the domain guard is the fallback).",
