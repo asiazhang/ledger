@@ -20,6 +20,7 @@ use nsh_core::prelude::*;
 
 use crate::assembly::{ColumnAlign, CurrencyTable};
 use crate::boot;
+use crate::design::font_size;
 use crate::modal;
 use crate::scheduled::{amount_text, occurrence_status_label};
 
@@ -346,12 +347,12 @@ pub(crate) fn plan_detail_modal(
         };
         match cell.key.as_ref() {
             "date" => text(cell.text.clone())
-                .text_size(px(12.0))
+                .text_size(px(font_size::CAPTION))
                 .text_color(fg)
                 .test_id(format!("occ-date-{}", occ.id).as_str())
                 .into_element(),
             "status" => text(cell.text.clone())
-                .text_size(px(12.0))
+                .text_size(px(font_size::CAPTION))
                 .text_color(if occ.status == "failed" {
                     danger_fg
                 } else {
@@ -365,11 +366,11 @@ pub(crate) fn plan_detail_modal(
                     nsh_base::button()
                         .disabled(move || state.get().retrying.as_deref() == Some(&occ_id))
                         .app_class(
-                            "px-2 py-0.5 rounded-md text-foreground hover:bg-accent disabled:opacity-40",
+                            "px-2 py-1 rounded-md text-foreground hover:bg-accent disabled:opacity-40",
                         )
                         .child(
                             text("重试")
-                                .text_size(px(12.0))
+                                .text_size(px(font_size::CAPTION))
                                 .text_color(fg)
                                 .test_id(format!("occ-retry-{}", occ.id).as_str()),
                         )
@@ -377,7 +378,7 @@ pub(crate) fn plan_detail_modal(
                         .into_element()
                 } else {
                     text("—")
-                        .text_size(px(12.0))
+                        .text_size(px(font_size::CAPTION))
                         .text_color(muted)
                         .into_element()
                 }
@@ -400,7 +401,7 @@ pub(crate) fn plan_detail_modal(
                     move || state.get().load_failed,
                     move || {
                         text(MSG_LOAD_FAILED)
-                            .text_size(px(12.0))
+                            .text_size(px(font_size::CAPTION))
                             .text_color(muted)
                             .test_id("occ-load-failed")
                     },
@@ -424,7 +425,7 @@ pub(crate) fn plan_detail_modal(
                                     }
                                     None => String::new(),
                                 })
-                                .text_size(px(13.0))
+                                .text_size(px(font_size::SECONDARY))
                                 .test_id("occ-plan-note"),
                             )
                             .child(
@@ -445,7 +446,7 @@ pub(crate) fn plan_detail_modal(
                                                 .unwrap_or_default(),
                                             None => String::new(),
                                         })
-                                        .text_size(px(12.0))
+                                        .text_size(px(font_size::CAPTION))
                                         .text_color(muted)
                                         .test_id("occ-total")
                                     },
@@ -479,7 +480,7 @@ pub(crate) fn plan_detail_modal(
                     },
                     move || {
                         text("暂无期次")
-                            .text_size(px(12.0))
+                            .text_size(px(font_size::CAPTION))
                             .text_color(muted)
                             .test_id("occ-empty")
                     },
@@ -491,7 +492,7 @@ pub(crate) fn plan_detail_modal(
                     move || state.get().note.is_some(),
                     move || {
                         text(move || state.get().note.unwrap_or_default())
-                            .text_size(px(12.0))
+                            .text_size(px(font_size::CAPTION))
                             .text_color(muted)
                             .test_id("occ-note")
                     },
@@ -511,12 +512,12 @@ pub(crate) fn plan_detail_modal(
                         nsh_base::button()
                             .disabled(move || state.get().expanding)
                             .app_class(
-                                "px-3 py-1.5 rounded-md border border-border text-foreground \
+                                "px-3 py-2 rounded-md border border-border text-foreground \
                                  hover:bg-accent disabled:opacity-40",
                             )
                             .child(
                                 text("展开更多期次")
-                                    .text_size(px(13.0))
+                                    .text_size(px(font_size::SECONDARY))
                                     .test_id("occ-expand"),
                             )
                             .on_press(move |_: &()| perform_expand())

@@ -28,6 +28,14 @@
 //! 期间首尾 + 收支类型集合（支出 + 退款，与参与聚合类型同源：退款继承原
 //! 分类计入柱值；income 可携带商户但不进排行）。
 //!
+//! 视觉收口（issue #2105，ADR-0147 决策 3/4）：字号全部来自
+//! [`crate::design::font_size`] 字阶常量——存量 11pt 升 CAPTION（阅读下限）、
+//! 12pt = CAPTION、13pt 升 SECONDARY（次要正文：空态/表格行）、卡题保持
+//! SECONDARY（页题 16 在上，卡题不反超页题层级）、页题 = BODY；商户排行
+//! 行高收进行高带 28–36（DESIGN.md §6，行内条体 12pt 收得下）；面包屑小
+//! 按点圆角取半档（rounded-sm 4pt）、TopN 档位按钮取控件基档（rounded-lg
+//! 8pt），其余间距档位原已合规不动。
+//!
 //! 测试豁免（ADR-0060）：本模块测试经 crate 根 cfg(test) 整体放行六件套。
 
 use nsh_core::prelude::*;
@@ -40,6 +48,7 @@ use crate::bar_chart::{
     uncategorized_color,
 };
 use crate::boot;
+use crate::design::font_size;
 use crate::nav;
 use crate::nav_model::{NavRequest, ViewName};
 use crate::transactions::{amount_color, amount_privacy_enabled};
@@ -195,8 +204,9 @@ fn share_cn(snaps: &[ShareSnap]) -> Vec<ledger_reports::CategoryShare> {
 /// 分类构成行高（pt；旧壳 CATEGORY_ROW_HEIGHT 32 的量级）。
 const CATEGORY_ROW_HEIGHT: f32 = 36.0;
 
-/// 商户排行行高（pt）：五列读表行距；滚动上限随旧壳限高 320 同口径。
-const MERCHANT_ROW_HEIGHT: f32 = 44.0;
+/// 商户排行行高（pt）：五列读表行距，行高带 28–36 上限（DESIGN.md §6；
+/// 行内分布条 12pt 收得下）。
+const MERCHANT_ROW_HEIGHT: f32 = 36.0;
 
 /// 商户表数值三列定宽（pt）：金额 / 占比 / 笔数右对齐。
 const MERCHANT_COL_WIDTH: f32 = 88.0;
@@ -589,7 +599,8 @@ pub(crate) fn ReportsView() -> impl IntoElement {
     // 商户表格区高（TopN 恒滚动收口；行数变少高度收缩——旧壳同形态）。
     let merchant_rows_height = computed(move || {
         let rows = merchant_cells.get().len().max(2);
-        (rows as f32 * MERCHANT_ROW_HEIGHT + 36.0).min(320.0)
+        // 列头预留一行行高（+36 裸预算的规格化写法，数值不变）。
+        ((rows + 1) as f32 * MERCHANT_ROW_HEIGHT).min(320.0)
     });
 
     view()
@@ -608,7 +619,7 @@ pub(crate) fn ReportsView() -> impl IntoElement {
                 .app_class("border-b border-border")
                 .child(
                     text(ViewName::Reports.label())
-                        .text_size(px(16.0))
+                        .text_size(px(font_size::BODY))
                         .text_color(fg)
                         .test_id("view-title"),
                 )
@@ -630,7 +641,7 @@ pub(crate) fn ReportsView() -> impl IntoElement {
                 move || main_error.get().is_some(),
                 move || {
                     text(move || format!("加载失败：{}", main_error.get().unwrap_or_default()))
-                        .text_size(px(12.0))
+                        .text_size(px(font_size::CAPTION))
                         .text_color(danger_fg)
                         .test_id("reports-main-error")
                 },
@@ -648,13 +659,13 @@ pub(crate) fn ReportsView() -> impl IntoElement {
                 .my_2()
                 .p_4()
                 .app_class("border border-border bg-background")
-                .child(text("月度收支").text_size(px(14.0)).text_color(fg))
+                .child(text("月度收支").text_size(px(font_size::SECONDARY)).text_color(fg))
                 .child(
                     when(
                         move || monthly_cells.get().is_empty(),
                         move || {
                             text("本期暂无数据")
-                                .text_size(px(13.0))
+                                .text_size(px(font_size::SECONDARY))
                                 .text_color(muted)
                                 .test_id("reports-monthly-empty")
                         },
@@ -680,7 +691,7 @@ pub(crate) fn ReportsView() -> impl IntoElement {
                         .flex_row()
                         .items_center()
                         .gap_3()
-                        .child(text("支出分类构成").text_size(px(14.0)).text_color(fg))
+                        .child(text("支出分类构成").text_size(px(font_size::SECONDARY)).text_color(fg))
                         .child(
                             // 面包屑（issue #379）：下钻态显示当前位置，点根回基础态。
                             when(
@@ -696,14 +707,14 @@ pub(crate) fn ReportsView() -> impl IntoElement {
                                                 .on_press(move |_: &PressEvent| {
                                                     set_drilldown(&session, None);
                                                 })
-                                                .rounded_md()
+                                                .rounded_sm()
                                                 .child(
                                                     text("全部分类")
-                                                        .text_size(px(12.0))
+                                                        .text_size(px(font_size::CAPTION))
                                                         .text_color(accent),
                                                 ),
                                         )
-                                        .child(text("›").text_size(px(11.0)).text_color(muted))
+                                        .child(text("›").text_size(px(font_size::CAPTION)).text_color(muted))
                                         .child(
                                             text(move || {
                                                 drilled_root
@@ -711,7 +722,7 @@ pub(crate) fn ReportsView() -> impl IntoElement {
                                                     .map(|(_, name)| name)
                                                     .unwrap_or_default()
                                             })
-                                            .text_size(px(12.0))
+                                            .text_size(px(font_size::CAPTION))
                                             .text_color(fg)
                                             .test_id("reports-breadcrumb-current"),
                                         )
@@ -725,7 +736,7 @@ pub(crate) fn ReportsView() -> impl IntoElement {
                         move || category_bars.get().is_empty(),
                         move || {
                             text("暂无支出数据")
-                                .text_size(px(13.0))
+                                .text_size(px(font_size::SECONDARY))
                                 .text_color(muted)
                                 .test_id("reports-category-empty")
                         },
@@ -763,7 +774,7 @@ pub(crate) fn ReportsView() -> impl IntoElement {
                         .flex_row()
                         .items_center()
                         .gap_2()
-                        .child(text("商户消费排行").text_size(px(14.0)).text_color(fg))
+                        .child(text("商户消费排行").text_size(px(font_size::SECONDARY)).text_color(fg))
                         .child(
                             // TopN 档位（旧壳 NRadioButton 两枚同形态）。
                             view().flex_row().gap_1().children(
@@ -771,13 +782,13 @@ pub(crate) fn ReportsView() -> impl IntoElement {
                                     nsh_base::button()
                                         .selected(move || session.merchant_top_n.get() == n)
                                         .app_class(
-                                            "px-2 py-1 rounded-md text-foreground hover:bg-accent selected:bg-accent",
+                                            "px-2 py-1 rounded-lg text-foreground hover:bg-accent selected:bg-accent",
                                         )
                                         .child(
                                             // test_id 落在按钮内文本上（headless press 命中
                                             // 可按压件或其内部文本，期间芯片先例同形）。
                                             text(format!("Top {n}"))
-                                                .text_size(px(12.0))
+                                                .text_size(px(font_size::CAPTION))
                                                 .text_color(fg)
                                                 .test_id(format!("reports-topn-{n}").as_str()),
                                         )
@@ -793,7 +804,7 @@ pub(crate) fn ReportsView() -> impl IntoElement {
                             text(move || {
                                 format!("加载失败：{}", merchant_error.get().unwrap_or_default())
                             })
-                            .text_size(px(12.0))
+                            .text_size(px(font_size::CAPTION))
                             .text_color(danger_fg)
                             .test_id("reports-merchant-error")
                         },
@@ -803,7 +814,7 @@ pub(crate) fn ReportsView() -> impl IntoElement {
                             move || merchant_cells.get().is_empty(),
                             move || {
                                 text("本期暂无商户消费")
-                                    .text_size(px(13.0))
+                                    .text_size(px(font_size::SECONDARY))
                                     .text_color(muted)
                                     .test_id("reports-merchant-empty")
                             },
@@ -848,31 +859,31 @@ fn merchant_table(
                 .gap_2()
                 .child(
                     text("商户名")
-                        .text_size(px(12.0))
+                        .text_size(px(font_size::CAPTION))
                         .text_color(muted)
                         .w(px(MERCHANT_NAME_WIDTH)),
                 )
                 .child(
                     text("金额分布")
-                        .text_size(px(12.0))
+                        .text_size(px(font_size::CAPTION))
                         .text_color(muted)
                         .flex_1(),
                 )
                 .child(
                     text("金额")
-                        .text_size(px(12.0))
+                        .text_size(px(font_size::CAPTION))
                         .text_color(muted)
                         .w(px(MERCHANT_COL_WIDTH)),
                 )
                 .child(
                     text("占比")
-                        .text_size(px(12.0))
+                        .text_size(px(font_size::CAPTION))
                         .text_color(muted)
                         .w(px(MERCHANT_COL_WIDTH)),
                 )
                 .child(
                     text("笔数")
-                        .text_size(px(12.0))
+                        .text_size(px(font_size::CAPTION))
                         .text_color(muted)
                         .w(px(MERCHANT_COL_WIDTH)),
                 ),
@@ -924,7 +935,7 @@ fn merchant_row(
                 .w(px(MERCHANT_NAME_WIDTH))
                 .child(
                     text(move || item.get().name.clone())
-                        .text_size(px(13.0))
+                        .text_size(px(font_size::SECONDARY))
                         .text_color(accent)
                         .number_of_lines(1),
                 ),
@@ -947,19 +958,19 @@ fn merchant_row(
         )
         .child(
             text(amount_text)
-                .text_size(px(13.0))
+                .text_size(px(font_size::SECONDARY))
                 .text_color(fg)
                 .w(px(MERCHANT_COL_WIDTH)),
         )
         .child(
             text(share_text)
-                .text_size(px(13.0))
+                .text_size(px(font_size::SECONDARY))
                 .text_color(muted)
                 .w(px(MERCHANT_COL_WIDTH)),
         )
         .child(
             text(count_text)
-                .text_size(px(13.0))
+                .text_size(px(font_size::SECONDARY))
                 .text_color(muted)
                 .w(px(MERCHANT_COL_WIDTH)),
         )

@@ -666,6 +666,118 @@ fn app_window_theme_tokens_follow_strong_pinned_appearance() {
     );
 }
 
+/// 报表与概览域视图亮暗双态探针（issue #2105，ADR-0147 决策 1/4）：概览与
+/// 报表两屏的关键文本亮暗取主题令牌双态值（foreground / muted-foreground），
+/// 字号落字阶常量档（主数字 TITLE + 半粗字重承旧壳强调、卡面标签/表格列头
+/// CAPTION、金额格 TITLE、卡题 SECONDARY）。任一令牌消费面改回本地色常量、
+/// 或字阶档漂移（主数字回裸 28 / 字重回落 regular）即红；亮暗两态截图对照
+/// 属人工对表子集，自动化面只断言已解析样式（选择器用 text: 内容锚——叶子
+/// text 的 test_id 不落 span，nsh-testing span 语义）。
+#[test]
+fn dashboard_and_reports_views_follow_theme_tokens_and_type_scale() {
+    let _guard = SERIAL.lock().unwrap();
+
+    // 概览 book（全量种子）亮→暗。
+    nsh_app::app::reset_book_assembly();
+    nsh_app::app::set_book_dir(seed_dashboard_book("t2105-theme-probe"));
+    let mut app = Headless::start(desktop_config()).unwrap();
+
+    // 概览（默认首屏）亮态：主数字 = foreground 令牌 + TITLE 档 + 半粗；
+    // 卡面标签 = muted-foreground 令牌 + CAPTION 档；金额格 = TITLE 档。
+    app.wait_for("id:net-worth-value").unwrap();
+    let hero = app.screen().span_style("text:¥400").unwrap();
+    assert_eq!(
+        hero.color,
+        nsh_core::Color(0x182635ff),
+        "主数字亮色 = foreground light"
+    );
+    assert_eq!(
+        hero.font_size,
+        nsh_core::Points(20.0),
+        "主数字字号 = 字阶 TITLE 档"
+    );
+    assert_eq!(
+        hero.font_weight, 600,
+        "主数字字重 = SEMIBOLD（层级靠字阶+字重）"
+    );
+    let label = app.screen().span_style("text:净资产").unwrap();
+    assert_eq!(
+        label.color,
+        nsh_core::Color(0x5c6c7eff),
+        "卡面标签亮色 = muted light"
+    );
+    assert_eq!(
+        label.font_size,
+        nsh_core::Points(12.0),
+        "卡面标签字号 = 字阶 CAPTION 档"
+    );
+    assert_eq!(
+        app.screen().span_style("text:500").unwrap().font_size,
+        nsh_core::Points(20.0),
+        "金额格字号 = 字阶 TITLE 档"
+    );
+
+    // 系统切暗色：令牌双态跟随（foreground / muted 暗态值）。
+    app.set_environment("dark mode", |env| env.color_scheme = ColorScheme::Dark)
+        .unwrap();
+    assert_eq!(
+        app.screen().span_style("text:¥400").unwrap().color,
+        nsh_core::Color(0xe6edf4ff),
+        "主数字暗色 = foreground dark"
+    );
+    assert_eq!(
+        app.screen().span_style("text:净资产").unwrap().color,
+        nsh_core::Color(0x93a4b6ff),
+        "卡面标签暗色 = muted dark"
+    );
+    drop(app);
+
+    // 报表 book（商户/分类种子）亮→暗：卡题 = foreground + SECONDARY 档
+    // （卡题保持次要正文章：页题 16 在上，卡题不反超页题层级）；表格列头 =
+    // muted + CAPTION 档。
+    nsh_app::app::reset_book_assembly();
+    nsh_app::app::set_book_dir(seed_reports_book("t2105-theme-probe-reports"));
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_reports(&mut app);
+    wait_reports_loaded(&mut app);
+    let title = app.screen().span_style("text:月度收支").unwrap();
+    assert_eq!(
+        title.color,
+        nsh_core::Color(0x182635ff),
+        "卡题亮色 = foreground light"
+    );
+    assert_eq!(
+        title.font_size,
+        nsh_core::Points(14.0),
+        "卡题字号 = 字阶 SECONDARY 档"
+    );
+    let header = app.screen().span_style("text:商户名").unwrap();
+    assert_eq!(
+        header.color,
+        nsh_core::Color(0x5c6c7eff),
+        "列头亮色 = muted light"
+    );
+    assert_eq!(
+        header.font_size,
+        nsh_core::Points(12.0),
+        "列头字号 = 字阶 CAPTION 档"
+    );
+
+    // 切暗态：两态闭环（token 读取面亮暗自适应，非构建期钉死）。
+    app.set_environment("dark mode", |env| env.color_scheme = ColorScheme::Dark)
+        .unwrap();
+    assert_eq!(
+        app.screen().span_style("text:月度收支").unwrap().color,
+        nsh_core::Color(0xe6edf4ff),
+        "卡题暗色 = foreground dark"
+    );
+    assert_eq!(
+        app.screen().span_style("text:商户名").unwrap().color,
+        nsh_core::Color(0x93a4b6ff),
+        "列头暗色 = muted dark"
+    );
+}
+
 /// 交易主路径字阶与主操作前景令牌（issue #2101，ADR-0147 视觉收口批次）：
 /// 字号取官方字阶五档（[`nsh_app::design`] 字阶常量同源——框架 text 预设
 /// `text_xs`/`text_sm`/`text_base` 即同一规范值 12/14/16），「记一笔」等主
@@ -9824,6 +9936,122 @@ fn scheduled_view_lands_with_panes_and_subscription_rows() {
     ] {
         assert!(app.screen().count(anchor).unwrap() > 0, "{anchor} 在屏");
     }
+}
+
+/// 计划域视觉收口探针（issue #2103，ADR-0147 决策 3/4）：订阅页签亮暗双态下
+/// 关键文字的**已解析样式**——字号全部落在字阶档（形态页签/主按钮文案 =
+/// SECONDARY 14、清单卡标题与花费统计数 = TITLE 20、弱化衬注/行操作 =
+/// CAPTION 12，档值出处 docs/DESIGN.md §3）；语义色全部取主题令牌且亮暗双态
+/// 跟随 theme.json 两段（主按钮文字 = primary-foreground——暗态深色底非白、
+/// 弱化衬注 = muted-foreground、形态页签前景 = foreground）。字号回退裸值
+/// （design 字阶拆除）或主按钮回退白字直调（rgb(0xffffff)）即红；亮暗两态
+/// 截图对照属人工子集，自动化面只断言已解析样式（ADR-0087 断言强度）。
+#[test]
+fn scheduled_view_typography_and_semantic_colors_follow_design_scale() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("scheduled-design-scale");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let account = seed_account_with_balance(&db, "测试现金", 10_000);
+        let merchant = seed_merchant(&db, "视频平台");
+        seed_subscription_plan(&db, &account, Some(&merchant), Some("视频会员"));
+    }
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_scheduled(&mut app);
+
+    // 等花费面板就绪（统计锚点在屏，探针目标全部可见）。
+    app.wait_for("id:spend-this-month").unwrap();
+    app.wait_for("id:sub-create-open").unwrap();
+
+    // 亮态：字号档位 + 令牌色（期望值出处 = docs/DESIGN.md §3 字阶与
+    // theme.json 亮段，独立真源）；span 用「视图锚 >> 文案」下钻精确命中
+    //（text: 是子串匹配，裸用会撞「订阅清单」等同桁文案）。
+    let tab = app
+        .screen()
+        .span_style("id:scheduled-tab-subscriptions >> text:订阅")
+        .unwrap();
+    assert_eq!(
+        tab.font_size,
+        nsh_core::Points(14.0),
+        "形态页签字号 = 字阶 SECONDARY"
+    );
+    assert_eq!(
+        tab.color,
+        nsh_core::Color(0x182635ff),
+        "形态页签前景 = foreground 亮态令牌"
+    );
+    let title = app.screen().span_style("text:订阅清单").unwrap();
+    assert_eq!(
+        title.font_size,
+        nsh_core::Points(20.0),
+        "清单卡标题字号 = 字阶 TITLE"
+    );
+    let caption = app.screen().span_style("text:/^单位：/").unwrap();
+    assert_eq!(
+        caption.font_size,
+        nsh_core::Points(12.0),
+        "单位衬注字号 = 字阶 CAPTION"
+    );
+    assert_eq!(
+        caption.color,
+        nsh_core::Color(0x5c6c7eff),
+        "单位衬注色 = muted-foreground 亮态令牌"
+    );
+    let primary = app
+        .screen()
+        .span_style("id:sub-create-open >> text:新建订阅")
+        .unwrap();
+    assert_eq!(
+        primary.font_size,
+        nsh_core::Points(14.0),
+        "主按钮文字字号 = 字阶 SECONDARY"
+    );
+    assert_eq!(
+        primary.color,
+        nsh_core::Color(0xf2f8ffff),
+        "主按钮文字色 = primary-foreground 亮态令牌（非裸白）"
+    );
+    let stat = app
+        .screen()
+        .span_style("id:spend-this-month >> text:¥0")
+        .unwrap();
+    assert_eq!(
+        stat.font_size,
+        nsh_core::Points(20.0),
+        "花费统计数字号 = 字阶 TITLE（未执行只读 ¥0，四统计首格）"
+    );
+
+    // 暗态：字号档不变，语义色随 theme.json 暗段（主按钮深色底非白——裸白
+    // 直调在暗态与亮态同值，此处即红）。
+    app.set_environment("dark mode", |env| env.color_scheme = ColorScheme::Dark)
+        .unwrap();
+    let tab = app
+        .screen()
+        .span_style("id:scheduled-tab-subscriptions >> text:订阅")
+        .unwrap();
+    assert_eq!(
+        tab.color,
+        nsh_core::Color(0xe6edf4ff),
+        "形态页签前景 = foreground 暗态令牌"
+    );
+    let caption = app.screen().span_style("text:/^单位：/").unwrap();
+    assert_eq!(
+        caption.color,
+        nsh_core::Color(0x93a4b6ff),
+        "单位衬注色 = muted-foreground 暗态令牌"
+    );
+    let primary = app
+        .screen()
+        .span_style("id:sub-create-open >> text:新建订阅")
+        .unwrap();
+    assert_eq!(
+        primary.color,
+        nsh_core::Color(0x0b2239ff),
+        "主按钮文字色 = primary-foreground 暗态令牌（非裸白）"
+    );
 }
 
 /// 创建旅程（旧壳校验面 + toast 反馈平价）：空账户前置拦截不写入；填齐
