@@ -339,7 +339,7 @@ fn boot_ledger_by_plan(plan: ledger_infra::db::boot::BootPlan) -> Result<DbState
 /// 「选择账本库目录…」按钮与首启引导「打开已有账本」（T3）两个消费面共用
 /// 同一函数——现场分流语义只有这一份。
 ///
-/// 分流闭集（判定序即闭集序）:
+/// 分流闭集（判定序即闭集序）：
 /// ① 注册表在册（含活动本自身，目录身份物理折叠）→ 切活动指针（已是活动
 ///    本幂等零写入）→ [`PickedBookDisposition::Open`]；
 /// ②③ 未在册：无库文件 → [`PickedBookDisposition::ConfirmCreate`]（新建
