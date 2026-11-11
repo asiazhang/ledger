@@ -23,7 +23,6 @@ use nsh_base::{tab, tabs};
 use nsh_core::element::desktop::MenuItem;
 use nsh_core::prelude::*;
 
-use crate::app::transactions_view;
 use crate::context_menu;
 use crate::insurers;
 use crate::items;
@@ -31,6 +30,13 @@ use crate::nav::{self, NavIntent};
 use crate::nav_model::{self, GroupId, NavRequest, ViewName};
 use crate::physical_assets;
 use crate::policies;
+use crate::transactions::transactions_view;
+
+/// 表单字段标签（弱化小字，旧壳 NFormItem label 的本壳形态；跨视图共用件，
+/// #2073 自 app.rs 归位到视图层）。
+pub(crate) fn field_label(label: &'static str, muted: AdaptiveColor) -> impl IntoElement {
+    text(label).text_size(px(12.0)).text_color(muted)
+}
 
 /// 视图令牌便捷面（前景/弱化，双态自适应；令牌缺失回退亮灰/中灰可读兜底，
 /// app.rs 先例同形）。

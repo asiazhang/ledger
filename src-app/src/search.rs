@@ -5,7 +5,7 @@
 //! 列表的筛选维度（账户/商户/分类/类型，域搜索读路径不支持，#2037 定型为
 //! 规格）、无任何写入口（无右键菜单、无表单；编辑走交易列表/表单）。旧壳
 //! 搜索页行为面（ADR-0070 决策 3）：关键词防抖自动搜索（300ms 单源，与
-//! 交易列表共用 [`crate::app::SEARCH_DEBOUNCE_MS`]）、五枚期间芯片 +
+//! 交易列表共用 [`crate::transactions::SEARCH_DEBOUNCE_MS`]）、五枚期间芯片 +
 //! 步进器、金额区间（元输入）、已应用筛选描述 + 清除筛选、结果只读分页；
 //! **状态源全视图本地、会话内保留明确不做**（离开再回 = 全新占位态——旧壳
 //! 同口径，本壳视图切换即卸载，重挂天然归位）。
@@ -26,12 +26,13 @@ use std::time::Duration;
 use nsh_base::{button, data_table, input, pagination};
 use nsh_core::prelude::*;
 
-use crate::app::{amount_privacy_enabled, db_slot, hit_total_text};
+use crate::app::db_slot;
 use crate::assembly::{self, CurrencyTable, RowCells, RowContext};
 use crate::boot;
 use crate::nav;
 use crate::nav_model::ViewName;
-use crate::{adaptive, app, period, period_row, tx_cards};
+use crate::transactions::{amount_privacy_enabled, hit_total_text};
+use crate::{adaptive, period, period_row, transactions, tx_cards};
 
 /// 搜索视图（导航骨架搜索分支的真实组件，#2040）：关键词防抖自动搜索 +
 /// 期间快捷筛选 + 金额区间 + 只读结果分页 + 占位/无命中两态空态。
@@ -110,11 +111,13 @@ pub(crate) fn SearchView() -> impl IntoElement {
                 let outcome = blocking(move || {
                     boot::transaction_search(
                         &db,
-                        &query,
                         page_no,
-                        amount_min,
-                        amount_max,
-                        range.as_ref(),
+                        &boot::TxSearchQuery {
+                            query,
+                            amount_min_cents: amount_min,
+                            amount_max_cents: amount_max,
+                            range,
+                        },
                     )
                     .map(|result| (result.items, result.total))
                     .and_then(|(items, total)| {
@@ -194,11 +197,14 @@ pub(crate) fn SearchView() -> impl IntoElement {
         // 直呼 set_timeout 会把定时器挂到子树 owner 上随卸载被取消——防抖
         // 到期不装载、结果静默不刷新（修复前 headless 清除旅程确定性复现）。
         view_owner.run(move || {
-            set_timeout(Duration::from_millis(app::SEARCH_DEBOUNCE_MS), move || {
-                if search_seq.get() == seq {
-                    load(1);
-                }
-            });
+            set_timeout(
+                Duration::from_millis(transactions::SEARCH_DEBOUNCE_MS),
+                move || {
+                    if search_seq.get() == seq {
+                        load(1);
+                    }
+                },
+            );
         });
     };
 
@@ -286,7 +292,7 @@ pub(crate) fn SearchView() -> impl IntoElement {
 
     // 响应式列集（备注列吸收富余宽，交易列表同形）与延迟出场加载指示
     //（快搜索不闪指示器，旧壳 useDelayedLoading 语义重建）。
-    let columns = computed(move || app::elastic_columns(adaptive::content_width()));
+    let columns = computed(move || transactions::elastic_columns(adaptive::content_width()));
     let visible_loading = delayed_loading(loading);
 
     view()
@@ -313,7 +319,7 @@ pub(crate) fn SearchView() -> impl IntoElement {
                     input()
                         .test_id("search-keyword")
                         .value(move || keyword.get())
-                        .placeholder(app::SEARCH_PLACEHOLDER)
+                        .placeholder(transactions::SEARCH_PLACEHOLDER)
                         .optional_label("搜索交易")
                         .text_color(fg)
                         .app_class(
@@ -437,11 +443,11 @@ pub(crate) fn SearchView() -> impl IntoElement {
                                     .child(
                                         data_table()
                                         .columns(columns)
-                                        .data(move || app::rows_to_data(&rows.get()))
+                                        .data(move || transactions::rows_to_data(&rows.get()))
                                         // 只读平价（#2040 模块注：行点击/下钻委托属表格级
                                         // 发送端 #2061，交易列表先行；本视图不挂委托，
                                         // 自绘格退回纯文本形态）。
-                                        .render_cell(app::render_cell(rows, None))
+                                        .render_cell(transactions::render_cell(rows, None))
                                         .loading(move || visible_loading.get())
                                         .loading_view(
                                             text("正在加载…").text_color(muted),
@@ -450,7 +456,7 @@ pub(crate) fn SearchView() -> impl IntoElement {
                                             text(assembly::search_empty_text(true))
                                                 .text_color(muted),
                                         )
-                                        .classes(app::table_classes())
+                                        .classes(transactions::table_classes())
                                         .flex_1(),
                                     )
                             }),

@@ -3,8 +3,9 @@
 //! 的重生，ADR-0022 页签分域 / ADR-0017 设置落点 / ADR-0116 功能开关）。
 //!
 //! **页签容器**：旧壳设置页的分域页签（通用 → 分类 → 币种 → 数据 → 定时 →
-//! 功能 → 关于，ADR-0022 修订链的完整结构）在 NSH 以 visited-once
-//! keep-mounted 页签容器单点重建——旧壳 display-directive="show:lazy" + 显式
+//! 功能 → 关于，ADR-0022 修订链的完整结构）在 NSH 以 crate 级单点
+//! visited-once keep-mounted 页签容器（[`crate::keep_mounted`]）重建——旧壳
+//! display-directive="show:lazy" + 显式
 //! key 的「带 key 实践」对应物：已到访页签走 display 隐藏保持挂载（切页签不
 //! 重挂重拉），未到访页签不预载（show:lazy 的 lazy 半边）。页签选中态会话内
 //! 有效、不跨启动持久化，离开设置页再回默认首签（旧壳顶级页签无 v-model 同
@@ -50,7 +51,7 @@ use nsh_core::storage::Storage;
 use crate::app::book_dir;
 use crate::assembly::CategoryOption;
 use crate::danger::{DangerConfirmSpec, DangerLevel, DangerOutcome, danger_confirm};
-use crate::{boot, nav, nav_model, select, views};
+use crate::{boot, keep_mounted, nav, nav_model, select, views};
 
 // ---------------------------------------------------------------------------
 // 词表（旧壳 settings.* zh-CN 词条原样；i18n 框架级方案不在本票，字面承载）。
@@ -415,19 +416,11 @@ pub fn SettingsView() -> impl IntoElement {
     let nav = nav::store();
 
     // 页签会话槽：选中页签（默认首签；离开再回 = 全新装载回首签，旧壳默认
-    // 态同口径）+ 到访标记（visited-once keep-mounted：先到的页签保持挂载）。
+    // 态同口径）+ 到访标记（visited-once keep-mounted：先到的页签保持挂载；
+    // 标记与到访 effect 的机制住 [`crate::keep_mounted`] 单点）。
     let active: Signal<SettingsTab> = signal(SettingsTab::General);
-    let visited: Signal<Vec<bool>> = signal({
-        let mut flags = vec![false; TABS.len()];
-        flags[0] = true; // 默认首签挂载即呈现
-        flags
-    });
-    effect(move || {
-        let current = active.get();
-        if let Some(index) = TABS.iter().position(|tab| *tab == current) {
-            visited.update(|flags| flags[index] = true);
-        }
-    });
+    let visited = keep_mounted::visited_flags(TABS.len());
+    keep_mounted::mark_visited_on_change(visited, &TABS, move || active.get());
 
     // 页签行（nsh-base Tabs 行为件：roving 焦点 + 无障碍页签列表；可见序随
     // 功能开关响应式——定时关闭即页签行隐）。
@@ -465,12 +458,20 @@ pub fn SettingsView() -> impl IntoElement {
         ));
 
     // 内容区（visited-once keep-mounted 页签宿主闭集；页签顺序呈现，激活切
-    // 换只变 display 不重挂）。
+    // 换只变 display 不重挂；宿主机制住 [`crate::keep_mounted`] 单点）。
     let content_host = view()
         .flex_1()
         .flex_col()
         .app_class("p-4 gap-3 overflow-hidden")
-        .children(TABS.map(|tab| keep_mounted_pane(tab, active, visited, palette)));
+        .children(TABS.map(|tab| {
+            keep_mounted::keep_mounted_pane(
+                &TABS,
+                tab,
+                visited,
+                move |t| active.get() == t,
+                move |t| pane_body(t, palette),
+            )
+        }));
 
     view()
         .flex_1()
@@ -487,40 +488,6 @@ pub fn SettingsView() -> impl IntoElement {
         )
         .child(tab_bar)
         .child(content_host)
-}
-
-/// keep-mounted 页签宿主：未到访不挂载（不预载）；已到访的宿主随激活状态
-/// display 切换（隐藏样式，退出布局流、不收点位）——「切页签不重挂重拉」
-/// 的呈现本体。删除 display 切换接线（改回卸载重建）即红：headless
-/// keep-mounted 探针见 tests/app_headless.rs（切回后已访页签的会话态随卸载
-/// 丢失 → 红）。
-fn keep_mounted_pane(
-    tab: SettingsTab,
-    active: Signal<SettingsTab>,
-    visited: Signal<Vec<bool>>,
-    palette: views::ViewPalette,
-) -> impl IntoElement {
-    let index = TABS.iter().position(|t| *t == tab).unwrap_or(0);
-    when(
-        move || visited.get()[index],
-        move || {
-            view()
-                .flex_col()
-                .flex_1()
-                .style_when(move || active.get() != tab, hide_when_inactive)
-                .child(pane_body(tab, palette))
-        },
-    )
-    .otherwise(view)
-}
-
-/// 不活动页签宿主的隐藏样式（display none —— 旧壳「非激活 pane 不在文档流」
-/// 的等效物；独立 fn 让删除映射即编译红）。
-fn hide_when_inactive(
-    style: nsh_core::element::StyleRefinement,
-) -> nsh_core::element::StyleRefinement {
-    use nsh_core::element::Styled;
-    style.hidden()
 }
 
 /// 页签内容分支（闭集；未迁四页签 = 占位说明）。

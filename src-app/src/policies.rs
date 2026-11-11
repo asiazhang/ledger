@@ -38,7 +38,7 @@ use nsh_core::element::{FontWeight, SharedString};
 use nsh_core::prelude::*;
 
 use crate::adaptive;
-use crate::app::{db_slot, field_label, table_classes};
+use crate::app::db_slot;
 use crate::assembly::{self, CurrencyTable, POLICY_COLUMNS};
 use crate::boot;
 use crate::combo_select;
@@ -48,6 +48,8 @@ use crate::nav_model::ViewName;
 use crate::pinyin_select;
 use crate::popconfirm;
 use crate::select;
+use crate::transactions::table_classes;
+use crate::views::field_label;
 use crate::{nav, signals};
 use ledger_policy::{Policy, PolicyInput, PolicyStats};
 use ledger_scheduled::ScheduledTransactionWithExt;

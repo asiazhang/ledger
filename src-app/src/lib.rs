@@ -48,7 +48,7 @@
 //!   日志档位卡、数据存储位置卡（查看 / 更改 / 恢复默认 + 二选一接管守卫）、
 //!   功能开关管理面（写路径归 [`nav::set_feature_closed`] 单点共源）；
 //!   备份 / 加密 / 同步 / 账本切换卡已随设置②（#2054）落位（[`settings_data`]）；
-//! - [`app`]：NSH 根组件与启动结果视图模型（装配入口可注入，headless 可测）；
+//! - [`app`]：NSH 根组件与启动结果视图模型（装配入口可注入，headless 可测；#2073 起视图本体已归位 [`transactions`] / [`budget`] 等各自模块）；
 //! - [`nav`]：进程内导航 API 与导航状态（#2032 壳导航骨架）——单点入口
 //!   `open`（守卫裁决 → 落位 → 持久化）、下钻意图读一次消费、键位带派发、
 //!   侧栏序/收纳清单/关闭集合/上次视图的存储读写（`nsh_core::storage::Storage`
@@ -141,6 +141,9 @@
 //!   触发件的确认/取消气泡、ESC/点外关闭、抑制上报自含；
 //! - [`popover`]：口径说明气泡封装（`App*` 封装族，#2039 首建）——触发件
 //!   点按开合的多行说明气泡（旧壳口径 tooltip 的点按形态）、抑制上报自含；
+//! - [`keep_mounted`]：visited-once keep-mounted 页签宿主封装（#2073 自设置
+//!   /投资双实现收拢）——已到访页签 display 隐藏保持挂载（切页签不重挂重拉）、
+//!   未到访不预载；到访标记与到访 effect 同点；设置页与投资页页签容器消费；
 //! - [`signals`]：进程内失效信号——交易数据失效的订阅/广播单点，写路径
 //!   成功后广播、列表视图订阅重读（#2022；词汇表失效信号语义的壳内通道）；
 //! - [`txn_form`]：交易表单弹窗（`App*` 封装族消费面，#2034）——基础收支
@@ -156,9 +159,17 @@
 //! - [`backup_entry`]：备份最小入口（#2038）——交易列表工具区一键备份：
 //!   文件保存对话框（NSH 壳能力直用）+ 域 backup 直调 + 成功/失败状态条
 //!   反馈；默认文件名生成面（旧壳 `defaultBackupFileName` 同格式）；
-//! - [`boot`]：域栈引导——库文件处置判定（复用基础设施引导层）、成对建连、
-//!   交易列表页与币种字典读取、交易删除（#2022）、手动备份与账本指纹
-//!   （#2038）；
+//! - [`boot`]：域栈引导——引导内核住 `boot/mod.rs`（库文件处置判定、成对建
+//!   连、启动编排、选目录处置、引导记录槽）；域读写接缝按域分文件（#2073，
+//!   transactions/items/backup/txn_form/budget/dashboard/reports/investment/
+//!   accounts/scheduled/merchants/savings/policies/insurers/physical_assets/
+//!   settings/data_safety），mod.rs 全量再导出，消费面 `boot::函数名` 不变；
+//! - [`budget`]：预算视图（#2033，#2073 自 app.rs 归位）——分类预算 + 执行
+//!   进度呈现，封装族（PinyinSelect / Modal / Popconfirm）首消费面；
+//! - [`transactions`]：交易表格视图与表格装配共用件族（#2018 首屏，#2073 自
+//!   app.rs 归位）——DataTable 首屏/分页/搜索/筛选，render_cell、
+//!   table_classes、rows_to_data、elastic_columns、amount_color、
+//!   amount_privacy_enabled 等跨视图共用件住址；
 //! - [`scheduled`]：定时视图壳（#2042 / #2043）——订阅 / 分期 / 定时转账三
 //!   形态页签容器（会话槽保留语义）、计划来源落点意图消费与订阅计划清单装
 //!   配（状态 / 期次状态 / 周期标签词表、行操作矩阵、行格文本）；
@@ -237,6 +248,7 @@ pub mod backup_entry;
 pub mod backup_host;
 pub mod bar_chart;
 pub mod boot;
+pub mod budget;
 pub mod combo_select;
 pub mod context_menu;
 pub mod cross_book;
@@ -254,6 +266,7 @@ pub mod investments_holdings;
 pub mod investments_instruments;
 pub mod investments_ledger;
 pub mod items;
+pub mod keep_mounted;
 pub mod logging;
 pub mod market_lanes;
 pub mod merchants;
@@ -287,6 +300,7 @@ pub mod shell_support;
 pub mod sidebar;
 pub mod signals;
 pub mod sync_triggers;
+pub mod transactions;
 pub mod tx_cards;
 pub mod tx_filter;
 pub mod tx_view_preferences;

@@ -62,7 +62,7 @@ use crate::assembly::CategoryOption;
 use crate::investments::PanePalette;
 use crate::{
     app, assembly, boot, context_menu, danger, investments, investments_form, modal, multi_select,
-    pinyin_select, signals,
+    pinyin_select, signals, transactions,
 };
 use ledger_transaction::TransactionKind;
 
@@ -404,11 +404,11 @@ const FEE_W: f32 = 100.0;
 const ACCOUNT_W: f32 = 110.0;
 const FUNDING_W: f32 = 110.0;
 
-/// 有效页数（≥1；服务端分页同语义同构——旧壳 ADR-0008 هم形；页大小 = 本
-/// 页签固定档 [`boot::LEDGER_TAB_PAGE_SIZE`]）。
+/// 有效页数（≥1；服务端分页同语义同构——旧壳 ADR-0008 同形；页大小 = 本
+/// 页签固定档 [`boot::LEDGER_TAB_PAGE_SIZE`]；换算住 [`assembly::total_pages_of`]
+/// 单点，#2073）。
 pub(crate) fn ledger_total_pages(total: i64) -> u32 {
-    let count = total.max(0) as usize;
-    count.div_ceil(boot::LEDGER_TAB_PAGE_SIZE).max(1) as u32
+    crate::assembly::total_pages_of(total, boot::LEDGER_TAB_PAGE_SIZE)
 }
 
 fn ledger_columns() -> Vec<DataTableColumn> {
@@ -572,7 +572,7 @@ pub(crate) fn LedgerPane() -> impl IntoElement {
     let load = move || {
         loading.set(true);
         error.set(None);
-        let privacy_enabled = app::amount_privacy_enabled();
+        let privacy_enabled = transactions::amount_privacy_enabled();
         // 会话快照进闭包（低频信号值拉过先例）。
         let page_now = session.detail_page.get_untracked().max(1);
         let kinds = session.detail_kinds.get_untracked();

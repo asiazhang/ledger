@@ -464,7 +464,7 @@ pub(crate) fn plan_detail_modal(
                         .columns(occ_columns())
                         .data(move || occ_rows_data(&state, &currencies, &privacy))
                         .render_cell(render_cell)
-                        .classes(crate::app::table_classes())
+                        .classes(crate::transactions::table_classes())
                         .flex_1(),
                 ),
             )

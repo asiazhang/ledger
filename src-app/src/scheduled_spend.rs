@@ -304,7 +304,7 @@ pub(crate) fn spend_panel(state: Signal<SpendPanelState>) -> impl IntoElement {
                         nsh_base::data_table()
                             .columns(spend_row_columns())
                             .data(move || spend_rows_data(&state))
-                            .classes(crate::app::table_classes())
+                            .classes(crate::transactions::table_classes())
                             .flex_1(),
                     ),
             )

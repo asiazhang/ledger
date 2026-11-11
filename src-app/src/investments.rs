@@ -2,8 +2,9 @@
 //! 页签容器：概览/盈亏随⑭已迁、持仓随⑮，ledger/instruments 随⑯）。
 //!
 //! 页签容器（旧壳 InvestmentsView 前三页签——ledger/instruments 随 ⑯）：
-//! visited-once keep-mounted 页签容器单点重建
-//!（同 [`crate::settings`] 形态）——旧壳 display-directive="show" + 页签 key
+//! crate 级单点 visited-once keep-mounted 页签容器
+//!（[`crate::keep_mounted`]，与 [`crate::settings`] 同点）——旧壳
+//! display-directive="show" + 页签 key
 //! 纪律的本壳对应物：已到访页签 display 隐藏保持挂载，切页签不重挂重拉；
 //! 删 display 切换接线即红（headless keep-mounted 探针）。
 //!
@@ -28,9 +29,10 @@
 
 use nsh_core::prelude::*;
 
-use crate::app::{amount_privacy_enabled, db_slot};
+use crate::app::db_slot;
 use crate::assembly::{self, AMOUNT_PRIVACY_MASK, CategoryOption, CurrencyFormat};
 use crate::boot;
+use crate::keep_mounted;
 use crate::nav;
 use crate::pinyin_select;
 use crate::plot_line;
@@ -38,6 +40,7 @@ use crate::plot_line::PlotLineSeries;
 use crate::popover::popover_tip;
 use crate::select;
 use crate::signals;
+use crate::transactions::amount_privacy_enabled;
 use crate::views;
 
 // ---------------------------------------------------------------------------
@@ -640,9 +643,10 @@ pub(crate) fn year_rows_desc(rows: &[YearPnlSnap]) -> Vec<YearPnlSnap> {
     sorted
 }
 
-/// 有效页数（≥1；行集空 = 一页）。
+/// 有效页数（≥1；行集空 = 一页；客户端切片分页与 [`assembly::total_pages_of`]
+/// 同口径，#2073 收敛为单点消费）。
 pub(crate) fn total_pages(row_count: usize) -> usize {
-    row_count.div_ceil(PNL_PAGE_SIZE).max(1)
+    crate::assembly::total_pages_of(row_count as i64, PNL_PAGE_SIZE) as usize
 }
 
 /// 客户端切片分页（旧壳「两表行集一次全量拉取，翻页只是内存展示切片」同
@@ -868,18 +872,10 @@ pub(crate) fn InvestmentsView() -> impl IntoElement {
     });
 
     // 到访标记（visited-once keep-mounted：先到的页签保持挂载，页签切换不
-    // 重挂重拉——旧壳 display-directive="show" + key 纪律的本壳对应物）。
-    let visited: Signal<Vec<bool>> = signal({
-        let mut flags = vec![false; TABS.len()];
-        flags[0] = true; // 默认首签挂载即呈现
-        flags
-    });
-    effect(move || {
-        let current = session.tab.get();
-        if let Some(index) = TABS.iter().position(|tab| *tab == current) {
-            visited.update(|flags: &mut Vec<bool>| flags[index] = true);
-        }
-    });
+    // 重挂重拉——旧壳 display-directive="show" + key 纪律的本壳对应物；
+    // 标记与到访 effect 的机制住 [`crate::keep_mounted`] 单点）。
+    let visited = keep_mounted::visited_flags(TABS.len());
+    keep_mounted::mark_visited_on_change(visited, &TABS, move || session.tab.get());
 
     let palette = views::view_palette();
     let tab_bar = view()
@@ -910,12 +906,33 @@ pub(crate) fn InvestmentsView() -> impl IntoElement {
         ));
 
     // 页签宿主闭集（visited-once keep-mounted；激活切换只变 display 不重挂
-    // ——顺序呈现，卸载重建即红钉 headless keep-mounted 探针）。
+    // ——顺序呈现，卸载重建即红钉 headless keep-mounted 探针；宿主机制住
+    // [`crate::keep_mounted`] 单点）。
     let content_host: View = view()
         .flex_1()
         .min_h(px(0.0))
         .app_class("overflow-hidden")
-        .children(TABS.map(|tab| keep_mounted_pane(tab, session, visited)));
+        .children(TABS.map(|tab| {
+            keep_mounted::keep_mounted_pane(
+                &TABS,
+                tab,
+                visited,
+                move |t| session.tab.get() == t,
+                move |t| match t {
+                    InvestmentsTab::Overview => overview_pane().into_element(),
+                    InvestmentsTab::Pnl => pnl_pane().into_element(),
+                    InvestmentsTab::Holdings => {
+                        crate::investments_holdings::holdings_pane().into_element()
+                    }
+                    InvestmentsTab::Ledger => {
+                        crate::investments_ledger::ledger_pane().into_element()
+                    }
+                    InvestmentsTab::Instruments => {
+                        crate::investments_instruments::instruments_pane().into_element()
+                    }
+                },
+            )
+        }));
 
     view()
         .flex_1()
@@ -937,47 +954,6 @@ pub(crate) fn InvestmentsView() -> impl IntoElement {
             crate::investment_sync::staleness_alert(),
         )
         .child(content_host)
-}
-
-/// keep-mounted 页签宿主：未到访不挂载（不预载）；已到访宿主随激活状态
-/// display 切换（隐藏样式，退出布局流）。
-fn keep_mounted_pane(
-    tab: InvestmentsTab,
-    session: InvestmentsSession,
-    visited: Signal<Vec<bool>>,
-) -> impl IntoElement {
-    let index = TABS.iter().position(|t| *t == tab).unwrap_or(0);
-    when(
-        move || visited.get()[index],
-        move || {
-            let pane = match tab {
-                InvestmentsTab::Overview => overview_pane().into_element(),
-                InvestmentsTab::Pnl => pnl_pane().into_element(),
-                InvestmentsTab::Holdings => {
-                    crate::investments_holdings::holdings_pane().into_element()
-                }
-                InvestmentsTab::Ledger => crate::investments_ledger::ledger_pane().into_element(),
-                InvestmentsTab::Instruments => {
-                    crate::investments_instruments::instruments_pane().into_element()
-                }
-            };
-            view()
-                .flex_col()
-                .flex_1()
-                .min_h(px(0.0))
-                .style_when(move || session.tab.get() != tab, hide_when_inactive)
-                .child(pane)
-        },
-    )
-    .otherwise(view)
-}
-
-/// 不活动页签宿主的隐藏样式（display none；独立 fn 让删除映射即编译红）。
-fn hide_when_inactive(
-    style: nsh_core::element::StyleRefinement,
-) -> nsh_core::element::StyleRefinement {
-    use nsh_core::element::Styled;
-    style.hidden()
 }
 
 /// 主题令牌调色板（双态自适应；令牌缺失回退亮灰/中灰可读兜底，先例同形）。

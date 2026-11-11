@@ -235,7 +235,7 @@ fn TxFilterDrillProbeApp() -> impl IntoElement {
         .flex_1()
         .flex_col()
         .app_class("bg-background")
-        .child(crate::app::transactions_view())
+        .child(crate::transactions::transactions_view())
 }
 
 /// 下钻筛选落位全链：载荷投递 → 守卫落位交易列表 → 意图投递 → 真实视图挂载

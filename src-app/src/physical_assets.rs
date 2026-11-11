@@ -41,7 +41,7 @@ use nsh_core::element::FontWeight;
 use nsh_core::prelude::*;
 
 use crate::adaptive;
-use crate::app::{db_slot, field_label, table_classes};
+use crate::app::db_slot;
 use crate::assembly::{self, ColumnAlign, CurrencyTable, PHYSICAL_ASSET_COLUMNS};
 use crate::boot;
 use crate::date_select;
@@ -49,6 +49,8 @@ use crate::modal;
 use crate::nav_model::ViewName;
 use crate::popconfirm;
 use crate::select;
+use crate::transactions::table_classes;
+use crate::views::field_label;
 use crate::{nav, signals};
 
 // ---------------------------------------------------------------------------

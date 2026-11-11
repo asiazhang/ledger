@@ -471,30 +471,24 @@ impl CategoryTable {
 /// |分| < 2⁵³（约 ¥9×10¹³）内 f64 精确，定点格式化与 `toFixed` 在该量级内
 /// 逐位同形（见 tests 基本例）；个人账本量级远在其下，不引入整数串算的第二
 /// 套舍入口径（口径单源：旧壳展示行为即对拍基准）。
+///
+/// 本函数是 [`format_amount_f64`] 的整数分入口变形（#2073 双胞胎合并）：
+/// i64 绝对值先经 i128 兜住 i64::MIN 再升 f64，与直转 f64 后 `abs` 在
+/// |分| < 2⁵³ 内逐位同值——换算与去零主体单点在 f64 版。
 pub fn format_amount_basic(cents: i64, fmt: &CurrencyFormat) -> String {
-    let sign = if cents < 0 { "-" } else { "" };
     let abs = (cents as i128).unsigned_abs() as f64;
-    let value = abs / 10f64.powi(fmt.decimal_places as i32);
-    let fixed = format!("{:.*}", fmt.decimal_places as usize, value);
-    // 只去零、不做舍入；小数部分全空时连小数点一起去掉（与旧壳 replace 同序）。
-    let trimmed = if fmt.decimal_places > 0 {
-        fixed.trim_end_matches('0').trim_end_matches('.')
-    } else {
-        fixed.as_str()
-    };
-    format!("{sign}{}{}", fmt.symbol, group_number_string(trimmed, 4))
+    format_amount_f64(if cents < 0 { -abs } else { abs }, fmt)
 }
 
 /// 金额基础格式化·小数分变形（formatAmount 的小数分消费面，issue #2044）：
 /// 域口径的**小数分**量（物品域 `per_day_cents` 分/天小数）沿用同一换算与去
-/// 零口径（f64 除法 + 定点格式化，与 [`format_amount_basic`] 同源）；熟悉
+/// 零口径（f64 除法 + 定点格式化，与 [`format_amount_basic`] 同源同点）；熟悉
 /// 量级内定点格式化与旧壳 toFixed 逐位同形（平价锁定例见单测）。
 pub fn format_amount_f64(cents: f64, fmt: &CurrencyFormat) -> String {
     let sign = if cents < 0.0 { "-" } else { "" };
     let value = cents.abs() / 10f64.powi(fmt.decimal_places as i32);
     let fixed = format!("{:.*}", fmt.decimal_places as usize, value);
-    // 只去零、不做舍入；小数部分全空时连小数点一起去掉（与 [`format_amount_basic`]
-    // 同序）。
+    // 只去零、不做舍入；小数部分全空时连小数点一起去掉（与旧壳 replace 同序）。
     let trimmed = if fmt.decimal_places > 0 {
         fixed.trim_end_matches('0').trim_end_matches('.')
     } else {
@@ -992,11 +986,18 @@ pub fn next_page(current: u32, total_pages: u32, step: PageStep) -> Option<u32> 
     }
 }
 
-/// 总页数（offset 分页，ADR-0008）：末页不满一页也算一页；`total = 0` 恒 1
-/// （分页条在单页时由 UI 层收起，见 [`crate::app`]）。
-pub fn total_pages(total: i64) -> u32 {
-    let pages = (total.max(0) as u64).div_ceil(PAGE_SIZE as u64);
+/// 总页数单点（offset 分页，ADR-0008；#2073 自五处分页面收敛）：末页不满
+/// 一页也算一页；`total = 0` 恒 1（分页条在单页时由 UI 层收起）；负 total
+/// 钳 0（防御性，域 total 语义非负）。各分页面（交易主列表 / 盈亏 / 持仓 /
+/// 明细 / 标的 / 商户）以各自页径消费本点，勿再自写 `div_ceil` 组合。
+pub fn total_pages_of(total: i64, page_size: usize) -> u32 {
+    let pages = (total.max(0) as u64).div_ceil(page_size as u64);
     pages.max(1) as u32
+}
+
+/// 总页数（交易主列表，offset 分页，ADR-0008）：页大小 [`PAGE_SIZE`]。
+pub fn total_pages(total: i64) -> u32 {
+    total_pages_of(total, PAGE_SIZE)
 }
 
 /// 删除一行后的页码决策（旧壳 afterRowDelete / ADR-0045 的决策半边，#2022）：
@@ -4335,20 +4336,12 @@ pub fn partition_insurer_rows(
 }
 
 /// 统一模糊搜索语义过滤（ADR-0027 唯一定义点的直接消费，pinyin_select 过滤
-/// 项同源）：按空白切词、词条间 AND，每词条对保司名判定「原文连续子串 ∨
-/// 拼音首字母子序列」。保序过滤（只隐藏未命中项，剩余项顺序不变——保护位
-/// 置记忆）；空查询恒全量（恢复完整列表）。纯函数、可离线单测。
+/// 项同源；查询级组合逻辑住 [`ledger_transaction::query_matches_text`] 单点）：
+/// 保序过滤（只隐藏未命中项，剩余项顺序不变——保护位置记忆）；空查询恒全量
+///（恢复完整列表）。纯函数、可离线单测。
 pub fn filter_insurer_rows(query: &str, rows: &[InsurerRowCells]) -> Vec<InsurerRowCells> {
-    let terms = ledger_transaction::split_terms(query);
-    if terms.is_empty() {
-        return rows.to_vec();
-    }
     rows.iter()
-        .filter(|row| {
-            terms
-                .iter()
-                .all(|term| ledger_transaction::term_matches_text(term, &row.name))
-        })
+        .filter(|row| ledger_transaction::query_matches_text(query, &row.name))
         .cloned()
         .collect()
 }
