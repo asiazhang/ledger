@@ -86,7 +86,7 @@ pub fn transaction_page(
 /// 交易搜索页查询载荷（#2073 自 6 散参收敛，与 [`TxListQuery`] 同构对称——
 /// 搜索读接缝的全部输入一个载体）：搜索面维度裁决见 [`transaction_search`]
 /// doc。默认构造 = 空关键词无筛选（域语义 = 空结果）。
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct TxSearchQuery {
     /// 关键词（统一模糊搜索语义，ADR-0027；空 + 有筛选 = 仅筛选查询，空 +
     /// 无筛选 = 域空结果语义）。
@@ -98,17 +98,6 @@ pub struct TxSearchQuery {
     /// 期间快照（含边界，搜索 × 期间裁决：期间对搜索命中面生效，旧壳搜索页
     /// 同口径；`None` = 全部）。
     pub range: Option<crate::period::PeriodRange>,
-}
-
-impl Default for TxSearchQuery {
-    fn default() -> Self {
-        Self {
-            query: String::new(),
-            amount_min_cents: None,
-            amount_max_cents: None,
-            range: None,
-        }
-    }
 }
 
 /// 搜索账本库交易（读路径直调域服务，issue #2023）：经核心交易域统一模糊
