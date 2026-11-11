@@ -74,6 +74,12 @@ bun scripts/check-eastmoney-residue.ts
 echo "▶ 样式块守门检查 (bun scripts/check-style-blocks.ts)"
 bun scripts/check-style-blocks.ts
 
+# 壳根包裸字号直调零残留守门（issue #2108 / spec #2099 / ADR-0147 决策 4）：
+# 视图零裸值纪律源码扫描（DESIGN.md §7）——text_size(px(<数字字面量>)) 直调
+# 即红，字号取值唯一来源 design::font_size 字阶。
+echo "▶ 壳根包裸字号直调零残留扫描 (bun scripts/check-bare-font-size.ts)"
+bun scripts/check-bare-font-size.ts
+
 echo "▶ i18n key 全等检查 (bun scripts/check-i18n-keys.ts)"
 bun scripts/check-i18n-keys.ts
 
