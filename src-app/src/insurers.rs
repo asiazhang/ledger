@@ -26,13 +26,15 @@ use nsh_core::element::FontWeight;
 use nsh_core::prelude::*;
 
 use crate::adaptive;
-use crate::app::{db_slot, field_label, table_classes};
+use crate::app::db_slot;
 use crate::assembly::{self, INSURER_COLUMNS, InsurerRowCells};
 use crate::boot;
 use crate::modal;
 use crate::nav;
 use crate::nav_model::ViewName;
 use crate::popconfirm;
+use crate::transactions::table_classes;
+use crate::views::field_label;
 
 // ---------------------------------------------------------------------------
 // 词表（旧壳 policies.insurers.* zh-CN 词条原样；i18n 框架级方案不在本票，

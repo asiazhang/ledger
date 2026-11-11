@@ -45,12 +45,14 @@ use nsh_core::element::FontWeight;
 use nsh_core::prelude::*;
 
 use crate::adaptive;
-use crate::app::{amount_privacy_enabled, db_slot, field_label, table_classes};
+use crate::app::db_slot;
 use crate::assembly::{self, ColumnAlign, MERCHANT_COLUMNS, MerchantListContext, MerchantRowCells};
 use crate::boot;
 use crate::modal;
 use crate::nav_model::{NavRequest, ViewName};
 use crate::popconfirm;
+use crate::transactions::{amount_privacy_enabled, table_classes};
+use crate::views::field_label;
 use crate::{nav, signals};
 use ledger_merchants::MerchantTransactionCount;
 
@@ -922,7 +924,7 @@ fn row_action_button(
 const MERCHANTS_TABLE_WIDTH_PAD: f32 = 16.0 * 2.0 + 12.0 * 2.0 + 2.0;
 
 /// 商户列宿主映射（[`MERCHANT_COLUMNS`] → 宿主列；UI 层只做映射不产列）：
-/// 弹性宽度分配同 [`crate::app::elastic_columns`] 先例——富余宽度全给名称列。
+/// 弹性宽度分配同 [`crate::transactions::elastic_columns`] 先例——富余宽度全给名称列。
 /// 条数列可排序（旧壳 sorter 的宿主面，spec DataRow 列定义的可排序钮）。
 fn merchant_columns(width: f32) -> Vec<DataTableColumn> {
     let mut columns: Vec<DataTableColumn> = MERCHANT_COLUMNS

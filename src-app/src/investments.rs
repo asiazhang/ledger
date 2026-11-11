@@ -29,7 +29,7 @@
 
 use nsh_core::prelude::*;
 
-use crate::app::{amount_privacy_enabled, db_slot};
+use crate::app::db_slot;
 use crate::assembly::{self, AMOUNT_PRIVACY_MASK, CategoryOption, CurrencyFormat};
 use crate::boot;
 use crate::keep_mounted;
@@ -40,6 +40,7 @@ use crate::plot_line::PlotLineSeries;
 use crate::popover::popover_tip;
 use crate::select;
 use crate::signals;
+use crate::transactions::amount_privacy_enabled;
 use crate::views;
 
 // ---------------------------------------------------------------------------

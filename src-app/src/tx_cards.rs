@@ -20,8 +20,8 @@
 use nsh_core::element::FontWeight;
 use nsh_core::prelude::*;
 
-use crate::app::amount_color;
 use crate::assembly::{RowCells, TransactionCard};
+use crate::transactions::amount_color;
 use crate::views::view_palette;
 
 /// 交易卡片列表（可交互消费方：卡片「⋯」经 `open_menu` 打开与表格行右键同一

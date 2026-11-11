@@ -51,7 +51,7 @@ use crate::adaptive;
 use crate::assembly::{CategoryOption, CurrencyTable, PnlSemantic};
 use crate::investments::{HoldingsSortColumn, HoldingsSorter};
 use crate::{
-    app, assembly, boot, investment_sync, investments, popover, select, signals,
+    app, assembly, boot, investment_sync, investments, popover, select, signals, transactions,
 };
 
 // ---------------------------------------------------------------------------
@@ -436,7 +436,7 @@ pub(crate) fn HoldingsPane() -> impl IntoElement {
     // 装载（首屏激活 + 失效信号重读 + 累计重试共用；隐私开关装载时机读取）。
     let load = move || {
         error.set(None);
-        let privacy_enabled = app::amount_privacy_enabled();
+        let privacy_enabled = transactions::amount_privacy_enabled();
         let db = app::db_slot().clone();
         spawn(async move {
             // DbState 克隆件拥有地进阻塞闭包（`blocking` 要求 'static）——

@@ -62,7 +62,7 @@ use crate::assembly::CategoryOption;
 use crate::investments::PanePalette;
 use crate::{
     app, assembly, boot, context_menu, danger, investments, investments_form, modal, multi_select,
-    pinyin_select, signals,
+    pinyin_select, signals, transactions,
 };
 use ledger_transaction::TransactionKind;
 
@@ -572,7 +572,7 @@ pub(crate) fn LedgerPane() -> impl IntoElement {
     let load = move || {
         loading.set(true);
         error.set(None);
-        let privacy_enabled = app::amount_privacy_enabled();
+        let privacy_enabled = transactions::amount_privacy_enabled();
         // 会话快照进闭包（低频信号值拉过先例）。
         let page_now = session.detail_page.get_untracked().max(1);
         let kinds = session.detail_kinds.get_untracked();

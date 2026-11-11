@@ -28,13 +28,14 @@ use chrono::Datelike;
 use nsh_core::prelude::*;
 
 use crate::adaptive;
-use crate::app::{amount_privacy_enabled, db_slot};
+use crate::app::db_slot;
 use crate::assembly::{self, CurrencyTable, FreedomStage, PnlSemantic};
 use crate::boot;
 use crate::nav;
 use crate::nav_model::{NavRequest, ViewName};
 use crate::popover::popover_tip;
 use crate::signals;
+use crate::transactions::amount_privacy_enabled;
 
 /// 净资产口径说明（旧壳 dashboard.netWorth.tooltip 同词表，文案单源两轴
 /// 同一份）。
@@ -98,7 +99,7 @@ pub(crate) fn DashboardView() -> impl IntoElement {
     let info_fg = AdaptiveColor::new(rgb(0x2080f0), rgb(0x63a8f2));
     // 进度条正常色（#2033 预算视图同款取舍：正常态用账本语义绿，超标才交给
     // 错误色——旧壳强调色琥珀在 NSH 无对应令牌）。
-    let bar_fg = crate::app::amount_color(assembly::AmountSemantic::Income);
+    let bar_fg = crate::transactions::amount_color(assembly::AmountSemantic::Income);
     // 盈亏涨跌色（红涨绿跌，与交易类型语义色正交；色值随旧壳 PNL_COLORS）。
     let gain_fg = AdaptiveColor::new(rgb(0xd03050), rgb(0xe88080));
     let loss_fg = AdaptiveColor::new(rgb(0x18a058), rgb(0x63e2b7));

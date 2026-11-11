@@ -33,7 +33,7 @@
 use nsh_core::prelude::*;
 
 use crate::adaptive;
-use crate::app::{amount_color, amount_privacy_enabled, db_slot};
+use crate::app::db_slot;
 use crate::assembly::{self, AmountSemantic, CategoryTable};
 use crate::bar_chart::{
     self, HorizontalRowFace, VerticalBarFace, VerticalGroupFace, category_color, ranking_color,
@@ -42,6 +42,7 @@ use crate::bar_chart::{
 use crate::boot;
 use crate::nav;
 use crate::nav_model::{NavRequest, ViewName};
+use crate::transactions::{amount_color, amount_privacy_enabled};
 use crate::{overlay, period, period_row, tx_filter};
 
 // ---------------------------------------------------------------------------
@@ -239,7 +240,7 @@ pub(crate) fn ReportsView() -> impl IntoElement {
     let danger_fg = tokens
         .color("destructive")
         .unwrap_or_else(|| hsla(0.0, 0.0, 0.98, 1.0).into());
-    // 月度图三柱语义色（与交易列表同类金额同源，色值单源 app::amount_color）。
+    // 月度图三柱语义色（与交易列表同类金额同源，色值单源 transactions::amount_color）。
     let income_color = amount_color(AmountSemantic::Income);
     let expense_color = amount_color(AmountSemantic::Expense);
     let refund_color = amount_color(AmountSemantic::Refund);

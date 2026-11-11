@@ -22,7 +22,7 @@ use nsh_core::element::desktop::MenuItem;
 use nsh_core::prelude::*;
 
 use crate::adaptive;
-use crate::app::{amount_color, amount_privacy_enabled, db_slot, field_label, table_classes};
+use crate::app::db_slot;
 use crate::assembly::{
     self, ACCOUNT_COLUMNS, AccountListContext, AccountRowCells, ColumnAlign, CurrencyTable,
 };
@@ -35,7 +35,9 @@ use crate::nav;
 use crate::nav_model::{NavRequest, ViewName};
 use crate::select;
 use crate::signals;
+use crate::transactions::{amount_color, amount_privacy_enabled, table_classes};
 use crate::tx_filter;
+use crate::views::field_label;
 use ledger_infra::error::AppError;
 
 // ---------------------------------------------------------------------------
@@ -1801,7 +1803,7 @@ fn day_text_to_i64(text: &str) -> Option<i64> {
 const ACCOUNT_TABLE_WIDTH_PAD: f32 = 16.0 * 2.0 + 12.0 * 2.0 + 2.0;
 
 /// 账户列宿主映射（[`ACCOUNT_COLUMNS`] → 宿主列；UI 层只做映射不产列）：
-/// 弹性宽度分配同 [`app::elastic_columns`] 先例——列组件无弹性列机制，富余
+/// 弹性宽度分配同 [`transactions::elastic_columns`] 先例——列组件无弹性列机制，富余
 /// 宽度全给名称列（旧壳名称列弹性），其余列按装配建议宽度；总宽不得超出
 /// 表格实测可用宽（列总和超出视口时尾列不挂载——DataTable 虚拟化按可视窗
 /// 裁列，操作列缺席即右键/「⋯」双入口灭失）。

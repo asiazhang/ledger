@@ -46,7 +46,7 @@ use nsh_core::element::{FontWeight, SharedString};
 use nsh_core::prelude::*;
 
 use crate::adaptive;
-use crate::app::{db_slot, field_label, table_classes};
+use crate::app::db_slot;
 use crate::assembly::{self, ColumnAlign, CurrencyTable, ITEM_COLUMNS, ItemListContext};
 use crate::boot;
 use crate::context_menu;
@@ -55,6 +55,8 @@ use crate::modal;
 use crate::nav_model::{NavRequest, ViewName};
 use crate::pinyin_select;
 use crate::popconfirm;
+use crate::transactions::table_classes;
+use crate::views::field_label;
 use crate::{nav, signals};
 use ledger_item::{ItemDailyCost, ItemDisposeInput, ItemInput, ItemWithDailyCost};
 
@@ -1536,7 +1538,7 @@ const ITEM_ROW_FOCUS_CLASS: &str = "bg-accent/25";
 const ITEMS_TABLE_WIDTH_PAD: f32 = 16.0 * 2.0 + 12.0 * 2.0 + 2.0;
 
 /// 物品列宿主映射（[`ITEM_COLUMNS`] → 宿主列；UI 层只做映射不产列）：弹性
-/// 宽度分配同 [`crate::app::elastic_columns`] 先例——富余宽度全给名称列。
+/// 宽度分配同 [`crate::transactions::elastic_columns`] 先例——富余宽度全给名称列。
 fn item_columns(width: f32) -> Vec<DataTableColumn> {
     let mut columns: Vec<DataTableColumn> = ITEM_COLUMNS
         .iter()
@@ -1610,7 +1612,7 @@ fn error_line(
 }
 
 fn field_label_boxed(label: &'static str, muted: AdaptiveColor) -> AnyElement {
-    crate::app::field_label(label, muted).into_element()
+    crate::views::field_label(label, muted).into_element()
 }
 
 // ---------------------------------------------------------------------------

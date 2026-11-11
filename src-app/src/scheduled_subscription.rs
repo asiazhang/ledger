@@ -282,7 +282,7 @@ pub(crate) fn subscriptions_pane(pending_focus: Signal<Option<String>>) -> impl 
                         merchants.set(MerchantTable::from_merchants(&merch_rows));
                         merchants_raw.set(txn_form::FormMerchants(merch_rows.clone()));
                         category_rows.set(txn_form::FormCategories(cat_rows.clone()));
-                        privacy.set(crate::app::amount_privacy_enabled());
+                        privacy.set(crate::transactions::amount_privacy_enabled());
                         match spend {
                             Ok(overview) => {
                                 let privacy_enabled = privacy.get_untracked();
@@ -823,7 +823,7 @@ pub(crate) fn subscriptions_pane(pending_focus: Signal<Option<String>>) -> impl 
                     .loading(move || loading.get())
                     .loading_view(text("正在加载…").text_color(muted))
                     .empty(text("暂无数据").text_color(muted))
-                    .classes(crate::app::table_classes())
+                    .classes(crate::transactions::table_classes())
                     .flex_1(),
             ),
         );

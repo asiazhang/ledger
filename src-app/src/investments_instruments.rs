@@ -55,6 +55,7 @@ use crate::assembly::CategoryOption;
 use crate::investments::PanePalette;
 use crate::{
     app, boot, danger, investment_sync, investments, modal, pinyin_select, select, signals,
+    transactions,
 };
 use ledger_investment::{InstrumentType, PriceChannel};
 
@@ -481,7 +482,7 @@ pub(crate) fn InstrumentsPane() -> impl IntoElement {
     let load = move || {
         loading.set(true);
         error.set(None);
-        let privacy_enabled = app::amount_privacy_enabled();
+        let privacy_enabled = transactions::amount_privacy_enabled();
         let filter = ledger_investment::InstrumentListFilter {
             search: {
                 let trimmed = search.get_untracked().trim().to_owned();
@@ -536,7 +537,7 @@ pub(crate) fn InstrumentsPane() -> impl IntoElement {
             anchor_id: Some(anchor_id),
             ..Default::default()
         };
-        let privacy_enabled = app::amount_privacy_enabled();
+        let privacy_enabled = transactions::amount_privacy_enabled();
         let db = app::db_slot().clone();
         spawn(async move {
             let Some(db) = db else {
@@ -611,7 +612,7 @@ pub(crate) fn InstrumentsPane() -> impl IntoElement {
         let current = seq.get_untracked() + 1;
         seq.set(current);
         set_timeout(
-            std::time::Duration::from_millis(app::SEARCH_DEBOUNCE_MS),
+            std::time::Duration::from_millis(transactions::SEARCH_DEBOUNCE_MS),
             move || {
                 if seq.get() == current {
                     applied.set(next);

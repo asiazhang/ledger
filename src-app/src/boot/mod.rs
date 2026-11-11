@@ -366,4 +366,3 @@ fn normalize_foreign_plaintext(db_path: &Path) -> Result<()> {
         )
     })
 }
-

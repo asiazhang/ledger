@@ -26,7 +26,7 @@ use nsh_core::element::FontWeight;
 use nsh_core::prelude::*;
 
 use crate::adaptive;
-use crate::app::{amount_color, amount_privacy_enabled, db_slot, field_label, table_classes};
+use crate::app::db_slot;
 use crate::assembly::{
     self, CurrencyTable, SAVINGS_GOAL_ARCHIVED_COLUMNS, SAVINGS_GOAL_COLUMNS, SavingsGoalRowCells,
 };
@@ -36,6 +36,8 @@ use crate::date_select;
 use crate::modal;
 use crate::nav;
 use crate::nav_model::ViewName;
+use crate::transactions::{amount_color, amount_privacy_enabled, table_classes};
+use crate::views::field_label;
 use ledger_infra::error::Result as InfraResult;
 
 // ---------------------------------------------------------------------------

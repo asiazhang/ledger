@@ -5,8 +5,8 @@
 
 use crate::assembly::PAGE_SIZE;
 use ledger_infra::db::DbState;
-use ledger_transaction::{TransactionListResult, TransactionSearchResult};
 use ledger_infra::error::Result;
+use ledger_transaction::{TransactionListResult, TransactionSearchResult};
 
 use super::conn_lock;
 use crate::shell_support::write_entry_locked;

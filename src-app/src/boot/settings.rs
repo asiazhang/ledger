@@ -7,10 +7,9 @@ use std::path::Path;
 use ledger_infra::db::DbState;
 use ledger_infra::error::{AppError, Result};
 
-use super::boot_record;
 use super::CODE_LOG_LEVEL_INVALID;
+use super::boot_record;
 use crate::logging;
-
 
 // ---------------------------------------------------------------------------
 // 设置接缝（#2053）：日志档位读写（基建 settings 共享接缝直调，运行期滤镜

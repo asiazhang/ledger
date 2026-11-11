@@ -407,7 +407,7 @@ pub(crate) fn transfers_pane(pending_focus: Signal<Option<String>>) -> impl Into
                         rows.set(TransferRowsSnap(transfer_rows));
                         currencies.set(CurrencyTable::from_currencies(&curr_rows));
                         accounts_raw.set(txn_form::FormAccounts(acct_rows));
-                        privacy.set(crate::app::amount_privacy_enabled());
+                        privacy.set(crate::transactions::amount_privacy_enabled());
                     }
                     Ok(Err(e)) => error.set(Some(e.to_string())),
                     Err(_) => error.set(Some("内部错误：读任务异常退出".to_owned())),
@@ -746,7 +746,7 @@ pub(crate) fn transfers_pane(pending_focus: Signal<Option<String>>) -> impl Into
                     .loading(move || loading.get())
                     .loading_view(text("正在加载…").text_color(muted))
                     .empty(text("暂无数据").text_color(muted))
-                    .classes(crate::app::table_classes())
+                    .classes(crate::transactions::table_classes())
                     .flex_1(),
             ),
         );

@@ -446,7 +446,7 @@ pub(crate) fn installments_pane(pending_focus: Signal<Option<String>>) -> impl I
                         merchants.set(MerchantTable::from_merchants(&merch_rows));
                         merchants_raw.set(txn_form::FormMerchants(merch_rows));
                         category_rows.set(txn_form::FormCategories(cat_rows));
-                        privacy.set(crate::app::amount_privacy_enabled());
+                        privacy.set(crate::transactions::amount_privacy_enabled());
                     }
                     Ok(Err(e)) => error.set(Some(e.to_string())),
                     Err(_) => error.set(Some("内部错误：读任务异常退出".to_owned())),
@@ -488,7 +488,7 @@ pub(crate) fn installments_pane(pending_focus: Signal<Option<String>>) -> impl I
         .color("destructive")
         .unwrap_or_else(|| hsla(0.0, 0.0, 0.98, 1.0).into());
     // 进度条正常色（#2033 预算 → #2039 概览同款取舍：正常态用账本语义绿）。
-    let progress_fg = crate::app::amount_color(assembly::AmountSemantic::Income);
+    let progress_fg = crate::transactions::amount_color(assembly::AmountSemantic::Income);
 
     // ============================ 清单呈现 ============================
     // 状态过滤（纯前端过滤，不产生请求——旧壳 filteredRows 同口径）。
@@ -823,7 +823,7 @@ pub(crate) fn installments_pane(pending_focus: Signal<Option<String>>) -> impl I
                     .loading(move || loading.get())
                     .loading_view(text("正在加载…").text_color(muted))
                     .empty(text("暂无数据").text_color(muted))
-                    .classes(crate::app::table_classes())
+                    .classes(crate::transactions::table_classes())
                     .flex_1(),
             ),
         );

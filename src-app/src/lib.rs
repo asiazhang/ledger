@@ -48,7 +48,7 @@
 //!   日志档位卡、数据存储位置卡（查看 / 更改 / 恢复默认 + 二选一接管守卫）、
 //!   功能开关管理面（写路径归 [`nav::set_feature_closed`] 单点共源）；
 //!   备份 / 加密 / 同步 / 账本切换卡已随设置②（#2054）落位（[`settings_data`]）；
-//! - [`app`]：NSH 根组件与启动结果视图模型（装配入口可注入，headless 可测）；
+//! - [`app`]：NSH 根组件与启动结果视图模型（装配入口可注入，headless 可测；#2073 起视图本体已归位 [`transactions`] / [`budget`] 等各自模块）；
 //! - [`nav`]：进程内导航 API 与导航状态（#2032 壳导航骨架）——单点入口
 //!   `open`（守卫裁决 → 落位 → 持久化）、下钻意图读一次消费、键位带派发、
 //!   侧栏序/收纳清单/关闭集合/上次视图的存储读写（`nsh_core::storage::Storage`
@@ -164,6 +164,12 @@
 //!   transactions/items/backup/txn_form/budget/dashboard/reports/investment/
 //!   accounts/scheduled/merchants/savings/policies/insurers/physical_assets/
 //!   settings/data_safety），mod.rs 全量再导出，消费面 `boot::函数名` 不变；
+//! - [`budget`]：预算视图（#2033，#2073 自 app.rs 归位）——分类预算 + 执行
+//!   进度呈现，封装族（PinyinSelect / Modal / Popconfirm）首消费面；
+//! - [`transactions`]：交易表格视图与表格装配共用件族（#2018 首屏，#2073 自
+//!   app.rs 归位）——DataTable 首屏/分页/搜索/筛选，render_cell、
+//!   table_classes、rows_to_data、elastic_columns、amount_color、
+//!   amount_privacy_enabled 等跨视图共用件住址；
 //! - [`scheduled`]：定时视图壳（#2042 / #2043）——订阅 / 分期 / 定时转账三
 //!   形态页签容器（会话槽保留语义）、计划来源落点意图消费与订阅计划清单装
 //!   配（状态 / 期次状态 / 周期标签词表、行操作矩阵、行格文本）；
@@ -242,6 +248,7 @@ pub mod backup_entry;
 pub mod backup_host;
 pub mod bar_chart;
 pub mod boot;
+pub mod budget;
 pub mod combo_select;
 pub mod context_menu;
 pub mod cross_book;
@@ -293,6 +300,7 @@ pub mod shell_support;
 pub mod sidebar;
 pub mod signals;
 pub mod sync_triggers;
+pub mod transactions;
 pub mod tx_cards;
 pub mod tx_filter;
 pub mod tx_view_preferences;
