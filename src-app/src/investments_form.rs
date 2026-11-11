@@ -896,10 +896,10 @@ fn submit_label(editing: bool, kind_word: &str) -> String {
 /// 判定红态输入框边框类（红框逐字段落位；正常态回标准边框）。
 fn error_border(bad: bool) -> &'static str {
     if bad {
-        "bg-background rounded-md border border-destructive px-2 py-1 \
+        "bg-background rounded-(--radius) border border-destructive px-2 py-1 \
          placeholder:text-muted-foreground"
     } else {
-        "bg-background rounded-md border border-border px-2 py-1 \
+        "bg-background rounded-(--radius) border border-border px-2 py-1 \
          placeholder:text-muted-foreground"
     }
 }
@@ -1185,7 +1185,7 @@ pub(crate) fn trade_form_modal(
                             .text_color(fg)
                             .flex_1()
                             .app_class(
-                                "bg-background rounded-md border border-border px-2 py-1 \
+                                "bg-background rounded-(--radius) border border-border px-2 py-1 \
                                  placeholder:text-muted-foreground",
                             )
                             .on_change(move |value: &str| state.note.set(value.to_owned())),
@@ -1213,7 +1213,7 @@ pub(crate) fn trade_form_modal(
                     .child(
                         nsh_base::button()
                             .app_class(
-                                "px-3 py-1 rounded-md border border-border text-foreground hover:bg-accent",
+                                "px-3 py-1 rounded-(--radius) border border-border text-foreground hover:bg-accent",
                             )
                             .child(
                                 text("取消")
@@ -1227,7 +1227,7 @@ pub(crate) fn trade_form_modal(
                         nsh_base::button()
                             .disabled(move || field_error.get())
                             .app_class(
-                                "px-3 py-1 rounded-md bg-primary hover:opacity-90 disabled:opacity-40",
+                                "px-3 py-1 rounded-(--radius) bg-primary hover:opacity-90 disabled:opacity-40",
                             )
                             .child(
                                 text(move || {

@@ -765,7 +765,7 @@ pub(crate) fn LedgerPane() -> impl IntoElement {
                         session.detail_account_id.set(None);
                         session.detail_instrument_id.set(None);
                     })
-                    .rounded_md()
+                    .rounded_lg()
                     .px_2()
                     .py_1()
                     .app_class("hover:bg-accent disabled:opacity-40")
@@ -794,7 +794,7 @@ pub(crate) fn LedgerPane() -> impl IntoElement {
                                 }
                             })
                             .test_id("ledger-create-buy")
-                            .rounded_md()
+                            .rounded_lg()
                             .px_3()
                             .py_1()
                             .app_class("bg-primary hover:opacity-90")
@@ -816,7 +816,7 @@ pub(crate) fn LedgerPane() -> impl IntoElement {
                                 }
                             })
                             .test_id("ledger-create-sell")
-                            .rounded_md()
+                            .rounded_lg()
                             .px_3()
                             .py_1()
                             .app_class("bg-primary hover:opacity-90")
@@ -968,7 +968,7 @@ pub(crate) fn LedgerPane() -> impl IntoElement {
                                         .total_pages(move || ledger_total_pages(total.get()))
                                         .disabled(move || loading.get())
                                         .item_class(
-                                            "px-2 py-1 rounded-md text-foreground hover:bg-accent \
+                                            "px-2 py-1 rounded-(--radius) text-foreground hover:bg-accent \
                                              selected:bg-accent disabled:opacity-40",
                                         )
                                         .on_change(move |&picked: &u32| {

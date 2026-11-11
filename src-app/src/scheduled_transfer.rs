@@ -681,7 +681,7 @@ pub(crate) fn transfers_pane(pending_focus: Signal<Option<String>>) -> impl Into
         .flex_1()
         .flex_col()
         .gap_2()
-        .app_class("rounded-md border border-border p-3")
+        .app_class("rounded-(--radius-card) border border-border p-3")
         .child(
             view()
                 .flex_row()
@@ -698,7 +698,7 @@ pub(crate) fn transfers_pane(pending_focus: Signal<Option<String>>) -> impl Into
                     let key_owned = key.to_owned();
                     button()
                         .app_class(
-                            "px-2 py-1 rounded-md text-foreground hover:bg-accent selected:bg-accent",
+                            "px-2 py-1 rounded-(--radius) text-foreground hover:bg-accent selected:bg-accent",
                         )
                         .child(
                             text(label)
@@ -709,7 +709,7 @@ pub(crate) fn transfers_pane(pending_focus: Signal<Option<String>>) -> impl Into
                 }))
                 .child(
                     button()
-                        .app_class("px-3 py-2 rounded-md bg-primary hover:opacity-90")
+                        .app_class("px-3 py-2 rounded-(--radius) bg-primary hover:opacity-90")
                         .child(
                             text(CREATE_TRANSFER_OPEN_LABEL)
                                 .text_size(px(font_size::SECONDARY))
@@ -760,7 +760,7 @@ pub(crate) fn transfers_pane(pending_focus: Signal<Option<String>>) -> impl Into
                 .text_color(fg)
                 .w(px(280.0))
                 .app_class(
-                    "bg-background rounded-md border border-border px-2 py-1 \
+                    "bg-background rounded-(--radius) border border-border px-2 py-1 \
                      placeholder:text-muted-foreground",
                 )
                 .on_change(move |value: &str| create_note.set(value.to_owned()))))
@@ -796,7 +796,7 @@ pub(crate) fn transfers_pane(pending_focus: Signal<Option<String>>) -> impl Into
                     .text_color(fg)
                     .w(px(160.0))
                     .app_class(
-                        "bg-background rounded-md border border-border px-2 py-1 \
+                        "bg-background rounded-(--radius) border border-border px-2 py-1 \
                          placeholder:text-muted-foreground",
                     )
                     .on_change(move |value: &str| create_amount.set(value.to_owned())))
@@ -820,7 +820,7 @@ pub(crate) fn transfers_pane(pending_focus: Signal<Option<String>>) -> impl Into
                     .text_color(fg)
                     .w(px(90.0))
                     .app_class(
-                        "bg-background rounded-md border border-border px-2 py-1 \
+                        "bg-background rounded-(--radius) border border-border px-2 py-1 \
                          placeholder:text-muted-foreground",
                     )
                     .on_change(move |value: &str| create_interval_text.set(value.to_owned())))
@@ -839,7 +839,7 @@ pub(crate) fn transfers_pane(pending_focus: Signal<Option<String>>) -> impl Into
                 .text_color(fg)
                 .w(px(200.0))
                 .app_class(
-                    "bg-background rounded-md border border-border px-2 py-1 \
+                    "bg-background rounded-(--radius) border border-border px-2 py-1 \
                      placeholder:text-muted-foreground",
                 )
                 .on_change(move |value: &str| create_total_occ_text.set(value.to_owned()))))
@@ -870,7 +870,7 @@ pub(crate) fn transfers_pane(pending_focus: Signal<Option<String>>) -> impl Into
                     .child(
                         button()
                             .app_class(
-                                "px-3 py-2 rounded-md border border-border text-foreground hover:bg-accent",
+                                "px-3 py-2 rounded-(--radius) border border-border text-foreground hover:bg-accent",
                             )
                             .child(
                                 text("取消")
@@ -882,7 +882,7 @@ pub(crate) fn transfers_pane(pending_focus: Signal<Option<String>>) -> impl Into
                     )
                     .child(
                         button()
-                            .app_class("px-3 py-2 rounded-md bg-primary hover:opacity-90")
+                            .app_class("px-3 py-2 rounded-(--radius) bg-primary hover:opacity-90")
                             .child(
                                 text(CREATE_TRANSFER_SUBMIT_LABEL)
                                     .text_size(px(font_size::SECONDARY))
@@ -1035,7 +1035,9 @@ fn make_action_renderer(
                                 cancel_label: "取消".to_owned(),
                             },
                             view()
-                                .app_class("px-2 py-1 rounded-md text-destructive hover:bg-accent")
+                                .app_class(
+                                    "px-2 py-1 rounded-(--radius) text-destructive hover:bg-accent",
+                                )
                                 .child(
                                     text("取消")
                                         .text_size(px(font_size::CAPTION))

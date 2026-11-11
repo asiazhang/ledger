@@ -84,7 +84,7 @@ pub(crate) fn AiPromptView() -> impl IntoElement {
                         // 空提示词禁用（防御面恒不触发——常量数据面）；禁用态
                         // 退弱化色、可用态主色按钮（旧壳 type=primary 同语义）。
                         .app_class(
-                            "px-3 py-1 rounded-md bg-primary hover:opacity-90 disabled:opacity-50",
+                            "px-3 py-1 rounded-(--radius) bg-primary hover:opacity-90 disabled:opacity-50",
                         )
                         .child(
                             text(BUTTON_COPY)
@@ -105,7 +105,7 @@ pub(crate) fn AiPromptView() -> impl IntoElement {
             // 缺省主题令牌的等宽字体家族名）。
             view()
                 .flex_col()
-                .app_class("rounded-md border border-border bg-background p-3")
+                .app_class("rounded-(--radius-card) border border-border bg-background p-3")
                 .child(
                     text(move || AI_PROMPT.to_owned())
                         .font_family("font-mono")

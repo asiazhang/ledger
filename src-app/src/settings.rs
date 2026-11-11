@@ -373,7 +373,7 @@ pub(crate) fn card(title: &'static str, palette: views::ViewPalette, rows: Vec<V
     }
     view()
         .flex_col()
-        .app_class("rounded-md border border-border p-3 gap-2")
+        .app_class("rounded-(--radius-card) border border-border p-3 gap-2")
         .child(
             text(title)
                 .text_size(px(font_size::SECONDARY))
@@ -440,7 +440,7 @@ pub fn SettingsView() -> impl IntoElement {
                     nsh_base::tab()
                         .selected(is_active)
                         .accessibility_label(tab.label())
-                        .app_class("px-2 py-1 rounded-md selected:bg-accent")
+                        .app_class("px-2 py-1 rounded-(--radius) selected:bg-accent")
                         .child(
                             text(tab.label())
                                 .text_size(px(font_size::SECONDARY))
@@ -1009,7 +1009,7 @@ fn location_card(palette: views::ViewPalette) -> View {
                 view()
                     .flex_col()
                     .app_class(
-                        "rounded-md border border-destructive/30 bg-destructive/10 p-2 gap-1",
+                        "rounded-sm border border-destructive/30 bg-destructive/10 p-2 gap-1",
                     )
                     .child(
                         text(LOCATION_FALLBACK_TITLE)
@@ -1041,7 +1041,7 @@ fn location_card(palette: views::ViewPalette) -> View {
             move || {
                 view()
                     .flex_col()
-                    .app_class("rounded-md border border-border p-2 gap-1")
+                    .app_class("rounded-sm border border-border p-2 gap-1")
                     .child(
                         text(LOCATION_PENDING_TITLE)
                             .text_size(px(font_size::CAPTION))
@@ -1084,7 +1084,7 @@ fn location_card(palette: views::ViewPalette) -> View {
                 view().flex_row().app_class("items-center gap-2").child(
                 nsh_base::button()
                     .app_class(
-                        "px-3 py-1 rounded-md border border-border text-foreground hover:bg-accent",
+                        "px-3 py-1 rounded-(--radius) border border-border text-foreground hover:bg-accent",
                     )
                     .child(
                         text(BUTTON_RETRY)
@@ -1106,7 +1106,7 @@ fn location_card(palette: views::ViewPalette) -> View {
         .app_class("items-center gap-2")
         .child(
             nsh_base::button()
-                .app_class("px-3 py-1.5 rounded-md bg-primary hover:opacity-90 disabled:opacity-40")
+                .app_class("px-3 py-1.5 rounded-(--radius) bg-primary hover:opacity-90 disabled:opacity-40")
                 .disabled(move || submitting.get())
                 .child(
                     text(BUTTON_CHANGE)
@@ -1118,7 +1118,7 @@ fn location_card(palette: views::ViewPalette) -> View {
         .child(
             nsh_base::button()
                 .app_class(
-                    "px-3 py-1.5 rounded-md border border-border text-foreground hover:bg-accent disabled:opacity-40",
+                    "px-3 py-1.5 rounded-(--radius) border border-border text-foreground hover:bg-accent disabled:opacity-40",
                 )
                 .disabled(move || {
                     submitting.get()
@@ -1175,7 +1175,7 @@ fn copy_button(
     on_copied: impl Fn() + Copy + 'static,
 ) -> impl IntoElement {
     nsh_base::button()
-        .app_class("px-2 py-0.5 rounded-md border border-border text-foreground hover:bg-accent")
+        .app_class("px-2 py-0.5 rounded-sm border border-border text-foreground hover:bg-accent")
         .child(
             text(BUTTON_COPY_PATH)
                 .text_size(px(font_size::CAPTION))
@@ -1259,7 +1259,7 @@ fn feature_row(feature: nav_model::ViewName, palette: views::ViewPalette) -> Vie
         .test_id(format!("feature-toggle-{}", feature.as_str()).as_str())
         .role(nsh_core::AccessibilityRole::Button)
         .optional_label(move || Some(SharedString::from(feature.label())))
-        .app_class("rounded-md")
+        .app_class("rounded-(--radius)")
         .on_press(move |_: &PressEvent| {
             let is_closed = closed.get_untracked().contains(&feature);
             nav::set_feature_closed(feature, !is_closed);

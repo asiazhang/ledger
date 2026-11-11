@@ -236,7 +236,7 @@ fn modal_buttons(
         .child(
             button()
                 .app_class(
-                    "px-3 py-1.5 rounded-md border border-border text-foreground hover:bg-accent",
+                    "px-3 py-1.5 rounded-(--radius) border border-border text-foreground hover:bg-accent",
                 )
                 .on_press(move |_: &()| on_cancel())
                 .child(
@@ -248,7 +248,7 @@ fn modal_buttons(
         )
         .child(
             button()
-                .app_class("px-3 py-1.5 rounded-md bg-primary hover:opacity-90")
+                .app_class("px-3 py-1.5 rounded-(--radius) bg-primary hover:opacity-90")
                 .on_press(move |_: &()| on_confirm())
                 .child(
                     text(SAVE_LABEL)
@@ -279,7 +279,7 @@ fn text_field(
             .text_color(fg)
             .w(px(width))
             .app_class(
-                "bg-background rounded-md border border-border px-2 py-1 \
+                "bg-background rounded-(--radius) border border-border px-2 py-1 \
                  placeholder:text-muted-foreground",
             )
             .on_change(move |text: &str| value.set(text.to_owned())),
@@ -329,7 +329,7 @@ fn amount_currency_row(
                     .text_color(fg)
                     .w(px(width))
                     .app_class(
-                        "bg-background rounded-md border border-border px-2 py-1 \
+                        "bg-background rounded-(--radius) border border-border px-2 py-1 \
                          placeholder:text-muted-foreground",
                     )
                     .on_change(move |text: &str| amount_signal.set(text.to_owned())),
@@ -353,7 +353,7 @@ fn action_button(
     on_press: impl Fn() + 'static,
 ) -> View {
     view()
-        .app_class("px-2 py-0.5 rounded-md border border-border text-foreground hover:bg-accent")
+        .app_class("px-2 py-0.5 rounded-sm border border-border text-foreground hover:bg-accent")
         .on_press(move |_: &PressEvent| on_press())
         .child(
             text(label)
@@ -950,7 +950,7 @@ pub(crate) fn PhysicalAssetsView() -> impl IntoElement {
                             // 吞掉外层按压——按压源归外层包裹视图，先例同注）。
                             view()
                                 .app_class(
-                                    "px-2 py-0.5 rounded-md border border-border text-foreground hover:bg-accent",
+                                    "px-2 py-0.5 rounded-sm border border-border text-foreground hover:bg-accent",
                                 )
                                 .child(
                                     text(ROW_DELETE)
@@ -985,7 +985,7 @@ pub(crate) fn PhysicalAssetsView() -> impl IntoElement {
         view().child(
             button()
                 .selected(move || filter.get() == status)
-                .app_class("px-2 py-0.5 rounded-md selected:bg-accent hover:bg-accent")
+                .app_class("px-2 py-0.5 rounded-sm selected:bg-accent hover:bg-accent")
                 .on_press(move |_: &()| {
                     if filter.get_untracked() != status {
                         filter.set(status);
@@ -1208,7 +1208,7 @@ pub(crate) fn PhysicalAssetsView() -> impl IntoElement {
                     )
                     .child(
                         button()
-                            .app_class("px-3 py-1.5 rounded-md bg-primary hover:opacity-90")
+                            .app_class("px-3 py-1.5 rounded-(--radius) bg-primary hover:opacity-90")
                             .on_press(move |_: &()| open_create())
                             .child(
                                 text(NEW_BUTTON)
@@ -1234,7 +1234,7 @@ pub(crate) fn PhysicalAssetsView() -> impl IntoElement {
                         .flex_1()
                         .flex_col()
                         .gap_2()
-                        .app_class("rounded-md border border-border p-3")
+                        .app_class("rounded-(--radius-card) border border-border p-3")
                         .child(
                             view()
                                 .flex_row()

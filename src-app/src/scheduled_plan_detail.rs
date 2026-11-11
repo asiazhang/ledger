@@ -366,7 +366,7 @@ pub(crate) fn plan_detail_modal(
                     nsh_base::button()
                         .disabled(move || state.get().retrying.as_deref() == Some(&occ_id))
                         .app_class(
-                            "px-2 py-1 rounded-md text-foreground hover:bg-accent disabled:opacity-40",
+                            "px-2 py-1 rounded-(--radius) text-foreground hover:bg-accent disabled:opacity-40",
                         )
                         .child(
                             text("重试")
@@ -512,7 +512,7 @@ pub(crate) fn plan_detail_modal(
                         nsh_base::button()
                             .disabled(move || state.get().expanding)
                             .app_class(
-                                "px-3 py-2 rounded-md border border-border text-foreground \
+                                "px-3 py-2 rounded-(--radius) border border-border text-foreground \
                                  hover:bg-accent disabled:opacity-40",
                             )
                             .child(

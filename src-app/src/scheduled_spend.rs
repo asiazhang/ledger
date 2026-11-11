@@ -175,7 +175,7 @@ pub(crate) fn spend_panel(state: Signal<SpendPanelState>) -> impl IntoElement {
             view()
                 .flex_col()
                 .gap_2()
-                .app_class("rounded-md border border-border p-3")
+                .app_class("rounded-(--radius-card) border border-border p-3")
                 .child(
                     text(SPEND_TITLE)
                         .text_size(px(font_size::TITLE))
@@ -201,7 +201,7 @@ pub(crate) fn spend_panel(state: Signal<SpendPanelState>) -> impl IntoElement {
         view()
             .flex_col()
             .gap_2()
-            .app_class("rounded-md border border-border p-3")
+            .app_class("rounded-(--radius-card) border border-border p-3")
             .child(
                 view()
                     .flex_row()

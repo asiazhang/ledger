@@ -484,7 +484,7 @@ pub(crate) fn ScheduledView() -> impl IntoElement {
             nsh_base::tab()
                 .selected(move || active.get() == tab)
                 .accessibility_label(form_tab_label(tab))
-                .app_class("px-2 py-2 rounded-md selected:bg-accent")
+                .app_class("px-2 py-2 rounded-(--radius) selected:bg-accent")
                 .child(
                     text(form_tab_label(tab))
                         .text_size(px(font_size::SECONDARY))

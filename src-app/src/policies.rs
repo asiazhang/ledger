@@ -508,7 +508,7 @@ fn modal_buttons(
         .child(
             button()
                 .app_class(
-                    "px-3 py-1.5 rounded-md border border-border text-foreground hover:bg-accent",
+                    "px-3 py-1.5 rounded-(--radius) border border-border text-foreground hover:bg-accent",
                 )
                 .on_press(move |_: &()| on_cancel())
                 .child(
@@ -520,7 +520,7 @@ fn modal_buttons(
         )
         .child(
             button()
-                .app_class("px-3 py-1.5 rounded-md bg-primary hover:opacity-90")
+                .app_class("px-3 py-1.5 rounded-(--radius) bg-primary hover:opacity-90")
                 .on_press(move |_: &()| on_confirm())
                 .child(
                     text(confirm_label)
@@ -568,7 +568,7 @@ fn text_field(
             .text_color(fg)
             .w(px(width))
             .app_class(
-                "bg-background rounded-md border border-border px-2 py-1 \
+                "bg-background rounded-(--radius) border border-border px-2 py-1 \
                  placeholder:text-muted-foreground",
             )
             .on_change(move |text: &str| value.set(text.to_owned())),
@@ -1410,7 +1410,7 @@ pub(crate) fn PoliciesView() -> impl IntoElement {
                     .child(
                         button()
                             .app_class(
-                                "px-2 py-0.5 rounded-md border border-border text-foreground hover:bg-accent",
+                                "px-2 py-0.5 rounded-sm border border-border text-foreground hover:bg-accent",
                             )
                             .on_press({
                                 let id = id.clone();
@@ -1450,7 +1450,7 @@ pub(crate) fn PoliciesView() -> impl IntoElement {
                             // 同注）。
                             view()
                                 .app_class(
-                                    "px-2 py-0.5 rounded-md border border-border text-foreground hover:bg-accent",
+                                    "px-2 py-0.5 rounded-sm border border-border text-foreground hover:bg-accent",
                                 )
                                 .child(
                                     text(ROW_DELETE)
@@ -1550,7 +1550,7 @@ pub(crate) fn PoliciesView() -> impl IntoElement {
         view()
             .flex_col()
             .gap_2()
-            .app_class("rounded-md border border-border p-3")
+            .app_class("rounded-(--radius-card) border border-border p-3")
             .child(
                 text(AGREEMENT_SECTION)
                     .text_size(px(font_size::SECONDARY))
@@ -1575,7 +1575,7 @@ pub(crate) fn PoliciesView() -> impl IntoElement {
                 when(has_active_segment, move || {
                     button()
                         .app_class(
-                            "px-2 py-1 rounded-md border border-border text-foreground hover:bg-accent",
+                            "px-2 py-1 rounded-(--radius) border border-border text-foreground hover:bg-accent",
                         )
                         .on_press(move |_: &()| open_rebuild())
                         .child(
@@ -1587,7 +1587,7 @@ pub(crate) fn PoliciesView() -> impl IntoElement {
                 })
                 .otherwise(move || {
                     button()
-                        .app_class("px-2 py-1 rounded-md bg-primary hover:opacity-90")
+                        .app_class("px-2 py-1 rounded-(--radius) bg-primary hover:opacity-90")
                         .on_press(move |_: &()| open_add())
                         .child(
                             text(AGREEMENT_ADD)
@@ -1729,7 +1729,7 @@ pub(crate) fn PoliciesView() -> impl IntoElement {
                                 .text_color(fg)
                                 .w(px(140.0))
                                 .app_class(
-                                    "bg-background rounded-md border border-border px-2 py-1 \
+                                    "bg-background rounded-(--radius) border border-border px-2 py-1 \
                                      placeholder:text-muted-foreground",
                                 )
                                 .on_change(move |text: &str| {
@@ -1798,7 +1798,7 @@ pub(crate) fn PoliciesView() -> impl IntoElement {
                     AGREEMENT_SECTION,
                     muted,
                     button()
-                        .app_class("px-2 py-1 rounded-md bg-primary hover:opacity-90")
+                        .app_class("px-2 py-1 rounded-(--radius) bg-primary hover:opacity-90")
                         .on_press(move |_: &()| {
                             with_agreement.update(|opened| *opened = !*opened);
                         })
@@ -1904,7 +1904,7 @@ pub(crate) fn PoliciesView() -> impl IntoElement {
                     // 顶部新建行（旧壳卡片内右对齐同位；新建唯一入口）。
                     view().flex_row().justify_end().child(
                         button()
-                            .app_class("px-3 py-1.5 rounded-md bg-primary hover:opacity-90")
+                            .app_class("px-3 py-1.5 rounded-(--radius) bg-primary hover:opacity-90")
                             .on_press(move |_: &()| open_create())
                             .child(
                                 text(NEW_BUTTON)
@@ -1921,7 +1921,7 @@ pub(crate) fn PoliciesView() -> impl IntoElement {
                         .flex_1()
                         .flex_col()
                         .gap_2()
-                        .app_class("rounded-md border border-border p-3")
+                        .app_class("rounded-(--radius-card) border border-border p-3")
                         .child(
                             view().flex_1().child(
                                 text(LIST_CARD_TITLE)
@@ -2027,7 +2027,7 @@ fn agreement_fields(
                         .text_color(fg)
                         .w(px(140.0))
                         .app_class(
-                            "bg-background rounded-md border border-border px-2 py-1 \
+                            "bg-background rounded-(--radius) border border-border px-2 py-1 \
                              placeholder:text-muted-foreground",
                         )
                         .on_change(move |text: &str| amount.set(text.to_owned())),
@@ -2059,7 +2059,9 @@ fn agreement_fields(
                         .optional_label(AGREEMENT_RECURRENCE)
                         .text_color(fg)
                         .w(px(56.0))
-                        .app_class("bg-background rounded-md border border-border px-2 py-1")
+                        .app_class(
+                            "bg-background rounded-(--radius) border border-border px-2 py-1",
+                        )
                         .on_change(move |text: &str| interval_text.set(text.to_owned())),
                 )
                 .child(select::app_select(

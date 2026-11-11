@@ -302,7 +302,7 @@ pub(crate) fn InsurersView() -> impl IntoElement {
             .child(
                 view()
                     .test_id(format!("ins-edit-{insurer_id}").as_str())
-                    .app_class("rounded-md hover:bg-accent px-1")
+                    .app_class("rounded-sm hover:bg-accent px-1")
                     .on_press(move |_: &PressEvent| open_edit(edit_insurer_id.clone()))
                     .child(
                         text(BUTTON_EDIT)
@@ -330,7 +330,7 @@ pub(crate) fn InsurersView() -> impl IntoElement {
                     },
                     view()
                         .test_id(format!("ins-delete-{insurer_id}").as_str())
-                        .app_class("rounded-md hover:bg-accent px-1")
+                        .app_class("rounded-sm hover:bg-accent px-1")
                         .child(
                             text(BUTTON_DELETE)
                                 .text_size(px(font_size::CAPTION))
@@ -367,7 +367,7 @@ pub(crate) fn InsurersView() -> impl IntoElement {
                                     .text_size(px(font_size::CAPTION))
                                     .text_color(muted)
                                     .test_id("ins-deleted-tag")
-                                    .app_class("px-1.5 rounded-md border border-border")
+                                    .app_class("px-1.5 rounded-(--radius) border border-border")
                             },
                         )
                         .otherwise(view),
@@ -436,7 +436,7 @@ pub(crate) fn InsurersView() -> impl IntoElement {
                     view()
                         .flex_col()
                         .gap_2()
-                        .app_class("rounded-md border border-border p-3")
+                        .app_class("rounded-(--radius-card) border border-border p-3")
                         .child(
                             text(ADD_CARD_TITLE)
                                 .text_size(px(font_size::SECONDARY))
@@ -458,7 +458,7 @@ pub(crate) fn InsurersView() -> impl IntoElement {
                                         .text_color(fg)
                                         .w(px(240.0))
                                         .app_class(
-                                            "bg-background rounded-md border border-border \
+                                            "bg-background rounded-(--radius) border border-border \
                                              px-2 py-1 placeholder:text-muted-foreground",
                                         )
                                         .on_change(move |text: &str| add_name.set(text.to_owned())),
@@ -466,7 +466,7 @@ pub(crate) fn InsurersView() -> impl IntoElement {
                                 .child(
                                     button()
                                         .app_class(
-                                            "px-3 py-1.5 rounded-md bg-primary hover:opacity-90",
+                                            "px-3 py-1.5 rounded-(--radius) bg-primary hover:opacity-90",
                                         )
                                         .child(
                                             text(BUTTON_ADD)
@@ -499,7 +499,7 @@ pub(crate) fn InsurersView() -> impl IntoElement {
                         .flex_1()
                         .flex_col()
                         .gap_2()
-                        .app_class("rounded-md border border-border p-3")
+                        .app_class("rounded-(--radius-card) border border-border p-3")
                         .child(
                             text(LIST_CARD_TITLE)
                                 .text_size(px(font_size::SECONDARY))
@@ -516,7 +516,7 @@ pub(crate) fn InsurersView() -> impl IntoElement {
                                     .text_color(fg)
                                     .w(px(240.0))
                                     .app_class(
-                                        "bg-background rounded-md border border-border px-2 \
+                                        "bg-background rounded-(--radius) border border-border px-2 \
                                          py-1 placeholder:text-muted-foreground",
                                     )
                                     .on_change(move |text: &str| search_term.set(text.to_owned())),
@@ -531,7 +531,7 @@ pub(crate) fn InsurersView() -> impl IntoElement {
                                         SHOW_DELETED
                                     })
                                     .app_class(
-                                        "px-2 py-1 rounded-md text-foreground hover:bg-accent \
+                                        "px-2 py-1 rounded-(--radius) text-foreground hover:bg-accent \
                                              selected:bg-accent",
                                     )
                                     .child(
@@ -602,7 +602,7 @@ pub(crate) fn InsurersView() -> impl IntoElement {
                                                 .optional_label("保司名称")
                                                 .text_color(fg)
                                                 .app_class(
-                                                    "bg-background rounded-md border \
+                                                    "bg-background rounded-(--radius) border \
                                                      border-border px-2 py-1 \
                                                      placeholder:text-muted-foreground",
                                                 )
@@ -631,7 +631,7 @@ pub(crate) fn InsurersView() -> impl IntoElement {
                                     view().flex_row().justify_end().child(
                                         button()
                                             .app_class(
-                                                "px-3 py-1.5 rounded-md bg-primary \
+                                                "px-3 py-1.5 rounded-(--radius) bg-primary \
                                                      hover:opacity-90",
                                             )
                                             .child(

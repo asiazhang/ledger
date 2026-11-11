@@ -2,7 +2,7 @@
 
 > 本仓视觉唯一真源（ADR-0147 决策 2）：叠于 NSH 官方设计指南（nsh.dev/zh-CN/docs/design-guides）之上——指南管「无论长什么样必须为真的事」，本规约管「本仓长什么样」，相左时本规约赢。
 >
-> 现状：骨架初版（spec #2099 票 #2100）。数值采用官方规范值；代码取值唯一来源是壳根包设计常量模块（`src-app/src/design.rs`，字阶/间距/圆角）与主题令牌表（`src-app/theme.json`，色值）。视图收口票（#2101–#2107）已把存量裸值逐批换到这两处；零裸值守门随 #2108 挂入检查脚本（`scripts/check-bare-font-size.ts`，挂载登记见 `scripts/gate-mounts.ts`）。
+> 现状：骨架初版（spec #2099 票 #2100）。数值采用官方规范值；代码取值唯一来源是壳根包设计常量模块（`src-app/src/design.rs`，字阶/间距/圆角）与主题令牌表（`src-app/theme.json`，色值）。视图收口票（#2101–#2107）已把存量裸值逐批换到这两处；圆角规格外档（框架 `rounded-md` 6pt）随 review 收编退役到三档令牌类；零裸值守门随 #2108 挂入检查脚本（`scripts/check-bare-font-size.ts`，挂载登记见 `scripts/gate-mounts.ts`）。
 >
 > 冲突裁决：规约与代码不一致时，按可验证行为修正规约（仓库通则）。
 
@@ -39,7 +39,7 @@
 
 ## 4. 形状与间距
 
-- **圆角阶**（pt），常量来源 `design::radius`（主题令牌 `radius`/`radius-card`/`radius-panel`/`radius-inset` 同值）：控件/弹层 8 → 卡片 12 → 大面板 16；小控件/标签取约半档；全圆（胶囊/圆形）用框架 `rounded-full`。
+- **圆角阶**（pt），常量来源 `design::radius`（主题令牌 `radius`/`radius-card`/`radius-panel`/`radius-inset` 同值）：控件/弹层 8 → 卡片 12 → 大面板 16；小控件/标签取约半档；全圆（胶囊/圆形）用框架 `rounded-full`。8pt 档的两种书写形态 `rounded-lg` 与 `rounded-(--radius)` 同指 `--radius` 令牌（框架档由 radius 派生），书写不强制，值同源即合规；框架 `rounded-md` 是 radius−2px 派生的 6pt 非档，不使用。
 - **同心规则**：嵌套处内层圆角 ≈ max(0, 外层圆角 − 层间缝)（`design::radius::concentric`）；重复出现的特殊组合应在主题表立具名档（先例：`radius-inset` 8）；嵌套裁剪也可由外层 overflow 承担。
 - **间距语义阶**（pt），常量来源 `design::spacing`：2（光学校正）→ 4（控件部件）→ 8（近亲控件）→ 12（同组）→ 16（同 section 不同组）→ 24（不同 section）→ 32（主要区域边界）。
 - padding 归组件、gap 归父级，不重复承担；横向优先 `ps-*`/`me-*` 逻辑边。

@@ -889,7 +889,7 @@ pub(crate) fn InvestmentsView() -> impl IntoElement {
                 nsh_base::tab()
                     .selected(is_active)
                     .accessibility_label(tab.label())
-                    .app_class("px-2 py-1 rounded-md selected:bg-accent")
+                    .app_class("px-2 py-1 rounded-(--radius) selected:bg-accent")
                     .child(
                         text(tab.label())
                             .text_size(px(font_size::SECONDARY))
@@ -1042,7 +1042,7 @@ pub(crate) fn retry_row(
         .child(
             view()
                 .on_press(move |_: &PressEvent| retry())
-                .rounded_md()
+                .rounded_lg()
                 .px_1()
                 .py_0p5()
                 .app_class("hover:bg-accent")
@@ -1479,7 +1479,7 @@ fn overview_pane() -> impl IntoElement {
                         nsh_base::button()
                             .selected(selected)
                             .app_class(
-                                "px-2 py-1 rounded-md text-foreground hover:bg-accent selected:bg-accent",
+                                "px-2 py-1 rounded-(--radius) text-foreground hover:bg-accent selected:bg-accent",
                             )
                             .child(
                                 text(p.label())

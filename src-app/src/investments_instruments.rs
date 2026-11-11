@@ -642,7 +642,7 @@ pub(crate) fn InstrumentsPane() -> impl IntoElement {
             view()
                 .on_press(move |_: &PressEvent| investment_sync::trigger_sync())
                 .test_id("sync-instrument-info")
-                .rounded_md()
+                .rounded_lg()
                 .px_2()
                 .py_1()
                 .app_class("bg-primary hover:opacity-90")
@@ -673,7 +673,7 @@ pub(crate) fn InstrumentsPane() -> impl IntoElement {
                 .text_color(palette.fg)
                 .w(px(240.0))
                 .app_class(
-                    "bg-background rounded-md border border-border px-2 py-1 \
+                    "bg-background rounded-(--radius) border border-border px-2 py-1 \
                      placeholder:text-muted-foreground",
                 )
                 .on_change(move |value: &str| schedule_search(value.to_owned())),
@@ -717,7 +717,7 @@ pub(crate) fn InstrumentsPane() -> impl IntoElement {
                     add_open.set(true);
                 })
                 .test_id("add-instrument")
-                .rounded_md()
+                .rounded_lg()
                 .px_2()
                 .py_1()
                 .app_class("border border-border hover:bg-accent")
@@ -998,7 +998,7 @@ pub(crate) fn InstrumentsPane() -> impl IntoElement {
                             .total_pages(move || instruments_total_pages(total.get()))
                             .disabled(move || loading.get())
                             .item_class(
-                                "px-2 py-1 rounded-md text-foreground hover:bg-accent \
+                                "px-2 py-1 rounded-(--radius) text-foreground hover:bg-accent \
                                  selected:bg-accent disabled:opacity-40",
                             )
                             .on_change(move |&picked: &u32| {
@@ -1214,10 +1214,10 @@ fn manual_quote_modal(
                         .child(crate::date_select::date_select("manual-quote-date", date)),
                 );
             let price_border = if price_error_now().is_some() {
-                "bg-background rounded-md border border-destructive px-2 py-1 \
+                "bg-background rounded-(--radius) border border-destructive px-2 py-1 \
                  placeholder:text-muted-foreground"
             } else {
-                "bg-background rounded-md border border-border px-2 py-1 \
+                "bg-background rounded-(--radius) border border-border px-2 py-1 \
                  placeholder:text-muted-foreground"
             };
             let price_row = view()
@@ -1262,7 +1262,7 @@ fn manual_quote_modal(
                     view()
                         .on_press(move |_: &PressEvent| quote_open.set(false))
                         .test_id("cancel-manual-quote")
-                        .rounded_md()
+                        .rounded_lg()
                         .px_3()
                         .py_1()
                         .app_class("border border-border hover:bg-accent disabled:opacity-40")
@@ -1289,7 +1289,7 @@ fn manual_quote_modal(
                             );
                         })
                         .test_id("submit-manual-quote")
-                        .rounded_md()
+                        .rounded_lg()
                         .px_3()
                         .py_1()
                         .app_class("bg-primary hover:opacity-90 disabled:opacity-40")
@@ -1703,7 +1703,7 @@ fn add_instrument_modal(
                                 .text_color(fg)
                                 .w(px(220.0))
                                 .app_class(
-                                    "bg-background rounded-md border border-border px-2 py-1 \
+                                    "bg-background rounded-(--radius) border border-border px-2 py-1 \
                                      placeholder:text-muted-foreground",
                                 )
                                 .on_change(move |value: &str| code.set(value.to_owned())),
@@ -1737,7 +1737,7 @@ fn add_instrument_modal(
                                     .text_color(fg)
                                     .w(px(220.0))
                                     .app_class(
-                                        "bg-background rounded-md border border-border px-2 py-1 \
+                                        "bg-background rounded-(--radius) border border-border px-2 py-1 \
                                              placeholder:text-muted-foreground",
                                     )
                                     .on_change(move |value: &str| {
@@ -1830,7 +1830,7 @@ fn add_instrument_modal(
                     view()
                         .on_press(move |_: &PressEvent| add_open.set(false))
                         .test_id("cancel-add-instrument")
-                        .rounded_md()
+                        .rounded_lg()
                         .px_3()
                         .py_1()
                         .app_class("border border-border hover:bg-accent disabled:opacity-40")
@@ -1845,7 +1845,7 @@ fn add_instrument_modal(
                     view()
                         .on_press(on_submit)
                         .test_id("submit-add-instrument")
-                        .rounded_md()
+                        .rounded_lg()
                         .px_3()
                         .py_1()
                         .app_class("bg-primary hover:opacity-90 disabled:opacity-40")

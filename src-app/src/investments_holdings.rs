@@ -788,7 +788,7 @@ fn filter_row(
                 .text_color(palette.fg)
                 .w(px(240.0))
                 .app_class(
-                    "bg-background rounded-md border border-border px-2 py-1 \
+                    "bg-background rounded-(--radius) border border-border px-2 py-1 \
                      placeholder:text-muted-foreground",
                 )
                 // 搜索输入：回显写回显值，防抖调度闭包持序号信号（应用值
@@ -877,7 +877,7 @@ fn holding_stats_cards(
                             .child(
                                 view()
                                     .on_press(move |_: &PressEvent| retry())
-                                    .rounded_md()
+                                    .rounded_lg()
                                     .px_1()
                                     .py_0p5()
                                     .app_class("hover:bg-accent")

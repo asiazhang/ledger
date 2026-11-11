@@ -574,7 +574,7 @@ pub(crate) fn MerchantsView() -> impl IntoElement {
                             // 物品删除先例同注）。
                             view()
                                 .app_class(
-                                    "px-2 py-0.5 rounded-md border border-border text-foreground hover:bg-accent",
+                                    "px-2 py-0.5 rounded-sm border border-border text-foreground hover:bg-accent",
                                 )
                                 .child(
                                     text(ROW_DELETE)
@@ -617,7 +617,7 @@ pub(crate) fn MerchantsView() -> impl IntoElement {
                             .text_color(fg)
                             .w(px(240.0))
                             .app_class(
-                                "bg-background rounded-md border border-border px-2 py-1 \
+                                "bg-background rounded-(--radius) border border-border px-2 py-1 \
                                  placeholder:text-muted-foreground",
                             )
                             .on_change(move |text: &str| edit_name.set(text.to_owned())),
@@ -648,7 +648,7 @@ pub(crate) fn MerchantsView() -> impl IntoElement {
                 // 无取消键语义）。
                 view().flex_row().justify_end().child(
                     button()
-                        .app_class("px-3 py-1.5 rounded-md bg-primary hover:opacity-90")
+                        .app_class("px-3 py-1.5 rounded-(--radius) bg-primary hover:opacity-90")
                         .on_press(move |_: &()| perform_edit())
                         .child(
                             text(SAVE_BUTTON)
@@ -666,7 +666,7 @@ pub(crate) fn MerchantsView() -> impl IntoElement {
     let create_card = view()
         .flex_col()
         .gap_2()
-        .app_class("rounded-md border border-border p-3")
+        .app_class("rounded-(--radius-card) border border-border p-3")
         .child(
             text(ADD_CARD_TITLE)
                 .text_size(px(font_size::SECONDARY))
@@ -694,7 +694,7 @@ pub(crate) fn MerchantsView() -> impl IntoElement {
                                 .text_color(fg)
                                 .w(px(160.0))
                                 .app_class(
-                                    "bg-background rounded-md border border-border px-2 py-1 \
+                                    "bg-background rounded-(--radius) border border-border px-2 py-1 \
                                      placeholder:text-muted-foreground",
                                 )
                                 .on_change(move |text: &str| create_name.set(text.to_owned())),
@@ -702,7 +702,7 @@ pub(crate) fn MerchantsView() -> impl IntoElement {
                 )
                 .child(
                     button()
-                        .app_class("px-3 py-1.5 rounded-md bg-primary hover:opacity-90")
+                        .app_class("px-3 py-1.5 rounded-(--radius) bg-primary hover:opacity-90")
                         .on_press(move |_: &()| perform_create())
                         .child(
                             text(ADD_BUTTON)
@@ -729,7 +729,7 @@ pub(crate) fn MerchantsView() -> impl IntoElement {
         .flex_1()
         .flex_col()
         .gap_2()
-        .app_class("rounded-md border border-border p-3")
+        .app_class("rounded-(--radius-card) border border-border p-3")
         .child(
             view().flex_1().child(
                 text(LIST_CARD_TITLE)
@@ -753,7 +753,7 @@ pub(crate) fn MerchantsView() -> impl IntoElement {
                         .text_color(fg)
                         .w(px(240.0))
                         .app_class(
-                            "bg-background rounded-md border border-border px-2 py-1 \
+                            "bg-background rounded-(--radius) border border-border px-2 py-1 \
                              placeholder:text-muted-foreground",
                         )
                         .on_change(move |text: &str| search_term.set(text.to_owned())),
@@ -817,7 +817,7 @@ pub(crate) fn MerchantsView() -> impl IntoElement {
                                     .total_pages(total_pages)
                                     .disabled(move || loading.get())
                                     .item_class(
-                                        "px-2 py-1 rounded-md text-foreground hover:bg-accent selected:bg-accent disabled:opacity-40",
+                                        "px-2 py-1 rounded-(--radius) text-foreground hover:bg-accent selected:bg-accent disabled:opacity-40",
                                     )
                                     .on_change(move |&picked: &u32| clap_page(picked)),
                             )
@@ -906,7 +906,7 @@ fn row_action_button(
     on_press: impl Fn() + 'static,
 ) -> AnyElement {
     button()
-        .app_class("px-2 py-0.5 rounded-md border border-border text-foreground hover:bg-accent")
+        .app_class("px-2 py-0.5 rounded-sm border border-border text-foreground hover:bg-accent")
         .on_press(move |_: &()| on_press())
         .child(
             text(label)
