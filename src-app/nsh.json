@@ -1,0 +1,6 @@
+{
+  "name": "Ledger",
+  "rust": ".",
+  "root": "app::App",
+  "theme": "theme.json"
+}

@@ -15,6 +15,10 @@
 //! （nsh-testing 能力盘点 §1.4），本件不带 tooltip（缺口回写父 spec，人工
 //! 对表子集记录）。
 //!
+//! 色彩（issue #2100 收编）：走势主色走主题令牌 `line`（亮暗同值，表内
+//! 单值档），网格线走 `border` 令牌降透明——本模块零本地色常量，读取经
+//! [`crate::theme::color`] 单点。
+//!
 //! 测试豁免（ADR-0060）：本模块测试经 crate 根 cfg(test) 整体放行六件套。
 
 use nsh_base::plot::{AxisPlacement, Curve, TickFormat, area, grid, line, plot, plot_axis};
@@ -24,10 +28,6 @@ use nsh_core::prelude::*;
 /// 点式 x 轴的抽点数（约数；采样点数不超抽点数时逐点标注——旧壳
 /// maxTicksLimit 12 的量级收紧，观感归人工对表子集）。
 const X_TICK_COUNT: usize = 6;
-
-/// 线与底色的主色（旧壳走势曲线 #2080f0 同值；底面积同色 15% 透明——旧壳
-/// backgroundColor rgba(32,128,240,0.15) 逐值镜像）。
-const LINE_RGB: u32 = 0x2080f0;
 
 /// line 图规格面（调用方装载产物）：每采样点的 x 标签与 y 值；等长两列，
 /// `values[i]` 为 `None` = 该周缺价（缺值点跨越语义，见模块头注）。y 值以
@@ -99,6 +99,13 @@ pub fn plot_line(
             .collect::<Vec<_>>()
     };
 
+    // 走势主色（主题令牌 `line`，亮暗同值）：线实色、底面积同色 15% 透明
+    // （旧壳 rgba(32,128,240,0.15) 的透明度同口径）；网格线走 `border` 令牌
+    // 降透明（旧壳 20% 灰的视觉重量同量级）。令牌解析在 UI 构建期（引擎
+    // 线程）进行，缺失统一落中灰可读兜底。
+    let line_color = crate::theme::color("line");
+    let grid_color = crate::theme::color("border").opacity(0.6);
+
     view().w_full().h(px(height)).child(
         plot()
             .data(rows)
@@ -106,17 +113,17 @@ pub fn plot_line(
             .accessibility_label("组合市值走势")
             .cross_line_class("w-px bg-border")
             .dot_class("size-1 rounded-full bg-foreground")
-            .child(grid().stroke_color(hsla(0.0, 0.0, 0.5, 0.2)))
+            .child(grid().stroke_color(grid_color))
             .child(
                 area()
                     .curve(Curve::Natural)
-                    .fill_color(rgba((LINE_RGB << 8) | 0x26)),
+                    .fill_color(line_color.opacity(0.15)),
             )
             .child(
                 line()
                     .curve(Curve::Natural)
                     .stroke_width(px(2.0))
-                    .stroke_color(rgb(LINE_RGB)),
+                    .stroke_color(line_color),
             )
             .child(
                 plot_axis()

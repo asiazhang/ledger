@@ -524,6 +524,14 @@ fn view_host(nav: nav::NavStore) -> impl IntoElement {
 })
 }
 
+/// 根组件构造单点（生产 `main.rs` 与 headless 测试同一条装配路径）：主题
+/// 令牌随根挂载（清单挂载解析，[`crate::theme::tokens`]——nsh.json
+/// `"theme"` → theme.json 令牌闭集，ADR-0147 决策 1）。拆除 `.tokens(..)`
+/// 或清单挂载即回退 UI 集缺省 neutral——出厂基线负向判据的接线点。
+pub fn root() -> nsh_core::element::Root {
+    nsh_core::element::Root::of::<App>().tokens(crate::theme::tokens())
+}
+
 /// 立桩根组件：就绪前居中呈现启动三态，就绪后承载导航骨架（侧栏 + 内容区）。
 #[component]
 pub fn App() -> impl IntoElement {
