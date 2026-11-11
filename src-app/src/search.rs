@@ -29,6 +29,7 @@ use nsh_core::prelude::*;
 use crate::app::db_slot;
 use crate::assembly::{self, CurrencyTable, RowCells, RowContext};
 use crate::boot;
+use crate::design::font_size;
 use crate::nav;
 use crate::nav_model::ViewName;
 use crate::transactions::{amount_privacy_enabled, hit_total_text};
@@ -63,14 +64,9 @@ pub(crate) fn SearchView() -> impl IntoElement {
     let search_seq = signal(0u64);
     let load_seq = signal(0u64);
 
-    // 主题令牌（双态自适应；令牌缺失回退亮灰/中灰可读兜底，先例同形）。
-    let tokens = nsh_core::element::tokens();
-    let fg = tokens
-        .color("foreground")
-        .unwrap_or_else(|| hsla(0.0, 0.0, 0.98, 1.0).into());
-    let muted = tokens
-        .color("muted-foreground")
-        .unwrap_or_else(|| hsla(0.0, 0.0, 0.45, 1.0).into());
+    // 主题令牌（双态自适应；缺失兜底统一归 crate::theme 单点）。
+    let fg = crate::theme::color("foreground");
+    let muted = crate::theme::color("muted-foreground");
 
     // 查询具备判定（旧壳 hasQuery 同口径：关键词非空或任一筛选在场——
     // 仅筛选也可出结果）。
@@ -300,10 +296,10 @@ pub(crate) fn SearchView() -> impl IntoElement {
         .flex_col()
         .app_class("bg-background")
         .child(
-            // 屏名（内容区标题，同容器壳形态）。
+            // 屏名（内容区标题，同容器壳形态；页题档 TITLE 20，§3）。
             view().px_4().py_2().child(
                 text(ViewName::Search.label())
-                    .text_base()
+                    .text_size(px(font_size::TITLE))
                     .text_color(fg)
                     .test_id("view-title"),
             ),

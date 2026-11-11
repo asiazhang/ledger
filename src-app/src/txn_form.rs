@@ -1231,16 +1231,9 @@ pub(crate) fn transaction_form_modal(
             .unwrap_or_else(|| "由原交易决定".to_owned())
     };
 
-    let tokens = nsh_core::element::tokens();
-    let fg = tokens
-        .color("foreground")
-        .unwrap_or_else(|| hsla(0.0, 0.0, 0.98, 1.0).into());
-    let muted = tokens
-        .color("muted-foreground")
-        .unwrap_or_else(|| hsla(0.0, 0.0, 0.45, 1.0).into());
-    let danger_fg = tokens
-        .color("destructive")
-        .unwrap_or_else(|| hsla(0.0, 0.0, 0.98, 1.0).into());
+    let fg = crate::theme::color("foreground");
+    let muted = crate::theme::color("muted-foreground");
+    let danger_fg = crate::theme::color("destructive");
 
     let submit = perform_submit(state, sources, view_owner);
 
@@ -1802,9 +1795,7 @@ fn funding_rows_section(
                 .test_id(format!("{}-text", FUNDING_TOTAL_ID).as_str())
                 .text_color(move || {
                     if total.get().1 {
-                        tokens()
-                            .color("destructive")
-                            .unwrap_or_else(|| hsla(0.0, 0.0, 0.98, 1.0).into())
+                        crate::theme::color("destructive")
                     } else {
                         muted
                     }

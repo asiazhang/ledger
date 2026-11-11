@@ -44,20 +44,23 @@ describe("check-bare-font-size（壳根包裸字号直调零残留守门，issue
     expect(r.output).toContain("已登记例外 0 条");
   });
 
-  it("负向判据：text_size(px(<数字字面量>)) 直调即红并定位到 文件:行", () => {
+  it("负向判据：text_size(px(<数字字面量>)) 直调即红并定位到 文件:行（含 `.5` 无整数位形态）", () => {
     const dir = makeFixture({
       "rogue_view.rs": [
         "use nsh_core::prelude::*;",
         "pub fn cell() -> impl IntoElement {",
         '    text("金额")',
         BARE_LINE,
+        '        .child(text("隙").text_size(px(.5)))',
         "}",
       ].join("\n"),
     });
     const r = run([dir]);
     expect(r.status).toBe(1);
     expect(r.output).toContain("rogue_view.rs:4");
+    expect(r.output).toContain("rogue_view.rs:5");
     expect(r.output).toContain("text_size(px(12.0)");
+    expect(r.output).toContain("px(.5)");
     expect(r.output).toContain("font_size");
   });
 

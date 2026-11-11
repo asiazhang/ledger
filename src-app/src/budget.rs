@@ -143,7 +143,7 @@ pub(crate) fn BudgetView() -> impl IntoElement {
     let confirm_id = signal(None::<String>);
     let delete_error = signal(None::<String>);
 
-    // 主题令牌（双态自适应；令牌缺失回退亮灰/中灰可读兜底，先例同形）。
+    // 主题令牌（双态自适应；缺失兜底统一归 crate::theme 单点）。
     let fg = crate::theme::color("foreground");
     let muted = crate::theme::color("muted-foreground");
     let danger_fg = crate::theme::color("destructive");
@@ -368,7 +368,7 @@ pub(crate) fn BudgetView() -> impl IntoElement {
                         .gap_1()
                         .child(
                             nsh_base::button()
-                                .app_class("px-2 py-1 rounded-md text-foreground hover:bg-accent")
+                                .app_class("px-2 py-1 rounded-(--radius) text-foreground hover:bg-accent")
                                 .child(
                                     text("编辑")
                                         .text_size(px(font_size::CAPTION))
@@ -405,7 +405,7 @@ pub(crate) fn BudgetView() -> impl IntoElement {
                                 // 会吞掉外层按压——封装的按压源是外层包裹视图）。
                                 view()
                                     .app_class(
-                                        "px-2 py-1 rounded-md text-foreground hover:bg-accent",
+                                        "px-2 py-1 rounded-(--radius) text-foreground hover:bg-accent",
                                     )
                                     .child(
                                         text("删除")
@@ -494,7 +494,7 @@ pub(crate) fn BudgetView() -> impl IntoElement {
                         .text_color(fg)
                         .w(px(120.0))
                         .app_class(
-                            "bg-background rounded-md border border-border px-2 py-1 \
+                            "bg-background rounded-(--radius) border border-border px-2 py-1 \
                              placeholder:text-muted-foreground",
                         )
                         .on_change(move |text: &str| amount_text.set(text.to_owned())),
@@ -502,7 +502,7 @@ pub(crate) fn BudgetView() -> impl IntoElement {
         )
         .child(
             nsh_base::button()
-                .app_class("px-3 py-1.5 rounded-md bg-primary hover:opacity-90")
+                .app_class("px-3 py-1.5 rounded-(--radius) bg-primary hover:opacity-90")
                 .child(
                     text("添加")
                         .text_size(px(font_size::SECONDARY))
@@ -519,7 +519,7 @@ pub(crate) fn BudgetView() -> impl IntoElement {
             view()
                 .flex_col()
                 .gap_2()
-                .app_class("rounded-md border border-border p-3")
+                .app_class("rounded-(--radius-card) border border-border p-3")
                 .child(
                     view()
                         .flex_row()
@@ -640,7 +640,7 @@ pub(crate) fn BudgetView() -> impl IntoElement {
                         view()
                             .flex_col()
                             .gap_2()
-                            .app_class("rounded-md border border-border p-3")
+                            .app_class("rounded-(--radius-card) border border-border p-3")
                             .child(
                                 text("新增预算")
                                     .text_size(px(font_size::SECONDARY))
@@ -672,7 +672,7 @@ pub(crate) fn BudgetView() -> impl IntoElement {
                             .flex_1()
                             .flex_col()
                             .gap_2()
-                            .app_class("rounded-md border border-border p-3")
+                            .app_class("rounded-(--radius-card) border border-border p-3")
                             .child(
                                 text("预算执行")
                                     .text_size(px(font_size::SECONDARY))
@@ -771,7 +771,7 @@ pub(crate) fn BudgetView() -> impl IntoElement {
                                         .text_color(fg)
                                         .w(px(160.0))
                                         .app_class(
-                                            "bg-background rounded-md border border-border px-2 py-1 \
+                                            "bg-background rounded-(--radius) border border-border px-2 py-1 \
                                              placeholder:text-muted-foreground",
                                         )
                                         .on_change(move |text: &str| {
@@ -799,7 +799,7 @@ pub(crate) fn BudgetView() -> impl IntoElement {
                                 .child(
                                     nsh_base::button()
                                         .app_class(
-                                            "px-3 py-1.5 rounded-md border border-border text-foreground hover:bg-accent",
+                                            "px-3 py-1.5 rounded-(--radius) border border-border text-foreground hover:bg-accent",
                                         )
                                         .child(
                                             text("取消")
@@ -811,7 +811,7 @@ pub(crate) fn BudgetView() -> impl IntoElement {
                                 )
                                 .child(
                                     nsh_base::button()
-                                        .app_class("px-3 py-1.5 rounded-md bg-primary hover:opacity-90")
+                                        .app_class("px-3 py-1.5 rounded-(--radius) bg-primary hover:opacity-90")
                                         .child(
                                             text("保存")
                                                 .text_size(px(font_size::SECONDARY))

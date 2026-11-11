@@ -832,7 +832,7 @@ pub(crate) fn ItemsView() -> impl IntoElement {
                             // 预算删除先例同注）。
                             view()
                                 .app_class(
-                                    "px-2 py-0.5 rounded-md border border-border text-foreground hover:bg-accent",
+                                    "px-2 py-0.5 rounded-sm border border-border text-foreground hover:bg-accent",
                                 )
                                 .child(
                                     text(ROW_DELETE)
@@ -878,7 +878,7 @@ pub(crate) fn ItemsView() -> impl IntoElement {
                     .text_color(fg)
                     .w(px(220.0))
                     .app_class(
-                        "bg-background rounded-md border border-border px-2 py-1 \
+                        "bg-background rounded-(--radius) border border-border px-2 py-1 \
                          placeholder:text-muted-foreground",
                     )
                     .on_change(move |text: &str| edit_name.set(text.to_owned())),
@@ -917,7 +917,7 @@ pub(crate) fn ItemsView() -> impl IntoElement {
                             .text_color(fg)
                             .w(px(140.0))
                             .app_class(
-                                "bg-background rounded-md border border-border px-2 py-1 \
+                                "bg-background rounded-(--radius) border border-border px-2 py-1 \
                                  placeholder:text-muted-foreground",
                             )
                             .on_change(move |text: &str| edit_cost.set(text.to_owned())),
@@ -956,7 +956,7 @@ pub(crate) fn ItemsView() -> impl IntoElement {
                     .text_color(fg)
                     .w(px(240.0))
                     .app_class(
-                        "bg-background rounded-md border border-border px-2 py-1 \
+                        "bg-background rounded-(--radius) border border-border px-2 py-1 \
                          placeholder:text-muted-foreground",
                     )
                     .on_change(move |text: &str| edit_note.set(text.to_owned())),
@@ -1016,7 +1016,7 @@ pub(crate) fn ItemsView() -> impl IntoElement {
                     .text_color(fg)
                     .w(px(140.0))
                     .app_class(
-                        "bg-background rounded-md border border-border px-2 py-1 \
+                        "bg-background rounded-(--radius) border border-border px-2 py-1 \
                          placeholder:text-muted-foreground",
                     )
                     .on_change(move |text: &str| dispose_residual.set(text.to_owned())),
@@ -1210,7 +1210,7 @@ pub(crate) fn ItemsView() -> impl IntoElement {
                         .child(
                             button()
                                 .app_class(
-                                    "px-2 py-0.5 rounded-md border border-border text-foreground hover:bg-accent",
+                                    "px-2 py-0.5 rounded-sm border border-border text-foreground hover:bg-accent",
                                 )
                                 .on_press(move |_: &()| clear_recalc())
                                 .child(
@@ -1301,7 +1301,7 @@ pub(crate) fn ItemsView() -> impl IntoElement {
                     .child(
                         button()
                             .app_class(
-                                "px-3 py-1.5 rounded-md border border-border text-foreground hover:bg-accent",
+                                "px-3 py-1.5 rounded-(--radius) border border-border text-foreground hover:bg-accent",
                             )
                             .on_press(move |_: &()| close_detail())
                             .child(
@@ -1358,7 +1358,7 @@ pub(crate) fn ItemsView() -> impl IntoElement {
                         .flex_row()
                         .items_center()
                         .gap_2()
-                        .app_class("rounded-md border border-border bg-accent/10 p-3")
+                        .app_class("rounded-(--radius) border border-border bg-accent/10 p-3")
                         .child(
                             text(CREATE_HINT)
                                 .text_size(px(font_size::SECONDARY))
@@ -1369,7 +1369,7 @@ pub(crate) fn ItemsView() -> impl IntoElement {
                         .child(
                             button()
                                 .app_class(
-                                    "px-2 py-1 rounded-md border border-border text-foreground hover:bg-accent",
+                                    "px-2 py-1 rounded-(--radius) border border-border text-foreground hover:bg-accent",
                                 )
                                 .on_press(move |_: &()| go_transactions())
                                 .child(
@@ -1387,7 +1387,7 @@ pub(crate) fn ItemsView() -> impl IntoElement {
                         .flex_1()
                         .flex_col()
                         .gap_2()
-                        .app_class("rounded-md border border-border p-3")
+                        .app_class("rounded-(--radius-card) border border-border p-3")
                         .child(
                             view().flex_1().child(
                                 text(LIST_CARD_TITLE)
@@ -1476,7 +1476,7 @@ fn row_action_button(
     on_press: impl Fn() + 'static,
 ) -> AnyElement {
     button()
-        .app_class("px-2 py-0.5 rounded-md border border-border text-foreground hover:bg-accent")
+        .app_class("px-2 py-0.5 rounded-sm border border-border text-foreground hover:bg-accent")
         .on_press(move |_: &()| on_press())
         .child(
             text(label)
@@ -1504,7 +1504,7 @@ fn action_buttons(
         .child(
             button()
                 .app_class(
-                    "px-3 py-1.5 rounded-md border border-border text-foreground hover:bg-accent",
+                    "px-3 py-1.5 rounded-(--radius) border border-border text-foreground hover:bg-accent",
                 )
                 .on_press(move |_: &()| on_cancel())
                 .child(
@@ -1516,7 +1516,7 @@ fn action_buttons(
         )
         .child(
             button()
-                .app_class("px-3 py-1.5 rounded-md bg-primary hover:opacity-90")
+                .app_class("px-3 py-1.5 rounded-(--radius) bg-primary hover:opacity-90")
                 .on_press(move |_: &()| on_confirm())
                 .child(
                     text(confirm_label)
@@ -1761,7 +1761,7 @@ pub(crate) fn add_item_modal(
                             .text_color(fg_of())
                             .w(px(260.0))
                             .app_class(
-                                "bg-background rounded-md border border-border px-2 py-1 \
+                                "bg-background rounded-(--radius) border border-border px-2 py-1 \
                                  placeholder:text-muted-foreground",
                             )
                             .on_change(move |text: &str| name.set(text.to_owned())),
@@ -1776,7 +1776,7 @@ pub(crate) fn add_item_modal(
                     .child(
                         button()
                             .app_class(
-                                "px-3 py-1.5 rounded-md border border-border text-foreground hover:bg-accent",
+                                "px-3 py-1.5 rounded-(--radius) border border-border text-foreground hover:bg-accent",
                             )
                             .disabled(move || submitting.get())
                             .on_press(move |_: &()| close())
@@ -1784,7 +1784,7 @@ pub(crate) fn add_item_modal(
                     )
                     .child(
                         button()
-                            .app_class("px-3 py-1.5 rounded-md bg-primary hover:opacity-90")
+                            .app_class("px-3 py-1.5 rounded-(--radius) bg-primary hover:opacity-90")
                             .disabled(move || submitting.get())
                             .on_press(move |_: &()| submit())
                             .child(

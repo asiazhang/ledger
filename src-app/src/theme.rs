@@ -18,11 +18,12 @@
 //!
 //! **令牌闭集**：shadcn 标准 UI 语义名（`background`/`primary`/`muted`/
 //! `destructive` 等，未写明的沿用出厂默认）+ 本仓自有令牌——金额语义色九档
-//! （`expense`…`dividend`）、警告（`warning`）、走势主色（`line`）、图表系列
+//! （`expense`…`dividend`）、警告与成功（`warning` 亮 `#f0a020` / 暗 `#f2c97d`、`success` 亮 `#18a058` / 暗 `#63e2b7`）、走势主色（`line`）、图表系列
 //! 十二槽（`chart-series-1…12`）与未分类灰（`chart-uncategorized`）、圆角阶
 //! 四档（`radius` 8 / `radius-card` 12 / `radius-panel` 16 / `radius-inset`
-//! 8 点，同心规则见 docs/DESIGN.md）。散落模块的本地色常量已按此表收编；
-//! 全仓散落色常量的唯一合法住所是本模块的缺失兜底（见 [`color`]）。
+//! 8 点，同心规则见 docs/DESIGN.md）。散落模块的本地色常量已按此表收编
+//! （视图层散落兜底随 #2104 与 review 收编清零）；全仓散落色常量的唯一合法
+//! 住所是本模块的缺失兜底（见 [`color`]）。
 //!
 //! 测试豁免（ADR-0060）：本模块测试经 crate 根 cfg(test) 整体放行六件套。
 

@@ -168,12 +168,10 @@ pub(crate) struct CellActions {
     pub copy_note: Arc<dyn Fn(&str)>,
 }
 
-/// 可点原子色（主题强调色；accounts/merchants 可点格先例同源——primary 令牌
-/// 缺失回退亮橙可读兜底）。
+/// 可点原子色（主题强调色；accounts/merchants 可点格先例同源，primary
+/// 令牌经 [`crate::theme::color`] 单点消费）。
 fn accent_color() -> AdaptiveColor {
-    nsh_core::element::tokens()
-        .color("primary")
-        .unwrap_or_else(|| hsla(0.11, 0.82, 0.60, 1.0).into())
+    crate::theme::color("primary")
 }
 
 /// 来源种类 → 导航域种类（装配载荷是域闭集，跳转目标计算吃导航域闭集——
@@ -504,17 +502,11 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
     // 不随对话框子树卸载被取消（见 perform_delete 注）。
     let view_owner = Owner::current();
 
-    // 主题令牌（双态自适应，registry 缺省带主题双态令牌）；缺失时回退亮灰/
-    // 中灰（缺省主题 registry 缺失时的可读兜底，非双态）。
-    let tokens = nsh_core::element::tokens();
-    let fg = tokens
-        .color("foreground")
-        .unwrap_or_else(|| hsla(0.0, 0.0, 0.98, 1.0).into());
-    // 加入物品成功反馈条位的前景色（#2044；tokens 绑定后取值）。
+    // 主题令牌（双态自适应；缺失兜底统一归 crate::theme 单点）。
+    let fg = crate::theme::color("foreground");
+    // 加入物品成功反馈条位的前景色（#2044；与列表前景同源）。
     let item_feedback_fg = fg;
-    let muted = tokens
-        .color("muted-foreground")
-        .unwrap_or_else(|| hsla(0.0, 0.0, 0.45, 1.0).into());
+    let muted = crate::theme::color("muted-foreground");
 
     // 装载一页（首屏、翻页、换期间、筛选与搜索共用一条路径）：判态——关键词
     // 或金额区间任一在场 = 搜索态直调域统一模糊搜索（与旧壳 `search_transactions`
@@ -1564,9 +1556,7 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
                     })
                     .text_xs()
                     .text_color(
-                        tokens
-                            .color("destructive")
-                            .unwrap_or_else(|| hsla(0.0, 0.0, 0.98, 1.0).into()),
+                        crate::theme::color("destructive"),
                     )
                     .test_id("tx-delete-error")
                     .app_class("px-4 py-1")

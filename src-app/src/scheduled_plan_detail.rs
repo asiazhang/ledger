@@ -366,7 +366,7 @@ pub(crate) fn plan_detail_modal(
                     nsh_base::button()
                         .disabled(move || state.get().retrying.as_deref() == Some(&occ_id))
                         .app_class(
-                            "px-2 py-1 rounded-md text-foreground hover:bg-accent disabled:opacity-40",
+                            "px-2 py-1 rounded-(--radius) text-foreground hover:bg-accent disabled:opacity-40",
                         )
                         .child(
                             text("重试")
@@ -512,7 +512,7 @@ pub(crate) fn plan_detail_modal(
                         nsh_base::button()
                             .disabled(move || state.get().expanding)
                             .app_class(
-                                "px-3 py-2 rounded-md border border-border text-foreground \
+                                "px-3 py-2 rounded-(--radius) border border-border text-foreground \
                                  hover:bg-accent disabled:opacity-40",
                             )
                             .child(
@@ -541,16 +541,9 @@ fn detail_palette() -> (
     nsh_core::element::AdaptiveColor,
     nsh_core::element::AdaptiveColor,
 ) {
-    let tokens = nsh_core::element::tokens();
     (
-        tokens
-            .color("foreground")
-            .unwrap_or_else(|| hsla(0.0, 0.0, 0.98, 1.0).into()),
-        tokens
-            .color("muted-foreground")
-            .unwrap_or_else(|| hsla(0.0, 0.0, 0.45, 1.0).into()),
-        tokens
-            .color("destructive")
-            .unwrap_or_else(|| hsla(0.0, 0.0, 0.98, 1.0).into()),
+        crate::theme::color("foreground"),
+        crate::theme::color("muted-foreground"),
+        crate::theme::color("destructive"),
     )
 }

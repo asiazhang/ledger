@@ -360,7 +360,7 @@ pub(crate) fn StalenessAlert() -> impl IntoElement {
                                         .tab
                                         .set(investments::InvestmentsTab::Instruments);
                                 })
-                                .rounded_md()
+                                .rounded_lg()
                                 .px_2()
                                 .py_1()
                                 .app_class("hover:bg-accent")

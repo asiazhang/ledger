@@ -889,7 +889,7 @@ pub(crate) fn InvestmentsView() -> impl IntoElement {
                 nsh_base::tab()
                     .selected(is_active)
                     .accessibility_label(tab.label())
-                    .app_class("px-2 py-1 rounded-md selected:bg-accent")
+                    .app_class("px-2 py-1 rounded-(--radius) selected:bg-accent")
                     .child(
                         text(tab.label())
                             .text_size(px(font_size::SECONDARY))
@@ -942,7 +942,7 @@ pub(crate) fn InvestmentsView() -> impl IntoElement {
         .child(
             view().px_4().py_2().child(
                 text("投资")
-                    .text_size(px(font_size::BODY))
+                    .text_size(px(font_size::TITLE))
                     .text_color(palette.fg)
                     .test_id("view-title"),
             ),
@@ -1042,7 +1042,7 @@ pub(crate) fn retry_row(
         .child(
             view()
                 .on_press(move |_: &PressEvent| retry())
-                .rounded_md()
+                .rounded_lg()
                 .px_1()
                 .py_0p5()
                 .app_class("hover:bg-accent")
@@ -1356,7 +1356,7 @@ fn overview_pane() -> impl IntoElement {
     let overview_card = card_container("investment-overview")
         .child(
             text(OVERVIEW_TITLE)
-                .text_size(px(font_size::LEADING))
+                .text_size(px(font_size::TITLE))
                 .text_color(palette.fg)
                 .test_id("overview-title"),
         )
@@ -1469,7 +1469,7 @@ fn overview_pane() -> impl IntoElement {
                 .justify_between()
                 .child(
                     text(TREND_CARD_TITLE)
-                        .text_size(px(font_size::LEADING))
+                        .text_size(px(font_size::TITLE))
                         .text_color(palette.fg)
                         .test_id("trend-card-title"),
                 )
@@ -1479,7 +1479,7 @@ fn overview_pane() -> impl IntoElement {
                         nsh_base::button()
                             .selected(selected)
                             .app_class(
-                                "px-2 py-1 rounded-md text-foreground hover:bg-accent selected:bg-accent",
+                                "px-2 py-1 rounded-(--radius) text-foreground hover:bg-accent selected:bg-accent",
                             )
                             .child(
                                 text(p.label())

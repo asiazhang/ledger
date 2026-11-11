@@ -145,7 +145,7 @@ pub(crate) fn AccountsView() -> impl IntoElement {
         reload();
     });
 
-    // 主题令牌（双态自适应；令牌缺失回退亮灰/中灰可读兜底，先例同形）。
+    // 主题令牌（双态自适应；缺失兜底统一归 crate::theme 单点）。
     let fg = crate::theme::color("foreground");
     let muted = crate::theme::color("muted-foreground");
     let accent = crate::theme::color("primary");
@@ -776,7 +776,7 @@ pub(crate) fn AccountsView() -> impl IntoElement {
             .flex_1()
             .flex_col()
             .gap_2()
-            .app_class("rounded-md border border-border p-3")
+            .app_class("rounded-(--radius-card) border border-border p-3")
             .child(
                 view().flex_1().child(
                     text(title)
@@ -865,7 +865,7 @@ pub(crate) fn AccountsView() -> impl IntoElement {
                                     .text_color(fg)
                                     .w(px(140.0))
                                     .app_class(
-                                        "bg-background rounded-md border border-border px-2 py-1                                          placeholder:text-muted-foreground",
+                                        "bg-background rounded-(--radius) border border-border px-2 py-1                                          placeholder:text-muted-foreground",
                                     )
                                     .on_change(move |text: &str| {
                                         edit_limit.set(text.to_owned())
@@ -887,7 +887,7 @@ pub(crate) fn AccountsView() -> impl IntoElement {
                                     .text_color(fg)
                                     .w(px(100.0))
                                     .app_class(
-                                        "bg-background rounded-md border border-border px-2 py-1                                          placeholder:text-muted-foreground",
+                                        "bg-background rounded-(--radius) border border-border px-2 py-1                                          placeholder:text-muted-foreground",
                                     )
                                     .on_change(move |text: &str| {
                                         edit_statement.set(text.to_owned())
@@ -909,7 +909,7 @@ pub(crate) fn AccountsView() -> impl IntoElement {
                                     .text_color(fg)
                                     .w(px(100.0))
                                     .app_class(
-                                        "bg-background rounded-md border border-border px-2 py-1                                          placeholder:text-muted-foreground",
+                                        "bg-background rounded-(--radius) border border-border px-2 py-1                                          placeholder:text-muted-foreground",
                                     )
                                     .on_change(
                                         move |text: &str| edit_due.set(text.to_owned()),
@@ -964,7 +964,7 @@ pub(crate) fn AccountsView() -> impl IntoElement {
                             .text_color(fg)
                             .w(px(240.0))
                             .app_class(
-                                "bg-background rounded-md border border-border px-2 py-1 \
+                                "bg-background rounded-(--radius) border border-border px-2 py-1 \
                                  placeholder:text-muted-foreground",
                             )
                             .on_change(move |text: &str| edit_name.set(text.to_owned())),
@@ -1021,7 +1021,7 @@ pub(crate) fn AccountsView() -> impl IntoElement {
                     .child(
                         button()
                             .app_class(
-                                "px-3 py-1.5 rounded-md border border-border text-foreground hover:bg-accent",
+                                "px-3 py-1.5 rounded-(--radius) border border-border text-foreground hover:bg-accent",
                             )
                             .child(
                                 text("取消")
@@ -1033,7 +1033,7 @@ pub(crate) fn AccountsView() -> impl IntoElement {
                     )
                     .child(
                         button()
-                            .app_class("px-3 py-1.5 rounded-md bg-primary hover:opacity-90")
+                            .app_class("px-3 py-1.5 rounded-(--radius) bg-primary hover:opacity-90")
                             .child(
                                 text("保存")
                                     .text_size(px(font_size::SECONDARY))
@@ -1083,7 +1083,7 @@ pub(crate) fn AccountsView() -> impl IntoElement {
                             .optional_label("目标余额")
                             .text_color(fg)
                             .w(px(240.0))
-                            .app_class("bg-background rounded-md border border-border px-2 py-1 placeholder:text-muted-foreground")
+                            .app_class("bg-background rounded-(--radius) border border-border px-2 py-1 placeholder:text-muted-foreground")
                             .on_change(move |text: &str| {
                                 adjust_target_text.set(text.to_owned())
                             }),
@@ -1172,7 +1172,7 @@ pub(crate) fn AccountsView() -> impl IntoElement {
                     .child(
                         button()
                             .app_class(
-                                "px-3 py-1.5 rounded-md border border-border text-foreground hover:bg-accent",
+                                "px-3 py-1.5 rounded-(--radius) border border-border text-foreground hover:bg-accent",
                             )
                             .child(
                                 text("取消")
@@ -1184,7 +1184,7 @@ pub(crate) fn AccountsView() -> impl IntoElement {
                     )
                     .child(
                         button()
-                            .app_class("px-3 py-1.5 rounded-md bg-primary hover:opacity-90")
+                            .app_class("px-3 py-1.5 rounded-(--radius) bg-primary hover:opacity-90")
                             .disabled(move || {
                                 let delta = adjust_delta(
                                     raw_row_of(adjust_target.get_untracked()).as_ref(),
@@ -1222,7 +1222,7 @@ pub(crate) fn AccountsView() -> impl IntoElement {
                         .optional_label("账户名称")
                         .text_color(fg)
                         .w(px(160.0))
-                        .app_class("bg-background rounded-md border border-border px-2 py-1 placeholder:text-muted-foreground")
+                        .app_class("bg-background rounded-(--radius) border border-border px-2 py-1 placeholder:text-muted-foreground")
                         .on_change(move |text: &str| create_name.set(text.to_owned())),
                 ),
         )
@@ -1274,7 +1274,7 @@ pub(crate) fn AccountsView() -> impl IntoElement {
                         .optional_label("初始余额")
                         .text_color(fg)
                         .w(px(140.0))
-                        .app_class("bg-background rounded-md border border-border px-2 py-1 placeholder:text-muted-foreground")
+                        .app_class("bg-background rounded-(--radius) border border-border px-2 py-1 placeholder:text-muted-foreground")
                         .on_change(move |text: &str| create_initial.set(text.to_owned())),
                 ),
         )
@@ -1302,7 +1302,7 @@ pub(crate) fn AccountsView() -> impl IntoElement {
                                         .optional_label("信用额度")
                                         .text_color(fg)
                                         .w(px(140.0))
-                                        .app_class("bg-background rounded-md border border-border px-2 py-1 placeholder:text-muted-foreground")
+                                        .app_class("bg-background rounded-(--radius) border border-border px-2 py-1 placeholder:text-muted-foreground")
                                         .on_change(move |text: &str| {
                                             create_limit.set(text.to_owned())
                                         }),
@@ -1322,7 +1322,7 @@ pub(crate) fn AccountsView() -> impl IntoElement {
                                         .optional_label("账单日")
                                         .text_color(fg)
                                         .w(px(100.0))
-                                        .app_class("bg-background rounded-md border border-border px-2 py-1 placeholder:text-muted-foreground")
+                                        .app_class("bg-background rounded-(--radius) border border-border px-2 py-1 placeholder:text-muted-foreground")
                                         .on_change(move |text: &str| {
                                             create_statement.set(text.to_owned())
                                         }),
@@ -1342,7 +1342,7 @@ pub(crate) fn AccountsView() -> impl IntoElement {
                                         .optional_label("还款日")
                                         .text_color(fg)
                                         .w(px(100.0))
-                                        .app_class("bg-background rounded-md border border-border px-2 py-1 placeholder:text-muted-foreground")
+                                        .app_class("bg-background rounded-(--radius) border border-border px-2 py-1 placeholder:text-muted-foreground")
                                         .on_change(move |text: &str| {
                                             create_due.set(text.to_owned())
                                         }),
@@ -1354,7 +1354,7 @@ pub(crate) fn AccountsView() -> impl IntoElement {
         )
         .child(
             button()
-                .app_class("px-3 py-1.5 rounded-md bg-primary hover:opacity-90")
+                .app_class("px-3 py-1.5 rounded-(--radius) bg-primary hover:opacity-90")
                 .child(
                     text("添加")
                         .text_size(px(font_size::SECONDARY))
@@ -1367,7 +1367,7 @@ pub(crate) fn AccountsView() -> impl IntoElement {
     let create_card = view()
         .flex_col()
         .gap_2()
-        .app_class("rounded-md border border-border p-3")
+        .app_class("rounded-(--radius-card) border border-border p-3")
         .child(
             text(CREATE_CARD_TITLE)
                 .text_size(px(font_size::SECONDARY))
@@ -1448,7 +1448,7 @@ pub(crate) fn AccountsView() -> impl IntoElement {
                                 .flex_1()
                                 .flex_col()
                                 .gap_2()
-                                .app_class("rounded-md border border-border p-3")
+                                .app_class("rounded-(--radius-card) border border-border p-3")
                                 .child(
                                     view().flex_row().items_center().gap_2().child(
                                         button()
@@ -1458,7 +1458,7 @@ pub(crate) fn AccountsView() -> impl IntoElement {
                                                 "展开已归档账户"
                                             })
                                             .app_class(
-                                                "px-2 py-1 rounded-md text-foreground hover:bg-accent",
+                                                "px-2 py-1 rounded-(--radius) text-foreground hover:bg-accent",
                                             )
                                             .on_press(move |_: &()| {
                                                 archived_expanded.update(|v| *v = !*v);

@@ -493,7 +493,7 @@ pub(crate) fn CrossBookSummaryView() -> impl IntoElement {
             view()
                 .flex_col()
                 .gap_2()
-                .app_class("rounded-md border border-border bg-background p-3")
+                .app_class("rounded-(--radius-card) border border-border bg-background p-3")
                 .child(
                     view()
                         .flex_row()
@@ -516,7 +516,7 @@ pub(crate) fn CrossBookSummaryView() -> impl IntoElement {
                 .child(
                     view()
                         .on_press(move |_: &()| reload())
-                        .rounded_md()
+                        .rounded_lg()
                         .px_2()
                         .py_1()
                         .app_class("bg-primary hover:opacity-90")

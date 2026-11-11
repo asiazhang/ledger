@@ -267,9 +267,7 @@ pub(crate) fn backup_button(state: BackupEntryState, owner: Owner) -> impl IntoE
 pub(crate) fn backup_status_line(state: BackupEntryState) -> impl IntoElement {
     let status = state.status;
     let palette = crate::views::view_palette();
-    let danger_color = nsh_core::element::tokens()
-        .color("destructive")
-        .unwrap_or_else(|| hsla(0.0, 0.0, 0.98, 1.0).into());
+    let danger_color = crate::theme::color("destructive");
     when(
         move || status.get().is_some(),
         move || {

@@ -617,7 +617,8 @@ pub(crate) fn store_keep_limit(n: u32) {
 // 共用呈现件（密文输入行 / 破坏色便捷面 / 表单字段行）。
 // ---------------------------------------------------------------------------
 
-/// 破坏色便捷面（主题令牌缺失回退亮灰可读兜底，backup_entry 同款口径）。
+/// 破坏色便捷面（destructive 令牌经 [`crate::theme::color`] 单点消费，
+/// backup_entry 同款口径）。
 fn danger_fg() -> AdaptiveColor {
     crate::theme::color("destructive")
 }
@@ -629,7 +630,7 @@ fn copy_button(
     on_copied: impl Fn() + Copy + 'static,
 ) -> impl IntoElement {
     button()
-        .app_class("px-2 py-0.5 rounded-md border border-border text-foreground hover:bg-accent")
+        .app_class("px-2 py-0.5 rounded-sm border border-border text-foreground hover:bg-accent")
         .child(
             text(BUTTON_COPY_PATH)
                 .text_size(px(font_size::CAPTION))
@@ -670,7 +671,7 @@ fn pass_input(
                 .text_color(palette.fg)
                 .w(px(260.0))
                 .app_class(
-                    "bg-background rounded-md border border-border px-2 py-1 placeholder:text-muted-foreground",
+                    "bg-background rounded-(--radius) border border-border px-2 py-1 placeholder:text-muted-foreground",
                 )
                 .on_change(move |value: &str| target.set(value.to_owned())),
         )
@@ -693,7 +694,7 @@ fn field_input(
         .text_color(palette.fg)
         .w(width)
         .app_class(
-            "bg-background rounded-md border border-border px-2 py-1 placeholder:text-muted-foreground",
+            "bg-background rounded-(--radius) border border-border px-2 py-1 placeholder:text-muted-foreground",
         )
         .on_change(move |value: &str| target.set(value.to_owned()));
     let base = match dynamic_placeholder {
@@ -1234,7 +1235,7 @@ fn restore_modal_body(state: BackupUiState, owner: Owner, palette: views::ViewPa
         .child(
             view()
                 .flex_col()
-                .app_class("rounded-md border border-destructive/30 bg-destructive/10 p-2 gap-1")
+                .app_class("rounded-sm border border-destructive/30 bg-destructive/10 p-2 gap-1")
                 .child(
                     text(RESTORE_CONFIRM_STRONG)
                         .text_size(px(font_size::CAPTION))
@@ -1245,7 +1246,7 @@ fn restore_modal_body(state: BackupUiState, owner: Owner, palette: views::ViewPa
         .children(cross_mode.map(|(title, warning)| {
             view()
                 .flex_col()
-                .app_class("rounded-md border border-destructive/30 bg-destructive/10 p-2 gap-1")
+                .app_class("rounded-sm border border-destructive/30 bg-destructive/10 p-2 gap-1")
                 .child(
                     text(title)
                         .text_size(px(font_size::CAPTION))
@@ -1281,7 +1282,7 @@ fn restore_modal_body(state: BackupUiState, owner: Owner, palette: views::ViewPa
                 .child(
                     button()
                         .app_class(
-                            "px-3 py-1.5 rounded-md border border-border text-foreground hover:bg-accent disabled:opacity-40",
+                            "px-3 py-1.5 rounded-(--radius) border border-border text-foreground hover:bg-accent disabled:opacity-40",
                         )
                         .disabled(busy)
                         .child(
@@ -1298,7 +1299,7 @@ fn restore_modal_body(state: BackupUiState, owner: Owner, palette: views::ViewPa
                 .child(
                     button()
                         .app_class(
-                            "px-3 py-1.5 rounded-md bg-destructive hover:opacity-90 disabled:opacity-40",
+                            "px-3 py-1.5 rounded-(--radius) bg-destructive hover:opacity-90 disabled:opacity-40",
                         )
                         .disabled(!can_submit_restore(state) || busy)
                         .child(
@@ -1399,7 +1400,7 @@ fn backup_cards(palette: views::ViewPalette) -> View {
                 .child(
                     button()
                         .app_class(
-                            "px-3 py-1.5 rounded-md bg-primary hover:opacity-90 disabled:opacity-40",
+                            "px-3 py-1.5 rounded-(--radius) bg-primary hover:opacity-90 disabled:opacity-40",
                         )
                         .disabled(move || state.backing_up.get())
                         .child(
@@ -1413,7 +1414,7 @@ fn backup_cards(palette: views::ViewPalette) -> View {
                 .child(
                     button()
                         .app_class(
-                            "px-3 py-1.5 rounded-md border border-border text-foreground hover:bg-accent disabled:opacity-40",
+                            "px-3 py-1.5 rounded-(--radius) border border-border text-foreground hover:bg-accent disabled:opacity-40",
                         )
                         .disabled(move || state.backing_up.get())
                         .child(
@@ -1489,7 +1490,7 @@ fn backup_cards(palette: views::ViewPalette) -> View {
                 .child(
                     button()
                         .app_class(
-                            "px-3 py-1.5 rounded-md border border-border text-foreground hover:bg-accent",
+                            "px-3 py-1.5 rounded-(--radius) border border-border text-foreground hover:bg-accent",
                         )
                         .child(
                             text(move || {
@@ -1529,7 +1530,7 @@ fn backup_cards(palette: views::ViewPalette) -> View {
                         move || {
                             button()
                                 .app_class(
-                                    "px-3 py-1.5 rounded-md border border-border text-foreground hover:bg-accent",
+                                    "px-3 py-1.5 rounded-(--radius) border border-border text-foreground hover:bg-accent",
                                 )
                                 .child(
                                     text(DIR_CLEAR)
@@ -1564,7 +1565,7 @@ fn backup_cards(palette: views::ViewPalette) -> View {
                         .value(move || state.keep_text.get())
                         .text_color(palette.fg)
                         .w(px(72.0))
-                        .app_class("bg-background rounded-md border border-border px-2 py-1")
+                        .app_class("bg-background rounded-(--radius) border border-border px-2 py-1")
                         .on_change(move |value: &str| {
                             // 数字过滤 + 闭集钳制：变更即刻提交，调小立即清理
                             //（旧壳 blur 提交的偏差：即时通道语义同向）。
@@ -1627,7 +1628,7 @@ fn backup_cards(palette: views::ViewPalette) -> View {
                             view()
                                 .flex_col()
                                 .app_class(
-                                    "rounded-md border border-destructive/30 bg-destructive/10 p-2 gap-1",
+                                    "rounded-sm border border-destructive/30 bg-destructive/10 p-2 gap-1",
                                 )
                                 .child(
                                     text(move || {
@@ -1761,7 +1762,7 @@ fn backup_cards(palette: views::ViewPalette) -> View {
                 .child(
                     button()
                         .app_class(
-                            "px-2 py-0.5 rounded-md border border-border text-foreground hover:bg-accent disabled:opacity-40",
+                            "px-2 py-0.5 rounded-sm border border-border text-foreground hover:bg-accent disabled:opacity-40",
                         )
                         .disabled(move || state.rows_loading.get())
                         .child(
@@ -1794,7 +1795,7 @@ fn backup_cards(palette: views::ViewPalette) -> View {
                 .child(
                     button()
                         .app_class(
-                            "px-3 py-1 rounded-md border border-border text-foreground hover:bg-accent disabled:opacity-40",
+                            "px-3 py-1 rounded-(--radius) border border-border text-foreground hover:bg-accent disabled:opacity-40",
                         )
                         .disabled(move || state.rows.get().is_empty() || state.pruning.get())
                         .child(
@@ -1854,7 +1855,7 @@ fn backup_cards(palette: views::ViewPalette) -> View {
         vec![
             view()
                 .flex_col()
-                .app_class("rounded-md border border-destructive/30 bg-destructive/10 p-2 gap-1")
+                .app_class("rounded-sm border border-destructive/30 bg-destructive/10 p-2 gap-1")
                 .child(
                     view()
                         .flex_row()
@@ -1871,7 +1872,7 @@ fn backup_cards(palette: views::ViewPalette) -> View {
             view().child(
                 button()
                     .app_class(
-                        "px-3 py-1.5 rounded-md border border-border text-foreground hover:bg-accent disabled:opacity-40",
+                        "px-3 py-1.5 rounded-(--radius) border border-border text-foreground hover:bg-accent disabled:opacity-40",
                     )
                     .disabled(move || state.restore_busy.get())
                     .child(
@@ -1922,7 +1923,7 @@ fn backup_row(palette: views::ViewPalette, index: usize, row: BackupRowView) -> 
                 .child(
                     button()
                         .app_class(
-                            "px-2 py-0.5 rounded-md border border-border text-foreground hover:bg-accent",
+                            "px-2 py-0.5 rounded-sm border border-border text-foreground hover:bg-accent",
                         )
                         .child(
                             text(REVEAL_LABEL)
@@ -2101,7 +2102,7 @@ fn encryption_error_view(state: EncryptionState) -> impl IntoElement {
         .child(
             button()
                 .app_class(
-                    "px-2 py-0.5 rounded-md border border-border text-foreground hover:bg-accent",
+                    "px-2 py-0.5 rounded-sm border border-border text-foreground hover:bg-accent",
                 )
                 .child(
                     text(ENCRYPT_RETRY)
@@ -2121,7 +2122,7 @@ fn encrypted_form(state: EncryptionState) -> impl IntoElement {
         .child(
             view()
                 .flex_col()
-                .app_class("rounded-md border border-destructive/30 bg-destructive/10 p-2 gap-1")
+                .app_class("rounded-sm border border-destructive/30 bg-destructive/10 p-2 gap-1")
                 .child(
                     text(ENCRYPT_ENABLED_LOCAL_TITLE)
                         .text_size(px(font_size::CAPTION))
@@ -2159,7 +2160,7 @@ fn enable_form(state: EncryptionState, palette: views::ViewPalette) -> impl Into
         .child(
             view()
                 .flex_col()
-                .app_class("rounded-md border border-destructive/30 bg-destructive/10 p-2 gap-1")
+                .app_class("rounded-sm border border-destructive/30 bg-destructive/10 p-2 gap-1")
                 .child(
                     text(ENCRYPTION_WARN_TITLE)
                         .text_size(px(font_size::CAPTION))
@@ -2215,7 +2216,7 @@ fn enable_form(state: EncryptionState, palette: views::ViewPalette) -> impl Into
         ))
         .child(
             button()
-                .app_class("px-3 py-1.5 rounded-md bg-primary hover:opacity-90 disabled:opacity-40")
+                .app_class("px-3 py-1.5 rounded-(--radius) bg-primary hover:opacity-90 disabled:opacity-40")
                 .disabled(move || !enable_ready(state))
                 .child(
                     text(ENCRYPT_BUTTON)
@@ -2663,7 +2664,7 @@ fn bootstrap_modal_body(state: SyncState, owner: Owner, palette: views::ViewPale
         .child(
             view()
                 .flex_col()
-                .app_class("rounded-md border border-warning/30 bg-warning/10 p-2 gap-1")
+                .app_class("rounded-sm border border-warning/30 bg-warning/10 p-2 gap-1")
                 .child(
                     text(SYNC_BOOTSTRAP_WARNING)
                         .text_size(px(font_size::CAPTION))
@@ -2736,7 +2737,7 @@ fn bootstrap_modal_body(state: SyncState, owner: Owner, palette: views::ViewPale
                 .child(
                     button()
                         .app_class(
-                            "px-3 py-1.5 rounded-md border border-border text-foreground hover:bg-accent disabled:opacity-40",
+                            "px-3 py-1.5 rounded-(--radius) border border-border text-foreground hover:bg-accent disabled:opacity-40",
                         )
                         .disabled(busy)
                         .child(
@@ -2753,7 +2754,7 @@ fn bootstrap_modal_body(state: SyncState, owner: Owner, palette: views::ViewPale
                 .child(
                     button()
                         .app_class(
-                            "px-3 py-1.5 rounded-md bg-warning hover:opacity-90 disabled:opacity-40",
+                            "px-3 py-1.5 rounded-(--radius) bg-warning hover:opacity-90 disabled:opacity-40",
                         )
                         .disabled(busy || !has_checkpoint)
                         .child(
@@ -2831,7 +2832,7 @@ fn sync_card(palette: views::ViewPalette) -> View {
             move || {
                 view()
                     .flex_col()
-                    .app_class("rounded-md border border-warning/30 bg-warning/10 p-2 gap-1")
+                    .app_class("rounded-sm border border-warning/30 bg-warning/10 p-2 gap-1")
                     .child(
                         text(SYNC_PLAINTEXT_WARNING)
                             .text_size(px(font_size::CAPTION))
@@ -2883,7 +2884,7 @@ fn sync_card(palette: views::ViewPalette) -> View {
             view().flex_row().app_class("gap-2").child(
                 button()
                     .app_class(
-                        "px-3 py-1.5 rounded-md bg-primary hover:opacity-90 disabled:opacity-40",
+                        "px-3 py-1.5 rounded-(--radius) bg-primary hover:opacity-90 disabled:opacity-40",
                     )
                     .disabled(move || state.syncing.get() || state.status_error.get().is_some())
                     .child(
@@ -2957,7 +2958,7 @@ fn sync_card(palette: views::ViewPalette) -> View {
                 .test_id("sync-path-style")
                 .role(nsh_core::AccessibilityRole::Button)
                 .optional_label(SYNC_PATH_STYLE_LABEL)
-                .app_class("rounded-md items-center")
+                .app_class("rounded-(--radius) items-center")
                 .on_press(move |_: &PressEvent| state.path_style.set(!state.path_style.get_untracked()))
                 .child(
                     view()
@@ -2991,7 +2992,7 @@ fn sync_card(palette: views::ViewPalette) -> View {
                 .child(
                     button()
                         .app_class(
-                            "px-3 py-1.5 rounded-md border border-border text-foreground hover:bg-accent disabled:opacity-40",
+                            "px-3 py-1.5 rounded-(--radius) border border-border text-foreground hover:bg-accent disabled:opacity-40",
                         )
                         .disabled(move || state.testing.get())
                         .child(
@@ -3004,7 +3005,7 @@ fn sync_card(palette: views::ViewPalette) -> View {
                 .child(
                     button()
                         .app_class(
-                            "px-3 py-1.5 rounded-md bg-primary hover:opacity-90 disabled:opacity-40",
+                            "px-3 py-1.5 rounded-(--radius) bg-primary hover:opacity-90 disabled:opacity-40",
                         )
                         .disabled(move || state.saving.get())
                         .child(
@@ -3039,7 +3040,7 @@ fn sync_card(palette: views::ViewPalette) -> View {
                 .child(
                     button()
                         .app_class(
-                            "px-3 py-1.5 rounded-md border border-border text-foreground hover:bg-accent disabled:opacity-40",
+                            "px-3 py-1.5 rounded-(--radius) border border-border text-foreground hover:bg-accent disabled:opacity-40",
                         )
                         .disabled(move || !configured() || state.publishing.get())
                         .child(
@@ -3052,7 +3053,7 @@ fn sync_card(palette: views::ViewPalette) -> View {
                 .child(
                     button()
                         .app_class(
-                            "px-3 py-1.5 rounded-md border border-border text-foreground hover:bg-accent disabled:opacity-40",
+                            "px-3 py-1.5 rounded-(--radius) border border-border text-foreground hover:bg-accent disabled:opacity-40",
                         )
                         .disabled(move || !configured())
                         .child(
@@ -3400,7 +3401,7 @@ fn books_card(palette: views::ViewPalette) -> View {
                 .child(
                     button()
                         .app_class(
-                            "px-3 py-1.5 rounded-md border border-border text-foreground hover:bg-accent disabled:opacity-40",
+                            "px-3 py-1.5 rounded-(--radius) border border-border text-foreground hover:bg-accent disabled:opacity-40",
                         )
                         .disabled(move || state.name_busy.get())
                         .child(
@@ -3417,7 +3418,7 @@ fn books_card(palette: views::ViewPalette) -> View {
                 .child(
                     button()
                         .app_class(
-                            "px-3 py-1.5 rounded-md bg-primary hover:opacity-90 disabled:opacity-40",
+                            "px-3 py-1.5 rounded-(--radius) bg-primary hover:opacity-90 disabled:opacity-40",
                         )
                         .disabled(move || {
                             state.name_busy.get() || state.name_draft.get().trim().is_empty()
@@ -3447,7 +3448,7 @@ fn books_card(palette: views::ViewPalette) -> View {
                         .text_color(palette.fg)
                         .w(px(260.0))
                         .app_class(
-                            "bg-background rounded-md border border-border px-2 py-1 placeholder:text-muted-foreground",
+                            "bg-background rounded-(--radius) border border-border px-2 py-1 placeholder:text-muted-foreground",
                         )
                         .on_change(move |value: &str| state.name_draft.set(value.to_owned())),
                 )
@@ -3465,7 +3466,7 @@ fn books_card(palette: views::ViewPalette) -> View {
                 move || {
                     view()
                         .flex_col()
-                        .app_class("rounded-md border border-warning/30 bg-warning/10 p-2 gap-1")
+                        .app_class("rounded-sm border border-warning/30 bg-warning/10 p-2 gap-1")
                         .child(
                             text(BOOKS_FALLBACK_TITLE)
                                 .text_size(px(font_size::CAPTION))
@@ -3484,7 +3485,7 @@ fn books_card(palette: views::ViewPalette) -> View {
         .child(
             button()
                 .app_class(
-                    "px-3 py-1.5 rounded-md border border-border text-foreground hover:bg-accent disabled:opacity-40",
+                    "px-3 py-1.5 rounded-(--radius) border border-border text-foreground hover:bg-accent disabled:opacity-40",
                 )
                 .disabled(move || !summary_available())
                 .child(
@@ -3525,7 +3526,7 @@ fn books_card(palette: views::ViewPalette) -> View {
             view().flex_row().app_class("items-center gap-2").child(
                 button()
                     .app_class(
-                        "px-3 py-1.5 rounded-md border border-border text-foreground hover:bg-accent disabled:opacity-40",
+                        "px-3 py-1.5 rounded-(--radius) border border-border text-foreground hover:bg-accent disabled:opacity-40",
                     )
                     .disabled(move || !state.mutable.get())
                     .child(text(BOOKS_NEW).text_size(px(font_size::SECONDARY)).test_id("book-create"))
@@ -3578,7 +3579,7 @@ fn book_row_view(
         .test_id(format!("book-switch-{row_id}").as_str())
         .role(nsh_core::AccessibilityRole::Button)
         .optional_label(move || Some(SharedString::from(book.get().name.clone())))
-        .app_class("rounded-md min-w-0")
+        .app_class("rounded-(--radius) min-w-0")
         .on_press(move |_: &PressEvent| (actions.switch_request)(book.get_untracked().clone()))
         .child(
             text(move || book.get().name.clone())
@@ -3612,7 +3613,7 @@ fn book_row_view(
             .child(
                 button()
                     .app_class(
-                        "px-2 py-0.5 rounded-md border border-border text-foreground hover:bg-accent disabled:opacity-40",
+                        "px-2 py-0.5 rounded-sm border border-border text-foreground hover:bg-accent disabled:opacity-40",
                     )
                     .disabled(access_disabled)
                     .child(
@@ -3660,7 +3661,7 @@ fn book_row_view(
                         // 图）。
                         view()
                             .app_class(
-                                "px-2 py-0.5 rounded-md border border-border text-foreground hover:bg-accent",
+                                "px-2 py-0.5 rounded-sm border border-border text-foreground hover:bg-accent",
                             )
                             .child(
                                 text(BOOKS_REMOVE)

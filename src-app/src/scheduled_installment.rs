@@ -477,27 +477,16 @@ pub(crate) fn installments_pane(pending_focus: Signal<Option<String>>) -> impl I
         }
     });
 
-    // 主题令牌（双态自适应；令牌缺失回退亮灰/中灰可读兜底，先例同形）。
-    let tokens = nsh_core::element::tokens();
-    let fg = tokens
-        .color("foreground")
-        .unwrap_or_else(|| hsla(0.0, 0.0, 0.98, 1.0).into());
-    let muted = tokens
-        .color("muted-foreground")
-        .unwrap_or_else(|| hsla(0.0, 0.0, 0.45, 1.0).into());
-    let danger_fg = tokens
-        .color("destructive")
-        .unwrap_or_else(|| hsla(0.0, 0.0, 0.98, 1.0).into());
+    // 主题令牌（双态自适应；缺失兜底统一归 crate::theme 单点）。
+    let fg = crate::theme::color("foreground");
+    let muted = crate::theme::color("muted-foreground");
+    let danger_fg = crate::theme::color("destructive");
     // 主按钮前景 = primary-foreground 令牌（亮暗双态随表；旧裸白直调退役）。
-    let primary_fg = tokens
-        .color("primary-foreground")
-        .unwrap_or_else(|| hsla(0.0, 0.0, 0.98, 1.0).into());
+    let primary_fg = crate::theme::color("primary-foreground");
     // 进度条正常色（#2033 预算 → #2039 概览同款取舍：正常态用账本语义绿）。
     let progress_fg = crate::transactions::amount_color(assembly::AmountSemantic::Income);
     // 进度条轨道色 = muted 令牌（弱化底语义角色；消费方零本地色纪律）。
-    let progress_track = tokens
-        .color("muted")
-        .unwrap_or_else(|| hsla(0.0, 0.0, 0.45, 1.0).into());
+    let progress_track = crate::theme::color("muted");
 
     // ============================ 清单呈现 ============================
     // 状态过滤（纯前端过滤，不产生请求——旧壳 filteredRows 同口径）。
@@ -772,7 +761,7 @@ pub(crate) fn installments_pane(pending_focus: Signal<Option<String>>) -> impl I
         .flex_1()
         .flex_col()
         .gap_2()
-        .app_class("rounded-md border border-border p-3")
+        .app_class("rounded-(--radius-card) border border-border p-3")
         .child(
             view()
                 .flex_row()
@@ -789,7 +778,7 @@ pub(crate) fn installments_pane(pending_focus: Signal<Option<String>>) -> impl I
                     let key_owned = key.to_owned();
                     button()
                         .app_class(
-                            "px-2 py-1 rounded-md text-foreground hover:bg-accent selected:bg-accent",
+                            "px-2 py-1 rounded-(--radius) text-foreground hover:bg-accent selected:bg-accent",
                         )
                         .child(
                             text(label)
@@ -800,7 +789,7 @@ pub(crate) fn installments_pane(pending_focus: Signal<Option<String>>) -> impl I
                 }))
                 .child(
                     button()
-                        .app_class("px-3 py-2 rounded-md bg-primary hover:opacity-90")
+                        .app_class("px-3 py-2 rounded-(--radius) bg-primary hover:opacity-90")
                         .child(
                             text(CREATE_INST_OPEN_LABEL)
                                 .text_size(px(font_size::SECONDARY))
@@ -858,7 +847,7 @@ pub(crate) fn installments_pane(pending_focus: Signal<Option<String>>) -> impl I
                         .text_color(fg)
                         .w(px(160.0))
                         .app_class(
-                            "bg-background rounded-md border border-border px-2 py-1 \
+                            "bg-background rounded-(--radius) border border-border px-2 py-1 \
                              placeholder:text-muted-foreground",
                         )
                         .on_change(move |value: &str| create_total.set(value.to_owned())))
@@ -878,7 +867,7 @@ pub(crate) fn installments_pane(pending_focus: Signal<Option<String>>) -> impl I
                 .text_color(fg)
                 .w(px(160.0))
                 .app_class(
-                    "bg-background rounded-md border border-border px-2 py-1 \
+                    "bg-background rounded-(--radius) border border-border px-2 py-1 \
                      placeholder:text-muted-foreground",
                 )
                 .on_change(move |value: &str| create_periods_text.set(value.to_owned()))))
@@ -903,7 +892,7 @@ pub(crate) fn installments_pane(pending_focus: Signal<Option<String>>) -> impl I
                 .text_color(fg)
                 .w(px(280.0))
                 .app_class(
-                    "bg-background rounded-md border border-border px-2 py-1 \
+                    "bg-background rounded-(--radius) border border-border px-2 py-1 \
                      placeholder:text-muted-foreground",
                 )
                 .on_change(move |value: &str| create_note.set(value.to_owned()))))
@@ -948,7 +937,7 @@ pub(crate) fn installments_pane(pending_focus: Signal<Option<String>>) -> impl I
                     .text_color(fg)
                     .w(px(90.0))
                     .app_class(
-                        "bg-background rounded-md border border-border px-2 py-1 \
+                        "bg-background rounded-(--radius) border border-border px-2 py-1 \
                          placeholder:text-muted-foreground",
                     )
                     .on_change(move |value: &str| create_interval_text.set(value.to_owned())))
@@ -986,7 +975,7 @@ pub(crate) fn installments_pane(pending_focus: Signal<Option<String>>) -> impl I
                     .child(
                         button()
                             .app_class(
-                                "px-3 py-2 rounded-md border border-border text-foreground hover:bg-accent",
+                                "px-3 py-2 rounded-(--radius) border border-border text-foreground hover:bg-accent",
                             )
                             .child(
                                 text("取消")
@@ -998,7 +987,7 @@ pub(crate) fn installments_pane(pending_focus: Signal<Option<String>>) -> impl I
                     )
                     .child(
                         button()
-                            .app_class("px-3 py-2 rounded-md bg-primary hover:opacity-90")
+                            .app_class("px-3 py-2 rounded-(--radius) bg-primary hover:opacity-90")
                             .child(
                                 text(CREATE_INST_SUBMIT_LABEL)
                                     .text_size(px(font_size::SECONDARY))
@@ -1089,10 +1078,7 @@ fn make_action_renderer(
             "progress" => {
                 // 进度条自绘（旧壳 NProgress type=line 本壳等价形态：轨道
                 // 定宽 + 按百分比宽度的指示条，颜色语义绿——禁用竖版进度）。
-                let tokens = nsh_core::element::tokens();
-                let fg = tokens
-                    .color("foreground")
-                    .unwrap_or_else(|| hsla(0.0, 0.0, 0.98, 1.0).into());
+                let fg = crate::theme::color("foreground");
                 view()
                     .test_id(format!("inst-progress-{}", row.id).as_str())
                     .flex_row()
@@ -1126,13 +1112,8 @@ fn make_action_renderer(
                     .into_element()
             }
             "actions" => {
-                let tokens = nsh_core::element::tokens();
-                let fg = tokens
-                    .color("foreground")
-                    .unwrap_or_else(|| hsla(0.0, 0.0, 0.98, 1.0).into());
-                let danger_fg = tokens
-                    .color("destructive")
-                    .unwrap_or_else(|| hsla(0.0, 0.0, 0.98, 1.0).into());
+                let fg = crate::theme::color("foreground");
+                let danger_fg = crate::theme::color("destructive");
                 let id = row.id.clone();
                 let mut buttons: Vec<nsh_core::element::AnyElement> = vec![action_button(
                     "期次",
@@ -1192,7 +1173,9 @@ fn make_action_renderer(
                                 cancel_label: "取消".to_owned(),
                             },
                             view()
-                                .app_class("px-2 py-1 rounded-md text-destructive hover:bg-accent")
+                                .app_class(
+                                    "px-2 py-1 rounded-(--radius) text-destructive hover:bg-accent",
+                                )
                                 .child(
                                     text("取消")
                                         .text_size(px(font_size::CAPTION))

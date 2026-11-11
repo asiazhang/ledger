@@ -603,14 +603,14 @@ pub(crate) fn HoldingsPane() -> impl IntoElement {
         .justify_between()
         .child(
             text(HOLDINGS_TITLE)
-                .text_size(px(font_size::LEADING))
+                .text_size(px(font_size::TITLE))
                 .text_color(palette.fg)
                 .test_id("holdings-title"),
         )
         .child(
             view()
                 .on_press(move |_: &PressEvent| investment_sync::trigger_sync())
-                .rounded_md()
+                .rounded_lg()
                 .px_2()
                 .py_1()
                 .app_class("bg-primary hover:opacity-90")
@@ -788,7 +788,7 @@ fn filter_row(
                 .text_color(palette.fg)
                 .w(px(240.0))
                 .app_class(
-                    "bg-background rounded-md border border-border px-2 py-1 \
+                    "bg-background rounded-(--radius) border border-border px-2 py-1 \
                      placeholder:text-muted-foreground",
                 )
                 // 搜索输入：回显写回显值，防抖调度闭包持序号信号（应用值
@@ -877,7 +877,7 @@ fn holding_stats_cards(
                             .child(
                                 view()
                                     .on_press(move |_: &PressEvent| retry())
-                                    .rounded_md()
+                                    .rounded_lg()
                                     .px_1()
                                     .py_0p5()
                                     .app_class("hover:bg-accent")
