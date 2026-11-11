@@ -93,22 +93,27 @@ impl PageRead {
     }
 }
 
-/// 金额语义色值表（旧壳 `packages/theme/src/semantic-colors.ts`
-/// `KIND_SEMANTIC_COLORS` 的逐值镜像，亮/暗两态自适应——色值只在此处与旧壳
-/// 各出现一份，NSH 侧不另立第二份色板：色型闭集住装配层
-/// [`assembly::AmountSemantic`]，色值映射住本函数）。
-pub(crate) fn amount_color(semantic: AmountSemantic) -> AdaptiveColor {
+/// 金额语义 → 主题令牌键（色型闭集住装配层 [`assembly::AmountSemantic`]，
+/// 键名闭集住本函数；色值住 theme.json 令牌表——issue #2100 收编后本模块
+/// 零本地色常量）。
+fn amount_token_name(semantic: AmountSemantic) -> &'static str {
     match semantic {
-        AmountSemantic::Expense => AdaptiveColor::new(rgb(0xd03050), rgb(0xe88080)),
-        AmountSemantic::Income => AdaptiveColor::new(rgb(0x18a058), rgb(0x63e2b7)),
-        AmountSemantic::Refund => AdaptiveColor::new(rgb(0x2080f0), rgb(0x63a8f2)),
-        AmountSemantic::Transfer => AdaptiveColor::new(rgb(0x722ed1), rgb(0xb37feb)),
-        AmountSemantic::Buy => AdaptiveColor::new(rgb(0xeb2f96), rgb(0xff85c0)),
-        AmountSemantic::Sell => AdaptiveColor::new(rgb(0x13c2c2), rgb(0x5cdbd3)),
-        AmountSemantic::Convert => AdaptiveColor::new(rgb(0xd48806), rgb(0xf0c060)),
-        AmountSemantic::Split => AdaptiveColor::new(rgb(0x2f54eb), rgb(0x85a5ff)),
-        AmountSemantic::Dividend => AdaptiveColor::new(rgb(0x0d9488), rgb(0x5eead4)),
+        AmountSemantic::Expense => "expense",
+        AmountSemantic::Income => "income",
+        AmountSemantic::Refund => "refund",
+        AmountSemantic::Transfer => "transfer",
+        AmountSemantic::Buy => "buy",
+        AmountSemantic::Sell => "sell",
+        AmountSemantic::Convert => "convert",
+        AmountSemantic::Split => "split",
+        AmountSemantic::Dividend => "dividend",
     }
+}
+
+/// 金额语义色（主题令牌消费，亮/暗两态自适应；读取经
+/// [`crate::theme::color`] 单点，缺失落可读兜底）。
+pub(crate) fn amount_color(semantic: AmountSemantic) -> AdaptiveColor {
+    crate::theme::color(amount_token_name(semantic))
 }
 
 /// 总数文案（与旧壳 zh-CN 词表同文案：transactions.list.total）。
@@ -164,7 +169,7 @@ pub(crate) struct CellActions {
 }
 
 /// 可点原子色（主题强调色；accounts/merchants 可点格先例同源——primary 令牌
-/// 缺失回退亮橙可读兑底）。
+/// 缺失回退亮橙可读兜底）。
 fn accent_color() -> AdaptiveColor {
     nsh_core::element::tokens()
         .color("primary")
@@ -930,7 +935,7 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
     // 账户/商户格自下钻：下钻载荷全量替换会话态（[tx_filter::drilled] 单点——
     // 旧壳 URL query「新 query 全量替换旧 query」同构），筛选下拉呈现随落位
     // 同步（挂载下钻消费 = apply_drill 后桥自会话态初始化；本路径显式回写桥
-    // 信号，同值守卫兑底不重装载）；搜索态（关键词/金额，组件本地态）随下钻
+    // 信号，同值守卫兜底不重装载）；搜索态（关键词/金额，组件本地态）随下钻
     // 归零——旧壳下钻落交易列表页即弃搜索态；装载由本路径直呼（不经防抖）。
     let self_drill = move |drill: tx_filter::DrillFilters| {
         search_text.set(String::new());

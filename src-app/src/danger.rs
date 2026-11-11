@@ -17,9 +17,9 @@
 //! Suppression 注册表（[`crate::overlay`]，快捷键抑制零新机制，ADR-0035）。
 //!
 //! 呈现面（应用内模态，非系统对话框——ADR-0078 决策 1「原生 confirm 清零」
-//! 在本壳同样成立）：遮罩层内居中卡片。warning 级的琥珀色取 Tailwind 缺省
-//! 调色板（本壳主题令牌集无 warning 档）；该级当前无壳内消费面，仅为分级
-//! 形态的构造面保留，消费票接入时再对齐旧壳观感。
+//! 在本壳同样成立）：遮罩层内居中卡片。分级色全部走主题令牌（issue #2100
+//! 收编：error = `destructive`，warning = `warning`——令牌表补档后本模块
+//! 零本地色常量，警示句前景色经 [`crate::theme::color`] 单点消费）。
 //!
 //! 测试豁免（ADR-0060）：本模块测试经 crate 根 cfg(test) 整体放行六件套。
 
@@ -68,17 +68,17 @@ pub struct DangerConfirmSpec {
 }
 
 /// 分级 → 呈现参数（纯映射单点，两级构造面闭集；UI 只消费）。前景色走
-/// 「主题令牌键 + 缺失回退」两段：令牌解析在 UI 构建期进行（需要引擎运行时），
-/// 本映射是纯数据、可离线单测——分级语义的测试面由此成立。
+/// 主题令牌（issue #2100 收编：色值住 theme.json 令牌表，读取经
+/// [`crate::theme::color`] 单点，缺失落可读兜底）——本映射只持令牌键与
+/// 令牌类，零本地色常量（分级语义的测试面由此成立）。
 struct DangerPalette {
     /// 警示块的容器类（警示块底色与描边随级）。
     alert_classes: &'static str,
     /// 警示句与确认按钮前景色的主题令牌键（nsh-base 缺省主题双态都有）。
     accent_token: &'static str,
-    /// 令牌缺失时的回退色（error：旧壳 expense 亮红——金额语义色表同值，
-    /// 可读兜底；warning：旧壳 naive-ui warning 色值，亮 #f0a020 / 暗提亮版）。
-    accent_fallback: AdaptiveColor,
-    /// 确认按钮的容器类（error 红 / warning 琥珀实色）。
+    /// 确认按钮文字的主题令牌键（实色填充上的前景，令牌表双态同白）。
+    accent_foreground_token: &'static str,
+    /// 确认按钮的容器类（error 红 / warning 琥珀实色，令牌类）。
     confirm_classes: &'static str,
 }
 
@@ -87,16 +87,14 @@ fn palette(level: DangerLevel) -> DangerPalette {
         DangerLevel::Error => DangerPalette {
             alert_classes: "rounded-md border border-destructive/30 bg-destructive/10 p-3",
             accent_token: "destructive",
-            accent_fallback: AdaptiveColor::new(rgb(0xd03050), rgb(0xe88080)),
+            accent_foreground_token: "destructive-foreground",
             confirm_classes: "bg-destructive hover:opacity-90",
         },
         DangerLevel::Warning => DangerPalette {
-            alert_classes: "rounded-md border border-amber-500/30 bg-amber-500/10 p-3",
-            // 本壳主题令牌集无 warning 档，令牌键照填、回退色承接（消费票
-            // 接入时再对齐旧壳观感，见模块注）。
+            alert_classes: "rounded-md border border-warning/30 bg-warning/10 p-3",
             accent_token: "warning",
-            accent_fallback: AdaptiveColor::new(rgb(0xf0a020), rgb(0xf2c97d)),
-            confirm_classes: "bg-amber-500 hover:opacity-90",
+            accent_foreground_token: "warning-foreground",
+            confirm_classes: "bg-warning hover:opacity-90",
         },
     }
 }
@@ -118,18 +116,12 @@ pub fn danger_confirm(
         token.report(shown);
     });
     let palette = palette(spec.level);
-    // 主题令牌（警示句/确认按钮前景色与卡片文字色；缺失时回退亮灰/中灰，
-    // 与启动视图同兜底口径）。令牌解析在 UI 构建期（引擎线程）进行。
-    let tokens = nsh_core::element::tokens();
-    let accent = tokens
-        .color(palette.accent_token)
-        .unwrap_or(palette.accent_fallback);
-    let fg = tokens
-        .color("foreground")
-        .unwrap_or_else(|| hsla(0.0, 0.0, 0.98, 1.0).into());
-    let muted = tokens
-        .color("muted-foreground")
-        .unwrap_or_else(|| hsla(0.0, 0.0, 0.45, 1.0).into());
+    // 主题令牌（警示句/确认按钮前景色与卡片文字色；缺失统一落中灰可读兜底，
+    // 兜底常量全仓唯一住在 crate::theme——本模块零本地色常量）。令牌解析在
+    // UI 构建期（引擎线程）进行。
+    let accent = crate::theme::color(palette.accent_token);
+    let fg = crate::theme::color("foreground");
+    let muted = crate::theme::color("muted-foreground");
     let cancel = move || on_outcome(DangerOutcome::Dismissed);
     when(open, move || {
         overlay()
@@ -195,7 +187,9 @@ pub fn danger_confirm(
                                         .child(
                                             text(spec.confirm_label.clone())
                                                 .test_id("danger-confirm")
-                                                .text_color(rgb(0xffffff)),
+                                                .text_color(crate::theme::color(
+                                                    palette.accent_foreground_token,
+                                                )),
                                         )
                                         .on_press(move || on_outcome(DangerOutcome::Confirmed)),
                                 ),
@@ -208,8 +202,9 @@ pub fn danger_confirm(
 mod tests {
     use super::*;
 
-    /// 两级形态的构造面闭集（ADR-0078 决策 2）：error 走 destructive 令牌类，
-    /// warning 走琥珀类；分级是封装件的一部分——删任一级的映射分支即红。
+    /// 两级形态的构造面闭集（ADR-0078 决策 2）：error 走 destructive 令牌类
+    /// 与令牌键，warning 走 warning 令牌类与令牌键（issue #2100 收编后本
+    /// 模块零本地色常量）；分级是封装件的一部分——删任一级的映射分支即红。
     #[test]
     fn both_levels_have_distinct_construction_faces() {
         let error = palette(DangerLevel::Error);
@@ -223,16 +218,16 @@ mod tests {
             "error 级确认按钮红色"
         );
         assert!(
-            warning.alert_classes.contains("amber"),
-            "warning 级警示块走琥珀类"
+            warning.alert_classes.contains("warning"),
+            "warning 级警示块走琥珀（warning）令牌类"
         );
         assert!(
-            warning.confirm_classes.contains("bg-amber"),
+            warning.confirm_classes.contains("bg-warning"),
             "warning 级确认按钮琥珀色"
         );
         assert_ne!(
-            error.accent_fallback, warning.accent_fallback,
-            "两级警示句前景色可区分"
+            error.accent_token, warning.accent_token,
+            "两级警示句前景色走不同令牌（可区分）"
         );
     }
 }

@@ -29,25 +29,25 @@ use nsh_core::prelude::*;
 use crate::assembly::{REPORT_PALETTE_LEN, category_palette_index};
 use crate::overlay;
 
-/// 分类柱色板（旧壳 `category-chart.ts` PALETTE 的逐值镜像，hex 实色不分
-/// 双态——canvas 图色随主题换色在旧壳即无此机制）：命中顺序不参与取色，
-/// 分类按 id 稳定取色，商户排行按名次序复用同一色板。槽位深度一致性由
-/// [`REPORT_PALETTE_LEN`] + 本模块单测钉住。
-const PALETTE: [u32; REPORT_PALETTE_LEN] = [
-    0x5470c6, 0x91cc75, 0xfac858, 0xee6666, 0x73c0de, 0x3ba272, 0xfc8452, 0x9a60b4, 0xea7ccc,
-    0x18a058, 0xd03050, 0x2080f0,
-];
+/// 分类柱色板（issue #2100 收编）：色值住 theme.json 令牌表（`chart-series-1`
+/// …`chart-series-12`，旧壳 `category-chart.ts` PALETTE 逐值镜像），槽位序 =
+/// 令牌序。命中顺序不参与取色，分类按 id 稳定取色，商户排行按名次序复用同
+/// 一色板。槽位深度一致性由 [`REPORT_PALETTE_LEN`] + 本模块单测钉住；读取
+/// 经 [`crate::theme::color`] 单点，本模块零本地色常量。
+fn series_token_name(index: usize) -> String {
+    format!("chart-series-{}", index % REPORT_PALETTE_LEN + 1)
+}
 
-/// 未分类柱固定灰（与真实分类一眼区分，旧壳 UNCATEGORIZED_COLOR 同值）。
+/// 未分类柱固定灰（与真实分类一眼区分，旧壳 UNCATEGORIZED_COLOR 同值；
+/// 令牌 `chart-uncategorized`，亮暗同值）。
 pub(crate) fn uncategorized_color() -> AdaptiveColor {
-    AdaptiveColor::rgb(0x909399, 0x909399)
+    crate::theme::color("chart-uncategorized")
 }
 
 /// 色板槽位 → 色值（越界回绕防崩：装配层散列已入界，越界只可能是色板长度
 /// 漂移——回绕不断渲染，而非 panic）。
 pub(crate) fn palette_color(index: usize) -> AdaptiveColor {
-    let hex = PALETTE[index % REPORT_PALETTE_LEN];
-    AdaptiveColor::rgb(hex, hex)
+    crate::theme::color(&series_token_name(index))
 }
 
 /// 商户排行名次色（旧壳 paletteColor 同口径：第 1 名 = 色板首位）。
@@ -69,15 +69,11 @@ pub(crate) fn category_color(id: &str) -> AdaptiveColor {
 const BAR_THICKNESS: f32 = 14.0;
 
 fn foreground() -> AdaptiveColor {
-    nsh_core::element::tokens()
-        .color("foreground")
-        .unwrap_or_else(|| hsla(0.0, 0.0, 0.98, 1.0).into())
+    crate::theme::color("foreground")
 }
 
 fn muted_foreground() -> AdaptiveColor {
-    nsh_core::element::tokens()
-        .color("muted-foreground")
-        .unwrap_or_else(|| hsla(0.0, 0.0, 0.45, 1.0).into())
+    crate::theme::color("muted-foreground")
 }
 
 /// 受控说明气泡 + 柱体载体（纵向与横向共用）：按压柱体开气泡、宿主关闭路径
@@ -356,24 +352,35 @@ fn horizontal_row(
 mod tests {
     use super::*;
 
-    /// 色板槽位深度 = 装配层口径常量（散列不越界的前置）、未分类灰与分类色
-    /// 不同（一眼区分的口头约定必须实质成立）。
+    /// 色板槽位深度 = 装配层口径常量（散列不越界的前置）、令牌序与槽位
+    /// 一一对应、未分类灰与分类色不同（一眼区分的口头约定必须实质成立）。
     #[test]
     fn palette_len_matches_assembly_constant_and_slots_are_stable() {
         assert_eq!(REPORT_PALETTE_LEN, 12);
-        assert_eq!(PALETTE.len(), REPORT_PALETTE_LEN);
-        // 同 id 恒同色。
-        assert_eq!(category_color("r-food"), category_color("r-food"));
-        // 越界回绕不断渲染。
+        // 槽位 → 令牌名一一对应（1..=12 逐槽在册，缺一档主题表即红）。
+        for slot in 0..REPORT_PALETTE_LEN {
+            let name = series_token_name(slot);
+            assert_eq!(name, format!("chart-series-{}", slot + 1));
+            assert!(
+                crate::theme::bundled_theme_has_token(&name),
+                "主题表缺 {name} 档"
+            );
+        }
+        // 同 id 恒同色（槽位口径稳定）。
         assert_eq!(
-            palette_color(REPORT_PALETTE_LEN),
-            palette_color(0),
+            category_palette_index("r-food"),
+            category_palette_index("r-food")
+        );
+        // 越界回绕不断渲染（防崩而非 panic）。
+        assert_eq!(
+            series_token_name(REPORT_PALETTE_LEN),
+            series_token_name(0),
             "越界回绕（防崩而非 panic）"
         );
-        assert_ne!(
-            uncategorized_color(),
-            category_color("r-food"),
-            "未分类灰 ≠ 任一分类色"
+        // 未分类灰 ≠ 任一分类色（令牌表内值级区分，离线核对）。
+        assert!(
+            crate::theme::bundled_theme_has_token("chart-uncategorized"),
+            "主题表缺未分类灰档"
         );
     }
 }

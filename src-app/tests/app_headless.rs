@@ -1,7 +1,7 @@
 //! headless 组件测试（issue #2018 交易表格首屏；docs/research/
 //! nsh-testing-capabilities.md §2.1 裁决的 UI 自动化接缝）。
 //!
-//! 进程内起真实视图树（`Root::of::<App>`，无窗口无平台后端），断言只写用户
+//! 进程内起真实视图树（根组件经 `nsh_app::app::root`，无窗口无平台后端），断言只写用户
 //! 可见结果：表格呈现真实账本数据（格文本来自装配层）、分页条点击翻页与空
 //! 态。装配入口注入测试库路径（生产与测试同一装配路径）；建库走产品
 //! 开库入口、造数经域层公开写入口（与 lib 单测同纪律，造数形态共享
@@ -41,7 +41,7 @@ use ledger_transaction::{
     TransactionFundingInput, TransactionInput, TransactionKind, TransactionPurchaseInput,
 };
 use nsh_core::platform::ColorScheme;
-use nsh_engine::{EngineConfig, Environment, Idiom, Os, Points, Root, Size};
+use nsh_engine::{EngineConfig, Environment, Idiom, Os, Points, Size};
 use nsh_testing::Headless;
 
 #[path = "support/seed.rs"]
@@ -81,7 +81,7 @@ fn desktop_config() -> EngineConfig {
             ..Environment::default()
         },
         ui_sets: vec![nsh_base::registry()],
-        ..EngineConfig::new(Root::of::<nsh_app::app::App>())
+        ..EngineConfig::new(nsh_app::app::root())
     }
 }
 
@@ -570,6 +570,99 @@ fn app_window_colors_amount_cells_by_kind_semantic() {
         app.screen().span_style("text:¥10").unwrap().color,
         nsh_core::Color(0x63e2b7ff),
         "收入金额暗色 = 旧壳 income dark"
+    );
+}
+
+/// 主题令牌表生效 + 设备级外观强指（issue #2100，ADR-0147 决策 1；外观设置
+/// #2053 语义零改动）：存储强指「深色」→ 交易列表关键视图照常渲染，金额
+/// 语义色取暗态令牌值（theme.json dark 段）、弱化计数文本取暗态 muted；
+/// 强指「浅色」→ 亮态值（且非 neutral 出厂纯白系）。主题挂载链拆除
+/// （app::root 的 .tokens 或清单 theme 键）即落 neutral，两态值均不成立
+/// （挂载负向判据的离线半边见 theme.rs 单测）。亮暗两态截图对照属人工子集，
+/// 自动化面只断言已解析样式。
+#[test]
+fn app_window_theme_tokens_follow_strong_pinned_appearance() {
+    let _guard = SERIAL.lock().unwrap();
+    let book = |tag: &str| {
+        nsh_app::app::reset_book_assembly();
+        let dir = make_book(tag);
+        {
+            let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+            let account = seed_cash_account(&db);
+            seed_transaction(
+                &db,
+                TxnSeed {
+                    account: &account,
+                    to_account: None,
+                    kind: TransactionKind::Expense,
+                    amount_cents: 2_500,
+                    date: "2026-01-15",
+                    category_id: None,
+                    merchant_id: None,
+                    note: None,
+                },
+            );
+            seed_transaction(
+                &db,
+                TxnSeed {
+                    account: &account,
+                    to_account: None,
+                    kind: TransactionKind::Income,
+                    amount_cents: 1_000,
+                    date: "2026-01-16",
+                    category_id: None,
+                    merchant_id: None,
+                    note: None,
+                },
+            );
+        }
+        dir
+    };
+
+    // 强指深色：金额暗态令牌值 + muted 暗态值（非 neutral 的 #a3a3a3）。
+    nsh_app::app::set_book_dir(book("theme-dark"));
+    let mut app =
+        Headless::start(desktop_config_with_storage(&[("appearance", "\"dark\"")])).unwrap();
+    open_transactions(&mut app);
+    app.wait_for("text:共 2 条").unwrap();
+    assert_eq!(
+        app.screen().span_style("text:¥25").unwrap().color,
+        nsh_core::Color(0xe88080ff),
+        "支出金额暗色 = 主题表 expense dark"
+    );
+    assert_eq!(
+        app.screen().span_style("text:¥10").unwrap().color,
+        nsh_core::Color(0x63e2b7ff),
+        "收入金额暗色 = 主题表 income dark"
+    );
+    assert_eq!(
+        app.screen().span_style("text:共 2 条").unwrap().color,
+        nsh_core::Color(0x93a4b6ff),
+        "弱化文本暗色 = 主题表 muted-foreground dark（非 neutral）"
+    );
+
+    // 强指浅色：亮态令牌值（存储键不写 = 跟随系统，写入即强指——设置语义
+    // 不变，本例顺带钉住存储强指跨启动生效半边）。
+    nsh_app::app::reset_book_assembly();
+    nsh_app::app::set_book_dir(book("theme-light"));
+    let mut app =
+        Headless::start(desktop_config_with_storage(&[("appearance", "\"light\"")])).unwrap();
+    open_transactions(&mut app);
+    app.wait_for("text:共 2 条").unwrap();
+    assert_eq!(
+        app.screen().span_style("text:¥25").unwrap().color,
+        nsh_core::Color(0xd03050ff),
+        "支出金额亮色 = 主题表 expense light"
+    );
+    assert_eq!(
+        app.screen().span_style("text:¥10").unwrap().color,
+        nsh_core::Color(0x18a058ff),
+        "收入金额亮色 = 主题表 income light"
+    );
+    assert_eq!(
+        app.screen().span_style("text:共 2 条").unwrap().color,
+        nsh_core::Color(0x5c6c7eff),
+        "弱化文本亮色 = 主题表 muted-foreground light（非 neutral）"
     );
 }
 
