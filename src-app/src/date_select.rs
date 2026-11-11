@@ -17,7 +17,7 @@
 use nsh_base::{DatePickerValue, date_picker, input};
 use nsh_core::prelude::*;
 
-use crate::overlay;
+use crate::{design::font_size, overlay};
 
 /// 日期文本 → 本地日历日（键入口径的单点解析）：完整 `YYYY-MM-DD` 即落值，
 /// 宽容零填充（`2026-1-5` 合法）；空白 / 残缺 / 非法日期返回 None（不静默落
@@ -32,14 +32,11 @@ pub fn date_select(id: &'static str, selected: Signal<chrono::NaiveDate>) -> imp
     let open = signal(false);
     // 键入中的原样文本（受控输入跟随键入；完整日期落值后由回显 effect 归一）。
     let typed = signal(selected.get().to_string());
-    // 主题令牌（双态自适应；令牌缺失回退亮灰/中灰可读兜底，先例同形）。
-    let tokens = nsh_core::element::tokens();
-    let fg = tokens
-        .color("foreground")
-        .unwrap_or_else(|| hsla(0.0, 0.0, 0.98, 1.0).into());
-    let muted = tokens
-        .color("muted-foreground")
-        .unwrap_or_else(|| hsla(0.0, 0.0, 0.45, 1.0).into());
+    // 主题令牌（双态自适应）：色值住 theme.json 令牌表，读取经
+    // [`crate::theme::color`] 单点，缺失落可读兜底——本模块零本地色常量
+    // （issue #2107 视觉收口）。
+    let fg = crate::theme::color("foreground");
+    let muted = crate::theme::color("muted-foreground");
 
     // 开/关上报（Overlay Suppression 注册表单一通道：追踪受控 open 信号，全
     // 关闭路径覆盖——点选 / ESC / 点外都经信号回写）；组件卸载时 Drop 自动撤销。
@@ -91,12 +88,15 @@ pub fn date_select(id: &'static str, selected: Signal<chrono::NaiveDate>) -> imp
                         .placeholder("YYYY-MM-DD")
                         .text_color(fg)
                         .app_class(
-                            "w-full bg-background rounded-md border border-border px-2 py-1 \
+                            "w-full bg-background rounded-(--radius) border border-border px-2 py-1 \
                              placeholder:text-muted-foreground",
                         )
                         .on_change(on_type),
                 )
-                .child(text("▾").text_size(px(11.0)).text_color(muted)),
+                .child(
+                    // 下拉指示字形（字阶 CAPTION 档，design.rs font_size 同源）。
+                    text("▾").text_size(px(font_size::CAPTION)).text_color(muted),
+                )
         )
 }
 
@@ -112,14 +112,11 @@ pub fn date_option_select(
     // 键入中的原样文本（键入中的残缺文本不被程序化置值覆盖；选中日变化时
     // 回显归一）。
     let typed = signal(selected.get().map(|d| d.to_string()).unwrap_or_default());
-    // 主题令牌（双态自适应；令牌缺失回退亮灰/中灰可读兜底，先例同形）。
-    let tokens = nsh_core::element::tokens();
-    let fg = tokens
-        .color("foreground")
-        .unwrap_or_else(|| hsla(0.0, 0.0, 0.98, 1.0).into());
-    let muted = tokens
-        .color("muted-foreground")
-        .unwrap_or_else(|| hsla(0.0, 0.0, 0.45, 1.0).into());
+    // 主题令牌（双态自适应）：色值住 theme.json 令牌表，读取经
+    // [`crate::theme::color`] 单点，缺失落可读兜底——本模块零本地色常量
+    // （issue #2107 视觉收口）。
+    let fg = crate::theme::color("foreground");
+    let muted = crate::theme::color("muted-foreground");
 
     let token = overlay::OverlayToken::new();
     effect(move || {
@@ -182,7 +179,7 @@ pub fn date_option_select(
                         .placeholder("YYYY-MM-DD")
                         .text_color(fg)
                         .app_class(
-                            "w-full bg-background rounded-md border border-border px-2 py-1 \
+                            "w-full bg-background rounded-(--radius) border border-border px-2 py-1 \
                              placeholder:text-muted-foreground",
                         )
                         .on_change(on_type),
@@ -191,14 +188,18 @@ pub fn date_option_select(
                     move || selected.get().is_some(),
                     move || {
                         view().on_press(move |_: &PressEvent| clear()).child(
+                            // 清空钮字形（字阶 CAPTION 档，design.rs font_size 同源）。
                             text("✕")
-                                .text_size(px(11.0))
+                                .text_size(px(font_size::CAPTION))
                                 .text_color(muted)
                                 .test_id(format!("{id}-clear").as_str()),
                         )
                     },
                 ))
-                .child(text("▾").text_size(px(11.0)).text_color(muted)),
+                .child(
+                    // 下拉指示字形（字阶 CAPTION 档，design.rs font_size 同源）。
+                    text("▾").text_size(px(font_size::CAPTION)).text_color(muted),
+                ),
         )
 }
 

@@ -1081,6 +1081,279 @@ fn app_window_shell_chrome_uses_type_scale_and_theme_tokens() {
         "引导主操作前景暗色 = 主题表 primary-foreground dark"
     );
 }
+/// 封装控件族字阶与令牌消费（issue #2107，ADR-0147 视觉收口批次）：壳内 ui
+/// 层封装件（模态弹窗、拼音可搜下拉、类型多选、轻量确认气泡、危险确认）
+/// 的字号全部落在官方字阶（[`nsh_app::design`] 同源：弹层/对话框标题 BODY
+/// 16、控件标签与选项行/气泡说明 SECONDARY 14、辅助字形与勾选/清除标记
+/// CAPTION 12），颜色经 `crate::theme::color` 单点消费（零模块级兜底色）。
+/// 亮暗双态：亮档断言（foreground/muted-foreground/destructive 亮值）+ 运行
+/// 中切暗随主题表转暗档——删除封装件侧字阶书写或令牌消费任一环即红（断言
+/// 对准已解析样式 font_size/color）。亮暗截图对照属人工子集，自动化面只断
+/// 言已解析样式。
+#[test]
+fn app_window_wrapper_family_uses_type_scale_and_theme_tokens() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("wrapper-family");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        seed::seed_expense_notes(&db, &["封装族探针一笔", "封装族探针二笔"]);
+        let tea = seed_category(&db, "茶饮", None);
+        seed_budget(&db, &tea, 50_000, ledger_budget::BudgetPeriod::Monthly);
+    }
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_transactions(&mut app);
+    app.wait_for("text:共 2 条").unwrap();
+
+    // —— 亮态 ——
+
+    // 拼音可搜下拉（账户筛选）：占位文案 = SECONDARY 14 + muted-foreground
+    // 亮档；开弹层 → 选项行 = SECONDARY 14 + foreground 亮档；选中即关，
+    // 清除钮字形 = CAPTION 12。
+    assert_eq!(
+        app.screen()
+            .span_style("id:tx-filter-account >> text:账户")
+            .unwrap()
+            .font_size,
+        Points(14.0),
+        "下拉占位文案字号 = 字阶 SECONDARY"
+    );
+    assert_eq!(
+        app.screen()
+            .span_style("id:tx-filter-account >> text:账户")
+            .unwrap()
+            .color,
+        nsh_core::Color(0x5c6c7eff),
+        "占位弱化色 = muted-foreground 亮档（主题单点消费）"
+    );
+    app.press("id:tx-filter-account").unwrap();
+    app.wait_for("id:tx-filter-account-search").unwrap();
+    assert_eq!(
+        app.screen()
+            .span_style("id:tx-filter-account-option >> text:测试现金")
+            .unwrap()
+            .font_size,
+        Points(14.0),
+        "选项行字号 = 字阶 SECONDARY"
+    );
+    assert_eq!(
+        app.screen()
+            .span_style("id:tx-filter-account-option >> text:测试现金")
+            .unwrap()
+            .color,
+        nsh_core::Color(0x182635ff),
+        "选项行前景 = foreground 亮档（主题单点消费）"
+    );
+    app.press("id:tx-filter-account-option >> text:测试现金")
+        .unwrap();
+    app.wait_for_gone("id:tx-filter-account-search", DEFAULT_WAIT)
+        .unwrap();
+    app.settle();
+    // 清除钮字形（字阶 CAPTION）：屏上两个可清空拼音下拉（账户/商户）各一
+    // 枚 ✕，同一封装同规格——任取第一枚断言。span 匹配用内容（button 内文本
+    // 节点不按 test_id 寻址，text:/scope + text: 为既证形态）。
+    assert_eq!(
+        app.screen()
+            .span_style("text:✕ >> nth=0")
+            .unwrap()
+            .font_size,
+        Points(12.0),
+        "清除钮字形字号 = 字阶 CAPTION"
+    );
+
+    // 类型多选：选项行 = SECONDARY 14；切换勾选（弹层不关）→ 已选触发件前景
+    // = foreground 亮档；勾选标记（行体随选项键控重建，重开弹层呈现）=
+    // CAPTION 12。
+    app.press("id:tx-filter-kind-trigger").unwrap();
+    app.wait_for("id:tx-filter-kind-option").unwrap();
+    assert_eq!(
+        app.screen()
+            .span_style("id:tx-filter-kind-option >> text:支出")
+            .unwrap()
+            .font_size,
+        Points(14.0),
+        "多选选项行字号 = 字阶 SECONDARY"
+    );
+    app.press("id:tx-filter-kind-option >> text:支出").unwrap();
+    assert_eq!(
+        app.screen()
+            .span_style("id:tx-filter-kind-trigger >> text:支出")
+            .unwrap()
+            .color,
+        nsh_core::Color(0x182635ff),
+        "已选触发件前景 = foreground 亮档"
+    );
+    // 勾选标记呈现：ESC 收闭弹层（弹层开着时 ESC 走抑制闸门，不触发全局筛选
+    // 复位）→ 重开 → 行体重建带 ✓。
+    app.press_key("escape").unwrap();
+    app.wait_for_gone("id:tx-filter-kind-option", DEFAULT_WAIT)
+        .unwrap();
+    app.press("id:tx-filter-kind-trigger").unwrap();
+    app.wait_for("id:tx-filter-kind-option").unwrap();
+    assert_eq!(
+        app.screen()
+            .span_style("id:tx-filter-kind-option >> text:✓")
+            .unwrap()
+            .font_size,
+        Points(12.0),
+        "勾选标记字号 = 字阶 CAPTION"
+    );
+    // 收尾复位：再切一次取消勾选（弹层保持开），ESC 收闭（无筛选残留）。
+    app.press("id:tx-filter-kind-option >> text:支出").unwrap();
+    app.press_key("escape").unwrap();
+    app.wait_for_gone("id:tx-filter-kind-option", DEFAULT_WAIT)
+        .unwrap();
+
+    // 危险确认对话框（error 级）：标题 = BODY 16、说明段 = SECONDARY 14 +
+    // muted 亮档、警示句 = SECONDARY 14 + destructive 亮档、确认钮前景 =
+    // destructive-foreground。
+    app.right_click("text:2026-01-01").unwrap();
+    app.choose_menu_item("删除").unwrap();
+    app.wait_for("text:删除交易").unwrap();
+    assert_eq!(
+        app.screen().span_style("text:删除交易").unwrap().font_size,
+        Points(16.0),
+        "对话框标题字号 = 字阶 BODY"
+    );
+    assert_eq!(
+        app.screen()
+            .span_style("text:确认删除该条交易？")
+            .unwrap()
+            .font_size,
+        Points(14.0),
+        "说明段字号 = 字阶 SECONDARY"
+    );
+    assert_eq!(
+        app.screen()
+            .span_style("text:确认删除该条交易？")
+            .unwrap()
+            .color,
+        nsh_core::Color(0x5c6c7eff),
+        "说明段弱化色 = muted-foreground 亮档"
+    );
+    assert_eq!(
+        app.screen()
+            .span_style("text:删除后不可恢复。")
+            .unwrap()
+            .font_size,
+        Points(14.0),
+        "警示句字号 = 字阶 SECONDARY"
+    );
+    assert_eq!(
+        app.screen()
+            .span_style("text:删除后不可恢复。")
+            .unwrap()
+            .color,
+        nsh_core::Color(0xd03050ff),
+        "警示句色 = destructive 亮档（分级令牌消费）"
+    );
+    assert_eq!(
+        app.screen()
+            .span_style("id:danger-dialog >> text:取消")
+            .unwrap()
+            .font_size,
+        Points(14.0),
+        "对话框按钮字号 = 字阶 SECONDARY"
+    );
+    app.press("id:danger-cancel").unwrap();
+    app.wait_for_gone("text:删除交易", DEFAULT_WAIT).unwrap();
+
+    // 模态弹窗（记一笔）：标题 = BODY 16、✕ 关闭钮 = SECONDARY 14。
+    open_create_form(&mut app, "id:tx-add-expense", "记一笔 · 支出");
+    assert_eq!(
+        app.screen()
+            .span_style("text:记一笔 · 支出")
+            .unwrap()
+            .font_size,
+        Points(16.0),
+        "弹窗标题字号 = 字阶 BODY"
+    );
+    assert_eq!(
+        app.screen()
+            .span_style("id:app-modal >> text:✕ >> nth=0")
+            .unwrap()
+            .font_size,
+        Points(14.0),
+        "✕ 关闭钮字号 = 字阶 SECONDARY"
+    );
+    app.press("id:tx-form-cancel").unwrap();
+    app.wait_for_gone("id:app-modal", DEFAULT_WAIT).unwrap();
+
+    // 轻量确认气泡（预算删除）：说明 = SECONDARY 14 + foreground 亮档、两键
+    // = CAPTION 12。
+    app.press("id:nav-budget").unwrap();
+    app.wait_for("text:500").unwrap();
+    app.press("id:budget-delete").unwrap();
+    app.wait_for("text:确认删除？").unwrap();
+    assert_eq!(
+        app.screen()
+            .span_style("text:确认删除？")
+            .unwrap()
+            .font_size,
+        Points(14.0),
+        "气泡说明字号 = 字阶 SECONDARY"
+    );
+    assert_eq!(
+        app.screen().span_style("text:确认删除？").unwrap().color,
+        nsh_core::Color(0x182635ff),
+        "气泡说明前景 = foreground 亮档"
+    );
+    assert_eq!(
+        app.screen().span_style("text:取消").unwrap().font_size,
+        Points(12.0),
+        "气泡按钮字号 = 字阶 CAPTION"
+    );
+    app.press("id:budget-del-cancel").unwrap();
+    app.wait_for_gone("text:确认删除？", DEFAULT_WAIT).unwrap();
+
+    // —— 切暗（运行中切换，同一会话）：封装件颜色随主题表转暗档 ——
+    app.set_environment("dark mode", |env| env.color_scheme = ColorScheme::Dark)
+        .unwrap();
+
+    // 回交易视图重开账户下拉：已选触发件前景与选项行前景 = 暗档。
+    app.press("id:nav-transactions").unwrap();
+    app.wait_for("id:tx-table").unwrap();
+    assert_eq!(
+        app.screen()
+            .span_style("id:tx-filter-account >> text:测试现金")
+            .unwrap()
+            .color,
+        nsh_core::Color(0xe6edf4ff),
+        "已选触发件前景 = foreground 暗档"
+    );
+    app.press("id:tx-filter-account").unwrap();
+    app.wait_for("id:tx-filter-account-search").unwrap();
+    assert_eq!(
+        app.screen()
+            .span_style("id:tx-filter-account-option >> text:测试现金")
+            .unwrap()
+            .color,
+        nsh_core::Color(0xe6edf4ff),
+        "选项行前景 = foreground 暗档"
+    );
+    app.press("id:tx-filter-account-option >> text:测试现金")
+        .unwrap();
+    app.wait_for_gone("id:tx-filter-account-search", DEFAULT_WAIT)
+        .unwrap();
+
+    // 危险确认对话框暗态：警示句随分级令牌转暗档（亮 0xd03050 → 暗
+    // 0xe88080）——主题单点消费的判别性证据。
+    app.right_click("text:2026-01-01").unwrap();
+    app.choose_menu_item("删除").unwrap();
+    app.wait_for("text:删除交易").unwrap();
+    assert_eq!(
+        app.screen()
+            .span_style("text:删除后不可恢复。")
+            .unwrap()
+            .color,
+        nsh_core::Color(0xe88080ff),
+        "警示句色 = destructive 暗档"
+    );
+    app.press("id:danger-cancel").unwrap();
+    app.wait_for_gone("text:删除交易", DEFAULT_WAIT).unwrap();
+}
 
 /// 分类路径与备注列接线（issue #2019）：父子分类的支出行呈现「父 > 子」路径
 /// 与备注原文；无分类无备注行落 `-`。删掉分类读接缝、路径装配或列映射任一环
