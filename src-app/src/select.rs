@@ -16,7 +16,7 @@
 use nsh_base::{PopoverEvent, button, popover};
 use nsh_core::prelude::*;
 
-use crate::{assembly::CategoryOption, overlay};
+use crate::{assembly::CategoryOption, design::font_size, overlay};
 
 /// 触发件锚点（headless `id:` 选择器用）。
 pub(crate) const TRIGGER_ID_SUFFIX: &str = "-trigger";
@@ -47,14 +47,11 @@ pub fn app_select(
     let prefix_option = format!("{}{}", id_prefix, OPTION_ID_SUFFIX);
     let prefix_clear = format!("{}{}", id_prefix, CLEAR_ID_SUFFIX);
     let open = signal(false);
-    // 主题令牌（双态自适应；令牌缺失回退亮灰/中灰可读兜底，先例同形）。
-    let tokens = nsh_core::element::tokens();
-    let fg = tokens
-        .color("foreground")
-        .unwrap_or_else(|| hsla(0.0, 0.0, 0.98, 1.0).into());
-    let muted = tokens
-        .color("muted-foreground")
-        .unwrap_or_else(|| hsla(0.0, 0.0, 0.45, 1.0).into());
+    // 主题令牌（双态自适应）：色值住 theme.json 令牌表，读取经
+    // [`crate::theme::color`] 单点，缺失落可读兜底——本模块零本地色常量
+    // （issue #2107 视觉收口）。
+    let fg = crate::theme::color("foreground");
+    let muted = crate::theme::color("muted-foreground");
 
     // 开/关上报（Overlay Suppression 注册表单一通道：追踪受控 open 信号，全
     // 关闭路径覆盖）；组件卸载时 Drop 自动撤销（卸载兜底）。
@@ -89,21 +86,26 @@ pub fn app_select(
                         open.set(shown);
                     }
                 })
-                .popup_class("bg-background border border-border rounded-md shadow-md p-1")
+                .popup_class("bg-background border border-border rounded-(--radius) shadow-md p-1")
                 .trigger(
                     view().test_id(prefix_trigger.as_str()).child(
                         button()
-                            .app_class("px-2 py-1 rounded-md border border-border hover:bg-accent")
+                            .app_class(
+                                "px-2 py-1 rounded-(--radius) border border-border hover:bg-accent",
+                            )
                             .flex_row()
                             .items_center()
                             .gap_1()
                             .min_w(px(160.0))
                             .on_press(move |_: &()| open.set(true))
                             .child(
+                                // 触发件文案（字阶 SECONDARY 档，design.rs font_size
+                                // 同源——DESIGN.md §3 「菜单/控件标签」档；占位态
+                                // 呈弱化色）。
                                 text(move || {
                                     selected_label().unwrap_or_else(|| placeholder.to_owned())
                                 })
-                                .text_size(px(13.0))
+                                .text_size(px(font_size::SECONDARY))
                                 .text_color(move || {
                                     if selected_label().is_some() {
                                         fg
@@ -114,7 +116,11 @@ pub fn app_select(
                                 .number_of_lines(1)
                                 .test_id(prefix_value.as_str()),
                             )
-                            .child(text("▾").text_size(px(11.0)).text_color(muted)),
+                            .child(
+                                text("▾")
+                                    .text_size(px(font_size::CAPTION))
+                                    .text_color(muted),
+                            ),
                     ),
                 )
                 .child(each(
@@ -125,12 +131,12 @@ pub fn app_select(
                         view().test_id(prefix_option.as_str()).child(
                             button()
                                 .app_class(
-                                    "w-full px-2 py-1 rounded-md text-left text-foreground \
+                                    "w-full px-2 py-1 rounded-(--radius) text-left text-foreground \
                                          hover:bg-accent selected:bg-accent",
                                 )
                                 .child(
                                     text(option.label.clone())
-                                        .text_size(px(13.0))
+                                        .text_size(px(font_size::SECONDARY))
                                         .text_color(fg),
                                 )
                                 .on_press(move |_: &()| choose(option.clone())),
@@ -146,10 +152,10 @@ pub fn app_select(
                 move || {
                     button()
                         .accessibility_label("清除")
-                        .app_class("px-1 py-0.5 rounded-md text-muted-foreground hover:bg-accent")
+                        .app_class("px-1 py-0.5 rounded-sm text-muted-foreground hover:bg-accent")
                         .child(
                             text("✕")
-                                .text_size(px(11.0))
+                                .text_size(px(font_size::CAPTION))
                                 .text_color(muted)
                                 .test_id(prefix_clear.as_str()),
                         )

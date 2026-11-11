@@ -19,6 +19,7 @@
 use nsh_base::{PopoverEvent, popover};
 use nsh_core::prelude::*;
 
+use crate::design::font_size;
 use crate::overlay;
 
 /// 气泡说明文案锚点后缀（headless `id:` 选择器用；调用方给前缀）。
@@ -51,7 +52,7 @@ pub fn popover_tip(
                 open.set(shown);
             }
         })
-        .popup_class("bg-background border border-border rounded-md shadow-md p-3")
+        .popup_class("bg-background border border-border rounded-(--radius) shadow-md p-3")
         .trigger(
             view()
                 // test_id 落在按压包裹视图上（headless id: 锚点须命中可按压
@@ -70,11 +71,12 @@ pub fn popover_tip(
                 // 锚点落首行文本（headless id: 选择器匹配文本节点；容器无
                 // 文本锚点不可寻址——popconfirm 单行文本同形）。
                 .children(lines.into_iter().enumerate().map(|(index, line)| {
-                    let line_text = text(line).text_size(px(12.0)).text_color(
-                        nsh_core::element::tokens()
-                            .color("foreground")
-                            .unwrap_or_else(|| hsla(0.0, 0.0, 0.98, 1.0).into()),
-                    );
+                    // 说明行（字阶 CAPTION 档，design.rs font_size 同源——DESIGN.md
+                    // §3 「辅助小字」下限档）；前景经 [`crate::theme::color`] 单点
+                    // 消费（零本地色常量）。
+                    let line_text = text(line)
+                        .text_size(px(font_size::CAPTION))
+                        .text_color(crate::theme::color("foreground"));
                     if index == 0 {
                         line_text.test_id(message_id.as_str())
                     } else {

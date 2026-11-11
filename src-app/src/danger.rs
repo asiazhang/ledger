@@ -27,6 +27,7 @@ use nsh_base::button;
 use nsh_core::element::FontWeight;
 use nsh_core::prelude::*;
 
+use crate::design::font_size;
 use crate::overlay;
 
 /// 分级（ADR-0078 决策 2 的形态闭集）。
@@ -85,13 +86,15 @@ struct DangerPalette {
 fn palette(level: DangerLevel) -> DangerPalette {
     match level {
         DangerLevel::Error => DangerPalette {
-            alert_classes: "rounded-md border border-destructive/30 bg-destructive/10 p-3",
+            // 警示块：弹层卡内的嵌套面——圆角取小面半档（DESIGN.md §4 同心
+            // 规则：内层 ≈ max(0, 外层 − 层间缝)，卡 8 − 卡内缝 → rounded-sm）。
+            alert_classes: "rounded-sm border border-destructive/30 bg-destructive/10 p-3",
             accent_token: "destructive",
             accent_foreground_token: "destructive-foreground",
             confirm_classes: "bg-destructive hover:opacity-90",
         },
         DangerLevel::Warning => DangerPalette {
-            alert_classes: "rounded-md border border-warning/30 bg-warning/10 p-3",
+            alert_classes: "rounded-sm border border-warning/30 bg-warning/10 p-3",
             accent_token: "warning",
             accent_foreground_token: "warning-foreground",
             confirm_classes: "bg-warning hover:opacity-90",
@@ -136,34 +139,42 @@ pub fn danger_confirm(
                 // ESC（弹层关闭语义）→ 放弃。
                 .on_cancel(cancel)
                 .child(
-                    // 卡片（旧壳 cardSize md 分档的近形：限宽、圆角、描边）。
+                    // 卡片（弹层面）：限宽、主题令牌圆角基档（8pt）、描边。
                     view()
                         .test_id("danger-dialog")
                         .flex_col()
                         .gap_3()
-                        .app_class("bg-background rounded-md border border-border shadow-lg p-4 w-80")
+                        .app_class("bg-background rounded-(--radius) border border-border shadow-lg p-4 w-80")
                         .child(
+                            // 对话框标题（字阶 BODY 档，design.rs font_size 同源）。
                             text(spec.title.clone())
-                                .text_size(px(16.0))
+                                .text_size(px(font_size::BODY))
                                 .font_weight(FontWeight::SEMIBOLD)
                                 .text_color(fg),
                         )
                         .children(spec.lead.clone().map(|lead| {
-                            text(lead).text_size(px(13.0)).text_color(muted)
+                            // 说明段（字阶 SECONDARY 档，DESIGN.md §3 「次要正文」）。
+                            text(lead)
+                                .text_size(px(font_size::SECONDARY))
+                                .text_color(muted)
                         }))
                         .children(spec.strong_warning.clone().map(|warning| {
                             view()
                                 .flex_col()
                                 .app_class(palette.alert_classes)
                                 .child(
+                                    // 警示句（字阶 SECONDARY 档，design.rs font_size 同源）。
                                     text(warning)
-                                        .text_size(px(13.0))
+                                        .text_size(px(font_size::SECONDARY))
                                         .font_weight(FontWeight::BOLD)
                                         .text_color(accent),
                                 )
                         }))
                         .children(spec.detail.clone().map(|detail| {
-                            text(detail).text_size(px(13.0)).text_color(muted)
+                            // 补充说明段（字阶 SECONDARY 档）。
+                            text(detail)
+                                .text_size(px(font_size::SECONDARY))
+                                .text_color(muted)
                         }))
                         .child(
                             view()
@@ -171,21 +182,30 @@ pub fn danger_confirm(
                                 .justify_end()
                                 .gap_2()
                                 .child(
+                                    // 次动作钮（h-8 32pt 默认档 + px-3，6pt 半步
+                                    // py-1.5 退役；文字 = 字阶 SECONDARY 档——
+                                    // DESIGN.md §6 控件高度/§3 按钮，txn_form 同形）。
                                     button()
                                         .app_class(
-                                            "px-3 py-1.5 rounded-md border border-border text-foreground hover:bg-accent",
+                                            "h-8 px-3 rounded-(--radius) border border-border text-foreground hover:bg-accent",
                                         )
-                                        .child(text(spec.cancel_label.clone()).test_id("danger-cancel").text_color(fg))
+                                        .child(
+                                            text(spec.cancel_label.clone())
+                                                .text_size(px(font_size::SECONDARY))
+                                                .test_id("danger-cancel")
+                                                .text_color(fg),
+                                        )
                                         .on_press(cancel),
                                 )
                                 .child(
                                     button()
                                         .app_class(format!(
-                                            "px-3 py-1.5 rounded-md {}",
+                                            "h-8 px-3 rounded-(--radius) {}",
                                             palette.confirm_classes
                                         ))
                                         .child(
                                             text(spec.confirm_label.clone())
+                                                .text_size(px(font_size::SECONDARY))
                                                 .test_id("danger-confirm")
                                                 .text_color(crate::theme::color(
                                                     palette.accent_foreground_token,

@@ -17,6 +17,7 @@ use nsh_base::button;
 use nsh_core::element::FontWeight;
 use nsh_core::prelude::*;
 
+use crate::design::font_size;
 use crate::overlay;
 
 /// 弹层内容锚点（headless `id:` 选择器用）。
@@ -43,14 +44,11 @@ pub fn app_modal(
         let shown = open();
         token.report(shown);
     });
-    // 主题令牌（双态自适应；令牌缺失回退亮灰/中灰可读兜底，app.rs 先例同形）。
-    let tokens = nsh_core::element::tokens();
-    let fg = tokens
-        .color("foreground")
-        .unwrap_or_else(|| hsla(0.0, 0.0, 0.98, 1.0).into());
-    let muted = tokens
-        .color("muted-foreground")
-        .unwrap_or_else(|| hsla(0.0, 0.0, 0.45, 1.0).into());
+    // 主题令牌（双态自适应）：色值住 theme.json 令牌表，读取经
+    // [`crate::theme::color`] 单点，缺失落可读兜底——本模块零本地色常量
+    // （issue #2107 视觉收口）。
+    let fg = crate::theme::color("foreground");
+    let muted = crate::theme::color("muted-foreground");
     when(open, move || {
         overlay()
             .inset_0()
@@ -73,7 +71,7 @@ pub fn app_modal(
                             .flex_1()
                             .gap_3()
                             .app_class(
-                                "bg-background rounded-md border border-border shadow-lg p-4",
+                                "bg-background rounded-(--radius) border border-border shadow-lg p-4",
                             )
                             .child(title_row(fg, muted, title, on_close))
                             .child(scroll().flex_1().flex_col().child(content())),
@@ -92,7 +90,7 @@ pub fn app_modal(
                                 .gap_3()
                                 .w(px(420.0))
                                 .app_class(
-                                    "bg-background rounded-md border border-border shadow-lg p-4",
+                                    "bg-background rounded-(--radius) border border-border shadow-lg p-4",
                                 )
                                 .child(title_row(fg, muted, title, on_close))
                                 .child(content()),
@@ -115,19 +113,23 @@ fn title_row(
         .items_center()
         .justify_between()
         .child(
+            // 弹窗标题（字阶 BODY 档，design.rs font_size 同源——DESIGN.md §3
+            // 「页面/卡片标题」档）。
             text(title())
-                .text_size(px(16.0))
+                .text_size(px(font_size::BODY))
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_color(fg)
                 .test_id(MODAL_TITLE_ID),
         )
         .child(
+            // ✕ 关闭钮（小幽灵钮：圆角半档 rounded-sm，txn_form 同形小钮；
+            // 字形 = 字阶 SECONDARY 档）。
             button()
                 .accessibility_label("关闭")
-                .app_class("px-2 py-0.5 rounded-md text-muted-foreground hover:bg-accent")
+                .app_class("px-2 py-0.5 rounded-sm text-muted-foreground hover:bg-accent")
                 .child(
                     text("✕")
-                        .text_size(px(13.0))
+                        .text_size(px(font_size::SECONDARY))
                         .text_color(muted)
                         .test_id(MODAL_CLOSE_ID),
                 )
