@@ -13353,6 +13353,91 @@ fn investments_view_overview_lands_with_period_numbers() {
     );
 }
 
+/// 投资域视图亮暗双态探针（issue #2102，ADR-0147 决策 1/4）：概览页签的
+/// 盈亏语义色与 Hero 字号在亮、暗两态都解析自主题令牌表 + 字阶常量——
+/// 累计收益正值取 expense 档亮/暗值（pane_palette 单点消费
+/// theme::color）、持仓收益零值照 Gain 档同表、卡标题取中性前景、Hero
+/// 取 TITLE 档 20pt、币种弱化标注取 muted-foreground 暗态值。删除即红：
+/// 拆主题挂载（nsh.json theme 键）→ 令牌缺失落兑底灰，expense 断言红；
+/// 字号硬编码（非字阶常量）→ TITLE 断言红。亮暗两态截图对照归人工子集
+/// （DESIGN.md §8），自动化面只断言已解析样式（#2100 探针同口径）。
+#[test]
+fn investments_view_semantic_tokens_follow_theme_scale_in_light_and_dark() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = seed_investments_book("invest-theme-light-dark");
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+
+    open_investments(&mut app);
+
+    // 亮态（出厂默认）：累计收益 ¥122.95 正值 → expense 亮档；总市值
+    // （非盈亏量）→ 中性前景；Hero 与币种标注随主题前景/弱化前景。
+    app.wait_for("text:¥122.95").unwrap();
+    app.wait_for("id:overview-hero-value").unwrap();
+    let hero = app.screen().span_style("text:¥132.95").unwrap();
+    assert_eq!(
+        hero.color,
+        nsh_core::Color(0x182635ff),
+        "Hero 前景 = 主题表 foreground 亮档"
+    );
+    assert!(
+        (hero.font_size.0 - 20.0).abs() < 0.01,
+        "Hero 字号 = 字阶 TITLE 档 20pt，实际 {}",
+        hero.font_size
+    );
+    assert_eq!(
+        app.screen().span_style("text:¥122.95").unwrap().color,
+        nsh_core::Color(0xd03050ff),
+        "累计收益正值亮色 = 主题表 expense 亮档（红涨）"
+    );
+    assert_eq!(
+        app.screen().span_style("text:投资概览").unwrap().color,
+        nsh_core::Color(0x182635ff),
+        "卡标题中性前景亮档（palette.fg）"
+    );
+    assert_eq!(
+        app.screen().span_style("text:¥0").unwrap().color,
+        nsh_core::Color(0xd03050ff),
+        "持仓收益零值照 Gain 档（pnl_semantic ≥0 为涨）= expense 亮档"
+    );
+
+    // 系统切暗色：语义色随 expense 暗档，弱化标注随 muted-foreground 暗档。
+    app.set_environment("dark mode", |env| env.color_scheme = ColorScheme::Dark)
+        .unwrap();
+    let hero_dark = app.screen().span_style("text:¥132.95").unwrap();
+    assert_eq!(
+        hero_dark.color,
+        nsh_core::Color(0xe6edf4ff),
+        "Hero 前景暗色 = 主题表 foreground 暗档"
+    );
+    assert!(
+        (hero_dark.font_size.0 - 20.0).abs() < 0.01,
+        "Hero 字号暗态同字阶 TITLE 档 20pt，实际 {}",
+        hero_dark.font_size
+    );
+    assert_eq!(
+        app.screen().span_style("text:¥122.95").unwrap().color,
+        nsh_core::Color(0xe88080ff),
+        "累计收益正值暗色 = 主题表 expense 暗档"
+    );
+    assert_eq!(
+        app.screen().span_style("text:投资概览").unwrap().color,
+        nsh_core::Color(0xe6edf4ff),
+        "卡标题中性前景暗档（palette.fg）"
+    );
+    assert_eq!(
+        app.screen().span_style("text:¥0").unwrap().color,
+        nsh_core::Color(0xe88080ff),
+        "持仓收益零值暗色照 Gain 档 = expense 暗档"
+    );
+    assert_eq!(
+        app.screen().span_style("text:本位币 CNY").unwrap().color,
+        nsh_core::Color(0x93a4b6ff),
+        "币种弱化标注暗色 = 主题表 muted-foreground 暗档"
+    );
+}
+
 /// 空账本引导：可投资资产 ¥0、构成条不渲染（空轨道不呈现）、无投资账户
 /// 引导句在屏（不隐藏功能，旧壳 overview.noAccount 同词）。删除 view_host
 /// 挂载分支即红（同上）。

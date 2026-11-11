@@ -59,6 +59,7 @@ use nsh_core::element::desktop::MenuItem;
 use nsh_core::prelude::*;
 
 use crate::assembly::CategoryOption;
+use crate::design::font_size;
 use crate::investments::PanePalette;
 use crate::{
     app, assembly, boot, context_menu, danger, investments, investments_form, modal, multi_select,
@@ -770,7 +771,7 @@ pub(crate) fn LedgerPane() -> impl IntoElement {
                     .app_class("hover:bg-accent disabled:opacity-40")
                     .child(
                         text(CLEAR_FILTERS)
-                            .text_size(px(12.0))
+                            .text_size(px(font_size::CAPTION))
                             .text_color(palette.fg),
                     ),
             )
@@ -799,8 +800,8 @@ pub(crate) fn LedgerPane() -> impl IntoElement {
                             .app_class("bg-primary hover:opacity-90")
                             .child(
                                 text(CREATE_BUY)
-                                    .text_size(px(12.0))
-                                    .text_color(rgb(0xffffff)),
+                                    .text_size(px(font_size::CAPTION))
+                                    .text_color(crate::theme::color("primary-foreground")),
                             ),
                     )
                     .child(
@@ -821,8 +822,8 @@ pub(crate) fn LedgerPane() -> impl IntoElement {
                             .app_class("bg-primary hover:opacity-90")
                             .child(
                                 text(CREATE_SELL)
-                                    .text_size(px(12.0))
-                                    .text_color(rgb(0xffffff)),
+                                    .text_size(px(font_size::CAPTION))
+                                    .text_color(crate::theme::color("primary-foreground")),
                             ),
                     ),
             )
@@ -898,7 +899,7 @@ pub(crate) fn LedgerPane() -> impl IntoElement {
                     move || delete_feedback.get().is_some(),
                     move || {
                         text(move || delete_feedback.get().unwrap_or_default())
-                            .text_size(px(12.0))
+                            .text_size(px(font_size::CAPTION))
                             .text_color(palette.fg)
                             .test_id("ledger-delete-status")
                     },
@@ -915,7 +916,7 @@ pub(crate) fn LedgerPane() -> impl IntoElement {
                                 delete_error.get().unwrap_or_default()
                             )
                         })
-                        .text_size(px(12.0))
+                        .text_size(px(font_size::CAPTION))
                         .text_color(palette.danger)
                         .test_id("ledger-delete-error")
                     },
@@ -950,7 +951,7 @@ pub(crate) fn LedgerPane() -> impl IntoElement {
                     .gap_3()
                     .child(
                         text(move || TOTAL_TEXT_FMT.replace("{n}", &total.get().to_string()))
-                            .text_size(px(12.0))
+                            .text_size(px(font_size::CAPTION))
                             .text_color(palette.muted)
                             .test_id("ledger-total"),
                     )
@@ -1000,7 +1001,7 @@ pub(crate) fn LedgerPane() -> impl IntoElement {
                 .app_class("border border-border bg-background")
                 .child(
                     text(investments::LEDGER_TAB_LABEL)
-                        .text_size(px(15.0))
+                        .text_size(px(font_size::LEADING))
                         .text_color(palette.fg)
                         .test_id("ledger-title"),
                 )
@@ -1035,7 +1036,7 @@ pub(crate) fn LedgerPane() -> impl IntoElement {
                         move || trade_form.load_error.get().is_some(),
                         move || {
                             text(move || trade_form.load_error.get().unwrap_or_default())
-                                .text_size(px(12.0))
+                                .text_size(px(font_size::CAPTION))
                                 .text_color(palette.danger)
                                 .test_id("ledger-trade-load-error")
                                 .app_class("px-4 py-1")
@@ -1188,7 +1189,7 @@ fn detail_modal(
                 .gap_2()
                 .child(
                     text(kind_word.unwrap_or_default())
-                        .text_size(px(12.0))
+                        .text_size(px(font_size::CAPTION))
                         .text_color(muted)
                         .test_id("ledger-detail-kind"),
                 )
@@ -1199,8 +1200,16 @@ fn detail_modal(
                         .items_center()
                         .gap_2()
                         .test_id(label_id.as_str())
-                        .child(text(label).text_size(px(12.0)).text_color(muted))
-                        .child(text(value).text_size(px(13.0)).text_color(fg))
+                        .child(
+                            text(label)
+                                .text_size(px(font_size::CAPTION))
+                                .text_color(muted),
+                        )
+                        .child(
+                            text(value)
+                                .text_size(px(font_size::SECONDARY))
+                                .text_color(fg),
+                        )
                 }))
         },
     )
