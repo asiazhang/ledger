@@ -167,7 +167,7 @@ pub(crate) fn period_row(
 
     // 键位提示（交易列表内嵌 `,`/`.`，ADR-0141；搜索视图无快捷键 → 无子元素）。
     let key_hint = |hint: &'static str| -> Option<View> {
-        key_hints.then(|| view().child(text(hint).text_size(px(11.0)).text_color(muted)))
+        key_hints.then(|| view().child(text(hint).text_xs().text_color(muted)))
     };
 
     let row = view()
@@ -181,7 +181,7 @@ pub(crate) fn period_row(
             button()
                 .disabled(move || !can_step_prev.get())
                 .accessibility_label("上一个周期")
-                .app_class("px-2 py-1 rounded-md text-foreground hover:bg-accent disabled:opacity-40")
+                .app_class("px-2 py-1 rounded-(--radius) text-foreground hover:bg-accent disabled:opacity-40")
                 .flex_row()
                 .items_center()
                 .gap_1()
@@ -202,18 +202,18 @@ pub(crate) fn period_row(
                         period_open.set(open);
                     }
                 })
-                .popup_class("bg-background border border-border rounded-md shadow-md p-1")
+                .popup_class("bg-background border border-border rounded-(--radius) shadow-md p-1")
                 .trigger(
                     // test_id 载体视图（组件元素无 test_id 槽，先例 tx-pagination 的
                     // 载体形态）；headless 经 id: 锚点命中载体、物理命中到内层按钮。
                     view().test_id(format!("{prefix}-label").as_str()).child(
                         button()
-                            .app_class("px-2 py-1 rounded-md text-foreground hover:bg-accent")
+                            .app_class("px-2 py-1 rounded-(--radius) text-foreground hover:bg-accent")
                             .flex_row()
                             .items_center()
                             .gap_1()
                             .child(text(move || period_label_text(cursor.get())).text_color(fg))
-                            .child(text("▾").text_size(px(11.0)).text_color(muted)),
+                            .child(text("▾").text_xs().text_color(muted)),
                     ),
                 )
                 .child(
@@ -226,7 +226,7 @@ pub(crate) fn period_row(
                             button()
                                 .selected(move || match_preset_now(range.get(), preset))
                                 .app_class(
-                                    "px-2 py-1 rounded-md text-foreground hover:bg-accent selected:bg-accent",
+                                    "px-2 py-1 rounded-(--radius) text-foreground hover:bg-accent selected:bg-accent",
                                 )
                                 .child(
                                     text(period::preset_label(preset)).test_id(
@@ -245,7 +245,7 @@ pub(crate) fn period_row(
             button()
                 .disabled(move || !can_step_next.get())
                 .accessibility_label("下一个周期")
-                .app_class("px-2 py-1 rounded-md text-foreground hover:bg-accent disabled:opacity-40")
+                .app_class("px-2 py-1 rounded-(--radius) text-foreground hover:bg-accent disabled:opacity-40")
                 .flex_row()
                 .items_center()
                 .gap_1()
