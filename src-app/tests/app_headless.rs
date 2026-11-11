@@ -9664,6 +9664,122 @@ fn scheduled_view_lands_with_panes_and_subscription_rows() {
     }
 }
 
+/// 计划域视觉收口探针（issue #2103，ADR-0147 决策 3/4）：订阅页签亮暗双态下
+/// 关键文字的**已解析样式**——字号全部落在字阶档（形态页签/主按钮文案 =
+/// SECONDARY 14、清单卡标题与花费统计数 = TITLE 20、弱化衬注/行操作 =
+/// CAPTION 12，档值出处 docs/DESIGN.md §3）；语义色全部取主题令牌且亮暗双态
+/// 跟随 theme.json 两段（主按钮文字 = primary-foreground——暗态深色底非白、
+/// 弱化衬注 = muted-foreground、形态页签前景 = foreground）。字号回退裸值
+/// （design 字阶拆除）或主按钮回退白字直调（rgb(0xffffff)）即红；亮暗两态
+/// 截图对照属人工子集，自动化面只断言已解析样式（ADR-0087 断言强度）。
+#[test]
+fn scheduled_view_typography_and_semantic_colors_follow_design_scale() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("scheduled-design-scale");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let account = seed_account_with_balance(&db, "测试现金", 10_000);
+        let merchant = seed_merchant(&db, "视频平台");
+        seed_subscription_plan(&db, &account, Some(&merchant), Some("视频会员"));
+    }
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_scheduled(&mut app);
+
+    // 等花费面板就绪（统计锚点在屏，探针目标全部可见）。
+    app.wait_for("id:spend-this-month").unwrap();
+    app.wait_for("id:sub-create-open").unwrap();
+
+    // 亮态：字号档位 + 令牌色（期望值出处 = docs/DESIGN.md §3 字阶与
+    // theme.json 亮段，独立真源）；span 用「视图锚 >> 文案」下钻精确命中
+    //（text: 是子串匹配，裸用会撞「订阅清单」等同桁文案）。
+    let tab = app
+        .screen()
+        .span_style("id:scheduled-tab-subscriptions >> text:订阅")
+        .unwrap();
+    assert_eq!(
+        tab.font_size,
+        nsh_core::Points(14.0),
+        "形态页签字号 = 字阶 SECONDARY"
+    );
+    assert_eq!(
+        tab.color,
+        nsh_core::Color(0x182635ff),
+        "形态页签前景 = foreground 亮态令牌"
+    );
+    let title = app.screen().span_style("text:订阅清单").unwrap();
+    assert_eq!(
+        title.font_size,
+        nsh_core::Points(20.0),
+        "清单卡标题字号 = 字阶 TITLE"
+    );
+    let caption = app.screen().span_style("text:/^单位：/").unwrap();
+    assert_eq!(
+        caption.font_size,
+        nsh_core::Points(12.0),
+        "单位衬注字号 = 字阶 CAPTION"
+    );
+    assert_eq!(
+        caption.color,
+        nsh_core::Color(0x5c6c7eff),
+        "单位衬注色 = muted-foreground 亮态令牌"
+    );
+    let primary = app
+        .screen()
+        .span_style("id:sub-create-open >> text:新建订阅")
+        .unwrap();
+    assert_eq!(
+        primary.font_size,
+        nsh_core::Points(14.0),
+        "主按钮文字字号 = 字阶 SECONDARY"
+    );
+    assert_eq!(
+        primary.color,
+        nsh_core::Color(0xf2f8ffff),
+        "主按钮文字色 = primary-foreground 亮态令牌（非裸白）"
+    );
+    let stat = app
+        .screen()
+        .span_style("id:spend-this-month >> text:¥0")
+        .unwrap();
+    assert_eq!(
+        stat.font_size,
+        nsh_core::Points(20.0),
+        "花费统计数字号 = 字阶 TITLE（未执行只读 ¥0，四统计首格）"
+    );
+
+    // 暗态：字号档不变，语义色随 theme.json 暗段（主按钮深色底非白——裸白
+    // 直调在暗态与亮态同值，此处即红）。
+    app.set_environment("dark mode", |env| env.color_scheme = ColorScheme::Dark)
+        .unwrap();
+    let tab = app
+        .screen()
+        .span_style("id:scheduled-tab-subscriptions >> text:订阅")
+        .unwrap();
+    assert_eq!(
+        tab.color,
+        nsh_core::Color(0xe6edf4ff),
+        "形态页签前景 = foreground 暗态令牌"
+    );
+    let caption = app.screen().span_style("text:/^单位：/").unwrap();
+    assert_eq!(
+        caption.color,
+        nsh_core::Color(0x93a4b6ff),
+        "单位衬注色 = muted-foreground 暗态令牌"
+    );
+    let primary = app
+        .screen()
+        .span_style("id:sub-create-open >> text:新建订阅")
+        .unwrap();
+    assert_eq!(
+        primary.color,
+        nsh_core::Color(0x0b2239ff),
+        "主按钮文字色 = primary-foreground 暗态令牌（非裸白）"
+    );
+}
+
 /// 创建旅程（旧壳校验面 + toast 反馈平价）：空账户前置拦截不写入；填齐
 /// （账户拼音下拉 / 分类 / 商户输入即建 / 金额）→ 创建 → 反馈 + 行即现 +
 /// 花费面板刷新。删 perform_create 写接缝（create_scheduled_plan 直调）或

@@ -33,6 +33,7 @@ use std::sync::MutexGuard;
 use nsh_core::prelude::*;
 
 use crate::assembly::{self, CategoryOption, ColumnAlign, CurrencyTable};
+use crate::design::font_size;
 use crate::nav;
 use crate::nav_model::ScheduledFormTab;
 
@@ -488,10 +489,10 @@ pub(crate) fn ScheduledView() -> impl IntoElement {
             nsh_base::tab()
                 .selected(move || active.get() == tab)
                 .accessibility_label(form_tab_label(tab))
-                .app_class("px-2 py-1 rounded-md selected:bg-accent")
+                .app_class("px-2 py-2 rounded-md selected:bg-accent")
                 .child(
                     text(form_tab_label(tab))
-                        .text_size(px(13.0))
+                        .text_size(px(font_size::SECONDARY))
                         .text_color(move || if active.get() == tab { fg } else { muted })
                         .test_id(id.as_str()),
                 )

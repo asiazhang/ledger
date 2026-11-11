@@ -51,6 +51,7 @@ use crate::adaptive;
 use crate::assembly::{self, AccountTable, CategoryOption, ColumnAlign, CurrencyTable};
 use crate::boot;
 use crate::date_select;
+use crate::design::font_size;
 use crate::modal;
 use crate::pinyin_select;
 use crate::popconfirm;
@@ -449,6 +450,10 @@ pub(crate) fn transfers_pane(pending_focus: Signal<Option<String>>) -> impl Into
     let danger_fg = tokens
         .color("destructive")
         .unwrap_or_else(|| hsla(0.0, 0.0, 0.98, 1.0).into());
+    // 主按钮前景 = primary-foreground 令牌（亮暗双态随表；旧裸白直调退役）。
+    let primary_fg = tokens
+        .color("primary-foreground")
+        .unwrap_or_else(|| hsla(0.0, 0.0, 0.98, 1.0).into());
 
     // ============================ 清单呈现 ============================
     // 状态过滤（纯前端过滤，不产生请求——旧壳 filteredRows 同口径）。
@@ -693,7 +698,7 @@ pub(crate) fn transfers_pane(pending_focus: Signal<Option<String>>) -> impl Into
                 .gap_2()
                 .child(
                     text(TRANSFER_LIST_TITLE)
-                        .text_size(px(13.0))
+                        .text_size(px(font_size::TITLE))
                         .font_weight(FontWeight::SEMIBOLD)
                         .text_color(fg),
                 )
@@ -702,22 +707,22 @@ pub(crate) fn transfers_pane(pending_focus: Signal<Option<String>>) -> impl Into
                     let key_owned = key.to_owned();
                     button()
                         .app_class(
-                            "px-2 py-0.5 rounded-md text-foreground hover:bg-accent selected:bg-accent",
+                            "px-2 py-1 rounded-md text-foreground hover:bg-accent selected:bg-accent",
                         )
                         .child(
                             text(label)
-                                .text_size(px(12.0))
+                                .text_size(px(font_size::CAPTION))
                                 .test_id(format!("transfer-filter-{key_owned}").as_str()),
                         )
                         .on_press(move |_: &()| active_filter.set(key.to_owned()))
                 }))
                 .child(
                     button()
-                        .app_class("px-3 py-1.5 rounded-md bg-primary hover:opacity-90")
+                        .app_class("px-3 py-2 rounded-md bg-primary hover:opacity-90")
                         .child(
                             text(CREATE_TRANSFER_OPEN_LABEL)
-                                .text_size(px(13.0))
-                                .text_color(rgb(0xffffff))
+                                .text_size(px(font_size::SECONDARY))
+                                .text_color(primary_fg)
                                 .test_id("transfer-create-open"),
                         )
                         .on_press(move |_: &()| open_create()),
@@ -807,7 +812,7 @@ pub(crate) fn transfers_pane(pending_focus: Signal<Option<String>>) -> impl Into
                 .child(
                     // 币种随转出账户推导（只读展示；拆 derive_currency_text 即红）。
                     text(move || create_currency_text.get())
-                        .text_size(px(13.0))
+                        .text_size(px(font_size::SECONDARY))
                         .text_color(muted)
                         .test_id("transfer-currency"),
                 )))
@@ -815,7 +820,7 @@ pub(crate) fn transfers_pane(pending_focus: Signal<Option<String>>) -> impl Into
                 .flex_row()
                 .items_center()
                 .gap_2()
-                .child(text("每").text_size(px(13.0)).text_color(fg))
+                .child(text("每").text_size(px(font_size::SECONDARY)).text_color(fg))
                 .child(input()
                     .test_id("transfer-interval")
                     .value(move || create_interval_text.get())
@@ -860,7 +865,7 @@ pub(crate) fn transfers_pane(pending_focus: Signal<Option<String>>) -> impl Into
                         move || create_error.get().is_some(),
                         move || {
                             text(move || format!("创建失败: {}", create_error.get().unwrap_or_default()))
-                                .text_size(px(12.0))
+                                .text_size(px(font_size::CAPTION))
                                 .text_color(danger_fg)
                                 .test_id("transfer-create-error")
                         },
@@ -874,11 +879,11 @@ pub(crate) fn transfers_pane(pending_focus: Signal<Option<String>>) -> impl Into
                     .child(
                         button()
                             .app_class(
-                                "px-3 py-1.5 rounded-md border border-border text-foreground hover:bg-accent",
+                                "px-3 py-2 rounded-md border border-border text-foreground hover:bg-accent",
                             )
                             .child(
                                 text("取消")
-                                    .text_size(px(13.0))
+                                    .text_size(px(font_size::SECONDARY))
                                     .text_color(fg)
                                     .test_id("transfer-create-cancel"),
                             )
@@ -886,11 +891,11 @@ pub(crate) fn transfers_pane(pending_focus: Signal<Option<String>>) -> impl Into
                     )
                     .child(
                         button()
-                            .app_class("px-3 py-1.5 rounded-md bg-primary hover:opacity-90")
+                            .app_class("px-3 py-2 rounded-md bg-primary hover:opacity-90")
                             .child(
                                 text(CREATE_TRANSFER_SUBMIT_LABEL)
-                                    .text_size(px(13.0))
-                                    .text_color(rgb(0xffffff))
+                                    .text_size(px(font_size::SECONDARY))
+                                    .text_color(primary_fg)
                                     .test_id("transfer-create"),
                             )
                             .on_press(move |_: &()| perform_create()),
@@ -909,7 +914,7 @@ pub(crate) fn transfers_pane(pending_focus: Signal<Option<String>>) -> impl Into
                 move || error.get().is_some(),
                 move || {
                     text(move || format!("加载失败: {}", error.get().unwrap_or_default()))
-                        .text_size(px(12.0))
+                        .text_size(px(font_size::CAPTION))
                         .text_color(danger_fg)
                         .test_id("transfer-error")
                         .app_class("px-4 py-1")
@@ -924,7 +929,7 @@ pub(crate) fn transfers_pane(pending_focus: Signal<Option<String>>) -> impl Into
                 move || status.get().is_some(),
                 move || {
                     text(move || status.get().unwrap_or_default())
-                        .text_size(px(12.0))
+                        .text_size(px(font_size::CAPTION))
                         .text_color(fg)
                         .test_id("transfer-status")
                 },
@@ -973,7 +978,7 @@ fn make_action_renderer(
         };
         match cell.key.as_ref() {
             "next" => text(cell.text.clone())
-                .text_size(px(13.0))
+                .text_size(px(font_size::SECONDARY))
                 .number_of_lines(1)
                 .test_id(format!("transfer-next-{}", row.id).as_str())
                 .into_element(),
@@ -1044,12 +1049,10 @@ fn make_action_renderer(
                                 cancel_label: "取消".to_owned(),
                             },
                             view()
-                                .app_class(
-                                    "px-2 py-0.5 rounded-md text-destructive hover:bg-accent",
-                                )
+                                .app_class("px-2 py-1 rounded-md text-destructive hover:bg-accent")
                                 .child(
                                     text("取消")
-                                        .text_size(px(12.0))
+                                        .text_size(px(font_size::CAPTION))
                                         .text_color(danger_fg)
                                         .test_id(format!("transfer-cancel-{id}").as_str()),
                                 ),
