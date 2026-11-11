@@ -48,7 +48,8 @@ reports
 # 本地 git worktree 脚手架目录（git worktree add 的容器，不入库）
 .worktrees/
 
-# Tauri (Rust target & generated schemas handled in src-tauri/.gitignore)
+# Tauri 旧壳残留目录（壳已退役，ADR-0145；本地遗留不入库）
+/src-tauri/
 
 # 根目录 Rust 构建产物（cargo 在仓库根运行时产生）
 /target/
