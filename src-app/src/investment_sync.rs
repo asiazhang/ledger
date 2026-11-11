@@ -28,6 +28,7 @@
 
 use nsh_core::prelude::*;
 
+use crate::design::font_size;
 use crate::{app, boot, investments};
 
 // ---------------------------------------------------------------------------
@@ -345,7 +346,7 @@ pub(crate) fn StalenessAlert() -> impl IntoElement {
                                     .map(staleness_message)
                                     .unwrap_or_default()
                             })
-                            .text_size(px(12.0))
+                            .text_size(px(font_size::CAPTION))
                             .text_color(palette.danger)
                             .test_id("staleness-message"),
                         )
@@ -365,7 +366,7 @@ pub(crate) fn StalenessAlert() -> impl IntoElement {
                                 .app_class("hover:bg-accent")
                                 .child(
                                     text(STALENESS_GO_SYNC)
-                                        .text_size(px(12.0))
+                                        .text_size(px(font_size::CAPTION))
                                         .text_color(palette.info)
                                         .test_id("staleness-go-sync"),
                                 ),
@@ -373,7 +374,7 @@ pub(crate) fn StalenessAlert() -> impl IntoElement {
                 )
                 .child(
                     text(STALENESS_HINT)
-                        .text_size(px(11.0))
+                        .text_size(px(font_size::CAPTION))
                         .text_color(palette.muted)
                         .test_id("staleness-hint"),
                 )
@@ -424,7 +425,7 @@ pub(crate) fn sync_progress_bar(palette: investments::PanePalette) -> impl IntoE
                     text(move || {
                         sync_progress_text_of(seam.progress_done.get(), seam.progress_total.get())
                     })
-                    .text_size(px(11.0))
+                    .text_size(px(font_size::CAPTION))
                     .text_color(palette.muted),
                 )
         },
@@ -445,7 +446,7 @@ pub(crate) fn sync_result_row(palette: investments::PanePalette) -> impl IntoEle
                 .gap_2()
                 .child(
                     text(move || seam.message.get().unwrap_or_default())
-                        .text_size(px(12.0))
+                        .text_size(px(font_size::CAPTION))
                         .text_color(move || {
                             if seam.success.get() {
                                 palette.fg
@@ -462,7 +463,7 @@ pub(crate) fn sync_result_row(palette: investments::PanePalette) -> impl IntoEle
                             // 降级可见（issue #1376 / ADR-0121 决策 4）：本次
                             // 回退逐标的通道时明示本次较慢。
                             text(SYNC_DEGRADED)
-                                .text_size(px(11.0))
+                                .text_size(px(font_size::CAPTION))
                                 .text_color(palette.muted)
                                 .test_id("investment-sync-degraded")
                         },

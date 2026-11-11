@@ -32,6 +32,7 @@ use nsh_core::prelude::*;
 use crate::app::db_slot;
 use crate::assembly::{self, AMOUNT_PRIVACY_MASK, CategoryOption, CurrencyFormat};
 use crate::boot;
+use crate::design::font_size;
 use crate::keep_mounted;
 use crate::nav;
 use crate::pinyin_select;
@@ -891,7 +892,7 @@ pub(crate) fn InvestmentsView() -> impl IntoElement {
                     .app_class("px-2 py-1 rounded-md selected:bg-accent")
                     .child(
                         text(tab.label())
-                            .text_size(px(13.0))
+                            .text_size(px(font_size::SECONDARY))
                             .text_color(move || {
                                 if is_active() {
                                     palette.fg
@@ -941,7 +942,7 @@ pub(crate) fn InvestmentsView() -> impl IntoElement {
         .child(
             view().px_4().py_2().child(
                 text("投资")
-                    .text_size(px(16.0))
+                    .text_size(px(font_size::BODY))
                     .text_color(palette.fg)
                     .test_id("view-title"),
             ),
@@ -956,35 +957,34 @@ pub(crate) fn InvestmentsView() -> impl IntoElement {
         .child(content_host)
 }
 
-/// 主题令牌调色板（双态自适应；令牌缺失回退亮灰/中灰可读兜底，先例同形）。
+/// 主题令牌调色板（双态自适应；色值全部经 [`crate::theme::color`] 从令牌
+/// 表解析，缺失落 theme 模块可读兑底——本结构只携键位语义不携色值）。
 #[derive(Clone, Copy)]
 pub(crate) struct PanePalette {
     pub(crate) fg: nsh_core::element::AdaptiveColor,
     pub(crate) muted: nsh_core::element::AdaptiveColor,
     pub(crate) danger: nsh_core::element::AdaptiveColor,
-    /// 盈亏涨跌色（红涨绿跌；dashboard investment_stat 同色值，红涨与交易
-    /// 语义色正交——词汇表「盈亏涨跌色」）。
+    /// 盈亏涨跌色（红涨绿跌；涨跌色消费主题表 expense/income 档——
+    /// 词汇表「盈亏涨跌色」）。
     pub(crate) gain: nsh_core::element::AdaptiveColor,
     pub(crate) loss: nsh_core::element::AdaptiveColor,
-    /// 口径说明触发点信息蓝。
+    /// 口径说明触发点信息蓝（主题表 refund 档）。
     pub(crate) info: nsh_core::element::AdaptiveColor,
 }
 
 pub(crate) fn pane_palette() -> PanePalette {
-    let tokens = nsh_core::element::tokens();
+    // 令牌消费单点（crate::theme::color：读取即订阅亮暗切换，缺失落
+    // theme 模块可读兑底——本模块不再私藏色值/兑底色）。
     PanePalette {
-        fg: tokens
-            .color("foreground")
-            .unwrap_or_else(|| hsla(0.0, 0.0, 0.98, 1.0).into()),
-        muted: tokens
-            .color("muted-foreground")
-            .unwrap_or_else(|| hsla(0.0, 0.0, 0.45, 1.0).into()),
-        danger: tokens
-            .color("destructive")
-            .unwrap_or_else(|| hsla(0.0, 0.0, 0.98, 1.0).into()),
-        gain: nsh_core::element::AdaptiveColor::new(rgb(0xd03050), rgb(0xe88080)),
-        loss: nsh_core::element::AdaptiveColor::new(rgb(0x18a058), rgb(0x63e2b7)),
-        info: nsh_core::element::AdaptiveColor::new(rgb(0x2080f0), rgb(0x63a8f2)),
+        fg: crate::theme::color("foreground"),
+        muted: crate::theme::color("muted-foreground"),
+        danger: crate::theme::color("destructive"),
+        // 涨跌语义色（红涨绿跌）：收编进主题表的自有令牌档——涨 = expense
+        // 档、跌 = income 档、口径说明蓝 = refund 档（词汇表「盈亏涨跌色」
+        // 消费主题表，不另造色常量）。
+        gain: crate::theme::color("expense"),
+        loss: crate::theme::color("income"),
+        info: crate::theme::color("refund"),
     }
 }
 
@@ -1003,7 +1003,7 @@ pub(crate) fn pnl_color(
 
 /// 概念说明触发点（常驻 ⓘ 形态；文案归 popover_tip 调用方）。
 pub(crate) fn info_dot(info: nsh_core::element::AdaptiveColor) -> impl IntoElement {
-    text("ⓘ").text_size(px(11.0)).text_color(info)
+    text("ⓘ").text_size(px(font_size::CAPTION)).text_color(info)
 }
 
 /// 卡容器（旧壳 NCard 的本壳等价形态：边框 + 圆角 + 内边距，reports.rs
@@ -1035,7 +1035,7 @@ pub(crate) fn retry_row(
         .gap_2()
         .child(
             text(message)
-                .text_size(px(12.0))
+                .text_size(px(font_size::CAPTION))
                 .text_color(palette.danger)
                 .test_id(error_id),
         )
@@ -1048,7 +1048,7 @@ pub(crate) fn retry_row(
                 .app_class("hover:bg-accent")
                 .child(
                     text(RETRY)
-                        .text_size(px(12.0))
+                        .text_size(px(font_size::CAPTION))
                         .text_color(palette.muted)
                         .test_id(retry_id),
                 ),
@@ -1201,7 +1201,7 @@ fn overview_pane() -> impl IntoElement {
                         .gap_1()
                         .child(
                             text(INVESTABLE_ASSETS)
-                                .text_size(px(12.0))
+                                .text_size(px(font_size::CAPTION))
                                 .text_color(palette.muted)
                                 .test_id("overview-investable-assets"),
                         )
@@ -1218,14 +1218,14 @@ fn overview_pane() -> impl IntoElement {
                             .map(|c| c.currency_label.clone())
                             .unwrap_or_default()
                     })
-                    .text_size(px(12.0))
+                    .text_size(px(font_size::CAPTION))
                     .text_color(palette.muted)
                     .test_id("overview-currency-label"),
                 ),
         )
         .child(
             text(move || cells.get().map(|c| c.hero_text.clone()).unwrap_or_default())
-                .text_size(px(28.0))
+                .text_size(px(font_size::TITLE))
                 .text_color(palette.fg)
                 .test_id("overview-hero-value"),
         );
@@ -1247,7 +1247,7 @@ fn overview_pane() -> impl IntoElement {
                             .map(|c| c.cash_leg_text.clone())
                             .unwrap_or_default()
                     })
-                    .text_size(px(12.0))
+                    .text_size(px(font_size::CAPTION))
                     .text_color(palette.muted)
                     .test_id("overview-cash-leg"),
                 ),
@@ -1265,7 +1265,7 @@ fn overview_pane() -> impl IntoElement {
                             .map(|c| c.holdings_leg_text.clone())
                             .unwrap_or_default()
                     })
-                    .text_size(px(12.0))
+                    .text_size(px(font_size::CAPTION))
                     .text_color(palette.muted)
                     .test_id("overview-holdings-leg"),
                 ),
@@ -1277,7 +1277,7 @@ fn overview_pane() -> impl IntoElement {
         .gap_1()
         .child(
             text(TOTALS_TITLE)
-                .text_size(px(12.0))
+                .text_size(px(font_size::CAPTION))
                 .text_color(palette.muted)
                 .test_id("overview-totals-title"),
         )
@@ -1321,7 +1321,7 @@ fn overview_pane() -> impl IntoElement {
                     .and_then(|c| c.missing_price_note.clone())
                     .unwrap_or_default()
             })
-            .text_size(px(12.0))
+            .text_size(px(font_size::CAPTION))
             .text_color(palette.muted)
             .test_id("overview-missing-price")
         },
@@ -1336,7 +1336,7 @@ fn overview_pane() -> impl IntoElement {
                     .and_then(|c| c.no_account_note.clone())
                     .unwrap_or_default()
             })
-            .text_size(px(12.0))
+            .text_size(px(font_size::CAPTION))
             .text_color(palette.muted)
             .test_id("overview-no-account")
         },
@@ -1356,7 +1356,7 @@ fn overview_pane() -> impl IntoElement {
     let overview_card = card_container("investment-overview")
         .child(
             text(OVERVIEW_TITLE)
-                .text_size(px(15.0))
+                .text_size(px(font_size::LEADING))
                 .text_color(palette.fg)
                 .test_id("overview-title"),
         )
@@ -1424,7 +1424,7 @@ fn overview_pane() -> impl IntoElement {
                             .gap_2()
                             .child(
                                 text(TREND_MODE_PORTFOLIO)
-                                    .text_size(px(12.0))
+                                    .text_size(px(font_size::CAPTION))
                                     .text_color(palette.muted),
                             )
                             .child(popover_tip(
@@ -1439,7 +1439,7 @@ fn overview_pane() -> impl IntoElement {
                                         .map(|s| trend_caption(&s.currency_code))
                                         .unwrap_or_default()
                                 })
-                                .text_size(px(12.0))
+                                .text_size(px(font_size::CAPTION))
                                 .text_color(palette.muted)
                                 .test_id("trend-currency"),
                             ),
@@ -1455,7 +1455,7 @@ fn overview_pane() -> impl IntoElement {
                         .map(|s| s.empty_note())
                         .unwrap_or_else(|| TREND_EMPTY_NO_POINTS.to_owned())
                 })
-                .text_size(px(13.0))
+                .text_size(px(font_size::SECONDARY))
                 .text_color(palette.muted)
                 .test_id("trend-empty"),
             )
@@ -1469,7 +1469,7 @@ fn overview_pane() -> impl IntoElement {
                 .justify_between()
                 .child(
                     text(TREND_CARD_TITLE)
-                        .text_size(px(15.0))
+                        .text_size(px(font_size::LEADING))
                         .text_color(palette.fg)
                         .test_id("trend-card-title"),
                 )
@@ -1483,7 +1483,7 @@ fn overview_pane() -> impl IntoElement {
                             )
                             .child(
                                 text(p.label())
-                                    .text_size(px(11.0))
+                                    .text_size(px(font_size::CAPTION))
                                     .text_color(move || {
                                         if selected() {
                                             palette.fg
@@ -1559,13 +1559,10 @@ fn composition_row(
         )
 }
 
-/// 两腿图例色源（现金 = 三级灰、持仓 = 主文本色——旧壳 investment-overview
-/// css 中性两阶灰阶，随主题整体换装）。
+/// 两腿图例色源（现金 = 弱化前景灰、持仓 = 主文本色——主题令牌两档，随
+/// 主题整体换装；旧壳 investment-overview css 中性两阶灰阶的令牌对应）。
 fn cash_leg_color() -> nsh_core::element::AdaptiveColor {
-    nsh_core::element::AdaptiveColor::new(
-        nsh_core::color::hsla(0.0, 0.0, 0.55, 1.0),
-        nsh_core::color::hsla(0.0, 0.0, 0.65, 1.0),
-    )
+    crate::theme::color("muted-foreground")
 }
 
 /// 投资合计单格（标签 + 口径说明 + 数值着涨跌色或中性；数值文本随同一
@@ -1587,7 +1584,11 @@ fn overview_stat(
                 .flex_row()
                 .items_center()
                 .gap_1()
-                .child(text(label).text_size(px(12.0)).text_color(palette.muted))
+                .child(
+                    text(label)
+                        .text_size(px(font_size::CAPTION))
+                        .text_color(palette.muted),
+                )
                 .child(popover_tip(
                     format!("{test_id}-info"),
                     vec![format!("{tip_body}{OVERVIEW_SCOPE_SUFFIX}")],
@@ -1605,7 +1606,7 @@ fn overview_stat(
                     })
                     .unwrap_or_default()
             })
-            .text_size(px(18.0))
+            .text_size(px(font_size::LEADING))
             .text_color(move || pnl_color(semantic(), &palette, &fg))
             .test_id(format!("{test_id}-value").as_str()),
         )
@@ -1878,7 +1879,7 @@ fn pnl_pane() -> impl IntoElement {
                 )),
         );
     let note = text(PNL_CALIBRATION_NOTE)
-        .text_size(px(11.0))
+        .text_size(px(font_size::CAPTION))
         .text_color(palette.muted)
         .test_id("pnl-calibration-note");
     let error_line = when(
@@ -1983,7 +1984,7 @@ fn pnl_pane() -> impl IntoElement {
                     // 命令失败已在错误条呈现；装载中/无数据给空态句。
                     view().test_id("pnl-empty").child(
                         text(PNL_EMPTY)
-                            .text_size(px(13.0))
+                            .text_size(px(font_size::SECONDARY))
                             .text_color(palette.muted),
                     )
                 }),
@@ -2008,7 +2009,7 @@ fn mwr_card(palette: PanePalette, mwr: nsh_core::element::ReadSignal<Vec<MwrRowS
                 .gap_1()
                 .child(
                     text(PNL_BY_MWR)
-                        .text_size(px(13.0))
+                        .text_size(px(font_size::SECONDARY))
                         .text_color(palette.fg)
                         .test_id("pnl-mwr-title"),
                 )
@@ -2023,7 +2024,7 @@ fn mwr_card(palette: PanePalette, mwr: nsh_core::element::ReadSignal<Vec<MwrRowS
                 move || mwr.get().is_empty(),
                 move || {
                     text(PNL_EMPTY_TABLE)
-                        .text_size(px(12.0))
+                        .text_size(px(font_size::CAPTION))
                         .text_color(palette.muted)
                         .test_id("pnl-mwr-empty")
                 },
@@ -2038,17 +2039,17 @@ fn mwr_card(palette: PanePalette, mwr: nsh_core::element::ReadSignal<Vec<MwrRowS
                             .gap_6()
                             .child(
                                 text(PNL_COL_ACCOUNT)
-                                    .text_size(px(12.0))
+                                    .text_size(px(font_size::CAPTION))
                                     .text_color(palette.muted),
                             )
                             .child(
                                 text(PNL_COL_CURRENCY)
-                                    .text_size(px(12.0))
+                                    .text_size(px(font_size::CAPTION))
                                     .text_color(palette.muted),
                             )
                             .child(
                                 text(PNL_COL_MWR)
-                                    .text_size(px(12.0))
+                                    .text_size(px(font_size::CAPTION))
                                     .text_color(palette.muted),
                             ),
                     )
@@ -2086,13 +2087,13 @@ fn mwr_row_view(
         .gap_6()
         .child(
             text(row.scope.clone())
-                .text_size(px(13.0))
+                .text_size(px(font_size::SECONDARY))
                 .text_color(palette.fg)
                 .test_id(format!("{rate_id}-scope").as_str()),
         )
         .child(
             text(row.currency_code.clone())
-                .text_size(px(13.0))
+                .text_size(px(font_size::SECONDARY))
                 .text_color(palette.muted),
         )
         .child(
@@ -2105,7 +2106,7 @@ fn mwr_row_view(
                         let snapshot = item.get();
                         rate_text_of(&snapshot)
                     })
-                    .text_size(px(13.0))
+                    .text_size(px(font_size::SECONDARY))
                     .test_id(rate_id.as_str())
                     .text_color(move || {
                         let snapshot = item.get();
@@ -2157,7 +2158,7 @@ fn pnl_table(
                 .flex_row()
                 .items_center()
                 .gap_1()
-                .child(text(title).text_size(px(13.0)).text_color(palette.fg))
+                .child(text(title).text_size(px(font_size::SECONDARY)).text_color(palette.fg))
                 // 主值列口径说明挂表头（旧壳 ConceptLabel 列头同位）。
                 .child(popover_tip(
                     format!("{test_id}-gain-info"),
@@ -2172,12 +2173,12 @@ fn pnl_table(
                 .gap_4()
                 .child(
                     text(head_col)
-                        .text_size(px(12.0))
+                        .text_size(px(font_size::CAPTION))
                         .text_color(palette.muted),
                 )
                 .child(
                     text(PNL_COL_REALIZED_GAIN)
-                        .text_size(px(12.0))
+                        .text_size(px(font_size::CAPTION))
                         .text_color(palette.muted)
                         .flex_1(),
                 ),
@@ -2187,7 +2188,7 @@ fn pnl_table(
                 move || rows_of().is_empty(),
                 move || {
                     text(PNL_EMPTY_TABLE)
-                        .text_size(px(13.0))
+                        .text_size(px(font_size::SECONDARY))
                         .text_color(palette.muted)
                         .test_id(format!("{test_id}-empty").as_str())
                 },
@@ -2240,7 +2241,7 @@ fn pnl_table(
                                         .gap_4()
                                         .child(
                                             text(row_name.clone())
-                                                .text_size(px(13.0))
+                                                .text_size(px(font_size::SECONDARY))
                                                 .text_color(palette.fg)
                                                 .test_id(
                                                     format!("{test_id}-name-{}", row_name)
@@ -2250,7 +2251,7 @@ fn pnl_table(
                                         .child(
                                             view().flex_col().child(
                                                 text(view_cells.gain_text.clone())
-                                                    .text_size(px(13.0))
+                                                    .text_size(px(font_size::SECONDARY))
                                                     .text_color(gain_color)
                                                     .test_id(
                                                         format!("{test_id}-value-{}", row_name)
@@ -2265,7 +2266,7 @@ fn pnl_table(
                                         move || view_cells.legs_present,
                                         move || {
                                             text(view_cells.legs_text.clone())
-                                                .text_size(px(11.0))
+                                                .text_size(px(font_size::CAPTION))
                                                 .text_color(palette.muted)
                                         },
                                     )
