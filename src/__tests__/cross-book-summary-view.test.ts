@@ -24,10 +24,10 @@ function makeSummary(
     cumulative_pnl_cents: 45_000,
     investable_assets_cents: 190_000,
     books: [
-      { id: "b1", name: "默认账本", status: "included" },
-      { id: "b2", name: "美股账本", status: "included" },
-      { id: "b3", name: "密码本", status: "locked" },
-      { id: "b4", name: "空账本", status: "not_initialized" },
+      { id: "b1", name: "默认账本", status: "included", is_active: true },
+      { id: "b2", name: "美股账本", status: "included", is_active: false },
+      { id: "b3", name: "密码本", status: "locked", is_active: false },
+      { id: "b4", name: "空账本", status: "not_initialized", is_active: false },
     ],
     ...overrides,
   };
@@ -104,13 +104,28 @@ describe("跨账本投资汇总视图", () => {
   it("全部计入时不出现部分合计警示", async () => {
     payload = makeSummary({
       books: [
-        { id: "b1", name: "默认账本", status: "included" },
-        { id: "b2", name: "美股账本", status: "included" },
+        { id: "b1", name: "默认账本", status: "included", is_active: true },
+        { id: "b2", name: "美股账本", status: "included", is_active: false },
       ],
     });
     wire();
     const wrapper = await mountView();
     expect(wrapper.text()).not.toContain("部分账本未计入");
+  });
+
+  it("「当前」标签只挂活动本行，非活动计入本不误标（issue #2069）", async () => {
+    payload = makeSummary({
+      books: [
+        { id: "b1", name: "默认账本", status: "included", is_active: true },
+        { id: "b2", name: "美股账本", status: "included", is_active: false },
+      ],
+    });
+    wire();
+    const wrapper = await mountView();
+    // 断言对准用户可观察结果（ADR-0087）：删接线的判定条件（退回 status 判定）
+    // 则 b2 行同挂 included、也会出现「当前」，第二条断言变红。
+    expect(wrapper.find('[data-testid="summary-book-b1"]').text()).toContain("当前");
+    expect(wrapper.find('[data-testid="summary-book-b2"]').text()).not.toContain("当前");
   });
 
   it("命令报错转 error 兜底显示中文错误，重试可恢复（不空数字、不崩溃）", async () => {
