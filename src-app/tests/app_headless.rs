@@ -666,6 +666,95 @@ fn app_window_theme_tokens_follow_strong_pinned_appearance() {
     );
 }
 
+/// 交易主路径字阶与主操作前景令牌（issue #2101，ADR-0147 视觉收口批次）：
+/// 字号取官方字阶五档（[`nsh_app::design`] 字阶常量同源——框架 text 预设
+/// `text_xs`/`text_sm`/`text_base` 即同一规范值 12/14/16），「记一笔」等主
+/// 操作前景取主题表 `primary-foreground`（亮暗双态；裸白字退役）。删除视图
+/// 侧字阶书写或令牌消费任一环即红——断言对准已解析样式（font_size/color）。
+/// 亮暗两态截图对照属人工子集，自动化面只断言已解析样式。
+#[test]
+fn app_window_transaction_views_use_type_scale_and_primary_foreground_token() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("tx-type-scale");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let account = seed_cash_account(&db);
+        seed_transaction(
+            &db,
+            TxnSeed {
+                account: &account,
+                to_account: None,
+                kind: TransactionKind::Expense,
+                amount_cents: 2_500,
+                date: "2026-01-15",
+                category_id: None,
+                merchant_id: None,
+                note: None,
+            },
+        );
+    }
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_transactions(&mut app);
+    app.wait_for("text:共 1 条").unwrap();
+
+    // 字阶：按钮/控件标签 = SECONDARY 14；底栏计数 = CAPTION 12。
+    for (selector, label) in [
+        ("text:记一笔", "主操作按钮"),
+        ("text:备份", "次级动作按钮"),
+        ("text:清除筛选", "筛选条按钮"),
+        ("text:隐藏投资相关流水", "筛选条开关标签"),
+    ] {
+        assert_eq!(
+            app.screen().span_style(selector).unwrap().font_size,
+            Points(14.0),
+            "{label}字号 = 字阶 SECONDARY"
+        );
+    }
+    assert_eq!(
+        app.screen().span_style("text:共 1 条").unwrap().font_size,
+        Points(12.0),
+        "底栏计数字号 = 字阶 CAPTION"
+    );
+
+    // 主操作前景 = primary-foreground 亮态令牌（裸白字退役）。
+    assert_eq!(
+        app.screen().span_style("text:记一笔").unwrap().color,
+        nsh_core::Color(0xf2f8ffff),
+        "主按钮前景亮色 = 主题表 primary-foreground light"
+    );
+
+    // 系统切暗色：主按钮前景随主题表暗态（裸白字在暗态主按钮上是坏对比——
+    // 令牌化即修）。
+    app.set_environment("dark mode", |env| env.color_scheme = ColorScheme::Dark)
+        .unwrap();
+    assert_eq!(
+        app.screen().span_style("text:记一笔").unwrap().color,
+        nsh_core::Color(0x0b2239ff),
+        "主按钮前景暗色 = 主题表 primary-foreground dark"
+    );
+
+    // 弹层表单（挂载后）：表单标签与按钮 = SECONDARY 14（弹层标题含「记一笔」
+    // 子串，触发件断言先行于开窗；表单根容器下钻定位字段标签——"日期"子串
+    // 在日期选择器触发件内另有命中，需限定在表单体内）。
+    open_create_form(&mut app, "id:tx-add-expense", "记一笔 · 支出");
+    assert_eq!(
+        app.screen()
+            .span_style("id:tx-form >> text:日期")
+            .unwrap()
+            .font_size,
+        Points(14.0),
+        "表单字段标签字号 = 字阶 SECONDARY"
+    );
+    assert_eq!(
+        app.screen().span_style("text:取消").unwrap().font_size,
+        Points(14.0),
+        "取消按钮字号 = 字阶 SECONDARY"
+    );
+}
+
 /// 分类路径与备注列接线（issue #2019）：父子分类的支出行呈现「父 > 子」路径
 /// 与备注原文；无分类无备注行落 `-`。删掉分类读接缝、路径装配或列映射任一环
 /// 即红。

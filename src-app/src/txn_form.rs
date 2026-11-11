@@ -993,10 +993,10 @@ fn selected_currency(state: &TxnFormState, sources: &TxnFormSources) -> String {
         .unwrap_or_else(|| "CNY".to_owned())
 }
 
-/// 表单字段标签（弱化小字；预算视图同形小工具——封装层尚无 form 原语，
-/// 不为此立新封装件）。
+/// 表单字段标签（字阶 SECONDARY 档，design.rs font_size 同源——DESIGN.md §3
+/// 「表单标签」档；预算视图同形小工具——封装层尚无 form 原语，不为此立新封装件）。
 fn field_label(label: &'static str, muted: AdaptiveColor) -> impl IntoElement {
-    text(label).text_size(px(12.0)).text_color(muted)
+    text(label).text_sm().text_color(muted)
 }
 
 /// 弹窗标题（创建「记一笔 · {入口词}」/ 编辑「编辑交易」——旧壳词表同形）。
@@ -1300,7 +1300,7 @@ pub(crate) fn transaction_form_modal(
                                 .text_color(fg)
                                 .w(px(160.0))
                                 .app_class(
-                                    "bg-background rounded-md border border-border px-2 py-1 placeholder:text-muted-foreground",
+                                    "bg-background rounded-(--radius) border border-border px-2 py-1 placeholder:text-muted-foreground",
                                 )
                                 .on_change(move |value: &str| state.amount_text.set(value.to_owned()))
                                 .on_blur(move || state.amount_marked.set(true)),
@@ -1310,7 +1310,7 @@ pub(crate) fn transaction_form_modal(
                             // 以后代命中；先例 date_select 触发件同形）。
                             view()
                                 .test_id(CURRENCY_ID)
-                                .child(text(currency_text).text_size(px(13.0)).text_color(muted)),
+                                .child(text(currency_text).text_sm().text_color(muted)),
                         ),
                 );
             // 形态字段族（kind 切换字段族重排；族随入口/编辑锁定）。
@@ -1403,7 +1403,7 @@ pub(crate) fn transaction_form_modal(
                             move || to_end_currency_error.get(),
                             move || {
                                 text("转出账户和转入账户的币种不一致")
-                                    .text_size(px(12.0))
+                                    .text_xs()
                                     .text_color(danger_fg)
                                     .test_id(TO_CURRENCY_ERROR_ID)
                             },
@@ -1431,12 +1431,12 @@ pub(crate) fn transaction_form_modal(
                                         nsh_base::button()
                                             .selected(move || state.lending_direction.get() == d)
                                             .app_class(
-                                                "px-2 py-1 rounded-md border border-border \
+                                                "px-2 py-1 rounded-(--radius) border border-border \
                                              text-foreground hover:bg-accent selected:bg-accent",
                                             )
                                             .child(
                                                 text(assembly::lending_direction_label(d))
-                                                    .text_size(px(13.0))
+                                                    .text_sm()
                                                     .text_color(fg)
                                                     .test_id(direction_test_id(d)),
                                             )
@@ -1489,7 +1489,7 @@ pub(crate) fn transaction_form_modal(
                                 text(move || {
                                     format!("原交易：{}", refund_target_text().unwrap_or_default())
                                 })
-                                .text_size(px(11.0))
+                                .text_xs()
                                 .text_color(muted)
                                 .test_id(REFUND_TARGET_ID)
                             },
@@ -1506,9 +1506,9 @@ pub(crate) fn transaction_form_modal(
                             .child(field_label("账户", muted))
                             .child(
                                 // 锚点落在包裹视图上（同上——组合选择器后代命中）。
-                                view().test_id(REFUND_ACCOUNT_ID).child(
-                                    text(refund_account_text).text_size(px(13.0)).text_color(fg),
-                                ),
+                                view()
+                                    .test_id(REFUND_ACCOUNT_ID)
+                                    .child(text(refund_account_text).text_sm().text_color(fg)),
                             ),
                     ),
                 FormFamily::Funding => body
@@ -1624,7 +1624,7 @@ pub(crate) fn transaction_form_modal(
                                 .text_color(fg)
                                 .flex_1()
                                 .app_class(
-                                    "bg-background rounded-md border border-border px-2 py-1 \
+                                    "bg-background rounded-(--radius) border border-border px-2 py-1 \
                                      placeholder:text-muted-foreground",
                                 )
                                 .on_change(move |value: &str| state.note.set(value.to_owned())),
@@ -1636,7 +1636,7 @@ pub(crate) fn transaction_form_modal(
                         move || state.error.get().is_some(),
                         move || {
                             text(move || state.error.get().unwrap_or_default())
-                                .text_size(px(12.0))
+                                .text_xs()
                                 .text_color(danger_fg)
                                 .test_id(ERROR_ID)
                         },
@@ -1652,17 +1652,17 @@ pub(crate) fn transaction_form_modal(
                         .child(
                             nsh_base::button()
                                 .app_class(
-                                    "px-3 py-1.5 rounded-md border border-border text-foreground hover:bg-accent",
+                                    "h-8 px-3 rounded-(--radius) border border-border text-foreground hover:bg-accent",
                                 )
                                 .child(
-                                    text("取消").text_size(px(13.0)).text_color(fg).test_id("tx-form-cancel"),
+                                    text("取消").text_sm().text_color(fg).test_id("tx-form-cancel"),
                                 )
                                 .on_press(move |_: &()| state.close()),
                         )
                         .child(
                             nsh_base::button()
                                 .disabled(move || amount_error() || to_end_currency_error.get())
-                                .app_class("px-3 py-1.5 rounded-md bg-primary hover:opacity-90 disabled:opacity-40")
+                                .app_class("h-8 px-3 rounded-(--radius) bg-primary hover:opacity-90 disabled:opacity-40")
                                 .child(
                                     text(move || {
                                         submit_label(
@@ -1672,8 +1672,8 @@ pub(crate) fn transaction_form_modal(
                                             state.editing_id.get().is_some(),
                                         )
                                     })
-                                        .text_size(px(13.0))
-                                        .text_color(rgb(0xffffff))
+                                        .text_sm()
+                                        .text_color(crate::theme::color("primary-foreground"))
                                         .test_id(SUBMIT_ID),
                                 )
                                 .on_press(move |_: &()| submit()),
@@ -1754,7 +1754,7 @@ fn funding_rows_section(
                         .text_color(fg)
                         .w(px(110.0))
                         .app_class(
-                            "bg-background rounded-md border border-border px-2 py-1 \
+                            "bg-background rounded-(--radius) border border-border px-2 py-1 \
                              placeholder:text-muted-foreground",
                         )
                         .on_change(move |value: &str| row.amount_text.set(value.to_owned())),
@@ -1768,7 +1768,7 @@ fn funding_rows_section(
                         .text_color(fg)
                         .w(px(110.0))
                         .app_class(
-                            "bg-background rounded-md border border-border px-2 py-1 \
+                            "bg-background rounded-(--radius) border border-border px-2 py-1 \
                              placeholder:text-muted-foreground",
                         )
                         .on_change(move |value: &str| row.label.set(value.to_owned())),
@@ -1776,8 +1776,8 @@ fn funding_rows_section(
                 .child(
                     nsh_base::button()
                         .accessibility_label("删除出资项")
-                        .app_class("px-1 py-0.5 rounded-md text-muted-foreground hover:bg-accent")
-                        .child(text("✕").text_size(px(11.0)).text_color(muted).test_id(
+                        .app_class("px-1 py-0.5 rounded-sm text-muted-foreground hover:bg-accent")
+                        .child(text("✕").text_xs().text_color(muted).test_id(
                             format!("{}-{}", FUND_REMOVE_PREFIX, row_for_remove.key).as_str(),
                         ))
                         .on_press(move |_: &()| {
@@ -1798,7 +1798,7 @@ fn funding_rows_section(
             // 合计行（一致中性 / 不一致红——可纠错的即时呈现，提交阻拦在装配
             // 器 fail fast 的错误条位）。
             text(move || total.get().0)
-                .text_size(px(11.0))
+                .text_xs()
                 .test_id(format!("{}-text", FUNDING_TOTAL_ID).as_str())
                 .text_color(move || {
                     if total.get().1 {
@@ -1813,11 +1813,11 @@ fn funding_rows_section(
         .child(
             nsh_base::button()
                 .app_class(
-                    "px-2 py-1 rounded-md border border-border text-foreground hover:bg-accent",
+                    "px-2 py-1 rounded-(--radius) border border-border text-foreground hover:bg-accent",
                 )
                 .child(
                     text("添加出资项")
-                        .text_size(px(12.0))
+                        .text_sm()
                         .text_color(fg)
                         .test_id(FUNDING_ADD_ID),
                 )
@@ -1881,7 +1881,7 @@ fn purchase_rows_section(
                         .text_color(fg)
                         .w(px(140.0))
                         .app_class(
-                            "bg-background rounded-md border border-border px-2 py-1 \
+                            "bg-background rounded-(--radius) border border-border px-2 py-1 \
                              placeholder:text-muted-foreground",
                         )
                         .on_change(move |value: &str| row.name.set(value.to_owned())),
@@ -1895,7 +1895,7 @@ fn purchase_rows_section(
                         .text_color(fg)
                         .w(px(60.0))
                         .app_class(
-                            "bg-background rounded-md border border-border px-2 py-1 \
+                            "bg-background rounded-(--radius) border border-border px-2 py-1 \
                              placeholder:text-muted-foreground",
                         )
                         .on_change(move |value: &str| row.quantity_text.set(value.to_owned())),
@@ -1916,22 +1916,22 @@ fn purchase_rows_section(
                         .text_color(fg)
                         .w(px(90.0))
                         .app_class(
-                            "bg-background rounded-md border border-border px-2 py-1 \
+                            "bg-background rounded-(--radius) border border-border px-2 py-1 \
                              placeholder:text-muted-foreground",
                         )
                         .on_change(move |value: &str| row.price_text.set(value.to_owned())),
                 )
                 .child(
                     text(move || subtotal().unwrap_or_default())
-                        .text_size(px(11.0))
+                        .text_xs()
                         .text_color(muted)
                         .test_id(format!("{}-{}", PURCHASE_SUBTOTAL_PREFIX, row.key).as_str()),
                 )
                 .child(
                     nsh_base::button()
                         .accessibility_label("删除商品")
-                        .app_class("px-1 py-0.5 rounded-md text-muted-foreground hover:bg-accent")
-                        .child(text("✕").text_size(px(11.0)).text_color(muted).test_id(
+                        .app_class("px-1 py-0.5 rounded-sm text-muted-foreground hover:bg-accent")
+                        .child(text("✕").text_xs().text_color(muted).test_id(
                             format!("{}-{}", PURCHASE_REMOVE_PREFIX, row_for_remove.key).as_str(),
                         ))
                         .on_press(move |_: &()| {
@@ -1951,11 +1951,11 @@ fn purchase_rows_section(
         .child(
             nsh_base::button()
                 .app_class(
-                    "px-2 py-1 rounded-md border border-border text-foreground hover:bg-accent",
+                    "px-2 py-1 rounded-(--radius) border border-border text-foreground hover:bg-accent",
                 )
                 .child(
                     text("添加商品")
-                        .text_size(px(12.0))
+                        .text_sm()
                         .text_color(fg)
                         .test_id(PURCHASE_ADD_ID),
                 )
@@ -1996,7 +1996,7 @@ fn merchant_label_row(
         move || merchant_label().is_some(),
         move || {
             text(move || format!("原商户：{}", merchant_label().unwrap_or_default()))
-                .text_size(px(11.0))
+                .text_xs()
                 .text_color(muted)
                 .test_id(MERCHANT_LABEL_ID)
         },
