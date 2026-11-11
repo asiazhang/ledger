@@ -62,7 +62,7 @@ pub fn SidebarView() -> impl IntoElement {
                 // 应用名（旧壳 common.app.name 同词表）。
                 "开源记账".to_owned()
             })
-            .text_size(px(14.0))
+            .text_sm()
             .text_color(fg),
         )
         .app_class("border-b border-border");
@@ -136,7 +136,7 @@ fn nav_item(
         .px_3()
         .py_1()
         .mx_1()
-        .rounded_md()
+        .app_class("rounded-(--radius)")
         .on_press(move |_: &()| nav::open(NavRequest::bare(name)))
         .style_when(
             move || nav::store().current.get() == name,
@@ -144,12 +144,13 @@ fn nav_item(
         )
         .child(
             text(name.label())
-                .text_size(px(13.0))
+                .text_sm()
                 .text_color(fg)
                 .number_of_lines(1),
         )
         .child(
             // 键位提示（桌面侧栏带；抽屉不渲染——决策 6 移动档快捷键退役）。
+            // 辅助小字下限 = 字阶 CAPTION 12（规约阅读文字 ≥ 12pt，10pt 裸值退役）。
             text(move || {
                 if surface == NavSurface::Desktop {
                     hint_of(name).unwrap_or_default()
@@ -157,7 +158,7 @@ fn nav_item(
                     String::new()
                 }
             })
-            .text_size(px(10.0))
+            .text_xs()
             .text_color(muted),
         );
     if surface == NavSurface::Desktop {
@@ -186,7 +187,7 @@ pub(crate) fn drawer_panel() -> View {
         .items_center()
         .px_3()
         .py_2()
-        .child(text("开源记账").text_size(px(14.0)).text_color(fg))
+        .child(text("开源记账").text_sm().text_color(fg))
         .app_class("border-b border-border");
     let fixed_item = |name: ViewName| nav_item(name, no_hint, fg, muted, NavSurface::Drawer);
     let group_rows = nav_model::GROUPS
@@ -283,8 +284,9 @@ fn group_header(nav: NavStore, gid: GroupId, fg: AdaptiveColor, muted: AdaptiveC
         .px_3()
         .pt_2()
         .child(
+            // 组名 overline：辅助小字下限 = 字阶 CAPTION 12。
             text(gid.label())
-                .text_size(px(11.0))
+                .text_xs()
                 .text_color(muted)
                 .app_class("uppercase"),
         )
@@ -300,10 +302,10 @@ fn group_header(nav: NavStore, gid: GroupId, fg: AdaptiveColor, muted: AdaptiveC
                         .items_center()
                         .gap_1()
                         .px_1()
-                        .rounded_md()
+                        .app_class("rounded-(--radius)")
                         .on_press(move |_: &()| nav::open(NavRequest::bare(gid.more_view())))
-                        .child(text("更多").text_size(px(11.0)).text_color(fg))
-                        .child(text("›").text_size(px(10.0)).text_color(muted))
+                        .child(text("更多").text_xs().text_color(fg))
+                        .child(text("›").text_xs().text_color(muted))
                 },
             )
             .otherwise(view),

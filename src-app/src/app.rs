@@ -265,17 +265,17 @@ fn fallback_notice_view(
 ) -> View {
     view()
         .flex_col()
-        .app_class("rounded-md border border-destructive/30 bg-destructive/10 p-2 gap-1")
+        .app_class("rounded-(--radius) border border-destructive/30 bg-destructive/10 p-2 gap-1")
         .child(
             text(settings::LOCATION_FALLBACK_TITLE)
-                .text_size(px(12.0))
+                .text_xs()
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_color(fg)
                 .test_id(title_id),
         )
         .child(
             text(move || reason.clone())
-                .text_size(px(12.0))
+                .text_xs()
                 .text_color(muted)
                 .test_id(body_id),
         )
@@ -855,13 +855,13 @@ pub fn App() -> impl IntoElement {
                         .test_id("onboarding-panel")
                         .child(
                             text(move || headline_text(&state.get()))
-                                .text_size(px(24.0))
+                                .text_xl()
                                 .text_color(fg)
                                 .test_id("startup-headline"),
                         )
                         .child(
                             text(move || secondary_text(&state.get()))
-                                .text_size(px(12.0))
+                                .text_xs()
                                 .text_color(muted)
                                 .test_id("onboarding-hint"),
                         )
@@ -887,12 +887,14 @@ pub fn App() -> impl IntoElement {
                             // 「新建账本」动作（决策 2 双动作之一）。按 press
                             // 开确认对话（明示完整路径），确认后建库+登记+置指针
                             // 并重走启动竖井（接线在 create_dialog 结局处）。
+                            // 主操作按钮规格对表 docs/DESIGN.md §6（h-8 32pt 默认
+                            // 档；#2101 记一笔同款）。
                             button()
-                                .app_class("px-3 py-1.5 rounded-md bg-primary hover:opacity-90")
+                                .app_class("h-8 px-3 rounded-(--radius) bg-primary hover:opacity-90")
                                 .child(
                                     text(ONBOARDING_CREATE_LABEL)
-                                        .text_size(px(13.0))
-                                        .text_color(rgb(0xffffff))
+                                        .text_sm()
+                                        .text_color(crate::theme::color("primary-foreground"))
                                         .test_id("onboarding-create"),
                                 )
                                 .on_press(move || create_open.set(true)),
@@ -906,10 +908,12 @@ pub fn App() -> impl IntoElement {
                             // 动，组件体挂载）、④⑤码化错误呈现；取消零副作用留
                             // 引导。删本接线即 headless 引导选择器用例红（ADR-0087）。
                             button()
-                                .app_class("px-3 py-1.5 rounded-md border border-border text-foreground hover:bg-accent")
+                                .app_class(
+                                    "h-8 px-3 rounded-(--radius) border border-border text-foreground hover:bg-accent",
+                                )
                                 .child(
                                     text(ONBOARDING_PICK_LABEL)
-                                        .text_size(px(13.0))
+                                        .text_sm()
                                         .text_color(fg)
                                         .test_id("onboarding-pick-book-dir"),
                                 )
@@ -921,7 +925,7 @@ pub fn App() -> impl IntoElement {
                                 move || create_error.get().is_some(),
                                 move || {
                                     text(move || create_error.get().unwrap_or_default())
-                                        .text_size(px(12.0))
+                                        .text_xs()
                                         .text_color(
                                             nsh_core::element::tokens()
                                                 .color("destructive")
@@ -945,13 +949,13 @@ pub fn App() -> impl IntoElement {
                     .gap_2()
                     .child(
                         text(move || headline_text(&state.get()))
-                            .text_size(px(24.0))
+                            .text_xl()
                             .text_color(fg)
                             .test_id("startup-headline"),
                     )
                     .child(
                         text(move || secondary_text(&state.get()))
-                            .text_size(px(12.0))
+                            .text_xs()
                             .text_color(muted),
                     )
                     .child(
@@ -972,11 +976,11 @@ pub fn App() -> impl IntoElement {
                             move || {
                                 button()
                                     .app_class(
-                                        "px-3 py-1.5 rounded-md border border-border text-foreground hover:bg-accent",
+                                        "h-8 px-3 rounded-(--radius) border border-border text-foreground hover:bg-accent",
                                     )
                                     .child(
                                         text(PICK_BOOK_DIR_BUTTON)
-                                            .text_size(px(13.0))
+                                            .text_sm()
                                             .text_color(fg)
                                             .test_id("startup-pick-book-dir"),
                                     )
