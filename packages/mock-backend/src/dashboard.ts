@@ -63,7 +63,8 @@ export function financialFreedom(): FinancialFreedomOverview {
 }
 
 /** 跨账本投资汇总（ADR-0114）：替身恒单账本常量态（books.ts）——单行 included、
- * 无跨本合并与当期汇率折算（converted 恒 false），四数即活动本投资口径直投影。 */
+ * 活动本即它（is_active true，与 NSH CrossBookBookRow 同形状），无跨本合并与
+ * 当期汇率折算（converted 恒 false），四数即活动本投资口径直投影。 */
 export function crossBookInvestmentSummary(): CrossBookInvestmentSummary {
   const overview = investmentOverview();
   return {
@@ -73,6 +74,6 @@ export function crossBookInvestmentSummary(): CrossBookInvestmentSummary {
     unrealized_pnl_cents: overview.unrealized_pnl_cents,
     cumulative_pnl_cents: cumulativePnlNativeTotal().total_cents,
     investable_assets_cents: overview.investable_assets_cents,
-    books: [{ id: MOCK_BOOK.id, name: MOCK_BOOK.name, status: "included" }],
+    books: [{ id: MOCK_BOOK.id, name: MOCK_BOOK.name, status: "included", is_active: true }],
   };
 }
