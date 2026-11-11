@@ -356,7 +356,7 @@ fn interactive_cell(
                             .test_id("tx-cell-copy-note")
                             .optional_label("复制备注")
                             .on_press(move |_: &PressEvent| copy_note(&press_note))
-                            .child(text("复制").text_size(px(12.0)).text_color(accent)),
+                            .child(text("复制").text_xs().text_color(accent)),
                     )
                     .into_element(),
             )
@@ -1113,16 +1113,24 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
                         add_menu_open.set(open);
                     }
                 })
-                .popup_class("bg-background border border-border rounded-md shadow-md p-1")
+                .popup_class("bg-background border border-border rounded-(--radius) shadow-md p-1")
                 .trigger(
                     view().test_id("tx-add").child(
                         button()
-                            .app_class("px-3 py-1.5 rounded-md bg-primary hover:opacity-90")
+                            .app_class("h-8 px-3 rounded-(--radius) bg-primary hover:opacity-90")
                             .flex_row()
                             .items_center()
                             .gap_1()
-                            .child(text("记一笔").text_size(px(13.0)).text_color(rgb(0xffffff)))
-                            .child(text("▾").text_size(px(11.0)).text_color(rgb(0xffffff))),
+                            .child(
+                                text("记一笔")
+                                    .text_sm()
+                                    .text_color(crate::theme::color("primary-foreground")),
+                            )
+                            .child(
+                                text("▾")
+                                    .text_xs()
+                                    .text_color(crate::theme::color("primary-foreground")),
+                            ),
                     ),
                 )
                 .child(
@@ -1144,7 +1152,7 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
                             .map(|(entry, label, anchor)| {
                                 button()
                                     .app_class(
-                                        "w-full px-2 py-1 rounded-md text-left text-foreground hover:bg-accent",
+                                        "w-full px-2 py-1 rounded-(--radius) text-left text-foreground hover:bg-accent",
                                     )
                                     .child(text(label).test_id(anchor))
                                     .on_press(move |_: &()| {
@@ -1162,7 +1170,7 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
                             .map(|(entry, label, anchor)| {
                                 button()
                                     .app_class(
-                                        "w-full px-2 py-1 rounded-md text-left text-foreground hover:bg-accent",
+                                        "w-full px-2 py-1 rounded-(--radius) text-left text-foreground hover:bg-accent",
                                     )
                                     .child(text(label).test_id(anchor))
                                     .on_press(move |_: &()| {
@@ -1180,7 +1188,7 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
                             .map(|(entry, label, anchor)| {
                                 button()
                                     .app_class(
-                                        "w-full px-2 py-1 rounded-md text-left text-foreground hover:bg-accent",
+                                        "w-full px-2 py-1 rounded-(--radius) text-left text-foreground hover:bg-accent",
                                     )
                                     .child(text(label).test_id(anchor))
                                     .on_press(move |_: &()| {
@@ -1244,7 +1252,7 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
                 .text_color(fg)
                 .w(px(130.0))
                 .app_class(
-                    "bg-background rounded-md border border-border px-2 py-1 \
+                    "bg-background rounded-(--radius) border border-border px-2 py-1 \
                      placeholder:text-muted-foreground",
                 )
                 .on_change(on_amount_min_change)
@@ -1263,7 +1271,7 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
                 .text_color(fg)
                 .w(px(130.0))
                 .app_class(
-                    "bg-background rounded-md border border-border px-2 py-1 \
+                    "bg-background rounded-(--radius) border border-border px-2 py-1 \
                      placeholder:text-muted-foreground",
                 )
                 .on_change(on_amount_max_change)
@@ -1284,7 +1292,7 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
                 .test_id("tx-filter-hide-investment")
                 .role(nsh_core::AccessibilityRole::Button)
                 .optional_label("隐藏投资相关流水")
-                .app_class("flex items-center gap-1.5 rounded-md")
+                .app_class("flex items-center gap-2 rounded-(--radius)")
                 .on_press(move |_: &PressEvent| {
                     let next = !hide_investment.get_untracked();
                     toggle_hide_investment(next);
@@ -1292,14 +1300,14 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
                 .child(
                     view()
                         .flex_row()
-                        .app_class("items-center gap-1.5")
+                        .app_class("items-center gap-2")
                         .child(
                             nsh_base::switch()
                                 .accessibility_label("隐藏投资相关流水")
                                 .checked(move || hide_investment.get())
                                 .on_change(move |value: &bool| toggle_hide_investment(*value)),
                         )
-                        .child(text("隐藏投资相关流水").text_size(px(12.0)).text_color(fg)),
+                        .child(text("隐藏投资相关流水").text_sm().text_color(fg)),
                 ),
         )
         .child(
@@ -1311,13 +1319,10 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
                 .disabled(move || !search_filters_active())
                 .accessibility_label("清除筛选")
                 .app_class(
-                    "px-2 py-1 rounded-md text-foreground hover:bg-accent disabled:opacity-40",
+                    "px-2 py-1 rounded-(--radius) text-foreground hover:bg-accent disabled:opacity-40",
                 )
                 .child(
-                    text("清除筛选")
-                        .text_size(px(12.0))
-                        .text_color(fg)
-                        .test_id("tx-filter-clear"),
+                    text("清除筛选").text_sm().text_color(fg).test_id("tx-filter-clear"),
                 )
                 .on_press(move |_: &()| reset_filters()),
         );
@@ -1453,7 +1458,7 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
                         .optional_label("搜索交易")
                         .text_color(fg)
                         .app_class(
-                            "flex-1 bg-background rounded-md border border-border px-2 py-1 \
+                            "flex-1 bg-background rounded-(--radius) border border-border px-2 py-1 \
                              placeholder:text-muted-foreground",
                         )
                         .on_change(schedule_search)
@@ -1482,7 +1487,7 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
                                     searched.get(),
                                     search_filters_active(),
                                 ))
-                                .text_size(px(13.0))
+                                .text_sm()
                                 .text_color(muted),
                             )
                         },
@@ -1541,7 +1546,7 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
                 move || item_feedback.get().is_some(),
                 move || {
                     text(move || item_feedback.get().unwrap_or_default())
-                        .text_size(px(12.0))
+                        .text_xs()
                         .text_color(item_feedback_fg)
                         .test_id("tx-add-item-status")
                         .app_class("px-4 py-1")
@@ -1557,7 +1562,7 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
                     text(move || {
                         format!("删除失败: {}", delete_error.get().unwrap_or_default())
                     })
-                    .text_size(px(12.0))
+                    .text_xs()
                     .text_color(
                         tokens
                             .color("destructive")
@@ -1576,7 +1581,7 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
                 move || copy_feedback.get().is_some(),
                 move || {
                     text(move || copy_feedback.get().unwrap_or_default())
-                        .text_size(px(12.0))
+                        .text_xs()
                         .text_color(item_feedback_fg)
                         .test_id("tx-copy-note-status")
                         .app_class("px-4 py-1")
@@ -1630,7 +1635,7 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
                 move || trade_form.load_error.get().is_some(),
                 move || {
                     text(move || trade_form.load_error.get().unwrap_or_default())
-                        .text_size(px(12.0))
+                        .text_xs()
                         .text_color(item_feedback_fg)
                         .test_id("tx-trade-edit-error")
                         .app_class("px-4 py-1")
@@ -1661,7 +1666,7 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
                                     text(move || {
                                         format!("加载失败：{}", error.get().unwrap_or_default())
                                     })
-                                    .text_size(px(12.0))
+                                    .text_xs()
                                     .text_color(fg)
                                     .test_id("tx-error")
                                 },
@@ -1674,7 +1679,7 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
                                         total_text(total.get())
                                     }
                                 })
-                                .text_size(px(12.0))
+                                .text_xs()
                                 .text_color(muted)
                                 .test_id("tx-total")
                             }),
@@ -1695,7 +1700,7 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
                                         .total_pages(move || assembly::total_pages(total.get()))
                                         .disabled(move || loading.get())
                                         .item_class(
-                                            "px-2 py-1 rounded-md text-foreground hover:bg-accent selected:bg-accent disabled:opacity-40",
+                                            "px-2 py-1 rounded-(--radius) text-foreground hover:bg-accent selected:bg-accent disabled:opacity-40",
                                         )
                                         .on_change(move |&picked: &u32| {
                                             filters.set_page(picked);
