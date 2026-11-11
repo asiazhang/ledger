@@ -285,7 +285,9 @@ pub(crate) fn MerchantsView() -> impl IntoElement {
     // 总条数与分页边界（旧壳 prefix / NDataTable 客户端分页同形）：总数 = 过滤
     // 后集合条数；切片 = 显示集合按 (page-1)×50 起的 50 行。
     let total = move || display_rows.get().len() as u64;
-    let total_pages = move || total().div_ceil(PAGE_SIZE as u64) as u32;
+    // 总页数走 [`assembly::total_pages_of`] 单点（#2073；页大小 = 本视图
+    // [`PAGE_SIZE`]，50 行/页）。
+    let total_pages = move || crate::assembly::total_pages_of(total() as i64, PAGE_SIZE);
     let page_rows = computed(move || {
         let snapshot = display_rows.get();
         let page = current_page.get().max(1) as usize;

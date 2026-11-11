@@ -333,9 +333,10 @@ fn symbol_order(a: &HoldingRowSnap, b: &HoldingRowSnap) -> std::cmp::Ordering {
     }
 }
 
-/// 有效页数（≥1；行集空 = 一页——旧壳 pageCount 同口径）。
+/// 有效页数（≥1；行集空 = 一页——旧壳 pageCount 同口径；换算住
+/// [`assembly::total_pages_of`] 单点，#2073）。
 pub(crate) fn holdings_total_pages(row_count: usize) -> usize {
-    row_count.div_ceil(investments::HOLDINGS_PAGE_SIZE).max(1)
+    crate::assembly::total_pages_of(row_count as i64, investments::HOLDINGS_PAGE_SIZE) as usize
 }
 
 /// 客户端切片（页码越界取末页——读出口整面，切片处仅兜底钳）。

@@ -462,7 +462,7 @@ impl CategoryTable {
 
 /// 金额基础格式化（`formatAmount` zh-CN 口径，issue #2019 全家桶的分组核）：
 /// 分 → 元按币种小数位换算、去尾零（98.00→98、98.50→98.5，无损去零不涉舍入）、
-/// 负号在最前、币符紧跟其后、整数部分 zh-CN 每四位一组（词汇表「数字分组」，
+/// 负号在最前、币符紧跟其后、整数部分 zh-CN 每四位一组（词汇表「数字分组」,
 /// 小数部分不分组）。隐私掩码在装配入口消费 [`RowContext::privacy_enabled`]
 /// 后收口（[`AMOUNT_PRIVACY_MASK`]，[`assemble_rows`]）；NSH 无界面语言切换，
 /// 分组恒 zh 四位一组（en-US 三位一组随 i18n 方案票再议）。
@@ -471,30 +471,24 @@ impl CategoryTable {
 /// |分| < 2⁵³（约 ¥9×10¹³）内 f64 精确，定点格式化与 `toFixed` 在该量级内
 /// 逐位同形（见 tests 基本例）；个人账本量级远在其下，不引入整数串算的第二
 /// 套舍入口径（口径单源：旧壳展示行为即对拍基准）。
+///
+/// 本函数是 [`format_amount_f64`] 的整数分入口变形（#2073 双胞胎合并）：
+/// i64 绝对值先经 i128 兜住 i64::MIN 再升 f64，与直转 f64 后 `abs` 在
+/// |分| < 2⁵³ 内逐位同值——换算与去零主体单点在 f64 版。
 pub fn format_amount_basic(cents: i64, fmt: &CurrencyFormat) -> String {
-    let sign = if cents < 0 { "-" } else { "" };
     let abs = (cents as i128).unsigned_abs() as f64;
-    let value = abs / 10f64.powi(fmt.decimal_places as i32);
-    let fixed = format!("{:.*}", fmt.decimal_places as usize, value);
-    // 只去零、不做舍入；小数部分全空时连小数点一起去掉（与旧壳 replace 同序）。
-    let trimmed = if fmt.decimal_places > 0 {
-        fixed.trim_end_matches('0').trim_end_matches('.')
-    } else {
-        fixed.as_str()
-    };
-    format!("{sign}{}{}", fmt.symbol, group_number_string(trimmed, 4))
+    format_amount_f64(if cents < 0 { -abs } else { abs }, fmt)
 }
 
 /// 金额基础格式化·小数分变形（formatAmount 的小数分消费面，issue #2044）：
 /// 域口径的**小数分**量（物品域 `per_day_cents` 分/天小数）沿用同一换算与去
-/// 零口径（f64 除法 + 定点格式化，与 [`format_amount_basic`] 同源）；熟悉
+/// 零口径（f64 除法 + 定点格式化，与 [`format_amount_basic`] 同源同点）；熟悉
 /// 量级内定点格式化与旧壳 toFixed 逐位同形（平价锁定例见单测）。
 pub fn format_amount_f64(cents: f64, fmt: &CurrencyFormat) -> String {
     let sign = if cents < 0.0 { "-" } else { "" };
     let value = cents.abs() / 10f64.powi(fmt.decimal_places as i32);
     let fixed = format!("{:.*}", fmt.decimal_places as usize, value);
-    // 只去零、不做舍入；小数部分全空时连小数点一起去掉（与 [`format_amount_basic`]
-    // 同序）。
+    // 只去零、不做舍入；小数部分全空时连小数点一起去掉（与旧壳 replace 同序）。
     let trimmed = if fmt.decimal_places > 0 {
         fixed.trim_end_matches('0').trim_end_matches('.')
     } else {
@@ -992,11 +986,18 @@ pub fn next_page(current: u32, total_pages: u32, step: PageStep) -> Option<u32> 
     }
 }
 
-/// 总页数（offset 分页，ADR-0008）：末页不满一页也算一页；`total = 0` 恒 1
-/// （分页条在单页时由 UI 层收起，见 [`crate::app`]）。
-pub fn total_pages(total: i64) -> u32 {
-    let pages = (total.max(0) as u64).div_ceil(PAGE_SIZE as u64);
+/// 总页数单点（offset 分页，ADR-0008；#2073 自五处分页面收敛）：末页不满
+/// 一页也算一页；`total = 0` 恒 1（分页条在单页时由 UI 层收起）；负 total
+/// 钳 0（防御性，域 total 语义非负）。各分页面（交易主列表 / 盈亏 / 持仓 /
+/// 明细 / 标的 / 商户）以各自页径消费本点，勿再自写 `div_ceil` 组合。
+pub fn total_pages_of(total: i64, page_size: usize) -> u32 {
+    let pages = (total.max(0) as u64).div_ceil(page_size as u64);
     pages.max(1) as u32
+}
+
+/// 总页数（交易主列表，offset 分页，ADR-0008）：页大小 [`PAGE_SIZE`]。
+pub fn total_pages(total: i64) -> u32 {
+    total_pages_of(total, PAGE_SIZE)
 }
 
 /// 删除一行后的页码决策（旧壳 afterRowDelete / ADR-0045 的决策半边，#2022）：

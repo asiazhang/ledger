@@ -351,10 +351,10 @@ pub(crate) fn instruments_empty_text(total: i64, filters_active: bool) -> &'stat
     }
 }
 
-/// 有效页数（≥1；服务端分页，页大小 [`PAGE_SIZE`]）。
+/// 有效页数（≥1；服务端分页，页大小 [`PAGE_SIZE`]；换算住
+/// [`assembly::total_pages_of`] 单点，#2073）。
 pub(crate) fn instruments_total_pages(total: i64) -> u32 {
-    let count = total.max(0) as usize;
-    count.div_ceil(PAGE_SIZE).max(1) as u32
+    crate::assembly::total_pages_of(total, PAGE_SIZE)
 }
 
 /// 筛选签名（同值守卫的比较锚）。

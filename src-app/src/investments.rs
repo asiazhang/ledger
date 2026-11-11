@@ -642,9 +642,10 @@ pub(crate) fn year_rows_desc(rows: &[YearPnlSnap]) -> Vec<YearPnlSnap> {
     sorted
 }
 
-/// 有效页数（≥1；行集空 = 一页）。
+/// 有效页数（≥1；行集空 = 一页；客户端切片分页与 [`assembly::total_pages_of`]
+/// 同口径，#2073 收敛为单点消费）。
 pub(crate) fn total_pages(row_count: usize) -> usize {
-    row_count.div_ceil(PNL_PAGE_SIZE).max(1)
+    crate::assembly::total_pages_of(row_count as i64, PNL_PAGE_SIZE) as usize
 }
 
 /// 客户端切片分页（旧壳「两表行集一次全量拉取，翻页只是内存展示切片」同
