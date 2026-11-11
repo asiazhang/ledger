@@ -162,7 +162,7 @@ const WRITE_TASK_FAILED: &str = "内部错误：写入任务异常退出";
 
 const ENCRYPTION_HINT: &str = "为账本数据库开启文件级加密：磁盘上的库文件与备份不再能被任意工具直接阅读。开启是一次自动完成的整库转换，失败时原库原样保留。";
 const ENCRYPTION_WARN_TITLE: &str = "开启前请确认";
-const ENCRYPTION_WARN_BODY: &str = "开启后每次启动都需输入主口令解锁；主口令不会被保存、也没有找回手段——遗忘将无法读取数据（可重置为全新空库，旧库保留为密文副本）。转换完成后应用将自动重启。";
+const ENCRYPTION_WARN_BODY: &str = "开启后每次启动都需输入主口令解锁；主口令不会被保存、也没有找回手段——遗忘将无法读取数据（可重置为全新空库，旧库保留为密文副本）。转换完成后本会话继续可用（下次启动需输入主口令解锁）。";
 const PASS_LABEL: &str = "主口令";
 const PASS_PLACEHOLDER: &str = "设置主口令";
 const PASS_CONFIRM_LABEL: &str = "确认主口令";
@@ -176,16 +176,54 @@ const ENCRYPT_CONFIRM_LEAD: &str = "开启后，每次启动都需输入主口�
 const ENCRYPT_CONFIRM_STRONG: &str =
     "主口令不会被保存、也无法找回——一旦忘记，这份账本的数据将无法再打开。";
 const ENCRYPT_CONFIRM_REST: &str =
-    "将把整个账本库转换为加密库（转换期间请勿关闭应用），完成后应用自动重启。";
+    "将把整个账本库转换为加密库（转换期间请勿关闭应用），完成后本会话继续可用。";
 const ENCRYPT_CONFIRM_OK: &str = "继续开启加密";
 const ENCRYPT_CONFIRM_CANCEL: &str = "取消";
-const ENCRYPT_OK_HOST_HINT: &str = "加密已开启（整库转换完成）。本壳暂不支持密文库启动——解锁向导界外另票：请用旧壳打开此数据（下次启动本壳将呈现「密文库暂不支持」）。";
+const ENCRYPT_OK_HOST_HINT: &str = "加密已开启（整库转换完成），本会话已切换到加密库；下次启动需输入主口令解锁。";
 const ENCRYPT_FAILED_PREFIX: &str = "开启加密失败: ";
 const ENCRYPT_STATUS_FAILED_PREFIX: &str = "读取加密状态失败: ";
 const ENCRYPT_RETRY: &str = "重试";
-const ENCRYPT_ENABLED_LOCAL_TITLE: &str = "已开启加密（密文库）";
-const ENCRYPT_ENABLED_LOCAL_BODY: &str = "当前账本库为密文库；本壳只引导未加密账本库（解锁向导界外另票）——修改主口令、关闭加密与自动解锁随解锁向导另票开门。";
-const ENCRYPT_PLAIN_ONLY_NOTE: &str = "本壳只引导未加密账本库：密文库形态（修改主口令 / 关闭加密 / 自动解锁）与解锁向导随解锁票开门。";
+/// 密文会话形态（#2088 平价旧壳 EncryptionSettings：已开启标识 + 修改主
+/// 口令 / 关闭加密 / 自动解锁三件写面；转换完成语义 = 原位换连本会话继续
+/// 可用，旧壳「应用自动重启」的本壳替代口径）。
+const ENCRYPT_ENABLED_LOCAL_TITLE: &str = "已开启加密";
+const ENCRYPT_ENABLED_LOCAL_BODY: &str = "当前账本库为加密库，每次启动需输入主口令解锁。";
+const CHANGE_HINT: &str = "怀疑泄露或定期轮换时可修改主口令：旧口令验证通过后转入新口令的新库，完成后本会话切换到新口令的加密库（下次启动凭新口令解锁）。";
+const CHANGE_OLD_LABEL: &str = "当前主口令";
+const CHANGE_OLD_PLACEHOLDER: &str = "输入当前主口令";
+const CHANGE_NEW_LABEL: &str = "新主口令";
+const CHANGE_NEW_PLACEHOLDER: &str = "设置新主口令";
+const CHANGE_CONFIRM_LABEL: &str = "确认新主口令";
+const CHANGE_CONFIRM_PLACEHOLDER: &str = "再次输入新主口令";
+const CHANGE_UNCHANGED: &str = "新主口令与当前主口令相同";
+const CHANGE_BUTTON: &str = "修改主口令";
+const CHANGE_CONFIRM_TITLE: &str = "修改主口令？";
+const CHANGE_CONFIRM_LEAD: &str = "修改后，每次启动都需凭新主口令解锁。";
+const CHANGE_CONFIRM_STRONG: &str =
+    "新主口令不会被保存、也无法找回——一旦忘记，这份账本的数据将无法再打开。";
+const CHANGE_CONFIRM_REST: &str =
+    "将把整个账本库转换为新主口令的加密库（转换期间请勿关闭应用），完成后本会话继续可用。";
+const CHANGE_CONFIRM_OK: &str = "继续修改主口令";
+const CHANGE_CONFIRM_CANCEL: &str = "取消";
+const CHANGE_OK_HOST_HINT: &str = "主口令已修改，本会话已切换（下次启动请使用新口令解锁）。";
+const CHANGE_FAILED_PREFIX: &str = "修改主口令失败: ";
+const DISABLE_WARN_TITLE: &str = "关闭前请确认";
+const DISABLE_WARN_BODY: &str = "关闭后账本库与今后的备份将以明文存放，启动不再需要主口令（既有密文备份不随之改变）。转换需输入当前主口令，完成后本会话切换到明文库。";
+const DISABLE_PASS_LABEL: &str = "当前主口令";
+const DISABLE_PASS_PLACEHOLDER: &str = "输入当前主口令";
+const DISABLE_BUTTON: &str = "关闭加密";
+const DISABLE_CONFIRM_TITLE: &str = "关闭加密？";
+const DISABLE_CONFIRM_LEAD: &str = "将把整个账本库转换回明文库，此后数据以明文存放、启动不再需要主口令。";
+const DISABLE_CONFIRM_STRONG: &str = "既有密文备份不随之改变，仍需当时的主口令读取；日后可随时重新开启加密。";
+const DISABLE_CONFIRM_REST: &str = "转换期间请勿关闭应用，完成后本会话继续可用。";
+const DISABLE_CONFIRM_OK: &str = "继续关闭加密";
+const DISABLE_CONFIRM_CANCEL: &str = "取消";
+const DISABLE_OK_HOST_HINT: &str = "加密已关闭，本会话已切换到明文库。";
+const DISABLE_FAILED_PREFIX: &str = "关闭加密失败: ";
+/// 自动解锁平价注记（issue #2088 裁决：`passphrase_cache::supported()` 仅
+/// macOS，本壳 Linux-only——旧壳非 macOS 隐藏选项回退手输的同款平价，在
+/// 屏静态注记不做写面）。
+const AUTO_UNLOCK_UNSUPPORTED_CARD: &str = "自动解锁：本机（Linux 桌面）不支持——主口令的本机缓存仅 macOS 可用，启动解锁请手动输入主口令。";
 
 const SYNC_PLAINTEXT_WARNING: &str = "当前账本未开启加密：同步数据将以明文存放于对象存储。如需加密同步，请先在本页「加密」卡开启加密模式。";
 const SYNC_ENCRYPTED_HINT: &str = "本账库为密文形态：同步数据将以主口令加密后上通道。";
@@ -1943,16 +1981,24 @@ fn backup_row(palette: views::ViewPalette, index: usize, row: BackupRowView) -> 
 
 #[derive(Clone, Copy)]
 struct EncryptionState {
-    /// 库文件密文形态（文件即真相；NSH 常态 = false）。
+    /// 库文件密文形态（文件即真相；明文会话 = false，密文会话 = true）。
     file_encrypted: Signal<bool>,
     /// 状态读取失败（错误位 + 重试）。
     status_error: Signal<Option<String>>,
-    /// 主口令与确认。
+    /// 主口令与确认（开启流）。
     pass: Signal<String>,
     confirm: Signal<String>,
     /// 开启加密确认弹窗开着。
     confirm_open: Signal<bool>,
-    /// 执行中（单飞）。
+    /// 修改主口令三框（当前 / 新 / 确认新）与确认弹窗。
+    change_current: Signal<String>,
+    change_new: Signal<String>,
+    change_confirm: Signal<String>,
+    change_open: Signal<bool>,
+    /// 关闭加密当前口令框与确认弹窗。
+    disable_current: Signal<String>,
+    disable_open: Signal<bool>,
+    /// 执行中（单飞，卡级三动作共用）。
     busy: Signal<bool>,
     /// 状态条位（成功 / 失败反馈）。
     status: Signal<Option<String>>,
@@ -1967,6 +2013,23 @@ fn enable_ready(state: EncryptionState) -> bool {
         && !pass.is_empty()
         && pass.chars().count() >= PASSPHRASE_MIN_LENGTH
         && state.confirm.get() == pass
+}
+
+/// 修改主口令表单可提交（当前口令非空、新口令 ≥8 位、两次一致、与当前不
+/// 同、非执行中——旧壳同守卫闭集加未变守卫）。
+fn change_ready(state: EncryptionState) -> bool {
+    let current = state.change_current.get();
+    let new = state.change_new.get();
+    !state.busy.get()
+        && !current.is_empty()
+        && new.chars().count() >= PASSPHRASE_MIN_LENGTH
+        && state.change_confirm.get() == new
+        && new != current
+}
+
+/// 关闭加密表单可提交（当前口令非空、非执行中——旧壳同守卫闭集）。
+fn disable_ready(state: EncryptionState) -> bool {
+    !state.busy.get() && !state.disable_current.get().trim().is_empty()
 }
 
 /// 加密状态首刷 / 重试（文件头探测阻塞面）。删首刷接线 → 卡面恒「主口令」
@@ -1990,8 +2053,8 @@ fn refresh_encryption_status(owner: Owner, state: EncryptionState) {
 }
 
 /// 开启加密执行任务（确认弹窗先关再执行——确认弹窗不是重试现场；整库转换
-/// 直调基建单点，失败原库原样保留）：成功反馈如实携带本壳密文启动暂不支
-/// 持的后果（旧壳自动重启 + 解锁屏的偏差在句内披露）。
+/// 直调基建单点，失败原库原样保留）：成功后原位换连本会话继续可用
+///（旧壳自动重启的本壳替代口径，见 boot::enable_encryption）。
 fn run_enable_encryption(owner: Owner, state: EncryptionState) {
     let passphrase = state.pass.get_untracked();
     state.busy.set(true);
@@ -2026,6 +2089,76 @@ fn run_enable_encryption(owner: Owner, state: EncryptionState) {
     });
 }
 
+/// 修改主口令执行任务（旧壳 `change_encryption_passphrase` 消费面；成功后
+/// 凭新口令原位换连本会话继续可用）。
+fn run_change_encryption(owner: Owner, state: EncryptionState) {
+    let current = state.change_current.get_untracked();
+    let new = state.change_new.get_untracked();
+    state.busy.set(true);
+    owner.run(move || {
+        spawn(async move {
+            let db = crate::app::db_slot().clone();
+            let outcome = blocking(move || match db.as_ref() {
+                Some(db) => boot::change_encryption_passphrase(db, &current, &new),
+                None => Err(ledger_infra::error::AppError::coded(
+                    boot::CODE_SESSION_MISSING,
+                    SESSION_MISSING,
+                )),
+            })
+            .await;
+            state.busy.set(false);
+            match outcome {
+                Ok(Ok(())) => {
+                    state.change_current.set(String::new());
+                    state.change_new.set(String::new());
+                    state.change_confirm.set(String::new());
+                    state.status.set(Some(CHANGE_OK_HOST_HINT.to_owned()));
+                }
+                Ok(Err(e)) => state
+                    .status
+                    .set(Some(format!("{CHANGE_FAILED_PREFIX}{e}"))),
+                Err(_) => state
+                    .status
+                    .set(Some(format!("{CHANGE_FAILED_PREFIX}{WRITE_TASK_FAILED}"))),
+            }
+        })
+    });
+}
+
+/// 关闭加密执行任务（旧壳 `disable_encryption` 消费面；成功后原位换连到
+/// 明文新世界本会话继续可用）。
+fn run_disable_encryption(owner: Owner, state: EncryptionState) {
+    let current = state.disable_current.get_untracked();
+    state.busy.set(true);
+    owner.run(move || {
+        spawn(async move {
+            let db = crate::app::db_slot().clone();
+            let outcome = blocking(move || match db.as_ref() {
+                Some(db) => boot::disable_encryption(db, &current),
+                None => Err(ledger_infra::error::AppError::coded(
+                    boot::CODE_SESSION_MISSING,
+                    SESSION_MISSING,
+                )),
+            })
+            .await;
+            state.busy.set(false);
+            match outcome {
+                Ok(Ok(())) => {
+                    state.disable_current.set(String::new());
+                    state.status.set(Some(DISABLE_OK_HOST_HINT.to_owned()));
+                    refresh_encryption_status(owner, state);
+                }
+                Ok(Err(e)) => state
+                    .status
+                    .set(Some(format!("{DISABLE_FAILED_PREFIX}{e}"))),
+                Err(_) => state
+                    .status
+                    .set(Some(format!("{DISABLE_FAILED_PREFIX}{WRITE_TASK_FAILED}"))),
+            }
+        })
+    });
+}
+
 fn encryption_card(palette: views::ViewPalette) -> View {
     let owner = Owner::current();
     let state = EncryptionState {
@@ -2034,6 +2167,12 @@ fn encryption_card(palette: views::ViewPalette) -> View {
         pass: signal(String::new()),
         confirm: signal(String::new()),
         confirm_open: signal(false),
+        change_current: signal(String::new()),
+        change_new: signal(String::new()),
+        change_confirm: signal(String::new()),
+        change_open: signal(false),
+        disable_current: signal(String::new()),
+        disable_open: signal(false),
         busy: signal(false),
         status: signal(None),
     };
@@ -2076,7 +2215,7 @@ fn encryption_card(palette: views::ViewPalette) -> View {
                 view().child(
                     when(
                         move || state.file_encrypted.get(),
-                        move || view().child(encrypted_form(state)),
+                        move || view().child(encrypted_form(state, palette)),
                     )
                     .otherwise(move || view().child(enable_form(state, palette))),
                 )
@@ -2109,12 +2248,54 @@ fn encryption_error_view(state: EncryptionState) -> impl IntoElement {
         )
 }
 
-/// 密文库形态呈现（「已开启」警示块 + 本壳不可达形态的偏差注记）。
-fn encrypted_form(state: EncryptionState) -> impl IntoElement {
-    let _ = state;
+/// 密文会话形态（#2088 平价旧壳 EncryptionSettings 已开启视图）：已开启
+/// 警示块 + 自动解锁平台注记 + 修改主口令流（error 级确认，旧壳同分级）+
+/// 关闭加密流（warning 级确认——破坏性但有兑底：.bak 密文副本保留可再
+/// 开启，旧壳同分级）。删任一写面接线 → 对应 headless 旅程红。
+fn encrypted_form(state: EncryptionState, palette: views::ViewPalette) -> impl IntoElement {
+    let owner = Owner::current();
+    // 修改主口令确认（error 级：新口令无后门，与开启加密同级，旧壳同分级）。
+    let change_dialog = danger_confirm(
+        move || state.change_open.get(),
+        DangerConfirmSpec {
+            level: DangerLevel::Error,
+            title: CHANGE_CONFIRM_TITLE.to_owned(),
+            lead: Some(CHANGE_CONFIRM_LEAD.to_owned()),
+            strong_warning: Some(CHANGE_CONFIRM_STRONG.to_owned()),
+            detail: Some(CHANGE_CONFIRM_REST.to_owned()),
+            confirm_label: CHANGE_CONFIRM_OK.to_owned(),
+            cancel_label: CHANGE_CONFIRM_CANCEL.to_owned(),
+        },
+        move |outcome: DangerOutcome| {
+            state.change_open.set(false);
+            if outcome == DangerOutcome::Confirmed {
+                run_change_encryption(owner, state);
+            }
+        },
+    );
+    // 关闭加密确认（warning 级：破坏性但有兑底，旧壳同分级）。
+    let disable_dialog = danger_confirm(
+        move || state.disable_open.get(),
+        DangerConfirmSpec {
+            level: DangerLevel::Warning,
+            title: DISABLE_CONFIRM_TITLE.to_owned(),
+            lead: Some(DISABLE_CONFIRM_LEAD.to_owned()),
+            strong_warning: Some(DISABLE_CONFIRM_STRONG.to_owned()),
+            detail: Some(DISABLE_CONFIRM_REST.to_owned()),
+            confirm_label: DISABLE_CONFIRM_OK.to_owned(),
+            cancel_label: DISABLE_CONFIRM_CANCEL.to_owned(),
+        },
+        move |outcome: DangerOutcome| {
+            state.disable_open.set(false);
+            if outcome == DangerOutcome::Confirmed {
+                run_disable_encryption(owner, state);
+            }
+        },
+    );
     view()
         .flex_col()
         .app_class("gap-2")
+        .test_id("enc-enabled-form")
         .child(
             view()
                 .flex_col()
@@ -2133,11 +2314,152 @@ fn encrypted_form(state: EncryptionState) -> impl IntoElement {
                 ),
         )
         .child(
-            text(ENCRYPT_PLAIN_ONLY_NOTE)
+            text(AUTO_UNLOCK_UNSUPPORTED_CARD)
                 .text_size(px(11.0))
-                .text_color(views::view_palette().muted)
-                .test_id("enc-plain-only-note"),
+                .text_color(palette.muted)
+                .test_id("enc-auto-unlock-note"),
         )
+        // —— 修改主口令流（旧壳 changeHint + 三框 + 未变/长度/一致守卫） ——
+        .child(
+            view()
+                .flex_col()
+                .app_class("gap-2")
+                .test_id("enc-change-form")
+                .child(
+                    text(CHANGE_HINT)
+                        .text_size(px(12.0))
+                        .text_color(palette.muted),
+                )
+                .child(pass_input(
+                    state.change_current,
+                    palette,
+                    "enc-change-current",
+                    CHANGE_OLD_LABEL,
+                    CHANGE_OLD_PLACEHOLDER,
+                ))
+                .child(pass_input(
+                    state.change_new,
+                    palette,
+                    "enc-change-new",
+                    CHANGE_NEW_LABEL,
+                    CHANGE_NEW_PLACEHOLDER,
+                ))
+                .child(when(
+                    move || {
+                        let new = state.change_new.get();
+                        !new.is_empty() && new.chars().count() < PASSPHRASE_MIN_LENGTH
+                    },
+                    move || {
+                        text(format!(
+                            "{PASS_TOO_SHORT_PREFIX}{PASSPHRASE_MIN_LENGTH}{PASS_TOO_SHORT_SUFFIX}"
+                        ))
+                        .text_size(px(11.0))
+                        .text_color(danger_fg())
+                        .test_id("enc-change-too-short")
+                    },
+                ))
+                .child(pass_input(
+                    state.change_confirm,
+                    palette,
+                    "enc-change-confirm",
+                    CHANGE_CONFIRM_LABEL,
+                    CHANGE_CONFIRM_PLACEHOLDER,
+                ))
+                .child(when(
+                    move || {
+                        let confirm = state.change_confirm.get();
+                        let new = state.change_new.get();
+                        !confirm.is_empty() && confirm != new
+                    },
+                    move || {
+                        text(PASS_MISMATCH)
+                            .text_size(px(11.0))
+                            .text_color(danger_fg())
+                            .test_id("enc-change-mismatch")
+                    },
+                ))
+                .child(when(
+                    move || {
+                        let confirm = state.change_confirm.get();
+                        let new = state.change_new.get();
+                        !confirm.is_empty()
+                            && !new.is_empty()
+                            && new == state.change_current.get_untracked()
+                            && confirm == new
+                    },
+                    move || {
+                        text(CHANGE_UNCHANGED)
+                            .text_size(px(11.0))
+                            .text_color(danger_fg())
+                            .test_id("enc-change-unchanged")
+                    },
+                ))
+                .child(
+                    button()
+                        .app_class("px-3 py-1.5 rounded-md bg-primary hover:opacity-90 disabled:opacity-40")
+                        .disabled(move || !change_ready(state))
+                        .child(
+                            text(CHANGE_BUTTON)
+                                .text_size(px(13.0))
+                                .text_color(rgb(0xffffff))
+                                .test_id("enc-change"),
+                        )
+                        .on_press(move |_: &()| {
+                            if change_ready(state) {
+                                state.change_open.set(true);
+                            }
+                        }),
+                ),
+        )
+        // —— 关闭加密流（旧壳 disableWarn + 当前口令框） ——
+        .child(
+            view()
+                .flex_col()
+                .app_class("gap-2")
+                .test_id("enc-disable-form")
+                .child(
+                    view()
+                        .flex_col()
+                        .app_class("rounded-md border border-amber-500/30 bg-amber-500/10 p-2 gap-1")
+                        .child(
+                            text(DISABLE_WARN_TITLE)
+                                .text_size(px(12.0))
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .text_color(danger_fg())
+                                .test_id("enc-disable-warn-title"),
+                        )
+                        .child(
+                            text(DISABLE_WARN_BODY)
+                                .text_size(px(12.0))
+                                .text_color(palette.fg),
+                        ),
+                )
+                .child(pass_input(
+                    state.disable_current,
+                    palette,
+                    "enc-disable-current",
+                    DISABLE_PASS_LABEL,
+                    DISABLE_PASS_PLACEHOLDER,
+                ))
+                .child(
+                    button()
+                        .app_class("px-3 py-1.5 rounded-md bg-primary hover:opacity-90 disabled:opacity-40")
+                        .disabled(move || !disable_ready(state))
+                        .child(
+                            text(DISABLE_BUTTON)
+                                .text_size(px(13.0))
+                                .text_color(rgb(0xffffff))
+                                .test_id("enc-disable"),
+                        )
+                        .on_press(move |_: &()| {
+                            if disable_ready(state) {
+                                state.disable_open.set(true);
+                            }
+                        }),
+                ),
+        )
+        .child(change_dialog)
+        .child(disable_dialog)
 }
 
 /// 明文库开启表单（开启前警示 + 主口令两框 + 即时字段错误 + 提交按钮；

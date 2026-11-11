@@ -12503,13 +12503,15 @@ fn encryption_enable_guard_blocks_and_converts() {
         ),
         "取消后文件头保持明文（零转换）"
     );
-    // 确认 → 整库转换（文件头密文）+ 本壳后果提示。
+    // 确认 → 整库转换（文件头密文）+ 原位换连本会话继续可用（旧壳自动重启
+    // 的本壳替代口径，#2088）：卡翻转到密文会话形态（已开启 + 写面四件）。
     app.press("id:enc-enable").unwrap();
     app.wait_for("text:开启加密？").unwrap();
     app.press("id:danger-confirm").unwrap();
     app.wait_for(
-        "text:加密已开启（整库转换完成）。本壳暂不支持密文库启动——解锁向导界外另票：请用旧壳打开此数据（下次启动本壳将呈现「密文库暂不支持」）。",
-    ).unwrap();
+        "text:加密已开启（整库转换完成），本会话已切换到加密库；下次启动需输入主口令解锁。",
+    )
+    .unwrap();
     assert!(
         matches!(
             ledger_infra::db::encryption::probe_file_kind(&dir.join("ledger.db")).unwrap(),
@@ -12517,6 +12519,15 @@ fn encryption_enable_guard_blocks_and_converts() {
         ),
         "确认后整库转换为密文库（文件头探测）"
     );
+    // 卡面翻转到密文会话形态：已开启警示块 + 自动解锁平台注记 + 修改主口令
+    // / 关闭加密写面在屏（旧壳 EncryptionSettings 已开启视图平价）。
+    app.wait_for("text:已开启加密").unwrap();
+    app.wait_for("id:enc-auto-unlock-note").unwrap();
+    app.wait_for("id:enc-change-form").unwrap();
+    app.wait_for("id:enc-disable-form").unwrap();
+    // 会话零中断：开启后主界面照常可用（读路径直调换连后新世界）。
+    open_transactions(&mut app);
+    app.wait_for("id:tx-table").unwrap();
 }
 
 /// 同步卡守卫旅程：通道未配置 → 「立即同步」报未配置码化错误（轮次编排归
@@ -15215,4 +15226,144 @@ fn locked_view_forgot_passphrase_resets_to_fresh_plaintext_session() {
         ),
         "旧密文库保留为 .bak 密文副本（无口令不可读，日后想起口令仍可救回）"
     );
+}
+
+/// 加密卡写面平价全旅程（issue #2088 交付②：修改主口令 / 关闭加密，旧壳
+/// `change_encryption_passphrase` / `disable_encryption` 消费面）：开启加密
+/// → 密文会话形态 → 修改主口令（error 级确认；旧口令错误就地报错原库原样；
+/// 正确后凭新口令原位换连，文件头仍密文且新口令可解）→ 关闭加密（warning
+/// 级确认；整库转回明文，文件头明文 + .bak 保留密文副本）。
+///
+/// 「删除即红」负向条目：删任一写面接线（encrypted_form 的表单/确认/任务
+/// 链）→ 对应流程不入屏/不落盘 → 本测 wait_for / 文件探测红。
+#[test]
+fn encryption_card_change_passphrase_then_disable_in_encrypted_session() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    const PASS_V1: &str = "首开启口令 journeyA";
+    const PASS_V2: &str = "换新口令 journeyB";
+    let dir = make_book("enc-write-journey");
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_data_tab(&mut app);
+
+    // 开启加密（守卫 + error 确认，前置旅程已另钉，此处直接走通）。
+    app.type_text("id:enc-passphrase", PASS_V1).unwrap();
+    app.type_text("id:enc-confirm", PASS_V1).unwrap();
+    app.wait_until("enc-enable ready", Duration::from_secs(5), |screen| {
+        screen.press_target("id:enc-enable").unwrap().is_some()
+    })
+    .unwrap();
+    app.press("id:enc-enable").unwrap();
+    app.wait_for("text:开启加密？").unwrap();
+    app.press("id:danger-confirm").unwrap();
+    app.wait_for("text:已开启加密").unwrap();
+    assert!(
+        matches!(
+            ledger_infra::db::encryption::probe_file_kind(&dir.join("ledger.db")).unwrap(),
+            ledger_infra::db::encryption::DbFileKind::Encrypted,
+        ),
+        "开启后库文件密文"
+    );
+
+    // —— 修改主口令：新口令守卫（未变 / 长度 / 一致）→ error 级确认 ——
+    app.type_text("id:enc-change-current", PASS_V1).unwrap();
+    app.type_text("id:enc-change-new", PASS_V1).unwrap();
+    app.type_text("id:enc-change-confirm", PASS_V1).unwrap();
+    app.wait_for("text:新主口令与当前主口令相同").unwrap();
+    assert!(
+        app.screen()
+            .press_target("id:enc-change")
+            .unwrap()
+            .is_none(),
+        "新口令与当前相同时「修改主口令」不可按"
+    );
+    app.clear("id:enc-change-new").unwrap();
+    app.type_text("id:enc-change-new", "短口令").unwrap();
+    app.clear("id:enc-change-confirm").unwrap();
+    app.type_text("id:enc-change-confirm", "短口令").unwrap();
+    app.wait_for("text:主口令至少需要 8 位").unwrap();
+    app.clear("id:enc-change-new").unwrap();
+    app.type_text("id:enc-change-new", PASS_V2).unwrap();
+    app.clear("id:enc-change-confirm").unwrap();
+    app.type_text("id:enc-change-confirm", "另一个口令一一贯不一致").unwrap();
+    app.wait_for("text:两次输入不一致").unwrap();
+    app.clear("id:enc-change-confirm").unwrap();
+    app.type_text("id:enc-change-confirm", PASS_V2).unwrap();
+    app.wait_until("enc-change ready", Duration::from_secs(5), |screen| {
+        screen.press_target("id:enc-change").unwrap().is_some()
+    })
+    .unwrap();
+
+    // 先走一次旧口令错误路径：当前口令框填错 → 确认 → 合并口径错误，库仍
+    // 凭旧口令可开（原库原样保留）。
+    app.clear("id:enc-change-current").unwrap();
+    app.type_text("id:enc-change-current", "错误当前口令X").unwrap();
+    app.press("id:enc-change").unwrap();
+    app.wait_for("text:修改主口令？").unwrap();
+    app.wait_for("text:/新主口令不会被保存、也无法找回/").unwrap();
+    app.press("id:danger-confirm").unwrap();
+    app.wait_for("text:/修改主口令失败: 口令错误或文件损坏/").unwrap();
+    assert!(
+        ledger_infra::db::encryption::verify_source_passphrase(&dir.join("ledger.db"), PASS_V1)
+            .is_ok(),
+        "口令错误后原库原样保留（仍凭旧口令可开）"
+    );
+
+    // 正确当前口令 → 转换成功 → 本会话切换（状态条反馈 + 文件仍密文且新
+    // 口令可解、旧口令不可解）。
+    app.clear("id:enc-change-current").unwrap();
+    app.type_text("id:enc-change-current", PASS_V1).unwrap();
+    app.press("id:enc-change").unwrap();
+    app.wait_for("text:修改主口令？").unwrap();
+    app.press("id:danger-confirm").unwrap();
+    app.wait_for("text:主口令已修改，本会话已切换（下次启动请使用新口令解锁）。")
+        .unwrap();
+    assert!(
+        ledger_infra::db::encryption::verify_source_passphrase(&dir.join("ledger.db"), PASS_V2)
+            .is_ok(),
+        "改口令后凭新口令可开"
+    );
+    assert!(
+        ledger_infra::db::encryption::verify_source_passphrase(&dir.join("ledger.db"), PASS_V1)
+            .is_err(),
+        "改口令后旧口令不再可开"
+    );
+
+    // —— 关闭加密：warning 级确认 → 整库转回明文，.bak 保留密文副本 ——
+    app.type_text("id:enc-disable-current", PASS_V2).unwrap();
+    app.press("id:enc-disable").unwrap();
+    app.wait_for("text:关闭加密？").unwrap();
+    app.wait_for("text:/既有密文备份不随之改变/").unwrap();
+    // 取消：零转换。
+    app.press("id:danger-cancel").unwrap();
+    app.settle();
+    assert!(
+        matches!(
+            ledger_infra::db::encryption::probe_file_kind(&dir.join("ledger.db")).unwrap(),
+            ledger_infra::db::encryption::DbFileKind::Encrypted,
+        ),
+        "取消后库文件仍密文"
+    );
+    // 确认：整库转回明文。
+    app.press("id:enc-disable").unwrap();
+    app.wait_for("text:关闭加密？").unwrap();
+    app.press("id:danger-confirm").unwrap();
+    app.wait_for("text:加密已关闭，本会话已切换到明文库。").unwrap();
+    assert!(
+        matches!(
+            ledger_infra::db::encryption::probe_file_kind(&dir.join("ledger.db")).unwrap(),
+            ledger_infra::db::encryption::DbFileKind::Plaintext,
+        ),
+        "关闭后库文件明文"
+    );
+    assert!(
+        matches!(
+            ledger_infra::db::encryption::probe_file_kind(&dir.join("ledger.db.bak")).unwrap(),
+            ledger_infra::db::encryption::DbFileKind::Encrypted,
+        ),
+        ".bak 保留关闭前的密文副本"
+    );
+    // 卡面翻回明文库开启形态。
+    app.wait_for("text:开启前请确认").unwrap();
 }
