@@ -942,7 +942,7 @@ pub(crate) fn InvestmentsView() -> impl IntoElement {
         .child(
             view().px_4().py_2().child(
                 text("投资")
-                    .text_size(px(font_size::BODY))
+                    .text_size(px(font_size::TITLE))
                     .text_color(palette.fg)
                     .test_id("view-title"),
             ),
@@ -1356,7 +1356,7 @@ fn overview_pane() -> impl IntoElement {
     let overview_card = card_container("investment-overview")
         .child(
             text(OVERVIEW_TITLE)
-                .text_size(px(font_size::LEADING))
+                .text_size(px(font_size::TITLE))
                 .text_color(palette.fg)
                 .test_id("overview-title"),
         )
@@ -1469,7 +1469,7 @@ fn overview_pane() -> impl IntoElement {
                 .justify_between()
                 .child(
                     text(TREND_CARD_TITLE)
-                        .text_size(px(font_size::LEADING))
+                        .text_size(px(font_size::TITLE))
                         .text_color(palette.fg)
                         .test_id("trend-card-title"),
                 )

@@ -603,14 +603,14 @@ pub(crate) fn HoldingsPane() -> impl IntoElement {
         .justify_between()
         .child(
             text(HOLDINGS_TITLE)
-                .text_size(px(font_size::LEADING))
+                .text_size(px(font_size::TITLE))
                 .text_color(palette.fg)
                 .test_id("holdings-title"),
         )
         .child(
             view()
                 .on_press(move |_: &PressEvent| investment_sync::trigger_sync())
-                .rounded_md()
+                .rounded_lg()
                 .px_2()
                 .py_1()
                 .app_class("bg-primary hover:opacity-90")

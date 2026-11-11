@@ -693,7 +693,7 @@ fn dashboard_and_reports_views_follow_theme_tokens_and_type_scale() {
     );
     assert_eq!(
         hero.font_size,
-        nsh_core::Points(20.0),
+        nsh_core::Points(nsh_app::design::font_size::TITLE),
         "主数字字号 = 字阶 TITLE 档"
     );
     assert_eq!(
@@ -708,12 +708,12 @@ fn dashboard_and_reports_views_follow_theme_tokens_and_type_scale() {
     );
     assert_eq!(
         label.font_size,
-        nsh_core::Points(12.0),
+        nsh_core::Points(nsh_app::design::font_size::CAPTION),
         "卡面标签字号 = 字阶 CAPTION 档"
     );
     assert_eq!(
         app.screen().span_style("text:500").unwrap().font_size,
-        nsh_core::Points(20.0),
+        nsh_core::Points(nsh_app::design::font_size::TITLE),
         "金额格字号 = 字阶 TITLE 档"
     );
 
@@ -732,8 +732,8 @@ fn dashboard_and_reports_views_follow_theme_tokens_and_type_scale() {
     );
     drop(app);
 
-    // 报表 book（商户/分类种子）亮→暗：卡题 = foreground + SECONDARY 档
-    // （卡题保持次要正文章：页题 16 在上，卡题不反超页题层级）；表格列头 =
+    // 报表 book（商户/分类种子）亮→暗：卡题 = foreground + TITLE 档
+    // （§3 页面/卡片标题 20；页题同档，层级靠字重与位置表达）；表格列头 =
     // muted + CAPTION 档。
     nsh_app::app::reset_book_assembly();
     nsh_app::app::set_book_dir(seed_reports_book("t2105-theme-probe-reports"));
@@ -748,8 +748,8 @@ fn dashboard_and_reports_views_follow_theme_tokens_and_type_scale() {
     );
     assert_eq!(
         title.font_size,
-        nsh_core::Points(14.0),
-        "卡题字号 = 字阶 SECONDARY 档"
+        nsh_core::Points(nsh_app::design::font_size::TITLE),
+        "卡题字号 = 字阶 TITLE 档"
     );
     let header = app.screen().span_style("text:商户名").unwrap();
     assert_eq!(
@@ -759,7 +759,7 @@ fn dashboard_and_reports_views_follow_theme_tokens_and_type_scale() {
     );
     assert_eq!(
         header.font_size,
-        nsh_core::Points(12.0),
+        nsh_core::Points(nsh_app::design::font_size::CAPTION),
         "列头字号 = 字阶 CAPTION 档"
     );
 
@@ -809,7 +809,7 @@ fn reference_and_settings_views_resolve_tokens_and_type_scale_across_appearances
     );
     assert_eq!(
         label.font_size,
-        nsh_core::Points(14.0),
+        nsh_core::Points(nsh_app::design::font_size::SECONDARY),
         "卡片/页签次要正文字号 = 字阶 SECONDARY 档 14pt"
     );
     assert_eq!(
@@ -826,7 +826,7 @@ fn reference_and_settings_views_resolve_tokens_and_type_scale_across_appearances
     );
     assert_eq!(
         create.font_size,
-        nsh_core::Points(14.0),
+        nsh_core::Points(nsh_app::design::font_size::SECONDARY),
         "参考数据域卡片标题字号 = 字阶 SECONDARY 档 14pt"
     );
     app.set_environment("light mode", |env| env.color_scheme = ColorScheme::Light)
@@ -862,6 +862,7 @@ fn reference_and_settings_views_resolve_tokens_and_type_scale_across_appearances
 /// `text_xs`/`text_sm`/`text_base` 即同一规范值 12/14/16），「记一笔」等主
 /// 操作前景取主题表 `primary-foreground`（亮暗双态；裸白字退役）。删除视图
 /// 侧字阶书写或令牌消费任一环即红——断言对准已解析样式（font_size/color）。
+/// 断言值纪律：字号档由 [`nsh_app::design::font_size`] 常量派生（测试同属消费方，值同源——字阶漂移断言与实现一起红）；色值快照断言保持字面量（钉 theme.json 亮暗两段独立真源）。
 /// 亮暗两态截图对照属人工子集，自动化面只断言已解析样式。
 #[test]
 fn app_window_transaction_views_use_type_scale_and_primary_foreground_token() {
@@ -900,13 +901,13 @@ fn app_window_transaction_views_use_type_scale_and_primary_foreground_token() {
     ] {
         assert_eq!(
             app.screen().span_style(selector).unwrap().font_size,
-            Points(14.0),
+            Points(nsh_app::design::font_size::SECONDARY),
             "{label}字号 = 字阶 SECONDARY"
         );
     }
     assert_eq!(
         app.screen().span_style("text:共 1 条").unwrap().font_size,
-        Points(12.0),
+        Points(nsh_app::design::font_size::CAPTION),
         "底栏计数字号 = 字阶 CAPTION"
     );
 
@@ -936,12 +937,12 @@ fn app_window_transaction_views_use_type_scale_and_primary_foreground_token() {
             .span_style("id:tx-form >> text:日期")
             .unwrap()
             .font_size,
-        Points(14.0),
+        Points(nsh_app::design::font_size::SECONDARY),
         "表单字段标签字号 = 字阶 SECONDARY"
     );
     assert_eq!(
         app.screen().span_style("text:取消").unwrap().font_size,
-        Points(14.0),
+        Points(nsh_app::design::font_size::SECONDARY),
         "取消按钮字号 = 字阶 SECONDARY"
     );
 }
@@ -973,7 +974,7 @@ fn app_window_shell_chrome_uses_type_scale_and_theme_tokens() {
     let brand = app.screen().span_style("text:开源记账").unwrap();
     assert_eq!(
         brand.font_size,
-        Points(14.0),
+        Points(nsh_app::design::font_size::SECONDARY),
         "侧栏品牌行字号 = 字阶 SECONDARY"
     );
     assert_eq!(
@@ -986,7 +987,7 @@ fn app_window_shell_chrome_uses_type_scale_and_theme_tokens() {
             .span_style("id:nav-dashboard >> text:概览")
             .unwrap()
             .font_size,
-        Points(14.0),
+        Points(nsh_app::design::font_size::SECONDARY),
         "侧栏导航项标签字号 = 字阶 SECONDARY"
     );
 
@@ -1009,12 +1010,12 @@ fn app_window_shell_chrome_uses_type_scale_and_theme_tokens() {
             .span_style("text:资产 · 更多")
             .unwrap()
             .font_size,
-        Points(16.0),
+        Points(nsh_app::design::font_size::BODY),
         "容器壳屏名字号 = 字阶 BODY"
     );
     assert_eq!(
         app.screen().span_style("text:实物资产").unwrap().font_size,
-        Points(14.0),
+        Points(nsh_app::design::font_size::SECONDARY),
         "容器页签标签字号 = 字阶 SECONDARY（收纳页签取唯一词「实物资产」——
          「保单」词面在真实视图内多次命中，不加顺序依赖）"
     );
@@ -1030,12 +1031,12 @@ fn app_window_shell_chrome_uses_type_scale_and_theme_tokens() {
             .span_style("id:nav-topbar >> text:概览")
             .unwrap()
             .font_size,
-        Points(14.0),
+        Points(nsh_app::design::font_size::SECONDARY),
         "顶栏视图名字号 = 字阶 SECONDARY"
     );
     assert_eq!(
         app.screen().span_style("text:☰").unwrap().font_size,
-        Points(18.0),
+        Points(nsh_app::design::font_size::LEADING),
         "顶栏汉堡字号 = 字阶 LEADING"
     );
 
@@ -1051,7 +1052,7 @@ fn app_window_shell_chrome_uses_type_scale_and_theme_tokens() {
             .span_style("text:欢迎使用 Ledger")
             .unwrap()
             .font_size,
-        Points(20.0),
+        Points(nsh_app::design::font_size::TITLE),
         "引导屏名标题字号 = 字阶 TITLE"
     );
     assert_eq!(
@@ -1059,13 +1060,13 @@ fn app_window_shell_chrome_uses_type_scale_and_theme_tokens() {
             .span_style("text:尚未找到账本库，新建一本账即可开始记账。")
             .unwrap()
             .font_size,
-        Points(12.0),
+        Points(nsh_app::design::font_size::CAPTION),
         "引导提示行字号 = 字阶 CAPTION"
     );
     let create = app.screen().span_style("text:新建账本").unwrap();
     assert_eq!(
         create.font_size,
-        Points(14.0),
+        Points(nsh_app::design::font_size::SECONDARY),
         "引导主操作标签字号 = 字阶 SECONDARY"
     );
     assert_eq!(
@@ -1117,7 +1118,7 @@ fn app_window_wrapper_family_uses_type_scale_and_theme_tokens() {
             .span_style("id:tx-filter-account >> text:账户")
             .unwrap()
             .font_size,
-        Points(14.0),
+        Points(nsh_app::design::font_size::SECONDARY),
         "下拉占位文案字号 = 字阶 SECONDARY"
     );
     assert_eq!(
@@ -1135,7 +1136,7 @@ fn app_window_wrapper_family_uses_type_scale_and_theme_tokens() {
             .span_style("id:tx-filter-account-option >> text:测试现金")
             .unwrap()
             .font_size,
-        Points(14.0),
+        Points(nsh_app::design::font_size::SECONDARY),
         "选项行字号 = 字阶 SECONDARY"
     );
     assert_eq!(
@@ -1159,7 +1160,7 @@ fn app_window_wrapper_family_uses_type_scale_and_theme_tokens() {
             .span_style("text:✕ >> nth=0")
             .unwrap()
             .font_size,
-        Points(12.0),
+        Points(nsh_app::design::font_size::CAPTION),
         "清除钮字形字号 = 字阶 CAPTION"
     );
 
@@ -1173,7 +1174,7 @@ fn app_window_wrapper_family_uses_type_scale_and_theme_tokens() {
             .span_style("id:tx-filter-kind-option >> text:支出")
             .unwrap()
             .font_size,
-        Points(14.0),
+        Points(nsh_app::design::font_size::SECONDARY),
         "多选选项行字号 = 字阶 SECONDARY"
     );
     app.press("id:tx-filter-kind-option >> text:支出").unwrap();
@@ -1197,7 +1198,7 @@ fn app_window_wrapper_family_uses_type_scale_and_theme_tokens() {
             .span_style("id:tx-filter-kind-option >> text:✓")
             .unwrap()
             .font_size,
-        Points(12.0),
+        Points(nsh_app::design::font_size::CAPTION),
         "勾选标记字号 = 字阶 CAPTION"
     );
     // 收尾复位：再切一次取消勾选（弹层保持开），ESC 收闭（无筛选残留）。
@@ -1214,7 +1215,7 @@ fn app_window_wrapper_family_uses_type_scale_and_theme_tokens() {
     app.wait_for("text:删除交易").unwrap();
     assert_eq!(
         app.screen().span_style("text:删除交易").unwrap().font_size,
-        Points(16.0),
+        Points(nsh_app::design::font_size::BODY),
         "对话框标题字号 = 字阶 BODY"
     );
     assert_eq!(
@@ -1222,7 +1223,7 @@ fn app_window_wrapper_family_uses_type_scale_and_theme_tokens() {
             .span_style("text:确认删除该条交易？")
             .unwrap()
             .font_size,
-        Points(14.0),
+        Points(nsh_app::design::font_size::SECONDARY),
         "说明段字号 = 字阶 SECONDARY"
     );
     assert_eq!(
@@ -1238,7 +1239,7 @@ fn app_window_wrapper_family_uses_type_scale_and_theme_tokens() {
             .span_style("text:删除后不可恢复。")
             .unwrap()
             .font_size,
-        Points(14.0),
+        Points(nsh_app::design::font_size::SECONDARY),
         "警示句字号 = 字阶 SECONDARY"
     );
     assert_eq!(
@@ -1254,7 +1255,7 @@ fn app_window_wrapper_family_uses_type_scale_and_theme_tokens() {
             .span_style("id:danger-dialog >> text:取消")
             .unwrap()
             .font_size,
-        Points(14.0),
+        Points(nsh_app::design::font_size::SECONDARY),
         "对话框按钮字号 = 字阶 SECONDARY"
     );
     app.press("id:danger-cancel").unwrap();
@@ -1267,7 +1268,7 @@ fn app_window_wrapper_family_uses_type_scale_and_theme_tokens() {
             .span_style("text:记一笔 · 支出")
             .unwrap()
             .font_size,
-        Points(16.0),
+        Points(nsh_app::design::font_size::BODY),
         "弹窗标题字号 = 字阶 BODY"
     );
     assert_eq!(
@@ -1275,7 +1276,7 @@ fn app_window_wrapper_family_uses_type_scale_and_theme_tokens() {
             .span_style("id:app-modal >> text:✕ >> nth=0")
             .unwrap()
             .font_size,
-        Points(14.0),
+        Points(nsh_app::design::font_size::SECONDARY),
         "✕ 关闭钮字号 = 字阶 SECONDARY"
     );
     app.press("id:tx-form-cancel").unwrap();
@@ -1292,7 +1293,7 @@ fn app_window_wrapper_family_uses_type_scale_and_theme_tokens() {
             .span_style("text:确认删除？")
             .unwrap()
             .font_size,
-        Points(14.0),
+        Points(nsh_app::design::font_size::SECONDARY),
         "气泡说明字号 = 字阶 SECONDARY"
     );
     assert_eq!(
@@ -1302,7 +1303,7 @@ fn app_window_wrapper_family_uses_type_scale_and_theme_tokens() {
     );
     assert_eq!(
         app.screen().span_style("text:取消").unwrap().font_size,
-        Points(12.0),
+        Points(nsh_app::design::font_size::CAPTION),
         "气泡按钮字号 = 字阶 CAPTION"
     );
     app.press("id:budget-del-cancel").unwrap();
@@ -10189,7 +10190,7 @@ fn scheduled_view_typography_and_semantic_colors_follow_design_scale() {
         .unwrap();
     assert_eq!(
         tab.font_size,
-        nsh_core::Points(14.0),
+        nsh_core::Points(nsh_app::design::font_size::SECONDARY),
         "形态页签字号 = 字阶 SECONDARY"
     );
     assert_eq!(
@@ -10200,13 +10201,13 @@ fn scheduled_view_typography_and_semantic_colors_follow_design_scale() {
     let title = app.screen().span_style("text:订阅清单").unwrap();
     assert_eq!(
         title.font_size,
-        nsh_core::Points(20.0),
+        nsh_core::Points(nsh_app::design::font_size::TITLE),
         "清单卡标题字号 = 字阶 TITLE"
     );
     let caption = app.screen().span_style("text:/^单位：/").unwrap();
     assert_eq!(
         caption.font_size,
-        nsh_core::Points(12.0),
+        nsh_core::Points(nsh_app::design::font_size::CAPTION),
         "单位衬注字号 = 字阶 CAPTION"
     );
     assert_eq!(
@@ -10220,7 +10221,7 @@ fn scheduled_view_typography_and_semantic_colors_follow_design_scale() {
         .unwrap();
     assert_eq!(
         primary.font_size,
-        nsh_core::Points(14.0),
+        nsh_core::Points(nsh_app::design::font_size::SECONDARY),
         "主按钮文字字号 = 字阶 SECONDARY"
     );
     assert_eq!(
@@ -10234,7 +10235,7 @@ fn scheduled_view_typography_and_semantic_colors_follow_design_scale() {
         .unwrap();
     assert_eq!(
         stat.font_size,
-        nsh_core::Points(20.0),
+        nsh_core::Points(nsh_app::design::font_size::TITLE),
         "花费统计数字号 = 字阶 TITLE（未执行只读 ¥0，四统计首格）"
     );
 
@@ -14186,10 +14187,10 @@ fn investments_view_semantic_tokens_follow_theme_scale_in_light_and_dark() {
         nsh_core::Color(0x182635ff),
         "Hero 前景 = 主题表 foreground 亮档"
     );
-    assert!(
-        (hero.font_size.0 - 20.0).abs() < 0.01,
-        "Hero 字号 = 字阶 TITLE 档 20pt，实际 {}",
-        hero.font_size
+    assert_eq!(
+        hero.font_size,
+        nsh_core::Points(nsh_app::design::font_size::TITLE),
+        "Hero 字号 = 字阶 TITLE 档（常量派生，同源即合规）"
     );
     assert_eq!(
         app.screen().span_style("text:¥122.95").unwrap().color,
@@ -14216,10 +14217,10 @@ fn investments_view_semantic_tokens_follow_theme_scale_in_light_and_dark() {
         nsh_core::Color(0xe6edf4ff),
         "Hero 前景暗色 = 主题表 foreground 暗档"
     );
-    assert!(
-        (hero_dark.font_size.0 - 20.0).abs() < 0.01,
-        "Hero 字号暗态同字阶 TITLE 档 20pt，实际 {}",
-        hero_dark.font_size
+    assert_eq!(
+        hero_dark.font_size,
+        nsh_core::Points(nsh_app::design::font_size::TITLE),
+        "Hero 字号暗态同字阶 TITLE 档（常量派生）"
     );
     assert_eq!(
         app.screen().span_style("text:¥122.95").unwrap().color,

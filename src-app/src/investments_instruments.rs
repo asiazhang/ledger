@@ -634,7 +634,7 @@ pub(crate) fn InstrumentsPane() -> impl IntoElement {
         .justify_between()
         .child(
             text(investments::INSTRUMENTS_TAB_LABEL)
-                .text_size(px(font_size::LEADING))
+                .text_size(px(font_size::TITLE))
                 .text_color(palette.fg)
                 .test_id("instruments-title"),
         )

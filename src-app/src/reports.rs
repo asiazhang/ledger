@@ -610,7 +610,7 @@ pub(crate) fn ReportsView() -> impl IntoElement {
                 .app_class("border-b border-border")
                 .child(
                     text(ViewName::Reports.label())
-                        .text_size(px(font_size::BODY))
+                        .text_size(px(font_size::TITLE))
                         .text_color(fg)
                         .test_id("view-title"),
                 )
@@ -650,7 +650,7 @@ pub(crate) fn ReportsView() -> impl IntoElement {
                 .my_2()
                 .p_4()
                 .app_class("border border-border bg-background")
-                .child(text("月度收支").text_size(px(font_size::SECONDARY)).text_color(fg))
+                .child(text("月度收支").text_size(px(font_size::TITLE)).text_color(fg))
                 .child(
                     when(
                         move || monthly_cells.get().is_empty(),
@@ -682,7 +682,7 @@ pub(crate) fn ReportsView() -> impl IntoElement {
                         .flex_row()
                         .items_center()
                         .gap_3()
-                        .child(text("支出分类构成").text_size(px(font_size::SECONDARY)).text_color(fg))
+                        .child(text("支出分类构成").text_size(px(font_size::TITLE)).text_color(fg))
                         .child(
                             // 面包屑（issue #379）：下钻态显示当前位置，点根回基础态。
                             when(
@@ -765,7 +765,7 @@ pub(crate) fn ReportsView() -> impl IntoElement {
                         .flex_row()
                         .items_center()
                         .gap_2()
-                        .child(text("商户消费排行").text_size(px(font_size::SECONDARY)).text_color(fg))
+                        .child(text("商户消费排行").text_size(px(font_size::TITLE)).text_color(fg))
                         .child(
                             // TopN 档位（旧壳 NRadioButton 两枚同形态）。
                             view().flex_row().gap_1().children(

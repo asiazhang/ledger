@@ -29,6 +29,7 @@ use nsh_core::prelude::*;
 use crate::app::db_slot;
 use crate::assembly::{self, CurrencyTable, RowCells, RowContext};
 use crate::boot;
+use crate::design::font_size;
 use crate::nav;
 use crate::nav_model::ViewName;
 use crate::transactions::{amount_privacy_enabled, hit_total_text};
@@ -295,10 +296,10 @@ pub(crate) fn SearchView() -> impl IntoElement {
         .flex_col()
         .app_class("bg-background")
         .child(
-            // 屏名（内容区标题，同容器壳形态）。
+            // 屏名（内容区标题，同容器壳形态；页题档 TITLE 20，§3）。
             view().px_4().py_2().child(
                 text(ViewName::Search.label())
-                    .text_base()
+                    .text_size(px(font_size::TITLE))
                     .text_color(fg)
                     .test_id("view-title"),
             ),

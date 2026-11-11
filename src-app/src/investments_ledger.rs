@@ -1001,7 +1001,7 @@ pub(crate) fn LedgerPane() -> impl IntoElement {
                 .app_class("border border-border bg-background")
                 .child(
                     text(investments::LEDGER_TAB_LABEL)
-                        .text_size(px(font_size::LEADING))
+                        .text_size(px(font_size::TITLE))
                         .text_color(palette.fg)
                         .test_id("ledger-title"),
                 )
