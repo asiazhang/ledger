@@ -295,10 +295,7 @@ fn book_missing_error(db_path: &Path) -> AppError {
 /// 密文库等待解锁的码化错误（文案单点：启动引导与锁定视图共用同码；呈现
 /// 面把本码映射为锁定视图而非失败态，见 [`crate::app::run_startup`]）。
 fn awaiting_unlock_error() -> AppError {
-    AppError::coded(
-        CODE_AWAITING_UNLOCK,
-        "账本库已加密：请输入主口令解锁",
-    )
+    AppError::coded(CODE_AWAITING_UNLOCK, "账本库已加密：请输入主口令解锁")
 }
 
 /// 损坏残留的码化错误（文案单点：与启动引导同码同文案，目录选择闭集分支⑤
@@ -453,9 +450,8 @@ fn normalize_foreign_plaintext(db_path: &Path) -> Result<()> {
 fn locked_session_db_path() -> Result<PathBuf> {
     let dir = match boot_record() {
         Some(record) => record.db_dir,
-        None => crate::app::book_dir().ok_or_else(|| {
-            AppError::coded(CODE_SESSION_MISSING, "内部错误：账本库会话缺失")
-        })?,
+        None => crate::app::book_dir()
+            .ok_or_else(|| AppError::coded(CODE_SESSION_MISSING, "内部错误：账本库会话缺失"))?,
     };
     Ok(dir.join(DB_FILE_NAME))
 }
@@ -476,8 +472,7 @@ pub fn unlock_encrypted_book(passphrase: &str) -> Result<DbState> {
     let db_path = locked_session_db_path()?;
     let conn = ledger_infra::db::encryption::unlock_db_file(&db_path, passphrase)?;
     let read_conn = match ledger_infra::db::open_connection_readonly_with_passphrase(
-        &db_path,
-        passphrase,
+        &db_path, passphrase,
     ) {
         Ok(read_conn) => read_conn,
         Err(e) => {

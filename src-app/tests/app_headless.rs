@@ -14678,9 +14678,9 @@ fn pick_bad_book_dir_reports_coded_error_without_picker(bad_bytes: &[u8], expect
     );
 }
 
-/// 现场闭集④（密文库，#2088 反转后语义）：选中密文库目录 → 登记 + 置活动
-/// + 判开 → 引导落锁定视图（解锁面板在屏），无选择器出口（锁定态不是失败
-/// 态，无目录出口）。
+/// 现场闭集④（密文库，#2088 反转后语义）：选中密文库目录 → 登记并置活
+/// 动指针后判开 → 引导落锁定视图（解锁面板在屏），无选择器出口（锁定态
+/// 不是失败态，无目录出口）。
 #[test]
 fn startup_picker_encrypted_dir_lands_locked_view() {
     let _guard = SERIAL.lock().unwrap();
@@ -15286,7 +15286,8 @@ fn encryption_card_change_passphrase_then_disable_in_encrypted_session() {
     app.clear("id:enc-change-new").unwrap();
     app.type_text("id:enc-change-new", PASS_V2).unwrap();
     app.clear("id:enc-change-confirm").unwrap();
-    app.type_text("id:enc-change-confirm", "另一个口令一一贯不一致").unwrap();
+    app.type_text("id:enc-change-confirm", "另一个口令一一贯不一致")
+        .unwrap();
     app.wait_for("text:两次输入不一致").unwrap();
     app.clear("id:enc-change-confirm").unwrap();
     app.type_text("id:enc-change-confirm", PASS_V2).unwrap();
@@ -15298,12 +15299,15 @@ fn encryption_card_change_passphrase_then_disable_in_encrypted_session() {
     // 先走一次旧口令错误路径：当前口令框填错 → 确认 → 合并口径错误，库仍
     // 凭旧口令可开（原库原样保留）。
     app.clear("id:enc-change-current").unwrap();
-    app.type_text("id:enc-change-current", "错误当前口令X").unwrap();
+    app.type_text("id:enc-change-current", "错误当前口令X")
+        .unwrap();
     app.press("id:enc-change").unwrap();
     app.wait_for("text:修改主口令？").unwrap();
-    app.wait_for("text:/新主口令不会被保存、也无法找回/").unwrap();
+    app.wait_for("text:/新主口令不会被保存、也无法找回/")
+        .unwrap();
     app.press("id:danger-confirm").unwrap();
-    app.wait_for("text:/修改主口令失败: 口令错误或文件损坏/").unwrap();
+    app.wait_for("text:/修改主口令失败: 口令错误或文件损坏/")
+        .unwrap();
     assert!(
         ledger_infra::db::encryption::verify_source_passphrase(&dir.join("ledger.db"), PASS_V1)
             .is_ok(),
@@ -15349,7 +15353,8 @@ fn encryption_card_change_passphrase_then_disable_in_encrypted_session() {
     app.press("id:enc-disable").unwrap();
     app.wait_for("text:关闭加密？").unwrap();
     app.press("id:danger-confirm").unwrap();
-    app.wait_for("text:加密已关闭，本会话已切换到明文库。").unwrap();
+    app.wait_for("text:加密已关闭，本会话已切换到明文库。")
+        .unwrap();
     assert!(
         matches!(
             ledger_infra::db::encryption::probe_file_kind(&dir.join("ledger.db")).unwrap(),
@@ -15436,8 +15441,7 @@ fn auto_backup_scheduling_three_states_in_encrypted_scenario() {
             .unwrap();
         }
     }
-    ledger_infra::db::encryption::enable_encryption_for_file(&dir.join("ledger.db"), PASS)
-        .unwrap();
+    ledger_infra::db::encryption::enable_encryption_for_file(&dir.join("ledger.db"), PASS).unwrap();
 
     let storage = storage_shard(&[(
         "backup_dir",
@@ -15447,7 +15451,7 @@ fn auto_backup_scheduling_three_states_in_encrypted_scenario() {
     let mut app = Headless::start(desktop_config_with_storage_shard(storage)).unwrap();
 
     // 锁定态：锁定视图在屏，等待窗口内无兜底产物（调度不拉起；等待窗走
-    /// 测试线程限时轮询——headless 无手动时钟场景，应用实时推进）。
+    // 测试线程限时轮询——headless 无手动时钟场景，应用实时推进）。
     app.wait_for("id:locked-panel").unwrap();
     wait_no_auto_product(&backup_dir, Duration::from_secs(2), "锁定态不可调度");
 

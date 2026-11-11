@@ -189,7 +189,8 @@ fn swap_converted_session(db: &DbState, db_path: &Path, passphrase: Option<&str>
     let opened = match passphrase {
         Some(pass) => {
             let conn = ledger_infra::db::open_connection_with_passphrase(db_path, pass);
-            let read_conn = ledger_infra::db::open_connection_readonly_with_passphrase(db_path, pass);
+            let read_conn =
+                ledger_infra::db::open_connection_readonly_with_passphrase(db_path, pass);
             conn.and_then(|conn| {
                 read_conn.map(|read_conn| {
                     (

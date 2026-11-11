@@ -182,7 +182,8 @@ const ENCRYPT_CONFIRM_REST: &str =
     "将把整个账本库转换为加密库（转换期间请勿关闭应用），完成后本会话继续可用。";
 const ENCRYPT_CONFIRM_OK: &str = "继续开启加密";
 const ENCRYPT_CONFIRM_CANCEL: &str = "取消";
-const ENCRYPT_OK_HOST_HINT: &str = "加密已开启（整库转换完成），本会话已切换到加密库；下次启动需输入主口令解锁。";
+const ENCRYPT_OK_HOST_HINT: &str =
+    "加密已开启（整库转换完成），本会话已切换到加密库；下次启动需输入主口令解锁。";
 const ENCRYPT_FAILED_PREFIX: &str = "开启加密失败: ";
 const ENCRYPT_STATUS_FAILED_PREFIX: &str = "读取加密状态失败: ";
 const ENCRYPT_RETRY: &str = "重试";
@@ -216,8 +217,10 @@ const DISABLE_PASS_LABEL: &str = "当前主口令";
 const DISABLE_PASS_PLACEHOLDER: &str = "输入当前主口令";
 const DISABLE_BUTTON: &str = "关闭加密";
 const DISABLE_CONFIRM_TITLE: &str = "关闭加密？";
-const DISABLE_CONFIRM_LEAD: &str = "将把整个账本库转换回明文库，此后数据以明文存放、启动不再需要主口令。";
-const DISABLE_CONFIRM_STRONG: &str = "既有密文备份不随之改变，仍需当时的主口令读取；日后可随时重新开启加密。";
+const DISABLE_CONFIRM_LEAD: &str =
+    "将把整个账本库转换回明文库，此后数据以明文存放、启动不再需要主口令。";
+const DISABLE_CONFIRM_STRONG: &str =
+    "既有密文备份不随之改变，仍需当时的主口令读取；日后可随时重新开启加密。";
 const DISABLE_CONFIRM_REST: &str = "转换期间请勿关闭应用，完成后本会话继续可用。";
 const DISABLE_CONFIRM_OK: &str = "继续关闭加密";
 const DISABLE_CONFIRM_CANCEL: &str = "取消";
@@ -226,7 +229,8 @@ const DISABLE_FAILED_PREFIX: &str = "关闭加密失败: ";
 /// 自动解锁平价注记（issue #2088 裁决：`passphrase_cache::supported()` 仅
 /// macOS，本壳 Linux-only——旧壳非 macOS 隐藏选项回退手输的同款平价，在
 /// 屏静态注记不做写面）。
-const AUTO_UNLOCK_UNSUPPORTED_CARD: &str = "自动解锁：本机（Linux 桌面）不支持——主口令的本机缓存仅 macOS 可用，启动解锁请手动输入主口令。";
+const AUTO_UNLOCK_UNSUPPORTED_CARD: &str =
+    "自动解锁：本机（Linux 桌面）不支持——主口令的本机缓存仅 macOS 可用，启动解锁请手动输入主口令。";
 
 const SYNC_PLAINTEXT_WARNING: &str = "当前账本未开启加密：同步数据将以明文存放于对象存储。如需加密同步，请先在本页「加密」卡开启加密模式。";
 const SYNC_ENCRYPTED_HINT: &str = "本账库为密文形态：同步数据将以主口令加密后上通道。";
@@ -2117,9 +2121,7 @@ fn run_change_encryption(owner: Owner, state: EncryptionState) {
                     state.change_confirm.set(String::new());
                     state.status.set(Some(CHANGE_OK_HOST_HINT.to_owned()));
                 }
-                Ok(Err(e)) => state
-                    .status
-                    .set(Some(format!("{CHANGE_FAILED_PREFIX}{e}"))),
+                Ok(Err(e)) => state.status.set(Some(format!("{CHANGE_FAILED_PREFIX}{e}"))),
                 Err(_) => state
                     .status
                     .set(Some(format!("{CHANGE_FAILED_PREFIX}{WRITE_TASK_FAILED}"))),

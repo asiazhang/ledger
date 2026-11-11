@@ -885,10 +885,7 @@ fn boot_page_aligned_foreign_header_lands_awaiting_unlock_and_locks_gate() {
     // 锁定视图；备份调度 / 同步触发的门检在锁定期间空转）。
     let record = crate::boot::boot_record().expect("密文库引导记录应落槽");
     assert_eq!(record.db_dir, dir, "引导记录登记密文库目录");
-    assert!(
-        crate::boot::encryption_locked(),
-        "密文库引导后锁定门应置锁"
-    );
+    assert!(crate::boot::encryption_locked(), "密文库引导后锁定门应置锁");
     // 复位门槽，不泄入后续用例（串行守卫内手动复位；headless 场景经
     // reset_book_assembly 同批复位）。
     crate::boot::reset_encryption_gate_for_tests();
@@ -1081,7 +1078,8 @@ fn picked_encrypted_dir_registers_and_activates_then_lands_awaiting_unlock() {
         "密文库目录判开（登记 + 置活动）"
     );
     assert_ne!(
-        active_book_of(&root).id, "b1",
+        active_book_of(&root).id,
+        "b1",
         "活动指针已切至新登记的密文本"
     );
     // 打开后的引导：等待解锁信号 + 门置锁（呈现层落锁定视图）。
