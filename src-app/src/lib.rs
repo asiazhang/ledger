@@ -159,9 +159,11 @@
 //! - [`backup_entry`]：备份最小入口（#2038）——交易列表工具区一键备份：
 //!   文件保存对话框（NSH 壳能力直用）+ 域 backup 直调 + 成功/失败状态条
 //!   反馈；默认文件名生成面（旧壳 `defaultBackupFileName` 同格式）；
-//! - [`boot`]：域栈引导——库文件处置判定（复用基础设施引导层）、成对建连、
-//!   交易列表页与币种字典读取、交易删除（#2022）、手动备份与账本指纹
-//!   （#2038）；
+//! - [`boot`]：域栈引导——引导内核住 `boot/mod.rs`（库文件处置判定、成对建
+//!   连、启动编排、选目录处置、引导记录槽）；域读写接缝按域分文件（#2073，
+//!   transactions/items/backup/txn_form/budget/dashboard/reports/investment/
+//!   accounts/scheduled/merchants/savings/policies/insurers/physical_assets/
+//!   settings/data_safety），mod.rs 全量再导出，消费面 `boot::函数名` 不变；
 //! - [`scheduled`]：定时视图壳（#2042 / #2043）——订阅 / 分期 / 定时转账三
 //!   形态页签容器（会话槽保留语义）、计划来源落点意图消费与订阅计划清单装
 //!   配（状态 / 期次状态 / 周期标签词表、行操作矩阵、行格文本）；
