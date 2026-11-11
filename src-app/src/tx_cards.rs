@@ -91,7 +91,7 @@ where
         .gap_1()
         .px_3()
         .py_2()
-        .rounded_md()
+        .rounded_xl()
         .app_class("bg-background border border-border")
         // 头部：日期（弱化）+ 类型（主分量）；交互消费方行尾「⋯」（test_id 落
         // 在文本上——headless id: 锚点命中文本、物理命中到可按压件，先例期间
@@ -108,13 +108,13 @@ where
                         .gap_2()
                         .child(
                             text(card.date.clone())
-                                .text_size(px(12.0))
+                                .text_xs()
                                 .text_color(muted)
                                 .test_id("tx-card-date"),
                         )
                         .child(
                             text(card.kind.clone())
-                                .text_size(px(13.0))
+                                .text_sm()
                                 .text_color(fg)
                                 .test_id("tx-card-kind"),
                         ),
@@ -129,11 +129,11 @@ where
                             .justify_center()
                             .px_2()
                             .py_1()
-                            .rounded_md()
+                            .rounded_sm()
                             .on_press(move |e: &PressEvent| open_menu(&for_menu, e.page_position))
                             .child(
                                 text("⋯")
-                                    .text_size(px(16.0))
+                                    .text_base()
                                     .text_color(muted)
                                     .test_id(format!("tx-card-menu-{index}").as_str()),
                             )
@@ -156,7 +156,7 @@ where
         .child(
             view().flex_row().justify_end().child(
                 text(card.amount.clone())
-                    .text_size(px(14.0))
+                    .text_sm()
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(amount_color(card.amount_semantic))
                     .test_id("tx-card-amount"),
@@ -169,7 +169,7 @@ where
 fn meta_line(body: &str, color: AdaptiveColor) -> View {
     view().flex_row().child(
         text(body.to_owned())
-            .text_size(px(13.0))
+            .text_sm()
             .text_color(color)
             .number_of_lines(1),
     )
