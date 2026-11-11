@@ -408,35 +408,58 @@ pub fn transaction_page(
     ledger_transaction::list_transactions(&conn, &filter)
 }
 
+/// 交易搜索页查询载荷（#2073 自 6 散参收敛，与 [`TxListQuery`] 同构对称——
+/// 搜索读接缝的全部输入一个载体）：搜索面维度裁决见 [`transaction_search`]
+/// doc。默认构造 = 空关键词无筛选（域语义 = 空结果）。
+#[derive(Clone, Debug)]
+pub struct TxSearchQuery {
+    /// 关键词（统一模糊搜索语义，ADR-0027；空 + 有筛选 = 仅筛选查询，空 +
+    /// 无筛选 = 域空结果语义）。
+    pub query: String,
+    /// 金额区间下界（整数分，本位币口径，issue #2037；`None` = 无下界）。
+    pub amount_min_cents: Option<i64>,
+    /// 金额区间上界（整数分，本位币口径；`None` = 无上界）。
+    pub amount_max_cents: Option<i64>,
+    /// 期间快照（含边界，搜索 × 期间裁决：期间对搜索命中面生效，旧壳搜索页
+    /// 同口径；`None` = 全部）。
+    pub range: Option<crate::period::PeriodRange>,
+}
+
+impl Default for TxSearchQuery {
+    fn default() -> Self {
+        Self {
+            query: String::new(),
+            amount_min_cents: None,
+            amount_max_cents: None,
+            range: None,
+        }
+    }
+}
+
 /// 搜索账本库交易（读路径直调域服务，issue #2023）：经核心交易域统一模糊
 /// 搜索 [`ledger_transaction::search_transactions`]——词条间 AND、字段间 OR 的
 /// 原文命中（备注原文子串 ∨ 账户名 ∨ 商户名 ∨ 购买项名称，LIKE 折叠仅 ASCII），
-/// 服务端 offset 分页（命中总数与页行集共用同一 WHERE，排序 date DESC）。
-/// 与旧壳 `search_transactions` 命令消费同一域函数——同一账本库同结果（#2023
+/// 服务端 offset 分页（命中总数与页行集共用同一 WHERE，排序 date DESC）。与
+/// 旧壳 `search_transactions` 命令消费同一域函数——同一账本库同结果（#2023
 /// AC1）；issue #2037 起接金额区间（整数分，本位币口径）与期间快照（搜索 ×
 /// 期间裁决：期间对搜索命中面生效，旧壳搜索页同口径）；账户/商户/分类/类型
 /// 维度不在搜索面（域读路径不支持，裁决定型为规格）。页大小沿 [`PAGE_SIZE`]
-/// （分页页径与列表态一致）。空查询无筛选的域语义是空结果；空查询 + 有筛选
-/// = 仅筛选查询（旧壳搜索页同语义，呈现态归视图层）。读连接是成对建连的
-/// 只读侧（ADR-0117）。
+/// （分页页径与列表态一致）。读连接是成对建连的只读侧（ADR-0117）。
 pub fn transaction_search(
     db: &DbState,
-    query: &str,
     page: u32,
-    amount_min_cents: Option<i64>,
-    amount_max_cents: Option<i64>,
-    range: Option<&crate::period::PeriodRange>,
+    filters: &TxSearchQuery,
 ) -> Result<TransactionSearchResult> {
     let conn = conn_lock(&db.read_conn)?;
     ledger_transaction::search_transactions(
         &conn,
-        query,
+        &filters.query,
         page.max(1) as usize,
         PAGE_SIZE,
-        amount_min_cents,
-        amount_max_cents,
-        range.map(|r| r.from.as_str()),
-        range.map(|r| r.to.as_str()),
+        filters.amount_min_cents,
+        filters.amount_max_cents,
+        filters.range.as_ref().map(|r| r.from.as_str()),
+        filters.range.as_ref().map(|r| r.to.as_str()),
     )
 }
 

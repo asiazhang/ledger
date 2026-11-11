@@ -231,7 +231,15 @@ fn search_reads_hit_transactions_with_raw_text_semantics() {
     seed_expense_notes(&dir, &["元旦火锅聚餐", "超市买菜"]);
     let db = boot_ledger(&dir).unwrap();
 
-    let result = transaction_search(&db, "火锅", 1, None, None, None).unwrap();
+    let result = transaction_search(
+        &db,
+        1,
+        &crate::boot::TxSearchQuery {
+            query: "火锅".to_owned(),
+            ..Default::default()
+        },
+    )
+    .unwrap();
     assert_eq!(result.total, 1, "命中总数 = 备注原文命中的未删除笔数");
     assert_eq!(result.items.len(), 1);
     assert_eq!(
@@ -242,7 +250,7 @@ fn search_reads_hit_transactions_with_raw_text_semantics() {
 
     // 空查询走域空结果语义（视图层空输入 = 列表态不调搜索——呈现切换归
     // headless 断言面，本用例只钉域函数自身的既有契约）。
-    let empty = transaction_search(&db, "", 1, None, None, None).unwrap();
+    let empty = transaction_search(&db, 1, &crate::boot::TxSearchQuery::default()).unwrap();
     assert_eq!(empty.total, 0);
     assert!(empty.items.is_empty());
 }
@@ -511,7 +519,17 @@ fn search_reads_with_amount_and_period_filters() {
     let db = boot_ledger(&dir).unwrap();
 
     // 关键词 × 金额区间（含边界）。
-    let ranged = transaction_search(&db, "火锅", 1, Some(4_400), Some(8_800), None).unwrap();
+    let ranged = transaction_search(
+        &db,
+        1,
+        &crate::boot::TxSearchQuery {
+            query: "火锅".to_owned(),
+            amount_min_cents: Some(4_400),
+            amount_max_cents: Some(8_800),
+            ..Default::default()
+        },
+    )
+    .unwrap();
     assert_eq!(
         ranged.total, 2,
         "金额下下含边界：8800 与 4400 命中，1100 排除"
@@ -520,20 +538,29 @@ fn search_reads_with_amount_and_period_filters() {
     // 关键词 × 期间：裁决后期间对搜索命中面生效（旧壳搜索页同口径）。
     let february = transaction_search(
         &db,
-        "火锅",
         1,
-        None,
-        None,
-        Some(&crate::period::PeriodRange {
-            from: "2026-02-01".to_owned(),
-            to: "2026-02-28".to_owned(),
-        }),
+        &crate::boot::TxSearchQuery {
+            query: "火锅".to_owned(),
+            range: Some(crate::period::PeriodRange {
+                from: "2026-02-01".to_owned(),
+                to: "2026-02-28".to_owned(),
+            }),
+            ..Default::default()
+        },
     )
     .unwrap();
     assert_eq!(february.total, 1, "期间快照过滤搜索命中面");
 
     // 空关键词 + 仅金额筛选 = 仅筛选查询（全部支出里按金额过滤）。
-    let filter_only = transaction_search(&db, "", 1, Some(5_000), None, None).unwrap();
+    let filter_only = transaction_search(
+        &db,
+        1,
+        &crate::boot::TxSearchQuery {
+            amount_min_cents: Some(5_000),
+            ..Default::default()
+        },
+    )
+    .unwrap();
     assert_eq!(filter_only.total, 1);
     assert_eq!(filter_only.items[0].note.as_deref(), Some("二月火锅"));
 }

@@ -1668,8 +1668,8 @@ fn perf_dataset_book_counts_match_domain_read_across_pages_and_scroll() {
 ///   框外（回车提交 BlurAndSubmit 失焦后）照常派发——翻页换搜索页、`,`/`.`
 ///   步进期间并按新区间重搜（命中数与行集随之）。
 ///
-/// 「删除即红」：删读路径的搜索携期间（boot::transaction_search range 参数）
-/// → 相 B 当月命中 2 条（上月照样命中）即红；删引擎可编辑焦点闸由引擎侧
+/// 「删除即红」：删读路径的搜索携期间（boot::TxSearchQuery 的 range 字段直传
+/// 域 from/to）→ 相 B 当月命中 2 条（上月照样命中）即红；删引擎可编辑焦点闸由引擎侧
 /// 承担（不属本壳接线面）。
 #[test]
 fn search_and_period_combo_semantics_adjudicated() {

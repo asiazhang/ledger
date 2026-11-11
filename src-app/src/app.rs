@@ -965,11 +965,13 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
                         // 不在搜索面（域读路径不支持，裁决定型为规格）。
                         boot::transaction_search(
                             &db,
-                            &query,
                             page_no,
-                            amount_min,
-                            amount_max,
-                            state.range.as_ref(),
+                            &boot::TxSearchQuery {
+                                query: query.clone(),
+                                amount_min_cents: amount_min,
+                                amount_max_cents: amount_max,
+                                range: state.range.clone(),
+                            },
                         )
                         .map(|result| PageRead::new(result.items, result.total))
                     };

@@ -110,11 +110,13 @@ pub(crate) fn SearchView() -> impl IntoElement {
                 let outcome = blocking(move || {
                     boot::transaction_search(
                         &db,
-                        &query,
                         page_no,
-                        amount_min,
-                        amount_max,
-                        range.as_ref(),
+                        &boot::TxSearchQuery {
+                            query,
+                            amount_min_cents: amount_min,
+                            amount_max_cents: amount_max,
+                            range,
+                        },
                     )
                     .map(|result| (result.items, result.total))
                     .and_then(|(items, total)| {
