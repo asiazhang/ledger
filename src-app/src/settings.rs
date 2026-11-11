@@ -51,6 +51,7 @@ use nsh_core::storage::Storage;
 use crate::app::book_dir;
 use crate::assembly::CategoryOption;
 use crate::danger::{DangerConfirmSpec, DangerLevel, DangerOutcome, danger_confirm};
+use crate::design::font_size;
 use crate::{boot, keep_mounted, nav, nav_model, select, views};
 
 // ---------------------------------------------------------------------------
@@ -375,7 +376,7 @@ pub(crate) fn card(title: &'static str, palette: views::ViewPalette, rows: Vec<V
         .app_class("rounded-md border border-border p-3 gap-2")
         .child(
             text(title)
-                .text_size(px(14.0))
+                .text_size(px(font_size::SECONDARY))
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_color(palette.fg),
         )
@@ -394,7 +395,7 @@ pub(crate) fn status_line(
             move || status.get().is_some(),
             move || {
                 text(move || status.get().unwrap_or_default())
-                    .text_size(px(12.0))
+                    .text_size(px(font_size::CAPTION))
                     .text_color(palette.muted)
                     .test_id(id)
                     .number_of_lines(3)
@@ -442,7 +443,7 @@ pub fn SettingsView() -> impl IntoElement {
                         .app_class("px-2 py-1 rounded-md selected:bg-accent")
                         .child(
                             text(tab.label())
-                                .text_size(px(13.0))
+                                .text_size(px(font_size::SECONDARY))
                                 .text_color(move || {
                                     if is_active() {
                                         palette.fg
@@ -480,7 +481,7 @@ pub fn SettingsView() -> impl IntoElement {
         .child(
             view().px_4().py_2().child(
                 text(VIEW_TITLE)
-                    .text_size(px(16.0))
+                    .text_size(px(font_size::TITLE))
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(palette.fg)
                     .test_id("view-title"),
@@ -511,12 +512,12 @@ fn placeholder_pane(tab: SettingsTab, palette: views::ViewPalette) -> View {
         .app_class("gap-2")
         .child(
             text(format!("{} · 迁移中", tab.label()))
-                .text_size(px(13.0))
+                .text_size(px(font_size::SECONDARY))
                 .text_color(palette.fg),
         )
         .child(
             text("此页签内容将随迁移系列票就位")
-                .text_size(px(12.0))
+                .text_size(px(font_size::CAPTION))
                 .text_color(palette.muted),
         )
 }
@@ -555,7 +556,7 @@ fn appearance_card(palette: views::ViewPalette) -> View {
                 .app_class("items-center gap-2")
                 .child(
                     text(APPEARANCE_LABEL)
-                        .text_size(px(13.0))
+                        .text_size(px(font_size::SECONDARY))
                         .text_color(palette.fg),
                 )
                 .child(select::app_select(
@@ -567,7 +568,7 @@ fn appearance_card(palette: views::ViewPalette) -> View {
                 )),
             view().child(
                 text(APPEARANCE_HINT)
-                    .text_size(px(11.0))
+                    .text_size(px(font_size::CAPTION))
                     .text_color(palette.muted),
             ),
         ],
@@ -656,7 +657,11 @@ fn log_card(palette: views::ViewPalette) -> View {
             view()
                 .flex_col()
                 .app_class("items-start gap-2")
-                .child(text(LOG_LABEL).text_size(px(13.0)).text_color(palette.fg))
+                .child(
+                    text(LOG_LABEL)
+                        .text_size(px(font_size::SECONDARY))
+                        .text_color(palette.fg),
+                )
                 .child(select::app_select(
                     "log-level",
                     log_level_options,
@@ -664,7 +669,13 @@ fn log_card(palette: views::ViewPalette) -> View {
                     LOG_PLACEHOLDER,
                     false,
                 ))
-                .child(view().child(text(LOG_HINT).text_size(px(11.0)).text_color(palette.muted))),
+                .child(
+                    view().child(
+                        text(LOG_HINT)
+                            .text_size(px(font_size::CAPTION))
+                            .text_color(palette.muted),
+                    ),
+                ),
             view().child(status_line("log-status", status, palette)),
         ],
     )
@@ -968,7 +979,7 @@ fn location_card(palette: views::ViewPalette) -> View {
         .app_class("items-center gap-2 flex-wrap")
         .child(
             text(LOCATION_ACTIVE_LABEL)
-                .text_size(px(13.0))
+                .text_size(px(font_size::SECONDARY))
                 .text_color(palette.fg),
         )
         .child(
@@ -978,7 +989,7 @@ fn location_card(palette: views::ViewPalette) -> View {
                     .map(|view| view.active_dir.clone())
                     .unwrap_or_else(|| LOCATION_READING.to_owned())
             })
-            .text_size(px(12.0))
+            .text_size(px(font_size::CAPTION))
             .text_color(palette.fg)
             .test_id("loc-active-path"),
         )
@@ -1002,7 +1013,7 @@ fn location_card(palette: views::ViewPalette) -> View {
                     )
                     .child(
                         text(LOCATION_FALLBACK_TITLE)
-                            .text_size(px(12.0))
+                            .text_size(px(font_size::CAPTION))
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(palette.fg)
                             .test_id("loc-fallback-title"),
@@ -1013,7 +1024,7 @@ fn location_card(palette: views::ViewPalette) -> View {
                                 .and_then(|view| view.fallback.clone())
                                 .unwrap_or_default()
                         })
-                        .text_size(px(12.0))
+                        .text_size(px(font_size::CAPTION))
                         .text_color(palette.muted)
                         .test_id("loc-fallback"),
                     )
@@ -1033,7 +1044,7 @@ fn location_card(palette: views::ViewPalette) -> View {
                     .app_class("rounded-md border border-border p-2 gap-1")
                     .child(
                         text(LOCATION_PENDING_TITLE)
-                            .text_size(px(12.0))
+                            .text_size(px(font_size::CAPTION))
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(palette.fg)
                             .test_id("loc-pending-title"),
@@ -1048,7 +1059,7 @@ fn location_card(palette: views::ViewPalette) -> View {
                                         .and_then(|view| view.pending.clone())
                                         .unwrap_or_default()
                                 })
-                                .text_size(px(12.0))
+                                .text_size(px(font_size::CAPTION))
                                 .text_color(palette.muted)
                                 .test_id("loc-pending"),
                             )
@@ -1077,7 +1088,7 @@ fn location_card(palette: views::ViewPalette) -> View {
                     )
                     .child(
                         text(BUTTON_RETRY)
-                            .text_size(px(12.0))
+                            .text_size(px(font_size::CAPTION))
                             .text_color(palette.fg)
                             .test_id("loc-retry"),
                     )
@@ -1099,7 +1110,7 @@ fn location_card(palette: views::ViewPalette) -> View {
                 .disabled(move || submitting.get())
                 .child(
                     text(BUTTON_CHANGE)
-                        .text_size(px(13.0))
+                        .text_size(px(font_size::SECONDARY))
                         .test_id("loc-change"),
                 )
                 .on_press(move |_: &()| change_entry()),
@@ -1117,7 +1128,7 @@ fn location_card(palette: views::ViewPalette) -> View {
                 })
                 .child(
                     text(BUTTON_RESTORE_DEFAULT)
-                        .text_size(px(13.0))
+                        .text_size(px(font_size::SECONDARY))
                         .test_id("loc-restore"),
                 )
                 .on_press(move |_: &()| restore_entry()),
@@ -1130,7 +1141,7 @@ fn location_card(palette: views::ViewPalette) -> View {
             vec![
                 view().child(
                     text(LOCATION_HINT)
-                        .text_size(px(11.0))
+                        .text_size(px(font_size::CAPTION))
                         .text_color(palette.muted),
                 ),
                 fallback_row,
@@ -1167,7 +1178,7 @@ fn copy_button(
         .app_class("px-2 py-0.5 rounded-md border border-border text-foreground hover:bg-accent")
         .child(
             text(BUTTON_COPY_PATH)
-                .text_size(px(11.0))
+                .text_size(px(font_size::CAPTION))
                 .text_color(views::view_palette().fg)
                 .test_id(id),
         )
@@ -1190,7 +1201,7 @@ fn copy_button(
 fn features_pane(palette: views::ViewPalette) -> View {
     let intro = view().child(
         text(FEATURES_INTRO)
-            .text_size(px(12.0))
+            .text_size(px(font_size::CAPTION))
             .text_color(palette.muted),
     );
     let rows = {
@@ -1224,12 +1235,12 @@ fn feature_row(feature: nav_model::ViewName, palette: views::ViewPalette) -> Vie
                 .app_class("gap-0.5")
                 .child(
                     text(feature.label())
-                        .text_size(px(13.0))
+                        .text_size(px(font_size::SECONDARY))
                         .text_color(palette.fg),
                 )
                 .child(
                     text(feature_description(feature))
-                        .text_size(px(11.0))
+                        .text_size(px(font_size::CAPTION))
                         .text_color(palette.muted),
                 ),
         )

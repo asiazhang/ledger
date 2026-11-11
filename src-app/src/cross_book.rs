@@ -41,6 +41,7 @@ use rusqlite::Connection;
 use nsh_core::prelude::*;
 
 use crate::app::db_slot;
+use crate::design::font_size;
 use crate::popover::popover_tip;
 use crate::{assembly, boot, nav};
 
@@ -474,21 +475,15 @@ pub(crate) fn CrossBookSummaryView() -> impl IntoElement {
         reload();
     });
 
-    // 主题令牌（双态自适应；令牌缺失回退亮灰/中灰可读兜底，先例同形）。
-    let tokens = nsh_core::element::tokens();
-    let fg = tokens
-        .color("foreground")
-        .unwrap_or_else(|| hsla(0.0, 0.0, 0.98, 1.0).into());
-    let muted = tokens
-        .color("muted-foreground")
-        .unwrap_or_else(|| hsla(0.0, 0.0, 0.45, 1.0).into());
-    let danger_fg = tokens
-        .color("destructive")
-        .unwrap_or_else(|| hsla(0.0, 0.0, 0.98, 1.0).into());
+    // 主题令牌（双态自适应）：视图层零本地色常量，缺失统一落 crate::theme
+    // 可读兜底（ADR-0147 决策 1）。
+    let fg = crate::theme::color("foreground");
+    let muted = crate::theme::color("muted-foreground");
+    let danger_fg = crate::theme::color("destructive");
     // 警告色（未计入本状态标签；危险确认 warning 级同色值）。
-    let warn_fg = AdaptiveColor::new(rgb(0xf0a020), rgb(0xf2c97d));
+    let warn_fg = crate::theme::color("warning");
     // 计入色（账本语义绿，与 #2033 起的正常态语义色同源）。
-    let ok_fg = AdaptiveColor::new(rgb(0x18a058), rgb(0x63e2b7));
+    let ok_fg = crate::theme::color("income");
 
     // 错误态（码化错误 zh 原样）：汇总读取失败 + 重试（同条读路径重发，
     // 零写入）。
@@ -506,14 +501,14 @@ pub(crate) fn CrossBookSummaryView() -> impl IntoElement {
                         .items_center()
                         .child(
                             text("汇总读取失败")
-                                .text_size(px(13.0))
+                                .text_size(px(font_size::SECONDARY))
                                 .text_color(danger_fg)
                                 .test_id("cross-book-error"),
                         )
                         .child(
                             view().flex_row().items_center().gap_2().child(
                                 text(move || error.get().unwrap_or_default())
-                                    .text_size(px(12.0))
+                                    .text_size(px(font_size::CAPTION))
                                     .text_color(muted),
                             ),
                         ),
@@ -527,8 +522,8 @@ pub(crate) fn CrossBookSummaryView() -> impl IntoElement {
                         .app_class("bg-primary hover:opacity-90")
                         .child(
                             text("重试")
-                                .text_size(px(13.0))
-                                .text_color(rgb(0xffffff))
+                                .text_size(px(font_size::SECONDARY))
+                                .text_color(crate::theme::color("primary-foreground"))
                                 .test_id("cross-book-retry"),
                         ),
                 )
@@ -539,7 +534,7 @@ pub(crate) fn CrossBookSummaryView() -> impl IntoElement {
             move || loading.get(),
             move || {
                 text("加载中…")
-                    .text_size(px(13.0))
+                    .text_size(px(font_size::SECONDARY))
                     .text_color(muted)
                     .test_id("cross-book-loading")
             },
@@ -558,7 +553,7 @@ pub(crate) fn CrossBookSummaryView() -> impl IntoElement {
                             snapshot.map(|c| c.note).unwrap_or_default()
                         }
                     })
-                    .text_size(px(13.0))
+                    .text_size(px(font_size::SECONDARY))
                     .text_color(move || {
                         if cells.get().as_ref().is_some_and(|c| c.has_excluded) {
                             warn_fg
@@ -589,18 +584,20 @@ pub(crate) fn CrossBookSummaryView() -> impl IntoElement {
                                         .gap_1()
                                         .child(
                                             text(move || card.get().label)
-                                                .text_size(px(12.0))
+                                                .text_size(px(font_size::CAPTION))
                                                 .text_color(muted),
                                         )
                                         .child(popover_tip(
                                             info_id,
                                             vec![card.get_untracked().tip],
-                                            text("ⓘ").text_size(px(12.0)).text_color(muted),
+                                            text("ⓘ")
+                                                .text_size(px(font_size::CAPTION))
+                                                .text_color(muted),
                                         )),
                                 )
                                 .child(
                                     text(move || card.get().amount)
-                                        .text_size(px(22.0))
+                                        .text_size(px(font_size::TITLE))
                                         .text_color(fg)
                                         .test_id(test_id.as_str()),
                                 )
@@ -618,12 +615,16 @@ pub(crate) fn CrossBookSummaryView() -> impl IntoElement {
                                 .flex_row()
                                 .items_center()
                                 .justify_between()
-                                .child(text("账本计入状态").text_size(px(13.0)).text_color(fg))
+                                .child(
+                                    text("账本计入状态")
+                                        .text_size(px(font_size::SECONDARY))
+                                        .text_color(fg),
+                                )
                                 .child(
                                     text(move || {
                                         cells.get().map(|c| c.footer_note).unwrap_or_default()
                                     })
-                                    .text_size(px(12.0))
+                                    .text_size(px(font_size::CAPTION))
                                     .text_color(muted),
                                 ),
                         )
@@ -640,7 +641,7 @@ pub(crate) fn CrossBookSummaryView() -> impl IntoElement {
                                     .test_id(row_test_id.as_str())
                                     .child(
                                         text(move || book.get().name.clone())
-                                            .text_size(px(13.0))
+                                            .text_size(px(font_size::SECONDARY))
                                             .text_color(fg)
                                             .test_id(format!("summary-book-name-{id}").as_str()),
                                     )
@@ -650,7 +651,7 @@ pub(crate) fn CrossBookSummaryView() -> impl IntoElement {
                                             move || book.get().is_active,
                                             move || {
                                                 text("当前")
-                                                    .text_size(px(11.0))
+                                                    .text_size(px(font_size::CAPTION))
                                                     .text_color(fg)
                                                     .test_id(
                                                         format!("summary-book-active-{id}")
@@ -662,7 +663,7 @@ pub(crate) fn CrossBookSummaryView() -> impl IntoElement {
                                     )
                                     .child(
                                         text(move || book.get().status)
-                                            .text_size(px(11.0))
+                                            .text_size(px(font_size::CAPTION))
                                             .text_color(move || {
                                                 if book.get().included { ok_fg } else { warn_fg }
                                             }),

@@ -33,6 +33,7 @@ use crate::assembly::{
 use crate::boot;
 use crate::danger::{self, DangerOutcome};
 use crate::date_select;
+use crate::design::font_size;
 use crate::modal;
 use crate::nav;
 use crate::nav_model::ViewName;
@@ -131,16 +132,9 @@ pub(crate) fn SavingsGoalsView() -> impl IntoElement {
     });
 
     // 主题令牌（双态自适应；令牌缺失回退亮灰/中灰可读兜底，先例同形）。
-    let tokens = nsh_core::element::tokens();
-    let fg = tokens
-        .color("foreground")
-        .unwrap_or_else(|| hsla(0.0, 0.0, 0.98, 1.0).into());
-    let muted = tokens
-        .color("muted-foreground")
-        .unwrap_or_else(|| hsla(0.0, 0.0, 0.45, 1.0).into());
-    let danger_fg = tokens
-        .color("destructive")
-        .unwrap_or_else(|| hsla(0.0, 0.0, 0.98, 1.0).into());
+    let fg = crate::theme::color("foreground");
+    let muted = crate::theme::color("muted-foreground");
+    let danger_fg = crate::theme::color("destructive");
     let success_fg = amount_color(assembly::AmountSemantic::Income);
 
     // 操作反馈条位（NSH 无 toast——#2038 裁决；旧壳 message.success/error 的
@@ -458,7 +452,7 @@ pub(crate) fn SavingsGoalsView() -> impl IntoElement {
                         .test_id("sg-projection")
                         .children(lines.iter().map(|line| {
                             text(line.clone())
-                                .text_size(px(12.0))
+                                .text_size(px(font_size::CAPTION))
                                 .text_color(muted)
                                 .number_of_lines(2)
                         }))
@@ -469,7 +463,7 @@ pub(crate) fn SavingsGoalsView() -> impl IntoElement {
                                 move || achieved_plan,
                                 move || {
                                     text(ACHIEVED_PLAN_HINT)
-                                        .text_size(px(12.0))
+                                        .text_size(px(font_size::CAPTION))
                                         .text_color(muted)
                                         .test_id("sg-plan-hint")
                                 },
@@ -481,7 +475,7 @@ pub(crate) fn SavingsGoalsView() -> impl IntoElement {
                 "status" => {
                     let achieved = assembled.as_ref().is_some_and(|r| r.achieved);
                     text(cell.text.clone())
-                        .text_size(px(13.0))
+                        .text_size(px(font_size::SECONDARY))
                         .text_color(if achieved { success_fg } else { muted })
                         .number_of_lines(1)
                         .into_element()
@@ -512,7 +506,7 @@ pub(crate) fn SavingsGoalsView() -> impl IntoElement {
                     .child(
                         view().flex_1().child(
                             text(CARD_TITLE)
-                                .text_size(px(13.0))
+                                .text_size(px(font_size::SECONDARY))
                                 .font_weight(FontWeight::SEMIBOLD)
                                 .text_color(fg),
                         ),
@@ -522,8 +516,8 @@ pub(crate) fn SavingsGoalsView() -> impl IntoElement {
                             .app_class("px-3 py-1.5 rounded-md bg-primary hover:opacity-90")
                             .child(
                                 text(NEW_BUTTON)
-                                    .text_size(px(13.0))
-                                    .text_color(rgb(0xffffff))
+                                    .text_size(px(font_size::SECONDARY))
+                                    .text_color(crate::theme::color("primary-foreground"))
                                     .test_id("sg-new"),
                             )
                             .on_press(move |_: &()| open_create()),
@@ -539,7 +533,7 @@ pub(crate) fn SavingsGoalsView() -> impl IntoElement {
                         .loading_view(text("正在加载…").text_color(muted))
                         .empty(
                             text(EMPTY_GUIDE)
-                                .text_size(px(13.0))
+                                .text_size(px(font_size::SECONDARY))
                                 .text_color(muted)
                                 .test_id("sg-empty"),
                         )
@@ -557,7 +551,7 @@ pub(crate) fn SavingsGoalsView() -> impl IntoElement {
             .child(
                 view().flex_1().child(
                     text(ARCHIVED_TITLE)
-                        .text_size(px(13.0))
+                        .text_size(px(font_size::SECONDARY))
                         .font_weight(FontWeight::SEMIBOLD)
                         .text_color(fg),
                 ),
@@ -673,7 +667,7 @@ pub(crate) fn SavingsGoalsView() -> impl IntoElement {
                         // 拦截提示与域码化错误同位原样呈现（旧壳 message 展示
                         // 同口径，不加二级前缀）。
                         text(move || form_error.get().unwrap_or_default())
-                            .text_size(px(12.0))
+                            .text_size(px(font_size::CAPTION))
                             .text_color(danger_fg)
                             .test_id("sg-form-error")
                     },
@@ -692,7 +686,7 @@ pub(crate) fn SavingsGoalsView() -> impl IntoElement {
                             )
                             .child(
                                 text("取消")
-                                    .text_size(px(13.0))
+                                    .text_size(px(font_size::SECONDARY))
                                     .text_color(fg)
                                     .test_id("sg-form-cancel"),
                             )
@@ -703,8 +697,8 @@ pub(crate) fn SavingsGoalsView() -> impl IntoElement {
                             .app_class("px-3 py-1.5 rounded-md bg-primary hover:opacity-90")
                             .child(
                                 text("保存")
-                                    .text_size(px(13.0))
-                                    .text_color(rgb(0xffffff))
+                                    .text_size(px(font_size::SECONDARY))
+                                    .text_color(crate::theme::color("primary-foreground"))
                                     .test_id("sg-form-save"),
                             )
                             .on_press(move |_: &()| perform_save()),
@@ -719,7 +713,7 @@ pub(crate) fn SavingsGoalsView() -> impl IntoElement {
         .child(
             view().px_4().py_2().child(
                 text(ViewName::SavingsGoals.label())
-                    .text_size(px(16.0))
+                    .text_size(px(font_size::TITLE))
                     .text_color(fg)
                     .test_id("view-title"),
             ),
@@ -731,7 +725,7 @@ pub(crate) fn SavingsGoalsView() -> impl IntoElement {
                 move || error.get().is_some(),
                 move || {
                     text(move || format!("加载失败：{}", error.get().unwrap_or_default()))
-                        .text_size(px(12.0))
+                        .text_size(px(font_size::CAPTION))
                         .text_color(danger_fg)
                         .test_id("sg-error")
                         .app_class("px-4 py-1")
@@ -756,7 +750,7 @@ pub(crate) fn SavingsGoalsView() -> impl IntoElement {
                         move || status.get().is_some(),
                         move || {
                             text(move || status.get().unwrap_or_default())
-                                .text_size(px(12.0))
+                                .text_size(px(font_size::CAPTION))
                                 .text_color(fg)
                                 .test_id("sg-status")
                         },
@@ -869,7 +863,11 @@ fn action_press(
         .test_id(id)
         .app_class("rounded-md hover:bg-accent px-1")
         .on_press(move |_: &PressEvent| action())
-        .child(text(label).text_size(px(12.0)).text_color(color))
+        .child(
+            text(label)
+                .text_size(px(font_size::CAPTION))
+                .text_color(color),
+        )
 }
 
 /// 删除确认 spec（error 级，旧壳 dialog.warning 二确认文案逐字同位）：后果句

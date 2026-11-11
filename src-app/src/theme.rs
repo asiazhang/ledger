@@ -191,6 +191,7 @@ mod tests {
         }
         for name in [
             "warning",
+            "success",
             "destructive-foreground",
             "warning-foreground",
             "chart-uncategorized",
