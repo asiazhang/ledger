@@ -186,35 +186,21 @@ pub fn encryption_status() -> Result<bool> {
 /// 新对打开失败（极端异常：试开验证已成功过）→ 读连接占位化（旧 inode
 /// 防线）+ 错误上抛，调用方按失败呈现（重启恢复）。
 fn swap_converted_session(db: &DbState, db_path: &Path, passphrase: Option<&str>) -> Result<()> {
-    let opened = match passphrase {
-        Some(pass) => {
-            let conn = ledger_infra::db::open_connection_with_passphrase(db_path, pass);
-            let read_conn =
-                ledger_infra::db::open_connection_readonly_with_passphrase(db_path, pass);
-            conn.and_then(|conn| {
-                read_conn.map(|read_conn| {
-                    (
-                        conn,
-                        read_conn,
-                        ledger_sync_engine::SessionEnvelope::Encrypted(pass.to_owned()),
-                    )
-                })
-            })
-        }
-        None => {
-            let conn = ledger_infra::db::open_connection(db_path);
-            let read_conn = ledger_infra::db::open_connection_readonly(db_path);
-            conn.and_then(|conn| {
-                read_conn.map(|read_conn| {
-                    (
-                        conn,
-                        read_conn,
-                        ledger_sync_engine::SessionEnvelope::Plaintext,
-                    )
-                })
-            })
-        }
+    // 两臂只差开连原语对与信封形态：按新形态成对开连（写 + 只读），任一
+    // 失败即整对失败（压平双 Result 的形状收单点）。
+    let (conn, read_conn, envelope) = match passphrase {
+        Some(pass) => (
+            ledger_infra::db::open_connection_with_passphrase(db_path, pass),
+            ledger_infra::db::open_connection_readonly_with_passphrase(db_path, pass),
+            ledger_sync_engine::SessionEnvelope::Encrypted(pass.to_owned()),
+        ),
+        None => (
+            ledger_infra::db::open_connection(db_path),
+            ledger_infra::db::open_connection_readonly(db_path),
+            ledger_sync_engine::SessionEnvelope::Plaintext,
+        ),
     };
+    let opened = conn.and_then(|conn| read_conn.map(|read_conn| (conn, read_conn, envelope)));
     match opened {
         Ok((conn, read_conn, envelope)) => {
             ledger_sync_engine::SessionEnvelope::remember(envelope);
@@ -229,55 +215,60 @@ fn swap_converted_session(db: &DbState, db_path: &Path, passphrase: Option<&str>
     }
 }
 
+/// 三形态写面的共享转换壳（开启 / 修改主口令 / 关闭的同构段收单点）：持
+/// 写槽锁 → infra 整库转换单正文（转换与原子性语义全在基础设施，失败原
+/// 库原样保留）→ [`swap_converted_session`] 原位换连。写槽锁只护转换段
+/// （阻塞并发写写进转换中的源文件）；换连段不得持锁——
+/// [`DbState::swap_pair`] 换写槽要取同一互斥体（持锁换连 = 自锁死）。
+fn convert_and_swap(
+    db: &DbState,
+    db_path: &Path,
+    passphrase: Option<&str>,
+    convert: impl FnOnce(&Path) -> Result<()>,
+) -> Result<()> {
+    {
+        let _guard = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+        convert(db_path)?;
+    }
+    swap_converted_session(db, db_path, passphrase)
+}
+
 /// 开启加密（旧壳 `enable_encryption` 命令同一执行协议）：当前明文库整库
-/// 一次性转换为密文库（转换与原子性语义全在基础设施
-/// [`encryption::enable_encryption_for_file`] 单正文，失败原库原样保留），
-/// 成功后原位换连继续会话（[`swap_converted_session`]，本会话零中断）。
-/// 转换期间持写槽锁（阻塞并发写写进转换中的源文件，恢复通道同口径）。
+/// 一次性转换为密文库，成功后原位换连继续会话（[`swap_converted_session`]，
+/// 本会话零中断）。
 pub fn enable_encryption(db: &DbState, passphrase: &str) -> Result<()> {
     let db_path = db_path_for_data_safety()?;
-    {
-        // 写槽锁只护转换段（阻塞并发写写进转换中的源文件）；换连段不得持
-        // 锁——swap_pair 换写槽要取同一互斥体（持锁换连 = 自锁死）。
-        let _guard = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-        ledger_infra::db::encryption::enable_encryption_for_file(&db_path, passphrase)?;
-    }
-    swap_converted_session(db, &db_path, Some(passphrase))
+    convert_and_swap(db, &db_path, Some(passphrase), |path| {
+        ledger_infra::db::encryption::enable_encryption_for_file(path, passphrase)
+    })
 }
 
 /// 修改主口令（旧壳 `change_encryption_passphrase` 命令同一执行协议，
-/// issue #571）：旧口令验证通过后整库转入新口令的新库（失败原库原样
-/// 保留），成功后凭新口令原位换连继续会话（[`swap_converted_session`]）。
-/// 转换期间持写槽锁（同开启加密）。
+/// issue #571）：旧口令验证通过后整库转入新口令的新库，成功后凭新口令原
+/// 位换连继续会话（[`swap_converted_session`]）。
 pub fn change_encryption_passphrase(
     db: &DbState,
     current_passphrase: &str,
     new_passphrase: &str,
 ) -> Result<()> {
     let db_path = db_path_for_data_safety()?;
-    {
-        // 写槽锁只护转换段（同开启加密；换连段不得持锁，见上）。
-        let _guard = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
+    convert_and_swap(db, &db_path, Some(new_passphrase), |path| {
         ledger_infra::db::encryption::change_passphrase_for_file(
-            &db_path,
+            path,
             current_passphrase,
             new_passphrase,
-        )?;
-    }
-    swap_converted_session(db, &db_path, Some(new_passphrase))
+        )
+    })
 }
 
 /// 关闭加密（旧壳 `disable_encryption` 命令同一执行协议，issue #571）：凭
-/// 当前主口令整库转回明文库（失败原库原样保留），成功后原位换连到明文
-/// 新世界（[`swap_converted_session`]）。转换期间持写槽锁（同开启加密）。
+/// 当前主口令整库转回明文库，成功后原位换连到明文新世界
+///（[`swap_converted_session`]）。
 pub fn disable_encryption(db: &DbState, current_passphrase: &str) -> Result<()> {
     let db_path = db_path_for_data_safety()?;
-    {
-        // 写槽锁只护转换段（同开启加密；换连段不得持锁，见上）。
-        let _guard = db.conn.lock().map_err(|e| AppError::Db(e.to_string()))?;
-        ledger_infra::db::encryption::disable_encryption_for_file(&db_path, current_passphrase)?;
-    }
-    swap_converted_session(db, &db_path, None)
+    convert_and_swap(db, &db_path, None, |path| {
+        ledger_infra::db::encryption::disable_encryption_for_file(path, current_passphrase)
+    })
 }
 
 /// 主口令验证（信封模式解析的消费面，与旧壳 `resolve_passphrase` 同序）。
