@@ -54,6 +54,7 @@ use crate::assembly::{
 use crate::boot;
 use crate::combo_select;
 use crate::date_select;
+use crate::design::font_size;
 use crate::modal;
 use crate::pinyin_select;
 use crate::popconfirm;
@@ -487,8 +488,16 @@ pub(crate) fn installments_pane(pending_focus: Signal<Option<String>>) -> impl I
     let danger_fg = tokens
         .color("destructive")
         .unwrap_or_else(|| hsla(0.0, 0.0, 0.98, 1.0).into());
+    // 主按钮前景 = primary-foreground 令牌（亮暗双态随表；旧裸白直调退役）。
+    let primary_fg = tokens
+        .color("primary-foreground")
+        .unwrap_or_else(|| hsla(0.0, 0.0, 0.98, 1.0).into());
     // 进度条正常色（#2033 预算 → #2039 概览同款取舍：正常态用账本语义绿）。
     let progress_fg = crate::transactions::amount_color(assembly::AmountSemantic::Income);
+    // 进度条轨道色 = muted 令牌（弱化底语义角色；消费方零本地色纪律）。
+    let progress_track = tokens
+        .color("muted")
+        .unwrap_or_else(|| hsla(0.0, 0.0, 0.45, 1.0).into());
 
     // ============================ 清单呈现 ============================
     // 状态过滤（纯前端过滤，不产生请求——旧壳 filteredRows 同口径）。
@@ -752,6 +761,7 @@ pub(crate) fn installments_pane(pending_focus: Signal<Option<String>>) -> impl I
         confirm_cancel,
         perform_status,
         progress_fg,
+        progress_track,
     );
 
     // 新建商户下拉选项源（在用商户；订阅页签同口径）。
@@ -770,7 +780,7 @@ pub(crate) fn installments_pane(pending_focus: Signal<Option<String>>) -> impl I
                 .gap_2()
                 .child(
                     text(INST_LIST_TITLE)
-                        .text_size(px(13.0))
+                        .text_size(px(font_size::TITLE))
                         .font_weight(FontWeight::SEMIBOLD)
                         .text_color(fg),
                 )
@@ -779,22 +789,22 @@ pub(crate) fn installments_pane(pending_focus: Signal<Option<String>>) -> impl I
                     let key_owned = key.to_owned();
                     button()
                         .app_class(
-                            "px-2 py-0.5 rounded-md text-foreground hover:bg-accent selected:bg-accent",
+                            "px-2 py-1 rounded-md text-foreground hover:bg-accent selected:bg-accent",
                         )
                         .child(
                             text(label)
-                                .text_size(px(12.0))
+                                .text_size(px(font_size::CAPTION))
                                 .test_id(format!("inst-filter-{key_owned}").as_str()),
                         )
                         .on_press(move |_: &()| active_filter.set(key.to_owned()))
                 }))
                 .child(
                     button()
-                        .app_class("px-3 py-1.5 rounded-md bg-primary hover:opacity-90")
+                        .app_class("px-3 py-2 rounded-md bg-primary hover:opacity-90")
                         .child(
                             text(CREATE_INST_OPEN_LABEL)
-                                .text_size(px(13.0))
-                                .text_color(rgb(0xffffff))
+                                .text_size(px(font_size::SECONDARY))
+                                .text_color(primary_fg)
                                 .test_id("inst-create-open"),
                         )
                         .on_press(move |_: &()| open_create()),
@@ -855,7 +865,7 @@ pub(crate) fn installments_pane(pending_focus: Signal<Option<String>>) -> impl I
                     .child(
                         // 币种随账户推导（只读展示；拆 derive_currency_text 即红）。
                         text(move || create_currency_text.get())
-                            .text_size(px(13.0))
+                            .text_size(px(font_size::SECONDARY))
                             .text_color(muted)
                             .test_id("inst-currency"),
                     ),
@@ -880,7 +890,7 @@ pub(crate) fn installments_pane(pending_focus: Signal<Option<String>>) -> impl I
                     .child(field_label("每期金额", muted))
                     .child(
                         text(move || preview.get())
-                            .text_size(px(13.0))
+                            .text_size(px(font_size::SECONDARY))
                             .text_color(fg)
                             .test_id("inst-preview"),
                     ),
@@ -929,7 +939,7 @@ pub(crate) fn installments_pane(pending_focus: Signal<Option<String>>) -> impl I
                 .flex_row()
                 .items_center()
                 .gap_2()
-                .child(text("每").text_size(px(13.0)).text_color(fg))
+                .child(text("每").text_size(px(font_size::SECONDARY)).text_color(fg))
                 .child(input()
                     .test_id("inst-interval")
                     .value(move || create_interval_text.get())
@@ -962,7 +972,7 @@ pub(crate) fn installments_pane(pending_focus: Signal<Option<String>>) -> impl I
                         move || create_error.get().is_some(),
                         move || {
                             text(move || format!("创建失败: {}", create_error.get().unwrap_or_default()))
-                                .text_size(px(12.0))
+                                .text_size(px(font_size::CAPTION))
                                 .text_color(danger_fg)
                                 .test_id("inst-create-error")
                         },
@@ -976,11 +986,11 @@ pub(crate) fn installments_pane(pending_focus: Signal<Option<String>>) -> impl I
                     .child(
                         button()
                             .app_class(
-                                "px-3 py-1.5 rounded-md border border-border text-foreground hover:bg-accent",
+                                "px-3 py-2 rounded-md border border-border text-foreground hover:bg-accent",
                             )
                             .child(
                                 text("取消")
-                                    .text_size(px(13.0))
+                                    .text_size(px(font_size::SECONDARY))
                                     .text_color(fg)
                                     .test_id("inst-create-cancel"),
                             )
@@ -988,11 +998,11 @@ pub(crate) fn installments_pane(pending_focus: Signal<Option<String>>) -> impl I
                     )
                     .child(
                         button()
-                            .app_class("px-3 py-1.5 rounded-md bg-primary hover:opacity-90")
+                            .app_class("px-3 py-2 rounded-md bg-primary hover:opacity-90")
                             .child(
                                 text(CREATE_INST_SUBMIT_LABEL)
-                                    .text_size(px(13.0))
-                                    .text_color(rgb(0xffffff))
+                                    .text_size(px(font_size::SECONDARY))
+                                    .text_color(primary_fg)
                                     .test_id("inst-create"),
                             )
                             .on_press(move |_: &()| perform_create()),
@@ -1011,7 +1021,7 @@ pub(crate) fn installments_pane(pending_focus: Signal<Option<String>>) -> impl I
                 move || error.get().is_some(),
                 move || {
                     text(move || format!("加载失败: {}", error.get().unwrap_or_default()))
-                        .text_size(px(12.0))
+                        .text_size(px(font_size::CAPTION))
                         .text_color(danger_fg)
                         .test_id("inst-error")
                         .app_class("px-4 py-1")
@@ -1026,7 +1036,7 @@ pub(crate) fn installments_pane(pending_focus: Signal<Option<String>>) -> impl I
                 move || status.get().is_some(),
                 move || {
                     text(move || status.get().unwrap_or_default())
-                        .text_size(px(12.0))
+                        .text_size(px(font_size::CAPTION))
                         .text_color(fg)
                         .test_id("inst-status")
                 },
@@ -1068,6 +1078,7 @@ fn make_action_renderer(
     confirm_cancel: Signal<Option<String>>,
     perform_status: impl Fn(String, ScheduledStatus) + Clone + 'static,
     progress_fg: nsh_core::element::AdaptiveColor,
+    progress_track: nsh_core::element::AdaptiveColor,
 ) -> impl Fn(&nsh_base::DataTableCell) -> nsh_core::element::AnyElement {
     move |cell: &nsh_base::DataTableCell| -> nsh_core::element::AnyElement {
         let index = cell.row as usize;
@@ -1088,11 +1099,15 @@ fn make_action_renderer(
                     .items_center()
                     .gap_2()
                     .child(
+                        // 轨道色 = muted 令牌（弱化底语义角色，亮暗双态随表；
+                        // 旧中性洗色 hsla 直调退役）。轨道/指示条全圆 = 圆角阶
+                        // rounded-full；轨道定宽与 6pt 高为进度条组件内部基线
+                        //（规格未成文，DESIGN.md §6 现状基线）。
                         view()
                             .w(px(160.0))
                             .h(px(6.0))
                             .rounded_full()
-                            .bg(hsla(0.0, 0.0, 0.5, 0.15))
+                            .bg(progress_track)
                             .child(
                                 view()
                                     .h(px(6.0))
@@ -1103,7 +1118,11 @@ fn make_action_renderer(
                                     .bg(progress_fg),
                             ),
                     )
-                    .child(text(cell.text.clone()).text_size(px(12.0)).text_color(fg))
+                    .child(
+                        text(cell.text.clone())
+                            .text_size(px(font_size::CAPTION))
+                            .text_color(fg),
+                    )
                     .into_element()
             }
             "actions" => {
@@ -1173,12 +1192,10 @@ fn make_action_renderer(
                                 cancel_label: "取消".to_owned(),
                             },
                             view()
-                                .app_class(
-                                    "px-2 py-0.5 rounded-md text-destructive hover:bg-accent",
-                                )
+                                .app_class("px-2 py-1 rounded-md text-destructive hover:bg-accent")
                                 .child(
                                     text("取消")
-                                        .text_size(px(12.0))
+                                        .text_size(px(font_size::CAPTION))
                                         .text_color(danger_fg)
                                         .test_id(format!("inst-cancel-{id}").as_str()),
                                 ),
