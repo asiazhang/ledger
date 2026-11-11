@@ -1,4 +1,4 @@
-//! NSH 根组件与启动结果视图模型（issue #2017 骨架；#2073 起视图本体归位——交易表格住 [`crate::transactions`]、预算视图住 [`crate::budget`]，本模块只持根组件、启动竖井与启动三态呈现）。
+//! NSH 根组件与启动结果视图模型（issue #2017 骨架；#2073 起视图本体归位——交易表格住 [`crate::transactions`]、预算视图住 [`crate::budget`]，本模块只持根组件、启动竖井与启动形态呈现（含密文库锁定态，#2088））。
 //!
 //! 装配入口可注入（docs/research/nsh-testing-capabilities.md §3.1：lib + bin
 //! 双靶，bin 薄启动）：bin（`main.rs`）解析启动参数后经 [`set_book_dir`] 注入
@@ -558,7 +558,7 @@ fn view_host(nav: nav::NavStore) -> impl IntoElement {
 })
 }
 
-/// 立桩根组件：就绪前居中呈现启动三态，就绪后承载导航骨架（侧栏 + 内容区）。
+/// 立桩根组件：就绪前居中呈现启动形态（缺参/引导中/首启引导/失败/密文锁定，#2088 起五态），就绪后承载导航骨架（侧栏 + 内容区）。
 #[component]
 pub fn App() -> impl IntoElement {
     // 导航状态与筛选会话态挂根组件实例（根永生，信号存活与进程同步；后续消费
@@ -818,7 +818,7 @@ pub fn App() -> impl IntoElement {
         state.set(outcome);
     });
     view().flex_1().flex_col().app_class("bg-background").child(
-        // 启动三态与导航骨架互斥呈现：就绪前居中三态，就绪后侧栏 + 内容区。
+        // 启动形态与导航骨架互斥呈现：就绪前居中启动形态（含密文锁定面板），就绪后侧栏 + 内容区。
         // 单一分支承载内容区（侧栏与视图宿主同分支），不双挂。
         when(
             move || matches!(state.get(), StartupView::Ready),

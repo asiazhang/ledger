@@ -144,7 +144,7 @@ impl LockedSurface {
     }
 }
 
-/// 锁定面板（App 启动三态互斥呈现的 Locked 分支；`surface` 与主行/次行前
+/// 锁定面板（App 启动形态互斥呈现的 Locked 分支；`surface` 与主行/次行前
 /// 景色由 App 组件体传入）。删本分支的挂载接线 → 锁定场景呈现缺参/空白两
 /// 行态、解锁入口缺席 → headless 解锁旅程红。
 pub(crate) fn locked_panel(
