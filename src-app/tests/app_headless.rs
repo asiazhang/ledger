@@ -13208,7 +13208,8 @@ fn investments_view_overview_lands_with_period_numbers() {
 
     open_investments(&mut app);
 
-    // 页签闭集（旧壳 investments.tabs 前两位；持仓/标的/明细随 ⑮/⑯就位）。
+    // 页签闭集（旧壳 investments.tabs 前两位；持仓/标的/明细已随 #2046 ⑮ /
+    // #2047 ⑯ 就位）。
     for tab in ["概览", "盈亏"] {
         assert!(
             app.shows(tab),
@@ -13871,8 +13872,9 @@ fn investments_view_holdings_sync_entry_reports_empty_book() {
 
 /// 缺价行引导与 staleness 提示条（#1193 / #1190）：行情通道标的缺现价 →
 /// 行内「同步」锚在屏（动作 = 同步触发，与卡头入口同一接缝单点）＋ staleness
-/// 提示条在屏（开场本地水位检查，持仓缺现价入选）。手动报价通道的「录价」
-/// 与页面级回执随⑯ 手动报价票落位（缺件留痕见模块头）。删 staleness 装载
+/// 提示条在屏（开场本地水位检查，持仓缺现价入选）。手动报价通道行内不设
+/// 引导（录价入口住标的库页签，#2047 ⑯；分流见 holdings 模块头）。删
+/// staleness 装载
 /// 接线（视图落位装载）→ 提示条永不出现（本测红；失效重查删除即红钉在
 /// lib staleness 探针）。
 #[test]
