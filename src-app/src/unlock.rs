@@ -33,7 +33,7 @@ use nsh_core::prelude::*;
 
 use crate::app::StartupView;
 use crate::danger::{DangerConfirmSpec, DangerLevel, DangerOutcome, danger_confirm};
-use crate::{app, boot, http_host};
+use crate::{app, boot, http_host, views};
 
 // ---------------------------------------------------------------------------
 // 词表（旧壳 unlock.* zh-CN 词条原样；标题/副题在 app.rs headline_text /
@@ -218,11 +218,9 @@ pub(crate) fn locked_panel(
                 move || {
                     text(move || surface.error.get().unwrap_or_default())
                         .text_size(px(12.0))
-                        .text_color(
-                            nsh_core::element::tokens()
-                                .color("destructive")
-                                .unwrap_or(AdaptiveColor::new(rgb(0xd03050), rgb(0xe88080))),
-                        )
+                        // 破坏色单一呈现令牌（crate::views::danger_fg，回退色
+                        // 与 settings_data / backup_entry 同口径）。
+                        .text_color(views::danger_fg())
                         .test_id("unlock-error")
                 },
             )

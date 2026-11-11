@@ -61,6 +61,15 @@ pub(crate) fn view_palette() -> ViewPalette {
     }
 }
 
+/// 破坏色便捷面（单一呈现令牌：destructive 令牌 + 缺失回退亮灰可读兑底，
+/// backup_entry 同款口径；settings_data 加密卡与 unlock 错误行同一消费
+/// 点——danger.rs 确认弹窗的分级 accent 回退是另一映射面，不在此收）。
+pub(crate) fn danger_fg() -> AdaptiveColor {
+    nsh_core::element::tokens()
+        .color("destructive")
+        .unwrap_or_else(|| hsla(0.0, 0.0, 0.98, 1.0).into())
+}
+
 /// 占位呈现体（共享壳）：屏名 + 「迁移中」反馈 + （有下钻意图时）定位目标
 /// 回显。`title` 与意图消费时机归调用方（独立占位 = 挂载消费；容器激活成员
 /// = effect 键激活切换消费）。

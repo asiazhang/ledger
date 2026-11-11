@@ -58,6 +58,7 @@ use crate::danger::{DangerConfirmSpec, DangerLevel, DangerOutcome, danger_confir
 use crate::modal::app_modal;
 use crate::nav_model::NavRequest;
 use crate::popconfirm;
+use crate::views::danger_fg;
 use crate::{backup_entry, backup_host, boot, nav, nav_model, select, settings, signals, views};
 
 // ---------------------------------------------------------------------------
@@ -658,15 +659,9 @@ pub(crate) fn store_keep_limit(n: u32) {
 }
 
 // ---------------------------------------------------------------------------
-// 共用呈现件（密文输入行 / 破坏色便捷面 / 表单字段行）。
+// 共用呈现件（密文输入行 / 表单字段行）；破坏色便捷面收 crate 级单点
+// [`crate::views::danger_fg`]。
 // ---------------------------------------------------------------------------
-
-/// 破坏色便捷面（主题令牌缺失回退亮灰可读兜底，backup_entry 同款口径）。
-fn danger_fg() -> AdaptiveColor {
-    nsh_core::element::tokens()
-        .color("destructive")
-        .unwrap_or_else(|| hsla(0.0, 0.0, 0.98, 1.0).into())
-}
 
 /// 复制路径按钮（旧壳 copy-text 通道：写剪贴板 + 卡内状态条位反馈）。
 fn copy_button(
