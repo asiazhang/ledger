@@ -946,6 +946,142 @@ fn app_window_transaction_views_use_type_scale_and_primary_foreground_token() {
     );
 }
 
+/// 壳导航与根件字阶与主题令牌（issue #2106，ADR-0147 视觉收口批次）：侧栏
+/// （品牌行 / 导航项标签）、组「更多」容器壳（屏名 / 页签标签）、移动档顶
+/// 栏（视图名 / 汉堡）与首启引导面板（屏名标题 / 提示行 / 主操作标签）的
+/// 字号取官方字阶五档（[`nsh_app::design`] 字阶常量同源规范值——框架 text
+/// 预设 text_xs/sm/base/lg/xl 即 12/14/16/18/20），前景色取主题表双态令牌
+/// （亮暗切换原生跟随；引导主操作裸白字退役，#2101 同款 primary-foreground）。
+/// 删除视图侧字阶书写或令牌消费任一环即红——断言对准已解析样式
+///（font_size/color）。亮暗两态截图对照属人工子集，自动化面只断言已解析
+/// 样式。
+#[test]
+fn app_window_shell_chrome_uses_type_scale_and_theme_tokens() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("shell-chrome");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        seed_cash_account(&db);
+    }
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+    app.wait_for("id:nav-dashboard").unwrap();
+
+    // 侧栏（桌面档）：品牌行 = SECONDARY 14 + foreground 亮态令牌；导航项
+    // 标签 = SECONDARY 14。
+    let brand = app.screen().span_style("text:开源记账").unwrap();
+    assert_eq!(
+        brand.font_size,
+        Points(14.0),
+        "侧栏品牌行字号 = 字阶 SECONDARY"
+    );
+    assert_eq!(
+        brand.color,
+        nsh_core::Color(0x182635ff),
+        "品牌行前景亮色 = 主题表 foreground light"
+    );
+    assert_eq!(
+        app.screen()
+            .span_style("id:nav-dashboard >> text:概览")
+            .unwrap()
+            .font_size,
+        Points(14.0),
+        "侧栏导航项标签字号 = 字阶 SECONDARY"
+    );
+
+    // 系统切暗色：品牌行前景随主题表暗态（令牌双态消费）。
+    app.set_environment("dark mode", |env| env.color_scheme = ColorScheme::Dark)
+        .unwrap();
+    assert_eq!(
+        app.screen().span_style("text:开源记账").unwrap().color,
+        nsh_core::Color(0xe6edf4ff),
+        "品牌行前景暗色 = 主题表 foreground dark"
+    );
+
+    // 组「更多」容器壳：屏名 = BODY 16、页签标签 = SECONDARY 14（侧栏「更多」
+    // 链接落资产组容器）。
+    app.press("id:nav-more-assets").unwrap();
+    app.wait_for("text:资产 · 更多").unwrap();
+    app.wait_for("text:实物资产").unwrap();
+    assert_eq!(
+        app.screen()
+            .span_style("text:资产 · 更多")
+            .unwrap()
+            .font_size,
+        Points(16.0),
+        "容器壳屏名字号 = 字阶 BODY"
+    );
+    assert_eq!(
+        app.screen().span_style("text:实物资产").unwrap().font_size,
+        Points(14.0),
+        "容器页签标签字号 = 字阶 SECONDARY（收纳页签取唯一词「实物资产」——
+         「保单」词面在真实视图内多次命中，不加顺序依赖）"
+    );
+
+    // 移动档顶栏：视图名 = SECONDARY 14（顶栏容器下钻——test_id 在 view 上，
+    // span 匹配面只认 text matcher）、汉堡 = LEADING 18（触控行面基线）。
+    nsh_app::app::reset_book_assembly();
+    nsh_app::app::set_book_dir(make_book("shell-chrome-mobile"));
+    let mut app = Headless::start(mobile_config()).unwrap();
+    app.wait_for("id:nav-topbar-title").unwrap();
+    assert_eq!(
+        app.screen()
+            .span_style("id:nav-topbar >> text:概览")
+            .unwrap()
+            .font_size,
+        Points(14.0),
+        "顶栏视图名字号 = 字阶 SECONDARY"
+    );
+    assert_eq!(
+        app.screen().span_style("text:☰").unwrap().font_size,
+        Points(18.0),
+        "顶栏汉堡字号 = 字阶 LEADING"
+    );
+
+    // 首启引导面板（ADR-0146 决策 2 现场）：屏名标题 = TITLE 20、提示行 =
+    // CAPTION 12、主操作标签 = SECONDARY 14 且前景 = primary-foreground
+    // 亮暗双态令牌（裸白字退役）。
+    nsh_app::app::reset_book_assembly();
+    nsh_app::cross_book::set_default_data_dir(make_data_root("shell-chrome-onboarding"));
+    let mut app = Headless::start(desktop_config()).unwrap();
+    app.wait_for("text:欢迎使用 Ledger").unwrap();
+    assert_eq!(
+        app.screen()
+            .span_style("text:欢迎使用 Ledger")
+            .unwrap()
+            .font_size,
+        Points(20.0),
+        "引导屏名标题字号 = 字阶 TITLE"
+    );
+    assert_eq!(
+        app.screen()
+            .span_style("text:尚未找到账本库，新建一本账即可开始记账。")
+            .unwrap()
+            .font_size,
+        Points(12.0),
+        "引导提示行字号 = 字阶 CAPTION"
+    );
+    let create = app.screen().span_style("text:新建账本").unwrap();
+    assert_eq!(
+        create.font_size,
+        Points(14.0),
+        "引导主操作标签字号 = 字阶 SECONDARY"
+    );
+    assert_eq!(
+        create.color,
+        nsh_core::Color(0xf2f8ffff),
+        "引导主操作前景亮色 = 主题表 primary-foreground light"
+    );
+    app.set_environment("dark mode", |env| env.color_scheme = ColorScheme::Dark)
+        .unwrap();
+    assert_eq!(
+        app.screen().span_style("text:新建账本").unwrap().color,
+        nsh_core::Color(0x0b2239ff),
+        "引导主操作前景暗色 = 主题表 primary-foreground dark"
+    );
+}
+
 /// 分类路径与备注列接线（issue #2019）：父子分类的支出行呈现「父 > 子」路径
 /// 与备注原文；无分类无备注行落 `-`。删掉分类读接缝、路径装配或列映射任一环
 /// 即红。

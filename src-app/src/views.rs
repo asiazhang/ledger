@@ -33,9 +33,10 @@ use crate::policies;
 use crate::transactions::transactions_view;
 
 /// 表单字段标签（弱化小字，旧壳 NFormItem label 的本壳形态；跨视图共用件，
-/// #2073 自 app.rs 归位到视图层）。
+/// #2073 自 app.rs 归位到视图层）。次要正文 = 字阶 SECONDARY 14（规约表单
+/// 标签档；#2101 表单同档）。
 pub(crate) fn field_label(label: &'static str, muted: AdaptiveColor) -> impl IntoElement {
-    text(label).text_size(px(12.0)).text_color(muted)
+    text(label).text_sm().text_color(muted)
 }
 
 /// 视图令牌便捷面（前景/弱化，双态自适应；令牌缺失回退亮灰/中灰可读兜底，
@@ -78,13 +79,13 @@ fn placeholder_shell(
         .app_class("bg-background")
         .child(
             text(title)
-                .text_size(px(20.0))
+                .text_xl()
                 .text_color(palette.fg)
                 .test_id("view-title"),
         )
         .child(
             text("迁移中，功能将随迁移系列票就位")
-                .text_size(px(12.0))
+                .text_xs()
                 .text_color(palette.muted)
                 .test_id("placeholder-note"),
         )
@@ -98,7 +99,7 @@ fn placeholder_shell(
                         "已记录定位目标 {}",
                         focused.get().and_then(|i| i.focus).unwrap_or_default()
                     ))
-                    .text_size(px(12.0))
+                    .text_xs()
                     .text_color(palette.muted)
                     .test_id("focus-target")
                 },
@@ -252,7 +253,7 @@ pub fn group_more_view(group: GroupId) -> impl IntoElement {
             // nav.bookkeeping-more 词表形态）。
             view().px_4().py_2().child(
                 text(format!("{} · 更多", group.label()))
-                    .text_size(px(16.0))
+                    .text_base()
                     .text_color(palette.fg)
                     .test_id("view-title"),
             ),
@@ -277,13 +278,13 @@ fn tab_shell(
             tab()
                 .selected(move || active.get() == Some(name))
                 .accessibility_label(name.label())
-                .app_class("px-2 py-1 rounded-md selected:bg-accent")
+                .app_class("px-2 py-1 rounded-(--radius) selected:bg-accent")
                 // test_id 落在页签内文本上（headless id: 锚点命中文本、物理命中
                 // 到内层页签可按压件，先例期间芯片同形）；右键事件就近上浮到本
                 // 包裹视图。
                 .child(
                     text(name.label())
-                        .text_size(px(13.0))
+                        .text_sm()
                         .text_color(fg)
                         .test_id(format!("more-tab-{}", name.as_str()).as_str()),
                 )
