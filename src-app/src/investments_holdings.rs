@@ -51,7 +51,7 @@ use crate::adaptive;
 use crate::assembly::{CategoryOption, CurrencyTable, PnlSemantic};
 use crate::investments::{HoldingsSortColumn, HoldingsSorter};
 use crate::{
-    app, assembly, boot, investment_sync, investments, pinyin_select, popover, select, signals,
+    app, assembly, boot, investment_sync, investments, popover, select, signals,
 };
 
 // ---------------------------------------------------------------------------
@@ -263,20 +263,10 @@ pub(crate) fn assemble_holding_rows(
 }
 
 /// 行搜索判定（旧壳 holdingMatchesSearch 同口径：统一模糊搜索语义、空/空白
-/// 恒命中；实现复用 pinyin 单点消费面——建单选项验命中）。
+/// 恒命中；查询级组合逻辑住 [`ledger_transaction::query_matches_text`] 单点
+/// ——#2073 摘除「建单选项喂 pinyin filter_options」中转绕行）。
 pub(crate) fn holding_matches_search(snap: &HoldingRowSnap, query: &str) -> bool {
-    let trimmed = query.trim();
-    if trimmed.is_empty() {
-        return true;
-    }
-    !pinyin_select::filter_options(
-        trimmed,
-        &[CategoryOption {
-            id: String::new(),
-            label: snap.search_label.clone(),
-        }],
-    )
-    .is_empty()
+    ledger_transaction::query_matches_text(query.trim(), &snap.search_label)
 }
 
 /// 行集过滤（旧壳 filterHoldings 同形状：账户过滤 + 搜索 AND 组合，保序）。

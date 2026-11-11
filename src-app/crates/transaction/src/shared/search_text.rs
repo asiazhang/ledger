@@ -80,6 +80,16 @@ pub fn term_matches(
         || merchant_name.is_some_and(|m| term_matches_text(term, m))
 }
 
+/// 查询对单个文本判定（查询级组合单点，#2073 自壳内 ≥4 处复制面收拢）：按
+/// 空白切词、词条间 AND，每词条对 `text` 判定 [`term_matches_text`]；空查询
+/// 恒真（不过滤，恢复全量）。行集过滤 = 对每行的可搜索文本消费本谓词，保序
+/// 由迭代器语义保证。切词与 AND 组合逻辑勿再自建——第二套组合面即红（消费
+/// 方测试钉住）。
+pub fn query_matches_text(query: &str, text: &str) -> bool {
+    let terms = split_terms(query);
+    terms.is_empty() || terms.iter().all(|term| term_matches_text(term, text))
+}
+
 /// 切词：按空白拆分，过滤空词条（词条之间 AND 由调用方组合）。
 pub fn split_terms(query: &str) -> Vec<String> {
     query.split_whitespace().map(str::to_string).collect()

@@ -23,7 +23,7 @@ use ledger_infra::db::{new_uuid, now_iso};
 use ledger_infra::error::{AppError, Result};
 use ledger_sync_protocol::device::device_id;
 use ledger_transaction::amount;
-use ledger_transaction::shared::search_text::{split_terms, term_matches_text};
+use ledger_transaction::shared::search_text::query_matches_text;
 
 /// list_holdings 行：Holding 投影 + 账户币种（本位币逐行折算的折算源，issue #1797）。
 struct HoldingRow {
@@ -289,17 +289,17 @@ fn list_instruments_inner(
     conn: &Connection,
     filter: &InstrumentListFilter,
 ) -> Result<InstrumentListResult> {
-    // 关键字过滤走统一模糊搜索语义（ADR-0027，复用全局搜索纯函数）：词条之间
-    // AND，命中 = 原文连续子串 ∨ 拼音首字母子序列（大小写不敏感）。判定目标为
+    // 关键字过滤走统一模糊搜索语义（ADR-0027，复用全局搜索纯函数；查询级
+    // 组合住 query_matches_text 单点，#2073 自本地切词+AND 组合面收拢）：命中
+    // = 原文连续子串 ∨ 拼音首字母子序列（大小写不敏感）。判定目标为
     // 「代码 · 名称」label 等价文本（instrument_match_label，与投资表单标的
     // 下拉的 label 一致）。子序列匹配无法下推 SQL，故有搜索词时取候选后
     // Rust 内存过滤再内存分页。
-    let search_terms = filter
+    let search = filter
         .search
         .as_deref()
         .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(split_terms);
+        .filter(|s| !s.is_empty());
 
     let mut conditions: Vec<String> = Vec::new();
     let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
@@ -357,16 +357,12 @@ fn list_instruments_inner(
         }
         None => None,
     };
-    let (total, items, anchor_page) = if let Some(terms) = &search_terms {
+    let (total, items, anchor_page) = if let Some(query) = search {
         // 语义匹配分支：全量候选后 Rust 过滤，total = 命中数，内存分页。
         let all: Vec<Instrument> = query_all(conn, &select_sql(""), params_ref.as_slice())?;
         let matched: Vec<Instrument> = all
             .into_iter()
-            .filter(|inst| {
-                terms
-                    .iter()
-                    .all(|t| term_matches_text(t, &instrument_match_label(inst)))
-            })
+            .filter(|inst| query_matches_text(query, &instrument_match_label(inst)))
             .collect();
         let total = matched.len() as i64;
         // 锚点序号在过滤后的命中集内求（与内存分页同一行集）。

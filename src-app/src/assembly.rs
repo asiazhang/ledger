@@ -4335,20 +4335,12 @@ pub fn partition_insurer_rows(
 }
 
 /// 统一模糊搜索语义过滤（ADR-0027 唯一定义点的直接消费，pinyin_select 过滤
-/// 项同源）：按空白切词、词条间 AND，每词条对保司名判定「原文连续子串 ∨
-/// 拼音首字母子序列」。保序过滤（只隐藏未命中项，剩余项顺序不变——保护位
-/// 置记忆）；空查询恒全量（恢复完整列表）。纯函数、可离线单测。
+/// 项同源；查询级组合逻辑住 [`ledger_transaction::query_matches_text`] 单点）：
+/// 保序过滤（只隐藏未命中项，剩余项顺序不变——保护位置记忆）；空查询恒全量
+///（恢复完整列表）。纯函数、可离线单测。
 pub fn filter_insurer_rows(query: &str, rows: &[InsurerRowCells]) -> Vec<InsurerRowCells> {
-    let terms = ledger_transaction::split_terms(query);
-    if terms.is_empty() {
-        return rows.to_vec();
-    }
     rows.iter()
-        .filter(|row| {
-            terms
-                .iter()
-                .all(|term| ledger_transaction::term_matches_text(term, &row.name))
-        })
+        .filter(|row| ledger_transaction::query_matches_text(query, &row.name))
         .cloned()
         .collect()
 }

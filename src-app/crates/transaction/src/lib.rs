@@ -75,7 +75,8 @@ pub use read::{
     list_transactions_internal,
 };
 pub use shared::search_text::{
-    is_subsequence, pinyin_initials, split_terms, term_matches, term_matches_text,
+    is_subsequence, pinyin_initials, query_matches_text, split_terms, term_matches,
+    term_matches_text,
 };
 pub use write::batch::{
     BatchOutcome, DedupIdentity, TransactionBatch, compute_dedup_hash, dedup_identity,

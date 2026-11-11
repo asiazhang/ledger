@@ -30,21 +30,13 @@ pub(crate) const OPTION_ID_SUFFIX: &str = "-option";
 /// 搜索输入框的稳定锚点后缀。
 pub(crate) const SEARCH_ID_SUFFIX: &str = "-search";
 
-/// 统一模糊搜索语义过滤（ADR-0027 唯一定义点的直接消费）：按空白切词、词条
-/// 间 AND，每词条对选项 label 判定「原文连续子串 ∨ 拼音首字母子序列」。空查询
-/// 恒全量（恢复完整列表）。纯函数、可离线单测。
+/// 统一模糊搜索语义过滤（ADR-0027 唯一定义点的直接消费；查询级组合逻辑住
+/// [`ledger_transaction::query_matches_text`] 单点）：空查询恒全量（恢复完整
+/// 列表），命中保序。纯函数、可离线单测。
 pub fn filter_options(query: &str, options: &[CategoryOption]) -> Vec<CategoryOption> {
-    let terms = ledger_transaction::split_terms(query);
-    if terms.is_empty() {
-        return options.to_vec();
-    }
     options
         .iter()
-        .filter(|option| {
-            terms
-                .iter()
-                .all(|term| ledger_transaction::term_matches_text(term, &option.label))
-        })
+        .filter(|option| ledger_transaction::query_matches_text(query, &option.label))
         .cloned()
         .collect()
 }

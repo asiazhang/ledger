@@ -8,8 +8,9 @@
 //! 实现明细见各区块注释；整体职责边界（按旧壳核实平价）：字典是名牌字典
 //!（issue #223：只处理名称）；**新增表单卡片 + 列表卡片 + 编辑弹窗**，交互沿用
 //! 分类管理先例（issue #189 / ADR-0028）——新增行内表单、清单（名称 / 关联
-//! 交易 / 操作三列）、统一模糊搜索本地过滤（ADR-0027 唯一定义点：交易域
-//! `split_terms` / `term_matches_text`，商户字典前端全量驻留的本地过滤形态）、
+//! 交易 / 操作三列）、统一模糊搜索本地过滤（ADR-0027 唯一定义点：查询级组
+//! 合住交易域 `query_matches_text` 单点，商户字典前端全量驻留的本地过滤形
+//! 态）、
 //! 显示已删开关（已删行追加在尾只读呈现、条数照常与可下钻，issue #447）、
 //! 前端分页展示层切片（issue #457，字段组件内受控不持久化、过滤意图页码
 //! 归零、删尾回退 ADR-0045）、条数下钻（issue #446：交易列表带商户过滤）、
@@ -94,19 +95,6 @@ type MerchantLoads = ledger_infra::error::Result<(
     Vec<ledger_merchants::Merchant>,
     Vec<MerchantTransactionCount>,
 )>;
-
-/// 统一模糊搜索语义过滤（ADR-0027 唯一定义点的直接消费，pinyin_select
-/// filter_options 同语义）：按空白切词、词条间 AND，每词条对名称判定
-///「原文连续子串 ∨ 拼音首字母子序列」；空查询恒全量；过滤只隐藏未命中项、
-/// 剩余项顺序不变。纯函数、可离线单测（商户名词典本地过滤的单一消费点，不另立
-/// 第二套语义）。
-fn search_matches(name: &str, query: &str) -> bool {
-    let terms = ledger_transaction::split_terms(query);
-    terms.is_empty()
-        || terms
-            .iter()
-            .all(|term| ledger_transaction::term_matches_text(term, name))
-}
 
 /// 商户视图（导航骨架商户分支的真实组件，#2052）。
 #[component]
@@ -269,7 +257,7 @@ pub(crate) fn MerchantsView() -> impl IntoElement {
             in_use
         };
         let query = search_term.get().trim().to_owned();
-        merged.retain(|row| search_matches(&row.name, &query));
+        merged.retain(|row| ledger_transaction::query_matches_text(&query, &row.name));
         match sort.get() {
             Some(ordered) if ordered.key == "transaction_count" => match ordered.direction {
                 DataTableSortDirection::Ascending => {
@@ -988,20 +976,21 @@ mod tests {
         assert_eq!(titles, vec!["名称", "关联交易", "操作"]);
     }
 
-    /// 统一模糊搜索语义过滤（本视图 matches_search 闭包消费面）：中文名命中、
-    /// 拼音首字母命中、多词 AND、空查询恒全量——域入口 [`ledger_transaction::
-    /// term_matches_text`] 唯一定义点，本测钉视图侧的消费接线（改走第二套
+    /// 统一模糊搜索语义过滤（本视图清单过滤消费面）：中文名命中、拼音首字母
+    /// 命中、多词 AND、空查询恒全量——查询级组合逻辑住域入口
+    /// [`ledger_transaction::query_matches_text`] 单点（#2073 自本文件本地
+    /// `search_matches` 复制件收拢），本测钉视图侧的消费接线（改走第二套
     /// 过滤语义即红）。
     #[test]
     fn search_filter_follows_unified_fuzzy_semantics() {
-        assert!(search_matches("京东", ""));
-        assert!(search_matches("京东", "京东"));
-        assert!(!search_matches("京东", "美团"));
+        assert!(ledger_transaction::query_matches_text("", "京东"));
+        assert!(ledger_transaction::query_matches_text("京东", "京东"));
+        assert!(!ledger_transaction::query_matches_text("美团", "京东"));
         // 拼音首字母子序列（ADR-0027 语义）。
-        assert!(search_matches("京东", "jd"));
+        assert!(ledger_transaction::query_matches_text("jd", "京东"));
         // 多词 AND（词条间 AND，同一名对多词条皆命中）。
-        assert!(search_matches("京东", "东 京"));
-        assert!(!search_matches("京东", "京东 美团"));
+        assert!(ledger_transaction::query_matches_text("东 京", "京东"));
+        assert!(!ledger_transaction::query_matches_text("京东 美团", "京东"));
     }
 
     /// 删尾页码回退（ADR-0045）与分页边界（issue #457 的纯决策半边，
