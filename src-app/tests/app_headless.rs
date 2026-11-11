@@ -15367,3 +15367,122 @@ fn encryption_card_change_passphrase_then_disable_in_encrypted_session() {
     // 卡面翻回明文库开启形态。
     app.wait_for("text:开启前请确认").unwrap();
 }
+
+/// 限时轮询断言窗口内无自动备份产物（三态负向半边；超窗仍无产物即断言
+/// 成立，出现产物立即红）。
+fn wait_no_auto_product(dir: &std::path::Path, window: Duration, label: &str) {
+    let deadline = std::time::Instant::now() + window;
+    while std::time::Instant::now() < deadline {
+        assert!(
+            find_first_auto_product(dir).is_none(),
+            "{label}：等待窗口内出现兜底产物"
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    assert!(
+        find_first_auto_product(dir).is_none(),
+        "{label}：等待窗口结束仍应无产物"
+    );
+}
+
+/// 自动备份调度密文库三态端到端（issue #2088 交付⑤：锁定 / 解锁 / 失败）：
+/// 密文库 + 备份目录已配置 + 自动备份开关已开启的现场——
+/// - **锁定态**：引导落锁定视图，调度不拉起（无会话无宿主），等待窗口内
+///   无兜底产物落盘（旧壳「锁定态不可调度」扇门的本壳行为）；
+/// - **解锁失败态**：错误口令仍锁定，零调度零产物；
+/// - **解锁**：正确口令进业务会话 → 调度宿主同点补拉起 → 首次兜底产物
+///   落盘（#2088 预留编排点的用户可观察结果）。
+///
+/// 「删除即红」负向条目：删解锁路径的 `start_session_host` 补拉起（业务可
+/// 用起点单点的备份宿主接线）→ 解锁后无产物 → 产物轮询超时红。
+#[test]
+fn auto_backup_scheduling_three_states_in_encrypted_scenario() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    const PASS: &str = "调度三态口令X";
+    // 夹具：种子数据 + 自动备份开启 + 整库加密（先明文置开关再转换）。
+    let dir = make_book("auto-backup-enc");
+    let backup_dir =
+        std::env::temp_dir().join(format!("ledger-test-nsh-auto-backup-enc-{}", new_uuid()));
+    fs::create_dir_all(&backup_dir).unwrap();
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let account = seed_cash_account(&db);
+        seed_transaction(
+            &db,
+            TxnSeed {
+                account: &account,
+                to_account: None,
+                kind: TransactionKind::Expense,
+                amount_cents: 3_500,
+                date: &test_date(0),
+                category_id: None,
+                merchant_id: None,
+                note: Some("调度三态种子".to_owned()),
+            },
+        );
+        // 自动备份开关开启（库内状态，转换随库走）。
+        {
+            let conn = db
+                .conn
+                .lock()
+                .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
+                .unwrap();
+            ledger_infra::settings::set(
+                &conn,
+                ledger_infra::settings::SettingKey::AutoBackupEnabled,
+                &true,
+            )
+            .unwrap();
+        }
+    }
+    ledger_infra::db::encryption::enable_encryption_for_file(&dir.join("ledger.db"), PASS)
+        .unwrap();
+
+    let storage = storage_shard(&[(
+        "backup_dir",
+        format!("{:?}", backup_dir.to_string_lossy()).as_str(),
+    )]);
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config_with_storage_shard(storage)).unwrap();
+
+    // 锁定态：锁定视图在屏，等待窗口内无兜底产物（调度不拉起；等待窗走
+    /// 测试线程限时轮询——headless 无手动时钟场景，应用实时推进）。
+    app.wait_for("id:locked-panel").unwrap();
+    wait_no_auto_product(&backup_dir, Duration::from_secs(2), "锁定态不可调度");
+
+    // 解锁失败态：错误口令仍锁定，零调度零产物。
+    app.type_text("id:unlock-passphrase", "错误口令一一贯不代表正确口令")
+        .unwrap();
+    app.press("id:unlock-confirm").unwrap();
+    app.wait_for("text:口令错误或文件损坏，请重试").unwrap();
+    wait_no_auto_product(&backup_dir, Duration::from_secs(2), "解锁失败态仍锁定");
+
+    // 解锁：进业务会话 → 备份宿主同点补拉起 → 首次兜底产物落盘。
+    app.clear("id:unlock-passphrase").unwrap();
+    app.type_text("id:unlock-passphrase", PASS).unwrap();
+    app.press("id:unlock-confirm").unwrap();
+    app.wait_for("id:nav-transactions").unwrap();
+    let deadline = std::time::Instant::now() + DEFAULT_WAIT;
+    let product = loop {
+        if let Some(found) = find_first_auto_product(&backup_dir) {
+            break found;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "解锁后应发生首次兜底自动备份（产物落盘），实际目录内容：{:?}",
+            fs::read_dir(&backup_dir)
+                .map(|entries| entries.flatten().map(|e| e.path()).collect::<Vec<_>>())
+                .unwrap_or_default()
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    let name = product
+        .file_name()
+        .and_then(|n| n.to_str().map(str::to_owned))
+        .unwrap_or_default();
+    assert!(
+        name.starts_with("ledger-auto-") && name.ends_with(".db.zip"),
+        "产物为受管自动命名：{name}"
+    );
+}
