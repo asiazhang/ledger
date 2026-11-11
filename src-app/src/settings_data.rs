@@ -52,6 +52,7 @@ use nsh_core::storage::Storage;
 use crate::app::book_dir;
 use crate::assembly::CategoryOption;
 use crate::danger::{DangerConfirmSpec, DangerLevel, DangerOutcome, danger_confirm};
+use crate::design::font_size;
 use crate::modal::app_modal;
 use crate::nav_model::NavRequest;
 use crate::popconfirm;
@@ -618,9 +619,7 @@ pub(crate) fn store_keep_limit(n: u32) {
 
 /// 破坏色便捷面（主题令牌缺失回退亮灰可读兜底，backup_entry 同款口径）。
 fn danger_fg() -> AdaptiveColor {
-    nsh_core::element::tokens()
-        .color("destructive")
-        .unwrap_or_else(|| hsla(0.0, 0.0, 0.98, 1.0).into())
+    crate::theme::color("destructive")
 }
 
 /// 复制路径按钮（旧壳 copy-text 通道：写剪贴板 + 卡内状态条位反馈）。
@@ -633,7 +632,7 @@ fn copy_button(
         .app_class("px-2 py-0.5 rounded-md border border-border text-foreground hover:bg-accent")
         .child(
             text(BUTTON_COPY_PATH)
-                .text_size(px(11.0))
+                .text_size(px(font_size::CAPTION))
                 .text_color(views::view_palette().fg)
                 .test_id(id),
         )
@@ -658,7 +657,7 @@ fn pass_input(
         .app_class("gap-1")
         .child(
             text(label)
-                .text_size(px(12.0))
+                .text_size(px(font_size::CAPTION))
                 .text_color(palette.fg),
         )
         .child(
@@ -1228,7 +1227,7 @@ fn restore_modal_body(state: BackupUiState, owner: Owner, palette: views::ViewPa
         .app_class("gap-2")
         .child(
             text(format!("备份文件：{}", intent.path))
-                .text_size(px(12.0))
+                .text_size(px(font_size::CAPTION))
                 .text_color(palette.fg)
                 .test_id("data-restore-path"),
         )
@@ -1238,7 +1237,7 @@ fn restore_modal_body(state: BackupUiState, owner: Owner, palette: views::ViewPa
                 .app_class("rounded-md border border-destructive/30 bg-destructive/10 p-2 gap-1")
                 .child(
                     text(RESTORE_CONFIRM_STRONG)
-                        .text_size(px(12.0))
+                        .text_size(px(font_size::CAPTION))
                         .font_weight(FontWeight::BOLD)
                         .text_color(danger_fg()),
                 ),
@@ -1249,14 +1248,14 @@ fn restore_modal_body(state: BackupUiState, owner: Owner, palette: views::ViewPa
                 .app_class("rounded-md border border-destructive/30 bg-destructive/10 p-2 gap-1")
                 .child(
                     text(title)
-                        .text_size(px(12.0))
+                        .text_size(px(font_size::CAPTION))
                         .font_weight(FontWeight::SEMIBOLD)
                         .text_color(palette.fg)
                         .test_id("data-restore-cross-mode-title"),
                 )
                 .child(
                     text(warning)
-                        .text_size(px(12.0))
+                        .text_size(px(font_size::CAPTION))
                         .text_color(palette.fg)
                         .test_id("data-restore-cross-mode"),
                 )
@@ -1270,7 +1269,7 @@ fn restore_modal_body(state: BackupUiState, owner: Owner, palette: views::ViewPa
         )))
         .children(state.restore_error.get().map(|err| {
             text(err.clone())
-                .text_size(px(12.0))
+                .text_size(px(font_size::CAPTION))
                 .text_color(danger_fg())
                 .test_id("data-restore-error")
         }))
@@ -1287,7 +1286,7 @@ fn restore_modal_body(state: BackupUiState, owner: Owner, palette: views::ViewPa
                         .disabled(busy)
                         .child(
                             text(RESTORE_CANCEL)
-                                .text_size(px(13.0))
+                                .text_size(px(font_size::SECONDARY))
                                 .test_id("data-restore-cancel"),
                         )
                         .on_press(move |_: &()| {
@@ -1304,8 +1303,8 @@ fn restore_modal_body(state: BackupUiState, owner: Owner, palette: views::ViewPa
                         .disabled(!can_submit_restore(state) || busy)
                         .child(
                             text(RESTORE_CONFIRM_ACTION)
-                                .text_size(px(13.0))
-                                .text_color(rgb(0xffffff))
+                                .text_size(px(font_size::SECONDARY))
+                                .text_color(crate::theme::color("destructive-foreground"))
                                 .test_id("data-restore-confirm"),
                         )
                         .on_press(move |_: &()| confirm_restore_task(body_owner, state)),
@@ -1391,7 +1390,7 @@ fn backup_cards(palette: views::ViewPalette) -> View {
         vec![
             view().child(
                 text(BACKUP_HINT)
-                    .text_size(px(12.0))
+                    .text_size(px(font_size::CAPTION))
                     .text_color(palette.muted),
             ),
             view()
@@ -1405,8 +1404,8 @@ fn backup_cards(palette: views::ViewPalette) -> View {
                         .disabled(move || state.backing_up.get())
                         .child(
                             text(BACKUP_ONCE)
-                                .text_size(px(13.0))
-                                .text_color(rgb(0xffffff))
+                                .text_size(px(font_size::SECONDARY))
+                                .text_color(crate::theme::color("primary-foreground"))
                                 .test_id("data-backup-once"),
                         )
                         .on_press(move |_: &()| begin_backup_once(owner, state)),
@@ -1419,7 +1418,7 @@ fn backup_cards(palette: views::ViewPalette) -> View {
                         .disabled(move || state.backing_up.get())
                         .child(
                             text(BACKUP_AS)
-                                .text_size(px(13.0))
+                                .text_size(px(font_size::SECONDARY))
                                 .test_id("data-backup-as"),
                         )
                         .on_press(move |_: &()| begin_backup_as(owner, state)),
@@ -1433,12 +1432,12 @@ fn backup_cards(palette: views::ViewPalette) -> View {
                             .app_class("items-center gap-2 flex-wrap")
                             .child(
                                 text(BACKUP_LAST_LABEL)
-                                    .text_size(px(12.0))
+                                    .text_size(px(font_size::CAPTION))
                                     .text_color(palette.fg),
                             )
                             .child(
                                 text(move || state.last_backup.get().unwrap_or_default())
-                                    .text_size(px(12.0))
+                                    .text_size(px(font_size::CAPTION))
                                     .text_color(palette.fg)
                                     .test_id("data-last-backup"),
                             )
@@ -1462,7 +1461,7 @@ fn backup_cards(palette: views::ViewPalette) -> View {
         vec![
             view().child(
                 text(DIR_HINT)
-                    .text_size(px(12.0))
+                    .text_size(px(font_size::CAPTION))
                     .text_color(palette.muted),
             ),
             view().child(
@@ -1470,7 +1469,7 @@ fn backup_cards(palette: views::ViewPalette) -> View {
                     move || !state.backup_dir.get().trim().is_empty(),
                     move || {
                         text(move || state.backup_dir.get())
-                            .text_size(px(12.0))
+                            .text_size(px(font_size::CAPTION))
                             .text_color(palette.fg)
                             .test_id("data-backup-dir-value")
                     },
@@ -1478,7 +1477,7 @@ fn backup_cards(palette: views::ViewPalette) -> View {
                 .otherwise(move || {
                     view().child(
                         text(DIR_UNSET)
-                            .text_size(px(12.0))
+                            .text_size(px(font_size::CAPTION))
                             .text_color(palette.muted)
                             .test_id("data-backup-dir-unset"),
                     )
@@ -1500,7 +1499,7 @@ fn backup_cards(palette: views::ViewPalette) -> View {
                                     DIR_CHANGE
                                 }
                             })
-                            .text_size(px(13.0))
+                            .text_size(px(font_size::SECONDARY))
                             .test_id("data-pick-backup-dir"),
                         )
                         .on_press(move |_: &()| {
@@ -1534,7 +1533,7 @@ fn backup_cards(palette: views::ViewPalette) -> View {
                                 )
                                 .child(
                                     text(DIR_CLEAR)
-                                        .text_size(px(13.0))
+                                        .text_size(px(font_size::SECONDARY))
                                         .test_id("data-clear-backup-dir"),
                                 )
                                 .on_press(move |_: &()| {
@@ -1556,7 +1555,7 @@ fn backup_cards(palette: views::ViewPalette) -> View {
                 .app_class("items-center gap-2")
                 .child(
                     text(KEEP_LIMIT_LABEL)
-                        .text_size(px(13.0))
+                        .text_size(px(font_size::SECONDARY))
                         .text_color(palette.fg),
                 )
                 .child(
@@ -1583,7 +1582,7 @@ fn backup_cards(palette: views::ViewPalette) -> View {
                 )
                 .child(
                     text(KEEP_LIMIT_SUFFIX)
-                        .text_size(px(11.0))
+                        .text_size(px(font_size::CAPTION))
                         .text_color(palette.muted),
                 ),
         ],
@@ -1607,7 +1606,7 @@ fn backup_cards(palette: views::ViewPalette) -> View {
                         .app_class("shrink-0"),
                 ).child(
                     text(AUTO_SWITCH_LABEL)
-                        .text_size(px(13.0))
+                        .text_size(px(font_size::SECONDARY))
                         .text_color(palette.fg),
                 ),
                 view().child(
@@ -1617,7 +1616,7 @@ fn backup_cards(palette: views::ViewPalette) -> View {
                             state.auto_last.get().map_or_else(|| AUTO_LAST_NEVER.to_owned(), |t| format_backup_time(&t))
                         )
                     })
-                    .text_size(px(12.0))
+                    .text_size(px(font_size::CAPTION))
                     .text_color(palette.fg)
                     .test_id("data-auto-last"),
                 ),
@@ -1637,7 +1636,7 @@ fn backup_cards(palette: views::ViewPalette) -> View {
                                             state.auto_failures.get()
                                         )
                                     })
-                                    .text_size(px(12.0))
+                                    .text_size(px(font_size::CAPTION))
                                     .text_color(danger_fg())
                                     .test_id("data-auto-failure-alert"),
                                 )
@@ -1651,7 +1650,7 @@ fn backup_cards(palette: views::ViewPalette) -> View {
                         move || {
                             view().child(
                                 text(AUTO_NEED_DIR)
-                                    .text_size(px(12.0))
+                                    .text_size(px(font_size::CAPTION))
                                     .text_color(palette.muted)
                                     .test_id("data-auto-need-dir"),
                             )
@@ -1664,7 +1663,7 @@ fn backup_cards(palette: views::ViewPalette) -> View {
                         move || state.auto_error.get().is_some(),
                         move || {
                             text(move || state.auto_error.get().unwrap_or_default())
-                                .text_size(px(12.0))
+                                .text_size(px(font_size::CAPTION))
                                 .text_color(danger_fg())
                                 .test_id("data-auto-error")
                         },
@@ -1767,14 +1766,14 @@ fn backup_cards(palette: views::ViewPalette) -> View {
                         .disabled(move || state.rows_loading.get())
                         .child(
                             text(BUTTON_REFRESH)
-                                .text_size(px(11.0))
+                                .text_size(px(font_size::CAPTION))
                                 .test_id("data-backup-list-refresh"),
                         )
                         .on_press(move |_: &()| refresh_rows_task(owner, state)),
                 ),
             view().child(
                 text(LIST_HINT)
-                    .text_size(px(12.0))
+                    .text_size(px(font_size::CAPTION))
                     .text_color(palette.muted),
             ),
             view()
@@ -1788,7 +1787,7 @@ fn backup_cards(palette: views::ViewPalette) -> View {
                             state.keep.get()
                         )
                     })
-                    .text_size(px(12.0))
+                    .text_size(px(font_size::CAPTION))
                     .text_color(palette.fg)
                     .test_id("data-backup-count"),
                 )
@@ -1800,7 +1799,7 @@ fn backup_cards(palette: views::ViewPalette) -> View {
                         .disabled(move || state.rows.get().is_empty() || state.pruning.get())
                         .child(
                             text(BUTTON_PRUNE_NOW)
-                                .text_size(px(12.0))
+                                .text_size(px(font_size::CAPTION))
                                 .test_id("data-backup-prune"),
                         )
                         .on_press(manual_prune),
@@ -1810,7 +1809,7 @@ fn backup_cards(palette: views::ViewPalette) -> View {
                     move || state.rows_error.get().is_some(),
                     move || {
                         text(move || state.rows_error.get().unwrap_or_default())
-                            .text_size(px(12.0))
+                            .text_size(px(font_size::CAPTION))
                             .text_color(danger_fg())
                             .test_id("data-backup-list-error")
                     },
@@ -1827,7 +1826,7 @@ fn backup_cards(palette: views::ViewPalette) -> View {
                                         LIST_EMPTY_NO_DIR.to_owned()
                                     }
                                 })
-                                .text_size(px(12.0))
+                                .text_size(px(font_size::CAPTION))
                                 .text_color(palette.muted)
                                 .test_id("data-backup-empty")
                             },
@@ -1860,14 +1859,14 @@ fn backup_cards(palette: views::ViewPalette) -> View {
                     view()
                         .flex_row()
                         .app_class("gap-1 flex-wrap")
-                        .child(text(RESTORE_HINT_BEFORE).text_size(px(12.0)).text_color(palette.fg))
+                        .child(text(RESTORE_HINT_BEFORE).text_size(px(font_size::CAPTION)).text_color(palette.fg))
                         .child(
                             text(RESTORE_HINT_STRONG)
-                                .text_size(px(12.0))
+                                .text_size(px(font_size::CAPTION))
                                 .font_weight(FontWeight::BOLD)
                                 .text_color(danger_fg()),
                         )
-                        .child(text(RESTORE_HINT_AFTER).text_size(px(12.0)).text_color(palette.fg)),
+                        .child(text(RESTORE_HINT_AFTER).text_size(px(font_size::CAPTION)).text_color(palette.fg)),
                 ),
             view().child(
                 button()
@@ -1877,7 +1876,7 @@ fn backup_cards(palette: views::ViewPalette) -> View {
                     .disabled(move || state.restore_busy.get())
                     .child(
                         text(RESTORE_BUTTON)
-                            .text_size(px(13.0))
+                            .text_size(px(font_size::SECONDARY))
                             .test_id("data-restore"),
                     )
                     .on_press(move |_: &()| pick_restore_task(owner, state)),
@@ -1906,7 +1905,7 @@ fn backup_row(palette: views::ViewPalette, index: usize, row: BackupRowView) -> 
         .app_class("gap-0.5 py-1 border-b border-border/60")
         .child(
             text(row.file_name.clone())
-                .text_size(px(12.0))
+                .text_size(px(font_size::CAPTION))
                 .text_color(palette.fg)
                 .test_id(format!("data-backup-row-{index}-name").as_str()),
         )
@@ -1916,7 +1915,7 @@ fn backup_row(palette: views::ViewPalette, index: usize, row: BackupRowView) -> 
                 .app_class("items-center gap-2 flex-wrap")
                 .child(
                     text(row.meta.clone())
-                        .text_size(px(11.0))
+                        .text_size(px(font_size::CAPTION))
                         .text_color(palette.muted)
                         .test_id(format!("data-backup-row-{index}-meta").as_str()),
                 )
@@ -1927,7 +1926,7 @@ fn backup_row(palette: views::ViewPalette, index: usize, row: BackupRowView) -> 
                         )
                         .child(
                             text(REVEAL_LABEL)
-                                .text_size(px(11.0))
+                                .text_size(px(font_size::CAPTION))
                                 .test_id(format!("data-backup-reveal-{index}").as_str()),
                         )
                         .on_press(move |_: &()| {
@@ -2064,7 +2063,7 @@ fn encryption_card(palette: views::ViewPalette) -> View {
         .app_class("gap-2")
         .child(
             text(ENCRYPTION_HINT)
-                .text_size(px(12.0))
+                .text_size(px(font_size::CAPTION))
                 .text_color(palette.muted),
         )
         .child(
@@ -2095,7 +2094,7 @@ fn encryption_error_view(state: EncryptionState) -> impl IntoElement {
         .app_class("items-center gap-2")
         .child(
             text(move || state.status_error.get().unwrap_or_default())
-                .text_size(px(12.0))
+                .text_size(px(font_size::CAPTION))
                 .text_color(danger_fg())
                 .test_id("enc-status-error"),
         )
@@ -2104,7 +2103,11 @@ fn encryption_error_view(state: EncryptionState) -> impl IntoElement {
                 .app_class(
                     "px-2 py-0.5 rounded-md border border-border text-foreground hover:bg-accent",
                 )
-                .child(text(ENCRYPT_RETRY).text_size(px(12.0)).test_id("enc-retry"))
+                .child(
+                    text(ENCRYPT_RETRY)
+                        .text_size(px(font_size::CAPTION))
+                        .test_id("enc-retry"),
+                )
                 .on_press(move |_: &()| refresh_encryption_status(retry_owner, state)),
         )
 }
@@ -2121,20 +2124,20 @@ fn encrypted_form(state: EncryptionState) -> impl IntoElement {
                 .app_class("rounded-md border border-destructive/30 bg-destructive/10 p-2 gap-1")
                 .child(
                     text(ENCRYPT_ENABLED_LOCAL_TITLE)
-                        .text_size(px(12.0))
+                        .text_size(px(font_size::CAPTION))
                         .font_weight(FontWeight::SEMIBOLD)
                         .text_color(views::view_palette().fg)
                         .test_id("enc-enabled-title"),
                 )
                 .child(
                     text(ENCRYPT_ENABLED_LOCAL_BODY)
-                        .text_size(px(12.0))
+                        .text_size(px(font_size::CAPTION))
                         .text_color(views::view_palette().fg),
                 ),
         )
         .child(
             text(ENCRYPT_PLAIN_ONLY_NOTE)
-                .text_size(px(11.0))
+                .text_size(px(font_size::CAPTION))
                 .text_color(views::view_palette().muted)
                 .test_id("enc-plain-only-note"),
         )
@@ -2159,14 +2162,14 @@ fn enable_form(state: EncryptionState, palette: views::ViewPalette) -> impl Into
                 .app_class("rounded-md border border-destructive/30 bg-destructive/10 p-2 gap-1")
                 .child(
                     text(ENCRYPTION_WARN_TITLE)
-                        .text_size(px(12.0))
+                        .text_size(px(font_size::CAPTION))
                         .font_weight(FontWeight::SEMIBOLD)
                         .text_color(danger_fg())
                         .test_id("enc-warn-title"),
                 )
                 .child(
                     text(ENCRYPTION_WARN_BODY)
-                        .text_size(px(12.0))
+                        .text_size(px(font_size::CAPTION))
                         .text_color(palette.fg),
                 ),
         )
@@ -2186,7 +2189,7 @@ fn enable_form(state: EncryptionState, palette: views::ViewPalette) -> impl Into
                 text(format!(
                     "{PASS_TOO_SHORT_PREFIX}{PASSPHRASE_MIN_LENGTH}{PASS_TOO_SHORT_SUFFIX}"
                 ))
-                .text_size(px(11.0))
+                .text_size(px(font_size::CAPTION))
                 .text_color(danger_fg())
                 .test_id("enc-too-short")
             },
@@ -2205,7 +2208,7 @@ fn enable_form(state: EncryptionState, palette: views::ViewPalette) -> impl Into
             },
             move || {
                 text(PASS_MISMATCH)
-                    .text_size(px(11.0))
+                    .text_size(px(font_size::CAPTION))
                     .text_color(danger_fg())
                     .test_id("enc-mismatch")
             },
@@ -2216,8 +2219,8 @@ fn enable_form(state: EncryptionState, palette: views::ViewPalette) -> impl Into
                 .disabled(move || !enable_ready(state))
                 .child(
                     text(ENCRYPT_BUTTON)
-                        .text_size(px(13.0))
-                        .text_color(rgb(0xffffff))
+                        .text_size(px(font_size::SECONDARY))
+                        .text_color(crate::theme::color("primary-foreground"))
                         .test_id("enc-enable"),
                 )
                 .on_press(move |_: &()| request_enable()),
@@ -2633,14 +2636,14 @@ fn parked_list(palette: views::ViewPalette, state: SyncState) -> View {
     let rows = state.parked.get();
     let mut host = view().flex_col().app_class("gap-1").child(
         text(SYNC_PARKED_LIST_TITLE)
-            .text_size(px(12.0))
+            .text_size(px(font_size::CAPTION))
             .font_weight(FontWeight::SEMIBOLD)
             .text_color(palette.fg),
     );
     for (index, op) in rows.into_iter().enumerate() {
         host = host.child(
             text(format!("{SYNC_PARKED_ITEM_PREFIX}{}", op.message))
-                .text_size(px(11.0))
+                .text_size(px(font_size::CAPTION))
                 .text_color(palette.muted)
                 .test_id(format!("sync-parked-item-{index}").as_str()),
         );
@@ -2660,10 +2663,10 @@ fn bootstrap_modal_body(state: SyncState, owner: Owner, palette: views::ViewPale
         .child(
             view()
                 .flex_col()
-                .app_class("rounded-md border border-amber-500/30 bg-amber-500/10 p-2 gap-1")
+                .app_class("rounded-md border border-warning/30 bg-warning/10 p-2 gap-1")
                 .child(
                     text(SYNC_BOOTSTRAP_WARNING)
-                        .text_size(px(12.0))
+                        .text_size(px(font_size::CAPTION))
                         .text_color(palette.fg)
                         .test_id("sync-bootstrap-warning"),
                 ),
@@ -2673,7 +2676,7 @@ fn bootstrap_modal_body(state: SyncState, owner: Owner, palette: views::ViewPale
                 move || state.prechecking.get(),
                 move || {
                     text(SYNC_BOOTSTRAP_PRECHECKING)
-                        .text_size(px(12.0))
+                        .text_size(px(font_size::CAPTION))
                         .text_color(palette.muted)
                         .test_id("sync-bootstrap-prechecking")
                 },
@@ -2684,7 +2687,7 @@ fn bootstrap_modal_body(state: SyncState, owner: Owner, palette: views::ViewPale
                 move || state.precheck_error.get().is_some(),
                 move || {
                     text(move || state.precheck_error.get().unwrap_or_default())
-                        .text_size(px(12.0))
+                        .text_size(px(font_size::CAPTION))
                         .text_color(danger_fg())
                         .test_id("sync-bootstrap-precheck-error")
                 },
@@ -2695,7 +2698,7 @@ fn bootstrap_modal_body(state: SyncState, owner: Owner, palette: views::ViewPale
                 move || state.checkpoint.get().is_none(),
                 move || {
                     text(SYNC_BOOTSTRAP_NOT_FOUND)
-                        .text_size(px(12.0))
+                        .text_size(px(font_size::CAPTION))
                         .text_color(palette.muted)
                         .test_id("sync-bootstrap-not-found")
                 },
@@ -2710,7 +2713,7 @@ fn bootstrap_modal_body(state: SyncState, owner: Owner, palette: views::ViewPale
                         "{SYNC_BOOTSTRAP_FOUND_PREFIX}{generation}{SYNC_BOOTSTRAP_FOUND_MIDDLE}{}",
                         format_backup_size(size)
                     ))
-                    .text_size(px(12.0))
+                    .text_size(px(font_size::CAPTION))
                     .text_color(palette.fg)
                     .test_id("sync-bootstrap-found")
                 },
@@ -2721,7 +2724,7 @@ fn bootstrap_modal_body(state: SyncState, owner: Owner, palette: views::ViewPale
         ))
         .children(state.bootstrap_error.get().map(|err| {
             text(err.clone())
-                .text_size(px(12.0))
+                .text_size(px(font_size::CAPTION))
                 .text_color(danger_fg())
                 .test_id("sync-bootstrap-error")
         }))
@@ -2738,7 +2741,7 @@ fn bootstrap_modal_body(state: SyncState, owner: Owner, palette: views::ViewPale
                         .disabled(busy)
                         .child(
                             text(SYNC_BOOTSTRAP_CANCEL)
-                                .text_size(px(13.0))
+                                .text_size(px(font_size::SECONDARY))
                                 .test_id("sync-bootstrap-cancel"),
                         )
                         .on_press(move |_: &()| {
@@ -2750,13 +2753,13 @@ fn bootstrap_modal_body(state: SyncState, owner: Owner, palette: views::ViewPale
                 .child(
                     button()
                         .app_class(
-                            "px-3 py-1.5 rounded-md bg-amber-500 hover:opacity-90 disabled:opacity-40",
+                            "px-3 py-1.5 rounded-md bg-warning hover:opacity-90 disabled:opacity-40",
                         )
                         .disabled(busy || !has_checkpoint)
                         .child(
                             text(SYNC_BOOTSTRAP_CONFIRM)
-                                .text_size(px(13.0))
-                                .text_color(rgb(0xffffff))
+                                .text_size(px(font_size::SECONDARY))
+                                .text_color(crate::theme::color("warning-foreground"))
                                 .test_id("sync-bootstrap-confirm"),
                         )
                         .on_press(move |_: &()| confirm_bootstrap_task(body_owner, state)),
@@ -2828,10 +2831,10 @@ fn sync_card(palette: views::ViewPalette) -> View {
             move || {
                 view()
                     .flex_col()
-                    .app_class("rounded-md border border-amber-500/30 bg-amber-500/10 p-2 gap-1")
+                    .app_class("rounded-md border border-warning/30 bg-warning/10 p-2 gap-1")
                     .child(
                         text(SYNC_PLAINTEXT_WARNING)
-                            .text_size(px(12.0))
+                            .text_size(px(font_size::CAPTION))
                             .text_color(palette.fg)
                             .test_id("sync-plaintext-warning"),
                     )
@@ -2841,14 +2844,14 @@ fn sync_card(palette: views::ViewPalette) -> View {
             move || state.status.get().is_some_and(|s| s.library_encrypted),
             move || {
                 text(SYNC_ENCRYPTED_HINT)
-                    .text_size(px(12.0))
+                    .text_size(px(font_size::CAPTION))
                     .text_color(palette.fg)
                     .test_id("sync-encrypted-hint")
             },
         ))
         .child(
             text(move || format!("{SYNC_LAST_LABEL}{}", sync_last_text(state)))
-                .text_size(px(12.0))
+                .text_size(px(font_size::CAPTION))
                 .text_color(palette.fg)
                 .test_id("sync-last-time"),
         )
@@ -2859,7 +2862,7 @@ fn sync_card(palette: views::ViewPalette) -> View {
                     state.status.get().map_or(0, |s| s.parked_count)
                 )
             })
-            .text_size(px(12.0))
+            .text_size(px(font_size::CAPTION))
             .text_color(palette.fg)
             .test_id("sync-parked-count"),
         )
@@ -2867,7 +2870,7 @@ fn sync_card(palette: views::ViewPalette) -> View {
             move || state.status.get().is_some_and(|s| s.parked_count > 0),
             move || {
                 text(SYNC_PARKED_HINT)
-                    .text_size(px(11.0))
+                    .text_size(px(font_size::CAPTION))
                     .text_color(palette.muted)
                     .test_id("sync-parked-hint")
             },
@@ -2885,8 +2888,8 @@ fn sync_card(palette: views::ViewPalette) -> View {
                     .disabled(move || state.syncing.get() || state.status_error.get().is_some())
                     .child(
                         text(SYNC_NOW)
-                            .text_size(px(13.0))
-                            .text_color(rgb(0xffffff))
+                            .text_size(px(font_size::SECONDARY))
+                            .text_color(crate::theme::color("primary-foreground"))
                             .test_id("sync-now"),
                     )
                     .on_press(move |_: &()| sync_now_task(owner, state)),
@@ -2911,7 +2914,7 @@ fn sync_card(palette: views::ViewPalette) -> View {
         .app_class("gap-2")
         .child(
             text(SYNC_CHANNEL_TITLE)
-                .text_size(px(13.0))
+                .text_size(px(font_size::SECONDARY))
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_color(palette.fg),
         )
@@ -2924,7 +2927,7 @@ fn sync_card(palette: views::ViewPalette) -> View {
         ))
         .child(
             text(SYNC_VENDOR_HINT)
-                .text_size(px(11.0))
+                .text_size(px(font_size::CAPTION))
                 .text_color(palette.muted)
                 .test_id("sync-vendor-hint"),
         )
@@ -2969,7 +2972,7 @@ fn sync_card(palette: views::ViewPalette) -> View {
                         )
                         .child(
                             text(SYNC_PATH_STYLE_LABEL)
-                                .text_size(px(12.0))
+                                .text_size(px(font_size::CAPTION))
                                 .text_color(palette.fg),
                         ),
                 ),
@@ -2977,7 +2980,7 @@ fn sync_card(palette: views::ViewPalette) -> View {
         .child(field_input(palette, "sync-space", SYNC_SPACE_PLACEHOLDER, state.space_id, false, None::<fn() -> &'static str>))
         .child(
             text(SYNC_SPACE_HINT)
-                .text_size(px(11.0))
+                .text_size(px(font_size::CAPTION))
                 .text_color(palette.muted)
                 .test_id("sync-space-hint"),
         )
@@ -2993,7 +2996,7 @@ fn sync_card(palette: views::ViewPalette) -> View {
                         .disabled(move || state.testing.get())
                         .child(
                             text(SYNC_TEST_CONNECTION)
-                                .text_size(px(13.0))
+                                .text_size(px(font_size::SECONDARY))
                                 .test_id("sync-test-connection"),
                         )
                         .on_press(move |_: &()| test_connection_task(owner, state)),
@@ -3006,8 +3009,8 @@ fn sync_card(palette: views::ViewPalette) -> View {
                         .disabled(move || state.saving.get())
                         .child(
                             text(SYNC_SAVE_CHANNEL)
-                                .text_size(px(13.0))
-                                .text_color(rgb(0xffffff))
+                                .text_size(px(font_size::SECONDARY))
+                                .text_color(crate::theme::color("primary-foreground"))
                                 .test_id("sync-save-channel"),
                         )
                         .on_press(move |_: &()| save_channel_task(owner, state)),
@@ -3020,13 +3023,13 @@ fn sync_card(palette: views::ViewPalette) -> View {
         .app_class("gap-2")
         .child(
             text(SYNC_CHECKPOINT_TITLE)
-                .text_size(px(13.0))
+                .text_size(px(font_size::SECONDARY))
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_color(palette.fg),
         )
         .child(
             text(SYNC_CHECKPOINT_HINT)
-                .text_size(px(11.0))
+                .text_size(px(font_size::CAPTION))
                 .text_color(palette.muted),
         )
         .child(
@@ -3041,7 +3044,7 @@ fn sync_card(palette: views::ViewPalette) -> View {
                         .disabled(move || !configured() || state.publishing.get())
                         .child(
                             text(SYNC_PUBLISH)
-                                .text_size(px(13.0))
+                                .text_size(px(font_size::SECONDARY))
                                 .test_id("sync-publish-checkpoint"),
                         )
                         .on_press(move |_: &()| publish_checkpoint_task(owner, state)),
@@ -3054,7 +3057,7 @@ fn sync_card(palette: views::ViewPalette) -> View {
                         .disabled(move || !configured())
                         .child(
                             text(SYNC_BOOTSTRAP_BUTTON)
-                                .text_size(px(13.0))
+                                .text_size(px(font_size::SECONDARY))
                                 .test_id("sync-bootstrap"),
                         )
                         .on_press(move |_: &()| open_bootstrap_task(owner, state)),
@@ -3080,7 +3083,7 @@ fn sync_card(palette: views::ViewPalette) -> View {
                 move || state.status_error.get().is_some(),
                 move || {
                     text(move || state.status_error.get().unwrap_or_default())
-                        .text_size(px(12.0))
+                        .text_size(px(font_size::CAPTION))
                         .text_color(danger_fg())
                         .test_id("sync-status-error")
                 },
@@ -3098,7 +3101,7 @@ fn sync_card(palette: views::ViewPalette) -> View {
             move || state.publish_plaintext.get(),
             move || {
                 text(SYNC_PUBLISH_PLAINTEXT)
-                    .text_size(px(11.0))
+                    .text_size(px(font_size::CAPTION))
                     .text_color(palette.muted)
                     .test_id("sync-publish-plaintext")
             },
@@ -3402,7 +3405,7 @@ fn books_card(palette: views::ViewPalette) -> View {
                         .disabled(move || state.name_busy.get())
                         .child(
                             text(BOOKS_CANCEL)
-                                .text_size(px(13.0))
+                                .text_size(px(font_size::SECONDARY))
                                 .test_id("book-name-cancel"),
                         )
                         .on_press(move |_: &()| {
@@ -3421,8 +3424,8 @@ fn books_card(palette: views::ViewPalette) -> View {
                         })
                         .child(
                             text(confirm_label)
-                                .text_size(px(13.0))
-                                .text_color(rgb(0xffffff))
+                                .text_size(px(font_size::SECONDARY))
+                                .text_color(crate::theme::color("primary-foreground"))
                                 .test_id("book-name-submit"),
                         )
                         .on_press(move |_: &()| submit_name()),
@@ -3432,7 +3435,7 @@ fn books_card(palette: views::ViewPalette) -> View {
                 .app_class("gap-2")
                 .child(
                     text(BOOKS_NAME_LABEL)
-                        .text_size(px(12.0))
+                        .text_size(px(font_size::CAPTION))
                         .text_color(palette.fg),
                 )
                 .child(
@@ -3462,17 +3465,17 @@ fn books_card(palette: views::ViewPalette) -> View {
                 move || {
                     view()
                         .flex_col()
-                        .app_class("rounded-md border border-amber-500/30 bg-amber-500/10 p-2 gap-1")
+                        .app_class("rounded-md border border-warning/30 bg-warning/10 p-2 gap-1")
                         .child(
                             text(BOOKS_FALLBACK_TITLE)
-                                .text_size(px(12.0))
+                                .text_size(px(font_size::CAPTION))
                                 .font_weight(FontWeight::SEMIBOLD)
                                 .text_color(palette.fg)
                                 .test_id("book-fallback-title"),
                         )
                         .child(
                             text(move || state.fallback_reason.get().unwrap_or_default())
-                                .text_size(px(12.0))
+                                .text_size(px(font_size::CAPTION))
                                 .text_color(palette.fg),
                         )
                 },
@@ -3486,7 +3489,7 @@ fn books_card(palette: views::ViewPalette) -> View {
                 .disabled(move || !summary_available())
                 .child(
                     text(BOOKS_ENTRY_SUMMARY)
-                        .text_size(px(13.0))
+                        .text_size(px(font_size::SECONDARY))
                         .test_id("book-summary-entry"),
                 )
                 .on_press(move |_: &()| open_summary()),
@@ -3525,7 +3528,7 @@ fn books_card(palette: views::ViewPalette) -> View {
                         "px-3 py-1.5 rounded-md border border-border text-foreground hover:bg-accent disabled:opacity-40",
                     )
                     .disabled(move || !state.mutable.get())
-                    .child(text(BOOKS_NEW).text_size(px(13.0)).test_id("book-create"))
+                    .child(text(BOOKS_NEW).text_size(px(font_size::SECONDARY)).test_id("book-create"))
                     .on_press(move |_: &()| open_create()),
             ),
         )
@@ -3579,7 +3582,7 @@ fn book_row_view(
         .on_press(move |_: &PressEvent| (actions.switch_request)(book.get_untracked().clone()))
         .child(
             text(move || book.get().name.clone())
-                .text_size(px(13.0))
+                .text_size(px(font_size::SECONDARY))
                 .text_color(move || {
                     if (actions.is_active)() {
                         palette.fg
@@ -3597,7 +3600,7 @@ fn book_row_view(
         move || (actions.is_active)(),
         move || {
             text(BOOKS_PANEL_CURRENT)
-                .text_size(px(11.0))
+                .text_size(px(font_size::CAPTION))
                 .text_color(palette.fg)
                 .test_id(format!("book-row-{index}-current").as_str())
         },
@@ -3614,7 +3617,7 @@ fn book_row_view(
                     .disabled(access_disabled)
                     .child(
                         text(BOOKS_RENAME)
-                            .text_size(px(11.0))
+                            .text_size(px(font_size::CAPTION))
                             .test_id(format!("book-rename-{row_id}").as_str()),
                     )
                     .on_press(move |_: &()| (actions.open_rename)(book.get_untracked().clone())),
@@ -3661,7 +3664,7 @@ fn book_row_view(
                             )
                             .child(
                                 text(BOOKS_REMOVE)
-                                    .text_size(px(11.0))
+                                    .text_size(px(font_size::CAPTION))
                                     .test_id(format!("book-remove-{row_id}").as_str()),
                             ),
                     move || (actions.remove_row)(book.get_untracked().clone()),

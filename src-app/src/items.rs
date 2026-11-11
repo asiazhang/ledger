@@ -51,6 +51,7 @@ use crate::assembly::{self, ColumnAlign, CurrencyTable, ITEM_COLUMNS, ItemListCo
 use crate::boot;
 use crate::context_menu;
 use crate::date_select;
+use crate::design::font_size;
 use crate::modal;
 use crate::nav_model::{NavRequest, ViewName};
 use crate::pinyin_select;
@@ -330,16 +331,9 @@ pub(crate) fn ItemsView() -> impl IntoElement {
     });
 
     // ============================ 主题令牌 ============================
-    let tokens = nsh_core::element::tokens();
-    let fg = tokens
-        .color("foreground")
-        .unwrap_or_else(|| hsla(0.0, 0.0, 0.98, 1.0).into());
-    let muted = tokens
-        .color("muted-foreground")
-        .unwrap_or_else(|| hsla(0.0, 0.0, 0.45, 1.0).into());
-    let danger_fg = tokens
-        .color("destructive")
-        .unwrap_or_else(|| hsla(0.0, 0.0, 0.98, 1.0).into());
+    let fg = crate::theme::color("foreground");
+    let muted = crate::theme::color("muted-foreground");
+    let danger_fg = crate::theme::color("destructive");
 
     // 操作反馈条位（NSH 无 toast——#2038 裁决；旧壳 message.success/error 的
     // 条位对应物：新动作开始时清回空）。
@@ -781,7 +775,7 @@ pub(crate) fn ItemsView() -> impl IntoElement {
                 name_view
                     .child(
                         text(cell.text.clone())
-                            .text_size(px(13.0))
+                            .text_size(px(font_size::SECONDARY))
                             .text_color(fg)
                             .number_of_lines(1),
                     )
@@ -842,7 +836,7 @@ pub(crate) fn ItemsView() -> impl IntoElement {
                                 )
                                 .child(
                                     text(ROW_DELETE)
-                                        .text_size(px(12.0))
+                                        .text_size(px(font_size::CAPTION))
                                         .text_color(fg)
                                         .test_id(format!("item-delete-{id}").as_str()),
                                 ),
@@ -852,7 +846,7 @@ pub(crate) fn ItemsView() -> impl IntoElement {
                     .into_element()
             }
             _ => text(cell.text.clone())
-                .text_size(px(13.0))
+                .text_size(px(font_size::SECONDARY))
                 .text_color(fg)
                 .number_of_lines(1)
                 .into_element(),
@@ -947,7 +941,7 @@ pub(crate) fn ItemsView() -> impl IntoElement {
                 EDIT_LABEL_CURRENCY,
                 muted,
                 text(currency_text)
-                    .text_size(px(13.0))
+                    .text_size(px(font_size::SECONDARY))
                     .text_color(muted)
                     .test_id("item-edit-currency"),
             ))
@@ -1002,7 +996,7 @@ pub(crate) fn ItemsView() -> impl IntoElement {
                         .map(|snap| snap.item.name)
                         .unwrap_or_default(),
                 )
-                .text_size(px(13.0))
+                .text_size(px(font_size::SECONDARY))
                 .text_color(fg)
                 .test_id("item-dispose-name"),
             ))
@@ -1083,7 +1077,7 @@ pub(crate) fn ItemsView() -> impl IntoElement {
                         .map(|row| row.item.name.clone())
                         .unwrap_or_default(),
                 )
-                .text_size(px(13.0))
+                .text_size(px(font_size::SECONDARY))
                 .text_color(fg)
                 .test_id("item-detail-name"),
             ))
@@ -1095,7 +1089,7 @@ pub(crate) fn ItemsView() -> impl IntoElement {
                 } else {
                     STATUS_IN_USE.to_owned()
                 })
-                .text_size(px(13.0))
+                .text_size(px(font_size::SECONDARY))
                 .text_color(fg),
             ))
             .child(row_field(
@@ -1107,7 +1101,7 @@ pub(crate) fn ItemsView() -> impl IntoElement {
                         .map(|row| row.item.purchase_date.clone())
                         .unwrap_or_default(),
                 )
-                .text_size(px(13.0))
+                .text_size(px(font_size::SECONDARY))
                 .text_color(fg),
             ));
         if disposed {
@@ -1122,7 +1116,7 @@ pub(crate) fn ItemsView() -> impl IntoElement {
                             .and_then(|row| row.item.disposal_date.clone())
                             .unwrap_or_default(),
                     )
-                    .text_size(px(13.0))
+                    .text_size(px(font_size::SECONDARY))
                     .text_color(fg)
                     .test_id("item-detail-disposal"),
                 ))
@@ -1136,7 +1130,7 @@ pub(crate) fn ItemsView() -> impl IntoElement {
                             .map(|cents| assembly::format_amount_basic(cents, &row_fmt))
                             .unwrap_or_else(|| MSG_PLAIN.to_owned()),
                     )
-                    .text_size(px(13.0))
+                    .text_size(px(font_size::SECONDARY))
                     .text_color(fg)
                     .test_id("item-detail-residual"),
                 ));
@@ -1152,7 +1146,7 @@ pub(crate) fn ItemsView() -> impl IntoElement {
                         .unwrap_or(0),
                     &row_fmt,
                 ))
-                .text_size(px(13.0))
+                .text_size(px(font_size::SECONDARY))
                 .text_color(fg)
                 .test_id("item-detail-total"),
             ))
@@ -1170,7 +1164,7 @@ pub(crate) fn ItemsView() -> impl IntoElement {
                     ),
                     base_currency.get_untracked()
                 ))
-                .text_size(px(13.0))
+                .text_size(px(font_size::SECONDARY))
                 .text_color(fg)
                 .test_id("item-detail-native"),
             ))
@@ -1183,7 +1177,7 @@ pub(crate) fn ItemsView() -> impl IntoElement {
                         .and_then(|row| row.item.note.clone())
                         .unwrap_or_else(|| MSG_PLAIN.to_owned()),
                 )
-                .text_size(px(13.0))
+                .text_size(px(font_size::SECONDARY))
                 .text_color(fg),
             ))
             .child(row_field(
@@ -1198,7 +1192,7 @@ pub(crate) fn ItemsView() -> impl IntoElement {
                 } else {
                     MSG_PLAIN.to_owned()
                 })
-                .text_size(px(13.0))
+                .text_size(px(font_size::SECONDARY))
                 .text_color(fg)
                 .test_id("item-detail-linked"),
             ))
@@ -1221,7 +1215,7 @@ pub(crate) fn ItemsView() -> impl IntoElement {
                                 .on_press(move |_: &()| clear_recalc())
                                 .child(
                                     text(DETAIL_REF_CLEAR)
-                                        .text_size(px(12.0))
+                                        .text_size(px(font_size::CAPTION))
                                         .text_color(fg)
                                         .test_id("item-detail-ref-clear"),
                                 ),
@@ -1248,7 +1242,7 @@ pub(crate) fn ItemsView() -> impl IntoElement {
                         .unwrap_or(0);
                     format!("{used} 天（含购买当日）")
                 })
-                .text_size(px(13.0))
+                .text_size(px(font_size::SECONDARY))
                 .text_color(fg)
                 .test_id("item-detail-used-days"),
             ))
@@ -1281,7 +1275,7 @@ pub(crate) fn ItemsView() -> impl IntoElement {
                         assembly::format_amount_f64(per_day, &fmt)
                     )
                 })
-                .text_size(px(13.0))
+                .text_size(px(font_size::SECONDARY))
                 .text_color(fg)
                 .test_id("item-detail-breakdown"),
             ))
@@ -1312,7 +1306,7 @@ pub(crate) fn ItemsView() -> impl IntoElement {
                             .on_press(move |_: &()| close_detail())
                             .child(
                                 text(ROW_CANCEL)
-                                    .text_size(px(13.0))
+                                    .text_size(px(font_size::SECONDARY))
                                     .text_color(fg)
                                     .test_id("item-detail-cancel"),
                             ),
@@ -1329,7 +1323,7 @@ pub(crate) fn ItemsView() -> impl IntoElement {
         .child(
             view().px_4().py_2().child(
                 text(ViewName::Items.label())
-                    .text_size(px(16.0))
+                    .text_size(px(font_size::TITLE))
                     .text_color(fg)
                     .test_id("view-title"),
             ),
@@ -1341,7 +1335,7 @@ pub(crate) fn ItemsView() -> impl IntoElement {
                 move || error.get().is_some(),
                 move || {
                     text(move || error.get().unwrap_or_default())
-                        .text_size(px(12.0))
+                        .text_size(px(font_size::CAPTION))
                         .text_color(danger_fg)
                         .test_id("item-error")
                         .app_class("px-4 py-1")
@@ -1367,7 +1361,7 @@ pub(crate) fn ItemsView() -> impl IntoElement {
                         .app_class("rounded-md border border-border bg-accent/10 p-3")
                         .child(
                             text(CREATE_HINT)
-                                .text_size(px(13.0))
+                                .text_size(px(font_size::SECONDARY))
                                 .text_color(fg)
                                 .flex_1()
                                 .test_id("item-create-hint"),
@@ -1380,7 +1374,7 @@ pub(crate) fn ItemsView() -> impl IntoElement {
                                 .on_press(move |_: &()| go_transactions())
                                 .child(
                                     text(GO_TRANSACTIONS)
-                                        .text_size(px(13.0))
+                                        .text_size(px(font_size::SECONDARY))
                                         .text_color(fg)
                                         .test_id("item-go-transactions"),
                                 ),
@@ -1397,7 +1391,7 @@ pub(crate) fn ItemsView() -> impl IntoElement {
                         .child(
                             view().flex_1().child(
                                 text(LIST_CARD_TITLE)
-                                    .text_size(px(13.0))
+                                    .text_size(px(font_size::SECONDARY))
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .text_color(fg),
                             ),
@@ -1435,7 +1429,7 @@ pub(crate) fn ItemsView() -> impl IntoElement {
                         move || status.get().is_some(),
                         move || {
                             text(move || status.get().unwrap_or_default())
-                                .text_size(px(12.0))
+                                .text_size(px(font_size::CAPTION))
                                 .text_color(fg)
                                 .test_id("item-status")
                         },
@@ -1484,7 +1478,12 @@ fn row_action_button(
     button()
         .app_class("px-2 py-0.5 rounded-md border border-border text-foreground hover:bg-accent")
         .on_press(move |_: &()| on_press())
-        .child(text(label).text_size(px(12.0)).text_color(fg).test_id(&id))
+        .child(
+            text(label)
+                .text_size(px(font_size::CAPTION))
+                .text_color(fg)
+                .test_id(&id),
+        )
         .into_element()
 }
 
@@ -1510,7 +1509,7 @@ fn action_buttons(
                 .on_press(move |_: &()| on_cancel())
                 .child(
                     text(ROW_CANCEL)
-                        .text_size(px(13.0))
+                        .text_size(px(font_size::SECONDARY))
                         .text_color(fg)
                         .test_id(cancel.as_str()),
                 ),
@@ -1521,8 +1520,8 @@ fn action_buttons(
                 .on_press(move |_: &()| on_confirm())
                 .child(
                     text(confirm_label)
-                        .text_size(px(13.0))
-                        .text_color(rgb(0xffffff))
+                        .text_size(px(font_size::SECONDARY))
+                        .text_color(crate::theme::color("primary-foreground"))
                         .test_id(confirm.as_str()),
                 ),
         )
@@ -1589,7 +1588,7 @@ fn locked_text_field(label: &'static str, muted: AdaptiveColor, preview: String)
         .child(field_label_boxed(label, muted))
         .child(
             text(preview)
-                .text_size(px(13.0))
+                .text_size(px(font_size::SECONDARY))
                 .text_color(muted)
                 .test_id("item-edit-backfill"),
         )
@@ -1604,7 +1603,7 @@ fn error_line(
 ) -> impl IntoElement {
     when(show, move || {
         text(text_of())
-            .text_size(px(12.0))
+            .text_size(px(font_size::CAPTION))
             .text_color(danger_fg)
             .test_id(id)
     })
@@ -1731,7 +1730,7 @@ pub(crate) fn add_item_modal(
                     .child(field_label(ADD_LABEL_PURCHASE_DATE, muted_of()))
                     .child(
                         text(date_text)
-                            .text_size(px(13.0))
+                            .text_size(px(font_size::SECONDARY))
                             .test_id("item-add-date"),
                     ),
             )
@@ -1743,7 +1742,7 @@ pub(crate) fn add_item_modal(
                     .child(field_label(ADD_LABEL_BASE_COST, muted_of()))
                     .child(
                         text(cost_text)
-                            .text_size(px(13.0))
+                            .text_size(px(font_size::SECONDARY))
                             .test_id("item-add-cost"),
                     ),
             )
@@ -1781,7 +1780,7 @@ pub(crate) fn add_item_modal(
                             )
                             .disabled(move || submitting.get())
                             .on_press(move |_: &()| close())
-                            .child(text(ROW_CANCEL).text_size(px(13.0))),
+                            .child(text(ROW_CANCEL).text_size(px(font_size::SECONDARY))),
                     )
                     .child(
                         button()
@@ -1790,7 +1789,7 @@ pub(crate) fn add_item_modal(
                             .on_press(move |_: &()| submit())
                             .child(
                                 text(ADD_CONFIRM)
-                                    .text_size(px(13.0))
+                                    .text_size(px(font_size::SECONDARY))
                                     .test_id("item-add-confirm"),
                             ),
                     ),
@@ -1806,7 +1805,7 @@ fn error_line_owned(error: Signal<Option<String>>, id: &'static str) -> impl Int
         move || error.get().is_some(),
         move || {
             text(move || error.get().unwrap_or_default())
-                .text_size(px(12.0))
+                .text_size(px(font_size::CAPTION))
                 .test_id(id)
         },
     )
@@ -1814,17 +1813,11 @@ fn error_line_owned(error: Signal<Option<String>>, id: &'static str) -> impl Int
 }
 
 fn muted_of() -> AdaptiveColor {
-    let tokens = nsh_core::element::tokens();
-    tokens
-        .color("muted-foreground")
-        .unwrap_or_else(|| hsla(0.0, 0.0, 0.45, 1.0).into())
+    crate::theme::color("muted-foreground")
 }
 
 fn fg_of() -> AdaptiveColor {
-    let tokens = nsh_core::element::tokens();
-    tokens
-        .color("foreground")
-        .unwrap_or_else(|| hsla(0.0, 0.0, 0.98, 1.0).into())
+    crate::theme::color("foreground")
 }
 
 /// 关联购买交易候选下拉选项（编辑弹窗换关数据源）：label 镜像旧壳

@@ -778,6 +778,85 @@ fn dashboard_and_reports_views_follow_theme_tokens_and_type_scale() {
     );
 }
 
+/// 参考数据与设置域视图亮暗双态探针（issue #2104，ADR-0147 决策 1/4；
+/// 外观强指 #2053 语义零改动）：强指与跟随两条显色路径下，设置页与账户页
+/// 的卡片/页签文本都取主题表 foreground 与 muted-foreground 的亮暗态令牌
+/// 值、字号取字阶 SECONDARY 档（14pt）。收口前这些文本色值走本地 hsla
+/// 兜底、字号 11/13pt 裸调——色值任一回退兜底常量、字号任一回退裸值、
+/// 主题挂载拆除即红。页面标题的 TITLE 档（20pt）与动态金额大字不进本
+/// 探针：标题文本与侧栏同名无法唯一寻址（span 查询只认可见文本），TITLE
+/// 收口由源码清单自证（本票验收 rg 零裸字号）+ 出厂观感对照截图人工子集
+/// （docs/DESIGN.md §8）承担。
+#[test]
+fn reference_and_settings_views_resolve_tokens_and_type_scale_across_appearances() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("t2104-ref-settings-appearance");
+    let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+    let _account = seed_cash_account(&db);
+    nsh_app::app::set_book_dir(dir);
+
+    // 强指路径（存储 appearance=dark，#2053）：全屏取暗态令牌值——运行中
+    // 切系统亮色不跟随（强指 = 无视系统，语义正确性在此一并钉住）。
+    let mut app =
+        Headless::start(desktop_config_with_storage(&[("appearance", "\"dark\"")])).unwrap();
+    open_settings(&mut app);
+    let label = app.screen().span_style("text:显示主题").unwrap();
+    assert_eq!(
+        label.color,
+        nsh_core::Color(0xe6edf4ff),
+        "设置页卡片标签深色 = 主题表 foreground dark（theme::color 单点消费）"
+    );
+    assert_eq!(
+        label.font_size,
+        nsh_core::Points(14.0),
+        "卡片/页签次要正文字号 = 字阶 SECONDARY 档 14pt"
+    );
+    assert_eq!(
+        app.screen().span_style("text:分类").unwrap().color,
+        nsh_core::Color(0x93a4b6ff),
+        "非激活页签深色 = 主题表 muted-foreground dark"
+    );
+    open_accounts(&mut app);
+    let create = app.screen().span_style("text:新增账户").unwrap();
+    assert_eq!(
+        create.color,
+        nsh_core::Color(0xe6edf4ff),
+        "账户页新建卡标题深色 = 主题表 foreground dark"
+    );
+    assert_eq!(
+        create.font_size,
+        nsh_core::Points(14.0),
+        "参考数据域卡片标题字号 = 字阶 SECONDARY 档 14pt"
+    );
+    app.set_environment("light mode", |env| env.color_scheme = ColorScheme::Light)
+        .unwrap();
+    assert_eq!(
+        app.screen().span_style("text:新增账户").unwrap().color,
+        nsh_core::Color(0xe6edf4ff),
+        "强指深色下系统切亮色不跟随（#2053 强指语义）"
+    );
+
+    // 跟随路径（无存储键 = 跟随系统）：亮态出厂值 + 运行中系统切深即随动。
+    nsh_app::app::reset_book_assembly();
+    nsh_app::app::set_book_dir(make_book("t2104-ref-settings-follow"));
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_settings(&mut app);
+    let label = app.screen().span_style("text:显示主题").unwrap();
+    assert_eq!(
+        label.color,
+        nsh_core::Color(0x182635ff),
+        "跟随系统亮色 = 主题表 foreground light"
+    );
+    app.set_environment("dark mode", |env| env.color_scheme = ColorScheme::Dark)
+        .unwrap();
+    assert_eq!(
+        app.screen().span_style("text:显示主题").unwrap().color,
+        nsh_core::Color(0xe6edf4ff),
+        "跟随模式下系统切深即随动 = 主题表 foreground dark"
+    );
+}
+
 /// 交易主路径字阶与主操作前景令牌（issue #2101，ADR-0147 视觉收口批次）：
 /// 字号取官方字阶五档（[`nsh_app::design`] 字阶常量同源——框架 text 预设
 /// `text_xs`/`text_sm`/`text_base` 即同一规范值 12/14/16），「记一笔」等主

@@ -30,6 +30,7 @@ use crate::boot;
 use crate::context_menu;
 use crate::danger::{self, DangerOutcome};
 use crate::date_select;
+use crate::design::font_size;
 use crate::modal;
 use crate::nav;
 use crate::nav_model::{NavRequest, ViewName};
@@ -145,19 +146,10 @@ pub(crate) fn AccountsView() -> impl IntoElement {
     });
 
     // 主题令牌（双态自适应；令牌缺失回退亮灰/中灰可读兜底，先例同形）。
-    let tokens = nsh_core::element::tokens();
-    let fg = tokens
-        .color("foreground")
-        .unwrap_or_else(|| hsla(0.0, 0.0, 0.98, 1.0).into());
-    let muted = tokens
-        .color("muted-foreground")
-        .unwrap_or_else(|| hsla(0.0, 0.0, 0.45, 1.0).into());
-    let accent = tokens
-        .color("primary")
-        .unwrap_or_else(|| hsla(0.11, 0.82, 0.60, 1.0).into());
-    let danger_fg = tokens
-        .color("destructive")
-        .unwrap_or_else(|| hsla(0.0, 0.0, 0.98, 1.0).into());
+    let fg = crate::theme::color("foreground");
+    let muted = crate::theme::color("muted-foreground");
+    let accent = crate::theme::color("primary");
+    let danger_fg = crate::theme::color("destructive");
 
     // 操作反馈条位（NSH 无 toast——#2038 裁决；旧壳 message.success/error
     // 的条位对应物：新动作开始时清回空）。状态语义: None = 无 / 空串 = 进
@@ -692,7 +684,7 @@ pub(crate) fn AccountsView() -> impl IntoElement {
                         })
                         .child(
                             text(label)
-                                .text_size(px(13.0))
+                                .text_size(px(font_size::SECONDARY))
                                 .text_color(accent)
                                 .number_of_lines(1),
                         )
@@ -700,7 +692,7 @@ pub(crate) fn AccountsView() -> impl IntoElement {
                 }
                 "balance" => {
                     let amount = text(cell.text.clone())
-                        .text_size(px(13.0))
+                        .text_size(px(font_size::SECONDARY))
                         .text_color(fg)
                         .number_of_lines(1);
                     match assembled.as_ref().and_then(|r| r.credit_percent) {
@@ -715,7 +707,7 @@ pub(crate) fn AccountsView() -> impl IntoElement {
                                 .child(amount)
                                 .child(
                                     text(format!("已用 {percent}%"))
-                                        .text_size(px(12.0))
+                                        .text_size(px(font_size::CAPTION))
                                         .text_color(if warning {
                                             amount_color(assembly::AmountSemantic::Expense)
                                         } else {
@@ -740,7 +732,7 @@ pub(crate) fn AccountsView() -> impl IntoElement {
                                 open_row_menu(partition, index, e.page_position);
                             }
                         })
-                        .child(text("⋯").text_size(px(14.0)).text_color(fg))
+                        .child(text("⋯").text_size(px(font_size::SECONDARY)).text_color(fg))
                         .into_element()
                 }
                 _ => text(cell.text.clone()).number_of_lines(1).into_element(),
@@ -788,7 +780,7 @@ pub(crate) fn AccountsView() -> impl IntoElement {
             .child(
                 view().flex_1().child(
                     text(title)
-                        .text_size(px(13.0))
+                        .text_size(px(font_size::SECONDARY))
                         .font_weight(FontWeight::SEMIBOLD)
                         .text_color(fg),
                 ),
@@ -932,7 +924,7 @@ pub(crate) fn AccountsView() -> impl IntoElement {
                             .child(field_label("额度使用", muted))
                             .child(
                                 text(usage_text.clone())
-                                    .text_size(px(12.0))
+                                    .text_size(px(font_size::CAPTION))
                                     .text_color(muted)
                                     .test_id("acct-edit-usage"),
                             ),
@@ -945,7 +937,7 @@ pub(crate) fn AccountsView() -> impl IntoElement {
                             .child(field_label("下次账单节点", muted))
                             .child(
                                 text(next_nodes_text.clone())
-                                    .text_size(px(12.0))
+                                    .text_size(px(font_size::CAPTION))
                                     .text_color(muted)
                                     .test_id("acct-edit-next"),
                             ),
@@ -986,7 +978,7 @@ pub(crate) fn AccountsView() -> impl IntoElement {
                     .child(field_label("类型", muted))
                     .child(
                         text(type_text)
-                            .text_size(px(13.0))
+                            .text_size(px(font_size::SECONDARY))
                             .text_color(muted)
                             .test_id("acct-edit-type"),
                     ),
@@ -1014,7 +1006,7 @@ pub(crate) fn AccountsView() -> impl IntoElement {
                         text(move || {
                             format!("保存失败：{}", edit_error.get().unwrap_or_default())
                         })
-                        .text_size(px(12.0))
+                        .text_size(px(font_size::CAPTION))
                         .text_color(danger_fg)
                         .test_id("acct-edit-error")
                     },
@@ -1033,7 +1025,7 @@ pub(crate) fn AccountsView() -> impl IntoElement {
                             )
                             .child(
                                 text("取消")
-                                    .text_size(px(13.0))
+                                    .text_size(px(font_size::SECONDARY))
                                     .text_color(fg)
                                     .test_id("acct-edit-cancel"),
                             )
@@ -1044,8 +1036,8 @@ pub(crate) fn AccountsView() -> impl IntoElement {
                             .app_class("px-3 py-1.5 rounded-md bg-primary hover:opacity-90")
                             .child(
                                 text("保存")
-                                    .text_size(px(13.0))
-                                    .text_color(rgb(0xffffff))
+                                    .text_size(px(font_size::SECONDARY))
+                                    .text_color(crate::theme::color("primary-foreground"))
                                     .test_id("acct-edit-save"),
                             )
                             .on_press(move |_: &()| perform_edit()),
@@ -1072,7 +1064,7 @@ pub(crate) fn AccountsView() -> impl IntoElement {
                     .child(field_label("当前余额", muted))
                     .child(
                         text(current_text)
-                            .text_size(px(13.0))
+                            .text_size(px(font_size::SECONDARY))
                             .text_color(fg)
                             .test_id("acct-adjust-current"),
                     ),
@@ -1141,7 +1133,7 @@ pub(crate) fn AccountsView() -> impl IntoElement {
                                 None => "对账后应有的余额未填写".to_owned(),
                             }
                         })
-                            .text_size(px(12.0))
+                            .text_size(px(font_size::CAPTION))
                             .text_color(move || {
                                 let positive = adjust_delta(
                                     raw_row_of(adjust_target.get_untracked()).as_ref(),
@@ -1165,7 +1157,7 @@ pub(crate) fn AccountsView() -> impl IntoElement {
                         text(move || {
                             format!("调整失败：{}", adjust_error.get().unwrap_or_default())
                         })
-                        .text_size(px(12.0))
+                        .text_size(px(font_size::CAPTION))
                         .text_color(danger_fg)
                         .test_id("acct-adjust-error")
                     },
@@ -1184,7 +1176,7 @@ pub(crate) fn AccountsView() -> impl IntoElement {
                             )
                             .child(
                                 text("取消")
-                                    .text_size(px(13.0))
+                                    .text_size(px(font_size::SECONDARY))
                                     .text_color(fg)
                                     .test_id("acct-adjust-cancel"),
                             )
@@ -1201,8 +1193,8 @@ pub(crate) fn AccountsView() -> impl IntoElement {
                             })
                             .child(
                                 text("确认调整")
-                                    .text_size(px(13.0))
-                                    .text_color(rgb(0xffffff))
+                                    .text_size(px(font_size::SECONDARY))
+                                    .text_color(crate::theme::color("primary-foreground"))
                                     .test_id("acct-adjust-confirm"),
                             )
                             .on_press(move |_: &()| perform_adjust()),
@@ -1365,8 +1357,8 @@ pub(crate) fn AccountsView() -> impl IntoElement {
                 .app_class("px-3 py-1.5 rounded-md bg-primary hover:opacity-90")
                 .child(
                     text("添加")
-                        .text_size(px(13.0))
-                        .text_color(rgb(0xffffff))
+                        .text_size(px(font_size::SECONDARY))
+                        .text_color(crate::theme::color("primary-foreground"))
                         .test_id("acct-add"),
                 )
                 .on_press(move |_: &()| perform_create()),
@@ -1378,7 +1370,7 @@ pub(crate) fn AccountsView() -> impl IntoElement {
         .app_class("rounded-md border border-border p-3")
         .child(
             text(CREATE_CARD_TITLE)
-                .text_size(px(13.0))
+                .text_size(px(font_size::SECONDARY))
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_color(fg),
         )
@@ -1389,7 +1381,7 @@ pub(crate) fn AccountsView() -> impl IntoElement {
                 move || create_error.get().is_some(),
                 move || {
                     text(move || create_error.get().unwrap_or_default())
-                        .text_size(px(12.0))
+                        .text_size(px(font_size::CAPTION))
                         .text_color(danger_fg)
                         .test_id("acct-create-error")
                 },
@@ -1404,7 +1396,7 @@ pub(crate) fn AccountsView() -> impl IntoElement {
         .child(
             view().px_4().py_2().child(
                 text(ViewName::Accounts.label())
-                    .text_size(px(16.0))
+                    .text_size(px(font_size::TITLE))
                     .text_color(fg)
                     .test_id("view-title"),
             ),
@@ -1416,7 +1408,7 @@ pub(crate) fn AccountsView() -> impl IntoElement {
                 move || error.get().is_some(),
                 move || {
                     text(move || format!("加载失败：{}", error.get().unwrap_or_default()))
-                        .text_size(px(12.0))
+                        .text_size(px(font_size::CAPTION))
                         .text_color(danger_fg)
                         .test_id("acct-error")
                         .app_class("px-4 py-1")
@@ -1487,7 +1479,7 @@ pub(crate) fn AccountsView() -> impl IntoElement {
                                                         ARCHIVED_TITLE
                                                     )
                                                 })
-                                                .text_size(px(13.0))
+                                                .text_size(px(font_size::SECONDARY))
                                                 .font_weight(FontWeight::SEMIBOLD)
                                                 .text_color(fg)
                                                 .test_id("acct-archived-toggle"),
@@ -1496,7 +1488,7 @@ pub(crate) fn AccountsView() -> impl IntoElement {
                                                 text(move || {
                                                     format!(" {}", archived_summary.get())
                                                 })
-                                                .text_size(px(12.0))
+                                                .text_size(px(font_size::CAPTION))
                                                 .text_color(muted)
                                                 .test_id("acct-archived-summary"),
                                             ),
@@ -1573,7 +1565,7 @@ pub(crate) fn AccountsView() -> impl IntoElement {
                         move || status.get().is_some(),
                         move || {
                             text(move || status.get().unwrap_or_default())
-                                .text_size(px(12.0))
+                                .text_size(px(font_size::CAPTION))
                                 .text_color(fg)
                                 .test_id("acct-status")
                         },
