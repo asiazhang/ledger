@@ -331,6 +331,22 @@ export const GATE_MOUNTS: readonly GateMount[] = [
     ],
   },
   {
+    name: "壳根包裸字号直调零残留扫描（check-bare-font-size）",
+    refs: "issue #2108 / spec #2099 / ADR-0147 决策 4",
+    hosts: [
+      {
+        file: CHECK_SH_FILE,
+        prefix: "bun scripts/check-bare-font-size.ts",
+        where: "scripts/check.sh 质量门槛序列（样式块守门后）",
+      },
+      {
+        file: CI_WORKFLOW_FILE,
+        prefix: "run: bun scripts/check-bare-font-size.ts",
+        where: ".github/workflows/build.yml frontend job（样式块守门后）",
+      },
+    ],
+  },
+  {
     name: "i18n key 全等检查（check-i18n-keys）",
     refs: "issue #342 / ADR-0049 / #1188",
     hosts: [

@@ -117,6 +117,11 @@ jobs:
       - name: 样式块守门检查
         run: bun scripts/check-style-blocks.ts
 
+      # 壳根包裸字号直调零残留守门（issue #2108 / spec #2099 / ADR-0147 决策 4）：
+      # 视图零裸值纪律源码扫描，bun 纯源码扫描，无需 Rust 工具链，与本 job 同址。
+      - name: 壳根包裸字号直调零残留扫描
+        run: bun scripts/check-bare-font-size.ts
+
       - name: i18n key 全等检查
         run: bun scripts/check-i18n-keys.ts
 
