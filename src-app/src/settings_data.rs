@@ -59,7 +59,9 @@ use crate::modal::app_modal;
 use crate::nav_model::NavRequest;
 use crate::popconfirm;
 use crate::views::danger_fg;
-use crate::{backup_entry, backup_host, boot, nav, nav_model, select, settings, signals, views};
+use crate::{
+    backup_entry, backup_host, boot, nav, nav_model, select, settings, signals, unlock, views,
+};
 
 // ---------------------------------------------------------------------------
 // 词表（旧壳 settings.data.* / books.* zh-CN 词条原样；i18n 框架级方案不在
@@ -227,11 +229,9 @@ const DISABLE_CONFIRM_OK: &str = "继续关闭加密";
 const DISABLE_CONFIRM_CANCEL: &str = "取消";
 const DISABLE_OK_HOST_HINT: &str = "加密已关闭，本会话已切换到明文库。";
 const DISABLE_FAILED_PREFIX: &str = "关闭加密失败: ";
-/// 自动解锁平价注记（issue #2088 裁决：`passphrase_cache::supported()` 仅
-/// macOS，本壳 Linux-only——旧壳非 macOS 隐藏选项回退手输的同款平价，在
-/// 屏静态注记不做写面）。
-const AUTO_UNLOCK_UNSUPPORTED_CARD: &str =
-    "自动解锁：本机（Linux 桌面）不支持——主口令的本机缓存仅 macOS 可用，启动解锁请手动输入主口令。";
+// 自动解锁平价注记共用解锁屏单点常量（[`crate::unlock::AUTO_UNLOCK_UNSUPPORTED`]；
+// issue #2088 裁决：`passphrase_cache::supported()` 仅 macOS，本壳
+// Linux-only——旧壳非 macOS 隐藏选项回退手输的同款平价，在屏静态注记不做写面）。
 
 const SYNC_PLAINTEXT_WARNING: &str = "当前账本未开启加密：同步数据将以明文存放于对象存储。如需加密同步，请先在本页「加密」卡开启加密模式。";
 const SYNC_ENCRYPTED_HINT: &str = "本账库为密文形态：同步数据将以主口令加密后上通道。";
@@ -2064,9 +2064,7 @@ fn run_encryption_action(
     ok_hint: &'static str,
     failed_prefix: &'static str,
     on_success: impl Fn(Owner, EncryptionState) + Copy + Send + 'static,
-    invoke: impl Fn(&ledger_infra::db::DbState) -> ledger_infra::error::Result<()>
-        + Send
-        + 'static,
+    invoke: impl Fn(&ledger_infra::db::DbState) -> ledger_infra::error::Result<()> + Send + 'static,
 ) {
     state.busy.set(true);
     owner.run(move || {
@@ -2305,7 +2303,7 @@ fn encrypted_form(state: EncryptionState, palette: views::ViewPalette) -> impl I
                 ),
         )
         .child(
-            text(AUTO_UNLOCK_UNSUPPORTED_CARD)
+            text(unlock::AUTO_UNLOCK_UNSUPPORTED)
                 .text_size(px(11.0))
                 .text_color(palette.muted)
                 .test_id("enc-auto-unlock-note"),

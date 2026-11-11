@@ -51,9 +51,10 @@ const RESET_CONFIRM_DETAIL: &str = "继续将把账本重置为全新的明文�
 const RESET_CONFIRM_OK: &str = "确认重置";
 const RESET_CONFIRM_CANCEL: &str = "取消";
 const RESET_TASK_FAILED: &str = "内部错误：重置任务异常退出";
-/// 自动解锁平价注记（Linux 平台不支持，见模块文档）。
-const AUTO_UNLOCK_UNSUPPORTED: &str =
-    "自动解锁：本机（Linux 桌面）不支持——主口令的本机缓存仅 macOS 可用，请手动输入主口令。";
+/// 自动解锁平价注记（Linux 平台不支持，见模块文档）。设置卡加密卡的
+/// 同一注记共用本常量（单点，避免双点措辞漂移）。
+pub(crate) const AUTO_UNLOCK_UNSUPPORTED: &str =
+    "自动解锁：本机（Linux 桌面）不支持——主口令的本机缓存仅 macOS 可用，启动解锁请手动输入主口令。";
 
 /// 锁定面板的信号组（根组件体装载期单次构造，见模块文档 owner 纪律；
 /// `Copy` 供任务闭包与 `danger_confirm` 的 `Copy` 约束捕获——信号字段全部
