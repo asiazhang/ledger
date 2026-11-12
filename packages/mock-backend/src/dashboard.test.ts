@@ -137,7 +137,7 @@ describe("跨账本投资汇总：cross_book_investment_summary（单账本 incl
       unrealized_pnl_cents: 35_003_610, // 275 − 115 + 3_450 + 35_000_000
       cumulative_pnl_cents: 34_727_080, // 未实现 + 已实现 (−285_030) + 分红 8_500
       investable_assets_cents: 385_848_610, // 500_000 + 385_348_610
-      books: [{ id: "mock-book", name: "Mock 账本", status: "included" }],
+      books: [{ id: "mock-book", name: "Mock 账本", status: "included", is_active: true }], // 活动本即它
     });
   });
 });

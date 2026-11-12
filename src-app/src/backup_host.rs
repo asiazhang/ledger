@@ -29,10 +29,9 @@
 //!   路径，在其返回后调用即旧壳 `RunEvent::Exit` 的正常退出触发面（旧壳
 //!   `RunEvent::Exit` 同样不覆盖 SIGKILL/崩溃；覆盖面一致，零新机制）。
 //!
-//! 每轮业务可用性判定：NSH 立桩注册恒真闭包——会话只在本票编排点（引导成功）
-//! 存在，进程内无锁定/失败占位形态；加密支持随迁移系列票开门时换供自己的门
-//! 判定，注册点形状不变（见 [`ledger_backup::BusinessAvailability`]）。
-//!
+//! 每轮业务可用性判定：NSH 经 [`business_availability`] 注册真门检（锁定
+//! 扇门查进程级加密锁定门，失败扇门由会话存在性承载）——密文库解锁前调
+//! 度线程空转、解锁后自动继续（issue #2088；#2078 立桩恒真闭包退役）。
 //! 备份成功反馈：深路径执行点（连接层写入口提交点 / 调度线程）只持 `&Connection`，
 //! 域内经 `emit_backups_changed_current` 发射；本模块注入的发射器把发射落成
 //! 进程级 pending 计数（[`crate::signals::record_backups_pending`]，任意写线程
@@ -139,10 +138,13 @@ pub(crate) fn install_shell_side() {
     push_backup_dir(&settings_data::pref_backup_dir());
 }
 
-/// 会话宿主接线（启动竖井成功分支；`run_startup` 内 `logging::apply_persisted`
-/// 之后单点调用）：首次兜底补跑 + 调度线程挂载。删除本调用 → 自动备份调度
-/// 失宿主（首次兜底不发生、轮询不启动）→ headless 首次兜底旅程与源码扫描
-/// 守门双红。
+/// 会话宿主接线（启动竖井成功分支 / 解锁成功后的业务可用起点，`run_startup`
+/// 与 [`crate::unlock`] 的续接共用 [`crate::app::enter_business_surface`]，
+/// `logging::apply_persisted` 之后单点调用）：首次兜底补跑 + 调度线程挂载。
+/// 删除本调用 → 自动备份调度失宿主（首次兜底不发生、轮询不启动）→ headless
+/// 首次兜底旅程与源码扫描守门双红。锁定场景（密文库引导后解锁，#2088）的
+/// 首次兜底在本调用补跑——调度线程若已在场（进程级幂等），门检在锁定期间
+/// 空转、解锁后自动继续（旧壳 #644 / ADR-0080 同口径）。
 pub(crate) fn start_session_host(db: &DbState) {
     // 会话首次兜底（认领机会在装载期推送时裁定；待跑标志在此消费）。
     if FIRST_FALLBACK_PENDING.swap(false, Ordering::SeqCst)
@@ -151,13 +153,34 @@ pub(crate) fn start_session_host(db: &DbState) {
         run_first_fallback_in_background(db, dir);
     }
     // 调度线程挂载（域内单次拉起守卫，重引导/重复调用幂等；每轮业务可用性
-    // 判定 = 恒真：NSH 立桩会话即业务可用，见模块文档）。轮询同轮承载定时
+    // 判定 = 真门检，见 [`business_availability`]）。轮询同轮承载定时
     // 计划追补（追补实现在 [`crate::wiring`] 对装，镜像默认关时空转）。
     ledger_backup::start_scheduler_with(
         db.write_handle(),
         backup_entry::APP_VERSION.to_owned(),
-        Arc::new(|| true),
+        business_availability(),
     );
+}
+
+/// 每轮业务可用性真门检（issue #2088；旧壳两扇门语义的本壳承接形状，
+/// 注册点反转的宿主实现——下层 [`ledger_backup::BusinessAvailability`] 定
+/// 义注册点、上层本函数注册实现、壳层启动时接线，ADR-0112 决策 5）：
+///
+/// - **锁定扇门**：进程级加密锁定门（[`crate::boot::encryption_locked`]）
+///   锁定期间不可调度——密文库引导后、解锁/重置成功前，已存活的调度线程
+///   在门检处空转（不触碰连接），解锁后自动继续（旧壳 auto.rs 门闭包
+///   `!(locked || boot_failed)` 的锁定半边同口径）。
+/// - **失败扇门**：NSH 无引导失败占位会话形态，等价物 = 会话存在性——
+///   本函数（调度挂载点）只在业务可用起点被调，引导失败即无会话无调度
+///   （#2088 裁决：闭包只查锁定门，不设 BootFailureGate 宿主形态）。
+///
+/// 恢复恒真闭包（#2078 立桩形态的字面）即门检语义退役：锁定场景调度轮照常
+/// 触碰连接（旧库句柄写旧世界）——本模块测试的
+/// `business_availability_blocks_while_locked`（锁定态判定）与
+/// `scheduler_gate_is_real_not_constant_true`（恒真闭包禁止回归的源码扫描）
+/// 双红。
+pub(crate) fn business_availability() -> ledger_backup::BusinessAvailability {
+    Arc::new(|| !crate::boot::encryption_locked())
 }
 
 /// 进程退出兜底（bin 主函数在平台事件循环返回后调用；触发面裁决见模块文档）：
@@ -198,6 +221,8 @@ mod tests {
     fn source_contains(source: &str, token: &str) -> bool {
         source.contains(token)
     }
+
+    use super::business_availability;
 
     #[test]
     fn shell_side_wiring_is_mounted_in_app_body() {
@@ -242,5 +267,45 @@ mod tests {
                 "域栈引导应接线 {token}——删除即本测红（置脏/追补/预算接线缺失是生产静默丢副作用）"
             );
         }
+    }
+
+    /// 调度门检真门形状（issue #2088 负向验收「还原恒真闭包即红」的扫描
+    /// 半边）：挂载点必须经 [`business_availability()`] 注册门检闭包，且生
+    /// 产源不再出现恒真闭包字面（含注释与测试模块——本测扫全文件）。恢复
+    /// 即本测红——锁定场景调度不再空转，密文库会话的调度语义失真。
+    #[test]
+    fn scheduler_gate_is_real_not_constant_true() {
+        let backup_host_rs = include_str!("backup_host.rs");
+        assert!(
+            source_contains(backup_host_rs, "business_availability(),"),
+            "调度线程挂载应注册真门检闭包 business_availability()——删除即本测红"
+        );
+        // 字面量经 concat 拆写：断言源文本自身不得含被扫字面（include_str!
+        // 全文件扫描，含本测试模块）。
+        let constant_true = concat!("Arc::new(|| ", "true)");
+        assert!(
+            !source_contains(backup_host_rs, constant_true),
+            "恒真闭包已退役（#2088 真门检）：不得回归"
+        );
+    }
+
+    /// 锁定扇门行为判定（issue #2088 负向验收「还原恒真闭包即红」的行为
+    /// 半边）：门开 → 可调度；门锁（密文库引导后、解锁前）→ 不可调度；
+    /// 解锁 → 自动恢复。把 [`business_availability`] 退回恒真即本测红。
+    /// 门槽是进程级单例，测试经装配串行锁防串扰，终态复位（恒开）。
+    #[test]
+    fn business_availability_blocks_while_locked() {
+        let _guard = crate::app::test_assembly_guard();
+        let available = business_availability();
+        assert!(available(), "门开（默认态）可调度");
+
+        crate::boot::set_encryption_locked(true);
+        assert!(!available(), "密文库锁定态不可调度（锁定扇门）");
+
+        crate::boot::set_encryption_locked(false);
+        assert!(available(), "解锁后自动恢复调度");
+
+        // 终态复位：槽内门实例回恒开，不泄入后续用例。
+        crate::boot::reset_encryption_gate_for_tests();
     }
 }

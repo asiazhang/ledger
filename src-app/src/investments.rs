@@ -1,19 +1,21 @@
-//! 投资视图（issue #2045 NSH 迁移⑭ + #2046 迁移⑮；旧壳 `InvestmentsView.vue`
-//! 页签容器：概览/盈亏随⑭已迁、持仓随⑮，ledger/instruments 随⑯）。
+//! 投资视图（issue #2045 NSH 迁移⑭ + #2046 迁移⑮ + #2047 迁移⑯；旧壳
+//! `InvestmentsView.vue` 页签容器五位全量：概览/盈亏 #2045、持仓 #2046、
+//! 明细/标的 #2047）。
 //!
-//! 页签容器（旧壳 InvestmentsView 前三页签——ledger/instruments 随 ⑯）：
+//! 页签容器（旧壳 InvestmentsView 五位页签全量——明细/标的由 #2047 ⑯ 补齐）：
 //! crate 级单点 visited-once keep-mounted 页签容器
 //!（[`crate::keep_mounted`]，与 [`crate::settings`] 同点）——旧壳
 //! display-directive="show" + 页签 key
 //! 纪律的本壳对应物：已到访页签 display 隐藏保持挂载，切页签不重挂重拉；
 //! 删 display 切换接线即红（headless keep-mounted 探针）。
 //!
-//! 会话槽（旧壳 investments-session store 的重生子集：已迁三页签射程内的
-//! 瞬态——当前页签 + 走势预设区间 + 盈亏两表页码 + 持仓筛选三维与页码）：
+//! 会话槽（旧壳 investments-session store 的重生子集：五位页签射程内的
+//! 瞬态——当前页签 + 走势预设区间 + 盈亏两表页码 + 持仓筛选三维与页码 +
+//! 明细筛选三维与页码 + 标的 focus 意图）：
 //! 进程级信号单例，同一会话内离开投资视图再回来回原样；冷启动回默认（默认
 //! 页签「概览」+ 走势「1 年」+ 页码 1）；保留全程零写盘。旧壳持仓筛选三维
 //! 与页码随 issue #1192 住会话 store，本壳会话槽同射程直接承载；明细/标的
-//! 筛选三维与其页解随各自页签的归属票就位（不扩射程之外的形状）。
+//! 筛选三维与其页解已由 #2047 ⑯ 扩入同射程（不扩射程之外的形状）。
 //!
 //! 读路径直调域公开读入口（[`crate::boot`]，不经 IPC——与旧壳
 //! investment_overview / realized_pnl_summary / portfolio_value_trend /
@@ -121,7 +123,7 @@ pub(crate) const MSG_INTERNAL: &str = "内部错误：读任务异常退出";
 // 会话槽（旧壳 investments-session store 的本票射程子集）
 // ---------------------------------------------------------------------------
 
-/// 页签闭集（本票两页签：持仓随 ⑮、ledger/instruments 随 ⑯ 再扩）。
+/// 页签闭集（旧壳 InvestmentsView 五位全序：持仓 #2046 ⑮、明细/标的 #2047 ⑯）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum InvestmentsTab {
     /// 概览（默认；旧壳 INVESTMENTS_DEFAULT_TAB 同源）。
@@ -160,7 +162,7 @@ impl InvestmentsTab {
     }
 }
 
-/// 页签全集（顺序 = 旧壳 InvestmentsView 五位全序；ledger/instruments 随 ⑯。
+/// 页签全集（顺序 = 旧壳 InvestmentsView 五位全序；明细/标的由 #2047 ⑯ 补齐）。
 const TABS: [InvestmentsTab; 5] = [
     InvestmentsTab::Overview,
     InvestmentsTab::Pnl,

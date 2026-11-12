@@ -107,13 +107,9 @@ function statusText(status: CrossBookBookStatus): string {
         >
           <span :class="bookName">
             {{ book.name }}
-            <NTag
-              v-if="book.status === 'included'"
-              size="small"
-              round
-              :bordered="false"
-              type="primary"
-            >
+            <!-- 「当前」只挂活动本行（issue #2069，NSH 同形状）：计入状态与活动性
+                 正交，非活动计入本同挂 included 但不标「当前」。 -->
+            <NTag v-if="book.is_active" size="small" round :bordered="false" type="primary">
               {{ t("crossBook.activeTag") }}
             </NTag>
           </span>
