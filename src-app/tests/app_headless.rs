@@ -35,7 +35,6 @@ use std::time::Duration;
 use chrono::Datelike;
 use ledger_accounts::{AccountInput, AccountType};
 use ledger_categories::{CategoryInput, create_category};
-use ledger_infra::ids::new_uuid;
 use ledger_physical_asset::{PhysicalAssetDisposeInput, PhysicalAssetInput};
 use ledger_transaction::{
     TransactionFundingInput, TransactionInput, TransactionKind, TransactionPurchaseInput,
@@ -13874,8 +13873,10 @@ fn startup_configured_active_book_missing_fails_loud() {
     nsh_app::app::reset_book_assembly();
     let root = make_data_root("shaft-missing");
     // 活动本目录不存在且无库文件（登记在册但落点无库）。
-    let active =
-        std::env::temp_dir().join(format!("ledger-test-nsh-book-shaft-miss-{}", new_uuid()));
+    // 活动本落点用 ScratchDir 持有（引导解析期产品会建出登记目录——guard 化
+    // 前该目录随测试残留泄漏，#2112）；空目录无库文件，book-missing 失败态
+    // 语义不变。
+    let active = ScratchDir::new("nsh-book-shaft-miss");
     seed_registry(&root, &active, &[]);
     nsh_app::cross_book::set_default_data_dir(root.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
