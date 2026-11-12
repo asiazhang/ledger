@@ -224,7 +224,7 @@ fn startup_wiring_syncs_fx_rates_and_concurrent_sync_is_rejected() {
     nsh_app::market_lanes::inject_history_backfill_channels_for_tests(silent_price_channels());
 
     // 启动接线（生产装配路径同款：run_startup 成功分支单点挂载三条车道）。
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     assert_eq!(
         nsh_app::app::run_startup(),
         nsh_app::app::StartupView::Ready,

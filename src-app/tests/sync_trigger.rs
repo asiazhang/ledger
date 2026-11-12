@@ -63,7 +63,7 @@ fn desktop_config() -> EngineConfig {
 }
 
 /// 测试账本（产品开库入口建库；共享助手 [`seed`]）。
-fn make_book(tag: &str) -> std::path::PathBuf {
+fn make_book(tag: &str) -> seed::BookDir {
     let dir = seed::make_book_dir(tag);
     seed::create_empty_book_file(&dir);
     dir
@@ -232,7 +232,7 @@ fn sync_triggers_pull_peer_segments_and_reload_list() {
         seed::seed_cash_account(&db);
     }
 
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_transactions(&mut app);
 

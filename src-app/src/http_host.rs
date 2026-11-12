@@ -105,7 +105,9 @@ async fn pump(mut rx: UnboundedReceiver<&'static str>) {
 /// 一次（[`HTTP_MOUNTED`]），泵任务引擎级每次重起（[`PUMP_TX`] 换装，模块
 /// 文档生命周期裁决）。调用线程即引擎线程（只在组件任务内的
 /// [`crate::app::run_startup`] 被调）：泵任务 `spawn` 进当前引擎执行器常驻。
-/// 端口 `127.0.0.1:9527`，绑定失败 fail loud，与旧壳同语义。
+/// 端口默认 `127.0.0.1:9527`，绑定失败 fail loud，与旧壳同语义；默认端口
+/// 被占用（同机并发测试进程 / 第二实例）时回落内核分配的临时端口，实际
+/// 绑定端口经 [`mounted_port`] 可观察（#2112 端口去固定化）。
 ///
 /// 门注入：加密锁定门恒开（NSH 立桩只引导未加密账本库，[`crate::boot::
 /// boot_ledger`] 拒密文库，锁定态随解锁向导迁移票补齐）；启动失败门恒未失败
@@ -133,6 +135,15 @@ pub fn mount(db: &DbState) {
 /// 钉着；本注入面使 headless 能独立验证「泵 → 壳内族广播 → 视图重读」段
 ///（headless 场景的服务库槽可能归属首个挂载场景，写端点路径在多场景并行下
 /// 不自洽——模块文档生命周期裁决）。生产零消费。
+///
+/// 本进程 HTTP 服务实际绑定端口（headless 接线断言消费，#2112）：`None` =
+/// 尚未绑定。断言「run_startup 挂载接线」的唯一可观察面——删除挂载接线后
+/// 本口永为 `None`，限时轮询超时即红（不再误连同机他进程占用的 9527 假绿）。
+#[doc(hidden)]
+pub fn mounted_port() -> Option<u16> {
+    api_server::bound_port()
+}
+
 #[doc(hidden)]
 pub fn post_invalidation_for_tests(event: &'static str) {
     // 锁失败静默返回（与 post 同语义：测试注入不承载成败）。
