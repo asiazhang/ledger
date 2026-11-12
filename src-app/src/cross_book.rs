@@ -477,9 +477,11 @@ pub(crate) fn CrossBookSummaryView() -> impl IntoElement {
 
     // 主题令牌（双态自适应）：视图层零本地色常量，缺失统一落 crate::theme
     // 可读兜底（ADR-0147 决策 1）。
-    let fg = crate::theme::color("foreground");
-    let muted = crate::theme::color("muted-foreground");
-    let danger_fg = crate::theme::color("destructive");
+    let crate::views::ViewPalette {
+        fg,
+        muted,
+        danger_fg,
+    } = crate::views::view_palette();
     // 警告色（未计入本状态标签；危险确认 warning 级同色值）。
     let warn_fg = crate::theme::color("warning");
     // 计入色（账本语义绿，与 #2033 起的正常态语义色同源）。

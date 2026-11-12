@@ -116,20 +116,8 @@ const LOADING_PLACEHOLDER: &str = "正在加载…";
 const READ_TASK_FAILED: &str = "内部错误：读任务异常退出";
 const WRITE_TASK_FAILED: &str = "内部错误：写入任务异常退出";
 
-/// 主题令牌单取：视图层零本地色常量，令牌缺失统一落 `crate::theme` 的
-/// 可读兜底（ADR-0147 决策 1；本地 token_or_fallback 已退役）。
-fn foreground_of() -> AdaptiveColor {
-    crate::theme::color("foreground")
-}
-
-fn muted_of() -> AdaptiveColor {
-    crate::theme::color("muted-foreground")
-}
-
-fn danger_of() -> AdaptiveColor {
-    crate::theme::color("destructive")
-}
-
+/// 语义令牌单取（success 非三件套成员，不经 ViewPalette）：视图层零本地
+/// 色常量，令牌缺失统一落 `crate::theme` 的可读兜底（ADR-0147 决策 1）。
 fn success_of() -> AdaptiveColor {
     crate::theme::color("success")
 }
@@ -270,7 +258,7 @@ fn text_field(
 ) -> impl IntoElement {
     form_row(
         label,
-        muted_of(),
+        crate::views::view_palette().muted,
         input()
             .test_id(id)
             .value(move || value.get())
@@ -315,7 +303,7 @@ fn amount_currency_row(
     let currency_id = format!("{id}-currency");
     form_row(
         label,
-        muted_of(),
+        crate::views::view_palette().muted,
         view()
             .flex_row()
             .items_center()
@@ -445,9 +433,11 @@ pub(crate) fn PhysicalAssetsView() -> impl IntoElement {
     });
 
     // ============================ 主题令牌 ============================
-    let fg = foreground_of();
-    let muted = muted_of();
-    let danger_fg = danger_of();
+    let crate::views::ViewPalette {
+        fg,
+        muted,
+        danger_fg,
+    } = crate::views::view_palette();
 
     // ============================ 行装配（渲染期零格式化） ============================
     let currencies = computed(move || CurrencyTable::from_currencies(currency_rows.get().0.iter()));
@@ -862,7 +852,11 @@ pub(crate) fn PhysicalAssetsView() -> impl IntoElement {
                     .is_some_and(|row| row.status_label == STATUS_DISPOSED);
                 text(cell.text.clone())
                     .text_size(px(font_size::SECONDARY))
-                    .text_color(if disposed { muted_of() } else { success_of() })
+                    .text_color(if disposed {
+                        crate::views::view_palette().muted
+                    } else {
+                        success_of()
+                    })
                     .into_element()
             }
             "actions" => {

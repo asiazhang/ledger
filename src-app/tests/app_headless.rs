@@ -52,6 +52,37 @@ use seed::{seed_cash_account, test_date};
 /// 与 `wait_for` 缺省同一超时（nsh-testing 的 `wait_for_gone` 需显式超时）。
 const DEFAULT_WAIT: Duration = Duration::from_secs(5);
 
+/// 主题令牌真源（issue #2113 断言值纪律）：色值断言的期望值从唯一真源
+/// `theme.json` 解析派生（`include_str!` 编译期内嵌，与产品消费同一份文件），
+/// 测试里不复制色值字面量——测试读真源文件 = 单一事实，不是第二源；产品
+/// 消费面偏离真源才红。字号档同理由 [`nsh_app::design::font_size`] 常量
+/// 派生（既有纪律，不回退）。「表内某档该是什么色」的出厂观感裁决归人工
+/// 截图对表（docs/DESIGN.md §8），不归本自动化面。
+const THEME_JSON: &str = include_str!("../theme.json");
+
+/// 亮/暗态（断言期望值的解析段）。
+#[derive(Clone, Copy, Debug)]
+enum Scheme {
+    Light,
+    Dark,
+}
+
+/// 从 theme.json 真源解析令牌色：`#rrggbb` → RGBA（alpha 补 `ff`）；dark 段
+/// 未写沿用 light（引擎「覆盖式只写差异」的同源实现，DESIGN.md §2 单值档）。
+/// 断言真源缺档即 panic（测试面显式失败，不静默）。
+fn theme_color(token: &str, scheme: Scheme) -> nsh_core::Color {
+    let vars: serde_json::Value = serde_json::from_str(THEME_JSON).expect("theme.json 是合法 JSON");
+    let section = |name: &str| vars["cssVars"][name][token].as_str().map(str::to_owned);
+    let value = match scheme {
+        Scheme::Light => section("light"),
+        Scheme::Dark => section("dark").or_else(|| section("light")),
+    }
+    .unwrap_or_else(|| panic!("theme.json 缺令牌 {token}（{scheme:?}）"));
+    let hex = value.strip_prefix('#').expect("令牌值是 #rrggbb");
+    assert_eq!(hex.len(), 6, "令牌 {token} 是 6 位 #rrggbb：{value}");
+    nsh_core::Color((u32::from_str_radix(hex, 16).expect("令牌值是十六进制") << 8) | 0xff)
+}
+
 /// 串行锁：装配入口（`set_book_dir`）与会话句柄是进程级单例，用例间串行防串扰
 /// （与 lib 单测的 SERIAL 同形；两测试二进制是独立进程，互不串扰）。
 static SERIAL: Mutex<()> = Mutex::new(());
@@ -549,12 +580,12 @@ fn app_window_colors_amount_cells_by_kind_semantic() {
     app.wait_for("text:¥25").unwrap();
     assert_eq!(
         app.screen().span_style("text:¥25").unwrap().color,
-        nsh_core::Color(0xd03050ff),
+        theme_color("expense", Scheme::Light),
         "支出金额亮色 = 旧壳 expense light"
     );
     assert_eq!(
         app.screen().span_style("text:¥10").unwrap().color,
-        nsh_core::Color(0x18a058ff),
+        theme_color("income", Scheme::Light),
         "收入金额亮色 = 旧壳 income light"
     );
 
@@ -563,12 +594,12 @@ fn app_window_colors_amount_cells_by_kind_semantic() {
         .unwrap();
     assert_eq!(
         app.screen().span_style("text:¥25").unwrap().color,
-        nsh_core::Color(0xe88080ff),
+        theme_color("expense", Scheme::Dark),
         "支出金额暗色 = 旧壳 expense dark"
     );
     assert_eq!(
         app.screen().span_style("text:¥10").unwrap().color,
-        nsh_core::Color(0x63e2b7ff),
+        theme_color("income", Scheme::Dark),
         "收入金额暗色 = 旧壳 income dark"
     );
 }
@@ -627,17 +658,17 @@ fn app_window_theme_tokens_follow_strong_pinned_appearance() {
     app.wait_for("text:共 2 条").unwrap();
     assert_eq!(
         app.screen().span_style("text:¥25").unwrap().color,
-        nsh_core::Color(0xe88080ff),
+        theme_color("expense", Scheme::Dark),
         "支出金额暗色 = 主题表 expense dark"
     );
     assert_eq!(
         app.screen().span_style("text:¥10").unwrap().color,
-        nsh_core::Color(0x63e2b7ff),
+        theme_color("income", Scheme::Dark),
         "收入金额暗色 = 主题表 income dark"
     );
     assert_eq!(
         app.screen().span_style("text:共 2 条").unwrap().color,
-        nsh_core::Color(0x93a4b6ff),
+        theme_color("muted-foreground", Scheme::Dark),
         "弱化文本暗色 = 主题表 muted-foreground dark（非 neutral）"
     );
 
@@ -651,17 +682,17 @@ fn app_window_theme_tokens_follow_strong_pinned_appearance() {
     app.wait_for("text:共 2 条").unwrap();
     assert_eq!(
         app.screen().span_style("text:¥25").unwrap().color,
-        nsh_core::Color(0xd03050ff),
+        theme_color("expense", Scheme::Light),
         "支出金额亮色 = 主题表 expense light"
     );
     assert_eq!(
         app.screen().span_style("text:¥10").unwrap().color,
-        nsh_core::Color(0x18a058ff),
+        theme_color("income", Scheme::Light),
         "收入金额亮色 = 主题表 income light"
     );
     assert_eq!(
         app.screen().span_style("text:共 2 条").unwrap().color,
-        nsh_core::Color(0x5c6c7eff),
+        theme_color("muted-foreground", Scheme::Light),
         "弱化文本亮色 = 主题表 muted-foreground light（非 neutral）"
     );
 }
@@ -688,7 +719,7 @@ fn dashboard_and_reports_views_follow_theme_tokens_and_type_scale() {
     let hero = app.screen().span_style("text:¥400").unwrap();
     assert_eq!(
         hero.color,
-        nsh_core::Color(0x182635ff),
+        theme_color("foreground", Scheme::Light),
         "主数字亮色 = foreground light"
     );
     assert_eq!(
@@ -703,7 +734,7 @@ fn dashboard_and_reports_views_follow_theme_tokens_and_type_scale() {
     let label = app.screen().span_style("text:净资产").unwrap();
     assert_eq!(
         label.color,
-        nsh_core::Color(0x5c6c7eff),
+        theme_color("muted-foreground", Scheme::Light),
         "卡面标签亮色 = muted light"
     );
     assert_eq!(
@@ -722,12 +753,12 @@ fn dashboard_and_reports_views_follow_theme_tokens_and_type_scale() {
         .unwrap();
     assert_eq!(
         app.screen().span_style("text:¥400").unwrap().color,
-        nsh_core::Color(0xe6edf4ff),
+        theme_color("foreground", Scheme::Dark),
         "主数字暗色 = foreground dark"
     );
     assert_eq!(
         app.screen().span_style("text:净资产").unwrap().color,
-        nsh_core::Color(0x93a4b6ff),
+        theme_color("muted-foreground", Scheme::Dark),
         "卡面标签暗色 = muted dark"
     );
     drop(app);
@@ -743,7 +774,7 @@ fn dashboard_and_reports_views_follow_theme_tokens_and_type_scale() {
     let title = app.screen().span_style("text:月度收支").unwrap();
     assert_eq!(
         title.color,
-        nsh_core::Color(0x182635ff),
+        theme_color("foreground", Scheme::Light),
         "卡题亮色 = foreground light"
     );
     assert_eq!(
@@ -754,7 +785,7 @@ fn dashboard_and_reports_views_follow_theme_tokens_and_type_scale() {
     let header = app.screen().span_style("text:商户名").unwrap();
     assert_eq!(
         header.color,
-        nsh_core::Color(0x5c6c7eff),
+        theme_color("muted-foreground", Scheme::Light),
         "列头亮色 = muted light"
     );
     assert_eq!(
@@ -768,12 +799,12 @@ fn dashboard_and_reports_views_follow_theme_tokens_and_type_scale() {
         .unwrap();
     assert_eq!(
         app.screen().span_style("text:月度收支").unwrap().color,
-        nsh_core::Color(0xe6edf4ff),
+        theme_color("foreground", Scheme::Dark),
         "卡题暗色 = foreground dark"
     );
     assert_eq!(
         app.screen().span_style("text:商户名").unwrap().color,
-        nsh_core::Color(0x93a4b6ff),
+        theme_color("muted-foreground", Scheme::Dark),
         "列头暗色 = muted dark"
     );
 }
@@ -804,7 +835,7 @@ fn reference_and_settings_views_resolve_tokens_and_type_scale_across_appearances
     let label = app.screen().span_style("text:显示主题").unwrap();
     assert_eq!(
         label.color,
-        nsh_core::Color(0xe6edf4ff),
+        theme_color("foreground", Scheme::Dark),
         "设置页卡片标签深色 = 主题表 foreground dark（theme::color 单点消费）"
     );
     assert_eq!(
@@ -814,14 +845,14 @@ fn reference_and_settings_views_resolve_tokens_and_type_scale_across_appearances
     );
     assert_eq!(
         app.screen().span_style("text:分类").unwrap().color,
-        nsh_core::Color(0x93a4b6ff),
+        theme_color("muted-foreground", Scheme::Dark),
         "非激活页签深色 = 主题表 muted-foreground dark"
     );
     open_accounts(&mut app);
     let create = app.screen().span_style("text:新增账户").unwrap();
     assert_eq!(
         create.color,
-        nsh_core::Color(0xe6edf4ff),
+        theme_color("foreground", Scheme::Dark),
         "账户页新建卡标题深色 = 主题表 foreground dark"
     );
     assert_eq!(
@@ -833,7 +864,7 @@ fn reference_and_settings_views_resolve_tokens_and_type_scale_across_appearances
         .unwrap();
     assert_eq!(
         app.screen().span_style("text:新增账户").unwrap().color,
-        nsh_core::Color(0xe6edf4ff),
+        theme_color("foreground", Scheme::Dark),
         "强指深色下系统切亮色不跟随（#2053 强指语义）"
     );
 
@@ -845,14 +876,14 @@ fn reference_and_settings_views_resolve_tokens_and_type_scale_across_appearances
     let label = app.screen().span_style("text:显示主题").unwrap();
     assert_eq!(
         label.color,
-        nsh_core::Color(0x182635ff),
+        theme_color("foreground", Scheme::Light),
         "跟随系统亮色 = 主题表 foreground light"
     );
     app.set_environment("dark mode", |env| env.color_scheme = ColorScheme::Dark)
         .unwrap();
     assert_eq!(
         app.screen().span_style("text:显示主题").unwrap().color,
-        nsh_core::Color(0xe6edf4ff),
+        theme_color("foreground", Scheme::Dark),
         "跟随模式下系统切深即随动 = 主题表 foreground dark"
     );
 }
@@ -862,7 +893,7 @@ fn reference_and_settings_views_resolve_tokens_and_type_scale_across_appearances
 /// `text_xs`/`text_sm`/`text_base` 即同一规范值 12/14/16），「记一笔」等主
 /// 操作前景取主题表 `primary-foreground`（亮暗双态；裸白字退役）。删除视图
 /// 侧字阶书写或令牌消费任一环即红——断言对准已解析样式（font_size/color）。
-/// 断言值纪律：字号档由 [`nsh_app::design::font_size`] 常量派生（测试同属消费方，值同源——字阶漂移断言与实现一起红）；色值快照断言保持字面量（钉 theme.json 亮暗两段独立真源）。
+/// 断言值纪律：字号档由 [`nsh_app::design::font_size`] 常量派生，色值由 [`theme_color`] 从 theme.json 真源解析派生（测试读真源文件 = 单一事实，不复制字面量——产品消费面偏离真源才红；「某档该是什么色」的出厂观感裁决归人工截图对表）。
 /// 亮暗两态截图对照属人工子集，自动化面只断言已解析样式。
 #[test]
 fn app_window_transaction_views_use_type_scale_and_primary_foreground_token() {
@@ -914,7 +945,7 @@ fn app_window_transaction_views_use_type_scale_and_primary_foreground_token() {
     // 主操作前景 = primary-foreground 亮态令牌（裸白字退役）。
     assert_eq!(
         app.screen().span_style("text:记一笔").unwrap().color,
-        nsh_core::Color(0xf2f8ffff),
+        theme_color("primary-foreground", Scheme::Light),
         "主按钮前景亮色 = 主题表 primary-foreground light"
     );
 
@@ -924,7 +955,7 @@ fn app_window_transaction_views_use_type_scale_and_primary_foreground_token() {
         .unwrap();
     assert_eq!(
         app.screen().span_style("text:记一笔").unwrap().color,
-        nsh_core::Color(0x0b2239ff),
+        theme_color("primary-foreground", Scheme::Dark),
         "主按钮前景暗色 = 主题表 primary-foreground dark"
     );
 
@@ -979,7 +1010,7 @@ fn app_window_shell_chrome_uses_type_scale_and_theme_tokens() {
     );
     assert_eq!(
         brand.color,
-        nsh_core::Color(0x182635ff),
+        theme_color("foreground", Scheme::Light),
         "品牌行前景亮色 = 主题表 foreground light"
     );
     assert_eq!(
@@ -996,7 +1027,7 @@ fn app_window_shell_chrome_uses_type_scale_and_theme_tokens() {
         .unwrap();
     assert_eq!(
         app.screen().span_style("text:开源记账").unwrap().color,
-        nsh_core::Color(0xe6edf4ff),
+        theme_color("foreground", Scheme::Dark),
         "品牌行前景暗色 = 主题表 foreground dark"
     );
 
@@ -1071,14 +1102,14 @@ fn app_window_shell_chrome_uses_type_scale_and_theme_tokens() {
     );
     assert_eq!(
         create.color,
-        nsh_core::Color(0xf2f8ffff),
+        theme_color("primary-foreground", Scheme::Light),
         "引导主操作前景亮色 = 主题表 primary-foreground light"
     );
     app.set_environment("dark mode", |env| env.color_scheme = ColorScheme::Dark)
         .unwrap();
     assert_eq!(
         app.screen().span_style("text:新建账本").unwrap().color,
-        nsh_core::Color(0x0b2239ff),
+        theme_color("primary-foreground", Scheme::Dark),
         "引导主操作前景暗色 = 主题表 primary-foreground dark"
     );
 }
@@ -1126,7 +1157,7 @@ fn app_window_wrapper_family_uses_type_scale_and_theme_tokens() {
             .span_style("id:tx-filter-account >> text:账户")
             .unwrap()
             .color,
-        nsh_core::Color(0x5c6c7eff),
+        theme_color("muted-foreground", Scheme::Light),
         "占位弱化色 = muted-foreground 亮档（主题单点消费）"
     );
     app.press("id:tx-filter-account").unwrap();
@@ -1144,7 +1175,7 @@ fn app_window_wrapper_family_uses_type_scale_and_theme_tokens() {
             .span_style("id:tx-filter-account-option >> text:测试现金")
             .unwrap()
             .color,
-        nsh_core::Color(0x182635ff),
+        theme_color("foreground", Scheme::Light),
         "选项行前景 = foreground 亮档（主题单点消费）"
     );
     app.press("id:tx-filter-account-option >> text:测试现金")
@@ -1183,7 +1214,7 @@ fn app_window_wrapper_family_uses_type_scale_and_theme_tokens() {
             .span_style("id:tx-filter-kind-trigger >> text:支出")
             .unwrap()
             .color,
-        nsh_core::Color(0x182635ff),
+        theme_color("foreground", Scheme::Light),
         "已选触发件前景 = foreground 亮档"
     );
     // 勾选标记呈现：ESC 收闭弹层（弹层开着时 ESC 走抑制闸门，不触发全局筛选
@@ -1231,7 +1262,7 @@ fn app_window_wrapper_family_uses_type_scale_and_theme_tokens() {
             .span_style("text:确认删除该条交易？")
             .unwrap()
             .color,
-        nsh_core::Color(0x5c6c7eff),
+        theme_color("muted-foreground", Scheme::Light),
         "说明段弱化色 = muted-foreground 亮档"
     );
     assert_eq!(
@@ -1247,7 +1278,7 @@ fn app_window_wrapper_family_uses_type_scale_and_theme_tokens() {
             .span_style("text:删除后不可恢复。")
             .unwrap()
             .color,
-        nsh_core::Color(0xd03050ff),
+        theme_color("destructive", Scheme::Light),
         "警示句色 = destructive 亮档（分级令牌消费）"
     );
     assert_eq!(
@@ -1298,7 +1329,7 @@ fn app_window_wrapper_family_uses_type_scale_and_theme_tokens() {
     );
     assert_eq!(
         app.screen().span_style("text:确认删除？").unwrap().color,
-        nsh_core::Color(0x182635ff),
+        theme_color("foreground", Scheme::Light),
         "气泡说明前景 = foreground 亮档"
     );
     assert_eq!(
@@ -1321,7 +1352,7 @@ fn app_window_wrapper_family_uses_type_scale_and_theme_tokens() {
             .span_style("id:tx-filter-account >> text:测试现金")
             .unwrap()
             .color,
-        nsh_core::Color(0xe6edf4ff),
+        theme_color("foreground", Scheme::Dark),
         "已选触发件前景 = foreground 暗档"
     );
     app.press("id:tx-filter-account").unwrap();
@@ -1331,7 +1362,7 @@ fn app_window_wrapper_family_uses_type_scale_and_theme_tokens() {
             .span_style("id:tx-filter-account-option >> text:测试现金")
             .unwrap()
             .color,
-        nsh_core::Color(0xe6edf4ff),
+        theme_color("foreground", Scheme::Dark),
         "选项行前景 = foreground 暗档"
     );
     app.press("id:tx-filter-account-option >> text:测试现金")
@@ -1349,7 +1380,7 @@ fn app_window_wrapper_family_uses_type_scale_and_theme_tokens() {
             .span_style("text:删除后不可恢复。")
             .unwrap()
             .color,
-        nsh_core::Color(0xe88080ff),
+        theme_color("destructive", Scheme::Dark),
         "警示句色 = destructive 暗档"
     );
     app.press("id:danger-cancel").unwrap();
@@ -10195,7 +10226,7 @@ fn scheduled_view_typography_and_semantic_colors_follow_design_scale() {
     );
     assert_eq!(
         tab.color,
-        nsh_core::Color(0x182635ff),
+        theme_color("foreground", Scheme::Light),
         "形态页签前景 = foreground 亮态令牌"
     );
     let title = app.screen().span_style("text:订阅清单").unwrap();
@@ -10212,7 +10243,7 @@ fn scheduled_view_typography_and_semantic_colors_follow_design_scale() {
     );
     assert_eq!(
         caption.color,
-        nsh_core::Color(0x5c6c7eff),
+        theme_color("muted-foreground", Scheme::Light),
         "单位衬注色 = muted-foreground 亮态令牌"
     );
     let primary = app
@@ -10226,7 +10257,7 @@ fn scheduled_view_typography_and_semantic_colors_follow_design_scale() {
     );
     assert_eq!(
         primary.color,
-        nsh_core::Color(0xf2f8ffff),
+        theme_color("primary-foreground", Scheme::Light),
         "主按钮文字色 = primary-foreground 亮态令牌（非裸白）"
     );
     let stat = app
@@ -10249,13 +10280,13 @@ fn scheduled_view_typography_and_semantic_colors_follow_design_scale() {
         .unwrap();
     assert_eq!(
         tab.color,
-        nsh_core::Color(0xe6edf4ff),
+        theme_color("foreground", Scheme::Dark),
         "形态页签前景 = foreground 暗态令牌"
     );
     let caption = app.screen().span_style("text:/^单位：/").unwrap();
     assert_eq!(
         caption.color,
-        nsh_core::Color(0x93a4b6ff),
+        theme_color("muted-foreground", Scheme::Dark),
         "单位衬注色 = muted-foreground 暗态令牌"
     );
     let primary = app
@@ -10264,7 +10295,7 @@ fn scheduled_view_typography_and_semantic_colors_follow_design_scale() {
         .unwrap();
     assert_eq!(
         primary.color,
-        nsh_core::Color(0x0b2239ff),
+        theme_color("primary-foreground", Scheme::Dark),
         "主按钮文字色 = primary-foreground 暗态令牌（非裸白）"
     );
 }
@@ -14184,7 +14215,7 @@ fn investments_view_semantic_tokens_follow_theme_scale_in_light_and_dark() {
     let hero = app.screen().span_style("text:¥132.95").unwrap();
     assert_eq!(
         hero.color,
-        nsh_core::Color(0x182635ff),
+        theme_color("foreground", Scheme::Light),
         "Hero 前景 = 主题表 foreground 亮档"
     );
     assert_eq!(
@@ -14194,17 +14225,17 @@ fn investments_view_semantic_tokens_follow_theme_scale_in_light_and_dark() {
     );
     assert_eq!(
         app.screen().span_style("text:¥122.95").unwrap().color,
-        nsh_core::Color(0xd03050ff),
+        theme_color("expense", Scheme::Light),
         "累计收益正值亮色 = 主题表 expense 亮档（红涨）"
     );
     assert_eq!(
         app.screen().span_style("text:投资概览").unwrap().color,
-        nsh_core::Color(0x182635ff),
+        theme_color("foreground", Scheme::Light),
         "卡标题中性前景亮档（palette.fg）"
     );
     assert_eq!(
         app.screen().span_style("text:¥0").unwrap().color,
-        nsh_core::Color(0xd03050ff),
+        theme_color("expense", Scheme::Light),
         "持仓收益零值照 Gain 档（pnl_semantic ≥0 为涨）= expense 亮档"
     );
 
@@ -14214,7 +14245,7 @@ fn investments_view_semantic_tokens_follow_theme_scale_in_light_and_dark() {
     let hero_dark = app.screen().span_style("text:¥132.95").unwrap();
     assert_eq!(
         hero_dark.color,
-        nsh_core::Color(0xe6edf4ff),
+        theme_color("foreground", Scheme::Dark),
         "Hero 前景暗色 = 主题表 foreground 暗档"
     );
     assert_eq!(
@@ -14224,22 +14255,22 @@ fn investments_view_semantic_tokens_follow_theme_scale_in_light_and_dark() {
     );
     assert_eq!(
         app.screen().span_style("text:¥122.95").unwrap().color,
-        nsh_core::Color(0xe88080ff),
+        theme_color("expense", Scheme::Dark),
         "累计收益正值暗色 = 主题表 expense 暗档"
     );
     assert_eq!(
         app.screen().span_style("text:投资概览").unwrap().color,
-        nsh_core::Color(0xe6edf4ff),
+        theme_color("foreground", Scheme::Dark),
         "卡标题中性前景暗档（palette.fg）"
     );
     assert_eq!(
         app.screen().span_style("text:¥0").unwrap().color,
-        nsh_core::Color(0xe88080ff),
+        theme_color("expense", Scheme::Dark),
         "持仓收益零值暗色照 Gain 档 = expense 暗档"
     );
     assert_eq!(
         app.screen().span_style("text:本位币 CNY").unwrap().color,
-        nsh_core::Color(0x93a4b6ff),
+        theme_color("muted-foreground", Scheme::Dark),
         "币种弱化标注暗色 = 主题表 muted-foreground 暗档"
     );
 }

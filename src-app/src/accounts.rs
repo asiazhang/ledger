@@ -146,10 +146,12 @@ pub(crate) fn AccountsView() -> impl IntoElement {
     });
 
     // 主题令牌（双态自适应；缺失兜底统一归 crate::theme 单点）。
-    let fg = crate::theme::color("foreground");
-    let muted = crate::theme::color("muted-foreground");
+    let crate::views::ViewPalette {
+        fg,
+        muted,
+        danger_fg,
+    } = crate::views::view_palette();
     let accent = crate::theme::color("primary");
-    let danger_fg = crate::theme::color("destructive");
 
     // 操作反馈条位（NSH 无 toast——#2038 裁决；旧壳 message.success/error
     // 的条位对应物：新动作开始时清回空）。状态语义: None = 无 / 空串 = 进
