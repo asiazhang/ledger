@@ -1,4 +1,4 @@
-//! NSH 根组件与启动结果视图模型（issue #2017 骨架；#2073 起视图本体归位——交易表格住 [`crate::transactions`]、预算视图住 [`crate::budget`]，本模块只持根组件、启动竖井与启动三态呈现）。
+//! NSH 根组件与启动结果视图模型（issue #2017 骨架；#2073 起视图本体归位——交易表格住 [`crate::transactions`]、预算视图住 [`crate::budget`]，本模块只持根组件、启动竖井与启动形态呈现（含密文库锁定态，#2088））。
 //!
 //! 装配入口可注入（docs/research/nsh-testing-capabilities.md §3.1：lib + bin
 //! 双靶，bin 薄启动）：bin（`main.rs`）解析启动参数后经 [`set_book_dir`] 注入
@@ -31,7 +31,7 @@ use crate::nav_model::ViewName;
 use crate::{
     accounts, backup_host, budget, danger, dashboard, investments, items, logging, nav, nav_model,
     reports, scheduled, search, settings, sidebar, signals, sync_triggers, transactions, tx_filter,
-    tx_view_preferences, views,
+    tx_view_preferences, unlock, views,
 };
 
 /// 启动装配入口：账本目录（bin 注入一次；headless 测试按场景注入）。槽位
@@ -111,6 +111,10 @@ pub fn reset_book_assembly() {
     reports::reset_for_tests();
     scheduled::reset_for_tests();
     investments::reset_for_tests();
+    // #2088：加密锁定门槽同批复位（上一场景的锁定态不得泄入下一场景——
+    // 门槽复位后下个取用重新 seed 恒开实例；锁定面板信号组随各场景 App
+    // 实例存亡，无进程级复位面）。
+    boot::reset_encryption_gate_for_tests();
     // #2046：投资同步接缝与 staleness 单例（进程级信号束属同批复位点——
     // 上一场景的接缝状态不得响应下一场景）。
     crate::investment_sync::reset_all_for_tests();
@@ -141,6 +145,10 @@ pub enum StartupView {
     ///（默认数据目录）无账本库。`fallback_reason` = 注册表损坏回退原因
     ///（`Some` 时引导界面带损坏告示；`None` = 未配置的干净出厂现场）。
     Onboarding { fallback_reason: Option<String> },
+    /// 密文库锁定态（issue #2088）：引导已识别密文库（引导记录落槽、锁定门
+    /// 置锁），等待主口令解锁或忘口令重置；成功后经业务可用起点单点进入
+    /// [`StartupView::Ready`]（原位换连，不重走启动竖井）。
+    Locked,
     /// 引导失败：码化错误的用户可见文案（zh-CN 原样呈现）。
     Failed {
         message: String,
@@ -188,36 +196,7 @@ pub fn run_startup_with_trigger_timings(
         },
     };
     match booted {
-        Ok(Some(db)) => {
-            // 日志档位接管（旧壳 boot_sequence 启动接线语义保持：RUST_LOG 显
-            // 式优先；接管失败仅告警不阻启动——排障档位不是启动位面，锁异常
-            // 按读路径容错同口径）。接管在 logging 单点内化，读路径消费面。
-            logging::apply_persisted(&db);
-            // 自动备份调度宿主接线（issue #2078）：会话首次兜底补跑 + 调度线程
-            // 挂载（旧壳 `start_background_services` 的本壳对应编排点；装载期
-            // 的偏好推送与深路径发射器在 [`backup_host::install_shell_side`]）。
-            backup_host::start_session_host(&db);
-            // AI 导入 HTTP 壳挂载（#2081）：库就绪即挂，旧壳 setup 内
-            // start_http_server 挂载语义保持（端口 127.0.0.1:9527、进程级
-            // 一次）；生产发射器与门注入在 http_host 内化（ADR-0112 决策 5）。
-            // 删除本接线即 headless 挂载断言红（tests/app_headless.rs）。
-            crate::http_host::mount(&db);
-            *db_slot() = Some(std::sync::Arc::new(db));
-            // 多端同步触发接线（issue #2080）：旧壳 setup 的 start_triggers 对应
-            // 面——写后即时同步钩子随域栈引导接线（wiring），触发闭集（打开即
-            // 同步 + 桌面低频轮询）随本调用拉起。旧壳「锁定/失败不拉起」同口径：
-            // 只在引导成功分支（占位连接不是业务库）。唯一接线点由源码扫描守门
-            // 钉住（sync_triggers guard_tests），删接线即 headless 旅程与触发
-            // 接线测试红（ADR-0087）。
-            sync_triggers::wire_sync_triggers_with(timings);
-            // 行情车道启动接线（issue #2079）：三条行情后台车道（价格历史补
-            // 全 / 每日现价刷新 / 每日汇率增量同步）在业务可用起点一并挂载
-            //（旧壳 start_background_services 挂载闭集平价，lib.rs:153-155）。
-            // 删除本行即车道接线测试红（tests/market_*_lane.rs + 本模块
-            // market_lanes::probe 探针）。
-            crate::market_lanes::start_market_lanes();
-            StartupView::Ready
-        }
+        Ok(Some(db)) => enter_business_surface(db, timings),
         // 首启引导现场（ADR-0146 决策 2，T2 #2092）：数据根已注入且注册表
         // 未配置（含损坏回退）且解析落点无库——分流信号在
         // boot_ledger_via_registry 内按注册表状态（RegistryBootState）判定，
@@ -232,18 +211,69 @@ pub fn run_startup_with_trigger_timings(
             },
             None => StartupView::MissingArg,
         },
+        // 密文库等待解锁（issue #2088）：引导层产出稳定的等待解锁码，呈现
+        // 层映射为锁定视图（解锁 / 忘口令重置入口），不是失败态。
+        Err(e) if e.is_code(boot::CODE_AWAITING_UNLOCK) => StartupView::Locked,
         Err(e) => failed_view(&e),
     }
 }
 
+/// 业务可用起点单点（旧壳 `resume_business_surface` 同位，issue #2088）：
+/// 启动竖井成功分支与解锁 / 重置成功后的续接共用——日志档位接管 → 会话槽
+/// 换入 → 加密锁定门开门（fail-closed 次序：先换入后开门，门在换入前若仍
+/// 锁定，调度 / 同步触发的门检自然空转）→ 自动备份调度宿主同点补拉起
+///（锁定场景解锁后的唯一拉起时机，backup_host 模块文档预留的编排点）→
+/// AI 导入 HTTP 壳挂载 → 同步触发 → 行情车道。调用方（引擎线程）在返回
+/// [`StartupView::Ready`] 后接线 HTTP 泵（`http_host::spawn_pump`，泵需引
+/// 擎线程）。
+pub(crate) fn enter_business_surface(
+    db: DbState,
+    timings: ledger_sync_engine::TriggerTimings,
+) -> StartupView {
+    // 日志档位接管（旧壳 boot_sequence 启动接线语义保持：RUST_LOG 显
+    // 式优先；接管失败仅告警不阻启动——排障档位不是启动位面，锁异常
+    // 按读路径容错同口径）。接管在 logging 单点内化，读路径消费面。
+    logging::apply_persisted(&db);
+    // 自动备份调度宿主接线（issue #2078）：会话首次兜底补跑 + 调度线程
+    // 挂载（旧壳 `start_background_services` 的本壳对应编排点；装载期
+    // 的偏好推送与深路径发射器在 [`backup_host::install_shell_side`]）。
+    // 密文库锁定场景：调度线程挂载在本步发生（线程每轮门检在锁定期间
+    // 空转，见 [`backup_host::business_availability`]），首次兜底在解锁后
+    // 的本次调用补跑（issue #2088 同点补拉起）。
+    backup_host::start_session_host(&db);
+    // AI 导入 HTTP 壳挂载（#2081）：库就绪即挂，旧壳 setup 内
+    // start_http_server 挂载语义保持（端口 127.0.0.1:9527、进程级
+    // 一次）；生产发射器与门注入在 http_host 内化（ADR-0112 决策 5）。
+    // 删除本接线即 headless 挂载断言红（tests/app_headless.rs）。
+    crate::http_host::mount(&db);
+    *db_slot() = Some(std::sync::Arc::new(db));
+    // 加密锁定门开门（fail-closed 次序：会话就位后开门；旧壳
+    // resume_business_surface 的「先换连再开门」同序）。明文启动门本就
+    // 恒开，翻转幂等。
+    boot::set_encryption_locked(false);
+    // 多端同步触发接线（issue #2080）：旧壳 setup 的 start_triggers 对应
+    // 面——写后即时同步钩子随域栈引导接线（wiring），触发闭集（打开即
+    // 同步 + 桌面低频轮询）随本调用拉起。旧壳「锁定/失败不拉起」同口径：
+    // 只在引导成功分支（占位连接不是业务库）。唯一接线点由源码扫描守门
+    // 钉住（sync_triggers guard_tests），删接线即 headless 旅程与触发
+    // 接线测试红（ADR-0087）。
+    sync_triggers::wire_sync_triggers_with(timings);
+    // 行情车道启动接线（issue #2079）：三条行情后台车道（价格历史补
+    // 全 / 每日现价刷新 / 每日汇率增量同步）在业务可用起点一并挂载
+    //（旧壳 start_background_services 挂载闭集平价，lib.rs:153-155）。
+    // 删除本行即车道接线测试红（tests/market_*_lane.rs + 本模块
+    // market_lanes::probe 探针）。
+    crate::market_lanes::start_market_lanes();
+    StartupView::Ready
+}
+
 /// 引导失败的失败态构造单点（错误 → 呈现态，含「选择账本库目录…」出口的
-/// 挂载判定，ADR-0146 决策 4 的负向闭集）：密文库与损坏残留（含无法自动修
-/// 复的外来形态）缺的是解锁与诊断，不是目录——不挂；其余失败（book-missing
-/// 本尊、文件对话框、注册表族、IO 与建连失败）保持出口在场，可重试或另指
-/// 目录。启动任务与失败态选择器恢复路径共用。
+/// 挂载判定，ADR-0146 决策 4 的负向闭集）：损坏残留（含无法自动修复的外来
+/// 形态）缺的是诊断，不是目录——不挂；其余失败（book-missing 本尊、文件
+/// 对话框、注册表族、IO 与建连失败）保持出口在场，可重试或另指目录。
+/// 密文库不经本函数（等待解锁码在 run_startup 映射为锁定视图，#2088）。
 fn failed_view(error: &AppError) -> StartupView {
-    let diagnosis_only = error.is_code(boot::CODE_ENCRYPTED_UNSUPPORTED)
-        || error.is_code(ledger_infra::db::boot::BOOT_DB_UNREADABLE)
+    let diagnosis_only = error.is_code(ledger_infra::db::boot::BOOT_DB_UNREADABLE)
         || error.is_code(ledger_infra::db::boot::BOOT_DB_NORMALIZE_FAILED);
     StartupView::Failed {
         message: error.to_string(),
@@ -355,6 +385,8 @@ pub fn headline_text(view: &StartupView) -> String {
         StartupView::Loading => "正在打开账本库…".to_owned(),
         StartupView::Ready => String::new(),
         StartupView::Onboarding { .. } => ONBOARDING_HEADLINE.to_owned(),
+        // 旧壳 unlock.title 同词（zh-CN 词条原样承载，#2088）。
+        StartupView::Locked => "账本已加密".to_owned(),
         StartupView::Failed { message, .. } => format!("启动失败：{message}"),
     }
 }
@@ -364,6 +396,8 @@ pub fn secondary_text(view: &StartupView) -> String {
     match view {
         StartupView::MissingArg => "用法：nsh-app <账本目录>".to_owned(),
         StartupView::Onboarding { .. } => ONBOARDING_HINT.to_owned(),
+        // 旧壳 unlock.hint 同词（#2088）。
+        StartupView::Locked => "输入主口令解锁您的数据".to_owned(),
         _ => match book_dir_slot().as_ref() {
             Some(dir) => dir.display().to_string(),
             None => String::new(),
@@ -524,7 +558,7 @@ fn view_host(nav: nav::NavStore) -> impl IntoElement {
 })
 }
 
-/// 立桩根组件：就绪前居中呈现启动三态，就绪后承载导航骨架（侧栏 + 内容区）。
+/// 立桩根组件：就绪前居中呈现启动形态（缺参/引导中/首启引导/失败/密文锁定，#2088 起五态），就绪后承载导航骨架（侧栏 + 内容区）。
 #[component]
 pub fn App() -> impl IntoElement {
     // 导航状态与筛选会话态挂根组件实例（根永生，信号存活与进程同步；后续消费
@@ -556,6 +590,9 @@ pub fn App() -> impl IntoElement {
     // 调度轮）。调度线程挂载在启动竖井成功分支（backup_host::start_session_host）。
     backup_host::install_shell_side();
     let state = signal(StartupView::Loading);
+    // 密文库锁定面板信号组（#2088）：根组件体单次构造（owner 纪律见 unlock
+    // 模块文档——解锁/重置任务挂根 owner，面板子树卸载不取消在途任务）。
+    let locked = unlock::locked_surface(state);
     // 首启引导的新建确认（ADR-0146 决策 2 / ADR-0078 warning 级，T2 #2092）：
     // 开着 = 待确认新建在场；结局回写关窗先行（settings.rs 二选一确认先例）。
     // 确认后任务挂根组件 owner（根永生）——状态翻转到就绪时引导子树卸载，
@@ -781,7 +818,7 @@ pub fn App() -> impl IntoElement {
         state.set(outcome);
     });
     view().flex_1().flex_col().app_class("bg-background").child(
-        // 启动三态与导航骨架互斥呈现：就绪前居中三态，就绪后侧栏 + 内容区。
+        // 启动形态与导航骨架互斥呈现：就绪前居中启动形态（含密文锁定面板），就绪后侧栏 + 内容区。
         // 单一分支承载内容区（侧栏与视图宿主同分支），不双挂。
         when(
             move || matches!(state.get(), StartupView::Ready),
@@ -831,14 +868,20 @@ pub fn App() -> impl IntoElement {
             },
         )
         .otherwise(move || {
-            // 首启引导（ADR-0146 决策 2，T2 #2092）：引导态呈现引导面板
-            //（欢迎 + 新建动作；损坏告示与确认对话见下），其余非就绪态
-            //（缺参 / 引导中 / 失败）保持既有两行呈现——失败态另挂「选择账本库
-            // 目录…」出口（ADR-0146 决策 4，T4 #2094）。文案单点在
-            // headline_text / secondary_text（Onboarding 臂）。
+            // 密文库锁定面板（#2088）优先分流：解锁 + 忘口令重置入口；文案
+            // 与 headline_text / secondary_text 的 Locked 臂同源。其余非就
+            // 绪态（首启引导 / 缺参 / 引导中 / 失败）保持既有呈现——首启
+            // 引导（ADR-0146 决策 2，T2 #2092）呈现引导面板（欢迎 + 新建
+            // 动作；损坏告示与确认对话见下），失败态另挂「选择账本库
+            // 目录…」出口（ADR-0146 决策 4，T4 #2094）。
             when(
-                move || matches!(state.get(), StartupView::Onboarding { .. }),
-                move || {
+                move || state.get() == StartupView::Locked,
+                move || unlock::locked_panel(locked, fg, muted),
+            )
+            .otherwise(move || {
+                when(
+                    move || matches!(state.get(), StartupView::Onboarding { .. }),
+                    move || {
                     view()
                         .flex_1()
                         .items_center()
@@ -977,6 +1020,7 @@ pub fn App() -> impl IntoElement {
                         )
                         .otherwise(view),
                     )
+                })
             })
         }),
     )

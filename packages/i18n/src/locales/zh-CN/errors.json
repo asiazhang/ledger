@@ -433,8 +433,8 @@
     "install-failed": "更新安装失败，请重试"
   },
   "nsh-shell": {
-    "book-missing": "账本库文件不存在：{0}（立桩期请传入已有账本的目录，不新建账本）",
-    "encrypted-unsupported": "密文库暂不支持：原生壳立桩只引导未加密账本库，解锁向导随迁移系列票补齐",
+    "book-missing": "账本库文件不存在：{0}。应用不会自动新建账本库（防止误指向空目录造成空账假象）；请确认目录后重试，或选择其他账本库目录。",
+    "awaiting-unlock": "账本库已加密：请输入主口令解锁",
     "session-missing": "内部错误：账本库会话缺失，请重新打开账本库",
     "policy-insurer-name-required": "保单表单的保司名不能为空（保存入口先拦空名，本体在域内兜底）",
     "policy-rebuild-target-missing": "内部错误：改价目标缺失"

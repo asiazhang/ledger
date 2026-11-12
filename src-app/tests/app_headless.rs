@@ -337,8 +337,10 @@ fn app_window_flips_pages_by_pagination_bar_click() {
     open_transactions(&mut app);
     app.wait_for("text:2026-05-30").unwrap();
     // 首页行集在屏 = 装载已落位；分页条挂载等其条件回合（#2057 窄窗双渲染
-    // 起 tx-table 经断点分支挂载，落位批次差一拍——凡按压分页条前等挂载）。
+    // 起 tx-table 经断点分支挂载，落位批次差一拍），再等目标页码按钮本身
+    // ——容器先行挂载、按钮行再落一拍（#2072），不等则 press 落进空窗。
     app.wait_for("id:tx-pagination").unwrap();
+    app.wait_for("role:button[2]").unwrap();
 
     // 点击页码 2 → 末页行集替换（最旧 50 笔，2026-01-01..2026-02-19），首页
     // 最新行不再在屏。断言对准视口内的首行（表格按视口虚拟化，视口外的行不
@@ -438,10 +440,16 @@ fn app_window_paginates_search_hits_after_enter_search() {
     app.type_text("id:tx-search", "批量造数").unwrap();
     app.submit("id:tx-search").unwrap();
     open_transactions(&mut app);
+    // 重进交易页携关键词重载——行集落屏即装载完成（分页按钮 disabled(loading)
+    // 同回合解除，#2072），按压分页条前先等行集。
+    app.wait_for("text:2026-05-30").unwrap();
 
     // 搜索态翻页：点击页码 2 → 末页（最旧 50 笔，2026-01-01..2026-02-19），
     // 首页最新行不再在屏（断言对准视口内首行，与列表态翻页同口径）。
     app.wait_for("id:tx-pagination").unwrap();
+    // 容器先行挂载、按钮行再落一拍（#2072 同 #2057 批次差一拍）——按压前
+    // 等目标页码按钮本身。
+    app.wait_for("role:button[2]").unwrap();
     app.press("role:button[2]").unwrap();
     app.wait_for("text:2026-02-19").unwrap();
     app.wait_for_gone("text:2026-05-30", DEFAULT_WAIT).unwrap();
@@ -460,8 +468,10 @@ fn app_window_steps_back_by_previous_button() {
     let mut app = Headless::start(desktop_config()).unwrap();
 
     open_transactions(&mut app);
-    // 分页条挂载等其装载回合（#2057 起落位批次差一拍——按压前等挂载）。
+    // 分页条挂载等其装载回合（#2057 起落位批次差一拍）；容器先行挂载、
+    // 按钮行再落一拍（#2072 间歇红根因）——按压前等目标页码按钮本身。
     app.wait_for("id:tx-pagination").unwrap();
+    app.wait_for("role:button[2]").unwrap();
     app.press("role:button[2]").unwrap();
     app.wait_for("text:2026-02-19").unwrap();
 
@@ -1624,8 +1634,10 @@ fn perf_dataset_book_counts_match_domain_read_across_pages_and_scroll() {
     app.wait_for_gone(&newest, DEFAULT_WAIT).unwrap();
 
     // 页数一致：末页页码按钮存在且可点（页码按钮闭集即 total_pages 的用户
-    // 可见投影——按钮不存在时 press 即红），末页首行 = 最旧一笔。
+    // 可见投影——按钮不存在时 press 即红），末页首行 = 最旧一笔。按钮行
+    // 比行集晚一拍落位（#2072）——按压前等按钮本身。
     let last_button = format!("role:button[{}]", facts.pages);
+    app.wait_for(&last_button).unwrap();
     app.press(&last_button).unwrap();
     let oldest = format!("text:{}", facts.oldest_date);
     app.wait_for(&oldest).unwrap();
@@ -3619,8 +3631,12 @@ fn budget_form_creates_budget_via_pinyin_search_and_refreshes_list() {
     app.type_text("id:budget-amount", "80").unwrap();
     app.press("id:budget-add").unwrap();
 
-    // 失效信号驱动重读：新行落表（子分类路径名 + 金额 80），表单清空回占位。
-    app.wait_for_within("text:80", DEFAULT_WAIT).unwrap();
+    // 失效信号驱动重读：先等表单清空回占位（「支出分类」回屏），再等新行
+    // 落表（金额 80）。CI 慢环境时序锚定：wait_for_within("text:80") 会被
+    // 输入框自身已填的「80」立即满足，抢在表单清空/重读落表前（run
+    // 42949840617 首崩即此：占位未回屏，「支出分类」断言失败）。
+    app.wait_for("text:支出分类").unwrap();
+    app.wait_for("text:80").unwrap();
     assert_eq!(
         app.screen().count("text:鲜食 > 刺身").unwrap(),
         1,
@@ -6223,7 +6239,9 @@ fn search_view_paginates_hits() {
     app.wait_for("id:search-pagination").unwrap();
 
     // 点击页码 2 → 末页行集（最旧 50 笔，2026-01-01..2026-02-19），首页
-    // 最新行离屏（断言对准视口内首行，交易列表分页同口径）。
+    // 最新行离屏（断言对准视口内首行，交易列表分页同口径）。容器先行
+    // 挂载、按钮行再落一拍（#2072）——按压前等目标页码按钮本身。
+    app.wait_for("role:button[2]").unwrap();
     app.press("role:button[2]").unwrap();
     app.wait_for("text:2026-02-19").unwrap();
     app.wait_for_gone("text:2026-05-30", DEFAULT_WAIT).unwrap();
@@ -6741,6 +6759,10 @@ fn savings_view_create_goal_journey() {
     app.wait_for("text:目标已创建，专属账户已就位").unwrap();
     app.wait_for_gone("id:sg-form-save", DEFAULT_WAIT).unwrap();
     app.wait_for("id:sg-table").unwrap();
+    // 重读异步落表（重读期屏幕可呈「正在加载…」，表壳 wait 不证行落屏）：
+    // 等行格内容再断言（run 43128098055 首崩即此）。
+    app.wait_for("text:¥500").unwrap();
+    app.wait_for("text:进行中").unwrap();
     for text in ["¥500", "进行中"] {
         assert!(
             app.shows(text),
@@ -6862,6 +6884,8 @@ fn savings_view_archives_unarchives_and_deletes_with_confirmation() {
     app.press("id:danger-confirm").unwrap();
     app.wait_for("text:目标已删除，专属账户一并收起，历史交易仍可查")
         .unwrap();
+    // 重读异步落表：反馈在屏 ≠ 重读已落，等行离场再断。
+    app.wait_for_gone("id:sg-edit", DEFAULT_WAIT).unwrap();
     assert_eq!(
         app.screen().count("id:sg-edit").unwrap(),
         0,
@@ -7143,6 +7167,8 @@ fn insurers_view_edit_backfill_and_rename_duplicate_guard() {
     app.press("id:ins-edit-save").unwrap();
     app.wait_for("text:已更新保险公司").unwrap();
     app.wait_for_gone("id:ins-edit-name", DEFAULT_WAIT).unwrap();
+    // 保存即失效重读（重读期屏幕可呈「正在加载…」）：等行内容回屏再断。
+    app.wait_for("text:海峡金桥财产保险").unwrap();
     assert!(app.shows("海峡金桥财产保险"), "原值保持");
 
     // 改名撞在用同名（种子「中国人寿」）：码化错误、弹窗不关（内容不丢）。
@@ -7472,6 +7498,8 @@ fn accounts_view_edit_renames_account() {
     open_accounts(&mut app);
 
     // ⋯ 开菜单 → 菜单闭集。
+    // 行集异步落屏：等行动作锚再按（CI 慢环境 press 竞态锚定，同 #2072）。
+    app.wait_for(&format!("id:acct-more-{cash_id}")).unwrap();
     app.press(&format!("id:acct-more-{cash_id}")).unwrap();
     let menu = app.menu().expect("「⋯」应打开行菜单");
     assert_eq!(
@@ -7565,6 +7593,7 @@ fn accounts_view_archives_and_restores() {
     open_accounts(&mut app);
 
     // 归档确认。
+    app.wait_for(&format!("id:acct-more-{cash_id}")).unwrap();
     app.press(&format!("id:acct-more-{cash_id}")).unwrap();
     app.choose_menu_item("归档").unwrap();
     app.wait_for("text:归档账户").unwrap();
@@ -7644,6 +7673,9 @@ fn accounts_view_adjust_balance_broadcasts_transactions_invalidated() {
     open_accounts(&mut app);
 
     // 调整弹窗：当前余额 -¥25（V017 缓存读数）。
+    // 行集异步落屏：等行动作锚再按（CI 慢环境 press 竞态锚定，同 #2072；
+    // run 43053079348 首崩即此）。
+    app.wait_for(&format!("id:acct-more-{cash_id}")).unwrap();
     app.press(&format!("id:acct-more-{cash_id}")).unwrap();
     app.choose_menu_item("调整余额").unwrap();
     app.wait_for("text:调整余额").unwrap();
@@ -7806,6 +7838,8 @@ fn accounts_view_name_click_drills_to_transactions_filtered() {
 
     // 点名称 → 交易页带账户筛选下钻：只剩现金账户两笔。「删除即红」负向条
     // 目：删账下钻 nav::open 接线 → 点击后停留账户视图，本断言红。
+    // 行集异步落屏：等行动作锚再按（CI 慢环境 press 竞态锚定，同 #2072）。
+    app.wait_for(&format!("id:acct-name-{cash_id}")).unwrap();
     app.press(&format!("id:acct-name-{cash_id}")).unwrap();
     app.wait_for("id:tx-table").unwrap();
     app.wait_for("text:共 2 条").unwrap();
@@ -9451,6 +9485,8 @@ fn scheduled_view_row_actions_pause_resume_cancel() {
 
     // 暂停：行随状态过滤离「进行中」视图（纯前端过滤，旧壳 filteredRows 平价；
     // 操作反馈与恢复钮下一过滤断——先钉行锚点消失再换过滤）。
+    // 行集异步落屏：等行动作锚再按（CI 慢环境 press 竞态锚定，同 #2072）。
+    app.wait_for(&format!("id:sub-pause-{plan_id}")).unwrap();
     app.press(&format!("id:sub-pause-{plan_id}")).unwrap();
     app.wait_for_gone(&format!("id:sub-next-{plan_id}"), DEFAULT_WAIT)
         .unwrap();
@@ -9513,6 +9549,8 @@ fn scheduled_view_edit_subscription_updates_fields() {
     let mut app = Headless::start(desktop_config()).unwrap();
     open_scheduled(&mut app);
 
+    // 行集异步落屏：等行动作锚再按（CI 慢环境 press 竞态锚定，同 #2072）。
+    app.wait_for(&format!("id:sub-edit-{plan_id}")).unwrap();
     app.press(&format!("id:sub-edit-{plan_id}")).unwrap();
     app.wait_for("id:app-modal").unwrap();
     app.wait_for("text:编辑订阅").unwrap();
@@ -9566,6 +9604,8 @@ fn scheduled_view_plan_detail_modal_retries_failed_occurrence() {
     open_scheduled(&mut app);
 
     // 开弹层：标题 + 计划备注摘要 + 期次表。
+    // 行集异步落屏：等行动作锚再按（CI 慢环境 press 竞态锚定，同 #2072）。
+    app.wait_for(&format!("id:sub-detail-{plan_id}")).unwrap();
     app.press(&format!("id:sub-detail-{plan_id}")).unwrap();
     app.wait_for("id:occ-table").unwrap();
     app.wait_for("text:会员扣款").unwrap();
@@ -9921,6 +9961,9 @@ fn scheduled_view_transfer_row_actions_pause_resume_cancel() {
 
     // 暂停：行随状态过滤离「进行中」视图（纯前端过滤，旧壳 filteredRows 平
     // 价；先钉行锚点消失再换过滤）。
+    // 行集异步落屏：等行动作锚再按（CI 慢环境 press 竞态锚定，同 #2072）。
+    app.wait_for(&format!("id:transfer-pause-{plan_id}"))
+        .unwrap();
     app.press(&format!("id:transfer-pause-{plan_id}")).unwrap();
     app.wait_for_gone(&format!("id:transfer-next-{plan_id}"), DEFAULT_WAIT)
         .unwrap();
@@ -12503,13 +12546,15 @@ fn encryption_enable_guard_blocks_and_converts() {
         ),
         "取消后文件头保持明文（零转换）"
     );
-    // 确认 → 整库转换（文件头密文）+ 本壳后果提示。
+    // 确认 → 整库转换（文件头密文）+ 原位换连本会话继续可用（旧壳自动重启
+    // 的本壳替代口径，#2088）：卡翻转到密文会话形态（已开启 + 写面四件）。
     app.press("id:enc-enable").unwrap();
     app.wait_for("text:开启加密？").unwrap();
     app.press("id:danger-confirm").unwrap();
     app.wait_for(
-        "text:加密已开启（整库转换完成）。本壳暂不支持密文库启动——解锁向导界外另票：请用旧壳打开此数据（下次启动本壳将呈现「密文库暂不支持」）。",
-    ).unwrap();
+        "text:加密已开启（整库转换完成），本会话已切换到加密库；下次启动需输入主口令解锁。",
+    )
+    .unwrap();
     assert!(
         matches!(
             ledger_infra::db::encryption::probe_file_kind(&dir.join("ledger.db")).unwrap(),
@@ -12517,6 +12562,15 @@ fn encryption_enable_guard_blocks_and_converts() {
         ),
         "确认后整库转换为密文库（文件头探测）"
     );
+    // 卡面翻转到密文会话形态：已开启警示块 + 自动解锁平台注记 + 修改主口令
+    // / 关闭加密写面在屏（旧壳 EncryptionSettings 已开启视图平价）。
+    app.wait_for("text:已开启加密").unwrap();
+    app.wait_for("id:enc-auto-unlock-note").unwrap();
+    app.wait_for("id:enc-change-form").unwrap();
+    app.wait_for("id:enc-disable-form").unwrap();
+    // 会话零中断：开启后主界面照常可用（读路径直调换连后新世界）。
+    open_transactions(&mut app);
+    app.wait_for("id:tx-table").unwrap();
 }
 
 /// 同步卡守卫旅程：通道未配置 → 「立即同步」报未配置码化错误（轮次编排归
@@ -13208,7 +13262,8 @@ fn investments_view_overview_lands_with_period_numbers() {
 
     open_investments(&mut app);
 
-    // 页签闭集（旧壳 investments.tabs 前两位；持仓/标的/明细随 ⑮/⑯就位）。
+    // 页签闭集（旧壳 investments.tabs 前两位；持仓/标的/明细已随 #2046 ⑮ /
+    // #2047 ⑯ 就位）。
     for tab in ["概览", "盈亏"] {
         assert!(
             app.shows(tab),
@@ -13555,7 +13610,9 @@ fn investments_view_pnl_pagination_slices_year_rows() {
         "第 1 页不含最老年份 2025（8 行/页切片）：{:?}",
         texts
     );
-    // 翻第 2 页：2025 行出现（on_change 页码写回会话槽的接线）。
+    // 翻第 2 页：2025 行出现（on_change 页码写回会话槽的接线）。按钮行
+    // 比分页容器晚一拍落位（#2072）——按压前等按钮本身。
+    app.wait_for("role:button[2]").unwrap();
     app.press("role:button[2]").unwrap();
     let texts = app.screen().texts();
     assert!(
@@ -13831,7 +13888,9 @@ fn investments_view_holdings_pagination_slices_rows() {
         "第 1 页不含末段 S24：{:?}",
         texts
     );
-    // 翻第 2 页：S20..S24 行出现。
+    // 翻第 2 页：S20..S24 行出现。分页按钮行比表头晚一拍落位（#2072 同型
+    // 空窗）——按压前等按钮本身。
+    app.wait_for("role:button[2]").unwrap();
     app.press("role:button[2]").unwrap();
     app.wait_for("text:S24").unwrap();
 
@@ -13871,8 +13930,9 @@ fn investments_view_holdings_sync_entry_reports_empty_book() {
 
 /// 缺价行引导与 staleness 提示条（#1193 / #1190）：行情通道标的缺现价 →
 /// 行内「同步」锚在屏（动作 = 同步触发，与卡头入口同一接缝单点）＋ staleness
-/// 提示条在屏（开场本地水位检查，持仓缺现价入选）。手动报价通道的「录价」
-/// 与页面级回执随⑯ 手动报价票落位（缺件留痕见模块头）。删 staleness 装载
+/// 提示条在屏（开场本地水位检查，持仓缺现价入选）。手动报价通道行内不设
+/// 引导（录价入口住标的库页签，#2047 ⑯；分流见 holdings 模块头）。删
+/// staleness 装载
 /// 接线（视图落位装载）→ 提示条永不出现（本测红；失效重查删除即红钉在
 /// lib staleness 探针）。
 #[test]
@@ -14064,6 +14124,9 @@ fn investments_view_holdings_code_drills_to_ledger_filtered() {
     // 标的），且落点是明细页签。「删除即红」负向条目：删持仓代码链接的
     // nav::open 接线 → 点击后停留持仓页签，本断言红。
     let symbol_anchor = format!("id:holdings-row-{}-{}-symbol", account_id, instrument_id);
+    // 持仓行异步落屏：等行锚再按（CI 慢环境 press 竞态锚定，同 #2072；
+    // run 42927784003 首崩即此——holdings-title 只证页签挂载不证行落屏）。
+    app.wait_for(&symbol_anchor).unwrap();
     app.press(&symbol_anchor).unwrap();
     app.wait_for("id:ledger-title").unwrap();
     app.wait_for("id:ledger-title").unwrap();
@@ -14645,8 +14708,8 @@ fn startup_picker_empty_dir_create_intent_confirms_and_opens() {
     );
 }
 
-/// 密文/损坏选中目录的失败呈现（闭集④⑤共用流程、夹具分场）：既有码化错
-/// 误上屏，失败态不挂选择器出口（缺的是解锁与诊断，不是目录，决策 4）。
+/// 损坏残留选中目录的失败呈现（闭集⑤）：码化错误上屏，失败态不挂选择器
+/// 出口（缺的是诊断，不是目录，决策 4）。
 fn pick_bad_book_dir_reports_coded_error_without_picker(bad_bytes: &[u8], expect: &str) {
     nsh_app::app::reset_book_assembly();
     let root = make_data_root("t4-bad-pick");
@@ -14663,15 +14726,41 @@ fn pick_bad_book_dir_reports_coded_error_without_picker(bad_bytes: &[u8], expect
     assert_eq!(
         app.screen().count("id:startup-pick-book-dir").unwrap(),
         0,
-        "密文/损坏失败态不挂选择器出口"
+        "损坏残留失败态不挂选择器出口"
     );
 }
 
-/// 现场闭集④（密文库）：既有 `nsh-shell.encrypted-unsupported` 呈现 + 无出口。
+/// 现场闭集④（密文库，#2088 反转后语义）：选中密文库目录 → 登记并置活
+/// 动指针后判开 → 引导落锁定视图（解锁面板在屏），无选择器出口（锁定态
+/// 不是失败态，无目录出口）。
 #[test]
-fn startup_picker_encrypted_dir_reports_coded_error_without_picker() {
+fn startup_picker_encrypted_dir_lands_locked_view() {
     let _guard = SERIAL.lock().unwrap();
-    pick_bad_book_dir_reports_coded_error_without_picker(&[0u8; 8_192], "text:/密文库暂不支持/");
+    nsh_app::app::reset_book_assembly();
+    let root = make_data_root("t4-encrypted-pick");
+    let active = seed::make_book_dir("t4-active-missing");
+    seed_registry(&root, &active, &[]);
+    nsh_app::cross_book::set_default_data_dir(root.clone());
+    let picked = seed::make_book_dir("t4-encrypted");
+    fs::write(picked.join("ledger.db"), vec![0u8; 8_192]).unwrap();
+    let mut app = Headless::start(desktop_config()).unwrap();
+    app.wait_for("text:/账本库文件不存在/").unwrap();
+    app.on_pick_paths(vec![picked]).unwrap();
+    app.press("id:startup-pick-book-dir").unwrap();
+    // 锁定视图（解锁面板 + 解锁入口在屏），无选择器出口。
+    app.wait_for("id:locked-panel").unwrap();
+    app.wait_for("id:unlock-passphrase").unwrap();
+    assert_eq!(
+        app.screen().count("id:startup-pick-book-dir").unwrap(),
+        0,
+        "锁定视图不挂选择器出口"
+    );
+    // 活动指针已切至密文本（登记 + 置活动，重启后同本直接落锁定视图）。
+    use ledger_infra::db::book_registry::{RegistryRead, read_registry};
+    let RegistryRead::Resolved(registry) = read_registry(&root) else {
+        panic!("注册表应可解析")
+    };
+    assert_ne!(registry.active_id, "b1", "活动指针已切至新登记的密文本");
 }
 
 /// 现场闭集⑤（损坏残留）：既有损坏码呈现 + 无出口（不自动换目录重试）。
@@ -14684,26 +14773,26 @@ fn startup_picker_corrupt_dir_reports_coded_error_without_picker() {
     );
 }
 
-/// F3（决策 3④ + 决策 4）：选中**在册但**密文的本 → 先分类后切指针：码化
-/// 错误呈现且注册表活动指针未变（旧序先切指针再打开失败会把指针移走，该
-/// 失败态又无选择器出口——应用内不可恢复）。删分类前置（退回在册直切）→
-/// 指针被切走 → 指针断言红。
+/// F3（决策 3⑤ 保留；④随 #2088 反转）：选中**在册但**损坏残留的本 → 先
+/// 分类后切指针失败：码化错误呈现且注册表活动指针未变。（④ 密文库的指针
+/// 断言并入 startup_picker_encrypted_dir_lands_locked_view。）删分类前置
+///（退回在册直切）→ 指针被切走 → 指针断言红。
 #[test]
-fn startup_picker_registered_encrypted_dir_reports_coded_error_pointer_unchanged() {
+fn startup_picker_registered_corrupt_dir_reports_coded_error_pointer_unchanged() {
     let _guard = SERIAL.lock().unwrap();
     nsh_app::app::reset_book_assembly();
-    let root = make_data_root("t4-f3-registered-encrypted");
+    let root = make_data_root("t4-f3-registered-corrupt");
     let active = seed::make_book_dir("t4-active-missing");
-    let other = make_book("t4-registered-encrypted");
-    // 在册兄弟本 b2 的库文件为密文（页对齐密文形态）。
-    fs::write(other.join("ledger.db"), vec![0u8; 8_192]).unwrap();
+    let other = make_book("t4-registered-corrupt");
+    // 在册兄弟本 b2 的库文件为损坏残留（非魔数且非页对齐）。
+    fs::write(other.join("ledger.db"), vec![0xABu8; 20]).unwrap();
     seed_registry(&root, &active, &[("b2", "备用账本", &other)]);
     nsh_app::cross_book::set_default_data_dir(root.clone());
     let mut app = Headless::start(desktop_config()).unwrap();
     app.wait_for("text:/账本库文件不存在/").unwrap();
     app.on_pick_paths(vec![other]).unwrap();
     app.press("id:startup-pick-book-dir").unwrap();
-    app.wait_for("text:/密文库暂不支持/").unwrap();
+    app.wait_for("text:/数据库文件无法打开/").unwrap();
     use ledger_infra::db::book_registry::{RegistryRead, read_registry};
     let RegistryRead::Resolved(registry) = read_registry(&root) else {
         panic!("注册表应可解析")
@@ -14852,9 +14941,9 @@ fn onboarding_pick_empty_dir_create_intent_confirms_and_opens() {
     );
 }
 
-/// 引导态选中密文 / 损坏目录的失败呈现（闭集④⑤共用流程、夹具分场）：既有
-/// 码化错误上屏，引导退场；失败态不挂选择器出口（缺的是解锁与诊断，不是
-/// 目录，决策 4）——不自动换目录重试的呈现面。
+/// 引导态选中损坏残留目录的失败呈现（闭集⑤）：码化错误上屏，引导退场；
+/// 失败态不挂选择器出口（缺的是诊断，不是目录，决策 4）——不自动换目录
+/// 重试的呈现面。（④ 密文库随 #2088 落锁定视图，用例独立。）
 fn onboarding_pick_bad_book_dir_reports_coded_error(bad_bytes: &[u8], expect: &str) {
     nsh_app::app::reset_book_assembly();
     let root = make_data_root("t3-onboard-bad");
@@ -14869,7 +14958,7 @@ fn onboarding_pick_bad_book_dir_reports_coded_error(bad_bytes: &[u8], expect: &s
     assert_eq!(
         app.screen().count("id:startup-pick-book-dir").unwrap(),
         0,
-        "密文/损坏失败态不挂选择器出口（无自动换目录重试）"
+        "损坏残留失败态不挂选择器出口（无自动换目录重试）"
     );
     assert_eq!(
         app.screen().count("id:onboarding-pick-book-dir").unwrap(),
@@ -14878,11 +14967,27 @@ fn onboarding_pick_bad_book_dir_reports_coded_error(bad_bytes: &[u8], expect: &s
     );
 }
 
-/// 现场闭集④（密文库）：既有 `nsh-shell.encrypted-unsupported` 呈现。
+/// 现场闭集④（密文库，#2088 反转后语义）：引导态选中密文库目录 → 登记 +
+/// 置活动 + 判开 → 引导落锁定视图（解锁面板在屏）。
 #[test]
-fn onboarding_pick_encrypted_dir_reports_coded_error() {
+fn onboarding_pick_encrypted_dir_lands_locked_view() {
     let _guard = SERIAL.lock().unwrap();
-    onboarding_pick_bad_book_dir_reports_coded_error(&[0u8; 8_192], "text:/密文库暂不支持/");
+    nsh_app::app::reset_book_assembly();
+    let root = make_data_root("t3-onboard-encrypted");
+    let picked = seed::make_book_dir("t3-encrypted-pick");
+    fs::write(picked.join("ledger.db"), vec![0u8; 8_192]).unwrap();
+    nsh_app::cross_book::set_default_data_dir(root);
+    let mut app = Headless::start(desktop_config()).unwrap();
+    app.wait_for("text:欢迎使用 Ledger").unwrap();
+    app.on_pick_paths(vec![picked]).unwrap();
+    app.press("id:onboarding-pick-book-dir").unwrap();
+    app.wait_for("id:locked-panel").unwrap();
+    app.wait_for("id:unlock-passphrase").unwrap();
+    assert_eq!(
+        app.screen().count("id:onboarding-pick-book-dir").unwrap(),
+        0,
+        "锁定视图下引导面板退场"
+    );
 }
 
 /// 现场闭集⑤（损坏残留）：既有损坏码呈现，无自动重试循环。
@@ -15002,25 +15107,26 @@ fn onboarding_pick_cancel_keeps_onboarding_and_action_retriggerable() {
     app.wait_for("id:nav-transactions").unwrap();
 }
 
-/// 引导期密文库 / 损坏残留失败态不挂选择器出口（决策 4 负向断言；argv 臂
-/// 同规则——failed_view 单点派生两臂共用）。
+/// 引导期密文库锁定态不挂选择器出口（#2088：密文库落锁定视图而非失败态）、
+/// 损坏残留失败态不挂选择器出口（决策 4 负向断言；argv 臂同规则——
+/// failed_view 单点派生两臂共用）。
 #[test]
-fn startup_encrypted_and_corrupt_boot_failed_states_have_no_picker() {
+fn startup_locked_and_corrupt_boot_states_have_no_picker() {
     let _guard = SERIAL.lock().unwrap();
-    // 密文库：页对齐密文形态（基础设施「密文库落盘形态」判别）。
+    // 密文库：页对齐密文形态（基础设施「密文库落盘形态」判别）→ 锁定视图。
     nsh_app::app::reset_book_assembly();
     let encrypted = seed::make_book_dir("t4-boot-encrypted");
     fs::write(encrypted.join("ledger.db"), vec![0u8; 8_192]).unwrap();
     nsh_app::app::set_book_dir(encrypted);
     let mut app = Headless::start(desktop_config()).unwrap();
-    app.wait_for("text:/密文库暂不支持/").unwrap();
+    app.wait_for("id:locked-panel").unwrap();
     assert_eq!(
         app.screen().count("id:startup-pick-book-dir").unwrap(),
         0,
-        "密文库失败态不挂选择器出口"
+        "锁定视图不挂选择器出口"
     );
 
-    // 损坏残留：非魔数且非页对齐。
+    // 损坏残留：非魔数且非页对齐 → 失败态不挂选择器出口。
     nsh_app::app::reset_book_assembly();
     let corrupt = seed::make_book_dir("t4-boot-corrupt");
     fs::write(corrupt.join("ledger.db"), vec![0xABu8; 20]).unwrap();
@@ -15031,5 +15137,408 @@ fn startup_encrypted_and_corrupt_boot_failed_states_have_no_picker() {
         app.screen().count("id:startup-pick-book-dir").unwrap(),
         0,
         "损坏残留失败态不挂选择器出口"
+    );
+}
+
+/// 造密文库夹具（明文造数 → 整库转换）：解锁 / 重置旅程共用。种子一笔
+/// 交易（换连后主界面呈现真实数据的用户可观察锚点）。
+fn make_encrypted_book(tag: &str, passphrase: &str) -> std::path::PathBuf {
+    let dir = make_book(tag);
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let account = seed_cash_account(&db);
+        seed_transaction(
+            &db,
+            TxnSeed {
+                account: &account,
+                to_account: None,
+                kind: TransactionKind::Expense,
+                amount_cents: 2_500,
+                date: &test_date(0),
+                category_id: None,
+                merchant_id: None,
+                note: Some("密文会话数据".to_owned()),
+            },
+        );
+    }
+    ledger_infra::db::encryption::enable_encryption_for_file(&dir.join("ledger.db"), passphrase)
+        .unwrap();
+    dir
+}
+
+/// 密文库解锁全旅程（issue #2088 交付①）：密文库引导落锁定视图（不是失
+/// 败态）→ 错误口令「口令错误或文件损坏」合并口径就地重试（可无限重试，
+/// 不误报损坏）→ 正确口令解锁进业务会话（换连编排：主界面呈现真实数据 =
+/// 成对只读连接读换连后新世界的用户可观察结果；readonly_connection 的 NSH
+/// 自动化回归同链）。
+///
+/// 「删除即红」负向条目：删解锁面板挂载（locked 分支）或解锁任务接线
+///（run_unlock 的 spawn 链）→ 锁定视图不入屏 / 解锁后不进主界面 → 本测
+/// wait_for 红；断言对准用户可见结果（锁定面板、错误行、解锁后的交易行）。
+#[test]
+fn encrypted_book_unlock_journey_enters_session_with_seeded_data() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    const PASS: &str = "解锁旅程口令X";
+    let dir = make_encrypted_book("unlock-journey", PASS);
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+
+    // 锁定视图：标题 + 口令框 + 自动解锁平台注记（Linux 不支持平价）。
+    app.wait_for("id:locked-panel").unwrap();
+    app.wait_for("text:账本已加密").unwrap();
+    app.wait_for("id:unlock-auto-unlock-note").unwrap();
+    assert!(
+        app.screen()
+            .press_target("id:unlock-confirm")
+            .unwrap()
+            .is_none(),
+        "空口令下「解锁」不可按（disabled 契约投影）"
+    );
+
+    // 错误口令：合并口径错误行就地呈现，仍留锁定视图可重试。
+    app.type_text("id:unlock-passphrase", "错误口令一一贯不代表正确口令")
+        .unwrap();
+    app.press("id:unlock-confirm").unwrap();
+    app.wait_for("text:口令错误或文件损坏，请重试").unwrap();
+    assert!(
+        app.screen().count("id:locked-panel").unwrap() > 0,
+        "解锁失败仍留锁定视图（fail-closed 可无限重试）"
+    );
+
+    // 正确口令：解锁进业务会话，主界面呈现真实数据（换连后的读路径）。
+    app.clear("id:unlock-passphrase").unwrap();
+    app.type_text("id:unlock-passphrase", PASS).unwrap();
+    app.press("id:unlock-confirm").unwrap();
+    app.wait_for("id:nav-transactions").unwrap();
+    open_transactions(&mut app);
+    app.wait_for(&format!("text:{}", test_date(0))).unwrap();
+}
+
+/// 锁定视图忘口令重置全旅程（issue #2088 交付③）：常驻入口 → error 级无后
+/// 门后果确认（ADR-0078 分级）→ infra 逃生门全语义（旧密文库保留 .bak 密
+/// 文副本、原位新建明文空库、sync.db 配对移位）→ 原位换连进全新明文会话
+///（无需重启，旧壳 reset_after_forgotten_passphrase 同语义）。
+///
+/// 「删除即红」负向条目：删忘口令入口或重置任务接线 → 确认弹窗不入屏 /
+/// 重置后不进主界面 → 本测 wait_for 红；确认前零写入（旧库原样）对准
+/// 文件级可观察结果。
+#[test]
+fn locked_view_forgot_passphrase_resets_to_fresh_plaintext_session() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_encrypted_book("forgot-reset-journey", "原口令 journeyX");
+    let db_path = dir.join("ledger.db");
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+    app.wait_for("id:locked-panel").unwrap();
+
+    // 忘口令入口 → error 级确认弹窗（无后门后果说明在屏）。
+    app.press("id:unlock-forgot").unwrap();
+    app.wait_for("text:重置为全新空库？").unwrap();
+    app.wait_for("text:/主口令没有任何后门或找回手段/").unwrap();
+
+    // 取消：零写入（旧密文库原样、锁定态原样）。
+    app.press("id:danger-cancel").unwrap();
+    app.settle();
+    assert!(
+        matches!(
+            ledger_infra::db::encryption::probe_file_kind(&db_path).unwrap(),
+            ledger_infra::db::encryption::DbFileKind::Encrypted,
+        ),
+        "取消后旧密文库原样"
+    );
+    assert_eq!(
+        app.screen().count("id:locked-panel").unwrap(),
+        1,
+        "取消后仍留锁定视图"
+    );
+
+    // 确认：逃生门全语义 —— 旧密文库保留 .bak 密文副本、新明文空库就位、
+    // 原位换连进全新明文会话（交易列表空、无锁定面板）。
+    app.press("id:unlock-forgot").unwrap();
+    app.wait_for("text:重置为全新空库？").unwrap();
+    app.press("id:danger-confirm").unwrap();
+    app.wait_for("id:nav-transactions").unwrap();
+    open_transactions(&mut app);
+    app.wait_for("text:暂无数据").unwrap();
+    use ledger_infra::db::encryption::DbFileKind;
+    assert!(
+        matches!(
+            ledger_infra::db::encryption::probe_file_kind(&db_path).unwrap(),
+            DbFileKind::Plaintext,
+        ),
+        "重置后原位为全新明文空库"
+    );
+    let bak = db_path.with_extension("db.bak");
+    assert!(
+        matches!(
+            ledger_infra::db::encryption::probe_file_kind(&bak).unwrap(),
+            DbFileKind::Encrypted
+        ),
+        "旧密文库保留为 .bak 密文副本（无口令不可读，日后想起口令仍可救回）"
+    );
+}
+
+/// 加密卡写面平价全旅程（issue #2088 交付②：修改主口令 / 关闭加密，旧壳
+/// `change_encryption_passphrase` / `disable_encryption` 消费面）：开启加密
+/// → 密文会话形态 → 修改主口令（error 级确认；旧口令错误就地报错原库原样；
+/// 正确后凭新口令原位换连，文件头仍密文且新口令可解）→ 关闭加密（warning
+/// 级确认；整库转回明文，文件头明文 + .bak 保留密文副本）。
+///
+/// 「删除即红」负向条目：删任一写面接线（encrypted_form 的表单/确认/任务
+/// 链）→ 对应流程不入屏/不落盘 → 本测 wait_for / 文件探测红。
+#[test]
+fn encryption_card_change_passphrase_then_disable_in_encrypted_session() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    const PASS_V1: &str = "首开启口令 journeyA";
+    const PASS_V2: &str = "换新口令 journeyB";
+    let dir = make_book("enc-write-journey");
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_data_tab(&mut app);
+
+    // 开启加密（守卫 + error 确认，前置旅程已另钉，此处直接走通）。
+    app.type_text("id:enc-passphrase", PASS_V1).unwrap();
+    app.type_text("id:enc-confirm", PASS_V1).unwrap();
+    app.wait_until("enc-enable ready", Duration::from_secs(5), |screen| {
+        screen.press_target("id:enc-enable").unwrap().is_some()
+    })
+    .unwrap();
+    app.press("id:enc-enable").unwrap();
+    app.wait_for("text:开启加密？").unwrap();
+    app.press("id:danger-confirm").unwrap();
+    app.wait_for("text:已开启加密").unwrap();
+    assert!(
+        matches!(
+            ledger_infra::db::encryption::probe_file_kind(&dir.join("ledger.db")).unwrap(),
+            ledger_infra::db::encryption::DbFileKind::Encrypted,
+        ),
+        "开启后库文件密文"
+    );
+
+    // —— 修改主口令：新口令守卫（未变 / 长度 / 一致）→ error 级确认 ——
+    app.type_text("id:enc-change-current", PASS_V1).unwrap();
+    app.type_text("id:enc-change-new", PASS_V1).unwrap();
+    app.type_text("id:enc-change-confirm", PASS_V1).unwrap();
+    app.wait_for("text:新主口令与当前主口令相同").unwrap();
+    assert!(
+        app.screen()
+            .press_target("id:enc-change")
+            .unwrap()
+            .is_none(),
+        "新口令与当前相同时「修改主口令」不可按"
+    );
+    app.clear("id:enc-change-new").unwrap();
+    app.type_text("id:enc-change-new", "短口令").unwrap();
+    app.clear("id:enc-change-confirm").unwrap();
+    app.type_text("id:enc-change-confirm", "短口令").unwrap();
+    app.wait_for("text:主口令至少需要 8 位").unwrap();
+    app.clear("id:enc-change-new").unwrap();
+    app.type_text("id:enc-change-new", PASS_V2).unwrap();
+    app.clear("id:enc-change-confirm").unwrap();
+    app.type_text("id:enc-change-confirm", "另一个口令一一贯不一致")
+        .unwrap();
+    app.wait_for("text:两次输入不一致").unwrap();
+    app.clear("id:enc-change-confirm").unwrap();
+    app.type_text("id:enc-change-confirm", PASS_V2).unwrap();
+    app.wait_until("enc-change ready", Duration::from_secs(5), |screen| {
+        screen.press_target("id:enc-change").unwrap().is_some()
+    })
+    .unwrap();
+
+    // 先走一次旧口令错误路径：当前口令框填错 → 确认 → 合并口径错误，库仍
+    // 凭旧口令可开（原库原样保留）。
+    app.clear("id:enc-change-current").unwrap();
+    app.type_text("id:enc-change-current", "错误当前口令X")
+        .unwrap();
+    app.press("id:enc-change").unwrap();
+    app.wait_for("text:修改主口令？").unwrap();
+    app.wait_for("text:/新主口令不会被保存、也无法找回/")
+        .unwrap();
+    app.press("id:danger-confirm").unwrap();
+    app.wait_for("text:/修改主口令失败: 口令错误或文件损坏/")
+        .unwrap();
+    assert!(
+        ledger_infra::db::encryption::verify_source_passphrase(&dir.join("ledger.db"), PASS_V1)
+            .is_ok(),
+        "口令错误后原库原样保留（仍凭旧口令可开）"
+    );
+
+    // 正确当前口令 → 转换成功 → 本会话切换（状态条反馈 + 文件仍密文且新
+    // 口令可解、旧口令不可解）。
+    app.clear("id:enc-change-current").unwrap();
+    app.type_text("id:enc-change-current", PASS_V1).unwrap();
+    app.press("id:enc-change").unwrap();
+    app.wait_for("text:修改主口令？").unwrap();
+    app.press("id:danger-confirm").unwrap();
+    app.wait_for("text:主口令已修改，本会话已切换（下次启动请使用新口令解锁）。")
+        .unwrap();
+    assert!(
+        ledger_infra::db::encryption::verify_source_passphrase(&dir.join("ledger.db"), PASS_V2)
+            .is_ok(),
+        "改口令后凭新口令可开"
+    );
+    assert!(
+        ledger_infra::db::encryption::verify_source_passphrase(&dir.join("ledger.db"), PASS_V1)
+            .is_err(),
+        "改口令后旧口令不再可开"
+    );
+
+    // —— 关闭加密：warning 级确认 → 整库转回明文，.bak 保留密文副本 ——
+    app.type_text("id:enc-disable-current", PASS_V2).unwrap();
+    app.press("id:enc-disable").unwrap();
+    app.wait_for("text:关闭加密？").unwrap();
+    app.wait_for("text:/既有密文备份不随之改变/").unwrap();
+    // 取消：零转换。
+    app.press("id:danger-cancel").unwrap();
+    app.settle();
+    assert!(
+        matches!(
+            ledger_infra::db::encryption::probe_file_kind(&dir.join("ledger.db")).unwrap(),
+            ledger_infra::db::encryption::DbFileKind::Encrypted,
+        ),
+        "取消后库文件仍密文"
+    );
+    // 确认：整库转回明文。
+    app.press("id:enc-disable").unwrap();
+    app.wait_for("text:关闭加密？").unwrap();
+    app.press("id:danger-confirm").unwrap();
+    app.wait_for("text:加密已关闭，本会话已切换到明文库。")
+        .unwrap();
+    assert!(
+        matches!(
+            ledger_infra::db::encryption::probe_file_kind(&dir.join("ledger.db")).unwrap(),
+            ledger_infra::db::encryption::DbFileKind::Plaintext,
+        ),
+        "关闭后库文件明文"
+    );
+    assert!(
+        matches!(
+            ledger_infra::db::encryption::probe_file_kind(&dir.join("ledger.db.bak")).unwrap(),
+            ledger_infra::db::encryption::DbFileKind::Encrypted,
+        ),
+        ".bak 保留关闭前的密文副本"
+    );
+    // 卡面翻回明文库开启形态。
+    app.wait_for("text:开启前请确认").unwrap();
+}
+
+/// 限时轮询断言窗口内无自动备份产物（三态负向半边；超窗仍无产物即断言
+/// 成立，出现产物立即红）。
+fn wait_no_auto_product(dir: &std::path::Path, window: Duration, label: &str) {
+    let deadline = std::time::Instant::now() + window;
+    while std::time::Instant::now() < deadline {
+        assert!(
+            find_first_auto_product(dir).is_none(),
+            "{label}：等待窗口内出现兜底产物"
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    assert!(
+        find_first_auto_product(dir).is_none(),
+        "{label}：等待窗口结束仍应无产物"
+    );
+}
+
+/// 自动备份调度密文库三态端到端（issue #2088 交付⑤：锁定 / 解锁 / 失败）：
+/// 密文库 + 备份目录已配置 + 自动备份开关已开启的现场——
+/// - **锁定态**：引导落锁定视图，调度不拉起（无会话无宿主），等待窗口内
+///   无兜底产物落盘（旧壳「锁定态不可调度」扇门的本壳行为）；
+/// - **解锁失败态**：错误口令仍锁定，零调度零产物；
+/// - **解锁**：正确口令进业务会话 → 调度宿主同点补拉起 → 首次兜底产物
+///   落盘（#2088 预留编排点的用户可观察结果）。
+///
+/// 「删除即红」负向条目：删解锁路径的 `start_session_host` 补拉起（业务可
+/// 用起点单点的备份宿主接线）→ 解锁后无产物 → 产物轮询超时红。
+#[test]
+fn auto_backup_scheduling_three_states_in_encrypted_scenario() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    const PASS: &str = "调度三态口令X";
+    // 夹具：种子数据 + 自动备份开启 + 整库加密（先明文置开关再转换）。
+    let dir = make_book("auto-backup-enc");
+    let backup_dir =
+        std::env::temp_dir().join(format!("ledger-test-nsh-auto-backup-enc-{}", new_uuid()));
+    fs::create_dir_all(&backup_dir).unwrap();
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let account = seed_cash_account(&db);
+        seed_transaction(
+            &db,
+            TxnSeed {
+                account: &account,
+                to_account: None,
+                kind: TransactionKind::Expense,
+                amount_cents: 3_500,
+                date: &test_date(0),
+                category_id: None,
+                merchant_id: None,
+                note: Some("调度三态种子".to_owned()),
+            },
+        );
+        // 自动备份开关开启（库内状态，转换随库走）。
+        {
+            let conn = db
+                .conn
+                .lock()
+                .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
+                .unwrap();
+            ledger_infra::settings::set(
+                &conn,
+                ledger_infra::settings::SettingKey::AutoBackupEnabled,
+                &true,
+            )
+            .unwrap();
+        }
+    }
+    ledger_infra::db::encryption::enable_encryption_for_file(&dir.join("ledger.db"), PASS).unwrap();
+
+    let storage = storage_shard(&[(
+        "backup_dir",
+        format!("{:?}", backup_dir.to_string_lossy()).as_str(),
+    )]);
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config_with_storage_shard(storage)).unwrap();
+
+    // 锁定态：锁定视图在屏，等待窗口内无兜底产物（调度不拉起；等待窗走
+    // 测试线程限时轮询——headless 无手动时钟场景，应用实时推进）。
+    app.wait_for("id:locked-panel").unwrap();
+    wait_no_auto_product(&backup_dir, Duration::from_secs(2), "锁定态不可调度");
+
+    // 解锁失败态：错误口令仍锁定，零调度零产物。
+    app.type_text("id:unlock-passphrase", "错误口令一一贯不代表正确口令")
+        .unwrap();
+    app.press("id:unlock-confirm").unwrap();
+    app.wait_for("text:口令错误或文件损坏，请重试").unwrap();
+    wait_no_auto_product(&backup_dir, Duration::from_secs(2), "解锁失败态仍锁定");
+
+    // 解锁：进业务会话 → 备份宿主同点补拉起 → 首次兜底产物落盘。
+    app.clear("id:unlock-passphrase").unwrap();
+    app.type_text("id:unlock-passphrase", PASS).unwrap();
+    app.press("id:unlock-confirm").unwrap();
+    app.wait_for("id:nav-transactions").unwrap();
+    let deadline = std::time::Instant::now() + DEFAULT_WAIT;
+    let product = loop {
+        if let Some(found) = find_first_auto_product(&backup_dir) {
+            break found;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "解锁后应发生首次兜底自动备份（产物落盘），实际目录内容：{:?}",
+            fs::read_dir(&backup_dir)
+                .map(|entries| entries.flatten().map(|e| e.path()).collect::<Vec<_>>())
+                .unwrap_or_default()
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    let name = product
+        .file_name()
+        .and_then(|n| n.to_str().map(str::to_owned))
+        .unwrap_or_default();
+    assert!(
+        name.starts_with("ledger-auto-") && name.ends_with(".db.zip"),
+        "产物为受管自动命名：{name}"
     );
 }

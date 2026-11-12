@@ -6,9 +6,10 @@
 //!
 //! AppHandle 三件用途逐件替换（对应关系）：
 //! - **state 取连接与两扇门**：会话句柄 [`crate::app::db_slot`] 的写连接 +
-//!   恒开门态（NSH 立桩只开明文库——`boot_ledger` 对密文库报
-//!   `boot.encrypted-unsupported`，锁定态不存在；接线只在 [`crate::app::run_startup`]
-//!   成功分支，启动失败占位不产生会话）——编排单点的门检仍在域内一处；
+//!   进程级加密锁定门（[`crate::boot::encryption_gate`]，issue #2088：密文
+//!   库解锁前门锁、解锁/重置后开门，与备份调度同门同源；接线只在
+//!   [`crate::app::enter_business_surface`] 业务可用起点，启动失败占位不
+//!   产生会话，失败扇门由会话存在性承载）——编排单点的门检仍在域内一处；
 //! - **事件投递**：域回调 `on_round_applied(applied > 0)` → [`ROUND_TX`] 通道
 //!   投递 → 引擎线程排空任务广播进程内失效信号（[`crate::signals`]；订阅者表
 //!   住引擎线程 thread_local，调度线程只投递不广播——线程契约同写路径
@@ -29,7 +30,6 @@
 use std::sync::{Arc, Mutex, MutexGuard, mpsc};
 
 use ledger_infra::db::boot::BootFailureGate;
-use ledger_infra::db::encryption::EncryptionGate;
 use ledger_sync_engine::{TriggerHost, TriggerTimings};
 use nsh_core::prelude::*;
 
@@ -93,21 +93,22 @@ pub(crate) fn install_invalidation_drain() {
 
 /// 接线单点：装配平台中立宿主面并经域编排单点
 /// `start_triggers_with_host` 拉起（分平台门收在域内一处）。会话缺失即静默
-/// 返回——接线只在引导成功分支（占位连接不是业务库，与旧壳「锁定/失败不拉起」
-/// 同口径）。唯一生产调用方是 [`crate::app::run_startup_with_trigger_timings`]
-/// 成功分支（源码扫描守门钉住）；生产时机走默认常量，触发接线测试注入短时机
-/// 经启动竖井的显式参数（issue #959）。
+/// 返回——接线只在引导成功 / 解锁成功分支（占位连接不是业务库，与旧壳
+/// 「锁定/失败不拉起」同口径）。唯一生产调用方是业务可用起点单点
+/// [`crate::app::enter_business_surface`]（源码扫描守门钉住）；生产时机走
+/// 默认常量，触发接线测试注入短时机经启动竖井的显式参数（issue #959）。
 ///
-/// 两扇门以恒开形态注入：NSH 立桩只开明文库（锁定态不存在）、接线只在引导
-/// 成功分支（启动失败占位不产生会话）——编排循环的门检语义不变，宿主按自身
-/// 状态机供给门态（NSH 引入密文库/启动失败恢复路径时换真实门态）。
+/// 两扇门门态：加密锁定门取进程级共享实例（[`crate::boot::encryption_gate`]，
+/// issue #2088——密文库解锁前门锁、解锁后开门，与备份调度同门同源）；启动
+/// 失败门保持恒开（NSH 无引导失败占位会话形态，失败扇门由会话存在性承载
+/// ——本接线只在业务可用起点被调，#2088 裁决留痕）。
 pub(crate) fn wire_sync_triggers_with(timings: TriggerTimings) {
     let Some(db) = crate::app::db_slot().clone() else {
         return;
     };
     let host = Arc::new(TriggerHost {
         conn: Arc::clone(&db.conn),
-        gate: EncryptionGate::new(false),
+        gate: crate::boot::encryption_gate(),
         boot_gate: BootFailureGate::new(),
         on_round_applied: Arc::new(on_round_applied),
     });

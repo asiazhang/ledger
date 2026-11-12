@@ -240,7 +240,10 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: src-tauri
+          # workspace 路径相对仓库根（GITHUB_WORKSPACE）解析：defaults.run
+          #  working-directory 只辖 run 步骤，不影响 uses 动作（切轨漏改残留：
+          #  src-tauri 已随 #2083 退役，写错路径缓存永不命中）。
+          workspaces: src-app
           # 换镜像起前缀隔离（issue #1109）：旧缓存是在宿主 runner 上编译的，与
           # 镜像内工具链/链接器产物彻底分层，避免宿主产物混进容器执行；切换后
           # 首跑一次冷编译（一次性成本）。
@@ -286,7 +289,9 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: src-tauri
+          # workspace 路径相对仓库根解析（同 backend job 注记），不随本 job 的
+          # run working-directory 变化。
+          workspaces: src-app
           # 前缀隔离理由同 backend job（issue #1109）。
           prefix-key: ci-image
           # 只允许 main 维护缓存，理由同 backend job：key miss 时 Post 冗余重存
