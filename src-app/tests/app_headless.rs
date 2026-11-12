@@ -6759,6 +6759,10 @@ fn savings_view_create_goal_journey() {
     app.wait_for("text:目标已创建，专属账户已就位").unwrap();
     app.wait_for_gone("id:sg-form-save", DEFAULT_WAIT).unwrap();
     app.wait_for("id:sg-table").unwrap();
+    // 重读异步落表（重读期屏幕可呈「正在加载…」，表壳 wait 不证行落屏）：
+    // 等行格内容再断言（run 43128098055 首崩即此）。
+    app.wait_for("text:¥500").unwrap();
+    app.wait_for("text:进行中").unwrap();
     for text in ["¥500", "进行中"] {
         assert!(
             app.shows(text),
@@ -6880,6 +6884,8 @@ fn savings_view_archives_unarchives_and_deletes_with_confirmation() {
     app.press("id:danger-confirm").unwrap();
     app.wait_for("text:目标已删除，专属账户一并收起，历史交易仍可查")
         .unwrap();
+    // 重读异步落表：反馈在屏 ≠ 重读已落，等行离场再断。
+    app.wait_for_gone("id:sg-edit", DEFAULT_WAIT).unwrap();
     assert_eq!(
         app.screen().count("id:sg-edit").unwrap(),
         0,
@@ -7161,6 +7167,8 @@ fn insurers_view_edit_backfill_and_rename_duplicate_guard() {
     app.press("id:ins-edit-save").unwrap();
     app.wait_for("text:已更新保险公司").unwrap();
     app.wait_for_gone("id:ins-edit-name", DEFAULT_WAIT).unwrap();
+    // 保存即失效重读（重读期屏幕可呈「正在加载…」）：等行内容回屏再断。
+    app.wait_for("text:海峡金桥财产保险").unwrap();
     assert!(app.shows("海峡金桥财产保险"), "原值保持");
 
     // 改名撞在用同名（种子「中国人寿」）：码化错误、弹窗不关（内容不丢）。
