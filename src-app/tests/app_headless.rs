@@ -3631,8 +3631,12 @@ fn budget_form_creates_budget_via_pinyin_search_and_refreshes_list() {
     app.type_text("id:budget-amount", "80").unwrap();
     app.press("id:budget-add").unwrap();
 
-    // 失效信号驱动重读：新行落表（子分类路径名 + 金额 80），表单清空回占位。
-    app.wait_for_within("text:80", DEFAULT_WAIT).unwrap();
+    // 失效信号驱动重读：先等表单清空回占位（「支出分类」回屏），再等新行
+    // 落表（金额 80）。CI 慢环境时序锚定：wait_for_within("text:80") 会被
+    // 输入框自身已填的「80」立即满足，抢在表单清空/重读落表前（run
+    // 42949840617 首崩即此：占位未回屏，「支出分类」断言失败）。
+    app.wait_for("text:支出分类").unwrap();
+    app.wait_for("text:80").unwrap();
     assert_eq!(
         app.screen().count("text:鲜食 > 刺身").unwrap(),
         1,
@@ -7486,6 +7490,8 @@ fn accounts_view_edit_renames_account() {
     open_accounts(&mut app);
 
     // ⋯ 开菜单 → 菜单闭集。
+    // 行集异步落屏：等行动作锚再按（CI 慢环境 press 竞态锚定，同 #2072）。
+    app.wait_for(&format!("id:acct-more-{cash_id}")).unwrap();
     app.press(&format!("id:acct-more-{cash_id}")).unwrap();
     let menu = app.menu().expect("「⋯」应打开行菜单");
     assert_eq!(
@@ -7579,6 +7585,7 @@ fn accounts_view_archives_and_restores() {
     open_accounts(&mut app);
 
     // 归档确认。
+    app.wait_for(&format!("id:acct-more-{cash_id}")).unwrap();
     app.press(&format!("id:acct-more-{cash_id}")).unwrap();
     app.choose_menu_item("归档").unwrap();
     app.wait_for("text:归档账户").unwrap();
@@ -7658,6 +7665,9 @@ fn accounts_view_adjust_balance_broadcasts_transactions_invalidated() {
     open_accounts(&mut app);
 
     // 调整弹窗：当前余额 -¥25（V017 缓存读数）。
+    // 行集异步落屏：等行动作锚再按（CI 慢环境 press 竞态锚定，同 #2072；
+    // run 43053079348 首崩即此）。
+    app.wait_for(&format!("id:acct-more-{cash_id}")).unwrap();
     app.press(&format!("id:acct-more-{cash_id}")).unwrap();
     app.choose_menu_item("调整余额").unwrap();
     app.wait_for("text:调整余额").unwrap();
@@ -7820,6 +7830,8 @@ fn accounts_view_name_click_drills_to_transactions_filtered() {
 
     // 点名称 → 交易页带账户筛选下钻：只剩现金账户两笔。「删除即红」负向条
     // 目：删账下钻 nav::open 接线 → 点击后停留账户视图，本断言红。
+    // 行集异步落屏：等行动作锚再按（CI 慢环境 press 竞态锚定，同 #2072）。
+    app.wait_for(&format!("id:acct-name-{cash_id}")).unwrap();
     app.press(&format!("id:acct-name-{cash_id}")).unwrap();
     app.wait_for("id:tx-table").unwrap();
     app.wait_for("text:共 2 条").unwrap();
@@ -9465,6 +9477,8 @@ fn scheduled_view_row_actions_pause_resume_cancel() {
 
     // 暂停：行随状态过滤离「进行中」视图（纯前端过滤，旧壳 filteredRows 平价；
     // 操作反馈与恢复钮下一过滤断——先钉行锚点消失再换过滤）。
+    // 行集异步落屏：等行动作锚再按（CI 慢环境 press 竞态锚定，同 #2072）。
+    app.wait_for(&format!("id:sub-pause-{plan_id}")).unwrap();
     app.press(&format!("id:sub-pause-{plan_id}")).unwrap();
     app.wait_for_gone(&format!("id:sub-next-{plan_id}"), DEFAULT_WAIT)
         .unwrap();
@@ -9527,6 +9541,8 @@ fn scheduled_view_edit_subscription_updates_fields() {
     let mut app = Headless::start(desktop_config()).unwrap();
     open_scheduled(&mut app);
 
+    // 行集异步落屏：等行动作锚再按（CI 慢环境 press 竞态锚定，同 #2072）。
+    app.wait_for(&format!("id:sub-edit-{plan_id}")).unwrap();
     app.press(&format!("id:sub-edit-{plan_id}")).unwrap();
     app.wait_for("id:app-modal").unwrap();
     app.wait_for("text:编辑订阅").unwrap();
@@ -9580,6 +9596,8 @@ fn scheduled_view_plan_detail_modal_retries_failed_occurrence() {
     open_scheduled(&mut app);
 
     // 开弹层：标题 + 计划备注摘要 + 期次表。
+    // 行集异步落屏：等行动作锚再按（CI 慢环境 press 竞态锚定，同 #2072）。
+    app.wait_for(&format!("id:sub-detail-{plan_id}")).unwrap();
     app.press(&format!("id:sub-detail-{plan_id}")).unwrap();
     app.wait_for("id:occ-table").unwrap();
     app.wait_for("text:会员扣款").unwrap();
@@ -9935,6 +9953,9 @@ fn scheduled_view_transfer_row_actions_pause_resume_cancel() {
 
     // 暂停：行随状态过滤离「进行中」视图（纯前端过滤，旧壳 filteredRows 平
     // 价；先钉行锚点消失再换过滤）。
+    // 行集异步落屏：等行动作锚再按（CI 慢环境 press 竞态锚定，同 #2072）。
+    app.wait_for(&format!("id:transfer-pause-{plan_id}"))
+        .unwrap();
     app.press(&format!("id:transfer-pause-{plan_id}")).unwrap();
     app.wait_for_gone(&format!("id:transfer-next-{plan_id}"), DEFAULT_WAIT)
         .unwrap();
@@ -14095,6 +14116,9 @@ fn investments_view_holdings_code_drills_to_ledger_filtered() {
     // 标的），且落点是明细页签。「删除即红」负向条目：删持仓代码链接的
     // nav::open 接线 → 点击后停留持仓页签，本断言红。
     let symbol_anchor = format!("id:holdings-row-{}-{}-symbol", account_id, instrument_id);
+    // 持仓行异步落屏：等行锚再按（CI 慢环境 press 竞态锚定，同 #2072；
+    // run 42927784003 首崩即此——holdings-title 只证页签挂载不证行落屏）。
+    app.wait_for(&symbol_anchor).unwrap();
     app.press(&symbol_anchor).unwrap();
     app.wait_for("id:ledger-title").unwrap();
     app.wait_for("id:ledger-title").unwrap();
