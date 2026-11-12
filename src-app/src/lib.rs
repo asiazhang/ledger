@@ -75,8 +75,8 @@
 //! - [`investments_form`]：投资记账表单买卖族（#2046 ⑮）——旧壳
 //!   InvestmentForm 族的重生：buy/sell 创建与编辑同表单语义（场外基金
 //!   金额权威/其余数量+单价权威分流、字段红框+提交禁用两件同发、先取
-//!   明细再开窗）；创建入口随⑯ 明细页签落位、编辑入口随交易列表右键接
-//!   线开放；
+//!   明细再开窗）；创建入口住明细页签（#2047 ⑯ 落位）、编辑入口随交易列
+//!   表右键接线开放；
 //! - [`investments_ledger`]：投资明细页签本体（#2047 ⑯/投资 3/3）——五种
 //!   投资 kind 投影行（kind 形态格装配，渲染期零格式化）、服务端 offset 分页、
 //!   类型子集多选/涉及账户单选/标的深链维（旧壳 ?instrument= 同语义）与清除
@@ -311,6 +311,7 @@ pub mod tx_cards;
 pub mod tx_filter;
 pub mod tx_view_preferences;
 pub mod txn_form;
+pub mod unlock;
 pub mod views;
 pub mod wiring;
 

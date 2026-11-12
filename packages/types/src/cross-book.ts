@@ -9,7 +9,7 @@ export type CrossBookBookStatus =
   | "schema_mismatch"
   | "unreadable";
 
-/** 逐本状态行（注册表序，含活动本）。 */
+/** 逐本状态行（注册表序，含活动本；字段命名与 Rust 侧 serde 默认一致）。 */
 export interface CrossBookBookRow {
   /** 账本标识。 */
   id: string;
@@ -17,6 +17,9 @@ export interface CrossBookBookRow {
   name: string;
   /** 计入状态。 */
   status: CrossBookBookStatus;
+  /** 是否活动本（issue #2069）：「当前」标签的判定面，与计入状态正交——
+   * 非活动的计入本同挂 included 但不得标「当前」（NSH 同形状）。 */
+  is_active: boolean;
 }
 
 /** 跨账本投资汇总载荷：折算目标与全部合计在后端完成，前端不出现第二份口径。 */

@@ -36,7 +36,7 @@ fn main() -> impl std::process::Termination {
     let exit_code = platform::run_app(
         platform::AppSource::Rust(nsh_app::app::root().app_id(APP_ID)),
         platform::AppOptions {
-            title: "Ledger 原生壳（立桩）".to_owned(),
+            title: "Ledger".to_owned(),
             app_id: APP_ID.to_owned(),
             // 交易表格首屏（issue #2018）：三列表格 + 底栏（总数/分页条）的
             // 常规桌面窗口尺寸。
@@ -50,5 +50,5 @@ fn main() -> impl std::process::Termination {
 
 #[cfg(not(target_os = "linux"))]
 compile_error!(
-    "NSH 原生壳立桩仅支持 Linux（issue #2017 / ADR-0145 硬伤清单的战场）；macOS / Windows 随迁移系列票逐平台开门"
+    "NSH 原生壳仅支持 Linux（issue #2017 / ADR-0145）；macOS / Windows 随迁移系列票逐平台开门"
 );
