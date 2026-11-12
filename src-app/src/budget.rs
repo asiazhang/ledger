@@ -144,9 +144,11 @@ pub(crate) fn BudgetView() -> impl IntoElement {
     let delete_error = signal(None::<String>);
 
     // 主题令牌（双态自适应；缺失兜底统一归 crate::theme 单点）。
-    let fg = crate::theme::color("foreground");
-    let muted = crate::theme::color("muted-foreground");
-    let danger_fg = crate::theme::color("destructive");
+    let crate::views::ViewPalette {
+        fg,
+        muted,
+        danger_fg,
+    } = crate::views::view_palette();
 
     // 装载（首屏与失效信号重读共用一条路径）：进度行集 + 年度汇总 + 支出分类
     // 字典一次读齐（小表聚合，重读成本可忽略）；金额隐私开关随装载取设备态

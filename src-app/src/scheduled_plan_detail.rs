@@ -333,7 +333,11 @@ pub(crate) fn plan_detail_modal(
         });
     };
 
-    let (fg, muted, danger_fg) = detail_palette();
+    let crate::views::ViewPalette {
+        fg,
+        muted,
+        danger_fg,
+    } = crate::views::view_palette();
 
     // 弹层表自绘格（重试按钮列按行固定目标：failed 行渲染「重试」、其余
     // 占位「—」；正在重试的行按钮先禁用防重复）。格文本已是装配产物。
@@ -532,18 +536,5 @@ pub(crate) fn plan_detail_modal(
         || DETAIL_TITLE.to_owned(),
         move || open_id.set(None),
         body,
-    )
-}
-
-/// 弹层令牌便捷面（前景 / 弱化 / 危险）。
-fn detail_palette() -> (
-    nsh_core::element::AdaptiveColor,
-    nsh_core::element::AdaptiveColor,
-    nsh_core::element::AdaptiveColor,
-) {
-    (
-        crate::theme::color("foreground"),
-        crate::theme::color("muted-foreground"),
-        crate::theme::color("destructive"),
     )
 }

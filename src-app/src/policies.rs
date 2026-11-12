@@ -165,20 +165,8 @@ fn today_text() -> String {
     chrono::Local::now().date_naive().to_string()
 }
 
-/// 主题令牌单取：视图层零本地色常量，令牌缺失统一落 `crate::theme` 的
-/// 可读兜底（ADR-0147 决策 1；本地 token_or_fallback 已退役）。
-fn foreground_of() -> AdaptiveColor {
-    crate::theme::color("foreground")
-}
-
-fn muted_of() -> AdaptiveColor {
-    crate::theme::color("muted-foreground")
-}
-
-fn danger_of() -> AdaptiveColor {
-    crate::theme::color("destructive")
-}
-
+/// 语义令牌单取（success/warning 非三件套成员，不经 ViewPalette）：视图层
+/// 零本地色常量，令牌缺失统一落 `crate::theme` 的可读兜底（ADR-0147 决策 1）。
 fn success_of() -> AdaptiveColor {
     crate::theme::color("success")
 }
@@ -559,7 +547,7 @@ fn text_field(
 ) -> impl IntoElement {
     form_row(
         label,
-        muted_of(),
+        crate::views::view_palette().muted,
         input()
             .test_id(id)
             .value(move || value.get())
@@ -684,9 +672,11 @@ pub(crate) fn PoliciesView() -> impl IntoElement {
     });
 
     // ============================ 主题令牌 ============================
-    let fg = foreground_of();
-    let muted = muted_of();
-    let danger_fg = danger_of();
+    let crate::views::ViewPalette {
+        fg,
+        muted,
+        danger_fg,
+    } = crate::views::view_palette();
 
     // ============================ 表单弹层状态 ============================
     // 新建 / 编辑共用同一弹层语义（编辑复用同表单回填初值）：`form_open`
@@ -2013,7 +2003,7 @@ fn agreement_fields(
         .gap_2()
         .child(form_row(
             AGREEMENT_AMOUNT,
-            muted_of(),
+            crate::views::view_palette().muted,
             view()
                 .flex_row()
                 .items_center()
@@ -2042,7 +2032,7 @@ fn agreement_fields(
         ))
         .child(form_row(
             AGREEMENT_RECURRENCE,
-            muted_of(),
+            crate::views::view_palette().muted,
             view()
                 .flex_row()
                 .items_center()
@@ -2074,7 +2064,7 @@ fn agreement_fields(
         ))
         .child(form_row(
             AGREEMENT_ACCOUNT,
-            muted_of(),
+            crate::views::view_palette().muted,
             pinyin_select::pinyin_select(
                 format!("{prefix}-account"),
                 account_options,
@@ -2085,7 +2075,7 @@ fn agreement_fields(
         ))
         .child(form_row(
             AGREEMENT_START_DATE,
-            muted_of(),
+            crate::views::view_palette().muted,
             date_select::date_select(start_id, start),
         ))
 }

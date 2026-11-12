@@ -331,9 +331,11 @@ pub(crate) fn ItemsView() -> impl IntoElement {
     });
 
     // ============================ 主题令牌 ============================
-    let fg = crate::theme::color("foreground");
-    let muted = crate::theme::color("muted-foreground");
-    let danger_fg = crate::theme::color("destructive");
+    let crate::views::ViewPalette {
+        fg,
+        muted,
+        danger_fg,
+    } = crate::views::view_palette();
 
     // 操作反馈条位（NSH 无 toast——#2038 裁决；旧壳 message.success/error 的
     // 条位对应物：新动作开始时清回空）。
@@ -1727,7 +1729,7 @@ pub(crate) fn add_item_modal(
                     .flex_row()
                     .items_center()
                     .gap_2()
-                    .child(field_label(ADD_LABEL_PURCHASE_DATE, muted_of()))
+                    .child(field_label(ADD_LABEL_PURCHASE_DATE, crate::views::view_palette().muted))
                     .child(
                         text(date_text)
                             .text_size(px(font_size::SECONDARY))
@@ -1739,7 +1741,7 @@ pub(crate) fn add_item_modal(
                     .flex_row()
                     .items_center()
                     .gap_2()
-                    .child(field_label(ADD_LABEL_BASE_COST, muted_of()))
+                    .child(field_label(ADD_LABEL_BASE_COST, crate::views::view_palette().muted))
                     .child(
                         text(cost_text)
                             .text_size(px(font_size::SECONDARY))
@@ -1751,14 +1753,14 @@ pub(crate) fn add_item_modal(
                     .flex_row()
                     .items_center()
                     .gap_2()
-                    .child(field_label(ADD_LABEL_NAME, muted_of()))
+                    .child(field_label(ADD_LABEL_NAME, crate::views::view_palette().muted))
                     .child(
                         input()
                             .test_id("item-add-name")
                             .value(move || name.get())
                             .placeholder(ADD_NAME_PLACEHOLDER)
                             .optional_label("物品名称")
-                            .text_color(fg_of())
+                            .text_color(crate::views::view_palette().fg)
                             .w(px(260.0))
                             .app_class(
                                 "bg-background rounded-(--radius) border border-border px-2 py-1 \
@@ -1810,14 +1812,6 @@ fn error_line_owned(error: Signal<Option<String>>, id: &'static str) -> impl Int
         },
     )
     .otherwise(view)
-}
-
-fn muted_of() -> AdaptiveColor {
-    crate::theme::color("muted-foreground")
-}
-
-fn fg_of() -> AdaptiveColor {
-    crate::theme::color("foreground")
 }
 
 /// 关联购买交易候选下拉选项（编辑弹窗换关数据源）：label 镜像旧壳

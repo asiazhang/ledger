@@ -1,7 +1,7 @@
 {
   "cssVars": {
     "theme": {
-      "radius": "0.5rem",
+      "radius": "8px",
       "radius-card": "12px",
       "radius-panel": "16px",
       "radius-inset": "8px"
