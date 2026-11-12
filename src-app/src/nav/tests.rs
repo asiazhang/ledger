@@ -40,7 +40,7 @@ fn SeamProbeApp() -> impl IntoElement {
         .child(
             // 落位状态呈现（容器页签意图经守卫落位的用户可见凭据）。
             text(move || current_text(nav))
-                .text_size(px(14.0))
+                .text_sm()
                 .test_id("probe-current"),
         )
         .child(

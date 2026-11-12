@@ -16,6 +16,7 @@
 use nsh_base::{PopoverEvent, button, popover};
 use nsh_core::prelude::*;
 
+use crate::design::font_size;
 use crate::overlay;
 
 /// 气泡说明文案锚点后缀（headless `id:` 选择器用；调用方给前缀）。
@@ -56,11 +57,10 @@ pub fn popconfirm(
         let shown = open_for_effect();
         token.report(shown);
     });
-    // 主题令牌（双态自适应；令牌缺失回退亮灰/中灰可读兜底，app.rs 先例同形）。
-    let tokens = nsh_core::element::tokens();
-    let fg = tokens
-        .color("foreground")
-        .unwrap_or_else(|| hsla(0.0, 0.0, 0.98, 1.0).into());
+    // 主题令牌（双态自适应）：色值住 theme.json 令牌表，读取经
+    // [`crate::theme::color`] 单点，缺失落可读兜底——本模块零本地色常量
+    // （issue #2107 视觉收口）。
+    let fg = crate::theme::color("foreground");
     let (message_text, confirm_text, cancel_text) =
         (spec.message, spec.confirm_label, spec.cancel_label);
     // 开合回写多站点复用（触发件 / 宿主回写 / 取消键 / 确认键），闭包捕获
@@ -80,7 +80,7 @@ pub fn popconfirm(
                 on_open_for_popover(shown);
             }
         })
-        .popup_class("bg-background border border-border rounded-md shadow-md p-2")
+        .popup_class("bg-background border border-border rounded-(--radius) shadow-md p-2")
         .trigger(
             view()
                 .on_press(move |_: &PressEvent| on_open_for_trigger(true))
@@ -91,8 +91,10 @@ pub fn popconfirm(
                 .flex_col()
                 .gap_2()
                 .child(
+                    // 说明文案（字阶 SECONDARY 档，design.rs font_size 同源——
+                    // DESIGN.md §3 「次要正文」档）。
                     text(message_text)
-                        .text_size(px(13.0))
+                        .text_size(px(font_size::SECONDARY))
                         .text_color(fg)
                         .test_id(format!("{}{}", id_prefix, MESSAGE_ID_SUFFIX).as_str()),
                 )
@@ -104,11 +106,11 @@ pub fn popconfirm(
                         .child(
                             button()
                                 .app_class(
-                                    "px-2 py-1 rounded-md border border-border text-foreground hover:bg-accent",
+                                    "px-2 py-1 rounded-(--radius) border border-border text-foreground hover:bg-accent",
                                 )
                                 .child(
                                     text(cancel_text)
-                                        .text_size(px(12.0))
+                                        .text_size(px(font_size::CAPTION))
                                         .text_color(fg)
                                         .test_id(format!("{}{}", id_prefix, CANCEL_ID_SUFFIX).as_str()),
                                 )
@@ -116,11 +118,13 @@ pub fn popconfirm(
                         )
                         .child(
                             button()
-                                .app_class("px-2 py-1 rounded-md bg-destructive hover:opacity-90")
+                                .app_class("px-2 py-1 rounded-(--radius) bg-destructive hover:opacity-90")
                                 .child(
+                                    // 实色破坏钮前景走 destructive-foreground 令牌
+                                    // （票 1 收编；裸白字退役——暗态随表）。
                                     text(confirm_text)
-                                        .text_size(px(12.0))
-                                        .text_color(rgb(0xffffff))
+                                        .text_size(px(font_size::CAPTION))
+                                        .text_color(crate::theme::color("destructive-foreground"))
                                         .test_id(format!("{}{}", id_prefix, CONFIRM_ID_SUFFIX).as_str()),
                                 )
                                 .on_press(move |_: &()| on_confirm_and_close()),

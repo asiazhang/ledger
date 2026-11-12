@@ -295,17 +295,17 @@ fn fallback_notice_view(
 ) -> View {
     view()
         .flex_col()
-        .app_class("rounded-md border border-destructive/30 bg-destructive/10 p-2 gap-1")
+        .app_class("rounded-(--radius) border border-destructive/30 bg-destructive/10 p-2 gap-1")
         .child(
             text(settings::LOCATION_FALLBACK_TITLE)
-                .text_size(px(12.0))
+                .text_xs()
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_color(fg)
                 .test_id(title_id),
         )
         .child(
             text(move || reason.clone())
-                .text_size(px(12.0))
+                .text_xs()
                 .text_color(muted)
                 .test_id(body_id),
         )
@@ -558,6 +558,14 @@ fn view_host(nav: nav::NavStore) -> impl IntoElement {
 })
 }
 
+/// 根组件构造单点（生产 `main.rs` 与 headless 测试同一条装配路径）：主题
+/// 令牌随根挂载（清单挂载解析，[`crate::theme::tokens`]——nsh.json
+/// `"theme"` → theme.json 令牌闭集，ADR-0147 决策 1）。拆除 `.tokens(..)`
+/// 或清单挂载即回退 UI 集缺省 neutral——出厂基线负向判据的接线点。
+pub fn root() -> nsh_core::element::Root {
+    nsh_core::element::Root::of::<App>().tokens(crate::theme::tokens())
+}
+
 /// 立桩根组件：就绪前居中呈现启动形态（缺参/引导中/首启引导/失败/密文锁定，#2088 起五态），就绪后承载导航骨架（侧栏 + 内容区）。
 #[component]
 pub fn App() -> impl IntoElement {
@@ -662,22 +670,18 @@ pub fn App() -> impl IntoElement {
             }
         },
     );
-    // 主行/次行前景取主题令牌（双态自适应，registry 缺省带主题双态令牌）：
-    // 裸 text 的默认前景是黑（ResolvedTextStyle::default 的 React Native
-    // 惯例），暗色桌面上黑字贴暗底不可见——窗口文字必须显式带色。令牌缺失
-    // 时回退亮灰/中灰（缺省主题 registry 缺失时的可读兜底，非双态）。
+    // 主行/次行前景取主题令牌（双态自适应）：裸 text 的默认前景是黑
+    // （ResolvedTextStyle::default 的 React Native 惯例），暗色桌面上黑字贴
+    // 暗底不可见——窗口文字必须显式带色。消费面走 crate::theme 单点（缺失
+    // 兜底归 theme.rs）；启动诊断日志另读 registry 原始在册状态。
     let tokens = nsh_core::element::tokens();
     tracing::debug!(
         foreground = ?tokens.color("foreground"),
         muted = ?tokens.color("muted-foreground"),
         "启动视图主题令牌"
     );
-    let fg = tokens
-        .color("foreground")
-        .unwrap_or_else(|| hsla(0.0, 0.0, 0.98, 1.0).into());
-    let muted = tokens
-        .color("muted-foreground")
-        .unwrap_or_else(|| hsla(0.0, 0.0, 0.45, 1.0).into());
+    let fg = crate::theme::color("foreground");
+    let muted = crate::theme::color("muted-foreground");
     // 失败态出口（ADR-0146 决策 4）与新建意图确认（决策 3 分支③）的现场：
     // 挂起新建目录信号、选择器任务与对话结局处理（组件期一次构造，信号驱动
     // 开合）。
@@ -890,13 +894,13 @@ pub fn App() -> impl IntoElement {
                         .test_id("onboarding-panel")
                         .child(
                             text(move || headline_text(&state.get()))
-                                .text_size(px(24.0))
+                                .text_xl()
                                 .text_color(fg)
                                 .test_id("startup-headline"),
                         )
                         .child(
                             text(move || secondary_text(&state.get()))
-                                .text_size(px(12.0))
+                                .text_xs()
                                 .text_color(muted)
                                 .test_id("onboarding-hint"),
                         )
@@ -922,12 +926,14 @@ pub fn App() -> impl IntoElement {
                             // 「新建账本」动作（决策 2 双动作之一）。按 press
                             // 开确认对话（明示完整路径），确认后建库+登记+置指针
                             // 并重走启动竖井（接线在 create_dialog 结局处）。
+                            // 主操作按钮规格对表 docs/DESIGN.md §6（h-8 32pt 默认
+                            // 档；#2101 记一笔同款）。
                             button()
-                                .app_class("px-3 py-1.5 rounded-md bg-primary hover:opacity-90")
+                                .app_class("h-8 px-3 rounded-(--radius) bg-primary hover:opacity-90")
                                 .child(
                                     text(ONBOARDING_CREATE_LABEL)
-                                        .text_size(px(13.0))
-                                        .text_color(rgb(0xffffff))
+                                        .text_sm()
+                                        .text_color(crate::theme::color("primary-foreground"))
                                         .test_id("onboarding-create"),
                                 )
                                 .on_press(move || create_open.set(true)),
@@ -941,10 +947,12 @@ pub fn App() -> impl IntoElement {
                             // 动，组件体挂载）、④⑤码化错误呈现；取消零副作用留
                             // 引导。删本接线即 headless 引导选择器用例红（ADR-0087）。
                             button()
-                                .app_class("px-3 py-1.5 rounded-md border border-border text-foreground hover:bg-accent")
+                                .app_class(
+                                    "h-8 px-3 rounded-(--radius) border border-border text-foreground hover:bg-accent",
+                                )
                                 .child(
                                     text(ONBOARDING_PICK_LABEL)
-                                        .text_size(px(13.0))
+                                        .text_sm()
                                         .text_color(fg)
                                         .test_id("onboarding-pick-book-dir"),
                                 )
@@ -956,14 +964,9 @@ pub fn App() -> impl IntoElement {
                                 move || create_error.get().is_some(),
                                 move || {
                                     text(move || create_error.get().unwrap_or_default())
-                                        .text_size(px(12.0))
+                                        .text_xs()
                                         .text_color(
-                                            nsh_core::element::tokens()
-                                                .color("destructive")
-                                                .unwrap_or(AdaptiveColor::new(
-                                                    rgb(0xd03050),
-                                                    rgb(0xe88080),
-                                                )),
+                                            crate::theme::color("destructive"),
                                         )
                                         .test_id("onboarding-error")
                                 },
@@ -980,13 +983,13 @@ pub fn App() -> impl IntoElement {
                     .gap_2()
                     .child(
                         text(move || headline_text(&state.get()))
-                            .text_size(px(24.0))
+                            .text_xl()
                             .text_color(fg)
                             .test_id("startup-headline"),
                     )
                     .child(
                         text(move || secondary_text(&state.get()))
-                            .text_size(px(12.0))
+                            .text_xs()
                             .text_color(muted),
                     )
                     .child(
@@ -1007,11 +1010,11 @@ pub fn App() -> impl IntoElement {
                             move || {
                                 button()
                                     .app_class(
-                                        "px-3 py-1.5 rounded-md border border-border text-foreground hover:bg-accent",
+                                        "h-8 px-3 rounded-(--radius) border border-border text-foreground hover:bg-accent",
                                     )
                                     .child(
                                         text(PICK_BOOK_DIR_BUTTON)
-                                            .text_size(px(13.0))
+                                            .text_sm()
                                             .text_color(fg)
                                             .test_id("startup-pick-book-dir"),
                                     )

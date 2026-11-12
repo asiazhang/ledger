@@ -45,6 +45,7 @@ use crate::app::db_slot;
 use crate::assembly::{self, ColumnAlign, CurrencyTable, PHYSICAL_ASSET_COLUMNS};
 use crate::boot;
 use crate::date_select;
+use crate::design::font_size;
 use crate::modal;
 use crate::nav_model::ViewName;
 use crate::popconfirm;
@@ -115,26 +116,22 @@ const LOADING_PLACEHOLDER: &str = "正在加载…";
 const READ_TASK_FAILED: &str = "内部错误：读任务异常退出";
 const WRITE_TASK_FAILED: &str = "内部错误：写入任务异常退出";
 
-fn token_or_fallback(key: &'static str, fallback_light: Hsla) -> AdaptiveColor {
-    nsh_core::element::tokens()
-        .color(key)
-        .unwrap_or_else(|| fallback_light.into())
-}
-
+/// 主题令牌单取：视图层零本地色常量，令牌缺失统一落 `crate::theme` 的
+/// 可读兜底（ADR-0147 决策 1；本地 token_or_fallback 已退役）。
 fn foreground_of() -> AdaptiveColor {
-    token_or_fallback("foreground", hsla(0.0, 0.0, 0.98, 1.0))
+    crate::theme::color("foreground")
 }
 
 fn muted_of() -> AdaptiveColor {
-    token_or_fallback("muted-foreground", hsla(0.0, 0.0, 0.45, 1.0))
+    crate::theme::color("muted-foreground")
 }
 
 fn danger_of() -> AdaptiveColor {
-    token_or_fallback("destructive", hsla(0.0, 0.0, 0.98, 1.0))
+    crate::theme::color("destructive")
 }
 
 fn success_of() -> AdaptiveColor {
-    token_or_fallback("success", hsla(0.42, 0.62, 0.35, 1.0))
+    crate::theme::color("success")
 }
 
 // ---------------------------------------------------------------------------
@@ -215,7 +212,7 @@ fn error_line(
 ) -> impl IntoElement {
     when(show, move || {
         text(text_of())
-            .text_size(px(12.0))
+            .text_size(px(font_size::CAPTION))
             .text_color(color)
             .test_id(id)
     })
@@ -239,24 +236,24 @@ fn modal_buttons(
         .child(
             button()
                 .app_class(
-                    "px-3 py-1.5 rounded-md border border-border text-foreground hover:bg-accent",
+                    "px-3 py-1.5 rounded-(--radius) border border-border text-foreground hover:bg-accent",
                 )
                 .on_press(move |_: &()| on_cancel())
                 .child(
                     text(ROW_CANCEL)
-                        .text_size(px(13.0))
+                        .text_size(px(font_size::SECONDARY))
                         .text_color(fg)
                         .test_id(cancel_id.as_str()),
                 ),
         )
         .child(
             button()
-                .app_class("px-3 py-1.5 rounded-md bg-primary hover:opacity-90")
+                .app_class("px-3 py-1.5 rounded-(--radius) bg-primary hover:opacity-90")
                 .on_press(move |_: &()| on_confirm())
                 .child(
                     text(SAVE_LABEL)
-                        .text_size(px(13.0))
-                        .text_color(rgb(0xffffff))
+                        .text_size(px(font_size::SECONDARY))
+                        .text_color(crate::theme::color("primary-foreground"))
                         .test_id(confirm_id.as_str()),
                 ),
         )
@@ -282,7 +279,7 @@ fn text_field(
             .text_color(fg)
             .w(px(width))
             .app_class(
-                "bg-background rounded-md border border-border px-2 py-1 \
+                "bg-background rounded-(--radius) border border-border px-2 py-1 \
                  placeholder:text-muted-foreground",
             )
             .on_change(move |text: &str| value.set(text.to_owned())),
@@ -332,7 +329,7 @@ fn amount_currency_row(
                     .text_color(fg)
                     .w(px(width))
                     .app_class(
-                        "bg-background rounded-md border border-border px-2 py-1 \
+                        "bg-background rounded-(--radius) border border-border px-2 py-1 \
                          placeholder:text-muted-foreground",
                     )
                     .on_change(move |text: &str| amount_signal.set(text.to_owned())),
@@ -356,9 +353,14 @@ fn action_button(
     on_press: impl Fn() + 'static,
 ) -> View {
     view()
-        .app_class("px-2 py-0.5 rounded-md border border-border text-foreground hover:bg-accent")
+        .app_class("px-2 py-0.5 rounded-sm border border-border text-foreground hover:bg-accent")
         .on_press(move |_: &PressEvent| on_press())
-        .child(text(label).text_size(px(12.0)).text_color(fg).test_id(id))
+        .child(
+            text(label)
+                .text_size(px(font_size::CAPTION))
+                .text_color(fg)
+                .test_id(id),
+        )
 }
 
 // ============================================================================
@@ -859,7 +861,7 @@ pub(crate) fn PhysicalAssetsView() -> impl IntoElement {
                     .get(index)
                     .is_some_and(|row| row.status_label == STATUS_DISPOSED);
                 text(cell.text.clone())
-                    .text_size(px(13.0))
+                    .text_size(px(font_size::SECONDARY))
                     .text_color(if disposed { muted_of() } else { success_of() })
                     .into_element()
             }
@@ -948,11 +950,11 @@ pub(crate) fn PhysicalAssetsView() -> impl IntoElement {
                             // 吞掉外层按压——按压源归外层包裹视图，先例同注）。
                             view()
                                 .app_class(
-                                    "px-2 py-0.5 rounded-md border border-border text-foreground hover:bg-accent",
+                                    "px-2 py-0.5 rounded-sm border border-border text-foreground hover:bg-accent",
                                 )
                                 .child(
                                     text(ROW_DELETE)
-                                        .text_size(px(12.0))
+                                        .text_size(px(font_size::CAPTION))
                                         .text_color(fg)
                                         .test_id(format!("physical-asset-delete-{id}").as_str()),
                                 ),
@@ -965,7 +967,7 @@ pub(crate) fn PhysicalAssetsView() -> impl IntoElement {
                     .into_element()
             }
             _ => text(cell.text.clone())
-                .text_size(px(13.0))
+                .text_size(px(font_size::SECONDARY))
                 .text_color(fg)
                 .number_of_lines(1)
                 .into_element(),
@@ -983,14 +985,19 @@ pub(crate) fn PhysicalAssetsView() -> impl IntoElement {
         view().child(
             button()
                 .selected(move || filter.get() == status)
-                .app_class("px-2 py-0.5 rounded-md selected:bg-accent hover:bg-accent")
+                .app_class("px-2 py-0.5 rounded-sm selected:bg-accent hover:bg-accent")
                 .on_press(move |_: &()| {
                     if filter.get_untracked() != status {
                         filter.set(status);
                         reload();
                     }
                 })
-                .child(text(label).text_size(px(12.0)).text_color(fg).test_id(id)),
+                .child(
+                    text(label)
+                        .text_size(px(font_size::CAPTION))
+                        .text_color(fg)
+                        .test_id(id),
+                ),
         )
     };
 
@@ -1098,7 +1105,7 @@ pub(crate) fn PhysicalAssetsView() -> impl IntoElement {
             ))
             .child(
                 text(VALUATION_DATE_HINT)
-                    .text_size(px(12.0))
+                    .text_size(px(font_size::CAPTION))
                     .text_color(muted),
             )
             .child(error_line(
@@ -1144,7 +1151,7 @@ pub(crate) fn PhysicalAssetsView() -> impl IntoElement {
             ))
             .child(
                 text(DISPOSE_DATE_HINT)
-                    .text_size(px(12.0))
+                    .text_size(px(font_size::CAPTION))
                     .text_color(muted),
             )
             .child(error_line(
@@ -1175,7 +1182,7 @@ pub(crate) fn PhysicalAssetsView() -> impl IntoElement {
             // 屏名（旧壳 page-title 同位；容器页签态与独立路由共用）。
             view().px_4().py_2().child(
                 text(ViewName::PhysicalAssets.label())
-                    .text_size(px(16.0))
+                    .text_size(px(font_size::TITLE))
                     .text_color(fg)
                     .test_id("view-title"),
             ),
@@ -1195,18 +1202,18 @@ pub(crate) fn PhysicalAssetsView() -> impl IntoElement {
                     .justify_between()
                     .child(
                         text(holding_total)
-                            .text_size(px(13.0))
+                            .text_size(px(font_size::SECONDARY))
                             .text_color(fg)
                             .test_id("physical-asset-holding-total"),
                     )
                     .child(
                         button()
-                            .app_class("px-3 py-1.5 rounded-md bg-primary hover:opacity-90")
+                            .app_class("px-3 py-1.5 rounded-(--radius) bg-primary hover:opacity-90")
                             .on_press(move |_: &()| open_create())
                             .child(
                                 text(NEW_BUTTON)
-                                    .text_size(px(13.0))
-                                    .text_color(rgb(0xffffff))
+                                    .text_size(px(font_size::SECONDARY))
+                                    .text_color(crate::theme::color("primary-foreground"))
                                     .test_id("physical-asset-new"),
                             ),
                     ),
@@ -1227,7 +1234,7 @@ pub(crate) fn PhysicalAssetsView() -> impl IntoElement {
                         .flex_1()
                         .flex_col()
                         .gap_2()
-                        .app_class("rounded-md border border-border p-3")
+                        .app_class("rounded-(--radius-card) border border-border p-3")
                         .child(
                             view()
                                 .flex_row()
@@ -1235,7 +1242,7 @@ pub(crate) fn PhysicalAssetsView() -> impl IntoElement {
                                 .gap_2()
                                 .child(
                                     text(LIST_CARD_TITLE)
-                                        .text_size(px(13.0))
+                                        .text_size(px(font_size::SECONDARY))
                                         .font_weight(FontWeight::SEMIBOLD)
                                         .text_color(fg),
                                 )
@@ -1272,7 +1279,7 @@ pub(crate) fn PhysicalAssetsView() -> impl IntoElement {
                         move || status.get().is_some(),
                         move || {
                             text(move || status.get().unwrap_or_default())
-                                .text_size(px(12.0))
+                                .text_size(px(font_size::CAPTION))
                                 .text_color(fg)
                                 .test_id("physical-asset-status")
                         },

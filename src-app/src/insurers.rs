@@ -29,6 +29,7 @@ use crate::adaptive;
 use crate::app::db_slot;
 use crate::assembly::{self, INSURER_COLUMNS, InsurerRowCells};
 use crate::boot;
+use crate::design::font_size;
 use crate::modal;
 use crate::nav;
 use crate::nav_model::ViewName;
@@ -119,17 +120,10 @@ pub(crate) fn InsurersView() -> impl IntoElement {
         reload();
     });
 
-    // 主题令牌（双态自适应；令牌缺失回退亮灰/中灰可读兜底，先例同形）。
-    let tokens = nsh_core::element::tokens();
-    let fg = tokens
-        .color("foreground")
-        .unwrap_or_else(|| hsla(0.0, 0.0, 0.98, 1.0).into());
-    let muted = tokens
-        .color("muted-foreground")
-        .unwrap_or_else(|| hsla(0.0, 0.0, 0.45, 1.0).into());
-    let danger_fg = tokens
-        .color("destructive")
-        .unwrap_or_else(|| hsla(0.0, 0.0, 0.98, 1.0).into());
+    // 主题令牌（双态自适应；缺失兜底统一归 crate::theme 单点）。
+    let fg = crate::theme::color("foreground");
+    let muted = crate::theme::color("muted-foreground");
+    let danger_fg = crate::theme::color("destructive");
 
     // 操作反馈条位（NSH 无 toast——#2038 裁决；旧壳 message.success/error 的
     // 条位对应物：新动作开始时清回空）。
@@ -308,9 +302,13 @@ pub(crate) fn InsurersView() -> impl IntoElement {
             .child(
                 view()
                     .test_id(format!("ins-edit-{insurer_id}").as_str())
-                    .app_class("rounded-md hover:bg-accent px-1")
+                    .app_class("rounded-sm hover:bg-accent px-1")
                     .on_press(move |_: &PressEvent| open_edit(edit_insurer_id.clone()))
-                    .child(text(BUTTON_EDIT).text_size(px(12.0)).text_color(fg)),
+                    .child(
+                        text(BUTTON_EDIT)
+                            .text_size(px(font_size::CAPTION))
+                            .text_color(fg),
+                    ),
             )
             .child(
                 // 轻量确认气泡（触发件用纯视图，nsh-base Button 自含按压语义
@@ -332,10 +330,10 @@ pub(crate) fn InsurersView() -> impl IntoElement {
                     },
                     view()
                         .test_id(format!("ins-delete-{insurer_id}").as_str())
-                        .app_class("rounded-md hover:bg-accent px-1")
+                        .app_class("rounded-sm hover:bg-accent px-1")
                         .child(
                             text(BUTTON_DELETE)
-                                .text_size(px(12.0))
+                                .text_size(px(font_size::CAPTION))
                                 .text_color(danger_fg),
                         ),
                     move || perform_delete(insurer_id.clone()),
@@ -357,7 +355,7 @@ pub(crate) fn InsurersView() -> impl IntoElement {
                     .gap_1()
                     .child(
                         text(cell.text.clone())
-                            .text_size(px(13.0))
+                            .text_size(px(font_size::SECONDARY))
                             .text_color(fg)
                             .number_of_lines(1),
                     )
@@ -366,10 +364,10 @@ pub(crate) fn InsurersView() -> impl IntoElement {
                             move || is_deleted,
                             move || {
                                 text(DELETED_TAG)
-                                    .text_size(px(12.0))
+                                    .text_size(px(font_size::CAPTION))
                                     .text_color(muted)
                                     .test_id("ins-deleted-tag")
-                                    .app_class("px-1.5 rounded-md border border-border")
+                                    .app_class("px-1.5 rounded-(--radius) border border-border")
                             },
                         )
                         .otherwise(view),
@@ -381,7 +379,7 @@ pub(crate) fn InsurersView() -> impl IntoElement {
                 _ => view().into_element(),
             },
             _ => text(cell.text.clone())
-                .text_size(px(13.0))
+                .text_size(px(font_size::SECONDARY))
                 .text_color(fg)
                 .number_of_lines(1)
                 .into_element(),
@@ -403,7 +401,7 @@ pub(crate) fn InsurersView() -> impl IntoElement {
         .child(
             view().px_4().py_2().child(
                 text(ViewName::Insurers.label())
-                    .text_size(px(16.0))
+                    .text_size(px(font_size::TITLE))
                     .text_color(fg)
                     .test_id("view-title"),
             ),
@@ -415,7 +413,7 @@ pub(crate) fn InsurersView() -> impl IntoElement {
                 move || error.get().is_some(),
                 move || {
                     text(move || format!("加载失败：{}", error.get().unwrap_or_default()))
-                        .text_size(px(12.0))
+                        .text_size(px(font_size::CAPTION))
                         .text_color(danger_fg)
                         .test_id("ins-error")
                         .app_class("px-4 py-1")
@@ -438,10 +436,10 @@ pub(crate) fn InsurersView() -> impl IntoElement {
                     view()
                         .flex_col()
                         .gap_2()
-                        .app_class("rounded-md border border-border p-3")
+                        .app_class("rounded-(--radius-card) border border-border p-3")
                         .child(
                             text(ADD_CARD_TITLE)
-                                .text_size(px(13.0))
+                                .text_size(px(font_size::SECONDARY))
                                 .font_weight(FontWeight::SEMIBOLD)
                                 .text_color(fg),
                         )
@@ -460,7 +458,7 @@ pub(crate) fn InsurersView() -> impl IntoElement {
                                         .text_color(fg)
                                         .w(px(240.0))
                                         .app_class(
-                                            "bg-background rounded-md border border-border \
+                                            "bg-background rounded-(--radius) border border-border \
                                              px-2 py-1 placeholder:text-muted-foreground",
                                         )
                                         .on_change(move |text: &str| add_name.set(text.to_owned())),
@@ -468,12 +466,14 @@ pub(crate) fn InsurersView() -> impl IntoElement {
                                 .child(
                                     button()
                                         .app_class(
-                                            "px-3 py-1.5 rounded-md bg-primary hover:opacity-90",
+                                            "px-3 py-1.5 rounded-(--radius) bg-primary hover:opacity-90",
                                         )
                                         .child(
                                             text(BUTTON_ADD)
-                                                .text_size(px(13.0))
-                                                .text_color(rgb(0xffffff))
+                                                .text_size(px(font_size::SECONDARY))
+                                                .text_color(crate::theme::color(
+                                                    "primary-foreground",
+                                                ))
                                                 .test_id("ins-add"),
                                         )
                                         .on_press(move |_: &()| perform_add()),
@@ -485,7 +485,7 @@ pub(crate) fn InsurersView() -> impl IntoElement {
                                 move || add_error.get().is_some(),
                                 move || {
                                     text(move || add_error.get().unwrap_or_default())
-                                        .text_size(px(12.0))
+                                        .text_size(px(font_size::CAPTION))
                                         .text_color(danger_fg)
                                         .test_id("ins-add-error")
                                 },
@@ -499,10 +499,10 @@ pub(crate) fn InsurersView() -> impl IntoElement {
                         .flex_1()
                         .flex_col()
                         .gap_2()
-                        .app_class("rounded-md border border-border p-3")
+                        .app_class("rounded-(--radius-card) border border-border p-3")
                         .child(
                             text(LIST_CARD_TITLE)
-                                .text_size(px(13.0))
+                                .text_size(px(font_size::SECONDARY))
                                 .font_weight(FontWeight::SEMIBOLD)
                                 .text_color(fg),
                         )
@@ -516,7 +516,7 @@ pub(crate) fn InsurersView() -> impl IntoElement {
                                     .text_color(fg)
                                     .w(px(240.0))
                                     .app_class(
-                                        "bg-background rounded-md border border-border px-2 \
+                                        "bg-background rounded-(--radius) border border-border px-2 \
                                          py-1 placeholder:text-muted-foreground",
                                     )
                                     .on_change(move |text: &str| search_term.set(text.to_owned())),
@@ -531,7 +531,7 @@ pub(crate) fn InsurersView() -> impl IntoElement {
                                         SHOW_DELETED
                                     })
                                     .app_class(
-                                        "px-2 py-1 rounded-md text-foreground hover:bg-accent \
+                                        "px-2 py-1 rounded-(--radius) text-foreground hover:bg-accent \
                                              selected:bg-accent",
                                     )
                                     .child(
@@ -542,7 +542,7 @@ pub(crate) fn InsurersView() -> impl IntoElement {
                                                 SHOW_DELETED
                                             )
                                         })
-                                        .text_size(px(12.0))
+                                        .text_size(px(font_size::CAPTION))
                                         .text_color(fg)
                                         .test_id("ins-show-deleted"),
                                     )
@@ -570,7 +570,7 @@ pub(crate) fn InsurersView() -> impl IntoElement {
                         move || status.get().is_some(),
                         move || {
                             text(move || status.get().unwrap_or_default())
-                                .text_size(px(12.0))
+                                .text_size(px(font_size::CAPTION))
                                 .text_color(fg)
                                 .test_id("ins-status")
                         },
@@ -602,7 +602,7 @@ pub(crate) fn InsurersView() -> impl IntoElement {
                                                 .optional_label("保司名称")
                                                 .text_color(fg)
                                                 .app_class(
-                                                    "bg-background rounded-md border \
+                                                    "bg-background rounded-(--radius) border \
                                                      border-border px-2 py-1 \
                                                      placeholder:text-muted-foreground",
                                                 )
@@ -618,7 +618,7 @@ pub(crate) fn InsurersView() -> impl IntoElement {
                                         move || edit_error.get().is_some(),
                                         move || {
                                             text(move || edit_error.get().unwrap_or_default())
-                                                .text_size(px(12.0))
+                                                .text_size(px(font_size::CAPTION))
                                                 .text_color(danger_fg)
                                                 .test_id("ins-edit-error")
                                         },
@@ -631,13 +631,15 @@ pub(crate) fn InsurersView() -> impl IntoElement {
                                     view().flex_row().justify_end().child(
                                         button()
                                             .app_class(
-                                                "px-3 py-1.5 rounded-md bg-primary \
+                                                "px-3 py-1.5 rounded-(--radius) bg-primary \
                                                      hover:opacity-90",
                                             )
                                             .child(
                                                 text(BUTTON_SAVE)
-                                                    .text_size(px(13.0))
-                                                    .text_color(rgb(0xffffff))
+                                                    .text_size(px(font_size::SECONDARY))
+                                                    .text_color(crate::theme::color(
+                                                        "primary-foreground",
+                                                    ))
                                                     .test_id("ins-edit-save"),
                                             )
                                             .on_press(move |_: &()| perform_update()),

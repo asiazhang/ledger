@@ -60,6 +60,7 @@ use crate::assembly::{
 use crate::boot;
 use crate::combo_select;
 use crate::date_select;
+use crate::design::font_size;
 use crate::modal;
 use crate::pinyin_select;
 use crate::popconfirm;
@@ -335,17 +336,12 @@ pub(crate) fn subscriptions_pane(pending_focus: Signal<Option<String>>) -> impl 
         }
     });
 
-    // 主题令牌（双态自适应；令牌缺失回退亮灰/中灰可读兜底，先例同形）。
-    let tokens = nsh_core::element::tokens();
-    let fg = tokens
-        .color("foreground")
-        .unwrap_or_else(|| hsla(0.0, 0.0, 0.98, 1.0).into());
-    let muted = tokens
-        .color("muted-foreground")
-        .unwrap_or_else(|| hsla(0.0, 0.0, 0.45, 1.0).into());
-    let danger_fg = tokens
-        .color("destructive")
-        .unwrap_or_else(|| hsla(0.0, 0.0, 0.98, 1.0).into());
+    // 主题令牌（双态自适应；缺失兜底统一归 crate::theme 单点）。
+    let fg = crate::theme::color("foreground");
+    let muted = crate::theme::color("muted-foreground");
+    let danger_fg = crate::theme::color("destructive");
+    // 主按钮前景 = primary-foreground 令牌（亮暗双态随表；旧裸白直调退役）。
+    let primary_fg = crate::theme::color("primary-foreground");
 
     // ============================ 清单呈现 ============================
     // 状态过滤（纯前端过滤，不产生请求——旧壳 filteredRows 同口径）。
@@ -754,7 +750,7 @@ pub(crate) fn subscriptions_pane(pending_focus: Signal<Option<String>>) -> impl 
         .flex_1()
         .flex_col()
         .gap_2()
-        .app_class("rounded-md border border-border p-3")
+        .app_class("rounded-(--radius-card) border border-border p-3")
         .child(
             view()
                 .flex_row()
@@ -762,7 +758,7 @@ pub(crate) fn subscriptions_pane(pending_focus: Signal<Option<String>>) -> impl 
                 .gap_2()
                 .child(
                     text(SUB_LIST_TITLE)
-                        .text_size(px(13.0))
+                        .text_size(px(font_size::TITLE))
                         .font_weight(FontWeight::SEMIBOLD)
                         .text_color(fg),
                 )
@@ -771,22 +767,22 @@ pub(crate) fn subscriptions_pane(pending_focus: Signal<Option<String>>) -> impl 
                     let key_owned = key.to_owned();
                     button()
                         .app_class(
-                            "px-2 py-0.5 rounded-md text-foreground hover:bg-accent selected:bg-accent",
+                            "px-2 py-1 rounded-(--radius) text-foreground hover:bg-accent selected:bg-accent",
                         )
                         .child(
                             text(label)
-                                .text_size(px(12.0))
+                                .text_size(px(font_size::CAPTION))
                                 .test_id(format!("sub-filter-{key_owned}").as_str()),
                         )
                         .on_press(move |_: &()| active_filter.set(key.to_owned()))
                 }))
                 .child(
                     button()
-                        .app_class("px-3 py-1.5 rounded-md bg-primary hover:opacity-90")
+                        .app_class("px-3 py-2 rounded-(--radius) bg-primary hover:opacity-90")
                         .child(
                             text("新建订阅")
-                                .text_size(px(13.0))
-                                .text_color(rgb(0xffffff))
+                                .text_size(px(font_size::SECONDARY))
+                                .text_color(primary_fg)
                                 .test_id("sub-create-open"),
                         )
                         .on_press(move |_: &()| open_create()),
@@ -842,7 +838,7 @@ pub(crate) fn subscriptions_pane(pending_focus: Signal<Option<String>>) -> impl 
                 .text_color(fg)
                 .w(px(280.0))
                 .app_class(
-                    "bg-background rounded-md border border-border px-2 py-1 \
+                    "bg-background rounded-(--radius) border border-border px-2 py-1 \
                      placeholder:text-muted-foreground",
                 )
                 .on_change(move |value: &str| create_note.set(value.to_owned()))))
@@ -886,14 +882,14 @@ pub(crate) fn subscriptions_pane(pending_focus: Signal<Option<String>>) -> impl 
                     .text_color(fg)
                     .w(px(160.0))
                     .app_class(
-                        "bg-background rounded-md border border-border px-2 py-1 \
+                        "bg-background rounded-(--radius) border border-border px-2 py-1 \
                          placeholder:text-muted-foreground",
                     )
                     .on_change(move |value: &str| create_amount.set(value.to_owned())))
                 .child(
                     // 币种随账户推导（只读展示，旧壳 disabled AppSelect 同位）。
                     text(move || create_currency_text.get())
-                        .text_size(px(13.0))
+                        .text_size(px(font_size::SECONDARY))
                         .text_color(muted)
                         .test_id("sub-currency"),
                 )))
@@ -901,7 +897,7 @@ pub(crate) fn subscriptions_pane(pending_focus: Signal<Option<String>>) -> impl 
                 .flex_row()
                 .items_center()
                 .gap_2()
-                .child(text("每").text_size(px(13.0)).text_color(fg))
+                .child(text("每").text_size(px(font_size::SECONDARY)).text_color(fg))
                 .child(input()
                     .test_id("sub-interval")
                     .value(move || create_interval_text.get())
@@ -910,7 +906,7 @@ pub(crate) fn subscriptions_pane(pending_focus: Signal<Option<String>>) -> impl 
                     .text_color(fg)
                     .w(px(90.0))
                     .app_class(
-                        "bg-background rounded-md border border-border px-2 py-1 \
+                        "bg-background rounded-(--radius) border border-border px-2 py-1 \
                          placeholder:text-muted-foreground",
                     )
                     .on_change(move |value: &str| create_interval_text.set(value.to_owned())))
@@ -934,7 +930,7 @@ pub(crate) fn subscriptions_pane(pending_focus: Signal<Option<String>>) -> impl 
                         move || create_error.get().is_some(),
                         move || {
                             text(move || format!("创建失败: {}", create_error.get().unwrap_or_default()))
-                                .text_size(px(12.0))
+                                .text_size(px(font_size::CAPTION))
                                 .text_color(danger_fg)
                                 .test_id("sub-create-error")
                         },
@@ -948,11 +944,11 @@ pub(crate) fn subscriptions_pane(pending_focus: Signal<Option<String>>) -> impl 
                     .child(
                         button()
                             .app_class(
-                                "px-3 py-1.5 rounded-md border border-border text-foreground hover:bg-accent",
+                                "px-3 py-2 rounded-(--radius) border border-border text-foreground hover:bg-accent",
                             )
                             .child(
                                 text("取消")
-                                    .text_size(px(13.0))
+                                    .text_size(px(font_size::SECONDARY))
                                     .text_color(fg)
                                     .test_id("sub-create-cancel"),
                             )
@@ -960,11 +956,11 @@ pub(crate) fn subscriptions_pane(pending_focus: Signal<Option<String>>) -> impl 
                     )
                     .child(
                         button()
-                            .app_class("px-3 py-1.5 rounded-md bg-primary hover:opacity-90")
+                            .app_class("px-3 py-2 rounded-(--radius) bg-primary hover:opacity-90")
                             .child(
                                 text(CREATE_SUB_SUBMIT_LABEL)
-                                    .text_size(px(13.0))
-                                    .text_color(rgb(0xffffff))
+                                    .text_size(px(font_size::SECONDARY))
+                                    .text_color(primary_fg)
                                     .test_id("sub-create"),
                             )
                             .on_press(move |_: &()| perform_create()),
@@ -985,7 +981,7 @@ pub(crate) fn subscriptions_pane(pending_focus: Signal<Option<String>>) -> impl 
                 .text_color(fg)
                 .w(px(280.0))
                 .app_class(
-                    "bg-background rounded-md border border-border px-2 py-1 \
+                    "bg-background rounded-(--radius) border border-border px-2 py-1 \
                      placeholder:text-muted-foreground",
                 )
                 .on_change(move |value: &str| edit_note.set(value.to_owned()))))
@@ -1039,7 +1035,7 @@ pub(crate) fn subscriptions_pane(pending_focus: Signal<Option<String>>) -> impl 
                         move || edit_error.get().is_some(),
                         move || {
                             text(move || format!("保存失败: {}", edit_error.get().unwrap_or_default()))
-                                .text_size(px(12.0))
+                                .text_size(px(font_size::CAPTION))
                                 .text_color(danger_fg)
                                 .test_id("sub-edit-error")
                         },
@@ -1053,11 +1049,11 @@ pub(crate) fn subscriptions_pane(pending_focus: Signal<Option<String>>) -> impl 
                     .child(
                         button()
                             .app_class(
-                                "px-3 py-1.5 rounded-md border border-border text-foreground hover:bg-accent",
+                                "px-3 py-2 rounded-(--radius) border border-border text-foreground hover:bg-accent",
                             )
                             .child(
                                 text("取消")
-                                    .text_size(px(13.0))
+                                    .text_size(px(font_size::SECONDARY))
                                     .text_color(fg)
                                     .test_id("sub-edit-cancel"),
                             )
@@ -1065,11 +1061,11 @@ pub(crate) fn subscriptions_pane(pending_focus: Signal<Option<String>>) -> impl 
                     )
                     .child(
                         button()
-                            .app_class("px-3 py-1.5 rounded-md bg-primary hover:opacity-90")
+                            .app_class("px-3 py-2 rounded-(--radius) bg-primary hover:opacity-90")
                             .child(
                                 text("保存")
-                                    .text_size(px(13.0))
-                                    .text_color(rgb(0xffffff))
+                                    .text_size(px(font_size::SECONDARY))
+                                    .text_color(primary_fg)
                                     .test_id("sub-edit-save"),
                             )
                             .on_press(move |_: &()| perform_edit()),
@@ -1088,7 +1084,7 @@ pub(crate) fn subscriptions_pane(pending_focus: Signal<Option<String>>) -> impl 
                 move || error.get().is_some(),
                 move || {
                     text(move || format!("加载失败: {}", error.get().unwrap_or_default()))
-                        .text_size(px(12.0))
+                        .text_size(px(font_size::CAPTION))
                         .text_color(danger_fg)
                         .test_id("sub-error")
                         .app_class("px-4 py-1")
@@ -1103,7 +1099,7 @@ pub(crate) fn subscriptions_pane(pending_focus: Signal<Option<String>>) -> impl 
                 move || status.get().is_some(),
                 move || {
                     text(move || status.get().unwrap_or_default())
-                        .text_size(px(12.0))
+                        .text_size(px(font_size::CAPTION))
                         .text_color(fg)
                         .test_id("sub-status")
                 },
@@ -1144,7 +1140,8 @@ pub(crate) fn subscriptions_pane(pending_focus: Signal<Option<String>>) -> impl 
 // 模块级 helper（装配证据的闭包支撑面 + 选项投影纯函数）。
 // ---------------------------------------------------------------------------
 
-/// 表单字段标签（弱化小字，交易表单同行形态）。空标签 = 占位空（错误条位
+/// 表单字段标签（字阶 SECONDARY 档 + muted 弱化——次要信息不靠缩字号，
+/// 交易表单同行形态）。空标签 = 占位空（错误条位
 /// 不配标签——与行位对齐）。
 pub(crate) fn field_label(
     label: &'static str,
@@ -1154,7 +1151,7 @@ pub(crate) fn field_label(
         view().w(px(64.0)).into_element()
     } else {
         text(label)
-            .text_size(px(12.0))
+            .text_size(px(font_size::SECONDARY))
             .text_color(muted)
             .w(px(64.0))
             .text_right()
@@ -1184,10 +1181,10 @@ pub(crate) fn action_button(
     fg: nsh_core::element::AdaptiveColor,
 ) -> nsh_core::element::AnyElement {
     button()
-        .app_class("px-2 py-0.5 rounded-md text-foreground hover:bg-accent")
+        .app_class("px-2 py-1 rounded-(--radius) text-foreground hover:bg-accent")
         .child(
             text(label)
-                .text_size(px(12.0))
+                .text_size(px(font_size::CAPTION))
                 .text_color(fg)
                 .test_id(anchor.as_str()),
         )
@@ -1215,18 +1212,13 @@ fn make_action_renderer(
         };
         match cell.key.as_ref() {
             "next" => text(cell.text.clone())
-                .text_size(px(13.0))
+                .text_size(px(font_size::SECONDARY))
                 .number_of_lines(1)
                 .test_id(format!("sub-next-{}", row.id).as_str())
                 .into_element(),
             "actions" => {
-                let tokens = nsh_core::element::tokens();
-                let fg = tokens
-                    .color("foreground")
-                    .unwrap_or_else(|| hsla(0.0, 0.0, 0.98, 1.0).into());
-                let danger_fg = tokens
-                    .color("destructive")
-                    .unwrap_or_else(|| hsla(0.0, 0.0, 0.98, 1.0).into());
+                let fg = crate::theme::color("foreground");
+                let danger_fg = crate::theme::color("destructive");
                 let id = row.id.clone();
                 let mut buttons: Vec<nsh_core::element::AnyElement> = vec![action_button(
                     "期次",
@@ -1293,11 +1285,11 @@ fn make_action_renderer(
                             // 面（旧壳 type=error quaternary 同位）。
                             view()
                                 .app_class(
-                                    "px-2 py-0.5 rounded-md text-destructive hover:bg-accent",
+                                    "px-2 py-1 rounded-(--radius) text-destructive hover:bg-accent",
                                 )
                                 .child(
                                     text("取消")
-                                        .text_size(px(12.0))
+                                        .text_size(px(font_size::CAPTION))
                                         .text_color(danger_fg)
                                         .test_id(format!("sub-cancel-{id}").as_str()),
                                 ),

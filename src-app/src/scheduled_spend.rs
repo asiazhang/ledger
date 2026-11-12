@@ -23,6 +23,7 @@ use nsh_core::element::FontWeight;
 use nsh_core::prelude::*;
 
 use crate::assembly::{ColumnAlign, CurrencyTable};
+use crate::design::{font_size, spacing};
 use crate::scheduled::{amount_text, status_label};
 
 /// 花费面板卡标题（旧壳 `scheduled.spend.title`）。
@@ -162,14 +163,11 @@ impl SpendPanelState {
 /// 零独立读路径（旧壳 onMounted reload 的对应物 = 页签装载批携带本面板
 /// 数据）。
 pub(crate) fn spend_panel(state: Signal<SpendPanelState>) -> impl IntoElement {
-    let tokens = nsh_core::element::tokens();
-    let fg = tokens
-        .color("foreground")
-        .unwrap_or_else(|| hsla(0.0, 0.0, 0.98, 1.0).into());
-    let muted = tokens
-        .color("muted-foreground")
-        .unwrap_or_else(|| hsla(0.0, 0.0, 0.45, 1.0).into());
-    let bar_color = hsla(0.58, 0.82, 0.52, 0.55).into();
+    let fg = crate::theme::color("foreground");
+    let muted = crate::theme::color("muted-foreground");
+    // 趋势柱色 = 走势主色 line 令牌（theme.json 单值档，亮暗同值）；令牌缺失
+    // 落可读灰兜底（消费方零本地色纪律，fg/muted 同款先例）。
+    let bar_color = crate::theme::color("line");
 
     when(
         move || state.get().failed,
@@ -177,16 +175,16 @@ pub(crate) fn spend_panel(state: Signal<SpendPanelState>) -> impl IntoElement {
             view()
                 .flex_col()
                 .gap_2()
-                .app_class("rounded-md border border-border p-3")
+                .app_class("rounded-(--radius-card) border border-border p-3")
                 .child(
                     text(SPEND_TITLE)
-                        .text_size(px(13.0))
+                        .text_size(px(font_size::TITLE))
                         .font_weight(FontWeight::SEMIBOLD)
                         .text_color(fg),
                 )
                 .child(
                     text("加载失败，请重试")
-                        .text_size(px(12.0))
+                        .text_size(px(font_size::CAPTION))
                         .text_color(muted)
                         .test_id("spend-failed"),
                 )
@@ -203,7 +201,7 @@ pub(crate) fn spend_panel(state: Signal<SpendPanelState>) -> impl IntoElement {
         view()
             .flex_col()
             .gap_2()
-            .app_class("rounded-md border border-border p-3")
+            .app_class("rounded-(--radius-card) border border-border p-3")
             .child(
                 view()
                     .flex_row()
@@ -211,13 +209,13 @@ pub(crate) fn spend_panel(state: Signal<SpendPanelState>) -> impl IntoElement {
                     .justify_between()
                     .child(
                         text(SPEND_TITLE)
-                            .text_size(px(13.0))
+                            .text_size(px(font_size::TITLE))
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(fg),
                     )
                     .child(
                         text(value(|c| c.caption.clone()))
-                            .text_size(px(12.0))
+                            .text_size(px(font_size::CAPTION))
                             .text_color(muted),
                     ),
             )
@@ -258,7 +256,7 @@ pub(crate) fn spend_panel(state: Signal<SpendPanelState>) -> impl IntoElement {
                     ))
                     .child(
                         text("推算：只计进行中的计划")
-                            .text_size(px(12.0))
+                            .text_size(px(font_size::CAPTION))
                             .text_color(muted),
                     ),
             )
@@ -279,7 +277,7 @@ pub(crate) fn spend_panel(state: Signal<SpendPanelState>) -> impl IntoElement {
                                     .unwrap_or_default()
                             )
                         })
-                        .text_size(px(11.0))
+                        .text_size(px(font_size::CAPTION))
                         .text_color(muted)
                         .test_id("spend-peak"),
                     )
@@ -287,7 +285,7 @@ pub(crate) fn spend_panel(state: Signal<SpendPanelState>) -> impl IntoElement {
                         view()
                             .flex_row()
                             .items_end()
-                            .gap(px(4.0))
+                            .gap(px(spacing::PART))
                             .h(px(150.0))
                             .test_id("spend-trend")
                             .child(bar_row(state, bar_color)),
@@ -322,10 +320,14 @@ fn stat_block(
     view()
         .flex_col()
         .gap_1()
-        .child(text(label).text_size(px(12.0)).text_color(muted))
+        .child(
+            text(label)
+                .text_size(px(font_size::CAPTION))
+                .text_color(muted),
+        )
         .child(
             text(value)
-                .text_size(px(20.0))
+                .text_size(px(font_size::TITLE))
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_color(fg)
                 .test_id(id),
@@ -339,9 +341,7 @@ fn bar_row(
     state: Signal<SpendPanelState>,
     bar_color: nsh_core::element::AdaptiveColor,
 ) -> impl IntoElement {
-    let muted = nsh_core::element::tokens()
-        .color("muted-foreground")
-        .unwrap_or_else(|| hsla(0.0, 0.0, 0.45, 1.0).into());
+    let muted = crate::theme::color("muted-foreground");
     each(
         move || {
             state
@@ -358,7 +358,7 @@ fn bar_row(
                 .flex_col()
                 .items_center()
                 .justify_end()
-                .gap(px(2.0))
+                .gap(px(spacing::HAIRLINE))
                 .flex_1()
                 .child(
                     view()
@@ -366,7 +366,11 @@ fn bar_row(
                         .h(move || px(bar.height.max(2.0)))
                         .bg(bar_color),
                 )
-                .child(text(bar.month).text_size(px(9.0)).text_color(muted))
+                .child(
+                    text(bar.month)
+                        .text_size(px(font_size::CAPTION))
+                        .text_color(muted),
+                )
         },
     )
 }

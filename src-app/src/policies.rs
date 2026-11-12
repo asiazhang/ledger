@@ -43,6 +43,7 @@ use crate::assembly::{self, CurrencyTable, POLICY_COLUMNS};
 use crate::boot;
 use crate::combo_select;
 use crate::date_select;
+use crate::design::font_size;
 use crate::modal;
 use crate::nav_model::ViewName;
 use crate::pinyin_select;
@@ -164,31 +165,26 @@ fn today_text() -> String {
     chrono::Local::now().date_naive().to_string()
 }
 
-/// 主题令牌单取（缺失回退双态兜底，app.rs 先例同形）。
-fn token_or_fallback(key: &'static str, fallback_light: Hsla) -> AdaptiveColor {
-    nsh_core::element::tokens()
-        .color(key)
-        .unwrap_or_else(|| fallback_light.into())
-}
-
+/// 主题令牌单取：视图层零本地色常量，令牌缺失统一落 `crate::theme` 的
+/// 可读兜底（ADR-0147 决策 1；本地 token_or_fallback 已退役）。
 fn foreground_of() -> AdaptiveColor {
-    token_or_fallback("foreground", hsla(0.0, 0.0, 0.98, 1.0))
+    crate::theme::color("foreground")
 }
 
 fn muted_of() -> AdaptiveColor {
-    token_or_fallback("muted-foreground", hsla(0.0, 0.0, 0.45, 1.0))
+    crate::theme::color("muted-foreground")
 }
 
 fn danger_of() -> AdaptiveColor {
-    token_or_fallback("destructive", hsla(0.0, 0.0, 0.98, 1.0))
+    crate::theme::color("destructive")
 }
 
 fn success_of() -> AdaptiveColor {
-    token_or_fallback("success", hsla(0.42, 0.62, 0.35, 1.0))
+    crate::theme::color("success")
 }
 
 fn warning_of() -> AdaptiveColor {
-    token_or_fallback("warning", hsla(0.10, 0.87, 0.53, 1.0))
+    crate::theme::color("warning")
 }
 
 // ---------------------------------------------------------------------------
@@ -512,24 +508,24 @@ fn modal_buttons(
         .child(
             button()
                 .app_class(
-                    "px-3 py-1.5 rounded-md border border-border text-foreground hover:bg-accent",
+                    "px-3 py-1.5 rounded-(--radius) border border-border text-foreground hover:bg-accent",
                 )
                 .on_press(move |_: &()| on_cancel())
                 .child(
                     text(ROW_CANCEL)
-                        .text_size(px(13.0))
+                        .text_size(px(font_size::SECONDARY))
                         .text_color(fg)
                         .test_id(cancel_id.as_str()),
                 ),
         )
         .child(
             button()
-                .app_class("px-3 py-1.5 rounded-md bg-primary hover:opacity-90")
+                .app_class("px-3 py-1.5 rounded-(--radius) bg-primary hover:opacity-90")
                 .on_press(move |_: &()| on_confirm())
                 .child(
                     text(confirm_label)
-                        .text_size(px(13.0))
-                        .text_color(rgb(0xffffff))
+                        .text_size(px(font_size::SECONDARY))
+                        .text_color(crate::theme::color("primary-foreground"))
                         .test_id(confirm_id.as_str()),
                 ),
         )
@@ -545,7 +541,7 @@ fn error_line(
 ) -> impl IntoElement {
     when(show, move || {
         text(text_of())
-            .text_size(px(12.0))
+            .text_size(px(font_size::CAPTION))
             .text_color(color)
             .test_id(id)
     })
@@ -572,7 +568,7 @@ fn text_field(
             .text_color(fg)
             .w(px(width))
             .app_class(
-                "bg-background rounded-md border border-border px-2 py-1 \
+                "bg-background rounded-(--radius) border border-border px-2 py-1 \
                  placeholder:text-muted-foreground",
             )
             .on_change(move |text: &str| value.set(text.to_owned())),
@@ -1387,7 +1383,7 @@ pub(crate) fn PoliciesView() -> impl IntoElement {
                 cell_view
                     .child(
                         text(cell.text.clone())
-                            .text_size(px(13.0))
+                            .text_size(px(font_size::SECONDARY))
                             .text_color(fg)
                             .number_of_lines(1),
                     )
@@ -1398,7 +1394,7 @@ pub(crate) fn PoliciesView() -> impl IntoElement {
                     .as_ref()
                     .is_some_and(|row| row.expiry == EXPIRY_EXPIRED);
                 text(cell.text.clone())
-                    .text_size(px(13.0))
+                    .text_size(px(font_size::SECONDARY))
                     .text_color(if expired { warning_of() } else { success_of() })
                     .into_element()
             }
@@ -1414,7 +1410,7 @@ pub(crate) fn PoliciesView() -> impl IntoElement {
                     .child(
                         button()
                             .app_class(
-                                "px-2 py-0.5 rounded-md border border-border text-foreground hover:bg-accent",
+                                "px-2 py-0.5 rounded-sm border border-border text-foreground hover:bg-accent",
                             )
                             .on_press({
                                 let id = id.clone();
@@ -1422,7 +1418,7 @@ pub(crate) fn PoliciesView() -> impl IntoElement {
                             })
                             .child(
                                 text(ROW_EDIT)
-                                    .text_size(px(12.0))
+                                    .text_size(px(font_size::CAPTION))
                                     .text_color(fg)
                                     .test_id(format!("policy-edit-{id}").as_str()),
                             ),
@@ -1454,11 +1450,11 @@ pub(crate) fn PoliciesView() -> impl IntoElement {
                             // 同注）。
                             view()
                                 .app_class(
-                                    "px-2 py-0.5 rounded-md border border-border text-foreground hover:bg-accent",
+                                    "px-2 py-0.5 rounded-sm border border-border text-foreground hover:bg-accent",
                                 )
                                 .child(
                                     text(ROW_DELETE)
-                                        .text_size(px(12.0))
+                                        .text_size(px(font_size::CAPTION))
                                         .text_color(fg)
                                         .test_id(format!("policy-delete-{id}").as_str()),
                                 ),
@@ -1471,7 +1467,7 @@ pub(crate) fn PoliciesView() -> impl IntoElement {
                     .into_element()
             }
             _ => text(cell.text.clone())
-                .text_size(px(13.0))
+                .text_size(px(font_size::SECONDARY))
                 .text_color(fg)
                 .number_of_lines(1)
                 .into_element(),
@@ -1525,7 +1521,7 @@ pub(crate) fn PoliciesView() -> impl IntoElement {
                 .test_id(format!("policy-seg-row-{}", segment.id).as_str())
                 .child(
                     text(segment_row_text(&segment, &currencies_now))
-                        .text_size(px(13.0))
+                        .text_size(px(font_size::SECONDARY))
                         .text_color(fg)
                         .number_of_lines(1),
                 )
@@ -1545,15 +1541,19 @@ pub(crate) fn PoliciesView() -> impl IntoElement {
                         )
                     },
                 )
-                .otherwise(move || text(SEGMENTS_EMPTY).text_size(px(12.0)).text_color(muted)),
+                .otherwise(move || {
+                    text(SEGMENTS_EMPTY)
+                        .text_size(px(font_size::CAPTION))
+                        .text_color(muted)
+                }),
             );
         view()
             .flex_col()
             .gap_2()
-            .app_class("rounded-md border border-border p-3")
+            .app_class("rounded-(--radius-card) border border-border p-3")
             .child(
                 text(AGREEMENT_SECTION)
-                    .text_size(px(13.0))
+                    .text_size(px(font_size::SECONDARY))
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(fg),
             )
@@ -1561,7 +1561,7 @@ pub(crate) fn PoliciesView() -> impl IntoElement {
                 text(format!(
                     "{AGREEMENT_SEG_AMOUNT} · {AGREEMENT_SEG_RECURRENCE} · {AGREEMENT_SEG_START} · {AGREEMENT_SEG_STATUS}"
                 ))
-                .text_size(px(12.0))
+                .text_size(px(font_size::CAPTION))
                 .text_color(muted),
             )
             .child(error_line(
@@ -1575,24 +1575,24 @@ pub(crate) fn PoliciesView() -> impl IntoElement {
                 when(has_active_segment, move || {
                     button()
                         .app_class(
-                            "px-2 py-1 rounded-md border border-border text-foreground hover:bg-accent",
+                            "px-2 py-1 rounded-(--radius) border border-border text-foreground hover:bg-accent",
                         )
                         .on_press(move |_: &()| open_rebuild())
                         .child(
                             text(AGREEMENT_REBUILD)
-                                .text_size(px(12.0))
+                                .text_size(px(font_size::CAPTION))
                                 .text_color(fg)
                                 .test_id("policy-agreement-rebuild-open"),
                         )
                 })
                 .otherwise(move || {
                     button()
-                        .app_class("px-2 py-1 rounded-md bg-primary hover:opacity-90")
+                        .app_class("px-2 py-1 rounded-(--radius) bg-primary hover:opacity-90")
                         .on_press(move |_: &()| open_add())
                         .child(
                             text(AGREEMENT_ADD)
-                                .text_size(px(12.0))
-                                .text_color(rgb(0xffffff))
+                                .text_size(px(font_size::CAPTION))
+                                .text_color(crate::theme::color("primary-foreground"))
                                 .test_id("policy-agreement-add"),
                         )
                 }),
@@ -1607,7 +1607,7 @@ pub(crate) fn PoliciesView() -> impl IntoElement {
                         if rebuilding {
                             inline = inline.child(
                                 text(AGREEMENT_REBUILD_HINT)
-                                    .text_size(px(12.0))
+                                    .text_size(px(font_size::CAPTION))
                                     .text_color(muted),
                             );
                         }
@@ -1702,7 +1702,11 @@ pub(crate) fn PoliciesView() -> impl IntoElement {
                     .items_center()
                     .gap_2()
                     .child(date_select::date_select("policy-form-start", form_start))
-                    .child(text(PERIOD_DIVIDER).text_size(px(13.0)).text_color(muted))
+                    .child(
+                        text(PERIOD_DIVIDER)
+                            .text_size(px(font_size::SECONDARY))
+                            .text_color(muted),
+                    )
                     .child(date_select::date_option_select("policy-form-end", form_end)),
             ))
             .child(
@@ -1725,7 +1729,7 @@ pub(crate) fn PoliciesView() -> impl IntoElement {
                                 .text_color(fg)
                                 .w(px(140.0))
                                 .app_class(
-                                    "bg-background rounded-md border border-border px-2 py-1 \
+                                    "bg-background rounded-(--radius) border border-border px-2 py-1 \
                                      placeholder:text-muted-foreground",
                                 )
                                 .on_change(move |text: &str| {
@@ -1769,10 +1773,14 @@ pub(crate) fn PoliciesView() -> impl IntoElement {
                             .flex_row()
                             .gap_1()
                             .items_center()
-                            .child(text(label).text_size(px(12.0)).text_color(muted))
+                            .child(
+                                text(label)
+                                    .text_size(px(font_size::CAPTION))
+                                    .text_color(muted),
+                            )
                             .child(
                                 text(value)
-                                    .text_size(px(13.0))
+                                    .text_size(px(font_size::SECONDARY))
                                     .text_color(fg)
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .test_id(anchor),
@@ -1790,7 +1798,7 @@ pub(crate) fn PoliciesView() -> impl IntoElement {
                     AGREEMENT_SECTION,
                     muted,
                     button()
-                        .app_class("px-2 py-1 rounded-md bg-primary hover:opacity-90")
+                        .app_class("px-2 py-1 rounded-(--radius) bg-primary hover:opacity-90")
                         .on_press(move |_: &()| {
                             with_agreement.update(|opened| *opened = !*opened);
                         })
@@ -1802,14 +1810,14 @@ pub(crate) fn PoliciesView() -> impl IntoElement {
                                     AGREEMENT_OFF
                                 }
                             })
-                            .text_size(px(12.0))
-                            .text_color(rgb(0xffffff))
+                            .text_size(px(font_size::CAPTION))
+                            .text_color(crate::theme::color("primary-foreground"))
                             .test_id("policy-agreement-toggle"),
                         ),
                 ))
                 .child(
                     text(AGREEMENT_TOGGLE_HINT)
-                        .text_size(px(12.0))
+                        .text_size(px(font_size::CAPTION))
                         .text_color(muted)
                         .test_id("policy-agreement-hint"),
                 )
@@ -1872,7 +1880,7 @@ pub(crate) fn PoliciesView() -> impl IntoElement {
         .child(
             view().px_4().py_2().child(
                 text(ViewName::Policies.label())
-                    .text_size(px(16.0))
+                    .text_size(px(font_size::TITLE))
                     .text_color(fg)
                     .test_id("view-title"),
             ),
@@ -1896,12 +1904,12 @@ pub(crate) fn PoliciesView() -> impl IntoElement {
                     // 顶部新建行（旧壳卡片内右对齐同位；新建唯一入口）。
                     view().flex_row().justify_end().child(
                         button()
-                            .app_class("px-3 py-1.5 rounded-md bg-primary hover:opacity-90")
+                            .app_class("px-3 py-1.5 rounded-(--radius) bg-primary hover:opacity-90")
                             .on_press(move |_: &()| open_create())
                             .child(
                                 text(NEW_BUTTON)
-                                    .text_size(px(13.0))
-                                    .text_color(rgb(0xffffff))
+                                    .text_size(px(font_size::SECONDARY))
+                                    .text_color(crate::theme::color("primary-foreground"))
                                     .test_id("policy-new"),
                             ),
                     ),
@@ -1913,11 +1921,11 @@ pub(crate) fn PoliciesView() -> impl IntoElement {
                         .flex_1()
                         .flex_col()
                         .gap_2()
-                        .app_class("rounded-md border border-border p-3")
+                        .app_class("rounded-(--radius-card) border border-border p-3")
                         .child(
                             view().flex_1().child(
                                 text(LIST_CARD_TITLE)
-                                    .text_size(px(13.0))
+                                    .text_size(px(font_size::SECONDARY))
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .text_color(fg),
                             ),
@@ -1947,7 +1955,7 @@ pub(crate) fn PoliciesView() -> impl IntoElement {
                         move || status.get().is_some(),
                         move || {
                             text(move || status.get().unwrap_or_default())
-                                .text_size(px(12.0))
+                                .text_size(px(font_size::CAPTION))
                                 .text_color(fg)
                                 .test_id("policy-status")
                         },
@@ -2019,7 +2027,7 @@ fn agreement_fields(
                         .text_color(fg)
                         .w(px(140.0))
                         .app_class(
-                            "bg-background rounded-md border border-border px-2 py-1 \
+                            "bg-background rounded-(--radius) border border-border px-2 py-1 \
                              placeholder:text-muted-foreground",
                         )
                         .on_change(move |text: &str| amount.set(text.to_owned())),
@@ -2039,7 +2047,11 @@ fn agreement_fields(
                 .flex_row()
                 .items_center()
                 .gap_1()
-                .child(text(EVERY_WORD).text_size(px(13.0)).text_color(fg))
+                .child(
+                    text(EVERY_WORD)
+                        .text_size(px(font_size::SECONDARY))
+                        .text_color(fg),
+                )
                 .child(
                     input()
                         .test_id(format!("{prefix}-interval").as_str())
@@ -2047,7 +2059,9 @@ fn agreement_fields(
                         .optional_label(AGREEMENT_RECURRENCE)
                         .text_color(fg)
                         .w(px(56.0))
-                        .app_class("bg-background rounded-md border border-border px-2 py-1")
+                        .app_class(
+                            "bg-background rounded-(--radius) border border-border px-2 py-1",
+                        )
                         .on_change(move |text: &str| interval_text.set(text.to_owned())),
                 )
                 .child(select::app_select(

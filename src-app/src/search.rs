@@ -29,6 +29,7 @@ use nsh_core::prelude::*;
 use crate::app::db_slot;
 use crate::assembly::{self, CurrencyTable, RowCells, RowContext};
 use crate::boot;
+use crate::design::font_size;
 use crate::nav;
 use crate::nav_model::ViewName;
 use crate::transactions::{amount_privacy_enabled, hit_total_text};
@@ -63,14 +64,9 @@ pub(crate) fn SearchView() -> impl IntoElement {
     let search_seq = signal(0u64);
     let load_seq = signal(0u64);
 
-    // 主题令牌（双态自适应；令牌缺失回退亮灰/中灰可读兜底，先例同形）。
-    let tokens = nsh_core::element::tokens();
-    let fg = tokens
-        .color("foreground")
-        .unwrap_or_else(|| hsla(0.0, 0.0, 0.98, 1.0).into());
-    let muted = tokens
-        .color("muted-foreground")
-        .unwrap_or_else(|| hsla(0.0, 0.0, 0.45, 1.0).into());
+    // 主题令牌（双态自适应；缺失兜底统一归 crate::theme 单点）。
+    let fg = crate::theme::color("foreground");
+    let muted = crate::theme::color("muted-foreground");
 
     // 查询具备判定（旧壳 hasQuery 同口径：关键词非空或任一筛选在场——
     // 仅筛选也可出结果）。
@@ -300,10 +296,10 @@ pub(crate) fn SearchView() -> impl IntoElement {
         .flex_col()
         .app_class("bg-background")
         .child(
-            // 屏名（内容区标题，同容器壳形态）。
+            // 屏名（内容区标题，同容器壳形态；页题档 TITLE 20，§3）。
             view().px_4().py_2().child(
                 text(ViewName::Search.label())
-                    .text_size(px(16.0))
+                    .text_size(px(font_size::TITLE))
                     .text_color(fg)
                     .test_id("view-title"),
             ),
@@ -323,7 +319,7 @@ pub(crate) fn SearchView() -> impl IntoElement {
                         .optional_label("搜索交易")
                         .text_color(fg)
                         .app_class(
-                            "flex-1 bg-background rounded-md border border-border px-2 py-1 \
+                            "flex-1 bg-background rounded-(--radius) border border-border px-2 py-1 \
                              placeholder:text-muted-foreground",
                         )
                         .on_change(on_keyword_change)
@@ -349,7 +345,7 @@ pub(crate) fn SearchView() -> impl IntoElement {
                         .text_color(fg)
                         .w(px(150.0))
                         .app_class(
-                            "bg-background rounded-md border border-border px-2 py-1 \
+                            "bg-background rounded-(--radius) border border-border px-2 py-1 \
                              placeholder:text-muted-foreground",
                         )
                         .on_change(on_amount_min_change)
@@ -363,7 +359,7 @@ pub(crate) fn SearchView() -> impl IntoElement {
                         .text_color(fg)
                         .w(px(150.0))
                         .app_class(
-                            "bg-background rounded-md border border-border px-2 py-1 \
+                            "bg-background rounded-(--radius) border border-border px-2 py-1 \
                              placeholder:text-muted-foreground",
                         )
                         .on_change(on_amount_max_change)
@@ -381,18 +377,18 @@ pub(crate) fn SearchView() -> impl IntoElement {
                                 .gap_2()
                                 .child(
                                     text(applied_filters_text)
-                                        .text_size(px(12.0))
+                                        .text_xs()
                                         .text_color(muted)
                                         .test_id("search-applied-filters"),
                                 )
                                 .child(
                                     button()
                                         .app_class(
-                                            "px-2 py-1 rounded-md text-foreground hover:bg-accent",
+                                            "px-2 py-1 rounded-(--radius) text-foreground hover:bg-accent",
                                         )
                                         .child(
                                             text("清除筛选")
-                                                .text_size(px(12.0))
+                                                .text_sm()
                                                 .text_color(fg)
                                                 .test_id("search-clear-filters"),
                                         )
@@ -428,7 +424,7 @@ pub(crate) fn SearchView() -> impl IntoElement {
                                                 .justify_center()
                                                 .child(
                                                     text(assembly::search_empty_text(true))
-                                                        .text_size(px(13.0))
+                                                        .text_sm()
                                                         .text_color(muted),
                                                 )
                                         },
@@ -482,14 +478,14 @@ pub(crate) fn SearchView() -> impl IntoElement {
                                                     error.get().unwrap_or_default()
                                                 )
                                             })
-                                            .text_size(px(12.0))
+                                            .text_xs()
                                             .text_color(fg)
                                             .test_id("search-error")
                                         },
                                     )
                                     .otherwise(move || {
                                         text(move || hit_total_text(total.get()))
-                                            .text_size(px(12.0))
+                                            .text_xs()
                                             .text_color(muted)
                                             .test_id("search-total")
                                     }),
@@ -512,7 +508,7 @@ pub(crate) fn SearchView() -> impl IntoElement {
                                                     })
                                                     .disabled(move || loading.get())
                                                     .item_class(
-                                                        "px-2 py-1 rounded-md text-foreground hover:bg-accent selected:bg-accent disabled:opacity-40",
+                                                        "px-2 py-1 rounded-(--radius) text-foreground hover:bg-accent selected:bg-accent disabled:opacity-40",
                                                     )
                                                     .on_change(move |&picked: &u32| {
                                                         page.set(picked);
@@ -534,7 +530,7 @@ pub(crate) fn SearchView() -> impl IntoElement {
                     .justify_center()
                     .child(
                         text(assembly::search_empty_text(false))
-                            .text_size(px(13.0))
+                            .text_sm()
                             .text_color(muted)
                             .test_id("search-empty"),
                     )

@@ -51,6 +51,7 @@ use crate::adaptive;
 use crate::assembly::{self, AccountTable, CategoryOption, ColumnAlign, CurrencyTable};
 use crate::boot;
 use crate::date_select;
+use crate::design::font_size;
 use crate::modal;
 use crate::pinyin_select;
 use crate::popconfirm;
@@ -438,17 +439,12 @@ pub(crate) fn transfers_pane(pending_focus: Signal<Option<String>>) -> impl Into
         }
     });
 
-    // 主题令牌（双态自适应；令牌缺失回退亮灰/中灰可读兜底，先例同形）。
-    let tokens = nsh_core::element::tokens();
-    let fg = tokens
-        .color("foreground")
-        .unwrap_or_else(|| hsla(0.0, 0.0, 0.98, 1.0).into());
-    let muted = tokens
-        .color("muted-foreground")
-        .unwrap_or_else(|| hsla(0.0, 0.0, 0.45, 1.0).into());
-    let danger_fg = tokens
-        .color("destructive")
-        .unwrap_or_else(|| hsla(0.0, 0.0, 0.98, 1.0).into());
+    // 主题令牌（双态自适应；缺失兜底统一归 crate::theme 单点）。
+    let fg = crate::theme::color("foreground");
+    let muted = crate::theme::color("muted-foreground");
+    let danger_fg = crate::theme::color("destructive");
+    // 主按钮前景 = primary-foreground 令牌（亮暗双态随表；旧裸白直调退役）。
+    let primary_fg = crate::theme::color("primary-foreground");
 
     // ============================ 清单呈现 ============================
     // 状态过滤（纯前端过滤，不产生请求——旧壳 filteredRows 同口径）。
@@ -685,7 +681,7 @@ pub(crate) fn transfers_pane(pending_focus: Signal<Option<String>>) -> impl Into
         .flex_1()
         .flex_col()
         .gap_2()
-        .app_class("rounded-md border border-border p-3")
+        .app_class("rounded-(--radius-card) border border-border p-3")
         .child(
             view()
                 .flex_row()
@@ -693,7 +689,7 @@ pub(crate) fn transfers_pane(pending_focus: Signal<Option<String>>) -> impl Into
                 .gap_2()
                 .child(
                     text(TRANSFER_LIST_TITLE)
-                        .text_size(px(13.0))
+                        .text_size(px(font_size::TITLE))
                         .font_weight(FontWeight::SEMIBOLD)
                         .text_color(fg),
                 )
@@ -702,22 +698,22 @@ pub(crate) fn transfers_pane(pending_focus: Signal<Option<String>>) -> impl Into
                     let key_owned = key.to_owned();
                     button()
                         .app_class(
-                            "px-2 py-0.5 rounded-md text-foreground hover:bg-accent selected:bg-accent",
+                            "px-2 py-1 rounded-(--radius) text-foreground hover:bg-accent selected:bg-accent",
                         )
                         .child(
                             text(label)
-                                .text_size(px(12.0))
+                                .text_size(px(font_size::CAPTION))
                                 .test_id(format!("transfer-filter-{key_owned}").as_str()),
                         )
                         .on_press(move |_: &()| active_filter.set(key.to_owned()))
                 }))
                 .child(
                     button()
-                        .app_class("px-3 py-1.5 rounded-md bg-primary hover:opacity-90")
+                        .app_class("px-3 py-2 rounded-(--radius) bg-primary hover:opacity-90")
                         .child(
                             text(CREATE_TRANSFER_OPEN_LABEL)
-                                .text_size(px(13.0))
-                                .text_color(rgb(0xffffff))
+                                .text_size(px(font_size::SECONDARY))
+                                .text_color(primary_fg)
                                 .test_id("transfer-create-open"),
                         )
                         .on_press(move |_: &()| open_create()),
@@ -764,7 +760,7 @@ pub(crate) fn transfers_pane(pending_focus: Signal<Option<String>>) -> impl Into
                 .text_color(fg)
                 .w(px(280.0))
                 .app_class(
-                    "bg-background rounded-md border border-border px-2 py-1 \
+                    "bg-background rounded-(--radius) border border-border px-2 py-1 \
                      placeholder:text-muted-foreground",
                 )
                 .on_change(move |value: &str| create_note.set(value.to_owned()))))
@@ -800,14 +796,14 @@ pub(crate) fn transfers_pane(pending_focus: Signal<Option<String>>) -> impl Into
                     .text_color(fg)
                     .w(px(160.0))
                     .app_class(
-                        "bg-background rounded-md border border-border px-2 py-1 \
+                        "bg-background rounded-(--radius) border border-border px-2 py-1 \
                          placeholder:text-muted-foreground",
                     )
                     .on_change(move |value: &str| create_amount.set(value.to_owned())))
                 .child(
                     // 币种随转出账户推导（只读展示；拆 derive_currency_text 即红）。
                     text(move || create_currency_text.get())
-                        .text_size(px(13.0))
+                        .text_size(px(font_size::SECONDARY))
                         .text_color(muted)
                         .test_id("transfer-currency"),
                 )))
@@ -815,7 +811,7 @@ pub(crate) fn transfers_pane(pending_focus: Signal<Option<String>>) -> impl Into
                 .flex_row()
                 .items_center()
                 .gap_2()
-                .child(text("每").text_size(px(13.0)).text_color(fg))
+                .child(text("每").text_size(px(font_size::SECONDARY)).text_color(fg))
                 .child(input()
                     .test_id("transfer-interval")
                     .value(move || create_interval_text.get())
@@ -824,7 +820,7 @@ pub(crate) fn transfers_pane(pending_focus: Signal<Option<String>>) -> impl Into
                     .text_color(fg)
                     .w(px(90.0))
                     .app_class(
-                        "bg-background rounded-md border border-border px-2 py-1 \
+                        "bg-background rounded-(--radius) border border-border px-2 py-1 \
                          placeholder:text-muted-foreground",
                     )
                     .on_change(move |value: &str| create_interval_text.set(value.to_owned())))
@@ -843,7 +839,7 @@ pub(crate) fn transfers_pane(pending_focus: Signal<Option<String>>) -> impl Into
                 .text_color(fg)
                 .w(px(200.0))
                 .app_class(
-                    "bg-background rounded-md border border-border px-2 py-1 \
+                    "bg-background rounded-(--radius) border border-border px-2 py-1 \
                      placeholder:text-muted-foreground",
                 )
                 .on_change(move |value: &str| create_total_occ_text.set(value.to_owned()))))
@@ -860,7 +856,7 @@ pub(crate) fn transfers_pane(pending_focus: Signal<Option<String>>) -> impl Into
                         move || create_error.get().is_some(),
                         move || {
                             text(move || format!("创建失败: {}", create_error.get().unwrap_or_default()))
-                                .text_size(px(12.0))
+                                .text_size(px(font_size::CAPTION))
                                 .text_color(danger_fg)
                                 .test_id("transfer-create-error")
                         },
@@ -874,11 +870,11 @@ pub(crate) fn transfers_pane(pending_focus: Signal<Option<String>>) -> impl Into
                     .child(
                         button()
                             .app_class(
-                                "px-3 py-1.5 rounded-md border border-border text-foreground hover:bg-accent",
+                                "px-3 py-2 rounded-(--radius) border border-border text-foreground hover:bg-accent",
                             )
                             .child(
                                 text("取消")
-                                    .text_size(px(13.0))
+                                    .text_size(px(font_size::SECONDARY))
                                     .text_color(fg)
                                     .test_id("transfer-create-cancel"),
                             )
@@ -886,11 +882,11 @@ pub(crate) fn transfers_pane(pending_focus: Signal<Option<String>>) -> impl Into
                     )
                     .child(
                         button()
-                            .app_class("px-3 py-1.5 rounded-md bg-primary hover:opacity-90")
+                            .app_class("px-3 py-2 rounded-(--radius) bg-primary hover:opacity-90")
                             .child(
                                 text(CREATE_TRANSFER_SUBMIT_LABEL)
-                                    .text_size(px(13.0))
-                                    .text_color(rgb(0xffffff))
+                                    .text_size(px(font_size::SECONDARY))
+                                    .text_color(primary_fg)
                                     .test_id("transfer-create"),
                             )
                             .on_press(move |_: &()| perform_create()),
@@ -909,7 +905,7 @@ pub(crate) fn transfers_pane(pending_focus: Signal<Option<String>>) -> impl Into
                 move || error.get().is_some(),
                 move || {
                     text(move || format!("加载失败: {}", error.get().unwrap_or_default()))
-                        .text_size(px(12.0))
+                        .text_size(px(font_size::CAPTION))
                         .text_color(danger_fg)
                         .test_id("transfer-error")
                         .app_class("px-4 py-1")
@@ -924,7 +920,7 @@ pub(crate) fn transfers_pane(pending_focus: Signal<Option<String>>) -> impl Into
                 move || status.get().is_some(),
                 move || {
                     text(move || status.get().unwrap_or_default())
-                        .text_size(px(12.0))
+                        .text_size(px(font_size::CAPTION))
                         .text_color(fg)
                         .test_id("transfer-status")
                 },
@@ -973,18 +969,13 @@ fn make_action_renderer(
         };
         match cell.key.as_ref() {
             "next" => text(cell.text.clone())
-                .text_size(px(13.0))
+                .text_size(px(font_size::SECONDARY))
                 .number_of_lines(1)
                 .test_id(format!("transfer-next-{}", row.id).as_str())
                 .into_element(),
             "actions" => {
-                let tokens = nsh_core::element::tokens();
-                let fg = tokens
-                    .color("foreground")
-                    .unwrap_or_else(|| hsla(0.0, 0.0, 0.98, 1.0).into());
-                let danger_fg = tokens
-                    .color("destructive")
-                    .unwrap_or_else(|| hsla(0.0, 0.0, 0.98, 1.0).into());
+                let fg = crate::theme::color("foreground");
+                let danger_fg = crate::theme::color("destructive");
                 let id = row.id.clone();
                 let mut buttons: Vec<nsh_core::element::AnyElement> = vec![action_button(
                     "期次",
@@ -1045,11 +1036,11 @@ fn make_action_renderer(
                             },
                             view()
                                 .app_class(
-                                    "px-2 py-0.5 rounded-md text-destructive hover:bg-accent",
+                                    "px-2 py-1 rounded-(--radius) text-destructive hover:bg-accent",
                                 )
                                 .child(
                                     text("取消")
-                                        .text_size(px(12.0))
+                                        .text_size(px(font_size::CAPTION))
                                         .text_color(danger_fg)
                                         .test_id(format!("transfer-cancel-{id}").as_str()),
                                 ),

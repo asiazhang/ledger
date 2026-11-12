@@ -13,6 +13,7 @@ use nsh_base::{data_table, input};
 use nsh_core::prelude::*;
 
 use crate::app::db_slot;
+use crate::design::font_size;
 use crate::transactions::{amount_color, amount_privacy_enabled, table_classes};
 use crate::views::field_label;
 use crate::{adaptive, assembly, boot, modal, nav, pinyin_select, popconfirm, signals};
@@ -41,7 +42,7 @@ fn budget_period_radio(
                     .on_change(move |_: &bool| period.set(value))
                     .child(
                         text(label)
-                            .text_size(px(13.0))
+                            .text_size(px(font_size::SECONDARY))
                             .text_color(fg)
                             .test_id(format!("{}{}", id_prefix, id_suffix).as_str()),
                     ),
@@ -82,7 +83,7 @@ fn progress_bar(
             .w(px(160.0))
             .h(px(6.0))
             .rounded_full()
-            .bg(hsla(0.0, 0.0, 0.5, 0.15))
+            .app_class("bg-muted-foreground/15")
             .child(
                 view()
                     .h(px(6.0))
@@ -94,7 +95,7 @@ fn progress_bar(
     if show_label {
         bar.child(
             text(move || format!("{}%", percent() as i64))
-                .text_size(px(11.0))
+                .text_size(px(font_size::CAPTION))
                 .test_id("budget-progress-percent"),
         )
     } else {
@@ -142,17 +143,10 @@ pub(crate) fn BudgetView() -> impl IntoElement {
     let confirm_id = signal(None::<String>);
     let delete_error = signal(None::<String>);
 
-    // 主题令牌（双态自适应；令牌缺失回退亮灰/中灰可读兜底，先例同形）。
-    let tokens = nsh_core::element::tokens();
-    let fg = tokens
-        .color("foreground")
-        .unwrap_or_else(|| hsla(0.0, 0.0, 0.98, 1.0).into());
-    let muted = tokens
-        .color("muted-foreground")
-        .unwrap_or_else(|| hsla(0.0, 0.0, 0.45, 1.0).into());
-    let danger_fg = tokens
-        .color("destructive")
-        .unwrap_or_else(|| hsla(0.0, 0.0, 0.98, 1.0).into());
+    // 主题令牌（双态自适应；缺失兜底统一归 crate::theme 单点）。
+    let fg = crate::theme::color("foreground");
+    let muted = crate::theme::color("muted-foreground");
+    let danger_fg = crate::theme::color("destructive");
 
     // 装载（首屏与失效信号重读共用一条路径）：进度行集 + 年度汇总 + 支出分类
     // 字典一次读齐（小表聚合，重读成本可忽略）；金额隐私开关随装载取设备态
@@ -352,7 +346,7 @@ pub(crate) fn BudgetView() -> impl IntoElement {
                     let over = row.map(|r| r.over_budget).unwrap_or(false);
                     let status = row.map(|r| r.status).unwrap_or("");
                     text(status)
-                        .text_size(px(12.0))
+                        .text_size(px(font_size::CAPTION))
                         .text_color(if over {
                             amount_color(assembly::AmountSemantic::Expense)
                         } else {
@@ -374,10 +368,10 @@ pub(crate) fn BudgetView() -> impl IntoElement {
                         .gap_1()
                         .child(
                             nsh_base::button()
-                                .app_class("px-2 py-1 rounded-md text-foreground hover:bg-accent")
+                                .app_class("px-2 py-1 rounded-(--radius) text-foreground hover:bg-accent")
                                 .child(
                                     text("编辑")
-                                        .text_size(px(12.0))
+                                        .text_size(px(font_size::CAPTION))
                                         .text_color(fg)
                                         .test_id("budget-edit"),
                                 )
@@ -411,11 +405,11 @@ pub(crate) fn BudgetView() -> impl IntoElement {
                                 // 会吞掉外层按压——封装的按压源是外层包裹视图）。
                                 view()
                                     .app_class(
-                                        "px-2 py-1 rounded-md text-foreground hover:bg-accent",
+                                        "px-2 py-1 rounded-(--radius) text-foreground hover:bg-accent",
                                     )
                                     .child(
                                         text("删除")
-                                            .text_size(px(12.0))
+                                            .text_size(px(font_size::CAPTION))
                                             .text_color(fg)
                                             .test_id("budget-delete"),
                                     ),
@@ -500,7 +494,7 @@ pub(crate) fn BudgetView() -> impl IntoElement {
                         .text_color(fg)
                         .w(px(120.0))
                         .app_class(
-                            "bg-background rounded-md border border-border px-2 py-1 \
+                            "bg-background rounded-(--radius) border border-border px-2 py-1 \
                              placeholder:text-muted-foreground",
                         )
                         .on_change(move |text: &str| amount_text.set(text.to_owned())),
@@ -508,11 +502,11 @@ pub(crate) fn BudgetView() -> impl IntoElement {
         )
         .child(
             nsh_base::button()
-                .app_class("px-3 py-1.5 rounded-md bg-primary hover:opacity-90")
+                .app_class("px-3 py-1.5 rounded-(--radius) bg-primary hover:opacity-90")
                 .child(
                     text("添加")
-                        .text_size(px(13.0))
-                        .text_color(rgb(0xffffff))
+                        .text_size(px(font_size::SECONDARY))
+                        .text_color(crate::theme::color("primary-foreground"))
                         .test_id("budget-add"),
                 )
                 .on_press(move |_: &()| perform_create()),
@@ -525,7 +519,7 @@ pub(crate) fn BudgetView() -> impl IntoElement {
             view()
                 .flex_col()
                 .gap_2()
-                .app_class("rounded-md border border-border p-3")
+                .app_class("rounded-(--radius-card) border border-border p-3")
                 .child(
                     view()
                         .flex_row()
@@ -533,13 +527,13 @@ pub(crate) fn BudgetView() -> impl IntoElement {
                         .justify_between()
                         .child(
                             text("本年度预算")
-                                .text_size(px(13.0))
+                                .text_size(px(font_size::SECONDARY))
                                 .font_weight(nsh_core::element::FontWeight::SEMIBOLD)
                                 .text_color(fg),
                         )
                         .child(
                             text(move || summary.get().map(|c| c.status).unwrap_or_default())
-                                .text_size(px(12.0))
+                                .text_size(px(font_size::CAPTION))
                                 .text_color(move || {
                                     if summary.get().map(|c| c.over_budget).unwrap_or(false) {
                                         amount_color(assembly::AmountSemantic::Expense)
@@ -556,7 +550,11 @@ pub(crate) fn BudgetView() -> impl IntoElement {
                         vec![
                             view()
                                 .flex_col()
-                                .child(text("年度预算总额").text_size(px(11.0)).text_color(muted))
+                                .child(
+                                    text("年度预算总额")
+                                        .text_size(px(font_size::CAPTION))
+                                        .text_color(muted),
+                                )
                                 .child(
                                     text(move || {
                                         summary
@@ -564,19 +562,23 @@ pub(crate) fn BudgetView() -> impl IntoElement {
                                             .map(|c| c.annual_total.clone())
                                             .unwrap_or_default()
                                     })
-                                    .text_size(px(22.0))
+                                    .text_size(px(font_size::TITLE))
                                     .text_color(fg)
                                     .test_id("budget-summary-total"),
                                 )
                                 .into_element(),
                             view()
                                 .flex_col()
-                                .child(text("本年已支").text_size(px(11.0)).text_color(muted))
+                                .child(
+                                    text("本年已支")
+                                        .text_size(px(font_size::CAPTION))
+                                        .text_color(muted),
+                                )
                                 .child(
                                     text(move || {
                                         summary.get().map(|c| c.spent.clone()).unwrap_or_default()
                                     })
-                                    .text_size(px(18.0))
+                                    .text_size(px(font_size::LEADING))
                                     .text_color(fg)
                                     .test_id("budget-summary-spent"),
                                 )
@@ -591,7 +593,7 @@ pub(crate) fn BudgetView() -> impl IntoElement {
                 ))
                 .child(
                     text("月预算按 ×12 年化计入总额；未设预算的分类支出不计入已支。")
-                        .text_size(px(11.0))
+                        .text_size(px(font_size::CAPTION))
                         .text_color(muted),
                 )
         },
@@ -606,7 +608,7 @@ pub(crate) fn BudgetView() -> impl IntoElement {
             // 屏名（内容区标题，同容器壳形态）。
             view().px_4().py_2().child(
                 text("预算")
-                    .text_size(px(16.0))
+                    .text_size(px(font_size::TITLE))
                     .text_color(fg)
                     .test_id("view-title"),
             ),
@@ -617,7 +619,7 @@ pub(crate) fn BudgetView() -> impl IntoElement {
                 move || error.get().is_some(),
                 move || {
                     text(move || format!("加载失败：{}", error.get().unwrap_or_default()))
-                        .text_size(px(12.0))
+                        .text_size(px(font_size::CAPTION))
                         .text_color(fg)
                         .test_id("budget-error")
                         .app_class("px-4 py-1")
@@ -638,10 +640,10 @@ pub(crate) fn BudgetView() -> impl IntoElement {
                         view()
                             .flex_col()
                             .gap_2()
-                            .app_class("rounded-md border border-border p-3")
+                            .app_class("rounded-(--radius-card) border border-border p-3")
                             .child(
                                 text("新增预算")
-                                    .text_size(px(13.0))
+                                    .text_size(px(font_size::SECONDARY))
                                     .font_weight(nsh_core::element::FontWeight::SEMIBOLD)
                                     .text_color(fg),
                             )
@@ -655,7 +657,7 @@ pub(crate) fn BudgetView() -> impl IntoElement {
                                         text(move || {
                                             create_error.get().unwrap_or_default()
                                         })
-                                        .text_size(px(12.0))
+                                        .text_size(px(font_size::CAPTION))
                                         .text_color(danger_fg)
                                         .test_id("budget-create-error")
                                     },
@@ -670,10 +672,10 @@ pub(crate) fn BudgetView() -> impl IntoElement {
                             .flex_1()
                             .flex_col()
                             .gap_2()
-                            .app_class("rounded-md border border-border p-3")
+                            .app_class("rounded-(--radius-card) border border-border p-3")
                             .child(
                                 text("预算执行")
-                                    .text_size(px(13.0))
+                                    .text_size(px(font_size::SECONDARY))
                                     .font_weight(nsh_core::element::FontWeight::SEMIBOLD)
                                     .text_color(fg),
                             )
@@ -711,7 +713,7 @@ pub(crate) fn BudgetView() -> impl IntoElement {
                                     move || delete_error.get().is_some(),
                                     move || {
                                         text(move || delete_error.get().unwrap_or_default())
-                                        .text_size(px(12.0))
+                                        .text_size(px(font_size::CAPTION))
                                         .text_color(danger_fg)
                                         .test_id("budget-delete-error")
                                     },
@@ -744,7 +746,7 @@ pub(crate) fn BudgetView() -> impl IntoElement {
                                 .gap_2()
                                 .child(field_label("分类", muted))
                                 // 分类只读（改法为删旧建新，旧壳同语义）。
-                                .child(text(category).text_size(px(13.0)).text_color(fg)),
+                                .child(text(category).text_size(px(font_size::SECONDARY)).text_color(fg)),
                         )
                         .child(
                             view()
@@ -769,7 +771,7 @@ pub(crate) fn BudgetView() -> impl IntoElement {
                                         .text_color(fg)
                                         .w(px(160.0))
                                         .app_class(
-                                            "bg-background rounded-md border border-border px-2 py-1 \
+                                            "bg-background rounded-(--radius) border border-border px-2 py-1 \
                                              placeholder:text-muted-foreground",
                                         )
                                         .on_change(move |text: &str| {
@@ -782,7 +784,7 @@ pub(crate) fn BudgetView() -> impl IntoElement {
                                 move || edit_error.get().is_some(),
                                 move || {
                                     text(move || edit_error.get().unwrap_or_default())
-                                        .text_size(px(12.0))
+                                        .text_size(px(font_size::CAPTION))
                                         .text_color(danger_fg)
                                         .test_id("budget-edit-error")
                                 },
@@ -797,11 +799,11 @@ pub(crate) fn BudgetView() -> impl IntoElement {
                                 .child(
                                     nsh_base::button()
                                         .app_class(
-                                            "px-3 py-1.5 rounded-md border border-border text-foreground hover:bg-accent",
+                                            "px-3 py-1.5 rounded-(--radius) border border-border text-foreground hover:bg-accent",
                                         )
                                         .child(
                                             text("取消")
-                                                .text_size(px(13.0))
+                                                .text_size(px(font_size::SECONDARY))
                                                 .text_color(fg)
                                                 .test_id("budget-cancel"),
                                         )
@@ -809,11 +811,11 @@ pub(crate) fn BudgetView() -> impl IntoElement {
                                 )
                                 .child(
                                     nsh_base::button()
-                                        .app_class("px-3 py-1.5 rounded-md bg-primary hover:opacity-90")
+                                        .app_class("px-3 py-1.5 rounded-(--radius) bg-primary hover:opacity-90")
                                         .child(
                                             text("保存")
-                                                .text_size(px(13.0))
-                                                .text_color(rgb(0xffffff))
+                                                .text_size(px(font_size::SECONDARY))
+                                                .text_color(crate::theme::color("primary-foreground"))
                                                 .test_id("budget-save"),
                                         )
                                         .on_press(move |_: &()| perform_update()),

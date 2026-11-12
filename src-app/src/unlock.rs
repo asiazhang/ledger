@@ -33,6 +33,7 @@ use nsh_core::prelude::*;
 
 use crate::app::StartupView;
 use crate::danger::{DangerConfirmSpec, DangerLevel, DangerOutcome, danger_confirm};
+use crate::design::font_size;
 use crate::{app, boot, http_host, views};
 
 // ---------------------------------------------------------------------------
@@ -187,14 +188,14 @@ pub(crate) fn locked_panel(
             // 主行/副行与 [`crate::app::headline_text`] / [`secondary_text`]
             // 的 Locked 臂同源（lib 文案断言同源单点，首启引导面板同形）。
             text(app::headline_text(&StartupView::Locked))
-                .text_size(px(24.0))
+                .text_size(px(font_size::TITLE))
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_color(fg)
                 .test_id("startup-headline"),
         )
         .child(
             text(app::secondary_text(&StartupView::Locked))
-                .text_size(px(12.0))
+                .text_size(px(font_size::CAPTION))
                 .text_color(muted),
         )
         .child(
@@ -218,7 +219,7 @@ pub(crate) fn locked_panel(
                 move || surface.error.get().is_some(),
                 move || {
                     text(move || surface.error.get().unwrap_or_default())
-                        .text_size(px(12.0))
+                        .text_size(px(font_size::CAPTION))
                         // 破坏色单一呈现令牌（crate::views::danger_fg，回退色
                         // 与 settings_data / backup_entry 同口径）。
                         .text_color(views::danger_fg())
@@ -236,7 +237,7 @@ pub(crate) fn locked_panel(
                         .app_class("px-3 py-1.5 rounded-md bg-primary hover:opacity-90 disabled:opacity-40")
                         .child(
                             text(UNLOCK_BUTTON)
-                                .text_size(px(13.0))
+                                .text_size(px(font_size::SECONDARY))
                                 .text_color(rgb(0xffffff))
                                 .test_id("unlock-confirm"),
                         )
@@ -255,7 +256,7 @@ pub(crate) fn locked_panel(
                         .app_class("px-3 py-1.5 rounded-md border border-border text-foreground hover:bg-accent")
                         .child(
                             text(FORGOT_ENTRY)
-                                .text_size(px(13.0))
+                                .text_size(px(font_size::SECONDARY))
                                 .text_color(fg)
                                 .test_id("unlock-forgot"),
                         )
@@ -264,7 +265,7 @@ pub(crate) fn locked_panel(
         )
         .child(
             text(AUTO_UNLOCK_UNSUPPORTED)
-                .text_size(px(11.0))
+                .text_size(px(font_size::CAPTION))
                 .text_color(muted)
                 .test_id("unlock-auto-unlock-note"),
         )

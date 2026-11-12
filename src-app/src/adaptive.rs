@@ -121,7 +121,10 @@ pub(crate) fn responsive_row(
     items: impl Fn() -> Vec<AnyElement> + Copy + 'static,
 ) -> impl IntoElement {
     when(is_narrow, move || {
-        view().flex_col().gap(px(12.0)).children(items())
+        view()
+            .flex_col()
+            .gap(px(crate::design::spacing::GROUP))
+            .children(items())
     })
     .otherwise(move || view().flex_row().gap(px(wide_gap)).children(items()))
 }
@@ -139,8 +142,8 @@ pub(crate) fn top_bar(fg: AdaptiveColor, muted: AdaptiveColor) -> View {
         .app_class("border-b border-border bg-background")
         .child(
             // 汉堡按钮：触控目标 ≥48pt（px_3 py_3 + 文本 18pt ≈ 48pt 行面，
-            // 决策 11 基线）；test_id 落在文本上（headless id: 锚点命中内层
-            // 可按压件，先例期间芯片同形）。
+            // 决策 11 基线；字阶 LEADING 档）；test_id 落在文本上（headless
+            // id: 锚点命中内层可按压件，先例期间芯片同形）。
             view()
                 .test_id("nav-topbar-open")
                 .flex_row()
@@ -148,18 +151,18 @@ pub(crate) fn top_bar(fg: AdaptiveColor, muted: AdaptiveColor) -> View {
                 .justify_center()
                 .px_3()
                 .py_3()
-                .rounded_md()
+                .app_class("rounded-(--radius)")
                 .on_press(move |_: &PressEvent| shell.open_drawer())
                 .child(
                     text("☰")
-                        .text_size(px(18.0))
+                        .text_lg()
                         .text_color(fg)
                         .test_id("nav-topbar-open"),
                 ),
         )
         .child(
             text(move || nav::store().current.get().label().to_owned())
-                .text_size(px(15.0))
+                .text_sm()
                 .text_color(muted)
                 .test_id("nav-topbar-title"),
         )

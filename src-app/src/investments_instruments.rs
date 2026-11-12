@@ -52,6 +52,7 @@ use nsh_base::{input, pagination, switch};
 use nsh_core::prelude::*;
 
 use crate::assembly::CategoryOption;
+use crate::design::font_size;
 use crate::investments::PanePalette;
 use crate::{
     app, boot, danger, investment_sync, investments, modal, pinyin_select, select, signals,
@@ -385,7 +386,7 @@ fn table_head(palette: PanePalette) -> impl IntoElement {
     let muted = palette.muted;
     let head = move |label: &'static str, width: f32| {
         text(label)
-            .text_size(px(12.0))
+            .text_size(px(font_size::CAPTION))
             .text_color(muted)
             .w(px(width))
     };
@@ -404,7 +405,11 @@ fn table_head(palette: PanePalette) -> impl IntoElement {
                 .items_center()
                 .gap_1()
                 .w(px(PRICE_W))
-                .child(text(COL_PRICE).text_size(px(12.0)).text_color(muted))
+                .child(
+                    text(COL_PRICE)
+                        .text_size(px(font_size::CAPTION))
+                        .text_color(muted),
+                )
                 .child(crate::popover::popover_tip(
                     "instruments-price-concept",
                     vec![PRICE_TIP.to_owned()],
@@ -629,7 +634,7 @@ pub(crate) fn InstrumentsPane() -> impl IntoElement {
         .justify_between()
         .child(
             text(investments::INSTRUMENTS_TAB_LABEL)
-                .text_size(px(15.0))
+                .text_size(px(font_size::TITLE))
                 .text_color(palette.fg)
                 .test_id("instruments-title"),
         )
@@ -637,7 +642,7 @@ pub(crate) fn InstrumentsPane() -> impl IntoElement {
             view()
                 .on_press(move |_: &PressEvent| investment_sync::trigger_sync())
                 .test_id("sync-instrument-info")
-                .rounded_md()
+                .rounded_lg()
                 .px_2()
                 .py_1()
                 .app_class("bg-primary hover:opacity-90")
@@ -650,8 +655,8 @@ pub(crate) fn InstrumentsPane() -> impl IntoElement {
                             investment_sync::SYNC_LABEL
                         }
                     })
-                    .text_size(px(12.0))
-                    .text_color(rgb(0xffffff)),
+                    .text_size(px(font_size::CAPTION))
+                    .text_color(crate::theme::color("primary-foreground")),
                 ),
         );
 
@@ -668,7 +673,7 @@ pub(crate) fn InstrumentsPane() -> impl IntoElement {
                 .text_color(palette.fg)
                 .w(px(240.0))
                 .app_class(
-                    "bg-background rounded-md border border-border px-2 py-1 \
+                    "bg-background rounded-(--radius) border border-border px-2 py-1 \
                      placeholder:text-muted-foreground",
                 )
                 .on_change(move |value: &str| schedule_search(value.to_owned())),
@@ -700,7 +705,7 @@ pub(crate) fn InstrumentsPane() -> impl IntoElement {
                 )
                 .child(
                     text(ONLY_INVESTED)
-                        .text_size(px(13.0))
+                        .text_size(px(font_size::SECONDARY))
                         .text_color(palette.fg),
                 ),
         )
@@ -712,13 +717,13 @@ pub(crate) fn InstrumentsPane() -> impl IntoElement {
                     add_open.set(true);
                 })
                 .test_id("add-instrument")
-                .rounded_md()
+                .rounded_lg()
                 .px_2()
                 .py_1()
                 .app_class("border border-border hover:bg-accent")
                 .child(
                     text(ADD_INSTRUMENT)
-                        .text_size(px(12.0))
+                        .text_size(px(font_size::CAPTION))
                         .text_color(palette.fg),
                 ),
         );
@@ -766,19 +771,19 @@ pub(crate) fn InstrumentsPane() -> impl IntoElement {
                     })
                     .child(
                         text(move || item.get().symbol.clone())
-                            .text_size(px(13.0))
+                            .text_size(px(font_size::SECONDARY))
                             .text_color(palette.fg)
                             .w(px(110.0)),
                     )
                     .child(
                         text(move || item.get().name_text.clone())
-                            .text_size(px(13.0))
+                            .text_size(px(font_size::SECONDARY))
                             .text_color(palette.fg)
                             .w(px(200.0)),
                     )
                     .child(
                         text(move || item.get().price_channel_word)
-                            .text_size(px(13.0))
+                            .text_size(px(font_size::SECONDARY))
                             .text_color(palette.muted)
                             .w(px(95.0)),
                     )
@@ -789,26 +794,26 @@ pub(crate) fn InstrumentsPane() -> impl IntoElement {
                                 .clone()
                                 .unwrap_or_else(|| "-".to_owned())
                         })
-                        .text_size(px(13.0))
+                        .text_size(px(font_size::SECONDARY))
                         .text_color(palette.fg)
                         .test_id("instrument-price")
                         .w(px(110.0)),
                     )
                     .child(
                         text(move || item.get().market_word.clone())
-                            .text_size(px(13.0))
+                            .text_size(px(font_size::SECONDARY))
                             .text_color(palette.muted)
                             .w(px(90.0)),
                     )
                     .child(
                         text(move || item.get().type_word)
-                            .text_size(px(13.0))
+                            .text_size(px(font_size::SECONDARY))
                             .text_color(palette.muted)
                             .w(px(90.0)),
                     )
                     .child(
                         text(move || item.get().currency_code.clone())
-                            .text_size(px(13.0))
+                            .text_size(px(font_size::SECONDARY))
                             .text_color(palette.muted)
                             .w(px(70.0)),
                     )
@@ -822,22 +827,28 @@ pub(crate) fn InstrumentsPane() -> impl IntoElement {
                             .app_class("hover:bg-accent")
                             .child(
                                 text(QUOTE_ACTION)
-                                    .text_size(px(11.0))
+                                    .text_size(px(font_size::CAPTION))
                                     .text_color(palette.fg),
                             )
                     } else {
-                        view().child(text("-").text_size(px(13.0)).text_color(palette.muted))
+                        view().child(
+                            text("-")
+                                .text_size(px(font_size::SECONDARY))
+                                .text_color(palette.muted),
+                        )
                     }))
                     .child(view().w(px(70.0)).child(if snap_head.invested {
                         text(COL_INVESTED_TAG)
-                            .text_size(px(11.0))
+                            .text_size(px(font_size::CAPTION))
                             .text_color(palette.fg)
                             .rounded_sm()
                             .px_1()
                             .py_0p5()
                             .app_class("bg-accent inline-block")
                     } else {
-                        text("-").text_size(px(13.0)).text_color(palette.muted)
+                        text("-")
+                            .text_size(px(font_size::SECONDARY))
+                            .text_color(palette.muted)
                     }))
                     .child(view().w(px(70.0)).child(if snap_head.deletable {
                         view()
@@ -849,11 +860,15 @@ pub(crate) fn InstrumentsPane() -> impl IntoElement {
                             .app_class("hover:bg-accent")
                             .child(
                                 text(DELETE_ACTION)
-                                    .text_size(px(11.0))
+                                    .text_size(px(font_size::CAPTION))
                                     .text_color(palette.danger),
                             )
                     } else {
-                        view().child(text("-").text_size(px(13.0)).text_color(palette.muted))
+                        view().child(
+                            text("-")
+                                .text_size(px(font_size::SECONDARY))
+                                .text_color(palette.muted),
+                        )
                     }))
             },
         )
@@ -871,7 +886,7 @@ pub(crate) fn InstrumentsPane() -> impl IntoElement {
                                 || only_invested.get(),
                         )
                     })
-                    .text_size(px(13.0))
+                    .text_size(px(font_size::SECONDARY))
                     .text_color(palette.muted)
                     .test_id("instruments-empty")
                 },
@@ -881,7 +896,7 @@ pub(crate) fn InstrumentsPane() -> impl IntoElement {
     };
     let table_body = when(when_active_error, move || {
         text(move || error.get().unwrap_or_default())
-            .text_size(px(12.0))
+            .text_size(px(font_size::CAPTION))
             .text_color(palette.danger)
     })
     .otherwise(rows_or_empty);
@@ -907,7 +922,7 @@ pub(crate) fn InstrumentsPane() -> impl IntoElement {
                                 move || add_message.get().is_some(),
                                 move || {
                                     text(move || add_message.get().unwrap_or_default())
-                                        .text_size(px(12.0))
+                                        .text_size(px(font_size::CAPTION))
                                         .text_color(palette.fg)
                                         .test_id("add-instrument-result")
                                 },
@@ -919,7 +934,7 @@ pub(crate) fn InstrumentsPane() -> impl IntoElement {
                                 move || delete_message.get().is_some(),
                                 move || {
                                     text(move || delete_message.get().unwrap_or_default())
-                                        .text_size(px(12.0))
+                                        .text_size(px(font_size::CAPTION))
                                         .text_color(palette.fg)
                                         .test_id("delete-instrument-result")
                                 },
@@ -934,7 +949,7 @@ pub(crate) fn InstrumentsPane() -> impl IntoElement {
                                         "{DELETE_FAILED_PREFIX}{}",
                                         delete_error.get().unwrap_or_default()
                                     ))
-                                    .text_size(px(12.0))
+                                    .text_size(px(font_size::CAPTION))
                                     .text_color(palette.danger)
                                     .test_id("delete-instrument-error")
                                 },
@@ -946,7 +961,7 @@ pub(crate) fn InstrumentsPane() -> impl IntoElement {
                                 move || quote_message.get().is_some(),
                                 move || {
                                     text(move || quote_message.get().unwrap_or_default())
-                                        .text_size(px(12.0))
+                                        .text_size(px(font_size::CAPTION))
                                         .text_color(palette.fg)
                                         .test_id("manual-quote-result")
                                 },
@@ -958,7 +973,7 @@ pub(crate) fn InstrumentsPane() -> impl IntoElement {
                                 move || quote_error.get().is_some(),
                                 move || {
                                     text(move || quote_error.get().unwrap_or_default())
-                                        .text_size(px(12.0))
+                                        .text_size(px(font_size::CAPTION))
                                         .text_color(palette.danger)
                                         .test_id("manual-quote-error-strip")
                                 },
@@ -983,7 +998,7 @@ pub(crate) fn InstrumentsPane() -> impl IntoElement {
                             .total_pages(move || instruments_total_pages(total.get()))
                             .disabled(move || loading.get())
                             .item_class(
-                                "px-2 py-1 rounded-md text-foreground hover:bg-accent \
+                                "px-2 py-1 rounded-(--radius) text-foreground hover:bg-accent \
                                  selected:bg-accent disabled:opacity-40",
                             )
                             .on_change(move |&picked: &u32| {
@@ -1180,7 +1195,7 @@ fn manual_quote_modal(
             let price_error_now = price_error_now;
             let start = view().flex_col().gap_2().child(
                 text(MANUAL_QUOTE_INTRO)
-                    .text_size(px(12.0))
+                    .text_size(px(font_size::CAPTION))
                     .text_color(muted),
             );
             let date_row = view()
@@ -1189,7 +1204,7 @@ fn manual_quote_modal(
                 .gap_2()
                 .child(
                     text(MANUAL_QUOTE_DATE_LABEL)
-                        .text_size(px(12.0))
+                        .text_size(px(font_size::CAPTION))
                         .text_color(muted)
                         .w(px(56.0)),
                 )
@@ -1199,10 +1214,10 @@ fn manual_quote_modal(
                         .child(crate::date_select::date_select("manual-quote-date", date)),
                 );
             let price_border = if price_error_now().is_some() {
-                "bg-background rounded-md border border-destructive px-2 py-1 \
+                "bg-background rounded-(--radius) border border-destructive px-2 py-1 \
                  placeholder:text-muted-foreground"
             } else {
-                "bg-background rounded-md border border-border px-2 py-1 \
+                "bg-background rounded-(--radius) border border-border px-2 py-1 \
                  placeholder:text-muted-foreground"
             };
             let price_row = view()
@@ -1211,7 +1226,7 @@ fn manual_quote_modal(
                 .gap_2()
                 .child(
                     text(MANUAL_QUOTE_PRICE_LABEL)
-                        .text_size(px(12.0))
+                        .text_size(px(font_size::CAPTION))
                         .text_color(muted)
                         .w(px(56.0)),
                 )
@@ -1233,7 +1248,7 @@ fn manual_quote_modal(
                 move || quote_error.get().is_some(),
                 move || {
                     text(move || quote_error.get().unwrap_or_default())
-                        .text_size(px(12.0))
+                        .text_size(px(font_size::CAPTION))
                         .text_color(palette.danger)
                         .test_id("manual-quote-error")
                 },
@@ -1247,12 +1262,16 @@ fn manual_quote_modal(
                     view()
                         .on_press(move |_: &PressEvent| quote_open.set(false))
                         .test_id("cancel-manual-quote")
-                        .rounded_md()
+                        .rounded_lg()
                         .px_3()
                         .py_1()
                         .app_class("border border-border hover:bg-accent disabled:opacity-40")
                         .disabled(move || submitting.get())
-                        .child(text(MANUAL_QUOTE_CANCEL).text_size(px(12.0)).text_color(fg)),
+                        .child(
+                            text(MANUAL_QUOTE_CANCEL)
+                                .text_size(px(font_size::CAPTION))
+                                .text_color(fg),
+                        ),
                 )
                 .child(
                     view()
@@ -1270,7 +1289,7 @@ fn manual_quote_modal(
                             );
                         })
                         .test_id("submit-manual-quote")
-                        .rounded_md()
+                        .rounded_lg()
                         .px_3()
                         .py_1()
                         .app_class("bg-primary hover:opacity-90 disabled:opacity-40")
@@ -1283,8 +1302,8 @@ fn manual_quote_modal(
                                     MANUAL_QUOTE_SUBMIT.to_owned()
                                 }
                             })
-                            .text_size(px(12.0))
-                            .text_color(rgb(0xffffff)),
+                            .text_size(px(font_size::CAPTION))
+                            .text_color(crate::theme::color("primary-foreground")),
                         ),
                 );
             view()
@@ -1637,7 +1656,11 @@ fn add_instrument_modal(
             let base = view()
                 .flex_col()
                 .gap_2()
-                .child(text(ADD_INTRO).text_size(px(12.0)).text_color(muted))
+                .child(
+                    text(ADD_INTRO)
+                        .text_size(px(font_size::CAPTION))
+                        .text_color(muted),
+                )
                 .child(
                     // 通道（AppSelect 必选）。
                     view()
@@ -1646,7 +1669,7 @@ fn add_instrument_modal(
                         .gap_2()
                         .child(
                             text(ADD_MARKET_LABEL)
-                                .text_size(px(12.0))
+                                .text_size(px(font_size::CAPTION))
                                 .text_color(muted)
                                 .w(px(56.0)),
                         )
@@ -1667,7 +1690,7 @@ fn add_instrument_modal(
                         .gap_2()
                         .child(
                             text(ADD_CODE_LABEL)
-                                .text_size(px(12.0))
+                                .text_size(px(font_size::CAPTION))
                                 .text_color(muted)
                                 .w(px(56.0)),
                         )
@@ -1680,7 +1703,7 @@ fn add_instrument_modal(
                                 .text_color(fg)
                                 .w(px(220.0))
                                 .app_class(
-                                    "bg-background rounded-md border border-border px-2 py-1 \
+                                    "bg-background rounded-(--radius) border border-border px-2 py-1 \
                                      placeholder:text-muted-foreground",
                                 )
                                 .on_change(move |value: &str| code.set(value.to_owned())),
@@ -1701,7 +1724,7 @@ fn add_instrument_modal(
                             .gap_2()
                             .child(
                                 text(ADD_NAME_LABEL)
-                                    .text_size(px(12.0))
+                                    .text_size(px(font_size::CAPTION))
                                     .text_color(muted)
                                     .w(px(56.0)),
                             )
@@ -1714,7 +1737,7 @@ fn add_instrument_modal(
                                     .text_color(fg)
                                     .w(px(220.0))
                                     .app_class(
-                                        "bg-background rounded-md border border-border px-2 py-1 \
+                                        "bg-background rounded-(--radius) border border-border px-2 py-1 \
                                              placeholder:text-muted-foreground",
                                     )
                                     .on_change(move |value: &str| {
@@ -1729,7 +1752,7 @@ fn add_instrument_modal(
                             .gap_2()
                             .child(
                                 text(ADD_TYPE_LABEL)
-                                    .text_size(px(12.0))
+                                    .text_size(px(font_size::CAPTION))
                                     .text_color(muted)
                                     .w(px(56.0)),
                             )
@@ -1749,7 +1772,7 @@ fn add_instrument_modal(
                             .gap_2()
                             .child(
                                 text(ADD_CURRENCY_LABEL)
-                                    .text_size(px(12.0))
+                                    .text_size(px(font_size::CAPTION))
                                     .text_color(muted)
                                     .w(px(56.0)),
                             )
@@ -1765,7 +1788,11 @@ fn add_instrument_modal(
                                 false,
                             )),
                     )
-                    .child(text(ADD_CUSTOM_HINT).text_size(px(11.0)).text_color(muted))
+                    .child(
+                        text(ADD_CUSTOM_HINT)
+                            .text_size(px(font_size::CAPTION))
+                            .text_color(muted),
+                    )
             })
             .otherwise(view);
 
@@ -1777,7 +1804,7 @@ fn add_instrument_modal(
                         move || add_error.get().is_some(),
                         move || {
                             text(move || add_error.get().unwrap_or_default())
-                                .text_size(px(12.0))
+                                .text_size(px(font_size::CAPTION))
                                 .text_color(palette.danger)
                                 .test_id("add-instrument-error")
                         },
@@ -1789,7 +1816,7 @@ fn add_instrument_modal(
                         move || not_found_hint.get(),
                         move || {
                             text(ADD_NOT_FOUND_HINT)
-                                .text_size(px(12.0))
+                                .text_size(px(font_size::CAPTION))
                                 .text_color(muted)
                         },
                     )
@@ -1803,18 +1830,22 @@ fn add_instrument_modal(
                     view()
                         .on_press(move |_: &PressEvent| add_open.set(false))
                         .test_id("cancel-add-instrument")
-                        .rounded_md()
+                        .rounded_lg()
                         .px_3()
                         .py_1()
                         .app_class("border border-border hover:bg-accent disabled:opacity-40")
                         .disabled(busy)
-                        .child(text("取消").text_size(px(12.0)).text_color(fg)),
+                        .child(
+                            text("取消")
+                                .text_size(px(font_size::CAPTION))
+                                .text_color(fg),
+                        ),
                 )
                 .child(
                     view()
                         .on_press(on_submit)
                         .test_id("submit-add-instrument")
-                        .rounded_md()
+                        .rounded_lg()
                         .px_3()
                         .py_1()
                         .app_class("bg-primary hover:opacity-90 disabled:opacity-40")
@@ -1829,8 +1860,8 @@ fn add_instrument_modal(
                                     primary_label().to_owned()
                                 }
                             })
-                            .text_size(px(12.0))
-                            .text_color(rgb(0xffffff)),
+                            .text_size(px(font_size::CAPTION))
+                            .text_color(crate::theme::color("primary-foreground")),
                         ),
                 );
 

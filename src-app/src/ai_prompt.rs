@@ -20,6 +20,7 @@
 //! 界面文案仅 zh-CN（旧壳 ai.* zh-CN 词表字面承载）。测试豁免（ADR-0060）：
 //! 本模块测试经 crate 根 cfg(test) 整体放行六件套。
 
+use crate::design::font_size;
 use nsh_core::prelude::*;
 
 /// AI 入口提示词全文（markdown 原文，编译期嵌入）。
@@ -35,17 +36,10 @@ const MSG_COPY_FAILED: &str = "复制失败";
 /// 提示词正文（等宽 pre 形态）+ 复制按钮 + 复制反馈状态条。
 #[component]
 pub(crate) fn AiPromptView() -> impl IntoElement {
-    let tokens = nsh_core::element::tokens();
-    let fg = tokens
-        .color("foreground")
-        .unwrap_or_else(|| hsla(0.0, 0.0, 0.98, 1.0).into());
-    let muted = tokens
-        .color("muted-foreground")
-        .unwrap_or_else(|| hsla(0.0, 0.0, 0.45, 1.0).into());
-    let danger_fg = tokens
-        .color("destructive")
-        .unwrap_or_else(|| hsla(0.0, 0.0, 0.98, 1.0).into());
-    let ok_fg = AdaptiveColor::new(rgb(0x18a058), rgb(0x63e2b7));
+    let fg = crate::theme::color("foreground");
+    let muted = crate::theme::color("muted-foreground");
+    let danger_fg = crate::theme::color("destructive");
+    let ok_fg = crate::theme::color("income");
 
     // 复制反馈状态（None = 无反馈；Some(ok) = 成功/失败两态文案）。
     let copied = signal(None::<bool>);
@@ -78,7 +72,11 @@ pub(crate) fn AiPromptView() -> impl IntoElement {
                 .flex_row()
                 .items_center()
                 .justify_between()
-                .child(text(VIEW_TITLE).text_size(px(15.0)).text_color(fg))
+                .child(
+                    text(VIEW_TITLE)
+                        .text_size(px(font_size::TITLE))
+                        .text_color(fg),
+                )
                 .child(
                     view()
                         .on_press(move |_: &()| perform_copy())
@@ -86,30 +84,32 @@ pub(crate) fn AiPromptView() -> impl IntoElement {
                         // 空提示词禁用（防御面恒不触发——常量数据面）；禁用态
                         // 退弱化色、可用态主色按钮（旧壳 type=primary 同语义）。
                         .app_class(
-                            "px-3 py-1 rounded-md bg-primary hover:opacity-90 disabled:opacity-50",
+                            "px-3 py-1 rounded-(--radius) bg-primary hover:opacity-90 disabled:opacity-50",
                         )
                         .child(
                             text(BUTTON_COPY)
-                                .text_size(px(13.0))
-                                .text_color(rgb(0xffffff))
+                                .text_size(px(font_size::SECONDARY))
+                                .text_color(crate::theme::color("primary-foreground"))
                                 .test_id("ai-copy"),
                         ),
                 ),
         )
         .child(
             // 页面说明（旧壳 ai.description 同词）。
-            text(DESCRIPTION).text_size(px(13.0)).text_color(muted),
+            text(DESCRIPTION)
+                .text_size(px(font_size::SECONDARY))
+                .text_color(muted),
         )
         .child(
             // 提示词正文（markdown 原文，等宽小字 pre 形态；font-mono 是
             // 缺省主题令牌的等宽字体家族名）。
             view()
                 .flex_col()
-                .app_class("rounded-md border border-border bg-background p-3")
+                .app_class("rounded-(--radius-card) border border-border bg-background p-3")
                 .child(
                     text(move || AI_PROMPT.to_owned())
                         .font_family("font-mono")
-                        .text_size(px(12.0))
+                        .text_size(px(font_size::CAPTION))
                         .text_color(fg)
                         .test_id("prompt-body"),
                 ),
@@ -124,7 +124,7 @@ pub(crate) fn AiPromptView() -> impl IntoElement {
                     } else {
                         MSG_COPY_FAILED
                     })
-                    .text_size(px(12.0))
+                    .text_size(px(font_size::CAPTION))
                     .text_color(move || {
                         if copied.get_untracked() == Some(true) {
                             ok_fg

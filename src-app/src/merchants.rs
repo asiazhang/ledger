@@ -48,6 +48,7 @@ use crate::adaptive;
 use crate::app::db_slot;
 use crate::assembly::{self, ColumnAlign, MERCHANT_COLUMNS, MerchantListContext, MerchantRowCells};
 use crate::boot;
+use crate::design::font_size;
 use crate::modal;
 use crate::nav_model::{NavRequest, ViewName};
 use crate::popconfirm;
@@ -173,20 +174,11 @@ pub(crate) fn MerchantsView() -> impl IntoElement {
             &reload_subscription;
     });
 
-    // 主题令牌（双态自适应；令牌缺失回退亮灰/中灰可读兜底，先例同形）。
-    let tokens = nsh_core::element::tokens();
-    let fg = tokens
-        .color("foreground")
-        .unwrap_or_else(|| hsla(0.0, 0.0, 0.98, 1.0).into());
-    let muted = tokens
-        .color("muted-foreground")
-        .unwrap_or_else(|| hsla(0.0, 0.0, 0.45, 1.0).into());
-    let accent = tokens
-        .color("primary")
-        .unwrap_or_else(|| hsla(0.11, 0.82, 0.60, 1.0).into());
-    let danger_fg = tokens
-        .color("destructive")
-        .unwrap_or_else(|| hsla(0.0, 0.0, 0.98, 1.0).into());
+    // 主题令牌（双态自适应；缺失兜底统一归 crate::theme 单点）。
+    let fg = crate::theme::color("foreground");
+    let muted = crate::theme::color("muted-foreground");
+    let accent = crate::theme::color("primary");
+    let danger_fg = crate::theme::color("destructive");
 
     // 操作反馈条位（NSH 无 toast——#2038 裁决；旧壳 message.success/error 的
     // 条位对应物：新动作开始时清回空）。
@@ -493,14 +485,14 @@ pub(crate) fn MerchantsView() -> impl IntoElement {
                 let mut cell_view = view().flex_row().items_center().gap_1();
                 cell_view = cell_view.child(
                     text(cell.text.clone())
-                        .text_size(px(13.0))
+                        .text_size(px(font_size::SECONDARY))
                         .text_color(fg)
                         .number_of_lines(1),
                 );
                 if assembled.as_ref().is_some_and(|row| row.is_deleted) {
                     cell_view = cell_view.child(
                         text(DELETED_TAG)
-                            .text_size(px(11.0))
+                            .text_size(px(font_size::CAPTION))
                             .text_color(accent)
                             .app_class("px-1 rounded border border-border")
                             .test_id(
@@ -527,7 +519,7 @@ pub(crate) fn MerchantsView() -> impl IntoElement {
                     })
                     .child(
                         text(cell.text.clone())
-                            .text_size(px(13.0))
+                            .text_size(px(font_size::SECONDARY))
                             .text_color(accent)
                             .number_of_lines(1),
                     )
@@ -582,11 +574,11 @@ pub(crate) fn MerchantsView() -> impl IntoElement {
                             // 物品删除先例同注）。
                             view()
                                 .app_class(
-                                    "px-2 py-0.5 rounded-md border border-border text-foreground hover:bg-accent",
+                                    "px-2 py-0.5 rounded-sm border border-border text-foreground hover:bg-accent",
                                 )
                                 .child(
                                     text(ROW_DELETE)
-                                        .text_size(px(12.0))
+                                        .text_size(px(font_size::CAPTION))
                                         .text_color(danger_fg)
                                         .test_id(
                                             format!("merchant-delete-{merchant_id}").as_str(),
@@ -598,7 +590,7 @@ pub(crate) fn MerchantsView() -> impl IntoElement {
                     .into_element()
             }
             _ => text(cell.text.clone())
-                .text_size(px(13.0))
+                .text_size(px(font_size::SECONDARY))
                 .text_color(fg)
                 .number_of_lines(1)
                 .into_element(),
@@ -625,7 +617,7 @@ pub(crate) fn MerchantsView() -> impl IntoElement {
                             .text_color(fg)
                             .w(px(240.0))
                             .app_class(
-                                "bg-background rounded-md border border-border px-2 py-1 \
+                                "bg-background rounded-(--radius) border border-border px-2 py-1 \
                                  placeholder:text-muted-foreground",
                             )
                             .on_change(move |text: &str| edit_name.set(text.to_owned())),
@@ -644,7 +636,7 @@ pub(crate) fn MerchantsView() -> impl IntoElement {
                                 edit_error.get().unwrap_or_default()
                             )
                         })
-                        .text_size(px(12.0))
+                        .text_size(px(font_size::CAPTION))
                         .text_color(danger_fg)
                         .test_id("merchant-edit-error")
                     },
@@ -656,12 +648,12 @@ pub(crate) fn MerchantsView() -> impl IntoElement {
                 // 无取消键语义）。
                 view().flex_row().justify_end().child(
                     button()
-                        .app_class("px-3 py-1.5 rounded-md bg-primary hover:opacity-90")
+                        .app_class("px-3 py-1.5 rounded-(--radius) bg-primary hover:opacity-90")
                         .on_press(move |_: &()| perform_edit())
                         .child(
                             text(SAVE_BUTTON)
-                                .text_size(px(13.0))
-                                .text_color(rgb(0xffffff))
+                                .text_size(px(font_size::SECONDARY))
+                                .text_color(crate::theme::color("primary-foreground"))
                                 .test_id("merchant-edit-save"),
                         ),
                 ),
@@ -674,10 +666,10 @@ pub(crate) fn MerchantsView() -> impl IntoElement {
     let create_card = view()
         .flex_col()
         .gap_2()
-        .app_class("rounded-md border border-border p-3")
+        .app_class("rounded-(--radius-card) border border-border p-3")
         .child(
             text(ADD_CARD_TITLE)
-                .text_size(px(13.0))
+                .text_size(px(font_size::SECONDARY))
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_color(fg),
         )
@@ -702,7 +694,7 @@ pub(crate) fn MerchantsView() -> impl IntoElement {
                                 .text_color(fg)
                                 .w(px(160.0))
                                 .app_class(
-                                    "bg-background rounded-md border border-border px-2 py-1 \
+                                    "bg-background rounded-(--radius) border border-border px-2 py-1 \
                                      placeholder:text-muted-foreground",
                                 )
                                 .on_change(move |text: &str| create_name.set(text.to_owned())),
@@ -710,12 +702,12 @@ pub(crate) fn MerchantsView() -> impl IntoElement {
                 )
                 .child(
                     button()
-                        .app_class("px-3 py-1.5 rounded-md bg-primary hover:opacity-90")
+                        .app_class("px-3 py-1.5 rounded-(--radius) bg-primary hover:opacity-90")
                         .on_press(move |_: &()| perform_create())
                         .child(
                             text(ADD_BUTTON)
-                                .text_size(px(13.0))
-                                .text_color(rgb(0xffffff))
+                                .text_size(px(font_size::SECONDARY))
+                                .text_color(crate::theme::color("primary-foreground"))
                                 .test_id("merchant-add"),
                         ),
                 ),
@@ -725,7 +717,7 @@ pub(crate) fn MerchantsView() -> impl IntoElement {
                 move || create_error.get().is_some(),
                 move || {
                     text(move || create_error.get().unwrap_or_default())
-                        .text_size(px(12.0))
+                        .text_size(px(font_size::CAPTION))
                         .text_color(danger_fg)
                         .test_id("merchant-create-error")
                 },
@@ -737,11 +729,11 @@ pub(crate) fn MerchantsView() -> impl IntoElement {
         .flex_1()
         .flex_col()
         .gap_2()
-        .app_class("rounded-md border border-border p-3")
+        .app_class("rounded-(--radius-card) border border-border p-3")
         .child(
             view().flex_1().child(
                 text(LIST_CARD_TITLE)
-                    .text_size(px(13.0))
+                    .text_size(px(font_size::SECONDARY))
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(fg),
             ),
@@ -761,7 +753,7 @@ pub(crate) fn MerchantsView() -> impl IntoElement {
                         .text_color(fg)
                         .w(px(240.0))
                         .app_class(
-                            "bg-background rounded-md border border-border px-2 py-1 \
+                            "bg-background rounded-(--radius) border border-border px-2 py-1 \
                              placeholder:text-muted-foreground",
                         )
                         .on_change(move |text: &str| search_term.set(text.to_owned())),
@@ -775,7 +767,7 @@ pub(crate) fn MerchantsView() -> impl IntoElement {
                             // test_id 落在标签文本上（headless id: 锚点命中文本、
                             // 物理命中到内层 checkbox 可按压件——页签先例同形）。
                             text(SHOW_DELETED_LABEL)
-                                .text_size(px(13.0))
+                                .text_size(px(font_size::SECONDARY))
                                 .text_color(fg)
                                 .test_id("merchant-show-deleted"),
                         ),
@@ -808,7 +800,7 @@ pub(crate) fn MerchantsView() -> impl IntoElement {
                 .justify_between()
                 .child(
                     text(move || format!("共 {} 条", total()))
-                        .text_size(px(12.0))
+                        .text_size(px(font_size::CAPTION))
                         .text_color(muted)
                         .test_id("merchant-total"),
                 )
@@ -825,7 +817,7 @@ pub(crate) fn MerchantsView() -> impl IntoElement {
                                     .total_pages(total_pages)
                                     .disabled(move || loading.get())
                                     .item_class(
-                                        "px-2 py-1 rounded-md text-foreground hover:bg-accent selected:bg-accent disabled:opacity-40",
+                                        "px-2 py-1 rounded-(--radius) text-foreground hover:bg-accent selected:bg-accent disabled:opacity-40",
                                     )
                                     .on_change(move |&picked: &u32| clap_page(picked)),
                             )
@@ -842,7 +834,7 @@ pub(crate) fn MerchantsView() -> impl IntoElement {
         .child(
             view().px_4().py_2().child(
                 text(ViewName::Merchants.label())
-                    .text_size(px(16.0))
+                    .text_size(px(font_size::TITLE))
                     .text_color(fg)
                     .test_id("view-title"),
             ),
@@ -854,7 +846,7 @@ pub(crate) fn MerchantsView() -> impl IntoElement {
                 move || error.get().is_some(),
                 move || {
                     text(move || format!("加载失败：{}", error.get().unwrap_or_default()))
-                        .text_size(px(12.0))
+                        .text_size(px(font_size::CAPTION))
                         .text_color(danger_fg)
                         .test_id("merchant-error")
                         .app_class("px-4 py-1")
@@ -876,7 +868,7 @@ pub(crate) fn MerchantsView() -> impl IntoElement {
                         move || status.get().is_some(),
                         move || {
                             text(move || status.get().unwrap_or_default())
-                                .text_size(px(12.0))
+                                .text_size(px(font_size::CAPTION))
                                 .text_color(fg)
                                 .test_id("merchant-status")
                         },
@@ -914,9 +906,14 @@ fn row_action_button(
     on_press: impl Fn() + 'static,
 ) -> AnyElement {
     button()
-        .app_class("px-2 py-0.5 rounded-md border border-border text-foreground hover:bg-accent")
+        .app_class("px-2 py-0.5 rounded-sm border border-border text-foreground hover:bg-accent")
         .on_press(move |_: &()| on_press())
-        .child(text(label).text_size(px(12.0)).text_color(fg).test_id(&id))
+        .child(
+            text(label)
+                .text_size(px(font_size::CAPTION))
+                .text_color(fg)
+                .test_id(&id),
+        )
         .into_element()
 }
 

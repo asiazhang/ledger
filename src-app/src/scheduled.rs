@@ -33,6 +33,7 @@ use std::sync::MutexGuard;
 use nsh_core::prelude::*;
 
 use crate::assembly::{self, CategoryOption, ColumnAlign, CurrencyTable};
+use crate::design::font_size;
 use crate::nav;
 use crate::nav_model::ScheduledFormTab;
 
@@ -458,14 +459,9 @@ pub(crate) fn ScheduledView() -> impl IntoElement {
         pending_focus.set(intent.and_then(|i| i.focus));
     });
 
-    // 主题令牌（双态自适应；令牌缺失回退亮灰/中灰可读兜底，先例同形）。
-    let tokens = nsh_core::element::tokens();
-    let fg = tokens
-        .color("foreground")
-        .unwrap_or_else(|| hsla(0.0, 0.0, 0.98, 1.0).into());
-    let muted = tokens
-        .color("muted-foreground")
-        .unwrap_or_else(|| hsla(0.0, 0.0, 0.45, 1.0).into());
+    // 主题令牌（双态自适应；缺失兜底统一归 crate::theme 单点）。
+    let fg = crate::theme::color("foreground");
+    let muted = crate::theme::color("muted-foreground");
 
     // 形态页签（三态闭集；会话槽缺省首签订阅）。页签点击写会话槽（会话内
     // 保留）；nsh-base Tabs 行为件（roving 焦点 + 无障碍页签列表，容器页签
@@ -488,10 +484,10 @@ pub(crate) fn ScheduledView() -> impl IntoElement {
             nsh_base::tab()
                 .selected(move || active.get() == tab)
                 .accessibility_label(form_tab_label(tab))
-                .app_class("px-2 py-1 rounded-md selected:bg-accent")
+                .app_class("px-2 py-2 rounded-(--radius) selected:bg-accent")
                 .child(
                     text(form_tab_label(tab))
-                        .text_size(px(13.0))
+                        .text_size(px(font_size::SECONDARY))
                         .text_color(move || if active.get() == tab { fg } else { muted })
                         .test_id(id.as_str()),
                 )

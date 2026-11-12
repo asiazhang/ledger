@@ -59,6 +59,7 @@
 use nsh_base::input;
 use nsh_core::prelude::*;
 
+use crate::design::font_size;
 use crate::{
     assembly::{self, CategoryOption, CurrencyFormat, CurrencyTable},
     boot, date_select, modal, pinyin_select, signals,
@@ -868,7 +869,9 @@ fn instrument_options(instruments: &Instruments) -> Vec<CategoryOption> {
 
 /// 表单字段标签（弱化小字；txn_form field_label 同形）。
 fn field_label(label: &'static str, muted: AdaptiveColor) -> impl IntoElement {
-    text(label).text_size(px(12.0)).text_color(muted)
+    text(label)
+        .text_size(px(font_size::CAPTION))
+        .text_color(muted)
 }
 
 /// 弹窗标题（创建「记一笔 · {词}」/ 编辑「编辑交易」——txn_form 同形，旧
@@ -894,10 +897,10 @@ fn submit_label(editing: bool, kind_word: &str) -> String {
 /// 判定红态输入框边框类（红框逐字段落位；正常态回标准边框）。
 fn error_border(bad: bool) -> &'static str {
     if bad {
-        "bg-background rounded-md border border-destructive px-2 py-1 \
+        "bg-background rounded-(--radius) border border-destructive px-2 py-1 \
          placeholder:text-muted-foreground"
     } else {
-        "bg-background rounded-md border border-border px-2 py-1 \
+        "bg-background rounded-(--radius) border border-border px-2 py-1 \
          placeholder:text-muted-foreground"
     }
 }
@@ -913,16 +916,9 @@ pub(crate) fn trade_form_modal(
     let is_fund = is_fund_computed(&state, &sources);
     // 任意字段错误 → 提交禁用（红框 + 提交禁用两件同发，ADR-0058 决策 1）。
     let field_error = has_field_error(&state, is_fund);
-    let tokens = nsh_core::element::tokens();
-    let fg = tokens
-        .color("foreground")
-        .unwrap_or_else(|| hsla(0.0, 0.0, 0.98, 1.0).into());
-    let muted = tokens
-        .color("muted-foreground")
-        .unwrap_or_else(|| hsla(0.0, 0.0, 0.45, 1.0).into());
-    let danger_fg = tokens
-        .color("destructive")
-        .unwrap_or_else(|| hsla(0.0, 0.0, 0.98, 1.0).into());
+    let fg = crate::theme::color("foreground");
+    let muted = crate::theme::color("muted-foreground");
+    let danger_fg = crate::theme::color("destructive");
 
     let submit = perform_submit(state, sources, is_fund, view_owner);
 
@@ -987,15 +983,17 @@ pub(crate) fn trade_form_modal(
                         .into_element()
                 } else {
                     text(auto_amount.unwrap_or_else(|| AMOUNT_AUTO.to_owned()))
-                        .text_size(px(13.0))
+                        .text_size(px(font_size::SECONDARY))
                         .text_color(muted)
                         .test_id(AUTO_AMOUNT_ID)
                         .into_element()
                 })
                 .child(
-                    view()
-                        .test_id(CURRENCY_ID)
-                        .child(text(currency_text).text_size(px(13.0)).text_color(muted)),
+                    view().test_id(CURRENCY_ID).child(
+                        text(currency_text)
+                            .text_size(px(font_size::SECONDARY))
+                            .text_color(muted),
+                    ),
                 );
             let body = view()
                 .test_id(FORM_ID)
@@ -1114,7 +1112,7 @@ pub(crate) fn trade_form_modal(
                                     derived_price_text(&state, is_fund)
                                         .unwrap_or_else(|| DERIVED_PRICE_PLACEHOLDER.to_owned()),
                                 )
-                                .text_size(px(13.0))
+                                .text_size(px(font_size::SECONDARY))
                                 .text_color(muted),
                             ),
                         ),
@@ -1188,7 +1186,7 @@ pub(crate) fn trade_form_modal(
                             .text_color(fg)
                             .flex_1()
                             .app_class(
-                                "bg-background rounded-md border border-border px-2 py-1 \
+                                "bg-background rounded-(--radius) border border-border px-2 py-1 \
                                  placeholder:text-muted-foreground",
                             )
                             .on_change(move |value: &str| state.note.set(value.to_owned())),
@@ -1200,7 +1198,7 @@ pub(crate) fn trade_form_modal(
                     move || state.error.get().is_some(),
                     move || {
                         text(move || state.error.get().unwrap_or_default())
-                            .text_size(px(12.0))
+                            .text_size(px(font_size::CAPTION))
                             .text_color(danger_fg)
                             .test_id(ERROR_ID)
                     },
@@ -1216,11 +1214,11 @@ pub(crate) fn trade_form_modal(
                     .child(
                         nsh_base::button()
                             .app_class(
-                                "px-3 py-1.5 rounded-md border border-border text-foreground hover:bg-accent",
+                                "px-3 py-1 rounded-(--radius) border border-border text-foreground hover:bg-accent",
                             )
                             .child(
                                 text("取消")
-                                    .text_size(px(13.0))
+                                    .text_size(px(font_size::SECONDARY))
                                     .text_color(fg)
                                     .test_id(CANCEL_ID),
                             )
@@ -1230,7 +1228,7 @@ pub(crate) fn trade_form_modal(
                         nsh_base::button()
                             .disabled(move || field_error.get())
                             .app_class(
-                                "px-3 py-1.5 rounded-md bg-primary hover:opacity-90 disabled:opacity-40",
+                                "px-3 py-1 rounded-(--radius) bg-primary hover:opacity-90 disabled:opacity-40",
                             )
                             .child(
                                 text(move || {
@@ -1239,8 +1237,8 @@ pub(crate) fn trade_form_modal(
                                         kind_word(state.kind.get()),
                                     )
                                 })
-                                .text_size(px(13.0))
-                                .text_color(rgb(0xffffff))
+                                .text_size(px(font_size::SECONDARY))
+                                .text_color(crate::theme::color("primary-foreground"))
                                 .test_id(SUBMIT_ID),
                             )
                             .on_press(move |_: &()| submit()),

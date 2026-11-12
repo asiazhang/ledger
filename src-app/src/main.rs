@@ -34,7 +34,7 @@ fn main() -> impl std::process::Termination {
     // 路径（nsh-platform-linux 0.4.0 无 RunEvent::Exit 等价物，裁决见
     // backup_host 模块文档）——退出前若脏且当天尚未自动备份过则补一次。
     let exit_code = platform::run_app(
-        platform::AppSource::Rust(platform::Root::of::<nsh_app::app::App>().app_id(APP_ID)),
+        platform::AppSource::Rust(nsh_app::app::root().app_id(APP_ID)),
         platform::AppOptions {
             title: "Ledger".to_owned(),
             app_id: APP_ID.to_owned(),

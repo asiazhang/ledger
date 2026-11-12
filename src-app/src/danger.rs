@@ -17,9 +17,9 @@
 //! Suppression 注册表（[`crate::overlay`]，快捷键抑制零新机制，ADR-0035）。
 //!
 //! 呈现面（应用内模态，非系统对话框——ADR-0078 决策 1「原生 confirm 清零」
-//! 在本壳同样成立）：遮罩层内居中卡片。warning 级的琥珀色取 Tailwind 缺省
-//! 调色板（本壳主题令牌集无 warning 档）；该级当前无壳内消费面，仅为分级
-//! 形态的构造面保留，消费票接入时再对齐旧壳观感。
+//! 在本壳同样成立）：遮罩层内居中卡片。分级色全部走主题令牌（issue #2100
+//! 收编：error = `destructive`，warning = `warning`——令牌表补档后本模块
+//! 零本地色常量，警示句前景色经 [`crate::theme::color`] 单点消费）。
 //!
 //! 测试豁免（ADR-0060）：本模块测试经 crate 根 cfg(test) 整体放行六件套。
 
@@ -27,6 +27,7 @@ use nsh_base::button;
 use nsh_core::element::FontWeight;
 use nsh_core::prelude::*;
 
+use crate::design::font_size;
 use crate::overlay;
 
 /// 分级（ADR-0078 决策 2 的形态闭集）。
@@ -68,35 +69,35 @@ pub struct DangerConfirmSpec {
 }
 
 /// 分级 → 呈现参数（纯映射单点，两级构造面闭集；UI 只消费）。前景色走
-/// 「主题令牌键 + 缺失回退」两段：令牌解析在 UI 构建期进行（需要引擎运行时），
-/// 本映射是纯数据、可离线单测——分级语义的测试面由此成立。
+/// 主题令牌（issue #2100 收编：色值住 theme.json 令牌表，读取经
+/// [`crate::theme::color`] 单点，缺失落可读兜底）——本映射只持令牌键与
+/// 令牌类，零本地色常量（分级语义的测试面由此成立）。
 struct DangerPalette {
     /// 警示块的容器类（警示块底色与描边随级）。
     alert_classes: &'static str,
     /// 警示句与确认按钮前景色的主题令牌键（nsh-base 缺省主题双态都有）。
     accent_token: &'static str,
-    /// 令牌缺失时的回退色（error：旧壳 expense 亮红——金额语义色表同值，
-    /// 可读兜底；warning：旧壳 naive-ui warning 色值，亮 #f0a020 / 暗提亮版）。
-    accent_fallback: AdaptiveColor,
-    /// 确认按钮的容器类（error 红 / warning 琥珀实色）。
+    /// 确认按钮文字的主题令牌键（实色填充上的前景，令牌表双态同白）。
+    accent_foreground_token: &'static str,
+    /// 确认按钮的容器类（error 红 / warning 琥珀实色，令牌类）。
     confirm_classes: &'static str,
 }
 
 fn palette(level: DangerLevel) -> DangerPalette {
     match level {
         DangerLevel::Error => DangerPalette {
-            alert_classes: "rounded-md border border-destructive/30 bg-destructive/10 p-3",
+            // 警示块：弹层卡内的嵌套面——圆角取小面半档（DESIGN.md §4 同心
+            // 规则：内层 ≈ max(0, 外层 − 层间缝)，卡 8 − 卡内缝 → rounded-sm）。
+            alert_classes: "rounded-sm border border-destructive/30 bg-destructive/10 p-3",
             accent_token: "destructive",
-            accent_fallback: AdaptiveColor::new(rgb(0xd03050), rgb(0xe88080)),
+            accent_foreground_token: "destructive-foreground",
             confirm_classes: "bg-destructive hover:opacity-90",
         },
         DangerLevel::Warning => DangerPalette {
-            alert_classes: "rounded-md border border-amber-500/30 bg-amber-500/10 p-3",
-            // 本壳主题令牌集无 warning 档，令牌键照填、回退色承接（消费票
-            // 接入时再对齐旧壳观感，见模块注）。
+            alert_classes: "rounded-sm border border-warning/30 bg-warning/10 p-3",
             accent_token: "warning",
-            accent_fallback: AdaptiveColor::new(rgb(0xf0a020), rgb(0xf2c97d)),
-            confirm_classes: "bg-amber-500 hover:opacity-90",
+            accent_foreground_token: "warning-foreground",
+            confirm_classes: "bg-warning hover:opacity-90",
         },
     }
 }
@@ -118,18 +119,12 @@ pub fn danger_confirm(
         token.report(shown);
     });
     let palette = palette(spec.level);
-    // 主题令牌（警示句/确认按钮前景色与卡片文字色；缺失时回退亮灰/中灰，
-    // 与启动视图同兜底口径）。令牌解析在 UI 构建期（引擎线程）进行。
-    let tokens = nsh_core::element::tokens();
-    let accent = tokens
-        .color(palette.accent_token)
-        .unwrap_or(palette.accent_fallback);
-    let fg = tokens
-        .color("foreground")
-        .unwrap_or_else(|| hsla(0.0, 0.0, 0.98, 1.0).into());
-    let muted = tokens
-        .color("muted-foreground")
-        .unwrap_or_else(|| hsla(0.0, 0.0, 0.45, 1.0).into());
+    // 主题令牌（警示句/确认按钮前景色与卡片文字色；缺失统一落中灰可读兜底，
+    // 兜底常量全仓唯一住在 crate::theme——本模块零本地色常量）。令牌解析在
+    // UI 构建期（引擎线程）进行。
+    let accent = crate::theme::color(palette.accent_token);
+    let fg = crate::theme::color("foreground");
+    let muted = crate::theme::color("muted-foreground");
     let cancel = move || on_outcome(DangerOutcome::Dismissed);
     when(open, move || {
         overlay()
@@ -144,34 +139,42 @@ pub fn danger_confirm(
                 // ESC（弹层关闭语义）→ 放弃。
                 .on_cancel(cancel)
                 .child(
-                    // 卡片（旧壳 cardSize md 分档的近形：限宽、圆角、描边）。
+                    // 卡片（弹层面）：限宽、主题令牌圆角基档（8pt）、描边。
                     view()
                         .test_id("danger-dialog")
                         .flex_col()
                         .gap_3()
-                        .app_class("bg-background rounded-md border border-border shadow-lg p-4 w-80")
+                        .app_class("bg-background rounded-(--radius) border border-border shadow-lg p-4 w-80")
                         .child(
+                            // 对话框标题（字阶 BODY 档，design.rs font_size 同源）。
                             text(spec.title.clone())
-                                .text_size(px(16.0))
+                                .text_size(px(font_size::BODY))
                                 .font_weight(FontWeight::SEMIBOLD)
                                 .text_color(fg),
                         )
                         .children(spec.lead.clone().map(|lead| {
-                            text(lead).text_size(px(13.0)).text_color(muted)
+                            // 说明段（字阶 SECONDARY 档，DESIGN.md §3 「次要正文」）。
+                            text(lead)
+                                .text_size(px(font_size::SECONDARY))
+                                .text_color(muted)
                         }))
                         .children(spec.strong_warning.clone().map(|warning| {
                             view()
                                 .flex_col()
                                 .app_class(palette.alert_classes)
                                 .child(
+                                    // 警示句（字阶 SECONDARY 档，design.rs font_size 同源）。
                                     text(warning)
-                                        .text_size(px(13.0))
+                                        .text_size(px(font_size::SECONDARY))
                                         .font_weight(FontWeight::BOLD)
                                         .text_color(accent),
                                 )
                         }))
                         .children(spec.detail.clone().map(|detail| {
-                            text(detail).text_size(px(13.0)).text_color(muted)
+                            // 补充说明段（字阶 SECONDARY 档）。
+                            text(detail)
+                                .text_size(px(font_size::SECONDARY))
+                                .text_color(muted)
                         }))
                         .child(
                             view()
@@ -179,23 +182,34 @@ pub fn danger_confirm(
                                 .justify_end()
                                 .gap_2()
                                 .child(
+                                    // 次动作钮（h-8 32pt 默认档 + px-3，6pt 半步
+                                    // py-1.5 退役；文字 = 字阶 SECONDARY 档——
+                                    // DESIGN.md §6 控件高度/§3 按钮，txn_form 同形）。
                                     button()
                                         .app_class(
-                                            "px-3 py-1.5 rounded-md border border-border text-foreground hover:bg-accent",
+                                            "h-8 px-3 rounded-(--radius) border border-border text-foreground hover:bg-accent",
                                         )
-                                        .child(text(spec.cancel_label.clone()).test_id("danger-cancel").text_color(fg))
+                                        .child(
+                                            text(spec.cancel_label.clone())
+                                                .text_size(px(font_size::SECONDARY))
+                                                .test_id("danger-cancel")
+                                                .text_color(fg),
+                                        )
                                         .on_press(cancel),
                                 )
                                 .child(
                                     button()
                                         .app_class(format!(
-                                            "px-3 py-1.5 rounded-md {}",
+                                            "h-8 px-3 rounded-(--radius) {}",
                                             palette.confirm_classes
                                         ))
                                         .child(
                                             text(spec.confirm_label.clone())
+                                                .text_size(px(font_size::SECONDARY))
                                                 .test_id("danger-confirm")
-                                                .text_color(rgb(0xffffff)),
+                                                .text_color(crate::theme::color(
+                                                    palette.accent_foreground_token,
+                                                )),
                                         )
                                         .on_press(move || on_outcome(DangerOutcome::Confirmed)),
                                 ),
@@ -208,8 +222,9 @@ pub fn danger_confirm(
 mod tests {
     use super::*;
 
-    /// 两级形态的构造面闭集（ADR-0078 决策 2）：error 走 destructive 令牌类，
-    /// warning 走琥珀类；分级是封装件的一部分——删任一级的映射分支即红。
+    /// 两级形态的构造面闭集（ADR-0078 决策 2）：error 走 destructive 令牌类
+    /// 与令牌键，warning 走 warning 令牌类与令牌键（issue #2100 收编后本
+    /// 模块零本地色常量）；分级是封装件的一部分——删任一级的映射分支即红。
     #[test]
     fn both_levels_have_distinct_construction_faces() {
         let error = palette(DangerLevel::Error);
@@ -223,16 +238,16 @@ mod tests {
             "error 级确认按钮红色"
         );
         assert!(
-            warning.alert_classes.contains("amber"),
-            "warning 级警示块走琥珀类"
+            warning.alert_classes.contains("warning"),
+            "warning 级警示块走琥珀（warning）令牌类"
         );
         assert!(
-            warning.confirm_classes.contains("bg-amber"),
+            warning.confirm_classes.contains("bg-warning"),
             "warning 级确认按钮琥珀色"
         );
         assert_ne!(
-            error.accent_fallback, warning.accent_fallback,
-            "两级警示句前景色可区分"
+            error.accent_token, warning.accent_token,
+            "两级警示句前景色走不同令牌（可区分）"
         );
     }
 }

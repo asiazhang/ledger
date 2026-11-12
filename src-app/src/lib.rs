@@ -146,6 +146,10 @@
 //!   未到访不预载；到访标记与到访 effect 同点；设置页与投资页页签容器消费；
 //! - [`signals`]：进程内失效信号——交易数据失效的订阅/广播单点，写路径
 //!   成功后广播、列表视图订阅重读（#2022；词汇表失效信号语义的壳内通道）；
+//! - [`theme`]：主题令牌装配（#2100，ADR-0147 决策 1）——nsh.json 清单挂载
+//!   解析 + theme.json 令牌表内嵌与令牌消费单点（散落色常量的收编住所）；
+//! - [`design`]：设计常量（#2100，ADR-0147 决策 3/4）——字阶/间距/圆角的
+//!   唯一来源，官方规范值；规约成文见 docs/DESIGN.md；
 //! - [`txn_form`]：交易表单弹窗（`App*` 封装族消费面，#2034）——基础收支
 //!   新增/编辑（日期、类型、金额、分类、账户、备注与来源关联语义），编辑
 //!   复用同表单（回填初值）；写路径经域公开写入口直调、失效信号驱动刷新；
@@ -255,6 +259,7 @@ pub mod cross_book;
 pub mod danger;
 pub mod dashboard;
 pub mod date_select;
+pub mod design;
 // AI 导入 HTTP 壳的生产挂载与失效信号泵（#2081）：api_server 迁居后的启动
 // 接线面——旧壳 lib.rs setup 内挂载的本壳对应物（ADR-0112 决策 5 壳层接线）。
 pub mod http_host;
@@ -300,6 +305,7 @@ pub mod shell_support;
 pub mod sidebar;
 pub mod signals;
 pub mod sync_triggers;
+pub mod theme;
 pub mod transactions;
 pub mod tx_cards;
 pub mod tx_filter;
