@@ -39,8 +39,8 @@ use crate::boot::{
 mod seed;
 
 pub(crate) use seed::{
-    create_empty_book_file, expense_input, make_book_dir as scratch_book_dir, seed_cash_account,
-    test_date,
+    BookDir, create_empty_book_file, expense_input, make_book_dir as scratch_book_dir,
+    seed_cash_account, test_date,
 };
 
 /// 串行锁：接缝注册与 OnceLock 装配入口是进程级单例，用例间串行防串扰
@@ -1010,7 +1010,7 @@ fn picked_unregistered_book_dir_registers_and_activates() {
     let entry = registry
         .books
         .iter()
-        .find(|book| book.dir == picked)
+        .find(|book| book.dir == picked.path())
         .expect("新条目指向选中目录");
     assert_eq!(entry.name, picked_name, "展示名取目录名");
     assert_eq!(registry.active_id, entry.id, "新条目即活动本");
@@ -1026,7 +1026,7 @@ fn picked_dir_without_book_asks_create_then_confirm_creates_and_registers() {
     assert!(
         matches!(
             resolve_picked_book_dir(&root, &picked).unwrap(),
-            PickedBookDisposition::ConfirmCreate(ref path) if path == &picked,
+            PickedBookDisposition::ConfirmCreate(ref path) if path.as_path() == picked.path(),
         ),
         "无库目录返回新建意图并明示路径"
     );
@@ -1041,7 +1041,7 @@ fn picked_dir_without_book_asks_create_then_confirm_creates_and_registers() {
         "建库走建连迁移单点（新装语义）"
     );
     let book = active_book_of(&root);
-    assert_eq!(book.dir, picked, "登记指向新建目录");
+    assert_eq!(book.dir, picked.path(), "登记指向新建目录");
     assert_eq!(
         book.name,
         picked.file_name().unwrap().to_string_lossy().to_string(),
@@ -1053,7 +1053,7 @@ fn picked_dir_without_book_asks_create_then_confirm_creates_and_registers() {
     confirm_create_picked_book(&root2, &root2).unwrap();
     assert!(root2.join("ledger.db").is_file(), "默认目录建库");
     let folded = active_book_of(&root2);
-    assert_eq!(folded.dir, root2);
+    assert_eq!(folded.dir, root2.path());
     assert_eq!(
         folded.name,
         ledger_infra::db::book_registry::DEFAULT_BOOK_NAME,
@@ -1124,7 +1124,11 @@ fn picked_dir_at_corrupt_registry_tolerates_as_unregistered_and_opens() {
         "损坏现场有库未登记目录：登记 + 判开"
     );
     let book = active_book_of(&root);
-    assert_eq!(book.dir, picked, "损坏文件被覆盖：选中目录登记为活动本");
+    assert_eq!(
+        book.dir,
+        picked.path(),
+        "损坏文件被覆盖：选中目录登记为活动本"
+    );
     assert_eq!(
         book.name,
         picked.file_name().unwrap().to_string_lossy().to_string(),
@@ -1165,14 +1169,14 @@ fn picked_empty_dir_at_corrupt_registry_confirms_create_folds_default_book() {
     assert!(
         matches!(
             resolve_picked_book_dir(&root, &root).unwrap(),
-            PickedBookDisposition::ConfirmCreate(ref path) if path == &root,
+            PickedBookDisposition::ConfirmCreate(ref path) if path.as_path() == root.path(),
         ),
         "损坏根无库：新建意图"
     );
     confirm_create_picked_book(&root, &root).unwrap();
     assert!(root.join("ledger.db").is_file(), "确认后建库");
     let folded = active_book_of(&root);
-    assert_eq!(folded.dir, root, "折叠登记指向默认目录");
+    assert_eq!(folded.dir, root.path(), "折叠登记指向默认目录");
     assert_eq!(
         folded.name,
         ledger_infra::db::book_registry::DEFAULT_BOOK_NAME,
@@ -1216,7 +1220,7 @@ fn run_startup_unconfigured_without_book_renders_onboarding() {
     let _guard = serial_guard();
     crate::app::reset_book_assembly();
     let root = scratch_book_dir("onboarding");
-    crate::cross_book::set_default_data_dir(root.clone());
+    crate::cross_book::set_default_data_dir(root.to_path_buf());
     let view = run_startup();
     assert_eq!(
         view,
@@ -1250,7 +1254,7 @@ fn run_startup_corrupt_registry_without_book_onboarding_carries_fallback_reason(
         "not-json{{",
     )
     .unwrap();
-    crate::cross_book::set_default_data_dir(root);
+    crate::cross_book::set_default_data_dir(root.to_path_buf());
     match run_startup() {
         StartupView::Onboarding {
             fallback_reason: Some(reason),
@@ -1280,7 +1284,7 @@ fn run_startup_configured_active_book_at_default_dir_missing_fails_loud() {
             books: vec![ledger_infra::db::book_registry::Book {
                 id: "b1".to_owned(),
                 name: "活动账本".to_owned(),
-                dir: root.clone(),
+                dir: root.to_path_buf(),
             }],
             active_id: "b1".to_owned(),
             pending_relocation: None,
@@ -1288,7 +1292,7 @@ fn run_startup_configured_active_book_at_default_dir_missing_fails_loud() {
         },
     )
     .unwrap();
-    crate::cross_book::set_default_data_dir(root);
+    crate::cross_book::set_default_data_dir(root.to_path_buf());
     match run_startup() {
         StartupView::Failed {
             message,
@@ -1318,7 +1322,7 @@ fn run_startup_with_seeded_book_places_session_and_reads_first_page() {
     let dir = scratch_book_dir("startup");
     create_empty_book_file(&dir);
     seed_expense_series(&dir, 2);
-    set_book_dir(dir.clone());
+    set_book_dir(dir.to_path_buf());
     assert_eq!(run_startup(), StartupView::Ready, "引导成功呈现就绪态");
     let db = nsh_app_session();
     let page = crate::boot::transaction_page(&db, 1, &crate::boot::TxListQuery::default()).unwrap();

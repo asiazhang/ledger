@@ -102,9 +102,10 @@
 
 ## 测试暂存目录
 
-- **定义**：Rust 侧真临时目录夹具的 RAII 清理唯一定义点（`test_support::scratch`，issue #1645）——`ScratchDir` 构造即建 `temp_dir()/ledger-test-{tag}-{uuid}/`，drop（含 panic unwind）整棵删除；`ScratchFile` 是散文件夹具（临时 .db/.zip 等）的目录化形态，文件住各自的暂存目录内。调用点只学构造函数并把返回值活到用例结束（集成测试夹具随元组交调用方持有）；手写 `remove_dir_all` / `fs_util::cleanup` 收尾是回潮。
+- **定义**：Rust 侧真临时目录夹具的 RAII 清理唯一定义点（`test_support::scratch`，issue #1645）——`ScratchDir` 构造即建 `temp_dir()/ledger-test-{tag}-{uuid}/`，drop（含 panic unwind）整棵删除；`ScratchFile` 是散文件夹具（临时 .db/.zip 等）的目录化形态，文件住各自的暂存目录内。调用点只学构造函数并把返回值活到用例结束（集成测试夹具随元组交调用方持有）；手写 `remove_dir_all` / `fs_util::cleanup` 收尾是回潮。根包测试面之外的 `#[path]` 双编译造数面（crate 身份不可达根包类型）自持同形 guard：`seed::BookDir` 同构造同清理语义（issue #2112）。
+- **启动期过期清扫**（issue #2112）：`seed::make_book_dir` 发放时执行 `sweep_stale_scratch_dirs`——删除 `/tmp` 下 `ledger-test-` 前缀且修改时间早于 24h 的目录，只清「明显过期 + 本仓前缀」双条件的异常终止残留，绝不触碰并发会话的活跃目录（活跃目录 mtime 必然新鲜）；清扫失败静默吸收，永不成为测试失败的噪声源。删除发放点内的清扫接线，`issuing_a_book_dir_sweeps_stale_residue_only` 即红。
 - **前缀闭集**：全部暂存目录落 `ledger-test-` 前缀下，tag 保留调用方语义作残留识别的第二段——跑完测试后的残留可一条 `rm -rf /tmp/ledger-test-*` 识别清理。
-- **边界**：产品代码路径（自有收尾机制）不属本器具；基础设施等域 crate 经既有 dev-dependency 环消费（测试专用边，与测试工厂同处理，ADR-0084 决策 1/2），不扩生产依赖面。SIGKILL 下 guard 不执行，残留从「每次全量堆积」降为「异常终止偶发」。
+- **边界**：产品代码路径（自有收尾机制）不属本器具；基础设施等域 crate 经既有 dev-dependency 环消费（测试专用边，与测试工厂同处理，ADR-0084 决策 1/2），不扩生产依赖面。SIGKILL 下 guard 不执行，残留从「每次全量堆积」降为「异常终止偶发」（>24h 后由启动期清扫回收）。进程级 `$HOME` 隔离根（见「进程级现场隔离」）不随用例删除，仍属本词条外的生活期残留。
 - **别名**：不使用「临时目录 helper」「测试 tempdir」变体指代本器具。
 
 ## 进程级现场隔离
