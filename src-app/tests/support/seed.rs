@@ -1,7 +1,8 @@
 //! NSH 两测试面共享的造数助手（issue #2027）：lib 单测（`src/tests.rs`）与
 //! headless 组件测试（`tests/app_headless.rs`）各自维护的同形助手收拢于此——
 //! 账本暂存目录、造数日期步进（[`test_date`]）、测试现金账户、最小支出输入
-//! （24 字段 `TransactionInput`）与支出系列三入口（按笔数 / 按备注 / 按日期）。
+//! （24 字段 `TransactionInput`，含分类维度变体 [`expense_input_with_category`]）
+//! 与支出系列三入口（按笔数 / 按备注 / 按日期）。
 //!
 //! 为什么住 `tests/` 豁免区、两侧 `#[path]` 载入（票内三选一裁决）：
 //! - 根包 `test_support` 统一工厂立桩时链接旧壳 tauri（GTK3，与 NSH 的 GTK4
@@ -208,6 +209,30 @@ pub fn expense_input(account: &str, date: &str, amount_cents: i64, note: &str) -
         origin: None,
         fx_rate: None,
         idempotency_key: None,
+    }
+}
+
+/// 一笔现金支出输入的分类维度变体（issue #2059）：支出可挂分类、备注可
+/// 缺省——分类路径装配读的造数入口；其余字段随 [`expense_input`] 单源，
+/// 调用面不再内联 24 字段字面量。
+///
+/// 现仅 lib 面（`src/tests.rs`）消费；headless 面支出变体走本地
+/// `bare_expense_input` 底座，尚未消费本入口。`#[path]` 双编译下单面子集
+/// 消费是共享原文的既定代价，按 `s3_stub.rs` facade 同形放行 dead_code。
+#[allow(dead_code)]
+pub fn expense_input_with_category(
+    account: &str,
+    date: &str,
+    amount_cents: i64,
+    category_id: Option<&str>,
+    note: Option<&str>,
+) -> TransactionInput {
+    TransactionInput {
+        category_id: category_id.map(str::to_owned),
+        note: note.map(str::to_owned),
+        // 底座 note 载荷由外层 struct update 唯一决定，传固定空串占位：
+        // 不随外层 note 派生（旧写法 None 时先造 Some("") 再被覆盖，属死载荷）。
+        ..expense_input(account, date, amount_cents, "")
     }
 }
 
