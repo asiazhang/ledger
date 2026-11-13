@@ -56,6 +56,14 @@ const DEFAULT_WAIT: Duration = Duration::from_secs(5);
 /// （与 lib 单测的 SERIAL 同形；两测试二进制是独立进程，互不串扰）。
 static SERIAL: Mutex<()> = Mutex::new(());
 
+/// 串行锁守卫（毒化取回内值，issue #2064）：锁不变量仅为互斥，锁本身不含
+/// 不变量——单测试持锁 panic 后锁毒化不影响正确性，毒化时取回内值继续串行
+/// 互斥，后续用例照常跑出真实结果，不再级联毒化全批（先例：lib 侧
+/// `test_assembly_guard` 与 app.rs 槽位守卫同形）。
+fn serial_lock() -> std::sync::MutexGuard<'static, ()> {
+    SERIAL.lock().unwrap_or_else(|p| p.into_inner())
+}
+
 /// 桌面形态 headless 配置（足够容纳侧栏 + 表格全部建议列宽的视口：内容区
 /// 1104pt ≥ 列宽总和 1090pt，导航骨架起侧栏不裁列），带设备存储初值
 /// （金额隐私开关的轻量设置项面；`None` = 缺省空存储）。
@@ -237,7 +245,7 @@ fn month_label(year: i32, month: u32) -> String {
 /// 引导 / 首页读 / 表格渲染任一环）即红。
 #[test]
 fn app_window_renders_transaction_table_of_seeded_book() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("one");
     seed_expense_series(&dir, 1);
@@ -262,7 +270,7 @@ fn app_window_renders_transaction_table_of_seeded_book() {
 /// 产物）。删除窄窗分支挂载 / 卡片形态 / 抽屉导航接线任一环本用例即红。
 #[test]
 fn app_window_narrow_renders_mobile_shell_and_transaction_cards() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("narrow");
     seed_expense_series(&dir, 1);
@@ -303,7 +311,7 @@ fn app_window_narrow_renders_mobile_shell_and_transaction_cards() {
 /// 与分页条。
 #[test]
 fn app_window_shows_empty_state_for_empty_book() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("empty");
 
@@ -325,7 +333,7 @@ fn app_window_shows_empty_state_for_empty_book() {
 /// 「2」翻页后呈现末页行集且首页最新行不再在屏。
 #[test]
 fn app_window_flips_pages_by_pagination_bar_click() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("paged");
     seed_expense_series(&dir, 150);
@@ -356,7 +364,7 @@ fn app_window_flips_pages_by_pagination_bar_click() {
 /// 总数随搜索语义变化（共 2 条 → 命中 1 条），命中行在屏、未命中行离屏。
 #[test]
 fn app_window_searches_by_chinese_keyword_with_raw_text_hits() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("search");
     seed_expense_notes(&dir, &["元旦火锅聚餐", "超市买菜"]);
@@ -382,7 +390,7 @@ fn app_window_searches_by_chinese_keyword_with_raw_text_hits() {
 /// hitCount 同形），表格不残留列表行。
 #[test]
 fn app_window_shows_empty_state_when_search_has_no_hits() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("search-empty");
     seed_expense_notes(&dir, &["元旦火锅聚餐", "超市买菜"]);
@@ -403,7 +411,7 @@ fn app_window_shows_empty_state_when_search_has_no_hits() {
 /// 空查询回占位同语义）。
 #[test]
 fn app_window_restores_list_when_search_cleared() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("search-clear");
     seed_expense_notes(&dir, &["元旦火锅聚餐", "超市买菜"]);
@@ -428,7 +436,7 @@ fn app_window_restores_list_when_search_cleared() {
 /// 离屏；搜索态总数与列表态同值不同词（命中 150 条）。
 #[test]
 fn app_window_paginates_search_hits_after_enter_search() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("search-paged");
     seed_expense_notes(&dir, &["批量造数"; 150]);
@@ -459,7 +467,7 @@ fn app_window_paginates_search_hits_after_enter_search() {
 /// 最新行回到屏上（上一页/下一页的可见文案即其无障碍标签）。
 #[test]
 fn app_window_steps_back_by_previous_button() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("back");
     seed_expense_series(&dir, 150);
@@ -487,7 +495,7 @@ fn app_window_steps_back_by_previous_button() {
 /// 消费任一环，明文金额回到屏上即红。
 #[test]
 fn app_window_masks_amounts_when_device_privacy_enabled() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("privacy");
     seed_expense_series(&dir, 1);
@@ -517,7 +525,7 @@ fn app_window_masks_amounts_when_device_privacy_enabled() {
 /// `render_cell` 接线或色值映射任一环即红。
 #[test]
 fn app_window_colors_amount_cells_by_kind_semantic() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("colors");
     {
@@ -592,7 +600,7 @@ fn app_window_colors_amount_cells_by_kind_semantic() {
 /// 自动化面只断言已解析样式。
 #[test]
 fn app_window_theme_tokens_follow_strong_pinned_appearance() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     let book = |tag: &str| {
         nsh_app::app::reset_book_assembly();
         let dir = make_book(tag);
@@ -685,7 +693,7 @@ fn app_window_theme_tokens_follow_strong_pinned_appearance() {
 /// text 的 test_id 不落 span，nsh-testing span 语义）。
 #[test]
 fn dashboard_and_reports_views_follow_theme_tokens_and_type_scale() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
 
     // 概览 book（全量种子）亮→暗。
     nsh_app::app::reset_book_assembly();
@@ -799,7 +807,7 @@ fn dashboard_and_reports_views_follow_theme_tokens_and_type_scale() {
 /// （docs/DESIGN.md §8）承担。
 #[test]
 fn reference_and_settings_views_resolve_tokens_and_type_scale_across_appearances() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("t2104-ref-settings-appearance");
     let db = nsh_app::boot::boot_ledger(&dir).unwrap();
@@ -876,7 +884,7 @@ fn reference_and_settings_views_resolve_tokens_and_type_scale_across_appearances
 /// 亮暗两态截图对照属人工子集，自动化面只断言已解析样式。
 #[test]
 fn app_window_transaction_views_use_type_scale_and_primary_foreground_token() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("tx-type-scale");
     {
@@ -968,7 +976,7 @@ fn app_window_transaction_views_use_type_scale_and_primary_foreground_token() {
 /// 样式。
 #[test]
 fn app_window_shell_chrome_uses_type_scale_and_theme_tokens() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("shell-chrome");
     {
@@ -1103,7 +1111,7 @@ fn app_window_shell_chrome_uses_type_scale_and_theme_tokens() {
 /// 言已解析样式。
 #[test]
 fn app_window_wrapper_family_uses_type_scale_and_theme_tokens() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("wrapper-family");
     {
@@ -1371,7 +1379,7 @@ fn app_window_wrapper_family_uses_type_scale_and_theme_tokens() {
 /// 即红。
 #[test]
 fn app_window_renders_category_path_and_note_cells() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("category");
     {
@@ -1454,7 +1462,7 @@ fn app_window_renders_category_path_and_note_cells() {
 /// （展开 / 订单级留空 / 逐行分类与商品）即红。
 #[test]
 fn app_window_renders_purchase_order_rows_with_count_by_transaction() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("order");
     {
@@ -1609,7 +1617,7 @@ fn app_window_renders_purchase_order_rows_with_count_by_transaction() {
 /// 同口径）。删掉借贷派生或账户格装配任一环即红。
 #[test]
 fn app_window_renders_lending_label_and_two_account_cell() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("lending");
     {
@@ -1657,7 +1665,7 @@ fn app_window_renders_lending_label_and_two_account_cell() {
 /// 反查接线的装配消费或状态标注任一环即红。
 #[test]
 fn app_window_renders_source_name_and_status() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("source");
     {
@@ -1743,7 +1751,7 @@ fn app_window_renders_source_name_and_status() {
 /// 对准用户可见结果（行集内容），删除 keymap 接线即红。
 #[test]
 fn pagination_shortcut_keys_flip_pages_and_stay_idempotent_at_ends() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("pg-keys");
     seed_expense_series(&dir, 150);
@@ -1781,7 +1789,7 @@ fn pagination_shortcut_keys_flip_pages_and_stay_idempotent_at_ends() {
 /// 被测应用同源取钟，与具体日期无关）。
 #[test]
 fn period_shortcut_keys_and_stepper_click_step_and_clamp_at_boundary() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("period-keys");
     seed_expense_on_date(&dir, &prev_month_mid().to_string(), 8_800);
@@ -1840,7 +1848,7 @@ fn period_shortcut_keys_and_stepper_click_step_and_clamp_at_boundary() {
 /// 经 settle 给错误路径落地窗口（红态下翻页在毫秒级完成），不写可点性断言。
 #[test]
 fn suppression_gate_blocks_pagination_key_while_period_popup_open() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("suppress-pg");
     seed_expense_series(&dir, 150);
@@ -1877,7 +1885,7 @@ fn suppression_gate_blocks_pagination_key_while_period_popup_open() {
 /// 闸门检查 → 对应测试红。
 #[test]
 fn suppression_gate_blocks_period_key_while_period_popup_open() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("suppress-period");
     seed_expense_on_date(&dir, &prev_month_mid().to_string(), 8_800);
@@ -1950,7 +1958,7 @@ fn book_transaction_dates(dir: &Path) -> Vec<String> {
 /// 库中该笔消失。异步纪律：域写与重读在后台线程，一律 wait_for（§3.5）。
 #[test]
 fn row_context_menu_delete_confirms_then_refreshes_list() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("delete");
     seed_expense_notes(&dir, &["要删除的一笔", "要留下的一笔"]);
@@ -2004,7 +2012,7 @@ fn row_context_menu_delete_confirms_then_refreshes_list() {
 /// 库中仍在（域读 API 核对）。
 #[test]
 fn row_context_menu_delete_cancel_writes_nothing() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("delete-cancel");
     seed_expense_notes(&dir, &["要删除的一笔", "要留下的一笔"]);
@@ -2039,7 +2047,7 @@ fn row_context_menu_delete_cancel_writes_nothing() {
 /// 框，不产生写入。
 #[test]
 fn row_context_menu_delete_escape_writes_nothing() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("delete-esc");
     seed_expense_notes(&dir, &["要删除的一笔", "要留下的一笔"]);
@@ -2073,7 +2081,7 @@ fn row_context_menu_delete_escape_writes_nothing() {
 /// 应用行为的假步。
 #[test]
 fn row_context_menu_escape_closes_menu_writes_nothing() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("menu-esc");
     seed_expense_notes(&dir, &["要删除的一笔", "要留下的一笔"]);
@@ -2114,7 +2122,7 @@ fn row_context_menu_escape_closes_menu_writes_nothing() {
 /// 生效。删掉 danger 对话框的抑制上报或 keymap 的闸门检查任一环本测红。
 #[test]
 fn suppression_gate_blocks_pagination_key_while_danger_dialog_open() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("suppress-danger");
     seed_expense_series(&dir, 150);
@@ -2153,7 +2161,7 @@ fn suppression_gate_blocks_pagination_key_while_danger_dialog_open() {
 /// 留底支出不受影响（行 id 同为交易本体 id 的固定目标语义）。
 #[test]
 fn purchase_item_row_right_click_deletes_whole_transaction() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("delete-order");
     {
@@ -2272,7 +2280,7 @@ fn purchase_item_row_right_click_deletes_whole_transaction() {
 /// 刻意最小，功能级细节归各专项用例，不做第二遍。
 #[test]
 fn app_smoke_boots_shows_first_screen_count_and_pages_by_key() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("smoke");
     seed_expense_series(&dir, 150);
@@ -2387,7 +2395,7 @@ fn perf_book_facts(dir: &Path) -> PerfBookFacts {
 /// 手册（同一生成器，只换 --transactions）。
 #[test]
 fn perf_dataset_book_counts_match_domain_read_across_pages_and_scroll() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = generate_perf_book(2_000);
     let facts = perf_book_facts(&dir);
@@ -2468,7 +2476,7 @@ fn perf_dataset_book_counts_match_domain_read_across_pages_and_scroll() {
 /// 承担（不属本壳接线面）。
 #[test]
 fn search_and_period_combo_semantics_adjudicated() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("search-period");
     seed_expense_on_date(&dir, &prev_month_mid().to_string(), 8_800);
@@ -2602,7 +2610,7 @@ fn seed_merchant(db: &ledger_infra::db::DbState, name: &str) -> String {
 /// （下拉写不落会话态）→ 行集不变红；删清除按钮 handler → 行集不复原红。
 #[test]
 fn filter_bar_account_and_merchant_selects_filter_rows_and_clear_restores() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("filter-dims");
     {
@@ -2702,7 +2710,7 @@ fn filter_bar_account_and_merchant_selects_filter_rows_and_clear_restores() {
 /// 的归一/装载接线）即红。
 #[test]
 fn filter_bar_kind_multiselect_toggles_normalize_and_clear() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("filter-kinds");
     {
@@ -2820,7 +2828,7 @@ fn filter_bar_kind_multiselect_toggles_normalize_and_clear() {
 /// 过滤；「全部」清除回列表态。
 #[test]
 fn filter_bar_amount_range_engages_search_surface_without_keyword() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("filter-amount");
     seed_expense_on_date(&dir, "2026-01-05", 1_100);
@@ -2855,7 +2863,7 @@ fn filter_bar_amount_range_engages_search_surface_without_keyword() {
 /// 接线 → 复位段红。
 #[test]
 fn esc_resets_filters_and_gated_while_overlay_open() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("filter-esc");
     {
@@ -2927,7 +2935,7 @@ fn esc_resets_filters_and_gated_while_overlay_open() {
 /// （筛选态随视图卸载重置）即红：切回后行集回全量。
 #[test]
 fn filters_survive_view_switch_session_retained() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("filter-retain");
     {
@@ -2991,7 +2999,7 @@ fn filters_survive_view_switch_session_retained() {
 /// 抑制上报——删除 multi_select 的 token 上报即红：翻页发生、行集换血）。
 #[test]
 fn suppression_gate_blocks_shortcuts_while_kind_popup_open() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("filter-suppress");
     seed_expense_series(&dir, 120);
@@ -3114,7 +3122,7 @@ fn seed_investment_related_rows(db: &ledger_infra::db::DbState) {
 /// 共 1 条等不到。
 #[test]
 fn filter_bar_hide_investment_toggle_hides_and_restores_rows() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("hide-inv-toggle");
     {
@@ -3160,7 +3168,7 @@ fn filter_bar_hide_investment_toggle_hides_and_restores_rows() {
 /// （偏好信号初值不经存储）→ 重启后行集回全量红。
 #[test]
 fn hide_investment_preference_persists_across_restart() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("hide-inv-restart");
     {
@@ -3221,7 +3229,7 @@ fn hide_investment_preference_persists_across_restart() {
 /// 让 reset_filters 复位偏好或让 filters_active 计入偏好，任一耦合本测即红。
 #[test]
 fn hide_investment_preference_not_touched_by_clear_or_escape() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("hide-inv-split");
     {
@@ -3301,7 +3309,7 @@ fn hide_investment_preference_not_touched_by_clear_or_escape() {
 /// 点击无效果，行集维持商户交集不变。
 #[test]
 fn tx_table_account_cell_click_self_drills_with_full_replacement() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("tx-cell-account");
     let cash_id;
@@ -3384,7 +3392,7 @@ fn tx_table_account_cell_click_self_drills_with_full_replacement() {
 /// 后行集不按该侧账户收窄。
 #[test]
 fn tx_table_transfer_row_two_account_atoms_drill_to_each_side() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("tx-cell-transfer");
     let cash_id;
@@ -3443,7 +3451,7 @@ fn tx_table_transfer_row_two_account_atoms_drill_to_each_side() {
 /// 即红：点击后行集不按商户收窄。
 #[test]
 fn tx_table_merchant_cell_click_drills_to_merchant_filtered() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("tx-cell-merchant");
     let merchant_id;
@@ -3497,7 +3505,7 @@ fn tx_table_merchant_cell_click_drills_to_merchant_filtered() {
 /// 删来源分发即红：点击停留交易列表，保单视图不落位。
 #[test]
 fn tx_table_source_cell_click_jumps_to_policy_view() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("tx-cell-source");
     let alive_policy;
@@ -3586,7 +3594,7 @@ fn tx_table_source_cell_click_jumps_to_policy_view() {
 /// 口径）。删复制分发即红：剪贴板断言与反馈文案两处即红（ai_view 同形）。
 #[test]
 fn tx_table_note_copy_writes_clipboard_with_feedback() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("tx-cell-copy");
     {
@@ -3755,7 +3763,7 @@ fn desktop_config_with_backend(storage: Arc<MemoryStorage>) -> EngineConfig {
 /// 清单非空的组渲染（洞察出厂无成员）。
 #[test]
 fn sidebar_renders_groups_fixed_items_and_hides_contained_members() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("nav-skeleton");
     seed_expense_series(&dir, 3);
@@ -3810,7 +3818,7 @@ fn sidebar_renders_groups_fixed_items_and_hides_contained_members() {
 /// 回到交易项 → 表格内容区原样（其余未迁移项的占位行为由各自迁移票接手）。
 #[test]
 fn clicking_sidebar_items_lands_placeholder_views_and_back() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("nav-click");
     seed_expense_series(&dir, 3);
@@ -3846,7 +3854,7 @@ fn clicking_sidebar_items_lands_placeholder_views_and_back() {
 /// 「删除即红」负向条目钉在 dispatch_key 的 open 接线（删除 → 本测红）。
 #[test]
 fn shortcut_band_keys_land_views() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("nav-keys");
     seed_expense_series(&dir, 3);
@@ -3889,7 +3897,7 @@ fn shortcut_band_keys_land_views() {
 /// 检查 → 本测红（弹层下按键切换视图）。
 #[test]
 fn suppression_gate_blocks_shortcut_band_while_period_popup_open() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("nav-suppress");
     seed_expense_series(&dir, 3);
@@ -3921,7 +3929,7 @@ fn suppression_gate_blocks_shortcut_band_while_period_popup_open() {
 /// （记账组「更多」链接仍在）。
 #[test]
 fn closed_feature_exits_sidebar_and_key_band() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("nav-closed");
     seed_expense_series(&dir, 3);
@@ -3956,7 +3964,7 @@ fn closed_feature_exits_sidebar_and_key_band() {
 /// 视图，#2041 迁入后为真实视图）；已关闭功能回出厂落点（骨架期 = 交易列表）；未知名回出厂落点。
 #[test]
 fn startup_restores_last_view_with_closed_and_unknown_fallbacks() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("nav-restore");
     seed_expense_series(&dir, 3);
@@ -4004,7 +4012,7 @@ fn startup_restores_last_view_with_closed_and_unknown_fallbacks() {
 /// 内容（会话槽）；页签态不跨启动持久化（重启回默认首签）。
 #[test]
 fn group_more_container_tabs_follow_session_state_not_restart() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("nav-more");
     seed_expense_series(&dir, 3);
@@ -4056,7 +4064,7 @@ fn group_more_container_tabs_follow_session_state_not_restart() {
 /// （关闭只筛页签入口、收纳清单保留——重开即回原位）。
 #[test]
 fn closed_feature_tab_is_filtered_from_group_more_container() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("nav-more-closed");
     seed_expense_series(&dir, 3);
@@ -4082,7 +4090,7 @@ fn closed_feature_tab_is_filtered_from_group_more_container() {
 /// 即写（重启后顺序保持——持久化往返）；恢复默认排序 → 回出厂（⌘1 回交易）。
 #[test]
 fn sort_menu_reorders_key_band_and_persists_across_restart() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("nav-sort");
     seed_expense_series(&dir, 3);
@@ -4126,7 +4134,7 @@ fn sort_menu_reorders_key_band_and_persists_across_restart() {
 /// 侧栏项回归末位（⌘3 回预算）。
 #[test]
 fn context_menus_move_item_into_more_and_back() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("nav-into-more");
     seed_expense_series(&dir, 3);
@@ -4182,7 +4190,7 @@ fn context_menus_move_item_into_more_and_back() {
 /// 「移回侧栏」置灰并附提示项；点选无效（页签保留）。
 #[test]
 fn move_back_menu_is_disabled_when_group_full() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("nav-full");
     seed_expense_series(&dir, 3);
@@ -4218,7 +4226,7 @@ fn move_back_menu_is_disabled_when_group_full() {
 /// 上次视图恢复到账户视图（#2041 迁入后为真实视图）。
 #[test]
 fn view_state_round_trips_across_restart() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("nav-roundtrip");
     seed_expense_series(&dir, 3);
@@ -4323,7 +4331,7 @@ fn seed_expense_this_month(db: &ledger_infra::db::DbState, category_id: &str, am
 /// 状态词）。删除任一接线（导航分支挂载 / 装配 / 读路径 / 表格渲染）即红。
 #[test]
 fn budget_view_renders_create_form_summary_and_progress_table() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("budget-view");
     {
@@ -4377,7 +4385,7 @@ fn budget_view_renders_create_form_summary_and_progress_table() {
 /// 环 → 本测红（表单清空但新行不出现）。
 #[test]
 fn budget_form_creates_budget_via_pinyin_search_and_refreshes_list() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("budget-create");
     {
@@ -4433,7 +4441,7 @@ fn budget_form_creates_budget_via_pinyin_search_and_refreshes_list() {
 /// （「删除即红」：删保存成功后的 notify 或弹窗关闭接线任一环即红）。
 #[test]
 fn budget_edit_modal_updates_amount_then_refreshes() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("budget-edit");
     {
@@ -4474,7 +4482,7 @@ fn budget_edit_modal_updates_amount_then_refreshes() {
 /// headless 盲区归人工对表）：关闭后行金额原样。
 #[test]
 fn budget_edit_modal_escape_cancel_and_close_button_write_nothing() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("budget-modal-close");
     {
@@ -4516,7 +4524,7 @@ fn budget_edit_modal_escape_cancel_and_close_button_write_nothing() {
 /// notify 广播 → 本测红（气泡关闭但行不消失）。
 #[test]
 fn budget_delete_popconfirm_cancel_writes_nothing_confirm_refreshes() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("budget-delete");
     {
@@ -4553,7 +4561,7 @@ fn budget_delete_popconfirm_cancel_writes_nothing_confirm_refreshes() {
 /// 0 → 「预算金额必须为正数」；两条都不落新行。
 #[test]
 fn budget_form_validates_required_and_positive_without_writing() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("budget-validate");
     {
@@ -4605,7 +4613,7 @@ fn budget_form_validates_required_and_positive_without_writing() {
 /// → 本测对应段红（弹层下按键切走）。
 #[test]
 fn suppression_gate_blocks_shortcuts_while_budget_popups_open() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("budget-suppress");
     {
@@ -4702,7 +4710,7 @@ fn pick_only_account(app: &mut Headless) {
 /// wait_for("text:¥12.5") 超时红（库中已写而列表仍旧）。
 #[test]
 fn form_creates_expense_and_refreshes_list() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("form-create");
     {
@@ -4760,7 +4768,7 @@ fn form_creates_expense_and_refreshes_list() {
 /// 收收入分类（收入分类可选中；支出分类不在候选）；保存后行类型标签「收入」。
 #[test]
 fn form_creates_income_with_income_only_category_candidates() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("form-income");
     {
@@ -4839,7 +4847,7 @@ fn form_creates_income_with_income_only_category_candidates() {
 /// perform_submit 内 notify 接线）本测试 wait_for("text:¥30") 超时红。
 #[test]
 fn form_edits_expense_with_backfill_and_refreshes() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("form-edit");
     {
@@ -4921,7 +4929,7 @@ fn form_edits_expense_with_backfill_and_refreshes() {
 /// 内部状态形状。
 #[test]
 fn form_blocks_invalid_submission_with_visible_errors() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("form-invalid");
     {
@@ -4977,7 +4985,7 @@ fn form_blocks_invalid_submission_with_visible_errors() {
 /// 或 keymap 闸门检查任一环，本测试红（弹窗开着时翻页键穿透）。
 #[test]
 fn form_modal_suppresses_pagination_shortcut_while_open() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("form-suppress");
     seed_expense_series(&dir, 105);
@@ -5021,7 +5029,7 @@ fn form_modal_suppresses_pagination_shortcut_while_open() {
 /// 观感归人工子集（headless 无像素断言）。
 #[test]
 fn form_date_field_accepts_typed_date_and_lands_on_row() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("form-date");
     {
@@ -5070,7 +5078,7 @@ fn form_date_field_accepts_typed_date_and_lands_on_row() {
 /// 域权威（挂单准入 / unchanged 语义）在域层既有测试，壳层钉选项面与提交面。
 #[test]
 fn form_attaches_policy_and_clears_it() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("form-policy");
     {
@@ -5154,7 +5162,7 @@ fn form_attaches_policy_and_clears_it() {
 /// 双态值语义的提交面。
 #[test]
 fn form_merchant_free_text_creates_merchant_via_domain_semantics() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("form-merchant");
     {
@@ -5230,7 +5238,7 @@ fn assert_select_shows(app: &mut Headless, prefix: &str, label: &str) {
 /// wait_for("text:共 1 条") 超时红（库中已写而列表仍旧）。
 #[test]
 fn transfer_form_creates_transfer_and_refreshes_list() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("transfer-create");
     {
@@ -5292,7 +5300,7 @@ fn transfer_form_creates_transfer_and_refreshes_list() {
 /// 相同」；非法金额文本 → 提交禁用；修正后提交成功。
 #[test]
 fn transfer_form_blocks_incomplete_submission_with_visible_errors() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("transfer-invalid");
     {
@@ -5350,7 +5358,7 @@ fn transfer_form_blocks_incomplete_submission_with_visible_errors() {
 /// 删掉编辑提交成功分支的失效信号广播本测试 wait_for("text:¥80") 超时红。
 #[test]
 fn transfer_form_edits_with_dual_account_backfill() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("transfer-edit");
     {
@@ -5425,7 +5433,7 @@ fn transfer_form_edits_with_dual_account_backfill() {
 /// 账户。保存后行类型标签「借出」（借贷派生文案）。
 #[test]
 fn lending_form_creates_lend_with_side_filtered_candidates() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("lending-create");
     {
@@ -5511,7 +5519,7 @@ fn lending_form_creates_lend_with_side_filtered_candidates() {
 /// 商户位），回填两端账户与金额；改备注保存后两端保持。
 #[test]
 fn lending_form_edit_derives_direction_and_backfills() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("lending-edit");
     {
@@ -5647,7 +5655,7 @@ fn minimal_input(
 /// 删掉提交成功分支的失效信号广播本测试 wait_for("text:共 2 条") 超时红。
 #[test]
 fn refund_form_creates_refund_from_row_with_default_amount() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("refund-create");
     let expense_id = {
@@ -5754,7 +5762,7 @@ fn refund_form_creates_refund_from_row_with_default_amount() {
 /// 辑破坏——旧壳 refund 行不开放编辑的顾虑由透传解除）。
 #[test]
 fn refund_form_edit_preserves_original_link() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("refund-edit");
     let (expense_id, refund_id) = {
@@ -5846,7 +5854,7 @@ fn refund_form_edit_preserves_original_link() {
 /// 普通支出行三项齐备。购买项行保留退款（新建独立行不触碰原行子行）。
 #[test]
 fn row_menu_open_face_follows_kind_and_subrows() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("menu-face");
     {
@@ -5966,7 +5974,7 @@ fn pick_funding_account(app: &mut Headless, row: usize, label: &str) {
 /// wait_for("text:等 2 账户") 超时红（库中已写而列表仍旧）。
 #[test]
 fn funding_form_creates_split_expense_and_refreshes_list() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("funding-create");
     {
@@ -6036,7 +6044,7 @@ fn funding_form_creates_split_expense_and_refreshes_list() {
 /// 错误条位呈现 zh-CN 文案、弹窗不关、不写库。
 #[test]
 fn funding_form_blocks_mismatched_total_with_visible_error() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("funding-mismatch");
     {
@@ -6089,7 +6097,7 @@ fn funding_form_blocks_mismatched_total_with_visible_error() {
 /// 行守卫）菜单断言红。
 #[test]
 fn funding_form_edits_split_backfill_and_refreshes() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("funding-edit");
     {
@@ -6196,7 +6204,7 @@ fn funding_form_edits_split_backfill_and_refreshes() {
 /// 掉失效信号广播本测试 wait_for("text:共 1 条") 超时红（同创建旅程接线）。
 #[test]
 fn purchase_form_creates_order_rows_and_refreshes_list() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("purchase-create");
     {
@@ -6270,7 +6278,7 @@ fn purchase_form_creates_order_rows_and_refreshes_list() {
 /// 回填断言红；删掉 app.rs 编辑开放面分支菜单断言红。
 #[test]
 fn purchase_form_edits_item_rows_backfill_add_delete() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("purchase-edit");
     {
@@ -6412,7 +6420,7 @@ fn purchase_form_edits_item_rows_backfill_add_delete() {
 /// 不对准调用形状。
 #[test]
 fn backup_entry_full_journey_writes_zip_and_reports_success() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("backup-journey");
     let backup_dir =
@@ -6468,7 +6476,7 @@ fn backup_entry_full_journey_writes_zip_and_reports_success() {
 /// 已被替换）。
 #[test]
 fn backup_overwrite_guard_confirms_before_replacing() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("backup-overwrite");
     let backup_dir =
@@ -6510,7 +6518,7 @@ fn backup_overwrite_guard_confirms_before_replacing() {
 /// 路径语义，封装级抑制/ESC 测试见交易删除与 #2022 AC3）。
 #[test]
 fn backup_overwrite_guard_cancel_keeps_existing_file() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("backup-overwrite-cancel");
     let backup_dir = std::env::temp_dir().join(format!(
@@ -6550,7 +6558,7 @@ fn backup_overwrite_guard_cancel_keeps_existing_file() {
 /// → 本测 wait_for 超时红（失败被静默吞掉）。
 #[test]
 fn backup_dialog_failure_reports_error() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("backup-dialog-error");
 
@@ -6577,7 +6585,7 @@ fn backup_dialog_failure_reports_error() {
 /// 覆盖确认对话框。
 #[test]
 fn backup_dialog_cancel_writes_nothing() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("backup-cancel");
     let backup_dir =
@@ -6822,7 +6830,7 @@ fn bare_expense_input() -> TransactionInput {
 /// 分支挂载 → 本测红（落回迁移占位）。
 #[test]
 fn search_view_lands_with_placeholder_and_controls() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("search-view");
     seed_expense_notes(&dir, &["元旦火锅聚餐"]);
@@ -6865,7 +6873,7 @@ fn search_view_lands_with_placeholder_and_controls() {
 /// （react_to_change）接线 → 本测红（输入后永远停留占位态）。
 #[test]
 fn search_view_keyword_debounced_search_shows_hits() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("search-view-keyword");
     seed_expense_notes(&dir, &["元旦火锅聚餐", "超市买菜"]);
@@ -6893,7 +6901,7 @@ fn search_view_keyword_debounced_search_shows_hits() {
 /// 本测红（输入金额后停留占位态）。
 #[test]
 fn search_view_amount_range_filters_without_keyword() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("search-view-amount");
     seed_expense_on_date(&dir, &today().to_string(), 2_500);
@@ -6930,7 +6938,7 @@ fn search_view_amount_range_filters_without_keyword() {
 /// 搒期间快照（`search_range` 不传域读路径）→ 本测红（上月备注仍命中）。
 #[test]
 fn search_view_period_chip_filters_hits() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("search-view-period");
     seed_expense_on_date(&dir, &prev_month_mid().to_string(), 8_800);
@@ -6972,7 +6980,7 @@ fn search_view_period_chip_filters_hits() {
 /// 与筛选不消失）；删统一出口的无查询分支 → 清词后停留无匹配空态。
 #[test]
 fn search_view_clear_filters_then_clear_keyword_returns_placeholder() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("search-view-clear");
     seed_expense_on_date(&dir, &today().to_string(), 2_500);
@@ -7008,7 +7016,7 @@ fn search_view_clear_filters_then_clear_keyword_returns_placeholder() {
 /// on_change 的翻页装载接线 → 本测红（页码不翻、行集不变）。
 #[test]
 fn search_view_paginates_hits() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("search-view-paged");
     seed_expense_notes(&dir, &["批量造数"; 150]);
@@ -7036,7 +7044,7 @@ fn search_view_paginates_hits() {
 /// → 本测红（菜单重现）。
 #[test]
 fn search_view_results_are_read_only_no_row_menu() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("search-view-readonly");
     seed_expense_notes(&dir, &["元旦火锅聚餐"]);
@@ -7073,7 +7081,7 @@ fn search_view_results_are_read_only_no_row_menu() {
 /// 齐现（商品名 + 件数），命中计数按交易计（命中 1 条，ADR-0008 口径）。
 #[test]
 fn search_view_purchase_name_hit_expands_order_rows() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("search-view-purchase");
     {
@@ -7132,7 +7140,7 @@ fn search_view_purchase_name_hit_expands_order_rows() {
 /// 拆除断言（交易视图先例同口径）。
 #[test]
 fn search_view_rapid_keyword_changes_show_latest_input_results() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("search-view-race");
     seed_expense_notes(&dir, &["元旦火锅聚餐", "超市买菜"]);
@@ -7161,7 +7169,7 @@ fn search_view_rapid_keyword_changes_show_latest_input_results() {
 /// 列表的筛选会话保留（tx_filter）刻意不同。
 #[test]
 fn search_view_state_resets_after_leaving_and_returning() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("search-view-reset");
     seed_expense_notes(&dir, &["元旦火锅聚餐"]);
@@ -7190,7 +7198,7 @@ fn search_view_state_resets_after_leaving_and_returning() {
 /// 占位文案离场（已入搜索态）。
 #[test]
 fn search_view_shows_no_hits_empty_state() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("search-view-no-hits");
     seed_expense_notes(&dir, &["元旦火锅聚餐"]);
@@ -7218,7 +7226,7 @@ fn search_view_shows_no_hits_empty_state() {
 /// 与 nav_model::DEFAULT_VIEW（改回交易列表即红）。
 #[test]
 fn startup_lands_on_dashboard_with_all_five_cards() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = seed_dashboard_book("dashboard-first-screen");
 
@@ -7257,7 +7265,7 @@ fn startup_lands_on_dashboard_with_all_five_cards() {
 /// 投资概览卡空态：无持仓账本呈现「暂无持仓」，三卡不呈现。
 #[test]
 fn dashboard_investment_card_shows_empty_state_without_holdings() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("dashboard-empty-invest");
     {
@@ -7297,7 +7305,7 @@ fn dashboard_investment_card_shows_empty_state_without_holdings() {
 /// 「删除即红」负向条目：删卡片内 nav::open 接线 → 本测红（停留概览）。
 #[test]
 fn net_worth_card_drills_down_to_accounts_view() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = seed_dashboard_book("dashboard-drill");
 
@@ -7322,7 +7330,7 @@ fn net_worth_card_drills_down_to_accounts_view() {
 /// ⓘ 消费任一环 → 本测红。
 #[test]
 fn caliber_popovers_open_and_close_on_dashboard() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = seed_dashboard_book("dashboard-popover");
 
@@ -7350,7 +7358,7 @@ fn caliber_popovers_open_and_close_on_dashboard() {
 /// 零分母引导：占位态「去设置预算」按钮落预算视图（守卫接缝裸访问同路径）。
 #[test]
 fn freedom_zero_denominator_guides_to_budget_view() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("dashboard-freedom-guide");
     {
@@ -7435,7 +7443,7 @@ fn seed_savings_goal(
 /// 归档卡缺席。删除 boot 装载读接缝 / rows 装配 / 香2行分支任一环即红。
 #[test]
 fn savings_view_lands_with_progress_rows_and_empty_guide() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("savings-land");
     {
@@ -7484,7 +7492,7 @@ fn savings_view_lands_with_progress_rows_and_empty_guide() {
 /// 零目标空态（旧壳 emptyGuide 同文案）：引导在场，行集零。
 #[test]
 fn savings_view_shows_empty_guide_without_goals() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("savings-empty");
     nsh_app::app::set_book_dir(dir.clone());
@@ -7506,7 +7514,7 @@ fn savings_view_shows_empty_guide_without_goals() {
 /// 删除「新建 → perform_save → reload」任一接线即红。
 #[test]
 fn savings_view_create_goal_journey() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("savings-create");
     nsh_app::app::set_book_dir(dir.clone());
@@ -7561,7 +7569,7 @@ fn savings_view_create_goal_journey() {
 /// 任一接线即红。
 #[test]
 fn savings_view_edits_goal_with_planned_monthly() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("savings-edit");
     {
@@ -7618,7 +7626,7 @@ fn savings_view_edits_goal_with_planned_monthly() {
 /// 从列表消失。删除归档 / 取消归档 / 确认接线任一环即红。
 #[test]
 fn savings_view_archives_unarchives_and_deletes_with_confirmation() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("savings-life");
     {
@@ -7681,7 +7689,7 @@ fn savings_view_archives_unarchives_and_deletes_with_confirmation() {
 /// 接线即红（守卫住在域单正文，本壳不自建）。
 #[test]
 fn savings_view_delete_guard_refuses_nonzero_balance() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("savings-guard");
     {
@@ -7743,7 +7751,7 @@ fn savings_view_delete_guard_refuses_nonzero_balance() {
 /// 关联计划提示（两域边界）。删除达成行状态覆写接线即红。
 #[test]
 fn savings_view_achieved_state_and_plan_hint_boundaries() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("savings-achieved");
     {
@@ -7843,7 +7851,7 @@ fn nsh_app_lib_insurer_id(dir: &std::path::Path, name: &str) -> String {
 /// 装配 / 渲染爪任一环即红。
 #[test]
 fn insurers_view_lands_with_seed_rows_and_tools() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("insurers-land");
 
@@ -7882,7 +7890,7 @@ fn insurers_view_lands_with_seed_rows_and_tools() {
 /// 份位静默。
 #[test]
 fn insurers_view_add_journey_with_empty_and_duplicate_guards() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("insurers-add");
 
@@ -7916,7 +7924,7 @@ fn insurers_view_add_journey_with_empty_and_duplicate_guards() {
 /// 码化错误、弹窗不关（内容不丢）。删编辑入口 / modal 保存接线 → 本测红。
 #[test]
 fn insurers_view_edit_backfill_and_rename_duplicate_guard() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("insurers-edit");
     {
@@ -7982,7 +7990,7 @@ fn insurers_view_edit_backfill_and_rename_duplicate_guard() {
 /// on_confirm 接线 → 本测红（气泡确认后行永不离场）。
 #[test]
 fn insurers_view_delete_popconfirm_softdeletes_and_readonly() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("insurers-delete");
     {
@@ -8054,7 +8062,7 @@ fn insurers_view_delete_popconfirm_softdeletes_and_readonly() {
 /// 不随搜索变化。
 #[test]
 fn insurers_view_search_filters_hits_and_clear_restores() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("insurers-search");
 
@@ -8118,7 +8126,7 @@ fn seed_account_with_balance(
 /// 不渲染。删除装配任一环（boot 余额读 / rows 装配 / 三分区派生 / 渲染爪）即红。
 #[test]
 fn accounts_view_lands_with_create_card_and_balance_rows() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("accounts-list");
     {
@@ -8166,7 +8174,7 @@ fn accounts_view_lands_with_create_card_and_balance_rows() {
 /// 删除「添加 → perform_create → reload」任一接线即红。
 #[test]
 fn accounts_view_create_account_journey() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("accounts-create");
     {
@@ -8208,7 +8216,7 @@ fn accounts_view_create_account_journey() {
 /// 带档案创建成功、行类型列「信用卡」、编辑弹窗回填资料与已保存的只读摘要。
 #[test]
 fn accounts_view_credit_type_reveals_profile_fields() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("accounts-credit");
     {
@@ -8267,7 +8275,7 @@ fn accounts_view_credit_type_reveals_profile_fields() {
 /// 或表单回填接线即红。
 #[test]
 fn accounts_view_edit_renames_account() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("accounts-edit");
     let cash_id;
@@ -8317,7 +8325,7 @@ fn accounts_view_edit_renames_account() {
 /// 拆 danger_confirm / close_delete / perform_delete 任一环即红。
 #[test]
 fn accounts_view_delete_needs_confirmation_and_cancels_before_write() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("accounts-delete");
     {
@@ -8360,7 +8368,7 @@ fn accounts_view_delete_needs_confirmation_and_cancels_before_write() {
 /// 接线即红。
 #[test]
 fn accounts_view_archives_and_restores() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("accounts-archive");
     let cash_id;
@@ -8429,7 +8437,7 @@ fn accounts_view_archives_and_restores() {
 /// 重读见转账行 + 余额更新。拆确认后 signals 广播或 reload 接线即红。
 #[test]
 fn accounts_view_adjust_balance_broadcasts_transactions_invalidated() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("accounts-adjust");
     let cash_id;
@@ -8485,7 +8493,7 @@ fn accounts_view_adjust_balance_broadcasts_transactions_invalidated() {
 /// boot::delete_account 守卫任一环）即红。
 #[test]
 fn accounts_view_goal_partition_and_name_readonly_with_delete_guard() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("accounts-goal");
     {
@@ -8549,7 +8557,7 @@ fn accounts_view_goal_partition_and_name_readonly_with_delete_guard() {
 /// 掩码（¥xx 不再在屏）。拆掩码消费（装配入参 privacy_enabled）即红。
 #[test]
 fn accounts_view_amount_privacy_masks_balances() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("accounts-privacy");
     {
@@ -8577,7 +8585,7 @@ fn accounts_view_amount_privacy_masks_balances() {
 /// 的 nav::open 接线即红（点击停留账户视图）。
 #[test]
 fn accounts_view_name_click_drills_to_transactions_filtered() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("accounts-drill");
     let cash_id;
@@ -8718,7 +8726,7 @@ fn seed_item(
 ///（boot 物品行读 / rows 装配 / 渲染爪）即红。
 #[test]
 fn items_view_lands_with_hint_and_rows() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("items-list");
     {
@@ -8769,7 +8777,7 @@ fn items_view_lands_with_hint_and_rows() {
 /// 空库空态（旧壳 empty guide 同文字）：空账本呈现创建引导文案。
 #[test]
 fn items_view_empty_book_shows_guide() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("items-empty");
 
@@ -8788,7 +8796,7 @@ fn items_view_empty_book_shows_guide() {
 /// 删 nav::open 接线即红。
 #[test]
 fn items_view_hint_button_navigates_to_transactions() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("items-hint");
 
@@ -8807,7 +8815,7 @@ fn items_view_hint_button_navigates_to_transactions() {
 /// 项接线」或「创建写路径」或「确认后广播/重读」任一环即红。
 #[test]
 fn items_view_create_from_transaction_menu_journey() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("items-create");
     {
@@ -8885,7 +8893,7 @@ fn items_view_create_from_transaction_menu_journey() {
 ///   接线即红（交易列表来源列仍显旧名）。
 #[test]
 fn items_view_edit_rename_updates_row_and_source_column() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("items-edit");
     {
@@ -8926,7 +8934,7 @@ fn items_view_edit_rename_updates_row_and_source_column() {
 /// 拆 boot::item_candidate_transactions 读接缝或换关守卫即红。
 #[test]
 fn items_view_edit_relink_backfills_on_save() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("items-relink");
     {
@@ -8981,7 +8989,7 @@ fn items_view_edit_relink_backfills_on_save() {
 /// 日与残值可改）。拆 dispose 写路径或弹窗预填接线即红。
 #[test]
 fn items_view_dispose_then_revise() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("items-dispose");
     {
@@ -9019,7 +9027,7 @@ fn items_view_dispose_then_revise() {
 /// popconfirm 门槛即红（确认即删）。
 #[test]
 fn items_view_delete_needs_confirmation_and_cancels_before_write() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("items-delete");
     {
@@ -9054,7 +9062,7 @@ fn items_view_delete_needs_confirmation_and_cancels_before_write() {
 /// 与清空回缺省。拆 boot::item_cost 读接缝即红。
 #[test]
 fn items_view_detail_recacs_reference_date_and_clears() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("items-detail");
     {
@@ -9112,7 +9120,7 @@ fn items_view_detail_recacs_reference_date_and_clears() {
 /// 域守卫拒绝——加入物品置灰是界面侧，本件以域守卫错误文案对拍）。
 #[test]
 fn items_view_add_form_error_keeps_dialog_open() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("items-add-error");
     {
@@ -9196,7 +9204,7 @@ fn nsh_app_lib_merchant_id(dir: &std::path::Path, name: &str) -> String {
 /// / merchant_transaction_counts）或装配分支即红。
 #[test]
 fn merchants_view_lands_with_cards_and_counted_rows() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("merchants-list");
     {
@@ -9252,7 +9260,7 @@ fn merchants_view_lands_with_cards_and_counted_rows() {
 /// create_merchant 写接缝即红（成功旅程行不到屏）。
 #[test]
 fn merchants_view_create_journey_and_duplicate_rejection() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("merchants-create");
 
@@ -9304,7 +9312,7 @@ fn merchants_view_create_journey_and_duplicate_rejection() {
 /// 广播是被删的语义锚）。删除 boot::update_merchant 写接缝即红（行不更新）。
 #[test]
 fn merchants_view_edit_renames_and_updates_source_column() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("merchants-edit");
     let jd;
@@ -9362,7 +9370,7 @@ fn merchants_view_edit_renames_and_updates_source_column() {
 ///（确认后行不离席）。
 #[test]
 fn merchants_view_delete_needs_confirmation_and_cancels_before_write() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("merchants-delete");
     let jd;
@@ -9405,7 +9413,7 @@ fn merchants_view_delete_needs_confirmation_and_cancels_before_write() {
 /// 清空恢复完整列表。删搜索接线或开关即红（断言对准在屏行集）。
 #[test]
 fn merchants_view_search_and_show_deleted_toggle_readonly_rows() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("merchants-filter");
     let bogus;
@@ -9469,7 +9477,7 @@ fn merchants_view_search_and_show_deleted_toggle_readonly_rows() {
 /// 红（「迁移中」占位——容器分支不经过本路径，负向条目独立于容器到达）。
 #[test]
 fn merchants_view_lands_directly_when_moved_to_sidebar() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("merchants-direct");
 
@@ -9497,7 +9505,7 @@ fn merchants_view_lands_directly_when_moved_to_sidebar() {
 /// nav::open 下钻接线即红（点击后停留商户视图）。
 #[test]
 fn merchants_view_count_click_drills_to_transactions_filtered() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("merchants-drill");
     let jd;
@@ -9715,7 +9723,7 @@ fn wait_reports_loaded(app: &mut Headless) {
 /// 期间行 / 月度读 / 分类读 / 商户读）即红。
 #[test]
 fn reports_view_lands_with_three_cards_and_defaults() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = seed_reports_book("reports-lands");
 
@@ -9773,7 +9781,7 @@ fn reports_view_lands_with_three_cards_and_defaults() {
 ///（净额 = 收入 − 支出 + 退款，旧壳 afterBody 同公式同词表）。
 #[test]
 fn reports_view_monthly_bar_tooltip_shows_gross_and_net() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = seed_reports_book("reports-monthly-tip");
 
@@ -9805,7 +9813,7 @@ fn reports_view_monthly_bar_tooltip_shows_gross_and_net() {
 /// 直挂行 + 面包屑）→ 二级行直达该分类交易列表；点面包屑根回基础态。
 #[test]
 fn reports_view_category_drilldown_breadcrumb_and_row_jump() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = seed_reports_book("reports-drilldown");
 
@@ -9840,7 +9848,7 @@ fn reports_view_category_drilldown_breadcrumb_and_row_jump() {
 /// 点面包屑根（全部分类）回基础态（#379 面包屑回退）。
 #[test]
 fn reports_view_breadcrumb_root_returns_to_base() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = seed_reports_book("reports-breadcrumb");
 
@@ -9867,7 +9875,7 @@ fn reports_view_breadcrumb_root_returns_to_base() {
 /// nav::open 接线即红。
 #[test]
 fn reports_view_uncategorized_bar_jumps_to_transactions_filtered() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = seed_reports_book("reports-uncat-jump");
 
@@ -9894,7 +9902,7 @@ fn reports_view_uncategorized_bar_jumps_to_transactions_filtered() {
 /// 不发读者）或 nav::open 接线任一即红。
 #[test]
 fn reports_view_merchant_top_n_switch_and_row_jump() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = seed_reports_book("reports-merchant");
 
@@ -9932,7 +9940,7 @@ fn reports_view_merchant_top_n_switch_and_row_jump() {
 /// 删除 on_apply 复位接线或任一读取接线即红。
 #[test]
 fn reports_view_period_switch_resets_drilldown_and_shows_empty_states() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = seed_reports_book("reports-period-reset");
 
@@ -9969,7 +9977,7 @@ fn reports_view_period_switch_resets_drilldown_and_shows_empty_states() {
 /// 切走再回来 = 回到离开时的样子（视图重挂重拉但会话态不丢）。
 #[test]
 fn reports_view_state_survives_view_switch() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = seed_reports_book("reports-retained");
 
@@ -10006,7 +10014,7 @@ fn reports_view_state_survives_view_switch() {
 /// 默认）幂等无操作。删除复位接线（on_key 或守卫任一）即红。
 #[test]
 fn reports_view_escape_resets_to_defaults() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = seed_reports_book("reports-esc");
 
@@ -10112,7 +10120,7 @@ fn first_pending_occurrence_id(dir: &std::path::Path, plan_id: &str) -> String {
 /// 实分支拆除（scheduled.rs 容器分支退回占位）→ 点页签后真实锚点缺席红。
 #[test]
 fn scheduled_view_lands_with_panes_and_subscription_rows() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("scheduled-landing");
     let plan_id;
@@ -10197,7 +10205,7 @@ fn scheduled_view_lands_with_panes_and_subscription_rows() {
 /// 截图对照属人工子集，自动化面只断言已解析样式（ADR-0087 断言强度）。
 #[test]
 fn scheduled_view_typography_and_semantic_colors_follow_design_scale() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("scheduled-design-scale");
     {
@@ -10309,7 +10317,7 @@ fn scheduled_view_typography_and_semantic_colors_follow_design_scale() {
 /// reload 接线任一环即红。
 #[test]
 fn scheduled_view_create_subscription_journey() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("scheduled-create");
     {
@@ -10368,7 +10376,7 @@ fn scheduled_view_create_subscription_journey() {
 /// reload 接线任一环即红。
 #[test]
 fn scheduled_view_row_actions_pause_resume_cancel() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("scheduled-actions");
     let plan_id;
@@ -10434,7 +10442,7 @@ fn scheduled_view_row_actions_pause_resume_cancel() {
 ///（update_scheduled_subscription 直调）即红。
 #[test]
 fn scheduled_view_edit_subscription_updates_fields() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("scheduled-edit");
     let plan_id;
@@ -10472,7 +10480,7 @@ fn scheduled_view_edit_subscription_updates_fields() {
 /// 或重试写接缝（execute_scheduled_occurrence 直调）任一环即红。
 #[test]
 fn scheduled_view_plan_detail_modal_retries_failed_occurrence() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("scheduled-detail");
     let plan_id;
@@ -10545,7 +10553,7 @@ fn scheduled_view_plan_detail_modal_retries_failed_occurrence() {
 /// pending_focus 暂存清闸接线（focus 残留）→ 二次进视图误开弹层红。
 #[test]
 fn scheduled_view_lands_without_detail_modal_when_no_focus() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("scheduled-no-focus");
     {
@@ -10581,7 +10589,7 @@ fn scheduled_view_lands_without_detail_modal_when_no_focus() {
 /// 拆 view_host 的 Scheduled 分支挂载 → 本测红（落回迁移占位）。
 #[test]
 fn scheduled_view_lands_directly_when_moved_to_sidebar() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("scheduled-direct");
     let plan_id;
@@ -10714,7 +10722,7 @@ fn open_installments_pane(app: &mut Headless) {
 /// make_action_renderer 行操作接线任一即红。
 #[test]
 fn scheduled_view_transfers_pane_lands_with_rows() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("scheduled-transfers-landing");
     let plan_id;
@@ -10780,7 +10788,7 @@ fn scheduled_view_transfers_pane_lands_with_rows() {
 /// 候选过滤、总期数语义任一接线即红。
 #[test]
 fn scheduled_view_create_transfer_journey() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("scheduled-transfer-create");
     {
@@ -10843,7 +10851,7 @@ fn scheduled_view_create_transfer_journey() {
 /// 确认接线任一环即红。
 #[test]
 fn scheduled_view_transfer_row_actions_pause_resume_cancel() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("scheduled-transfer-actions");
     let plan_id;
@@ -10912,7 +10920,7 @@ fn scheduled_view_transfer_row_actions_pause_resume_cancel() {
 /// 条自绘接线或行操作接线任一即红。
 #[test]
 fn scheduled_view_installments_pane_lands_with_progress_rows() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("scheduled-installments-landing");
     let plan_id;
@@ -10993,7 +11001,7 @@ fn scheduled_view_installments_pane_lands_with_progress_rows() {
 /// create 写接缝或预览接线任一环即红（预览文案缺席）。
 #[test]
 fn scheduled_view_create_installment_journey() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("scheduled-installment-create");
     {
@@ -11193,7 +11201,7 @@ fn open_policies(app: &mut Headless) {
 /// 位「—」）。删除 boot 装载读接缝 / 行装配 / 容器挂载任一环即红。
 #[test]
 fn policy_view_lands_with_rows_stats_and_columns() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("policy-land");
     {
@@ -11281,7 +11289,7 @@ fn policy_view_lands_with_rows_stats_and_columns() {
 /// 接线即红。
 #[test]
 fn policy_view_create_journey_with_new_insurer() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("policy-create");
 
@@ -11331,7 +11339,7 @@ fn policy_view_create_journey_with_new_insurer() {
 /// 协议」任一接线即红。
 #[test]
 fn policy_view_create_with_agreement_creates_plan() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("policy-agreement");
     {
@@ -11397,7 +11405,7 @@ fn policy_view_create_with_agreement_creates_plan() {
 /// (update) → reload」任一接线即红。
 #[test]
 fn policy_view_edit_updates_fields() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("policy-edit");
     {
@@ -11453,7 +11461,7 @@ fn policy_view_edit_updates_fields() {
 /// 中行保留）。删除 popconfirm 开合接线 → 「确认文案永不呈现」本测红。
 #[test]
 fn policy_view_delete_guard_and_soft_delete() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("policy-delete");
     {
@@ -11510,7 +11518,7 @@ fn policy_view_delete_guard_and_soft_delete() {
 /// 空库空态（旧壳 empty guide 同文案）：无保单呈现建档引导。
 #[test]
 fn policy_view_empty_book_shows_guide() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("policy-empty");
 
@@ -11529,7 +11537,7 @@ fn policy_view_empty_book_shows_guide() {
 /// 装载 → 分段呈现 → 改价入口」任一接线即红。
 #[test]
 fn policy_view_edit_shows_agreement_segments_and_rebuild_entry() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("policy-agg-segments");
     {
@@ -11674,7 +11682,7 @@ fn open_physical_assets(app: &mut Headless) {
 /// 占位「—」）。删除 boot 装载读接缝 / 行装配 / 容器挂载任一环即红。
 #[test]
 fn physical_asset_view_lands_with_rows_total_and_columns() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("physical-asset-land");
     {
@@ -11765,7 +11773,7 @@ fn physical_asset_view_lands_with_rows_total_and_columns() {
 /// 负向条目独立于容器到达）。
 #[test]
 fn physical_asset_view_lands_directly_when_moved_to_sidebar() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("physical-asset-direct");
 
@@ -11795,7 +11803,7 @@ fn physical_asset_view_lands_directly_when_moved_to_sidebar() {
 /// 空库空态（旧壳 empty guide 同文案）：无资产呈现建档引导。
 #[test]
 fn physical_asset_view_empty_book_shows_guide() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("physical-asset-empty");
 
@@ -11814,7 +11822,7 @@ fn physical_asset_view_empty_book_shows_guide() {
 /// 删除「新建 → perform_save → reload」任一接线即红。
 #[test]
 fn physical_asset_view_create_journey_with_initial_valuation() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("physical-asset-create");
 
@@ -11867,7 +11875,7 @@ fn physical_asset_view_create_journey_with_initial_valuation() {
 /// (update) → reload」任一接线即红。
 #[test]
 fn physical_asset_view_edit_updates_profile_without_valuation() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("physical-asset-edit");
     let asset_id;
@@ -11919,7 +11927,7 @@ fn physical_asset_view_edit_updates_profile_without_valuation() {
 /// perform_valuation → reload」任一接线即红。
 #[test]
 fn physical_asset_view_valuation_update_appends_history() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("physical-asset-valuation");
     let asset_id;
@@ -11969,7 +11977,7 @@ fn physical_asset_view_valuation_update_appends_history() {
 /// reload」任一接线即红。
 #[test]
 fn physical_asset_view_dispose_moves_mark_and_keeps_archive() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("physical-asset-dispose");
     let asset_id;
@@ -12019,7 +12027,7 @@ fn physical_asset_view_dispose_moves_mark_and_keeps_archive() {
 /// 本测红。
 #[test]
 fn physical_asset_view_delete_guard_and_soft_delete() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("physical-asset-delete");
     let asset_id;
@@ -12129,7 +12137,7 @@ fn seed_investment_cash(db: &ledger_infra::db::DbState, name: &str, currency: &s
 /// 接线（reload）→ 渲染用例红（「删除即红」负向条目，实拆见交付报告）。
 #[test]
 fn cross_book_summary_renders_converted_totals_books_and_concept_tip() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let root = make_data_root("render");
     let dir_active = make_book("x-active");
@@ -12254,7 +12262,7 @@ fn cross_book_summary_renders_converted_totals_books_and_concept_tip() {
 /// 射 → 关闭态恢复直接落汇总，本测红。
 #[test]
 fn cross_book_summary_closure_follows_investments_toggle() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("x-guard");
     seed_expense_series(&dir, 1);
@@ -12299,7 +12307,7 @@ fn cross_book_summary_closure_follows_investments_toggle() {
 /// 断言与反馈文案两处即红。
 #[test]
 fn ai_view_renders_prompt_and_copy_reports_into_clipboard() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("ai");
     seed_expense_series(&dir, 1);
@@ -12376,7 +12384,7 @@ fn open_settings(app: &mut Headless) {
 /// 未到访页签不预载（show:lazy 的 lazy 半边：宿主内容缺席）。
 #[test]
 fn settings_view_lands_with_old_shell_tab_domains_and_general_cards() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("settings-lands");
     nsh_app::app::set_book_dir(dir.clone());
@@ -12419,7 +12427,7 @@ fn settings_view_lands_with_old_shell_tab_domains_and_general_cards() {
 /// 数守卫（删除 display 切换接线即红：切走即卸载 → 计数跌零、切回重挂）。
 #[test]
 fn settings_view_keeps_visited_panes_mounted_across_tab_switches() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("settings-keep");
     nsh_app::app::set_book_dir(dir.clone());
@@ -12462,7 +12470,7 @@ fn settings_view_keeps_visited_panes_mounted_across_tab_switches() {
 /// 随存储读回「跟随系统」。
 #[test]
 fn settings_view_appearance_reads_and_writes_device_storage() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("settings-appearance");
     let storage = storage_shard(&[("appearance", "\"light\"")]);
@@ -12510,7 +12518,7 @@ fn settings_view_appearance_reads_and_writes_device_storage() {
 /// boot::set_log_level 直调 → 库内档位不落 → 回读仍旧 info → 红。
 #[test]
 fn settings_view_log_level_select_persists_across_remounts() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("settings-logs");
     nsh_app::app::set_book_dir(dir.clone());
@@ -12558,7 +12566,7 @@ fn settings_view_log_level_select_persists_across_remounts() {
 /// 直接投影，删除禁用接线即红）。更改入口 / 复制路径在屏。
 #[test]
 fn settings_view_data_location_lands_with_active_path_and_restore_gating() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("settings-loc-lands");
     nsh_app::app::set_book_dir(dir.clone());
@@ -12596,7 +12604,7 @@ fn settings_view_data_location_lands_with_active_path_and_restore_gating() {
 /// 表，搬迁不发生）→ 第二段生效位置仍旧 → 红。
 #[test]
 fn settings_view_data_location_change_commits_and_relocates_on_next_start() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("settings-loc-change");
     let storage = storage_shard(&[]);
@@ -12678,7 +12686,7 @@ fn settings_view_data_location_change_commits_and_relocates_on_next_start() {
 /// 常在 + 存储缺写 → 红。
 #[test]
 fn settings_view_feature_toggles_feed_the_shared_closed_source() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("settings-toggles");
     let storage = storage_shard(&[]);
@@ -12762,7 +12770,7 @@ fn settings_view_feature_toggles_feed_the_shared_closed_source() {
 /// 意图）→ 弹窗不现 + 覆盖直接落盘 → 红。
 #[test]
 fn settings_view_data_location_target_conflict_needs_choice_guard() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("settings-loc-adopt");
     let target = make_book("settings-loc-adopt-existing");
@@ -12849,7 +12857,7 @@ fn open_data_tab(app: &mut Headless) {
 /// 载接线（数据页签改挂占位卡）→ 全部卡面缺席 → 红。
 #[test]
 fn data_safety_cards_lands_with_backup_encryption_sync_books_cards() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("settings-data-cards");
     nsh_app::app::set_book_dir(dir);
@@ -12894,7 +12902,7 @@ fn data_safety_cards_lands_with_backup_encryption_sync_books_cards() {
 /// 弹窗不现 + 标记内容被替换 → 红。
 #[test]
 fn backup_full_journey_backs_up_lists_prunes_and_guards_overwrite() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("settings-backup-journey");
     let backup_dir =
@@ -13045,7 +13053,7 @@ fn backup_full_journey_backs_up_lists_prunes_and_guards_overwrite() {
 /// （直接整库替换）→ 弹窗不现 → 红。
 #[test]
 fn restore_guard_replaces_data_across_restart() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("settings-restore-journey");
     // 种子（域写入口造数，测试工厂纪律）：两笔现金支出。
@@ -13165,7 +13173,7 @@ fn restore_guard_replaces_data_across_restart() {
 /// 试（start_scheduler_with_tick 短周期注入）；本测钉壳侧接线的端到端结果。
 #[test]
 fn auto_backup_first_fallback_backs_up_at_session_start_and_card_refreshes() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("auto-backup-host");
     let backup_dir =
@@ -13272,7 +13280,7 @@ fn find_first_auto_product(dir: &Path) -> Option<std::path::PathBuf> {
 /// 不置脏、写时到期检查不发生 → 产物不出、状态不刷新 → 本测红。
 #[test]
 fn auto_backup_triggers_after_shell_write_and_card_refreshes() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("auto-backup-write-trigger");
     let backup_dir =
@@ -13391,7 +13399,7 @@ fn auto_backup_triggers_after_shell_write_and_card_refreshes() {
 /// → 弹窗不现 → 红；删口令守卫（不校验即执行）→ 短口令禁用面消失 → 红。
 #[test]
 fn encryption_enable_guard_blocks_and_converts() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("settings-encrypt-journey");
     nsh_app::app::set_book_dir(dir.clone());
@@ -13477,7 +13485,7 @@ fn encryption_enable_guard_blocks_and_converts() {
 /// + 发布 / 引导入口解锁。删保存写链 → 库内无配置 → 回显不置换 → 红。
 #[test]
 fn sync_card_requires_configured_channel_then_saves_and_echoes() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("settings-sync-journey");
     nsh_app::app::set_book_dir(dir.clone());
@@ -13532,7 +13540,7 @@ fn sync_card_requires_configured_channel_then_saves_and_echoes() {
 /// 删移除气泡确认（直接摘登记）→ 气泡不现 → 红。
 #[test]
 fn books_create_rename_and_remove_flow_registry() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("settings-books-journey");
     nsh_app::app::set_book_dir(dir.clone());
@@ -13599,7 +13607,7 @@ fn books_create_rename_and_remove_flow_registry() {
 /// 副账本（其行的当前标记）。删切换写链 → 指针不写、重启仍在账本1 → 红。
 #[test]
 fn books_switch_journey_moves_active_pointer_across_restart() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("settings-books-switch");
     // 预登记副账本（可用性：目录可创建 → 目标目录空库在首次进入建出，与
@@ -13654,7 +13662,7 @@ fn books_switch_journey_moves_active_pointer_across_restart() {
 /// 不落位 → 红。
 #[test]
 fn books_summary_entry_opens_cross_book_summary() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("settings-books-summary");
     nsh_app::app::set_book_dir(dir);
@@ -13682,7 +13690,7 @@ fn books_summary_entry_opens_cross_book_summary() {
 /// 主界面不落位 → 红。
 #[test]
 fn startup_without_book_dir_opens_registry_active_book() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let root = make_data_root("shaft-registry");
     let active = make_book("shaft-active");
@@ -13705,7 +13713,7 @@ fn startup_without_book_dir_opens_registry_active_book() {
 /// 已有存量库（旧壳升级现场）→ 无参启动直接打开该库，升级无感。
 #[test]
 fn startup_without_book_dir_opens_unconfigured_default_book() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let root = make_data_root("shaft-default");
     // 默认数据目录已有存量库（0 字节文件 = 新装语义，产品开库入口建出）。
@@ -13727,7 +13735,7 @@ fn startup_without_book_dir_opens_unconfigured_default_book() {
 ///（设置卡回退行同款：标题 + 原因）。删告示呈现接线 → 库照开但告示缺席 → 红。
 #[test]
 fn startup_registry_corrupt_falls_back_to_default_dir_with_notice() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let root = make_data_root("shaft-corrupt");
     seed::create_empty_book_file(&root);
@@ -13756,7 +13764,7 @@ fn startup_registry_corrupt_falls_back_to_default_dir_with_notice() {
 /// 提示）。删引导呈现接线（引导态回退两行死路呈现）→ 新建动作缺席 → 红。
 #[test]
 fn startup_unconfigured_without_book_renders_first_run_onboarding() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let root = make_data_root("shaft-onboarding");
     nsh_app::cross_book::set_default_data_dir(root.clone());
@@ -13786,7 +13794,7 @@ fn startup_unconfigured_without_book_renders_first_run_onboarding() {
 /// （按压直建或无对话）→ 路径明示缺席 → 红。
 #[test]
 fn onboarding_create_dialog_shows_full_creation_path() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let root = make_data_root("shaft-dialog");
     nsh_app::cross_book::set_default_data_dir(root.clone());
@@ -13808,7 +13816,7 @@ fn onboarding_create_dialog_shows_full_creation_path() {
 /// 确认取消：不建库、不写注册表、留在引导（零副作用；动作可再次触发）。
 #[test]
 fn onboarding_create_cancel_keeps_onboarding_without_provisioning() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let root = make_data_root("shaft-cancel");
     nsh_app::cross_book::set_default_data_dir(root.clone());
@@ -13840,7 +13848,7 @@ fn onboarding_create_cancel_keeps_onboarding_without_provisioning() {
 /// 文件内容断言红。
 #[test]
 fn onboarding_create_confirm_provisions_default_book_and_enters_main_view() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let root = make_data_root("shaft-confirm");
     nsh_app::cross_book::set_default_data_dir(root.clone());
@@ -13890,7 +13898,7 @@ fn onboarding_create_confirm_provisions_default_book_and_enters_main_view() {
 ///（「意图下次生效」形态）→ 重启后仍在引导 → 红。
 #[test]
 fn onboarding_created_book_opens_directly_on_next_start() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let root = make_data_root("shaft-restart");
     nsh_app::cross_book::set_default_data_dir(root.clone());
@@ -13920,7 +13928,7 @@ fn onboarding_created_book_opens_directly_on_next_start() {
 /// 引导在但告示缺席 → 红。
 #[test]
 fn onboarding_corrupt_fallback_without_book_shows_corruption_notice() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let root = make_data_root("shaft-onboard-corrupt");
     // 注册表损坏现场（非法 JSON）且默认目录无库：引导态 + 损坏告示。
@@ -13945,7 +13953,7 @@ fn onboarding_corrupt_fallback_without_book_shows_corruption_notice() {
 /// 选择器归 T4，文案重写亦归 T4，本票断言只锚定稳定片段「账本库文件不存在」）。
 #[test]
 fn startup_configured_active_book_missing_fails_loud() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let root = make_data_root("shaft-missing");
     // 活动本目录不存在且无库文件（登记在册但落点无库）。
@@ -14153,7 +14161,7 @@ fn open_investments(app: &mut Headless) {
 /// 分支挂载 → 落回迁移占位（本测红）。
 #[test]
 fn investments_view_overview_lands_with_period_numbers() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = seed_investments_book("invest-overview");
     nsh_app::app::set_book_dir(dir);
@@ -14224,7 +14232,7 @@ fn investments_view_overview_lands_with_period_numbers() {
 /// （DESIGN.md §8），自动化面只断言已解析样式（#2100 探针同口径）。
 #[test]
 fn investments_view_semantic_tokens_follow_theme_scale_in_light_and_dark() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = seed_investments_book("invest-theme-light-dark");
     nsh_app::app::set_book_dir(dir);
@@ -14304,7 +14312,7 @@ fn investments_view_semantic_tokens_follow_theme_scale_in_light_and_dark() {
 /// 挂载分支即红（同上）。
 #[test]
 fn investments_view_guides_when_no_investment_account() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("invest-empty");
     nsh_app::app::set_book_dir(dir);
@@ -14326,7 +14334,7 @@ fn investments_view_guides_when_no_investment_account() {
 /// 严格口径，旧壳 spec #1684 的隐私裁量平整价）。
 #[test]
 fn investments_view_privacy_masks_amounts_and_hides_composition() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = seed_investments_book("invest-privacy");
     let storage = nsh_testing::MemoryStorage::new(vec![(
@@ -14361,7 +14369,7 @@ fn investments_view_privacy_masks_amounts_and_hides_composition() {
 /// 页签落位装载（load_summary 接线）→ 两表永不呈现（本测红）。
 #[test]
 fn investments_view_pnl_tab_tables_and_mwr_card() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = seed_investments_book("invest-pnl");
     nsh_app::app::set_book_dir(dir);
@@ -14407,7 +14415,7 @@ fn investments_view_pnl_tab_tables_and_mwr_card() {
 /// 「删除即红」负向条目：删筛选写路径 effect（变化不重查）→ 两表仍旧本测红。
 #[test]
 fn investments_view_pnl_filters_narrow_tables() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = seed_investments_book("invest-filter");
     nsh_app::app::set_book_dir(dir.clone());
@@ -14458,7 +14466,7 @@ fn investments_view_pnl_filters_narrow_tables() {
 /// → 到访印记随卸载清零，本测红。
 #[test]
 fn investments_view_keeps_visited_panes_mounted_across_tab_switches() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = seed_investments_book("invest-keep");
     nsh_app::app::set_book_dir(dir);
@@ -14496,7 +14504,7 @@ fn investments_view_keeps_visited_panes_mounted_across_tab_switches() {
 /// 删分页条的 on_change → 页码写回永不发生（本测红）。
 #[test]
 fn investments_view_pnl_pagination_slices_year_rows() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("invest-pages");
     let db = nsh_app::boot::boot_ledger(&dir).unwrap();
@@ -14610,7 +14618,7 @@ fn investments_view_pnl_pagination_slices_year_rows() {
 /// 显式可见，旧壳 overview.missingPrice 同词）。
 #[test]
 fn investments_view_reports_missing_price_count() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("invest-missing-price");
     let db = nsh_app::boot::boot_ledger(&dir).unwrap();
@@ -14682,7 +14690,7 @@ fn investments_view_reports_missing_price_count() {
 /// 测红；删除接线断言见 lib 失效探针注释）。
 #[test]
 fn investments_view_holdings_tab_lands_rows_cards_and_stats() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = seed_investments_book("invest-holdings");
     nsh_app::app::set_book_dir(dir);
@@ -14739,7 +14747,7 @@ fn investments_view_holdings_tab_lands_rows_cards_and_stats() {
 /// 除即红」：删筛选写路径接线（应用值 effect）→ 行集不收窄（本测红）。
 #[test]
 fn investments_view_holdings_filters_narrow_rows() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = seed_investments_book("invest-holdings-filter");
     // 无持仓的投资账户（筛选候选面在用账户）。
@@ -14796,7 +14804,7 @@ fn investments_view_holdings_filters_narrow_rows() {
 /// 在屏）。「删除即红」：删分页条 on_change 页码写回接线 → 第 2 页不出现。
 #[test]
 fn investments_view_holdings_pagination_slices_rows() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("invest-holdings-pages");
     {
@@ -14894,7 +14902,7 @@ fn investments_view_holdings_pagination_slices_rows() {
 /// 行永不出现（本测红）。空库不发起任何网络（通道在空标的分区无取数）。
 #[test]
 fn investments_view_holdings_sync_entry_reports_empty_book() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("invest-holdings-empty");
     nsh_app::app::set_book_dir(dir);
@@ -14921,7 +14929,7 @@ fn investments_view_holdings_sync_entry_reports_empty_book() {
 /// lib staleness 探针）。
 #[test]
 fn investments_view_holdings_missing_price_guide_and_staleness_alert() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("invest-holdings-guide");
     let (account_id, instrument_id) = {
@@ -15036,7 +15044,7 @@ fn seed_manual_bond_instrument(db: &ledger_infra::db::DbState, symbol: &str) -> 
 
 #[test]
 fn investments_view_ledger_tab_lands_kind_rows_and_filters() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = seed_investments_book("invest-ledger-rows");
 
@@ -15076,7 +15084,7 @@ fn investments_view_ledger_tab_lands_kind_rows_and_filters() {
 /// 接线或 investments_drill 消费任一 → 点击后不换页签/不过滤，本测红。
 #[test]
 fn investments_view_holdings_code_drills_to_ledger_filtered() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = seed_investments_book("invest-holdings-drill");
 
@@ -15128,7 +15136,7 @@ fn investments_view_holdings_code_drills_to_ledger_filtered() {
 /// 播门任一 → 现价列不刷新，本测红。
 #[test]
 fn investments_view_instruments_search_and_manual_quote_journey() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = seed_investments_book("invest-instruments-quote");
     let dir_probe = dir.clone();
@@ -15220,7 +15228,7 @@ fn open_transactions_mobile(app: &mut Headless) {
 /// 分支或卡片挂载任一环）→ 本测窄窗段落红。
 #[test]
 fn app_window_breakpoint_flip_keeps_state_smooth() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("flip");
     seed_expense_series(&dir, 1);
@@ -15251,7 +15259,7 @@ fn app_window_breakpoint_flip_keeps_state_smooth() {
 /// （同卡多购买项行的操作目标 = 交易本体）。删除卡片菜单接线即红。
 #[test]
 fn app_window_narrow_card_menu_shares_row_menu_and_deletes_transaction() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("narrow-delete");
     let db = nsh_app::boot::boot_ledger(&dir).unwrap();
@@ -15351,7 +15359,7 @@ fn app_window_narrow_card_menu_shares_row_menu_and_deletes_transaction() {
 /// 挂载但无菜单无写入口（读-only），命中行文本同宽形态装配产物。
 #[test]
 fn app_window_narrow_search_results_reuse_readonly_cards() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("narrow-search");
     seed_expense_notes(&dir, &["元旦火锅聚餐", "超市买菜"]);
@@ -15434,7 +15442,7 @@ fn raw_http_request(
 /// 下不自洽，见 http_host 模块文档生命周期裁决）。
 #[test]
 fn http_api_server_mounts_and_pumps_invalidation_to_views() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("http-mount");
     seed_expense_series(&dir, 1);
@@ -15500,7 +15508,7 @@ fn start_failed_state_with_picker() -> (std::path::PathBuf, Headless) {
 /// 删按钮接线 → 失败态断言红（ADR-0087 接线断言，实证见交付报告）。
 #[test]
 fn startup_book_missing_failed_state_offers_dir_picker_and_opens_registered_book() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let root = make_data_root("t4-main");
     let active = seed::make_book_dir("t4-active-missing");
@@ -15539,7 +15547,7 @@ fn startup_book_missing_failed_state_offers_dir_picker_and_opens_registered_book
 /// 的 book_missing_error 单点同文案同出口）。
 #[test]
 fn startup_argv_missing_book_shows_same_failed_state_with_picker() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let bad = seed::make_book_dir("t4-argv-missing");
     nsh_app::app::set_book_dir(bad);
@@ -15551,7 +15559,7 @@ fn startup_argv_missing_book_shows_same_failed_state_with_picker() {
 /// 取消选择：留原失败态、按钮可再次触发（误触零后果——取消零改向零写入）。
 #[test]
 fn startup_picker_cancel_keeps_failed_state_and_button_retriggerable() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     let (root, mut app) = start_failed_state_with_picker();
     let other = make_book("t4-cancel-other");
 
@@ -15578,7 +15586,7 @@ fn startup_picker_cancel_keeps_failed_state_and_button_retriggerable() {
 /// 该处。注册表根退回 argv 目录 → 登记写错位 → 数据根注册表断言红。
 #[test]
 fn startup_argv_picker_registers_into_default_data_root_not_argv_dir() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let root = make_data_root("t4-f5-root");
     let active = make_book("t4-f5-active");
@@ -15617,7 +15625,7 @@ fn startup_argv_picker_registers_into_default_data_root_not_argv_dir() {
 /// `nsh-shell.file-dialog-failed` 码化呈现，出口保持在场可重试（#2038 先例）。
 #[test]
 fn startup_picker_unavailable_reports_coded_error_and_stays_retryable() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     let (_root, mut app) = start_failed_state_with_picker();
     // 不注入 on_pick_paths 替身 → pick_paths Err。
     app.press("id:startup-pick-book-dir").unwrap();
@@ -15628,7 +15636,7 @@ fn startup_picker_unavailable_reports_coded_error_and_stays_retryable() {
 /// 现场闭集②（有库未登记）：选中未登记库目录 → 自动登记 + 置活动 + 打开。
 #[test]
 fn startup_picker_unregistered_book_dir_registers_switches_and_opens() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     let (root, mut app) = start_failed_state_with_picker();
     let picked = make_book("t4-unregistered");
 
@@ -15651,7 +15659,7 @@ fn startup_picker_unregistered_book_dir_registers_switches_and_opens() {
 /// 确认后建库登记并打开。
 #[test]
 fn startup_picker_empty_dir_create_intent_confirms_and_opens() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     let (root, mut app) = start_failed_state_with_picker();
     let picked = seed::make_book_dir("t4-create");
 
@@ -15719,7 +15727,7 @@ fn pick_bad_book_dir_reports_coded_error_without_picker(bad_bytes: &[u8], expect
 /// 不是失败态，无目录出口）。
 #[test]
 fn startup_picker_encrypted_dir_lands_locked_view() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let root = make_data_root("t4-encrypted-pick");
     let active = seed::make_book_dir("t4-active-missing");
@@ -15750,7 +15758,7 @@ fn startup_picker_encrypted_dir_lands_locked_view() {
 /// 现场闭集⑤（损坏残留）：既有损坏码呈现 + 无出口（不自动换目录重试）。
 #[test]
 fn startup_picker_corrupt_dir_reports_coded_error_without_picker() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     pick_bad_book_dir_reports_coded_error_without_picker(
         &[0xABu8; 20],
         "text:/数据库文件无法打开/",
@@ -15763,7 +15771,7 @@ fn startup_picker_corrupt_dir_reports_coded_error_without_picker() {
 ///（退回在册直切）→ 指针被切走 → 指针断言红。
 #[test]
 fn startup_picker_registered_corrupt_dir_reports_coded_error_pointer_unchanged() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let root = make_data_root("t4-f3-registered-corrupt");
     let active = seed::make_book_dir("t4-active-missing");
@@ -15798,7 +15806,7 @@ fn startup_picker_registered_corrupt_dir_reports_coded_error_pointer_unchanged()
 ///（ADR-0087 断言对准屏幕可见结果）。
 #[test]
 fn startup_configured_active_book_at_default_dir_missing_fails_with_picker_and_switches_pointer() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let root = make_data_root("t3-at-default");
     let other = make_book("t3-other");
@@ -15838,7 +15846,7 @@ fn startup_configured_active_book_at_default_dir_missing_fails_with_picker_and_s
 ///「下次启动」直接打开。
 #[test]
 fn onboarding_pick_unregistered_book_dir_registers_switches_and_opens() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let root = make_data_root("t3-onboard-b2");
     let picked = make_book("t3-unregistered");
@@ -15873,7 +15881,7 @@ fn onboarding_pick_unregistered_book_dir_registers_switches_and_opens() {
 /// 级）；取消零写入留引导可再触发；确认后建库登记并打开。
 #[test]
 fn onboarding_pick_empty_dir_create_intent_confirms_and_opens() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let root = make_data_root("t3-onboard-b3");
     let picked = seed::make_book_dir("t3-create");
@@ -15955,7 +15963,7 @@ fn onboarding_pick_bad_book_dir_reports_coded_error(bad_bytes: &[u8], expect: &s
 /// 置活动 + 判开 → 引导落锁定视图（解锁面板在屏）。
 #[test]
 fn onboarding_pick_encrypted_dir_lands_locked_view() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let root = make_data_root("t3-onboard-encrypted");
     let picked = seed::make_book_dir("t3-encrypted-pick");
@@ -15977,7 +15985,7 @@ fn onboarding_pick_encrypted_dir_lands_locked_view() {
 /// 现场闭集⑤（损坏残留）：既有损坏码呈现，无自动重试循环。
 #[test]
 fn onboarding_pick_corrupt_dir_reports_coded_error() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     onboarding_pick_bad_book_dir_reports_coded_error(&[0xABu8; 20], "text:/数据库文件无法打开/");
 }
 
@@ -15987,7 +15995,7 @@ fn onboarding_pick_corrupt_dir_reports_coded_error() {
 /// 容错退回查册上抛 → 选择器后错误屏而非主界面 → 红。
 #[test]
 fn onboarding_corrupt_registry_pick_unregistered_book_dir_registers_and_opens() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let root = make_data_root("t3-corrupt-b2");
     let picked = make_book("t3-corrupt-unregistered");
@@ -16027,7 +16035,7 @@ fn onboarding_corrupt_registry_pick_unregistered_book_dir_registers_and_opens() 
 /// 建库 + 折叠登记（损坏文件被覆盖，注册表可解析）+ 打开。
 #[test]
 fn onboarding_corrupt_registry_pick_empty_dir_confirms_create_and_opens() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let root = make_data_root("t3-corrupt-b3");
     let picked = seed::make_book_dir("t3-corrupt-create");
@@ -16064,7 +16072,7 @@ fn onboarding_corrupt_registry_pick_empty_dir_confirms_create_and_opens() {
 /// 选择器层取消：留引导界面零写入，动作可再次触发（再次选定即打开）。
 #[test]
 fn onboarding_pick_cancel_keeps_onboarding_and_action_retriggerable() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let root = make_data_root("t3-onboard-cancel");
     let other = make_book("t3-cancel-other");
@@ -16096,7 +16104,7 @@ fn onboarding_pick_cancel_keeps_onboarding_and_action_retriggerable() {
 /// failed_view 单点派生两臂共用）。
 #[test]
 fn startup_locked_and_corrupt_boot_states_have_no_picker() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     // 密文库：页对齐密文形态（基础设施「密文库落盘形态」判别）→ 锁定视图。
     nsh_app::app::reset_book_assembly();
     let encrypted = seed::make_book_dir("t4-boot-encrypted");
@@ -16161,7 +16169,7 @@ fn make_encrypted_book(tag: &str, passphrase: &str) -> std::path::PathBuf {
 /// wait_for 红；断言对准用户可见结果（锁定面板、错误行、解锁后的交易行）。
 #[test]
 fn encrypted_book_unlock_journey_enters_session_with_seeded_data() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     const PASS: &str = "解锁旅程口令X";
     let dir = make_encrypted_book("unlock-journey", PASS);
@@ -16209,7 +16217,7 @@ fn encrypted_book_unlock_journey_enters_session_with_seeded_data() {
 /// 文件级可观察结果。
 #[test]
 fn locked_view_forgot_passphrase_resets_to_fresh_plaintext_session() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_encrypted_book("forgot-reset-journey", "原口令 journeyX");
     let db_path = dir.join("ledger.db");
@@ -16274,7 +16282,7 @@ fn locked_view_forgot_passphrase_resets_to_fresh_plaintext_session() {
 /// 链）→ 对应流程不入屏/不落盘 → 本测 wait_for / 文件探测红。
 #[test]
 fn encryption_card_change_passphrase_then_disable_in_encrypted_session() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     const PASS_V1: &str = "首开启口令 journeyA";
     const PASS_V2: &str = "换新口令 journeyB";
@@ -16438,7 +16446,7 @@ fn wait_no_auto_product(dir: &std::path::Path, window: Duration, label: &str) {
 /// 用起点单点的备份宿主接线）→ 解锁后无产物 → 产物轮询超时红。
 #[test]
 fn auto_backup_scheduling_three_states_in_encrypted_scenario() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     const PASS: &str = "调度三态口令X";
     // 夹具：种子数据 + 自动备份开启 + 整库加密（先明文置开关再转换）。
