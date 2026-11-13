@@ -476,8 +476,10 @@ fn app_window_steps_back_by_previous_button() {
     let mut app = Headless::start(desktop_config()).unwrap();
 
     open_transactions(&mut app);
-    // 分页条挂载等其装载回合（#2057 起落位批次差一拍）；容器先行挂载、
-    // 按钮行再落一拍（#2072 间歇红根因）——按压前等目标页码按钮本身。
+    // 首行锚点 = 装载已落位（#2068：装载是晚于步骤到达的后台读，缺此锚
+    // 分页条未渲染、按压落空；与翻页用例同口径）。容器先行挂载、按钮行再
+    // 落一拍（#2072 间歇红根因）——按压前等目标页码按钮本身。
+    app.wait_for("text:2026-05-30").unwrap();
     app.wait_for("id:tx-pagination").unwrap();
     app.wait_for("role:button[2]").unwrap();
     app.press("role:button[2]").unwrap();
@@ -1857,6 +1859,9 @@ fn suppression_gate_blocks_pagination_key_while_period_popup_open() {
     let mut app = Headless::start(desktop_config()).unwrap();
 
     open_transactions(&mut app);
+    // 首行锚点同 #2068：装载前 `]` 被 next_page 幂等拦截静默丢弃，
+    // 后续等末页行集即超时红——先等装载落位再派发分页键。
+    app.wait_for("text:2026-05-30").unwrap();
     app.press_key("]").unwrap();
     app.wait_for("text:2026-02-19").unwrap();
 
@@ -2131,6 +2136,9 @@ fn suppression_gate_blocks_pagination_key_while_danger_dialog_open() {
     let mut app = Headless::start(desktop_config()).unwrap();
 
     open_transactions(&mut app);
+    // 首行锚点同 #2068：装载前 `]` 被 next_page 幂等拦截静默丢弃，
+    // 后续等末页行集即超时红——先等装载落位再派发分页键。
+    app.wait_for("text:2026-05-30").unwrap();
     app.press_key("]").unwrap();
     app.wait_for("text:2026-02-19").unwrap();
 
