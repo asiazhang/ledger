@@ -703,41 +703,15 @@ fn category_rows_assemble_into_path_cells_active_only() {
         },
     )
     .unwrap();
-    let make_expense =
-        |date: &str, category_id: Option<String>, note: Option<String>| TransactionInput {
-            kind: TransactionKind::Expense,
-            amount_cents: 2_500,
-            currency_code: "CNY".to_owned(),
-            account_id: Some(account.clone()),
-            to_account_id: None,
-            funding_account_id: None,
-            funding: Vec::new(),
-            purchases: Vec::new(),
-            category_id,
-            merchant_id: None,
-            merchant_name: None,
-            policy_id: None,
-            refund_of_transaction_id: None,
-            note,
-            source_order_no: None,
-            date: date.to_owned(),
-            instrument_id: None,
-            quantity: None,
-            price_cents: None,
-            fee_cents: None,
-            to_instrument_id: None,
-            to_quantity: None,
-            out_amount_cents: None,
-            in_amount_cents: None,
-            origin: None,
-            fx_rate: None,
-            idempotency_key: None,
-        };
     // 三笔各占一天（排序 date DESC：行序 = 写入序倒序，断言与 created_at
-    // 同秒无关）。
+    // 同秒无关）。造数走共享助手分类维度入口（issue #2059），不再内联
+    // 24 字段字面量。
+    let make_expense = |date: &str, category_id: Option<&str>, note: Option<&str>| {
+        seed::expense_input_with_category(&account, date, 2_500, category_id, note)
+    };
     ledger_transaction::create(
         &conn,
-        make_expense("2026-01-15", Some(child.clone()), Some("买咖啡".to_owned())),
+        make_expense("2026-01-15", Some(child.as_str()), Some("买咖啡")),
     )
     .unwrap();
     ledger_transaction::create(&conn, make_expense("2026-01-16", None, None)).unwrap();
@@ -753,7 +727,7 @@ fn category_rows_assemble_into_path_cells_active_only() {
     )
     .unwrap();
     ledger_categories::delete_category(&conn, &gone).unwrap();
-    ledger_transaction::create(&conn, make_expense("2026-01-17", Some(gone.clone()), None))
+    ledger_transaction::create(&conn, make_expense("2026-01-17", Some(gone.as_str()), None))
         .unwrap();
     drop(conn);
 
