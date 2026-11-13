@@ -4847,7 +4847,7 @@ fn form_creates_income_with_income_only_category_candidates() {
 /// 守卫 → 未选中段断言红（✕ 随 clearable 常驻渲染）。
 #[test]
 fn form_category_clear_button_shows_only_while_selected() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("form-category-clear-guard");
     {
