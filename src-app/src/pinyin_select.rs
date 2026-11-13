@@ -200,20 +200,27 @@ pub fn pinyin_select(
                 ),
         );
 
-    // 可清空形态（#2034）：选中时触发件右侧渲染 ✕（独立按压件，清除落 None
-    // 不开弹层；与 select.rs / date_select 的清除形态同位）。
+    // 可清空形态（#2034）：选中时触发件右侧才渲染 ✕（独立按压件，清除落
+    // None 不开弹层；守卫与 select.rs / multi_select.rs / date_select 的清除
+    // 钮同位——未选中不渲染，#2063）。
     if clearable {
         view().flex_row().items_center().gap_1().child(body).child(
-            nsh_base::button()
-                .accessibility_label("清除")
-                .app_class("px-1 py-0.5 rounded-sm text-muted-foreground hover:bg-accent")
-                .child(
-                    text("✕")
-                        .text_size(px(font_size::CAPTION))
-                        .text_color(muted)
-                        .test_id(prefix_clear.as_str()),
-                )
-                .on_press(move |_: &()| selected.set(None)),
+            when(
+                move || selected.get().is_some(),
+                move || {
+                    nsh_base::button()
+                        .accessibility_label("清除")
+                        .app_class("px-1 py-0.5 rounded-sm text-muted-foreground hover:bg-accent")
+                        .child(
+                            text("✕")
+                                .text_size(px(font_size::CAPTION))
+                                .text_color(muted)
+                                .test_id(prefix_clear.as_str()),
+                        )
+                        .on_press(move |_: &()| selected.set(None))
+                },
+            )
+            .otherwise(view),
         )
     } else {
         view().child(body)

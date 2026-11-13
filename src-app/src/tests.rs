@@ -38,6 +38,12 @@ use crate::boot::{
 #[path = "../tests/support/seed.rs"]
 mod seed;
 
+/// 测试 logger 助手（issue #2109）同自共享 `tests/support/` 载入：headless
+/// 测试进程缺省无 logger、框架错误出口 `log::error!` 静默丢弃（坑、用法与
+/// 让位语义见模块文档；本面无进程级消费点，进程级接线自测住集成面）。
+#[path = "../tests/support/test_logger.rs"]
+mod test_logger;
+
 pub(crate) use seed::{
     create_empty_book_file, expense_input, make_book_dir as scratch_book_dir, seed_cash_account,
     test_date,

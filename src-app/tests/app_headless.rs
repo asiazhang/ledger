@@ -47,6 +47,12 @@ use nsh_testing::Headless;
 #[path = "support/seed.rs"]
 mod seed;
 
+/// 测试 logger 助手（#2109）：headless 测试进程缺省无 logger、框架错误出口
+/// `log::error!` 静默丢弃的 opt-in 安装面（坑说明与捕获面见模块文档；示范
+/// 接线见 `backup_dialog_failure_reports_error`）。
+#[path = "support/test_logger.rs"]
+mod test_logger;
+
 use seed::{seed_cash_account, test_date};
 
 /// 与 `wait_for` 缺省同一超时（nsh-testing 的 `wait_for_gone` 需显式超时）。
@@ -4874,6 +4880,61 @@ fn form_creates_income_with_income_only_category_candidates() {
     );
 }
 
+/// 可清空形态清除钮守卫（#2063，select.rs / multi_select.rs 清除钮同位）：
+/// 分类未选中时 ✕ 不在屏，选中后呈现，清除后消失（触发件回占位）。「删除
+/// 即红」负向条目：删 pinyin_select.rs 清除钮的 when(selected.is_some())
+/// 守卫 → 未选中段断言红（✕ 随 clearable 常驻渲染）。
+#[test]
+fn form_category_clear_button_shows_only_while_selected() {
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("form-category-clear-guard");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        seed_cash_account(&db);
+        seed_category(&db, "餐饮", None);
+    }
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_transactions(&mut app);
+
+    app.wait_for("text:暂无数据").unwrap();
+    open_create_form(&mut app, "id:tx-add-expense", "记一笔 · 支出");
+
+    // 未选中：清除钮不在屏（守卫缺席即随 clearable 常驻渲染，此处红）。
+    assert_eq!(
+        app.screen().count("id:tx-form-category-clear").unwrap(),
+        0,
+        "分类未选中时清除钮不渲染：{:?}",
+        app.screen().texts()
+    );
+
+    // 选中分类：清除钮呈现。
+    app.press("id:tx-form-category").unwrap();
+    app.wait_for("id:tx-form-category-option").unwrap();
+    app.press("id:tx-form-category-option >> text:餐饮")
+        .unwrap();
+    app.settle();
+    app.wait_for("id:tx-form-category-clear").unwrap();
+
+    // 清除：落 None，清除钮消失、触发件回占位文案。
+    app.press("id:tx-form-category-clear").unwrap();
+    app.wait_for_gone("id:tx-form-category-clear", DEFAULT_WAIT)
+        .unwrap();
+    assert_eq!(
+        app.screen().count("id:tx-form-category-clear").unwrap(),
+        0,
+        "清除后清除钮不渲染：{:?}",
+        app.screen().texts()
+    );
+    assert!(
+        app.shows("选择分类"),
+        "清除后触发件回占位文案：{:?}",
+        app.screen().texts()
+    );
+}
+
 /// 编辑回填与保存旅程（用户故事 5/6）：右键收入/支出行 → 编辑 → 弹窗回填
 /// 全部业务字段（金额文本 / 日期 / 备注 / 商户口名）→ 改金额保存 → 列表
 /// 刷新呈现新值。删掉编辑提交成功分支的失效信号广播（txn_form::
@@ -6592,6 +6653,10 @@ fn backup_overwrite_guard_cancel_keeps_existing_file() {
 #[test]
 fn backup_dialog_failure_reports_error() {
     let _guard = serial_lock();
+    // 示范接线（#2109）：headless 缺省无 logger，框架错误出口 log::error! 静默
+    // 丢弃——失败路径排查前先 opt-in 安装（坑说明见 tests/support/
+    // test_logger.rs 模块文档；本测试屏面断言不变，安装仅让错误流可观察）。
+    test_logger::install_test_logger();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("backup-dialog-error");
 
@@ -6610,6 +6675,23 @@ fn backup_dialog_failure_reports_error() {
     assert!(
         app.screen().enabled("id:tx-backup").unwrap(),
         "失败后入口恢复可用"
+    );
+}
+
+/// 进程级接线自测（#2109，集成面持有：lib 测试进程与 `logging` 模块单测共存，
+/// 槽位归属不确定——见 tests/support/test_logger.rs「让位语义」）：安装后
+/// `log::error!` 可观察（捕获快照命中标记行）——删除 install_test_logger 内
+/// 的 `log::set_logger` 接线即红（错误出口回到静默丢弃，假阴性陷阱复现）。
+#[test]
+fn install_then_error_is_captured() {
+    test_logger::install_test_logger();
+    log::error!("test_logger-capture-probe-2109: 框架错误出口观察探针");
+    assert!(
+        test_logger::captured()
+            .iter()
+            .any(|l| l.contains("test_logger-capture-probe-2109")),
+        "安装后 log::error! 应落捕获快照（logger 缺位 = 静默丢弃，见模块文档）：{:?}",
+        test_logger::captured()
     );
 }
 
