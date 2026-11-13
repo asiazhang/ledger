@@ -45,9 +45,9 @@ pub type EmitterSlot = Option<Arc<dyn SignalEmitter>>;
 /// HTTP 服务器状态：数据库连接 + 失效信号发射槽 + 可选基金行情接缝 + 加密锁定门。
 ///
 /// `emitter`（发射槽，ADR-0044 / ADR-0054）：`Some` 时写事务提交成功后经信号
-/// 映射单点发射失效信号。生产路径由 `start_http_server` 注入
-/// `Some(Arc::new(app))`——同一 `AppHandle` 发射器实现，行为与泛化前零变化；
-/// 集成测试（`tests/api_server/`）不经真实 Tauri 运行时构建路由，传 `None`
+/// 映射单点发射失效信号。生产路径由壳层启动接线注入 NSH 泵发射器
+///（`crate::http_host`，旧壳 `AppHandle` 发射器实现随 #2083 切轨退役）；
+/// 集成测试（`tests/api_server/`）不经壳层发射接线构建路由，传 `None`
 /// 跳过发射分支，或注入受控发射器观察「写请求返回后信号最终到达」的
 /// 外部行为（spec #367，`signal_delivery.rs`）。
 ///

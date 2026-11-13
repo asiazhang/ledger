@@ -59,7 +59,10 @@ use seed::{seed_cash_account, test_date};
 const DEFAULT_WAIT: Duration = Duration::from_secs(5);
 
 /// 串行锁：装配入口（`set_book_dir`）与会话句柄是进程级单例，用例间串行防串扰
-/// （与 lib 单测的 SERIAL 同形；两测试二进制是独立进程，互不串扰）。
+/// （lib 单测同纪律，锁现名 `serial_guard`、转发 `app::test_assembly_guard`
+/// 携毒化守卫，#2086；本集成测试二进制链接非 cfg(test) 构建，消费不到
+/// `pub(crate)` + `#[cfg(test)]` 的 crate 内守卫，保留本面 SERIAL——两测试
+/// 二进制是独立进程，互不串扰）。
 static SERIAL: Mutex<()> = Mutex::new(());
 
 /// 串行锁守卫（毒化取回内值，issue #2064）：锁不变量仅为互斥，锁本身不含
