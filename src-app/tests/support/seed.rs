@@ -135,12 +135,8 @@ pub fn expense_input(account: &str, date: &str, amount_cents: i64, note: &str) -
 
 /// 一笔现金支出输入的分类维度变体（issue #2059）：支出可挂分类、备注可
 /// 缺省——分类路径装配读的造数入口；其余字段随 [`expense_input`] 单源，
-/// 调用面不再内联 24 字段字面量。
-///
-/// 现仅 lib 面（`src/tests.rs`）消费；headless 面支出变体走本地
-/// `bare_expense_input` 底座，尚未消费本入口。`#[path]` 双编译下单面子集
-/// 消费是共享原文的既定代价，按 `s3_stub.rs` facade 同形放行 dead_code。
-#[allow(dead_code)]
+/// 调用面不再内联 24 字段字面量。变维字段（分类/备注/政策）由调用侧
+/// 经外层 struct update 覆写（#2118 起 headless 面同形消费）。
 pub fn expense_input_with_category(
     account: &str,
     date: &str,

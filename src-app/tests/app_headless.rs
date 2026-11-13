@@ -1724,33 +1724,8 @@ fn app_window_renders_source_name_and_status() {
         let alive =
             ledger_policy::create_policy(&conn, make_policy("P-2", "重疾险"), &mut || {}).unwrap();
         let make_expense = |date: &str, policy: String| TransactionInput {
-            kind: TransactionKind::Expense,
-            amount_cents: 2_500,
-            currency_code: "CNY".to_owned(),
-            account_id: Some(account.clone()),
-            to_account_id: None,
-            funding_account_id: None,
-            funding: Vec::new(),
-            purchases: Vec::new(),
-            category_id: None,
-            merchant_id: None,
-            merchant_name: None,
             policy_id: Some(policy),
-            refund_of_transaction_id: None,
-            note: None,
-            source_order_no: None,
-            date: date.to_owned(),
-            instrument_id: None,
-            quantity: None,
-            price_cents: None,
-            fee_cents: None,
-            to_instrument_id: None,
-            to_quantity: None,
-            out_amount_cents: None,
-            in_amount_cents: None,
-            origin: None,
-            fx_rate: None,
-            idempotency_key: None,
+            ..seed::expense_input_with_category(&account, date, 2_500, None, None)
         };
         ledger_transaction::create(&conn, make_expense("2026-01-15", deleted.clone())).unwrap();
         ledger_transaction::create(&conn, make_expense("2026-01-16", alive)).unwrap();
@@ -3569,33 +3544,8 @@ fn tx_table_source_cell_click_jumps_to_policy_view() {
         alive_policy =
             ledger_policy::create_policy(&conn, make_policy("P-2", "重疾险"), &mut || {}).unwrap();
         let make_expense = |date: &str, policy: String| TransactionInput {
-            kind: TransactionKind::Expense,
-            amount_cents: 2_500,
-            currency_code: "CNY".to_owned(),
-            account_id: Some(account.clone()),
-            to_account_id: None,
-            funding_account_id: None,
-            funding: Vec::new(),
-            purchases: Vec::new(),
-            category_id: None,
-            merchant_id: None,
-            merchant_name: None,
             policy_id: Some(policy),
-            refund_of_transaction_id: None,
-            note: None,
-            source_order_no: None,
-            date: date.to_owned(),
-            instrument_id: None,
-            quantity: None,
-            price_cents: None,
-            fee_cents: None,
-            to_instrument_id: None,
-            to_quantity: None,
-            out_amount_cents: None,
-            in_amount_cents: None,
-            origin: None,
-            fx_rate: None,
-            idempotency_key: None,
+            ..seed::expense_input_with_category(&account, date, 2_500, None, None)
         };
         ledger_transaction::create(&conn, make_expense("2026-01-15", deleted_policy.clone()))
             .unwrap();
