@@ -30,17 +30,20 @@
 //!   [`captured`] 快照（断言形态：`captured().iter().any(|l| l.contains(标记))`）；
 //! - 级别上限 `LevelFilter::Info` 常量，需更细粒度时改常量（不扩 API 面）。
 //!
-//! 让位语义：`log::set_logger` 每进程只成交一次，若壳初始化路径已抢先
-//!（`logging::init_with` 的 `try_init` 在 tracing-log feature 下会把 LogTracer
-//! 装成全局 log logger——产品启动同款形态，log 记录本就经它进 tracing 双输出），
-//! 本助手静默让位且捕获面不可用（错误记录仍经既有 logger 可观察）。lib 单测
-//! 进程与 `logging` 模块单测共存，槽位归属不确定；headless 组件测试进程无壳
-//! 初始化，本助手稳持槽位——进程级接线断言因此住集成面（见下）。
+//! 让位语义：`log::set_logger` 每进程只成交一次，若进程内已有 logger 则本助手
+//! 静默让位且捕获面不可用（错误记录仍经既有 logger 可观察）。槽位归属两侧
+//! 测试进程都已确定（issue #2119）：`logging` 单测经 cfg(test) 门只占 tracing
+//! 槽位、不装 log logger（`logging::init_with` 内特化注释），lib 测试进程的
+//! log 槽位无竞夺方、本助手先到先得即稳得；headless 组件测试进程无壳初始
+//! 化，同稳。产品启动路径保持 `try_init`（LogTracer 装成全局 log logger，
+//! log facade 记录本就经它进 tracing 双输出）——壳初始化先于本助手的进程
+//!（如显式调 `logging::init` 的嵌入宿主）让位语义不变。
 //!
-//! 自测分两层：模块内纯单元自测（不经全局槽位，两侧测试二进制都跑）+
-//! 集成面进程级接线自测（`app_headless.rs` 的 `install_then_error_is_captured`，
-//! 删除 [`install_test_logger`] 内的 `log::set_logger` 接线即红，ADR-0087
-//! 负向条目）。
+//! 自测分三层：模块内纯单元自测（不经全局槽位，两侧测试二进制都跑）+
+//! 进程级接线自测两侧各一——lib 面 `logging.rs` 单测（issue #2119 解锁）与
+//! 集成面 `app_headless.rs` 的 `install_then_error_is_captured`（issue #2109
+//! 交付形态保留），均守「删除 [`install_test_logger`] 内的 `log::set_logger`
+//! 接线即红」（ADR-0087 负向条目）。
 //!
 //! 双侧共享同 seed.rs 形态（issue #2027 先例）：lib（`src/tests.rs` 内
 //! `#[path = "../tests/support/test_logger.rs"]`）与集成（`tests/app_headless.rs`
@@ -51,11 +54,6 @@
 //! 边界：整理类最小面（#2109 预裁定）——捕获缓冲随进程存活、只增不清，断言用
 //! 标记词 `contains` 匹配，不依赖全量精确快照；捕获面只做读取快照，不做清理、
 //! 不做级别/目标过滤配置。
-
-// 双侧 `#[path]` 载入、单侧可能不消费全部项（进程级安装助手的消费面住集成
-// 面——lib 测试进程与 logging 单测共存，槽位归属不确定，见上「让位语义」；
-// lib 侧只载入模块与单元自测），免 lib 侧死码告警。
-#![allow(dead_code)]
 
 use std::io::Write;
 use std::sync::{Mutex, OnceLock};
@@ -68,7 +66,7 @@ static INSTALL: OnceLock<()> = OnceLock::new();
 static CAPTURED: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
 /// 为当前测试进程安装测试 logger（opt-in，见模块文档的坑说明）。同一进程
-/// 首次调用生效，后续调用零副作用；进程内已有 logger（壳初始化路径的
+/// 首次调用生效，后续调用零副作用；进程内已有 logger（产品启动形态的
 /// LogTracer）时静默让位（见模块文档「让位语义」）。
 pub fn install_test_logger() {
     if INSTALL.set(()).is_ok() {
