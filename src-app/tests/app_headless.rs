@@ -15233,7 +15233,6 @@ fn investments_view_holdings_code_drills_to_ledger_filtered() {
     // 42927784003 首崩即此——holdings-title 只证页签挂载不证行落屏）。
     press_after(&mut app, &symbol_anchor, &symbol_anchor).unwrap();
     app.wait_for("id:ledger-title").unwrap();
-    app.wait_for("id:ledger-title").unwrap();
     app.wait_for("text:共 3 条").unwrap();
     assert!(
         app.shows("2025-12-20") && app.shows("2025-12-30") && app.shows("2026-03-05"),
