@@ -3,7 +3,9 @@
 //! 入口/读 helper 一行调用，业务语义零增量。
 //!
 //! 全部触 DB 端点 async 化（形状乙，spec #498 / #503）：DB 调用经连接层统一
-//! helper [`ledger_infra::db::run_db`] 进 tauri 阻塞线程池执行，tokio worker 不再被
+//! helper [`ledger_infra::db::run_db`] 放到当前 tokio 运行时的阻塞线程池执行
+//!（[`tokio::task::spawn_blocking`]，旧壳 tauri 阻塞线程池随 #2083 退役后为
+//! 唯一驱动形态），tokio worker 不再被
 //! 毫秒级 DB 调用占用；helper 显式携带调用方 span 与 dispatcher 跨线程，SQL
 //! 耗时归因沿 tower_http 请求 span 不漂移（集成测试契约
 //! `test_http_sql_duration_attributed_to_request_span`）。归因串用契约端点键

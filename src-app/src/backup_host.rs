@@ -2,8 +2,8 @@
 //! 注册实现、壳层启动时接线）。
 //!
 //! 旧壳把 AppHandle 状态（写句柄、两扇门、版本号）交给备份域门内
-//! `start_scheduler` / `exit_fallback`（tauri-host 门，#2074）；NSH 进程零
-//! tauri（GTK3/WebKitGTK 与 GTK4 同进程符号互踩），经备份域公开的**平台中立
+//! `start_scheduler` / `exit_fallback`（tauri-host 门，#2074）；NSH 零
+//! tauri 依赖（#2083 切轨后旧壳退役），经备份域公开的**平台中立
 //! 调度面**接线：[`ledger_backup::start_scheduler_with`]（收写句柄 + 版本号 +
 //! 每轮业务可用性判定）与 [`ledger_backup::exit_fallback_with`]。调度节奏
 //! （10 分钟轮询、单一 tick 双判定〔到期备份 + 定时计划追补〕）、日界门、产物

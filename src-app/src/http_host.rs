@@ -3,8 +3,8 @@
 //!
 //! tauri 依赖反转（ADR-0112 决策 5：下层定义注册点、上层注册实现、壳层启动时
 //! 接线）：旧壳把 `tauri::AppHandle`（SignalEmitter 的 tauri-emit 生产实现）
-//! 直传 `start_http_server`；本壳进程零 tauri（GTK3/WebKitGTK 与 GTK4 同进程
-//! 符号互踩，仓库根 Cargo.toml 头注），api_server 面向既有抽象
+//! 直传 `start_http_server`；本壳零 tauri 依赖（#2083 切轨后旧壳退役，全仓
+//! 无 tauri 门），api_server 面向既有抽象
 //! `EmitterSlot`（`Option<Arc<dyn SignalEmitter>>`）参数化，生产发射器由本模块
 //! 接线——[`NshHttpEmitter`] 把基础设施失效事件（`ledger_infra::events`）泵进
 //! 壳内失效信号族（[`crate::signals`]）。

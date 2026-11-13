@@ -59,7 +59,10 @@ use seed::{seed_cash_account, test_date};
 const DEFAULT_WAIT: Duration = Duration::from_secs(5);
 
 /// 串行锁：装配入口（`set_book_dir`）与会话句柄是进程级单例，用例间串行防串扰
-/// （与 lib 单测的 SERIAL 同形；两测试二进制是独立进程，互不串扰）。
+/// （lib 单测同纪律，锁现名 `serial_guard`、转发 `app::test_assembly_guard`
+/// 携毒化守卫，#2086；本集成测试二进制链接非 cfg(test) 构建，消费不到
+/// `pub(crate)` + `#[cfg(test)]` 的 crate 内守卫，保留本面 SERIAL——两测试
+/// 二进制是独立进程，互不串扰）。
 static SERIAL: Mutex<()> = Mutex::new(());
 
 /// 串行锁守卫（毒化取回内值，issue #2064）：锁不变量仅为互斥，锁本身不含
@@ -1724,33 +1727,8 @@ fn app_window_renders_source_name_and_status() {
         let alive =
             ledger_policy::create_policy(&conn, make_policy("P-2", "重疾险"), &mut || {}).unwrap();
         let make_expense = |date: &str, policy: String| TransactionInput {
-            kind: TransactionKind::Expense,
-            amount_cents: 2_500,
-            currency_code: "CNY".to_owned(),
-            account_id: Some(account.clone()),
-            to_account_id: None,
-            funding_account_id: None,
-            funding: Vec::new(),
-            purchases: Vec::new(),
-            category_id: None,
-            merchant_id: None,
-            merchant_name: None,
             policy_id: Some(policy),
-            refund_of_transaction_id: None,
-            note: None,
-            source_order_no: None,
-            date: date.to_owned(),
-            instrument_id: None,
-            quantity: None,
-            price_cents: None,
-            fee_cents: None,
-            to_instrument_id: None,
-            to_quantity: None,
-            out_amount_cents: None,
-            in_amount_cents: None,
-            origin: None,
-            fx_rate: None,
-            idempotency_key: None,
+            ..seed::expense_input_with_category(&account, date, 2_500, None, None)
         };
         ledger_transaction::create(&conn, make_expense("2026-01-15", deleted.clone())).unwrap();
         ledger_transaction::create(&conn, make_expense("2026-01-16", alive)).unwrap();
@@ -3569,33 +3547,8 @@ fn tx_table_source_cell_click_jumps_to_policy_view() {
         alive_policy =
             ledger_policy::create_policy(&conn, make_policy("P-2", "重疾险"), &mut || {}).unwrap();
         let make_expense = |date: &str, policy: String| TransactionInput {
-            kind: TransactionKind::Expense,
-            amount_cents: 2_500,
-            currency_code: "CNY".to_owned(),
-            account_id: Some(account.clone()),
-            to_account_id: None,
-            funding_account_id: None,
-            funding: Vec::new(),
-            purchases: Vec::new(),
-            category_id: None,
-            merchant_id: None,
-            merchant_name: None,
             policy_id: Some(policy),
-            refund_of_transaction_id: None,
-            note: None,
-            source_order_no: None,
-            date: date.to_owned(),
-            instrument_id: None,
-            quantity: None,
-            price_cents: None,
-            fee_cents: None,
-            to_instrument_id: None,
-            to_quantity: None,
-            out_amount_cents: None,
-            in_amount_cents: None,
-            origin: None,
-            fx_rate: None,
-            idempotency_key: None,
+            ..seed::expense_input_with_category(&account, date, 2_500, None, None)
         };
         ledger_transaction::create(&conn, make_expense("2026-01-15", deleted_policy.clone()))
             .unwrap();
@@ -15233,7 +15186,6 @@ fn investments_view_holdings_code_drills_to_ledger_filtered() {
     // 持仓行异步落屏：锚点先于按压（CI 慢环境 press 竞态锚定；run
     // 42927784003 首崩即此——holdings-title 只证页签挂载不证行落屏）。
     press_after(&mut app, &symbol_anchor, &symbol_anchor).unwrap();
-    app.wait_for("id:ledger-title").unwrap();
     app.wait_for("id:ledger-title").unwrap();
     app.wait_for("text:共 3 条").unwrap();
     assert!(
