@@ -154,6 +154,12 @@ tokio = { version = "1", features = ["rt", "net", "macros", "time"] }
 # 版本与旧壳根包 dev-dependency 声明一致。
 tower = { version = "0.5", features = ["util"] }
 http-body-util = "0.1"
+# 测试 logger 助手（#2109）：log facade 是 NSH 框架错误出口的记录面（nsh-core
+# 组件任务失败无 error boundary、nsh-engine host handler panic 等走 log::error!），
+# headless 测试进程缺省无 logger、记录静默丢弃——tests/support/test_logger.rs
+# 的 opt-in 助手经本依赖实现（stderr + 捕获快照）。版本随依赖树既有解析
+#（Cargo.lock 已锁 0.4.35，tracing 传递引入），不新增外部依赖面。
+log = "0.4"
 
 # 六件套易 panic 构造门禁经 workspace 继承（ADR-0060 / spec #1086 门禁前置）：
 # 本行是继承接线，缺失即门禁静默消失，由 scripts/check-structure.ts 守门。

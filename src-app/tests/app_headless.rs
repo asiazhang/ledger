@@ -47,6 +47,12 @@ use nsh_testing::Headless;
 #[path = "support/seed.rs"]
 mod seed;
 
+/// 测试 logger 助手（#2109）：headless 测试进程缺省无 logger、框架错误出口
+/// `log::error!` 静默丢弃的 opt-in 安装面（坑说明与捕获面见模块文档；示范
+/// 接线见 `backup_dialog_failure_reports_error`）。
+#[path = "support/test_logger.rs"]
+mod test_logger;
+
 use seed::{seed_cash_account, test_date};
 
 /// 与 `wait_for` 缺省同一超时（nsh-testing 的 `wait_for_gone` 需显式超时）。
@@ -6551,6 +6557,10 @@ fn backup_overwrite_guard_cancel_keeps_existing_file() {
 #[test]
 fn backup_dialog_failure_reports_error() {
     let _guard = SERIAL.lock().unwrap();
+    // 示范接线（#2109）：headless 缺省无 logger，框架错误出口 log::error! 静默
+    // 丢弃——失败路径排查前先 opt-in 安装（坑说明见 tests/support/
+    // test_logger.rs 模块文档；本测试屏面断言不变，安装仅让错误流可观察）。
+    test_logger::install_test_logger();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("backup-dialog-error");
 
@@ -6569,6 +6579,23 @@ fn backup_dialog_failure_reports_error() {
     assert!(
         app.screen().enabled("id:tx-backup").unwrap(),
         "失败后入口恢复可用"
+    );
+}
+
+/// 进程级接线自测（#2109，集成面持有：lib 测试进程与 `logging` 模块单测共存，
+/// 槽位归属不确定——见 tests/support/test_logger.rs「让位语义」）：安装后
+/// `log::error!` 可观察（捕获快照命中标记行）——删除 install_test_logger 内
+/// 的 `log::set_logger` 接线即红（错误出口回到静默丢弃，假阴性陷阱复现）。
+#[test]
+fn install_then_error_is_captured() {
+    test_logger::install_test_logger();
+    log::error!("test_logger-capture-probe-2109: 框架错误出口观察探针");
+    assert!(
+        test_logger::captured()
+            .iter()
+            .any(|l| l.contains("test_logger-capture-probe-2109")),
+        "安装后 log::error! 应落捕获快照（logger 缺位 = 静默丢弃，见模块文档）：{:?}",
+        test_logger::captured()
     );
 }
 
