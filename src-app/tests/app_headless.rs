@@ -281,8 +281,7 @@ fn app_window_renders_transaction_table_of_seeded_book() {
     let mut app = Headless::start(desktop_config()).unwrap();
 
     open_transactions(&mut app);
-    // 首屏装载锚（#2068 同口径）：open_transactions 只等表格挂载，格文本
-    // 是晚于步骤到达的后台读，装载前读屏即假红。
+    // 首屏装载锚（#2068 纪律见 open_transactions doc）：装载前读屏即假红。
     app.wait_for("text:2026-01-01").unwrap();
     let texts = app.screen().texts();
     for expected in ["日期", "类型", "金额", "2026-01-01", "支出", "¥25"] {
@@ -506,9 +505,8 @@ fn app_window_steps_back_by_previous_button() {
     let mut app = Headless::start(desktop_config()).unwrap();
 
     open_transactions(&mut app);
-    // 首行锚点 = 装载已落位（#2068：装载是晚于步骤到达的后台读，缺此锚
-    // 分页条未渲染、按压落空；与翻页用例同口径）。容器先行挂载、按钮行再
-    // 落一拍（#2072 间歇红根因）——按压前等目标页码按钮本身。
+    // 首行锚点 = 装载已落位（#2068 纪律见 open_transactions doc）。
+    // 容器先行挂载、按钮行再落一拍（#2072 间歇红根因）——按压前等目标页码按钮本身。
     app.wait_for("text:2026-05-30").unwrap();
     app.wait_for("id:tx-pagination").unwrap();
     app.wait_for("role:button[2]").unwrap();
@@ -1617,8 +1615,7 @@ fn app_window_renders_purchase_order_rows_with_count_by_transaction() {
 
     // 「共 N 条」按交易计：两个购买项行仍共 1 条（决策 14，购买项行不虚增计数）。
     open_transactions(&mut app);
-    // 首屏装载锚（#2068 同口径）：open_transactions 只等表格挂载，格文本
-    // 是晚于步骤到达的后台读，装载前读屏即假红。
+    // 首屏装载锚（#2068 纪律见 open_transactions doc）：装载前读屏即假红。
     app.wait_for("text:2026-01-15").unwrap();
     let texts = app.screen().texts();
     for expected in [
@@ -1892,8 +1889,7 @@ fn suppression_gate_blocks_pagination_key_while_period_popup_open() {
     let mut app = Headless::start(desktop_config()).unwrap();
 
     open_transactions(&mut app);
-    // 首行锚点同 #2068：装载前 `]` 被 next_page 幂等拦截静默丢弃，
-    // 后续等末页行集即超时红——先等装载落位再派发分页键。
+    // 先等装载落位再派发 `]`（#2068 纪律见 open_transactions doc；装载前按键被幂等拦截静默丢弃）。
     app.wait_for("text:2026-05-30").unwrap();
     app.press_key("]").unwrap();
     app.wait_for("text:2026-02-19").unwrap();
@@ -2169,8 +2165,7 @@ fn suppression_gate_blocks_pagination_key_while_danger_dialog_open() {
     let mut app = Headless::start(desktop_config()).unwrap();
 
     open_transactions(&mut app);
-    // 首行锚点同 #2068：装载前 `]` 被 next_page 幂等拦截静默丢弃，
-    // 后续等末页行集即超时红——先等装载落位再派发分页键。
+    // 先等装载落位再派发 `]`（#2068 纪律见 open_transactions doc；装载前按键被幂等拦截静默丢弃）。
     app.wait_for("text:2026-05-30").unwrap();
     app.press_key("]").unwrap();
 
@@ -6892,6 +6887,10 @@ fn seed_dashboard_book(tag: &str) -> std::path::PathBuf {
 /// 落位交易列表（出厂落点改回概览后的显式导航面，#2039 起首屏是概览）：等
 /// 侧栏就绪 → 点侧栏交易项 → 等表格挂载。各用例的交易/表单/筛选断言先经本
 /// 助手落位；概览视图自身的断言不经本助手。
+///
+/// #2068 装载锚纪律：挂载 ≠ 装载——本助手只等表格容器挂载，行格文本是晚
+/// 于步骤到达的后台读（装载前读屏即假红）；锚点先于按压/即时消费，第一
+/// 读、第一按前先等首行锚点落位。
 fn open_transactions(app: &mut Headless) {
     app.wait_for("id:nav-transactions").unwrap();
     app.press("id:nav-transactions").unwrap();
