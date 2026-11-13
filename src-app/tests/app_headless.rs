@@ -6627,8 +6627,9 @@ fn backup_dialog_failure_reports_error() {
     );
 }
 
-/// 进程级接线自测（#2109，集成面持有：lib 测试进程与 `logging` 模块单测共存，
-/// 槽位归属不确定——见 tests/support/test_logger.rs「让位语义」）：安装后
+/// 进程级接线自测（#2109 交付形态保留；lib 面同款自测已随 #2119 住
+/// `logging.rs` 单测——log 槽位归属经 init_with 的 cfg(test) 门特化后两侧都
+/// 确定，见 tests/support/test_logger.rs「让位语义」）：安装后
 /// `log::error!` 可观察（捕获快照命中标记行）——删除 install_test_logger 内
 /// 的 `log::set_logger` 接线即红（错误出口回到静默丢弃，假阴性陷阱复现）。
 #[test]
