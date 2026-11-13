@@ -333,13 +333,15 @@ fn guard_source_list_matches_directory_exactly() {
     );
 }
 
-/// 后台车道（含不经 lane 单轮骨架的每日汇率增量同步）必须是挂全局运行时的 async
-/// 任务（ADR-0125 决策 7 / issue #1413，删除即变红）：调度循环以
-/// `tauri::async_runtime::spawn` 拉起 async 任务，启动延迟与自然日窗口用
-/// `tokio::time::sleep` 异步定时；生产面零自建线程。把调度循环改回
-/// `std::thread::spawn` + `std::thread::sleep`（或删掉异步执行器接线）本测即红
-/// ——「删除即变红」的负向半边，与 `scripts/check-background-services.ts`
-/// 的成对拉起守门互补（那边管「在哪拉起」，本测管「以什么执行器拉起」）。
+/// 后台车道（含不经 lane 单轮骨架的每日汇率增量同步）必须是宿主运行时上的
+/// async 任务（ADR-0125 决策 7 / issue #1413，删除即变红）：调度循环经宿主
+/// 执行器接缝（`start_daily_lane_kernel`，#2079 注入；旧壳
+/// `tauri::async_runtime` 全局运行时包装随 #2083 退役）拉起 async 任务，
+/// 启动延迟与自然日窗口用 `tokio::time::sleep` 异步定时；生产面零自建线程。
+/// 把调度循环改回 `std::thread::spawn` + `std::thread::sleep`（或删掉异步
+/// 执行器接线）本测即红——「删除即变红」的负向半边；旧壳成对拉起守门
+/// `scripts/check-background-services.ts`（「在哪拉起」半边）已随 #2083
+/// 退役，本测是执行器形态的唯一自动化半边。
 ///
 /// issue #1622 收敛后，执行器与异步定时接线单点住 lane.rs（三车道共用调度循环
 /// `start_daily_lane`）；车道模块只留接线（调起共享循环）与本车道编排——车道

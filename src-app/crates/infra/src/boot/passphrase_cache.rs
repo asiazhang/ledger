@@ -20,8 +20,9 @@
 //! 评估当前生物特征，不与条目绑定）。
 //!
 //! 运行形态分叉（issue #662「开发态回退」）：形态判别收口 `uses_biometry_gate`（本模块
-//! 私有纯函数，输入构建 profile）：**发布构建读取前过 LA 门**；开发/未签名构建
-//! （`tauri dev` / debug）降级为无门形态——写入与发布形态完全相同（普通条目），
+//! 私有纯函数，输入构建 profile）：**发布构建读取前过 LA 门**；开发构建
+//!（debug profile，`cfg!(debug_assertions)`；旧 `tauri dev` 开发回路已随
+//! #2083 切轨退役）降级为无门形态——写入与发布形态完全相同（普通条目），
 //! 读取不弹生物认证直接读出，本地 dev 的「自动解锁」不依赖签名基建进度立即
 //! 可用。两形态共用同一 service/account 的传统 file-based 钥匙串，`store`
 //! 先删后建，形态切换不留混合条目。
@@ -88,8 +89,9 @@ pub fn supported() -> bool {
     cfg!(target_os = "macos")
 }
 
-/// 当前进程是否为开发/未签名构建（issue #662）：`tauri dev` 与 debug 构建均属
-/// 开发态（`cfg!(debug_assertions)`）；release 构建为发布态。
+/// 当前进程是否为开发构建（issue #662）：debug profile 构建属开发态
+///（`cfg!(debug_assertions)`；旧 `tauri dev` 开发回路随 #2083 切轨退役）；
+/// release 构建为发布态。
 pub(crate) fn is_dev_build() -> bool {
     cfg!(debug_assertions)
 }
