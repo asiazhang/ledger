@@ -4833,6 +4833,61 @@ fn form_creates_income_with_income_only_category_candidates() {
     );
 }
 
+/// 可清空形态清除钮守卫（#2063，select.rs / multi_select.rs 清除钮同位）：
+/// 分类未选中时 ✕ 不在屏，选中后呈现，清除后消失（触发件回占位）。「删除
+/// 即红」负向条目：删 pinyin_select.rs 清除钮的 when(selected.is_some())
+/// 守卫 → 未选中段断言红（✕ 随 clearable 常驻渲染）。
+#[test]
+fn form_category_clear_button_shows_only_while_selected() {
+    let _guard = SERIAL.lock().unwrap();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("form-category-clear-guard");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        seed_cash_account(&db);
+        seed_category(&db, "餐饮", None);
+    }
+
+    nsh_app::app::set_book_dir(dir.clone());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_transactions(&mut app);
+
+    app.wait_for("text:暂无数据").unwrap();
+    open_create_form(&mut app, "id:tx-add-expense", "记一笔 · 支出");
+
+    // 未选中：清除钮不在屏（守卫缺席即随 clearable 常驻渲染，此处红）。
+    assert_eq!(
+        app.screen().count("id:tx-form-category-clear").unwrap(),
+        0,
+        "分类未选中时清除钮不渲染：{:?}",
+        app.screen().texts()
+    );
+
+    // 选中分类：清除钮呈现。
+    app.press("id:tx-form-category").unwrap();
+    app.wait_for("id:tx-form-category-option").unwrap();
+    app.press("id:tx-form-category-option >> text:餐饮")
+        .unwrap();
+    app.settle();
+    app.wait_for("id:tx-form-category-clear").unwrap();
+
+    // 清除：落 None，清除钮消失、触发件回占位文案。
+    app.press("id:tx-form-category-clear").unwrap();
+    app.wait_for_gone("id:tx-form-category-clear", DEFAULT_WAIT)
+        .unwrap();
+    assert_eq!(
+        app.screen().count("id:tx-form-category-clear").unwrap(),
+        0,
+        "清除后清除钮不渲染：{:?}",
+        app.screen().texts()
+    );
+    assert!(
+        app.shows("选择分类"),
+        "清除后触发件回占位文案：{:?}",
+        app.screen().texts()
+    );
+}
+
 /// 编辑回填与保存旅程（用户故事 5/6）：右键收入/支出行 → 编辑 → 弹窗回填
 /// 全部业务字段（金额文本 / 日期 / 备注 / 商户口名）→ 改金额保存 → 列表
 /// 刷新呈现新值。删掉编辑提交成功分支的失效信号广播（txn_form::
