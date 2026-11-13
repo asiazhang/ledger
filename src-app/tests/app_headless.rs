@@ -82,10 +82,11 @@ fn press_after(app: &mut Headless, anchor: &str, target: &str) -> Result<(), Str
     app.press(target)
 }
 
-/// [`press_after`] 的右键同形：`right_click` 与 `press` 同为「不等目标出
-/// 现、立即寻址落屏目标」的交互步，行集异步落屏的竞态面相同（#2068 范围
+/// [`press_after`] 的右键同形——`right_click` 的锚点先于按压形态：先等
+/// `anchor` 落屏，再右键 `target`。`right_click` 与 `press` 同为「不等目标
+/// 出现、立即寻址落屏目标」的交互步，行集异步落屏的竞态面相同（#2068 范围
 /// 外报告的行右键站点族），纪律同 [`press_after`]。
-fn click_after(app: &mut Headless, anchor: &str, target: &str) -> Result<(), String> {
+fn right_click_after(app: &mut Headless, anchor: &str, target: &str) -> Result<(), String> {
     app.wait_for(anchor)?;
     app.right_click(target)
 }
@@ -280,8 +281,7 @@ fn app_window_renders_transaction_table_of_seeded_book() {
     let mut app = Headless::start(desktop_config()).unwrap();
 
     open_transactions(&mut app);
-    // 首屏装载锚（#2068 同口径）：open_transactions 只等表格挂载，格文本
-    // 是晚于步骤到达的后台读，装载前读屏即假红。
+    // 首屏装载锚（#2068 纪律见 open_transactions doc）：装载前读屏即假红。
     app.wait_for("text:2026-01-01").unwrap();
     let texts = app.screen().texts();
     for expected in ["日期", "类型", "金额", "2026-01-01", "支出", "¥25"] {
@@ -505,9 +505,8 @@ fn app_window_steps_back_by_previous_button() {
     let mut app = Headless::start(desktop_config()).unwrap();
 
     open_transactions(&mut app);
-    // 首行锚点 = 装载已落位（#2068：装载是晚于步骤到达的后台读，缺此锚
-    // 分页条未渲染、按压落空；与翻页用例同口径）。容器先行挂载、按钮行再
-    // 落一拍（#2072 间歇红根因）——按压前等目标页码按钮本身。
+    // 首行锚点 = 装载已落位（#2068 纪律见 open_transactions doc）。
+    // 容器先行挂载、按钮行再落一拍（#2072 间歇红根因）——按压前等目标页码按钮本身。
     app.wait_for("text:2026-05-30").unwrap();
     app.wait_for("id:tx-pagination").unwrap();
     app.wait_for("role:button[2]").unwrap();
@@ -1259,7 +1258,7 @@ fn app_window_wrapper_family_uses_type_scale_and_theme_tokens() {
     // 危险确认对话框（error 级）：标题 = BODY 16、说明段 = SECONDARY 14 +
     // muted 亮档、警示句 = SECONDARY 14 + destructive 亮档、确认钮前景 =
     // destructive-foreground。
-    click_after(&mut app, "text:2026-01-01", "text:2026-01-01").unwrap();
+    right_click_after(&mut app, "text:2026-01-01", "text:2026-01-01").unwrap();
     app.choose_menu_item("删除").unwrap();
     app.wait_for("text:删除交易").unwrap();
     assert_eq!(
@@ -1390,7 +1389,7 @@ fn app_window_wrapper_family_uses_type_scale_and_theme_tokens() {
 
     // 危险确认对话框暗态：警示句随分级令牌转暗档（亮 0xd03050 → 暗
     // 0xe88080）——主题单点消费的判别性证据。
-    click_after(&mut app, "text:2026-01-01", "text:2026-01-01").unwrap();
+    right_click_after(&mut app, "text:2026-01-01", "text:2026-01-01").unwrap();
     app.choose_menu_item("删除").unwrap();
     app.wait_for("text:删除交易").unwrap();
     assert_eq!(
@@ -1616,8 +1615,7 @@ fn app_window_renders_purchase_order_rows_with_count_by_transaction() {
 
     // 「共 N 条」按交易计：两个购买项行仍共 1 条（决策 14，购买项行不虚增计数）。
     open_transactions(&mut app);
-    // 首屏装载锚（#2068 同口径）：open_transactions 只等表格挂载，格文本
-    // 是晚于步骤到达的后台读，装载前读屏即假红。
+    // 首屏装载锚（#2068 纪律见 open_transactions doc）：装载前读屏即假红。
     app.wait_for("text:2026-01-15").unwrap();
     let texts = app.screen().texts();
     for expected in [
@@ -1891,8 +1889,7 @@ fn suppression_gate_blocks_pagination_key_while_period_popup_open() {
     let mut app = Headless::start(desktop_config()).unwrap();
 
     open_transactions(&mut app);
-    // 首行锚点同 #2068：装载前 `]` 被 next_page 幂等拦截静默丢弃，
-    // 后续等末页行集即超时红——先等装载落位再派发分页键。
+    // 先等装载落位再派发 `]`（#2068 纪律见 open_transactions doc；装载前按键被幂等拦截静默丢弃）。
     app.wait_for("text:2026-05-30").unwrap();
     app.press_key("]").unwrap();
     app.wait_for("text:2026-02-19").unwrap();
@@ -2007,7 +2004,7 @@ fn row_context_menu_delete_confirms_then_refreshes_list() {
 
     // 行右键 → 上下文菜单呈现（zh-CN 文案与旧壳 transactions.menu.delete 同词
     // 表；#2035 起支出行带退款项）。
-    click_after(&mut app, "text:2026-01-01", "text:2026-01-01").unwrap();
+    right_click_after(&mut app, "text:2026-01-01", "text:2026-01-01").unwrap();
     let menu = app.menu().expect("右键应打开上下文菜单");
     assert_eq!(
         menu.iter().map(|e| e.label.as_str()).collect::<Vec<_>>(),
@@ -2058,7 +2055,7 @@ fn row_context_menu_delete_cancel_writes_nothing() {
     let mut app = Headless::start(desktop_config()).unwrap();
 
     open_transactions(&mut app);
-    click_after(&mut app, "text:2026-01-01", "text:2026-01-01").unwrap();
+    right_click_after(&mut app, "text:2026-01-01", "text:2026-01-01").unwrap();
     app.choose_menu_item("删除").unwrap();
     app.wait_for("text:删除交易").unwrap();
 
@@ -2093,7 +2090,7 @@ fn row_context_menu_delete_escape_writes_nothing() {
     let mut app = Headless::start(desktop_config()).unwrap();
 
     open_transactions(&mut app);
-    click_after(&mut app, "text:2026-01-01", "text:2026-01-01").unwrap();
+    right_click_after(&mut app, "text:2026-01-01", "text:2026-01-01").unwrap();
     app.choose_menu_item("删除").unwrap();
     app.wait_for("text:删除交易").unwrap();
 
@@ -2127,7 +2124,7 @@ fn row_context_menu_escape_closes_menu_writes_nothing() {
     let mut app = Headless::start(desktop_config()).unwrap();
 
     open_transactions(&mut app);
-    click_after(&mut app, "text:2026-01-01", "text:2026-01-01").unwrap();
+    right_click_after(&mut app, "text:2026-01-01", "text:2026-01-01").unwrap();
     assert!(
         app.menu()
             .is_some_and(|items| items.iter().any(|e| e.label == "删除")),
@@ -2168,13 +2165,12 @@ fn suppression_gate_blocks_pagination_key_while_danger_dialog_open() {
     let mut app = Headless::start(desktop_config()).unwrap();
 
     open_transactions(&mut app);
-    // 首行锚点同 #2068：装载前 `]` 被 next_page 幂等拦截静默丢弃，
-    // 后续等末页行集即超时红——先等装载落位再派发分页键。
+    // 先等装载落位再派发 `]`（#2068 纪律见 open_transactions doc；装载前按键被幂等拦截静默丢弃）。
     app.wait_for("text:2026-05-30").unwrap();
     app.press_key("]").unwrap();
 
     // 右键行 → 菜单 → 删除 → 危险确认对话框开（注册抑制的弹层）。
-    click_after(&mut app, "text:2026-02-19", "text:2026-02-19").unwrap();
+    right_click_after(&mut app, "text:2026-02-19", "text:2026-02-19").unwrap();
     app.choose_menu_item("删除").unwrap();
     app.wait_for("text:删除交易").unwrap();
 
@@ -2280,7 +2276,7 @@ fn purchase_item_row_right_click_deletes_whole_transaction() {
     open_transactions(&mut app);
 
     // 右键购买项**续行**（非首行）→ 菜单 → 删除 → 确认。
-    click_after(&mut app, "text:洗衣液 共 1 件", "text:洗衣液 共 1 件").unwrap();
+    right_click_after(&mut app, "text:洗衣液 共 1 件", "text:洗衣液 共 1 件").unwrap();
     app.choose_menu_item("删除").unwrap();
     app.wait_for("text:删除交易").unwrap();
     app.press("id:danger-confirm").unwrap();
@@ -4141,7 +4137,7 @@ fn sort_menu_reorders_key_band_and_persists_across_restart() {
 
     // 右键预算 → 移到顶部 → ⌘1 落预算（键位带内随动的用户可见凭据；预算
     // 视图已真实化，落位凭据 = 预算视图内容「新增预算」在屏，占位反馈离场）。
-    click_after(&mut app, "id:nav-budget", "id:nav-budget").unwrap();
+    right_click_after(&mut app, "id:nav-budget", "id:nav-budget").unwrap();
     app.choose_menu_item("移到顶部").unwrap();
     app.press_key("mod+1").unwrap();
     app.wait_for("text:新增预算").unwrap();
@@ -4162,7 +4158,7 @@ fn sort_menu_reorders_key_band_and_persists_across_restart() {
     );
 
     // 恢复默认排序 → ⌘1 回交易（出厂序）。
-    click_after(&mut app, "id:nav-budget", "id:nav-budget").unwrap();
+    right_click_after(&mut app, "id:nav-budget", "id:nav-budget").unwrap();
     app.choose_menu_item("恢复默认排序").unwrap();
     app.press_key("mod+1").unwrap();
     app.wait_for("text:共 3 条").unwrap();
@@ -4184,7 +4180,7 @@ fn context_menus_move_item_into_more_and_back() {
     open_transactions(&mut app);
 
     // 移入更多：侧栏预算消失、⌘3 空键待命。
-    click_after(&mut app, "id:nav-budget", "id:nav-budget").unwrap();
+    right_click_after(&mut app, "id:nav-budget", "id:nav-budget").unwrap();
     app.choose_menu_item("移入更多").unwrap();
     app.settle();
     assert!(
@@ -4197,7 +4193,7 @@ fn context_menus_move_item_into_more_and_back() {
 
     // 容器出现预算页签；页签右键移回（记账组主项 2 项未满 3，可移回）。
     app.press("id:nav-more-bookkeeping").unwrap();
-    click_after(&mut app, "id:more-tab-budget", "id:more-tab-budget").unwrap();
+    right_click_after(&mut app, "id:more-tab-budget", "id:more-tab-budget").unwrap();
     app.choose_menu_item("移回侧栏").unwrap();
     app.settle();
     assert!(
@@ -4238,7 +4234,7 @@ fn move_back_menu_is_disabled_when_group_full() {
     open_transactions(&mut app);
 
     app.press("id:nav-more-bookkeeping").unwrap();
-    click_after(&mut app, "id:more-tab-scheduled", "id:more-tab-scheduled").unwrap();
+    right_click_after(&mut app, "id:more-tab-scheduled", "id:more-tab-scheduled").unwrap();
     let menu = app.menu().expect("右键应弹出菜单");
     let back = menu
         .iter()
@@ -4274,7 +4270,7 @@ fn view_state_round_trips_across_restart() {
     open_transactions(&mut app);
 
     // 排序（物品移到资产组顶部）+ 导航到账户。
-    click_after(&mut app, "id:nav-items", "id:nav-items").unwrap();
+    right_click_after(&mut app, "id:nav-items", "id:nav-items").unwrap();
     app.choose_menu_item("移到顶部").unwrap();
     app.press("id:nav-accounts").unwrap();
     app.wait_for("text:新增账户").unwrap();
@@ -4966,7 +4962,7 @@ fn form_edits_expense_with_backfill_and_refreshes() {
     let mut app = Headless::start(desktop_config()).unwrap();
     open_transactions(&mut app);
 
-    click_after(&mut app, "text:2026-01-01", "text:2026-01-01").unwrap();
+    right_click_after(&mut app, "text:2026-01-01", "text:2026-01-01").unwrap();
     app.choose_menu_item("编辑").unwrap();
     app.wait_for("text:编辑交易").unwrap();
 
@@ -5232,7 +5228,7 @@ fn form_attaches_policy_and_clears_it() {
     assert!(policy_id.is_some(), "挂单保存落 policy_id");
 
     // 清除：编辑面清除按钮（✕）落 None——「挂单可清除」语义。
-    click_after(&mut app, "text:¥200", "text:¥200").unwrap(); // 金额格文本寻址该行（单行账本）
+    right_click_after(&mut app, "text:¥200", "text:¥200").unwrap(); // 金额格文本寻址该行（单行账本）
     app.choose_menu_item("编辑").unwrap();
     app.wait_for("text:编辑交易").unwrap();
     app.press("id:tx-form-policy-clear").unwrap();
@@ -5478,7 +5474,7 @@ fn transfer_form_edits_with_dual_account_backfill() {
     let mut app = Headless::start(desktop_config()).unwrap();
     open_transactions(&mut app);
 
-    click_after(&mut app, "text:2026-01-01", "text:2026-01-01").unwrap();
+    right_click_after(&mut app, "text:2026-01-01", "text:2026-01-01").unwrap();
     app.choose_menu_item("编辑").unwrap();
     app.wait_for("text:编辑交易").unwrap();
 
@@ -5639,7 +5635,7 @@ fn lending_form_edit_derives_direction_and_backfills() {
     let mut app = Headless::start(desktop_config()).unwrap();
     open_transactions(&mut app);
 
-    click_after(&mut app, "text:2026-02-01", "text:2026-02-01").unwrap();
+    right_click_after(&mut app, "text:2026-02-01", "text:2026-02-01").unwrap();
     app.choose_menu_item("编辑").unwrap();
     app.wait_for("text:编辑交易").unwrap();
 
@@ -5787,7 +5783,7 @@ fn refund_form_creates_refund_from_row_with_default_amount() {
     let mut app = Headless::start(desktop_config()).unwrap();
     open_transactions(&mut app);
 
-    click_after(&mut app, "text:2026-01-01", "text:2026-01-01").unwrap();
+    right_click_after(&mut app, "text:2026-01-01", "text:2026-01-01").unwrap();
     app.choose_menu_item("退款").unwrap();
     app.wait_for("text:记一笔 · 退款").unwrap();
 
@@ -5891,7 +5887,7 @@ fn refund_form_edit_preserves_original_link() {
     let mut app = Headless::start(desktop_config()).unwrap();
     open_transactions(&mut app);
 
-    click_after(&mut app, "text:2026-01-05", "text:2026-01-05").unwrap();
+    right_click_after(&mut app, "text:2026-01-05", "text:2026-01-05").unwrap();
     app.choose_menu_item("编辑").unwrap();
     app.wait_for("text:编辑交易").unwrap();
 
@@ -6008,7 +6004,7 @@ fn row_menu_open_face_follows_kind_and_subrows() {
     open_transactions(&mut app);
 
     // 普通支出行：编辑 + 退款 + 加入物品（#2044）+ 删除。
-    click_after(&mut app, "text:2026-01-01", "text:2026-01-01").unwrap();
+    right_click_after(&mut app, "text:2026-01-01", "text:2026-01-01").unwrap();
     let menu = app.menu().expect("右键应打开上下文菜单");
     assert_eq!(
         menu.iter().map(|e| e.label.as_str()).collect::<Vec<_>>(),
@@ -6021,7 +6017,7 @@ fn row_menu_open_face_follows_kind_and_subrows() {
     // 出资分解行：编辑开放（表单③子行编辑；进出资分解族回填）+ 不开放退
     // 款（#1861 口径）+ 加入物品（#2044；分解行也是支出行——溯源口径同
     // 旧壳 row-menu:分解行保留加入物品）+ 删除。
-    click_after(&mut app, "text:2026-01-02", "text:2026-01-02").unwrap();
+    right_click_after(&mut app, "text:2026-01-02", "text:2026-01-02").unwrap();
     let menu = app.menu().expect("右键应打开上下文菜单");
     assert_eq!(
         menu.iter().map(|e| e.label.as_str()).collect::<Vec<_>>(),
@@ -6032,7 +6028,7 @@ fn row_menu_open_face_follows_kind_and_subrows() {
     app.settle();
 
     // 退款行：编辑（本票扩展）+ 删除，不带退款项（退款入口只对支出行）。
-    click_after(&mut app, "text:2026-01-03", "text:2026-01-03").unwrap();
+    right_click_after(&mut app, "text:2026-01-03", "text:2026-01-03").unwrap();
     let menu = app.menu().expect("右键应打开上下文菜单");
     assert_eq!(
         menu.iter().map(|e| e.label.as_str()).collect::<Vec<_>>(),
@@ -6227,7 +6223,7 @@ fn funding_form_edits_split_backfill_and_refreshes() {
     open_transactions(&mut app);
 
     // 菜单形状：分解行开放编辑（子行守卫解除）+ 不开放退款（#1861 口径）。
-    click_after(&mut app, "text:2026-01-02", "text:2026-01-02").unwrap();
+    right_click_after(&mut app, "text:2026-01-02", "text:2026-01-02").unwrap();
     let menu = app.menu().expect("右键应打开上下文菜单");
     let labels: Vec<_> = menu.iter().map(|e| e.label.as_str()).collect();
     assert!(labels.contains(&"编辑"), "分解行开放编辑：{labels:?}");
@@ -6407,7 +6403,7 @@ fn purchase_form_edits_item_rows_backfill_add_delete() {
     let mut app = Headless::start(desktop_config()).unwrap();
     open_transactions(&mut app);
 
-    click_after(&mut app, "text:2026-01-02", "text:2026-01-02").unwrap();
+    right_click_after(&mut app, "text:2026-01-02", "text:2026-01-02").unwrap();
     let menu = app.menu().expect("右键应打开上下文菜单");
     let labels: Vec<_> = menu.iter().map(|e| e.label.as_str()).collect();
     assert!(
@@ -6891,6 +6887,10 @@ fn seed_dashboard_book(tag: &str) -> std::path::PathBuf {
 /// 落位交易列表（出厂落点改回概览后的显式导航面，#2039 起首屏是概览）：等
 /// 侧栏就绪 → 点侧栏交易项 → 等表格挂载。各用例的交易/表单/筛选断言先经本
 /// 助手落位；概览视图自身的断言不经本助手。
+///
+/// #2068 装载锚纪律：挂载 ≠ 装载——本助手只等表格容器挂载，行格文本是晚
+/// 于步骤到达的后台读（装载前读屏即假红）；锚点先于按压/即时消费，第一
+/// 读、第一按前先等首行锚点落位。
 fn open_transactions(app: &mut Headless) {
     app.wait_for("id:nav-transactions").unwrap();
     app.press("id:nav-transactions").unwrap();
@@ -7173,7 +7173,7 @@ fn search_view_results_are_read_only_no_row_menu() {
 
     // 命中行右键：无上下文菜单弹出（交易列表同路径右键有「编辑/退款/删除」
     // 三项——搜索页是只读结果面，无此形态）。
-    click_after(&mut app, "text:2026-01-01", "text:2026-01-01").unwrap();
+    right_click_after(&mut app, "text:2026-01-01", "text:2026-01-01").unwrap();
     app.settle();
     assert!(
         app.menu().is_none(),
@@ -8454,7 +8454,7 @@ fn accounts_view_delete_needs_confirmation_and_cancels_before_write() {
     open_accounts(&mut app);
 
     // 右键开菜单（另一入口同位==原注释）→ 删除。
-    click_after(&mut app, "text:测试现金", "text:测试现金").unwrap();
+    right_click_after(&mut app, "text:测试现金", "text:测试现金").unwrap();
     app.choose_menu_item("删除").unwrap();
     app.wait_for("text:删除账户").unwrap();
     app.wait_for("text:删除后相关交易仍保留。").unwrap();
@@ -8955,7 +8955,7 @@ fn items_view_create_from_transaction_menu_journey() {
     open_transactions(&mut app);
 
     // 行右键 → 菜单带「加入物品」（无物品行 enabled）。
-    click_after(&mut app, "text:2026-01-01", "text:2026-01-01").unwrap();
+    right_click_after(&mut app, "text:2026-01-01", "text:2026-01-01").unwrap();
     let menu = app.menu().expect("右键应打开上下文菜单");
     assert_eq!(
         menu.iter().map(|e| e.label.as_str()).collect::<Vec<_>>(),
@@ -8988,7 +8988,7 @@ fn items_view_create_from_transaction_menu_journey() {
 
     // 溯源唯一（ADR-0025）出口面：回交易页行菜单「加入物品」已置灰。
     open_transactions(&mut app);
-    click_after(&mut app, "text:电饭煲", "text:2026-01-01").unwrap();
+    right_click_after(&mut app, "text:电饭煲", "text:2026-01-01").unwrap();
     let menu = app.menu().expect("右键应打开上下文菜单");
     let add = menu
         .iter()
@@ -13462,7 +13462,7 @@ fn auto_backup_triggers_after_shell_write_and_card_refreshes() {
 
     // 用户写路径：行右键 → 删除 → 确认（壳写函数族经统一写入口 → 提交点
     // 置脏 + 写时顺带到期检查 → BackupNow）。
-    click_after(&mut app, "text:2026-01-01", "text:2026-01-01").unwrap();
+    right_click_after(&mut app, "text:2026-01-01", "text:2026-01-01").unwrap();
     app.choose_menu_item("删除").unwrap();
     app.wait_for("text:删除交易").unwrap();
     app.press("id:danger-confirm").unwrap();
