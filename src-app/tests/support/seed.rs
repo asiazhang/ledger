@@ -151,7 +151,9 @@ pub fn expense_input_with_category(
     TransactionInput {
         category_id: category_id.map(str::to_owned),
         note: note.map(str::to_owned),
-        ..expense_input(account, date, amount_cents, note.unwrap_or_default())
+        // 底座 note 载荷由外层 struct update 唯一决定，传固定空串占位：
+        // 不随外层 note 派生（旧写法 None 时先造 Some("") 再被覆盖，属死载荷）。
+        ..expense_input(account, date, amount_cents, "")
     }
 }
 
