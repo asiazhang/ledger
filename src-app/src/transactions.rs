@@ -454,6 +454,12 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
     // 筛选会话态——清除筛选与 ESC 复位不触达）。列表态装载时机读值（搜索
     // 态不携带：域搜索读路径无此维度，ADR-0136 决策 4 搜索面不动）。
     let hide_investment = tx_view_preferences::store();
+    // total 会话缓存（#2011）：最近一次列表态读的 (筛选签名, total)。同签名
+    // 翻页不重跑全量 COUNT（真实库无日期范围 COUNT ~117ms，票面证据）；
+    // 写后失效在 reload_after_delete（失效信号订阅处理器）清零——total 与
+    // 行集同一读路径刷新。视图实例作用域：重挂即新缓存（首读一次 COUNT），
+    // 无跨账本/跨场景残留面。
+    let total_cache = signal(None::<(boot::TxListQuery, i64)>);
     let amount_min_text = signal(String::new());
     let amount_max_text = signal(String::new());
     // 行删除态（issue #2022）：待确认删除的交易 id（Some = 危险确认对话框开）
@@ -542,6 +548,35 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
         // 同纪律）：列表态载荷携带，搜索态不携带（ADR-0136 决策 4）。
         let hide_investment_related = hide_investment.get_untracked();
         let db = db_slot().clone();
+        // 列表态查询载荷在引擎线程一次成形（#2011）：它同时是 total 会话复用
+        // 的筛选签名——全字段相等（页码不进载荷）= 同签名，翻页可复用已算得
+        // 的 total；搜索态不参与（搜索读路径自带命中计数，无此开关）。
+        let list_query = (!searching).then(|| boot::TxListQuery {
+            range: state.range.clone(),
+            kinds: tx_filter::resolve_request_kinds(state.kinds.as_deref()),
+            involving_account_id: state.involving_account_id.clone(),
+            merchant_id: state.merchant_id.clone(),
+            category_id: state.category.as_ref().and_then(|c| match c {
+                tx_filter::CategoryFilter::Exact(id) => Some(id.clone()),
+                tx_filter::CategoryFilter::UncategorizedOnly => None,
+            }),
+            uncategorized_only: matches!(
+                state.category,
+                Some(tx_filter::CategoryFilter::UncategorizedOnly)
+            ),
+            // 视图偏好先决收窄（ADR-0136 决策 1/3）：偏好不是筛选维度，不入
+            // 会话态（snapshot 不含它）、不参与清除/ESC；行集 = 偏好收窄 ∩
+            // 既有筛选，下钻不让位（服务端 total 同口径）。删除本行即红：
+            // 开关切换行集不变（headless 旅程测试）。
+            hide_investment_related,
+        });
+        // 签名命中即翻页复用（#2011）：skip_total 直传域读路径（不跑全量
+        // COUNT），total 用缓存值回填；未命中走默认读并在落位处写缓存。
+        let reused_total = total_cache
+            .get_untracked()
+            .filter(|(signature, _)| list_query.as_ref().is_some_and(|q| q == signature))
+            .map(|(_, total)| total);
+        let reuse_total = reused_total.is_some();
         // 任务挂视图实例 owner（perform_delete 先例同形）：处理器可能运行在
         // 即将卸载的子树 owner 下——筛选条清除钮/弹层选项按下后随状态翻转即
         // 时卸载（#2037 起多了一类「按下即自卸载」的触发面），直呼 spawn 会
@@ -562,35 +597,24 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
                 // 与行集一并走错误呈现。数据期间边界读失败不拖垮页呈现：钳制退化为不钳制
                 // （旧壳 silent 同口径），保留旧值到下次成功替换。表单参考数据源与原始
                 // 行集随装载一并落位（#2034：编辑回填与选项面的同一事实源）。
+                // 阻塞任务持载荷克隆（全字段小结构，廉价）；本体留在本异步块
+                // 供落位处写会话缓存（#2011）。
+                let blocking_query = list_query.clone();
                 let outcome = blocking(move || {
-                    let page_read = if !searching {
-                        // 列表态：筛选维度 + 期间快照 + 默认 kind 收窄（投资 kind
-                        // 排除是读接缝单点，ADR-0135）。
-                        boot::transaction_page(
-                            &db,
-                            page_no,
-                            &boot::TxListQuery {
-                                range: state.range.clone(),
-                                kinds: tx_filter::resolve_request_kinds(state.kinds.as_deref()),
-                                involving_account_id: state.involving_account_id.clone(),
-                                merchant_id: state.merchant_id.clone(),
-                                category_id: state.category.as_ref().and_then(|c| match c {
-                                    tx_filter::CategoryFilter::Exact(id) => Some(id.clone()),
-                                    tx_filter::CategoryFilter::UncategorizedOnly => None,
-                                }),
-                                uncategorized_only: matches!(
-                                    state.category,
-                                    Some(tx_filter::CategoryFilter::UncategorizedOnly)
-                                ),
-                                // 视图偏好先决收窄（ADR-0136 决策 1/3）：偏好不是筛选
-                                // 维度，不入会话态（snapshot 不含它）、不参与清除/ESC；
-                                // 行集 = 偏好收窄 ∩ 既有筛选，下钻不让位（服务端
-                                // total 同口径）。删除本行即红：开关切换行集不变
-                                // （headless 旅程测试）。
-                                hide_investment_related,
+                    let page_read = if let Some(list_query) = blocking_query.as_ref() {
+                        // 列表态：筛选维度 + 期间快照 + 默认 kind 收窄（投资
+                        // kind 排除是读接缝单点，ADR-0135）；同签名翻页
+                        // skip_total（#2011，total 由调用方缓存回填）。
+                        boot::transaction_page(&db, page_no, list_query, reuse_total).map(
+                            |result| {
+                                let total = if reuse_total {
+                                    reused_total.unwrap_or_default()
+                                } else {
+                                    result.total
+                                };
+                                PageRead::new(result.items, total)
                             },
                         )
-                        .map(|result| PageRead::new(result.items, result.total))
                     } else {
                         // 搜索态：关键词 + 金额区间 + 期间快照（裁决后期间对搜索
                         // 命中面生效，旧壳搜索页同口径）；账户/商户/分类/类型维度
@@ -663,6 +687,13 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
                         merchant_rows,
                         policy_rows,
                     })) => {
+                        // 新签名首读落缓存（#2011）：复用读不落（值未变）；
+                        // 落位与行集同批，写后失效由订阅处理器清零。
+                        if let Some(list_query) = &list_query
+                            && !reuse_total
+                        {
+                            total_cache.set(Some((list_query.clone(), total_count)));
+                        }
                         // 表单参考数据源与编辑回填锚点（原始行集）随装载落位
                         //（#2034：与列表同一读批的同一事实源）。
                         tx_items.set(txn_form::TxItems(items.clone()));
@@ -700,6 +731,10 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
     // 以删后页码决策（保持当前页 / 本页删空回退一页，旧壳 afterRowDelete
     // ADR-0045 同语义）重读。订阅句柄随视图实例存亡；生产进程一视图一订阅。
     let reload_after_delete = move || {
+        // 写后失效（#2011）：失效广播到达即清 total 会话缓存——本次重读重算
+        // total，下一轮同签名翻页在新基线上复用。全部交易写路径（表单提交/
+        // 行删除/HTTP 导入/同步重放/定时执行）汇于此同一订阅点。
+        total_cache.set(None);
         let target = assembly::page_after_row_delete(filters.page.get(), total.get())
             .unwrap_or_else(|| filters.page.get());
         filters.set_page(target);

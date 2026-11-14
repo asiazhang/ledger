@@ -207,6 +207,17 @@ pub fn open_file_scratch(tag: &str) -> (Connection, ScratchDir) {
     (conn, dir)
 }
 
+/// headless 集成测试用：进程会话账本库句柄（[`crate::app::db_slot`] 的 Arc
+/// 克隆）。用途：对应用自身的读连接做语句级观察（如 #2011 翻页 COUNT 计数
+/// ——trace_v2 回调须注册在被测执行的那条连接上，测试自建连接观察不到应用
+/// 内语句）。会话未就绪（Headless 启动完成前）返回 `None`；连接注册属测试
+/// 现场装置，顶掉建连收尾的 PROFILE 耗时 hook（snapshot_probe 同款注记），
+/// app 实例随用例存亡、无需回装。生产面零暴露（模块门
+/// `cfg(any(test, feature = "test-utils"))`）。
+pub fn session_db() -> Option<std::sync::Arc<ledger_infra::db::DbState>> {
+    crate::app::db_slot().clone()
+}
+
 /// 测试接线单点（[`open`] / [`open_file`] / [`open_file_scratch`] 共享；测试库与
 /// 生产同形，幂等、先装者优先）：
 /// - 提交点后置动作（spec #1086 / issue #1088）：连接层写入口的副作用实现由域侧

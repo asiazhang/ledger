@@ -119,11 +119,21 @@ pub fn list_transactions_internal(
             );
         }
 
-        let total: i64 = conn.query_row(
-            &format!("SELECT COUNT(*) FROM transactions {where_clause}"),
-            rusqlite::params_from_iter(params.iter()),
-            |r| r.get(0),
-        )?;
+        // 全量 COUNT 按调用方开关跳过（issue #2011）：同筛选签名的会话复用
+        // 翻页读置 skip_total，本读不再跑 COUNT（真实库无日期范围 COUNT
+        // ~117ms，票面证据），返回 total=0 占位、total 语义由调用方自持；
+        // 默认路径 COUNT 恒跑（total 恒返回契约不变）。items 与 COUNT 共用
+        // 同一 WHERE 的不变量不受影响——skip 时闭包只剩 items 与投影填充，
+        // 仍整体收进同一读事务（#1699）。
+        let total: i64 = if filter.skip_total {
+            0
+        } else {
+            conn.query_row(
+                &format!("SELECT COUNT(*) FROM transactions {where_clause}"),
+                rusqlite::params_from_iter(params.iter()),
+                |r| r.get(0),
+            )?
+        };
 
         // 确定性排序：date DESC, created_at DESC, id DESC。
         // id 是最终 tiebreaker——`now_iso()` 为秒级精度，同一秒内写入的行 created_at 相同，

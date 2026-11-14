@@ -75,6 +75,14 @@ pub struct TransactionListFilter {
     /// 这是**视图偏好在读路径上的载荷**，不是筛选维度：前端偏好状态不入会话筛选
     /// （ADR-0136 决策 1 偏好与筛选分家——清除筛选与 ESC 复位不触达它）。
     pub hide_investment_related: Option<bool>,
+    /// 全量 COUNT 跳过开关（issue #2011）：`true` 时本读不执行全量 `COUNT(*)`，
+    /// 返回 `total = 0` 占位、total 语义由调用方自持——同筛选签名的会话复用
+    /// （翻页仅 page 变化、total 不变）的翻页读置位；items 行集、排序与分页
+    /// 语义不变，多语句读闭包纪律不变（#1699：闭包内语句仍在同一读事务）。
+    /// 缺省 `false` = 既有契约（total 恒返回）不变（只增）；HTTP 面本参数恒
+    /// 归零（`list_transactions_handler` 强制），不属已发布契约面。
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub skip_total: bool,
 }
 
 /// `kinds` 字段双形态反序列化（issue #581，spec #1025 起兼任单值载体）：字符串数组

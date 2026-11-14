@@ -40,6 +40,9 @@ const HTTP_MAX_PAGE_SIZE: usize = 100;
 fn enforce_http_page_bounds(
     mut filter: TransactionListFilter,
 ) -> Result<TransactionListFilter, AppError> {
+    // total 会话复用开关不属 HTTP 面（issue #2011）：进程内读接缝专用，HTTP
+    // 请求携带恒归零——已发布契约「total 恒返回」不变（只增不改）。
+    filter.skip_total = false;
     if let Some(page_size) = filter.page_size {
         if page_size > HTTP_MAX_PAGE_SIZE {
             let requested = page_size.to_string();

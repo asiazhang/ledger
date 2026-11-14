@@ -1,7 +1,7 @@
 //! NSH 两测试面共享的造数助手（issue #2027）：lib 单测（`src/tests.rs`）与
 //! headless 组件测试（`tests/app_headless.rs`）各自维护的同形助手收拢于此——
 //! 账本暂存目录、造数日期步进（[`test_date`]）、测试现金账户、最小支出输入
-//! （24 字段 `TransactionInput`，含分类维度变体 [`expense_input_with_category`]）
+//! （24 字段 `TransactionInput`，含可变维共享底座 [`expense_input_base`]）
 //! 与支出系列三入口（按笔数 / 按备注 / 按日期）。
 //!
 //! 为什么住 `tests/` 豁免区、两侧 `#[path]` 载入（票内三选一裁决）：
@@ -217,11 +217,11 @@ pub fn expense_input(account: &str, date: &str, amount_cents: i64, note: &str) -
     }
 }
 
-/// 一笔现金支出输入的分类维度变体（issue #2059）：支出可挂分类、备注可
-/// 缺省——分类路径装配读的造数入口；其余字段随 [`expense_input`] 单源，
-/// 调用面不再内联 24 字段字面量。变维字段（分类/备注/政策）由调用侧
-/// 经外层 struct update 覆写（#2118 起 headless 面同形消费）。
-pub fn expense_input_with_category(
+/// 支出造数可变维共享底座（issue #2059 引入、#2118 收拢后成为两测试面
+/// 共享入口）：变维三向——分类 / 备注走参数（可 `None` 缺省），政策等其余
+/// 字段由调用侧经外层 struct update 覆写；其余字段随 [`expense_input`]
+/// 单源，调用面不再内联 24 字段字面量。
+pub fn expense_input_base(
     account: &str,
     date: &str,
     amount_cents: i64,

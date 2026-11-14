@@ -148,7 +148,7 @@ fn seed_expense_on_date(dir: &Path, date: &str, amount_cents: i64, note: &str) {
 /// 首页读断言（空库与造数库共用）：total 与当前页行集。
 fn assert_first_page(dir: &Path, expected_total: i64, expected_rows: usize) {
     let db = boot_ledger(dir).unwrap();
-    let page = transaction_page(&db, 1, &crate::boot::TxListQuery::default()).unwrap();
+    let page = transaction_page(&db, 1, &crate::boot::TxListQuery::default(), false).unwrap();
     assert_eq!(
         page.total, expected_total,
         "total = 满足过滤条件的未删除总数"
@@ -175,7 +175,7 @@ fn boot_reads_seeded_transactions_via_domain_write_entries() {
     create_empty_book_file(&dir);
     seed_expense_series(&dir, 3);
     let db = boot_ledger(&dir).unwrap();
-    let page = transaction_page(&db, 1, &crate::boot::TxListQuery::default()).unwrap();
+    let page = transaction_page(&db, 1, &crate::boot::TxListQuery::default(), false).unwrap();
     assert_eq!(
         page.total, 3,
         "total = 公开写入口写入的未删除笔数（读路径直调域服务）"
@@ -196,7 +196,7 @@ fn page_reads_offset_paging_boundaries_with_deterministic_order() {
     seed_expense_series(&dir, 250);
     let db = boot_ledger(&dir).unwrap();
 
-    let page1 = transaction_page(&db, 1, &crate::boot::TxListQuery::default()).unwrap();
+    let page1 = transaction_page(&db, 1, &crate::boot::TxListQuery::default(), false).unwrap();
     assert_eq!(page1.total, 250, "total 与页无关：满足过滤条件的总数");
     assert_eq!(page1.items.len(), 100, "首页整 100 行");
     assert_eq!(
@@ -210,7 +210,7 @@ fn page_reads_offset_paging_boundaries_with_deterministic_order() {
         "首页末行 = 第 151 笔写入序"
     );
 
-    let page2 = transaction_page(&db, 2, &crate::boot::TxListQuery::default()).unwrap();
+    let page2 = transaction_page(&db, 2, &crate::boot::TxListQuery::default(), false).unwrap();
     assert_eq!(page2.items.len(), 100);
     assert_eq!(
         page2.items[0].date,
@@ -219,12 +219,12 @@ fn page_reads_offset_paging_boundaries_with_deterministic_order() {
     );
     assert_eq!(page2.items[99].date, test_date(50));
 
-    let last = transaction_page(&db, 3, &crate::boot::TxListQuery::default()).unwrap();
+    let last = transaction_page(&db, 3, &crate::boot::TxListQuery::default(), false).unwrap();
     assert_eq!(last.items.len(), 50, "末页 50 行（250 = 100 + 100 + 50）");
     assert_eq!(last.items[0].date, test_date(49));
     assert_eq!(last.items[49].date, test_date(0), "末页末行最早");
 
-    let beyond = transaction_page(&db, 4, &crate::boot::TxListQuery::default()).unwrap();
+    let beyond = transaction_page(&db, 4, &crate::boot::TxListQuery::default(), false).unwrap();
     assert_eq!(beyond.items.len(), 0, "越界页空行集");
     assert_eq!(beyond.total, 250, "越界页 total 仍返回");
 }
@@ -289,6 +289,7 @@ fn page_reads_filter_by_period_range_with_inclusive_bounds() {
             }),
             ..Default::default()
         },
+        false,
     )
     .unwrap();
     assert_eq!(march.total, 2, "total 与行集共用同一 WHERE 子句");
@@ -303,7 +304,8 @@ fn page_reads_filter_by_period_range_with_inclusive_bounds() {
     );
 
     // 「全部」（None）：不过滤。
-    let all = crate::boot::transaction_page(&db, 1, &crate::boot::TxListQuery::default()).unwrap();
+    let all =
+        crate::boot::transaction_page(&db, 1, &crate::boot::TxListQuery::default(), false).unwrap();
     assert_eq!(all.total, 4);
 }
 
@@ -416,7 +418,7 @@ fn page_reads_filter_dimensions_and_defaults_to_main_kinds() {
     };
 
     // 默认载荷：四通用 kind（买入排除）→ 4 笔。
-    let default = transaction_page(&db, 1, &crate::boot::TxListQuery::default()).unwrap();
+    let default = transaction_page(&db, 1, &crate::boot::TxListQuery::default(), false).unwrap();
     assert_eq!(default.total, 4, "投资 kind 不进主列表（默认载荷显式排除）");
 
     // 类型子集：维度内取或。
@@ -427,6 +429,7 @@ fn page_reads_filter_dimensions_and_defaults_to_main_kinds() {
             kinds: vec![TransactionKind::Expense],
             ..Default::default()
         },
+        false,
     )
     .unwrap();
     assert_eq!(expense_only.total, 1);
@@ -440,6 +443,7 @@ fn page_reads_filter_dimensions_and_defaults_to_main_kinds() {
             involving_account_id: Some(cash.clone()),
             ..Default::default()
         },
+        false,
     )
     .unwrap();
     assert_eq!(involving_cash.total, 3, "现金：支出 + 转账转出 + 退款");
@@ -450,6 +454,7 @@ fn page_reads_filter_dimensions_and_defaults_to_main_kinds() {
             involving_account_id: Some(bank.clone()),
             ..Default::default()
         },
+        false,
     )
     .unwrap();
     assert_eq!(
@@ -466,6 +471,7 @@ fn page_reads_filter_dimensions_and_defaults_to_main_kinds() {
             kinds: vec![TransactionKind::Buy],
             ..Default::default()
         },
+        false,
     )
     .unwrap();
     assert_eq!(invest_buys.total, 1, "显式携带投资 kind 时买入可见");
@@ -478,6 +484,7 @@ fn page_reads_filter_dimensions_and_defaults_to_main_kinds() {
             merchant_id: Some(merchant),
             ..Default::default()
         },
+        false,
     )
     .unwrap();
     assert_eq!(
@@ -493,6 +500,7 @@ fn page_reads_filter_dimensions_and_defaults_to_main_kinds() {
             category_id: Some(category),
             ..Default::default()
         },
+        false,
     )
     .unwrap();
     assert_eq!(
@@ -506,6 +514,7 @@ fn page_reads_filter_dimensions_and_defaults_to_main_kinds() {
             uncategorized_only: true,
             ..Default::default()
         },
+        false,
     )
     .unwrap();
     assert_eq!(
@@ -638,7 +647,7 @@ fn page_reads_assemble_into_cell_texts_across_page_boundaries() {
     };
 
     let first = crate::assembly::assemble_rows(
-        &transaction_page(&db, 1, &crate::boot::TxListQuery::default())
+        &transaction_page(&db, 1, &crate::boot::TxListQuery::default(), false)
             .unwrap()
             .items,
         &ctx,
@@ -653,7 +662,7 @@ fn page_reads_assemble_into_cell_texts_across_page_boundaries() {
     assert_eq!(first[99].date, test_date(150), "首页末行边界");
 
     let last = crate::assembly::assemble_rows(
-        &transaction_page(&db, 3, &crate::boot::TxListQuery::default())
+        &transaction_page(&db, 3, &crate::boot::TxListQuery::default(), false)
             .unwrap()
             .items,
         &ctx,
@@ -713,10 +722,10 @@ fn category_rows_assemble_into_path_cells_active_only() {
     )
     .unwrap();
     // 三笔各占一天（排序 date DESC：行序 = 写入序倒序，断言与 created_at
-    // 同秒无关）。造数走共享助手分类维度入口（issue #2059），不再内联
+    // 同秒无关）。造数走共享底座可变维入口（issue #2059），不再内联
     // 24 字段字面量。
     let make_expense = |date: &str, category_id: Option<&str>, note: Option<&str>| {
-        seed::expense_input_with_category(&account, date, 2_500, category_id, note)
+        seed::expense_input_base(&account, date, 2_500, category_id, note)
     };
     ledger_transaction::create(
         &conn,
@@ -750,7 +759,7 @@ fn category_rows_assemble_into_path_cells_active_only() {
         privacy_enabled: false,
     };
     let rows = crate::assembly::assemble_rows(
-        &transaction_page(&db, 1, &crate::boot::TxListQuery::default())
+        &transaction_page(&db, 1, &crate::boot::TxListQuery::default(), false)
             .unwrap()
             .items,
         &ctx,
@@ -1323,7 +1332,8 @@ fn run_startup_with_seeded_book_places_session_and_reads_first_page() {
     set_book_dir(dir.to_path_buf());
     assert_eq!(run_startup(), StartupView::Ready, "引导成功呈现就绪态");
     let db = nsh_app_session();
-    let page = crate::boot::transaction_page(&db, 1, &crate::boot::TxListQuery::default()).unwrap();
+    let page =
+        crate::boot::transaction_page(&db, 1, &crate::boot::TxListQuery::default(), false).unwrap();
     assert_eq!(page.total, 2, "会话句柄可直读首页（读路径直调域服务）");
     assert_eq!(page.items.len(), 2);
 }
@@ -1366,7 +1376,7 @@ fn delete_transaction_writes_via_domain_entry_and_reports_coded_not_found() {
 
     delete_transaction(&db, &gone_id).expect("存在的 id 删除成功");
 
-    let page = transaction_page(&db, 1, &crate::boot::TxListQuery::default()).unwrap();
+    let page = transaction_page(&db, 1, &crate::boot::TxListQuery::default(), false).unwrap();
     assert_eq!(page.total, 1, "删除后 total = 未删除笔数");
     assert!(
         page.items.iter().all(|tx| tx.id != gone_id),
@@ -1432,7 +1442,7 @@ fn shell_transaction_writes_reach_after_commit_dirty_marker() {
 
     // 删除路径同接线：先显式清脏（消除 create 段遗留标记，删除后置脏才可判
     // 定），再经壳写入口删除——脏标记重新翻转（清脏后不重翻即删入口脱线）。
-    let id = transaction_page(&db, 1, &crate::boot::TxListQuery::default())
+    let id = transaction_page(&db, 1, &crate::boot::TxListQuery::default(), false)
         .unwrap()
         .items
         .into_iter()
