@@ -3,7 +3,7 @@
 //! 域服务）与装配层对 DB 造数行集的分页边界装配。
 //!
 //! 造数纪律：**不经根包 test_support 统一工厂**——立桩时工厂链接旧壳 tauri
-//!（GTK3，与 NSH 的 GTK4 同进程符号互踩，src-app/Cargo.toml 头注；spec #2015
+//!（GTK3，与 NSH 的 GTK4 同进程符号互踩；spec #2015
 //! AC 原文的「统一测试数据库工厂造数」当时在本壳不可达）；#2083 切轨后
 //! tauri 清零、互踩消失，不经工厂走产品开库入口的分层纪律保留。改用同纪律
 //! 的分层形态：
@@ -40,9 +40,12 @@ mod seed;
 
 /// 测试 logger 助手（issue #2109）同自共享 `tests/support/` 载入：headless
 /// 测试进程缺省无 logger、框架错误出口 `log::error!` 静默丢弃（坑、用法与
-/// 让位语义见模块文档；本面无进程级消费点，进程级接线自测住集成面）。
+/// 让位语义见模块文档）。本面进程级消费点：`logging` 单测的接线自测
+///（issue #2119，log 槽位经 init_with 的 cfg(test) 门特化后 lib 面归属确定）。
 #[path = "../tests/support/test_logger.rs"]
 mod test_logger;
+
+pub(crate) use test_logger::{captured, install_test_logger};
 
 pub(crate) use seed::{
     create_empty_book_file, expense_input, make_book_dir as scratch_book_dir, seed_cash_account,

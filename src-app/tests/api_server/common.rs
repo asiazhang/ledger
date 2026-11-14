@@ -60,7 +60,7 @@ fn build_test_app(
 pub(crate) fn setup_app_with_fund_fetch(
     fund_fetch: Option<FundQuoteFetcher>,
 ) -> (Router, Arc<Mutex<rusqlite::Connection>>) {
-    // 集成测试不经真实 Tauri 运行时，发射槽传 None（发射分支跳过，见 ApiState 注释）
+    // 集成测试不经壳层发射接线，发射槽传 None（发射分支跳过，见 ApiState 注释）
     build_test_app(fund_fetch, None, None)
 }
 

@@ -27,7 +27,9 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 use tracing_appender::non_blocking::WorkerGuard;
-use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
+#[cfg(not(test))]
+use tracing_subscriber::util::SubscriberInitExt;
+use tracing_subscriber::{EnvFilter, layer::SubscriberExt};
 
 /// 运行期可重载的全局日志滤镜句柄（spec #608 预铸接缝的 NSH 重建）：`init`
 /// 启动期以「RUST_LOG 或默认 info」建立滤镜后登记；`set_level` 经它替换滤镜。
@@ -84,11 +86,25 @@ fn init_with(data_root: Option<PathBuf>, now: chrono::DateTime<chrono::Utc>) {
     });
 
     // 重复初始化不视为失败（bin 注释同语义：嵌入测试宿主重复 init 静默）。
-    let _ = tracing_subscriber::registry()
+    // 槽位安装按编译面特化（issue #2119）：产品路径 try_init 在 tracing-log
+    // feature（tracing-subscriber 默认 feature，随依赖图恒开）下会经
+    // `LogTracer::init` 把 LogTracer 装成全局 log logger——log crate 槽位
+    // set-once、不可复位，lib 测试进程的 log 全局槽位会被本模块单测抢先
+    //（install_test_logger 在 lib 面永远让位，#2109 的进程级接线自测被迫住
+    // 集成面）。测试面改走 set_global_default：与 try_init 的 tracing 槽位
+    // 语义相同（set-once、重复初始化静默保留现状），差别只在 log 兼容层不
+    // 装——本模块单测对 log 槽位零触碰，测试进程的 log 槽位归
+    // install_test_logger 先到先得（lib 面接线自测见本模块 tests 尾部，坑
+    // 与让位语义总账见 tests/support/test_logger.rs 模块文档）。产品路径
+    // 不变：log facade 记录（框架错误出口）仍经 LogTracer 进 tracing 双输出。
+    let registry = tracing_subscriber::registry()
         .with(filter_layer)
         .with(file_layer)
-        .with(terminal_layer)
-        .try_init();
+        .with(terminal_layer);
+    #[cfg(test)]
+    let _ = tracing::subscriber::set_global_default(registry);
+    #[cfg(not(test))]
+    let _ = registry.try_init();
     let _ = FILTER_HANDLE.set(handle);
 }
 
@@ -319,5 +335,27 @@ mod tests {
     #[test]
     fn init_without_data_root_degrades_to_stderr_only() {
         init_with(None, chrono::Utc::now());
+    }
+
+    /// lib 面进程级接线自测（issue #2119 解锁，删除接线即红，ADR-0087）：测试
+    /// 面 init_with 只占 tracing 槽位、不装 log logger（见 init_with 特化注
+    /// 释），本测试进程的 log 全局槽位由 install_test_logger 先到先得稳持——
+    /// 安装后 `log::error!` 落捕获快照。删除 install_test_logger 内的
+    /// `log::set_logger` 接线即红（本进程再无 logger，框架错误出口回到静默
+    /// 丢弃，#2089 假阴性陷阱复现）；init_with 测试面改回 try_init 则与本模
+    /// 块 init 系单测抢槽（并行调度下随机变红，#2109 排查形态）。坑与让位
+    /// 语义总账见 tests/support/test_logger.rs 模块文档；集成面同款自测住
+    /// app_headless.rs（#2109 交付形态保留）。
+    #[test]
+    fn install_test_logger_captures_error_in_lib_face() {
+        crate::tests::install_test_logger();
+        log::error!("test_logger-lib-face-probe-2119: lib 面进程级接线探针");
+        assert!(
+            crate::tests::captured()
+                .iter()
+                .any(|l| l.contains("test_logger-lib-face-probe-2119")),
+            "lib 面安装后 log::error! 应落捕获快照（槽位被抢先 = 静默丢弃）：{:?}",
+            crate::tests::captured()
+        );
     }
 }
