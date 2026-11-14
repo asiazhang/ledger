@@ -27,7 +27,7 @@ mod router;
 mod state;
 
 // 壳层引用面单点：`crate::api_server::` 对外路径零变化（issue #429）。
-pub use router::{build_router, start_http_server};
+pub use router::{bound_port, build_router, start_http_server};
 pub use state::{
     ApiState, EmitterSlot, FundQuoteFetcher, QuoteFuture, ReadConn, StockQuoteFetcher,
 };

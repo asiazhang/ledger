@@ -220,9 +220,9 @@ pub(crate) fn locked_panel(
                 move || {
                     text(move || surface.error.get().unwrap_or_default())
                         .text_size(px(font_size::CAPTION))
-                        // 破坏色单一呈现令牌（crate::views::danger_fg，回退色
+                        // 破坏色单一呈现令牌（ViewPalette::danger_fg 成员，
                         // 与 settings_data / backup_entry 同口径）。
-                        .text_color(views::danger_fg())
+                        .text_color(views::view_palette().danger_fg)
                         .test_id("unlock-error")
                 },
             )

@@ -509,10 +509,13 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
     let view_owner = Owner::current();
 
     // 主题令牌（双态自适应；缺失兜底统一归 crate::theme 单点）。
-    let fg = crate::theme::color("foreground");
+    let crate::views::ViewPalette {
+        fg,
+        muted,
+        danger_fg,
+    } = crate::views::view_palette();
     // 加入物品成功反馈条位的前景色（#2044；与列表前景同源）。
     let item_feedback_fg = fg;
-    let muted = crate::theme::color("muted-foreground");
 
     // 装载一页（首屏、翻页、换期间、筛选与搜索共用一条路径）：判态——关键词
     // 或金额区间任一在场 = 搜索态直调域统一模糊搜索（与旧壳 `search_transactions`
@@ -1590,9 +1593,7 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
                         format!("删除失败: {}", delete_error.get().unwrap_or_default())
                     })
                     .text_xs()
-                    .text_color(
-                        crate::theme::color("destructive"),
-                    )
+                    .text_color(danger_fg)
                     .test_id("tx-delete-error")
                     .app_class("px-4 py-1")
                 },

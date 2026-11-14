@@ -19,6 +19,7 @@
 - **令牌闭集**（`src-app/theme.json`，shadcn cssVars 格式，亮暗双态）：
   - shadcn 标准 UI 语义名：`background`/`foreground`、`card`、`popover`、`primary`、`secondary`、`muted`、`accent`、`destructive`（+ 本仓补 `destructive-foreground`）、`border`、`input`、`ring`、sidebar 八件族、chart-1…5（未定制，沿用出厂）；
   - 本仓自有令牌：金额语义色九档 `expense`/`income`/`refund`/`transfer`/`buy`/`sell`/`convert`/`split`/`dividend`；`warning`（+ `warning-foreground`）；`success`（亮 `#18a058` / 暗 `#63e2b7`，达标/成功态）；走势主色 `line`；图表系列 `chart-series-1…12` 与 `chart-uncategorized`；圆角阶四档（见 §4）。
+  - **单值档**（亮暗同值的令牌，dark 段不重复写）：两种书写形态——写 `theme` 段（亮暗共用，如圆角阶四档），或只写 `light` 段（引擎按「覆盖式只写差异」解析：`dark` 未写即沿用 `light` 值，如 `line`、`chart-series-*`）。两形态同效，别在 `dark` 段抄同值。
 - **分层正交**：主题表答「出厂观感是什么」；设备级亮暗强指（外观设置，#2053 接缝）答「这台设备用亮还是暗」——清单不设 `appearance` 键，两层互不取代。
 - **强调克制**：每屏一个主操作（primary）；警示色（destructive/warning/expense）保持稀缺；金额语义色只用于金额与其直接载体。
 
@@ -65,7 +66,7 @@
 
 ## 7. 视图零裸值纪律与例外挂账处
 
-**纪律**：视图层零裸值——颜色走主题令牌、字号走字阶常量、圆角与间距走尺度常量；新增代码不得出现裸 `text_size(px(…))` 直调、裸 hex/`rgb()`、调色板类名与散写圆角/间距值。守门已挂入（#2108）：`scripts/check-bare-font-size.ts` 扫描壳根包（`src-app/src`）`text_size(px(<数字字面量>))` 直调即红——字号取值唯一来源 `design::font_size` 字阶。扫描面内的 `#[cfg(test)]` 单元测试块与设计常量模块不豁免（夹具写裸字号同样制造第二套数）；`src-app/tests/` 目录不在扫描面（headless 集成测试不辖本门，其探针断言的裸字号另受「常量派生」纪律约束——字号断言由 `design::font_size` 常量派生，色值快照断言除外，见 §8）；注释/字符串引证经词法掩码豁免；命中质量不达预期的合法在场经脚本内 `REGISTERED_EXCEPTIONS` 严格相等校验登记并挂账本表。
+**纪律**：视图层零裸值——颜色走主题令牌、字号走字阶常量、圆角与间距走尺度常量；新增代码不得出现裸 `text_size(px(…))` 直调、裸 hex/`rgb()`、调色板类名与散写圆角/间距值。守门已挂入（#2108）：`scripts/check-bare-font-size.ts` 扫描壳根包（`src-app/src`）`text_size(px(<数字字面量>))` 直调即红——字号取值唯一来源 `design::font_size` 字阶。扫描面内的 `#[cfg(test)]` 单元测试块与设计常量模块不豁免（夹具写裸字号同样制造第二套数）；`src-app/tests/` 目录不在扫描面（headless 集成测试不辖本门，其探针断言值另受「唯一来源派生」纪律约束——字号由 `design::font_size` 常量派生，色值由 theme.json 真源解析派生（#2113），见 §8）；注释/字符串引证经词法掩码豁免；命中质量不达预期的合法在场经脚本内 `REGISTERED_EXCEPTIONS` 严格相等校验登记并挂账本表。
 
 **例外挂账处**（裸值/特殊值必须在此成文，未挂账即违规）：
 

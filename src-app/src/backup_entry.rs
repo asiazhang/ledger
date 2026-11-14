@@ -267,7 +267,7 @@ pub(crate) fn backup_button(state: BackupEntryState, owner: Owner) -> impl IntoE
 pub(crate) fn backup_status_line(state: BackupEntryState) -> impl IntoElement {
     let status = state.status;
     let palette = crate::views::view_palette();
-    let danger_color = crate::theme::color("destructive");
+    let danger_color = palette.danger_fg;
     when(
         move || status.get().is_some(),
         move || {

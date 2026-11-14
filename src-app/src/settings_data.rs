@@ -59,7 +59,7 @@ use crate::design::font_size;
 use crate::modal::app_modal;
 use crate::nav_model::NavRequest;
 use crate::popconfirm;
-use crate::views::danger_fg;
+use crate::views::view_palette;
 use crate::{
     backup_entry, backup_host, boot, nav, nav_model, select, settings, signals, unlock, views,
 };
@@ -660,8 +660,9 @@ pub(crate) fn store_keep_limit(n: u32) {
 }
 
 // ---------------------------------------------------------------------------
-// 共用呈现件（密文输入行 / 表单字段行）；破坏色便捷面收 crate 级单点
-// [`crate::views::danger_fg`]。
+// ---------------------------------------------------------------------------
+// 共用呈现件（密文输入行 / 表单字段行）；破坏色便捷面收
+// [`crate::views::ViewPalette`] 的 `danger_fg` 成员（三件套唯一住所）。
 // ---------------------------------------------------------------------------
 
 /// 复制路径按钮（旧壳 copy-text 通道：写剪贴板 + 卡内状态条位反馈）。
@@ -1281,7 +1282,7 @@ fn restore_modal_body(state: BackupUiState, owner: Owner, palette: views::ViewPa
                     text(RESTORE_CONFIRM_STRONG)
                         .text_size(px(font_size::CAPTION))
                         .font_weight(FontWeight::BOLD)
-                        .text_color(danger_fg()),
+                        .text_color(views::view_palette().danger_fg),
                 ),
         )
         .children(cross_mode.map(|(title, warning)| {
@@ -1312,7 +1313,7 @@ fn restore_modal_body(state: BackupUiState, owner: Owner, palette: views::ViewPa
         .children(state.restore_error.get().map(|err| {
             text(err.clone())
                 .text_size(px(font_size::CAPTION))
-                .text_color(danger_fg())
+                .text_color(views::view_palette().danger_fg)
                 .test_id("data-restore-error")
         }))
         .child(
@@ -1679,7 +1680,7 @@ fn backup_cards(palette: views::ViewPalette) -> View {
                                         )
                                     })
                                     .text_size(px(font_size::CAPTION))
-                                    .text_color(danger_fg())
+                                    .text_color(views::view_palette().danger_fg)
                                     .test_id("data-auto-failure-alert"),
                                 )
                         },
@@ -1706,7 +1707,7 @@ fn backup_cards(palette: views::ViewPalette) -> View {
                         move || {
                             text(move || state.auto_error.get().unwrap_or_default())
                                 .text_size(px(font_size::CAPTION))
-                                .text_color(danger_fg())
+                                .text_color(views::view_palette().danger_fg)
                                 .test_id("data-auto-error")
                         },
                     )
@@ -1852,7 +1853,7 @@ fn backup_cards(palette: views::ViewPalette) -> View {
                     move || {
                         text(move || state.rows_error.get().unwrap_or_default())
                             .text_size(px(font_size::CAPTION))
-                            .text_color(danger_fg())
+                            .text_color(views::view_palette().danger_fg)
                             .test_id("data-backup-list-error")
                     },
                 )
@@ -1906,7 +1907,7 @@ fn backup_cards(palette: views::ViewPalette) -> View {
                             text(RESTORE_HINT_STRONG)
                                 .text_size(px(font_size::CAPTION))
                                 .font_weight(FontWeight::BOLD)
-                                .text_color(danger_fg()),
+                                .text_color(views::view_palette().danger_fg),
                         )
                         .child(text(RESTORE_HINT_AFTER).text_size(px(font_size::CAPTION)).text_color(palette.fg)),
                 ),
@@ -2226,7 +2227,7 @@ fn encryption_error_view(state: EncryptionState) -> impl IntoElement {
         .child(
             text(move || state.status_error.get().unwrap_or_default())
                 .text_size(px(font_size::CAPTION))
-                .text_color(danger_fg())
+                .text_color(views::view_palette().danger_fg)
                 .test_id("enc-status-error"),
         )
         .child(
@@ -2349,7 +2350,7 @@ fn encrypted_form(state: EncryptionState, palette: views::ViewPalette) -> impl I
                             "{PASS_TOO_SHORT_PREFIX}{PASSPHRASE_MIN_LENGTH}{PASS_TOO_SHORT_SUFFIX}"
                         ))
                         .text_size(px(font_size::CAPTION))
-                        .text_color(danger_fg())
+                        .text_color(view_palette().danger_fg)
                         .test_id("enc-change-too-short")
                     },
                 ))
@@ -2369,7 +2370,7 @@ fn encrypted_form(state: EncryptionState, palette: views::ViewPalette) -> impl I
                     move || {
                         text(PASS_MISMATCH)
                             .text_size(px(font_size::CAPTION))
-                            .text_color(danger_fg())
+                            .text_color(view_palette().danger_fg)
                             .test_id("enc-change-mismatch")
                     },
                 ))
@@ -2385,7 +2386,7 @@ fn encrypted_form(state: EncryptionState, palette: views::ViewPalette) -> impl I
                     move || {
                         text(CHANGE_UNCHANGED)
                             .text_size(px(font_size::CAPTION))
-                            .text_color(danger_fg())
+                            .text_color(view_palette().danger_fg)
                             .test_id("enc-change-unchanged")
                     },
                 ))
@@ -2420,7 +2421,7 @@ fn encrypted_form(state: EncryptionState, palette: views::ViewPalette) -> impl I
                             text(DISABLE_WARN_TITLE)
                                 .text_size(px(font_size::CAPTION))
                                 .font_weight(FontWeight::SEMIBOLD)
-                                .text_color(danger_fg())
+                                .text_color(view_palette().danger_fg)
                                 .test_id("enc-disable-warn-title"),
                         )
                         .child(
@@ -2478,7 +2479,7 @@ fn enable_form(state: EncryptionState, palette: views::ViewPalette) -> impl Into
                     text(ENCRYPTION_WARN_TITLE)
                         .text_size(px(font_size::CAPTION))
                         .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(danger_fg())
+                        .text_color(views::view_palette().danger_fg)
                         .test_id("enc-warn-title"),
                 )
                 .child(
@@ -2504,7 +2505,7 @@ fn enable_form(state: EncryptionState, palette: views::ViewPalette) -> impl Into
                     "{PASS_TOO_SHORT_PREFIX}{PASSPHRASE_MIN_LENGTH}{PASS_TOO_SHORT_SUFFIX}"
                 ))
                 .text_size(px(font_size::CAPTION))
-                .text_color(danger_fg())
+                .text_color(views::view_palette().danger_fg)
                 .test_id("enc-too-short")
             },
         ))
@@ -2523,7 +2524,7 @@ fn enable_form(state: EncryptionState, palette: views::ViewPalette) -> impl Into
             move || {
                 text(PASS_MISMATCH)
                     .text_size(px(font_size::CAPTION))
-                    .text_color(danger_fg())
+                    .text_color(views::view_palette().danger_fg)
                     .test_id("enc-mismatch")
             },
         ))
@@ -3002,7 +3003,7 @@ fn bootstrap_modal_body(state: SyncState, owner: Owner, palette: views::ViewPale
                 move || {
                     text(move || state.precheck_error.get().unwrap_or_default())
                         .text_size(px(font_size::CAPTION))
-                        .text_color(danger_fg())
+                        .text_color(views::view_palette().danger_fg)
                         .test_id("sync-bootstrap-precheck-error")
                 },
             ),
@@ -3039,7 +3040,7 @@ fn bootstrap_modal_body(state: SyncState, owner: Owner, palette: views::ViewPale
         .children(state.bootstrap_error.get().map(|err| {
             text(err.clone())
                 .text_size(px(font_size::CAPTION))
-                .text_color(danger_fg())
+                .text_color(views::view_palette().danger_fg)
                 .test_id("sync-bootstrap-error")
         }))
         .child(
@@ -3398,7 +3399,7 @@ fn sync_card(palette: views::ViewPalette) -> View {
                 move || {
                     text(move || state.status_error.get().unwrap_or_default())
                         .text_size(px(font_size::CAPTION))
-                        .text_color(danger_fg())
+                        .text_color(views::view_palette().danger_fg)
                         .test_id("sync-status-error")
                 },
             )

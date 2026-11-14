@@ -32,8 +32,15 @@ use nsh_app::test_support::isolate_home;
 /// 不得命中毒化路径（命中即说明夹具漏重定向对应变量）。
 #[test]
 fn isolate_home_redirects_xdg_data_and_config_roots() {
-    let poison_data = std::env::temp_dir().join("ledger-test-home-poison-data");
-    let poison_config = std::env::temp_dir().join("ledger-test-home-poison-config");
+    // 毒化路径带 PID 后缀（#2112）：固定名会让并发测试进程互相指到同一路径。
+    let poison_data = std::env::temp_dir().join(format!(
+        "ledger-test-home-poison-data-{}",
+        std::process::id()
+    ));
+    let poison_config = std::env::temp_dir().join(format!(
+        "ledger-test-home-poison-config-{}",
+        std::process::id()
+    ));
     // SAFETY：set_var 自 Rust 2024 起 unsafe；本写入先于夹具 Once（本进程唯一
     // 用例），毒化值只被夹具覆盖、不再被读取为真实现场。
     unsafe { std::env::set_var("XDG_DATA_HOME", &poison_data) };

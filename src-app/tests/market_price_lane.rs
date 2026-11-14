@@ -169,7 +169,7 @@ fn startup_wiring_refreshes_prices_and_never_reruns_same_day_window() {
     nsh_app::market_lanes::inject_fx_channels_for_tests(silent_fx_channels());
 
     // 启动接线（生产装配路径同款：run_startup 成功分支单点挂载三条车道）。
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     assert_eq!(
         nsh_app::app::run_startup(),
         nsh_app::app::StartupView::Ready,

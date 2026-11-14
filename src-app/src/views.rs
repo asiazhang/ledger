@@ -39,30 +39,26 @@ pub(crate) fn field_label(label: &'static str, muted: AdaptiveColor) -> impl Int
     text(label).text_sm().text_color(muted)
 }
 
-/// 视图令牌便捷面（前景/弱化，双态自适应；缺失兜底统一归 crate::theme 单点）。
+/// 视图令牌便捷面（前景 / 弱化 / 危险——fg/muted/danger_fg 三件套信号构造
+/// 闭集的唯一住所，issue #2113：三件套此前在视图层逐份复制，收拢后消费方
+/// 一律经 [`view_palette`] 解构取值，视图层再散写三件套构造即回潮）。
 #[derive(Clone, Copy)]
 pub(crate) struct ViewPalette {
     /// 前景。
     pub fg: AdaptiveColor,
     /// 弱化前景。
     pub muted: AdaptiveColor,
+    /// 危险前景（destructive：警示句/危险动作色）。
+    pub danger_fg: AdaptiveColor,
 }
 
-/// 取视图令牌。
+/// 取视图令牌（三件套唯一构造点；缺失兜底统一归 crate::theme 单点）。
 pub(crate) fn view_palette() -> ViewPalette {
     ViewPalette {
         fg: crate::theme::color("foreground"),
         muted: crate::theme::color("muted-foreground"),
+        danger_fg: crate::theme::color("destructive"),
     }
-}
-
-/// 破坏色便捷面（单一呈现令牌：destructive 令牌 + 缺失回退亮灰可读兑底，
-/// backup_entry 同款口径；settings_data 加密卡与 unlock 错误行同一消费
-/// 点——danger.rs 确认弹窗的分级 accent 回退是另一映射面，不在此收）。
-pub(crate) fn danger_fg() -> AdaptiveColor {
-    nsh_core::element::tokens()
-        .color("destructive")
-        .unwrap_or_else(|| hsla(0.0, 0.0, 0.98, 1.0).into())
 }
 
 /// 占位呈现体（共享壳）：屏名 + 「迁移中」反馈 + （有下钻意图时）定位目标

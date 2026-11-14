@@ -36,9 +36,11 @@ const MSG_COPY_FAILED: &str = "复制失败";
 /// 提示词正文（等宽 pre 形态）+ 复制按钮 + 复制反馈状态条。
 #[component]
 pub(crate) fn AiPromptView() -> impl IntoElement {
-    let fg = crate::theme::color("foreground");
-    let muted = crate::theme::color("muted-foreground");
-    let danger_fg = crate::theme::color("destructive");
+    let crate::views::ViewPalette {
+        fg,
+        muted,
+        danger_fg,
+    } = crate::views::view_palette();
     let ok_fg = crate::theme::color("income");
 
     // 复制反馈状态（None = 无反馈；Some(ok) = 成功/失败两态文案）。
