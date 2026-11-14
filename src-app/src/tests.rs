@@ -713,10 +713,10 @@ fn category_rows_assemble_into_path_cells_active_only() {
     )
     .unwrap();
     // 三笔各占一天（排序 date DESC：行序 = 写入序倒序，断言与 created_at
-    // 同秒无关）。造数走共享助手分类维度入口（issue #2059），不再内联
+    // 同秒无关）。造数走共享底座可变维入口（issue #2059），不再内联
     // 24 字段字面量。
     let make_expense = |date: &str, category_id: Option<&str>, note: Option<&str>| {
-        seed::expense_input_with_category(&account, date, 2_500, category_id, note)
+        seed::expense_input_base(&account, date, 2_500, category_id, note)
     };
     ledger_transaction::create(
         &conn,

@@ -1728,7 +1728,7 @@ fn app_window_renders_source_name_and_status() {
             ledger_policy::create_policy(&conn, make_policy("P-2", "重疾险"), &mut || {}).unwrap();
         let make_expense = |date: &str, policy: String| TransactionInput {
             policy_id: Some(policy),
-            ..seed::expense_input_with_category(&account, date, 2_500, None, None)
+            ..seed::expense_input_base(&account, date, 2_500, None, None)
         };
         ledger_transaction::create(&conn, make_expense("2026-01-15", deleted.clone())).unwrap();
         ledger_transaction::create(&conn, make_expense("2026-01-16", alive)).unwrap();
@@ -3548,7 +3548,7 @@ fn tx_table_source_cell_click_jumps_to_policy_view() {
             ledger_policy::create_policy(&conn, make_policy("P-2", "重疾险"), &mut || {}).unwrap();
         let make_expense = |date: &str, policy: String| TransactionInput {
             policy_id: Some(policy),
-            ..seed::expense_input_with_category(&account, date, 2_500, None, None)
+            ..seed::expense_input_base(&account, date, 2_500, None, None)
         };
         ledger_transaction::create(&conn, make_expense("2026-01-15", deleted_policy.clone()))
             .unwrap();
