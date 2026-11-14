@@ -1,10 +1,12 @@
 //! 源码扫描器具单一维护点（issue #1433）：Rust 侧源码扫描守门共用的词法掩码
 //! 与花括号配对原语。
 //!
-//! 消费面：壳层信号守门（`signals_cross_check`）、连接槽守门（`db_slot_guard`）、
-//! 同步触发守门（`sync_trigger_guard`）、行情接缝守门（`api_server::state`
-//! 测试）、`commands/investment.rs` 扫描测试，以及行情同步域车道守门（经既有
-//! `tauri-app` dev-dependency 环，spec #1086；登记处 ADR-0084 修订注记）。
+//! 消费面：HTTP 半边信号守门（`api_server::guard`，自旧壳根包
+//! `signals_cross_check` 迁居，IPC 半边随旧壳退役）、同步触发守门
+//!（`sync_triggers`）、行情接缝守门（`api_server::state` 测试），以及行情
+//! 同步域车道守门（经域测试 `nsh-app` dev-dependency 环，spec #1086；登记处
+//! ADR-0084 修订注记）；旧壳消费面（`db_slot_guard` 连接槽守门、
+//! `commands/investment.rs` 扫描测试）已随旧壳退役。
 //!
 //! **双源登记**（#1433）：[`mask_non_code`] 与 TS 侧 `scripts/gate-primitives.ts`
 //! 的 `maskNonCode` 是同一条 Rust 词法掩码规则的**两个运行时载体**（守门脚本跑

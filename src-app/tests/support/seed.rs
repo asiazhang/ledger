@@ -6,9 +6,11 @@
 //!
 //! 为什么住 `tests/` 豁免区、两侧 `#[path]` 载入（票内三选一裁决）：
 //! - 根包 `test_support` 统一工厂立桩时链接旧壳 tauri（GTK3，与 NSH 的 GTK4
-//!   同进程符号互踩，`src-app/Cargo.toml` 头注），当时本 crate 不可消费（#2018
-//!   提交信息已记录该偏离）；#2083 切轨后互踩消失，「建库走产品开库入口」的
-//!   既有分层纪律保留——「通用能力上收测试辅助层」仍不适用；
+//!   同进程符号互踩），当时本 crate 不可消费（#2018
+//!   提交信息已记录该偏离）；#2083 切轨后旧壳退役、互踩消失，本形态保留的
+//!   现理由不再是链接约束——统一工厂的准入规则只收跨 ≥2 域重复的域夹具
+//!   （ADR-0084 决策 1），壳测试特有的 NSH 夹具不入厂，「建库走产品开库入口」
+//!   的分层纪律保留——「通用能力上收测试辅助层」仍不适用；
 //! - lib 的 `#[cfg(test)]` 模块对外挂集成测试不可见，crate 不能 dev-depend
 //!   自己；立在 crate 内的 `#[doc(hidden)]` 支撑模块会把测试代码带进产品 bin
 //!   （LTO 前），与「测试代码不进产品构建」的既有形态（bin `test = false`、
@@ -21,7 +23,8 @@
 //! 载入形态（两侧 `#[path]` include）：
 //! - lib：`src/tests.rs` 内 `#[path = "../tests/support/seed.rs"] mod seed;`
 //!   （`#[path]` 相对所在文件 `src/`）；
-//! - 集成：`tests/app_headless.rs` 内 `#[path = "support/seed.rs"] mod seed;`。
+//! - 集成：`tests/` 下 6 个消费目标（app_headless、sync_trigger、
+//!   sync_trigger_write 与市场三车道）内 `#[path = "support/seed.rs"] mod seed;`。
 //!
 //! 本文件因此**只引用 crate 外符号**（域 crate / 基础设施 / std），不引用
 //! `nsh_app::`——两份编译上下文的 crate 身份不同（lib 测试构建内是 `crate::`，
@@ -29,9 +32,11 @@
 //! 入口由两侧薄壳包装（各自调本面可达的 boot），本文件只收 db 级形态。
 //!
 //! 边界：只承载本 crate 两测试面的造数形态（nsh 特有夹具），通用能力仍归根包
-//! 测试辅助层（本 crate 不可达，#2018 偏离记录）；每个测试二进制各得一份副本
-//! （`#[path]` 双编译），进程级单例（SERIAL 串行锁）仍归各面文件，「两测试
-//! 二进制独立进程互不串扰」语义不变。暂存目录前缀统一归 `ledger-test-` 闭集
+//! 测试辅助层（不入厂理由见上文准入规则；#2018 立桩时的「本 crate 不可达」
+//! 偏离已随 #2083 切轨消失）；每个测试二进制各得一份副本
+//! （`#[path]` 双编译），进程级串行锁仍归各面（headless 面 `SERIAL` 静态、
+//! lib 面 `app::test_assembly_guard`，#2086 携毒化守卫），「两测试二进制独立
+//! 进程互不串扰」语义不变。暂存目录前缀统一归 `ledger-test-` 闭集
 //! 第二段（残留一条 `rm -rf /tmp/ledger-test-*` 识别清理）；账本目录发放自带
 //! RAII guard 与 >24h 过期清扫（#2112），正常运行零残留。
 
@@ -214,12 +219,8 @@ pub fn expense_input(account: &str, date: &str, amount_cents: i64, note: &str) -
 
 /// 一笔现金支出输入的分类维度变体（issue #2059）：支出可挂分类、备注可
 /// 缺省——分类路径装配读的造数入口；其余字段随 [`expense_input`] 单源，
-/// 调用面不再内联 24 字段字面量。
-///
-/// 现仅 lib 面（`src/tests.rs`）消费；headless 面支出变体走本地
-/// `bare_expense_input` 底座，尚未消费本入口。`#[path]` 双编译下单面子集
-/// 消费是共享原文的既定代价，按 `s3_stub.rs` facade 同形放行 dead_code。
-#[allow(dead_code)]
+/// 调用面不再内联 24 字段字面量。变维字段（分类/备注/政策）由调用侧
+/// 经外层 struct update 覆写（#2118 起 headless 面同形消费）。
 pub fn expense_input_with_category(
     account: &str,
     date: &str,
