@@ -2032,7 +2032,9 @@ fn app_window_pagination_reuses_total_without_full_count_and_refreshes_after_del
     let dir = make_book("total-reuse");
     seed_expense_series(&dir, 150);
 
-    nsh_app::app::set_book_dir(dir);
+    // BookDir RAII 守卫（#2115 后的 seed 契约）：Deref<Path>，入场经 to_path_buf
+    // 拷贝路径给壳槽位，守卫Drop清理不触槽位。
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
 
     // 首屏装载落位（首读 COUNT 发生在臂装前，计数从零起算）。
