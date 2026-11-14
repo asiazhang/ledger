@@ -28,7 +28,7 @@ use ledger_infra::db::{self};
 use ledger_infra::test_utils::{
     FOREIGN_RESERVED_BYTES, read_reserved_byte, write_foreign_form_plaintext_db,
 };
-use nsh_app::test_support::isolate_home;
+use nsh_app::test_support::{ScratchDir, isolate_home};
 
 /// 验收判据（issue #1453，NSH 形态）：以畸形夹具引导 → `boot_ledger` 成功、
 /// 库文件被归一化（偏移 20 = 0）、夹具数据经归一化后的真实连接仍可读、
@@ -36,11 +36,7 @@ use nsh_app::test_support::isolate_home;
 #[test]
 fn boot_ledger_normalizes_foreign_form_plaintext_ledger() {
     isolate_home();
-    let dir = std::env::temp_dir().join(format!(
-        "ledger-test-boot-normalization-{}",
-        std::process::id()
-    ));
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = ScratchDir::new("boot-normalization");
     let db_path = dir.join(db::data_location::DB_FILE_NAME);
     write_foreign_form_plaintext_db(&db_path, 3);
     assert_eq!(
@@ -80,5 +76,5 @@ fn boot_ledger_normalizes_foreign_form_plaintext_ledger() {
         "归一化后产出的快照不再携带外来保留字节"
     );
 
-    std::fs::remove_dir_all(&dir).ok();
+    drop(dir);
 }

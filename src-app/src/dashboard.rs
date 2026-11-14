@@ -96,9 +96,11 @@ pub(crate) fn DashboardView() -> impl IntoElement {
     let currencies = signal(CurrencyTable::default());
 
     // 主题令牌（双态自适应；缺失兜底统一归 theme.rs 唯一住所）。
-    let fg = crate::theme::color("foreground");
-    let muted = crate::theme::color("muted-foreground");
-    let danger_fg = crate::theme::color("destructive");
+    let crate::views::ViewPalette {
+        fg,
+        muted,
+        danger_fg,
+    } = crate::views::view_palette();
     // 走势/接近态蓝（接近自由阶段的普通态；色值与旧壳同源，经令牌 line 单点）。
     let info_fg = crate::theme::color("line");
     // 进度条正常色（#2033 预算视图同款取舍：正常态用账本语义绿，超标才交给

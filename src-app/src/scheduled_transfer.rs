@@ -440,9 +440,11 @@ pub(crate) fn transfers_pane(pending_focus: Signal<Option<String>>) -> impl Into
     });
 
     // 主题令牌（双态自适应；缺失兜底统一归 crate::theme 单点）。
-    let fg = crate::theme::color("foreground");
-    let muted = crate::theme::color("muted-foreground");
-    let danger_fg = crate::theme::color("destructive");
+    let crate::views::ViewPalette {
+        fg,
+        muted,
+        danger_fg,
+    } = crate::views::view_palette();
     // 主按钮前景 = primary-foreground 令牌（亮暗双态随表；旧裸白直调退役）。
     let primary_fg = crate::theme::color("primary-foreground");
 
@@ -974,8 +976,7 @@ fn make_action_renderer(
                 .test_id(format!("transfer-next-{}", row.id).as_str())
                 .into_element(),
             "actions" => {
-                let fg = crate::theme::color("foreground");
-                let danger_fg = crate::theme::color("destructive");
+                let crate::views::ViewPalette { fg, danger_fg, .. } = crate::views::view_palette();
                 let id = row.id.clone();
                 let mut buttons: Vec<nsh_core::element::AnyElement> = vec![action_button(
                     "期次",

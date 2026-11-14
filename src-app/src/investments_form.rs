@@ -916,9 +916,11 @@ pub(crate) fn trade_form_modal(
     let is_fund = is_fund_computed(&state, &sources);
     // 任意字段错误 → 提交禁用（红框 + 提交禁用两件同发，ADR-0058 决策 1）。
     let field_error = has_field_error(&state, is_fund);
-    let fg = crate::theme::color("foreground");
-    let muted = crate::theme::color("muted-foreground");
-    let danger_fg = crate::theme::color("destructive");
+    let crate::views::ViewPalette {
+        fg,
+        muted,
+        danger_fg,
+    } = crate::views::view_palette();
 
     let submit = perform_submit(state, sources, is_fund, view_owner);
 

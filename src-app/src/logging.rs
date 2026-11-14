@@ -247,14 +247,10 @@ mod tests {
     use super::*;
     use std::fs::File;
 
-    /// 唯一暂存数据根（infra 身份工厂发 UUID，测试互不串目录；进程退出由 OS 回收）。
-    fn temp_root(tag: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "ledger-test-nsh-logs-{tag}-{}",
-            ledger_infra::ids::new_uuid()
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
-        dir
+    /// 唯一暂存数据根（测试暂存目录器具发放，RAII guard 整树清理，#2112）：
+    /// 「进程退出由 OS 回收」是错误假设，残留随用例数堆积。
+    fn temp_root(tag: &str) -> crate::test_support::ScratchDir {
+        crate::test_support::ScratchDir::new(&format!("nsh-logs-{tag}"))
     }
 
     /// 在日志目录内预置一个文件（调用方保证父目录已建）。
@@ -290,7 +286,7 @@ mod tests {
         let root = temp_root("mklogdir");
         let logs = root.join("logs");
         assert!(!logs.exists(), "前置：测试不预建 logs 目录");
-        init_with(Some(root), chrono::Utc::now());
+        init_with(Some(root.to_path_buf()), chrono::Utc::now());
         assert!(logs.is_dir(), "init 应在数据根下建 logs 目录");
     }
 
@@ -305,7 +301,10 @@ mod tests {
         let logs = root.join("logs");
         std::fs::create_dir_all(&logs).unwrap();
         plant(&logs, "ledger.2020-01-01");
-        init_with(Some(root), chrono::Utc::now() + chrono::Duration::days(8));
+        init_with(
+            Some(root.to_path_buf()),
+            chrono::Utc::now() + chrono::Duration::days(8),
+        );
         assert!(
             !logs.join("ledger.2020-01-01").exists(),
             "超出保留窗的日滚产物应被清理"
@@ -325,7 +324,7 @@ mod tests {
         );
         plant(&logs, &today);
         plant(&logs, "unrelated.txt");
-        init_with(Some(root), chrono::Utc::now());
+        init_with(Some(root.to_path_buf()), chrono::Utc::now());
         assert!(logs.join(&today).exists(), "保留窗内日滚产物不清理");
         assert!(logs.join("unrelated.txt").exists(), "无关文件不清理");
     }

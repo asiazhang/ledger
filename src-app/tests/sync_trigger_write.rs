@@ -137,7 +137,7 @@ fn write_entry_enqueues_upload_via_scheduler() {
     // 启动竖井（显式时机版）：引导 → 会话就位 → 接线（含 on-start 空轮 +
     // 调度线程，注入「短去抖 + 超长轮询」——接线断掉时不得被低频轮询救活，
     // issue #959）。
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     assert_eq!(
         nsh_app::app::run_startup_with_trigger_timings(TriggerTimings {
             poll_interval: Duration::from_secs(600),

@@ -35,11 +35,11 @@ use std::time::Duration;
 use chrono::Datelike;
 use ledger_accounts::{AccountInput, AccountType};
 use ledger_categories::{CategoryInput, create_category};
-use ledger_infra::ids::new_uuid;
 use ledger_physical_asset::{PhysicalAssetDisposeInput, PhysicalAssetInput};
 use ledger_transaction::{
     TransactionFundingInput, TransactionInput, TransactionKind, TransactionPurchaseInput,
 };
+use nsh_app::test_support::{ScratchDir, ScratchFile};
 use nsh_core::platform::ColorScheme;
 use nsh_engine::{EngineConfig, Environment, Idiom, Os, Points, Size};
 use nsh_testing::Headless;
@@ -57,6 +57,37 @@ use seed::{seed_cash_account, test_date};
 
 /// 与 `wait_for` 缺省同一超时（nsh-testing 的 `wait_for_gone` 需显式超时）。
 const DEFAULT_WAIT: Duration = Duration::from_secs(5);
+
+/// 主题令牌真源（issue #2113 断言值纪律）：色值断言的期望值从唯一真源
+/// `theme.json` 解析派生（`include_str!` 编译期内嵌，与产品消费同一份文件），
+/// 测试里不复制色值字面量——测试读真源文件 = 单一事实，不是第二源；产品
+/// 消费面偏离真源才红。字号档同理由 [`nsh_app::design::font_size`] 常量
+/// 派生（既有纪律，不回退）。「表内某档该是什么色」的出厂观感裁决归人工
+/// 截图对表（docs/DESIGN.md §8），不归本自动化面。
+const THEME_JSON: &str = include_str!("../theme.json");
+
+/// 亮/暗态（断言期望值的解析段）。
+#[derive(Clone, Copy, Debug)]
+enum Scheme {
+    Light,
+    Dark,
+}
+
+/// 从 theme.json 真源解析令牌色：`#rrggbb` → RGBA（alpha 补 `ff`）；dark 段
+/// 未写沿用 light（引擎「覆盖式只写差异」的同源实现，DESIGN.md §2 单值档）。
+/// 断言真源缺档即 panic（测试面显式失败，不静默）。
+fn theme_color(token: &str, scheme: Scheme) -> nsh_core::Color {
+    let vars: serde_json::Value = serde_json::from_str(THEME_JSON).expect("theme.json 是合法 JSON");
+    let section = |name: &str| vars["cssVars"][name][token].as_str().map(str::to_owned);
+    let value = match scheme {
+        Scheme::Light => section("light"),
+        Scheme::Dark => section("dark").or_else(|| section("light")),
+    }
+    .unwrap_or_else(|| panic!("theme.json 缺令牌 {token}（{scheme:?}）"));
+    let hex = value.strip_prefix('#').expect("令牌值是 #rrggbb");
+    assert_eq!(hex.len(), 6, "令牌 {token} 是 6 位 #rrggbb：{value}");
+    nsh_core::Color((u32::from_str_radix(hex, 16).expect("令牌值是十六进制") << 8) | 0xff)
+}
 
 /// 串行锁：装配入口（`set_book_dir`）与会话句柄是进程级单例，用例间串行防串扰
 /// （lib 单测同纪律，锁现名 `serial_guard`、转发 `app::test_assembly_guard`
@@ -125,7 +156,7 @@ fn desktop_config() -> EngineConfig {
 
 /// 测试账本（产品开库入口建库：0 字节文件 = 新装语义；目录与空库文件形态归
 /// 共享助手 [`seed`]，issue #2027）。
-fn make_book(tag: &str) -> std::path::PathBuf {
+fn make_book(tag: &str) -> seed::BookDir {
     let dir = seed::make_book_dir(tag);
     seed::create_empty_book_file(&dir);
     dir
@@ -280,7 +311,7 @@ fn app_window_renders_transaction_table_of_seeded_book() {
     let dir = make_book("one");
     seed_expense_series(&dir, 1);
 
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
 
     open_transactions(&mut app);
@@ -307,7 +338,7 @@ fn app_window_narrow_renders_mobile_shell_and_transaction_cards() {
     let dir = make_book("narrow");
     seed_expense_series(&dir, 1);
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(mobile_config()).unwrap();
 
     // 窄窗移动档导航壳：侧栏不挂载（品牌行「开源记账」只属侧栏/抽屉），顶栏
@@ -347,7 +378,7 @@ fn app_window_shows_empty_state_for_empty_book() {
     nsh_app::app::reset_book_assembly();
     let dir = make_book("empty");
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
 
     open_transactions(&mut app);
@@ -370,7 +401,7 @@ fn app_window_flips_pages_by_pagination_bar_click() {
     let dir = make_book("paged");
     seed_expense_series(&dir, 150);
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
 
     // 首页（最新 100 笔）：总数与首页首行（第 150 笔，2026-05-30）在屏。
@@ -401,7 +432,7 @@ fn app_window_searches_by_chinese_keyword_with_raw_text_hits() {
     let dir = make_book("search");
     seed_expense_notes(&dir, &["元旦火锅聚餐", "超市买菜"]);
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
 
     // 列表态基线：共 2 条，两行都在屏（date DESC：01-02 在前）。
@@ -427,7 +458,7 @@ fn app_window_shows_empty_state_when_search_has_no_hits() {
     let dir = make_book("search-empty");
     seed_expense_notes(&dir, &["元旦火锅聚餐", "超市买菜"]);
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
 
     open_transactions(&mut app);
@@ -448,7 +479,7 @@ fn app_window_restores_list_when_search_cleared() {
     let dir = make_book("search-clear");
     seed_expense_notes(&dir, &["元旦火锅聚餐", "超市买菜"]);
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
 
     open_transactions(&mut app);
@@ -473,7 +504,7 @@ fn app_window_paginates_search_hits_after_enter_search() {
     let dir = make_book("search-paged");
     seed_expense_notes(&dir, &["批量造数"; 150]);
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
 
     open_transactions(&mut app);
@@ -504,7 +535,7 @@ fn app_window_steps_back_by_previous_button() {
     let dir = make_book("back");
     seed_expense_series(&dir, 150);
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
 
     open_transactions(&mut app);
@@ -533,7 +564,7 @@ fn app_window_masks_amounts_when_device_privacy_enabled() {
     let dir = make_book("privacy");
     seed_expense_series(&dir, 1);
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config_with_storage(&[(
         "amount_privacy_enabled",
         "true",
@@ -592,7 +623,7 @@ fn app_window_colors_amount_cells_by_kind_semantic() {
         );
     }
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
 
     open_transactions(&mut app);
@@ -600,12 +631,12 @@ fn app_window_colors_amount_cells_by_kind_semantic() {
     app.wait_for("text:¥25").unwrap();
     assert_eq!(
         app.screen().span_style("text:¥25").unwrap().color,
-        nsh_core::Color(0xd03050ff),
+        theme_color("expense", Scheme::Light),
         "支出金额亮色 = 旧壳 expense light"
     );
     assert_eq!(
         app.screen().span_style("text:¥10").unwrap().color,
-        nsh_core::Color(0x18a058ff),
+        theme_color("income", Scheme::Light),
         "收入金额亮色 = 旧壳 income light"
     );
 
@@ -614,12 +645,12 @@ fn app_window_colors_amount_cells_by_kind_semantic() {
         .unwrap();
     assert_eq!(
         app.screen().span_style("text:¥25").unwrap().color,
-        nsh_core::Color(0xe88080ff),
+        theme_color("expense", Scheme::Dark),
         "支出金额暗色 = 旧壳 expense dark"
     );
     assert_eq!(
         app.screen().span_style("text:¥10").unwrap().color,
-        nsh_core::Color(0x63e2b7ff),
+        theme_color("income", Scheme::Dark),
         "收入金额暗色 = 旧壳 income dark"
     );
 }
@@ -671,48 +702,50 @@ fn app_window_theme_tokens_follow_strong_pinned_appearance() {
     };
 
     // 强指深色：金额暗态令牌值 + muted 暗态值（非 neutral 的 #a3a3a3）。
-    nsh_app::app::set_book_dir(book("theme-dark"));
+    let dark_dir = book("theme-dark");
+    nsh_app::app::set_book_dir(dark_dir.to_path_buf());
     let mut app =
         Headless::start(desktop_config_with_storage(&[("appearance", "\"dark\"")])).unwrap();
     open_transactions(&mut app);
     app.wait_for("text:共 2 条").unwrap();
     assert_eq!(
         app.screen().span_style("text:¥25").unwrap().color,
-        nsh_core::Color(0xe88080ff),
+        theme_color("expense", Scheme::Dark),
         "支出金额暗色 = 主题表 expense dark"
     );
     assert_eq!(
         app.screen().span_style("text:¥10").unwrap().color,
-        nsh_core::Color(0x63e2b7ff),
+        theme_color("income", Scheme::Dark),
         "收入金额暗色 = 主题表 income dark"
     );
     assert_eq!(
         app.screen().span_style("text:共 2 条").unwrap().color,
-        nsh_core::Color(0x93a4b6ff),
+        theme_color("muted-foreground", Scheme::Dark),
         "弱化文本暗色 = 主题表 muted-foreground dark（非 neutral）"
     );
 
     // 强指浅色：亮态令牌值（存储键不写 = 跟随系统，写入即强指——设置语义
     // 不变，本例顺带钉住存储强指跨启动生效半边）。
     nsh_app::app::reset_book_assembly();
-    nsh_app::app::set_book_dir(book("theme-light"));
+    let light_dir = book("theme-light");
+    nsh_app::app::set_book_dir(light_dir.to_path_buf());
     let mut app =
         Headless::start(desktop_config_with_storage(&[("appearance", "\"light\"")])).unwrap();
     open_transactions(&mut app);
     app.wait_for("text:共 2 条").unwrap();
     assert_eq!(
         app.screen().span_style("text:¥25").unwrap().color,
-        nsh_core::Color(0xd03050ff),
+        theme_color("expense", Scheme::Light),
         "支出金额亮色 = 主题表 expense light"
     );
     assert_eq!(
         app.screen().span_style("text:¥10").unwrap().color,
-        nsh_core::Color(0x18a058ff),
+        theme_color("income", Scheme::Light),
         "收入金额亮色 = 主题表 income light"
     );
     assert_eq!(
         app.screen().span_style("text:共 2 条").unwrap().color,
-        nsh_core::Color(0x5c6c7eff),
+        theme_color("muted-foreground", Scheme::Light),
         "弱化文本亮色 = 主题表 muted-foreground light（非 neutral）"
     );
 }
@@ -730,7 +763,8 @@ fn dashboard_and_reports_views_follow_theme_tokens_and_type_scale() {
 
     // 概览 book（全量种子）亮→暗。
     nsh_app::app::reset_book_assembly();
-    nsh_app::app::set_book_dir(seed_dashboard_book("t2105-theme-probe"));
+    let dashboard_dir = seed_dashboard_book("t2105-theme-probe");
+    nsh_app::app::set_book_dir(dashboard_dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
 
     // 概览（默认首屏）亮态：主数字 = foreground 令牌 + TITLE 档 + 半粗；
@@ -739,7 +773,7 @@ fn dashboard_and_reports_views_follow_theme_tokens_and_type_scale() {
     let hero = app.screen().span_style("text:¥400").unwrap();
     assert_eq!(
         hero.color,
-        nsh_core::Color(0x182635ff),
+        theme_color("foreground", Scheme::Light),
         "主数字亮色 = foreground light"
     );
     assert_eq!(
@@ -754,7 +788,7 @@ fn dashboard_and_reports_views_follow_theme_tokens_and_type_scale() {
     let label = app.screen().span_style("text:净资产").unwrap();
     assert_eq!(
         label.color,
-        nsh_core::Color(0x5c6c7eff),
+        theme_color("muted-foreground", Scheme::Light),
         "卡面标签亮色 = muted light"
     );
     assert_eq!(
@@ -773,12 +807,12 @@ fn dashboard_and_reports_views_follow_theme_tokens_and_type_scale() {
         .unwrap();
     assert_eq!(
         app.screen().span_style("text:¥400").unwrap().color,
-        nsh_core::Color(0xe6edf4ff),
+        theme_color("foreground", Scheme::Dark),
         "主数字暗色 = foreground dark"
     );
     assert_eq!(
         app.screen().span_style("text:净资产").unwrap().color,
-        nsh_core::Color(0x93a4b6ff),
+        theme_color("muted-foreground", Scheme::Dark),
         "卡面标签暗色 = muted dark"
     );
     drop(app);
@@ -787,14 +821,15 @@ fn dashboard_and_reports_views_follow_theme_tokens_and_type_scale() {
     // （§3 页面/卡片标题 20；页题同档，层级靠字重与位置表达）；表格列头 =
     // muted + CAPTION 档。
     nsh_app::app::reset_book_assembly();
-    nsh_app::app::set_book_dir(seed_reports_book("t2105-theme-probe-reports"));
+    let reports_dir = seed_reports_book("t2105-theme-probe-reports");
+    nsh_app::app::set_book_dir(reports_dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_reports(&mut app);
     wait_reports_loaded(&mut app);
     let title = app.screen().span_style("text:月度收支").unwrap();
     assert_eq!(
         title.color,
-        nsh_core::Color(0x182635ff),
+        theme_color("foreground", Scheme::Light),
         "卡题亮色 = foreground light"
     );
     assert_eq!(
@@ -805,7 +840,7 @@ fn dashboard_and_reports_views_follow_theme_tokens_and_type_scale() {
     let header = app.screen().span_style("text:商户名").unwrap();
     assert_eq!(
         header.color,
-        nsh_core::Color(0x5c6c7eff),
+        theme_color("muted-foreground", Scheme::Light),
         "列头亮色 = muted light"
     );
     assert_eq!(
@@ -819,12 +854,12 @@ fn dashboard_and_reports_views_follow_theme_tokens_and_type_scale() {
         .unwrap();
     assert_eq!(
         app.screen().span_style("text:月度收支").unwrap().color,
-        nsh_core::Color(0xe6edf4ff),
+        theme_color("foreground", Scheme::Dark),
         "卡题暗色 = foreground dark"
     );
     assert_eq!(
         app.screen().span_style("text:商户名").unwrap().color,
-        nsh_core::Color(0x93a4b6ff),
+        theme_color("muted-foreground", Scheme::Dark),
         "列头暗色 = muted dark"
     );
 }
@@ -845,7 +880,7 @@ fn reference_and_settings_views_resolve_tokens_and_type_scale_across_appearances
     let dir = make_book("t2104-ref-settings-appearance");
     let db = nsh_app::boot::boot_ledger(&dir).unwrap();
     let _account = seed_cash_account(&db);
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
 
     // 强指路径（存储 appearance=dark，#2053）：全屏取暗态令牌值——运行中
     // 切系统亮色不跟随（强指 = 无视系统，语义正确性在此一并钉住）。
@@ -855,7 +890,7 @@ fn reference_and_settings_views_resolve_tokens_and_type_scale_across_appearances
     let label = app.screen().span_style("text:显示主题").unwrap();
     assert_eq!(
         label.color,
-        nsh_core::Color(0xe6edf4ff),
+        theme_color("foreground", Scheme::Dark),
         "设置页卡片标签深色 = 主题表 foreground dark（theme::color 单点消费）"
     );
     assert_eq!(
@@ -865,14 +900,14 @@ fn reference_and_settings_views_resolve_tokens_and_type_scale_across_appearances
     );
     assert_eq!(
         app.screen().span_style("text:分类").unwrap().color,
-        nsh_core::Color(0x93a4b6ff),
+        theme_color("muted-foreground", Scheme::Dark),
         "非激活页签深色 = 主题表 muted-foreground dark"
     );
     open_accounts(&mut app);
     let create = app.screen().span_style("text:新增账户").unwrap();
     assert_eq!(
         create.color,
-        nsh_core::Color(0xe6edf4ff),
+        theme_color("foreground", Scheme::Dark),
         "账户页新建卡标题深色 = 主题表 foreground dark"
     );
     assert_eq!(
@@ -884,26 +919,27 @@ fn reference_and_settings_views_resolve_tokens_and_type_scale_across_appearances
         .unwrap();
     assert_eq!(
         app.screen().span_style("text:新增账户").unwrap().color,
-        nsh_core::Color(0xe6edf4ff),
+        theme_color("foreground", Scheme::Dark),
         "强指深色下系统切亮色不跟随（#2053 强指语义）"
     );
 
     // 跟随路径（无存储键 = 跟随系统）：亮态出厂值 + 运行中系统切深即随动。
     nsh_app::app::reset_book_assembly();
-    nsh_app::app::set_book_dir(make_book("t2104-ref-settings-follow"));
+    let follow_dir = make_book("t2104-ref-settings-follow");
+    nsh_app::app::set_book_dir(follow_dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_settings(&mut app);
     let label = app.screen().span_style("text:显示主题").unwrap();
     assert_eq!(
         label.color,
-        nsh_core::Color(0x182635ff),
+        theme_color("foreground", Scheme::Light),
         "跟随系统亮色 = 主题表 foreground light"
     );
     app.set_environment("dark mode", |env| env.color_scheme = ColorScheme::Dark)
         .unwrap();
     assert_eq!(
         app.screen().span_style("text:显示主题").unwrap().color,
-        nsh_core::Color(0xe6edf4ff),
+        theme_color("foreground", Scheme::Dark),
         "跟随模式下系统切深即随动 = 主题表 foreground dark"
     );
 }
@@ -913,7 +949,7 @@ fn reference_and_settings_views_resolve_tokens_and_type_scale_across_appearances
 /// `text_xs`/`text_sm`/`text_base` 即同一规范值 12/14/16），「记一笔」等主
 /// 操作前景取主题表 `primary-foreground`（亮暗双态；裸白字退役）。删除视图
 /// 侧字阶书写或令牌消费任一环即红——断言对准已解析样式（font_size/color）。
-/// 断言值纪律：字号档由 [`nsh_app::design::font_size`] 常量派生（测试同属消费方，值同源——字阶漂移断言与实现一起红）；色值快照断言保持字面量（钉 theme.json 亮暗两段独立真源）。
+/// 断言值纪律：字号档由 [`nsh_app::design::font_size`] 常量派生，色值由 [`theme_color`] 从 theme.json 真源解析派生（测试读真源文件 = 单一事实，不复制字面量——产品消费面偏离真源才红；「某档该是什么色」的出厂观感裁决归人工截图对表）。
 /// 亮暗两态截图对照属人工子集，自动化面只断言已解析样式。
 #[test]
 fn app_window_transaction_views_use_type_scale_and_primary_foreground_token() {
@@ -938,7 +974,7 @@ fn app_window_transaction_views_use_type_scale_and_primary_foreground_token() {
         );
     }
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_transactions(&mut app);
     app.wait_for("text:共 1 条").unwrap();
@@ -965,7 +1001,7 @@ fn app_window_transaction_views_use_type_scale_and_primary_foreground_token() {
     // 主操作前景 = primary-foreground 亮态令牌（裸白字退役）。
     assert_eq!(
         app.screen().span_style("text:记一笔").unwrap().color,
-        nsh_core::Color(0xf2f8ffff),
+        theme_color("primary-foreground", Scheme::Light),
         "主按钮前景亮色 = 主题表 primary-foreground light"
     );
 
@@ -975,7 +1011,7 @@ fn app_window_transaction_views_use_type_scale_and_primary_foreground_token() {
         .unwrap();
     assert_eq!(
         app.screen().span_style("text:记一笔").unwrap().color,
-        nsh_core::Color(0x0b2239ff),
+        theme_color("primary-foreground", Scheme::Dark),
         "主按钮前景暗色 = 主题表 primary-foreground dark"
     );
 
@@ -1016,7 +1052,7 @@ fn app_window_shell_chrome_uses_type_scale_and_theme_tokens() {
         let db = nsh_app::boot::boot_ledger(&dir).unwrap();
         seed_cash_account(&db);
     }
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     app.wait_for("id:nav-dashboard").unwrap();
 
@@ -1030,7 +1066,7 @@ fn app_window_shell_chrome_uses_type_scale_and_theme_tokens() {
     );
     assert_eq!(
         brand.color,
-        nsh_core::Color(0x182635ff),
+        theme_color("foreground", Scheme::Light),
         "品牌行前景亮色 = 主题表 foreground light"
     );
     assert_eq!(
@@ -1047,7 +1083,7 @@ fn app_window_shell_chrome_uses_type_scale_and_theme_tokens() {
         .unwrap();
     assert_eq!(
         app.screen().span_style("text:开源记账").unwrap().color,
-        nsh_core::Color(0xe6edf4ff),
+        theme_color("foreground", Scheme::Dark),
         "品牌行前景暗色 = 主题表 foreground dark"
     );
 
@@ -1074,7 +1110,8 @@ fn app_window_shell_chrome_uses_type_scale_and_theme_tokens() {
     // 移动档顶栏：视图名 = SECONDARY 14（顶栏容器下钻——test_id 在 view 上，
     // span 匹配面只认 text matcher）、汉堡 = LEADING 18（触控行面基线）。
     nsh_app::app::reset_book_assembly();
-    nsh_app::app::set_book_dir(make_book("shell-chrome-mobile"));
+    let mobile_dir = make_book("shell-chrome-mobile");
+    nsh_app::app::set_book_dir(mobile_dir.to_path_buf());
     let mut app = Headless::start(mobile_config()).unwrap();
     app.wait_for("id:nav-topbar-title").unwrap();
     assert_eq!(
@@ -1095,7 +1132,8 @@ fn app_window_shell_chrome_uses_type_scale_and_theme_tokens() {
     // CAPTION 12、主操作标签 = SECONDARY 14 且前景 = primary-foreground
     // 亮暗双态令牌（裸白字退役）。
     nsh_app::app::reset_book_assembly();
-    nsh_app::cross_book::set_default_data_dir(make_data_root("shell-chrome-onboarding"));
+    let onboarding_root = make_data_root("shell-chrome-onboarding");
+    nsh_app::cross_book::set_default_data_dir(onboarding_root.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     app.wait_for("text:欢迎使用 Ledger").unwrap();
     assert_eq!(
@@ -1122,14 +1160,14 @@ fn app_window_shell_chrome_uses_type_scale_and_theme_tokens() {
     );
     assert_eq!(
         create.color,
-        nsh_core::Color(0xf2f8ffff),
+        theme_color("primary-foreground", Scheme::Light),
         "引导主操作前景亮色 = 主题表 primary-foreground light"
     );
     app.set_environment("dark mode", |env| env.color_scheme = ColorScheme::Dark)
         .unwrap();
     assert_eq!(
         app.screen().span_style("text:新建账本").unwrap().color,
-        nsh_core::Color(0x0b2239ff),
+        theme_color("primary-foreground", Scheme::Dark),
         "引导主操作前景暗色 = 主题表 primary-foreground dark"
     );
 }
@@ -1154,7 +1192,7 @@ fn app_window_wrapper_family_uses_type_scale_and_theme_tokens() {
         seed_budget(&db, &tea, 50_000, ledger_budget::BudgetPeriod::Monthly);
     }
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_transactions(&mut app);
     app.wait_for("text:共 2 条").unwrap();
@@ -1177,7 +1215,7 @@ fn app_window_wrapper_family_uses_type_scale_and_theme_tokens() {
             .span_style("id:tx-filter-account >> text:账户")
             .unwrap()
             .color,
-        nsh_core::Color(0x5c6c7eff),
+        theme_color("muted-foreground", Scheme::Light),
         "占位弱化色 = muted-foreground 亮档（主题单点消费）"
     );
     app.press("id:tx-filter-account").unwrap();
@@ -1195,7 +1233,7 @@ fn app_window_wrapper_family_uses_type_scale_and_theme_tokens() {
             .span_style("id:tx-filter-account-option >> text:测试现金")
             .unwrap()
             .color,
-        nsh_core::Color(0x182635ff),
+        theme_color("foreground", Scheme::Light),
         "选项行前景 = foreground 亮档（主题单点消费）"
     );
     app.press("id:tx-filter-account-option >> text:测试现金")
@@ -1234,7 +1272,7 @@ fn app_window_wrapper_family_uses_type_scale_and_theme_tokens() {
             .span_style("id:tx-filter-kind-trigger >> text:支出")
             .unwrap()
             .color,
-        nsh_core::Color(0x182635ff),
+        theme_color("foreground", Scheme::Light),
         "已选触发件前景 = foreground 亮档"
     );
     // 勾选标记呈现：ESC 收闭弹层（弹层开着时 ESC 走抑制闸门，不触发全局筛选
@@ -1282,7 +1320,7 @@ fn app_window_wrapper_family_uses_type_scale_and_theme_tokens() {
             .span_style("text:确认删除该条交易？")
             .unwrap()
             .color,
-        nsh_core::Color(0x5c6c7eff),
+        theme_color("muted-foreground", Scheme::Light),
         "说明段弱化色 = muted-foreground 亮档"
     );
     assert_eq!(
@@ -1298,7 +1336,7 @@ fn app_window_wrapper_family_uses_type_scale_and_theme_tokens() {
             .span_style("text:删除后不可恢复。")
             .unwrap()
             .color,
-        nsh_core::Color(0xd03050ff),
+        theme_color("destructive", Scheme::Light),
         "警示句色 = destructive 亮档（分级令牌消费）"
     );
     assert_eq!(
@@ -1349,7 +1387,7 @@ fn app_window_wrapper_family_uses_type_scale_and_theme_tokens() {
     );
     assert_eq!(
         app.screen().span_style("text:确认删除？").unwrap().color,
-        nsh_core::Color(0x182635ff),
+        theme_color("foreground", Scheme::Light),
         "气泡说明前景 = foreground 亮档"
     );
     assert_eq!(
@@ -1372,7 +1410,7 @@ fn app_window_wrapper_family_uses_type_scale_and_theme_tokens() {
             .span_style("id:tx-filter-account >> text:测试现金")
             .unwrap()
             .color,
-        nsh_core::Color(0xe6edf4ff),
+        theme_color("foreground", Scheme::Dark),
         "已选触发件前景 = foreground 暗档"
     );
     app.press("id:tx-filter-account").unwrap();
@@ -1382,7 +1420,7 @@ fn app_window_wrapper_family_uses_type_scale_and_theme_tokens() {
             .span_style("id:tx-filter-account-option >> text:测试现金")
             .unwrap()
             .color,
-        nsh_core::Color(0xe6edf4ff),
+        theme_color("foreground", Scheme::Dark),
         "选项行前景 = foreground 暗档"
     );
     app.press("id:tx-filter-account-option >> text:测试现金")
@@ -1400,7 +1438,7 @@ fn app_window_wrapper_family_uses_type_scale_and_theme_tokens() {
             .span_style("text:删除后不可恢复。")
             .unwrap()
             .color,
-        nsh_core::Color(0xe88080ff),
+        theme_color("destructive", Scheme::Dark),
         "警示句色 = destructive 暗档"
     );
     app.press("id:danger-cancel").unwrap();
@@ -1472,7 +1510,7 @@ fn app_window_renders_category_path_and_note_cells() {
         );
     }
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
 
     open_transactions(&mut app);
@@ -1613,7 +1651,7 @@ fn app_window_renders_purchase_order_rows_with_count_by_transaction() {
         .unwrap();
     }
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
 
     // 「共 N 条」按交易计：两个购买项行仍共 1 条（决策 14，购买项行不虚增计数）。
@@ -1674,7 +1712,7 @@ fn app_window_renders_lending_label_and_two_account_cell() {
         );
     }
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
 
     open_transactions(&mut app);
@@ -1737,7 +1775,7 @@ fn app_window_renders_source_name_and_status() {
         drop(conn);
     }
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
 
     open_transactions(&mut app);
@@ -1766,7 +1804,7 @@ fn pagination_shortcut_keys_flip_pages_and_stay_idempotent_at_ends() {
     let dir = make_book("pg-keys");
     seed_expense_series(&dir, 150);
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
 
     open_transactions(&mut app);
@@ -1805,7 +1843,7 @@ fn period_shortcut_keys_and_stepper_click_step_and_clamp_at_boundary() {
     seed_expense_on_date(&dir, &prev_month_mid().to_string(), 8_800);
     seed_expense_on_date(&dir, &today().to_string(), 2_500);
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
 
     open_transactions(&mut app);
@@ -1863,7 +1901,7 @@ fn suppression_gate_blocks_pagination_key_while_period_popup_open() {
     let dir = make_book("suppress-pg");
     seed_expense_series(&dir, 150);
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
 
     open_transactions(&mut app);
@@ -1903,7 +1941,7 @@ fn suppression_gate_blocks_period_key_while_period_popup_open() {
     seed_expense_on_date(&dir, &prev_month_mid().to_string(), 8_800);
     seed_expense_on_date(&dir, &today().to_string(), 2_500);
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
 
     open_transactions(&mut app);
@@ -1975,7 +2013,7 @@ fn row_context_menu_delete_confirms_then_refreshes_list() {
     let dir = make_book("delete");
     seed_expense_notes(&dir, &["要删除的一笔", "要留下的一笔"]);
 
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
 
     open_transactions(&mut app);
@@ -2029,7 +2067,7 @@ fn row_context_menu_delete_cancel_writes_nothing() {
     let dir = make_book("delete-cancel");
     seed_expense_notes(&dir, &["要删除的一笔", "要留下的一笔"]);
 
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
 
     open_transactions(&mut app);
@@ -2064,7 +2102,7 @@ fn row_context_menu_delete_escape_writes_nothing() {
     let dir = make_book("delete-esc");
     seed_expense_notes(&dir, &["要删除的一笔", "要留下的一笔"]);
 
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
 
     open_transactions(&mut app);
@@ -2098,7 +2136,7 @@ fn row_context_menu_escape_closes_menu_writes_nothing() {
     let dir = make_book("menu-esc");
     seed_expense_notes(&dir, &["要删除的一笔", "要留下的一笔"]);
 
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
 
     open_transactions(&mut app);
@@ -2139,7 +2177,7 @@ fn suppression_gate_blocks_pagination_key_while_danger_dialog_open() {
     let dir = make_book("suppress-danger");
     seed_expense_series(&dir, 150);
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
 
     open_transactions(&mut app);
@@ -2247,7 +2285,7 @@ fn purchase_item_row_right_click_deletes_whole_transaction() {
         );
     }
 
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
 
     // 「共 N 条」按交易计：订单 1 笔 + 留底 1 笔（购买项行不虚增计数）。
@@ -2298,7 +2336,7 @@ fn app_smoke_boots_shows_first_screen_count_and_pages_by_key() {
     let dir = make_book("smoke");
     seed_expense_series(&dir, 150);
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
 
     // 就绪 + 首屏概览（出厂落点，#2039）：净资产主数字在屏。
@@ -2329,13 +2367,8 @@ fn ledger_perf_bin() -> std::path::PathBuf {
 /// 参数必出同库，账户/分类/商户/转账/退款/软删/购买项/投资/计划全画像都在），
 /// 输出落产品形态目录（ledger.db + sync.db，与 nsh-app boot 的开库形态一致）。
 /// 返回账本目录。
-fn generate_perf_book(transactions: u64) -> std::path::PathBuf {
-    let dir = std::env::temp_dir().join(format!(
-        "ledger-test-nsh-perf-{}-{}",
-        transactions,
-        new_uuid()
-    ));
-    fs::create_dir_all(&dir).unwrap();
+fn generate_perf_book(transactions: u64) -> seed::BookDir {
+    let dir = seed::make_book_dir(&format!("nsh-perf-{transactions}"));
     let out = dir.join("ledger.db");
     let status = std::process::Command::new(ledger_perf_bin())
         .args([
@@ -2419,7 +2452,7 @@ fn perf_dataset_book_counts_match_domain_read_across_pages_and_scroll() {
         facts.pages
     );
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
 
     // 总数一致（UI == 域读，非幻数）；首页首行 = 最新一笔落进视口。
@@ -2495,7 +2528,7 @@ fn search_and_period_combo_semantics_adjudicated() {
     seed_expense_on_date(&dir, &prev_month_mid().to_string(), 8_800);
     seed_expense_on_date(&dir, &today().to_string(), 2_500);
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
 
     open_transactions(&mut app);
@@ -2672,7 +2705,7 @@ fn filter_bar_account_and_merchant_selects_filter_rows_and_clear_restores() {
         );
     }
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_transactions(&mut app);
 
@@ -2771,7 +2804,7 @@ fn filter_bar_kind_multiselect_toggles_normalize_and_clear() {
         );
     }
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_transactions(&mut app);
 
@@ -2848,7 +2881,7 @@ fn filter_bar_amount_range_engages_search_surface_without_keyword() {
     seed_expense_on_date(&dir, "2026-01-06", 8_800);
     seed_expense_on_date(&dir, "2026-01-07", 4_400);
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_transactions(&mut app);
 
@@ -2911,7 +2944,7 @@ fn esc_resets_filters_and_gated_while_overlay_open() {
         );
     }
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_transactions(&mut app);
 
@@ -2983,7 +3016,7 @@ fn filters_survive_view_switch_session_retained() {
         );
     }
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_transactions(&mut app);
 
@@ -3017,7 +3050,7 @@ fn suppression_gate_blocks_shortcuts_while_kind_popup_open() {
     let dir = make_book("filter-suppress");
     seed_expense_series(&dir, 120);
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_transactions(&mut app);
 
@@ -3143,7 +3176,7 @@ fn filter_bar_hide_investment_toggle_hides_and_restores_rows() {
         seed_investment_related_rows(&db);
     }
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_transactions(&mut app);
 
@@ -3190,7 +3223,7 @@ fn hide_investment_preference_persists_across_restart() {
     }
     let storage = MemoryStorage::new(Vec::new());
 
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config_with_backend(storage.clone())).unwrap();
     open_transactions(&mut app);
     app.wait_for("text:共 4 条").unwrap();
@@ -3209,7 +3242,7 @@ fn hide_investment_preference_persists_across_restart() {
 
     // 重启（开启态持久）：不经开关，行集即按偏好收窄。
     nsh_app::app::reset_book_assembly();
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config_with_backend(storage.clone())).unwrap();
     open_transactions(&mut app);
     app.wait_for("text:共 1 条").unwrap();
@@ -3230,7 +3263,7 @@ fn hide_investment_preference_persists_across_restart() {
     );
     drop(app);
     nsh_app::app::reset_book_assembly();
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config_with_backend(storage)).unwrap();
     open_transactions(&mut app);
     app.wait_for("text:共 4 条").unwrap();
@@ -3250,7 +3283,7 @@ fn hide_investment_preference_not_touched_by_clear_or_escape() {
         seed_investment_related_rows(&db);
     }
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_transactions(&mut app);
 
@@ -3372,7 +3405,7 @@ fn tx_table_account_cell_click_self_drills_with_full_replacement() {
         );
     }
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_transactions(&mut app);
     app.wait_for("text:共 4 条").unwrap();
@@ -3440,7 +3473,7 @@ fn tx_table_transfer_row_two_account_atoms_drill_to_each_side() {
         }
     }
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_transactions(&mut app);
     app.wait_for("text:共 3 条").unwrap();
@@ -3500,7 +3533,7 @@ fn tx_table_merchant_cell_click_drills_to_merchant_filtered() {
         );
     }
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_transactions(&mut app);
     app.wait_for("text:共 2 条").unwrap();
@@ -3559,7 +3592,7 @@ fn tx_table_source_cell_click_jumps_to_policy_view() {
         drop(conn);
     }
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_transactions(&mut app);
     app.wait_for("text:医疗险 已删除").unwrap();
@@ -3703,7 +3736,7 @@ fn tx_table_note_copy_writes_clipboard_with_feedback() {
         drop(conn);
     }
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_transactions(&mut app);
     app.wait_for("text:共 3 条").unwrap();
@@ -3756,7 +3789,7 @@ fn sidebar_renders_groups_fixed_items_and_hides_contained_members() {
     let dir = make_book("nav-skeleton");
     seed_expense_series(&dir, 3);
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
 
     // 交易列表为骨架首个挂载视图（出厂落点）。
@@ -3811,7 +3844,7 @@ fn clicking_sidebar_items_lands_placeholder_views_and_back() {
     let dir = make_book("nav-click");
     seed_expense_series(&dir, 3);
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_transactions(&mut app);
 
@@ -3847,7 +3880,7 @@ fn shortcut_band_keys_land_views() {
     let dir = make_book("nav-keys");
     seed_expense_series(&dir, 3);
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_transactions(&mut app);
 
@@ -3890,7 +3923,7 @@ fn suppression_gate_blocks_shortcut_band_while_period_popup_open() {
     let dir = make_book("nav-suppress");
     seed_expense_series(&dir, 3);
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_transactions(&mut app);
 
@@ -3922,7 +3955,7 @@ fn closed_feature_exits_sidebar_and_key_band() {
     let dir = make_book("nav-closed");
     seed_expense_series(&dir, 3);
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let storage = MemoryStorage::new(vec![(
         "view_state:closed_features".to_owned(),
         "[\"budget\"]".to_owned(),
@@ -3957,7 +3990,7 @@ fn startup_restores_last_view_with_closed_and_unknown_fallbacks() {
     let dir = make_book("nav-restore");
     seed_expense_series(&dir, 3);
 
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     // 已存合法视图 → 恢复账户占位。
     let storage = MemoryStorage::new(vec![(
         "view_state:route".to_owned(),
@@ -3974,7 +4007,7 @@ fn startup_restores_last_view_with_closed_and_unknown_fallbacks() {
 
     // 已关闭功能的上次视图 → 出厂落点（交易表格）。
     nsh_app::app::reset_book_assembly();
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let storage = MemoryStorage::new(vec![
         ("view_state:route".to_owned(), "\"budget\"".to_owned()),
         (
@@ -3990,7 +4023,7 @@ fn startup_restores_last_view_with_closed_and_unknown_fallbacks() {
 
     // 未知名 → 出厂落点（概览）。
     nsh_app::app::reset_book_assembly();
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let storage = MemoryStorage::new(vec![("view_state:route".to_owned(), "\"nope\"".to_owned())]);
     let mut app = Headless::start(desktop_config_with_backend(storage)).unwrap();
     app.wait_for("id:net-worth-card").unwrap();
@@ -4005,7 +4038,7 @@ fn group_more_container_tabs_follow_session_state_not_restart() {
     let dir = make_book("nav-more");
     seed_expense_series(&dir, 3);
 
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let storage = MemoryStorage::new(Vec::new());
     let mut app = Headless::start(desktop_config_with_backend(storage.clone())).unwrap();
     open_transactions(&mut app);
@@ -4038,7 +4071,7 @@ fn group_more_container_tabs_follow_session_state_not_restart() {
 
     // 重启：页签态不跨启动持久化，回默认首签保单。
     nsh_app::app::reset_book_assembly();
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config_with_backend(storage)).unwrap();
     app.wait_for("id:more-tab-policies").unwrap();
     assert_eq!(
@@ -4057,7 +4090,7 @@ fn closed_feature_tab_is_filtered_from_group_more_container() {
     let dir = make_book("nav-more-closed");
     seed_expense_series(&dir, 3);
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let storage = MemoryStorage::new(vec![(
         "view_state:closed_features".to_owned(),
         "[\"merchants\"]".to_owned(),
@@ -4083,7 +4116,7 @@ fn sort_menu_reorders_key_band_and_persists_across_restart() {
     let dir = make_book("nav-sort");
     seed_expense_series(&dir, 3);
 
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let storage = MemoryStorage::new(Vec::new());
     let mut app = Headless::start(desktop_config_with_backend(storage.clone())).unwrap();
     open_transactions(&mut app);
@@ -4098,7 +4131,7 @@ fn sort_menu_reorders_key_band_and_persists_across_restart() {
 
     // 重启：顺序持久化（先离开到概览，再 ⌘1——派发面不再被同名幂等短路）。
     nsh_app::app::reset_book_assembly();
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config_with_backend(storage)).unwrap();
     app.press_key("mod+`").unwrap();
     app.wait_for_within("text:概览", DEFAULT_WAIT).unwrap();
@@ -4127,7 +4160,7 @@ fn context_menus_move_item_into_more_and_back() {
     let dir = make_book("nav-into-more");
     seed_expense_series(&dir, 3);
 
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let storage = MemoryStorage::new(Vec::new());
     let mut app = Headless::start(desktop_config_with_backend(storage.clone())).unwrap();
     open_transactions(&mut app);
@@ -4167,7 +4200,7 @@ fn context_menus_move_item_into_more_and_back() {
 
     // 重启：移入/移回的持久化往返（侧栏预算在册、容器页签无预算）。
     nsh_app::app::reset_book_assembly();
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config_with_backend(storage)).unwrap();
     app.press_key("mod+3").unwrap();
     app.wait_for("text:预算").unwrap();
@@ -4182,7 +4215,7 @@ fn move_back_menu_is_disabled_when_group_full() {
     let dir = make_book("nav-full");
     seed_expense_series(&dir, 3);
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_transactions(&mut app);
 
@@ -4217,7 +4250,7 @@ fn view_state_round_trips_across_restart() {
     let dir = make_book("nav-roundtrip");
     seed_expense_series(&dir, 3);
 
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let storage = MemoryStorage::new(Vec::new());
     let mut app = Headless::start(desktop_config_with_backend(storage.clone())).unwrap();
     open_transactions(&mut app);
@@ -4231,7 +4264,7 @@ fn view_state_round_trips_across_restart() {
 
     // 重启：上次视图 = 账户；物品已在资产组首位 → ⌘4（带内随动）落物品——两态都持久。
     nsh_app::app::reset_book_assembly();
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config_with_backend(storage)).unwrap();
     app.wait_for("text:新增账户").unwrap();
     assert_eq!(
@@ -4327,7 +4360,7 @@ fn budget_view_renders_create_form_summary_and_progress_table() {
         seed_expense_this_month(&db, &tea, 12_000);
     }
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_transactions(&mut app);
 
@@ -4382,7 +4415,7 @@ fn budget_form_creates_budget_via_pinyin_search_and_refreshes_list() {
         seed_category(&db, "刺身", Some(&fresh));
     }
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     press_after(&mut app, "id:nav-budget", "id:nav-budget").unwrap();
     app.wait_for("text:预算执行").unwrap();
@@ -4439,7 +4472,7 @@ fn budget_edit_modal_updates_amount_then_refreshes() {
         seed_expense_this_month(&db, &tea, 12_000);
     }
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_transactions(&mut app);
     app.press("id:nav-budget").unwrap();
@@ -4479,7 +4512,7 @@ fn budget_edit_modal_escape_cancel_and_close_button_write_nothing() {
         seed_budget(&db, &tea, 50_000, ledger_budget::BudgetPeriod::Monthly);
     }
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     app.wait_for("id:nav-budget").unwrap();
     app.press("id:nav-budget").unwrap();
@@ -4521,7 +4554,7 @@ fn budget_delete_popconfirm_cancel_writes_nothing_confirm_refreshes() {
         seed_budget(&db, &tea, 50_000, ledger_budget::BudgetPeriod::Monthly);
     }
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     app.wait_for("id:nav-budget").unwrap();
     app.press("id:nav-budget").unwrap();
@@ -4560,7 +4593,7 @@ fn budget_form_validates_required_and_positive_without_writing() {
         seed_category(&db, "刺身", Some(&fresh));
     }
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     app.wait_for("id:nav-budget").unwrap();
     app.press("id:nav-budget").unwrap();
@@ -4610,7 +4643,7 @@ fn suppression_gate_blocks_shortcuts_while_budget_popups_open() {
         seed_budget(&db, &tea, 50_000, ledger_budget::BudgetPeriod::Monthly);
     }
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     app.wait_for("id:nav-budget").unwrap();
     app.press("id:nav-budget").unwrap();
@@ -4706,7 +4739,7 @@ fn form_creates_expense_and_refreshes_list() {
         seed_cash_account(&db);
     }
 
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_transactions(&mut app);
 
@@ -4789,7 +4822,7 @@ fn form_creates_income_with_income_only_category_candidates() {
         .unwrap();
     }
 
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_transactions(&mut app);
 
@@ -4844,7 +4877,7 @@ fn form_category_clear_button_shows_only_while_selected() {
         seed_category(&db, "餐饮", None);
     }
 
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_transactions(&mut app);
 
@@ -4911,7 +4944,7 @@ fn form_edits_expense_with_backfill_and_refreshes() {
         );
     }
 
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_transactions(&mut app);
 
@@ -4980,7 +5013,7 @@ fn form_blocks_invalid_submission_with_visible_errors() {
         seed_cash_account(&db);
     }
 
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_transactions(&mut app);
 
@@ -5033,7 +5066,7 @@ fn form_modal_suppresses_pagination_shortcut_while_open() {
     let dir = make_book("form-suppress");
     seed_expense_series(&dir, 105);
 
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_transactions(&mut app);
     // 第 1 页首行 = 日期最大一笔（test_date(104) = 2026-04-14）。
@@ -5080,7 +5113,7 @@ fn form_date_field_accepts_typed_date_and_lands_on_row() {
         seed_cash_account(&db);
     }
 
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_transactions(&mut app);
 
@@ -5150,7 +5183,7 @@ fn form_attaches_policy_and_clears_it() {
         .unwrap();
     }
 
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_transactions(&mut app);
 
@@ -5213,7 +5246,7 @@ fn form_merchant_free_text_creates_merchant_via_domain_semantics() {
         seed_cash_account(&db);
     }
 
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_transactions(&mut app);
 
@@ -5290,7 +5323,7 @@ fn transfer_form_creates_transfer_and_refreshes_list() {
         seed_account(&db, "测试银行", AccountType::Bank);
     }
 
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_transactions(&mut app);
 
@@ -5352,7 +5385,7 @@ fn transfer_form_blocks_incomplete_submission_with_visible_errors() {
         seed_account(&db, "测试银行", AccountType::Bank);
     }
 
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_transactions(&mut app);
 
@@ -5423,7 +5456,7 @@ fn transfer_form_edits_with_dual_account_backfill() {
         );
     }
 
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_transactions(&mut app);
 
@@ -5485,7 +5518,7 @@ fn lending_form_creates_lend_with_side_filtered_candidates() {
         seed_account(&db, "借出·张三", AccountType::Receivable);
     }
 
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_transactions(&mut app);
 
@@ -5584,7 +5617,7 @@ fn lending_form_edit_derives_direction_and_backfills() {
         );
     }
 
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_transactions(&mut app);
 
@@ -5732,7 +5765,7 @@ fn refund_form_creates_refund_from_row_with_default_amount() {
         seed_tx_with_id(&db, expense)
     };
 
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_transactions(&mut app);
 
@@ -5836,7 +5869,7 @@ fn refund_form_edit_preserves_original_link() {
         (expense_id, refund_id)
     };
 
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_transactions(&mut app);
 
@@ -5952,7 +5985,7 @@ fn row_menu_open_face_follows_kind_and_subrows() {
         );
     }
 
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_transactions(&mut app);
 
@@ -6026,7 +6059,7 @@ fn funding_form_creates_split_expense_and_refreshes_list() {
         seed_account(&db, "测试信用", AccountType::Credit);
     }
 
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_transactions(&mut app);
 
@@ -6096,7 +6129,7 @@ fn funding_form_blocks_mismatched_total_with_visible_error() {
         seed_account(&db, "测试信用", AccountType::Credit);
     }
 
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_transactions(&mut app);
 
@@ -6171,7 +6204,7 @@ fn funding_form_edits_split_backfill_and_refreshes() {
         seed_tx_with_id(&db, input);
     }
 
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_transactions(&mut app);
 
@@ -6255,7 +6288,7 @@ fn purchase_form_creates_order_rows_and_refreshes_list() {
         seed_cash_account(&db);
     }
 
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_transactions(&mut app);
 
@@ -6352,7 +6385,7 @@ fn purchase_form_edits_item_rows_backfill_add_delete() {
         seed_tx_with_id(&db, input);
     }
 
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_transactions(&mut app);
 
@@ -6466,12 +6499,10 @@ fn backup_entry_full_journey_writes_zip_and_reports_success() {
     let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("backup-journey");
-    let backup_dir =
-        std::env::temp_dir().join(format!("ledger-test-nsh-backup-journey-{}", new_uuid()));
-    fs::create_dir_all(&backup_dir).unwrap();
+    let backup_dir = ScratchDir::new("nsh-backup-journey");
     let target = backup_dir.join("手动选择.zip");
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
 
     // 入口存在性：交易列表工具区「备份」按钮呈现（id 锚点，research doc §3.5）。
@@ -6522,15 +6553,13 @@ fn backup_overwrite_guard_confirms_before_replacing() {
     let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("backup-overwrite");
-    let backup_dir =
-        std::env::temp_dir().join(format!("ledger-test-nsh-backup-overwrite-{}", new_uuid()));
-    fs::create_dir_all(&backup_dir).unwrap();
+    let backup_dir = ScratchDir::new("nsh-backup-overwrite");
     let target = backup_dir.join("手动选择.zip");
     // 预置旧备份文件（内容可辨：确认前不被替换、确认后被备份产物替换）。
     const OLD_CONTENT: &[u8] = b"old-backup-content-marker";
     fs::write(&target, OLD_CONTENT).unwrap();
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
 
     open_transactions(&mut app);
@@ -6564,16 +6593,12 @@ fn backup_overwrite_guard_cancel_keeps_existing_file() {
     let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("backup-overwrite-cancel");
-    let backup_dir = std::env::temp_dir().join(format!(
-        "ledger-test-nsh-backup-overwrite-cancel-{}",
-        new_uuid()
-    ));
-    fs::create_dir_all(&backup_dir).unwrap();
+    let backup_dir = ScratchDir::new("nsh-backup-overwrite-cancel");
     let target = backup_dir.join("手动选择.zip");
     const OLD_CONTENT: &[u8] = b"old-backup-content-marker";
     fs::write(&target, OLD_CONTENT).unwrap();
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
 
     open_transactions(&mut app);
@@ -6609,7 +6634,7 @@ fn backup_dialog_failure_reports_error() {
     nsh_app::app::reset_book_assembly();
     let dir = make_book("backup-dialog-error");
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
 
     open_transactions(&mut app);
@@ -6653,11 +6678,9 @@ fn backup_dialog_cancel_writes_nothing() {
     let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("backup-cancel");
-    let backup_dir =
-        std::env::temp_dir().join(format!("ledger-test-nsh-backup-cancel-{}", new_uuid()));
-    fs::create_dir_all(&backup_dir).unwrap();
+    let backup_dir = ScratchDir::new("nsh-backup-cancel");
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
 
     open_transactions(&mut app);
@@ -6799,7 +6822,7 @@ fn seed_buy(db: &ledger_infra::db::DbState, account: &str, instrument: &str, dat
 ///   1 份@¥1 → 持仓市值 10_000、未实现 9_900、累计收益 9_900、自由度分子
 ///   10_000（现金腿归零）；
 /// - 净资产 = 现金 30_000 + 持仓市值 10_000 = 40_000（实物腿 0）。
-fn seed_dashboard_book(tag: &str) -> std::path::PathBuf {
+fn seed_dashboard_book(tag: &str) -> seed::BookDir {
     let dir = make_book(tag);
     let db = nsh_app::boot::boot_ledger(&dir).unwrap();
     let cash = seed_account_with_currency(&db, "现金", AccountType::Cash, "CNY", 0);
@@ -6904,7 +6927,7 @@ fn search_view_lands_with_placeholder_and_controls() {
     let dir = make_book("search-view");
     seed_expense_notes(&dir, &["元旦火锅聚餐"]);
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
 
     open_search(&mut app);
@@ -6947,7 +6970,7 @@ fn search_view_keyword_debounced_search_shows_hits() {
     let dir = make_book("search-view-keyword");
     seed_expense_notes(&dir, &["元旦火锅聚餐", "超市买菜"]);
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
 
     open_search(&mut app);
@@ -6976,7 +6999,7 @@ fn search_view_amount_range_filters_without_keyword() {
     seed_expense_on_date(&dir, &today().to_string(), 2_500);
     seed_expense_on_date(&dir, &today().to_string(), 88_000);
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
 
     open_search(&mut app);
@@ -7013,7 +7036,7 @@ fn search_view_period_chip_filters_hits() {
     seed_expense_on_date(&dir, &prev_month_mid().to_string(), 8_800);
     seed_expense_on_date(&dir, &today().to_string(), 2_500);
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
 
     open_search(&mut app);
@@ -7055,7 +7078,7 @@ fn search_view_clear_filters_then_clear_keyword_returns_placeholder() {
     seed_expense_on_date(&dir, &today().to_string(), 2_500);
     seed_expense_on_date(&dir, &today().to_string(), 88_000);
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
 
     open_search(&mut app);
@@ -7090,7 +7113,7 @@ fn search_view_paginates_hits() {
     let dir = make_book("search-view-paged");
     seed_expense_notes(&dir, &["批量造数"; 150]);
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
 
     open_search(&mut app);
@@ -7118,7 +7141,7 @@ fn search_view_results_are_read_only_no_row_menu() {
     let dir = make_book("search-view-readonly");
     seed_expense_notes(&dir, &["元旦火锅聚餐"]);
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
 
     open_search(&mut app);
@@ -7189,7 +7212,7 @@ fn search_view_purchase_name_hit_expands_order_rows() {
         .unwrap();
     }
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
 
     open_search(&mut app);
@@ -7214,7 +7237,7 @@ fn search_view_rapid_keyword_changes_show_latest_input_results() {
     let dir = make_book("search-view-race");
     seed_expense_notes(&dir, &["元旦火锅聚餐", "超市买菜"]);
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
 
     open_search(&mut app);
@@ -7243,7 +7266,7 @@ fn search_view_state_resets_after_leaving_and_returning() {
     let dir = make_book("search-view-reset");
     seed_expense_notes(&dir, &["元旦火锅聚餐"]);
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
 
     open_search(&mut app);
@@ -7272,7 +7295,7 @@ fn search_view_shows_no_hits_empty_state() {
     let dir = make_book("search-view-no-hits");
     seed_expense_notes(&dir, &["元旦火锅聚餐"]);
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
 
     open_search(&mut app);
@@ -7299,7 +7322,7 @@ fn startup_lands_on_dashboard_with_all_five_cards() {
     nsh_app::app::reset_book_assembly();
     let dir = seed_dashboard_book("dashboard-first-screen");
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     // 第一屏凭据：净资产主数字（域单点折算值）+ 各卡标题。
     app.wait_for("id:net-worth-value").unwrap();
@@ -7355,7 +7378,7 @@ fn dashboard_investment_card_shows_empty_state_without_holdings() {
         );
     }
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     app.wait_for("text:暂无持仓").unwrap();
     assert!(
@@ -7378,7 +7401,7 @@ fn net_worth_card_drills_down_to_accounts_view() {
     nsh_app::app::reset_book_assembly();
     let dir = seed_dashboard_book("dashboard-drill");
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     app.wait_for("id:net-worth-card").unwrap();
     app.press("id:net-worth-view-accounts").unwrap();
@@ -7403,7 +7426,7 @@ fn caliber_popovers_open_and_close_on_dashboard() {
     nsh_app::app::reset_book_assembly();
     let dir = seed_dashboard_book("dashboard-popover");
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     app.wait_for("id:net-worth-card").unwrap();
     // 净资产口径：点开 → 说明在场 → ESC 关。
@@ -7448,7 +7471,7 @@ fn freedom_zero_denominator_guides_to_budget_view() {
         );
     }
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     app.wait_for("id:freedom-zero-denominator").unwrap();
     app.press("id:freedom-go-budget").unwrap();
@@ -7520,7 +7543,7 @@ fn savings_view_lands_with_progress_rows_and_empty_guide() {
         seed_savings_goal(&db, "买车基金", 20_000, None);
     }
 
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_savings(&mut app);
     // 异步装载纪律：先等行到屏（§3.5）再断格文本与列头。
@@ -7564,7 +7587,7 @@ fn savings_view_shows_empty_guide_without_goals() {
     let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("savings-empty");
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_savings(&mut app);
     app.wait_for("id:sg-table").unwrap();
@@ -7586,7 +7609,7 @@ fn savings_view_create_goal_journey() {
     let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("savings-create");
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_savings(&mut app);
     app.press("id:sg-new").unwrap();
@@ -7646,7 +7669,7 @@ fn savings_view_edits_goal_with_planned_monthly() {
         seed_savings_goal(&db, "买车基金", 20_000, None);
     }
 
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_savings(&mut app);
     app.wait_for("text:买车基金").unwrap();
@@ -7703,7 +7726,7 @@ fn savings_view_archives_unarchives_and_deletes_with_confirmation() {
         seed_savings_goal(&db, "买车基金", 10_000, None);
     }
 
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_savings(&mut app);
     app.wait_for("text:买车基金").unwrap();
@@ -7797,7 +7820,7 @@ fn savings_view_delete_guard_refuses_nonzero_balance() {
         .unwrap();
     }
 
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_savings(&mut app);
     // 异步装载纪律：先等行到屏再断已存（V017 缓存读数）。
@@ -7858,7 +7881,7 @@ fn savings_view_achieved_state_and_plan_hint_boundaries() {
         .unwrap();
     }
 
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_savings(&mut app);
     app.wait_for("id:sg-table").unwrap();
@@ -7924,7 +7947,7 @@ fn insurers_view_lands_with_seed_rows_and_tools() {
     nsh_app::app::reset_book_assembly();
     let dir = make_book("insurers-land");
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_insurers(&mut app);
     // 种子（V019）名称序行集在屏（可视前两行为种子保司；名称序位在底部
@@ -7963,7 +7986,7 @@ fn insurers_view_add_journey_with_empty_and_duplicate_guards() {
     nsh_app::app::reset_book_assembly();
     let dir = make_book("insurers-add");
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_insurers(&mut app);
 
@@ -8013,7 +8036,7 @@ fn insurers_view_edit_backfill_and_rename_duplicate_guard() {
     }
     let id = nsh_app_lib_insurer_id(&dir, "海峡金桥财产保险");
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_insurers(&mut app);
     // 搜索定位（名称序位在虚拟化视口之外）：唯一命中行动作锚点以 id 内嵌。
@@ -8079,7 +8102,7 @@ fn insurers_view_delete_popconfirm_softdeletes_and_readonly() {
     }
     let id = nsh_app_lib_insurer_id(&dir, "海峡金桥财产保险");
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_insurers(&mut app);
     // 搜索定位（名称序位在虚拟化视口之外）：唯一命中行动作锚点以 id 内嵌。
@@ -8135,7 +8158,7 @@ fn insurers_view_search_filters_hits_and_clear_restores() {
     nsh_app::app::reset_book_assembly();
     let dir = make_book("insurers-search");
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_insurers(&mut app);
     // 过滤前凭据：人保财险在屏（首屏可见行；过滤后消失才证过滤面）。
@@ -8204,7 +8227,7 @@ fn accounts_view_lands_with_create_card_and_balance_rows() {
         seed_account(&db, "银行卡", AccountType::Bank);
     }
 
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_accounts(&mut app);
     // 异步装载纪律：先等主表行到屏（§3.5）再断格文本与列头。
@@ -8251,7 +8274,7 @@ fn accounts_view_create_account_journey() {
         seed_cash_account(&db);
     }
 
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_accounts(&mut app);
 
@@ -8293,7 +8316,7 @@ fn accounts_view_credit_type_reveals_profile_fields() {
         seed_cash_account(&db);
     }
 
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_accounts(&mut app);
 
@@ -8353,7 +8376,7 @@ fn accounts_view_edit_renames_account() {
         cash_id = seed_cash_account(&db);
     }
 
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_accounts(&mut app);
 
@@ -8403,7 +8426,7 @@ fn accounts_view_delete_needs_confirmation_and_cancels_before_write() {
         seed_account(&db, "要留下的", AccountType::Cash);
     }
 
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_accounts(&mut app);
 
@@ -8448,7 +8471,7 @@ fn accounts_view_archives_and_restores() {
         seed_account(&db, "要留下的", AccountType::Cash);
     }
 
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_accounts(&mut app);
 
@@ -8528,7 +8551,7 @@ fn accounts_view_adjust_balance_broadcasts_transactions_invalidated() {
         );
     }
 
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_accounts(&mut app);
 
@@ -8583,7 +8606,7 @@ fn accounts_view_goal_partition_and_name_readonly_with_delete_guard() {
         .unwrap();
     }
 
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_accounts(&mut app);
 
@@ -8633,7 +8656,7 @@ fn accounts_view_amount_privacy_masks_balances() {
         seed_account_with_balance(&db, "测试现金", 10_000);
     }
 
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config_with_storage(&[(
         "amount_privacy_enabled",
         "true",
@@ -8691,7 +8714,7 @@ fn accounts_view_name_click_drills_to_transactions_filtered() {
         );
     }
 
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_accounts(&mut app);
 
@@ -8803,7 +8826,7 @@ fn items_view_lands_with_hint_and_rows() {
         seed_item(&db, &account, "显示器", 100_000, &test_date(0));
     }
 
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_items(&mut app);
     app.wait_for("text:显示器").unwrap();
@@ -8849,7 +8872,7 @@ fn items_view_empty_book_shows_guide() {
     nsh_app::app::reset_book_assembly();
     let dir = make_book("items-empty");
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_items(&mut app);
     app.wait_for("id:item-empty-guide").unwrap();
@@ -8868,7 +8891,7 @@ fn items_view_hint_button_navigates_to_transactions() {
     nsh_app::app::reset_book_assembly();
     let dir = make_book("items-hint");
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_items(&mut app);
     app.press("id:item-go-transactions").unwrap();
@@ -8904,7 +8927,7 @@ fn items_view_create_from_transaction_menu_journey() {
         );
     }
 
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_transactions(&mut app);
 
@@ -8969,7 +8992,7 @@ fn items_view_edit_rename_updates_row_and_source_column() {
         seed_item(&db, &account, "显示器", 100_000, &test_date(0));
     }
 
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_items(&mut app);
     app.wait_for("text:显示器").unwrap();
@@ -9024,7 +9047,7 @@ fn items_view_edit_relink_backfills_on_save() {
         );
     }
 
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_items(&mut app);
     app.wait_for("text:显示器").unwrap();
@@ -9065,7 +9088,7 @@ fn items_view_dispose_then_revise() {
         seed_item(&db, &account, "显示器", 100_000, &test_date(0));
     }
 
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_items(&mut app);
     app.wait_for("text:显示器").unwrap();
@@ -9103,7 +9126,7 @@ fn items_view_delete_needs_confirmation_and_cancels_before_write() {
         seed_item(&db, &account, "显示器", 100_000, &test_date(0));
     }
 
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_items(&mut app);
     app.wait_for("text:显示器").unwrap();
@@ -9143,7 +9166,7 @@ fn items_view_detail_recacs_reference_date_and_clears() {
         seed_item(&db, &account, "显示器", 100_000, &purchase);
     }
 
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_items(&mut app);
     app.wait_for("text:显示器").unwrap();
@@ -9196,7 +9219,7 @@ fn items_view_add_form_error_keeps_dialog_open() {
         seed_item(&db, &account, "已有物品", 10_000, &test_date(0));
     }
 
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_items(&mut app);
     app.wait_for("text:已有物品").unwrap();
@@ -9296,7 +9319,7 @@ fn merchants_view_lands_with_cards_and_counted_rows() {
         }
     }
 
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_merchants(&mut app);
 
@@ -9331,7 +9354,7 @@ fn merchants_view_create_journey_and_duplicate_rejection() {
     nsh_app::app::reset_book_assembly();
     let dir = make_book("merchants-create");
 
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_merchants(&mut app);
 
@@ -9402,7 +9425,7 @@ fn merchants_view_edit_renames_and_updates_source_column() {
         );
     }
 
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_merchants(&mut app);
     app.wait_for("text:京东").unwrap();
@@ -9446,7 +9469,7 @@ fn merchants_view_delete_needs_confirmation_and_cancels_before_write() {
         jd = seed_merchant(&db, "京东");
     }
 
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_merchants(&mut app);
     app.wait_for("text:京东").unwrap();
@@ -9500,7 +9523,7 @@ fn merchants_view_search_and_show_deleted_toggle_readonly_rows() {
         ledger_merchants::delete_merchant(&conn, &bogus).unwrap();
     }
 
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_merchants(&mut app);
 
@@ -9561,7 +9584,7 @@ fn merchants_view_lands_directly_when_moved_to_sidebar() {
         ),
     ]))
     .unwrap();
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     app.wait_for("id:nav-merchants").unwrap();
     app.press("id:nav-merchants").unwrap();
     app.wait_for("id:merchant-table").unwrap();
@@ -9611,7 +9634,7 @@ fn merchants_view_count_click_drills_to_transactions_filtered() {
         );
     }
 
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_merchants(&mut app);
     app.wait_for("text:京东").unwrap();
@@ -9655,7 +9678,7 @@ fn reports_month_key() -> String {
 /// 报表造数簿：账户 + 两段分类（午饭挂餐饮根 + 通勤根）+ 商户 × 7 + 当月
 /// 一组交易（收入/支出/退款、分类/未分类、两主力商户 + 五笔小额）——三张
 /// 报表的期间口径、下钻两段与 TopN 档位共用同一簿（旅程间无交叉写）。
-fn seed_reports_book(tag: &str) -> std::path::PathBuf {
+fn seed_reports_book(tag: &str) -> seed::BookDir {
     let dir = make_book(tag);
     let db = nsh_app::boot::boot_ledger(&dir).unwrap();
     let cash = seed_cash_account(&db);
@@ -9794,7 +9817,7 @@ fn reports_view_lands_with_three_cards_and_defaults() {
     nsh_app::app::reset_book_assembly();
     let dir = seed_reports_book("reports-lands");
 
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_reports(&mut app);
     wait_reports_loaded(&mut app);
@@ -9852,7 +9875,7 @@ fn reports_view_monthly_bar_tooltip_shows_gross_and_net() {
     nsh_app::app::reset_book_assembly();
     let dir = seed_reports_book("reports-monthly-tip");
 
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_reports(&mut app);
     let ym = reports_month_key();
@@ -9884,7 +9907,7 @@ fn reports_view_category_drilldown_breadcrumb_and_row_jump() {
     nsh_app::app::reset_book_assembly();
     let dir = seed_reports_book("reports-drilldown");
 
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_reports(&mut app);
     wait_reports_loaded(&mut app);
@@ -9919,7 +9942,7 @@ fn reports_view_breadcrumb_root_returns_to_base() {
     nsh_app::app::reset_book_assembly();
     let dir = seed_reports_book("reports-breadcrumb");
 
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_reports(&mut app);
     wait_reports_loaded(&mut app);
@@ -9946,7 +9969,7 @@ fn reports_view_uncategorized_bar_jumps_to_transactions_filtered() {
     nsh_app::app::reset_book_assembly();
     let dir = seed_reports_book("reports-uncat-jump");
 
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_reports(&mut app);
     wait_reports_loaded(&mut app);
@@ -9973,7 +9996,7 @@ fn reports_view_merchant_top_n_switch_and_row_jump() {
     nsh_app::app::reset_book_assembly();
     let dir = seed_reports_book("reports-merchant");
 
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_reports(&mut app);
     wait_reports_loaded(&mut app);
@@ -10011,7 +10034,7 @@ fn reports_view_period_switch_resets_drilldown_and_shows_empty_states() {
     nsh_app::app::reset_book_assembly();
     let dir = seed_reports_book("reports-period-reset");
 
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_reports(&mut app);
     wait_reports_loaded(&mut app);
@@ -10048,7 +10071,7 @@ fn reports_view_state_survives_view_switch() {
     nsh_app::app::reset_book_assembly();
     let dir = seed_reports_book("reports-retained");
 
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_reports(&mut app);
     wait_reports_loaded(&mut app);
@@ -10085,7 +10108,7 @@ fn reports_view_escape_resets_to_defaults() {
     nsh_app::app::reset_book_assembly();
     let dir = seed_reports_book("reports-esc");
 
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_reports(&mut app);
     wait_reports_loaded(&mut app);
@@ -10198,7 +10221,7 @@ fn scheduled_view_lands_with_panes_and_subscription_rows() {
         plan_id = seed_subscription_plan(&db, &account, Some(&merchant), Some("视频会员"));
     }
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_scheduled(&mut app);
 
@@ -10282,7 +10305,7 @@ fn scheduled_view_typography_and_semantic_colors_follow_design_scale() {
         seed_subscription_plan(&db, &account, Some(&merchant), Some("视频会员"));
     }
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_scheduled(&mut app);
 
@@ -10304,7 +10327,7 @@ fn scheduled_view_typography_and_semantic_colors_follow_design_scale() {
     );
     assert_eq!(
         tab.color,
-        nsh_core::Color(0x182635ff),
+        theme_color("foreground", Scheme::Light),
         "形态页签前景 = foreground 亮态令牌"
     );
     let title = app.screen().span_style("text:订阅清单").unwrap();
@@ -10321,7 +10344,7 @@ fn scheduled_view_typography_and_semantic_colors_follow_design_scale() {
     );
     assert_eq!(
         caption.color,
-        nsh_core::Color(0x5c6c7eff),
+        theme_color("muted-foreground", Scheme::Light),
         "单位衬注色 = muted-foreground 亮态令牌"
     );
     let primary = app
@@ -10335,7 +10358,7 @@ fn scheduled_view_typography_and_semantic_colors_follow_design_scale() {
     );
     assert_eq!(
         primary.color,
-        nsh_core::Color(0xf2f8ffff),
+        theme_color("primary-foreground", Scheme::Light),
         "主按钮文字色 = primary-foreground 亮态令牌（非裸白）"
     );
     let stat = app
@@ -10358,13 +10381,13 @@ fn scheduled_view_typography_and_semantic_colors_follow_design_scale() {
         .unwrap();
     assert_eq!(
         tab.color,
-        nsh_core::Color(0xe6edf4ff),
+        theme_color("foreground", Scheme::Dark),
         "形态页签前景 = foreground 暗态令牌"
     );
     let caption = app.screen().span_style("text:/^单位：/").unwrap();
     assert_eq!(
         caption.color,
-        nsh_core::Color(0x93a4b6ff),
+        theme_color("muted-foreground", Scheme::Dark),
         "单位衬注色 = muted-foreground 暗态令牌"
     );
     let primary = app
@@ -10373,7 +10396,7 @@ fn scheduled_view_typography_and_semantic_colors_follow_design_scale() {
         .unwrap();
     assert_eq!(
         primary.color,
-        nsh_core::Color(0x0b2239ff),
+        theme_color("primary-foreground", Scheme::Dark),
         "主按钮文字色 = primary-foreground 暗态令牌（非裸白）"
     );
 }
@@ -10393,7 +10416,7 @@ fn scheduled_view_create_subscription_journey() {
         seed_category(&db, "茶饮", None);
     }
 
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_scheduled(&mut app);
 
@@ -10453,7 +10476,7 @@ fn scheduled_view_row_actions_pause_resume_cancel() {
         plan_id = seed_subscription_plan(&db, &account, None, Some("会员扣款"));
     }
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_scheduled(&mut app);
 
@@ -10519,7 +10542,7 @@ fn scheduled_view_edit_subscription_updates_fields() {
         plan_id = seed_subscription_plan(&db, &account, None, Some("旧备注名"));
     }
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_scheduled(&mut app);
 
@@ -10573,7 +10596,7 @@ fn scheduled_view_plan_detail_modal_retries_failed_occurrence() {
         .unwrap();
     }
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_scheduled(&mut app);
 
@@ -10629,7 +10652,7 @@ fn scheduled_view_lands_without_detail_modal_when_no_focus() {
         seed_subscription_plan(&db, &account, None, Some("会员扣款"));
     }
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_scheduled(&mut app);
     app.settle();
@@ -10679,7 +10702,7 @@ fn scheduled_view_lands_directly_when_moved_to_sidebar() {
         ),
     ]))
     .unwrap();
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     app.wait_for("id:nav-scheduled").unwrap();
     app.press("id:nav-scheduled").unwrap();
     app.wait_for("id:sub-table").unwrap();
@@ -10800,7 +10823,7 @@ fn scheduled_view_transfers_pane_lands_with_rows() {
         plan_id = seed_transfer_plan(&db, &from, &to, Some("月度储蓄"), Some(3));
     }
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_transfers_pane(&mut app);
 
@@ -10864,7 +10887,7 @@ fn scheduled_view_create_transfer_journey() {
         seed_account_with_balance(&db, "储蓄罐", 0);
     }
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_transfers_pane(&mut app);
 
@@ -10929,7 +10952,7 @@ fn scheduled_view_transfer_row_actions_pause_resume_cancel() {
         plan_id = seed_transfer_plan(&db, &from, &to, Some("月度储蓄"), None);
     }
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_transfers_pane(&mut app);
 
@@ -11009,7 +11032,7 @@ fn scheduled_view_installments_pane_lands_with_progress_rows() {
         ledger_scheduled::execute_occurrence(&conn, &occ_id).unwrap();
     }
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_installments_pane(&mut app);
 
@@ -11076,7 +11099,7 @@ fn scheduled_view_create_installment_journey() {
         seed_account_with_balance(&db, "测试现金", 10_000);
     }
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_installments_pane(&mut app);
 
@@ -11296,7 +11319,7 @@ fn policy_view_lands_with_rows_stats_and_columns() {
         seed_policy_expense(&db, &account, &second, 12_00);
     }
 
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_policies(&mut app);
     app.wait_for("text:长期重疾险").unwrap();
@@ -11360,7 +11383,7 @@ fn policy_view_create_journey_with_new_insurer() {
     nsh_app::app::reset_book_assembly();
     let dir = make_book("policy-create");
 
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_policies(&mut app);
 
@@ -11414,7 +11437,7 @@ fn policy_view_create_with_agreement_creates_plan() {
         seed_cash_account(&db);
     }
 
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_policies(&mut app);
 
@@ -11481,7 +11504,7 @@ fn policy_view_edit_updates_fields() {
         seed_policy(&db, &insurer, "P-301", "编辑险种", "2025-01-01", None, None);
     }
 
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_policies(&mut app);
     app.wait_for("text:编辑险种").unwrap();
@@ -11550,7 +11573,7 @@ fn policy_view_delete_guard_and_soft_delete() {
             .id
     };
 
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_policies(&mut app);
     app.wait_for("text:删除险种").unwrap();
@@ -11589,7 +11612,7 @@ fn policy_view_empty_book_shows_guide() {
     nsh_app::app::reset_book_assembly();
     let dir = make_book("policy-empty");
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_policies(&mut app);
     app.wait_for("id:policy-empty-guide").unwrap();
@@ -11652,7 +11675,7 @@ fn policy_view_edit_shows_agreement_segments_and_rebuild_entry() {
             .id
     };
 
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_policies(&mut app);
     app.wait_for("text:分段险种").unwrap();
@@ -11786,7 +11809,7 @@ fn physical_asset_view_lands_with_rows_total_and_columns() {
         .unwrap();
     }
 
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_physical_assets(&mut app);
 
@@ -11856,7 +11879,7 @@ fn physical_asset_view_lands_directly_when_moved_to_sidebar() {
         ),
     ]))
     .unwrap();
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     app.wait_for("id:nav-physicalAssets").unwrap();
     app.press("id:nav-physicalAssets").unwrap();
     app.wait_for("id:physical-asset-table").unwrap();
@@ -11874,7 +11897,7 @@ fn physical_asset_view_empty_book_shows_guide() {
     nsh_app::app::reset_book_assembly();
     let dir = make_book("physical-asset-empty");
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_physical_assets(&mut app);
     app.wait_for("id:physical-asset-empty-guide").unwrap();
@@ -11893,7 +11916,7 @@ fn physical_asset_view_create_journey_with_initial_valuation() {
     nsh_app::app::reset_book_assembly();
     let dir = make_book("physical-asset-create");
 
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_physical_assets(&mut app);
 
@@ -11957,7 +11980,7 @@ fn physical_asset_view_edit_updates_profile_without_valuation() {
         );
     }
 
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_physical_assets(&mut app);
     app.wait_for("text:代步车").unwrap();
@@ -12003,7 +12026,7 @@ fn physical_asset_view_valuation_update_appends_history() {
         asset_id = seed_physical_asset(&db, "客厅油画", None, 50_000_000, "CNY");
     }
 
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_physical_assets(&mut app);
     app.wait_for("text:客厅油画").unwrap();
@@ -12054,7 +12077,7 @@ fn physical_asset_view_dispose_moves_mark_and_keeps_archive() {
         seed_physical_asset(&db, "国画", None, 5_000_000, "CNY");
     }
 
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_physical_assets(&mut app);
     app.wait_for("text:代步车").unwrap();
@@ -12104,7 +12127,7 @@ fn physical_asset_view_delete_guard_and_soft_delete() {
         seed_physical_asset(&db, "拆除资产", None, 2_000_000, "CNY");
     }
 
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_physical_assets(&mut app);
     app.wait_for("text:误录资产").unwrap();
@@ -12157,14 +12180,11 @@ fn physical_asset_view_delete_guard_and_soft_delete() {
 
 use ledger_currencies::ExchangeRateInput;
 use ledger_infra::db::book_registry::{Book, BookRegistry, RegistryOrigin, write_registry};
-use std::path::PathBuf;
 
 /// 唯一暂存注册表数据根（跨账本注册表所在的<XDG 数据根>面：目录名即生产
 /// 同构面，identifier 拼接语义由常量见证）。
-fn make_data_root(tag: &str) -> PathBuf {
-    let root = std::env::temp_dir().join(format!("ledger-test-nsh-xbook-{tag}-{}", new_uuid()));
-    fs::create_dir_all(&root).unwrap();
-    root
+fn make_data_root(tag: &str) -> ScratchDir {
+    ScratchDir::new(&format!("nsh-xbook-{tag}"))
 }
 
 /// 落盘注册表：单活动本 + 追加他本（文件现场；活动本指向 active 目录）。
@@ -12208,8 +12228,8 @@ fn cross_book_summary_renders_converted_totals_books_and_concept_tip() {
     nsh_app::app::reset_book_assembly();
     let root = make_data_root("render");
     let dir_active = make_book("x-active");
-    nsh_app::app::set_book_dir(dir_active.clone());
-    nsh_app::cross_book::set_default_data_dir(root.clone());
+    nsh_app::app::set_book_dir(dir_active.to_path_buf());
+    nsh_app::cross_book::set_default_data_dir(root.to_path_buf());
 
     // 活动本：投资账户 CNY 现金 2000 元 + 当期汇率 USD→CNY = 7。
     {
@@ -12260,9 +12280,7 @@ fn cross_book_summary_renders_converted_totals_books_and_concept_tip() {
     }
 
     // 未建库本（只登记、无库文件）。
-    let dir_missing =
-        std::env::temp_dir().join(format!("ledger-test-nsh-xbook-missing-{}", new_uuid()));
-    fs::create_dir_all(&dir_missing).unwrap();
+    let dir_missing = ScratchDir::new("nsh-xbook-missing");
 
     seed_registry(
         &root,
@@ -12333,8 +12351,9 @@ fn cross_book_summary_closure_follows_investments_toggle() {
     nsh_app::app::reset_book_assembly();
     let dir = make_book("x-guard");
     seed_expense_series(&dir, 1);
-    nsh_app::app::set_book_dir(dir.clone());
-    nsh_app::cross_book::set_default_data_dir(make_data_root("guard"));
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let guard_root = make_data_root("guard");
+    nsh_app::cross_book::set_default_data_dir(guard_root.to_path_buf());
 
     // 关闭投资 → 恢复落概览（净资产卡），不落汇总。
     let storage = MemoryStorage::new(vec![
@@ -12358,8 +12377,9 @@ fn cross_book_summary_closure_follows_investments_toggle() {
 
     // 投资开放 → 恢复落自有路由。
     nsh_app::app::reset_book_assembly();
-    nsh_app::app::set_book_dir(dir);
-    nsh_app::cross_book::set_default_data_dir(make_data_root("guard-open"));
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let guard_open_root = make_data_root("guard-open");
+    nsh_app::cross_book::set_default_data_dir(guard_open_root.to_path_buf());
     let storage = MemoryStorage::new(vec![(
         "view_state:route".to_owned(),
         "\"cross-book-summary\"".to_owned(),
@@ -12378,7 +12398,7 @@ fn ai_view_renders_prompt_and_copy_reports_into_clipboard() {
     nsh_app::app::reset_book_assembly();
     let dir = make_book("ai");
     seed_expense_series(&dir, 1);
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     // 等侧栏就绪再派发键位（既有键位上用例同序——就绪窗口内键位绑定已挂）。
     app.wait_for("id:nav-ai").unwrap();
@@ -12454,7 +12474,7 @@ fn settings_view_lands_with_old_shell_tab_domains_and_general_cards() {
     let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("settings-lands");
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_settings(&mut app);
 
@@ -12497,7 +12517,7 @@ fn settings_view_keeps_visited_panes_mounted_across_tab_switches() {
     let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("settings-keep");
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_settings(&mut app);
 
@@ -12542,7 +12562,7 @@ fn settings_view_appearance_reads_and_writes_device_storage() {
     let dir = make_book("settings-appearance");
     let storage = storage_shard(&[("appearance", "\"light\"")]);
 
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config_with_storage_shard(storage.clone())).unwrap();
     open_settings(&mut app);
 
@@ -12568,7 +12588,7 @@ fn settings_view_appearance_reads_and_writes_device_storage() {
 
     // 「重启」等价（同存储再启）→ 初值读回「跟随系统」。
     nsh_app::app::reset_book_assembly();
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config_with_storage_shard(storage)).unwrap();
     open_settings(&mut app);
     app.wait_for("text:主题模式").unwrap();
@@ -12588,7 +12608,7 @@ fn settings_view_log_level_select_persists_across_remounts() {
     let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("settings-logs");
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_settings(&mut app);
 
@@ -12636,7 +12656,7 @@ fn settings_view_data_location_lands_with_active_path_and_restore_gating() {
     let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("settings-loc-lands");
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_settings(&mut app);
     app.press("id:set-tab-data").unwrap();
@@ -12675,12 +12695,9 @@ fn settings_view_data_location_change_commits_and_relocates_on_next_start() {
     nsh_app::app::reset_book_assembly();
     let dir = make_book("settings-loc-change");
     let storage = storage_shard(&[]);
-    let target = std::env::temp_dir().join(format!(
-        "ledger-test-nsh-loc-target-{}",
-        ledger_infra::ids::new_uuid()
-    ));
+    let target = ScratchDir::new("nsh-loc-target");
 
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config_with_storage_shard(storage.clone())).unwrap();
     open_settings(&mut app);
     app.press("id:set-tab-data").unwrap();
@@ -12688,7 +12705,7 @@ fn settings_view_data_location_change_commits_and_relocates_on_next_start() {
 
     // 更改位置：目录选择对话框（替身回答）→ 意图落盘。
     use nsh_core::file_dialog::FileRequest;
-    app.on_pick_paths(vec![target.clone()]).unwrap();
+    app.on_pick_paths(vec![target.to_path_buf()]).unwrap();
     app.press("id:loc-change").unwrap();
     app.settle();
     let requests = app.screen().file_requests();
@@ -12720,7 +12737,7 @@ fn settings_view_data_location_change_commits_and_relocates_on_next_start() {
 
     // 「下次启动」等价：重置装配 + 同目录参数再启动 → 引导消费注册表搬迁。
     nsh_app::app::reset_book_assembly();
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config_with_storage_shard(storage)).unwrap();
     // 上次停留视图跟随恢复（导航界面状态同一存储）→ 设置页（数据页签为会话
     // 态回首签——旧壳页签不持久化同口径）。
@@ -12758,7 +12775,7 @@ fn settings_view_feature_toggles_feed_the_shared_closed_source() {
     let dir = make_book("settings-toggles");
     let storage = storage_shard(&[]);
     {
-        nsh_app::app::set_book_dir(dir.clone());
+        nsh_app::app::set_book_dir(dir.to_path_buf());
         let mut app = Headless::start(desktop_config_with_storage_shard(storage.clone())).unwrap();
         open_settings(&mut app);
 
@@ -12815,7 +12832,7 @@ fn settings_view_feature_toggles_feed_the_shared_closed_source() {
     // 页签原位（关闭只隐藏入口，共一源）。
     nsh_app::app::reset_book_assembly();
     let dir = make_book("settings-toggles-hidden");
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let storage = storage_shard(&[("view_state:closed_features", "[\"scheduled\"]")]);
     let mut app = Headless::start(desktop_config_with_storage_shard(storage)).unwrap();
     open_settings(&mut app);
@@ -12842,14 +12859,14 @@ fn settings_view_data_location_target_conflict_needs_choice_guard() {
     let dir = make_book("settings-loc-adopt");
     let target = make_book("settings-loc-adopt-existing");
 
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_settings(&mut app);
     app.press("id:set-tab-data").unwrap();
     app.wait_for("text:当前生效位置：").unwrap();
 
     // 更改位置 → 目标已有同名库 → 提交应挂起 + 接管弹窗。
-    app.on_pick_paths(vec![target.clone()]).unwrap();
+    app.on_pick_paths(vec![target.to_path_buf()]).unwrap();
     app.press("id:loc-change").unwrap();
     app.wait_for("text:接管已有账本库？").unwrap();
     for piece in [
@@ -12876,7 +12893,7 @@ fn settings_view_data_location_target_conflict_needs_choice_guard() {
 
     // 「接管该库」路径：重提交 → 挂起弹窗 → 确认 → 意图落盘（ adopt_existing
     // = true 同一通道二次提交）+ 成功反馈 + 待重启横幅。
-    app.on_pick_paths(vec![target.clone()]).unwrap();
+    app.on_pick_paths(vec![target.to_path_buf()]).unwrap();
     app.press("id:loc-change").unwrap();
     app.wait_for("text:接管已有账本库？").unwrap();
     app.press("id:danger-confirm").unwrap();
@@ -12927,7 +12944,7 @@ fn data_safety_cards_lands_with_backup_encryption_sync_books_cards() {
     let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("settings-data-cards");
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_data_tab(&mut app);
 
@@ -12972,9 +12989,7 @@ fn backup_full_journey_backs_up_lists_prunes_and_guards_overwrite() {
     let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("settings-backup-journey");
-    let backup_dir =
-        std::env::temp_dir().join(format!("ledger-test-nsh-data-backup-{}", new_uuid()));
-    fs::create_dir_all(&backup_dir).unwrap();
+    let backup_dir = ScratchDir::new("nsh-data-backup");
     let storage = storage_shard(&[
         (
             "backup_dir",
@@ -13013,7 +13028,7 @@ fn backup_full_journey_backs_up_lists_prunes_and_guards_overwrite() {
         );
     }
 
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config_with_storage_shard(storage)).unwrap();
     open_data_tab(&mut app);
 
@@ -13144,8 +13159,7 @@ fn restore_guard_replaces_data_across_restart() {
         }
     }
     // 备份包（域直调同款执行协议，不经壳）。
-    let mut zip = std::env::temp_dir().join(format!("ledger-test-nsh-restore-{}", new_uuid()));
-    zip.set_extension("db.zip");
+    let zip = ScratchFile::new("nsh-restore", "restore.db.zip");
     {
         let db = nsh_app::boot::boot_ledger(&dir).unwrap();
         nsh_app::boot::create_backup(&db, &zip, env!("CARGO_PKG_VERSION")).unwrap();
@@ -13170,17 +13184,15 @@ fn restore_guard_replaces_data_across_restart() {
 
     // 应用数据根（恢复安全备份 RestoreSafetyBackup 的落点；headless 注入
     // 临时目录——生产 bin 的注入单点在 main.rs）。
-    let data_root =
-        std::env::temp_dir().join(format!("ledger-test-nsh-restore-root-{}", new_uuid()));
-    fs::create_dir_all(&data_root).unwrap();
-    nsh_app::cross_book::set_default_data_dir(data_root);
+    let data_root = ScratchDir::new("nsh-restore-root");
+    nsh_app::cross_book::set_default_data_dir(data_root.to_path_buf());
 
     let storage = storage_shard(&[]);
     let storage2 = storage_shard(&[]);
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config_with_storage_shard(storage)).unwrap();
     open_data_tab(&mut app);
-    app.on_pick_paths(vec![zip.clone()]).unwrap();
+    app.on_pick_paths(vec![zip.to_path_buf()]).unwrap();
     app.press("id:data-restore").unwrap();
     // 确认弹窗（最高级危险确认）：后果警示与备份文件路径在屏。
     app.wait_for("text:确认恢复").unwrap();
@@ -13195,7 +13207,7 @@ fn restore_guard_replaces_data_across_restart() {
     app.press("id:data-restore-cancel").unwrap();
     app.settle();
     // 重进确认 → 替换 + 成功反馈重启提示。
-    app.on_pick_paths(vec![zip.clone()]).unwrap();
+    app.on_pick_paths(vec![zip.to_path_buf()]).unwrap();
     app.press("id:data-restore").unwrap();
     app.wait_for("text:确认恢复").unwrap();
     app.press("id:data-restore-confirm").unwrap();
@@ -13206,7 +13218,7 @@ fn restore_guard_replaces_data_across_restart() {
 
     // 「下次启动」等价重置重启：交易回到两笔（备份内容已换入）。
     nsh_app::app::reset_book_assembly();
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config_with_storage_shard(storage2)).unwrap();
     // 上次停留视图跟随恢复（导航界面状态同一存储）：呈现就绪即可（落位到
     // 上次视图），数据断言直接读库。
@@ -13243,9 +13255,7 @@ fn auto_backup_first_fallback_backs_up_at_session_start_and_card_refreshes() {
     let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("auto-backup-host");
-    let backup_dir =
-        std::env::temp_dir().join(format!("ledger-test-nsh-auto-backup-{}", new_uuid()));
-    fs::create_dir_all(&backup_dir).unwrap();
+    let backup_dir = ScratchDir::new("nsh-auto-backup");
     let storage = storage_shard(&[(
         "backup_dir",
         format!("{:?}", backup_dir.to_string_lossy()).as_str(),
@@ -13271,7 +13281,7 @@ fn auto_backup_first_fallback_backs_up_at_session_start_and_card_refreshes() {
         );
     }
 
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config_with_storage_shard(storage)).unwrap();
 
     // 首次兜底在后台线程执行（不阻塞启动竖井）：产物落盘 = 用户可观察的
@@ -13350,9 +13360,7 @@ fn auto_backup_triggers_after_shell_write_and_card_refreshes() {
     let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("auto-backup-write-trigger");
-    let backup_dir =
-        std::env::temp_dir().join(format!("ledger-test-nsh-auto-backup-write-{}", new_uuid()));
-    fs::create_dir_all(&backup_dir).unwrap();
+    let backup_dir = ScratchDir::new("nsh-auto-backup-write");
 
     // 种子两笔（域直调造数，不经壳写入口——造数段不触发备份的对照语义）+
     // 手动受管产物一枚（合法受管命名）：首兜底受管列表非空跳过、不清日界锚。
@@ -13401,7 +13409,7 @@ fn auto_backup_triggers_after_shell_write_and_card_refreshes() {
         "backup_dir",
         format!("{:?}", backup_dir.to_string_lossy()).as_str(),
     )]);
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config_with_storage_shard(storage)).unwrap();
     open_transactions(&mut app);
     app.settle();
@@ -13469,7 +13477,7 @@ fn encryption_enable_guard_blocks_and_converts() {
     let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("settings-encrypt-journey");
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_data_tab(&mut app);
 
@@ -13555,7 +13563,7 @@ fn sync_card_requires_configured_channel_then_saves_and_echoes() {
     let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("settings-sync-journey");
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_data_tab(&mut app);
 
@@ -13610,7 +13618,7 @@ fn books_create_rename_and_remove_flow_registry() {
     let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("settings-books-journey");
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_data_tab(&mut app);
 
@@ -13688,7 +13696,7 @@ fn books_switch_journey_moves_active_pointer_across_restart() {
 
     let storage = storage_shard(&[]);
     let storage2 = storage_shard(&[]);
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config_with_storage_shard(storage)).unwrap();
     open_data_tab(&mut app);
     // 清单两行（默认账本 + 副账本），副账本未标当前。
@@ -13709,7 +13717,7 @@ fn books_switch_journey_moves_active_pointer_across_restart() {
 
     // 「下次启动」等价：重置 + 同目录参数再启动 → 引导消费注册表进副账本。
     nsh_app::app::reset_book_assembly();
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config_with_storage_shard(storage2)).unwrap();
     open_data_tab(&mut app);
     app.wait_for(format!("id:book-switch-{}", second.id).as_str())
@@ -13732,7 +13740,7 @@ fn books_summary_entry_opens_cross_book_summary() {
     let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("settings-books-summary");
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_data_tab(&mut app);
     app.press("id:book-summary-entry").unwrap();
@@ -13764,7 +13772,7 @@ fn startup_without_book_dir_opens_registry_active_book() {
     seed_expense_notes(&active, &["解析链活动本"]);
     seed_registry(&root, &active, &[]);
     // 关键现场：只注入数据根，不注入 book_dir（发布形态点图标无 argv）。
-    nsh_app::cross_book::set_default_data_dir(root);
+    nsh_app::cross_book::set_default_data_dir(root.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_transactions(&mut app);
     app.wait_for("text:共 1 条").unwrap();
@@ -13786,7 +13794,7 @@ fn startup_without_book_dir_opens_unconfigured_default_book() {
     // 默认数据目录已有存量库（0 字节文件 = 新装语义，产品开库入口建出）。
     seed::create_empty_book_file(&root);
     seed_expense_notes(&root, &["默认目录存量库"]);
-    nsh_app::cross_book::set_default_data_dir(root);
+    nsh_app::cross_book::set_default_data_dir(root.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_transactions(&mut app);
     app.wait_for("text:共 1 条").unwrap();
@@ -13813,7 +13821,7 @@ fn startup_registry_corrupt_falls_back_to_default_dir_with_notice() {
         "not-json{{",
     )
     .unwrap();
-    nsh_app::cross_book::set_default_data_dir(root);
+    nsh_app::cross_book::set_default_data_dir(root.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     // 不阻断打开：默认目录的库照常打开（主界面 + 种子交易可见）。
     open_transactions(&mut app);
@@ -13834,7 +13842,7 @@ fn startup_unconfigured_without_book_renders_first_run_onboarding() {
     let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let root = make_data_root("shaft-onboarding");
-    nsh_app::cross_book::set_default_data_dir(root.clone());
+    nsh_app::cross_book::set_default_data_dir(root.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     app.wait_for("text:欢迎使用 Ledger").unwrap();
     app.wait_for("text:尚未找到账本库，新建一本账即可开始记账。")
@@ -13864,7 +13872,7 @@ fn onboarding_create_dialog_shows_full_creation_path() {
     let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let root = make_data_root("shaft-dialog");
-    nsh_app::cross_book::set_default_data_dir(root.clone());
+    nsh_app::cross_book::set_default_data_dir(root.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     wait_pressable(&mut app, "id:onboarding-create");
     app.press("id:onboarding-create").unwrap();
@@ -13886,7 +13894,7 @@ fn onboarding_create_cancel_keeps_onboarding_without_provisioning() {
     let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let root = make_data_root("shaft-cancel");
-    nsh_app::cross_book::set_default_data_dir(root.clone());
+    nsh_app::cross_book::set_default_data_dir(root.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     wait_pressable(&mut app, "id:onboarding-create");
     app.press("id:onboarding-create").unwrap();
@@ -13918,7 +13926,7 @@ fn onboarding_create_confirm_provisions_default_book_and_enters_main_view() {
     let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let root = make_data_root("shaft-confirm");
-    nsh_app::cross_book::set_default_data_dir(root.clone());
+    nsh_app::cross_book::set_default_data_dir(root.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     wait_pressable(&mut app, "id:onboarding-create");
     app.press("id:onboarding-create").unwrap();
@@ -13951,7 +13959,8 @@ fn onboarding_create_confirm_provisions_default_book_and_enters_main_view() {
     assert_eq!(resolved.books.len(), 1, "首本唯一：默认账本折叠形态");
     assert_eq!(resolved.books[0].name, "默认账本");
     assert_eq!(
-        resolved.books[0].dir, root,
+        resolved.books[0].dir,
+        root.path(),
         "首本直落默认数据目录（决策 5）"
     );
     assert_eq!(
@@ -13968,7 +13977,7 @@ fn onboarding_created_book_opens_directly_on_next_start() {
     let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let root = make_data_root("shaft-restart");
-    nsh_app::cross_book::set_default_data_dir(root.clone());
+    nsh_app::cross_book::set_default_data_dir(root.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     wait_pressable(&mut app, "id:onboarding-create");
     app.press("id:onboarding-create").unwrap();
@@ -13978,7 +13987,7 @@ fn onboarding_created_book_opens_directly_on_next_start() {
 
     // 二次启动（「下次启动」等价重置 + 同数据根再启动，账本切换旅程同型）。
     nsh_app::app::reset_book_assembly();
-    nsh_app::cross_book::set_default_data_dir(root.clone());
+    nsh_app::cross_book::set_default_data_dir(root.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     app.wait_for("id:nav-transactions").unwrap();
     open_transactions(&mut app);
@@ -14004,7 +14013,7 @@ fn onboarding_corrupt_fallback_without_book_shows_corruption_notice() {
         "not-json{{",
     )
     .unwrap();
-    nsh_app::cross_book::set_default_data_dir(root);
+    nsh_app::cross_book::set_default_data_dir(root.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     app.wait_for("text:欢迎使用 Ledger").unwrap();
     // 损坏告示可见：标题 + 基础设施回退原因原文（与就绪态回退告示同源：
@@ -14024,10 +14033,12 @@ fn startup_configured_active_book_missing_fails_loud() {
     nsh_app::app::reset_book_assembly();
     let root = make_data_root("shaft-missing");
     // 活动本目录不存在且无库文件（登记在册但落点无库）。
-    let active =
-        std::env::temp_dir().join(format!("ledger-test-nsh-book-shaft-miss-{}", new_uuid()));
+    // 活动本落点用 ScratchDir 持有（引导解析期产品会建出登记目录——guard 化
+    // 前该目录随测试残留泄漏，#2112）；空目录无库文件，book-missing 失败态
+    // 语义不变。
+    let active = ScratchDir::new("nsh-book-shaft-miss");
     seed_registry(&root, &active, &[]);
-    nsh_app::cross_book::set_default_data_dir(root);
+    nsh_app::cross_book::set_default_data_dir(root.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     app.wait_for("text:/启动失败：账本库文件不存在/").unwrap();
 }
@@ -14047,7 +14058,7 @@ fn startup_configured_active_book_missing_fails_loud() {
 ///（2025-12-30，已实现 -2000 分）、现金分红 12345 分（2026-03-05）——
 /// 可投资资产 = 990 现金腿 + 0 持仓腿（卖出清仓）= ¥9.9；盈亏按年 2026
 ///（已实现 -2000 + 分红 12345 = 10345）与 2025（已实现 -2000）两行。
-fn seed_investments_book(tag: &str) -> std::path::PathBuf {
+fn seed_investments_book(tag: &str) -> seed::BookDir {
     let dir = make_book(tag);
     let db = nsh_app::boot::boot_ledger(&dir).unwrap();
     seed_investment_flow_book(&db, 1_000, 10_000);
@@ -14231,7 +14242,7 @@ fn investments_view_overview_lands_with_period_numbers() {
     let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = seed_investments_book("invest-overview");
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
 
     open_investments(&mut app);
@@ -14302,7 +14313,7 @@ fn investments_view_semantic_tokens_follow_theme_scale_in_light_and_dark() {
     let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = seed_investments_book("invest-theme-light-dark");
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
 
     open_investments(&mut app);
@@ -14314,7 +14325,7 @@ fn investments_view_semantic_tokens_follow_theme_scale_in_light_and_dark() {
     let hero = app.screen().span_style("text:¥132.95").unwrap();
     assert_eq!(
         hero.color,
-        nsh_core::Color(0x182635ff),
+        theme_color("foreground", Scheme::Light),
         "Hero 前景 = 主题表 foreground 亮档"
     );
     assert_eq!(
@@ -14324,17 +14335,17 @@ fn investments_view_semantic_tokens_follow_theme_scale_in_light_and_dark() {
     );
     assert_eq!(
         app.screen().span_style("text:¥122.95").unwrap().color,
-        nsh_core::Color(0xd03050ff),
+        theme_color("expense", Scheme::Light),
         "累计收益正值亮色 = 主题表 expense 亮档（红涨）"
     );
     assert_eq!(
         app.screen().span_style("text:投资概览").unwrap().color,
-        nsh_core::Color(0x182635ff),
+        theme_color("foreground", Scheme::Light),
         "卡标题中性前景亮档（palette.fg）"
     );
     assert_eq!(
         app.screen().span_style("text:¥0").unwrap().color,
-        nsh_core::Color(0xd03050ff),
+        theme_color("expense", Scheme::Light),
         "持仓收益零值照 Gain 档（pnl_semantic ≥0 为涨）= expense 亮档"
     );
 
@@ -14344,7 +14355,7 @@ fn investments_view_semantic_tokens_follow_theme_scale_in_light_and_dark() {
     let hero_dark = app.screen().span_style("text:¥132.95").unwrap();
     assert_eq!(
         hero_dark.color,
-        nsh_core::Color(0xe6edf4ff),
+        theme_color("foreground", Scheme::Dark),
         "Hero 前景暗色 = 主题表 foreground 暗档"
     );
     assert_eq!(
@@ -14354,22 +14365,22 @@ fn investments_view_semantic_tokens_follow_theme_scale_in_light_and_dark() {
     );
     assert_eq!(
         app.screen().span_style("text:¥122.95").unwrap().color,
-        nsh_core::Color(0xe88080ff),
+        theme_color("expense", Scheme::Dark),
         "累计收益正值暗色 = 主题表 expense 暗档"
     );
     assert_eq!(
         app.screen().span_style("text:投资概览").unwrap().color,
-        nsh_core::Color(0xe6edf4ff),
+        theme_color("foreground", Scheme::Dark),
         "卡标题中性前景暗档（palette.fg）"
     );
     assert_eq!(
         app.screen().span_style("text:¥0").unwrap().color,
-        nsh_core::Color(0xe88080ff),
+        theme_color("expense", Scheme::Dark),
         "持仓收益零值暗色照 Gain 档 = expense 暗档"
     );
     assert_eq!(
         app.screen().span_style("text:本位币 CNY").unwrap().color,
-        nsh_core::Color(0x93a4b6ff),
+        theme_color("muted-foreground", Scheme::Dark),
         "币种弱化标注暗色 = 主题表 muted-foreground 暗档"
     );
 }
@@ -14382,7 +14393,7 @@ fn investments_view_guides_when_no_investment_account() {
     let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("invest-empty");
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
 
     open_investments(&mut app);
@@ -14408,7 +14419,7 @@ fn investments_view_privacy_masks_amounts_and_hides_composition() {
         "amount_privacy_enabled".to_owned(),
         "true".to_owned(),
     )]);
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(EngineConfig {
         storage: Some(storage),
         ..desktop_config()
@@ -14439,7 +14450,7 @@ fn investments_view_pnl_tab_tables_and_mwr_card() {
     let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = seed_investments_book("invest-pnl");
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
 
     open_investments(&mut app);
@@ -14485,7 +14496,7 @@ fn investments_view_pnl_filters_narrow_tables() {
     let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = seed_investments_book("invest-filter");
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
 
     // 先造一个无交易的投资账户（「闲置」；筛选候选面在用投资账户）。
@@ -14536,7 +14547,7 @@ fn investments_view_keeps_visited_panes_mounted_across_tab_switches() {
     let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = seed_investments_book("invest-keep");
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
 
     open_investments(&mut app);
@@ -14649,7 +14660,7 @@ fn investments_view_pnl_pagination_slices_year_rows() {
         }
     }
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_investments(&mut app);
     app.press("id:inv-tab-pnl").unwrap();
@@ -14734,7 +14745,7 @@ fn investments_view_reports_missing_price_count() {
         )
         .unwrap();
     }
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
 
     open_investments(&mut app);
@@ -14760,7 +14771,7 @@ fn investments_view_holdings_tab_lands_rows_cards_and_stats() {
     let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = seed_investments_book("invest-holdings");
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
 
     open_investments(&mut app);
@@ -14836,7 +14847,7 @@ fn investments_view_holdings_filters_narrow_rows() {
         .unwrap();
     }
 
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_investments(&mut app);
     app.press("id:inv-tab-holdings").unwrap();
@@ -14926,7 +14937,7 @@ fn investments_view_holdings_pagination_slices_rows() {
         }
     }
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_investments(&mut app);
     app.press("id:inv-tab-holdings").unwrap();
@@ -14972,7 +14983,7 @@ fn investments_view_holdings_sync_entry_reports_empty_book() {
     let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("invest-holdings-empty");
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
 
     open_investments(&mut app);
@@ -15047,7 +15058,7 @@ fn investments_view_holdings_missing_price_guide_and_staleness_alert() {
         (account, instrument)
     };
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_investments(&mut app);
     app.press("id:inv-tab-holdings").unwrap();
@@ -15115,7 +15126,7 @@ fn investments_view_ledger_tab_lands_kind_rows_and_filters() {
     nsh_app::app::reset_book_assembly();
     let dir = seed_investments_book("invest-ledger-rows");
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_investments(&mut app);
 
@@ -15155,7 +15166,7 @@ fn investments_view_holdings_code_drills_to_ledger_filtered() {
     nsh_app::app::reset_book_assembly();
     let dir = seed_investments_book("invest-holdings-drill");
 
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     // 行键 = 账户 id + 标的 id（v_holdings 一行 = 一个账户一只标的；账
     // 户/标的 id 经域读反查）。
@@ -15204,14 +15215,14 @@ fn investments_view_instruments_search_and_manual_quote_journey() {
     let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = seed_investments_book("invest-instruments-quote");
-    let dir_probe = dir.clone();
+    let dir_probe = dir.to_path_buf();
     let bond_id;
     {
         let db = nsh_app::boot::boot_ledger(&dir).unwrap();
         bond_id = seed_manual_bond_instrument(&db, "BD01");
     }
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_investments(&mut app);
     app.press("id:inv-tab-instruments").unwrap();
@@ -15298,7 +15309,7 @@ fn app_window_breakpoint_flip_keeps_state_smooth() {
     let dir = make_book("flip");
     seed_expense_series(&dir, 1);
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_transactions(&mut app);
     app.wait_for("text:共 1 条").unwrap();
@@ -15382,7 +15393,7 @@ fn app_window_narrow_card_menu_shares_row_menu_and_deletes_transaction() {
     .unwrap();
     drop(conn);
 
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(mobile_config()).unwrap();
     open_transactions_mobile(&mut app);
 
@@ -15429,7 +15440,7 @@ fn app_window_narrow_search_results_reuse_readonly_cards() {
     let dir = make_book("narrow-search");
     seed_expense_notes(&dir, &["元旦火锅聚餐", "超市买菜"]);
 
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(mobile_config()).unwrap();
     // 搜索视图经抽屉落位（同一份导航状态）。
     app.wait_for("id:nav-topbar-open").unwrap();
@@ -15462,17 +15473,19 @@ fn app_window_narrow_search_results_reuse_readonly_cards() {
 }
 
 /// 手写极简 HTTP/1.1 请求（接线断言专用；Connection: close 单往返，无状态
-/// 复用）：返回（状态码，响应体全文）。
+/// 复用）：端口取本进程 [`http_host::mounted_port`]（#2112 端口去固定化——
+/// 不再硬连 9527，不误连同机他进程占用的默认端口）；返回（状态码，响应体全文）。
 fn raw_http_request(
+    port: u16,
     method: &str,
     path: &str,
     body: Option<&str>,
 ) -> std::io::Result<(u16, String)> {
     use std::io::{Read, Write};
-    let mut stream = std::net::TcpStream::connect("127.0.0.1:9527")?;
+    let mut stream = std::net::TcpStream::connect(("127.0.0.1", port))?;
     let body = body.unwrap_or("");
     let request = format!(
-        "{method} {path} HTTP/1.1\r\nHost: 127.0.0.1:9527\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+        "{method} {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
         body.len()
     );
     stream.write_all(request.as_bytes())?;
@@ -15512,17 +15525,21 @@ fn http_api_server_mounts_and_pumps_invalidation_to_views() {
     let dir = make_book("http-mount");
     seed_expense_series(&dir, 1);
 
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_transactions(&mut app);
     app.wait_for("text:¥25").unwrap();
 
-    // 挂载半边：契约自举端点限时可用（服务是进程级设施，起过一次即常驻）。
+    // 挂载半边：本进程绑定端口限时可观察 + 契约自举端点限时可用（服务是
+    // 进程级设施，起过一次即常驻）。端口只认本进程的绑定事实——删除挂载
+    // 接线后 mounted_port 永为 None，轮询超时即红（同机他进程占用 9527 时
+    // 不得误连出假绿，#2112）。
     let mut contract = String::new();
     let mut mounted = false;
     for _ in 0..50 {
-        if let Ok(result) = raw_http_request("GET", "/api/v1/contract", None) {
-            let (status, body) = result;
+        if let Some(port) = nsh_app::http_host::mounted_port()
+            && let Ok((status, body)) = raw_http_request(port, "GET", "/api/v1/contract", None)
+        {
             assert_eq!(status, 200, "契约自举端点应 200：{status} {body}");
             contract = body;
             mounted = true;
@@ -15532,7 +15549,7 @@ fn http_api_server_mounts_and_pumps_invalidation_to_views() {
     }
     assert!(
         mounted,
-        "HTTP 服务应在启动后限时可用（run_startup 挂载接线断言，127.0.0.1:9527）"
+        "HTTP 服务应在启动后限时可用（run_startup 挂载接线断言，本进程绑定端口）"
     );
     // 紧凑契约方言（issue #839）的路径是去 /api/v1 前缀的相对形状（base 承载前缀）。
     assert!(
@@ -15556,16 +15573,16 @@ fn http_api_server_mounts_and_pumps_invalidation_to_views() {
 /// 注册表根 + 活动本缺库的失败态现场（本段用例共用前置）：注册表已配置、
 /// 活动本 b1 目录无 ledger.db → 启动落 book-missing 失败态（决策 4 保留的
 /// fail loud 内核），出口按钮在场。
-fn start_failed_state_with_picker() -> (std::path::PathBuf, Headless) {
+fn start_failed_state_with_picker() -> (ScratchDir, seed::BookDir, Headless) {
     nsh_app::app::reset_book_assembly();
     let root = make_data_root("t4-failed");
     let active = seed::make_book_dir("t4-active-missing");
     seed_registry(&root, &active, &[]);
-    nsh_app::cross_book::set_default_data_dir(root.clone());
+    nsh_app::cross_book::set_default_data_dir(root.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     app.wait_for("text:/账本库文件不存在/").unwrap();
     app.wait_for("id:startup-pick-book-dir").unwrap();
-    (root, app)
+    (root, active, app)
 }
 
 /// 主现场（已配置 + 活动本缺库）：失败态呈现按钮 → 选中注册表在册其他本 →
@@ -15579,7 +15596,7 @@ fn startup_book_missing_failed_state_offers_dir_picker_and_opens_registered_book
     let active = seed::make_book_dir("t4-active-missing");
     let other = make_book("t4-other");
     seed_registry(&root, &active, &[("b2", "备用账本", &other)]);
-    nsh_app::cross_book::set_default_data_dir(root.clone());
+    nsh_app::cross_book::set_default_data_dir(root.to_path_buf());
 
     let mut app = Headless::start(desktop_config()).unwrap();
     app.wait_for("text:/账本库文件不存在/").unwrap();
@@ -15592,7 +15609,7 @@ fn startup_book_missing_failed_state_offers_dir_picker_and_opens_registered_book
     app.wait_for("id:startup-pick-book-dir").unwrap();
 
     // 选中在册其他本 → 切活动指针 → 本次启动直接打开。
-    app.on_pick_paths(vec![other.clone()]).unwrap();
+    app.on_pick_paths(vec![other.to_path_buf()]).unwrap();
     app.press("id:startup-pick-book-dir").unwrap();
     app.wait_for("id:nav-transactions").unwrap();
     use ledger_infra::db::book_registry::{RegistryRead, read_registry};
@@ -15603,7 +15620,7 @@ fn startup_book_missing_failed_state_offers_dir_picker_and_opens_registered_book
 
     // 「下次启动」等价：重置再启动（无 argv）→ 解析链直接打开新活动本。
     nsh_app::app::reset_book_assembly();
-    nsh_app::cross_book::set_default_data_dir(root);
+    nsh_app::cross_book::set_default_data_dir(root.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     app.wait_for("id:nav-transactions").unwrap();
 }
@@ -15615,7 +15632,7 @@ fn startup_argv_missing_book_shows_same_failed_state_with_picker() {
     let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let bad = seed::make_book_dir("t4-argv-missing");
-    nsh_app::app::set_book_dir(bad);
+    nsh_app::app::set_book_dir(bad.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     app.wait_for("text:/账本库文件不存在/").unwrap();
     app.wait_for("id:startup-pick-book-dir").unwrap();
@@ -15625,7 +15642,7 @@ fn startup_argv_missing_book_shows_same_failed_state_with_picker() {
 #[test]
 fn startup_picker_cancel_keeps_failed_state_and_button_retriggerable() {
     let _guard = serial_lock();
-    let (root, mut app) = start_failed_state_with_picker();
+    let (root, _active, mut app) = start_failed_state_with_picker();
     let other = make_book("t4-cancel-other");
 
     // 用户取消（应答空 = Ok(None)）：原失败态与出口原样保留。
@@ -15641,7 +15658,7 @@ fn startup_picker_cancel_keeps_failed_state_and_button_retriggerable() {
     assert_eq!(registry.active_id, "b1", "取消零改向");
 
     // 可再次触发：再选在册其他本 → 打开。
-    app.on_pick_paths(vec![other]).unwrap();
+    app.on_pick_paths(vec![other.to_path_buf()]).unwrap();
     app.press("id:startup-pick-book-dir").unwrap();
     app.wait_for("id:nav-transactions").unwrap();
 }
@@ -15658,13 +15675,13 @@ fn startup_argv_picker_registers_into_default_data_root_not_argv_dir() {
     seed_registry(&root, &active, &[]);
     // argv 打错路径（目录在但无库 → book-missing 失败态）；数据根照常注入。
     let bad = seed::make_book_dir("t4-f5-bad-argv");
-    nsh_app::app::set_book_dir(bad.clone());
-    nsh_app::cross_book::set_default_data_dir(root.clone());
+    nsh_app::app::set_book_dir(bad.to_path_buf());
+    nsh_app::cross_book::set_default_data_dir(root.to_path_buf());
     let picked = make_book("t4-f5-picked");
 
     let mut app = Headless::start(desktop_config()).unwrap();
     app.wait_for("text:/账本库文件不存在/").unwrap();
-    app.on_pick_paths(vec![picked.clone()]).unwrap();
+    app.on_pick_paths(vec![picked.to_path_buf()]).unwrap();
     app.press("id:startup-pick-book-dir").unwrap();
     app.wait_for("id:nav-transactions").unwrap();
     // argv 臂重指直开选定目录（失败态出口语义不变）；注册表写数据根。
@@ -15675,7 +15692,7 @@ fn startup_argv_picker_registers_into_default_data_root_not_argv_dir() {
     let entry = registry
         .books
         .iter()
-        .find(|book| book.dir == picked)
+        .find(|book| book.dir == picked.path())
         .expect("选中目录已登记进数据根注册表");
     assert_eq!(registry.active_id, entry.id, "新条目即数据根注册表的活动本");
     // 负向：打错的 argv 目录不被写入注册表。
@@ -15691,7 +15708,7 @@ fn startup_argv_picker_registers_into_default_data_root_not_argv_dir() {
 #[test]
 fn startup_picker_unavailable_reports_coded_error_and_stays_retryable() {
     let _guard = serial_lock();
-    let (_root, mut app) = start_failed_state_with_picker();
+    let (_root, _active, mut app) = start_failed_state_with_picker();
     // 不注入 on_pick_paths 替身 → pick_paths Err。
     app.press("id:startup-pick-book-dir").unwrap();
     app.wait_for("text:/文件对话框无法打开/").unwrap();
@@ -15702,10 +15719,10 @@ fn startup_picker_unavailable_reports_coded_error_and_stays_retryable() {
 #[test]
 fn startup_picker_unregistered_book_dir_registers_switches_and_opens() {
     let _guard = serial_lock();
-    let (root, mut app) = start_failed_state_with_picker();
+    let (root, _active, mut app) = start_failed_state_with_picker();
     let picked = make_book("t4-unregistered");
 
-    app.on_pick_paths(vec![picked.clone()]).unwrap();
+    app.on_pick_paths(vec![picked.to_path_buf()]).unwrap();
     app.press("id:startup-pick-book-dir").unwrap();
     app.wait_for("id:nav-transactions").unwrap();
     use ledger_infra::db::book_registry::{RegistryRead, read_registry};
@@ -15715,7 +15732,7 @@ fn startup_picker_unregistered_book_dir_registers_switches_and_opens() {
     let entry = registry
         .books
         .iter()
-        .find(|book| book.dir == picked)
+        .find(|book| book.dir == picked.path())
         .expect("选中目录已登记");
     assert_eq!(registry.active_id, entry.id, "新条目即活动本");
 }
@@ -15725,11 +15742,11 @@ fn startup_picker_unregistered_book_dir_registers_switches_and_opens() {
 #[test]
 fn startup_picker_empty_dir_create_intent_confirms_and_opens() {
     let _guard = serial_lock();
-    let (root, mut app) = start_failed_state_with_picker();
+    let (root, _active, mut app) = start_failed_state_with_picker();
     let picked = seed::make_book_dir("t4-create");
 
     // 新建意图：确认对话明示完整路径（ADR-0146 决策 2/3）。
-    app.on_pick_paths(vec![picked.clone()]).unwrap();
+    app.on_pick_paths(vec![picked.to_path_buf()]).unwrap();
     app.press("id:startup-pick-book-dir").unwrap();
     app.wait_for("text:新建账本").unwrap();
     app.wait_for(&format!(
@@ -15745,7 +15762,7 @@ fn startup_picker_empty_dir_create_intent_confirms_and_opens() {
     app.wait_for("id:startup-pick-book-dir").unwrap();
 
     // 再触发 → 确认：建库 + 登记 + 打开。
-    app.on_pick_paths(vec![picked.clone()]).unwrap();
+    app.on_pick_paths(vec![picked.to_path_buf()]).unwrap();
     app.press("id:startup-pick-book-dir").unwrap();
     app.wait_for("text:新建账本").unwrap();
     app.press("id:danger-confirm").unwrap();
@@ -15760,7 +15777,7 @@ fn startup_picker_empty_dir_create_intent_confirms_and_opens() {
     };
     assert_eq!(
         registry.active_dir(),
-        Some(picked.as_path()),
+        Some(picked.path()),
         "登记 + 活动指针即时落盘"
     );
 }
@@ -15772,12 +15789,12 @@ fn pick_bad_book_dir_reports_coded_error_without_picker(bad_bytes: &[u8], expect
     let root = make_data_root("t4-bad-pick");
     let active = seed::make_book_dir("t4-active-missing");
     seed_registry(&root, &active, &[]);
-    nsh_app::cross_book::set_default_data_dir(root);
+    nsh_app::cross_book::set_default_data_dir(root.to_path_buf());
     let picked = seed::make_book_dir("t4-bad");
     fs::write(picked.join("ledger.db"), bad_bytes).unwrap();
     let mut app = Headless::start(desktop_config()).unwrap();
     app.wait_for("text:/账本库文件不存在/").unwrap();
-    app.on_pick_paths(vec![picked]).unwrap();
+    app.on_pick_paths(vec![picked.to_path_buf()]).unwrap();
     app.press("id:startup-pick-book-dir").unwrap();
     app.wait_for(expect).unwrap();
     assert_eq!(
@@ -15797,12 +15814,12 @@ fn startup_picker_encrypted_dir_lands_locked_view() {
     let root = make_data_root("t4-encrypted-pick");
     let active = seed::make_book_dir("t4-active-missing");
     seed_registry(&root, &active, &[]);
-    nsh_app::cross_book::set_default_data_dir(root.clone());
+    nsh_app::cross_book::set_default_data_dir(root.to_path_buf());
     let picked = seed::make_book_dir("t4-encrypted");
     fs::write(picked.join("ledger.db"), vec![0u8; 8_192]).unwrap();
     let mut app = Headless::start(desktop_config()).unwrap();
     app.wait_for("text:/账本库文件不存在/").unwrap();
-    app.on_pick_paths(vec![picked]).unwrap();
+    app.on_pick_paths(vec![picked.to_path_buf()]).unwrap();
     app.press("id:startup-pick-book-dir").unwrap();
     // 锁定视图（解锁面板 + 解锁入口在屏），无选择器出口。
     app.wait_for("id:locked-panel").unwrap();
@@ -15844,10 +15861,10 @@ fn startup_picker_registered_corrupt_dir_reports_coded_error_pointer_unchanged()
     // 在册兄弟本 b2 的库文件为损坏残留（非魔数且非页对齐）。
     fs::write(other.join("ledger.db"), vec![0xABu8; 20]).unwrap();
     seed_registry(&root, &active, &[("b2", "备用账本", &other)]);
-    nsh_app::cross_book::set_default_data_dir(root.clone());
+    nsh_app::cross_book::set_default_data_dir(root.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     app.wait_for("text:/账本库文件不存在/").unwrap();
-    app.on_pick_paths(vec![other]).unwrap();
+    app.on_pick_paths(vec![other.to_path_buf()]).unwrap();
     app.press("id:startup-pick-book-dir").unwrap();
     app.wait_for("text:/数据库文件无法打开/").unwrap();
     use ledger_infra::db::book_registry::{RegistryRead, read_registry};
@@ -15877,7 +15894,7 @@ fn startup_configured_active_book_at_default_dir_missing_fails_with_picker_and_s
     let other = make_book("t3-other");
     // 活动本 b1 = 默认目录自身（无库），在册其他本 b2 有库。
     seed_registry(&root, &root, &[("b2", "备用账本", &other)]);
-    nsh_app::cross_book::set_default_data_dir(root.clone());
+    nsh_app::cross_book::set_default_data_dir(root.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     // 失败态在屏（fail loud），首启引导面板不出现（负向断言：决策 2/4 分界）。
     app.wait_for("text:/账本库文件不存在/").unwrap();
@@ -15890,7 +15907,7 @@ fn startup_configured_active_book_at_default_dir_missing_fails_with_picker_and_s
     );
 
     // 失败态选择器：选中在册其他本 → 切活动指针 → 本次启动直接打开。
-    app.on_pick_paths(vec![other.clone()]).unwrap();
+    app.on_pick_paths(vec![other.to_path_buf()]).unwrap();
     app.press("id:startup-pick-book-dir").unwrap();
     app.wait_for("id:nav-transactions").unwrap();
     use ledger_infra::db::book_registry::{RegistryRead, read_registry};
@@ -15901,7 +15918,7 @@ fn startup_configured_active_book_at_default_dir_missing_fails_with_picker_and_s
 
     // 「下次启动」等价：重置再启动（无 argv）→ 解析链直接打开新活动本。
     nsh_app::app::reset_book_assembly();
-    nsh_app::cross_book::set_default_data_dir(root);
+    nsh_app::cross_book::set_default_data_dir(root.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     app.wait_for("id:nav-transactions").unwrap();
 }
@@ -15915,12 +15932,12 @@ fn onboarding_pick_unregistered_book_dir_registers_switches_and_opens() {
     nsh_app::app::reset_book_assembly();
     let root = make_data_root("t3-onboard-b2");
     let picked = make_book("t3-unregistered");
-    nsh_app::cross_book::set_default_data_dir(root.clone());
+    nsh_app::cross_book::set_default_data_dir(root.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     app.wait_for("text:欢迎使用 Ledger").unwrap();
     wait_pressable(&mut app, "id:onboarding-pick-book-dir");
 
-    app.on_pick_paths(vec![picked.clone()]).unwrap();
+    app.on_pick_paths(vec![picked.to_path_buf()]).unwrap();
     app.press("id:onboarding-pick-book-dir").unwrap();
     app.wait_for("id:nav-transactions").unwrap();
     use ledger_infra::db::book_registry::{RegistryRead, read_registry};
@@ -15930,13 +15947,13 @@ fn onboarding_pick_unregistered_book_dir_registers_switches_and_opens() {
     let entry = registry
         .books
         .iter()
-        .find(|book| book.dir == picked)
+        .find(|book| book.dir == picked.path())
         .expect("选中目录已登记");
     assert_eq!(registry.active_id, entry.id, "新条目即活动本");
 
     // 「下次启动」等价：重置再启动（无 argv）→ 解析链直接打开登记的活动本。
     nsh_app::app::reset_book_assembly();
-    nsh_app::cross_book::set_default_data_dir(root);
+    nsh_app::cross_book::set_default_data_dir(root.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     app.wait_for("id:nav-transactions").unwrap();
 }
@@ -15950,13 +15967,13 @@ fn onboarding_pick_empty_dir_create_intent_confirms_and_opens() {
     nsh_app::app::reset_book_assembly();
     let root = make_data_root("t3-onboard-b3");
     let picked = seed::make_book_dir("t3-create");
-    nsh_app::cross_book::set_default_data_dir(root.clone());
+    nsh_app::cross_book::set_default_data_dir(root.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     app.wait_for("text:欢迎使用 Ledger").unwrap();
     wait_pressable(&mut app, "id:onboarding-pick-book-dir");
 
     // 新建意图：确认对话明示完整路径（ADR-0146 决策 2/3）。
-    app.on_pick_paths(vec![picked.clone()]).unwrap();
+    app.on_pick_paths(vec![picked.to_path_buf()]).unwrap();
     app.press("id:onboarding-pick-book-dir").unwrap();
     app.wait_for("text:新建账本").unwrap();
     app.wait_for(&format!(
@@ -15978,7 +15995,7 @@ fn onboarding_pick_empty_dir_create_intent_confirms_and_opens() {
     );
 
     // 可再触发：再选同一目录 → 确认 → 建库 + 登记 + 打开。
-    app.on_pick_paths(vec![picked.clone()]).unwrap();
+    app.on_pick_paths(vec![picked.to_path_buf()]).unwrap();
     app.press("id:onboarding-pick-book-dir").unwrap();
     app.wait_for("text:新建账本").unwrap();
     app.press("id:danger-confirm").unwrap();
@@ -15993,7 +16010,7 @@ fn onboarding_pick_empty_dir_create_intent_confirms_and_opens() {
     };
     assert_eq!(
         registry.active_dir(),
-        Some(picked.as_path()),
+        Some(picked.path()),
         "登记 + 活动指针即时落盘"
     );
 }
@@ -16006,10 +16023,10 @@ fn onboarding_pick_bad_book_dir_reports_coded_error(bad_bytes: &[u8], expect: &s
     let root = make_data_root("t3-onboard-bad");
     let picked = seed::make_book_dir("t3-bad-pick");
     fs::write(picked.join("ledger.db"), bad_bytes).unwrap();
-    nsh_app::cross_book::set_default_data_dir(root);
+    nsh_app::cross_book::set_default_data_dir(root.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     app.wait_for("text:欢迎使用 Ledger").unwrap();
-    app.on_pick_paths(vec![picked]).unwrap();
+    app.on_pick_paths(vec![picked.to_path_buf()]).unwrap();
     app.press("id:onboarding-pick-book-dir").unwrap();
     app.wait_for(expect).unwrap();
     assert_eq!(
@@ -16033,10 +16050,10 @@ fn onboarding_pick_encrypted_dir_lands_locked_view() {
     let root = make_data_root("t3-onboard-encrypted");
     let picked = seed::make_book_dir("t3-encrypted-pick");
     fs::write(picked.join("ledger.db"), vec![0u8; 8_192]).unwrap();
-    nsh_app::cross_book::set_default_data_dir(root);
+    nsh_app::cross_book::set_default_data_dir(root.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     app.wait_for("text:欢迎使用 Ledger").unwrap();
-    app.on_pick_paths(vec![picked]).unwrap();
+    app.on_pick_paths(vec![picked.to_path_buf()]).unwrap();
     app.press("id:onboarding-pick-book-dir").unwrap();
     app.wait_for("id:locked-panel").unwrap();
     app.wait_for("id:unlock-passphrase").unwrap();
@@ -16070,13 +16087,13 @@ fn onboarding_corrupt_registry_pick_unregistered_book_dir_registers_and_opens() 
         "not-json{{",
     )
     .unwrap();
-    nsh_app::cross_book::set_default_data_dir(root.clone());
+    nsh_app::cross_book::set_default_data_dir(root.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     app.wait_for("text:欢迎使用 Ledger").unwrap();
     app.wait_for("text:已回退到默认位置").unwrap();
     wait_pressable(&mut app, "id:onboarding-pick-book-dir");
 
-    app.on_pick_paths(vec![picked.clone()]).unwrap();
+    app.on_pick_paths(vec![picked.to_path_buf()]).unwrap();
     app.press("id:onboarding-pick-book-dir").unwrap();
     app.wait_for("id:nav-transactions").unwrap();
     use ledger_infra::db::book_registry::{RegistryRead, read_registry};
@@ -16085,13 +16102,13 @@ fn onboarding_corrupt_registry_pick_unregistered_book_dir_registers_and_opens() 
     };
     assert_eq!(
         registry.active_dir(),
-        Some(picked.as_path()),
+        Some(picked.path()),
         "选中目录登记为活动本"
     );
 
     // 「下次启动」等价：重置再启动（无 argv）→ 直接打开登记的活动本。
     nsh_app::app::reset_book_assembly();
-    nsh_app::cross_book::set_default_data_dir(root);
+    nsh_app::cross_book::set_default_data_dir(root.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     app.wait_for("id:nav-transactions").unwrap();
 }
@@ -16109,12 +16126,12 @@ fn onboarding_corrupt_registry_pick_empty_dir_confirms_create_and_opens() {
         "not-json{{",
     )
     .unwrap();
-    nsh_app::cross_book::set_default_data_dir(root.clone());
+    nsh_app::cross_book::set_default_data_dir(root.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     app.wait_for("text:欢迎使用 Ledger").unwrap();
     wait_pressable(&mut app, "id:onboarding-pick-book-dir");
 
-    app.on_pick_paths(vec![picked.clone()]).unwrap();
+    app.on_pick_paths(vec![picked.to_path_buf()]).unwrap();
     app.press("id:onboarding-pick-book-dir").unwrap();
     app.wait_for("text:新建账本").unwrap();
     app.press("id:danger-confirm").unwrap();
@@ -16129,7 +16146,7 @@ fn onboarding_corrupt_registry_pick_empty_dir_confirms_create_and_opens() {
     };
     assert_eq!(
         registry.active_dir(),
-        Some(picked.as_path()),
+        Some(picked.path()),
         "登记 + 活动指针即时落盘"
     );
 }
@@ -16141,7 +16158,7 @@ fn onboarding_pick_cancel_keeps_onboarding_and_action_retriggerable() {
     nsh_app::app::reset_book_assembly();
     let root = make_data_root("t3-onboard-cancel");
     let other = make_book("t3-cancel-other");
-    nsh_app::cross_book::set_default_data_dir(root.clone());
+    nsh_app::cross_book::set_default_data_dir(root.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     app.wait_for("text:欢迎使用 Ledger").unwrap();
     wait_pressable(&mut app, "id:onboarding-pick-book-dir");
@@ -16159,7 +16176,7 @@ fn onboarding_pick_cancel_keeps_onboarding_and_action_retriggerable() {
     );
 
     // 动作可再次触发：再选有库目录 → 打开。
-    app.on_pick_paths(vec![other]).unwrap();
+    app.on_pick_paths(vec![other.to_path_buf()]).unwrap();
     app.press("id:onboarding-pick-book-dir").unwrap();
     app.wait_for("id:nav-transactions").unwrap();
 }
@@ -16174,7 +16191,7 @@ fn startup_locked_and_corrupt_boot_states_have_no_picker() {
     nsh_app::app::reset_book_assembly();
     let encrypted = seed::make_book_dir("t4-boot-encrypted");
     fs::write(encrypted.join("ledger.db"), vec![0u8; 8_192]).unwrap();
-    nsh_app::app::set_book_dir(encrypted);
+    nsh_app::app::set_book_dir(encrypted.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     app.wait_for("id:locked-panel").unwrap();
     assert_eq!(
@@ -16187,7 +16204,7 @@ fn startup_locked_and_corrupt_boot_states_have_no_picker() {
     nsh_app::app::reset_book_assembly();
     let corrupt = seed::make_book_dir("t4-boot-corrupt");
     fs::write(corrupt.join("ledger.db"), vec![0xABu8; 20]).unwrap();
-    nsh_app::app::set_book_dir(corrupt);
+    nsh_app::app::set_book_dir(corrupt.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     app.wait_for("text:/数据库文件无法打开/").unwrap();
     assert_eq!(
@@ -16199,7 +16216,7 @@ fn startup_locked_and_corrupt_boot_states_have_no_picker() {
 
 /// 造密文库夹具（明文造数 → 整库转换）：解锁 / 重置旅程共用。种子一笔
 /// 交易（换连后主界面呈现真实数据的用户可观察锚点）。
-fn make_encrypted_book(tag: &str, passphrase: &str) -> std::path::PathBuf {
+fn make_encrypted_book(tag: &str, passphrase: &str) -> seed::BookDir {
     let dir = make_book(tag);
     {
         let db = nsh_app::boot::boot_ledger(&dir).unwrap();
@@ -16238,7 +16255,7 @@ fn encrypted_book_unlock_journey_enters_session_with_seeded_data() {
     nsh_app::app::reset_book_assembly();
     const PASS: &str = "解锁旅程口令X";
     let dir = make_encrypted_book("unlock-journey", PASS);
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
 
     // 锁定视图：标题 + 口令框 + 自动解锁平台注记（Linux 不支持平价）。
@@ -16286,7 +16303,7 @@ fn locked_view_forgot_passphrase_resets_to_fresh_plaintext_session() {
     nsh_app::app::reset_book_assembly();
     let dir = make_encrypted_book("forgot-reset-journey", "原口令 journeyX");
     let db_path = dir.join("ledger.db");
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     app.wait_for("id:locked-panel").unwrap();
 
@@ -16352,7 +16369,7 @@ fn encryption_card_change_passphrase_then_disable_in_encrypted_session() {
     const PASS_V1: &str = "首开启口令 journeyA";
     const PASS_V2: &str = "换新口令 journeyB";
     let dir = make_book("enc-write-journey");
-    nsh_app::app::set_book_dir(dir.clone());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     open_data_tab(&mut app);
 
@@ -16516,9 +16533,7 @@ fn auto_backup_scheduling_three_states_in_encrypted_scenario() {
     const PASS: &str = "调度三态口令X";
     // 夹具：种子数据 + 自动备份开启 + 整库加密（先明文置开关再转换）。
     let dir = make_book("auto-backup-enc");
-    let backup_dir =
-        std::env::temp_dir().join(format!("ledger-test-nsh-auto-backup-enc-{}", new_uuid()));
-    fs::create_dir_all(&backup_dir).unwrap();
+    let backup_dir = ScratchDir::new("nsh-auto-backup-enc");
     {
         let db = nsh_app::boot::boot_ledger(&dir).unwrap();
         let account = seed_cash_account(&db);
@@ -16556,7 +16571,7 @@ fn auto_backup_scheduling_three_states_in_encrypted_scenario() {
         "backup_dir",
         format!("{:?}", backup_dir.to_string_lossy()).as_str(),
     )]);
-    nsh_app::app::set_book_dir(dir);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config_with_storage_shard(storage)).unwrap();
 
     // 锁定态：锁定视图在屏，等待窗口内无兜底产物（调度不拉起；等待窗走

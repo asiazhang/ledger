@@ -975,12 +975,14 @@ pub(crate) struct PanePalette {
 }
 
 pub(crate) fn pane_palette() -> PanePalette {
-    // 令牌消费单点（crate::theme::color：读取即订阅亮暗切换，缺失落
-    // theme 模块可读兑底——本模块不再私藏色值/兑底色）。
+    // 令牌消费单点（三件套经 views::ViewPalette 唯一住所派生，issue #2113；
+    // 涨跌语义色走 crate::theme::color：读取即订阅亮暗切换，缺失落 theme
+    // 模块可读兜底——本模块不再私藏色值/兜底色）。
+    let palette = crate::views::view_palette();
     PanePalette {
-        fg: crate::theme::color("foreground"),
-        muted: crate::theme::color("muted-foreground"),
-        danger: crate::theme::color("destructive"),
+        fg: palette.fg,
+        muted: palette.muted,
+        danger: palette.danger_fg,
         // 涨跌语义色（红涨绿跌）：收编进主题表的自有令牌档——涨 = expense
         // 档、跌 = income 档、口径说明蓝 = refund 档（词汇表「盈亏涨跌色」
         // 消费主题表，不另造色常量）。

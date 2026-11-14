@@ -680,8 +680,11 @@ pub fn App() -> impl IntoElement {
         muted = ?tokens.color("muted-foreground"),
         "启动视图主题令牌"
     );
-    let fg = crate::theme::color("foreground");
-    let muted = crate::theme::color("muted-foreground");
+    let crate::views::ViewPalette {
+        fg,
+        muted,
+        danger_fg,
+    } = crate::views::view_palette();
     // 失败态出口（ADR-0146 决策 4）与新建意图确认（决策 3 分支③）的现场：
     // 挂起新建目录信号、选择器任务与对话结局处理（组件期一次构造，信号驱动
     // 开合）。
@@ -965,9 +968,7 @@ pub fn App() -> impl IntoElement {
                                 move || {
                                     text(move || create_error.get().unwrap_or_default())
                                         .text_xs()
-                                        .text_color(
-                                            crate::theme::color("destructive"),
-                                        )
+                                        .text_color(danger_fg)
                                         .test_id("onboarding-error")
                                 },
                             )

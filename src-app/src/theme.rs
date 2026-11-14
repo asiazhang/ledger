@@ -21,7 +21,9 @@
 //! （`expense`…`dividend`）、警告与成功（`warning` 亮 `#f0a020` / 暗 `#f2c97d`、`success` 亮 `#18a058` / 暗 `#63e2b7`）、走势主色（`line`）、图表系列
 //! 十二槽（`chart-series-1…12`）与未分类灰（`chart-uncategorized`）、圆角阶
 //! 四档（`radius` 8 / `radius-card` 12 / `radius-panel` 16 / `radius-inset`
-//! 8 点，同心规则见 docs/DESIGN.md）。散落模块的本地色常量已按此表收编
+//! 8 点，同心规则见 docs/DESIGN.md）。亮暗同值的**单值档**（docs/DESIGN.md
+//! §2）不在 dark 段重复写：圆角阶写 `theme` 段亮暗共用；`line` 与
+//! `chart-series-*` 只写 `light` 段（引擎「覆盖式只写差异」：dark 沿用同值）。散落模块的本地色常量已按此表收编
 //! （视图层散落兜底随 #2104 与 review 收编清零）；全仓散落色常量的唯一合法
 //! 住所是本模块的缺失兜底（见 [`color`]）。
 //!
@@ -202,10 +204,11 @@ mod tests {
         let line = tokens.color("line").expect("走势主色 line 在册");
         assert_eq!(line.light, line.dark, "line 亮暗同值（单值档）");
         for slot in 1..=12 {
-            assert!(
-                tokens.color(&format!("chart-series-{slot}")).is_some(),
-                "图表系列槽 chart-series-{slot} 在册"
-            );
+            let name = format!("chart-series-{slot}");
+            let color = tokens
+                .color(&name)
+                .unwrap_or_else(|| panic!("图表系列槽 {name} 在册"));
+            assert_eq!(color.light, color.dark, "{name} 亮暗同值（单值档）");
         }
         assert_eq!(tokens.number("radius"), Some(8.0), "圆角基档 8 点");
         assert_eq!(tokens.number("radius-card"), Some(12.0));

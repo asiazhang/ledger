@@ -237,10 +237,12 @@ pub(crate) fn ReportsView() -> impl IntoElement {
     let merchant_seq = signal(0u64);
 
     // 主题令牌（双态自适应；缺失兜底统一归 crate::theme 单点）。
-    let fg = crate::theme::color("foreground");
-    let muted = crate::theme::color("muted-foreground");
+    let crate::views::ViewPalette {
+        fg,
+        muted,
+        danger_fg,
+    } = crate::views::view_palette();
     let accent = crate::theme::color("primary");
-    let danger_fg = crate::theme::color("destructive");
     // 月度图三柱语义色（与交易列表同类金额同源，色值单源 transactions::amount_color）。
     let income_color = amount_color(AmountSemantic::Income);
     let expense_color = amount_color(AmountSemantic::Expense);

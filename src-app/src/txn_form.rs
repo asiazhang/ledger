@@ -1231,9 +1231,11 @@ pub(crate) fn transaction_form_modal(
             .unwrap_or_else(|| "由原交易决定".to_owned())
     };
 
-    let fg = crate::theme::color("foreground");
-    let muted = crate::theme::color("muted-foreground");
-    let danger_fg = crate::theme::color("destructive");
+    let crate::views::ViewPalette {
+        fg,
+        muted,
+        danger_fg,
+    } = crate::views::view_palette();
 
     let submit = perform_submit(state, sources, view_owner);
 

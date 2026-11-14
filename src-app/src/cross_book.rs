@@ -477,9 +477,11 @@ pub(crate) fn CrossBookSummaryView() -> impl IntoElement {
 
     // 主题令牌（双态自适应）：视图层零本地色常量，缺失统一落 crate::theme
     // 可读兜底（ADR-0147 决策 1）。
-    let fg = crate::theme::color("foreground");
-    let muted = crate::theme::color("muted-foreground");
-    let danger_fg = crate::theme::color("destructive");
+    let crate::views::ViewPalette {
+        fg,
+        muted,
+        danger_fg,
+    } = crate::views::view_palette();
     // 警告色（未计入本状态标签；危险确认 warning 级同色值）。
     let warn_fg = crate::theme::color("warning");
     // 计入色（账本语义绿，与 #2033 起的正常态语义色同源）。
@@ -858,20 +860,24 @@ mod tests {
 
     use ledger_accounts::AccountType;
 
-    /// 唯一暂存库目录（同 tests.rs 纪律：身份工厂发 UUID，进程退出由 OS 回收）。
-    fn scratch_book_dir(tag: &str) -> std::path::PathBuf {
-        let dir =
-            std::env::temp_dir().join(format!("nsh-xbook-{tag}-{}", ledger_infra::ids::new_uuid()));
-        std::fs::create_dir_all(&dir).unwrap();
-        dir
-    }
+    /// 唯一暂存库目录：消费共享造数助手（tests.rs 再导出接缝，RAII guard +
+    /// 前缀闭集，#2112）——本模块的本地副本（前缀 `nsh-xbook-` 也越出
+    /// `ledger-test-` 闭集）随 guard 化退役。
+    use crate::tests::scratch_book_dir;
 
-    /// 建一个库作为可读明文本（0 字节文件 + 产品开库入口；返回连接）。
-    fn open_preminted_book(tag: &str) -> (std::path::PathBuf, ledger_infra::db::DbState) {
+    /// 建一个库作为可读明文本（0 字节文件 + 产品开库入口；返回连接）。目录
+    /// PathBuf 供登记现场消费，guard 须由调用方持有到用例结束（#2112 清理契约）。
+    fn open_preminted_book(
+        tag: &str,
+    ) -> (
+        std::path::PathBuf,
+        crate::tests::BookDir,
+        ledger_infra::db::DbState,
+    ) {
         let dir = scratch_book_dir(tag);
         std::fs::write(dir.join(ledger_infra::db::data_location::DB_FILE_NAME), b"").unwrap();
         let db = crate::boot::boot_ledger(&dir).unwrap();
-        (dir, db)
+        (dir.to_path_buf(), dir, db)
     }
 
     /// 逐本分派（旧壳集成场景的重生子集）：明文本计入并出数、空库/目录登记
@@ -880,10 +886,10 @@ mod tests {
     #[test]
     fn collect_other_books_dispatches_four_visible_states() {
         // 活动本（无需造数；其 schema 版本即参照）。
-        let (_active_dir, active_db) = open_preminted_book("active");
+        let (_active_guard, _active_dir, active_db) = open_preminted_book("active");
 
         // 明文本：投资账户出数（现金腿 = 可投资资产读数）。
-        let (readable_dir, readable_db) = open_preminted_book("readable");
+        let (_readable_guard, readable_dir, readable_db) = open_preminted_book("readable");
         {
             let conn = readable_db.conn.lock().unwrap();
             ledger_accounts::create_account(
@@ -911,7 +917,7 @@ mod tests {
         .unwrap();
 
         // 密文本（先建明文库再转加密 → 未解锁、未计入；ADR-0117 决策 2）。
-        let (locked_dir, _locked_db) = open_preminted_book("locked");
+        let (_locked_guard, locked_dir, _locked_db) = open_preminted_book("locked");
         ledger_infra::db::encryption::enable_encryption_for_file(
             &locked_dir.join(ledger_infra::db::data_location::DB_FILE_NAME),
             "测试口令",
@@ -921,7 +927,7 @@ mod tests {
 
         // 版本不一致本：明文迁移完成后降写 user_version（仓库外版本位移的
         // 现场模拟）。
-        let (mismatch_dir, mismatch_db) = open_preminted_book("mismatch");
+        let (_mismatch_guard, mismatch_dir, mismatch_db) = open_preminted_book("mismatch");
         mismatch_db
             .conn
             .lock()
@@ -939,12 +945,12 @@ mod tests {
             dir,
         };
         let books = vec![
-            book("active-id", "活动本", _active_dir),
-            book("b-readable", "明文本", readable_dir),
-            book("b-empty", "空库本", empty_dir),
-            book("b-locked", "密文本", locked_dir),
-            book("b-mismatch", "旧版本本", mismatch_dir),
-            book("b-missing", "未建库本", missing_dir),
+            book("active-id", "活动本", _active_dir.to_path_buf()),
+            book("b-readable", "明文本", readable_dir.to_path_buf()),
+            book("b-empty", "空库本", empty_dir.to_path_buf()),
+            book("b-locked", "密文本", locked_dir.to_path_buf()),
+            book("b-mismatch", "旧版本本", mismatch_dir.to_path_buf()),
+            book("b-missing", "未建库本", missing_dir.to_path_buf()),
         ];
         let schema =
             ledger_infra::db::schema_version(&active_db.read_conn.lock().unwrap()).unwrap();
@@ -986,7 +992,7 @@ mod tests {
     /// 读数在同一目标币种口径下合并；缺折算汇率的码化错误原样上抶。
     #[test]
     fn active_book_merge_consumes_same_currency_and_missing_fx_raises() {
-        let (_dir, db) = open_preminted_book("merge");
+        let (_merge_guard, _merge_dir, db) = open_preminted_book("merge");
         // 活动本：投资账户 CNY 现金 2 000 元。
         {
             let conn = db.conn.lock().unwrap();
