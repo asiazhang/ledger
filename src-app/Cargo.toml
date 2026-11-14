@@ -58,8 +58,8 @@ nsh-platform-linux.workspace = true
 # 域栈直调面（壳 → 域 → 基础设施单向，ADR-0112）：立桩读路径（交易列表 total）
 # 与其全部读时投影接缝（来源列反查 / 出资视图 / 转换两腿）的实现注册侧。
 # http feature（issue #1133 门纪律）：AI 导入 HTTP 壳随 #2081 迁居本壳，
-# `impl IntoResponse for AppError` 的 axum 投影面由本壳启用；tauri-emit 不启用
-#（NSH 进程零 tauri，GTK3/WebKitGTK 与 GTK4 同进程符号互踩）。
+# `impl IntoResponse for AppError` 的 axum 投影面由本壳启用；feature 面仅编
+# axum（tauri-emit 等 tauri 件已随 #2083 切轨退役，NSH 进程零 tauri）。
 ledger-infra = { path = "crates/infra", features = ["http"] }
 ledger-transaction = { path = "crates/transaction" }
 # 数据期间边界（issue #2021 / ADR-0141 钳制输入）：报表域日期极值读路径
