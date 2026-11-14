@@ -14,6 +14,10 @@
   - **「打开日志目录 / 在文件管理器中显示」入口随旧壳退役**：文件日志本体仍在（数据根下 `logs/`，日滚 + 7 天保留），但应用内一键打开日志目录（`open_log_dir`）与从设置页在文件管理器中显示某文件（`reveal_in_file_manager`）无 NSH 对应入口，需自行到数据根目录查看。
   - 移动布局与触屏适配随 Android 端退役不再发布；Web 参照前端（浏览器 mock 模式）保留为非产品形态的布局对照物（`pnpm dev:mock`）。
 
+### Changed
+
+- **交易列表**：全量视图（无日期过滤）翻页提速——同筛选条件连续翻页不再重跑全量 `COUNT(*)`（真实库约 117ms/次叠加进翻页耗时），总数改为会话内复用；记一笔 / 编辑 / 删除 / 导入后总数照常刷新，带日期视图不受影响（[#2011]）。
+
 ## [0.11.2] - 2026-11-01
 
 ### Added
@@ -574,3 +578,4 @@
 [#1982]: https://github.com/asiazhang/ledger/issues/1982
 [#1999]: https://github.com/asiazhang/ledger/issues/1999
 [#2004]: https://github.com/asiazhang/ledger/issues/2004
+[#2011]: https://github.com/asiazhang/ledger/issues/2011

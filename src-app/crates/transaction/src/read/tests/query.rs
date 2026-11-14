@@ -766,6 +766,89 @@ fn list_transactions_limit_path_unchanged() {
     );
 }
 
+/// total 会话复用的读侧开关（issue #2011）：`skip_total=true` 的翻页读不执行
+/// 全量 `COUNT(*)`——语句执行事实经 trace_v2 STMT 计数直接观察（与读快照探针
+/// 同器具族；注册顶掉测试连接的 PROFILE 耗时 hook，用例作用域可接受），items
+/// 行集、排序与分页语义不变，total 返回 0 占位（语义由调用方自持）。默认路径
+/// COUNT 恒跑的既有契约不回归（第 1/3 次读各 +1）。
+#[test]
+fn list_transactions_skip_total_runs_no_count_and_keeps_page_semantics() {
+    use rusqlite::trace::{TraceEvent, TraceEventCodes};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    // 裸 fn 指针回调动静态传态；本用例独占该计数器，用例内以增量断言。
+    static COUNT_STMTS: AtomicUsize = AtomicUsize::new(0);
+    fn on_stmt(event: TraceEvent<'_>) {
+        if let TraceEvent::Stmt(_, sql) = event
+            && sql.contains("SELECT COUNT(*) FROM transactions WHERE is_deleted")
+        {
+            COUNT_STMTS.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    let conn = test_support::open();
+    test_support::seed_account(&conn, "acc-skip-total", "现金", "cash", "CNY", 0);
+    for day in 1..=3 {
+        create_transaction_internal(
+            &conn,
+            make_input(
+                "acc-skip-total",
+                TransactionKind::Expense,
+                100,
+                &format!("2026-01-0{day}"),
+            ),
+        )
+        .unwrap();
+    }
+    conn.trace_v2(TraceEventCodes::SQLITE_TRACE_STMT, Some(on_stmt));
+
+    // 首读（默认路径）：COUNT 恰执行一次，total = 满足口径的总数。
+    let first = list_transactions_internal(
+        &conn,
+        &TransactionListFilter {
+            page: Some(1),
+            page_size: Some(2),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let after_first = COUNT_STMTS.load(Ordering::SeqCst);
+    assert_eq!(first.total, 3);
+    assert_eq!(after_first, 1, "默认路径应恰执行一次全量 COUNT");
+
+    // 翻页读（skip_total=true）：不执行 COUNT，行集按同一 WHERE 走第 2 页，
+    // total 占位 0。
+    let second = list_transactions_internal(
+        &conn,
+        &TransactionListFilter {
+            page: Some(2),
+            page_size: Some(2),
+            skip_total: true,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        COUNT_STMTS.load(Ordering::SeqCst),
+        after_first,
+        "skip_total 翻页读不得执行全量 COUNT"
+    );
+    assert_eq!(
+        second.total, 0,
+        "skip_total 读 total 为占位 0，由调用方自持"
+    );
+    assert_eq!(second.items.len(), 1, "分页语义不变：第 2 页剩 1 行");
+    assert_eq!(
+        second.items[0].date, "2026-01-01",
+        "排序不变：第 2 页为最旧一行"
+    );
+
+    // 默认路径不回归：再读一次 COUNT 恒跑、total 恒返回。
+    let third = list_transactions_internal(&conn, &TransactionListFilter::default()).unwrap();
+    assert_eq!(third.total, 3);
+    assert_eq!(COUNT_STMTS.load(Ordering::SeqCst), after_first + 1);
+}
+
 #[test]
 fn list_transactions_out_of_range_page_and_empty_result() {
     let conn = test_support::open();

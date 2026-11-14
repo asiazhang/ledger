@@ -1965,6 +1965,91 @@ fn book_transaction_dates(dir: &Path) -> Vec<String> {
         .collect()
 }
 
+/// 翻页 total 会话复用与写后失效（issue #2011）：同筛选签名连续翻页不重跑
+/// 全量 COUNT——语句执行事实经会话读连接 trace_v2 STMT 计数直接观察（与
+/// perf 慢查询日志同源的 trace_v2 器具；注册顶掉该连接的 PROFILE 耗时
+/// hook，app 实例随用例存亡无需回装），「共 N 条」总数跨页保持。删除
+/// （失效信号广播 → 视图订阅重读）后 total 缓存清零重算：总数减一在屏、
+/// COUNT 恰重跑一次，其后再翻页复用恢复。删视图缓存清零接线（订阅处理器
+/// 内清缓存）或翻页 skip_total 传参任一环即红——前者删后总数停旧值
+/// wait 红、重算计数不增；后者翻页计数增长断言红。
+#[test]
+fn app_window_pagination_reuses_total_without_full_count_and_refreshes_after_delete() {
+    use rusqlite::trace::{TraceEvent, TraceEventCodes};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    // 列表全量 COUNT 的语句级计数：读连接的语句跑在引擎 blocking 任务线程，
+    // 裸 fn 回调经进程级原子计数传态；本用例独占（serial_lock 串行）。
+    static LIST_COUNT_STMTS: AtomicUsize = AtomicUsize::new(0);
+    fn on_stmt(event: TraceEvent<'_>) {
+        if let TraceEvent::Stmt(_, sql) = event
+            && sql.contains("SELECT COUNT(*) FROM transactions WHERE is_deleted")
+        {
+            LIST_COUNT_STMTS.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("total-reuse");
+    seed_expense_series(&dir, 150);
+
+    nsh_app::app::set_book_dir(dir);
+    let mut app = Headless::start(desktop_config()).unwrap();
+
+    // 首屏装载落位（首读 COUNT 发生在臂装前，计数从零起算）。
+    open_transactions(&mut app);
+    app.wait_for("text:共 150 条").unwrap();
+
+    // 臂装：对会话读连接注册 STMT 计数（trace_v2 单槽；snapshot_probe 同款
+    // 注记——顶掉建连收尾的 PROFILE 耗时 hook，测试用例作用域可接受）。
+    {
+        let db = nsh_app::test_support::session_db().expect("会话库应已就绪");
+        let read_conn = db.read_conn.lock().unwrap_or_else(|p| p.into_inner());
+        LIST_COUNT_STMTS.store(0, Ordering::SeqCst);
+        read_conn.trace_v2(TraceEventCodes::SQLITE_TRACE_STMT, Some(on_stmt));
+    }
+
+    // 翻页（`]`）：行集换血 + 总数保持，且不产生全量 COUNT——装载发生由
+    // 行集换血证明，计数不变证明 COUNT 未跑。
+    app.wait_for("id:tx-pagination").unwrap();
+    app.press_key("]").unwrap();
+    app.wait_for("text:2026-02-19").unwrap();
+    app.wait_for_gone("text:2026-05-30", DEFAULT_WAIT).unwrap();
+    assert_eq!(
+        LIST_COUNT_STMTS.load(Ordering::SeqCst),
+        0,
+        "同筛选签名翻页不得重跑全量 COUNT（#2011）"
+    );
+    assert!(
+        app.shows("共 150 条"),
+        "翻页后总数保持：{:?}",
+        app.screen().texts()
+    );
+
+    // 删除（页 2 顶行）：确认后失效信号驱动重读——缓存清零，COUNT 恰重跑
+    // 一次，总数减一在屏。
+    right_click_after(&mut app, "text:2026-02-19", "text:2026-02-19").unwrap();
+    app.choose_menu_item("删除").unwrap();
+    app.wait_for("text:删除交易").unwrap();
+    app.press("id:danger-confirm").unwrap();
+    app.wait_for("text:共 149 条").unwrap();
+    let after_delete = LIST_COUNT_STMTS.load(Ordering::SeqCst);
+    assert_eq!(
+        after_delete, 1,
+        "写后失效重读应恰重跑一次全量 COUNT（缓存清零接线）"
+    );
+
+    // 失效后的新一轮会话：翻页复用恢复（回页 1 不重跑 COUNT）。
+    app.press_key("[").unwrap();
+    app.wait_for("text:2026-05-30").unwrap();
+    assert_eq!(
+        LIST_COUNT_STMTS.load(Ordering::SeqCst),
+        after_delete,
+        "写后重算后的翻页仍不重跑全量 COUNT"
+    );
+}
+
 /// 删除全旅程（issue #2022 AC1）：行右键菜单选「删除」→ 危险确认（error 级，
 /// ADR-0078）→ 确认后交易删除生效且列表自动刷新（无需手动刷新）；总数减一、
 /// 库中该笔消失。异步纪律：域写与重读在后台线程，一律 wait_for（§3.5）。
@@ -2377,7 +2462,7 @@ struct PerfBookFacts {
 fn perf_book_facts(dir: &Path) -> PerfBookFacts {
     let db = nsh_app::boot::boot_ledger(dir).unwrap();
     let read_page = |no: u32| {
-        let result = nsh_app::boot::transaction_page(&db, no, &Default::default()).unwrap();
+        let result = nsh_app::boot::transaction_page(&db, no, &Default::default(), false).unwrap();
         assert!(
             !result.items.is_empty(),
             "第 {no} 页应有行集（数据集量级下不应有空页）"

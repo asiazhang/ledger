@@ -14,7 +14,10 @@ use crate::shell_support::write_entry_locked;
 /// 交易列表页查询载荷（issue #2037 筛选读接缝）：筛选会话态快照的读路径投影。
 /// 默认构造 = 无筛选但显式携带四通用 kind（主列表排除投资 kind 的读接缝单点，
 /// ADR-0135——本壳立桩期未接筛选维度的缺口由此闭合）。
-#[derive(Clone, Debug)]
+///
+/// 本型即 total 会话复用的**筛选签名**（#2011）：全字段相等（不含页码——
+/// 页码不进本型）= 同一筛选签名，翻页可复用已算得的 total。
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TxListQuery {
     /// 期间快照（「全部」= `None`）。
     pub range: Option<crate::period::PeriodRange>,
@@ -61,10 +64,16 @@ impl Default for TxListQuery {
 /// 按域契约直传（维度间 AND、类型维度内取或）。来源列等读时投影接缝已由
 /// [`crate::wiring`] 接线。读连接是成对建连的只读侧（ADR-0117：读路径不进
 /// 写者闸门）。
+///
+/// `skip_total`（issue #2011）直传域读路径的全量 COUNT 跳过开关：同筛选签名
+/// 会话复用 total 的翻页读置 `true`（调用方用缓存 total 回填），本函数不持有
+/// 会话态——签名的持有与失效（写后广播清零）在消费方视图；缺省 `false` =
+/// COUNT 恒跑、total 恒返回（既有契约）。
 pub fn transaction_page(
     db: &DbState,
     page: u32,
     query: &TxListQuery,
+    skip_total: bool,
 ) -> Result<TransactionListResult> {
     let filter = ledger_transaction::TransactionListFilter {
         page: Some(page.max(1) as usize),
@@ -77,6 +86,7 @@ pub fn transaction_page(
         uncategorized_only: query.uncategorized_only.then_some(true),
         kinds: (!query.kinds.is_empty()).then(|| query.kinds.clone()),
         hide_investment_related: query.hide_investment_related.then_some(true),
+        skip_total,
         ..Default::default()
     };
     let conn = conn_lock(&db.read_conn)?;
