@@ -1978,6 +1978,130 @@ fn suppression_gate_blocks_period_key_while_period_popup_open() {
 }
 
 // ---------------------------------------------------------------------------
+// 记一笔裸键直达（issue #2139，web CreateShortcut 平价）：a/z/i 直达
+// 记支出/记转账/记收入表单弹窗（键位映射与 web `CREATE_KIND_KEYS` 同源）。
+// 借出/借入与退款不入裸键闭集（create-entry-kinds 同源口径）。
+// ---------------------------------------------------------------------------
+
+/// a/z/i 各自打开对应类型的表单弹窗（用户可观察结果 = 弹窗标题）。
+/// 「删除即红」负向条目（ADR-0087）：删掉 transactions.rs 中任一
+/// `on_key("a"/"z"/"i")` 挂键 → 对应段落的 `wait_for` 超时红（按键无
+/// 绑定、无输入焦点落点，弹窗永不出现）。
+#[test]
+fn create_shortcut_keys_open_matching_forms() {
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("create-keys");
+
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config()).unwrap();
+
+    open_transactions(&mut app);
+    app.wait_for("text:暂无数据").unwrap();
+
+    // `a` → 记支出。
+    app.press_key("a").unwrap();
+    app.wait_for("text:记一笔 · 支出").unwrap();
+    app.press_key("escape").unwrap();
+    app.wait_for_gone("text:记一笔 · 支出", DEFAULT_WAIT)
+        .unwrap();
+
+    // `z` → 记转账。
+    app.press_key("z").unwrap();
+    app.wait_for("text:记一笔 · 转账").unwrap();
+    app.press_key("escape").unwrap();
+    app.wait_for_gone("text:记一笔 · 转账", DEFAULT_WAIT)
+        .unwrap();
+
+    // `i` → 记收入。
+    app.press_key("i").unwrap();
+    app.wait_for("text:记一笔 · 收入").unwrap();
+    app.press_key("escape").unwrap();
+    app.wait_for_gone("text:记一笔 · 收入", DEFAULT_WAIT)
+        .unwrap();
+}
+
+/// 可编辑焦点闸（引擎 keymap `When::Auto` 承担，a/z/i 皆文本编辑键）：
+/// 焦点在搜索框时 a/z/i 落框不派发（字符追加进查询，弹窗不开）。
+/// 「删除即红」负向条目：此闸在引擎侧（不属本壳接线面），删挂键或把
+/// 绑定改为 `When::Always` → 首段断言红（弹窗在输入中出现）。
+#[test]
+fn suppression_gate_blocks_create_keys_while_editable_focused() {
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("create-keys-edit");
+
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config()).unwrap();
+
+    open_transactions(&mut app);
+    app.wait_for("text:暂无数据").unwrap();
+
+    app.type_text("id:tx-search", "火锅").unwrap();
+    let modal_titles = [
+        "text:记一笔 · 支出",
+        "text:记一笔 · 转账",
+        "text:记一笔 · 收入",
+    ];
+    for key in ["a", "z", "i"] {
+        app.press_key(key).unwrap();
+        app.settle();
+        assert!(
+            !modal_titles.iter().any(|t| app.shows(t)),
+            "焦点在搜索框时 `{key}` 不得打开表单弹窗：{:?}",
+            app.screen().texts()
+        );
+    }
+    assert_eq!(
+        app.screen().input_text("id:tx-search").unwrap(),
+        Some("火锅azi"),
+        "a/z/i 应落进输入框（可编辑焦点闸，不派发）"
+    );
+}
+
+/// 抑制闸门——记一笔族（Overlay Suppression）：注册抑制的弹层（期间选择
+/// 弹层）开着时 a/z/i 不派发（弹窗不开），关弹层后同键生效。
+/// 「删除即红」负向条目（ADR-0087）：删掉处理器中的 `overlay::has_open_overlay`
+/// 检查 → 弹层下按键把表单弹窗打开，本测红（断言对准用户可观察结果）。
+#[test]
+fn suppression_gate_blocks_create_keys_while_period_popup_open() {
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("create-keys-suppress");
+
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config()).unwrap();
+
+    open_transactions(&mut app);
+    app.wait_for("text:暂无数据").unwrap();
+
+    // 打开注册抑制的弹层 → a/z/i 不派发（弹窗不开）。
+    app.press("id:period-label").unwrap();
+    app.wait_for("id:period-chip-all").unwrap();
+    let modal_titles = [
+        "text:记一笔 · 支出",
+        "text:记一笔 · 转账",
+        "text:记一笔 · 收入",
+    ];
+    for key in ["a", "z", "i"] {
+        app.press_key(key).unwrap();
+        app.settle();
+        assert!(
+            !modal_titles.iter().any(|t| app.shows(t)),
+            "弹层开着时 `{key}` 不得打开表单弹窗：{:?}",
+            app.screen().texts()
+        );
+    }
+
+    // 关弹层（ESC 走弹层关闭语义）→ 同键直达生效（`a` → 记支出）。
+    app.press_key("escape").unwrap();
+    app.wait_for_gone("id:period-chip-all", DEFAULT_WAIT)
+        .unwrap();
+    app.press_key("a").unwrap();
+    app.wait_for("text:记一笔 · 支出").unwrap();
+}
+
+// ---------------------------------------------------------------------------
 // 期间直达面板（issue #2128，旧壳 QuickTimeRange.periodPicker 平价）：点击
 // 期间标签打开的弹层内，预设芯片之外另有月/季/年直达面板；面板单位随当前
 // 游标（「全部」态默认月面板）；点选写精确自然周期快照并关弹层；面板格子
