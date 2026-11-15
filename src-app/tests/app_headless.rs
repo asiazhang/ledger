@@ -8399,6 +8399,53 @@ fn dashboard_investment_card_shows_empty_state_without_holdings() {
     app.wait_for("text:设置预算后解锁财务自由度").unwrap();
 }
 
+/// 概览订阅消费面真负向测试（ADR-0087，设置·分类改名旅程的补钉）：交易族
+/// 广播到达 → **在场**订阅者重读。概览落地首屏即在场（交易族五卡订阅者，
+/// dashboard.rs tx_sub）；域公开写入口直写一笔本月支出（写库不广播——NSH
+/// 壳内广播是调用方接线，#2081 同口径）→ 概览仍持旧数；经泵通道注入失效
+/// 事件 → 泵广播进交易族 → 概览随广播重读，月度净支出变化在屏。
+/// 「删除即红」负向条目：删概览 tx_sub 订阅接线（或泵接线任一环）→ 月度
+/// 数字停留旧值即红（红绿实证：注释掉 dashboard.rs tx_sub 后本测红，
+/// 恢复后绿）。
+/// （设置·分类改名旅程的广播消费面无法同屏断言：视图按导航分支挂载，
+/// settings_categories 写路径与订阅视图不可能同时在场——见
+/// settings_view_category_edit_modal_renames_and_refreshes_transaction_list
+/// 注释头部。）
+#[test]
+fn dashboard_monthly_numbers_reload_on_transaction_invalidation_while_mounted() {
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("dashboard-invalidation-reload");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let cash = seed_cash_account(&db);
+        seed_transaction(
+            &db,
+            TxnSeed {
+                account: &cash,
+                to_account: None,
+                kind: TransactionKind::Expense,
+                amount_cents: 10_000,
+                date: &today().to_string(),
+                category_id: None,
+                merchant_id: None,
+                note: None,
+            },
+        );
+    }
+
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    // 概览落地首屏：月度净支出初值 100（1 笔支出）。
+    app.wait_for("text:100").unwrap();
+
+    // 域公开写入口直写一笔本月支出（写库不广播）→ 概览仍持旧数；注入失效
+    // 事件 → 泵广播 → 概览订阅重读 → 净支出 100 → 350 在屏。
+    seed_expense_on_date(&dir, &today().to_string(), 25_000);
+    nsh_app::http_host::post_invalidation_for_tests(ledger_infra::events::LEDGER_CHANGED);
+    app.wait_for("text:350").unwrap();
+}
+
 /// 净资产卡下钻（总览屏唯一动作）：点「查看账户明细」落账户视图（#2041 起
 /// 为真实视图，新增账户卡在屏）。
 /// 「删除即红」负向条目：删卡片内 nav::open 接线 → 本测红（停留概览）。
@@ -19236,8 +19283,14 @@ fn settings_view_categories_pane_lands_and_creates_root_and_child() {
 }
 
 /// 编辑旅程（旧壳 CategoryEditModal 同语义）：编辑按钮 → 弹窗预填 → 改名
-/// 保存 → 行与交易列表分类列刷新（广播接线删除即红：删成功回调里的
-/// notify_transactions_invalidated → 交易列表分类列仍旧名即红）。
+/// 保存 → 行与交易列表分类列刷新。注意：末段交易列表断言钉的是「落位重
+/// 读」（交易视图按导航分支挂载、落位即全新装载重读 category_rows，
+/// transactions.rs 装载闭包），**不构成**「删成功回调里的
+/// notify_transactions_invalidated 即红」的负向证据——改名写路径与订阅视图
+/// 无法同屏（视图按导航分支挂载），本旅程删广播仍绿。交易族广播的订阅消
+/// 费面（「广播到达 → 在场订阅者重读」）另由概览消费面真负向测试
+/// `dashboard_monthly_numbers_reload_on_transaction_invalidation_while_mounted`
+/// 钉住（ADR-0087 断言强度）。
 #[test]
 fn settings_view_category_edit_modal_renames_and_refreshes_transaction_list() {
     let _guard = serial_lock();
@@ -19296,7 +19349,8 @@ fn settings_view_category_edit_modal_renames_and_refreshes_transaction_list() {
     app.wait_for("text:已更新分类").unwrap();
     app.wait_for("text:餐饮消费").unwrap();
 
-    // 交易列表分类列新名（广播 → 列表重读；删广播接线即红）。
+    // 交易列表分类列新名（落位重读：导航分支挂载即全新装载；广播负向
+    // 证据见概览消费面真负向测试，注释头部同引）。
     open_transactions(&mut app);
     app.wait_for("text:餐饮消费").unwrap();
 }
