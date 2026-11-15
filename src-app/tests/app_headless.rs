@@ -12736,6 +12736,57 @@ fn settings_view_log_level_select_persists_across_remounts() {
     app.wait_for("text:调试 (debug)").unwrap();
 }
 
+/// 日志卡「打开日志目录」（旧壳 open_log_dir 命令同语义的 NSH 接线，#2132）:
+/// 入口可达 + 按压发起宿主打开调用。替身断言：headless 平台只记录 FileRequest
+/// 从不真开（放开能力位后 open/reveal 一律成功应答不触盘），断言对准被记录
+/// 的 OpenPath 目标 = 数据根下 `logs`——与 logging.rs 文件面同根同式（旧壳
+/// app_log_dir 平价落点）。删除按钮接线（on_press 内 open_path 调用或整按钮）
+/// → 本测红：file_requests 恒空（ADR-0087 断言强度：断言对准宿主调用被发起）。
+#[test]
+fn settings_view_log_card_open_dir_button_opens_data_root_logs_dir() {
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+    let data_root = make_data_root("log-open-dir");
+    nsh_app::cross_book::set_default_data_dir(data_root.to_path_buf());
+    let dir = make_book("settings-log-open");
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config_with_storage_shard(storage_shard(&[]))).unwrap();
+    // 放开宿主路径请求能力位：此后 open/reveal 请求被全量记录且成功应答
+    // （空回答集只影响对话框替身，不影响 open/reveal）。
+    app.on_pick_paths(vec![]).unwrap();
+    open_settings(&mut app);
+
+    app.press("id:log-open-dir").unwrap();
+    app.settle();
+    use nsh_core::file_dialog::FileRequest;
+    let requests = app.screen().file_requests();
+    assert_eq!(
+        requests,
+        &[FileRequest::OpenPath(data_root.to_path_buf().join("logs"))],
+        "按压「打开日志目录」应发起恰好一次宿主打开调用，目标 = 数据根 logs：{requests:?}"
+    );
+}
+
+/// 数据根缺席（嵌入宿主未注入，logging.rs 文件面同款降级现场）：入口可达
+/// 但不发起宿主调用，失败经卡内状态条位呈现旧壳同前缀文案。
+#[test]
+fn settings_view_log_card_open_dir_without_data_root_reports_failure() {
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("settings-log-open-noroot");
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_settings(&mut app);
+
+    app.press("id:log-open-dir").unwrap();
+    app.wait_for("text:打开日志目录失败：数据根未就绪").unwrap();
+    assert!(
+        app.screen().file_requests().is_empty(),
+        "数据根缺席不发起宿主调用：{:?}",
+        app.screen().file_requests()
+    );
+}
+
 /// 位置卡信息聚合（boot::data_location_info 直调基建 gather_info_from_boot）：
 /// 生效位置 = 启动目录 + 原文回显；意图缺席 → 「恢复默认」禁用（契约不变量
 /// 直接投影，删除禁用接线即红）。更改入口 / 复制路径在屏。
@@ -13213,6 +13264,86 @@ fn backup_full_journey_backs_up_lists_prunes_and_guards_overwrite() {
     assert!(
         !landed_b.exists(),
         "确认后的滚动清理同样按保留上限进行（桶内超额最旧产物被清）"
+    );
+}
+
+/// 备份行「在访达中显示」（旧壳 reveal_in_file_manager 命令的 NSH 承载面：
+/// 切轨起保留在备份文件列表行级，#2132 补替身断言证明入口可达且触发宿主
+/// 定位调用）：备份一行 → 按压行级入口 → 被记录的 RevealPath 目标 = 该行
+/// 产物（设备子目录落点原文）。删除行级按钮的 reveal_path 调用 → 本测红：
+/// file_requests 恒空（ADR-0087 断言强度）。
+#[test]
+fn settings_view_backup_row_reveal_issues_host_reveal_request() {
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("settings-backup-reveal");
+    let backup_dir = ScratchDir::new("nsh-data-reveal");
+    let storage = storage_shard(&[
+        (
+            "backup_dir",
+            format!("{:?}", backup_dir.to_string_lossy()).as_str(),
+        ),
+        ("backup_max_count", "1"),
+    ]);
+
+    // 种子一笔交易（空库无可归属产物，备份空库不产生列表行）；自动备份预置
+    // 关（空列表会话的首次兜底自动备份会混入非手动产物）。
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        {
+            let conn = db.conn.lock().unwrap();
+            ledger_infra::settings::set(
+                &conn,
+                ledger_infra::settings::SettingKey::AutoBackupEnabled,
+                &false,
+            )
+            .unwrap();
+        }
+        let account = seed_cash_account(&db);
+        seed_transaction(
+            &db,
+            TxnSeed {
+                account: &account,
+                to_account: None,
+                kind: TransactionKind::Expense,
+                amount_cents: 2_500,
+                date: &test_date(0),
+                category_id: None,
+                merchant_id: None,
+                note: Some("访达定位种子".to_owned()),
+            },
+        );
+    }
+
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config_with_storage_shard(storage)).unwrap();
+    app.on_pick_paths(vec![]).unwrap();
+    open_data_tab(&mut app);
+
+    // 备份一行（对话框替身问到盘面；受管改道落设备子目录）。
+    let device = {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let conn = db.read_conn.lock().unwrap();
+        ledger_backup::source_device_id(&conn).expect("种子库可取设备标识")
+    };
+    let target = backup_dir.join("ledger-backup-20260101-000000.db.zip");
+    let landed = backup_dir
+        .join(&device)
+        .join("ledger-backup-20260101-000000.db.zip");
+    app.on_pick_save_path(Some(target.clone())).unwrap();
+    app.press("id:data-backup-as").unwrap();
+    app.wait_for("id:data-backup-row-0-name").unwrap();
+    assert!(landed.is_file(), "备份产物落盘：{}", landed.display());
+
+    // 行级「在访达中显示」→ 宿主定位调用，目标 = 该行产物（前置的另存为
+    // 对话框请求同屏记录，取末位）。
+    app.press("id:data-backup-reveal-0").unwrap();
+    app.settle();
+    use nsh_core::file_dialog::FileRequest;
+    let requests = app.screen().file_requests();
+    assert!(
+        matches!(requests.last(), Some(FileRequest::RevealPath(path)) if path == &landed),
+        "按压行级「在访达中显示」应发起宿主定位调用，目标 = 该行产物：{requests:?}"
     );
 }
 
@@ -13833,6 +13964,179 @@ fn books_summary_entry_opens_cross_book_summary() {
     open_data_tab(&mut app);
     app.press("id:book-summary-entry").unwrap();
     app.wait_for("text:汇总读取失败").unwrap();
+}
+
+// ---------------------------------------------------------------------------
+// 侧栏底部账本切换区（issue #2129，web BookSidebarEntry 展开态的 NSH 重生）:
+// 触发件（当前账本名）→ 清单弹层（汇总置顶入口 + 账本行 + 活动指针指示）→
+// 行按压切换（warning 级轻量确认 → 写活动指针 → 重启生效提示）。换本生效
+// 时机按 web 参照既有语义核对（useBookSwitcher：确认后写指针并原位重引导
+// 重载进目标账本）；本壳无原位重引导（既有偏差，设置面账本切换卡同款），
+// 确认后写指针 + 状态条提示重启生效——ADR-0146 首启现场闭集零接触。
+// ---------------------------------------------------------------------------
+
+/// 切换区呈现：触发件显示活动账本名，弹层列出账本清单且活动行带「当前」
+/// 指示（其余行无）。删切换区挂载接线（侧栏底部组件移除）→ 触发件缺席 →
+/// 红。
+#[test]
+fn sidebar_book_switch_area_lands_with_list_and_active_pointer() {
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("sidebar-books-list");
+    // 预登记副账本（只登记不建库，清单呈现与库文件无关）。
+    let second = ledger_infra::db::book_registry::create_book_entry(&dir, "副账本").unwrap();
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config()).unwrap();
+
+    // 触发件（侧栏底部）：显示活动账本名（升级折叠形态唯一首本「默认账本」）。
+    // 装载锚：清单异步首刷，先等装载产物再读屏（#2068 纪律）。
+    app.wait_for("id:sidebar-book-entry").unwrap();
+    app.wait_for("text:默认账本").unwrap();
+
+    // 弹层：账本清单两行，活动行（默认账本，登记序 0）带「当前」指示，
+    // 副账本行无。
+    app.press("id:sidebar-book-entry").unwrap();
+    app.wait_for("id:sidebar-book-row-0-current").unwrap();
+    app.wait_for(format!("id:sidebar-book-switch-{}", second.id).as_str())
+        .unwrap();
+    assert!(
+        app.shows("副账本"),
+        "弹层应列出登记清单：{:?}",
+        app.screen().texts()
+    );
+    assert_eq!(
+        app.screen().count("id:sidebar-book-row-1-current").unwrap(),
+        0,
+        "非活动行不带「当前」指示"
+    );
+}
+
+/// 切换全旅程（读写落目标账本）：弹层行按压切换意图 → warning 级轻量确认
+/// → 确认后写活动指针（状态条提示重启生效）→ 重启后进目标账本：目标本种
+/// 子流水可见、原活动本流水不可见（读落目标本）；经 UI 记一笔后新写入目标
+/// 本库、原活动本库不变（写落目标本）。删切换写链（确认后不调 boot 写缝）
+/// → 指针不写、重启仍在原本 → 红。
+#[test]
+fn sidebar_book_switch_moves_pointer_and_lands_reads_writes_in_target() {
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("sidebar-books-switch");
+    // 两本各自种子（独立数据宇宙：各自专属备注流水；seed_expense_notes
+    // 内建建账户「测试现金」，供重启后记一笔表单选账）。
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        seed::seed_expense_notes(&db, &["主账本专属流水"]);
+    }
+    let second = {
+        let book = ledger_infra::db::book_registry::create_book_entry(&dir, "副账本").unwrap();
+        fs::write(book.dir.join("ledger.db"), b"").unwrap();
+        let db = nsh_app::boot::boot_ledger(&book.dir).unwrap();
+        seed::seed_expense_notes(&db, &["副账本专属流水"]);
+        book
+    };
+
+    let storage = storage_shard(&[]);
+    let storage2 = storage_shard(&[]);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config_with_storage_shard(storage)).unwrap();
+
+    // 弹层行按压切换意图 → 轻量确认（warning 级）→ 确认写指针。
+    app.wait_for("id:sidebar-book-entry").unwrap();
+    app.wait_for("text:默认账本").unwrap();
+    app.press("id:sidebar-book-entry").unwrap();
+    wait_pressable(
+        &mut app,
+        format!("id:sidebar-book-switch-{}", second.id).as_str(),
+    );
+    app.press(format!("id:sidebar-book-switch-{}", second.id).as_str())
+        .unwrap();
+    app.wait_for("text:切换账本").unwrap();
+    app.press("id:danger-confirm").unwrap();
+    app.wait_for("text:已切换到「副账本」，重启应用后进入新账本")
+        .unwrap();
+    // 活动指针写链（读注册表文件：active = 副账本 id）。
+    let registry = fs::read_to_string(dir.join("data_location.json")).unwrap();
+    assert!(
+        registry.contains(second.id.as_str()) && registry.contains("\"active\""),
+        "注册表活动指针应指向副账本：{registry}"
+    );
+
+    // 「重启生效」等价：重置 + 同目录参数再启动 → 引导消费注册表进副账本。
+    nsh_app::app::reset_book_assembly();
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config_with_storage_shard(storage2)).unwrap();
+    open_transactions(&mut app);
+    app.wait_for("text:共 1 条").unwrap();
+    app.wait_for("text:副账本专属流水").unwrap();
+    assert!(
+        !app.shows("主账本专属流水"),
+        "读落目标本：原活动本流水不可见：{:?}",
+        app.screen().texts()
+    );
+
+    // 写落目标本：经 UI 记一笔 → 目标本库新增、原活动本库不变。
+    open_create_form(&mut app, "id:tx-add-expense", "记一笔 · 支出");
+    app.type_text("id:tx-form-amount", "12.50").unwrap();
+    pick_only_account(&mut app);
+    app.press("id:tx-form-submit").unwrap();
+    app.wait_for_gone("text:记一笔 · 支出", DEFAULT_WAIT)
+        .unwrap();
+    app.wait_for("text:共 2 条").unwrap();
+    // 库态核对（不经 UI）：按目录直开（`open_db_in`，绕过注册表解析链——
+    // 切换后 `boot_ledger` 会随活动指针解析到目标本，探针须指向特定本）。
+    let count = |path: &Path| -> i64 {
+        let db = ledger_infra::db::open_db_in(path).unwrap();
+        let conn = db
+            .read_conn
+            .lock()
+            .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
+            .unwrap();
+        ledger_transaction::list_transactions(
+            &conn,
+            &ledger_transaction::TransactionListFilter::default(),
+        )
+        .unwrap()
+        .total
+    };
+    assert_eq!(count(&second.dir), 2, "新写入落目标本库");
+    assert_eq!(count(&dir), 1, "原活动本库不受牵连");
+}
+
+/// 汇总置顶入口（web `book-summary-entry` 同位，置于清单容器外）：按压 →
+/// 落位跨账本汇总视图（headless 未注入数据根，呈现读失败重试态，落位凭证
+/// 以视图内确定文案为锚）。删导航接线（入口改空动作）→ 汇总视图不落位 →
+/// 红。
+#[test]
+fn sidebar_book_summary_entry_opens_cross_book_summary() {
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("sidebar-books-summary");
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    app.wait_for("id:sidebar-book-entry").unwrap();
+    app.press("id:sidebar-book-entry").unwrap();
+    wait_pressable(&mut app, "id:sidebar-book-summary");
+    app.press("id:sidebar-book-summary").unwrap();
+    app.wait_for("text:汇总读取失败").unwrap();
+}
+
+/// 汇总入口可用性门（web `summaryAvailable` 同口径）：投资功能关闭时入口
+/// 不可按（ADR-0116 决策 4；聚合改道语义归 nav_model 既有单测）。
+#[test]
+fn sidebar_book_summary_entry_disabled_when_investments_closed() {
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("sidebar-books-summary-closed");
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let storage = storage_shard(&[("view_state:closed_features", "[\"investments\"]")]);
+    let mut app = Headless::start(desktop_config_with_storage_shard(storage)).unwrap();
+    app.wait_for("id:sidebar-book-entry").unwrap();
+    app.press("id:sidebar-book-entry").unwrap();
+    app.wait_for("id:sidebar-book-summary").unwrap();
+    assert!(
+        !app.screen().enabled("id:sidebar-book-summary").unwrap(),
+        "投资关闭时汇总入口不可按"
+    );
 }
 
 // ---------------------------------------------------------------------------

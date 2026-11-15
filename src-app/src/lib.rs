@@ -313,6 +313,7 @@ pub mod settings;
 pub mod settings_data;
 pub mod shell_support;
 pub mod sidebar;
+pub mod sidebar_books;
 pub mod signals;
 pub mod sync_triggers;
 pub mod theme;
