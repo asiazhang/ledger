@@ -10832,6 +10832,41 @@ fn scheduled_view_lands_with_panes_and_subscription_rows() {
     }
 }
 
+/// 定时视图切走再回不崩且形态页签保留（范围外修复，#2130 期间发现）：会
+/// 话槽信号首调若挂定时视图体，切走视图重挂（owner 释放）后页签 computed
+/// 读 disposed 句柄即崩——根绑定接线（App 体首调初始化）删除即本测红：
+/// 回不来（视图挂载崩）或页签回订阅（保留丢失），两端皆红。
+#[test]
+fn scheduled_view_survives_view_switch_and_retains_form_tab() {
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("scheduled-switch-retain");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let account = seed_account_with_balance(&db, "测试现金", 10_000);
+        let merchant = seed_merchant(&db, "视频平台");
+        seed_subscription_plan(&db, &account, Some(&merchant), Some("视频会员"));
+    }
+
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_scheduled(&mut app);
+
+    // 留下印记：切到分期页签（会话槽写路径）。
+    app.press("id:scheduled-tab-installments").unwrap();
+    app.wait_for("id:inst-table").unwrap();
+
+    // 切走（交易视图）再回（更多容器 → 定时）：视图正常挂载且形态页签保留
+    // 在分期（页签会话内保留）。
+    open_transactions(&mut app);
+    app.wait_for("id:nav-more-bookkeeping").unwrap();
+    app.press("id:nav-more-bookkeeping").unwrap();
+    app.wait_for("id:more-tab-scheduled").unwrap();
+    app.press("id:more-tab-scheduled").unwrap();
+    app.wait_for("text:分期清单").unwrap();
+    app.wait_for("id:inst-table").unwrap();
+}
+
 /// 计划域视觉收口探针（issue #2103，ADR-0147 决策 3/4）：订阅页签亮暗双态下
 /// 关键文字的**已解析样式**——字号全部落在字阶档（形态页签/主按钮文案 =
 /// SECONDARY 14、清单卡标题与花费统计数 = TITLE 20、弱化衬注/行操作 =
@@ -16154,6 +16189,324 @@ fn investments_view_holdings_code_drills_to_ledger_filtered() {
     assert!(
         app.shows("2025-12-20") && app.shows("2025-12-30") && app.shows("2026-03-05"),
         "该账户该标的三笔在列：{:?}",
+        app.screen().texts()
+    );
+}
+
+/// 投资明细·日期维度造数账本（#2130，日期相对「今天」派生——跨年运行不
+/// 脆）：投资账户 + 标的 + 三笔投资交易——买入（去年 12-15）、卖出（本月
+/// 1 日）、分红（今天）。数据期间 = [去年12月, 本月]（分红锚今天抬升最晚
+/// 端到本月），年边界 = [去年, 今年]——芯片「当年」子集 / 步进跨年 / 面板
+/// 月格钳制的独立推演基准（与 period 边界数学同源，period_shortcut 先例）。
+fn seed_ledger_period_book(tag: &str) -> seed::BookDir {
+    let dir = make_book(tag);
+    let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+    use ledger_investment::{InstrumentInput, InstrumentType};
+    let t = today();
+    let last_dec15 = chrono::NaiveDate::from_ymd_opt(t.year() - 1, 12, 15).unwrap();
+    let month_first = chrono::NaiveDate::from_ymd_opt(t.year(), t.month(), 1).unwrap();
+    let (account_id, instrument_id) = {
+        let conn = db.conn.lock().unwrap();
+        let account_id = ledger_accounts::create_account(
+            &conn,
+            AccountInput {
+                name: "证券".to_owned(),
+                kind: AccountType::Investment,
+                currency_code: "CNY".to_owned(),
+                initial_balance_cents: Some(100_000),
+                credit_limit_cents: None,
+                statement_day: None,
+                due_day: None,
+            },
+        )
+        .unwrap();
+        let instrument_id = ledger_investment::create_instrument(
+            &conn,
+            InstrumentInput {
+                symbol: "TST".to_owned(),
+                kind: InstrumentType::Stock,
+                name: Some("测试标的".to_owned()),
+                currency_code: "CNY".to_owned(),
+                market: None,
+            },
+        )
+        .unwrap();
+        (account_id, instrument_id)
+    };
+    let rows = [
+        (ledger_transaction::TransactionKind::Buy, last_dec15, 0),
+        (ledger_transaction::TransactionKind::Sell, month_first, 0),
+        (ledger_transaction::TransactionKind::Dividend, t, 12_345),
+    ];
+    {
+        let conn = db.conn.lock().unwrap();
+        for (kind, date, amount_cents) in rows {
+            let traded = kind != ledger_transaction::TransactionKind::Dividend;
+            ledger_transaction::create(
+                &conn,
+                ledger_transaction::TransactionInput {
+                    kind,
+                    amount_cents,
+                    currency_code: "CNY".to_owned(),
+                    account_id: Some(account_id.clone()),
+                    instrument_id: Some(instrument_id.clone()),
+                    quantity: traded.then_some(1.0),
+                    price_cents: traded.then_some(10_000),
+                    fee_cents: Some(0),
+                    date: date.to_string(),
+                    ..probe_investments_input()
+                },
+            )
+            .unwrap();
+        }
+    }
+    dir
+}
+
+/// 明细页签期间行·芯片与步进（#2130，QuickTimeRange 第四消费形态）：五芯
+/// 片 + 步进器在屏（无键位提示内嵌——同搜索视图 key_hints=false 口径）；
+/// 「当年」芯片写快照（标签 = 今年）且行集收窄到今年两笔；步进上一周期跨
+/// 到去年（行集 1 笔）、下一周期回今年；越界（明年）步进按钮置灰——点按
+/// 无操作（幂等）。「删除即红」负向条目（ADR-0087）：删期间行挂载接线
+///（period_row 调用）→ 本测在 id:ledger-period-label 锚处红；删日期维进
+/// 筛选签名（tracked effect）或 filter from/to 投影任一 → 芯片/步进后行
+/// 集不收窄，总数与行文本断言红。断言对准用户可见结果（标签 / 总数 /
+/// 日期格），不写可点性断言。
+#[test]
+fn investments_view_ledger_period_chip_and_stepper_narrow_rows() {
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+    let dir = seed_ledger_period_book("invest-ledger-period-chip");
+    let t = today();
+    let last_dec15 = format!("{}-12-15", t.year() - 1);
+    let month_first = format!("{}-{:02}-01", t.year(), t.month());
+
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_investments(&mut app);
+    app.press("id:inv-tab-ledger").unwrap();
+    app.wait_for("id:ledger-title").unwrap();
+    app.wait_for("text:共 3 条").unwrap();
+
+    // 期间行挂载（无日期维 = 「全部」默认态）：标签召唤文案在屏。
+    app.wait_for("id:ledger-period-label").unwrap();
+    assert!(
+        app.shows("选择期间"),
+        "默认「全部」态标签：{:?}",
+        app.screen().texts()
+    );
+
+    // 「当年」芯片 → 快照 = 今年自然年，行集收窄到今年两笔（卖出 + 分红）。
+    app.press("id:ledger-period-label").unwrap();
+    app.wait_for("id:ledger-period-chip-year").unwrap();
+    app.press("id:ledger-period-chip-year").unwrap();
+    app.wait_for_gone("id:ledger-period-chip-year", DEFAULT_WAIT)
+        .unwrap();
+    app.wait_for(&format!("text:{}年", t.year())).unwrap();
+    app.wait_for("text:共 2 条").unwrap();
+    assert!(
+        app.shows(&month_first) && app.shows(&t.to_string()),
+        "今年两笔在列：{:?}",
+        app.screen().texts()
+    );
+    assert!(!app.shows(&last_dec15), "去年买入离屏（行集随日期维收窄）");
+
+    // 步进上一周期 → 去年自然年：行集收窄到去年买入一笔。
+    app.press("role:button[上一个周期]").unwrap();
+    app.wait_for(&format!("text:{}年", t.year() - 1)).unwrap();
+    app.wait_for("text:共 1 条").unwrap();
+    assert!(
+        app.shows(&last_dec15),
+        "去年买入在列：{:?}",
+        app.screen().texts()
+    );
+    assert!(!app.shows(&t.to_string()), "今年分红离屏");
+
+    // 步进下一周期 → 回今年；再下一步（明年）越出数据期间边界 → 按钮置灰。
+    app.press("role:button[下一个周期]").unwrap();
+    app.wait_for(&format!("text:{}年", t.year())).unwrap();
+    app.wait_for("text:共 2 条").unwrap();
+    assert!(
+        !app.screen().enabled("role:button[下一个周期]").unwrap(),
+        "明年越出数据期间边界：下步按钮置灰"
+    );
+
+    // 「全部」芯片 → 回无过滤默认态：标签召唤文案 + 行集回全量三笔。
+    app.press("id:ledger-period-label").unwrap();
+    app.wait_for("id:ledger-period-chip-all").unwrap();
+    app.press("id:ledger-period-chip-all").unwrap();
+    app.wait_for_gone("id:ledger-period-chip-all", DEFAULT_WAIT)
+        .unwrap();
+    app.wait_for("text:共 3 条").unwrap();
+    assert!(
+        app.shows("选择期间"),
+        "「全部」= 无过滤默认态标签：{:?}",
+        app.screen().texts()
+    );
+}
+
+/// 明细页签期间行·直达面板（#2130 / #2128 共用件第四消费面）：「全部」态
+/// 开弹层默认月面板（季/年格不呈现）；月格可达性 = 数据期间边界独立推演
+///（本月及以前可达、之后置灰）；锚年上一年可达、下一年置灰；锚年导航到
+/// 去年后仅去年 12 月格可达；点选写精确自然月快照并收窄行集。「删除即
+/// 红」负向条目（ADR-0087）：删面板挂载接线（period_row 面板 child）→
+/// 本测在 id:ledger-period-panel 锚处红；删边界装载接线（boundary_dates
+/// 喂 period_row）→ 格子不钳制、可达性断言红。
+#[test]
+fn investments_view_ledger_period_panel_direct_month_select_narrows_rows() {
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+    let dir = seed_ledger_period_book("invest-ledger-period-panel");
+    let t = today();
+    let last_dec15 = format!("{}-12-15", t.year() - 1);
+    let month_first = format!("{}-{:02}-01", t.year(), t.month());
+    let prefix = "ledger-period";
+
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_investments(&mut app);
+    app.press("id:inv-tab-ledger").unwrap();
+    app.wait_for("id:ledger-title").unwrap();
+    app.wait_for("text:共 3 条").unwrap();
+
+    // 开弹层：「全部」态默认月面板（本月月格在屏，季/年格不呈现）。
+    app.press("id:ledger-period-label").unwrap();
+    app.wait_for("id:ledger-period-chip-all").unwrap();
+    app.wait_for("id:ledger-period-panel").unwrap();
+    app.wait_for(&panel_month_cell(prefix, t.month0())).unwrap();
+    assert_eq!(
+        app.screen().count(&panel_quarter_cell(prefix, 0)).unwrap(),
+        0,
+        "「全部」态默认月面板：季格不呈现"
+    );
+    assert_eq!(
+        app.screen()
+            .count(&panel_year_cell(prefix, t.year()))
+            .unwrap(),
+        0,
+        "「全部」态默认月面板：年格不呈现"
+    );
+
+    // 月格可达性独立推演（与 period 边界数学同源）：边界月序 =
+    // [min(最早交易月, 本月), max(最新交易月, 本月)]，本例最晚端 = 本月
+    //（分红锚今天）→ 锚今年本月及以前可达、之后置灰。
+    let ord_m = |d: chrono::NaiveDate| i64::from(d.year()) * 12 + i64::from(d.month0());
+    let lo = ord_m(chrono::NaiveDate::from_ymd_opt(t.year() - 1, 12, 15).unwrap());
+    let hi = ord_m(t).max(ord_m(
+        chrono::NaiveDate::from_ymd_opt(t.year(), t.month(), 1).unwrap(),
+    ));
+    for m0 in 0..12u32 {
+        let expected = i64::from(t.year()) * 12 + i64::from(m0) >= lo
+            && i64::from(t.year()) * 12 + i64::from(m0) <= hi;
+        let role = format!("role:button[{}月]", m0 + 1);
+        assert_eq!(
+            app.screen().enabled(&role).unwrap(),
+            expected,
+            "月格「{}月」可达性应 = 边界内推演（{expected}）",
+            m0 + 1
+        );
+    }
+    // 锚年导航可达性：上一年 = 边界最早年（去年 12 月）→ 可达；下一年越出
+    // 边界最晚年（今年）→ 置灰。
+    assert!(
+        app.screen()
+            .enabled(&format!("id:{prefix}-panel-prev"))
+            .unwrap(),
+        "面板上一年可达（边界最早年在去年）"
+    );
+    assert!(
+        !app.screen()
+            .enabled(&format!("id:{prefix}-panel-next"))
+            .unwrap(),
+        "面板下一年置灰（边界最晚年 = 今年）"
+    );
+
+    // 锚年导航到去年：仅去年 12 月格可达（其余月置灰）。
+    app.press(&format!("id:{prefix}-panel-prev")).unwrap();
+    app.wait_for(&format!("text:{}年", t.year() - 1)).unwrap();
+    assert!(
+        app.screen().enabled(&panel_month_cell(prefix, 11)).unwrap(),
+        "去年 12 月格可达"
+    );
+    assert!(
+        !app.screen().enabled(&panel_month_cell(prefix, 0)).unwrap(),
+        "去年 1 月格置灰（边界最早 = 去年 12 月）"
+    );
+
+    // 点选去年 12 月格 → 写精确自然月快照并关弹层：行集收窄到去年买入一笔。
+    app.press(&panel_month_cell(prefix, 11)).unwrap();
+    app.wait_for_gone("id:ledger-period-chip-all", DEFAULT_WAIT)
+        .unwrap();
+    app.wait_for(&format!("text:{}年12月", t.year() - 1))
+        .unwrap();
+    app.wait_for("text:共 1 条").unwrap();
+    assert!(
+        app.shows(&last_dec15),
+        "去年买入在列：{:?}",
+        app.screen().texts()
+    );
+    assert!(
+        !app.shows(&month_first) && !app.shows(&t.to_string()),
+        "今年两笔离屏"
+    );
+}
+
+/// 明细页签期间快照会话内保留 + 冷启动回「全部」（#2130，ADR-0094 会话内
+/// 保留默认粒度 / ADR-0135 决策 3 四维同射程口径）：选「当年」→ 切走（交
+/// 易视图）再回（投资明细）= 标签与行集原样保留；重启应用 = 快照回「全部」
+///（标签召唤文案 + 行集全量）。「删除即红」负向条目（ADR-0087）：删会话
+/// 槽日期字段（detail_date 降为组件本地信号）→ 切走再回重挂重拉后快照回
+/// 「全部」、行集回全量，保留段断言红。
+#[test]
+fn investments_view_ledger_period_snapshot_session_retained_cold_start_resets() {
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+    let dir = seed_ledger_period_book("invest-ledger-period-session");
+    let t = today();
+    let year_label = format!("text:{}年", t.year());
+
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_investments(&mut app);
+    app.press("id:inv-tab-ledger").unwrap();
+    app.wait_for("id:ledger-title").unwrap();
+    app.wait_for("text:共 3 条").unwrap();
+
+    // 留下快照印记：「当年」芯片 → 行集收窄到今年两笔。
+    app.press("id:ledger-period-label").unwrap();
+    app.wait_for("id:ledger-period-chip-year").unwrap();
+    app.press("id:ledger-period-chip-year").unwrap();
+    app.wait_for_gone("id:ledger-period-chip-year", DEFAULT_WAIT)
+        .unwrap();
+    app.wait_for(&year_label).unwrap();
+    app.wait_for("text:共 2 条").unwrap();
+
+    // 切走（交易视图）再回（投资视图，会话页签 = 明细）：标签与行集原样
+    //（进程级会话槽承担保留，ADR-0094）。
+    open_transactions(&mut app);
+    app.wait_for("id:tx-table").unwrap();
+    open_investments(&mut app);
+    app.wait_for("id:ledger-title").unwrap();
+    app.wait_for(&year_label).unwrap();
+    app.wait_for("text:共 2 条").unwrap();
+    assert!(
+        !app.shows("选择期间"),
+        "保留态不是「全部」：{:?}",
+        app.screen().texts()
+    );
+    drop(app);
+
+    // 冷启动（复位装配 + 重启）：快照回「全部」默认态，行集回全量三笔。
+    nsh_app::app::reset_book_assembly();
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_investments(&mut app);
+    app.press("id:inv-tab-ledger").unwrap();
+    app.wait_for("id:ledger-title").unwrap();
+    app.wait_for("text:共 3 条").unwrap();
+    assert!(
+        app.shows("选择期间"),
+        "冷启动回「全部」默认态：{:?}",
         app.screen().texts()
     );
 }

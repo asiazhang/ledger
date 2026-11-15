@@ -11,11 +11,12 @@
 //!
 //! 会话槽（旧壳 investments-session store 的重生子集：五位页签射程内的
 //! 瞬态——当前页签 + 走势预设区间 + 盈亏两表页码 + 持仓筛选三维与页码 +
-//! 明细筛选三维与页码 + 标的 focus 意图）：
+//! 明细筛选四维与页码 + 标的 focus 意图）：
 //! 进程级信号单例，同一会话内离开投资视图再回来回原样；冷启动回默认（默认
 //! 页签「概览」+ 走势「1 年」+ 页码 1）；保留全程零写盘。旧壳持仓筛选三维
 //! 与页码随 issue #1192 住会话 store，本壳会话槽同射程直接承载；明细/标的
-//! 筛选三维与其页解已由 #2047 ⑯ 扩入同射程（不扩射程之外的形状）。
+//! 筛选维与其页解已由 #2047 ⑯ 扩入同射程（日期维随 #2130 补齐——不扩射
+//! 程之外的形状）。
 //!
 //! 读路径直调域公开读入口（[`crate::boot`]，不经 IPC——与旧壳
 //! investment_overview / realized_pnl_summary / portfolio_value_trend /
@@ -37,6 +38,7 @@ use crate::boot;
 use crate::design::font_size;
 use crate::keep_mounted;
 use crate::nav;
+use crate::period;
 use crate::pinyin_select;
 use crate::plot_line;
 use crate::plot_line::PlotLineSeries;
@@ -248,6 +250,11 @@ pub(crate) struct InvestmentsSession {
     pub detail_account_id: Signal<Option<String>>,
     /// 明细·标的深链维（None = 默认态；仅下钻落点写入，无手动控件，⑯）。
     pub detail_instrument_id: Signal<Option<String>>,
+    /// 明细·日期维度（None = 无过滤「全部」默认态；#2130 QuickTimeRange
+    /// 第四消费形态：[`crate::period_row`] 共用件芯片/步进/直达面板写精确
+    /// 自然周期快照——旧壳 detailDateFrom/To 受控桥接同射程，ADR-0135
+    /// 决策 3 四维、ADR-0094 会话内保留）。
+    pub detail_date: Signal<Option<period::PeriodRange>>,
     /// 标的页签·anchor 定位意图（None = 默认态；仅下钻落点写入，消费后即
     /// 复位——读一次，⑯）。
     pub instruments_focus: Signal<Option<String>>,
@@ -301,6 +308,7 @@ pub(crate) fn store() -> InvestmentsSession {
         detail_kinds: signal(Vec::new()),
         detail_account_id: signal(None),
         detail_instrument_id: signal(None),
+        detail_date: signal(None),
         instruments_focus: signal(None),
     };
     *slot = Some(s);

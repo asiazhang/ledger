@@ -587,6 +587,14 @@ pub fn App() -> impl IntoElement {
     // 报表页会话态（#2048）同样挂根实例（首调初始化；离开报表视图重挂不丢
     // ——旧壳 reports-session 存活期 = 应用会话同语义）。
     reports::store();
+    // 投资页会话态（#2045–#2047）同挂根实例（同一条所有权契约：首调若落在
+    // 投资视图体，切走视图重挂（owner 释放）后页签栏/装载读会话信号即崩
+    // ——与筛选会话态/报表会话态同根因，#2130 期间发现，诊断证据随交付
+    // 报告）。
+    investments::store();
+    // 定时视图会话态（#2042）同挂根实例（同上：形态页签 computed 读会话槽，
+    // 挂视图体则切走重挂即崩——同根因同接线）。
+    scheduled::bind_session_at_root();
     nav::bind_shortcuts();
     // 显示主题启动钩（#2053）：按存储外观应用全局显色——三环接缝（存储读 /
     // 解析 / 应用）在 settings::apply_startup_appearance 单点内的接线，拆除

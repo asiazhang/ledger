@@ -10,14 +10,17 @@
 //! 默认）。页大小固定 20（旧壳默认档同值；页大小档位选择器缺席——旧壳
 //! `pageSizes` 档位带随主列表同源，缺件留痕随交付报告）。
 //!
-//! **筛选三维**：类型多选（[`crate::multi_select`] 弹层，选项闭集 = 五种投
-//! 资 kind 与域行集闭包同源、维度内取或）、账户单选（涉及账户语义：账户端
-//! ∪ 出资端——语义单点在域读路径；候选 = 可选择投资账户 + 选中归档补值
-//! 「（已归档）」，spec #1952 同款）、清除筛选（#1807 主列表同款判定）；任
-//! 一应用值实际变化 → 翻页归零 + 重拉（同值守卫 effect 内化，同值重设不触
-//! 发）。标的维度无手动控件：仅下钻落点写入（旧壳 `?instrument=` 只读承
-//! 载同语义）。日期维度缺席（旧壳 QuickTimeRange 芯片 + 期间直达面板，头
-//! 件不在本壳就有——缺件留痕随交付报告）。
+//! **筛选四维**（ADR-0135 决策 3：账户 / 标的 / 类型 / 日期）：类型多选
+//!（[`crate::multi_select`] 弹层，选项闭集 = 五种投资 kind 与域行集闭包同
+//! 源、维度内取或）、账户单选（涉及账户语义：账户端 ∪ 出资端——语义单点
+//! 在域读路径；候选 = 可选择投资账户 + 选中归档补值「（已归档）」，spec
+//! #1952 同款）、日期维度（#2130：[`crate::period_row`] 共用期间行第四消
+//! 费形态——芯片五枚 + 步进 + 直达面板全量，无快捷键分流同搜索视图口径
+//! `key_hints: false`；快照住会话槽 `detail_date`，冷启动回「全部」
+//! ADR-0094；行集收窄 = 域过滤器既有 from/to 维，零域改动）、清除筛选
+//!（#1807 主列表同款判定，含日期维）；任一应用值实际变化 → 翻页归零 +
+//! 重拉（同值守卫签名 effect 内化，同值重设不触发）。标的维度无手动控件：
+//! 仅下钻落点写入（旧壳 `?instrument=` 只读承载同语义）。
 //!
 //! **行操作弹窗族**（旧壳 ADR-0135 决策 4 / issue #1781 同权复用）：行右键
 //! 菜单（编辑 buy/sell、只读详情 convert/split/dividend、删除）——编辑经
@@ -63,7 +66,7 @@ use crate::design::font_size;
 use crate::investments::PanePalette;
 use crate::{
     app, assembly, boot, context_menu, danger, investments, investments_form, modal, multi_select,
-    pinyin_select, signals, transactions,
+    period, period_row, pinyin_select, signals, transactions,
 };
 use ledger_transaction::TransactionKind;
 
@@ -498,13 +501,14 @@ fn table_classes() -> DataTableClasses {
     classes
 }
 
-/// 筛选签名（同值守卫的比较锚；二维空集合归一层——过滤面只有类型/账户/
-/// 标的深链）。
+/// 筛选签名（同值守卫的比较锚；空集合归一层——过滤面 = 类型/账户/
+/// 标的深链/日期期间四维，ADR-0135 决策 3）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct FilterSignature {
     kinds: Vec<String>,
     account_id: Option<String>,
     instrument_id: Option<String>,
+    date: Option<period::PeriodRange>,
 }
 
 impl FilterSignature {
@@ -512,11 +516,13 @@ impl FilterSignature {
         kinds: &[TransactionKind],
         account_id: Option<String>,
         instrument_id: Option<String>,
+        date: Option<period::PeriodRange>,
     ) -> Self {
         Self {
             kinds: kind_signature(kinds),
             account_id,
             instrument_id,
+            date,
         }
     }
 }
@@ -525,7 +531,16 @@ impl FilterSignature {
 // 视图
 // ---------------------------------------------------------------------------
 
-/// 明细页签本体（旧壳 InvestmentLedgerTab 的本壳等价：筛选三维 + 服务端分
+/// 列表读批产物（行页 + 账户候选 + 币种字典 + 数据期间边界——一个阻塞读
+/// 批一次产出；别名供闭包签名消费，#2130 起含边界第四元）。
+type LedgerPageBatch = (
+    ledger_investment::InvestmentTransactionListResult,
+    Vec<ledger_accounts::Account>,
+    Vec<ledger_currencies::Currency>,
+    Option<(Option<String>, Option<String>)>,
+);
+
+/// 明细页签本体（旧壳 InvestmentLedgerTab 的本壳等价：筛选四维 + 服务端分
 /// 页明细表 + 行右键操作弹窗族 + 创建入口两钮 + 创建与只读详情弹窗挂面）。
 /// 「删除即红」负向条目钉在 headless：页签激活装载 / 筛选重拉 / 创建入口
 /// 接线 / 交易失效重读 / 删除重读。
@@ -545,6 +560,10 @@ pub(crate) fn LedgerPane() -> impl IntoElement {
     let accounts = signal(investments_form::Accounts(Vec::new()));
     #[allow(unused_assignments)]
     let privacy = signal(false);
+    // 数据期间边界（期间行步进/面板钳制输入；随列表读批同批装载——交易/
+    // 搜索/报表三消费面同款；None = 在途/失败 → 钳制退化为不钳，
+    // period_row 模块口径）。
+    let boundary_dates = signal(None::<(Option<String>, Option<String>)>);
 
     // 行操作弹窗族（#2046 偏差 1 消费：买卖表单族——创建与编辑共用弹窗、
     // 只读详情弹窗、删除确认目标与反馈条位。意图互不串扰）。
@@ -577,14 +596,17 @@ pub(crate) fn LedgerPane() -> impl IntoElement {
         // 会话快照进闭包（低频信号值拉过先例）。
         let page_now = session.detail_page.get_untracked().max(1);
         let kinds = session.detail_kinds.get_untracked();
+        // 日期维投影（#2130：period::PeriodRange 双端含 YYYY-MM-DD，与域过
+        // 滤器字典序比较同口径——快照进既有域读路径，零域改动）。
+        let date_now = session.detail_date.get_untracked();
         let filter = ledger_investment::InvestmentTransactionListFilter {
             page: Some(page_now),
             page_size: Some(boot::LEDGER_TAB_PAGE_SIZE),
             kinds: (!kinds.is_empty()).then(|| kinds.clone()),
             account_id: session.detail_account_id.get_untracked(),
             instrument_id: session.detail_instrument_id.get_untracked(),
-            from: None,
-            to: None,
+            from: date_now.as_ref().map(|r| r.from.clone()),
+            to: date_now.as_ref().map(|r| r.to.clone()),
         };
         let filter_account = filter.account_id.clone();
         let filter_instrument = filter.instrument_id.clone();
@@ -596,24 +618,19 @@ pub(crate) fn LedgerPane() -> impl IntoElement {
                 error.set(Some(format!("{LOAD_FAILED_PREFIX}{MSG_INTERNAL}")));
                 return;
             };
-            let outcome = blocking(
-                move || -> ledger_infra::error::Result<
-                    (
-                        ledger_investment::InvestmentTransactionListResult,
-                        Vec<ledger_accounts::Account>,
-                        Vec<ledger_currencies::Currency>,
-                    ),
-                > {
-                    let page = boot::investment_transaction_page(&db, &filter)?;
-                    let account_rows = boot::account_rows(&db)?;
-                    let currencies = boot::currency_rows(&db)?;
-                    Ok((page, account_rows, currencies))
-                },
-            )
+            let outcome = blocking(move || -> ledger_infra::error::Result<LedgerPageBatch> {
+                let page = boot::investment_transaction_page(&db, &filter)?;
+                let account_rows = boot::account_rows(&db)?;
+                let currencies = boot::currency_rows(&db)?;
+                let date_range = boot::report_date_range(&db)
+                    .ok()
+                    .map(|dr| (dr.min_date, dr.max_date));
+                Ok((page, account_rows, currencies, date_range))
+            })
             .await;
             loading.set(false);
             match outcome {
-                Ok(Ok((page, account_rows, currency_rows))) => {
+                Ok(Ok((page, account_rows, currency_rows, date_range))) => {
                     // 空页自愈（issue #893 同款）。
                     if page.items.is_empty()
                         && page.total > 0
@@ -633,6 +650,7 @@ pub(crate) fn LedgerPane() -> impl IntoElement {
                         privacy_enabled,
                     ));
                     total.set(page.total);
+                    boundary_dates.set(date_range);
                     error.set(None);
                 }
                 Ok(Err(e)) => error.set(Some(format!("{LOAD_FAILED_PREFIX}{e}"))),
@@ -642,10 +660,10 @@ pub(crate) fn LedgerPane() -> impl IntoElement {
         });
     };
 
-    // 筛选三维任一实际变化 → 翻页归零 + 重拉（同值守卫；同值重设与首载
+    // 筛选四维任一实际变化 → 翻页归零 + 重拉（同值守卫；同值重设与首载
     // 不触发。删除本 effect 接线即红：筛选变化不刷新，headless 筛选用例红。
     // 装载与「deep-link 覆盖」共用本 effect——下钻落点直接写会话槽即天然
-    // 走到本重拉）。
+    // 走到本重拉；日期维（#2130）随本签名进同一条重拉路径）。
     let tracked = std::rc::Rc::new(std::cell::RefCell::new(None::<FilterSignature>));
     let tracked_for_effect = tracked;
     effect(move || {
@@ -653,6 +671,7 @@ pub(crate) fn LedgerPane() -> impl IntoElement {
             session.detail_kinds.get().as_slice(),
             session.detail_account_id.get(),
             session.detail_instrument_id.get(),
+            session.detail_date.get(),
         );
         let mut prev = tracked_for_effect.borrow_mut();
         if prev.as_ref() == Some(&current) {
@@ -663,6 +682,23 @@ pub(crate) fn LedgerPane() -> impl IntoElement {
         session.detail_page.set(1);
         load();
     });
+
+    // 期间行（#2130，QuickTimeRange 第四消费形态：芯片五枚 + 步进 + 直达面
+    // 板全量共用件；无快捷键分流同搜索视图口径 key_hints = false，含「全
+    // 部」默认态）。快照 = 会话槽 detail_date（唯一事实源，受控承载，
+    // ADR-0135 修订口径）；应用回调零动作——翻页归零与重拉由上方筛选签名
+    // effect 单点承担（四维同值守卫同一条重拉路径，与类型/账户维同构）；
+    // 边界装载见 load 批；步进动作本页签无快捷键分流，不外接。
+    let (period_row_view, _ledger_period_step) = period_row::period_row(
+        "ledger-period",
+        false,
+        true,
+        session.detail_date,
+        boundary_dates,
+        move |_changed: bool| {
+            // 快照应用后的重载出口归签名 effect 单点（同值守卫防重拉在先）。
+        },
+    );
 
     // 页签落位装载（visited-once keep-mounted：激活边即重拉——旧壳明细页
     // 签 display 缺省 'if' 重挂重拉语义，会话内保留的是选择不是快照；删除
@@ -708,11 +744,12 @@ pub(crate) fn LedgerPane() -> impl IntoElement {
     let on_kind_clear = move || session.detail_kinds.set(Vec::new());
 
     // 筛选激活判定（清除筛选按钮的准入 + 空态分型，旧壳 filtersActive 同
-    // 判定——含深链带入的标的维）。
+    // 判定——含深链带入的标的维与日期维 #2130）。
     let filters_active = move || {
         !session.detail_kinds.get_untracked().is_empty()
             || session.detail_account_id.get_untracked().is_some()
             || session.detail_instrument_id.get_untracked().is_some()
+            || session.detail_date.get_untracked().is_some()
     };
 
     let filter_row = move || {
@@ -756,7 +793,7 @@ pub(crate) fn LedgerPane() -> impl IntoElement {
             )
             .child(
                 // 清除筛选（#1807 主列表同款判定：任一明细维度激活即可用；清明
-                // 细筛选 + 翻页归零，不切页签、不动页大小）。
+                // 细筛选（含日期维 #2130）+ 翻页归零，不切页签、不动页大小）。
                 view()
                     .test_id("ledger-clear-filters")
                     .disabled(move || !filters_active())
@@ -764,6 +801,7 @@ pub(crate) fn LedgerPane() -> impl IntoElement {
                         session.detail_kinds.set(Vec::new());
                         session.detail_account_id.set(None);
                         session.detail_instrument_id.set(None);
+                        session.detail_date.set(None);
                     })
                     .rounded_lg()
                     .px_2()
@@ -1005,6 +1043,9 @@ pub(crate) fn LedgerPane() -> impl IntoElement {
                         .text_color(palette.fg)
                         .test_id("ledger-title"),
                 )
+                // 期间行（#2130）：时间维度行在筛选行上方（交易/搜索/报表同序
+                //——快照与边界见 builder 接线注）。
+                .child(period_row_view)
                 .child(body)
                 // 危险确认对话框挂面（error 级形态；抑制上报与 ESC
                 // /遮罩语义归封装——#2022 交易删除同形）。
