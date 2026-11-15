@@ -12735,6 +12735,57 @@ fn settings_view_log_level_select_persists_across_remounts() {
     app.wait_for("text:调试 (debug)").unwrap();
 }
 
+/// 日志卡「打开日志目录」（旧壳 open_log_dir 命令同语义的 NSH 接线，#2132）:
+/// 入口可达 + 按压发起宿主打开调用。替身断言：headless 平台只记录 FileRequest
+/// 从不真开（放开能力位后 open/reveal 一律成功应答不触盘），断言对准被记录
+/// 的 OpenPath 目标 = 数据根下 `logs`——与 logging.rs 文件面同根同式（旧壳
+/// app_log_dir 平价落点）。删除按钮接线（on_press 内 open_path 调用或整按钮）
+/// → 本测红：file_requests 恒空（ADR-0087 断言强度：断言对准宿主调用被发起）。
+#[test]
+fn settings_view_log_card_open_dir_button_opens_data_root_logs_dir() {
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+    let data_root = make_data_root("log-open-dir");
+    nsh_app::cross_book::set_default_data_dir(data_root.to_path_buf());
+    let dir = make_book("settings-log-open");
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config_with_storage_shard(storage_shard(&[]))).unwrap();
+    // 放开宿主路径请求能力位：此后 open/reveal 请求被全量记录且成功应答
+    // （空回答集只影响对话框替身，不影响 open/reveal）。
+    app.on_pick_paths(vec![]).unwrap();
+    open_settings(&mut app);
+
+    app.press("id:log-open-dir").unwrap();
+    app.settle();
+    use nsh_core::file_dialog::FileRequest;
+    let requests = app.screen().file_requests();
+    assert_eq!(
+        requests,
+        &[FileRequest::OpenPath(data_root.to_path_buf().join("logs"))],
+        "按压「打开日志目录」应发起恰好一次宿主打开调用，目标 = 数据根 logs：{requests:?}"
+    );
+}
+
+/// 数据根缺席（嵌入宿主未注入，logging.rs 文件面同款降级现场）：入口可达
+/// 但不发起宿主调用，失败经卡内状态条位呈现旧壳同前缀文案。
+#[test]
+fn settings_view_log_card_open_dir_without_data_root_reports_failure() {
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("settings-log-open-noroot");
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_settings(&mut app);
+
+    app.press("id:log-open-dir").unwrap();
+    app.wait_for("text:打开日志目录失败：数据根未就绪").unwrap();
+    assert!(
+        app.screen().file_requests().is_empty(),
+        "数据根缺席不发起宿主调用：{:?}",
+        app.screen().file_requests()
+    );
+}
+
 /// 位置卡信息聚合（boot::data_location_info 直调基建 gather_info_from_boot）：
 /// 生效位置 = 启动目录 + 原文回显；意图缺席 → 「恢复默认」禁用（契约不变量
 /// 直接投影，删除禁用接线即红）。更改入口 / 复制路径在屏。
@@ -13212,6 +13263,86 @@ fn backup_full_journey_backs_up_lists_prunes_and_guards_overwrite() {
     assert!(
         !landed_b.exists(),
         "确认后的滚动清理同样按保留上限进行（桶内超额最旧产物被清）"
+    );
+}
+
+/// 备份行「在访达中显示」（旧壳 reveal_in_file_manager 命令的 NSH 承载面：
+/// 切轨起保留在备份文件列表行级，#2132 补替身断言证明入口可达且触发宿主
+/// 定位调用）：备份一行 → 按压行级入口 → 被记录的 RevealPath 目标 = 该行
+/// 产物（设备子目录落点原文）。删除行级按钮的 reveal_path 调用 → 本测红：
+/// file_requests 恒空（ADR-0087 断言强度）。
+#[test]
+fn settings_view_backup_row_reveal_issues_host_reveal_request() {
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("settings-backup-reveal");
+    let backup_dir = ScratchDir::new("nsh-data-reveal");
+    let storage = storage_shard(&[
+        (
+            "backup_dir",
+            format!("{:?}", backup_dir.to_string_lossy()).as_str(),
+        ),
+        ("backup_max_count", "1"),
+    ]);
+
+    // 种子一笔交易（空库无可归属产物，备份空库不产生列表行）；自动备份预置
+    // 关（空列表会话的首次兜底自动备份会混入非手动产物）。
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        {
+            let conn = db.conn.lock().unwrap();
+            ledger_infra::settings::set(
+                &conn,
+                ledger_infra::settings::SettingKey::AutoBackupEnabled,
+                &false,
+            )
+            .unwrap();
+        }
+        let account = seed_cash_account(&db);
+        seed_transaction(
+            &db,
+            TxnSeed {
+                account: &account,
+                to_account: None,
+                kind: TransactionKind::Expense,
+                amount_cents: 2_500,
+                date: &test_date(0),
+                category_id: None,
+                merchant_id: None,
+                note: Some("访达定位种子".to_owned()),
+            },
+        );
+    }
+
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config_with_storage_shard(storage)).unwrap();
+    app.on_pick_paths(vec![]).unwrap();
+    open_data_tab(&mut app);
+
+    // 备份一行（对话框替身问到盘面；受管改道落设备子目录）。
+    let device = {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let conn = db.read_conn.lock().unwrap();
+        ledger_backup::source_device_id(&conn).expect("种子库可取设备标识")
+    };
+    let target = backup_dir.join("ledger-backup-20260101-000000.db.zip");
+    let landed = backup_dir
+        .join(&device)
+        .join("ledger-backup-20260101-000000.db.zip");
+    app.on_pick_save_path(Some(target.clone())).unwrap();
+    app.press("id:data-backup-as").unwrap();
+    app.wait_for("id:data-backup-row-0-name").unwrap();
+    assert!(landed.is_file(), "备份产物落盘：{}", landed.display());
+
+    // 行级「在访达中显示」→ 宿主定位调用，目标 = 该行产物（前置的另存为
+    // 对话框请求同屏记录，取末位）。
+    app.press("id:data-backup-reveal-0").unwrap();
+    app.settle();
+    use nsh_core::file_dialog::FileRequest;
+    let requests = app.screen().file_requests();
+    assert!(
+        matches!(requests.last(), Some(FileRequest::RevealPath(path)) if path == &landed),
+        "按压行级「在访达中显示」应发起宿主定位调用，目标 = 该行产物：{requests:?}"
     );
 }
 
