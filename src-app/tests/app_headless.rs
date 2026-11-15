@@ -10831,6 +10831,41 @@ fn scheduled_view_lands_with_panes_and_subscription_rows() {
     }
 }
 
+/// 定时视图切走再回不崩且形态页签保留（范围外修复，#2130 期间发现）：会
+/// 话槽信号首调若挂定时视图体，切走视图重挂（owner 释放）后页签 computed
+/// 读 disposed 句柄即崩——根绑定接线（App 体首调初始化）删除即本测红：
+/// 回不来（视图挂载崩）或页签回订阅（保留丢失），两端皆红。
+#[test]
+fn scheduled_view_survives_view_switch_and_retains_form_tab() {
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("scheduled-switch-retain");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let account = seed_account_with_balance(&db, "测试现金", 10_000);
+        let merchant = seed_merchant(&db, "视频平台");
+        seed_subscription_plan(&db, &account, Some(&merchant), Some("视频会员"));
+    }
+
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_scheduled(&mut app);
+
+    // 留下印记：切到分期页签（会话槽写路径）。
+    app.press("id:scheduled-tab-installments").unwrap();
+    app.wait_for("id:inst-table").unwrap();
+
+    // 切走（交易视图）再回（更多容器 → 定时）：视图正常挂载且形态页签保留
+    // 在分期（页签会话内保留）。
+    open_transactions(&mut app);
+    app.wait_for("id:nav-more-bookkeeping").unwrap();
+    app.press("id:nav-more-bookkeeping").unwrap();
+    app.wait_for("id:more-tab-scheduled").unwrap();
+    app.press("id:more-tab-scheduled").unwrap();
+    app.wait_for("text:分期清单").unwrap();
+    app.wait_for("id:inst-table").unwrap();
+}
+
 /// 计划域视觉收口探针（issue #2103，ADR-0147 决策 3/4）：订阅页签亮暗双态下
 /// 关键文字的**已解析样式**——字号全部落在字阶档（形态页签/主按钮文案 =
 /// SECONDARY 14、清单卡标题与花费统计数 = TITLE 20、弱化衬注/行操作 =

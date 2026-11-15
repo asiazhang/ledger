@@ -586,6 +586,9 @@ pub fn App() -> impl IntoElement {
     // ——与筛选会话态/报表会话态同根因，#2130 期间发现，诊断证据随交付
     // 报告）。
     investments::store();
+    // 定时视图会话态（#2042）同挂根实例（同上：形态页签 computed 读会话槽，
+    // 挂视图体则切走重挂即崩——同根因同接线）。
+    scheduled::bind_session_at_root();
     nav::bind_shortcuts();
     // 显示主题启动钩（#2053）：按存储外观应用全局显色——三环接缝（存储读 /
     // 解析 / 应用）在 settings::apply_startup_appearance 单点内的接线，拆除

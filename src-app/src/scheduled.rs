@@ -88,7 +88,8 @@ fn session_slot() -> MutexGuard<'static, Option<ScheduledSession>> {
 }
 
 /// 会话槽（惰性初始化：首次消费创建，信号挂首次调用的组件实例——生产路径
-/// `ScheduledView` 组件体最先调用）。
+/// 经 [`bind_session_at_root`] 挂根实例（与筛选/报表会话态同一条所有权契
+/// 约：挂视图体则切走重挂读 disposed 句柄即崩），消费面经同一句柄）。
 fn scheduled_session() -> ScheduledSession {
     let mut slot = session_slot();
     if let Some(s) = *slot {
@@ -105,6 +106,15 @@ fn scheduled_session() -> ScheduledSession {
 #[doc(hidden)]
 pub fn reset_for_tests() {
     *session_slot() = None;
+}
+
+/// 根实例绑定入口（[`crate::app`] App 体首调初始化）：会话槽信号挂根组件
+/// 实例（根永生）——形态页签保留跨视图卸载存活，切走定时视图再回不崩。
+/// 删除本接线即红：headless 切走再回用例（scheduled_view_survives_view_
+/// switch_and_retains_form_tab）在重挂读 disposed 句柄处红。
+#[doc(hidden)]
+pub(crate) fn bind_session_at_root() {
+    scheduled_session();
 }
 
 // ---------------------------------------------------------------------------
