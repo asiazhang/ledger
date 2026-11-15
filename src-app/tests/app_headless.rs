@@ -9803,6 +9803,111 @@ fn item_id_by_name(dir: &std::path::Path, name: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------
+// 来源跳转落点滚动定位（#2140）：交易来源列跳转物品 → 落点高亮行滚动进视
+// 口。物品清单是虚拟滚动表格（行高 32pt，视口可见十余行）且聚焦行格 test_id
+// 只在行入视口后由 render_cell 渲染——聚焦锚在屏 = 行已入视口，再以表格视
+// 口框边界核对「在视口内」。删除消费面滚动接线即红的负向条目写在各测试注释
+//（ADR-0087 断言强度：断言对准用户可观察结果）。
+// ---------------------------------------------------------------------------
+
+/// 造一列物品（每件一笔关联支出，日期随 [`test_date`] 递增）：物品清单按
+/// 创建序升序——末件（返回值的物品 id）是清单最深行，其交易日期最晚 =
+/// 交易列表首行（来源格在屏可按）。count 大于视口可见行数时末件初始不在
+/// 视口（本票滚动定位的落点前提）。
+fn seed_item_series(db: &ledger_infra::db::DbState, count: usize) -> (String, String) {
+    let account = seed_cash_account(db);
+    let mut last = None;
+    for index in 0..count {
+        let name = format!("跳转物品{index:02}");
+        last = Some(seed_item(db, &account, &name, 1_000, &test_date(index)));
+    }
+    last.unwrap()
+}
+
+/// 来源跳转落点滚动定位（物品，#2140）：点交易首行来源格（末件物品）→ 物品
+/// 视图落位，清单最末行（初始不在视口）滚动进视口并高亮。「删除即红」负向
+/// 条目：删消费面滚动接线（items.rs 聚焦行 scroll 效果）→ 高亮行停留视口
+/// 外、聚焦行格永不渲染，wait_for 超时本测红。
+#[test]
+fn items_view_source_jump_scrolls_focused_row_into_view() {
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("items-jump-scroll");
+    let item_id;
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let (_, id) = seed_item_series(&db, 60);
+        item_id = id;
+    }
+
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_transactions(&mut app);
+    // 交易列表首行 = 末件物品的购买交易（日期最晚），来源格在屏后跳转。
+    app.wait_for(&format!("id:tx-cell-source-{item_id}"))
+        .unwrap();
+    app.press(&format!("id:tx-cell-source-{item_id}")).unwrap();
+
+    // 落物品视图：聚焦行格在屏（虚拟滚动——不滚动则第 60 行格不渲染）且在
+    // 表格视口框内（layout 边界随滚动偏移移动，#2140 的「进入视口」可观察
+    // 结果）。
+    app.wait_for("id:item-table").unwrap();
+    app.wait_for("id:item-row-focus").unwrap();
+    let nodes = app.screen().layout_nodes();
+    let node_of = |test_id: &str| {
+        nodes
+            .iter()
+            .find(|n| n.test_id.as_deref() == Some(test_id))
+            .unwrap_or_else(|| panic!("layout 节点 {test_id} 不在屏"))
+            .clone()
+    };
+    let table = node_of("item-table");
+    let focus = node_of("item-row-focus");
+    let top = table.bounds.origin.y;
+    let bottom = top + table.bounds.size.height;
+    assert!(
+        focus.bounds.origin.y >= top && focus.bounds.origin.y + focus.bounds.size.height <= bottom,
+        "聚焦行在表格视口框内：table={:?} focus={:?}",
+        table.bounds,
+        focus.bounds
+    );
+}
+
+/// 短清单幂等（#2140）：行集短于视口（2 行），跳转聚焦次行——scroll_to_row
+/// 钳制在滚动范围内空转，不抛错不误滚：视图照常落位、聚焦行在屏、无错误
+/// 条位。删除滚动接线后本测照绿（幂等性本身不依赖接线，红绿由上一测守）。
+#[test]
+fn items_view_source_jump_short_list_is_idempotent() {
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("items-jump-short");
+    let item_id;
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let (_, id) = seed_item_series(&db, 2);
+        item_id = id;
+    }
+
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_transactions(&mut app);
+    app.wait_for(&format!("id:tx-cell-source-{item_id}"))
+        .unwrap();
+    app.press(&format!("id:tx-cell-source-{item_id}")).unwrap();
+
+    // 落物品视图：聚焦行在屏（短清单本就全可见）、无错误条位、视图正常。
+    app.wait_for("id:item-table").unwrap();
+    app.wait_for("id:item-row-focus").unwrap();
+    app.settle();
+    assert!(
+        !app.shows("内部错误"),
+        "滚动空转不抛错：{:?}",
+        app.screen().texts()
+    );
+    assert!(app.shows("物品列表"), "视图正常落位");
+}
+
+// ---------------------------------------------------------------------------
 // 商户管理视图（#2052）：字典 + 新增表单卡 + 清单卡（统一模糊搜索 / 显示已删 /
 // 条数排序 / 条数下钻 / 客户端分页）+ 编辑弹窗与软删轻量确认；写路径直调域，
 // 写成功后广播交易失效信号（交易列表商户来源重读）。删任一接线即红的负向
@@ -12282,6 +12387,87 @@ fn policy_view_edit_shows_agreement_segments_and_rebuild_entry() {
         "改价字段组频次预填旧段"
     );
 }
+
+/// 造一列保单（各带一笔挂单支出，日期随 [`test_date`] 递增）：保单清单按
+/// 创建序升序——末张（返回值）是清单最深行，其支出日期最晚 = 交易列表首
+/// 行（来源格在屏可按）。count 大于视口可见行数时末张初始不在视口。
+fn seed_policy_series(db: &ledger_infra::db::DbState, count: usize) -> String {
+    let account = seed_cash_account(db);
+    let insurer = seed_insurer(db, "众安");
+    let mut last = None;
+    for index in 0..count {
+        let policy_id = seed_policy(
+            db,
+            &insurer,
+            &format!("P-{index:03}"),
+            &format!("险种{index:03}"),
+            &test_date(index),
+            None,
+            None,
+        );
+        let conn = db.conn.lock().unwrap();
+        ledger_transaction::create(
+            &conn,
+            TransactionInput {
+                policy_id: Some(policy_id.clone()),
+                ..seed::expense_input_base(&account, &test_date(index), 2_500, None, None)
+            },
+        )
+        .unwrap();
+        drop(conn);
+        last = Some(policy_id);
+    }
+    last.unwrap()
+}
+
+/// 来源跳转落点滚动定位（保单，#2140）：点交易首行来源格（末张保单）→ 保
+/// 单页签落位，清单最末行（初始不在视口）滚动进视口并高亮。「删除即红」负
+/// 向条目：删消费面滚动接线（policies.rs 聚焦行 scroll 效果）→ 高亮行停留
+/// 视口外、聚焦行格永不渲染，wait_for 超时本测红。
+#[test]
+fn policies_view_source_jump_scrolls_focused_row_into_view() {
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("policies-jump-scroll");
+    let policy_id;
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        policy_id = seed_policy_series(&db, 40);
+    }
+
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_transactions(&mut app);
+    // 交易列表首行 = 末张保单的挂单保费（日期最晚），来源格在屏后跳转。
+    app.wait_for(&format!("id:tx-cell-source-{policy_id}"))
+        .unwrap();
+    app.press(&format!("id:tx-cell-source-{policy_id}"))
+        .unwrap();
+
+    // 落保单页签：聚焦行格在屏（虚拟滚动——不滚动则第 40 行格不渲染）且在
+    // 表格视口框内。
+    app.wait_for("id:policy-table").unwrap();
+    app.wait_for("id:policy-row-focus").unwrap();
+    let nodes = app.screen().layout_nodes();
+    let node_of = |test_id: &str| {
+        nodes
+            .iter()
+            .find(|n| n.test_id.as_deref() == Some(test_id))
+            .unwrap_or_else(|| panic!("layout 节点 {test_id} 不在屏"))
+            .clone()
+    };
+    let table = node_of("policy-table");
+    let focus = node_of("policy-row-focus");
+    let top = table.bounds.origin.y;
+    let bottom = top + table.bounds.size.height;
+    assert!(
+        focus.bounds.origin.y >= top && focus.bounds.origin.y + focus.bounds.size.height <= bottom,
+        "聚焦行在表格视口框内：table={:?} focus={:?}",
+        table.bounds,
+        focus.bounds
+    );
+}
+
 // ---------------------------------------------------------------------------
 // 实物资产视图（#2049 NSH 迁移⑱）：清单（在持合计卡 + 状态筛选 + 列头与
 // 行格）+ 新建/编辑表单 + 更新估值 + 处置 + 软删确认的 CRUD 旅程。删除任一
