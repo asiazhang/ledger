@@ -7983,6 +7983,233 @@ fn search_view_shows_no_hits_empty_state() {
     );
 }
 
+// ---------------------------------------------------------------------------
+// 结果格级行为委托（#2138）：与交易列表同构的 CellActions（#2061 同一装配
+// 路径）——账户/商户格点击 → 交易页自下钻（tx_filter 载荷经 nav::open 投递、
+// 交易视图挂载消费）、来源格点击 → 来源跳转（导航单点）、备注复制（剪贴板
+// + 条位反馈）。结果呈现仍是只读形态（无行菜单、无编辑入口，#2040 决策
+// 不变）。「删除即变红」负向条目（ADR-0087）：删搜索视图的 CellActions
+// 装配接线（render_cell 退回 None）→ 自绘格退纯文本不可点，各测试的
+// 点击落位即红。
+// ---------------------------------------------------------------------------
+
+/// 命中行账户格下钻（#2138）：点命中行账户原子 → 落交易列表并带账户筛选
+///（tx_filter 全量替换落位），行集只剩该账户的命中行。判别性证据：两账户
+/// 各有命中行，下钻后他账户命中行离屏、命中计数收窄（若只导航不带筛选，
+/// 行集回全量四笔即红）。删搜索视图 CellActions 装配（render_cell 退回
+/// None）→ 账户格退纯文本不可点，落位不发生即红。
+#[test]
+fn search_view_account_cell_click_drills_to_transactions_filtered() {
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("search-cell-account");
+    let cash_id;
+    let bank_id;
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        cash_id = seed_cash_account(&db);
+        bank_id = seed_account(&db, "银行卡", AccountType::Bank);
+        // 两账户各两笔同词命中：下钻后只留现金侧两笔。
+        for (account, amount, date) in [
+            (&cash_id, 2_500, "2026-01-01"),
+            (&cash_id, 2_600, "2026-01-02"),
+            (&bank_id, 6_600, "2026-01-03"),
+            (&bank_id, 6_700, "2026-01-04"),
+        ] {
+            seed_transaction(
+                &db,
+                TxnSeed {
+                    account,
+                    to_account: None,
+                    kind: TransactionKind::Expense,
+                    amount_cents: amount,
+                    date,
+                    category_id: None,
+                    merchant_id: None,
+                    note: Some("火锅聚餐".to_owned()),
+                },
+            );
+        }
+    }
+
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config()).unwrap();
+
+    open_search(&mut app);
+    app.type_text("id:search-keyword", "火锅").unwrap();
+    app.wait_for("text:命中 4 条").unwrap();
+
+    // 点命中首行的现金账户原子 → 落交易列表且带账户筛选：行集只剩现金
+    // 两笔，银行卡两笔离屏。
+    app.press(&format!("id:tx-cell-account-{cash_id} >> nth=0"))
+        .unwrap();
+    app.wait_for("id:tx-table").unwrap();
+    app.wait_for("text:共 2 条").unwrap();
+    assert!(app.shows("2026-01-01") && app.shows("2026-01-02"));
+    assert!(
+        !app.shows("2026-01-03") && !app.shows("2026-01-04"),
+        "他账户命中行被下钻筛选排除：{:?}",
+        app.screen().texts()
+    );
+}
+
+/// 命中行商户格下钻（#2138）：点命中行商户原子 → 落交易列表并带商户筛选。
+/// 判别性证据：带商户与不带商户的行同词命中，下钻后不带商户行离屏。删
+/// CellActions 装配 → 商户格退纯文本不可点即红。
+#[test]
+fn search_view_merchant_cell_click_drills_to_transactions_filtered() {
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("search-cell-merchant");
+    let merchant_id;
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let cash = seed_cash_account(&db);
+        merchant_id = seed_merchant(&db, "链商超");
+        for (merchant, amount, date, note) in [
+            (
+                Some(merchant_id.clone()),
+                2_500,
+                "2026-01-01",
+                "链商超买火锅".to_owned(),
+            ),
+            (
+                Some(merchant_id.clone()),
+                2_600,
+                "2026-01-02",
+                "链商超火锅食材".to_owned(),
+            ),
+            (None, 6_600, "2026-01-03", "自制火锅".to_owned()),
+        ] {
+            seed_transaction(
+                &db,
+                TxnSeed {
+                    account: &cash,
+                    to_account: None,
+                    kind: TransactionKind::Expense,
+                    amount_cents: amount,
+                    date,
+                    category_id: None,
+                    merchant_id: merchant,
+                    note: Some(note),
+                },
+            );
+        }
+    }
+
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config()).unwrap();
+
+    open_search(&mut app);
+    app.type_text("id:search-keyword", "火锅").unwrap();
+    app.wait_for("text:命中 3 条").unwrap();
+
+    // 点命中首行的商户原子 → 落交易列表且带商户筛选：行集只剩带商户两笔，
+    // 无商户行离屏。
+    app.press(&format!("id:tx-cell-merchant-{merchant_id} >> nth=0"))
+        .unwrap();
+    app.wait_for("id:tx-table").unwrap();
+    app.wait_for("text:共 2 条").unwrap();
+    assert!(app.shows("2026-01-01") && app.shows("2026-01-02"));
+    assert!(
+        !app.shows("2026-01-03"),
+        "无商户行被下钻筛选排除：{:?}",
+        app.screen().texts()
+    );
+}
+
+/// 命中行备注复制（#2138）：点「复制」原子 → 剪贴板写入备注原文 + 复制
+/// 反馈条呈现（「备注已复制」，条位反馈——NSH 无 toast 超时机制，驻留条位
+/// 是既有先例口径）。删 CellActions 装配 → 复制通道缺席即红。
+#[test]
+fn search_view_note_copy_writes_clipboard_and_shows_feedback() {
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("search-cell-copy");
+    seed_expense_notes(&dir, &["搜索页复制我这条备注"]);
+
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config()).unwrap();
+
+    open_search(&mut app);
+    app.type_text("id:search-keyword", "搜索页复制").unwrap();
+    app.wait_for("text:命中 1 条").unwrap();
+
+    // 复制前剪贴板为空；点「复制」→ 剪贴板 = 备注原文 + 反馈条呈现。
+    assert!(app.screen().clipboard().is_none(), "复制前无剪贴板文本");
+    app.press("id:tx-cell-copy-note").unwrap();
+    app.wait_for("id:search-copy-note-status").unwrap();
+    assert_eq!(
+        app.screen().clipboard(),
+        Some("搜索页复制我这条备注"),
+        "剪贴板内容 = 备注原文"
+    );
+    assert!(
+        app.shows("备注已复制"),
+        "复制成功反馈条呈现：{:?}",
+        app.screen().texts()
+    );
+}
+
+/// 命中行来源格跳转（#2138）：点命中行来源原子 → 落来源目标视图（出厂
+/// 收纳态：保单落资产「更多」容器页签）。删 CellActions 装配 → 来源格退
+/// 纯文本不可点即红（点击落空）。
+#[test]
+fn search_view_source_cell_click_jumps_to_policy_view() {
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("search-cell-source");
+    let policy_id;
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let account = seed_cash_account(&db);
+        let conn = db
+            .conn
+            .lock()
+            .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
+            .unwrap();
+        let insurer = ledger_policy::create_insurer_by_name(&conn, "众安").unwrap();
+        policy_id = ledger_policy::create_policy(
+            &conn,
+            ledger_policy::PolicyInput {
+                insurer_id: insurer,
+                policy_number: "P-1".to_owned(),
+                product_name: "重疾险".to_owned(),
+                start_date: "2026-01-01".to_owned(),
+                end_date: None,
+                coverage_amount_cents: None,
+                coverage_currency_code: None,
+                note: None,
+            },
+            &mut || {},
+        )
+        .unwrap();
+        ledger_transaction::create(
+            &conn,
+            TransactionInput {
+                policy_id: Some(policy_id.clone()),
+                note: Some("火锅聚餐保费".to_owned()),
+                ..seed::expense_input_base(&account, "2026-01-15", 2_500, None, None)
+            },
+        )
+        .unwrap();
+        drop(conn);
+    }
+
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config()).unwrap();
+
+    open_search(&mut app);
+    app.type_text("id:search-keyword", "火锅").unwrap();
+    app.wait_for("text:命中 1 条").unwrap();
+    app.wait_for("text:重疾险").unwrap();
+
+    // 点命中行来源原子 → 落保单视图。
+    app.press(&format!("id:tx-cell-source-{policy_id}"))
+        .unwrap();
+    app.wait_for("id:policy-table").unwrap();
+}
+
 /// 启动即概览（出厂落点改回裁决的可见侧，#2039）：五卡全部呈现真实读数、
 /// 不再是迁移占位。净资产 = 现金 30_000 + 持仓市值 10_000 = ¥400（域单点
 /// 折算，装配层只消费）；「删除即红」负向条目钉在 view_host 的概览分支挂载
