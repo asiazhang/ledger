@@ -70,17 +70,11 @@ fn preset_test_suffix(preset: period::Preset) -> &'static str {
     }
 }
 
-/// 直达面板格子文案（zh-CN，与 [`crate::period`] 期间词表同源；旧壳
+/// 直达面板格子文案：词表单点在 [`crate::period::format_period_unit_label']
+///（不带年份的月/季名与年号，与期间标签同源——#2126 review 收敛，旧壳
 /// quickTimeRange.periodPicker 同构）。index 语义随单位（0 起月/季，年恒 0）。
 fn panel_cell_label(p: &period::NaturalPeriod) -> String {
-    match p.unit {
-        period::PeriodUnit::Month => format!("{}月", p.index + 1),
-        period::PeriodUnit::Quarter => {
-            let name = ["一", "二", "三", "四"][p.index as usize % 4];
-            format!("{name}季度")
-        }
-        period::PeriodUnit::Year => format!("{}年", p.year),
-    }
+    period::format_period_unit_label(p)
 }
 
 /// 直达面板格子稳定锚点后缀（headless 选择器用 id: 前缀，同芯片）。

@@ -371,16 +371,26 @@ pub fn can_step_current(
     step_current(from, to, delta, boundary).is_some()
 }
 
+/// 期间格局部词表 zh-CN（不带年份的月/季名与年号全名；旧壳
+/// quickTimeRange.periodPicker 面板格与 [`format_period_label`] 同源单点，
+/// #2126 review 收敛）：「5月」「二季度」「2025年」。
+pub fn format_period_unit_label(p: &NaturalPeriod) -> String {
+    match p.unit {
+        PeriodUnit::Year => format!("{}年", p.year),
+        PeriodUnit::Month => format!("{}月", p.index + 1),
+        PeriodUnit::Quarter => {
+            let name = ["一", "二", "三", "四"][p.index as usize % 4];
+            format!("{name}季度")
+        }
+    }
+}
+
 /// 期间标签 zh-CN（旧壳 formatPeriodLabel 同词表）：
 /// 「2026年2月」「2026年二季度」「2025年」。
 pub fn format_period_label(p: &NaturalPeriod) -> String {
     match p.unit {
-        PeriodUnit::Year => format!("{}年", p.year),
-        PeriodUnit::Month => format!("{}年{}月", p.year, p.index + 1),
-        PeriodUnit::Quarter => {
-            let name = ["一", "二", "三", "四"][p.index as usize % 4];
-            format!("{}年{name}季度", p.year)
-        }
+        PeriodUnit::Year => format_period_unit_label(p),
+        _ => format!("{}年{}", p.year, format_period_unit_label(p)),
     }
 }
 
