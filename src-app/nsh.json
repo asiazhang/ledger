@@ -1,6 +1,13 @@
 {
   "name": "Ledger",
+  "id": "com.zhangheng.ledger.nsh",
+  "version": "0.11.2",
+  "icon": "packaging/ledger.png",
   "rust": ".",
   "root": "app::App",
-  "theme": "theme.json"
+  "theme": "theme.json",
+  "updater": {
+    "github": "asiazhang/ledger",
+    "publicKey": "F/jAfzdFTWjJLLAxvMKOGWqXaf4kSYP8FkCA24B4Xc0="
+  }
 }

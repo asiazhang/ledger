@@ -429,6 +429,7 @@
     "no-update": "No update is available to install right now.",
     "download-failed": "The update could not be downloaded. Check your network and try again.",
     "signature-invalid": "The update artifact failed signature verification and was rejected.",
+    "checksum-mismatch": "The update artifact failed checksum verification (SHA-256 or size mismatch) and was rejected.",
     "not-downloaded": "The update has not finished downloading yet. Download it first.",
     "install-failed": "The update could not be installed. Try again."
   },
