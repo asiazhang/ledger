@@ -59,7 +59,9 @@ const FX_STAGE_PERSISTING_PREFIX: &str = "已解析 ";
 const FX_STAGE_PERSISTING_SUFFIX: &str = " 天，正在写入…";
 const FX_OK_PREFIX: &str = "同步完成：";
 const FX_OK_MIDDLE: &str = " 条汇率数据（覆盖 ";
-const FX_OK_MIDDLE2: &str = " 至 ";
+/// 覆盖区间起止分隔（「{earliest} 至 {latest}」；缺端以 [`FX_INTERVAL_DASH`]
+/// 兜底）。
+const FX_OK_RANGE_TO: &str = " 至 ";
 const FX_OK_SUFFIX: &str = "）";
 const FX_FAILED_PREFIX: &str = "同步汇率失败: ";
 const FX_INTERVAL_DASH: &str = "-";
@@ -289,7 +291,7 @@ pub(crate) fn currencies_pane(palette: views::ViewPalette) -> View {
                 match outcome {
                     Ok(report) => {
                         fx_status.set(Some(format!(
-                            "{FX_OK_PREFIX}{}{FX_OK_MIDDLE}{}{FX_OK_MIDDLE2}{}{FX_OK_SUFFIX}",
+                            "{FX_OK_PREFIX}{}{FX_OK_MIDDLE}{}{FX_OK_RANGE_TO}{}{FX_OK_SUFFIX}",
                             report.persist.points,
                             report
                                 .persist

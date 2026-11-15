@@ -19257,7 +19257,6 @@ fn settings_view_categories_pane_lands_and_creates_root_and_child() {
     app.type_text("id:cat-create-name", "餐饮").unwrap();
     press_after(&mut app, "id:cat-add", "id:cat-add").unwrap();
     app.wait_for("text:已添加分类").unwrap();
-    app.wait_for("text:已添加分类").unwrap();
     app.wait_for("text:餐饮").unwrap();
 
     // 新增子分类：父分类下拉选「餐饮」→ 清单出现「父 > 子」路径行。
@@ -19453,8 +19452,6 @@ fn settings_view_category_move_buttons_reorder_sibling_rows() {
     let pos_a = texts.iter().position(|t| *t == "甲类").unwrap();
     let pos_b = texts.iter().position(|t| *t == "乙类").unwrap();
     assert!(pos_b < pos_a, "上移后乙在甲前：{:?}", texts);
-    // 重排后甲类「上移」不可用（到头禁用——按钮仍呈现但不触发新写）。
-    let _ = id_a;
 }
 
 /// 币种页签三卡：本位币基准读回显 + 变更落库（域权威读反查）、展示币种设
