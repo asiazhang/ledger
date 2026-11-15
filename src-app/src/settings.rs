@@ -37,6 +37,29 @@
 //!   侧栏 / 容器页签 / 本页页签可见性共源）；关闭只隐藏入口的知情权由静态简
 //!   介文案承担，不设确认与拦截（ADR-0116 决策 1/8）。
 //!
+//! **#2136 设置③五面**（分类 / 币种 / 定时 / 关于 + 数据修复卡随数据页签落
+//! 位，各卡组住独立模块）：
+//! - **分类**（CategoryManager + CategoryEditModal 重生，[`crate::settings_categories`]）：
+//!   支出 / 收入两类页签各 = 新增表单卡（名称 / 父分类〔拼音可搜下拉〕 /
+//!   图标）+ 两级树行清单（行级编辑弹窗 / 软删确认气泡 / 上移下移重排——旧
+//!   壳拖拽改序的 NSH 对应形态，交互差异入交付报告对表）；写直调域入口，
+//!   成功广播交易失效信号（分类名进交易列表与表单下拉）。
+//! - **币种**（三卡，[`crate::settings_currencies`]）：本位币基准（账本级设
+//!   置，全壳折算口径的用户入口，显示值一律来自读返回）/ 展示币种（设备偏
+//!   好，键 `default_currency`，消费面 = 记账表单无账户缺省预选）/ 同步汇
+//!   率手动入口（持门编排，手动与每日自动共用在途互斥，阶段文字随真实进度
+//!   流转，结果就地呈现）。
+//! - **定时**（ScheduledSettings + DevicePreferenceSyncHost 推送镜像，
+//!   [`crate::settings_scheduled`]）：设备级「自动执行」开关——存储键
+//!   `auto_execution_enabled`，启动与变更双点推送运行时镜像（wiring.rs 旧
+//!   注「镜像默认关（NSH 现无自动执行开关推送面）」随本卡翻转）。
+//! - **关于**（AboutSettings，[`crate::settings_about`]）：版本 / 平台 /
+//!   Git 版本 / 许可证 / 版权元信息行 + 复制版本信息 + Git 行点击复制完整
+//!   sha + 项目主页 / Issues 链接（宿主 open_url）。
+//! - **数据修复卡**（BalanceCacheSettings，ADR-0067 决策 5，
+//!   [`crate::settings_data`] 余额缓存审计修复卡随数据安全卡组落位）：一键
+//!   审计 + 幂等修复 + 逐户差异报告。
+//!
 //! 界面文案仅 zh-CN（旧壳 settings.* zh-CN 词表原样承载）；码化错误 zh 原样
 //! 呈现；NSH 无 toast，动作反馈落卡内状态条位（#2038 裁决）；视图本地快照、
 //! 离开再回 = 全新装载（旧壳 onMounted 同口径）；阻塞 IO（档位读写、位置信
@@ -304,9 +327,9 @@ pub(crate) fn location_view(
 pub(crate) enum SettingsTab {
     /// 通用（外观卡 + 日志卡）。
     General,
-    /// 分类（未迁占位）。
+    /// 分类（#2136 分类管理卡，卡组住 [`crate::settings_categories`]）。
     Categories,
-    /// 币种（未迁占位）。
+    /// 币种（#2136 三卡，卡组住 [`crate::settings_currencies`]）。
     Currencies,
     /// 数据（存储位置卡 + #2054 数据安全四卡，卡组住 [`crate::settings_data`]）。
     Data,
@@ -314,7 +337,7 @@ pub(crate) enum SettingsTab {
     Scheduled,
     /// 功能（功能开关管理面）。
     Features,
-    /// 关于（未迁占位）。
+    /// 关于（#2136 关于卡，卡组住 [`crate::settings_about`]）。
     About,
 }
 
@@ -499,35 +522,17 @@ pub fn SettingsView() -> impl IntoElement {
         .child(content_host)
 }
 
-/// 页签内容分支（闭集；未迁四页签 = 占位说明）。
+/// 页签内容分支（闭集；五个页签 = #2136 真实卡组）。
 fn pane_body(tab: SettingsTab, palette: views::ViewPalette) -> View {
     match tab {
         SettingsTab::General => general_pane(palette),
         SettingsTab::Data => data_pane(palette),
         SettingsTab::Features => features_pane(palette),
-        SettingsTab::Categories
-        | SettingsTab::Currencies
-        | SettingsTab::Scheduled
-        | SettingsTab::About => placeholder_pane(tab, palette),
+        SettingsTab::Categories => crate::settings_categories::categories_pane(palette),
+        SettingsTab::Currencies => crate::settings_currencies::currencies_pane(palette),
+        SettingsTab::Scheduled => crate::settings_scheduled::scheduled_pane(palette),
+        SettingsTab::About => crate::settings_about::about_pane(palette),
     }
-}
-
-/// 占位页签（未迁内容明确「迁移中」反馈；分类 / 币种 / 定时管理面与关于面
-/// 随各自迁移票就位——设置链后续票落点）。
-fn placeholder_pane(tab: SettingsTab, palette: views::ViewPalette) -> View {
-    view()
-        .flex_col()
-        .app_class("gap-2")
-        .child(
-            text(format!("{} · 迁移中", tab.label()))
-                .text_size(px(font_size::SECONDARY))
-                .text_color(palette.fg),
-        )
-        .child(
-            text("此页签内容将随迁移系列票就位")
-                .text_size(px(font_size::CAPTION))
-                .text_color(palette.muted),
-        )
 }
 // ---------------------------------------------------------------------------
 // 通用页签：外观卡 + 日志卡（旧壳 GeneralSettings 卡栈：主题卡 + 日志卡；语
@@ -742,11 +747,21 @@ fn open_log_dir_button(owner: Owner, status: Signal<Option<String>>) -> impl Int
 /// 账本切换；[`crate::settings_data`]——卡片组住独立模块，页签容器面单点
 /// 不变）。
 fn data_pane(palette: views::ViewPalette) -> View {
-    view()
-        .flex_col()
-        .app_class("gap-3")
-        .child(location_card(palette))
-        .child(crate::settings_data::data_safety_cards())
+    // 卡列滚动容器（数据页签卡多：位置 + 四安全卡 + #2136 余额缓存修复卡，
+    // 超视口的卡不进文档——headless 用例经滚动锚点滚入视野）。
+    view().flex_1().min_h(px(0.0)).child(
+        scroll()
+            .flex_1()
+            .min_h(px(0.0))
+            .test_id("data-pane-scroll")
+            .child(
+                view()
+                    .flex_col()
+                    .app_class("gap-3")
+                    .child(location_card(palette))
+                    .child(crate::settings_data::data_safety_cards()),
+            ),
+    )
 }
 
 /// 二选一挂起目标（接管确认对话框开着时的落点集：目标目录原文 + 通道是否

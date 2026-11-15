@@ -600,6 +600,10 @@ pub fn App() -> impl IntoElement {
     // 解析 / 应用）在 settings::apply_startup_appearance 单点内的接线，拆除
     // 即红（headless 外观探针）。
     settings::apply_startup_appearance();
+    // 自动执行偏好启动推送（#2136）：读存储偏好推送运行时镜像（旧壳
+    // DevicePreferenceSyncHost immediate 推送同位）。删除本行 → 已开启偏好
+    // 跨启动失效（镜像回默认关）→ headless「已开启偏好跨启动生效」探针红。
+    crate::settings_scheduled::apply_startup_auto_execution();
     // 多端同步轮次的失效广播排空任务（issue #2080）：挂根组件实例（根永生）
     // ——调度线程的轮次回调只投递，回引擎线程才广播（signals 线程契约）。唯一
     // 装载点由源码扫描守门钉住（sync_triggers guard_tests）。

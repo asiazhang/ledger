@@ -967,8 +967,10 @@ fn perform_submit(
 
 /// 币种随所选账户推导（基础收支/订单记账币种 = 账户币种；转账记账币种 = 转
 /// 出账户币种，ADR-0134 决策 5；出资分解 = 首条出资账户币种——域准入要求逐
-/// 条与交易币种一致，多账户跨币种不做；无账户缺省 CNY——默认币种缺 key 回默
-/// 认 CNY 同口径，有账户上下文的提交必选账户）。
+/// 条与交易币种一致，多账户跨币种不做；无账户缺省 = 展示币种设备偏好
+///（[#2136 设置③展示币种卡，键 `default_currency`]，缺 key 回默认 CNY 同
+/// 口径，旧壳 store.defaultCurrency 的表单预选消费面同位），有账户上下文的
+/// 提交必选账户）。
 fn selected_currency(state: &TxnFormState, sources: &TxnFormSources) -> String {
     let account_id = if state.family.get() == FormFamily::Funding {
         state
@@ -990,7 +992,7 @@ fn selected_currency(state: &TxnFormState, sources: &TxnFormSources) -> String {
                 .find(|a| a.id == id)
                 .map(|a| a.currency_code.clone())
         })
-        .unwrap_or_else(|| "CNY".to_owned())
+        .unwrap_or_else(crate::settings_currencies::display_currency_pref)
 }
 
 /// 表单字段标签（字阶 SECONDARY 档，design.rs font_size 同源——DESIGN.md §3
