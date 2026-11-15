@@ -22,9 +22,10 @@
 //!   改动经 [`nsh_core::element::set_color_scheme`] 立即生效、跨启动记住。
 //! - **日志**（LogSettings）：档位五档下拉 + 排障提示；读写直调基建 settings
 //!   共享接缝（boot 单点），闭集外拒绝码 `settings.log-level-invalid`（旧壳
-//!   同码同文案），运行期滤镜接管即档位立即生效；旧壳「打开日志目录」动作在
-//!   本壳无对应物（NSH stderr 为日志出口、无文件日志面）——偏差见 #2053 交付
-//!   报告。旧壳语言卡（i18n 界外）与检查更新卡（切轨退役）同属偏差面。
+//!   同码同文案），运行期滤镜接管即档位立即生效；旧壳「打开日志目录」动作
+//!   随 #2132 回归本卡（宿主 open_path，目标 = 数据根 `logs`，与
+//!   [`crate::logging`] 文件面同根）。旧壳语言卡（i18n 界外）与检查更新卡
+//!   （切轨退役）同属偏差面。
 //! - **数据存储位置**（DataLocationSettings）：查看生效位置 / 待重启提示 /
 //!   回退警示 / 复制路径；「更改位置 / 恢复默认」直调基础设施引导层三步校验
 //!   与意图落盘（旧壳二选一确认的 NSH 对应 = danger warning 级「接管已有账
@@ -43,7 +44,7 @@
 //!
 //! 测试豁免（ADR-0060）：本模块测试经 crate 根 cfg(test) 整体放行六件套。
 
-use nsh_core::element::{FontWeight, pick_paths, set_clipboard, set_color_scheme};
+use nsh_core::element::{FontWeight, open_path, pick_paths, set_clipboard, set_color_scheme};
 use nsh_core::file_dialog::OpenDialog;
 use nsh_core::prelude::*;
 use nsh_core::storage::Storage;
@@ -74,6 +75,13 @@ const LOG_HINT: &str = "默认 info；切换后立即生效并跨启动保留。
 const LOG_PLACEHOLDER: &str = "选择日志等级";
 const LOG_LOAD_PREFIX: &str = "读取日志等级失败：";
 const LOG_SAVE_PREFIX: &str = "设置日志等级失败: ";
+/// 打开日志目录入口（旧壳 settings.logs.openLogDir 词条原文 + 旧壳命令错误
+/// 前缀「打开日志目录失败：」同文，#2132）。
+const BUTTON_OPEN_LOG_DIR: &str = "打开日志目录";
+const MSG_OPEN_LOG_DIR_PREFIX: &str = "打开日志目录失败：";
+/// 数据根缺席（嵌入宿主未注入）时不发起宿主调用的整句反馈（生产 bin 启动
+/// 必注入数据根，此现场仅属嵌入/headless 形态）。
+const MSG_OPEN_LOG_DIR_NO_DATA_ROOT: &str = "打开日志目录失败：数据根未就绪";
 const LOG_LEVEL_ERROR: &str = "错误 (error)";
 const LOG_LEVEL_WARN: &str = "警告 (warn)";
 const LOG_LEVEL_INFO: &str = "信息 (info)";
@@ -576,7 +584,8 @@ fn appearance_card(palette: views::ViewPalette) -> View {
 }
 
 /// 日志卡（档位下拉：读 boot 直调基建设置接缝；写入链同点；失败回显保持原
-/// 档位——旧壳 handleLevelChange 同语义）。
+/// 档位——旧壳 handleLevelChange 同语义）+「打开日志目录」入口
+///（[`open_log_dir_button`]，#2132）。
 fn log_card(palette: views::ViewPalette) -> View {
     let owner = Owner::current();
     // 会话句柄（快照一次；读写两链共享同一快照——离开再回视图重挂即重新置零）
@@ -676,9 +685,45 @@ fn log_card(palette: views::ViewPalette) -> View {
                             .text_color(palette.muted),
                     ),
                 ),
+            view().child(open_log_dir_button(owner, status)),
             view().child(status_line("log-status", status, palette)),
         ],
     )
+}
+
+/// 打开日志目录按钮（旧壳 `open_log_dir` 命令同语义的 NSH 接线，#2132）：
+/// 目录 = 数据根下 `logs`（[`crate::logging`] 文件面同根单点——`init_with`
+/// 的 `root.join("logs")` 同式，与旧壳 Linux `app_log_dir` 同根）；宿主调用
+/// 经 nsh-core [`open_path`]（下层框架定义的宿主请求通道，Linux 平台实现 =
+/// GTK FileLauncher，即 xdg-open 类系统能力；本视图是上层消费面，与备份行
+/// reveal / 文件对话框同款消费形态，无自建注册点）。即发即望：失败经卡内
+/// 状态条位呈现旧壳同前缀文案（「打开日志目录失败：」），成功静默（旧壳
+/// 同口径）；数据根缺席不发起调用直接呈现失败——文件面在该现场本就跳过，
+/// 目录不存在无打开意义。headless 替身断言面见
+/// `tests/app_headless.rs`（OpenPath 记录断言）。
+fn open_log_dir_button(owner: Owner, status: Signal<Option<String>>) -> impl IntoElement {
+    nsh_base::button()
+        .app_class("px-2 py-0.5 rounded-sm border border-border text-foreground hover:bg-accent")
+        .child(
+            text(BUTTON_OPEN_LOG_DIR)
+                .text_size(px(font_size::CAPTION))
+                .text_color(views::view_palette().fg)
+                .test_id("log-open-dir"),
+        )
+        .on_press(move |_: &()| {
+            let Some(dir) = crate::cross_book::default_data_dir().map(|root| root.join("logs"))
+            else {
+                status.set(Some(MSG_OPEN_LOG_DIR_NO_DATA_ROOT.to_owned()));
+                return;
+            };
+            owner.run(move || {
+                spawn(async move {
+                    if let Err(e) = open_path(dir).await {
+                        status.set(Some(format!("{MSG_OPEN_LOG_DIR_PREFIX}{e}")));
+                    }
+                });
+            });
+        })
 }
 // ---------------------------------------------------------------------------
 // 数据存储位置卡（查看 / 更改 / 恢复默认 / 二选一接管确认；流程分支与旧壳
