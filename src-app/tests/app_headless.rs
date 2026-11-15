@@ -1977,6 +1977,465 @@ fn suppression_gate_blocks_period_key_while_period_popup_open() {
 }
 
 // ---------------------------------------------------------------------------
+// 期间直达面板（issue #2128，旧壳 QuickTimeRange.periodPicker 平价）：点击
+// 期间标签打开的弹层内，预设芯片之外另有月/季/年直达面板；面板单位随当前
+// 游标（「全部」态默认月面板）；点选写精确自然周期快照并关弹层；面板格子
+// 受数据期间边界钳制（边界外不可选），年面板年份闭集按边界裁剪。
+// ---------------------------------------------------------------------------
+
+/// 面板月格锚点（0 起月份，与 `period` 模块 NaturalPeriod.index 同序）。
+fn panel_month_cell(prefix: &str, m0: u32) -> String {
+    format!("id:{prefix}-panel-m{m0}")
+}
+
+/// 面板季格锚点（0 起季度）。
+fn panel_quarter_cell(prefix: &str, q0: u32) -> String {
+    format!("id:{prefix}-panel-q{q0}")
+}
+
+/// 面板年格锚点（自然年）。
+fn panel_year_cell(prefix: &str, year: i32) -> String {
+    format!("id:{prefix}-panel-y{year}")
+}
+
+/// 面板开合 + 「全部」态默认月面板 + 月格直达写快照 + 芯片点亮（#2128）。
+/// 「删除即红」负向条目（ADR-0087）：删除弹层内的面板挂载接线（period_row
+/// 面板 child）→ 本测在 `id:period-panel` 锚处红；删除面板点选写回接线
+/// （apply_panel 的 range.set / on_apply）→ 快照不变、标签与行集不变、芯片
+/// 不点亮，后续断言红。断言对准用户可见结果（标签 / 行集 / 芯片无障碍
+/// selected 态），不写可点性断言。
+#[test]
+fn period_panel_opens_with_month_cells_and_direct_select_writes_snapshot() {
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("period-panel");
+    seed_expense_on_date(&dir, &prev_month_mid().to_string(), 8_800);
+    seed_expense_on_date(&dir, &today().to_string(), 2_500);
+
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config()).unwrap();
+
+    open_transactions(&mut app);
+    app.wait_for("text:¥25").unwrap();
+
+    // 点期间标签开弹层：预设芯片仍在（既有形态保留），直达面板同层在屏。
+    app.press("id:period-label").unwrap();
+    app.wait_for("id:period-chip-all").unwrap();
+    app.wait_for("id:period-panel").unwrap();
+
+    // 「全部」态（无游标）默认月面板：本月月格在屏，季/年格不在。
+    let t = today();
+    app.wait_for(&panel_month_cell("period", t.month0()))
+        .unwrap();
+    assert_eq!(
+        app.screen()
+            .count(&panel_quarter_cell("period", 0))
+            .unwrap(),
+        0,
+        "「全部」态默认月面板：季格不呈现"
+    );
+    assert_eq!(
+        app.screen()
+            .count(&panel_year_cell("period", t.year()))
+            .unwrap(),
+        0,
+        "「全部」态默认月面板：年格不呈现"
+    );
+
+    // 点本月月格 → 写当月快照并关弹层：标签 = 本月，行集只剩本月一笔。
+    app.press(&panel_month_cell("period", t.month0())).unwrap();
+    app.wait_for_gone("id:period-chip-all", DEFAULT_WAIT)
+        .unwrap();
+    app.wait_for(&month_label(t.year(), t.month())).unwrap();
+    app.wait_for("text:¥25").unwrap();
+    assert!(!app.shows("¥88"), "月格直达当月：上月支出离屏");
+
+    // 再开弹层：当月芯片点亮（match_preset 高亮，无障碍 selected 态可读）。
+    app.press("id:period-label").unwrap();
+    app.wait_for("id:period-chip-month").unwrap();
+    app.wait_until("当月芯片点亮", DEFAULT_WAIT, |screen| {
+        screen.selected("role:button[当月]").unwrap_or(false)
+    })
+    .unwrap();
+
+    // 面板开合：ESC 关弹层，面板与芯片同层收场。
+    app.press_key("escape").unwrap();
+    app.wait_for_gone("id:period-panel", DEFAULT_WAIT).unwrap();
+    app.wait_for_gone("id:period-chip-month", DEFAULT_WAIT)
+        .unwrap();
+}
+
+/// 季面板：单位随游标（当季游标 → 季格，月/年格不呈现）、格子受边界钳制
+/// （可达集由测试侧独立推演，与 period 边界数学同源）、面板上一年导航、
+/// 点选写快照、历史季不点亮芯片（#2128）。「删除即红」负向条目
+/// （ADR-0087）：删除面板单位派生（panel_unit 恒月）→ 季游标下月格仍在、
+/// 季格缺席，本测在单位断言处红；删除格子钳制调用（panel_cell_enabled 的
+/// derive_boundary + period_within_boundary 组合）→ 边界外季格可选，可达集
+/// 断言红；删除锚年导航钳制（can_panel_prev/next）→ 边界外年份可导航。
+#[test]
+fn period_panel_shows_quarter_cells_while_quarter_cursor_and_selects_past_quarter() {
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("period-panel-quarter");
+    let t = today();
+    let p = prev_month_mid();
+    // 两季度之前的稳定锚（15 日；1–4 月落在去年，正好检验锚年导航）。
+    let qd = p.checked_sub_months(chrono::Months::new(3)).unwrap();
+    seed_expense_on_date(&dir, &t.to_string(), 2_500);
+    seed_expense_on_date(&dir, &p.to_string(), 8_800);
+    seed_expense_on_date(&dir, &qd.to_string(), 6_600);
+
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config()).unwrap();
+
+    open_transactions(&mut app);
+    app.wait_for("text:¥25").unwrap();
+
+    // 经「当季」芯片取得季游标 → 标签 = 本季。
+    let quarter_names = ["一", "二", "三", "四"];
+    app.press("id:period-label").unwrap();
+    app.wait_for("id:period-chip-quarter").unwrap();
+    app.press("id:period-chip-quarter").unwrap();
+    app.wait_for_gone("id:period-chip-quarter", DEFAULT_WAIT)
+        .unwrap();
+    let tq = t.month0() / 3;
+    app.wait_for(&format!(
+        "text:{}年{}季度",
+        t.year(),
+        quarter_names[tq as usize]
+    ))
+    .unwrap();
+
+    // 重开弹层：季格在屏（单位随游标），月/年格不呈现。
+    app.press("id:period-label").unwrap();
+    app.wait_for("id:period-panel").unwrap();
+    app.wait_for(&panel_quarter_cell("period", 3)).unwrap();
+    assert_eq!(
+        app.screen().count(&panel_month_cell("period", 0)).unwrap(),
+        0,
+        "季游标 → 季面板：月格不呈现"
+    );
+    assert_eq!(
+        app.screen()
+            .count(&panel_year_cell("period", t.year()))
+            .unwrap(),
+        0,
+        "季游标 → 季面板：年格不呈现"
+    );
+
+    // 可达集独立推演（与 period 边界数学同源：期序相对锚年，双端含）：
+    // 边界 = [min(最早交易季, 本季), max(最新交易季, 本季)]。
+    let ord = |d: chrono::NaiveDate| (d.year() - t.year()) as i64 * 4 + (d.month0() / 3) as i64;
+    let tq_ord = ord(t);
+    let lo = ord(qd).min(ord(p));
+    let hi = tq_ord.max(ord(qd)).max(ord(p));
+    for q0 in 0..4u32 {
+        let expected = q0 as i64 >= lo && q0 as i64 <= hi;
+        let role = format!("role:button[{}季度]", quarter_names[q0 as usize]);
+        assert_eq!(
+            app.screen().enabled(&role).unwrap(),
+            expected,
+            "季格「{}季度」可达性应 = 边界内推演（{expected}）",
+            quarter_names[q0 as usize]
+        );
+    }
+
+    // 锚年导航：锚年 = 今年。上一年可达 ⟺ 边界最早年在去年（1–4 月分支）；
+    // 下一年恒不可达（本季即边界最晚）。
+    assert_eq!(
+        app.screen().enabled("id:period-panel-prev").unwrap(),
+        qd.year() < t.year(),
+        "面板上一年可达性应随边界最早年裁剪"
+    );
+    assert!(
+        !app.screen().enabled("id:period-panel-next").unwrap(),
+        "面板下一年应随边界最晚年裁剪"
+    );
+    // qd 落去年时先导航回上一年再点选；同年则直接点选 qd 所在季。
+    if qd.year() < t.year() {
+        app.press("id:period-panel-prev").unwrap();
+        app.wait_for("id:period-panel-year").unwrap();
+    }
+    let qd_cell = panel_quarter_cell("period", qd.month0() / 3);
+    app.wait_for(&qd_cell).unwrap();
+    app.press(&qd_cell).unwrap();
+    app.wait_for_gone("id:period-chip-quarter", DEFAULT_WAIT)
+        .unwrap();
+
+    // 快照写回：标签 = qd 季，行集只剩 qd 一笔（¥66）。
+    app.wait_for(&format!(
+        "text:{}年{}季度",
+        qd.year(),
+        quarter_names[(qd.month0() / 3) as usize]
+    ))
+    .unwrap();
+    app.wait_for("text:¥66").unwrap();
+    assert!(
+        !app.shows("¥25") && !app.shows("¥88"),
+        "季格直达：他季支出离屏"
+    );
+
+    // 重开弹层：历史季不点亮当季芯片。
+    app.press("id:period-label").unwrap();
+    app.wait_for("id:period-chip-quarter").unwrap();
+    assert!(
+        !app.screen().selected("role:button[当季]").unwrap(),
+        "历史季不点亮当季芯片"
+    );
+    app.press_key("escape").unwrap();
+    app.wait_for_gone("id:period-panel", DEFAULT_WAIT).unwrap();
+}
+
+/// 年面板：单位随游标（当年游标 → 年格，月/季格不呈现）、年份闭集按边界
+/// 裁剪（界外年份不渲染）、点选写快照、历史年不点亮芯片（#2128）。「删除
+/// 即红」负向条目（ADR-0087）：删除年份闭集裁剪（panel_cells 年分支的边界
+/// 年份区间派生）→ 界外年份格出现，count 断言红。
+#[test]
+fn period_panel_shows_year_cells_clipped_to_boundary_and_selects_past_year() {
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("period-panel-year");
+    let t = today();
+    let p = prev_month_mid();
+    // 整一年前的稳定锚（15 日）：年界跨去年。
+    let old = p.checked_sub_months(chrono::Months::new(12)).unwrap();
+    seed_expense_on_date(&dir, &t.to_string(), 2_500);
+    seed_expense_on_date(&dir, &p.to_string(), 8_800);
+    seed_expense_on_date(&dir, &old.to_string(), 7_700);
+
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config()).unwrap();
+
+    open_transactions(&mut app);
+    app.wait_for("text:¥25").unwrap();
+
+    // 经「当年」芯片取得年游标。
+    app.press("id:period-label").unwrap();
+    app.wait_for("id:period-chip-year").unwrap();
+    app.press("id:period-chip-year").unwrap();
+    app.wait_for_gone("id:period-chip-year", DEFAULT_WAIT)
+        .unwrap();
+    app.wait_for(&format!("text:{}年", t.year())).unwrap();
+
+    // 重开弹层：年格在屏（单位随游标），月/季格不呈现。
+    app.press("id:period-label").unwrap();
+    app.wait_for("id:period-panel").unwrap();
+    app.wait_for(&panel_year_cell("period", t.year())).unwrap();
+    assert_eq!(
+        app.screen().count(&panel_month_cell("period", 0)).unwrap(),
+        0,
+        "年游标 → 年面板：月格不呈现"
+    );
+    assert_eq!(
+        app.screen()
+            .count(&panel_quarter_cell("period", 0))
+            .unwrap(),
+        0,
+        "年游标 → 年面板：季格不呈现"
+    );
+
+    // 年份闭集按边界裁剪：数据年（old/p/t）各一枚；界外年份不渲染。
+    for y in [old.year(), p.year(), t.year()] {
+        assert_eq!(
+            app.screen().count(&panel_year_cell("period", y)).unwrap(),
+            1,
+            "数据年 {y} 应在年面板闭集内"
+        );
+    }
+    assert_eq!(
+        app.screen()
+            .count(&panel_year_cell("period", old.year() - 1))
+            .unwrap(),
+        0,
+        "边界最早年之前不渲染（年区间按边界裁剪）"
+    );
+    assert_eq!(
+        app.screen()
+            .count(&panel_year_cell("period", t.year() + 1))
+            .unwrap(),
+        0,
+        "边界最晚年之后不渲染（年区间按边界裁剪）"
+    );
+
+    // 点去年格（old 所在年）→ 快照写回：标签 = 去年，行集只剩去年一笔。
+    app.press(&panel_year_cell("period", old.year())).unwrap();
+    app.wait_for_gone("id:period-chip-year", DEFAULT_WAIT)
+        .unwrap();
+    app.wait_for(&format!("text:{}年", old.year())).unwrap();
+    app.wait_for("text:¥77").unwrap();
+    assert!(
+        !app.shows("¥25") && !app.shows("¥88"),
+        "年格直达：他年支出离屏"
+    );
+
+    // 重开弹层：仍是年面板（单位随游标），历史年不点亮当年芯片。
+    app.press("id:period-label").unwrap();
+    app.wait_for("id:period-panel").unwrap();
+    app.wait_for(&panel_year_cell("period", old.year()))
+        .unwrap();
+    assert_eq!(
+        app.screen().count(&panel_month_cell("period", 0)).unwrap(),
+        0,
+        "年游标保持年面板"
+    );
+    assert!(
+        !app.screen().selected("role:button[当年]").unwrap(),
+        "历史年不点亮当年芯片"
+    );
+    app.press_key("escape").unwrap();
+    app.wait_for_gone("id:period-panel", DEFAULT_WAIT).unwrap();
+}
+
+/// 月面板边界钳制：「全部」态月面板的格子可达性 = 数据期间边界月序内；
+/// 锚年导航同裁剪（界外年不可导航）（#2128）。「删除即红」负向条目
+/// （ADR-0087）：删除格子钳制调用（panel_cell_enabled 的 derive_boundary +
+/// period_within_boundary 组合）→ 边界外月格可选，可达性断言红；删除锚年
+/// 导航钳制（can_panel_next）→ 面板下一年可选，导航断言红。
+#[test]
+fn period_panel_month_cells_clamped_to_boundary_and_anchor_nav_clipped() {
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("period-panel-clamp");
+    let t = today();
+    let p = prev_month_mid();
+    seed_expense_on_date(&dir, &p.to_string(), 8_800);
+    seed_expense_on_date(&dir, &t.to_string(), 2_500);
+
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config()).unwrap();
+
+    open_transactions(&mut app);
+    app.wait_for("text:¥25").unwrap();
+
+    // 「全部」态开弹层：月面板（上月 + 本月可达；其余月界外不可选）。
+    app.press("id:period-label").unwrap();
+    app.wait_for("id:period-panel").unwrap();
+
+    // 可达集独立推演（与 period 边界数学同源：月序相对锚年，双端含）。
+    let m_ord = |d: chrono::NaiveDate| (d.year() - t.year()) as i64 * 12 + d.month0() as i64;
+    let lo = m_ord(p).min(m_ord(t));
+    let hi = m_ord(p).max(m_ord(t));
+    for m0 in 0..12u32 {
+        let expected = m0 as i64 >= lo && m0 as i64 <= hi;
+        let role = format!("role:button[{}月]", m0 + 1);
+        assert_eq!(
+            app.screen().enabled(&role).unwrap(),
+            expected,
+            "月格「{}月」可达性应 = 边界内推演（{expected}）",
+            m0 + 1
+        );
+    }
+
+    // 锚年导航同裁剪：下一年恒不可达（本月即边界最晚）；上一年仅边界最早
+    // 年在去年时可达（1 月分支）。
+    assert!(
+        !app.screen().enabled("id:period-panel-next").unwrap(),
+        "面板下一年应随边界最晚年裁剪"
+    );
+    assert_eq!(
+        app.screen().enabled("id:period-panel-prev").unwrap(),
+        p.year() < t.year(),
+        "面板上一年可达性应随边界最早年裁剪"
+    );
+
+    // 可达月格点选写快照（上月）：标签与行集随动。
+    app.press(&panel_month_cell("period", p.month0())).unwrap();
+    app.wait_for_gone("id:period-chip-all", DEFAULT_WAIT)
+        .unwrap();
+    app.wait_for(&month_label(p.year(), p.month())).unwrap();
+    app.wait_for("text:¥88").unwrap();
+    assert!(!app.shows("¥25"), "月格直达上月：本月支出离屏");
+}
+
+/// 搜索面共用件接线（#2128 三消费面之一）：搜索视图弹层同屏直达面板，
+/// 月格直达写快照 → 命中面随动。「删除即红」负向条目（ADR-0087）：面板
+/// 挂在共用件 period_row（不在交易视图私有）——删除弹层面板挂载或点选
+/// 写回任一环 → 本测红（搜索面面板缺席或命中面不变）。
+#[test]
+fn search_view_period_panel_direct_select_filters_hits() {
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("search-period-panel");
+    let t = today();
+    let p = prev_month_mid();
+    seed_expense_on_date(&dir, &p.to_string(), 8_800);
+    seed_expense_on_date(&dir, &t.to_string(), 2_500);
+
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config()).unwrap();
+
+    open_search(&mut app);
+    app.type_text("id:search-keyword", "支出").unwrap();
+    app.wait_for("text:命中 2 条").unwrap();
+
+    // 开搜索面期间弹层：「全部」态月面板，本月月格可达。
+    app.press("id:search-period-label").unwrap();
+    app.wait_for("id:search-period-panel").unwrap();
+    app.wait_for(&panel_month_cell("search-period", t.month0()))
+        .unwrap();
+
+    // 点本月月格 → 快照写回 → 命中面只剩本月一行。
+    app.press(&panel_month_cell("search-period", t.month0()))
+        .unwrap();
+    app.wait_for_gone("id:search-period-chip-all", DEFAULT_WAIT)
+        .unwrap();
+    app.wait_for(&month_label(t.year(), t.month())).unwrap();
+    app.wait_for("text:命中 1 条").unwrap();
+    app.wait_for("text:¥25").unwrap();
+    assert!(!app.shows("¥88"), "月格直达当月：上月备注不命中");
+}
+
+/// 报表面共用件接线（#2128 三消费面之一）：报表默认期间 = 当下自然年 →
+/// 弹层直达面板呈年格（单位随游标在报表面的体现），点选历史年写快照 →
+/// 月度卡随期间重读。「删除即红」负向条目（ADR-0087）：删除弹层面板挂载
+/// 或点选写回任一环 → 本测红（报表面面板缺席或月度卡不变）。
+#[test]
+fn reports_view_period_panel_direct_select_changes_period() {
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("reports-period-panel");
+    let t = today();
+    let p = prev_month_mid();
+    let old = p.checked_sub_months(chrono::Months::new(12)).unwrap();
+    seed_expense_on_date(&dir, &t.to_string(), 2_500);
+    seed_expense_on_date(&dir, &old.to_string(), 7_700);
+
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_reports(&mut app);
+    // 装载锚：当月月份行标到屏（§3.5 异步装载纪律）。
+    app.wait_for(&format!("text:{}", reports_month_key()))
+        .unwrap();
+
+    // 开报表期间弹层：默认年游标 → 年面板（月/季格不呈现）。
+    app.press("id:reports-period-label").unwrap();
+    app.wait_for("id:reports-period-panel").unwrap();
+    app.wait_for(&panel_year_cell("reports-period", t.year()))
+        .unwrap();
+    assert_eq!(
+        app.screen()
+            .count(&panel_month_cell("reports-period", 0))
+            .unwrap(),
+        0,
+        "报表默认年游标 → 年面板：月格不呈现"
+    );
+
+    // 点历史年格 → 快照写回：月度卡随期间重读（只剩去年月份行，当月行离场）。
+    app.press(&panel_year_cell("reports-period", old.year()))
+        .unwrap();
+    app.wait_for_gone("id:reports-period-chip-year", DEFAULT_WAIT)
+        .unwrap();
+    app.wait_for(&format!("text:{}年", old.year())).unwrap();
+    let old_key = format!("{}-{:02}", old.year(), old.month());
+    app.wait_for(&format!("text:{old_key}")).unwrap();
+    assert!(
+        !app.shows(&reports_month_key()),
+        "历史年期间：当月月份行离场：{:?}",
+        app.screen().texts()
+    );
+}
+
+// ---------------------------------------------------------------------------
 // 行右键删除全链路（issue #2022）：右键菜单 → 危险确认 → 域公开写入口直调删除
 // → 进程内失效信号驱动列表重读。
 // ---------------------------------------------------------------------------

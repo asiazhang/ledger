@@ -1,5 +1,7 @@
 //! 时间维度行（交易列表与搜索视图的共用形态，#2040 起自 [`crate::app`]
-//! 抽出单点）：期间步进器 `< 期间标签 >` + 期间选择弹层（预设闭集芯片）。
+//! 抽出单点）：期间步进器 `< 期间标签 >` + 期间选择弹层（预设闭集芯片 +
+//! 月/季/年直达面板，#2128 补齐直达面板——旧壳 QuickTimeRange.periodPicker
+//! 平价）。
 //!
 //! 纯决策逻辑（游标反推 / 步进换算 / 边界钳制 / 预设换算）单点在
 //! [`crate::period`]，本模块只做呈现与交互桥：期间快照信号与「应用回调」
@@ -13,12 +15,19 @@
 //! 键位提示（`,`/`.` 内嵌步进按钮）只属交易列表（ADR-0141 快捷键闭集），
 //! 搜索视图无快捷键不内嵌——由 `key_hints` 入参分流。
 //!
+//! 直达面板（#2128，旧壳 QuickTimeRange.periodPicker 同构）：面板单位随当
+//! 前游标（月游标 → 月格、季 → 季格、年 → 年格），「全部」态默认月面板；
+//! 点选写精确自然周期快照并关弹层（同芯片出口）；格子钳制与步进器同源——
+//! 受数据期间边界约束（边界外不可选），年面板年份闭集按边界裁剪；面板格
+//! 词表与 [`crate::period`] 期间文案同源（「5月」「三季度」「2025年」）。
+//!
 //! 弹层抑制上报自含（Overlay Suppression，[`crate::overlay`]）：token 实例
 //! 作用域持有 + effect 追踪受控 open 信号（受控关闭不产生 Popover 事件，
 //! 只听事件会漏报）。
 //!
 //! 测试豁免（ADR-0060）：本模块测试经 crate 根 cfg(test) 整体放行六件套。
 
+use chrono::Datelike;
 use nsh_base::{PopoverEvent, button, popover};
 use nsh_core::prelude::*;
 
@@ -58,6 +67,28 @@ fn preset_test_suffix(preset: period::Preset) -> &'static str {
         period::Preset::Quarter => "quarter",
         period::Preset::Year => "year",
         period::Preset::LastYear => "last-year",
+    }
+}
+
+/// 直达面板格子文案（zh-CN，与 [`crate::period`] 期间词表同源；旧壳
+/// quickTimeRange.periodPicker 同构）。index 语义随单位（0 起月/季，年恒 0）。
+fn panel_cell_label(p: &period::NaturalPeriod) -> String {
+    match p.unit {
+        period::PeriodUnit::Month => format!("{}月", p.index + 1),
+        period::PeriodUnit::Quarter => {
+            let name = ["一", "二", "三", "四"][p.index as usize % 4];
+            format!("{name}季度")
+        }
+        period::PeriodUnit::Year => format!("{}年", p.year),
+    }
+}
+
+/// 直达面板格子稳定锚点后缀（headless 选择器用 id: 前缀，同芯片）。
+fn panel_cell_test_suffix(p: &period::NaturalPeriod) -> String {
+    match p.unit {
+        period::PeriodUnit::Month => format!("m{}", p.index),
+        period::PeriodUnit::Quarter => format!("q{}", p.index),
+        period::PeriodUnit::Year => format!("y{}", p.year),
     }
 }
 
@@ -137,6 +168,99 @@ pub(crate) fn period_row(
         )
     });
 
+    // —— 直达面板派生（#2128，旧壳 periodPicker 同构）——面板单位随当前
+    // 游标，「全部」态默认月面板（旧壳 periodPanelUnit 同式）；面板边界
+    // 取面板单位下的数据期间边界（不随游标缺席而缺席——「全部」态同样钳
+    // 制，旧壳 periodPanelBoundary 同式）；锚年随开弹层重置为游标年或今年。
+    let panel_unit = computed(move || {
+        cursor
+            .get()
+            .map(|p| p.unit)
+            .unwrap_or(period::PeriodUnit::Month)
+    });
+    let panel_year = signal(today().year());
+    let panel_boundary = computed(move || {
+        let (min, max) = boundary_dates.get()?;
+        Some(period::derive_boundary(
+            panel_unit.get(),
+            min.as_deref(),
+            max.as_deref(),
+            today(),
+        ))
+    });
+    // 面板锚定年导航可达性：锚年不越出数据期间边界年份（年区间按边界裁剪）。
+    // 边界未知退化为不钳制（同步进器）。
+    let can_panel_prev = computed(move || match panel_boundary.get() {
+        Some(b) => panel_year.get() > b.earliest.year,
+        None => true,
+    });
+    let can_panel_next = computed(move || match panel_boundary.get() {
+        Some(b) => panel_year.get() < b.latest.year,
+        None => true,
+    });
+    // 面板格子闭集：月面板 = 锚年 12 个月、季面板 = 锚年 4 个季度、年面板 =
+    // 数据期间边界年份全闭集（边界未知回退锚年 ±10 的有界窗，旧壳 ±100 同
+    // 意图的收敛形态——格子闭集有界即全部可达）。
+    let panel_cells = computed(move || match panel_unit.get() {
+        period::PeriodUnit::Month => (0..12)
+            .map(|m0| period::NaturalPeriod {
+                unit: period::PeriodUnit::Month,
+                year: panel_year.get(),
+                index: m0,
+            })
+            .collect::<Vec<_>>(),
+        period::PeriodUnit::Quarter => (0..4)
+            .map(|q0| period::NaturalPeriod {
+                unit: period::PeriodUnit::Quarter,
+                year: panel_year.get(),
+                index: q0,
+            })
+            .collect::<Vec<_>>(),
+        period::PeriodUnit::Year => match panel_boundary.get() {
+            Some(b) => (b.earliest.year..=b.latest.year)
+                .map(|y| period::NaturalPeriod {
+                    unit: period::PeriodUnit::Year,
+                    year: y,
+                    index: 0,
+                })
+                .collect::<Vec<_>>(),
+            None => {
+                let y = panel_year.get();
+                (y - 10..=y + 9)
+                    .map(|year| period::NaturalPeriod {
+                        unit: period::PeriodUnit::Year,
+                        year,
+                        index: 0,
+                    })
+                    .collect::<Vec<_>>()
+            }
+        },
+    });
+    // 面板格子钳制（面板版步进器置灰）：数据期间边界外不可选；边界未知
+    // 退化为不钳制（同同步进器，旧壳 isPeriodDateDisabled 同语义）。
+    let panel_cell_enabled = move |p: &period::NaturalPeriod| -> bool {
+        match panel_boundary.get() {
+            Some(b) => period::period_within_boundary(p, &b),
+            None => true,
+        }
+    };
+
+    // 开弹层重置面板锚年：随当前游标年，「全部」态锚今年（旧壳面板值随
+    // currentPeriod 同语义）。
+    let on_open_change = move |e: &PopoverEvent| {
+        if let PopoverEvent::OpenChange(open, _) = *e {
+            period_open.set(open);
+            if open {
+                panel_year.set(
+                    cursor
+                        .get()
+                        .map(|p| p.year)
+                        .unwrap_or_else(|| today().year()),
+                );
+            }
+        }
+    };
+
     // 周期步进动作（ADR-0141 决策 2：游标反推、边界钳制、越界幂等全在
     // [`period::step_current`] 单点；步进必然产生新快照，按已变化回调）。
     // 按钮与外部快捷键共用（快捷键路径的抑制闸门归调用方）。
@@ -161,6 +285,20 @@ pub(crate) fn period_row(
         let next = period::preset_range(preset, today());
         let changed = range.get_untracked() != next;
         range.set(next);
+        on_apply(changed);
+        period_open.set(false);
+    };
+
+    // 直达面板点选动作（#2128）：写精确自然周期快照并关弹层——与芯片同一
+    // 出口（快照唯一事实源在调用方信号，装载与否归 on_apply(changed) 裁决；
+    // 「全部」态仅在确认选定后才离开无过滤默认态，旧壳 onPeriodPanelSelect
+    // 同语义）。
+    let apply_panel = move |p: period::NaturalPeriod| {
+        let Some(next) = period::period_range(&p) else {
+            return;
+        };
+        let changed = range.get_untracked().as_ref() != Some(&next);
+        range.set(Some(next));
         on_apply(changed);
         period_open.set(false);
     };
@@ -197,11 +335,7 @@ pub(crate) fn period_row(
             // 开合上报住上方 effect 单通道；token 随组件卸载撤销）。
             popover()
                 .open(move || Some(period_open.get()))
-                .on_open_change(move |e: &PopoverEvent| {
-                    if let PopoverEvent::OpenChange(open, _) = *e {
-                        period_open.set(open);
-                    }
-                })
+                .on_open_change(on_open_change)
                 .popup_class("bg-background border border-border rounded-(--radius) shadow-md p-1")
                 .trigger(
                     // test_id 载体视图（组件元素无 test_id 槽，先例 tx-pagination 的
@@ -217,28 +351,112 @@ pub(crate) fn period_row(
                     ),
                 )
                 .child(
-                    // 芯片 test_id 落在按钮内文本上（headless press 只认可按元素
-                    // 本身或其内部文本，包裹视图不命中，nsh-testing Screen::pressable）。
-                    view()
-                        .flex_col()
-                        .gap_1()
-                        .children(period::PRESETS.iter().copied().filter(|p| include_all || *p != period::Preset::All).map(|preset| {
-                            button()
-                                .selected(move || match_preset_now(range.get(), preset))
-                                .app_class(
-                                    "px-2 py-1 rounded-(--radius) text-foreground hover:bg-accent selected:bg-accent",
-                                )
-                                .child(
-                                    text(period::preset_label(preset)).test_id(
-                                        format!("{prefix}-chip-{}", preset_test_suffix(preset))
-                                            .as_str(),
+                    // 弹层主体：预设芯片列（既有形态保留）+ 直达面板（#2128）。
+                    view().flex_col().gap_1().child(
+                        // 芯片 test_id 落在按钮内文本上（headless press 只认可按元素
+                        // 本身或其内部文本，包裹视图不命中，nsh-testing Screen::pressable）。
+                        view()
+                            .flex_col()
+                            .gap_1()
+                            .children(period::PRESETS.iter().copied().filter(|p| include_all || *p != period::Preset::All).map(|preset| {
+                                button()
+                                    .selected(move || match_preset_now(range.get(), preset))
+                                    .app_class(
+                                        "px-2 py-1 rounded-(--radius) text-foreground hover:bg-accent selected:bg-accent",
+                                    )
+                                    .child(
+                                        text(period::preset_label(preset)).test_id(
+                                            format!("{prefix}-chip-{}", preset_test_suffix(preset))
+                                                .as_str(),
+                                        ),
+                                    )
+                                    .on_press({
+                                        let apply = apply_preset;
+                                        move || apply(preset)
+                                    })
+                            })),
+                    )
+                    .child(
+                        // 直达面板（#2128）：锚定年导航行（‹ 年 ›，越界年禁用）
+                        // + 格子闭集（单位随游标；锚年变化整组重建，`each` 键 =
+                        // 单位-年-序）。格子锚点落在按钮内文本上（同芯片形态）。
+                        view()
+                            .flex_col()
+                            .gap_1()
+                            .app_class("border-t border-border pt-1")
+                            .test_id(format!("{prefix}-panel").as_str())
+                            .child(
+                                view()
+                                    .flex_row()
+                                    .items_center()
+                                    .gap_1()
+                                    .child(
+                                        button()
+                                            .disabled(move || !can_panel_prev.get())
+                                            .accessibility_label("面板上一年")
+                                            .app_class(
+                                                "px-2 py-1 rounded-(--radius) text-foreground hover:bg-accent disabled:opacity-40",
+                                            )
+                                            .on_press({
+                                                let year = panel_year;
+                                                move || year.set(year.get() - 1)
+                                            })
+                                            .child(text("‹").test_id(format!("{prefix}-panel-prev").as_str()).text_color(fg)),
+                                    )
+                                    .child(
+                                        text(move || format!("{}年", panel_year.get()))
+                                            .test_id(format!("{prefix}-panel-year").as_str())
+                                            .text_xs()
+                                            .text_color(muted),
+                                    )
+                                    .child(
+                                        button()
+                                            .disabled(move || !can_panel_next.get())
+                                            .accessibility_label("面板下一年")
+                                            .app_class(
+                                                "px-2 py-1 rounded-(--radius) text-foreground hover:bg-accent disabled:opacity-40",
+                                            )
+                                            .on_press({
+                                                let year = panel_year;
+                                                move || year.set(year.get() + 1)
+                                            })
+                                            .child(text("›").test_id(format!("{prefix}-panel-next").as_str()).text_color(fg)),
                                     ),
-                                )
-                                .on_press({
-                                    let apply = apply_preset;
-                                    move || apply(preset)
-                                })
-                        })),
+                            )
+                            .child(
+                                view()
+                                    .flex_row()
+                                    .flex_wrap()
+                                    .gap_1()
+                                    .child(each(
+                                        move || panel_cells.get(),
+                                        |p: &period::NaturalPeriod| {
+                                            format!("{:?}-{}-{}", p.unit, p.year, p.index)
+                                        },
+                                        move |p: ReadSignal<period::NaturalPeriod>, _index: ReadSignal<usize>| {
+                                            let current = p.get();
+                                            button()
+                                                .selected(move || cursor.get() == Some(p.get()))
+                                                .disabled(move || !panel_cell_enabled(&p.get()))
+                                                .app_class(
+                                                    "w-16 py-1 rounded-(--radius) text-foreground hover:bg-accent selected:bg-accent disabled:opacity-40",
+                                                )
+                                                .flex_row()
+                                                .items_center()
+                                                .justify_center()
+                                                .child(
+                                                    text(panel_cell_label(&current))
+                                                        .text_xs()
+                                                        .test_id(
+                                                            format!("{prefix}-panel-{}", panel_cell_test_suffix(&current))
+                                                                .as_str(),
+                                                        ),
+                                                )
+                                                .on_press(move || apply_panel(p.get()))
+                                        },
+                                    )),
+                            ),
+                    ),
                 ),
         )
         .child(
