@@ -165,9 +165,10 @@ pub fn restore_backup(
 // —— 加密（状态与整库三形态写面：开启 / 修改主口令 / 关闭，issue #2088） ——
 
 /// 加密状态（旧壳 `get_encryption_status` 命令同一执行协议）：库文件头探测
-/// （文件即真相，ADR-0075 决策 4）。锁定态在本壳结构性不可达——设置卡只在
-/// 业务就绪后可达（会话已就位、门已开），锁定现场的呈现面是解锁面板
-/// （[`crate::unlock`]），不经本函数。
+/// （文件即真相，ADR-0075 决策 4）。设置卡只在业务就绪后可达（会话已就位、
+/// 门已开）；锁定现场的消费面是解锁屏恢复入口（#2131：恢复通道最小命令面
+/// 的当前模式探测步——纯文件探测，无会话依赖），锁定现场呈现面其余部分
+/// 是解锁面板（[`crate::unlock`]），不经本函数。
 pub fn encryption_status() -> Result<bool> {
     let file_encrypted = ledger_infra::db::encryption::probe_file_kind(&db_path_for_data_safety()?)?
         == ledger_infra::db::encryption::DbFileKind::Encrypted;

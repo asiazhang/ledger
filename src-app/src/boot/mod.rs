@@ -437,10 +437,11 @@ fn normalize_foreign_plaintext(db_path: &Path) -> Result<()> {
 }
 
 // ---------------------------------------------------------------------------
-// 密文库解锁 / 忘口令重置编排（issue #2088；旧壳 commands/encryption.rs 的
-// do_unlock / reset_after_forgotten_passphrase 的本壳对应面）：文件级引擎
-//（infra unlock_db_file / reset_encrypted_db_file）之上补成对建连与进程态
-// 编排；会话槽换入、门翻转与后台服务拉起归呈现层业务可用起点单点
+// 密文库解锁 / 忘口令重置 / 锁定屏备份恢复编排（issue #2088 / #2131；旧壳
+// commands/encryption.rs 的 do_unlock / reset_after_forgotten_passphrase 与
+// 解锁屏恢复入口的本壳对应面）：文件级引擎（infra unlock_db_file /
+// reset_encrypted_db_file / 域 restore_db_from）之上补成对建连与进程态编排；
+// 会话槽换入、门翻转与后台服务拉起归呈现层业务可用起点单点
 //（[`crate::app::enter_business_surface`]，旧壳 resume_business_surface 同位）。
 // ---------------------------------------------------------------------------
 
@@ -510,4 +511,56 @@ pub fn reset_locked_book() -> Result<DbState> {
     }
     ledger_sync_engine::SessionEnvelope::remember(ledger_sync_engine::SessionEnvelope::Plaintext);
     Ok(DbState::from_pair(conn, read_conn))
+}
+
+/// 锁定屏「从备份文件恢复」（issue #2131，旧壳 UnlockScreen 恢复入口 #603 的
+/// 本壳对应面）：备份域恢复通道全语义（[`ledger_backup::restore_db_from`]：
+/// 提取 → 完整性 + 版本校验 → RestoreSafetyBackup + 原子替换，双库成对与
+/// 口令语义全在域内，词条口径不变）+ 模式探测接管实际模式（恢复后新库形
+/// 态决定续接路径，文件即真相）。返回成对会话供调用方走业务可用起点；
+/// 成功路径上会话信封已按恢复后形态记入。
+///
+/// **锁定期无会话句柄**（#2088 挂账时的核心裁决点）：本函数不取
+/// `DbState`——锁定现场会话槽恒空，无写连接可持锁、无读连接可占位化；
+/// 并发写面也结构性不在场（调度宿主锁定门检空转、同步触发未拉起、HTTP 壳
+/// 未挂载、解锁/重置/恢复三入口共用 busy 单飞守卫），会话场景的写连接锁
+///（[`boot::data_safety::restore_backup`]）与读连接占位化都无对象，恢复期
+/// 间零并发面。恢复成功后的续接按新库形态分流：明文 → 产品建连单点成对
+/// 打开（[`open_db_in`]，迁移与 sync.db 挂载收口在彼处——旧备份迁移升级由
+/// 建连收尾承担，与启动引导同链）；密文 → 凭恢复时已验证的口令走解锁编排
+///（[`unlock_encrypted_book`]，同函数承担迁移与信封记入；恢复校验已凭该
+/// 口令打开过备份库，此处试开失败在结构性上不可达，失败按错误上抛、锁定
+/// 现场可重试）。两臂等价于旧壳「恢复后重启、由启动探测接管实际模式」的
+/// 本壳原位形态（无原位重引导机制的偏差口径，与设置卡恢复
+/// [`data_safety::restore_backup`] 一致）。
+pub fn restore_locked_book(backup_path: &Path, passphrase: Option<&str>) -> Result<DbState> {
+    let db_path = locked_session_db_path()?;
+    let safety_dir = crate::cross_book::default_data_dir()
+        .ok_or_else(|| AppError::Io("应用数据根不可解析，无法保存恢复安全备份".to_owned()))?;
+    let expected = ledger_backup::expected_schema_version()?;
+    ledger_backup::restore_db_from(backup_path, &db_path, &safety_dir, expected, passphrase)?;
+    match ledger_infra::db::encryption::probe_file_kind(&db_path)? {
+        ledger_infra::db::encryption::DbFileKind::Encrypted => {
+            // 密文备份缺口令在校验阶段（替换发生前）已被域拒绝，控制流到不了
+            // 这里；防御分支显式码化上抛，不 panic（ADR-0060）。
+            let passphrase = passphrase.ok_or_else(|| {
+                AppError::coded(
+                    "backup.passphrase-required",
+                    "恢复出的密文库需要备份所在库的主口令才能解锁",
+                )
+            })?;
+            unlock_encrypted_book(passphrase)
+        }
+        ledger_infra::db::encryption::DbFileKind::Plaintext
+        | ledger_infra::db::encryption::DbFileKind::Empty => {
+            ledger_sync_engine::SessionEnvelope::remember(
+                ledger_sync_engine::SessionEnvelope::Plaintext,
+            );
+            open_db_in(
+                db_path
+                    .parent()
+                    .ok_or_else(|| AppError::Io("库文件路径无父目录".to_owned()))?,
+            )
+        }
+    }
 }
