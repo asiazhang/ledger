@@ -310,22 +310,14 @@ pub(crate) fn SearchView() -> impl IntoElement {
     // 页分类下钻同一接缝（resolve_landing 落交易列表 + 意图随落位投递）。
     let drill_account = move |id: &str| {
         nav::open(
-            nav_model::NavRequest::bare(ViewName::Transactions).with_tx_filters(
-                tx_filter::DrillFilters {
-                    account: Some(id.to_owned()),
-                    ..tx_filter::DrillFilters::default()
-                },
-            ),
+            nav_model::NavRequest::bare(ViewName::Transactions)
+                .with_tx_filters(tx_filter::drill_by_account(id)),
         );
     };
     let drill_merchant = move |id: &str| {
         nav::open(
-            nav_model::NavRequest::bare(ViewName::Transactions).with_tx_filters(
-                tx_filter::DrillFilters {
-                    merchant: Some(id.to_owned()),
-                    ..tx_filter::DrillFilters::default()
-                },
-            ),
+            nav_model::NavRequest::bare(ViewName::Transactions)
+                .with_tx_filters(tx_filter::drill_by_merchant(id)),
         );
     };
     // 来源格跳转 + 备注复制反馈：与交易列表同一接缝（共享单点

@@ -1053,18 +1053,8 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
     let copy_note = copy_note_feedback(view_owner, copy_feedback);
 
     let cell_actions = CellActions {
-        account: Arc::new(move |id: &str| {
-            self_drill(tx_filter::DrillFilters {
-                account: Some(id.to_owned()),
-                ..tx_filter::DrillFilters::default()
-            })
-        }),
-        merchant: Arc::new(move |id: &str| {
-            self_drill(tx_filter::DrillFilters {
-                merchant: Some(id.to_owned()),
-                ..tx_filter::DrillFilters::default()
-            })
-        }),
+        account: Arc::new(move |id: &str| self_drill(tx_filter::drill_by_account(id))),
+        merchant: Arc::new(move |id: &str| self_drill(tx_filter::drill_by_merchant(id))),
         source: Arc::new(jump_source),
         copy_note: Arc::new(copy_note),
     };
