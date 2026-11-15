@@ -29,9 +29,9 @@ Ledger 的领域词汇表按自然域拆分：本文件列出全部分域、各�
 | 11 | 实物资产 | [`docs/contexts/CONTEXT-physical-asset.md`](docs/contexts/CONTEXT-physical-asset.md) | PhysicalAsset（实物资产）、Valuation（估值）、ValuationHistory（估值历史）、Disposal（处置）（ADR-0064） |
 | 12 | 测试基础设施 | [`docs/contexts/CONTEXT-testing.md`](docs/contexts/CONTEXT-testing.md) | invoke 测试接缝、defaults 表、overrides 表、未命中报错、参考数据预热、清理四件套、媒体查询测试接缝（#841）、消息替身稳定实例、通道线格式替身（#956）、源码扫描掩码器具（#1433）、守门挂载登记、守门接线测试（#1682）、测试暂存目录（#1645）、进程级现场隔离（#1989）、同机并发假红（#2111）、读快照探针（#1699/#1702）、文件库测试模板（#1868）、op 写失败注入（#1896）、目录级测试薄壳、行为等价判据（ADR-0085）；测试世界等 BDD 词条已随 #2083 退役（ADR-0086 留档）；测试三层与权威层、壳三件套、接线证明、错误码契约代表（ADR-0087）；断言强度、双断言、矩阵、存在性断言、组件测试数据工厂；零击杀测试、存活变异体、等价变异体（ADR-0137）；替身后端、浏览器开发模式（ADR-0143）；性能基准（ADR-0068）；计数型渲染守门（#2012） |
 | 13 | 多端同步 | [`docs/contexts/CONTEXT-sync.md`](docs/contexts/CONTEXT-sync.md) | Sync、Transport、OpLog、DomainCommand、Replay、重放注册表（ADR-0101）、DeviceId、TotalOrder、OccurrenceKey、ParkedOp、Checkpoint、StreamPosition（位点）、SyncEnvelope、SyncBoundary（ADR-0091）、SyncDatabase（ADR-0139）、SyncTrigger（同步触发）、SyncRound（同步轮次）、SessionEnvelope（会话信封形态） |
-| 14 | 应用更新 | [`docs/contexts/CONTEXT-app-update.md`](docs/contexts/CONTEXT-app-update.md) | 自动更新（Auto Update）、更新检查、更新清单、更新工件、更新签名（ADR-0124） |
+| 14 | 应用更新 | [`docs/contexts/CONTEXT-app-update.md`](docs/contexts/CONTEXT-app-update.md) | 自动更新（Auto Update）、更新检查、更新清单、更新工件、更新签名（ADR-0124；翻案重建见 ADR-0145 修订注记 2026-11-15） |
 | 15 | 储蓄目标 | [`docs/contexts/CONTEXT-savings-goal.md`](docs/contexts/CONTEXT-savings-goal.md) | 储蓄目标（SavingsGoal）、目标账户、蓄水进度、预计达成时间（ETA）、所需月存、达成与归档、养老测算 |
-| 16 | 应用壳 | [`docs/contexts/CONTEXT-app-shell.md`](docs/contexts/CONTEXT-app-shell.md) | 原生壳（Native Shell App）、双壳并存期（Dual-Shell Migration Window）、Web 参照前端（Web Reference Frontend）（ADR-0145）；首启引导（First-Run Onboarding）（ADR-0146）；主题令牌（Theme Tokens）、视觉规约（Visual Design Spec）、壳内 ui 层（App Styled Layer）（ADR-0147） |
+| 16 | 应用壳 | [`docs/contexts/CONTEXT-app-shell.md`](docs/contexts/CONTEXT-app-shell.md) | 原生壳（Native Shell App）、双壳并存期（Dual-Shell Migration Window）、Web 参照前端（Web Reference Frontend）（ADR-0145）；功能平价（Functional Parity）、有意偏差（Documented Deviation）；首启引导（First-Run Onboarding）（ADR-0146）；主题令牌（Theme Tokens）、视觉规约（Visual Design Spec）、壳内 ui 层（App Styled Layer）（ADR-0147） |
 
 ## 域间关系
 
@@ -51,6 +51,6 @@ Ledger 的领域词汇表按自然域拆分：本文件列出全部分域、各�
 - **测试基础设施 → 替身与步骤层消费各域**：invoke 测试接缝布线各命令的替身应答（参考数据预热是参考设置域 Reference Data 的测试投影；原 BDD 步骤层随 #2083 退役）——命令与被测实体的业务语义归各业务分域，本域只定义布线、清理、构造与行为等价判据（ADR-0085），不持业务语义。
 - **多端同步 → 经写入接缝重放各域语义命令**：同步域不定义业务语义，op 载荷就是各域既有写入命令，重放是行为编排之外的第 N 写入入口（ADR-0091）；与备份域相邻——SyncEnvelope 复用加密模式 / 主口令，但备份 ≠ 同步（快照还原 vs 增量合并）。期次去重与同步边界细节见同步域词条。
 - **实物资产（单列小域）→ 核心交易（只消费不产流水）**：PhysicalAsset 是大件实物的估值档案，与物品域 Item 按「要不要跟踪市值」互斥分家；金额折算走核心域 Amount 接缝、币种复用核心域字典。估值机制、净资产口径与 MVP 边界见实物资产域词条（ADR-0064）。
-- **应用更新（单列小域）→ 壳层机制，与备份域相邻**：自动更新不持账本语义，后端与前端面归壳层（不立业务域 crate 与壳内域目录，ADR-0111 归位判据；决策集合见 ADR-0124）；安装前经备份域更新前备份，自动检查开关与提醒记忆是设备偏好（见参考设置域轻量设置项），提醒弹层消费界面域弹层编排；与多端同步域无交叉——更新分发应用本体，不分发账本数据。
+- **应用更新（单列小域）→ 壳层机制，与备份域相邻**：自动更新不持账本语义，后端与前端面归壳层（不立业务域 crate 与壳内域目录，ADR-0111 归位判据；决策集合见 ADR-0124）；安装前经备份域更新前备份，自动检查开关与提醒记忆是设备偏好（见参考设置域轻量设置项），提醒弹层消费界面域弹层编排；与多端同步域无交叉——更新分发应用本体，不分发账本数据；切轨时随旧壳退役下线，经 ADR-0145 修订注记（2026-11-15）翻案、随 NSH 内置更新器重建（实现随票）。
 - **储蓄目标（单列小域）→ 核心交易 + 定时计划**：蓄水与取出是真实 `transfer` / `expense` 流水，进度即专属账户余额（ADR-0133）；月存节奏复用定时转账（ScheduledTransfer）形态，目标域零新写入路径；与预算互不扣减——预算管花、目标管攒；账户身份由绑定派生、不复用账户类型闭集（黑洞先例）。
-- **应用壳（单列小域）→ 消费全部业务域 crate、承载迁移编排**：原生壳是壳层的下一任承载者，依赖方向沿用分层纪律（ADR-0112）、不定义账本语义；双壳并存期 Tauri 壳保持唯一发版产品，平价核对基线＝命令清单＋BDD 场景清单；与界面状态与交互域相邻——交互语义（快捷键、弹层抑制、输入轴等）定义仍归界面域，原生壳只做跨栈保真不重定义；与应用更新域相邻——自动更新机制在切轨前仍由旧壳承载、随旧壳退役下线（ADR-0145）。
+- **应用壳（单列小域）→ 消费全部业务域 crate、承载迁移编排**：原生壳是壳层的下一任承载者，依赖方向沿用分层纪律（ADR-0112）、不定义账本语义；双壳并存期 Tauri 壳保持唯一发版产品，平价核对基线＝命令清单＋BDD 场景清单；与界面状态与交互域相邻——交互语义（快捷键、弹层抑制、输入轴等）定义仍归界面域，原生壳只做跨栈保真不重定义；与应用更新域相邻——自动更新机制切轨时随旧壳退役下线，翻案随 NSH 内置更新器重建（ADR-0145 修订注记 2026-11-15，实现随票）。

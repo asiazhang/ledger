@@ -3,7 +3,7 @@
 - 状态：已接受（决策入档；实现随迁移票系列落地）
 - 日期：2026-11-04
 - 作者：Ledger 项目
-- 关联：ADR-0112（workspace crate 拆分——新 bin crate 与壳→域合法直呼，本决策的护城河）、ADR-0118（ui-kit `App*` 封装族——组件缺口的单点落点）、ADR-0047（命令注册单一来源——命令层随旧壳退役）、ADR-0087（测试三层权威——BDD 退役的基准）、ADR-0124（自动更新——随旧壳下线）、ADR-0143（浏览器开发模式——随 Web 前端退役）、ADR-0080（原位重引导与 WebView 重载——壳层机制随旧壳退役）、ADR-0054（emit 非阻塞——接缝问题随命令层消失）、ADR-0088（移动端 UI 适配——交互语义保真基准之一）、#2010 / #2012（Linux 迟滞诊断与渲染守门）；词汇表：应用壳域「原生壳」「双壳并存期」（随本 ADR 入档）
+- 关联：ADR-0112（workspace crate 拆分——新 bin crate 与壳→域合法直呼，本决策的护城河）、ADR-0118（ui-kit `App*` 封装族——组件缺口的单点落点）、ADR-0047（命令注册单一来源——命令层随旧壳退役）、ADR-0087（测试三层权威——BDD 退役的基准）、ADR-0124（自动更新——随旧壳下线；2026-11-15 翻案随 NSH 内置更新器重建，见修订注记）、ADR-0143（浏览器开发模式——随 Web 前端退役）、ADR-0080（原位重引导与 WebView 重载——壳层机制随旧壳退役）、ADR-0054（emit 非阻塞——接缝问题随命令层消失）、ADR-0088（移动端 UI 适配——交互语义保真基准之一）、#2010 / #2012（Linux 迟滞诊断与渲染守门）；词汇表：应用壳域「原生壳」「双壳并存期」（随本 ADR 入档）
 - 来源：grill-with-docs 五轮裁决（2026-11-04）
 
 ## 背景
@@ -106,3 +106,15 @@ Linux 打包自建（AppImage / deb 工具链接入既有 CI 矩阵），macOS /
 - **守门与 CI**：零链接门升级为全仓无 tauri 门（`cargo tree --workspace -i tauri` + 新脚本 `scripts/check-no-tauri.ts` 三面：Cargo 清单、前端 import、package.json 键）；gate-mounts 登记收缩；check.sh 退役 check-commands / check-background-services 两个挂载点；CI 矩阵收缩为 check + Linux 构建（产物 = release 二进制 artifact）；perf-bench 路径随迁。结构守门退役双壳规则与 tauri 特免面（check-structure 的 CRATES 政策核以 `nsh-app` dir "." 登记）。
 - **保留面**：`src-app/src/test_support/` 工厂与器具全量随迁（含源码扫描掩码、读快照探针、op 写失败注入等）；原 Tauri 壳 12 个遗留集成测试 disposition——HTTP 契约/信号投递等随 api_server 迁居保留，纯命令装配面退役（逐条清单见 #2083 交付报告）。
 - **发布形态**：release 二进制 + `.desktop` 直跑（`src-app/packaging/` 模板）；Linux 打包工具链、NSH 自动化回归能力为后续票。加密面曾是**切轨遗留的未裁决偏差**（非本 ADR 某条决策的有意取舍），已随 #2088 收敛（2026-11-11）：密文库启动落锁定视图、解锁 / 忘口令重置 / 加密卡写面（开启 / 修改主口令 / 关闭加密）全量平价，旧壳锁定/失败双门检换真门检（锁定扇门查进程级加密锁定门，失败扇门由会话存在性承载）；残留差异（口令强度条、自动解锁 macOS-only、锁定屏无恢复入口）见 CHANGELOG 同日条目。
+
+## 修订注记（自动更新翻案，2026-11-15，grill-with-docs 裁决）：决策 7 修订——自动更新随 NSH 0.5 内置更新器重建
+
+决策 7「自动更新（ADR-0124 面）随旧壳退役下线」翻案：NSH v0.5.0（2026-11-11）起内置签名更新能力，自建前提消失，按决策 7 预留的「后续想要再立票」条款重建。裁决要点：
+
+1. 发版产物形态迁回 nsh package 打包形态（内置更新器的硬前提）：切轨修订「release 二进制 + .desktop 直跑」的简化让位于更新能力，仓库 packaging 模板与发布流程随票恢复。
+2. 更新前备份语义保留：安装/换装前触发 backup crate 既有 create_pre_update_backup 接缝，备份域「更新前备份」词条口径不变。
+3. Rust 模式接入路径先验证后动手：NSH 完整流程公开 API 现为 JS 模块形态、文档无 Rust 模式示例，票内第一刀为 spike——验证 nsh-updater crate Rust 直调链路，结论回填票面，不赌未证实路径。
+4. NSH 0.4→0.5 升级独立小票先行，更新器重建票原生 blocked-by 升级票（0.x breaking 常态税，布局回归单独验证）。
+5. 旧 tauri 清单格式与生成器随旧壳退役不兼容、直接弃用；Ed25519 新密钥对（nsh keygen，清单分离签名、公钥烧入应用配置、context 防挪用）替代旧 minisign 信任链，无迁移负担。全询问式交互、启动延迟静默检查＋设置页手动检查、已提醒版本记忆、单 stable 通道等 ADR-0124 交互语义沿袭不变。
+
+实施挂功能平价 spec（升级票＋更新器重建票，后者原生 blocked-by 前者）；文档同步：CONTEXT-app-update.md 已随本注记改写 NSH 时代口径、CONTEXT-MAP 关系行同步；CHANGELOG Unreleased 切轨条目「应用内自动更新下线」表述随实现票修订。
