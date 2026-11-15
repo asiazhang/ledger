@@ -118,23 +118,23 @@ const RESTORE_HINT_AFTER: &str =
     "（破坏性操作）。恢复前系统会自动备份当前数据到应用数据目录；恢复成功后应用将自动重启。";
 const RESTORE_BUTTON: &str = "从备份恢复…";
 const RESTORE_PICK_TITLE: &str = "从备份恢复…";
-const RESTORE_MODAL_TITLE: &str = "确认恢复";
-const RESTORE_CONFIRM_STRONG: &str =
+pub(crate) const RESTORE_MODAL_TITLE: &str = "确认恢复";
+pub(crate) const RESTORE_CONFIRM_STRONG: &str =
     "恢复将替换当前全部数据，且不可撤销。系统会在恢复前自动备份当前数据到应用数据目录。";
-const RESTORE_CONFIRM_ACTION: &str = "确认恢复";
-const RESTORE_CANCEL: &str = "取消";
-const RESTORE_PASS_LABEL: &str = "备份的主口令";
-const RESTORE_PASS_PLACEHOLDER: &str = "输入该备份的主口令";
-const RESTORE_CROSS_MODE_TITLE: &str = "加密模式不一致";
-const RESTORE_TO_PLAINTEXT_WARN: &str =
+pub(crate) const RESTORE_CONFIRM_ACTION: &str = "确认恢复";
+pub(crate) const RESTORE_CANCEL: &str = "取消";
+pub(crate) const RESTORE_PASS_LABEL: &str = "备份的主口令";
+pub(crate) const RESTORE_PASS_PLACEHOLDER: &str = "输入该备份的主口令";
+pub(crate) const RESTORE_CROSS_MODE_TITLE: &str = "加密模式不一致";
+pub(crate) const RESTORE_TO_PLAINTEXT_WARN: &str =
     "当前库为加密库：恢复这份明文备份后，数据将变为未加密，应用重启后以明文库启动。";
-const RESTORE_TO_ENCRYPTED_WARN: &str =
+pub(crate) const RESTORE_TO_ENCRYPTED_WARN: &str =
     "这份备份为密文备份：恢复后此库将变为加密库，应用重启后需凭该备份的主口令解锁。";
-const RESTORE_FAIL_PREFIX: &str = "恢复失败: ";
+pub(crate) const RESTORE_FAIL_PREFIX: &str = "恢复失败: ";
 const MSG_RESTORE_OK: &str =
     "恢复成功，请重启应用进入新库（本壳无原位重引导：旧壳恢复后自动重启的偏差见交付报告）";
-const MSG_META_FAILED_PREFIX: &str = "读取备份信息失败: ";
-const MSG_ENCRYPTION_STATUS_FAILED_PREFIX: &str = "读取加密状态失败: ";
+pub(crate) const MSG_META_FAILED_PREFIX: &str = "读取备份信息失败: ";
+pub(crate) const MSG_ENCRYPTION_STATUS_FAILED_PREFIX: &str = "读取加密状态失败: ";
 const MSG_LIST_FAILED_PREFIX: &str = "读取备份列表失败: ";
 const MSG_AUTO_STATE_FAILED_PREFIX: &str = "读取自动备份状态失败: ";
 const MSG_AUTO_ON: &str = "自动备份已开启";
@@ -162,10 +162,10 @@ const PRUNE_CONFIRM_DETAIL: &str =
     "删除的是备份产物，账本数据本身不受影响；自动备份开启时会按保留上限继续生成新备份。";
 const PRUNE_CONFIRM_OK: &str = "确认清理";
 const PRUNE_CONFIRM_CANCEL: &str = "取消";
-const FILTER_NAME: &str = "开源记账备份";
+pub(crate) const FILTER_NAME: &str = "开源记账备份";
 const SESSION_MISSING: &str = "内部错误：账本库会话缺失";
-const READ_TASK_FAILED: &str = "内部错误：读任务异常退出";
-const WRITE_TASK_FAILED: &str = "内部错误：写入任务异常退出";
+pub(crate) const READ_TASK_FAILED: &str = "内部错误：读任务异常退出";
+pub(crate) const WRITE_TASK_FAILED: &str = "内部错误：写入任务异常退出";
 
 const ENCRYPTION_HINT: &str = "为账本数据库开启文件级加密：磁盘上的库文件与备份不再能被任意工具直接阅读。开启是一次自动完成的整库转换，失败时原库原样保留。";
 const ENCRYPTION_WARN_TITLE: &str = "开启前请确认";

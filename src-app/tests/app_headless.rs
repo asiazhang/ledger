@@ -16441,6 +16441,218 @@ fn locked_view_forgot_passphrase_resets_to_fresh_plaintext_session() {
     );
 }
 
+/// 锁定屏「从备份文件恢复」全旅程·明文备份臂（issue #2131）：锁定视图常驻
+/// 恢复入口（与忘口令重置并列双逃生门，#603 平价）→ 选择明文备份 → 确认
+/// 弹窗（后果警示 + 跨模式警告：密文现库恢复明文备份；明文备份无口令框）
+/// → 取消零替换（仍锁定、文件原样）→ 再确认恢复 → 备份域恢复通道全语义
+///（RestoreSafetyBackup + 整库替换，备份域词条口径不变）→ 模式探测接管
+/// 实际模式：恢复出明文库原位进会话（主界面呈现备份内容，无需重启——
+/// 旧壳「恢复后自动重启」的本壳原位续接同口径）。
+///
+/// 「删除即红」负向条目（ADR-0087 接线）：删锁定屏恢复入口按钮接线
+///（unlock.rs locked_panel 的 `unlock-restore-open` → `run_restore_pick`）
+/// → 入口不可达 / 弹窗不入屏 → 本测 wait_for/press 红；删恢复确认任务接线
+///（`run_restore_confirm` 的 spawn 链）→ 恢复不执行、不进会话 → 对应
+/// wait_for 红。断言对准用户可见结果（入口在屏、弹窗文案、恢复后的交易行
+/// 与库文件形态）。
+#[test]
+fn locked_view_restore_plaintext_backup_replaces_book_and_enters_session() {
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+
+    // 备份源（另一本明文库，两笔「备份源数据」支出）→ 域直调产备份包。
+    let source = make_book("lock-restore-source");
+    {
+        let db = nsh_app::boot::boot_ledger(&source).unwrap();
+        let account = seed_cash_account(&db);
+        for index in 0..2 {
+            seed_transaction(
+                &db,
+                TxnSeed {
+                    account: &account,
+                    to_account: None,
+                    kind: TransactionKind::Expense,
+                    amount_cents: 2_500,
+                    date: &test_date(index),
+                    category_id: None,
+                    merchant_id: None,
+                    note: Some("备份源数据".to_owned()),
+                },
+            );
+        }
+    }
+    let zip = ScratchFile::new("nsh-lock-restore", "restore.db.zip");
+    {
+        let db = nsh_app::boot::boot_ledger(&source).unwrap();
+        nsh_app::boot::create_backup(&db, &zip, env!("CARGO_PKG_VERSION")).unwrap();
+    }
+
+    // 当前密文库（本口令 journeyP）带一笔本地数据（恢复后应被备份内容替换）。
+    let dir = make_encrypted_book("lock-restore-current", "本口令 journeyP");
+    let db_path = dir.join("ledger.db");
+    // 应用数据根（RestoreSafetyBackup 的落点；headless 注入临时目录，生产
+    // bin 的注入单点在 main.rs）。
+    let data_root = ScratchDir::new("nsh-lock-restore-root");
+    nsh_app::cross_book::set_default_data_dir(data_root.to_path_buf());
+
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    app.wait_for("id:locked-panel").unwrap();
+
+    // 双逃生门并列常驻：恢复入口与忘口令入口同屏可达。
+    app.wait_for("id:unlock-restore-open").unwrap();
+    assert!(
+        app.screen().count("id:unlock-forgot").unwrap() > 0,
+        "忘口令重置入口与恢复入口并存不互斥"
+    );
+
+    // 选择明文备份 → 确认弹窗：后果警示 + 跨模式警告在屏；明文备份无口令框。
+    app.on_pick_paths(vec![zip.to_path_buf()]).unwrap();
+    app.press("id:unlock-restore-open").unwrap();
+    app.wait_for("text:确认恢复").unwrap();
+    app.wait_for("text:/恢复将替换当前全部数据/").unwrap();
+    app.wait_for("text:加密模式不一致").unwrap();
+    assert_eq!(
+        app.screen().count("id:unlock-restore-passphrase").unwrap(),
+        0,
+        "明文备份无口令框"
+    );
+
+    // 取消：零替换（弹窗关、仍锁定、库文件原样密文）。
+    app.press("id:unlock-restore-cancel").unwrap();
+    app.settle();
+    assert!(
+        app.screen().count("id:locked-panel").unwrap() > 0,
+        "取消后仍留锁定视图"
+    );
+    assert!(matches!(
+        ledger_infra::db::encryption::probe_file_kind(&db_path).unwrap(),
+        ledger_infra::db::encryption::DbFileKind::Encrypted,
+    ));
+
+    // 再进确认 → 恢复执行 → 模式探测接管：明文库原位进会话（备份内容在屏、
+    // 原数据退场、库文件转明文）。
+    app.on_pick_paths(vec![zip.to_path_buf()]).unwrap();
+    app.press("id:unlock-restore-open").unwrap();
+    app.wait_for("text:确认恢复").unwrap();
+    app.press("id:unlock-restore-confirm").unwrap();
+    app.wait_for("id:nav-transactions").unwrap();
+    open_transactions(&mut app);
+    app.wait_for("text:备份源数据").unwrap();
+    assert!(
+        !app.shows("密文会话数据"),
+        "恢复替换当前数据：原密文库数据退场：{:?}",
+        app.screen().texts()
+    );
+    assert!(matches!(
+        ledger_infra::db::encryption::probe_file_kind(&db_path).unwrap(),
+        ledger_infra::db::encryption::DbFileKind::Plaintext,
+    ));
+}
+
+/// 锁定屏「从备份文件恢复」·密文备份臂（issue #2131）：上下文口令自动试开
+///（解锁框手输过的口令随意图携带，密文备份先自动试开、口令框不显出）→
+/// 试开失败（口令错误）不关弹窗、口令框就地显出重输（解锁同语义）→ 正确
+/// 口令恢复成功 → 模式探测接管：恢复出密文库凭该口令走解锁编排进会话。
+#[test]
+fn locked_view_restore_encrypted_backup_context_pass_retry_enters_session() {
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+    const PASS_SOURCE: &str = "备份源口令 journeyA";
+
+    // 备份源：密文库（一笔「密文备份源」）→ 密文备份包（产物加密随源库走）。
+    let source = make_book("lock-restore-enc-source");
+    {
+        let db = nsh_app::boot::boot_ledger(&source).unwrap();
+        let account = seed_cash_account(&db);
+        seed_transaction(
+            &db,
+            TxnSeed {
+                account: &account,
+                to_account: None,
+                kind: TransactionKind::Expense,
+                amount_cents: 2_500,
+                date: &test_date(0),
+                category_id: None,
+                merchant_id: None,
+                note: Some("密文备份源".to_owned()),
+            },
+        );
+    }
+    ledger_infra::db::encryption::enable_encryption_for_file(
+        &source.join("ledger.db"),
+        PASS_SOURCE,
+    )
+    .unwrap();
+    let zip = ScratchFile::new("nsh-lock-restore-enc", "restore.db.zip");
+    {
+        let db = nsh_app::boot::unlock_encrypted_book(PASS_SOURCE).unwrap();
+        nsh_app::boot::create_backup(&db, &zip, env!("CARGO_PKG_VERSION")).unwrap();
+    }
+
+    // 当前密文库（不同口令 journeyB；本地数据「密文会话数据」，恢复后退场）。
+    let dir = make_encrypted_book("lock-restore-enc-current", "当前口令 journeyB");
+    let db_path = dir.join("ledger.db");
+    let data_root = ScratchDir::new("nsh-lock-restore-enc-root");
+    nsh_app::cross_book::set_default_data_dir(data_root.to_path_buf());
+
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    app.wait_for("id:locked-panel").unwrap();
+
+    // 上下文口令：解锁框手输当前库口令（对备份是错误口令——自动试开真实场景：
+    // 用户先试自己记得的口令）。
+    app.type_text("id:unlock-passphrase", "当前口令 journeyB")
+        .unwrap();
+    app.on_pick_paths(vec![zip.to_path_buf()]).unwrap();
+    app.press("id:unlock-restore-open").unwrap();
+    app.wait_for("text:确认恢复").unwrap();
+    assert_eq!(
+        app.screen().count("id:unlock-restore-passphrase").unwrap(),
+        0,
+        "上下文口令在场：口令框不显出（确认先自动试开）"
+    );
+
+    // 自动试开失败（口令错误）：错误在弹窗内就地呈现、弹窗不关、口令框显出。
+    app.press("id:unlock-restore-confirm").unwrap();
+    app.wait_for("text:/恢复失败: 口令错误或文件损坏/").unwrap();
+    assert_eq!(
+        app.screen().count("id:unlock-restore-passphrase").unwrap(),
+        1,
+        "试开失败后口令框就地显出可重输"
+    );
+    assert!(
+        app.screen().count("id:locked-panel").unwrap() > 0,
+        "失败不关弹窗、库文件未替换（仍留锁定视图）"
+    );
+    assert!(matches!(
+        ledger_infra::db::encryption::probe_file_kind(&db_path).unwrap(),
+        ledger_infra::db::encryption::DbFileKind::Encrypted,
+    ));
+
+    // 重输备份主口令 → 恢复成功 → 恢复出密文库凭同口令解锁进会话（备份内容
+    // 在屏、原数据退场、库文件仍密文且凭备份口令可解）。
+    app.type_text("id:unlock-restore-passphrase", PASS_SOURCE)
+        .unwrap();
+    app.press("id:unlock-restore-confirm").unwrap();
+    app.wait_for("id:nav-transactions").unwrap();
+    open_transactions(&mut app);
+    app.wait_for("text:密文备份源").unwrap();
+    assert!(
+        !app.shows("密文会话数据"),
+        "恢复替换当前数据：原密文库数据退场：{:?}",
+        app.screen().texts()
+    );
+    assert!(matches!(
+        ledger_infra::db::encryption::probe_file_kind(&db_path).unwrap(),
+        ledger_infra::db::encryption::DbFileKind::Encrypted,
+    ));
+    assert!(
+        ledger_infra::db::encryption::verify_source_passphrase(&db_path, PASS_SOURCE).is_ok(),
+        "恢复出的密文库凭备份主口令可解（会话已凭同口令开启）"
+    );
+}
+
 /// 加密卡写面平价全旅程（issue #2088 交付②：修改主口令 / 关闭加密，旧壳
 /// `change_encryption_passphrase` / `disable_encryption` 消费面）：开启加密
 /// → 密文会话形态 → 修改主口令（error 级确认；旧口令错误就地报错原库原样；
