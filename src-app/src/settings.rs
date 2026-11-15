@@ -52,7 +52,7 @@ use crate::app::book_dir;
 use crate::assembly::CategoryOption;
 use crate::danger::{DangerConfirmSpec, DangerLevel, DangerOutcome, danger_confirm};
 use crate::design::font_size;
-use crate::{boot, keep_mounted, nav, nav_model, select, views};
+use crate::{boot, keep_mounted, nav, nav_model, select, updater, views};
 
 // ---------------------------------------------------------------------------
 // 词表（旧壳 settings.* zh-CN 词条原样；i18n 框架级方案不在本票，字面承载）。
@@ -528,10 +528,17 @@ fn placeholder_pane(tab: SettingsTab, palette: views::ViewPalette) -> View {
 
 /// 通用页签内容。
 fn general_pane(palette: views::ViewPalette) -> View {
-    view()
+    let mut pane = view()
         .flex_col()
         .app_class("gap-3")
-        .children(vec![appearance_card(palette), log_card(palette)])
+        .children(vec![appearance_card(palette), log_card(palette)]);
+    // 应用更新卡（#2134，UpdateSettings.vue 更新卡的 NSH 对应件）：更新面仅
+    // 在打包安装形态可用（包内 nsh-updater.json 在场；开发运行无包配置、卡
+    // 不呈现——Web 对照 surface=null 不渲染同口径）。
+    if updater::updater_setup().is_some() {
+        pane = pane.child(updater::update_card(palette));
+    }
+    pane
 }
 
 /// 外观卡（三态下拉；选择 → 存储 → 全局显色，读/写/应用任一环拆除即红——
