@@ -969,7 +969,12 @@ fn perform_submit(
 /// 出账户币种，ADR-0134 决策 5；出资分解 = 首条出资账户币种——域准入要求逐
 /// 条与交易币种一致，多账户跨币种不做；无账户缺省 = 展示币种设备偏好
 ///（[#2136 设置③展示币种卡，键 `default_currency`]，缺 key 回默认 CNY 同
-/// 口径，旧壳 store.defaultCurrency 的表单预选消费面同位），有账户上下文的
+/// 口径，旧壳 store.defaultCurrency 的表单预选消费面同位；接线由 headless
+/// 平价对表补钉钉住：
+/// tests/app_headless.rs `txn_form_currency_preselect_follows_display_currency_pref`——
+/// 展示币种偏好（键 `default_currency`）→ 表单币种预选，删除本接线即红；
+/// 票面未点名，属与旧壳 store.defaultCurrency 同位的必要平价，code-review
+/// 交付注记）。有账户上下文的
 /// 提交必选账户）。
 fn selected_currency(state: &TxnFormState, sources: &TxnFormSources) -> String {
     let account_id = if state.family.get() == FormFamily::Funding {

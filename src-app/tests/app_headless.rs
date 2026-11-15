@@ -2059,6 +2059,34 @@ fn suppression_gate_blocks_create_keys_while_editable_focused() {
     );
 }
 
+/// 展示币种偏好 → 新建交易表单币种预选（#2139 平价对表补钉，code-review：
+/// txn_form::selected_currency 无账户缺省读展示币种设备偏好的接线无测试
+/// 钉住——与旧壳 store.defaultCurrency 的表单预选消费面同位，票面未点名的
+/// 必要平价）。预置偏好 USD（键 default_currency）→ 记支出表单未选账户时
+/// 币种预选即 USD（非账户币种：造数账户为 CNY 而不选中——缺省读的是设备
+/// 偏好）。「删除即红」负向条目（ADR-0087）：拆
+/// selected_currency 尾部的 unwrap_or_else(display_currency_pref) 接线
+///（回退出厂 CNY 常量）→ 本测 USD 断言红（红绿实证见交付报告）。
+#[test]
+fn txn_form_currency_preselect_follows_display_currency_pref() {
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("txn-form-display-currency-pref");
+    let storage = storage_shard(&[("default_currency", "\"USD\"")]);
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        seed_cash_account(&db);
+    }
+
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config_with_storage_shard(storage)).unwrap();
+    open_transactions(&mut app);
+    open_create_form(&mut app, "id:tx-add-expense", "记一笔 · 支出");
+
+    // 未选账户的币种预选 = 展示币种设备偏好（USD），非出厂/非账户币种。
+    app.wait_for("id:tx-form-currency >> text:USD").unwrap();
+}
+
 /// 抑制闸门——记一笔族（Overlay Suppression）：注册抑制的弹层（期间选择
 /// 弹层）开着时 a/z/i 不派发（弹窗不开），关弹层后同键生效。
 /// 「删除即红」负向条目（ADR-0087）：删掉处理器中的 `overlay::has_open_overlay`
