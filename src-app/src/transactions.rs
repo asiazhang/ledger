@@ -154,8 +154,8 @@ type SourceJumpDispatch = Arc<dyn Fn(ledger_transaction::TransactionSourceKind, 
 
 /// 表格级行为委托处理器闭集（#2061 的分发端；旧壳 transaction-table-actions
 /// 的本壳对应形态——装配行带交互载荷，自绘格按格键命中、载荷分发）：视图
-/// 装配一次传入 [`render_cell`]；只读消费方（搜索视图，模块注「先平价只读」）
-/// 传 None——自绘格退回纯文本形态，不渲染可点样式、不挂空接缝。
+/// 装配一次传入 [`render_cell`]；交互消费方（交易列表与搜索视图 #2138 同一
+/// 装配）各自装配一份，闭包面归各自视图（下钻落点与反馈条位不同）。
 #[derive(Clone)]
 pub(crate) struct CellActions {
     /// 账户原子下钻（账户 id）。
@@ -175,8 +175,11 @@ fn accent_color() -> AdaptiveColor {
 }
 
 /// 来源种类 → 导航域种类（装配载荷是域闭集，跳转目标计算吃导航域闭集——
-/// 映射归 UI 层，与列对齐枚举映射同形）。
-fn source_nav_kind(kind: ledger_transaction::TransactionSourceKind) -> nav_model::SourceKind {
+/// 映射归 UI 层，与列对齐枚举映射同形；交易列表与搜索视图（#2138）消费
+/// 同一单点）。
+pub(crate) fn source_nav_kind(
+    kind: ledger_transaction::TransactionSourceKind,
+) -> nav_model::SourceKind {
     match kind {
         ledger_transaction::TransactionSourceKind::InstallmentPlan => {
             nav_model::SourceKind::InstallmentPlan
@@ -197,9 +200,9 @@ fn source_nav_kind(kind: ledger_transaction::TransactionSourceKind) -> nav_model
 /// 着色（旧壳金额列着色口径），账户/商户/来源/备注四格在委托处理器在场时按
 /// 装配载荷渲染可点原子（accent 色文本 + test_id + on_press 分发——accounts
 /// 视图可点格先例同形），其余列平文——格文本仍取自数据（`cell.text`），本函数
-/// 只补色与交互。只读消费方（actions None）或载荷缺席 → 纯文本形态（与既有
-/// 呈现零差异）。掩码态照常着色（掩码隐藏数字，不隐藏方向，旧壳隐私保留项
-/// 同口径）。交易列表（交互）与搜索视图（只读）共用。
+/// 只补色与交互。委托缺席或载荷缺席 → 纯文本形态（与既有呈现零差异）。掩码
+/// 态照常着色（掩码隐藏数字，不隐藏方向，旧壳隐私保留项同口径）。交易列表
+/// 与搜索视图（#2138）共用。
 pub(crate) fn render_cell(
     rows_signal: Signal<Vec<RowCells>>,
     actions: Option<CellActions>,
@@ -244,7 +247,8 @@ pub(crate) fn render_cell(
 /// 交互格渲染（#2061）：命中可点载荷 → 可点原子元素（accent 色文本 +
 /// test_id + on_press 分发；accounts 视图名称列先例同形）；未命中（该格无
 /// 载荷：占位「-」/ 续行空格）返回 None → 纯文本路径。单行截断与纯文本路径
-/// 同纪律（虚拟滚动固定行高，长文本不换行）。
+/// 同纪律（虚拟滚动固定行高，长文本不换行）。（搜索视图 #2138 同消费：
+/// 委托缺席时整体退纯文本路径。）
 fn interactive_cell(
     cell: &DataTableCell,
     rows_signal: &Signal<Vec<RowCells>>,
