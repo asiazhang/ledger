@@ -226,12 +226,21 @@ pub(crate) fn currencies_pane(palette: views::ViewPalette) -> View {
         }
     });
 
-    // 展示币种（设备偏好：初值 = 存储读路径；变更即落盘——旧壳
-    // setDefaultCurrency 同语义，无后端往返）。
+    // 展示币种（设备偏好：初读同源双写不触发、选点变化才写盘——与本位币
+    // 卡同形（code-review：原实现初值 Some(pref) 使 effect 初挂即写一次存
+    // 储，进页即写盘与本位币卡口径不一致）；变更即落盘——旧壳
+    // setDefaultCurrency 同语义，无后端往返；写失败不静默（告警 + 会话内
+    // 仍生效，下次启动回出厂——外观卡同取舍）。
+    let display_persisted = signal(display_currency_pref());
     let display_selected = signal(Some(display_currency_pref()));
     effect(move || {
-        if let Some(code) = display_selected.get() {
+        let current = display_selected.get();
+        let persisted = display_persisted.get_untracked();
+        if let Some(code) = current
+            && persisted != code
+        {
             store_display_currency(&code);
+            display_persisted.set(code);
         }
     });
 

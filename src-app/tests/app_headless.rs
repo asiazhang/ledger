@@ -19471,6 +19471,15 @@ fn settings_view_currencies_cards_load_change_and_persist() {
     let mut app = Headless::start(desktop_config_with_storage_shard(storage.clone())).unwrap();
     open_settings_tab(&mut app, "currencies");
 
+    // 初挂不写盘（code-review，与本位币卡「初读同源双写不触发」同形）：
+    // 进页未变更不落存储键——旧实现初挂 effect 即写 CNY 一次，回退初挂即写
+    // 形状本断言红。
+    assert!(
+        !storage.entries().contains_key("default_currency"),
+        "进页未变更不写盘：{:?}",
+        storage.entries()
+    );
+
     // 本位币基准初读回显（权威读单点；删读接缝 → 触发件空占位即红）。
     app.wait_for("text:CNY - 人民币").unwrap();
     // 展示币种初值（出厂 CNY）。
