@@ -1263,8 +1263,6 @@ fn restore_modal_body(state: BackupUiState, owner: Owner, palette: views::ViewPa
             (RESTORE_CROSS_MODE_TITLE, RESTORE_TO_PLAINTEXT_WARN)
         }
     });
-    let show_pass = intent.backup_encrypted || state.restore_pass_revealed.get();
-    let busy = state.restore_busy.get();
     view()
         .flex_col()
         .app_class("gap-2")
@@ -1303,18 +1301,38 @@ fn restore_modal_body(state: BackupUiState, owner: Owner, palette: views::ViewPa
                         .test_id("data-restore-cross-mode"),
                 )
         }))
-        .children(show_pass.then(|| pass_input(
-            state.restore_pass,
-            palette,
-            "data-restore-passphrase",
-            RESTORE_PASS_LABEL,
-            RESTORE_PASS_PLACEHOLDER,
-        )))
-        .children(state.restore_error.get().map(|err| {
-            text(err.clone())
-                .text_size(px(font_size::CAPTION))
-                .text_color(views::view_palette().danger_fg)
-                .test_id("data-restore-error")
+        // 口令框与错误位是「弹窗开着期间就地变化」的条件结构：when 分支闭包
+        // untracked 求值（开弹时一次），后续显出/置错不再重跑——条件段用
+        // dynamic（读什么变什么重造，nsh-core flow.rs Region::Dynamic），按钮
+        // 禁用面用响应式闭包（prop 绑定逐次求值）。修复前静态 children/静态
+        // disabled 开弹即冻结：密文备份口令输入后确认按钮永不可按（无法提交）、
+        // 失败错误行不呈现、后端报需口令后口令框不显出（headless
+        // settings_restore_modal_encrypted_backup_submits_after_passphrase_typed
+        // 钉住）。交叉模式块随意图固定，静态段承载。
+        .child(dynamic(move || {
+            let Some(intent) = state.restore_intent.get() else {
+                return view();
+            };
+            let show_pass = intent.backup_encrypted || state.restore_pass_revealed.get();
+            if !show_pass {
+                return view();
+            }
+            pass_input(
+                state.restore_pass,
+                palette,
+                "data-restore-passphrase",
+                RESTORE_PASS_LABEL,
+                RESTORE_PASS_PLACEHOLDER,
+            )
+        }))
+        .child(dynamic(move || match state.restore_error.get() {
+            Some(err) => view().child(
+                text(err)
+                    .text_size(px(font_size::CAPTION))
+                    .text_color(views::view_palette().danger_fg)
+                    .test_id("data-restore-error"),
+            ),
+            None => view(),
         }))
         .child(
             view()
@@ -1326,7 +1344,7 @@ fn restore_modal_body(state: BackupUiState, owner: Owner, palette: views::ViewPa
                         .app_class(
                             "px-3 py-1.5 rounded-(--radius) border border-border text-foreground hover:bg-accent disabled:opacity-40",
                         )
-                        .disabled(busy)
+                        .disabled(move || state.restore_busy.get())
                         .child(
                             text(RESTORE_CANCEL)
                                 .text_size(px(font_size::SECONDARY))
@@ -1343,7 +1361,7 @@ fn restore_modal_body(state: BackupUiState, owner: Owner, palette: views::ViewPa
                         .app_class(
                             "px-3 py-1.5 rounded-(--radius) bg-destructive hover:opacity-90 disabled:opacity-40",
                         )
-                        .disabled(!can_submit_restore(state) || busy)
+                        .disabled(move || !can_submit_restore(state) || state.restore_busy.get())
                         .child(
                             text(RESTORE_CONFIRM_ACTION)
                                 .text_size(px(font_size::SECONDARY))
@@ -2969,7 +2987,6 @@ fn parked_list(palette: views::ViewPalette, state: SyncState) -> View {
 /// 引导向导弹窗内容（警示块 + 预检态 + 口令输入 + 确认行）。
 fn bootstrap_modal_body(state: SyncState, owner: Owner, palette: views::ViewPalette) -> View {
     let body_owner = owner;
-    let busy = state.bootstrapping.get();
     let has_checkpoint = state.checkpoint.get().is_some();
     view()
         .flex_col()
@@ -3037,12 +3054,20 @@ fn bootstrap_modal_body(state: SyncState, owner: Owner, palette: views::ViewPale
         .child(pass_input(
             state.bootstrap_pass, palette, "sync-bootstrap-passphrase", "主口令", SYNC_BOOTSTRAP_PASS_PLACEHOLDER,
         ))
-        .children(state.bootstrap_error.get().map(|err| {
-            text(err.clone())
-                .text_size(px(font_size::CAPTION))
-                .text_color(views::view_palette().danger_fg)
-                .test_id("sync-bootstrap-error")
-        }))
+        // 错误行随弹窗开着期间的信号变化（引导失败置错误）：when 分支闭包
+        // untracked 求值、静态 children 开弹即冻结，失败错误行不呈现——同弹
+        // 窗 precheck_error 同款 when 形态（与恢复确认弹窗同款修复；无
+        // headless 验证面〔同步引导旅程需通道桩，headless 面未覆盖〕，机械
+        // 同款修复）。
+        .child(when(
+            move || state.bootstrap_error.get().is_some(),
+            move || {
+                text(move || state.bootstrap_error.get().unwrap_or_default())
+                    .text_size(px(font_size::CAPTION))
+                    .text_color(views::view_palette().danger_fg)
+                    .test_id("sync-bootstrap-error")
+            },
+        ))
         .child(
             view()
                 .flex_row()
@@ -3053,7 +3078,7 @@ fn bootstrap_modal_body(state: SyncState, owner: Owner, palette: views::ViewPale
                         .app_class(
                             "px-3 py-1.5 rounded-(--radius) border border-border text-foreground hover:bg-accent disabled:opacity-40",
                         )
-                        .disabled(busy)
+                        .disabled(move || state.bootstrapping.get())
                         .child(
                             text(SYNC_BOOTSTRAP_CANCEL)
                                 .text_size(px(font_size::SECONDARY))
@@ -3070,7 +3095,7 @@ fn bootstrap_modal_body(state: SyncState, owner: Owner, palette: views::ViewPale
                         .app_class(
                             "px-3 py-1.5 rounded-(--radius) bg-warning hover:opacity-90 disabled:opacity-40",
                         )
-                        .disabled(busy || !has_checkpoint)
+                        .disabled(move || state.bootstrapping.get() || !has_checkpoint)
                         .child(
                             text(SYNC_BOOTSTRAP_CONFIRM)
                                 .text_size(px(font_size::SECONDARY))
