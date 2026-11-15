@@ -22,12 +22,16 @@
 //!   引导失败即无会话、本函数不被调用（无锁定/失败占位形态，无解锁/重置恢复
 //!   编排点——恢复宿主随迁移系列票开门时在同一编排点补拉起）；
 //! - [`exit_fallback`]：进程退出兜底（bin 主函数在平台事件循环返回后调用）。
-//!   **裁决留痕**：nsh-platform-linux 0.4.0 / nsh-core 0.4.0 无 `RunEvent::Exit`
-//!   等价物（`AppOptions` 无退出回调字段，`run_app` 是闭合函数，窗口 destroy
-//!   钩子〔`connect_destroy` / `AppView::stop`〕为平台内部实现、不对应用层暴露，
-//!   亦无信号处理）；`run_app` 同步返回 = GTK 主循环结束 = 窗口关闭的正常退出
-//!   路径，在其返回后调用即旧壳 `RunEvent::Exit` 的正常退出触发面（旧壳
-//!   `RunEvent::Exit` 同样不覆盖 SIGKILL/崩溃；覆盖面一致，零新机制）。
+//!   **裁决留痕**：nsh-platform-linux（0.4.0 复核至 0.5.1，#2133 升级时再证）
+//!   无 `RunEvent::Exit` 等价物（`AppOptions` 无退出回调字段，`run_app` 是闭合
+//!   函数，窗口 destroy 钩子〔`connect_destroy` / `AppView::stop`〕为平台内部
+//!   实现、不对应用层暴露，亦无信号处理）；0.5.0 起 nsh-core 新增
+//!   `element::desktop::on_app_quit`（核心 quit listeners），但平台 standalone
+//!   退出路径（`quit_application` → 窗口 close → `app.quit`）不调用 listeners，
+//!   核心回调在 Linux standalone 形态不触发——`run_app` 同步返回 = GTK 主循环
+//!   结束 = 窗口关闭的正常退出路径，在其返回后调用即旧壳 `RunEvent::Exit` 的
+//!   正常退出触发面（旧壳 `RunEvent::Exit` 同样不覆盖 SIGKILL/崩溃；覆盖面
+//!   一致，零新机制）。
 //!
 //! 每轮业务可用性判定：NSH 经 [`business_availability`] 注册真门检（锁定
 //! 扇门查进程级加密锁定门，失败扇门由会话存在性承载）——密文库解锁前调

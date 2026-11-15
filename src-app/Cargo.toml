@@ -41,9 +41,10 @@ serde = { version = "1", features = ["derive"] }
 # 泵的无界通道，#2081）。
 tokio = { version = "1", features = ["rt", "macros", "time", "sync"] }
 # NSH 框架经 workspace 精确锁定消费（ADR-0145 决策 2 / issue #2017 AC：0.x 连续
-# breaking，升级显式成票；default-features = false 关掉 QuickJS VM，Rust 模式）。
-# 平台后端按目标门禁（先例：根包窗口状态插件的 target 三元组条件）——立桩期
-# 仅 Linux（硬伤清单的战场）；macOS / Windows 随迁移系列票逐平台开门。
+# breaking，升级显式成票——0.4.0→0.5.1 见 #2133；default-features = false 关掉
+# QuickJS VM，Rust 模式）。平台后端按目标门禁（先例：根包窗口状态插件的 target
+# 三元组条件）——立桩期仅 Linux（硬伤清单的战场）；macOS / Windows 随迁移系列
+# 票逐平台开门。
 nsh-core.workspace = true
 # UI 组件集（issue #2018 首屏表格）：DataTable（虚拟化大表）与 Pagination（分页条）
 # 消费面；平台宿主缺省已注册同一组件集（nsh-platform-linux app.rs 缺省 ui_sets =
@@ -192,14 +193,16 @@ resolver = "3"
 # 三周四版连续 breaking，升级必须显式成票——全部精确版本（`=`）钉死于 workspace
 # 声明，成员经 `workspace = true` 消费，`cargo update` 不会漂入新版本。全部
 # default-features = false：Rust 模式不带 QuickJS VM（nsh-engine / nsh-platform-linux
-# 的 default 含 `js`，ADR-0145 决策 1），nsh-base 的 default 含代码高亮（syntect，
-# 立桩消费面用不到）；`nsh-testing` 0.4.0 的 default 不含 QuickJS，测试侧原样消费。
+# 的 default 含 `js`，ADR-0145 决策 1），nsh-base 的 default 含代码高亮（syntect）
+# 与 editor/rich-editor/term，立桩消费面用不到；0.5.0 起 plot 组件模块也走
+# feature 门控（走势图消费面，本仓显式启用 `plot`）；`nsh-testing` 0.5.1 的
+# default 仍是 ["live"]（不含 QuickJS），测试侧原样消费。
 [workspace.dependencies]
-nsh-core = { version = "=0.4.0" }
-nsh-base = { version = "=0.4.0", default-features = false }
-nsh-engine = { version = "=0.4.0", default-features = false }
-nsh-platform-linux = { version = "=0.4.0", default-features = false }
-nsh-testing = { version = "=0.4.0", default-features = false }
+nsh-core = { version = "=0.5.1" }
+nsh-base = { version = "=0.5.1", default-features = false, features = ["plot"] }
+nsh-engine = { version = "=0.5.1", default-features = false }
+nsh-platform-linux = { version = "=0.5.1", default-features = false }
+nsh-testing = { version = "=0.5.1", default-features = false }
 
 # 易 panic 构造六件套 deny 门禁（issue #432 / ADR-0060）：门禁约束生产路径；
 # 测试目标经 crate 根与集成/BDD 测试 crate 头部 cfg_attr(test, allow) 整体豁免，

@@ -240,6 +240,16 @@
 //! 生成器，spec #458）随本包构建——headless 集成测试经 `CARGO_BIN_EXE_ledger-perf`
 //! 消费，工具单测归 perf-bench.yml 每日基准承接（test-exec.ts EXEMPT_BINS 登记）。
 
+// NSH 0.5 起 Rust 应用 crate 根必须声明原生模块（nsh CLI 的 describe/run 构
+// 建面硬要求，缺失即生成器 stand-in 构建失败并提示；#2133 升级时补齐）：
+// 本壳无 TSX 导出面（纯 Rust 模式，ADR-0145 决策 1），注册集留空——组件面
+// 全部来自 `nsh_base::registry()`（本仓 main.rs 直跑走平台缺省
+// ui_sets，`nsh run` 生成 runner 亦自行注入 base 集后再拼本集，两者均与
+// 0.4 形态一致）；空集不改变任何组件注册语义。宏另在 crate 根生成
+// `registry()`（0.5 文档形态），当前零消费方。
+#[nsh_core::element::native_module("app/native")]
+fn native(_registry: &mut nsh_core::element::Registry) {}
+
 pub mod accounts;
 pub mod adaptive;
 pub mod ai_prompt;

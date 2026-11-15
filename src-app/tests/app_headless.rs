@@ -105,12 +105,12 @@ fn serial_lock() -> std::sync::MutexGuard<'static, ()> {
 }
 
 /// 锚点先于按压的组合子（issue #2114）：先等 `anchor` 落屏，再按压
-/// `target`。`press` 内建等待属框架层语义（nsh-testing 0.4.0 精确钉版，
-/// ADR-0145 决策 2；`press` 不等目标出现，落屏前按压即 Err），仓内以本
-/// 组合子收口已知竞态站点（CI 三首崩 + #2068 范围外报告站点），已知站点
-/// 之外不改造；上游化建议与站点清单见 issue #2114 票评论（先例 #2089
-/// 框架层留证形态）。`anchor` 通常取 `target` 自身（等目标落屏再按），
-/// 目标是行内动作时取宿主行锚。
+/// `target`。`press` 内建等待属框架层语义（nsh-testing 精确钉版，ADR-0145
+/// 决策 2；`press` 不等目标出现，落屏前按压即 Err；0.5.1 步骤 settle 语义见
+/// 上游 #1729），仓内以本组合子收口已知竞态站点（CI 三首崩 + #2068 范围外
+/// 报告站点），已知站点之外不改造；上游化建议与站点清单见 issue #2114 票
+/// 评论（先例 #2089 框架层留证形态）。`anchor` 通常取 `target` 自身（等目标
+/// 落屏再按），目标是行内动作时取宿主行锚。
 fn press_after(app: &mut Headless, anchor: &str, target: &str) -> Result<(), String> {
     app.wait_for(anchor)?;
     app.press(target)

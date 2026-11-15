@@ -16,6 +16,7 @@
 
 ### Changed
 
+- **壳层框架**：NSH 0.4.0 → 0.5.1（[#2133]；自动更新重建前置 [#2134]）。breaking 消解仅两处：nsh-base 0.5.0 起 plot 组件模块改 feature 门控（本仓显式启用 `plot`）、`nsh run` 构建面要求 crate 根声明 `#[native_module]`（本壳无 TSX 导出面，空注册集）；Rust 模式无 QuickJS 不变。0.5.0 带入的列表滚动、文本输入（含 IME）、弹层焦点等修复随框架升级直接受益，行为面以升级验证（headless 全量 2871 用例与基线一致全绿）为准。
 - **交易列表**：全量视图（无日期过滤）翻页提速——同筛选条件连续翻页不再重跑全量 `COUNT(*)`（真实库约 117ms/次叠加进翻页耗时），总数改为会话内复用；记一笔 / 编辑 / 删除 / 导入后总数照常刷新，带日期视图不受影响（[#2011]）。
 
 ## [0.11.2] - 2026-11-01
@@ -579,3 +580,5 @@
 [#1999]: https://github.com/asiazhang/ledger/issues/1999
 [#2004]: https://github.com/asiazhang/ledger/issues/2004
 [#2011]: https://github.com/asiazhang/ledger/issues/2011
+[#2133]: https://github.com/asiazhang/ledger/issues/2133
+[#2134]: https://github.com/asiazhang/ledger/issues/2134

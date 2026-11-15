@@ -31,8 +31,8 @@ fn main() -> impl std::process::Termination {
     use nsh_platform_linux as platform;
     const APP_ID: &str = "com.zhangheng.ledger.nsh";
     // 自动备份退出兜底（issue #2078）：平台事件循环返回 = 窗口关闭的正常退出
-    // 路径（nsh-platform-linux 0.4.0 无 RunEvent::Exit 等价物，裁决见
-    // backup_host 模块文档）——退出前若脏且当天尚未自动备份过则补一次。
+    // 路径（nsh-platform-linux 无 RunEvent::Exit 等价物，复核至 0.5.1；裁决
+    // 见 backup_host 模块文档）——退出前若脏且当天尚未自动备份过则补一次。
     let exit_code = platform::run_app(
         platform::AppSource::Rust(nsh_app::app::root().app_id(APP_ID)),
         platform::AppOptions {
