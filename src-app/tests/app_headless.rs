@@ -4382,6 +4382,115 @@ fn sidebar_renders_groups_fixed_items_and_hides_contained_members() {
     );
 }
 
+/// 品牌行眼睛按钮（issue #2137，spec #2126 功能平价：旧壳侧栏标题行金额隐私
+/// 眼睛按钮的 NSH 对应形态）：点击切换设备轻量设置项 `amount_privacy_enabled`
+/// （同键同值形态，值为 JSON 布尔字面量）；掩码消费面装载时机读取——离位再
+/// 落位即按新态装配，金额格翻转为掩码、再切回还原，存储值随两态持久。
+/// 「删除即变红」负向条目：删品牌行按钮接线（on_press → 写入口
+/// `set_amount_privacy_enabled`）→ 存储恒缺，落位重挂后明文金额不翻转（本测红）。
+#[test]
+fn sidebar_brand_privacy_toggle_masks_and_restores_amounts() {
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("brand-privacy");
+    seed_expense_series(&dir, 1);
+
+    let storage = MemoryStorage::new(Vec::new());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config_with_backend(storage.clone())).unwrap();
+    open_transactions(&mut app);
+    // 装载锚纪律：先等首行落位，再按压/断言（挂载 ≠ 装载）。
+    app.wait_for("text:¥25").unwrap();
+
+    // 眼睛按钮：点击即切换（写存储 = JSON 布尔字面量，旧壳 saveLocal 同形）。
+    app.press("id:brand-privacy").unwrap();
+    assert_eq!(
+        storage
+            .entries()
+            .get("amount_privacy_enabled")
+            .map(String::as_str),
+        Some("true"),
+        "开启即持久化（设备轻量设置项，重启保持的另一半由重启测试断言）"
+    );
+
+    // 金额格翻转为掩码（消费面装载时机读取：离位再落位即按新态装配）。
+    app.press("id:nav-dashboard").unwrap();
+    app.wait_for("id:net-worth-card").unwrap();
+    app.press("id:nav-transactions").unwrap();
+    app.wait_for("text:••••").unwrap();
+    assert!(
+        !app.shows("¥25"),
+        "隐私开启后明文金额不在屏：{:?}",
+        app.screen().texts()
+    );
+
+    // 再切回还原：明文金额回屏、掩码离屏，存储回显式 false（不做删记录）。
+    app.press("id:brand-privacy").unwrap();
+    app.press("id:nav-dashboard").unwrap();
+    app.wait_for("id:net-worth-card").unwrap();
+    app.press("id:nav-transactions").unwrap();
+    app.wait_for("text:¥25").unwrap();
+    assert!(
+        !app.shows("••••"),
+        "隐私关闭后掩码不在屏：{:?}",
+        app.screen().texts()
+    );
+    assert_eq!(
+        storage
+            .entries()
+            .get("amount_privacy_enabled")
+            .map(String::as_str),
+        Some("false"),
+        "关闭持久化为字面 false（旧壳 saveLocal 同形）"
+    );
+}
+
+/// 品牌行眼睛按钮跨重启保持（issue #2137：设备级持久——`Storage` 平台文件
+/// 侧 KV，不进 SQLite、不与旧壳共享）：开启后重启（同一存储后端起第二个
+/// 引擎）落位即掩码，关闭后重启明文回屏。删写入口或删按钮接线任一环，
+/// 重启后明文不翻转即红。
+#[test]
+fn sidebar_brand_privacy_toggle_persists_across_restart() {
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("brand-privacy-restart");
+    seed_expense_series(&dir, 1);
+
+    let storage = MemoryStorage::new(Vec::new());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config_with_backend(storage.clone())).unwrap();
+    open_transactions(&mut app);
+    app.wait_for("text:¥25").unwrap();
+
+    // 开启 → 重启：设备级持久，落位即掩码。
+    app.press("id:brand-privacy").unwrap();
+    drop(app);
+    nsh_app::app::reset_book_assembly();
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config_with_backend(storage.clone())).unwrap();
+    open_transactions(&mut app);
+    app.wait_for("text:••••").unwrap();
+    assert!(
+        !app.shows("¥25"),
+        "重启后隐私开启保持：{:?}",
+        app.screen().texts()
+    );
+
+    // 关闭 → 重启：默认关持久，明文回屏。
+    app.press("id:brand-privacy").unwrap();
+    drop(app);
+    nsh_app::app::reset_book_assembly();
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config_with_backend(storage.clone())).unwrap();
+    open_transactions(&mut app);
+    app.wait_for("text:¥25").unwrap();
+    assert!(
+        !app.shows("••••"),
+        "重启后隐私关闭保持：{:?}",
+        app.screen().texts()
+    );
+}
+
 /// 点击导航：侧栏项 → 真实视图落位（账户 #2041 / 攒钱 #2056 起不再占位）→
 /// 回到交易项 → 表格内容区原样（其余未迁移项的占位行为由各自迁移票接手）。
 #[test]
