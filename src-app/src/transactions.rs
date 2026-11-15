@@ -424,11 +424,12 @@ pub(crate) fn table_classes() -> DataTableClasses {
 /// （100 行/页服务端 offset 分页，走域读路径）+ 忙碌指示 + 空态。
 /// 时间维度行（issue #2021 / ADR-0141）：期间步进器 `< 期间标签 >` + 期间
 /// 选择弹层。期间状态 = 日期区间快照（None = 「全部」默认态，与旧壳同）；
-/// 步进/芯片换算与钳制归 [`period`] 纯决策单点，UI 只消费；翻页与周期步进
-/// 两族快捷键（ADR-0140/0141 裸键 `[` `]` `,` `.`）语义等同点击对应控件、
-/// 共用 Overlay Suppression 闸门（[`overlay`]，弹层开着不派发；可编辑焦点
-/// 闸由引擎 keymap `When::Auto` 承担——四键皆为文本编辑键，输入焦点期间不
-/// 派发；桌面立桩无触控轴）。
+/// 步进/芯片换算与钳制归 [`period`] 纯决策单点，UI 只消费；翻页、周期步进
+/// 与记一笔三族快捷键（ADR-0140/0141 裸键 `[` `]` `,` `.`，#2139 裸键
+/// a/z/i）语义等同点击对应控件、共用 Overlay Suppression 闸门
+/// （[`overlay`]，弹层开着不派发；可编辑焦点闸由引擎 keymap `When::Auto`
+/// 承担——各键皆为文本编辑键，输入焦点期间不派发；桌面无触控轴，键盘轴
+/// 直挂不设输入轴闸门）。
 #[component]
 pub(crate) fn TransactionsView() -> impl IntoElement {
     let total = signal(0i64);
@@ -1094,6 +1095,36 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
             return;
         }
         step_period(1);
+    });
+    // 记一笔裸键直达（issue #2139，web CreateShortcut 平价，ADR-0135 决策 5
+    // 收窄后的现役闭集）：a/z/i 直达记支出/记转账/记收入表单弹窗——键位映射
+    // 与 web `CREATE_KIND_KEYS` 同源（expense→a / transfer→z / income→i），
+    // 可用性闭集与 `create-entry-kinds` 同源：三键各自对应交易页创建闭集
+    // （支出/收入/转账）内的 kind，借出/借入与退款不入裸键闭集（借贷走
+    // 「记一笔」菜单预置方向，退款入口由行右键菜单承接）。走既有
+    // `txn_form::CreateEntry` 打开路径（与「记一笔」菜单项同一出口）；裸键
+    // 语义 = 拒绝一切修饰键（引擎 keystroke 精确匹配含修饰位）；`When::Auto`
+    // 缺省（a/z/i 皆文本编辑键，输入焦点期间引擎不派发——可编辑焦点闸，与
+    // 翻页/周期四键先例同形）；处理器体即「闸门 → 派发」两步（无决策半边——
+    // 键位映射闭集即键位表）。
+    on_key("a", move |_| {
+        // Overlay Suppression 闸门（与翻页/周期族共用同一判定，删除任一处即红）。
+        if overlay::has_open_overlay() {
+            return;
+        }
+        form.open_create(txn_form::CreateEntry::Expense);
+    });
+    on_key("z", move |_| {
+        if overlay::has_open_overlay() {
+            return;
+        }
+        form.open_create(txn_form::CreateEntry::Transfer);
+    });
+    on_key("i", move |_| {
+        if overlay::has_open_overlay() {
+            return;
+        }
+        form.open_create(txn_form::CreateEntry::Income);
     });
     // ESC 复位（旧壳 registerViewReset(resetFilters) 同语义：窗口行为守卫在
     // 无弹层 ESC 时消费——本壳等价形态 = 抑制闸门 + 幂等守卫）。弹层开着时
