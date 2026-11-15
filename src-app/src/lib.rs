@@ -300,6 +300,7 @@ pub mod popconfirm;
 pub mod popover;
 pub mod redact;
 pub mod reports;
+pub mod row_focus;
 pub mod savings;
 pub mod scheduled;
 pub mod scheduled_installment;

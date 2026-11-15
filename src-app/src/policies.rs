@@ -36,7 +36,7 @@
 
 use ledger_infra::error::{AppError, Result as InfraResult};
 use nsh_base::{
-    DataTable, DataTableAlign, DataTableApi, DataTableColumn, DataTableRows, button, data_table,
+    DataTable, DataTableAlign, DataTableColumn, DataTableRows, button, data_table,
     input,
 };
 use nsh_core::element::{FontWeight, SharedString};
@@ -764,30 +764,23 @@ pub(crate) fn PoliciesView() -> impl IntoElement {
         )
     });
 
-    // 聚焦行滚动定位（#2140）：封装层虚拟滚动容器的定位句柄（DataTable 的
-    // 组件 ref → scroll_to_row）在 focus 消费后把高亮行滚进视口。触发面 =
-    // 高亮 × 行集（行集落位或失效重读变化即滚——高亮保持到实例消亡，重读
-    // 后仍归位；物品视图同款接缝）。等一帧再调：行集 prop 与行高在下一帧提
-    // 交后组件才可读，本帧直读是旧行集。聚焦 id 不在行集（软删无锚）不滚；
-    // 行集短于视口时空转幂等；窄窗卡片形态不涉及（高亮即全可见）。
+    // 聚焦行滚动定位（#2140）：共享接缝归 crate::row_focus（物品 / 保单两
+    // 消费面同缝——命中行滚进视口的机制与幂等口径见该模块文档）。触发面 =
+    // 高亮 × 行集；窄窗卡片形态不涉及（高亮即全可见）。
     let table_ref = component_ref::<DataTable>();
-    effect(move || {
-        let Some(focused) = highlight.get() else {
-            return;
-        };
-        let Some(index) = rows.get().iter().position(|row| row.id == focused) else {
-            return;
-        };
-        let index = index as u32;
-        view_owner.run(move || {
-            spawn(async move {
-                next_frame().await;
-                if let Some(api) = table_ref.api::<DataTableApi>() {
-                    api.scroll_to_row(index, None);
-                }
-            });
-        });
-    });
+    crate::row_focus::scroll_focused_row_into_view(
+        table_ref,
+        move || {
+            let Some(focused) = highlight.get() else {
+                return None;
+            };
+            rows.get()
+                .iter()
+                .position(|row| row.id == focused)
+                .map(|index| index as u32)
+        },
+        view_owner,
+    );
 
     // 行快照反查（编辑 / 删除的目标）：域行快照内单点；行缺席（并发软删）
     // 动作静默退场（弹窗不呈现半态）。
