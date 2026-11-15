@@ -19601,6 +19601,40 @@ fn settings_view_scheduled_auto_execution_off_does_not_land_occurrences() {
     )
     .unwrap();
     assert!(ledger_scheduled::auto_run::is_enabled(), "开关联动镜像翻转");
+    // 单击恰好一次推送/翻转（code-review：可区分双翻的现场断言；ADR-0087）：
+    // 每次按压后镜像与偏好落盘都恰好翻转一次——再按翻回关、三按复开；若一
+    // 次点击双翻净零或镜像双推漂移，任一读回断言即红。（nsh-base switch 按
+    // 压语义已实读：命中面恒是内层单点，开关本体 on_press 只在开关面命中、
+    // 行替身只在行面命中，一次点击只达其中一面；headless 下开关本体不暴露
+    // 可按压面（role/label 选择器均不可达，功能开关行先例同形），行替身是
+    // 测试唯一可达按压面，两链已收口同一执行体。）
+    assert_eq!(
+        storage.entries().get("auto_execution_enabled").map(String::as_str),
+        Some("true"),
+        "按压一次：偏好恰好落盘一次（开）"
+    );
+    press_after(
+        &mut app,
+        "id:scheduled-auto-toggle",
+        "id:scheduled-auto-toggle",
+    )
+    .unwrap();
+    assert!(
+        !ledger_scheduled::auto_run::is_enabled(),
+        "再按压恰好翻转一次（翻回关）"
+    );
+    assert_eq!(
+        storage.entries().get("auto_execution_enabled").map(String::as_str),
+        Some("false"),
+        "再按压：偏好落盘回关（现场读回）"
+    );
+    press_after(
+        &mut app,
+        "id:scheduled-auto-toggle",
+        "id:scheduled-auto-toggle",
+    )
+    .unwrap();
+    assert!(ledger_scheduled::auto_run::is_enabled(), "三按压复开（后续追补与重启段前置）");
     // 设备偏好落盘的「重启」等价验证见本用例末段（同分片再启读回推送）。
 
     // 开关开启：追补一轮 → 到期期次落账（交易日期忠实取期次计划日期）。

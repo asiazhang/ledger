@@ -75,6 +75,18 @@ pub(crate) fn scheduled_pane(palette: views::ViewPalette) -> View {
     // 无障碍名随动（「开启/关闭 + 开关标签」——功能开关行先例同形）。
     let switch_label: &'static str =
         Box::leak(format!("{}{}", SWITCH_LABEL, " 开关").into_boxed_str());
+    // 单一执行链（code-review：功能开关行先例同形——双按压面同源不另立第二
+    // 笔写路径）：置镜像信号 + 写偏好推送只此一处，开关本体的 on_change 与
+    // 行按压替身（headless id 锚点）同源调用。按压命中面恒是内层单点（
+    // nsh-base switch 的 on_press 只在开关本体；行替身只在行面命中——一次
+    // 点击只会达其中一面），但两面各自内联一份写链在形状上是双写漂移，
+    // 收口为同一执行体。
+    let apply = move |next: bool| {
+        checked.set(next);
+        // 写偏好 + 推送镜像一体（函数注释同口径）；删推送调用
+        // → 镜像不翻转 → 期次落账旅程红（headless 探针）。
+        push_auto_execution(next);
+    };
     let row = view()
         .flex_row()
         .app_class("items-center gap-3")
@@ -82,12 +94,7 @@ pub(crate) fn scheduled_pane(palette: views::ViewPalette) -> View {
             nsh_base::switch()
                 .accessibility_label(switch_label)
                 .checked(move || checked.get())
-                .on_change(move |value: &bool| {
-                    checked.set(*value);
-                    // 写偏好 + 推送镜像一体（函数注释同口径）；删推送调用
-                    // → 镜像不翻转 → 期次落账旅程红（headless 探针）。
-                    push_auto_execution(*value);
-                })
+                .on_change(move |value: &bool| apply(*value))
                 .app_class("shrink-0"),
         )
         .child(
@@ -97,7 +104,8 @@ pub(crate) fn scheduled_pane(palette: views::ViewPalette) -> View {
                 .test_id("scheduled-auto-label"),
         );
     // 行按压替身（headless id 锚点 → 同一写链的执行体；删替身接线即红——
-    // 特接 inline press 页面行为，功能开关行先例同形）。
+    // 特接 inline press 页面行为，功能开关行先例同形）。行替身不内联写链，
+    // 与开关 on_change 同走上方单一执行体。
     card(
         CARD_TITLE,
         palette,
@@ -107,11 +115,7 @@ pub(crate) fn scheduled_pane(palette: views::ViewPalette) -> View {
                 .role(nsh_core::AccessibilityRole::Button)
                 .optional_label(move || Some(SharedString::from(SWITCH_LABEL)))
                 .app_class("rounded-(--radius)")
-                .on_press(move |_: &PressEvent| {
-                    let next = !checked.get_untracked();
-                    checked.set(next);
-                    push_auto_execution(next);
-                })
+                .on_press(move |_: &PressEvent| apply(!checked.get_untracked()))
                 .child(row),
             view().child(
                 text(BODY1)
