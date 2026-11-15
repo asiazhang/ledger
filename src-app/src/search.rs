@@ -16,11 +16,15 @@
 //!
 //! 结果呈现复用交易列表的表格映射族（列集 / 自绘格 / 弹性列宽 / 部件主题，
 //! [`crate::app`]）与装配层行装配（购买项命中整单展开，旧壳搜索页
-//! expandPurchases 同口径）；行点击/下钻委托（账户/商户/来源格跳转）属
-//! 表格级发送端 #2061（交易列表同缺口，一并落地），本视图先平价只读。
+//! expandPurchases 同口径）；格级行为委托与交易列表同构（#2138）：同一
+//! [`transactions::CellActions`] 装配（#2061 接缝）——账户/商户格点击 →
+//! 交易页自下钻（`tx_filter` 载荷经 [`nav::open`] 投递、交易视图挂载消费）、
+//! 来源格点击 → `nav::open` 来源跳转、备注复制（剪贴板 + 条位反馈）；结果
+//! 呈现仍是只读形态（无行菜单、无编辑入口，#2040 决策不变）。
 //!
 //! 测试豁免（ADR-0060）：本模块测试经 crate 根 cfg(test) 整体放行六件套。
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use nsh_base::{button, data_table, input, pagination};
@@ -31,9 +35,9 @@ use crate::assembly::{self, CurrencyTable, RowCells, RowContext};
 use crate::boot;
 use crate::design::font_size;
 use crate::nav;
-use crate::nav_model::ViewName;
+use crate::nav_model::{self, ViewName};
 use crate::transactions::{amount_privacy_enabled, hit_total_text};
-use crate::{adaptive, period, period_row, transactions, tx_cards};
+use crate::{adaptive, period, period_row, transactions, tx_cards, tx_filter};
 
 /// 搜索视图（导航骨架搜索分支的真实组件，#2040）：关键词防抖自动搜索 +
 /// 期间快捷筛选 + 金额区间 + 只读结果分页 + 占位/无命中两态空态。
@@ -63,6 +67,9 @@ pub(crate) fn SearchView() -> impl IntoElement {
     // 旧壳搜索页单 watcher 同形）与装载序号（后发作废先发）。
     let search_seq = signal(0u64);
     let load_seq = signal(0u64);
+    // 备注复制反馈（条位反馈，交易列表 #2061 同形：驻留至下次复制，NSH 无
+    // toast 超时机制——既有先例口径）。
+    let copy_feedback = signal(None::<String>);
 
     // 主题令牌（双态自适应；缺失兜底统一归 crate::theme 单点）。
     let fg = crate::theme::color("foreground");
@@ -264,8 +271,11 @@ pub(crate) fn SearchView() -> impl IntoElement {
         )
     };
 
-    // 下钻意图投递即弃（搜索视图无定位形态——旧壳搜索路由不读 focus 同
-    // 语义；读一次封闸语义由 take_intent 单点承担）。
+    // 下钻意图落位即弃（搜索路由无自身定位消费面——旧壳搜索路由不读
+    // focus 同语义）：只弃「本视图落位时在场的他源意图」；本视图格级委托
+    //（#2138）落点他视图的意图不在此消费——落点视图挂载时读一次消费
+    //（[nav::take_intent] 封闸，报表页分类下钻同一先例），落位切换即卸载
+    // 本视图，本 effect 不再跑。
     effect(move || {
         let _current_landed = nav::store().current.get();
         let _ = nav::take_intent();
@@ -290,6 +300,74 @@ pub(crate) fn SearchView() -> impl IntoElement {
     //（快搜索不闪指示器，旧壳 useDelayedLoading 语义重建）。
     let columns = computed(move || transactions::elastic_columns(adaptive::content_width()));
     let visible_loading = delayed_loading(loading);
+
+    // —— 格级行为委托（#2138）：与交易列表同构的 [transactions::CellActions]
+    // 装配（#2061 接缝，交易视图 jump_source / copy_note 同形）——结果呈现
+    // 仍是只读形态（无行菜单、无编辑入口，#2040 决策不变）。——
+
+    // 账户/商户格跨视图自下钻：载荷经 [nav::open] 的 tx_filters 通道投递，
+    // 交易视图挂载消费（filters.apply_drill 单点，全量替换会话态）——报表
+    // 页分类下钻同一接缝（resolve_landing 落交易列表 + 意图随落位投递）。
+    let drill_account = move |id: &str| {
+        nav::open(
+            nav_model::NavRequest::bare(ViewName::Transactions).with_tx_filters(
+                tx_filter::DrillFilters {
+                    account: Some(id.to_owned()),
+                    ..tx_filter::DrillFilters::default()
+                },
+            ),
+        );
+    };
+    let drill_merchant = move |id: &str| {
+        nav::open(
+            nav_model::NavRequest::bare(ViewName::Transactions).with_tx_filters(
+                tx_filter::DrillFilters {
+                    merchant: Some(id.to_owned()),
+                    ..tx_filter::DrillFilters::default()
+                },
+            ),
+        );
+    };
+    // 来源格跳转：与交易列表 jump_source 同一接缝（目标计算收口导航域深
+    // 模块，落位经导航单点入口——消费不自建）。
+    let jump_source = move |kind: ledger_transaction::TransactionSourceKind, entity_id: &str| {
+        let store = nav::store();
+        nav::open(nav_model::resolve_source_jump(
+            transactions::source_nav_kind(kind),
+            entity_id,
+            |v| store.is_view_contained(v),
+            |v| store.is_closed(v),
+        ));
+    };
+    // 备注复制：剪贴板显式写 + 回读校验两态反馈（交易列表同形——同一应用
+    // 进程的自写自读；成功词表 transactions.list.copyNoteOk 同文案）。
+    let copy_note = {
+        let owner = view_owner;
+        move |note: &str| {
+            let note = note.to_owned();
+            owner.run(move || {
+                spawn(async move {
+                    set_clipboard(&note);
+                    let readback = clipboard_string().await;
+                    let matched = readback == note;
+                    if !matched {
+                        tracing::warn!("剪贴板回读与备注原文不一致，复制反馈呈现失败态");
+                    }
+                    copy_feedback.set(Some(if matched {
+                        "备注已复制".to_owned()
+                    } else {
+                        "复制失败".to_owned()
+                    }));
+                });
+            });
+        }
+    };
+    let cell_actions = transactions::CellActions {
+        account: Arc::new(drill_account),
+        merchant: Arc::new(drill_merchant),
+        source: Arc::new(jump_source),
+        copy_note: Arc::new(copy_note),
+    };
 
     view()
         .flex_1()
@@ -408,6 +486,9 @@ pub(crate) fn SearchView() -> impl IntoElement {
             when(
                 move || searched.get(),
                 move || {
+                    // CellActions 非 Copy：外层分支闭包先克隆一份（Arc 克隆
+                    // 廉价），内层桌面档 move 闭包再取走——嵌套闭包逐层让渡。
+                    let cell_actions = cell_actions.clone();
                     view()
                         .flex_1()
                         .flex_col()
@@ -433,6 +514,8 @@ pub(crate) fn SearchView() -> impl IntoElement {
                                 },
                             )
                             .otherwise(move || {
+                                // 取走外层克隆（本地 move 让渡），格内再按次克隆——
+                                // 闭包保持 Fn（交易列表单层闭包 clone 同形语义）。
                                 view()
                                     .test_id("search-table")
                                     .flex_1()
@@ -440,10 +523,13 @@ pub(crate) fn SearchView() -> impl IntoElement {
                                         data_table()
                                         .columns(columns)
                                         .data(move || transactions::rows_to_data(&rows.get()))
-                                        // 只读平价（#2040 模块注：行点击/下钻委托属表格级
-                                        // 发送端 #2061，交易列表先行；本视图不挂委托，
-                                        // 自绘格退回纯文本形态）。
-                                        .render_cell(transactions::render_cell(rows, None))
+                                        // 格级行为委托（#2138）：与交易列表同构的 CellActions
+                                        //（账户/商户下钻、来源跳转、备注复制）；呈现仍是只读
+                                        // 形态（无行菜单、无编辑入口，#2040 决策不变）。
+                                        .render_cell(transactions::render_cell(
+                                            rows,
+                                            Some(cell_actions.clone()),
+                                        ))
                                         .loading(move || visible_loading.get())
                                         .loading_view(
                                             text("正在加载…").text_color(muted),
@@ -492,10 +578,8 @@ pub(crate) fn SearchView() -> impl IntoElement {
                                 )
                                 .child(
                                     when(
-                                        move || {
-                                            error.get().is_none()
-                                                && assembly::total_pages(total.get()) > 1
-                                        },
+                                        move || error.get().is_none()
+                                            && assembly::total_pages(total.get()) > 1,
                                         move || {
                                             view().test_id("search-pagination").flex_row().child(
                                                 pagination()
@@ -518,6 +602,22 @@ pub(crate) fn SearchView() -> impl IntoElement {
                                         },
                                     )
                                     .otherwise(view),
+                                )
+                                // 备注复制反馈条位（#2138，交易列表 #2061 同形）：驻留至
+                                // 下次复制（NSH 无 toast 超时机制，既有先例口径）。
+                                .child(
+                                    when(
+                                        move || copy_feedback.get().is_some(),
+                                        move || {
+                                            text(move || {
+                                                copy_feedback.get().unwrap_or_default()
+                                            })
+                                            .text_xs()
+                                            .text_color(fg)
+                                            .test_id("search-copy-note-status")
+                                            .app_class("px-4 py-1")
+                                        },
+                                    ),
                                 ),
                         )
                 },

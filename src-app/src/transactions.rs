@@ -42,12 +42,28 @@ use crate::{
 const AMOUNT_PRIVACY_STORAGE_KEY: &str = "amount_privacy_enabled";
 
 /// 金额隐私开关的设备态读取（组件任务内同步读；解析镜像旧壳 `loadLocal`
-/// 的 JSON 布尔语义：缺失/非法归默认关）。立桩无设置面——开关的写入口随
-/// 设置面票接入（旧壳入口：侧栏标题行眼睛图标），本壳消费同一域来源、
-/// 同一存储键。crate 内消费面：交易/预算/概览视图的装配入口（#2039）。
+/// 的 JSON 布尔语义：缺失/非法归默认关）。写入口在
+/// [`set_amount_privacy_enabled`] 单点（侧栏品牌行眼睛按钮消费，issue
+/// #2137）。crate 内消费面：交易/预算/概览视图的装配入口（#2039）。
 pub(crate) fn amount_privacy_enabled() -> bool {
     nsh_core::storage::Storage::get_item(AMOUNT_PRIVACY_STORAGE_KEY)
         .is_some_and(|raw| raw.trim() == "true")
+}
+
+/// 写金额隐私开关的设备态（同键；值为 JSON 布尔字面量 `"true"` / `"false"`
+/// ——旧壳 `saveLocal` 同形，关态写显式 `false`、不做删记录）。写失败不静
+/// 默：告警日志，镜像信号仍在会话内生效（下次启动回默认——导航界面状态
+/// 写入同取舍）；存储即设备态的读侧，无第二写入口。
+pub(crate) fn set_amount_privacy_enabled(enabled: bool) {
+    if let Err(e) =
+        nsh_core::storage::Storage::set_item(AMOUNT_PRIVACY_STORAGE_KEY, enabled.to_string())
+    {
+        tracing::warn!(
+            key = AMOUNT_PRIVACY_STORAGE_KEY,
+            error = %e,
+            "金额隐私开关写入存储失败"
+        );
+    }
 }
 
 /// 装载批次读侧载荷（[`assembly::RowContext`] 的读侧对称形态）：一次页读同
@@ -154,8 +170,8 @@ type SourceJumpDispatch = Arc<dyn Fn(ledger_transaction::TransactionSourceKind, 
 
 /// 表格级行为委托处理器闭集（#2061 的分发端；旧壳 transaction-table-actions
 /// 的本壳对应形态——装配行带交互载荷，自绘格按格键命中、载荷分发）：视图
-/// 装配一次传入 [`render_cell`]；只读消费方（搜索视图，模块注「先平价只读」）
-/// 传 None——自绘格退回纯文本形态，不渲染可点样式、不挂空接缝。
+/// 装配一次传入 [`render_cell`]；交互消费方（交易列表与搜索视图 #2138 同一
+/// 装配）各自装配一份，闭包面归各自视图（下钻落点与反馈条位不同）。
 #[derive(Clone)]
 pub(crate) struct CellActions {
     /// 账户原子下钻（账户 id）。
@@ -175,8 +191,11 @@ fn accent_color() -> AdaptiveColor {
 }
 
 /// 来源种类 → 导航域种类（装配载荷是域闭集，跳转目标计算吃导航域闭集——
-/// 映射归 UI 层，与列对齐枚举映射同形）。
-fn source_nav_kind(kind: ledger_transaction::TransactionSourceKind) -> nav_model::SourceKind {
+/// 映射归 UI 层，与列对齐枚举映射同形；交易列表与搜索视图（#2138）消费
+/// 同一单点）。
+pub(crate) fn source_nav_kind(
+    kind: ledger_transaction::TransactionSourceKind,
+) -> nav_model::SourceKind {
     match kind {
         ledger_transaction::TransactionSourceKind::InstallmentPlan => {
             nav_model::SourceKind::InstallmentPlan
@@ -197,9 +216,9 @@ fn source_nav_kind(kind: ledger_transaction::TransactionSourceKind) -> nav_model
 /// 着色（旧壳金额列着色口径），账户/商户/来源/备注四格在委托处理器在场时按
 /// 装配载荷渲染可点原子（accent 色文本 + test_id + on_press 分发——accounts
 /// 视图可点格先例同形），其余列平文——格文本仍取自数据（`cell.text`），本函数
-/// 只补色与交互。只读消费方（actions None）或载荷缺席 → 纯文本形态（与既有
-/// 呈现零差异）。掩码态照常着色（掩码隐藏数字，不隐藏方向，旧壳隐私保留项
-/// 同口径）。交易列表（交互）与搜索视图（只读）共用。
+/// 只补色与交互。委托缺席或载荷缺席 → 纯文本形态（与既有呈现零差异）。掩码
+/// 态照常着色（掩码隐藏数字，不隐藏方向，旧壳隐私保留项同口径）。交易列表
+/// 与搜索视图（#2138）共用。
 pub(crate) fn render_cell(
     rows_signal: Signal<Vec<RowCells>>,
     actions: Option<CellActions>,
@@ -244,7 +263,8 @@ pub(crate) fn render_cell(
 /// 交互格渲染（#2061）：命中可点载荷 → 可点原子元素（accent 色文本 +
 /// test_id + on_press 分发；accounts 视图名称列先例同形）；未命中（该格无
 /// 载荷：占位「-」/ 续行空格）返回 None → 纯文本路径。单行截断与纯文本路径
-/// 同纪律（虚拟滚动固定行高，长文本不换行）。
+/// 同纪律（虚拟滚动固定行高，长文本不换行）。（搜索视图 #2138 同消费：
+/// 委托缺席时整体退纯文本路径。）
 fn interactive_cell(
     cell: &DataTableCell,
     rows_signal: &Signal<Vec<RowCells>>,
@@ -420,11 +440,12 @@ pub(crate) fn table_classes() -> DataTableClasses {
 /// （100 行/页服务端 offset 分页，走域读路径）+ 忙碌指示 + 空态。
 /// 时间维度行（issue #2021 / ADR-0141）：期间步进器 `< 期间标签 >` + 期间
 /// 选择弹层。期间状态 = 日期区间快照（None = 「全部」默认态，与旧壳同）；
-/// 步进/芯片换算与钳制归 [`period`] 纯决策单点，UI 只消费；翻页与周期步进
-/// 两族快捷键（ADR-0140/0141 裸键 `[` `]` `,` `.`）语义等同点击对应控件、
-/// 共用 Overlay Suppression 闸门（[`overlay`]，弹层开着不派发；可编辑焦点
-/// 闸由引擎 keymap `When::Auto` 承担——四键皆为文本编辑键，输入焦点期间不
-/// 派发；桌面立桩无触控轴）。
+/// 步进/芯片换算与钳制归 [`period`] 纯决策单点，UI 只消费；翻页、周期步进
+/// 与记一笔三族快捷键（ADR-0140/0141 裸键 `[` `]` `,` `.`，#2139 裸键
+/// a/z/i）语义等同点击对应控件、共用 Overlay Suppression 闸门
+/// （[`overlay`]，弹层开着不派发；可编辑焦点闸由引擎 keymap `When::Auto`
+/// 承担——各键皆为文本编辑键，输入焦点期间不派发；桌面无触控轴，键盘轴
+/// 直挂不设输入轴闸门）。
 #[component]
 pub(crate) fn TransactionsView() -> impl IntoElement {
     let total = signal(0i64);
@@ -1090,6 +1111,36 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
             return;
         }
         step_period(1);
+    });
+    // 记一笔裸键直达（issue #2139，web CreateShortcut 平价，ADR-0135 决策 5
+    // 收窄后的现役闭集）：a/z/i 直达记支出/记转账/记收入表单弹窗——键位映射
+    // 与 web `CREATE_KIND_KEYS` 同源（expense→a / transfer→z / income→i），
+    // 可用性闭集与 `create-entry-kinds` 同源：三键各自对应交易页创建闭集
+    // （支出/收入/转账）内的 kind，借出/借入与退款不入裸键闭集（借贷走
+    // 「记一笔」菜单预置方向，退款入口由行右键菜单承接）。走既有
+    // `txn_form::CreateEntry` 打开路径（与「记一笔」菜单项同一出口）；裸键
+    // 语义 = 拒绝一切修饰键（引擎 keystroke 精确匹配含修饰位）；`When::Auto`
+    // 缺省（a/z/i 皆文本编辑键，输入焦点期间引擎不派发——可编辑焦点闸，与
+    // 翻页/周期四键先例同形）；处理器体即「闸门 → 派发」两步（无决策半边——
+    // 键位映射闭集即键位表）。
+    on_key("a", move |_| {
+        // Overlay Suppression 闸门（与翻页/周期族共用同一判定，删除任一处即红）。
+        if overlay::has_open_overlay() {
+            return;
+        }
+        form.open_create(txn_form::CreateEntry::Expense);
+    });
+    on_key("z", move |_| {
+        if overlay::has_open_overlay() {
+            return;
+        }
+        form.open_create(txn_form::CreateEntry::Transfer);
+    });
+    on_key("i", move |_| {
+        if overlay::has_open_overlay() {
+            return;
+        }
+        form.open_create(txn_form::CreateEntry::Income);
     });
     // ESC 复位（旧壳 registerViewReset(resetFilters) 同语义：窗口行为守卫在
     // 无弹层 ESC 时消费——本壳等价形态 = 抑制闸门 + 幂等守卫）。弹层开着时

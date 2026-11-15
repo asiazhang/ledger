@@ -30,15 +30,17 @@
 //! 界面文案仅 zh-CN（旧壳 items.* zh-CN 词条原样字面承载）；码化错误 zh 原样
 //! 呈现；视图本地状态、会话内保留不做（离开再回 = 全新装载，旧壳重挂同口径）。
 //! 窄窗横向滚动下限（旧壳 issue #849 / ADR-0088 决策 11）归系列尾部窄窗横切
-//! 票（Out of Scope，spec #2031）；行聚焦的滚动定位 NSH 无宿主面（虚拟化
-//! 滚动需组件句柄，封装层现无该窗口），本壳落点 = 高亮呈现，滚动位随窄窗
-//! 横切票。
+//! 票（Out of Scope，spec #2031）；行聚焦的滚动定位已交付（#2140，原注「NSH
+//! 无宿主面」的挂账目标窄窗横切票 #2057 已交付且不含该项，挂账失效回补）：
+//! 封装层 DataTable 的组件 ref（scroll_to_row 句柄）在 focus 消费后把高亮
+//! 行滚进视口，窄窗卡片形态不涉及（无虚拟滚动，高亮即全可见）。
 //!
 //! 测试豁免（ADR-0060）：本模块测试经 crate 根 cfg(test) 整体放行六件套。
 
 use ledger_infra::error::AppError;
 use nsh_base::{
-    DataTableAlign, DataTableColumn, DataTableContextMenu, DataTableRows, button, data_table, input,
+    DataTable, DataTableAlign, DataTableApi, DataTableColumn, DataTableContextMenu, DataTableRows,
+    button, data_table, input,
 };
 use nsh_core::element::AnyElement;
 use nsh_core::element::desktop::MenuItem;
@@ -303,7 +305,7 @@ pub(crate) fn ItemsView() -> impl IntoElement {
         )
     });
 
-    // ============================ 来源跳转落点（行高亮） ============================
+    // ============================ 来源跳转落点（行高亮 + 滚动定位） ============================
     let highlight = signal(None::<String>);
     // 落位 + 意图消费（读一次封闸：「先拿 id 后等数据」——只暂存 id，行渲染
     // 后生效，旧壳 useFocusParam 同语义；已处置物品仍在列表（带处置标注）
@@ -314,6 +316,32 @@ pub(crate) fn ItemsView() -> impl IntoElement {
         let _landed = nav::store().current.get();
         let intent = nav::take_intent();
         highlight.set(intent.and_then(|intent| intent.focus));
+    });
+
+    // 聚焦行滚动定位（#2140）：封装层虚拟滚动容器的定位句柄（DataTable 的
+    // 组件 ref → scroll_to_row）在 focus 消费后把高亮行滚进视口。触发面 =
+    // 高亮 × 行集（行集落位或失效重读变化即滚——高亮保持到实例消亡，重读
+    // 后仍归位）。等一帧再调：行集 prop 与行高在下一帧提交后组件才可读，本
+    // 帧直读是旧行集。聚焦 id 不在行集（软删无锚）不滚；行集短于视口时
+    // scroll_to_row 钳制在滚动范围内，空转幂等；窄窗卡片形态无虚拟滚动容器，
+    // 高亮即全可见，本接缝不涉及。
+    let table_ref = component_ref::<DataTable>();
+    effect(move || {
+        let Some(focused) = highlight.get() else {
+            return;
+        };
+        let Some(index) = rows.get().iter().position(|row| row.id == focused) else {
+            return;
+        };
+        let index = index as u32;
+        view_owner.run(move || {
+            spawn(async move {
+                next_frame().await;
+                if let Some(api) = table_ref.api::<DataTableApi>() {
+                    api.scroll_to_row(index, None);
+                }
+            });
+        });
     });
 
     // ============================ 落位装载与失效信号 ============================
@@ -1401,6 +1429,7 @@ pub(crate) fn ItemsView() -> impl IntoElement {
                         .child(
                             view().test_id("item-table").flex_1().child(
                                 data_table()
+                                    .component_ref(&table_ref)
                                     .columns(columns)
                                     .data(data_of)
                                     .row_classes(row_classes)

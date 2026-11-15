@@ -1978,6 +1978,130 @@ fn suppression_gate_blocks_period_key_while_period_popup_open() {
 }
 
 // ---------------------------------------------------------------------------
+// 记一笔裸键直达（issue #2139，web CreateShortcut 平价）：a/z/i 直达
+// 记支出/记转账/记收入表单弹窗（键位映射与 web `CREATE_KIND_KEYS` 同源）。
+// 借出/借入与退款不入裸键闭集（create-entry-kinds 同源口径）。
+// ---------------------------------------------------------------------------
+
+/// a/z/i 各自打开对应类型的表单弹窗（用户可观察结果 = 弹窗标题）。
+/// 「删除即红」负向条目（ADR-0087）：删掉 transactions.rs 中任一
+/// `on_key("a"/"z"/"i")` 挂键 → 对应段落的 `wait_for` 超时红（按键无
+/// 绑定、无输入焦点落点，弹窗永不出现）。
+#[test]
+fn create_shortcut_keys_open_matching_forms() {
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("create-keys");
+
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config()).unwrap();
+
+    open_transactions(&mut app);
+    app.wait_for("text:暂无数据").unwrap();
+
+    // `a` → 记支出。
+    app.press_key("a").unwrap();
+    app.wait_for("text:记一笔 · 支出").unwrap();
+    app.press_key("escape").unwrap();
+    app.wait_for_gone("text:记一笔 · 支出", DEFAULT_WAIT)
+        .unwrap();
+
+    // `z` → 记转账。
+    app.press_key("z").unwrap();
+    app.wait_for("text:记一笔 · 转账").unwrap();
+    app.press_key("escape").unwrap();
+    app.wait_for_gone("text:记一笔 · 转账", DEFAULT_WAIT)
+        .unwrap();
+
+    // `i` → 记收入。
+    app.press_key("i").unwrap();
+    app.wait_for("text:记一笔 · 收入").unwrap();
+    app.press_key("escape").unwrap();
+    app.wait_for_gone("text:记一笔 · 收入", DEFAULT_WAIT)
+        .unwrap();
+}
+
+/// 可编辑焦点闸（引擎 keymap `When::Auto` 承担，a/z/i 皆文本编辑键）：
+/// 焦点在搜索框时 a/z/i 落框不派发（字符追加进查询，弹窗不开）。
+/// 「删除即红」负向条目：此闸在引擎侧（不属本壳接线面），删挂键或把
+/// 绑定改为 `When::Always` → 首段断言红（弹窗在输入中出现）。
+#[test]
+fn suppression_gate_blocks_create_keys_while_editable_focused() {
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("create-keys-edit");
+
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config()).unwrap();
+
+    open_transactions(&mut app);
+    app.wait_for("text:暂无数据").unwrap();
+
+    app.type_text("id:tx-search", "火锅").unwrap();
+    let modal_titles = [
+        "text:记一笔 · 支出",
+        "text:记一笔 · 转账",
+        "text:记一笔 · 收入",
+    ];
+    for key in ["a", "z", "i"] {
+        app.press_key(key).unwrap();
+        app.settle();
+        assert!(
+            !modal_titles.iter().any(|t| app.shows(t)),
+            "焦点在搜索框时 `{key}` 不得打开表单弹窗：{:?}",
+            app.screen().texts()
+        );
+    }
+    assert_eq!(
+        app.screen().input_text("id:tx-search").unwrap(),
+        Some("火锅azi"),
+        "a/z/i 应落进输入框（可编辑焦点闸，不派发）"
+    );
+}
+
+/// 抑制闸门——记一笔族（Overlay Suppression）：注册抑制的弹层（期间选择
+/// 弹层）开着时 a/z/i 不派发（弹窗不开），关弹层后同键生效。
+/// 「删除即红」负向条目（ADR-0087）：删掉处理器中的 `overlay::has_open_overlay`
+/// 检查 → 弹层下按键把表单弹窗打开，本测红（断言对准用户可观察结果）。
+#[test]
+fn suppression_gate_blocks_create_keys_while_period_popup_open() {
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("create-keys-suppress");
+
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config()).unwrap();
+
+    open_transactions(&mut app);
+    app.wait_for("text:暂无数据").unwrap();
+
+    // 打开注册抑制的弹层 → a/z/i 不派发（弹窗不开）。
+    app.press("id:period-label").unwrap();
+    app.wait_for("id:period-chip-all").unwrap();
+    let modal_titles = [
+        "text:记一笔 · 支出",
+        "text:记一笔 · 转账",
+        "text:记一笔 · 收入",
+    ];
+    for key in ["a", "z", "i"] {
+        app.press_key(key).unwrap();
+        app.settle();
+        assert!(
+            !modal_titles.iter().any(|t| app.shows(t)),
+            "弹层开着时 `{key}` 不得打开表单弹窗：{:?}",
+            app.screen().texts()
+        );
+    }
+
+    // 关弹层（ESC 走弹层关闭语义）→ 同键直达生效（`a` → 记支出）。
+    app.press_key("escape").unwrap();
+    app.wait_for_gone("id:period-chip-all", DEFAULT_WAIT)
+        .unwrap();
+    app.press_key("a").unwrap();
+    app.wait_for("text:记一笔 · 支出").unwrap();
+}
+
+// ---------------------------------------------------------------------------
 // 期间直达面板（issue #2128，旧壳 QuickTimeRange.periodPicker 平价）：点击
 // 期间标签打开的弹层内，预设芯片之外另有月/季/年直达面板；面板单位随当前
 // 游标（「全部」态默认月面板）；点选写精确自然周期快照并关弹层；面板格子
@@ -4379,6 +4503,115 @@ fn sidebar_renders_groups_fixed_items_and_hides_contained_members() {
     assert!(
         app.screen().count("id:nav-more-insights").unwrap() == 0,
         "洞察组出厂无收纳成员，「更多」链接不渲染"
+    );
+}
+
+/// 品牌行眼睛按钮（issue #2137，spec #2126 功能平价：旧壳侧栏标题行金额隐私
+/// 眼睛按钮的 NSH 对应形态）：点击切换设备轻量设置项 `amount_privacy_enabled`
+/// （同键同值形态，值为 JSON 布尔字面量）；掩码消费面装载时机读取——离位再
+/// 落位即按新态装配，金额格翻转为掩码、再切回还原，存储值随两态持久。
+/// 「删除即变红」负向条目：删品牌行按钮接线（on_press → 写入口
+/// `set_amount_privacy_enabled`）→ 存储恒缺，落位重挂后明文金额不翻转（本测红）。
+#[test]
+fn sidebar_brand_privacy_toggle_masks_and_restores_amounts() {
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("brand-privacy");
+    seed_expense_series(&dir, 1);
+
+    let storage = MemoryStorage::new(Vec::new());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config_with_backend(storage.clone())).unwrap();
+    open_transactions(&mut app);
+    // 装载锚纪律：先等首行落位，再按压/断言（挂载 ≠ 装载）。
+    app.wait_for("text:¥25").unwrap();
+
+    // 眼睛按钮：点击即切换（写存储 = JSON 布尔字面量，旧壳 saveLocal 同形）。
+    app.press("id:brand-privacy").unwrap();
+    assert_eq!(
+        storage
+            .entries()
+            .get("amount_privacy_enabled")
+            .map(String::as_str),
+        Some("true"),
+        "开启即持久化（设备轻量设置项，重启保持的另一半由重启测试断言）"
+    );
+
+    // 金额格翻转为掩码（消费面装载时机读取：离位再落位即按新态装配）。
+    app.press("id:nav-dashboard").unwrap();
+    app.wait_for("id:net-worth-card").unwrap();
+    app.press("id:nav-transactions").unwrap();
+    app.wait_for("text:••••").unwrap();
+    assert!(
+        !app.shows("¥25"),
+        "隐私开启后明文金额不在屏：{:?}",
+        app.screen().texts()
+    );
+
+    // 再切回还原：明文金额回屏、掩码离屏，存储回显式 false（不做删记录）。
+    app.press("id:brand-privacy").unwrap();
+    app.press("id:nav-dashboard").unwrap();
+    app.wait_for("id:net-worth-card").unwrap();
+    app.press("id:nav-transactions").unwrap();
+    app.wait_for("text:¥25").unwrap();
+    assert!(
+        !app.shows("••••"),
+        "隐私关闭后掩码不在屏：{:?}",
+        app.screen().texts()
+    );
+    assert_eq!(
+        storage
+            .entries()
+            .get("amount_privacy_enabled")
+            .map(String::as_str),
+        Some("false"),
+        "关闭持久化为字面 false（旧壳 saveLocal 同形）"
+    );
+}
+
+/// 品牌行眼睛按钮跨重启保持（issue #2137：设备级持久——`Storage` 平台文件
+/// 侧 KV，不进 SQLite、不与旧壳共享）：开启后重启（同一存储后端起第二个
+/// 引擎）落位即掩码，关闭后重启明文回屏。删写入口或删按钮接线任一环，
+/// 重启后明文不翻转即红。
+#[test]
+fn sidebar_brand_privacy_toggle_persists_across_restart() {
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("brand-privacy-restart");
+    seed_expense_series(&dir, 1);
+
+    let storage = MemoryStorage::new(Vec::new());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config_with_backend(storage.clone())).unwrap();
+    open_transactions(&mut app);
+    app.wait_for("text:¥25").unwrap();
+
+    // 开启 → 重启：设备级持久，落位即掩码。
+    app.press("id:brand-privacy").unwrap();
+    drop(app);
+    nsh_app::app::reset_book_assembly();
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config_with_backend(storage.clone())).unwrap();
+    open_transactions(&mut app);
+    app.wait_for("text:••••").unwrap();
+    assert!(
+        !app.shows("¥25"),
+        "重启后隐私开启保持：{:?}",
+        app.screen().texts()
+    );
+
+    // 关闭 → 重启：默认关持久，明文回屏。
+    app.press("id:brand-privacy").unwrap();
+    drop(app);
+    nsh_app::app::reset_book_assembly();
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config_with_backend(storage.clone())).unwrap();
+    open_transactions(&mut app);
+    app.wait_for("text:¥25").unwrap();
+    assert!(
+        !app.shows("••••"),
+        "重启后隐私关闭保持：{:?}",
+        app.screen().texts()
     );
 }
 
@@ -7859,6 +8092,233 @@ fn search_view_shows_no_hits_empty_state() {
     );
 }
 
+// ---------------------------------------------------------------------------
+// 结果格级行为委托（#2138）：与交易列表同构的 CellActions（#2061 同一装配
+// 路径）——账户/商户格点击 → 交易页自下钻（tx_filter 载荷经 nav::open 投递、
+// 交易视图挂载消费）、来源格点击 → 来源跳转（导航单点）、备注复制（剪贴板
+// + 条位反馈）。结果呈现仍是只读形态（无行菜单、无编辑入口，#2040 决策
+// 不变）。「删除即变红」负向条目（ADR-0087）：删搜索视图的 CellActions
+// 装配接线（render_cell 退回 None）→ 自绘格退纯文本不可点，各测试的
+// 点击落位即红。
+// ---------------------------------------------------------------------------
+
+/// 命中行账户格下钻（#2138）：点命中行账户原子 → 落交易列表并带账户筛选
+///（tx_filter 全量替换落位），行集只剩该账户的命中行。判别性证据：两账户
+/// 各有命中行，下钻后他账户命中行离屏、命中计数收窄（若只导航不带筛选，
+/// 行集回全量四笔即红）。删搜索视图 CellActions 装配（render_cell 退回
+/// None）→ 账户格退纯文本不可点，落位不发生即红。
+#[test]
+fn search_view_account_cell_click_drills_to_transactions_filtered() {
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("search-cell-account");
+    let cash_id;
+    let bank_id;
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        cash_id = seed_cash_account(&db);
+        bank_id = seed_account(&db, "银行卡", AccountType::Bank);
+        // 两账户各两笔同词命中：下钻后只留现金侧两笔。
+        for (account, amount, date) in [
+            (&cash_id, 2_500, "2026-01-01"),
+            (&cash_id, 2_600, "2026-01-02"),
+            (&bank_id, 6_600, "2026-01-03"),
+            (&bank_id, 6_700, "2026-01-04"),
+        ] {
+            seed_transaction(
+                &db,
+                TxnSeed {
+                    account,
+                    to_account: None,
+                    kind: TransactionKind::Expense,
+                    amount_cents: amount,
+                    date,
+                    category_id: None,
+                    merchant_id: None,
+                    note: Some("火锅聚餐".to_owned()),
+                },
+            );
+        }
+    }
+
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config()).unwrap();
+
+    open_search(&mut app);
+    app.type_text("id:search-keyword", "火锅").unwrap();
+    app.wait_for("text:命中 4 条").unwrap();
+
+    // 点命中首行的现金账户原子 → 落交易列表且带账户筛选：行集只剩现金
+    // 两笔，银行卡两笔离屏。
+    app.press(&format!("id:tx-cell-account-{cash_id} >> nth=0"))
+        .unwrap();
+    app.wait_for("id:tx-table").unwrap();
+    app.wait_for("text:共 2 条").unwrap();
+    assert!(app.shows("2026-01-01") && app.shows("2026-01-02"));
+    assert!(
+        !app.shows("2026-01-03") && !app.shows("2026-01-04"),
+        "他账户命中行被下钻筛选排除：{:?}",
+        app.screen().texts()
+    );
+}
+
+/// 命中行商户格下钻（#2138）：点命中行商户原子 → 落交易列表并带商户筛选。
+/// 判别性证据：带商户与不带商户的行同词命中，下钻后不带商户行离屏。删
+/// CellActions 装配 → 商户格退纯文本不可点即红。
+#[test]
+fn search_view_merchant_cell_click_drills_to_transactions_filtered() {
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("search-cell-merchant");
+    let merchant_id;
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let cash = seed_cash_account(&db);
+        merchant_id = seed_merchant(&db, "链商超");
+        for (merchant, amount, date, note) in [
+            (
+                Some(merchant_id.clone()),
+                2_500,
+                "2026-01-01",
+                "链商超买火锅".to_owned(),
+            ),
+            (
+                Some(merchant_id.clone()),
+                2_600,
+                "2026-01-02",
+                "链商超火锅食材".to_owned(),
+            ),
+            (None, 6_600, "2026-01-03", "自制火锅".to_owned()),
+        ] {
+            seed_transaction(
+                &db,
+                TxnSeed {
+                    account: &cash,
+                    to_account: None,
+                    kind: TransactionKind::Expense,
+                    amount_cents: amount,
+                    date,
+                    category_id: None,
+                    merchant_id: merchant,
+                    note: Some(note),
+                },
+            );
+        }
+    }
+
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config()).unwrap();
+
+    open_search(&mut app);
+    app.type_text("id:search-keyword", "火锅").unwrap();
+    app.wait_for("text:命中 3 条").unwrap();
+
+    // 点命中首行的商户原子 → 落交易列表且带商户筛选：行集只剩带商户两笔，
+    // 无商户行离屏。
+    app.press(&format!("id:tx-cell-merchant-{merchant_id} >> nth=0"))
+        .unwrap();
+    app.wait_for("id:tx-table").unwrap();
+    app.wait_for("text:共 2 条").unwrap();
+    assert!(app.shows("2026-01-01") && app.shows("2026-01-02"));
+    assert!(
+        !app.shows("2026-01-03"),
+        "无商户行被下钻筛选排除：{:?}",
+        app.screen().texts()
+    );
+}
+
+/// 命中行备注复制（#2138）：点「复制」原子 → 剪贴板写入备注原文 + 复制
+/// 反馈条呈现（「备注已复制」，条位反馈——NSH 无 toast 超时机制，驻留条位
+/// 是既有先例口径）。删 CellActions 装配 → 复制通道缺席即红。
+#[test]
+fn search_view_note_copy_writes_clipboard_and_shows_feedback() {
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("search-cell-copy");
+    seed_expense_notes(&dir, &["搜索页复制我这条备注"]);
+
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config()).unwrap();
+
+    open_search(&mut app);
+    app.type_text("id:search-keyword", "搜索页复制").unwrap();
+    app.wait_for("text:命中 1 条").unwrap();
+
+    // 复制前剪贴板为空；点「复制」→ 剪贴板 = 备注原文 + 反馈条呈现。
+    assert!(app.screen().clipboard().is_none(), "复制前无剪贴板文本");
+    app.press("id:tx-cell-copy-note").unwrap();
+    app.wait_for("id:search-copy-note-status").unwrap();
+    assert_eq!(
+        app.screen().clipboard(),
+        Some("搜索页复制我这条备注"),
+        "剪贴板内容 = 备注原文"
+    );
+    assert!(
+        app.shows("备注已复制"),
+        "复制成功反馈条呈现：{:?}",
+        app.screen().texts()
+    );
+}
+
+/// 命中行来源格跳转（#2138）：点命中行来源原子 → 落来源目标视图（出厂
+/// 收纳态：保单落资产「更多」容器页签）。删 CellActions 装配 → 来源格退
+/// 纯文本不可点即红（点击落空）。
+#[test]
+fn search_view_source_cell_click_jumps_to_policy_view() {
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("search-cell-source");
+    let policy_id;
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let account = seed_cash_account(&db);
+        let conn = db
+            .conn
+            .lock()
+            .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
+            .unwrap();
+        let insurer = ledger_policy::create_insurer_by_name(&conn, "众安").unwrap();
+        policy_id = ledger_policy::create_policy(
+            &conn,
+            ledger_policy::PolicyInput {
+                insurer_id: insurer,
+                policy_number: "P-1".to_owned(),
+                product_name: "重疾险".to_owned(),
+                start_date: "2026-01-01".to_owned(),
+                end_date: None,
+                coverage_amount_cents: None,
+                coverage_currency_code: None,
+                note: None,
+            },
+            &mut || {},
+        )
+        .unwrap();
+        ledger_transaction::create(
+            &conn,
+            TransactionInput {
+                policy_id: Some(policy_id.clone()),
+                note: Some("火锅聚餐保费".to_owned()),
+                ..seed::expense_input_base(&account, "2026-01-15", 2_500, None, None)
+            },
+        )
+        .unwrap();
+        drop(conn);
+    }
+
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config()).unwrap();
+
+    open_search(&mut app);
+    app.type_text("id:search-keyword", "火锅").unwrap();
+    app.wait_for("text:命中 1 条").unwrap();
+    app.wait_for("text:重疾险").unwrap();
+
+    // 点命中行来源原子 → 落保单视图。
+    app.press(&format!("id:tx-cell-source-{policy_id}"))
+        .unwrap();
+    app.wait_for("id:policy-table").unwrap();
+}
+
 /// 启动即概览（出厂落点改回裁决的可见侧，#2039）：五卡全部呈现真实读数、
 /// 不再是迁移占位。净资产 = 现金 30_000 + 持仓市值 10_000 = ¥400（域单点
 /// 折算，装配层只消费）；「删除即红」负向条目钉在 view_host 的概览分支挂载
@@ -9800,6 +10260,111 @@ fn item_id_by_name(dir: &std::path::Path, name: &str) -> String {
         .find(|row| row.item.name == name)
         .map(|row| row.item.id)
         .unwrap_or_default()
+}
+
+// ---------------------------------------------------------------------------
+// 来源跳转落点滚动定位（#2140）：交易来源列跳转物品 → 落点高亮行滚动进视
+// 口。物品清单是虚拟滚动表格（行高 32pt，视口可见十余行）且聚焦行格 test_id
+// 只在行入视口后由 render_cell 渲染——聚焦锚在屏 = 行已入视口，再以表格视
+// 口框边界核对「在视口内」。删除消费面滚动接线即红的负向条目写在各测试注释
+//（ADR-0087 断言强度：断言对准用户可观察结果）。
+// ---------------------------------------------------------------------------
+
+/// 造一列物品（每件一笔关联支出，日期随 [`test_date`] 递增）：物品清单按
+/// 创建序升序——末件（返回值的物品 id）是清单最深行，其交易日期最晚 =
+/// 交易列表首行（来源格在屏可按）。count 大于视口可见行数时末件初始不在
+/// 视口（本票滚动定位的落点前提）。
+fn seed_item_series(db: &ledger_infra::db::DbState, count: usize) -> (String, String) {
+    let account = seed_cash_account(db);
+    let mut last = None;
+    for index in 0..count {
+        let name = format!("跳转物品{index:02}");
+        last = Some(seed_item(db, &account, &name, 1_000, &test_date(index)));
+    }
+    last.unwrap()
+}
+
+/// 来源跳转落点滚动定位（物品，#2140）：点交易首行来源格（末件物品）→ 物品
+/// 视图落位，清单最末行（初始不在视口）滚动进视口并高亮。「删除即红」负向
+/// 条目：删消费面滚动接线（items.rs 聚焦行 scroll 效果）→ 高亮行停留视口
+/// 外、聚焦行格永不渲染，wait_for 超时本测红。
+#[test]
+fn items_view_source_jump_scrolls_focused_row_into_view() {
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("items-jump-scroll");
+    let item_id;
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let (_, id) = seed_item_series(&db, 60);
+        item_id = id;
+    }
+
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_transactions(&mut app);
+    // 交易列表首行 = 末件物品的购买交易（日期最晚），来源格在屏后跳转。
+    app.wait_for(&format!("id:tx-cell-source-{item_id}"))
+        .unwrap();
+    app.press(&format!("id:tx-cell-source-{item_id}")).unwrap();
+
+    // 落物品视图：聚焦行格在屏（虚拟滚动——不滚动则第 60 行格不渲染）且在
+    // 表格视口框内（layout 边界随滚动偏移移动，#2140 的「进入视口」可观察
+    // 结果）。
+    app.wait_for("id:item-table").unwrap();
+    app.wait_for("id:item-row-focus").unwrap();
+    let nodes = app.screen().layout_nodes();
+    let node_of = |test_id: &str| {
+        nodes
+            .iter()
+            .find(|n| n.test_id.as_deref() == Some(test_id))
+            .unwrap_or_else(|| panic!("layout 节点 {test_id} 不在屏"))
+            .clone()
+    };
+    let table = node_of("item-table");
+    let focus = node_of("item-row-focus");
+    let top = table.bounds.origin.y;
+    let bottom = top + table.bounds.size.height;
+    assert!(
+        focus.bounds.origin.y >= top && focus.bounds.origin.y + focus.bounds.size.height <= bottom,
+        "聚焦行在表格视口框内：table={:?} focus={:?}",
+        table.bounds,
+        focus.bounds
+    );
+}
+
+/// 短清单幂等（#2140）：行集短于视口（2 行），跳转聚焦次行——scroll_to_row
+/// 钳制在滚动范围内空转，不抛错不误滚：视图照常落位、聚焦行在屏、无错误
+/// 条位。删除滚动接线后本测照绿（幂等性本身不依赖接线，红绿由上一测守）。
+#[test]
+fn items_view_source_jump_short_list_is_idempotent() {
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("items-jump-short");
+    let item_id;
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let (_, id) = seed_item_series(&db, 2);
+        item_id = id;
+    }
+
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_transactions(&mut app);
+    app.wait_for(&format!("id:tx-cell-source-{item_id}"))
+        .unwrap();
+    app.press(&format!("id:tx-cell-source-{item_id}")).unwrap();
+
+    // 落物品视图：聚焦行在屏（短清单本就全可见）、无错误条位、视图正常。
+    app.wait_for("id:item-table").unwrap();
+    app.wait_for("id:item-row-focus").unwrap();
+    app.settle();
+    assert!(
+        !app.shows("内部错误"),
+        "滚动空转不抛错：{:?}",
+        app.screen().texts()
+    );
+    assert!(app.shows("物品列表"), "视图正常落位");
 }
 
 // ---------------------------------------------------------------------------
@@ -12282,6 +12847,87 @@ fn policy_view_edit_shows_agreement_segments_and_rebuild_entry() {
         "改价字段组频次预填旧段"
     );
 }
+
+/// 造一列保单（各带一笔挂单支出，日期随 [`test_date`] 递增）：保单清单按
+/// 创建序升序——末张（返回值）是清单最深行，其支出日期最晚 = 交易列表首
+/// 行（来源格在屏可按）。count 大于视口可见行数时末张初始不在视口。
+fn seed_policy_series(db: &ledger_infra::db::DbState, count: usize) -> String {
+    let account = seed_cash_account(db);
+    let insurer = seed_insurer(db, "众安");
+    let mut last = None;
+    for index in 0..count {
+        let policy_id = seed_policy(
+            db,
+            &insurer,
+            &format!("P-{index:03}"),
+            &format!("险种{index:03}"),
+            &test_date(index),
+            None,
+            None,
+        );
+        let conn = db.conn.lock().unwrap();
+        ledger_transaction::create(
+            &conn,
+            TransactionInput {
+                policy_id: Some(policy_id.clone()),
+                ..seed::expense_input_base(&account, &test_date(index), 2_500, None, None)
+            },
+        )
+        .unwrap();
+        drop(conn);
+        last = Some(policy_id);
+    }
+    last.unwrap()
+}
+
+/// 来源跳转落点滚动定位（保单，#2140）：点交易首行来源格（末张保单）→ 保
+/// 单页签落位，清单最末行（初始不在视口）滚动进视口并高亮。「删除即红」负
+/// 向条目：删消费面滚动接线（policies.rs 聚焦行 scroll 效果）→ 高亮行停留
+/// 视口外、聚焦行格永不渲染，wait_for 超时本测红。
+#[test]
+fn policies_view_source_jump_scrolls_focused_row_into_view() {
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("policies-jump-scroll");
+    let policy_id;
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        policy_id = seed_policy_series(&db, 40);
+    }
+
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_transactions(&mut app);
+    // 交易列表首行 = 末张保单的挂单保费（日期最晚），来源格在屏后跳转。
+    app.wait_for(&format!("id:tx-cell-source-{policy_id}"))
+        .unwrap();
+    app.press(&format!("id:tx-cell-source-{policy_id}"))
+        .unwrap();
+
+    // 落保单页签：聚焦行格在屏（虚拟滚动——不滚动则第 40 行格不渲染）且在
+    // 表格视口框内。
+    app.wait_for("id:policy-table").unwrap();
+    app.wait_for("id:policy-row-focus").unwrap();
+    let nodes = app.screen().layout_nodes();
+    let node_of = |test_id: &str| {
+        nodes
+            .iter()
+            .find(|n| n.test_id.as_deref() == Some(test_id))
+            .unwrap_or_else(|| panic!("layout 节点 {test_id} 不在屏"))
+            .clone()
+    };
+    let table = node_of("policy-table");
+    let focus = node_of("policy-row-focus");
+    let top = table.bounds.origin.y;
+    let bottom = top + table.bounds.size.height;
+    assert!(
+        focus.bounds.origin.y >= top && focus.bounds.origin.y + focus.bounds.size.height <= bottom,
+        "聚焦行在表格视口框内：table={:?} focus={:?}",
+        table.bounds,
+        focus.bounds
+    );
+}
+
 // ---------------------------------------------------------------------------
 // 实物资产视图（#2049 NSH 迁移⑱）：清单（在持合计卡 + 状态筛选 + 列头与
 // 行格）+ 新建/编辑表单 + 更新估值 + 处置 + 软删确认的 CRUD 旅程。删除任一
