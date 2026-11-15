@@ -328,44 +328,14 @@ pub(crate) fn SearchView() -> impl IntoElement {
             ),
         );
     };
-    // 来源格跳转：与交易列表 jump_source 同一接缝（目标计算收口导航域深
-    // 模块，落位经导航单点入口——消费不自建）。
-    let jump_source = move |kind: ledger_transaction::TransactionSourceKind, entity_id: &str| {
-        let store = nav::store();
-        nav::open(nav_model::resolve_source_jump(
-            transactions::source_nav_kind(kind),
-            entity_id,
-            |v| store.is_view_contained(v),
-            |v| store.is_closed(v),
-        ));
-    };
-    // 备注复制：剪贴板显式写 + 回读校验两态反馈（交易列表同形——同一应用
-    // 进程的自写自读；成功词表 transactions.list.copyNoteOk 同文案）。
-    let copy_note = {
-        let owner = view_owner;
-        move |note: &str| {
-            let note = note.to_owned();
-            owner.run(move || {
-                spawn(async move {
-                    set_clipboard(&note);
-                    let readback = clipboard_string().await;
-                    let matched = readback == note;
-                    if !matched {
-                        tracing::warn!("剪贴板回读与备注原文不一致，复制反馈呈现失败态");
-                    }
-                    copy_feedback.set(Some(if matched {
-                        "备注已复制".to_owned()
-                    } else {
-                        "复制失败".to_owned()
-                    }));
-                });
-            });
-        }
-    };
+    // 来源格跳转 + 备注复制反馈：与交易列表同一接缝（共享单点
+    // transactions::jump_source / copy_note_feedback——目标计算收口导航域
+    // 深模块，剪贴板回读校验与词面单一来源；#2061 / #2138）。
+    let copy_note = transactions::copy_note_feedback(view_owner, copy_feedback);
     let cell_actions = transactions::CellActions {
         account: Arc::new(drill_account),
         merchant: Arc::new(drill_merchant),
-        source: Arc::new(jump_source),
+        source: Arc::new(transactions::jump_source),
         copy_note: Arc::new(copy_note),
     };
 
