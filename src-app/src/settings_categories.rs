@@ -40,6 +40,7 @@ use crate::modal::app_modal;
 use crate::pinyin_select;
 use crate::popconfirm;
 use crate::settings::status_line;
+use crate::settings_data::{READ_TASK_FAILED, SESSION_MISSING, WRITE_TASK_FAILED};
 use crate::{signals, views};
 
 // ---------------------------------------------------------------------------
@@ -76,9 +77,6 @@ const MSG_DELETE_FAILED_PREFIX: &str = "删除失败: ";
 const MSG_SORT_FAILED_PREFIX: &str = "排序失败: ";
 const LOADING_PLACEHOLDER: &str = "正在加载…";
 const LOAD_FAILED_PREFIX: &str = "加载失败：";
-const SESSION_MISSING: &str = "内部错误：账本库会话缺失";
-const READ_TASK_FAILED: &str = "内部错误：读任务异常退出";
-const WRITE_TASK_FAILED: &str = "内部错误：写入任务异常退出";
 
 // ---------------------------------------------------------------------------
 // 装配层（纯投影，无 UI 依赖；渲染期零格式化）。

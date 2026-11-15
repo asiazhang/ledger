@@ -34,6 +34,7 @@ use crate::boot;
 use crate::design::font_size;
 use crate::select;
 use crate::settings::{card, status_line};
+use crate::settings_data::{READ_TASK_FAILED, SESSION_MISSING};
 use crate::views;
 
 // ---------------------------------------------------------------------------
@@ -62,8 +63,6 @@ const FX_OK_MIDDLE2: &str = " 至 ";
 const FX_OK_SUFFIX: &str = "）";
 const FX_FAILED_PREFIX: &str = "同步汇率失败: ";
 const FX_INTERVAL_DASH: &str = "-";
-const SESSION_MISSING: &str = "内部错误：账本库会话缺失";
-const READ_TASK_FAILED: &str = "内部错误：读任务异常退出";
 
 /// 展示币种存储键（旧壳 store `default_currency` 同键字面；NSH 自建平台存储
 /// ——外观卡同款契约）。
