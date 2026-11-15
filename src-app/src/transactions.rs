@@ -42,12 +42,28 @@ use crate::{
 const AMOUNT_PRIVACY_STORAGE_KEY: &str = "amount_privacy_enabled";
 
 /// 金额隐私开关的设备态读取（组件任务内同步读；解析镜像旧壳 `loadLocal`
-/// 的 JSON 布尔语义：缺失/非法归默认关）。立桩无设置面——开关的写入口随
-/// 设置面票接入（旧壳入口：侧栏标题行眼睛图标），本壳消费同一域来源、
-/// 同一存储键。crate 内消费面：交易/预算/概览视图的装配入口（#2039）。
+/// 的 JSON 布尔语义：缺失/非法归默认关）。写入口在
+/// [`set_amount_privacy_enabled`] 单点（侧栏品牌行眼睛按钮消费，issue
+/// #2137）。crate 内消费面：交易/预算/概览视图的装配入口（#2039）。
 pub(crate) fn amount_privacy_enabled() -> bool {
     nsh_core::storage::Storage::get_item(AMOUNT_PRIVACY_STORAGE_KEY)
         .is_some_and(|raw| raw.trim() == "true")
+}
+
+/// 写金额隐私开关的设备态（同键；值为 JSON 布尔字面量 `"true"` / `"false"`
+/// ——旧壳 `saveLocal` 同形，关态写显式 `false`、不做删记录）。写失败不静
+/// 默：告警日志，镜像信号仍在会话内生效（下次启动回默认——导航界面状态
+/// 写入同取舍）；存储即设备态的读侧，无第二写入口。
+pub(crate) fn set_amount_privacy_enabled(enabled: bool) {
+    if let Err(e) =
+        nsh_core::storage::Storage::set_item(AMOUNT_PRIVACY_STORAGE_KEY, enabled.to_string())
+    {
+        tracing::warn!(
+            key = AMOUNT_PRIVACY_STORAGE_KEY,
+            error = %e,
+            "金额隐私开关写入存储失败"
+        );
+    }
 }
 
 /// 装载批次读侧载荷（[`assembly::RowContext`] 的读侧对称形态）：一次页读同

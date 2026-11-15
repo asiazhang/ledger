@@ -11,8 +11,16 @@
 //! 弹层纪律：右键菜单经 [`crate::context_menu`] 封装（原生菜单 + 存续期间
 //! 抑制上报），零新抑制机制；文案仅 zh-CN（旧壳 common.sidebar* 同词表）。
 //!
+//! 品牌行（issue #2137）：应用名 + 金额隐私眼睛按钮——旧壳 `App.vue`
+//! brandRow（侧栏标题行，#566）的 NSH 对应形态，侧栏与导航抽屉同一渲染面
+//! （[`brand_row`] 单点，旧壳桌面档与移动档壳层复用同一渲染函数同构）；
+//! 点击切换设备轻量设置项 `amount_privacy_enabled`（写入口在
+//! [`crate::transactions`] 单点），掩码消费面零改动（装载时机读取语义已在
+//! 各视图落地：切换后已挂载视图不即时翻转，落位重挂/失效重读即按新态装配）。
+//!
 //! 测试豁免（ADR-0060）：本模块测试经 crate 根 cfg(test) 整体放行六件套。
 
+use nsh_base::button;
 use nsh_core::element::desktop::MenuItem;
 use nsh_core::platform::Os;
 use nsh_core::prelude::*;
@@ -20,6 +28,7 @@ use nsh_core::prelude::*;
 use crate::context_menu;
 use crate::nav::{self, NavStore};
 use crate::nav_model::{self, GroupId, NavRequest, SortAction, ViewName};
+use crate::transactions::{amount_privacy_enabled, set_amount_privacy_enabled};
 
 /// 侧栏宽度（桌面档固定宽；折叠与自适应不在本票——旧壳折叠态随窄窗横切票
 /// 另裁）。
@@ -47,20 +56,7 @@ pub fn SidebarView() -> impl IntoElement {
     };
 
     // 固定项（概览首位 / AI 倒数第二 / 设置末位；不可关、不可排、无右键菜单）。
-    let brand = view()
-        .flex_row()
-        .items_center()
-        .px_3()
-        .py_2()
-        .child(
-            text(move || {
-                // 应用名（旧壳 common.app.name 同词表）。
-                "开源记账".to_owned()
-            })
-            .text_sm()
-            .text_color(fg),
-        )
-        .app_class("border-b border-border");
+    let brand = brand_row();
     let fixed_item = |name: ViewName| nav_item(name, hint_of, fg, muted, NavSurface::Desktop);
 
     // 三组（组序固定）：组标题行（组名 + 「更多」链接）+ 组内成员（关闭只筛
@@ -105,6 +101,71 @@ pub fn SidebarView() -> impl IntoElement {
         // 沉底；#2129）。
         .child(view().flex_1())
         .child(crate::sidebar_books::book_switch_area())
+}
+
+/// 品牌行（侧栏与导航抽屉同一渲染面，入口唯一——旧壳 `App.vue` brandRow
+/// 桌面档与移动档壳层复用同构）：应用名 + 金额隐私眼睛按钮（issue #2137）。
+///
+/// 眼睛按钮点击切换设备轻量设置项 `amount_privacy_enabled`（写入口在
+/// [`crate::transactions::set_amount_privacy_enabled`] 单点，同键同值形态）；
+/// 睁/闭两态字形与无障碍标签反映当前状态（文案 = 旧壳 common.amountPrivacy*
+/// zh-CN 词面：关→「隐藏金额」、开→「显示金额」，zh-CN 硬编码现状）；按钮
+/// selected 态携带开关语义（旧壳 aria-pressed 的原生对应物，toggle button
+/// 模式）；无禁用态（旧壳同口径，侧栏折叠时按钮不可见在本壳无折叠态）。
+///
+/// 掩码消费面零改动：各视图仍装载时机读取，切换后已挂载视图不即时翻转，
+/// 落位重挂/失效重读即按新态装配。镜像信号（挂本组件实例）只承担按钮自身
+/// 的响应式呈现——存储读无响应式依赖，不镜像则切换后字形不随动。
+fn brand_row() -> View {
+    let fg = crate::theme::color("foreground");
+    let muted = crate::theme::color("muted-foreground");
+    // 开关镜像信号：初值 = 存储读取（挂本组件实例）；点击即写存储 + 置镜像。
+    let privacy = signal(amount_privacy_enabled());
+    view()
+        .flex_row()
+        .items_center()
+        .justify_between()
+        .px_3()
+        .py_2()
+        .child(
+            // 应用名（旧壳 common.app.name 同词表）。
+            text("开源记账").text_sm().text_color(fg),
+        )
+        .child(
+            button()
+                .selected(move || privacy.get())
+                .accessibility_label(move || {
+                    // 两态无障碍标签（旧壳 common.amountPrivacy* zh-CN 词面）。
+                    let label: SharedString = if privacy.get() {
+                        "显示金额".into()
+                    } else {
+                        "隐藏金额".into()
+                    };
+                    Some(label)
+                })
+                .app_class("rounded-full px-1.5 py-0.5 hover:bg-accent")
+                .child(
+                    text(move || {
+                        // 两态字形（旧壳 EyeOutline / EyeOffOutline 图标的本壳
+                        // 字形对应物：睁眼 = 金额可见；掩码字面 = 金额已隐藏，
+                        // 与全应用隐私掩码同词）。
+                        if privacy.get() {
+                            "••••".to_owned()
+                        } else {
+                            "👁".to_owned()
+                        }
+                    })
+                    .text_xs()
+                    .text_color(muted)
+                    .test_id("brand-privacy"),
+                )
+                .on_press(move |_: &()| {
+                    let enabled = !privacy.get_untracked();
+                    set_amount_privacy_enabled(enabled);
+                    privacy.set(enabled);
+                }),
+        )
+        .app_class("border-b border-border")
 }
 
 /// 侧栏呈现面（桌面侧栏 / 导航抽屉同构消费导航状态，形态差异收口）。
@@ -176,13 +237,7 @@ pub(crate) fn drawer_panel() -> View {
     let fg = crate::theme::color("foreground");
     let muted = crate::theme::color("muted-foreground");
     let no_hint = |_: ViewName| -> Option<String> { None };
-    let brand = view()
-        .flex_row()
-        .items_center()
-        .px_3()
-        .py_2()
-        .child(text("开源记账").text_sm().text_color(fg))
-        .app_class("border-b border-border");
+    let brand = brand_row();
     let fixed_item = |name: ViewName| nav_item(name, no_hint, fg, muted, NavSurface::Drawer);
     let group_rows = nav_model::GROUPS
         .iter()
