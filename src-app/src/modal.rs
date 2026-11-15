@@ -114,8 +114,11 @@ fn title_row(
         .justify_between()
         .child(
             // 弹窗标题（字阶 BODY 档，design.rs font_size 同源——DESIGN.md §3
-            // 「页面/卡片标题」档）。
-            text(title())
+            // 「页面/卡片标题」档）。标题是响应式绑定（bound_text
+            // render_effect 逐次求值）：分支闭包 untracked 求值一次，弹窗
+            // 开着期间随调闭包所读信号变化的标题（如更新弹窗随流程阶段换
+            // 文案，#2126 review）不重建分支也能就位更新。
+            text(title)
                 .text_size(px(font_size::BODY))
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_color(fg)

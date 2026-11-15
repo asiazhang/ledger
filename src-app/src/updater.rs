@@ -861,7 +861,10 @@ pub(crate) fn update_modal() -> impl IntoElement {
     // open 是 tracked 读（流程态也读）：开合与阶段转换都触发重评估——闭包值
     // 只在「弹层应开」边界翻转，阶段内部切换由内容 dynamic 区域承担。
     let open = move || store.modal_open.get() && store.flow.get() != Flow::Idle;
-    let title = move || match store.flow.get_untracked() {
+    // 标题随流程阶段换文案（Remind → Downloading → Downloaded）：tracked 读
+    // ——when 分支闭包 untracked 一次求值，标题以响应式绑定（modal.rs
+    // title_row 的 bound_text）随流程态就位更新，不依赖 open 边界翻转。
+    let title = move || match store.flow.get() {
         Flow::Remind(plan) => format!("{MODAL_TITLE_REMIND_PREFIX}{}", plan.version),
         Flow::Downloading(..) => MODAL_TITLE_DOWNLOADING.to_owned(),
         _ => MODAL_TITLE_DOWNLOADED.to_owned(),

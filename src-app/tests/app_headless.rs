@@ -18385,6 +18385,58 @@ fn update_startup_check_reminds_once_per_version_with_memory() {
     );
 }
 
+/// 弹层标题随流程阶段转换（Remind → Downloading → Downloaded）：弹层开着
+/// 期间 `open` 边界不翻转、nsh `when` 分支闭包 untracked 求值一次——标题若
+/// 以 `text(title())` 开弹时一次快照，阶段转换后停留「发现新版本 vX」。
+/// 修复后标题以响应式绑定随流程态更新（删除 modal.rs 标题行的响应式绑定
+/// 即本测红：已下载态标题停留提醒态文案，ADR-0087 断言对准屏上可见结果）。
+#[test]
+fn update_modal_title_follows_flow_stage() {
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+    let source = stub_update_source(false);
+    let _installed = install_update_stubs(source);
+    let dir = make_book("t2134-update-modal-title");
+    // 下载腿需要数据根（工件落盘路径解析：无数据根 = 码化拒绝，不静默）。
+    let data_root = ScratchDir::new("t2134-update-modal-title");
+    nsh_app::cross_book::set_default_data_dir(data_root.path().to_path_buf());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config_with_manual_clock(&[])).unwrap();
+    open_settings(&mut app);
+
+    // 推进过延迟窗：提醒弹层开（标题 = 发现新版本 vX）。
+    app.fast_forward(std::time::Duration::from_secs(16))
+        .unwrap();
+    app.wait_for("id:update-modal-notes").unwrap();
+    assert!(
+        app.screen()
+            .texts()
+            .contains(&format!("发现新版本 {UPDATE_NEXT_VERSION}").as_str()),
+        "提醒态标题呈现新版本号：{:?}",
+        app.screen().texts()
+    );
+
+    // 弹层内下载：流程转下载中 → 已下载（替身即时完成），弹层开着、open
+    // 边界不翻转——标题应随阶段转「准备安装更新」，停留提醒态文案即缺陷。
+    // （下载中态标题同机制，替身即时完成不可稳定观察，钉已下载终态。）
+    press_after(&mut app, "id:update-download-btn", "id:update-download-btn").unwrap();
+    // 手动时钟：进度轮询的 timer 需时钟推进才走完（替身即时完成，一次推进
+    // 足够轮询循环观察到句柄完结）。
+    app.run_for(std::time::Duration::from_secs(2)).unwrap();
+    app.wait_for("id:update-install-btn").unwrap();
+    let texts = app.screen().texts();
+    assert!(
+        texts.contains(&"准备安装更新"),
+        "已下载态标题随阶段转换：{:?}",
+        texts
+    );
+    assert!(
+        !texts.contains(&format!("发现新版本 {UPDATE_NEXT_VERSION}").as_str()),
+        "阶段转换后提醒态标题退场：{:?}",
+        texts
+    );
+}
+
 /// 手动检查失败就地报错（ADR-0124 决策 4：后台失败静默、手动失败就地——
 /// 本用例钉手动侧码化文案呈现）。
 #[test]
