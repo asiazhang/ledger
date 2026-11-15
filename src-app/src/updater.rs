@@ -788,15 +788,25 @@ pub(crate) fn confirm_install(store: UpdateStore) {
             }
             // 第 2 步：换装链（成功即重启不返回；失败回已下载态就地报错，
             // 应用保持原样——官方语义「If install fails, the app stays as
-            // it was」）。
+            // it was」）。工件路径先于 blocking 解析：无数据根 = 码化拒绝
+            // （与 [`archive_target`] 下载腿同口径，不静默造伪名；更新前备
+            // 份步同条件已先挡，此处同条件防御收敛为诚实报错）。
             let setup = updater_setup();
             let install_plan = plan.clone();
             let outcome = match setup {
                 Some(setup) => {
+                    let archive = match install_plan_archive(&install_plan) {
+                        Ok(archive) => archive,
+                        Err(error) => {
+                            store.flow_error.set(Some(error.to_string()));
+                            store.flow.set(Flow::Downloaded(plan));
+                            return;
+                        }
+                    };
                     let installer = installer_slot().clone();
                     blocking(move || match installer {
-                        Some(installer) => installer(&install_plan_archive(&install_plan)),
-                        None => perform_install(&setup, &install_plan_archive(&install_plan)),
+                        Some(installer) => installer(&archive),
+                        None => perform_install(&setup, &archive),
                     })
                     .await
                 }
@@ -826,9 +836,11 @@ pub(crate) fn confirm_install(store: UpdateStore) {
 }
 
 /// 流程内计划对应的已下载工件路径（安装编排消费；与 [`archive_target`] 同一
-/// 命名单点）。
-fn install_plan_archive(plan: &PlanUpdate) -> PathBuf {
-    archive_target(&plan.version).unwrap_or_else(|_| PathBuf::from("ledger-update.tar.gz"))
+/// 命名单点）。数据根未注入 = 码化拒绝（下载无落点比静默丢失诚实——安装
+/// 编排同口径，不静默回退伪名；更新前备份步同条件已先挡，此处为同条件
+/// 防御路径，失败同样就地报错不静默）。
+fn install_plan_archive(plan: &PlanUpdate) -> Result<PathBuf, AppError> {
+    archive_target(&plan.version)
 }
 
 // ---------------------------------------------------------------------------
