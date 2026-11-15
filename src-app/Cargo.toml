@@ -41,10 +41,14 @@ serde = { version = "1", features = ["derive"] }
 # 泵的无界通道，#2081）。
 tokio = { version = "1", features = ["rt", "macros", "time", "sync"] }
 # NSH 框架经 workspace 精确锁定消费（ADR-0145 决策 2 / issue #2017 AC：0.x 连续
-# breaking，升级显式成票；default-features = false 关掉 QuickJS VM，Rust 模式）。
-# 平台后端按目标门禁（先例：根包窗口状态插件的 target 三元组条件）——立桩期
-# 仅 Linux（硬伤清单的战场）；macOS / Windows 随迁移系列票逐平台开门。
+# breaking，升级显式成票——0.4.0→0.5.1 见 #2133；default-features = false 关掉
+# QuickJS VM，Rust 模式）。平台后端按目标门禁（先例：根包窗口状态插件的 target
+# 三元组条件）——立桩期仅 Linux（硬伤清单的战场）；macOS / Windows 随迁移系列
+# 票逐平台开门。
 nsh-core.workspace = true
+# 更新器规则面（#2134）：Config 校验/检查、Download 流校验、Installation 换装
+# （详见 workspace 声明处注释）。
+nsh-updater.workspace = true
 # UI 组件集（issue #2018 首屏表格）：DataTable（虚拟化大表）与 Pagination（分页条）
 # 消费面；平台宿主缺省已注册同一组件集（nsh-platform-linux app.rs 缺省 ui_sets =
 # nsh_base::registry()），本依赖只是 Rust 侧的组件构造入口，不引入第二份注册。
@@ -108,6 +112,10 @@ tokio = { version = "1", features = ["rt", "sync", "time"] }
 # 本地日历（期间数学的自然月/季/年边界与「今天」，issue #2021）：域栈多 crate
 # 同版本的既有直接依赖（workspace 未收 workspace.dependencies，各成员同版本声明）。
 chrono = "0.4.45"
+# 更新器 HTTP 传输（#2134）：nsh-updater 不带网络（规则 crate），清单/工件字节
+# 获取由本壳自备——blocking 客户端跑 blocking 任务，TLS 走 rustls（与域栈
+# market-sync / sync-engine 同版本同特性线，webpki roots 兼 GitHub 证书链）。
+reqwest = { version = "0.13", default-features = false, features = ["blocking", "rustls"] }
 # 性能工具 bin 的确定性摘要（#2082 迁居：src/bin/ledger-perf 的 rng 模块以
 # SHA-256 为可种子化 PRNG 的派生熵源；与 infra / sync-engine / transaction
 # 同款直接依赖版本，workspace 未收束）。
@@ -192,14 +200,20 @@ resolver = "3"
 # 三周四版连续 breaking，升级必须显式成票——全部精确版本（`=`）钉死于 workspace
 # 声明，成员经 `workspace = true` 消费，`cargo update` 不会漂入新版本。全部
 # default-features = false：Rust 模式不带 QuickJS VM（nsh-engine / nsh-platform-linux
-# 的 default 含 `js`，ADR-0145 决策 1），nsh-base 的 default 含代码高亮（syntect，
-# 立桩消费面用不到）；`nsh-testing` 0.4.0 的 default 不含 QuickJS，测试侧原样消费。
+# 的 default 含 `js`，ADR-0145 决策 1），nsh-base 的 default 含代码高亮（syntect）
+# 与 editor/rich-editor/term，立桩消费面用不到；0.5.0 起 plot 组件模块也走
+# feature 门控（走势图消费面，本仓显式启用 `plot`）；`nsh-testing` 0.5.1 的
+# default 仍是 ["live"]（不含 QuickJS），测试侧原样消费。
 [workspace.dependencies]
-nsh-core = { version = "=0.4.0" }
-nsh-base = { version = "=0.4.0", default-features = false }
-nsh-engine = { version = "=0.4.0", default-features = false }
-nsh-platform-linux = { version = "=0.4.0", default-features = false }
-nsh-testing = { version = "=0.4.0", default-features = false }
+nsh-core = { version = "=0.5.1" }
+nsh-base = { version = "=0.5.1", default-features = false, features = ["plot"] }
+nsh-engine = { version = "=0.5.1", default-features = false }
+nsh-platform-linux = { version = "=0.5.1", default-features = false }
+nsh-testing = { version = "=0.5.1", default-features = false }
+# 更新器规则 crate（#2134 / ADR-0145 修订注记 2026-11-15）：签名清单校验、下载
+# 流校验与整包换装（no network、no UI——HTTP 传输由本壳自备）。与 nsh-core 传递
+# 依赖同版本精确锁定，随 NSH 版本同一张升级票。
+nsh-updater = { version = "=0.5.1" }
 
 # 易 panic 构造六件套 deny 门禁（issue #432 / ADR-0060）：门禁约束生产路径；
 # 测试目标经 crate 根与集成/BDD 测试 crate 头部 cfg_attr(test, allow) 整体豁免，

@@ -31,7 +31,7 @@ use crate::nav_model::ViewName;
 use crate::{
     accounts, backup_host, budget, danger, dashboard, investments, items, logging, nav, nav_model,
     reports, scheduled, search, settings, sidebar, signals, sync_triggers, transactions, tx_filter,
-    tx_view_preferences, unlock, views,
+    tx_view_preferences, unlock, updater, views,
 };
 
 /// 启动装配入口：账本目录（bin 注入一次；headless 测试按场景注入）。槽位
@@ -130,6 +130,9 @@ pub fn reset_book_assembly() {
     // #2078：自动备份宿主的进程级单例态同批复位（目录镜像 / 首次兜底认领
     // 与待跑标志——上一场景的备份目录不得泄入下一场景）。
     backup_host::reset_shell_side_for_tests();
+    // #2134：更新器现场同批复位（状态槽 / 传输桩 / 换装桩 / 配置字节——上一
+    // 场景的替身与配置不得泄入下一场景）。
+    crate::updater::reset_for_tests();
 }
 
 /// 启动结果闭集（窗口呈现的全部状态）。
@@ -146,7 +149,8 @@ pub enum StartupView {
     ///（`Some` 时引导界面带损坏告示；`None` = 未配置的干净出厂现场）。
     Onboarding { fallback_reason: Option<String> },
     /// 密文库锁定态（issue #2088）：引导已识别密文库（引导记录落槽、锁定门
-    /// 置锁），等待主口令解锁或忘口令重置；成功后经业务可用起点单点进入
+    /// 置锁），等待主口令解锁、忘口令重置或从备份文件恢复（#2131，双逃生
+    /// 门平价）；成功后经业务可用起点单点进入
     /// [`StartupView::Ready`]（原位换连，不重走启动竖井）。
     Locked,
     /// 引导失败：码化错误的用户可见文案（zh-CN 原样呈现）。
@@ -574,12 +578,23 @@ pub fn App() -> impl IntoElement {
     // 绑定随根实例存亡（引擎线程派发，含抑制闸门）。
     let nav = nav::store();
     tx_filter::store();
+    // 更新器状态挂根实例（#2134：弹层与设置卡共源——首调在根组件体，信号
+    // 随进程存活；启动延迟静默检查与弹层同源消费）。
+    updater::store();
     // 交易页视图偏好（#2062）信号同挂根实例：首调若落在交易视图体，断点翻转
     // 重挂视图（owner 释放）后装载读信号即崩——与筛选会话态同一条所有权契约。
     tx_view_preferences::store();
     // 报表页会话态（#2048）同样挂根实例（首调初始化；离开报表视图重挂不丢
     // ——旧壳 reports-session 存活期 = 应用会话同语义）。
     reports::store();
+    // 投资页会话态（#2045–#2047）同挂根实例（同一条所有权契约：首调若落在
+    // 投资视图体，切走视图重挂（owner 释放）后页签栏/装载读会话信号即崩
+    // ——与筛选会话态/报表会话态同根因，#2130 期间发现，诊断证据随交付
+    // 报告）。
+    investments::store();
+    // 定时视图会话态（#2042）同挂根实例（同上：形态页签 computed 读会话槽，
+    // 挂视图体则切走重挂即崩——同根因同接线）。
+    scheduled::bind_session_at_root();
     nav::bind_shortcuts();
     // 显示主题启动钩（#2053）：按存储外观应用全局显色——三环接缝（存储读 /
     // 解析 / 应用）在 settings::apply_startup_appearance 单点内的接线，拆除
@@ -821,6 +836,10 @@ pub fn App() -> impl IntoElement {
         // 删除本接线即 headless 泵断言红（tests/app_headless.rs）。
         if outcome == StartupView::Ready {
             crate::http_host::spawn_pump();
+            // 启动延迟静默检查（#2134 / ADR-0124 决策 4：延迟 15s，失败静默，
+            // 每新版本至多提醒一次；进程级一次排程）。删本接线即 headless
+            // 启动检查探针红（手动时钟 fast_forward 推进）。
+            updater::schedule_startup_check();
         }
         state.set(outcome);
     });
@@ -1034,6 +1053,10 @@ pub fn App() -> impl IntoElement {
     // 故挂组件体这一层（OpenDialog 只从引导面板按钮开启）。
     .child(create_dialog)
     .child(create_book_dialog)
+    // 更新弹层（#2134，AppUpdateModal 的 NSH 对应件）同样挂根层：提醒 / 下载
+    // / 安装三阶段同一弹层按流程态分形，遮罩 inset_0 覆盖全窗（封装弹层纪律
+    // 同上）；流程态信号挂根实例（updater::store 在组件体首调）。
+    .child(updater::update_modal())
 }
 
 #[cfg(test)]

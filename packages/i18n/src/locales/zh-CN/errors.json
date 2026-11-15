@@ -429,6 +429,7 @@
     "no-update": "当前没有可安装的更新",
     "download-failed": "更新下载失败，请检查网络后重试",
     "signature-invalid": "更新工件验签失败，已拒绝安装",
+    "checksum-mismatch": "更新工件校验失败（与清单的 SHA-256 或大小不符），已拒绝安装",
     "not-downloaded": "更新尚未下载完成，请先下载",
     "install-failed": "更新安装失败，请重试"
   },

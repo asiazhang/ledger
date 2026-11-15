@@ -70,8 +70,8 @@ pub fn plot_line(
         let series = series();
         let len = series.len();
         let mut columns: Vec<f64> = Vec::with_capacity(len);
-        for i in 0..len {
-            columns.push(series.values[i].unwrap_or(f64::NAN));
+        for value in series.values.iter().take(len) {
+            columns.push(value.unwrap_or(f64::NAN));
         }
         Rows::from_columns(len, [("value".into(), columns)])
     };

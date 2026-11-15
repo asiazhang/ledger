@@ -1,12 +1,15 @@
-//! 密文库锁定视图（解锁面板 + 忘口令重置，issue #2088；旧壳
-//! `UnlockScreen.vue` 的 NSH 对应面，旧壳 `unlock.*` zh-CN 词条原样承载）。
+//! 密文库锁定视图（解锁面板 + 忘口令重置 + 从备份文件恢复，issue #2088 /
+//! #2131；旧壳 `UnlockScreen.vue` 的 NSH 对应面，旧壳 `unlock.*` zh-CN 词条
+//! 原样承载）。
 //!
-//! 呈现面只放解锁 / 状态 / 恢复动作（旧壳 `LOCKED_ALLOWED_COMMANDS` 白名单
-//! 语义的本壳对应闭集）：主口令输入 + 解锁、错误行、忘记口令重置入口。会话
-//! 不存在的锁定现场无业务读写面（业务视图未挂载、[`crate::app::db_slot`]
-//! 恒空），白名单不变量结构性成立；「从备份文件恢复」入口不在本屏（豁免
-//! 留痕：恢复通道 = 忘口令重置进明文会话 → 设置卡恢复备份文件，与 NSH
-//! 失败态无恢复入口的既有形态一致，#2088 裁决）。
+//! 呈现面只放解锁 / 状态 / 逃生门动作（旧壳 `LOCKED_ALLOWED_COMMANDS` 白名单
+//! 语义的本壳对应闭集）：主口令输入 + 解锁、错误行、忘记口令重置入口、从
+//! 备份文件恢复入口（#2131 收口 #2088 挂账残留：恢复入口与忘口令重置并列
+//! 常驻双逃生门，#603 平价；复用备份域恢复通道与 RestoreSafetyBackup 语义，
+//! 词条口径不变——文件选择器 → 元数据校验 → 模式探测 → 确认弹窗〔跨模式
+//! 警告 + 密文备份主口令，上下文口令自动试开〕→ [`crate::boot::restore_locked_book`]
+//! 恢复通道最小命令面，其余业务读写仍被锁定现场结构性拦截——会话不存在
+//!（[`crate::app::db_slot`] 恒空）、业务视图未挂载，白名单不变量成立）。
 //!
 //! 自动解锁平价（#2088 裁决）：[`ledger_infra::db::passphrase_cache::supported`]
 //! 仅 macOS——本壳 Linux-only（ADR-0145），解锁屏不做自动解锁尝试（旧壳
@@ -27,13 +30,19 @@
 //!
 //! 测试豁免（ADR-0060）：本模块测试经 crate 根 cfg(test) 整体放行六件套。
 
+use std::path::Path;
+
 use nsh_base::{button, input};
 use nsh_core::element::FontWeight;
+use nsh_core::file_dialog::{FileFilter, OpenDialog};
 use nsh_core::prelude::*;
 
 use crate::app::StartupView;
 use crate::danger::{DangerConfirmSpec, DangerLevel, DangerOutcome, danger_confirm};
 use crate::design::font_size;
+use crate::modal::app_modal;
+use crate::settings_data;
+use crate::settings_data::{READ_TASK_FAILED, WRITE_TASK_FAILED};
 use crate::{app, boot, http_host, views};
 
 // ---------------------------------------------------------------------------
@@ -52,6 +61,10 @@ const RESET_CONFIRM_DETAIL: &str = "继续将把账本重置为全新的明文�
 const RESET_CONFIRM_OK: &str = "确认重置";
 const RESET_CONFIRM_CANCEL: &str = "取消";
 const RESET_TASK_FAILED: &str = "内部错误：重置任务异常退出";
+/// 从备份文件恢复入口与选择器标题（旧壳 `unlock.restore` /
+/// `unlock.restorePickTitle` zh-CN 词条原样；#2131）。
+const RESTORE_ENTRY: &str = "从备份文件恢复…";
+const RESTORE_PICK_TITLE: &str = "选择备份文件";
 /// 自动解锁平价注记（Linux 平台不支持，见模块文档）。设置卡加密卡的
 /// 同一注记共用本常量（单点，避免双点措辞漂移）。
 pub(crate) const AUTO_UNLOCK_UNSUPPORTED: &str =
@@ -67,6 +80,30 @@ pub(crate) struct LockedSurface {
     busy: Signal<bool>,
     error: Signal<Option<String>>,
     reset_open: Signal<bool>,
+    /// 恢复意图（Some = 确认弹窗开；#2131）。
+    restore_intent: Signal<Option<LockedRestoreIntent>>,
+    /// 恢复弹窗口令输入（上下文口令自动试开失败后就地重输位）。
+    restore_pass: Signal<String>,
+    /// 口令框就地显出（试开失败 / 后端报需口令后置真）。
+    restore_pass_revealed: Signal<bool>,
+    /// 恢复弹窗内错误位（失败不关弹窗，就地重试）。
+    restore_error: Signal<Option<String>>,
+}
+
+/// 锁定屏恢复意图（设置卡 `RestoreIntent` 的本屏对应面 + 上下文口令，
+/// #2131）：弹窗开着 = 意图在场；`context_pass` 是选定备份那一刻解锁框口令
+/// 的快照（非空才携带——密文备份确认先自动试开、失败就地显出口令框重输，
+/// 旧壳 `useRestoreFromFile` contextPassphrase 同语义）。
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct LockedRestoreIntent {
+    /// 备份文件路径（选定即定，弹窗内回显）。
+    path: String,
+    /// 备份是否密文（元数据加密标记，驱动口令框与跨模式警告）。
+    backup_encrypted: bool,
+    /// 当前库是否密文（文件头探测，驱动跨模式警告）。
+    current_encrypted: bool,
+    /// 上下文口令快照（None = 不携带，弹窗直接弹口令框）。
+    context_pass: Option<String>,
 }
 
 /// 构造锁定面板信号组（App 组件体内调用一次；任务经 `Owner::current()` =
@@ -78,6 +115,10 @@ pub(crate) fn locked_surface(startup: Signal<StartupView>) -> LockedSurface {
         busy: signal(false),
         error: signal(None),
         reset_open: signal(false),
+        restore_intent: signal(None),
+        restore_pass: signal(String::new()),
+        restore_pass_revealed: signal(false),
+        restore_error: signal(None),
     }
 }
 
@@ -144,11 +185,166 @@ impl LockedSurface {
             });
         });
     }
+
+    /// 口令框显出判定（旧壳 RestoreConfirmModal showPassphrase 同位，#2131）：
+    /// 密文备份且无上下文口令时确认前显出；上下文试开失败或后端报需口令后
+    /// 就地显出。
+    fn restore_show_pass(&self, intent: &LockedRestoreIntent) -> bool {
+        (intent.backup_encrypted && intent.context_pass.is_none())
+            || self.restore_pass_revealed.get()
+    }
+
+    /// 恢复入口任务（旧壳 UnlockScreen pickRestore / 设置卡 pick_restore_task
+    /// 的本屏对应面，#2131）：文件选择 → 元数据校验 → 当前模式探测 → 意图
+    /// 落位（确认弹窗开）。校验失败即中止（弹窗不开，宁可不弹窗——破坏性
+    /// 操作前的安全面同设置卡口径），经解锁屏错误行呈现。两步探测都是纯
+    /// 文件面（恢复通道最小命令面，无会话依赖——锁定现场可用）。上下文口
+    /// 令在选定备份那一刻快照（解锁框非空即随意图携带，空白不携带）。
+    fn run_restore_pick(&self, owner: Owner) {
+        if self.busy.get_untracked() {
+            return; // 解锁 / 重置 / 恢复在途防重入（busy 三入口共用单飞）
+        }
+        let surface = *self;
+        owner.run(move || {
+            spawn(async move {
+                let picked = match pick_paths(
+                    OpenDialog::files()
+                        .multiple(false)
+                        .filter(FileFilter::new(settings_data::FILTER_NAME, ["zip", "db"]))
+                        .title(RESTORE_PICK_TITLE),
+                )
+                .await
+                {
+                    Ok(Some(paths)) => paths,
+                    _ => return,
+                };
+                let Some(path) = picked.into_iter().next() else {
+                    return;
+                };
+                let target: String = String::from(path.to_string_lossy().as_ref());
+                let probe_target = target.clone();
+                let meta = match blocking(move || boot::backup_meta(Path::new(&probe_target))).await
+                {
+                    Ok(Ok(meta)) => meta,
+                    Ok(Err(e)) => {
+                        surface.fail(format!("{}{e}", settings_data::MSG_META_FAILED_PREFIX));
+                        return;
+                    }
+                    Err(_) => {
+                        surface.fail(format!(
+                            "{}{READ_TASK_FAILED}",
+                            settings_data::MSG_META_FAILED_PREFIX
+                        ));
+                        return;
+                    }
+                };
+                let current = match blocking(boot::encryption_status).await {
+                    Ok(Ok(flag)) => flag,
+                    Ok(Err(e)) => {
+                        surface.fail(format!(
+                            "{}{e}",
+                            settings_data::MSG_ENCRYPTION_STATUS_FAILED_PREFIX
+                        ));
+                        return;
+                    }
+                    Err(_) => {
+                        surface.fail(format!(
+                            "{}{READ_TASK_FAILED}",
+                            settings_data::MSG_ENCRYPTION_STATUS_FAILED_PREFIX
+                        ));
+                        return;
+                    }
+                };
+                let context = {
+                    let pass = surface.pass.get_untracked();
+                    (!pass.trim().is_empty()).then_some(pass)
+                };
+                surface.restore_pass.set(String::new());
+                surface.restore_pass_revealed.set(false);
+                surface.restore_error.set(None);
+                surface.restore_intent.set(Some(LockedRestoreIntent {
+                    path: target,
+                    backup_encrypted: meta.encrypted,
+                    current_encrypted: current,
+                    context_pass: context,
+                }));
+            })
+        });
+    }
+
+    /// 恢复确认任务（弹窗提交；旧壳 RestoreConfirmModal confirm / 设置卡
+    /// confirm_restore_task 的本屏对应面，#2131）：口令框显出时用输入值，
+    /// 否则用上下文口令自动试开；失败不关弹窗（口令错误就地重试，解锁同
+    /// 语义），密文备份或后端报需口令时就地显出口令框；成功关弹窗并经业务
+    /// 可用起点进会话（恢复出的会话已按模式探测结果成对打开，
+    /// [`boot::restore_locked_book`]：明文库直达主界面，密文库凭恢复时已验
+    /// 证的口令解锁——旧壳「恢复后重启由启动探测接管」的本壳原位形态）。
+    fn run_restore_confirm(&self, owner: Owner) {
+        let Some(intent) = self.restore_intent.get_untracked() else {
+            return;
+        };
+        if self.busy.get_untracked() {
+            return; // 解锁 / 重置 / 恢复在途防重入
+        }
+        let typed = self.restore_pass.get_untracked().clone();
+        let show_pass = self.restore_show_pass(&intent);
+        if show_pass && typed.is_empty() {
+            return; // 口令框显出时须非空（按钮 disabled 同守卫）
+        }
+        let attempt = if show_pass {
+            typed
+        } else {
+            intent.context_pass.clone().unwrap_or_default()
+        };
+        let passphrase = (!attempt.is_empty()).then_some(attempt);
+        self.busy.set(true);
+        self.restore_error.set(None);
+        let surface = *self;
+        owner.run(move || {
+            spawn(async move {
+                let restore_target = intent.path.clone();
+                let outcome = blocking(move || {
+                    boot::restore_locked_book(Path::new(&restore_target), passphrase.as_deref())
+                })
+                .await;
+                match outcome {
+                    Ok(Ok(db)) => {
+                        surface.restore_intent.set(None);
+                        surface.restore_pass.set(String::new());
+                        surface.busy.set(false);
+                        surface.enter_ready(db);
+                    }
+                    Ok(Err(e)) => {
+                        let text = e.to_string();
+                        surface.restore_error.set(Some(format!(
+                            "{}{text}",
+                            settings_data::RESTORE_FAIL_PREFIX
+                        )));
+                        surface.busy.set(false);
+                        // 后端探测实际密文而元数据未标记（异常产物）时，按需显
+                        // 出口令输入——以后端探测为准（旧壳
+                        // passphraseRevealedByError 同位）。
+                        if intent.backup_encrypted || text.contains("backup.passphrase-required") {
+                            surface.restore_pass_revealed.set(true);
+                        }
+                    }
+                    Err(_) => {
+                        surface.restore_error.set(Some(format!(
+                            "{}{WRITE_TASK_FAILED}",
+                            settings_data::RESTORE_FAIL_PREFIX
+                        )));
+                        surface.busy.set(false);
+                    }
+                }
+            })
+        });
+    }
 }
 
 /// 锁定面板（App 启动形态互斥呈现的 Locked 分支；`surface` 与主行/次行前
 /// 景色由 App 组件体传入）。删本分支的挂载接线 → 锁定场景呈现缺参/空白两
-/// 行态、解锁入口缺席 → headless 解锁旅程红。
+/// 行态、解锁入口缺席 → headless 解锁旅程红；删恢复入口 / 恢复确认弹窗
+/// 接线（`unlock-restore-open` / `restore_modal`）→ 恢复旅程红（#2131）。
 pub(crate) fn locked_panel(
     surface: LockedSurface,
     fg: AdaptiveColor,
@@ -177,6 +373,18 @@ pub(crate) fn locked_panel(
         },
     );
     let unlock_surface = surface;
+    // 从备份文件恢复确认弹窗（#2131；设置卡恢复弹窗同形：意图开着 = 呈现，
+    // 关闭路径 = 取消 / ESC / ✕——执行中不关；成功后由任务关并进会话）。
+    let restore_modal = app_modal(
+        move || surface.restore_intent.get().is_some(),
+        || settings_data::RESTORE_MODAL_TITLE.to_owned(),
+        move || {
+            if !surface.busy.get_untracked() {
+                surface.restore_intent.set(None);
+            }
+        },
+        move || restore_modal_body(surface, fg),
+    );
     view()
         .flex_1()
         .flex_col()
@@ -261,6 +469,20 @@ pub(crate) fn locked_panel(
                                 .test_id("unlock-forgot"),
                         )
                         .on_press(move |_: &()| surface.reset_open.set(true)),
+                )
+                .child(
+                    // 从备份文件恢复常驻入口（#2131，旧壳 UnlockScreen 同位
+                    // 双逃生门并列；文件选择 → 探测 → 确认弹窗，见
+                    // restore_modal）。
+                    button()
+                        .app_class("px-3 py-1.5 rounded-md border border-border text-foreground hover:bg-accent")
+                        .child(
+                            text(RESTORE_ENTRY)
+                                .text_size(px(font_size::SECONDARY))
+                                .text_color(fg)
+                                .test_id("unlock-restore-open"),
+                        )
+                        .on_press(move |_: &()| surface.run_restore_pick(owner)),
                 ),
         )
         .child(
@@ -270,4 +492,150 @@ pub(crate) fn locked_panel(
                 .test_id("unlock-auto-unlock-note"),
         )
         .child(reset_dialog)
+        .child(restore_modal)
+}
+
+/// 恢复确认弹窗内容（设置卡 `restore_modal_body` 同构，#2131：恢复后果警
+/// 示、跨模式警告、密文备份主口令〔上下文口令自动试开时不显出〕与弹窗内
+/// 错误位；词表单点复用设置卡常量，措辞零漂移）。
+fn restore_modal_body(surface: LockedSurface, fg: AdaptiveColor) -> View {
+    let owner = Owner::current();
+    let Some(intent) = surface.restore_intent.get() else {
+        return view();
+    };
+    let cross_mode = (intent.backup_encrypted != intent.current_encrypted).then_some({
+        if intent.backup_encrypted {
+            (
+                settings_data::RESTORE_CROSS_MODE_TITLE,
+                settings_data::RESTORE_TO_ENCRYPTED_WARN,
+            )
+        } else {
+            (
+                settings_data::RESTORE_CROSS_MODE_TITLE,
+                settings_data::RESTORE_TO_PLAINTEXT_WARN,
+            )
+        }
+    });
+    view()
+        .flex_col()
+        .app_class("gap-2")
+        .child(
+            text(format!("备份文件：{}", intent.path))
+                .text_size(px(font_size::CAPTION))
+                .text_color(fg)
+                .test_id("unlock-restore-path"),
+        )
+        .child(
+            view()
+                .flex_col()
+                .app_class("rounded-sm border border-destructive/30 bg-destructive/10 p-2 gap-1")
+                .child(
+                    text(settings_data::RESTORE_CONFIRM_STRONG)
+                        .text_size(px(font_size::CAPTION))
+                        .font_weight(FontWeight::BOLD)
+                        .text_color(views::view_palette().danger_fg),
+                ),
+        )
+        .children(cross_mode.map(|(title, warning)| {
+            view()
+                .flex_col()
+                .app_class("rounded-sm border border-destructive/30 bg-destructive/10 p-2 gap-1")
+                .child(
+                    text(title)
+                        .text_size(px(font_size::CAPTION))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(fg)
+                        .test_id("unlock-restore-cross-mode-title"),
+                )
+                .child(
+                    text(warning)
+                        .text_size(px(font_size::CAPTION))
+                        .text_color(fg)
+                        .test_id("unlock-restore-cross-mode"),
+                )
+        }))
+        // 口令框与错误位是「弹窗开着期间就地变化」的条件结构：when 分支闭包
+        // untracked 求值（开弹时一次），后续显出/置错不再重跑——条件段用
+        // dynamic（读什么变什么重造，nsh-core flow.rs Region::Dynamic），按钮
+        // 禁用面用响应式闭包（prop 绑定逐次求值）。交叉模式块随意图固定，
+        // 静态段承载。
+        .child(dynamic(move || {
+            let Some(intent) = surface.restore_intent.get() else {
+                return view();
+            };
+            if !surface.restore_show_pass(&intent) {
+                return view();
+            }
+            view()
+                .flex_col()
+                .app_class("gap-1")
+                .child(
+                    text(settings_data::RESTORE_PASS_LABEL)
+                        .text_size(px(font_size::CAPTION))
+                        .text_color(fg),
+                )
+                .child(
+                    input()
+                        .test_id("unlock-restore-passphrase")
+                        .value(move || surface.restore_pass.get())
+                        .masked(true)
+                        .placeholder(settings_data::RESTORE_PASS_PLACEHOLDER)
+                        .optional_label(settings_data::RESTORE_PASS_LABEL)
+                        .text_color(fg)
+                        .app_class(
+                            "bg-background rounded-md border border-border px-2 py-1 placeholder:text-muted-foreground",
+                        )
+                        .on_change(move |value: &str| surface.restore_pass.set(value.to_owned())),
+                )
+        }))
+        .child(dynamic(move || match surface.restore_error.get() {
+            Some(err) => view().child(
+                text(err)
+                    .text_size(px(font_size::CAPTION))
+                    .text_color(views::view_palette().danger_fg)
+                    .test_id("unlock-restore-error"),
+            ),
+            None => view(),
+        }))
+        .child(
+            view()
+                .flex_row()
+                .justify_end()
+                .app_class("gap-2")
+                .child(
+                    button()
+                        .app_class("px-3 py-1.5 rounded-md border border-border text-foreground hover:bg-accent disabled:opacity-40")
+                        .disabled(move || surface.busy.get())
+                        .child(
+                            text(settings_data::RESTORE_CANCEL)
+                                .text_size(px(font_size::SECONDARY))
+                                .test_id("unlock-restore-cancel"),
+                        )
+                        .on_press(move |_: &()| {
+                            if !surface.busy.get_untracked() {
+                                surface.restore_intent.set(None);
+                            }
+                        }),
+                )
+                .child(
+                    button()
+                        .app_class("px-3 py-1.5 rounded-md bg-destructive hover:opacity-90 disabled:opacity-40")
+                        .disabled(move || {
+                            surface.busy.get() || {
+                                let show = surface
+                                    .restore_intent
+                                    .get()
+                                    .is_some_and(|intent| surface.restore_show_pass(&intent));
+                                show && surface.restore_pass.get().is_empty()
+                            }
+                        })
+                        .child(
+                            text(settings_data::RESTORE_CONFIRM_ACTION)
+                                .text_size(px(font_size::SECONDARY))
+                                .text_color(crate::theme::color("destructive-foreground"))
+                                .test_id("unlock-restore-confirm"),
+                        )
+                        .on_press(move |_: &()| surface.run_restore_confirm(owner)),
+                ),
+        )
 }

@@ -9,9 +9,10 @@
 //!   `defaultBackupFileName` 同格式（`ledger-backup-YYYYMMDD-HHMMSS[-<指纹>]
 //!   .db.zip`，本地时间；前缀常量前后端各持一份是 ADR-0016 已接受的取舍，
 //!   本壳生成面持第三份同值——全量备份管理面归设置②时再收敛）。
-//! - 文件保存对话框是 NSH 壳能力（spec #2031 NSH 版本条款）：上游 0.4.0 已
-//!   具备（[`nsh_core::element::pick_save_path`]，Linux 宿主 GTK
-//!   `GtkFileDialog`），直用不另建；对话框原生观感归人工对表子集。
+//! - 文件保存对话框是 NSH 壳能力（spec #2031 NSH 版本条款）：上游已具备
+//!   （[`nsh_core::element::pick_save_path`]，Linux 宿主 GTK
+//!   `GtkFileDialog`；0.4.0 起在、0.5.1 复核仍在），直用不另建；对话框原生观感
+//!   归人工对表子集。
 //! - 反馈形态：NSH 无 toast（前票裁决），成功/失败经入口下方状态条呈现
 //!   （旧壳 message.success/error 的条位对应物，交易删除错误条位先例）；
 //!   失败文案 = 码化错误的中文原样（[`crate::boot`] 消息随码走，本壳无错误

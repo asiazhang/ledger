@@ -40,6 +40,7 @@ use ledger_transaction::{
     TransactionFundingInput, TransactionInput, TransactionKind, TransactionPurchaseInput,
 };
 use nsh_app::test_support::{ScratchDir, ScratchFile};
+use nsh_app::updater::ByteSink;
 use nsh_core::platform::ColorScheme;
 use nsh_engine::{EngineConfig, Environment, Idiom, Os, Points, Size};
 use nsh_testing::Headless;
@@ -105,12 +106,12 @@ fn serial_lock() -> std::sync::MutexGuard<'static, ()> {
 }
 
 /// 锚点先于按压的组合子（issue #2114）：先等 `anchor` 落屏，再按压
-/// `target`。`press` 内建等待属框架层语义（nsh-testing 0.4.0 精确钉版，
-/// ADR-0145 决策 2；`press` 不等目标出现，落屏前按压即 Err），仓内以本
-/// 组合子收口已知竞态站点（CI 三首崩 + #2068 范围外报告站点），已知站点
-/// 之外不改造；上游化建议与站点清单见 issue #2114 票评论（先例 #2089
-/// 框架层留证形态）。`anchor` 通常取 `target` 自身（等目标落屏再按），
-/// 目标是行内动作时取宿主行锚。
+/// `target`。`press` 内建等待属框架层语义（nsh-testing 精确钉版，ADR-0145
+/// 决策 2；`press` 不等目标出现，落屏前按压即 Err；0.5.1 步骤 settle 语义见
+/// 上游 #1729），仓内以本组合子收口已知竞态站点（CI 三首崩 + #2068 范围外
+/// 报告站点），已知站点之外不改造；上游化建议与站点清单见 issue #2114 票
+/// 评论（先例 #2089 框架层留证形态）。`anchor` 通常取 `target` 自身（等目标
+/// 落屏再按），目标是行内动作时取宿主行锚。
 fn press_after(app: &mut Headless, anchor: &str, target: &str) -> Result<(), String> {
     app.wait_for(anchor)?;
     app.press(target)
@@ -1974,6 +1975,465 @@ fn suppression_gate_blocks_period_key_while_period_popup_open() {
     let p = prev_month_mid();
     app.wait_for(&month_label(p.year(), p.month())).unwrap();
     app.wait_for("text:¥88").unwrap();
+}
+
+// ---------------------------------------------------------------------------
+// 期间直达面板（issue #2128，旧壳 QuickTimeRange.periodPicker 平价）：点击
+// 期间标签打开的弹层内，预设芯片之外另有月/季/年直达面板；面板单位随当前
+// 游标（「全部」态默认月面板）；点选写精确自然周期快照并关弹层；面板格子
+// 受数据期间边界钳制（边界外不可选），年面板年份闭集按边界裁剪。
+// ---------------------------------------------------------------------------
+
+/// 面板月格锚点（0 起月份，与 `period` 模块 NaturalPeriod.index 同序）。
+fn panel_month_cell(prefix: &str, m0: u32) -> String {
+    format!("id:{prefix}-panel-m{m0}")
+}
+
+/// 面板季格锚点（0 起季度）。
+fn panel_quarter_cell(prefix: &str, q0: u32) -> String {
+    format!("id:{prefix}-panel-q{q0}")
+}
+
+/// 面板年格锚点（自然年）。
+fn panel_year_cell(prefix: &str, year: i32) -> String {
+    format!("id:{prefix}-panel-y{year}")
+}
+
+/// 面板开合 + 「全部」态默认月面板 + 月格直达写快照 + 芯片点亮（#2128）。
+/// 「删除即红」负向条目（ADR-0087）：删除弹层内的面板挂载接线（period_row
+/// 面板 child）→ 本测在 `id:period-panel` 锚处红；删除面板点选写回接线
+/// （apply_panel 的 range.set / on_apply）→ 快照不变、标签与行集不变、芯片
+/// 不点亮，后续断言红。断言对准用户可见结果（标签 / 行集 / 芯片无障碍
+/// selected 态），不写可点性断言。
+#[test]
+fn period_panel_opens_with_month_cells_and_direct_select_writes_snapshot() {
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("period-panel");
+    seed_expense_on_date(&dir, &prev_month_mid().to_string(), 8_800);
+    seed_expense_on_date(&dir, &today().to_string(), 2_500);
+
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config()).unwrap();
+
+    open_transactions(&mut app);
+    app.wait_for("text:¥25").unwrap();
+
+    // 点期间标签开弹层：预设芯片仍在（既有形态保留），直达面板同层在屏。
+    app.press("id:period-label").unwrap();
+    app.wait_for("id:period-chip-all").unwrap();
+    app.wait_for("id:period-panel").unwrap();
+
+    // 「全部」态（无游标）默认月面板：本月月格在屏，季/年格不在。
+    let t = today();
+    app.wait_for(&panel_month_cell("period", t.month0()))
+        .unwrap();
+    assert_eq!(
+        app.screen()
+            .count(&panel_quarter_cell("period", 0))
+            .unwrap(),
+        0,
+        "「全部」态默认月面板：季格不呈现"
+    );
+    assert_eq!(
+        app.screen()
+            .count(&panel_year_cell("period", t.year()))
+            .unwrap(),
+        0,
+        "「全部」态默认月面板：年格不呈现"
+    );
+
+    // 点本月月格 → 写当月快照并关弹层：标签 = 本月，行集只剩本月一笔。
+    app.press(&panel_month_cell("period", t.month0())).unwrap();
+    app.wait_for_gone("id:period-chip-all", DEFAULT_WAIT)
+        .unwrap();
+    app.wait_for(&month_label(t.year(), t.month())).unwrap();
+    app.wait_for("text:¥25").unwrap();
+    assert!(!app.shows("¥88"), "月格直达当月：上月支出离屏");
+
+    // 再开弹层：当月芯片点亮（match_preset 高亮，无障碍 selected 态可读）。
+    app.press("id:period-label").unwrap();
+    app.wait_for("id:period-chip-month").unwrap();
+    app.wait_until("当月芯片点亮", DEFAULT_WAIT, |screen| {
+        screen.selected("role:button[当月]").unwrap_or(false)
+    })
+    .unwrap();
+
+    // 面板开合：ESC 关弹层，面板与芯片同层收场。
+    app.press_key("escape").unwrap();
+    app.wait_for_gone("id:period-panel", DEFAULT_WAIT).unwrap();
+    app.wait_for_gone("id:period-chip-month", DEFAULT_WAIT)
+        .unwrap();
+}
+
+/// 季面板：单位随游标（当季游标 → 季格，月/年格不呈现）、格子受边界钳制
+/// （可达集由测试侧独立推演，与 period 边界数学同源）、面板上一年导航、
+/// 点选写快照、历史季不点亮芯片（#2128）。「删除即红」负向条目
+/// （ADR-0087）：删除面板单位派生（panel_unit 恒月）→ 季游标下月格仍在、
+/// 季格缺席，本测在单位断言处红；删除格子钳制调用（panel_cell_enabled 的
+/// derive_boundary + period_within_boundary 组合）→ 边界外季格可选，可达集
+/// 断言红；删除锚年导航钳制（can_panel_prev/next）→ 边界外年份可导航。
+#[test]
+fn period_panel_shows_quarter_cells_while_quarter_cursor_and_selects_past_quarter() {
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("period-panel-quarter");
+    let t = today();
+    let p = prev_month_mid();
+    // 两季度之前的稳定锚（15 日；1–4 月落在去年，正好检验锚年导航）。
+    let qd = p.checked_sub_months(chrono::Months::new(3)).unwrap();
+    seed_expense_on_date(&dir, &t.to_string(), 2_500);
+    seed_expense_on_date(&dir, &p.to_string(), 8_800);
+    seed_expense_on_date(&dir, &qd.to_string(), 6_600);
+
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config()).unwrap();
+
+    open_transactions(&mut app);
+    app.wait_for("text:¥25").unwrap();
+
+    // 经「当季」芯片取得季游标 → 标签 = 本季。
+    let quarter_names = ["一", "二", "三", "四"];
+    app.press("id:period-label").unwrap();
+    app.wait_for("id:period-chip-quarter").unwrap();
+    app.press("id:period-chip-quarter").unwrap();
+    app.wait_for_gone("id:period-chip-quarter", DEFAULT_WAIT)
+        .unwrap();
+    let tq = t.month0() / 3;
+    app.wait_for(&format!(
+        "text:{}年{}季度",
+        t.year(),
+        quarter_names[tq as usize]
+    ))
+    .unwrap();
+
+    // 重开弹层：季格在屏（单位随游标），月/年格不呈现。
+    app.press("id:period-label").unwrap();
+    app.wait_for("id:period-panel").unwrap();
+    app.wait_for(&panel_quarter_cell("period", 3)).unwrap();
+    assert_eq!(
+        app.screen().count(&panel_month_cell("period", 0)).unwrap(),
+        0,
+        "季游标 → 季面板：月格不呈现"
+    );
+    assert_eq!(
+        app.screen()
+            .count(&panel_year_cell("period", t.year()))
+            .unwrap(),
+        0,
+        "季游标 → 季面板：年格不呈现"
+    );
+
+    // 可达集独立推演（与 period 边界数学同源：期序相对锚年，双端含）：
+    // 边界 = [min(最早交易季, 本季), max(最新交易季, 本季)]。
+    let ord = |d: chrono::NaiveDate| (d.year() - t.year()) as i64 * 4 + (d.month0() / 3) as i64;
+    let tq_ord = ord(t);
+    let lo = ord(qd).min(ord(p));
+    let hi = tq_ord.max(ord(qd)).max(ord(p));
+    for q0 in 0..4u32 {
+        let expected = q0 as i64 >= lo && q0 as i64 <= hi;
+        let role = format!("role:button[{}季度]", quarter_names[q0 as usize]);
+        assert_eq!(
+            app.screen().enabled(&role).unwrap(),
+            expected,
+            "季格「{}季度」可达性应 = 边界内推演（{expected}）",
+            quarter_names[q0 as usize]
+        );
+    }
+
+    // 锚年导航：锚年 = 今年。上一年可达 ⟺ 边界最早年在去年（1–4 月分支）；
+    // 下一年恒不可达（本季即边界最晚）。
+    assert_eq!(
+        app.screen().enabled("id:period-panel-prev").unwrap(),
+        qd.year() < t.year(),
+        "面板上一年可达性应随边界最早年裁剪"
+    );
+    assert!(
+        !app.screen().enabled("id:period-panel-next").unwrap(),
+        "面板下一年应随边界最晚年裁剪"
+    );
+    // qd 落去年时先导航回上一年再点选；同年则直接点选 qd 所在季。
+    if qd.year() < t.year() {
+        app.press("id:period-panel-prev").unwrap();
+        app.wait_for("id:period-panel-year").unwrap();
+    }
+    let qd_cell = panel_quarter_cell("period", qd.month0() / 3);
+    app.wait_for(&qd_cell).unwrap();
+    app.press(&qd_cell).unwrap();
+    app.wait_for_gone("id:period-chip-quarter", DEFAULT_WAIT)
+        .unwrap();
+
+    // 快照写回：标签 = qd 季，行集只剩 qd 一笔（¥66）。
+    app.wait_for(&format!(
+        "text:{}年{}季度",
+        qd.year(),
+        quarter_names[(qd.month0() / 3) as usize]
+    ))
+    .unwrap();
+    app.wait_for("text:¥66").unwrap();
+    assert!(
+        !app.shows("¥25") && !app.shows("¥88"),
+        "季格直达：他季支出离屏"
+    );
+
+    // 重开弹层：历史季不点亮当季芯片。
+    app.press("id:period-label").unwrap();
+    app.wait_for("id:period-chip-quarter").unwrap();
+    assert!(
+        !app.screen().selected("role:button[当季]").unwrap(),
+        "历史季不点亮当季芯片"
+    );
+    app.press_key("escape").unwrap();
+    app.wait_for_gone("id:period-panel", DEFAULT_WAIT).unwrap();
+}
+
+/// 年面板：单位随游标（当年游标 → 年格，月/季格不呈现）、年份闭集按边界
+/// 裁剪（界外年份不渲染）、点选写快照、历史年不点亮芯片（#2128）。「删除
+/// 即红」负向条目（ADR-0087）：删除年份闭集裁剪（panel_cells 年分支的边界
+/// 年份区间派生）→ 界外年份格出现，count 断言红。
+#[test]
+fn period_panel_shows_year_cells_clipped_to_boundary_and_selects_past_year() {
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("period-panel-year");
+    let t = today();
+    let p = prev_month_mid();
+    // 整一年前的稳定锚（15 日）：年界跨去年。
+    let old = p.checked_sub_months(chrono::Months::new(12)).unwrap();
+    seed_expense_on_date(&dir, &t.to_string(), 2_500);
+    seed_expense_on_date(&dir, &p.to_string(), 8_800);
+    seed_expense_on_date(&dir, &old.to_string(), 7_700);
+
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config()).unwrap();
+
+    open_transactions(&mut app);
+    app.wait_for("text:¥25").unwrap();
+
+    // 经「当年」芯片取得年游标。
+    app.press("id:period-label").unwrap();
+    app.wait_for("id:period-chip-year").unwrap();
+    app.press("id:period-chip-year").unwrap();
+    app.wait_for_gone("id:period-chip-year", DEFAULT_WAIT)
+        .unwrap();
+    app.wait_for(&format!("text:{}年", t.year())).unwrap();
+
+    // 重开弹层：年格在屏（单位随游标），月/季格不呈现。
+    app.press("id:period-label").unwrap();
+    app.wait_for("id:period-panel").unwrap();
+    app.wait_for(&panel_year_cell("period", t.year())).unwrap();
+    assert_eq!(
+        app.screen().count(&panel_month_cell("period", 0)).unwrap(),
+        0,
+        "年游标 → 年面板：月格不呈现"
+    );
+    assert_eq!(
+        app.screen()
+            .count(&panel_quarter_cell("period", 0))
+            .unwrap(),
+        0,
+        "年游标 → 年面板：季格不呈现"
+    );
+
+    // 年份闭集按边界裁剪：数据年（old/p/t）各一枚；界外年份不渲染。
+    for y in [old.year(), p.year(), t.year()] {
+        assert_eq!(
+            app.screen().count(&panel_year_cell("period", y)).unwrap(),
+            1,
+            "数据年 {y} 应在年面板闭集内"
+        );
+    }
+    assert_eq!(
+        app.screen()
+            .count(&panel_year_cell("period", old.year() - 1))
+            .unwrap(),
+        0,
+        "边界最早年之前不渲染（年区间按边界裁剪）"
+    );
+    assert_eq!(
+        app.screen()
+            .count(&panel_year_cell("period", t.year() + 1))
+            .unwrap(),
+        0,
+        "边界最晚年之后不渲染（年区间按边界裁剪）"
+    );
+
+    // 点去年格（old 所在年）→ 快照写回：标签 = 去年，行集只剩去年一笔。
+    app.press(&panel_year_cell("period", old.year())).unwrap();
+    app.wait_for_gone("id:period-chip-year", DEFAULT_WAIT)
+        .unwrap();
+    app.wait_for(&format!("text:{}年", old.year())).unwrap();
+    app.wait_for("text:¥77").unwrap();
+    assert!(
+        !app.shows("¥25") && !app.shows("¥88"),
+        "年格直达：他年支出离屏"
+    );
+
+    // 重开弹层：仍是年面板（单位随游标），历史年不点亮当年芯片。
+    app.press("id:period-label").unwrap();
+    app.wait_for("id:period-panel").unwrap();
+    app.wait_for(&panel_year_cell("period", old.year()))
+        .unwrap();
+    assert_eq!(
+        app.screen().count(&panel_month_cell("period", 0)).unwrap(),
+        0,
+        "年游标保持年面板"
+    );
+    assert!(
+        !app.screen().selected("role:button[当年]").unwrap(),
+        "历史年不点亮当年芯片"
+    );
+    app.press_key("escape").unwrap();
+    app.wait_for_gone("id:period-panel", DEFAULT_WAIT).unwrap();
+}
+
+/// 月面板边界钳制：「全部」态月面板的格子可达性 = 数据期间边界月序内；
+/// 锚年导航同裁剪（界外年不可导航）（#2128）。「删除即红」负向条目
+/// （ADR-0087）：删除格子钳制调用（panel_cell_enabled 的 derive_boundary +
+/// period_within_boundary 组合）→ 边界外月格可选，可达性断言红；删除锚年
+/// 导航钳制（can_panel_next）→ 面板下一年可选，导航断言红。
+#[test]
+fn period_panel_month_cells_clamped_to_boundary_and_anchor_nav_clipped() {
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("period-panel-clamp");
+    let t = today();
+    let p = prev_month_mid();
+    seed_expense_on_date(&dir, &p.to_string(), 8_800);
+    seed_expense_on_date(&dir, &t.to_string(), 2_500);
+
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config()).unwrap();
+
+    open_transactions(&mut app);
+    app.wait_for("text:¥25").unwrap();
+
+    // 「全部」态开弹层：月面板（上月 + 本月可达；其余月界外不可选）。
+    app.press("id:period-label").unwrap();
+    app.wait_for("id:period-panel").unwrap();
+
+    // 可达集独立推演（与 period 边界数学同源：月序相对锚年，双端含）。
+    let m_ord = |d: chrono::NaiveDate| (d.year() - t.year()) as i64 * 12 + d.month0() as i64;
+    let lo = m_ord(p).min(m_ord(t));
+    let hi = m_ord(p).max(m_ord(t));
+    for m0 in 0..12u32 {
+        let expected = m0 as i64 >= lo && m0 as i64 <= hi;
+        let role = format!("role:button[{}月]", m0 + 1);
+        assert_eq!(
+            app.screen().enabled(&role).unwrap(),
+            expected,
+            "月格「{}月」可达性应 = 边界内推演（{expected}）",
+            m0 + 1
+        );
+    }
+
+    // 锚年导航同裁剪：下一年恒不可达（本月即边界最晚）；上一年仅边界最早
+    // 年在去年时可达（1 月分支）。
+    assert!(
+        !app.screen().enabled("id:period-panel-next").unwrap(),
+        "面板下一年应随边界最晚年裁剪"
+    );
+    assert_eq!(
+        app.screen().enabled("id:period-panel-prev").unwrap(),
+        p.year() < t.year(),
+        "面板上一年可达性应随边界最早年裁剪"
+    );
+
+    // 可达月格点选写快照（上月）：标签与行集随动。
+    app.press(&panel_month_cell("period", p.month0())).unwrap();
+    app.wait_for_gone("id:period-chip-all", DEFAULT_WAIT)
+        .unwrap();
+    app.wait_for(&month_label(p.year(), p.month())).unwrap();
+    app.wait_for("text:¥88").unwrap();
+    assert!(!app.shows("¥25"), "月格直达上月：本月支出离屏");
+}
+
+/// 搜索面共用件接线（#2128 三消费面之一）：搜索视图弹层同屏直达面板，
+/// 月格直达写快照 → 命中面随动。「删除即红」负向条目（ADR-0087）：面板
+/// 挂在共用件 period_row（不在交易视图私有）——删除弹层面板挂载或点选
+/// 写回任一环 → 本测红（搜索面面板缺席或命中面不变）。
+#[test]
+fn search_view_period_panel_direct_select_filters_hits() {
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("search-period-panel");
+    let t = today();
+    let p = prev_month_mid();
+    seed_expense_on_date(&dir, &p.to_string(), 8_800);
+    seed_expense_on_date(&dir, &t.to_string(), 2_500);
+
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config()).unwrap();
+
+    open_search(&mut app);
+    app.type_text("id:search-keyword", "支出").unwrap();
+    app.wait_for("text:命中 2 条").unwrap();
+
+    // 开搜索面期间弹层：「全部」态月面板，本月月格可达。
+    app.press("id:search-period-label").unwrap();
+    app.wait_for("id:search-period-panel").unwrap();
+    app.wait_for(&panel_month_cell("search-period", t.month0()))
+        .unwrap();
+
+    // 点本月月格 → 快照写回 → 命中面只剩本月一行。
+    app.press(&panel_month_cell("search-period", t.month0()))
+        .unwrap();
+    app.wait_for_gone("id:search-period-chip-all", DEFAULT_WAIT)
+        .unwrap();
+    app.wait_for(&month_label(t.year(), t.month())).unwrap();
+    app.wait_for("text:命中 1 条").unwrap();
+    app.wait_for("text:¥25").unwrap();
+    assert!(!app.shows("¥88"), "月格直达当月：上月备注不命中");
+}
+
+/// 报表面共用件接线（#2128 三消费面之一）：报表默认期间 = 当下自然年 →
+/// 弹层直达面板呈年格（单位随游标在报表面的体现），点选历史年写快照 →
+/// 月度卡随期间重读。「删除即红」负向条目（ADR-0087）：删除弹层面板挂载
+/// 或点选写回任一环 → 本测红（报表面面板缺席或月度卡不变）。
+#[test]
+fn reports_view_period_panel_direct_select_changes_period() {
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("reports-period-panel");
+    let t = today();
+    let p = prev_month_mid();
+    let old = p.checked_sub_months(chrono::Months::new(12)).unwrap();
+    seed_expense_on_date(&dir, &t.to_string(), 2_500);
+    seed_expense_on_date(&dir, &old.to_string(), 7_700);
+
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_reports(&mut app);
+    // 装载锚：当月月份行标到屏（§3.5 异步装载纪律）。
+    app.wait_for(&format!("text:{}", reports_month_key()))
+        .unwrap();
+
+    // 开报表期间弹层：默认年游标 → 年面板（月/季格不呈现）。
+    app.press("id:reports-period-label").unwrap();
+    app.wait_for("id:reports-period-panel").unwrap();
+    app.wait_for(&panel_year_cell("reports-period", t.year()))
+        .unwrap();
+    assert_eq!(
+        app.screen()
+            .count(&panel_month_cell("reports-period", 0))
+            .unwrap(),
+        0,
+        "报表默认年游标 → 年面板：月格不呈现"
+    );
+
+    // 点历史年格 → 快照写回：月度卡随期间重读（只剩去年月份行，当月行离场）。
+    app.press(&panel_year_cell("reports-period", old.year()))
+        .unwrap();
+    app.wait_for_gone("id:reports-period-chip-year", DEFAULT_WAIT)
+        .unwrap();
+    app.wait_for(&format!("text:{}年", old.year())).unwrap();
+    let old_key = format!("{}-{:02}", old.year(), old.month());
+    app.wait_for(&format!("text:{old_key}")).unwrap();
+    assert!(
+        !app.shows(&reports_month_key()),
+        "历史年期间：当月月份行离场：{:?}",
+        app.screen().texts()
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -10372,6 +10832,41 @@ fn scheduled_view_lands_with_panes_and_subscription_rows() {
     }
 }
 
+/// 定时视图切走再回不崩且形态页签保留（范围外修复，#2130 期间发现）：会
+/// 话槽信号首调若挂定时视图体，切走视图重挂（owner 释放）后页签 computed
+/// 读 disposed 句柄即崩——根绑定接线（App 体首调初始化）删除即本测红：
+/// 回不来（视图挂载崩）或页签回订阅（保留丢失），两端皆红。
+#[test]
+fn scheduled_view_survives_view_switch_and_retains_form_tab() {
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("scheduled-switch-retain");
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let account = seed_account_with_balance(&db, "测试现金", 10_000);
+        let merchant = seed_merchant(&db, "视频平台");
+        seed_subscription_plan(&db, &account, Some(&merchant), Some("视频会员"));
+    }
+
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_scheduled(&mut app);
+
+    // 留下印记：切到分期页签（会话槽写路径）。
+    app.press("id:scheduled-tab-installments").unwrap();
+    app.wait_for("id:inst-table").unwrap();
+
+    // 切走（交易视图）再回（更多容器 → 定时）：视图正常挂载且形态页签保留
+    // 在分期（页签会话内保留）。
+    open_transactions(&mut app);
+    app.wait_for("id:nav-more-bookkeeping").unwrap();
+    app.press("id:nav-more-bookkeeping").unwrap();
+    app.wait_for("id:more-tab-scheduled").unwrap();
+    app.press("id:more-tab-scheduled").unwrap();
+    app.wait_for("text:分期清单").unwrap();
+    app.wait_for("id:inst-table").unwrap();
+}
+
 /// 计划域视觉收口探针（issue #2103，ADR-0147 决策 3/4）：订阅页签亮暗双态下
 /// 关键文字的**已解析样式**——字号全部落在字阶档（形态页签/主按钮文案 =
 /// SECONDARY 14、清单卡标题与花费统计数 = TITLE 20、弱化衬注/行操作 =
@@ -12735,6 +13230,57 @@ fn settings_view_log_level_select_persists_across_remounts() {
     app.wait_for("text:调试 (debug)").unwrap();
 }
 
+/// 日志卡「打开日志目录」（旧壳 open_log_dir 命令同语义的 NSH 接线，#2132）:
+/// 入口可达 + 按压发起宿主打开调用。替身断言：headless 平台只记录 FileRequest
+/// 从不真开（放开能力位后 open/reveal 一律成功应答不触盘），断言对准被记录
+/// 的 OpenPath 目标 = 数据根下 `logs`——与 logging.rs 文件面同根同式（旧壳
+/// app_log_dir 平价落点）。删除按钮接线（on_press 内 open_path 调用或整按钮）
+/// → 本测红：file_requests 恒空（ADR-0087 断言强度：断言对准宿主调用被发起）。
+#[test]
+fn settings_view_log_card_open_dir_button_opens_data_root_logs_dir() {
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+    let data_root = make_data_root("log-open-dir");
+    nsh_app::cross_book::set_default_data_dir(data_root.to_path_buf());
+    let dir = make_book("settings-log-open");
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config_with_storage_shard(storage_shard(&[]))).unwrap();
+    // 放开宿主路径请求能力位：此后 open/reveal 请求被全量记录且成功应答
+    // （空回答集只影响对话框替身，不影响 open/reveal）。
+    app.on_pick_paths(vec![]).unwrap();
+    open_settings(&mut app);
+
+    app.press("id:log-open-dir").unwrap();
+    app.settle();
+    use nsh_core::file_dialog::FileRequest;
+    let requests = app.screen().file_requests();
+    assert_eq!(
+        requests,
+        &[FileRequest::OpenPath(data_root.to_path_buf().join("logs"))],
+        "按压「打开日志目录」应发起恰好一次宿主打开调用，目标 = 数据根 logs：{requests:?}"
+    );
+}
+
+/// 数据根缺席（嵌入宿主未注入，logging.rs 文件面同款降级现场）：入口可达
+/// 但不发起宿主调用，失败经卡内状态条位呈现旧壳同前缀文案。
+#[test]
+fn settings_view_log_card_open_dir_without_data_root_reports_failure() {
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("settings-log-open-noroot");
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_settings(&mut app);
+
+    app.press("id:log-open-dir").unwrap();
+    app.wait_for("text:打开日志目录失败：数据根未就绪").unwrap();
+    assert!(
+        app.screen().file_requests().is_empty(),
+        "数据根缺席不发起宿主调用：{:?}",
+        app.screen().file_requests()
+    );
+}
+
 /// 位置卡信息聚合（boot::data_location_info 直调基建 gather_info_from_boot）：
 /// 生效位置 = 启动目录 + 原文回显；意图缺席 → 「恢复默认」禁用（契约不变量
 /// 直接投影，删除禁用接线即红）。更改入口 / 复制路径在屏。
@@ -13215,6 +13761,86 @@ fn backup_full_journey_backs_up_lists_prunes_and_guards_overwrite() {
     );
 }
 
+/// 备份行「在访达中显示」（旧壳 reveal_in_file_manager 命令的 NSH 承载面：
+/// 切轨起保留在备份文件列表行级，#2132 补替身断言证明入口可达且触发宿主
+/// 定位调用）：备份一行 → 按压行级入口 → 被记录的 RevealPath 目标 = 该行
+/// 产物（设备子目录落点原文）。删除行级按钮的 reveal_path 调用 → 本测红：
+/// file_requests 恒空（ADR-0087 断言强度）。
+#[test]
+fn settings_view_backup_row_reveal_issues_host_reveal_request() {
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("settings-backup-reveal");
+    let backup_dir = ScratchDir::new("nsh-data-reveal");
+    let storage = storage_shard(&[
+        (
+            "backup_dir",
+            format!("{:?}", backup_dir.to_string_lossy()).as_str(),
+        ),
+        ("backup_max_count", "1"),
+    ]);
+
+    // 种子一笔交易（空库无可归属产物，备份空库不产生列表行）；自动备份预置
+    // 关（空列表会话的首次兜底自动备份会混入非手动产物）。
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        {
+            let conn = db.conn.lock().unwrap();
+            ledger_infra::settings::set(
+                &conn,
+                ledger_infra::settings::SettingKey::AutoBackupEnabled,
+                &false,
+            )
+            .unwrap();
+        }
+        let account = seed_cash_account(&db);
+        seed_transaction(
+            &db,
+            TxnSeed {
+                account: &account,
+                to_account: None,
+                kind: TransactionKind::Expense,
+                amount_cents: 2_500,
+                date: &test_date(0),
+                category_id: None,
+                merchant_id: None,
+                note: Some("访达定位种子".to_owned()),
+            },
+        );
+    }
+
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config_with_storage_shard(storage)).unwrap();
+    app.on_pick_paths(vec![]).unwrap();
+    open_data_tab(&mut app);
+
+    // 备份一行（对话框替身问到盘面；受管改道落设备子目录）。
+    let device = {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let conn = db.read_conn.lock().unwrap();
+        ledger_backup::source_device_id(&conn).expect("种子库可取设备标识")
+    };
+    let target = backup_dir.join("ledger-backup-20260101-000000.db.zip");
+    let landed = backup_dir
+        .join(&device)
+        .join("ledger-backup-20260101-000000.db.zip");
+    app.on_pick_save_path(Some(target.clone())).unwrap();
+    app.press("id:data-backup-as").unwrap();
+    app.wait_for("id:data-backup-row-0-name").unwrap();
+    assert!(landed.is_file(), "备份产物落盘：{}", landed.display());
+
+    // 行级「在访达中显示」→ 宿主定位调用，目标 = 该行产物（前置的另存为
+    // 对话框请求同屏记录，取末位）。
+    app.press("id:data-backup-reveal-0").unwrap();
+    app.settle();
+    use nsh_core::file_dialog::FileRequest;
+    let requests = app.screen().file_requests();
+    assert!(
+        matches!(requests.last(), Some(FileRequest::RevealPath(path)) if path == &landed),
+        "按压行级「在访达中显示」应发起宿主定位调用，目标 = 该行产物：{requests:?}"
+    );
+}
+
 /// 恢复最高级危险确认与全旅程：两笔种子交易 → 备份包 → 删除两笔（当前数
 /// 据变空）→ 恢复该包：确认弹窗（后果警示 + 备份文件路径）→ 取消零替换
 /// → 再进确认 → 成功反馈 + 重启提示；「下次启动」等价重置重启后交易回到
@@ -13323,6 +13949,107 @@ fn restore_guard_replaces_data_across_restart() {
         "恢复旅程后交易回到两笔：{:?}",
         alive.items
     );
+}
+
+/// 设置卡恢复确认弹窗·密文备份旅程（范围外修复，#2131 交付中发现的同弹窗
+/// 缺陷，根因与 unlock.rs 同款：when 分支闭包 untracked 求值，静态
+/// `.children(...)` / 静态 `.disabled(bool)` 开弹后不随信号重跑）：密文备份
+/// 口令框开弹即在，口令输入后确认按钮应解禁可按（修复前静态 disabled 永久
+/// 真，密文备份无法经设置卡恢复提交）；错误口令恢复失败弹窗不关、弹窗内
+/// 错误行就地呈现、重输后成功（口令错误就地重试，解锁同语义）。
+#[test]
+fn settings_restore_modal_encrypted_backup_submits_after_passphrase_typed() {
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+    const PASS_BACKUP: &str = "密文备份口令 journeyC";
+
+    // 密文备份包（备份源密文库，产物加密随源库走）。
+    let source = make_book("settings-restore-enc-source");
+    {
+        let db = nsh_app::boot::boot_ledger(&source).unwrap();
+        let account = seed_cash_account(&db);
+        seed_transaction(
+            &db,
+            TxnSeed {
+                account: &account,
+                to_account: None,
+                kind: TransactionKind::Expense,
+                amount_cents: 2_500,
+                date: &test_date(0),
+                category_id: None,
+                merchant_id: None,
+                note: Some("备份源数据".to_owned()),
+            },
+        );
+    }
+    ledger_infra::db::encryption::enable_encryption_for_file(
+        &source.join("ledger.db"),
+        PASS_BACKUP,
+    )
+    .unwrap();
+    let zip = ScratchFile::new("nsh-settings-restore-enc", "restore.db.zip");
+    {
+        let db = nsh_app::boot::unlock_encrypted_book(PASS_BACKUP).unwrap();
+        nsh_app::boot::create_backup(&db, &zip, env!("CARGO_PKG_VERSION")).unwrap();
+    }
+
+    // 当前明文会话（跨模式警告臂：密文备份恢复进明文库）。
+    let dir = make_book("settings-restore-enc-current");
+    seed_expense_on_date(&dir, &test_date(0), 8_800);
+    let data_root = ScratchDir::new("nsh-settings-restore-enc-root");
+    nsh_app::cross_book::set_default_data_dir(data_root.to_path_buf());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_data_tab(&mut app);
+
+    // 选定密文备份 → 确认弹窗：跨模式警告 + 口令框开弹即在。
+    app.on_pick_paths(vec![zip.to_path_buf()]).unwrap();
+    app.press("id:data-restore").unwrap();
+    app.wait_for("text:确认恢复").unwrap();
+    app.wait_for("text:加密模式不一致").unwrap();
+    assert_eq!(
+        app.screen().count("id:data-restore-passphrase").unwrap(),
+        1,
+        "密文备份口令框开弹即在"
+    );
+    assert!(
+        app.screen()
+            .press_target("id:data-restore-confirm")
+            .unwrap()
+            .is_none(),
+        "空口令下确认不可按"
+    );
+
+    // 口令输入后确认解禁可按（修复点①：disabled 随输入响应式更新）。
+    app.type_text("id:data-restore-passphrase", "错误口令一一贯不代表正确口令")
+        .unwrap();
+    app.wait_until("restore confirm ready", Duration::from_secs(5), |screen| {
+        screen
+            .press_target("id:data-restore-confirm")
+            .unwrap()
+            .is_some()
+    })
+    .unwrap();
+    app.press("id:data-restore-confirm").unwrap();
+
+    // 错误口令：弹窗不关、弹窗内错误行就地呈现（修复点②：错误行随信号重
+    // 跑），库文件原样（明文，校验发生在安全备份与替换之前）。
+    app.wait_for("id:data-restore-error").unwrap();
+    app.wait_for("text:/恢复失败: 口令错误或文件损坏/").unwrap();
+    assert!(matches!(
+        ledger_infra::db::encryption::probe_file_kind(&dir.join("ledger.db")).unwrap(),
+        ledger_infra::db::encryption::DbFileKind::Plaintext,
+    ));
+
+    // 重输正确口令 → 恢复成功 → 成功反馈（旧壳同语义的就地重试闭环）。
+    app.clear("id:data-restore-passphrase").unwrap();
+    app.type_text("id:data-restore-passphrase", PASS_BACKUP)
+        .unwrap();
+    app.press("id:data-restore-confirm").unwrap();
+    app.wait_for(
+        "text:恢复成功，请重启应用进入新库（本壳无原位重引导：旧壳恢复后自动重启的偏差见交付报告）",
+    )
+    .unwrap();
 }
 
 /// 自动备份首次兜底全旅程（issue #2078 接线断言；backup 域既有语义零新口径）：
@@ -13832,6 +14559,195 @@ fn books_summary_entry_opens_cross_book_summary() {
     open_data_tab(&mut app);
     app.press("id:book-summary-entry").unwrap();
     app.wait_for("text:汇总读取失败").unwrap();
+}
+
+// ---------------------------------------------------------------------------
+// 侧栏底部账本切换区（issue #2129，web BookSidebarEntry 展开态的 NSH 重生）:
+// 触发件（当前账本名）→ 清单弹层（汇总置顶入口 + 账本行 + 活动指针指示）→
+// 行按压切换（warning 级轻量确认 → 写活动指针 → 重启生效提示）。换本生效
+// 时机按 web 参照既有语义核对（useBookSwitcher：确认后写指针并原位重引导
+// 重载进目标账本）；本壳无原位重引导（既有偏差，设置面账本切换卡同款），
+// 确认后写指针 + 状态条提示重启生效——ADR-0146 首启现场闭集零接触。
+// ---------------------------------------------------------------------------
+
+/// 切换区呈现：触发件显示活动账本名，弹层列出账本清单且活动行带「当前」
+/// 指示（其余行无）。删切换区挂载接线（侧栏底部组件移除）→ 触发件缺席 →
+/// 红。
+#[test]
+fn sidebar_book_switch_area_lands_with_list_and_active_pointer() {
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("sidebar-books-list");
+    // 预登记副账本（只登记不建库，清单呈现与库文件无关）。
+    let second = ledger_infra::db::book_registry::create_book_entry(&dir, "副账本").unwrap();
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config()).unwrap();
+
+    // 触发件（侧栏底部）：显示活动账本名（升级折叠形态唯一首本「默认账本」）。
+    // 装载锚：清单异步首刷，先等装载产物再读屏（#2068 纪律）。
+    app.wait_for("id:sidebar-book-entry").unwrap();
+    app.wait_for("text:默认账本").unwrap();
+
+    // 弹层：账本清单两行，活动行（默认账本，登记序 0）带「当前」指示，
+    // 副账本行无。
+    app.press("id:sidebar-book-entry").unwrap();
+    app.wait_for("id:sidebar-book-row-0-current").unwrap();
+    app.wait_for(format!("id:sidebar-book-switch-{}", second.id).as_str())
+        .unwrap();
+    assert!(
+        app.shows("副账本"),
+        "弹层应列出登记清单：{:?}",
+        app.screen().texts()
+    );
+    assert_eq!(
+        app.screen().count("id:sidebar-book-row-1-current").unwrap(),
+        0,
+        "非活动行不带「当前」指示"
+    );
+}
+
+/// 切换全旅程（读写落目标账本）：弹层行按压切换意图 → warning 级轻量确认
+/// → 确认后写活动指针（状态条提示重启生效）→ 重启后进目标账本：目标本种
+/// 子流水可见、原活动本流水不可见（读落目标本）；经 UI 记一笔后新写入目标
+/// 本库、原活动本库不变（写落目标本）。删切换写链（确认后不调 boot 写缝）
+/// → 指针不写、重启仍在原本 → 红。
+#[test]
+fn sidebar_book_switch_moves_pointer_and_lands_reads_writes_in_target() {
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("sidebar-books-switch");
+    // 两本各自种子（独立数据宇宙：各自专属备注流水；seed_expense_notes
+    // 内建建账户「测试现金」，供重启后记一笔表单选账）。
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        seed::seed_expense_notes(&db, &["主账本专属流水"]);
+    }
+    let second = {
+        let book = ledger_infra::db::book_registry::create_book_entry(&dir, "副账本").unwrap();
+        fs::write(book.dir.join("ledger.db"), b"").unwrap();
+        let db = nsh_app::boot::boot_ledger(&book.dir).unwrap();
+        seed::seed_expense_notes(&db, &["副账本专属流水"]);
+        book
+    };
+
+    let storage = storage_shard(&[]);
+    let storage2 = storage_shard(&[]);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config_with_storage_shard(storage)).unwrap();
+
+    // 弹层行按压切换意图 → 轻量确认（warning 级）→ 确认写指针。
+    app.wait_for("id:sidebar-book-entry").unwrap();
+    app.wait_for("text:默认账本").unwrap();
+    app.press("id:sidebar-book-entry").unwrap();
+    wait_pressable(
+        &mut app,
+        format!("id:sidebar-book-switch-{}", second.id).as_str(),
+    );
+    app.press(format!("id:sidebar-book-switch-{}", second.id).as_str())
+        .unwrap();
+    app.wait_for("text:切换账本").unwrap();
+    app.press("id:danger-confirm").unwrap();
+    app.wait_for("text:已切换到「副账本」，重启应用后进入新账本")
+        .unwrap();
+    // 活动指针写链（读注册表文件：active = 副账本 id）。
+    let registry = fs::read_to_string(dir.join("data_location.json")).unwrap();
+    assert!(
+        registry.contains(second.id.as_str()) && registry.contains("\"active\""),
+        "注册表活动指针应指向副账本：{registry}"
+    );
+
+    // 「重启生效」等价：重置 + 同目录参数再启动 → 引导消费注册表进副账本。
+    nsh_app::app::reset_book_assembly();
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config_with_storage_shard(storage2)).unwrap();
+    open_transactions(&mut app);
+    app.wait_for("text:共 1 条").unwrap();
+    app.wait_for("text:副账本专属流水").unwrap();
+    assert!(
+        !app.shows("主账本专属流水"),
+        "读落目标本：原活动本流水不可见：{:?}",
+        app.screen().texts()
+    );
+
+    // 写落目标本：经 UI 记一笔 → 目标本库新增、原活动本库不变。
+    open_create_form(&mut app, "id:tx-add-expense", "记一笔 · 支出");
+    app.type_text("id:tx-form-amount", "12.50").unwrap();
+    pick_only_account(&mut app);
+    app.press("id:tx-form-submit").unwrap();
+    app.wait_for_gone("text:记一笔 · 支出", DEFAULT_WAIT)
+        .unwrap();
+    app.wait_for("text:共 2 条").unwrap();
+    // 库态核对（不经 UI）：按目录直开（`open_db_in`，绕过注册表解析链——
+    // 切换后 `boot_ledger` 会随活动指针解析到目标本，探针须指向特定本）。
+    let count = |path: &Path| -> i64 {
+        let db = ledger_infra::db::open_db_in(path).unwrap();
+        let conn = db
+            .read_conn
+            .lock()
+            .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
+            .unwrap();
+        ledger_transaction::list_transactions(
+            &conn,
+            &ledger_transaction::TransactionListFilter::default(),
+        )
+        .unwrap()
+        .total
+    };
+    assert_eq!(count(&second.dir), 2, "新写入落目标本库");
+    assert_eq!(count(&dir), 1, "原活动本库不受牵连");
+}
+
+/// 汇总置顶入口（web `book-summary-entry` 同位，置于清单容器外）：按压 →
+/// 落位跨账本汇总视图且成功出数（#2126 review 加强锚定：数据根 + 注册表 +
+/// 活动本投资现金注入成功现场，可投资资产卡出数、逐本「已计入」在屏，
+/// 读失败重试态退场；原仅以读失败文案锚定落位）。删导航接线（入口改空
+/// 动作）→ 汇总视图不落位 → 红。
+#[test]
+fn sidebar_book_summary_entry_opens_cross_book_summary() {
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+    let root = make_data_root("sidebar-summary");
+    let dir = make_book("sidebar-books-summary");
+    // 活动本种子投资现金（汇总成功现场：可投资资产 = 2000 元）。
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        seed_investment_cash(&db, "证券", "CNY", 200_000);
+    }
+    seed_registry(&root, &dir, &[]);
+    nsh_app::cross_book::set_default_data_dir(root.to_path_buf());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    app.wait_for("id:sidebar-book-entry").unwrap();
+    app.press("id:sidebar-book-entry").unwrap();
+    wait_pressable(&mut app, "id:sidebar-book-summary");
+    app.press("id:sidebar-book-summary").unwrap();
+    // 成功现场：可投资资产卡出数 + 活动本「已计入」；读失败重试态退场。
+    app.wait_for("text:¥2000").unwrap();
+    app.wait_for("text:已计入").unwrap();
+    assert!(
+        app.screen().count("id:cross-book-error").unwrap() == 0,
+        "成功现场不呈现读失败重试态：{:?}",
+        app.screen().texts()
+    );
+}
+
+/// 汇总入口可用性门（web `summaryAvailable` 同口径）：投资功能关闭时入口
+/// 不可按（ADR-0116 决策 4；聚合改道语义归 nav_model 既有单测）。
+#[test]
+fn sidebar_book_summary_entry_disabled_when_investments_closed() {
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("sidebar-books-summary-closed");
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let storage = storage_shard(&[("view_state:closed_features", "[\"investments\"]")]);
+    let mut app = Headless::start(desktop_config_with_storage_shard(storage)).unwrap();
+    app.wait_for("id:sidebar-book-entry").unwrap();
+    app.press("id:sidebar-book-entry").unwrap();
+    app.wait_for("id:sidebar-book-summary").unwrap();
+    assert!(
+        !app.screen().enabled("id:sidebar-book-summary").unwrap(),
+        "投资关闭时汇总入口不可按"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -15293,6 +16209,324 @@ fn investments_view_holdings_code_drills_to_ledger_filtered() {
     );
 }
 
+/// 投资明细·日期维度造数账本（#2130，日期相对「今天」派生——跨年运行不
+/// 脆）：投资账户 + 标的 + 三笔投资交易——买入（去年 12-15）、卖出（本月
+/// 1 日）、分红（今天）。数据期间 = [去年12月, 本月]（分红锚今天抬升最晚
+/// 端到本月），年边界 = [去年, 今年]——芯片「当年」子集 / 步进跨年 / 面板
+/// 月格钳制的独立推演基准（与 period 边界数学同源，period_shortcut 先例）。
+fn seed_ledger_period_book(tag: &str) -> seed::BookDir {
+    let dir = make_book(tag);
+    let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+    use ledger_investment::{InstrumentInput, InstrumentType};
+    let t = today();
+    let last_dec15 = chrono::NaiveDate::from_ymd_opt(t.year() - 1, 12, 15).unwrap();
+    let month_first = chrono::NaiveDate::from_ymd_opt(t.year(), t.month(), 1).unwrap();
+    let (account_id, instrument_id) = {
+        let conn = db.conn.lock().unwrap();
+        let account_id = ledger_accounts::create_account(
+            &conn,
+            AccountInput {
+                name: "证券".to_owned(),
+                kind: AccountType::Investment,
+                currency_code: "CNY".to_owned(),
+                initial_balance_cents: Some(100_000),
+                credit_limit_cents: None,
+                statement_day: None,
+                due_day: None,
+            },
+        )
+        .unwrap();
+        let instrument_id = ledger_investment::create_instrument(
+            &conn,
+            InstrumentInput {
+                symbol: "TST".to_owned(),
+                kind: InstrumentType::Stock,
+                name: Some("测试标的".to_owned()),
+                currency_code: "CNY".to_owned(),
+                market: None,
+            },
+        )
+        .unwrap();
+        (account_id, instrument_id)
+    };
+    let rows = [
+        (ledger_transaction::TransactionKind::Buy, last_dec15, 0),
+        (ledger_transaction::TransactionKind::Sell, month_first, 0),
+        (ledger_transaction::TransactionKind::Dividend, t, 12_345),
+    ];
+    {
+        let conn = db.conn.lock().unwrap();
+        for (kind, date, amount_cents) in rows {
+            let traded = kind != ledger_transaction::TransactionKind::Dividend;
+            ledger_transaction::create(
+                &conn,
+                ledger_transaction::TransactionInput {
+                    kind,
+                    amount_cents,
+                    currency_code: "CNY".to_owned(),
+                    account_id: Some(account_id.clone()),
+                    instrument_id: Some(instrument_id.clone()),
+                    quantity: traded.then_some(1.0),
+                    price_cents: traded.then_some(10_000),
+                    fee_cents: Some(0),
+                    date: date.to_string(),
+                    ..probe_investments_input()
+                },
+            )
+            .unwrap();
+        }
+    }
+    dir
+}
+
+/// 明细页签期间行·芯片与步进（#2130，QuickTimeRange 第四消费形态）：五芯
+/// 片 + 步进器在屏（无键位提示内嵌——同搜索视图 key_hints=false 口径）；
+/// 「当年」芯片写快照（标签 = 今年）且行集收窄到今年两笔；步进上一周期跨
+/// 到去年（行集 1 笔）、下一周期回今年；越界（明年）步进按钮置灰——点按
+/// 无操作（幂等）。「删除即红」负向条目（ADR-0087）：删期间行挂载接线
+///（period_row 调用）→ 本测在 id:ledger-period-label 锚处红；删日期维进
+/// 筛选签名（tracked effect）或 filter from/to 投影任一 → 芯片/步进后行
+/// 集不收窄，总数与行文本断言红。断言对准用户可见结果（标签 / 总数 /
+/// 日期格），不写可点性断言。
+#[test]
+fn investments_view_ledger_period_chip_and_stepper_narrow_rows() {
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+    let dir = seed_ledger_period_book("invest-ledger-period-chip");
+    let t = today();
+    let last_dec15 = format!("{}-12-15", t.year() - 1);
+    let month_first = format!("{}-{:02}-01", t.year(), t.month());
+
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_investments(&mut app);
+    app.press("id:inv-tab-ledger").unwrap();
+    app.wait_for("id:ledger-title").unwrap();
+    app.wait_for("text:共 3 条").unwrap();
+
+    // 期间行挂载（无日期维 = 「全部」默认态）：标签召唤文案在屏。
+    app.wait_for("id:ledger-period-label").unwrap();
+    assert!(
+        app.shows("选择期间"),
+        "默认「全部」态标签：{:?}",
+        app.screen().texts()
+    );
+
+    // 「当年」芯片 → 快照 = 今年自然年，行集收窄到今年两笔（卖出 + 分红）。
+    app.press("id:ledger-period-label").unwrap();
+    app.wait_for("id:ledger-period-chip-year").unwrap();
+    app.press("id:ledger-period-chip-year").unwrap();
+    app.wait_for_gone("id:ledger-period-chip-year", DEFAULT_WAIT)
+        .unwrap();
+    app.wait_for(&format!("text:{}年", t.year())).unwrap();
+    app.wait_for("text:共 2 条").unwrap();
+    assert!(
+        app.shows(&month_first) && app.shows(&t.to_string()),
+        "今年两笔在列：{:?}",
+        app.screen().texts()
+    );
+    assert!(!app.shows(&last_dec15), "去年买入离屏（行集随日期维收窄）");
+
+    // 步进上一周期 → 去年自然年：行集收窄到去年买入一笔。
+    app.press("role:button[上一个周期]").unwrap();
+    app.wait_for(&format!("text:{}年", t.year() - 1)).unwrap();
+    app.wait_for("text:共 1 条").unwrap();
+    assert!(
+        app.shows(&last_dec15),
+        "去年买入在列：{:?}",
+        app.screen().texts()
+    );
+    assert!(!app.shows(&t.to_string()), "今年分红离屏");
+
+    // 步进下一周期 → 回今年；再下一步（明年）越出数据期间边界 → 按钮置灰。
+    app.press("role:button[下一个周期]").unwrap();
+    app.wait_for(&format!("text:{}年", t.year())).unwrap();
+    app.wait_for("text:共 2 条").unwrap();
+    assert!(
+        !app.screen().enabled("role:button[下一个周期]").unwrap(),
+        "明年越出数据期间边界：下步按钮置灰"
+    );
+
+    // 「全部」芯片 → 回无过滤默认态：标签召唤文案 + 行集回全量三笔。
+    app.press("id:ledger-period-label").unwrap();
+    app.wait_for("id:ledger-period-chip-all").unwrap();
+    app.press("id:ledger-period-chip-all").unwrap();
+    app.wait_for_gone("id:ledger-period-chip-all", DEFAULT_WAIT)
+        .unwrap();
+    app.wait_for("text:共 3 条").unwrap();
+    assert!(
+        app.shows("选择期间"),
+        "「全部」= 无过滤默认态标签：{:?}",
+        app.screen().texts()
+    );
+}
+
+/// 明细页签期间行·直达面板（#2130 / #2128 共用件第四消费面）：「全部」态
+/// 开弹层默认月面板（季/年格不呈现）；月格可达性 = 数据期间边界独立推演
+///（本月及以前可达、之后置灰）；锚年上一年可达、下一年置灰；锚年导航到
+/// 去年后仅去年 12 月格可达；点选写精确自然月快照并收窄行集。「删除即
+/// 红」负向条目（ADR-0087）：删面板挂载接线（period_row 面板 child）→
+/// 本测在 id:ledger-period-panel 锚处红；删边界装载接线（boundary_dates
+/// 喂 period_row）→ 格子不钳制、可达性断言红。
+#[test]
+fn investments_view_ledger_period_panel_direct_month_select_narrows_rows() {
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+    let dir = seed_ledger_period_book("invest-ledger-period-panel");
+    let t = today();
+    let last_dec15 = format!("{}-12-15", t.year() - 1);
+    let month_first = format!("{}-{:02}-01", t.year(), t.month());
+    let prefix = "ledger-period";
+
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_investments(&mut app);
+    app.press("id:inv-tab-ledger").unwrap();
+    app.wait_for("id:ledger-title").unwrap();
+    app.wait_for("text:共 3 条").unwrap();
+
+    // 开弹层：「全部」态默认月面板（本月月格在屏，季/年格不呈现）。
+    app.press("id:ledger-period-label").unwrap();
+    app.wait_for("id:ledger-period-chip-all").unwrap();
+    app.wait_for("id:ledger-period-panel").unwrap();
+    app.wait_for(&panel_month_cell(prefix, t.month0())).unwrap();
+    assert_eq!(
+        app.screen().count(&panel_quarter_cell(prefix, 0)).unwrap(),
+        0,
+        "「全部」态默认月面板：季格不呈现"
+    );
+    assert_eq!(
+        app.screen()
+            .count(&panel_year_cell(prefix, t.year()))
+            .unwrap(),
+        0,
+        "「全部」态默认月面板：年格不呈现"
+    );
+
+    // 月格可达性独立推演（与 period 边界数学同源）：边界月序 =
+    // [min(最早交易月, 本月), max(最新交易月, 本月)]，本例最晚端 = 本月
+    //（分红锚今天）→ 锚今年本月及以前可达、之后置灰。
+    let ord_m = |d: chrono::NaiveDate| i64::from(d.year()) * 12 + i64::from(d.month0());
+    let lo = ord_m(chrono::NaiveDate::from_ymd_opt(t.year() - 1, 12, 15).unwrap());
+    let hi = ord_m(t).max(ord_m(
+        chrono::NaiveDate::from_ymd_opt(t.year(), t.month(), 1).unwrap(),
+    ));
+    for m0 in 0..12u32 {
+        let expected = i64::from(t.year()) * 12 + i64::from(m0) >= lo
+            && i64::from(t.year()) * 12 + i64::from(m0) <= hi;
+        let role = format!("role:button[{}月]", m0 + 1);
+        assert_eq!(
+            app.screen().enabled(&role).unwrap(),
+            expected,
+            "月格「{}月」可达性应 = 边界内推演（{expected}）",
+            m0 + 1
+        );
+    }
+    // 锚年导航可达性：上一年 = 边界最早年（去年 12 月）→ 可达；下一年越出
+    // 边界最晚年（今年）→ 置灰。
+    assert!(
+        app.screen()
+            .enabled(&format!("id:{prefix}-panel-prev"))
+            .unwrap(),
+        "面板上一年可达（边界最早年在去年）"
+    );
+    assert!(
+        !app.screen()
+            .enabled(&format!("id:{prefix}-panel-next"))
+            .unwrap(),
+        "面板下一年置灰（边界最晚年 = 今年）"
+    );
+
+    // 锚年导航到去年：仅去年 12 月格可达（其余月置灰）。
+    app.press(&format!("id:{prefix}-panel-prev")).unwrap();
+    app.wait_for(&format!("text:{}年", t.year() - 1)).unwrap();
+    assert!(
+        app.screen().enabled(&panel_month_cell(prefix, 11)).unwrap(),
+        "去年 12 月格可达"
+    );
+    assert!(
+        !app.screen().enabled(&panel_month_cell(prefix, 0)).unwrap(),
+        "去年 1 月格置灰（边界最早 = 去年 12 月）"
+    );
+
+    // 点选去年 12 月格 → 写精确自然月快照并关弹层：行集收窄到去年买入一笔。
+    app.press(&panel_month_cell(prefix, 11)).unwrap();
+    app.wait_for_gone("id:ledger-period-chip-all", DEFAULT_WAIT)
+        .unwrap();
+    app.wait_for(&format!("text:{}年12月", t.year() - 1))
+        .unwrap();
+    app.wait_for("text:共 1 条").unwrap();
+    assert!(
+        app.shows(&last_dec15),
+        "去年买入在列：{:?}",
+        app.screen().texts()
+    );
+    assert!(
+        !app.shows(&month_first) && !app.shows(&t.to_string()),
+        "今年两笔离屏"
+    );
+}
+
+/// 明细页签期间快照会话内保留 + 冷启动回「全部」（#2130，ADR-0094 会话内
+/// 保留默认粒度 / ADR-0135 决策 3 四维同射程口径）：选「当年」→ 切走（交
+/// 易视图）再回（投资明细）= 标签与行集原样保留；重启应用 = 快照回「全部」
+///（标签召唤文案 + 行集全量）。「删除即红」负向条目（ADR-0087）：删会话
+/// 槽日期字段（detail_date 降为组件本地信号）→ 切走再回重挂重拉后快照回
+/// 「全部」、行集回全量，保留段断言红。
+#[test]
+fn investments_view_ledger_period_snapshot_session_retained_cold_start_resets() {
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+    let dir = seed_ledger_period_book("invest-ledger-period-session");
+    let t = today();
+    let year_label = format!("text:{}年", t.year());
+
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_investments(&mut app);
+    app.press("id:inv-tab-ledger").unwrap();
+    app.wait_for("id:ledger-title").unwrap();
+    app.wait_for("text:共 3 条").unwrap();
+
+    // 留下快照印记：「当年」芯片 → 行集收窄到今年两笔。
+    app.press("id:ledger-period-label").unwrap();
+    app.wait_for("id:ledger-period-chip-year").unwrap();
+    app.press("id:ledger-period-chip-year").unwrap();
+    app.wait_for_gone("id:ledger-period-chip-year", DEFAULT_WAIT)
+        .unwrap();
+    app.wait_for(&year_label).unwrap();
+    app.wait_for("text:共 2 条").unwrap();
+
+    // 切走（交易视图）再回（投资视图，会话页签 = 明细）：标签与行集原样
+    //（进程级会话槽承担保留，ADR-0094）。
+    open_transactions(&mut app);
+    app.wait_for("id:tx-table").unwrap();
+    open_investments(&mut app);
+    app.wait_for("id:ledger-title").unwrap();
+    app.wait_for(&year_label).unwrap();
+    app.wait_for("text:共 2 条").unwrap();
+    assert!(
+        !app.shows("选择期间"),
+        "保留态不是「全部」：{:?}",
+        app.screen().texts()
+    );
+    drop(app);
+
+    // 冷启动（复位装配 + 重启）：快照回「全部」默认态，行集回全量三笔。
+    nsh_app::app::reset_book_assembly();
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_investments(&mut app);
+    app.press("id:inv-tab-ledger").unwrap();
+    app.wait_for("id:ledger-title").unwrap();
+    app.wait_for("text:共 3 条").unwrap();
+    assert!(
+        app.shows("选择期间"),
+        "冷启动回「全部」默认态：{:?}",
+        app.screen().texts()
+    );
+}
+
 /// 标的库检索 + 手动报价旅程：浏览（服务端分页 50/页）、搜索收窄、手动
 /// 通道行「录价」入口、提交断言写路径两个落点与回执分型 + 投资失效信号
 /// 驱动行集原地重拉（现价列现值化）。删除价格失效信号订阅或「是否发」广
@@ -16441,6 +17675,218 @@ fn locked_view_forgot_passphrase_resets_to_fresh_plaintext_session() {
     );
 }
 
+/// 锁定屏「从备份文件恢复」全旅程·明文备份臂（issue #2131）：锁定视图常驻
+/// 恢复入口（与忘口令重置并列双逃生门，#603 平价）→ 选择明文备份 → 确认
+/// 弹窗（后果警示 + 跨模式警告：密文现库恢复明文备份；明文备份无口令框）
+/// → 取消零替换（仍锁定、文件原样）→ 再确认恢复 → 备份域恢复通道全语义
+///（RestoreSafetyBackup + 整库替换，备份域词条口径不变）→ 模式探测接管
+/// 实际模式：恢复出明文库原位进会话（主界面呈现备份内容，无需重启——
+/// 旧壳「恢复后自动重启」的本壳原位续接同口径）。
+///
+/// 「删除即红」负向条目（ADR-0087 接线）：删锁定屏恢复入口按钮接线
+///（unlock.rs locked_panel 的 `unlock-restore-open` → `run_restore_pick`）
+/// → 入口不可达 / 弹窗不入屏 → 本测 wait_for/press 红；删恢复确认任务接线
+///（`run_restore_confirm` 的 spawn 链）→ 恢复不执行、不进会话 → 对应
+/// wait_for 红。断言对准用户可见结果（入口在屏、弹窗文案、恢复后的交易行
+/// 与库文件形态）。
+#[test]
+fn locked_view_restore_plaintext_backup_replaces_book_and_enters_session() {
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+
+    // 备份源（另一本明文库，两笔「备份源数据」支出）→ 域直调产备份包。
+    let source = make_book("lock-restore-source");
+    {
+        let db = nsh_app::boot::boot_ledger(&source).unwrap();
+        let account = seed_cash_account(&db);
+        for index in 0..2 {
+            seed_transaction(
+                &db,
+                TxnSeed {
+                    account: &account,
+                    to_account: None,
+                    kind: TransactionKind::Expense,
+                    amount_cents: 2_500,
+                    date: &test_date(index),
+                    category_id: None,
+                    merchant_id: None,
+                    note: Some("备份源数据".to_owned()),
+                },
+            );
+        }
+    }
+    let zip = ScratchFile::new("nsh-lock-restore", "restore.db.zip");
+    {
+        let db = nsh_app::boot::boot_ledger(&source).unwrap();
+        nsh_app::boot::create_backup(&db, &zip, env!("CARGO_PKG_VERSION")).unwrap();
+    }
+
+    // 当前密文库（本口令 journeyP）带一笔本地数据（恢复后应被备份内容替换）。
+    let dir = make_encrypted_book("lock-restore-current", "本口令 journeyP");
+    let db_path = dir.join("ledger.db");
+    // 应用数据根（RestoreSafetyBackup 的落点；headless 注入临时目录，生产
+    // bin 的注入单点在 main.rs）。
+    let data_root = ScratchDir::new("nsh-lock-restore-root");
+    nsh_app::cross_book::set_default_data_dir(data_root.to_path_buf());
+
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    app.wait_for("id:locked-panel").unwrap();
+
+    // 双逃生门并列常驻：恢复入口与忘口令入口同屏可达。
+    app.wait_for("id:unlock-restore-open").unwrap();
+    assert!(
+        app.screen().count("id:unlock-forgot").unwrap() > 0,
+        "忘口令重置入口与恢复入口并存不互斥"
+    );
+
+    // 选择明文备份 → 确认弹窗：后果警示 + 跨模式警告在屏；明文备份无口令框。
+    app.on_pick_paths(vec![zip.to_path_buf()]).unwrap();
+    app.press("id:unlock-restore-open").unwrap();
+    app.wait_for("text:确认恢复").unwrap();
+    app.wait_for("text:/恢复将替换当前全部数据/").unwrap();
+    app.wait_for("text:加密模式不一致").unwrap();
+    assert_eq!(
+        app.screen().count("id:unlock-restore-passphrase").unwrap(),
+        0,
+        "明文备份无口令框"
+    );
+
+    // 取消：零替换（弹窗关、仍锁定、库文件原样密文）。
+    app.press("id:unlock-restore-cancel").unwrap();
+    app.settle();
+    assert!(
+        app.screen().count("id:locked-panel").unwrap() > 0,
+        "取消后仍留锁定视图"
+    );
+    assert!(matches!(
+        ledger_infra::db::encryption::probe_file_kind(&db_path).unwrap(),
+        ledger_infra::db::encryption::DbFileKind::Encrypted,
+    ));
+
+    // 再进确认 → 恢复执行 → 模式探测接管：明文库原位进会话（备份内容在屏、
+    // 原数据退场、库文件转明文）。
+    app.on_pick_paths(vec![zip.to_path_buf()]).unwrap();
+    app.press("id:unlock-restore-open").unwrap();
+    app.wait_for("text:确认恢复").unwrap();
+    app.press("id:unlock-restore-confirm").unwrap();
+    app.wait_for("id:nav-transactions").unwrap();
+    open_transactions(&mut app);
+    app.wait_for("text:备份源数据").unwrap();
+    assert!(
+        !app.shows("密文会话数据"),
+        "恢复替换当前数据：原密文库数据退场：{:?}",
+        app.screen().texts()
+    );
+    assert!(matches!(
+        ledger_infra::db::encryption::probe_file_kind(&db_path).unwrap(),
+        ledger_infra::db::encryption::DbFileKind::Plaintext,
+    ));
+}
+
+/// 锁定屏「从备份文件恢复」·密文备份臂（issue #2131）：上下文口令自动试开
+///（解锁框手输过的口令随意图携带，密文备份先自动试开、口令框不显出）→
+/// 试开失败（口令错误）不关弹窗、口令框就地显出重输（解锁同语义）→ 正确
+/// 口令恢复成功 → 模式探测接管：恢复出密文库凭该口令走解锁编排进会话。
+#[test]
+fn locked_view_restore_encrypted_backup_context_pass_retry_enters_session() {
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+    const PASS_SOURCE: &str = "备份源口令 journeyA";
+
+    // 备份源：密文库（一笔「密文备份源」）→ 密文备份包（产物加密随源库走）。
+    let source = make_book("lock-restore-enc-source");
+    {
+        let db = nsh_app::boot::boot_ledger(&source).unwrap();
+        let account = seed_cash_account(&db);
+        seed_transaction(
+            &db,
+            TxnSeed {
+                account: &account,
+                to_account: None,
+                kind: TransactionKind::Expense,
+                amount_cents: 2_500,
+                date: &test_date(0),
+                category_id: None,
+                merchant_id: None,
+                note: Some("密文备份源".to_owned()),
+            },
+        );
+    }
+    ledger_infra::db::encryption::enable_encryption_for_file(
+        &source.join("ledger.db"),
+        PASS_SOURCE,
+    )
+    .unwrap();
+    let zip = ScratchFile::new("nsh-lock-restore-enc", "restore.db.zip");
+    {
+        let db = nsh_app::boot::unlock_encrypted_book(PASS_SOURCE).unwrap();
+        nsh_app::boot::create_backup(&db, &zip, env!("CARGO_PKG_VERSION")).unwrap();
+    }
+
+    // 当前密文库（不同口令 journeyB；本地数据「密文会话数据」，恢复后退场）。
+    let dir = make_encrypted_book("lock-restore-enc-current", "当前口令 journeyB");
+    let db_path = dir.join("ledger.db");
+    let data_root = ScratchDir::new("nsh-lock-restore-enc-root");
+    nsh_app::cross_book::set_default_data_dir(data_root.to_path_buf());
+
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    app.wait_for("id:locked-panel").unwrap();
+
+    // 上下文口令：解锁框手输当前库口令（对备份是错误口令——自动试开真实场景：
+    // 用户先试自己记得的口令）。
+    app.type_text("id:unlock-passphrase", "当前口令 journeyB")
+        .unwrap();
+    app.on_pick_paths(vec![zip.to_path_buf()]).unwrap();
+    app.press("id:unlock-restore-open").unwrap();
+    app.wait_for("text:确认恢复").unwrap();
+    assert_eq!(
+        app.screen().count("id:unlock-restore-passphrase").unwrap(),
+        0,
+        "上下文口令在场：口令框不显出（确认先自动试开）"
+    );
+
+    // 自动试开失败（口令错误）：错误在弹窗内就地呈现、弹窗不关、口令框显出。
+    app.press("id:unlock-restore-confirm").unwrap();
+    app.wait_for("text:/恢复失败: 口令错误或文件损坏/").unwrap();
+    assert_eq!(
+        app.screen().count("id:unlock-restore-passphrase").unwrap(),
+        1,
+        "试开失败后口令框就地显出可重输"
+    );
+    assert!(
+        app.screen().count("id:locked-panel").unwrap() > 0,
+        "失败不关弹窗、库文件未替换（仍留锁定视图）"
+    );
+    assert!(matches!(
+        ledger_infra::db::encryption::probe_file_kind(&db_path).unwrap(),
+        ledger_infra::db::encryption::DbFileKind::Encrypted,
+    ));
+
+    // 重输备份主口令 → 恢复成功 → 恢复出密文库凭同口令解锁进会话（备份内容
+    // 在屏、原数据退场、库文件仍密文且凭备份口令可解）。
+    app.type_text("id:unlock-restore-passphrase", PASS_SOURCE)
+        .unwrap();
+    app.press("id:unlock-restore-confirm").unwrap();
+    app.wait_for("id:nav-transactions").unwrap();
+    open_transactions(&mut app);
+    app.wait_for("text:密文备份源").unwrap();
+    assert!(
+        !app.shows("密文会话数据"),
+        "恢复替换当前数据：原密文库数据退场：{:?}",
+        app.screen().texts()
+    );
+    assert!(matches!(
+        ledger_infra::db::encryption::probe_file_kind(&db_path).unwrap(),
+        ledger_infra::db::encryption::DbFileKind::Encrypted,
+    ));
+    assert!(
+        ledger_infra::db::encryption::verify_source_passphrase(&db_path, PASS_SOURCE).is_ok(),
+        "恢复出的密文库凭备份主口令可解（会话已凭同口令开启）"
+    );
+}
+
 /// 加密卡写面平价全旅程（issue #2088 交付②：修改主口令 / 关闭加密，旧壳
 /// `change_encryption_passphrase` / `disable_encryption` 消费面）：开启加密
 /// → 密文会话形态 → 修改主口令（error 级确认；旧口令错误就地报错原库原样；
@@ -16699,5 +18145,375 @@ fn auto_backup_scheduling_three_states_in_encrypted_scenario() {
     assert!(
         name.starts_with("ledger-auto-") && name.ends_with(".db.zip"),
         "产物为受管自动命名：{name}"
+    );
+}
+
+// ===========================================================================
+// 更新器替身回路（issue #2134 / ADR-0124 交互语义沿袭 / ADR-0145 修订注记）
+// ===========================================================================
+
+/// 固定测试签名密钥对（`nsh keygen` 产物字面值，仅测试用——非生产信任链；
+/// 生产公钥烧入 `src-app/nsh.json`，私钥离线保管，人工步骤见
+/// `src-app/packaging/README.md`）。
+const UPDATE_TEST_SECRET: &str = "yuL6phWEeObaoIlsgOvpT+E+15N69jKPdCePGT69M0k=";
+/// 测试公钥（同上密钥对的公开半边，烧入替身配置）。
+const UPDATE_TEST_PUBLIC: &str = "3lmQLLPw7wdT1AScadPouw0lxA4KuU3IpKEk1nhqlhE=";
+/// 替身应用 id（与 `src-app/nsh.json` 的 id 字面一致，manifest id 核对用）。
+const UPDATE_APP_ID: &str = "com.zhangheng.ledger.nsh";
+/// 替身配置的当前版本（须低于清单版本，版本只升不降核对面）。
+const UPDATE_CURRENT_VERSION: &str = "0.0.1";
+/// 替身清单提供的新版本。
+const UPDATE_NEXT_VERSION: &str = "9.9.9";
+/// 替身清单发布说明。
+const UPDATE_NOTES: &str = "替身回路测试发布说明";
+
+/// 更新源替身（内存清单 + 分离签名 + 工件；`fail` = 传输失败现场）。
+struct StubUpdateSource {
+    manifest: Vec<u8>,
+    signature: Vec<u8>,
+    archive: Vec<u8>,
+    fail: bool,
+}
+
+impl StubUpdateSource {
+    fn serve(&self, url: &str, sink: ByteSink<'_>) -> Result<(), String> {
+        if self.fail {
+            return Err("替身传输已断".to_owned());
+        }
+        let bytes = if url.ends_with("latest.json.sig") {
+            &self.signature
+        } else if url.ends_with("latest.json") {
+            &self.manifest
+        } else if url.ends_with(".tar.gz") {
+            &self.archive
+        } else {
+            return Err(format!("替身传输未知路径: {url}"));
+        };
+        sink(bytes, Some(bytes.len() as u64))
+    }
+}
+
+impl nsh_app::updater::Transport for StubUpdateSource {
+    fn get_bounded(&self, url: &str, sink: ByteSink<'_>) -> Result<(), String> {
+        self.serve(url, sink)
+    }
+
+    fn get(&self, url: &str, sink: ByteSink<'_>) -> Result<(), String> {
+        self.serve(url, sink)
+    }
+}
+
+/// 替身配置字节（github 源 + 测试公钥——生产同形：公钥烧入、清单强制分离签名）。
+fn update_config_bytes() -> Vec<u8> {
+    serde_json::json!({
+        "id": UPDATE_APP_ID,
+        "version": UPDATE_CURRENT_VERSION,
+        "github": "asiazhang/ledger",
+        "publicKey": UPDATE_TEST_PUBLIC,
+    })
+    .to_string()
+    .into_bytes()
+}
+
+/// 装配替身更新源（Ed25519 真签名——验签腿一并走真）。
+fn stub_update_source(fail: bool) -> Arc<dyn nsh_app::updater::Transport> {
+    let archive = b"ledger-stub-update-archive".to_vec();
+    let platform = nsh_updater::platform();
+    let manifest = format!(
+        r#"{{"id":"{UPDATE_APP_ID}","version":"{UPDATE_NEXT_VERSION}","notes":"{UPDATE_NOTES}","platforms":{{"{platform}":{{"url":"Ledger-{UPDATE_NEXT_VERSION}-{platform}.tar.gz","sha256":"{sha}","size":{size}}}}}}}"#,
+        platform = platform,
+        sha = nsh_updater::sha256(&archive),
+        size = archive.len(),
+    );
+    let signature = nsh_updater::sign(UPDATE_TEST_SECRET, manifest.as_bytes()).unwrap();
+    Arc::new(StubUpdateSource {
+        manifest: manifest.into_bytes(),
+        signature: signature.into_bytes(),
+        archive,
+        fail,
+    })
+}
+
+/// 注入更新器替身现场（配置字节 + 传输桩 + 换装桩；换装桩记录收到的工件路径
+/// 并返回成功——headless 无包布局，换装与重启归人工端到端验收）。
+fn install_update_stubs(
+    source: Arc<dyn nsh_app::updater::Transport>,
+) -> Arc<std::sync::Mutex<Vec<std::path::PathBuf>>> {
+    nsh_app::updater::set_config_bytes_for_tests(Some(update_config_bytes()));
+    nsh_app::updater::set_transport_for_tests(Some(source));
+    let installed = Arc::new(std::sync::Mutex::new(Vec::<std::path::PathBuf>::new()));
+    let installed_sink = Arc::clone(&installed);
+    nsh_app::updater::set_installer_for_tests(Some(Arc::new(move |archive: &Path| {
+        installed_sink
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(archive.to_path_buf());
+        Ok(())
+    })));
+    installed
+}
+
+/// 轮询等待（真实时间）：条件在期限内置真即成功——异步编排产物（备份文件 /
+/// 桩记录）晚于状态呈现的场合，等待成功优于即刻失败。
+fn wait_until(deadline: Duration, mut cond: impl FnMut() -> bool) -> bool {
+    let start = std::time::Instant::now();
+    while start.elapsed() < deadline {
+        if cond() {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    cond()
+}
+
+/// 手动时钟桌面配置（启动延迟检查经 `fast_forward` 推进——不旁路睡眠）。
+fn desktop_config_with_manual_clock(entries: &[(&str, &str)]) -> EngineConfig {
+    EngineConfig {
+        clock: nsh_engine::Clock::manual(std::time::SystemTime::UNIX_EPOCH),
+        ..desktop_config_with_storage(entries)
+    }
+}
+
+/// 手动检查全回路：检查 → 就地三态（新版本 + 发布说明）→ 下载（弹层进度 →
+/// 已下载）→ 确认安装 → **更新前备份在场**（PreUpdateBackup 触发接线，
+/// ADR-0124 决策 6；删除即变红负向条目：删
+/// `updater.rs::create_pre_update_backup_for_install` 的调用即本用例红——
+/// 断言对准用户可观察结果「安装前备份文件存在」，不对准函数调用形状）。
+#[test]
+fn update_manual_check_circuit_downloads_then_backs_up_before_install() {
+    let _guard = serial_lock();
+    test_logger::install_test_logger();
+    nsh_app::app::reset_book_assembly();
+    let data_root = ScratchDir::new("t2134-update-circuit");
+    nsh_app::cross_book::set_default_data_dir(data_root.path().to_path_buf());
+    let source = stub_update_source(false);
+    let installed = install_update_stubs(source);
+    let dir = make_book("t2134-update-circuit");
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config_with_storage(&[])).unwrap();
+    open_settings(&mut app);
+
+    // 更新卡在场（包配置注入 → surface 可用；开发运行无配置卡不呈现）。
+    app.wait_for("id:update-current-version").unwrap();
+    // 手动检查 → 就地呈现新版本与发布说明（不弹层、不写提醒记忆）。
+    press_after(&mut app, "id:update-check-btn", "id:update-check-btn").unwrap();
+    app.wait_for("id:update-check-version").unwrap();
+    let texts = app.screen().texts();
+    assert!(
+        texts.contains(&format!("发现新版本 {UPDATE_NEXT_VERSION}").as_str()),
+        "手动检查就地呈现新版本号：{:?}",
+        texts
+    );
+    assert!(
+        texts.contains(&UPDATE_NOTES),
+        "手动检查就地呈现发布说明：{:?}",
+        texts
+    );
+    assert!(
+        app.screen().count("id:update-modal-notes").unwrap() == 0,
+        "手动检查不弹提醒层（弹层只属自动检查路径）"
+    );
+
+    // 卡内下载入口 → 弹层转下载态 → 工件落盘（替身即时完成，推进时钟让
+    // 进度轮询循环走完）→ 已下载确认态。
+    press_after(&mut app, "id:update-download-btn", "id:update-download-btn").unwrap();
+    app.wait_for("id:update-install-btn").unwrap();
+    let archive_path = data_root
+        .path()
+        .join("updates")
+        .join(format!("ledger-{UPDATE_NEXT_VERSION}.tar.gz"));
+    assert!(
+        archive_path.is_file(),
+        "下载工件两段式落盘完成：{}",
+        archive_path.display()
+    );
+
+    // 确认安装（warning 级确认面在场 + 兜底说明）→ 备份（裸作业）→ 换装桩
+    // 收到工件路径 → 流程停在安装态（生产路径此处重启退出，替身即断言面）。
+    assert!(
+        app.screen()
+            .texts()
+            .contains(&"安装前会自动为当前账本创建更新前备份；备份失败则中止更新。"),
+        "安装确认面呈现更新前备份兜底说明：{:?}",
+        app.screen().texts()
+    );
+    press_after(&mut app, "id:update-install-btn", "id:update-install-btn").unwrap();
+    app.wait_for("id:update-installing").unwrap();
+    // 安装编排异步进行（备份 → 换装桩），产物与桩记录晚于 Installing 态呈现
+    // ——轮询等待（套件满载下备份耗时不可先验，等待成功优于即刻失败）。
+    assert!(
+        wait_until(DEFAULT_WAIT, || !installed
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_empty()),
+        "换装桩收到已下载工件"
+    );
+    let installed_paths = installed.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    assert_eq!(
+        installed_paths,
+        vec![archive_path.clone()],
+        "换装桩收到的正是已下载工件"
+    );
+    let pre_update_backup = data_root.path().join("pre-update.db.zip");
+    assert!(
+        wait_until(DEFAULT_WAIT, || pre_update_backup.is_file()),
+        "安装前更新前备份在场（删除 create_pre_update_backup 调用即红）：{}",
+        pre_update_backup.display()
+    );
+}
+
+/// 启动延迟静默检查 + 已提醒版本记忆（ADR-0124 决策 4）：启动 15s 延迟检查
+///（手动时钟推进，删除 `app.rs` 就绪分支的 `schedule_startup_check` 接线即
+/// 本用例红——提醒弹层永不出现）→ 提醒弹层含发布说明 →「以后再说」取消不
+/// 下载 → 同版本二次检查不再提醒（记忆生效）。
+#[test]
+fn update_startup_check_reminds_once_per_version_with_memory() {
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+    let source = stub_update_source(false);
+    let _installed = install_update_stubs(source);
+    let dir = make_book("t2134-update-remind");
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config_with_manual_clock(&[])).unwrap();
+    open_settings(&mut app);
+
+    // 推进过延迟窗：静默检查发现新版本 → 提醒弹层（含发布说明）。
+    app.fast_forward(std::time::Duration::from_secs(16))
+        .unwrap();
+    app.wait_for("id:update-modal-notes").unwrap();
+    assert!(
+        app.screen().texts().contains(&UPDATE_NOTES),
+        "提醒弹层呈现发布说明：{:?}",
+        app.screen().texts()
+    );
+    // 「以后再说」= 取消：不下载（无下载态）、流程回场。
+    press_after(&mut app, "id:update-modal-later", "id:update-modal-later").unwrap();
+    app.wait_for_gone("id:update-modal-notes", DEFAULT_WAIT)
+        .unwrap();
+
+    // 同版本二次检查（时钟再推进一个延迟窗）：记忆命中 → 不再提醒。
+    app.fast_forward(std::time::Duration::from_secs(16))
+        .unwrap();
+    app.run_for(std::time::Duration::from_millis(500)).unwrap();
+    assert!(
+        app.screen().count("id:update-modal-notes").unwrap() == 0,
+        "已提醒版本记忆生效：同版本不重复弹层"
+    );
+}
+
+/// 弹层标题随流程阶段转换（Remind → Downloading → Downloaded）：弹层开着
+/// 期间 `open` 边界不翻转、nsh `when` 分支闭包 untracked 求值一次——标题若
+/// 以 `text(title())` 开弹时一次快照，阶段转换后停留「发现新版本 vX」。
+/// 修复后标题以响应式绑定随流程态更新（删除 modal.rs 标题行的响应式绑定
+/// 即本测红：已下载态标题停留提醒态文案，ADR-0087 断言对准屏上可见结果）。
+#[test]
+fn update_modal_title_follows_flow_stage() {
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+    let source = stub_update_source(false);
+    let _installed = install_update_stubs(source);
+    let dir = make_book("t2134-update-modal-title");
+    // 下载腿需要数据根（工件落盘路径解析：无数据根 = 码化拒绝，不静默）。
+    let data_root = ScratchDir::new("t2134-update-modal-title");
+    nsh_app::cross_book::set_default_data_dir(data_root.path().to_path_buf());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config_with_manual_clock(&[])).unwrap();
+    open_settings(&mut app);
+
+    // 推进过延迟窗：提醒弹层开（标题 = 发现新版本 vX）。
+    app.fast_forward(std::time::Duration::from_secs(16))
+        .unwrap();
+    app.wait_for("id:update-modal-notes").unwrap();
+    assert!(
+        app.screen()
+            .texts()
+            .contains(&format!("发现新版本 {UPDATE_NEXT_VERSION}").as_str()),
+        "提醒态标题呈现新版本号：{:?}",
+        app.screen().texts()
+    );
+
+    // 弹层内下载：流程转下载中 → 已下载（替身即时完成），弹层开着、open
+    // 边界不翻转——标题应随阶段转「准备安装更新」，停留提醒态文案即缺陷。
+    // （下载中态标题同机制，替身即时完成不可稳定观察，钉已下载终态。）
+    press_after(&mut app, "id:update-download-btn", "id:update-download-btn").unwrap();
+    // 手动时钟：进度轮询的 timer 需时钟推进才走完（替身即时完成，一次推进
+    // 足够轮询循环观察到句柄完结）。
+    app.run_for(std::time::Duration::from_secs(2)).unwrap();
+    app.wait_for("id:update-install-btn").unwrap();
+    let texts = app.screen().texts();
+    assert!(
+        texts.contains(&"准备安装更新"),
+        "已下载态标题随阶段转换：{:?}",
+        texts
+    );
+    assert!(
+        !texts.contains(&format!("发现新版本 {UPDATE_NEXT_VERSION}").as_str()),
+        "阶段转换后提醒态标题退场：{:?}",
+        texts
+    );
+}
+
+/// 手动检查失败就地报错（ADR-0124 决策 4：后台失败静默、手动失败就地——
+/// 本用例钉手动侧码化文案呈现）。
+#[test]
+fn update_manual_check_failure_reports_error_in_place() {
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+    let source = stub_update_source(true);
+    let _installed = install_update_stubs(source);
+    let dir = make_book("t2134-update-failure");
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config_with_manual_clock(&[])).unwrap();
+    open_settings(&mut app);
+
+    press_after(&mut app, "id:update-check-btn", "id:update-check-btn").unwrap();
+    app.wait_for("id:update-check-error").unwrap();
+    assert!(
+        app.screen()
+            .texts()
+            .contains(&"更新源暂时不可用，请检查网络后重试"),
+        "手动检查失败就地报错（码化文案）：{:?}",
+        app.screen().texts()
+    );
+    assert!(
+        app.screen().count("id:update-modal-notes").unwrap() == 0,
+        "失败不弹层"
+    );
+}
+
+/// 自动检查开关关闭：启动延迟检查跳过（ADR-0124 决策 8 设备级偏好），手动
+/// 检查不受开关限制照常可用。
+#[test]
+fn update_auto_check_disabled_skips_startup_check_but_manual_still_works() {
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+    let source = stub_update_source(false);
+    let _installed = install_update_stubs(source);
+    let dir = make_book("t2134-update-auto-off");
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config_with_manual_clock(&[(
+        "update.auto-check",
+        "false",
+    )]))
+    .unwrap();
+    open_settings(&mut app);
+
+    // 开关关闭：推进过延迟窗，静默检查跳过、零弹层。
+    app.fast_forward(std::time::Duration::from_secs(16))
+        .unwrap();
+    app.run_for(std::time::Duration::from_millis(500)).unwrap();
+    assert!(
+        app.screen().count("id:update-modal-notes").unwrap() == 0,
+        "自动检查关闭时不弹层"
+    );
+    // 手动检查不受开关限制：照常发现新版本。
+    press_after(&mut app, "id:update-check-btn", "id:update-check-btn").unwrap();
+    app.wait_for("id:update-check-version").unwrap();
+    assert!(
+        app.screen()
+            .texts()
+            .contains(&format!("发现新版本 {UPDATE_NEXT_VERSION}").as_str()),
+        "手动检查不受自动检查开关限制：{:?}",
+        app.screen().texts()
     );
 }

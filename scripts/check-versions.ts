@@ -1,11 +1,12 @@
 #!/usr/bin/env bun
-// 版本元数据一致性守门（issue #1957 / ADR-0022 修订注记）：应用版本在两个文件里
-// 各写一次——`package.json`（Web 参照前端元数据）与根 `src-app/Cargo.toml`
-//（壳层版本真源，`CARGO_PKG_VERSION` 消费）。两处互不引用，任何一处漏改都会
-// 让两处版本漂移——本门把它钉死。`src-tauri/tauri.conf.json` 腿随 Tauri 壳
+// 版本元数据一致性守门（issue #1957 / ADR-0022 修订注记）：应用版本在三个文件里
+// 各写一次——`package.json`（Web 参照前端元数据）、根 `src-app/Cargo.toml`
+//（壳层版本真源，`CARGO_PKG_VERSION` 消费）与 `src-app/nsh.json`（nsh package
+// 打包版本与更新器比较面真源，#2134 起加入）。三处互不引用，任何一处漏改都会
+// 让版本漂移——本门把它钉死。`src-tauri/tauri.conf.json` 腿随 Tauri 壳
 // 退役（#2083：安装包与更新比较面已不存在）。
 //
-// 判定：两处相等即绿；不相等、文件缺失、字段读不出（fail loud，不静默跳过）
+// 判定：三处相等即绿；不相等、文件缺失、字段读不出（fail loud，不静默跳过）
 // 一律非零退出并逐条列出。`Cargo.lock` 不入判定面——它是 cargo 的产物，
 // 随 `cargo build`/`cargo update` 自动跟随，纳入判定只会制造与真实元数据无关的假红。
 //
@@ -31,8 +32,13 @@ export interface VersionSourceReading {
   problem: string | null;
 }
 
-/** 判定面清单（顺序即输出顺序）：两份元数据文件各一条。 */
-export const VERSION_SOURCES: readonly string[] = ["package.json", "src-app/Cargo.toml"];
+/** 判定面清单（顺序即输出顺序）：三份元数据文件各一条（nsh.json 腿随 #2134
+ * 更新器重建加入——nsh package 的打包版本与更新器比较面真源）。 */
+export const VERSION_SOURCES: readonly string[] = [
+  "package.json",
+  "src-app/Cargo.toml",
+  "src-app/nsh.json",
+];
 
 /** 从 JSON 元数据（package.json）读顶层 version。 */
 function readJsonVersion(text: string): string | null {
