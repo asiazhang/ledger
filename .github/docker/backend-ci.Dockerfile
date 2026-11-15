@@ -30,7 +30,11 @@ ENV LANG=C.UTF-8 \
 #   perl 脚本），runner 镜像预装而裸 ubuntu 没有，必须显式带上；
 # - NSH 壳系统依赖 + mold：libgtk-4-dev = NSH 原生壳（issue #2017 / ADR-0145；
 #   #2083 起 Tauri 壳退役，GTK4 是唯一 UI 栈）——nsh-platform-linux
-#   （GTK4 后端）经 gtk4-sys/pkg-config 发现系统库。
+#   （GTK4 后端）经 gtk4-sys/pkg-config 发现系统库；
+#   libgstreamer1.0-dev + libgstreamer-plugins-base1.0-dev = nsh 0.5.1 起
+#   nsh-platform-linux 新增 gstreamer/gstreamer-app/gstreamer-audio 依赖
+#   （媒体面，仅 default feature，基线 ≥1.14，ubuntu 24.04 的 1.22 满足）
+#   ——gstreamer*-sys 经 pkg-config 发现系统库（#2133 升级随行）。
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
     ca-certificates \
@@ -40,6 +44,8 @@ RUN apt-get update \
     build-essential \
     perl \
     libgtk-4-dev \
+    libgstreamer1.0-dev \
+    libgstreamer-plugins-base1.0-dev \
     mold \
   && rm -rf /var/lib/apt/lists/*
 
