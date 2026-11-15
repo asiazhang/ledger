@@ -101,6 +101,10 @@ pub fn SidebarView() -> impl IntoElement {
         .children(group_rows)
         .child(fixed_item(ViewName::Ai).mt_2())
         .child(fixed_item(ViewName::Settings))
+        // 弹性占位 + 底部账本切换区（web sider 骨架同构：菜单区伸展、入口
+        // 沉底；#2129）。
+        .child(view().flex_1())
+        .child(crate::sidebar_books::book_switch_area())
 }
 
 /// 侧栏呈现面（桌面侧栏 / 导航抽屉同构消费导航状态，形态差异收口）。

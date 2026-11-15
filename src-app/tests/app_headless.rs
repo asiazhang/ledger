@@ -13966,6 +13966,179 @@ fn books_summary_entry_opens_cross_book_summary() {
 }
 
 // ---------------------------------------------------------------------------
+// 侧栏底部账本切换区（issue #2129，web BookSidebarEntry 展开态的 NSH 重生）:
+// 触发件（当前账本名）→ 清单弹层（汇总置顶入口 + 账本行 + 活动指针指示）→
+// 行按压切换（warning 级轻量确认 → 写活动指针 → 重启生效提示）。换本生效
+// 时机按 web 参照既有语义核对（useBookSwitcher：确认后写指针并原位重引导
+// 重载进目标账本）；本壳无原位重引导（既有偏差，设置面账本切换卡同款），
+// 确认后写指针 + 状态条提示重启生效——ADR-0146 首启现场闭集零接触。
+// ---------------------------------------------------------------------------
+
+/// 切换区呈现：触发件显示活动账本名，弹层列出账本清单且活动行带「当前」
+/// 指示（其余行无）。删切换区挂载接线（侧栏底部组件移除）→ 触发件缺席 →
+/// 红。
+#[test]
+fn sidebar_book_switch_area_lands_with_list_and_active_pointer() {
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("sidebar-books-list");
+    // 预登记副账本（只登记不建库，清单呈现与库文件无关）。
+    let second = ledger_infra::db::book_registry::create_book_entry(&dir, "副账本").unwrap();
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config()).unwrap();
+
+    // 触发件（侧栏底部）：显示活动账本名（升级折叠形态唯一首本「默认账本」）。
+    // 装载锚：清单异步首刷，先等装载产物再读屏（#2068 纪律）。
+    app.wait_for("id:sidebar-book-entry").unwrap();
+    app.wait_for("text:默认账本").unwrap();
+
+    // 弹层：账本清单两行，活动行（默认账本，登记序 0）带「当前」指示，
+    // 副账本行无。
+    app.press("id:sidebar-book-entry").unwrap();
+    app.wait_for("id:sidebar-book-row-0-current").unwrap();
+    app.wait_for(format!("id:sidebar-book-switch-{}", second.id).as_str())
+        .unwrap();
+    assert!(
+        app.shows("副账本"),
+        "弹层应列出登记清单：{:?}",
+        app.screen().texts()
+    );
+    assert_eq!(
+        app.screen().count("id:sidebar-book-row-1-current").unwrap(),
+        0,
+        "非活动行不带「当前」指示"
+    );
+}
+
+/// 切换全旅程（读写落目标账本）：弹层行按压切换意图 → warning 级轻量确认
+/// → 确认后写活动指针（状态条提示重启生效）→ 重启后进目标账本：目标本种
+/// 子流水可见、原活动本流水不可见（读落目标本）；经 UI 记一笔后新写入目标
+/// 本库、原活动本库不变（写落目标本）。删切换写链（确认后不调 boot 写缝）
+/// → 指针不写、重启仍在原本 → 红。
+#[test]
+fn sidebar_book_switch_moves_pointer_and_lands_reads_writes_in_target() {
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("sidebar-books-switch");
+    // 两本各自种子（独立数据宇宙：各自专属备注流水；seed_expense_notes
+    // 内建建账户「测试现金」，供重启后记一笔表单选账）。
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        seed::seed_expense_notes(&db, &["主账本专属流水"]);
+    }
+    let second = {
+        let book = ledger_infra::db::book_registry::create_book_entry(&dir, "副账本").unwrap();
+        fs::write(book.dir.join("ledger.db"), b"").unwrap();
+        let db = nsh_app::boot::boot_ledger(&book.dir).unwrap();
+        seed::seed_expense_notes(&db, &["副账本专属流水"]);
+        book
+    };
+
+    let storage = storage_shard(&[]);
+    let storage2 = storage_shard(&[]);
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config_with_storage_shard(storage)).unwrap();
+
+    // 弹层行按压切换意图 → 轻量确认（warning 级）→ 确认写指针。
+    app.wait_for("id:sidebar-book-entry").unwrap();
+    app.wait_for("text:默认账本").unwrap();
+    app.press("id:sidebar-book-entry").unwrap();
+    wait_pressable(
+        &mut app,
+        format!("id:sidebar-book-switch-{}", second.id).as_str(),
+    );
+    app.press(format!("id:sidebar-book-switch-{}", second.id).as_str())
+        .unwrap();
+    app.wait_for("text:切换账本").unwrap();
+    app.press("id:danger-confirm").unwrap();
+    app.wait_for("text:已切换到「副账本」，重启应用后进入新账本")
+        .unwrap();
+    // 活动指针写链（读注册表文件：active = 副账本 id）。
+    let registry = fs::read_to_string(dir.join("data_location.json")).unwrap();
+    assert!(
+        registry.contains(second.id.as_str()) && registry.contains("\"active\""),
+        "注册表活动指针应指向副账本：{registry}"
+    );
+
+    // 「重启生效」等价：重置 + 同目录参数再启动 → 引导消费注册表进副账本。
+    nsh_app::app::reset_book_assembly();
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config_with_storage_shard(storage2)).unwrap();
+    open_transactions(&mut app);
+    app.wait_for("text:共 1 条").unwrap();
+    app.wait_for("text:副账本专属流水").unwrap();
+    assert!(
+        !app.shows("主账本专属流水"),
+        "读落目标本：原活动本流水不可见：{:?}",
+        app.screen().texts()
+    );
+
+    // 写落目标本：经 UI 记一笔 → 目标本库新增、原活动本库不变。
+    open_create_form(&mut app, "id:tx-add-expense", "记一笔 · 支出");
+    app.type_text("id:tx-form-amount", "12.50").unwrap();
+    pick_only_account(&mut app);
+    app.press("id:tx-form-submit").unwrap();
+    app.wait_for_gone("text:记一笔 · 支出", DEFAULT_WAIT)
+        .unwrap();
+    app.wait_for("text:共 2 条").unwrap();
+    // 库态核对（不经 UI）：按目录直开（`open_db_in`，绕过注册表解析链——
+    // 切换后 `boot_ledger` 会随活动指针解析到目标本，探针须指向特定本）。
+    let count = |path: &Path| -> i64 {
+        let db = ledger_infra::db::open_db_in(path).unwrap();
+        let conn = db
+            .read_conn
+            .lock()
+            .map_err(|e| ledger_infra::error::AppError::Db(e.to_string()))
+            .unwrap();
+        ledger_transaction::list_transactions(
+            &conn,
+            &ledger_transaction::TransactionListFilter::default(),
+        )
+        .unwrap()
+        .total
+    };
+    assert_eq!(count(&second.dir), 2, "新写入落目标本库");
+    assert_eq!(count(&dir), 1, "原活动本库不受牵连");
+}
+
+/// 汇总置顶入口（web `book-summary-entry` 同位，置于清单容器外）：按压 →
+/// 落位跨账本汇总视图（headless 未注入数据根，呈现读失败重试态，落位凭证
+/// 以视图内确定文案为锚）。删导航接线（入口改空动作）→ 汇总视图不落位 →
+/// 红。
+#[test]
+fn sidebar_book_summary_entry_opens_cross_book_summary() {
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("sidebar-books-summary");
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    app.wait_for("id:sidebar-book-entry").unwrap();
+    app.press("id:sidebar-book-entry").unwrap();
+    wait_pressable(&mut app, "id:sidebar-book-summary");
+    app.press("id:sidebar-book-summary").unwrap();
+    app.wait_for("text:汇总读取失败").unwrap();
+}
+
+/// 汇总入口可用性门（web `summaryAvailable` 同口径）：投资功能关闭时入口
+/// 不可按（ADR-0116 决策 4；聚合改道语义归 nav_model 既有单测）。
+#[test]
+fn sidebar_book_summary_entry_disabled_when_investments_closed() {
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("sidebar-books-summary-closed");
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let storage = storage_shard(&[("view_state:closed_features", "[\"investments\"]")]);
+    let mut app = Headless::start(desktop_config_with_storage_shard(storage)).unwrap();
+    app.wait_for("id:sidebar-book-entry").unwrap();
+    app.press("id:sidebar-book-entry").unwrap();
+    app.wait_for("id:sidebar-book-summary").unwrap();
+    assert!(
+        !app.screen().enabled("id:sidebar-book-summary").unwrap(),
+        "投资关闭时汇总入口不可按"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // 启动账本目录解析链（ADR-0146 决策 1 / spec #2090 T1，issue #2091）：无参
 // 启动（发布形态 .desktop 直跑，点图标即可用）按「argv 显式 > 账本注册表
 // 活动指针 > 默认数据目录」解析。现场矩阵（数据根经既有环境隔离夹具注入，
