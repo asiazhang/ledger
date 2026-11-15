@@ -195,11 +195,11 @@ resolver = "3"
 # 的 default 含 `js`，ADR-0145 决策 1），nsh-base 的 default 含代码高亮（syntect，
 # 立桩消费面用不到）；`nsh-testing` 0.4.0 的 default 不含 QuickJS，测试侧原样消费。
 [workspace.dependencies]
-nsh-core = { version = "=0.4.0" }
-nsh-base = { version = "=0.4.0", default-features = false }
-nsh-engine = { version = "=0.4.0", default-features = false }
-nsh-platform-linux = { version = "=0.4.0", default-features = false }
-nsh-testing = { version = "=0.4.0", default-features = false }
+nsh-core = { version = "=0.5.1" }
+nsh-base = { version = "=0.5.1", default-features = false }
+nsh-engine = { version = "=0.5.1", default-features = false }
+nsh-platform-linux = { version = "=0.5.1", default-features = false }
+nsh-testing = { version = "=0.5.1", default-features = false }
 
 # 易 panic 构造六件套 deny 门禁（issue #432 / ADR-0060）：门禁约束生产路径；
 # 测试目标经 crate 根与集成/BDD 测试 crate 头部 cfg_attr(test, allow) 整体豁免，
