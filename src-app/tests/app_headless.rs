@@ -40,6 +40,7 @@ use ledger_transaction::{
     TransactionFundingInput, TransactionInput, TransactionKind, TransactionPurchaseInput,
 };
 use nsh_app::test_support::{ScratchDir, ScratchFile};
+use nsh_app::updater::ByteSink;
 use nsh_core::platform::ColorScheme;
 use nsh_engine::{EngineConfig, Environment, Idiom, Os, Points, Size};
 use nsh_testing::Headless;
@@ -17775,5 +17776,323 @@ fn auto_backup_scheduling_three_states_in_encrypted_scenario() {
     assert!(
         name.starts_with("ledger-auto-") && name.ends_with(".db.zip"),
         "产物为受管自动命名：{name}"
+    );
+}
+
+// ===========================================================================
+// 更新器替身回路（issue #2134 / ADR-0124 交互语义沿袭 / ADR-0145 修订注记）
+// ===========================================================================
+
+/// 固定测试签名密钥对（`nsh keygen` 产物字面值，仅测试用——非生产信任链；
+/// 生产公钥烧入 `src-app/nsh.json`，私钥离线保管，人工步骤见
+/// `src-app/packaging/README.md`）。
+const UPDATE_TEST_SECRET: &str = "yuL6phWEeObaoIlsgOvpT+E+15N69jKPdCePGT69M0k=";
+/// 测试公钥（同上密钥对的公开半边，烧入替身配置）。
+const UPDATE_TEST_PUBLIC: &str = "3lmQLLPw7wdT1AScadPouw0lxA4KuU3IpKEk1nhqlhE=";
+/// 替身应用 id（与 `src-app/nsh.json` 的 id 字面一致，manifest id 核对用）。
+const UPDATE_APP_ID: &str = "com.zhangheng.ledger.nsh";
+/// 替身配置的当前版本（须低于清单版本，版本只升不降核对面）。
+const UPDATE_CURRENT_VERSION: &str = "0.0.1";
+/// 替身清单提供的新版本。
+const UPDATE_NEXT_VERSION: &str = "9.9.9";
+/// 替身清单发布说明。
+const UPDATE_NOTES: &str = "替身回路测试发布说明";
+
+/// 更新源替身（内存清单 + 分离签名 + 工件；`fail` = 传输失败现场）。
+struct StubUpdateSource {
+    manifest: Vec<u8>,
+    signature: Vec<u8>,
+    archive: Vec<u8>,
+    fail: bool,
+}
+
+impl StubUpdateSource {
+    fn serve(&self, url: &str, sink: ByteSink<'_>) -> Result<(), String> {
+        if self.fail {
+            return Err("替身传输已断".to_owned());
+        }
+        let bytes = if url.ends_with("latest.json.sig") {
+            &self.signature
+        } else if url.ends_with("latest.json") {
+            &self.manifest
+        } else if url.ends_with(".tar.gz") {
+            &self.archive
+        } else {
+            return Err(format!("替身传输未知路径: {url}"));
+        };
+        sink(bytes, Some(bytes.len() as u64))
+    }
+}
+
+impl nsh_app::updater::Transport for StubUpdateSource {
+    fn get_bounded(&self, url: &str, sink: ByteSink<'_>) -> Result<(), String> {
+        self.serve(url, sink)
+    }
+
+    fn get(&self, url: &str, sink: ByteSink<'_>) -> Result<(), String> {
+        self.serve(url, sink)
+    }
+}
+
+/// 替身配置字节（github 源 + 测试公钥——生产同形：公钥烧入、清单强制分离签名）。
+fn update_config_bytes() -> Vec<u8> {
+    serde_json::json!({
+        "id": UPDATE_APP_ID,
+        "version": UPDATE_CURRENT_VERSION,
+        "github": "asiazhang/ledger",
+        "publicKey": UPDATE_TEST_PUBLIC,
+    })
+    .to_string()
+    .into_bytes()
+}
+
+/// 装配替身更新源（Ed25519 真签名——验签腿一并走真）。
+fn stub_update_source(fail: bool) -> Arc<dyn nsh_app::updater::Transport> {
+    let archive = b"ledger-stub-update-archive".to_vec();
+    let platform = nsh_updater::platform();
+    let manifest = format!(
+        r#"{{"id":"{UPDATE_APP_ID}","version":"{UPDATE_NEXT_VERSION}","notes":"{UPDATE_NOTES}","platforms":{{"{platform}":{{"url":"Ledger-{UPDATE_NEXT_VERSION}-{platform}.tar.gz","sha256":"{sha}","size":{size}}}}}}}"#,
+        platform = platform,
+        sha = nsh_updater::sha256(&archive),
+        size = archive.len(),
+    );
+    let signature = nsh_updater::sign(UPDATE_TEST_SECRET, manifest.as_bytes()).unwrap();
+    Arc::new(StubUpdateSource {
+        manifest: manifest.into_bytes(),
+        signature: signature.into_bytes(),
+        archive,
+        fail,
+    })
+}
+
+/// 注入更新器替身现场（配置字节 + 传输桩 + 换装桩；换装桩记录收到的工件路径
+/// 并返回成功——headless 无包布局，换装与重启归人工端到端验收）。
+fn install_update_stubs(
+    source: Arc<dyn nsh_app::updater::Transport>,
+) -> Arc<std::sync::Mutex<Vec<std::path::PathBuf>>> {
+    nsh_app::updater::set_config_bytes_for_tests(Some(update_config_bytes()));
+    nsh_app::updater::set_transport_for_tests(Some(source));
+    let installed = Arc::new(std::sync::Mutex::new(Vec::<std::path::PathBuf>::new()));
+    let installed_sink = Arc::clone(&installed);
+    nsh_app::updater::set_installer_for_tests(Some(Arc::new(move |archive: &Path| {
+        installed_sink
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(archive.to_path_buf());
+        Ok(())
+    })));
+    installed
+}
+
+/// 轮询等待（真实时间）：条件在期限内置真即成功——异步编排产物（备份文件 /
+/// 桩记录）晚于状态呈现的场合，等待成功优于即刻失败。
+fn wait_until(deadline: Duration, mut cond: impl FnMut() -> bool) -> bool {
+    let start = std::time::Instant::now();
+    while start.elapsed() < deadline {
+        if cond() {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    cond()
+}
+
+/// 手动时钟桌面配置（启动延迟检查经 `fast_forward` 推进——不旁路睡眠）。
+fn desktop_config_with_manual_clock(entries: &[(&str, &str)]) -> EngineConfig {
+    EngineConfig {
+        clock: nsh_engine::Clock::manual(std::time::SystemTime::UNIX_EPOCH),
+        ..desktop_config_with_storage(entries)
+    }
+}
+
+/// 手动检查全回路：检查 → 就地三态（新版本 + 发布说明）→ 下载（弹层进度 →
+/// 已下载）→ 确认安装 → **更新前备份在场**（PreUpdateBackup 触发接线，
+/// ADR-0124 决策 6；删除即变红负向条目：删
+/// `updater.rs::create_pre_update_backup_for_install` 的调用即本用例红——
+/// 断言对准用户可观察结果「安装前备份文件存在」，不对准函数调用形状）。
+#[test]
+fn update_manual_check_circuit_downloads_then_backs_up_before_install() {
+    let _guard = serial_lock();
+    test_logger::install_test_logger();
+    nsh_app::app::reset_book_assembly();
+    let data_root = ScratchDir::new("t2134-update-circuit");
+    nsh_app::cross_book::set_default_data_dir(data_root.path().to_path_buf());
+    let source = stub_update_source(false);
+    let installed = install_update_stubs(source);
+    let dir = make_book("t2134-update-circuit");
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config_with_storage(&[])).unwrap();
+    open_settings(&mut app);
+
+    // 更新卡在场（包配置注入 → surface 可用；开发运行无配置卡不呈现）。
+    app.wait_for("id:update-current-version").unwrap();
+    // 手动检查 → 就地呈现新版本与发布说明（不弹层、不写提醒记忆）。
+    press_after(&mut app, "id:update-check-btn", "id:update-check-btn").unwrap();
+    app.wait_for("id:update-check-version").unwrap();
+    let texts = app.screen().texts();
+    assert!(
+        texts.contains(&format!("发现新版本 {UPDATE_NEXT_VERSION}").as_str()),
+        "手动检查就地呈现新版本号：{:?}",
+        texts
+    );
+    assert!(
+        texts.contains(&UPDATE_NOTES),
+        "手动检查就地呈现发布说明：{:?}",
+        texts
+    );
+    assert!(
+        app.screen().count("id:update-modal-notes").unwrap() == 0,
+        "手动检查不弹提醒层（弹层只属自动检查路径）"
+    );
+
+    // 卡内下载入口 → 弹层转下载态 → 工件落盘（替身即时完成，推进时钟让
+    // 进度轮询循环走完）→ 已下载确认态。
+    press_after(&mut app, "id:update-download-btn", "id:update-download-btn").unwrap();
+    app.wait_for("id:update-install-btn").unwrap();
+    let archive_path = data_root
+        .path()
+        .join("updates")
+        .join(format!("ledger-{UPDATE_NEXT_VERSION}.tar.gz"));
+    assert!(
+        archive_path.is_file(),
+        "下载工件两段式落盘完成：{}",
+        archive_path.display()
+    );
+
+    // 确认安装（warning 级确认面在场 + 兜底说明）→ 备份（裸作业）→ 换装桩
+    // 收到工件路径 → 流程停在安装态（生产路径此处重启退出，替身即断言面）。
+    assert!(
+        app.screen()
+            .texts()
+            .contains(&"安装前会自动为当前账本创建更新前备份；备份失败则中止更新。"),
+        "安装确认面呈现更新前备份兜底说明：{:?}",
+        app.screen().texts()
+    );
+    press_after(&mut app, "id:update-install-btn", "id:update-install-btn").unwrap();
+    app.wait_for("id:update-installing").unwrap();
+    // 安装编排异步进行（备份 → 换装桩），产物与桩记录晚于 Installing 态呈现
+    // ——轮询等待（套件满载下备份耗时不可先验，等待成功优于即刻失败）。
+    assert!(
+        wait_until(DEFAULT_WAIT, || !installed
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_empty()),
+        "换装桩收到已下载工件"
+    );
+    let installed_paths = installed.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    assert_eq!(
+        installed_paths,
+        vec![archive_path.clone()],
+        "换装桩收到的正是已下载工件"
+    );
+    let pre_update_backup = data_root.path().join("pre-update.db.zip");
+    assert!(
+        wait_until(DEFAULT_WAIT, || pre_update_backup.is_file()),
+        "安装前更新前备份在场（删除 create_pre_update_backup 调用即红）：{}",
+        pre_update_backup.display()
+    );
+}
+
+/// 启动延迟静默检查 + 已提醒版本记忆（ADR-0124 决策 4）：启动 15s 延迟检查
+///（手动时钟推进，删除 `app.rs` 就绪分支的 `schedule_startup_check` 接线即
+/// 本用例红——提醒弹层永不出现）→ 提醒弹层含发布说明 →「以后再说」取消不
+/// 下载 → 同版本二次检查不再提醒（记忆生效）。
+#[test]
+fn update_startup_check_reminds_once_per_version_with_memory() {
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+    let source = stub_update_source(false);
+    let _installed = install_update_stubs(source);
+    let dir = make_book("t2134-update-remind");
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config_with_manual_clock(&[])).unwrap();
+    open_settings(&mut app);
+
+    // 推进过延迟窗：静默检查发现新版本 → 提醒弹层（含发布说明）。
+    app.fast_forward(std::time::Duration::from_secs(16))
+        .unwrap();
+    app.wait_for("id:update-modal-notes").unwrap();
+    assert!(
+        app.screen().texts().contains(&UPDATE_NOTES),
+        "提醒弹层呈现发布说明：{:?}",
+        app.screen().texts()
+    );
+    // 「以后再说」= 取消：不下载（无下载态）、流程回场。
+    press_after(&mut app, "id:update-modal-later", "id:update-modal-later").unwrap();
+    app.wait_for_gone("id:update-modal-notes", DEFAULT_WAIT)
+        .unwrap();
+
+    // 同版本二次检查（时钟再推进一个延迟窗）：记忆命中 → 不再提醒。
+    app.fast_forward(std::time::Duration::from_secs(16))
+        .unwrap();
+    app.run_for(std::time::Duration::from_millis(500)).unwrap();
+    assert!(
+        app.screen().count("id:update-modal-notes").unwrap() == 0,
+        "已提醒版本记忆生效：同版本不重复弹层"
+    );
+}
+
+/// 手动检查失败就地报错（ADR-0124 决策 4：后台失败静默、手动失败就地——
+/// 本用例钉手动侧码化文案呈现）。
+#[test]
+fn update_manual_check_failure_reports_error_in_place() {
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+    let source = stub_update_source(true);
+    let _installed = install_update_stubs(source);
+    let dir = make_book("t2134-update-failure");
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config_with_manual_clock(&[])).unwrap();
+    open_settings(&mut app);
+
+    press_after(&mut app, "id:update-check-btn", "id:update-check-btn").unwrap();
+    app.wait_for("id:update-check-error").unwrap();
+    assert!(
+        app.screen()
+            .texts()
+            .contains(&"更新源暂时不可用，请检查网络后重试"),
+        "手动检查失败就地报错（码化文案）：{:?}",
+        app.screen().texts()
+    );
+    assert!(
+        app.screen().count("id:update-modal-notes").unwrap() == 0,
+        "失败不弹层"
+    );
+}
+
+/// 自动检查开关关闭：启动延迟检查跳过（ADR-0124 决策 8 设备级偏好），手动
+/// 检查不受开关限制照常可用。
+#[test]
+fn update_auto_check_disabled_skips_startup_check_but_manual_still_works() {
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+    let source = stub_update_source(false);
+    let _installed = install_update_stubs(source);
+    let dir = make_book("t2134-update-auto-off");
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config_with_manual_clock(&[(
+        "update.auto-check",
+        "false",
+    )]))
+    .unwrap();
+    open_settings(&mut app);
+
+    // 开关关闭：推进过延迟窗，静默检查跳过、零弹层。
+    app.fast_forward(std::time::Duration::from_secs(16))
+        .unwrap();
+    app.run_for(std::time::Duration::from_millis(500)).unwrap();
+    assert!(
+        app.screen().count("id:update-modal-notes").unwrap() == 0,
+        "自动检查关闭时不弹层"
+    );
+    // 手动检查不受开关限制：照常发现新版本。
+    press_after(&mut app, "id:update-check-btn", "id:update-check-btn").unwrap();
+    app.wait_for("id:update-check-version").unwrap();
+    assert!(
+        app.screen()
+            .texts()
+            .contains(&format!("发现新版本 {UPDATE_NEXT_VERSION}").as_str()),
+        "手动检查不受自动检查开关限制：{:?}",
+        app.screen().texts()
     );
 }

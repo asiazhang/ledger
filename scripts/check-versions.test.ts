@@ -17,7 +17,7 @@ afterAll(() => {
   for (const dir of tempDirs) rmSync(dir, { recursive: true, force: true });
 });
 
-/** 两份元数据的最小可解析形态；值为 null 表示刻意省略该文件。 */
+/** 三份元数据的最小可解析形态；值为 null 表示刻意省略该文件。 */
 const DEFAULT_FILES: Record<string, string | null> = {
   "package.json": JSON.stringify({ name: "ledger", version: "1.2.3" }, null, 2),
   "src-app/Cargo.toml": [
@@ -28,6 +28,11 @@ const DEFAULT_FILES: Record<string, string | null> = {
     "[dependencies]",
     'serde = { version = "1" }',
   ].join("\n"),
+  "src-app/nsh.json": JSON.stringify(
+    { name: "Ledger", id: "com.zhangheng.ledger.nsh", version: "1.2.3" },
+    null,
+    2,
+  ),
 };
 
 /** 建夹具目录（形状同构仓库根）；值为 null 表示刻意省略该文件。 */
@@ -48,13 +53,28 @@ describe("check-versions（版本元数据一致性守门，issue #1957）", () 
     const r = run();
     expect(r.status).toBe(0);
     expect(r.output).toContain("版本元数据一致");
-    expect(r.output).toContain("package.json / src-app/Cargo.toml");
+    expect(r.output).toContain("package.json / src-app/Cargo.toml / src-app/nsh.json");
   });
 
-  it("夹具两处一致全绿（位置参数指向夹具根）", () => {
+  it("夹具三处一致全绿（位置参数指向夹具根）", () => {
     const r = run([makeFixture()]);
     expect(r.status).toBe(0);
     expect(r.output).toContain("1.2.3");
+  });
+
+  it("nsh.json 漂移即红（#2134 更新器版本真源腿：nsh package 打包版本与更新器比较面）", () => {
+    const dir = makeFixture({
+      "src-app/nsh.json": JSON.stringify(
+        { name: "Ledger", id: "com.zhangheng.ledger.nsh", version: "1.2.0" },
+        null,
+        2,
+      ),
+    });
+    const r = run([dir]);
+    expect(r.status).toBe(1);
+    expect(r.output).toContain("版本号不一致");
+    expect(r.output).toContain("src-app/nsh.json=1.2.0");
+    expect(r.output).toContain("package.json=1.2.3");
   });
 
   it("Cargo.toml 漂移即红，并列出两处取值（覆盖 cargo 解析腿：依赖区 version 不参与判定）", () => {
