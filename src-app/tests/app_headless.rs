@@ -14698,21 +14698,37 @@ fn sidebar_book_switch_moves_pointer_and_lands_reads_writes_in_target() {
 }
 
 /// 汇总置顶入口（web `book-summary-entry` 同位，置于清单容器外）：按压 →
-/// 落位跨账本汇总视图（headless 未注入数据根，呈现读失败重试态，落位凭证
-/// 以视图内确定文案为锚）。删导航接线（入口改空动作）→ 汇总视图不落位 →
-/// 红。
+/// 落位跨账本汇总视图且成功出数（#2126 review 加强锚定：数据根 + 注册表 +
+/// 活动本投资现金注入成功现场，可投资资产卡出数、逐本「已计入」在屏，
+/// 读失败重试态退场；原仅以读失败文案锚定落位）。删导航接线（入口改空
+/// 动作）→ 汇总视图不落位 → 红。
 #[test]
 fn sidebar_book_summary_entry_opens_cross_book_summary() {
     let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
+    let root = make_data_root("sidebar-summary");
     let dir = make_book("sidebar-books-summary");
+    // 活动本种子投资现金（汇总成功现场：可投资资产 = 2000 元）。
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        seed_investment_cash(&db, "证券", "CNY", 200_000);
+    }
+    seed_registry(&root, &dir, &[]);
+    nsh_app::cross_book::set_default_data_dir(root.to_path_buf());
     nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config()).unwrap();
     app.wait_for("id:sidebar-book-entry").unwrap();
     app.press("id:sidebar-book-entry").unwrap();
     wait_pressable(&mut app, "id:sidebar-book-summary");
     app.press("id:sidebar-book-summary").unwrap();
-    app.wait_for("text:汇总读取失败").unwrap();
+    // 成功现场：可投资资产卡出数 + 活动本「已计入」；读失败重试态退场。
+    app.wait_for("text:¥2000").unwrap();
+    app.wait_for("text:已计入").unwrap();
+    assert!(
+        app.screen().count("id:cross-book-error").unwrap() == 0,
+        "成功现场不呈现读失败重试态：{:?}",
+        app.screen().texts()
+    );
 }
 
 /// 汇总入口可用性门（web `summaryAvailable` 同口径）：投资功能关闭时入口
