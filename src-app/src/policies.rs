@@ -36,8 +36,7 @@
 
 use ledger_infra::error::{AppError, Result as InfraResult};
 use nsh_base::{
-    DataTable, DataTableAlign, DataTableColumn, DataTableRows, button, data_table,
-    input,
+    DataTable, DataTableAlign, DataTableColumn, DataTableRows, button, data_table, input,
 };
 use nsh_core::element::{FontWeight, SharedString};
 use nsh_core::prelude::*;
@@ -771,9 +770,7 @@ pub(crate) fn PoliciesView() -> impl IntoElement {
     crate::row_focus::scroll_focused_row_into_view(
         table_ref,
         move || {
-            let Some(focused) = highlight.get() else {
-                return None;
-            };
+            let focused = highlight.get()?;
             rows.get()
                 .iter()
                 .position(|row| row.id == focused)

@@ -19643,7 +19643,10 @@ fn settings_view_scheduled_auto_execution_off_does_not_land_occurrences() {
     // 可按压面（role/label 选择器均不可达，功能开关行先例同形），行替身是
     // 测试唯一可达按压面，两链已收口同一执行体。）
     assert_eq!(
-        storage.entries().get("auto_execution_enabled").map(String::as_str),
+        storage
+            .entries()
+            .get("auto_execution_enabled")
+            .map(String::as_str),
         Some("true"),
         "按压一次：偏好恰好落盘一次（开）"
     );
@@ -19658,7 +19661,10 @@ fn settings_view_scheduled_auto_execution_off_does_not_land_occurrences() {
         "再按压恰好翻转一次（翻回关）"
     );
     assert_eq!(
-        storage.entries().get("auto_execution_enabled").map(String::as_str),
+        storage
+            .entries()
+            .get("auto_execution_enabled")
+            .map(String::as_str),
         Some("false"),
         "再按压：偏好落盘回关（现场读回）"
     );
@@ -19668,7 +19674,10 @@ fn settings_view_scheduled_auto_execution_off_does_not_land_occurrences() {
         "id:scheduled-auto-toggle",
     )
     .unwrap();
-    assert!(ledger_scheduled::auto_run::is_enabled(), "三按压复开（后续追补与重启段前置）");
+    assert!(
+        ledger_scheduled::auto_run::is_enabled(),
+        "三按压复开（后续追补与重启段前置）"
+    );
     // 设备偏好落盘的「重启」等价验证见本用例末段（同分片再启读回推送）。
 
     // 开关开启：追补一轮 → 到期期次落账（交易日期忠实取期次计划日期）。

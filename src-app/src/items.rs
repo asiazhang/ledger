@@ -39,8 +39,8 @@
 
 use ledger_infra::error::AppError;
 use nsh_base::{
-    DataTable, DataTableAlign, DataTableColumn, DataTableContextMenu, DataTableRows,
-    button, data_table, input,
+    DataTable, DataTableAlign, DataTableColumn, DataTableContextMenu, DataTableRows, button,
+    data_table, input,
 };
 use nsh_core::element::AnyElement;
 use nsh_core::element::desktop::MenuItem;
@@ -325,9 +325,7 @@ pub(crate) fn ItemsView() -> impl IntoElement {
     crate::row_focus::scroll_focused_row_into_view(
         table_ref,
         move || {
-            let Some(focused) = highlight.get() else {
-                return None;
-            };
+            let focused = highlight.get()?;
             rows.get()
                 .iter()
                 .position(|row| row.id == focused)

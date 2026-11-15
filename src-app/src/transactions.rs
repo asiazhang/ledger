@@ -221,10 +221,7 @@ pub(crate) const COPY_NOTE_FAILED: &str = "复制失败";
 /// 航域深模块（收纳/关闭两轴谓词由导航状态注入——旧壳 sidebar-order /
 /// feature-toggles 两 store 注入同位），落位经导航单点入口（下钻/跳转经
 /// resolve_source_jump 造 NavRequest 后调 open 的既有接缝，消费不自建）。
-pub(crate) fn jump_source(
-    kind: ledger_transaction::TransactionSourceKind,
-    entity_id: &str,
-) {
+pub(crate) fn jump_source(kind: ledger_transaction::TransactionSourceKind, entity_id: &str) {
     let store = nav::store();
     nav::open(nav_model::resolve_source_jump(
         source_nav_kind(kind),
@@ -235,8 +232,9 @@ pub(crate) fn jump_source(
 }
 
 /// 备注复制反馈接缝（交易列表与搜索视图共用，#2061 / #2138）：剪贴板显式写
-/// + 回读校验两态反馈（ai_prompt 先例同形——同一应用进程的自写自读）；任务
-/// 挂调用方传入的视图实例 owner，反馈落调用方条位信号。
+/// + 回读校验两态反馈（ai_prompt 先例同形——同一应用进程的自写自读）；
+///
+/// 任务挂调用方传入的视图实例 owner，反馈落调用方条位信号。
 pub(crate) fn copy_note_feedback(
     owner: Owner,
     feedback: Signal<Option<String>>,
