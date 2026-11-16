@@ -551,12 +551,12 @@ pub(crate) fn SavingsGoalsView() -> impl IntoElement {
             .gap_2()
             .app_class("rounded-(--radius-card) border border-border p-3")
             .child(
-                view().flex_1().child(
-                    text(ARCHIVED_TITLE)
-                        .text_size(px(font_size::SECONDARY))
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(fg),
-                ),
+                // 卡标题自然高度（#2135 布局对齐线，同根因另见 items/accounts/
+                // merchants/policies 同款标题行）：标题不参与弹性分配。
+                text(ARCHIVED_TITLE)
+                    .text_size(px(font_size::SECONDARY))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(fg),
             )
             .child(
                 view().test_id("sg-archived-table").flex_1().child(

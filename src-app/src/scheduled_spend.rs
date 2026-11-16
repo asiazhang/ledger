@@ -29,6 +29,27 @@ use crate::scheduled::{amount_text, status_label};
 /// 花费面板卡标题（旧壳 `scheduled.spend.title`）。
 const SPEND_TITLE: &str = "实际花费";
 
+/// 绘图区高（pt）：柱带与纵轴刻度/网格共用的高度基准（web chart-box 220px
+/// 内柱区的本壳等价；#2135 布局对齐线补轴面后柱高换算同步锚到本值）。
+const PLOT_PT: f32 = 120.0;
+
+/// 纵轴刻度目标档数（含顶与底零线；web Chart.js y 轴默认 ~5 档同量级，
+/// 实际档数随 peak 档整步长浮动）。
+const Y_TICK_TARGET: i64 = 5;
+
+/// 纵轴刻度列宽（pt）：刻度文本右对齐锚定此列。
+const Y_AXIS_W: f32 = 64.0;
+
+/// 档心纵坐标（第 i 档 / 共 n 档：i/(n−1) × 绘图区高；单档全零窗口锚
+/// 零线）——刻度文本与网格线共用的几何单点，两处漂移即标签与网格错位。
+fn tick_center(index: usize, count: usize) -> f32 {
+    if count > 1 {
+        PLOT_PT * index as f32 / (count - 1) as f32
+    } else {
+        PLOT_PT
+    }
+}
+
 /// 花费行格单元格（逐订阅行的装配产物）。
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct SpendRowCells {
@@ -44,7 +65,7 @@ pub(crate) struct SpendRowCells {
 pub(crate) struct SpendBar {
     /// 日历月 `YYYY-MM`。
     pub month: String,
-    /// 柱高像素（与窗口峰值成比例；无花费月为 0）。
+    /// 柱高像素（与纵轴顶档成比例，[PLOT_PT]；无花费月为 0）。
     pub height: f32,
     /// 金额展示文本（隐私口径同 [`amount_text`]）。
     pub amount_text: String,
@@ -61,8 +82,8 @@ pub(crate) struct SpendCells {
     pub projected_year: String,
     /// 过去 12 个月趋势柱（含当月，旧→新）。
     pub bars: Vec<SpendBar>,
-    /// 峰值金额文本（柱侧标签；全零窗口占位「—」）。
-    pub peak_text: String,
+    /// 纵轴刻度金额文本（顶档→零线；隐私掩码同统计口径；全零窗口单零档）。
+    pub y_ticks: Vec<String>,
     pub rows: Vec<SpendRowCells>,
 }
 
@@ -86,15 +107,19 @@ pub(crate) fn assemble_spend(
         .map(|m| m.native_cents)
         .max()
         .unwrap_or(0);
+    // 纵轴：整步长刻度（web Chart.js nice-number 同语义；柱高随轴顶档
+    // 比例——轴顶 ≥ peak，峰值柱顶达顶档网格线）。刻度文本同隐私掩码。
+    let ticks = y_axis_ticks(peak);
+    let axis_top = ticks.first().copied().unwrap_or(0);
     let bars = overview
         .months
         .iter()
         .map(|m| SpendBar {
             month: m.month.clone(),
-            height: if peak <= 0 {
+            height: if axis_top <= 0 {
                 0.0
             } else {
-                108.0 * (m.native_cents as f64 / peak as f64) as f32
+                PLOT_PT * (m.native_cents as f64 / axis_top as f64) as f32
             },
             amount_text: text(m.native_cents),
         })
@@ -105,11 +130,7 @@ pub(crate) fn assemble_spend(
         this_year: text(overview.this_year_native_cents),
         projected_month: text(overview.projected_month_native_cents),
         projected_year: text(overview.projected_year_native_cents),
-        peak_text: if peak > 0 {
-            text(peak)
-        } else {
-            "—".to_owned()
-        },
+        y_ticks: ticks.iter().map(|c| text(*c)).collect(),
         bars,
         rows: overview
             .rows
@@ -127,6 +148,41 @@ pub(crate) fn assemble_spend(
             })
             .collect(),
     }
+}
+
+/// 纵轴整步长刻度（分）：step 取 nice-number（1/2/2.5/5 × 10^k）覆盖
+/// `peak ÷ (Y_TICK_TARGET − 1)` 的最小档，顶档 = 峰值向上取整到 step 倍
+/// 数，自顶向下到零（含零线）。全零窗口单零档。web Chart.js 默认刻度
+/// 算法的本壳等价（装配层纯函数，单测钉点）。
+fn y_axis_ticks(peak: i64) -> Vec<i64> {
+    if peak <= 0 {
+        return vec![0];
+    }
+    let raw = peak as f64 / (Y_TICK_TARGET - 1) as f64;
+    let magnitude = 10f64.powf(raw.log10().floor());
+    let norm = raw / magnitude;
+    // nice-number 取整档（web Chart.js niceNum round 同判：1.5/3/7 边界）。
+    let nice = if norm < 1.5 {
+        1.0
+    } else if norm < 3.0 {
+        2.0
+    } else if norm < 7.0 {
+        5.0
+    } else {
+        10.0
+    };
+    let step = (nice * magnitude).round();
+    let top = (peak as f64 / step).ceil() * step;
+    let mut ticks = Vec::new();
+    let mut value = top;
+    loop {
+        ticks.push(value.round() as i64);
+        if value <= 0.0 {
+            break;
+        }
+        value -= step;
+    }
+    ticks
 }
 
 /// 花费面板装载态（视图信号持有）。
@@ -261,34 +317,22 @@ pub(crate) fn spend_panel(state: Signal<SpendPanelState>) -> impl IntoElement {
                     ),
             )
             .child(
-                // 12 月趋势柱（自绘标尺：右上峰值标签 = 纵轴顶值）。
+                // 12 月趋势图（自绘纵轴 + 水平网格 + 底轴——web Chart.js y
+                // 轴默认横网格/刻度同位，#2135 布局对齐线：旧「右上峰值标签」
+                // 退役为轴刻度）：左列刻度文本 + 右列绘图区（绝对网格线与
+                // 零轴压底、柱带叠加）与月键标签行。
                 view()
-                    .flex_col()
-                    .gap_1()
-                    .child(
-                        text(move || {
-                            let snapshot = state.get();
-                            format!(
-                                "峰值 {}",
-                                snapshot
-                                    .cells
-                                    .as_ref()
-                                    .map(|c| c.peak_text.clone())
-                                    .unwrap_or_default()
-                            )
-                        })
-                        .text_size(px(font_size::CAPTION))
-                        .text_color(muted)
-                        .test_id("spend-peak"),
-                    )
+                    .flex_row()
+                    .gap(px(spacing::PART))
+                    .test_id("spend-trend")
+                    .child(y_axis_col(state))
                     .child(
                         view()
-                            .flex_row()
-                            .items_end()
-                            .gap(px(spacing::PART))
-                            .h(px(150.0))
-                            .test_id("spend-trend")
-                            .child(bar_row(state, bar_color)),
+                            .flex_col()
+                            .flex_1()
+                            .gap_1()
+                            .child(plot_area(state, bar_color))
+                            .child(month_labels_row(state)),
                     ),
             )
             .child(
@@ -334,14 +378,123 @@ fn stat_block(
         )
 }
 
-/// 自绘柱行（12 个月一行，末端对齐的柱体 + 月键标签）。柱高随窗口峰值
-/// 比例变化（柱高比例归 [`assemble_spend`]）；数据源响应式（重拉后就地
-/// 刷新——`each` 键 = 月键，键稳定行复用）。
+/// 纵轴刻度列（相对定位：每档文本右对齐锚定列右缘、盒中心对准档心——
+/// 文本读装配产物，隐私掩码同源）。
+fn y_axis_col(state: Signal<SpendPanelState>) -> View {
+    let muted = crate::theme::color("muted-foreground");
+    // 刻度行盒高 = 字阶 CAPTION 一行 + 间距档 PART（光学校正），档心 =
+    // 盒中心（顶位由盒高推导，无裸微调值）。
+    let row = font_size::CAPTION + spacing::PART;
+    view().relative().w(px(Y_AXIS_W)).h(px(PLOT_PT)).child(each(
+        move || {
+            state
+                .get()
+                .cells
+                .as_ref()
+                .map(|c| c.y_ticks.clone())
+                .unwrap_or_default()
+        },
+        |t: &String| t.clone(),
+        move |item: ReadSignal<String>, index: ReadSignal<usize>| {
+            let label = item.get();
+            let count = state.get().cells.map(|c| c.y_ticks.len()).unwrap_or(1);
+            let center = tick_center(index.get(), count);
+            text(label)
+                .text_size(px(font_size::CAPTION))
+                .text_color(muted)
+                .absolute()
+                .top(px((center - row / 2.0).max(0.0)))
+                .right(px(0.0))
+        },
+    ))
+}
+
+/// 绘图区：水平网格线（每档一条，降透明同 plot_line 先例）+ 零轴底边
+/// （全色边线，web Chart.js x 轴 border 同位）压底，柱带叠加。
+fn plot_area(state: Signal<SpendPanelState>, bar_color: nsh_core::element::AdaptiveColor) -> View {
+    let grid = crate::theme::color("border").opacity(0.6);
+    let axis = crate::theme::color("border");
+    view()
+        .relative()
+        .flex_1()
+        .h(px(PLOT_PT))
+        // 网格线随刻度集响应式重建（`each` 键 = 刻度文本，与 y_axis_col
+        // 同一数据源、同一档心几何——重拉后刻度档数变化两处同帧换装；
+        // 末档 = 零轴底边全色，web Chart.js x 轴 border 同位，余档降透明
+        // 同 plot_line 网格先例）。
+        .child(each(
+            move || {
+                state
+                    .get()
+                    .cells
+                    .as_ref()
+                    .map(|c| c.y_ticks.clone())
+                    .unwrap_or_default()
+            },
+            |t: &String| t.clone(),
+            move |item: ReadSignal<String>, index: ReadSignal<usize>| {
+                let _ = item;
+                let count = state.get().cells.map(|c| c.y_ticks.len()).unwrap_or(1);
+                let is_axis = index.get() + 1 == count;
+                view()
+                    .absolute()
+                    .left_0()
+                    .right_0()
+                    .top(px(tick_center(index.get(), count)))
+                    .h(px(1.0))
+                    .bg(if is_axis { axis } else { grid })
+            },
+        ))
+        .child(
+            // 柱带（绘图区整体叠加：末端对齐逐月柱，零高度月保持细条）。
+            view()
+                .absolute()
+                .left_0()
+                .top_0()
+                .right_0()
+                .bottom_0()
+                .flex_row()
+                .items_end()
+                .gap(px(spacing::PART))
+                .child(bar_row(state, bar_color)),
+        )
+}
+
+/// 月键标签行（与柱带同分栏结构：等分列 + 同 gap，柱与月键一一对位；
+/// 文本读装配产物，隐私不涉及）。
+fn month_labels_row(state: Signal<SpendPanelState>) -> View {
+    let muted = crate::theme::color("muted-foreground");
+    view()
+        .flex_row()
+        .items_center()
+        .gap(px(spacing::PART))
+        .child(each(
+            move || {
+                state
+                    .get()
+                    .cells
+                    .as_ref()
+                    .map(|c| c.bars.clone())
+                    .unwrap_or_default()
+            },
+            |b: &SpendBar| b.month.clone(),
+            move |item: ReadSignal<SpendBar>, _index: ReadSignal<usize>| {
+                let bar = item.get();
+                view().flex_1().items_center().child(
+                    text(bar.month)
+                        .text_size(px(font_size::CAPTION))
+                        .text_color(muted),
+                )
+            },
+        ))
+}
+
+/// 柱带（逐月等分列，柱体末端对齐，柱高随纵轴顶档比例）。数据源响应式
+/// （重拉后就地刷新——`each` 键 = 月键，键稳定行复用）。
 fn bar_row(
     state: Signal<SpendPanelState>,
     bar_color: nsh_core::element::AdaptiveColor,
 ) -> impl IntoElement {
-    let muted = crate::theme::color("muted-foreground");
     each(
         move || {
             state
@@ -358,18 +511,12 @@ fn bar_row(
                 .flex_col()
                 .items_center()
                 .justify_end()
-                .gap(px(spacing::HAIRLINE))
                 .flex_1()
                 .child(
                     view()
                         .w_full()
                         .h(move || px(bar.height.max(2.0)))
                         .bg(bar_color),
-                )
-                .child(
-                    text(bar.month)
-                        .text_size(px(font_size::CAPTION))
-                        .text_color(muted),
                 )
         },
     )
@@ -497,7 +644,12 @@ mod tests {
             "折算月成本（域内已按周期系数折算）"
         );
         assert_eq!(cells.projected_year, "¥840", "折算年成本 = 折算月成本 × 12");
-        assert_eq!(cells.peak_text, "¥45", "峰值 = 12 月窗口最大月花费");
+        // 纵轴：峰值 4500 → raw step 1125 → nice 1000 → 顶档 5000，五步降零。
+        assert_eq!(
+            cells.y_ticks,
+            vec!["¥50", "¥40", "¥30", "¥20", "¥10", "¥0"],
+            "纵轴整步长刻度（顶档→零线）"
+        );
         // 行名 = note ?? merchant_name ?? —（旧壳同口径）；状态经 status_label。
         assert_eq!(cells.rows[0].name, "视频会员");
         assert_eq!(cells.rows[0].this_year, "¥150");
@@ -520,12 +672,23 @@ mod tests {
         let cells = assemble_spend(&overview(), &currencies(), false);
         assert_eq!(cells.bars.len(), 4, "12 月窗口逐月（含当月）全量柱");
         assert!(
-            (cells.bars[0].height - 108.0 * 3000.0 / 4500.0).abs() < 0.01,
-            "柱高与峰值成比例：{:?}",
+            (cells.bars[0].height - 120.0 * 3000.0 / 5000.0).abs() < 0.01,
+            "柱高与纵轴顶档成比例（轴顶 = nice step 向上取整，≥ 峰值）：{:?}",
             cells.bars[0].height
         );
         assert_eq!(cells.bars[3].height, 0.0, "无花费月零高度（形状不出数字）");
         assert_eq!(cells.bars[1].amount_text, "¥45", "柱侧金额 = 月内实际花费");
+    }
+
+    #[test]
+    fn y_axis_ticks_are_nice_stepped() {
+        // nice step 覆盖：整除 / 上取整 / 全零窗口单零档。
+        assert_eq!(y_axis_ticks(4_000), vec![4_000, 3_000, 2_000, 1_000, 0]);
+        assert_eq!(
+            y_axis_ticks(4_500),
+            vec![5_000, 4_000, 3_000, 2_000, 1_000, 0]
+        );
+        assert_eq!(y_axis_ticks(0), vec![0]);
     }
 
     #[test]
@@ -536,10 +699,13 @@ mod tests {
             cells.this_year.clone(),
             cells.projected_month.clone(),
             cells.projected_year.clone(),
-            cells.peak_text.clone(),
         ] {
-            assert_eq!(text, "••••", "隐私掩码覆盖四个统计与峰值");
+            assert_eq!(text, "••••", "隐私掩码覆盖四个统计");
         }
+        assert!(
+            cells.y_ticks.iter().all(|t| t == "••••"),
+            "隐私掩码覆盖纵轴刻度"
+        );
         assert!(cells.bars.iter().all(|b| b.amount_text == "••••"));
         assert!(
             cells

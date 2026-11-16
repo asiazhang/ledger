@@ -205,7 +205,10 @@ resolver = "3"
 # feature 门控（走势图消费面，本仓显式启用 `plot`）；`nsh-testing` 0.5.1 的
 # default 仍是 ["live"]（不含 QuickJS），测试侧原样消费。
 [workspace.dependencies]
-nsh-core = { version = "=0.5.1" }
+# `svg` feature（#2135 布局对齐线）：`nsh_core::svg()` 原生端画 SVG 字形——侧栏
+# 视图图标、空态/提示条字形消费（布局靠拢 web 参照的图标位）；resvg 随
+# feature 引入，版本仍随 workspace 精确钉版约束。
+nsh-core = { version = "=0.5.1", features = ["svg"] }
 nsh-base = { version = "=0.5.1", default-features = false, features = ["plot"] }
 nsh-engine = { version = "=0.5.1", default-features = false }
 nsh-platform-linux = { version = "=0.5.1", default-features = false }

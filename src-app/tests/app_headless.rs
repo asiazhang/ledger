@@ -11842,11 +11842,19 @@ fn scheduled_view_plan_detail_modal_retries_failed_occurrence() {
 
     // 失效刷新（自回调重拉线）：弹窗外的清单与花费面板同步重拉——期次执
     // 行落交易行后，花费面板的本月/本年实际花费与逐订阅行从「¥0」变「¥30」
-    //（执行期次按计划日入账，本月口径变化）。整屏再无「¥0」残留——删
-    // reload_after_change 的 reload 接线即红（¥0 残留、其余不变）；信号
-    // 广播线（notify_transactions_invalidated）的共享目的地（交易列表）
-    // 另有 #2022 删除刷新旅程钉点（删除该广播点即红）。
-    app.wait_for_gone("text:¥0", DEFAULT_WAIT).unwrap();
+    //（执行期次按计划日入账，本月口径变化）。探针按本月格值锚定——#2135
+    // 布局对齐线后纵轴零档「¥0」常驻在屏（web Chart.js y 轴同位），整屏
+    // 「¥0 gone」不再成立。删 reload_after_change 的 reload 接线即红
+    //（本月格值停在「¥0」、其余不变）；信号广播线
+    //（notify_transactions_invalidated）的共享目的地（交易列表）另有
+    // #2022 删除刷新旅程钉点（删除该广播点即红）。
+    app.wait_until("spend-this-month 重拉为 ¥30", DEFAULT_WAIT, |s| {
+        s.layout_nodes().iter().any(|n| {
+            n.test_id.as_deref() == Some("spend-this-month")
+                && n.text.as_ref().is_some_and(|t| t.text.text == "¥30")
+        })
+    })
+    .unwrap();
 
     // 展开更多期次（active 计划恒可展开：无限循环无上限）→ 反馈条位在屏。
     app.press("id:occ-expand").unwrap();

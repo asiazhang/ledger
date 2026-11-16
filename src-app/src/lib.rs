@@ -273,6 +273,7 @@ pub mod design;
 // AI 导入 HTTP 壳的生产挂载与失效信号泵（#2081）：api_server 迁居后的启动
 // 接线面——旧壳 lib.rs setup 内挂载的本壳对应物（ADR-0112 决策 5 壳层接线）。
 pub mod http_host;
+pub mod icons;
 pub mod insurers;
 pub mod investment_sync;
 pub mod investments;
