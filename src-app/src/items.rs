@@ -60,6 +60,7 @@ use crate::modal;
 use crate::nav_model::{NavRequest, ViewName};
 use crate::pinyin_select;
 use crate::popconfirm;
+use crate::settings_data::{READ_TASK_FAILED, WRITE_TASK_FAILED};
 use crate::transactions::table_classes;
 use crate::views::field_label;
 use crate::{nav, signals};
@@ -138,10 +139,9 @@ const MSG_PLAIN: &str = "—";
 /// 本位币基准读取失败的软回退（旧壳缺省 CNY 同口径：折算后缀不阻断列表）。
 const DEFAULT_BASE_CURRENCY: &str = "CNY";
 
-/// 装载占位与任务缺省错误文案（旧壳 loading / 异常分支同口径）。
+/// 装载占位文案（旧壳 loading 同口径）；任务退出错误文案消费
+/// settings_data 单一来源。
 const LOADING_PLACEHOLDER: &str = "正在加载…";
-const LOAD_TASK_FAILED: &str = "内部错误：读任务异常退出";
-const WRITE_TASK_FAILED: &str = "内部错误：写入任务异常退出";
 
 fn dispose_label_by_flag(in_use: bool) -> &'static str {
     if in_use {
@@ -289,7 +289,7 @@ pub(crate) fn ItemsView() -> impl IntoElement {
                         base_currency.set(base);
                         candidates.set(CandidatesSnap(candidate_rows));
                     }
-                    None => error.set(Some(LOAD_TASK_FAILED.to_owned())),
+                    None => error.set(Some(READ_TASK_FAILED.to_owned())),
                 }
                 loading.set(false);
             });
@@ -671,7 +671,7 @@ pub(crate) fn ItemsView() -> impl IntoElement {
                 match outcome {
                     Ok(Ok(cost)) => detail_cost.set(RecalcSnap(Some(cost))),
                     Ok(Err(e)) => detail_error.set(Some(format!("{MSG_RECALC_FAILED}: {e}"))),
-                    Err(_) => detail_error.set(Some(LOAD_TASK_FAILED.to_owned())),
+                    Err(_) => detail_error.set(Some(READ_TASK_FAILED.to_owned())),
                 }
             });
         });

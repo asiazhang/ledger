@@ -50,6 +50,7 @@ use crate::modal;
 use crate::nav_model::ViewName;
 use crate::popconfirm;
 use crate::select;
+use crate::settings_data::{READ_TASK_FAILED, WRITE_TASK_FAILED};
 use crate::transactions::table_classes;
 use crate::views::field_label;
 use crate::{nav, signals};
@@ -111,10 +112,9 @@ const DISPOSE_DATE_HINT: &str =
 const DISPOSE_PRICE_INVALID: &str = "处置价必须大于 0";
 const DISPOSE_CURRENCY_REQUIRED: &str = "请选择处置币种";
 
-/// 装载占位与任务缺省错误文案（旧壳 loading / 异常分支同口径）。
+/// 装载占位文案（旧壳 loading 同口径）；任务退出错误文案消费
+/// settings_data 单一来源。
 const LOADING_PLACEHOLDER: &str = "正在加载…";
-const READ_TASK_FAILED: &str = "内部错误：读任务异常退出";
-const WRITE_TASK_FAILED: &str = "内部错误：写入任务异常退出";
 
 /// 语义令牌单取（success 非三件套成员，不经 ViewPalette）：视图层零本地
 /// 色常量，令牌缺失统一落 `crate::theme` 的可读兜底（ADR-0147 决策 1）。

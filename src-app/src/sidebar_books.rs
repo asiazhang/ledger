@@ -35,6 +35,7 @@ use crate::nav;
 use crate::nav_model::{self, NavRequest};
 use crate::overlay;
 use crate::settings;
+use crate::settings_data::WRITE_TASK_FAILED;
 use crate::views;
 
 // ---------------------------------------------------------------------------
@@ -58,7 +59,6 @@ const SWITCHED_PREFIX: &str = "已切换到「";
 const SWITCHED_SUFFIX: &str = "」，重启应用后进入新账本";
 const ACTION_FAILED_PREFIX: &str = "操作失败: ";
 const SESSION_UNAVAILABLE: &str = "账本注册表尚未就绪，请重启应用后再试";
-const WRITE_TASK_FAILED: &str = "内部错误：写入任务异常退出";
 
 /// 账本切换区反应式状态（挂 [`book_switch_area`] 所在组件实例）。
 #[derive(Clone, Copy)]
