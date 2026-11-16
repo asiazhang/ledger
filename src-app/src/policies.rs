@@ -680,6 +680,7 @@ pub(crate) fn PoliciesView() -> impl IntoElement {
         fg,
         muted,
         danger_fg,
+        ..
     } = crate::views::view_palette();
 
     // ============================ 表单弹层状态 ============================

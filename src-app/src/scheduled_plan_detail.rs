@@ -337,6 +337,7 @@ pub(crate) fn plan_detail_modal(
         fg,
         muted,
         danger_fg,
+        ..
     } = crate::views::view_palette();
 
     // 弹层表自绘格（重试按钮列按行固定目标：failed 行渲染「重试」、其余

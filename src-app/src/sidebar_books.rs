@@ -120,9 +120,11 @@ pub fn book_switch_area() -> impl IntoElement {
     };
     refresh(owner, state);
 
-    // 主题令牌（双态自适应；sidebar 同源单点消费）。
-    let fg = crate::theme::color("foreground");
-    let muted = crate::theme::color("muted-foreground");
+    // 视图层取色统一经 view_palette（#2146：直读 theme::color 属绕过封
+    // 装，双态自适应与兑底语义两处自行维护）。
+    let palette = views::view_palette();
+    let fg = palette.fg;
+    let muted = palette.muted;
 
     // 活动账本展示名（web `activeBook?.name ?? label` 同语义）。
     let active_name = move || {
@@ -253,7 +255,7 @@ pub fn book_switch_area() -> impl IntoElement {
                 .mx_1()
                 .app_class("rounded-(--radius) min-w-0")
                 .on_press(move |_: &PressEvent| switch_request(item.get_untracked().clone()))
-                .style_when(is_active, move |s| s.bg(crate::theme::color("accent")))
+                .style_when(is_active, move |s| s.bg(palette.accent))
                 .child(
                     text(move || item.get().name.clone())
                         .text_sm()
@@ -315,7 +317,7 @@ pub fn book_switch_area() -> impl IntoElement {
         .child(settings::status_line(
             "sidebar-book-status",
             state.status,
-            views::view_palette(),
+            palette,
         ))
         .child(
             popover()

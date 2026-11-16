@@ -39,9 +39,11 @@ pub(crate) fn field_label(label: &'static str, muted: AdaptiveColor) -> impl Int
     text(label).text_sm().text_color(muted)
 }
 
-/// 视图令牌便捷面（前景 / 弱化 / 危险——fg/muted/danger_fg 三件套信号构造
-/// 闭集的唯一住所，issue #2113：三件套此前在视图层逐份复制，收拢后消费方
-/// 一律经 [`view_palette`] 解构取值，视图层再散写三件套构造即回潮）。
+/// 视图层取色便捷面（前景 / 弱化 / 危险 / 强调——fg/muted/danger_fg/accent
+/// 四件套构造闭集的唯一住所，issue #2113：三件套此前在视图层逐份复制，收
+/// 拢后消费方一律经 [`view_palette`] 解构取值，视图层再散写同源令牌构造即
+/// 回潮；#2146 accent 纳入闭集，视图层直读 `theme::color` 绕过封装的取色
+/// 面一并收口）。
 #[derive(Clone, Copy)]
 pub(crate) struct ViewPalette {
     /// 前景。
@@ -50,14 +52,17 @@ pub(crate) struct ViewPalette {
     pub muted: AdaptiveColor,
     /// 危险前景（destructive：警示句/危险动作色）。
     pub danger_fg: AdaptiveColor,
+    /// 主题强调色（accent：悬停 / 选中底色等）。
+    pub accent: AdaptiveColor,
 }
 
-/// 取视图令牌（三件套唯一构造点；缺失兜底统一归 crate::theme 单点）。
+/// 取视图令牌（四件套唯一构造点；缺失兜底统一归 crate::theme 单点）。
 pub(crate) fn view_palette() -> ViewPalette {
     ViewPalette {
         fg: crate::theme::color("foreground"),
         muted: crate::theme::color("muted-foreground"),
         danger_fg: crate::theme::color("destructive"),
+        accent: crate::theme::color("accent"),
     }
 }
 

@@ -341,6 +341,7 @@ pub(crate) fn subscriptions_pane(pending_focus: Signal<Option<String>>) -> impl 
         fg,
         muted,
         danger_fg,
+        ..
     } = crate::views::view_palette();
     // 主按钮前景 = primary-foreground 令牌（亮暗双态随表；旧裸白直调退役）。
     let primary_fg = crate::theme::color("primary-foreground");

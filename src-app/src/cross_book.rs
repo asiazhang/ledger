@@ -481,6 +481,7 @@ pub(crate) fn CrossBookSummaryView() -> impl IntoElement {
         fg,
         muted,
         danger_fg,
+        ..
     } = crate::views::view_palette();
     // 警告色（未计入本状态标签；危险确认 warning 级同色值）。
     let warn_fg = crate::theme::color("warning");
