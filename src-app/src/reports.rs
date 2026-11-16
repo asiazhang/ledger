@@ -241,6 +241,7 @@ pub(crate) fn ReportsView() -> impl IntoElement {
         fg,
         muted,
         danger_fg,
+        ..
     } = crate::views::view_palette();
     let accent = crate::theme::color("primary");
     // 月度图三柱语义色（与交易列表同类金额同源，色值单源 transactions::amount_color）。

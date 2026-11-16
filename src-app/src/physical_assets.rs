@@ -437,6 +437,7 @@ pub(crate) fn PhysicalAssetsView() -> impl IntoElement {
         fg,
         muted,
         danger_fg,
+        ..
     } = crate::views::view_palette();
 
     // ============================ 行装配（渲染期零格式化） ============================

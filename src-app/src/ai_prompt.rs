@@ -40,6 +40,7 @@ pub(crate) fn AiPromptView() -> impl IntoElement {
         fg,
         muted,
         danger_fg,
+        ..
     } = crate::views::view_palette();
     let ok_fg = crate::theme::color("income");
 

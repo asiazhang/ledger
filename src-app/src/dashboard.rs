@@ -100,6 +100,7 @@ pub(crate) fn DashboardView() -> impl IntoElement {
         fg,
         muted,
         danger_fg,
+        ..
     } = crate::views::view_palette();
     // 走势/接近态蓝（接近自由阶段的普通态；色值与旧壳同源，经令牌 line 单点）。
     let info_fg = crate::theme::color("line");

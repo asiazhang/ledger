@@ -703,6 +703,7 @@ pub fn App() -> impl IntoElement {
         fg,
         muted,
         danger_fg,
+        ..
     } = crate::views::view_palette();
     // 失败态出口（ADR-0146 决策 4）与新建意图确认（决策 3 分支③）的现场：
     // 挂起新建目录信号、选择器任务与对话结局处理（组件期一次构造，信号驱动

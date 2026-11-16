@@ -124,6 +124,7 @@ pub(crate) fn InsurersView() -> impl IntoElement {
         fg,
         muted,
         danger_fg,
+        ..
     } = crate::views::view_palette();
 
     // 操作反馈条位（NSH 无 toast——#2038 裁决；旧壳 message.success/error 的

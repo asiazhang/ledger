@@ -136,6 +136,7 @@ pub(crate) fn SavingsGoalsView() -> impl IntoElement {
         fg,
         muted,
         danger_fg,
+        ..
     } = crate::views::view_palette();
     let success_fg = amount_color(assembly::AmountSemantic::Income);
 

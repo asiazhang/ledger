@@ -179,6 +179,7 @@ pub(crate) fn MerchantsView() -> impl IntoElement {
         fg,
         muted,
         danger_fg,
+        ..
     } = crate::views::view_palette();
     let accent = crate::theme::color("primary");
 

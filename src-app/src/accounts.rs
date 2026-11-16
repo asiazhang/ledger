@@ -150,6 +150,7 @@ pub(crate) fn AccountsView() -> impl IntoElement {
         fg,
         muted,
         danger_fg,
+        ..
     } = crate::views::view_palette();
     let accent = crate::theme::color("primary");
 
