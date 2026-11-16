@@ -42,8 +42,9 @@ pub(crate) fn field_label(label: &'static str, muted: AdaptiveColor) -> impl Int
 /// 视图层取色便捷面（前景 / 弱化 / 危险 / 强调——fg/muted/danger_fg/accent
 /// 四件套构造闭集的唯一住所，issue #2113：三件套此前在视图层逐份复制，收
 /// 拢后消费方一律经 [`view_palette`] 解构取值，视图层再散写同源令牌构造即
-/// 回潮；#2146 accent 纳入闭集，视图层直读 `theme::color` 绕过封装的取色
-/// 面一并收口）。
+/// 回潮；#2146 accent 纳入闭集，本次收口面 = sidebar_books.rs 统一经
+/// [`view_palette`] 取色 + accent 闭集成员；其余直读面（primary-foreground /
+/// 语义色 / 共享件独立取色面）为 palette 外留置，待各自收口票处理）。
 #[derive(Clone, Copy)]
 pub(crate) struct ViewPalette {
     /// 前景。

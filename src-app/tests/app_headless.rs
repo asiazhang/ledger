@@ -9622,7 +9622,7 @@ fn accounts_view_archives_and_restores() {
 /// `dashboard_monthly_numbers_reload_on_transaction_invalidation_while_mounted`
 /// 与 #2022 删除刷新旅程（ADR-0087 断言强度）。
 #[test]
-fn accounts_view_adjust_balance_broadcasts_transactions_invalidated() {
+fn accounts_view_adjust_balance_reloads_while_mounted() {
     let _guard = serial_lock();
     nsh_app::app::reset_book_assembly();
     let dir = make_book("accounts-adjust");
