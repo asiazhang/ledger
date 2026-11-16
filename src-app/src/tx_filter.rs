@@ -106,6 +106,25 @@ pub struct DrillFilters {
     pub date_to: Option<String>,
 }
 
+/// 单维下钻构造（code-review 手拼四处收口）：账户维（旧壳 `?account=` 同
+/// 键，其余维度复位 = 全量替换语义）。交易列表自下钻与搜索视图跨视图下钻
+/// 同一构造单点。
+pub(crate) fn drill_by_account(id: &str) -> DrillFilters {
+    DrillFilters {
+        account: Some(id.to_owned()),
+        ..DrillFilters::default()
+    }
+}
+
+/// 单维下钻构造：商户维（旧壳 `?merchant=` 同键，其余维度复位 = 全量替换
+/// 语义）。交易列表自下钻与搜索视图跨视图下钻同一构造单点。
+pub(crate) fn drill_by_merchant(id: &str) -> DrillFilters {
+    DrillFilters {
+        merchant: Some(id.to_owned()),
+        ..DrillFilters::default()
+    }
+}
+
 /// 列表请求的类型集合装配（旧壳 `resolveRequestKinds` 同口径）：显式集合在场
 /// 按其携带；默认态显式携带四通用 kind——含默认态的显式排除是本单点（主列表
 /// 排除投资 kind 的唯一机制，ADR-0135）。

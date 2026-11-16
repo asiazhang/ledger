@@ -115,3 +115,13 @@ pub fn adjust_account_balance(
         ledger_accounts::adjust_account_balance(conn, id, input)
     })
 }
+
+/// 余额缓存审计修复（域公开入口直调，旧壳 `audit_balance_cache` 命令同一执行
+/// 协议，#2136 设置③数据修复卡）：全账户实时重算 vs 缓存逐户比对 → 整体重算
+/// 回写 → 差异快照，语义全在域内单正文。唯一允许绕过统一写入口的缓存修复
+/// 写入（与设置/恢复同列豁免形态，域内裁决注释同口径）：缓存为派生数据，
+/// 修复不置脏、不发信号。写连接是成对建连的写侧（比对与修复一段事务内收口
+/// ——域内自持事务形态）。
+pub fn audit_balance_cache(db: &DbState) -> Result<ledger_accounts::BalanceCacheAudit> {
+    write_entry_locked(db, ledger_accounts::audit_balance_cache)
+}

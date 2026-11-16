@@ -27,13 +27,17 @@
 //!
 //! 界面文案仅 zh-CN（旧壳 policies.* zh-CN 词条原样字面承载）；码化错误 zh
 //! 原样呈现；视图本地快照、离开再回 = 全新装载（旧壳 onMounted 同口径）；无
-//! toast，动作反馈落状态条位（#2038 裁决）。行聚焦的滚动定位 NSH 无宿主面，
-//! 本壳落点 = 高亮呈现（物品视图先例同口径），滚动位随窄窗横切票。
+//! toast，动作反馈落状态条位（#2038 裁决）。行聚焦的滚动定位已交付（#2140，
+//! 原注「NSH 无宿主面」的挂账目标窄窗横切票 #2057 已交付且不含该项，挂账
+//! 失效回补）：封装层 DataTable 的组件 ref（scroll_to_row 句柄）在 focus
+//! 消费后把高亮行滚进视口，窄窗卡片形态不涉及（无虚拟滚动，高亮即全可见）。
 //!
 //! 测试豁免（ADR-0060）：本模块测试经 crate 根 cfg(test) 整体放行六件套。
 
 use ledger_infra::error::{AppError, Result as InfraResult};
-use nsh_base::{DataTableAlign, DataTableColumn, DataTableRows, button, data_table, input};
+use nsh_base::{
+    DataTable, DataTableAlign, DataTableColumn, DataTableRows, button, data_table, input,
+};
 use nsh_core::element::{FontWeight, SharedString};
 use nsh_core::prelude::*;
 
@@ -642,7 +646,7 @@ pub(crate) fn PoliciesView() -> impl IntoElement {
         });
     };
 
-    // ============================ 来源跳转落点（行高亮） ============================
+    // ============================ 来源跳转落点（行高亮 + 滚动定位） ============================
     let highlight = signal(None::<String>);
     // 落位 + 意图消费（读一次封闸：「先拿 id 后等数据」——只暂存 id，行渲染
     // 后生效，旧壳 useFocusParam 同语义；软删保单不在列表，高亮无锚空转安
@@ -758,6 +762,22 @@ pub(crate) fn PoliciesView() -> impl IntoElement {
             &today_text(),
         )
     });
+
+    // 聚焦行滚动定位（#2140）：共享接缝归 crate::row_focus（物品 / 保单两
+    // 消费面同缝——命中行滚进视口的机制与幂等口径见该模块文档）。触发面 =
+    // 高亮 × 行集；窄窗卡片形态不涉及（高亮即全可见）。
+    let table_ref = component_ref::<DataTable>();
+    crate::row_focus::scroll_focused_row_into_view(
+        table_ref,
+        move || {
+            let focused = highlight.get()?;
+            rows.get()
+                .iter()
+                .position(|row| row.id == focused)
+                .map(|index| index as u32)
+        },
+        view_owner,
+    );
 
     // 行快照反查（编辑 / 删除的目标）：域行快照内单点；行缺席（并发软删）
     // 动作静默退场（弹窗不呈现半态）。
@@ -1923,6 +1943,7 @@ pub(crate) fn PoliciesView() -> impl IntoElement {
                         .child(
                             view().test_id("policy-table").flex_1().child(
                                 data_table()
+                                    .component_ref(&table_ref)
                                     .columns(columns)
                                     .data(data_of)
                                     .row_classes(row_classes)
