@@ -574,7 +574,11 @@ fn app_window_masks_amounts_when_device_privacy_enabled() {
 
     // 交易列表落位后断言（首屏概览的预算卡同样掩码——概览卡面的掩码呈现
     // 由概览测试覆盖，本测断言面是交易表格）。
+    // 判别性等待：掩码全壳生效（侧栏账户余额同掩码），`••••` 不指认交易行——
+    // 先等行集计数锚点（慢机上行渲染晚于表格挂载一帧，2026-11-15 CI 实证），
+    // 再等掩码上屏，随后单帧捕获断言。
     open_transactions(&mut app);
+    app.wait_for("text:共 1 条").unwrap();
     app.wait_for("text:••••").unwrap();
     let texts = app.screen().texts();
     assert!(
@@ -9600,10 +9604,11 @@ fn accounts_view_archives_and_restores() {
     app.choose_menu_item("恢复").unwrap();
     app.wait_for("text:账户已恢复").unwrap();
     app.wait_for("text:测试现金").unwrap();
-    assert!(
-        app.screen().count("id:acct-archived-toggle").unwrap() == 0,
-        "恢复后已归档分区空集不渲染"
-    );
+    // 等待消失（ADR-0087 断言强度不减：分区卸载接线被删则恒在场超时红）；
+    // 慢机上主表行回屏与归档分区卸载可跨渲染帧，立即断言抢跑即假红
+    // （2026-11-15 CI 实证）。
+    app.wait_for_gone("id:acct-archived-toggle", Duration::from_secs(3))
+        .unwrap();
 }
 
 /// 调整余额旅行（旧壳 adjustBalance + ADR-0026）：⋯「调整余额」→ 弹窗日叔
