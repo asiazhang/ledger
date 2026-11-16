@@ -64,6 +64,7 @@ use nsh_core::prelude::*;
 use crate::assembly::CategoryOption;
 use crate::design::font_size;
 use crate::investments::PanePalette;
+use crate::settings_data::READ_TASK_FAILED;
 use crate::{
     app, assembly, boot, context_menu, danger, investments, investments_form, modal, multi_select,
     period, period_row, pinyin_select, signals, transactions,
@@ -108,7 +109,6 @@ const DELETED: &str = "已删除";
 /// 同词）。
 const DELETE_FAILED_PREFIX: &str = "删除失败: ";
 pub(crate) const LOAD_FAILED_PREFIX: &str = "加载失败: ";
-const MSG_INTERNAL: &str = "内部错误：读任务异常退出";
 /// 只读详情弹窗标题（旧壳 transactions.detail.title 同词）。
 pub(crate) const DETAIL_TITLE: &str = "交易详情";
 
@@ -615,7 +615,7 @@ pub(crate) fn LedgerPane() -> impl IntoElement {
         spawn(async move {
             let Some(db) = db else {
                 loading.set(false);
-                error.set(Some(format!("{LOAD_FAILED_PREFIX}{MSG_INTERNAL}")));
+                error.set(Some(format!("{LOAD_FAILED_PREFIX}{READ_TASK_FAILED}")));
                 return;
             };
             let outcome = blocking(move || -> ledger_infra::error::Result<LedgerPageBatch> {
@@ -654,7 +654,7 @@ pub(crate) fn LedgerPane() -> impl IntoElement {
                     error.set(None);
                 }
                 Ok(Err(e)) => error.set(Some(format!("{LOAD_FAILED_PREFIX}{e}"))),
-                Err(_) => error.set(Some(format!("{LOAD_FAILED_PREFIX}{MSG_INTERNAL}"))),
+                Err(_) => error.set(Some(format!("{LOAD_FAILED_PREFIX}{READ_TASK_FAILED}"))),
             }
             let _ = (filter_account, filter_instrument);
         });

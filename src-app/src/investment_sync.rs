@@ -30,6 +30,7 @@
 use nsh_core::prelude::*;
 
 use crate::design::font_size;
+use crate::settings_data::SESSION_MISSING;
 use crate::{app, boot, investments};
 
 // ---------------------------------------------------------------------------
@@ -55,9 +56,6 @@ pub(crate) const SYNCING_LABEL: &str = "同步中…";
 fn sync_progress_text_of(done: u32, total: u32) -> String {
     format!("同步标的信息 {done}/{total}")
 }
-
-/// 会话缺失 / 任务异常退出的内部错误（boot 读面同词）。
-const MSG_INTERNAL_SESSION: &str = "内部错误：账本库会话缺失";
 
 /// 过期计数快照（staleness 检查结果投影）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -158,7 +156,7 @@ pub(crate) fn trigger_sync() {
     let db = app::db_slot().clone();
     spawn(async move {
         let Some(db) = db.as_ref() else {
-            finish_err(MSG_INTERNAL_SESSION.to_owned());
+            finish_err(SESSION_MISSING.to_owned());
             return;
         };
         // 进度回调（issue #897）：编排逐次直达接缝信号（非阻塞覆写；迟到

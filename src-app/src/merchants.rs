@@ -52,6 +52,7 @@ use crate::design::font_size;
 use crate::modal;
 use crate::nav_model::{NavRequest, ViewName};
 use crate::popconfirm;
+use crate::settings_data::{READ_TASK_FAILED, WRITE_TASK_FAILED};
 use crate::transactions::{amount_privacy_enabled, table_classes};
 use crate::views::field_label;
 use crate::{nav, signals};
@@ -87,10 +88,9 @@ const MSG_DELETE_FAILED: &str = "删除失败";
 /// 跳页 NSH 分页条无宿主面，入交付报告对表）。
 const PAGE_SIZE: usize = 50;
 
-/// 装载占位与任务缺省错误文案（旧壳 loading / 异常分支同口径）。
+/// 装载占位文案（旧壳 loading 同口径）；任务退出错误文案消费
+/// settings_data 单一来源。
 const LOADING_PLACEHOLDER: &str = "正在加载…";
-const LOAD_TASK_FAILED: &str = "内部错误：读任务异常退出";
-const WRITE_TASK_FAILED: &str = "内部错误：写入任务异常退出";
 
 /// 装载批产物（读接缝单点的具名元组）：字典全量（含软删）+ 引用计数
 ///（计数失败静默保留旧值，返回 None）。
@@ -149,7 +149,7 @@ pub(crate) fn MerchantsView() -> impl IntoElement {
                             },
                         ));
                     }
-                    None => error.set(Some(LOAD_TASK_FAILED.to_owned())),
+                    None => error.set(Some(READ_TASK_FAILED.to_owned())),
                 }
                 loading.set(false);
             });

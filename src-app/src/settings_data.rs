@@ -164,8 +164,8 @@ const PRUNE_CONFIRM_DETAIL: &str =
 const PRUNE_CONFIRM_OK: &str = "确认清理";
 const PRUNE_CONFIRM_CANCEL: &str = "取消";
 pub(crate) const FILTER_NAME: &str = "开源记账备份";
-/// 任务退出三词面单一来源（旧壳命令层同守卫词表；设置面各页签卡统一消费
-/// 本源，不再各自重复声明——code-review 常量三份收口）。
+/// 任务退出三词面单一来源（旧壳命令层同守卫词表；壳内各视图模块统一消费
+/// 本源，不再各自重复声明——#2147 设置面收口、#2149 全壳收口）。
 pub(crate) const SESSION_MISSING: &str = "内部错误：账本库会话缺失";
 pub(crate) const READ_TASK_FAILED: &str = "内部错误：读任务异常退出";
 pub(crate) const WRITE_TASK_FAILED: &str = "内部错误：写入任务异常退出";
