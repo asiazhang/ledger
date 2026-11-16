@@ -225,12 +225,13 @@ fn TxFilterDrillProbeApp() -> impl IntoElement {
         .unwrap_or_else(|p| p.into_inner())
         .clone()
         .unwrap_or_default();
-    nav::open(NavRequest::bare(ViewName::Transactions).with_tx_filters(
-        crate::tx_filter::DrillFilters {
-            account: (!account.is_empty()).then_some(account),
-            ..crate::tx_filter::DrillFilters::default()
-        },
-    ));
+    nav::open(
+        NavRequest::bare(ViewName::Transactions).with_tx_filters(if !account.is_empty() {
+            crate::tx_filter::drill_by_account(&account)
+        } else {
+            crate::tx_filter::DrillFilters::default()
+        }),
+    );
     view()
         .flex_1()
         .flex_col()

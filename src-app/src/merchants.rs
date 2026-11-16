@@ -440,10 +440,7 @@ pub(crate) fn MerchantsView() -> impl IntoElement {
             form_tab: None,
             focus: None,
             investments_drill: None,
-            tx_filters: Some(crate::tx_filter::DrillFilters {
-                merchant: Some(merchant_id),
-                ..crate::tx_filter::DrillFilters::default()
-            }),
+            tx_filters: Some(crate::tx_filter::drill_by_merchant(&merchant_id)),
         });
     };
 
