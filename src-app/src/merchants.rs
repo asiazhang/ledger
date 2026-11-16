@@ -376,9 +376,10 @@ pub(crate) fn MerchantsView() -> impl IntoElement {
                     Ok(Ok(())) => {
                         close_edit();
                         status.set(Some(MSG_UPDATED.to_owned()));
-                        // 改名即时生效（交易以 merchant_id 引用）——交易列表
-                        // 来源列新名字号经广播驱动的重读即现（广播接线删除
-                        // 即红钉在 headless 旅程）。
+                        // 改名即时生效（交易以 merchant_id 引用）——本视图无
+                        // 本地 reload：广播接线删除 → 在场商户行停留旧名即红
+                        //（headless 改名旅程钉点）；交易列表来源列经落位重读
+                        // 即现，不构成广播负向证据。
                         signals::notify_transactions_invalidated();
                     }
                     Ok(Err(e)) => {

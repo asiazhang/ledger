@@ -482,8 +482,12 @@ pub(crate) fn AccountsView() -> impl IntoElement {
                 match outcome {
                     Ok(Ok((_tx_id, _created))) => {
                         close_adjust();
-                        // 余额调整生成了转账交易：广播交易失效信号（交易
-                        // 列表重读；广播接线删除即红钉在 tests/app_headless.rs）。
+                        // 余额调整生成了转账交易：广播交易失效信号（交易列
+                        // 表重读）。本视图无在场交易族订阅消费面（余额更新走
+                        // reload），「删广播即红」钉点在 headless 概览真负向
+                        // 测试（dashboard_monthly_numbers_reload_on_
+                        // transaction_invalidation_while_mounted）与 #2022
+                        // 删除刷新旅程（tests/app_headless.rs）。
                         signals::notify_transactions_invalidated();
                         status.set(Some(MSG_ADJUSTED.to_owned()));
                         reload();

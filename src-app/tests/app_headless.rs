@@ -9613,7 +9613,14 @@ fn accounts_view_archives_and_restores() {
 
 /// 调整余额旅行（旧壳 adjustBalance + ADR-0026）：⋯「调整余额」→ 弹窗日叔
 /// 当前余额 → 目标差额实时呈现 → 确认后生成转账（失效信号广播）→ 交易列表
-/// 重读见转账行 + 余额更新。拆确认后 signals 广播或 reload 接线即红。
+/// 见转账行 + 余额更新。「删除即红」负向条目钉在账户视图 reload 接线（删
+/// reload → 在场余额数字停留旧值即红）；末段交易列表断言钉的是「落位重读」
+/// （交易视图按导航分支挂载、落位即全新装载重读，transactions.rs 装载闭包）
+/// ——账户视图无在场交易族订阅消费面，删广播接线本测仍绿（红绿实证：注释
+/// accounts.rs adjust 成功分支广播行后本测绿）；交易族广播的在场消费面钉点
+/// 见概览真负向测试
+/// `dashboard_monthly_numbers_reload_on_transaction_invalidation_while_mounted`
+/// 与 #2022 删除刷新旅程（ADR-0087 断言强度）。
 #[test]
 fn accounts_view_adjust_balance_broadcasts_transactions_invalidated() {
     let _guard = serial_lock();
@@ -9657,7 +9664,8 @@ fn accounts_view_adjust_balance_broadcasts_transactions_invalidated() {
     app.wait_for("text:将从「无」转入 ¥95（生成一笔与「无」的转账，删除该转账即撤销调整）")
         .unwrap();
 
-    // 确认 → 反馈在屏 + 交易列表重读见转账行（失效信号广播落第点）。
+    // 确认 → 反馈在屏 + 余额更新（删本视图 reload 接线即红，负向条目见
+    // 注释头部）；交易列表见转账行为落位重读。
     press_after(&mut app, "id:acct-adjust-confirm", "id:acct-adjust-confirm").unwrap();
     app.wait_for("text:余额已调整").unwrap();
     app.wait_for("text:¥70").unwrap();
@@ -9988,9 +9996,12 @@ fn items_view_hint_button_navigates_to_transactions() {
 }
 
 /// 创建入口（ADR-0025 创建唯一入口的 NSH 承载面）：交易行右键「加入物品」→
-/// 名称默认取交易备注可微调 → 确认创建 → 反馈条位 + 清单落位（物品视图行
-/// 即现）+ 交易列表来源列即显物品名（失效信号广播驱动的重读）。删除「菜单
-/// 项接线」或「创建写路径」或「确认后广播/重读」任一环即红。
+/// 名称默认取交易备注可微调 → 确认创建 → 反馈条位 + 在场交易列表来源列即显
+/// 物品名（写路径成功广播交易失效信号 → 在场交易视图订阅重读）。「删除即
+/// 红」负向条目：删 items.rs 加入物品创建成功分支的广播接线 → 在场来源列停
+/// 留无物品即红（红绿实证：注释该广播行后本测红，恢复后绿）。后续物品视图
+/// 行与溯源唯一置灰断言是导航后全新装载读（落位重读），不构成广播负向证据
+/// （ADR-0087 断言强度：负向条目钉在场消费面，不钉落位重读）。
 #[test]
 fn items_view_create_from_transaction_menu_journey() {
     let _guard = serial_lock();
@@ -10045,7 +10056,11 @@ fn items_view_create_from_transaction_menu_journey() {
         app.screen().texts()
     );
 
-    // 物品视图行即现（写后信号重读 + 落位装载）。
+    // 在场交易列表来源列即显物品名（写后广播 → 在场交易视图订阅重读；删
+    // 广播接线即红，负向条目见注释头部）。
+    app.wait_for("text:电饭煲").unwrap();
+
+    // 物品视图行即现（落位装载读）。
     open_items(&mut app);
     app.wait_for("text:电饭煲").unwrap();
     assert!(app.shows("¥1200"), "成本列：{:?}", app.screen().texts());
@@ -10065,9 +10080,13 @@ fn items_view_create_from_transaction_menu_journey() {
     app.close_menu().unwrap();
 }
 
-/// 编辑旅程（旧壳 issue #117 平价）：打开弹窗预填 → 改名保存 → 反馈 + 行更新 + 交易列表来源列新名
-///   （失效信号广播驱动的明细重读）；删除 notify_transactions_invalidated
-///   接线即红（交易列表来源列仍显旧名）。
+/// 编辑旅程（旧壳 issue #117 平价）：打开弹窗预填 → 改名保存 → 反馈 + 行更新 +
+/// 交易列表来源列新名。改名成功无本地 reload——在场物品清单行更新走「广播 →
+/// 在场订阅重读」。「删除即红」负向条目：删 items.rs 改名成功分支的
+/// notify_transactions_invalidated 接线 → 在场物品行停留旧名即红（红绿实证：
+/// 注释该广播行后本测红于行更新 wait，恢复后绿）。末段交易列表来源列断言钉
+/// 的是「落位重读」（交易视图按导航分支挂载、落位即全新装载重读
+/// category_rows，transactions.rs 装载闭包），不构成广播负向证据。
 #[test]
 fn items_view_edit_rename_updates_row_and_source_column() {
     let _guard = serial_lock();
@@ -10100,8 +10119,8 @@ fn items_view_edit_rename_updates_row_and_source_column() {
     app.wait_for("text:已保存").unwrap();
     app.wait_for("text:曲面显示器").unwrap();
 
-    // 交易列表来源列新名（广播→列表重读；删除信号::notify_transactions_invalidated
-    // 接线即红——列表落位重读是读时的，广播是被删的语义锚）。
+    // 交易列表来源列新名（落位重读：导航分支挂载即全新装载；广播负向
+    // 证据钉在上方在场物品行重读，注释头部同引）。
     open_transactions(&mut app);
     app.wait_for("text:曲面显示器").unwrap();
 }
@@ -10589,9 +10608,13 @@ fn merchants_view_create_journey_and_duplicate_rejection() {
 }
 
 /// 编辑改名（旧壳 MerchantEditModal 平价）：行内「编辑」→ 弹窗预填 → 保存
-/// → 反馈 + 行更新；交易列表来源列新名即现（失效信号广播驱动的重读——删除
-/// signals::notify_transactions_invalidated 接线即红：列表落位重读是读时的，
-/// 广播是被删的语义锚）。删除 boot::update_merchant 写接缝即红（行不更新）。
+/// → 反馈 + 行更新；交易列表来源列新名即现。改名成功无本地 reload——在场
+/// 商户清单行更新走「广播 → 在场订阅重读」。「删除即红」负向条目：删
+/// merchants.rs 改名成功分支的 signals::notify_transactions_invalidated 接线
+/// → 在场商户行停留旧名即红（红绿实证：注释该广播行后本测红于行更新
+/// wait，恢复后绿）；删 boot::update_merchant 写接缝即红（行不更新）。末段
+/// 交易列表来源列断言钉的是「落位重读」（交易视图按导航分支挂载、落位即
+/// 全新装载重读，transactions.rs 装载闭包），不构成广播负向证据。
 #[test]
 fn merchants_view_edit_renames_and_updates_source_column() {
     let _guard = serial_lock();
@@ -10642,7 +10665,8 @@ fn merchants_view_edit_renames_and_updates_source_column() {
     app.wait_for("text:已更新商户").unwrap();
     app.wait_for("text:京东商城").unwrap();
 
-    // 交易列表来源列新名（广播 → 列表重读）。
+    // 交易列表来源列新名（落位重读：导航分支挂载即全新装载；广播负向
+    // 证据钉在上方在场商户行重读，注释头部同引）。
     open_transactions(&mut app);
     app.wait_for("text:京东商城").unwrap();
 }
