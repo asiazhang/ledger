@@ -106,9 +106,9 @@ pub struct DrillFilters {
     pub date_to: Option<String>,
 }
 
-/// 单维下钻构造（code-review 手拼四处收口）：账户维（旧壳 `?account=` 同
-/// 键，其余维度复位 = 全量替换语义）。交易列表自下钻与搜索视图跨视图下钻
-/// 同一构造单点。
+/// 单维下钻构造（#2147 手拼四处 + #2150 残余收口）：账户维（旧壳
+/// `?account=` 同键，其余维度复位 = 全量替换语义）。交易列表自下钻、搜索
+/// 视图跨视图下钻与账户页下钻同一构造单点。
 pub(crate) fn drill_by_account(id: &str) -> DrillFilters {
     DrillFilters {
         account: Some(id.to_owned()),
@@ -117,7 +117,7 @@ pub(crate) fn drill_by_account(id: &str) -> DrillFilters {
 }
 
 /// 单维下钻构造：商户维（旧壳 `?merchant=` 同键，其余维度复位 = 全量替换
-/// 语义）。交易列表自下钻与搜索视图跨视图下钻同一构造单点。
+/// 语义）。交易列表自下钻、搜索视图跨视图下钻与商户页下钻同一构造单点。
 pub(crate) fn drill_by_merchant(id: &str) -> DrillFilters {
     DrillFilters {
         merchant: Some(id.to_owned()),

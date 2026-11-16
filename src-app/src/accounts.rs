@@ -629,10 +629,7 @@ pub(crate) fn AccountsView() -> impl IntoElement {
             container_tab: None,
             form_tab: None,
             focus: None,
-            tx_filters: Some(tx_filter::DrillFilters {
-                account: Some(account_id),
-                ..tx_filter::DrillFilters::default()
-            }),
+            tx_filters: Some(tx_filter::drill_by_account(&account_id)),
             investments_drill: None,
         });
     };
