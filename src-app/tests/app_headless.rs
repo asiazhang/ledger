@@ -14682,10 +14682,7 @@ fn restore_guard_replaces_data_across_restart() {
     app.press("id:data-restore").unwrap();
     app.wait_for("text:确认恢复").unwrap();
     app.press("id:data-restore-confirm").unwrap();
-    app.wait_for(
-        "text:恢复成功，请重启应用进入新库（本壳无原位重引导：旧壳恢复后自动重启的偏差见交付报告）",
-    )
-    .unwrap();
+    app.wait_for("text:恢复成功，请重启应用进入新库").unwrap();
 
     // 「下次启动」等价重置重启：交易回到两笔（备份内容已换入）。
     nsh_app::app::reset_book_assembly();
@@ -14804,10 +14801,7 @@ fn settings_restore_modal_encrypted_backup_submits_after_passphrase_typed() {
     app.type_text("id:data-restore-passphrase", PASS_BACKUP)
         .unwrap();
     app.press("id:data-restore-confirm").unwrap();
-    app.wait_for(
-        "text:恢复成功，请重启应用进入新库（本壳无原位重引导：旧壳恢复后自动重启的偏差见交付报告）",
-    )
-    .unwrap();
+    app.wait_for("text:恢复成功，请重启应用进入新库").unwrap();
 }
 
 /// 自动备份首次兜底全旅程（issue #2078 接线断言；backup 域既有语义零新口径）：
@@ -15278,7 +15272,7 @@ fn books_switch_journey_moves_active_pointer_across_restart() {
         .unwrap();
     app.wait_for("text:切换账本").unwrap();
     app.press("id:danger-confirm").unwrap();
-    app.wait_for("text:已切换到「副账本」，重启应用后进入新账本（旧壳自动重载的偏差见交付报告）")
+    app.wait_for("text:已切换到「副账本」，重启应用后进入新账本")
         .unwrap();
     // 活动指针写链（读取注册表文件：active = 副账本 id）。
     let registry = fs::read_to_string(dir.join("data_location.json")).unwrap();
