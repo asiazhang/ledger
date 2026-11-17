@@ -17457,20 +17457,6 @@ fn investments_view_instruments_search_and_manual_quote_journey() {
     // 价格失效信号（实际写入任一落点即广播——零变化不广播）→ 行集原地重
     // 拉：现价列从「-」变为「¥1.2345」。删「是否发」广播门或本 pane 订阅
     // 任一 → 现价列不刷新，本断言红。
-    // DEBUG: db state first
-    {
-        let db = nsh_app::boot::boot_ledger(&dir_probe).unwrap();
-        let conn = db.conn.lock().unwrap();
-        let (price, history): (Option<i64>, i64) = conn
-            .query_row(
-                "SELECT (SELECT price_cents FROM market_prices WHERE instrument_id=?1), \
-                 (SELECT COUNT(*) FROM price_history WHERE instrument_id=?1)",
-                rusqlite::params![bond_id],
-                |r| Ok((r.get(0)?, r.get(1)?)),
-            )
-            .unwrap();
-        eprintln!("DEBUG quote db state price={:?} history={}", price, history);
-    }
     app.wait_for("text:¥1.2345").unwrap();
 
     // 库态核对（两个落点）：现价缓存 upsert + 价格历史周采样行（source
