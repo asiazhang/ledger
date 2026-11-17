@@ -14519,6 +14519,53 @@ fn backup_full_journey_backs_up_lists_prunes_and_guards_overwrite() {
     );
 }
 
+/// 备份列表行集随备份就地刷新（#2143 审计新发现同根因实例：备份文件列表
+/// 卡的行集是 when 分支 otherwise 内静态 children（state.rows 一次读入），
+/// 列表非空期间新增备份不重渲染——行集卡在旧清单直到面板重开。修复 = 行
+/// 集段换 dynamic（读什么变什么重造，#2146 选型标准整段重造归 dynamic）。
+/// 「删除即红」：行集回静态 children → 第二次备份后 row-1 不在屏，本测红。
+#[test]
+fn backup_list_rows_refresh_in_place_after_new_backup() {
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("settings-backup-rows-refresh");
+    let backup_dir = ScratchDir::new("nsh-data-backup-rows");
+    let storage = storage_shard(&[
+        (
+            "backup_dir",
+            format!("{:?}", backup_dir.to_string_lossy()).as_str(),
+        ),
+        ("backup_max_count", "10"),
+    ]);
+    seed_expense_on_date(&dir, &test_date(0), 2_500);
+    let data_root = ScratchDir::new("nsh-data-backup-rows-root");
+    nsh_app::cross_book::set_default_data_dir(data_root.to_path_buf());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config_with_storage_shard(storage)).unwrap();
+    open_data_tab(&mut app);
+
+    // 备份①（空 → 非空：when 分支翻转，行集首次呈现）。
+    let target_a = backup_dir.join("ledger-backup-20260101-000000.db.zip");
+    app.on_pick_save_path(Some(target_a.clone())).unwrap();
+    app.press("id:data-backup-as").unwrap();
+    app.wait_for("id:data-backup-row-0-name").unwrap();
+
+    // 备份②（非空 → 仍非空：修复前静态 children 冻结，行集不重渲染，红）。
+    let target_b = backup_dir.join("ledger-backup-20260101-000100.db.zip");
+    app.on_pick_save_path(Some(target_b.clone())).unwrap();
+    app.press("id:data-backup-as").unwrap();
+    app.wait_for("id:data-backup-row-1-name").unwrap();
+    app.wait_for("text:ledger-backup-20260101-000100.db.zip")
+        .unwrap();
+
+    // 面板未重开（同一 Headless 会话）即就地看到两行。
+    assert!(
+        app.shows("ledger-backup-20260101-000000.db.zip"),
+        "备份①行仍在屏：{:?}",
+        app.screen().texts()
+    );
+}
+
 /// 备份行「在访达中显示」（旧壳 reveal_in_file_manager 命令的 NSH 承载面：
 /// 切轨起保留在备份文件列表行级，#2132 补替身断言证明入口可达且触发宿主
 /// 定位调用）：备份一行 → 按压行级入口 → 被记录的 RevealPath 目标 = 该行

@@ -1908,14 +1908,22 @@ fn backup_cards(palette: views::ViewPalette) -> View {
                             },
                         )
                         .otherwise(move || {
-                            view().flex_col().app_class("gap-1").children(
-                                state
-                                    .rows
-                                    .get()
-                                    .into_iter()
-                                    .enumerate()
-                                    .map(|(index, row)| backup_row(palette, index, row)),
-                            )
+                            // 行集段 dynamic（读什么变什么重造，#2146 选型标准
+                            // 整段重造归 dynamic）：修复前 otherwise 分支内静
+                            // 态 children（state.rows 一次读入），列表非空期间
+                            // 新增/清理备份后行集不重渲染，面板重开才见新清单
+                            //（#2143 审计同根因实例；删 dynamic 回静态 →
+                            // backup_list_rows_refresh_in_place_after_new_backup 红）。
+                            dynamic(move || {
+                                view().flex_col().app_class("gap-1").children(
+                                    state
+                                        .rows
+                                        .get()
+                                        .into_iter()
+                                        .enumerate()
+                                        .map(|(index, row)| backup_row(palette, index, row)),
+                                )
+                            })
                         }),
                     )
                 }),
