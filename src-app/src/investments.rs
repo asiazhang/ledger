@@ -1475,39 +1475,40 @@ fn overview_pane() -> impl IntoElement {
     });
     let trend_card = card_container("overview-trend-card")
         .child(
+            // 卡标题（web 同位：卡头仅标题；#2135 布局对齐线——时间窗从卡头
+            // 右上迁到标题下独立一行左对齐，web NRadioGroup 同位）。
+            text(TREND_CARD_TITLE)
+                .text_size(px(font_size::TITLE))
+                .text_color(palette.fg)
+                .test_id("trend-card-title"),
+        )
+        .child(
+            // 时间窗预设组（左对齐一行；形态保留本壳分段按钮——控件形态
+            // 口径外，GTK 原生）。
             view()
                 .flex_row()
-                .items_center()
-                .justify_between()
-                .child(
-                    text(TREND_CARD_TITLE)
-                        .text_size(px(font_size::TITLE))
-                        .text_color(palette.fg)
-                        .test_id("trend-card-title"),
-                )
-                .child(
-                    view().flex_row().gap_1().children(TREND_PRESETS.map(|p| {
-                        let selected = move || session.trend_preset.get() == p;
-                        nsh_base::button()
-                            .selected(selected)
-                            .app_class(
-                                "px-2 py-1 rounded-(--radius) text-foreground hover:bg-accent selected:bg-accent",
-                            )
-                            .child(
-                                text(p.label())
-                                    .text_size(px(font_size::CAPTION))
-                                    .text_color(move || {
-                                        if selected() {
-                                            palette.fg
-                                        } else {
-                                            palette.muted
-                                        }
-                                    })
-                                    .test_id(format!("trend-range-{}", p.label()).as_str()),
-                            )
-                            .on_press(move |_: &()| on_preset_change(p))
-                    })),
-                ),
+                .gap_1()
+                .children(TREND_PRESETS.map(|p| {
+                    let selected = move || session.trend_preset.get() == p;
+                    nsh_base::button()
+                        .selected(selected)
+                        .app_class(
+                            "px-2 py-1 rounded-(--radius) text-foreground hover:bg-accent selected:bg-accent",
+                        )
+                        .child(
+                            text(p.label())
+                                .text_size(px(font_size::CAPTION))
+                                .text_color(move || {
+                                    if selected() {
+                                        palette.fg
+                                    } else {
+                                        palette.muted
+                                    }
+                                })
+                                .test_id(format!("trend-range-{}", p.label()).as_str()),
+                        )
+                        .on_press(move |_: &()| on_preset_change(p))
+                })),
         )
         .child(trend_body);
 
@@ -1517,14 +1518,13 @@ fn overview_pane() -> impl IntoElement {
         .child(view().flex_col().child(overview_card).child(trend_card))
 }
 
-/// 构成比例条轨道宽（pt；纯图形、不显示百分数——等价信息归图例文本）。
-const COMPOSITION_TRACK_PT: f32 = 240.0;
-
 /// 两段式构成比例条（段宽 = 各腿独立占比，钳 [0, 100]——两段各自独立按
 /// 「各腿 ÷ 可投资资产」计算，不做 100−x 余量法，不复述「两腿之和 = 可
 /// 投资资产」的口径不变量：后端两腿失配时比例条如实出现缺口而非被余量
-/// 抹平——旧壳 spec #1684 同裁决的本壳等价）。可投资资产为 0 或隐私开启
-/// 时整条缺席（调用方 cells 装配门）。
+/// 抹平——旧壳 spec #1684 同裁决的本壳等价）。轨道通栏（w_full，#2135
+/// 布局对齐线：web investment-overview css 轨道无宽度约束、铺满卡内容区，
+/// 240pt 定宽随布局对齐退役）；段宽 = relative 比例。可投资资产为 0 或隐
+/// 私开启时整条缺席（调用方 cells 装配门）。
 fn composition_row(
     cells: nsh_core::element::ReadSignal<Option<OverviewCells>>,
     palette: PanePalette,
@@ -1534,7 +1534,7 @@ fn composition_row(
     view()
         .flex_row()
         .h(px(10.0))
-        .w(px(COMPOSITION_TRACK_PT))
+        .w_full()
         .rounded_sm()
         .test_id("overview-composition-bar")
         .child(
@@ -1549,10 +1549,11 @@ fn composition_row(
                     view()
                         .flex_row()
                         .h(px(10.0))
+                        .w_full()
                         .child(
                             view()
                                 .h(px(10.0))
-                                .w(px(COMPOSITION_TRACK_PT * cash as f32 / 100.0))
+                                .w(move || relative(cash.clamp(0.0, 100.0) as f32 / 100.0))
                                 .rounded_sm()
                                 .bg(cash_color)
                                 .test_id("overview-bar-cash"),
@@ -1560,7 +1561,7 @@ fn composition_row(
                         .child(
                             view()
                                 .h(px(10.0))
-                                .w(px(COMPOSITION_TRACK_PT * holdings as f32 / 100.0))
+                                .w(move || relative(holdings.clamp(0.0, 100.0) as f32 / 100.0))
                                 .rounded_sm()
                                 .bg(holdings_color)
                                 .test_id("overview-bar-holdings"),

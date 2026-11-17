@@ -54,6 +54,7 @@ use crate::boot;
 use crate::context_menu;
 use crate::date_select;
 use crate::design::font_size;
+use crate::icons;
 use crate::modal;
 use crate::nav_model::{NavRequest, ViewName};
 use crate::pinyin_select;
@@ -354,6 +355,8 @@ pub(crate) fn ItemsView() -> impl IntoElement {
         muted,
         danger_fg,
     } = crate::views::view_palette();
+    // 信息语义色（提示条字形；主色系承担 info 语义，theme.json 单点）。
+    let info_fg = crate::theme::color("primary");
 
     // 操作反馈条位（NSH 无 toast——#2038 裁决；旧壳 message.success/error 的
     // 条位对应物：新动作开始时清回空）。
@@ -1373,12 +1376,16 @@ pub(crate) fn ItemsView() -> impl IntoElement {
                     // 创建唯一入口提示（issue #207 / ADR-0025）：本页不提供
                     // 手动新增，物品只能经交易右键「加入物品」创建（NSH 的
                     // 该入口随本票挂交易行菜单）；提示条常驻顶部并一键跳转
-                    // 交易页。
+                    // 交易页。形态对齐 web NAlert type=info（#2135 布局对齐
+                    // 线）：语义淡染面 + 信息字形（本仓蓝色主色系承担 info
+                    // 语义——观感自立，不进 web 色值；danger.rs 警示块
+                    // 「同级淡染先例」同构）。
                     view()
                         .flex_row()
                         .items_center()
                         .gap_2()
-                        .app_class("rounded-(--radius) border border-border bg-accent/10 p-3")
+                        .app_class("rounded-(--radius) border border-primary/30 bg-primary/10 p-3")
+                        .child(icons::inline_icon(icons::INFO_CIRCLE).text_color(info_fg))
                         .child(
                             text(CREATE_HINT)
                                 .text_size(px(font_size::SECONDARY))
@@ -1409,12 +1416,15 @@ pub(crate) fn ItemsView() -> impl IntoElement {
                         .gap_2()
                         .app_class("rounded-(--radius-card) border border-border p-3")
                         .child(
-                            view().flex_1().child(
-                                text(LIST_CARD_TITLE)
-                                    .text_size(px(font_size::SECONDARY))
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .text_color(fg),
-                            ),
+                            // 卡标题自然高度（#2135 布局对齐线）：标题不参与
+                            // 弹性分配——flex_1 标题行曾与表格容器对分卡内剩
+                            // 余高度，少数据时表头被推到卡内中部（web 卡头即
+                            // 标题，表格内容自适应高度）；虚拟化高度仍由卡片
+                            // 本体 flex_1 提供，标题行退出弹性链即可。
+                            text(LIST_CARD_TITLE)
+                                .text_size(px(font_size::SECONDARY))
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .text_color(fg),
                         )
                         .child(
                             view().test_id("item-table").flex_1().child(

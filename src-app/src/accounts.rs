@@ -780,12 +780,13 @@ pub(crate) fn AccountsView() -> impl IntoElement {
             .gap_2()
             .app_class("rounded-(--radius-card) border border-border p-3")
             .child(
-                view().flex_1().child(
-                    text(title)
-                        .text_size(px(font_size::SECONDARY))
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(fg),
-                ),
+                // 卡标题自然高度（#2135 布局对齐线，同根因另见 items/merchants/
+                // policies 同款标题行）：标题不参与弹性分配，否则少数据时
+                // 表头被推到卡内中部。
+                text(title)
+                    .text_size(px(font_size::SECONDARY))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(fg),
             )
             .child(table_of(partition, table_id))
     };

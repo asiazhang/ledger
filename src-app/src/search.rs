@@ -37,7 +37,7 @@ use crate::design::font_size;
 use crate::nav;
 use crate::nav_model::{self, ViewName};
 use crate::transactions::{amount_privacy_enabled, hit_total_text};
-use crate::{adaptive, period, period_row, transactions, tx_cards, tx_filter};
+use crate::{adaptive, icons, period, period_row, transactions, tx_cards, tx_filter};
 
 /// 搜索视图（导航骨架搜索分支的真实组件，#2040）：关键词防抖自动搜索 +
 /// 期间快捷筛选 + 金额区间 + 只读结果分页 + 占位/无命中两态空态。
@@ -465,6 +465,8 @@ pub(crate) fn SearchView() -> impl IntoElement {
                                                 .flex_1()
                                                 .items_center()
                                                 .justify_center()
+                                                .gap_2()
+                                                .child(icons::empty_glyph(muted))
                                                 .child(
                                                     text(assembly::search_empty_text(true))
                                                         .text_sm()
@@ -585,11 +587,14 @@ pub(crate) fn SearchView() -> impl IntoElement {
                 },
             )
             .otherwise(move || {
-                // 占位空态（未搜索：旧壳 search.emptyPlaceholder 同文案）。
+                // 占位空态（未搜索：旧壳 search.emptyPlaceholder 同文案；空态
+                // 带字形——web NEmpty 出厂插画同位，#2135 布局对齐线）。
                 view()
                     .flex_1()
                     .items_center()
                     .justify_center()
+                    .gap_2()
+                    .child(icons::empty_glyph(muted))
                     .child(
                         text(assembly::search_empty_text(false))
                             .text_sm()

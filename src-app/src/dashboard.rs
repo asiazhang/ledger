@@ -938,21 +938,23 @@ fn investment_tip(body: &str) -> String {
 }
 
 /// 进度条（比例读数与色随响应式闭包；旧壳 NProgress type=line 的本壳等价
-/// 形态——轨道 240pt 定宽，与 #2033 预算视图条体同形）。
+/// 形态——轨道通栏（w_full，#2135 布局对齐线：web 概览预算/自由度卡进度条
+/// 铺满卡内容区，240pt 定宽随布局对齐退役），指示条宽 = 轨道宽 × 百分比
+/// （relative 比例，定宽不再参与换算）。
 fn progress_bar(
     percent: impl Fn() -> f32 + Copy + 'static,
     color: impl Fn() -> AdaptiveColor + Copy + 'static,
 ) -> impl IntoElement {
     view().flex_row().items_center().child(
         view()
-            .w(px(240.0))
+            .w_full()
             .h(px(6.0))
             .rounded_full()
             .app_class("bg-muted-foreground/15")
             .child(
                 view()
                     .h(px(6.0))
-                    .w(move || px(240.0 * (percent().clamp(0.0, 100.0) / 100.0)))
+                    .w(move || relative(percent().clamp(0.0, 100.0) / 100.0))
                     .rounded_full()
                     .bg(color()),
             ),

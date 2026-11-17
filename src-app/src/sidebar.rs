@@ -26,6 +26,7 @@ use nsh_core::platform::Os;
 use nsh_core::prelude::*;
 
 use crate::context_menu;
+use crate::icons;
 use crate::nav::{self, NavStore};
 use crate::nav_model::{self, GroupId, NavRequest, SortAction, ViewName};
 use crate::transactions::{amount_privacy_enabled, set_amount_privacy_enabled};
@@ -203,10 +204,21 @@ fn nav_item(
             move |s| s.bg(accent_background()),
         )
         .child(
-            text(name.label())
-                .text_sm()
-                .text_color(fg)
-                .number_of_lines(1),
+            // 图标 + 视图名（web 侧栏每项带图标——viewIcons 同映射闭集，
+            // #2135 布局对齐线；控件形态 = 本壳字形，观感随主题）。
+            view()
+                .flex_row()
+                .items_center()
+                .gap_2()
+                .children(
+                    icons::view_icon(name).map(|markup| icons::nav_icon(markup).text_color(fg)),
+                )
+                .child(
+                    text(name.label())
+                        .text_sm()
+                        .text_color(fg)
+                        .number_of_lines(1),
+                ),
         )
         .child(
             // 键位提示（桌面侧栏带；抽屉不渲染——决策 6 移动档快捷键退役）。
@@ -353,6 +365,7 @@ fn group_header(nav: NavStore, gid: GroupId, fg: AdaptiveColor, muted: AdaptiveC
                         .px_1()
                         .app_class("rounded-(--radius)")
                         .on_press(move |_: &()| nav::open(NavRequest::bare(gid.more_view())))
+                        .child(icons::inline_icon(icons::GROUP_MORE).text_color(fg))
                         .child(text("更多").text_xs().text_color(fg))
                         .child(text("›").text_xs().text_color(muted))
                 },
