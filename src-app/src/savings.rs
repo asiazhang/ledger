@@ -37,6 +37,7 @@ use crate::design::font_size;
 use crate::modal;
 use crate::nav;
 use crate::nav_model::ViewName;
+use crate::settings_data::{READ_TASK_FAILED, SESSION_MISSING, WRITE_TASK_FAILED};
 use crate::transactions::{amount_color, amount_privacy_enabled, table_classes};
 use crate::views::field_label;
 use ledger_infra::error::Result as InfraResult;
@@ -91,7 +92,7 @@ pub(crate) fn SavingsGoalsView() -> impl IntoElement {
         view_owner.run(move || {
             spawn(async move {
                 let Some(db) = db else {
-                    error.set(Some("内部错误：账本库会话缺失".to_owned()));
+                    error.set(Some(SESSION_MISSING.to_owned()));
                     loading.set(false);
                     return;
                 };
@@ -116,7 +117,7 @@ pub(crate) fn SavingsGoalsView() -> impl IntoElement {
                         privacy.set(amount_privacy_enabled());
                     }
                     Ok(Err(e)) => error.set(Some(e.to_string())),
-                    Err(_) => error.set(Some("内部错误：读任务异常退出".to_owned())),
+                    Err(_) => error.set(Some(READ_TASK_FAILED.to_owned())),
                 }
                 loading.set(false);
             });
@@ -276,10 +277,7 @@ pub(crate) fn SavingsGoalsView() -> impl IntoElement {
                             planned_monthly_cents,
                         },
                     ),
-                    (None, _) => Err(AppError::coded(
-                        boot::CODE_SESSION_MISSING,
-                        "内部错误：账本库会话缺失",
-                    )),
+                    (None, _) => Err(AppError::coded(boot::CODE_SESSION_MISSING, SESSION_MISSING)),
                 })
                 .await;
                 match outcome {
@@ -298,7 +296,7 @@ pub(crate) fn SavingsGoalsView() -> impl IntoElement {
                         // 不加二级前缀）；弹窗不关、内容不丢。
                         form_error.set(Some(e.to_string()))
                     }
-                    Err(_) => form_error.set(Some("内部错误：写入任务异常退出".to_owned())),
+                    Err(_) => form_error.set(Some(WRITE_TASK_FAILED.to_owned())),
                 }
             });
         });
@@ -323,10 +321,7 @@ pub(crate) fn SavingsGoalsView() -> impl IntoElement {
                             boot::unarchive_savings_goal(db, &goal_id)
                         }
                     }
-                    None => Err(AppError::coded(
-                        boot::CODE_SESSION_MISSING,
-                        "内部错误：账本库会话缺失",
-                    )),
+                    None => Err(AppError::coded(boot::CODE_SESSION_MISSING, SESSION_MISSING)),
                 })
                 .await;
                 match outcome {
@@ -349,7 +344,7 @@ pub(crate) fn SavingsGoalsView() -> impl IntoElement {
                             "恢复失败"
                         }
                     ))),
-                    Err(_) => status.set(Some("内部错误：写入任务异常退出".to_owned())),
+                    Err(_) => status.set(Some(WRITE_TASK_FAILED.to_owned())),
                 }
             });
         });
@@ -362,10 +357,7 @@ pub(crate) fn SavingsGoalsView() -> impl IntoElement {
             spawn(async move {
                 let outcome = blocking(move || match db.as_ref() {
                     Some(db) => boot::delete_savings_goal(db, &goal_id),
-                    None => Err(AppError::coded(
-                        boot::CODE_SESSION_MISSING,
-                        "内部错误：账本库会话缺失",
-                    )),
+                    None => Err(AppError::coded(boot::CODE_SESSION_MISSING, SESSION_MISSING)),
                 })
                 .await;
                 match outcome {
@@ -374,7 +366,7 @@ pub(crate) fn SavingsGoalsView() -> impl IntoElement {
                         reload();
                     }
                     Ok(Err(e)) => status.set(Some(format!("删除失败: {e}"))),
-                    Err(_) => status.set(Some("内部错误：写入任务异常退出".to_owned())),
+                    Err(_) => status.set(Some(WRITE_TASK_FAILED.to_owned())),
                 }
             });
         });

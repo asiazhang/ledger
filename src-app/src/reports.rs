@@ -51,6 +51,7 @@ use crate::boot;
 use crate::design::font_size;
 use crate::nav;
 use crate::nav_model::{NavRequest, ViewName};
+use crate::settings_data::{READ_TASK_FAILED, SESSION_MISSING};
 use crate::transactions::{amount_color, amount_privacy_enabled};
 use crate::{overlay, period, period_row, tx_filter};
 
@@ -266,7 +267,7 @@ pub(crate) fn ReportsView() -> impl IntoElement {
         view_owner.run(move || {
             spawn(async move {
                 let Some(db) = db else {
-                    main_error.set(Some("内部错误：账本库会话缺失".to_owned()));
+                    main_error.set(Some(SESSION_MISSING.to_owned()));
                     return;
                 };
                 let outcome = blocking(move || -> ledger_infra::error::Result<MainBatchRead> {
@@ -303,7 +304,7 @@ pub(crate) fn ReportsView() -> impl IntoElement {
                         main_error.set(None);
                     }
                     Ok(Err(e)) => main_error.set(Some(e.to_string())),
-                    Err(_) => main_error.set(Some("内部错误：读任务异常退出".to_owned())),
+                    Err(_) => main_error.set(Some(READ_TASK_FAILED.to_owned())),
                 }
             });
         });
@@ -322,7 +323,7 @@ pub(crate) fn ReportsView() -> impl IntoElement {
         view_owner.run(move || {
             spawn(async move {
                 let Some(db) = db else {
-                    merchant_error.set(Some("内部错误：账本库会话缺失".to_owned()));
+                    merchant_error.set(Some(SESSION_MISSING.to_owned()));
                     return;
                 };
                 let outcome =
@@ -340,7 +341,7 @@ pub(crate) fn ReportsView() -> impl IntoElement {
                         merchant_error.set(None);
                     }
                     Ok(Err(e)) => merchant_error.set(Some(e.to_string())),
-                    Err(_) => merchant_error.set(Some("内部错误：读任务异常退出".to_owned())),
+                    Err(_) => merchant_error.set(Some(READ_TASK_FAILED.to_owned())),
                 }
             });
         });

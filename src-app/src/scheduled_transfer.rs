@@ -61,6 +61,7 @@ use crate::scheduled_subscription::{
     account_options_of, action_button, currency_of_account, derive_currency_text, field_label,
     form_row,
 };
+use crate::settings_data::{READ_TASK_FAILED, SESSION_MISSING, WRITE_TASK_FAILED};
 use crate::signals;
 use crate::{nav, txn_form};
 
@@ -367,7 +368,7 @@ pub(crate) fn transfers_pane(pending_focus: Signal<Option<String>>) -> impl Into
         view_owner.run(move || {
             spawn(async move {
                 let Some(db) = db else {
-                    error.set(Some("内部错误：账本库会话缺失".to_owned()));
+                    error.set(Some(SESSION_MISSING.to_owned()));
                     loading.set(false);
                     return;
                 };
@@ -411,7 +412,7 @@ pub(crate) fn transfers_pane(pending_focus: Signal<Option<String>>) -> impl Into
                         privacy.set(crate::transactions::amount_privacy_enabled());
                     }
                     Ok(Err(e)) => error.set(Some(e.to_string())),
-                    Err(_) => error.set(Some("内部错误：读任务异常退出".to_owned())),
+                    Err(_) => error.set(Some(READ_TASK_FAILED.to_owned())),
                 }
                 loading.set(false);
             });
@@ -490,7 +491,7 @@ pub(crate) fn transfers_pane(pending_focus: Signal<Option<String>>) -> impl Into
                     Some(db) => boot::update_scheduled_plan_status(db, &plan_id, new_status),
                     None => Err(ledger_infra::error::AppError::coded(
                         boot::CODE_SESSION_MISSING,
-                        "内部错误：账本库会话缺失",
+                        SESSION_MISSING,
                     )),
                 })
                 .await;
@@ -500,7 +501,7 @@ pub(crate) fn transfers_pane(pending_focus: Signal<Option<String>>) -> impl Into
                         reload();
                     }
                     Ok(Err(e)) => status.set(Some(format!("操作失败: {e}"))),
-                    Err(_) => status.set(Some("操作失败: 内部错误：写入任务异常退出".to_owned())),
+                    Err(_) => status.set(Some(format!("操作失败: {WRITE_TASK_FAILED}"))),
                 }
             });
         });
@@ -643,7 +644,7 @@ pub(crate) fn transfers_pane(pending_focus: Signal<Option<String>>) -> impl Into
                     Some(db) => boot::create_scheduled_plan(db, input),
                     None => Err(ledger_infra::error::AppError::coded(
                         boot::CODE_SESSION_MISSING,
-                        "内部错误：账本库会话缺失",
+                        SESSION_MISSING,
                     )),
                 })
                 .await;
@@ -657,7 +658,7 @@ pub(crate) fn transfers_pane(pending_focus: Signal<Option<String>>) -> impl Into
                         reload();
                     }
                     Ok(Err(e)) => create_error.set(Some(format!("创建失败: {e}"))),
-                    Err(_) => create_error.set(Some("内部错误：写入任务异常退出".to_owned())),
+                    Err(_) => create_error.set(Some(WRITE_TASK_FAILED.to_owned())),
                 }
             });
         });

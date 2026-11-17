@@ -52,7 +52,7 @@ use crate::design::font_size;
 use crate::modal;
 use crate::nav_model::{NavRequest, ViewName};
 use crate::popconfirm;
-use crate::settings_data::{READ_TASK_FAILED, WRITE_TASK_FAILED};
+use crate::settings_data::{READ_TASK_FAILED, SESSION_MISSING, WRITE_TASK_FAILED};
 use crate::transactions::{amount_privacy_enabled, table_classes};
 use crate::views::field_label;
 use crate::{nav, signals};
@@ -120,7 +120,7 @@ pub(crate) fn MerchantsView() -> impl IntoElement {
         view_owner.run(move || {
             spawn(async move {
                 let Some(dbc) = db.clone() else {
-                    error.set(Some("内部错误：账本库会话缺失".to_owned()));
+                    error.set(Some(SESSION_MISSING.to_owned()));
                     loading.set(false);
                     return;
                 };
@@ -209,10 +209,7 @@ pub(crate) fn MerchantsView() -> impl IntoElement {
                         db,
                         ledger_merchants::MerchantInput { name: name.clone() },
                     ),
-                    None => Err(AppError::coded(
-                        boot::CODE_SESSION_MISSING,
-                        "内部错误：账本库会话缺失",
-                    )),
+                    None => Err(AppError::coded(boot::CODE_SESSION_MISSING, SESSION_MISSING)),
                 })
                 .await;
                 match outcome {
@@ -367,10 +364,7 @@ pub(crate) fn MerchantsView() -> impl IntoElement {
                             name: Some(name.clone()),
                         },
                     ),
-                    None => Err(AppError::coded(
-                        boot::CODE_SESSION_MISSING,
-                        "内部错误：账本库会话缺失",
-                    )),
+                    None => Err(AppError::coded(boot::CODE_SESSION_MISSING, SESSION_MISSING)),
                 })
                 .await;
                 match outcome {
@@ -406,10 +400,7 @@ pub(crate) fn MerchantsView() -> impl IntoElement {
             spawn(async move {
                 let outcome = blocking(move || match db.as_ref() {
                     Some(db) => boot::delete_merchant(db, &merchant_id),
-                    None => Err(AppError::coded(
-                        boot::CODE_SESSION_MISSING,
-                        "内部错误：账本库会话缺失",
-                    )),
+                    None => Err(AppError::coded(boot::CODE_SESSION_MISSING, SESSION_MISSING)),
                 })
                 .await;
                 match outcome {

@@ -4065,7 +4065,6 @@ const BALANCE_REPORT_NOOP_BODY_PREFIX: &str = "全部 ";
 const BALANCE_REPORT_NOOP_BODY_SUFFIX: &str = " 个账户的缓存与实时重算一致，未做改动。";
 const BALANCE_MISSING_TAG: &str = "（缓存行缺失）";
 const BALANCE_DRIFT_COLUMNS: [&str; 3] = ["账户", "修复前缓存", "实时重算"];
-const BALANCE_TASK_FAILED: &str = "内部错误：写入任务异常退出";
 const BALANCE_REPAIR_FAILED_PREFIX: &str = "修复失败: ";
 
 /// 修复报告的呈现投影（旧壳 reportView computed 同口径：有漂移 → 已修复
@@ -4182,7 +4181,7 @@ fn balance_cache_card(palette: views::ViewPalette) -> View {
                     }
                     Ok(Err(e)) => status.set(Some(format!("{BALANCE_REPAIR_FAILED_PREFIX}{e}"))),
                     Err(_) => status.set(Some(format!(
-                        "{BALANCE_REPAIR_FAILED_PREFIX}{BALANCE_TASK_FAILED}"
+                        "{BALANCE_REPAIR_FAILED_PREFIX}{WRITE_TASK_FAILED}"
                     ))),
                 }
             });
