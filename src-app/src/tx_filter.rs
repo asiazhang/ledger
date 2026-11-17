@@ -106,9 +106,19 @@ pub struct DrillFilters {
     pub date_to: Option<String>,
 }
 
-/// 单维下钻构造（#2147 手拼四处 + #2150 残余收口）：账户维（旧壳
-/// `?account=` 同键，其余维度复位 = 全量替换语义）。交易列表自下钻、搜索
-/// 视图跨视图下钻与账户页下钻同一构造单点。
+/// 下钻构造的覆盖边界（#2155 决策：多维下钻不收口进本模块）：本组 helper
+/// 只辖**单维**下钻（账户维 / 商户维，其余维度复位 = 全量替换语义，调用方
+/// 零额外载荷）。报表视图的多维下钻（分类/商户 + 期间首尾 + 固定支出/退款
+/// kinds）保留 reports.rs 手拼 [`DrillFilters`] 的正当边界——该 kinds 是
+/// 报表柱值口径（支出净额）的**报表侧语义**，参数化进本模块会把报表
+/// kinds 语义耦合进交易筛选会话态；且报表两处调用各带不同维度，多维
+/// 参数化 helper 只会退化为 struct 字面量的第二写法，收口无净收益。
+/// 未来报表面扩展若再引手拼，先对照本边界判断归属，不默认扩 helper。
+///
+/// #2155 之前的单维收口（#2147 手拼四处 + #2150 残余）：交易列表自下钻、
+/// 搜索视图跨视图下钻与账户页下钻同一构造单点。
+///
+/// 单维下钻构造：账户维（旧壳 `?account=` 同键）。
 pub(crate) fn drill_by_account(id: &str) -> DrillFilters {
     DrillFilters {
         account: Some(id.to_owned()),
@@ -118,6 +128,7 @@ pub(crate) fn drill_by_account(id: &str) -> DrillFilters {
 
 /// 单维下钻构造：商户维（旧壳 `?merchant=` 同键，其余维度复位 = 全量替换
 /// 语义）。交易列表自下钻、搜索视图跨视图下钻与商户页下钻同一构造单点。
+/// 多维下钻（报表侧）不在此收口——见本组 helper 头部的覆盖边界声明（#2155）。
 pub(crate) fn drill_by_merchant(id: &str) -> DrillFilters {
     DrillFilters {
         merchant: Some(id.to_owned()),

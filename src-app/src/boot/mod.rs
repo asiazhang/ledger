@@ -550,7 +550,7 @@ pub fn restore_locked_book(backup_path: &Path, passphrase: Option<&str>) -> Resu
             // 这里；防御分支显式码化上抛，不 panic（ADR-0060）。
             let passphrase = passphrase.ok_or_else(|| {
                 AppError::coded(
-                    "backup.passphrase-required",
+                    ledger_backup::CODE_PASSPHRASE_REQUIRED,
                     "恢复出的密文库需要备份所在库的主口令才能解锁",
                 )
             })?;

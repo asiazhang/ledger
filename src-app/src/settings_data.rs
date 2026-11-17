@@ -1235,7 +1235,9 @@ fn confirm_restore_task(owner: Owner, state: BackupUiState) {
                     state.restore_busy.set(false);
                     // 后端探测实际密文而元数据未标记（异常产物）时，按需显出口令
                     // 输入——以后端探测为准（旧壳 passphraseRevealedByError 同位）。
-                    if e.to_string().contains("backup.passphrase-required") {
+                    // 判读以码化错误的 code 类型化判定（#2145：后端 Display 只含
+                    // 中文消息，原文案子串 contains 恒不命中、显出接线形同虚设）。
+                    if e.is_code(ledger_backup::CODE_PASSPHRASE_REQUIRED) {
                         state.restore_pass_revealed.set(true);
                     }
                 }

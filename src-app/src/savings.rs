@@ -34,6 +34,7 @@ use crate::boot;
 use crate::danger::{self, DangerOutcome};
 use crate::date_select;
 use crate::design::font_size;
+use crate::list_card;
 use crate::modal;
 use crate::nav;
 use crate::nav_model::ViewName;
@@ -538,31 +539,23 @@ pub(crate) fn SavingsGoalsView() -> impl IntoElement {
             )
     };
     let archived_card = move || {
-        view()
-            .flex_1()
-            .flex_col()
-            .gap_2()
-            .app_class("rounded-(--radius-card) border border-border p-3")
-            .child(
-                // 卡标题自然高度（#2135 布局对齐线，同根因另见 items/accounts/
-                // merchants/policies 同款标题行）：标题不参与弹性分配。
-                text(ARCHIVED_TITLE)
-                    .text_size(px(font_size::SECONDARY))
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(fg),
-            )
-            .child(
-                view().test_id("sg-archived-table").flex_1().child(
-                    data_table()
-                        .columns(archived_columns)
-                        .data(data_of(archived_rows, true))
-                        .render_cell(cell_of(archived_rows, true))
-                        .loading(move || loading.get())
-                        .loading_view(text("正在加载…").text_color(muted))
-                        .classes(table_classes())
-                        .flex_1(),
-                ),
-            )
+        // 装配三件归 list_card_of 单点（#2156）；渲染门控在调用方
+        // （下方 child 处归档非零才挂载，旧壳 v-if 同果）。
+        list_card::list_card_of(
+            ARCHIVED_TITLE,
+            fg,
+            None,
+            "sg-archived-table",
+            data_table()
+                .columns(archived_columns)
+                .data(data_of(archived_rows, true))
+                .render_cell(cell_of(archived_rows, true))
+                .loading(move || loading.get())
+                .loading_view(text("正在加载…").text_color(muted))
+                .classes(table_classes())
+                .flex_1(),
+            None,
+        )
     };
 
     // 表单弹层内容（视图树内联函数式插槽）：新建与编辑共用；计划月存结构性

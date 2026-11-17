@@ -48,6 +48,7 @@ use crate::boot;
 use crate::combo_select;
 use crate::date_select;
 use crate::design::font_size;
+use crate::list_card;
 use crate::modal;
 use crate::nav_model::ViewName;
 use crate::pinyin_select;
@@ -1914,41 +1915,30 @@ pub(crate) fn PoliciesView() -> impl IntoElement {
                     ),
                 )
                 .child(
-                    // 清单卡片（卡片自身 flex_1——虚拟化表格取弹性链高度，卡
-                    // 片不定高则虚拟化量出零高，先例同注）。
-                    view()
-                        .flex_1()
-                        .flex_col()
-                        .gap_2()
-                        .app_class("rounded-(--radius-card) border border-border p-3")
-                        .child(
-                            // 卡标题自然高度（#2135 布局对齐线，同根因另见
-                            // items/accounts/merchants 同款标题行）：标题不参
-                            // 与弹性分配，否则少数据时表头被推到卡内中部。
-                            text(LIST_CARD_TITLE)
-                                .text_size(px(font_size::SECONDARY))
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .text_color(fg),
-                        )
-                        .child(
-                            view().test_id("policy-table").flex_1().child(
-                                data_table()
-                                    .component_ref(&table_ref)
-                                    .columns(columns)
-                                    .data(data_of)
-                                    .row_classes(row_classes)
-                                    .render_cell(cell_of)
-                                    .loading(move || loading.get())
-                                    .loading_view(text(LOADING_PLACEHOLDER).text_color(muted))
-                                    .empty(
-                                        text(EMPTY_GUIDE)
-                                            .text_color(muted)
-                                            .test_id("policy-empty-guide"),
-                                    )
-                                    .classes(table_classes())
-                                    .flex_1(),
-                            ),
-                        ),
+                    // 清单卡（装配三件归 list_card_of 单点，#2156）：卡片
+                    // flex_1 容器 + 自然高标题 + flex_1 表格容器。
+                    list_card::list_card_of(
+                        LIST_CARD_TITLE,
+                        fg,
+                        None,
+                        "policy-table",
+                        data_table()
+                            .component_ref(&table_ref)
+                            .columns(columns)
+                            .data(data_of)
+                            .row_classes(row_classes)
+                            .render_cell(cell_of)
+                            .loading(move || loading.get())
+                            .loading_view(text(LOADING_PLACEHOLDER).text_color(muted))
+                            .empty(
+                                text(EMPTY_GUIDE)
+                                    .text_color(muted)
+                                    .test_id("policy-empty-guide"),
+                            )
+                            .classes(table_classes())
+                            .flex_1(),
+                        None,
+                    ),
                 )
                 .child(
                     // 操作反馈条位（成功/失败共用一条；新动作开始清回空）。

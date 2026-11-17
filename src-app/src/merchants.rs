@@ -49,6 +49,7 @@ use crate::app::db_slot;
 use crate::assembly::{self, ColumnAlign, MERCHANT_COLUMNS, MerchantListContext, MerchantRowCells};
 use crate::boot;
 use crate::design::font_size;
+use crate::list_card;
 use crate::modal;
 use crate::nav_model::{NavRequest, ViewName};
 use crate::popconfirm;
@@ -717,21 +718,12 @@ pub(crate) fn MerchantsView() -> impl IntoElement {
             .otherwise(view),
         );
 
-    let list_card = view()
-        .flex_1()
-        .flex_col()
-        .gap_2()
-        .app_class("rounded-(--radius-card) border border-border p-3")
-        .child(
-            // 卡标题自然高度（#2135 布局对齐线，同根因另见 items/accounts/
-            // policies 同款标题行）：标题不参与弹性分配，否则少数据时
-            // 表头与搜索行被推到卡内中部。
-            text(LIST_CARD_TITLE)
-                .text_size(px(font_size::SECONDARY))
-                .font_weight(FontWeight::SEMIBOLD)
-                .text_color(fg),
-        )
-        .child(
+    // 清单卡（装配三件归 list_card_of 单点，#2156）：卡片 flex_1 容器 +
+    // 自然高标题 + flex_1 表格容器；搜索行 / 分页条经 before / after 收纳。
+    let list_card = list_card::list_card_of(
+        LIST_CARD_TITLE,
+        fg,
+        Some(
             // 搜索 + 显示已删（过滤意图行）。
             view()
                 .flex_row()
@@ -764,27 +756,24 @@ pub(crate) fn MerchantsView() -> impl IntoElement {
                                 .text_color(fg)
                                 .test_id("merchant-show-deleted"),
                         ),
-                ),
-        )
-        .child(
-            // 清单卡片体（卡片自身 flex_1——虚拟化表格取弹性链高度，卡片不定高
-            // 则虚拟化量出零高，先例账户/物品视图同注）。
-            view().test_id("merchant-table").flex_1().child(
-                data_table()
-                    .columns(columns)
-                    .data(data_of)
-                    .render_cell(cell_of)
-                    .sort(move || sort.get())
-                    .on_sort_change(move |requested: &Option<DataTableSort>| {
-                        on_sort_change(requested);
-                    })
-                    .loading(move || loading.get())
-                    .loading_view(text(LOADING_PLACEHOLDER).text_color(muted))
-                    .classes(table_classes())
-                    .flex_1(),
-            ),
-        )
-        .child(
+                )
+                .into_element(),
+        ),
+        "merchant-table",
+        // 清单卡片体（卡片自身 flex_1——虚拟化表格取弹性链高度）。
+        data_table()
+            .columns(columns)
+            .data(data_of)
+            .render_cell(cell_of)
+            .sort(move || sort.get())
+            .on_sort_change(move |requested: &Option<DataTableSort>| {
+                on_sort_change(requested);
+            })
+            .loading(move || loading.get())
+            .loading_view(text(LOADING_PLACEHOLDER).text_color(muted))
+            .classes(table_classes())
+            .flex_1(),
+        Some(
             // 总条数 + 分页条（旧壳 pagination.prefix「共 N 条」同词表；分页条
             // 仅多页在场——单页只留总数，旧壳同果）。
             view()
@@ -817,8 +806,10 @@ pub(crate) fn MerchantsView() -> impl IntoElement {
                         },
                     )
                     .otherwise(view),
-                ),
-        );
+                )
+                .into_element(),
+        ),
+    );
 
     view()
         .flex_1()
