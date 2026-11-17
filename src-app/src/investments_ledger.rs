@@ -65,7 +65,7 @@ use crate::assembly::CategoryOption;
 use crate::design::font_size;
 use crate::investments::PanePalette;
 use crate::read_load::{ReadLoad, blocking_read};
-use crate::settings_data::READ_TASK_FAILED;
+use crate::settings_data::{READ_TASK_FAILED, SESSION_MISSING, WRITE_TASK_FAILED};
 use crate::{
     app, assembly, boot, context_menu, danger, investments, investments_form, modal, multi_select,
     period, period_row, pinyin_select, signals, transactions,
@@ -1104,7 +1104,7 @@ fn perform_delete(
     view_owner.run(move || {
         spawn(async move {
             let Some(db) = db else {
-                delete_error.set(Some("内部错误：账本库会话缺失".to_owned()));
+                delete_error.set(Some(SESSION_MISSING.to_owned()));
                 return;
             };
             let target = id.clone();
@@ -1116,7 +1116,7 @@ fn perform_delete(
                     reload();
                 }
                 Ok(Err(e)) => delete_error.set(Some(e.to_string())),
-                Err(_) => delete_error.set(Some("内部错误：写入任务异常退出".to_owned())),
+                Err(_) => delete_error.set(Some(WRITE_TASK_FAILED.to_owned())),
             }
         });
     });

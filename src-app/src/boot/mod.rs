@@ -42,6 +42,7 @@ use ledger_infra::db::encryption::EncryptionGate;
 use ledger_infra::db::{DbState, open_connection_readonly_in, open_db_in};
 use ledger_infra::error::{AppError, Result};
 
+use crate::settings_data::SESSION_MISSING;
 use crate::wiring;
 
 mod accounts;
@@ -456,7 +457,7 @@ fn locked_session_db_path() -> Result<PathBuf> {
     let dir = match boot_record() {
         Some(record) => record.db_dir,
         None => crate::app::book_dir()
-            .ok_or_else(|| AppError::coded(CODE_SESSION_MISSING, "内部错误：账本库会话缺失"))?,
+            .ok_or_else(|| AppError::coded(CODE_SESSION_MISSING, SESSION_MISSING))?,
     };
     Ok(dir.join(DB_FILE_NAME))
 }
@@ -549,7 +550,7 @@ pub fn restore_locked_book(backup_path: &Path, passphrase: Option<&str>) -> Resu
             // 这里；防御分支显式码化上抛，不 panic（ADR-0060）。
             let passphrase = passphrase.ok_or_else(|| {
                 AppError::coded(
-                    "backup.passphrase-required",
+                    ledger_backup::CODE_PASSPHRASE_REQUIRED,
                     "恢复出的密文库需要备份所在库的主口令才能解锁",
                 )
             })?;

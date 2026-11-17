@@ -285,6 +285,7 @@ pub mod investments_instruments;
 pub mod investments_ledger;
 pub mod items;
 pub mod keep_mounted;
+pub mod list_card;
 pub mod logging;
 pub mod market_lanes;
 pub mod merchants;

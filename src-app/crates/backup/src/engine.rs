@@ -778,6 +778,12 @@ pub fn backup_db_to(
 /// 备份与数据文件域 PreUpdateBackup 词条）。
 pub const PRE_UPDATE_BACKUP_FILE_NAME: &str = "pre-update.db.zip";
 
+/// 码 `backup.passphrase-required`（issue #2145 单一来源）：密文备份缺口令
+/// 的码化错误条件（构造点：[`open_backup_db_conn`] 校验关口与
+/// `restore_locked_book` 防御分支；判读点：壳层恢复失败臂按 code 类型化
+/// 判读显出口令框）。错误口令另报 `encryption.passphrase-incorrect`。
+pub const CODE_PASSPHRASE_REQUIRED: &str = "backup.passphrase-required";
+
 /// 创建更新前备份（PreUpdateBackup，issue #1430 / ADR-0124 决策 6）：应用自动
 /// 更新安装前由系统自动为当前活动账本创建的备份，用于新版迁移出错时回滚。
 ///
@@ -983,7 +989,7 @@ fn open_backup_db_conn(tmp_db: &Path, passphrase: Option<&str>) -> Result<Connec
                 Some(pass) => db::open_connection_with_passphrase(tmp_db, pass)?,
                 None => {
                     return Err(AppError::coded(
-                        "backup.passphrase-required",
+                        CODE_PASSPHRASE_REQUIRED,
                         "该备份为密文备份，需要备份所在库的主口令才能恢复",
                     ));
                 }
