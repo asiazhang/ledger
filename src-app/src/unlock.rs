@@ -314,8 +314,12 @@ impl LockedSurface {
                         surface.busy.set(false);
                         // 后端探测实际密文而元数据未标记（异常产物）时，按需显
                         // 出口令输入——以后端探测为准（旧壳
-                        // passphraseRevealedByError 同位）。
-                        if intent.backup_encrypted || text.contains("backup.passphrase-required") {
+                        // passphraseRevealedByError 同位）。判读以码化错误的
+                        // code 类型化判定（#2145：后端 Display 只含中文消息，
+                        // 原文案子串 contains 恒不命中、显出接线形同虚设）。
+                        if intent.backup_encrypted
+                            || e.is_code(ledger_backup::CODE_PASSPHRASE_REQUIRED)
+                        {
                             surface.restore_pass_revealed.set(true);
                         }
                     }

@@ -54,6 +54,7 @@ use nsh_core::prelude::*;
 use crate::assembly::CategoryOption;
 use crate::design::font_size;
 use crate::investments::PanePalette;
+use crate::settings_data::{READ_TASK_FAILED, SESSION_MISSING, WRITE_TASK_FAILED};
 use crate::{
     app, boot, danger, investment_sync, investments, modal, pinyin_select, select, signals,
     transactions,
@@ -504,7 +505,7 @@ pub(crate) fn InstrumentsPane() -> impl IntoElement {
         spawn(async move {
             let Some(db) = db else {
                 loading.set(false);
-                error.set(Some("内部错误：账本库会话缺失".to_owned()));
+                error.set(Some(SESSION_MISSING.to_owned()));
                 return;
             };
             let db_read = db.clone();
@@ -517,7 +518,7 @@ pub(crate) fn InstrumentsPane() -> impl IntoElement {
                     apply_page(result, table, privacy_enabled);
                 }
                 Ok(Err(e)) => error.set(Some(e.to_string())),
-                Err(_) => error.set(Some("内部错误：读任务异常退出".to_owned())),
+                Err(_) => error.set(Some(READ_TASK_FAILED.to_owned())),
             }
         });
     };
@@ -547,7 +548,7 @@ pub(crate) fn InstrumentsPane() -> impl IntoElement {
         spawn(async move {
             let Some(db) = db else {
                 loading.set(false);
-                error.set(Some("内部错误：账本库会话缺失".to_owned()));
+                error.set(Some(SESSION_MISSING.to_owned()));
                 return;
             };
             let db_read = db.clone();
@@ -1118,7 +1119,7 @@ fn perform_instrument_delete(
             let id = row.id.clone();
             let label = row.display_name.clone();
             let Some(db) = db else {
-                delete_error.set(Some("内部错误：账本库会话缺失".to_owned()));
+                delete_error.set(Some(SESSION_MISSING.to_owned()));
                 return;
             };
             let outcome = blocking(move || boot::delete_instrument(&db, &id)).await;
@@ -1129,7 +1130,7 @@ fn perform_instrument_delete(
                     reload();
                 }
                 Ok(Err(e)) => delete_error.set(Some(e.to_string())),
-                Err(_) => delete_error.set(Some("内部错误：写入任务异常退出".to_owned())),
+                Err(_) => delete_error.set(Some(WRITE_TASK_FAILED.to_owned())),
             }
         })
     });
@@ -1372,7 +1373,7 @@ fn submit_manual_quote(
             submitting.set(true);
             let Some(db) = db else {
                 submitting.set(false);
-                quote_error.set(Some("内部错误：账本库会话缺失".to_owned()));
+                quote_error.set(Some(SESSION_MISSING.to_owned()));
                 return;
             };
             let outcome = blocking(move || boot::record_manual_price(&db, &input)).await;
@@ -1397,7 +1398,7 @@ fn submit_manual_quote(
                     }
                 }
                 Ok(Err(e)) => quote_error.set(Some(e.to_string())),
-                Err(_) => quote_error.set(Some("内部错误：写入任务异常退出".to_owned())),
+                Err(_) => quote_error.set(Some(WRITE_TASK_FAILED.to_owned())),
             }
         });
     });
@@ -1497,7 +1498,6 @@ fn add_instrument_modal(
         move || ADD_TITLE.to_owned(),
         move || add_open.set(false),
         move || {
-            let placeholder = code_placeholder_of(channel.get().as_deref());
             // 主提交（分派：自定义 = 建档；其余 = 查询——旧壳 submitPrimary
             // 同面）。分派在闭包内做（is_custom 现读），装面输入 Reflection。
             let on_submit = move |_: &PressEvent| {
@@ -1529,7 +1529,7 @@ fn add_instrument_modal(
                                 add_error.set(None);
                                 let Some(db) = db else {
                                     creating.set(false);
-                                    add_error.set(Some("内部错误：账本库会话缺失".to_owned()));
+                                    add_error.set(Some(SESSION_MISSING.to_owned()));
                                     return;
                                 };
                                 let outcome =
@@ -1550,9 +1550,7 @@ fn add_instrument_modal(
                                         signals::notify_investments_invalidated();
                                     }
                                     Ok(Err(e)) => add_error.set(Some(e.to_string())),
-                                    Err(_) => {
-                                        add_error.set(Some("内部错误：写入任务异常退出".to_owned()))
-                                    }
+                                    Err(_) => add_error.set(Some(WRITE_TASK_FAILED.to_owned())),
                                 }
                             });
                         }
@@ -1576,7 +1574,7 @@ fn add_instrument_modal(
                                 not_found_hint.set(false);
                                 let Some(db) = db else {
                                     querying.set(false);
-                                    add_error.set(Some("内部错误：账本库会话缺失".to_owned()));
+                                    add_error.set(Some(SESSION_MISSING.to_owned()));
                                     return;
                                 };
                                 let outcome = if channel_id == CHANNEL_ID_FUND {
@@ -1698,7 +1696,12 @@ fn add_instrument_modal(
                             input()
                                 .test_id("add-instrument-code")
                                 .value(move || code.get())
-                                .placeholder(placeholder)
+                                // 占位随通道选择就地跟换（#2143 审计命中①弹窗
+                                // 内缺陷段：弹窗内容闭包 untracked 求值，静态
+                                // placeholder 开弹即冻结——换选后引导文案不跟。
+                                // prop 绑定逐次求值；删除绑定回静态 → 本壳
+                                // headless 旅程红）。
+                                .placeholder(move || code_placeholder_of(channel.get().as_deref()))
                                 .optional_label("录入代码")
                                 .text_color(fg)
                                 .w(px(220.0))
@@ -1711,8 +1714,10 @@ fn add_instrument_modal(
                 );
 
             let custom_blocks = when(is_custom(), move || {
-                let codes_now = currencies_table.get();
-                let sys_signal = signal(currency_options(&codes_now));
+                // 币种选项响应式闭包（随字典装载跟换）：修复前分支内建本地
+                // 信号一次播种，字典装载晚于分支建立即冻结空集（同根因家族
+                // 静态形态）。
+                let sys_options = move || currency_options(&currencies_table.get());
                 view()
                     .flex_col()
                     .gap_2()
@@ -1779,10 +1784,7 @@ fn add_instrument_modal(
                             .test_id("add-instrument-currency")
                             .child(pinyin_select::pinyin_select(
                                 "add-instrument-currency-select",
-                                {
-                                    let rows_signal = sys_signal;
-                                    move || rows_signal.get()
-                                },
+                                sys_options,
                                 custom_currency,
                                 ADD_CURRENCY_LABEL,
                                 false,

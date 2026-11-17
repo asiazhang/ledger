@@ -1239,7 +1239,9 @@ fn confirm_restore_task(owner: Owner, state: BackupUiState) {
                     state.restore_busy.set(false);
                     // 后端探测实际密文而元数据未标记（异常产物）时，按需显出口令
                     // 输入——以后端探测为准（旧壳 passphraseRevealedByError 同位）。
-                    if e.to_string().contains("backup.passphrase-required") {
+                    // 判读以码化错误的 code 类型化判定（#2145：后端 Display 只含
+                    // 中文消息，原文案子串 contains 恒不命中、显出接线形同虚设）。
+                    if e.is_code(ledger_backup::CODE_PASSPHRASE_REQUIRED) {
                         state.restore_pass_revealed.set(true);
                     }
                 }
@@ -1774,14 +1776,22 @@ fn backup_cards(palette: views::ViewPalette) -> View {
                             },
                         )
                         .otherwise(move || {
-                            view().flex_col().app_class("gap-1").children(
-                                state
-                                    .rows
-                                    .get()
-                                    .into_iter()
-                                    .enumerate()
-                                    .map(|(index, row)| backup_row(palette, index, row)),
-                            )
+                            // 行集段 dynamic（读什么变什么重造，#2146 选型标准
+                            // 整段重造归 dynamic）：修复前 otherwise 分支内静
+                            // 态 children（state.rows 一次读入），列表非空期间
+                            // 新增/清理备份后行集不重渲染，面板重开才见新清单
+                            //（#2143 审计同根因实例；删 dynamic 回静态 →
+                            // backup_list_rows_refresh_in_place_after_new_backup 红）。
+                            dynamic(move || {
+                                view().flex_col().app_class("gap-1").children(
+                                    state
+                                        .rows
+                                        .get()
+                                        .into_iter()
+                                        .enumerate()
+                                        .map(|(index, row)| backup_row(palette, index, row)),
+                                )
+                            })
                         }),
                     )
                 }),
@@ -3931,7 +3941,6 @@ const BALANCE_REPORT_NOOP_BODY_PREFIX: &str = "全部 ";
 const BALANCE_REPORT_NOOP_BODY_SUFFIX: &str = " 个账户的缓存与实时重算一致，未做改动。";
 const BALANCE_MISSING_TAG: &str = "（缓存行缺失）";
 const BALANCE_DRIFT_COLUMNS: [&str; 3] = ["账户", "修复前缓存", "实时重算"];
-const BALANCE_TASK_FAILED: &str = "内部错误：写入任务异常退出";
 const BALANCE_REPAIR_FAILED_PREFIX: &str = "修复失败: ";
 
 /// 修复报告的呈现投影（旧壳 reportView computed 同口径：有漂移 → 已修复
@@ -4048,7 +4057,7 @@ fn balance_cache_card(palette: views::ViewPalette) -> View {
                     }
                     Ok(Err(e)) => status.set(Some(format!("{BALANCE_REPAIR_FAILED_PREFIX}{e}"))),
                     Err(_) => status.set(Some(format!(
-                        "{BALANCE_REPAIR_FAILED_PREFIX}{BALANCE_TASK_FAILED}"
+                        "{BALANCE_REPAIR_FAILED_PREFIX}{WRITE_TASK_FAILED}"
                     ))),
                 }
             });
