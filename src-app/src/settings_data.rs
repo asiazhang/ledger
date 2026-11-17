@@ -135,6 +135,7 @@ pub(crate) const RESTORE_CONFIRM_ACTION: &str = "确认恢复";
 pub(crate) const RESTORE_CANCEL: &str = "取消";
 pub(crate) const RESTORE_PASS_LABEL: &str = "备份的主口令";
 pub(crate) const RESTORE_PASS_PLACEHOLDER: &str = "输入该备份的主口令";
+pub(crate) const RESTORE_BACKUP_FILE_LABEL: &str = "备份文件：";
 pub(crate) const RESTORE_CROSS_MODE_TITLE: &str = "加密模式不一致";
 pub(crate) const RESTORE_TO_PLAINTEXT_WARN: &str =
     "当前库为加密库：恢复这份明文备份后，数据将变为未加密，应用重启后以明文库启动。";

@@ -129,7 +129,11 @@ fn restore_body(
         .flex_col()
         .app_class("gap-2")
         .child(
-            text(format!("备份文件：{}", opened.path))
+            text(format!(
+                "{}{}",
+                settings_data::RESTORE_BACKUP_FILE_LABEL,
+                opened.path
+            ))
                 .text_size(px(font_size::CAPTION))
                 .text_color(palette.fg)
                 .test_id(ids.path),
