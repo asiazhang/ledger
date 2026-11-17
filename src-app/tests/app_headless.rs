@@ -14885,10 +14885,7 @@ fn settings_restore_modal_metadata_unmarked_encrypted_backup_reveals_passphrase_
     app.type_text("id:data-restore-passphrase", PASS_BACKUP)
         .unwrap();
     app.press("id:data-restore-confirm").unwrap();
-    app.wait_for(
-        "text:恢复成功，请重启应用进入新库（本壳无原位重引导：旧壳恢复后自动重启的偏差见交付报告）",
-    )
-    .unwrap();
+    app.wait_for("text:恢复成功，请重启应用进入新库").unwrap();
 }
 
 /// 自动备份首次兜底全旅程（issue #2078 接线断言；backup 域既有语义零新口径）：
