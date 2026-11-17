@@ -43,6 +43,7 @@ use crate::pinyin_select;
 use crate::plot_line;
 use crate::plot_line::PlotLineSeries;
 use crate::popover::popover_tip;
+use crate::read_load::{ReadLoad, blocking_read};
 use crate::select;
 use crate::settings_data::READ_TASK_FAILED;
 use crate::signals;
@@ -1098,22 +1099,14 @@ fn overview_pane() -> impl IntoElement {
         let privacy_enabled = amount_privacy_enabled();
         let db = db_slot().clone();
         spawn(async move {
-            let Some(db) = db else {
-                error.set(Some(READ_TASK_FAILED.to_owned()));
-                return;
-            };
-            let outcome = blocking(
-                move || -> ledger_infra::error::Result<
-                    (OverviewSnap, Vec<ledger_currencies::Currency>),
-                > {
-                    let overview = boot::investment_overview(&db)?;
-                    let currencies = boot::currency_rows(&db)?;
-                    Ok((OverviewSnap::of_domain(&overview), currencies))
-                },
-            )
-            .await;
-            match outcome {
-                Ok(Ok((snap, currency_rows))) => {
+            match blocking_read(db, |db| {
+                let overview = boot::investment_overview(db)?;
+                let currencies = boot::currency_rows(db)?;
+                Ok((OverviewSnap::of_domain(&overview), currencies))
+            })
+            .await
+            {
+                ReadLoad::Ready((snap, currency_rows)) => {
                     privacy.set(privacy_enabled);
                     cells.set(Some(assemble_overview(
                         &snap,
@@ -1125,8 +1118,10 @@ fn overview_pane() -> impl IntoElement {
                     ));
                     error.set(None);
                 }
-                Ok(Err(e)) => error.set(Some(e.to_string())),
-                Err(_) => error.set(Some(READ_TASK_FAILED.to_owned())),
+                ReadLoad::Coded(e) => error.set(Some(e.to_string())),
+                ReadLoad::MissingDb | ReadLoad::TaskFailed => {
+                    error.set(Some(READ_TASK_FAILED.to_owned()))
+                }
             }
         });
     };
@@ -1143,18 +1138,15 @@ fn overview_pane() -> impl IntoElement {
         };
         let db = db_slot().clone();
         spawn(async move {
-            let Some(db) = db else {
-                trend_error.set(Some(READ_TASK_FAILED.to_owned()));
-                return;
-            };
-            let outcome = blocking(move || boot::portfolio_value_trend(&db, &range)).await;
-            match outcome {
-                Ok(Ok(t)) => {
+            match blocking_read(db, move |db| boot::portfolio_value_trend(db, &range)).await {
+                ReadLoad::Ready(t) => {
                     trend.set(Some(assemble_trend(&t)));
                     trend_error.set(None);
                 }
-                Ok(Err(e)) => trend_error.set(Some(e.to_string())),
-                Err(_) => trend_error.set(Some(READ_TASK_FAILED.to_owned())),
+                ReadLoad::Coded(e) => trend_error.set(Some(e.to_string())),
+                ReadLoad::MissingDb | ReadLoad::TaskFailed => {
+                    trend_error.set(Some(READ_TASK_FAILED.to_owned()))
+                }
             }
         });
     };
@@ -1667,31 +1659,21 @@ fn pnl_pane() -> impl IntoElement {
         let filter_instrument = filter.instrument_id.clone();
         let db = db_slot().clone();
         spawn(async move {
-            let Some(db) = db else {
-                error.set(Some(READ_TASK_FAILED.to_owned()));
-                return;
-            };
-            // 汇总与收益率两条命令独立（旧壳两 Loadable 并行同口径）；失败
-            // 各自呈现，不互相拖垮。
-            let outcome = blocking(
-                move || -> ledger_infra::error::Result<(
-                    PnlSnap,
-                    ledger_investment::MoneyWeightedReturnSummary,
-                    Vec<ledger_currencies::Currency>,
-                )> {
-                    let filter = ledger_investment::PnlFilter {
-                        account_id: filter_account.clone(),
-                        instrument_id: filter_instrument.clone(),
-                    };
-                    let summary = boot::realized_pnl_summary(&db, &filter)?;
-                    let mwr = boot::money_weighted_return_summary(&db)?;
-                    let currencies = boot::currency_rows(&db)?;
-                    Ok((PnlSnap::of_domain(&summary), mwr, currencies))
-                },
-            )
-            .await;
-            match outcome {
-                Ok(Ok((summary_snap, mwr_raw, currency_rows))) => {
+            match blocking_read(db, |db| {
+                // 汇总与收益率两条命令独立（旧壳两 Loadable 并行同口径）；
+                // 失败各自呈现，不互相拖垮。
+                let filter = ledger_investment::PnlFilter {
+                    account_id: filter_account,
+                    instrument_id: filter_instrument,
+                };
+                let summary = boot::realized_pnl_summary(db, &filter)?;
+                let mwr = boot::money_weighted_return_summary(db)?;
+                let currencies = boot::currency_rows(db)?;
+                Ok((PnlSnap::of_domain(&summary), mwr, currencies))
+            })
+            .await
+            {
+                ReadLoad::Ready((summary_snap, mwr_raw, currency_rows)) => {
                     pnl_currencies.set(crate::assembly::CurrencyTable::from_currencies(
                         &currency_rows,
                     ));
@@ -1718,8 +1700,10 @@ fn pnl_pane() -> impl IntoElement {
                             .min(total_pages(summary_snap.by_account.len())),
                     );
                 }
-                Ok(Err(e)) => error.set(Some(e.to_string())),
-                Err(_) => error.set(Some(READ_TASK_FAILED.to_owned())),
+                ReadLoad::Coded(e) => error.set(Some(e.to_string())),
+                ReadLoad::MissingDb | ReadLoad::TaskFailed => {
+                    error.set(Some(READ_TASK_FAILED.to_owned()))
+                }
             }
         });
     };

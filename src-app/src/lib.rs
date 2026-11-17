@@ -144,6 +144,8 @@
 //! - [`keep_mounted`]：visited-once keep-mounted 页签宿主封装（#2073 自设置
 //!   /投资双实现收拢）——已到访页签 display 隐藏保持挂载（切页签不重挂重拉）、
 //!   未到访不预载；到访标记与到访 effect 同点；设置页与投资页页签容器消费；
+//! - [`read_load`]：读装载守卫（#2154）——db 缺席守卫 + blocking + 三分口
+//!   产出的小件，投资族与物品清单装载共用；码化错误语义与在场行为零变化；
 //! - [`signals`]：进程内失效信号——交易数据失效的订阅/广播单点，写路径
 //!   成功后广播、列表视图订阅重读（#2022；词汇表失效信号语义的壳内通道）；
 //! - [`theme`]：主题令牌装配（#2100，ADR-0147 决策 1）——nsh.json 清单挂载
@@ -300,6 +302,7 @@ pub mod plot_line;
 pub mod policies;
 pub mod popconfirm;
 pub mod popover;
+pub mod read_load;
 pub mod redact;
 pub mod reports;
 pub mod row_focus;
