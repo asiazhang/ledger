@@ -51,6 +51,7 @@ use crate::adaptive;
 use crate::assembly::{CategoryOption, CurrencyTable, PnlSemantic};
 use crate::design::font_size;
 use crate::investments::{HoldingsSortColumn, HoldingsSorter};
+use crate::read_load::{ReadLoad, blocking_read};
 use crate::settings_data::READ_TASK_FAILED;
 use crate::{
     app, assembly, boot, investment_sync, investments, popover, select, signals, transactions,
@@ -441,21 +442,15 @@ pub(crate) fn HoldingsPane() -> impl IntoElement {
         let privacy_enabled = transactions::amount_privacy_enabled();
         let db = app::db_slot().clone();
         spawn(async move {
-            // DbState 克隆件拥有地进阻塞闭包（`blocking` 要求 'static）——
-            // 借用面溢出即编译红，投资污污同形先例。
-            let Some(db) = db else {
-                error.set(Some(READ_TASK_FAILED.to_owned()));
-                return;
-            };
-            let outcome = blocking(move || -> ledger_infra::error::Result<LoadAll> {
+            match blocking_read(db, |db| -> ledger_infra::error::Result<LoadAll> {
                 // 行集 + 参考面一次装载；累计收益命令独立（错误只降级累计卡，
                 // 旧壳两路独立 Loadable 同语义）。
-                let holdings = boot::portfolio_rows(&db)?;
-                let instruments = boot::instrument_rows(&db)?;
-                let accounts = boot::account_rows(&db)?;
-                let mwr = boot::money_weighted_return_summary(&db)?;
-                let currencies = boot::currency_rows(&db)?;
-                let cumulative = boot::cumulative_pnl_native_total(&db);
+                let holdings = boot::portfolio_rows(db)?;
+                let instruments = boot::instrument_rows(db)?;
+                let accounts = boot::account_rows(db)?;
+                let mwr = boot::money_weighted_return_summary(db)?;
+                let currencies = boot::currency_rows(db)?;
+                let cumulative = boot::cumulative_pnl_native_total(db);
                 let (cumulative, cumulative_error) = match cumulative {
                     Ok(c) => (
                         Some(CumulativeSnap {
@@ -476,9 +471,9 @@ pub(crate) fn HoldingsPane() -> impl IntoElement {
                     cumulative_error,
                 })
             })
-            .await;
-            match outcome {
-                Ok(Ok(all)) => {
+            .await
+            {
+                ReadLoad::Ready(all) => {
                     // 装配与快照双用账户行集（快照面先克隆，装配面消费原集）。
                     let accounts_rows = all.accounts.clone();
                     accounts.set(Accounts(accounts_rows));
@@ -497,8 +492,10 @@ pub(crate) fn HoldingsPane() -> impl IntoElement {
                     cumulative.set(all.cumulative);
                     cumulative_error.set(all.cumulative_error.map(|e| e.to_string()));
                 }
-                Ok(Err(e)) => error.set(Some(e.to_string())),
-                Err(_) => error.set(Some(READ_TASK_FAILED.to_owned())),
+                ReadLoad::Coded(e) => error.set(Some(e.to_string())),
+                ReadLoad::MissingDb | ReadLoad::TaskFailed => {
+                    error.set(Some(READ_TASK_FAILED.to_owned()))
+                }
             }
         });
     };

@@ -64,6 +64,7 @@ use nsh_core::prelude::*;
 use crate::assembly::CategoryOption;
 use crate::design::font_size;
 use crate::investments::PanePalette;
+use crate::read_load::{ReadLoad, blocking_read};
 use crate::settings_data::READ_TASK_FAILED;
 use crate::{
     app, assembly, boot, context_menu, danger, investments, investments_form, modal, multi_select,
@@ -613,24 +614,22 @@ pub(crate) fn LedgerPane() -> impl IntoElement {
         let tracked_session = session;
         let db = app::db_slot().clone();
         spawn(async move {
-            let Some(db) = db else {
-                loading.set(false);
-                error.set(Some(format!("{LOAD_FAILED_PREFIX}{READ_TASK_FAILED}")));
-                return;
-            };
-            let outcome = blocking(move || -> ledger_infra::error::Result<LedgerPageBatch> {
-                let page = boot::investment_transaction_page(&db, &filter)?;
-                let account_rows = boot::account_rows(&db)?;
-                let currencies = boot::currency_rows(&db)?;
-                let date_range = boot::report_date_range(&db)
-                    .ok()
-                    .map(|dr| (dr.min_date, dr.max_date));
-                Ok((page, account_rows, currencies, date_range))
-            })
+            let outcome = blocking_read(
+                db,
+                move |db| -> ledger_infra::error::Result<LedgerPageBatch> {
+                    let page = boot::investment_transaction_page(db, &filter)?;
+                    let account_rows = boot::account_rows(db)?;
+                    let currencies = boot::currency_rows(db)?;
+                    let date_range = boot::report_date_range(db)
+                        .ok()
+                        .map(|dr| (dr.min_date, dr.max_date));
+                    Ok((page, account_rows, currencies, date_range))
+                },
+            )
             .await;
             loading.set(false);
             match outcome {
-                Ok(Ok((page, account_rows, currency_rows, date_range))) => {
+                ReadLoad::Ready((page, account_rows, currency_rows, date_range)) => {
                     // 空页自愈（issue #893 同款）。
                     if page.items.is_empty()
                         && page.total > 0
@@ -653,8 +652,10 @@ pub(crate) fn LedgerPane() -> impl IntoElement {
                     boundary_dates.set(date_range);
                     error.set(None);
                 }
-                Ok(Err(e)) => error.set(Some(format!("{LOAD_FAILED_PREFIX}{e}"))),
-                Err(_) => error.set(Some(format!("{LOAD_FAILED_PREFIX}{READ_TASK_FAILED}"))),
+                ReadLoad::Coded(e) => error.set(Some(format!("{LOAD_FAILED_PREFIX}{e}"))),
+                ReadLoad::MissingDb | ReadLoad::TaskFailed => {
+                    error.set(Some(format!("{LOAD_FAILED_PREFIX}{READ_TASK_FAILED}")))
+                }
             }
             let _ = (filter_account, filter_instrument);
         });

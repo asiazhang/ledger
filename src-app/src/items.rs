@@ -61,6 +61,7 @@ use crate::modal;
 use crate::nav_model::{NavRequest, ViewName};
 use crate::pinyin_select;
 use crate::popconfirm;
+use crate::read_load::{ReadLoad, blocking_read};
 use crate::settings_data::{READ_TASK_FAILED, WRITE_TASK_FAILED};
 use crate::transactions::table_classes;
 use crate::views::field_label;
@@ -155,14 +156,6 @@ fn dispose_label_by_flag(in_use: bool) -> &'static str {
 // ---------------------------------------------------------------------------
 // 快照与流形状
 // ---------------------------------------------------------------------------
-
-/// 装载批产物（读接缝单点的具名元组）。
-type ItemLoads = ledger_infra::error::Result<(
-    Vec<ItemWithDailyCost>,
-    Vec<ledger_currencies::Currency>,
-    String,
-    Vec<ledger_transaction::Transaction>,
-)>;
 
 /// 编辑 / 处置 / 详情目标的行反查单点（同一快照单点，不另立第二映射）。
 fn snap_of<'a>(snapshot: &'a [ItemWithDailyCost], id: &str) -> Option<&'a ItemWithDailyCost> {
@@ -265,13 +258,7 @@ pub(crate) fn ItemsView() -> impl IntoElement {
         let db = db_slot().clone();
         view_owner.run(move || {
             spawn(async move {
-                let Some(dbc) = db.clone() else {
-                    error.set(Some("内部错误：账本库会话缺失".to_owned()));
-                    loading.set(false);
-                    return;
-                };
-                let outcome = blocking(move || -> ItemLoads {
-                    let dbc = &dbc;
+                match blocking_read(db, |dbc| {
                     let rows = boot::item_rows(dbc)?;
                     let currency_rows = boot::currency_rows(dbc).unwrap_or_default();
                     let base = boot::base_currency_code(dbc)
@@ -281,16 +268,21 @@ pub(crate) fn ItemsView() -> impl IntoElement {
                         .unwrap_or_default();
                     Ok((rows, currency_rows, base, candidate_rows))
                 })
-                .await;
-                let loaded = outcome.ok().and_then(|inner| inner.ok());
-                match loaded {
-                    Some((rows, currency_rows, base, candidate_rows)) => {
+                .await
+                {
+                    ReadLoad::Ready((rows, currency_rows, base, candidate_rows)) => {
                         items.set(ItemsSnap(rows));
                         currencies.set(CurrencyTable::from_currencies(&currency_rows));
                         base_currency.set(base);
                         candidates.set(CandidatesSnap(candidate_rows));
                     }
-                    None => error.set(Some(READ_TASK_FAILED.to_owned())),
+                    // 旧折叠口径：码化错误与任务退出同价（READ_TASK_FAILED），
+                    // 会话缺席是另一句「账本库会话缺失」——三分口文案各异，不收
+                    // 进守卫。
+                    ReadLoad::MissingDb => error.set(Some("内部错误：账本库会话缺失".to_owned())),
+                    ReadLoad::Coded(_) | ReadLoad::TaskFailed => {
+                        error.set(Some(READ_TASK_FAILED.to_owned()))
+                    }
                 }
                 loading.set(false);
             });
