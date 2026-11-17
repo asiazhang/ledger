@@ -15167,6 +15167,77 @@ fn auto_backup_triggers_after_shell_write_and_card_refreshes() {
         .unwrap();
 }
 
+/// 定时计划自动执行（追补）落账 → 在场视图在屏更新（issue #2159 接线断言）。
+/// 到期期次经产品追补入口自动落账（备份调度线程每轮经钩子调用的同一入口：
+/// 连接取会话写连接、开关与今天注入——调度轮的测试驱动等价面，不实等 10 分钟
+/// 节奏，节奏语义归备份域内核测试）；交易页在场时无需重新落位即可见新交易：
+/// 追补落账 → 定时计划域注册点钩子（壳层接线）→ pending 计数（跨线程桥）→
+/// 引擎线程泵消费广播交易 / 预算族 → 视图订阅重读。
+///
+/// 「删除即红」（ADR-0087 接线断言，对准用户可观察结果 = 新交易在屏）：删壳层
+/// 接线（wiring 的追补失效钩子对装）或删泵消费（backup_host 泵的追补 pending
+/// 分支）任一环 → 追补落账后无任何壳内失效广播 → 视图持旧空列表 → 本
+/// wait_for 超时红。追补行为本体（到期判定 / 失败策略 / 置脏）归域单测与
+/// ADR-0042 既有覆盖，本测钉壳内反馈接线的端到端结果。
+#[test]
+fn scheduled_catch_up_auto_execution_updates_on_screen_transaction_list() {
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("auto-run-catch-up");
+    // 到期期次现场：订阅计划起始日 = 昨天（最早一期已到期，金额 ¥30；本月
+    // 后续期次未到期不被追补触碰）。
+    let due_date = today()
+        .checked_sub_days(chrono::Days::new(1))
+        .unwrap()
+        .to_string();
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let account = seed_account_with_balance(&db, "测试现金", 10_000);
+        let conn = db.conn.lock().unwrap();
+        ledger_scheduled::create_plan(
+            &conn,
+            ledger_scheduled::CreateScheduledInput {
+                kind: ledger_scheduled::ScheduledKind::Subscription,
+                account_id: account,
+                category_id: None,
+                amount_cents: 3_000,
+                currency_code: "CNY".to_owned(),
+                recurrence_type: ledger_scheduled::RecurrenceType::Monthly,
+                recurrence_interval: 1,
+                recurrence_day: None,
+                start_date: due_date.clone(),
+                note: Some("自动执行追补的计划".to_owned()),
+                merchant_id: None,
+                policy_id: None,
+                total_amount_cents: None,
+                total_occurrences: None,
+                to_account_id: None,
+            },
+        )
+        .unwrap();
+    }
+
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_transactions(&mut app);
+    // 基线：追补前交易列表为空（期次尚未落账）。
+    app.wait_for("text:暂无数据").unwrap();
+
+    // 触发追补：产品追补入口（调度线程每轮调用的同一入口；开关注入开、今天
+    // 注入本地今日），连接取会话写连接——与调度轮的连接取用同源。
+    let db = nsh_app::test_support::session_db().expect("会话应已就绪");
+    {
+        let conn = db.conn.lock().unwrap();
+        let summary = ledger_scheduled::auto_run::run_catch_up(&conn, true, today());
+        assert_eq!(summary.executed, 1, "到期一期应自动落账");
+    }
+
+    // 追补落账 → 失效广播 → 视图重读：新交易在屏（日期忠实回填期次计划日期，
+    // 金额为计划金额）。删除接线任一环本 wait_for 超时红。
+    app.wait_for(&format!("text:{due_date}")).unwrap();
+    app.wait_for("text:¥30").unwrap();
+}
+
 /// 加密开启流守卫（error 级无后门确认 + ≥8 位 / 一致守卫）：短口令即时红
 /// 显 + 提交禁用；不一致红显；同向可用 → error 级确认弹窗（无后门后果说
 /// 明在屏）→ 取消零写（密码文件为明文）→ 再进确认 → 整库转换成功（文件
