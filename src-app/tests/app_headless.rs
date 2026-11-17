@@ -14928,14 +14928,12 @@ fn settings_restore_modal_metadata_unmarked_encrypted_backup_reveals_passphrase_
     );
 
     // 重输备份主口令 → 恢复成功（密文备份恢复进明文库，元数据未标记不拦
-    // 正确口令的整库替换）。
+    // 正确口令的整库替换）。成功反馈取 #2142 落定的干净变体（#2145 合并
+    // 冲突残留：本测曾带开发向括注长文案，与 #2142 去括注后的常量分叉）。
     app.type_text("id:data-restore-passphrase", PASS_BACKUP)
         .unwrap();
     app.press("id:data-restore-confirm").unwrap();
-    app.wait_for(
-        "text:恢复成功，请重启应用进入新库（本壳无原位重引导：旧壳恢复后自动重启的偏差见交付报告）",
-    )
-    .unwrap();
+    app.wait_for("text:恢复成功，请重启应用进入新库").unwrap();
 }
 
 /// 自动备份首次兜底全旅程（issue #2078 接线断言；backup 域既有语义零新口径）：
