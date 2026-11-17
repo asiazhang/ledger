@@ -315,7 +315,8 @@ pub(crate) fn subscriptions_pane(pending_focus: Signal<Option<String>>) -> impl 
     // 详情重试 / 展开成功的回报（changed）：清单与花费同步重拉 + 交易失效
     // 信号广播（期次执行落交易行 → 交易列表重读见行；「删除即红」条目钉
     // 在 headless：删本回调的重拉接线 → 弹窗外清单的「下期扣款」行值不
-    // 重读即红；删广播接线 → 交易列表不刷新即红）。
+    // 重读即红；交易列表侧的删广播即红钉在 #2022 删除刷新旅程与概览真负向
+    // 测试（tests/app_headless.rs），定时写路径与订阅视图无法同屏）。
     let reload_after_change = move || {
         reload();
         signals::notify_transactions_invalidated();
@@ -341,6 +342,7 @@ pub(crate) fn subscriptions_pane(pending_focus: Signal<Option<String>>) -> impl 
         fg,
         muted,
         danger_fg,
+        ..
     } = crate::views::view_palette();
     // 主按钮前景 = primary-foreground 令牌（亮暗双态随表；旧裸白直调退役）。
     let primary_fg = crate::theme::color("primary-foreground");

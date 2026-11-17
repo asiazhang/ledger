@@ -920,6 +920,7 @@ pub(crate) fn trade_form_modal(
         fg,
         muted,
         danger_fg,
+        ..
     } = crate::views::view_palette();
 
     let submit = perform_submit(state, sources, is_fund, view_owner);

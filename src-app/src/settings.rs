@@ -76,6 +76,7 @@ use crate::app::book_dir;
 use crate::assembly::CategoryOption;
 use crate::danger::{DangerConfirmSpec, DangerLevel, DangerOutcome, danger_confirm};
 use crate::design::font_size;
+use crate::settings_data::{READ_TASK_FAILED, SESSION_MISSING, WRITE_TASK_FAILED};
 use crate::{boot, keep_mounted, nav, nav_model, select, updater, views};
 
 // ---------------------------------------------------------------------------
@@ -140,9 +141,6 @@ const ADOPT_CANCEL: &str = "取消换位";
 const CARD_FEATURES: &str = "功能开关";
 const FEATURES_INTRO: &str =
     "关闭只隐藏入口：数据不删，统计口径与后台行为照旧运行，随时可以重新打开。";
-const SESSION_MISSING: &str = "内部错误：账本库会话缺失";
-const READ_TASK_FAILED: &str = "内部错误：读任务异常退出";
-const WRITE_TASK_FAILED: &str = "内部错误：写入任务异常退出";
 
 /// 功能简介词表（旧壳 settings.features.descriptions.<id> 原文；键 = 可关九
 /// 项，与 [`nav_model::CLOSABLE_FEATURES`] 同集；不可关项不出现——旧壳同口径

@@ -53,6 +53,7 @@ use crate::nav_model::ViewName;
 use crate::pinyin_select;
 use crate::popconfirm;
 use crate::select;
+use crate::settings_data::{READ_TASK_FAILED, WRITE_TASK_FAILED};
 use crate::transactions::table_classes;
 use crate::views::field_label;
 use crate::{nav, signals};
@@ -132,10 +133,9 @@ const MSG_SEGMENTS_FAILED: &str = "协议历史加载失败";
 const EVERY_WORD: &str = "每";
 const PERIOD_DIVIDER: &str = "~";
 
-/// 装载占位与任务缺省错误文案（旧壳 loading / 异常分支同口径）。
+/// 装载占位文案（旧壳 loading 同口径）；任务退出错误文案消费
+/// settings_data 单一来源。
 const LOADING_PLACEHOLDER: &str = "正在加载…";
-const WRITE_TASK_FAILED: &str = "内部错误：写入任务异常退出";
-const READ_TASK_FAILED: &str = "内部错误：读任务异常退出";
 
 /// 统计行缺失 / 无活跃协议等「—」占位（旧壳 policyStatAmountText 等同口径）。
 const DASH_PLACEHOLDER: &str = "—";
@@ -680,6 +680,7 @@ pub(crate) fn PoliciesView() -> impl IntoElement {
         fg,
         muted,
         danger_fg,
+        ..
     } = crate::views::view_palette();
 
     // ============================ 表单弹层状态 ============================

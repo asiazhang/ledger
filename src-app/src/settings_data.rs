@@ -41,6 +41,13 @@
 //! 案仅 zh-CN（旧壳 settings.* / books.* zh-CN 词条原样承载）；码化错误的
 //! 中文原样呈现。
 //!
+//! 弹窗条件段机制选型（#2146 定案，行为零变化）：**布尔有无 / 分支翻转 →
+//! `when`**（nsh-core `flow.rs` `Region::If`：条件翻转入支重造、离支销毁，
+//! 分支闭包 untracked 求值，内容活性靠 reactive 绑定逐次求值）；**多态内容
+//! 匹配或整段重造 → `dynamic`**（`Region::Dynamic`：读什么变什么重造）。
+//! 全部弹窗条件段按此归位（恢复弹窗口令框/错误位与引导弹窗各族段均为布尔
+//! 有无 → `when` 同款）。
+//!
 //! 测试豁免（ADR-0060）：本模块测试经 crate 根 cfg(test) 整体放行六件套。
 
 use std::path::{Path, PathBuf};
@@ -164,8 +171,8 @@ const PRUNE_CONFIRM_DETAIL: &str =
 const PRUNE_CONFIRM_OK: &str = "确认清理";
 const PRUNE_CONFIRM_CANCEL: &str = "取消";
 pub(crate) const FILTER_NAME: &str = "开源记账备份";
-/// 任务退出三词面单一来源（旧壳命令层同守卫词表；设置面各页签卡统一消费
-/// 本源，不再各自重复声明——code-review 常量三份收口）。
+/// 任务退出三词面单一来源（旧壳命令层同守卫词表；壳内各视图模块统一消费
+/// 本源，不再各自重复声明——#2147 设置面收口、#2149 全壳收口）。
 pub(crate) const SESSION_MISSING: &str = "内部错误：账本库会话缺失";
 pub(crate) const READ_TASK_FAILED: &str = "内部错误：读任务异常退出";
 pub(crate) const WRITE_TASK_FAILED: &str = "内部错误：写入任务异常退出";
@@ -1304,39 +1311,43 @@ fn restore_modal_body(state: BackupUiState, owner: Owner, palette: views::ViewPa
                         .test_id("data-restore-cross-mode"),
                 )
         }))
-        // 口令框与错误位是「弹窗开着期间就地变化」的条件结构：when 分支闭包
-        // untracked 求值（开弹时一次），后续显出/置错不再重跑——条件段用
-        // dynamic（读什么变什么重造，nsh-core flow.rs Region::Dynamic），按钮
-        // 禁用面用响应式闭包（prop 绑定逐次求值）。修复前静态 children/静态
-        // disabled 开弹即冻结：密文备份口令输入后确认按钮永不可按（无法提交）、
-        // 失败错误行不呈现、后端报需口令后口令框不显出（headless
+        // 口令框与错误位是「弹窗开着期间就地变化」的条件段，均为布尔有无
+        // （口令框 = 意图为密文备份或口令已显出；错误行 = 有无错误），按模块
+        // 头选型标准（#2146）用 when（条件翻转重建 + reactive 绑定逐次求
+        // 值，同引导弹窗同款形态），不用 dynamic（读什么变什么重造，选型标
+        // 准只留给多态内容匹配/整段重造）。按钮禁用面用响应式闭包（prop 绑
+        // 定逐次求值）。修复前静态 children/静态 disabled 开弹即冻结：密文
+        // 备份口令输入后确认按钮永不可按（无法提交）、失败错误行不呈现、后
+        // 端报需口令后口令框不显出（headless
         // settings_restore_modal_encrypted_backup_submits_after_passphrase_typed
         // 钉住）。交叉模式块随意图固定，静态段承载。
-        .child(dynamic(move || {
-            let Some(intent) = state.restore_intent.get() else {
-                return view();
-            };
-            let show_pass = intent.backup_encrypted || state.restore_pass_revealed.get();
-            if !show_pass {
-                return view();
-            }
-            pass_input(
-                state.restore_pass,
-                palette,
-                "data-restore-passphrase",
-                RESTORE_PASS_LABEL,
-                RESTORE_PASS_PLACEHOLDER,
-            )
-        }))
-        .child(dynamic(move || match state.restore_error.get() {
-            Some(err) => view().child(
-                text(err)
+        .child(when(
+            move || {
+                state
+                    .restore_intent
+                    .get()
+                    .is_some_and(|intent| intent.backup_encrypted)
+                    || state.restore_pass_revealed.get()
+            },
+            move || {
+                pass_input(
+                    state.restore_pass,
+                    palette,
+                    "data-restore-passphrase",
+                    RESTORE_PASS_LABEL,
+                    RESTORE_PASS_PLACEHOLDER,
+                )
+            },
+        ))
+        .child(when(
+            move || state.restore_error.get().is_some(),
+            move || {
+                text(move || state.restore_error.get().unwrap_or_default())
                     .text_size(px(font_size::CAPTION))
                     .text_color(views::view_palette().danger_fg)
-                    .test_id("data-restore-error"),
-            ),
-            None => view(),
-        }))
+                    .test_id("data-restore-error")
+            },
+        ))
         .child(
             view()
                 .flex_row()
@@ -3057,11 +3068,11 @@ fn bootstrap_modal_body(state: SyncState, owner: Owner, palette: views::ViewPale
         .child(pass_input(
             state.bootstrap_pass, palette, "sync-bootstrap-passphrase", "主口令", SYNC_BOOTSTRAP_PASS_PLACEHOLDER,
         ))
-        // 错误行随弹窗开着期间的信号变化（引导失败置错误）：when 分支闭包
-        // untracked 求值、静态 children 开弹即冻结，失败错误行不呈现——同弹
-        // 窗 precheck_error 同款 when 形态（与恢复确认弹窗同款修复；无
-        // headless 验证面〔同步引导旅程需通道桩，headless 面未覆盖〕，机械
-        // 同款修复）。
+        // 错误行随弹窗开着期间的信号变化（引导失败置错误）：布尔有无 →
+        // when（模块头选型标准 #2146；when 分支闭包 untracked 求值、静态
+        // children 开弹即冻结，失败错误行不呈现）——同弹窗 precheck_error
+        // 同款 when 形态（与恢复确认弹窗错误位同款修复；无 headless 验证
+        // 面〔同步引导旅程需通道桩，headless 面未覆盖〕，机械同款修复）。
         .child(when(
             move || state.bootstrap_error.get().is_some(),
             move || {

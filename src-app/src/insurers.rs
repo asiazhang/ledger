@@ -34,6 +34,7 @@ use crate::modal;
 use crate::nav;
 use crate::nav_model::ViewName;
 use crate::popconfirm;
+use crate::settings_data::{READ_TASK_FAILED, WRITE_TASK_FAILED};
 use crate::transactions::table_classes;
 use crate::views::field_label;
 
@@ -62,8 +63,6 @@ const MSG_UPDATED: &str = "已更新保险公司";
 const MSG_UPDATED_FAILED: &str = "更新失败";
 const MSG_DELETED: &str = "已删除保险公司";
 const MSG_DELETE_FAILED: &str = "删除失败";
-const READ_TASK_FAILED: &str = "内部错误：读任务异常退出";
-const WRITE_TASK_FAILED: &str = "内部错误：写入任务异常退出";
 
 /// 保司管理视图（组「更多」容器保司页签的真实组件，#2051）。
 #[component]
@@ -125,6 +124,7 @@ pub(crate) fn InsurersView() -> impl IntoElement {
         fg,
         muted,
         danger_fg,
+        ..
     } = crate::views::view_palette();
 
     // 操作反馈条位（NSH 无 toast——#2038 裁决；旧壳 message.success/error 的

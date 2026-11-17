@@ -581,6 +581,7 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
         fg,
         muted,
         danger_fg,
+        ..
     } = crate::views::view_palette();
     // 加入物品成功反馈条位的前景色（#2044；与列表前景同源）。
     let item_feedback_fg = fg;

@@ -1242,6 +1242,7 @@ pub(crate) fn transaction_form_modal(
         fg,
         muted,
         danger_fg,
+        ..
     } = crate::views::view_palette();
 
     let submit = perform_submit(state, sources, view_owner);

@@ -24,8 +24,10 @@
 //! 修正处置信息）+ 软删轻量确认气泡（ADR-0078 轻量档平价：旧壳
 //! AppPopconfirm 同形态，气泡挂行内删除按钮）。写路径直调域公开写入口
 //! （不经 IPC，ADR-0145 决策 4），成功后广播交易失效信号（交易列表来源列
-//! 展示物品名 / 处置态——旧壳 `ledger:changed` 粗粒度语义的壳内对应物；
-//! 广播接线删除即红钉在 headless 名字改后来源列重读旅程）。
+//! 展示物品名 / 处置态——旧壳 `ledger:changed` 粗粒度语义的壳内对应物）。
+//! 本视图写路径无本地 reload：在场物品行重读走「广播 → 订阅重读」，删广播
+//! 接线即红钉在 headless 物品改名旅程（红于在场行更新，非交易列表来源列
+//! 的落位重读）。
 //!
 //! 界面文案仅 zh-CN（旧壳 items.* zh-CN 词条原样字面承载）；码化错误 zh 原样
 //! 呈现；视图本地状态、会话内保留不做（离开再回 = 全新装载，旧壳重挂同口径）。
@@ -59,6 +61,7 @@ use crate::modal;
 use crate::nav_model::{NavRequest, ViewName};
 use crate::pinyin_select;
 use crate::popconfirm;
+use crate::settings_data::{READ_TASK_FAILED, WRITE_TASK_FAILED};
 use crate::transactions::table_classes;
 use crate::views::field_label;
 use crate::{nav, signals};
@@ -137,10 +140,9 @@ const MSG_PLAIN: &str = "—";
 /// 本位币基准读取失败的软回退（旧壳缺省 CNY 同口径：折算后缀不阻断列表）。
 const DEFAULT_BASE_CURRENCY: &str = "CNY";
 
-/// 装载占位与任务缺省错误文案（旧壳 loading / 异常分支同口径）。
+/// 装载占位文案（旧壳 loading 同口径）；任务退出错误文案消费
+/// settings_data 单一来源。
 const LOADING_PLACEHOLDER: &str = "正在加载…";
-const LOAD_TASK_FAILED: &str = "内部错误：读任务异常退出";
-const WRITE_TASK_FAILED: &str = "内部错误：写入任务异常退出";
 
 fn dispose_label_by_flag(in_use: bool) -> &'static str {
     if in_use {
@@ -288,7 +290,7 @@ pub(crate) fn ItemsView() -> impl IntoElement {
                         base_currency.set(base);
                         candidates.set(CandidatesSnap(candidate_rows));
                     }
-                    None => error.set(Some(LOAD_TASK_FAILED.to_owned())),
+                    None => error.set(Some(READ_TASK_FAILED.to_owned())),
                 }
                 loading.set(false);
             });
@@ -354,6 +356,7 @@ pub(crate) fn ItemsView() -> impl IntoElement {
         fg,
         muted,
         danger_fg,
+        ..
     } = crate::views::view_palette();
     // 信息语义色（提示条字形；主色系承担 info 语义，theme.json 单点）。
     let info_fg = crate::theme::color("primary");
@@ -478,7 +481,8 @@ pub(crate) fn ItemsView() -> impl IntoElement {
                         status.set(Some(MSG_SAVED.to_owned()));
                         // 物品行变化（名称 / 溯源 / 成本）会改变交易列表来源列
                         // 展示——按旧壳 ledger:changed 粗粒度语义广播交易失效
-                        //（广播接线删除即红：headless 名字改后来源列重读旅程）。
+                        //（本视图无本地 reload：广播接线删除 → 在场物品行停留
+                        // 旧值即红，headless 改名旅程钉点）。
                         signals::notify_transactions_invalidated();
                     }
                     Ok(Err(e)) => {
@@ -671,7 +675,7 @@ pub(crate) fn ItemsView() -> impl IntoElement {
                 match outcome {
                     Ok(Ok(cost)) => detail_cost.set(RecalcSnap(Some(cost))),
                     Ok(Err(e)) => detail_error.set(Some(format!("{MSG_RECALC_FAILED}: {e}"))),
-                    Err(_) => detail_error.set(Some(LOAD_TASK_FAILED.to_owned())),
+                    Err(_) => detail_error.set(Some(READ_TASK_FAILED.to_owned())),
                 }
             });
         });

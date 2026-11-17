@@ -148,6 +148,7 @@ pub(crate) fn BudgetView() -> impl IntoElement {
         fg,
         muted,
         danger_fg,
+        ..
     } = crate::views::view_palette();
 
     // 装载（首屏与失效信号重读共用一条路径）：进度行集 + 年度汇总 + 支出分类

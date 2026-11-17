@@ -51,6 +51,7 @@ use crate::adaptive;
 use crate::assembly::{CategoryOption, CurrencyTable, PnlSemantic};
 use crate::design::font_size;
 use crate::investments::{HoldingsSortColumn, HoldingsSorter};
+use crate::settings_data::READ_TASK_FAILED;
 use crate::{
     app, assembly, boot, investment_sync, investments, popover, select, signals, transactions,
 };
@@ -443,7 +444,7 @@ pub(crate) fn HoldingsPane() -> impl IntoElement {
             // DbState 克隆件拥有地进阻塞闭包（`blocking` 要求 'static）——
             // 借用面溢出即编译红，投资污污同形先例。
             let Some(db) = db else {
-                error.set(Some(investments::MSG_INTERNAL.to_owned()));
+                error.set(Some(READ_TASK_FAILED.to_owned()));
                 return;
             };
             let outcome = blocking(move || -> ledger_infra::error::Result<LoadAll> {
@@ -497,7 +498,7 @@ pub(crate) fn HoldingsPane() -> impl IntoElement {
                     cumulative_error.set(all.cumulative_error.map(|e| e.to_string()));
                 }
                 Ok(Err(e)) => error.set(Some(e.to_string())),
-                Err(_) => error.set(Some(investments::MSG_INTERNAL.to_owned())),
+                Err(_) => error.set(Some(READ_TASK_FAILED.to_owned())),
             }
         });
     };

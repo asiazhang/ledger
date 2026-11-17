@@ -44,6 +44,7 @@ use crate::plot_line;
 use crate::plot_line::PlotLineSeries;
 use crate::popover::popover_tip;
 use crate::select;
+use crate::settings_data::READ_TASK_FAILED;
 use crate::signals;
 use crate::transactions::amount_privacy_enabled;
 use crate::views;
@@ -118,8 +119,6 @@ pub(crate) const PNL_MWR_CUMULATIVE_TIP: &str =
     "未年化：累计收益除以累计投入（含建仓时点未知的持仓，不给年化）";
 /// 折算口径披露句（旧壳 investments.pnl.calibrationNote 同词表直取）。
 pub(crate) const PNL_CALIBRATION_NOTE: &str = "两表金额已折算为本位币：每腿按其实现时点所在周的汇率折算（汇率缺失时取就近周），跨币种已合计，供跨年、跨账户直接比较。";
-/// 内部错误兜底文案（读任务异常退出/会话缺失；boot 读面同词）。
-pub(crate) const MSG_INTERNAL: &str = "内部错误：读任务异常退出";
 
 // ---------------------------------------------------------------------------
 // 会话槽（旧壳 investments-session store 的本票射程子集）
@@ -1100,7 +1099,7 @@ fn overview_pane() -> impl IntoElement {
         let db = db_slot().clone();
         spawn(async move {
             let Some(db) = db else {
-                error.set(Some(MSG_INTERNAL.to_owned()));
+                error.set(Some(READ_TASK_FAILED.to_owned()));
                 return;
             };
             let outcome = blocking(
@@ -1127,7 +1126,7 @@ fn overview_pane() -> impl IntoElement {
                     error.set(None);
                 }
                 Ok(Err(e)) => error.set(Some(e.to_string())),
-                Err(_) => error.set(Some(MSG_INTERNAL.to_owned())),
+                Err(_) => error.set(Some(READ_TASK_FAILED.to_owned())),
             }
         });
     };
@@ -1145,7 +1144,7 @@ fn overview_pane() -> impl IntoElement {
         let db = db_slot().clone();
         spawn(async move {
             let Some(db) = db else {
-                trend_error.set(Some(MSG_INTERNAL.to_owned()));
+                trend_error.set(Some(READ_TASK_FAILED.to_owned()));
                 return;
             };
             let outcome = blocking(move || boot::portfolio_value_trend(&db, &range)).await;
@@ -1155,7 +1154,7 @@ fn overview_pane() -> impl IntoElement {
                     trend_error.set(None);
                 }
                 Ok(Err(e)) => trend_error.set(Some(e.to_string())),
-                Err(_) => trend_error.set(Some(MSG_INTERNAL.to_owned())),
+                Err(_) => trend_error.set(Some(READ_TASK_FAILED.to_owned())),
             }
         });
     };
@@ -1669,7 +1668,7 @@ fn pnl_pane() -> impl IntoElement {
         let db = db_slot().clone();
         spawn(async move {
             let Some(db) = db else {
-                error.set(Some(MSG_INTERNAL.to_owned()));
+                error.set(Some(READ_TASK_FAILED.to_owned()));
                 return;
             };
             // 汇总与收益率两条命令独立（旧壳两 Loadable 并行同口径）；失败
@@ -1720,7 +1719,7 @@ fn pnl_pane() -> impl IntoElement {
                     );
                 }
                 Ok(Err(e)) => error.set(Some(e.to_string())),
-                Err(_) => error.set(Some(MSG_INTERNAL.to_owned())),
+                Err(_) => error.set(Some(READ_TASK_FAILED.to_owned())),
             }
         });
     };
