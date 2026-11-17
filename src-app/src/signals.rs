@@ -71,6 +71,15 @@ thread_local! {
 /// 度失效信号只表达「备份列表变过」，消费方重拉即得最新全量。
 static BACKUPS_PENDING: AtomicUsize = AtomicUsize::new(0);
 
+/// 追补落账失效的进程级 pending 计数（#2159 跨线程桥的落点）：定时计划追补
+/// （备份调度线程，无命令身份、只持 `&Connection`）经壳层接线钩子置数；引擎
+/// 线程泵（[`crate::backup_host`] 装载）消费后在本线程广播交易 / 预算族（追补
+/// 只写交易行，预算进度派生自交易；投资 / 参考 / 价格 / 备份数据不动，不广
+/// 播）。与 [`BACKUPS_PENDING`] 同款机制：计数无场景态（进程级原子），桥接与
+/// 消费两侧任意场景顺序下语义不变；粗粒度失效只表达「追补落过账」，消费方重
+/// 拉即得最新全量。
+static CATCH_UP_PENDING: AtomicUsize = AtomicUsize::new(0);
+
 /// 订阅句柄发放计数器（进程级单调，每订阅一个；跨族共享——id 全表唯一，
 /// 句柄撤销按 id 清行即可，无需族信息）。
 static NEXT_SUBSCRIBER: AtomicU64 = AtomicU64::new(0);
@@ -186,6 +195,19 @@ pub fn take_backups_pending() -> bool {
     BACKUPS_PENDING.swap(0, Ordering::Relaxed) > 0
 }
 
+/// 深路径发射落点（任意写线程；追补落账失效经壳层接线钩子到达）：置一次追补
+/// 落账 pending。非阻塞、无锁争用面（原子加计）——发射失败静默语义沿
+/// ADR-0044（本落点不可失败）。
+pub fn record_catch_up_pending() {
+    CATCH_UP_PENDING.fetch_add(1, Ordering::Relaxed);
+}
+
+/// 消费追补落账 pending（UI 线程泵消费点）：有待消费置数则清零并返回 true，
+/// 泵据此广播交易 / 预算族（广播闭集见 [`CATCH_UP_PENDING`] 注记）。
+pub fn take_catch_up_pending() -> bool {
+    CATCH_UP_PENDING.swap(0, Ordering::Relaxed) > 0
+}
+
 /// 清空全部订阅（headless 多场景串行测试的复位接缝：上一场景的引擎已撤销，
 /// 其视图订阅者不得响应下一场景的广播；生产 bin 不消费）。与
 /// [`crate::app::reset_book_assembly`] 同一批复位点。全表一并复位；备份族
@@ -194,6 +216,7 @@ pub fn take_backups_pending() -> bool {
 pub fn reset_for_tests() {
     SUBSCRIBERS.with_borrow_mut(|slot| slot.clear());
     BACKUPS_PENDING.store(0, Ordering::Relaxed);
+    CATCH_UP_PENDING.store(0, Ordering::Relaxed);
 }
 
 #[cfg(test)]
@@ -426,6 +449,20 @@ mod tests {
         reset();
         notify_backups_invalidated();
         assert_eq!(hits.load(Ordering::Relaxed), 1, "复位后广播无人接收");
+        reset();
+    }
+
+    /// 追补落账族（#2159）：pending 计数置/取对称、消费即清零。泵接线归
+    /// backup_host 装载（headless 追补落账旅程钉「追补落账 → 在屏更新」端到
+    /// 端），本测钉计数语义本身。
+    #[test]
+    fn catch_up_pending_round_trips() {
+        reset();
+        assert!(!take_catch_up_pending(), "初始无待消费 pending");
+        record_catch_up_pending();
+        record_catch_up_pending();
+        assert!(take_catch_up_pending(), "有待消费 pending 应取到 true");
+        assert!(!take_catch_up_pending(), "消费即清零，第二次取应为 false");
         reset();
     }
 }

@@ -134,6 +134,13 @@ pub(crate) fn install_shell_side() {
         if signals::take_backups_pending() {
             signals::notify_backups_invalidated();
         }
+        // 追补落账失效（#2159，与备份族同款 pending 桥）：定时计划追补（备份
+        // 调度线程经接线钩子置数）→ 本泵消费后广播交易 / 预算族——追补只写
+        // 交易行，预算进度派生自交易；广播闭集注记见 signals::CATCH_UP_PENDING。
+        if signals::take_catch_up_pending() {
+            signals::notify_transactions_invalidated();
+            signals::notify_budgets_invalidated();
+        }
     });
     effect(move || {
         let _held_for_app_lifetime: &Spawned<()> = &pump;
@@ -264,6 +271,7 @@ mod tests {
             "ledger_backup::occurrence_dirty_hook",
             "register_catch_up_hook",
             "auto_run::catch_up_hook",
+            "register_catch_up_invalidation_hook",
             "register_lock_hold_budget",
         ] {
             assert!(
