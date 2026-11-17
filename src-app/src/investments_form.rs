@@ -909,6 +909,7 @@ pub(crate) fn trade_form_modal(
         fg,
         muted,
         danger_fg,
+        primary_fg,
         ..
     } = crate::views::view_palette();
 
@@ -1230,7 +1231,7 @@ pub(crate) fn trade_form_modal(
                                     )
                                 })
                                 .text_size(px(font_size::SECONDARY))
-                                .text_color(crate::theme::color("primary-foreground"))
+                                .text_color(primary_fg)
                                 .test_id(SUBMIT_ID),
                             )
                             .on_press(move |_: &()| submit()),

@@ -119,12 +119,14 @@ pub fn danger_confirm(
         token.report(shown);
     });
     let palette = palette(spec.level);
-    // 主题令牌（警示句/确认按钮前景色与卡片文字色；缺失统一落中灰可读兜底，
-    // 兜底常量全仓唯一住在 crate::theme——本模块零本地色常量）。令牌解析在
+    // 视图层取色（#2153）：fg/muted 通面成员改经视图层取色面 view_palette
+    // （共享件入闭集，散写同源令牌构造即第二构造点）；accent 为动态令牌面
+    // （按两级 level 取 destructive / warning 族令牌），保留 theme 单点直读
+    // 正当边界——警示句/确认按钮前景色与卡片文字色；缺失统一落中灰可读兜底，
+    // 兜底常量全仓唯一住在 crate::theme——本模块零本地色常量。令牌解析在
     // UI 构建期（引擎线程）进行。
     let accent = crate::theme::color(palette.accent_token);
-    let fg = crate::theme::color("foreground");
-    let muted = crate::theme::color("muted-foreground");
+    let crate::views::ViewPalette { fg, muted, .. } = crate::views::view_palette();
     let cancel = move || on_outcome(DangerOutcome::Dismissed);
     when(open, move || {
         overlay()

@@ -440,15 +440,15 @@ pub(crate) fn transfers_pane(pending_focus: Signal<Option<String>>) -> impl Into
         }
     });
 
-    // 主题令牌（双态自适应；缺失兜底统一归 crate::theme 单点）。
+    // 主题令牌（双态自适应；缺失兜底统一归 crate::theme 单点；#2153
+    // primary_fg 纳入五件套闭集，主按钮前景随解构取值）。
     let crate::views::ViewPalette {
         fg,
         muted,
         danger_fg,
+        primary_fg,
         ..
     } = crate::views::view_palette();
-    // 主按钮前景 = primary-foreground 令牌（亮暗双态随表；旧裸白直调退役）。
-    let primary_fg = crate::theme::color("primary-foreground");
 
     // ============================ 清单呈现 ============================
     // 状态过滤（纯前端过滤，不产生请求——旧壳 filteredRows 同口径）。

@@ -1238,6 +1238,7 @@ pub(crate) fn transaction_form_modal(
         fg,
         muted,
         danger_fg,
+        primary_fg,
         ..
     } = crate::views::view_palette();
 
@@ -1672,7 +1673,7 @@ pub(crate) fn transaction_form_modal(
                                         )
                                     })
                                         .text_sm()
-                                        .text_color(crate::theme::color("primary-foreground"))
+                                        .text_color(primary_fg)
                                         .test_id(SUBMIT_ID),
                                 )
                                 .on_press(move |_: &()| submit()),
@@ -1801,6 +1802,9 @@ fn funding_rows_section(
                 .test_id(format!("{}-text", FUNDING_TOTAL_ID).as_str())
                 .text_color(move || {
                     if total.get().1 {
+                        // 语义色保留 theme 单点直读（#2153 边界：destructive
+                        // 作语境语义色（红/中性条件选择）按语义单点消费，不入
+                        // palette 闭集，正当边界见 ViewPalette 文档）。
                         crate::theme::color("destructive")
                     } else {
                         muted

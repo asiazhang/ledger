@@ -625,7 +625,7 @@ pub(crate) fn HoldingsPane() -> impl IntoElement {
                         }
                     })
                     .text_size(px(font_size::CAPTION))
-                    .text_color(crate::theme::color("primary-foreground"))
+                    .text_color(palette.primary_fg)
                     .test_id("holdings-sync-button"),
                 ),
         );
@@ -1178,7 +1178,7 @@ fn holdings_table_body(
 fn render_symbol_link(
     drill: Option<crate::nav_model::InvestmentsDrill>,
     label: String,
-    accent: nsh_core::element::AdaptiveColor,
+    primary: nsh_core::element::AdaptiveColor,
     fg: nsh_core::element::AdaptiveColor,
 ) -> nsh_core::element::View {
     match drill {
@@ -1192,7 +1192,7 @@ fn render_symbol_link(
             .child(
                 text(label)
                     .text_size(px(font_size::SECONDARY))
-                    .text_color(accent),
+                    .text_color(primary),
             ),
         None => view().child(
             text(label)
@@ -1238,9 +1238,10 @@ fn row_body(
     let fg = palette.fg;
     let muted = palette.muted;
     // 下钻强调色（旧壳 InstrumentLink accentColor 同语义：主题 primary 令牌
-    // 经 theme::color 单点消费，缺失落可读兑底——accounts.rs 账户名下钻链接
-    // 同款先例）。
-    let accent = crate::theme::color("primary");
+    // 的语义角色消费，低频专用保留 theme::color 直读——accounts.rs 可点原子
+    // 同款先例；#2153：原局部名 accent 与 ViewPalette.accent（accent 令牌）
+    // 同名异义同屏，改名消歧）。
+    let primary = crate::theme::color("primary");
     let gain = palette.gain;
     let loss = palette.loss;
     each(
@@ -1283,7 +1284,7 @@ fn row_body(
                     instrument_id: Some(row.instrument_id.clone()),
                 });
             let link_symbol_text = row.symbol.clone().unwrap_or_else(|| "-".to_owned());
-            let symbol_cell = render_symbol_link(link_drill, link_symbol_text, accent, fg)
+            let symbol_cell = render_symbol_link(link_drill, link_symbol_text, primary, fg)
                 .test_id(format!("holdings-row-{}-symbol", row_id).as_str());
             view()
                 .test_id(format!("holdings-row-{row_id}").as_str())

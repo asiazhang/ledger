@@ -242,9 +242,13 @@ pub(crate) fn ReportsView() -> impl IntoElement {
         fg,
         muted,
         danger_fg,
+        primary_fg,
         ..
     } = crate::views::view_palette();
-    let accent = crate::theme::color("primary");
+    // 可点原子/下钻强调色（primary 令牌的语义角色消费，低频专用保留直读；
+    // #2153：原局部名 accent 与 ViewPalette.accent（accent 令牌）同名异义
+    // 同屏，改名消歧——transactions::primary_color 同款）。
+    let primary = crate::theme::color("primary");
     // 月度图三柱语义色（与交易列表同类金额同源，色值单源 transactions::amount_color）。
     let income_color = amount_color(AmountSemantic::Income);
     let expense_color = amount_color(AmountSemantic::Expense);
@@ -708,7 +712,7 @@ pub(crate) fn ReportsView() -> impl IntoElement {
                                                 .child(
                                                     text("全部分类")
                                                         .text_size(px(font_size::CAPTION))
-                                                        .text_color(accent),
+                                                        .text_color(primary),
                                                 ),
                                         )
                                         .child(text("›").text_size(px(font_size::CAPTION)).text_color(muted))
@@ -824,7 +828,7 @@ pub(crate) fn ReportsView() -> impl IntoElement {
                                     merchant_cells,
                                     fg,
                                     muted,
-                                    accent,
+                                    primary,
                                     content_width,
                                     on_merchant_name_press,
                                 ))
@@ -842,7 +846,7 @@ fn merchant_table(
     cells: Memo<Vec<assembly::MerchantRankingCells>>,
     fg: AdaptiveColor,
     muted: AdaptiveColor,
-    accent: AdaptiveColor,
+    primary: AdaptiveColor,
     content_width: impl Fn() -> f32 + Copy + 'static,
     on_name_press: impl Fn(usize) + Copy + 'static,
 ) -> impl IntoElement {
@@ -889,7 +893,15 @@ fn merchant_table(
             move || cells.get(),
             |r: &assembly::MerchantRankingCells| r.merchant_id.clone(),
             move |item: ReadSignal<assembly::MerchantRankingCells>, index: ReadSignal<usize>| {
-                merchant_row(item, index, fg, muted, accent, content_width, on_name_press)
+                merchant_row(
+                    item,
+                    index,
+                    fg,
+                    muted,
+                    primary,
+                    content_width,
+                    on_name_press,
+                )
             },
         ))
 }
@@ -901,7 +913,7 @@ fn merchant_row(
     index: ReadSignal<usize>,
     fg: AdaptiveColor,
     muted: AdaptiveColor,
-    accent: AdaptiveColor,
+    primary: AdaptiveColor,
     content_width: impl Fn() -> f32 + Copy + 'static,
     on_name_press: impl Fn(usize) + Copy + 'static,
 ) -> impl IntoElement {
@@ -933,7 +945,7 @@ fn merchant_row(
                 .child(
                     text(move || item.get().name.clone())
                         .text_size(px(font_size::SECONDARY))
-                        .text_color(accent)
+                        .text_color(primary)
                         .number_of_lines(1),
                 ),
         )

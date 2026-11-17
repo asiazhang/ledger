@@ -1532,7 +1532,7 @@ fn action_buttons(
                 .child(
                     text(confirm_label)
                         .text_size(px(font_size::SECONDARY))
-                        .text_color(crate::theme::color("primary-foreground"))
+                        .text_color(crate::views::view_palette().primary_fg)
                         .test_id(confirm.as_str()),
                 ),
         )

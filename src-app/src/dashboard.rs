@@ -101,6 +101,7 @@ pub(crate) fn DashboardView() -> impl IntoElement {
         fg,
         muted,
         danger_fg,
+        primary_fg,
         ..
     } = crate::views::view_palette();
     // 走势/接近态蓝（接近自由阶段的普通态；色值与旧壳同源，经令牌 line 单点）。
@@ -622,9 +623,7 @@ pub(crate) fn DashboardView() -> impl IntoElement {
                                         .child(
                                             text("去设置预算")
                                                 .text_size(px(font_size::SECONDARY))
-                                                .text_color(crate::theme::color(
-                                                    "primary-foreground",
-                                                )),
+                                                .text_color(primary_fg),
                                         ),
                                 ),
                             )
@@ -732,7 +731,8 @@ pub(crate) fn DashboardView() -> impl IntoElement {
 
 /// 卡片壳（标题 + 内容体的统一容器；旧壳 NCard size=small 的本壳等价形态）。
 fn card(title: &'static str, body: impl IntoElement) -> impl IntoElement {
-    let fg = crate::theme::color("foreground");
+    // fg 通面成员经视图层取色面（#2153 共享/共用件入闭集）。
+    let fg = crate::views::view_palette().fg;
     view()
         .flex_col()
         .gap_2()

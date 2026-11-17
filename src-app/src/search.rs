@@ -72,9 +72,9 @@ pub(crate) fn SearchView() -> impl IntoElement {
     // toast 超时机制——既有先例口径）。
     let copy_feedback = signal(None::<String>);
 
-    // 主题令牌（双态自适应；缺失兜底统一归 crate::theme 单点）。
-    let fg = crate::theme::color("foreground");
-    let muted = crate::theme::color("muted-foreground");
+    // 视图层取色统一经 view_palette（#2153：fg/muted 通面成员，直读属第
+    // 二构造点；缺失兜底统一归 crate::theme 单点）。
+    let crate::views::ViewPalette { fg, muted, .. } = crate::views::view_palette();
 
     // 查询具备判定（旧壳 hasQuery 同口径：关键词非空或任一筛选在场——
     // 仅筛选也可出结果）。

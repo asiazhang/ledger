@@ -636,6 +636,9 @@ fn restore_modal_body(surface: LockedSurface, fg: AdaptiveColor) -> View {
                         .child(
                             text(settings_data::RESTORE_CONFIRM_ACTION)
                                 .text_size(px(font_size::SECONDARY))
+                                // 低频专用配对前景保留 theme 单点直读（#2153
+                                // 边界：destructive-foreground 不入 palette
+                                // 闭集，正当边界见 ViewPalette 文档）。
                                 .text_color(crate::theme::color("destructive-foreground"))
                                 .test_id("unlock-restore-confirm"),
                         )

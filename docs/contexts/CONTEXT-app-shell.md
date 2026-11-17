@@ -68,6 +68,12 @@
   - **出厂基线，不是运行时状态**：答「出厂观感是什么」；设备级亮暗选择归参考数据与设置域外观设置（答「这台设备用亮还是暗」），两层正交、互不取代。
   - **与界面状态与交互域 Design Tokens（ADR-0093）划界**：后者是 Web 参照前端的中性常量来源（只收中性设计常量、业务语义色归 Appearance 接缝），随参照形态存续；两栈各自单一来源，跨栈视觉同源一致性不再是目标。
   - **派生方向单向**：视图与封装件是令牌消费方，不持独立副本（与 ADR-0093 派生纪律同源）。
+- **取色面分层（#2153）**：跨视图高频通面令牌（foreground / muted-foreground /
+  destructive / accent / primary-foreground）经壳内取色便捷面 `ViewPalette`
+  五件套解构消费（闭集唯一构造点，共享件取色面同规）；语义色、动态令牌、
+  图表图形面与低频专用配对前景（destructive-foreground / warning-foreground /
+  primary 语义角色）保留 `theme::color` 直读为正当边界（分类与逐点留痕见
+  `ViewPalette` 文档）；`theme::color` 单点仍是全部色值的唯一住所。
 - **别名**：不使用「Design Tokens」指代本词条（该名已被界面域占用，语境是 Web 参照前端）；不使用「调色板」（palette 是令牌的取值集，不是令牌本体）。
 
 ## 视觉规约（Visual Design Spec）

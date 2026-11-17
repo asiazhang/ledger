@@ -478,15 +478,15 @@ pub(crate) fn installments_pane(pending_focus: Signal<Option<String>>) -> impl I
         }
     });
 
-    // 主题令牌（双态自适应；缺失兜底统一归 crate::theme 单点）。
+    // 主题令牌（双态自适应；缺失兜底统一归 crate::theme 单点；#2153
+    // primary_fg 纳入五件套闭集，主按钮前景随解构取值）。
     let crate::views::ViewPalette {
         fg,
         muted,
         danger_fg,
+        primary_fg,
         ..
     } = crate::views::view_palette();
-    // 主按钮前景 = primary-foreground 令牌（亮暗双态随表；旧裸白直调退役）。
-    let primary_fg = crate::theme::color("primary-foreground");
     // 进度条正常色（#2033 预算 → #2039 概览同款取舍：正常态用账本语义绿）。
     let progress_fg = crate::transactions::amount_color(assembly::AmountSemantic::Income);
     // 进度条轨道色 = muted 令牌（弱化底语义角色；消费方零本地色纪律）。
@@ -1082,7 +1082,7 @@ fn make_action_renderer(
             "progress" => {
                 // 进度条自绘（旧壳 NProgress type=line 本壳等价形态：轨道
                 // 定宽 + 按百分比宽度的指示条，颜色语义绿——禁用竖版进度）。
-                let fg = crate::theme::color("foreground");
+                let fg = crate::views::view_palette().fg;
                 view()
                     .test_id(format!("inst-progress-{}", row.id).as_str())
                     .flex_row()

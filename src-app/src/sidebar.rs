@@ -40,9 +40,10 @@ pub(crate) const SIDEBAR_WIDTH: f32 = 176.0;
 #[component]
 pub fn SidebarView() -> impl IntoElement {
     let nav = nav::store();
-    // 主题令牌（双态自适应；裸 text 默认前景黑——暗色桌面不可见，#2017 先例）。
-    let fg = crate::theme::color("foreground");
-    let muted = crate::theme::color("muted-foreground");
+    // 视图层取色统一经 view_palette（#2146/#2153：直读 theme::color 属绕过
+    // 封装，双态自适应与兜底语义两处自行维护；裸 text 默认前景黑——暗色
+    // 桌面不可见，#2017 先例）。
+    let crate::views::ViewPalette { fg, muted, .. } = crate::views::view_palette();
     // 键位提示符号（⌘ / ⌃）：平台判定一次（bin 当前仅 Linux；macOS 随平台票）。
     let apple = os() == Os::MacOs;
     // 键位带现推导（组内序/关闭集合响应式随动：重排即带内重排、关闭即退出）。
@@ -118,8 +119,7 @@ pub fn SidebarView() -> impl IntoElement {
 /// 落位重挂/失效重读即按新态装配。镜像信号（挂本组件实例）只承担按钮自身
 /// 的响应式呈现——存储读无响应式依赖，不镜像则切换后字形不随动。
 fn brand_row() -> View {
-    let fg = crate::theme::color("foreground");
-    let muted = crate::theme::color("muted-foreground");
+    let crate::views::ViewPalette { fg, muted, .. } = crate::views::view_palette();
     // 开关镜像信号：初值 = 存储读取（挂本组件实例）；点击即写存储 + 置镜像。
     let privacy = signal(amount_privacy_enabled());
     view()
@@ -246,8 +246,7 @@ fn nav_item(
 /// ——决策 6/10）。导航即关闭由抽屉层收口（落位驱使收起，本面板零变更）。
 pub(crate) fn drawer_panel() -> View {
     let nav = nav::store();
-    let fg = crate::theme::color("foreground");
-    let muted = crate::theme::color("muted-foreground");
+    let crate::views::ViewPalette { fg, muted, .. } = crate::views::view_palette();
     let no_hint = |_: ViewName| -> Option<String> { None };
     let brand = brand_row();
     let fixed_item = |name: ViewName| nav_item(name, no_hint, fg, muted, NavSurface::Drawer);
@@ -374,7 +373,8 @@ fn group_header(nav: NavStore, gid: GroupId, fg: AdaptiveColor, muted: AdaptiveC
         )
 }
 
-/// 当前视图高亮底色（弱化面，accent 令牌经 [`crate::theme::color`] 单点）。
+/// 当前视图高亮底色（弱化面；accent 令牌经视图层取色面 [`crate::views::
+/// view_palette`] 单点——#2146 sidebar_books.rs 同款先例，#2153 收口直读）。
 fn accent_background() -> AdaptiveColor {
-    crate::theme::color("accent")
+    crate::views::view_palette().accent
 }

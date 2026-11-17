@@ -88,6 +88,12 @@ pub(crate) fn tokens() -> Tokens {
 /// 令牌色读取单点（引擎线程；读取即订阅，亮暗切换原生跟随）：令牌缺失落
 /// [`MISSING_TOKEN_FALLBACK`] 可读兜底，不 panic 不静默透明。图表、危险态与
 /// 金额语义色一律经此消费——消费方零本地色常量。
+///
+/// **消费面分层（#2153）**：跨视图高频通面令牌（foreground / muted-foreground /
+/// destructive / accent / primary-foreground）经 [`crate::views::view_palette`]
+/// 五件套解构消费；语义色、动态令牌、图表图形面与低频专用配对前景保留本单点
+/// 直读（正当边界分类见 [`crate::views`] ViewPalette 文档），本单点仍是全部
+/// 取值的唯一住所。
 pub(crate) fn color(name: &str) -> AdaptiveColor {
     nsh_core::element::tokens()
         .color(name)

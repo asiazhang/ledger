@@ -170,8 +170,9 @@ fn today_text() -> String {
     chrono::Local::now().date_naive().to_string()
 }
 
-/// 语义令牌单取（success/warning 非三件套成员，不经 ViewPalette）：视图层
-/// 零本地色常量，令牌缺失统一落 `crate::theme` 的可读兜底（ADR-0147 决策 1）。
+/// 语义令牌单取（success/warning 非通面五件套成员，不经 ViewPalette——
+/// #2153 语义色正当直读边界）：视图层零本地色常量，令牌缺失统一落
+/// `crate::theme` 的可读兜底（ADR-0147 决策 1）。
 fn success_of() -> AdaptiveColor {
     crate::theme::color("success")
 }
@@ -518,7 +519,7 @@ fn modal_buttons(
                 .child(
                     text(confirm_label)
                         .text_size(px(font_size::SECONDARY))
-                        .text_color(crate::theme::color("primary-foreground"))
+                        .text_color(crate::views::view_palette().primary_fg)
                         .test_id(confirm_id.as_str()),
                 ),
         )
@@ -681,6 +682,7 @@ pub(crate) fn PoliciesView() -> impl IntoElement {
         fg,
         muted,
         danger_fg,
+        primary_fg,
         ..
     } = crate::views::view_palette();
 
@@ -1592,7 +1594,7 @@ pub(crate) fn PoliciesView() -> impl IntoElement {
                         .child(
                             text(AGREEMENT_ADD)
                                 .text_size(px(font_size::CAPTION))
-                                .text_color(crate::theme::color("primary-foreground"))
+                                .text_color(primary_fg)
                                 .test_id("policy-agreement-add"),
                         )
                 }),
@@ -1811,7 +1813,7 @@ pub(crate) fn PoliciesView() -> impl IntoElement {
                                 }
                             })
                             .text_size(px(font_size::CAPTION))
-                            .text_color(crate::theme::color("primary-foreground"))
+                            .text_color(primary_fg)
                             .test_id("policy-agreement-toggle"),
                         ),
                 ))
@@ -1909,7 +1911,7 @@ pub(crate) fn PoliciesView() -> impl IntoElement {
                             .child(
                                 text(NEW_BUTTON)
                                     .text_size(px(font_size::SECONDARY))
-                                    .text_color(crate::theme::color("primary-foreground"))
+                                    .text_color(primary_fg)
                                     .test_id("policy-new"),
                             ),
                     ),

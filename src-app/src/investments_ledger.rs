@@ -839,7 +839,7 @@ pub(crate) fn LedgerPane() -> impl IntoElement {
                             .child(
                                 text(CREATE_BUY)
                                     .text_size(px(font_size::CAPTION))
-                                    .text_color(crate::theme::color("primary-foreground")),
+                                    .text_color(palette.primary_fg),
                             ),
                     )
                     .child(
@@ -861,7 +861,7 @@ pub(crate) fn LedgerPane() -> impl IntoElement {
                             .child(
                                 text(CREATE_SELL)
                                     .text_size(px(font_size::CAPTION))
-                                    .text_color(crate::theme::color("primary-foreground")),
+                                    .text_color(palette.primary_fg),
                             ),
                     ),
             )

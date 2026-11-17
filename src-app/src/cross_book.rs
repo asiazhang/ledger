@@ -482,6 +482,7 @@ pub(crate) fn CrossBookSummaryView() -> impl IntoElement {
         fg,
         muted,
         danger_fg,
+        primary_fg,
         ..
     } = crate::views::view_palette();
     // 警告色（未计入本状态标签；危险确认 warning 级同色值）。
@@ -527,7 +528,7 @@ pub(crate) fn CrossBookSummaryView() -> impl IntoElement {
                         .child(
                             text("重试")
                                 .text_size(px(font_size::SECONDARY))
-                                .text_color(crate::theme::color("primary-foreground"))
+                                .text_color(primary_fg)
                                 .test_id("cross-book-retry"),
                         ),
                 )

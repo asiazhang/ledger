@@ -149,6 +149,7 @@ pub(crate) fn BudgetView() -> impl IntoElement {
         fg,
         muted,
         danger_fg,
+        primary_fg,
         ..
     } = crate::views::view_palette();
 
@@ -501,7 +502,7 @@ pub(crate) fn BudgetView() -> impl IntoElement {
                 .child(
                     text("添加")
                         .text_size(px(font_size::SECONDARY))
-                        .text_color(crate::theme::color("primary-foreground"))
+                        .text_color(primary_fg)
                         .test_id("budget-add"),
                 )
                 .on_press(move |_: &()| perform_create()),
@@ -810,7 +811,7 @@ pub(crate) fn BudgetView() -> impl IntoElement {
                                         .child(
                                             text("保存")
                                                 .text_size(px(font_size::SECONDARY))
-                                                .text_color(crate::theme::color("primary-foreground"))
+                                                .text_color(primary_fg)
                                                 .test_id("budget-save"),
                                         )
                                         .on_press(move |_: &()| perform_update()),

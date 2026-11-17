@@ -116,8 +116,9 @@ const DISPOSE_CURRENCY_REQUIRED: &str = "请选择处置币种";
 /// settings_data 单一来源。
 const LOADING_PLACEHOLDER: &str = "正在加载…";
 
-/// 语义令牌单取（success 非三件套成员，不经 ViewPalette）：视图层零本地
-/// 色常量，令牌缺失统一落 `crate::theme` 的可读兜底（ADR-0147 决策 1）。
+/// 语义令牌单取（success 非通面五件套成员，不经 ViewPalette——#2153 语义
+/// 色正当直读边界）：视图层零本地色常量，令牌缺失统一落 `crate::theme` 的
+/// 可读兜底（ADR-0147 决策 1）。
 fn success_of() -> AdaptiveColor {
     crate::theme::color("success")
 }
@@ -241,7 +242,7 @@ fn modal_buttons(
                 .child(
                     text(SAVE_LABEL)
                         .text_size(px(font_size::SECONDARY))
-                        .text_color(crate::theme::color("primary-foreground"))
+                        .text_color(crate::views::view_palette().primary_fg)
                         .test_id(confirm_id.as_str()),
                 ),
         )
@@ -437,6 +438,7 @@ pub(crate) fn PhysicalAssetsView() -> impl IntoElement {
         fg,
         muted,
         danger_fg,
+        primary_fg,
         ..
     } = crate::views::view_palette();
 
@@ -1196,7 +1198,7 @@ pub(crate) fn PhysicalAssetsView() -> impl IntoElement {
                             .child(
                                 text(NEW_BUTTON)
                                     .text_size(px(font_size::SECONDARY))
-                                    .text_color(crate::theme::color("primary-foreground"))
+                                    .text_color(primary_fg)
                                     .test_id("physical-asset-new"),
                             ),
                     ),

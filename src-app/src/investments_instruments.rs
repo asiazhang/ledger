@@ -657,7 +657,7 @@ pub(crate) fn InstrumentsPane() -> impl IntoElement {
                         }
                     })
                     .text_size(px(font_size::CAPTION))
-                    .text_color(crate::theme::color("primary-foreground")),
+                    .text_color(palette.primary_fg),
                 ),
         );
 
@@ -1304,11 +1304,12 @@ fn manual_quote_modal(
                                 }
                             })
                             .text_size(px(font_size::CAPTION))
-                            .text_color(crate::theme::color("primary-foreground")),
+                            .text_color(palette.primary_fg),
                         ),
                 );
             view()
                 .flex_col()
+                .gap_2()
                 .gap_2()
                 .child(start)
                 .child(date_row)
@@ -1860,7 +1861,7 @@ fn add_instrument_modal(
                                 }
                             })
                             .text_size(px(font_size::CAPTION))
-                            .text_color(crate::theme::color("primary-foreground")),
+                            .text_color(palette.primary_fg),
                         ),
                 );
 

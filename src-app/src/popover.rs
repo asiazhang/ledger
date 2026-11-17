@@ -72,11 +72,11 @@ pub fn popover_tip(
                 // 文本锚点不可寻址——popconfirm 单行文本同形）。
                 .children(lines.into_iter().enumerate().map(|(index, line)| {
                     // 说明行（字阶 CAPTION 档，design.rs font_size 同源——DESIGN.md
-                    // §3 「辅助小字」下限档）；前景经 [`crate::theme::color`] 单点
-                    // 消费（零本地色常量）。
+                    // §3 「辅助小字」下限档）；前景经视图层取色面 view_palette
+                    // 消费（#2153 共享件入闭集：foreground 通面成员；零本地色常量）。
                     let line_text = text(line)
                         .text_size(px(font_size::CAPTION))
-                        .text_color(crate::theme::color("foreground"));
+                        .text_color(crate::views::view_palette().fg);
                     if index == 0 {
                         line_text.test_id(message_id.as_str())
                     } else {

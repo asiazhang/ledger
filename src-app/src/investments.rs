@@ -979,17 +979,20 @@ pub(crate) struct PanePalette {
     pub(crate) loss: nsh_core::element::AdaptiveColor,
     /// 口径说明触发点信息蓝（主题表 refund 档）。
     pub(crate) info: nsh_core::element::AdaptiveColor,
+    /// 主按钮前景（primary-foreground 档；#2153 经五件套派生同批收口）。
+    pub(crate) primary_fg: nsh_core::element::AdaptiveColor,
 }
 
 pub(crate) fn pane_palette() -> PanePalette {
-    // 令牌消费单点（三件套经 views::ViewPalette 唯一住所派生，issue #2113；
-    // 涨跌语义色走 crate::theme::color：读取即订阅亮暗切换，缺失落 theme
-    // 模块可读兜底——本模块不再私藏色值/兜底色）。
+    // 令牌消费单点（通面五件套经 views::ViewPalette 唯一住所派生，issue
+    // #2113 / #2153；涨跌语义色走 crate::theme::color：读取即订阅亮暗切换，
+    // 缺失落 theme 模块可读兜底——本模块不再私藏色值/兜底色）。
     let palette = crate::views::view_palette();
     PanePalette {
         fg: palette.fg,
         muted: palette.muted,
         danger: palette.danger_fg,
+        primary_fg: palette.primary_fg,
         // 涨跌语义色（红涨绿跌）：收编进主题表的自有令牌档——涨 = expense
         // 档、跌 = income 档、口径说明蓝 = refund 档（词汇表「盈亏涨跌色」
         // 消费主题表，不另造色常量）。
@@ -1574,7 +1577,8 @@ fn composition_row(
 /// 两腿图例色源（现金 = 弱化前景灰、持仓 = 主文本色——主题令牌两档，随
 /// 主题整体换装；旧壳 investment-overview css 中性两阶灰阶的令牌对应）。
 fn cash_leg_color() -> nsh_core::element::AdaptiveColor {
-    crate::theme::color("muted-foreground")
+    // muted 通面成员经视图层取色面（#2153）。
+    crate::views::view_palette().muted
 }
 
 /// 投资合计单格（标签 + 口径说明 + 数值着涨跌色或中性；数值文本随同一

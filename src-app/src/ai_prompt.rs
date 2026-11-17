@@ -40,8 +40,10 @@ pub(crate) fn AiPromptView() -> impl IntoElement {
         fg,
         muted,
         danger_fg,
+        primary_fg,
         ..
     } = crate::views::view_palette();
+    // 成功反馈色（income 语义档；#2153 语义色正当直读边界，不入 palette 闭集）。
     let ok_fg = crate::theme::color("income");
 
     // 复制反馈状态（None = 无反馈；Some(ok) = 成功/失败两态文案）。
@@ -92,7 +94,7 @@ pub(crate) fn AiPromptView() -> impl IntoElement {
                         .child(
                             text(BUTTON_COPY)
                                 .text_size(px(font_size::SECONDARY))
-                                .text_color(crate::theme::color("primary-foreground"))
+                                .text_color(primary_fg)
                                 .test_id("ai-copy"),
                         ),
                 ),

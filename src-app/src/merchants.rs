@@ -180,9 +180,13 @@ pub(crate) fn MerchantsView() -> impl IntoElement {
         fg,
         muted,
         danger_fg,
+        primary_fg,
         ..
     } = crate::views::view_palette();
-    let accent = crate::theme::color("primary");
+    // 可点原子/下钻强调色（primary 令牌的语义角色消费，低频专用保留直读；
+    // #2153：原局部名 accent 与 ViewPalette.accent（accent 令牌）同名异义
+    // 同屏，改名消歧——transactions::primary_color 同款）。
+    let primary = crate::theme::color("primary");
 
     // 操作反馈条位（NSH 无 toast——#2038 裁决；旧壳 message.success/error 的
     // 条位对应物：新动作开始时清回空）。
@@ -486,7 +490,7 @@ pub(crate) fn MerchantsView() -> impl IntoElement {
                     cell_view = cell_view.child(
                         text(DELETED_TAG)
                             .text_size(px(font_size::CAPTION))
-                            .text_color(accent)
+                            .text_color(primary)
                             .app_class("px-1 rounded border border-border")
                             .test_id(
                                 format!(
@@ -513,7 +517,7 @@ pub(crate) fn MerchantsView() -> impl IntoElement {
                     .child(
                         text(cell.text.clone())
                             .text_size(px(font_size::SECONDARY))
-                            .text_color(accent)
+                            .text_color(primary)
                             .number_of_lines(1),
                     )
                     .into_element()
@@ -646,7 +650,7 @@ pub(crate) fn MerchantsView() -> impl IntoElement {
                         .child(
                             text(SAVE_BUTTON)
                                 .text_size(px(font_size::SECONDARY))
-                                .text_color(crate::theme::color("primary-foreground"))
+                                .text_color(primary_fg)
                                 .test_id("merchant-edit-save"),
                         ),
                 ),
@@ -700,7 +704,7 @@ pub(crate) fn MerchantsView() -> impl IntoElement {
                         .child(
                             text(ADD_BUTTON)
                                 .text_size(px(font_size::SECONDARY))
-                                .text_color(crate::theme::color("primary-foreground"))
+                                .text_color(primary_fg)
                                 .test_id("merchant-add"),
                         ),
                 ),

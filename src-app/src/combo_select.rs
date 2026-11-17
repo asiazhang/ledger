@@ -37,8 +37,9 @@ pub fn combo_select(
     let open = signal(false);
     // 主题令牌（双态自适应）：色值住 theme.json 令牌表，读取经
     // [`crate::theme::color`] 单点，缺失落可读兜底——本模块零本地色常量
-    // （issue #2107 视觉收口）。
-    let fg = crate::theme::color("foreground");
+    // （issue #2107 视觉收口）。#2153：共享件入闭集，fg 改经视图层取色面
+    // view_palette（通面成员，散写同源令牌构造即第二构造点）。
+    let fg = crate::views::view_palette().fg;
 
     // 开/关上报（Overlay Suppression 注册表单一通道：追踪受控 open 信号，全
     // 关闭路径覆盖）；组件卸载时 Drop 自动撤销（卸载兜底）。

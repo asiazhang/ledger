@@ -703,6 +703,7 @@ pub fn App() -> impl IntoElement {
         fg,
         muted,
         danger_fg,
+        primary_fg,
         ..
     } = crate::views::view_palette();
     // 失败态出口（ADR-0146 决策 4）与新建意图确认（决策 3 分支③）的现场：
@@ -960,7 +961,7 @@ pub fn App() -> impl IntoElement {
                                 .child(
                                     text(ONBOARDING_CREATE_LABEL)
                                         .text_sm()
-                                        .text_color(crate::theme::color("primary-foreground"))
+                                        .text_color(primary_fg)
                                         .test_id("onboarding-create"),
                                 )
                                 .on_press(move || create_open.set(true)),

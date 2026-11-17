@@ -124,6 +124,7 @@ pub(crate) fn InsurersView() -> impl IntoElement {
         fg,
         muted,
         danger_fg,
+        primary_fg,
         ..
     } = crate::views::view_palette();
 
@@ -464,9 +465,7 @@ pub(crate) fn InsurersView() -> impl IntoElement {
                                         .child(
                                             text(BUTTON_ADD)
                                                 .text_size(px(font_size::SECONDARY))
-                                                .text_color(crate::theme::color(
-                                                    "primary-foreground",
-                                                ))
+                                                .text_color(primary_fg)
                                                 .test_id("ins-add"),
                                         )
                                         .on_press(move |_: &()| perform_add()),
@@ -630,9 +629,7 @@ pub(crate) fn InsurersView() -> impl IntoElement {
                                             .child(
                                                 text(BUTTON_SAVE)
                                                     .text_size(px(font_size::SECONDARY))
-                                                    .text_color(crate::theme::color(
-                                                        "primary-foreground",
-                                                    ))
+                                                    .text_color(primary_fg)
                                                     .test_id("ins-edit-save"),
                                             )
                                             .on_press(move |_: &()| perform_update()),
