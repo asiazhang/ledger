@@ -40,7 +40,9 @@ use nsh_core::prelude::*;
 use crate::app::StartupView;
 use crate::danger::{DangerConfirmSpec, DangerLevel, DangerOutcome, danger_confirm};
 use crate::design::font_size;
-use crate::modal::app_modal;
+use crate::restore_confirm::{
+    RestoreIds, RestoreIntent, app_restore_confirm_modal, restore_show_pass,
+};
 use crate::settings_data;
 use crate::settings_data::{READ_TASK_FAILED, WRITE_TASK_FAILED};
 use crate::{app, boot, http_host, views};
@@ -70,6 +72,18 @@ const RESTORE_PICK_TITLE: &str = "选择备份文件";
 pub(crate) const AUTO_UNLOCK_UNSUPPORTED: &str =
     "自动解锁：本机（Linux 桌面）不支持——主口令的本机缓存仅 macOS 可用，启动解锁请手动输入主口令。";
 
+/// 恢复确认弹窗 headless 锚点（锁定屏前缀，#2131；收敛后经共享封装
+/// [`RestoreIds`] 消费，#2144）。
+const RESTORE_IDS: RestoreIds = RestoreIds {
+    path: "unlock-restore-path",
+    cross_mode_title: "unlock-restore-cross-mode-title",
+    cross_mode: "unlock-restore-cross-mode",
+    passphrase: "unlock-restore-passphrase",
+    error: "unlock-restore-error",
+    cancel: "unlock-restore-cancel",
+    confirm: "unlock-restore-confirm",
+};
+
 /// 锁定面板的信号组（根组件体装载期单次构造，见模块文档 owner 纪律；
 /// `Copy` 供任务闭包与 `danger_confirm` 的 `Copy` 约束捕获——信号字段全部
 /// `Copy`）。
@@ -80,30 +94,15 @@ pub(crate) struct LockedSurface {
     busy: Signal<bool>,
     error: Signal<Option<String>>,
     reset_open: Signal<bool>,
-    /// 恢复意图（Some = 确认弹窗开；#2131）。
-    restore_intent: Signal<Option<LockedRestoreIntent>>,
+    /// 恢复意图（Some = 确认弹窗开；#2131，意图类型收敛共享
+    /// [`RestoreIntent`]，#2144）。
+    restore_intent: Signal<Option<RestoreIntent>>,
     /// 恢复弹窗口令输入（上下文口令自动试开失败后就地重输位）。
     restore_pass: Signal<String>,
     /// 口令框就地显出（试开失败 / 后端报需口令后置真）。
     restore_pass_revealed: Signal<bool>,
     /// 恢复弹窗内错误位（失败不关弹窗，就地重试）。
     restore_error: Signal<Option<String>>,
-}
-
-/// 锁定屏恢复意图（设置卡 `RestoreIntent` 的本屏对应面 + 上下文口令，
-/// #2131）：弹窗开着 = 意图在场；`context_pass` 是选定备份那一刻解锁框口令
-/// 的快照（非空才携带——密文备份确认先自动试开、失败就地显出口令框重输，
-/// 旧壳 `useRestoreFromFile` contextPassphrase 同语义）。
-#[derive(Clone, Debug, PartialEq)]
-pub(crate) struct LockedRestoreIntent {
-    /// 备份文件路径（选定即定，弹窗内回显）。
-    path: String,
-    /// 备份是否密文（元数据加密标记，驱动口令框与跨模式警告）。
-    backup_encrypted: bool,
-    /// 当前库是否密文（文件头探测，驱动跨模式警告）。
-    current_encrypted: bool,
-    /// 上下文口令快照（None = 不携带，弹窗直接弹口令框）。
-    context_pass: Option<String>,
 }
 
 /// 构造锁定面板信号组（App 组件体内调用一次；任务经 `Owner::current()` =
@@ -186,14 +185,6 @@ impl LockedSurface {
         });
     }
 
-    /// 口令框显出判定（旧壳 RestoreConfirmModal showPassphrase 同位，#2131）：
-    /// 密文备份且无上下文口令时确认前显出；上下文试开失败或后端报需口令后
-    /// 就地显出。
-    fn restore_show_pass(&self, intent: &LockedRestoreIntent) -> bool {
-        (intent.backup_encrypted && intent.context_pass.is_none())
-            || self.restore_pass_revealed.get()
-    }
-
     /// 恢复入口任务（旧壳 UnlockScreen pickRestore / 设置卡 pick_restore_task
     /// 的本屏对应面，#2131）：文件选择 → 元数据校验 → 当前模式探测 → 意图
     /// 落位（确认弹窗开）。校验失败即中止（弹窗不开，宁可不弹窗——破坏性
@@ -262,7 +253,7 @@ impl LockedSurface {
                 surface.restore_pass.set(String::new());
                 surface.restore_pass_revealed.set(false);
                 surface.restore_error.set(None);
-                surface.restore_intent.set(Some(LockedRestoreIntent {
+                surface.restore_intent.set(Some(RestoreIntent {
                     path: target,
                     backup_encrypted: meta.encrypted,
                     current_encrypted: current,
@@ -287,7 +278,7 @@ impl LockedSurface {
             return; // 解锁 / 重置 / 恢复在途防重入
         }
         let typed = self.restore_pass.get_untracked().clone();
-        let show_pass = self.restore_show_pass(&intent);
+        let show_pass = restore_show_pass(&intent, self.restore_pass_revealed);
         if show_pass && typed.is_empty() {
             return; // 口令框显出时须非空（按钮 disabled 同守卫）
         }
@@ -377,17 +368,18 @@ pub(crate) fn locked_panel(
         },
     );
     let unlock_surface = surface;
-    // 从备份文件恢复确认弹窗（#2131；设置卡恢复弹窗同形：意图开着 = 呈现，
-    // 关闭路径 = 取消 / ESC / ✕——执行中不关；成功后由任务关并进会话）。
-    let restore_modal = app_modal(
-        move || surface.restore_intent.get().is_some(),
-        || settings_data::RESTORE_MODAL_TITLE.to_owned(),
-        move || {
-            if !surface.busy.get_untracked() {
-                surface.restore_intent.set(None);
-            }
-        },
-        move || restore_modal_body(surface, fg),
+    // 从备份文件恢复确认弹窗（#2131；#2144 收敛共享封装
+    // [`crate::restore_confirm::app_restore_confirm_modal`]，锁定屏与设置
+    // 卡两侧消费同一成员；关闭路径 = 取消 / ESC / ✕——执行中不关；成功后
+    // 由任务关并进会话）。
+    let restore_modal = app_restore_confirm_modal(
+        surface.restore_intent,
+        surface.restore_pass,
+        surface.restore_pass_revealed,
+        surface.busy,
+        surface.restore_error,
+        &RESTORE_IDS,
+        move |_: &()| surface.run_restore_confirm(owner),
     );
     view()
         .flex_1()
@@ -497,149 +489,4 @@ pub(crate) fn locked_panel(
         )
         .child(reset_dialog)
         .child(restore_modal)
-}
-
-/// 恢复确认弹窗内容（设置卡 `restore_modal_body` 同构，#2131：恢复后果警
-/// 示、跨模式警告、密文备份主口令〔上下文口令自动试开时不显出〕与弹窗内
-/// 错误位；词表单点复用设置卡常量，措辞零漂移）。
-fn restore_modal_body(surface: LockedSurface, fg: AdaptiveColor) -> View {
-    let owner = Owner::current();
-    let Some(intent) = surface.restore_intent.get() else {
-        return view();
-    };
-    let cross_mode = (intent.backup_encrypted != intent.current_encrypted).then_some({
-        if intent.backup_encrypted {
-            (
-                settings_data::RESTORE_CROSS_MODE_TITLE,
-                settings_data::RESTORE_TO_ENCRYPTED_WARN,
-            )
-        } else {
-            (
-                settings_data::RESTORE_CROSS_MODE_TITLE,
-                settings_data::RESTORE_TO_PLAINTEXT_WARN,
-            )
-        }
-    });
-    view()
-        .flex_col()
-        .app_class("gap-2")
-        .child(
-            text(format!("备份文件：{}", intent.path))
-                .text_size(px(font_size::CAPTION))
-                .text_color(fg)
-                .test_id("unlock-restore-path"),
-        )
-        .child(
-            view()
-                .flex_col()
-                .app_class("rounded-sm border border-destructive/30 bg-destructive/10 p-2 gap-1")
-                .child(
-                    text(settings_data::RESTORE_CONFIRM_STRONG)
-                        .text_size(px(font_size::CAPTION))
-                        .font_weight(FontWeight::BOLD)
-                        .text_color(views::view_palette().danger_fg),
-                ),
-        )
-        .children(cross_mode.map(|(title, warning)| {
-            view()
-                .flex_col()
-                .app_class("rounded-sm border border-destructive/30 bg-destructive/10 p-2 gap-1")
-                .child(
-                    text(title)
-                        .text_size(px(font_size::CAPTION))
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(fg)
-                        .test_id("unlock-restore-cross-mode-title"),
-                )
-                .child(
-                    text(warning)
-                        .text_size(px(font_size::CAPTION))
-                        .text_color(fg)
-                        .test_id("unlock-restore-cross-mode"),
-                )
-        }))
-        // 口令框与错误位是「弹窗开着期间就地变化」的条件结构：when 分支闭包
-        // untracked 求值（开弹时一次），后续显出/置错不再重跑——条件段用
-        // dynamic（读什么变什么重造，nsh-core flow.rs Region::Dynamic），按钮
-        // 禁用面用响应式闭包（prop 绑定逐次求值）。交叉模式块随意图固定，
-        // 静态段承载。
-        .child(dynamic(move || {
-            let Some(intent) = surface.restore_intent.get() else {
-                return view();
-            };
-            if !surface.restore_show_pass(&intent) {
-                return view();
-            }
-            view()
-                .flex_col()
-                .app_class("gap-1")
-                .child(
-                    text(settings_data::RESTORE_PASS_LABEL)
-                        .text_size(px(font_size::CAPTION))
-                        .text_color(fg),
-                )
-                .child(
-                    input()
-                        .test_id("unlock-restore-passphrase")
-                        .value(move || surface.restore_pass.get())
-                        .masked(true)
-                        .placeholder(settings_data::RESTORE_PASS_PLACEHOLDER)
-                        .optional_label(settings_data::RESTORE_PASS_LABEL)
-                        .text_color(fg)
-                        .app_class(
-                            "bg-background rounded-md border border-border px-2 py-1 placeholder:text-muted-foreground",
-                        )
-                        .on_change(move |value: &str| surface.restore_pass.set(value.to_owned())),
-                )
-        }))
-        .child(dynamic(move || match surface.restore_error.get() {
-            Some(err) => view().child(
-                text(err)
-                    .text_size(px(font_size::CAPTION))
-                    .text_color(views::view_palette().danger_fg)
-                    .test_id("unlock-restore-error"),
-            ),
-            None => view(),
-        }))
-        .child(
-            view()
-                .flex_row()
-                .justify_end()
-                .app_class("gap-2")
-                .child(
-                    button()
-                        .app_class("px-3 py-1.5 rounded-md border border-border text-foreground hover:bg-accent disabled:opacity-40")
-                        .disabled(move || surface.busy.get())
-                        .child(
-                            text(settings_data::RESTORE_CANCEL)
-                                .text_size(px(font_size::SECONDARY))
-                                .test_id("unlock-restore-cancel"),
-                        )
-                        .on_press(move |_: &()| {
-                            if !surface.busy.get_untracked() {
-                                surface.restore_intent.set(None);
-                            }
-                        }),
-                )
-                .child(
-                    button()
-                        .app_class("px-3 py-1.5 rounded-md bg-destructive hover:opacity-90 disabled:opacity-40")
-                        .disabled(move || {
-                            surface.busy.get() || {
-                                let show = surface
-                                    .restore_intent
-                                    .get()
-                                    .is_some_and(|intent| surface.restore_show_pass(&intent));
-                                show && surface.restore_pass.get().is_empty()
-                            }
-                        })
-                        .child(
-                            text(settings_data::RESTORE_CONFIRM_ACTION)
-                                .text_size(px(font_size::SECONDARY))
-                                .text_color(crate::theme::color("destructive-foreground"))
-                                .test_id("unlock-restore-confirm"),
-                        )
-                        .on_press(move |_: &()| surface.run_restore_confirm(owner)),
-                ),
-        )
 }

@@ -305,6 +305,7 @@ pub mod popover;
 pub mod read_load;
 pub mod redact;
 pub mod reports;
+pub mod restore_confirm;
 pub mod row_focus;
 pub mod savings;
 pub mod scheduled;
