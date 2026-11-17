@@ -687,7 +687,7 @@ pub(crate) fn store_keep_limit(n: u32) {
 // ---------------------------------------------------------------------------
 // ---------------------------------------------------------------------------
 // 共用呈现件（密文输入行 / 表单字段行）；破坏色便捷面收
-// [`crate::views::ViewPalette`] 的 `danger_fg` 成员（三件套唯一住所）。
+// [`crate::views::ViewPalette`] 的 `danger_fg` 成员（通面五件套唯一住所）。
 // ---------------------------------------------------------------------------
 
 /// 复制路径按钮（旧壳 copy-text 通道：写剪贴板 + 卡内状态条位反馈）。
@@ -1349,7 +1349,7 @@ fn backup_cards(palette: views::ViewPalette) -> View {
                         .child(
                             text(BACKUP_ONCE)
                                 .text_size(px(font_size::SECONDARY))
-                                .text_color(crate::theme::color("primary-foreground"))
+                                .text_color(palette.primary_fg)
                                 .test_id("data-backup-once"),
                         )
                         .on_press(move |_: &()| begin_backup_once(owner, state)),
@@ -2444,7 +2444,7 @@ fn enable_form(state: EncryptionState, palette: views::ViewPalette) -> impl Into
                 .child(
                     text(ENCRYPT_BUTTON)
                         .text_size(px(font_size::SECONDARY))
-                        .text_color(crate::theme::color("primary-foreground"))
+                        .text_color(palette.primary_fg)
                         .test_id("enc-enable"),
                 )
                 .on_press(move |_: &()| request_enable()),
@@ -2990,6 +2990,9 @@ fn bootstrap_modal_body(state: SyncState, owner: Owner, palette: views::ViewPale
                         .child(
                             text(SYNC_BOOTSTRAP_CONFIRM)
                                 .text_size(px(font_size::SECONDARY))
+                                // 低频专用配对前景保留 theme 单点直读（#2153
+                                // 边界：warning-foreground 不入 palette 闭集，
+                                // 正当边界见 ViewPalette 文档）。
                                 .text_color(crate::theme::color("warning-foreground"))
                                 .test_id("sync-bootstrap-confirm"),
                         )
@@ -3120,7 +3123,7 @@ fn sync_card(palette: views::ViewPalette) -> View {
                     .child(
                         text(SYNC_NOW)
                             .text_size(px(font_size::SECONDARY))
-                            .text_color(crate::theme::color("primary-foreground"))
+                            .text_color(palette.primary_fg)
                             .test_id("sync-now"),
                     )
                     .on_press(move |_: &()| sync_now_task(owner, state)),
@@ -3241,7 +3244,7 @@ fn sync_card(palette: views::ViewPalette) -> View {
                         .child(
                             text(SYNC_SAVE_CHANNEL)
                                 .text_size(px(font_size::SECONDARY))
-                                .text_color(crate::theme::color("primary-foreground"))
+                                .text_color(palette.primary_fg)
                                 .test_id("sync-save-channel"),
                         )
                         .on_press(move |_: &()| save_channel_task(owner, state)),
@@ -3656,7 +3659,7 @@ fn books_card(palette: views::ViewPalette) -> View {
                         .child(
                             text(confirm_label)
                                 .text_size(px(font_size::SECONDARY))
-                                .text_color(crate::theme::color("primary-foreground"))
+                                .text_color(palette.primary_fg)
                                 .test_id("book-name-submit"),
                         )
                         .on_press(move |_: &()| submit_name()),
