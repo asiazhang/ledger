@@ -17357,6 +17357,41 @@ fn investments_view_instruments_search_and_manual_quote_journey() {
     }
 }
 
+/// 新增标的弹窗·代码框占位文案随通道选择就地更新（#2143 审计命中①的弹窗
+/// 内缺陷段：弹窗内容闭包 untracked 求值（nsh-core flow.rs `Region::If` 同
+/// 根因家族），静态 placeholder 开弹即冻结——通道换选（股票/基金/自定义）
+/// 后引导文案不跟。修复 = placeholder 换响应式绑定（prop 绑定逐次求值）。
+/// 「删除即红」：占位回静态绑定 → 换选后仍停在开弹档占位，本测红。
+#[test]
+fn add_instrument_modal_placeholder_follows_channel_selection() {
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+    let dir = seed_investments_book("add-instrument-placeholder");
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_investments(&mut app);
+    app.press("id:inv-tab-instruments").unwrap();
+    app.wait_for("id:add-instrument").unwrap();
+    app.press("id:add-instrument").unwrap();
+    app.wait_for("text:添加投资标的").unwrap();
+
+    // 开弹未选通道：股票档占位在屏（缺省档）。
+    app.wait_for("text:股票代码，如 600519 / 00700 / AAPL")
+        .unwrap();
+
+    // 换选场外基金：占位就地换成基金档（修复前静态冻结在股票档，红）。
+    app.press("id:add-instrument-channel-trigger").unwrap();
+    app.press("id:add-instrument-channel-option >> text:场外基金")
+        .unwrap();
+    app.wait_for("text:6 位基金代码，如 000001").unwrap();
+
+    // 再换自定义标的：占位随选跟换（两段翻转都钉住）。
+    app.press("id:add-instrument-channel-trigger").unwrap();
+    app.press("id:add-instrument-channel-option >> text:自定义标的")
+        .unwrap();
+    app.wait_for("text:自定义代码，自由文本，如 HW-VR").unwrap();
+}
+
 // ---------------------------------------------------------------------------
 // 窄窗自适应横切（#2057 / ADR-0088 对表）：断点切换、卡片菜单与搜索只读卡片。
 // ---------------------------------------------------------------------------

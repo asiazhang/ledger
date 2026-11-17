@@ -1497,7 +1497,6 @@ fn add_instrument_modal(
         move || ADD_TITLE.to_owned(),
         move || add_open.set(false),
         move || {
-            let placeholder = code_placeholder_of(channel.get().as_deref());
             // 主提交（分派：自定义 = 建档；其余 = 查询——旧壳 submitPrimary
             // 同面）。分派在闭包内做（is_custom 现读），装面输入 Reflection。
             let on_submit = move |_: &PressEvent| {
@@ -1698,7 +1697,12 @@ fn add_instrument_modal(
                             input()
                                 .test_id("add-instrument-code")
                                 .value(move || code.get())
-                                .placeholder(placeholder)
+                                // 占位随通道选择就地跟换（#2143 审计命中①弹窗
+                                // 内缺陷段：弹窗内容闭包 untracked 求值，静态
+                                // placeholder 开弹即冻结——换选后引导文案不跟。
+                                // prop 绑定逐次求值；删除绑定回静态 → 本壳
+                                // headless 旅程红）。
+                                .placeholder(move || code_placeholder_of(channel.get().as_deref()))
                                 .optional_label("录入代码")
                                 .text_color(fg)
                                 .w(px(220.0))
@@ -1711,8 +1715,10 @@ fn add_instrument_modal(
                 );
 
             let custom_blocks = when(is_custom(), move || {
-                let codes_now = currencies_table.get();
-                let sys_signal = signal(currency_options(&codes_now));
+                // 币种选项响应式闭包（随字典装载跟换）：修复前分支内建本地
+                // 信号一次播种，字典装载晚于分支建立即冻结空集（同根因家族
+                // 静态形态）。
+                let sys_options = move || currency_options(&currencies_table.get());
                 view()
                     .flex_col()
                     .gap_2()
@@ -1779,10 +1785,7 @@ fn add_instrument_modal(
                             .test_id("add-instrument-currency")
                             .child(pinyin_select::pinyin_select(
                                 "add-instrument-currency-select",
-                                {
-                                    let rows_signal = sys_signal;
-                                    move || rows_signal.get()
-                                },
+                                sys_options,
                                 custom_currency,
                                 ADD_CURRENCY_LABEL,
                                 false,
