@@ -31,6 +31,7 @@ use crate::context_menu;
 use crate::danger::{self, DangerOutcome};
 use crate::date_select;
 use crate::design::font_size;
+use crate::list_card;
 use crate::modal;
 use crate::nav;
 use crate::nav_model::{NavRequest, ViewName};
@@ -745,52 +746,35 @@ pub(crate) fn AccountsView() -> impl IntoElement {
     };
 
     // 分区表构造（三分区同构：同列集同渲染器，数据各分区行集）。
-    let table_of = move |partition: Memo<Vec<AccountRowCells>>, table_id: &'static str| {
-        view().test_id(table_id).flex_1().child(
-            data_table()
-                .columns(columns)
-                .data(data_of(partition))
-                .render_cell(cell_of(partition))
-                // 行右键菜单（「⋯」同 options）：目标行由右键所在行固定
-                // （fixed-target，旧壳同位）。
-                .on_context_menu({
-                    move |e: &DataTableContextMenu| {
-                        let Some(row_index) = e.row else {
-                            return;
-                        };
-                        open_row_menu(partition, row_index as usize, Point::new(e.x, e.y));
-                    }
-                })
-                .loading(move || loading.get())
-                .loading_view(text("正在加载…").text_color(muted))
-                // 无 .empty 槽：行集已在数据门控（折叠零行、无归档账户整卡缺席），
-                // 空态文案归 outcome 面（折叠不呈现「暂无数据」——旧壳 v-if 同果）。
-                .classes(table_classes())
-                .flex_1(),
-        )
+    let table_of = move |partition: Memo<Vec<AccountRowCells>>| {
+        data_table()
+            .columns(columns)
+            .data(data_of(partition))
+            .render_cell(cell_of(partition))
+            // 行右键菜单（「⋯」同 options）：目标行由右键所在行固定
+            // （fixed-target，旧壳同位）。
+            .on_context_menu({
+                move |e: &DataTableContextMenu| {
+                    let Some(row_index) = e.row else {
+                        return;
+                    };
+                    open_row_menu(partition, row_index as usize, Point::new(e.x, e.y));
+                }
+            })
+            .loading(move || loading.get())
+            .loading_view(text("正在加载…").text_color(muted))
+            // 无 .empty 槽：行集已在数据门控（折叠零行、无归档账户整卡缺席），
+            // 空态文案归 outcome 面（折叠不呈现「暂无数据」——旧壳 v-if 同果）。
+            .classes(table_classes())
+            .flex_1()
     };
 
-    // 并区卡片体（标题 + 数据表）：卡片自身 flex_1——分区是根内容列的弹性
-    // 子项，撑出确定高给内嵌的虚拟化表格（表格组件在弹性链内取自身高度，
-    // 卡片不定高则虚拟化量出零高、行不呈现——#2041 面重排即发现的先例）。
+    // 并区卡片体（装配三件归 list_card_of 单点，#2156）：卡片自身 flex_1——
+    // 分区是根内容列的弹性子项，撑出确定高给内嵌的虚拟化表格。
     let section_of = move |title: &'static str,
                            partition: Memo<Vec<AccountRowCells>>,
                            table_id: &'static str| {
-        view()
-            .flex_1()
-            .flex_col()
-            .gap_2()
-            .app_class("rounded-(--radius-card) border border-border p-3")
-            .child(
-                // 卡标题自然高度（#2135 布局对齐线，同根因另见 items/merchants/
-                // policies 同款标题行）：标题不参与弹性分配，否则少数据时
-                // 表头被推到卡内中部。
-                text(title)
-                    .text_size(px(font_size::SECONDARY))
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(fg),
-            )
-            .child(table_of(partition, table_id))
+        list_card::list_card_of(title, fg, None, table_id, table_of(partition), None)
     };
 
     // ============================ 弹窗内容（视图树内联函数式插槽） ============================
