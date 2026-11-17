@@ -14519,6 +14519,53 @@ fn backup_full_journey_backs_up_lists_prunes_and_guards_overwrite() {
     );
 }
 
+/// 备份列表行集随备份就地刷新（#2143 审计新发现同根因实例：备份文件列表
+/// 卡的行集是 when 分支 otherwise 内静态 children（state.rows 一次读入），
+/// 列表非空期间新增备份不重渲染——行集卡在旧清单直到面板重开。修复 = 行
+/// 集段换 dynamic（读什么变什么重造，#2146 选型标准整段重造归 dynamic）。
+/// 「删除即红」：行集回静态 children → 第二次备份后 row-1 不在屏，本测红。
+#[test]
+fn backup_list_rows_refresh_in_place_after_new_backup() {
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("settings-backup-rows-refresh");
+    let backup_dir = ScratchDir::new("nsh-data-backup-rows");
+    let storage = storage_shard(&[
+        (
+            "backup_dir",
+            format!("{:?}", backup_dir.to_string_lossy()).as_str(),
+        ),
+        ("backup_max_count", "10"),
+    ]);
+    seed_expense_on_date(&dir, &test_date(0), 2_500);
+    let data_root = ScratchDir::new("nsh-data-backup-rows-root");
+    nsh_app::cross_book::set_default_data_dir(data_root.to_path_buf());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config_with_storage_shard(storage)).unwrap();
+    open_data_tab(&mut app);
+
+    // 备份①（空 → 非空：when 分支翻转，行集首次呈现）。
+    let target_a = backup_dir.join("ledger-backup-20260101-000000.db.zip");
+    app.on_pick_save_path(Some(target_a.clone())).unwrap();
+    app.press("id:data-backup-as").unwrap();
+    app.wait_for("id:data-backup-row-0-name").unwrap();
+
+    // 备份②（非空 → 仍非空：修复前静态 children 冻结，行集不重渲染，红）。
+    let target_b = backup_dir.join("ledger-backup-20260101-000100.db.zip");
+    app.on_pick_save_path(Some(target_b.clone())).unwrap();
+    app.press("id:data-backup-as").unwrap();
+    app.wait_for("id:data-backup-row-1-name").unwrap();
+    app.wait_for("text:ledger-backup-20260101-000100.db.zip")
+        .unwrap();
+
+    // 面板未重开（同一 Headless 会话）即就地看到两行。
+    assert!(
+        app.shows("ledger-backup-20260101-000000.db.zip"),
+        "备份①行仍在屏：{:?}",
+        app.screen().texts()
+    );
+}
+
 /// 备份行「在访达中显示」（旧壳 reveal_in_file_manager 命令的 NSH 承载面：
 /// 切轨起保留在备份文件列表行级，#2132 补替身断言证明入口可达且触发宿主
 /// 定位调用）：备份一行 → 按压行级入口 → 被记录的 RevealPath 目标 = 该行
@@ -14881,7 +14928,8 @@ fn settings_restore_modal_metadata_unmarked_encrypted_backup_reveals_passphrase_
     );
 
     // 重输备份主口令 → 恢复成功（密文备份恢复进明文库，元数据未标记不拦
-    // 正确口令的整库替换）。
+    // 正确口令的整库替换）。成功反馈取 #2142 落定的干净变体（#2145 合并
+    // 冲突残留：本测曾带开发向括注长文案，与 #2142 去括注后的常量分叉）。
     app.type_text("id:data-restore-passphrase", PASS_BACKUP)
         .unwrap();
     app.press("id:data-restore-confirm").unwrap();
@@ -15115,6 +15163,77 @@ fn auto_backup_triggers_after_shell_write_and_card_refreshes() {
     app.wait_for("id:data-auto-last").unwrap();
     app.wait_for_gone("text:上次自动备份：从未", DEFAULT_WAIT)
         .unwrap();
+}
+
+/// 定时计划自动执行（追补）落账 → 在场视图在屏更新（issue #2159 接线断言）。
+/// 到期期次经产品追补入口自动落账（备份调度线程每轮经钩子调用的同一入口：
+/// 连接取会话写连接、开关与今天注入——调度轮的测试驱动等价面，不实等 10 分钟
+/// 节奏，节奏语义归备份域内核测试）；交易页在场时无需重新落位即可见新交易：
+/// 追补落账 → 定时计划域注册点钩子（壳层接线）→ pending 计数（跨线程桥）→
+/// 引擎线程泵消费广播交易 / 预算族 → 视图订阅重读。
+///
+/// 「删除即红」（ADR-0087 接线断言，对准用户可观察结果 = 新交易在屏）：删壳层
+/// 接线（wiring 的追补失效钩子对装）或删泵消费（backup_host 泵的追补 pending
+/// 分支）任一环 → 追补落账后无任何壳内失效广播 → 视图持旧空列表 → 本
+/// wait_for 超时红。追补行为本体（到期判定 / 失败策略 / 置脏）归域单测与
+/// ADR-0042 既有覆盖，本测钉壳内反馈接线的端到端结果。
+#[test]
+fn scheduled_catch_up_auto_execution_updates_on_screen_transaction_list() {
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("auto-run-catch-up");
+    // 到期期次现场：订阅计划起始日 = 昨天（最早一期已到期，金额 ¥30；本月
+    // 后续期次未到期不被追补触碰）。
+    let due_date = today()
+        .checked_sub_days(chrono::Days::new(1))
+        .unwrap()
+        .to_string();
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let account = seed_account_with_balance(&db, "测试现金", 10_000);
+        let conn = db.conn.lock().unwrap();
+        ledger_scheduled::create_plan(
+            &conn,
+            ledger_scheduled::CreateScheduledInput {
+                kind: ledger_scheduled::ScheduledKind::Subscription,
+                account_id: account,
+                category_id: None,
+                amount_cents: 3_000,
+                currency_code: "CNY".to_owned(),
+                recurrence_type: ledger_scheduled::RecurrenceType::Monthly,
+                recurrence_interval: 1,
+                recurrence_day: None,
+                start_date: due_date.clone(),
+                note: Some("自动执行追补的计划".to_owned()),
+                merchant_id: None,
+                policy_id: None,
+                total_amount_cents: None,
+                total_occurrences: None,
+                to_account_id: None,
+            },
+        )
+        .unwrap();
+    }
+
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_transactions(&mut app);
+    // 基线：追补前交易列表为空（期次尚未落账）。
+    app.wait_for("text:暂无数据").unwrap();
+
+    // 触发追补：产品追补入口（调度线程每轮调用的同一入口；开关注入开、今天
+    // 注入本地今日），连接取会话写连接——与调度轮的连接取用同源。
+    let db = nsh_app::test_support::session_db().expect("会话应已就绪");
+    {
+        let conn = db.conn.lock().unwrap();
+        let summary = ledger_scheduled::auto_run::run_catch_up(&conn, true, today());
+        assert_eq!(summary.executed, 1, "到期一期应自动落账");
+    }
+
+    // 追补落账 → 失效广播 → 视图重读：新交易在屏（日期忠实回填期次计划日期，
+    // 金额为计划金额）。删除接线任一环本 wait_for 超时红。
+    app.wait_for(&format!("text:{due_date}")).unwrap();
+    app.wait_for("text:¥30").unwrap();
 }
 
 /// 加密开启流守卫（error 级无后门确认 + ≥8 位 / 一致守卫）：短口令即时红
@@ -17407,20 +17526,6 @@ fn investments_view_instruments_search_and_manual_quote_journey() {
     // 价格失效信号（实际写入任一落点即广播——零变化不广播）→ 行集原地重
     // 拉：现价列从「-」变为「¥1.2345」。删「是否发」广播门或本 pane 订阅
     // 任一 → 现价列不刷新，本断言红。
-    // DEBUG: db state first
-    {
-        let db = nsh_app::boot::boot_ledger(&dir_probe).unwrap();
-        let conn = db.conn.lock().unwrap();
-        let (price, history): (Option<i64>, i64) = conn
-            .query_row(
-                "SELECT (SELECT price_cents FROM market_prices WHERE instrument_id=?1), \
-                 (SELECT COUNT(*) FROM price_history WHERE instrument_id=?1)",
-                rusqlite::params![bond_id],
-                |r| Ok((r.get(0)?, r.get(1)?)),
-            )
-            .unwrap();
-        eprintln!("DEBUG quote db state price={:?} history={}", price, history);
-    }
     app.wait_for("text:¥1.2345").unwrap();
 
     // 库态核对（两个落点）：现价缓存 upsert + 价格历史周采样行（source
@@ -17439,6 +17544,41 @@ fn investments_view_instruments_search_and_manual_quote_journey() {
         assert_eq!(price, Some(12_345), "现价缓存按最新点映像规则 upsert");
         assert_eq!(history, 1, "价格历史周采样落库");
     }
+}
+
+/// 新增标的弹窗·代码框占位文案随通道选择就地更新（#2143 审计命中①的弹窗
+/// 内缺陷段：弹窗内容闭包 untracked 求值（nsh-core flow.rs `Region::If` 同
+/// 根因家族），静态 placeholder 开弹即冻结——通道换选（股票/基金/自定义）
+/// 后引导文案不跟。修复 = placeholder 换响应式绑定（prop 绑定逐次求值）。
+/// 「删除即红」：占位回静态绑定 → 换选后仍停在开弹档占位，本测红。
+#[test]
+fn add_instrument_modal_placeholder_follows_channel_selection() {
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+    let dir = seed_investments_book("add-instrument-placeholder");
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_investments(&mut app);
+    app.press("id:inv-tab-instruments").unwrap();
+    app.wait_for("id:add-instrument").unwrap();
+    app.press("id:add-instrument").unwrap();
+    app.wait_for("text:添加投资标的").unwrap();
+
+    // 开弹未选通道：股票档占位在屏（缺省档）。
+    app.wait_for("text:股票代码，如 600519 / 00700 / AAPL")
+        .unwrap();
+
+    // 换选场外基金：占位就地换成基金档（修复前静态冻结在股票档，红）。
+    app.press("id:add-instrument-channel-trigger").unwrap();
+    app.press("id:add-instrument-channel-option >> text:场外基金")
+        .unwrap();
+    app.wait_for("text:6 位基金代码，如 000001").unwrap();
+
+    // 再换自定义标的：占位随选跟换（两段翻转都钉住）。
+    app.press("id:add-instrument-channel-trigger").unwrap();
+    app.press("id:add-instrument-channel-option >> text:自定义标的")
+        .unwrap();
+    app.wait_for("text:自定义代码，自由文本，如 HW-VR").unwrap();
 }
 
 // ---------------------------------------------------------------------------
