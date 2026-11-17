@@ -31,7 +31,8 @@
 //! - **账本切换**（`useBookSwitcher`）：清单卡（跨账本汇总**置顶入口** +
 //!   行按压切换〔warning 级轻量确认〕+ 行级改名弹窗 / 移除气泡确认 + 新建
 //!   弹窗），清单读注册表最新落盘态；切换写活动指针，本壳无原位重引导
-//!   （旧壳 restart_app 自动重载的偏差在反馈句内披露）。
+//!   （旧壳 restart_app 自动重载的偏差不在屏披露，反馈句与侧栏 #2129
+//!   干净变体同文）。
 //!
 //! 偏好镜像（备份目录 / 保留上限）：NSH 自建平台存储 [`Storage`]（键值形
 //! 态同旧壳 `backup_dir` / `backup_max_count` 的 JSON 形状，不与旧壳共享、
@@ -139,8 +140,7 @@ pub(crate) const RESTORE_TO_PLAINTEXT_WARN: &str =
 pub(crate) const RESTORE_TO_ENCRYPTED_WARN: &str =
     "这份备份为密文备份：恢复后此库将变为加密库，应用重启后需凭该备份的主口令解锁。";
 pub(crate) const RESTORE_FAIL_PREFIX: &str = "恢复失败: ";
-const MSG_RESTORE_OK: &str =
-    "恢复成功，请重启应用进入新库（本壳无原位重引导：旧壳恢复后自动重启的偏差见交付报告）";
+const MSG_RESTORE_OK: &str = "恢复成功，请重启应用进入新库";
 pub(crate) const MSG_META_FAILED_PREFIX: &str = "读取备份信息失败: ";
 pub(crate) const MSG_ENCRYPTION_STATUS_FAILED_PREFIX: &str = "读取加密状态失败: ";
 const MSG_LIST_FAILED_PREFIX: &str = "读取备份列表失败: ";
@@ -304,7 +304,8 @@ const SYNC_BOOTSTRAP_PASS_PLACEHOLDER: &str = "主口令（快照为密文时必
 const SYNC_BOOTSTRAP_CANCEL: &str = "取消";
 const SYNC_BOOTSTRAP_CONFIRM: &str = "引导并重启";
 const SYNC_BOOTSTRAP_FAILED_PREFIX: &str = "引导失败: ";
-const SYNC_BOOTSTRAP_OK_HOST_HINT: &str = "引导完成（本机账本数据已整库替换）：请重启应用载入引导数据（本壳无原位重引导，旧壳自动重启的偏差见交付报告）";
+const SYNC_BOOTSTRAP_OK_HOST_HINT: &str =
+    "引导完成（本机账本数据已整库替换）：请重启应用载入引导数据";
 const SYNC_BOOTSTRAP_REENCRYPTED_HINT: &str =
     "；本机已转为密文库：重启后需凭主口令解锁（即引导快照的主口令）";
 
@@ -330,7 +331,7 @@ const BOOKS_SWITCH_CONFIRM: &str = "切换并重启后生效";
 const BOOKS_SWITCH_DETAIL: &str =
     "将写活动账本指针：重启应用后进入目标账本。未保存的界面状态会丢失，账本数据本身不受影响。";
 const BOOKS_SWITCHING_PREFIX: &str = "已切换到「";
-const BOOKS_SWITCHING_SUFFIX: &str = "」，重启应用后进入新账本（旧壳自动重载的偏差见交付报告）";
+const BOOKS_SWITCHING_SUFFIX: &str = "」，重启应用后进入新账本";
 const BOOKS_ACTION_FAILED_PREFIX: &str = "操作失败: ";
 const BOOKS_SET_FAILED_PREFIX: &str = "设置失败: ";
 const BOOKS_SESSION_UNAVAILABLE: &str = "账本注册表尚未就绪，请重启应用后再试";
