@@ -44,6 +44,7 @@ use crate::design::font_size;
 use crate::nav;
 use crate::nav_model::{NavRequest, ViewName};
 use crate::popover::popover_tip;
+use crate::settings_data::{READ_TASK_FAILED, SESSION_MISSING};
 use crate::signals;
 use crate::transactions::amount_privacy_enabled;
 
@@ -124,7 +125,7 @@ pub(crate) fn DashboardView() -> impl IntoElement {
         let db = db_slot().clone();
         spawn(async move {
             let Some(db) = db else {
-                net_worth_error.set(Some("内部错误：账本库会话缺失".to_owned()));
+                net_worth_error.set(Some(SESSION_MISSING.to_owned()));
                 return;
             };
             let outcome = blocking(move || -> ledger_infra::error::Result<(
@@ -145,7 +146,7 @@ pub(crate) fn DashboardView() -> impl IntoElement {
                     )));
                 }
                 Ok(Err(e)) => net_worth_error.set(Some(e.to_string())),
-                Err(_) => net_worth_error.set(Some("内部错误：读任务异常退出".to_owned())),
+                Err(_) => net_worth_error.set(Some(READ_TASK_FAILED.to_owned())),
             }
         });
     };
@@ -175,7 +176,7 @@ pub(crate) fn DashboardView() -> impl IntoElement {
         let db = db_slot().clone();
         spawn(async move {
             let Some(db) = db else {
-                stats_error.set(Some("内部错误：账本库会话缺失".to_owned()));
+                stats_error.set(Some(SESSION_MISSING.to_owned()));
                 return;
             };
             // 两路读同旧壳 usePortfolioOverview：行集（list_holdings）与累计
@@ -203,7 +204,7 @@ pub(crate) fn DashboardView() -> impl IntoElement {
                     )));
                 }
                 Ok(Err(e)) => stats_error.set(Some(e.to_string())),
-                Err(_) => stats_error.set(Some("内部错误：读任务异常退出".to_owned())),
+                Err(_) => stats_error.set(Some(READ_TASK_FAILED.to_owned())),
             }
         });
     };
@@ -214,7 +215,7 @@ pub(crate) fn DashboardView() -> impl IntoElement {
         let db = db_slot().clone();
         spawn(async move {
             let Some(db) = db else {
-                freedom_error.set(Some("内部错误：账本库会话缺失".to_owned()));
+                freedom_error.set(Some(SESSION_MISSING.to_owned()));
                 return;
             };
             let outcome = blocking(move || -> ledger_infra::error::Result<(
@@ -235,7 +236,7 @@ pub(crate) fn DashboardView() -> impl IntoElement {
                     )));
                 }
                 Ok(Err(e)) => freedom_error.set(Some(e.to_string())),
-                Err(_) => freedom_error.set(Some("内部错误：读任务异常退出".to_owned())),
+                Err(_) => freedom_error.set(Some(READ_TASK_FAILED.to_owned())),
             }
         });
     };
@@ -246,7 +247,7 @@ pub(crate) fn DashboardView() -> impl IntoElement {
         let db = db_slot().clone();
         spawn(async move {
             let Some(db) = db else {
-                budget_error.set(Some("内部错误：账本库会话缺失".to_owned()));
+                budget_error.set(Some(SESSION_MISSING.to_owned()));
                 return;
             };
             let outcome = blocking(move || {
@@ -257,7 +258,7 @@ pub(crate) fn DashboardView() -> impl IntoElement {
             match outcome {
                 Ok(Ok(cells)) => budget.set(Some(cells)),
                 Ok(Err(e)) => budget_error.set(Some(e.to_string())),
-                Err(_) => budget_error.set(Some("内部错误：读任务异常退出".to_owned())),
+                Err(_) => budget_error.set(Some(READ_TASK_FAILED.to_owned())),
             }
         });
     };

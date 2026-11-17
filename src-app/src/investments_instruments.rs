@@ -54,6 +54,7 @@ use nsh_core::prelude::*;
 use crate::assembly::CategoryOption;
 use crate::design::font_size;
 use crate::investments::PanePalette;
+use crate::settings_data::{READ_TASK_FAILED, SESSION_MISSING, WRITE_TASK_FAILED};
 use crate::{
     app, boot, danger, investment_sync, investments, modal, pinyin_select, select, signals,
     transactions,
@@ -504,7 +505,7 @@ pub(crate) fn InstrumentsPane() -> impl IntoElement {
         spawn(async move {
             let Some(db) = db else {
                 loading.set(false);
-                error.set(Some("内部错误：账本库会话缺失".to_owned()));
+                error.set(Some(SESSION_MISSING.to_owned()));
                 return;
             };
             let db_read = db.clone();
@@ -517,7 +518,7 @@ pub(crate) fn InstrumentsPane() -> impl IntoElement {
                     apply_page(result, table, privacy_enabled);
                 }
                 Ok(Err(e)) => error.set(Some(e.to_string())),
-                Err(_) => error.set(Some("内部错误：读任务异常退出".to_owned())),
+                Err(_) => error.set(Some(READ_TASK_FAILED.to_owned())),
             }
         });
     };
@@ -547,7 +548,7 @@ pub(crate) fn InstrumentsPane() -> impl IntoElement {
         spawn(async move {
             let Some(db) = db else {
                 loading.set(false);
-                error.set(Some("内部错误：账本库会话缺失".to_owned()));
+                error.set(Some(SESSION_MISSING.to_owned()));
                 return;
             };
             let db_read = db.clone();
@@ -1118,7 +1119,7 @@ fn perform_instrument_delete(
             let id = row.id.clone();
             let label = row.display_name.clone();
             let Some(db) = db else {
-                delete_error.set(Some("内部错误：账本库会话缺失".to_owned()));
+                delete_error.set(Some(SESSION_MISSING.to_owned()));
                 return;
             };
             let outcome = blocking(move || boot::delete_instrument(&db, &id)).await;
@@ -1129,7 +1130,7 @@ fn perform_instrument_delete(
                     reload();
                 }
                 Ok(Err(e)) => delete_error.set(Some(e.to_string())),
-                Err(_) => delete_error.set(Some("内部错误：写入任务异常退出".to_owned())),
+                Err(_) => delete_error.set(Some(WRITE_TASK_FAILED.to_owned())),
             }
         })
     });
@@ -1372,7 +1373,7 @@ fn submit_manual_quote(
             submitting.set(true);
             let Some(db) = db else {
                 submitting.set(false);
-                quote_error.set(Some("内部错误：账本库会话缺失".to_owned()));
+                quote_error.set(Some(SESSION_MISSING.to_owned()));
                 return;
             };
             let outcome = blocking(move || boot::record_manual_price(&db, &input)).await;
@@ -1397,7 +1398,7 @@ fn submit_manual_quote(
                     }
                 }
                 Ok(Err(e)) => quote_error.set(Some(e.to_string())),
-                Err(_) => quote_error.set(Some("内部错误：写入任务异常退出".to_owned())),
+                Err(_) => quote_error.set(Some(WRITE_TASK_FAILED.to_owned())),
             }
         });
     });
@@ -1528,7 +1529,7 @@ fn add_instrument_modal(
                                 add_error.set(None);
                                 let Some(db) = db else {
                                     creating.set(false);
-                                    add_error.set(Some("内部错误：账本库会话缺失".to_owned()));
+                                    add_error.set(Some(SESSION_MISSING.to_owned()));
                                     return;
                                 };
                                 let outcome =
@@ -1549,9 +1550,7 @@ fn add_instrument_modal(
                                         signals::notify_investments_invalidated();
                                     }
                                     Ok(Err(e)) => add_error.set(Some(e.to_string())),
-                                    Err(_) => {
-                                        add_error.set(Some("内部错误：写入任务异常退出".to_owned()))
-                                    }
+                                    Err(_) => add_error.set(Some(WRITE_TASK_FAILED.to_owned())),
                                 }
                             });
                         }
@@ -1575,7 +1574,7 @@ fn add_instrument_modal(
                                 not_found_hint.set(false);
                                 let Some(db) = db else {
                                     querying.set(false);
-                                    add_error.set(Some("内部错误：账本库会话缺失".to_owned()));
+                                    add_error.set(Some(SESSION_MISSING.to_owned()));
                                     return;
                                 };
                                 let outcome = if channel_id == CHANNEL_ID_FUND {

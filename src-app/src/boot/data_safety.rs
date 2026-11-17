@@ -12,6 +12,7 @@ use ledger_infra::error::{AppError, Result};
 use super::CODE_SESSION_MISSING;
 use super::boot_record;
 use super::conn_lock;
+use crate::settings_data::SESSION_MISSING;
 
 // ---------------------------------------------------------------------------
 // 数据安全与连接接缝（#2054 设置②）：备份管理全量面（列表 / 清理 / 自动备份
@@ -37,7 +38,7 @@ fn db_path_for_data_safety() -> Result<PathBuf> {
     let dir = match boot_record() {
         Some(record) => record.db_dir,
         None => crate::app::book_dir()
-            .ok_or_else(|| AppError::coded(CODE_SESSION_MISSING, "内部错误：账本库会话缺失"))?,
+            .ok_or_else(|| AppError::coded(CODE_SESSION_MISSING, SESSION_MISSING))?,
     };
     Ok(dir.join(ledger_infra::db::data_location::DB_FILE_NAME))
 }

@@ -45,8 +45,8 @@ use nsh_base::{
     data_table, input,
 };
 use nsh_core::element::AnyElement;
+use nsh_core::element::SharedString;
 use nsh_core::element::desktop::MenuItem;
-use nsh_core::element::{FontWeight, SharedString};
 use nsh_core::prelude::*;
 
 use crate::adaptive;
@@ -57,11 +57,12 @@ use crate::context_menu;
 use crate::date_select;
 use crate::design::font_size;
 use crate::icons;
+use crate::list_card;
 use crate::modal;
 use crate::nav_model::{NavRequest, ViewName};
 use crate::pinyin_select;
 use crate::popconfirm;
-use crate::settings_data::{READ_TASK_FAILED, WRITE_TASK_FAILED};
+use crate::settings_data::{READ_TASK_FAILED, SESSION_MISSING, WRITE_TASK_FAILED};
 use crate::transactions::table_classes;
 use crate::views::field_label;
 use crate::{nav, signals};
@@ -266,7 +267,7 @@ pub(crate) fn ItemsView() -> impl IntoElement {
         view_owner.run(move || {
             spawn(async move {
                 let Some(dbc) = db.clone() else {
-                    error.set(Some("内部错误：账本库会话缺失".to_owned()));
+                    error.set(Some(SESSION_MISSING.to_owned()));
                     loading.set(false);
                     return;
                 };
@@ -469,10 +470,7 @@ pub(crate) fn ItemsView() -> impl IntoElement {
             spawn(async move {
                 let outcome = blocking(move || match db.as_ref() {
                     Some(db) => boot::update_item(db, &id, input),
-                    None => Err(AppError::coded(
-                        boot::CODE_SESSION_MISSING,
-                        "内部错误：账本库会话缺失",
-                    )),
+                    None => Err(AppError::coded(boot::CODE_SESSION_MISSING, SESSION_MISSING)),
                 })
                 .await;
                 match outcome {
@@ -576,10 +574,7 @@ pub(crate) fn ItemsView() -> impl IntoElement {
             spawn(async move {
                 let outcome = blocking(move || match db.as_ref() {
                     Some(db) => boot::dispose_item(db, &id, input),
-                    None => Err(AppError::coded(
-                        boot::CODE_SESSION_MISSING,
-                        "内部错误：账本库会话缺失",
-                    )),
+                    None => Err(AppError::coded(boot::CODE_SESSION_MISSING, SESSION_MISSING)),
                 })
                 .await;
                 match outcome {
@@ -607,10 +602,7 @@ pub(crate) fn ItemsView() -> impl IntoElement {
             spawn(async move {
                 let outcome = blocking(move || match db.as_ref() {
                     Some(db) => boot::delete_item(db, &id),
-                    None => Err(AppError::coded(
-                        boot::CODE_SESSION_MISSING,
-                        "内部错误：账本库会话缺失",
-                    )),
+                    None => Err(AppError::coded(boot::CODE_SESSION_MISSING, SESSION_MISSING)),
                 })
                 .await;
                 match outcome {
@@ -666,10 +658,7 @@ pub(crate) fn ItemsView() -> impl IntoElement {
             spawn(async move {
                 let outcome = blocking(move || match db.as_ref() {
                     Some(db) => boot::item_cost(db, &id, Some(&date_text)),
-                    None => Err(AppError::coded(
-                        boot::CODE_SESSION_MISSING,
-                        "内部错误：账本库会话缺失",
-                    )),
+                    None => Err(AppError::coded(boot::CODE_SESSION_MISSING, SESSION_MISSING)),
                 })
                 .await;
                 match outcome {
@@ -1412,51 +1401,38 @@ pub(crate) fn ItemsView() -> impl IntoElement {
                         ),
                 )
                 .child(
-                    // 清单卡片（卡片自身 flex_1——虚拟化表格取弹性链高度，
-                    // 卡片不定高则虚拟化量出零高，先例账户视图注释同形）。
-                    view()
-                        .flex_1()
-                        .flex_col()
-                        .gap_2()
-                        .app_class("rounded-(--radius-card) border border-border p-3")
-                        .child(
-                            // 卡标题自然高度（#2135 布局对齐线）：标题不参与
-                            // 弹性分配——flex_1 标题行曾与表格容器对分卡内剩
-                            // 余高度，少数据时表头被推到卡内中部（web 卡头即
-                            // 标题，表格内容自适应高度）；虚拟化高度仍由卡片
-                            // 本体 flex_1 提供，标题行退出弹性链即可。
-                            text(LIST_CARD_TITLE)
-                                .text_size(px(font_size::SECONDARY))
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .text_color(fg),
-                        )
-                        .child(
-                            view().test_id("item-table").flex_1().child(
-                                data_table()
-                                    .component_ref(&table_ref)
-                                    .columns(columns)
-                                    .data(data_of)
-                                    .row_classes(row_classes)
-                                    .render_cell(cell_of)
-                                    .on_context_menu(move |e: &DataTableContextMenu| {
-                                        if let Some(row_index) = e.row {
-                                            open_row_menu(
-                                                row_index as usize,
-                                                Point::new(e.x, e.y),
-                                            );
-                                        }
-                                    })
-                                    .loading(move || loading.get())
-                                    .loading_view(text(LOADING_PLACEHOLDER).text_color(muted))
-                                    .empty(
-                                        text(EMPTY_GUIDE)
-                                            .text_color(muted)
-                                            .test_id("item-empty-guide"),
-                                    )
-                                    .classes(table_classes())
-                                    .flex_1(),
-                            ),
-                        ),
+                    // 清单卡（装配三件归 list_card_of 单点，#2156）：卡片
+                    // flex_1 容器 + 自然高标题 + flex_1 表格容器。
+                    list_card::list_card_of(
+                        LIST_CARD_TITLE,
+                        fg,
+                        None,
+                        "item-table",
+                        data_table()
+                            .component_ref(&table_ref)
+                            .columns(columns)
+                            .data(data_of)
+                            .row_classes(row_classes)
+                            .render_cell(cell_of)
+                            .on_context_menu(move |e: &DataTableContextMenu| {
+                                if let Some(row_index) = e.row {
+                                    open_row_menu(
+                                        row_index as usize,
+                                        Point::new(e.x, e.y),
+                                    );
+                                }
+                            })
+                            .loading(move || loading.get())
+                            .loading_view(text(LOADING_PLACEHOLDER).text_color(muted))
+                            .empty(
+                                text(EMPTY_GUIDE)
+                                    .text_color(muted)
+                                    .test_id("item-empty-guide"),
+                            )
+                            .classes(table_classes())
+                            .flex_1(),
+                        None,
+                    ),
                 )
                 .child(
                     // 操作反馈条位（成功/失败共用一条，新动作开始清回空）。
@@ -1717,10 +1693,7 @@ pub(crate) fn add_item_modal(
             spawn(async move {
                 let outcome = blocking(move || match db.as_ref() {
                     Some(db) => boot::create_item(db, input),
-                    None => Err(AppError::coded(
-                        boot::CODE_SESSION_MISSING,
-                        "内部错误：账本库会话缺失",
-                    )),
+                    None => Err(AppError::coded(boot::CODE_SESSION_MISSING, SESSION_MISSING)),
                 })
                 .await;
                 match outcome {
