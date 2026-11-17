@@ -436,6 +436,8 @@ pub(crate) fn ReportsView() -> impl IntoElement {
     // ============================ 跳转下钻（消费导航单点，不自建） ============================
     // 载荷 = 分类/商户 + 期间首尾 + 类型集合（支出 + 退款）——列表净值与
     // 柱值一致由载荷显式保证（旧壳同口径）。
+    // 多维手拼为声明边界（#2155）：tx_filter 单维 helper 只辖单维下钻，
+    // 本处多维形状不收口进 tx_filter（判定理由见该模块覆盖边界声明）。
     let go_category_transactions = move |category: tx_filter::CategoryFilter| {
         let Some(range) = session.period.get_untracked() else {
             return;
