@@ -14810,6 +14810,93 @@ fn settings_restore_modal_encrypted_backup_submits_after_passphrase_typed() {
     .unwrap();
 }
 
+/// 设置卡恢复确认弹窗·元数据未标记的密文备份（异常产物，issue #2145）：包
+/// 内库文件实际密文而 `backup.json` 加密标记被改写为 false（外部工具篡改
+/// 的异常产物）——元数据未标记时口令框开弹不显出，确认提交后端「文件即
+/// 真相」探测报需口令，弹窗内就地显出口令框重输，正确口令恢复成功。
+///
+/// 「删除即红」（ADR-0087 接线）：删恢复失败臂的需口令显出接线（#2145 前
+/// 以错误文案子串驱动、恒不命中——后端 Display 只含中文消息）→ 口令框不
+/// 显出、无口令可输 → 本测 count 断言红；断言对准用户可见结果（口令框在
+/// 屏 + 恢复成功反馈）。
+#[test]
+fn settings_restore_modal_metadata_unmarked_encrypted_backup_reveals_passphrase_on_error() {
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+    const PASS_BACKUP: &str = "密文备份口令 journeyC";
+
+    // 密文备份包（备份源密文库，产物加密随源库走），再篡改内层元数据的
+    // 加密标记为 false——「元数据未标记的密文备份」异常产物。
+    let source = make_book("settings-restore-unmarked-source");
+    {
+        let db = nsh_app::boot::boot_ledger(&source).unwrap();
+        let account = seed_cash_account(&db);
+        seed_transaction(
+            &db,
+            TxnSeed {
+                account: &account,
+                to_account: None,
+                kind: TransactionKind::Expense,
+                amount_cents: 2_500,
+                date: &test_date(0),
+                category_id: None,
+                merchant_id: None,
+                note: Some("备份源数据".to_owned()),
+            },
+        );
+    }
+    ledger_infra::db::encryption::enable_encryption_for_file(
+        &source.join("ledger.db"),
+        PASS_BACKUP,
+    )
+    .unwrap();
+    let zip = ScratchFile::new("nsh-settings-restore-unmarked", "restore.db.zip");
+    {
+        let db = nsh_app::boot::unlock_encrypted_book(PASS_BACKUP).unwrap();
+        nsh_app::boot::create_backup(&db, &zip, env!("CARGO_PKG_VERSION")).unwrap();
+    }
+    nsh_app::test_support::merge_extra_backup_meta(&zip, &serde_json::json!({"encrypted": false}));
+
+    // 当前明文会话（元数据未标记 → 无跨模式警告，口令框开弹不显出）。
+    let dir = make_book("settings-restore-unmarked-current");
+    seed_expense_on_date(&dir, &test_date(0), 8_800);
+    let data_root = ScratchDir::new("nsh-settings-restore-unmarked-root");
+    nsh_app::cross_book::set_default_data_dir(data_root.to_path_buf());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_data_tab(&mut app);
+
+    // 选定篡改产物 → 确认弹窗：口令框不显出（元数据未标记；异常前提在屏）。
+    app.on_pick_paths(vec![zip.to_path_buf()]).unwrap();
+    app.press("id:data-restore").unwrap();
+    app.wait_for("text:确认恢复").unwrap();
+    assert_eq!(
+        app.screen().count("id:data-restore-passphrase").unwrap(),
+        0,
+        "元数据未标记：口令框开弹不显出（异常前提）"
+    );
+
+    // 空口令确认 → 后端探测实际密文报需口令：错误就地呈现 + 口令框就地显出
+    //（#2145 修复点：以码化错误的 code 判读驱动，不再按文案子串）。
+    app.press("id:data-restore-confirm").unwrap();
+    app.wait_for("text:/恢复失败: 该备份为密文备份/").unwrap();
+    assert_eq!(
+        app.screen().count("id:data-restore-passphrase").unwrap(),
+        1,
+        "后端报需口令后口令框就地显出可重输"
+    );
+
+    // 重输备份主口令 → 恢复成功（密文备份恢复进明文库，元数据未标记不拦
+    // 正确口令的整库替换）。
+    app.type_text("id:data-restore-passphrase", PASS_BACKUP)
+        .unwrap();
+    app.press("id:data-restore-confirm").unwrap();
+    app.wait_for(
+        "text:恢复成功，请重启应用进入新库（本壳无原位重引导：旧壳恢复后自动重启的偏差见交付报告）",
+    )
+    .unwrap();
+}
+
 /// 自动备份首次兜底全旅程（issue #2078 接线断言；backup 域既有语义零新口径）：
 /// 配置备份目录偏好（设备存储）→ 应用装载期推送目录镜像（旧壳
 /// DevicePreferenceSyncHost 启动 immediate 推送同位）→ 启动竖井成功分支执行
@@ -18643,6 +18730,96 @@ fn locked_view_restore_encrypted_backup_context_pass_retry_enters_session() {
         ledger_infra::db::encryption::verify_source_passphrase(&db_path, PASS_SOURCE).is_ok(),
         "恢复出的密文库凭备份主口令可解（会话已凭同口令开启）"
     );
+}
+
+/// 锁定屏恢复·元数据未标记的密文备份（异常产物，issue #2145）：解锁屏
+/// 同款接线的另一消费面——元数据未标记时口令框不显出（上下文口令也缺席：
+/// 解锁框空），确认提交后端探测报需口令，弹窗内就地显出口令框，正确口令
+/// 恢复出密文库凭该口令解锁进会话。
+///
+/// 「删除即红」同款：删恢复失败臂的需口令显出接线 → 口令框不显出、无口令
+/// 可输 → 本测 count 断言红。
+#[test]
+fn locked_view_restore_metadata_unmarked_encrypted_backup_reveals_passphrase_on_error() {
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+    const PASS_SOURCE: &str = "备份源口令 journeyA";
+
+    // 密文备份包 + 篡改内层加密标记为 false（异常产物同设置卡用例）。
+    let source = make_book("lock-restore-unmarked-source");
+    {
+        let db = nsh_app::boot::boot_ledger(&source).unwrap();
+        let account = seed_cash_account(&db);
+        seed_transaction(
+            &db,
+            TxnSeed {
+                account: &account,
+                to_account: None,
+                kind: TransactionKind::Expense,
+                amount_cents: 2_500,
+                date: &test_date(0),
+                category_id: None,
+                merchant_id: None,
+                note: Some("密文备份源".to_owned()),
+            },
+        );
+    }
+    ledger_infra::db::encryption::enable_encryption_for_file(
+        &source.join("ledger.db"),
+        PASS_SOURCE,
+    )
+    .unwrap();
+    let zip = ScratchFile::new("nsh-lock-restore-unmarked", "restore.db.zip");
+    {
+        let db = nsh_app::boot::unlock_encrypted_book(PASS_SOURCE).unwrap();
+        nsh_app::boot::create_backup(&db, &zip, env!("CARGO_PKG_VERSION")).unwrap();
+    }
+    nsh_app::test_support::merge_extra_backup_meta(&zip, &serde_json::json!({"encrypted": false}));
+
+    // 当前密文库（另一口令 journeyB）落锁定视图；解锁框留空 → 上下文口令
+    // 不携带。
+    let dir = make_encrypted_book("lock-restore-unmarked-current", "当前口令 journeyB");
+    let db_path = dir.join("ledger.db");
+    let data_root = ScratchDir::new("nsh-lock-restore-unmarked-root");
+    nsh_app::cross_book::set_default_data_dir(data_root.to_path_buf());
+
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    app.wait_for("id:locked-panel").unwrap();
+
+    // 选定篡改产物 → 确认弹窗：跨模式警告在屏（元数据称明文备份、当前库
+    // 密文），口令框不显出（元数据未标记 + 上下文口令缺席）。
+    app.on_pick_paths(vec![zip.to_path_buf()]).unwrap();
+    app.press("id:unlock-restore-open").unwrap();
+    app.wait_for("text:确认恢复").unwrap();
+    app.wait_for("text:加密模式不一致").unwrap();
+    assert_eq!(
+        app.screen().count("id:unlock-restore-passphrase").unwrap(),
+        0,
+        "元数据未标记且无上下文口令：口令框不显出（异常前提）"
+    );
+
+    // 空口令确认 → 后端探测实际密文报需口令：错误就地呈现 + 口令框就地显出
+    //（#2145 修复点，解锁屏消费面）。
+    app.press("id:unlock-restore-confirm").unwrap();
+    app.wait_for("text:/恢复失败: 该备份为密文备份/").unwrap();
+    assert_eq!(
+        app.screen().count("id:unlock-restore-passphrase").unwrap(),
+        1,
+        "后端报需口令后口令框就地显出可重输"
+    );
+
+    // 重输备份主口令 → 恢复成功 → 恢复出密文库凭该口令解锁进会话。
+    app.type_text("id:unlock-restore-passphrase", PASS_SOURCE)
+        .unwrap();
+    app.press("id:unlock-restore-confirm").unwrap();
+    app.wait_for("id:nav-transactions").unwrap();
+    open_transactions(&mut app);
+    app.wait_for("text:密文备份源").unwrap();
+    assert!(matches!(
+        ledger_infra::db::encryption::probe_file_kind(&db_path).unwrap(),
+        ledger_infra::db::encryption::DbFileKind::Encrypted,
+    ));
 }
 
 /// 加密卡写面平价全旅程（issue #2088 交付②：修改主口令 / 关闭加密，旧壳
