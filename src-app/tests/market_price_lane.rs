@@ -195,12 +195,16 @@ fn startup_wiring_refreshes_prices_and_never_reruns_same_day_window() {
     while !(written && progressed) {
         let remaining = feedback_deadline
             .checked_duration_since(Instant::now())
-            .unwrap_or_else(|| panic!("实际写入的反馈未在限时内到达（written={written}, progressed={progressed}）"));
+            .unwrap_or_else(|| {
+                panic!("实际写入的反馈未在限时内到达（written={written}, progressed={progressed}）")
+            });
         match nsh_app::market_lanes::recv_feedback_for_tests(remaining) {
             Some(nsh_app::market_lanes::LaneFeedback::PriceWritten) => written = true,
             Some(nsh_app::market_lanes::LaneFeedback::PriceProgress(_)) => progressed = true,
             Some(_) => {}
-            None => panic!("实际写入的反馈未在限时内到达（written={written}, progressed={progressed}）"),
+            None => {
+                panic!("实际写入的反馈未在限时内到达（written={written}, progressed={progressed}）")
+            }
         }
     }
 
@@ -225,7 +229,11 @@ fn startup_wiring_refreshes_prices_and_never_reruns_same_day_window() {
             .unwrap(),
         )
     };
-    assert_eq!(price, Some(130_000), "启动接线刷出现价（market_prices 落行）");
+    assert_eq!(
+        price,
+        Some(130_000),
+        "启动接线刷出现价（market_prices 落行）"
+    );
     assert_eq!(
         history_rows, 0,
         "现价刷新不落任何历史点（含已有历史序列之外的单点）"

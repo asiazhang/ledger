@@ -329,6 +329,16 @@ pub fn take_feedback_for_tests() -> Vec<LaneFeedback> {
 /// 不消费。
 #[doc(hidden)]
 pub fn recv_feedback_for_tests(timeout: Duration) -> Option<LaneFeedback> {
+    // 测试线程通常不在 tokio 运行时上下文：临时 current-thread 运行时驱动
+    // 带期限的 recv（投递即唤醒，期限仅作兜底）。构建失败按「本轮不可等待」
+    // 处置（log warn + None，接收端不动——极端资源耗尽现场，测试由自身期限
+    // 兜底报错；映射形态同 sync-engine transport_runtime，不在 lib panic 出
+    // 六件套门）。
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .build()
+        .map_err(|error| tracing::warn!(%error, "测试等待运行时构建失败，本轮不等待"))
+        .ok()?;
     // 临时取走接收端等待（不持槽锁阻塞——send_feedback 也要锁同槽，持锁等待
     // 会与车道线程投递死锁）；等待完放回原位（本二进制无泵，槽内接收端恒
     // 在；泵已装配时取不到，返回 None）。
@@ -336,25 +346,17 @@ pub fn recv_feedback_for_tests(timeout: Duration) -> Option<LaneFeedback> {
         let mut slot = feedback_slot();
         slot.as_mut().and_then(|(_, receiver)| receiver.take())
     }?;
-    // 测试线程通常不在 tokio 运行时上下文：临时 current-thread 运行时驱动
-    // 带期限的 recv（投递即唤醒，期限仅作兜底）。
-    let item = {
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_time()
-            .build()
-            .expect("测试等待运行时应可建");
-        runtime.block_on(async {
-            tokio::time::timeout(timeout, receiver.recv())
-                .await
-                .ok()
-                .flatten()
-        })
-    };
+    let item = runtime.block_on(async {
+        tokio::time::timeout(timeout, receiver.recv())
+            .await
+            .ok()
+            .flatten()
+    });
     let mut slot = feedback_slot();
-    if let Some((_, r)) = slot.as_mut() {
-        if r.is_none() {
-            *r = Some(receiver);
-        }
+    if let Some((_, r)) = slot.as_mut()
+        && r.is_none()
+    {
+        *r = Some(receiver);
     }
     item
 }
