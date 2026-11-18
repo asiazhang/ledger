@@ -28,6 +28,7 @@ use nsh_core::prelude::*;
 
 use crate::boot;
 use crate::nav_model::ViewName;
+use crate::shell_msgs::{MSG_CREATE_BOOK_TASK_FAILED, MSG_STARTUP_TASK_FAILED};
 use crate::{
     accounts, backup_host, budget, danger, dashboard, investments, items, logging, nav, nav_model,
     reports, scheduled, search, settings, sidebar, signals, sync_triggers, transactions, tx_filter,
@@ -319,7 +320,7 @@ fn fallback_notice_view(
 /// 仍可另指账本库目录）。
 fn startup_task_aborted_view() -> StartupView {
     StartupView::Failed {
-        message: "内部错误：启动任务异常退出".to_owned(),
+        message: MSG_STARTUP_TASK_FAILED.to_owned(),
         can_pick_book_dir: true,
     }
 }
@@ -668,14 +669,13 @@ pub fn App() -> impl IntoElement {
                             // 成功后重走启动竖井：解析链打开新账本，日志/备份宿主/
                             // HTTP 壳/同步触发/行情车道等就绪分支接线一次性完成——
                             // 本次启动直接进主界面，引导不再回归。
-                            let outcome = blocking(move || {
-                                match boot::create_default_book(&target) {
+                            let outcome =
+                                blocking(move || match boot::create_default_book(&target) {
                                     Ok(()) => Ok(run_startup()),
                                     Err(e) => Err(e.to_string()),
-                                }
-                            })
-                            .await
-                            .unwrap_or_else(|_| Err("内部错误：创建账本任务异常退出".to_owned()));
+                                })
+                                .await
+                                .unwrap_or_else(|_| Err(MSG_CREATE_BOOK_TASK_FAILED.to_owned()));
                             creating.set(false);
                             match outcome {
                                 Ok(view) => state.set(view),

@@ -29,7 +29,7 @@ use crate::assembly::{
 use crate::boot;
 use crate::items::AddItemTarget;
 use crate::nav_model;
-use crate::shell_msgs::MSG_SESSION_MISSING;
+use crate::shell_msgs::{MSG_DELETE_TASK_FAILED, MSG_READ_PAGE_TASK_FAILED, MSG_SESSION_MISSING};
 use crate::write_load::session_missing_err;
 use crate::{
     backup_entry, context_menu, danger, investments_form, items, multi_select, nav, overlay,
@@ -793,7 +793,7 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
                         searched.set(searching);
                     }
                     Ok(Err(e)) => error.set(Some(e.to_string())),
-                    Err(_) => error.set(Some("内部错误：读页任务异常退出".to_owned())),
+                    Err(_) => error.set(Some(MSG_READ_PAGE_TASK_FAILED.to_owned())),
                 }
                 loading.set(false);
             });
@@ -847,9 +847,7 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
                 match outcome {
                     Ok(Ok(())) => signals::notify_transactions_invalidated(),
                     Ok(Err(e)) => delete_error.set(Some(format!("删除失败: {e}"))),
-                    Err(_) => {
-                        delete_error.set(Some("删除失败: 内部错误：删除任务异常退出".to_owned()))
-                    }
+                    Err(_) => delete_error.set(Some(format!("删除失败: {MSG_DELETE_TASK_FAILED}"))),
                 }
             })
         });

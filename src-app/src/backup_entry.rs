@@ -34,6 +34,7 @@ use nsh_core::element::pick_save_path;
 use nsh_core::file_dialog::{FileFilter, SaveDialog};
 use nsh_core::prelude::*;
 
+use crate::shell_msgs::MSG_BACKUP_TASK_FAILED;
 use crate::write_load::session_missing_err;
 use crate::{boot, danger};
 
@@ -192,7 +193,7 @@ pub(crate) fn perform_backup(state: BackupEntryState, owner: Owner, target: Path
                     message: format!("备份失败: {e}"),
                 })),
                 Err(_) => state.status.set(Some(BackupStatus::Failed {
-                    message: "备份失败: 内部错误：备份任务异常退出".to_owned(),
+                    message: format!("备份失败: {MSG_BACKUP_TASK_FAILED}"),
                 })),
             }
         });

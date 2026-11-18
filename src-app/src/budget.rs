@@ -13,7 +13,10 @@ use nsh_core::prelude::*;
 
 use crate::app::db_slot;
 use crate::design::font_size;
-use crate::shell_msgs::{MSG_READ_TASK_FAILED, MSG_SESSION_MISSING};
+use crate::shell_msgs::{
+    MSG_CREATE_TASK_FAILED, MSG_DELETE_TASK_FAILED, MSG_READ_TASK_FAILED, MSG_SAVE_TASK_FAILED,
+    MSG_SESSION_MISSING,
+};
 use crate::transactions::{amount_color, amount_privacy_enabled, table_classes};
 use crate::views::field_label;
 use crate::write_load::session_missing_err;
@@ -247,9 +250,7 @@ pub(crate) fn BudgetView() -> impl IntoElement {
                         signals::notify_budgets_invalidated();
                     }
                     Ok(Err(e)) => create_error.set(Some(format!("创建失败: {e}"))),
-                    Err(_) => {
-                        create_error.set(Some("创建失败: 内部错误：创建任务异常退出".to_owned()))
-                    }
+                    Err(_) => create_error.set(Some(format!("创建失败: {MSG_CREATE_TASK_FAILED}"))),
                 }
             });
         });
@@ -292,9 +293,7 @@ pub(crate) fn BudgetView() -> impl IntoElement {
                         signals::notify_budgets_invalidated();
                     }
                     Ok(Err(e)) => edit_error.set(Some(format!("更新失败: {e}"))),
-                    Err(_) => {
-                        edit_error.set(Some("更新失败: 内部错误：保存任务异常退出".to_owned()))
-                    }
+                    Err(_) => edit_error.set(Some(format!("更新失败: {MSG_SAVE_TASK_FAILED}"))),
                 }
             });
         });
@@ -314,9 +313,7 @@ pub(crate) fn BudgetView() -> impl IntoElement {
                 match outcome {
                     Ok(Ok(())) => signals::notify_budgets_invalidated(),
                     Ok(Err(e)) => delete_error.set(Some(format!("删除失败: {e}"))),
-                    Err(_) => {
-                        delete_error.set(Some("删除失败: 内部错误：删除任务异常退出".to_owned()))
-                    }
+                    Err(_) => delete_error.set(Some(format!("删除失败: {MSG_DELETE_TASK_FAILED}"))),
                 }
             });
         });

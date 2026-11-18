@@ -45,7 +45,9 @@ use crate::restore_confirm::{
 };
 use crate::settings_data;
 use crate::shell_msgs;
-use crate::shell_msgs::{MSG_READ_TASK_FAILED, MSG_WRITE_TASK_FAILED};
+use crate::shell_msgs::{
+    MSG_READ_TASK_FAILED, MSG_RESET_TASK_FAILED, MSG_UNLOCK_TASK_FAILED, MSG_WRITE_TASK_FAILED,
+};
 use crate::{app, boot, http_host, views};
 
 // ---------------------------------------------------------------------------
@@ -55,7 +57,6 @@ use crate::{app, boot, http_host, views};
 
 const UNLOCK_PASS_PLACEHOLDER: &str = "主口令";
 const UNLOCK_BUTTON: &str = "解锁";
-const UNLOCK_TASK_FAILED: &str = "内部错误：解锁任务异常退出";
 const FORGOT_ENTRY: &str = "忘记口令？";
 const RESET_CONFIRM_TITLE: &str = "重置为全新空库？";
 const RESET_CONFIRM_STRONG: &str =
@@ -63,7 +64,6 @@ const RESET_CONFIRM_STRONG: &str =
 const RESET_CONFIRM_DETAIL: &str = "继续将把账本重置为全新的明文空库，应用随即进入全新账本（重置后可再次开启加密）。当前账本会保留为密文副本（无口令不可读）——日后想起口令时，数据仍可救回。";
 const RESET_CONFIRM_OK: &str = "确认重置";
 const RESET_CONFIRM_CANCEL: &str = "取消";
-const RESET_TASK_FAILED: &str = "内部错误：重置任务异常退出";
 /// 从备份文件恢复入口与选择器标题（旧壳 `unlock.restore` /
 /// `unlock.restorePickTitle` zh-CN 词条原样；#2131）。
 const RESTORE_ENTRY: &str = "从备份文件恢复…";
@@ -159,7 +159,7 @@ impl LockedSurface {
                 match outcome {
                     Ok(Ok(db)) => surface.enter_ready(db),
                     Ok(Err(e)) => surface.fail(e.to_string()),
-                    Err(_) => surface.fail(UNLOCK_TASK_FAILED.to_owned()),
+                    Err(_) => surface.fail(MSG_UNLOCK_TASK_FAILED.to_owned()),
                 }
             });
         });
@@ -180,7 +180,7 @@ impl LockedSurface {
                 match outcome {
                     Ok(Ok(db)) => surface.enter_ready(db),
                     Ok(Err(e)) => surface.fail(e.to_string()),
-                    Err(_) => surface.fail(RESET_TASK_FAILED.to_owned()),
+                    Err(_) => surface.fail(MSG_RESET_TASK_FAILED.to_owned()),
                 }
             });
         });

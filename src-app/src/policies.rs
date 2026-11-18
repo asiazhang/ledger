@@ -54,7 +54,9 @@ use crate::nav_model::ViewName;
 use crate::pinyin_select;
 use crate::popconfirm;
 use crate::select;
-use crate::shell_msgs::{MSG_READ_TASK_FAILED, MSG_SESSION_MISSING, MSG_WRITE_TASK_FAILED};
+use crate::shell_msgs::{
+    MSG_READ_TASK_FAILED, MSG_REPRICE_TARGET_MISSING, MSG_SESSION_MISSING, MSG_WRITE_TASK_FAILED,
+};
 use crate::transactions::table_classes;
 use crate::views::field_label;
 use crate::write_load::session_missing_err;
@@ -1217,7 +1219,7 @@ pub(crate) fn PoliciesView() -> impl IntoElement {
                             let Some(old_id) = old_plan_id.clone() else {
                                 return Err(AppError::coded(
                                     CODE_REBUILD_TARGET_MISSING,
-                                    "内部错误：改价目标缺失",
+                                    MSG_REPRICE_TARGET_MISSING,
                                 ));
                             };
                             boot::update_scheduled_plan_status(
