@@ -40,7 +40,7 @@ use crate::{boot, danger};
 
 /// 应用版本（备份元数据的应用版本标记，旧壳 `app.package_info().version` 的
 /// 对应物：workspace 各成员版本与根包锁步，Cargo.toml 头注）。pub(crate)：
-/// 设置②备份管理面（`settings_data`）同一标记的消费面。
+/// 设置②备份管理面（[`crate::backup_cards`]）同一标记的消费面。
 pub(crate) const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// 手动备份默认文件名的前缀（旧壳 `MANUAL_BACKUP_PREFIX` 同值：命名规则前后

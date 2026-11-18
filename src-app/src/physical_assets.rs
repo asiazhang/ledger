@@ -113,7 +113,7 @@ const DISPOSE_PRICE_INVALID: &str = "处置价必须大于 0";
 const DISPOSE_CURRENCY_REQUIRED: &str = "请选择处置币种";
 
 /// 装载占位文案（旧壳 loading 同口径）；任务退出错误文案消费
-/// settings_data 单一来源。
+/// shell_msgs 单一来源。
 const LOADING_PLACEHOLDER: &str = "正在加载…";
 
 /// 语义令牌单取（success 非通面五件套成员，不经 ViewPalette——#2153 语义

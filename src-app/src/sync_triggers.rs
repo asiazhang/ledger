@@ -82,7 +82,7 @@ pub(crate) fn install_invalidation_drain() {
                 return; // 发送端全灭（测试复位）：排空任务随通道退场
             }
             // 轮次应用外来 op = 账本数据变化（对端写入落库）：三族失效信号
-            // 与手动同步完成后的广播同闭集（settings_data sync_now_task 同款），
+            // 与手动同步完成后的广播同闭集（sync_card sync_now_task 同款），
             // 否则「同步了但界面不动」。
             signals::notify_transactions_invalidated();
             signals::notify_budgets_invalidated();

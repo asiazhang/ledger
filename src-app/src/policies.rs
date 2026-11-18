@@ -138,7 +138,7 @@ const EVERY_WORD: &str = "每";
 const PERIOD_DIVIDER: &str = "~";
 
 /// 装载占位文案（旧壳 loading 同口径）；任务退出错误文案消费
-/// settings_data 单一来源。
+/// shell_msgs 单一来源。
 const LOADING_PLACEHOLDER: &str = "正在加载…";
 
 /// 统计行缺失 / 无活跃协议等「—」占位（旧壳 policyStatAmountText 等同口径）。

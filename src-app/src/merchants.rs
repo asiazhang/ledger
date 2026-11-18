@@ -90,7 +90,7 @@ const MSG_DELETE_FAILED: &str = "删除失败";
 const PAGE_SIZE: usize = 50;
 
 /// 装载占位文案（旧壳 loading 同口径）；任务退出错误文案消费
-/// settings_data 单一来源。
+/// shell_msgs 单一来源。
 const LOADING_PLACEHOLDER: &str = "正在加载…";
 
 /// 装载批产物（读接缝单点的具名元组）：字典全量（含软删）+ 引用计数

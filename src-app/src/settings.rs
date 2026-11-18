@@ -11,10 +11,10 @@
 //! 有效、不跨启动持久化，离开设置页再回默认首签（旧壳顶级页签无 v-model 同
 //! 口径）。「定时」页签随功能开关响应式隐藏（旧壳 v-if 设置面联动，#1243 /
 //! ADR-0116 决策 4；关闭只隐藏入口、不改写任何清单状态）。容器机制单点，
-//! 设置②（#2054）的数据安全四卡复用本容器的页签面与卡片宿主。
+//! 设置②（#2054）的数据安全卡组复用本容器的页签面与卡片宿主。
 //!
-//! **本票四卡**（设置② 数据安全四卡已随 #2054 落位，卡组住
-//! [`crate::settings_data`]）：
+//! **本票四卡**（设置② 数据安全卡组已随 #2054 落位，#2167 拆分后各卡
+//! 模块化、页签装配宿主住 [`crate::settings_data`]）：
 //! - **外观**（GeneralSettings 主题卡）：显示主题三态（跟随系统 / 深色 /
 //!   浅色——跟随系统是 NSH 框架能力的显式开口，旧壳 Appearance 为 dark/light
 //!   二值；默认深色与旧壳出厂同口径）。设备级轻量设置项（ADR-0017）：NSH 自
@@ -57,8 +57,8 @@
 //!   Git 版本 / 许可证 / 版权元信息行 + 复制版本信息 + Git 行点击复制完整
 //!   sha + 项目主页 / Issues 链接（宿主 open_url）。
 //! - **数据修复卡**（BalanceCacheSettings，ADR-0067 决策 5，
-//!   [`crate::settings_data`] 余额缓存审计修复卡随数据安全卡组落位）：一键
-//!   审计 + 幂等修复 + 逐户差异报告。
+//!   [`crate::balance_cache_card`] 随数据安全卡组落位）：一键审计 + 幂等
+//!   修复 + 逐户差异报告。
 //!
 //! 界面文案仅 zh-CN（旧壳 settings.* zh-CN 词表原样承载）；码化错误 zh 原样
 //! 呈现；NSH 无 toast，动作反馈落卡内状态条位（#2038 裁决）；视图本地快照、
@@ -329,7 +329,8 @@ pub(crate) enum SettingsTab {
     Categories,
     /// 币种（#2136 三卡，卡组住 [`crate::settings_currencies`]）。
     Currencies,
-    /// 数据（存储位置卡 + #2054 数据安全四卡，卡组住 [`crate::settings_data`]）。
+    /// 数据（存储位置卡 + #2054 数据安全卡组，装配住
+    /// [`crate::settings_data`]、各卡模块化（#2167））。
     Data,
     /// 定时（功能开关关闭即页签整行隐藏，旧壳 v-if 联动）。
     Scheduled,
@@ -393,8 +394,8 @@ pub(crate) fn visible_tabs(closed: &[nav_model::ViewName]) -> Vec<SettingsTab> {
 // 卡共用，#2054 数据安全四卡复用）。
 // ---------------------------------------------------------------------------
 
-/// 卡容器（标题 + 竖排内容行）。pub(crate)：#2054 数据安全四卡（
-/// [`crate::settings_data`]）复用同一卡片宿主形态，单点不重建。
+/// 卡容器（标题 + 竖排内容行）。pub(crate)：#2054 数据安全卡组（
+/// [`crate::settings_data`] 及其分卡模块）复用同一卡片宿主形态，单点不重建。
 pub(crate) fn card(title: &'static str, palette: views::ViewPalette, rows: Vec<View>) -> View {
     let mut body = view().flex_col().app_class("gap-2");
     for row in rows {
@@ -741,9 +742,9 @@ fn open_log_dir_button(owner: Owner, status: Signal<Option<String>>) -> impl Int
 // 同形）。
 // ---------------------------------------------------------------------------
 
-/// 数据页签：存储位置卡 + 设置② 数据安全四卡（备份 / 加密 / 多端同步 /
-/// 账本切换；[`crate::settings_data`]——卡片组住独立模块，页签容器面单点
-/// 不变）。
+/// 数据页签：存储位置卡 + 设置② 数据安全卡组（备份 / 加密 / 多端同步 /
+/// 账本切换 / 余额缓存；[`crate::settings_data`]——装配住独立模块、各卡
+/// 随 #2167 再分簇，页签容器面单点不变）。
 fn data_pane(palette: views::ViewPalette) -> View {
     // 卡列滚动容器（数据页签卡多：位置 + 四安全卡 + #2136 余额缓存修复卡，
     // 超视口的卡不进文档——headless 用例经滚动锚点滚入视野）。

@@ -143,7 +143,7 @@ const MSG_PLAIN: &str = "—";
 const DEFAULT_BASE_CURRENCY: &str = "CNY";
 
 /// 装载占位文案（旧壳 loading 同口径）；任务退出错误文案消费
-/// settings_data 单一来源。
+/// shell_msgs 单一来源。
 const LOADING_PLACEHOLDER: &str = "正在加载…";
 
 fn dispose_label_by_flag(in_use: bool) -> &'static str {
