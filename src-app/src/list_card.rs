@@ -5,7 +5,8 @@
 //! 列表卡装配 helper（issue #2156，#2135 review 判断性发现的单点）：卡片
 //! flex_1 容器 + 自然高标题 + flex_1 虚拟滚动表格容器三件，items /
 //! accounts / merchants / policies / savings 五处列表视图消费；参数面
-//! [`ListCardOf`] builder（#2164 类型化，尾部可选行不参与位置序）。
+//! [`ListCardOf`] builder（#2164 类型化，尾部可选行不参与位置序；#2166
+//! `table_id` 改链式 setter、`before` / `after` 收 `AnyElement`）。
 //!
 //! 装配纪律住本单点（历史五处手写同构，一处布局纪律变化要逐文件改五处，
 //! 复制漂移即 #2084 盘点到的容器空白缺陷，#2135 布局对齐线逐处修复）：
@@ -16,7 +17,7 @@
 //! 即调用方传入的 `table_id`（headless 锚点面不变）。
 //!
 //! `before` / `after` 收纳标题与表格之间（过滤意图行等）、表格之后（分页
-//! 条等）的额外行，纯三件调用面传 `None`。行为零变化重构：样式与结构按
+//! 条等）的额外行，纯三件调用面不链式调用即缺省 `None`。行为零变化重构：样式与结构按
 //! 消费面原样搬入，不改变任何行为与 test_id 面（既有 headless 旅程即护栏）。
 //!
 //! 测试豁免（ADR-0060）：本模块测试经 crate 根 cfg(test) 整体放行六件套。
@@ -26,11 +27,12 @@ use nsh_core::prelude::*;
 
 use crate::design::font_size;
 
-/// 列表卡装配参数（#2164 类型化）：原 `list_card_of` 六位置参数含两个尾部
-/// `Option<AnyElement>`（`before` / `after`），相邻同型实参错序难察觉——选
-/// builder 而非全字段结构体：`items` / `savings` / `policies` / `accounts`
-/// 四个纯三件调用面 `new` 后直接 `build`，调用面最短；仅 `merchants` 一处
-/// 链式 `.before` / `.after` 补挂额外行，尾部可选项不再参与位置序。
+/// 列表卡装配参数（#2164 类型化，#2166 收敛余量）：`new(title, fg, table)`
+/// 仅收卡三件，`table_id` 走链式 setter——原 `title` / `table_id` 相邻同型
+/// `&'static str` 位置实参错序难被类型拦截，setter 化后该实参不再参与位置
+/// 序；`before` / `after` 收 `AnyElement`（内部存 `Option`），唯一非平凡
+/// 调用面 `merchants` 不再自带 `Some(…)` 包装。选 builder 链而非全字段
+/// 结构体 / newtype：调用点字符串显式带名，不引入新类型。
 pub(crate) struct ListCardOf<T: IntoElement> {
     /// 卡标题。
     title: &'static str,
@@ -47,32 +49,34 @@ pub(crate) struct ListCardOf<T: IntoElement> {
 }
 
 impl<T: IntoElement> ListCardOf<T> {
-    /// 纯三件调用面：`before` / `after` 缺省 None。
-    pub(crate) fn new(
-        title: &'static str,
-        fg: AdaptiveColor,
-        table_id: &'static str,
-        table: T,
-    ) -> Self {
+    /// 纯三件调用面：`table_id` 经 [`Self::table_id`] 链式补挂，`before` /
+    /// `after` 缺省 None。
+    pub(crate) fn new(title: &'static str, fg: AdaptiveColor, table: T) -> Self {
         Self {
             title,
             fg,
-            table_id,
+            table_id: "",
             table,
             before: None,
             after: None,
         }
     }
 
+    /// 表格容器 headless 锚点（test_id，原 `new` 位置实参 setter 化）。
+    pub(crate) fn table_id(mut self, table_id: &'static str) -> Self {
+        self.table_id = table_id;
+        self
+    }
+
     /// 卡标题与表格之间（过滤意图行等）。
-    pub(crate) fn before(mut self, before: Option<AnyElement>) -> Self {
-        self.before = before;
+    pub(crate) fn before(mut self, before: AnyElement) -> Self {
+        self.before = Some(before);
         self
     }
 
     /// 表格之后（分页条等）。
-    pub(crate) fn after(mut self, after: Option<AnyElement>) -> Self {
-        self.after = after;
+    pub(crate) fn after(mut self, after: AnyElement) -> Self {
+        self.after = Some(after);
         self
     }
 

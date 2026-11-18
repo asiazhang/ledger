@@ -1925,7 +1925,6 @@ pub(crate) fn PoliciesView() -> impl IntoElement {
                     list_card::ListCardOf::new(
                         LIST_CARD_TITLE,
                         fg,
-                        "policy-table",
                         data_table()
                             .component_ref(&table_ref)
                             .columns(columns)
@@ -1942,6 +1941,7 @@ pub(crate) fn PoliciesView() -> impl IntoElement {
                             .classes(table_classes())
                             .flex_1(),
                     )
+                    .table_id("policy-table")
                     .build(),
                 )
                 .child(

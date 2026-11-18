@@ -545,7 +545,6 @@ pub(crate) fn SavingsGoalsView() -> impl IntoElement {
         list_card::ListCardOf::new(
             ARCHIVED_TITLE,
             fg,
-            "sg-archived-table",
             data_table()
                 .columns(archived_columns)
                 .data(data_of(archived_rows, true))
@@ -555,6 +554,7 @@ pub(crate) fn SavingsGoalsView() -> impl IntoElement {
                 .classes(table_classes())
                 .flex_1(),
         )
+        .table_id("sg-archived-table")
         .build()
     };
 
