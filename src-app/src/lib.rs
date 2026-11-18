@@ -274,6 +274,7 @@ pub mod context_menu;
 pub mod cross_book;
 pub mod danger;
 pub mod dashboard;
+pub mod encryption_card;
 pub mod date_select;
 pub mod design;
 // AI 导入 HTTP 壳的生产挂载与失效信号泵（#2081）：api_server 迁居后的启动
