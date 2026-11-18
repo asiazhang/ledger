@@ -57,14 +57,18 @@ fn configure_channel(
     settings::set(&conn, SettingKey::SyncChannelConfig, config).unwrap();
 }
 
-/// 等待自动轮次的用户可观察结果并断言（限时轮询，OS 线程执行）：①「上次
+/// 等待自动轮次的用户可观察结果并断言（限时轮询，OS 线程执行；期限仅作
+/// 兜底——写信号 → 去抖 → 轮次发布的链路事件在通道与库上可观察，无事件
+/// 等待面也无 UI，收敛轮询是唯一观察面，条件置真即停）：①「上次
 /// 成功同步时刻」落库；②通道 manifest 上出现本机设备的**非空段**（on-start
 /// 空轮只落时刻不产段，非空段只能是写信号触发的轮次发布的——删除信号路径
 /// 即红）。S3 传输桥的真 HTTP 往返与阻塞等待在 OS 线程执行，不占测试主线程
 /// （旧壳 wait_for_auto_round 同款现场形态）。
 fn wait_for_auto_round(conn: Arc<std::sync::Mutex<rusqlite::Connection>>, space_id: &'static str) {
     let worker = std::thread::spawn(move || {
-        let deadline = Instant::now() + Duration::from_secs(10);
+        // 期限 30s 兜底（满载慢 CI 现场紧期限假红：真 HTTP 桩往返 + 轮次发布
+        // 在满载容器内可远超 10s）。
+        let deadline = Instant::now() + Duration::from_secs(30);
         let (mut stamped, mut segment) = (false, false);
         while Instant::now() < deadline {
             let channel = {
@@ -152,7 +156,10 @@ fn write_entry_enqueues_upload_via_scheduler() {
     // 被 on-start 轮次顺带发布，写信号路径红不了。
     {
         let db = nsh_app::boot::boot_ledger(&dir).unwrap();
-        let deadline = Instant::now() + Duration::from_secs(10);
+        // 收敛轮询（期限 30s 兜底）：on-start 轮次落库时刻是确定性完成标志，
+        // 无事件等待面也无 UI（本二进制不装配视图树）；满载慢 CI 现场紧期限
+        // 假红，20ms 轮询节奏不影响正确性（条件置真即停）。
+        let deadline = Instant::now() + Duration::from_secs(30);
         loop {
             let conn = db.read_conn.lock().unwrap();
             let stamped = settings::get::<Option<String>>(&conn, SettingKey::SyncLastSyncAt, None)

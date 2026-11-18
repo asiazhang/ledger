@@ -14978,22 +14978,20 @@ fn auto_backup_first_fallback_backs_up_at_session_start_and_card_refreshes() {
     nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config_with_storage_shard(storage)).unwrap();
 
-    // 首次兜底在后台线程执行（不阻塞启动竖井）：产物落盘 = 用户可观察的
-    // 「自动备份发生」（受管自动命名沿用 backup 域规则）。
-    let deadline = std::time::Instant::now() + DEFAULT_WAIT;
-    let product = loop {
-        if let Some(found) = find_first_auto_product(&backup_dir) {
-            break found;
-        }
-        assert!(
-            std::time::Instant::now() < deadline,
-            "启动后应发生首次兜底自动备份（产物落盘），实际目录内容：{:?}",
-            fs::read_dir(&backup_dir)
-                .map(|entries| entries.flatten().map(|e| e.path()).collect::<Vec<_>>())
-                .unwrap_or_default()
-        );
-        std::thread::sleep(Duration::from_millis(50));
-    };
+    // 设置卡自动备份状态刷新（深路径发射 → pending 桥 → 泵广播 → 卡片重读；
+    // 兜底先于卡片装载完成时初始读即时刻）。确定性观察点：「上次自动备份」
+    // 离开「从未」即兜底备份完成——时刻锚（mark_clean）在产物落盘之后写入
+    //（backup 域 attempt 收尾），回显出现即备份已落盘，随后的产物断言无竞态
+    //（旧写法目录忙轮询 + 5s 紧期限，满载慢 CI 现场假红）。删除兜底接线 →
+    // 卡片停留「从未」→ 本 wait_for_gone 超时红。
+    open_data_tab(&mut app);
+    app.wait_for("id:data-auto-last").unwrap();
+    app.wait_for_gone("text:上次自动备份：从未", DEFAULT_WAIT)
+        .unwrap();
+
+    // 产物落盘 = 用户可观察的「自动备份发生」（受管自动命名沿用 backup 域规则）。
+    let product =
+        find_first_auto_product(&backup_dir).expect("启动后应发生首次兜底自动备份（产物落盘）");
     let name = product
         .file_name()
         .and_then(|n| n.to_str())
@@ -15008,13 +15006,6 @@ fn auto_backup_first_fallback_backs_up_at_session_start_and_card_refreshes() {
         "产物非空：{}",
         product.display()
     );
-
-    // 设置卡自动备份状态刷新（深路径发射 → pending 桥 → 泵广播 → 卡片重读；
-    // 兜底先于卡片装载完成时初始读即时刻，断言同样成立）。
-    open_data_tab(&mut app);
-    app.wait_for("id:data-auto-last").unwrap();
-    app.wait_for_gone("text:上次自动备份：从未", DEFAULT_WAIT)
-        .unwrap();
 }
 
 /// 递归找目录下首个自动备份产物（自动产物落设备子目录一层，域语义沿用）。
@@ -15108,6 +15099,8 @@ fn auto_backup_triggers_after_shell_write_and_card_refreshes() {
     open_transactions(&mut app);
     app.settle();
     // 首兜底被受管列表挡住：启动期零自动产物（本日的备份机会留给写触发）。
+    // 负向缺失断言无慢现场假红面：受管列表在启动门检前已预置非空，兜底被挡
+    // 则永不写，产物只能在缺陷在场时出现（缺陷越晚现形只会越不易红）。
     assert!(
         find_first_auto_product(&backup_dir).is_none(),
         "首次兜底应被预置受管产物挡住（启动期零自动产物），实际目录：{:?}",
@@ -15124,21 +15117,20 @@ fn auto_backup_triggers_after_shell_write_and_card_refreshes() {
     app.press("id:danger-confirm").unwrap();
     app.wait_for("text:共 1 条").unwrap();
 
+    // 设置卡自动备份状态刷新（深路径发射 → pending 桥 → 泵广播 → 卡片重读）。
+    // 确定性观察点：「上次自动备份」离开「从未」即写触发的自动备份完成——
+    // 时刻锚（mark_clean）在产物落盘之后写入（backup 域 attempt 收尾），回显
+    // 出现即备份已落盘，随后的产物断言无竞态（旧写法目录忙轮询 + 5s 紧期限，
+    // 满载慢 CI 现场假红）。删提交点接线 → 产物不出、卡片停留「从未」→
+    // 本 wait_for_gone 超时红。
+    open_data_tab(&mut app);
+    app.wait_for("id:data-auto-last").unwrap();
+    app.wait_for_gone("text:上次自动备份：从未", DEFAULT_WAIT)
+        .unwrap();
+
     // 写触发的自动备份产物落盘（用户可观察结果；受管自动命名沿用域规则）。
-    let deadline = std::time::Instant::now() + DEFAULT_WAIT;
-    let product = loop {
-        if let Some(found) = find_first_auto_product(&backup_dir) {
-            break found;
-        }
-        assert!(
-            std::time::Instant::now() < deadline,
-            "用户写交易后应触发自动备份（产物落盘），实际目录内容：{:?}",
-            fs::read_dir(&backup_dir)
-                .map(|entries| entries.flatten().map(|e| e.path()).collect::<Vec<_>>())
-                .unwrap_or_default()
-        );
-        std::thread::sleep(Duration::from_millis(50));
-    };
+    let product =
+        find_first_auto_product(&backup_dir).expect("用户写交易后应触发自动备份（产物落盘）");
     let name = product
         .file_name()
         .and_then(|n| n.to_str())
@@ -15153,12 +15145,6 @@ fn auto_backup_triggers_after_shell_write_and_card_refreshes() {
         "产物非空：{}",
         product.display()
     );
-
-    // 设置卡自动备份状态刷新（深路径发射 → pending 桥 → 泵广播 → 卡片重读）。
-    open_data_tab(&mut app);
-    app.wait_for("id:data-auto-last").unwrap();
-    app.wait_for_gone("text:上次自动备份：从未", DEFAULT_WAIT)
-        .unwrap();
 }
 
 /// 定时计划自动执行（追补）落账 → 在场视图在屏更新（issue #2159 接线断言）。
@@ -17829,7 +17815,11 @@ fn http_api_server_mounts_and_pumps_invalidation_to_views() {
     // 不得误连出假绿，#2112）。
     let mut contract = String::new();
     let mut mounted = false;
-    for _ in 0..50 {
+    // 收敛轮询（期限放宽至 30s 兜底）：mounted_port 无事件面（进程级设施，
+    // 无 UI 锚点可等），轮询是唯一观察面；满载慢 CI 现场「紧期限」会假红，
+    // 100ms 轮询节奏不影响正确性（条件置真即停）。
+    let mount_deadline = std::time::Instant::now() + Duration::from_secs(30);
+    while std::time::Instant::now() < mount_deadline {
         if let Some(port) = nsh_app::http_host::mounted_port()
             && let Ok((status, body)) = raw_http_request(port, "GET", "/api/v1/contract", None)
         {
@@ -19120,7 +19110,8 @@ fn wait_no_auto_product(dir: &std::path::Path, window: Duration, label: &str) {
 ///   落盘（#2088 预留编排点的用户可观察结果）。
 ///
 /// 「删除即红」负向条目：删解锁路径的 `start_session_host` 补拉起（业务可
-/// 用起点单点的备份宿主接线）→ 解锁后无产物 → 产物轮询超时红。
+/// 用起点单点的备份宿主接线）→ 解锁后无产物、设置卡停留「从未」→
+/// wait_for_gone 超时红。
 #[test]
 fn auto_backup_scheduling_three_states_in_encrypted_scenario() {
     let _guard = serial_lock();
@@ -19181,25 +19172,21 @@ fn auto_backup_scheduling_three_states_in_encrypted_scenario() {
     app.wait_for("text:口令错误或文件损坏，请重试").unwrap();
     wait_no_auto_product(&backup_dir, Duration::from_secs(2), "解锁失败态仍锁定");
 
-    // 解锁：进业务会话 → 备份宿主同点补拉起 → 首次兜底产物落盘。
+    // 解锁：进业务会话 → 备份宿主同点补拉起 → 首次兜底产物落盘。确定性
+    // 观察点：「上次自动备份」离开「从未」即兜底备份完成——时刻锚
+    //（mark_clean）在产物落盘之后写入（backup 域 attempt 收尾），回显出现
+    // 即备份已落盘，随后的产物断言无竞态（旧写法目录忙轮询 + 5s 紧期限，
+    // 满载慢 CI 现场假红）。删解锁路径的补拉起 → 卡片停留「从未」→ 红。
     app.clear("id:unlock-passphrase").unwrap();
     app.type_text("id:unlock-passphrase", PASS).unwrap();
     app.press("id:unlock-confirm").unwrap();
     app.wait_for("id:nav-transactions").unwrap();
-    let deadline = std::time::Instant::now() + DEFAULT_WAIT;
-    let product = loop {
-        if let Some(found) = find_first_auto_product(&backup_dir) {
-            break found;
-        }
-        assert!(
-            std::time::Instant::now() < deadline,
-            "解锁后应发生首次兜底自动备份（产物落盘），实际目录内容：{:?}",
-            fs::read_dir(&backup_dir)
-                .map(|entries| entries.flatten().map(|e| e.path()).collect::<Vec<_>>())
-                .unwrap_or_default()
-        );
-        std::thread::sleep(Duration::from_millis(50));
-    };
+    open_data_tab(&mut app);
+    app.wait_for("id:data-auto-last").unwrap();
+    app.wait_for_gone("text:上次自动备份：从未", DEFAULT_WAIT)
+        .unwrap();
+    let product =
+        find_first_auto_product(&backup_dir).expect("解锁后应发生首次兜底自动备份（产物落盘）");
     let name = product
         .file_name()
         .and_then(|n| n.to_str().map(str::to_owned))
@@ -19316,7 +19303,9 @@ fn install_update_stubs(
 }
 
 /// 轮询等待（真实时间）：条件在期限内置真即成功——异步编排产物（备份文件 /
-/// 桩记录）晚于状态呈现的场合，等待成功优于即刻失败。
+/// 桩记录）晚于状态呈现的场合，等待成功优于即刻失败。期限仅作兜底（条件
+/// 置真即唤醒返回）：满载慢 CI 现场备份 / 桩记录可晚于状态呈现数秒，调用方
+/// 传 30s 兜底期限，50ms 轮询节奏不影响正确性。
 fn wait_until(deadline: Duration, mut cond: impl FnMut() -> bool) -> bool {
     let start = std::time::Instant::now();
     while start.elapsed() < deadline {
@@ -19403,8 +19392,10 @@ fn update_manual_check_circuit_downloads_then_backs_up_before_install() {
     app.wait_for("id:update-installing").unwrap();
     // 安装编排异步进行（备份 → 换装桩），产物与桩记录晚于 Installing 态呈现
     // ——轮询等待（套件满载下备份耗时不可先验，等待成功优于即刻失败）。
+    // 替身回路无终态 UI 锚点（成功即停在安装态），轮询是唯一观察面；期限
+    // 30s 兜底（满载慢 CI 现场紧期限假红，见 wait_until 文档）。
     assert!(
-        wait_until(DEFAULT_WAIT, || !installed
+        wait_until(Duration::from_secs(30), || !installed
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .is_empty()),
@@ -19417,8 +19408,11 @@ fn update_manual_check_circuit_downloads_then_backs_up_before_install() {
         "换装桩收到的正是已下载工件"
     );
     let pre_update_backup = data_root.path().join("pre-update.db.zip");
+    // 更新前备份落应用数据根（非用户备份目录，无卡片可观察面）、裸作业零
+    // 状态接触——轮询是唯一观察面；期限 30s 兜底（满载慢 CI 现场紧期限假红，
+    // 见 wait_until 文档）。
     assert!(
-        wait_until(DEFAULT_WAIT, || pre_update_backup.is_file()),
+        wait_until(Duration::from_secs(30), || pre_update_backup.is_file()),
         "安装前更新前备份在场（删除 create_pre_update_backup 调用即红）：{}",
         pre_update_backup.display()
     );
