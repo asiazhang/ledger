@@ -272,11 +272,15 @@ fn startup_wiring_syncs_fx_rates_and_concurrent_sync_is_rejected() {
 
     // 放行后台取数：每日通道完成落库——4 个夹具周 × 字典对全落库，当期汇率
     // 改写为最新一天 2026-09-21 的交叉值（「后台通道真实落库」的可观察面）。
-    // 另一路被互斥拒绝、零写入，落库全部来自每日通道。
+    // 收敛轮询（期限放宽至 30s 兜底）：fx 车道无反馈桥项（LaneFeedback 闭集
+    // 无 fx 件——fx 可重建缓存、无失效信号语义），库态读亦无 UI 观察点，
+    // 收敛轮询是唯一可用等待面；满载慢 CI 现场「紧期限」会假红，50ms 轮询
+    // 节奏不影响正确性（条件置真即停）。另一路被互斥拒绝、零写入，落库全部
+    // 来自每日通道。
     release_tx.send(()).expect("放行应成功");
     let expected_rows = (LANE_DAY_SPECS.len() * (codes.len() - 1)) as i64;
     let expected_rate = LANE_DAY_SPECS.last().unwrap().1 / usd_leg(&codes);
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + Duration::from_secs(30);
     loop {
         let (rows, rate): (i64, Option<f64>) = {
             let conn = db.conn.lock().unwrap();
@@ -302,7 +306,8 @@ fn startup_wiring_syncs_fx_rates_and_concurrent_sync_is_rejected() {
     }
 
     // 同日窗口不重跑（AC「每自然日至多一次」）：巡检多次到期后，每日通道的
-    // 全量取数仍只有首轮那一次，增量腿从未被触达。
+    // 全量取数仍只有首轮那一次，增量腿从未被触达。观察窗即时间语义本体
+    //（同日窗口不重跑），注入时机受控（短 window_poll），非竞态等待。
     let step = POLL_INTERVAL / 4;
     let deadline = Instant::now() + POLL_INTERVAL * 2;
     while Instant::now() < deadline {

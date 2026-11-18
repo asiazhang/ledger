@@ -188,28 +188,43 @@ fn startup_wiring_backfills_history_and_never_reruns_same_day_window() {
         .recv_timeout(Duration::from_secs(10))
         .expect("后台补全应到达周 K 抓取点");
 
-    // 放行后台抓取：补全完成，历史落行（只能来自后台——每日刷新桩的报价为空表）。
+    // 放行后台抓取：补全完成，历史落行（只能来自后台——每日刷新桩的报价为
+    // 空表）。事件驱动等待反馈桥投递（PriceWritten 在写提交后由车道内核收尾
+    // 单点投递——到达即写入已落盘，随后的库态断言无竞态；阻塞 recv 由投递
+    // 事件唤醒，不依赖测试线程轮询节奏，期限仅作兜底。旧写法库态忙轮询 +
+    // 10s 紧期限，满载慢 CI 现场假红）。静默计数（BackfillProgress）在轮次
+    // 内先行入队，与 PriceWritten 一并等待；忽略现价车道静默桩可发的其他件。
     release_tx.send(()).expect("放行应成功");
-    let deadline = Instant::now() + Duration::from_secs(10);
-    loop {
-        let rows: i64 = {
-            let conn = db.conn.lock().unwrap();
-            conn.query_row(
-                "SELECT count(*) FROM price_history WHERE instrument_id = ?1",
-                rusqlite::params![instrument_id],
-                |r| r.get(0),
-            )
-            .unwrap()
-        };
-        if rows >= 2 {
-            break;
+    let feedback_deadline = Instant::now() + Duration::from_secs(30);
+    let (mut written, mut counted) = (false, false);
+    while !(written && counted) {
+        let remaining = feedback_deadline
+            .checked_duration_since(Instant::now())
+            .unwrap_or_else(|| {
+                panic!("补全的反馈未在限时内到达（written={written}, counted={counted}）")
+            });
+        match nsh_app::market_lanes::recv_feedback_for_tests(remaining) {
+            Some(nsh_app::market_lanes::LaneFeedback::PriceWritten) => written = true,
+            Some(nsh_app::market_lanes::LaneFeedback::BackfillProgress(_)) => counted = true,
+            Some(_) => {}
+            None => {
+                panic!("补全的反馈未在限时内到达（written={written}, counted={counted}）")
+            }
         }
-        assert!(
-            Instant::now() < deadline,
-            "启动接线未在限时内补齐历史（price_history 未落行）"
-        );
-        std::thread::sleep(Duration::from_millis(50));
     }
+
+    // 历史已落行（PriceWritten 到达即写提交完成）：无历史标的的历史自己长出
+    // 来。断言无轮询无竞态。
+    let rows: i64 = {
+        let conn = db.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT count(*) FROM price_history WHERE instrument_id = ?1",
+            rusqlite::params![instrument_id],
+            |r| r.get(0),
+        )
+        .unwrap()
+    };
+    assert!(rows >= 2, "启动接线补齐历史（price_history 落行）");
 
     // 现价零写入：market_prices 恒零行（补全不刷现价，刷新桩报价空表）。
     let price_rows: i64 = {
@@ -223,30 +238,14 @@ fn startup_wiring_backfills_history_and_never_reruns_same_day_window() {
     };
     assert_eq!(price_rows, 0, "补全不落现价（历史行的来路唯一）");
 
-    // 实际写入经反馈桥投递（成败同判收尾裁决的投递半边）：PriceWritten 与静默
-    // 计数（BackfillProgress，含 total 预告）都必达。泵不在场（本二进制无引
-    // 擎），队列即排空断言面；呈现半边由 market_lanes::probe 钉住。
-    let feedback_deadline = Instant::now() + Duration::from_secs(10);
-    loop {
-        let drained = nsh_app::market_lanes::take_feedback_for_tests();
-        let written = drained
-            .iter()
-            .any(|fb| matches!(fb, nsh_app::market_lanes::LaneFeedback::PriceWritten));
-        let counted = drained
-            .iter()
-            .any(|fb| matches!(fb, nsh_app::market_lanes::LaneFeedback::BackfillProgress(_)));
-        if written && counted {
-            break;
-        }
-        assert!(
-            Instant::now() < feedback_deadline,
-            "实际写入 / 静默计数的反馈未在限时内到达（written={written}, counted={counted}）"
-        );
-        std::thread::sleep(Duration::from_millis(10));
-    }
+    // 反馈到达即排空断言面（上面事件驱动等待已收到 PriceWritten 与
+    // BackfillProgress 各一件——泵不在场，本二进制无引擎，队列即断言面；
+    // 呈现半边由 market_lanes::probe 钉住）。
 
     // 同日窗口不重跑（AC「每自然日窗口一次」）：巡检多次到期后，周 K 抓取仍
     // 只有首轮那一次（接线断言；规则权威在域单测 daily_window_opens_*）。
+    // 观察窗即时间语义本体（同日窗口不重跑），注入时机受控（短 window_poll），
+    // 非竞态等待。
     let step = POLL_INTERVAL / 4;
     let deadline = Instant::now() + POLL_INTERVAL * 2;
     while Instant::now() < deadline {
