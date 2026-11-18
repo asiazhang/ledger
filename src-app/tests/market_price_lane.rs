@@ -185,65 +185,51 @@ fn startup_wiring_refreshes_prices_and_never_reruns_same_day_window() {
 
     // 放行后台抓取：每日刷新完成，现价被后台写入为 1300.00 元（130000 分）。
     release_tx.send(()).expect("放行应成功");
-    let deadline = Instant::now() + Duration::from_secs(10);
-    loop {
-        let price: Option<i64> = {
-            let conn = db.conn.lock().unwrap();
+
+    // 事件驱动等待反馈桥投递（PriceWritten 在写提交后由车道线程收尾投递，
+    // lane.rs 收尾单点——到达即写入已落盘，随后的库态断言无竞态；阻塞 recv
+    // 由投递事件唤醒，不依赖测试线程轮询节奏，期限仅作兜底）。PriceProgress
+    // 先于 PriceWritten 入队，忽略 BackfillProgress（静默桩车道可发）。
+    let feedback_deadline = Instant::now() + Duration::from_secs(30);
+    let (mut written, mut progressed) = (false, false);
+    while !(written && progressed) {
+        let remaining = feedback_deadline
+            .checked_duration_since(Instant::now())
+            .unwrap_or_else(|| panic!("实际写入的反馈未在限时内到达（written={written}, progressed={progressed}）"));
+        match nsh_app::market_lanes::recv_feedback_for_tests(remaining) {
+            Some(nsh_app::market_lanes::LaneFeedback::PriceWritten) => written = true,
+            Some(nsh_app::market_lanes::LaneFeedback::PriceProgress(_)) => progressed = true,
+            Some(_) => {}
+            None => panic!("实际写入的反馈未在限时内到达（written={written}, progressed={progressed}）"),
+        }
+    }
+
+    // 现价已写入（PriceWritten 到达即写提交完成）：market_prices 落行 130000
+    // 分，且现价刷新不承担历史——price_history 恒零行（历史归价格历史后台
+    // 补全）。断言无轮询无竞态。
+    let (price, history_rows): (Option<i64>, i64) = {
+        let conn = db.conn.lock().unwrap();
+        (
             conn.query_row(
                 "SELECT price_cents FROM market_prices WHERE instrument_id = ?1",
                 rusqlite::params![instrument_id],
                 |r| r.get(0),
             )
             .optional()
-            .unwrap()
-        };
-        if price == Some(130_000) {
-            break;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "启动接线未在限时内刷出现价（market_prices 未被后台写入）"
-        );
-        std::thread::sleep(Duration::from_millis(50));
-    }
-
-    // 现价刷新不承担历史：price_history 恒零行（历史归价格历史后台补全）。
-    let history_rows: i64 = {
-        let conn = db.conn.lock().unwrap();
-        conn.query_row(
-            "SELECT count(*) FROM price_history WHERE instrument_id = ?1",
-            rusqlite::params![instrument_id],
-            |r| r.get(0),
+            .unwrap(),
+            conn.query_row(
+                "SELECT count(*) FROM price_history WHERE instrument_id = ?1",
+                rusqlite::params![instrument_id],
+                |r| r.get(0),
+            )
+            .unwrap(),
         )
-        .unwrap()
     };
+    assert_eq!(price, Some(130_000), "启动接线刷出现价（market_prices 落行）");
     assert_eq!(
         history_rows, 0,
         "现价刷新不落任何历史点（含已有历史序列之外的单点）"
     );
-
-    // 实际写入经反馈桥投递（成败同判收尾裁决的投递半边）：PriceWritten 必达、
-    // 进度事件（含 total 预告）至少一条。泵不在场（本二进制无引擎），队列即
-    // 排空断言面；呈现半边由 market_lanes::probe 钉住。
-    let feedback_deadline = Instant::now() + Duration::from_secs(10);
-    let (written, progressed) = loop {
-        let drained = nsh_app::market_lanes::take_feedback_for_tests();
-        let written = drained
-            .iter()
-            .any(|fb| matches!(fb, nsh_app::market_lanes::LaneFeedback::PriceWritten));
-        let progressed = drained
-            .iter()
-            .any(|fb| matches!(fb, nsh_app::market_lanes::LaneFeedback::PriceProgress(_)));
-        if written && progressed {
-            break (written, progressed);
-        }
-        assert!(
-            Instant::now() < feedback_deadline,
-            "实际写入的反馈未在限时内到达（written={written}, progressed={progressed}）"
-        );
-        std::thread::sleep(Duration::from_millis(10));
-    };
-    assert!(written, "实际写入必达反馈桥");
     assert!(progressed, "现价刷新进度事件必达反馈桥");
 
     // 同日窗口不重跑（AC「每自然日窗口一次」）：巡检多次到期后，批量报价抓取

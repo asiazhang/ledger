@@ -14489,15 +14489,11 @@ fn backup_full_journey_backs_up_lists_prunes_and_guards_overwrite() {
     app.press("id:data-backup-as").unwrap();
     app.wait_for("text:覆盖备份文件").unwrap();
     app.press("id:danger-confirm").unwrap();
-    // last-backup 锚点在备份①②已置亮，此处 wait 无等待效果——settle 等
-    // 本次备份异步写收敛后再断言文件替换（否则偶发在写入落地前读旧内容）。
-    app.settle();
-    app.wait_for("id:data-last-backup").unwrap();
-    assert_eq!(
-        fs::read(&target_overwrite).unwrap(),
-        b"canary-bytes",
-        "扁平回答路径零改动（写入按域改道落设备子目录，旧壳同款组合行为）"
-    );
+    // 确定性等待：清单行（新备份文件名）只在写入落盘 + 清单重拉后出现——
+    // 行出现即写已落盘，随后的文件断言无竞态（备份①的 row-0-name 同款形态；
+    // 旧写法 settle 后立即断言文件存在，慢 CI 现场在写入落地前读到旧状态。
+    app.wait_for("text:ledger-backup-20260101-000200.db.zip")
+        .unwrap();
     assert_eq!(
         fs::read(&target_overwrite).unwrap(),
         b"canary-bytes",
