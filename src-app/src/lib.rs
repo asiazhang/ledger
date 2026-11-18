@@ -329,6 +329,7 @@ pub mod settings_data;
 pub mod settings_scheduled;
 pub mod shell_msgs;
 pub mod shell_support;
+pub mod sync_card;
 pub mod sidebar;
 pub mod sidebar_books;
 pub mod signals;
