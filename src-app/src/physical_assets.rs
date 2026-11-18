@@ -30,7 +30,6 @@
 //!
 //! 测试豁免（ADR-0060）：本模块测试经 crate 根 cfg(test) 整体放行六件套。
 
-use ledger_infra::error::AppError;
 use ledger_physical_asset::{
     PhysicalAsset, PhysicalAssetDisposeInput, PhysicalAssetInput, PhysicalAssetStatus,
     PhysicalAssetUpdateInput, PhysicalAssetValuationInput,
@@ -53,6 +52,7 @@ use crate::select;
 use crate::shell_msgs::{MSG_READ_TASK_FAILED, MSG_SESSION_MISSING, MSG_WRITE_TASK_FAILED};
 use crate::transactions::table_classes;
 use crate::views::field_label;
+use crate::write_load::session_missing_err;
 use crate::{nav, signals};
 
 // ---------------------------------------------------------------------------
@@ -655,10 +655,7 @@ pub(crate) fn PhysicalAssetsView() -> impl IntoElement {
                         )
                         .map(|_: String| ()),
                     },
-                    None => Err(AppError::coded(
-                        boot::CODE_SESSION_MISSING,
-                        MSG_SESSION_MISSING,
-                    )),
+                    None => Err(session_missing_err()),
                 })
                 .await;
                 match outcome {
@@ -714,10 +711,7 @@ pub(crate) fn PhysicalAssetsView() -> impl IntoElement {
             spawn(async move {
                 let outcome = blocking(move || match db.as_ref() {
                     Some(db) => boot::update_physical_asset_valuation(db, &asset_id, input),
-                    None => Err(AppError::coded(
-                        boot::CODE_SESSION_MISSING,
-                        MSG_SESSION_MISSING,
-                    )),
+                    None => Err(session_missing_err()),
                 })
                 .await;
                 match outcome {
@@ -776,10 +770,7 @@ pub(crate) fn PhysicalAssetsView() -> impl IntoElement {
             spawn(async move {
                 let outcome = blocking(move || match db.as_ref() {
                     Some(db) => boot::dispose_physical_asset(db, &asset_id, input),
-                    None => Err(AppError::coded(
-                        boot::CODE_SESSION_MISSING,
-                        MSG_SESSION_MISSING,
-                    )),
+                    None => Err(session_missing_err()),
                 })
                 .await;
                 match outcome {
@@ -805,10 +796,7 @@ pub(crate) fn PhysicalAssetsView() -> impl IntoElement {
             spawn(async move {
                 let outcome = blocking(move || match db.as_ref() {
                     Some(db) => boot::delete_physical_asset(db, &id),
-                    None => Err(AppError::coded(
-                        boot::CODE_SESSION_MISSING,
-                        MSG_SESSION_MISSING,
-                    )),
+                    None => Err(session_missing_err()),
                 })
                 .await;
                 match outcome {

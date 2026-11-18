@@ -41,7 +41,7 @@ use crate::signals;
 use crate::transactions::{amount_color, amount_privacy_enabled, table_classes};
 use crate::tx_filter;
 use crate::views::field_label;
-use ledger_infra::error::AppError;
+use crate::write_load::session_missing_err;
 
 // ---------------------------------------------------------------------------
 // 词表（旧壳 accounts.* zh-CN 词条原样；i18n 框架级方案不在本票，字面承载）。
@@ -295,10 +295,7 @@ pub(crate) fn AccountsView() -> impl IntoElement {
                 // #2033 预算写路径同形）。
                 let outcome = blocking(move || match db.as_ref() {
                     Some(db) => boot::create_account(db, input),
-                    None => Err(AppError::coded(
-                        boot::CODE_SESSION_MISSING,
-                        MSG_SESSION_MISSING,
-                    )),
+                    None => Err(session_missing_err()),
                 })
                 .await;
                 match outcome {
@@ -415,10 +412,7 @@ pub(crate) fn AccountsView() -> impl IntoElement {
             spawn(async move {
                 let outcome = blocking(move || match db.as_ref() {
                     Some(db) => boot::update_account(db, &id, input),
-                    None => Err(AppError::coded(
-                        boot::CODE_SESSION_MISSING,
-                        MSG_SESSION_MISSING,
-                    )),
+                    None => Err(session_missing_err()),
                 })
                 .await;
                 match outcome {
@@ -480,10 +474,7 @@ pub(crate) fn AccountsView() -> impl IntoElement {
             spawn(async move {
                 let outcome = blocking(move || match db.as_ref() {
                     Some(db) => boot::adjust_account_balance(db, &id, &input),
-                    None => Err(AppError::coded(
-                        boot::CODE_SESSION_MISSING,
-                        MSG_SESSION_MISSING,
-                    )),
+                    None => Err(session_missing_err()),
                 })
                 .await;
                 match outcome {
@@ -529,10 +520,7 @@ pub(crate) fn AccountsView() -> impl IntoElement {
                             boot::unarchive_account(db, &id)
                         }
                     }
-                    None => Err(AppError::coded(
-                        boot::CODE_SESSION_MISSING,
-                        MSG_SESSION_MISSING,
-                    )),
+                    None => Err(session_missing_err()),
                 })
                 .await;
                 match outcome {
@@ -564,10 +552,7 @@ pub(crate) fn AccountsView() -> impl IntoElement {
             spawn(async move {
                 let outcome = blocking(move || match db.as_ref() {
                     Some(db) => boot::delete_account(db, &id),
-                    None => Err(AppError::coded(
-                        boot::CODE_SESSION_MISSING,
-                        MSG_SESSION_MISSING,
-                    )),
+                    None => Err(session_missing_err()),
                 })
                 .await;
                 match outcome {

@@ -14,7 +14,6 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use ledger_infra::error::AppError;
 use nsh_base::{
     DataTableAlign, DataTableCell, DataTableClasses, DataTableColumn, DataTableContextMenu,
     DataTableRows, PopoverEvent, button, data_table, input, pagination, popover,
@@ -31,6 +30,7 @@ use crate::boot;
 use crate::items::AddItemTarget;
 use crate::nav_model;
 use crate::shell_msgs::MSG_SESSION_MISSING;
+use crate::write_load::session_missing_err;
 use crate::{
     backup_entry, context_menu, danger, investments_form, items, multi_select, nav, overlay,
     period_row, pinyin_select, signals, tx_filter, tx_view_preferences, txn_form,
@@ -841,10 +841,7 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
             spawn(async move {
                 let outcome = blocking(move || match db.as_ref() {
                     Some(db) => boot::delete_transaction(db, &id),
-                    None => Err(AppError::coded(
-                        boot::CODE_SESSION_MISSING,
-                        MSG_SESSION_MISSING,
-                    )),
+                    None => Err(session_missing_err()),
                 })
                 .await;
                 match outcome {

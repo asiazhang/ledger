@@ -20,7 +20,6 @@
 //!
 //! 测试豁免（ADR-0060）：本模块测试经 crate 根 cfg(test) 整体放行六件套。
 
-use ledger_infra::error::AppError;
 use nsh_base::{DataTableAlign, DataTableColumn, DataTableRows, button, data_table, input};
 use nsh_core::element::FontWeight;
 use nsh_core::prelude::*;
@@ -37,6 +36,7 @@ use crate::popconfirm;
 use crate::shell_msgs::{MSG_READ_TASK_FAILED, MSG_SESSION_MISSING, MSG_WRITE_TASK_FAILED};
 use crate::transactions::table_classes;
 use crate::views::field_label;
+use crate::write_load::session_missing_err;
 
 // ---------------------------------------------------------------------------
 // 词表（旧壳 policies.insurers.* zh-CN 词条原样；i18n 框架级方案不在本票，
@@ -160,10 +160,7 @@ pub(crate) fn InsurersView() -> impl IntoElement {
                         boot::create_insurer(db, ledger_policy::InsurerInput { name: name.clone() })
                             .map(|_id| ())
                     }
-                    None => Err(AppError::coded(
-                        boot::CODE_SESSION_MISSING,
-                        MSG_SESSION_MISSING,
-                    )),
+                    None => Err(session_missing_err()),
                 })
                 .await;
                 match outcome {
@@ -226,10 +223,7 @@ pub(crate) fn InsurersView() -> impl IntoElement {
                             name: Some(name.clone()),
                         },
                     ),
-                    None => Err(AppError::coded(
-                        boot::CODE_SESSION_MISSING,
-                        MSG_SESSION_MISSING,
-                    )),
+                    None => Err(session_missing_err()),
                 })
                 .await;
                 match outcome {
@@ -259,10 +253,7 @@ pub(crate) fn InsurersView() -> impl IntoElement {
             spawn(async move {
                 let outcome = blocking(move || match db.as_ref() {
                     Some(db) => boot::delete_insurer(db, &insurer_id),
-                    None => Err(AppError::coded(
-                        boot::CODE_SESSION_MISSING,
-                        MSG_SESSION_MISSING,
-                    )),
+                    None => Err(session_missing_err()),
                 })
                 .await;
                 match outcome {

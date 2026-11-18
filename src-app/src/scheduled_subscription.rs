@@ -73,6 +73,7 @@ use crate::scheduled::{
 use crate::scheduled_spend::{SpendPanelState, assemble_spend, spend_panel};
 use crate::shell_msgs::{MSG_READ_TASK_FAILED, MSG_SESSION_MISSING, MSG_WRITE_TASK_FAILED};
 use crate::signals;
+use crate::write_load::session_missing_err;
 use crate::{nav, txn_form};
 
 // ---------------------------------------------------------------------------
@@ -392,10 +393,7 @@ pub(crate) fn subscriptions_pane(pending_focus: Signal<Option<String>>) -> impl 
             spawn(async move {
                 let outcome = blocking(move || match db.as_ref() {
                     Some(db) => boot::update_scheduled_plan_status(db, &plan_id, new_status),
-                    None => Err(ledger_infra::error::AppError::coded(
-                        boot::CODE_SESSION_MISSING,
-                        MSG_SESSION_MISSING,
-                    )),
+                    None => Err(session_missing_err()),
                 })
                 .await;
                 match outcome {
@@ -541,10 +539,7 @@ pub(crate) fn subscriptions_pane(pending_focus: Signal<Option<String>>) -> impl 
                             },
                         )
                     }
-                    None => Err(ledger_infra::error::AppError::coded(
-                        boot::CODE_SESSION_MISSING,
-                        MSG_SESSION_MISSING,
-                    )),
+                    None => Err(session_missing_err()),
                 })
                 .await;
                 match outcome {
@@ -712,10 +707,7 @@ pub(crate) fn subscriptions_pane(pending_focus: Signal<Option<String>>) -> impl 
                             },
                         )
                     }
-                    None => Err(ledger_infra::error::AppError::coded(
-                        boot::CODE_SESSION_MISSING,
-                        MSG_SESSION_MISSING,
-                    )),
+                    None => Err(session_missing_err()),
                 })
                 .await;
                 match outcome {

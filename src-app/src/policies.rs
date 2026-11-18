@@ -57,6 +57,7 @@ use crate::select;
 use crate::shell_msgs::{MSG_READ_TASK_FAILED, MSG_SESSION_MISSING, MSG_WRITE_TASK_FAILED};
 use crate::transactions::table_classes;
 use crate::views::field_label;
+use crate::write_load::session_missing_err;
 use crate::{nav, signals};
 use ledger_policy::{Policy, PolicyInput, PolicyStats};
 use ledger_scheduled::ScheduledTransactionWithExt;
@@ -806,10 +807,7 @@ pub(crate) fn PoliciesView() -> impl IntoElement {
                 let outcome = blocking(move || match db.as_ref() {
                     Some(db) => boot::plan_rows(db)
                         .map(|plans| PlanSnap(plans.iter().map(Segment::from).collect())),
-                    None => Err(AppError::coded(
-                        boot::CODE_SESSION_MISSING,
-                        MSG_SESSION_MISSING,
-                    )),
+                    None => Err(session_missing_err()),
                 })
                 .await;
                 match outcome {
@@ -832,10 +830,7 @@ pub(crate) fn PoliciesView() -> impl IntoElement {
             spawn(async move {
                 let outcome = blocking(move || match db.as_ref() {
                     Some(db) => boot::delete_policy(db, &id),
-                    None => Err(AppError::coded(
-                        boot::CODE_SESSION_MISSING,
-                        MSG_SESSION_MISSING,
-                    )),
+                    None => Err(session_missing_err()),
                 })
                 .await;
                 match outcome {
@@ -1107,10 +1102,7 @@ pub(crate) fn PoliciesView() -> impl IntoElement {
                             }
                         }
                     }
-                    None => Err(AppError::coded(
-                        boot::CODE_SESSION_MISSING,
-                        MSG_SESSION_MISSING,
-                    )),
+                    None => Err(session_missing_err()),
                 })
                 .await;
                 match outcome {
@@ -1238,10 +1230,7 @@ pub(crate) fn PoliciesView() -> impl IntoElement {
                         input.policy_id = Some(batch_policy_id);
                         boot::create_scheduled_plan(db, input)
                     }
-                    None => Err(AppError::coded(
-                        boot::CODE_SESSION_MISSING,
-                        MSG_SESSION_MISSING,
-                    )),
+                    None => Err(session_missing_err()),
                 })
                 .await;
                 match outcome {

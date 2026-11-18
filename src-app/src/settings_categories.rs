@@ -40,7 +40,8 @@ use crate::modal::app_modal;
 use crate::pinyin_select;
 use crate::popconfirm;
 use crate::settings::status_line;
-use crate::shell_msgs::{MSG_READ_TASK_FAILED, MSG_SESSION_MISSING, MSG_WRITE_TASK_FAILED};
+use crate::shell_msgs::{MSG_READ_TASK_FAILED, MSG_WRITE_TASK_FAILED};
+use crate::write_load::session_missing_err;
 use crate::{signals, views};
 
 // ---------------------------------------------------------------------------
@@ -238,10 +239,7 @@ pub(crate) fn categories_pane(palette: views::ViewPalette) -> View {
                 spawn(async move {
                     let outcome = blocking(move || match db.as_ref() {
                         Some(db) => boot::category_rows(db),
-                        None => Err(ledger_infra::error::AppError::coded(
-                            boot::CODE_SESSION_MISSING,
-                            MSG_SESSION_MISSING,
-                        )),
+                        None => Err(session_missing_err()),
                     })
                     .await;
                     match outcome {
@@ -304,10 +302,7 @@ pub(crate) fn categories_pane(palette: views::ViewPalette) -> View {
                             icon,
                         },
                     ),
-                    None => Err(ledger_infra::error::AppError::coded(
-                        boot::CODE_SESSION_MISSING,
-                        MSG_SESSION_MISSING,
-                    )),
+                    None => Err(session_missing_err()),
                 })
                 .await;
                 match outcome {
@@ -371,10 +366,7 @@ pub(crate) fn categories_pane(palette: views::ViewPalette) -> View {
                             parent_id,
                         },
                     ),
-                    None => Err(ledger_infra::error::AppError::coded(
-                        boot::CODE_SESSION_MISSING,
-                        MSG_SESSION_MISSING,
-                    )),
+                    None => Err(session_missing_err()),
                 })
                 .await;
                 match outcome {
@@ -399,10 +391,7 @@ pub(crate) fn categories_pane(palette: views::ViewPalette) -> View {
             spawn(async move {
                 let outcome = blocking(move || match db.as_ref() {
                     Some(db) => boot::delete_category(db, &id),
-                    None => Err(ledger_infra::error::AppError::coded(
-                        boot::CODE_SESSION_MISSING,
-                        MSG_SESSION_MISSING,
-                    )),
+                    None => Err(session_missing_err()),
                 })
                 .await;
                 match outcome {
@@ -439,10 +428,7 @@ pub(crate) fn categories_pane(palette: views::ViewPalette) -> View {
             spawn(async move {
                 let outcome = blocking(move || match db.as_ref() {
                     Some(db) => boot::reorder_categories(db, items),
-                    None => Err(ledger_infra::error::AppError::coded(
-                        boot::CODE_SESSION_MISSING,
-                        MSG_SESSION_MISSING,
-                    )),
+                    None => Err(session_missing_err()),
                 })
                 .await;
                 match outcome {

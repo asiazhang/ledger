@@ -34,7 +34,7 @@ use nsh_core::element::pick_save_path;
 use nsh_core::file_dialog::{FileFilter, SaveDialog};
 use nsh_core::prelude::*;
 
-use crate::shell_msgs::MSG_SESSION_MISSING;
+use crate::write_load::session_missing_err;
 use crate::{boot, danger};
 
 /// 应用版本（备份元数据的应用版本标记，旧壳 `app.package_info().version` 的
@@ -178,10 +178,7 @@ pub(crate) fn perform_backup(state: BackupEntryState, owner: Owner, target: Path
             let db = crate::app::db_slot().clone();
             let outcome = blocking(move || match db.as_ref() {
                 Some(db) => boot::create_backup(db, &target, APP_VERSION),
-                None => Err(ledger_infra::error::AppError::coded(
-                    boot::CODE_SESSION_MISSING,
-                    MSG_SESSION_MISSING,
-                )),
+                None => Err(session_missing_err()),
             })
             .await;
             state.backing_up.set(false);

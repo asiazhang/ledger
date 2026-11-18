@@ -34,8 +34,9 @@ use crate::boot;
 use crate::design::font_size;
 use crate::select;
 use crate::settings::{card, status_line};
-use crate::shell_msgs::{MSG_READ_TASK_FAILED, MSG_SESSION_MISSING};
+use crate::shell_msgs::MSG_READ_TASK_FAILED;
 use crate::views;
+use crate::write_load::session_missing_err;
 
 // ---------------------------------------------------------------------------
 // 词表（旧壳 settings.* zh-CN 词条原样；i18n 框架级方案不在本票，字面承载）。
@@ -130,10 +131,7 @@ pub(crate) fn currencies_pane(palette: views::ViewPalette) -> View {
                 let db = db_slot().clone();
                 let outcome = blocking(move || match db.as_ref() {
                     Some(db) => boot::currency_rows(db),
-                    None => Err(ledger_infra::error::AppError::coded(
-                        boot::CODE_SESSION_MISSING,
-                        MSG_SESSION_MISSING,
-                    )),
+                    None => Err(session_missing_err()),
                 })
                 .await;
                 match outcome {
@@ -168,10 +166,7 @@ pub(crate) fn currencies_pane(palette: views::ViewPalette) -> View {
                 let db = db_slot().clone();
                 let outcome = blocking(move || match db.as_ref() {
                     Some(db) => boot::base_currency(db),
-                    None => Err(ledger_infra::error::AppError::coded(
-                        boot::CODE_SESSION_MISSING,
-                        MSG_SESSION_MISSING,
-                    )),
+                    None => Err(session_missing_err()),
                 })
                 .await;
                 match outcome {
@@ -201,10 +196,7 @@ pub(crate) fn currencies_pane(palette: views::ViewPalette) -> View {
                     let db = db_slot().clone();
                     let outcome = blocking(move || match db.as_ref() {
                         Some(db) => boot::set_base_currency(db, &target),
-                        None => Err(ledger_infra::error::AppError::coded(
-                            boot::CODE_SESSION_MISSING,
-                            MSG_SESSION_MISSING,
-                        )),
+                        None => Err(session_missing_err()),
                     })
                     .await;
                     match outcome {
@@ -282,10 +274,7 @@ pub(crate) fn currencies_pane(palette: views::ViewPalette) -> View {
                         )
                         .await
                     }
-                    None => Err(ledger_infra::error::AppError::coded(
-                        boot::CODE_SESSION_MISSING,
-                        MSG_SESSION_MISSING,
-                    )),
+                    None => Err(session_missing_err()),
                 };
                 fx_syncing.set(false);
                 fx_stage.set(None);

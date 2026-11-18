@@ -8,7 +8,6 @@
 //!
 //! 测试豁免（ADR-0060）：本模块测试经 crate 根 cfg(test) 整体放行六件套。
 
-use ledger_infra::error::AppError;
 use nsh_base::{data_table, input};
 use nsh_core::prelude::*;
 
@@ -17,6 +16,7 @@ use crate::design::font_size;
 use crate::shell_msgs::{MSG_READ_TASK_FAILED, MSG_SESSION_MISSING};
 use crate::transactions::{amount_color, amount_privacy_enabled, table_classes};
 use crate::views::field_label;
+use crate::write_load::session_missing_err;
 use crate::{adaptive, assembly, boot, modal, nav, pinyin_select, popconfirm, signals};
 
 // ---------------------------------------------------------------------------
@@ -234,10 +234,7 @@ pub(crate) fn BudgetView() -> impl IntoElement {
             spawn(async move {
                 let outcome = blocking(move || match db.as_ref() {
                     Some(db) => boot::create_budget(db, &input),
-                    None => Err(AppError::coded(
-                        boot::CODE_SESSION_MISSING,
-                        MSG_SESSION_MISSING,
-                    )),
+                    None => Err(session_missing_err()),
                 })
                 .await;
                 match outcome {
@@ -286,10 +283,7 @@ pub(crate) fn BudgetView() -> impl IntoElement {
                         cents.unwrap_or_default(),
                         Some(next_period),
                     ),
-                    None => Err(AppError::coded(
-                        boot::CODE_SESSION_MISSING,
-                        MSG_SESSION_MISSING,
-                    )),
+                    None => Err(session_missing_err()),
                 })
                 .await;
                 match outcome {
@@ -314,10 +308,7 @@ pub(crate) fn BudgetView() -> impl IntoElement {
             spawn(async move {
                 let outcome = blocking(move || match db.as_ref() {
                     Some(db) => boot::delete_budget(db, &id),
-                    None => Err(AppError::coded(
-                        boot::CODE_SESSION_MISSING,
-                        MSG_SESSION_MISSING,
-                    )),
+                    None => Err(session_missing_err()),
                 })
                 .await;
                 match outcome {

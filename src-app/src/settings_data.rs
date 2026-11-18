@@ -71,9 +71,10 @@ use crate::restore_confirm::{RestoreIds, RestoreIntent, app_restore_confirm_moda
 use crate::settings::{card, status_line};
 use crate::shell_msgs::{
     MSG_ENCRYPTION_STATUS_FAILED_PREFIX, MSG_META_FAILED_PREFIX, MSG_READ_TASK_FAILED,
-    MSG_SESSION_MISSING, MSG_WRITE_TASK_FAILED,
+    MSG_WRITE_TASK_FAILED,
 };
 use crate::views::view_palette;
+use crate::write_load::session_missing_err;
 use crate::{
     backup_entry, backup_host, boot, nav, nav_model, select, settings, signals, unlock, views,
 };
@@ -843,10 +844,7 @@ fn refresh_rows_task(owner: Owner, state: BackupUiState) {
             let outcome = blocking(move || match db.as_ref() {
                 Some(db) if !dir.trim().is_empty() => boot::backup_rows(db, Path::new(dir.trim())),
                 Some(_) => Ok(Vec::new()),
-                None => Err(ledger_infra::error::AppError::coded(
-                    boot::CODE_SESSION_MISSING,
-                    MSG_SESSION_MISSING,
-                )),
+                None => Err(session_missing_err()),
             })
             .await;
             state.rows_loading.set(false);
@@ -878,10 +876,7 @@ fn refresh_auto_backup_state(owner: Owner, state: BackupUiState) {
             let db = crate::app::db_slot().clone();
             let outcome = blocking(move || match db.as_ref() {
                 Some(db) => boot::auto_backup_state(db),
-                None => Err(ledger_infra::error::AppError::coded(
-                    boot::CODE_SESSION_MISSING,
-                    MSG_SESSION_MISSING,
-                )),
+                None => Err(session_missing_err()),
             })
             .await;
             match outcome {
@@ -914,10 +909,7 @@ fn run_backup_task(owner: Owner, state: BackupUiState, target: PathBuf) {
             let db = crate::app::db_slot().clone();
             let outcome = blocking(move || match db.as_ref() {
                 Some(db) => boot::create_backup(db, &target, backup_entry::APP_VERSION),
-                None => Err(ledger_infra::error::AppError::coded(
-                    boot::CODE_SESSION_MISSING,
-                    MSG_SESSION_MISSING,
-                )),
+                None => Err(session_missing_err()),
             })
             .await;
             state.backing_up.set(false);
@@ -969,10 +961,7 @@ fn prune_to_limit_task(owner: Owner, state: BackupUiState) {
                 deleted: Vec::new(),
                 failed: Vec::new(),
             }),
-            None => Err(ledger_infra::error::AppError::coded(
-                boot::CODE_SESSION_MISSING,
-                MSG_SESSION_MISSING,
-            )),
+            None => Err(session_missing_err()),
         })
         .await;
         state.pruning.set(false);
@@ -1006,10 +995,7 @@ fn apply_auto_toggle(owner: Owner, state: BackupUiState, enabled: bool) {
             let db = crate::app::db_slot().clone();
             let outcome = blocking(move || match db.as_ref() {
                 Some(db) => boot::set_auto_backup_enabled(db, enabled),
-                None => Err(ledger_infra::error::AppError::coded(
-                    boot::CODE_SESSION_MISSING,
-                    MSG_SESSION_MISSING,
-                )),
+                None => Err(session_missing_err()),
             })
             .await;
             match outcome {
@@ -1139,10 +1125,7 @@ fn pick_restore_task(owner: Owner, state: BackupUiState) {
             let probe_target = target.clone();
             let probe = blocking(move || match db.as_ref() {
                 Some(_) => boot::backup_meta(Path::new(&probe_target)),
-                None => Err(ledger_infra::error::AppError::coded(
-                    boot::CODE_SESSION_MISSING,
-                    MSG_SESSION_MISSING,
-                )),
+                None => Err(session_missing_err()),
             })
             .await;
             let meta = match probe {
@@ -1211,10 +1194,7 @@ fn confirm_restore_task(owner: Owner, state: BackupUiState) {
                 Some(db) => {
                     boot::restore_backup(db, Path::new(&restore_target), passphrase.as_deref())
                 }
-                None => Err(ledger_infra::error::AppError::coded(
-                    boot::CODE_SESSION_MISSING,
-                    MSG_SESSION_MISSING,
-                )),
+                None => Err(session_missing_err()),
             })
             .await;
             match outcome {
@@ -1984,10 +1964,7 @@ fn run_encryption_action(
             let db = crate::app::db_slot().clone();
             let outcome = blocking(move || match db.as_ref() {
                 Some(db) => invoke(db),
-                None => Err(ledger_infra::error::AppError::coded(
-                    boot::CODE_SESSION_MISSING,
-                    MSG_SESSION_MISSING,
-                )),
+                None => Err(session_missing_err()),
             })
             .await;
             state.busy.set(false);
@@ -2537,10 +2514,7 @@ fn refresh_sync_status(owner: Owner, state: SyncState) {
             let db = crate::app::db_slot().clone();
             let outcome = blocking(move || match db.as_ref() {
                 Some(db) => boot::sync_status(db),
-                None => Err(ledger_infra::error::AppError::coded(
-                    boot::CODE_SESSION_MISSING,
-                    MSG_SESSION_MISSING,
-                )),
+                None => Err(session_missing_err()),
             })
             .await;
             match outcome {
@@ -2568,10 +2542,7 @@ fn load_channel_config(owner: Owner, state: SyncState) {
             let db = crate::app::db_slot().clone();
             let outcome = blocking(move || match db.as_ref() {
                 Some(db) => boot::sync_channel_config(db),
-                None => Err(ledger_infra::error::AppError::coded(
-                    boot::CODE_SESSION_MISSING,
-                    MSG_SESSION_MISSING,
-                )),
+                None => Err(session_missing_err()),
             })
             .await;
             match outcome {
@@ -2616,10 +2587,7 @@ fn save_channel_task(owner: Owner, state: SyncState) {
             let config = config;
             let outcome = blocking(move || match db.as_ref() {
                 Some(db) => boot::save_sync_channel_config(db, config),
-                None => Err(ledger_infra::error::AppError::coded(
-                    boot::CODE_SESSION_MISSING,
-                    MSG_SESSION_MISSING,
-                )),
+                None => Err(session_missing_err()),
             })
             .await;
             state.saving.set(false);
@@ -2672,10 +2640,7 @@ fn sync_now_task(owner: Owner, state: SyncState) {
         let db = crate::app::db_slot().clone();
         let outcome = blocking(move || match db.as_ref() {
             Some(db) => boot::sync_now(db, passphrase.as_deref()),
-            None => Err(ledger_infra::error::AppError::coded(
-                boot::CODE_SESSION_MISSING,
-                MSG_SESSION_MISSING,
-            )),
+            None => Err(session_missing_err()),
         })
         .await;
         state.syncing.set(false);
@@ -2716,10 +2681,7 @@ fn refresh_parked_rows(owner: Owner, state: SyncState) {
             let db = crate::app::db_slot().clone();
             let outcome = blocking(move || match db.as_ref() {
                 Some(db) => boot::parked_rows(db),
-                None => Err(ledger_infra::error::AppError::coded(
-                    boot::CODE_SESSION_MISSING,
-                    MSG_SESSION_MISSING,
-                )),
+                None => Err(session_missing_err()),
             })
             .await;
             match outcome {
@@ -2743,10 +2705,7 @@ fn publish_checkpoint_task(owner: Owner, state: SyncState) {
             let db = crate::app::db_slot().clone();
             let outcome = blocking(move || match db.as_ref() {
                 Some(db) => boot::publish_sync_checkpoint(db, passphrase.as_deref()),
-                None => Err(ledger_infra::error::AppError::coded(
-                    boot::CODE_SESSION_MISSING,
-                    MSG_SESSION_MISSING,
-                )),
+                None => Err(session_missing_err()),
             })
             .await;
             state.publishing.set(false);
@@ -2782,10 +2741,7 @@ fn open_bootstrap_task(owner: Owner, state: SyncState) {
             let db = crate::app::db_slot().clone();
             let outcome = blocking(move || match db.as_ref() {
                 Some(db) => boot::sync_channel_checkpoint(db),
-                None => Err(ledger_infra::error::AppError::coded(
-                    boot::CODE_SESSION_MISSING,
-                    MSG_SESSION_MISSING,
-                )),
+                None => Err(session_missing_err()),
             })
             .await;
             state.prechecking.set(false);
@@ -2817,10 +2773,7 @@ fn confirm_bootstrap_task(owner: Owner, state: SyncState) {
             let db = crate::app::db_slot().clone();
             let outcome = blocking(move || match db.as_ref() {
                 Some(db) => boot::bootstrap_sync_from_channel(db, passphrase.as_deref()),
-                None => Err(ledger_infra::error::AppError::coded(
-                    boot::CODE_SESSION_MISSING,
-                    MSG_SESSION_MISSING,
-                )),
+                None => Err(session_missing_err()),
             })
             .await;
             state.bootstrapping.set(false);
@@ -4051,10 +4004,7 @@ fn balance_cache_card(palette: views::ViewPalette) -> View {
                             balance_cache_report_view(&audit, &currencies, &currency_of)
                         })
                     }
-                    None => Err(ledger_infra::error::AppError::coded(
-                        boot::CODE_SESSION_MISSING,
-                        MSG_SESSION_MISSING,
-                    )),
+                    None => Err(session_missing_err()),
                 })
                 .await;
                 repairing.set(false);

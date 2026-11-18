@@ -66,6 +66,7 @@ use crate::scheduled_subscription::{
 };
 use crate::shell_msgs::{MSG_READ_TASK_FAILED, MSG_SESSION_MISSING, MSG_WRITE_TASK_FAILED};
 use crate::signals;
+use crate::write_load::session_missing_err;
 use crate::{nav, txn_form};
 
 // ---------------------------------------------------------------------------
@@ -533,10 +534,7 @@ pub(crate) fn installments_pane(pending_focus: Signal<Option<String>>) -> impl I
             spawn(async move {
                 let outcome = blocking(move || match db.as_ref() {
                     Some(db) => boot::update_scheduled_plan_status(db, &plan_id, new_status),
-                    None => Err(ledger_infra::error::AppError::coded(
-                        boot::CODE_SESSION_MISSING,
-                        MSG_SESSION_MISSING,
-                    )),
+                    None => Err(session_missing_err()),
                 })
                 .await;
                 match outcome {
@@ -717,10 +715,7 @@ pub(crate) fn installments_pane(pending_focus: Signal<Option<String>>) -> impl I
                             },
                         )
                     }
-                    None => Err(ledger_infra::error::AppError::coded(
-                        boot::CODE_SESSION_MISSING,
-                        MSG_SESSION_MISSING,
-                    )),
+                    None => Err(session_missing_err()),
                 })
                 .await;
                 match outcome {

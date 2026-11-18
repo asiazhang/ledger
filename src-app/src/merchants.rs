@@ -36,7 +36,6 @@
 
 use std::collections::BTreeMap;
 
-use ledger_infra::error::AppError;
 use nsh_base::{
     DataTableAlign, DataTableColumn, DataTableRows, DataTableSort, DataTableSortDirection, button,
     checkbox, data_table, input, pagination,
@@ -56,6 +55,7 @@ use crate::popconfirm;
 use crate::shell_msgs::{MSG_READ_TASK_FAILED, MSG_SESSION_MISSING, MSG_WRITE_TASK_FAILED};
 use crate::transactions::{amount_privacy_enabled, table_classes};
 use crate::views::field_label;
+use crate::write_load::session_missing_err;
 use crate::{nav, signals};
 use ledger_merchants::MerchantTransactionCount;
 
@@ -214,10 +214,7 @@ pub(crate) fn MerchantsView() -> impl IntoElement {
                         db,
                         ledger_merchants::MerchantInput { name: name.clone() },
                     ),
-                    None => Err(AppError::coded(
-                        boot::CODE_SESSION_MISSING,
-                        MSG_SESSION_MISSING,
-                    )),
+                    None => Err(session_missing_err()),
                 })
                 .await;
                 match outcome {
@@ -372,10 +369,7 @@ pub(crate) fn MerchantsView() -> impl IntoElement {
                             name: Some(name.clone()),
                         },
                     ),
-                    None => Err(AppError::coded(
-                        boot::CODE_SESSION_MISSING,
-                        MSG_SESSION_MISSING,
-                    )),
+                    None => Err(session_missing_err()),
                 })
                 .await;
                 match outcome {
@@ -411,10 +405,7 @@ pub(crate) fn MerchantsView() -> impl IntoElement {
             spawn(async move {
                 let outcome = blocking(move || match db.as_ref() {
                     Some(db) => boot::delete_merchant(db, &merchant_id),
-                    None => Err(AppError::coded(
-                        boot::CODE_SESSION_MISSING,
-                        MSG_SESSION_MISSING,
-                    )),
+                    None => Err(session_missing_err()),
                 })
                 .await;
                 match outcome {
