@@ -10175,6 +10175,10 @@ fn items_view_edit_relink_backfills_on_save() {
     // 提交后成本回填为次笔交易的金额（详情弹窗读数）。
     app.press("id:item-edit-confirm").unwrap();
     app.wait_for("text:已保存").unwrap();
+    // 确定性等待：保存触发的清单重拉收敛——行成本换新值（¥1000→¥880）上屏
+    // 即重读完成、loading 占位已撤；「已保存」只证明写完成，不证明重拉
+    // 收敛，慢 CI 现场占位会覆盖行按压目标（press 按真实手指语义硬失败）。
+    app.wait_for("text:¥880").unwrap();
     app.press(&format!("id:item-detail-{item_id}")).unwrap();
     app.wait_for("text:¥880").unwrap();
     app.press("id:item-detail-cancel").unwrap();
