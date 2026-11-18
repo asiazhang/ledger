@@ -264,6 +264,7 @@ pub mod ai_prompt;
 pub mod api_server;
 pub mod app;
 pub mod backup_cards;
+pub mod balance_cache_card;
 pub mod backup_entry;
 pub mod backup_host;
 pub mod bar_chart;
