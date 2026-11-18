@@ -38,12 +38,12 @@ use nsh_core::file_dialog::{FileFilter, OpenDialog};
 use nsh_core::prelude::*;
 
 use crate::app::StartupView;
+use crate::backup_cards;
 use crate::danger::{DangerConfirmSpec, DangerLevel, DangerOutcome, danger_confirm};
 use crate::design::font_size;
 use crate::restore_confirm::{
     RestoreIds, RestoreIntent, RestoreSignals, app_restore_confirm_modal, restore_show_pass,
 };
-use crate::backup_cards;
 use crate::shell_msgs;
 use crate::shell_msgs::{
     MSG_READ_TASK_FAILED, MSG_RESET_TASK_FAILED, MSG_UNLOCK_TASK_FAILED, MSG_WRITE_TASK_FAILED,

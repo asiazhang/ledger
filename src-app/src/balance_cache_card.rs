@@ -313,8 +313,6 @@ mod tests {
         assert!(view.body.contains("2 个账户"));
     }
 
-
-
     /// 差异行的金额列：缓存缺失（None）独立文案呈现，不显示成 0（旧壳
     /// cachedText 同口径）；账户币种未收录退化为无币种格式化。
     #[test]

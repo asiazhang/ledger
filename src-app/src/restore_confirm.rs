@@ -26,9 +26,9 @@ use nsh_base::{button, input};
 use nsh_core::element::FontWeight;
 use nsh_core::prelude::*;
 
+use crate::backup_cards;
 use crate::design::font_size;
 use crate::modal::app_modal;
-use crate::backup_cards;
 use crate::views;
 
 /// 恢复确认意图（旧壳 `RestoreIntent` 的本壳对应面；#2131 两侧意图类型的

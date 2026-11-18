@@ -20,11 +20,11 @@ use nsh_core::prelude::*;
 use crate::danger::{DangerConfirmSpec, DangerLevel, DangerOutcome, danger_confirm};
 use crate::design::font_size;
 use crate::settings;
-use crate::views::view_palette;
 use crate::settings_data::pass_input;
 use crate::shell_msgs::{
     MSG_ENCRYPTION_STATUS_FAILED_PREFIX, MSG_READ_TASK_FAILED, MSG_WRITE_TASK_FAILED,
 };
+use crate::views::view_palette;
 use crate::write_load::session_missing_err;
 use crate::{boot, unlock, views};
 
@@ -98,7 +98,6 @@ const DISABLE_FAILED_PREFIX: &str = "关闭加密失败: ";
 /// 主口令最小长度（旧壳 `PASSPHRASE_MIN_LENGTH` 同值：≥8 仅界面判定，后端
 /// 契约不动；短口令即时红显 + 提交禁用，不拦截键入，ADR-0058 口径）。
 const PASSPHRASE_MIN_LENGTH: usize = 8;
-
 
 // ---------------------------------------------------------------------------
 // 加密卡（整库加密三形态写面，#2088 平价交付）：明文库呈现开启流；密文
@@ -661,4 +660,3 @@ fn enable_form(state: EncryptionState, palette: views::ViewPalette) -> impl Into
                 .on_press(move |_: &()| request_enable()),
         )
 }
-
