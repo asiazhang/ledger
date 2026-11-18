@@ -43,7 +43,7 @@ use crate::design::font_size;
 use crate::restore_confirm::{
     RestoreIds, RestoreIntent, RestoreSignals, app_restore_confirm_modal, restore_show_pass,
 };
-use crate::settings_data;
+use crate::backup_cards;
 use crate::shell_msgs;
 use crate::shell_msgs::{
     MSG_READ_TASK_FAILED, MSG_RESET_TASK_FAILED, MSG_UNLOCK_TASK_FAILED, MSG_WRITE_TASK_FAILED,
@@ -202,7 +202,7 @@ impl LockedSurface {
                 let picked = match pick_paths(
                     OpenDialog::files()
                         .multiple(false)
-                        .filter(FileFilter::new(settings_data::FILTER_NAME, ["zip", "db"]))
+                        .filter(FileFilter::new(backup_cards::FILTER_NAME, ["zip", "db"]))
                         .title(RESTORE_PICK_TITLE),
                 )
                 .await
@@ -428,7 +428,7 @@ pub(crate) fn locked_panel(
                     text(move || surface.error.get().unwrap_or_default())
                         .text_size(px(font_size::CAPTION))
                         // 破坏色单一呈现令牌（ViewPalette::danger_fg 成员，
-                        // 与 settings_data / backup_entry 同口径）。
+                        // 与 backup_cards / backup_entry 同口径）。
                         .text_color(views::view_palette().danger_fg)
                         .test_id("unlock-error")
                 },

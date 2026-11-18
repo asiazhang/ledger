@@ -263,6 +263,7 @@ pub mod ai_prompt;
 // 决策 5），生产发射器由 http_host 接线；契约（路由、载荷、错误码）零演进。
 pub mod api_server;
 pub mod app;
+pub mod backup_cards;
 pub mod backup_entry;
 pub mod backup_host;
 pub mod bar_chart;

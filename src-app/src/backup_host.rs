@@ -52,7 +52,7 @@ use std::time::Duration;
 use ledger_infra::db::DbState;
 use nsh_core::prelude::*;
 
-use crate::{app, backup_entry, settings_data, signals};
+use crate::{app, backup_cards, backup_entry, signals};
 
 /// 会话首次兜底的待跑标志（App 装载期偏好推送认领机会、会话就绪后补跑——
 /// 旧壳 `set_auto_backup_dir` 启动推送即跑，NSH 推送早于引导完成，跑点后移到
@@ -80,7 +80,7 @@ impl ledger_infra::events::SignalEmitter for BackupsChangedRelay {
 /// 同样消费认领机会——旧壳启动 immediate 推送先于有效目录的同款行为）；
 /// 认领成功且目录有效时置待跑标志，会话就绪后由 [`start_session_host`] 补跑。
 ///
-/// 引擎线程调用（偏好读是引擎线程面，见 [`settings_data::pref_backup_dir`]）；
+/// 引擎线程调用（偏好读是引擎线程面，见 [`backup_cards::pref_backup_dir`]）；
 /// 设置卡目录选择 / 清除动作消费同一函数（变更推送，旧壳 watch immediate 同位
 /// ——彼时认领机会已被启动推送消费，镜像更新即时生效）。
 pub(crate) fn push_backup_dir(dir_pref: &str) {
@@ -129,7 +129,7 @@ pub(crate) fn install_shell_side() {
     ledger_infra::events::init_deep_path_emitter(Box::new(BackupsChangedRelay));
     // 失效信号泵：深路径发射先落 pending（任意写线程），本泵在引擎线程周期
     // 消费并换广播——广播触达设置卡的备份列表 / 自动备份状态重读（订阅接线
-    // 在 `settings_data::backup_cards`）。任务挂根 owner（随进程存亡）。
+    // 在 `backup_cards::backup_cards`）。任务挂根 owner（随进程存亡）。
     let pump = set_interval(Duration::from_secs(1), || {
         if signals::take_backups_pending() {
             signals::notify_backups_invalidated();
@@ -146,7 +146,7 @@ pub(crate) fn install_shell_side() {
         let _held_for_app_lifetime: &Spawned<()> = &pump;
     });
     // 设备偏好推送（旧壳 DevicePreferenceSyncHost 启动 immediate 推送同位）。
-    push_backup_dir(&settings_data::pref_backup_dir());
+    push_backup_dir(&backup_cards::pref_backup_dir());
 }
 
 /// 会话宿主接线（启动竖井成功分支 / 解锁成功后的业务可用起点，`run_startup`
