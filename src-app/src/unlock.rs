@@ -310,7 +310,7 @@ impl LockedSurface {
                         let text = e.to_string();
                         surface.restore_error.set(Some(format!(
                             "{}{text}",
-                            settings_data::RESTORE_FAIL_PREFIX
+                            shell_msgs::MSG_RESTORE_FAIL_PREFIX
                         )));
                         surface.busy.set(false);
                         // 后端探测实际密文而元数据未标记（异常产物）时，按需显
@@ -327,7 +327,7 @@ impl LockedSurface {
                     Err(_) => {
                         surface.restore_error.set(Some(format!(
                             "{}{MSG_WRITE_TASK_FAILED}",
-                            settings_data::RESTORE_FAIL_PREFIX
+                            shell_msgs::MSG_RESTORE_FAIL_PREFIX
                         )));
                         surface.busy.set(false);
                     }

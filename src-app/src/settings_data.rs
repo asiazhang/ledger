@@ -73,7 +73,7 @@ use crate::restore_confirm::{
 use crate::settings::{card, status_line};
 use crate::shell_msgs::{
     MSG_ENCRYPTION_STATUS_FAILED_PREFIX, MSG_META_FAILED_PREFIX, MSG_READ_TASK_FAILED,
-    MSG_WRITE_TASK_FAILED,
+    MSG_RESTORE_FAIL_PREFIX, MSG_WRITE_TASK_FAILED,
 };
 use crate::views::view_palette;
 use crate::write_load::session_missing_err;
@@ -148,7 +148,6 @@ pub(crate) const RESTORE_TO_PLAINTEXT_WARN: &str =
     "当前库为加密库：恢复这份明文备份后，数据将变为未加密，应用重启后以明文库启动。";
 pub(crate) const RESTORE_TO_ENCRYPTED_WARN: &str =
     "这份备份为密文备份：恢复后此库将变为加密库，应用重启后需凭该备份的主口令解锁。";
-pub(crate) const RESTORE_FAIL_PREFIX: &str = "恢复失败: ";
 const MSG_RESTORE_OK: &str = "恢复成功，请重启应用进入新库";
 
 const MSG_LIST_FAILED_PREFIX: &str = "读取备份列表失败: ";
@@ -214,7 +213,6 @@ const ENCRYPT_CONFIRM_CANCEL: &str = "取消";
 const ENCRYPT_OK_HOST_HINT: &str =
     "加密已开启（整库转换完成），本会话已切换到加密库；下次启动需输入主口令解锁。";
 const ENCRYPT_FAILED_PREFIX: &str = "开启加密失败: ";
-const ENCRYPT_STATUS_FAILED_PREFIX: &str = "读取加密状态失败: ";
 const ENCRYPT_RETRY: &str = "重试";
 /// 密文会话形态（#2088 平价旧壳 EncryptionSettings：已开启标识 + 修改主
 /// 口令 / 关闭加密 / 自动解锁三件写面；转换完成语义 = 原位换连本会话继续
@@ -1215,7 +1213,7 @@ fn confirm_restore_task(owner: Owner, state: BackupUiState) {
                 Ok(Err(e)) => {
                     state
                         .restore_error
-                        .set(Some(format!("{RESTORE_FAIL_PREFIX}{e}")));
+                        .set(Some(format!("{MSG_RESTORE_FAIL_PREFIX}{e}")));
                     state.restore_busy.set(false);
                     // 后端探测实际密文而元数据未标记（异常产物）时，按需显出口令
                     // 输入——以后端探测为准（旧壳 passphraseRevealedByError 同位）。
@@ -1227,7 +1225,7 @@ fn confirm_restore_task(owner: Owner, state: BackupUiState) {
                 }
                 Err(_) => {
                     state.restore_error.set(Some(format!(
-                        "{RESTORE_FAIL_PREFIX}{MSG_WRITE_TASK_FAILED}"
+                        "{MSG_RESTORE_FAIL_PREFIX}{MSG_WRITE_TASK_FAILED}"
                     )));
                     state.restore_busy.set(false);
                 }
@@ -1941,7 +1939,7 @@ fn refresh_encryption_status(owner: Owner, state: EncryptionState) {
                 }
                 Ok(Err(e)) => state
                     .status_error
-                    .set(Some(format!("{ENCRYPT_STATUS_FAILED_PREFIX}{e}"))),
+                    .set(Some(format!("{MSG_ENCRYPTION_STATUS_FAILED_PREFIX}{e}"))),
                 Err(_) => state
                     .status_error
                     .set(Some(MSG_READ_TASK_FAILED.to_owned())),

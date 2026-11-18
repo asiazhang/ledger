@@ -12,7 +12,9 @@
 //! 「删除失败: 」等前缀仍留调用点。
 //!
 //! 设置域自用的文案常量（恢复弹窗、备份卡等）仍住 [`crate::settings_data`]，
-//! 不上收；本模块只收「跨模块共享」的词面。
+//! 不上收；本模块只收「跨模块共享」的词面。恢复失败前缀
+//! [`MSG_RESTORE_FAIL_PREFIX`] 词面源自恢复弹窗，但被 [`crate::unlock`] 跨
+//! 模块消费，同属跨模块共享词面归此（#2162–#2165 review 收口）。
 
 /// 任务退出三词面单一来源（旧壳命令层同守卫词表）。
 pub(crate) const MSG_SESSION_MISSING: &str = "内部错误：账本库会话缺失";
@@ -39,3 +41,7 @@ pub(crate) const MSG_REPRICE_TARGET_MISSING: &str = "内部错误：改价目标
 
 pub(crate) const MSG_META_FAILED_PREFIX: &str = "读取备份信息失败: ";
 pub(crate) const MSG_ENCRYPTION_STATUS_FAILED_PREFIX: &str = "读取加密状态失败: ";
+
+/// 恢复失败前缀（恢复弹窗错误行；词面源自恢复弹窗但被 [`crate::unlock`]
+/// 跨模块消费，#2162–#2165 review 自 [`crate::settings_data`] 归位至此）。
+pub(crate) const MSG_RESTORE_FAIL_PREFIX: &str = "恢复失败: ";
