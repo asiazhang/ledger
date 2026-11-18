@@ -2,7 +2,7 @@
 //! `RestoreConfirmModal` 的 NSH 对应件，锁定屏 [`crate::unlock`] 与备份卡
 //! [`crate::backup_cards`] 两侧消费同一封装，收敛 #2131 时期的
 //! 两侧同构复制；#2167 拆分后设置面备份卡自 [`crate::settings_data`] 归位
-//! [`crate::backup_cards`]）。
+//! [`crate::backup_cards`]。
 //!
 //! 形态闭集（两侧并集语义，零业务语义）：备份文件路径行 + 恢复后果强警示
 //! 块 + 跨模式警告块 + 密文备份主口令输入 + 弹窗内错误位 + 取消/确认按钮

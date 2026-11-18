@@ -62,7 +62,8 @@ impl<T: IntoElement> ListCardOf<T> {
         }
     }
 
-    /// 表格容器 headless 锚点（test_id，原 `new` 位置实参 setter 化）。
+    /// 表格容器 headless 锚点（test_id，原 `new` 位置实参 setter 化）。必链：
+    /// 未链即静默产出空 test_id，仅 headless 测试可兑，余量在此留痕。
     pub(crate) fn table_id(mut self, table_id: &'static str) -> Self {
         self.table_id = table_id;
         self
