@@ -469,9 +469,9 @@ pub(crate) fn ScheduledView() -> impl IntoElement {
         pending_focus.set(intent.and_then(|i| i.focus));
     });
 
-    // 主题令牌（双态自适应；缺失兜底统一归 crate::theme 单点）。
-    let fg = crate::theme::color("foreground");
-    let muted = crate::theme::color("muted-foreground");
+    // 视图层取色统一经 view_palette（#2153：fg/muted 通面成员，直读属
+    // 第二构造点；缺失兜底统一归 crate::theme 单点）。
+    let crate::views::ViewPalette { fg, muted, .. } = crate::views::view_palette();
 
     // 形态页签（三态闭集；会话槽缺省首签订阅）。页签点击写会话槽（会话内
     // 保留）；nsh-base Tabs 行为件（roving 焦点 + 无障碍页签列表，容器页签

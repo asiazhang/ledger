@@ -76,11 +76,13 @@ pub(crate) fn category_color(id: &str) -> AdaptiveColor {
 const BAR_THICKNESS: f32 = 14.0;
 
 fn foreground() -> AdaptiveColor {
-    crate::theme::color("foreground")
+    // fg 通面成员经视图层取色面（#2153：与 spend_panel 轴面同规；图表数据
+    // 色仍走 theme 单点直读正当边界）。
+    crate::views::view_palette().fg
 }
 
 fn muted_foreground() -> AdaptiveColor {
-    crate::theme::color("muted-foreground")
+    crate::views::view_palette().muted
 }
 
 /// 受控说明气泡 + 柱体载体（纵向与横向共用）：按压柱体开气泡、宿主关闭路径

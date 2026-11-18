@@ -579,7 +579,7 @@ pub(crate) fn categories_pane(palette: views::ViewPalette) -> View {
                         .child(
                             text(BUTTON_ADD)
                                 .text_size(px(font_size::SECONDARY))
-                                .text_color(crate::theme::color("primary-foreground"))
+                                .text_color(palette.primary_fg)
                                 .test_id("cat-add"),
                         ),
                 ),
@@ -833,7 +833,7 @@ pub(crate) fn categories_pane(palette: views::ViewPalette) -> View {
                             .child(
                                 text(BUTTON_SAVE)
                                     .text_size(px(font_size::SECONDARY))
-                                    .text_color(crate::theme::color("primary-foreground"))
+                                    .text_color(palette.primary_fg)
                                     .test_id("cat-edit-save"),
                             ),
                     ),

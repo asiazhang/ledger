@@ -64,7 +64,8 @@ use nsh_core::prelude::*;
 use crate::assembly::CategoryOption;
 use crate::design::font_size;
 use crate::investments::PanePalette;
-use crate::settings_data::READ_TASK_FAILED;
+use crate::read_load::{ReadLoad, blocking_read};
+use crate::settings_data::{READ_TASK_FAILED, SESSION_MISSING, WRITE_TASK_FAILED};
 use crate::{
     app, assembly, boot, context_menu, danger, investments, investments_form, modal, multi_select,
     period, period_row, pinyin_select, signals, transactions,
@@ -613,24 +614,22 @@ pub(crate) fn LedgerPane() -> impl IntoElement {
         let tracked_session = session;
         let db = app::db_slot().clone();
         spawn(async move {
-            let Some(db) = db else {
-                loading.set(false);
-                error.set(Some(format!("{LOAD_FAILED_PREFIX}{READ_TASK_FAILED}")));
-                return;
-            };
-            let outcome = blocking(move || -> ledger_infra::error::Result<LedgerPageBatch> {
-                let page = boot::investment_transaction_page(&db, &filter)?;
-                let account_rows = boot::account_rows(&db)?;
-                let currencies = boot::currency_rows(&db)?;
-                let date_range = boot::report_date_range(&db)
-                    .ok()
-                    .map(|dr| (dr.min_date, dr.max_date));
-                Ok((page, account_rows, currencies, date_range))
-            })
+            let outcome = blocking_read(
+                db,
+                move |db| -> ledger_infra::error::Result<LedgerPageBatch> {
+                    let page = boot::investment_transaction_page(db, &filter)?;
+                    let account_rows = boot::account_rows(db)?;
+                    let currencies = boot::currency_rows(db)?;
+                    let date_range = boot::report_date_range(db)
+                        .ok()
+                        .map(|dr| (dr.min_date, dr.max_date));
+                    Ok((page, account_rows, currencies, date_range))
+                },
+            )
             .await;
             loading.set(false);
             match outcome {
-                Ok(Ok((page, account_rows, currency_rows, date_range))) => {
+                ReadLoad::Ready((page, account_rows, currency_rows, date_range)) => {
                     // 空页自愈（issue #893 同款）。
                     if page.items.is_empty()
                         && page.total > 0
@@ -653,8 +652,10 @@ pub(crate) fn LedgerPane() -> impl IntoElement {
                     boundary_dates.set(date_range);
                     error.set(None);
                 }
-                Ok(Err(e)) => error.set(Some(format!("{LOAD_FAILED_PREFIX}{e}"))),
-                Err(_) => error.set(Some(format!("{LOAD_FAILED_PREFIX}{READ_TASK_FAILED}"))),
+                ReadLoad::Coded(e) => error.set(Some(format!("{LOAD_FAILED_PREFIX}{e}"))),
+                ReadLoad::MissingDb | ReadLoad::TaskFailed => {
+                    error.set(Some(format!("{LOAD_FAILED_PREFIX}{READ_TASK_FAILED}")))
+                }
             }
             let _ = (filter_account, filter_instrument);
         });
@@ -839,7 +840,7 @@ pub(crate) fn LedgerPane() -> impl IntoElement {
                             .child(
                                 text(CREATE_BUY)
                                     .text_size(px(font_size::CAPTION))
-                                    .text_color(crate::theme::color("primary-foreground")),
+                                    .text_color(palette.primary_fg),
                             ),
                     )
                     .child(
@@ -861,7 +862,7 @@ pub(crate) fn LedgerPane() -> impl IntoElement {
                             .child(
                                 text(CREATE_SELL)
                                     .text_size(px(font_size::CAPTION))
-                                    .text_color(crate::theme::color("primary-foreground")),
+                                    .text_color(palette.primary_fg),
                             ),
                     ),
             )
@@ -1103,7 +1104,7 @@ fn perform_delete(
     view_owner.run(move || {
         spawn(async move {
             let Some(db) = db else {
-                delete_error.set(Some("内部错误：账本库会话缺失".to_owned()));
+                delete_error.set(Some(SESSION_MISSING.to_owned()));
                 return;
             };
             let target = id.clone();
@@ -1115,7 +1116,7 @@ fn perform_delete(
                     reload();
                 }
                 Ok(Err(e)) => delete_error.set(Some(e.to_string())),
-                Err(_) => delete_error.set(Some("内部错误：写入任务异常退出".to_owned())),
+                Err(_) => delete_error.set(Some(WRITE_TASK_FAILED.to_owned())),
             }
         });
     });

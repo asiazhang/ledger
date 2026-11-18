@@ -23,6 +23,11 @@
 //! `scripts/check-structure.ts`）。反向的同族接缝（issue #1091 / 挂载点④）：
 //! 调度线程的追补触发由备份域定义注册点（`register_catch_up_hook`）、本模块
 //! 提供 [`catch_up_hook`] 实现、壳层启动时对装——备份域对定时计划域亦零依赖。
+//! 有实际落账的追补轮结束即通知壳内视图失效（#2159）：本模块只定义失效广播
+//! 钩子注册点（[`register_catch_up_invalidation_hook`]），实现由壳层提供——
+//! 壳内失效信号广播要求引擎线程（订阅者表 thread_local），调度线程不能直呼，
+//! 壳层实现经进程级 pending 计数 + 引擎线程泵跨线程投递（备份族深路径发射的
+//! 同款桥，#2078）。
 
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -63,6 +68,42 @@ pub fn register_after_occurrence_hook(hook: AfterOccurrenceHook) {
 /// 未推送即空转）。
 pub fn catch_up_hook(conn: &Connection) {
     run_catch_up(conn, is_enabled(), Local::now().date_naive());
+}
+
+// ---------------------------------------------------------------------------
+// 追补落账失效广播接缝（issue #2159，ADR-0112 决策 5）：追补是交易写入的第 N
+// 入口，落账即交易数据变化，但执行点在备份调度线程（无命令身份、只持
+// `&Connection`）——壳内失效信号的广播在引擎线程（订阅者表 thread_local），
+// 下层（本域）只定义注册点、上层（壳）注册实现、壳层启动时接线。
+// ---------------------------------------------------------------------------
+
+/// 追补落账失效广播钩子签名：无参数——粗粒度失效语义（「追补落了账」）不携带
+/// 数据，广播是壳内信号面动作、非库动作，不需要连接（与
+/// [`AfterOccurrenceHook`] 收连接的置脏语义相区分）。
+type CatchUpInvalidationHook = fn();
+
+/// 追补落账失效广播钩子的进程级单例（登记点反转的承接面）：先装者优先、
+/// 重复注册零动作。
+static CATCH_UP_INVALIDATION_HOOK: OnceLock<CatchUpInvalidationHook> = OnceLock::new();
+
+/// 注册追补落账失效广播钩子实现（幂等：进程级一次，重复注册保留首次实现）。
+///
+/// 接缝形态（ADR-0112 决策 5）：实现由壳层提供（把失效投递进进程级 pending
+/// 计数，引擎线程泵消费后广播交易 / 预算族——调度线程不能直呼壳内广播），
+/// 调用点在壳层启动接线（`nsh_app::wiring::install_domain_seams`，与期次落账
+/// 置脏对装同点）；「删除接线即红」由 headless 追补落账旅程与接线扫描守门
+/// 双半边钉住。未注册（本域单测 / 无消费面环境）时静默跳过——失效广播不承载
+/// 成败语义，与深路径发射「未注入静默跳过」同口径（ADR-0044）。
+pub fn register_catch_up_invalidation_hook(hook: CatchUpInvalidationHook) {
+    let _ = CATCH_UP_INVALIDATION_HOOK.set(hook);
+}
+
+/// 通知追补落账失效（[`run_catch_up`] 消费）：钩子未注册静默跳过（见
+/// [`register_catch_up_invalidation_hook`]）。
+fn notify_catch_up_invalidation() {
+    if let Some(hook) = CATCH_UP_INVALIDATION_HOOK.get() {
+        hook();
+    }
 }
 
 /// 后端运行时镜像（进程级）：设备级开关默认关，前端启动/变更时经 IPC 推送更新。
@@ -145,6 +186,12 @@ pub fn run_catch_up(conn: &Connection, enabled: bool, today: NaiveDate) -> Catch
                 }
             }
         }
+    }
+    // 有实际落账 = 交易数据变化（issue #2159）：追补是交易写入的既有入口之一，
+    // 失效通知与手动路径同语义（零写入不广播——纯失败轮不动任何交易行不发）。
+    // 广播走注册点（壳层实现），本域不持壳内信号知识。
+    if summary.executed > 0 {
+        notify_catch_up_invalidation();
     }
     if summary.executed > 0 || summary.failed > 0 {
         tracing::info!(

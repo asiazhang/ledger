@@ -31,7 +31,8 @@
 //! - **账本切换**（`useBookSwitcher`）：清单卡（跨账本汇总**置顶入口** +
 //!   行按压切换〔warning 级轻量确认〕+ 行级改名弹窗 / 移除气泡确认 + 新建
 //!   弹窗），清单读注册表最新落盘态；切换写活动指针，本壳无原位重引导
-//!   （旧壳 restart_app 自动重载的偏差在反馈句内披露）。
+//!   （旧壳 restart_app 自动重载的偏差不在屏披露，反馈句与侧栏 #2129
+//!   干净变体同文）。
 //!
 //! 偏好镜像（备份目录 / 保留上限）：NSH 自建平台存储 [`Storage`]（键值形
 //! 态同旧壳 `backup_dir` / `backup_max_count` 的 JSON 形状，不与旧壳共享、
@@ -66,6 +67,7 @@ use crate::design::font_size;
 use crate::modal::app_modal;
 use crate::nav_model::NavRequest;
 use crate::popconfirm;
+use crate::restore_confirm::{RestoreIds, RestoreIntent, app_restore_confirm_modal};
 use crate::settings::{card, status_line};
 use crate::views::view_palette;
 use crate::{
@@ -133,14 +135,15 @@ pub(crate) const RESTORE_CONFIRM_ACTION: &str = "确认恢复";
 pub(crate) const RESTORE_CANCEL: &str = "取消";
 pub(crate) const RESTORE_PASS_LABEL: &str = "备份的主口令";
 pub(crate) const RESTORE_PASS_PLACEHOLDER: &str = "输入该备份的主口令";
+pub(crate) const RESTORE_BACKUP_FILE_LABEL: &str = "备份文件：";
 pub(crate) const RESTORE_CROSS_MODE_TITLE: &str = "加密模式不一致";
 pub(crate) const RESTORE_TO_PLAINTEXT_WARN: &str =
     "当前库为加密库：恢复这份明文备份后，数据将变为未加密，应用重启后以明文库启动。";
 pub(crate) const RESTORE_TO_ENCRYPTED_WARN: &str =
     "这份备份为密文备份：恢复后此库将变为加密库，应用重启后需凭该备份的主口令解锁。";
 pub(crate) const RESTORE_FAIL_PREFIX: &str = "恢复失败: ";
-const MSG_RESTORE_OK: &str =
-    "恢复成功，请重启应用进入新库（本壳无原位重引导：旧壳恢复后自动重启的偏差见交付报告）";
+const MSG_RESTORE_OK: &str = "恢复成功，请重启应用进入新库";
+
 pub(crate) const MSG_META_FAILED_PREFIX: &str = "读取备份信息失败: ";
 pub(crate) const MSG_ENCRYPTION_STATUS_FAILED_PREFIX: &str = "读取加密状态失败: ";
 const MSG_LIST_FAILED_PREFIX: &str = "读取备份列表失败: ";
@@ -166,6 +169,18 @@ const MSG_BACKUP_FAILED_PREFIX: &str = "备份失败: ";
 const PRUNE_CONFIRM_TITLE: &str = "确认清理";
 const PRUNE_CONFIRM_STRONG_PREFIX: &str = "将删除最旧的 ";
 const PRUNE_CONFIRM_STRONG_SUFFIX: &str = " 个备份，删除后不可恢复。";
+
+/// 恢复确认弹窗 headless 锚点（设置卡前缀；#2144 收敛后经共享封装
+/// [`RestoreIds`] 消费）。
+const DATA_RESTORE_IDS: RestoreIds = RestoreIds {
+    path: "data-restore-path",
+    cross_mode_title: "data-restore-cross-mode-title",
+    cross_mode: "data-restore-cross-mode",
+    passphrase: "data-restore-passphrase",
+    error: "data-restore-error",
+    cancel: "data-restore-cancel",
+    confirm: "data-restore-confirm",
+};
 const PRUNE_CONFIRM_DETAIL: &str =
     "删除的是备份产物，账本数据本身不受影响；自动备份开启时会按保留上限继续生成新备份。";
 const PRUNE_CONFIRM_OK: &str = "确认清理";
@@ -304,7 +319,8 @@ const SYNC_BOOTSTRAP_PASS_PLACEHOLDER: &str = "主口令（快照为密文时必
 const SYNC_BOOTSTRAP_CANCEL: &str = "取消";
 const SYNC_BOOTSTRAP_CONFIRM: &str = "引导并重启";
 const SYNC_BOOTSTRAP_FAILED_PREFIX: &str = "引导失败: ";
-const SYNC_BOOTSTRAP_OK_HOST_HINT: &str = "引导完成（本机账本数据已整库替换）：请重启应用载入引导数据（本壳无原位重引导，旧壳自动重启的偏差见交付报告）";
+const SYNC_BOOTSTRAP_OK_HOST_HINT: &str =
+    "引导完成（本机账本数据已整库替换）：请重启应用载入引导数据";
 const SYNC_BOOTSTRAP_REENCRYPTED_HINT: &str =
     "；本机已转为密文库：重启后需凭主口令解锁（即引导快照的主口令）";
 
@@ -330,7 +346,7 @@ const BOOKS_SWITCH_CONFIRM: &str = "切换并重启后生效";
 const BOOKS_SWITCH_DETAIL: &str =
     "将写活动账本指针：重启应用后进入目标账本。未保存的界面状态会丢失，账本数据本身不受影响。";
 const BOOKS_SWITCHING_PREFIX: &str = "已切换到「";
-const BOOKS_SWITCHING_SUFFIX: &str = "」，重启应用后进入新账本（旧壳自动重载的偏差见交付报告）";
+const BOOKS_SWITCHING_SUFFIX: &str = "」，重启应用后进入新账本";
 const BOOKS_ACTION_FAILED_PREFIX: &str = "操作失败: ";
 const BOOKS_SET_FAILED_PREFIX: &str = "设置失败: ";
 const BOOKS_SESSION_UNAVAILABLE: &str = "账本注册表尚未就绪，请重启应用后再试";
@@ -672,7 +688,7 @@ pub(crate) fn store_keep_limit(n: u32) {
 // ---------------------------------------------------------------------------
 // ---------------------------------------------------------------------------
 // 共用呈现件（密文输入行 / 表单字段行）；破坏色便捷面收
-// [`crate::views::ViewPalette`] 的 `danger_fg` 成员（三件套唯一住所）。
+// [`crate::views::ViewPalette`] 的 `danger_fg` 成员（通面五件套唯一住所）。
 // ---------------------------------------------------------------------------
 
 /// 复制路径按钮（旧壳 copy-text 通道：写剪贴板 + 卡内状态条位反馈）。
@@ -801,7 +817,7 @@ struct BackupUiState {
     auto_failures: Signal<u32>,
     /// 本机设备标识（桶判定基准）。
     device: Signal<Option<String>>,
-    /// 恢复意图（弹窗开着 = Some）。
+    /// 恢复意图（弹窗开着 = Some；类型收敛共享 [`RestoreIntent`]，#2144）。
     restore_intent: Signal<Option<RestoreIntent>>,
     /// 恢复口令输入。
     restore_pass: Signal<String>,
@@ -811,17 +827,6 @@ struct BackupUiState {
     restore_busy: Signal<bool>,
     /// 恢复弹窗内错误位（口令错误可就地重试）。
     restore_error: Signal<Option<String>>,
-}
-
-/// 恢复确认弹窗意图（旧壳 RestoreIntent 的本壳子集；本壳无上下文口令面）。
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct RestoreIntent {
-    /// 所选备份文件路径。
-    path: String,
-    /// 备份是否为密文（元数据标记）。
-    backup_encrypted: bool,
-    /// 当前库是否为密文（文件即真相）。
-    current_encrypted: bool,
 }
 
 /// 备份目录是否已配置（偏好镜像非空 = 已设置）。
@@ -1177,6 +1182,7 @@ fn pick_restore_task(owner: Owner, state: BackupUiState) {
                 path: target,
                 backup_encrypted: meta.encrypted,
                 current_encrypted,
+                context_pass: None,
             }));
         })
     });
@@ -1234,7 +1240,9 @@ fn confirm_restore_task(owner: Owner, state: BackupUiState) {
                     state.restore_busy.set(false);
                     // 后端探测实际密文而元数据未标记（异常产物）时，按需显出口令
                     // 输入——以后端探测为准（旧壳 passphraseRevealedByError 同位）。
-                    if e.to_string().contains("backup.passphrase-required") {
+                    // 判读以码化错误的 code 类型化判定（#2145：后端 Display 只含
+                    // 中文消息，原文案子串 contains 恒不命中、显出接线形同虚设）。
+                    if e.is_code(ledger_backup::CODE_PASSPHRASE_REQUIRED) {
                         state.restore_pass_revealed.set(true);
                     }
                 }
@@ -1247,144 +1255,6 @@ fn confirm_restore_task(owner: Owner, state: BackupUiState) {
             }
         })
     });
-}
-
-/// 恢复确认可提交判定（口令框显出时须非空；执行中禁用）。
-fn can_submit_restore(state: BackupUiState) -> bool {
-    let needs_pass = state.restore_pass_revealed.get()
-        || state
-            .restore_intent
-            .get_untracked()
-            .is_some_and(|intent| intent.backup_encrypted);
-    !needs_pass || !state.restore_pass.get().is_empty()
-}
-
-/// 恢复确认弹窗内容（旧壳 RestoreConfirmModal 语义面：恢复后果警示 +
-/// 跨模式警告 + 密文备份主口令 + 弹窗内错误位）。
-fn restore_modal_body(state: BackupUiState, owner: Owner, palette: views::ViewPalette) -> View {
-    let body_owner = owner;
-    let Some(intent) = state.restore_intent.get() else {
-        return view();
-    };
-    let cross_mode = (intent.backup_encrypted != intent.current_encrypted).then_some({
-        if intent.backup_encrypted {
-            (RESTORE_CROSS_MODE_TITLE, RESTORE_TO_ENCRYPTED_WARN)
-        } else {
-            (RESTORE_CROSS_MODE_TITLE, RESTORE_TO_PLAINTEXT_WARN)
-        }
-    });
-    view()
-        .flex_col()
-        .app_class("gap-2")
-        .child(
-            text(format!("备份文件：{}", intent.path))
-                .text_size(px(font_size::CAPTION))
-                .text_color(palette.fg)
-                .test_id("data-restore-path"),
-        )
-        .child(
-            view()
-                .flex_col()
-                .app_class("rounded-sm border border-destructive/30 bg-destructive/10 p-2 gap-1")
-                .child(
-                    text(RESTORE_CONFIRM_STRONG)
-                        .text_size(px(font_size::CAPTION))
-                        .font_weight(FontWeight::BOLD)
-                        .text_color(views::view_palette().danger_fg),
-                ),
-        )
-        .children(cross_mode.map(|(title, warning)| {
-            view()
-                .flex_col()
-                .app_class("rounded-sm border border-destructive/30 bg-destructive/10 p-2 gap-1")
-                .child(
-                    text(title)
-                        .text_size(px(font_size::CAPTION))
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(palette.fg)
-                        .test_id("data-restore-cross-mode-title"),
-                )
-                .child(
-                    text(warning)
-                        .text_size(px(font_size::CAPTION))
-                        .text_color(palette.fg)
-                        .test_id("data-restore-cross-mode"),
-                )
-        }))
-        // 口令框与错误位是「弹窗开着期间就地变化」的条件段，均为布尔有无
-        // （口令框 = 意图为密文备份或口令已显出；错误行 = 有无错误），按模块
-        // 头选型标准（#2146）用 when（条件翻转重建 + reactive 绑定逐次求
-        // 值，同引导弹窗同款形态），不用 dynamic（读什么变什么重造，选型标
-        // 准只留给多态内容匹配/整段重造）。按钮禁用面用响应式闭包（prop 绑
-        // 定逐次求值）。修复前静态 children/静态 disabled 开弹即冻结：密文
-        // 备份口令输入后确认按钮永不可按（无法提交）、失败错误行不呈现、后
-        // 端报需口令后口令框不显出（headless
-        // settings_restore_modal_encrypted_backup_submits_after_passphrase_typed
-        // 钉住）。交叉模式块随意图固定，静态段承载。
-        .child(when(
-            move || {
-                state
-                    .restore_intent
-                    .get()
-                    .is_some_and(|intent| intent.backup_encrypted)
-                    || state.restore_pass_revealed.get()
-            },
-            move || {
-                pass_input(
-                    state.restore_pass,
-                    palette,
-                    "data-restore-passphrase",
-                    RESTORE_PASS_LABEL,
-                    RESTORE_PASS_PLACEHOLDER,
-                )
-            },
-        ))
-        .child(when(
-            move || state.restore_error.get().is_some(),
-            move || {
-                text(move || state.restore_error.get().unwrap_or_default())
-                    .text_size(px(font_size::CAPTION))
-                    .text_color(views::view_palette().danger_fg)
-                    .test_id("data-restore-error")
-            },
-        ))
-        .child(
-            view()
-                .flex_row()
-                .justify_end()
-                .app_class("gap-2")
-                .child(
-                    button()
-                        .app_class(
-                            "px-3 py-1.5 rounded-(--radius) border border-border text-foreground hover:bg-accent disabled:opacity-40",
-                        )
-                        .disabled(move || state.restore_busy.get())
-                        .child(
-                            text(RESTORE_CANCEL)
-                                .text_size(px(font_size::SECONDARY))
-                                .test_id("data-restore-cancel"),
-                        )
-                        .on_press(move |_: &()| {
-                            if !state.restore_busy.get_untracked() {
-                                state.restore_intent.set(None);
-                            }
-                        }),
-                )
-                .child(
-                    button()
-                        .app_class(
-                            "px-3 py-1.5 rounded-(--radius) bg-destructive hover:opacity-90 disabled:opacity-40",
-                        )
-                        .disabled(move || !can_submit_restore(state) || state.restore_busy.get())
-                        .child(
-                            text(RESTORE_CONFIRM_ACTION)
-                                .text_size(px(font_size::SECONDARY))
-                                .text_color(crate::theme::color("destructive-foreground"))
-                                .test_id("data-restore-confirm"),
-                        )
-                        .on_press(move |_: &()| confirm_restore_task(body_owner, state)),
-                ),
-        )
 }
 
 /// 备份管理五卡（动作 / 目录 / 自动 / 列表 / 恢复；五卡共用同一信号组）。
@@ -1446,16 +1316,16 @@ fn backup_cards(palette: views::ViewPalette) -> View {
     }
 
     // 恢复确认弹窗（旧壳 ModalIntent 同形：意图开着 = 呈现；关闭路径 = 取消 /
-    // ESC / 成功后由任务关）。
-    let restore_modal = app_modal(
-        move || state.restore_intent.get().is_some(),
-        || RESTORE_MODAL_TITLE.to_owned(),
-        move || {
-            if !state.restore_busy.get_untracked() {
-                state.restore_intent.set(None);
-            }
-        },
-        move || restore_modal_body(state, owner, palette),
+    // ESC / 成功后由任务关）。#2144 收敛共享封装
+    // [`app_restore_confirm_modal`]，与锁定屏恢复弹窗消费同一成员。
+    let restore_modal = app_restore_confirm_modal(
+        state.restore_intent,
+        state.restore_pass,
+        state.restore_pass_revealed,
+        state.restore_busy,
+        state.restore_error,
+        &DATA_RESTORE_IDS,
+        move |_: &()| confirm_restore_task(owner, state),
     );
 
     // 动作卡（动作 + 最近备份回显 + 复制 + 状态条位）。
@@ -1480,7 +1350,7 @@ fn backup_cards(palette: views::ViewPalette) -> View {
                         .child(
                             text(BACKUP_ONCE)
                                 .text_size(px(font_size::SECONDARY))
-                                .text_color(crate::theme::color("primary-foreground"))
+                                .text_color(palette.primary_fg)
                                 .test_id("data-backup-once"),
                         )
                         .on_press(move |_: &()| begin_backup_once(owner, state)),
@@ -1907,14 +1777,22 @@ fn backup_cards(palette: views::ViewPalette) -> View {
                             },
                         )
                         .otherwise(move || {
-                            view().flex_col().app_class("gap-1").children(
-                                state
-                                    .rows
-                                    .get()
-                                    .into_iter()
-                                    .enumerate()
-                                    .map(|(index, row)| backup_row(palette, index, row)),
-                            )
+                            // 行集段 dynamic（读什么变什么重造，#2146 选型标准
+                            // 整段重造归 dynamic）：修复前 otherwise 分支内静
+                            // 态 children（state.rows 一次读入），列表非空期间
+                            // 新增/清理备份后行集不重渲染，面板重开才见新清单
+                            //（#2143 审计同根因实例；删 dynamic 回静态 →
+                            // backup_list_rows_refresh_in_place_after_new_backup 红）。
+                            dynamic(move || {
+                                view().flex_col().app_class("gap-1").children(
+                                    state
+                                        .rows
+                                        .get()
+                                        .into_iter()
+                                        .enumerate()
+                                        .map(|(index, row)| backup_row(palette, index, row)),
+                                )
+                            })
                         }),
                     )
                 }),
@@ -2567,7 +2445,7 @@ fn enable_form(state: EncryptionState, palette: views::ViewPalette) -> impl Into
                 .child(
                     text(ENCRYPT_BUTTON)
                         .text_size(px(font_size::SECONDARY))
-                        .text_color(crate::theme::color("primary-foreground"))
+                        .text_color(palette.primary_fg)
                         .test_id("enc-enable"),
                 )
                 .on_press(move |_: &()| request_enable()),
@@ -3113,6 +2991,9 @@ fn bootstrap_modal_body(state: SyncState, owner: Owner, palette: views::ViewPale
                         .child(
                             text(SYNC_BOOTSTRAP_CONFIRM)
                                 .text_size(px(font_size::SECONDARY))
+                                // 低频专用配对前景保留 theme 单点直读（#2153
+                                // 边界：warning-foreground 不入 palette 闭集，
+                                // 正当边界见 ViewPalette 文档）。
                                 .text_color(crate::theme::color("warning-foreground"))
                                 .test_id("sync-bootstrap-confirm"),
                         )
@@ -3243,7 +3124,7 @@ fn sync_card(palette: views::ViewPalette) -> View {
                     .child(
                         text(SYNC_NOW)
                             .text_size(px(font_size::SECONDARY))
-                            .text_color(crate::theme::color("primary-foreground"))
+                            .text_color(palette.primary_fg)
                             .test_id("sync-now"),
                     )
                     .on_press(move |_: &()| sync_now_task(owner, state)),
@@ -3364,7 +3245,7 @@ fn sync_card(palette: views::ViewPalette) -> View {
                         .child(
                             text(SYNC_SAVE_CHANNEL)
                                 .text_size(px(font_size::SECONDARY))
-                                .text_color(crate::theme::color("primary-foreground"))
+                                .text_color(palette.primary_fg)
                                 .test_id("sync-save-channel"),
                         )
                         .on_press(move |_: &()| save_channel_task(owner, state)),
@@ -3779,7 +3660,7 @@ fn books_card(palette: views::ViewPalette) -> View {
                         .child(
                             text(confirm_label)
                                 .text_size(px(font_size::SECONDARY))
-                                .text_color(crate::theme::color("primary-foreground"))
+                                .text_color(palette.primary_fg)
                                 .test_id("book-name-submit"),
                         )
                         .on_press(move |_: &()| submit_name()),
@@ -4064,7 +3945,6 @@ const BALANCE_REPORT_NOOP_BODY_PREFIX: &str = "全部 ";
 const BALANCE_REPORT_NOOP_BODY_SUFFIX: &str = " 个账户的缓存与实时重算一致，未做改动。";
 const BALANCE_MISSING_TAG: &str = "（缓存行缺失）";
 const BALANCE_DRIFT_COLUMNS: [&str; 3] = ["账户", "修复前缓存", "实时重算"];
-const BALANCE_TASK_FAILED: &str = "内部错误：写入任务异常退出";
 const BALANCE_REPAIR_FAILED_PREFIX: &str = "修复失败: ";
 
 /// 修复报告的呈现投影（旧壳 reportView computed 同口径：有漂移 → 已修复
@@ -4181,7 +4061,7 @@ fn balance_cache_card(palette: views::ViewPalette) -> View {
                     }
                     Ok(Err(e)) => status.set(Some(format!("{BALANCE_REPAIR_FAILED_PREFIX}{e}"))),
                     Err(_) => status.set(Some(format!(
-                        "{BALANCE_REPAIR_FAILED_PREFIX}{BALANCE_TASK_FAILED}"
+                        "{BALANCE_REPAIR_FAILED_PREFIX}{WRITE_TASK_FAILED}"
                     ))),
                 }
             });

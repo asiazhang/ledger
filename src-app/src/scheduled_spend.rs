@@ -219,10 +219,11 @@ impl SpendPanelState {
 /// 零独立读路径（旧壳 onMounted reload 的对应物 = 页签装载批携带本面板
 /// 数据）。
 pub(crate) fn spend_panel(state: Signal<SpendPanelState>) -> impl IntoElement {
-    let fg = crate::theme::color("foreground");
-    let muted = crate::theme::color("muted-foreground");
-    // 趋势柱色 = 走势主色 line 令牌（theme.json 单值档，亮暗同值）；令牌缺失
-    // 落可读灰兜底（消费方零本地色纪律，fg/muted 同款先例）。
+    // 视图层取色统一经 view_palette（#2153：fg/muted 通面成员，直读属第二
+    // 构造点）；趋势柱色 = 走势主色 line 令牌（theme.json 单值档，亮暗同值；
+    // 图表图形面正当直读边界）——令牌缺失落可读灰兜底（消费方零本地色纪
+    // 律，fg/muted 同款先例）。
+    let crate::views::ViewPalette { fg, muted, .. } = crate::views::view_palette();
     let bar_color = crate::theme::color("line");
 
     when(
@@ -381,7 +382,8 @@ fn stat_block(
 /// 纵轴刻度列（相对定位：每档文本右对齐锚定列右缘、盒中心对准档心——
 /// 文本读装配产物，隐私掩码同源）。
 fn y_axis_col(state: Signal<SpendPanelState>) -> View {
-    let muted = crate::theme::color("muted-foreground");
+    // muted 通面成员经视图层取色面（#2153）。
+    let muted = crate::views::view_palette().muted;
     // 刻度行盒高 = 字阶 CAPTION 一行 + 间距档 PART（光学校正），档心 =
     // 盒中心（顶位由盒高推导，无裸微调值）。
     let row = font_size::CAPTION + spacing::PART;
@@ -412,6 +414,8 @@ fn y_axis_col(state: Signal<SpendPanelState>) -> View {
 /// 绘图区：水平网格线（每档一条，降透明同 plot_line 先例）+ 零轴底边
 /// （全色边线，web Chart.js x 轴 border 同位）压底，柱带叠加。
 fn plot_area(state: Signal<SpendPanelState>, bar_color: nsh_core::element::AdaptiveColor) -> View {
+    // 图形面令牌（轴/网格 border）保留 theme 单点直读——#2153 图表图形面
+    // 正当边界（DESIGN.md 例外挂账面）。
     let grid = crate::theme::color("border").opacity(0.6);
     let axis = crate::theme::color("border");
     view()
@@ -463,7 +467,8 @@ fn plot_area(state: Signal<SpendPanelState>, bar_color: nsh_core::element::Adapt
 /// 月键标签行（与柱带同分栏结构：等分列 + 同 gap，柱与月键一一对位；
 /// 文本读装配产物，隐私不涉及）。
 fn month_labels_row(state: Signal<SpendPanelState>) -> View {
-    let muted = crate::theme::color("muted-foreground");
+    // muted 通面成员经视图层取色面（#2153）。
+    let muted = crate::views::view_palette().muted;
     view()
         .flex_row()
         .items_center()

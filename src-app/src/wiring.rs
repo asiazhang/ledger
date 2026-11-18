@@ -57,6 +57,16 @@ pub fn install_domain_seams() {
     ledger_scheduled::auto_run::register_after_occurrence_hook(
         ledger_backup::occurrence_dirty_hook,
     );
+    // 追补落账失效广播对装（issue #2159，ADR-0112 决策 5）：追补轮有实际落账时
+    // 由壳层实现把失效投递进程级 pending 计数（[`crate::signals`]，任意线程可
+    // 调）——调度线程不能直呼壳内广播（订阅者表 thread_local，跨线程直调零动
+    // 作），引擎线程泵（[`crate::backup_host`] 装载）消费后广播交易 / 预算族。
+    // 与期次落账置脏对装同族同点：定时计划域只定义注册点、壳层注册实现；删除
+    // 本接线 → 自动执行后在场视图不刷新（用户可见），headless 旅程与接线扫描
+    // （backup_host 域栈引导扫描）双红。
+    ledger_scheduled::auto_run::register_catch_up_invalidation_hook(
+        crate::signals::record_catch_up_pending,
+    );
     // 追补触发对装（issue #1091 / 挂载点④，ADR-0112 决策 5）：自动备份调度
     // 线程单一 tick 的追补判定实现由定时计划域提供（开关镜像 + 本地今天在
     // 实现内注入）、壳层启动时注册进备份域的注册点——备份域对定时计划域零依赖。

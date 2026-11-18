@@ -49,10 +49,11 @@ use crate::app::db_slot;
 use crate::assembly::{self, ColumnAlign, MERCHANT_COLUMNS, MerchantListContext, MerchantRowCells};
 use crate::boot;
 use crate::design::font_size;
+use crate::list_card;
 use crate::modal;
 use crate::nav_model::{NavRequest, ViewName};
 use crate::popconfirm;
-use crate::settings_data::{READ_TASK_FAILED, WRITE_TASK_FAILED};
+use crate::settings_data::{READ_TASK_FAILED, SESSION_MISSING, WRITE_TASK_FAILED};
 use crate::transactions::{amount_privacy_enabled, table_classes};
 use crate::views::field_label;
 use crate::{nav, signals};
@@ -120,7 +121,7 @@ pub(crate) fn MerchantsView() -> impl IntoElement {
         view_owner.run(move || {
             spawn(async move {
                 let Some(dbc) = db.clone() else {
-                    error.set(Some("内部错误：账本库会话缺失".to_owned()));
+                    error.set(Some(SESSION_MISSING.to_owned()));
                     loading.set(false);
                     return;
                 };
@@ -179,9 +180,13 @@ pub(crate) fn MerchantsView() -> impl IntoElement {
         fg,
         muted,
         danger_fg,
+        primary_fg,
         ..
     } = crate::views::view_palette();
-    let accent = crate::theme::color("primary");
+    // 可点原子/下钻强调色（primary 令牌的语义角色消费，低频专用保留直读；
+    // #2153：原局部名 accent 与 ViewPalette.accent（accent 令牌）同名异义
+    // 同屏，改名消歧——transactions::primary_color 同款）。
+    let primary = crate::theme::color("primary");
 
     // 操作反馈条位（NSH 无 toast——#2038 裁决；旧壳 message.success/error 的
     // 条位对应物：新动作开始时清回空）。
@@ -209,10 +214,7 @@ pub(crate) fn MerchantsView() -> impl IntoElement {
                         db,
                         ledger_merchants::MerchantInput { name: name.clone() },
                     ),
-                    None => Err(AppError::coded(
-                        boot::CODE_SESSION_MISSING,
-                        "内部错误：账本库会话缺失",
-                    )),
+                    None => Err(AppError::coded(boot::CODE_SESSION_MISSING, SESSION_MISSING)),
                 })
                 .await;
                 match outcome {
@@ -367,10 +369,7 @@ pub(crate) fn MerchantsView() -> impl IntoElement {
                             name: Some(name.clone()),
                         },
                     ),
-                    None => Err(AppError::coded(
-                        boot::CODE_SESSION_MISSING,
-                        "内部错误：账本库会话缺失",
-                    )),
+                    None => Err(AppError::coded(boot::CODE_SESSION_MISSING, SESSION_MISSING)),
                 })
                 .await;
                 match outcome {
@@ -406,10 +405,7 @@ pub(crate) fn MerchantsView() -> impl IntoElement {
             spawn(async move {
                 let outcome = blocking(move || match db.as_ref() {
                     Some(db) => boot::delete_merchant(db, &merchant_id),
-                    None => Err(AppError::coded(
-                        boot::CODE_SESSION_MISSING,
-                        "内部错误：账本库会话缺失",
-                    )),
+                    None => Err(AppError::coded(boot::CODE_SESSION_MISSING, SESSION_MISSING)),
                 })
                 .await;
                 match outcome {
@@ -494,7 +490,7 @@ pub(crate) fn MerchantsView() -> impl IntoElement {
                     cell_view = cell_view.child(
                         text(DELETED_TAG)
                             .text_size(px(font_size::CAPTION))
-                            .text_color(accent)
+                            .text_color(primary)
                             .app_class("px-1 rounded border border-border")
                             .test_id(
                                 format!(
@@ -521,7 +517,7 @@ pub(crate) fn MerchantsView() -> impl IntoElement {
                     .child(
                         text(cell.text.clone())
                             .text_size(px(font_size::SECONDARY))
-                            .text_color(accent)
+                            .text_color(primary)
                             .number_of_lines(1),
                     )
                     .into_element()
@@ -654,7 +650,7 @@ pub(crate) fn MerchantsView() -> impl IntoElement {
                         .child(
                             text(SAVE_BUTTON)
                                 .text_size(px(font_size::SECONDARY))
-                                .text_color(crate::theme::color("primary-foreground"))
+                                .text_color(primary_fg)
                                 .test_id("merchant-edit-save"),
                         ),
                 ),
@@ -708,7 +704,7 @@ pub(crate) fn MerchantsView() -> impl IntoElement {
                         .child(
                             text(ADD_BUTTON)
                                 .text_size(px(font_size::SECONDARY))
-                                .text_color(crate::theme::color("primary-foreground"))
+                                .text_color(primary_fg)
                                 .test_id("merchant-add"),
                         ),
                 ),
@@ -726,21 +722,12 @@ pub(crate) fn MerchantsView() -> impl IntoElement {
             .otherwise(view),
         );
 
-    let list_card = view()
-        .flex_1()
-        .flex_col()
-        .gap_2()
-        .app_class("rounded-(--radius-card) border border-border p-3")
-        .child(
-            // 卡标题自然高度（#2135 布局对齐线，同根因另见 items/accounts/
-            // policies 同款标题行）：标题不参与弹性分配，否则少数据时
-            // 表头与搜索行被推到卡内中部。
-            text(LIST_CARD_TITLE)
-                .text_size(px(font_size::SECONDARY))
-                .font_weight(FontWeight::SEMIBOLD)
-                .text_color(fg),
-        )
-        .child(
+    // 清单卡（装配三件归 list_card_of 单点，#2156）：卡片 flex_1 容器 +
+    // 自然高标题 + flex_1 表格容器；搜索行 / 分页条经 before / after 收纳。
+    let list_card = list_card::list_card_of(
+        LIST_CARD_TITLE,
+        fg,
+        Some(
             // 搜索 + 显示已删（过滤意图行）。
             view()
                 .flex_row()
@@ -773,27 +760,24 @@ pub(crate) fn MerchantsView() -> impl IntoElement {
                                 .text_color(fg)
                                 .test_id("merchant-show-deleted"),
                         ),
-                ),
-        )
-        .child(
-            // 清单卡片体（卡片自身 flex_1——虚拟化表格取弹性链高度，卡片不定高
-            // 则虚拟化量出零高，先例账户/物品视图同注）。
-            view().test_id("merchant-table").flex_1().child(
-                data_table()
-                    .columns(columns)
-                    .data(data_of)
-                    .render_cell(cell_of)
-                    .sort(move || sort.get())
-                    .on_sort_change(move |requested: &Option<DataTableSort>| {
-                        on_sort_change(requested);
-                    })
-                    .loading(move || loading.get())
-                    .loading_view(text(LOADING_PLACEHOLDER).text_color(muted))
-                    .classes(table_classes())
-                    .flex_1(),
-            ),
-        )
-        .child(
+                )
+                .into_element(),
+        ),
+        "merchant-table",
+        // 清单卡片体（卡片自身 flex_1——虚拟化表格取弹性链高度）。
+        data_table()
+            .columns(columns)
+            .data(data_of)
+            .render_cell(cell_of)
+            .sort(move || sort.get())
+            .on_sort_change(move |requested: &Option<DataTableSort>| {
+                on_sort_change(requested);
+            })
+            .loading(move || loading.get())
+            .loading_view(text(LOADING_PLACEHOLDER).text_color(muted))
+            .classes(table_classes())
+            .flex_1(),
+        Some(
             // 总条数 + 分页条（旧壳 pagination.prefix「共 N 条」同词表；分页条
             // 仅多页在场——单页只留总数，旧壳同果）。
             view()
@@ -826,8 +810,10 @@ pub(crate) fn MerchantsView() -> impl IntoElement {
                         },
                     )
                     .otherwise(view),
-                ),
-        );
+                )
+                .into_element(),
+        ),
+    );
 
     view()
         .flex_1()

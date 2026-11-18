@@ -39,12 +39,28 @@ pub(crate) fn field_label(label: &'static str, muted: AdaptiveColor) -> impl Int
     text(label).text_sm().text_color(muted)
 }
 
-/// 视图层取色便捷面（前景 / 弱化 / 危险 / 强调——fg/muted/danger_fg/accent
-/// 四件套构造闭集的唯一住所，issue #2113：三件套此前在视图层逐份复制，收
-/// 拢后消费方一律经 [`view_palette`] 解构取值，视图层再散写同源令牌构造即
-/// 回潮；#2146 accent 纳入闭集，本次收口面 = sidebar_books.rs 统一经
-/// [`view_palette`] 取色 + accent 闭集成员；其余直读面（primary-foreground /
-/// 语义色 / 共享件独立取色面）为 palette 外留置，待各自收口票处理）。
+/// 视图层取色便捷面（fg/muted/danger_fg/accent/primary_fg 五件套构造闭集
+/// 的唯一住所，issue #2113：三件套此前在视图层逐份复制，收拢后消费方一律
+/// 经 [`view_palette`] 解构取值，视图层再散写同源令牌构造即回潮；#2146
+/// accent 纳入闭集；#2153 primary_fg（主按钮前景）纳入闭集——跨视图高频
+/// 共用呈现令牌（39 处直读）收口，共享件独立取色面（modal/select 等）同
+/// 批改经 [`view_palette`] 解构）。
+///
+/// **palette 外正当直读边界（#2153 归口判定，theme 单点不变）**：令牌色值
+/// 唯一来源仍是 `theme.json` + [`crate::theme::color`] 单点，闭集只收「跨
+/// 视图高频通面」成员；以下三类保留直读且为正当边界，不逐票再裁：
+/// 1. **语义色与动态令牌**：金额语义九档（[`crate::transactions::amount_color`]
+///    动态名）、涨跌/警告/成功等语境语义色、危险确认两级动态令牌面
+///    （danger.rs accent_token）——按语义单点消费，命名动态或低频专用，
+///    不入静态闭集（消费点各有留痕注释）。
+/// 2. **图表与图形装配面**：chart-series-*（动态槽名）、chart-uncategorized、
+///    line、border（轴面）、muted（轨道底）——docs/DESIGN.md 挂账例外面。
+/// 3. **低频专用配对前景**：destructive-foreground / warning-foreground
+///    （危险/警告确认按钮前景，个位数处）与 primary 令牌的语义角色消费
+///    （可点原子色 / 下钻强调色，单点 [`crate::transactions::primary_color`]
+///    与各视图局部 `primary` 变量，改名消歧见各消费点）——入闭集收益低于
+///    闭集膨胀成本；primary-foreground 因跨视图高频入闭集，为同族唯一
+///    例外。
 #[derive(Clone, Copy)]
 pub(crate) struct ViewPalette {
     /// 前景。
@@ -55,15 +71,18 @@ pub(crate) struct ViewPalette {
     pub danger_fg: AdaptiveColor,
     /// 主题强调色（accent：悬停 / 选中底色等）。
     pub accent: AdaptiveColor,
+    /// 主按钮前景（primary-foreground：bg-primary 配对令牌，#2153 入闭集）。
+    pub primary_fg: AdaptiveColor,
 }
 
-/// 取视图令牌（四件套唯一构造点；缺失兜底统一归 crate::theme 单点）。
+/// 取视图令牌（五件套唯一构造点；缺失兜底统一归 crate::theme 单点）。
 pub(crate) fn view_palette() -> ViewPalette {
     ViewPalette {
         fg: crate::theme::color("foreground"),
         muted: crate::theme::color("muted-foreground"),
         danger_fg: crate::theme::color("destructive"),
         accent: crate::theme::color("accent"),
+        primary_fg: crate::theme::color("primary-foreground"),
     }
 }
 

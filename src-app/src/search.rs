@@ -36,6 +36,7 @@ use crate::boot;
 use crate::design::font_size;
 use crate::nav;
 use crate::nav_model::{self, ViewName};
+use crate::settings_data::{READ_TASK_FAILED, SESSION_MISSING};
 use crate::transactions::{amount_privacy_enabled, hit_total_text};
 use crate::{adaptive, icons, period, period_row, transactions, tx_cards, tx_filter};
 
@@ -71,9 +72,9 @@ pub(crate) fn SearchView() -> impl IntoElement {
     // toast 超时机制——既有先例口径）。
     let copy_feedback = signal(None::<String>);
 
-    // 主题令牌（双态自适应；缺失兜底统一归 crate::theme 单点）。
-    let fg = crate::theme::color("foreground");
-    let muted = crate::theme::color("muted-foreground");
+    // 视图层取色统一经 view_palette（#2153：fg/muted 通面成员，直读属第
+    // 二构造点；缺失兜底统一归 crate::theme 单点）。
+    let crate::views::ViewPalette { fg, muted, .. } = crate::views::view_palette();
 
     // 查询具备判定（旧壳 hasQuery 同口径：关键词非空或任一筛选在场——
     // 仅筛选也可出结果）。
@@ -107,7 +108,7 @@ pub(crate) fn SearchView() -> impl IntoElement {
         view_owner.run(move || {
             spawn(async move {
                 let Some(db) = db else {
-                    error.set(Some("内部错误：账本库会话缺失".to_owned()));
+                    error.set(Some(SESSION_MISSING.to_owned()));
                     loading.set(false);
                     return;
                 };
@@ -170,7 +171,7 @@ pub(crate) fn SearchView() -> impl IntoElement {
                         searched.set(true);
                     }
                     Ok(Err(e)) => error.set(Some(e.to_string())),
-                    Err(_) => error.set(Some("内部错误：读任务异常退出".to_owned())),
+                    Err(_) => error.set(Some(READ_TASK_FAILED.to_owned())),
                 }
                 loading.set(false);
             });

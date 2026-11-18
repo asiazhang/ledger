@@ -47,6 +47,7 @@ use std::sync::{
     Arc, Mutex, MutexGuard,
     atomic::{AtomicBool, Ordering},
 };
+use std::time::Duration;
 
 use ledger_market_sync::{
     FxSyncChannels, LaneHost, LaneTask, LaneTimings, SyncFetchChannels, SyncProgress,
@@ -320,6 +321,44 @@ pub fn take_feedback_for_tests() -> Vec<LaneFeedback> {
         drained.push(feedback);
     }
     drained
+}
+
+/// 阻塞等待一件反馈（事件驱动形态：车道线程投递即唤醒，不依赖测试线程的
+/// 轮询节奏——慢负载现场忙轮询 + 紧期限会假红，阻塞 recv 由投递事件唤醒，
+/// 期限仅作兜底；泵已装配时队列由泵消费，本函数超时返回 `None`）。生产 bin
+/// 不消费。
+#[doc(hidden)]
+pub fn recv_feedback_for_tests(timeout: Duration) -> Option<LaneFeedback> {
+    // 测试线程通常不在 tokio 运行时上下文：临时 current-thread 运行时驱动
+    // 带期限的 recv（投递即唤醒，期限仅作兜底）。构建失败按「本轮不可等待」
+    // 处置（log warn + None，接收端不动——极端资源耗尽现场，测试由自身期限
+    // 兜底报错；映射形态同 sync-engine transport_runtime，不在 lib panic 出
+    // 六件套门）。
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .build()
+        .map_err(|error| tracing::warn!(%error, "测试等待运行时构建失败，本轮不等待"))
+        .ok()?;
+    // 临时取走接收端等待（不持槽锁阻塞——send_feedback 也要锁同槽，持锁等待
+    // 会与车道线程投递死锁）；等待完放回原位（本二进制无泵，槽内接收端恒
+    // 在；泵已装配时取不到，返回 None）。
+    let mut receiver = {
+        let mut slot = feedback_slot();
+        slot.as_mut().and_then(|(_, receiver)| receiver.take())
+    }?;
+    let item = runtime.block_on(async {
+        tokio::time::timeout(timeout, receiver.recv())
+            .await
+            .ok()
+            .flatten()
+    });
+    let mut slot = feedback_slot();
+    if let Some((_, r)) = slot.as_mut()
+        && r.is_none()
+    {
+        *r = Some(receiver);
+    }
+    item
 }
 
 #[cfg(test)]

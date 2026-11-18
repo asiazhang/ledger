@@ -31,10 +31,12 @@ use crate::context_menu;
 use crate::danger::{self, DangerOutcome};
 use crate::date_select;
 use crate::design::font_size;
+use crate::list_card;
 use crate::modal;
 use crate::nav;
 use crate::nav_model::{NavRequest, ViewName};
 use crate::select;
+use crate::settings_data::{READ_TASK_FAILED, SESSION_MISSING, WRITE_TASK_FAILED};
 use crate::signals;
 use crate::transactions::{amount_color, amount_privacy_enabled, table_classes};
 use crate::tx_filter;
@@ -87,7 +89,7 @@ pub(crate) fn AccountsView() -> impl IntoElement {
         view_owner.run(move || {
             spawn(async move {
                 let Some(db) = db else {
-                    error.set(Some("内部错误：账本库会话缺失".to_owned()));
+                    error.set(Some(SESSION_MISSING.to_owned()));
                     loading.set(false);
                     return;
                 };
@@ -130,7 +132,7 @@ pub(crate) fn AccountsView() -> impl IntoElement {
                         privacy.set(amount_privacy_enabled());
                     }
                     Ok(Err(e)) => error.set(Some(e.to_string())),
-                    Err(_) => error.set(Some("内部错误：读任务异常退出".to_owned())),
+                    Err(_) => error.set(Some(READ_TASK_FAILED.to_owned())),
                 }
                 loading.set(false);
             });
@@ -150,9 +152,13 @@ pub(crate) fn AccountsView() -> impl IntoElement {
         fg,
         muted,
         danger_fg,
+        primary_fg,
         ..
     } = crate::views::view_palette();
-    let accent = crate::theme::color("primary");
+    // 可点原子/下钻强调色（primary 令牌的语义角色消费，低频专用保留直读；
+    // #2153：原局部名 accent 与 ViewPalette.accent（accent 令牌）同名异义
+    // 同屏，改名消歧——transactions::primary_color 同款）。
+    let primary = crate::theme::color("primary");
 
     // 操作反馈条位（NSH 无 toast——#2038 裁决；旧壳 message.success/error
     // 的条位对应物：新动作开始时清回空）。状态语义: None = 无 / 空串 = 进
@@ -289,10 +295,7 @@ pub(crate) fn AccountsView() -> impl IntoElement {
                 // #2033 预算写路径同形）。
                 let outcome = blocking(move || match db.as_ref() {
                     Some(db) => boot::create_account(db, input),
-                    None => Err(AppError::coded(
-                        boot::CODE_SESSION_MISSING,
-                        "内部错误：账本库会话缺失",
-                    )),
+                    None => Err(AppError::coded(boot::CODE_SESSION_MISSING, SESSION_MISSING)),
                 })
                 .await;
                 match outcome {
@@ -307,7 +310,7 @@ pub(crate) fn AccountsView() -> impl IntoElement {
                         reload();
                     }
                     Ok(Err(e)) => create_error.set(Some(format!("创建失败: {e}"))),
-                    Err(_) => create_error.set(Some("内部错误：写入任务异常退出".to_owned())),
+                    Err(_) => create_error.set(Some(WRITE_TASK_FAILED.to_owned())),
                 }
             });
         });
@@ -409,10 +412,7 @@ pub(crate) fn AccountsView() -> impl IntoElement {
             spawn(async move {
                 let outcome = blocking(move || match db.as_ref() {
                     Some(db) => boot::update_account(db, &id, input),
-                    None => Err(AppError::coded(
-                        boot::CODE_SESSION_MISSING,
-                        "内部错误：账本库会话缺失",
-                    )),
+                    None => Err(AppError::coded(boot::CODE_SESSION_MISSING, SESSION_MISSING)),
                 })
                 .await;
                 match outcome {
@@ -422,7 +422,7 @@ pub(crate) fn AccountsView() -> impl IntoElement {
                         reload();
                     }
                     Ok(Err(e)) => edit_error.set(Some(format!("保存失败: {e}"))),
-                    Err(_) => edit_error.set(Some("内部错误：写入任务异常退出".to_owned())),
+                    Err(_) => edit_error.set(Some(WRITE_TASK_FAILED.to_owned())),
                 }
             });
         });
@@ -474,10 +474,7 @@ pub(crate) fn AccountsView() -> impl IntoElement {
             spawn(async move {
                 let outcome = blocking(move || match db.as_ref() {
                     Some(db) => boot::adjust_account_balance(db, &id, &input),
-                    None => Err(AppError::coded(
-                        boot::CODE_SESSION_MISSING,
-                        "内部错误：账本库会话缺失",
-                    )),
+                    None => Err(AppError::coded(boot::CODE_SESSION_MISSING, SESSION_MISSING)),
                 })
                 .await;
                 match outcome {
@@ -494,7 +491,7 @@ pub(crate) fn AccountsView() -> impl IntoElement {
                         reload();
                     }
                     Ok(Err(e)) => adjust_error.set(Some(format!("调整失败: {e}"))),
-                    Err(_) => adjust_error.set(Some("内部错误：写入任务异常退出".to_owned())),
+                    Err(_) => adjust_error.set(Some(WRITE_TASK_FAILED.to_owned())),
                 }
             });
         });
@@ -523,10 +520,7 @@ pub(crate) fn AccountsView() -> impl IntoElement {
                             boot::unarchive_account(db, &id)
                         }
                     }
-                    None => Err(AppError::coded(
-                        boot::CODE_SESSION_MISSING,
-                        "内部错误：账本库会话缺失",
-                    )),
+                    None => Err(AppError::coded(boot::CODE_SESSION_MISSING, SESSION_MISSING)),
                 })
                 .await;
                 match outcome {
@@ -544,7 +538,7 @@ pub(crate) fn AccountsView() -> impl IntoElement {
                             "恢复失败"
                         }
                     ))),
-                    Err(_) => status.set(Some("内部错误：写入任务异常退出".to_owned())),
+                    Err(_) => status.set(Some(WRITE_TASK_FAILED.to_owned())),
                 }
             });
         });
@@ -558,10 +552,7 @@ pub(crate) fn AccountsView() -> impl IntoElement {
             spawn(async move {
                 let outcome = blocking(move || match db.as_ref() {
                     Some(db) => boot::delete_account(db, &id),
-                    None => Err(AppError::coded(
-                        boot::CODE_SESSION_MISSING,
-                        "内部错误：账本库会话缺失",
-                    )),
+                    None => Err(AppError::coded(boot::CODE_SESSION_MISSING, SESSION_MISSING)),
                 })
                 .await;
                 match outcome {
@@ -570,7 +561,7 @@ pub(crate) fn AccountsView() -> impl IntoElement {
                         reload();
                     }
                     Ok(Err(e)) => status.set(Some(format!("删除失败: {e}"))),
-                    Err(_) => status.set(Some("内部错误：写入任务异常退出".to_owned())),
+                    Err(_) => status.set(Some(WRITE_TASK_FAILED.to_owned())),
                 }
             });
         });
@@ -689,7 +680,7 @@ pub(crate) fn AccountsView() -> impl IntoElement {
                         .child(
                             text(label)
                                 .text_size(px(font_size::SECONDARY))
-                                .text_color(accent)
+                                .text_color(primary)
                                 .number_of_lines(1),
                         )
                         .into_element()
@@ -745,52 +736,35 @@ pub(crate) fn AccountsView() -> impl IntoElement {
     };
 
     // 分区表构造（三分区同构：同列集同渲染器，数据各分区行集）。
-    let table_of = move |partition: Memo<Vec<AccountRowCells>>, table_id: &'static str| {
-        view().test_id(table_id).flex_1().child(
-            data_table()
-                .columns(columns)
-                .data(data_of(partition))
-                .render_cell(cell_of(partition))
-                // 行右键菜单（「⋯」同 options）：目标行由右键所在行固定
-                // （fixed-target，旧壳同位）。
-                .on_context_menu({
-                    move |e: &DataTableContextMenu| {
-                        let Some(row_index) = e.row else {
-                            return;
-                        };
-                        open_row_menu(partition, row_index as usize, Point::new(e.x, e.y));
-                    }
-                })
-                .loading(move || loading.get())
-                .loading_view(text("正在加载…").text_color(muted))
-                // 无 .empty 槽：行集已在数据门控（折叠零行、无归档账户整卡缺席），
-                // 空态文案归 outcome 面（折叠不呈现「暂无数据」——旧壳 v-if 同果）。
-                .classes(table_classes())
-                .flex_1(),
-        )
+    let table_of = move |partition: Memo<Vec<AccountRowCells>>| {
+        data_table()
+            .columns(columns)
+            .data(data_of(partition))
+            .render_cell(cell_of(partition))
+            // 行右键菜单（「⋯」同 options）：目标行由右键所在行固定
+            // （fixed-target，旧壳同位）。
+            .on_context_menu({
+                move |e: &DataTableContextMenu| {
+                    let Some(row_index) = e.row else {
+                        return;
+                    };
+                    open_row_menu(partition, row_index as usize, Point::new(e.x, e.y));
+                }
+            })
+            .loading(move || loading.get())
+            .loading_view(text("正在加载…").text_color(muted))
+            // 无 .empty 槽：行集已在数据门控（折叠零行、无归档账户整卡缺席），
+            // 空态文案归 outcome 面（折叠不呈现「暂无数据」——旧壳 v-if 同果）。
+            .classes(table_classes())
+            .flex_1()
     };
 
-    // 并区卡片体（标题 + 数据表）：卡片自身 flex_1——分区是根内容列的弹性
-    // 子项，撑出确定高给内嵌的虚拟化表格（表格组件在弹性链内取自身高度，
-    // 卡片不定高则虚拟化量出零高、行不呈现——#2041 面重排即发现的先例）。
+    // 并区卡片体（装配三件归 list_card_of 单点，#2156）：卡片自身 flex_1——
+    // 分区是根内容列的弹性子项，撑出确定高给内嵌的虚拟化表格。
     let section_of = move |title: &'static str,
                            partition: Memo<Vec<AccountRowCells>>,
                            table_id: &'static str| {
-        view()
-            .flex_1()
-            .flex_col()
-            .gap_2()
-            .app_class("rounded-(--radius-card) border border-border p-3")
-            .child(
-                // 卡标题自然高度（#2135 布局对齐线，同根因另见 items/merchants/
-                // policies 同款标题行）：标题不参与弹性分配，否则少数据时
-                // 表头被推到卡内中部。
-                text(title)
-                    .text_size(px(font_size::SECONDARY))
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(fg),
-            )
-            .child(table_of(partition, table_id))
+        list_card::list_card_of(title, fg, None, table_id, table_of(partition), None)
     };
 
     // ============================ 弹窗内容（视图树内联函数式插槽） ============================
@@ -1042,7 +1016,7 @@ pub(crate) fn AccountsView() -> impl IntoElement {
                             .child(
                                 text("保存")
                                     .text_size(px(font_size::SECONDARY))
-                                    .text_color(crate::theme::color("primary-foreground"))
+                                    .text_color(primary_fg)
                                     .test_id("acct-edit-save"),
                             )
                             .on_press(move |_: &()| perform_edit()),
@@ -1199,7 +1173,7 @@ pub(crate) fn AccountsView() -> impl IntoElement {
                             .child(
                                 text("确认调整")
                                     .text_size(px(font_size::SECONDARY))
-                                    .text_color(crate::theme::color("primary-foreground"))
+                                    .text_color(primary_fg)
                                     .test_id("acct-adjust-confirm"),
                             )
                             .on_press(move |_: &()| perform_adjust()),
@@ -1363,7 +1337,7 @@ pub(crate) fn AccountsView() -> impl IntoElement {
                 .child(
                     text("添加")
                         .text_size(px(font_size::SECONDARY))
-                        .text_color(crate::theme::color("primary-foreground"))
+                        .text_color(primary_fg)
                         .test_id("acct-add"),
                 )
                 .on_press(move |_: &()| perform_create()),

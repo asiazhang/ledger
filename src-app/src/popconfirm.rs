@@ -59,8 +59,9 @@ pub fn popconfirm(
     });
     // 主题令牌（双态自适应）：色值住 theme.json 令牌表，读取经
     // [`crate::theme::color`] 单点，缺失落可读兜底——本模块零本地色常量
-    // （issue #2107 视觉收口）。
-    let fg = crate::theme::color("foreground");
+    // （issue #2107 视觉收口）。#2153：共享件入闭集，fg 改经视图层取色面
+    // view_palette（通面成员，散写同源令牌构造即第二构造点）。
+    let fg = crate::views::view_palette().fg;
     let (message_text, confirm_text, cancel_text) =
         (spec.message, spec.confirm_label, spec.cancel_label);
     // 开合回写多站点复用（触发件 / 宿主回写 / 取消键 / 确认键），闭包捕获
@@ -121,7 +122,10 @@ pub fn popconfirm(
                                 .app_class("px-2 py-1 rounded-(--radius) bg-destructive hover:opacity-90")
                                 .child(
                                     // 实色破坏钮前景走 destructive-foreground 令牌
-                                    // （票 1 收编；裸白字退役——暗态随表）。
+                                    // （票 1 收编；裸白字退役——暗态随表）。#2153
+                                    // 边界：低频专用配对前景不入 palette 闭集，
+                                    // 保留 theme 单点直读（正当边界见 ViewPalette
+                                    // 文档——同族仅 primary-foreground 高频例外）。
                                     text(confirm_text)
                                         .text_size(px(font_size::CAPTION))
                                         .text_color(crate::theme::color("destructive-foreground"))

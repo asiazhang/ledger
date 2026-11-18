@@ -50,7 +50,7 @@ use crate::modal;
 use crate::nav_model::ViewName;
 use crate::popconfirm;
 use crate::select;
-use crate::settings_data::{READ_TASK_FAILED, WRITE_TASK_FAILED};
+use crate::settings_data::{READ_TASK_FAILED, SESSION_MISSING, WRITE_TASK_FAILED};
 use crate::transactions::table_classes;
 use crate::views::field_label;
 use crate::{nav, signals};
@@ -116,8 +116,9 @@ const DISPOSE_CURRENCY_REQUIRED: &str = "请选择处置币种";
 /// settings_data 单一来源。
 const LOADING_PLACEHOLDER: &str = "正在加载…";
 
-/// 语义令牌单取（success 非三件套成员，不经 ViewPalette）：视图层零本地
-/// 色常量，令牌缺失统一落 `crate::theme` 的可读兜底（ADR-0147 决策 1）。
+/// 语义令牌单取（success 非通面五件套成员，不经 ViewPalette——#2153 语义
+/// 色正当直读边界）：视图层零本地色常量，令牌缺失统一落 `crate::theme` 的
+/// 可读兜底（ADR-0147 决策 1）。
 fn success_of() -> AdaptiveColor {
     crate::theme::color("success")
 }
@@ -241,7 +242,7 @@ fn modal_buttons(
                 .child(
                     text(SAVE_LABEL)
                         .text_size(px(font_size::SECONDARY))
-                        .text_color(crate::theme::color("primary-foreground"))
+                        .text_color(crate::views::view_palette().primary_fg)
                         .test_id(confirm_id.as_str()),
                 ),
         )
@@ -390,7 +391,7 @@ pub(crate) fn PhysicalAssetsView() -> impl IntoElement {
         view_owner.run(move || {
             spawn(async move {
                 let Some(db) = db else {
-                    error.set(Some("内部错误：账本库会话缺失".to_owned()));
+                    error.set(Some(SESSION_MISSING.to_owned()));
                     loading.set(false);
                     return;
                 };
@@ -437,6 +438,7 @@ pub(crate) fn PhysicalAssetsView() -> impl IntoElement {
         fg,
         muted,
         danger_fg,
+        primary_fg,
         ..
     } = crate::views::view_palette();
 
@@ -653,10 +655,7 @@ pub(crate) fn PhysicalAssetsView() -> impl IntoElement {
                         )
                         .map(|_: String| ()),
                     },
-                    None => Err(AppError::coded(
-                        boot::CODE_SESSION_MISSING,
-                        "内部错误：账本库会话缺失",
-                    )),
+                    None => Err(AppError::coded(boot::CODE_SESSION_MISSING, SESSION_MISSING)),
                 })
                 .await;
                 match outcome {
@@ -712,10 +711,7 @@ pub(crate) fn PhysicalAssetsView() -> impl IntoElement {
             spawn(async move {
                 let outcome = blocking(move || match db.as_ref() {
                     Some(db) => boot::update_physical_asset_valuation(db, &asset_id, input),
-                    None => Err(AppError::coded(
-                        boot::CODE_SESSION_MISSING,
-                        "内部错误：账本库会话缺失",
-                    )),
+                    None => Err(AppError::coded(boot::CODE_SESSION_MISSING, SESSION_MISSING)),
                 })
                 .await;
                 match outcome {
@@ -774,10 +770,7 @@ pub(crate) fn PhysicalAssetsView() -> impl IntoElement {
             spawn(async move {
                 let outcome = blocking(move || match db.as_ref() {
                     Some(db) => boot::dispose_physical_asset(db, &asset_id, input),
-                    None => Err(AppError::coded(
-                        boot::CODE_SESSION_MISSING,
-                        "内部错误：账本库会话缺失",
-                    )),
+                    None => Err(AppError::coded(boot::CODE_SESSION_MISSING, SESSION_MISSING)),
                 })
                 .await;
                 match outcome {
@@ -803,10 +796,7 @@ pub(crate) fn PhysicalAssetsView() -> impl IntoElement {
             spawn(async move {
                 let outcome = blocking(move || match db.as_ref() {
                     Some(db) => boot::delete_physical_asset(db, &id),
-                    None => Err(AppError::coded(
-                        boot::CODE_SESSION_MISSING,
-                        "内部错误：账本库会话缺失",
-                    )),
+                    None => Err(AppError::coded(boot::CODE_SESSION_MISSING, SESSION_MISSING)),
                 })
                 .await;
                 match outcome {
@@ -1208,7 +1198,7 @@ pub(crate) fn PhysicalAssetsView() -> impl IntoElement {
                             .child(
                                 text(NEW_BUTTON)
                                     .text_size(px(font_size::SECONDARY))
-                                    .text_color(crate::theme::color("primary-foreground"))
+                                    .text_color(primary_fg)
                                     .test_id("physical-asset-new"),
                             ),
                     ),

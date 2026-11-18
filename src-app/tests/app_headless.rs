@@ -10175,6 +10175,10 @@ fn items_view_edit_relink_backfills_on_save() {
     // 提交后成本回填为次笔交易的金额（详情弹窗读数）。
     app.press("id:item-edit-confirm").unwrap();
     app.wait_for("text:已保存").unwrap();
+    // 确定性等待：保存触发的清单重拉收敛——行成本换新值（¥1000→¥880）上屏
+    // 即重读完成、loading 占位已撤；「已保存」只证明写完成，不证明重拉
+    // 收敛，慢 CI 现场占位会覆盖行按压目标（press 按真实手指语义硬失败）。
+    app.wait_for("text:¥880").unwrap();
     app.press(&format!("id:item-detail-{item_id}")).unwrap();
     app.wait_for("text:¥880").unwrap();
     app.press("id:item-detail-cancel").unwrap();
@@ -14489,15 +14493,11 @@ fn backup_full_journey_backs_up_lists_prunes_and_guards_overwrite() {
     app.press("id:data-backup-as").unwrap();
     app.wait_for("text:覆盖备份文件").unwrap();
     app.press("id:danger-confirm").unwrap();
-    // last-backup 锚点在备份①②已置亮，此处 wait 无等待效果——settle 等
-    // 本次备份异步写收敛后再断言文件替换（否则偶发在写入落地前读旧内容）。
-    app.settle();
-    app.wait_for("id:data-last-backup").unwrap();
-    assert_eq!(
-        fs::read(&target_overwrite).unwrap(),
-        b"canary-bytes",
-        "扁平回答路径零改动（写入按域改道落设备子目录，旧壳同款组合行为）"
-    );
+    // 确定性等待：清单行（新备份文件名）只在写入落盘 + 清单重拉后出现——
+    // 行出现即写已落盘，随后的文件断言无竞态（备份①的 row-0-name 同款形态；
+    // 旧写法 settle 后立即断言文件存在，慢 CI 现场在写入落地前读到旧状态。
+    app.wait_for("text:ledger-backup-20260101-000200.db.zip")
+        .unwrap();
     assert_eq!(
         fs::read(&target_overwrite).unwrap(),
         b"canary-bytes",
@@ -14516,6 +14516,53 @@ fn backup_full_journey_backs_up_lists_prunes_and_guards_overwrite() {
     assert!(
         !landed_b.exists(),
         "确认后的滚动清理同样按保留上限进行（桶内超额最旧产物被清）"
+    );
+}
+
+/// 备份列表行集随备份就地刷新（#2143 审计新发现同根因实例：备份文件列表
+/// 卡的行集是 when 分支 otherwise 内静态 children（state.rows 一次读入），
+/// 列表非空期间新增备份不重渲染——行集卡在旧清单直到面板重开。修复 = 行
+/// 集段换 dynamic（读什么变什么重造，#2146 选型标准整段重造归 dynamic）。
+/// 「删除即红」：行集回静态 children → 第二次备份后 row-1 不在屏，本测红。
+#[test]
+fn backup_list_rows_refresh_in_place_after_new_backup() {
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("settings-backup-rows-refresh");
+    let backup_dir = ScratchDir::new("nsh-data-backup-rows");
+    let storage = storage_shard(&[
+        (
+            "backup_dir",
+            format!("{:?}", backup_dir.to_string_lossy()).as_str(),
+        ),
+        ("backup_max_count", "10"),
+    ]);
+    seed_expense_on_date(&dir, &test_date(0), 2_500);
+    let data_root = ScratchDir::new("nsh-data-backup-rows-root");
+    nsh_app::cross_book::set_default_data_dir(data_root.to_path_buf());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config_with_storage_shard(storage)).unwrap();
+    open_data_tab(&mut app);
+
+    // 备份①（空 → 非空：when 分支翻转，行集首次呈现）。
+    let target_a = backup_dir.join("ledger-backup-20260101-000000.db.zip");
+    app.on_pick_save_path(Some(target_a.clone())).unwrap();
+    app.press("id:data-backup-as").unwrap();
+    app.wait_for("id:data-backup-row-0-name").unwrap();
+
+    // 备份②（非空 → 仍非空：修复前静态 children 冻结，行集不重渲染，红）。
+    let target_b = backup_dir.join("ledger-backup-20260101-000100.db.zip");
+    app.on_pick_save_path(Some(target_b.clone())).unwrap();
+    app.press("id:data-backup-as").unwrap();
+    app.wait_for("id:data-backup-row-1-name").unwrap();
+    app.wait_for("text:ledger-backup-20260101-000100.db.zip")
+        .unwrap();
+
+    // 面板未重开（同一 Headless 会话）即就地看到两行。
+    assert!(
+        app.shows("ledger-backup-20260101-000000.db.zip"),
+        "备份①行仍在屏：{:?}",
+        app.screen().texts()
     );
 }
 
@@ -14682,10 +14729,7 @@ fn restore_guard_replaces_data_across_restart() {
     app.press("id:data-restore").unwrap();
     app.wait_for("text:确认恢复").unwrap();
     app.press("id:data-restore-confirm").unwrap();
-    app.wait_for(
-        "text:恢复成功，请重启应用进入新库（本壳无原位重引导：旧壳恢复后自动重启的偏差见交付报告）",
-    )
-    .unwrap();
+    app.wait_for("text:恢复成功，请重启应用进入新库").unwrap();
 
     // 「下次启动」等价重置重启：交易回到两笔（备份内容已换入）。
     nsh_app::app::reset_book_assembly();
@@ -14804,10 +14848,92 @@ fn settings_restore_modal_encrypted_backup_submits_after_passphrase_typed() {
     app.type_text("id:data-restore-passphrase", PASS_BACKUP)
         .unwrap();
     app.press("id:data-restore-confirm").unwrap();
-    app.wait_for(
-        "text:恢复成功，请重启应用进入新库（本壳无原位重引导：旧壳恢复后自动重启的偏差见交付报告）",
+    app.wait_for("text:恢复成功，请重启应用进入新库").unwrap();
+}
+
+/// 设置卡恢复确认弹窗·元数据未标记的密文备份（异常产物，issue #2145）：包
+/// 内库文件实际密文而 `backup.json` 加密标记被改写为 false（外部工具篡改
+/// 的异常产物）——元数据未标记时口令框开弹不显出，确认提交后端「文件即
+/// 真相」探测报需口令，弹窗内就地显出口令框重输，正确口令恢复成功。
+///
+/// 「删除即红」（ADR-0087 接线）：删恢复失败臂的需口令显出接线（#2145 前
+/// 以错误文案子串驱动、恒不命中——后端 Display 只含中文消息）→ 口令框不
+/// 显出、无口令可输 → 本测 count 断言红；断言对准用户可见结果（口令框在
+/// 屏 + 恢复成功反馈）。
+#[test]
+fn settings_restore_modal_metadata_unmarked_encrypted_backup_reveals_passphrase_on_error() {
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+    const PASS_BACKUP: &str = "密文备份口令 journeyC";
+
+    // 密文备份包（备份源密文库，产物加密随源库走），再篡改内层元数据的
+    // 加密标记为 false——「元数据未标记的密文备份」异常产物。
+    let source = make_book("settings-restore-unmarked-source");
+    {
+        let db = nsh_app::boot::boot_ledger(&source).unwrap();
+        let account = seed_cash_account(&db);
+        seed_transaction(
+            &db,
+            TxnSeed {
+                account: &account,
+                to_account: None,
+                kind: TransactionKind::Expense,
+                amount_cents: 2_500,
+                date: &test_date(0),
+                category_id: None,
+                merchant_id: None,
+                note: Some("备份源数据".to_owned()),
+            },
+        );
+    }
+    ledger_infra::db::encryption::enable_encryption_for_file(
+        &source.join("ledger.db"),
+        PASS_BACKUP,
     )
     .unwrap();
+    let zip = ScratchFile::new("nsh-settings-restore-unmarked", "restore.db.zip");
+    {
+        let db = nsh_app::boot::unlock_encrypted_book(PASS_BACKUP).unwrap();
+        nsh_app::boot::create_backup(&db, &zip, env!("CARGO_PKG_VERSION")).unwrap();
+    }
+    nsh_app::test_support::merge_extra_backup_meta(&zip, &serde_json::json!({"encrypted": false}));
+
+    // 当前明文会话（元数据未标记 → 无跨模式警告，口令框开弹不显出）。
+    let dir = make_book("settings-restore-unmarked-current");
+    seed_expense_on_date(&dir, &test_date(0), 8_800);
+    let data_root = ScratchDir::new("nsh-settings-restore-unmarked-root");
+    nsh_app::cross_book::set_default_data_dir(data_root.to_path_buf());
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_data_tab(&mut app);
+
+    // 选定篡改产物 → 确认弹窗：口令框不显出（元数据未标记；异常前提在屏）。
+    app.on_pick_paths(vec![zip.to_path_buf()]).unwrap();
+    app.press("id:data-restore").unwrap();
+    app.wait_for("text:确认恢复").unwrap();
+    assert_eq!(
+        app.screen().count("id:data-restore-passphrase").unwrap(),
+        0,
+        "元数据未标记：口令框开弹不显出（异常前提）"
+    );
+
+    // 空口令确认 → 后端探测实际密文报需口令：错误就地呈现 + 口令框就地显出
+    //（#2145 修复点：以码化错误的 code 判读驱动，不再按文案子串）。
+    app.press("id:data-restore-confirm").unwrap();
+    app.wait_for("text:/恢复失败: 该备份为密文备份/").unwrap();
+    assert_eq!(
+        app.screen().count("id:data-restore-passphrase").unwrap(),
+        1,
+        "后端报需口令后口令框就地显出可重输"
+    );
+
+    // 重输备份主口令 → 恢复成功（密文备份恢复进明文库，元数据未标记不拦
+    // 正确口令的整库替换）。成功反馈取 #2142 落定的干净变体（#2145 合并
+    // 冲突残留：本测曾带开发向括注长文案，与 #2142 去括注后的常量分叉）。
+    app.type_text("id:data-restore-passphrase", PASS_BACKUP)
+        .unwrap();
+    app.press("id:data-restore-confirm").unwrap();
+    app.wait_for("text:恢复成功，请重启应用进入新库").unwrap();
 }
 
 /// 自动备份首次兜底全旅程（issue #2078 接线断言；backup 域既有语义零新口径）：
@@ -14856,22 +14982,20 @@ fn auto_backup_first_fallback_backs_up_at_session_start_and_card_refreshes() {
     nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config_with_storage_shard(storage)).unwrap();
 
-    // 首次兜底在后台线程执行（不阻塞启动竖井）：产物落盘 = 用户可观察的
-    // 「自动备份发生」（受管自动命名沿用 backup 域规则）。
-    let deadline = std::time::Instant::now() + DEFAULT_WAIT;
-    let product = loop {
-        if let Some(found) = find_first_auto_product(&backup_dir) {
-            break found;
-        }
-        assert!(
-            std::time::Instant::now() < deadline,
-            "启动后应发生首次兜底自动备份（产物落盘），实际目录内容：{:?}",
-            fs::read_dir(&backup_dir)
-                .map(|entries| entries.flatten().map(|e| e.path()).collect::<Vec<_>>())
-                .unwrap_or_default()
-        );
-        std::thread::sleep(Duration::from_millis(50));
-    };
+    // 设置卡自动备份状态刷新（深路径发射 → pending 桥 → 泵广播 → 卡片重读；
+    // 兜底先于卡片装载完成时初始读即时刻）。确定性观察点：「上次自动备份」
+    // 离开「从未」即兜底备份完成——时刻锚（mark_clean）在产物落盘之后写入
+    //（backup 域 attempt 收尾），回显出现即备份已落盘，随后的产物断言无竞态
+    //（旧写法目录忙轮询 + 5s 紧期限，满载慢 CI 现场假红）。删除兜底接线 →
+    // 卡片停留「从未」→ 本 wait_for_gone 超时红。
+    open_data_tab(&mut app);
+    app.wait_for("id:data-auto-last").unwrap();
+    app.wait_for_gone("text:上次自动备份：从未", DEFAULT_WAIT)
+        .unwrap();
+
+    // 产物落盘 = 用户可观察的「自动备份发生」（受管自动命名沿用 backup 域规则）。
+    let product =
+        find_first_auto_product(&backup_dir).expect("启动后应发生首次兜底自动备份（产物落盘）");
     let name = product
         .file_name()
         .and_then(|n| n.to_str())
@@ -14886,13 +15010,6 @@ fn auto_backup_first_fallback_backs_up_at_session_start_and_card_refreshes() {
         "产物非空：{}",
         product.display()
     );
-
-    // 设置卡自动备份状态刷新（深路径发射 → pending 桥 → 泵广播 → 卡片重读；
-    // 兜底先于卡片装载完成时初始读即时刻，断言同样成立）。
-    open_data_tab(&mut app);
-    app.wait_for("id:data-auto-last").unwrap();
-    app.wait_for_gone("text:上次自动备份：从未", DEFAULT_WAIT)
-        .unwrap();
 }
 
 /// 递归找目录下首个自动备份产物（自动产物落设备子目录一层，域语义沿用）。
@@ -14986,6 +15103,8 @@ fn auto_backup_triggers_after_shell_write_and_card_refreshes() {
     open_transactions(&mut app);
     app.settle();
     // 首兜底被受管列表挡住：启动期零自动产物（本日的备份机会留给写触发）。
+    // 负向缺失断言无慢现场假红面：受管列表在启动门检前已预置非空，兜底被挡
+    // 则永不写，产物只能在缺陷在场时出现（缺陷越晚现形只会越不易红）。
     assert!(
         find_first_auto_product(&backup_dir).is_none(),
         "首次兜底应被预置受管产物挡住（启动期零自动产物），实际目录：{:?}",
@@ -15002,21 +15121,20 @@ fn auto_backup_triggers_after_shell_write_and_card_refreshes() {
     app.press("id:danger-confirm").unwrap();
     app.wait_for("text:共 1 条").unwrap();
 
+    // 设置卡自动备份状态刷新（深路径发射 → pending 桥 → 泵广播 → 卡片重读）。
+    // 确定性观察点：「上次自动备份」离开「从未」即写触发的自动备份完成——
+    // 时刻锚（mark_clean）在产物落盘之后写入（backup 域 attempt 收尾），回显
+    // 出现即备份已落盘，随后的产物断言无竞态（旧写法目录忙轮询 + 5s 紧期限，
+    // 满载慢 CI 现场假红）。删提交点接线 → 产物不出、卡片停留「从未」→
+    // 本 wait_for_gone 超时红。
+    open_data_tab(&mut app);
+    app.wait_for("id:data-auto-last").unwrap();
+    app.wait_for_gone("text:上次自动备份：从未", DEFAULT_WAIT)
+        .unwrap();
+
     // 写触发的自动备份产物落盘（用户可观察结果；受管自动命名沿用域规则）。
-    let deadline = std::time::Instant::now() + DEFAULT_WAIT;
-    let product = loop {
-        if let Some(found) = find_first_auto_product(&backup_dir) {
-            break found;
-        }
-        assert!(
-            std::time::Instant::now() < deadline,
-            "用户写交易后应触发自动备份（产物落盘），实际目录内容：{:?}",
-            fs::read_dir(&backup_dir)
-                .map(|entries| entries.flatten().map(|e| e.path()).collect::<Vec<_>>())
-                .unwrap_or_default()
-        );
-        std::thread::sleep(Duration::from_millis(50));
-    };
+    let product =
+        find_first_auto_product(&backup_dir).expect("用户写交易后应触发自动备份（产物落盘）");
     let name = product
         .file_name()
         .and_then(|n| n.to_str())
@@ -15031,12 +15149,77 @@ fn auto_backup_triggers_after_shell_write_and_card_refreshes() {
         "产物非空：{}",
         product.display()
     );
+}
 
-    // 设置卡自动备份状态刷新（深路径发射 → pending 桥 → 泵广播 → 卡片重读）。
-    open_data_tab(&mut app);
-    app.wait_for("id:data-auto-last").unwrap();
-    app.wait_for_gone("text:上次自动备份：从未", DEFAULT_WAIT)
+/// 定时计划自动执行（追补）落账 → 在场视图在屏更新（issue #2159 接线断言）。
+/// 到期期次经产品追补入口自动落账（备份调度线程每轮经钩子调用的同一入口：
+/// 连接取会话写连接、开关与今天注入——调度轮的测试驱动等价面，不实等 10 分钟
+/// 节奏，节奏语义归备份域内核测试）；交易页在场时无需重新落位即可见新交易：
+/// 追补落账 → 定时计划域注册点钩子（壳层接线）→ pending 计数（跨线程桥）→
+/// 引擎线程泵消费广播交易 / 预算族 → 视图订阅重读。
+///
+/// 「删除即红」（ADR-0087 接线断言，对准用户可观察结果 = 新交易在屏）：删壳层
+/// 接线（wiring 的追补失效钩子对装）或删泵消费（backup_host 泵的追补 pending
+/// 分支）任一环 → 追补落账后无任何壳内失效广播 → 视图持旧空列表 → 本
+/// wait_for 超时红。追补行为本体（到期判定 / 失败策略 / 置脏）归域单测与
+/// ADR-0042 既有覆盖，本测钉壳内反馈接线的端到端结果。
+#[test]
+fn scheduled_catch_up_auto_execution_updates_on_screen_transaction_list() {
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+    let dir = make_book("auto-run-catch-up");
+    // 到期期次现场：订阅计划起始日 = 昨天（最早一期已到期，金额 ¥30；本月
+    // 后续期次未到期不被追补触碰）。
+    let due_date = today()
+        .checked_sub_days(chrono::Days::new(1))
+        .unwrap()
+        .to_string();
+    {
+        let db = nsh_app::boot::boot_ledger(&dir).unwrap();
+        let account = seed_account_with_balance(&db, "测试现金", 10_000);
+        let conn = db.conn.lock().unwrap();
+        ledger_scheduled::create_plan(
+            &conn,
+            ledger_scheduled::CreateScheduledInput {
+                kind: ledger_scheduled::ScheduledKind::Subscription,
+                account_id: account,
+                category_id: None,
+                amount_cents: 3_000,
+                currency_code: "CNY".to_owned(),
+                recurrence_type: ledger_scheduled::RecurrenceType::Monthly,
+                recurrence_interval: 1,
+                recurrence_day: None,
+                start_date: due_date.clone(),
+                note: Some("自动执行追补的计划".to_owned()),
+                merchant_id: None,
+                policy_id: None,
+                total_amount_cents: None,
+                total_occurrences: None,
+                to_account_id: None,
+            },
+        )
         .unwrap();
+    }
+
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_transactions(&mut app);
+    // 基线：追补前交易列表为空（期次尚未落账）。
+    app.wait_for("text:暂无数据").unwrap();
+
+    // 触发追补：产品追补入口（调度线程每轮调用的同一入口；开关注入开、今天
+    // 注入本地今日），连接取会话写连接——与调度轮的连接取用同源。
+    let db = nsh_app::test_support::session_db().expect("会话应已就绪");
+    {
+        let conn = db.conn.lock().unwrap();
+        let summary = ledger_scheduled::auto_run::run_catch_up(&conn, true, today());
+        assert_eq!(summary.executed, 1, "到期一期应自动落账");
+    }
+
+    // 追补落账 → 失效广播 → 视图重读：新交易在屏（日期忠实回填期次计划日期，
+    // 金额为计划金额）。删除接线任一环本 wait_for 超时红。
+    app.wait_for(&format!("text:{due_date}")).unwrap();
+    app.wait_for("text:¥30").unwrap();
 }
 
 /// 加密开启流守卫（error 级无后门确认 + ≥8 位 / 一致守卫）：短口令即时红
@@ -15278,7 +15461,7 @@ fn books_switch_journey_moves_active_pointer_across_restart() {
         .unwrap();
     app.wait_for("text:切换账本").unwrap();
     app.press("id:danger-confirm").unwrap();
-    app.wait_for("text:已切换到「副账本」，重启应用后进入新账本（旧壳自动重载的偏差见交付报告）")
+    app.wait_for("text:已切换到「副账本」，重启应用后进入新账本")
         .unwrap();
     // 活动指针写链（读取注册表文件：active = 副账本 id）。
     let registry = fs::read_to_string(dir.join("data_location.json")).unwrap();
@@ -17329,20 +17512,6 @@ fn investments_view_instruments_search_and_manual_quote_journey() {
     // 价格失效信号（实际写入任一落点即广播——零变化不广播）→ 行集原地重
     // 拉：现价列从「-」变为「¥1.2345」。删「是否发」广播门或本 pane 订阅
     // 任一 → 现价列不刷新，本断言红。
-    // DEBUG: db state first
-    {
-        let db = nsh_app::boot::boot_ledger(&dir_probe).unwrap();
-        let conn = db.conn.lock().unwrap();
-        let (price, history): (Option<i64>, i64) = conn
-            .query_row(
-                "SELECT (SELECT price_cents FROM market_prices WHERE instrument_id=?1), \
-                 (SELECT COUNT(*) FROM price_history WHERE instrument_id=?1)",
-                rusqlite::params![bond_id],
-                |r| Ok((r.get(0)?, r.get(1)?)),
-            )
-            .unwrap();
-        eprintln!("DEBUG quote db state price={:?} history={}", price, history);
-    }
     app.wait_for("text:¥1.2345").unwrap();
 
     // 库态核对（两个落点）：现价缓存 upsert + 价格历史周采样行（source
@@ -17361,6 +17530,41 @@ fn investments_view_instruments_search_and_manual_quote_journey() {
         assert_eq!(price, Some(12_345), "现价缓存按最新点映像规则 upsert");
         assert_eq!(history, 1, "价格历史周采样落库");
     }
+}
+
+/// 新增标的弹窗·代码框占位文案随通道选择就地更新（#2143 审计命中①的弹窗
+/// 内缺陷段：弹窗内容闭包 untracked 求值（nsh-core flow.rs `Region::If` 同
+/// 根因家族），静态 placeholder 开弹即冻结——通道换选（股票/基金/自定义）
+/// 后引导文案不跟。修复 = placeholder 换响应式绑定（prop 绑定逐次求值）。
+/// 「删除即红」：占位回静态绑定 → 换选后仍停在开弹档占位，本测红。
+#[test]
+fn add_instrument_modal_placeholder_follows_channel_selection() {
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+    let dir = seed_investments_book("add-instrument-placeholder");
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    open_investments(&mut app);
+    app.press("id:inv-tab-instruments").unwrap();
+    app.wait_for("id:add-instrument").unwrap();
+    app.press("id:add-instrument").unwrap();
+    app.wait_for("text:添加投资标的").unwrap();
+
+    // 开弹未选通道：股票档占位在屏（缺省档）。
+    app.wait_for("text:股票代码，如 600519 / 00700 / AAPL")
+        .unwrap();
+
+    // 换选场外基金：占位就地换成基金档（修复前静态冻结在股票档，红）。
+    app.press("id:add-instrument-channel-trigger").unwrap();
+    app.press("id:add-instrument-channel-option >> text:场外基金")
+        .unwrap();
+    app.wait_for("text:6 位基金代码，如 000001").unwrap();
+
+    // 再换自定义标的：占位随选跟换（两段翻转都钉住）。
+    app.press("id:add-instrument-channel-trigger").unwrap();
+    app.press("id:add-instrument-channel-option >> text:自定义标的")
+        .unwrap();
+    app.wait_for("text:自定义代码，自由文本，如 HW-VR").unwrap();
 }
 
 // ---------------------------------------------------------------------------
@@ -17615,7 +17819,11 @@ fn http_api_server_mounts_and_pumps_invalidation_to_views() {
     // 不得误连出假绿，#2112）。
     let mut contract = String::new();
     let mut mounted = false;
-    for _ in 0..50 {
+    // 收敛轮询（期限放宽至 30s 兜底）：mounted_port 无事件面（进程级设施，
+    // 无 UI 锚点可等），轮询是唯一观察面；满载慢 CI 现场「紧期限」会假红，
+    // 100ms 轮询节奏不影响正确性（条件置真即停）。
+    let mount_deadline = std::time::Instant::now() + Duration::from_secs(30);
+    while std::time::Instant::now() < mount_deadline {
         if let Some(port) = nsh_app::http_host::mounted_port()
             && let Ok((status, body)) = raw_http_request(port, "GET", "/api/v1/contract", None)
         {
@@ -18645,6 +18853,96 @@ fn locked_view_restore_encrypted_backup_context_pass_retry_enters_session() {
     );
 }
 
+/// 锁定屏恢复·元数据未标记的密文备份（异常产物，issue #2145）：解锁屏
+/// 同款接线的另一消费面——元数据未标记时口令框不显出（上下文口令也缺席：
+/// 解锁框空），确认提交后端探测报需口令，弹窗内就地显出口令框，正确口令
+/// 恢复出密文库凭该口令解锁进会话。
+///
+/// 「删除即红」同款：删恢复失败臂的需口令显出接线 → 口令框不显出、无口令
+/// 可输 → 本测 count 断言红。
+#[test]
+fn locked_view_restore_metadata_unmarked_encrypted_backup_reveals_passphrase_on_error() {
+    let _guard = serial_lock();
+    nsh_app::app::reset_book_assembly();
+    const PASS_SOURCE: &str = "备份源口令 journeyA";
+
+    // 密文备份包 + 篡改内层加密标记为 false（异常产物同设置卡用例）。
+    let source = make_book("lock-restore-unmarked-source");
+    {
+        let db = nsh_app::boot::boot_ledger(&source).unwrap();
+        let account = seed_cash_account(&db);
+        seed_transaction(
+            &db,
+            TxnSeed {
+                account: &account,
+                to_account: None,
+                kind: TransactionKind::Expense,
+                amount_cents: 2_500,
+                date: &test_date(0),
+                category_id: None,
+                merchant_id: None,
+                note: Some("密文备份源".to_owned()),
+            },
+        );
+    }
+    ledger_infra::db::encryption::enable_encryption_for_file(
+        &source.join("ledger.db"),
+        PASS_SOURCE,
+    )
+    .unwrap();
+    let zip = ScratchFile::new("nsh-lock-restore-unmarked", "restore.db.zip");
+    {
+        let db = nsh_app::boot::unlock_encrypted_book(PASS_SOURCE).unwrap();
+        nsh_app::boot::create_backup(&db, &zip, env!("CARGO_PKG_VERSION")).unwrap();
+    }
+    nsh_app::test_support::merge_extra_backup_meta(&zip, &serde_json::json!({"encrypted": false}));
+
+    // 当前密文库（另一口令 journeyB）落锁定视图；解锁框留空 → 上下文口令
+    // 不携带。
+    let dir = make_encrypted_book("lock-restore-unmarked-current", "当前口令 journeyB");
+    let db_path = dir.join("ledger.db");
+    let data_root = ScratchDir::new("nsh-lock-restore-unmarked-root");
+    nsh_app::cross_book::set_default_data_dir(data_root.to_path_buf());
+
+    nsh_app::app::set_book_dir(dir.to_path_buf());
+    let mut app = Headless::start(desktop_config()).unwrap();
+    app.wait_for("id:locked-panel").unwrap();
+
+    // 选定篡改产物 → 确认弹窗：跨模式警告在屏（元数据称明文备份、当前库
+    // 密文），口令框不显出（元数据未标记 + 上下文口令缺席）。
+    app.on_pick_paths(vec![zip.to_path_buf()]).unwrap();
+    app.press("id:unlock-restore-open").unwrap();
+    app.wait_for("text:确认恢复").unwrap();
+    app.wait_for("text:加密模式不一致").unwrap();
+    assert_eq!(
+        app.screen().count("id:unlock-restore-passphrase").unwrap(),
+        0,
+        "元数据未标记且无上下文口令：口令框不显出（异常前提）"
+    );
+
+    // 空口令确认 → 后端探测实际密文报需口令：错误就地呈现 + 口令框就地显出
+    //（#2145 修复点，解锁屏消费面）。
+    app.press("id:unlock-restore-confirm").unwrap();
+    app.wait_for("text:/恢复失败: 该备份为密文备份/").unwrap();
+    assert_eq!(
+        app.screen().count("id:unlock-restore-passphrase").unwrap(),
+        1,
+        "后端报需口令后口令框就地显出可重输"
+    );
+
+    // 重输备份主口令 → 恢复成功 → 恢复出密文库凭该口令解锁进会话。
+    app.type_text("id:unlock-restore-passphrase", PASS_SOURCE)
+        .unwrap();
+    app.press("id:unlock-restore-confirm").unwrap();
+    app.wait_for("id:nav-transactions").unwrap();
+    open_transactions(&mut app);
+    app.wait_for("text:密文备份源").unwrap();
+    assert!(matches!(
+        ledger_infra::db::encryption::probe_file_kind(&db_path).unwrap(),
+        ledger_infra::db::encryption::DbFileKind::Encrypted,
+    ));
+}
+
 /// 加密卡写面平价全旅程（issue #2088 交付②：修改主口令 / 关闭加密，旧壳
 /// `change_encryption_passphrase` / `disable_encryption` 消费面）：开启加密
 /// → 密文会话形态 → 修改主口令（error 级确认；旧口令错误就地报错原库原样；
@@ -18816,7 +19114,8 @@ fn wait_no_auto_product(dir: &std::path::Path, window: Duration, label: &str) {
 ///   落盘（#2088 预留编排点的用户可观察结果）。
 ///
 /// 「删除即红」负向条目：删解锁路径的 `start_session_host` 补拉起（业务可
-/// 用起点单点的备份宿主接线）→ 解锁后无产物 → 产物轮询超时红。
+/// 用起点单点的备份宿主接线）→ 解锁后无产物、设置卡停留「从未」→
+/// wait_for_gone 超时红。
 #[test]
 fn auto_backup_scheduling_three_states_in_encrypted_scenario() {
     let _guard = serial_lock();
@@ -18877,25 +19176,21 @@ fn auto_backup_scheduling_three_states_in_encrypted_scenario() {
     app.wait_for("text:口令错误或文件损坏，请重试").unwrap();
     wait_no_auto_product(&backup_dir, Duration::from_secs(2), "解锁失败态仍锁定");
 
-    // 解锁：进业务会话 → 备份宿主同点补拉起 → 首次兜底产物落盘。
+    // 解锁：进业务会话 → 备份宿主同点补拉起 → 首次兜底产物落盘。确定性
+    // 观察点：「上次自动备份」离开「从未」即兜底备份完成——时刻锚
+    //（mark_clean）在产物落盘之后写入（backup 域 attempt 收尾），回显出现
+    // 即备份已落盘，随后的产物断言无竞态（旧写法目录忙轮询 + 5s 紧期限，
+    // 满载慢 CI 现场假红）。删解锁路径的补拉起 → 卡片停留「从未」→ 红。
     app.clear("id:unlock-passphrase").unwrap();
     app.type_text("id:unlock-passphrase", PASS).unwrap();
     app.press("id:unlock-confirm").unwrap();
     app.wait_for("id:nav-transactions").unwrap();
-    let deadline = std::time::Instant::now() + DEFAULT_WAIT;
-    let product = loop {
-        if let Some(found) = find_first_auto_product(&backup_dir) {
-            break found;
-        }
-        assert!(
-            std::time::Instant::now() < deadline,
-            "解锁后应发生首次兜底自动备份（产物落盘），实际目录内容：{:?}",
-            fs::read_dir(&backup_dir)
-                .map(|entries| entries.flatten().map(|e| e.path()).collect::<Vec<_>>())
-                .unwrap_or_default()
-        );
-        std::thread::sleep(Duration::from_millis(50));
-    };
+    open_data_tab(&mut app);
+    app.wait_for("id:data-auto-last").unwrap();
+    app.wait_for_gone("text:上次自动备份：从未", DEFAULT_WAIT)
+        .unwrap();
+    let product =
+        find_first_auto_product(&backup_dir).expect("解锁后应发生首次兜底自动备份（产物落盘）");
     let name = product
         .file_name()
         .and_then(|n| n.to_str().map(str::to_owned))
@@ -19012,7 +19307,9 @@ fn install_update_stubs(
 }
 
 /// 轮询等待（真实时间）：条件在期限内置真即成功——异步编排产物（备份文件 /
-/// 桩记录）晚于状态呈现的场合，等待成功优于即刻失败。
+/// 桩记录）晚于状态呈现的场合，等待成功优于即刻失败。期限仅作兜底（条件
+/// 置真即唤醒返回）：满载慢 CI 现场备份 / 桩记录可晚于状态呈现数秒，调用方
+/// 传 30s 兜底期限，50ms 轮询节奏不影响正确性。
 fn wait_until(deadline: Duration, mut cond: impl FnMut() -> bool) -> bool {
     let start = std::time::Instant::now();
     while start.elapsed() < deadline {
@@ -19099,8 +19396,10 @@ fn update_manual_check_circuit_downloads_then_backs_up_before_install() {
     app.wait_for("id:update-installing").unwrap();
     // 安装编排异步进行（备份 → 换装桩），产物与桩记录晚于 Installing 态呈现
     // ——轮询等待（套件满载下备份耗时不可先验，等待成功优于即刻失败）。
+    // 替身回路无终态 UI 锚点（成功即停在安装态），轮询是唯一观察面；期限
+    // 30s 兜底（满载慢 CI 现场紧期限假红，见 wait_until 文档）。
     assert!(
-        wait_until(DEFAULT_WAIT, || !installed
+        wait_until(Duration::from_secs(30), || !installed
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .is_empty()),
@@ -19113,8 +19412,11 @@ fn update_manual_check_circuit_downloads_then_backs_up_before_install() {
         "换装桩收到的正是已下载工件"
     );
     let pre_update_backup = data_root.path().join("pre-update.db.zip");
+    // 更新前备份落应用数据根（非用户备份目录，无卡片可观察面）、裸作业零
+    // 状态接触——轮询是唯一观察面；期限 30s 兜底（满载慢 CI 现场紧期限假红，
+    // 见 wait_until 文档）。
     assert!(
-        wait_until(DEFAULT_WAIT, || pre_update_backup.is_file()),
+        wait_until(Duration::from_secs(30), || pre_update_backup.is_file()),
         "安装前更新前备份在场（删除 create_pre_update_backup 调用即红）：{}",
         pre_update_backup.display()
     );

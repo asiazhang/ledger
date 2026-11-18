@@ -23,6 +23,7 @@ use crate::boot;
 use crate::design::font_size;
 use crate::modal;
 use crate::scheduled::{amount_text, occurrence_status_label};
+use crate::settings_data::{SESSION_MISSING, WRITE_TASK_FAILED};
 
 /// 弹层标题（旧壳 `scheduled.detail.title`）。
 const DETAIL_TITLE: &str = "期次详情";
@@ -217,7 +218,7 @@ pub(crate) fn plan_detail_modal(
                     Some(db) => boot::scheduled_plan_detail(db, &id),
                     None => Err(ledger_infra::error::AppError::coded(
                         boot::CODE_SESSION_MISSING,
-                        "内部错误：账本库会话缺失",
+                        SESSION_MISSING,
                     )),
                 })
                 .await;
@@ -265,7 +266,7 @@ pub(crate) fn plan_detail_modal(
                     Some(db) => boot::execute_scheduled_occurrence(db, &occ_id),
                     None => Err(ledger_infra::error::AppError::coded(
                         boot::CODE_SESSION_MISSING,
-                        "内部错误：账本库会话缺失",
+                        SESSION_MISSING,
                     )),
                 })
                 .await;
@@ -275,7 +276,7 @@ pub(crate) fn plan_detail_modal(
                     match outcome {
                         Ok(Ok(_)) => s.note = Some(MSG_RETRY_OK.to_owned()),
                         Ok(Err(e)) => s.note = Some(format!("重试失败: {e}")),
-                        Err(_) => s.note = Some("重试失败: 内部错误：写入任务异常退出".to_owned()),
+                        Err(_) => s.note = Some(format!("重试失败: {WRITE_TASK_FAILED}")),
                     }
                 });
                 if landed {
@@ -307,7 +308,7 @@ pub(crate) fn plan_detail_modal(
                     Some(db) => boot::expand_scheduled_occurrences(db, &id),
                     None => Err(ledger_infra::error::AppError::coded(
                         boot::CODE_SESSION_MISSING,
-                        "内部错误：账本库会话缺失",
+                        SESSION_MISSING,
                     )),
                 })
                 .await;
@@ -323,7 +324,7 @@ pub(crate) fn plan_detail_modal(
                             });
                         }
                         Ok(Err(e)) => s.note = Some(format!("展开失败: {e}")),
-                        Err(_) => s.note = Some("展开失败: 内部错误：写入任务异常退出".to_owned()),
+                        Err(_) => s.note = Some(format!("展开失败: {WRITE_TASK_FAILED}")),
                     }
                 });
                 if expanded {

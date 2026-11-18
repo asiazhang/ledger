@@ -46,9 +46,9 @@ pub fn app_modal(
     });
     // 主题令牌（双态自适应）：色值住 theme.json 令牌表，读取经
     // [`crate::theme::color`] 单点，缺失落可读兜底——本模块零本地色常量
-    // （issue #2107 视觉收口）。
-    let fg = crate::theme::color("foreground");
-    let muted = crate::theme::color("muted-foreground");
+    // （issue #2107 视觉收口）。#2153：共享件入闭集，fg/muted 改经视图层
+    // 取色面 view_palette（通面成员，散写同源令牌构造即第二构造点）。
+    let crate::views::ViewPalette { fg, muted, .. } = crate::views::view_palette();
     when(open, move || {
         overlay()
             .inset_0()

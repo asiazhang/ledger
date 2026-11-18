@@ -64,6 +64,7 @@ use crate::scheduled_subscription::{
     MerchantRefOf, account_options_of, action_button, currency_of_account, derive_currency_text,
     field_label, form_row, merchant_options_active, merchant_ref_of,
 };
+use crate::settings_data::{READ_TASK_FAILED, SESSION_MISSING, WRITE_TASK_FAILED};
 use crate::signals;
 use crate::{nav, txn_form};
 
@@ -396,7 +397,7 @@ pub(crate) fn installments_pane(pending_focus: Signal<Option<String>>) -> impl I
         view_owner.run(move || {
             spawn(async move {
                 let Some(db) = db else {
-                    error.set(Some("内部错误：账本库会话缺失".to_owned()));
+                    error.set(Some(SESSION_MISSING.to_owned()));
                     loading.set(false);
                     return;
                 };
@@ -450,7 +451,7 @@ pub(crate) fn installments_pane(pending_focus: Signal<Option<String>>) -> impl I
                         privacy.set(crate::transactions::amount_privacy_enabled());
                     }
                     Ok(Err(e)) => error.set(Some(e.to_string())),
-                    Err(_) => error.set(Some("内部错误：读任务异常退出".to_owned())),
+                    Err(_) => error.set(Some(READ_TASK_FAILED.to_owned())),
                 }
                 loading.set(false);
             });
@@ -477,15 +478,15 @@ pub(crate) fn installments_pane(pending_focus: Signal<Option<String>>) -> impl I
         }
     });
 
-    // 主题令牌（双态自适应；缺失兜底统一归 crate::theme 单点）。
+    // 主题令牌（双态自适应；缺失兜底统一归 crate::theme 单点；#2153
+    // primary_fg 纳入五件套闭集，主按钮前景随解构取值）。
     let crate::views::ViewPalette {
         fg,
         muted,
         danger_fg,
+        primary_fg,
         ..
     } = crate::views::view_palette();
-    // 主按钮前景 = primary-foreground 令牌（亮暗双态随表；旧裸白直调退役）。
-    let primary_fg = crate::theme::color("primary-foreground");
     // 进度条正常色（#2033 预算 → #2039 概览同款取舍：正常态用账本语义绿）。
     let progress_fg = crate::transactions::amount_color(assembly::AmountSemantic::Income);
     // 进度条轨道色 = muted 令牌（弱化底语义角色；消费方零本地色纪律）。
@@ -534,7 +535,7 @@ pub(crate) fn installments_pane(pending_focus: Signal<Option<String>>) -> impl I
                     Some(db) => boot::update_scheduled_plan_status(db, &plan_id, new_status),
                     None => Err(ledger_infra::error::AppError::coded(
                         boot::CODE_SESSION_MISSING,
-                        "内部错误：账本库会话缺失",
+                        SESSION_MISSING,
                     )),
                 })
                 .await;
@@ -544,7 +545,7 @@ pub(crate) fn installments_pane(pending_focus: Signal<Option<String>>) -> impl I
                         reload();
                     }
                     Ok(Err(e)) => status.set(Some(format!("操作失败: {e}"))),
-                    Err(_) => status.set(Some("操作失败: 内部错误：写入任务异常退出".to_owned())),
+                    Err(_) => status.set(Some(format!("操作失败: {WRITE_TASK_FAILED}"))),
                 }
             });
         });
@@ -718,7 +719,7 @@ pub(crate) fn installments_pane(pending_focus: Signal<Option<String>>) -> impl I
                     }
                     None => Err(ledger_infra::error::AppError::coded(
                         boot::CODE_SESSION_MISSING,
-                        "内部错误：账本库会话缺失",
+                        SESSION_MISSING,
                     )),
                 })
                 .await;
@@ -732,7 +733,7 @@ pub(crate) fn installments_pane(pending_focus: Signal<Option<String>>) -> impl I
                         reload();
                     }
                     Ok(Err(e)) => create_error.set(Some(format!("创建失败: {e}"))),
-                    Err(_) => create_error.set(Some("内部错误：写入任务异常退出".to_owned())),
+                    Err(_) => create_error.set(Some(WRITE_TASK_FAILED.to_owned())),
                 }
             });
         });
@@ -1081,7 +1082,7 @@ fn make_action_renderer(
             "progress" => {
                 // 进度条自绘（旧壳 NProgress type=line 本壳等价形态：轨道
                 // 定宽 + 按百分比宽度的指示条，颜色语义绿——禁用竖版进度）。
-                let fg = crate::theme::color("foreground");
+                let fg = crate::views::view_palette().fg;
                 view()
                     .test_id(format!("inst-progress-{}", row.id).as_str())
                     .flex_row()

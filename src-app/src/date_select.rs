@@ -32,11 +32,11 @@ pub fn date_select(id: &'static str, selected: Signal<chrono::NaiveDate>) -> imp
     let open = signal(false);
     // 键入中的原样文本（受控输入跟随键入；完整日期落值后由回显 effect 归一）。
     let typed = signal(selected.get().to_string());
-    // 主题令牌（双态自适应）：色值住 theme.json 令牌表，读取经
-    // [`crate::theme::color`] 单点，缺失落可读兜底——本模块零本地色常量
-    // （issue #2107 视觉收口）。
-    let fg = crate::theme::color("foreground");
-    let muted = crate::theme::color("muted-foreground");
+    // 视图层取色统一经 view_palette（#2153 共享件入闭集：fg/muted 是
+    // ViewPalette 通面成员，散写同源令牌构造即第二构造点；色值仍住
+    // theme.json 令牌表单点，缺失落可读兜底——本模块零本地色常量，
+    // issue #2107 视觉收口）。
+    let crate::views::ViewPalette { fg, muted, .. } = crate::views::view_palette();
 
     // 开/关上报（Overlay Suppression 注册表单一通道：追踪受控 open 信号，全
     // 关闭路径覆盖——点选 / ESC / 点外都经信号回写）；组件卸载时 Drop 自动撤销。
@@ -112,11 +112,11 @@ pub fn date_option_select(
     // 键入中的原样文本（键入中的残缺文本不被程序化置值覆盖；选中日变化时
     // 回显归一）。
     let typed = signal(selected.get().map(|d| d.to_string()).unwrap_or_default());
-    // 主题令牌（双态自适应）：色值住 theme.json 令牌表，读取经
-    // [`crate::theme::color`] 单点，缺失落可读兜底——本模块零本地色常量
-    // （issue #2107 视觉收口）。
-    let fg = crate::theme::color("foreground");
-    let muted = crate::theme::color("muted-foreground");
+    // 视图层取色统一经 view_palette（#2153 共享件入闭集：fg/muted 是
+    // ViewPalette 通面成员，散写同源令牌构造即第二构造点；色值仍住
+    // theme.json 令牌表单点，缺失落可读兜底——本模块零本地色常量，
+    // issue #2107 视觉收口）。
+    let crate::views::ViewPalette { fg, muted, .. } = crate::views::view_palette();
 
     let token = overlay::OverlayToken::new();
     effect(move || {

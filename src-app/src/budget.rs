@@ -14,6 +14,7 @@ use nsh_core::prelude::*;
 
 use crate::app::db_slot;
 use crate::design::font_size;
+use crate::settings_data::{READ_TASK_FAILED, SESSION_MISSING};
 use crate::transactions::{amount_color, amount_privacy_enabled, table_classes};
 use crate::views::field_label;
 use crate::{adaptive, assembly, boot, modal, nav, pinyin_select, popconfirm, signals};
@@ -148,6 +149,7 @@ pub(crate) fn BudgetView() -> impl IntoElement {
         fg,
         muted,
         danger_fg,
+        primary_fg,
         ..
     } = crate::views::view_palette();
 
@@ -161,7 +163,7 @@ pub(crate) fn BudgetView() -> impl IntoElement {
         let privacy = amount_privacy_enabled();
         spawn(async move {
             let Some(db) = db else {
-                error.set(Some("内部错误：账本库会话缺失".to_owned()));
+                error.set(Some(SESSION_MISSING.to_owned()));
                 loading.set(false);
                 return;
             };
@@ -184,7 +186,7 @@ pub(crate) fn BudgetView() -> impl IntoElement {
                     options.set(assembly::expense_category_options(&category_rows));
                 }
                 Ok(Err(e)) => error.set(Some(e.to_string())),
-                Err(_) => error.set(Some("内部错误：读任务异常退出".to_owned())),
+                Err(_) => error.set(Some(READ_TASK_FAILED.to_owned())),
             }
             loading.set(false);
         });
@@ -232,10 +234,7 @@ pub(crate) fn BudgetView() -> impl IntoElement {
             spawn(async move {
                 let outcome = blocking(move || match db.as_ref() {
                     Some(db) => boot::create_budget(db, &input),
-                    None => Err(AppError::coded(
-                        boot::CODE_SESSION_MISSING,
-                        "内部错误：账本库会话缺失",
-                    )),
+                    None => Err(AppError::coded(boot::CODE_SESSION_MISSING, SESSION_MISSING)),
                 })
                 .await;
                 match outcome {
@@ -284,10 +283,7 @@ pub(crate) fn BudgetView() -> impl IntoElement {
                         cents.unwrap_or_default(),
                         Some(next_period),
                     ),
-                    None => Err(AppError::coded(
-                        boot::CODE_SESSION_MISSING,
-                        "内部错误：账本库会话缺失",
-                    )),
+                    None => Err(AppError::coded(boot::CODE_SESSION_MISSING, SESSION_MISSING)),
                 })
                 .await;
                 match outcome {
@@ -312,10 +308,7 @@ pub(crate) fn BudgetView() -> impl IntoElement {
             spawn(async move {
                 let outcome = blocking(move || match db.as_ref() {
                     Some(db) => boot::delete_budget(db, &id),
-                    None => Err(AppError::coded(
-                        boot::CODE_SESSION_MISSING,
-                        "内部错误：账本库会话缺失",
-                    )),
+                    None => Err(AppError::coded(boot::CODE_SESSION_MISSING, SESSION_MISSING)),
                 })
                 .await;
                 match outcome {
@@ -509,7 +502,7 @@ pub(crate) fn BudgetView() -> impl IntoElement {
                 .child(
                     text("添加")
                         .text_size(px(font_size::SECONDARY))
-                        .text_color(crate::theme::color("primary-foreground"))
+                        .text_color(primary_fg)
                         .test_id("budget-add"),
                 )
                 .on_press(move |_: &()| perform_create()),
@@ -818,7 +811,7 @@ pub(crate) fn BudgetView() -> impl IntoElement {
                                         .child(
                                             text("保存")
                                                 .text_size(px(font_size::SECONDARY))
-                                                .text_color(crate::theme::color("primary-foreground"))
+                                                .text_color(primary_fg)
                                                 .test_id("budget-save"),
                                         )
                                         .on_press(move |_: &()| perform_update()),

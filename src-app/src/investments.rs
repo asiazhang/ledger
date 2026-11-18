@@ -43,6 +43,7 @@ use crate::pinyin_select;
 use crate::plot_line;
 use crate::plot_line::PlotLineSeries;
 use crate::popover::popover_tip;
+use crate::read_load::{ReadLoad, blocking_read};
 use crate::select;
 use crate::settings_data::READ_TASK_FAILED;
 use crate::signals;
@@ -979,17 +980,20 @@ pub(crate) struct PanePalette {
     pub(crate) loss: nsh_core::element::AdaptiveColor,
     /// 口径说明触发点信息蓝（主题表 refund 档）。
     pub(crate) info: nsh_core::element::AdaptiveColor,
+    /// 主按钮前景（primary-foreground 档；#2153 经五件套派生同批收口）。
+    pub(crate) primary_fg: nsh_core::element::AdaptiveColor,
 }
 
 pub(crate) fn pane_palette() -> PanePalette {
-    // 令牌消费单点（三件套经 views::ViewPalette 唯一住所派生，issue #2113；
-    // 涨跌语义色走 crate::theme::color：读取即订阅亮暗切换，缺失落 theme
-    // 模块可读兜底——本模块不再私藏色值/兜底色）。
+    // 令牌消费单点（通面五件套经 views::ViewPalette 唯一住所派生，issue
+    // #2113 / #2153；涨跌语义色走 crate::theme::color：读取即订阅亮暗切换，
+    // 缺失落 theme 模块可读兜底——本模块不再私藏色值/兜底色）。
     let palette = crate::views::view_palette();
     PanePalette {
         fg: palette.fg,
         muted: palette.muted,
         danger: palette.danger_fg,
+        primary_fg: palette.primary_fg,
         // 涨跌语义色（红涨绿跌）：收编进主题表的自有令牌档——涨 = expense
         // 档、跌 = income 档、口径说明蓝 = refund 档（词汇表「盈亏涨跌色」
         // 消费主题表，不另造色常量）。
@@ -1098,22 +1102,14 @@ fn overview_pane() -> impl IntoElement {
         let privacy_enabled = amount_privacy_enabled();
         let db = db_slot().clone();
         spawn(async move {
-            let Some(db) = db else {
-                error.set(Some(READ_TASK_FAILED.to_owned()));
-                return;
-            };
-            let outcome = blocking(
-                move || -> ledger_infra::error::Result<
-                    (OverviewSnap, Vec<ledger_currencies::Currency>),
-                > {
-                    let overview = boot::investment_overview(&db)?;
-                    let currencies = boot::currency_rows(&db)?;
-                    Ok((OverviewSnap::of_domain(&overview), currencies))
-                },
-            )
-            .await;
-            match outcome {
-                Ok(Ok((snap, currency_rows))) => {
+            match blocking_read(db, |db| {
+                let overview = boot::investment_overview(db)?;
+                let currencies = boot::currency_rows(db)?;
+                Ok((OverviewSnap::of_domain(&overview), currencies))
+            })
+            .await
+            {
+                ReadLoad::Ready((snap, currency_rows)) => {
                     privacy.set(privacy_enabled);
                     cells.set(Some(assemble_overview(
                         &snap,
@@ -1125,8 +1121,10 @@ fn overview_pane() -> impl IntoElement {
                     ));
                     error.set(None);
                 }
-                Ok(Err(e)) => error.set(Some(e.to_string())),
-                Err(_) => error.set(Some(READ_TASK_FAILED.to_owned())),
+                ReadLoad::Coded(e) => error.set(Some(e.to_string())),
+                ReadLoad::MissingDb | ReadLoad::TaskFailed => {
+                    error.set(Some(READ_TASK_FAILED.to_owned()))
+                }
             }
         });
     };
@@ -1143,18 +1141,15 @@ fn overview_pane() -> impl IntoElement {
         };
         let db = db_slot().clone();
         spawn(async move {
-            let Some(db) = db else {
-                trend_error.set(Some(READ_TASK_FAILED.to_owned()));
-                return;
-            };
-            let outcome = blocking(move || boot::portfolio_value_trend(&db, &range)).await;
-            match outcome {
-                Ok(Ok(t)) => {
+            match blocking_read(db, move |db| boot::portfolio_value_trend(db, &range)).await {
+                ReadLoad::Ready(t) => {
                     trend.set(Some(assemble_trend(&t)));
                     trend_error.set(None);
                 }
-                Ok(Err(e)) => trend_error.set(Some(e.to_string())),
-                Err(_) => trend_error.set(Some(READ_TASK_FAILED.to_owned())),
+                ReadLoad::Coded(e) => trend_error.set(Some(e.to_string())),
+                ReadLoad::MissingDb | ReadLoad::TaskFailed => {
+                    trend_error.set(Some(READ_TASK_FAILED.to_owned()))
+                }
             }
         });
     };
@@ -1574,7 +1569,8 @@ fn composition_row(
 /// 两腿图例色源（现金 = 弱化前景灰、持仓 = 主文本色——主题令牌两档，随
 /// 主题整体换装；旧壳 investment-overview css 中性两阶灰阶的令牌对应）。
 fn cash_leg_color() -> nsh_core::element::AdaptiveColor {
-    crate::theme::color("muted-foreground")
+    // muted 通面成员经视图层取色面（#2153）。
+    crate::views::view_palette().muted
 }
 
 /// 投资合计单格（标签 + 口径说明 + 数值着涨跌色或中性；数值文本随同一
@@ -1667,31 +1663,21 @@ fn pnl_pane() -> impl IntoElement {
         let filter_instrument = filter.instrument_id.clone();
         let db = db_slot().clone();
         spawn(async move {
-            let Some(db) = db else {
-                error.set(Some(READ_TASK_FAILED.to_owned()));
-                return;
-            };
-            // 汇总与收益率两条命令独立（旧壳两 Loadable 并行同口径）；失败
-            // 各自呈现，不互相拖垮。
-            let outcome = blocking(
-                move || -> ledger_infra::error::Result<(
-                    PnlSnap,
-                    ledger_investment::MoneyWeightedReturnSummary,
-                    Vec<ledger_currencies::Currency>,
-                )> {
-                    let filter = ledger_investment::PnlFilter {
-                        account_id: filter_account.clone(),
-                        instrument_id: filter_instrument.clone(),
-                    };
-                    let summary = boot::realized_pnl_summary(&db, &filter)?;
-                    let mwr = boot::money_weighted_return_summary(&db)?;
-                    let currencies = boot::currency_rows(&db)?;
-                    Ok((PnlSnap::of_domain(&summary), mwr, currencies))
-                },
-            )
-            .await;
-            match outcome {
-                Ok(Ok((summary_snap, mwr_raw, currency_rows))) => {
+            match blocking_read(db, |db| {
+                // 汇总与收益率两条命令独立（旧壳两 Loadable 并行同口径）；
+                // 失败各自呈现，不互相拖垮。
+                let filter = ledger_investment::PnlFilter {
+                    account_id: filter_account,
+                    instrument_id: filter_instrument,
+                };
+                let summary = boot::realized_pnl_summary(db, &filter)?;
+                let mwr = boot::money_weighted_return_summary(db)?;
+                let currencies = boot::currency_rows(db)?;
+                Ok((PnlSnap::of_domain(&summary), mwr, currencies))
+            })
+            .await
+            {
+                ReadLoad::Ready((summary_snap, mwr_raw, currency_rows)) => {
                     pnl_currencies.set(crate::assembly::CurrencyTable::from_currencies(
                         &currency_rows,
                     ));
@@ -1718,8 +1704,10 @@ fn pnl_pane() -> impl IntoElement {
                             .min(total_pages(summary_snap.by_account.len())),
                     );
                 }
-                Ok(Err(e)) => error.set(Some(e.to_string())),
-                Err(_) => error.set(Some(READ_TASK_FAILED.to_owned())),
+                ReadLoad::Coded(e) => error.set(Some(e.to_string())),
+                ReadLoad::MissingDb | ReadLoad::TaskFailed => {
+                    error.set(Some(READ_TASK_FAILED.to_owned()))
+                }
             }
         });
     };

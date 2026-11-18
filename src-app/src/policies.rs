@@ -48,12 +48,13 @@ use crate::boot;
 use crate::combo_select;
 use crate::date_select;
 use crate::design::font_size;
+use crate::list_card;
 use crate::modal;
 use crate::nav_model::ViewName;
 use crate::pinyin_select;
 use crate::popconfirm;
 use crate::select;
-use crate::settings_data::{READ_TASK_FAILED, WRITE_TASK_FAILED};
+use crate::settings_data::{READ_TASK_FAILED, SESSION_MISSING, WRITE_TASK_FAILED};
 use crate::transactions::table_classes;
 use crate::views::field_label;
 use crate::{nav, signals};
@@ -169,8 +170,9 @@ fn today_text() -> String {
     chrono::Local::now().date_naive().to_string()
 }
 
-/// 语义令牌单取（success/warning 非三件套成员，不经 ViewPalette）：视图层
-/// 零本地色常量，令牌缺失统一落 `crate::theme` 的可读兜底（ADR-0147 决策 1）。
+/// 语义令牌单取（success/warning 非通面五件套成员，不经 ViewPalette——
+/// #2153 语义色正当直读边界）：视图层零本地色常量，令牌缺失统一落
+/// `crate::theme` 的可读兜底（ADR-0147 决策 1）。
 fn success_of() -> AdaptiveColor {
     crate::theme::color("success")
 }
@@ -517,7 +519,7 @@ fn modal_buttons(
                 .child(
                     text(confirm_label)
                         .text_size(px(font_size::SECONDARY))
-                        .text_color(crate::theme::color("primary-foreground"))
+                        .text_color(crate::views::view_palette().primary_fg)
                         .test_id(confirm_id.as_str()),
                 ),
         )
@@ -609,7 +611,7 @@ pub(crate) fn PoliciesView() -> impl IntoElement {
         view_owner.run(move || {
             spawn(async move {
                 let Some(db) = db else {
-                    error.set(Some("内部错误：账本库会话缺失".to_owned()));
+                    error.set(Some(SESSION_MISSING.to_owned()));
                     loading.set(false);
                     return;
                 };
@@ -680,6 +682,7 @@ pub(crate) fn PoliciesView() -> impl IntoElement {
         fg,
         muted,
         danger_fg,
+        primary_fg,
         ..
     } = crate::views::view_palette();
 
@@ -803,10 +806,7 @@ pub(crate) fn PoliciesView() -> impl IntoElement {
                 let outcome = blocking(move || match db.as_ref() {
                     Some(db) => boot::plan_rows(db)
                         .map(|plans| PlanSnap(plans.iter().map(Segment::from).collect())),
-                    None => Err(AppError::coded(
-                        boot::CODE_SESSION_MISSING,
-                        "内部错误：账本库会话缺失",
-                    )),
+                    None => Err(AppError::coded(boot::CODE_SESSION_MISSING, SESSION_MISSING)),
                 })
                 .await;
                 match outcome {
@@ -829,10 +829,7 @@ pub(crate) fn PoliciesView() -> impl IntoElement {
             spawn(async move {
                 let outcome = blocking(move || match db.as_ref() {
                     Some(db) => boot::delete_policy(db, &id),
-                    None => Err(AppError::coded(
-                        boot::CODE_SESSION_MISSING,
-                        "内部错误：账本库会话缺失",
-                    )),
+                    None => Err(AppError::coded(boot::CODE_SESSION_MISSING, SESSION_MISSING)),
                 })
                 .await;
                 match outcome {
@@ -1104,10 +1101,7 @@ pub(crate) fn PoliciesView() -> impl IntoElement {
                             }
                         }
                     }
-                    None => Err(AppError::coded(
-                        boot::CODE_SESSION_MISSING,
-                        "内部错误：账本库会话缺失",
-                    )),
+                    None => Err(AppError::coded(boot::CODE_SESSION_MISSING, SESSION_MISSING)),
                 })
                 .await;
                 match outcome {
@@ -1235,10 +1229,7 @@ pub(crate) fn PoliciesView() -> impl IntoElement {
                         input.policy_id = Some(batch_policy_id);
                         boot::create_scheduled_plan(db, input)
                     }
-                    None => Err(AppError::coded(
-                        boot::CODE_SESSION_MISSING,
-                        "内部错误：账本库会话缺失",
-                    )),
+                    None => Err(AppError::coded(boot::CODE_SESSION_MISSING, SESSION_MISSING)),
                 })
                 .await;
                 match outcome {
@@ -1603,7 +1594,7 @@ pub(crate) fn PoliciesView() -> impl IntoElement {
                         .child(
                             text(AGREEMENT_ADD)
                                 .text_size(px(font_size::CAPTION))
-                                .text_color(crate::theme::color("primary-foreground"))
+                                .text_color(primary_fg)
                                 .test_id("policy-agreement-add"),
                         )
                 }),
@@ -1822,7 +1813,7 @@ pub(crate) fn PoliciesView() -> impl IntoElement {
                                 }
                             })
                             .text_size(px(font_size::CAPTION))
-                            .text_color(crate::theme::color("primary-foreground"))
+                            .text_color(primary_fg)
                             .test_id("policy-agreement-toggle"),
                         ),
                 ))
@@ -1920,47 +1911,36 @@ pub(crate) fn PoliciesView() -> impl IntoElement {
                             .child(
                                 text(NEW_BUTTON)
                                     .text_size(px(font_size::SECONDARY))
-                                    .text_color(crate::theme::color("primary-foreground"))
+                                    .text_color(primary_fg)
                                     .test_id("policy-new"),
                             ),
                     ),
                 )
                 .child(
-                    // 清单卡片（卡片自身 flex_1——虚拟化表格取弹性链高度，卡
-                    // 片不定高则虚拟化量出零高，先例同注）。
-                    view()
-                        .flex_1()
-                        .flex_col()
-                        .gap_2()
-                        .app_class("rounded-(--radius-card) border border-border p-3")
-                        .child(
-                            // 卡标题自然高度（#2135 布局对齐线，同根因另见
-                            // items/accounts/merchants 同款标题行）：标题不参
-                            // 与弹性分配，否则少数据时表头被推到卡内中部。
-                            text(LIST_CARD_TITLE)
-                                .text_size(px(font_size::SECONDARY))
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .text_color(fg),
-                        )
-                        .child(
-                            view().test_id("policy-table").flex_1().child(
-                                data_table()
-                                    .component_ref(&table_ref)
-                                    .columns(columns)
-                                    .data(data_of)
-                                    .row_classes(row_classes)
-                                    .render_cell(cell_of)
-                                    .loading(move || loading.get())
-                                    .loading_view(text(LOADING_PLACEHOLDER).text_color(muted))
-                                    .empty(
-                                        text(EMPTY_GUIDE)
-                                            .text_color(muted)
-                                            .test_id("policy-empty-guide"),
-                                    )
-                                    .classes(table_classes())
-                                    .flex_1(),
-                            ),
-                        ),
+                    // 清单卡（装配三件归 list_card_of 单点，#2156）：卡片
+                    // flex_1 容器 + 自然高标题 + flex_1 表格容器。
+                    list_card::list_card_of(
+                        LIST_CARD_TITLE,
+                        fg,
+                        None,
+                        "policy-table",
+                        data_table()
+                            .component_ref(&table_ref)
+                            .columns(columns)
+                            .data(data_of)
+                            .row_classes(row_classes)
+                            .render_cell(cell_of)
+                            .loading(move || loading.get())
+                            .loading_view(text(LOADING_PLACEHOLDER).text_color(muted))
+                            .empty(
+                                text(EMPTY_GUIDE)
+                                    .text_color(muted)
+                                    .test_id("policy-empty-guide"),
+                            )
+                            .classes(table_classes())
+                            .flex_1(),
+                        None,
+                    ),
                 )
                 .child(
                     // 操作反馈条位（成功/失败共用一条；新动作开始清回空）。

@@ -51,6 +51,7 @@ use crate::adaptive;
 use crate::assembly::{CategoryOption, CurrencyTable, PnlSemantic};
 use crate::design::font_size;
 use crate::investments::{HoldingsSortColumn, HoldingsSorter};
+use crate::read_load::{ReadLoad, blocking_read};
 use crate::settings_data::READ_TASK_FAILED;
 use crate::{
     app, assembly, boot, investment_sync, investments, popover, select, signals, transactions,
@@ -441,21 +442,15 @@ pub(crate) fn HoldingsPane() -> impl IntoElement {
         let privacy_enabled = transactions::amount_privacy_enabled();
         let db = app::db_slot().clone();
         spawn(async move {
-            // DbState 克隆件拥有地进阻塞闭包（`blocking` 要求 'static）——
-            // 借用面溢出即编译红，投资污污同形先例。
-            let Some(db) = db else {
-                error.set(Some(READ_TASK_FAILED.to_owned()));
-                return;
-            };
-            let outcome = blocking(move || -> ledger_infra::error::Result<LoadAll> {
+            match blocking_read(db, |db| -> ledger_infra::error::Result<LoadAll> {
                 // 行集 + 参考面一次装载；累计收益命令独立（错误只降级累计卡，
                 // 旧壳两路独立 Loadable 同语义）。
-                let holdings = boot::portfolio_rows(&db)?;
-                let instruments = boot::instrument_rows(&db)?;
-                let accounts = boot::account_rows(&db)?;
-                let mwr = boot::money_weighted_return_summary(&db)?;
-                let currencies = boot::currency_rows(&db)?;
-                let cumulative = boot::cumulative_pnl_native_total(&db);
+                let holdings = boot::portfolio_rows(db)?;
+                let instruments = boot::instrument_rows(db)?;
+                let accounts = boot::account_rows(db)?;
+                let mwr = boot::money_weighted_return_summary(db)?;
+                let currencies = boot::currency_rows(db)?;
+                let cumulative = boot::cumulative_pnl_native_total(db);
                 let (cumulative, cumulative_error) = match cumulative {
                     Ok(c) => (
                         Some(CumulativeSnap {
@@ -476,9 +471,9 @@ pub(crate) fn HoldingsPane() -> impl IntoElement {
                     cumulative_error,
                 })
             })
-            .await;
-            match outcome {
-                Ok(Ok(all)) => {
+            .await
+            {
+                ReadLoad::Ready(all) => {
                     // 装配与快照双用账户行集（快照面先克隆，装配面消费原集）。
                     let accounts_rows = all.accounts.clone();
                     accounts.set(Accounts(accounts_rows));
@@ -497,8 +492,10 @@ pub(crate) fn HoldingsPane() -> impl IntoElement {
                     cumulative.set(all.cumulative);
                     cumulative_error.set(all.cumulative_error.map(|e| e.to_string()));
                 }
-                Ok(Err(e)) => error.set(Some(e.to_string())),
-                Err(_) => error.set(Some(READ_TASK_FAILED.to_owned())),
+                ReadLoad::Coded(e) => error.set(Some(e.to_string())),
+                ReadLoad::MissingDb | ReadLoad::TaskFailed => {
+                    error.set(Some(READ_TASK_FAILED.to_owned()))
+                }
             }
         });
     };
@@ -625,7 +622,7 @@ pub(crate) fn HoldingsPane() -> impl IntoElement {
                         }
                     })
                     .text_size(px(font_size::CAPTION))
-                    .text_color(crate::theme::color("primary-foreground"))
+                    .text_color(palette.primary_fg)
                     .test_id("holdings-sync-button"),
                 ),
         );
@@ -1178,7 +1175,7 @@ fn holdings_table_body(
 fn render_symbol_link(
     drill: Option<crate::nav_model::InvestmentsDrill>,
     label: String,
-    accent: nsh_core::element::AdaptiveColor,
+    primary: nsh_core::element::AdaptiveColor,
     fg: nsh_core::element::AdaptiveColor,
 ) -> nsh_core::element::View {
     match drill {
@@ -1192,7 +1189,7 @@ fn render_symbol_link(
             .child(
                 text(label)
                     .text_size(px(font_size::SECONDARY))
-                    .text_color(accent),
+                    .text_color(primary),
             ),
         None => view().child(
             text(label)
@@ -1238,9 +1235,10 @@ fn row_body(
     let fg = palette.fg;
     let muted = palette.muted;
     // 下钻强调色（旧壳 InstrumentLink accentColor 同语义：主题 primary 令牌
-    // 经 theme::color 单点消费，缺失落可读兑底——accounts.rs 账户名下钻链接
-    // 同款先例）。
-    let accent = crate::theme::color("primary");
+    // 的语义角色消费，低频专用保留 theme::color 直读——accounts.rs 可点原子
+    // 同款先例；#2153：原局部名 accent 与 ViewPalette.accent（accent 令牌）
+    // 同名异义同屏，改名消歧）。
+    let primary = crate::theme::color("primary");
     let gain = palette.gain;
     let loss = palette.loss;
     each(
@@ -1283,7 +1281,7 @@ fn row_body(
                     instrument_id: Some(row.instrument_id.clone()),
                 });
             let link_symbol_text = row.symbol.clone().unwrap_or_else(|| "-".to_owned());
-            let symbol_cell = render_symbol_link(link_drill, link_symbol_text, accent, fg)
+            let symbol_cell = render_symbol_link(link_drill, link_symbol_text, primary, fg)
                 .test_id(format!("holdings-row-{}-symbol", row_id).as_str());
             view()
                 .test_id(format!("holdings-row-{row_id}").as_str())

@@ -42,6 +42,7 @@
 use nsh_base::input;
 use nsh_core::prelude::*;
 
+use crate::settings_data::{SESSION_MISSING, WRITE_TASK_FAILED};
 use crate::{
     assembly::{self, BasicFormSubmit, CategoryOption, CurrencyTable, MerchantRef},
     boot, combo_select, date_select, modal, pinyin_select, select, signals,
@@ -933,10 +934,7 @@ fn perform_submit(
                         .map(|_: ledger_transaction::TransactionWrite| ()),
                     (Some(db), Some(id)) => boot::update_transaction(db, id, input)
                         .map(|_: ledger_infra::signals::WriteEvidence| ()),
-                    (None, _) => Err(AppError::coded(
-                        boot::CODE_SESSION_MISSING,
-                        "内部错误：账本库会话缺失",
-                    )),
+                    (None, _) => Err(AppError::coded(boot::CODE_SESSION_MISSING, SESSION_MISSING)),
                 })
                 .await;
                 match outcome {
@@ -956,9 +954,7 @@ fn perform_submit(
                         };
                         state.error.set(Some(format!("{prefix}: {e}")));
                     }
-                    Err(_) => state
-                        .error
-                        .set(Some("内部错误：写入任务异常退出".to_owned())),
+                    Err(_) => state.error.set(Some(WRITE_TASK_FAILED.to_owned())),
                 }
             });
         });
@@ -1242,6 +1238,7 @@ pub(crate) fn transaction_form_modal(
         fg,
         muted,
         danger_fg,
+        primary_fg,
         ..
     } = crate::views::view_palette();
 
@@ -1676,7 +1673,7 @@ pub(crate) fn transaction_form_modal(
                                         )
                                     })
                                         .text_sm()
-                                        .text_color(crate::theme::color("primary-foreground"))
+                                        .text_color(primary_fg)
                                         .test_id(SUBMIT_ID),
                                 )
                                 .on_press(move |_: &()| submit()),
@@ -1805,6 +1802,9 @@ fn funding_rows_section(
                 .test_id(format!("{}-text", FUNDING_TOTAL_ID).as_str())
                 .text_color(move || {
                     if total.get().1 {
+                        // 语义色保留 theme 单点直读（#2153 边界：destructive
+                        // 作语境语义色（红/中性条件选择）按语义单点消费，不入
+                        // palette 闭集，正当边界见 ViewPalette 文档）。
                         crate::theme::color("destructive")
                     } else {
                         muted

@@ -30,6 +30,7 @@ use crate::assembly::{
 use crate::boot;
 use crate::items::AddItemTarget;
 use crate::nav_model;
+use crate::settings_data::SESSION_MISSING;
 use crate::{
     backup_entry, context_menu, danger, investments_form, items, multi_select, nav, overlay,
     period_row, pinyin_select, signals, tx_filter, tx_view_preferences, txn_form,
@@ -184,9 +185,11 @@ pub(crate) struct CellActions {
     pub copy_note: Arc<dyn Fn(&str)>,
 }
 
-/// 可点原子色（主题强调色；accounts/merchants 可点格先例同源，primary
-/// 令牌经 [`crate::theme::color`] 单点消费）。
-fn accent_color() -> AdaptiveColor {
+/// 可点原子色（主题主色 primary 令牌的语义角色消费——accounts/merchants 可
+/// 点格先例同源；低频专用语义，保留 [`crate::theme::color`] 直读正当边界，
+/// #2153：原函数名 accent_color 与 ViewPalette.accent（accent 令牌）同名
+/// 异义，改名消歧）。
+fn primary_color() -> AdaptiveColor {
     crate::theme::color("primary")
 }
 
@@ -261,7 +264,7 @@ pub(crate) fn copy_note_feedback(
 
 /// 自绘格（金额语义色，issue #2019；格级交互格，#2061）：金额列按行语义色型
 /// 着色（旧壳金额列着色口径），账户/商户/来源/备注四格在委托处理器在场时按
-/// 装配载荷渲染可点原子（accent 色文本 + test_id + on_press 分发——accounts
+/// 装配载荷渲染可点原子（primary 色文本 + test_id + on_press 分发——accounts
 /// 视图可点格先例同形），其余列平文——格文本仍取自数据（`cell.text`），本函数
 /// 只补色与交互。委托缺席或载荷缺席 → 纯文本形态（与既有呈现零差异）。掩码
 /// 态照常着色（掩码隐藏数字，不隐藏方向，旧壳隐私保留项同口径）。交易列表
@@ -270,12 +273,12 @@ pub(crate) fn render_cell(
     rows_signal: Signal<Vec<RowCells>>,
     actions: Option<CellActions>,
 ) -> impl Fn(&DataTableCell) -> nsh_core::element::AnyElement {
-    let accent = accent_color();
+    let primary = primary_color();
     move |cell: &DataTableCell| {
         // 交互格（#2061）：委托处理器在场且装配行带载荷才走可点形态；命中
         // 失败（只读视图 / 占位「-」/ 续行空格）落回纯文本路径。
         if let Some(actions) = actions.as_ref()
-            && let Some(element) = interactive_cell(cell, &rows_signal, actions, accent)
+            && let Some(element) = interactive_cell(cell, &rows_signal, actions, primary)
         {
             return element;
         }
@@ -307,7 +310,7 @@ pub(crate) fn render_cell(
     }
 }
 
-/// 交互格渲染（#2061）：命中可点载荷 → 可点原子元素（accent 色文本 +
+/// 交互格渲染（#2061）：命中可点载荷 → 可点原子元素（primary 色文本 +
 /// test_id + on_press 分发；accounts 视图名称列先例同形）；未命中（该格无
 /// 载荷：占位「-」/ 续行空格）返回 None → 纯文本路径。单行截断与纯文本路径
 /// 同纪律（虚拟滚动固定行高，长文本不换行）。（搜索视图 #2138 同消费：
@@ -316,12 +319,12 @@ fn interactive_cell(
     cell: &DataTableCell,
     rows_signal: &Signal<Vec<RowCells>>,
     actions: &CellActions,
-    accent: AdaptiveColor,
+    primary: AdaptiveColor,
 ) -> Option<nsh_core::element::AnyElement> {
     let row = rows_signal.get().get(cell.row as usize)?.clone();
     // 分发闭集按格键取 Arc 克隆（on_press 闭包 'static——挂到元素随存活）。
     let dispatch = actions.clone();
-    // 账户原子元素：带 id（可下钻）= accent 色可点件；占位「-」= 平文。
+    // 账户原子元素：带 id（可下钻）= primary 色可点件；占位「-」= 平文。
     let account_atom_element = |atom: &AccountAtom| -> nsh_core::element::AnyElement {
         match &atom.account_id {
             Some(id) => {
@@ -332,7 +335,7 @@ fn interactive_cell(
                     .on_press(move |_: &PressEvent| account(&id))
                     .child(
                         text(atom.text.clone())
-                            .text_color(accent)
+                            .text_color(primary)
                             .number_of_lines(1),
                     )
                     .into_element()
@@ -375,7 +378,7 @@ fn interactive_cell(
                     .on_press(move |_: &PressEvent| merchant(&press_id))
                     .child(
                         text(cell.text.to_string())
-                            .text_color(accent)
+                            .text_color(primary)
                             .number_of_lines(1),
                     )
                     .into_element(),
@@ -399,7 +402,7 @@ fn interactive_cell(
                         view()
                             .test_id(format!("tx-cell-source-{entity_id}").as_str())
                             .on_press(move |_: &PressEvent| source(kind, &press_entity))
-                            .child(text(name).text_color(accent).number_of_lines(1)),
+                            .child(text(name).text_color(primary).number_of_lines(1)),
                     )
                     // 状态标注不可点（文本尾段，旧壳状态徽章平铺镜像同位）。
                     .children(status.map(|label| text(format!(" {label}")).number_of_lines(1)))
@@ -421,7 +424,7 @@ fn interactive_cell(
                             .test_id("tx-cell-copy-note")
                             .optional_label("复制备注")
                             .on_press(move |_: &PressEvent| copy_note(&press_note))
-                            .child(text("复制").text_xs().text_color(accent)),
+                            .child(text("复制").text_xs().text_color(primary)),
                     )
                     .into_element(),
             )
@@ -581,6 +584,7 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
         fg,
         muted,
         danger_fg,
+        primary_fg,
         ..
     } = crate::views::view_palette();
     // 加入物品成功反馈条位的前景色（#2044；与列表前景同源）。
@@ -657,7 +661,7 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
         view_owner.run(move || {
             spawn(async move {
                 let Some(db) = db else {
-                    error.set(Some("内部错误：账本库会话缺失".to_owned()));
+                    error.set(Some(SESSION_MISSING.to_owned()));
                     loading.set(false);
                     return;
                 };
@@ -837,10 +841,7 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
             spawn(async move {
                 let outcome = blocking(move || match db.as_ref() {
                     Some(db) => boot::delete_transaction(db, &id),
-                    None => Err(AppError::coded(
-                        boot::CODE_SESSION_MISSING,
-                        "内部错误：账本库会话缺失",
-                    )),
+                    None => Err(AppError::coded(boot::CODE_SESSION_MISSING, SESSION_MISSING)),
                 })
                 .await;
                 match outcome {
@@ -1209,12 +1210,12 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
                             .child(
                                 text("记一笔")
                                     .text_sm()
-                                    .text_color(crate::theme::color("primary-foreground")),
+                                    .text_color(primary_fg),
                             )
                             .child(
                                 text("▾")
                                     .text_xs()
-                                    .text_color(crate::theme::color("primary-foreground")),
+                                    .text_color(primary_fg),
                             ),
                     ),
                 )
