@@ -74,40 +74,56 @@ pub(crate) struct RestoreIds {
     pub confirm: &'static str,
 }
 
+/// 恢复确认五信号束（#2164 类型化：意图 / 口令 / 显出 / busy / 错误五信号
+/// 归调用方持有、任务按各自通道写回——原七位置参中五信号整束传递，收敛为
+/// 命名字段消错序；`Copy` 随 [`Signal`]，闭包各自捕获副本，语义零变化）。
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct RestoreSignals {
+    /// 弹窗意图（开着 = 呈现；取消 / ✕ / ESC 关闭路径由此置空）。
+    pub intent: Signal<Option<RestoreIntent>>,
+    /// 主口令输入。
+    pub pass: Signal<String>,
+    /// 口令框显出（判定单点 [`restore_show_pass`]）。
+    pub revealed: Signal<bool>,
+    /// 执行中（单飞守卫语义随调用方：锁定屏三入口共用、设置卡独立）。
+    pub busy: Signal<bool>,
+    /// 弹窗内错误位。
+    pub error: Signal<Option<String>>,
+}
+
 /// 恢复确认弹窗（意图开着 = 呈现；关闭路径 = 取消 / ESC / ✕——执行中
 /// 不关；成功后由调用方任务关并走各自续接）。
 pub(crate) fn app_restore_confirm_modal(
-    intent: Signal<Option<RestoreIntent>>,
-    pass: Signal<String>,
-    revealed: Signal<bool>,
-    busy: Signal<bool>,
-    error: Signal<Option<String>>,
+    signals: RestoreSignals,
     ids: &'static RestoreIds,
     on_confirm: impl Fn(&()) + Copy + 'static,
 ) -> impl IntoElement {
     app_modal(
-        move || intent.get().is_some(),
+        move || signals.intent.get().is_some(),
         || settings_data::RESTORE_MODAL_TITLE.to_owned(),
         move || {
-            if !busy.get_untracked() {
-                intent.set(None);
+            if !signals.busy.get_untracked() {
+                signals.intent.set(None);
             }
         },
-        move || restore_body(intent, pass, revealed, busy, error, ids, on_confirm),
+        move || restore_body(signals, ids, on_confirm),
     )
 }
 
 /// 弹窗内容（两侧同构面的单一封装族成员；交叉模式块随意图固定，静态段
 /// 承载；口令框与错误位是「弹窗开着期间就地变化」的条件段，`when` 承载）。
 fn restore_body(
-    intent: Signal<Option<RestoreIntent>>,
-    pass: Signal<String>,
-    revealed: Signal<bool>,
-    busy: Signal<bool>,
-    error: Signal<Option<String>>,
+    signals: RestoreSignals,
     ids: &'static RestoreIds,
     on_confirm: impl Fn(&()) + Copy + 'static,
 ) -> View {
+    let RestoreSignals {
+        intent,
+        pass,
+        revealed,
+        busy,
+        error,
+    } = signals;
     let palette = views::view_palette();
     let Some(opened) = intent.get() else {
         return view();

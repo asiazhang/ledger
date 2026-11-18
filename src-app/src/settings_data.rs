@@ -67,7 +67,9 @@ use crate::design::font_size;
 use crate::modal::app_modal;
 use crate::nav_model::NavRequest;
 use crate::popconfirm;
-use crate::restore_confirm::{RestoreIds, RestoreIntent, app_restore_confirm_modal};
+use crate::restore_confirm::{
+    RestoreIds, RestoreIntent, RestoreSignals, app_restore_confirm_modal,
+};
 use crate::settings::{card, status_line};
 use crate::shell_msgs::{
     MSG_ENCRYPTION_STATUS_FAILED_PREFIX, MSG_META_FAILED_PREFIX, MSG_READ_TASK_FAILED,
@@ -1296,11 +1298,13 @@ fn backup_cards(palette: views::ViewPalette) -> View {
     // ESC / 成功后由任务关）。#2144 收敛共享封装
     // [`app_restore_confirm_modal`]，与锁定屏恢复弹窗消费同一成员。
     let restore_modal = app_restore_confirm_modal(
-        state.restore_intent,
-        state.restore_pass,
-        state.restore_pass_revealed,
-        state.restore_busy,
-        state.restore_error,
+        RestoreSignals {
+            intent: state.restore_intent,
+            pass: state.restore_pass,
+            revealed: state.restore_pass_revealed,
+            busy: state.restore_busy,
+            error: state.restore_error,
+        },
         &DATA_RESTORE_IDS,
         move |_: &()| confirm_restore_task(owner, state),
     );

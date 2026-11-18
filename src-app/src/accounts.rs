@@ -764,7 +764,7 @@ pub(crate) fn AccountsView() -> impl IntoElement {
     let section_of = move |title: &'static str,
                            partition: Memo<Vec<AccountRowCells>>,
                            table_id: &'static str| {
-        list_card::list_card_of(title, fg, None, table_id, table_of(partition), None)
+        list_card::ListCardOf::new(title, fg, table_id, table_of(partition)).build()
     };
 
     // ============================ 弹窗内容（视图树内联函数式插槽） ============================
