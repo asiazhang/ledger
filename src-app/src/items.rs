@@ -1398,7 +1398,6 @@ pub(crate) fn ItemsView() -> impl IntoElement {
                     list_card::ListCardOf::new(
                         LIST_CARD_TITLE,
                         fg,
-                        "item-table",
                         data_table()
                             .component_ref(&table_ref)
                             .columns(columns)
@@ -1423,6 +1422,7 @@ pub(crate) fn ItemsView() -> impl IntoElement {
                             .classes(table_classes())
                             .flex_1(),
                     )
+                    .table_id("item-table")
                     .build(),
                 )
                 .child(

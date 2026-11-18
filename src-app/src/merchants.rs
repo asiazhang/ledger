@@ -723,47 +723,44 @@ pub(crate) fn MerchantsView() -> impl IntoElement {
         );
 
     // 搜索 + 显示已删（过滤意图行，list_card before 面先行装配）。
-    let search_row = Some(
-        view()
-            .flex_row()
-            .items_center()
-            .gap_3()
-            .child(
-                input()
-                    .test_id("merchant-search")
-                    .value(move || search_term.get())
-                    .placeholder(SEARCH_PLACEHOLDER)
-                    .optional_label("搜索商户")
-                    .text_color(fg)
-                    .w(px(240.0))
-                    .app_class(
-                        "bg-background rounded-(--radius) border border-border px-2 py-1 \
+    let search_row = view()
+        .flex_row()
+        .items_center()
+        .gap_3()
+        .child(
+            input()
+                .test_id("merchant-search")
+                .value(move || search_term.get())
+                .placeholder(SEARCH_PLACEHOLDER)
+                .optional_label("搜索商户")
+                .text_color(fg)
+                .w(px(240.0))
+                .app_class(
+                    "bg-background rounded-(--radius) border border-border px-2 py-1 \
                              placeholder:text-muted-foreground",
-                    )
-                    .on_change(move |text: &str| search_term.set(text.to_owned())),
-            )
-            .child(
-                checkbox()
-                    .checked(move || show_deleted.get())
-                    .on_change(move |&next: &bool| show_deleted.set(next))
-                    .accessibility_label(SHOW_DELETED_LABEL)
-                    .child(
-                        // test_id 落在标签文本上（headless id: 锚点命中文本、
-                        // 物理命中到内层 checkbox 可按压件——页签先例同形）。
-                        text(SHOW_DELETED_LABEL)
-                            .text_size(px(font_size::SECONDARY))
-                            .text_color(fg)
-                            .test_id("merchant-show-deleted"),
-                    ),
-            )
-            .into_element(),
-    );
+                )
+                .on_change(move |text: &str| search_term.set(text.to_owned())),
+        )
+        .child(
+            checkbox()
+                .checked(move || show_deleted.get())
+                .on_change(move |&next: &bool| show_deleted.set(next))
+                .accessibility_label(SHOW_DELETED_LABEL)
+                .child(
+                    // test_id 落在标签文本上（headless id: 锚点命中文本、
+                    // 物理命中到内层 checkbox 可按压件——页签先例同形）。
+                    text(SHOW_DELETED_LABEL)
+                        .text_size(px(font_size::SECONDARY))
+                        .text_color(fg)
+                        .test_id("merchant-show-deleted"),
+                ),
+        )
+        .into_element();
     // 清单卡（装配三件归 list_card 单点，#2156）：卡片 flex_1 容器 +
     // 自然高标题 + flex_1 表格容器；搜索行 / 分页条经 before / after 收纳。
     let list_card = list_card::ListCardOf::new(
         LIST_CARD_TITLE,
         fg,
-        "merchant-table",
         // 清单卡片体（卡片自身 flex_1——虚拟化表格取弹性链高度）。
         data_table()
             .columns(columns)
@@ -778,8 +775,9 @@ pub(crate) fn MerchantsView() -> impl IntoElement {
             .classes(table_classes())
             .flex_1(),
     )
+    .table_id("merchant-table")
     .before(search_row)
-    .after(Some(
+    .after(
         // 总条数 + 分页条（旧壳 pagination.prefix「共 N 条」同词表；分页条
         // 仅多页在场——单页只留总数，旧壳同果）。
             view()
@@ -814,7 +812,7 @@ pub(crate) fn MerchantsView() -> impl IntoElement {
                     .otherwise(view),
                 )
                 .into_element(),
-    ))
+    )
     .build();
 
     view()
