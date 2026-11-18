@@ -42,7 +42,7 @@
 use nsh_base::input;
 use nsh_core::prelude::*;
 
-use crate::settings_data::{SESSION_MISSING, WRITE_TASK_FAILED};
+use crate::shell_msgs::{MSG_SESSION_MISSING, MSG_WRITE_TASK_FAILED};
 use crate::{
     assembly::{self, BasicFormSubmit, CategoryOption, CurrencyTable, MerchantRef},
     boot, combo_select, date_select, modal, pinyin_select, select, signals,
@@ -934,7 +934,10 @@ fn perform_submit(
                         .map(|_: ledger_transaction::TransactionWrite| ()),
                     (Some(db), Some(id)) => boot::update_transaction(db, id, input)
                         .map(|_: ledger_infra::signals::WriteEvidence| ()),
-                    (None, _) => Err(AppError::coded(boot::CODE_SESSION_MISSING, SESSION_MISSING)),
+                    (None, _) => Err(AppError::coded(
+                        boot::CODE_SESSION_MISSING,
+                        MSG_SESSION_MISSING,
+                    )),
                 })
                 .await;
                 match outcome {
@@ -954,7 +957,7 @@ fn perform_submit(
                         };
                         state.error.set(Some(format!("{prefix}: {e}")));
                     }
-                    Err(_) => state.error.set(Some(WRITE_TASK_FAILED.to_owned())),
+                    Err(_) => state.error.set(Some(MSG_WRITE_TASK_FAILED.to_owned())),
                 }
             });
         });

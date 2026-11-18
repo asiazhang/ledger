@@ -14,7 +14,7 @@ use nsh_core::prelude::*;
 
 use crate::app::db_slot;
 use crate::design::font_size;
-use crate::settings_data::{READ_TASK_FAILED, SESSION_MISSING};
+use crate::shell_msgs::{MSG_READ_TASK_FAILED, MSG_SESSION_MISSING};
 use crate::transactions::{amount_color, amount_privacy_enabled, table_classes};
 use crate::views::field_label;
 use crate::{adaptive, assembly, boot, modal, nav, pinyin_select, popconfirm, signals};
@@ -163,7 +163,7 @@ pub(crate) fn BudgetView() -> impl IntoElement {
         let privacy = amount_privacy_enabled();
         spawn(async move {
             let Some(db) = db else {
-                error.set(Some(SESSION_MISSING.to_owned()));
+                error.set(Some(MSG_SESSION_MISSING.to_owned()));
                 loading.set(false);
                 return;
             };
@@ -186,7 +186,7 @@ pub(crate) fn BudgetView() -> impl IntoElement {
                     options.set(assembly::expense_category_options(&category_rows));
                 }
                 Ok(Err(e)) => error.set(Some(e.to_string())),
-                Err(_) => error.set(Some(READ_TASK_FAILED.to_owned())),
+                Err(_) => error.set(Some(MSG_READ_TASK_FAILED.to_owned())),
             }
             loading.set(false);
         });
@@ -234,7 +234,10 @@ pub(crate) fn BudgetView() -> impl IntoElement {
             spawn(async move {
                 let outcome = blocking(move || match db.as_ref() {
                     Some(db) => boot::create_budget(db, &input),
-                    None => Err(AppError::coded(boot::CODE_SESSION_MISSING, SESSION_MISSING)),
+                    None => Err(AppError::coded(
+                        boot::CODE_SESSION_MISSING,
+                        MSG_SESSION_MISSING,
+                    )),
                 })
                 .await;
                 match outcome {
@@ -283,7 +286,10 @@ pub(crate) fn BudgetView() -> impl IntoElement {
                         cents.unwrap_or_default(),
                         Some(next_period),
                     ),
-                    None => Err(AppError::coded(boot::CODE_SESSION_MISSING, SESSION_MISSING)),
+                    None => Err(AppError::coded(
+                        boot::CODE_SESSION_MISSING,
+                        MSG_SESSION_MISSING,
+                    )),
                 })
                 .await;
                 match outcome {
@@ -308,7 +314,10 @@ pub(crate) fn BudgetView() -> impl IntoElement {
             spawn(async move {
                 let outcome = blocking(move || match db.as_ref() {
                     Some(db) => boot::delete_budget(db, &id),
-                    None => Err(AppError::coded(boot::CODE_SESSION_MISSING, SESSION_MISSING)),
+                    None => Err(AppError::coded(
+                        boot::CODE_SESSION_MISSING,
+                        MSG_SESSION_MISSING,
+                    )),
                 })
                 .await;
                 match outcome {

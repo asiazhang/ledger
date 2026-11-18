@@ -34,7 +34,7 @@ use crate::boot;
 use crate::design::font_size;
 use crate::select;
 use crate::settings::{card, status_line};
-use crate::settings_data::{READ_TASK_FAILED, SESSION_MISSING};
+use crate::shell_msgs::{MSG_READ_TASK_FAILED, MSG_SESSION_MISSING};
 use crate::views;
 
 // ---------------------------------------------------------------------------
@@ -132,7 +132,7 @@ pub(crate) fn currencies_pane(palette: views::ViewPalette) -> View {
                     Some(db) => boot::currency_rows(db),
                     None => Err(ledger_infra::error::AppError::coded(
                         boot::CODE_SESSION_MISSING,
-                        SESSION_MISSING,
+                        MSG_SESSION_MISSING,
                     )),
                 })
                 .await;
@@ -149,7 +149,7 @@ pub(crate) fn currencies_pane(palette: views::ViewPalette) -> View {
                         load_error.set(None);
                     }
                     Ok(Err(e)) => load_error.set(Some(format!("{BASE_LOAD_PREFIX}{e}"))),
-                    Err(_) => load_error.set(Some(READ_TASK_FAILED.to_owned())),
+                    Err(_) => load_error.set(Some(MSG_READ_TASK_FAILED.to_owned())),
                 }
             });
         });
@@ -170,7 +170,7 @@ pub(crate) fn currencies_pane(palette: views::ViewPalette) -> View {
                     Some(db) => boot::base_currency(db),
                     None => Err(ledger_infra::error::AppError::coded(
                         boot::CODE_SESSION_MISSING,
-                        SESSION_MISSING,
+                        MSG_SESSION_MISSING,
                     )),
                 })
                 .await;
@@ -180,7 +180,7 @@ pub(crate) fn currencies_pane(palette: views::ViewPalette) -> View {
                         base_selected.set(Some(code));
                     }
                     Ok(Err(e)) => base_status.set(Some(format!("{BASE_LOAD_PREFIX}{e}"))),
-                    Err(_) => base_status.set(Some(READ_TASK_FAILED.to_owned())),
+                    Err(_) => base_status.set(Some(MSG_READ_TASK_FAILED.to_owned())),
                 }
             });
         });
@@ -203,7 +203,7 @@ pub(crate) fn currencies_pane(palette: views::ViewPalette) -> View {
                         Some(db) => boot::set_base_currency(db, &target),
                         None => Err(ledger_infra::error::AppError::coded(
                             boot::CODE_SESSION_MISSING,
-                            SESSION_MISSING,
+                            MSG_SESSION_MISSING,
                         )),
                     })
                     .await;
@@ -219,7 +219,8 @@ pub(crate) fn currencies_pane(palette: views::ViewPalette) -> View {
                         }
                         Err(_) => {
                             base_selected.set(reset);
-                            base_status.set(Some(format!("{BASE_SAVE_PREFIX}{READ_TASK_FAILED}")));
+                            base_status
+                                .set(Some(format!("{BASE_SAVE_PREFIX}{MSG_READ_TASK_FAILED}")));
                         }
                     }
                 });
@@ -283,7 +284,7 @@ pub(crate) fn currencies_pane(palette: views::ViewPalette) -> View {
                     }
                     None => Err(ledger_infra::error::AppError::coded(
                         boot::CODE_SESSION_MISSING,
-                        SESSION_MISSING,
+                        MSG_SESSION_MISSING,
                     )),
                 };
                 fx_syncing.set(false);

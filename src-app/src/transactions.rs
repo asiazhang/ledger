@@ -30,7 +30,7 @@ use crate::assembly::{
 use crate::boot;
 use crate::items::AddItemTarget;
 use crate::nav_model;
-use crate::settings_data::SESSION_MISSING;
+use crate::shell_msgs::MSG_SESSION_MISSING;
 use crate::{
     backup_entry, context_menu, danger, investments_form, items, multi_select, nav, overlay,
     period_row, pinyin_select, signals, tx_filter, tx_view_preferences, txn_form,
@@ -661,7 +661,7 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
         view_owner.run(move || {
             spawn(async move {
                 let Some(db) = db else {
-                    error.set(Some(SESSION_MISSING.to_owned()));
+                    error.set(Some(MSG_SESSION_MISSING.to_owned()));
                     loading.set(false);
                     return;
                 };
@@ -841,7 +841,10 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
             spawn(async move {
                 let outcome = blocking(move || match db.as_ref() {
                     Some(db) => boot::delete_transaction(db, &id),
-                    None => Err(AppError::coded(boot::CODE_SESSION_MISSING, SESSION_MISSING)),
+                    None => Err(AppError::coded(
+                        boot::CODE_SESSION_MISSING,
+                        MSG_SESSION_MISSING,
+                    )),
                 })
                 .await;
                 match outcome {

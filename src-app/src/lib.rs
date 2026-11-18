@@ -322,6 +322,7 @@ pub mod settings_categories;
 pub mod settings_currencies;
 pub mod settings_data;
 pub mod settings_scheduled;
+pub mod shell_msgs;
 pub mod shell_support;
 pub mod sidebar;
 pub mod sidebar_books;

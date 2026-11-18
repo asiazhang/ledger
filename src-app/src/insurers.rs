@@ -34,7 +34,7 @@ use crate::modal;
 use crate::nav;
 use crate::nav_model::ViewName;
 use crate::popconfirm;
-use crate::settings_data::{READ_TASK_FAILED, SESSION_MISSING, WRITE_TASK_FAILED};
+use crate::shell_msgs::{MSG_READ_TASK_FAILED, MSG_SESSION_MISSING, MSG_WRITE_TASK_FAILED};
 use crate::transactions::table_classes;
 use crate::views::field_label;
 
@@ -89,7 +89,7 @@ pub(crate) fn InsurersView() -> impl IntoElement {
         view_owner.run(move || {
             spawn(async move {
                 let Some(db) = db else {
-                    error.set(Some(SESSION_MISSING.to_owned()));
+                    error.set(Some(MSG_SESSION_MISSING.to_owned()));
                     loading.set(false);
                     return;
                 };
@@ -104,7 +104,7 @@ pub(crate) fn InsurersView() -> impl IntoElement {
                         rows.set(assembly::assemble_insurer_rows(&loaded));
                     }
                     Ok(Err(e)) => error.set(Some(e.to_string())),
-                    Err(_) => error.set(Some(READ_TASK_FAILED.to_owned())),
+                    Err(_) => error.set(Some(MSG_READ_TASK_FAILED.to_owned())),
                 }
                 loading.set(false);
             });
@@ -160,7 +160,10 @@ pub(crate) fn InsurersView() -> impl IntoElement {
                         boot::create_insurer(db, ledger_policy::InsurerInput { name: name.clone() })
                             .map(|_id| ())
                     }
-                    None => Err(AppError::coded(boot::CODE_SESSION_MISSING, SESSION_MISSING)),
+                    None => Err(AppError::coded(
+                        boot::CODE_SESSION_MISSING,
+                        MSG_SESSION_MISSING,
+                    )),
                 })
                 .await;
                 match outcome {
@@ -172,7 +175,7 @@ pub(crate) fn InsurersView() -> impl IntoElement {
                     // 码化错误 zh 原样呈现（旧壳 addFailed 同口径）；表单不清空、
                     // 用户可直接修正。
                     Ok(Err(e)) => add_error.set(Some(format!("{MSG_ADD_FAILED}: {e}"))),
-                    Err(_) => add_error.set(Some(WRITE_TASK_FAILED.to_owned())),
+                    Err(_) => add_error.set(Some(MSG_WRITE_TASK_FAILED.to_owned())),
                 }
             });
         });
@@ -223,7 +226,10 @@ pub(crate) fn InsurersView() -> impl IntoElement {
                             name: Some(name.clone()),
                         },
                     ),
-                    None => Err(AppError::coded(boot::CODE_SESSION_MISSING, SESSION_MISSING)),
+                    None => Err(AppError::coded(
+                        boot::CODE_SESSION_MISSING,
+                        MSG_SESSION_MISSING,
+                    )),
                 })
                 .await;
                 match outcome {
@@ -235,7 +241,7 @@ pub(crate) fn InsurersView() -> impl IntoElement {
                     // 重名等后端校验错误原样上抛展示，弹窗不关、内容不丢（旧
                     // 壳 updateFailed 同口径）。
                     Ok(Err(e)) => edit_error.set(Some(format!("{MSG_UPDATED_FAILED}: {e}"))),
-                    Err(_) => edit_error.set(Some(WRITE_TASK_FAILED.to_owned())),
+                    Err(_) => edit_error.set(Some(MSG_WRITE_TASK_FAILED.to_owned())),
                 }
             });
         });
@@ -253,7 +259,10 @@ pub(crate) fn InsurersView() -> impl IntoElement {
             spawn(async move {
                 let outcome = blocking(move || match db.as_ref() {
                     Some(db) => boot::delete_insurer(db, &insurer_id),
-                    None => Err(AppError::coded(boot::CODE_SESSION_MISSING, SESSION_MISSING)),
+                    None => Err(AppError::coded(
+                        boot::CODE_SESSION_MISSING,
+                        MSG_SESSION_MISSING,
+                    )),
                 })
                 .await;
                 match outcome {
@@ -262,7 +271,7 @@ pub(crate) fn InsurersView() -> impl IntoElement {
                         reload();
                     }
                     Ok(Err(e)) => status.set(Some(format!("{MSG_DELETE_FAILED}: {e}"))),
-                    Err(_) => status.set(Some(WRITE_TASK_FAILED.to_owned())),
+                    Err(_) => status.set(Some(MSG_WRITE_TASK_FAILED.to_owned())),
                 }
             });
         });
