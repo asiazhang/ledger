@@ -19,6 +19,16 @@
 //! `locked_session_db_path` 与数据安全面 `db_path_for_data_safety`（引导
 //! 记录 / 启动参数目录缺失的兜底，None 语义源不同且位于本模块下游，反向
 //! 依赖不成立）。
+//!
+//! #2162 review 留痕（收口范围与 read_load 的边界）：本模块收口对象是
+//! 「db 槽位 None 分臂的码化错误构造」这一形状——无论外层 blocking 闭包
+//! 承载读任务还是写任务，形状同构即归此，故 [`crate::settings_data`] 备
+//! 份卡的读任务位点（refresh_rows_task / refresh_auto_backup_state /
+//! pick_restore_task 读 meta 等）消费 [`session_missing_err`] 也算收口；
+//! [`crate::read_load`]（#2154）收的是视图装载「缺席守卫 + blocking +
+//! 三分口产出」三段形状，口径更窄，两者的收口范围不同但不冲突。
+//! settings_data 读任务位点只共享 None 分臂构造、不构成三段形状，故归
+//! 本模块而非 read_load。
 
 use ledger_infra::error::AppError;
 
