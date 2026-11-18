@@ -1917,12 +1917,11 @@ pub(crate) fn PoliciesView() -> impl IntoElement {
                     ),
                 )
                 .child(
-                    // 清单卡（装配三件归 list_card_of 单点，#2156）：卡片
+                    // 清单卡（装配三件归 list_card 单点，#2156）：卡片
                     // flex_1 容器 + 自然高标题 + flex_1 表格容器。
-                    list_card::list_card_of(
+                    list_card::ListCardOf::new(
                         LIST_CARD_TITLE,
                         fg,
-                        None,
                         "policy-table",
                         data_table()
                             .component_ref(&table_ref)
@@ -1939,8 +1938,8 @@ pub(crate) fn PoliciesView() -> impl IntoElement {
                             )
                             .classes(table_classes())
                             .flex_1(),
-                        None,
-                    ),
+                    )
+                    .build(),
                 )
                 .child(
                     // 操作反馈条位（成功/失败共用一条；新动作开始清回空）。

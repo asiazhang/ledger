@@ -41,7 +41,7 @@ use crate::app::StartupView;
 use crate::danger::{DangerConfirmSpec, DangerLevel, DangerOutcome, danger_confirm};
 use crate::design::font_size;
 use crate::restore_confirm::{
-    RestoreIds, RestoreIntent, app_restore_confirm_modal, restore_show_pass,
+    RestoreIds, RestoreIntent, RestoreSignals, app_restore_confirm_modal, restore_show_pass,
 };
 use crate::settings_data;
 use crate::settings_data::{READ_TASK_FAILED, WRITE_TASK_FAILED};
@@ -373,11 +373,13 @@ pub(crate) fn locked_panel(
     // 卡两侧消费同一成员；关闭路径 = 取消 / ESC / ✕——执行中不关；成功后
     // 由任务关并进会话）。
     let restore_modal = app_restore_confirm_modal(
-        surface.restore_intent,
-        surface.restore_pass,
-        surface.restore_pass_revealed,
-        surface.busy,
-        surface.restore_error,
+        RestoreSignals {
+            intent: surface.restore_intent,
+            pass: surface.restore_pass,
+            revealed: surface.restore_pass_revealed,
+            busy: surface.busy,
+            error: surface.restore_error,
+        },
         &RESTORE_IDS,
         move |_: &()| surface.run_restore_confirm(owner),
     );

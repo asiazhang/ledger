@@ -542,10 +542,9 @@ pub(crate) fn SavingsGoalsView() -> impl IntoElement {
     let archived_card = move || {
         // 装配三件归 list_card_of 单点（#2156）；渲染门控在调用方
         // （下方 child 处归档非零才挂载，旧壳 v-if 同果）。
-        list_card::list_card_of(
+        list_card::ListCardOf::new(
             ARCHIVED_TITLE,
             fg,
-            None,
             "sg-archived-table",
             data_table()
                 .columns(archived_columns)
@@ -555,8 +554,8 @@ pub(crate) fn SavingsGoalsView() -> impl IntoElement {
                 .loading_view(text("正在加载…").text_color(muted))
                 .classes(table_classes())
                 .flex_1(),
-            None,
         )
+        .build()
     };
 
     // 表单弹层内容（视图树内联函数式插槽）：新建与编辑共用；计划月存结构性
