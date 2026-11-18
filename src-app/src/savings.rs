@@ -38,7 +38,7 @@ use crate::list_card;
 use crate::modal;
 use crate::nav;
 use crate::nav_model::ViewName;
-use crate::settings_data::{READ_TASK_FAILED, SESSION_MISSING, WRITE_TASK_FAILED};
+use crate::shell_msgs::{MSG_READ_TASK_FAILED, MSG_SESSION_MISSING, MSG_WRITE_TASK_FAILED};
 use crate::transactions::{amount_color, amount_privacy_enabled, table_classes};
 use crate::views::field_label;
 use ledger_infra::error::Result as InfraResult;
@@ -93,7 +93,7 @@ pub(crate) fn SavingsGoalsView() -> impl IntoElement {
         view_owner.run(move || {
             spawn(async move {
                 let Some(db) = db else {
-                    error.set(Some(SESSION_MISSING.to_owned()));
+                    error.set(Some(MSG_SESSION_MISSING.to_owned()));
                     loading.set(false);
                     return;
                 };
@@ -118,7 +118,7 @@ pub(crate) fn SavingsGoalsView() -> impl IntoElement {
                         privacy.set(amount_privacy_enabled());
                     }
                     Ok(Err(e)) => error.set(Some(e.to_string())),
-                    Err(_) => error.set(Some(READ_TASK_FAILED.to_owned())),
+                    Err(_) => error.set(Some(MSG_READ_TASK_FAILED.to_owned())),
                 }
                 loading.set(false);
             });
@@ -279,7 +279,10 @@ pub(crate) fn SavingsGoalsView() -> impl IntoElement {
                             planned_monthly_cents,
                         },
                     ),
-                    (None, _) => Err(AppError::coded(boot::CODE_SESSION_MISSING, SESSION_MISSING)),
+                    (None, _) => Err(AppError::coded(
+                        boot::CODE_SESSION_MISSING,
+                        MSG_SESSION_MISSING,
+                    )),
                 })
                 .await;
                 match outcome {
@@ -298,7 +301,7 @@ pub(crate) fn SavingsGoalsView() -> impl IntoElement {
                         // 不加二级前缀）；弹窗不关、内容不丢。
                         form_error.set(Some(e.to_string()))
                     }
-                    Err(_) => form_error.set(Some(WRITE_TASK_FAILED.to_owned())),
+                    Err(_) => form_error.set(Some(MSG_WRITE_TASK_FAILED.to_owned())),
                 }
             });
         });
@@ -323,7 +326,10 @@ pub(crate) fn SavingsGoalsView() -> impl IntoElement {
                             boot::unarchive_savings_goal(db, &goal_id)
                         }
                     }
-                    None => Err(AppError::coded(boot::CODE_SESSION_MISSING, SESSION_MISSING)),
+                    None => Err(AppError::coded(
+                        boot::CODE_SESSION_MISSING,
+                        MSG_SESSION_MISSING,
+                    )),
                 })
                 .await;
                 match outcome {
@@ -346,7 +352,7 @@ pub(crate) fn SavingsGoalsView() -> impl IntoElement {
                             "恢复失败"
                         }
                     ))),
-                    Err(_) => status.set(Some(WRITE_TASK_FAILED.to_owned())),
+                    Err(_) => status.set(Some(MSG_WRITE_TASK_FAILED.to_owned())),
                 }
             });
         });
@@ -359,7 +365,10 @@ pub(crate) fn SavingsGoalsView() -> impl IntoElement {
             spawn(async move {
                 let outcome = blocking(move || match db.as_ref() {
                     Some(db) => boot::delete_savings_goal(db, &goal_id),
-                    None => Err(AppError::coded(boot::CODE_SESSION_MISSING, SESSION_MISSING)),
+                    None => Err(AppError::coded(
+                        boot::CODE_SESSION_MISSING,
+                        MSG_SESSION_MISSING,
+                    )),
                 })
                 .await;
                 match outcome {
@@ -368,7 +377,7 @@ pub(crate) fn SavingsGoalsView() -> impl IntoElement {
                         reload();
                     }
                     Ok(Err(e)) => status.set(Some(format!("删除失败: {e}"))),
-                    Err(_) => status.set(Some(WRITE_TASK_FAILED.to_owned())),
+                    Err(_) => status.set(Some(MSG_WRITE_TASK_FAILED.to_owned())),
                 }
             });
         });

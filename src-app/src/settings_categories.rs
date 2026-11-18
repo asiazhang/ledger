@@ -40,7 +40,7 @@ use crate::modal::app_modal;
 use crate::pinyin_select;
 use crate::popconfirm;
 use crate::settings::status_line;
-use crate::settings_data::{READ_TASK_FAILED, SESSION_MISSING, WRITE_TASK_FAILED};
+use crate::shell_msgs::{MSG_READ_TASK_FAILED, MSG_SESSION_MISSING, MSG_WRITE_TASK_FAILED};
 use crate::{signals, views};
 
 // ---------------------------------------------------------------------------
@@ -240,7 +240,7 @@ pub(crate) fn categories_pane(palette: views::ViewPalette) -> View {
                         Some(db) => boot::category_rows(db),
                         None => Err(ledger_infra::error::AppError::coded(
                             boot::CODE_SESSION_MISSING,
-                            SESSION_MISSING,
+                            MSG_SESSION_MISSING,
                         )),
                     })
                     .await;
@@ -250,7 +250,7 @@ pub(crate) fn categories_pane(palette: views::ViewPalette) -> View {
                             error.set(None);
                         }
                         Ok(Err(e)) => error.set(Some(format!("{LOAD_FAILED_PREFIX}{e}"))),
-                        Err(_) => error.set(Some(READ_TASK_FAILED.to_owned())),
+                        Err(_) => error.set(Some(MSG_READ_TASK_FAILED.to_owned())),
                     }
                     loading.set(false);
                 });
@@ -306,7 +306,7 @@ pub(crate) fn categories_pane(palette: views::ViewPalette) -> View {
                     ),
                     None => Err(ledger_infra::error::AppError::coded(
                         boot::CODE_SESSION_MISSING,
-                        SESSION_MISSING,
+                        MSG_SESSION_MISSING,
                     )),
                 })
                 .await;
@@ -320,7 +320,7 @@ pub(crate) fn categories_pane(palette: views::ViewPalette) -> View {
                     Ok(Err(e)) => {
                         create_error.set(Some(format!("{MSG_ADD_FAILED_PREFIX}{e}")));
                     }
-                    Err(_) => create_error.set(Some(WRITE_TASK_FAILED.to_owned())),
+                    Err(_) => create_error.set(Some(MSG_WRITE_TASK_FAILED.to_owned())),
                 }
             });
         });
@@ -373,7 +373,7 @@ pub(crate) fn categories_pane(palette: views::ViewPalette) -> View {
                     ),
                     None => Err(ledger_infra::error::AppError::coded(
                         boot::CODE_SESSION_MISSING,
-                        SESSION_MISSING,
+                        MSG_SESSION_MISSING,
                     )),
                 })
                 .await;
@@ -385,7 +385,7 @@ pub(crate) fn categories_pane(palette: views::ViewPalette) -> View {
                     Ok(Err(e)) => {
                         edit_error.set(Some(format!("{MSG_UPDATE_FAILED_PREFIX}{e}")));
                     }
-                    Err(_) => edit_error.set(Some(WRITE_TASK_FAILED.to_owned())),
+                    Err(_) => edit_error.set(Some(MSG_WRITE_TASK_FAILED.to_owned())),
                 }
             });
         });
@@ -401,7 +401,7 @@ pub(crate) fn categories_pane(palette: views::ViewPalette) -> View {
                     Some(db) => boot::delete_category(db, &id),
                     None => Err(ledger_infra::error::AppError::coded(
                         boot::CODE_SESSION_MISSING,
-                        SESSION_MISSING,
+                        MSG_SESSION_MISSING,
                     )),
                 })
                 .await;
@@ -410,7 +410,7 @@ pub(crate) fn categories_pane(palette: views::ViewPalette) -> View {
                     Ok(Err(e)) => on_write_error(MSG_DELETE_FAILED_PREFIX, e),
                     Err(_) => on_write_error(
                         MSG_DELETE_FAILED_PREFIX,
-                        ledger_infra::error::AppError::Db(WRITE_TASK_FAILED.to_owned()),
+                        ledger_infra::error::AppError::Db(MSG_WRITE_TASK_FAILED.to_owned()),
                     ),
                 }
             });
@@ -441,7 +441,7 @@ pub(crate) fn categories_pane(palette: views::ViewPalette) -> View {
                     Some(db) => boot::reorder_categories(db, items),
                     None => Err(ledger_infra::error::AppError::coded(
                         boot::CODE_SESSION_MISSING,
-                        SESSION_MISSING,
+                        MSG_SESSION_MISSING,
                     )),
                 })
                 .await;
@@ -450,7 +450,7 @@ pub(crate) fn categories_pane(palette: views::ViewPalette) -> View {
                     Ok(Err(e)) => on_write_error(MSG_SORT_FAILED_PREFIX, e),
                     Err(_) => on_write_error(
                         MSG_SORT_FAILED_PREFIX,
-                        ledger_infra::error::AppError::Db(WRITE_TASK_FAILED.to_owned()),
+                        ledger_infra::error::AppError::Db(MSG_WRITE_TASK_FAILED.to_owned()),
                     ),
                 }
             });

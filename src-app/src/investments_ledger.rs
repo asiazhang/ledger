@@ -65,7 +65,7 @@ use crate::assembly::CategoryOption;
 use crate::design::font_size;
 use crate::investments::PanePalette;
 use crate::read_load::{ReadLoad, blocking_read};
-use crate::settings_data::{READ_TASK_FAILED, SESSION_MISSING, WRITE_TASK_FAILED};
+use crate::shell_msgs::{MSG_READ_TASK_FAILED, MSG_SESSION_MISSING, MSG_WRITE_TASK_FAILED};
 use crate::{
     app, assembly, boot, context_menu, danger, investments, investments_form, modal, multi_select,
     period, period_row, pinyin_select, signals, transactions,
@@ -654,7 +654,7 @@ pub(crate) fn LedgerPane() -> impl IntoElement {
                 }
                 ReadLoad::Coded(e) => error.set(Some(format!("{LOAD_FAILED_PREFIX}{e}"))),
                 ReadLoad::MissingDb | ReadLoad::TaskFailed => {
-                    error.set(Some(format!("{LOAD_FAILED_PREFIX}{READ_TASK_FAILED}")))
+                    error.set(Some(format!("{LOAD_FAILED_PREFIX}{MSG_READ_TASK_FAILED}")))
                 }
             }
             let _ = (filter_account, filter_instrument);
@@ -1104,7 +1104,7 @@ fn perform_delete(
     view_owner.run(move || {
         spawn(async move {
             let Some(db) = db else {
-                delete_error.set(Some(SESSION_MISSING.to_owned()));
+                delete_error.set(Some(MSG_SESSION_MISSING.to_owned()));
                 return;
             };
             let target = id.clone();
@@ -1116,7 +1116,7 @@ fn perform_delete(
                     reload();
                 }
                 Ok(Err(e)) => delete_error.set(Some(e.to_string())),
-                Err(_) => delete_error.set(Some(WRITE_TASK_FAILED.to_owned())),
+                Err(_) => delete_error.set(Some(MSG_WRITE_TASK_FAILED.to_owned())),
             }
         });
     });

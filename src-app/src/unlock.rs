@@ -44,7 +44,8 @@ use crate::restore_confirm::{
     RestoreIds, RestoreIntent, RestoreSignals, app_restore_confirm_modal, restore_show_pass,
 };
 use crate::settings_data;
-use crate::settings_data::{READ_TASK_FAILED, WRITE_TASK_FAILED};
+use crate::shell_msgs;
+use crate::shell_msgs::{MSG_READ_TASK_FAILED, MSG_WRITE_TASK_FAILED};
 use crate::{app, boot, http_host, views};
 
 // ---------------------------------------------------------------------------
@@ -218,13 +219,13 @@ impl LockedSurface {
                 {
                     Ok(Ok(meta)) => meta,
                     Ok(Err(e)) => {
-                        surface.fail(format!("{}{e}", settings_data::MSG_META_FAILED_PREFIX));
+                        surface.fail(format!("{}{e}", shell_msgs::MSG_META_FAILED_PREFIX));
                         return;
                     }
                     Err(_) => {
                         surface.fail(format!(
-                            "{}{READ_TASK_FAILED}",
-                            settings_data::MSG_META_FAILED_PREFIX
+                            "{}{MSG_READ_TASK_FAILED}",
+                            shell_msgs::MSG_META_FAILED_PREFIX
                         ));
                         return;
                     }
@@ -234,14 +235,14 @@ impl LockedSurface {
                     Ok(Err(e)) => {
                         surface.fail(format!(
                             "{}{e}",
-                            settings_data::MSG_ENCRYPTION_STATUS_FAILED_PREFIX
+                            shell_msgs::MSG_ENCRYPTION_STATUS_FAILED_PREFIX
                         ));
                         return;
                     }
                     Err(_) => {
                         surface.fail(format!(
-                            "{}{READ_TASK_FAILED}",
-                            settings_data::MSG_ENCRYPTION_STATUS_FAILED_PREFIX
+                            "{}{MSG_READ_TASK_FAILED}",
+                            shell_msgs::MSG_ENCRYPTION_STATUS_FAILED_PREFIX
                         ));
                         return;
                     }
@@ -325,7 +326,7 @@ impl LockedSurface {
                     }
                     Err(_) => {
                         surface.restore_error.set(Some(format!(
-                            "{}{WRITE_TASK_FAILED}",
+                            "{}{MSG_WRITE_TASK_FAILED}",
                             settings_data::RESTORE_FAIL_PREFIX
                         )));
                         surface.busy.set(false);

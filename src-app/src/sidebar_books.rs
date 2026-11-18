@@ -35,7 +35,7 @@ use crate::nav;
 use crate::nav_model::{self, NavRequest};
 use crate::overlay;
 use crate::settings;
-use crate::settings_data::WRITE_TASK_FAILED;
+use crate::shell_msgs::MSG_WRITE_TASK_FAILED;
 use crate::views;
 
 // ---------------------------------------------------------------------------
@@ -185,9 +185,9 @@ pub fn book_switch_area() -> impl IntoElement {
                             refresh(owner, state);
                         }
                         Ok(Err(e)) => state.status.set(Some(format!("{ACTION_FAILED_PREFIX}{e}"))),
-                        Err(_) => state
-                            .status
-                            .set(Some(format!("{ACTION_FAILED_PREFIX}{WRITE_TASK_FAILED}"))),
+                        Err(_) => state.status.set(Some(format!(
+                            "{ACTION_FAILED_PREFIX}{MSG_WRITE_TASK_FAILED}"
+                        ))),
                     }
                 })
             });

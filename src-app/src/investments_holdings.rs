@@ -52,7 +52,7 @@ use crate::assembly::{CategoryOption, CurrencyTable, PnlSemantic};
 use crate::design::font_size;
 use crate::investments::{HoldingsSortColumn, HoldingsSorter};
 use crate::read_load::{ReadLoad, blocking_read};
-use crate::settings_data::READ_TASK_FAILED;
+use crate::shell_msgs::MSG_READ_TASK_FAILED;
 use crate::{
     app, assembly, boot, investment_sync, investments, popover, select, signals, transactions,
 };
@@ -494,7 +494,7 @@ pub(crate) fn HoldingsPane() -> impl IntoElement {
                 }
                 ReadLoad::Coded(e) => error.set(Some(e.to_string())),
                 ReadLoad::MissingDb | ReadLoad::TaskFailed => {
-                    error.set(Some(READ_TASK_FAILED.to_owned()))
+                    error.set(Some(MSG_READ_TASK_FAILED.to_owned()))
                 }
             }
         });

@@ -53,7 +53,7 @@ use crate::list_card;
 use crate::modal;
 use crate::nav_model::{NavRequest, ViewName};
 use crate::popconfirm;
-use crate::settings_data::{READ_TASK_FAILED, SESSION_MISSING, WRITE_TASK_FAILED};
+use crate::shell_msgs::{MSG_READ_TASK_FAILED, MSG_SESSION_MISSING, MSG_WRITE_TASK_FAILED};
 use crate::transactions::{amount_privacy_enabled, table_classes};
 use crate::views::field_label;
 use crate::{nav, signals};
@@ -121,7 +121,7 @@ pub(crate) fn MerchantsView() -> impl IntoElement {
         view_owner.run(move || {
             spawn(async move {
                 let Some(dbc) = db.clone() else {
-                    error.set(Some(SESSION_MISSING.to_owned()));
+                    error.set(Some(MSG_SESSION_MISSING.to_owned()));
                     loading.set(false);
                     return;
                 };
@@ -150,7 +150,7 @@ pub(crate) fn MerchantsView() -> impl IntoElement {
                             },
                         ));
                     }
-                    None => error.set(Some(READ_TASK_FAILED.to_owned())),
+                    None => error.set(Some(MSG_READ_TASK_FAILED.to_owned())),
                 }
                 loading.set(false);
             });
@@ -214,7 +214,10 @@ pub(crate) fn MerchantsView() -> impl IntoElement {
                         db,
                         ledger_merchants::MerchantInput { name: name.clone() },
                     ),
-                    None => Err(AppError::coded(boot::CODE_SESSION_MISSING, SESSION_MISSING)),
+                    None => Err(AppError::coded(
+                        boot::CODE_SESSION_MISSING,
+                        MSG_SESSION_MISSING,
+                    )),
                 })
                 .await;
                 match outcome {
@@ -227,7 +230,7 @@ pub(crate) fn MerchantsView() -> impl IntoElement {
                     Ok(Err(e)) => {
                         create_error.set(Some(format!("{MSG_ADD_FAILED}: {e}")));
                     }
-                    Err(_) => create_error.set(Some(WRITE_TASK_FAILED.to_owned())),
+                    Err(_) => create_error.set(Some(MSG_WRITE_TASK_FAILED.to_owned())),
                 }
             });
         });
@@ -369,7 +372,10 @@ pub(crate) fn MerchantsView() -> impl IntoElement {
                             name: Some(name.clone()),
                         },
                     ),
-                    None => Err(AppError::coded(boot::CODE_SESSION_MISSING, SESSION_MISSING)),
+                    None => Err(AppError::coded(
+                        boot::CODE_SESSION_MISSING,
+                        MSG_SESSION_MISSING,
+                    )),
                 })
                 .await;
                 match outcome {
@@ -385,7 +391,7 @@ pub(crate) fn MerchantsView() -> impl IntoElement {
                     Ok(Err(e)) => {
                         edit_error.set(Some(format!("{MSG_UPDATE_FAILED}: {e}")));
                     }
-                    Err(_) => edit_error.set(Some(WRITE_TASK_FAILED.to_owned())),
+                    Err(_) => edit_error.set(Some(MSG_WRITE_TASK_FAILED.to_owned())),
                 }
             });
         });
@@ -405,7 +411,10 @@ pub(crate) fn MerchantsView() -> impl IntoElement {
             spawn(async move {
                 let outcome = blocking(move || match db.as_ref() {
                     Some(db) => boot::delete_merchant(db, &merchant_id),
-                    None => Err(AppError::coded(boot::CODE_SESSION_MISSING, SESSION_MISSING)),
+                    None => Err(AppError::coded(
+                        boot::CODE_SESSION_MISSING,
+                        MSG_SESSION_MISSING,
+                    )),
                 })
                 .await;
                 match outcome {
@@ -417,7 +426,7 @@ pub(crate) fn MerchantsView() -> impl IntoElement {
                         signals::notify_transactions_invalidated();
                     }
                     Ok(Err(e)) => status.set(Some(format!("{MSG_DELETE_FAILED}: {e}"))),
-                    Err(_) => status.set(Some(WRITE_TASK_FAILED.to_owned())),
+                    Err(_) => status.set(Some(MSG_WRITE_TASK_FAILED.to_owned())),
                 }
             });
         });

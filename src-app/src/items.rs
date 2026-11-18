@@ -63,7 +63,7 @@ use crate::nav_model::{NavRequest, ViewName};
 use crate::pinyin_select;
 use crate::popconfirm;
 use crate::read_load::{ReadLoad, blocking_read};
-use crate::settings_data::{READ_TASK_FAILED, SESSION_MISSING, WRITE_TASK_FAILED};
+use crate::shell_msgs::{MSG_READ_TASK_FAILED, MSG_SESSION_MISSING, MSG_WRITE_TASK_FAILED};
 use crate::transactions::table_classes;
 use crate::views::field_label;
 use crate::{nav, signals};
@@ -277,12 +277,12 @@ pub(crate) fn ItemsView() -> impl IntoElement {
                         base_currency.set(base);
                         candidates.set(CandidatesSnap(candidate_rows));
                     }
-                    // 旧折叠口径：码化错误与任务退出同价（READ_TASK_FAILED），
+                    // 旧折叠口径：码化错误与任务退出同价（MSG_READ_TASK_FAILED），
                     // 会话缺席是另一句「账本库会话缺失」——三分口文案各异，不收
                     // 进守卫。
-                    ReadLoad::MissingDb => error.set(Some(SESSION_MISSING.to_owned())),
+                    ReadLoad::MissingDb => error.set(Some(MSG_SESSION_MISSING.to_owned())),
                     ReadLoad::Coded(_) | ReadLoad::TaskFailed => {
-                        error.set(Some(READ_TASK_FAILED.to_owned()))
+                        error.set(Some(MSG_READ_TASK_FAILED.to_owned()))
                     }
                 }
                 loading.set(false);
@@ -462,7 +462,10 @@ pub(crate) fn ItemsView() -> impl IntoElement {
             spawn(async move {
                 let outcome = blocking(move || match db.as_ref() {
                     Some(db) => boot::update_item(db, &id, input),
-                    None => Err(AppError::coded(boot::CODE_SESSION_MISSING, SESSION_MISSING)),
+                    None => Err(AppError::coded(
+                        boot::CODE_SESSION_MISSING,
+                        MSG_SESSION_MISSING,
+                    )),
                 })
                 .await;
                 match outcome {
@@ -478,7 +481,7 @@ pub(crate) fn ItemsView() -> impl IntoElement {
                     Ok(Err(e)) => {
                         edit_error.set(Some(format!("{MSG_SAVE_FAILED}: {e}")));
                     }
-                    Err(_) => edit_error.set(Some(WRITE_TASK_FAILED.to_owned())),
+                    Err(_) => edit_error.set(Some(MSG_WRITE_TASK_FAILED.to_owned())),
                 }
             });
         });
@@ -566,7 +569,10 @@ pub(crate) fn ItemsView() -> impl IntoElement {
             spawn(async move {
                 let outcome = blocking(move || match db.as_ref() {
                     Some(db) => boot::dispose_item(db, &id, input),
-                    None => Err(AppError::coded(boot::CODE_SESSION_MISSING, SESSION_MISSING)),
+                    None => Err(AppError::coded(
+                        boot::CODE_SESSION_MISSING,
+                        MSG_SESSION_MISSING,
+                    )),
                 })
                 .await;
                 match outcome {
@@ -580,7 +586,7 @@ pub(crate) fn ItemsView() -> impl IntoElement {
                         signals::notify_transactions_invalidated();
                     }
                     Ok(Err(e)) => dispose_error.set(Some(format!("{MSG_DISPOSE_FAILED}: {e}"))),
-                    Err(_) => dispose_error.set(Some(WRITE_TASK_FAILED.to_owned())),
+                    Err(_) => dispose_error.set(Some(MSG_WRITE_TASK_FAILED.to_owned())),
                 }
             });
         });
@@ -594,7 +600,10 @@ pub(crate) fn ItemsView() -> impl IntoElement {
             spawn(async move {
                 let outcome = blocking(move || match db.as_ref() {
                     Some(db) => boot::delete_item(db, &id),
-                    None => Err(AppError::coded(boot::CODE_SESSION_MISSING, SESSION_MISSING)),
+                    None => Err(AppError::coded(
+                        boot::CODE_SESSION_MISSING,
+                        MSG_SESSION_MISSING,
+                    )),
                 })
                 .await;
                 match outcome {
@@ -603,7 +612,7 @@ pub(crate) fn ItemsView() -> impl IntoElement {
                         signals::notify_transactions_invalidated();
                     }
                     Ok(Err(e)) => status.set(Some(format!("{MSG_DELETE_FAILED}: {e}"))),
-                    Err(_) => status.set(Some(WRITE_TASK_FAILED.to_owned())),
+                    Err(_) => status.set(Some(MSG_WRITE_TASK_FAILED.to_owned())),
                 }
             });
         });
@@ -650,13 +659,16 @@ pub(crate) fn ItemsView() -> impl IntoElement {
             spawn(async move {
                 let outcome = blocking(move || match db.as_ref() {
                     Some(db) => boot::item_cost(db, &id, Some(&date_text)),
-                    None => Err(AppError::coded(boot::CODE_SESSION_MISSING, SESSION_MISSING)),
+                    None => Err(AppError::coded(
+                        boot::CODE_SESSION_MISSING,
+                        MSG_SESSION_MISSING,
+                    )),
                 })
                 .await;
                 match outcome {
                     Ok(Ok(cost)) => detail_cost.set(RecalcSnap(Some(cost))),
                     Ok(Err(e)) => detail_error.set(Some(format!("{MSG_RECALC_FAILED}: {e}"))),
-                    Err(_) => detail_error.set(Some(READ_TASK_FAILED.to_owned())),
+                    Err(_) => detail_error.set(Some(MSG_READ_TASK_FAILED.to_owned())),
                 }
             });
         });
@@ -1684,7 +1696,10 @@ pub(crate) fn add_item_modal(
             spawn(async move {
                 let outcome = blocking(move || match db.as_ref() {
                     Some(db) => boot::create_item(db, input),
-                    None => Err(AppError::coded(boot::CODE_SESSION_MISSING, SESSION_MISSING)),
+                    None => Err(AppError::coded(
+                        boot::CODE_SESSION_MISSING,
+                        MSG_SESSION_MISSING,
+                    )),
                 })
                 .await;
                 match outcome {
@@ -1697,7 +1712,7 @@ pub(crate) fn add_item_modal(
                         signals::notify_transactions_invalidated();
                     }
                     Ok(Err(e)) => error.set(Some(format!("加入物品失败: {e}"))),
-                    Err(_) => error.set(Some(WRITE_TASK_FAILED.to_owned())),
+                    Err(_) => error.set(Some(MSG_WRITE_TASK_FAILED.to_owned())),
                 }
             });
         });

@@ -76,7 +76,7 @@ use crate::app::book_dir;
 use crate::assembly::CategoryOption;
 use crate::danger::{DangerConfirmSpec, DangerLevel, DangerOutcome, danger_confirm};
 use crate::design::font_size;
-use crate::settings_data::{READ_TASK_FAILED, SESSION_MISSING, WRITE_TASK_FAILED};
+use crate::shell_msgs::{MSG_READ_TASK_FAILED, MSG_SESSION_MISSING, MSG_WRITE_TASK_FAILED};
 use crate::{boot, keep_mounted, nav, nav_model, select, updater, views};
 
 // ---------------------------------------------------------------------------
@@ -613,7 +613,7 @@ fn log_card(palette: views::ViewPalette) -> View {
         owner.run(move || {
             spawn(async move {
                 let Some(db) = db_slot else {
-                    status.set(Some(SESSION_MISSING.to_owned()));
+                    status.set(Some(MSG_SESSION_MISSING.to_owned()));
                     return;
                 };
                 match blocking(move || boot::log_level(&db)).await {
@@ -625,7 +625,7 @@ fn log_card(palette: views::ViewPalette) -> View {
                     Ok(Err(e)) => {
                         status.set(Some(format!("{LOG_LOAD_PREFIX}{e}")));
                     }
-                    Err(_) => status.set(Some(READ_TASK_FAILED.to_owned())),
+                    Err(_) => status.set(Some(MSG_READ_TASK_FAILED.to_owned())),
                 }
             });
         });
@@ -646,7 +646,7 @@ fn log_card(palette: views::ViewPalette) -> View {
                 spawn(async move {
                     let Some(db) = db_slot else {
                         level.set(reset);
-                        status.set(Some(SESSION_MISSING.to_owned()));
+                        status.set(Some(MSG_SESSION_MISSING.to_owned()));
                         return;
                     };
                     match blocking(move || boot::set_log_level(&db, &target)).await {
@@ -661,7 +661,7 @@ fn log_card(palette: views::ViewPalette) -> View {
                         }
                         Err(_) => {
                             level.set(reset);
-                            status.set(Some(WRITE_TASK_FAILED.to_owned()));
+                            status.set(Some(MSG_WRITE_TASK_FAILED.to_owned()));
                         }
                     }
                 });
@@ -851,7 +851,7 @@ fn location_card(palette: views::ViewPalette) -> View {
                 spawn(async move {
                     let Some(launch) = launch else {
                         info.set(None);
-                        status.set(Some(SESSION_MISSING.to_owned()));
+                        status.set(Some(MSG_SESSION_MISSING.to_owned()));
                         return;
                     };
                     let outcome = blocking(move || boot::data_location_info(&launch)).await;
@@ -927,7 +927,7 @@ fn location_card(palette: views::ViewPalette) -> View {
                         (Some(launch), SubmitKind::RestoreAdopt) => {
                             to_flow(boot::restore_default_data_location(&launch, true))
                         }
-                        (None, _) => SubmitFlow::Rejected(SESSION_MISSING.to_owned()),
+                        (None, _) => SubmitFlow::Rejected(MSG_SESSION_MISSING.to_owned()),
                     })
                     .await;
                     // 二选一挂起目标回填：基础设施二选一信号不带目标（target_dir
@@ -958,7 +958,9 @@ fn location_card(palette: views::ViewPalette) -> View {
                             }
                             apply_flow(flow);
                         }
-                        Err(_) => apply_flow(SubmitFlow::Rejected(WRITE_TASK_FAILED.to_owned())),
+                        Err(_) => {
+                            apply_flow(SubmitFlow::Rejected(MSG_WRITE_TASK_FAILED.to_owned()))
+                        }
                     }
                 });
             });

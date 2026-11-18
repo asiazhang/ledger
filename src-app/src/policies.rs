@@ -54,7 +54,7 @@ use crate::nav_model::ViewName;
 use crate::pinyin_select;
 use crate::popconfirm;
 use crate::select;
-use crate::settings_data::{READ_TASK_FAILED, SESSION_MISSING, WRITE_TASK_FAILED};
+use crate::shell_msgs::{MSG_READ_TASK_FAILED, MSG_SESSION_MISSING, MSG_WRITE_TASK_FAILED};
 use crate::transactions::table_classes;
 use crate::views::field_label;
 use crate::{nav, signals};
@@ -611,7 +611,7 @@ pub(crate) fn PoliciesView() -> impl IntoElement {
         view_owner.run(move || {
             spawn(async move {
                 let Some(db) = db else {
-                    error.set(Some(SESSION_MISSING.to_owned()));
+                    error.set(Some(MSG_SESSION_MISSING.to_owned()));
                     loading.set(false);
                     return;
                 };
@@ -641,7 +641,7 @@ pub(crate) fn PoliciesView() -> impl IntoElement {
                         base_currency.set(base);
                     }
                     Ok(Err(e)) => error.set(Some(e.to_string())),
-                    Err(_) => error.set(Some(READ_TASK_FAILED.to_owned())),
+                    Err(_) => error.set(Some(MSG_READ_TASK_FAILED.to_owned())),
                 }
                 loading.set(false);
             });
@@ -806,7 +806,10 @@ pub(crate) fn PoliciesView() -> impl IntoElement {
                 let outcome = blocking(move || match db.as_ref() {
                     Some(db) => boot::plan_rows(db)
                         .map(|plans| PlanSnap(plans.iter().map(Segment::from).collect())),
-                    None => Err(AppError::coded(boot::CODE_SESSION_MISSING, SESSION_MISSING)),
+                    None => Err(AppError::coded(
+                        boot::CODE_SESSION_MISSING,
+                        MSG_SESSION_MISSING,
+                    )),
                 })
                 .await;
                 match outcome {
@@ -815,7 +818,7 @@ pub(crate) fn PoliciesView() -> impl IntoElement {
                         segments_error.set(None);
                     }
                     Ok(Err(e)) => segments_error.set(Some(format!("{MSG_SEGMENTS_FAILED}: {e}"))),
-                    Err(_) => segments_error.set(Some(READ_TASK_FAILED.to_owned())),
+                    Err(_) => segments_error.set(Some(MSG_READ_TASK_FAILED.to_owned())),
                 }
             });
         });
@@ -829,7 +832,10 @@ pub(crate) fn PoliciesView() -> impl IntoElement {
             spawn(async move {
                 let outcome = blocking(move || match db.as_ref() {
                     Some(db) => boot::delete_policy(db, &id),
-                    None => Err(AppError::coded(boot::CODE_SESSION_MISSING, SESSION_MISSING)),
+                    None => Err(AppError::coded(
+                        boot::CODE_SESSION_MISSING,
+                        MSG_SESSION_MISSING,
+                    )),
                 })
                 .await;
                 match outcome {
@@ -841,7 +847,7 @@ pub(crate) fn PoliciesView() -> impl IntoElement {
                         signals::notify_transactions_invalidated();
                     }
                     Ok(Err(e)) => status.set(Some(format!("{MSG_DELETE_FAILED}: {e}"))),
-                    Err(_) => status.set(Some(WRITE_TASK_FAILED.to_owned())),
+                    Err(_) => status.set(Some(MSG_WRITE_TASK_FAILED.to_owned())),
                 }
             });
         });
@@ -1101,7 +1107,10 @@ pub(crate) fn PoliciesView() -> impl IntoElement {
                             }
                         }
                     }
-                    None => Err(AppError::coded(boot::CODE_SESSION_MISSING, SESSION_MISSING)),
+                    None => Err(AppError::coded(
+                        boot::CODE_SESSION_MISSING,
+                        MSG_SESSION_MISSING,
+                    )),
                 })
                 .await;
                 match outcome {
@@ -1124,7 +1133,7 @@ pub(crate) fn PoliciesView() -> impl IntoElement {
                         // 同口径不回滚）：清单重读让已落库行即时可见。
                         reload();
                     }
-                    Err(_) => form_error.set(Some(WRITE_TASK_FAILED.to_owned())),
+                    Err(_) => form_error.set(Some(MSG_WRITE_TASK_FAILED.to_owned())),
                 }
             });
         });
@@ -1229,7 +1238,10 @@ pub(crate) fn PoliciesView() -> impl IntoElement {
                         input.policy_id = Some(batch_policy_id);
                         boot::create_scheduled_plan(db, input)
                     }
-                    None => Err(AppError::coded(boot::CODE_SESSION_MISSING, SESSION_MISSING)),
+                    None => Err(AppError::coded(
+                        boot::CODE_SESSION_MISSING,
+                        MSG_SESSION_MISSING,
+                    )),
                 })
                 .await;
                 match outcome {
@@ -1248,7 +1260,7 @@ pub(crate) fn PoliciesView() -> impl IntoElement {
                         load_segments(policy_id);
                     }
                     Ok(Err(e)) => seg_error.set(Some(format!("{MSG_AGREEMENT_FAILED}: {e}"))),
-                    Err(_) => seg_error.set(Some(WRITE_TASK_FAILED.to_owned())),
+                    Err(_) => seg_error.set(Some(MSG_WRITE_TASK_FAILED.to_owned())),
                 }
             });
         });

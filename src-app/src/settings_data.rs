@@ -71,6 +71,10 @@ use crate::restore_confirm::{
     RestoreIds, RestoreIntent, RestoreSignals, app_restore_confirm_modal,
 };
 use crate::settings::{card, status_line};
+use crate::shell_msgs::{
+    MSG_ENCRYPTION_STATUS_FAILED_PREFIX, MSG_META_FAILED_PREFIX, MSG_READ_TASK_FAILED,
+    MSG_SESSION_MISSING, MSG_WRITE_TASK_FAILED,
+};
 use crate::views::view_palette;
 use crate::{
     backup_entry, backup_host, boot, nav, nav_model, select, settings, signals, unlock, views,
@@ -146,8 +150,6 @@ pub(crate) const RESTORE_TO_ENCRYPTED_WARN: &str =
 pub(crate) const RESTORE_FAIL_PREFIX: &str = "恢复失败: ";
 const MSG_RESTORE_OK: &str = "恢复成功，请重启应用进入新库";
 
-pub(crate) const MSG_META_FAILED_PREFIX: &str = "读取备份信息失败: ";
-pub(crate) const MSG_ENCRYPTION_STATUS_FAILED_PREFIX: &str = "读取加密状态失败: ";
 const MSG_LIST_FAILED_PREFIX: &str = "读取备份列表失败: ";
 const MSG_AUTO_STATE_FAILED_PREFIX: &str = "读取自动备份状态失败: ";
 const MSG_AUTO_ON: &str = "自动备份已开启";
@@ -188,11 +190,6 @@ const PRUNE_CONFIRM_DETAIL: &str =
 const PRUNE_CONFIRM_OK: &str = "确认清理";
 const PRUNE_CONFIRM_CANCEL: &str = "取消";
 pub(crate) const FILTER_NAME: &str = "开源记账备份";
-/// 任务退出三词面单一来源（旧壳命令层同守卫词表；壳内各视图模块统一消费
-/// 本源，不再各自重复声明——#2147 设置面收口、#2149 全壳收口）。
-pub(crate) const SESSION_MISSING: &str = "内部错误：账本库会话缺失";
-pub(crate) const READ_TASK_FAILED: &str = "内部错误：读任务异常退出";
-pub(crate) const WRITE_TASK_FAILED: &str = "内部错误：写入任务异常退出";
 
 const ENCRYPTION_HINT: &str = "为账本数据库开启文件级加密：磁盘上的库文件与备份不再能被任意工具直接阅读。开启是一次自动完成的整库转换，失败时原库原样保留。";
 const ENCRYPTION_WARN_TITLE: &str = "开启前请确认";
@@ -850,7 +847,7 @@ fn refresh_rows_task(owner: Owner, state: BackupUiState) {
                 Some(_) => Ok(Vec::new()),
                 None => Err(ledger_infra::error::AppError::coded(
                     boot::CODE_SESSION_MISSING,
-                    SESSION_MISSING,
+                    MSG_SESSION_MISSING,
                 )),
             })
             .await;
@@ -868,7 +865,7 @@ fn refresh_rows_task(owner: Owner, state: BackupUiState) {
                 }
                 Err(_) => {
                     state.rows.set(Vec::new());
-                    state.rows_error.set(Some(READ_TASK_FAILED.to_owned()));
+                    state.rows_error.set(Some(MSG_READ_TASK_FAILED.to_owned()));
                 }
             }
         })
@@ -885,7 +882,7 @@ fn refresh_auto_backup_state(owner: Owner, state: BackupUiState) {
                 Some(db) => boot::auto_backup_state(db),
                 None => Err(ledger_infra::error::AppError::coded(
                     boot::CODE_SESSION_MISSING,
-                    SESSION_MISSING,
+                    MSG_SESSION_MISSING,
                 )),
             })
             .await;
@@ -902,7 +899,7 @@ fn refresh_auto_backup_state(owner: Owner, state: BackupUiState) {
                 Ok(Err(e)) => state
                     .auto_error
                     .set(Some(format!("{MSG_AUTO_STATE_FAILED_PREFIX}{e}"))),
-                Err(_) => state.auto_error.set(Some(READ_TASK_FAILED.to_owned())),
+                Err(_) => state.auto_error.set(Some(MSG_READ_TASK_FAILED.to_owned())),
             }
         })
     });
@@ -921,7 +918,7 @@ fn run_backup_task(owner: Owner, state: BackupUiState, target: PathBuf) {
                 Some(db) => boot::create_backup(db, &target, backup_entry::APP_VERSION),
                 None => Err(ledger_infra::error::AppError::coded(
                     boot::CODE_SESSION_MISSING,
-                    SESSION_MISSING,
+                    MSG_SESSION_MISSING,
                 )),
             })
             .await;
@@ -950,7 +947,7 @@ fn run_backup_task(owner: Owner, state: BackupUiState, target: PathBuf) {
                     .status
                     .set(Some(format!("{MSG_BACKUP_FAILED_PREFIX}{e}"))),
                 Err(_) => state.status.set(Some(format!(
-                    "{MSG_BACKUP_FAILED_PREFIX}{WRITE_TASK_FAILED}"
+                    "{MSG_BACKUP_FAILED_PREFIX}{MSG_WRITE_TASK_FAILED}"
                 ))),
             }
         })
@@ -976,7 +973,7 @@ fn prune_to_limit_task(owner: Owner, state: BackupUiState) {
             }),
             None => Err(ledger_infra::error::AppError::coded(
                 boot::CODE_SESSION_MISSING,
-                SESSION_MISSING,
+                MSG_SESSION_MISSING,
             )),
         })
         .await;
@@ -997,7 +994,7 @@ fn prune_to_limit_task(owner: Owner, state: BackupUiState) {
                 }
             }
             Ok(Err(e)) => state.status.set(Some(format!("{MSG_PRUNE_FAILED_PREFIX}{e}"))),
-            Err(_) => state.status.set(Some(format!("{MSG_PRUNE_FAILED_PREFIX}{WRITE_TASK_FAILED}"))),
+            Err(_) => state.status.set(Some(format!("{MSG_PRUNE_FAILED_PREFIX}{MSG_WRITE_TASK_FAILED}"))),
         }
         refresh_rows_task(owner, state);
         refresh_auto_backup_state(owner, state);
@@ -1013,7 +1010,7 @@ fn apply_auto_toggle(owner: Owner, state: BackupUiState, enabled: bool) {
                 Some(db) => boot::set_auto_backup_enabled(db, enabled),
                 None => Err(ledger_infra::error::AppError::coded(
                     boot::CODE_SESSION_MISSING,
-                    SESSION_MISSING,
+                    MSG_SESSION_MISSING,
                 )),
             })
             .await;
@@ -1034,7 +1031,7 @@ fn apply_auto_toggle(owner: Owner, state: BackupUiState, enabled: bool) {
                 }
                 Err(_) => {
                     state.status.set(Some(format!(
-                        "{MSG_AUTO_TOGGLE_FAILED_PREFIX}{WRITE_TASK_FAILED}"
+                        "{MSG_AUTO_TOGGLE_FAILED_PREFIX}{MSG_WRITE_TASK_FAILED}"
                     )));
                     refresh_auto_backup_state(owner, state);
                 }
@@ -1146,7 +1143,7 @@ fn pick_restore_task(owner: Owner, state: BackupUiState) {
                 Some(_) => boot::backup_meta(Path::new(&probe_target)),
                 None => Err(ledger_infra::error::AppError::coded(
                     boot::CODE_SESSION_MISSING,
-                    SESSION_MISSING,
+                    MSG_SESSION_MISSING,
                 )),
             })
             .await;
@@ -1159,7 +1156,7 @@ fn pick_restore_task(owner: Owner, state: BackupUiState) {
                     return;
                 }
                 Err(_) => {
-                    state.status.set(Some(READ_TASK_FAILED.to_owned()));
+                    state.status.set(Some(MSG_READ_TASK_FAILED.to_owned()));
                     return;
                 }
             };
@@ -1173,7 +1170,7 @@ fn pick_restore_task(owner: Owner, state: BackupUiState) {
                     return;
                 }
                 Err(_) => {
-                    state.status.set(Some(READ_TASK_FAILED.to_owned()));
+                    state.status.set(Some(MSG_READ_TASK_FAILED.to_owned()));
                     return;
                 }
             };
@@ -1218,7 +1215,7 @@ fn confirm_restore_task(owner: Owner, state: BackupUiState) {
                 }
                 None => Err(ledger_infra::error::AppError::coded(
                     boot::CODE_SESSION_MISSING,
-                    SESSION_MISSING,
+                    MSG_SESSION_MISSING,
                 )),
             })
             .await;
@@ -1249,9 +1246,9 @@ fn confirm_restore_task(owner: Owner, state: BackupUiState) {
                     }
                 }
                 Err(_) => {
-                    state
-                        .restore_error
-                        .set(Some(format!("{RESTORE_FAIL_PREFIX}{WRITE_TASK_FAILED}")));
+                    state.restore_error.set(Some(format!(
+                        "{RESTORE_FAIL_PREFIX}{MSG_WRITE_TASK_FAILED}"
+                    )));
                     state.restore_busy.set(false);
                 }
             }
@@ -1965,14 +1962,16 @@ fn refresh_encryption_status(owner: Owner, state: EncryptionState) {
                 Ok(Err(e)) => state
                     .status_error
                     .set(Some(format!("{ENCRYPT_STATUS_FAILED_PREFIX}{e}"))),
-                Err(_) => state.status_error.set(Some(READ_TASK_FAILED.to_owned())),
+                Err(_) => state
+                    .status_error
+                    .set(Some(MSG_READ_TASK_FAILED.to_owned())),
             }
         })
     });
 }
 
 /// 加密卡三动作的共享任务编排（busy 单飞 → 根 owner blocking 任务直调
-/// boot 写面，db 槽缺失补 SESSION_MISSING 码化错误——旧壳命令层同守卫闭
+/// boot 写面，db 槽缺失补 MSG_SESSION_MISSING 码化错误——旧壳命令层同守卫闭
 /// 集）：终态三分支收口状态条——成功先走 `on_success` 清表单并按动作续接
 /// （刷新状态读取 / 换连后续接），失败携动作前缀，任务异常携统一文案。
 fn run_encryption_action(
@@ -1991,7 +1990,7 @@ fn run_encryption_action(
                 Some(db) => invoke(db),
                 None => Err(ledger_infra::error::AppError::coded(
                     boot::CODE_SESSION_MISSING,
-                    SESSION_MISSING,
+                    MSG_SESSION_MISSING,
                 )),
             })
             .await;
@@ -2004,7 +2003,7 @@ fn run_encryption_action(
                 Ok(Err(e)) => state.status.set(Some(format!("{failed_prefix}{e}"))),
                 Err(_) => state
                     .status
-                    .set(Some(format!("{failed_prefix}{WRITE_TASK_FAILED}"))),
+                    .set(Some(format!("{failed_prefix}{MSG_WRITE_TASK_FAILED}"))),
             }
         })
     });
@@ -2544,7 +2543,7 @@ fn refresh_sync_status(owner: Owner, state: SyncState) {
                 Some(db) => boot::sync_status(db),
                 None => Err(ledger_infra::error::AppError::coded(
                     boot::CODE_SESSION_MISSING,
-                    SESSION_MISSING,
+                    MSG_SESSION_MISSING,
                 )),
             })
             .await;
@@ -2556,7 +2555,9 @@ fn refresh_sync_status(owner: Owner, state: SyncState) {
                 Ok(Err(e)) => state
                     .status_error
                     .set(Some(format!("{SYNC_STATUS_FAILED_PREFIX}{e}"))),
-                Err(_) => state.status_error.set(Some(READ_TASK_FAILED.to_owned())),
+                Err(_) => state
+                    .status_error
+                    .set(Some(MSG_READ_TASK_FAILED.to_owned())),
             }
         })
     });
@@ -2573,7 +2574,7 @@ fn load_channel_config(owner: Owner, state: SyncState) {
                 Some(db) => boot::sync_channel_config(db),
                 None => Err(ledger_infra::error::AppError::coded(
                     boot::CODE_SESSION_MISSING,
-                    SESSION_MISSING,
+                    MSG_SESSION_MISSING,
                 )),
             })
             .await;
@@ -2600,7 +2601,9 @@ fn load_channel_config(owner: Owner, state: SyncState) {
                 Ok(Err(e)) => state
                     .status_error
                     .set(Some(format!("{SYNC_STATUS_FAILED_PREFIX}{e}"))),
-                Err(_) => state.status_error.set(Some(READ_TASK_FAILED.to_owned())),
+                Err(_) => state
+                    .status_error
+                    .set(Some(MSG_READ_TASK_FAILED.to_owned())),
             }
             refresh_sync_status(owner, state);
         })
@@ -2619,7 +2622,7 @@ fn save_channel_task(owner: Owner, state: SyncState) {
                 Some(db) => boot::save_sync_channel_config(db, config),
                 None => Err(ledger_infra::error::AppError::coded(
                     boot::CODE_SESSION_MISSING,
-                    SESSION_MISSING,
+                    MSG_SESSION_MISSING,
                 )),
             })
             .await;
@@ -2634,7 +2637,7 @@ fn save_channel_task(owner: Owner, state: SyncState) {
                     .status_msg
                     .set(Some(format!("{SYNC_SAVE_FAILED_PREFIX}{e}"))),
                 Err(_) => state.status_msg.set(Some(format!(
-                    "{SYNC_SAVE_FAILED_PREFIX}{WRITE_TASK_FAILED}"
+                    "{SYNC_SAVE_FAILED_PREFIX}{MSG_WRITE_TASK_FAILED}"
                 ))),
             }
         })
@@ -2655,7 +2658,7 @@ fn test_connection_task(owner: Owner, state: SyncState) {
                     .status_msg
                     .set(Some(format!("{SYNC_TEST_FAILED_PREFIX}{e}"))),
                 Err(_) => state.status_msg.set(Some(format!(
-                    "{SYNC_TEST_FAILED_PREFIX}{WRITE_TASK_FAILED}"
+                    "{SYNC_TEST_FAILED_PREFIX}{MSG_WRITE_TASK_FAILED}"
                 ))),
             }
         })
@@ -2675,7 +2678,7 @@ fn sync_now_task(owner: Owner, state: SyncState) {
             Some(db) => boot::sync_now(db, passphrase.as_deref()),
             None => Err(ledger_infra::error::AppError::coded(
                 boot::CODE_SESSION_MISSING,
-                SESSION_MISSING,
+                MSG_SESSION_MISSING,
             )),
         })
         .await;
@@ -2704,7 +2707,7 @@ fn sync_now_task(owner: Owner, state: SyncState) {
                 refresh_parked_rows(owner, state);
             }
             Ok(Err(e)) => state.status_msg.set(Some(format!("{SYNC_FAILED_PREFIX}{e}"))),
-            Err(_) => state.status_msg.set(Some(format!("{SYNC_FAILED_PREFIX}{WRITE_TASK_FAILED}"))),
+            Err(_) => state.status_msg.set(Some(format!("{SYNC_FAILED_PREFIX}{MSG_WRITE_TASK_FAILED}"))),
         }
     }));
 }
@@ -2719,7 +2722,7 @@ fn refresh_parked_rows(owner: Owner, state: SyncState) {
                 Some(db) => boot::parked_rows(db),
                 None => Err(ledger_infra::error::AppError::coded(
                     boot::CODE_SESSION_MISSING,
-                    SESSION_MISSING,
+                    MSG_SESSION_MISSING,
                 )),
             })
             .await;
@@ -2746,7 +2749,7 @@ fn publish_checkpoint_task(owner: Owner, state: SyncState) {
                 Some(db) => boot::publish_sync_checkpoint(db, passphrase.as_deref()),
                 None => Err(ledger_infra::error::AppError::coded(
                     boot::CODE_SESSION_MISSING,
-                    SESSION_MISSING,
+                    MSG_SESSION_MISSING,
                 )),
             })
             .await;
@@ -2764,7 +2767,7 @@ fn publish_checkpoint_task(owner: Owner, state: SyncState) {
                     .status_msg
                     .set(Some(format!("{SYNC_PUBLISH_FAILED_PREFIX}{e}"))),
                 Err(_) => state.status_msg.set(Some(format!(
-                    "{SYNC_PUBLISH_FAILED_PREFIX}{WRITE_TASK_FAILED}"
+                    "{SYNC_PUBLISH_FAILED_PREFIX}{MSG_WRITE_TASK_FAILED}"
                 ))),
             }
         })
@@ -2785,7 +2788,7 @@ fn open_bootstrap_task(owner: Owner, state: SyncState) {
                 Some(db) => boot::sync_channel_checkpoint(db),
                 None => Err(ledger_infra::error::AppError::coded(
                     boot::CODE_SESSION_MISSING,
-                    SESSION_MISSING,
+                    MSG_SESSION_MISSING,
                 )),
             })
             .await;
@@ -2796,7 +2799,9 @@ fn open_bootstrap_task(owner: Owner, state: SyncState) {
                     .set(Some((pointer.generation, pointer.size))),
                 Ok(Ok(None)) => state.checkpoint.set(None),
                 Ok(Err(e)) => state.precheck_error.set(Some(e.to_string())),
-                Err(_) => state.precheck_error.set(Some(READ_TASK_FAILED.to_owned())),
+                Err(_) => state
+                    .precheck_error
+                    .set(Some(MSG_READ_TASK_FAILED.to_owned())),
             }
         })
     });
@@ -2818,7 +2823,7 @@ fn confirm_bootstrap_task(owner: Owner, state: SyncState) {
                 Some(db) => boot::bootstrap_sync_from_channel(db, passphrase.as_deref()),
                 None => Err(ledger_infra::error::AppError::coded(
                     boot::CODE_SESSION_MISSING,
-                    SESSION_MISSING,
+                    MSG_SESSION_MISSING,
                 )),
             })
             .await;
@@ -2840,7 +2845,7 @@ fn confirm_bootstrap_task(owner: Owner, state: SyncState) {
                     .bootstrap_error
                     .set(Some(format!("{SYNC_BOOTSTRAP_FAILED_PREFIX}{e}"))),
                 Err(_) => state.bootstrap_error.set(Some(format!(
-                    "{SYNC_BOOTSTRAP_FAILED_PREFIX}{WRITE_TASK_FAILED}"
+                    "{SYNC_BOOTSTRAP_FAILED_PREFIX}{MSG_WRITE_TASK_FAILED}"
                 ))),
             }
         })
@@ -3505,7 +3510,7 @@ fn books_card(palette: views::ViewPalette) -> View {
                             .status
                             .set(Some(format!("{BOOKS_ACTION_FAILED_PREFIX}{e}"))),
                         Err(_) => state.status.set(Some(format!(
-                            "{BOOKS_ACTION_FAILED_PREFIX}{WRITE_TASK_FAILED}"
+                            "{BOOKS_ACTION_FAILED_PREFIX}{MSG_WRITE_TASK_FAILED}"
                         ))),
                     }
                 })
@@ -3553,7 +3558,7 @@ fn books_card(palette: views::ViewPalette) -> View {
                             .status
                             .set(Some(format!("{BOOKS_ACTION_FAILED_PREFIX}{e}"))),
                         Err(_) => state.status.set(Some(format!(
-                            "{BOOKS_ACTION_FAILED_PREFIX}{WRITE_TASK_FAILED}"
+                            "{BOOKS_ACTION_FAILED_PREFIX}{MSG_WRITE_TASK_FAILED}"
                         ))),
                     }
                 })
@@ -3607,7 +3612,7 @@ fn books_card(palette: views::ViewPalette) -> View {
                             .status
                             .set(Some(format!("{BOOKS_SET_FAILED_PREFIX}{e}"))),
                         Err(_) => state.status.set(Some(format!(
-                            "{BOOKS_SET_FAILED_PREFIX}{WRITE_TASK_FAILED}"
+                            "{BOOKS_SET_FAILED_PREFIX}{MSG_WRITE_TASK_FAILED}"
                         ))),
                     }
                 })
@@ -4052,7 +4057,7 @@ fn balance_cache_card(palette: views::ViewPalette) -> View {
                     }
                     None => Err(ledger_infra::error::AppError::coded(
                         boot::CODE_SESSION_MISSING,
-                        SESSION_MISSING,
+                        MSG_SESSION_MISSING,
                     )),
                 })
                 .await;
@@ -4065,7 +4070,7 @@ fn balance_cache_card(palette: views::ViewPalette) -> View {
                     }
                     Ok(Err(e)) => status.set(Some(format!("{BALANCE_REPAIR_FAILED_PREFIX}{e}"))),
                     Err(_) => status.set(Some(format!(
-                        "{BALANCE_REPAIR_FAILED_PREFIX}{WRITE_TASK_FAILED}"
+                        "{BALANCE_REPAIR_FAILED_PREFIX}{MSG_WRITE_TASK_FAILED}"
                     ))),
                 }
             });
