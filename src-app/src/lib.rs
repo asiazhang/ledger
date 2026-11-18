@@ -267,6 +267,7 @@ pub mod backup_cards;
 pub mod backup_entry;
 pub mod backup_host;
 pub mod bar_chart;
+pub mod books_card;
 pub mod boot;
 pub mod budget;
 pub mod combo_select;
