@@ -202,21 +202,22 @@ resolver = "3"
 # default-features = false：Rust 模式不带 QuickJS VM（nsh-engine / nsh-platform-linux
 # 的 default 含 `js`，ADR-0145 决策 1），nsh-base 的 default 含代码高亮（syntect）
 # 与 editor/rich-editor/term，立桩消费面用不到；0.5.0 起 plot 组件模块也走
-# feature 门控（走势图消费面，本仓显式启用 `plot`）；`nsh-testing` 0.5.1 的
-# default 仍是 ["live"]（不含 QuickJS），测试侧原样消费。
+# feature 门控（走势图消费面，本仓显式启用 `plot`）；0.6.0 起 WebSocket /
+# updater / SVG / HTTP 也转 optional feature（#1709），svg 由本仓显式启用；
+# `nsh-testing` 0.6.0 的 default 仍是 ["live"]（不含 QuickJS），测试侧原样消费。
 [workspace.dependencies]
 # `svg` feature（#2135 布局对齐线）：`nsh_core::svg()` 原生端画 SVG 字形——侧栏
 # 视图图标、空态/提示条字形消费（布局靠拢 web 参照的图标位）；resvg 随
 # feature 引入，版本仍随 workspace 精确钉版约束。
-nsh-core = { version = "=0.5.1", features = ["svg"] }
-nsh-base = { version = "=0.5.1", default-features = false, features = ["plot"] }
-nsh-engine = { version = "=0.5.1", default-features = false }
-nsh-platform-linux = { version = "=0.5.1", default-features = false }
-nsh-testing = { version = "=0.5.1", default-features = false }
+nsh-core = { version = "=0.6.0", features = ["svg"] }
+nsh-base = { version = "=0.6.0", default-features = false, features = ["plot"] }
+nsh-engine = { version = "=0.6.0", default-features = false }
+nsh-platform-linux = { version = "=0.6.0", default-features = false }
+nsh-testing = { version = "=0.6.0", default-features = false }
 # 更新器规则 crate（#2134 / ADR-0145 修订注记 2026-11-15）：签名清单校验、下载
 # 流校验与整包换装（no network、no UI——HTTP 传输由本壳自备）。与 nsh-core 传递
 # 依赖同版本精确锁定，随 NSH 版本同一张升级票。
-nsh-updater = { version = "=0.5.1" }
+nsh-updater = { version = "=0.6.0" }
 
 # 易 panic 构造六件套 deny 门禁（issue #432 / ADR-0060）：门禁约束生产路径；
 # 测试目标经 crate 根与集成/BDD 测试 crate 头部 cfg_attr(test, allow) 整体豁免，
