@@ -47,7 +47,9 @@ jobs:
       # 守门脚本运行时 = uv（issue #2174 / ADR-0083 修订注记）；版本与本地门槛
       # 同一固定值，升级走显式 bump。python-version 随 uv 解析（门脚本
       # requires-python >= 3.12；runner 预装 python3 即可满足，无需 uv 托管下载）。
-      - uses: astral-sh/setup-uv@v10
+      # setup-uv 自 v8.0.0 起 immutable release——major 浮动 tag（@v10）不存在，
+      # 只能钉精确版本 tag（升级走显式 bump，与本 job 其他钉死口径同纪律）。
+      - uses: astral-sh/setup-uv@v10.3.3
         with:
           uv-version: "0.13.8"
 
