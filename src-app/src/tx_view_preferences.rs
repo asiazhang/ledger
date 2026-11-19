@@ -18,7 +18,7 @@ use std::sync::Mutex;
 
 use nsh_core::prelude::*;
 
-/// 存储键（旧壳 view_state 家族同名键：`packages/utils/view-state.ts` 的
+/// 存储键（旧壳 view_state 家族同名键（宿主已随 Web 前端退役 #2171/#2172）：
 /// `view_state:hide_investment_related`；值为 JSON 布尔字面量 `"true"`——
 /// 开启持久化、关闭删记录，默认态 = 无记录）。
 const HIDE_INVESTMENT_RELATED_KEY: &str = "view_state:hide_investment_related";

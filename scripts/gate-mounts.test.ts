@@ -11,8 +11,8 @@ import {
 } from "./gate-mounts.ts";
 
 // 守门接线测试（issue #1682）：守门挂载登记的「删除即变红」核对载体，守门家族
-// interface 的一环（先例收编：check-sh 三件套接线断言、check-frontend-structure
-// 运行时接线核对、test-exec 守门规则④）。断言对准用户可观察事实——「该门被质量
+// interface 的一环（先例收编：check-sh 三件套接线断言、运行时接线核对先例（
+// check-frontend-structure 已随 Web 前端退役 #2171/#2172）、test-exec 守门规则④）。断言对准用户可观察事实——「该门被质量
 // 门槛执行于该宿主」的可观察代理 = 宿主文件的非注释执行行以登记形态行首命中
 // （ADR-0087 断言强度：不对准行号与文本形状）。
 // 核对，不生成（grilling 定案）：check.sh 与 CI workflow 保持手写，本测试断言
@@ -168,9 +168,9 @@ describe("守门挂载登记（删除即变红，issue #1682）", () => {
   });
 
   it("echo 展示行与注释行结构上不可能命中挂载（行首前缀判定，#1112 假绿教训）", () => {
-    const invocation = "bun scripts/check-frontend-structure.ts";
+    const invocation = "bun scripts/check-structure.ts";
     // 真实 check.sh 的门标签行形态：命令字样在 echo 参数里，行首是标签引导词。
-    expect(mounted(`echo "▶ 前端结构守门 (${invocation})"`, invocation)).toBe(false);
+    expect(mounted(`echo "▶ 结构守门检查 (${invocation})"`, invocation)).toBe(false);
     expect(mounted(`# ${invocation}`, invocation)).toBe(false);
     expect(mounted(`  ${invocation}  `, invocation)).toBe(true);
   });

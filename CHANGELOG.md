@@ -12,7 +12,8 @@
   - **整库加密随原生壳重建（切轨遗留偏差已收敛，issue #2088）**：密文库启动落锁定视图，凭主口令解锁或忘口令重置（旧库保留密文副本）；加密卡写面（修改主口令 / 关闭加密 / 开启）全量平价，转换完成后原位换连、本会话继续可用（旧壳「应用自动重启」的替代口径，无重启丢写窗口）。与旧壳的残留差异：口令强度实时条未迁（zxcvbn 依赖的字典体积对单二进制的增量，守卫闭集 ≥8 位 / 两次一致保留）；自动解锁仅 macOS 钥匙串可用，Linux 呈平台不支持注记、解锁屏手动输入。锁定屏「从备份文件恢复」入口随 [#2131] 收口（见 Changed）。
   - **多端同步、备份、AI 导入 HTTP 端点不受影响**：同一批域引擎原样随迁，口径与既有契约不变。
   - **「打开日志目录 / 在文件管理器中显示」入口恢复（切轨缺口已收敛，[#2132]）**：文件日志本体在数据根下 `logs/`（日滚 + 7 天保留）；设置页「通用 → 日志」卡恢复「打开日志目录」（旧壳 `open_log_dir` 语义，经宿主系统打开调用）；「在文件管理器中显示」（旧壳 `reveal_in_file_manager`）由「数据 → 备份文件列表」行级「在访达中显示」承载（切轨起保留，#2132 补 headless 替身断言覆盖）。
-  - 移动布局与触屏适配随 Android 端退役不再发布；Web 参照前端（浏览器 mock 模式）保留为非产品形态的布局对照物（`pnpm dev:mock`）。
+  - 移动布局与触屏适配随 Android 端退役不再发布。
+  - **Web 参照前端整体退役（[#2171] / [#2172]，ADR-0148）**：布局对齐收口（[#2135]）后对照使命完结，仓库删除 Web 前端源码、pnpm 工具链与 Vitest 测试面，NSH 成为唯一前端；开发者入口随之消失——`pnpm dev:mock` 浏览器开发模式、`pnpm test` 与前端 lint/类型检查门不再存在，仓库开发流程收敛为 Rust 工具链 + bun 守门脚本；码化错误双语模板（errors.json）迁住仓库根 `locales/`，ADR-0050 门继续生效（[#1188] 收口的机器守门不退役）。
 
 ### Changed
 
@@ -587,4 +588,15 @@
 [#2132]: https://github.com/asiazhang/ledger/issues/2132
 [#2133]: https://github.com/asiazhang/ledger/issues/2133
 [#2134]: https://github.com/asiazhang/ledger/issues/2134
+[#2135]: https://github.com/asiazhang/ledger/issues/2135
+[#2171]: https://github.com/asiazhang/ledger/issues/2171
+[#2172]: https://github.com/asiazhang/ledger/issues/2172
+[#1188]: https://github.com/asiazhang/ledger/issues/1188
+[#953]: https://github.com/asiazhang/ledger/issues/953
+[#1212]: https://github.com/asiazhang/ledger/issues/1212
+[#1401]: https://github.com/asiazhang/ledger/issues/1401
+[#1489]: https://github.com/asiazhang/ledger/issues/1489
+[#1533]: https://github.com/asiazhang/ledger/issues/1533
+[#1874]: https://github.com/asiazhang/ledger/issues/1874
+[#1929]: https://github.com/asiazhang/ledger/issues/1929
 [#2169]: https://github.com/asiazhang/ledger/issues/2169

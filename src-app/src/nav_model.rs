@@ -9,9 +9,10 @@
 //! 纯函数纪律（旧壳同款）：不见引擎、不见 store、不见存储——状态经入参注入，
 //! 可离线直测；响应式外壳与持久化住 [`crate::nav`]。
 //!
-//! 词表平价基准：旧壳 `src/stores/sidebar-order.ts`（组与种子）、
-//! `src/settings/feature-toggles.ts`（可关九项）、
-//! `packages/i18n/src/locales/zh-CN/common.json`（nav / sidebarGroup /
+//! 词表平价基准（历史出处；对照宿主已随 Web 参照前端退役，#2171/#2172）：
+//! 旧壳 `src/stores/sidebar-order.ts`（组与种子）、
+//! `src/settings/feature-toggles.ts`（可关九项）、旧壳 `packages/i18n`
+//! zh-CN common.json（nav / sidebarGroup /
 //! sidebarSort / sidebarContainment 文案）。语义裁决见本文件各条目注释与
 //! ADR-0145 / spec #2031。
 

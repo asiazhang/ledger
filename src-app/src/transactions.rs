@@ -37,7 +37,7 @@ use crate::{
 };
 
 /// 金额隐私模式开关的存储键（设备轻量设置项，与旧壳同键同值形态：旧壳
-/// `@ledger/money` 的 `AMOUNT_PRIVACY_STORAGE_KEY`，值为 JSON 布尔字面量
+/// 旧壳 `AMOUNT_PRIVACY_STORAGE_KEY` 同键（宿主已随 Web 前端退役 #2171/#2172），值为 JSON 布尔字面量
 /// `"true"` / `"false"`）。轻量设置项域语义见
 /// docs/contexts/CONTEXT-reference-settings.md「金额隐私模式」。
 const AMOUNT_PRIVACY_STORAGE_KEY: &str = "amount_privacy_enabled";

@@ -590,7 +590,7 @@ fn app_window_masks_amounts_when_device_privacy_enabled() {
 }
 
 /// 金额语义色接线（issue #2019）：支出红 / 收入绿逐值镜像旧壳
-/// `kindSemanticColor`（packages/theme），亮暗两态随系统外观切换。删掉
+/// 旧壳 kindSemanticColor 色值（宿主已随 Web 前端退役 #2171/#2172），亮暗两态随系统外观切换。删掉
 /// `render_cell` 接线或色值映射任一环即红。
 #[test]
 fn app_window_colors_amount_cells_by_kind_semantic() {

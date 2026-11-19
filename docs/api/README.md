@@ -7,6 +7,5 @@
 | 想知道 | 从代码查 |
 |---|---|
 || HTTP 端点契约 / 实现 | 运行期 `GET /api/v1/openapi.json`；`src-app/src/api_server/`（契约装配 `openapi.rs`、路由表 `router.rs`、端点 `handlers/`）|
-| 前端调用封装与类型 | `packages/api/src/index.ts` + `packages/types/src/index.ts`（issue #1150 起类型抽为 `@ledger/types` 包，issue #1155 起调用面抽为 `@ledger/api` 包） |
 
 领域边界一句话：HTTP API 服务 AI 编程助手（AI 导入域唯一壳通道；#2083 切轨后产品壳为 NSH 直调域入口、IPC 面已退役），HTTP 层是薄壳编排，写入口径统一收口 Writer / Amount 接缝（见 `AGENTS.md`）。

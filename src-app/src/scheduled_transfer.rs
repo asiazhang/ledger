@@ -67,7 +67,7 @@ use crate::write_load::session_missing_err;
 use crate::{nav, txn_form};
 
 // ---------------------------------------------------------------------------
-// 词表（旧壳 packages/i18n zh-CN scheduled.json 逐条平价；i18n 框架级方案不在
+// 词表（旧壳 zh-CN scheduled.json，词表宿主已随 Web 前端退役 #2171/#2172 逐条平价；i18n 框架级方案不在
 // 本票，字面承载）。
 // ---------------------------------------------------------------------------
 pub(crate) const TRANSFER_LIST_TITLE: &str = "定时转账清单";

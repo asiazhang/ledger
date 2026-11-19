@@ -4,12 +4,12 @@ Ledger 的领域词汇表按自然域拆分：本文件列出全部分域、各�
 
 ## 结构约定
 
-- 全部分域文件**集中存放于 `docs/contexts/`**，不按源码目录散布——一个自然域横跨前端组件/状态与后端域引擎/壳层（Rust 侧住 `src-app/`〔根包＝NSH 壳与 workspace 成员 crate〕，Web 参照前端住 `src/`，前端子包落 `packages/*`，issue #1149），词汇表按源码目录散布会割裂域视角；地图独自留在根目录，作为唯一入口。
+- 全部分域文件**集中存放于 `docs/contexts/`**，不按源码目录散布——一个自然域横跨界面层与后端域引擎/壳层（全部住 Rust：`src-app/`〔根包＝NSH 壳与 workspace 成员 crate〕；原 Web 参照前端目录树与子包已整体退役，#2171/#2172 / ADR-0148），词汇表按源码目录散布会割裂域视角；地图独自留在根目录，作为唯一入口。
 - **术语全库唯一**：任一术语只在一份分域文件中定义，各分域文件间不复制定义。
 - **跨域共享术语归核心交易域**：被多个域消费的概念（Transaction、Amount Model、Transaction Kind Mapping、Category、DefaultCurrency 等）只在核心交易域定义；其他域以「见核心交易域 X」引用，不复制定义。
 - **新增术语进哪份文件**：按自然域归属放入对应分域；若它是被多域消费的共享概念，进核心交易域；单列小域只接纳体量小且与既有域边界清晰的独立概念（如物品域）。
 - **代码可查事实不进文档（三层标尺 + ADR 坐标收敛）**：分域词汇表与模型文档按一条标尺取舍内容——**甲类删**：实现坐标（文件路径、函数名、参数名、字段清单、DDL、正则、公式等能从代码直接查出的事实），schema 字段以 migration、行为以代码为唯一事实来源；**乙类留**：作为术语本体的标识符（表名、视图名、事件名、信号名、接缝名、列名），只作专名出现、不复述结构；**丙类留**：闭集性、口径归属、边界、动机等纯语义。导航职责收口 AGENTS.md，语义职责收口词汇表，二者不互相复述。ADR 按同一取向收敛坐标——现役落点保留域、crate 与模块/函数专名，不写文件路径与行号；历史对照可在注记中保留旧坐标原文并加注现役落点。已存在但未失真的历史坐标不做一次性迁移，漂移命中时随修订收敛。ADR 不纳入脚本⑤扫描，扫描范围仍限分域词汇表与模型文档。
-- **Web 参照前端壳内按域归位（issue #1159 / ADR-0118 决策 4/5；#2083 切轨后该壳降格为非产品形态的布局对照物，目录约定不变）**：壳内域源码按自然域分目录，与后端业务域 crate 多数同名对应（同名例外与无独立目录的域见本条内注），域目录即「哪一域对应哪个目录」的单一清单——`src/accounts/`、`src/backup/`（备份与数据文件域的前端面）、`src/categories/`、`src/dashboard/`（首页卡片数据层）、`src/investment/`、`src/item/`、`src/merchants/`、`src/physical-asset/`、`src/policy/`（含保司字典）、`src/reports/`、`src/savings-goal/`、`src/scheduled/`、`src/settings/`（设置页签、功能开关与账本侧栏入口，对应参考数据与设置域的后端设置/账本面，币种与本位币前端面同住此目录）、`src/transaction/`，每域一目录收拢本域组件、composable、store 与纯逻辑；预算域前端仅预算视图、无独立目录，行情同步（ledger-market-sync）与多端同步（ledger-sync-engine）的前端面分别住在 investment 与 settings。**跨域件落点**：不属任何单一域的壳件留在 `src/components/`、`src/composables/`、`src/stores/` 三根目录（应用壳与界面交互件；stores 根仅存 app / reference / render-errors / sidebar-order 四件）；通用件住 `packages/*`（`@ledger/ui-kit` 等，成员闭集与深模块成包裁定见 ADR-0118）；视图（`src/views/`）、路由（`src/router/`）与应用入口留壳不随域搬。
+- **Web 参照前端壳内按域归位［已退役］**（issue #1159 / ADR-0118 决策 4/5）：原 Web 参照前端域目录树与子包闭集已随参照前端整体退役删除（#2171/#2172 / ADR-0148），目录约定不再有现行宿主；深模块成包裁定与词条闭集留档见 ADR-0118。
 - 一致性校验（地图与文件对应、术语唯一、导航一致、代码坐标）由独立检查脚本 `scripts/check-docs.sh` 守住，挂入 `scripts/check.sh` 质量门槛。
 
 ## 分域一览
@@ -27,11 +27,11 @@ Ledger 的领域词汇表按自然域拆分：本文件列出全部分域、各�
 | 9 | 预算 | [`docs/contexts/CONTEXT-budget.md`](docs/contexts/CONTEXT-budget.md) | Budget（可挂任意层级支出分类、彼此独立，ADR-0052）、BudgetPeriod、BudgetProgress（永久滚动，ADR-0029；父含子、子只算自身）、AnnualBudgetTotal、BudgetAnnualSummary（本年已支逐笔去重、只服务当前自然年） |
 | 10 | 保险 | [`docs/contexts/CONTEXT-insurance.md`](docs/contexts/CONTEXT-insurance.md) | Policy（保单）、Insurer（保险公司）、Premium（保费）、PolicyInflow（保单现金流入）、PolicyReference（保单引用）、保单视角统计（ADR-0051、ADR-0082） |
 | 11 | 实物资产 | [`docs/contexts/CONTEXT-physical-asset.md`](docs/contexts/CONTEXT-physical-asset.md) | PhysicalAsset（实物资产）、Valuation（估值）、ValuationHistory（估值历史）、Disposal（处置）（ADR-0064） |
-| 12 | 测试基础设施 | [`docs/contexts/CONTEXT-testing.md`](docs/contexts/CONTEXT-testing.md) | invoke 测试接缝、defaults 表、overrides 表、未命中报错、参考数据预热、清理四件套、媒体查询测试接缝（#841）、消息替身稳定实例、通道线格式替身（#956）、源码扫描掩码器具（#1433）、守门挂载登记、守门接线测试（#1682）、测试暂存目录（#1645）、进程级现场隔离（#1989）、同机并发假红（#2111）、读快照探针（#1699/#1702）、文件库测试模板（#1868）、op 写失败注入（#1896）、目录级测试薄壳、行为等价判据（ADR-0085）；测试世界等 BDD 词条已随 #2083 退役（ADR-0086 留档）；测试三层与权威层、壳三件套、接线证明、错误码契约代表（ADR-0087）；断言强度、双断言、矩阵、存在性断言、组件测试数据工厂；零击杀测试、存活变异体、等价变异体（ADR-0137）；替身后端、浏览器开发模式（ADR-0143）；性能基准（ADR-0068）；计数型渲染守门（#2012） |
+| 12 | 测试基础设施 | [`docs/contexts/CONTEXT-testing.md`](docs/contexts/CONTEXT-testing.md) | invoke 测试接缝、defaults 表、overrides 表、未命中报错、参考数据预热、清理四件套、媒体查询测试接缝（#841）、消息替身稳定实例、通道线格式替身（#956）、源码扫描掩码器具（#1433）、守门挂载登记、守门接线测试（#1682）、测试暂存目录（#1645）、进程级现场隔离（#1989）、同机并发假红（#2111）、读快照探针（#1699/#1702）、文件库测试模板（#1868）、op 写失败注入（#1896）、目录级测试薄壳、行为等价判据（ADR-0085）；测试世界等 BDD 词条已随 #2083 退役（ADR-0086 留档）；前端测试器具词条族已随 Web 参照前端退役（#2171/#2172，ADR-0085 / ADR-0088 票① / ADR-0143 留档）；测试三层与权威层、壳三件套、接线证明、错误码契约代表（ADR-0087）；断言强度、双断言、矩阵、存在性断言、组件测试数据工厂；零击杀测试、存活变异体、等价变异体（ADR-0137）；性能基准（ADR-0068） |
 | 13 | 多端同步 | [`docs/contexts/CONTEXT-sync.md`](docs/contexts/CONTEXT-sync.md) | Sync、Transport、OpLog、DomainCommand、Replay、重放注册表（ADR-0101）、DeviceId、TotalOrder、OccurrenceKey、ParkedOp、Checkpoint、StreamPosition（位点）、SyncEnvelope、SyncBoundary（ADR-0091）、SyncDatabase（ADR-0139）、SyncTrigger（同步触发）、SyncRound（同步轮次）、SessionEnvelope（会话信封形态） |
 | 14 | 应用更新 | [`docs/contexts/CONTEXT-app-update.md`](docs/contexts/CONTEXT-app-update.md) | 自动更新（Auto Update）、更新检查、更新清单、更新工件、更新签名（ADR-0124；翻案重建见 ADR-0145 修订注记 2026-11-15） |
 | 15 | 储蓄目标 | [`docs/contexts/CONTEXT-savings-goal.md`](docs/contexts/CONTEXT-savings-goal.md) | 储蓄目标（SavingsGoal）、目标账户、蓄水进度、预计达成时间（ETA）、所需月存、达成与归档、养老测算 |
-| 16 | 应用壳 | [`docs/contexts/CONTEXT-app-shell.md`](docs/contexts/CONTEXT-app-shell.md) | 原生壳（Native Shell App）、双壳并存期（Dual-Shell Migration Window）、Web 参照前端（Web Reference Frontend）（ADR-0145）；功能平价（Functional Parity）、有意偏差（Documented Deviation）；首启引导（First-Run Onboarding）（ADR-0146）；主题令牌（Theme Tokens）、视觉规约（Visual Design Spec）、壳内 ui 层（App Styled Layer）（ADR-0147） |
+| 16 | 应用壳 | [`docs/contexts/CONTEXT-app-shell.md`](docs/contexts/CONTEXT-app-shell.md) | 原生壳（Native Shell App）、双壳并存期（Dual-Shell Migration Window）、Web 参照前端（Web Reference Frontend）［已退役，ADR-0148］（ADR-0145）；功能平价（Functional Parity）、有意偏差（Documented Deviation）；首启引导（First-Run Onboarding）（ADR-0146）；主题令牌（Theme Tokens）、视觉规约（Visual Design Spec）、壳内 ui 层（App Styled Layer）（ADR-0147） |
 
 ## 域间关系
 

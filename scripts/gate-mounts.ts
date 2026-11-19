@@ -17,6 +17,11 @@
 // 新增守门的登记动作（story 5）：在 GATE_MOUNTS 追加一条——唯一名称、issue/ADR
 // 出处（导航字段）、按宿主的执行行形态；check.sh 执行行与 CI 步骤同步挂载，
 // 接线测试自动核对三侧全等。门的核心判定规则归各门自身，本登记只管挂载。
+//
+// Web 参照前端退役（#2171/#2172 / ADR-0148）：八个纯 Web 门（vue-tsc×2、oxlint、
+// oxfmt、check-frontend-structure、check-style-blocks、check-dialog-forms、
+// check-test-stubs、check-async-guards）随宿主删除、登记条目一并移除；CI 前端
+// job 更名 gates（守门脚本 job，宿主语义不变）。
 
 /** 宿主文件：本地质量门槛序列（唯一权威的全量执行面）。 */
 export const CHECK_SH_FILE = "scripts/check.sh";
@@ -48,75 +53,30 @@ export interface GateMount {
 }
 
 /** CI 挂门 job 内的非门步骤豁免（政策显式，#1591：政策无源就显式）：
- *  构建步骤 `pnpm run build` 内含前端类型检查（package.json build 脚本 =
- *  `vue-tsc --noEmit && vite build`），类型检查由该脚本承接、CI 无独立步骤，
- *  故「前端类型检查」条目只声明 check.sh 宿主；本行随之不属门挂载面。 */
-export const CI_NON_GATE_RUNS: readonly string[] = ["run: pnpm run build"];
+ *  前端退役（#2171/#2172）后 gates job 内全部单行 run 步骤均为登记门——原豁免项
+ *  `run: pnpm run build`（内含前端类型检查）随宿主删除，清单留空但机制保留。 */
+export const CI_NON_GATE_RUNS: readonly string[] = [];
 
 /**
  * 登记清单（check.sh 全部质量门步骤：bun TS 门与非 TS 步骤同表；check-docs.sh 作
- * 单条，其内部九项校验不展开。spec #1682 定案口径 22 条 = 13 + 9——实际集合以
- * 守门接线测试与 check.sh / CI 的双向全等断言为准，本注释不作计数依据）。
- * 顺序与 check.sh 执行序列一致，便于逐行核对；CI 挂载为子集（frontend job /
- * backend-lint job）。
+ * 单条，其内部九项校验不展开）。顺序与 check.sh 执行序列一致，便于逐行核对；
+ * CI 挂载为子集（gates job / backend-lint job 分布见各条 where）。实际集合以
+ * 守门接线测试与 check.sh / CI 的双向全等断言为准，本注释不作计数依据。
  */
 export const GATE_MOUNTS: readonly GateMount[] = [
   {
-    name: "前端类型检查（vue-tsc）",
-    refs: "仓库既有门槛（早于 issue 化，无单票出处）",
+    name: "守门脚本与测试类型检查（tsc）",
+    refs: "issue #734 / #740 / ADR-0083；宿主迁移 #2171/#2172（vue-tsc → 原生 tsc）",
     hosts: [
       {
         file: CHECK_SH_FILE,
-        prefix: "pnpm exec vue-tsc --noEmit",
-        where: "scripts/check.sh 质量门槛序列",
-      },
-    ],
-  },
-  {
-    name: "守门脚本与测试类型检查（vue-tsc -p tsconfig.scripts.json）",
-    refs: "issue #734 / #740 / ADR-0083",
-    hosts: [
-      {
-        file: CHECK_SH_FILE,
-        prefix: "pnpm exec vue-tsc -p tsconfig.scripts.json --noEmit",
-        where: "scripts/check.sh 质量门槛序列",
+        prefix: "./scripts/check-scripts-types.sh",
+        where: "scripts/check.sh 质量门槛序列（首门）",
       },
       {
         file: CI_WORKFLOW_FILE,
-        prefix: "run: pnpm exec vue-tsc -p tsconfig.scripts.json --noEmit",
-        where: ".github/workflows/build.yml frontend job",
-      },
-    ],
-  },
-  {
-    name: "前端 lint（oxlint）",
-    refs: "issue #743",
-    hosts: [
-      {
-        file: CHECK_SH_FILE,
-        prefix: "pnpm exec oxlint --deny-warnings",
-        where: "scripts/check.sh 质量门槛序列",
-      },
-      {
-        file: CI_WORKFLOW_FILE,
-        prefix: "run: pnpm exec oxlint --deny-warnings",
-        where: ".github/workflows/build.yml frontend job",
-      },
-    ],
-  },
-  {
-    name: "前端格式检查（oxfmt）",
-    refs: "issue #1519 / ADR-0128",
-    hosts: [
-      {
-        file: CHECK_SH_FILE,
-        prefix: "pnpm exec oxfmt --check .",
-        where: "scripts/check.sh 质量门槛序列",
-      },
-      {
-        file: CI_WORKFLOW_FILE,
-        prefix: "run: pnpm exec oxfmt --check .",
-        where: ".github/workflows/build.yml frontend job",
+        prefix: "run: ./scripts/check-scripts-types.sh",
+        where: ".github/workflows/build.yml gates job（首步）",
       },
     ],
   },
@@ -126,8 +86,7 @@ export const GATE_MOUNTS: readonly GateMount[] = [
     hosts: [
       {
         file: CHECK_SH_FILE,
-        prefix:
-          "( cd src-app && cargo clippy --workspace --all-targets --all-features -- -D warnings )",
+        prefix: "( cd src-app && cargo clippy --workspace --all-targets --all-features -- -D warnings )",
         where: "scripts/check.sh 质量门槛序列",
       },
       {
@@ -166,23 +125,7 @@ export const GATE_MOUNTS: readonly GateMount[] = [
         file: CI_WORKFLOW_FILE,
         prefix: "run: cargo tree --workspace -i tauri",
         where:
-          ".github/workflows/build.yml backend-lint job（cargo 宿主；backend-test 镜像无 bun，故为命令型门）",
-      },
-    ],
-  },
-  {
-    name: "全仓无 tauri 守门（check-no-tauri，清单形状 + 前端死路径面）",
-    refs: "issue #2083 / ADR-0145 决策 4/7",
-    hosts: [
-      {
-        file: CHECK_SH_FILE,
-        prefix: "bun scripts/check-no-tauri.ts",
-        where: "scripts/check.sh 质量门槛序列（文档一致性检查后）",
-      },
-      {
-        file: CI_WORKFLOW_FILE,
-        prefix: "run: bun scripts/check-no-tauri.ts",
-        where: ".github/workflows/build.yml frontend job",
+          ".github/workflows/build.yml backend-lint job（grep 管道形态，见 backend-lint 步骤）",
       },
     ],
   },
@@ -230,7 +173,23 @@ export const GATE_MOUNTS: readonly GateMount[] = [
       {
         file: CI_WORKFLOW_FILE,
         prefix: "run: ./scripts/check-docs.sh",
-        where: ".github/workflows/build.yml frontend job",
+        where: ".github/workflows/build.yml gates job",
+      },
+    ],
+  },
+  {
+    name: "全仓无 tauri 守门（check-no-tauri，清单形状面）",
+    refs: "issue #2083 / ADR-0145 决策 4/7",
+    hosts: [
+      {
+        file: CHECK_SH_FILE,
+        prefix: "bun scripts/check-no-tauri.ts",
+        where: "scripts/check.sh 质量门槛序列（文档一致性检查后）",
+      },
+      {
+        file: CI_WORKFLOW_FILE,
+        prefix: "run: bun scripts/check-no-tauri.ts",
+        where: ".github/workflows/build.yml gates job",
       },
     ],
   },
@@ -246,7 +205,7 @@ export const GATE_MOUNTS: readonly GateMount[] = [
       {
         file: CI_WORKFLOW_FILE,
         prefix: "run: bun scripts/check-versions.ts",
-        where: ".github/workflows/build.yml frontend job",
+        where: ".github/workflows/build.yml gates job",
       },
     ],
   },
@@ -262,23 +221,7 @@ export const GATE_MOUNTS: readonly GateMount[] = [
       {
         file: CI_WORKFLOW_FILE,
         prefix: "run: bun scripts/check-structure.ts",
-        where: ".github/workflows/build.yml frontend job",
-      },
-    ],
-  },
-  {
-    name: "前端 workspace 结构守门（check-frontend-structure）",
-    refs: "issue #1149 / spec #1148",
-    hosts: [
-      {
-        file: CHECK_SH_FILE,
-        prefix: "bun scripts/check-frontend-structure.ts",
-        where: "scripts/check.sh 质量门槛序列",
-      },
-      {
-        file: CI_WORKFLOW_FILE,
-        prefix: "run: bun scripts/check-frontend-structure.ts",
-        where: ".github/workflows/build.yml frontend job",
+        where: ".github/workflows/build.yml gates job",
       },
     ],
   },
@@ -294,7 +237,7 @@ export const GATE_MOUNTS: readonly GateMount[] = [
       {
         file: CI_WORKFLOW_FILE,
         prefix: "run: bun scripts/check-infra-dml.ts",
-        where: ".github/workflows/build.yml frontend job（issue #1682 CI 补齐）",
+        where: ".github/workflows/build.yml gates job（issue #1682 CI 补齐）",
       },
     ],
   },
@@ -310,23 +253,7 @@ export const GATE_MOUNTS: readonly GateMount[] = [
       {
         file: CI_WORKFLOW_FILE,
         prefix: "run: bun scripts/check-eastmoney-residue.ts",
-        where: ".github/workflows/build.yml frontend job（issue #1682 CI 补齐）",
-      },
-    ],
-  },
-  {
-    name: "样式块守门（check-style-blocks）",
-    refs: "issue #888 / ADR-0093",
-    hosts: [
-      {
-        file: CHECK_SH_FILE,
-        prefix: "bun scripts/check-style-blocks.ts",
-        where: "scripts/check.sh 质量门槛序列",
-      },
-      {
-        file: CI_WORKFLOW_FILE,
-        prefix: "run: bun scripts/check-style-blocks.ts",
-        where: ".github/workflows/build.yml frontend job（issue #1682 CI 补齐）",
+        where: ".github/workflows/build.yml gates job（issue #1682 CI 补齐）",
       },
     ],
   },
@@ -337,12 +264,12 @@ export const GATE_MOUNTS: readonly GateMount[] = [
       {
         file: CHECK_SH_FILE,
         prefix: "bun scripts/check-bare-font-size.ts",
-        where: "scripts/check.sh 质量门槛序列（样式块守门后）",
+        where: "scripts/check.sh 质量门槛序列（东财残留扫描后）",
       },
       {
         file: CI_WORKFLOW_FILE,
         prefix: "run: bun scripts/check-bare-font-size.ts",
-        where: ".github/workflows/build.yml frontend job（样式块守门后）",
+        where: ".github/workflows/build.yml gates job（东财残留扫描后）",
       },
     ],
   },
@@ -358,39 +285,7 @@ export const GATE_MOUNTS: readonly GateMount[] = [
       {
         file: CI_WORKFLOW_FILE,
         prefix: "run: bun scripts/check-i18n-keys.ts",
-        where: ".github/workflows/build.yml frontend job（issue #1682 CI 补齐）",
-      },
-    ],
-  },
-  {
-    name: "弹窗表单节奏守门（check-dialog-forms）",
-    refs: "issue #804 / ADR-0079 决策 4",
-    hosts: [
-      {
-        file: CHECK_SH_FILE,
-        prefix: "bun scripts/check-dialog-forms.ts",
-        where: "scripts/check.sh 质量门槛序列",
-      },
-      {
-        file: CI_WORKFLOW_FILE,
-        prefix: "run: bun scripts/check-dialog-forms.ts",
-        where: ".github/workflows/build.yml frontend job（issue #1682 CI 补齐）",
-      },
-    ],
-  },
-  {
-    name: "测试桩守门（check-test-stubs）",
-    refs: "issue #725 / #750 / #822",
-    hosts: [
-      {
-        file: CHECK_SH_FILE,
-        prefix: "bun scripts/check-test-stubs.ts",
-        where: "scripts/check.sh 质量门槛序列",
-      },
-      {
-        file: CI_WORKFLOW_FILE,
-        prefix: "run: bun scripts/check-test-stubs.ts",
-        where: ".github/workflows/build.yml frontend job（issue #1682 CI 补齐）",
+        where: ".github/workflows/build.yml gates job（issue #1682 CI 补齐）",
       },
     ],
   },
@@ -406,7 +301,7 @@ export const GATE_MOUNTS: readonly GateMount[] = [
       {
         file: CI_WORKFLOW_FILE,
         prefix: "run: bun scripts/check-test-support.ts",
-        where: ".github/workflows/build.yml frontend job（issue #1682 CI 补齐）",
+        where: ".github/workflows/build.yml gates job（issue #1682 CI 补齐）",
       },
     ],
   },
@@ -422,23 +317,7 @@ export const GATE_MOUNTS: readonly GateMount[] = [
       {
         file: CI_WORKFLOW_FILE,
         prefix: "run: bun scripts/test-exec.ts check",
-        where: ".github/workflows/build.yml frontend job",
-      },
-    ],
-  },
-  {
-    name: "前端异步守门（check-async-guards）",
-    refs: "issue #1039 / #1008 决议 4",
-    hosts: [
-      {
-        file: CHECK_SH_FILE,
-        prefix: "bun scripts/check-async-guards.ts",
-        where: "scripts/check.sh 质量门槛序列",
-      },
-      {
-        file: CI_WORKFLOW_FILE,
-        prefix: "run: bun scripts/check-async-guards.ts",
-        where: ".github/workflows/build.yml frontend job",
+        where: ".github/workflows/build.yml gates job",
       },
     ],
   },
@@ -454,7 +333,7 @@ export const GATE_MOUNTS: readonly GateMount[] = [
       {
         file: CI_WORKFLOW_FILE,
         prefix: "run: bun test scripts/",
-        where: ".github/workflows/build.yml frontend job",
+        where: ".github/workflows/build.yml gates job",
       },
     ],
   },

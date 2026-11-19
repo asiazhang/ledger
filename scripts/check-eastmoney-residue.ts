@@ -17,7 +17,7 @@
 // 零例外（同 check-infra-dml 自 #1108 起的空清单稳态）；今后若出现新的合法在场，
 // 须在此逐条登记（文件 + 预期命中数 + 理由）。
 //
-// 扫描边界：全仓文本面（rs/ts/tsx/vue/md/json/sql/sh/html/toml/yml/yaml）。
+// 扫描边界：全仓文本面（rs/md/json/sql/sh/html/toml/yml/yaml；ts/tsx/vue 面已随 Web 前端退役删除，#2171/#2172）。
 // docs/ 整域豁免——ADR、调研档案与词汇表的历史叙述（含端点 URL 引证）是其职责
 // 本体；CHANGELOG.md 豁免（历史条目）；守门脚本与其包装测试豁免（禁令字面量以
 // 数据形态住在其中）。豁免全部 fail loud：登记文件消失即红（清单漂移），不放任
@@ -48,9 +48,6 @@ const WRAPPER_TEST_REL = "scripts/check-eastmoney-residue.test.ts";
 /** 扫描的文本面扩展名：源码、契约、脚本与文档化文本；二进制资产不在判据面 */
 const SCAN_EXTENSIONS = new Set([
   ".rs",
-  ".ts",
-  ".tsx",
-  ".vue",
   ".md",
   ".json",
   ".sql",

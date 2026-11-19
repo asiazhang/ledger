@@ -17,9 +17,8 @@ afterAll(() => {
   for (const dir of tempDirs) rmSync(dir, { recursive: true, force: true });
 });
 
-/** 三份元数据的最小可解析形态；值为 null 表示刻意省略该文件。 */
+/** 两份元数据的最小可解析形态；值为 null 表示刻意省略该文件。 */
 const DEFAULT_FILES: Record<string, string | null> = {
-  "package.json": JSON.stringify({ name: "ledger", version: "1.2.3" }, null, 2),
   "src-app/Cargo.toml": [
     "[package]",
     'name = "nsh-app"',
@@ -53,10 +52,10 @@ describe("check-versions（版本元数据一致性守门，issue #1957）", () 
     const r = run();
     expect(r.status).toBe(0);
     expect(r.output).toContain("版本元数据一致");
-    expect(r.output).toContain("package.json / src-app/Cargo.toml / src-app/nsh.json");
+    expect(r.output).toContain("src-app/Cargo.toml / src-app/nsh.json");
   });
 
-  it("夹具三处一致全绿（位置参数指向夹具根）", () => {
+  it("夹具两处一致全绿（位置参数指向夹具根）", () => {
     const r = run([makeFixture()]);
     expect(r.status).toBe(0);
     expect(r.output).toContain("1.2.3");
@@ -74,7 +73,7 @@ describe("check-versions（版本元数据一致性守门，issue #1957）", () 
     expect(r.status).toBe(1);
     expect(r.output).toContain("版本号不一致");
     expect(r.output).toContain("src-app/nsh.json=1.2.0");
-    expect(r.output).toContain("package.json=1.2.3");
+    expect(r.output).toContain("src-app/Cargo.toml=1.2.3");
   });
 
   it("Cargo.toml 漂移即红，并列出两处取值（覆盖 cargo 解析腿：依赖区 version 不参与判定）", () => {
@@ -92,7 +91,7 @@ describe("check-versions（版本元数据一致性守门，issue #1957）", () 
     expect(r.status).toBe(1);
     expect(r.output).toContain("版本号不一致");
     expect(r.output).toContain("src-app/Cargo.toml=1.2.0");
-    expect(r.output).toContain("package.json=1.2.3");
+    expect(r.output).toContain("src-app/nsh.json=1.2.3");
   });
 
   it("文件缺失即红并指名缺失文件（fail loud，不静默跳过）", () => {
@@ -104,10 +103,10 @@ describe("check-versions（版本元数据一致性守门，issue #1957）", () 
 
   it("version 字段读不出即红（不按空值放行）", () => {
     const dir = makeFixture({
-      "package.json": JSON.stringify({ name: "ledger" }, null, 2),
+      "src-app/nsh.json": JSON.stringify({ name: "Ledger", id: "com.zhangheng.ledger.nsh" }, null, 2),
     });
     const r = run([dir]);
     expect(r.status).toBe(1);
-    expect(r.output).toContain("package.json：读不出顶层 version 字段");
+    expect(r.output).toContain("src-app/nsh.json：读不出顶层 version 字段");
   });
 });

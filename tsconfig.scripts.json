@@ -1,37 +1,30 @@
 {
-  /* 守门脚本与测试的类型检查工程（issue #734 / ADR-0083；include 全量翻转见 #740）。
-     执行：pnpm exec vue-tsc -p tsconfig.scripts.json --noEmit（质量门槛挂载登记见
-     scripts/gate-mounts.ts，issue #1682）。compilerOptions 收敛至 tsconfig.base.json（issue #1149），
-     本工程经 extends 继承——行为逐字不变（ADR-0083「与根 tsconfig.json 保持同构」
-     表述同步修订为「两工程共用同一份 extends 源」），差异仅两处：
-     ① types 限定 node + vitest/globals + bun-types（@types/node 提供 node:* 声明；
-        bun-types 提供 scripts 测试显式 `from "bun:test"` 导入的模块声明（#1995 起
-        守门测试不再经 vitest 隐式别名跑 bun:test，导入与运行器同名同源）；
-        vitest/globals 续留——include 面内存在部分导入的测试与测试助手内联用例，
-        全局 beforeEach/afterEach/expect 有真实消费者）；
-     ② include = 脚本 + 全量测试目录（#737 收窄入门，#738/#739 分批清债，#740 收口
-        翻转——「测试文件零类型检查」缺口正式关死）；本票迁入的包内测试目录收入
-        （spec #1148 用户故事 10 / issue #1153、#1154），迁移不带来类型检查缩水，其余包内
-        测试的纳管另行收口。另收入 src 下全局 .d.ts（vite-env.d.ts 等全局声明，
-        脚本与测试导入图引用）+ 共享测试支持包源码（issue #1152：测试侧 .ts 的类型
-        面，包内测试随同一工程检查；@ledger/types 包源码不入本工程——生产类型层由
-        消费方程序随引随查）。
-     scripts 由 Bun 运行时执行（ADR-0083），类型检查仍按 TS 语义进行。 */
-  "extends": "./tsconfig.base.json",
+  /* 守门脚本与测试的类型检查工程（issue #734 / ADR-0083）。原 extends 根
+     tsconfig.base.json 随 Web 参照前端退役删除（#2171/#2172），公共项就地内联
+     （原继承值逐字保留，仅删去前端专属项：lib 的 DOM 面、paths 的 @/* 映射——
+     两者的唯一消费者是已删除的前端工程）。类型检查执行 = bunx 拉取 typescript 7
+     原生 tsc（vue-tsc 随前端退役，其存在的唯一理由 vue 单文件组件不复存在）：
+     bunx --package typescript@7.0.2 --package bun-types@1.4.0 --package @types/node@22.20.1 \
+       tsc --noEmit -p tsconfig.scripts.json（版本钉死，与 CI 同值）。
+     include 面自前端退役后只剩 scripts/（原 src/**、packages/** 测试面已删除）。 */
   "compilerOptions": {
-    "types": ["node", "vitest/globals", "bun-types"]
+    "target": "ES2020",
+    "module": "ESNext",
+    "lib": ["ES2020"],
+    "skipLibCheck": true,
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noEmit": true,
+
+    /* Linting */
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+
+    "types": ["node", "bun-types"]
   },
-  "include": [
-    "scripts/**/*.ts",
-    "src/__tests__/**/*.ts",
-    "src/**/*.d.ts",
-    "packages/money/src/__tests__/**/*.ts",
-    "packages/row-context-menu/src/__tests__/**/*.ts",
-    "packages/loadable/src/__tests__/**/*.ts",
-    "packages/scheduled-plan-list/src/__tests__/**/*.ts",
-    "packages/transaction-modal-state/src/__tests__/**/*.ts",
-    "packages/theme/src/__tests__/**/*.ts",
-    "packages/ui-kit/src/__tests__/**/*.ts",
-    "packages/test-support/src/**/*.ts"
-  ]
+  "include": ["scripts/**/*.ts"]
 }

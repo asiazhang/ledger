@@ -115,9 +115,10 @@ done
 
 # ── ⑤ 代码坐标扫描（分域词汇表与模型文档禁止实现坐标） ──────────────────
 # 「代码可查事实不进文档」三层标尺（甲删乙留丙留，详见 CONTEXT-MAP「结构约定」）：
-# 甲类实现坐标——src-app/src/、src/ 路径式引用与 .rs/.ts/.vue 文件名——出现即失败；
+# 甲类实现坐标——src-app/src/、src/ 路径式引用与 .rs/.ts 文件名——出现即失败（.vue
+# 面随 Web 参照前端退役删除，#2171/#2172，正则同步收窄）；
 # 术语专名（表名/视图名/信号名/接缝名）不在扫描范围。白名单刻意留空：清理完成后应零豁免通过。
-coord_re='(src-app/)?src/[A-Za-z0-9_./-]+|[A-Za-z0-9_-]+\.(rs|ts|vue)\b'
+coord_re='(src-app/)?src/[A-Za-z0-9_./-]+|[A-Za-z0-9_-]+\.(rs|ts)\b'
 coord_whitelist=''  # 豁免文件清单（空格分隔仓库相对路径），当前留空
 for f in $(find "$CTX_DIR" docs/model -type f -name '*.md' 2>/dev/null | sort); do
   case " $coord_whitelist " in

@@ -183,7 +183,8 @@ pub fn matching_brace_end(masked: &str, open: usize) -> Option<usize> {
 }
 
 /// 双源防漂移语料（#1433）：本实现与 TS 侧 `maskNonCode` 消费同一夹具，
-/// 期望输出以 TS 侧权威实现生成；两侧单独改规则即本测或 vitest 侧语料测试红。
+/// 期望输出以 TS 侧权威实现生成；两侧单独改规则即本测或 scripts/gate-primitives.test.ts
+/// 语料测试红（vitest 收集面已随 Web 前端退役，#2171/#2172；TS 侧载体现住守门原语库）。
 #[test]
 fn mask_non_code_matches_shared_corpus() {
     let corpus = include_str!("../../../scripts/fixtures/rust-mask-corpus.rs");

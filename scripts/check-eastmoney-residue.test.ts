@@ -73,12 +73,14 @@ describe("check-eastmoney-residue（东财行情面端点零残留守门，issue
   });
 
   it("dfcfw 域名同在禁令闭集：东财自有域任一出现即红", () => {
+    // 扫描面扩展闭集随 Web 前端退役收窄（#2171/#2172）：夹具改用 .rs 面（原
+    // .ts 夹具不再入扫描面，语义不变——任意文本面出现东财域即红）。
     const dir = makeFixture({
-      "src/rogue.ts": "export const IMG = 'https://dfcfw.eastmoney.com/x.png';",
+      "src-app/crates/market-sync/src/rogue2.rs": "// https://dfcfw.eastmoney.com/x.png",
     });
     const r = run([dir]);
     expect(r.status).toBe(1);
-    expect(r.output).toContain("src/rogue.ts:1");
+    expect(r.output).toContain("src-app/crates/market-sync/src/rogue2.rs:1");
   });
 
   it("收紧后的判据：原 FX 腿主机池文件（http.rs）再出现东财域名即未登记残留红", () => {
