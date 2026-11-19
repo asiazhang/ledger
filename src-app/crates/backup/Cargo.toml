@@ -31,7 +31,7 @@ tracing = "0.1"
 # （test_support，ADR-0084）与账户域余额口径（恢复往返对拍）。dev-dependency
 # 环由 Cargo 允许——测试目标与生产依赖图分离，不构成生产环；结构守门的依赖
 # 方向核对只辖生产依赖（本 crate 声明壳 crate 为生产依赖即红，负向夹具见
-# check-structure.test.ts）。由于该环，本 crate 不能像协议 crate 那样以
+# test_check_structure.py）。由于该环，本 crate 不能像协议 crate 那样以
 # `use nsh_app::…` 的 compile_fail 文档用例承载反向引用负向例
 # （dev-dependency 对 doctest 可见，会击穿该形态）——反向引用的编译期拒绝
 # 由生产依赖面承担（lib 目标解析不到 dev-dependency），机器面负向核对住
@@ -45,6 +45,6 @@ ledger-accounts = { path = "../accounts" }
 ledger-infra = { path = "../infra", features = ["test-utils"] }
 
 # 六件套易 panic 构造门禁经 workspace 继承（ADR-0060 / spec #1086 门禁前置）：
-# 本行是继承接线，缺失即门禁静默消失，由 scripts/check-structure.ts 守门。
+# 本行是继承接线，缺失即门禁静默消失，由 scripts/check_structure.py 守门。
 [lints]
 workspace = true

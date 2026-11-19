@@ -17,6 +17,8 @@
 
 ### Changed
 
+- **守门脚本运行时迁移 Python + uv（[#2174]，ADR-0083 修订注记）**：scripts/ 下 11 个守门脚本与各自测试逐语义移植 Python（判定语义、白名单、输出文案逐字保留，bun test 用例逐一对应），bun 全量退役——门宿主行改 `uv run scripts/<name>.py`，类型检查门 tsc 改 mypy --strict，守门脚本测试改 pytest（`uv run scripts/run_tests.py`），mypy/pytest 版本以 PEP 723 内联依赖钉死，仓库零工具链 manifest；词法掩码双源登记换载体（Rust ↔ Python），共享语料夹具与 keepLiterals 期望双侧消费不变。
+
 - **NSH 布局对齐**：对照 Web 参照前端的布局结构逐项收口（[#2135]，#2084 盘点剩余项）——侧栏导航项补图标（ionicons Outline 同映射闭集，`nsh-core` 启用 `svg` feature 原生重画）、概览本年度预算/财务自由度与投资概览卡进度条通栏（240pt 定宽退役）、列表类卡片「标题与表头间大片空白」修复（账户/商户/物品/保单/攒钱归档，卡标题退出弹性分配）、订阅「实际花费」柱图补纵轴刻度与水平网格（右上峰值标签退役为轴刻度）、物品页创建提示条改 info 淡染面带图标、投资组合走势时间窗从卡头右上迁到标题下左对齐、搜索空态补图标；交易页页内搜索框行裁决为 NSH 增量保留（立桩 #2023 交付能力，web 对应能力在独立搜索页），设置页主题三态下拉裁决为有意偏差（三态含「跟随系统」是本壳显式开口，控件形态属 GTK 原生口径外）。
 - **锁定屏**：新增「从备份文件恢复…」常驻入口，与「忘记口令？」并列双逃生门（#2088 挂账残留差异收口，[#2131]）：选定备份文件 → 元数据校验 → 恢复确认弹窗（跨模式警告；密文备份需该备份的主口令，手输过的口令先自动试开、失败就地显出口令框重输）→ 复用既有恢复全语义（恢复前自动备份当前数据到应用数据目录 + 整库替换，破坏性确认与取消零替换语义不变）；恢复成功后按恢复出的库形态原位进入——明文库直达主界面、密文库凭该备份主口令解锁进会话，无需重启。
 - **壳层框架**：NSH 0.4.0 → 0.5.1（[#2133]；自动更新重建前置 [#2134]）。breaking 消解仅两处：nsh-base 0.5.0 起 plot 组件模块改 feature 门控（本仓显式启用 `plot`）、`nsh run` 构建面要求 crate 根声明 `#[native_module]`（本壳无 TSX 导出面，空注册集）；Rust 模式无 QuickJS 不变。0.5.0 带入的列表滚动、文本输入（含 IME）、弹层焦点等修复随框架升级直接受益，行为面以升级验证（headless 全量 2871 用例与基线一致全绿）为准。
@@ -591,6 +593,7 @@
 [#2135]: https://github.com/asiazhang/ledger/issues/2135
 [#2171]: https://github.com/asiazhang/ledger/issues/2171
 [#2172]: https://github.com/asiazhang/ledger/issues/2172
+[#2174]: https://github.com/asiazhang/ledger/issues/2174
 [#1188]: https://github.com/asiazhang/ledger/issues/1188
 [#953]: https://github.com/asiazhang/ledger/issues/953
 [#1212]: https://github.com/asiazhang/ledger/issues/1212

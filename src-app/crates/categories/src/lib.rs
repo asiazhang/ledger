@@ -37,8 +37,8 @@
 //! 依赖方向由编译期强制（issue #1094 AC3）：生产依赖面（lib 目标）没有根包
 //! `nsh_app` 与任何业务域，构造对它们的引用即编译失败；dev-dependency
 //! 环只覆盖测试目标，不构成生产环（本 crate Cargo.toml 注释留痕）。机器面
-//! 负向核对住结构守门的 crate 依赖方向（`scripts/check-structure.ts` CRATES +
-//! `check-structure.test.ts` 负向夹具）——本 crate 不能用 `use nsh_app::…`
+//! 负向核对住结构守门的 crate 依赖方向（`scripts/check_structure.py` CRATES +
+//! `test_check_structure.py` 负向夹具）——本 crate 不能用 `use nsh_app::…`
 //! 的 compile_fail 文档用例承载该负向例：dev-dependency 对 doctest 可见，会
 //! 击穿该形态（先例说明见 ledger-backup / ledger-transaction crate 根文档）。
 //!

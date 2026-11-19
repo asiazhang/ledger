@@ -12,7 +12,7 @@ publish = false
 # 只消费基础设施（db / error）与同步协议（SyncCommand / op 产出 / 设备标识），
 # 对交易域与任何业务域、根包（壳层）零依赖。对壳层/域目录的反向引用由生产
 # 依赖面编译期拒绝（本 crate 声明 壳层 crate 为生产依赖即红，负向夹具见
-# check-structure.test.ts）。
+# test_check_structure.py）。
 ledger-infra = { path = "../infra" }
 ledger-sync-protocol = { path = "../sync-protocol" }
 rusqlite = { version = "0.40", features = ["bundled-sqlcipher-vendored-openssl", "trace"] }
@@ -34,6 +34,6 @@ nsh-app = { path = "../..", features = ["test-utils"] }
 serde_json = "1"
 
 # 六件套易 panic 构造门禁经 workspace 继承（ADR-0060 / spec #1086 门禁前置）：
-# 本行是继承接线，缺失即门禁静默消失，由 scripts/check-structure.ts 守门。
+# 本行是继承接线，缺失即门禁静默消失，由 scripts/check_structure.py 守门。
 [lints]
 workspace = true

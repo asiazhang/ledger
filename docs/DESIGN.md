@@ -2,7 +2,7 @@
 
 > 本仓视觉唯一真源（ADR-0147 决策 2）：叠于 NSH 官方设计指南（nsh.dev/zh-CN/docs/design-guides）之上——指南管「无论长什么样必须为真的事」，本规约管「本仓长什么样」，相左时本规约赢。
 >
-> 现状：骨架初版（spec #2099 票 #2100）。数值采用官方规范值；代码取值唯一来源是壳根包设计常量模块（`src-app/src/design.rs`，字阶/间距/圆角）与主题令牌表（`src-app/theme.json`，色值）。视图收口票（#2101–#2107）已把存量裸值逐批换到这两处；圆角规格外档（框架 `rounded-md` 6pt）随 review 收编退役到三档令牌类；零裸值守门随 #2108 挂入检查脚本（`scripts/check-bare-font-size.ts`，挂载登记见 `scripts/gate-mounts.ts`）。
+> 现状：骨架初版（spec #2099 票 #2100）。数值采用官方规范值；代码取值唯一来源是壳根包设计常量模块（`src-app/src/design.rs`，字阶/间距/圆角）与主题令牌表（`src-app/theme.json`，色值）。视图收口票（#2101–#2107）已把存量裸值逐批换到这两处；圆角规格外档（框架 `rounded-md` 6pt）随 review 收编退役到三档令牌类；零裸值守门随 #2108 挂入检查脚本（`scripts/check_bare_font_size.py`，挂载登记见 `scripts/gate_mounts.py`）。
 >
 > 冲突裁决：规约与代码不一致时，按可验证行为修正规约（仓库通则）。
 
@@ -66,7 +66,7 @@
 
 ## 7. 视图零裸值纪律与例外挂账处
 
-**纪律**：视图层零裸值——颜色走主题令牌、字号走字阶常量、圆角与间距走尺度常量；新增代码不得出现裸 `text_size(px(…))` 直调、裸 hex/`rgb()`、调色板类名与散写圆角/间距值。守门已挂入（#2108）：`scripts/check-bare-font-size.ts` 扫描壳根包（`src-app/src`）`text_size(px(<数字字面量>))` 直调即红——字号取值唯一来源 `design::font_size` 字阶。扫描面内的 `#[cfg(test)]` 单元测试块与设计常量模块不豁免（夹具写裸字号同样制造第二套数）；`src-app/tests/` 目录不在扫描面（headless 集成测试不辖本门，其探针断言值另受「唯一来源派生」纪律约束——字号由 `design::font_size` 常量派生，色值由 theme.json 真源解析派生（#2113），见 §8）；注释/字符串引证经词法掩码豁免；命中质量不达预期的合法在场经脚本内 `REGISTERED_EXCEPTIONS` 严格相等校验登记并挂账本表。
+**纪律**：视图层零裸值——颜色走主题令牌、字号走字阶常量、圆角与间距走尺度常量；新增代码不得出现裸 `text_size(px(…))` 直调、裸 hex/`rgb()`、调色板类名与散写圆角/间距值。守门已挂入（#2108）：`scripts/check_bare_font_size.py` 扫描壳根包（`src-app/src`）`text_size(px(<数字字面量>))` 直调即红——字号取值唯一来源 `design::font_size` 字阶。扫描面内的 `#[cfg(test)]` 单元测试块与设计常量模块不豁免（夹具写裸字号同样制造第二套数）；`src-app/tests/` 目录不在扫描面（headless 集成测试不辖本门，其探针断言值另受「唯一来源派生」纪律约束——字号由 `design::font_size` 常量派生，色值由 theme.json 真源解析派生（#2113），见 §8）；注释/字符串引证经词法掩码豁免；命中质量不达预期的合法在场经脚本内 `REGISTERED_EXCEPTIONS` 严格相等校验登记并挂账本表。
 
 **例外挂账处**（裸值/特殊值必须在此成文，未挂账即违规）：
 

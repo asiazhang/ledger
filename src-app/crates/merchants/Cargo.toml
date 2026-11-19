@@ -26,7 +26,7 @@ utoipa = { version = "5", features = ["axum_extras"] }
 # 复用，Cargo 允许」）：域单测用根包的统一测试数据库工厂与共享断言
 # （test_support，ADR-0084）。dev-dependency 环由 Cargo 允许——测试目标与生产
 # 依赖图分离，不构成生产环；结构守门的依赖方向核对只辖生产依赖（本 crate 声明
-# 壳层 crate 为生产依赖即红，负向夹具见 check-structure.test.ts）。由于该环，
+# 壳层 crate 为生产依赖即红，负向夹具见 test_check_structure.py）。由于该环，
 # 本 crate 不能像协议 crate 那样以 `use nsh_app::…` compile_fail 文档用例
 # 承载反向引用负向例（dev-dependency 对 doctest 可见，会击穿该形态）——反向
 # 引用的编译期拒绝由生产依赖面承担（lib 目标解析不到 dev-dependency），机器面
@@ -35,6 +35,6 @@ nsh-app = { path = "../..", features = ["test-utils"] }
 serde_json = "1"
 
 # 六件套易 panic 构造门禁经 workspace 继承（ADR-0060 / spec #1086 门禁前置）：
-# 本行是继承接线，缺失即门禁静默消失，由 scripts/check-structure.ts 守门。
+# 本行是继承接线，缺失即门禁静默消失，由 scripts/check_structure.py 守门。
 [lints]
 workspace = true

@@ -66,6 +66,6 @@ reqwest = { version = "0.13", default-features = false, features = ["blocking", 
 uuid = { version = "1.23", features = ["v7", "v5", "serde"] }
 
 # 六件套易 panic 构造门禁经 workspace 继承（ADR-0060 / spec #1086 门禁前置）：
-# 本行是继承接线，缺失即门禁静默消失，由 scripts/check-structure.ts 守门。
+# 本行是继承接线，缺失即门禁静默消失，由 scripts/check_structure.py 守门。
 [lints]
 workspace = true

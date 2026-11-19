@@ -124,7 +124,7 @@ cargo build --release
 
 产物是 `src-app/target/release/nsh-app` 单个二进制，直接运行即可（需要本机装有 Rust 工具链与 GTK4 开发库 `libgtk-4-dev`）。
 
-> 需要本机装有 Rust 工具链与 GTK4 开发库。守门脚本以 Bun 运行（ADR-0083），跑 `./scripts/check.sh` 需先安装 bun；更多技术细节、开发命令与架构约定，请见 [AGENTS.md](AGENTS.md) 与 [docs/](docs/) 开发文档。
+> 需要本机装有 Rust 工具链与 GTK4 开发库。守门脚本以 uv 运行（#2174 / ADR-0083 修订注记），跑 `./scripts/check.sh` 需先安装 uv；更多技术细节、开发命令与架构约定，请见 [AGENTS.md](AGENTS.md) 与 [docs/](docs/) 开发文档。
 
 ## 文档
 

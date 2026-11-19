@@ -43,8 +43,8 @@
 //! 依赖方向由编译期强制（issue #1093 AC3）：生产依赖面（lib 目标）没有根包
 //! `nsh_app` 与任何同级业务域，构造对它们的引用即编译失败；dev-dependency
 //! 环只覆盖测试目标，不构成生产环（本 crate Cargo.toml 注释留痕）。机器面负向
-//! 核对住结构守门的 crate 依赖方向（`scripts/check-structure.ts` CRATES +
-//! `check-structure.test.ts` 负向夹具）。
+//! 核对住结构守门的 crate 依赖方向（`scripts/check_structure.py` CRATES +
+//! `test_check_structure.py` 负向夹具）。
 //!
 //! **测试实例纪律（dev-dependency 环双实例）**：`cargo test -p ledger-accounts`
 //! 的依赖图内存在本 crate 的两份实例——被测本实例与根包图内实例（nsh-app 经

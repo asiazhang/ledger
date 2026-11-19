@@ -36,7 +36,7 @@
 //! `nsh_app`，在本 crate 生产代码里构造对壳层/定时计划域的引用即编译
 //! 失败；dev-dependency 环只覆盖测试目标，不构成生产环（根包 Cargo.toml 注释
 //! 与本 crate Cargo.toml 注释留痕）。机器面负向核对住结构守门的 crate 依赖
-//! 方向（`scripts/check-structure.ts` CRATES + `check-structure.test.ts`
+//! 方向（`scripts/check_structure.py` CRATES + `test_check_structure.py`
 //! 负向夹具）——本 crate 不能用 `use nsh_app::…` 的 compile_fail 文档
 //! 用例承载该负向例：dev-dependency 对 doctest 可见，会击穿该形态（先例说明
 //! 见 sync-protocol crate 的 Cargo.toml 注释）。

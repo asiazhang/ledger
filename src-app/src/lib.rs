@@ -246,7 +246,7 @@
 //!
 //! 包内第二 bin（#2082）：`src/bin/ledger-perf`（性能基准工具，ADR-0062 唯一
 //! 生成器，spec #458）随本包构建——headless 集成测试经 `CARGO_BIN_EXE_ledger-perf`
-//! 消费，工具单测归 perf-bench.yml 每日基准承接（test-exec.ts EXEMPT_BINS 登记）。
+//! 消费，工具单测归 perf-bench.yml 每日基准承接（test_exec.py EXEMPT_BINS 登记）。
 
 // NSH 0.5 起 Rust 应用 crate 根必须声明原生模块（nsh CLI 的 describe/run 构
 // 建面硬要求，缺失即生成器 stand-in 构建失败并提示；#2133 升级时补齐）：
