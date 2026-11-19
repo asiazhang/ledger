@@ -8,15 +8,18 @@
 //!
 //! 测试豁免（ADR-0060）：本模块测试经 crate 根 cfg(test) 整体放行六件套。
 
-use ledger_infra::error::AppError;
 use nsh_base::{data_table, input};
 use nsh_core::prelude::*;
 
 use crate::app::db_slot;
 use crate::design::font_size;
-use crate::settings_data::{READ_TASK_FAILED, SESSION_MISSING};
+use crate::shell_msgs::{
+    MSG_CREATE_TASK_FAILED, MSG_DELETE_TASK_FAILED, MSG_READ_TASK_FAILED, MSG_SAVE_TASK_FAILED,
+    MSG_SESSION_MISSING,
+};
 use crate::transactions::{amount_color, amount_privacy_enabled, table_classes};
 use crate::views::field_label;
+use crate::write_load::session_missing_err;
 use crate::{adaptive, assembly, boot, modal, nav, pinyin_select, popconfirm, signals};
 
 // ---------------------------------------------------------------------------
@@ -163,7 +166,7 @@ pub(crate) fn BudgetView() -> impl IntoElement {
         let privacy = amount_privacy_enabled();
         spawn(async move {
             let Some(db) = db else {
-                error.set(Some(SESSION_MISSING.to_owned()));
+                error.set(Some(MSG_SESSION_MISSING.to_owned()));
                 loading.set(false);
                 return;
             };
@@ -186,7 +189,7 @@ pub(crate) fn BudgetView() -> impl IntoElement {
                     options.set(assembly::expense_category_options(&category_rows));
                 }
                 Ok(Err(e)) => error.set(Some(e.to_string())),
-                Err(_) => error.set(Some(READ_TASK_FAILED.to_owned())),
+                Err(_) => error.set(Some(MSG_READ_TASK_FAILED.to_owned())),
             }
             loading.set(false);
         });
@@ -234,7 +237,7 @@ pub(crate) fn BudgetView() -> impl IntoElement {
             spawn(async move {
                 let outcome = blocking(move || match db.as_ref() {
                     Some(db) => boot::create_budget(db, &input),
-                    None => Err(AppError::coded(boot::CODE_SESSION_MISSING, SESSION_MISSING)),
+                    None => Err(session_missing_err()),
                 })
                 .await;
                 match outcome {
@@ -247,9 +250,7 @@ pub(crate) fn BudgetView() -> impl IntoElement {
                         signals::notify_budgets_invalidated();
                     }
                     Ok(Err(e)) => create_error.set(Some(format!("创建失败: {e}"))),
-                    Err(_) => {
-                        create_error.set(Some("创建失败: 内部错误：创建任务异常退出".to_owned()))
-                    }
+                    Err(_) => create_error.set(Some(format!("创建失败: {MSG_CREATE_TASK_FAILED}"))),
                 }
             });
         });
@@ -283,7 +284,7 @@ pub(crate) fn BudgetView() -> impl IntoElement {
                         cents.unwrap_or_default(),
                         Some(next_period),
                     ),
-                    None => Err(AppError::coded(boot::CODE_SESSION_MISSING, SESSION_MISSING)),
+                    None => Err(session_missing_err()),
                 })
                 .await;
                 match outcome {
@@ -292,9 +293,7 @@ pub(crate) fn BudgetView() -> impl IntoElement {
                         signals::notify_budgets_invalidated();
                     }
                     Ok(Err(e)) => edit_error.set(Some(format!("更新失败: {e}"))),
-                    Err(_) => {
-                        edit_error.set(Some("更新失败: 内部错误：保存任务异常退出".to_owned()))
-                    }
+                    Err(_) => edit_error.set(Some(format!("更新失败: {MSG_SAVE_TASK_FAILED}"))),
                 }
             });
         });
@@ -308,15 +307,13 @@ pub(crate) fn BudgetView() -> impl IntoElement {
             spawn(async move {
                 let outcome = blocking(move || match db.as_ref() {
                     Some(db) => boot::delete_budget(db, &id),
-                    None => Err(AppError::coded(boot::CODE_SESSION_MISSING, SESSION_MISSING)),
+                    None => Err(session_missing_err()),
                 })
                 .await;
                 match outcome {
                     Ok(Ok(())) => signals::notify_budgets_invalidated(),
                     Ok(Err(e)) => delete_error.set(Some(format!("删除失败: {e}"))),
-                    Err(_) => {
-                        delete_error.set(Some("删除失败: 内部错误：删除任务异常退出".to_owned()))
-                    }
+                    Err(_) => delete_error.set(Some(format!("删除失败: {MSG_DELETE_TASK_FAILED}"))),
                 }
             });
         });

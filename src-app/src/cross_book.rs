@@ -43,7 +43,7 @@ use nsh_core::prelude::*;
 use crate::app::db_slot;
 use crate::design::font_size;
 use crate::popover::popover_tip;
-use crate::settings_data::{READ_TASK_FAILED, SESSION_MISSING};
+use crate::shell_msgs::{MSG_READ_TASK_FAILED, MSG_SESSION_MISSING};
 use crate::{assembly, boot, nav};
 
 /// 注册表不可用的稳定错误码与文案（旧壳 cross_book_summary 命令同码同文
@@ -443,7 +443,7 @@ pub(crate) fn CrossBookSummaryView() -> impl IntoElement {
         view_owner.run(move || {
             spawn(async move {
                 let Some(db) = db else {
-                    error.set(Some(SESSION_MISSING.to_owned()));
+                    error.set(Some(MSG_SESSION_MISSING.to_owned()));
                     loading.set(false);
                     return;
                 };
@@ -462,7 +462,7 @@ pub(crate) fn CrossBookSummaryView() -> impl IntoElement {
                 match outcome {
                     Ok(Ok(transformed)) => cells.set(Some(transformed)),
                     Ok(Err(e)) => error.set(Some(e.to_string())),
-                    Err(_) => error.set(Some(READ_TASK_FAILED.to_owned())),
+                    Err(_) => error.set(Some(MSG_READ_TASK_FAILED.to_owned())),
                 }
                 loading.set(false);
             });

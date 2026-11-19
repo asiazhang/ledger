@@ -38,13 +38,16 @@ use nsh_core::file_dialog::{FileFilter, OpenDialog};
 use nsh_core::prelude::*;
 
 use crate::app::StartupView;
+use crate::backup_cards;
 use crate::danger::{DangerConfirmSpec, DangerLevel, DangerOutcome, danger_confirm};
 use crate::design::font_size;
 use crate::restore_confirm::{
-    RestoreIds, RestoreIntent, app_restore_confirm_modal, restore_show_pass,
+    RestoreIds, RestoreIntent, RestoreSignals, app_restore_confirm_modal, restore_show_pass,
 };
-use crate::settings_data;
-use crate::settings_data::{READ_TASK_FAILED, WRITE_TASK_FAILED};
+use crate::shell_msgs;
+use crate::shell_msgs::{
+    MSG_READ_TASK_FAILED, MSG_RESET_TASK_FAILED, MSG_UNLOCK_TASK_FAILED, MSG_WRITE_TASK_FAILED,
+};
 use crate::{app, boot, http_host, views};
 
 // ---------------------------------------------------------------------------
@@ -54,7 +57,6 @@ use crate::{app, boot, http_host, views};
 
 const UNLOCK_PASS_PLACEHOLDER: &str = "主口令";
 const UNLOCK_BUTTON: &str = "解锁";
-const UNLOCK_TASK_FAILED: &str = "内部错误：解锁任务异常退出";
 const FORGOT_ENTRY: &str = "忘记口令？";
 const RESET_CONFIRM_TITLE: &str = "重置为全新空库？";
 const RESET_CONFIRM_STRONG: &str =
@@ -62,7 +64,6 @@ const RESET_CONFIRM_STRONG: &str =
 const RESET_CONFIRM_DETAIL: &str = "继续将把账本重置为全新的明文空库，应用随即进入全新账本（重置后可再次开启加密）。当前账本会保留为密文副本（无口令不可读）——日后想起口令时，数据仍可救回。";
 const RESET_CONFIRM_OK: &str = "确认重置";
 const RESET_CONFIRM_CANCEL: &str = "取消";
-const RESET_TASK_FAILED: &str = "内部错误：重置任务异常退出";
 /// 从备份文件恢复入口与选择器标题（旧壳 `unlock.restore` /
 /// `unlock.restorePickTitle` zh-CN 词条原样；#2131）。
 const RESTORE_ENTRY: &str = "从备份文件恢复…";
@@ -158,7 +159,7 @@ impl LockedSurface {
                 match outcome {
                     Ok(Ok(db)) => surface.enter_ready(db),
                     Ok(Err(e)) => surface.fail(e.to_string()),
-                    Err(_) => surface.fail(UNLOCK_TASK_FAILED.to_owned()),
+                    Err(_) => surface.fail(MSG_UNLOCK_TASK_FAILED.to_owned()),
                 }
             });
         });
@@ -179,7 +180,7 @@ impl LockedSurface {
                 match outcome {
                     Ok(Ok(db)) => surface.enter_ready(db),
                     Ok(Err(e)) => surface.fail(e.to_string()),
-                    Err(_) => surface.fail(RESET_TASK_FAILED.to_owned()),
+                    Err(_) => surface.fail(MSG_RESET_TASK_FAILED.to_owned()),
                 }
             });
         });
@@ -201,7 +202,7 @@ impl LockedSurface {
                 let picked = match pick_paths(
                     OpenDialog::files()
                         .multiple(false)
-                        .filter(FileFilter::new(settings_data::FILTER_NAME, ["zip", "db"]))
+                        .filter(FileFilter::new(backup_cards::FILTER_NAME, ["zip", "db"]))
                         .title(RESTORE_PICK_TITLE),
                 )
                 .await
@@ -218,13 +219,13 @@ impl LockedSurface {
                 {
                     Ok(Ok(meta)) => meta,
                     Ok(Err(e)) => {
-                        surface.fail(format!("{}{e}", settings_data::MSG_META_FAILED_PREFIX));
+                        surface.fail(format!("{}{e}", shell_msgs::MSG_META_FAILED_PREFIX));
                         return;
                     }
                     Err(_) => {
                         surface.fail(format!(
-                            "{}{READ_TASK_FAILED}",
-                            settings_data::MSG_META_FAILED_PREFIX
+                            "{}{MSG_READ_TASK_FAILED}",
+                            shell_msgs::MSG_META_FAILED_PREFIX
                         ));
                         return;
                     }
@@ -234,14 +235,14 @@ impl LockedSurface {
                     Ok(Err(e)) => {
                         surface.fail(format!(
                             "{}{e}",
-                            settings_data::MSG_ENCRYPTION_STATUS_FAILED_PREFIX
+                            shell_msgs::MSG_ENCRYPTION_STATUS_FAILED_PREFIX
                         ));
                         return;
                     }
                     Err(_) => {
                         surface.fail(format!(
-                            "{}{READ_TASK_FAILED}",
-                            settings_data::MSG_ENCRYPTION_STATUS_FAILED_PREFIX
+                            "{}{MSG_READ_TASK_FAILED}",
+                            shell_msgs::MSG_ENCRYPTION_STATUS_FAILED_PREFIX
                         ));
                         return;
                     }
@@ -309,7 +310,7 @@ impl LockedSurface {
                         let text = e.to_string();
                         surface.restore_error.set(Some(format!(
                             "{}{text}",
-                            settings_data::RESTORE_FAIL_PREFIX
+                            shell_msgs::MSG_RESTORE_FAIL_PREFIX
                         )));
                         surface.busy.set(false);
                         // 后端探测实际密文而元数据未标记（异常产物）时，按需显
@@ -325,8 +326,8 @@ impl LockedSurface {
                     }
                     Err(_) => {
                         surface.restore_error.set(Some(format!(
-                            "{}{WRITE_TASK_FAILED}",
-                            settings_data::RESTORE_FAIL_PREFIX
+                            "{}{MSG_WRITE_TASK_FAILED}",
+                            shell_msgs::MSG_RESTORE_FAIL_PREFIX
                         )));
                         surface.busy.set(false);
                     }
@@ -373,11 +374,13 @@ pub(crate) fn locked_panel(
     // 卡两侧消费同一成员；关闭路径 = 取消 / ESC / ✕——执行中不关；成功后
     // 由任务关并进会话）。
     let restore_modal = app_restore_confirm_modal(
-        surface.restore_intent,
-        surface.restore_pass,
-        surface.restore_pass_revealed,
-        surface.busy,
-        surface.restore_error,
+        RestoreSignals {
+            intent: surface.restore_intent,
+            pass: surface.restore_pass,
+            revealed: surface.restore_pass_revealed,
+            busy: surface.busy,
+            error: surface.restore_error,
+        },
         &RESTORE_IDS,
         move |_: &()| surface.run_restore_confirm(owner),
     );
@@ -425,7 +428,7 @@ pub(crate) fn locked_panel(
                     text(move || surface.error.get().unwrap_or_default())
                         .text_size(px(font_size::CAPTION))
                         // 破坏色单一呈现令牌（ViewPalette::danger_fg 成员，
-                        // 与 settings_data / backup_entry 同口径）。
+                        // 与 backup_cards / backup_entry 同口径）。
                         .text_color(views::view_palette().danger_fg)
                         .test_id("unlock-error")
                 },

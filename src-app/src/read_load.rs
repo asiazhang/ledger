@@ -15,7 +15,8 @@
 //! 弃误变体，三段形状缺第三段错误映射——收口需引入无谓失败分口）；
 //! [`crate::items`] 的 `perform_recalc`（db 缺席路径在阻塞闭包内构造码化
 //! 错误，非守卫形状）；其余视图模块（transactions / search / dashboard 等）
-//! 的同名形状不在本票范围。
+//! 的同名形状不在本票范围。写路径的同族孪生形状（db 槽位 `None` → 码化
+//! SESSION_MISSING 错误）另收口于 [`crate::write_load`]（#2162）。
 
 use std::sync::Arc;
 

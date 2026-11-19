@@ -36,12 +36,12 @@ use crate::modal;
 use crate::nav;
 use crate::nav_model::{NavRequest, ViewName};
 use crate::select;
-use crate::settings_data::{READ_TASK_FAILED, SESSION_MISSING, WRITE_TASK_FAILED};
+use crate::shell_msgs::{MSG_READ_TASK_FAILED, MSG_SESSION_MISSING, MSG_WRITE_TASK_FAILED};
 use crate::signals;
 use crate::transactions::{amount_color, amount_privacy_enabled, table_classes};
 use crate::tx_filter;
 use crate::views::field_label;
-use ledger_infra::error::AppError;
+use crate::write_load::session_missing_err;
 
 // ---------------------------------------------------------------------------
 // 词表（旧壳 accounts.* zh-CN 词条原样；i18n 框架级方案不在本票，字面承载）。
@@ -89,7 +89,7 @@ pub(crate) fn AccountsView() -> impl IntoElement {
         view_owner.run(move || {
             spawn(async move {
                 let Some(db) = db else {
-                    error.set(Some(SESSION_MISSING.to_owned()));
+                    error.set(Some(MSG_SESSION_MISSING.to_owned()));
                     loading.set(false);
                     return;
                 };
@@ -132,7 +132,7 @@ pub(crate) fn AccountsView() -> impl IntoElement {
                         privacy.set(amount_privacy_enabled());
                     }
                     Ok(Err(e)) => error.set(Some(e.to_string())),
-                    Err(_) => error.set(Some(READ_TASK_FAILED.to_owned())),
+                    Err(_) => error.set(Some(MSG_READ_TASK_FAILED.to_owned())),
                 }
                 loading.set(false);
             });
@@ -295,7 +295,7 @@ pub(crate) fn AccountsView() -> impl IntoElement {
                 // #2033 预算写路径同形）。
                 let outcome = blocking(move || match db.as_ref() {
                     Some(db) => boot::create_account(db, input),
-                    None => Err(AppError::coded(boot::CODE_SESSION_MISSING, SESSION_MISSING)),
+                    None => Err(session_missing_err()),
                 })
                 .await;
                 match outcome {
@@ -310,7 +310,7 @@ pub(crate) fn AccountsView() -> impl IntoElement {
                         reload();
                     }
                     Ok(Err(e)) => create_error.set(Some(format!("创建失败: {e}"))),
-                    Err(_) => create_error.set(Some(WRITE_TASK_FAILED.to_owned())),
+                    Err(_) => create_error.set(Some(MSG_WRITE_TASK_FAILED.to_owned())),
                 }
             });
         });
@@ -412,7 +412,7 @@ pub(crate) fn AccountsView() -> impl IntoElement {
             spawn(async move {
                 let outcome = blocking(move || match db.as_ref() {
                     Some(db) => boot::update_account(db, &id, input),
-                    None => Err(AppError::coded(boot::CODE_SESSION_MISSING, SESSION_MISSING)),
+                    None => Err(session_missing_err()),
                 })
                 .await;
                 match outcome {
@@ -422,7 +422,7 @@ pub(crate) fn AccountsView() -> impl IntoElement {
                         reload();
                     }
                     Ok(Err(e)) => edit_error.set(Some(format!("保存失败: {e}"))),
-                    Err(_) => edit_error.set(Some(WRITE_TASK_FAILED.to_owned())),
+                    Err(_) => edit_error.set(Some(MSG_WRITE_TASK_FAILED.to_owned())),
                 }
             });
         });
@@ -474,7 +474,7 @@ pub(crate) fn AccountsView() -> impl IntoElement {
             spawn(async move {
                 let outcome = blocking(move || match db.as_ref() {
                     Some(db) => boot::adjust_account_balance(db, &id, &input),
-                    None => Err(AppError::coded(boot::CODE_SESSION_MISSING, SESSION_MISSING)),
+                    None => Err(session_missing_err()),
                 })
                 .await;
                 match outcome {
@@ -491,7 +491,7 @@ pub(crate) fn AccountsView() -> impl IntoElement {
                         reload();
                     }
                     Ok(Err(e)) => adjust_error.set(Some(format!("调整失败: {e}"))),
-                    Err(_) => adjust_error.set(Some(WRITE_TASK_FAILED.to_owned())),
+                    Err(_) => adjust_error.set(Some(MSG_WRITE_TASK_FAILED.to_owned())),
                 }
             });
         });
@@ -520,7 +520,7 @@ pub(crate) fn AccountsView() -> impl IntoElement {
                             boot::unarchive_account(db, &id)
                         }
                     }
-                    None => Err(AppError::coded(boot::CODE_SESSION_MISSING, SESSION_MISSING)),
+                    None => Err(session_missing_err()),
                 })
                 .await;
                 match outcome {
@@ -538,7 +538,7 @@ pub(crate) fn AccountsView() -> impl IntoElement {
                             "恢复失败"
                         }
                     ))),
-                    Err(_) => status.set(Some(WRITE_TASK_FAILED.to_owned())),
+                    Err(_) => status.set(Some(MSG_WRITE_TASK_FAILED.to_owned())),
                 }
             });
         });
@@ -552,7 +552,7 @@ pub(crate) fn AccountsView() -> impl IntoElement {
             spawn(async move {
                 let outcome = blocking(move || match db.as_ref() {
                     Some(db) => boot::delete_account(db, &id),
-                    None => Err(AppError::coded(boot::CODE_SESSION_MISSING, SESSION_MISSING)),
+                    None => Err(session_missing_err()),
                 })
                 .await;
                 match outcome {
@@ -561,7 +561,7 @@ pub(crate) fn AccountsView() -> impl IntoElement {
                         reload();
                     }
                     Ok(Err(e)) => status.set(Some(format!("删除失败: {e}"))),
-                    Err(_) => status.set(Some(WRITE_TASK_FAILED.to_owned())),
+                    Err(_) => status.set(Some(MSG_WRITE_TASK_FAILED.to_owned())),
                 }
             });
         });
@@ -764,7 +764,9 @@ pub(crate) fn AccountsView() -> impl IntoElement {
     let section_of = move |title: &'static str,
                            partition: Memo<Vec<AccountRowCells>>,
                            table_id: &'static str| {
-        list_card::list_card_of(title, fg, None, table_id, table_of(partition), None)
+        list_card::ListCardOf::new(title, fg, table_of(partition))
+            .table_id(table_id)
+            .build()
     };
 
     // ============================ 弹窗内容（视图树内联函数式插槽） ============================

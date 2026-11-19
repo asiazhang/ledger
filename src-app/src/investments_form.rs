@@ -60,12 +60,12 @@ use nsh_base::input;
 use nsh_core::prelude::*;
 
 use crate::design::font_size;
-use crate::settings_data::{READ_TASK_FAILED, SESSION_MISSING, WRITE_TASK_FAILED};
+use crate::shell_msgs::{MSG_READ_TASK_FAILED, MSG_WRITE_TASK_FAILED};
+use crate::write_load::session_missing_err;
 use crate::{
     assembly::{self, CategoryOption, CurrencyFormat, CurrencyTable},
     boot, date_select, modal, pinyin_select, signals,
 };
-use ledger_infra::error::AppError;
 
 /// 表单锚点前缀（headless `id:` 选择器用；旧壳 data-testid `investment-*`
 /// 的本壳选择器命名带）。
@@ -260,7 +260,7 @@ fn load_form_references(
     db: Option<&ledger_infra::db::DbState>,
 ) -> ledger_infra::error::Result<FormReferences> {
     let Some(db) = db else {
-        return Err(AppError::coded(boot::CODE_SESSION_MISSING, SESSION_MISSING));
+        return Err(session_missing_err());
     };
     let accounts = boot::account_rows(db)?;
     let instruments = boot::instrument_rows(db)?;
@@ -281,7 +281,7 @@ fn load_edit_bundle(
     anchor: TradeEditAnchor,
 ) -> ledger_infra::error::Result<EditLoad> {
     let Some(db) = db else {
-        return Err(AppError::coded(boot::CODE_SESSION_MISSING, SESSION_MISSING));
+        return Err(session_missing_err());
     };
     let trade = boot::transaction_trade(db, tx_id)?;
     let references = load_form_references(Some(db))?;
@@ -405,7 +405,7 @@ impl TradeFormState {
                     }
                     Err(_) => {
                         self.load_error
-                            .set(Some(format!("{LOAD_FAILED_PREFIX}{READ_TASK_FAILED}")));
+                            .set(Some(format!("{LOAD_FAILED_PREFIX}{MSG_READ_TASK_FAILED}")));
                         return;
                     }
                 };
@@ -458,7 +458,7 @@ impl TradeFormState {
                     }
                     Err(_) => self
                         .load_error
-                        .set(Some(format!("{LOAD_FAILED_PREFIX}{READ_TASK_FAILED}"))),
+                        .set(Some(format!("{LOAD_FAILED_PREFIX}{MSG_READ_TASK_FAILED}"))),
                 }
             });
         });
@@ -737,7 +737,7 @@ fn perform_submit(
                         .map(|_: ledger_transaction::TransactionWrite| ()),
                     (Some(db), Some(id)) => boot::update_transaction(db, id, input)
                         .map(|_: ledger_infra::signals::WriteEvidence| ()),
-                    (None, _) => Err(AppError::coded(boot::CODE_SESSION_MISSING, SESSION_MISSING)),
+                    (None, _) => Err(session_missing_err()),
                 })
                 .await;
                 match outcome {
@@ -757,7 +757,7 @@ fn perform_submit(
                         };
                         state.error.set(Some(format!("{prefix}{e}")));
                     }
-                    Err(_) => state.error.set(Some(WRITE_TASK_FAILED.to_owned())),
+                    Err(_) => state.error.set(Some(MSG_WRITE_TASK_FAILED.to_owned())),
                 }
             });
         });

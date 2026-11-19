@@ -14,7 +14,6 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use ledger_infra::error::AppError;
 use nsh_base::{
     DataTableAlign, DataTableCell, DataTableClasses, DataTableColumn, DataTableContextMenu,
     DataTableRows, PopoverEvent, button, data_table, input, pagination, popover,
@@ -30,7 +29,8 @@ use crate::assembly::{
 use crate::boot;
 use crate::items::AddItemTarget;
 use crate::nav_model;
-use crate::settings_data::SESSION_MISSING;
+use crate::shell_msgs::{MSG_DELETE_TASK_FAILED, MSG_READ_PAGE_TASK_FAILED, MSG_SESSION_MISSING};
+use crate::write_load::session_missing_err;
 use crate::{
     backup_entry, context_menu, danger, investments_form, items, multi_select, nav, overlay,
     period_row, pinyin_select, signals, tx_filter, tx_view_preferences, txn_form,
@@ -661,7 +661,7 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
         view_owner.run(move || {
             spawn(async move {
                 let Some(db) = db else {
-                    error.set(Some(SESSION_MISSING.to_owned()));
+                    error.set(Some(MSG_SESSION_MISSING.to_owned()));
                     loading.set(false);
                     return;
                 };
@@ -793,7 +793,7 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
                         searched.set(searching);
                     }
                     Ok(Err(e)) => error.set(Some(e.to_string())),
-                    Err(_) => error.set(Some("内部错误：读页任务异常退出".to_owned())),
+                    Err(_) => error.set(Some(MSG_READ_PAGE_TASK_FAILED.to_owned())),
                 }
                 loading.set(false);
             });
@@ -841,15 +841,13 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
             spawn(async move {
                 let outcome = blocking(move || match db.as_ref() {
                     Some(db) => boot::delete_transaction(db, &id),
-                    None => Err(AppError::coded(boot::CODE_SESSION_MISSING, SESSION_MISSING)),
+                    None => Err(session_missing_err()),
                 })
                 .await;
                 match outcome {
                     Ok(Ok(())) => signals::notify_transactions_invalidated(),
                     Ok(Err(e)) => delete_error.set(Some(format!("删除失败: {e}"))),
-                    Err(_) => {
-                        delete_error.set(Some("删除失败: 内部错误：删除任务异常退出".to_owned()))
-                    }
+                    Err(_) => delete_error.set(Some(format!("删除失败: {MSG_DELETE_TASK_FAILED}"))),
                 }
             })
         });

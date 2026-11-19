@@ -1,11 +1,12 @@
 //! 恢复确认弹窗封装（issue #2144；`App*` 封装族成员，modal.rs 同层——旧壳
-//! `RestoreConfirmModal` 的 NSH 对应件，锁定屏 [`crate::unlock`] 与设置卡
-//! 备份卡 [`crate::settings_data`] 两侧消费同一封装，收敛 #2131 时期的
-//! 两侧同构复制）。
+//! `RestoreConfirmModal` 的 NSH 对应件，锁定屏 [`crate::unlock`] 与备份卡
+//! [`crate::backup_cards`] 两侧消费同一封装，收敛 #2131 时期的
+//! 两侧同构复制；#2167 拆分后设置面备份卡自 [`crate::settings_data`] 归位
+//! [`crate::backup_cards`]。
 //!
 //! 形态闭集（两侧并集语义，零业务语义）：备份文件路径行 + 恢复后果强警示
 //! 块 + 跨模式警告块 + 密文备份主口令输入 + 弹窗内错误位 + 取消/确认按钮
-//! 行。词表单点复用设置卡常量（[`crate::settings_data`]，措辞零漂移，
+//! 行。词表单点复用设置卡常量（[`crate::backup_cards`]，措辞零漂移，
 //! #2131）。口令显出判定收敛两侧并集（[`restore_show_pass`]）：密文备份
 //! 且无上下文口令、或已被要求显出——设置卡无上下文口令面（恒 `None`），
 //! 退化即其原判定；锁定屏上下文口令自动试开时不显出（#2131）。条件段
@@ -25,9 +26,9 @@ use nsh_base::{button, input};
 use nsh_core::element::FontWeight;
 use nsh_core::prelude::*;
 
+use crate::backup_cards;
 use crate::design::font_size;
 use crate::modal::app_modal;
-use crate::settings_data;
 use crate::views;
 
 /// 恢复确认意图（旧壳 `RestoreIntent` 的本壳对应面；#2131 两侧意图类型的
@@ -74,40 +75,56 @@ pub(crate) struct RestoreIds {
     pub confirm: &'static str,
 }
 
+/// 恢复确认五信号束（#2164 类型化：意图 / 口令 / 显出 / busy / 错误五信号
+/// 归调用方持有、任务按各自通道写回——原七位置参中五信号整束传递，收敛为
+/// 命名字段消错序；`Copy` 随 [`Signal`]，闭包各自捕获副本，语义零变化）。
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct RestoreSignals {
+    /// 弹窗意图（开着 = 呈现；取消 / ✕ / ESC 关闭路径由此置空）。
+    pub intent: Signal<Option<RestoreIntent>>,
+    /// 主口令输入。
+    pub pass: Signal<String>,
+    /// 口令框显出（判定单点 [`restore_show_pass`]）。
+    pub revealed: Signal<bool>,
+    /// 执行中（单飞守卫语义随调用方：锁定屏三入口共用、设置卡独立）。
+    pub busy: Signal<bool>,
+    /// 弹窗内错误位。
+    pub error: Signal<Option<String>>,
+}
+
 /// 恢复确认弹窗（意图开着 = 呈现；关闭路径 = 取消 / ESC / ✕——执行中
 /// 不关；成功后由调用方任务关并走各自续接）。
 pub(crate) fn app_restore_confirm_modal(
-    intent: Signal<Option<RestoreIntent>>,
-    pass: Signal<String>,
-    revealed: Signal<bool>,
-    busy: Signal<bool>,
-    error: Signal<Option<String>>,
+    signals: RestoreSignals,
     ids: &'static RestoreIds,
     on_confirm: impl Fn(&()) + Copy + 'static,
 ) -> impl IntoElement {
     app_modal(
-        move || intent.get().is_some(),
-        || settings_data::RESTORE_MODAL_TITLE.to_owned(),
+        move || signals.intent.get().is_some(),
+        || backup_cards::RESTORE_MODAL_TITLE.to_owned(),
         move || {
-            if !busy.get_untracked() {
-                intent.set(None);
+            if !signals.busy.get_untracked() {
+                signals.intent.set(None);
             }
         },
-        move || restore_body(intent, pass, revealed, busy, error, ids, on_confirm),
+        move || restore_body(signals, ids, on_confirm),
     )
 }
 
 /// 弹窗内容（两侧同构面的单一封装族成员；交叉模式块随意图固定，静态段
 /// 承载；口令框与错误位是「弹窗开着期间就地变化」的条件段，`when` 承载）。
 fn restore_body(
-    intent: Signal<Option<RestoreIntent>>,
-    pass: Signal<String>,
-    revealed: Signal<bool>,
-    busy: Signal<bool>,
-    error: Signal<Option<String>>,
+    signals: RestoreSignals,
     ids: &'static RestoreIds,
     on_confirm: impl Fn(&()) + Copy + 'static,
 ) -> View {
+    let RestoreSignals {
+        intent,
+        pass,
+        revealed,
+        busy,
+        error,
+    } = signals;
     let palette = views::view_palette();
     let Some(opened) = intent.get() else {
         return view();
@@ -115,13 +132,13 @@ fn restore_body(
     let cross_mode = (opened.backup_encrypted != opened.current_encrypted).then_some({
         if opened.backup_encrypted {
             (
-                settings_data::RESTORE_CROSS_MODE_TITLE,
-                settings_data::RESTORE_TO_ENCRYPTED_WARN,
+                backup_cards::RESTORE_CROSS_MODE_TITLE,
+                backup_cards::RESTORE_TO_ENCRYPTED_WARN,
             )
         } else {
             (
-                settings_data::RESTORE_CROSS_MODE_TITLE,
-                settings_data::RESTORE_TO_PLAINTEXT_WARN,
+                backup_cards::RESTORE_CROSS_MODE_TITLE,
+                backup_cards::RESTORE_TO_PLAINTEXT_WARN,
             )
         }
     });
@@ -131,7 +148,7 @@ fn restore_body(
         .child(
             text(format!(
                 "{}{}",
-                settings_data::RESTORE_BACKUP_FILE_LABEL,
+                backup_cards::RESTORE_BACKUP_FILE_LABEL,
                 opened.path
             ))
                 .text_size(px(font_size::CAPTION))
@@ -143,7 +160,7 @@ fn restore_body(
                 .flex_col()
                 .app_class("rounded-sm border border-destructive/30 bg-destructive/10 p-2 gap-1")
                 .child(
-                    text(settings_data::RESTORE_CONFIRM_STRONG)
+                    text(backup_cards::RESTORE_CONFIRM_STRONG)
                         .text_size(px(font_size::CAPTION))
                         .font_weight(FontWeight::BOLD)
                         .text_color(palette.danger_fg),
@@ -176,7 +193,7 @@ fn restore_body(
                     .flex_col()
                     .app_class("gap-1")
                     .child(
-                        text(settings_data::RESTORE_PASS_LABEL)
+                        text(backup_cards::RESTORE_PASS_LABEL)
                             .text_size(px(font_size::CAPTION))
                             .text_color(palette.fg),
                     )
@@ -185,8 +202,8 @@ fn restore_body(
                             .test_id(ids.passphrase)
                             .value(move || pass.get())
                             .masked(true)
-                            .placeholder(settings_data::RESTORE_PASS_PLACEHOLDER)
-                            .optional_label(settings_data::RESTORE_PASS_LABEL)
+                            .placeholder(backup_cards::RESTORE_PASS_PLACEHOLDER)
+                            .optional_label(backup_cards::RESTORE_PASS_LABEL)
                             .text_color(palette.fg)
                             .w(px(260.0))
                             .app_class(
@@ -217,7 +234,7 @@ fn restore_body(
                         )
                         .disabled(move || busy.get())
                         .child(
-                            text(settings_data::RESTORE_CANCEL)
+                            text(backup_cards::RESTORE_CANCEL)
                                 .text_size(px(font_size::SECONDARY))
                                 .test_id(ids.cancel),
                         )
@@ -241,7 +258,7 @@ fn restore_body(
                             }
                         })
                         .child(
-                            text(settings_data::RESTORE_CONFIRM_ACTION)
+                            text(backup_cards::RESTORE_CONFIRM_ACTION)
                                 .text_size(px(font_size::SECONDARY))
                                 // 低频专用配对前景保留 theme 单点直读（#2153
                                 // 边界：destructive-foreground 不入 palette

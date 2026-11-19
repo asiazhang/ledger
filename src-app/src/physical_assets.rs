@@ -30,7 +30,6 @@
 //!
 //! 测试豁免（ADR-0060）：本模块测试经 crate 根 cfg(test) 整体放行六件套。
 
-use ledger_infra::error::AppError;
 use ledger_physical_asset::{
     PhysicalAsset, PhysicalAssetDisposeInput, PhysicalAssetInput, PhysicalAssetStatus,
     PhysicalAssetUpdateInput, PhysicalAssetValuationInput,
@@ -50,9 +49,10 @@ use crate::modal;
 use crate::nav_model::ViewName;
 use crate::popconfirm;
 use crate::select;
-use crate::settings_data::{READ_TASK_FAILED, SESSION_MISSING, WRITE_TASK_FAILED};
+use crate::shell_msgs::{MSG_READ_TASK_FAILED, MSG_SESSION_MISSING, MSG_WRITE_TASK_FAILED};
 use crate::transactions::table_classes;
 use crate::views::field_label;
+use crate::write_load::session_missing_err;
 use crate::{nav, signals};
 
 // ---------------------------------------------------------------------------
@@ -113,7 +113,7 @@ const DISPOSE_PRICE_INVALID: &str = "处置价必须大于 0";
 const DISPOSE_CURRENCY_REQUIRED: &str = "请选择处置币种";
 
 /// 装载占位文案（旧壳 loading 同口径）；任务退出错误文案消费
-/// settings_data 单一来源。
+/// shell_msgs 单一来源。
 const LOADING_PLACEHOLDER: &str = "正在加载…";
 
 /// 语义令牌单取（success 非通面五件套成员，不经 ViewPalette——#2153 语义
@@ -391,7 +391,7 @@ pub(crate) fn PhysicalAssetsView() -> impl IntoElement {
         view_owner.run(move || {
             spawn(async move {
                 let Some(db) = db else {
-                    error.set(Some(SESSION_MISSING.to_owned()));
+                    error.set(Some(MSG_SESSION_MISSING.to_owned()));
                     loading.set(false);
                     return;
                 };
@@ -411,7 +411,7 @@ pub(crate) fn PhysicalAssetsView() -> impl IntoElement {
                         currency_rows.set(CurrenciesSnap(currency_list));
                     }
                     Ok(Err(e)) => error.set(Some(e.to_string())),
-                    Err(_) => error.set(Some(READ_TASK_FAILED.to_owned())),
+                    Err(_) => error.set(Some(MSG_READ_TASK_FAILED.to_owned())),
                 }
                 loading.set(false);
             });
@@ -655,7 +655,7 @@ pub(crate) fn PhysicalAssetsView() -> impl IntoElement {
                         )
                         .map(|_: String| ()),
                     },
-                    None => Err(AppError::coded(boot::CODE_SESSION_MISSING, SESSION_MISSING)),
+                    None => Err(session_missing_err()),
                 })
                 .await;
                 match outcome {
@@ -673,7 +673,7 @@ pub(crate) fn PhysicalAssetsView() -> impl IntoElement {
                         reload();
                     }
                     Ok(Err(e)) => form_error.set(Some(format!("{MSG_SAVE_FAILED}: {e}"))),
-                    Err(_) => form_error.set(Some(WRITE_TASK_FAILED.to_owned())),
+                    Err(_) => form_error.set(Some(MSG_WRITE_TASK_FAILED.to_owned())),
                 }
             });
         });
@@ -711,7 +711,7 @@ pub(crate) fn PhysicalAssetsView() -> impl IntoElement {
             spawn(async move {
                 let outcome = blocking(move || match db.as_ref() {
                     Some(db) => boot::update_physical_asset_valuation(db, &asset_id, input),
-                    None => Err(AppError::coded(boot::CODE_SESSION_MISSING, SESSION_MISSING)),
+                    None => Err(session_missing_err()),
                 })
                 .await;
                 match outcome {
@@ -724,7 +724,7 @@ pub(crate) fn PhysicalAssetsView() -> impl IntoElement {
                         reload();
                     }
                     Ok(Err(e)) => valuation_error.set(Some(format!("{MSG_SAVE_FAILED}: {e}"))),
-                    Err(_) => valuation_error.set(Some(WRITE_TASK_FAILED.to_owned())),
+                    Err(_) => valuation_error.set(Some(MSG_WRITE_TASK_FAILED.to_owned())),
                 }
             });
         });
@@ -770,7 +770,7 @@ pub(crate) fn PhysicalAssetsView() -> impl IntoElement {
             spawn(async move {
                 let outcome = blocking(move || match db.as_ref() {
                     Some(db) => boot::dispose_physical_asset(db, &asset_id, input),
-                    None => Err(AppError::coded(boot::CODE_SESSION_MISSING, SESSION_MISSING)),
+                    None => Err(session_missing_err()),
                 })
                 .await;
                 match outcome {
@@ -782,7 +782,7 @@ pub(crate) fn PhysicalAssetsView() -> impl IntoElement {
                         reload();
                     }
                     Ok(Err(e)) => dispose_error.set(Some(format!("{MSG_SAVE_FAILED}: {e}"))),
-                    Err(_) => dispose_error.set(Some(WRITE_TASK_FAILED.to_owned())),
+                    Err(_) => dispose_error.set(Some(MSG_WRITE_TASK_FAILED.to_owned())),
                 }
             });
         });
@@ -796,7 +796,7 @@ pub(crate) fn PhysicalAssetsView() -> impl IntoElement {
             spawn(async move {
                 let outcome = blocking(move || match db.as_ref() {
                     Some(db) => boot::delete_physical_asset(db, &id),
-                    None => Err(AppError::coded(boot::CODE_SESSION_MISSING, SESSION_MISSING)),
+                    None => Err(session_missing_err()),
                 })
                 .await;
                 match outcome {
@@ -805,7 +805,7 @@ pub(crate) fn PhysicalAssetsView() -> impl IntoElement {
                         signals::notify_transactions_invalidated();
                     }
                     Ok(Err(e)) => status.set(Some(format!("{MSG_DELETE_FAILED}: {e}"))),
-                    Err(_) => status.set(Some(WRITE_TASK_FAILED.to_owned())),
+                    Err(_) => status.set(Some(MSG_WRITE_TASK_FAILED.to_owned())),
                 }
             });
         });

@@ -42,12 +42,12 @@
 use nsh_base::input;
 use nsh_core::prelude::*;
 
-use crate::settings_data::{SESSION_MISSING, WRITE_TASK_FAILED};
+use crate::shell_msgs::MSG_WRITE_TASK_FAILED;
+use crate::write_load::session_missing_err;
 use crate::{
     assembly::{self, BasicFormSubmit, CategoryOption, CurrencyTable, MerchantRef},
     boot, combo_select, date_select, modal, pinyin_select, select, signals,
 };
-use ledger_infra::error::AppError;
 
 /// 表单锚点前缀（headless `id:` 选择器用；各字段锚点 = 前缀 + 后缀）。
 pub(crate) const FORM_ID: &str = "tx-form";
@@ -934,7 +934,7 @@ fn perform_submit(
                         .map(|_: ledger_transaction::TransactionWrite| ()),
                     (Some(db), Some(id)) => boot::update_transaction(db, id, input)
                         .map(|_: ledger_infra::signals::WriteEvidence| ()),
-                    (None, _) => Err(AppError::coded(boot::CODE_SESSION_MISSING, SESSION_MISSING)),
+                    (None, _) => Err(session_missing_err()),
                 })
                 .await;
                 match outcome {
@@ -954,7 +954,7 @@ fn perform_submit(
                         };
                         state.error.set(Some(format!("{prefix}: {e}")));
                     }
-                    Err(_) => state.error.set(Some(WRITE_TASK_FAILED.to_owned())),
+                    Err(_) => state.error.set(Some(MSG_WRITE_TASK_FAILED.to_owned())),
                 }
             });
         });

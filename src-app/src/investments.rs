@@ -45,7 +45,7 @@ use crate::plot_line::PlotLineSeries;
 use crate::popover::popover_tip;
 use crate::read_load::{ReadLoad, blocking_read};
 use crate::select;
-use crate::settings_data::READ_TASK_FAILED;
+use crate::shell_msgs::MSG_READ_TASK_FAILED;
 use crate::signals;
 use crate::transactions::amount_privacy_enabled;
 use crate::views;
@@ -1123,7 +1123,7 @@ fn overview_pane() -> impl IntoElement {
                 }
                 ReadLoad::Coded(e) => error.set(Some(e.to_string())),
                 ReadLoad::MissingDb | ReadLoad::TaskFailed => {
-                    error.set(Some(READ_TASK_FAILED.to_owned()))
+                    error.set(Some(MSG_READ_TASK_FAILED.to_owned()))
                 }
             }
         });
@@ -1148,7 +1148,7 @@ fn overview_pane() -> impl IntoElement {
                 }
                 ReadLoad::Coded(e) => trend_error.set(Some(e.to_string())),
                 ReadLoad::MissingDb | ReadLoad::TaskFailed => {
-                    trend_error.set(Some(READ_TASK_FAILED.to_owned()))
+                    trend_error.set(Some(MSG_READ_TASK_FAILED.to_owned()))
                 }
             }
         });
@@ -1706,7 +1706,7 @@ fn pnl_pane() -> impl IntoElement {
                 }
                 ReadLoad::Coded(e) => error.set(Some(e.to_string())),
                 ReadLoad::MissingDb | ReadLoad::TaskFailed => {
-                    error.set(Some(READ_TASK_FAILED.to_owned()))
+                    error.set(Some(MSG_READ_TASK_FAILED.to_owned()))
                 }
             }
         });

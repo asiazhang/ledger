@@ -34,12 +34,13 @@ use nsh_core::element::pick_save_path;
 use nsh_core::file_dialog::{FileFilter, SaveDialog};
 use nsh_core::prelude::*;
 
-use crate::settings_data::SESSION_MISSING;
+use crate::shell_msgs::MSG_BACKUP_TASK_FAILED;
+use crate::write_load::session_missing_err;
 use crate::{boot, danger};
 
 /// 应用版本（备份元数据的应用版本标记，旧壳 `app.package_info().version` 的
 /// 对应物：workspace 各成员版本与根包锁步，Cargo.toml 头注）。pub(crate)：
-/// 设置②备份管理面（`settings_data`）同一标记的消费面。
+/// 设置②备份管理面（[`crate::backup_cards`]）同一标记的消费面。
 pub(crate) const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// 手动备份默认文件名的前缀（旧壳 `MANUAL_BACKUP_PREFIX` 同值：命名规则前后
@@ -178,10 +179,7 @@ pub(crate) fn perform_backup(state: BackupEntryState, owner: Owner, target: Path
             let db = crate::app::db_slot().clone();
             let outcome = blocking(move || match db.as_ref() {
                 Some(db) => boot::create_backup(db, &target, APP_VERSION),
-                None => Err(ledger_infra::error::AppError::coded(
-                    boot::CODE_SESSION_MISSING,
-                    SESSION_MISSING,
-                )),
+                None => Err(session_missing_err()),
             })
             .await;
             state.backing_up.set(false);
@@ -195,7 +193,7 @@ pub(crate) fn perform_backup(state: BackupEntryState, owner: Owner, target: Path
                     message: format!("备份失败: {e}"),
                 })),
                 Err(_) => state.status.set(Some(BackupStatus::Failed {
-                    message: "备份失败: 内部错误：备份任务异常退出".to_owned(),
+                    message: format!("备份失败: {MSG_BACKUP_TASK_FAILED}"),
                 })),
             }
         });

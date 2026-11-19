@@ -30,7 +30,7 @@
 use nsh_core::prelude::*;
 
 use crate::design::font_size;
-use crate::settings_data::SESSION_MISSING;
+use crate::shell_msgs::MSG_SESSION_MISSING;
 use crate::{app, boot, investments};
 
 // ---------------------------------------------------------------------------
@@ -156,7 +156,7 @@ pub(crate) fn trigger_sync() {
     let db = app::db_slot().clone();
     spawn(async move {
         let Some(db) = db.as_ref() else {
-            finish_err(SESSION_MISSING.to_owned());
+            finish_err(MSG_SESSION_MISSING.to_owned());
             return;
         };
         // 进度回调（issue #897）：编排逐次直达接缝信号（非阻塞覆写；迟到

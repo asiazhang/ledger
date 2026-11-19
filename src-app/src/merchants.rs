@@ -36,7 +36,6 @@
 
 use std::collections::BTreeMap;
 
-use ledger_infra::error::AppError;
 use nsh_base::{
     DataTableAlign, DataTableColumn, DataTableRows, DataTableSort, DataTableSortDirection, button,
     checkbox, data_table, input, pagination,
@@ -53,9 +52,10 @@ use crate::list_card;
 use crate::modal;
 use crate::nav_model::{NavRequest, ViewName};
 use crate::popconfirm;
-use crate::settings_data::{READ_TASK_FAILED, SESSION_MISSING, WRITE_TASK_FAILED};
+use crate::shell_msgs::{MSG_READ_TASK_FAILED, MSG_SESSION_MISSING, MSG_WRITE_TASK_FAILED};
 use crate::transactions::{amount_privacy_enabled, table_classes};
 use crate::views::field_label;
+use crate::write_load::session_missing_err;
 use crate::{nav, signals};
 use ledger_merchants::MerchantTransactionCount;
 
@@ -90,7 +90,7 @@ const MSG_DELETE_FAILED: &str = "删除失败";
 const PAGE_SIZE: usize = 50;
 
 /// 装载占位文案（旧壳 loading 同口径）；任务退出错误文案消费
-/// settings_data 单一来源。
+/// shell_msgs 单一来源。
 const LOADING_PLACEHOLDER: &str = "正在加载…";
 
 /// 装载批产物（读接缝单点的具名元组）：字典全量（含软删）+ 引用计数
@@ -121,7 +121,7 @@ pub(crate) fn MerchantsView() -> impl IntoElement {
         view_owner.run(move || {
             spawn(async move {
                 let Some(dbc) = db.clone() else {
-                    error.set(Some(SESSION_MISSING.to_owned()));
+                    error.set(Some(MSG_SESSION_MISSING.to_owned()));
                     loading.set(false);
                     return;
                 };
@@ -150,7 +150,7 @@ pub(crate) fn MerchantsView() -> impl IntoElement {
                             },
                         ));
                     }
-                    None => error.set(Some(READ_TASK_FAILED.to_owned())),
+                    None => error.set(Some(MSG_READ_TASK_FAILED.to_owned())),
                 }
                 loading.set(false);
             });
@@ -214,7 +214,7 @@ pub(crate) fn MerchantsView() -> impl IntoElement {
                         db,
                         ledger_merchants::MerchantInput { name: name.clone() },
                     ),
-                    None => Err(AppError::coded(boot::CODE_SESSION_MISSING, SESSION_MISSING)),
+                    None => Err(session_missing_err()),
                 })
                 .await;
                 match outcome {
@@ -227,7 +227,7 @@ pub(crate) fn MerchantsView() -> impl IntoElement {
                     Ok(Err(e)) => {
                         create_error.set(Some(format!("{MSG_ADD_FAILED}: {e}")));
                     }
-                    Err(_) => create_error.set(Some(WRITE_TASK_FAILED.to_owned())),
+                    Err(_) => create_error.set(Some(MSG_WRITE_TASK_FAILED.to_owned())),
                 }
             });
         });
@@ -369,7 +369,7 @@ pub(crate) fn MerchantsView() -> impl IntoElement {
                             name: Some(name.clone()),
                         },
                     ),
-                    None => Err(AppError::coded(boot::CODE_SESSION_MISSING, SESSION_MISSING)),
+                    None => Err(session_missing_err()),
                 })
                 .await;
                 match outcome {
@@ -385,7 +385,7 @@ pub(crate) fn MerchantsView() -> impl IntoElement {
                     Ok(Err(e)) => {
                         edit_error.set(Some(format!("{MSG_UPDATE_FAILED}: {e}")));
                     }
-                    Err(_) => edit_error.set(Some(WRITE_TASK_FAILED.to_owned())),
+                    Err(_) => edit_error.set(Some(MSG_WRITE_TASK_FAILED.to_owned())),
                 }
             });
         });
@@ -405,7 +405,7 @@ pub(crate) fn MerchantsView() -> impl IntoElement {
             spawn(async move {
                 let outcome = blocking(move || match db.as_ref() {
                     Some(db) => boot::delete_merchant(db, &merchant_id),
-                    None => Err(AppError::coded(boot::CODE_SESSION_MISSING, SESSION_MISSING)),
+                    None => Err(session_missing_err()),
                 })
                 .await;
                 match outcome {
@@ -417,7 +417,7 @@ pub(crate) fn MerchantsView() -> impl IntoElement {
                         signals::notify_transactions_invalidated();
                     }
                     Ok(Err(e)) => status.set(Some(format!("{MSG_DELETE_FAILED}: {e}"))),
-                    Err(_) => status.set(Some(WRITE_TASK_FAILED.to_owned())),
+                    Err(_) => status.set(Some(MSG_WRITE_TASK_FAILED.to_owned())),
                 }
             });
         });
@@ -722,48 +722,45 @@ pub(crate) fn MerchantsView() -> impl IntoElement {
             .otherwise(view),
         );
 
-    // 清单卡（装配三件归 list_card_of 单点，#2156）：卡片 flex_1 容器 +
+    // 搜索 + 显示已删（过滤意图行，list_card before 面先行装配）。
+    let search_row = view()
+        .flex_row()
+        .items_center()
+        .gap_3()
+        .child(
+            input()
+                .test_id("merchant-search")
+                .value(move || search_term.get())
+                .placeholder(SEARCH_PLACEHOLDER)
+                .optional_label("搜索商户")
+                .text_color(fg)
+                .w(px(240.0))
+                .app_class(
+                    "bg-background rounded-(--radius) border border-border px-2 py-1 \
+                             placeholder:text-muted-foreground",
+                )
+                .on_change(move |text: &str| search_term.set(text.to_owned())),
+        )
+        .child(
+            checkbox()
+                .checked(move || show_deleted.get())
+                .on_change(move |&next: &bool| show_deleted.set(next))
+                .accessibility_label(SHOW_DELETED_LABEL)
+                .child(
+                    // test_id 落在标签文本上（headless id: 锚点命中文本、
+                    // 物理命中到内层 checkbox 可按压件——页签先例同形）。
+                    text(SHOW_DELETED_LABEL)
+                        .text_size(px(font_size::SECONDARY))
+                        .text_color(fg)
+                        .test_id("merchant-show-deleted"),
+                ),
+        )
+        .into_element();
+    // 清单卡（装配三件归 list_card 单点，#2156）：卡片 flex_1 容器 +
     // 自然高标题 + flex_1 表格容器；搜索行 / 分页条经 before / after 收纳。
-    let list_card = list_card::list_card_of(
+    let list_card = list_card::ListCardOf::new(
         LIST_CARD_TITLE,
         fg,
-        Some(
-            // 搜索 + 显示已删（过滤意图行）。
-            view()
-                .flex_row()
-                .items_center()
-                .gap_3()
-                .child(
-                    input()
-                        .test_id("merchant-search")
-                        .value(move || search_term.get())
-                        .placeholder(SEARCH_PLACEHOLDER)
-                        .optional_label("搜索商户")
-                        .text_color(fg)
-                        .w(px(240.0))
-                        .app_class(
-                            "bg-background rounded-(--radius) border border-border px-2 py-1 \
-                             placeholder:text-muted-foreground",
-                        )
-                        .on_change(move |text: &str| search_term.set(text.to_owned())),
-                )
-                .child(
-                    checkbox()
-                        .checked(move || show_deleted.get())
-                        .on_change(move |&next: &bool| show_deleted.set(next))
-                        .accessibility_label(SHOW_DELETED_LABEL)
-                        .child(
-                            // test_id 落在标签文本上（headless id: 锚点命中文本、
-                            // 物理命中到内层 checkbox 可按压件——页签先例同形）。
-                            text(SHOW_DELETED_LABEL)
-                                .text_size(px(font_size::SECONDARY))
-                                .text_color(fg)
-                                .test_id("merchant-show-deleted"),
-                        ),
-                )
-                .into_element(),
-        ),
-        "merchant-table",
         // 清单卡片体（卡片自身 flex_1——虚拟化表格取弹性链高度）。
         data_table()
             .columns(columns)
@@ -777,9 +774,12 @@ pub(crate) fn MerchantsView() -> impl IntoElement {
             .loading_view(text(LOADING_PLACEHOLDER).text_color(muted))
             .classes(table_classes())
             .flex_1(),
-        Some(
-            // 总条数 + 分页条（旧壳 pagination.prefix「共 N 条」同词表；分页条
-            // 仅多页在场——单页只留总数，旧壳同果）。
+    )
+    .table_id("merchant-table")
+    .before(search_row)
+    .after(
+        // 总条数 + 分页条（旧壳 pagination.prefix「共 N 条」同词表；分页条
+        // 仅多页在场——单页只留总数，旧壳同果）。
             view()
                 .flex_row()
                 .items_center()
@@ -812,8 +812,8 @@ pub(crate) fn MerchantsView() -> impl IntoElement {
                     .otherwise(view),
                 )
                 .into_element(),
-        ),
-    );
+    )
+    .build();
 
     view()
         .flex_1()

@@ -47,7 +47,10 @@
 //!   功能/关于，visited-once keep-mounted 状态保留）、外观卡（显示主题三态）、
 //!   日志档位卡、数据存储位置卡（查看 / 更改 / 恢复默认 + 二选一接管守卫）、
 //!   功能开关管理面（写路径归 [`nav::set_feature_closed`] 单点共源）；
-//!   备份 / 加密 / 同步 / 账本切换卡已随设置②（#2054）落位（[`settings_data`]）；
+//!   设置②数据安全卡组随 #2054 落位、#2167 按消费面分簇：备份卡
+//!   [`backup_cards`] / 加密卡 [`encryption_card`] / 同步卡 [`sync_card`] /
+//!   账本切换卡 [`books_card`] / 余额缓存修复卡 [`balance_cache_card`]，
+//!   页签装配宿主住 [`settings_data`]；
 //! - [`app`]：NSH 根组件与启动结果视图模型（装配入口可注入，headless 可测；#2073 起视图本体已归位 [`transactions`] / [`budget`] 等各自模块）；
 //! - [`nav`]：进程内导航 API 与导航状态（#2032 壳导航骨架）——单点入口
 //!   `open`（守卫裁决 → 落位 → 持久化）、下钻意图读一次消费、键位带派发、
@@ -146,6 +149,9 @@
 //!   未到访不预载；到访标记与到访 effect 同点；设置页与投资页页签容器消费；
 //! - [`read_load`]：读装载守卫（#2154）——db 缺席守卫 + blocking + 三分口
 //!   产出的小件，投资族与物品清单装载共用；码化错误语义与在场行为零变化；
+//! - [`write_load`]：写路径会话缺失守卫（#2162，read_load 同族）——db 槽位
+//!   `None → 码化 SESSION_MISSING 错误`孪生形状的错误构造单点；码化语义与
+//!   词面零变化；
 //! - [`signals`]：进程内失效信号——交易数据失效的订阅/广播单点，写路径
 //!   成功后广播、列表视图订阅重读（#2022；词汇表失效信号语义的壳内通道）；
 //! - [`theme`]：主题令牌装配（#2100，ADR-0147 决策 1）——nsh.json 清单挂载
@@ -260,9 +266,12 @@ pub mod ai_prompt;
 // 决策 5），生产发射器由 http_host 接线；契约（路由、载荷、错误码）零演进。
 pub mod api_server;
 pub mod app;
+pub mod backup_cards;
 pub mod backup_entry;
 pub mod backup_host;
+pub mod balance_cache_card;
 pub mod bar_chart;
+pub mod books_card;
 pub mod boot;
 pub mod budget;
 pub mod combo_select;
@@ -272,6 +281,7 @@ pub mod danger;
 pub mod dashboard;
 pub mod date_select;
 pub mod design;
+pub mod encryption_card;
 // AI 导入 HTTP 壳的生产挂载与失效信号泵（#2081）：api_server 迁居后的启动
 // 接线面——旧壳 lib.rs setup 内挂载的本壳对应物（ADR-0112 决策 5 壳层接线）。
 pub mod http_host;
@@ -322,10 +332,12 @@ pub mod settings_categories;
 pub mod settings_currencies;
 pub mod settings_data;
 pub mod settings_scheduled;
+pub mod shell_msgs;
 pub mod shell_support;
 pub mod sidebar;
 pub mod sidebar_books;
 pub mod signals;
+pub mod sync_card;
 pub mod sync_triggers;
 pub mod theme;
 pub mod transactions;
@@ -337,6 +349,7 @@ pub mod unlock;
 pub mod updater;
 pub mod views;
 pub mod wiring;
+pub mod write_load;
 
 mod assembly;
 

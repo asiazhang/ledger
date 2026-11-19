@@ -20,7 +20,6 @@
 //!
 //! 测试豁免（ADR-0060）：本模块测试经 crate 根 cfg(test) 整体放行六件套。
 
-use ledger_infra::error::AppError;
 use nsh_base::{DataTableAlign, DataTableColumn, DataTableRows, button, data_table, input};
 use nsh_core::element::FontWeight;
 use nsh_core::prelude::*;
@@ -38,9 +37,10 @@ use crate::list_card;
 use crate::modal;
 use crate::nav;
 use crate::nav_model::ViewName;
-use crate::settings_data::{READ_TASK_FAILED, SESSION_MISSING, WRITE_TASK_FAILED};
+use crate::shell_msgs::{MSG_READ_TASK_FAILED, MSG_SESSION_MISSING, MSG_WRITE_TASK_FAILED};
 use crate::transactions::{amount_color, amount_privacy_enabled, table_classes};
 use crate::views::field_label;
+use crate::write_load::session_missing_err;
 use ledger_infra::error::Result as InfraResult;
 
 // ---------------------------------------------------------------------------
@@ -93,7 +93,7 @@ pub(crate) fn SavingsGoalsView() -> impl IntoElement {
         view_owner.run(move || {
             spawn(async move {
                 let Some(db) = db else {
-                    error.set(Some(SESSION_MISSING.to_owned()));
+                    error.set(Some(MSG_SESSION_MISSING.to_owned()));
                     loading.set(false);
                     return;
                 };
@@ -118,7 +118,7 @@ pub(crate) fn SavingsGoalsView() -> impl IntoElement {
                         privacy.set(amount_privacy_enabled());
                     }
                     Ok(Err(e)) => error.set(Some(e.to_string())),
-                    Err(_) => error.set(Some(READ_TASK_FAILED.to_owned())),
+                    Err(_) => error.set(Some(MSG_READ_TASK_FAILED.to_owned())),
                 }
                 loading.set(false);
             });
@@ -279,7 +279,7 @@ pub(crate) fn SavingsGoalsView() -> impl IntoElement {
                             planned_monthly_cents,
                         },
                     ),
-                    (None, _) => Err(AppError::coded(boot::CODE_SESSION_MISSING, SESSION_MISSING)),
+                    (None, _) => Err(session_missing_err()),
                 })
                 .await;
                 match outcome {
@@ -298,7 +298,7 @@ pub(crate) fn SavingsGoalsView() -> impl IntoElement {
                         // 不加二级前缀）；弹窗不关、内容不丢。
                         form_error.set(Some(e.to_string()))
                     }
-                    Err(_) => form_error.set(Some(WRITE_TASK_FAILED.to_owned())),
+                    Err(_) => form_error.set(Some(MSG_WRITE_TASK_FAILED.to_owned())),
                 }
             });
         });
@@ -323,7 +323,7 @@ pub(crate) fn SavingsGoalsView() -> impl IntoElement {
                             boot::unarchive_savings_goal(db, &goal_id)
                         }
                     }
-                    None => Err(AppError::coded(boot::CODE_SESSION_MISSING, SESSION_MISSING)),
+                    None => Err(session_missing_err()),
                 })
                 .await;
                 match outcome {
@@ -346,7 +346,7 @@ pub(crate) fn SavingsGoalsView() -> impl IntoElement {
                             "恢复失败"
                         }
                     ))),
-                    Err(_) => status.set(Some(WRITE_TASK_FAILED.to_owned())),
+                    Err(_) => status.set(Some(MSG_WRITE_TASK_FAILED.to_owned())),
                 }
             });
         });
@@ -359,7 +359,7 @@ pub(crate) fn SavingsGoalsView() -> impl IntoElement {
             spawn(async move {
                 let outcome = blocking(move || match db.as_ref() {
                     Some(db) => boot::delete_savings_goal(db, &goal_id),
-                    None => Err(AppError::coded(boot::CODE_SESSION_MISSING, SESSION_MISSING)),
+                    None => Err(session_missing_err()),
                 })
                 .await;
                 match outcome {
@@ -368,7 +368,7 @@ pub(crate) fn SavingsGoalsView() -> impl IntoElement {
                         reload();
                     }
                     Ok(Err(e)) => status.set(Some(format!("删除失败: {e}"))),
-                    Err(_) => status.set(Some(WRITE_TASK_FAILED.to_owned())),
+                    Err(_) => status.set(Some(MSG_WRITE_TASK_FAILED.to_owned())),
                 }
             });
         });
@@ -542,11 +542,9 @@ pub(crate) fn SavingsGoalsView() -> impl IntoElement {
     let archived_card = move || {
         // 装配三件归 list_card_of 单点（#2156）；渲染门控在调用方
         // （下方 child 处归档非零才挂载，旧壳 v-if 同果）。
-        list_card::list_card_of(
+        list_card::ListCardOf::new(
             ARCHIVED_TITLE,
             fg,
-            None,
-            "sg-archived-table",
             data_table()
                 .columns(archived_columns)
                 .data(data_of(archived_rows, true))
@@ -555,8 +553,9 @@ pub(crate) fn SavingsGoalsView() -> impl IntoElement {
                 .loading_view(text("正在加载…").text_color(muted))
                 .classes(table_classes())
                 .flex_1(),
-            None,
         )
+        .table_id("sg-archived-table")
+        .build()
     };
 
     // 表单弹层内容（视图树内联函数式插槽）：新建与编辑共用；计划月存结构性

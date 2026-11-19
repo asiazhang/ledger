@@ -35,7 +35,7 @@ use crate::nav;
 use crate::nav_model::{self, NavRequest};
 use crate::overlay;
 use crate::settings;
-use crate::settings_data::WRITE_TASK_FAILED;
+use crate::shell_msgs::MSG_WRITE_TASK_FAILED;
 use crate::views;
 
 // ---------------------------------------------------------------------------
@@ -81,7 +81,7 @@ struct SwitcherState {
     open: Signal<bool>,
 }
 
-/// 清单装载（聚合读注册表最新落盘态；与设置面 [`crate::settings_data`] 的
+/// 清单装载（聚合读注册表最新落盘态；与设置面 [`crate::books_card`] 的
 /// `refresh_books` 同一 boot 读缝）。删装载接线 → 清单永远空态 → 红。
 fn refresh(owner: Owner, state: SwitcherState) {
     owner.run(move || {
@@ -185,9 +185,9 @@ pub fn book_switch_area() -> impl IntoElement {
                             refresh(owner, state);
                         }
                         Ok(Err(e)) => state.status.set(Some(format!("{ACTION_FAILED_PREFIX}{e}"))),
-                        Err(_) => state
-                            .status
-                            .set(Some(format!("{ACTION_FAILED_PREFIX}{WRITE_TASK_FAILED}"))),
+                        Err(_) => state.status.set(Some(format!(
+                            "{ACTION_FAILED_PREFIX}{MSG_WRITE_TASK_FAILED}"
+                        ))),
                     }
                 })
             });

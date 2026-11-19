@@ -54,9 +54,12 @@ use crate::nav_model::ViewName;
 use crate::pinyin_select;
 use crate::popconfirm;
 use crate::select;
-use crate::settings_data::{READ_TASK_FAILED, SESSION_MISSING, WRITE_TASK_FAILED};
+use crate::shell_msgs::{
+    MSG_READ_TASK_FAILED, MSG_REPRICE_TARGET_MISSING, MSG_SESSION_MISSING, MSG_WRITE_TASK_FAILED,
+};
 use crate::transactions::table_classes;
 use crate::views::field_label;
+use crate::write_load::session_missing_err;
 use crate::{nav, signals};
 use ledger_policy::{Policy, PolicyInput, PolicyStats};
 use ledger_scheduled::ScheduledTransactionWithExt;
@@ -135,7 +138,7 @@ const EVERY_WORD: &str = "每";
 const PERIOD_DIVIDER: &str = "~";
 
 /// 装载占位文案（旧壳 loading 同口径）；任务退出错误文案消费
-/// settings_data 单一来源。
+/// shell_msgs 单一来源。
 const LOADING_PLACEHOLDER: &str = "正在加载…";
 
 /// 统计行缺失 / 无活跃协议等「—」占位（旧壳 policyStatAmountText 等同口径）。
@@ -611,7 +614,7 @@ pub(crate) fn PoliciesView() -> impl IntoElement {
         view_owner.run(move || {
             spawn(async move {
                 let Some(db) = db else {
-                    error.set(Some(SESSION_MISSING.to_owned()));
+                    error.set(Some(MSG_SESSION_MISSING.to_owned()));
                     loading.set(false);
                     return;
                 };
@@ -641,7 +644,7 @@ pub(crate) fn PoliciesView() -> impl IntoElement {
                         base_currency.set(base);
                     }
                     Ok(Err(e)) => error.set(Some(e.to_string())),
-                    Err(_) => error.set(Some(READ_TASK_FAILED.to_owned())),
+                    Err(_) => error.set(Some(MSG_READ_TASK_FAILED.to_owned())),
                 }
                 loading.set(false);
             });
@@ -806,7 +809,7 @@ pub(crate) fn PoliciesView() -> impl IntoElement {
                 let outcome = blocking(move || match db.as_ref() {
                     Some(db) => boot::plan_rows(db)
                         .map(|plans| PlanSnap(plans.iter().map(Segment::from).collect())),
-                    None => Err(AppError::coded(boot::CODE_SESSION_MISSING, SESSION_MISSING)),
+                    None => Err(session_missing_err()),
                 })
                 .await;
                 match outcome {
@@ -815,7 +818,7 @@ pub(crate) fn PoliciesView() -> impl IntoElement {
                         segments_error.set(None);
                     }
                     Ok(Err(e)) => segments_error.set(Some(format!("{MSG_SEGMENTS_FAILED}: {e}"))),
-                    Err(_) => segments_error.set(Some(READ_TASK_FAILED.to_owned())),
+                    Err(_) => segments_error.set(Some(MSG_READ_TASK_FAILED.to_owned())),
                 }
             });
         });
@@ -829,7 +832,7 @@ pub(crate) fn PoliciesView() -> impl IntoElement {
             spawn(async move {
                 let outcome = blocking(move || match db.as_ref() {
                     Some(db) => boot::delete_policy(db, &id),
-                    None => Err(AppError::coded(boot::CODE_SESSION_MISSING, SESSION_MISSING)),
+                    None => Err(session_missing_err()),
                 })
                 .await;
                 match outcome {
@@ -841,7 +844,7 @@ pub(crate) fn PoliciesView() -> impl IntoElement {
                         signals::notify_transactions_invalidated();
                     }
                     Ok(Err(e)) => status.set(Some(format!("{MSG_DELETE_FAILED}: {e}"))),
-                    Err(_) => status.set(Some(WRITE_TASK_FAILED.to_owned())),
+                    Err(_) => status.set(Some(MSG_WRITE_TASK_FAILED.to_owned())),
                 }
             });
         });
@@ -1101,7 +1104,7 @@ pub(crate) fn PoliciesView() -> impl IntoElement {
                             }
                         }
                     }
-                    None => Err(AppError::coded(boot::CODE_SESSION_MISSING, SESSION_MISSING)),
+                    None => Err(session_missing_err()),
                 })
                 .await;
                 match outcome {
@@ -1124,7 +1127,7 @@ pub(crate) fn PoliciesView() -> impl IntoElement {
                         // 同口径不回滚）：清单重读让已落库行即时可见。
                         reload();
                     }
-                    Err(_) => form_error.set(Some(WRITE_TASK_FAILED.to_owned())),
+                    Err(_) => form_error.set(Some(MSG_WRITE_TASK_FAILED.to_owned())),
                 }
             });
         });
@@ -1216,7 +1219,7 @@ pub(crate) fn PoliciesView() -> impl IntoElement {
                             let Some(old_id) = old_plan_id.clone() else {
                                 return Err(AppError::coded(
                                     CODE_REBUILD_TARGET_MISSING,
-                                    "内部错误：改价目标缺失",
+                                    MSG_REPRICE_TARGET_MISSING,
                                 ));
                             };
                             boot::update_scheduled_plan_status(
@@ -1229,7 +1232,7 @@ pub(crate) fn PoliciesView() -> impl IntoElement {
                         input.policy_id = Some(batch_policy_id);
                         boot::create_scheduled_plan(db, input)
                     }
-                    None => Err(AppError::coded(boot::CODE_SESSION_MISSING, SESSION_MISSING)),
+                    None => Err(session_missing_err()),
                 })
                 .await;
                 match outcome {
@@ -1248,7 +1251,7 @@ pub(crate) fn PoliciesView() -> impl IntoElement {
                         load_segments(policy_id);
                     }
                     Ok(Err(e)) => seg_error.set(Some(format!("{MSG_AGREEMENT_FAILED}: {e}"))),
-                    Err(_) => seg_error.set(Some(WRITE_TASK_FAILED.to_owned())),
+                    Err(_) => seg_error.set(Some(MSG_WRITE_TASK_FAILED.to_owned())),
                 }
             });
         });
@@ -1917,13 +1920,11 @@ pub(crate) fn PoliciesView() -> impl IntoElement {
                     ),
                 )
                 .child(
-                    // 清单卡（装配三件归 list_card_of 单点，#2156）：卡片
+                    // 清单卡（装配三件归 list_card 单点，#2156）：卡片
                     // flex_1 容器 + 自然高标题 + flex_1 表格容器。
-                    list_card::list_card_of(
+                    list_card::ListCardOf::new(
                         LIST_CARD_TITLE,
                         fg,
-                        None,
-                        "policy-table",
                         data_table()
                             .component_ref(&table_ref)
                             .columns(columns)
@@ -1939,8 +1940,9 @@ pub(crate) fn PoliciesView() -> impl IntoElement {
                             )
                             .classes(table_classes())
                             .flex_1(),
-                        None,
-                    ),
+                    )
+                    .table_id("policy-table")
+                    .build(),
                 )
                 .child(
                     // 操作反馈条位（成功/失败共用一条；新动作开始清回空）。

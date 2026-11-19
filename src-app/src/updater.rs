@@ -46,6 +46,7 @@ use nsh_updater::{Available, Config, Download};
 
 use crate::backup_entry::APP_VERSION;
 use crate::design::font_size;
+use crate::shell_msgs::{MSG_DOWNLOAD_TASK_FAILED, MSG_UPDATE_CHECK_TASK_FAILED};
 use crate::{modal, settings, views};
 
 // ---------------------------------------------------------------------------
@@ -597,9 +598,9 @@ pub(crate) fn check_manual(store: UpdateStore) {
                 Ok(Ok(None)) => store.check.set(CheckState::UpToDate),
                 Ok(Ok(Some(plan))) => store.check.set(CheckState::Available(plan)),
                 Ok(Err(error)) => store.check.set(CheckState::Failed(error.to_string())),
-                Err(_) => store.check.set(CheckState::Failed(
-                    "内部错误：更新检查任务异常退出".to_owned(),
-                )),
+                Err(_) => store
+                    .check
+                    .set(CheckState::Failed(MSG_UPDATE_CHECK_TASK_FAILED.to_owned())),
             }
         });
     });
@@ -734,7 +735,7 @@ pub(crate) fn start_download(store: UpdateStore, plan: PlanUpdate) {
                 Err(_) => {
                     store
                         .flow_error
-                        .set(Some("内部错误：下载任务异常退出".to_owned()));
+                        .set(Some(MSG_DOWNLOAD_TASK_FAILED.to_owned()));
                     store.flow.set(Flow::Remind(plan));
                 }
             }
