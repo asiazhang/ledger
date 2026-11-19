@@ -30,7 +30,7 @@ use crate::error::{AppError, Result};
 /// 只增不改）：不复用 `boot.db-unreadable`——漂移库打得开且数据完好，恢复通道
 /// 中「从备份恢复」应作为首选动作呈现，与「库不可读」（重置优先）的处置顺序
 /// 有真实差异，前端按码区分文案（#994）。错误模板见
-/// `packages/i18n/src/locales/{zh-CN,en-US}/errors.json` 的 `boot.schema-drift`。
+/// `locales/{zh-CN,en-US}/errors.json`（仓库根；原住 packages/i18n，随 Web 参照前端退役迁址，#2171/#2172）的 `boot.schema-drift`。
 pub const BOOT_SCHEMA_DRIFT: &str = "boot.schema-drift";
 
 /// 比对侧的库对象清单与表列集（一侧 = main 或 attached `sync`）。

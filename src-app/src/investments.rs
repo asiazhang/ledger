@@ -51,7 +51,7 @@ use crate::transactions::amount_privacy_enabled;
 use crate::views;
 
 // ---------------------------------------------------------------------------
-// 词表（旧壳 packages/i18n zh-CN investments.json 逐条平价；字面闭集承载）。
+// 词表（旧壳 zh-CN investments.json 逐条平价，词表宿主已随 Web 前端退役 #2171/#2172；字面闭集承载）。
 // ---------------------------------------------------------------------------
 
 pub(crate) const OVERVIEW_TITLE: &str = "投资概览";

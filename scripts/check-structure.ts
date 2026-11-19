@@ -12,7 +12,8 @@
 // 唯一壳，CRATES 以 dir "." 登记）；壳层模块面不整册登记（SHELL 层模块分层不
 // 投影，域/基建/协议 crate 的模块面由各自 lib.rs 投影）。旧壳 tauri-app 条目、
 // 根包 src 白名单与 tauri-emit / tauri-host 门已随切轨退役；「全仓无 tauri」
-// 形状面（Cargo 清单 + 前端死路径）由 scripts/check-no-tauri.ts 独立辖。
+// 形状面（Cargo 清单；前端死路径面已随 Web 前端退役删除 #2171/#2172）由
+// scripts/check-no-tauri.ts 独立辖。
 //
 // 测试豁免（ADR-0056 决策 5）：外挂测试模块/目录（tests.rs 文件、tests/ 目录）
 // 不参与守门——BDD/单元 fixture 合法引用壳层入口，不制造虚假违规；内联
@@ -82,7 +83,7 @@
 // 旗标不算范围）；引号内的命令字样是说明文字不算命令面，宿主里一条命令都核不到即红
 // （空集假绿）。另核 test_utils 生产编译门（ADR-0111 决策 5 / #1132）、投资五节锚点
 // 门（#1185）与 http 投影 feature 门（ADR-0111 决策 5 / #1133）。tauri 面不在本门
-// （清单形状 + 前端死路径归 scripts/check-no-tauri.ts、依赖全图归 cargo tree 命令
+// （清单形状归 scripts/check-no-tauri.ts、依赖全图归 cargo tree 命令
 // 门，#2083 切轨后 tauri-emit / tauri-host 门与 DOMAIN_TAURI_ALLOWED 整体退役）。
 //
 // TypeScript 化 + Bun 运行时（issue #734 / ADR-0083）：类型经 tsconfig.scripts.json

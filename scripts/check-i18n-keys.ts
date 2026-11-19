@@ -5,7 +5,8 @@
 // 纯函数导出供单测（scripts/check-i18n-keys.test.ts），CLI 入口可独立运行。
 // TypeScript 化 + Bun 运行时（issue #734 / ADR-0083）：类型经 tsconfig.scripts.json
 // 门槛检查；调用方式 `bun scripts/check-i18n-keys.ts`。
-// 默认校验本仓库（locales 文案资源随 @ledger/i18n 包走，issue #1151）；测试可传位置
+// 默认校验本仓库（locales 文案资源住仓库根 locales/——原住 packages/i18n 随 Web
+// 参照前端退役迁址，#2171/#2172，ADR-0050 门保留）；测试可传位置
 // 参数指向夹具目录：bun scripts/check-i18n-keys.ts [locales-dir] [rust-src-dir]
 // 真实仓绿基线用例：scripts/check-i18n-keys.test.ts（issue #1473）。
 //
@@ -239,7 +240,7 @@ export function compareLocalesDir(localesDir: string): CompareResult {
 
 function main(): void {
   const localesDir =
-    process.argv[2] ?? fileURLToPath(new URL("../packages/i18n/src/locales", import.meta.url));
+    process.argv[2] ?? fileURLToPath(new URL("../locales", import.meta.url));
   const rustRoot = process.argv[3] ?? fileURLToPath(new URL("../src-app", import.meta.url));
   const { sourceLocale, locales, failures } = compareLocalesDir(localesDir);
   if (failures.length === 0) {

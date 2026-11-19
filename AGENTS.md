@@ -50,22 +50,21 @@ Rust 根（`src-app/`）是 workspace：根包就是壳（NSH 原生壳，#2083 
 ## 前端与入口
 
 - 产品壳 = NSH（Linux 桌面）：视图直调域 crate 公开读写入口，不经任何 IPC 命令边界——新壳能力只经「域公开接缝 + 壳层接线」消费，不得重建命令层；壳→域→基础设施→协议方向不变（ADR-0112 / ADR-0145）。
-- Web 参照前端（`src/` + `packages/*`）是非产品形态的布局活体对照物：仅经浏览器开发模式（`pnpm dev:mock`）跑 mock 后端，不连真实数据、不作发版产品；保持可编译、可 lint、可测试；前端内不得再出现 tauri 依赖与 `@tauri-apps` 引用（全仓无 tauri 门辖）。
+- Web 参照前端已随布局对齐收口整体退役删除（#2171/#2172 / ADR-0148）：仓库无前端源码与 pnpm/Vitest 工具链，NSH 是唯一前端；码化错误翻译对拍资源 errors.json 迁住仓库根 locales/（ADR-0050 门继续生效，check-i18n-keys 守门）。
 - 开发期调试：NSH 壳走 NSH dev server 回路——应用目录内 `nsh run` 启动：保存 Rust 编辑（含其路径依赖 crate）即重建并重启应用，日志与构建错误直接进终端（`-v` 全量输出、`--trace` 提交耗时）；参数与目标细节以 NSH 官方文档 nsh.dev/zh-CN/docs/dev-server-and-debugging 为准。
 - 参考数据、设备偏好、后端设置和运行时状态遵循各自领域的单一来源与归口规则。
 - 会影响快捷键抑制的交互层通过现有壳内弹层封装族接入 Overlay Suppression；新增形态先补对应封装和注册表接线。
 - AI 导入 HTTP 端点走 API 契约与 API 集成测试；新增端点同步契约文档与测试，不另开调用面。
-- 用户可见文案：NSH 现状 zh-CN 硬编码（框架级 i18n 方案另票收敛）；后端用户可见错误使用码化错误构造器。Web 参照前端文案经 i18n，后端错误同步错误模板。
-- naive-ui 页签组含 `display-directive="show"` / `"show:lazy"` 页签（预取/状态保留语义依赖组件实例身份）时，该组全部 `NTabPane` 必须带 `key`（= 页签名）：无 key 时 Vue 按位置就地复用同类型 pane 组件，切页签即插槽换血重挂重拉，`show` 语义失效（先例：投资页概览→盈亏切换重挂重拉，机制注释与回归测试见 `src/views/InvestmentsView.vue`、`src/__tests__/InvestmentsView.test.ts`；条款辖 Web 参照前端）。
+- 用户可见文案：NSH 现状 zh-CN 硬编码（框架级 i18n 方案另票收敛）；后端用户可见错误使用码化错误构造器，错误模板的 zh-CN / en-US 双语住在仓库根 locales/ 下、由 check-i18n-keys 门守全等与码覆盖（ADR-0049 / ADR-0050）。
 
 ## 测试、工作流与发布
 
-- Rust 侧测试三层各有权威：域行为归域单测、壳行为归根包 lib 单测与 headless 组件测试（`cargo test -p nsh-app`）、HTTP 契约归 axum API 集成测试（`src-app/tests/api_server/`）；前端逻辑补 Vitest。BDD e2e 已随 Tauri 壳退役（ADR-0145 决策 6，牺牲项显式化）。断言归属判据与接线证明见 `docs/contexts/CONTEXT-testing.md`。
+- Rust 侧测试三层各有权威：域行为归域单测、壳行为归根包 lib 单测与 headless 组件测试（`cargo test -p nsh-app`）、HTTP 契约归 axum API 集成测试（`src-app/tests/api_server/`）。BDD e2e 已随 Tauri 壳退役（ADR-0145 决策 6），前端 Vitest 测试面已随 Web 参照前端退役（ADR-0148），牺牲项均显式化。断言归属判据与接线证明见 `docs/contexts/CONTEXT-testing.md`。
 - NSH headless 组件测试写法与 trace 语义（选择器与步骤、MemoryStorage / StubNetwork / 手动时钟、`EngineConfig::trace` 与 mount 批次 `perf` 行）以 NSH 官方文档 nsh.dev/zh-CN/docs/testing-and-trace 为准；读 trace 守性能时信 ops / mount item 计数（确定性），不信单次微秒（随机器频率状态浮动）。
 - 改动引入「所有入口都必须遵循」的约束（成对调用、必须接线、必须带门、必须清理）时，用 `rg` 枚举全部调用点并逐一核对，交付报告附核对清单；修复缺陷后，用 `rg` 检索同一根因的其他实例并核对每处命中。
 - 拆票或补验收判据时，接线 / 时机 / 入口型 ticket（核心价值是某调用必须在某时机出现在某位置）的验收判据必须含「删除即变红」负向条目：删除 `<接线调用点>` → 至少一条测试变红，断言对准用户可观察结果，不对准线程或函数调用形状（ADR-0087 断言强度）；领域逻辑型不加，避免形式主义；接线在本机 CI 不构建的分支内时以源码扫描守门替代（先例 #959、#961）。
 - 编译加速归口 kache：热回路（编辑后重跑 `cargo test`）由仓库根 `.kache.toml` 的 `preserve_incremental` 保住 rustc 增量，冷构建（新 worktree 首次构建）由 kache 共享 store 承担；需要提速构建时直接依赖这套设置，不要另行配置 `RUSTC_WRAPPER`、`KACHE_DISABLED` 等环境变量方案。
-- 调用 `/implement` 实施代码改动时：对应 GitHub issue 先认领（见 `docs/agents/issue-tracker.md` 开发认领），再使用独立 git worktree（建在主仓同级目录，不进 `/tmp`），并在工作树内完成验证和提交——编辑锚点一律取自 worktree 内的 read（worktree 建立前的主仓锚点仍解析到主仓，复用即改错副本）；开工与提交前各在主仓跑一次 `git status --porcelain`，发现非预期脏改先停下报告，不直接还原；提交前通读完整 diff。提交后推送分支并主动在 GitHub 上创建 PR，PR 是交付终点，不自行合并。worktree 缺少前端依赖时先运行 `pnpm install`。
+- 调用 `/implement` 实施代码改动时：对应 GitHub issue 先认领（见 `docs/agents/issue-tracker.md` 开发认领），再使用独立 git worktree（建在主仓同级目录，不进 `/tmp`），并在工作树内完成验证和提交——编辑锚点一律取自 worktree 内的 read（worktree 建立前的主仓锚点仍解析到主仓，复用即改错副本）；开工与提交前各在主仓跑一次 `git status --porcelain`，发现非预期脏改先停下报告，不直接还原；提交前通读完整 diff。提交后推送分支并主动在 GitHub 上创建 PR，PR 是交付终点，不自行合并。
 - 只读审查不修改、不提交；研究任务是否写入文档，以用户要求和对应 skill 为准。
 - 修改迁移、AI API 契约、数据模型或准备发布时，先判断当前提交相对最新 tag 的发布边界。无可用 tag 时，先报告无法判断发布边界，不擅自把 schema/AI API 契约当作已发布或未发布。已发布 AI API 契约和数据模型只增不改；已发布迁移的就地修改须在 migration 文件头部注明对应 CHANGELOG 条目，并在 `CHANGELOG.md` 的对应版本或 `Unreleased` 下增加 BREAKING 条目。
 

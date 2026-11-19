@@ -17,7 +17,7 @@ use crate::error::{AppError, Result};
 /// 文件完好无损，重置会毁掉完好的新库、恢复出的备份同样是超前库，两条恢复
 /// 通道都通向死路；前端失败恢复屏按码只呈现升级引导（与漂移码
 /// [`crate::db::schema_guard::BOOT_SCHEMA_DRIFT`] 同款「按码区分处置」）。错误模板见
-/// `packages/i18n/src/locales/{zh-CN,en-US}/errors.json` 的 `boot.schema-ahead`。
+/// `locales/{zh-CN,en-US}/errors.json`（仓库根；原住 packages/i18n，随 Web 参照前端退役迁址，#2171/#2172）的 `boot.schema-ahead`。
 pub const BOOT_SCHEMA_AHEAD: &str = "boot.schema-ahead";
 
 /// 迁移集合。新增 schema 变更或种子数据时，在 `src-app/migrations/` 下新建

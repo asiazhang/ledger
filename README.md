@@ -97,7 +97,7 @@
 ## 桌面
 
 - NSH 壳是原生 GTK 应用：无内嵌 WebView，界面即桌面窗口（详见 ADR-0145）
-- 另保留一个非产品形态的 Web 参照前端（浏览器开发模式，见下「从源码构建」），仅作布局与交互的对照物，不连接真实数据
+- 原用于布局对照的 Web 参照前端已整体退役（ADR-0148），仓库无前端源码与 JS 工具链
 
 ## 安装
 
@@ -124,14 +124,7 @@ cargo build --release
 
 产物是 `src-app/target/release/nsh-app` 单个二进制，直接运行即可（需要本机装有 Rust 工具链与 GTK4 开发库 `libgtk-4-dev`）。
 
-运行 Web 参照前端（浏览器开发模式，mock 内存后端）：
-
-```bash
-pnpm install
-pnpm run dev:mock   # http://localhost:1420
-```
-
-> 需要本机装有 Rust 工具链、Node.js 与 pnpm（版本由 `package.json` 的 `packageManager` 字段锁定，可用 corepack 或 pnpm 官方安装脚本安装对应版本）。更多技术细节、开发命令与架构约定，请见 [AGENTS.md](AGENTS.md) 与 [docs/](docs/) 开发文档。
+> 需要本机装有 Rust 工具链与 GTK4 开发库。守门脚本以 Bun 运行（ADR-0083），跑 `./scripts/check.sh` 需先安装 bun；更多技术细节、开发命令与架构约定，请见 [AGENTS.md](AGENTS.md) 与 [docs/](docs/) 开发文档。
 
 ## 文档
 

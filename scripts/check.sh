@@ -6,6 +6,11 @@
 # Rust 侧命令必须显式声明 workspace 范围（spec #1086 / issue #1087）：非虚拟
 # workspace 下 cargo 默认只作用于根包，缺范围参数会静默漏检成员 crate。
 # 任一环节失败即退出（CI 可直接调用）
+#
+# Web 参照前端已随 #2171/#2172 整体退役（ADR-0148）：vue-tsc×2、oxlint、oxfmt、
+# check-frontend-structure、check-style-blocks、check-dialog-forms、
+# check-test-stubs、check-async-guards 八门随宿主消失；守门脚本类型检查换宿主
+# 为 scripts/check-scripts-types.sh（bun + 原生 tsc，见该脚本头注）。
 set -eu
 cd "$(dirname "$0")/.."
 
@@ -15,17 +20,8 @@ if ! command -v bun >/dev/null 2>&1; then
   exit 1
 fi
 
-echo "▶ 前端类型检查 (pnpm exec vue-tsc --noEmit)"
-pnpm exec vue-tsc --noEmit
-
-echo "▶ 守门脚本与测试类型检查 (pnpm exec vue-tsc -p tsconfig.scripts.json --noEmit)"
-pnpm exec vue-tsc -p tsconfig.scripts.json --noEmit
-
-echo "▶ 前端 lint (pnpm exec oxlint --deny-warnings)"
-pnpm exec oxlint --deny-warnings
-
-echo "▶ 前端格式检查 (pnpm exec oxfmt --check)"
-pnpm exec oxfmt --check .
+echo "▶ 守门脚本与测试类型检查 (scripts/check-scripts-types.sh)"
+./scripts/check-scripts-types.sh
 
 echo "▶ Rust clippy (--workspace --all-targets --all-features, -D warnings)"
 ( cd src-app && cargo clippy --workspace --all-targets --all-features -- -D warnings )
@@ -37,8 +33,7 @@ echo "▶ Rust gate-off 编译检查 (cargo check -p ledger-infra，默认 featu
 ( cd src-app && cargo check -p ledger-infra )
 
 # 全仓无 tauri 守门（issue #2083 / ADR-0145 决策 4/7，#2074 零链接门升级）：
-# Tauri 壳退役后全仓（workspace 全成员、全依赖种类）不得出现 tauri——清单形状
-# 与前端死路径面由 check-no-tauri 辖，本门辖解析后的依赖全图（含传递边）。
+# Tauri 壳退役后全仓（workspace 全成员、全依赖种类）不得出现 tauri——
 # 判定语义：tauri 不在任何成员依赖图 = cargo tree -i 报 did not match——grep
 # 命中即绿；tauri 在图（要抓的回归）或其他 cargo 失败（陈旧锁等）grep 不中即红
 #（fail-closed，单一命令两宿主同判：CI backend-lint 无 bun，故为命令型门）。
@@ -62,17 +57,11 @@ bun scripts/check-versions.ts
 echo "▶ 结构守门检查 (bun scripts/check-structure.ts)"
 bun scripts/check-structure.ts
 
-echo "▶ 前端 workspace 结构守门 (bun scripts/check-frontend-structure.ts)"
-bun scripts/check-frontend-structure.ts
-
 echo "▶ 基础设施账本数据表 DML 禁令 (bun scripts/check-infra-dml.ts)"
 bun scripts/check-infra-dml.ts
 
 echo "▶ 东财行情面端点零残留源码扫描 (bun scripts/check-eastmoney-residue.ts)"
 bun scripts/check-eastmoney-residue.ts
-
-echo "▶ 样式块守门检查 (bun scripts/check-style-blocks.ts)"
-bun scripts/check-style-blocks.ts
 
 # 壳根包裸字号直调零残留守门（issue #2108 / spec #2099 / ADR-0147 决策 4）：
 # 视图零裸值纪律源码扫描（DESIGN.md §7）——text_size(px(<数字字面量>)) 直调
@@ -83,25 +72,15 @@ bun scripts/check-bare-font-size.ts
 echo "▶ i18n key 全等检查 (bun scripts/check-i18n-keys.ts)"
 bun scripts/check-i18n-keys.ts
 
-echo "▶ 弹窗表单节奏守门 (bun scripts/check-dialog-forms.ts)"
-bun scripts/check-dialog-forms.ts
-
-echo "▶ 测试桩守门检查 (bun scripts/check-test-stubs.ts)"
-bun scripts/check-test-stubs.ts
-
 echo "▶ Rust 测试守门检查 (bun scripts/check-test-support.ts)"
 bun scripts/check-test-support.ts
 
 echo "▶ 测试执行覆盖守门 (bun scripts/test-exec.ts check)"
 bun scripts/test-exec.ts check
 
-echo "▶ 前端异步守门检查 (bun scripts/check-async-guards.ts)"
-bun scripts/check-async-guards.ts
-
 # 守门脚本测试（issue #1991）：scripts/*.test.ts 的唯一运行口径 = bun test——
-# 测试经 spawnSync('bun') 依赖 bun 在 PATH，vitest/node 下基线即红；vitest 收集
-# 范围自此不含 scripts/（双运行时边界收严，ADR-0083）。挂载登记归
-# scripts/gate-mounts.ts，删除本步即红。
+# 测试经 spawnSync('bun') 依赖 bun 在 PATH。挂载登记归 scripts/gate-mounts.ts，
+# 删除本步即红。
 echo "▶ 守门脚本测试 (bun test scripts/)"
 bun test scripts/
 

@@ -14,8 +14,6 @@
 // - maskNonCode —— Rust 词法掩码（注释与字符串/char 字面量掩为等长空白、保留换行
 //   列位；keepLiterals=true 只掩注释），私有助手 rawStringOpenQuoteAt。
 // - RUST_EXTENSIONS —— Rust 面扩展名闭集（全等副本收口单点，消费方直接 import）。
-// - maskComments —— TS/Vue 注释掩码（自 ts-comment-mask.ts 并入：消费方
-//   check-frontend-structure.ts 与 check-commands.ts 恰 2 门，达 ≥2 门准入判据）。
 // #1742 增补（平铺 readdir 与内联 endsWith 的收口/留门判定票，逐处留痕见票）：
 // - readDirEntries / DirEntry —— 只读一层目录列举（localeCompare 排序 + dirent 类型
 //   投影，不跟随目录符号链接，与 walkTextFiles 同语义；与递归遍历形状不同构，单层
@@ -23,15 +21,15 @@
 // - hasExtension —— 点扩展名闭集匹配（walkTextFiles 内部同款）；残余内联
 //   endsWith(".rs")（test-exec ×3、check-structure ×1）换库 RUST_EXTENSIONS 消费。
 //
-// 消费方（守门家族全量，#1680 T2 收口后）：check-structure、check-infra-dml、
-// check-eastmoney-residue、check-background-services、test-exec、check-commands、
-// check-frontend-structure、check-async-guards、check-test-support、check-test-stubs、
-// check-i18n-keys、check-dialog-forms、check-style-blocks，与原语级测试
+// 消费方（守门家族全量，#1680 T2 收口后；check-commands、check-background-services
+// 随 #2083 壳退役移出，check-frontend-structure、check-async-guards、
+// check-test-stubs、check-dialog-forms、check-style-blocks 随 #2171/#2172 前端
+// 退役移出）：check-structure、check-infra-dml、check-eastmoney-residue、test-exec、
+// check-test-support、check-i18n-keys、check-bare-font-size，与原语级测试
 // gate-primitives.test.ts。掩码与遍历规则改动只动本文件，消费者随引用自动跟随。
 //
-// 边界（#1466/#1433 划界声明，自 ts-comment-mask.ts 头部迁入）：maskComments 只
-// 承载 TS/Vue 注释掩码。面向 Rust 源码的词法掩码，本模块 maskNonCode 是 TS 侧
-// 载体，与 Rust 侧唯一实现 `src-app/src/test_support/scan.rs` 的
+// 边界（#1466/#1433 划界声明）：面向 Rust 源码的词法掩码，本模块 maskNonCode 是
+// TS 侧载体，与 Rust 侧唯一实现 `src-app/src/test_support/scan.rs` 的
 // `mask_non_code` 是同一条词法规则的两个运行时载体（双源登记，规则改动必须两侧
 // 同步）；防漂移断言消费共享语料夹具 `scripts/fixtures/rust-mask-corpus.rs`
 // （gate-primitives.test.ts 与 Rust 测试双侧消费，任一侧单独改规则即红）。
@@ -103,7 +101,7 @@ export interface DirEntry {
  * 只读一层的目录列举（守门家族共享单点，issue #1742）：平铺 readdir 与递归遍历
  * 形状不同构，单层语义在此统一——localeCompare 排序保证输出确定（与 walkTextFiles
  * 同款家族统一行为；直接消费列举序的站点原 plain sort / readdir 原序已实树逐目录
- * 对拍全等（packages/、crates/、migrations/、locales/*），列举序被下游再排序吸收
+ * 对拍全等（crates/、migrations/、locales/*——packages/ 对拍面已随 Web 前端退役，#2171/#2172），列举序被下游再排序吸收
  * 的站点（check-structure diskModuleKeys）对拍不参与、结果与列举序无关，#1742 留痕）、
  * dirent 类型判定不跟随目录符号链接（同 walkTextFiles）。
  * 列举哪些、怎么过滤属各守门政策，消费侧自持；目录不存在按 readdirSync 原样抛错
@@ -265,57 +263,3 @@ export function hasExtension(name: string, extensions: ReadonlySet<string>): boo
 
 /** Rust 面扩展名闭集（walkTextFiles 消费参数；全等副本收口单点，issue #1680） */
 export const RUST_EXTENSIONS: ReadonlySet<string> = new Set([".rs"]);
-
-/** 若 text[start] 起是字符串/模板字面量，返回结束引号后的下标；未闭合则返回文末。
- *  否则返回 -1。只用于跳过字面量内容以识别注释起点，字面量本身不掩码。 */
-function stringLiteralEnd(text: string, start: number): number {
-  const quote = text[start];
-  if (quote !== "'" && quote !== '"' && quote !== "`") return -1;
-  let i = start + 1;
-  while (i < text.length) {
-    if (text[i] === "\\") {
-      i += 2;
-      continue;
-    }
-    if (text[i] === quote) return i + 1;
-    i++;
-  }
-  return text.length;
-}
-
-/** 掩码 TS/Vue 源文本中的注释（行注释与块注释）：内容替换为等长空白（保留换行与
- *  列位），使 import / invoke 扫描只落在真实代码上。字面量内容不掩码——import 说明符
- *  本身是字符串、invoke 命令名也是字符串，掩码会连靶一起抹掉；但识别注释起点前先
- *  跳过字符串/模板字面量，否则字面量里的 // 或 /* 会被误当注释、吞掉同行与前后的
- *  真实代码（把真实 import 或 invoke 藏出检测面，issue #1471）。正则字面量体内未转义
- *  的 / 会终止字面量，故体内 / 必为 \/，紧邻的反斜杠即「正则内斜杠」信号——带转义的
- *  / 不作注释起点，正则字面量的 \/\/ 形态同样不吞其后的真实代码。正则字面量整体词法
- *  不做（残余：字符类内相邻斜杠如 /[//]/、模板 ${} 插值——本仓零现役命中，评审兜底）；
- *  字符串内的伪 import 仍靠关键词上下文排除。
- *  单一维护点（issue #1481）：check-frontend-structure.ts 与 check-commands.ts 消费
- *  本出口，掩码规则改动只动本文件。 */
-export function maskComments(text: string): string {
-  const out = text.split("");
-  const n = text.length;
-  const blank = (from: number, to: number): void => {
-    for (let k = from; k < to && k < n; k++) if (out[k] !== "\n") out[k] = " ";
-  };
-  let i = 0;
-  while (i < n) {
-    // text[i - 1] === '\\'：正则字面量体内的转义斜杠，不是注释起点（issue #1471）。
-    if (text[i] === "/" && text[i - 1] !== "\\" && text[i + 1] === "/") {
-      const stop = text.indexOf("\n", i) === -1 ? n : text.indexOf("\n", i);
-      blank(i, stop);
-      i = stop;
-    } else if (text[i] === "/" && text[i - 1] !== "\\" && text[i + 1] === "*") {
-      const end = text.indexOf("*/", i + 2);
-      const stop = end === -1 ? n : end + 2;
-      blank(i, stop);
-      i = stop;
-    } else {
-      const literalEnd = stringLiteralEnd(text, i);
-      i = literalEnd === -1 ? i + 1 : literalEnd;
-    }
-  }
-  return out.join("");
-}

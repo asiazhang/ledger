@@ -131,4 +131,7 @@ if [ -n "$OTHER_DIRS" ]; then
 fi
 
 echo "▶ 启动开发环境"
-exec pnpm run tauri dev
+# NSH dev server 回路（#2083 切轨后唯一开发入口；原 `pnpm run tauri dev` 随
+# Tauri 壳与 Web 前端退役，#2171/#2172）：应用目录内 nsh run，保存 Rust 编辑
+# 即重建并重启应用。
+( cd src-app && exec nsh run )

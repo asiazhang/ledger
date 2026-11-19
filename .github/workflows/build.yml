@@ -22,48 +22,36 @@ jobs:
   # GitHub 托管）。backend / backend-lint 挂预构建容器镜像（#1109，apt 已归零），
   # `Initialize containers` 步骤实测：backend job 19–31s、backend-lint job 20–32s
   # （两 job 各自实测，不互相外推）。实测（同批 7 次运行）：backend 后端测试
-  # 258–306s（典型 ~271s）｜backend-lint 静态检查 81–96s｜frontend-test 分片
-  # 112–189s（典型 ~170s）｜frontend 检查 39–87s。关键路径 = 后端测试 job（前端分片
-  # 不再是决定项），PR 端到端 ≈ 4.3–5.1 分钟（job 跨度口径，不含排队）。
+  # 258–306s（典型 ~271s）｜backend-lint 静态检查 81–96s｜前端分片与前端检查
+  # 数据已随 Web 参照前端退役过期（#2171/#2172，gates job 待新基线刷新）。关键路径 =
+  # 后端测试 job，PR 端到端 ≈ 4.3–5.1 分钟（job 跨度口径，不含排队）。
   # 后端测试 job 的四段拆解与「180s 不可达 / 250s 乐观下界」推算（对外口径单点，含
   # 下界数字）住 backend job 注释；逐 run 实测数据与口径定义随 issue #1110 存档
   # （验收记录不进仓库，git 历史可回溯）。
   # issue #1109 起，backend/backend-lint 挂预构建 CI 镜像（ci-image.yml 发布到
   # GHCR），job 内零 apt 安装；镜像内容与重建路径见 .github/docker/backend-ci.Dockerfile 头注。
 
-  # 前端构建与一致性检查：vue-tsc 类型检查（前端 + 守门脚本与测试两个工程）+ oxlint lint
-  # （--deny-warnings，与本地 check.sh 同门槛）+ oxfmt 格式检查（--check，与本地 check.sh
-  # 同门槛，issue #1519 / ADR-0128）+ vite build + 守门脚本（Bun 运行时，ADR-0083）；
-  # 2026-09-13 基线（7 次 PR 运行，run 34747049405–34749024124）39–87s，典型 ~50s。
-  # 测试拆至 frontend-test 分片 job，二者并行。
-  frontend:
-    name: 前端检查
+  # 守门脚本 job（原 frontend job，Web 参照前端退役 #2171/#2172 / ADR-0148 后更名）：
+  # bun 纯源码扫描门族 + 守门脚本类型检查（原生 tsc，工具链经 bun 运行时装入用户
+  # 缓存，版本钉死在 scripts/check-scripts-types.sh 单一事实源）+ 守门脚本测试。
+  # 全部步骤与本地 check.sh 同门槛，挂载登记归 scripts/gate-mounts.ts（issue #1682）。
+  gates:
+    name: 守门检查
     if: "!startsWith(github.ref, 'refs/tags/')"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-
-      - uses: pnpm/setup@v3
-        with:
-          runtime: node@26
-          cache: true
-          require-lockfile: true
 
       # 守门脚本运行时 = Bun（ADR-0083）；版本与本地门槛同一固定值，升级走显式 bump
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.4
 
-      - run: pnpm run build
-
+      # 守门脚本与测试类型检查（issue #734/#740 门保留，宿主迁移 #2171/#2172）：
+      # 版本钉死与工具链装配归 scripts/check-scripts-types.sh（单一事实源，本地
+      # check.sh 同挂，双宿主零漂移）。
       - name: 守门脚本与测试类型检查
-        run: pnpm exec vue-tsc -p tsconfig.scripts.json --noEmit
-
-      - name: 前端 lint
-        run: pnpm exec oxlint --deny-warnings
-
-      - name: 前端格式检查
-        run: pnpm exec oxfmt --check .
+        run: ./scripts/check-scripts-types.sh
 
       - name: 版本元数据一致性检查
         run: bun scripts/check-versions.ts
@@ -71,11 +59,8 @@ jobs:
       - name: 结构守门检查
         run: bun scripts/check-structure.ts
 
-      - name: 前端结构守门检查
-        run: bun scripts/check-frontend-structure.ts
-
       # 测试执行覆盖守门（issue #1112）：并发入口（scripts/test-exec.ts）与非并发
-      # 入口（scripts/test.sh 的 e2e + doc-test）的覆盖范围必须与工作区测试目标
+      # 入口（scripts/test.sh 的 cargo doc-test）的覆盖范围必须与工作区测试目标
       # 清单全等——新增测试目标不静默漏跑。纯静态发现（manifest + 目录形态），
       # 不需 Rust 工具链，故与本 job 的其余守门同址。挂载接线核对归守门接线测试
       # （scripts/gate-mounts.test.ts，登记住 scripts/gate-mounts.ts 守门挂载登记，
@@ -85,37 +70,29 @@ jobs:
       - name: 测试执行覆盖守门
         run: bun scripts/test-exec.ts check
 
-      - name: 前端异步守门
-        run: bun scripts/check-async-guards.ts
-
       # 守门脚本测试（issue #1991）：scripts/*.test.ts 的唯一运行口径 = bun test
-      # （测试经 spawnSync('bun') 依赖 bun 在 PATH，vitest 收集范围自此不含
-      # scripts/，ADR-0083 双运行时边界收严）；挂载登记归 scripts/gate-mounts.ts，
-      # 删除本步骤即红。
+      # （测试经 spawnSync('bun') 依赖 bun 在 PATH，ADR-0083 双运行时边界）；
+      # 挂载登记归 scripts/gate-mounts.ts，删除本步骤即红。
       - name: 守门脚本测试
         run: bun test scripts/
 
       - name: 文档一致性检查
         run: ./scripts/check-docs.sh
 
-      # 全仓无 tauri 守门（issue #2083 / ADR-0145 决策 4/7）：清单形状 + 前端死
-      # 路径面（命令型依赖图门在 backend-lint 的 cargo tree）。bun 纯源码扫描，
-      # 无需 Rust 工具链，与本 job 的其余守门同址。
+      # 全仓无 tauri 守门（issue #2083 / ADR-0145 决策 4/7）：清单形状面（前端死
+      # 路径面已随 Web 参照前端退役删除，#2171/#2172；命令型依赖图门在 backend-lint
+      # 的 cargo tree）。bun 纯源码扫描，无需 Rust 工具链，与本 job 的其余守门同址。
       - name: 全仓无 tauri 守门
         run: bun scripts/check-no-tauri.ts
 
-      # issue #1682 CI 执行面补齐：7 个此前仅在本地 check.sh 的 TS 门补挂本 job
-      # 尾部（均为秒级 bun 纯源码扫描，无需 Rust 工具链），不改 check.sh 既有
-      # 顺序与依赖语义；挂载登记与「删除即变红」核对住 scripts/gate-mounts.ts /
+      # issue #1682 CI 执行面补齐：秒级 bun 纯源码扫描门（无需 Rust 工具链）与本
+      # job 同址；挂载登记与「删除即变红」核对住 scripts/gate-mounts.ts /
       # scripts/gate-mounts.test.ts（守门挂载登记 + 守门接线测试）。
       - name: 基础设施账本数据表 DML 禁令
         run: bun scripts/check-infra-dml.ts
 
       - name: 东财行情面端点零残留源码扫描
         run: bun scripts/check-eastmoney-residue.ts
-
-      - name: 样式块守门检查
-        run: bun scripts/check-style-blocks.ts
 
       # 壳根包裸字号直调零残留守门（issue #2108 / spec #2099 / ADR-0147 决策 4）：
       # 视图零裸值纪律源码扫描，bun 纯源码扫描，无需 Rust 工具链，与本 job 同址。
@@ -125,39 +102,8 @@ jobs:
       - name: i18n key 全等检查
         run: bun scripts/check-i18n-keys.ts
 
-      - name: 弹窗表单节奏守门
-        run: bun scripts/check-dialog-forms.ts
-
-      - name: 测试桩守门检查
-        run: bun scripts/check-test-stubs.ts
-
       - name: Rust 测试守门检查
         run: bun scripts/check-test-support.ts
-
-  # 前端测试按 shard 均分到 2 个并行 runner：拆分前 vitest 单 job 208s（累计 586s）。
-  # 2026-09-13 基线（同批 7 次 PR 运行）：分片 1/2 126–189s、分片 2/2 112–175s——
-  # 两片不再均衡（分片成本受文件分布与 runner 波动双重影响），但都远低于后端测试
-  # job，不在关键路径上。不采用 isolate:false（worker 复用 jsdom 省每文件环境创建），
-  # 因 pinia/i18n/fake timers 等模块级单例跨文件泄漏风险不可控，放弃该项收益。
-  frontend-test:
-    name: 前端测试（shard ${{ matrix.shard }}/2）
-    if: "!startsWith(github.ref, 'refs/tags/')"
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: [1, 2]
-    steps:
-      - uses: actions/checkout@v7
-
-      - uses: pnpm/setup@v3
-        with:
-          runtime: node@26
-          cache: true
-          require-lockfile: true
-
-      - name: Vitest 分片运行
-        run: pnpm exec vitest run --shard=${{ matrix.shard }}/2
 
   # 后端测试：fmt/clippy 拆至 backend-lint 并行（clippy 仅 ~20–30s，不值得占关键路径）。
   #

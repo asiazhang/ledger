@@ -38,7 +38,7 @@ use crate::nav;
 use crate::nav_model::ScheduledFormTab;
 
 // ---------------------------------------------------------------------------
-// 词表（旧壳 packages/i18n zh-CN scheduled.json 逐条平价；i18n 框架级方案不在
+// 词表（旧壳 zh-CN scheduled.json，词表宿主已随 Web 前端退役 #2171/#2172 逐条平价；i18n 框架级方案不在
 // 本票，字面承载）。
 // ---------------------------------------------------------------------------
 pub(crate) const SUB_LIST_TITLE: &str = "订阅清单";

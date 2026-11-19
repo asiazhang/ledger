@@ -1,8 +1,8 @@
 //! 构建期元信息注入（#2136 设置③「关于」页签）：把 Git 版本信息编译进二进制
 //! ——`NSH_GIT_SHA`（完整 40 位，`git rev-parse HEAD`）与 `NSH_GIT_DIRTY`
 //! （构建时工作树是否含未提交改动）。与 Web 参照前端 `vite define` 注入的
-//! `__GIT_SHA__` / `__GIT_DIRTY__` 同口径（packages/utils git-info 同一事实源
-//! 的两侧载体）；非 Git 目录 / git 命令失败降级为空值/不脏，「关于」卡按
+//! `__GIT_SHA__` / `__GIT_DIRTY__` 同口径（旧壳 git-info 同一事实源的两侧载体，
+//! 前端侧已随 Web 参照前端退役 #2171/#2172，本侧为唯一现役载体）；非 Git 目录 / git 命令失败降级为空值/不脏，「关于」卡按
 //! 「宁缺不填假值」不渲染 Git 行。
 //!
 //! rerun 策略：`.git`（仓库或 worktree 的 gitdir 指针 / 目录）变化才重跑——
