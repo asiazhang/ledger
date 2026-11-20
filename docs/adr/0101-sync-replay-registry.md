@@ -33,7 +33,7 @@
 ### 4. 三道门
 
 - **(a) 双源门：样本轮询测试**。每变体一条最小样本，断言 serde tag == `ENTITY`。样本表以「穷尽 match + 兜底 panic 臂」实现：新增变体漏补样本时测试运行期红并列出变体名——双源缺口不对第 15 个变体静默重开。
-- **(b) 契约④门：结构守门严形态**。check-structure.ts 增规则：业务域引用 sync_engine 仅允许契约模块（command），引用 ops/engine/model 等内部件一律红——「重放不产本地 op」今天靠「域不知道 ops 存在」的结构巧合成立，扫描把巧合变规格。严形态一步到位，未来合法 import 走既有认许边机制逐条留痕；夹具正反例为变红证明。基线勘误：scheduled 今日 import 的是 `engine::ReplayEffect`，严形态在基线为红；绿点 = `ReplayEffect` 挪入契约模块之后——门 (b) 与决策 3 的挪位同批落地，不拆分。
+- **(b) 契约④门：结构守门严形态**。结构守门增规则：业务域引用 sync_engine 仅允许契约模块与既有根共享接缝，引用内部件一律红——「重放不产本地 op」今天靠「域不知道 ops 存在」的结构巧合成立，扫描把巧合变规格。严形态一步到位，未来合法 import 走既有认许边机制逐条留痕；夹具正反例为变红证明。基线勘误：scheduled 今日 import 的是引擎内 `ReplayEffect`，严形态在基线为红；绿点 = `ReplayEffect` 挪入契约模块之后——门 (b) 与决策 3 的挪位同批落地，不拆分。
 - **(c) 注册完备门：编译器**。穷尽 match 的臂引用绑定，删任一绑定即编译红——无需额外机制。
 
 ### 5. wire 契约零变化
@@ -44,7 +44,7 @@ enum、serde 输出、`sync_ops.entity` 列取值、挂起行字段全部不动�
 
 1. 适配绑定含 13 处 `() → Applied` 的仪式性转发——形状差异诚实的对价。
 2. 样本 JSON 随新增变体维护；兜底 panic 臂把漏补变成运行期红，非编译红。
-3. 门 (b) 是文本级扫描，别名改写不可达——与 check-structure.ts 既有边界一致，靠评审兜底。
+3. 门 (b) 是文本级扫描，别名改写不可达——与结构守门既有边界一致，靠评审兜底。
 4. 域侧 subject 派生的签名形状不强制统一（Option 包装与否由域自定），由适配层归一——域保留自然形状。
 5. 「新增一个可重放域」仍非字面加一行：加 enum 变体 + 两处一行臂 + 一个绑定 + 域侧 subject 派生与重放入口 + 样本——每步都被门拦住漏项，但步数是诚实的。
 6. 词汇表收「重放注册表」词条（接缝名与契约承载关系）；机制细节以本 ADR 为唯一解释处（与 ADR-0047 决策 6 同一取舍，但本机制属 sync 分域自有接缝，故词条落 CONTEXT-sync）。
@@ -53,15 +53,15 @@ enum、serde 输出、`sync_ops.entity` 列取值、挂起行字段全部不动�
 
 实施前代码核查推翻两处基线事实并校准一处接缝口径，均不改动本文决策骨架；证据坐标见 #1006 二轮记录。
 
-> **勘误 1（背景事实：price 标签双源，LWW 对 price 从未生效）**：`PriceCommand::subject()` 今日返回 `("market_price", 标的)` / `("price_history", 标的×周)`，而 serde tag、`entity()` 与 `sync_ops.entity` 列均为 `"price"`；LWW 检索以 subject 标签查 entity 列，字面不同即永不命中——price 类 op 的 LWW 压制从未生效，跨轮乱序到达（先 clock 大后 clock 小）时输者执行并覆盖赢者，终态可能为全序输者的值。测试面仅 `reference_data.rs` 钉住现标签，无 price LWW 用例。决策 2「标签恒有（entity 列取值）」与决策 5「列取值不动」在此事实下相撞，二轮裁决如下。
+> **勘误 1（背景事实：price 标签双源，LWW 对 price 从未生效）**：`PriceCommand::subject()` 返回的标签（market_price / price_history）与 serde tag、entity 列取值（`"price"`）不一致，LWW 检索以 subject 标签查 entity 列，字面不同即永不命中——price 类 op 的 LWW 压制从未生效，跨轮乱序到达时输者执行并覆盖赢者，终态可能为全序输者的值。测试面仅既有参考数据用例钉住现标签，无 price LWW 用例。决策 2「标签恒有（entity 列取值）」与决策 5「列取值不动」在此事实下相撞，二轮裁决如下。
 
-> **勘误 2（决策 2/5 落实口径：列读 subject 标签，price 归一并复活 LWW）**：op 落库与挂起行的 entity 列改读 `subject().0`（「标签恒有」动机成立，`entity()` 真删除、无替代路由臂）；price 裁决域标签归一——`"market_price"`/`"price_history"` 字面量删除（全库仅定义处与测试钉值两处，其余命中为 `price_history`/`market_prices` 表名，无外溢）。LWW 对 price 复活，为本次**唯一行为变化**，以引擎测试钉住跨轮乱序（输者 `Superseded`、终态 = 全序赢者）。决策 5 完整成立：归一后列值仍为 `"price"`，零列值变化、零新旧行混窗。键碰撞面已排除：`instrument_id` 一律 `new_uuid()`（不含 `|`），裸 uuid 键与 `uuid|ISO 周` 键结构不相交，键格式不变、不加判别前缀。
+> **勘误 2（决策 2/5 落实口径：列读 subject 标签，price 归一并复活 LWW）**：op 落库与挂起行的 entity 列改读 `subject().0`（「标签恒有」动机成立，`entity()` 真删除、无替代路由臂）；price 裁决域标签归一为 `"price"`（字面量删除，普查证实无外溢命中）。LWW 对 price 复活，为本次**唯一行为变化**，以引擎测试钉住跨轮乱序（输者 `Superseded`、终态 = 全序赢者）。决策 5 完整成立：归一后列值仍为 `"price"`，零列值变化、零新旧行混窗。键碰撞面已排除（裸 uuid 键与 `uuid|ISO 周` 键结构不相交），键格式不变、不加判别前缀。
 
-> **勘误 3（决策 2 字面修订：标签单源化，impl 块移驻注册表）**：`subject()` 签名不变，impl 块自 command.rs 移驻 `registry.rs` 与绑定同居（同 crate 跨模块 inherent impl；依赖保持 registry→command 单向），臂一行委托绑定，标签一律取 `ENTITY`（含键为空的臂）——标签宇宙 = {serde derive, `ENTITY`} 各 14 处，门 (a) 维持原文二源断言，`subject().0 ≡ ENTITY` 由构造成立。「14 个语义命令类型统一自带 subject 派生」修订为「**键派生归命令类型，标签归注册表单源组装**」：8 个内联域零改动（既有 `subject_id()` 即键派生，绑定组装标签），6 个已有 pair 派生的域（scheduled / category / physical_asset / instrument / exchange_rate / price）剥标签收敛为键派生——决策 2「8 个域各补数行方法」作废（#1006 清单笔误：categories 本有 pair 派生，系误列）。代价与边界 4「域保留自然形状」由此完整成立；`DomainCommand` 存在第二个 impl 块系本勘误刻意安排，非散落。
+> **勘误 3（决策 2 字面修订：标签单源化，subject 派生随绑定同居注册表）**：`subject()` 签名不变，派生臂随绑定同居注册表文件，臂一行委托绑定，标签一律取 `ENTITY`（含键为空的臂）——标签宇宙 = {serde derive, `ENTITY`} 各 14 处，门 (a) 维持原文二源断言，`subject().0 ≡ ENTITY` 由构造成立。「14 个语义命令类型统一自带 subject 派生」修订为「**键派生归命令类型，标签归注册表单源组装**」：既有内联域零改动（既有 `subject_id()` 即键派生，绑定组装标签），已有 pair 派生的域剥标签收敛为键派生——决策 2「8 个域各补数行方法」作废。代价与边界 4「域保留自然形状」由此完整成立。
 
-> **勘误 4（门 (b) 基线勘误扩充：根共享接缝白名单）**：基线红点远不止 scheduled 一处——`record_local`（ops.rs，经根 re-export 被 9 个业务域 command.rs 引用）与 `device_id`（约 20 处业务域引用）均为业务域既有合法依赖（mod.rs 既有注释「域内共享接缝」）。严形态合法面据此定为：`command` 模块路径 ∪ 根 re-export 白名单 `{DomainCommand, record_local, device_id}`（三条各附缘由注释，认许边同款纪律）；内部模块路径（`engine::`/`ops::`/`model::`/…）一律红；门作用域限业务域目录（`commands/`、`test_support/`、tests 不在列）。scheduled 的 `engine::ReplayEffect` 在 ReplayEffect 挪入契约模块后自动转绿，无须白名单。
+> **勘误 4（门 (b) 基线勘误扩充：根共享接缝白名单）**：基线红点远不止 scheduled 一处——经根 re-export 被业务域引用的既有共享接缝（op 产出单点、设备号工厂等）均为业务域既有合法依赖。严形态合法面据此定为：契约模块路径 ∪ 根共享接缝白名单（逐条附缘由注释，认许边同款纪律）；内部模块路径一律红。〔该门载体已由 #1591 定案改为声明面判定，见文末修订注记。〕
 
-> **勘误 5（落地细节）**：门 (a) 样本轮询测试落点 `sync_engine/tests/wire.rs`（契约 serde 一致性既有落点）；单 PR 交付（门 (b) 绿点依赖 ReplayEffect 挪位、门 (a) 依赖绑定与键派生就位，拆批产生基线红中间态）；LWW 复活用例落点 `sync_engine/tests/merge.rs`。
+> **勘误 5（落地细节）**：单 PR 交付（拆批产生基线红中间态）；样本与 LWW 复活用例落同步引擎既有测试面（落点见 #1006 交付记录）。
 
 ## 修订注记（#1591 定案，2026-09-20）：决策 4(b) 门的载体改为声明面判定
 
