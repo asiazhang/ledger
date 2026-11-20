@@ -19754,16 +19754,18 @@ fn settings_view_category_delete_popconfirm_removes_row() {
     app.wait_for("text:确认删除？").unwrap();
     press_after(&mut app, "id:cat-delete-confirm", "id:cat-delete-confirm").unwrap();
     app.wait_for("text:已删除").unwrap();
-    assert_eq!(
-        app.screen().count("text:待删分类").unwrap(),
-        0,
-        "删除确认后行离场（在用清单不显示软删行）"
-    );
+    // 「已删除」toast 只证明写完成；行离场还依赖清单后台重读（同 #2178 根因：
+    // 紧贴 toast 读屏幕会读到旧行集，CI 高负载下即假红）。等行离场这一用户可
+    // 观察结果收敛；丢 reload 接线（或删除写空转）时行永不离场，本等待超时即红。
+    let row_anchor = format!("id:cat-row-{cat_id}");
+    app.wait_for_gone(row_anchor.as_str(), DEFAULT_WAIT)
+        .unwrap();
 }
 
 /// 重排旅程（旧壳拖拽改序的 NSH 对应形态「上移 / 下移」；域 reorder 全集
-/// 覆盖语义）：两个根分类，点「下移」把 A 挪到 B 后 → 行序变化（删执行
-/// 接线 → 行序永不变即红；断言对准用户可观察的行序）。
+/// 覆盖语义）：两个根分类，点「乙类」的「上移」把它挪到甲前 → 行序变化
+///（删执行接线 / 丢清单重读接线 → 行序永不变化即红；断言对准用户可观察的
+/// 行序）。
 #[test]
 fn settings_view_category_move_buttons_reorder_sibling_rows() {
     let _guard = serial_lock();
@@ -19810,15 +19812,27 @@ fn settings_view_category_move_buttons_reorder_sibling_rows() {
     let pos_b = texts.iter().position(|t| *t == "乙类").unwrap();
     assert!(pos_a < pos_b, "初始序甲在乙前：{:?}", texts);
 
-    // 点「甲类」的「上移」（到头，禁用态无效）→ 无动作；点「乙类」的「上移」
-    // → 乙排到甲前（重排写成功 → 清单重读落新序）。
+    // 点「乙类」的「上移」→ 乙排到甲前（重排写成功 → 清单重读落新序）。
+    // 「甲类」的上移在首位为禁用态，不参与本旅程。
     let up_b = format!("id:cat-up-{id_b}");
     press_after(&mut app, up_b.as_str(), up_b.as_str()).unwrap();
     app.wait_for("text:已更新分类").unwrap();
-    let texts = app.screen().texts();
-    let pos_a = texts.iter().position(|t| *t == "甲类").unwrap();
-    let pos_b = texts.iter().position(|t| *t == "乙类").unwrap();
-    assert!(pos_b < pos_a, "上移后乙在甲前：{:?}", texts);
+    // 「已更新分类」toast 只证明写完成；行序变化是清单后台重读的后续异步步
+    //（#2178：CI 高负载下两步间被拉开，紧贴 toast 读屏幕会读到旧序即假红）。
+    // 等「乙在甲前」这一用户可观察结果收敛——等待面即断言面（§3.5 禁用「步骤
+    // 后立刻断言」）；丢 reload 接线（或重排写空转）时行序永不变化，本等待超
+    // 时即红（ADR-0087 负向条目仍在）。
+    app.wait_until("上移后乙在甲前", DEFAULT_WAIT, |screen| {
+        let texts = screen.texts();
+        match (
+            texts.iter().position(|t| *t == "乙类"),
+            texts.iter().position(|t| *t == "甲类"),
+        ) {
+            (Some(pos_b), Some(pos_a)) => pos_b < pos_a,
+            _ => false,
+        }
+    })
+    .unwrap();
 }
 
 /// 币种页签三卡：本位币基准读回显 + 变更落库（域权威读反查）、展示币种设
