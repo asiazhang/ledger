@@ -18,10 +18,10 @@ Ledger 桌面应用运行期间，AI 编程助手经常经本地 HTTP API（`htt
 
 ## 决策
 
-1. **参考数据 = 带失效信号的深度模块，单一来源**。`useReferenceStore`（`src/stores/reference.ts`）持有 `currencies / accounts / categories` 三张参考表及全部派生映射（`currencyMap / accountMap / categoryMap`）与分类树逻辑（`rootCategories / expenseCategories / incomeCategories / categoryChildren / categoryPath / treeCategoryOptions`），作为 UI 字典 / 枚举的单一来源。
+1. **参考数据 = 带失效信号的深度模块，单一来源**。前端参考 store 持有 `currencies / accounts / categories` 三张参考表及全部派生映射与分类树逻辑，作为 UI 字典 / 枚举的单一来源。
 2. **失效策略 = 事件驱动失效（push-first）**。任一参考写入成功后，后端发出通用、粗粒度、无 payload 的 `ledger:changed` 信号；前端 `useReferenceStore` 订阅该信号 → 置为 loading → 重拉三张参考表 → 推回响应式数组，视图消费响应式状态即自动反映新鲜数据，**不再依赖「每次挂载全量刷新」**。
 3. **信号设计 = 通用可复用，无 payload**。`ledger:changed` 不与具体资源绑定，未来其他订阅者（如交易视图实时刷新）可低成本复用，无需重设计。**交易类写入本期不 emit**（不改参考表，参考数据消费者不需要交易级信号；日后需要时再补 emitter）。
-4. **「是否为参考写入」的判定收口在 events 模块**（`src-tauri/src/events.rs`）：IPC 命令清单 `REFERENCE_WRITE_COMMANDS`（账号 create/delete，分类 create/update/reorder/delete）+ 纯函数 `is_reference_write`，命令层统一经 `emit_reference_changed` 走该判定；HTTP 端点（账号 / 分类 create/delete）结构上即参考写入，直接经 `emit_ledger_changed_if_present` 发射（`Option<AppHandle>` 为集成测试留缝，生产路径注入 `Some`）。新增参考写入命令须同步扩充清单，由单测锁定映射。
+4. **「是否为参考写入」的判定收口在后端 events 模块单点**：写命令白名单 + 纯函数判定，命令层统一经判定入口发射；HTTP 端点（账号 / 分类 create/delete）结构上即参考写入，直接发射（集成测试可留缝跳过发射）。新增参考写入命令须同步扩充清单，由单测锁定映射。（该白名单判定机制已由 ADR-0044 收口为 `signals_for` 信号映射单点，白名单退役。）
 5. **push-first 生命周期**。store 首次被访问时自我初始化触发一次 `refresh()`；`ledger:changed` 订阅放在 store setup 体内（仅注册一次）。重拉采用 **stale-while-revalidate**：保留旧数据，成功后整体替换，避免界面闪空。
 6. **暴露失效信号与动作**。`status`（`idle | loading | ready | error`）与 `version`（每次成功重拉自增）供消费者显式感知新鲜度；`refresh()`（强制拉取）与 `ensureFresh()`（缓存 + 在途去重 + stale 感知，fresh 时零 IPC）。
 7. **消除手工刷新散布**。删除各视图 `onMounted → loadAll()`（含 `App.vue`）与账户 / 分类管理流程里的手工 `loadAccounts()` / `loadCategories()`；应用自身写入（同一批 IPC 命令）天然经信号失效，与外部写入行为一致。
@@ -50,14 +50,6 @@ Ledger 桌面应用运行期间，AI 编程助手经常经本地 HTTP API（`htt
 
 ## 影响
 
-- **已完成（分批落地）**：
-  - #78：抽出 `useReferenceStore` 作为参考数据单一来源；`useAppStore` 参考数据 getters 全部委托到新 store（共享同一份状态），现有消费者零改动。
-  - #79：后端 `ledger:changed` 信号（`src-tauri/src/events.rs`：事件名常量 + `REFERENCE_WRITE_COMMANDS` 清单 + `is_reference_write` 纯函数 + emit 薄胶入口）；`AppHandle` 传入 HTTP 服务器；参考写入端点（账号 / 分类 create/delete）与参考写入 IPC 命令（账号 create/delete，分类 create/update/reorder/delete）成功后 emit；交易类写入不 emit。
-  - #81：`useReferenceStore` 内建失效信号（`status` / `version`）+ push 生命周期（订阅 `ledger:changed` → 重拉）+ `refresh()` / `ensureFresh()`。
-  - #82–#84：消费端迁移批次（账户 / 分类管理流、交易 / 搜索流、报表 / 预算 / 投资 / 设置流）改为从 `useReferenceStore` 读取并依赖信号刷新。
-  - #85：移除 `useAppStore` 参考数据 getters / load 函数（含参考 store 的遗留 `loadAll` / 单表 load），收缩为纯 UI 设置 store（主题 / 默认币种 / 备份设置）。
-- **待完成（spec #76 后续子任务）**：
-  - #86：端到端整合验证 + 组件反应性测试 + 测试迁移。
-- **文档**：本 ADR + `CONTEXT.md` 术语表新增「参考数据 Reference Data」条目（issue #80）。
+- 决策按 spec #76 分批落地（#78–#86，逐票落地记录见各票与交付 PR）；词汇表新增「参考数据 Reference Data」条目（#80）。
 - 无 schema 变更、无迁移。
 - **修订（#241，2026-08-29）**：`ensureFresh()` 与新鲜度窗口（决策 6 提及的动作之一）自落地起零生产消费，已从 store 接口移除；事件驱动失效（`ledger:changed`）是唯一失效机制，无 pull 侧兜底（窗口命中、挂载期兜底拉取均已不存在），需要强制重拉时显式 `refresh()`。决策 1–7 正文保留原貌，本注记为准。

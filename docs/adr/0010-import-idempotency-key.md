@@ -41,11 +41,9 @@
 
 ## 影响
 
-- 新增前向迁移 `V007__transaction_idempotency_key.sql`：`transactions` 加 `idempotency_key TEXT` 列，建部分唯一索引 `CREATE UNIQUE INDEX ... ON transactions(idempotency_key) WHERE idempotency_key IS NOT NULL AND is_deleted=0`。
-- `src/models.rs`：`TransactionInput` 加可选 `idempotency_key`；`CreateTransactionResult` 在 duplicate 分支返回已有 `id`（更丰富，不破坏现有调用）。
-- `src/commands/transactions.rs`：去重逻辑分支——有键按键查、无键走 `compute_dedup_hash`；新增 `update_transaction_internal`。
-- `src/api_server.rs`：新增 `PUT /api/v1/transactions/{id}` 端点；更新 openapi 描述。
-- `src-tauri/prompts/ledger-api.md`、`import-knowledge-base.md` / `import-knowledge-investment.md`（原 `import-knowledge.md`，#1121 拆分）：批量导入一律带 `idempotency_key`；纠错用修改 API 而非"删后重导"。
-- `CONTEXT.md`：新增 `IdempotencyKey`、`AICleanupModify`，修订 `ImportDedup`，同步 `AI API`。
-- 前端 `src/types/index.ts`：加 `idempotency_key`；IPC `create_transactions` 仍为 `dedup=false` 不变。
-- 测试：BDD 补"同键重跑跳过""同键不同内容仍跳过（内容无关）""不同键雷同内容都保留""按 id 修改后重跑不重复"等场景。
+- 前向迁移：`transactions` 加 `idempotency_key` 列与「一键至多一活交易」部分唯一索引（DDL 见迁移文件）。
+- `TransactionInput` 加可选 `idempotency_key`；duplicate 分支返回已有交易 `id`（不破坏现有调用）。
+- 去重逻辑分派单点：有键按键查、无键走内容哈希；新增按 id 全字段替换的交易修改入口。
+- API 服务新增 `PUT /api/v1/transactions/{id}` 端点。
+- AI 导入知识（`ledger-api.md` 与分域知识节，#1121 拆分）：批量导入一律带 `idempotency_key`；纠错用修改 API 而非"删后重导"。
+- 词汇表新增 `IdempotencyKey`、`AICleanupModify`，修订 `ImportDedup`。
