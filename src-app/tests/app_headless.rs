@@ -10792,7 +10792,9 @@ fn merchants_view_lands_directly_when_moved_to_sidebar() {
     let dir = make_book("merchants-direct");
 
     // 侧栏序存储种子：「商户」移回侧栏（收纳清单同步剔除，就地移回豁免
-    // 同形的存储侧清面）。
+    // 同形的存储侧清面）。装配注入先行于挂载（App 体启动任务在挂载后首帧
+    // 即可运行，先注入后挂载是装配现场的确定性次序）。
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config_with_storage(&[
         (
             "view_state:sidebar_containment",
@@ -10804,7 +10806,6 @@ fn merchants_view_lands_directly_when_moved_to_sidebar() {
         ),
     ]))
     .unwrap();
-    nsh_app::app::set_book_dir(dir.to_path_buf());
     app.wait_for("id:nav-merchants").unwrap();
     app.press("id:nav-merchants").unwrap();
     app.wait_for("id:merchant-table").unwrap();
@@ -13211,7 +13212,9 @@ fn physical_asset_view_lands_directly_when_moved_to_sidebar() {
     nsh_app::app::reset_book_assembly();
     let dir = make_book("physical-asset-direct");
 
-    // 侧栏序存储种子：「实物资产」移回侧栏（收纳清单同步剔除）。
+    // 侧栏序存储种子：「实物资产」移回侧栏（收纳清单同步剔除）。装配注入
+    // 先行于挂载（同商户侧栏直达用例的确定性次序注）。
+    nsh_app::app::set_book_dir(dir.to_path_buf());
     let mut app = Headless::start(desktop_config_with_storage(&[
         (
             "view_state:sidebar_containment",
@@ -13223,7 +13226,6 @@ fn physical_asset_view_lands_directly_when_moved_to_sidebar() {
         ),
     ]))
     .unwrap();
-    nsh_app::app::set_book_dir(dir.to_path_buf());
     app.wait_for("id:nav-physicalAssets").unwrap();
     app.press("id:nav-physicalAssets").unwrap();
     app.wait_for("id:physical-asset-table").unwrap();

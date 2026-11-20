@@ -2,8 +2,11 @@
 //!
 //! 装配入口可注入（docs/research/nsh-testing-capabilities.md §3.1：lib + bin
 //! 双靶，bin 薄启动）：bin（`main.rs`）解析启动参数后经 [`set_book_dir`] 注入
-//! 账本目录；headless 组件测试以同一入口注入测试库路径后起真实视图树
-//! （`Root::of::<App>`），生产与测试同一条装配路径。
+//! 账本目录、经 [`ensure_startup_injections`] 注入跨账本数据根；headless 组
+//! 件测试以同一入口注入测试库路径后起真实视图树（`Root::of::<App>`），生产
+//! 与测试同一条装配路径。dev 回路（`nsh run` / `nsh dev`）的 dev runner 不执
+//! 行 bin，装配前的启动注入在 [`App`] 体内按 dev 现场标记门控补齐（见组件体
+//! 注释）——dev 与生产无参形态同走解析链注册表臂。
 //!
 //! 引导在组件任务的后台线程执行（`spawn` + `blocking`：SQLite 是阻塞 IO，不占
 //! 引擎线程）；就绪态经 [`view_host`] 分派各视图模块（交易表格
@@ -66,6 +69,19 @@ pub fn set_book_dir(dir: PathBuf) {
     let mut slot = book_dir_slot();
     if slot.is_none() {
         *slot = Some(dir);
+    }
+}
+
+/// 启动注入单点（幂等，先注入者优先）：跨账本数据根从平台 env 解析注入
+/// （与 `main.rs` 既有块同逻辑，收口成单点供 bin 与 dev 门控两个消费面共
+/// 用）。**argv 账本目录臂不入本单点**——本函数可被 [`App`] 体在 headless
+/// 测试进程触达，测试二进制的 argv[1] 是过滤器参数而非账本目录，argv 解析
+/// 只归 `main.rs`（dev runner 的 runner 进程无应用参数，已核实）。
+pub fn ensure_startup_injections() {
+    if crate::cross_book::default_data_dir().is_none()
+        && let Some(dir) = crate::cross_book::default_data_dir_from_env()
+    {
+        crate::cross_book::set_default_data_dir(dir);
     }
 }
 
@@ -574,6 +590,17 @@ pub fn root() -> nsh_core::element::Root {
 /// 立桩根组件：就绪前居中呈现启动形态（缺参/引导中/首启引导/失败/密文锁定，#2088 起五态），就绪后承载导航骨架（侧栏 + 内容区）。
 #[component]
 pub fn App() -> impl IntoElement {
+    // 开发宿主启动注入（dev 回路与生产无参形态同走解析链）：`nsh run` /
+    // `nsh dev` 的 dev runner 不执行 bin（main.rs），装配前的数据根注入缺失
+    // → 解析链两端断 → 缺参态。dev runner 由 nsh CLI 以 NSH_APP_DIR 标记
+    // spawn（runner 进程 env 已核实；生产 bin 与 cargo test 进程无此变量），
+    // 据此门控：生产 bin 此处槽位恒已注入（main.rs 先行），单点幂等跳过；
+    // headless 测试现场无标记，注入零触发（测试装配槽位不受影响）。删除本
+    // 接线 → dev 回路重启落缺参态（源码扫描钉住，
+    // `app_body_wires_dev_runner_startup_injections`）。
+    if std::env::var_os("NSH_APP_DIR").is_some() {
+        ensure_startup_injections();
+    }
     // 导航状态与筛选会话态挂根组件实例（根永生，信号存活与进程同步；后续消费
     // 经同一句柄；筛选会话态「视图卸载不丢」依赖根实例所有权，#2037），键位带
     // 绑定随根实例存亡（引擎线程派发，含抑制闸门）。

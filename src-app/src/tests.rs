@@ -1919,19 +1919,59 @@ fn portfolio_and_freedom_seams_read_holdings_and_budget() {
 
 /// bin 启动接线钉（#2077，源码扫描守门：main 不进 headless 测试进程，删接线
 /// 或换序扫描即红——#959/#961 先例形态）：`logging::init` 的文件日志面解析日
-/// 志目录消费跨账本数据根槽位，main 必须先注入数据根再初始化日志，且两处
-/// 接线调用都在。
+/// 志目录消费跨账本数据根槽位，main 必须先经启动注入单点注入数据根再初始化
+/// 日志，且两处接线调用都在。
 #[test]
 fn main_wires_data_root_before_logging_init() {
     let main_rs = include_str!("main.rs");
     let data_root_pos = main_rs
-        .find("cross_book::default_data_dir_from_env()")
-        .expect("main 应注入跨账本注册表数据根");
+        .find("ensure_startup_injections()")
+        .expect("main 应经启动注入单点注入跨账本注册表数据根");
     let logging_pos = main_rs
         .find("logging::init()")
         .expect("main 应接线日志初始化（stderr + 日滚文件双输出）");
     assert!(
         data_root_pos < logging_pos,
         "数据根注入必须先于日志初始化（文件日志目录解析消费数据根槽位）"
+    );
+}
+
+/// App 体 dev 注入门控接线钉（源码扫描，#959/#961 先例形态）：dev runner 不
+/// 进 headless 测试进程、该现场不可观察——门控判定与单点调用必须在
+/// `App` 组件体内，删接线或移出组件体即红。
+#[test]
+fn app_body_wires_dev_runner_startup_injections() {
+    let app_rs = include_str!("app.rs");
+    let app_pos = app_rs.find("pub fn App()").expect("App 组件体应存在");
+    let body = &app_rs[app_pos..];
+    let gate_pos = body
+        .find("NSH_APP_DIR")
+        .expect("App 体应带 NSH_APP_DIR 门控（dev runner 现场标记，生产 bin 与测试进程无此变量）");
+    let inject_pos = body
+        .find("ensure_startup_injections()")
+        .expect("App 体应接线启动注入单点");
+    assert!(gate_pos < inject_pos, "门控判定应先于单点调用");
+}
+
+/// 启动注入单点（dev 回路与生产同形的共享函数）：空槽现场从平台 env 解析
+/// 数据根注入；幂等（先注入者优先）——显式注入的现场不被 env 覆盖。argv 臂
+/// 不入单点（headless 测试二进制的 argv[1] 是过滤器参数，非账本目录）。
+#[test]
+fn startup_injections_fill_empty_data_root_from_env_idempotent() {
+    let _guard = serial_guard();
+    crate::app::reset_book_assembly();
+    crate::app::ensure_startup_injections();
+    assert_eq!(
+        crate::cross_book::default_data_dir(),
+        crate::cross_book::default_data_dir_from_env(),
+        "空槽现场应从平台 env 注入数据根（dev runner 现场的解析链前提）"
+    );
+    // 幂等（先注入者优先）：显式注入在前，env 解析不覆盖既有槽位。
+    crate::app::reset_book_assembly();
+    crate::cross_book::set_default_data_dir(std::path::PathBuf::from("/test-root-first"));
+    crate::app::ensure_startup_injections();
+    assert_eq!(
+        crate::cross_book::default_data_dir(),
+        Some(std::path::PathBuf::from("/test-root-first")),
     );
 }

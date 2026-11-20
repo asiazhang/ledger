@@ -10,12 +10,11 @@ use std::path::PathBuf;
 #[cfg(target_os = "linux")]
 fn main() -> impl std::process::Termination {
     // 跨账本注册表数据根（#2055）：与旧壳同一数据根（XDG 拼 identifier，
-    //Linux 平台语义）；解析失败不阻断启动（汇总读取码化拒绝同码呈现）。
+    //Linux 平台语义）；解析失败不阻断启动（汇总读取码化拒绝同码呈现）。注入
+    // 收口到启动单点（dev runner 门控消费同一函数，见 app.rs）。
     // 先于日志初始化（#2077）：日志文件面的目录解析消费数据根槽位，槽位未
     // 注入时文件面降级为仅 stderr（接线顺序由 src/tests.rs 源码扫描钉住）。
-    if let Some(dir) = nsh_app::cross_book::default_data_dir_from_env() {
-        nsh_app::cross_book::set_default_data_dir(dir);
-    }
+    nsh_app::app::ensure_startup_injections();
     // 域栈日志面（tracing 基座，ADR-0006；crate::logging 单点）：stderr +
     // 日滚文件双输出（数据根下 logs 目录，按天滚动 7 天保留）+ RUST_LOG 过滤
     //（显式优先，缺省 info），可重载滤镜登记后设置卡调档立即生效、库就绪后
