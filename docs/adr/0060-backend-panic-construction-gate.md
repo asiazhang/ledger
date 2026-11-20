@@ -13,28 +13,28 @@
 
 ### 1. 六件套 deny 门禁
 
-包清单 `[lints.clippy]` 将六个 restriction lints 全部 deny：`unwrap_used` / `expect_used` / `panic` / `todo` / `unimplemented` / `unreachable`。`check.sh` 的 clippy 环节（`--all-targets --all-features -D warnings`）自动拦截一切新增易 panic 代码，脚本零改动。构建脚本 `build.rs` 的 fail-loud 守门（ADR-0047 扫描器失灵即拒绝构建）刻意保留 panic!/expect，文件级豁免并注明「构建期代码不进入生产运行时」。
+包清单 `[lints.clippy]` 将六个 restriction lints 全部 deny：`unwrap_used` / `expect_used` / `panic` / `todo` / `unimplemented` / `unreachable`。`check.sh` 的 clippy 环节（`--all-targets --all-features -D warnings`）自动拦截一切新增易 panic 代码，脚本零改动。（历史：构建脚本曾为退役命令注册扫描器保留 fail-loud 豁免，ADR-0047 命令层退役后随之消亡，现役构建脚本无易 panic 构造。）
 
 ### 2. 测试面整体豁免（cfg(test)）
 
-测试代码（单元、集成、BDD）是易 panic 构造的合法主场，整体豁免而非逐点安置：crate 根（`lib.rs`）与各测试 crate 头部（`tests/e2e.rs`、`tests/api_server/main.rs`）加 `#![cfg_attr(test, allow(六项))]`。`cfg(test)` 只在测试目标编译时为真，生产构建零放宽。集成测试以非 `cfg(test)` 构建链接 lib，故 lib 内的测试专用夹具模块（`src/test_utils.rs`）无法被 crate 根豁免覆盖，按 C 类文件级放行（见下）。
+测试代码（单元、集成）是易 panic 构造的合法主场，整体豁免而非逐点安置：crate 根与各测试 crate 头部加 `#![cfg_attr(test, allow(六项))]`。`cfg(test)` 只在测试目标编译时为真，生产构建零放宽。集成测试以非 `cfg(test)` 构建链接 lib，故 lib 内的测试专用夹具模块无法被 crate 根豁免覆盖，按 C 类文件级放行（见下）。
 
 ### 3. 存量逐点豁免纪律（B/C/A 三类）
 
-存量生产 panic 点逐点 allow + 理由注释（`#[allow(...)]` 贴最近语句，注释引用本 ADR 与理由）；除 C 类夹具与宏生成代码两类文件级豁免（各自无法更窄，见下）外，禁止函数级/模块级宽放：
+存量生产 panic 点逐点 allow + 理由注释（`#[allow(...)]` 贴最近语句，注释引用本 ADR 与理由）；除 C 类夹具与（历史）宏生成代码两类文件级豁免（各自无法更窄，见下）外，禁止函数级/模块级宽放。**豁免清单的唯一权威是代码内豁免注释（全库 `rg` 即清单），本文不复述成员与计数**：
 
-- **B 类（7 处，启动期「失败即无法运行」，长期保留）**：应用启动装配链（`lib.rs` Tauri Builder 构建失败）、HTTP API 壳的 Tokio 运行时创建 / 端口绑定 / 服务器异常退出（`api_server/router.rs`）、日志系统首次初始化（`logger.rs`）。这些点失败即进程不可用，fail loud 是正确行为。
-- **C 类（2 个模块，文件级 allow + 「仅测试用」声明）**：集成测试专用夹具模块 `src/test_utils.rs`，与统一测试数据库工厂/共享断言库 `src/test_support/`（ADR-0084，#751）——均被集成测试以非 test 构建链接而无法 `cfg(test)` 门控，文件级放行六件套并声明生产路径不得消费。
-- **A 类（原 4 处，已经 #433 / #434 结构性消除并摘除豁免，清点为零）**：定时计划域 2 处（`scheduled_transactions/engine.rs`：Occurrence 扩展 Option unwrap、穷尽 match 防御臂 unreachable）、投资域同步 2 处（`sync/fund_nav.rs` 现价选取 expect、`sync/incremental.rs` 北京时间计算 expect），两域防御面改写为 let-else 防线 / 码化错误后逐点豁免随之摘除；新增强制走码化错误路径，不再产生 A 类存量。
-- **宏生成代码（23 个文件，升 tauri 后移除）**：tauri 宏为 async 命令生成 `let _check: _ = unreachable!()`（tauri-macros wrapper.rs），宏不透传逐点 allow，只能在命令壳文件级放行——存量 `commands/investment.rs`、`commands/sync.rs`；#501 / #502 / #503 三批 async 化（形状乙，决策见 ADR-0069）新增 `commands/accounts.rs`、`commands/categories.rs`、`commands/currencies.rs`、`commands/merchants.rs`、`commands/search.rs`、`commands/dashboard.rs`、`commands/transactions.rs`、`commands/scheduled.rs`、`commands/reports.rs`、`commands/budget.rs`、`commands/item.rs`、`commands/policy.rs`、`commands/physical_asset.rs`、`commands/financial_freedom.rs`、`commands/backup.rs`、`commands/data_location.rs`；`commands/encryption.rs`（#570）与 `commands/boot.rs`（#601）后续 async 化同批豁免；`commands/insurer.rs`（#712，保司命令面）同款豁免；`commands/book.rs`（#833，账本注册表命令面）同款豁免；`commands/settings.rs`（#858，本位币基准命令面 async 化）同款豁免；属上游缺陷，tauri 修复后移除。#504 收口复核：豁免注释各文件形态一致（均引本 ADR 与上游缺陷归属），无旧形态残留。
+- **B 类（启动期「失败即无法运行」，长期保留）**：应用启动装配链、HTTP API 壳的运行时创建 / 端口绑定 / 服务器异常退出、日志系统首次初始化等——失败即进程不可用，fail loud 是正确行为，不设消除期限。
+- **C 类（文件级 allow + 「仅测试用」声明）**：集成测试链接的非 test 构建夹具面（测试专用夹具模块、统一测试数据库工厂/共享断言库 ADR-0084）无法 `cfg(test)` 门控，文件级放行六件套并声明生产路径不得消费。
+- **A 类（业务路径可防御化违规）：结构性消除后摘除豁免**。定时计划域与投资域同步共 4 处已经结构性消除（防御面改写为 let-else 防线 / 码化错误，#433/#434）并摘除豁免、清点为零；新增强制走码化错误路径（ADR-0050），不再产生 A 类存量。
+- **宏生成代码（文件级豁免，已随 Tauri 壳退役消亡）**：tauri 宏为 async 命令生成的防御臂（上游缺陷）不可逐点放行，命令壳文件级豁免；切轨 NSH 后命令壳消亡，该豁免族随之消失。
 
 ### 4. 后续收紧方向
 
-门禁生效后按存量治理节奏收紧：A 类四处经 #433/#434 结构性消除并摘除豁免；宏生成豁免随 tauri 升级移除；B 类七处为长期豁免，不设消除期限（启动期 fail loud 是终态）。新增强制走错误化路径（错误码契约见 ADR-0050），clippy 门禁保证违规在编译期即红。
+门禁生效后按存量治理节奏收紧：A 类已经结构性消除并摘除豁免（见决策 3）；宏生成豁免已随 Tauri 壳退役消亡；B 类为长期豁免，不设消除期限（启动期 fail loud 是终态）。新增强制走错误化路径（错误码契约见 ADR-0050），clippy 门禁保证违规在编译期即红。
 
 ## 后果
 
 - **新增易 panic 代码编译期即红**：clippy 环节零脚本改动自动拦截，评审不再依赖记忆。
 - **测试写法零负担**：测试面整体豁免，断言辅助照常用 unwrap；生产构建零放宽由 `cfg(test)` 语义保证。
-- **豁免可清点**：全库 `rg` 豁免点数量与位置即豁免清单（B 7 + C 2 + 宏 23 文件 + build.rs 1；A 类 4 处已消除，清点为零），漂移在 review 可见。
+- **豁免可清点**：全库 `rg` 豁免点数量与位置即豁免清单（成员与计数随治理漂移，以代码内注释为准），漂移在 review 可见。
 - **不改变运行时行为**：本门禁只加 lint 与豁免注释，零语义变化；A 类四处行为改写由后续 ticket 承载并有既有测试兜底。

@@ -32,20 +32,18 @@
 3. **码化错误携带归类**：`Coded` 变体内含 `class`（Invalid→400 / NotFound→404），
    序列化后 `kind` 取归类同值（`Invalid` / `NotFound`），HTTP 状态与 IPC 语义同既有
    口径。
-4. **前端按码本地化，降级透传**：错误展示唯一接缝 `errorMessage(e)`（`@ledger/utils` 包；原坐标 `src/utils/errors.ts`，#1314 成包时收敛）
-   扩展——错误带码且当前语言配置了 `errors.<code>` 文案（码内点号即文案嵌套路径）则
+4. **前端按码本地化，降级透传**：错误展示唯一接缝（旧 Web 壳名 `errorMessage`，职责由 NSH 壳同位承接；#1314 曾成包收敛）
+   ——错误带码且当前语言配置了 `errors.<code>` 文案（码内点号即文案嵌套路径）则
    用 `params` 插值翻译（如缺汇率错误插出 USD→CNY 完整语句）；无码、未知码或未配
    翻译的新错误一律透传后端中文原文——**用户永远读到可读的错误信息，绝不显示 key
    代号**。中文界面的 zh 模板与后端消息模板逐字一致，输出与现状无差别。
-5. **码表落双语文案资源**：全部码的 zh/en 模板收进 `packages/i18n/src/locales/{zh-CN,en-US}/errors.json`
-   （zh = 后端消息模板的同形物，en = 新译；文案资源随 @ledger/i18n 包落位，issue #1151；**迁址（2026-11-19，#2171/#2172 / ADR-0148）：errors.json 随 Web 参照前端退役迁住仓库根 `locales/`，门与消费语义不变，见修订记录末条**），与其他文案资源同受 key 集合全等校验
+5. **码表落双语文案资源**：全部码的 zh/en 模板收进 errors.json 双语文案资源（zh = 后端消息模板的同形物，en = 新译；**现役落点仓库根 `locales/`**，2026-11-19 随 Web 参照前端退役迁址 #2171/#2172 / ADR-0148，见修订记录末条），与其他文案资源同受 key 集合全等校验
    （ADR-0049 决策 6）——「码表覆盖全部用户可见错误条件」由码表与后端码点的对照评审
    保证，双语 parity 由门槛脚本保证。新增错误条件 = 后端用码化构造器 + errors.json
    两份补翻译，漏翻在 CI 拦截。
 6. **测试归口**：错误契约的字段断言（`code`/`params` 存在且稳定、`message` 中文不变）
-   归 `src-tauri/tests/api_server/` 集成测试（HTTP 端点层既有归口，#296/#304 先例），
-   不新增 BDD `.feature`；`error.rs` 内单测钉死序列化形态基线；前端插值/降级行为归
-   Vitest（`errors.test.ts`）。
+   归 API 集成测试（HTTP 端点层既有归口，#296/#304 先例），不新增 BDD；序列化形态基线由
+   错误模块单测钉死；前端插值/降级行为归壳层测试面（原 Web Vitest 面已随 ADR-0148 退役）。
 
 ## 理由
 
@@ -71,4 +69,4 @@
 ## 修订记录
 
 - 2026-09-12 grilling 复核（模型审查）：决策 5 的「码表覆盖全部用户可见错误条件」存在实现缺口——至少十个已 `coded` 的错误码在 zh/en 模板中缺失（含投资域写入接缝码与出资账户接缝码），用户会看到未翻译的码。已立 issue #1188，逐码按「补模板，或判定为程序缺陷降级为裸内部错误」收口；本契约本身不变。
-- 2026-09-12 收口（issue #1188）：全量差集枚举生产代码全部码化构造点（`coded` / `codedp` / `coded_not_found` / `codedp_not_found` 字面量与 `const NAME: &str` 一级引用静态枚举；动态构造点 12 处逐一人工核查：closed_set 宏 1、engine.rs 1、validation.rs 3、trade.rs 2、trend.rs 1、unwind.rs 4）共 258 码，与 zh/en 模板差集 12 条全部补齐模板、零豁免降级——其中 `balance.cache-row-missing` 是 ADR-0067 有意的码化设计（缓存行缺失报码化错误引导审计修复），其余 11 条为接缝/守卫码（`transaction.*-unregistered`、`sync-engine.truncate-not-owner`）：虽语义上是接线缺失类程序缺陷，但触发时前端确实展示 message 且码值已被单测钉死为对外契约，按「补模板」主路径收口。非逐字同形项共两处（模板无法逐字复刻后端消息，取等义主干）：`transaction.investment-hook-unregistered`（消息含内部槽名动态段且无 params，模板取无槽名主干）；`balance.cache-row-missing`（两调用点形状不一致：一处 message 插账户名而 params 传账户 id、另一处 message 无名称段，模板 {0} 渲染账户 id）。守门机器化：`scripts/check-i18n-keys.ts` 在双语 key 全等之外增查「每个静态可枚举的码化构造码必须在 zh/en errors.json 均有模板」（动态构造点无法静态解析，计入 unresolved 供人审，漏报方向安全；`db.error` / `parse.error` / `io.error` 系统通用码无构造点、按决策 2 不进码表，无需白名单），挂入 check.sh。检视修正（同票）：`physical-asset.<估值|处置>-date-future` 原以中文短名拼码，运行时永不匹配既有 `valuation-/disposal-date-future` 模板键（en 用户降级读中文），已改为 slug 与文案分离传参并对齐模板键（域单测钉住）。- 2026-11-19 迁址（#2171/#2172 / ADR-0148）：码表资源唯一幸存命名空间 errors.json 随 Web 参照前端整体退役迁住仓库根 `locales/`（其余命名空间唯一消费者是被删的 Web UI，一并退役）；check-i18n-keys 门保留，默认扫描路径同步迁移，Rust 码化构造点 ↔ 双语模板对拍继续由 CI 拦截（迁址后实测 304 码全覆盖）。
+- 2026-09-12 收口（issue #1188）：全量核对生产代码码化构造点共 258 码（逐点核查与按文件计数见 #1188 交付记录），与 zh/en 模板差集 12 条全部补齐模板、零豁免降级——其中 `balance.cache-row-missing` 是 ADR-0067 有意的码化设计（缓存行缺失报码化错误引导审计修复），其余 11 条为接缝/守卫码：虽语义上是接线缺失类程序缺陷，但触发时前端确实展示 message 且码值已被单测钉死为对外契约，按「补模板」主路径收口。非逐字同形项两处（模板无法逐字复刻后端消息，取等义主干）：`transaction.investment-hook-unregistered`（消息含内部槽名动态段且无 params）；`balance.cache-row-missing`（两调用点形状不一致，模板 {0} 渲染账户 id）。守门机器化：check-i18n-keys 门在双语 key 全等之外增查「每个静态可枚举的码化构造码必须在 zh/en 模板均有条目」（动态构造点无法静态解析，计入 unresolved 供人审，漏报方向安全；`db.error` / `parse.error` / `io.error` 系统通用码无构造点、按决策 2 不进码表），挂入 check.sh。检视修正（同票）：`physical-asset.*-date-future` 两码原以中文短名拼码、运行时永不匹配既有模板键（en 用户降级读中文），已改为 slug 与文案分离传参并对齐模板键（域单测钉住）。- 2026-11-19 迁址（#2171/#2172 / ADR-0148）：码表资源唯一幸存命名空间 errors.json 随 Web 参照前端整体退役迁住仓库根 `locales/`（其余命名空间唯一消费者是被删的 Web UI，一并退役）；check-i18n-keys 门保留，默认扫描路径同步迁移，Rust 码化构造点 ↔ 双语模板对拍继续由 CI 拦截（迁址后实测 304 码全覆盖）。
