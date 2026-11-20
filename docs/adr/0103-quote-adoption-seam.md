@@ -7,7 +7,7 @@
 
 ## 背景
 
-基金与股票的新增标的路径各走三段同形阶梯——取行情（行情同步域 `ledger-market-sync` crate 网络层 `fetch_fund_quote_production`（`src-tauri/crates/market-sync/src/fund.rs:194`）/ `fetch_stock_quote_production`（`src-tauri/crates/market-sync/src/stock.rs:174`））→ 按代码解析/建档（投资域 `ledger-investment` crate：`add_fund_by_code_with` / `fetch_stock_quote_for_add` + `persist_fund_detail`（现役名 `adopt_fund_quote`）/ `persist_stock_quote`（现役名 `adopt_stock_quote`））→ 落价格（同域 `upsert_market_price`）。形状经 ADR-0038/0039/0081 演进已经对齐：注入拉取闭包同构（慢闭包在连接锁外）、persist 均为「建档 + 落价」一体。但接缝没有名字：payload 各写一份（`FundDetail` / `StockQuote` 同构不同形）、拉取闭包签名各异（`FnMut(&str)` vs `FnMut(&str, &str)`）、`upsert_market_price` 以 conn + 6 个业务位置参数暴露，7 个生产调用点各自重新记忆 `nav_date` / `source` 的通道语义。壳层编排节奏也不相同：基金 IPC 一枪式（查询即落库）、股票对话框两段式（查询回显、确认后落库）、AI 创建端点直调 persist。
+基金与股票的新增标的路径各走三段同形阶梯——取行情（行情同步域 `ledger-market-sync` crate 网络层 `fetch_fund_quote_production` / `fetch_stock_quote_production`）→ 按代码解析/建档（投资域 `ledger-investment` crate：`add_fund_by_code_with` / `fetch_stock_quote_for_add` + `persist_fund_detail`（现役名 `adopt_fund_quote`）/ `persist_stock_quote`（现役名 `adopt_stock_quote`））→ 落价格（同域 `upsert_market_price`）。形状经 ADR-0038/0039/0081 演进已经对齐：注入拉取闭包同构（慢闭包在连接锁外）、persist 均为「建档 + 落价」一体。但接缝没有名字：payload 各写一份（`FundDetail` / `StockQuote` 同构不同形）、拉取闭包签名各异（`FnMut(&str)` vs `FnMut(&str, &str)`）、`upsert_market_price` 以 conn + 6 个业务位置参数暴露，7 个生产调用点各自重新记忆 `nav_date` / `source` 的通道语义。壳层编排节奏也不相同：基金 IPC 一枪式（查询即落库）、股票对话框两段式（查询回显、确认后落库）、AI 创建端点直调 persist。
 
 ## 决策
 
