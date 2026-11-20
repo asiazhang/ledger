@@ -32,9 +32,11 @@ jobs:
   # GHCR），job 内零 apt 安装；镜像内容与重建路径见 .github/docker/backend-ci.Dockerfile 头注。
 
   # 守门脚本 job（原 frontend job，Web 参照前端退役 #2171/#2172 / ADR-0148 后更名）：
-  # bun 纯源码扫描门族 + 守门脚本类型检查（原生 tsc，工具链经 bun 运行时装入用户
-  # 缓存，版本钉死在 scripts/check-scripts-types.sh 单一事实源）+ 守门脚本测试。
-  # 全部步骤与本地 check.sh 同门槛，挂载登记归 scripts/gate-mounts.ts（issue #1682）。
+  # uv + Python 纯源码扫描门族（守门脚本运行时迁移 #2174 / ADR-0083 修订注记）
+  # + 守门脚本类型检查（mypy，工具链经 uv + PEP 723 内联依赖装配，版本钉死在
+  # scripts/check_scripts_types.py 单一事实源）+ 守门脚本测试（pytest，版本钉死
+  # 在 scripts/run_tests.py）。全部步骤与本地 check.sh 同门槛，挂载登记归
+  # scripts/gate_mounts.py（issue #1682）。
   gates:
     name: 守门检查
     if: "!startsWith(github.ref, 'refs/tags/')"
@@ -42,68 +44,74 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # 守门脚本运行时 = Bun（ADR-0083）；版本与本地门槛同一固定值，升级走显式 bump
-      - uses: oven-sh/setup-bun@v2
+      # 守门脚本运行时 = uv（issue #2174 / ADR-0083 修订注记）；版本与本地门槛
+      # 同一固定值，升级走显式 bump。python-version 随 uv 解析（门脚本
+      # requires-python >= 3.12；runner 预装 python3 即可满足，无需 uv 托管下载）。
+      # setup-uv 自 v8.0.0 起 immutable release——major 浮动 tag（@v10）不存在，
+      # 只能钉精确版本 tag（升级走显式 bump，与本 job 其他钉死口径同纪律）。
+      - uses: astral-sh/setup-uv@v10.3.3
         with:
-          bun-version: 1.4.4
+          uv-version: "0.13.8"
 
-      # 守门脚本与测试类型检查（issue #734/#740 门保留，宿主迁移 #2171/#2172）：
-      # 版本钉死与工具链装配归 scripts/check-scripts-types.sh（单一事实源，本地
+      # 守门脚本与测试类型检查（issue #734/#740 门保留，运行时迁移 #2174）：
+      # 版本钉死与工具链装配归 scripts/check_scripts_types.py（单一事实源，本地
       # check.sh 同挂，双宿主零漂移）。
       - name: 守门脚本与测试类型检查
-        run: ./scripts/check-scripts-types.sh
+        run: uv run scripts/check_scripts_types.py
 
       - name: 版本元数据一致性检查
-        run: bun scripts/check-versions.ts
+        run: uv run scripts/check_versions.py
 
       - name: 结构守门检查
-        run: bun scripts/check-structure.ts
+        run: uv run scripts/check_structure.py
 
-      # 测试执行覆盖守门（issue #1112）：并发入口（scripts/test-exec.ts）与非并发
+      # 测试执行覆盖守门（issue #1112）：并发入口（scripts/test_exec.py）与非并发
       # 入口（scripts/test.sh 的 cargo doc-test）的覆盖范围必须与工作区测试目标
       # 清单全等——新增测试目标不静默漏跑。纯静态发现（manifest + 目录形态），
       # 不需 Rust 工具链，故与本 job 的其余守门同址。挂载接线核对归守门接线测试
-      # （scripts/gate-mounts.test.ts，登记住 scripts/gate-mounts.ts 守门挂载登记，
+      # （scripts/test_gate_mounts.py，登记住 scripts/gate_mounts.py 守门挂载登记，
       # issue #1682）：删除本步骤即变红；守门自身
       # 保留等价性规则（测试运行期读 cargo 注入环境变量即红，
-      # scripts/test-exec.test.ts）。
+      # scripts/test_test_exec.py）。
       - name: 测试执行覆盖守门
-        run: bun scripts/test-exec.ts check
+        run: uv run scripts/test_exec.py check
 
-      # 守门脚本测试（issue #1991）：scripts/*.test.ts 的唯一运行口径 = bun test
-      # （测试经 spawnSync('bun') 依赖 bun 在 PATH，ADR-0083 双运行时边界）；
-      # 挂载登记归 scripts/gate-mounts.ts，删除本步骤即红。
+      # 守门脚本测试（issue #1991 / 运行时迁移 #2174）：scripts/ 侧测试的唯一运行
+      # 口径 = uv run scripts/run_tests.py（pytest；测试经 spawn 'uv run' 依赖 uv
+      # 在 PATH，ADR-0083 修订注记）；挂载登记归 scripts/gate_mounts.py，删除本
+      # 步骤即红。
       - name: 守门脚本测试
-        run: bun test scripts/
+        run: uv run scripts/run_tests.py
 
       - name: 文档一致性检查
         run: ./scripts/check-docs.sh
 
       # 全仓无 tauri 守门（issue #2083 / ADR-0145 决策 4/7）：清单形状面（前端死
       # 路径面已随 Web 参照前端退役删除，#2171/#2172；命令型依赖图门在 backend-lint
-      # 的 cargo tree）。bun 纯源码扫描，无需 Rust 工具链，与本 job 的其余守门同址。
+      # 的 cargo tree）。uv + Python 纯源码扫描，无需 Rust 工具链，与本 job 的其余
+      # 守门同址。
       - name: 全仓无 tauri 守门
-        run: bun scripts/check-no-tauri.ts
+        run: uv run scripts/check_no_tauri.py
 
-      # issue #1682 CI 执行面补齐：秒级 bun 纯源码扫描门（无需 Rust 工具链）与本
-      # job 同址；挂载登记与「删除即变红」核对住 scripts/gate-mounts.ts /
-      # scripts/gate-mounts.test.ts（守门挂载登记 + 守门接线测试）。
+      # issue #1682 CI 执行面补齐：秒级纯源码扫描门（无需 Rust 工具链）与本
+      # job 同址；挂载登记与「删除即变红」核对住 scripts/gate_mounts.py /
+      # scripts/test_gate_mounts.py（守门挂载登记 + 守门接线测试）。
       - name: 基础设施账本数据表 DML 禁令
-        run: bun scripts/check-infra-dml.ts
+        run: uv run scripts/check_infra_dml.py
 
       - name: 东财行情面端点零残留源码扫描
-        run: bun scripts/check-eastmoney-residue.ts
+        run: uv run scripts/check_eastmoney_residue.py
 
       # 壳根包裸字号直调零残留守门（issue #2108 / spec #2099 / ADR-0147 决策 4）：
-      # 视图零裸值纪律源码扫描，bun 纯源码扫描，无需 Rust 工具链，与本 job 同址。
+      # 视图零裸值纪律源码扫描，纯源码扫描，无需 Rust 工具链，与本 job 同址。
       - name: 壳根包裸字号直调零残留扫描
-        run: bun scripts/check-bare-font-size.ts
+        run: uv run scripts/check_bare_font_size.py
 
       - name: i18n key 全等检查
-        run: bun scripts/check-i18n-keys.ts
+        run: uv run scripts/check_i18n_keys.py
 
       - name: Rust 测试守门检查
-        run: bun scripts/check-test-support.ts
+        run: uv run scripts/check_test_support.py
 
   # 后端测试：fmt/clippy 拆至 backend-lint 并行（clippy 仅 ~20–30s，不值得占关键路径）。
   #

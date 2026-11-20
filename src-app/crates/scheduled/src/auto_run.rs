@@ -20,7 +20,7 @@
 //! 本模块只定义期次落账后置钩子的注册点（[`register_after_occurrence_hook`]），
 //! 实现由备份域提供（#1091 起为 `ledger-backup` crate，`backup::occurrence_dirty_hook`）、
 //! 壳层启动时接线——定时计划域对备份域零直接依赖（域间禁边，
-//! `scripts/check-structure.ts`）。反向的同族接缝（issue #1091 / 挂载点④）：
+//! `scripts/check_structure.py`）。反向的同族接缝（issue #1091 / 挂载点④）：
 //! 调度线程的追补触发由备份域定义注册点（`register_catch_up_hook`）、本模块
 //! 提供 [`catch_up_hook`] 实现、壳层启动时对装——备份域对定时计划域亦零依赖。
 //! 有实际落账的追补轮结束即通知壳内视图失效（#2159）：本模块只定义失效广播

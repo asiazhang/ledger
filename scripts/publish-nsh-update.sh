@@ -20,7 +20,7 @@
 # 三件套（archive + latest.json + latest.json.sig）作为 GitHub Release assets
 # 上传（updater.github 源 = asiazhang/ledger）；draft / prerelease 不被更新器
 # 提供——发布前把 Release 标为正式版。`nsh.json` version 必须比上一发布增长
-# （更新器版本只升不降），三处版本一致性由 scripts/check-versions.ts 守门。
+# （更新器版本只升不降），三处版本一致性由 scripts/check_versions.py 守门。
 set -eu
 cd "$(dirname "$0")/.."
 
@@ -39,7 +39,7 @@ if [ ! -f "$KEY" ]; then
   echo "✗ 签名私钥不存在: $KEY（一次性人工步骤见 src-app/packaging/README.md）" >&2
   exit 1
 fi
-VERSION=$(bun -e 'console.log(JSON.parse(require("fs").readFileSync("src-app/nsh.json","utf8")).version)')
+VERSION=$(python3 -c 'import json; print(json.load(open("src-app/nsh.json", encoding="utf-8"))["version"])')
 echo "▶ 打包 nsh package（version=$VERSION，Linux release 构建）"
 ( cd src-app && nsh package --target linux )
 

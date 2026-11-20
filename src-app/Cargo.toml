@@ -10,11 +10,11 @@ default-run = "nsh-app"
 
 # bin 单测执行面排除（issue #1787 热点 2）：main.rs 是薄入口（启动参数注入 +
 # 平台 run_app），bin 目标零单测，显式声明 test = false 免链免跑；bin 内若新增
-# #[test]，scripts/test-exec.ts 的源码扫描守门会变红。逻辑与测试住 lib（boot /
+# #[test]，scripts/test_exec.py 的源码扫描守门会变红。逻辑与测试住 lib（boot /
 # wiring / app），经 lib 目标进并发测试入口。
 #
 # 包内第二 bin：性能基准工具 `src/bin/ledger-perf/`（目录型自动发现，保留单测，
-# 归 perf-bench.yml 每日基准承接——test-exec.ts 的 EXEMPT_BINS 登记）；headless
+# 归 perf-bench.yml 每日基准承接——test_exec.py 的 EXEMPT_BINS 登记）；headless
 # 集成测试经 cargo 注入的 CARGO_BIN_EXE_ledger-perf 消费，同包 bin 由 cargo 随
 # 测试构建自带，二进制缺失路径结构上不可能（#2064 触发面）。
 [[bin]]
@@ -170,7 +170,7 @@ http-body-util = "0.1"
 log = "0.4"
 
 # 六件套易 panic 构造门禁经 workspace 继承（ADR-0060 / spec #1086 门禁前置）：
-# 本行是继承接线，缺失即门禁静默消失，由 scripts/check-structure.ts 守门。
+# 本行是继承接线，缺失即门禁静默消失，由 scripts/check_structure.py 守门。
 
 [profile.dev.package."*"]
 debug = false
@@ -225,7 +225,7 @@ nsh-updater = { version = "=0.6.0" }
 #
 # 门禁的**唯一声明处**在 workspace 级 `[workspace.lints.clippy]`：lint 表不跨
 # package 自动继承，成员必须显式写 `[lints] workspace = true`——漏写会让门禁
-# 静默消失而 clippy 依然全绿。`scripts/check-structure.ts` 的 crate 边界核对
+# 静默消失而 clippy 依然全绿。`scripts/check_structure.py` 的 crate 边界核对
 # 对「成员漏继承」与「新成员未登记」做删除即变红的负向守门（ADR-0056 门禁前置）。
 [workspace.lints.clippy]
 unwrap_used = "deny"

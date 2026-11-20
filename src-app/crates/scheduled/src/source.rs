@@ -5,7 +5,7 @@
 //! 自 #1090 起本模块私有化并承担接缝反转的实现侧：核心交易域只定义注册点
 //!（`ledger_transaction::seams::source::register_plan_source_resolver`），本模块提供实现并经
 //! [`install_plan_source_hook`] 在壳层启动时装入——核心交易域对定时计划域零直接
-//! 依赖（域间禁边，`scripts/check-structure.ts`）。反查行不再公开再导出。
+//! 依赖（域间禁边，`scripts/check_structure.py`）。反查行不再公开再导出。
 
 use std::collections::HashMap;
 

@@ -237,7 +237,7 @@ fn missing_current_rate_error(base_code: &str, quote_code: &str) -> AppError {
 /// [`convert_to_native_on_trade_date`]，当期表不再是写路径取数源）。
 ///
 /// 守门台账（#1692 / ADR-0011 2026-09-22 修订 ①）：本入口的**生产调用方闭集**由
-/// 结构守门的符号调用方白名单 `CONVERT_CURRENT_CALLERS`（`scripts/check-structure.ts`）
+/// 结构守门的符号调用方白名单 `CONVERT_CURRENT_CALLERS`（`scripts/check_structure.py`）
 /// 守门——白名单外调用即红（测试代码按 `/tests/` 路径约定豁免）；新增读路径消费面
 /// 先在该台账留痕成因，写路径一律改接按交易日入口。
 pub fn convert_to_native_current(

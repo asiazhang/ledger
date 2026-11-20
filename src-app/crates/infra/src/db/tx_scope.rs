@@ -22,7 +22,7 @@
 //! 第三只原语 [`rollback_if_open`]（issue #1408 / ADR-0125 决策 3）：异步 DB 门面
 //! 的作业 panic 恢复收尾——「未提交事务整体回滚 + 提交点复核」的两步判据。它与
 //! 上述两只原语同属事务能力（原生事务语句的唯一合法住址即本文件，结构守门
-//! `check-structure.ts` 的 `NATIVE_TX_STMT_ALLOWED`）。
+//! `check_structure.py` 的 `NATIVE_TX_STMT_ALLOWED`）。
 //!
 //! 行为单测：`tests/tx_scope.rs` 锁定两原语的行为——嵌套加入外层 / 自持失败整体
 //! 回滚 / COMMIT 失败尽力回滚清理 / ROLLBACK 自身失败不遮蔽原错误 / 无条件自持提交

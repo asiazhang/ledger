@@ -7,7 +7,7 @@
 //!
 //! 本模块是同步域对业务域暴露的**契约面**（ADR-0101 决策 1/4b）：信封
 //! [`DomainCommand`] 与重放绑定契约 [`ReplayBinding`] 集中住此——业务域只许经
-//! 本模块路径与根再导出白名单引用同步域（门 b，`check-structure.ts`）。15 个
+//! 本模块路径与根再导出白名单引用同步域（门 b，`check_structure.py`）。15 个
 //! 适配绑定与 `DomainCommand::subject` 的组装臂住 [`super::registry`]（契约读
 //! 一处即知，绑定与组装同居一处）。
 //!
@@ -81,7 +81,7 @@ pub(crate) use ledger_sync_protocol::command::ReplayEffect;
 /// 可重放契约五条（ADR-0091）：① 载荷可 serde 且只增不改、⑤ 确定性——由
 /// [`DomainCommand`] 信封与域侧命令类型承载；② 裁决域派生——[`Self::subject`]；
 /// ③ 域暴露重放入口——[`Self::replay`]；④ 重放不产本地 op——域侧不认识同步域
-/// 内部件，由结构守门钉死（门 b，`check-structure.ts`）。
+/// 内部件，由结构守门钉死（门 b，`check_structure.py`）。
 pub(crate) trait ReplayBinding {
     /// 实体标签（serde tag 与 `sync_ops.entity` 列同源；门 a 样本轮询断言之锚）。
     const ENTITY: &'static str;

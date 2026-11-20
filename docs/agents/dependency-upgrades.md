@@ -4,7 +4,7 @@
 
 本文件只写**口径与纪律**，不复述可查事实：当前版本以 `src-app/Cargo.toml` 与锁文件（`src-app/Cargo.lock`）为真源，先例以 git 历史为真源。
 
-Web 参照前端与其 pnpm 工具链已整体退役（ADR-0148）：本文件不再有 JS 依赖升级面；守门脚本类型检查的工具链三包（typescript / bun-types / @types/node）版本钉死在 `scripts/check-scripts-types.sh`，升级即改该脚本（缓存目录按版本串键控自动重建）。
+Web 参照前端与其 pnpm 工具链已整体退役（ADR-0148）：本文件不再有 JS 依赖升级面；守门脚本已迁移 uv + Python（#2174 / ADR-0083 修订注记），工具链零 manifest——mypy 与 pytest 版本钉死在各自 PEP 723 内联依赖声明（`scripts/check_scripts_types.py` / `scripts/run_tests.py`），升级即改对应脚本；uv 本体版本钉死在 CI workflow 的 setup-uv 步骤。
 
 ## 口径：什么是「升到最新」
 
@@ -36,8 +36,7 @@ Web 参照前端与其 pnpm 工具链已整体退役（ADR-0148）：本文件�
 
 ## 工具链与 CI 固定值
 
-- CI 固定值（bun 版本）与 `scripts/check.sh` 里的报错文案是**两处**，升级时同步改。
-- 守门脚本类型检查工具链版本钉在 `scripts/check-scripts-types.sh`（单一事实源），升级走显式 bump。
+- CI 固定值（uv 版本，住 CI workflow 的 setup-uv 步骤）与 `scripts/check.sh` 里的报错文案是**两处**，升级时同步改；mypy 钉死住 `scripts/check_scripts_types.py`，pytest 在 `scripts/run_tests.py` 与 `check_scripts_types.py` **两处同钉**（类型门须与测试运行器同版才能解析测试文件的 pytest 导入类型），升级两处同步改。
 - 工具链 bump 与依赖版本升级**分开做**：工具链牵动 CI 固定值与 ADR-0083 的约定，混在一起会让回退粒度失真。
 
 ## 验证

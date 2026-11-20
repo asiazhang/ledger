@@ -8,17 +8,18 @@
 //! ADR-0084 修订注记）；旧壳消费面（`db_slot_guard` 连接槽守门、
 //! `commands/investment.rs` 扫描测试）已随旧壳退役。
 //!
-//! **双源登记**（#1433）：[`mask_non_code`] 与 TS 侧 `scripts/gate-primitives.ts`
-//! 的 `maskNonCode` 是同一条 Rust 词法掩码规则的**两个运行时载体**（守门脚本跑
-//! Bun、Rust 测试跑 cargo，单份实现不可共享），规则改动必须两侧同步；防漂移
+//! **双源登记**（#1433）：[`mask_non_code`] 与脚本侧（Python，#2174 运行时迁移）`scripts/gate_primitives.py`
+//! 的 `mask_non_code` 是同一条 Rust 词法掩码规则的**两个运行时载体**（守门脚本跑
+//! uv + Python、Rust 测试跑 cargo，单份实现不可共享），规则改动必须两侧同步；防漂移
 //! 断言消费共享语料夹具 `scripts/fixtures/rust-mask-corpus.rs`（期望输出
 //! `.expected.txt`），任一侧单独改规则即语料测试红。
 //!
 //! 已知双源边界（语料不含，#1433 交付报告登记）：非 ASCII 标识符紧邻原始串、
-//! 非 BMP 字符入 char 字面量两形态，TS 侧按 ASCII/UTF-16 近似，两侧结果可能
-//! 不同；`'\u{…}'` 转义两实现**一致地**不按字面量识别（两侧旧注释声称支持，
+//! 非 BMP 字符入 char 字面量两形态，两侧结果可能不同（#2174 迁移后成因：Rust 侧
+//! 原始串前缀的标识符判定用 `is_alphanumeric`（Unicode 域），脚本侧用 ASCII 正则，
+//! 非 ASCII 标识符两判定分歧）；`'\u{…}'` 转义两实现**一致地**不按字面量识别（两侧旧注释声称支持，
 //! 与实现不符——#1433 改为如实描述），扩展属规则改动，须两侧同步 + 语料更新；
-//! TS 侧另有 `keepLiterals` 扩展形态（保留字面量只掩注释，#1014），Rust 侧
+//! 脚本侧另有 `keep_literals` 扩展形态（保留字面量只掩注释，#1014），Rust 侧
 //! 消费面无此需求未实现，属登记在案的不对称。
 
 /// 若 `chars` 中 `i` 起是 Rust 原始字符串前缀，返回其后开引号下标；否则返回
@@ -53,8 +54,8 @@ fn raw_string_open_quote(chars: &[char], i: usize) -> Option<usize> {
 /// 及其字节变体 `br"…"` / `br#"…"` / `br##"…"`（# 数任意；前一字符为标识符
 /// 成分时是普通名字，不误伤）、char 字面量（`'a'`、`'\n'`、`'\\'`、`'\''`、
 /// `'"'`）；生命周期标注（`'a`）按非字面量处理。`'\u{…}'` 不按字面量识别
-///（见模块文档「双源登记」）。与 `maskNonCode`
-///（`scripts/gate-primitives.ts`）双源同规，防漂移见模块文档。
+///（见模块文档「双源登记」）。与 `mask_non_code`
+///（`scripts/gate_primitives.py`）双源同规，防漂移见模块文档。
 pub fn mask_non_code(text: &str) -> String {
     let bytes: Vec<char> = text.chars().collect();
     let n = bytes.len();
@@ -182,9 +183,9 @@ pub fn matching_brace_end(masked: &str, open: usize) -> Option<usize> {
     None
 }
 
-/// 双源防漂移语料（#1433）：本实现与 TS 侧 `maskNonCode` 消费同一夹具，
-/// 期望输出以 TS 侧权威实现生成；两侧单独改规则即本测或 scripts/gate-primitives.test.ts
-/// 语料测试红（vitest 收集面已随 Web 前端退役，#2171/#2172；TS 侧载体现住守门原语库）。
+/// 双源防漂移语料（#1433）：本实现与脚本侧 `mask_non_code` 消费同一夹具，
+/// 期望输出以脚本侧权威实现生成；两侧单独改规则即本测或 scripts/test_gate_primitives.py
+/// 语料测试红（守门测试唯一运行口径见 ADR-0083 修订注记；脚本侧载体现住守门原语库）。
 #[test]
 fn mask_non_code_matches_shared_corpus() {
     let corpus = include_str!("../../../scripts/fixtures/rust-mask-corpus.rs");
@@ -192,8 +193,8 @@ fn mask_non_code_matches_shared_corpus() {
     assert_eq!(
         mask_non_code(corpus),
         expected,
-        "掩码输出与共享语料期望漂移——规则改动必须与 TS 侧 maskNonCode \
-         （scripts/gate-primitives.ts）同步并重新生成语料期望"
+        "掩码输出与共享语料期望漂移——规则改动必须与脚本侧 mask_non_code \
+         （scripts/gate_primitives.py）同步并重新生成语料期望"
     );
 }
 

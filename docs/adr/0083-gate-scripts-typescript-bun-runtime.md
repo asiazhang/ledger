@@ -115,3 +115,47 @@ spawnSync('bun') 接缝不变——变的是测试文件自身的执行器（vit
 零 npm 依赖性质不变”先例）；`vitest/globals` 续留——include 面内的部分导入
 测试（仅导入 describe/it 等、全局用 beforeEach/afterEach）与测试助手内联
 用例（packages/test-support/src 源码内的 expect）有真实消费者，非死面。
+
+## 修订注记（#2174，2026-11-20）：守门脚本运行时迁移 Python + uv——TS 载体退役，Bun 条款全量改判
+
+Web 参照前端退役（ADR-0148）后，bun 的剩余角色只有守门脚本运行时与类型检查工具链
+装配器（scripts/check-scripts-types.sh 的 bunx/缓存目录形态是该票的务实妥协）。
+2026-11-19 拷问会话裁决（#2172 会话，A 方案）：守门脚本运行时迁移 Python + uv，
+以独立 spec 承接（issue #2174）；删除票先行收敛转换面（原 ~20 门已因八门退役缩至
+11 个），本票在其后实施。自本注记起：
+
+1. **决策 1（TS 化）反转**：scripts/ 下 11 个守门脚本 + 各自 bun test 文件逐语义
+   移植 Python（判定语义、白名单/豁免清单、正则、fail-loud 空集哨兵、退出码、
+   zh-CN 输出文案逐字保留；bun test 语义规格 = 移植验收基线，用例逐一对应，含全部
+   「删除即变红」负例）。TS 版本（.ts 文件、tsconfig.scripts.json、
+   check-scripts-types.sh）随移植完成退役删除。
+2. **决策 2（运行时 = Bun）改判为 uv + Python**：门宿主行 = `uv run
+   scripts/<name>.py`；check.sh 前置 `command -v uv` 检测（缺失显式中文报错退出，
+   不静默降级——机理同原决策 2）。工具链零 manifest：mypy 与 pytest 以 PEP 723
+   内联依赖钉死版本（类型检查门 scripts/check_scripts_types.py、测试运行器
+   scripts/run_tests.py 各自单一事实源），仓库无 pyproject/requirements。
+3. **决策 3（类型检查入门槛）换宿主保留**：tsconfig.scripts.json / tsc 退役，改
+   mypy --strict（门槛水位与 TS strict 套件同精神——移植代码全量显式标注）；
+   pyright 排除（依赖 node 运行时，与「仓库零 JS 工具链」目标相悖）。挂载不变：
+   check.sh 首门 + CI gates job 首步。
+4. **#1991 修订注记的「唯一运行口径 = bun test」改判为 pytest**：scripts/ 侧测试
+   唯一口径 = `uv run scripts/run_tests.py`（pytest，自仓库根发起，cwd 接缝沿用）；
+   包装测试 spawn `uv run <script>` 与门槛调用同款——「测的就是门槛路径」的机理
+   不变。测试文件命名 `test_<name>.py`，与所测脚本同目录住（#1158 不变）。
+5. **决策 5（双运行时固化）随之消解**：bun 不再有任何角色，CI gates job 的
+   `oven-sh/setup-bun` 改 `astral-sh/setup-uv`（uv 版本钉死）；backend 各 job 无
+   Python/uv 需求，不受影响。
+6. **gate-primitives 双源登记换载体**：词法掩码双源从「Rust ↔ TS」改为「Rust ↔
+   Python」（`gate_primitives.py` 的 `mask_non_code`），共享语料夹具
+   scripts/fixtures/rust-mask-corpus.rs 与 keepLiterals 期望双侧消费语义不变，
+   src-app/src/test_support/scan.rs 不动；共享原语闭集逐件移植（snake_case）。
+   排序语义移植注记：JS localeCompare（ICU 主级大小写不敏感）以排序键等价
+   （casefold 主级 + 码点次级），本仓扫描树文件名均为 ASCII，判定行为一致。
+7. **文字面残留清理**：AGENTS.md、CONTEXT-testing 词条、README、
+   docs/agents/dependency-upgrades.md、ADR-0148（本票指针注记）与 CI workflow 同步；
+   `rg -i bun` 全仓仅历史叙事留痕（本 ADR 与各 ADR 的历史注记）。
+
+零 npm 依赖性质由「零工具链依赖」延续：门脚本全部 stdlib-only，第三方依赖只住
+两处 PEP 723 内联声明（mypy、pytest），与原「零 npm 依赖、类型库只服务类型检查」
+同构。ADR-0047 / 0049 / 0056 / 0071 等被引 ADR 中「守门脚本」的宿主表述以本注记
+为唯一解释处（先例：本 ADR 对 ADR-0047 决策 4/5 的改判）。

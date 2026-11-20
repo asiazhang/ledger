@@ -7,7 +7,7 @@
 “受影响域”包括：修改代码所在域、调用到的域、数据模型所属域，以及用户可见行为所属域。
 
 - **业务规则、领域术语或跨域改动**：先读 `CONTEXT-MAP.md`，再读所有受影响域的 `docs/contexts/CONTEXT-*.md` 与相关 ADR。
-- **后端分层与归位（壳 / 域 / 基础设施 / crate 内部组织，含 triage 判定）**：读 ADR-0112、ADR-0113、ADR-0111；crate 政策核（成员 / 分层 / 依赖方向）见 `scripts/check-structure.ts` 的 `CRATES`。
+- **后端分层与归位（壳 / 域 / 基础设施 / crate 内部组织，含 triage 判定）**：读 ADR-0112、ADR-0113、ADR-0111；crate 政策核（成员 / 分层 / 依赖方向）见 `scripts/check_structure.py` 的 `CRATES`。
 - **后端易 panic 构造（unwrap/expect/panic!/todo!/unimplemented!/unreachable!）或其豁免**：读 `docs/adr/0060-backend-panic-construction-gate.md`。
 - **金额或交易写入改动**：先读 `docs/contexts/CONTEXT-core.md` 和相关 ADR，再以当前金额与写入接缝为唯一实现依据。
 - **前端状态、界面交互或弹层**：读 `docs/contexts/CONTEXT-reference-settings.md`、`docs/contexts/CONTEXT-ui-interaction.md` 及相关 ADR。
@@ -28,7 +28,7 @@
 
 ## 后端分层
 
-Rust 根（`src-app/`）是 workspace：根包就是壳（NSH 原生壳，#2083 切轨后唯一产品壳；Tauri 旧壳已退役），成员 crate 集中在 `src-app/crates/`（glob 纳入，新 crate 落入即自动成为成员）。目标依赖方向是 **壳 → 域 → 基础设施 → 协议**，域不依赖壳；拆分轴、正交判据（无环且方向单一）、破环方式与门禁保底见 ADR-0112。全仓不得再出现 tauri 依赖（清单形状与前端死路径归 `scripts/check-no-tauri.ts`、依赖全图归 `cargo tree --workspace -i tauri` 命令门）；新壳能力走「下层定义注册点、上层注册实现、壳层启动时接线」，不引入壳层业务语义。
+Rust 根（`src-app/`）是 workspace：根包就是壳（NSH 原生壳，#2083 切轨后唯一产品壳；Tauri 旧壳已退役），成员 crate 集中在 `src-app/crates/`（glob 纳入，新 crate 落入即自动成为成员）。目标依赖方向是 **壳 → 域 → 基础设施 → 协议**，域不依赖壳；拆分轴、正交判据（无环且方向单一）、破环方式与门禁保底见 ADR-0112。全仓不得再出现 tauri 依赖（清单形状与前端死路径归 `scripts/check_no_tauri.py`、依赖全图归 `cargo tree --workspace -i tauri` 命令门）；新壳能力走「下层定义注册点、上层注册实现、壳层启动时接线」，不引入壳层业务语义。
 
 业务域 crate 内部按消费面分四区（共享语义 / 跨域接缝 / 写路径 / 读路径），依赖方向单向（写读 → 接缝 → 共享语义），模块清单双向全等与区级反向依赖由结构守门断言，见 ADR-0113；拆出后的域内重排受该 ADR 管辖，不属拆 crate 迁移纪律（ADR-0112 决策 1 的限缩见其修订注记）。
 
@@ -36,9 +36,9 @@ Rust 根（`src-app/`）是 workspace：根包就是壳（NSH 原生壳，#2083 
 
 基础设施（`ledger-infra`，`src-app/crates/infra/`）只承诺两条：不依赖任何域 crate、不定义账本数据的口径与规则（账本数据的语义与算术一律归域，基础设施不得对账本数据表执行 DML）；跨层共享机制、引导层不变量、单点收口用的闭集与键名表在此合法（ADR-0111）。crate 内分三区：原语（顶层单文件）、db（库与连接机制）、boot（引导层）；events、signals、settings 为共享接缝。内部依赖方向：原语 ← db ← boot 单向。壳层机制（统一读写入口、载荷脱敏、日志初始化）住根包 `src-app/src/shell_support.rs`——壳层机制不进基础设施，新只被壳层消费的机制直接归壳层。
 
-协议（`ledger-sync-protocol`）：多端同步的最底层共享协议，内容清单见 `check-structure.ts` 的 CRATES；业务域只依赖协议 crate，不依赖多端同步域。
+协议（`ledger-sync-protocol`）：多端同步的最底层共享协议，内容清单见 `check_structure.py` 的 CRATES；业务域只依赖协议 crate，不依赖多端同步域。
 
-门禁保底：clippy 六件套唯一声明处在 workspace 级 `[workspace.lints.clippy]`，成员必须显式 `[lints] workspace = true` 继承；静态检查与测试命令显式 `--workspace` 覆盖全部成员。结构边界由 `bun scripts/check-structure.ts` 守门（守门脚本运行时 = Bun，ADR-0083）：crate 边界**政策核**是脚本内 `CRATES` 清单（成员登记、分层、允许依赖方向），认许边（基础设施 dev-dep 环、块间禁边等）继续辖编译器看不见的规则，逐条留痕在脚本内（ADR-0056 决策 4、ADR-0071 修订注记；切轨后无模块级白名单）；守门数据按「事实有权威源就投影，政策无源就显式」分界（#1591 定案，实施 #1593–#1595：模块清单由各 crate `lib.rs` 的 `mod` 声明投影、注记归 crate `//!` 与模块文件头、cargo 编译期已拒绝的方向退役给编译期）。
+门禁保底：clippy 六件套唯一声明处在 workspace 级 `[workspace.lints.clippy]`，成员必须显式 `[lints] workspace = true` 继承；静态检查与测试命令显式 `--workspace` 覆盖全部成员。结构边界由 `uv run scripts/check_structure.py` 守门（守门脚本运行时 = uv + Python，ADR-0083 修订注记 / #2174）：crate 边界**政策核**是脚本内 `CRATES` 清单（成员登记、分层、允许依赖方向），认许边（基础设施 dev-dep 环、块间禁边等）继续辖编译器看不见的规则，逐条留痕在脚本内（ADR-0056 决策 4、ADR-0071 修订注记；切轨后无模块级白名单）；守门数据按「事实有权威源就投影，政策无源就显式」分界（#1591 定案，实施 #1593–#1595：模块清单由各 crate `lib.rs` 的 `mod` 声明投影、注记归 crate `//!` 与模块文件头、cargo 编译期已拒绝的方向退役给编译期）。
 
 ## 数据与交易
 

@@ -8,7 +8,7 @@
 #   ③ 导航一致：AGENTS.md 与 CONTEXT-MAP.md 引用的仓库内文件/目录必须存在（导航指向已删除文件即报错）
 #   ④ ADR 编号唯一：docs/adr/ 下文件名前缀编号不得重复（同号不同义会误导读者与 AI 助手）
 #   ⑤ 代码坐标：分域词汇表与模型文档不得出现实现坐标（src-app/src/、src/ 路径式引用
-#      及 .rs/.ts/.vue 文件名）——「代码可查事实不进文档」三层标尺的守门（标尺见
+#      及 .rs/.ts/.py 文件名）——「代码可查事实不进文档」三层标尺的守门（标尺见
 #      CONTEXT-MAP「结构约定」；扫描范围不含 ADR / agents / api 文档；ADR 按同节
 #      「坐标收敛到域 / crate 级」人工评审，不扩扫描，#1262 方式②未采纳）
 #   ⑦ ADR 索引完整：docs/adr/ 下每个现行 ADR 文件编号都必须在 docs/adr/README.md
@@ -115,10 +115,10 @@ done
 
 # ── ⑤ 代码坐标扫描（分域词汇表与模型文档禁止实现坐标） ──────────────────
 # 「代码可查事实不进文档」三层标尺（甲删乙留丙留，详见 CONTEXT-MAP「结构约定」）：
-# 甲类实现坐标——src-app/src/、src/ 路径式引用与 .rs/.ts 文件名——出现即失败（.vue
+# 甲类实现坐标——src-app/src/、src/ 路径式引用与 .rs/.ts/.py 文件名——出现即失败（.vue
 # 面随 Web 参照前端退役删除，#2171/#2172，正则同步收窄）；
 # 术语专名（表名/视图名/信号名/接缝名）不在扫描范围。白名单刻意留空：清理完成后应零豁免通过。
-coord_re='(src-app/)?src/[A-Za-z0-9_./-]+|[A-Za-z0-9_-]+\.(rs|ts)\b'
+coord_re='(src-app/)?src/[A-Za-z0-9_./-]+|[A-Za-z0-9_-]+\.(rs|ts|py)\b'
 coord_whitelist=''  # 豁免文件清单（空格分隔仓库相对路径），当前留空
 for f in $(find "$CTX_DIR" docs/model -type f -name '*.md' 2>/dev/null | sort); do
   case " $coord_whitelist " in
