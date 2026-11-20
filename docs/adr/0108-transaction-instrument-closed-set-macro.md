@@ -18,7 +18,7 @@
 
 1. **机制 = 宏同体派生（ADR-0102 模式复用），新宏 `closed_set!`**。调用清单吃 `(变体 => 字面量)` 对，同一 token 流同体展开五产物：enum 本体（derive 与 `///` 文档经 meta 原位透传）、`ALL`、`as_str`（const fn）、`parse`（未知值报参数错误，文案附合法值清单）、`Display`（骑行 `as_str`）。字符串字面量每变体只出现一次，「新增变体漏登 `ALL` / 漏写 `as_str` / `parse` 臂 / 双面漂移」的失败类**不可表达**（构造性保证）。
 2. **域自有接缝不由宏生成**：serde 手写 impl（serialize 骑 `as_str`、deserialize 复用 `parse`）、`FromSql`/`ToSql`、utoipa `PartialSchema` 保持各域手写——它们骑行宏产物，本身不含第二份字面量事实。两域 impl 形状同构（先例互引），是否上收为宏第六产物留待第三处消费出现再议（ADR-0084 准入规则同款纪律：≥2 重复才收编）。
-3. **宏住址 = 新基础设施文件 `src-tauri/src/closed_set.rs`**（`macro_rules!` + `pub(crate) use` 路径导出），check-structure 白名单追加一行（ADR-0056：无域语义、被所有层消费）。不同于 `write_op_set!` 的单域就地形态——其「局部性即卖点」前提是单一使用点，两域共用后共享基础设施是正确归位。
+3. **宏住址 = 基础设施 crate（`ledger-infra`）原语区 `closed_set` 模块**（`macro_rules!` + `pub(crate) use` 路径导出），check-structure 白名单追加一行（ADR-0056：无域语义、被所有层消费）。不同于 `write_op_set!` 的单域就地形态——其「局部性即卖点」前提是单一使用点，两域共用后共享基础设施是正确归位。
 4. **`ALL` 保持定长数组**：`[$name; [$( $name::$variant ),*].len()]`（匿名 const 技巧；`${count}` 元变量表达式在 rustc 1.98 仍不稳定，#83527 未落地）。既有消费方（`ALL.map(...)` 生成 OpenAPI 枚举值、`into_iter()` 遍历矩阵）零适配——与 `write_op_set!` 的切片改形不同，此处行为保持优先。
 5. **`InstrumentType` 对齐 `TransactionKind` 形态**：去 `rename_all = "snake_case"` derive，serde 改手写 impl 骑行 `as_str`/`parse`（双字符串面收敛为一份）；`FromStr` 收口为宏生成的 `parse`（域内无其他 `FromStr` 消费点；e2e 步骤层 4 处 `.parse()` 随迁改调 `InstrumentType::parse`）。5 变体全单词，`snake_case` 展开与 `as_str` 逐字同形——**wire 形状不变**。唯一用户可见差异：未知类型报错文案追加「（合法值: …）」后缀（与 `TransactionKind` 文案同构，grilling 定谳采纳）。
 6. **DB CHECK 冻结副本 = 测试期互核兜底**：宏够不到已发布迁移的字面量。新增两域各一道守门测试，从 `sqlite_master` 读回**实际应用的 schema**（非迁移文件文本，ADR-0087 断言强度），断言 `CHECK(<col> IN (...))` 字面量 == `ALL` 的 `as_str` 集，**顺序敏感**（enum 序 = CHECK 序 = OpenAPI `enum_values` 序）；漂移从静默降为测试红。V017 视图的 kind 子集字面量是度量语义（≠ 全集、随发布冻结），等值断言不适用、子集断言增益边际，**不覆盖**。
@@ -35,7 +35,7 @@
 1. 仓库第二个自定义声明宏：宏内文档 rustdoc 不入调用域文档链接（已避免跨展开 intra-doc link）；展开调试依赖 `cargo expand`（清单形态简单）。
 2. `InstrumentType` 未知值报错文案变化（追加合法值后缀）——用户可见，已被 grilling 接受为改进。
 3. e2e 步骤层 4 处 `.parse()` 改调 `InstrumentType::parse`（`FromStr` 退役的随迁成本）。
-4. **与 ADR-0050 的关系（显式记录）**：宏生成的 `parse` 保持既有裸 `AppError::Invalid` 构造（两枚举既状如此，本票不扩大范围）；「Invalid 构造点逐点码化」是 ADR-0050 的存量收口债，宏固化该形状使第三枚举接入时会照抄——已立票单独追踪，不静默延续。**（本句所述裸 `Invalid` 形状已被 #1071 取代**：宏增必填 `err_code` 参数、`parse` 改报码化错误；见文末「实施 recorded · #1071 收口」。）
+4. **与 ADR-0050 的关系（显式记录）**：宏生成的 `parse` 保持既有裸 `AppError::Invalid` 构造（两枚举既状如此，本票不扩大范围）；「Invalid 构造点逐点码化」是 ADR-0050 的存量收口债，宏固化该形状使第三枚举接入时会照抄——已立票单独追踪，不静默延续。**（本句所述裸 `Invalid` 形状已被 #1071 取代**：宏增必填 `err_code` 参数、`parse` 改报码化错误；见文末「#1071 收口」。）
 
 ## 替代方案（防重提）
 
@@ -53,27 +53,18 @@
 
 ## 实施证据（#1022）
 
-- **scratch 变体走查**：宏清单加走查变体即带入 `ALL`/`as_str`/`parse`；`create_instrument_manual` 穷尽 match 编译红（强制面不因宏弱化），补臂后 V002 CHECK 互核测试红（5 字面量 vs `ALL` 6 项，证明互核有牙），删 scratch 回绿。
-- **删除即变红**：`FromSql`/serde/`ToSql`/`Display`/OpenAPI 消费宏产物，删任一产物即 `E0599` 编译红。
-- **等价性**：`cargo test` 1369 项零改全绿（含契约逐字符断言），仅 e2e 4 处 parse 调用形态随迁。
+- **互核有牙**：scratch 走查变体使穷尽 match 编译红（强制面不因宏弱化），补臂后 CHECK 互核测试红（5 字面量 vs `ALL` 6 项），删 scratch 回绿。
+- **删除即变红**：各消费方（`FromSql`/serde/`ToSql`/`Display`/OpenAPI）骑行宏产物，删任一产物即编译红。
+- **等价性**：`cargo test` 1369 项零改全绿（含契约逐字符断言）。
 
 ### #1071 收口（2026-09-11，代价 4 的存量债结清）
 
-- **宏增必填 `err_code` 参数**（`err_label` 保留）：`parse` 未知值由裸 `AppError::Invalid` 改为 `AppError::codedp`——稳定码 `transaction.kind-unknown` / `instrument.type-unknown`，`params` = `[未知值, 合法值清单]`。必填而非可选，是让「第三枚举接入时照抄裸 Invalid」不可表达（漏参数即编译红）。
-- **合法值清单不落前端码表**：zh/en 模板写 `未知交易类型: {0}（合法值: {1}）` / `unknown transaction kind: {0} (valid values: {1})`，清单仍由宏同一批字面量同源拼接、经 `{1}` 插值——ADR-0108「消灭手抄清单」跨本地化边界保持；`message` 与清单逐字不变（ADR-0050 只增不改）。
-- **包装路径行为语义保持**：serde 反序列化与 `FromSql` 继续骑行 `parse`（未知值即错，不静默映射）；两者经 serde/rusqlite 错误类型扁平化后只承载 `message`，`code`/`params` 不随之外传——与既有的 `account.type-unknown`（同为 serde 包装的闭集码）同一形态，按 ADR-0050 决策 2 的「构造点码化」口径落地。**已知边界**：新增两码在当前 wire/DB 路径不可达前端；若要经边界直达，须改解包形态（如壳层改收原始字符串后域内 `parse`），超出本票「不改解析行为」边界，建议另立票评估。
-- **同族扫描**：`rg "AppError::Invalid\(" src-tauri/src` 剩余存量构造点无既有收口票，清单化立为 #1072（区分用户可见条件候选与 ADR-0050 允许不转的程序性/内部错误）。
+宏增必填 `err_code` 参数（`err_label` 保留）：`parse` 未知值改报码化错误，稳定码 `transaction.kind-unknown` / `instrument.type-unknown`（`params` = [未知值, 合法值清单]）。必填而非可选，让「第三枚举接入时照抄裸 Invalid」不可表达（漏参数即编译红）。合法值清单不落前端码表：zh/en 模板经 `{1}` 插值，清单仍由宏同一批字面量同源拼接——「消灭手抄清单」跨本地化边界保持，`message` 与清单逐字不变（ADR-0050 只增不改）。包装路径（serde / `FromSql`）行为语义保持、经错误扁平化后只承载 `message`，与既有 `account.type-unknown` 同形态。已知边界：新增两码在当前 wire/DB 路径不可达前端，直达须改解包形态，超出本票「不改解析行为」边界、另议。
 
 ### #1072 收口（2026-09-11，同族扫描结清）
 
-- **转码化（8 条件 / 9 构造点，`message` 逐字保留、动态值进 `params`）**：
-  - `budget.period-unknown`（`budget/model.rs`，`BudgetPeriod` 闭集解析）；
-  - `scheduled-plan.kind-unknown` / `scheduled-plan.status-unknown` / `scheduled-plan.recurrence-unknown` / `scheduled-occurrence.status-unknown`（`scheduled_transactions/models.rs` 四处 `FromStr` 闭集解析）；
-  - `scheduled-plan.occurrence-date-invalid`（`scheduled_transactions/engine.rs` 两处期次日期守卫——`recurrence_day` 未在入口校验，0 日等非法值落在 `from_ymd_opt` 的 None 分支，是用户可达条件）；
-  - `instrument.query-required`（`api_server/handlers/instruments.rs` 标的搜索缺 `query`，AI 导入按码自纠的 HTTP 入参条件）；
-  - `db.integrity-check-failed`（`db/mod.rs` `check_integrity`）。**码归 `db.*` 而非票面猜测的 `boot.*`**：构造点在基础设施，启动引导、备份恢复校验、同步 checkpoint 重建三域共用，按启动场景命名会把后两者的同名失败误标为启动条件；启动路径经 `BootFailureGate` 记录该码，失败恢复屏仍按「库不可读」呈现（只有 `boot.schema-drift` 走恢复优先排布）。
-- **票面候选中判定保留裸 `Invalid` 的两点（ADR-0050 决策 2「程序性/内部错误可不转」的逐点裁定，非票面预授权）**：
-  - `scheduled_transactions/engine.rs` 的 `未知周期类型` 防御臂：`recurrence_type` 列只由 `RecurrenceType` 闭集写入，闭集外的值只可能来自外部改库——判「内部不一致」；同一条件的稳定码已归 `RecurrenceType` 解析边界（`scheduled-plan.recurrence-unknown`），此处另立码会让一条条件长出两个码。
-  - `api_server/handlers/categories.rs` 的请求体反序列化失败：`message` 是 JSON 解析器的技术错误原文（英文、位置相关），没有可逐字保留的中文模板——判「程序性输入格式错误」。同族先例：其余 handler 的 `Json<T>` / `Query<T>` extractor 拒绝（如标的搜索非法 `type`）走框架默认 400 体、同样无码不经 `AppError`，本点与之一致；同族的 sync_engine 序列化失败亦在同票排除清单。
-- **测试层归口（对 ADR-0050 决策 6 的显式例外，先例 #1071）**：`instrument.query-required` 走 HTTP 面，在 API 集成测试断言码与 `params` 缺席；5 条闭集解析码经 serde/rusqlite 扁平化不上抛，按 #1071 构造点口径归域/基础设施单测钉码；两条 IPC 可达码的壳层断言归后续命令面集成测试票。
-- **`db.*` 命名空间**：`db.integrity-check-failed` 构造点在基础设施、启动引导/备份恢复/同步 checkpoint 三域共用，沿用 `db` 前缀而不新造域。
+`AppError::Invalid` 同族扫描的存量构造点逐点裁定完毕：
+
+- **转码 8 条件 / 9 构造点**（`message` 逐字保留、动态值进 `params`）：`budget.period-unknown`、定时计划域四个闭集解析码（plan kind/status、recurrence、occurrence status）、`scheduled-plan.occurrence-date-invalid`（非法期次日期是用户可达条件）、`instrument.query-required`（AI 导入按码自纠的 HTTP 入参条件）、`db.integrity-check-failed`。后者码归 `db.*` 而非票面猜测的 `boot.*`：构造点在基础设施、启动引导/备份恢复/同步 checkpoint 三域共用，按启动场景命名会把后两者的同名失败误标为启动条件。
+- **保留裸 `Invalid` 两点**（ADR-0050 决策 2「程序性/内部错误可不转」的逐点裁定，非票面预授权）：定时计划域引擎防御臂——同一条件的稳定码已归闭集解析边界，另立码会让一条条件长出两个码；分类 handler 请求体反序列化失败——`message` 是 JSON 解析器技术原文、无可逐字保留的中文模板，与同族框架 400 拒绝一致。
+- **测试层归口**（对 ADR-0050 决策 6 的显式例外，先例 #1071）：HTTP 可达码归 API 集成测试钉码；经 serde/rusqlite 扁平化不上抛的码归域/基础设施单测。
