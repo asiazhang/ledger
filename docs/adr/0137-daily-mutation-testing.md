@@ -26,11 +26,13 @@
 
 ### 2. 范围：`--in-diff`，只变异基线以来改动的 Rust 代码
 
-`cargo mutants --in-diff`，diff 取「上次成功运行 head_sha → 本次提交」，在 `src-tauri/` 内以 `git diff --relative` 生成（路径输出 `crates/...` 形态，与变异体 source path 同口径，同时自动排除前端改动）。成本随当日改动量走，历史欠账不每日重放——历史面的零击杀与存活清单由报告驱动的专项清理票处理（试点即此形态）。
+`cargo mutants --in-diff`，diff 取「上次成功运行 head_sha → 本次提交」，在 Rust 根（切轨后 `src-app/`，写作时 `src-tauri/`）内以 `git diff --relative` 生成（路径输出与变异体 source path 同口径，同时自动排除非 Rust 改动）。成本随当日改动量走，历史欠账不每日重放——历史面的零击杀与存活清单由报告驱动的专项清理票处理（试点即此形态）。
 
 ### 3. 前端 Stryker 本期撤出，接入待工具链适配（#1832）
 
-前端侧（`src/**/*.ts`、vitest-runner + typescript-checker、incremental 走 actions/cache、不含 `.vue`）的设计已随试点验证成型，但 vitest-runner v10 与 Vitest 5 的不兼容使报告不可信（0 killed 误报，诊断见 #1832）——**报告可信是本工作流的前提，不可信的观测面宁可不观测**。本期撤出：workflow 不含前端 job、`stryker.config.mjs` 与 `@stryker-mutator/*` 依赖不入库。接入前置条件（上游支持 Vitest 5、或独立论证后降 Vitest——后者不为一个工具反向降级，已否决）与届时接入内容见 #1832 与本决策历史。
+前端侧（vitest-runner + typescript-checker、增量缓存、不含 `.vue`）的设计已随试点验证成型，但 vitest-runner v10 与 Vitest 5 的不兼容使报告不可信（0 killed 误报，诊断见 #1832）——**报告可信是本工作流的前提，不可信的观测面宁可不观测**。本期撤出：workflow 不含前端 job、Stryker 依赖不入库。接入前置条件（上游支持 Vitest 5、或独立论证后降 Vitest——后者不为一个工具反向降级，已否决）与届时接入内容见 #1832 与本决策历史。
+
+> 注：前端观测面后经 #1832 补丁接入（见修订注记），最终随 Web 参照前端整体退役（#2171/#2172 / ADR-0148），本决策仅存史。
 
 ### 4. 观测期不判定：阈值待 CI 基线稳定后另立判据
 
@@ -50,11 +52,11 @@ cargo-mutants 退出码 2（存在存活变异体）与 3（超时）不使 job 
 
 ### 6. 豁免单点收口：workspace 根 `.cargo/mutants.toml`
 
-cargo-mutants 豁免配置住 `src-tauri/.cargo/mutants.toml`（工具真源位置：workspace 根的 `.cargo/mutants.toml`），每条豁免附内联注释写明类别（等价变异体 / 不可测变异体）与理由；空清单起步，各域清理按需追加。
+cargo-mutants 豁免配置住 Rust 根 `.cargo/mutants.toml`（写作时在 `src-tauri/.cargo/mutants.toml`，切轨后随根更名），每条豁免附内联注释写明类别（等价变异体 / 不可测变异体）与理由；空清单起步，各域清理按需追加。
 
 ## 代价
 
-- **每日 CI 成本**：job 上限 180 分钟（#1935 修订，原 60 分钟——首跑消化积压与扩面余量需要；基线正常推进后日常约 36 分钟），gate 跳过日零成本；有改动日随「白名单 ∩ 当日 diff」规模浮动，首跑/基线缺失回退 `HEAD~1` = 有界成本。
+- **执行成本**：本地按需运行，单次成本随「白名单 ∩ 当日改动」规模浮动；基线缺失时回退 `HEAD~1` = 有界成本（CI 载体期的 job 时长与超时调参随载体退役，见修订注记）。
 - **观测期缺口**：合入代码的测试有效性缺口不会被拦截，只会在次日报告暴露——显式接受，拦截升级到门禁是基线稳定后的判据票（同 ADR-0068 从观测到门禁的路径）。
 - **前端不在观测面**：`src/**/*.ts` 与组件层的测试有效性本期无机器观测——显式接受，接入条件与设计留档 #1832，不静默扩面。
 - **in-diff 盲区**：diff 不含的 Rust 代码（含历史欠账）不重放——由专项清理票承担，不是遗忘。
@@ -72,36 +74,29 @@ cargo-mutants 豁免配置住 `src-tauri/.cargo/mutants.toml`（工具真源位�
 ## 影响
 
 - 词汇表同步（随本 ADR 入档）：测试基础设施域新增「零击杀测试」「存活变异体」「等价变异体」三词条（含与「断言强度」的引用关系），CONTEXT-MAP 分域条目主题追加。
-- CI：新增 `mutation-bench.yml`（每日 03:23 UTC），不入 `scripts/check.sh`、不入 build.yml；新增 `scripts/mutation-summary.sh` 报告格式化脚本（只格式化不判定，同 perf-summary.sh 纪律）。
-- 依赖：本期**零新增**（Stryker 三件套随撤出不入库）；cargo-mutants 由 workflow 内 `cargo install` 安装，版本以安装时解析为真源。
+- 载体：mutation-bench workflow 已随 2026-10-14 载体撤下修订删除（本地按需运行）；报告格式化脚本转为本地工具（只格式化不判定，同性能基准报告脚本纪律）。
+- 依赖：Rust 侧零新增（cargo-mutants 按需安装）；前端 Stryker 三件套随前端退役清零。
 - 实施拆票建议：本 ADR + workflow + 词条随 #1827 一票落地；阈值判据待观测基线稳定后另立（届时修订本 ADR）；前端接入与 `.vue` 变异随 #1832 另议。
 
-## 修订注记（#1832，2026-10-09）：前端 Stryker 经补丁接入——修 Vitest 5 误报、金丝雀兔底报告可信
+## 修订注记（#1832，2026-10-09）：前端 Stryker 经补丁接入——后随 Web 参照前端退役（ADR-0148）
 
-决策 3 撤出时预留的接入前置是「上游支持 Vitest 5、或降 Vitest」，#1832 走了第三条路：**pnpm patchedDependencies 把上游修复 PR stryker-js#6214 套在 vitest-runner@10.0.0 的发布产物上**，不降级测试栈、不等待上游，撤出决策就此解除。
+决策 3 撤出时预留的接入前置是「上游支持 Vitest 5、或降 Vitest」，#1832 走了第三条路：**pnpm patch 把上游修复套在 vitest-runner 发布产物上**，不降级测试栈、不等待上游，撤出决策就此解除。根因是 Vitest 5 用例链分隔符变更致 runner 用例过滤永不命中、covered mutants 全量误报 Survived（0/199 误报复现；修复后同面 187 killed / 15 survived）。「报告可信」由一次性验收改为金丝雀每日持续验收——选已知必杀变异真实重测（不经增量缓存），报非 Killed 即红；升级 vitest-runner 或 Vitest 前必须重做补丁并重跑金丝雀；上游发布支持版本后删补丁回归官方产物；`.vue` 变异面维持不扩面。〔前端观测面已随 Web 参照前端整体退役（#2171/#2172 / ADR-0148），本注记仅存史。〕
 
-- **根因与修复**：Vitest 5 把用例链分隔符从空格改为 `' > '`，runner@10.0.0 仍按空格拼接，perTest 覆盖分析的用例过滤永不命中——变异体零测试执行，covered mutants 全量误报 Survived（0/199 实测复现，修复后同面 187 killed / 15 survived）。补丁打在 dist 编译产物上，绑定精确版本 10.0.0；注册注释与退出条件住 `pnpm-workspace.yaml` 的 `patchedDependencies`。
-- **金丝雀兔底**：「报告可信」从一次性验收改为每日持续验收——mutation-bench 前端 job 选侧栏排序 store 的已知必杀变异（有测试覆盖、形态稳定）作金丝雀，用独立增量文件真实重测（不经增量缓存，防陈旧结果掩盖 runner 失效），报非 Killed 即 job 变红（防 #6073 类残留误报静默复发）。
-- **升级纪律**：升级 vitest-runner 或 Vitest 前必须重做补丁并重跑金丝雀（补丁绑定精确版本，升级即失效）；依赖升级纪律见 `docs/agents/dependency-upgrades.md`「易碎件：补丁依赖」。
-- **退出条件**：上游发布支持 Vitest 5 的版本后删除补丁，重跑金丝雀验证后回归官方产物。
-- **`.vue` 变异面**：维持决策 3 不含 `.vue` 的口径不变，本票不扩面。
+## 修订注记（#1935，2026-10-13）：观测面白名单渐进扩面——修基线冻结循环与域 crate 静默缺失
 
-## 修订注记（#1935，2026-10-13）：观测面白名单渐进扩面——修基线冻结循环、Stryker dry run 超时与域 crate 静默缺失
+上线 16 连败诊断出三个叠加缺陷，一并处置；不推翻决策 1–6 的任何判定口径，只修执行面（dry run 超时与 job 时长等运维调参留痕见 #1935，随载体退役）：
 
-上线 16 连败（2026-09-28 起）诊断出三个叠加缺陷，本修订一并处置；不推翻决策 1–6 的任何判定口径，只修执行面。
-
-- **域 crate 静默缺失（观测面 bug）**：`cargo mutants` 默认只变异当前包，工作流未传 `--workspace`，自上线以来全部变异体均来自根包——`crates/` 域从未进过变异面，决策 2「只变异改动的 Rust 代码」对域代码不成立。修复：`--workspace` + `--file` 白名单（见下），测试集默认全 workspace（工具源码断言确认），击杀判定口径不变，workflow 显式 `--test-workspace=true` 固化。
-- **白名单渐进扩面（替代一次性全量）**：全 workspace 6,197 变异体 ≈ 124 小时，超 GitHub job 6 小时上限 20 倍（「全量每日跑」的否决因此加重）；按 crate 优先级渐进——批次 1 = `transaction`（资金写入核心）+ 根包 `commands`/`api_server`（命令出口接缝，保留既有观测面）。每批 = 加一行 `--file` + 本注记补当批清单与成本预估，扩面前先看上批报告存活分布；`src/bin`、`src/test_support`（工具与测试支撑，共 1,231 变异体）长期排除，白名单外自然排除。
-- **基线冻结循环（gate 语义修订）**：gate 原只认上次成功运行为基线，连续失败使基线冻在 2026-09-27，in-diff 积压 54 提交 → 60 分钟跑不完 → 超时 → 继续冻结。修订：无任何成功运行时基线回退「除本次外最近一次运行」的 head_sha——失败也推进基线，diff 永远只含增量，欠账不重放（决策 2 原意）；观测面换「瞬时故障日缺口显式接受」。job 上限 60 → 180 分钟（首跑消化积压 120 变异体 ≈ 150 分钟；基线正常后日常约 36 分钟）。
-- **Stryker dry run 超时（前端 job 零成功根因）**：默认 `dryRunTimeout` 300s，CI 单 vitest 进程跑全量前端套件 ≈ 5–6 分钟必撞，首跑即 `Initial test run timed out!`。修复：`stryker.config.mjs` `dryRunTimeout: 900_000`；4860 变异体全量耗时待首跑实测，超限再议缩面或并发。
+- **域 crate 静默缺失（观测面 bug）**：工具默认只变异当前包，自上线以来全部变异体均来自根包——域 crate 从未进过变异面，决策 2「只变异改动的 Rust 代码」对域代码不成立。修复：`--workspace` + 白名单（见下），测试集默认全 workspace，击杀判定口径不变。
+- **白名单渐进扩面（替代一次性全量）**：全 workspace 6,197 变异体 ≈ 124 小时，超 CI 单日成本上限 20 倍（「全量每日跑」的否决因此加重）；按 crate 优先级渐进——批次 1 = 核心交易域 + 根包命令出口接缝（保留既有观测面）；工具与测试支撑面（共 1,231 变异体）长期排除，白名单外自然排除；每批补当批清单与成本预估，扩面前先看上批报告存活分布。
+- **基线冻结循环（gate 语义修订）**：gate 原只认上次成功运行为基线，连续失败使基线冻结、in-diff 积压越滚越大直至超时死循环。修订：无任何成功运行时基线回退「除本次外最近一次运行」的 head_sha——失败也推进基线，diff 永远只含增量，欠账不重放（决策 2 原意）；换「瞬时故障日缺口显式接受」。
+- **Stryker dry run 超时（前端 job 零成功根因）**：默认超时低于 CI 全量前端套件实测时长，首跑即撞；修复为显式放大（调参随前端退役失效）。
 
 ## 修订注记（2026-10-14）：CI 载体撤下——mutation-bench workflow 删除，改本地按需运行
 
-上线以来 CI 零成功（#1935 诊断时已 16 连败；run 38415261755 收口实证：Rust job 撞 180 分钟上限被取消、前端 Stryker 步骤连红）——白名单批次 1 已逼近 GitHub 托管 runner 的单 job 时长上限，#1935 的渐进扩面在 CI 上没有可行余量，「每日常驻观测」的成本前提不成立。决策 1 的载体修订为**本地按需运行**；决策 2–6 的判定口径、处置语义、豁免收口与词汇表全部不变；观测面换「无人定期跑」的显式缺口，由本地纪律承接。
+上线以来 CI 零成功（连败收口实证：Rust job 撞时长上限被取消、前端 Stryker 步骤连红）——白名单批次 1 已逼近托管 runner 的单 job 时长上限，渐进扩面在 CI 上没有可行余量，「每日常驻观测」的成本前提不成立。决策 1 的载体修订为**本地按需运行**；决策 2–6 的判定口径、处置语义、豁免收口与词汇表全部不变；观测面换「无人定期跑」的显式缺口，由本地纪律承接。
 
-本地入口（替代原 workflow 步骤）：
+本地入口（替代原 workflow 步骤；前端侧已随 Web 参照前端退役，仅 Rust 现役）：
 
-- **Rust（cargo-mutants）**：`cd src-tauri && cargo mutants --in-place --workspace --test-workspace=true --file 'crates/transaction/src/**' --file 'src/commands/**' --file 'src/api_server/**' --output /tmp/mutants-run`（白名单 = #1935 批次 1，扩面纪律不变；in-diff 基线按需以 `--in-diff <diff>` 给定）；报告阅读 `./scripts/mutation-summary.sh /tmp/mutants-run/mutants.out`。
-- **前端（Stryker）**：仓库根 `pnpm exec stryker run`（增量文件 `reports/stryker-incremental.json` 本地留存）；报告阅读 `./scripts/mutation-frontend-summary.sh reports/mutation/mutation.json`。
-- **金丝雀验收**（升级 vitest-runner / Vitest 前必跑，替代原 workflow 步骤）：`pnpm exec stryker run --mutate "src/stores/sidebar-order.ts" --incrementalFile /tmp/stryker-canary-incremental.json --reporters json`，isArrangeableView（sidebar-order.ts 71–73 行）的 ConditionalExpression→false 变异必须全部 Killed；行锚点移位需同步更新，变异面配置漂移即 fail loud。
-- 原报告出口（Step Summary / artifact）随载体退役；`scripts/mutation-*.sh` 转为本地报告阅读工具，输出直写 stdout。
+- **Rust（cargo-mutants）**：在 Rust 根按 #1935 批次 1 白名单运行（全 workspace + 测试集同 workspace；in-diff 基线按需给定，具体 flag 见白名单登记处）；报告经本地报告脚本阅读。
+- **前端（Stryker）**：已随 Web 参照前端退役（ADR-0148），无本地入口。
+- 原报告出口（Step Summary / artifact）随载体退役；报告脚本转为本地工具，输出直写 stdout。

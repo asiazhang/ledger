@@ -1,6 +1,6 @@
 # ADR-0099: 基金转换（convert）交易类型——第 9 种 kind、结转成本与零余额扰动
 
-- 状态：已接受（schema 已落地于 issue #977；行为层 / 前端 / 契约随 #978 起的实现票落地）
+- 状态：已接受（已全部落地：schema 于 #977，行为层 / 前端 / 契约随 #978 起的实现票交付）
 - 日期：2026-09-10
 - 作者：Ledger 项目
 - 关联：ADR-0011（kind→度量矩阵与 raw/native 金额分离，扩列须同步矩阵）、ADR-0013 / 0033（行为层单点穷尽分派与编排入口、事务所有权）、ADR-0038（场外基金一等标的：复用 buy/sell、金额权威单价反算）、ADR-0067（余额与净资产持久化缓存：写路径整体重算）、ADR-0091（同步 op 语义、载荷只增与挂起队列）、ADR-0096（出资账户准入闭集）、ADR-0097（删除语义修订：revert 与级联先例）、ADR-0050（码化错误）、ADR-0081 / 0082 / 0038（1.0 前就地修改已发布迁移 + 两级 BREAKING 标记的既有裁定）、spec #973、issue #977
@@ -30,9 +30,9 @@ wire 值 / DB CHECK / 同步载荷 / i18n key 统一 `convert`。一笔转换 = 
 
 ### 2. 存储形态：`security_transactions` 扩 4 个可空列 + 转出消耗表
 
-`security_transactions` 扩 `to_instrument_id`（命名对齐 transfer 的 `to_account_id` 惯例）/ `to_quantity` / `out_amount_cents` / `in_amount_cents`，`action` CHECK 纳入 `'convert'`。convert 行：`instrument_id` = 转出标的、`quantity` = 转出份额、`price_cents` = 反算的展示单价（金额权威、单价反算，与场外基金 buy/sell 同款）、`fee_cents` = 手续费。
+`security_transactions` 扩转入标的、转入份额与转出/转入金额四个可空列（命名对齐 transfer 的 `to_account_id` 惯例），`action` CHECK 纳入 `'convert'`（列清单见迁移）。convert 行：`instrument_id` = 转出标的、`quantity` = 转出份额、`price_cents` = 反算的展示单价（金额权威、单价反算，与场外基金 buy/sell 同款）、`fee_cents` = 手续费。
 
-新增**转出消耗表** `security_lot_conversions`（`transaction_id` / `lot_id` / `quantity` / `cost_per_unit_cents` / `cost_cents`）承载转出腿逐批次消耗：它是修改回退 / 删除精确回补的**唯一依据**（转出时的 FIFO 状态在后续交易发生后不可重建），也是分批结转成本的审计载体。转入批次经既有批次表的买入锚点列锚定 convert 明细行，既有唯一键天然满足。
+新增**转出消耗表** `security_lot_conversions` 承载转出腿逐批次消耗（列清单见迁移）：它是修改回退 / 删除精确回补的**唯一依据**（转出时的 FIFO 状态在后续交易发生后不可重建），也是分批结转成本的审计载体。转入批次经既有批次表的买入锚点列锚定 convert 明细行，既有唯一键天然满足。
 
 ### 3. 成本结转：转入批次成本 = 被消耗转出批次原始成本
 
@@ -54,11 +54,11 @@ convert 行金额占位 0 提交，服务端按 FIFO 消耗算出结转成本后
 
 ### 6. 同步：载荷只增、成本随命令携带、旧端挂起
 
-同步命令载荷新增**可选**成员 `ConvertCommandFields`（`quantity` / `to_instrument_id` / `to_quantity` / `out_amount_cents` / `in_amount_cents` / `fee_cents` / `carried_cost_cents`）——「只增不改」纪律（ADR-0091）。`carried_cost_cents` 由源端算好随命令携带、重放端本地重建 FIFO 快照（既有「成本随命令携带、快照本端重建」先例）。旧版本设备经 op schema 版本硬检查与 kind 防御臂**双保险**挂起（ParkedOp），不静默错账。
+同步命令载荷新增**可选**成员 `ConvertCommandFields`（转出份额、转入腿标的/份额、转出/转入金额、手续费、结转成本）——「只增不改」纪律（ADR-0091）。结转成本由源端算好随命令携带、重放端本地重建 FIFO 快照（既有「成本随命令携带、快照本端重建」先例）。旧版本设备经 op schema 版本硬检查与 kind 防御臂**双保险**挂起（ParkedOp），不静默错账。
 
 ### 7. AI 契约与导入知识：只增 4 个可选字段
 
-提交走既有批量导入端点，`TransactionInput` 只增 `to_instrument_id` / `to_quantity` / `out_amount_cents` / `in_amount_cents` 四个可选字段；契约经运行时自描述自动带出。kind 闭集精确断言锁与 20KB 体积预算锁（ADR-0090）随 `convert` 同步更新；导入知识新增「基金转换」教学节（快照字段位置、单腿一条记录、腿序幂等键、金额占比分摊、余额不变对账口径、纠错步骤；多腿转出份额「逐腿直读 / 金额占比拆分」两写）。「dividend/split 不受支持」文案保留。
+提交走既有批量导入端点，`TransactionInput` 只增转入腿标的/份额与转出/转入金额四个可选字段；契约经运行时自描述自动带出。kind 闭集精确断言锁与 20KB 体积预算锁（ADR-0090）随 `convert` 同步更新；导入知识新增「基金转换」教学节（快照字段位置、单腿一条记录、腿序幂等键、金额占比分摊、余额不变对账口径、纠错步骤；多腿转出份额「逐腿直读 / 金额占比拆分」两写）。「dividend/split 不受支持」文案保留。
 
 > **修订（ADR-0106）**：`split`（份额调整）获得同等待遇——导入知识新增份额调整教学节，能力文案改为「`split` 可用 / `dividend` 仍拒绝」。本节对 `dividend` 保留的部分不变。
 
@@ -90,9 +90,9 @@ convert 行金额占位 0 提交，服务端按 FIFO 消耗算出结转成本后
 
 ## 影响
 
-- **schema（issue #977 已落地）**：`V001` `transactions.kind` CHECK 9 种；`V002` `security_transactions.action` CHECK 含 `convert` + 4 个可空列 + `security_lot_conversions` + 两条外键级联索引；`docs/model/README.md` 实体图与 Migration 索引同步。存量库须重建库（决策 9）。
-- **待落地（#978 起）**：行为层五处穷尽 match 与守卫、投资域 `prepare`/`apply`/`revert`/`release_for_delete` 四出口、`TransactionKind` 枚举与度量矩阵加行（六系数全 0）、PUT 禁改 kind 的码化错误与错误模板、时点持仓推算双方向、批量导入 4 个可选字段与两处契约锁、导入知识教学节、前端表单与展示/筛选闭集、同步 `ConvertCommandFields` 与挂起测试。
-- **词汇表同步（随行为层票落地）**：核心交易域 kind 闭集 8 → 9 与度量矩阵 `convert` 行、投资域「基金转换（Conversion）」词条与推算口径、AI 导入域能力清单。本票只落 schema，词汇表**尚未**同步（术语定义随行为可用而生效，避免文档领先于代码）。
+- **schema（#977）**：`transactions.kind` CHECK 扩至 9 种；`security_transactions.action` CHECK 纳入 `convert` + 4 个可空列 + 转出消耗表及配套索引（DDL 见迁移）；模型文档实体图与 Migration 索引同步。存量库须重建库（决策 9）。
+- **其余面已随 #978 起实现票全部落地**：行为层五处穷尽 match 与守卫、投资域四出口、度量矩阵加行、PUT 禁改 kind 码化错误、时点持仓推算双方向、批量导入可选字段与契约锁、导入知识教学节、前端表单与展示/筛选闭集、同步转换字段与挂起测试。
+- **词汇表已随行为层票同步**：核心交易域 kind 闭集 8 → 9 与度量矩阵 `convert` 行、投资域「基金转换（Conversion）」词条与推算口径、AI 导入域能力清单（术语定义随行为可用而生效，避免文档领先于代码）。
 - **无新增域间横向边**：convert 复用既有「核心交易域 → 投资域」分派边（ADR-0013 / 0071），新表归投资域，分层方向不变。
 - **不变式**：决策 4 的闭合式随实现票改为绑定测试；余额缓存「回填 == 实时」对拍（ADR-0067）自动覆盖转换行（六系数 0，重算值不变）。
 - **遗留假设（迁移侧环境就绪时验证，证伪按 ADR 修订流程更新）**：快照转入份额为扣费后净份额；多腿逐腿转出份额有无。
