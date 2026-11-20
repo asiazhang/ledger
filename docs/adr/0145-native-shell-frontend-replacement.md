@@ -39,7 +39,7 @@ workspace 新增 NSH 应用 bin crate（结构守门白名单为其开门），�
 
 ### 5. ui-kit 封装族重实现
 
-`App*` 封装族（日期选择器、下拉、树选择、拼音可搜下拉、模态 / 抽屉 / popconfirm、overlayRegistry）在 NSH 基元上重实现，含 NSH 缺失的日期选择器与下拉选择；bar 图自绘。视图层不直连 NSH 缺件——ADR-0118 的封装纪律在原生壳延续。
+`App*` 封装族（日期选择器、下拉、树选择、拼音可搜下拉、模态 / 抽屉 / popconfirm、弹层注册表）在 NSH 基元上重实现，含 NSH 缺失的日期选择器与下拉选择；bar 图自绘。视图层不直连 NSH 缺件——ADR-0118 的封装纪律在原生壳延续。
 
 ### 6. 测试策略
 
@@ -99,13 +99,7 @@ Linux 打包自建（AppImage / deb 工具链接入既有 CI 矩阵），macOS /
 
 ## 修订注记（切轨实施，2026-11-11，issue #2083）：一体切轨落地
 
-上两条修订注记的裁决定案后，本票完成实施。落地形态与裁决的偏差面（均已在裁决射程内，无新增决策）：
-
-- **目录与根包**：`src-tauri/` 更名 `src-app/`，旧 Tauri 壳整体删除；`crates/nsh` 升为 workspace 根包（包名 `nsh-app`，dir = 仓库根 `src-app/`），原 nsh crate 随宿主消失。依赖方向 壳→域→基础设施→协议 不变。
-- **退役闭集**：155 个 IPC 命令及命令注册扫描（build.rs + check-commands）、tauri-host / tauri-emit 门化面与 AppHandle 包装 API（`*_with` 内核与宿主 trait 保留）、自动更新（ADR-0124 面）、BDD e2e 456 场景与 `tests/e2e/`（不移植，词汇表留档）、命令层测试与 API 集成测试中的命令装配面（HTTP 契约测试随 api_server 迁居保留）、Android gen 树、tauri 图标/能力/打包配置。前端 `@tauri-apps/*` 引用清零，桥面收敛为 `@ledger/mock-backend/bridge/*`（Web 参照前端唯一传输面）。
-- **守门与 CI**：零链接门升级为全仓无 tauri 门（`cargo tree --workspace -i tauri` + 新脚本 `scripts/check-no-tauri.ts` 三面：Cargo 清单、前端 import、package.json 键）；gate-mounts 登记收缩；check.sh 退役 check-commands / check-background-services 两个挂载点；CI 矩阵收缩为 check + Linux 构建（产物 = release 二进制 artifact）；perf-bench 路径随迁。结构守门退役双壳规则与 tauri 特免面（check-structure 的 CRATES 政策核以 `nsh-app` dir "." 登记）。
-- **保留面**：`src-app/src/test_support/` 工厂与器具全量随迁（含源码扫描掩码、读快照探针、op 写失败注入等）；原 Tauri 壳 12 个遗留集成测试 disposition——HTTP 契约/信号投递等随 api_server 迁居保留，纯命令装配面退役（逐条清单见 #2083 交付报告）。
-- **发布形态**：release 二进制 + `.desktop` 直跑（`src-app/packaging/` 模板）；Linux 打包工具链、NSH 自动化回归能力为后续票。加密面曾是**切轨遗留的未裁决偏差**（非本 ADR 某条决策的有意取舍），已随 #2088 收敛（2026-11-11）：密文库启动落锁定视图、解锁 / 忘口令重置 / 加密卡写面（开启 / 修改主口令 / 关闭加密）全量平价，旧壳锁定/失败双门检换真门检（锁定扇门查进程级加密锁定门，失败扇门由会话存在性承载）；残留差异（口令强度条、自动解锁 macOS-only、锁定屏无恢复入口）见 CHANGELOG 同日条目。
+上两条修订注记的裁决定案后，本票完成实施。落地形态：`src-tauri/` 更名 `src-app/`，旧 Tauri 壳整体删除；`crates/nsh` 升为 workspace 根包（包名 `nsh-app`，dir = 仓库根 `src-app/`），依赖方向 壳→域→基础设施→协议 不变。退役闭集（155 个 IPC 命令与命令注册扫描、自动更新面、BDD e2e 场景、命令装配测试面、Android gen 树、tauri 打包配置）、保留面（测试工厂与器具全量随迁；HTTP 契约/信号投递测试随 api_server 迁居保留）、守门与 CI 换宿主处置（零链接门升级为全仓无 tauri 门、check.sh 挂载点收缩、结构守门以 `nsh-app` dir "." 登记）逐条清单见 **#2083 交付报告**；前端退役闭集与质量门换宿主另见 ADR-0148。加密面曾是切轨遗留的未裁决偏差（非本 ADR 某条决策的有意取舍），已随 #2088 收敛：密文库启动落锁定视图、解锁 / 忘口令重置 / 加密卡写面全量平价，残留差异见 CHANGELOG 同日条目。发布形态的后续翻案见下条修订注记。
 
 ## 修订注记（自动更新翻案，2026-11-15，grill-with-docs 裁决）：决策 7 修订——自动更新随 NSH 0.5 内置更新器重建
 
