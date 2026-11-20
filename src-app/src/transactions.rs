@@ -563,8 +563,9 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
     // 弹窗 + 行菜单分流接缝先行（行集闭集不含 buy/sell 的死面注释保留）。
     let trade_form = investments_form::TradeFormState::new();
     let trade_sources = investments_form::TradeFormSources::new();
-    // 「记一笔」类型菜单弹层开合（入口单点表达 kind：弹层两项——记支出/
-    // 记收入；弹层开合上报 Overlay Suppression，期间弹层同形）。
+    // 「记一笔」类型菜单弹层开合（入口单点表达 kind：三组七项——记支出/
+    // 记收入/记转账、借出/借入、出资分解/购买项下单；弹层开合上报
+    // Overlay Suppression，期间弹层同形）。
     let add_menu_open = signal(false);
     let add_menu_token = overlay::OverlayToken::new();
     // 备份最小入口（#2038）：入口状态束挂视图实例（工具区按钮 + 反馈状态
@@ -1177,8 +1178,9 @@ pub(crate) fn TransactionsView() -> impl IntoElement {
     // 时间维度行（共用期间行，#2040 起抽离 `period_row` 模块）：步进器 +
     // 期间选择弹层（预设闭集 + 月/季/年直达面板，#2128 补齐）。快照住筛选
     // 会话态，应用回调见上方 builder 接线；行尾「记一笔」入口（#2034）：
-    // 类型由入口单点表达——弹层两项（记支出/记收入），弹窗内不提供切换
-    //（旧壳 #150 同语义；转账/借出/退款随表单②、投资随表单③）。
+    // 类型由入口单点表达——弹层三组七项（记支出/记收入/记转账 + 借出/
+    // 借入 + 出资分解/购买项下单），弹窗内不提供切换（旧壳 #150 同语义；
+    // 退款不入菜单、入口由交易条目右键菜单承接，旧壳同口径）。
     let period_row = period_row_view
         .child(view().flex_1())
         .child(
