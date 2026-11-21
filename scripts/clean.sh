@@ -1,5 +1,4 @@
 #!/bin/sh
-# 清理构建产物：前端 dist / Vite 缓存 + Rust target
 set -eu
 cd "$(dirname "$0")/.."
 

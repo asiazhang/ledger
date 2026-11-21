@@ -24,13 +24,17 @@
 
 ## 刻意 hold 的写法
 
-包被刻意留在旧 major 时，**必须在 manifest 注释里写明可验证依据**，不能只写结论：
+包被刻意留在旧 major 时，**必须在下节「现役 hold 台账」登记可验证依据**，不能只写结论（注释禁令 ADR-0145 落地后 manifest 不再承载说明文字，hold 依据的唯一住址是本文件）：
 
 - 具体失败模式（报错原文、退出码），不是「不兼容」三个字；
 - 上游追踪 issue 号与状态；
 - 解除条件（等什么、等到什么程度）。
 
 反面教材：把 hold 写成「暂不支持」——下一个人（或 AI）会重新踩一遍。同理，**不用别名方案**（`typescript → npm:@typescript/typescript6` 之类）绕过 hold：那是把不确定性藏进依赖树，会让 `pnpm outdated` 与审计看不清真实状态。
+
+### 现役 hold 台账
+
+- **typescript 刻意留在 6.x**：typescript@7.0.2 是 Go 端口，exports map 不再暴露 `./lib/tsc` 与 `./lib/typescript.js`，vue-tsc@3.3.11 直接硬崩溃（ERR_PACKAGE_PATH_NOT_EXPORTED，非静默跳过），build 类型检查不可用。上游 vuejs/language-tools #5381（TypeScript 7/tsgo 支持追踪，已关闭）与 #6156 均指向 typescript-native-bridge，维护者明确需等 TypeScript 7.1 的官方插件接口。解除条件：待 vue-tsc 支持后升级。
 
 ## 工具链与 CI 固定值
 

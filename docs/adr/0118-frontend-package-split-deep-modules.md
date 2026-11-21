@@ -70,3 +70,13 @@ utils（被最多包依赖）与零依赖包（window-tier / modal-intent / row-
 - 新增九包的登记与交付固定成本，换取边界知识可证伪；跨包 import 形态改写量大但纯机械，行为等价由既有测试原样跑绿提供（spec Testing Decisions：不新增行为测试接缝，唯一新接缝是规则⑦及其测试）。
 - `utils → i18n` 使底层包不再全为零依赖叶子；类型层（`@ledger/types`）仍是唯一恒空方向表。
 - 机制术语不进词汇表（ADR-0083 既有口径）；包边界知识落 PACKAGES 登记册与本 ADR，词汇表只保留深模块的领域语义词条（TransactionFilter、Loadable 等）。
+
+## 修订注记（#2205 清零，2026-11-21）：包定位说明 `"//"` 数据键退役，住址收敛
+
+18 个包 `package.json` 的 `"//"` 定位键（纯文档字符串，无脚本消费其值）随注释禁令清零（ADR-0145 决策 1；issue #2205）。包定位与边界语义的新住址：本文决策 4/5（成包裁定与 ui-kit 闭集）+ 各深模块 ADR（ADR-0040/0041/0045/0058/0072/0077/0088/0093/0143）+ `scripts/check-frontend-structure.ts` PACKAGES 登记册（成员登记与依赖方向，机器强制）+ 包内源码与 exports 字段。原键中不重复于上述住址的独有裁定，浓缩迁移如下：
+
+- **money**：金额隐私模式响应式开关持本包；启动水合与持久化归应用设置 store，包不反向依赖 stores（#1153）。
+- **latest-wins**：前端异步竞态裁决机制「竞态纪元」的唯一实现与唯一合法住址，token 制接口（begin 推进 / observe 采样 / invalidate 作废 + isStale 判据）；过期后「做什么」属各消费点组合层，不入本包（#1678）。
+- **loadable**：竞态序号簿记自 #1678 起改经 @ledger/latest-wins 消费，本模块不自持序号；模块级 toast sink 单例随包 ESM 持有，只暴露 registerToastSink 注册接口（决策 6 的落地先例）。
+- **test-support**：toast sink 假件是 @ledger/loadable sink 接缝替身的唯一定义点，复位函数接收被测包注册接口、保持测试边单向（#1354）；invoke 接缝的 store 层参考预热经 registerReferenceRefresher 注册注入，接缝本体不反向依赖应用壳。
+- **window-tier**：断点常量全仓唯一收口于包内，vite.config.ts 构建期按源码路径提取（收口漂移 fail-loud），CSS 媒体查询经构建期占位符替换消费同值（决策 5 构建期契约的落地细则）。

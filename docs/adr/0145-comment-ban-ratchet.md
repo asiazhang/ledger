@@ -78,6 +78,23 @@ Rust 全形态（`///`、`//!`、普通 `//`、块注释）；TS/Vue/JS 行注�
 - 分域清理批次：19 个域 crate 与前端逐域推进，每域一个 checklist 勾选项，豁口辩护记入 #2213，基线随 PR 单调下降（spec #2202 批次 3）。
 - 归零批次：基线清零，门禁全面零容忍（spec #2202 批次 4）。
 
+## 修订注记（#2205 清零，2026-11-21）：配置面与 shell 面注释清零——独有决策记录在本注记收口
+
+package.json `"//"` 键（根 + 18 包）、Cargo.toml 全部注释、`.kache.toml`、resume-dev.sh 与 scripts/*.sh 注释按四分类清零（shebang 豁免）。多数条目已有住址直接删：同义复述类（clippy 六件套继承声明住 AGENTS.md「门禁保底」；dev-dependency 测试专用环与 compile_fail 击穿机理住 ADR-0084 #1111 修订注记；各 crate 依赖面定位与依赖声明、check-structure.ts 守门及根 Cargo.toml 同文重复；workspace 骨架与协议 crate 定位住 AGENTS.md「后端分层」「协议」）；决策记录类（加密引擎与生物门住 ADR-0075；行情 HTTP 面与异步 DB 门面住 ADR-0125；窗口状态插件桌面化住 ADR-0074 决策 6；测试器具可见性与 HTTP 投影门住 ADR-0111 决策 5；归档 op 载荷住 ADR-0142 决策 5；行菜单事件纪律住 ADR-0077 决策 4；ECB 汇率源住 ADR-0019 修订注记；mock 后端住 ADR-0143；bin 测试面与脚本测试运行口径住 ADR-0083 修订注记与 test-exec.ts / gate-mounts.ts 数据面）。package.json `"//"` 键的住址改迁见依赖升级文档（TypeScript 6.x hold）与 ADR-0118 修订注记（包定位）。以下独有决策记录无既有住址，在本注记收口（信息不蒸发）：
+
+- **备份版本锁步**（backup crate）：`after_commit_hook` 以编译期 `env!("CARGO_PKG_VERSION")` 落备份元数据的 app_version 字段——workspace 成员升版必须同步，否则备份元数据版本失真。
+- **默认 bin 指向**（根包）：包内第二个 bin（ledger-perf，ADR-0062）出现后显式 `default-run` 指向主程序，保证 `cargo run` 与 tauri dev 不改行为。
+- **bin 单测排除**（根包，#1787 热点 2）：main.rs 薄入口（逻辑住 lib 与各域 crate）的 bin 目标声明 `test = false` 免链免跑；bin 内新增 `#[test]` 即被 scripts/test-exec.ts 的 test = false 源码扫描守门打红；ledger-perf 保留单测（EXEMPT_BINS 登记），归 perf-bench.yml 每日基准承接。
+- **updater 刻意 default-features = false**（根包，ADR-0124 伴随裁决）：default 含 system-proxy，会把整个二进制的 reqwest 编译面翻成「读系统代理」——本机实证 hyper-util 的 macOS 实现只读代理地址不读例外表，行情域 fx 同步（ADR-0125 决策 5 直连语义）对 127.0.0.1 的请求被劫持进本机代理，既有测试 fx_sync_classifies_unreachable_source 当场变红。保留 rustls-tls（GitHub 端点 HTTPS）与 zip（macOS .app.tar.gz 解包即在此 feature 内，命名有误导）；更新检查可达性按 ADR-0124 决策 2 端点数组扩展位，环境变量代理 reqwest 默认仍生效。
+- **dev 构建去符号**（根包 `[profile.dev.package."*"]` `debug = false`）：依赖 crate 的 dev 构建关闭调试信息——产物不携带 DWARF/OSO 引用，规避链接器（Xcode 26 ld）对 kache 共享 store 还原产物追溯原始编译路径时的 unable to open object file 告警；业务 crate 不受影响、断点调试不变，依赖栈帧回溯仍显示函数名（无行号），需要依赖完整符号时临时还原本段。
+- **release 产物瘦身**（根包 `[profile.release]`，#1999）：strip + LTO + codegen-units = 1——v0.11.1 Android APK 60.8 MiB 中 22.3 MiB 是 .strtab/.symtab 调试符号，LTO + 单 codegen-unit 再裁跨 crate 死代码（预期 60.8 → ~30 MiB，代价是 CI release 编译变慢）。刻意不设两项：panic = "abort"（可再省 ~5.9 MiB unwind 表，否决——生产代码依赖 catch_unwind 保护读事务闭包，abort 改变 panic 语义）；opt-level 维持默认 3（"s" 是性能换体积的真实取舍，以 perf-bench 数据决策，#2000）。
+- **infra 依赖留守**：tracing-subscriber 留 infra 常规依赖——test_utils（信号捕获 Layer）随 feature 编入 lib、对下游测试构建可见，dev-dependencies 不进下游闭包。
+- **行情编码**（market-sync）：腾讯行情报价为 GBK 编码（ADR-0130 源决策的落地细节），encoding_rs 标准 WHATWG 实现，解码出错 fail-closed，不把替换字符混进权威名称字段。
+- **kache 配置机理**（.kache.toml）：kache 默认在缓存路径剥掉 `-C incremental` 并删除 Cargo 增量目录（clean_incremental 默认 true），同处一行改动实测 ~3s 退化到 ~18s；`preserve_incremental` 让带增量的本地 crate 走旁路（增量目录隔离到 target/debug/incremental.kache-preserved），registry 依赖仍走缓存，新 worktree 冷构建共享 store 收益照旧。政策口径（热/冷回路分工、禁止另行配置 RUSTC_WRAPPER 等环境变量方案）住 AGENTS.md「编译加速归口 kache」。
+
+另记录一处版本事实漂移：tracing-subscriber 0.3.23 的 reload 模块在 std（默认 feature）下无条件可用、无独立 reload feature——ADR-0006 修订注记「需启用 reload feature」的表述与该版本事实不符，按失准以代码为准处置（本票只删注释不改写 ADR 历史，ADR-0006 修订留待下次触达）。
+
+
 ## 修订注记（#2204 决策记录并入，2026-11-21）：掩码双源登记细节与已知边界自 scan.rs 注记并入
 
 决策记录盘点票 #2204 把 Rust 侧掩码器具模块（根包 `test_support/scan.rs`）头注中本决策 3 未展开的双源登记细节并入本文；注释本体按四分类进入后续清理批次。

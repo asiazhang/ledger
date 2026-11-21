@@ -1,24 +1,4 @@
 #!/bin/sh
-# mutation-frontend-summary.sh —— 把 Stryker 的 JSON 报告转成 Markdown 报告摘要
-# （spec #1816 / ADR-0137 决策 3 / 前端接入 #1832；CI 载体 mutation-bench.yml
-# 已撤下，2026-10-14 起为本地报告阅读工具，ADR-0137 修订注记）。
-#
-# 观测期不判定（ADR-0137）：本脚本只做计数与清单展示，不做任何阈值判定——
-# 存活清单是「看报告优化」的输入，不是门禁输出。金丝雀验收（已知 killer 变异
-# 必须报 Killed）是判定，归升级纪律的本地验收步骤，命令留档 ADR-0137 修订注记，
-# 不在本脚本。
-#
-# 用法：mutation-frontend-summary.sh <mutation.json 路径>
-#   JSON 由 Stryker json reporter 产出（默认 reports/mutation/mutation.json，
-#   schema = mutation-testing-elements）。
-# 输出：Markdown（计数表 + 存活/无覆盖清单折叠块）写到 stdout，本地
-# 重定向到文件或直接阅读。
-#
-# 解析口径（真源 = mutation-testing-elements schema）：计数从
-# .files[].mutants[].status 聚合——Killed / Survived / NoCoverage / Timeout /
-# CompileError / RuntimeError / Ignored / Pending。CompileError 与 RuntimeError
-# 是类型检查或运行期不过的变异体（等同 cargo-mutants 的 unviable），不计入
-# 分数分母。.files 缺失或 mutants 非数组即报错退出（fail loud）。
 set -eu
 
 if [ "$#" -ne 1 ]; then
@@ -32,7 +12,6 @@ if [ ! -f "$REPORT" ]; then
   exit 1
 fi
 
-# status 聚合计数；.files 缺失 = 报告格式漂移，jq -e 空输出即非零退出。
 STATUS_JSON=$(jq -ce '
   .files
   | [to_entries[].value.mutants[] | .status]
@@ -55,8 +34,6 @@ timeout=$(jq -r '.timeout' <<<"$STATUS_JSON")
 compile_error=$(jq -r '.compile_error' <<<"$STATUS_JSON")
 runtime_error=$(jq -r '.runtime_error' <<<"$STATUS_JSON")
 
-# 分数口径（mutation-testing-elements）：分母 = killed + survived + nocoverage +
-# timeout（CompileError/RuntimeError 不计入）；分母为 0 时分数不显示。
 denominator=$((killed + survived + nocoverage + timeout))
 if [ "$denominator" -gt 0 ]; then
   score_line="变异分数：$(( (killed + timeout) * 100 / denominator ))%（观测期，无门禁阈值）"
@@ -73,9 +50,7 @@ echo
 echo "> $score_line"
 echo
 
-# 存活 + 无覆盖清单是报告主体（看报告优化的输入）；有则折叠展示，无则一句话说明。
 list_rows() {
-  # 每行一个 Markdown 表格行：| 文件:行 | 变异器 | 替换 |（字段内竖线先转义防串列）
   jq -r --arg want "$1" '
     .files | to_entries[] as $f
     | $f.value.mutants[]
