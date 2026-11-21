@@ -122,9 +122,15 @@ globalStyle(`.tx-source-status-tag`, {
 
 /** 表格内轻量原生按钮（备注复制、操作列「⋯」）：替代 NButton tiny quaternary
  * ——移除波纹层/加载态/主题混入实例开销，原生按钮基座与焦点环收口此处；
- * 悬停显现/触控常驻规则仍在 global.css（.note-copy-btn 既有规则，元素换形态
- * 后语义不变）。仅作用于表格内（.n-data-table 前缀），移动档卡片的 NButton
- * 「⋯」（同类名）不受影响。 */
+ * 悬停显现/触控常驻规则仍在 assets 全局样式基座文件（.note-copy-btn 既有规则，
+ * 元素换形态后语义不变）。仅作用于表格内（.n-data-table 前缀），移动档卡片的
+ * NButton「⋯」（同类名）不受影响。
+ *
+ * 注意：本类文件（*.css.ts）注释里不得出现 `global.xxx` / `require(` /
+ * `exports.x` 等形如 CommonJS 的字面串——vanilla-extract 经 mlly detectSyntax
+ * 误判模块为 CJS（正则 `global\.w` 命中注释文本），注入 require 版作用域包装
+ * 在 ESM 求值下失效，编译报「Styles were unable to be assigned to a file」。
+ * 这是本票 CI 的实际翻车根因（#2189）。 */
 globalStyle(`.n-data-table .note-copy-btn, .n-data-table .row-actions-btn`, {
   border: "none",
   background: "none",

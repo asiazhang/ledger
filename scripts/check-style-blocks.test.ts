@@ -64,11 +64,10 @@ function makeFixture(omit?: string): string {
  *  走，脱离仓库树则 vue/compiler-sfc 不可达；node_modules 已 gitignore，不污染
  *  工作树状态，afterAll 统一清理。#1680 库拆分后脚本 import ./gate-primitives.ts，
  *  变体目录里一并落库副本，相对解析才可达）。 */
-function makeWhitelistMutant(entry: string): string {
-  const needle = `  "${entry}",\n`;
+function makeScriptMutant(needle: string, replacement: string): string {
   const source = readFileSync(script, "utf8");
   if (!source.includes(needle)) {
-    throw new Error(`白名单变体锚点未命中：${needle.trim()}——脚本格式漂移，请同步本测试`);
+    throw new Error(`脚本变体锚点未命中：${needle.trim()}——脚本格式漂移，请同步本测试`);
   }
   const dir = mkdtempSync(join(process.cwd(), "node_modules", "check-style-blocks-mutant-"));
   tempDirs.push(dir);
@@ -77,8 +76,12 @@ function makeWhitelistMutant(entry: string): string {
     readFileSync(join(process.cwd(), "scripts", "gate-primitives.ts"), "utf8"),
   );
   const mutant = join(dir, "check-style-blocks.ts");
-  writeFileSync(mutant, source.replace(needle, ""));
+  writeFileSync(mutant, source.replace(needle, replacement));
   return mutant;
+}
+
+function makeWhitelistMutant(entry: string): string {
+  return makeScriptMutant(`  "${entry}",\n`, "");
 }
 
 describe("check-style-blocks（样式块守门）", () => {
@@ -114,5 +117,51 @@ describe("check-style-blocks（样式块守门）", () => {
     expect(r.status).toBe(1);
     expect(r.output).toContain("新增 <style> 块");
     expect(r.output).toContain(entry);
+  });
+});
+
+describe("check-style-blocks css.ts CJS 形态字面串扫描（#2189 翻车根因机械化）", () => {
+  it("真实仓库默认通过：src 下 *.css.ts 零 CJS 形态字面串", () => {
+    const r = run([]);
+    expect(r.status).toBe(0);
+    expect(r.output).toContain("css.ts 零 CJS 形态字面串");
+  });
+
+  it("注释里的 global.css / require( / exports.x 即红（mlly CJS_RE 原样命中，含注释）", () => {
+    const root = makeFixture();
+    const rel = "src/stub.css.ts";
+    writeFileSync(
+      join(root, rel),
+      [
+        'import { globalStyle } from "@vanilla-extract/css";',
+        "",
+        "/** 引用全局基座：仍在 global.css（注释里的字面串也命中）。 */",
+        'globalStyle(`.stub-a`, { color: "red" });',
+      ].join("\n"),
+    );
+    const r = run([root], root);
+    expect(r.status).toBe(1);
+    expect(r.output).toContain("CJS 形态字面串");
+    expect(r.output).toContain(rel);
+  });
+
+  it("删掉探测正则接线（CJS_LOOKALIKE_RE）即红：命中形态不再被拦截", () => {
+    // 正则改写为永不命中的形态（删除/改空即红的最小可失败代理）
+    // 摘除判定接线（命中分支恒 false）→ 拦截失效、守门假绿对照
+    const mutant = makeScriptMutant("if (CJS_LOOKALIKE_RE.test(line)) {", "if (false) {");
+    const root = makeFixture();
+    const rel = "src/stub.css.ts";
+    writeFileSync(
+      join(root, rel),
+      [
+        'import { globalStyle } from "@vanilla-extract/css";',
+        "",
+        "/** 引用全局基座：仍在 global.css */",
+        'globalStyle(`.stub-a`, { color: "red" });',
+      ].join("\n"),
+    );
+    const r = run([root], root, mutant);
+    expect(r.status).toBe(0); // 守门被摘除后该形态漏拦（对照上一用例的红）
+    expect(r.output).toContain("样式块守门");
   });
 });

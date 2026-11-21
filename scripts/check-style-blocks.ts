@@ -20,8 +20,9 @@ import { pathToFileURL, fileURLToPath } from "node:url";
 import { walkTextFiles } from "./gate-primitives.ts";
 import { parse } from "vue/compiler-sfc";
 
-/** 扫描面扩展名闭集（walkTextFiles 消费参数）：本守门只扫 .vue */
+/** 扫描面扩展名闭集（walkTextFiles 消费参数）：.vue（样式块）+ .ts（css.ts 旁路文件） */
 const VUE_EXTENSIONS: ReadonlySet<string> = new Set([".vue"]);
+const TS_EXTENSIONS: ReadonlySet<string> = new Set([".ts"]);
 
 /** 存量 <style> 块白名单（issue #888 交付时点快照，按路径排序；#1159 起源码按域
  *  归位，域文件路径同步为域目录坐标 src/<域>/）：
@@ -71,6 +72,43 @@ export function collectVueFiles(root: string): string[] {
   return walkTextFiles(root, "", { extensions: VUE_EXTENSIONS }).map((f) => f.abs);
 }
 
+/** 递归收集扫描根下全部 vanilla-extract 旁路样式文件（*.css.ts）。 */
+export function collectCssFiles(root: string): string[] {
+  return walkTextFiles(root, "", { extensions: TS_EXTENSIONS })
+    .filter((f) => f.abs.endsWith(".css.ts"))
+    .map((f) => f.abs);
+}
+
+/**
+ * CJS 形态字面串探测（与 mlly `detectSyntax` 的 CJS_RE 同一正则，逐字同源）：
+ * vanilla-extract 编译管线对每个 *.css.ts 以该正则判 ESM/CJS（@vanilla-extract/
+ * integration addFileScope → detectSyntax，**不剥注释**）——命中即按 CommonJS
+ * 处理，注入 `require("@vanilla-extract/css/fileScope")` 版文件作用域包装；
+ * ESM 求值下 require 不存在，作用域从未设置，首个样式调用即抛
+ * 「Styles were unable to be assigned to a file」（vite build 失败，#2189 实际
+ * 翻车根因：注释里的 `global.css` 命中 `global\.w`）。
+ *
+ * 判定面 = 原始文本（注释与字符串都算）：与真实管线行为逐字对齐，不设白名单
+ * ——真被误判 CJS 的文件在本门禁内即红，逃逸 = 改写措辞（如 `global.css` →
+ * `全局样式基座`）或显式回 ADR 讨论。
+ */
+export const CJS_LOOKALIKE_RE =
+  /(?:[\s;]|^)(?:module\.exports\b|exports\.\w|require\s*\(|global\.\w)/g;
+
+/** 检查单个 .css.ts：返回 CJS 形态字面串命中行（1 基行号 + 命中文本）。 */
+export function checkCssFile(file: string): Array<{ line: number; text: string }> {
+  const source = readFileSync(file, "utf-8");
+  const hits: Array<{ line: number; text: string }> = [];
+  const lines = source.split("\n");
+  for (const [i, line] of lines.entries()) {
+    CJS_LOOKALIKE_RE.lastIndex = 0;
+    if (CJS_LOOKALIKE_RE.test(line)) {
+      hits.push({ line: i + 1, text: line.trim() });
+    }
+  }
+  return hits;
+}
+
 /** 检查单个 .vue 文件：返回是否携带 <style> 块与解析失败信息（如有）。
  *  经 vue/compiler-sfc 解析（注释里的 "<style>" 字样不误报）。 */
 export function checkVueFile(file: string): { hasStyleBlock: boolean; failure?: string } {
@@ -97,12 +135,22 @@ function main(): void {
       violations.push(normalizePath(file));
     }
   }
+  // *.css.ts 旁路文件的 CJS 形态字面串扫描（#2189 翻车根因机械化）
+  const cssFiles = collectCssFiles(scanRoot);
+  const cssHits = cssFiles.flatMap((file) =>
+    checkCssFile(file).map((hit) => ({ file: normalizePath(file) || file, ...hit })),
+  );
   // 反向存在性断言（#1360）：白名单条目必须在扫描面内可达，陈目即红
   const scannedRels = new Set(files.map((file) => normalizePath(file)));
   const unreachable = STYLE_BLOCK_WHITELIST.filter((rel) => !scannedRels.has(rel));
-  if (violations.length === 0 && failures.length === 0 && unreachable.length === 0) {
+  if (
+    violations.length === 0 &&
+    failures.length === 0 &&
+    unreachable.length === 0 &&
+    cssHits.length === 0
+  ) {
     console.log(
-      `✅ 样式块守门：${files.length} 个 .vue 文件检查通过——白名单（${STYLE_BLOCK_WHITELIST.length} 个存量文件）外零 <style> 块且全条目可达（ADR-0093 / #1360）`,
+      `✅ 样式块守门：${files.length} 个 .vue 文件 + ${cssFiles.length} 个 .css.ts 检查通过——白名单（${STYLE_BLOCK_WHITELIST.length} 个存量文件）外零 <style> 块且全条目可达，css.ts 零 CJS 形态字面串（ADR-0093 / #1360 / #2189）`,
     );
     return;
   }
@@ -118,6 +166,14 @@ function main(): void {
       `✗ 新增 <style> 块：${v}\n  样式方案守门（ADR-0093 / issue #888）：白名单外禁止 <style> 块，` +
         `新样式一律写组件旁路 vanilla-extract 样式文件（*.css.ts，与组件同目录共置）。` +
         `若属存量文件迁移回退或清单漂移，请同步 scripts/check-style-blocks.ts 的 STYLE_BLOCK_WHITELIST。`,
+    );
+  }
+  for (const hit of cssHits) {
+    console.error(
+      `✗ css.ts 内 CJS 形态字面串：${hit.file}:${hit.line} — ${hit.text}\n` +
+        `  vanilla-extract 以 mlly CJS_RE（不剥注释）判模块语法，命中即按 CommonJS 注入` +
+        `require 版作用域包装，ESM 求值下失效、vite build 失败（#2189）。` +
+        `改写措辞（如 global.css → 全局样式基座）或移出该文件。`,
     );
   }
   process.exit(1);
