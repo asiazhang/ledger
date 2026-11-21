@@ -813,6 +813,12 @@ fn bootstrap_migrates_older_schema_snapshot() {
         stale
             .execute("DROP INDEX IF EXISTS idx_transactions_funding", [])
             .unwrap();
+        // V038（issue #2197）：kind 维度计数覆盖索引引用 funding_account_id 列，
+        // 须先卸下再 DROP 该列（索引列不可直接 DROP COLUMN）；快照回退到 V021
+        // 时代后，前向重放 V038 会按链内 DDL 重建本索引。
+        stale
+            .execute("DROP INDEX IF EXISTS idx_transactions_kind_count", [])
+            .unwrap();
         stale
             .execute(
                 "ALTER TABLE transactions DROP COLUMN funding_account_id",
