@@ -135,12 +135,17 @@ describe("fixture 形态在场（缺形态即红：计数阈值只对覆盖到�
   it("金额隐私模式：掩码即时呈现于全部金额格（••••）", async () => {
     // 先挂载再置位：app store 首次创建时从 localStorage 水合开关、会覆写渲染前置位
     // （chart-privacy-mask 同款先例）；先挂载后置位也顺带断言「开关即时生效」。
+    // 开关是展示格式化层模块级单点，用例结尾复原避免污染同文件后续用例。
     const wrapper = await mountAndFlush();
-    amountPrivacyEnabled.value = true;
-    await nextTick();
-    const amountCells = wrapper.findAll(".amount-cell");
-    expect(amountCells.length).toBe(FIXTURE_TXN_COUNT);
-    for (const cell of amountCells) expect(cell.text()).toBe("••••");
+    try {
+      amountPrivacyEnabled.value = true;
+      await nextTick();
+      const amountCells = wrapper.findAll(".amount-cell");
+      expect(amountCells.length).toBe(FIXTURE_TXN_COUNT);
+      for (const cell of amountCells) expect(cell.text()).toBe("••••");
+    } finally {
+      amountPrivacyEnabled.value = false;
+    }
   });
 });
 

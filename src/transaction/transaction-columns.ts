@@ -255,6 +255,22 @@ function sourceDisplayOf(
   };
 }
 
+/** 出资分解行标注派生（单一出处）：多账户「等 N 账户」、同账户多条「同账户 N 笔」、
+ * 单条无标注；退款派生分解行另附「按比例自动分解」。预计算层与渲染回落路径
+ * 共用本函数，两路径零口径漂移。 */
+function fundingMarkersOf(row: Transaction): { marker: string | null; derived: string | null } {
+  const distinctAccounts = new Set(row.fundings.map((f) => f.account_id)).size;
+  return {
+    marker:
+      distinctAccounts > 1
+        ? t("transactions.funding.accountCount", { n: distinctAccounts })
+        : row.fundings.length > 1
+          ? t("transactions.funding.sameAccountEntries", { n: row.fundings.length })
+          : null,
+    derived: row.fundings.some((f) => f.derived) ? t("transactions.funding.autoDerived") : null,
+  };
+}
+
 /** 账户列展示形态与出资分解标注（与 renderAccountCell 分派逻辑逐字段一致的单源
  * 数据面，renderFundingAccountCell 预计算路径与移动档卡片共用）。 */
 function accountDisplayOf(
@@ -265,20 +281,13 @@ function accountDisplayOf(
 > {
   if (row.fundings.length > 0) {
     // 出资分解行（分解子行在场 ⇔ account_id 读回 null，ADR-0138 决策 6）：
-    // 首条出资账户 + 「等 N 账户 / 同账户 N 笔 / 按比例自动分解」标注。
-    const distinctAccounts = new Set(row.fundings.map((f) => f.account_id)).size;
+    // 首条出资账户 + 标注（fundingMarkersOf 单源）。
+    const markers = fundingMarkersOf(row);
     return {
       accountPrimaryId: row.fundings[0].account_id,
       accountSecondaryId: null,
-      fundingMarker:
-        distinctAccounts > 1
-          ? t("transactions.funding.accountCount", { n: distinctAccounts })
-          : row.fundings.length > 1
-            ? t("transactions.funding.sameAccountEntries", { n: row.fundings.length })
-            : null,
-      fundingDerivedMarker: row.fundings.some((f) => f.derived)
-        ? t("transactions.funding.autoDerived")
-        : null,
+      fundingMarker: markers.marker,
+      fundingDerivedMarker: markers.derived,
     };
   }
   const accountId = row.account_id ?? "";
@@ -337,6 +346,7 @@ export function precomputeTransactionDisplayRows(
   const theme = useAppStore().theme;
   const expandPurchases = options.expandPurchases ?? false;
   return rows.flatMap((row) => {
+    const merchant = row.merchant_id ? reference.merchantMap.get(row.merchant_id) : undefined;
     const base: PrecomputedTransactionRow = {
       ...row,
       purchaseIndex: -1,
@@ -347,10 +357,8 @@ export function precomputeTransactionDisplayRows(
         amountText: displayAmountText(reference, row),
         amountColor: kindSemanticColor(row.kind, theme),
         ...accountDisplayOf(row),
-        merchantName: row.merchant_id
-          ? (reference.merchantMap.get(row.merchant_id)?.name ?? null)
-          : null,
-        merchantClickable: row.merchant_id ? reference.merchantMap.has(row.merchant_id) : false,
+        merchantName: merchant?.name ?? null,
+        merchantClickable: !!merchant,
         ...sourceDisplayOf(row.source),
       },
     };
@@ -640,23 +648,14 @@ const ACCOUNT_CELL_SUFFIX_STYLE =
  * 导出面（issue #846）：移动档卡片列表消费同一渲染，账户呈现三形态单源。 */
 function renderFundingAccountCell(row: Transaction): VNode {
   const first = row.fundings[0];
-  // 标注文案读预计算（#2188：patch 期零取词）；display 缺省回落渲染期单源计算。
+  // 标注文案读预计算（#2188：patch 期零取词）；display 缺省回落渲染期单源计算
+  //（fundingMarkersOf 与预计算层共用同一派生函数，两路径零口径漂移）。
   const display = precomputedDisplayOf(row);
-  const markerText = display
-    ? display.fundingMarker
-    : (() => {
-        const distinctAccounts = new Set(row.fundings.map((f) => f.account_id)).size;
-        return distinctAccounts > 1
-          ? t("transactions.funding.accountCount", { n: distinctAccounts })
-          : row.fundings.length > 1
-            ? t("transactions.funding.sameAccountEntries", { n: row.fundings.length })
-            : null;
-      })();
-  const derivedMarkerText = display
-    ? display.fundingDerivedMarker
-    : row.fundings.some((f) => f.derived)
-      ? t("transactions.funding.autoDerived")
-      : null;
+  const markers = display
+    ? { marker: display.fundingMarker, derived: display.fundingDerivedMarker }
+    : fundingMarkersOf(row);
+  const markerText = markers.marker;
+  const derivedMarkerText = markers.derived;
   const line = h(
     "div",
     {
