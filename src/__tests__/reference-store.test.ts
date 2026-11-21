@@ -80,6 +80,20 @@ const mockCategories: Category[] = [
     device_id: "test",
     is_deleted: false,
   },
+  {
+    // 软删分类（issue #2187）：历史交易口径——不进在用字典，路径缓存保留历史路径
+    id: "cat-del",
+    name: "旅游",
+    kind: "expense",
+    parent_id: "cat-root",
+    icon: null,
+    sort_order: 0,
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+    version: 1,
+    device_id: "test",
+    is_deleted: true,
+  },
 ];
 
 const mockMerchants: Merchant[] = [
@@ -158,7 +172,8 @@ describe("useReferenceStore", () => {
     await store.refresh();
     expect(store.currencies).toEqual(mockCurrencies);
     expect(store.accounts).toEqual(mockAccounts);
-    expect(store.categories).toEqual(mockCategories);
+    // 含软删全量拉取按 is_deleted 拆分：在用字典只含在用行（软删进 deletedCategories 内部缓存）
+    expect(store.categories.map((c) => c.id)).toEqual(["cat-root", "cat-child", "cat-income"]);
     expect(store.merchants).toEqual(mockMerchants);
     expect(store.insurers.map((i) => i.id)).toEqual(["ins-1"]);
     expect(store.deletedInsurers.get("ins-del")?.name).toBe("已删保司");
@@ -394,10 +409,57 @@ describe("useReferenceStore", () => {
     expect(store.categoryPath("cat-child")).toBe("餐饮 > 外卖");
     expect(store.categoryPath("cat-root")).toBe("餐饮");
     expect(store.categoryPath(null)).toBe("");
+    // 未知标识回空串（调用方兜底，口径不变）；软删分类保留历史路径（历史交易口径，
+    // issue #2187：在用字典不含软删，路径缓存由含软删全量字典派生）
+    expect(store.categoryPath("cat-gone")).toBe("");
+    expect(store.categoryPath("cat-del")).toBe("餐饮 > 旅游");
     const expenseTree = store.treeCategoryOptions("expense");
     expect(expenseTree.map((n) => n.key)).toEqual(["cat-root"]);
     expect(expenseTree[0].children?.map((c) => c.key)).toEqual(["cat-child"]);
     expect(store.treeCategoryOptions("income").map((n) => n.key)).toEqual(["cat-income"]);
+  });
+
+  it("分类路径缓存随失效重拉同步（重命名 / 软删后路径即时更新，issue #2187）", async () => {
+    const store = useReferenceStore();
+    await store.refresh();
+    expect(store.categoryPath("cat-child")).toBe("餐饮 > 外卖");
+
+    // 重命名：失效重拉（ledger:changed 触发的 refresh 同一出口）后新路径即时生效
+    wireInvokeSeam({
+      overrides: {
+        list_currencies: mockCurrencies,
+        list_accounts: mockAccounts,
+        list_categories: [
+          mockCategories[0],
+          { ...mockCategories[1], name: "快餐" },
+          ...mockCategories.slice(2),
+        ],
+        list_merchants: mockMerchants,
+        list_insurers: mockInsurers,
+      },
+    });
+    await store.refresh();
+    expect(store.categoryPath("cat-child")).toBe("餐饮 > 快餐");
+
+    // 软删：从在用字典消失，路径缓存保留历史路径
+    wireInvokeSeam({
+      overrides: {
+        list_currencies: mockCurrencies,
+        list_accounts: mockAccounts,
+        list_categories: [
+          mockCategories[0],
+          { ...mockCategories[1], name: "快餐", is_deleted: true },
+          ...mockCategories.slice(2),
+        ],
+        list_merchants: mockMerchants,
+        list_insurers: mockInsurers,
+      },
+    });
+    await store.refresh();
+    expect(store.categories.map((c) => c.id)).toEqual(["cat-root", "cat-income"]);
+    expect(store.categoryMap.get("cat-child")?.name).toBe("快餐");
+    expect(store.categoryMap.get("cat-del")?.name).toBe("旅游");
+    expect(store.categoryPath("cat-child")).toBe("餐饮 > 快餐");
   });
 
   it("categoryDisplayName：子分类路径名、顶级自身名，解析不到回退兜底名（issue #356）", async () => {

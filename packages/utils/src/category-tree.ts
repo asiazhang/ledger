@@ -9,9 +9,9 @@ export interface CategoryTreeNode {
   [key: string]: unknown;
 }
 
-function makeCategoryMap(categories: Category[]): Map<string, Category> {
+function makeCategoryMap(categories: Iterable<Category>): Map<string, Category> {
   const m = new Map<string, Category>();
-  categories.forEach((c) => m.set(c.id, c));
+  for (const c of categories) m.set(c.id, c);
   return m;
 }
 
@@ -23,14 +23,28 @@ export function categoryChildren(categories: Category[], parentId: string): Cate
   return categories.filter((c) => c.parent_id === parentId);
 }
 
+/**
+ * 分类路径映射（issue #2187）：一次遍历把分类清单整体折叠为
+ * 「分类标识 → 完整展示路径」的 Map，供消费方按标识 O(1) 查表取路径——
+ * 替代逐次调用 categoryPath 时线性遍历重建临时映射的重复开销。
+ * 路径口径与 categoryPath 单条查询完全一致：顶级为自身名，子分类为
+ * 「父 > 子」，父级解析不到（孤儿引用）退自身名；同一输入下两函数结果相同。
+ * 调用方传入含软删全量清单即可同时缓存软删分类的历史路径（历史交易口径）。
+ */
+export function buildCategoryPathMap(categories: Iterable<Category>): Map<string, string> {
+  const byId = makeCategoryMap(categories);
+  const paths = new Map<string, string>();
+  for (const c of byId.values()) {
+    const parent = c.parent_id != null ? byId.get(c.parent_id) : undefined;
+    paths.set(c.id, parent ? `${parent.name} > ${c.name}` : c.name);
+  }
+  return paths;
+}
+
 export function categoryPath(categories: Category[], id: string | null | undefined): string {
-  if (id == null) return "";
-  const map = makeCategoryMap(categories);
-  const cat = map.get(id);
-  if (!cat) return "";
-  if (cat.parent_id == null) return cat.name;
-  const parent = map.get(cat.parent_id);
-  return parent ? `${parent.name} > ${cat.name}` : cat.name;
+  // 单条查询复用同一口径（buildCategoryPathMap 折叠后查表），双份口径不再并存；
+  // 本纯函数已不在热路径（store 消费整体折叠缓存，见 issue #2187）。
+  return buildCategoryPathMap(categories).get(id ?? "") ?? "";
 }
 
 export function categoryRoot(categories: Category[], categoryId: string): Category | undefined {

@@ -150,3 +150,13 @@ export function resetFakeMedia(): void {
   state = { ...DEFAULT_MEDIA_STATE };
   registry = [];
 }
+
+/**
+ * 观察口：统计指定查询字符串在当前注册表中累计登记的 change 监听数
+ * （跨全部已发放的 MediaQueryList 求和，issue #2187 输入轴共享单例的
+ * 「多消费者仅一组监听」计数断言消费本口；查询串须与产品代码收口的
+ * 查询字符串完全一致）。接缝外部行为面不变，仅新增只读观测。
+ */
+export function fakeMediaListenerCount(query: string): number {
+  return registry.reduce((n, entry) => (entry.media === query ? n + entry.listeners.size : n), 0);
+}

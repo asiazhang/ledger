@@ -14,7 +14,7 @@ import {
 import {
   rootCategories as pureRootCategories,
   categoryChildren as pureCategoryChildren,
-  categoryPath as pureCategoryPath,
+  buildCategoryPathMap as pureBuildCategoryPathMap,
   buildCategoryTree as pureBuildCategoryTree,
   type CategoryTreeNode,
 } from "@ledger/utils/category-tree";
@@ -219,8 +219,18 @@ export const useReferenceStore = defineStore("reference", () => {
     return pureCategoryChildren(categories.value, parentId);
   }
 
+  /**
+   * 分类路径缓存（issue #2187）：分类标识 → 完整展示路径的 O(1) 查表映射，
+   * 由含软删全量分类字典派生（categoryMap：在用 + 软删，历史交易口径同商户先例
+   * issue #191）——路径查询不再每次线性遍历全部分类重建临时映射。
+   * 路径口径与纯函数单条查询一致（顶级名 / 父 > 子 / 孤儿退自身名）；
+   * 空与未知标识不在映射内，查询回空串由调用方兜底。computed 随字典重拉
+   * 自动重建：失效信号（ledger:changed）重拉后重命名或软删分类的路径即时更新。
+   */
+  const categoryPathMap = computed(() => pureBuildCategoryPathMap(categoryMap.value.values()));
+
   function categoryPath(id: string | null | undefined): string {
-    return pureCategoryPath(categories.value, id);
+    return categoryPathMap.value.get(id ?? "") ?? "";
   }
 
   /** 分类显示名（issue #356）：顶级为自身名，子分类为「父 > 子」路径名；
