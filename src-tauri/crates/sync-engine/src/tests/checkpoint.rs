@@ -913,9 +913,7 @@ fn bootstrap_migrates_older_schema_snapshot() {
                 r.get::<_, String>(1)?,
                 r.get::<_, String>(2)?,
                 r.get::<_, Option<String>>(3)?
-                    .map(|s| {
-                        s.split_whitespace().collect::<Vec<_>>().join(" ")
-                    })
+                    .map(|s| s.split_whitespace().collect::<Vec<_>>().join(" "))
                     .unwrap_or_default(),
             ))
         })
