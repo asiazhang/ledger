@@ -20,117 +20,21 @@ use crate::error::{AppError, Result};
 /// `packages/i18n/src/locales/{zh-CN,en-US}/errors.json` 的 `boot.schema-ahead`。
 pub const BOOT_SCHEMA_AHEAD: &str = "boot.schema-ahead";
 
-/// 迁移集合。新增 schema 变更或种子数据时，在 `src-tauri/migrations/` 下新建
-/// `V00X__名称.sql`，并在 `migrations()` 的 `vec!` 里追加
-/// `M::up(include_str!("../../../../migrations/V00X__名称.sql"))`。
-/// 版本由 SQLite 的 `user_version` 字段自动追踪，无需手动维护版本表。
+// 迁移链 SQL 清单与链长：`crates/infra/build.rs` 按目录投影生成，勿手改；
+// 单一事实源 = `src-tauri/migrations/` 目录本身（issue #2199）。
+include!(concat!(env!("OUT_DIR"), "/migration_chain.rs"));
+
+/// 迁移集合。新增 schema 变更或种子数据时，只在 `src-tauri/migrations/` 下新建
+/// `V00X__名称.sql`——注册链（[`MIGRATION_CHAIN`]）与链长（[`MIGRATION_COUNT`]）
+/// 由 `crates/infra/build.rs` 按目录投影生成，无手工清单（issue #2199；#2197 现场
+/// 即漏改手工副本而测试红）。版本由 SQLite 的 `user_version` 字段自动追踪，无需
+/// 手动维护版本表。
 /// pub 语义边界：生产路径一律经 [`init_db`]（迁移 + 守卫单点）；pub 只为测试侧
 /// 构造历史世界（如旧形态备份夹具的拆库前形态，`to_version` 停版）。
 pub fn migrations() -> &'static Migrations<'static> {
     static MIGRATIONS: OnceLock<Migrations<'static>> = OnceLock::new();
-    MIGRATIONS.get_or_init(|| {
-        Migrations::new(vec![
-            M::up(include_str!("../../../../migrations/V001__initial.sql")),
-            M::up(include_str!("../../../../migrations/V002__investment.sql")),
-            M::up(include_str!(
-                "../../../../migrations/V003__scheduled_transactions.sql"
-            )),
-            M::up(include_str!(
-                "../../../../migrations/V004__seed_defaults.sql"
-            )),
-            // 注：原 V005__search_index.sql（搜索索引）已从序列整体移除（见 ADR-0027），
-            // 序列号不回填，后续迁移文件名保持不变；新库不再产生搜索索引对象。
-            M::up(include_str!(
-                "../../../../migrations/V006__transaction_amount_index.sql"
-            )),
-            M::up(include_str!(
-                "../../../../migrations/V007__transaction_idempotency_key.sql"
-            )),
-            M::up(include_str!(
-                "../../../../migrations/V008__app_settings.sql"
-            )),
-            M::up(include_str!("../../../../migrations/V009__items.sql")),
-            M::up(include_str!(
-                "../../../../migrations/V010__price_history.sql"
-            )),
-            M::up(include_str!(
-                "../../../../migrations/V011__instruments_source.sql"
-            )),
-            M::up(include_str!("../../../../migrations/V012__policies.sql")),
-            M::up(include_str!(
-                "../../../../migrations/V013__transaction_policy_id.sql"
-            )),
-            M::up(include_str!(
-                "../../../../migrations/V014__subscription_plan_policy_id.sql"
-            )),
-            M::up(include_str!(
-                "../../../../migrations/V015__physical_assets.sql"
-            )),
-            M::up(include_str!(
-                "../../../../migrations/V016__transaction_structural_indexes.sql"
-            )),
-            M::up(include_str!(
-                "../../../../migrations/V017__balance_net_worth_cache.sql"
-            )),
-            M::up(include_str!("../../../../migrations/V018__note_pinyin.sql")),
-            M::up(include_str!(
-                "../../../../migrations/V019__insurer_dictionary.sql"
-            )),
-            M::up(include_str!("../../../../migrations/V020__sync_oplog.sql")),
-            M::up(include_str!(
-                "../../../../migrations/V021__sync_merge_semantics.sql"
-            )),
-            M::up(include_str!(
-                "../../../../migrations/V022__sync_checkpoint.sql"
-            )),
-            M::up(include_str!(
-                "../../../../migrations/V023__transaction_funding_account.sql"
-            )),
-            M::up(include_str!(
-                "../../../../migrations/V024__security_lot_adjustments.sql"
-            )),
-            M::up(include_str!(
-                "../../../../migrations/V025__transaction_index_cleanup.sql"
-            )),
-            M::up(include_str!(
-                "../../../../migrations/V026__account_credit_terms.sql"
-            )),
-            M::up(include_str!(
-                "../../../../migrations/V027__security_transaction_origin.sql"
-            )),
-            M::up(include_str!(
-                "../../../../migrations/V028__instrument_constant_unit_price.sql"
-            )),
-            M::up(include_str!(
-                "../../../../migrations/V029__transaction_fx_rate_trace.sql"
-            )),
-            M::up(include_str!(
-                "../../../../migrations/V030__transaction_merchant_covering_index.sql"
-            )),
-            M::up(include_str!(
-                "../../../../migrations/V031__drop_note_pinyin.sql"
-            )),
-            M::up(include_str!("../../../../migrations/V032__goals.sql")),
-            M::up(include_str!(
-                "../../../../migrations/V033__security_transaction_to_instrument_index.sql"
-            )),
-            M::up(include_str!(
-                "../../../../migrations/V034__transaction_fundings.sql"
-            )),
-            M::up(include_str!(
-                "../../../../migrations/V035__transaction_source_order_no.sql"
-            )),
-            M::up(include_str!(
-                "../../../../migrations/V036__sync_db_split.sql"
-            )),
-            M::up(include_str!(
-                "../../../../migrations/V037__account_archive.sql"
-            )),
-            M::up(include_str!(
-                "../../../../migrations/V038__transaction_kind_count_index.sql"
-            )),
-        ])
-    })
+    MIGRATIONS
+        .get_or_init(|| Migrations::new(MIGRATION_CHAIN.iter().map(|sql| M::up(sql)).collect()))
 }
 
 /// 库版本超前守卫（[`BOOT_SCHEMA_AHEAD`] 的判定本体，[`init_db`] 首步接线）：
