@@ -43,7 +43,6 @@ describe("参考命令覆写（overrides 表优先于规范夹具）", () => {
     const custom = [{ code: "USD", name: "美元", symbol: "$", decimal_places: 2 }];
     wireInvokeSeam({ overrides: { list_currencies: custom } });
     await expect(mockInvoke("list_currencies")).resolves.toBe(custom);
-    // 未覆写的参考命令仍走规范夹具
     await expect(mockInvoke("list_merchants")).resolves.toBe(refMerchants);
   });
 
@@ -58,7 +57,6 @@ describe("参考命令覆写（overrides 表优先于规范夹具）", () => {
     await expect(mockInvoke("list_merchants")).resolves.toBe(refMerchants);
     const emptied: typeof refMerchants = [];
     merchants = emptied;
-    // 派发时取值：可变库改写后重拉读到最新值
     await expect(mockInvoke("list_merchants")).resolves.toBe(emptied);
     await expect(mockInvoke("list_accounts", { id: "acc-1" })).resolves.toEqual({
       echoed: { id: "acc-1" },
@@ -69,7 +67,7 @@ describe("参考命令覆写（overrides 表优先于规范夹具）", () => {
     wireInvokeSeam({
       overrides: {
         list_insurers: () => Promise.reject(new Error("db 错误")),
-        list_categories: () => new Promise(() => {}), // 永不 resolve（在途）
+        list_categories: () => new Promise(() => {}),
       },
     });
     await expect(mockInvoke("list_insurers")).rejects.toThrow("db 错误");
@@ -96,7 +94,6 @@ describe("参考命令覆写（overrides 表优先于规范夹具）", () => {
         : base(cmd, args as Record<string, unknown>),
     );
     await expect(mockInvoke("create_transaction")).resolves.toBe("new-id");
-    // 未覆写的参考命令经委托仍走规范夹具
     await expect(mockInvoke("list_insurers")).resolves.toBe(refInsurers);
     await expect(mockInvoke("unknown_cmd")).rejects.toThrow("unexpected invoke: unknown_cmd");
   });

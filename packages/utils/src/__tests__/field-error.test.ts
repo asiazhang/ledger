@@ -9,13 +9,6 @@ import {
   type AmountJudgment,
 } from "../field-error";
 
-/**
- * 字段错误态共享判定单点测试（ADR-0058 / issue #414，规则表接缝）：
- * 穷举金额格式错误闭集（解析失败 / 超出表示精度 / 必填为空）与
- * 错误态装配的时机口径（输入中即红；空值红在失焦或保存尝试后）。
- * 改判定口径只碰 ../field-error 一处，此处同步钉死。
- */
-
 describe("judgeAmountText（金额格式判定闭集）", () => {
   describe("必填为空", () => {
     it("空字符串 → empty", () => {
@@ -50,20 +43,12 @@ describe("judgeAmountText（金额格式判定闭集）", () => {
   });
 
   describe("解析失败（parse-error）", () => {
-    it.each([
-      "4.30发", // 混排非数字字符（原始诉求）
-      "abc",
-      "1e3", // 科学计数法（与 yuanToCents 口径一致：拒绝）
-      "1,000", // 千分位逗号
-      "4.3.0", // 多个小数点
-      "１２３", // 全角数字
-      ".", // 无数字
-      "-", // 只有符号
-      "12.5. ",
-      "1 2",
-    ])("%s → parse-error", (text) => {
-      expect(judgeAmountText(text)).toEqual({ kind: "parse-error" });
-    });
+    it.each(["4.30发", "abc", "1e3", "1,000", "4.3.0", "１２３", ".", "-", "12.5. ", "1 2"])(
+      "%s → parse-error",
+      (text) => {
+        expect(judgeAmountText(text)).toEqual({ kind: "parse-error" });
+      },
+    );
   });
 
   describe("超出表示精度（over-precision，金额以整数分表达、至多两位小数）", () => {
@@ -194,8 +179,6 @@ describe("fieldErrorKind（错误态装配：格式类即时红，空值红在�
   const untouched = { touched: false, saveAttempted: false };
 
   it("合法判定永无错误态（任意时机）", () => {
-    // 以真实判定闭集类型承载字面量（fieldErrorKind 入参按结构只取 kind，
-    // 真实调用点传入的是含 yuan 的完整判定对象）
     const okJudgment: AmountJudgment = { kind: "ok", yuan: 1 };
     expect(fieldErrorKind(okJudgment, untouched)).toBeNull();
     expect(fieldErrorKind(okJudgment, { touched: true, saveAttempted: true })).toBeNull();

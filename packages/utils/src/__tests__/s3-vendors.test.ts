@@ -12,12 +12,6 @@ import {
   vendorTierKey,
 } from "../s3-vendors";
 
-/**
- * 厂商预设纯函数（issue #1220，父 spec #1214）。
- *
- * 本票验收把「预填与反查」的覆盖明确归到纯函数单测：下拉项构成、命中预填、端点
- * 命中与未命中都在这里钉死；组件侧只验证渲染与「预设不落库」。
- */
 describe("vendorOptions 下拉项构成", () => {
   it("末尾固定「其他（自定义）」，其余全是预设厂商", () => {
     const options = vendorOptions();
@@ -84,17 +78,14 @@ describe("vendorPrefill 选中厂商预填", () => {
 
 describe("matchVendorByEndpoint 端点反查", () => {
   it.each([
-    // 阿里云：S3 协议专属端点（预设模板）与原生端点都认。
     ["https://s3.oss-cn-hangzhou.aliyuncs.com", "aliyun-oss"],
     ["https://bucket.s3.oss-cn-hangzhou.aliyuncs.com", "aliyun-oss"],
     ["https://oss-cn-hangzhou.aliyuncs.com", "aliyun-oss"],
     ["https://bucket.oss-cn-hangzhou.aliyuncs.com", "aliyun-oss"],
-    // 腾讯云：COS 的 S3 兼容端点即其原生端点（虚拟托管）。
     ["https://cos.ap-guangzhou.myqcloud.com", "tencent-cos"],
     ["https://bucket-1250000000.cos.ap-guangzhou.myqcloud.com", "tencent-cos"],
     ["https://obs.cn-north-4.myhuaweicloud.com", "huawei-obs"],
     ["https://bucket.obs.cn-north-4.myhuaweicloud.com", "huawei-obs"],
-    // 火山引擎：S3 协议专属端点是 tos-s3-*，与原生 tos-* 不同名。
     ["https://tos-s3-cn-beijing.volces.com", "volcengine-tos"],
     ["https://bucket.tos-s3-cn-beijing.volces.com", "volcengine-tos"],
     ["https://tos-cn-beijing.volces.com", "volcengine-tos"],
@@ -115,19 +106,15 @@ describe("matchVendorByEndpoint 端点反查", () => {
     expect(matchVendorByEndpoint("")).toBe(CUSTOM_VENDOR_ID);
     expect(matchVendorByEndpoint("   ")).toBe(CUSTOM_VENDOR_ID);
     expect(matchVendorByEndpoint("not a url at all")).toBe(CUSTOM_VENDOR_ID);
-    // 后缀判据带前导点：仿冒域名不误判成厂商预设。
     expect(matchVendorByEndpoint("https://aliyuncs.com.evil.example")).toBe(CUSTOM_VENDOR_ID);
   });
 
   it("同品牌的其他服务不算命中（只看品牌后缀会把 ECS/CDN 误判成对象存储）", () => {
-    // 服务段前缀 + 品牌后缀两端同时成立才算命中：华为云 ECS、腾讯云 CDN、
-    // 火山引擎其他 volces.com 服务都不是对象存储端点。
     expect(matchVendorByEndpoint("https://ecs.cn-north-4.myhuaweicloud.com")).toBe(
       CUSTOM_VENDOR_ID,
     );
     expect(matchVendorByEndpoint("https://cdn.myqcloud.com")).toBe(CUSTOM_VENDOR_ID);
     expect(matchVendorByEndpoint("https://iam.volces.com")).toBe(CUSTOM_VENDOR_ID);
-    // 品牌域名本身（无服务段）也不算命中。
     expect(matchVendorByEndpoint("https://myhuaweicloud.com")).toBe(CUSTOM_VENDOR_ID);
     expect(matchVendorByEndpoint("https://aliyuncs.com")).toBe(CUSTOM_VENDOR_ID);
   });
@@ -170,7 +157,6 @@ describe("预设表诚实性与完整性守门", () => {
   });
 
   it("未实测前档位恒 false：没有任何厂商被凭空标成「已实测」", () => {
-    // #1222 真实桶实测清单落地后，这条断言随之改为「已实测集合与清单一致」。
     expect(S3_VENDOR_PRESETS.every((v) => v.verified === false)).toBe(true);
   });
 

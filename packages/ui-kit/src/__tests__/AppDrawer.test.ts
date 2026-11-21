@@ -4,7 +4,6 @@ import { defineComponent, ref } from "vue";
 import AppDrawer from "../AppDrawer.vue";
 import { hasOpenOverlay, openOverlayNames } from "../overlayRegistry";
 
-/** 受控宿主：以 show 状态驱动 AppDrawer（生产用法 v-model:show 的等价形态） */
 function mountDrawer(initialShow: boolean) {
   const Harness = defineComponent({
     components: { AppDrawer },
@@ -19,7 +18,6 @@ function mountDrawer(initialShow: boolean) {
     `,
   });
   const wrapper = mount(Harness);
-  // NDrawer 内容传送门到 body，断言走 document.body（AppModal.test 同款）
   const marker = () => document.body.querySelector(".drawer-marker");
   const setOpen = async (value: boolean) => {
     (wrapper.vm as unknown as { show: boolean }).show = value;

@@ -47,10 +47,10 @@ describe("yuanToCents（元 → 分）", () => {
 
   it("非法输入 → null", () => {
     expect(yuanToCents("abc")).toBeNull();
-    expect(yuanToCents("1e3")).toBeNull(); // 科学计数法不识别
+    expect(yuanToCents("1e3")).toBeNull();
     expect(yuanToCents("12.34.56")).toBeNull();
     expect(yuanToCents("--5")).toBeNull();
-    expect(yuanToCents("15.")).toBeNull(); // 小数点后必须有数字
+    expect(yuanToCents("15.")).toBeNull();
   });
 
   it("超大数字溢出 → null（不产生 Infinity）", () => {

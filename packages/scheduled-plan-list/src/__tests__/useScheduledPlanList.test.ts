@@ -31,17 +31,6 @@ import type {
   ScheduledTransactionWithExt,
 } from "@ledger/types";
 
-// ---------------------------------------------------------------------------
-// 假 sink 消费共享唯一定义点 @ledger/test-support/toast-sink（#1354 上收，
-// 原局部替身与壳侧 factories.ts 双源随本票消除）；计划/期次数据工厂不在本地
-// 定义之列（结构守门规则 4：唯一定义点在共享工厂层出口），消费
-// @ledger/test-support/plan-factories（#1322 上收住址）。
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// 详情组装留守本地
-// ---------------------------------------------------------------------------
-
 function makeDetail(
   plan: ScheduledTransactionWithExt,
   pending_occurrences: ScheduledTransactionOccurrence[],
@@ -59,10 +48,6 @@ function makeDetail(
     occurrences: pending_occurrences,
   };
 }
-
-// ---------------------------------------------------------------------------
-// invoke 布线：可变数据源（状态操作后重载读最新值）；保司字典走接缝内建兜底
-// ---------------------------------------------------------------------------
 
 let mockPlans: ScheduledTransactionWithExt[] = [];
 const mockDetails = new Map<string, ScheduledTransactionDetail>();
@@ -83,14 +68,6 @@ const PLAN_INVOKE: Record<string, InvokeSeamOverride> = {
   },
 };
 
-// ---------------------------------------------------------------------------
-// 消费契约镜像（ADR-0030 先例）：最小挂载壳直打工厂实例；模块内化请求发起与
-// 错误提示。重拉观察面 = list_scheduled_transactions 调用次数——零消费的
-// refreshVersion 已随 issue #1008 删除，「等待重拉完成」由 await load() 承担；
-// 加载失败的 toast 走 Loadable sink，用例经假 sink 断言。
-// ---------------------------------------------------------------------------
-
-/** 转账行扩展：下期 = 最早 pending 期次（详情失败时为 null）。 */
 interface TransferExt {
   next: ScheduledTransactionOccurrence | null;
 }
@@ -137,7 +114,6 @@ function lastMessage(method: string): string {
   return found!.text;
 }
 
-/** 清单命令调用次数（重拉观察面，替代已删的 refreshVersion）。 */
 function listCalls(): number {
   return mockInvoke.mock.calls.filter(([cmd]) => cmd === "list_scheduled_transactions").length;
 }
@@ -233,14 +209,12 @@ describe("useScheduledPlanList 清单加载", () => {
     const bad = makeTransferPlan({ id: "bad1", note: "详情失败行" }, null);
     mockPlans = [ok, bad];
     mockDetails.set("ok1", makeDetail(ok, []));
-    // bad1 详情命令将失败
     const { list } = mountHarness();
     await list.load();
     await flushPromises();
     expect(list.rows.value.find((r) => r.plan.core.id === "bad1")!.detailFailed).toBe(true);
     expect(list.rows.value.find((r) => r.plan.core.id === "bad1")!.ext.next).toBeNull();
     expect(list.rows.value.find((r) => r.plan.core.id === "ok1")!.detailFailed).toBe(false);
-    // 详情失败不拖垮整单加载：行照常落位
     expect(list.rows.value).toHaveLength(2);
   });
 
@@ -257,7 +231,6 @@ describe("useScheduledPlanList 清单加载", () => {
     failList = true;
     await list.load();
     await flushPromises();
-    // 默认策略 = 裸 errorMessage（ADR-0040 决策 2）：动作上下文由视图 warning 位承载
     expect(sink.error).toHaveBeenCalledWith("数据库不可用");
     expect(list.error.value).toBe("数据库不可用");
     expect(list.loading.value).toBe(false);
@@ -281,7 +254,6 @@ describe("useScheduledPlanList 状态过滤", () => {
     await flushPromises();
     expect(list.statusFilter.value).toBe("completed");
     expect(list.filteredRows.value.map((r) => r.plan.core.id)).toEqual(["d1"]);
-    // 状态过滤是纯前端过滤：不产生重拉
     expect(listCalls()).toBe(1);
   });
 
@@ -373,8 +345,6 @@ describe("useScheduledPlanList Plan Lifecycle 操作", () => {
   });
 });
 
-// 「未结束」判据（active | paused）的唯一定义点：取消可用性（行操作矩阵）与账户
-// 归档提示（`isUnfinishedPlan`）同吃这一份，两处不得各写一份字面量。
 describe("isUnfinishedStatus（Plan Lifecycle「未结束」判据）", () => {
   it("active 与 paused 未结束；cancelled 与 completed 已结束", () => {
     expect(isUnfinishedStatus("active")).toBe(true);

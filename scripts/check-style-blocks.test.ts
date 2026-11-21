@@ -5,14 +5,6 @@ import { join } from "node:path";
 import { STYLE_BLOCK_WHITELIST } from "../scripts/check-style-blocks.ts";
 import { gateScript, runGateScript } from "./run-gate-script.test-helper.ts";
 
-// 被测对象是仓库工具脚本 scripts/check-style-blocks.ts（样式块守门，issue #888 /
-// ADR-0093）。脚本以 Bun 运行时执行（ADR-0083）：runGateScript 以 spawnSync('bun')
-// 与门槛调用同款拉起，测的就是门槛路径。按测试决策只测外部可观察结果——进程退出码
-// 与输出（ADR-0087 断言强度），不测内部函数；通过位置参数把扫描目标指向临时夹具仓库根
-// （布局与生产扫描面同构：白名单键含 src/ 前缀、相对仓库根），spawnSync 的 cwd 同步
-// 指向夹具根——守门的路径归一化以 cwd 为基准，夹具运行时归一化须落在夹具上。
-// 夹具文件清单自助手导出的 STYLE_BLOCK_WHITELIST 派生（单一事实源，无双源漂移，
-// TOAST_BASELINE 同款纪律）。
 const script = gateScript("check-style-blocks.ts");
 const run = (args: string[], cwd?: string, scriptPath = script) =>
   runGateScript(scriptPath, args, { cwd });
@@ -22,7 +14,6 @@ afterAll(() => {
   for (const dir of tempDirs) rmSync(dir, { recursive: true, force: true });
 });
 
-/** 夹具 SFC：带 <style> 块的存量携带形态（守门经 vue/compiler-sfc 解析，须为合法 SFC） */
 const STUB_WITH_STYLE = [
   "<template>",
   '  <div class="stub" />',
@@ -36,16 +27,7 @@ const STUB_WITH_STYLE = [
   "",
 ].join("\n");
 
-/** 建临时夹具：按脚本导出的 STYLE_BLOCK_WHITELIST 生成全部条目文件（每文件带一个
- *  <style> 块——白名单即存量携带者登记表，全量桩即夹具绿基线）；omit 指定的条目
- *  不落盘（文件删除/改名后未同步白名单的陈目形态）。返回夹具仓库根。 */
 function makeFixture(omit?: string): string {
-  // 夹具根必须**解析后**再当 cwd 与扫描根传入（issue #1368）：macOS 的 os.tmpdir()
-  // 是 /var/folders/…，而 /var 是指向 /private/var 的符号链接，子进程里
-  // process.cwd() 拿到的是解析后的 /private/var/…——两串不同源时守门的
-  // relative(process.cwd(), file) 会算出 ../../../var/folders/…，白名单对比全数失配，
-  // 夹具绿基线恒红（Linux 的 /tmp 非符号链接，故 CI 掩盖了此缺陷）。
-  // 生产调用不受影响：门槛不带扫描根参数，默认根由脚本自身路径推出，与 cwd 同源。
   const root = realpathSync(mkdtempSync(join(tmpdir(), "check-style-blocks-")));
   tempDirs.push(root);
   for (const rel of STYLE_BLOCK_WHITELIST) {
@@ -57,13 +39,6 @@ function makeFixture(omit?: string): string {
   return root;
 }
 
-/** 生成脚本变体：从白名单删除 entry 条目（文本级删除，锚点未命中即抛错
- *  ——变体失效时报红而非假绿）。条目行格式（两格缩进 + 双引号 + 逗号）由
- *  tsconfig.scripts.json 工程的类型检查与 oxfmt 格式约定保稳，漂移时在本处显式报错。
- *  返回变体脚本绝对路径（写入仓库 node_modules 下：Bun 依赖解析随文件位置向上
- *  走，脱离仓库树则 vue/compiler-sfc 不可达；node_modules 已 gitignore，不污染
- *  工作树状态，afterAll 统一清理。#1680 库拆分后脚本 import ./gate-primitives.ts，
- *  变体目录里一并落库副本，相对解析才可达）。 */
 function makeScriptMutant(needle: string, replacement: string): string {
   const source = readFileSync(script, "utf8");
   if (!source.includes(needle)) {
@@ -105,14 +80,12 @@ describe("check-style-blocks（样式块守门）", () => {
     expect(r.status).toBe(1);
     expect(r.output).toContain("不可达");
     expect(r.output).toContain(omitted);
-    // 只有被 omit 的那一条不可达（issue #1368）：夹具路径同源时归一化必然落在夹具上，
-    // 报出多条即归一化再次失配（曾经在 macOS 上以「全部不可达」假红）。
     expect(r.output.match(/不可达/g)).toHaveLength(1);
   });
 
   it("删除白名单条目即红：文件仍带 <style> 块时回潮分支拦截（只减不增，#1360）", () => {
     const entry = STYLE_BLOCK_WHITELIST[STYLE_BLOCK_WHITELIST.length - 1];
-    const root = makeFixture(); // 文件仍在且仍带 <style> 块，唯独清单失去该条目
+    const root = makeFixture();
     const r = run([root], root, makeWhitelistMutant(entry));
     expect(r.status).toBe(1);
     expect(r.output).toContain("新增 <style> 块");
@@ -146,8 +119,6 @@ describe("check-style-blocks css.ts CJS 形态字面串扫描（#2189 翻车根�
   });
 
   it("删掉探测正则接线（CJS_LOOKALIKE_RE）即红：命中形态不再被拦截", () => {
-    // 正则改写为永不命中的形态（删除/改空即红的最小可失败代理）
-    // 摘除判定接线（命中分支恒 false）→ 拦截失效、守门假绿对照
     const mutant = makeScriptMutant("if (CJS_LOOKALIKE_RE.test(line)) {", "if (false) {");
     const root = makeFixture();
     const rel = "src/stub.css.ts";
@@ -161,7 +132,7 @@ describe("check-style-blocks css.ts CJS 形态字面串扫描（#2189 翻车根�
       ].join("\n"),
     );
     const r = run([root], root, mutant);
-    expect(r.status).toBe(0); // 守门被摘除后该形态漏拦（对照上一用例的红）
+    expect(r.status).toBe(0);
     expect(r.output).toContain("样式块守门");
   });
 });

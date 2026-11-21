@@ -2,13 +2,6 @@ import { describe, expect, it } from "vitest";
 import { nextTick, watch } from "vue";
 import { useModalIntent } from "../index";
 
-/**
- * ModalIntent（弹窗意图编排）模块测试（ADR-0072，词汇表「ModalIntent」词条）：
- * 工厂零外部依赖（无 store、无 api、无组件），直接实例化直打接口——
- * 意图（开/重开/关/带载荷开）→ 可观察状态终态与序号递增，不断言内部实现拓扑。
- */
-
-/** 测试用意图闭集：带载荷判别联合（形态照消费方声明）。 */
 type TestIntent = { type: "create" } | { type: "edit"; rowId: string };
 
 describe("useModalIntent 初始状态", () => {
@@ -31,7 +24,6 @@ describe("useModalIntent open（纯同步）", () => {
 
   it("同载荷重开：意图为全新对象（重触发消费方响应）、序号再递增", () => {
     const modal = useModalIntent<TestIntent>();
-    // 复用同一引用重开：全新对象由工厂机制保证（不依赖调用方每次传新字面量）
     const samePayload = { type: "edit", rowId: "r1" } as const;
     modal.open(samePayload);
     const first = modal.intent.value;
@@ -51,7 +43,7 @@ describe("useModalIntent open（纯同步）", () => {
       fires += 1;
     });
     modal.open(samePayload);
-    await nextTick(); // watch 回调随 pre 队列异步刷新
+    await nextTick();
     expect(fires).toBe(1);
   });
 

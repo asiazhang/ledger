@@ -1,98 +1,4 @@
 #!/usr/bin/env bun
-// 前端测试桩守门（issue #725 + #726 + #750 + #822），四条规则：
-//
-// 规则 1（#725）：前端测试文件不得再手搓参考数据 `list_*` 桩接线。
-//
-// 背景：参考数据桩（list_currencies/list_accounts/list_categories/list_merchants/
-// list_insurers）曾散落全仓 ~57 个测试文件，两分支并行各插一行后合并出同回调
-// 重复桩——if 链先命中短路，后一条永远不生效，带数据桩被兜底空桩静默短路，
-// 测试以「数据缺失」的间接方式失败，排查成本高。
-// 治理：参考命令接线收敛到唯一接缝 wireInvokeSeam（@ledger/test-support/invoke-mock.ts，
-// 登记处在 @ledger/test-support/reference-stubs.ts）；本脚本防回归。issue #1152 起
-// 接缝宿主下沉为共享测试支持包，包内测试（packages/**/src/*.test.ts）与包外测试
-// 同规纳管——测试跟随被测包，守门跟随测试。
-//
-// 命令清单单一来源：从助手的 `REFERENCE_DEFAULTS` 登记处文本提取命令名——
-// 新增参考表只改助手，守门清单自动跟随，无双源漂移。登记处提不出任何命令
-// 即红（清单漂移 fail loud）。
-//
-// 扫描边界：文本级扫描三个互斥区间——① `<testsDir>/**`（默认 src/__tests__）全部
-// .ts（含 .test.ts 与目录级共享模块）；② seam 宿主目录（默认
-// packages/test-support/src，arg2 可指夹具）全部 .ts——接缝本体与登记处住址，
-// 规则 1/3 豁免（登记处即桩来源，接缝出口合法布线），规则 2/4 不豁免（#726：
-// helper 内重复桩危害面更大）；③ 包内测试 `packages/**` 下的 *.test.ts（不含
-// seam 宿主子树，归②）——规则 1/2/3/4 全量纳管；包内非测试源码不扫（产品代码
-// 无 vitest mock 面）。接缝自测 invoke-seam.test.ts 文件级豁免沿用（夹具文本
-// 合法包含违规形态）。本守门自身的包装测试已随测试归位迁到 scripts/
-// （issue #1158），在扫描边界之外。
-// 命中形态限桩接线：`if (cmd === '<命令>')`（if 链）、`cmd === '<命令>' ?`（三元）、
-// `case '<命令>':`（switch）；断言里的命令等值比较（如 mock.calls.filter 箭头函数体）
-// 非接线，不误报。已知文本不可达处（靠评审兜底）：桩实现形参改名（如 cmd → c）
-// 即逃逸匹配；经变量间接分派、对象字面量覆写（overrides / defaults 表）
-// 等合法形态同样不可达。
-// 领域数据命令（list_transactions 等，不在登记处）的手写分发桩由规则 3 纳管。
-//
-// 规则 2（#726）：同一 `mockImplementation` 回调体内同名命令的 `if (cmd === 'X')` 接线
-// 不得重复（PR #721/#722/#723 合并曾产出 63 处同回调重复桩：if 链先命中短路，后一条
-// 永不生效，带数据桩被兜底空桩静默短路，测试以「数据缺失」的间接方式失败）。规则 1
-// 封禁参考命令接线后，领域命令（list_transactions 等）的手搓桩仍合法，本规则对其保留
-// 兜底。实现：括号配对取回调体（词法跳过字符串字面量与注释，注释里不配对引号不再干
-// 扰配对），嵌套 mockImplementation 体各自成独立单元（互不计数，DataLocationSettings
-// 内层 cmd2 桩为合法先例）；接线匹配若落在注释/字符串里不计数，仅统计活代码（临时
-// 注释掉接线不致误红）；对每个单元统计 `if (cmd === 'X')`（含 else if）出现次数，
-// 同名 >1 即红，报文件、行号、命令名。
-// 已知文本不可达处（靠评审兜底）：形参改名（cmd → cmd2/c）后逃逸匹配；三元/switch/
-// 复合条件（&&/||）形态不在检测范围（参考命令的三元与 case 已由规则 1 覆盖）；
-// mockImplementationOnce 是队列语义非整体替换，不纳入；正则字面量按普通字符扫描，
-// 内含引号/括号时可致词法错位——失衡单元跳过不计（宁漏不误），或局部误判（漏报）；
-// 恰好整体等于接线形态的字符串字面量理论上可误报（现实中未见）。同一文件两个独立
-// 回调各桩同命令一次是整体替换语义，合法。
-//
-// 规则 3（#750，ADR-0085 决策 9）：迁移完成后禁回潮——测试辅助出口之外禁止
-// 手写 invoke 分发桩与本地布线包装定义。
-//   3a 手写分发桩：`.mockImplementation(`（非 Once）回调，首参名为 cmd，且回调体
-//      活代码含命令分发特征（`if (cmd ===`、`cmd === '…' ?`、`switch (cmd)`）——
-//      全量替换 + 命令分发即手写接缝，无论是否委托回接缝。特征串以 #750 收尾后
-//      残余形态为准：钦定保留形态 = mockImplementationOnce 一次性委托（队列语义，
-//      接缝文档典型用法）与无 cmd 形参的全量替换契约桩（裸值/在途用例），均不拦。
-//   3b 本地布线包装：声明形出现 baseInvoke/stubInvoke/mockBaseCommands/invokeHandler
-//      （迁移期已清零的历史布线包装名）即红；注释/字符串中提及不拦。
-//   豁免范围与规则 1 同（helpers/ 目录自身、守门自测文件）另加接缝自测文件。
-//   已知文本不可达处（靠评审兜底）：形参改名（cmd → c）与 async (cmd) 等前缀形态逃逸
-//   3a；Once 无委托形态、非声明形的局部布线包装不可达。3b 按行首判定跳过注释行、
-//   不做字符串掩码——字符串内恰好含完整声明形态文本理论上可误红（现实中未见）。
-//
-// 规则 4（#822；#1364 辖域扩到共享测试替身）：测试文件内定义领域数据工厂与共享
-// 测试替身即红——组件测试数据工厂唯一定义点在共享工厂层出口
-// （#1322 前为 src/__tests__/factories.ts；#1322 抽 scheduled-plan-list 包时
-// 计划/期次四厂随测试面上收 @ledger/test-support/plan-factories，壳侧 factories.ts
-// 改再导出），toast sink 假件唯一定义点在共享测试支持包
-// （packages/test-support/src/toast-sink.ts，#1354 上收），
-// 测试文件本地定义即副本回潮。
-//   名单（精确声明名）：领域数据工厂 makePlan / makeSubscriptionPlan /
-//   makeInstallmentPlan / makeTransferPlan / makeOccurrence；共享测试替身
-//   makeFakeSink / resetToastSink。交易侧 makeTxn / makeTransaction 待 #821
-//   收敛落地后补入名单——本票与 #821 文件面不相交、互不阻塞，名单先行会让其
-//   未收敛副本在守门直接变红。
-//   白名单（`<扫描区间>:<相对该区间的 posix 路径>`，区间名见 ScanTarget.zone）：
-//   app:factories.ts（壳侧再导出层）与 seam-home:plan-factories.ts（#1322 起的
-//   唯一定义点住址）与 app:TransactionsView/common.ts（#821 交易薄壳一行包装，
-//   交易名补入名单时生效）与 seam-home:toast-sink.ts（#1364 起的替身唯一定义点
-//   住址）。键含区间是因为各区间 rel 基准不同——只按相对路径放行会让别的区间里
-//   同名文件（如壳侧 src/__tests__/toast-sink.ts）静默逃逸；壳侧再导出层与
-//   plan-factories 同款：`export {} from` 非声明形不命中正则，白名单是双保险。
-//   双源代价（登记处）：名单与各唯一定义点出口须人工同步——新增共享工厂或共享
-//   测试替身必须同步本名单，否则其新副本不被拦截。
-//   文本盲区（靠评审兜底）：改名逃逸（工厂/替身改名或换名定义即逃逸名单）；仅识别
-//   function/const/let/var 声明形，注释行整行跳过、字符串内无声明前缀不匹配，
-//   与规则 3b 同款行首判定。规则 4 在 seam 宿主与包内测试同样不豁免：替身唯一
-//   定义点虽住 seam 宿主，放行靠白名单精确路径而非整区豁免；包内测试 helper 内
-//   本地定义名单名同样是回潮（豁免分工与规则 1/3 不同是有意为之）。
-//
-// TypeScript 化 + Bun 运行时（issue #734 / ADR-0083）：类型经 tsconfig.scripts.json
-// 门槛检查；调用方式 `bun scripts/check-test-stubs.ts`。
-// 用法：bun scripts/check-test-stubs.ts [testsDir] [seamHomeDir]
-//   seamHomeDir 默认 packages/test-support/src；packages 根由其上溯两级派生。
 
 import { existsSync, readFileSync } from "node:fs";
 import { join, relative, resolve, sep } from "node:path";
@@ -100,12 +6,8 @@ import { pathToFileURL } from "node:url";
 import { lineAt, walkTextFiles } from "./gate-primitives.ts";
 
 const testsDir = resolve(process.argv[2] ?? join("src", "__tests__"));
-// seam 宿主目录（issue #1152）：共享测试支持包源码住址，登记处（reference-stubs.ts）
-// 与接缝出口（invoke-mock.ts）的唯一宿主；arg2 可指夹具路径。
 const seamHomeDir = resolve(process.argv[3] ?? join("packages", "test-support", "src"));
 const helperPath = join(seamHomeDir, "reference-stubs.ts");
-// packages 根由 seam 宿主上溯两级派生（生产形态 packages/test-support/src →
-// packages），供包内测试扫描；夹具同构（<tmp>/packages/test-support/src）。
 const packagesDir = resolve(seamHomeDir, "..", "..");
 
 function fail(message: string): never {
@@ -113,7 +15,6 @@ function fail(message: string): never {
   process.exit(1);
 }
 
-// —— 从助手登记处提取命令清单（单一来源） ——
 function extractCommands(): string[] {
   if (!existsSync(helperPath)) {
     fail(`参考数据桩助手缺失：${helperPath}（issue #725 治理的桩单一来源）`);
@@ -126,9 +27,6 @@ function extractCommands(): string[] {
   return [...registryMatch[1].matchAll(/^\s*(list_[a-z_]+):/gm)].map((m) => m[1]);
 }
 
-// —— 递归收集 .ts 文件（目录缺失返回空：夹具可无 packages 子树；接缝自测豁免） ——
-// 遍历机制归守门家族共享单点 walkTextFiles（#1680 收口）；keepName 谓词与接缝
-// 自测豁免（invoke-seam.test.ts）是本守门政策，walk 后按文件名过滤。
 const TS_EXTENSIONS: ReadonlySet<string> = new Set([".ts"]);
 function walk(dir: string, keepName: (name: string) => boolean): string[] {
   if (!existsSync(dir)) return [];
@@ -140,9 +38,6 @@ function walk(dir: string, keepName: (name: string) => boolean): string[] {
     .map((f) => f.abs);
 }
 
-// 扫描目标三区间（互斥；rel 基准各归其主，白名单按 posix 相对路径比对）：
-// app = 包外测试（testsDir 全量 .ts）；seam-home = 接缝宿主全量 .ts（规则 1/3 豁免）；
-// pkg-tests = 包内 *.test.ts（排除 seam 宿主子树，规则全量）。
 interface ScanTarget {
   abs: string;
   rel: string;
@@ -166,7 +61,6 @@ function collectScanTargets(): ScanTarget[] {
   return out;
 }
 
-// —— 规则 1：参考数据手搓桩接线（行级扫描；接线正则每个命令只编译一次） ——
 function findHandWiredReferenceStubs(rel: string, source: string, commands: string[]): string[] {
   const wirings = commands.map((cmd) => {
     const q = `['"\`]${cmd}['"\`]`;
@@ -192,8 +86,6 @@ function findHandWiredReferenceStubs(rel: string, source: string, commands: stri
   return hits;
 }
 
-// —— 规则 2：括号配对取出每个 mockImplementation 回调体范围（词法跳过字符串与注释，
-//    并记录它们在单元内的范围供后续挖空） ——
 interface CallbackUnit {
   start: number;
   end: number;
@@ -202,7 +94,7 @@ interface CallbackUnit {
 
 function extractCallbackUnits(source: string): CallbackUnit[] {
   const units: CallbackUnit[] = [];
-  const re = /\.mockImplementation\s*\(/g; // 不匹配 mockImplementationOnce（队列语义，无静默短路）
+  const re = /\.mockImplementation\s*\(/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(source))) {
     const start = m.index + m[0].length;
@@ -237,15 +129,12 @@ function extractCallbackUnits(source: string): CallbackUnit[] {
         i++;
       }
     }
-    if (depth !== 0) continue; // 配对失衡（字面量错位、非完整片段）：跳过该单元，宁漏不误
+    if (depth !== 0) continue;
     units.push({ start, end: i - 1, masks });
   }
   return units;
 }
 
-// —— 规则 2：同回调内同名命令 if 接线去重 ——
-// 仅统计活代码：接线匹配若落在注释/字符串内（与某个注释/字符串范围重叠且伸出其外），
-// 不计数；匹配自身携带的命令字符串完全包含于匹配内，不影响判定。
 function findDuplicateWiring(rel: string, source: string, units: CallbackUnit[]): string[] {
   const hits: string[] = [];
   const IF_WIRING = /\bif\s*\(\s*cmd\s*===\s*(['"`])([^'"`]+)\1\s*\)/g;
@@ -261,7 +150,7 @@ function findDuplicateWiring(rel: string, source: string, units: CallbackUnit[])
       if (nested.start >= unit.start && nested.end <= unit.end) {
         const s = nested.start - unit.start;
         const e = nested.end - unit.start;
-        text = text.slice(0, s) + text.slice(s, e).replace(/[^\n]/g, " ") + text.slice(e); // 同长挖空，稳住行号
+        text = text.slice(0, s) + text.slice(s, e).replace(/[^\n]/g, " ") + text.slice(e);
       }
     }
     const byCmd = new Map<string, number[]>();
@@ -283,13 +172,11 @@ function findDuplicateWiring(rel: string, source: string, units: CallbackUnit[])
   return hits;
 }
 
-// —— 规则 3a：手写 invoke 分发桩（全量替换 mockImplementation 回调 + cmd 首参 +
-//    活代码命令分发特征）。Once 一次性委托（队列语义）与无 cmd 形参的契约桩不拦。
 const DISPATCH_FEATURE = new RegExp(
   [
-    "\\bif\\s*\\(\\s*cmd\\s*===", // if (cmd === '…')
-    "\\bcmd\\s*===\\s*['\"`][^'\"`\\n]*['\"`]\\s*\\?", // cmd === '…' ?
-    "\\bswitch\\s*\\(\\s*cmd\\s*\\)", // switch (cmd)
+    "\\bif\\s*\\(\\s*cmd\\s*===",
+    "\\bcmd\\s*===\\s*['\"`][^'\"`\\n]*['\"`]\\s*\\?",
+    "\\bswitch\\s*\\(\\s*cmd\\s*\\)",
   ].join("|"),
   "g",
 );
@@ -298,9 +185,7 @@ function findHandWrittenDispatchStub(rel: string, source: string, units: Callbac
   const hits: string[] = [];
   for (const unit of units) {
     const raw = source.slice(unit.start, unit.end);
-    // 首参名限定 cmd（形参改名即逃逸匹配，已知文本不可达处）；cmd2 等不误伤
     if (!/^\s*\(?\s*cmd\b/.test(raw)) continue;
-    // 挖空嵌套回调单元与字符串/注释（与规则 2 同款词法掩码），只看本单元活代码
     let text = raw;
     for (const nested of units) {
       if (nested === unit) continue;
@@ -319,8 +204,6 @@ function findHandWrittenDispatchStub(rel: string, source: string, units: Callbac
     while ((m = DISPATCH_FEATURE.exec(text))) {
       const at = m.index;
       const len = m[0].length;
-      // 存在性检测：匹配整体落在字符串/注释掩码内才算死（三元特征必然内含命令名
-      // 字符串字面量，部分重叠不算死——与规则 2 的计数口径有意不同）
       const dead = masks.some(([ms, me]) => ms <= at && at + len <= me);
       if (!dead) {
         dispatched = true;
@@ -336,8 +219,6 @@ function findHandWrittenDispatchStub(rel: string, source: string, units: Callbac
   return hits;
 }
 
-// —— 规则 3b：本地布线包装定义（迁移期已清零的历史布线包装名，声明形出现即红；
-//    注释/字符串中提及不拦——注释行整行跳过，字符串内无声明关键字前缀不匹配） ——
 const WRAPPER_DECL =
   /\b(?:function\s+|(?:const|let|var)\s+)(baseInvoke|stubInvoke|mockBaseCommands|invokeHandler)\b/g;
 
@@ -357,18 +238,12 @@ function findLocalWiringWrapper(rel: string, source: string): string[] {
   return hits;
 }
 
-// —— 规则 4：共享测试替身 / 领域数据工厂本地定义（声明形出现即红；注释行整行跳过，
-//    字符串内无声明关键字前缀不匹配——与规则 3b 同款行首判定） ——
-// 名单与各唯一定义点出口人工同步（双源代价，见头注释）：新增共享工厂或共享测试替身
-// 必须同步此清单；交易侧 makeTxn/makeTransaction 待 #821 收敛落地后补入。
 const FACTORY_NAMES = [
   "makePlan",
   "makeSubscriptionPlan",
   "makeInstallmentPlan",
   "makeTransferPlan",
   "makeOccurrence",
-  // 共享测试替身（#1364）：toast sink 假件（#1354 上收）唯一定义点
-  // @ledger/test-support/toast-sink，测试文件本地复制声明即红。
   "makeFakeSink",
   "resetToastSink",
 ];
@@ -376,17 +251,6 @@ const FACTORY_DECL = new RegExp(
   `\\b(?:function\\s+|(?:const|let|var)\\s+)(${FACTORY_NAMES.join("|")})\\b`,
   "g",
 );
-// 白名单按 `<扫描区间>:<相对该区间的 posix 路径>` 登记：唯一定义点 + 交易薄壳一行
-// 包装（#821）。键必须带区间——各区间 rel 基准不同（app = testsDir、seam-home =
-// seam 宿主、pkg-tests = packages 根），只按相对路径放行会让别的区间里的同名文件
-// 静默逃逸（如壳侧 src/__tests__/toast-sink.ts 定义替身却绿）。
-// #1322 起计划/期次四厂（subscription/installment/scheduled_transfer/occurrence）
-// 上收 @ledger/test-support/plan-factories——抽 scheduled-plan-list 包时其包内测试
-// 跟随被测包，而规则 4 不豁免包内测试与 seam 宿主，唯一定义点随测试面上收，
-// seam-home 区间路径登记为新住址；壳侧 factories.ts 改再导出，仍在 app 区间白名单
-// （壳侧测试经 './factories' 消费，import 面不变）。
-// #1364 同款：toast sink 假件（makeFakeSink/resetToastSink，#1354 上收）唯一定义点
-// 住 seam 宿主，按区间 + 精确路径放行，不做整区豁免。
 const FACTORY_WHITELIST = new Set([
   "app:factories.ts",
   "seam-home:plan-factories.ts",
@@ -455,7 +319,6 @@ function main(): void {
   );
 }
 
-// 仅直接运行时执行 main；被测试/其他工具 import 时只取导出的扫描函数。
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main();
 }

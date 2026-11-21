@@ -4,11 +4,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { gateScript, runGateScript } from "./run-gate-script.test-helper.ts";
 
-// 被测对象是仓库工具脚本 scripts/check-dialog-forms.ts（弹窗表单行距节奏守门）。
-// 脚本以 Bun 运行时执行（ADR-0083）：runGateScript 以 spawnSync('bun') 与门槛
-// 调用同款拉起，测的就是门槛路径。
-// 按测试决策只测外部可观察结果——进程退出码与输出，不测内部函数；
-// 通过位置参数把扫描目标指向临时夹具目录（仿 check-i18n-keys.test.ts 先例）。
 const script = gateScript("check-dialog-forms.ts");
 
 const tmpDirs: string[] = [];
@@ -56,10 +51,6 @@ const BARE_ITEM = `<template>
 
 describe("弹窗表单行距节奏守门（check.sh 质量门槛）", () => {
   it("真实仓库默认通过：本仓库全部 .vue 无节奏违例（现行仓库绿）", () => {
-    // 无位置参数 = 默认扫描本仓库 src。随守门测试挂载进 CI（issue #1473 引入挂载；
-    // #1991 起运行口径 = bun test scripts/）：
-    // 真实仓违例即红，不再只靠本地自觉跑 check.sh。文件计数行证明扫描面真实
-    // 覆盖（非零 .vue），守门空转（扫描根失效等）即红。
     const r = runGateScript(script);
     expect(r.status).toBe(0);
     expect(r.output).toMatch(/弹窗表单节奏：[1-9]\d* 个 \.vue 文件检查通过/);

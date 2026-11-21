@@ -4,23 +4,10 @@ import { installMockBackend } from "./index";
 import { invoke } from "./tauri/core";
 import { listen } from "./tauri/event";
 
-/**
- * 投资标的域替身行为测试（issue #1969 / spec #1964 / ADR-0143）：接缝 = 应用
- * 所见的 tauri 命令面（`installMockBackend` + `invoke`）与事件面（`listen`），
- * 断言筛选/分页/anchor 定位的契约形状与写闭环（写改内存、读投影内存、写后
- * 必发 ledger:changed），不探内表。替身刻意不追行为等价（ADR-0143 决策 1）：
- * 按代码添加的「行情源回显」为按代码确定性推导，不联网。
- *
- * 夹具种子序（symbol 排序，与真后端 ORDER BY symbol 一致）：
- * 000001 基金 unknown / 00700 港股 hk / 019666 债券 sh / 159915 ETF sz /
- * 600519 沪股 sh / GOLD 自建 other unknown——下列筛选与分页断言按此序人算。
- */
-
 beforeEach(() => {
-  installMockBackend(); // 重装即重播种：每用例从夹具种子起步
+  installMockBackend();
 });
 
-/** 订阅 ledger:changed 并返回触发计数（断言失效信号必发，ADR-0143 决策 3）。 */
 function captureLedgerChanged(): () => number {
   let count = 0;
   void listen("ledger:changed", () => {
@@ -51,7 +38,7 @@ describe("list_instruments：夹具投影与四维筛选", () => {
 
   it("search 对 symbol / name 子串命中（大小写不敏感）", async () => {
     await expect(symbolsOf({ search: "茅台" })).resolves.toEqual(["600519"]);
-    await expect(symbolsOf({ search: "etf" })).resolves.toEqual(["159915"]); // 名称「创业板ETF」
+    await expect(symbolsOf({ search: "etf" })).resolves.toEqual(["159915"]);
     await expect(symbolsOf({ search: "007" })).resolves.toEqual(["00700"]);
     await expect(symbolsOf({ search: "不存在" })).resolves.toEqual([]);
   });
@@ -59,8 +46,6 @@ describe("list_instruments：夹具投影与四维筛选", () => {
   it("market 精确 / type / only_invested 三维筛选", async () => {
     await expect(symbolsOf({ market: "sh" })).resolves.toEqual(["019666", "600519"]);
     await expect(symbolsOf({ type: "stock" })).resolves.toEqual(["00700", "600519"]);
-    // invested 口径自 issue #1971 起与 fixtureHoldings 行集一致：茅台在库未持有，
-    // 其余五标的有持仓行（期初存量 / 夹具交易建仓）
     await expect(symbolsOf({ only_invested: true })).resolves.toEqual([
       "000001",
       "00700",
@@ -68,7 +53,6 @@ describe("list_instruments：夹具投影与四维筛选", () => {
       "159915",
       "GOLD",
     ]);
-    // 四维叠加：sh + stock → 仅贵州茅台
     await expect(symbolsOf({ market: "sh", type: "stock" })).resolves.toEqual(["600519"]);
   });
 });
@@ -90,14 +74,13 @@ describe("list_instruments：服务端分页与 anchor 定位", () => {
     const result = await invoke<InstrumentListResult>("list_instruments", {
       filter: { page: 1, page_size: 2, anchor_id: "mock-inst-etf" },
     });
-    // 159915 排序序号为 3（0 起），page_size=2 → 第 2 页
     expect(result.anchor_page).toBe(2);
     expect(result.items.map((i) => i.symbol)).toEqual(["019666", "159915"]);
   });
 
   it("anchor_id 不在结果集（被筛掉 / 不存在）时不带 anchor_page，按普通页码查询", async () => {
     const filtered = await invoke<InstrumentListResult>("list_instruments", {
-      filter: { market: "sz", anchor_id: "mock-inst-sh" }, // 被市场筛藏
+      filter: { market: "sz", anchor_id: "mock-inst-sh" },
     });
     expect(filtered.anchor_page).toBeUndefined();
     expect(filtered.items.map((i) => i.symbol)).toEqual(["159915"]);
@@ -134,9 +117,9 @@ describe("create_instrument：自建标的写闭环", () => {
       id,
       type: "other",
       name: "家庭白银存折",
-      source: "manual", // 非同步即手动，来源随行终身不变（ADR-0036 决策 2）
-      market: "unknown", // 缺省归一 unknown
-      price_cents: null, // 手动建档无现价
+      source: "manual",
+      market: "unknown",
+      price_cents: null,
       invested: false,
     });
   });
@@ -145,7 +128,7 @@ describe("create_instrument：自建标的写闭环", () => {
     const id = await invoke<string>("create_instrument", {
       input: { symbol: "GOLD", type: "other", name: "家庭黄金存折·改名", currency_code: "CNY" },
     });
-    expect(id).toBe("mock-inst-custom"); // 复用夹具行，不新建
+    expect(id).toBe("mock-inst-custom");
 
     const result = await invoke<InstrumentListResult>("list_instruments", {
       filter: { search: "GOLD" },
@@ -208,8 +191,6 @@ describe("add_fund_by_code：按代码即拉场外基金（确定性回显，不
   it("回显按代码推导的权威名称与净值占位，落库后列表可查，发恰一次 ledger:changed", async () => {
     const changed = captureLedgerChanged();
 
-    // 确定性推导：name = `替身基金 ${code}`；nav = code % 9000 + 1000（万分之一元）
-    // 110022 % 9000 = 2022 → 3022 → 0.3022 元；nav_date 恒字面量
     const result = await invoke<AddFundResult>("add_fund_by_code", { code: "110022" });
     expect(result).toEqual({
       instrument_id: result.instrument_id,
@@ -229,11 +210,11 @@ describe("add_fund_by_code：按代码即拉场外基金（确定性回显，不
     expect(list.items[0]).toMatchObject({
       id: result.instrument_id,
       type: "fund",
-      market: "unknown", // 场外无交易所市场，恒 unknown（ADR-0038）
+      market: "unknown",
       currency_code: "CNY",
-      price_cents: 3022, // 净值即现价占位
+      price_cents: 3022,
       price_channel: "fund_nav",
-      source: "manual", // 建档来源标记（adopt 语义，非同步即手动）
+      source: "manual",
     });
   });
 
@@ -253,8 +234,6 @@ describe("add_fund_by_code：按代码即拉场外基金（确定性回显，不
 
 describe("add_instrument_by_code：场内通道按代码建档 + 类型自动识别回显", () => {
   it("sh 通道：普通 6 位代码识别为股票，回显名称/现价（确定性推导）", async () => {
-    // 确定性推导：price = (ΣcharCode % 900 + 100) × 1000；
-    // "600036": 54+48+48+48+51+54 = 303 → 403000 → 40.3 元
     const result = await invoke<AddStockInstrumentResult>("add_instrument_by_code", {
       market: "sh",
       code: "600036",
@@ -288,7 +267,7 @@ describe("add_instrument_by_code：场内通道按代码建档 + 类型自动识
       code: "700",
     });
     expect(result.symbol).toBe("00700");
-    expect(result.instrument_id).toBe("mock-inst-hk"); // 复用夹具行，不新建
+    expect(result.instrument_id).toBe("mock-inst-hk");
     await expect(symbolsOf({ market: "hk" })).resolves.toEqual(["00700"]);
   });
 
@@ -300,7 +279,7 @@ describe("add_instrument_by_code：场内通道按代码建档 + 类型自动识
     expect(result).toMatchObject({
       symbol: "AAPL",
       type: "stock",
-      market: "nasdaq", // 首字母 < N → nasdaq（替身确定性规则，非真实归属）
+      market: "nasdaq",
       currency_code: "USD",
     });
   });

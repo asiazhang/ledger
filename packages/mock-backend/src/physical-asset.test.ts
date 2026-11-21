@@ -3,24 +3,10 @@ import { installMockBackend } from "./index";
 import { invoke } from "./tauri/core";
 import { listen } from "./tauri/event";
 
-/**
- * 实物资产域替身行为测试（issue #1975 / spec #1964 / ADR-0143）：接缝 = 应用
- * 所见的 tauri 命令面（`installMockBackend` + `invoke`），断言布线与行为一体——
- * 删除任一登记行即未命中报错、本文件变红（接线负向判据，ADR-0087 断言强度）。
- *
- * 期望值为独立人算字面量：夹具黄金首饰（mock-pa-gold，在持）两条估值历史
- * （2025-12-31 → 130_000、2026-01-10 → 132_000，当前 = 最新一条 132_000）、
- * 笔记本电脑（mock-pa-laptop，2025-11-20 已处置，最新估值 2025-11-01 → 42_000）。
- * 在持合计恒指在持行：132_000（已处置行不计、与筛选无关）。替身从简口径
- * （physical-asset.ts 头注）：不折算（夹具单币种 CNY 直记，native = 原币金额），
- * 缺省估值日期锚定替身「今日」2026-01-15（budget.ts 同款锚）。
- */
-
 beforeEach(() => {
-  installMockBackend(); // 重装即重播种：每用例从夹具种子起步
+  installMockBackend();
 });
 
-/** 订阅 ledger:changed 并返回触发计数（断言失效信号必发，ADR-0143 决策 3）。 */
 function captureLedgerChanged(): () => number {
   let count = 0;
   void listen("ledger:changed", () => {
@@ -67,7 +53,7 @@ describe("实物资产读：夹具投影", () => {
     expect(list.assets[0]).toMatchObject({
       status: "disposed",
       disposal_date: "2025-11-20",
-      current_valuation_native_cents: null, // 已处置行 native 估值缺席
+      current_valuation_native_cents: null,
     });
     expect(list.holding_total_native_cents).toBe(132_000);
   });
@@ -108,7 +94,7 @@ describe("实物资产写闭环", () => {
         purchase_currency_code: "CNY",
         initial_valuation_cents: 90_000,
         initial_valuation_currency_code: "CNY",
-        initial_valuation_date: null, // 缺省 = 替身今日 2026-01-15
+        initial_valuation_date: null,
       },
     });
     expect(id).toBeTruthy();
@@ -123,7 +109,6 @@ describe("实物资产写闭环", () => {
       current_valuation_native_cents: 90_000,
     });
 
-    // 在持合计随新资产前进：132_000 + 90_000 = 222_000（独立人算）
     const list = await invoke<{ holding_total_native_cents: number }>("list_physical_assets", {
       status: null,
     });
@@ -139,7 +124,7 @@ describe("实物资产写闭环", () => {
     ).rejects.toThrow(/initial_valuation_cents/);
     expect(changed()).toBe(0);
     const list = await invoke<{ assets: unknown[] }>("list_physical_assets", { status: null });
-    expect(list.assets).toHaveLength(1); // 仍只有夹具在持行
+    expect(list.assets).toHaveLength(1);
   });
 
   it("update 仅改名称/购买信息：当前估值不动，恰发一次信号", async () => {
@@ -162,7 +147,7 @@ describe("实物资产写闭环", () => {
       name: "黄金首饰（结嫣）",
       purchase_date: "2025-06-20",
       purchase_price_cents: 125_000,
-      current_valuation_cents: 132_000, // 估值不经编辑变更
+      current_valuation_cents: 132_000,
       current_valuation_date: "2026-01-10",
     });
   });
@@ -194,7 +179,6 @@ describe("实物资产写闭环", () => {
   });
 
   it("估值同日追加：后插者胜（插入序 tie-break）", async () => {
-    // 与夹具最新行同日 2026-01-10（132_000）追加 133_000：当前估值 = 后插一条
     await invoke<void>("update_physical_asset_valuation", {
       id: "mock-pa-gold",
       input: { amount_cents: 133_000, currency_code: "CNY", valuation_date: "2026-01-10" },
@@ -227,8 +211,8 @@ describe("实物资产写闭环", () => {
       status: "disposed",
       disposal_date: "2026-01-20",
       disposal_price_cents: 135_000,
-      current_valuation_cents: 132_000, // 估值历史原样保留
-      current_valuation_native_cents: null, // 已处置行 native 投影缺席
+      current_valuation_cents: 132_000,
+      current_valuation_native_cents: null,
     });
 
     const holding = await invoke<{

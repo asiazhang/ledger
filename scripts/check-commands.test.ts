@@ -4,11 +4,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { gateScript, runGateScript } from "./run-gate-script.test-helper.ts";
 
-// 被测对象是仓库工具脚本 scripts/check-commands.ts（命令注册一致性校验：命令名腿 + 参数键名腿）。
-// 脚本以 Bun 运行时执行（ADR-0083）：runGateScript 以 spawnSync('bun') 与门槛
-// 调用同款拉起，测的就是门槛路径。
-// 按测试决策只测外部可观察结果——进程退出码与输出，不测内部函数；
-// 通过位置参数把扫描目标指向临时夹具目录。
 const script = gateScript("check-commands.ts");
 const run = (args: string[]) => runGateScript(script, args);
 
@@ -17,7 +12,6 @@ afterAll(() => {
   for (const dir of tempDirs) rmSync(dir, { recursive: true, force: true });
 });
 
-/** 建临时夹具：commands 命令目录 + api.ts 调用面文件，返回脚本参数 */
 function makeFixture(commands: Record<string, string>, apiTs: string): string[] {
   const dir = mkdtempSync(join(tmpdir(), "check-commands-"));
   tempDirs.push(dir);
@@ -32,7 +26,6 @@ function makeFixture(commands: Record<string, string>, apiTs: string): string[] 
   return [cmdsDir, apiFile];
 }
 
-// 注入参数用真实形态（State<'_, DbState>）：db 是 Tauri 注入参数，不进 invoke 键集（#1398）
 const cmd = (name: string) =>
   `#[tauri::command]\npub fn ${name}(db: State<'_, DbState>) -> String {\n    todo!()\n}\n`;
 
@@ -120,9 +113,6 @@ describe("check-commands（命令注册一致性校验）", () => {
   });
 
   it("注释掩码口径（issue #1741 收口）：块注释缀随/包裹的注解不假红，纯注释里的注解形态不认命令", () => {
-    // Rust 腿自 #1741 起整文 maskNonCode(·, true) 后逐行扫：注解行被块注释缀随或
-    // 前置时掩码后 trim 仍精确命中；整行落在块注释内的注解被掩掉不武装扫描器
-    // （弱形态逐行剥离器会漏掩块注释，注解行误武装、`*/` 行报假红）。
     const args = makeFixture(
       {
         "alpha.rs": [
@@ -179,8 +169,8 @@ describe("check-commands（命令注册一致性校验）", () => {
       );
       const r = run(args);
       expect(r.status).toBe(1);
-      expect(r.output).toContain("topN"); // 期望键（Rust 参数名转换后）
-      expect(r.output).toContain("top_n"); // 失配的实际键
+      expect(r.output).toContain("topN");
+      expect(r.output).toContain("top_n");
     });
 
     it("实参缺键（TS 漏传可选参数）→ 失败并列出缺失键", () => {
@@ -265,8 +255,8 @@ describe("check-commands（命令注册一致性校验）", () => {
       const r = run(args);
       expect(r.status).toBe(1);
       expect(r.output).toContain("Rust 无此命令");
-      expect(r.output).toContain("ghost_real"); // 注释外的真实调用照旧核对（未因掩码放过）
-      expect(r.output).not.toContain("ghost_commented"); // 注释里的调用不进调用面（删除掩码即红）
+      expect(r.output).toContain("ghost_real");
+      expect(r.output).not.toContain("ghost_commented");
     });
 
     it("注释掉的调用不参与参数键名核对（参数键名腿同口径）", () => {

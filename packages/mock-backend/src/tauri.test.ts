@@ -5,12 +5,6 @@ import { open, save } from "./tauri/plugin-dialog";
 import { openUrl } from "./tauri/plugin-opener";
 import { getCurrentWindow } from "./tauri/window";
 
-/**
- * tauri API 面模块替身的行为测试（issue #1962 / ADR-0143 决策 5）：
- * 消费面形状（返回值形态、可撤销句柄、假路径非空）逐一对准生产调用点，
- * 「对话框替身返回假路径、外链打开空操作」的决策边界在此钉住。
- */
-
 describe("invoke 路由（tauri/core 替身）", () => {
   it("已登记命令转发实现并透传参数对象；返回非 promise 值包装为 resolved", async () => {
     const handler = vi.fn((args: Record<string, unknown>) => args.id);

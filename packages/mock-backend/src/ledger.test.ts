@@ -4,21 +4,10 @@ import { invoke } from "./tauri/core";
 import { emitMockEvent, listen } from "./tauri/event";
 import type { Transaction, TransactionListResult } from "@ledger/types";
 
-/**
- * 替身后端行为测试（issue #1962 / ADR-0143）：接缝 = 应用所见的 tauri 命令面
- * （`installMockBackend` + `invoke`）与事件面（`listen`）。断言对准命令契约的
- * 返回形态与可观察状态迁移（写改内存、读投影内存、写后必发 ledger:changed），
- * 不探内表——ledger 内部结构变化时本文件应零改动。
- *
- * 替身刻意不追行为等价（ADR-0143 决策 1）：此处只钉首批主路径闭环的契约形状，
- * 不复刻 Rust 侧领域规则。
- */
-
 beforeEach(() => {
-  installMockBackend(); // 重装即重播种：每用例从夹具种子起步
+  installMockBackend();
 });
 
-/** 订阅 ledger:changed 并返回触发计数（断言失效信号必发，ADR-0143 决策 3）。 */
 function captureLedgerChanged(): () => number {
   let count = 0;
   void listen("ledger:changed", () => {
@@ -167,7 +156,6 @@ describe("交易读写闭环（ADR-0143 决策 2）", () => {
     expect(created).toBeDefined();
     expect((await allTransactions()).find((t) => t.id === id)?.merchant_id).toBe(created?.id);
 
-    // 复用：同名不再新建
     await invoke<string>("create_transaction", {
       input: {
         kind: "expense",
@@ -215,7 +203,6 @@ describe("交易读写闭环（ADR-0143 决策 2）", () => {
     const onlyTransfer = await invoke<TransactionListResult>("list_transactions", {
       filter: { kinds: ["transfer"] },
     });
-    // 通用 txn-003 + 定时转账期次历史 txn-307（issue #1973 夹具）
     expect(onlyTransfer.items.map((t) => t.id).sort()).toEqual(["mock-txn-003", "mock-txn-307"]);
 
     const janFirst = await invoke<TransactionListResult>("list_transactions", {
@@ -226,9 +213,6 @@ describe("交易读写闭环（ADR-0143 决策 2）", () => {
     const involvingBank = await invoke<TransactionListResult>("list_transactions", {
       filter: { involving_account_id: "mock-acc-bank" },
     });
-    // 投资夹具行：buy/sell 出资工资卡、dividend 到账工资卡（issue #1970）+
-    // 定时历史行：年缴保费扣工资卡、定投转出工资卡（issue #1973）+
-    // 理赔流入到账工资卡（issue #1974 保单挂单）
     expect(involvingBank.items.map((t) => t.id).sort()).toEqual([
       "mock-txn-002",
       "mock-txn-003",
@@ -245,20 +229,18 @@ describe("交易读写闭环（ADR-0143 决策 2）", () => {
     const byEtf = await invoke<TransactionListResult>("list_transactions", {
       filter: { instrument_id: "mock-inst-etf" },
     });
-    // buy 直接持有 + convert 转入腿，date 倒序
     expect(byEtf.items.map((t) => t.id)).toEqual(["mock-txn-103", "mock-txn-101"]);
     expect(byEtf.total).toBe(2);
 
     const byFund = await invoke<TransactionListResult>("list_transactions", {
       filter: { instrument_id: "mock-inst-fund" },
     });
-    // sell 直接持有 + convert 转出腿
     expect(byFund.items.map((t) => t.id)).toEqual(["mock-txn-103", "mock-txn-102"]);
 
     const byHk = await invoke<TransactionListResult>("list_transactions", {
       filter: { instrument_id: "mock-inst-hk" },
     });
-    expect(byHk.items.map((t) => t.id)).toEqual(["mock-txn-105"]); // dividend 到账行
+    expect(byHk.items.map((t) => t.id)).toEqual(["mock-txn-105"]);
   });
 
   it("list_transactions 分页：items 切片 + total 恒为过滤全集", async () => {
@@ -266,7 +248,7 @@ describe("交易读写闭环（ADR-0143 决策 2）", () => {
       filter: { page: 1, page_size: 2 },
     });
     expect(page1.items).toHaveLength(2);
-    expect(page1.total).toBe(24); // 通用 4 + 同单 2（#1968）+ 投资 5（#1970）+ 定时 9（#1973）+ 保单挂单 4（#1974）
+    expect(page1.total).toBe(24);
     expect(page1.items[0]?.id).toBe("mock-txn-105");
 
     const page2 = await invoke<TransactionListResult>("list_transactions", {
@@ -290,9 +272,6 @@ describe("交易读写闭环（ADR-0143 决策 2）", () => {
       filter: { hide_investment_related: true },
     });
     expect(hidden.items.map((t) => t.account_id)).not.toContain("mock-acc-invest");
-    // 全部 25 行（24 夹具 + 1 新建）隐藏 6 行（101–104 投资账户端 4 +
-    // 新建投资账户 expense + 定时转账 txn-307 转入投资账户，issue #1973）；
-    // dividend 到账工资卡、同单两行（#1968）、保单挂单四行（#1974）均不隐藏
     expect(hidden.total).toBe(19);
   });
 
@@ -324,9 +303,6 @@ describe("交易读写闭环（ADR-0143 决策 2）", () => {
 });
 
 describe("余额校准：adjust_account_balance（黑洞转账，ADR-0026）", () => {
-  /** 人算基线：cash = 期初 50_000 − 006 支出 1_200 = 48_800；
-   * bank = 1_000_000 + 002 收入 1_200_000 − 003 转出 300_000
-   *   − 101 买入出资 205_200 + 102 卖出到账 3_000 + 105 分红到账 8_500 = 1_706_300。 */
   it("调高：落黑洞→账户转账，余额到目标，恰发一次 ledger:changed", async () => {
     const changed = captureLedgerChanged();
 
@@ -342,13 +318,12 @@ describe("余额校准：adjust_account_balance（黑洞转账，ADR-0026）", (
       );
     expect(balances.find((b) => b.account.id === "mock-acc-cash")?.balance_cents).toBe(60_000);
 
-    // 转账行：差额 11_200（60_000 − 48_800），方向黑洞→cash，note 缺省「余额调整」
     const list = await invoke<TransactionListResult>("list_transactions");
     const row = list.items.find((t) => t.id === txId);
     expect(row).toMatchObject({
       kind: "transfer",
       amount_cents: 11_200,
-      account_id: expect.any(String), // 黑洞账户 id（下一用例断名字）
+      account_id: expect.any(String),
       to_account_id: "mock-acc-cash",
       note: "余额调整",
       date: "2026-01-30",
@@ -357,8 +332,6 @@ describe("余额校准：adjust_account_balance（黑洞转账，ADR-0026）", (
   });
 
   it("调低：账户→黑洞方向，差额绝对值入账（bank 1_106_300 → 600_000）", async () => {
-    // bank 人算：1_706_300（#1968 基数）− 保费 600_000 − 定投转出 500_000（#1973）
-    //   + 理赔流入 500_000（#1974）= 1_106_300
     const txId = await invoke<string>("adjust_account_balance", {
       id: "mock-acc-bank",
       input: { target_balance_cents: 600_000, date: "2026-01-30" },
@@ -367,9 +340,9 @@ describe("余额校准：adjust_account_balance（黑洞转账，ADR-0026）", (
     const list = await invoke<TransactionListResult>("list_transactions");
     expect(list.items.find((t) => t.id === txId)).toMatchObject({
       kind: "transfer",
-      amount_cents: 506_300, // |1_106_300 − 600_000|
+      amount_cents: 506_300,
       account_id: "mock-acc-bank",
-      to_account_id: expect.any(String), // 黑洞账户 id
+      to_account_id: expect.any(String),
     });
     const balances =
       await invoke<Array<{ account: { id: string }; balance_cents: number }>>(
@@ -388,16 +361,14 @@ describe("余额校准：adjust_account_balance（黑洞转账，ADR-0026）", (
       input: { target_balance_cents: 600_000, date: "2026-01-30" },
     });
 
-    // 两笔转账的黑洞端是同一 id（即建后复用）；type 不可见（隐藏账户不进账户列表，
-    // 见下一用例），经交易行引用断言
     const list =
       await invoke<Array<{ id: string; account_id: string | null; to_account_id: string | null }>>(
         "list_transactions",
       );
     const firstRow = list.items.find((t) => t.id === first);
     const secondRow = list.items.find((t) => t.id === second);
-    const firstHole = firstRow?.account_id; // 调高：黑洞→cash（黑洞是转出端）
-    const secondHole = secondRow?.to_account_id; // 调低：bank→黑洞（黑洞是转入端）
+    const firstHole = firstRow?.account_id;
+    const secondHole = secondRow?.to_account_id;
     expect(firstHole).toBeTruthy();
     expect(secondHole).toBe(firstHole);
   });
@@ -419,7 +390,7 @@ describe("余额校准：adjust_account_balance（黑洞转账，ADR-0026）", (
     await expect(
       invoke<string>("adjust_account_balance", {
         id: "mock-acc-cash",
-        input: { target_balance_cents: 48_800, date: "2026-01-30" }, // 人算：当前余额
+        input: { target_balance_cents: 48_800, date: "2026-01-30" },
       }),
     ).rejects.toThrow(/无需调整/);
   });
@@ -457,8 +428,6 @@ describe("余额缓存审计：audit_balance_cache（mock 余额口径即唯一�
 });
 
 describe("商户关联交易计数：list_merchant_transaction_counts（毛笔数口径）", () => {
-  /** 人算：京东被 005/006 + 定时历史 7 笔（201/202/301..305，#1973）引用 = 9；
-   * 美团被 001/004 引用 = 2；已删商户无引用 = 0。序按名字典序：京东 < 已删商户 < 美团。 */
   it("含软删商户全字典行、无引用计 0、未删流水逐笔计 1", async () => {
     await expect(invoke("list_merchant_transaction_counts")).resolves.toEqual([
       { merchant_id: "mock-mch-jd", transaction_count: 9 },
@@ -508,13 +477,9 @@ describe("未实现命令：含命令名报错（console + toast 双出口）", 
   it("invoke 未登记命令以含命令名的错误拒绝，console.error 与 toastError 双出口", async () => {
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const toast = vi.fn();
-    // 经 loadable 注册接口挂假 sink：断言走公共接缝，不探模块私有 sink 状态
     const { registerToastSink } = await import("@ledger/loadable");
     registerToastSink({ error: toast });
 
-    // 样本取恒不登记的占位命令名（invoke-seam.test.ts 同款）：mock 已覆盖真
-    // 后端全部命令面（#1974/#1976/#1977 并入后），无真实未落地命令可取，占位
-    // 名不会随后续并入再撞号（list_policies、dashboard_overview 先后撞号教训）
     await expect(invoke("no_such_cmd")).rejects.toThrow(/no_such_cmd/);
     expect(errSpy).toHaveBeenCalledWith(expect.stringContaining("no_such_cmd"));
     expect(toast).toHaveBeenCalledWith(expect.stringContaining("no_such_cmd"));
@@ -545,7 +510,6 @@ describe("事件面：listen / emitMockEvent（tauri/event 替身）", () => {
 
     unlisten();
     emitMockEvent("mock:event", "pong");
-    // 仅被撤销者停收，其余监听不受牵连
     expect(seen).toEqual(["a:ping"]);
     expect(second).toEqual(["b:ping", "b:pong"]);
   });

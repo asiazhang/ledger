@@ -1,75 +1,18 @@
 #!/usr/bin/env bun
-// 前端 workspace 结构守门（issue #1149 / spec #1148）：pnpm 子包骨架的边界门禁，
-// 为每一次包抽取提供可证伪的边界基线。本脚本不移动业务代码，只核结构。
-// 规则七类：
-// ① 成员登记：packages/* 下的成员目录必须登记于本脚本 PACKAGES（磁盘 ↔ 清单双向
-//    全等，清单漂移 fail loud）——pnpm-workspace.yaml 的 glob 自动纳管目录，能「漏
-//    登记」的只有方向表登记册；新建成员目录不登记即红（删除即变红）。
-//    另核 pnpm-workspace.yaml 须以 glob 声明 packages/*（成员可为空，目录缺失即红）。
-// ② 包依赖方向：每个包只能依赖 PACKAGES 已声明且方向允许的包；依赖未登记包、或
-//    依赖不在自身 deps 方向表内的包即红。方向表随包抽取逐票补充；dependencies /
-//    devDependencies / optionalDependencies / peerDependencies 四类一并核对（包间
-//    测试边也是真实边界，方向表显式放行）。
-//    消费面补齐（issue #1470）：包内源码命中跨包 import 时，消费方 package.json
-//    四类依赖须含目标包——未在自身清单声明的幽灵 import（借 workspace 根
-//    node_modules 符号链接即可解析）在此显形；反向，方向表登记的依赖边须被实际
-//    消费，使包登记 note 承诺的「方向表与实际 import 全等」两向都可证伪
-//    （dev 边仍归规则⑤；未登记目标与深导入形态归规则③④）。
-// ③ 跨包引用形态：包内源码跨包引用只能走包名 `@ledger/*`；禁止 `@/` 别名（指向根
-//    src，从包内使用必然穿越包边界）与相对路径穿越包边界（解析后落点在包目录外）。
-// ④ 深导入禁令：`@ledger/x/sub` 形态必须命中目标包 package.json `exports` 的对应
-//    入口（精确键 `./sub` 或 `./*` 通配；exports 为字符串视作仅暴露 `.`）。
-// ⑤ 测试支持纯净性（issue #1152）：PACKAGES 内 testSupport: true 的包只许经
-//    devDependencies 被消费（根包与成员包一并核对，dependencies/optionalDependencies/
-//    peerDependencies 任一出现即红）；且测试支持包自身 dependencies 必须为空
-//    （替身与接缝所需运行面全部走 devDependencies）——生产依赖图零测试支持内容。
-// ⑥ 上行引用禁令（issue #1156）：登记目录不得引用登记的上层目标——上行越界接缝
-//    归位后把方向固化成登记项，登记项唯一事实源为 FORBIDDEN_UPWARD_IMPORTS；
-//    改动登记项即变红（登记表全等断言，issue #1156 验收判据）。
-//    #1314 起 src/utils 全量成包 @ledger/utils，唯一登记项（dir: 'src/utils'）随
-//    搬迁对象消失而收缩清空：包层上行形态改由规则②（方向表全等）、③（@/ 别名
-//    禁令）、④（深导入 exports 入口）在包边界接管，登记机制保留——后续目录级
-//    边界约束（如 ADR-0118 规则⑦深模块登记表）的登记处。
-// ⑦ 深模块边界登记表（issue #1323 / ADR-0118 决策 7）：不成包的深模块以「允许消费
-//    方白名单」守门，登记 { 模块文件 → 允许消费方闭集 }，登记项唯一事实源为
-//    DEEP_MODULE_BOUNDARIES；扫描 src/ + packages/ 源文件（排除测试文件——单测引用
-//    被测对象是天然形态，白名单表达生产消费面）的 import（@/ 别名与相对路径统一
-//    解析落点后比对），消费方不在白名单内即红；登记模块文件不存在即红（改名/删除
-//    后拒绝规则静默失效）；删除登记项即变红（登记表全等断言 + 夹具违规即红，
-//    issue #1323 验收判据）。
-// 扫描边界：文本级扫描，只掩码注释（行注释与块注释）后匹配 import 形态——import
-// 说明符本身是字符串，掩码字符串会连靶一起抹掉；故字符串里的伪 import 靠 import/
-// from 关键词上下文排除，模板字面量动态 import（反引号形态）与字符串内的关键字
-// 假阳性不可达，靠评审兜底。仅扫描 .ts / .tsx / .vue 源文件。
-// 默认校验本仓库；测试传位置参数指向夹具：
-// bun scripts/check-frontend-structure.ts [repo-root] [packages-manifest.json]
-// arg2 = 夹具包登记表（JSON 数组，与 PACKAGES 同形）——仅供测试夹具注入，注入时
-// 完全替代生产登记表（#1150 起 PACKAGES 非空，拼接会让生产条目泄漏进夹具）；
-// 生产路径不传，登记表唯一事实源仍是本脚本 PACKAGES。
 
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { maskComments, readDirEntries, walkTextFiles, type WalkedFile } from "./gate-primitives.ts";
 
-/** 成员包登记条目（单一事实源，issue #1149）：dir 相对仓库根。 */
 export interface PackageEntry {
-  /** 包名：`@ledger/xxx`（与包 package.json name 全等） */
   name: string;
-  /** 目录：相对仓库根，`packages/xxx` */
   dir: string;
-  /** 允许依赖的 @ledger 包名（方向表，随包抽取逐票补充） */
   deps: readonly string[];
-  /** 测试支持包（issue #1152 规则⑤）：只许被 devDependencies 消费，且自身
-   *  dependencies 必须为空——生产依赖图零测试支持内容；未标记者不受此约束 */
   testSupport?: boolean;
   note: string;
 }
 
-/**
- * 成员包登记册（issue #1149）：与 check-structure.ts 的 CRATES 同为「已验证事实
- * 固化为规格」——packages/* 下的每个成员目录在此恰有一行；每拆一个前端包追加。
- */
 export const PACKAGES: readonly PackageEntry[] = [
   {
     name: "@ledger/types",
@@ -197,30 +140,22 @@ export const PACKAGES: readonly PackageEntry[] = [
   },
 ];
 
-/** workspace 成员 glob（pnpm-workspace.yaml 侧声明与本脚本核对同源）。 */
 const MEMBER_DIR_GLOB = "packages/*";
 
-/** 包名空间前缀（规则③④的跨包引用识别面）。 */
 const PACKAGE_NAME_PREFIX = "@ledger/";
 
-/** 规则③④靶形态（逐行扫描，与既有守门同形制）：说明符与 from 同行（多行 import
- *  的尾行即 from 行，行号对准说明符）；动态 import 与副作用 import 单独捕形 */
 const FROM_SPECIFIER_PATTERN = /\bfrom\s*['"]([^'"]+)['"]/;
 const DYNAMIC_IMPORT_PATTERN = /\bimport\s*\(\s*['"]([^'"]+)['"]/;
 const SIDE_EFFECT_IMPORT_PATTERN = /\bimport\s+['"]([^'"]+)['"]/;
 
-/** 扫描的源文件扩展名闭集（walkTextFiles 消费参数；Vue SFC 的 script 块与 TS 源码） */
 const SOURCE_EXTENSIONS: ReadonlySet<string> = new Set([".ts", ".tsx", ".vue"]);
 
-/** 单条 import 说明符命中：行号（1 起算）、原文行、说明符 */
 export interface ImportHit {
   line: number;
   text: string;
   specifier: string;
 }
 
-/** 扫描单个源文本（逐行、掩码注释后）的 import 说明符：返回行号与说明符清单。
- *  同一行命中多条形态时全部上报（分号连写的多语句均为真实引用）。 */
 export function scanImportSpecifiers(text: string): ImportHit[] {
   const masked = maskComments(text);
   const maskedLines = masked.split("\n");
@@ -241,34 +176,25 @@ export function scanImportSpecifiers(text: string): ImportHit[] {
   return hits;
 }
 
-/** 解析 `@ledger/x[/sub]` 说明符形态（规则②消费面与规则③④共用的唯一定义点）：
- *  返回包名与子路径；非包形态（含 `@ledger/` 残缺形态）返回 null，深导入判定
- *  归规则④。 */
 function parseLedgerSpecifier(specifier: string): { name: string; subpath?: string } | null {
   const m = /^@ledger\/([^/]+)(?:\/(.*))?$/.exec(specifier);
   if (!m) return null;
   return { name: `${PACKAGE_NAME_PREFIX}${m[1]}`, subpath: m[2] };
 }
 
-/** 递归收集目录下全部源文件（相对路径排序保证输出确定）：遍历机制归守门家族
- *  共享单点 walkTextFiles（#1680 收口），扩展名闭集经 options 注入；目录缺失
- *  返回空集（夹具形态）。 */
 function collectSourceFiles(dir: string, relBase: string): WalkedFile[] {
   if (!existsSync(dir)) return [];
   return walkTextFiles(dir, relBase, { extensions: SOURCE_EXTENSIONS });
 }
 
-/** 规则④：深导入子路径是否命中目标包 exports 入口（精确键或 `./*` 通配） */
 function exportsExposeSubpath(exportsField: unknown, subpath: string): boolean {
-  if (typeof exportsField === "string") return false; // 字符串形态仅暴露 "."，不含子路径
+  if (typeof exportsField === "string") return false;
   if (exportsField === null || typeof exportsField !== "object") return false;
   const keys = Object.keys(exportsField);
   if (keys.includes(`./${subpath}`)) return true;
-  // 简单通配 "./*"：目录级放行（包抽取逐票补精确键时收窄）
   return keys.includes("./*");
 }
 
-/** 夹具登记表装载（arg2）：JSON 数组、与 PackageEntry 同形，畸形 fail loud */
 function loadFixtureManifest(path: string): PackageEntry[] {
   let parsed: unknown;
   try {
@@ -284,15 +210,12 @@ function loadFixtureManifest(path: string): PackageEntry[] {
   return parsed as PackageEntry[];
 }
 
-/** pnpm-workspace.yaml 以 glob 声明成员目录（文本级核对，与 yaml 现状同形态）：
- *  packages: 键与 - packages/* 列表项之间的注释行不参与匹配 */
 function workspaceDeclaresPackagesGlob(yamlText: string): boolean {
   return /(?:^|\n)packages:[^\n]*\n(?:\s*#[^\n]*\n)*\s*-\s*['"]?packages\/\*['"]?\s*(?:\n|$)/.test(
     yamlText,
   );
 }
 
-/** 成员 package.json 的四类依赖键（方向核对统一口径） */
 const DEP_KINDS = [
   "dependencies",
   "devDependencies",
@@ -300,7 +223,6 @@ const DEP_KINDS = [
   "peerDependencies",
 ] as const;
 
-/** 规则①：磁盘成员目录 ↔ PACKAGES 双向全等（新建不登记即红、清单漂移即红） */
 function checkMemberRegistration(
   repoRoot: string,
   registry: readonly PackageEntry[],
@@ -313,8 +235,6 @@ function checkMemberRegistration(
     );
     return;
   }
-  // 成员目录列举归家族共享单点 readDirEntries（#1742 收口）：排序归一为 localeCompare
-  // （原 plain sort 实树对拍全等）；PACKAGES 登记双向全等是本门政策，留门。
   const onDisk = readDirEntries(packagesDir)
     .filter((e) => e.isDirectory)
     .map((e) => `packages/${e.name}`);
@@ -334,7 +254,6 @@ function checkMemberRegistration(
   }
 }
 
-/** 规则②：包依赖方向——只许依赖已登记且在自身方向表 deps 内的 @ledger 包 */
 function checkDependencyDirection(
   repoRoot: string,
   registry: readonly PackageEntry[],
@@ -389,14 +308,6 @@ function checkDependencyDirection(
   }
 }
 
-/** 规则②消费面（issue #1470）：包内源码的跨包 import 与「消费方声明 + 方向表」
- *  双向核对。正向——命中跨包 import 时消费方 package.json 四类依赖须含目标包
- *  （四类任一命中即算已声明；dev 边仍归规则⑤），堵幽灵 import 借 workspace 根
- *  node_modules 符号链接绕过方向表；反向——方向表登记的依赖边须被实际消费，
- *  使「方向表与实际 import 全等」两向可证伪。消费证明取实际 import（非清单
- *  声明），核对面与规则③同源（包内 .ts / .tsx / .vue 源码）。自引用（包名指向
- *  自身）不属跨包边；未登记目标归规则③、深导入形态归规则④、包目录与清单缺口
- *  归规则①②，均不在此重复。 */
 function checkDependencyConsumption(
   repoRoot: string,
   registry: readonly PackageEntry[],
@@ -416,7 +327,6 @@ function checkDependencyConsumption(
         if (depName.startsWith(PACKAGE_NAME_PREFIX)) declared.add(depName);
       }
     }
-    // 每条边只留首个命中：文件 + 行号足够可操作定位，重复行只增噪音
     const consumed = new Map<string, { rel: string; line: number; text: string }>();
     for (const f of collectSourceFiles(pkgRoot, pkg.dir)) {
       for (const hit of scanImportSpecifiers(readFileSync(f.abs, "utf8"))) {
@@ -451,7 +361,6 @@ function checkDependencyConsumption(
   }
 }
 
-/** 规则③④：包内源码的跨包引用形态（@/ 别名、相对穿越、深导入 exports 入口） */
 function checkImportShapes(
   repoRoot: string,
   registry: readonly PackageEntry[],
@@ -502,7 +411,7 @@ function checkImportShapes(
             );
             continue;
           }
-          if (subpath === undefined) continue; // 包名整引，规则④不适用
+          if (subpath === undefined) continue;
           const targetManifestPath = join(repoRoot, target.dir, "package.json");
           if (!existsSync(targetManifestPath)) {
             problems.push(
@@ -533,7 +442,6 @@ function checkImportShapes(
   }
 }
 
-/** 读清单为 JSON 对象；缺失或不可解析返回 null——对应缺口由规则②报，不在此重复 */
 function tryReadManifest(path: string): Record<string, unknown> | null {
   if (!existsSync(path)) return null;
   try {
@@ -543,11 +451,6 @@ function tryReadManifest(path: string): Record<string, unknown> | null {
   }
 }
 
-/** 规则⑤：testSupport 包只许经 devDependencies 被消费，且自身 dependencies 为空。
- *  登记面 = PACKAGES 内 testSupport: true 的条目（单一事实源，夹具登记表同形）；
- *  核对面 = 根包 + 全部成员包的清单（生产依赖图 = 各包 dependencies 侧的并集）。
- *  对 optionalDependencies/peerDependencies 同样拦截——optional 与 peer 都会把包
- *  带进消费方的安装/解析面，dev 是唯一合法通道。 */
 function checkTestSupportPurity(
   repoRoot: string,
   registry: readonly PackageEntry[],
@@ -590,24 +493,14 @@ function checkTestSupportPurity(
   }
 }
 
-/** 规则⑥ 上行引用禁令登记册（单一事实源，issue #1156）：按目录登记「不得引用的
- *  上层目标」。每个条目 = 一段已固化的方向约束；条目本身即规格——删除/改动条目会
- *  让 scripts/check-frontend-structure.test.ts 的登记表全等断言变红
- *  （删除即变红，issue #1156 验收判据；测试文件 #1991 起随同目录约定住 scripts/）。 */
 export interface UpwardImportRule {
-  /** 被约束的源目录（相对仓库根，posix 分隔） */
   dir: string;
-  /** 禁止出现的 import 说明符：精确名或其 `名/子路径` */
   forbidden: readonly string[];
   note: string;
 }
 
-/** 登记项（逐票补充）：#1314 起 src/utils 成包 @ledger/utils，唯一登记项
- *  （issue #1156 的 utils 四条上行禁令）随搬迁对象消失而收缩，现为空集——
- *  包层上行由规则②③④接管（见规则⑥头注）；新增目录级约束在此登记。 */
 export const FORBIDDEN_UPWARD_IMPORTS: readonly UpwardImportRule[] = [];
 
-/** 说明符是否命中登记的上行目标（精确名或其 `名/子路径`，避免 `@/storesX` 误伤） */
 function hitsForbiddenSpecifier(specifier: string, forbidden: readonly string[]): string | null {
   for (const target of forbidden) {
     if (specifier === target || specifier.startsWith(`${target}/`)) return target;
@@ -615,8 +508,6 @@ function hitsForbiddenSpecifier(specifier: string, forbidden: readonly string[])
   return null;
 }
 
-/** 规则⑥：登记目录不得出现登记的上行 import（文本级扫描，复用 import 捕形）。
- *  登记目录缺失即红——拒绝以空集假绿（目录改名/漂移后规则静默失效）。 */
 function checkUpwardImports(repoRoot: string, problems: string[]): void {
   for (const rule of FORBIDDEN_UPWARD_IMPORTS) {
     const dir = join(repoRoot, rule.dir);
@@ -643,20 +534,12 @@ function checkUpwardImports(repoRoot: string, problems: string[]): void {
   }
 }
 
-/** 规则⑦ 深模块边界登记条目（单一事实源，issue #1323 / ADR-0118 决策 7）：路径相对
- *  仓库根，posix 分隔。 */
 export interface DeepModuleBoundary {
-  /** 深模块文件路径（相对仓库根） */
   module: string;
-  /** 允许的消费方目录/文件闭集（相对仓库根；目录为前缀闭集） */
   allowedConsumers: readonly string[];
   note: string;
 }
 
-/** 深模块边界登记册（issue #1323）：不成包的深模块（依赖壳内状态故过不了成包判据
- *  1，ADR-0118 决策 1/4）以白名单固化生产消费面；每新增一项登记追加一行。条目本身
- *  即规格——删除/改动条目会让 scripts/check-frontend-structure.test.ts 的登记表全等
- *  断言变红（删除即变红，issue #1323 验收判据）。 */
 export const DEEP_MODULE_BOUNDARIES: readonly DeepModuleBoundary[] = [
   {
     module: "src/transaction/useTransactionFilter.ts",
@@ -670,13 +553,10 @@ export const DEEP_MODULE_BOUNDARIES: readonly DeepModuleBoundary[] = [
   },
 ];
 
-/** 消费方 rel 路径是否命中白名单条目（目录为前缀闭集：`src/views` 放行 `src/views/` 整棵树） */
 function consumerAllowed(consumerRel: string, allowed: readonly string[]): boolean {
   return allowed.some((dir) => consumerRel === dir || consumerRel.startsWith(`${dir}/`));
 }
 
-/** import 说明符解析为仓库相对路径（`@/` 别名指向 src/；相对路径自消费方文件解析；
- *  包名与 bare 说明符不指向壳内文件，返回 null） */
 function resolveShellSpecifier(repoRoot: string, consumerAbs: string, specifier: string): string {
   const abs = specifier.startsWith("@/")
     ? join(repoRoot, "src", specifier.slice(2))
@@ -684,21 +564,16 @@ function resolveShellSpecifier(repoRoot: string, consumerAbs: string, specifier:
   return relative(repoRoot, abs);
 }
 
-/** 说明符解析落点是否命中登记模块（精确文件，或 TS 无扩展名 / 编译 .js 形态） */
 function hitsDeepModule(candRel: string, moduleRel: string): boolean {
   if (candRel === moduleRel) return true;
   const stem = moduleRel.replace(/\.ts$/, "");
   return candRel === stem || candRel === `${stem}.js`;
 }
 
-/** 测试文件不在规则⑦扫描面：单测引用被测对象是天然形态，白名单表达生产消费面 */
 function isTestFile(rel: string): boolean {
   return rel.split("/").includes("__tests__") || /\.(test|spec)\.[tj]sx?$/.test(rel);
 }
 
-/** 规则⑦：登记模块的消费方必须全在白名单内（文本级扫描 src/ + packages/ 源码树，
- *  复用 import 捕形与注释掩码）。登记模块文件缺失即红——拒绝以空集假绿（模块
- *  改名/删除后规则静默失效，同规则⑥登记目录缺失形制）。 */
 function checkDeepModuleBoundaries(repoRoot: string, problems: string[]): void {
   for (const entry of DEEP_MODULE_BOUNDARIES) {
     const moduleAbs = join(repoRoot, entry.module);
@@ -734,15 +609,12 @@ function main(): void {
   const scriptDir = dirname(fileURLToPath(import.meta.url));
   const repoRoot = process.argv[2] ?? join(scriptDir, "..");
   const fixtureManifestPath = process.argv[3];
-  // 夹具注入完全替代生产登记表（issue #1150 起 PACKAGES 非空）：concat 会让生产
-  // 条目泄漏进夹具仓库根、触发「清单漂移」假红；夹具自足才可隔离校验。
   const registry: readonly PackageEntry[] = fixtureManifestPath
     ? loadFixtureManifest(fixtureManifestPath)
     : PACKAGES;
 
   const problems: string[] = [];
 
-  // 规则①前置：pnpm-workspace.yaml 须以 glob 声明 packages/*
   const workspaceYamlPath = join(repoRoot, "pnpm-workspace.yaml");
   if (!existsSync(workspaceYamlPath)) {
     problems.push(`✗ workspace 骨架：pnpm-workspace.yaml 不存在（${repoRoot}）`);
@@ -782,7 +654,6 @@ function main(): void {
   );
 }
 
-// 仅直接运行时执行 main；被测试/其他工具 import 时只取导出的扫描函数与清单。
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main();
 }

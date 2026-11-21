@@ -3,34 +3,10 @@ import { installMockBackend } from "./index";
 import { invoke } from "./tauri/core";
 import { listen } from "./tauri/event";
 
-/**
- * 报表聚合替身行为测试（issue #1968 / spec #1964 / ADR-0143）：接缝 = 应用所见的
- * tauri 命令面（`installMockBackend` + `invoke`），删除任一登记行即未命中报错、
- * 本文件变红（接线负向判据，ADR-0087 断言强度）。
- *
- * 聚合期望值为独立人算字面量。夹具未删交易 24 笔：
- * - 001 expense 2_500 餐饮 美团 2026-01-05 ｜ 002 income 1_200_000 工资 2026-01-10
- * - 003 transfer 300_000 2026-01-25 ｜ 004 refund 1_500 餐饮 美团 2026-01-06
- * - 005 expense 8_800 未分类 京东 2026-01-08 ｜ 006 expense 1_200 未分类 京东 2026-01-08
- * - 投资五种 kind（101–105，2026-02，#1970）：仅 105 dividend 8_500 进收入列，
- *   买入/卖出/折算/拆分不进毛值三列（kind→度量矩阵）
- * - 定时期次历史 9 笔（#1973，均未分类）：京东 expense 201/202（1_000，
- *   2025-12-15/2026-01-15）+ 301..305（2_500，2025-09..2026-01 各月 10 日）；
- *   保费 306 无商户 600_000 2025-06-01；定投 transfer 307 不进毛值列
- * - 保单挂单四笔（#1974）：保费 expense 三笔（360_000×2 + 120_000）与理赔
- *   income 500_000，分类/商户均空——进毛值三列与未分类份额、不进商户排行；
- *   原号 201/202 撞号顺延改 308/309：309（2025-03-01）/308（2025-07-05）/
- *   203（理赔 2025-11-20）落 2025 年，204（2026-01-05）落当月窗口
- *
- * 替身从简口径（reports.ts 头注记录与真后端差异）：不折算（amount_native_cents
- * = 原币直记）、子类直归本类不模拟上卷。
- */
-
 beforeEach(() => {
-  installMockBackend(); // 重装即重播种：每用例从夹具种子起步
+  installMockBackend();
 });
 
-/** 订阅 ledger:changed 并返回触发计数（报表域全读命令，恒 0）。 */
 function captureLedgerChanged(): () => number {
   let count = 0;
   void listen("ledger:changed", () => {
@@ -42,7 +18,7 @@ function captureLedgerChanged(): () => number {
 describe("报表日期极值：report_date_range", () => {
   it("返回未删交易日期极值对（人算：2025-03-01 保费最小、02-25 分红最大）", async () => {
     await expect(invoke("report_date_range")).resolves.toEqual({
-      min_date: "2025-03-01", // 保单挂单 309（原 202 改号，#1974）早于定时保费 306
+      min_date: "2025-03-01",
       max_date: "2026-02-25",
     });
   });
@@ -58,8 +34,6 @@ describe("报表日期极值：report_date_range", () => {
 
 describe("月度汇总：monthly_summary（毛值三列，人算字面量）", () => {
   it("期间口径：当月一行 income 1_200_000 / expense 毛值 376_000 / refund 1_500", async () => {
-    // expense 人算：001+005+006 12_500 + 定时历史 202（1_000）+ 305（2_500，#1973）
-    //   + 续期保费 204（360_000，#1974 挂单）= 376_000
     await expect(
       invoke("monthly_summary", { year: 2026, from: "2026-01-01", to: "2026-01-31" }),
     ).resolves.toEqual([
@@ -70,13 +44,8 @@ describe("月度汇总：monthly_summary（毛值三列，人算字面量）", (
   it("遗留 year 形态：2026 年按月两行（2 月仅分红 8_500）；2025 年定时 + 保单流水七行；无交易年空数组", async () => {
     await expect(invoke("monthly_summary", { year: 2026, from: null, to: null })).resolves.toEqual([
       { month: "2026-01", income_cents: 1_200_000, expense_cents: 376_000, refund_cents: 1_500 },
-      // 2 月投资夹具：买入/卖出/折算/拆分不进毛值三列，仅分红计入收入
       { month: "2026-02", income_cents: 8_500, expense_cents: 0, refund_cents: 0 },
     ]);
-    // 2025 = 定时历史（#1973）+ 保单挂单（#1974，原号 201/202 撞号顺延改 308/309）：
-    // 03 保费 120_000、06 保费 600_000、07 保费 360_000、09–10 会员各 2_500、
-    // 11 = 会员 2_500 + 理赔 income 500_000、12 = 201（1_000）+ 304（2_500）= 3_500；
-    // transfer 307 不进毛值列
     await expect(invoke("monthly_summary", { year: 2025, from: null, to: null })).resolves.toEqual([
       { month: "2025-03", income_cents: 0, expense_cents: 120_000, refund_cents: 0 },
       { month: "2025-06", income_cents: 0, expense_cents: 600_000, refund_cents: 0 },
@@ -114,7 +83,6 @@ describe("月度汇总：monthly_summary（毛值三列，人算字面量）", (
       invoke("monthly_summary", { year: 2026, from: "2026-01-01", to: "2026-02-28" }),
     ).resolves.toEqual([
       { month: "2026-01", income_cents: 1_200_000, expense_cents: 376_000, refund_cents: 1_500 },
-      // 2 月 = 投资夹具分红 8_500 + 新记支出 6_600（买入等不进毛值列，人算）
       { month: "2026-02", income_cents: 8_500, expense_cents: 6_600, refund_cents: 0 },
     ]);
   });
@@ -122,8 +90,6 @@ describe("月度汇总：monthly_summary（毛值三列，人算字面量）", (
 
 describe("分类份额：category_shares（净值口径，人算字面量）", () => {
   it("expense 全月：未分类 373_500（005/006 + 定时历史两笔 + 204 保费）居首、餐饮 1_000（2500 − 退款 1500）次之", async () => {
-    // 人算：10_000 + 202（1_000）+ 305（2_500，#1973）+ 204（360_000，#1974）= 373_500；
-    // 餐饮 = 2500 − 退款 1500
     await expect(
       invoke("category_shares", {
         kind: "expense",
@@ -162,7 +128,6 @@ describe("分类份额：category_shares（净值口径，人算字面量）", (
         to: "2026-01-05",
       }),
     ).resolves.toEqual([
-      // 同日 204 保费（未分类 360_000）与 001（餐饮 2_500）均落窗口内（人算）
       { category_id: "", category_name: "未分类", amount_cents: 360_000 },
       { category_id: "mock-cat-food", category_name: "餐饮", amount_cents: 2_500 },
     ]);
@@ -210,7 +175,6 @@ describe("分类份额：category_shares（净值口径，人算字面量）", (
 
 describe("商户消费排行：merchant_shares（expense_net + 同口径笔数 + total，人算字面量）", () => {
   it("全月：京东 13_500/4 笔居首（含定时历史两笔）、美团 1_000（2500−1500）/2 笔，total 14_500", async () => {
-    // 人算：京东 = 005/006 10_000 + 202（1_000）+ 305（2_500）= 13_500 / 4 笔（#1973）
     await expect(
       invoke("merchant_shares", { year: 2026, from: "2026-01-01", to: "2026-01-31", topN: null }),
     ).resolves.toEqual({
@@ -285,12 +249,10 @@ describe("商户消费排行：merchant_shares（expense_net + 同口径笔数 +
       amount_cents: 3_300,
       transaction_count: 1,
     });
-    expect(report.total_cents).toBe(17_800); // 14_500 + 3_300（人算）
+    expect(report.total_cents).toBe(17_800);
   });
 
   it("遗留 year 形态：2025 年仅定时历史京东五行", async () => {
-    // 2025 定时历史（#1973）：京东 = 201（1_000）+ 301..304（2_500 × 4）= 11_000 / 5 笔；
-    // 保费 306 无商户不进商户聚合
     await expect(
       invoke("merchant_shares", { year: 2025, from: null, to: null, topN: null }),
     ).resolves.toEqual({

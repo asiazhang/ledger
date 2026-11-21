@@ -23,10 +23,8 @@ describe("pinyinInitials", () => {
 describe("isSubsequence", () => {
   it("按序允许跳字命中", () => {
     expect(isSubsequence("wy", "wkwy")).toBe(true);
-    // 输入 `wy` 能命中首字母串为 `wxy`/`awya` 的选项（跳字命中）
     expect(isSubsequence("wy", "wxy")).toBe(true);
     expect(isSubsequence("wy", "awya")).toBe(true);
-    // target 中不存在的字符无法命中
     expect(isSubsequence("wxy", "wkwy")).toBe(false);
     expect(isSubsequence("awya", "wkwy")).toBe(false);
   });
@@ -108,7 +106,6 @@ describe("pinyinFilter（NSelect filter 签名收口）", () => {
   });
 
   it("数字 label 转字符串判定", () => {
-    // 契约违例夹具（数字 label）：naive-ui 选项类型不含数字 label，经 unknown 单点绕过
     expect(pinyinFilter("12", { label: 123, value: 123 } as unknown as SelectOption)).toBe(true);
   });
 

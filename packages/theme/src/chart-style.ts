@@ -2,33 +2,19 @@ import { Chart as ChartJS, type Chart } from "chart.js";
 import type { Theme } from "./theme";
 import { formatAmount } from "@ledger/money";
 
-/**
- * 柔和柱状图统一样式（报表页两张图共用，2026-09 视觉柔化；投资趋势图未来可复用）：
- * - 柱端 4px 圆角：borderSkipped 默认 start，基线端不圆，柱端读数位置不糊；
- * - 柱体沿数值轴渐隐：柱端实色 → 基线 40% 透明度，由 softBarFillPlugin 在绘制期
- *   逐柱换装——data 侧 backgroundColor 仍传实色字符串（同 id 稳定配色的数据契约、
- *   图桩 JSON 序列化断言均不受影响），渐变纯绘制期呈现；
- * - 网格/刻度主题感知弱化 + tooltip/图例柔和预设，中性色按外观取值。
- */
-
-/** 柱端圆角（px） */
 export const SOFT_BAR_RADIUS = 4;
 
-/** 月度图柱宽收窄：柱体占类目宽 70%×85%，柱间留呼吸感 */
 export const SOFT_BAR_PERCENTAGE = 0.7;
 export const SOFT_CATEGORY_PERCENTAGE = 0.85;
 
-/** 基线端透明度（柱端实色 → 基线淡出） */
 const BASE_ALPHA = 0.4;
 
-/** 主题感知中性色：网格线与刻度文字（暗色白基、亮色黑基，同灰阶） */
 export function softChartColors(theme: Theme): { grid: string; ticks: string } {
   return theme === "dark"
     ? { grid: "rgba(255, 255, 255, 0.10)", ticks: "rgba(255, 255, 255, 0.55)" }
     : { grid: "rgba(0, 0, 0, 0.08)", ticks: "rgba(0, 0, 0, 0.55)" };
 }
 
-/** tooltip 柔和预设：深色气泡两主题一致，圆角 + 加大内边距去工程感 */
 export const SOFT_TOOLTIP = {
   backgroundColor: "rgba(0, 0, 0, 0.85)",
   cornerRadius: 8,
@@ -36,7 +22,6 @@ export const SOFT_TOOLTIP = {
   boxPadding: 6,
 } as const;
 
-/** 图例小圆点预设：弱化图例存在感 */
 export const SOFT_LEGEND_LABELS = {
   usePointStyle: true,
   pointStyle: "circle",
@@ -53,20 +38,10 @@ function withAlpha(hex: string, alpha: number): string {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
-/** 柱尾标注插件选项（chart options 的 plugins.barEndAmounts，issue #843）：
- *  labels 按索引覆盖默认金额标注；缺省（未提供或不覆盖到的索引）回退金额。 */
 export interface BarEndAmountsPluginOptions {
-  /** 柱尾标注覆盖（按索引）：分类构成占比点按显示（ADR-0088 决策 6）由视图经
-   *  「金额 · 占比%」口径（barTooltipLabel）构造传入；插件不认识任何口径。 */
   labels?: string[];
 }
 
-/**
- * 柱尾金额标注插件（issue #378 立项，issue #588 起报表页两张横向柱图共用单点）：
- * afterDatasetsDraw 阶段在柱尾外侧画 formatAmount 金额（隐私模式同源掩码，#567）；
- * 正值柱标柱尾右侧、负值柱标柱尾左侧（0 轴如实渲染）。挂进 Bar 的 plugins 即生效，
- * 与柱体渐隐插件同先例。标注文案可经 plugins.barEndAmounts.labels 按索引覆盖
- * （issue #843），插件只画传入的字符串，不含任何占比口径。 */
 export const barEndAmountPlugin = {
   id: "barEndAmounts",
   afterDatasetsDraw(chart: Chart<"bar">) {
@@ -85,7 +60,6 @@ export const barEndAmountPlugin = {
       const value = data[i];
       const label = labelOverrides?.[i] ?? formatAmount(value);
       const { x, y } = el.getProps(["x", "y"], true);
-      // 正值柱标在柱尾右侧，负值柱标在柱尾左侧（0 轴如实渲染）
       ctx.textAlign = value >= 0 ? "left" : "right";
       ctx.fillText(label, value >= 0 ? x + 6 : x - 6, y);
     });
@@ -93,13 +67,6 @@ export const barEndAmountPlugin = {
   },
 };
 
-/**
- * 柱体渐隐插件（挂进 Bar 的 plugins 即生效，与柱尾标签插件同先例）：
- * beforeDatasetsDraw 阶段元素几何已定，逐柱把已解析的实色 backgroundColor
- * 换成「基线 BASE_ALPHA → 柱端实色」的 canvas 渐变；方向随 indexAxis 自动
- * 适配（横向图数值端实色、基线淡出，负值柱天然正确）。退化柱（高/宽近 0）
- * 与非 6 位 hex 实色原样跳过，保持实色。
- */
 export const softBarFillPlugin = {
   id: "softBarFill",
   beforeDatasetsDraw(chart: Chart<"bar">) {

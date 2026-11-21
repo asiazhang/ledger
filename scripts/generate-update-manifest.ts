@@ -1,56 +1,21 @@
 #!/usr/bin/env bun
-// 更新清单生成器（issue #1428 / ADR-0124 决策 2/10）：发布 publish 阶段把各平台
-// 更新工件与 .sig 签名装配成 latest.json 随 GitHub Release 上传——发布即更新源，
-// 清单生成零手工步骤（不引入 tauri-action，沿 ADR-0066 决策 3 手写 publish 路线）。
-// publish job（build.yml）与本地干跑共用本脚本，清单形态只有这一份权威。
-//
-// 清单契约（消费方 = tauri-plugin-updater Static 形态，随 #1429 进应用）：
-//   {
-//     "version":   "x.y.z"            ← 纯三段式语义版本（无 v 前缀，semver 比较）
-//     "notes":     "…"                ← 发布说明，承载兼容性警告（取 CHANGELOG 版本条目）
-//     "pub_date":  "…Z"               ← RFC3339 UTC，秒精度
-//     "platforms": {
-//       "<target>": { "url": "…", "signature": "…" }
-//     }
-//   }
-//   - platforms 键（updater target 字符串 = {target}-{arch}）闭集三平台：
-//     darwin-aarch64（*.app.tar.gz）、windows-x86_64（NSIS *.exe，更新工件即安装器
-//     本体）、linux-x86_64（*.AppImage，同左）；deb 与 Android 无更新工件、不进清单。
-//   - signature = 对应更新工件 .sig 文件内容（minisign 签名的 base64 文本，原样内嵌）。
-//     签名经 `pnpm tauri signer sign --app-version <版本>` 生成（CLI 2.11.5 起
-//     trusted comment 绑定版本，配合插件 requireSignedVersion 可防降级——#1429 配置项）。
-//
-// 更新源端点定形记录（#1429 插件配置的契约依据）：端点以数组配置、按序尝试，
-//   首位为 https://github.com/asiazhang/ledger/releases/latest/download/latest.json
-//   （latest 跳转恒指最新已发布 Release 的清单资产，发布零手工）；镜像扩展位 = 数组
-//   追加，不改代码（ADR-0124 决策 2）。
-//
-// 本地干跑（不必触发完整发布，验证生成物）：
-//   bun scripts/generate-update-manifest.ts --dir <工件目录> --version 0.9.0 \
-//     --tag v0.9.0 --repo asiazhang/ledger --notes-file <发布说明.md>
-//   目录内放置三个更新工件（文件名任意、平铺或嵌套子目录均可——按后缀识别，
-//   嵌套形态 = publish 下载的 upload-artifact LCA 布局）并各配 `pnpm tauri signer sign
-//   --app-version 0.9.0 <工件>` 产出的 .sig；不传 --out 时清单打印到 stdout。
 
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
-/** 平台键 → 更新工件文件后缀的闭集（updater Static 形态的 platforms 键）。 */
 const PLATFORM_ARTIFACT_SUFFIXES: ReadonlyArray<{ target: string; suffix: string }> = [
   { target: "darwin-aarch64", suffix: ".app.tar.gz" },
   { target: "windows-x86_64", suffix: ".exe" },
   { target: "linux-x86_64", suffix: ".AppImage" },
 ];
 
-/** 单平台更新工件：文件名与随附 .sig 的内容（清单 signature 字段原样内嵌）。 */
 export interface PlatformArtifact {
   target: string;
   file: string;
   signature: string;
 }
 
-/** 清单装配输入（pubDate 显式注入，测试可固定时间）。 */
 export interface ManifestInput {
   version: string;
   notes: string | undefined;
@@ -60,18 +25,12 @@ export interface ManifestInput {
   artifacts: PlatformArtifact[];
 }
 
-/** 校验三段式语义版本（与发布流程 versionCode 派生同一规则；拒绝 v 前缀）。 */
 export function validateVersion(version: string): void {
   if (!/^\d+\.\d+\.\d+$/.test(version)) {
     throw new Error(`✗ 版本号 ${version} 不是三段式语义版本（应为 x.y.z，无 v 前缀）`);
   }
 }
 
-/** 扫描工件目录（递归含子目录），按后缀闭集识别三平台更新工件并读取随附 .sig。
- *  递归的缘由：publish 下载的工件按 upload-artifact 最小公共祖先保留子目录形态
- *  （dmg 与更新工件分属 bundle/dmg、bundle/macos，v0.9.1 首次执行 publish 实测）。
- *  file 取 basename——Release 资产恒平铺，清单 URL 以资产名为准；.sig 与工件同目录。
- *  缺工件 / 缺签名 / 同平台多候选一律报错——发布门禁宁红不哑。 */
 export function collectUpdaterArtifacts(dir: string): PlatformArtifact[] {
   const entries = readdirSync(dir, { recursive: true, encoding: "utf8" });
   const basename = (entry: string): string => entry.split(/[\\/]/).pop()!;
@@ -102,7 +61,6 @@ export function collectUpdaterArtifacts(dir: string): PlatformArtifact[] {
   return artifacts;
 }
 
-/** 装配 latest.json（字段序即输出序：version / notes / pub_date / platforms）。 */
 export function buildManifest(input: ManifestInput): string {
   validateVersion(input.version);
   if (!input.repo || input.repo.includes("..") || !/^[^/]+\/[^/]+$/.test(input.repo)) {
@@ -133,7 +91,6 @@ export interface CliOptions {
   out: string | undefined;
 }
 
-/** 解析 CLI 参数；repo / tag 缺省取 CI 环境（GITHUB_REPOSITORY / GITHUB_REF_NAME）。 */
 export function parseArgs(argv: readonly string[], env: NodeJS.ProcessEnv): CliOptions {
   const values = new Map<string, string>();
   for (let i = 0; i < argv.length; i += 2) {
@@ -201,8 +158,6 @@ function main(): void {
   }
 }
 
-// 仅直接运行时执行 main；被测试/其他工具 import 时只取导出的装配函数
-// （与 scripts/check-commands.ts 同一惯法）。
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main();
 }

@@ -2,16 +2,9 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-// 登记处本体已随接缝宿主下沉共享测试支持包（issue #1152），本文件跨目录指向它。
 import { REFERENCE_DEFAULTS } from "@ledger/test-support/reference-stubs";
 import { gateScript, runGateScript, type RunResult } from "./run-gate-script.test-helper.ts";
 
-// 被测对象是仓库工具脚本 scripts/check-test-stubs.ts（前端测试桩守门，issue #725/#726/#822）。
-// 脚本以 Bun 运行时执行（ADR-0083）：runGateScript 以 spawnSync('bun') 与门槛
-// 调用同款拉起，测的就是门槛路径。
-// 按测试决策只测外部可观察结果——进程退出码与输出，不测内部函数；
-// 通过位置参数把扫描目标指向临时夹具目录。
-// 夹具命令清单自助手导出的 REFERENCE_DEFAULTS 派生（单一事实源，无双源漂移）。
 const script = gateScript("check-test-stubs.ts");
 const run = (args: string[]) => runGateScript(script, args);
 
@@ -20,7 +13,6 @@ afterAll(() => {
   for (const dir of tempDirs) rmSync(dir, { recursive: true, force: true });
 });
 
-/** 助手夹具：登记处命令清单由真实 REFERENCE_DEFAULTS 派生（可加自定义命令）。 */
 function helperFixture(extraCommands: string[] = []): string {
   const lines = [
     "// 测试夹具：参考数据桩助手（形状与 @ledger/test-support/reference-stubs.ts 同构）",
@@ -33,14 +25,10 @@ function helperFixture(extraCommands: string[] = []): string {
 }
 
 interface FixtureDirs {
-  /** 包外测试目录（arg1，默认 src/__tests__ 的夹具替身） */
   app: string;
-  /** seam 宿主目录（arg2，默认 packages/test-support/src 的夹具替身） */
   seamHome: string;
 }
 
-/** 建夹具：app 测试目录 + seam 宿主（packages/test-support/src 同构）+ 包内测试位。
- *  files 相对 app 目录；packageTestFiles 相对 packages/<pkg>/src。返回双目录路径。 */
 function makeFixture(
   files: Record<string, string> = {},
   extraCommands: string[] = [],
@@ -80,11 +68,6 @@ mockInvoke.mockImplementationOnce((cmd: string, args?: Record<string, unknown>) 
 
 describe("check-test-stubs", () => {
   it("真实仓库默认通过：三区间扫真实仓全绿（现行仓库绿）", () => {
-    // 无参数 = 真实仓库默认扫描根（src/__tests__ + packages/test-support/src +
-    // 包内测试）。随守门测试挂载进 CI（issue #1473 引入挂载；#1991 起运行口径 =
-    // bun test scripts/）：真实仓违例即红，
-    // 不再只靠本地自觉跑 check.sh。成功行的登记处计数从 REFERENCE_DEFAULTS 派生
-    //（单一事实源），扫描根字段证明默认根解析到真实仓而非空转。
     const r = run([]);
     expect(r.status).toBe(0);
     expect(r.output).toContain("测试桩守门通过");
@@ -165,7 +148,6 @@ const impl = (cmd: string) => (cmd === 'list_warranties' ? Promise.resolve([]) :
 
   it("seam 宿主自身豁免（登记处即桩来源，接缝出口合法布线）", () => {
     const dirs = makeFixture();
-    // 登记处注释里的演示形态不误报
     writeFileSync(
       join(dirs.seamHome, "reference-stubs.ts"),
       helperFixture().replace(
@@ -173,7 +155,6 @@ const impl = (cmd: string) => (cmd === 'list_warranties' ? Promise.resolve([]) :
         "// 注释里演示 cmd === 'list_currencies' 不应误报\nexport const REFERENCE_DEFAULTS",
       ),
     );
-    // 接缝出口内的活代码分发形态属合法布线，同样豁免（规则 1/3 只辖 seam 宿主之外）
     writeFileSync(
       join(dirs.seamHome, "invoke-mock.ts"),
       "export const legalWiring = (cmd: string) => {\n  if (cmd === 'list_insurers') return Promise.resolve([])\n  return Promise.reject(new Error('x'))\n}\n",

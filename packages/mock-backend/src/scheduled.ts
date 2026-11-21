@@ -29,39 +29,7 @@ import {
   touch,
 } from "./state";
 
-/**
- * 定时/订阅域替身（issue #1973 / spec #1964 / ADR-0143）：计划 + 期次 + 三张
- * 形态扩展行内存态，定时页「建计划 → 期次出现 → 手动执行 → 流水出现」与订阅
- * 花费面板可用。从简口径（不追行为等价，与真后端的差异点，发现误导 UI 开发
- * 时以真后端为准修替身）：
- *
- * - **失效信号**：全部写命令（建计划 / 状态变更 / 订阅编辑 / 期次执行 / 期次
- *   展开）完成后统一发一次 `ledger:changed`（spec #1964「失效信号必发」取向）。
- *   真后端这五条计划写入刻意零信号（命令壳头注，映射单点显式登记）——替身
- *   统一发，多一次重拉无害；期次展开零新增期次时不发（无写入即无信号）。
- * - **订阅花费窗口锚定 MOCK_TODAY（2026-01-15）**：真后端按运行日滚动，替身
- *   不随真实时钟走（确定性纪律，budget.ts 同款先例）；实际花费 = completed
- *   期次关联流水按流水 date 的日历月直和（不摊销、不折算——夹具单币种 CNY，
- *   原币直记即本位币口径）；折算系数同真后端 monthly_coefficient 单点口径
- *   （月 ×1、年 ÷12、周 ×52÷12、日 ×30，间隔 N 再 ÷N），逐计划四舍五入
- *   到分后求和、年成本 = 月成本 × 12。
- * - **校验只做存在性必需**（计划/期次行在用、形态专属数据齐全）：金额正数、
- *   状态机转移合法性（真后端拒绝手动 completed 等）、定时转账禁携商户/保单、
- *   跨币种守卫、订阅编辑商户变更校验等真后端校验不模拟（spec #1964 取向）；
- *   例外：金额哨兵拒绝与「仅订阅可编辑」按票面要求模拟（ADR-0023 决策三）。
- * - **取消级联**：计划置 cancelled 时 pending 期次批量置 cancelled（真后端
- *   同语义，期次详情弹窗可见性依赖）；执行期次后上限计划的自动完成检查
- *   同真后端（分期/有上限转账全期完成 → 计划 completed）。
- *
- * 期次日期推进（advanceDate）与真后端 engine.rs 同款算术：daily/weekly 按
- * 天数；monthly/yearly 按 calendar 月/年推进后日号锚定 recurrence_day（缺省
- * 沿用起始日号），超当月天数收敛到月末（如 31 号在 2 月钳制到 28/29）。
- */
-
-/** 订阅期次展开的预生成窗口大小（engine.rs WINDOW_SIZE 同款）。 */
 const OCCURRENCE_WINDOW = 12;
-
-// —— 计划行与扩展行定位（存在性校验：找不到报错） ——
 
 function activePlan(id: string): ScheduledTransaction {
   const row = db().scheduledPlans.find((p) => p.id === id && !p.is_deleted);
@@ -87,16 +55,12 @@ function transferExt(planId: string): ScheduledTransferPlan {
   return row;
 }
 
-/** 在用期次行（按 id 定位；不存在或已软删报错）。 */
 function activeOccurrence(id: string): ScheduledTransactionOccurrence {
   const row = db().scheduledOccurrences.find((o) => o.id === id && !o.is_deleted);
   if (!row) throw new Error(`替身后端：期次不存在或已删除 ${id}`);
   return row;
 }
 
-// —— 读：列表与详情 ——
-
-/** 计划行的形态扩展投影（list 与 detail 扩展共用视图）。 */
 function extProjection(plan: ScheduledTransaction): ScheduledTransactionWithExt {
   const base = { core: plan };
   switch (plan.kind) {
@@ -143,7 +107,6 @@ export function listScheduledTransactions(): ScheduledTransactionWithExt[] {
     .map(extProjection);
 }
 
-/** 某计划的在用期次（scheduled_date 升序）。 */
 function planOccurrences(planId: string): ScheduledTransactionOccurrence[] {
   return db()
     .scheduledOccurrences.filter((o) => o.scheduled_transaction_id === planId && !o.is_deleted)
@@ -172,10 +135,6 @@ export function getScheduledTransactionDetail(
   };
 }
 
-// —— 写：建档与期次展开 ——
-
-/** 日期加 offset 期次后的计划日期（engine.rs advance_date 同款：月/年推进后
- *  日号锚定 recurrence_day，超当月天数收敛到月末）。 */
 function advanceDate(
   recurrenceType: string,
   recurrenceInterval: number,
@@ -191,7 +150,6 @@ function advanceDate(
   if (recurrenceType === "weekly") {
     return shiftDay(from, 7 * interval * offset);
   }
-  // monthly / yearly：calendar 推进 + 日号锚定（缺省沿用起始日号）
   const totalMonths =
     recurrenceType === "monthly"
       ? y0 * 12 + (m0 - 1) + interval * offset
@@ -213,7 +171,6 @@ function daysInMonth(year: number, month: number): number {
   return [4, 6, 9, 11].includes(month) ? 30 : 31;
 }
 
-/** 日期平移 n 天（daily/weekly 推进；UTC 无时区陷阱）。 */
 function shiftDay(date: string, days: number): string {
   const d = new Date(`${date}T00:00:00Z`);
   d.setUTCDate(d.getUTCDate() + days);
@@ -222,7 +179,6 @@ function shiftDay(date: string, days: number): string {
 
 export function createScheduledTransaction(args: Record<string, unknown>): string {
   const input = obj<CreateScheduledInput>(args, "input");
-  // 存在性校验（spec #1964 取向）：账户必须在用；形态专属数据齐全
   findActive(db().accounts, input.account_id, "账户");
   if (input.kind === "scheduled_transfer" && !input.to_account_id) {
     throw new Error("替身后端：定时转账必须指定目标账户");
@@ -256,7 +212,6 @@ export function createScheduledTransaction(args: Record<string, unknown>): strin
   };
   db().scheduledPlans.push(plan);
 
-  // 形态扩展行（scheduled_transfer 不使用商户：真后端行为层拒绝携带，替身忽略）
   switch (input.kind) {
     case "installment":
       db().installmentPlans.push({
@@ -282,14 +237,11 @@ export function createScheduledTransaction(args: Record<string, unknown>): strin
       break;
   }
 
-  expandPlanOccurrences(plan.id); // 建档即展开首段期次（真后端同协议）
+  expandPlanOccurrences(plan.id);
   emitLedgerChanged();
   return plan.id;
 }
 
-/** 期次展开协议（engine.rs expand_occurrences_protocol 同款）：分期/有上限
- *  转账补齐到上限（分期金额 = 总额均摊、末期补尾差）；无上限计划补 12 期
- *  窗口；起始 = 已有最后一期的下一期或 start_date。返回新增期次 id。 */
 function expandPlanOccurrences(planId: string): string[] {
   const plan = activePlan(planId);
   if (plan.status !== "active") return [];
@@ -302,7 +254,7 @@ function expandPlanOccurrences(planId: string): string[] {
       ? installmentExt(planId).total_occurrences
       : plan.kind === "scheduled_transfer"
         ? transferExt(planId).total_occurrences
-        : null; // 订阅无上限
+        : null;
   if (total !== null && existing.length >= total) return [];
 
   const start =
@@ -339,7 +291,6 @@ function expandPlanOccurrences(planId: string): string[] {
   };
 
   if (plan.kind === "installment" && total !== null) {
-    // 分期金额分配：总额 ÷ 总期数取整为基准，尾差补到末期
     const ext = installmentExt(planId);
     const base = Math.trunc(ext.total_amount_cents / ext.total_occurrences);
     const tail = ext.total_amount_cents - base * ext.total_occurrences;
@@ -368,11 +319,9 @@ function expandPlanOccurrences(planId: string): string[] {
 
 export function expandScheduledOccurrences(args: Record<string, unknown>): string[] {
   const ids = expandPlanOccurrences(str(args, "id"));
-  if (ids.length > 0) emitLedgerChanged(); // 无新增期次零信号（真后端空窗口同语义）
+  if (ids.length > 0) emitLedgerChanged();
   return ids;
 }
-
-// —— 写：状态变更与订阅编辑 ——
 
 const STATUS_CLOSED_SET: readonly ScheduledStatus[] = [
   "active",
@@ -389,7 +338,6 @@ export function updateScheduledTransactionStatus(args: Record<string, unknown>):
   const plan = activePlan(input.id);
   plan.status = input.new_status;
   touch(plan);
-  // 取消级联（engine.rs 同语义）：pending 期次批量置 cancelled
   if (input.new_status === "cancelled") {
     for (const occ of db().scheduledOccurrences) {
       if (
@@ -407,8 +355,6 @@ export function updateScheduledTransactionStatus(args: Record<string, unknown>):
 
 export function updateScheduledSubscription(args: Record<string, unknown>): void {
   const input = obj<UpdateSubscriptionInput>(args, "input");
-  // 金额哨兵（ADR-0023 决策三，Rust de_amount_sentinel 同语义）：请求体 key
-  // 一旦出现（含显式 null）即拒绝——改价 = 取消旧计划 + 新建
   const raw = input as unknown as Record<string, unknown>;
   if ("amount_cents" in raw || "total_amount_cents" in raw) {
     throw new Error("替身后端：订阅金额不可编辑：改价 = 取消旧计划 + 新建");
@@ -418,7 +364,6 @@ export function updateScheduledSubscription(args: Record<string, unknown>): void
     throw new Error("替身后端：仅订阅计划支持编辑非金额字段");
   }
   findActive(db().accounts, input.account_id, "账户");
-  // 全量替换非金额字段（真后端同语义：未携带字段由调用方补齐当前值）
   plan.account_id = input.account_id;
   plan.category_id = input.category_id ?? null;
   plan.note = input.note ?? null;
@@ -427,8 +372,6 @@ export function updateScheduledSubscription(args: Record<string, unknown>): void
   ext.merchant_id = input.merchant_id ?? null;
   emitLedgerChanged();
 }
-
-// —— 写：期次执行（真落交易 + 回填 + 自动完成检查） ——
 
 export function executeScheduledOccurrence(args: Record<string, unknown>): string {
   const input = obj<ExecuteOccurrenceInput>(args, "input");
@@ -441,15 +384,12 @@ export function executeScheduledOccurrence(args: Record<string, unknown>): strin
     throw new Error("替身后端：关联计划未处于活跃状态");
   }
 
-  // kind 按计划形态（engine.rs 同映射）：分期/订阅 expense（复制商户/保单引用），
-  // 转账 transfer（计划扩展行的目标账户）
   const ext = subscriptionOrInstallmentExt(plan);
   const txn: Transaction = {
     id: nextId("mock-txn"),
     kind: plan.kind === "scheduled_transfer" ? "transfer" : "expense",
     amount_cents: occ.amount_cents,
     currency_code: plan.currency_code,
-    // 不折算（ADR-0143 决策 1）：本位币金额按原币直记、折算留痕恒空
     amount_native_cents: occ.amount_cents,
     fx_rate_used: null,
     fx_rate_source: null,
@@ -475,7 +415,6 @@ export function executeScheduledOccurrence(args: Record<string, unknown>): strin
   };
   db().transactions.push(txn);
 
-  // 期次置 completed 并回填交易 id
   occ.status = "completed";
   occ.transaction_id = txn.id;
   touch(occ);
@@ -485,7 +424,6 @@ export function executeScheduledOccurrence(args: Record<string, unknown>): strin
   return txn.id;
 }
 
-/** 分期/订阅的商户/保单引用（转账无此概念，恒空投影）。 */
 function subscriptionOrInstallmentExt(plan: ScheduledTransaction): {
   merchant_id: string | null;
   policy_id?: string | null;
@@ -500,8 +438,6 @@ function subscriptionOrInstallmentExt(plan: ScheduledTransaction): {
   return { merchant_id: null };
 }
 
-/** 上限计划自动完成（engine.rs check_and_complete_plan 同款）：全期次
- *  completed → 计划置 completed（订阅无上限恒不触发）。 */
 function checkAndCompletePlan(planId: string): void {
   const plan = activePlan(planId);
   const total =
@@ -520,9 +456,6 @@ function checkAndCompletePlan(planId: string): void {
   }
 }
 
-// —— 订阅花费总览（实际口径 + 折算推算，ADR-0023 决策二；头注从简口径） ——
-
-/** 折算月成本系数（spend.rs monthly_coefficient 同款单点口径）。 */
 function monthlyCoefficient(recurrenceType: string, recurrenceInterval: number): number {
   const perCycle =
     recurrenceType === "monthly"
@@ -531,11 +464,10 @@ function monthlyCoefficient(recurrenceType: string, recurrenceInterval: number):
         ? 1 / 12
         : recurrenceType === "weekly"
           ? 52 / 12
-          : 30; // daily
+          : 30;
   return perCycle / Math.max(recurrenceInterval, 1);
 }
 
-/** YYYY-MM 递增 n 个月（窗口序列推算，无钳制——月首锚定）。 */
 function addMonths(yyyyMm: string, months: number): string {
   const [year, month] = yyyyMm.split("-").map(Number);
   const total = year * 12 + (month - 1) + months;
@@ -543,11 +475,9 @@ function addMonths(yyyyMm: string, months: number): string {
 }
 
 export function subscriptionSpendOverview(): SubscriptionSpendOverview {
-  const thisMonth = MOCK_TODAY.slice(0, 7); // "2026-01"
-  const thisYear = MOCK_TODAY.slice(0, 4); // "2026"
+  const thisMonth = MOCK_TODAY.slice(0, 7);
+  const thisYear = MOCK_TODAY.slice(0, 4);
 
-  // 逐计划逐日历月实际花费：只认 completed 期次关联的在用流水（计划状态不参与
-  // 过滤——取消/暂停不影响历史实际花费；不折算，原币直记即本位币口径）
   const byPlan = new Map<string, Map<string, number>>();
   for (const occ of db().scheduledOccurrences) {
     if (occ.status !== "completed" || occ.is_deleted || occ.transaction_id === null) continue;
@@ -563,7 +493,6 @@ export function subscriptionSpendOverview(): SubscriptionSpendOverview {
     byPlan.set(plan.id, planMap);
   }
 
-  // 过去 12 个日历月窗口（含当月，旧→新）；行内花费与顶层汇总同源
   const months: SubscriptionMonthSpend[] = [];
   for (let i = 11; i >= 0; i--) {
     const month = addMonths(thisMonth, -i);
@@ -575,7 +504,6 @@ export function subscriptionSpendOverview(): SubscriptionSpendOverview {
     .filter((m) => m.month.startsWith(thisYear))
     .reduce((sum, m) => sum + m.native_cents, 0);
 
-  // 逐订阅行：全部订阅计划（不过滤状态），商户名左联现名（改名即时生效、软删照常显示）
   const rows: SubscriptionSpendRow[] = db()
     .scheduledPlans.filter((p) => p.kind === "subscription" && !p.is_deleted)
     .sort((a, b) => b.created_at.localeCompare(a.created_at))
@@ -599,7 +527,6 @@ export function subscriptionSpendOverview(): SubscriptionSpendOverview {
       };
     });
 
-  // 折算推算：只算 active 订阅，逐计划系数折算四舍五入到分后求和（不折算币种）
   const projectedMonth = db()
     .scheduledPlans.filter(
       (p) => p.kind === "subscription" && p.status === "active" && !p.is_deleted,

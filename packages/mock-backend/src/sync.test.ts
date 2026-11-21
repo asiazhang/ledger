@@ -3,16 +3,8 @@ import { installMockBackend } from "./index";
 import { invoke } from "./tauri/core";
 import type { SyncChannelConfig, SyncRoundReport, SyncStatus } from "@ledger/types";
 
-/**
- * 多端同步域替身测试（issue #1966 / spec #1964 / ADR-0143 决策 1）：环境壳不
- * 模拟同步引擎与通道——状态恒「未配置、无挂起、明文库」，手动同步答零计数
- * 轮次报告，挂起清单空，通道配置按未配置空表单读写，测试连接 void，检查点
- * 预检 null、发布与引导答占位回执，保证设置页同步卡片可导航不报错。
- * 接缝 = tauri 命令面，删除任一登记行即未命中报错、本文件变红。
- */
-
 beforeEach(() => {
-  installMockBackend(); // 重装即重播种：每用例从夹具种子起步
+  installMockBackend();
 });
 
 describe("同步状态：未配置、无挂起、明文库", () => {
@@ -51,7 +43,6 @@ describe("通道配置：未配置空表单", () => {
     expect(config.configured).toBe(false);
     expect(config.endpoint).toBe("");
     expect(config.secret_key).toBe("");
-    // 全字段空表单形态（S3 七字段 + 同步空间 + path-style）
     expect([
       config.space_id,
       config.region,

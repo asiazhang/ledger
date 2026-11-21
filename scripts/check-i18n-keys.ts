@@ -1,37 +1,12 @@
 #!/usr/bin/env bun
-// i18n 文案 key 全等校验（issue #342 / ADR-0049）：源语言 zh-CN 与其余各 locale
-// 的 key 集合双向全等——任一方向孤儿（源语言独有 / 其他 locale 独有）即非零退出，
-// 漏翻在合入前被拦截。仿命令集双向全等校验先例（scripts/check-commands.ts）：
-// 纯函数导出供单测（scripts/check-i18n-keys.test.ts），CLI 入口可独立运行。
-// TypeScript 化 + Bun 运行时（issue #734 / ADR-0083）：类型经 tsconfig.scripts.json
-// 门槛检查；调用方式 `bun scripts/check-i18n-keys.ts`。
-// 默认校验本仓库（locales 文案资源随 @ledger/i18n 包走，issue #1151）；测试可传位置
-// 参数指向夹具目录：bun scripts/check-i18n-keys.ts [locales-dir] [rust-src-dir]
-// 真实仓绿基线用例：scripts/check-i18n-keys.test.ts（issue #1473）。
-//
-// 码化错误模板覆盖守门（issue #1188 / ADR-0050）：在 key 全等之外，再枚举 Rust
-// 生产代码中全部码化错误构造点（AppError::coded / codedp / coded_not_found /
-// codedp_not_found 的第一参数），要求每个码在 zh-CN 与 en-US 的 errors.json 中
-// 都有模板——「新增错误条件 = 后端码化构造器 + errors.json 两份补翻译，漏翻在
-// CI 拦截」由此从评审约定变为机器守门。边界（已知且可接受）：
-// - 只静态枚举字符串字面量与 `const NAME: &str` 一级常量引用；宏参数
-//   （closed_set! 的 err_code）与 format! 拼接形态的动态码无法静态解析，
-//   计入 unresolved 计数仅供人审（漏报方向安全：不会误伤存量已覆盖的码）。
-// - #[cfg(test)] 块与测试路径（tests 目录 / *tests.rs）不扫：测试内构造不直达用户。
-// - 序列化层统一携带的系统通用码（db.error / parse.error / io.error，ADR-0050
-//   决策 2「底层驱动消息不翻译也不进码表」）无构造点，天然不入枚举，无需白名单。
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL, fileURLToPath } from "node:url";
 import { maskNonCode, readDirEntries, RUST_EXTENSIONS, walkTextFiles } from "./gate-primitives.ts";
 
-/** 源语言目录名（其余 locale 一律与它比对） */
 export const SOURCE_LOCALE_DIR = "zh-CN";
 
-/**
- * 递归展开 JSON 对象为点分 key 全集（叶子 key 才计入；数组整体视为叶子）。
- */
 export function flattenKeys(obj: unknown, prefix = ""): string[] {
   const keys: string[] = [];
   for (const [k, v] of Object.entries(obj as Record<string, unknown>)) {
@@ -45,14 +20,12 @@ export function flattenKeys(obj: unknown, prefix = ""): string[] {
   return keys.sort();
 }
 
-/** 双向集合差的逐 locale 失败项 */
 export interface LocaleFailure {
   locale: string;
   sourceOnly: string[];
   otherOnly: string[];
 }
 
-/** 双向集合差：sourceOnly = 源语言独有（其他 locale 漏翻），otherOnly = 其他 locale 独有。 */
 export function diffKeySets(
   sourceKeys: string[],
   otherKeys: string[],
@@ -65,12 +38,8 @@ export function diffKeySets(
   };
 }
 
-/** 读取单个 locale 目录：聚合同目录全部 *.json 的点分 key（文件名作为顶层域前缀） */
 export function collectLocaleKeys(dir: string): string[] {
   const keys: string[] = [];
-  // 列举机制归家族共享单点 readDirEntries（#1742 收口）：排序归一为 localeCompare
-  // （原 plain sort 实树对拍全等）；.json 是 i18n 键文件扩展名政策（单消费、无副本
-  // 可漂移），留门不换扩展名闭集（#1742 留门）。
   for (const entry of readDirEntries(dir)) {
     if (!entry.name.endsWith(".json")) continue;
     const domain = entry.name.slice(0, -".json".length);
@@ -80,24 +49,9 @@ export function collectLocaleKeys(dir: string): string[] {
   return keys.sort();
 }
 
-// ---------------------------------------------------------------------------
-// 码化错误模板覆盖（issue #1188 / ADR-0050）：Rust 码化构造点 → errors.json 模板
-// ---------------------------------------------------------------------------
-
-/** 码化错误构造调用形态（第一参数恒为错误码） */
 const CODED_CALL_RE = /\b(codedp_not_found|coded_not_found|codedp|coded)\s*\(/g;
-/** `const NAME: &str = "..."` 一级常量表（跨文件聚合，供常量引用型调用点解析） */
 const RUST_STR_CONST_RE = /\bconst\s+([A-Z_][A-Z0-9_]*)\s*:\s*&str\s*=\s*"([^"]*)"/g;
 
-// 弱形态注释预处理器 stripRustComments 已收口（issue #1741）：与共享原语
-// maskNonCode 在真实仓 275 个非测试 .rs 逐文件对拍（码集 + unresolved 计数 +
-// 常量表聚合）零差异，管线改消费 gate-primitives 的 maskNonCode(src, true)。
-// keepLiterals 形态只掩注释、保留字符串/char 字面量（码化构造点第一参数与
-// const 值都是字符串字面量，须原样回吐），且等长保位、识别原始串/嵌套块
-// 注释/char 字面量——弱形态不识别这些形态的分歧从此由单一权威裁决；消费
-// 名单由 gate-primitives.test.ts 锁定。
-
-/** 移除 #[cfg(test)] 修饰的 mod 块（跟踪大括号配对，块可重复出现）。 */
 export function stripCfgTestBlocks(src: string): string {
   let out = src;
   for (;;) {
@@ -122,7 +76,6 @@ export function stripCfgTestBlocks(src: string): string {
   return out;
 }
 
-/** 测试路径判定：tests 目录 / *tests.rs（测试内构造不直达用户，不入枚举）。 */
 export function isRustTestPath(relPath: string): boolean {
   const parts = relPath.split("/");
   const file = parts[parts.length - 1] ?? "";
@@ -130,14 +83,11 @@ export function isRustTestPath(relPath: string): boolean {
   return file.endsWith("tests.rs") || file.endsWith("_tests.rs");
 }
 
-/** collectRustCodedErrorCodes 的返回：去重排序后的码 + 无法静态解析的调用点计数 */
 export interface RustCodedCodesResult {
   codes: string[];
   unresolvedCallSites: number;
 }
 
-/** 递归收集 root 下全部 .rs 文件（target/ 剪枝是本守门扫描边界政策）：遍历机制归
- *  守门家族共享单点 walkTextFiles（#1680 收口），扩展名闭集由库 RUST_EXTENSIONS 提供。 */
 function walkRustFiles(root: string): string[] {
   return walkTextFiles(root, "", {
     extensions: RUST_EXTENSIONS,
@@ -145,11 +95,6 @@ function walkRustFiles(root: string): string[] {
   }).map((f) => f.abs);
 }
 
-/**
- * 枚举 Rust 生产代码中全部码化错误码（字面量 + `const NAME: &str` 一级引用）。
- * 无法静态解析的动态构造点（宏参数、format! 拼接）计入 unresolvedCallSites，
- * 仅供人审，不作失败条件（漏报方向安全，见文件头边界说明）。
- */
 export function collectRustCodedErrorCodes(rustRoot: string): RustCodedCodesResult {
   const constTable = new Map<string, string>();
   const sources: string[] = [];
@@ -170,10 +115,8 @@ export function collectRustCodedErrorCodes(rustRoot: string): RustCodedCodesResu
   let unresolvedCallSites = 0;
   for (const src of sources) {
     for (const m of src.matchAll(CODED_CALL_RE)) {
-      // 排除构造器定义处（fn coded(...) / pub fn codedp(...)）
       const before = src.slice(Math.max(0, (m.index ?? 0) - 30), m.index);
       if (/\bfn\s+$/.test(before)) continue;
-      // 抓第一参数：跳过 ( 与空白，期待字符串字面量或常量标识符
       let j = (m.index ?? 0) + m[0].length;
       while (
         j < src.length &&
@@ -203,25 +146,18 @@ export function collectRustCodedErrorCodes(rustRoot: string): RustCodedCodesResu
   return { codes: [...codes].sort(), unresolvedCallSites };
 }
 
-/** 码化模板缺失差集：枚举码有而 locale 模板没有的键 */
 export function diffCodedCoverage(codes: string[], errorTemplateKeys: string[]): string[] {
   const keys = new Set(errorTemplateKeys);
   return codes.filter((c) => !keys.has(c));
 }
 
-/** compareLocalesDir 返回：源语言名、参与比对的 locale 清单、失败明细 */
 export interface CompareResult {
   sourceLocale: string;
   locales: string[];
   failures: LocaleFailure[];
 }
 
-/**
- * 比对 locales 目录下源语言与其余 locale 的 key 集合。
- */
 export function compareLocalesDir(localesDir: string): CompareResult {
-  // 子目录列举归家族共享单点 readDirEntries（#1742 收口）；原显式 localeCompare 排序
-  // 与原语排序全等，输出序零变化。
   const dirs = readDirEntries(localesDir)
     .filter((e) => e.isDirectory)
     .map((e) => e.name);
@@ -255,8 +191,6 @@ function main(): void {
     process.exit(1);
   }
 
-  // 码化错误模板覆盖守门（issue #1188 / ADR-0050）：每个码化构造码必须在
-  // zh-CN 与 en-US 的 errors.json 都有模板（码内点号即 JSON 嵌套路径）。
   const { codes, unresolvedCallSites } = collectRustCodedErrorCodes(rustRoot);
   const zhErrors = flattenKeys(
     JSON.parse(readFileSync(join(localesDir, "zh-CN", "errors.json"), "utf-8")) as unknown,
@@ -281,8 +215,6 @@ function main(): void {
   );
 }
 
-// 仅直接运行时执行 main；被测试/其他工具 import 时只取导出的比对函数
-// （与 scripts/check-commands.ts 同一惯法）。
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main();
 }

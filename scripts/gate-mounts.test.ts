@@ -10,36 +10,17 @@ import {
   type GateMount,
 } from "./gate-mounts.ts";
 
-// 守门接线测试（issue #1682）：守门挂载登记的「删除即变红」核对载体，守门家族
-// interface 的一环（先例收编：check-sh 三件套接线断言、check-frontend-structure
-// 运行时接线核对、test-exec 守门规则④）。断言对准用户可观察事实——「该门被质量
-// 门槛执行于该宿主」的可观察代理 = 宿主文件的非注释执行行以登记形态行首命中
-// （ADR-0087 断言强度：不对准行号与文本形状）。
-// 核对，不生成（grilling 定案）：check.sh 与 CI workflow 保持手写，本测试断言
-// 双向全等——
-//   ① 登记 → 宿主：删任一宿主挂载行即红；
-//   ② 宿主 → 登记：删 check.sh 门执行行 / 删登记条目即红（执行行无登记认领）；
-//   ③ CI 按宿主投影同 ①②；非门 run 步骤走 CI_NON_GATE_RUNS 显式豁免（政策
-//      无源就显式，#1591），判定面 = 挂门 job 内的单行 `run:` 步骤。
-// 判定语义 = per-host 行首前缀：非注释行 trim 后行首匹配。echo 展示行行首是
-// `echo "▶`，结构上永不可能命中执行形态——echo 假绿免疫是判定语义的结构后果
-// （#1112 第三轮审查实测教训；末条用例钉住该语义）。
-
-/** 仓库根：bun test 进程 cwd 即仓库根（bun test scripts/ 自仓库根发起；同
- *  run-gate-script 助手的定位观察）。 */
 const repoRoot = process.cwd();
 
 function readHost(file: string): string {
   return readFileSync(join(repoRoot, file), "utf8");
 }
 
-/** 宿主行是否命中挂载形态：非空、非注释、trim 后行首前缀。 */
 function mounted(line: string, prefix: string): boolean {
   const t = line.trim();
   return t !== "" && !t.startsWith("#") && t.startsWith(prefix);
 }
 
-/** 条目在指定宿主的挂载声明。 */
 function mountOf(
   entry: GateMount,
   file: GateHostFile,
@@ -47,9 +28,6 @@ function mountOf(
   return entry.hosts.find((h) => h.file === file);
 }
 
-/** check.sh 门执行行：首个 `echo "▶` 门标签行之后的非注释、非 echo 行。
- *  门段起点锚定标签结构——其前是 shebang、头部注释与 bun 缺失守卫，皆非门步骤；
- *  门段内每个门执行行前必有标签行，echo 行与注释行不入执行集合。 */
 function checkShGateLines(content: string): string[] {
   const out: string[] = [];
   let started = false;
@@ -65,9 +43,6 @@ function checkShGateLines(content: string): string[] {
   return out;
 }
 
-/** CI 单行 `run:` 步骤按 job 分组（YAML 列表项装饰 `- ` 剥除后比对）。
- *  `run: |` / `run: >` 多行脚本块与 `run:` 空值（defaults 键）不入判定面——
- *  门挂载一律以单行执行形态表达，多行块内挂载会因登记方向无行可认领而变红。 */
 function ciRunLinesByJob(content: string): Map<string, string[]> {
   const jobs = new Map<string, string[]>();
   let inJobs = false;
@@ -94,7 +69,6 @@ function ciRunLinesByJob(content: string): Map<string, string[]> {
   return jobs;
 }
 
-/** 宿主的登记前缀清单（该宿主侧的认领面）。 */
 function prefixesFor(file: GateHostFile): string[] {
   return GATE_MOUNTS.map((entry) => mountOf(entry, file)?.prefix).filter(
     (p): p is string => p !== undefined,
@@ -103,7 +77,7 @@ function prefixesFor(file: GateHostFile): string[] {
 
 describe("守门挂载登记（删除即变红，issue #1682）", () => {
   it("登记结构不变量：名称唯一、每条含 check.sh 宿主与 issue/ADR 出处", () => {
-    expect(GATE_MOUNTS.length).toBeGreaterThan(0); // 拒绝空集假绿
+    expect(GATE_MOUNTS.length).toBeGreaterThan(0);
     const names = GATE_MOUNTS.map((entry) => entry.name);
     expect(new Set(names).size, "登记名称必须唯一").toBe(names.length);
     for (const entry of GATE_MOUNTS) {
@@ -159,7 +133,7 @@ describe("守门挂载登记（删除即变红，issue #1682）", () => {
     const allCiLines = [...jobs.values()].flat();
     for (const entry of GATE_MOUNTS) {
       const prefix = mountOf(entry, CI_WORKFLOW_FILE)?.prefix;
-      if (prefix === undefined) continue; // CI 未挂载的门（如经构建脚本承接的前端类型检查）
+      if (prefix === undefined) continue;
       expect(
         allCiLines.some((line) => line.startsWith(prefix)),
         `登记条目在 CI 无步骤（删宿主挂载即红）：${entry.name}`,
@@ -169,7 +143,6 @@ describe("守门挂载登记（删除即变红，issue #1682）", () => {
 
   it("echo 展示行与注释行结构上不可能命中挂载（行首前缀判定，#1112 假绿教训）", () => {
     const invocation = "bun scripts/check-frontend-structure.ts";
-    // 真实 check.sh 的门标签行形态：命令字样在 echo 参数里，行首是标签引导词。
     expect(mounted(`echo "▶ 前端结构守门 (${invocation})"`, invocation)).toBe(false);
     expect(mounted(`# ${invocation}`, invocation)).toBe(false);
     expect(mounted(`  ${invocation}  `, invocation)).toBe(true);

@@ -11,12 +11,6 @@ import type {
   TransactionTrade,
 } from "@ledger/types";
 
-// ---------------------------------------------------------------------------
-// 数据工厂：共享工厂 makeTransaction 的包内自足副本（与 src/__tests__/factories.ts
-// 同源同体；本测试随被测包搬迁后夹具不回指壳层），交易行工厂；买卖明细 makeTrade
-// 在此之上覆写（先例：packages/utils category-chart 测试的 makeCategory 自足副本）
-// ---------------------------------------------------------------------------
-
 function makeTransaction(partial: Partial<Transaction> & { id: string }): Transaction {
   return {
     kind: "expense",
@@ -42,9 +36,7 @@ function makeTransaction(partial: Partial<Transaction> & { id: string }): Transa
     version: 1,
     device_id: "test",
     is_deleted: false,
-    // 来源列默认无来源（列表/搜索读路径才填充）；来源场景显式传 source
     source: null,
-    // 转换扩展默认无（仅 convert 行由列表/搜索读路径填充）；转换场景显式传 convert
     convert: null,
     ...partial,
   };
@@ -224,7 +216,6 @@ describe("useTransactionModalState edit 意图（先取明细再开窗）", () =
   });
 });
 
-/** 购买项条目（issue #1884）：包内自足最小工厂，订单场景经 purchases: [..] 组装。 */
 function makePurchaseItem(partial: Partial<TransactionPurchase> = {}): TransactionPurchase {
   return { name: "商品", quantity: 1, category_id: null, unit_price_cents: null, ...partial };
 }
@@ -336,7 +327,6 @@ describe("useTransactionModalState 竞态守卫（last-open-wins）", () => {
     });
 
     await modals.open({ type: "edit", row: rowA });
-    // 编辑意图已在场（trade 仍在途，下一断言补全）；matchObject 兼容意图联合（create 支无 row）
     expect(modals.intent.value).toMatchObject({ type: "edit", row: { id: "a1" } });
     const openB = modals.open({ type: "edit", row: rowB });
     expect(modals.intent.value).toEqual({
