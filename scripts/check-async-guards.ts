@@ -141,7 +141,8 @@ export const TOAST_BASELINE: Readonly<Record<string, number>> = {
   "src/investment/useInvestmentForm.ts": 1,
   // #1322 起计划清单接缝随包出壳，基线键改挂仓库根包内路径（值不变）
   "packages/scheduled-plan-list/src/useScheduledPlanList.ts": 1,
-  "packages/ui-kit/src/NoteCopyButton.vue": 1,
+  // NoteCopyButton 的直接 toast 已随 #2189 收编共享复制出口（ui-kit note-copy.ts，
+  // 剪贴板写入 + 统一 toast 单点），基线条目随之退役。
 };
 
 /** 行首注释形态：整行跳过/置空（行内尾注与多行块注释内部行不可达，靠评审兜底） */

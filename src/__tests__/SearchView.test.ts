@@ -6,7 +6,6 @@ import { setFakeMedia } from "@ledger/test-support/media-mock";
 import { useReferenceStore } from "@/stores/reference";
 import { SEARCH_DEBOUNCE_MS } from "@/composables/search-debounce";
 import SearchView from "@/views/SearchView.vue";
-import AccountLink from "@/accounts/AccountLink.vue";
 import { applyLocale } from "@ledger/i18n";
 import { resetOverlays } from "@ledger/ui-kit/overlayRegistry";
 import { mockInvoke, wireInvokeSeam } from "@ledger/test-support/invoke-mock";
@@ -766,7 +765,7 @@ describe("SearchView.vue", () => {
   });
 });
 
-describe("SearchView 转账行双向账户名（issue #99）", () => {
+describe("SearchView 转账行双向账户名（issue #99，#2189 起单元格轻量化 + 表级委托）", () => {
   it("搜索结果转账行显示「转出 → 转入」双向账户名，两个名字各自可点击、各自跳转对应账户", async () => {
     vi.useFakeTimers();
     const wrapper = mount(SearchView);
@@ -774,20 +773,20 @@ describe("SearchView 转账行双向账户名（issue #99）", () => {
     await typeAndSearch(wrapper, "转账");
     expect(wrapper.text()).toContain("命中 1 条");
     // 双向展示：转出（现金）→ 转入（银行）两个可点击账户名 + 箭头
-    const links = wrapper.findAllComponents(AccountLink);
+    const links = wrapper.findAll('button[data-tx-action="account-drill"]');
     expect(links.length).toBe(2);
-    expect(links.map((l) => l.text())).toEqual(["现金", "银行"]);
+    expect(links.map((l) => l.text().trim())).toEqual(["现金", "银行"]);
     expect(wrapper.text()).toContain("→");
     expect(links[0].attributes("title")).toBe("查看该账户的交易");
     expect(links[1].attributes("title")).toBe("查看该账户的交易");
-    // 转出账户点击 → 跳转其过滤视图
-    await links[0].find("button").trigger("click");
+    // 转出账户点击（表级事件委托分发）→ 跳转其过滤视图
+    await links[0].trigger("click");
     expect(pushMock).toHaveBeenLastCalledWith({
       name: "transactions",
       query: { account: "acc-cash" },
     });
     // 转入账户点击 → 跳转其过滤视图
-    await links[1].find("button").trigger("click");
+    await links[1].trigger("click");
     expect(pushMock).toHaveBeenLastCalledWith({
       name: "transactions",
       query: { account: "acc-bank" },
@@ -800,10 +799,10 @@ describe("SearchView 转账行双向账户名（issue #99）", () => {
     await nextTick();
     await typeAndSearch(wrapper, "报销");
     // 2 条报销 expense 行，各渲染单个账户链接
-    const links = wrapper.findAllComponents(AccountLink);
+    const links = wrapper.findAll('button[data-tx-action="account-drill"]');
     expect(links.length).toBe(2);
-    expect(links.map((l) => l.text())).toEqual(["现金", "现金"]);
-    await links[0].find("button").trigger("click");
+    expect(links.map((l) => l.text().trim())).toEqual(["现金", "现金"]);
+    await links[0].trigger("click");
     expect(pushMock).toHaveBeenLastCalledWith({
       name: "transactions",
       query: { account: "acc-cash" },

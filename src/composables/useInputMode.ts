@@ -77,6 +77,17 @@ function releaseSharedListeners(): void {
 }
 
 /**
+ * 输入轴共享信号（issue #2189 表格单元格按轴分流消费面）：与 useInputMode 消费
+ * 同一份共享 ref 的只读 computed，供渲染函数等**非 setup 语境**读取（composable
+ * 要求活动 effect scope，渲染函数不在其列）。注意：本信号不绑定媒体查询监听
+ * ——监听由消费登记（useInputMode）驱动；无任何登记时共享 ref 保守为触控轴
+ * （映射矩阵同款方向：宁可触控轴兜底，不可指针轴漏判）。
+ */
+export const sharedInputMode: ComputedRef<InputMode> = computed<InputMode>(() =>
+  canHover.value && hasFinePointer.value ? "pointer" : "touch",
+);
+
+/**
  * 输入轴 composable：hover / pointer 媒体查询 → 触控轴 / 指针轴。
  *
  * 消费即登记共享订阅（模块级两路监听，引用计数），作用域销毁时注销；

@@ -11,7 +11,8 @@
     "./overrides": "./src/overrides.ts",
     "./theme-contract": "./src/theme-contract.ts",
     "./app-theme.css.ts": "./src/app-theme.css.ts",
-    "./sprinkles.css.ts": "./src/sprinkles.css.ts"
+    "./sprinkles.css.ts": "./src/sprinkles.css.ts",
+    "./tag-colors": "./src/tag-colors.ts"
   },
   "dependencies": {
     "@ledger/money": "workspace:*",

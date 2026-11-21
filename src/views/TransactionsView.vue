@@ -47,6 +47,7 @@ import { useInputMode } from "@/composables/useInputMode";
 import { usePaginationShortcuts } from "@/composables/usePaginationShortcuts";
 import { useTimePeriodShortcuts, PERIOD_STEP_KEYS } from "@/composables/useTimePeriodShortcuts";
 import { useRowContextMenu } from "@ledger/row-context-menu";
+import { useTransactionTableCellActions } from "@/transaction/table-cell-actions";
 import { paginationHint, paginationRow } from "./TransactionsView.css.ts";
 import {
   useTransactionFilter,
@@ -534,7 +535,12 @@ function onPageSizeChange(size: number): void {
 // 与行右键共用同一行菜单编排工厂 open 入口，以点击坐标弹出（账户行先例）。
 const columns = computed<DataTableColumn<Transaction>[]>(() => [
   ...buildTransactionColumns(reference, {
-    onRowMenuOpen: (e, row) => rowMenu.open(e, row),
+    // 行菜单操作列（「⋯」常显第二入口，委托形态）：按钮只携带语义属性，打开动作
+    // 经下方表格容器的事件委托分发到 rowMenu.open（与行右键同一入口）。
+    rowActions: true,
+    // 输入轴信号（issue #2187 共享单例，本视图已消费登记）：金额单元格与来源类型
+    // 常驻小字按轴分流。
+    inputMode,
     // 购买项展开（issue #1883 / ADR-0138 决策 13）：订单级列合并、分类逐行、备注一列两用
     expandPurchases: true,
   }),
@@ -553,6 +559,21 @@ const displayRows = computed(() =>
 
 // scroll-x：列中所有固定列（有 width 的列，备注为弹性列不计入）宽度总和
 const scrollX = computed(() => sumFixedColumnWidths(columns.value));
+
+// 表级事件委托（issue #2189 行内高频组件瘦身）：单元格内的账户/商户/来源下钻、
+// 备注复制与操作列「⋯」不再逐格绑定回调，只携带 data-tx-action 语义属性，点击
+// 冒泡到表格容器统一分发——路由跳转、来源跳转深模块（注入侧栏收纳与功能开关
+// 谓词）、剪贴板写入与统一 toast、行菜单打开（与行右键共用 rowMenu.open）全部
+// 收口在装配单点。键盘可达性由原生 button 承担（Tab 聚焦 + Enter 触发 click，
+// 冒泡即走同一分发）。
+const rowByKey = computed(() => new Map(displayRows.value.map((row) => [displayRowKey(row), row])));
+const onTableCellClick = useTransactionTableCellActions({
+  message,
+  onRowMenu: (event, key) => {
+    const row = rowByKey.value.get(key);
+    if (row) rowMenu.open(event, row);
+  },
+});
 
 /** 空态文案（两档同源）：过滤无结果提示 / 默认暂无数据，归一计算属性供
  * 移动档空态与桌面表格 #empty 槽共用同一字符串口径。 */
@@ -838,32 +859,34 @@ function activateCard(row: Transaction): void {
       </NPagination>
     </template>
     <!-- 备注列为弹性列（transaction-columns 中不设 width），表格始终铺满容器；
-         窄窗口时备注先收缩，scroll-x（固定列宽总和）作为横向滚动下限 -->
-    <NDataTable
-      v-else
-      :columns="columns"
-      :data="displayRows"
-      :row-key="displayRowKey"
-      :loading="loading"
-      :bordered="false"
-      size="small"
-      remote
-      :row-props="rowProps"
-      :scroll-x="scrollX"
-      :pagination="false"
-    >
-      <!-- 空态：过滤无结果时展示明确提示（与加载态区分：loading 时空态节点隐藏）；
+         窄窗口时备注先收缩，scroll-x（固定列宽总和）作为横向滚动下限。
+         表格容器承载单元格动作的表级事件委托（issue #2189，见 onTableCellClick） -->
+    <div v-else @click="onTableCellClick">
+      <NDataTable
+        :columns="columns"
+        :data="displayRows"
+        :row-key="displayRowKey"
+        :loading="loading"
+        :bordered="false"
+        size="small"
+        remote
+        :row-props="rowProps"
+        :scroll-x="scrollX"
+        :pagination="false"
+      >
+        <!-- 空态：过滤无结果时展示明确提示（与加载态区分：loading 时空态节点隐藏）；
            无过滤时为默认「暂无数据」文案 -->
-      <template #empty>
-        <NEmpty :description="emptyDescription" size="small">
-          <template v-if="filtersActive" #extra>
-            <NButton size="tiny" quaternary type="primary" @click="resetFilters">
-              {{ t("transactions.filter.clear") }}
-            </NButton>
-          </template>
-        </NEmpty>
-      </template>
-    </NDataTable>
+        <template #empty>
+          <NEmpty :description="emptyDescription" size="small">
+            <template v-if="filtersActive" #extra>
+              <NButton size="tiny" quaternary type="primary" @click="resetFilters">
+                {{ t("transactions.filter.clear") }}
+              </NButton>
+            </template>
+          </NEmpty>
+        </template>
+      </NDataTable>
+    </div>
     <!-- 桌面档外置分页（issue #1929）：内建分页无插槽是键位提示游离成独立行的根因，
          改用与移动档同款 NPagination 置于表格下方同一行右端，键位提示走 #suffix 槽
          两档同源（仅指针轴渲染，触控轴不渲染，ADR-0088）；翻页/页大小/跳页语义与

@@ -1,10 +1,22 @@
 <script setup lang="ts">
 import { t } from "@ledger/i18n";
 import { computed, ref, shallowRef, watch } from "vue";
-import { NButton, NDataTable, NEmpty, NInput, NPagination, NSpace, NSpin, NText } from "naive-ui";
+import {
+  NButton,
+  NDataTable,
+  NEmpty,
+  NInput,
+  NPagination,
+  NSpace,
+  NSpin,
+  NText,
+  useMessage,
+} from "naive-ui";
 import type { DataTableColumn } from "naive-ui";
 import QuickTimeRange from "@/components/QuickTimeRange.vue";
 import TransactionCardList from "@/transaction/TransactionCardList.vue";
+import { useTransactionTableCellActions } from "@/transaction/table-cell-actions";
+import { useInputMode } from "@/composables/useInputMode";
 import { useWindowTier } from "@ledger/window-tier";
 import { useLoadable } from "@ledger/loadable";
 import { api } from "@ledger/api";
@@ -22,6 +34,11 @@ import { SEARCH_DEBOUNCE_MS } from "@/composables/search-debounce";
 
 const store = useAppStore();
 const reference = useReferenceStore();
+// 输入轴消费登记（issue #2187 共享单例）：金额单元格与来源类型常驻小字按轴分流
+//（列工厂经 inputMode 选项消费同一信号）。
+const inputMode = useInputMode();
+// 备注复制 toast（统一出口 copyNoteWithToast 经委托装配消费）
+const message = useMessage();
 // 窗口分级（ADR-0088 决策 9）：搜索结果断点双渲染——移动档同构复用交易卡片列表
 // （第二消费方，只读形态：无「⋯」、无整卡编辑，与桌面搜索结果只读口径一致）
 const tier = useWindowTier();
@@ -175,7 +192,7 @@ function clearFilters() {
 // 经 computed 构造：列名（t()）随语言切换即时重建。购买项展开（issue #1885 /
 // ADR-0138 决策 14）：商品名命中即整单呈现全部购买项行，与交易列表同一装配。
 const columns = computed<DataTableColumn<Transaction>[]>(() =>
-  buildTransactionColumns(reference, { expandPurchases: true }),
+  buildTransactionColumns(reference, { expandPurchases: true, inputMode }),
 );
 
 // 展开显示行集 + 展示文本预计算（issue #2188，与交易列表同一接线）：数据到达或
@@ -194,6 +211,10 @@ function onPageChange(p: number): void {
   page.value = p;
   void runSearch();
 }
+
+// 表级事件委托（issue #2189）：搜索结果的账户/商户/来源下钻与备注复制经单元格
+// 语义属性冒泡分发（无行菜单——只读结果形态）。
+const onTableCellClick = useTransactionTableCellActions({ message });
 
 const pagination = computed(() => ({
   page: page.value,
@@ -258,18 +279,20 @@ const pagination = computed(() => ({
           @update:page="onPageChange"
         />
       </template>
-      <!-- 备注列为弹性列，表格铺满容器；窄窗口时备注先收缩，scroll-x（固定列宽总和）作为横向滚动下限 -->
-      <NDataTable
-        v-else
-        :columns="columns"
-        :data="displayRows"
-        :loading="loading"
-        :bordered="false"
-        size="small"
-        remote
-        :scroll-x="scrollX"
-        :pagination="pagination"
-      />
+      <!-- 备注列为弹性列，表格铺满容器；窄窗口时备注先收缩，scroll-x（固定列宽总和）作为横向滚动下限。
+           表格容器承载单元格动作的表级事件委托（issue #2189，见 onTableCellClick） -->
+      <div v-else @click="onTableCellClick">
+        <NDataTable
+          :columns="columns"
+          :data="displayRows"
+          :loading="loading"
+          :bordered="false"
+          size="small"
+          remote
+          :scroll-x="scrollX"
+          :pagination="pagination"
+        />
+      </div>
     </template>
     <NEmpty v-else :description="t('search.emptyPlaceholder')" />
   </NSpace>

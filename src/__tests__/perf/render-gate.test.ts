@@ -6,10 +6,11 @@
 //      全表重渲染窗口内的调用次数 = 0（#2188 文本预计算落地后的核心形态）：
 //      预计算在数据到达/上下文变化时完成、不在 patch 期逐格执行；格式化被改回
 //      渲染期逐格执行（#2188 接线被移除的形态）即红（删除即红，ADR-0087 断言强度）。
-//   ② 行内交互组件实例数（AccountLink / MerchantLink / SourceLink /
-//      NoteCopyButton / AmountCell / NTag / NEllipsis）≤ 阈值；省略组件（NEllipsis，
-//      同步实例化提示弹层的形态）上限收紧到 #2188 优化后基线（仅表头省略 2）。
-//   ③ 表格容器内 DOM 节点总数 ≤ 阈值。
+//   ② 行内重型组件实例数（AccountLink / MerchantLink / SourceLink /
+//      NoteCopyButton / AmountCell / NTag / NEllipsis）——指针轴下收紧到 0
+//      （issue #2189 行内高频组件瘦身：类型/操作/复制/金额/账户/商户/来源格全部
+//      轻量原生元素 + 表级事件委托；任一列回退逐格重型组件即红）。
+//   ③ 表格容器内 DOM 节点总数 ≤ 阈值（50 行与 100 行两档）。
 // 计数窗口 = 「同一行集 + 重建列数组」的纯 patch 阶段：列数组在窗口外先构建
 //（列标题/无障碍标签取词属数据/上下文到达阶段，同视图 computed 重建列的时点），
 // mockClear 后仅 setProps 触发列对象引用更新 → 全部单元格 patch。渲染函数若逐格
@@ -64,18 +65,17 @@ const RENDER_FORMAT_T_BASELINE = 0;
 const RENDER_FORMAT_AMOUNT_BASELINE = 0;
 const RENDER_RESOLVE_LENDING_BASELINE = 0;
 
-// —— ② 行内交互组件实例数基线 ——
-// AccountLink 60（40 单账户行 + 10 转账行 × 2）、MerchantLink 10（含 1 软删）、
-// SourceLink 15（订阅 5 + 分期 5 + 保单 5）、NoteCopyButton 20（有备注且非购买项行）、
-// AmountCell 50（订单级合并）、NTag 52（类型标签 50 + 来源状态标注 2：已删保单 1 +
-// 已取消订阅 1）、NEllipsis 162（分类列 65 显示行 + 商户列 50 交易 + 备注列 45
-//（备注文本 20 + 购买项商品名 25）+ 表头省略 2：分类/商户列头）。
-const ACCOUNT_LINK_BASELINE = 60;
-const MERCHANT_LINK_BASELINE = 10;
-const SOURCE_LINK_BASELINE = 15;
-const NOTE_COPY_BUTTON_BASELINE = 20;
-const AMOUNT_CELL_BASELINE = 50;
-const N_TAG_BASELINE = 52;
+// —— ② 行内重型组件实例数基线（issue #2189 收紧到 0）——
+// 指针轴下全部高频格为轻量原生元素：类型标签 = 语义样式元素（tag-colors）、
+// 账户/商户/来源 = 原生按钮/占位文本（data-tx-action 委托）、备注复制 = 原生
+// 按钮 + 共享静态图标、金额 = 轻量文本（AmountCell 仅触控轴）。删除任一列的
+// 瘦身接线（回退逐格重型组件实例）即本组断言变红（删除即红）。
+const ACCOUNT_LINK_BASELINE = 0;
+const MERCHANT_LINK_BASELINE = 0;
+const SOURCE_LINK_BASELINE = 0;
+const NOTE_COPY_BUTTON_BASELINE = 0;
+const AMOUNT_CELL_BASELINE = 0;
+const N_TAG_BASELINE = 0;
 // NEllipsis（同步省略，每格同步实例化完整提示弹层子树）#2188 后仅剩表头省略 2：
 // 分类/商户列头（列头仍走同步 Ellipsis，naive-ui Header 不消费 performant 变体）。
 // 表格分类/商户列已改列级懒挂载（performant-ellipsis）、备注/商品名单元格内已改
@@ -83,7 +83,12 @@ const N_TAG_BASELINE = 52;
 const N_ELLIPSIS_BASELINE = 2;
 
 // —— ③ 表格容器内 DOM 节点总数基线（.n-data-table 内全部元素节点）——
-const TABLE_DOM_NODES_BASELINE = 1794;
+// 50 行档：#2189 收紧（类型/账户/商户/来源/备注复制/金额格轻量化 + 事件委托去
+// 逐格绑定，#2188 优化后基线 1794 → 1422）。
+const TABLE_DOM_NODES_BASELINE = 1422;
+// 100 行档（主列表页大小上限档，issue #2189 新增覆盖）：100 笔交易 + 购买项展开
+// = 150 显示行，阈值按同形态线性外推并实测锚定。
+const TABLE_DOM_NODES_100_BASELINE = 2787;
 
 beforeEach(async () => {
   await wireRenderFixture();
@@ -198,12 +203,40 @@ describe("渲染期计数守门（阈值 = 优化后基线，收紧纪律见文�
     expect(wrapper.findAllComponents(NEllipsis).length).toBeLessThanOrEqual(N_ELLIPSIS_BASELINE);
   });
 
-  it("③ 表格容器内 DOM 节点总数 ≤ 基线", async () => {
+  it("③ 表格容器内 DOM 节点总数 ≤ 基线（50 行档）", async () => {
     const wrapper = await mountAndFlush();
     const table = wrapper.find(".n-data-table");
     expect(table.exists()).toBe(true);
-    expect(table.element.querySelectorAll("*").length).toBeLessThanOrEqual(
-      TABLE_DOM_NODES_BASELINE,
+    const count = table.element.querySelectorAll("*").length;
+    expect(count).toBeLessThanOrEqual(TABLE_DOM_NODES_BASELINE);
+  });
+});
+
+describe("100 行/页档位覆盖（issue #2189：主列表页大小上限档守门）", () => {
+  it("100 笔交易（150 显示行）挂载：行内重型组件实例仍为 0、DOM 节点 ≤ 100 行档基线", async () => {
+    const wrapper = mountDesktopRenderTable({ txnCount: 100 });
+    await flushPromises();
+    expect(wrapper.findAll(".n-data-table-tbody .n-data-table-tr")).toHaveLength(
+      FIXTURE_DISPLAY_ROW_COUNT * 2,
     );
+    // 行内重型组件实例（指针轴）：与 50 行档同收 0——翻页换档不引入组件回潮
+    expect(wrapper.findAllComponents(AccountLink).length).toBeLessThanOrEqual(
+      ACCOUNT_LINK_BASELINE,
+    );
+    expect(wrapper.findAllComponents(MerchantLink).length).toBeLessThanOrEqual(
+      MERCHANT_LINK_BASELINE,
+    );
+    expect(wrapper.findAllComponents(SourceLink).length).toBeLessThanOrEqual(SOURCE_LINK_BASELINE);
+    expect(wrapper.findAllComponents(NoteCopyButton).length).toBeLessThanOrEqual(
+      NOTE_COPY_BUTTON_BASELINE,
+    );
+    expect(wrapper.findAllComponents(AmountCell).length).toBeLessThanOrEqual(AMOUNT_CELL_BASELINE);
+    expect(wrapper.findAllComponents(NTag).length).toBeLessThanOrEqual(N_TAG_BASELINE);
+    expect(wrapper.findAllComponents(NEllipsis).length).toBeLessThanOrEqual(N_ELLIPSIS_BASELINE);
+    // DOM 节点总数 ≤ 100 行档基线
+    const table = wrapper.find(".n-data-table");
+    expect(table.exists()).toBe(true);
+    const count = table.element.querySelectorAll("*").length;
+    expect(count).toBeLessThanOrEqual(TABLE_DOM_NODES_100_BASELINE);
   });
 });

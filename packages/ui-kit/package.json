@@ -17,7 +17,8 @@
     "./NoteCopyButton.vue": "./src/NoteCopyButton.vue",
     "./PinyinSelect.vue": "./src/PinyinSelect.vue",
     "./app-modal.css.ts": "./src/app-modal.css.ts",
-    "./overlayRegistry": "./src/overlayRegistry.ts"
+    "./overlayRegistry": "./src/overlayRegistry.ts",
+    "./note-copy": "./src/note-copy.ts"
   },
   "dependencies": {
     "@ledger/i18n": "workspace:*",
