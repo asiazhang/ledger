@@ -1,25 +1,3 @@
-//! 财务自由度口径（issue #343 / ADR-0048）：可投资资产 × 3% 安全提取率
-//! ÷ 年度预算总额的只读聚合。
-//!
-//! 口径（ADR-0048；术语见本域 InvestableAssets / FinancialFreedom 与
-//! 预算域 AnnualBudgetTotal 词汇表）：
-//! - 分子 = Σ 持仓市值 + Σ 投资账户余额，均折算全局默认币种；排除隐藏账户
-//!   （含黑洞——隐藏投资账户的现金与持仓一并不进分子）；从未录价的持仓按
-//!   空值语义跳过，不以零计入；缺汇率错误上抛（中文错误信息），不静默混币种。
-//!   与净资产的边界差异：净资产同样计入投资账户现金（ADR-0020 修订），两者
-//!   差异仅在生活现金与实物资产（见 ADR-0048 决策 2）。
-//! - 分母 = 年度预算总额，取数走预算域单点函数
-//!   [`ledger_budget::annual_budget_total_cents`]（Σ 月度预算 × 12 + Σ 年度预算，
-//!   全部未删除预算），无窗口、不滚动；口径表达式不复制（ADR-0131 决策 4），
-//!   预算页年度汇总卡与财务自由度因此永远同源（issue #1948）。
-//! - 3% 安全提取率为常量，单点收口于 [`SAFE_WITHDRAWAL_RATE`]；调整先修订 ADR-0048。
-//! - 覆盖年数 = 分子 ÷ 分母；未设预算（零分母）时 ratio 与 coverage_years 均为 0，
-//!   占位引导在展示层。
-//! - 实时计算不落库；不新增任何写函数（ADR-0013）。
-//!
-//! 与净资产聚合（仪表盘域）的同形片段刻意未收拢：#405 票边界只迁不改，
-//! 提取共享持仓市值合计留待后续重构另行立项。
-
 use rusqlite::Connection;
 
 use ledger_accounts::AccountType;
@@ -31,11 +9,8 @@ use ledger_transaction::amount;
 
 use super::model::FinancialFreedomOverview;
 
-/// 安全提取率常量（单点收口，ADR-0048）：自由度 = 可投资资产 × 3% 对年度预算
-/// 总额的覆盖比例。取保守的 3% 而非教科书 4%——达标线更扎实、留足安全边际。
 const SAFE_WITHDRAWAL_RATE: f64 = 0.03;
 
-/// 持仓金额行：`v_holdings` 金额列（账户本位币，可为 NULL）+ 账户币种。
 struct HoldingValue {
     amount_cents: Option<i64>,
     currency_code: String,
@@ -50,19 +25,10 @@ impl FromRow for HoldingValue {
     }
 }
 
-/// 持仓腿取数面（软删与隐藏账户一律排除）：可投资资产·持仓市值腿与其
-/// 「未计入持仓数」（投资概览，[`super::overview`]）共用同一 FROM/WHERE 片段
-/// ——计数面与合计面同源不漂移（ADR-0131 决策 4：口径表达式不复制）。
 pub(crate) const HOLDINGS_VISIBLE_FACET: &str = "FROM v_holdings h \
      JOIN accounts a ON a.id = h.account_id \
      WHERE a.is_deleted=0 AND a.is_hidden=0";
 
-/// conn 级聚合：可投资资产分子·**投资账户现金腿**（折全局默认币种，分）。
-///
-/// 余额口径与账户列表一致（account_flow，排除隐藏/黑洞），仅取投资账户——未投入
-/// 的现金不被持仓市值体现，漏算会低估可投资资产；生活现金不计入。本腿与持仓市值腿
-/// 相加即 [`query_investable_assets_cents`]（投资概览页签按腿拆分展示，issue #1536，
-/// 口径表达式不复制）。
 pub fn query_investable_assets_cash_leg_cents(conn: &Connection) -> Result<i64> {
     let mut cash_sum = 0i64;
     for ab in list_account_balances_with_visibility(conn, false)? {
@@ -77,12 +43,6 @@ pub fn query_investable_assets_cash_leg_cents(conn: &Connection) -> Result<i64> 
     Ok(cash_sum)
 }
 
-/// v_holdings 金额列的折本位币求和（可见持仓取数面的共用单点）：市值腿与
-/// 投资概览的持仓收益（未实现盈亏）列同形——同一 FROM/WHERE
-/// （[`HOLDINGS_VISIBLE_FACET`]，软删与隐藏账户一律排除）、NULL 按空值语义
-/// 跳过、逐行折全局默认币种（缺折算到本位币的汇率时错误上抛，码化
-/// `fx.rate-missing`，不静默混币种）。列名是本 crate 内调用方传入的字面量，
-/// 非外部输入（ADR-0131 决策 4：口径表达式不复制，计数与合计同源不漂移）。
 pub(crate) fn sum_holdings_facet_column_cents(conn: &Connection, column: &str) -> Result<i64> {
     let sql = format!("SELECT h.{column}, a.currency_code {HOLDINGS_VISIBLE_FACET}");
     let holdings: Vec<HoldingValue> = query_all(conn, &sql, [])?;
@@ -95,41 +55,21 @@ pub(crate) fn sum_holdings_facet_column_cents(conn: &Connection, column: &str) -
     Ok(sum)
 }
 
-/// conn 级聚合：可投资资产分子·**持仓市值腿**（折全局默认币种，分）。
-///
-/// v_holdings 市值（账户本位币）→ 全局默认币种；NULL 市值（缺现价或缺价格币→账户币
-/// 汇率）按空值语义跳过、不以零计入；排除隐藏账户（v_holdings 本身不过滤可见性，
-/// 与净资产管线共用的视图口径在此由本口径收紧）。折算与空值语义收口在
-/// [`sum_holdings_facet_column_cents`]，投资概览的持仓收益列同源消费。
 pub fn query_investable_assets_holdings_leg_cents(conn: &Connection) -> Result<i64> {
     sum_holdings_facet_column_cents(conn, "market_value_cents")
 }
 
-/// conn 级聚合：可投资资产分子（折本位币，单点提取，issue #1196）。
-///
-/// 财务自由度的分子、跨账本汇总的「可投资资产」与投资概览页签的合计同源消费本
-/// 函数：Σ 投资账户现金 + Σ 持仓市值，均折全局默认币种。两条腿各有单点
-/// （[`query_investable_assets_cash_leg_cents`] / [`query_investable_assets_holdings_leg_cents`]），
-/// 本函数只做相加——口径表达式不复制，两腿拆分与合计不会各说各话。
 pub fn query_investable_assets_cents(conn: &Connection) -> Result<i64> {
     Ok(query_investable_assets_cash_leg_cents(conn)?
         + query_investable_assets_holdings_leg_cents(conn)?)
 }
 
-/// conn 级聚合：计算财务自由度总览（只读）。
-///
-/// **读快照一致性（issue #1699）**：分子（现金腿 + 持仓腿逐行折算）与分母
-///（预算域年度预算总额聚合）跨表多语句，整体收进同一读事务（嵌套感知）——分子分母恒
-/// 同时点，写提交落在语句之间会两端不同时点。
 pub fn query_financial_freedom(conn: &Connection) -> Result<FinancialFreedomOverview> {
     ensure_transaction(conn, || {
-        // 分子：投资账户现金 + 持仓市值，口径单点见 [`query_investable_assets_cents`]。
         let numerator_cents = query_investable_assets_cents(conn)?;
 
-        // 分母：年度预算总额，口径单点在预算域（#1948）：月度 × 12 为节奏年化。
         let denominator_cents = ledger_budget::annual_budget_total_cents(conn)?;
 
-        // 零分母（未设预算）：返回零，不回退实际支出；占位引导在展示层。
         let (ratio, coverage_years) = if denominator_cents == 0 {
             (0.0, 0.0)
         } else {
@@ -152,7 +92,6 @@ pub fn query_financial_freedom(conn: &Connection) -> Result<FinancialFreedomOver
     })
 }
 
-/// 一位小数四舍五入（ratio 与 coverage_years 共用刻度）。
 fn round1(value: f64) -> f64 {
     (value * 10.0).round() / 10.0
 }

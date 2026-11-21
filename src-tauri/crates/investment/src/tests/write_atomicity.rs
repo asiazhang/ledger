@@ -1,14 +1,3 @@
-//! 投资域简单写的事务原子性（issue #1867，ADR-0139 决策 2 的先行缺陷票）：
-//! 汇率、现价、删标的、建档改名、手动报价五个编排入口的「业务写 + op 追加」
-//! 必须同事务提交/回滚——任一步失败整体回滚，业务行与 op 行同生共死。
-//!
-//! 失败注入用纯测试侧手段（op 写失败注入器具 `test_support::op_write_failure`
-//! ——四域同形触发器注入的收编单点，issue #1896；先例：`db::tx_scope` 行为
-//! 单测的触发器 RAISE(ABORT)）：`BEFORE INSERT ON sync_ops` 触发器挡下 op
-//! 落库，使编排体在**最后一步**失败。修复前（逐语句 autocommit）业务
-//! 行已先行落库、op 缺席——「业务行残留」即红灯；修复后（嵌套感知事务自持）
-//! 业务行与 op 行一同消失。断言对准数据终态（ADR-0087），不断言事务写法。
-
 use rusqlite::{Connection, params};
 
 use crate::crud::{
@@ -96,7 +85,6 @@ fn create_market_price_op_failure_rolls_back_price_row() {
 #[test]
 fn delete_instrument_op_failure_keeps_instrument_row() {
     let conn = open();
-    // 经核心创建入口建档（manual 来源，守卫允许删除）。
     let id = create_instrument(&conn, instrument_input("600000", "浦发银行")).unwrap();
     block_op_writes(&conn);
     let ops_before = op_count(&conn);
@@ -134,7 +122,6 @@ fn create_instrument_op_failure_rolls_back_new_row() {
 #[test]
 fn create_instrument_rename_op_failure_keeps_old_name() {
     let conn = open();
-    // 首次建档（不注入，成功落库）。
     create_instrument(&conn, instrument_input("600000", "旧名")).unwrap();
     block_op_writes(&conn);
     let ops_before = op_count(&conn);
@@ -170,7 +157,6 @@ fn record_manual_price_op_failure_rolls_back_both_landing_points() {
     .unwrap_err();
     assert_op_write_failure(&err);
 
-    // 手动报价一条通道两落点（价格历史 + 现价缓存），两处都必须随事务回滚。
     assert_eq!(
         count(&conn, "SELECT COUNT(*) FROM price_history"),
         0,
@@ -184,12 +170,6 @@ fn record_manual_price_op_failure_rolls_back_both_landing_points() {
     assert_eq!(op_count(&conn), 0);
 }
 
-/// ADR-0139 决策 2 字面方向「业务写失败 ⇒ op 不存在」的非空洞形态：多落点管道
-/// 中前一步业务写已成功、后一步业务写失败——已写的落点必须随整体回滚，op 不得
-/// 产出。单落点入口的业务写失败发生在首条语句，op 缺席由 `?` 顺序平凡保证，
-/// 不做空洞断言。注入点：market_prices 的 BEFORE INSERT 触发器挡下落点二
-/// （业务写落点注入是本域单域夹具，不上收测试工厂——ADR-0084 决策 1；op 写
-/// 失败注入已收编 `test_support::op_write_failure`，issue #1896）。
 #[test]
 fn record_manual_price_business_write_failure_rolls_back_history_and_op() {
     let conn = open();

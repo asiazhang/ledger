@@ -1,8 +1,3 @@
-//! 手动创建入口守卫（`create_instrument_manual`，issue #290 / ADR-0036
-//! 决策 3）：类型白名单（债券/ETF/其他）与名称必填收在域的手动创建入口
-//! （#401 域归位前住 IPC 命令入口层）；核心创建函数保持通用（AI HTTP 端点五类
-//! 全开、名称可选，ADR-0037），不经本守卫。
-
 use rusqlite::{Connection, params};
 
 use super::common::insert_instrument_with_source;
@@ -29,7 +24,6 @@ fn count_of(conn: &Connection, kind: &str) -> i64 {
     .unwrap()
 }
 
-/// 白名单拦截：股票类明确拒绝（中文报错），不产生标的行。
 #[test]
 fn manual_create_rejects_stock() {
     let conn = open();
@@ -45,7 +39,6 @@ fn manual_create_rejects_stock() {
     assert_eq!(count_of(&conn, "stock"), 0, "股票类不应产生标的行");
 }
 
-/// 白名单拦截：基金类拒绝（fund 唯一创建入口归按代码即拉，issue #301 / ADR-0038）。
 #[test]
 fn manual_create_rejects_fund() {
     let conn = open();
@@ -61,7 +54,6 @@ fn manual_create_rejects_fund() {
     assert_eq!(count_of(&conn, "fund"), 0, "基金类不应产生标的行");
 }
 
-/// 白名单放行：债券/ETF/其他三类经守卫到达核心创建函数（新建行来源 manual）。
 #[test]
 fn manual_create_allows_whitelisted_kinds() {
     let conn = open();
@@ -84,7 +76,6 @@ fn manual_create_allows_whitelisted_kinds() {
     }
 }
 
-/// 名称必填：空串与纯空白均拒绝（自建标的主身份是名称），不产生标的行。
 #[test]
 fn manual_create_requires_name() {
     let conn = open();
@@ -99,8 +90,6 @@ fn manual_create_requires_name() {
     assert_eq!(count_of(&conn, "other"), 0, "空名称不应产生标的行");
 }
 
-/// 守卫放行后 upsert 语义保持：（代码，类型）命中既有行复用并只更名，来源随行不变
-/// （守卫只加拦截，不改写核心创建函数行为）。
 #[test]
 fn manual_create_reuse_keeps_existing_source() {
     let conn = open();

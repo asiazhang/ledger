@@ -1,55 +1,3 @@
-//! 仪表盘领域 crate（Dashboard，issue #142；#405 域目录化 ADR-0056；spec
-//! #1086 / issue #1104 自根包域目录拆出，P3 叶子业务域 crate）：首页净资产
-//! 跨币种合计，只读聚合。
-//!
-//! 口径（ADR-0020 修订，真实财富视角；第三腿 ADR-0064 决策 6）：
-//! 净资产 = Σ 账户折本位币余额（含投资账户现金）+ Σ 折本位币持仓市值
-//!   + Σ 在持实物资产估值折本位币。
-//! - 账户侧余额沿用 `accounts::balance::list_account_balances_with_visibility`
-//!   （内部即 `account_flow` 口径的 `compute_all_balances_with_visibility`，
-//!   与账户列表/余额页一致，排除隐藏与黑洞账户），**含投资账户余额**：投资账户
-//!   余额是未投入的现金（子弹），不被持仓市值体现；买卖是现金与持仓之间的零和
-//!   转换（现金腿增减、持仓市值随之增减），同一笔钱只计一次，不重复计算；
-//! - 持仓侧读 `v_holdings` 视图市值（账户本位币），再折算到全局默认币种；
-//!   `market_value_cents` 为 NULL（从未录价或缺折算汇率）时按空值语义跳过；
-//! - 币种折算一律复用 Amount 接缝当期入口 [`amount::convert_to_native_current`]，缺汇率错误上抛
-//!   （中文错误信息），不静默混币种；
-//! - 实物资产腿复用 [`ledger_physical_asset`] 域 API 的在持合计读口径
-//!   （`list_physical_assets` 的 `holding_total_native_cents`，最新估值行经
-//!   Amount 接缝折算、缺汇率错误上抛、已处置 / 软删不计入），与实物资产
-//!   列表「家底合计」同源不漂移；
-//! - 投资域不新增任何写函数（ADR-0013）；可投资资产（财务自由度分子，
-//!   ADR-0048）不受实物资产影响。
-//!
-//! 核心函数吃 `&Connection` 可直接单测/供 e2e 复用；IPC 参数解包与连接锁
-//! 管理在壳层 `commands::dashboard`（#405 压平为单文件纯壳）。依赖方向恒为
-//! 「壳层 → dashboard → 基础设施」，本 crate 不反向依赖壳层。净资产总览
-//! 读模型集中本域 [`model`]（#421 随域归位），消费方经域路径逐类型显式
-//! import。输入指纹推导、读探针与缓存回写收口本域 [`net_worth`]（ADR-0071
-//! 决策 3，自 `db/net_worth.rs` 整块迁入），实时聚合公式留在域入口。
-//!
-//! 依赖方向（spec #1086 / issue #1104 修订后 AC）：本 crate 消费基础设施、
-//! 账户域、核心交易域与实物资产域（`ledger-infra` / `ledger-accounts` /
-//! `ledger-transaction` / `ledger-physical-asset`，票面允许集「基础设施、
-//! 协议、核心交易域、账户域、实物资产域」的子集）——余额口径经账户域、
-//! 折算口径经核心交易域、第三腿经实物资产域单一读口径，均为上层域对底层
-//! 域的合法单向依赖（ADR-0112 决策 2）；本域是纯读模型、无同步命令，对同步
-//! 协议 crate 亦零生产依赖，无接缝无注册点、壳层启动零接线。对根包（壳层）
-//! 与同步域零直接依赖，反向引用由 cargo 依赖图编译期拒绝（生产依赖面无根包，
-//! 机器面负向核对住结构守门的 crate 依赖方向，Cargo.toml 注释留痕）。
-//!
-//! **测试布局**：快照探针域单测随 issue #1702 立项（[`tests`]，读闭包纪律的
-//! 域内验收），其余纯读聚合仍由根包侧三层测试覆盖（壳层命令集成与 e2e BDD
-//! `dashboard.feature`，断言与场景文本零改动）。
-//!
-//! **测试实例纪律（dev-dependency 环双实例，ledger-reports 同款）**：
-//! `cargo test -p ledger-dashboard` 的依赖图内存在本 crate 的两份实例——被测本
-//! 实例与根包图内实例。本域是纯读路径、不读任何接缝注册静态，域单测直接驱动
-//! 本实例；经壳层的旅程由根包侧三层测试走根包图实例覆盖。
-
-// 测试整体豁免（ADR-0060）：clippy 六件套 deny 仅约束生产路径；单元测试目标
-// （含 src/** 内 #[cfg(test)] 模块）经 crate 根 cfg(test) 整体放行，生产构建
-// 零放宽。
 #![cfg_attr(
     test,
     allow(
@@ -79,9 +27,6 @@ use ledger_infra::db::query::{FromRow, query_all};
 use ledger_infra::error::Result;
 use ledger_transaction::amount;
 
-/// 持仓市值行：`v_holdings` 市值（账户本位币，可为 NULL）+ 账户币种。
-/// 与投资域 `financial_freedom::HoldingValue` 同形片段刻意不收拢（跨域共享
-/// 待共享持仓市值合计立项时统一提取，见对向注释）。
 struct HoldingValue {
     market_value_cents: Option<i64>,
     currency_code: String,
@@ -96,20 +41,13 @@ impl FromRow for HoldingValue {
     }
 }
 
-/// 既有实时聚合公式（本位币净资产总览）：三腿合计（ADR-0020 修订：余额腿含投资
-/// 账户现金）——余额腿自
-/// B2 起读余额缓存（五出口切缓存），其余两腿仍实时聚合；读探针
-/// （[`net_worth::query_dashboard_overview`]）指纹命中直读缓存、失配回填。
 fn compute_dashboard_overview(conn: &Connection) -> Result<DashboardOverview> {
-    // 账户余额合计（含投资账户现金，ADR-0020 修订）：余额口径与账户列表一致
-    // （account_flow，排除隐藏/黑洞）；投资账户余额即未投入的现金，不经持仓市值体现。
     let mut accounts_sum = 0i64;
     for ab in list_account_balances_with_visibility(conn, false)? {
         accounts_sum +=
             amount::convert_to_native_current(conn, ab.balance_cents, &ab.account.currency_code)?;
     }
 
-    // 持仓市值合计：v_holdings 市值（账户本位币）→ 全局默认币种；NULL 市值跳过。
     let holdings: Vec<HoldingValue> = query_all(
         conn,
         "SELECT h.market_value_cents, a.currency_code \
@@ -124,9 +62,6 @@ fn compute_dashboard_overview(conn: &Connection) -> Result<DashboardOverview> {
         }
     }
 
-    // 在持实物资产估值合计（第三腿，ADR-0064 决策 6）：经实物资产域单一读
-    // 口径取数（缺汇率错误上抛，不静默漏算；已处置 / 软删不计入），与实物
-    // 资产列表「家底合计」同源。
     let physical_assets_value_cents =
         ledger_physical_asset::list_physical_assets(conn, None)?.holding_total_native_cents;
 
