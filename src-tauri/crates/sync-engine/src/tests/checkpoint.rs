@@ -893,6 +893,42 @@ fn bootstrap_migrates_older_schema_snapshot() {
         .query_row("PRAGMA user_version", [], |r| r.get(0))
         .unwrap();
     assert_eq!(actual, expected, "引导后迁移升级到本端最新 schema");
+
+    // 终态 schema 全等（迁移链不变量钉定，#2197）：同一条迁移链重放两次
+    // （全新 to_latest 与旧快照前向迁移），sqlite_master 必须逐对象一致。
+    // 旧快照夹具的「卸下清单」是手工同步点、不可投影（逆向迁移不可推导），
+    // 本断言把「清单抄全」从夹具注释的纪律提醒升级为不变量：新增迁移漏卸
+    // （含索引列依赖型失败）在引入迁移的 PR 内即红，不待后续故障现形。
+    // 内部对象（sqlite_stat1 等内容随数据不同）不比较；DDL 文本规范化空白。
+    let schema_of = |conn: &rusqlite::Connection| -> Vec<(String, String, String, String)> {
+        let mut stmt = conn
+            .prepare(
+                "SELECT type, name, tbl_name, sql FROM sqlite_master \
+                 WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name",
+            )
+            .unwrap();
+        stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, Option<String>>(3)?
+                    .map(|s| {
+                        s.split_whitespace().collect::<Vec<_>>().join(" ")
+                    })
+                    .unwrap_or_default(),
+            ))
+        })
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap()
+    };
+    assert_eq!(
+        schema_of(&conn_b),
+        schema_of(&fresh),
+        "旧快照前向迁移终态应与全新 to_latest 库 schema 全等"
+    );
+
     let dev_a = device_of(&conn_a);
     let pos = stream_positions(&conn_b)
         .unwrap()
