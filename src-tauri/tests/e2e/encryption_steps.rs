@@ -1,13 +1,3 @@
-//! 加密转换三形态 BDD 步骤（issue #570/#571 / ADR-0075）。
-//!
-//! 与 data_location.feature 同一文件级接缝：真临时目录驱动真实文件系统，
-//! 每个 scenario 干净的目录现场，只断言外部可见行为（转换往返、启动探测
-//! 接管、失败原子性、口令错误可重试、关闭/改口令对称形态、搬迁后仍为密
-//! 文库）。步骤直调 db 基础设施的实现接缝（`enable_encryption_for_file`
-//! / `disable_encryption_for_file` / `change_passphrase_for_file` /
-//! `unlock_db_file` / `boot` / `relocate_with_key`），与真实 IPC 命令同一
-//! 实现（先例：BDD 直调命令层内部函数）。
-
 use cucumber::{given, then, when};
 use rusqlite::Connection;
 
@@ -23,16 +13,10 @@ use ledger_infra::error::AppError;
 use crate::common::{count_transactions, count_transactions_in_file, seed_account_with_expenses};
 use crate::world::LedgerWorld;
 
-// ---------------------------------------------------------------------------
-// 场景现场与本地辅助
-// ---------------------------------------------------------------------------
-
 fn ensure_dir(world: &mut LedgerWorld) {
     if world.boot.enc_dir.is_none() {
         let dir = world.scratch_dir("e2e-enc");
         world.boot.enc_dir = Some(dir.clone());
-        // 同步登记到 DataLocation 场景现场：生目录断言类步骤（"生效目录应为
-        // 默认数据目录"）复用 data_location_steps 的既有定义，不重复声明。
         world.boot.dl_default_dir = Some(dir);
     }
 }
@@ -41,13 +25,10 @@ fn db_path(world: &LedgerWorld) -> std::path::PathBuf {
     world.boot.enc_dir.as_ref().unwrap().join(DB_FILE_NAME)
 }
 
-/// 在文件库中建账户与 N 条交易：账户经域公开创建入口（余额缓存行不变量由
-/// 产品代码保证，#763 旁路归零），交易经共享种子助手（L1 工厂 + 行为层接缝）。
 fn seed_db(conn: &Connection, count: usize) {
     seed_account_with_expenses(conn, "现金", "加密种子交易", count, 1000, "2026-03-01");
 }
 
-/// 断言库中种子交易完整：数量一致且种子备注逐条在（转换往返不丢内容）。
 fn assert_seed_rows(conn: &Connection, count: usize) {
     assert_eq!(count_transactions(conn) as usize, count, "交易数不符");
     let notes: i64 = conn
@@ -67,7 +48,6 @@ fn code_of(err: &AppError) -> Option<&str> {
     }
 }
 
-/// 抽取交易表内容快照（排序后拼接），供转换前后一致性比对。
 fn transactions_fingerprint(conn: &Connection) -> String {
     let mut stmt = conn
         .prepare(
@@ -89,10 +69,6 @@ fn transactions_fingerprint(conn: &Connection) -> String {
     rows.map(|r| r.unwrap()).collect::<Vec<_>>().join("\n")
 }
 
-// ---------------------------------------------------------------------------
-// Given
-// ---------------------------------------------------------------------------
-
 #[given(expr = "默认数据目录中已有一个含 {int} 条交易的明文库")]
 fn given_plaintext_db(world: &mut LedgerWorld, count: usize) {
     ensure_dir(world);
@@ -111,7 +87,6 @@ fn given_encrypted_db(world: &mut LedgerWorld, passphrase: String, count: usize)
         seed_db(&conn, count);
     }
     enable_encryption_for_file(&path, &passphrase).unwrap();
-    // 场景现场收尾：.bak 副本不入现场（它是转换的副产物，后续场景自己断言）。
     std::fs::remove_file(path.with_extension("db.bak")).unwrap();
 }
 
@@ -132,19 +107,12 @@ fn given_pointer_to_empty_target(world: &mut LedgerWorld) {
 #[given(expr = "数据目录不可写")]
 fn given_dir_readonly(world: &mut LedgerWorld) {
     let dir = world.boot.enc_dir.clone().unwrap();
-    // Unix 权限位触发失败路径：非 root 下真实生效，root 架空权限位，本场景
-    // 由启动器按 @non-root-only 显式跳过（issue #793，与 #791 db 单测守卫
-    // 同策略）。先置只读再进入转换，转换结束后由 Then 侧恢复权限。
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o555)).unwrap();
     }
 }
-
-// ---------------------------------------------------------------------------
-// When
-// ---------------------------------------------------------------------------
 
 #[when(expr = "执行启动引导")]
 fn when_boot(world: &mut LedgerWorld) {
@@ -234,10 +202,6 @@ fn when_open_bak_without_key(world: &mut LedgerWorld) {
     .err();
 }
 
-// ---------------------------------------------------------------------------
-// Then
-// ---------------------------------------------------------------------------
-
 #[then(expr = "库文件应探测为明文库")]
 fn then_probe_plaintext(world: &mut LedgerWorld) {
     assert_eq!(
@@ -290,7 +254,6 @@ fn then_convert_failed(world: &mut LedgerWorld) {
         world.boot.enc_last_error.is_some(),
         "预期转换失败（目录不可写），实际成功"
     );
-    // 恢复目录权限，便于临时目录清理与后续断言。
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -348,7 +311,6 @@ fn then_convert_failed_with_code(world: &mut LedgerWorld, code: String) {
 fn then_open_with_passphrase(world: &mut LedgerWorld, passphrase: String, count: usize) {
     let path = db_path(world);
     let conn = open_connection_with_passphrase(&path, &passphrase).unwrap();
-    // 内容完整：与转换前 seed 的确定性内容比对（同序同值）。
     assert_seed_rows(&conn, count);
 }
 
@@ -521,7 +483,6 @@ fn then_target_content(world: &mut LedgerWorld, passphrase: String, count: usize
     let target = world.boot.enc_target_dir.as_ref().unwrap();
     let conn = open_connection_with_passphrase(target.join(DB_FILE_NAME), &passphrase).unwrap();
     assert_eq!(count_transactions(&conn) as usize, count);
-    // 与源库快照逐行比对：搬迁前后内容一致。
     let source = open_connection_with_passphrase(db_path(world), &passphrase).unwrap();
     assert_eq!(
         transactions_fingerprint(&conn),
@@ -540,10 +501,6 @@ fn then_source_preserved(world: &mut LedgerWorld) {
         "源库应保持密文形态"
     );
 }
-
-// ---------------------------------------------------------------------------
-// 原位重引导计划（issue #644 / ADR-0080）：重启命令消费的引导序列内核
-// ---------------------------------------------------------------------------
 
 #[when(expr = "制定重引导计划")]
 fn when_plan_reboot(world: &mut LedgerWorld) {

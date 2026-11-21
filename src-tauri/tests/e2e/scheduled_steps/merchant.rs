@@ -1,10 +1,3 @@
-//! 带商户的定时计划（issue #190 / ADR-0028）：installment/subscription 可携带商户、
-//! 定时转账拒绝携带；商户相关断言（计划 / 生成流水 / 扩展表 schema）也归此。
-//!
-//! #762 迁移：输入构造收编 L1 三形态工厂（[`crate::step_inputs`]，商户为冷字段
-//! 覆盖）、写入收编 L2 计划动词（[`crate::step_verbs`]）；try 形态 +
-//! `capture_expected_error` 承接「应返回错误」断言，断言语义不变。
-
 use cucumber::{then, when};
 use rusqlite::params;
 
@@ -17,11 +10,6 @@ use crate::step_inputs::{
 use crate::step_verbs::{account_currency_code, create_plan_verb, try_create_plan_verb};
 use crate::world::LedgerWorld;
 
-// ---------------------------------------------------------------------------
-// When：带商户的计划（issue #190 / ADR-0028：installment/subscription 可携带商户）
-// ---------------------------------------------------------------------------
-
-/// 创建带商户的订阅计划（每期生成交易时复制商户到流水）。
 #[when(
     expr = "创建订阅计划 金额 {int} 币种 {string} 账户 {string} 起始日期 {string} 备注 {string} 商户 {string}"
 )]
@@ -45,7 +33,6 @@ fn create_subscription_plan_with_merchant(
     );
 }
 
-/// 创建带商户的分期计划。
 #[when(expr = "创建分期计划 总额 {int} 期数 {int} 账户 {string} 起始日期 {string} 商户 {string}")]
 fn create_installment_plan_with_merchant(
     world: &mut LedgerWorld,
@@ -66,7 +53,6 @@ fn create_installment_plan_with_merchant(
     );
 }
 
-/// 尝试创建定时转账计划并捕获错误（行为层拒绝携带商户，issue #190）。
 #[when(
     expr = "尝试创建定时转账计划 金额 {int} 从 {string} 到 {string} 期数 {int} 起始日期 {string} 商户 {string}"
 )]
@@ -91,7 +77,6 @@ fn try_create_transfer_plan_with_merchant(
     capture_expected_error(world, result);
 }
 
-/// 尝试创建带商户的订阅计划并捕获错误（软删商户不可被新计划选择）。
 #[when(
     expr = "尝试创建订阅计划 金额 {int} 币种 {string} 账户 {string} 起始日期 {string} 商户 {string}"
 )]
@@ -112,7 +97,6 @@ fn try_create_subscription_plan_with_merchant(
     capture_expected_error(world, result);
 }
 
-/// 最近期次生成的交易商户名（左联 merchants 现名：改名即时生效，软删照常显示）。
 fn occurrence_txn_merchant_name(world: &LedgerWorld) -> Option<String> {
     let occ_id = world.plan.last_occurrence_id.clone().expect("尚无期次");
     world_conn!(world)
@@ -136,8 +120,6 @@ fn assert_occurrence_txn_merchant(world: &mut LedgerWorld, expected: String) {
     );
 }
 
-/// 迁移后 schema 就位：installment/subscription 扩展表含 merchant_id 列、无 counterparty 列
-/// （issue #190 / ADR-0028：counterparty 文本列原地改为商户引用，不写前向迁移）。
 #[then(expr = "计划扩展表应含 merchant_id 列且无 counterparty 列")]
 fn assert_scheduled_ext_schema(world: &mut LedgerWorld) {
     for table in ["installment_plans", "subscription_plans"] {
@@ -160,7 +142,6 @@ fn assert_scheduled_ext_schema(world: &mut LedgerWorld) {
     }
 }
 
-/// 最近计划生成的每笔交易商户名都应是指定商户（分期逐期断言）。
 #[then(expr = "最近计划生成的每笔交易商户应为 {string}")]
 fn assert_all_plan_txns_merchant(world: &mut LedgerWorld, expected: String) {
     let plan_id = world.plan.last_plan_id.clone().expect("尚无定时计划");
@@ -186,7 +167,6 @@ fn assert_all_plan_txns_merchant(world: &mut LedgerWorld, expected: String) {
     }
 }
 
-/// 最近创建的计划商户名（左联 merchants 现名）。
 #[then(expr = "最近创建的计划商户应为 {string}")]
 fn assert_plan_merchant(world: &mut LedgerWorld, expected: String) {
     let plan_id = world.plan.last_plan_id.clone().expect("尚无定时计划");
@@ -208,7 +188,6 @@ fn assert_plan_merchant(world: &mut LedgerWorld, expected: String) {
     );
 }
 
-/// 最近计划生成的第 n 笔交易商户名（左联 merchants 现名）。
 #[then(expr = "第 {int} 笔计划交易商户应为 {string}")]
 fn assert_plan_txn_merchant(world: &mut LedgerWorld, nth: usize, expected: String) {
     let plan_id = world.plan.last_plan_id.clone().expect("尚无定时计划");

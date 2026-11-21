@@ -1,7 +1,3 @@
-//! 工厂自身行为的直接断言（issue #751）：种子落行、组合种子三行齐备、对拍断言
-//! 在一致世界通过、漂移世界变红。「回填 == 实时」对拍的场景级覆盖由两域迁移后的
-//! balance_cache 测试承载（行为等价判据：全量既有测试保持绿，ADR-0084 决策 7）。
-
 use rusqlite::params;
 
 use super::{
@@ -15,7 +11,6 @@ fn scalar(conn: &rusqlite::Connection, sql: &str) -> i64 {
     conn.query_row(sql, [], |r| r.get(0)).unwrap()
 }
 
-/// `open()`：外键开启、迁移至最新、V004 默认种子在位（建库两行序的吸收语义）。
 #[test]
 fn open_initializes_memory_db() {
     let conn = open();
@@ -29,7 +24,6 @@ fn open_initializes_memory_db() {
     );
 }
 
-/// `seed_account` 全位置签名落行：列值、簿记戳（FIXED_NOW 内部发放）与初始余额。
 #[test]
 fn seed_account_lands_full_row() {
     let conn = open();
@@ -67,8 +61,6 @@ fn seed_account_lands_full_row() {
     assert_eq!(device, "test");
 }
 
-/// `seed_instrument` / `seed_price_history` / `seed_fx_rate_history`：列清单落行、
-/// 域时刻（采样日）显式收参、来源固定 eastmoney。
 #[test]
 fn reference_data_seeds_land_rows() {
     let conn = open();
@@ -103,7 +95,6 @@ fn reference_data_seeds_land_rows() {
     assert!((rate - 0.92).abs() < f64::EPSILON);
 }
 
-/// `seed_exchange_rate`：行 id 由货币对派生（表约束每货币对一行），汇率值落行。
 #[test]
 fn seed_exchange_rate_derives_pair_id() {
     let conn = open();
@@ -119,9 +110,6 @@ fn seed_exchange_rate_derives_pair_id() {
     assert!((rate - 7.2).abs() < f64::EPSILON);
 }
 
-/// `seed_market_price`：现价缓存单行落行，簿记戳与 `priced_at` 全走 FIXED_NOW
-/// 内部发放（调用点零字面量，ADR-0084 决策 5），`source` NULL / `version` 1 /
-/// `device_id` 'test'，行 id 内部发放，返回 instrument_id。
 #[test]
 fn market_price_seed_lands_single_row() {
     let conn = open();
@@ -163,9 +151,6 @@ fn market_price_seed_lands_single_row() {
     assert_eq!(device, "test");
 }
 
-/// `seed_fund_market_price`：基金现价带净值水位——`nav_date` 域时刻显式传入、
-/// `priced_at` 与之同值（基金现价行情日期 = 净值日期，ADR-0038 生产同形），
-/// `source` 透传（同步存量行 / 无源行 NULL），簿记戳走 FIXED_NOW。
 #[test]
 fn fund_market_price_seed_lands_nav_watermark() {
     let conn = open();
@@ -202,7 +187,6 @@ fn fund_market_price_seed_lands_nav_watermark() {
     assert_eq!(created_at, super::FIXED_NOW, "簿记戳由工厂内部发放");
 }
 
-/// 投资铺垫组合种子：账户（USD 投资户）+ 标的（USD 股票）+ 1:1 汇率三行齐备。
 #[test]
 fn investment_setup_seeds_account_instrument_and_rate() {
     let conn = open();
@@ -232,7 +216,6 @@ fn investment_setup_seeds_account_instrument_and_rate() {
     assert!((rate - 1.0).abs() < f64::EPSILON);
 }
 
-/// 对拍断言：种子直插账户经整体重算接缝回填后，「缓存 == 实时」在世界一致时通过。
 #[test]
 fn balance_cache_assertion_passes_on_consistent_world() {
     let conn = open();
@@ -242,8 +225,6 @@ fn balance_cache_assertion_passes_on_consistent_world() {
     assert_balance_cache_matches_realtime(&conn);
 }
 
-/// 对拍断言：缓存值漂移（含缓存行缺失）即红，消息携带账户定位——不变式唯一
-/// 维护点的守护语义（ADR-0067）。
 #[test]
 #[should_panic(expected = "缓存应等于实时计算")]
 fn balance_cache_assertion_catches_drift() {
@@ -258,9 +239,6 @@ fn balance_cache_assertion_catches_drift() {
     assert_balance_cache_matches_realtime(&conn);
 }
 
-/// `open_file_scratch`（issue #1868）：文件库模板的初始化能力与内存模板等价——
-/// 外键开启、迁移至最新（user_version 同内存模板）、默认种子（V004）等量在位、
-/// 库文件落在自带暂存目录、种子可在返回连接上注入。
 #[test]
 fn open_file_scratch_initializes_like_memory_template() {
     let (conn, dir) = open_file_scratch("selftest-file-tpl");
@@ -292,8 +270,6 @@ fn open_file_scratch_initializes_like_memory_template() {
     );
 }
 
-/// `open_file_scratch`（issue #1868）：测试后清理——连接关闭、guard drop 后整棵
-/// 暂存目录消失（删掉 `ScratchDir` 的 Drop 实现本断言红）。
 #[test]
 fn open_file_scratch_cleans_up_scratch_dir_after_test() {
     let dir_path = {
@@ -309,9 +285,6 @@ fn open_file_scratch_cleans_up_scratch_dir_after_test() {
     assert!(!dir_path.exists(), "guard drop 后整棵暂存目录应消失");
 }
 
-/// op 写失败注入（issue #1896）：臂装后 `sync.sync_ops` 的 INSERT 被 RAISE(ABORT)
-/// 挡下且错误携带注入消息（消息即断言契约）；解除后同语句不再命中注入——
-/// 约束错误取而代之（sync_ops 全列 NOT NULL 无默认值），证明阻断确来自触发器。
 #[test]
 fn op_write_failure_probe_blocks_and_unblocks() {
     let conn = open();

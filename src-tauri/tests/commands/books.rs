@@ -1,17 +1,3 @@
-//! 账本注册表命令面集成测试（issue #833 / ADR-0089）。
-//!
-//! 直调命令函数（`#[tokio::test]`），覆盖壳行为：参数解包、错误码、切换后
-//! 的引导相位（引导序列内核 `db::boot::plan_boot`）。登记规则的纯函数语义
-//! 归内核单测（`db::book_registry` / `db::data_location`），此处只钉
-//! 「命令壳 → 内核 → 落盘 → 引导」整链。
-//!
-//! 现场隔离：mock runtime 的 `app_data_dir()` 实现为 `dirs::data_dir()` 拼接
-//! 空 identifier，Linux 下 `data_dir()` 优先解析 `$XDG_DATA_HOME`，指向真实
-//! 用户目录。现场隔离收 [`tauri_app_lib::test_support::isolate_home`]（进程内
-//! 一次，`$HOME` 与 XDG 两根一齐重定向，#1989），默认数据目录随之落在隔离区。
-//! tokio 测试线程池并行执行会互踩同一现场，故
-//! 全部场景收进一个顺序旅程测试（与 BDD 场景流同型）。
-
 use std::path::PathBuf;
 
 use ledger_infra::db::boot::plan_boot;
@@ -25,9 +11,6 @@ use tauri_app_lib::commands::boot::BootCell;
 
 use tauri_app_lib::test_support::isolate_home;
 
-/// mock 应用 + 真实引导态：引导按生产同型登记（真实
-/// [`data_location::boot`] 解析 → [`BootCell`]）——命令预检与清单聚合
-/// 消费的正是这一引导态。
 fn mock_app() -> (tauri::AppHandle<tauri::test::MockRuntime>, PathBuf) {
     let app = tauri::test::mock_app();
     let dir = app
@@ -40,7 +23,6 @@ fn mock_app() -> (tauri::AppHandle<tauri::test::MockRuntime>, PathBuf) {
     (app.handle().clone(), dir)
 }
 
-/// 断言码化错误命中的稳定码。
 fn assert_code(err: AppError, code: &str) {
     assert!(err.is_code(code), "期望 {code}，实际 {err:?}");
 }
@@ -49,9 +31,6 @@ fn assert_code(err: AppError, code: &str) {
 async fn book_registry_command_surface_end_to_end() {
     isolate_home();
 
-    // -----------------------------------------------------------------
-    // 场景一：新建 → 清单 → 切换 → 明文库引导直进相位。
-    // -----------------------------------------------------------------
     let (app, dir) = mock_app();
     let created = book::create_book(app.clone(), "家庭账本".into())
         .await
@@ -62,14 +41,13 @@ async fn book_registry_command_surface_end_to_end() {
     let info = book::list_books(app.clone()).await.expect("清单应可用");
     assert!(info.mutable);
     assert!(info.fallback_reason.is_none());
-    assert_eq!(info.books.len(), 2); // 默认账本 + 家庭账本
+    assert_eq!(info.books.len(), 2);
     assert_ne!(info.active_id.as_deref(), Some(created.id.as_str()));
 
     let switched = book::switch_book(app.clone(), created.id.clone())
         .await
         .expect("切换应成功");
     assert_eq!(switched.id, created.id);
-    // 切换写活动指针落盘：随后的引导按注册表进入目标账本（明文直进相位）。
     let plan = plan_boot(&dir);
     assert_eq!(plan.boot.db_dir, created.dir);
     assert!(plan.boot.fallback_reason.is_none());
@@ -79,14 +57,10 @@ async fn book_registry_command_surface_end_to_end() {
         plan.disposition
     );
 
-    // -----------------------------------------------------------------
-    // 场景二：切换到密文库 → 重引导落解锁屏相位。
-    // -----------------------------------------------------------------
     let (app, dir) = mock_app();
     let encrypted = book::create_book(app.clone(), "密码本".into())
         .await
         .expect("新建应成功");
-    // 现场造密文库：产品入口建真库（含迁移，文件落盘）后转密文（e2e 同款接缝）。
     let db_state = ledger_infra::db::open_db_in(&encrypted.dir).unwrap();
     drop(db_state);
     enable_encryption_for_file(&encrypted.dir.join(DB_FILE_NAME), "pw-1234").unwrap();
@@ -105,9 +79,6 @@ async fn book_registry_command_surface_end_to_end() {
         plan.disposition
     );
 
-    // -----------------------------------------------------------------
-    // 场景三：改名 → 移除（仅摘登记、文件保留）。
-    // -----------------------------------------------------------------
     let (app, _dir) = mock_app();
     let created = book::create_book(app.clone(), "临时名".into())
         .await
@@ -123,9 +94,6 @@ async fn book_registry_command_surface_end_to_end() {
     assert!(info.books.iter().all(|b| b.id != created.id));
     assert!(created.dir.is_dir(), "移除仅摘登记，目录必须保留");
 
-    // -----------------------------------------------------------------
-    // 场景四：错误码矩阵（参数解包层稳定码）。
-    // -----------------------------------------------------------------
     let (app, _dir) = mock_app();
     book::create_book(app.clone(), "一本".into())
         .await
@@ -148,7 +116,6 @@ async fn book_registry_command_surface_end_to_end() {
             .unwrap_err(),
         "book.not-found",
     );
-    // 活动账本不可移除（新建后活动账本仍是默认账本）→ 稳定错误码。
     let active_id = book::list_books(app.clone())
         .await
         .expect("清单应可用")
@@ -160,7 +127,6 @@ async fn book_registry_command_surface_end_to_end() {
             .unwrap_err(),
         "book.remove-active",
     );
-    // 切换到不可用目录：目录被普通文件占位后无法创建 → 稳定错误码，指针不变。
     let other = book::create_book(app.clone(), "二本".into())
         .await
         .expect("新建应成功");
@@ -173,9 +139,6 @@ async fn book_registry_command_surface_end_to_end() {
         "book.dir-unavailable",
     );
 
-    // -----------------------------------------------------------------
-    // 场景五：注册表损坏 → 清单降级（空 + 不可变 + 回退原因），变更拒绝。
-    // -----------------------------------------------------------------
     let dir = mock_app().1;
     std::fs::write(dir.join(data_location::POINTER_FILE_NAME), "{broken").unwrap();
     let (app, _) = mock_app_with_boot(data_location::boot(&dir));
@@ -189,9 +152,6 @@ async fn book_registry_command_surface_end_to_end() {
         "book.registry-corrupt",
     );
 
-    // -----------------------------------------------------------------
-    // 场景六：推迟搬迁窗口 → 变更一律拒绝（registry-busy）。
-    // -----------------------------------------------------------------
     let dir = mock_app().1;
     let mut deferred = data_location::boot(&dir);
     deferred.deferred_relocation = Some(PathBuf::from("/somewhere/target"));
@@ -208,8 +168,6 @@ async fn book_registry_command_surface_end_to_end() {
     );
 }
 
-/// 在指定引导态上建 mock 应用（场景五：损坏文件后引导；场景六：注入
-/// 推迟搬迁窗口的引导态）。
 fn mock_app_with_boot(
     boot: data_location::Boot,
 ) -> (tauri::AppHandle<tauri::test::MockRuntime>, PathBuf) {

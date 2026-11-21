@@ -1,11 +1,3 @@
-//! 启动失败恢复 BDD 步骤（issue #601 / ADR-0075 决策 5 修订）。
-//!
-//! 与 data_location / encryption feature 同一文件级接缝：真临时目录驱动真实
-//! 文件系统，只断言外部可见行为（启动处置三态、失败重置闭环、恢复通道的
-//! 引导目录落位）。「按启动处置流程尝试接管库文件」复刻 `lib.rs::init_database`
-//! 消费 `classify_for_boot` 的判定 + 建连序列——与真实启动同一实现接缝
-//! （先例：BDD 直调命令层内部函数）。
-
 use cucumber::{given, then, when};
 
 use std::path::PathBuf;
@@ -22,15 +14,9 @@ use ledger_infra::db::{boot, init_db, open_connection, open_db_in};
 use crate::common::seed_account_with_expenses;
 use crate::world::{LedgerWorld, StartupTakeover};
 
-// ---------------------------------------------------------------------------
-// Given
-// ---------------------------------------------------------------------------
-
 #[given(expr = "默认数据目录中存在一个头部完好但内容损坏的明文库")]
 fn default_dir_with_corrupt_plaintext_db(world: &mut LedgerWorld) {
     let dir = world.scratch_dir("e2e-sf-plain");
-    // 明文魔数完好、内容为垃圾：头探测按明文建连，建连即失败——启动失败的
-    // 主场景（旧世界走原生「重置/退出」对话框，issue #601 起进失败恢复屏）。
     let mut bytes = SQLITE_HEADER_MAGIC.to_vec();
     bytes.extend_from_slice(b"corrupted body: not a real database page");
     std::fs::write(dir.join(DB_FILE_NAME), bytes).unwrap();
@@ -41,13 +27,9 @@ fn default_dir_with_corrupt_plaintext_db(world: &mut LedgerWorld) {
 fn target_dir_with_corrupt_db(world: &mut LedgerWorld) {
     let target = world.boot.dl_target_dir.clone().unwrap();
     std::fs::create_dir_all(&target).unwrap();
-    // 目标目录已有同名库（损坏残留）：引导直接接管目标位置，不发生搬迁。
     std::fs::write(target.join(DB_FILE_NAME), b"not a database at all").unwrap();
 }
 
-/// 在文件库中建账户与 N 条交易：账户经域公开创建入口（余额缓存行不变量由
-/// 产品代码保证，#763 旁路归零），交易经共享种子助手（L1 工厂 + 行为层接缝）；
-/// 与 encryption_steps 的种子同型。本文件仅解锁屏恢复入口场景使用。
 fn seed_vault_db(conn: &Connection, count: usize) {
     seed_account_with_expenses(
         conn,
@@ -59,9 +41,6 @@ fn seed_vault_db(conn: &Connection, count: usize) {
     );
 }
 
-/// 等待解锁现场（issue #603）：默认数据目录中的真密文库（页对齐落盘形态），
-/// 解锁屏恢复入口场景的 Given——与 encryption_steps 的密文库 Given 独立声明
-/// （落点不同：本步骤落在启动失败恢复场景的 dl_default_dir，供接管步骤消费）。
 #[given(expr = "默认数据目录中有一个凭主口令 {string} 加密且含 {int} 条交易的真密文库")]
 fn default_dir_with_encrypted_vault(world: &mut LedgerWorld, passphrase: String, count: usize) {
     let dir = world.scratch_dir("e2e-sf-vault");
@@ -72,14 +51,10 @@ fn default_dir_with_encrypted_vault(world: &mut LedgerWorld, passphrase: String,
         seed_vault_db(&conn, count);
     }
     enable_encryption_for_file(&path, &passphrase).unwrap();
-    // 场景现场收尾：.bak 副本不入现场（它是转换的副产物，后续场景自己断言）。
     std::fs::remove_file(path.with_extension("db.bak")).unwrap();
     world.boot.dl_default_dir = Some(dir);
 }
 
-/// 默认数据目录中的缺列漂移明文库（issue #971/#992 / ADR-0100）：先从零
-/// 迁出健康库，再注入漂移——删列后 user_version 不变，rusqlite_migration
-/// 的迁移裁决（只比 user_version）不再触发，漂移守卫是唯一防线。
 #[given(expr = "默认数据目录中存在一个缺列漂移的明文库")]
 fn default_dir_with_drifted_db(world: &mut LedgerWorld) {
     let dir = world.scratch_dir("e2e-sf-drift");
@@ -93,23 +68,13 @@ fn default_dir_with_drifted_db(world: &mut LedgerWorld) {
     world.boot.dl_default_dir = Some(dir);
 }
 
-// ---------------------------------------------------------------------------
-// When
-// ---------------------------------------------------------------------------
-
-/// 启动处置接管（与 `lib.rs::init_database` 同序）：文件判定 → 按四态分派，
-/// 明文路径的外来形态先归一化（issue #1453）、建连失败同样归入启动失败。
 fn takeover(world: &mut LedgerWorld) {
     let dir = world.boot.dl_default_dir.clone().unwrap();
     let db_path = dir.join(DB_FILE_NAME);
-    // 错误槽随每次接管重置：接管成功不留上次失败的陈旧错误（码断言只认
-    // 最近一次接管的失败现场）。
     world.last_app_error = None;
     let outcome = match boot::classify_for_boot(&db_path) {
         Ok(boot::BootDisposition::AwaitUnlock) => StartupTakeover::AwaitUnlock,
         Ok(boot::BootDisposition::Unreadable) => StartupTakeover::Failed,
-        // 明文路径：自有形态直接建连；外来形态（每页保留字节 ≠ 0）与
-        // `boot_sequence` 同序——建连前先整库归一化。
         Ok(disposition) => {
             let opened = if disposition == boot::BootDisposition::NormalizePlaintext {
                 match normalize_plaintext_db_file(&db_path) {
@@ -125,7 +90,6 @@ fn takeover(world: &mut LedgerWorld) {
                     StartupTakeover::Opened
                 }
                 Err(e) => {
-                    // 建连/迁移/漂移守卫/归一化失败原样登记（码化错误码断言用）。
                     world.last_app_error = Some(e);
                     StartupTakeover::Failed
                 }
@@ -163,7 +127,6 @@ fn restore_into_boot_dir(world: &mut LedgerWorld) {
     let boot = world.boot.last_boot.as_ref().expect("尚未执行引导");
     let default_dir = world.boot.dl_default_dir.clone().unwrap();
     let db_path = boot.db_dir.join(DB_FILE_NAME);
-    // 安全备份与真实命令壳同口径落默认数据目录（词汇表 RestoreSafetyBackup）。
     let safety_dir = default_dir.join("restore-safety");
     let expected = expected_schema_version().unwrap();
     let result = restore_db_from(&backup, &db_path, &safety_dir, expected, None);
@@ -171,12 +134,6 @@ fn restore_into_boot_dir(world: &mut LedgerWorld) {
     std::fs::remove_dir_all(&safety_dir).ok();
 }
 
-// ---------------------------------------------------------------------------
-// 备份恢复通道（issue #602）：失败库位置的恢复全语义（引擎面）
-// ---------------------------------------------------------------------------
-
-/// 接管库位置（启动处置接管后的库文件路径）：恢复目标与字节不变断言共用——
-/// 启动失败与锁定等待两种相位下，接管指向同一库文件位置（命名不偏向任一相位）。
 fn takeover_db_path(world: &LedgerWorld) -> PathBuf {
     let dir = world
         .boot
@@ -186,9 +143,6 @@ fn takeover_db_path(world: &LedgerWorld) -> PathBuf {
     dir.join(DB_FILE_NAME)
 }
 
-/// 恢复到失败库位置（真实命令壳同序：生效目录解析 → restore_db_from）。
-/// 与生产 restore_backup 一致：安全备份落默认数据目录，不随恢复删除，
-/// 供「字节副本」与「拒绝不生成」两组断言消费。
 fn restore_into_failed_location(world: &mut LedgerWorld, passphrase: Option<&str>) {
     let backup = world.boot.last_backup_path.clone().expect("尚未备份");
     let db_path = takeover_db_path(world);
@@ -211,7 +165,6 @@ fn restore_into_failed_location_with_passphrase(world: &mut LedgerWorld, passphr
     restore_into_failed_location(world, Some(&passphrase));
 }
 
-/// 错误口令恢复尝试：被拒上抛（错误码断言），不改动失败库位置任何字节。
 #[when(expr = "尝试以主口令 {string} 从备份恢复到启动失败的库位置")]
 fn try_restore_into_failed_location(world: &mut LedgerWorld, passphrase: String) {
     let backup = world.boot.last_backup_path.clone().expect("尚未备份");
@@ -227,11 +180,6 @@ fn try_restore_into_failed_location(world: &mut LedgerWorld, passphrase: String)
     }
 }
 
-// ---------------------------------------------------------------------------
-// 解锁屏恢复入口（issue #603）：等待解锁库位置的恢复全语义（引擎面与失败
-// 相位同型——恢复命令对无已打开库连接可用，恢复目标同经生效目录解析）
-// ---------------------------------------------------------------------------
-
 #[when(expr = "从备份恢复到等待解锁的库位置（解锁屏恢复入口）")]
 fn restore_into_awaiting_unlock_location(world: &mut LedgerWorld) {
     restore_into_failed_location(world, None);
@@ -245,7 +193,6 @@ fn restore_into_awaiting_unlock_location_with_passphrase(
     restore_into_failed_location(world, Some(&passphrase));
 }
 
-/// 错误口令恢复尝试（等待解锁现场）：被拒上抛（错误码断言），不改库字节。
 #[when(expr = "尝试以主口令 {string} 从备份恢复到等待解锁的库位置")]
 fn try_restore_into_awaiting_unlock_location(world: &mut LedgerWorld, passphrase: String) {
     let backup = world.boot.last_backup_path.clone().expect("尚未备份");
@@ -261,10 +208,6 @@ fn try_restore_into_awaiting_unlock_location(world: &mut LedgerWorld, passphrase
     }
 }
 
-// ---------------------------------------------------------------------------
-// Then
-// ---------------------------------------------------------------------------
-
 #[then(expr = "启动应进入失败状态")]
 fn startup_failed(world: &mut LedgerWorld) {
     assert_eq!(
@@ -274,8 +217,6 @@ fn startup_failed(world: &mut LedgerWorld) {
     );
 }
 
-/// 启动失败的错误码断言（issue #992 / ADR-0100）：漂移守卫失败经
-/// open_db_in → init_db 尾部守卫原样上抛，码化错误在接管现场可观察。
 #[then(expr = "启动失败错误码应为 {string}")]
 fn startup_failed_with_code(world: &mut LedgerWorld, code: String) {
     let error = world.last_app_error.as_ref().expect("预期启动失败错误");
@@ -351,10 +292,6 @@ fn default_dir_has_no_db(world: &mut LedgerWorld) {
     );
 }
 
-/// 恢复安全备份目录中主库安全副本的路径（每场景独立 safety 目录，先例
-/// backup_steps）。同步元数据库按 ADR-0139 决策 3 配对纪律一并移位为
-/// `restore-safety-sync-*.db`（issue #1869）；主库副本为 `restore-safety-*.db`，
-/// 断言主库副本恰一份后返回（唯一性语义同旧行为）。
 fn safety_backup_file(safety_dir: &std::path::Path) -> PathBuf {
     let entries: Vec<PathBuf> = std::fs::read_dir(safety_dir)
         .expect("读安全备份目录失败")

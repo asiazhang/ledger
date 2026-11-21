@@ -1,13 +1,3 @@
-//! 股票按代码查询 HTTP 端点（`GET /api/v1/stocks/{code}`，issue #693/#696 /
-//! ADR-0081 决策 1/2；换源 ADR-0130 决策 2 / issue #1567）。
-//!
-//! 只断言外部行为：沪深港美命中投影（权威名称/精确市场/币种/最新价/价格日期/类型
-//! 提示，价格按万分之一元刻度）、6 位代码免传 market 推断沪深、5 位数字港股命中
-//! 与补零归一、字母 ticker 美股一次查询命中并返回数据源自报的精确交易所与 USD、
-//! 北交所与参数矛盾/无法推断 400 中文错误且不发起网络、查无此码 400、网络故障
-//! 500、开放 API 契约自描述覆盖。行情访问经注入桩离线驱动（桩按命中行自带市场
-//! 应答，与数据源自报精确市场同构）。
-
 use std::collections::HashMap;
 
 use axum::http::StatusCode;
@@ -18,10 +8,6 @@ use crate::common::{
     StockStubHit, get_json, setup_app_with_stock_fetch, setup_app_with_stock_stub,
 };
 
-/// 命中表：沪 600519 贵州茅台 / 深 000001 平安银行 / 港 00700 腾讯控股 /
-/// 沪 ETF 510300（类型提示 etf）/ 美股聚合键各一（us/AAPL→nasdaq、us/BABA→nyse、
-/// us/SPY→amex，issue #696/#1567——精确市场由「数据源」自报）。
-/// 价格为万分之一元刻度。
 fn stub_hits() -> HashMap<String, StockStubHit> {
     HashMap::from([
         (
@@ -90,10 +76,6 @@ fn stub_hits() -> HashMap<String, StockStubHit> {
     ])
 }
 
-// ---------------------------------------------------------------------------
-// 命中：权威名称 / 精确市场 / 币种 / 最新价 / 价格日期 / 类型提示
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn test_lookup_stock_returns_full_projection() {
     let (app, _conn, _calls) = setup_app_with_stock_stub(stub_hits());
@@ -116,14 +98,12 @@ async fn test_lookup_stock_returns_full_projection() {
 async fn test_lookup_stock_sz_hit_with_and_without_explicit_market() {
     let (app, _conn, calls) = setup_app_with_stock_stub(stub_hits());
 
-    // 免传 market：6 位 0 开头推断深市。
     let (status, body) = get_json(&app, "/api/v1/stocks/000001").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["market"], "sz");
     assert_eq!(body["name"], "平安银行");
     assert_eq!(body["currency_code"], "CNY");
 
-    // 显式 market 与推断一致：同样命中（显式传参不改变语义）。
     let (status, body) = get_json(&app, "/api/v1/stocks/000001?market=sz").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["market"], "sz");
@@ -149,15 +129,10 @@ async fn test_lookup_stock_etf_hint_projected() {
     assert_eq!(body["market"], "sh", "场内基金仍按交易所落精确市场");
 }
 
-// ---------------------------------------------------------------------------
-// 港股：5 位数字命中与短数字补零归一
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn test_lookup_stock_hk_five_digit_and_zero_padding() {
     let (app, _conn, calls) = setup_app_with_stock_stub(stub_hits());
 
-    // 5 位数字港股：免传 market 命中，币种推导港币。
     let (status, body) = get_json(&app, "/api/v1/stocks/00700").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["code"], "00700");
@@ -165,7 +140,6 @@ async fn test_lookup_stock_hk_five_digit_and_zero_padding() {
     assert_eq!(body["currency_code"], "HKD");
     assert_eq!(body["price_cents"], 4428000);
 
-    // 短数字港股：左补零归一后命中同一标的，响应返回归一化代码。
     let (status, body) = get_json(&app, "/api/v1/stocks/700").await;
     assert_eq!(status, StatusCode::OK, "短数字应按港股补零命中: {body}");
     assert_eq!(body["code"], "00700", "响应应返回归一化代码");
@@ -182,15 +156,10 @@ async fn test_lookup_stock_hk_five_digit_and_zero_padding() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// 美股：字母 ticker 一次查询命中、精确市场与 USD（issue #696 / ADR-0130 决策 2）
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn test_lookup_us_ticker_single_query_returns_source_reported_market() {
     let (app, _conn, calls) = setup_app_with_stock_stub(stub_hits());
 
-    // 免传 market：聚合 us 单次查询，精确交易所由数据源自报（不必手选交易所）。
     let (status, body) = get_json(&app, "/api/v1/stocks/AAPL").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["code"], "AAPL");
@@ -209,7 +178,6 @@ async fn test_lookup_us_ticker_single_query_returns_source_reported_market() {
 async fn test_lookup_us_ticker_resolves_exchange_without_manual_pick() {
     let (app, _conn, calls) = setup_app_with_stock_stub(stub_hits());
 
-    // 同一聚合键形态下，不同交易所归属由数据源自报逐一给出。
     let (status, body) = get_json(&app, "/api/v1/stocks/BABA").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["market"], "nyse");
@@ -252,8 +220,6 @@ async fn test_lookup_us_ticker_lowercase_normalized_to_uppercase() {
 async fn test_lookup_us_ticker_explicit_market_same_aggregate_query() {
     let (app, _conn, calls) = setup_app_with_stock_stub(stub_hits());
 
-    // 显式美股市场与缺省同解（数据源不区分交易所）；形态矛盾（数字代码 +
-    // 美股市场 / 字母 ticker + 沪深港）仍 400 且不发起网络。
     let (status, body) = get_json(&app, "/api/v1/stocks/SPY?market=amex").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["market"], "amex", "响应恒为数据源自报的权威市场");
@@ -297,7 +263,6 @@ async fn test_lookup_us_ticker_all_miss_returns_400() {
 
 #[tokio::test]
 async fn test_lookup_us_ticker_network_failure_returns_500() {
-    // 网络故障：立即 500 上抛（临时错误不重试其他形态）。
     let (app, _conn) = setup_app_with_stock_fetch(Some(std::sync::Arc::new(
         |route: StockRoute, _code: &str| {
             assert_eq!(route, StockRoute::Us, "查询应以美股聚合路由值发起");
@@ -315,10 +280,6 @@ async fn test_lookup_us_ticker_network_failure_returns_500() {
     );
     assert_eq!(err["kind"], "Io");
 }
-
-// ---------------------------------------------------------------------------
-// 400 矩阵：北交所 / 参数矛盾 / 市场不支持 / 无法推断（均不发起网络）
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn test_lookup_stock_beijing_exchange_code_rejected_without_network() {
@@ -345,10 +306,10 @@ async fn test_lookup_stock_market_conflict_rejected_without_network() {
     let (app, _conn, calls) = setup_app_with_stock_stub(stub_hits());
 
     for uri in [
-        "/api/v1/stocks/600519?market=sz", // 沪市形态传深市
-        "/api/v1/stocks/000001?market=sh", // 深市形态传沪市
-        "/api/v1/stocks/00700?market=sz",  // 港股形态传深市
-        "/api/v1/stocks/600519?market=hk", // 沪市形态传港股
+        "/api/v1/stocks/600519?market=sz",
+        "/api/v1/stocks/000001?market=sh",
+        "/api/v1/stocks/00700?market=sz",
+        "/api/v1/stocks/600519?market=hk",
     ] {
         let (status, err) = get_json(&app, uri).await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "{uri} 应 400");
@@ -365,8 +326,6 @@ async fn test_lookup_stock_market_conflict_rejected_without_network() {
 async fn test_lookup_stock_unsupported_market_rejected() {
     let (app, _conn, calls) = setup_app_with_stock_stub(stub_hits());
 
-    // 闭集外市场（含北交所形态 bse）：显式 400 暂不支持；美股三市场自 #696 起
-    // 属支持闭集，不再落入本分支（美股行为见上方聚合查询组测试）。
     for market in ["bse", "us", "unknown"] {
         let (status, err) = get_json(&app, &format!("/api/v1/stocks/600519?market={market}")).await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "{market} 应 400");
@@ -386,8 +345,6 @@ async fn test_lookup_stock_unsupported_market_rejected() {
 async fn test_lookup_stock_unresolvable_code_rejected_without_network() {
     let (app, _conn, calls) = setup_app_with_stock_stub(stub_hits());
 
-    // 字母数字混杂（含点号）与闭集外数字形态：缺省 market 无法推断；
-    // 纯字母 ticker 自 #696 起按美股解析，不再落入本分支。
     for code in ["1234A6", "BRK.B", "900001", "1234567"] {
         let (status, err) = get_json(&app, &format!("/api/v1/stocks/{code}")).await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "{code} 应 400");
@@ -403,15 +360,10 @@ async fn test_lookup_stock_unresolvable_code_rejected_without_network() {
     assert!(calls.lock().unwrap().is_empty(), "无法推断应不发起网络");
 }
 
-// ---------------------------------------------------------------------------
-// 查无此码 400 / 网络故障 500
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn test_lookup_stock_unknown_code_returns_400_chinese_error() {
     let (app, _conn, calls) = setup_app_with_stock_stub(stub_hits());
 
-    // 699999：6 开头推断沪市、可发起查询，但行情源查无此码。
     let (status, err) = get_json(&app, "/api/v1/stocks/699999").await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(err["kind"], "Invalid");
@@ -432,7 +384,6 @@ async fn test_lookup_stock_unknown_code_returns_400_chinese_error() {
 
 #[tokio::test]
 async fn test_lookup_stock_network_failure_returns_500() {
-    // 行情源不可达桩：Io 错误上抛（与生产网络故障同形状），端点应 500。
     let (app, _conn) = setup_app_with_stock_fetch(Some(std::sync::Arc::new(
         |_route: StockRoute, _code: &str| {
             crate::common::ready_quote(Err(ledger_infra::error::AppError::Io(
@@ -450,10 +401,6 @@ async fn test_lookup_stock_network_failure_returns_500() {
     assert_eq!(err["kind"], "Io", "错误应为统一形状的 Io: {err}");
 }
 
-// ---------------------------------------------------------------------------
-// 开放 API 契约自描述
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn test_openapi_doc_covers_stock_lookup_endpoint() {
     let (app, _conn, _calls) = setup_app_with_stock_stub(stub_hits());
@@ -462,7 +409,6 @@ async fn test_openapi_doc_covers_stock_lookup_endpoint() {
     let get_op = &doc["paths"]["/api/v1/stocks/{code}"]["get"];
     assert!(get_op["summary"].is_string(), "OpenAPI 应包含股票查询端点");
     let description = get_op["description"].as_str().unwrap_or_default();
-    // kind_hint 语义由字段名「类型提示」承载（字段级描述保留，issue #839）。
     for expected in [
         "market",
         "推断",

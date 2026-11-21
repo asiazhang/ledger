@@ -1,21 +1,3 @@
-//! generate 扩展：预算与定时计划画像（issue #460）。
-//!
-//! - Budget（[`insert_budgets`]）：6 条（月度 4 + 年度 2），挂支出分类池头部、
-//!   「分类 + 周期」不重复（与写入行为层唯一性约束同构，ADR-0029/0052 语义）；
-//!   `start_date` 为冻结残留列，照产品写入惯例记窗口起点。
-//! - ScheduledTransaction（[`insert_scheduled`]）：8 个计划（分期 3 / 订阅 3 /
-//!   定时转账 2），三种形态各有扩展表行；期次（Occurrence）自计划起点按月
-//!   展开——锚定结束日前的往期置 completed 并各生成一条真实交易（分期/订阅
-//!   → expense、定时转账 → transfer，经产品 `execute_occurrence` 同构字段：
-//!   商户复制到流水、转账带转入账户），期间穿插 failed / cancelled 形态
-//!   （无交易），结束日之后到预生成窗口的期次保持 pending（无交易）；
-//!   一个计划为 paused（暂停后不再预生成期次）。
-//!
-//! 计划期次交易从 `--transactions` 预算中预留（[`insert_scheduled`] 返回预留
-//! 数，主循环按余量生成常规交易）：交易总数 = max(--transactions, 期次交易数)，
-//! 默认规模下 50 万笔画像不变。开始日期取锚定结束日的固定月偏移（日固定
-//! 10 号）：结构恒定、跨种子稳定，种子只影响金额/账户选择等内容面。
-
 use chrono::{Datelike, Duration, Months, NaiveDate};
 use rusqlite::Connection;
 
@@ -23,25 +5,15 @@ use super::generate::date_millis;
 use super::generate::{AccountRow, DEVICE_ID, GenCounts};
 use super::rng::{Rng, time_ordered_id};
 
-/// 期次交易的审计时刻（固定日内时点，自动执行的形似锚）。
 const OCCURRENCE_HOUR: &str = "09:30:00";
 
-/// 预算条数：月度 4 + 年度 2。
 const BUDGET_TOTAL: usize = 6;
 const BUDGET_MONTHLY: usize = 4;
-/// 月度预算金额区间（分）：¥2,000–¥9,000。
 const BUDGET_MONTHLY_RANGE: (i64, i64) = (200_000, 900_000);
-/// 年度预算金额区间（分）：¥20,000–¥90,000。
 const BUDGET_YEARLY_RANGE: (i64, i64) = (2_000_000, 9_000_000);
 
-/// active 计划的期次预生成窗口：锚定结束日之后再预生成 3 个月（未来 pending）。
 const PENDING_HORIZON_MONTHS: u32 = 3;
 
-// ---------------------------------------------------------------------------
-// 预算
-// ---------------------------------------------------------------------------
-
-/// 插入 6 条预算（月度 4 + 年度 2），挂支出分类池前 6 个互不重复的分类。
 pub(crate) fn insert_budgets(
     conn: &Connection,
     rng: &mut Rng,
@@ -83,35 +55,20 @@ pub(crate) fn insert_budgets(
     Ok(())
 }
 
-// ---------------------------------------------------------------------------
-// 定时计划
-// ---------------------------------------------------------------------------
-
-/// 一个计划的固定画像规格（结构常量：种子只影响内容面，不影响结构）。
 struct PlanSpec {
     kind: &'static str,
     label: &'static str,
-    /// 计划起点 = 锚定结束日往前 months_ago 个月的 10 号。
     months_ago: u32,
-    /// 分期总期数；订阅/定时转账为周期性（None，预生成到窗口为止）。
     total_occurrences: Option<u32>,
-    /// 计划状态。
     status: &'static str,
-    /// 计划金额（分）：分期/订阅为每期金额，转账为每期转出金额。
     amount_cents: i64,
-    /// 转出账户类型（从生成账户中取首个该类型 CNY 账户）。
     account_kind: &'static str,
-    /// 定时转账的转入账户类型（同上，与转出账户不同户）。
     to_account_kind: Option<&'static str>,
-    /// 支出分类池下标（分期/订阅用；转账不挂分类）。
     category_idx: usize,
-    /// 头部商户池下标（分期/订阅扩展表挂商户并随期次复制；None 不挂）。
     merchant_idx: Option<usize>,
-    /// 特殊期次：期数 k → 状态（failed / cancelled，无交易）。
     special: &'static [(u32, &'static str)],
 }
 
-/// 8 个计划：分期 3 / 订阅 3 / 定时转账 2（其中 1 个 paused）。
 const PLANS: [PlanSpec; 8] = [
     PlanSpec {
         kind: "installment",
@@ -219,13 +176,11 @@ const PLANS: [PlanSpec; 8] = [
     },
 ];
 
-/// 计划生成的账户选取上下文：类型 → 首个该类型 CNY 账户 id（生成账户内）。
 struct AccountPicker {
     by_kind: Vec<(&'static str, String)>,
 }
 
 impl AccountPicker {
-    /// 从生成账户行收集各类型首个 CNY 账户（顺序稳定 → 确定性）。
     fn new(accounts: &[AccountRow]) -> Self {
         let mut by_kind: Vec<(&'static str, String)> = Vec::new();
         for a in accounts {
@@ -247,18 +202,12 @@ impl AccountPicker {
     }
 }
 
-/// 期次展开口径：某期该是什么状态、要不要生成交易。
 enum OccurrenceState {
-    /// 往期已完成（生成交易并关联）。
     Completed,
-    /// 往期失败/取消（不生成交易）。
     Skipped(&'static str),
-    /// 未来期次（pending，不生成交易）。
     Pending,
 }
 
-/// 插入 8 个计划 + 扩展表行 + 期次 + 已完成期次的真实交易；返回期次交易数
-/// （主循环的预算预留量）。
 pub(crate) fn insert_scheduled(
     conn: &Connection,
     expense_pool: &[String],
@@ -269,7 +218,6 @@ pub(crate) fn insert_scheduled(
 ) -> Result<u64, String> {
     let picker = AccountPicker::new(accounts);
     let active_horizon = end_date + Months::new(PENDING_HORIZON_MONTHS);
-    // paused 计划：期次只预生成到暂停（锚定结束日所在月之前）。
     let paused_horizon = end_date
         .with_day(1)
         .map(|d| d - Duration::days(1))
@@ -318,8 +266,6 @@ pub(crate) fn insert_scheduled(
                     .pick(kind)
                     .filter(|picked| *picked != account_id)
                     .or_else(|| {
-                        // 同类型账户已耗尽（如 investment 只有一个）时退回任意
-                        // 不同 CNY 账户，保住「转账两端不同账户」的不变式。
                         accounts
                             .iter()
                             .find(|a| a.ccy == "CNY" && a.id != account_id)
@@ -394,7 +340,6 @@ pub(crate) fn insert_scheduled(
             }
         }
 
-        // 期次展开：从计划起点按月推进，until 预生成窗口外 / 分期总期数用尽。
         let horizon = if spec.status == "paused" {
             paused_horizon
         } else {
@@ -474,7 +419,6 @@ pub(crate) fn insert_scheduled(
 
     counts.scheduled_plans = PLANS.len();
     counts.scheduled_occurrence_transactions = occurrence_txns as usize;
-    // 期次行数：completed + skipped + pending 的总和，从计数器反推。
     counts.scheduled_occurrences = occurrence_seq as usize;
     Ok(occurrence_txns)
 }

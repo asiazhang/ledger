@@ -1,15 +1,3 @@
-//! 标的创建端点的 stock 增强（`POST /api/v1/instruments`，issue #694/#696 /
-//! ADR-0081 决策 2；换源 ADR-0130 决策 2 / issue #1567）。
-//!
-//! 只断言外部行为：stock + 可解析真实代码经行情源校验——命中回填权威名称并落最新
-//! 价现价（万分之一元刻度，来源标记 tencent）、查无此码 400 拒绝且不产生标的行、
-//! 网络不可达降级为提交名称 + 真实代码 + 降级市场建行（**显式市场/形态可推断市场
-//! 保留**——股票行情通道只依赖市场+代码，降级行价格同步仍可达；美股 ticker 缺省
-//! 降级 unknown）；美股 ticker 单查询落数据源自报的精确交易所市场与 USD、大小写
-//! 归一幂等；北交所代码与真实代码形态的 market 矛盾显式 400 不建行；名称充代码
-//! 兜底不发起网络请求；降级重放不覆盖既有权威名称；幂等重放返回同一 id。行情
-//! 访问经注入桩离线驱动。
-
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -24,8 +12,6 @@ use tauri_app_lib::api_server::StockQuoteFetcher;
 
 use crate::common::{StockStubHit, get_json, post_instrument, setup_app_with_stock_stub};
 
-/// stock 标的行与现价行的断言投影：name / market / currency / source 与可选现价
-/// (price_cents, priced_at 非空, nav_date, source)。
 struct StockRow {
     name: Option<String>,
     market: String,
@@ -34,7 +20,6 @@ struct StockRow {
     price: Option<(i64, bool, Option<String>, Option<String>)>,
 }
 
-/// 查询 stock 标的行（name, market, currency, source）与现价行。
 fn stock_row(conn: &Arc<Mutex<rusqlite::Connection>>, symbol: &str) -> StockRow {
     let conn = conn.lock().unwrap();
     let (name, market, currency, source) = conn
@@ -76,7 +61,6 @@ fn stock_row(conn: &Arc<Mutex<rusqlite::Connection>>, symbol: &str) -> StockRow 
     }
 }
 
-/// 命中表：sh/600519 → 贵州茅台 / 最新价 15.00 元（万分之一元 150000）。
 fn stub_hit() -> HashMap<String, StockStubHit> {
     HashMap::from([(
         "sh/600519".to_string(),
@@ -89,8 +73,6 @@ fn stub_hit() -> HashMap<String, StockStubHit> {
     )])
 }
 
-/// 美股命中表（issue #696/#1567）：聚合键 us/AAPL 苹果（自报 nasdaq）、
-/// us/BABA 阿里巴巴（自报 nyse）（价格为万分之一元刻度）。
 fn us_stub_hits() -> HashMap<String, StockStubHit> {
     HashMap::from([
         (
@@ -114,15 +96,10 @@ fn us_stub_hits() -> HashMap<String, StockStubHit> {
     ])
 }
 
-// ---------------------------------------------------------------------------
-// 行情源命中：权威名称回填 + 最新价落现价
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn test_create_stock_with_known_code_backfills_authoritative_name_and_price() {
     let (app, conn, calls) = setup_app_with_stock_stub(stub_hit());
 
-    // AI 提交的名称有误（账单抄写名），后端应以行情源权威名称为准。
     let body = r#"{"symbol":"600519","type":"stock","market":"sh","name":"贵州茅台A（账单抄写）"}"#;
     let (status, bytes) = post_instrument(&app, body).await;
     assert_eq!(status, StatusCode::CREATED);
@@ -169,7 +146,6 @@ async fn test_create_stock_without_market_infers_and_creates_with_resolved_marke
     );
     let (app, conn, calls) = setup_app_with_stock_stub(hits);
 
-    // 缺省 market：按代码形态推断深市，创建落精确市场与现价。
     let (status, bytes) = post_instrument(&app, r#"{"symbol":"000001","type":"stock"}"#).await;
     assert_eq!(status, StatusCode::CREATED);
     let _: String = serde_json::from_slice(&bytes).unwrap();
@@ -200,8 +176,6 @@ async fn test_create_etf_typed_instrument_gets_same_enhancement() {
     );
     let (app, conn, calls) = setup_app_with_stock_stub(hits);
 
-    // 导入知识教 AI 按类型提示填 type：etf 提交同样走增强（场内两类型同属行情
-    // 通道），回填权威名称 + 落现价；类型以提交为准落库，不被改写。
     let (status, bytes) = post_instrument(&app, r#"{"symbol":"510300","type":"etf"}"#).await;
     assert_eq!(status, StatusCode::CREATED);
     let _: String = serde_json::from_slice(&bytes).unwrap();
@@ -224,10 +198,6 @@ async fn test_create_etf_typed_instrument_gets_same_enhancement() {
         vec![("sh".to_string(), "510300".to_string())]
     );
 }
-
-// ---------------------------------------------------------------------------
-// 查无此码：拒绝创建，不产生标的行
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn test_create_stock_with_unknown_code_rejects_without_row() {
@@ -265,11 +235,6 @@ async fn test_create_stock_with_unknown_code_rejects_without_row() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// 网络不可达：降级为提交名称 + 真实代码 + 降级市场建行（市场保留、价格通道可达）
-// ---------------------------------------------------------------------------
-
-/// 状态开关桩：`down=true` 模拟行情网络不可达（Io），否则按命中表返回。
 fn toggle_stub(
     hits: HashMap<String, StockStubHit>,
     down: Arc<AtomicBool>,
@@ -293,7 +258,6 @@ fn toggle_stub(
                     kind_hint: Some(hit.kind_hint),
                     fund_class: None,
                     nav_date: None,
-                    // 场内通道无恒定价格信号（ADR-0126）。
                     constant_unit_price_cents: None,
                     price_source: ledger_investment::prices::TENCENT_PRICE_SOURCE,
                 }),
@@ -304,12 +268,10 @@ fn toggle_stub(
                 )),
             }
         };
-        // async 接缝（ADR-0125 决策 7 / issue #1413）：应答值装箱为立即就绪的 future。
         crate::common::ready_quote(result)
     })
 }
 
-/// 带状态开关桩的一步装配：返回 (router, 连接, 不可达开关, 调用记录)。
 type ToggleStubApp = (
     Router,
     Arc<Mutex<rusqlite::Connection>>,
@@ -338,8 +300,6 @@ async fn test_create_stock_degrades_preserving_market_when_network_unreachable()
     assert_eq!(status, StatusCode::CREATED, "网络不可达应降级建行而非拒绝");
     let _: String = serde_json::from_slice(&bytes).unwrap();
 
-    // 降级行：真实代码 + AI 提交名称 + 解析市场保留（与基金恒 unknown 的镜像差异）——
-    // 行情通道只依赖（市场，代码），market 保留即价格通道可达。
     let row = stock_row(&conn, "600519");
     assert_eq!(
         row.name.as_deref(),
@@ -354,8 +314,6 @@ async fn test_create_stock_degrades_preserving_market_when_network_unreachable()
         vec![("sh".to_string(), "600519".to_string())]
     );
 
-    // 价格通道可达：行情恢复（down 复位）后，降级行携带的（市场，代码）经查询
-    // 端点照常命中——market 保留即通道可达。
     down.store(false, Ordering::SeqCst);
     let (status, lookup) = get_json(&app, "/api/v1/stocks/600519?market=sh").await;
     assert_eq!(status, StatusCode::OK, "降级行的（市场，代码）应行情可达");
@@ -368,7 +326,6 @@ async fn test_create_stock_degrades_without_ai_name_creates_code_only_row() {
     let (app, conn, down, _calls) = setup_app_with_toggle_stub(stub_hit());
     down.store(true, Ordering::SeqCst);
 
-    // 降级 + 未提交名称：代码 + 市场可用即建行（name 为 NULL），行情恢复后可回填。
     let (status, bytes) =
         post_instrument(&app, r#"{"symbol":"600519","type":"stock","market":"sh"}"#).await;
     assert_eq!(status, StatusCode::CREATED, "降级不因缺名称被阻塞");
@@ -384,14 +341,11 @@ async fn test_create_stock_degrades_without_ai_name_creates_code_only_row() {
 async fn test_create_stock_degrade_replay_keeps_existing_authoritative_name() {
     let (app, conn, down, calls) = setup_app_with_toggle_stub(stub_hit());
 
-    // 第一笔：行情可达 → 权威名称回填 + 落价。
     let (status, bytes) =
         post_instrument(&app, r#"{"symbol":"600519","type":"stock","market":"sh"}"#).await;
     assert_eq!(status, StatusCode::CREATED);
     let id: String = serde_json::from_slice(&bytes).unwrap();
 
-    // 第二笔：行情不可达 + AI 提交另一名称 → 降级建行成功、返回同一 id，
-    // 既有权威名称不被 AI 名称覆盖。
     down.store(true, Ordering::SeqCst);
     let (status, bytes) = post_instrument(
         &app,
@@ -411,10 +365,6 @@ async fn test_create_stock_degrade_replay_keeps_existing_authoritative_name() {
     assert!(row.price.is_some(), "既有现价不被降级重放破坏");
     assert_eq!(calls.lock().unwrap().len(), 2, "两笔各发起一次行情尝试");
 }
-
-// ---------------------------------------------------------------------------
-// 显式边界：北交所与 market 矛盾拒绝建行；兜底形态不触网
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn test_create_beijing_code_rejects_without_row_or_network() {
@@ -449,7 +399,6 @@ async fn test_create_beijing_code_rejects_without_row_or_network() {
 async fn test_create_stock_with_conflicting_market_rejects() {
     let (app, conn, calls) = setup_app_with_stock_stub(stub_hit());
 
-    // 600519 是沪市 6 开头代码，显式 market=sz 自相矛盾：400 拒绝，不建错挂行情的行。
     let (status, bytes) =
         post_instrument(&app, r#"{"symbol":"600519","type":"stock","market":"sz"}"#).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
@@ -469,7 +418,6 @@ async fn test_create_stock_with_conflicting_market_rejects() {
 async fn test_create_stock_with_name_as_code_skips_quote_lookup() {
     let (app, conn, calls) = setup_app_with_stock_stub(stub_hit());
 
-    // 源数据确无代码：名称充代码兜底建行（自然键防碎），不触发行情校验、无现价。
     let (status, bytes) = post_instrument(
         &app,
         r#"{"symbol":"某雪球私募一号","type":"stock","name":"某雪球私募一号"}"#,
@@ -488,15 +436,10 @@ async fn test_create_stock_with_name_as_code_skips_quote_lookup() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// 美股 ticker：单查询落数据源自报的精确市场与 USD（issue #696 / ADR-0130 决策 2）
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn test_create_us_ticker_lands_source_reported_market_usd_and_price() {
     let (app, conn, calls) = setup_app_with_stock_stub(us_stub_hits());
 
-    // 缺省 market + 小写 ticker：聚合 us 单次查询，命中后落数据源自报的精确市场。
     let (status, bytes) = post_instrument(&app, r#"{"symbol":"aapl","type":"stock"}"#).await;
     assert_eq!(status, StatusCode::CREATED);
     let _: String = serde_json::from_slice(&bytes).unwrap();
@@ -516,7 +459,6 @@ async fn test_create_us_ticker_lands_source_reported_market_usd_and_price() {
         "一次查询即命中，以大写归一代码发起请求"
     );
 
-    // 小写形态不产生第二条标的行（自然键归一后同键）。
     let lower: i64 = conn
         .lock()
         .unwrap()
@@ -533,7 +475,6 @@ async fn test_create_us_ticker_lands_source_reported_market_usd_and_price() {
 async fn test_create_us_ticker_lands_other_exchange_market() {
     let (app, conn, calls) = setup_app_with_stock_stub(us_stub_hits());
 
-    // 同一聚合键形态，数据源自报 nyse → 落纽约交易所（一次查询即命中）。
     let (status, bytes) = post_instrument(&app, r#"{"symbol":"BABA","type":"stock"}"#).await;
     assert_eq!(status, StatusCode::CREATED);
     let _: String = serde_json::from_slice(&bytes).unwrap();
@@ -601,7 +542,6 @@ async fn test_create_us_ticker_degrade_with_explicit_market_preserves_channel() 
     let (app, conn, down, calls) = setup_app_with_toggle_stub(us_stub_hits());
     down.store(true, Ordering::SeqCst);
 
-    // 显式美股市场 + 网络不可达：降级建行且保留该市场（行情通道可达语义不变）。
     let (status, bytes) = post_instrument(
         &app,
         r#"{"symbol":"AAPL","type":"stock","market":"nasdaq","name":"苹果公司"}"#,
@@ -620,13 +560,10 @@ async fn test_create_us_ticker_degrade_with_explicit_market_preserves_channel() 
     );
     assert!(row.price.is_none(), "网络不可达无价可落");
 
-    // 行情恢复后降级行的（市场，代码）行情可达。
     down.store(false, Ordering::SeqCst);
     let (status, lookup) = get_json(&app, "/api/v1/stocks/AAPL?market=nasdaq").await;
     assert_eq!(status, StatusCode::OK, "降级行的（市场，代码）应行情可达");
     assert_eq!(lookup["name"], "苹果");
-    // 两次请求：创建时一次、行情恢复后查询端点验证一次（美股显式市场与缺省
-    // 同解为聚合 us 查询）。
     assert_eq!(
         *calls.lock().unwrap(),
         vec![
@@ -641,9 +578,6 @@ async fn test_create_us_ticker_degrade_without_market_lands_unknown() {
     let (app, conn, down, calls) = setup_app_with_toggle_stub(us_stub_hits());
     down.store(true, Ordering::SeqCst);
 
-    // 缺省 market 的美股 ticker + 网络不可达：无网络时无法预知交易所归属，
-    // 降级落 unknown（诚实无行情通道；镜像基金恒 unknown。查询先行流先取得
-    // 精确市场再显式传参创建，不会进入本分支）。
     let (status, bytes) = post_instrument(&app, r#"{"symbol":"AAPL","type":"stock"}"#).await;
     assert_eq!(status, StatusCode::CREATED, "降级不阻塞导入");
     let _: String = serde_json::from_slice(&bytes).unwrap();
@@ -656,10 +590,6 @@ async fn test_create_us_ticker_degrade_without_market_lands_unknown() {
     );
     assert_eq!(calls.lock().unwrap().len(), 1, "临时故障单次尝试即降级");
 }
-
-// ---------------------------------------------------------------------------
-// 幂等重放：同自然键返回同一 id，现价不重复落行
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn test_create_stock_replay_returns_same_id_without_price_fragments() {
@@ -688,10 +618,6 @@ async fn test_create_stock_replay_returns_same_id_without_price_fragments() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// 契约锁：stock 增强语义写入端点自述
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn test_openapi_create_endpoint_documents_stock_enhancement() {
     let (app, _conn, _calls) = setup_app_with_stock_stub(stub_hit());
@@ -699,8 +625,6 @@ async fn test_openapi_create_endpoint_documents_stock_enhancement() {
 
     let description = &doc["paths"]["/api/v1/instruments"]["post"]["description"];
     let description = description.as_str().unwrap_or_default();
-    // 端点自述为「一句话 + 指针」（issue #839 描述政策）：stock 增强细节迁入
-    // 导入知识「投资交易」节，落价/市场保留/北交所/名称充代码语义由知识关键词锁保护。
     for expected in ["fund/stock", "权威名称", "查无此码", "降级", "导入知识"] {
         assert!(
             description.contains(expected),

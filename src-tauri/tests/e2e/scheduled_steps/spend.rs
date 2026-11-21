@@ -1,10 +1,3 @@
-//! 订阅实际花费口径（issue #160，ADR-0023 决策二）：多周期订阅夹具、
-//! 执行前 N 期 / 取消 / 暂停、花费总览断言。
-//!
-//! #762 迁移：计划创建收编 L1 订阅工厂（周期/备注为冷字段覆盖）、写入收编 L2
-//! 计划动词；生命周期变更（取消/暂停）经生命周期动词走既有命令形态域函数
-//! `update_plan_status`，不为测试开旁路。
-
 use cucumber::{then, when};
 use rusqlite::params;
 
@@ -18,10 +11,6 @@ use crate::step_verbs::{create_plan_verb, update_plan_status_verb};
 use crate::world::LedgerWorld;
 
 use super::common::execute_occurrence_step;
-
-// ---------------------------------------------------------------------------
-// 订阅花费——实际花费口径（issue #160，ADR-0023 决策二）
-// ---------------------------------------------------------------------------
 
 #[when(
     expr = "创建订阅计划 金额 {int} 币种 {string} 账户 {string} 周期 {string} 起始日期 {string} 备注 {string}"
@@ -49,7 +38,6 @@ fn create_subscription_plan_with_recurrence(
     );
 }
 
-/// 执行最近计划的前 N 条 pending 期次（scheduled_date 升序）。
 #[when(expr = "执行该计划前 {int} 期")]
 fn execute_first_n_occurrences(world: &mut LedgerWorld, n: usize) {
     let plan_id = world.plan.last_plan_id.clone().expect("尚无定时计划");
@@ -72,21 +60,18 @@ fn execute_first_n_occurrences(world: &mut LedgerWorld, n: usize) {
     }
 }
 
-/// 取消最近的订阅计划（生命周期动词 → update_plan_status 命令体）。
 #[when(expr = "取消该订阅计划")]
 fn cancel_subscription_plan(world: &mut LedgerWorld) {
     let plan_id = world.plan.last_plan_id.clone().expect("尚无定时计划");
     update_plan_status_verb(world, &plan_id, ScheduledStatus::Cancelled);
 }
 
-/// 暂停最近的订阅计划（生命周期动词 → update_plan_status 命令体）。
 #[when(expr = "暂停该订阅计划")]
 fn pause_subscription_plan(world: &mut LedgerWorld) {
     let plan_id = world.plan.last_plan_id.clone().expect("尚无定时计划");
     update_plan_status_verb(world, &plan_id, ScheduledStatus::Paused);
 }
 
-/// 以注入的固定「今日」查询订阅实际花费总览（确定性口径，不依赖真实时钟）。
 #[when(expr = "以 {string} 为今日查询订阅花费")]
 fn query_spend_with_today(world: &mut LedgerWorld, today: String) {
     let today =

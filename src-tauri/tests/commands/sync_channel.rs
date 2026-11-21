@@ -1,21 +1,3 @@
-//! 多端同步命令面集成测试（issue #862 / #863 / #1217 / ADR-0091）。
-//!
-//! 直调命令函数（`#[tokio::test]`），覆盖壳行为：参数解包、错误码、双端经
-//! 真实 S3 桩手动同步后数据一致（验收判据「手动触发路径」#1217）、挂起通知
-//! 命令面可见（#863）、S3 配置保存/回显与非 https 保存门（#1217 验收）。通道
-//! 布局、轮次协议、幂等重放、挂起语义与触发编排归域单测（`sync_engine::tests`
-//! / `sync_engine::trigger::tests`，ADR-0087），此处只钉「命令壳 → 通道在位性
-//! → 轮次 → 状态回显」的整链行为。
-//!
-//! 现场隔离：每个「设备」是独立的 mock 应用 + 独立临时目录的文件库 + 引导
-//! 登记态（与 `books.rs` 同型）；现场隔离收
-//! [`tauri_app_lib::test_support::isolate_home`]（进程内一次，mock runtime 的
-//! `app_data_dir` 回退解析隔离，#1989 起 `$HOME` 与 XDG 两根一齐重定向）。
-//! 测试间以各自独立的 S3 桩（真实 HTTP 服务，对象 PUT/GET）对接，
-//! 互不共享通道；桩是明文 http 端点，故轮次测试经设置域单点落配置（保存门只
-//! 收 https，见 [`configure_channel`]），保存命令的成功/拒绝路径另有专门用例。
-
-// 测试整体豁免（ADR-0060）：集成测试 crate 经 cfg(test) 放行六件套，生产构建零放宽。
 #![cfg_attr(
     test,
     allow(
@@ -48,22 +30,9 @@ use tauri_app_lib::test_support::{
 
 use tauri_app_lib::test_support::isolate_home;
 
-/// 引导登记态在位的 mock 应用 + 独立临时目录（不含库连接；连接由调用方按
-/// 明文/密文形态自行挂载，tauri manage 同型仅首次生效）。库目录走 ScratchDir
-/// （issue #1645）：guard 随元组交调用方持有，用例结束（含 panic）整棵删除。
 pub(crate) fn fresh_app(tag: &str) -> (tauri::App<tauri::test::MockRuntime>, ScratchDir) {
-    // 写路径副作用接缝接线（issue #1090）：本套件经产品建缝拿文件库连接（不入
-    // 测试工厂，ADR-0084 决策 3），建库单点的注册不覆盖本处——落库前显式注册
-    // 余额刷新实现（幂等，进程级，与 BDD world 同款纪律）。
     ledger_accounts::balance::install_balance_refresh_hook();
-    // 交易域接缝接线（issue #1092 / #1180）：与测试工厂同形——六向实现经组合入口
-    // 一次装入（幂等，进程级）。
     tauri_app_lib::transaction_wiring::install_all();
-    // 写后即时同步接线（#1089）：与测试工厂（test_support::open）同形——op 产出
-    // 单点在协议 crate，响应闭包由同步域提供，本套件不入测试工厂故须在此显式
-    // 登记（幂等，进程级）。漏登记的后果是进程级状态依赖：全二进制同跑时由别的
-    // 测试（经测试工厂）装上、单独跑本用例时永不装上，
-    // `write_entry_enqueues_upload_via_scheduler` 遂在隔离运行下假红。
     ledger_sync_engine::trigger::install_after_write_hook();
     let dir = ScratchDir::new(&format!("syncchannel-it-{tag}"));
     let app = tauri::test::mock_app();
@@ -72,19 +41,16 @@ pub(crate) fn fresh_app(tag: &str) -> (tauri::App<tauri::test::MockRuntime>, Scr
     (app, dir)
 }
 
-/// 一台「设备」：mock 应用 + 独立临时目录文件库 + 真实引导登记态（BootCell）。
 pub(crate) fn device_app(tag: &str) -> (tauri::AppHandle<tauri::test::MockRuntime>, ScratchDir) {
     let (app, dir) = fresh_app(tag);
     app.manage(db::open_db_in(&dir).unwrap());
     (app.handle().clone(), dir)
 }
 
-/// 断言码化错误命中的稳定码。
 fn assert_code(err: AppError, code: &str) {
     assert!(err.is_code(code), "期望 {code}，实际 {err:?}");
 }
 
-/// 支出交易输入构造器（行为前置经壳层公开命令，op 产出随之发生）。
 pub(crate) fn expense_input(account_id: &str, amount_cents: i64, note: &str) -> TransactionInput {
     TransactionInput {
         funding: Vec::new(),
@@ -117,18 +83,10 @@ pub(crate) fn expense_input(account_id: &str, amount_cents: i64, note: &str) -> 
     }
 }
 
-/// 场景通道桩（S3 兼容服务，明文 http 端点——命令面保存门只收 https，故轮次
-/// 测试不经保存命令落配置，见 [`configure_channel`]）。
 pub(crate) fn spawn_sync_stub() -> S3Stub {
     spawn_s3_stub(S3StubConfig::new(S3Addressing::PathStyle))
 }
 
-/// 两端配置同一 S3 桩与同一同步空间（跨端共识的世界身份）。
-///
-/// 经设置域单点直落配置，不经保存命令：桩是明文 http 端点，而保存命令按
-/// #1217 验收只接受 https（命令门的拒绝路径由
-/// `non_https_endpoint_save_is_rejected` 单独覆盖）。本套件要钉的是「保存后的
-/// 配置 → 手动同步一轮」的整链，配置写入面与保存门各自已由专门用例覆盖。
 pub(crate) fn configure_channel(app: &tauri::AppHandle<tauri::test::MockRuntime>, stub: &S3Stub) {
     let config = stub.channel_config("family");
     let conn = app.state::<DbState>().conn.clone();
@@ -141,7 +99,6 @@ async fn sync_status_defaults_and_s3_channel_config_roundtrip() {
     isolate_home();
     let (app, _dir) = device_app("status");
 
-    // 未配置现场：状态各字段取默认，设备标识在位（首用生成）。
     let status = get_sync_status(app.clone()).await.expect("状态应可读");
     assert!(!status.device_id.is_empty(), "设备标识应非空");
     assert!(!status.channel_configured, "新端通道未配置");
@@ -149,14 +106,12 @@ async fn sync_status_defaults_and_s3_channel_config_roundtrip() {
     assert_eq!(status.parked_count, 0, "新端无挂起");
     assert!(!status.library_encrypted, "明文库");
 
-    // 未配置回显：空表单形态（各字段空串 / 假值）。
     let empty = get_sync_channel_config(app.clone())
         .await
         .expect("未配置回显应可读");
     assert!(!empty.configured);
     assert_eq!(empty.endpoint, "", "未配置回空表单");
 
-    // 配置往返（命令面保存 → 读回一致 + 状态翻转）：S3 字段整体落库。
     let input = SyncChannelConfigInput {
         endpoint: "https://s3.example.com".into(),
         region: "cn-hangzhou".into(),
@@ -186,7 +141,6 @@ async fn sync_status_defaults_and_s3_channel_config_roundtrip() {
     let status = get_sync_status(app.clone()).await.expect("状态应可读");
     assert!(status.channel_configured, "保存后通道在位");
 
-    // 非法通道（空端点）：码化错误、不落库（读回仍是原值）。
     let bad = SyncChannelConfigInput {
         endpoint: "   ".into(),
         ..Default::default()
@@ -205,10 +159,6 @@ async fn sync_status_defaults_and_s3_channel_config_roundtrip() {
     assert_eq!(config.bucket, "ledger", "坏值未覆盖原配置");
 }
 
-/// 退役后端留下的旧配置仍可读（#1221 升级路径的命令面形态）：直落一份只带旧键
-/// （`backend` 与地址 / 凭据）的 JSON，回显照常读出——未知键被忽略，未识别字段
-/// 回空串 / 假值。同步从未随任何版本发布（ADR-0091 决策 1 修订），这里只钉
-/// 「解析性不回归」，不承诺旧配置可用。
 #[tokio::test]
 async fn legacy_config_with_retired_backend_keys_is_readable() {
     isolate_home();
@@ -239,14 +189,11 @@ async fn legacy_config_with_retired_backend_keys_is_readable() {
     assert!(!config.path_style);
 }
 
-/// 非 https 端点保存被拒（#1217 验收）：报配置类码化错误；失败路径零写入，
-/// 读回仍是先前的 https 配置（无半配置状态）。
 #[tokio::test]
 async fn non_https_endpoint_save_is_rejected_and_leaves_config_untouched() {
     isolate_home();
     let (app, _dir) = device_app("insecure");
 
-    // 基准：一份合法 https 配置先落库。
     set_sync_channel_config(
         app.clone(),
         SyncChannelConfigInput {
@@ -263,7 +210,6 @@ async fn non_https_endpoint_save_is_rejected_and_leaves_config_untouched() {
     .await
     .expect("https 配置应保存成功");
 
-    // 明文 http：保存门拒绝。
     let insecure_s3 = SyncChannelConfigInput {
         endpoint: "http://127.0.0.1:9000".into(),
         region: "us-east-1".into(),
@@ -278,7 +224,6 @@ async fn non_https_endpoint_save_is_rejected_and_leaves_config_untouched() {
         .expect_err("http 端点应被拒");
     assert_code(err, "sync-channel.endpoint-insecure");
 
-    // 失败零写入：读回仍是先前合法配置。
     let config = get_sync_channel_config(app.clone())
         .await
         .expect("配置应可读");
@@ -295,9 +240,6 @@ async fn sync_now_without_channel_is_rejected_with_coded_error() {
     assert_code(err, "sync-channel.not-configured");
 }
 
-/// 验收判据（issue #862 / #1217）：两台桌面设备经真实 S3 桩手动触发同步后数据
-/// 一致。A 记账 → A 同步 → B 同步（收到 A 的账）→ B 记账 → B 同步 → A 同步
-///（收到 B 的账）；业务行（账户 + 两笔交易金额）在两端相等。
 #[tokio::test]
 async fn dual_device_manual_sync_converges_over_real_s3_stub() {
     isolate_home();
@@ -307,7 +249,6 @@ async fn dual_device_manual_sync_converges_over_real_s3_stub() {
     configure_channel(&app_a, &stub);
     configure_channel(&app_b, &stub);
 
-    // A 端记账（经壳层公开命令：写入接缝 + op 产出随之发生）。
     let acc_id = accounts::create_account(
         app_a.state(),
         app_a.clone(),
@@ -331,16 +272,13 @@ async fn dual_device_manual_sync_converges_over_real_s3_stub() {
     .await
     .expect("A 记账应成功");
 
-    // A 同步：发布自己流（明文库 → 明文模式随报告标记）。
     let report_a1 = sync_now(app_a.clone(), None).await.expect("A 首轮应成功");
     assert!(report_a1.uploaded_ops >= 2, "A 应上传自己的 op");
     assert!(report_a1.plaintext_mode, "明文库同步应标记明文模式");
 
-    // B 同步：拉取并重放 A 的流。
     let report_b1 = sync_now(app_b.clone(), None).await.expect("B 首轮应成功");
     assert!(report_b1.applied >= 2, "B 应应用 A 的 op");
 
-    // B 端可观察结果（接线证明）：A 的账户与交易已落 B 库。
     let b_accounts = accounts::list_accounts(app_b.clone().state())
         .await
         .expect("B 账户清单应可读");
@@ -356,7 +294,6 @@ async fn dual_device_manual_sync_converges_over_real_s3_stub() {
     );
     assert_eq!(b_amount, Some(10_000), "A 的交易金额应在 B 端一致");
 
-    // 反向：B 记账 → B 同步上传 → A 同步收下。
     let b_txn = transactions::create_transaction(
         app_b.state(),
         app_b.clone(),
@@ -375,7 +312,6 @@ async fn dual_device_manual_sync_converges_over_real_s3_stub() {
     );
     assert_eq!(a_amount, Some(2_500), "B 的交易金额应在 A 端一致");
 
-    // 幂等续作：重复轮次零变化（全部已知跳过），数据不重复。
     let again = sync_now(app_b.clone(), None).await.expect("B 三轮应成功");
     assert_eq!(again.applied, 0, "重复轮次不应再应用");
     let count = read_scalar_i64(
@@ -386,16 +322,12 @@ async fn dual_device_manual_sync_converges_over_real_s3_stub() {
     assert_eq!(count, Some(2), "两端各一笔，重复同步不产生重复行");
 }
 
-/// 密文库同步的信封接线：状态回显加密形态；缺口令报码化错误；显式口令
-/// （主口令 = 库口令）轮次成功——「加密模式由壳层按本库加密形态决定」。
 #[tokio::test]
 async fn encrypted_library_requires_passphrase_and_seals_with_it() {
     isolate_home();
     let stub = spawn_sync_stub();
-    // 密文库设备：先建明文库（迁移完成）→ 原位转换 → 以口令重开连接挂载
-    //（连接在转换后一次性挂载，tauri manage 同型仅首次生效）。
     let (app, dir) = fresh_app("encrypted");
-    db::open_db_in(&dir).unwrap(); // 建明文库（连接随即丢弃，文件已迁移）
+    db::open_db_in(&dir).unwrap();
     let db_path = dir.join(data_location::DB_FILE_NAME);
     enable_encryption_for_file(&db_path, "master-pass").expect("加密转换应成功");
     assert_eq!(
@@ -412,35 +344,26 @@ async fn encrypted_library_requires_passphrase_and_seals_with_it() {
     let app = app.handle().clone();
     configure_channel(&app, &stub);
 
-    // 状态回显加密形态（明文提示与口令引导的依据）。
     let status = get_sync_status(app.clone()).await.expect("状态应可读");
     assert!(status.library_encrypted, "密文库应回显加密形态");
 
-    // 缺口令：码化错误（错误模板既有 sync-channel.passphrase-required）。
     let err = sync_now(app.clone(), None).await.expect_err("缺口令应被拒");
     assert_code(err, "sync-channel.passphrase-required");
 
-    // 错误口令在封包上传前被拦下（错误口令封出的段对端解不开，段名幂等跳过
-    // 会令重传永不发生）：码化错误与密文备份恢复同款合并口径。
     let err = sync_now(app.clone(), Some("wrong-pass".into()))
         .await
         .expect_err("错误口令应被拦下");
     assert_code(err, "encryption.passphrase-incorrect");
 
-    // 显式口令：信封以主口令封包，轮次成功（域单测已证密文可解，此处钉壳层模式选择）。
     let report = sync_now(app.clone(), Some("master-pass".into()))
         .await
         .expect("凭口令轮次应成功");
     assert!(!report.plaintext_mode, "密文库轮次不应标记明文模式");
 
-    // 上次成功同步时刻随成功轮次落库。
     let status = get_sync_status(app.clone()).await.expect("状态应可读");
     assert!(status.last_sync_at.is_some(), "成功轮次应更新同步时刻");
 }
 
-/// 挂起通知命令面（issue #863）：不可重放 op 经手动同步落入挂起队列后，
-/// `get_parked_ops` 返回其身份与码化原因，`get_sync_status` 的 `parked_count`
-/// 同步反映——「挂起通知可见」的壳三件套形态（参数解包、码化错误、接线证明）。
 #[tokio::test]
 async fn parked_ops_are_visible_through_command_surface() {
     isolate_home();
@@ -448,17 +371,14 @@ async fn parked_ops_are_visible_through_command_surface() {
     let (app, _dir) = device_app("parked");
     configure_channel(&app, &stub);
 
-    // 空队列：命令回空清单（读路径零副作用）。
     let parked = get_parked_ops(app.clone()).await.expect("挂起清单应可读");
     assert!(parked.is_empty(), "新端无挂起");
 
-    // 对端投递一条引用不存在账户的 op：写段 + 归并 manifest（真实通道路径）。
     deliver_unreplayable_op(stub.channel_config("family"));
 
     let report = sync_now(app.clone(), None).await.expect("同步应成功");
     assert_eq!(report.parked, 1, "不可重放 op 应挂起");
 
-    // 挂起通知可见（命令面）：身份、码化原因与详情齐备。
     let parked = get_parked_ops(app.clone()).await.expect("挂起清单应可读");
     assert_eq!(parked.len(), 1);
     assert_eq!(parked[0].op_id, "it-parked-op");
@@ -470,8 +390,6 @@ async fn parked_ops_are_visible_through_command_surface() {
         parked[0].code
     );
     assert!(!parked[0].message.is_empty(), "原因详情不应为空");
-    // 插值参数随挂起行出 wire（issue #957）：壳层 `ParkedOpState::from` 是手工
-    // 字段搬运，漏字段即前端渲染残缺句；此处钉住 params 与 code 同源到场。
     assert_eq!(parked[0].code, "account.not-found");
     assert_eq!(
         parked[0].params,
@@ -480,16 +398,10 @@ async fn parked_ops_are_visible_through_command_surface() {
     );
     assert!(!parked[0].parked_at.is_empty(), "挂起时刻应落库");
 
-    // 状态回显同源：parked_count 与清单长度一致。
     let status = get_sync_status(app.clone()).await.expect("状态应可读");
     assert_eq!(status.parked_count, 1, "挂起数量应回显");
 }
 
-/// 对端投递一条引用不存在账户的 op（段 + manifest 两条真实通道写）。
-///
-/// 走独立 OS 线程：S3 传输桥的真 HTTP 往返与阻塞等待（多端同步域异步化 #1405
-/// 另案前传输面同步形态）不得占用 tokio 运行时线程——与产品侧把阻塞 IO 放进
-/// 阻塞线程池同一语义（ADR-0069 / 壳层 `sync_now` 形态）。
 fn deliver_unreplayable_op(config: SyncChannelConfig) {
     std::thread::spawn(move || deliver_unreplayable_op_blocking(&config))
         .join()
@@ -503,8 +415,6 @@ fn deliver_unreplayable_op_blocking(config: &SyncChannelConfig) {
 
     let channel = build_channel(config).unwrap();
     let layout = ChannelLayout::new("family").unwrap();
-    // schema 版本取产品单点（`db::schema_version`），与重放端同版：走重放路径
-    // 而非 schema 偏斜挂起。
     let schema_version = db::schema_version(&tauri_app_lib::test_support::open()).unwrap();
     let op = SyncOp {
         op_id: "it-parked-op".into(),
@@ -539,8 +449,6 @@ fn deliver_unreplayable_op_blocking(config: &SyncChannelConfig) {
         }),
     };
     let payload = vec![op];
-    // 段 + manifest 两条真实通道写：线格式成帧收归测试支持域（issue #956），
-    // 本处只提供 op 语义与对端身份。
     publish_raw_segment(
         channel.transport(),
         &layout,
@@ -551,11 +459,6 @@ fn deliver_unreplayable_op_blocking(config: &SyncChannelConfig) {
     .unwrap();
 }
 
-// ---------------------------------------------------------------------------
-// 保存前「测试连接」（issue #1219）
-// ---------------------------------------------------------------------------
-
-/// 探测用表单入参（S3 组字段齐备；同步空间与寻址取缺省形态）。
 fn probe_input(endpoint: &str, bucket: &str) -> SyncChannelConfigInput {
     SyncChannelConfigInput {
         endpoint: endpoint.into(),
@@ -569,11 +472,6 @@ fn probe_input(endpoint: &str, bucket: &str) -> SyncChannelConfigInput {
     }
 }
 
-/// 探测命令真的走到了端点：不可达的 https 地址报分层的网络失败——**删除探测
-/// 接线（命令直接返回成功）本用例即变红**，是 #1219 的负向条目。
-///
-/// 同时钉「探测零副作用」：探测用的是表单里的另一份坏配置，不落库、不改已保存
-/// 的可用配置（用户改坏表单再点测试，不会污染既有同步）。
 #[tokio::test]
 async fn test_connection_probes_the_endpoint_and_leaves_saved_config_untouched() {
     isolate_home();
@@ -597,8 +495,6 @@ async fn test_connection_probes_the_endpoint_and_leaves_saved_config_untouched()
     assert_eq!(config.bucket, "ledger");
 }
 
-/// 非 https 端点：与保存同规拒绝（探测会把凭据发到端点，明文 http 不放行），
-/// 错误码复用保存门的既有码。
 #[tokio::test]
 async fn test_connection_rejects_non_https_endpoint() {
     isolate_home();
@@ -610,13 +506,8 @@ async fn test_connection_rejects_non_https_endpoint() {
     assert_code(err, "sync-channel.endpoint-insecure");
 }
 
-// ---------------------------------------------------------------------------
-// 手动同步轮次的锁跨度与在途互斥（issue #1339 / ADR-0120）
-// ---------------------------------------------------------------------------
-
 use std::time::{Duration, Instant};
 
-/// 等桩观测到命令发出的通道请求（此刻请求已到达、应答未回，即网络在途）。
 async fn wait_for_channel_request(stub: &S3Stub, limit: Duration) {
     let deadline = Instant::now() + limit;
     while stub.requests().is_empty() {
@@ -628,18 +519,9 @@ async fn wait_for_channel_request(stub: &S3Stub, limit: Duration) {
     }
 }
 
-/// 手动同步的锁跨度（ADR-0120 决策 2/4，判据同 #1283/#1284 先例）：网络在途
-/// （manifest 读已到桩、应答未回）时，读命令与写命令照常在限时内完成——连接锁
-/// 只盖轮次数据库步骤，网络段出锁。
-///
-/// **负向判据（ADR-0087 断言强度）**：把轮次改回整轮持锁（本票修复前的形状，
-/// `sync_now` 经整段写入口持连接锁跑完全部网络往返），桩闸门挡住首个通道请求
-/// 期间，下面的命令在限时内等不到连接锁，本测试即红。
 #[tokio::test]
 async fn sync_now_network_wait_does_not_block_other_commands() {
     isolate_home();
-    // 桩闸门把「同步的网络在途」做成可确定复现的输入。先铺一笔本机 op：
-    // 轮次全程 manifest 读、段上传、manifest 写回三次往返，全部过闸门。
     let (config, gate) = S3StubConfig::new(S3Addressing::PathStyle).gated_requests();
     let stub = spawn_s3_stub(config);
     let (app, _dir) = device_app("sync-lock");
@@ -671,8 +553,6 @@ async fn sync_now_network_wait_does_not_block_other_commands() {
     let sync = tokio::spawn(sync_now(app.clone(), None));
     wait_for_channel_request(&stub, Duration::from_secs(5)).await;
 
-    // 网络在途：其它命令照常读写——读命令取读连接（读入口）、写命令取写连接
-    //（统一写入口），两条锁都不得被轮次的网络等待占据。
     let listed =
         tokio::time::timeout(Duration::from_secs(2), accounts::list_accounts(app.state())).await;
     let created = tokio::time::timeout(
@@ -693,11 +573,8 @@ async fn sync_now_network_wait_does_not_block_other_commands() {
     )
     .await;
 
-    // 先放行网络与同步任务再断言：测试失败（修复回退）时不把桩线程悬在闸门上。
     gate.release(8);
     let report = sync.await.expect("同步任务不应 panic").expect("同步应成功");
-    // 铺垫含建户 + 记账（各产出 op，随域形态可能伴随设置类 op）；数量不是本
-    // 测试的判定目标——本测试钉的是网络在途时其它命令不被挡。
     assert!(
         report.uploaded_ops >= 2,
         "本轮应上传铺垫的本机 op，实际 {report:?}"
@@ -710,12 +587,6 @@ async fn sync_now_network_wait_does_not_block_other_commands() {
         .expect("写命令应成功");
 }
 
-/// 手动入口在途不启动第二轮（ADR-0120 决策 3）：第一轮网络在途时重复触发
-/// 「立即同步」，不产生第二个轮次的通道请求；在途轮次完成后，两次触发拿到
-/// **同一份轮次报告**。
-///
-/// **负向判据（ADR-0087 断言强度）**：删除轮次在途互斥接线，第二次触发的轮次
-/// 也会打到桩闸门上（观测请求增长），本测试即红。
 #[tokio::test]
 async fn sync_now_reuses_in_flight_round_instead_of_running_a_second() {
     isolate_home();
@@ -750,7 +621,6 @@ async fn sync_now_reuses_in_flight_round_instead_of_running_a_second() {
     let first = tokio::spawn(sync_now(app.clone(), None));
     wait_for_channel_request(&stub, Duration::from_secs(5)).await;
 
-    // 第一轮网络在途：重复触发不启动第二轮——短暂窗口内桩不得观测到新请求。
     let second = tokio::spawn(sync_now(app.clone(), None));
     let deadline = Instant::now() + Duration::from_millis(400);
     while Instant::now() < deadline {
@@ -762,7 +632,6 @@ async fn sync_now_reuses_in_flight_round_instead_of_running_a_second() {
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
 
-    // 放行第一轮：两次触发都成功，且拿到同一份报告（复用唯一在途轮次）。
     gate.release(8);
     let first_report = first
         .await
@@ -775,8 +644,6 @@ async fn sync_now_reuses_in_flight_round_instead_of_running_a_second() {
     assert_eq!(first_report, second_report, "两次触发应拿到同一份轮次报告");
 }
 
-/// 失败语义（ADR-0120 决策 6）：中途失败不更新「上次成功同步时刻」；已上传段
-/// 留存通道，恢复后下一轮幂等续作、不重复上传。
 #[tokio::test]
 async fn failed_round_keeps_uploaded_segment_and_success_time() {
     isolate_home();
@@ -807,7 +674,6 @@ async fn failed_round_keeps_uploaded_segment_and_success_time() {
     .await
     .expect("记账应成功");
 
-    // 第一轮成功：段上通道、成功时刻落库。
     let report = sync_now(app.clone(), None).await.expect("首轮应成功");
     assert!(report.uploaded_ops >= 1, "首轮应上传铺垫的本机 op");
     let stamp = get_sync_status(app.clone())
@@ -816,7 +682,6 @@ async fn failed_round_keeps_uploaded_segment_and_success_time() {
         .last_sync_at
         .expect("成功轮次应落成功时刻");
 
-    // 指向不可达端点：下一轮在网络段失败——成功时刻不得被更新。
     let conn = app.state::<DbState>().conn.clone();
     {
         let guard = conn.lock().unwrap();
@@ -842,7 +707,6 @@ async fn failed_round_keeps_uploaded_segment_and_success_time() {
         "失败轮次不得更新成功时刻"
     );
 
-    // 已上传段留存通道；恢复配置后下一轮幂等续作——段不重复上传。
     let segment_puts = |stub: &S3Stub| {
         stub.requests()
             .iter()

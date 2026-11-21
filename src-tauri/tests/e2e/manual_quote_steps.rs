@@ -1,8 +1,3 @@
-//! 手动报价 e2e 步骤（issue #291 / ADR-0036）：录价写入走
-//! `investment::record_manual_price`（与 IPC 命令同一实现，#401 域目录化后直调域入口），
-//! 断言读现价缓存 / 价格历史 / `v_holdings` 视图。组合走势、净资产总览与买卖
-//! 流水复用既有步骤（investment_trend_steps / dashboard_steps / instruments_steps）。
-
 use cucumber::{then, when};
 use rusqlite::params;
 
@@ -11,7 +6,6 @@ use ledger_investment::record_manual_price;
 
 use crate::world::LedgerWorld;
 
-/// 按标的代码查 instrument id（手动创建步骤先行落库，必存在）。
 fn instrument_id(conn: &rusqlite::Connection, symbol: &str) -> String {
     conn.query_row(
         "SELECT id FROM instruments WHERE symbol=?1",
@@ -20,10 +14,6 @@ fn instrument_id(conn: &rusqlite::Connection, symbol: &str) -> String {
     )
     .unwrap_or_else(|_| panic!("标的不存在，先铺垫手动创建标的步骤: {symbol}"))
 }
-
-// ---------------------------------------------------------------------------
-// When：录价（真实写路径，与 IPC 命令同一实现）
-// ---------------------------------------------------------------------------
 
 #[when(expr = "给标的 {string} 录价 日期 {string} 价格 {int} 万分之一元")]
 fn record_manual_quote(world: &mut LedgerWorld, symbol: String, date: String, price_cents: i64) {
@@ -39,12 +29,6 @@ fn record_manual_quote(world: &mut LedgerWorld, symbol: String, date: String, pr
     }
 }
 
-// ---------------------------------------------------------------------------
-// Then：现价缓存 / 价格历史 / 持仓视图
-// ---------------------------------------------------------------------------
-
-/// 现价缓存断言（不限标的类型）：手动报价落点一——来源 manual、
-/// priced_at = 报价日、无净值日期语义。
 #[then(expr = "标的 {string} 现价为 {int} 万分之一元 priced_at {string} 来源 {string}")]
 fn assert_market_price(
     world: &mut LedgerWorld,
@@ -67,7 +51,6 @@ fn assert_market_price(
     assert_eq!(actual_price, price_cents, "现价（万分之一元）不符");
     assert_eq!(actual_priced_at, priced_at, "现价 priced_at 不符");
     assert_eq!(nav_date, None, "手动落价无净值日期语义，nav_date 应为 NULL");
-    // 来源标记单列断言（与价格值同行，分开查询以简化元组）。
     let actual_source: String = world_conn!(world)
         .query_row(
             "SELECT p.source FROM market_prices p JOIN instruments i ON i.id = p.instrument_id \
@@ -92,8 +75,6 @@ fn assert_price_history_count(world: &mut LedgerWorld, symbol: String, count: i6
     assert_eq!(actual, count, "标的 {symbol} 价格历史条数不符");
 }
 
-/// 周点断言按周键（week_start 生成列）定位：该报价日所在 ISO 周至多一条，
-/// 整周覆盖后 trade_date 为该周最后写入的报价日。
 #[then(expr = "标的 {string} 价格历史 {string} 周点价格为 {int} 万分之一元 来源 {string}")]
 fn assert_price_history_week_point(
     world: &mut LedgerWorld,

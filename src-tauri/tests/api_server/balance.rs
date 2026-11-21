@@ -69,7 +69,6 @@ async fn test_get_account_balances_applies_five_kinds_and_splits_transfer() {
     assert_eq!(status, StatusCode::OK);
     let rows = body.as_array().expect("应返回 AccountBalance 数组");
     assert_eq!(rows.len(), 4);
-    // 10000 + 5000 - 2000 - 3000 - 1000 + 400
     assert_eq!(balance_of(rows, "现金账户"), 9400);
     assert_eq!(balance_of(rows, "银行账户"), 3000);
     assert_eq!(balance_of(rows, "无(CNY)"), 700);

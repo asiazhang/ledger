@@ -1,6 +1,3 @@
-//! 执行期次与引擎落库断言：汇率夹具、期次执行（含 #230 事务自持注入）、
-//! 生成交易的类型 / 金额 / 状态断言。
-
 use cucumber::{given, then, when};
 use rusqlite::params;
 
@@ -10,21 +7,11 @@ use crate::world::LedgerWorld;
 
 use super::common::execute_occurrence_step;
 
-// ---------------------------------------------------------------------------
-// Given
-// ---------------------------------------------------------------------------
-
-/// 写入一条汇率（base → quote），经汇率夹具动词走投资域公开创建入口（#764
-/// 旁路收敛；source 落 'manual'，场景不断言来源）；币种须存在于种子 currencies
-/// （FK 约束）。报价时刻无断言语义（折算查询不消费），取非 FIXED_NOW 值。
 #[given(expr = "存在汇率 {string} 兑 {string} 为 {float}")]
 fn add_exchange_rate(world: &mut LedgerWorld, base: String, quote: String, rate: f64) {
     create_exchange_rate_verb(world, &base, &quote, rate, "2026-02-01T00:00:00Z");
 }
 
-/// 写入汇率历史周点序列（#1547 写路径按交易日取数的 Given 夹具）：自起始日期
-/// 起每周一点直到今天后，覆盖场景内固定与相对交易日期的所属周。步骤定义全局
-/// 注册，跨 feature 复用（与「存在汇率」同款共享方式）。
 #[given(expr = "存在汇率历史 {string} 兑 {string} 为 {float} 自 {string} 起每周")]
 fn add_fx_history_series(
     world: &mut LedgerWorld,
@@ -36,11 +23,6 @@ fn add_fx_history_series(
     crate::step_verbs::seed_fx_history_series_verb(world, &base, &quote, rate, &from_date);
 }
 
-// ---------------------------------------------------------------------------
-// When：执行期次
-// ---------------------------------------------------------------------------
-
-/// 执行最近计划的第一个 pending 期次（按 scheduled_date 升序）。
 #[when(expr = "执行该计划第一期")]
 fn execute_first_occurrence(world: &mut LedgerWorld) {
     let occ_id = pending_occurrence_ids(world, Some(1))
@@ -50,7 +32,6 @@ fn execute_first_occurrence(world: &mut LedgerWorld) {
     execute_occurrence_step(world, &occ_id);
 }
 
-/// 依次执行最近计划的全部 pending 期次（按 scheduled_date 升序）。
 #[when(expr = "依次执行全部期次")]
 fn execute_all_occurrences(world: &mut LedgerWorld) {
     for occ_id in pending_occurrence_ids(world, None) {
@@ -58,7 +39,6 @@ fn execute_all_occurrences(world: &mut LedgerWorld) {
     }
 }
 
-/// 最近计划的 pending 期次 id（按 scheduled_date 升序；`limit` 为 None 时取全部）。
 fn pending_occurrence_ids(world: &LedgerWorld, limit: Option<i64>) -> Vec<String> {
     let plan_id = world.plan.last_plan_id.clone().expect("尚无定时计划");
     let conn = world_conn!(world);
@@ -77,19 +57,12 @@ fn pending_occurrence_ids(world: &LedgerWorld, limit: Option<i64>) -> Vec<String
     .collect()
 }
 
-/// 重新执行上一次尝试的期次（失败场景中补录汇率后重试）。
 #[when(expr = "重新执行该期次")]
 fn re_execute_occurrence(world: &mut LedgerWorld) {
     let occ_id = world.plan.last_occurrence_id.clone().expect("尚无期次");
     execute_occurrence_step(world, &occ_id);
 }
 
-// ---------------------------------------------------------------------------
-// 引擎事务自持：期次中间态缺口修复（issue #230 / ADR-0033 决策 #6）
-// ---------------------------------------------------------------------------
-
-/// 注入「期次落库中途失败」：期次已 CAS 置 processing 后，交易行 INSERT 被触发器
-/// RAISE(ABORT) 挡下——纯测试侧注入（spec #169 定案），产品代码零 hook。
 #[when(expr = "注入交易落库失败触发器")]
 fn inject_txn_insert_failure(world: &mut LedgerWorld) {
     world_conn!(world)
@@ -101,17 +74,12 @@ fn inject_txn_insert_failure(world: &mut LedgerWorld) {
         .unwrap();
 }
 
-/// 移除注入触发器，让回滚后回原状态的期次可重试。
 #[when(expr = "移除交易落库失败触发器")]
 fn drop_txn_insert_failure_trigger(world: &mut LedgerWorld) {
     world_conn!(world)
         .execute("DROP TRIGGER block_txn_insert", [])
         .unwrap();
 }
-
-// ---------------------------------------------------------------------------
-// Then
-// ---------------------------------------------------------------------------
 
 #[then(expr = "执行应失败并提示 {string}")]
 fn assert_last_error(world: &mut LedgerWorld, needle: String) {
@@ -182,7 +150,6 @@ fn assert_generated_txns(world: &mut LedgerWorld, count: i64, kind: String, amou
         .map(|s| s.trim().parse().expect("金额列表应为逗号分隔整数"))
         .collect();
     assert_eq!(expected.len() as i64, count, "金额列表长度应与笔数一致");
-    // 只统计最近计划的期次回填的交易（经 occurrence 关联），避免整库 kind 误计。
     let plan_id = world.plan.last_plan_id.clone().expect("尚无定时计划");
     let amounts: Vec<i64> = {
         let conn = world_conn!(world);
@@ -216,7 +183,6 @@ fn assert_plan_status(world: &mut LedgerWorld, expected: String) {
     assert_eq!(status, expected, "计划状态不符");
 }
 
-/// 最近期次回填的交易的落库字段（供断言与 writer 列映射一致）。
 struct OccurrenceTxn {
     kind: String,
     amount_cents: i64,
