@@ -427,6 +427,22 @@ export const GATE_MOUNTS: readonly GateMount[] = [
     ],
   },
   {
+    name: "注释禁令棘轮守门（check-comment-gate）",
+    refs: "issue #2202 / ADR-0145",
+    hosts: [
+      {
+        file: CHECK_SH_FILE,
+        prefix: "bun scripts/check-comment-gate.ts",
+        where: "scripts/check.sh 质量门槛序列",
+      },
+      {
+        file: CI_WORKFLOW_FILE,
+        prefix: "run: bun scripts/check-comment-gate.ts",
+        where: ".github/workflows/build.yml frontend job",
+      },
+    ],
+  },
+  {
     name: "守门脚本测试（bun test scripts/）",
     refs: "issue #1991 / ADR-0083",
     hosts: [

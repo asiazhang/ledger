@@ -86,6 +86,9 @@ bun scripts/test-exec.ts check
 echo "▶ 前端异步守门检查 (bun scripts/check-async-guards.ts)"
 bun scripts/check-async-guards.ts
 
+echo "▶ 注释禁令棘轮守门 (bun scripts/check-comment-gate.ts)"
+bun scripts/check-comment-gate.ts
+
 # 守门脚本测试（issue #1991）：scripts/*.test.ts 的唯一运行口径 = bun test——
 # 测试经 spawnSync('bun') 依赖 bun 在 PATH，vitest/node 下基线即红；vitest 收集
 # 范围自此不含 scripts/（双运行时边界收严，ADR-0083）。挂载登记归

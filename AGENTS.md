@@ -18,7 +18,7 @@
 - **HTTP 端点**：读实际路由、对应 API 契约和 API 集成测试；仅在属于 AI 导入时读取 AI 导入文档。
 - **Issue、PR、triage 或依赖关系**：按需读 `docs/agents/issue-tracker.md` 与 `docs/agents/triage-labels.md`。
 - **依赖升级、工具链 bump 或发布打 tag**：升级读 `docs/agents/dependency-upgrades.md`；发布用 `/run-release`，版本元数据与 `CHANGELOG.md` 由该流程更新。
-- **测试改动或脚本/质量检查**：测试读 `docs/contexts/CONTEXT-testing.md`；脚本改动先读目标脚本头部注释，脚本当前行为是真源。
+- **测试改动或脚本/质量检查**：测试读 `docs/contexts/CONTEXT-testing.md`；脚本当前行为是真源——脚本头部注释处于注释禁令清理过渡期（棘轮基线辖 scripts/，ADR-0145），新脚本一律零注释，规则出处查守门挂载登记与 ADR。
 
 代码行为与词汇表不一致时，按可验证行为修正词汇表。代码行为与 ADR 冲突时，先显式报告冲突，确认决策后再修改 ADR 或实现。
 
@@ -38,7 +38,7 @@ Rust 根（`src-tauri/`）是 workspace：根包仍是 tauri 应用包（壳层�
 
 协议（`ledger-sync-protocol`）：多端同步的最底层共享协议，内容清单见 `check-structure.ts` 的 CRATES；业务域只依赖协议 crate，不依赖多端同步域。
 
-门禁保底：clippy 六件套唯一声明处在 workspace 级 `[workspace.lints.clippy]`，成员必须显式 `[lints] workspace = true` 继承；静态检查与测试命令显式 `--workspace` 覆盖全部成员。结构边界由 `bun scripts/check-structure.ts` 守门（守门脚本运行时 = Bun，ADR-0083）：crate 边界**政策核**是脚本内 `CRATES` 清单（成员登记、分层、允许依赖方向），模块级白名单与认许边继续辖编译器看不见的规则，逐条留痕在脚本内（ADR-0056 决策 4、ADR-0071 修订注记）；守门数据按「事实有权威源就投影，政策无源就显式」分界（#1591 定案，实施 #1593–#1595：模块清单由各 crate `lib.rs` 的 `mod` 声明投影、注记归 crate `//!` 与模块文件头、cargo 编译期已拒绝的方向退役给编译期）。
+门禁保底：clippy 六件套唯一声明处在 workspace 级 `[workspace.lints.clippy]`，成员必须显式 `[lints] workspace = true` 继承；静态检查与测试命令显式 `--workspace` 覆盖全部成员。结构边界由 `bun scripts/check-structure.ts` 守门（守门脚本运行时 = Bun，ADR-0083）：crate 边界**政策核**是脚本内 `CRATES` 清单（成员登记、分层、允许依赖方向），模块级白名单与认许边继续辖编译器看不见的规则，逐条留痕在脚本内（ADR-0056 决策 4、ADR-0071 修订注记）；守门数据按「事实有权威源就投影，政策无源就显式」分界（#1591 定案，实施 #1593–#1595：模块清单由各 crate `lib.rs` 的 `mod` 声明投影、注记归 ADR 本体与守门脚本数据面——原「归 crate `//!` 与模块文件头」随代码注释禁令废止（ADR-0145）、cargo 编译期已拒绝的方向退役给编译期）。
 
 ## 数据与交易
 

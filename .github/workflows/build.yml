@@ -129,6 +129,9 @@ jobs:
       - name: Rust 测试守门检查
         run: bun scripts/check-test-support.ts
 
+      - name: 注释禁令棘轮守门
+        run: bun scripts/check-comment-gate.ts
+
   # 前端测试按 shard 均分到 2 个并行 runner：拆分前 vitest 单 job 208s（累计 586s）。
   # 2026-09-13 基线（同批 7 次 PR 运行）：分片 1/2 126–189s、分片 2/2 112–175s——
   # 两片不再均衡（分片成本受文件分布与 runner 波动双重影响），但都远低于后端测试
