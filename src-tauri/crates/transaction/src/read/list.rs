@@ -101,10 +101,17 @@ pub fn list_transactions_internal(
         //
         // 「三端 ∪ 出资子行任一命中即排除」按德摩根写成四个独立 NOT EXISTS 而非单个
         // OR 子查询（issue #1924）：OR 形态使 planner 逐行退化为「每投资户 × fundings
-        // 全表扫」（真实库 COUNT 报 377ms），拆开后每行是纯主键探测（accounts id=? ×3
-        // + fundings transaction_id=? + accounts join），且不依赖 sqlite_stat1；两形态
-        // 语义严格等价（真实库双向 EXCEPT 计数为 0，含分解行 account_id IS NULL——
-        // 故 NOT IN 改写因 NULL 误杀不可用）。
+        // 全表扫」（真实库 COUNT 报 377ms），拆开后 accounts 三探测是纯主键探测
+        // （accounts id=? ×3）且不依赖 sqlite_stat1；两形态语义严格等价（真实库双向
+        // EXCEPT 计数为 0，含分解行 account_id IS NULL——故 NOT IN 改写因 NULL 误杀
+        // 不可用）。
+        //
+        // fundings 子查询的形态由 planner 按统计自适应（issue #2197）：无外层覆盖
+        // 索引时，fundings 表小则 planner 判「逐行扫 fundings（SCAN f）」更便宜，
+        // 并非恒为主键探测；V038 `idx_transactions_kind_count` 落地后外层 COUNT 走
+        // covering index 脱离肥表，fundings 子查询在真实库收敛为
+        // `SEARCH f USING sqlite_autoindex_transaction_fundings_1 (transaction_id=?)`
+        // 主键探测（该形态不钉：planner 按统计自适应，测试只钉外层走覆盖索引）。
         if filter.hide_investment_related == Some(true) {
             where_clause.push_str(
                 " AND NOT EXISTS (SELECT 1 FROM accounts a WHERE a.type = 'investment' \

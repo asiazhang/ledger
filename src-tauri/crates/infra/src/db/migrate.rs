@@ -126,6 +126,9 @@ pub fn migrations() -> &'static Migrations<'static> {
             M::up(include_str!(
                 "../../../../migrations/V037__account_archive.sql"
             )),
+            M::up(include_str!(
+                "../../../../migrations/V038__transaction_kind_count_index.sql"
+            )),
         ])
     })
 }
