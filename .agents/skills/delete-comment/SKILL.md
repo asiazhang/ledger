@@ -5,7 +5,7 @@ description: 按 ADR-0145 注释禁令与棘轮基线删除代码注释。Use wh
 
 # /delete-comment：注释删除与棘轮基线下调
 
-决策权威：ADR-0145（禁令辖域、豁免闭集、棘轮机制、四分类法）。分类术语定义见 `docs/contexts/CONTEXT-testing.md`（同义复述 / 豁口辩护 / 失准 / 决策记录四词条）。豁免闭集（`// SAFETY:` 形态与 shebang 行）之外的注释只许删、不许加；本 skill 不适用于豁免形态。
+决策权威：ADR-0145（禁令辖域、豁免闭集、棘轮机制、四分类法）。分类术语定义见 `docs/contexts/CONTEXT-testing.md`（同义复述 / 豁口辩护 / 失准 / 决策记录四词条）。豁免闭集（`// SAFETY:` 形态、shebang 行与 compile_fail doctest 载体，闭集以 ADR-0145 为 canonical）之外的注释只许删、不许加；本 skill 不适用于豁免形态。
 
 ## 流程
 
@@ -22,6 +22,6 @@ description: 按 ADR-0145 注释禁令与棘轮基线删除代码注释。Use wh
 ## 纪律
 
 - 不在删除注释的同时改代码行为——清理是纯删除 + 基线下调；行为修改独立成票。
-- 不删除豁免闭集形态（`// SAFETY:` 首行、shebang）；对 SAFETY 续行（非豁免形态的普通注释行）照常分类处置。
+- 不删除豁免闭集形态（`// SAFETY:` 首行、shebang、`///`/`//!` 内 ```compile_fail fence 行——活负向守门测试载荷）；对 SAFETY 续行（非豁免形态的普通注释行）照常分类处置。
 - markdown 文档（docs/、词汇表、ADR、skill）不受禁令辖域，不在本 skill 处置范围。
 - 删除后发现自己无法归类的注释：按「决策记录 > 豁口辩护 > 失准 > 同义复述」顺位核对；仍拿不准时在 PR 描述中显式提出，不擅自归为同义复述一删了之。
