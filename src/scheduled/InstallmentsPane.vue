@@ -38,34 +38,12 @@ import { MOBILE_CELL_STYLE, MOBILE_SUB_STYLE, mobileSubLine } from "@/components
 import { usePlanFocusLanding } from "@/scheduled/usePlanFocusLanding";
 import { scheduledStatusLabel } from "@ledger/utils/scheduled";
 
-/**
- * 分期页签 = ScheduledPlanList 计划清单模块（ADR-0041 迁移步 3）的薄适配器：
- * 清单加载/刷新、状态过滤、Plan Lifecycle 操作、行操作描述符与周期标签全在模块；
- * 状态过滤补「已完成」项（#309 显式可见变化之二在此落地：按 Plan Lifecycle 自然
- * 完成的分期计划恢复可见可查，此前从清单消失且无入口可见）。本组件只留分期形态
- * 真差异——期数预览（含尾差文案）与进度列（期数维度百分比 + 已还金额/总额实时
- * 汇总，不持久化、不推算）。行操作经共享渲染组件 PlanRowActions 透传渲染（确认
- * 弹层/锚点/空占位只此一份，ADR-0041 决策 7）；表单公共部分与提交流程编排走
- * ScheduledPlanForm 接缝（商户挂靠保留，issue #206；submitCreate 编排，spec #520），
- * 校验、每期 floor 口径与总额/期数特化组装留本页签。
- */
-
 const reference = useReferenceStore();
 const message = useMessage();
 
-// 移动档适配（issue #848 / ADR-0088 决策 11 票⑧）：清单列结构三分（备注/总额/
-// 操作），进度与关联对象并入副行不丢失；生命周期操作经 PlanRowActions 移动档
-// 变体一击可达。断点口径接窗口分级 composable；桌面档十列一字不动（回归红线）。
 const windowTier = useWindowTier();
 const isMobileTier = computed(() => windowTier.value === "mobile");
 
-// ---------------------------------------------------------------------------
-// 清单编排（ADR-0041）：全部经 ScheduledPlanList 模块；行操作经共享渲染组件
-// PlanRowActions 透传渲染（确认弹层由组件承载，ADR-0041 决策 3 注 / spec #520）。
-// 进度来自既有详情命令的已完成期次实时汇总（金额与期数，不持久化、不推算）。
-// ---------------------------------------------------------------------------
-
-/** 一行 = 计划 + 形态扩展器产出的已完成期次汇总（期数与金额）。 */
 interface InstallmentExt {
   completedCount: number;
   completedAmountCents: number;
@@ -85,19 +63,10 @@ const list = useScheduledPlanList<InstallmentExt>({
 });
 const { loading, statusFilter, statusFilterOptions, filteredRows } = list;
 
-/** 期次详情弹窗内重试成功会发 changed，清单随之刷新（进度由详情实时汇总，重拉即可）。 */
 async function onDetailChanged() {
   await list.load();
 }
 
-// ---------------------------------------------------------------------------
-// 新建分期弹窗（issue #204 / #206）：开启/关闭编排归弹窗意图工厂 ModalIntent
-// （ADR-0072，词汇表 ModalIntent）——纯新建布尔方言收编为单成员意图闭集
-// （type: create，无目标载荷），显示由「意图非空」派生（无独立 show 布尔），
-// 关闭（提交成功 / ✕ / ESC / 取消）统一经工厂清回 null 终态；表单重置留视图。
-// ---------------------------------------------------------------------------
-
-/** 新建分期弹窗意图（单成员闭集）：纯新建，无目标载荷。 */
 interface InstallmentCreateIntent {
   type: "create";
 }
@@ -111,18 +80,8 @@ const {
 const totalYuan = ref("");
 const periods = ref<number | null>(null);
 
-// ---------------------------------------------------------------------------
-// 表单接缝（ADR-0041）：公共草稿字段、商户解析（含重名兜底竞态）与公共 payload
-// 组装全仓单点；提交流程编排沉入接缝 submitCreate（spec #520）——商户解析进编排
-// → 公共 payload 合并形态特化字段 → 创建命令 → 提示 → 公共草稿重置 → 成功后回调，
-// 成功回调注入本页签原子动作：关窗 + 特化字段重置 + 清单刷新。总额/期数、校验与
-// 每期 floor 口径留本页签（每期金额预览口径唯一来源是 installmentSchedule，
-// 与后端 expand_occurrences 的 floor 均分、尾差进末期一致）。
-// ---------------------------------------------------------------------------
-
 const form = useScheduledPlanForm({
   onSubmitted: () => {
-    // 提交成功后原子动作：关窗 + 特化字段重置 + 清单刷新（公共草稿已由接缝重置）
     closeCreateIntent();
     totalYuan.value = "";
     periods.value = null;
@@ -144,14 +103,8 @@ const {
   merchantOptions,
 } = form;
 
-// ---------------------------------------------------------------------------
-// 每期金额预览与新建提交（分期形态真差异）
-// ---------------------------------------------------------------------------
-
-/** 周期下拉选项（与另两页签同单源；computed 现取标签，切语言即时生效） */
 const recurrenceOptions = computed(scheduledRecurrenceOptions);
 
-/** 每期金额预览：总额与期数均合法时给出每期与末期（含尾差），否则为空。 */
 const schedule = computed(() => {
   const totalCents = yuanToCents(totalYuan.value);
   if (totalCents === null || periods.value === null || periods.value < 1) return null;
@@ -162,7 +115,6 @@ const schedule = computed(() => {
   }
 });
 
-/** 预览文案：整除时末期与每期一致，不提尾差；不整除时明确标注末期含尾差。 */
 const previewText = computed(() => {
   const s = schedule.value;
   if (!s) return "";
@@ -176,7 +128,6 @@ const previewText = computed(() => {
   });
 });
 
-/** 新建提交：校验与每期 floor 口径留页签，提交流程编排由接缝 submitCreate 持有（spec #520）。 */
 async function create() {
   if (!accountId.value) {
     message.warning(t("scheduled.form.selectAccount"));
@@ -196,7 +147,6 @@ async function create() {
     message.warning(t("scheduled.form.totalBelowPeriods"));
     return;
   }
-  // amount_cents 存每期金额（floor 口径），与期次生成一致（见 e2e 先例）
   const s = installmentSchedule(totalCents, totalOccurrences);
   await form.submitCreate({
     kind: "installment",
@@ -205,26 +155,19 @@ async function create() {
   });
 }
 
-// ---------------------------------------------------------------------------
-// 展示助手：参考数据名称解析与单元格渲染留适配器；周期标签走模块单源
-// ---------------------------------------------------------------------------
-
 function statusLabel(status: string): string {
   return scheduledStatusLabel(status);
 }
 
-/** 商户名解析（桌面/移动两分支共用；merchantMap 含软删商户会话缓存，改名即时生效）。 */
 function merchantName(row: InstallmentRow): string {
   const m = row.plan.merchant_id ? reference.merchantMap.get(row.plan.merchant_id) : undefined;
   return m?.name ?? "—";
 }
 
-/** 扣款账户名解析（两分支共用；未知 id 回退 id，与桌面列同口径）。 */
 function accountName(row: InstallmentRow): string {
   return reference.accountMap.get(row.plan.core.account_id)?.name ?? row.plan.core.account_id;
 }
 
-/** 进度文案（两分支共用）：详情失败示「加载失败」不与无数据混淆，否则已还汇总。 */
 function progressText(row: InstallmentRow): string {
   const currency = reference.getCurrency(row.plan.core.currency_code);
   return row.detailFailed
@@ -237,7 +180,6 @@ function progressText(row: InstallmentRow): string {
       });
 }
 
-/** 进度百分比：期数维度（已完成期数 / 总期数），总额异常时兜底 0。 */
 function progressPercentage(row: InstallmentRow): number {
   const total = row.plan.total_occurrences ?? 0;
   if (total <= 0) return 0;
@@ -245,8 +187,6 @@ function progressPercentage(row: InstallmentRow): number {
 }
 
 const columns = computed<DataTableColumns<InstallmentRow>>(() => {
-  // 移动档三分列（issue #848）：备注标题行 + 状态/周期/开始日与商户/分类/账户两
-  // 弱化副行 + 总额/进度列（进度锚点与桌面同 testid）；窄屏无横向滚动
   if (isMobileTier.value) {
     return [
       {
@@ -328,7 +268,6 @@ const columns = computed<DataTableColumns<InstallmentRow>>(() => {
     {
       title: t("scheduled.column.merchant"),
       key: "merchant",
-      // 改名即时生效（引用指向 id）：merchantMap 含软删商户会话缓存，历史计划照常显示
       render: (row) => merchantName(row),
     },
     {
@@ -386,8 +325,6 @@ const columns = computed<DataTableColumns<InstallmentRow>>(() => {
     {
       title: t("scheduled.column.actions"),
       key: "actions",
-      // 行操作描述符（可用性矩阵/标签/run）由模块构建；此处透传共享渲染组件，
-      // 确认弹层/测试锚点/空占位只此一份（ADR-0041 决策 7，spec #520）
       render: (row) =>
         h(PlanRowActions, {
           actions: list.rowActions(row),
@@ -397,13 +334,10 @@ const columns = computed<DataTableColumns<InstallmentRow>>(() => {
   ];
 });
 
-/** 来源跳转落点入参（spec #704 / issue #707）：待开的计划 id（视图侧 focus
- * 读一次后的暂存；空则无落点）。 */
 const props = defineProps<{ focusPlanId?: string | null }>();
 
 const emit = defineEmits<{ (e: "focusConsumed"): void }>();
 
-// 计划来源落点时序（读 id → 开窗 → 回报）收口共享工厂，三页签零手搓：
 usePlanFocusLanding({
   focusPlanId: () => props.focusPlanId,
   openDetail: (id) => void planDetailRef.value?.open(id),

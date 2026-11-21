@@ -1,16 +1,6 @@
 import { style } from "@vanilla-extract/css";
 import { sprinkles } from "@ledger/theme/sprinkles.css.ts";
 
-/**
- * 同步进度条旁路样式（issue #897 / ADR-0095，ADR-0093 样式方案）：scoped 样式
- * 块迁出为组件旁的 vanilla-extract 样式文件，与组件同目录共置。
- *
- * 蓝色是同步进度专属色（品牌强调色为琥珀，该蓝亮暗主题同色相可读），中性
- * token 与合同变量不覆盖这一语义色，按先例以一次性字面量收在本文件、不入
- * sprinkles（不造第二套常量来源）；胶囊圆角与灰色轨道面同为该组件的形态
- * 字面量。减弱动态偏好（prefers-reduced-motion）下宽度变化即时生效，不做
- * 过渡动画。
- */
 export const root = style([
   sprinkles({
     display: "flex",
@@ -50,11 +40,6 @@ export const text = style({
   whiteSpace: "nowrap",
 });
 
-/**
- * 计数文案的纵向栈：进度条右侧标的级计数行，右对齐。display/对齐族走
- * Sprinkles 原子（ADR-0093 布尔轴约定，与 `root` 同形），gap/minWidth 留本
- * 文件字面量。（原次行基金页级明细已随换源退役，issue #1571。）
- */
 export const textStack = style([
   sprinkles({
     display: "flex",

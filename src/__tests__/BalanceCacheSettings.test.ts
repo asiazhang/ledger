@@ -11,7 +11,6 @@ import { registerToastSink } from "@ledger/loadable";
 
 import BalanceCacheSettings from "@/settings/BalanceCacheSettings.vue";
 
-/** 有漂移的报告（含「缓存行缺失」形态：cached_cents 为 null）。 */
 const driftReport: BalanceCacheAudit = {
   accounts_checked: 19,
   drifts: [
@@ -21,7 +20,6 @@ const driftReport: BalanceCacheAudit = {
   repaired: true,
 };
 
-/** 零漂移的报告。 */
 const cleanReport: BalanceCacheAudit = {
   accounts_checked: 19,
   drifts: [],
@@ -42,9 +40,7 @@ describe("BalanceCacheSettings.vue", () => {
     expect(mockInvoke).toHaveBeenCalledWith("audit_balance_cache");
     const html = wrapper.html();
     expect(html).toContain("修复完成：已校准 2 个账户");
-    // 缓存缺失不显示成 0：独立文案呈现
     expect(html).toContain("（缓存行缺失）");
-    // 两行账户名与实时重算值在场
     expect(html).toContain("老婆的且慢");
     expect(html).toContain("且慢");
     expect(messageApi.success).toHaveBeenCalled();

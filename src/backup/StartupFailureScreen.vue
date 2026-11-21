@@ -1,25 +1,4 @@
 <script setup lang="ts">
-/**
- * 启动失败恢复屏（issue #601 / ADR-0075 决策 5 修订）：启动失败首屏。
- *
- * 启动期数据库打不开（明文库损坏等）时，本组件**整体替代**主界面（App.vue
- * 以 `v-if` 分支渲染，主界面与全部业务 IPC 消费方都不挂载——后端已登记启动
- * 失败门，占位连接不是业务库，业务读写被 IPC/HTTP 门禁拦截，触达不得）。
- *
- * 恢复通道有两个（issue #601 / #602）：
- * - 「重置为空库」——把打不开的旧库按既有重置命名语义保留为 `.bak` 副本后
- *   原位新建明文空库，成功即进入全新账本（后端原位换连、拉起调度，无需
- *   重启）。重置是破坏性操作，二次确认采用应用内弹窗（ADR-0078 error 级
- *   形态：红色警示块 + 加粗后果句 + 红色确认按钮；原生 confirm 自此不容
- *   新增）。
- * - 「从备份文件恢复…」（issue #602）——文件选择器选定备份 → 元数据校验 →
- *   恢复确认弹窗（跨模式警告与密文备份口令复用 #572 的恢复确认弹窗）→
- *   既有 Restore 全语义（安全备份字节副本 + 原子替换）→ 成功后自动重启
- *   进入恢复后的数据。编排收口在 useFailureRestore。
- *
- * 无需注册 Overlay Suppression：本屏挂载期间侧栏/视图/快捷键宿主全部
- * 不存在（与解锁屏同理，见 UnlockScreen 注释）。
- */
 import { NAlert, NButton, NCard, NSpace, NText, useMessage } from "naive-ui";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { computed, ref } from "vue";
@@ -40,21 +19,10 @@ const confirmVisible = ref(false);
 const submitting = ref(false);
 const errorText = ref("");
 
-/** 漂移失败（issue #994 / ADR-0100）：漂移库打得开且数据完好，与「库不可读」
- *  的处置顺序有真实差异——标题/说明按码取材（不再宣称「打不开」），「从备份
- *  恢复」首选在前、「重置为空库」次选在后；error 级二次确认（ADR-0078）两
- *  场景共用不变。其它失败码回退既有单一呈现（向后兼容未知码）。 */
 const isSchemaDrift = computed(() => bootErrorCode.value === "boot.schema-drift");
 
-/** 库版本超前（`boot.schema-ahead`）：账本曾由更新版本的应用打开过，数据完好、
- *  旧版二进制无法也不应继续打开。此码下**不呈现重置/恢复通道**——重置会毁掉
- *  完好的新库，恢复出的备份同样是超前库，两条通道都通向死路；唯一正确出路
- *  是升级应用，主通道为打开发布页（与「通用 → 更新」卡片的发布页引导同一
- *  URL 单点）。 */
 const isSchemaAhead = computed(() => bootErrorCode.value === "boot.schema-ahead");
 
-/** 通道排布单一来源（DOM 顺序即呈现顺序）：恢复优先仅漂移场景；超前场景
- *  只有升级通道。 */
 const channels = computed(() =>
   isSchemaAhead.value
     ? (["upgrade"] as const)
@@ -63,8 +31,6 @@ const channels = computed(() =>
       : (["reset", "restore"] as const),
 );
 
-/** 打开发布页（升级主通道）：失败处理与「通用 → 更新」卡片的发布页引导同款
- *  （console 留痕，不打断失败屏）。 */
 async function openReleasePage(): Promise<void> {
   try {
     await openUrl(RELEASE_PAGE_URL);
@@ -73,7 +39,6 @@ async function openReleasePage(): Promise<void> {
   }
 }
 
-/** 二次确认：取消或失败都留在失败恢复屏，可再次进入。 */
 function openConfirm() {
   errorText.value = "";
   confirmVisible.value = true;

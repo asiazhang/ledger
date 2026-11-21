@@ -6,7 +6,6 @@ import { useReferenceStore } from "@/stores/reference";
 import RefundForm from "@/transaction/RefundForm.vue";
 import type { Transaction } from "@ledger/types";
 
-/** 行内退款模式的固定原交易（¥30 支出） */
 const fixedTx: Transaction = {
   id: "txn-001",
   kind: "expense",
@@ -38,11 +37,9 @@ const fixedTx: Transaction = {
 
 describe("RefundForm.vue", () => {
   beforeEach(async () => {
-    // 参考命令桩统一走接缝（issue #725）：币种/账户/分类与规范夹具等值流入
     wireInvokeSeam({
       overrides: {},
     });
-    // Pre-load store so components have data
     const store = useReferenceStore();
     await store.refresh();
   });
@@ -52,15 +49,10 @@ describe("RefundForm.vue", () => {
     expect(wrapper.text()).toContain("记退款");
   });
 
-  // ---- 字段错误态（ADR-0058 / issue #415，行为接缝）：断言用户可见状态——
-  // 输入的错误态呈现（n-input--error-status）与保存按钮可用性，不断言内部状态变量。
-  // 红态时机路径与支出/收入形态（#414 先例）、转账形态（#415）完全一致。
-  /** 退款金额输入框（placeholder「退款金额」） */
   function amountInput(wrapper: ReturnType<typeof mount>) {
     return wrapper.find('input[placeholder="退款金额"]');
   }
 
-  /** 金额输入的 NInput 根元素（错误态 class 挂载处） */
   function amountInputRoot(wrapper: ReturnType<typeof mount>) {
     const el = amountInput(wrapper).element.closest(".n-input");
     expect(el).not.toBeNull();
@@ -71,7 +63,6 @@ describe("RefundForm.vue", () => {
     return amountInputRoot(wrapper).classList.contains("n-input--error-status");
   }
 
-  /** 保存按钮（表单内唯一按钮） */
   function submitButton(wrapper: ReturnType<typeof mount>) {
     return wrapper.find("button");
   }
@@ -107,11 +98,9 @@ describe("RefundForm.vue", () => {
       const wrapper = mount(RefundForm);
       await amountInput(wrapper).setValue("4.30发");
       await amountInput(wrapper).trigger("blur");
-      // 失焦不再被静默清空
       expect((amountInput(wrapper).element as HTMLInputElement).value).toBe("4.30发");
       expect(hasErrorStatus(wrapper)).toBe(true);
       expect(submitButton(wrapper).attributes("disabled")).toBeDefined();
-      // 修正：红态立即解除（可走出的闭环）
       await amountInput(wrapper).setValue("4.30");
       expect(hasErrorStatus(wrapper)).toBe(false);
       expect(submitButton(wrapper).attributes("disabled")).toBeUndefined();
@@ -119,7 +108,6 @@ describe("RefundForm.vue", () => {
 
     it("清空后未失焦不红；失焦红；重新输入合法解除（行内模式回填金额）", async () => {
       const wrapper = mount(RefundForm, { props: { fixedTarget: fixedTx } });
-      // 行内模式打开即按原交易金额回填（30），合法回填不红
       expect((amountInput(wrapper).element as HTMLInputElement).value).toBe("30");
       expect(hasErrorStatus(wrapper)).toBe(false);
       await amountInput(wrapper).setValue("");
@@ -151,7 +139,6 @@ describe("RefundForm.vue", () => {
       await submitButton(wrapper).trigger("click");
       await flushPromises();
       expect(createCalls()).toHaveLength(0);
-      // 负数可解析（非格式错误闭集），同走提交通道
       await amountInput(wrapper).setValue("-5");
       expect(hasErrorStatus(wrapper)).toBe(false);
       await submitButton(wrapper).trigger("click");
@@ -160,11 +147,8 @@ describe("RefundForm.vue", () => {
     });
 
     it("创建成功后表单不留潜伏红态（清空金额但初始为空不红，ADR-0058 决策 2）", async () => {
-      // 重桩：提交成功走 create_transaction，参考命令经接缝回归规范夹具（issue #725）
       wireInvokeSeam({ overrides: { create_transaction: "refund-id" } });
       const wrapper = mount(RefundForm, { props: { fixedTarget: fixedTx } });
-      // 行内模式金额预填 30：先清空（未失焦不红），再制造一次保存尝试（空值兜底
-      // 红态、静默中止）与失焦（时机标志置位），最后填合法值提交
       await amountInput(wrapper).setValue("");
       await submitButton(wrapper).trigger("click");
       expect(hasErrorStatus(wrapper)).toBe(true);
@@ -174,7 +158,6 @@ describe("RefundForm.vue", () => {
       await submitButton(wrapper).trigger("click");
       await flushPromises();
       expect(createCalls()).toHaveLength(1);
-      // 成功后金额清空且时机标志重置：不显红态
       expect((amountInput(wrapper).element as HTMLInputElement).value).toBe("");
       expect(hasErrorStatus(wrapper)).toBe(false);
       expect(wrapper.emitted("created")).toHaveLength(1);
@@ -192,8 +175,6 @@ describe("RefundForm.vue 币种随继承目标推导（issue #1770 / ADR-0134 �
   };
 
   function currencySelect(wrapper: ReturnType<typeof mount>) {
-    // 币种框是第一个锁定下拉（币种先于锁定的账户字段；搜索模式下标 0 是
-    // 关联交易 PinyinSelect、不锁定，两种模式下均成立）
     const locked = wrapper.findAllComponents(NSelect).filter((s) => s.props("disabled"));
     expect(locked.length).toBeGreaterThanOrEqual(1);
     return locked[0];

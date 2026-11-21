@@ -12,13 +12,11 @@ function bodyQuery(selector: string): HTMLElement | null {
   return document.body.querySelector(selector);
 }
 
-/** 弹窗内输入框：NInput 外层带 data-testid，真 input 在内部（先例 PoliciesView formInput）。 */
 function formInput(testid: string) {
   const modal = bodyQuery('[data-testid="physical-asset-form-modal"]')!;
   return new DOMWrapper<HTMLInputElement>(modal.querySelector(`[data-testid="${testid}"] input`));
 }
 
-/** 弹窗内保存按钮（PoliciesView saveButton 先例：诚实化为 HTMLElement 包装器）。 */
 function saveButton() {
   return findBodyButtonByTestId("physical-asset-save")!;
 }
@@ -34,8 +32,6 @@ function baseAsset(over: Partial<PhysicalAsset> = {}): PhysicalAsset {
 
 let list: PhysicalAssetList;
 
-/** 视图布线：list_currencies 参考命令本场景需自定义值（CNY+USD，overrides 优先于参考兜底）；
- *  list_physical_assets/create_physical_asset 为动态行为（可变库 + 建档写库），归 overrides。 */
 const VIEW_OVERRIDES = {
   list_currencies: mockCurrencies,
   list_physical_assets: () => Promise.resolve(list),
@@ -114,10 +110,8 @@ describe("PhysicalAssetsView 实物资产视图冒烟（issue #466）", () => {
         purchase_currency_code: null,
       },
     });
-    // 列表经 store 重拉出现新资产，合计随之更新
     expect(wrapper.text()).toContain("代步车");
     expect(wrapper.find('[data-testid="physical-asset-holding-total"]').text()).toContain("8,0000");
-    // 弹窗关闭（update:show = false）
     expect(wrapper.findComponent(PhysicalAssetFormModal).emitted("update:show")).toContainEqual([
       false,
     ]);
@@ -133,7 +127,6 @@ describe("PhysicalAssetsView 实物资产视图冒烟（issue #466）", () => {
     expect(modal).not.toBeNull();
     expect(formInput("physical-asset-name").exists()).toBe(true);
     expect(formInput("physical-asset-name").element as HTMLInputElement).toBeTruthy();
-    // 编辑模式估值字段结构性排除（v-if 不渲染）
     expect(formInput("physical-asset-valuation").exists()).toBe(false);
   });
 
@@ -170,11 +163,6 @@ describe("PhysicalAssetsView 实物资产视图冒烟（issue #466）", () => {
 });
 
 describe("PhysicalAssetsView 实物资产弹窗族排版统一（issue #635）", () => {
-  /** 取 body 上可见的卡片元素：弹窗卡片 teleport 到 body；视图自有的合计卡与
-   *  列表卡随 VTU 默认 detached 挂载不在 document 内，故 body 上可见卡片即当前
-   *  弹窗（先例 src/__tests__/TransactionsView/modal-layout.test.ts，其成立
-   *  理由是「视图无自有 NCard」，本视图不同，靠 detached 挂载成立；命中多张
-   *  时断言显式失败，不静默）。 */
   function visibleModalCard(): HTMLElement {
     const cards = [...document.querySelectorAll<HTMLElement>(".n-card")].filter((el) => {
       let node: Element | null = el;
@@ -188,7 +176,6 @@ describe("PhysicalAssetsView 实物资产弹窗族排版统一（issue #635）",
     return cards[0];
   }
 
-  /** 断言当前弹窗卡片：宽度档位 + 无边框（AppModal 默认，调用点不再显式声明）。 */
   function expectModalCard(width: string) {
     const card = visibleModalCard();
     expect(card.style.width).toBe(width);
@@ -196,7 +183,6 @@ describe("PhysicalAssetsView 实物资产弹窗族排版统一（issue #635）",
   }
 
   async function openBy(testid: string) {
-    // 行内按钮（更新估值/处置）只在有在持资产行时渲染；预置一条对新建按钮无副作用
     list = makePhysicalAssetList({ assets: [baseAsset()] });
     const wrapper = mount(PhysicalAssetsView);
     await flushPromises();

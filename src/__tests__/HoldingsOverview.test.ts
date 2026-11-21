@@ -29,14 +29,9 @@ import {
 import { refCurrencies } from "@ledger/test-support/reference-stubs";
 import type { Account, Holding, Instrument } from "@ledger/types";
 
-// 金额断言委托形态（issue #770）：期待值调同一 formatAmount/formatPrice 实现，
-// 格式规则唯一归属其专测；现价列为价格刻度（ADR-0038）走 formatPrice
 const cny = refCurrencies[0];
 import { firePricesChanged, resetPricesChangedHandler } from "./prices-changed-mock";
 
-// 价格失效信号订阅基座 mock（issue #238 / ADR-0031 决策 3）：捕获订阅回调，
-// 测试中手动触发模拟后端 emit；失败/零更新路径后端不 emit，即无重拉。
-// 捕获/触发辅助收在 prices-changed-mock 共享（三个价格消费方测试同构）。
 vi.mock("@/investment/usePricesChanged", async () => {
   const { capturePricesChangedHandler } = await import("./prices-changed-mock");
   return {
@@ -44,14 +39,10 @@ vi.mock("@/investment/usePricesChanged", async () => {
   };
 });
 
-/** 默认布线 defaults 表：持仓 + 持仓标的字典 + 累计收益单值 + 标的信息同步
- *（参考五命令走接缝规范兜底） */
 const BASE_DEFAULTS = {
   list_holdings: mockHoldings,
   list_instruments: { items: mockInstruments, total: mockInstruments.length },
-  // 累计收益·折本位币单值（issue #1077 / #1797）：全账本三腿相加后端折算聚合，独立于持仓行
   cumulative_pnl_native_total: { total_cents: 48000, native_currency: "CNY" },
-  // 资金加权收益率（issue #1195）：与金额口径并列的比例列，独立一次拉取
   money_weighted_return_summary: makeMwrSummary(),
   sync_instrument_info: { synced: 2, skipped: 0, message: "已同步 2 只，跳过 0 只" },
 };
@@ -77,15 +68,12 @@ describe("HoldingsOverview 当前持仓概览卡（issue #110）", () => {
     expect(wrapper.text()).toContain("当前持仓");
     expect(wrapper.text()).toContain("总市值");
     expect(wrapper.text()).toContain(formatAmount(150000, cny));
-    // 展示词逐字归一（issue #1077）：合计卡标签即「持仓收益」（账务口径仍为未实现盈亏）
     expect(wrapper.find('[data-testid="total-unrealized-pnl-value"]').text()).toBe(
       formatAmount(30000, cny),
     );
-    // 缺价行未计入但显式计数（issue #1797：既不虚增也不静默低估）
     expect(wrapper.find('[data-testid="total-unrealized-pnl-missing-price"]').text()).toBe(
       "1 只持仓因缺现价未计入。",
     );
-    // 展示词归一（issue #1077）：持仓页签不再残留「未实现盈亏」文案
     expect(wrapper.text()).not.toContain("未实现盈亏");
   });
 
@@ -106,22 +94,18 @@ describe("HoldingsOverview 当前持仓概览卡（issue #110）", () => {
     ]) {
       expect(headers).toContain(h);
     }
-    // 行数据来自 mock（默认标的代码字母序，issue #902：000001 < 600000）
     expect(await cellText("symbol")).toEqual(["000001", "600000"]);
     expect(await cellText("quantity")).toEqual(["10", "100"]);
     expect(await cellText("cost_basis")).toEqual([
       formatAmount(8000, cny),
       formatAmount(120000, cny),
     ]);
-    // 无行情行现价列保留空值语义「-」并接行内引导（issue #1193：行情通道 → 同步）；
-    // 现价列为价格刻度（formatPrice），其余列金额刻度（formatAmount）
     expect(await cellText("latest_price")).toEqual(["-同步", formatPrice(150000, cny)]);
     expect(await cellText("market_value")).toEqual(["-", formatAmount(150000, cny)]);
     expect(await cellText("unrealized_pnl")).toEqual(["-", formatAmount(30000, cny)]);
   });
 
   it("合计区新增「累计收益」卡：折本位币单值透传（issue #1077/#1797 接线负向条目，ADR-0087）", async () => {
-    // 断言对准用户可观察结果：删除该卡的接线调用（NStatistic / testid）即找不到卡片、本用例变红。
     wrapper = mount(HoldingsOverview);
     await flushPromises();
     const card = wrapper.find('[data-testid="total-cumulative-pnl"]');
@@ -132,7 +116,6 @@ describe("HoldingsOverview 当前持仓概览卡（issue #110）", () => {
   it("合计三卡：盈亏两卡按符号着盈亏涨跌色、市值卡不着色，三卡数值等宽数字", async () => {
     wireInvokeSeam({
       defaults: BASE_DEFAULTS,
-      // 累计收益转亏，锁住「绿跌」向；持仓收益保持默认 +30000 的「红涨」向
       overrides: { cumulative_pnl_native_total: { total_cents: -900, native_currency: "CNY" } },
     });
     wrapper = mount(HoldingsOverview);
@@ -142,16 +125,13 @@ describe("HoldingsOverview 当前持仓概览卡（issue #110）", () => {
       wrapper!
         .findAll(`[data-testid="${testId}-value"] span[style]`)
         .map((s) => (s.element as HTMLElement).style.color);
-    // 市值格保持中性：无内联语义色（色由读数条样式给主文本色）
     expect(inlineColors("total-market-value")).toEqual([]);
-    // 盈亏两格与持仓明细列同一语义色接缝：盈利红涨、亏损绿跌，随主题取变体
     expect(inlineColors("total-unrealized-pnl")).toEqual([
       probeColor(pnlSemanticColor(30000, theme)),
     ]);
     expect(inlineColors("total-cumulative-pnl")).toEqual([
       probeColor(pnlSemanticColor(-900, theme)),
     ]);
-    // 三卡同排等宽：合计区只有这三张卡（页面其余统计不用 NStatistic）
     expect(wrapper.findAll(".n-statistic-value")).toHaveLength(3);
     for (const id of ["total-market-value", "total-unrealized-pnl", "total-cumulative-pnl"]) {
       const valueBox = wrapper.find(`[data-testid="${id}"] .n-statistic-value`)
@@ -180,23 +160,19 @@ describe("HoldingsOverview 当前持仓概览卡（issue #110）", () => {
             latest_price_currency_code: "USD",
             market_value_cents: 3500,
             unrealized_pnl_cents: -500,
-            // 后端当期汇率逐行折算（issue #1797）：USD 行折 CNY 后并入单值
             native_market_value_cents: 26000,
             native_unrealized_pnl_cents: -36000,
           }),
         ],
       },
     });
-    // 参考数据在 beforeEach 已按默认币种表水合；本场景自定义 CNY+USD 后需重刷
     await useReferenceStore().refresh();
     wrapper = mount(HoldingsOverview);
     await flushPromises();
     const theme = useAppStore().theme;
-    // 市值卡：150000 + 26000 单值（多币种分组拼接「 / 」形态退役）
     const market = wrapper.find('[data-testid="total-market-value-value"]');
     expect(market.text()).toBe(formatAmount(176000, cny));
     expect(market.text()).not.toContain(" / ");
-    // 盈亏卡：30000 − 36000 = −6000 单值，单符号单色（红涨绿跌随主题）
     const pnl = wrapper.find('[data-testid="total-unrealized-pnl-value"]');
     expect(pnl.text()).toBe(formatAmount(-6000, cny));
     expect(pnl.findAll("span[style]").map((s) => (s.element as HTMLElement).style.color)).toEqual([
@@ -210,8 +186,6 @@ describe("HoldingsOverview 当前持仓概览卡（issue #110）", () => {
     await flushPromises();
     const gridStyle = () =>
       (wrapper!.find(".n-grid").element as HTMLElement).style.gridTemplateColumns;
-    // 具名断点写法（cols="1 s:3"）在 NGrid 默认 responsive="self" 下永不命中、静默
-    // 退成 1 列（三卡竖排）——断言落在真实渲染的栅格列数上，删掉窗口分级切档即变红
     expect(gridStyle()).toBe("repeat(3, minmax(0, 1fr))");
     setFakeMedia({ width: 600 });
     await flushPromises();
@@ -230,14 +204,12 @@ describe("HoldingsOverview 当前持仓概览卡（issue #110）", () => {
     }
     expect(document.body.textContent).not.toContain("累计分红");
     const tipText = await hoverTipText(wrapper.find('[data-testid="total-cumulative-pnl-info"]'));
-    // 累计收益口径：三腿相加（未实现 + 已实现 + 分红）且全账本、不跨币种
     expect(tipText).toContain("已实现盈亏");
     expect(tipText).toContain("累计分红");
     expect(tipText).toContain("全账本");
   });
 
   it("持仓表列头口径说明：成本/现价/市值/持仓收益/收益率各带说明触发器（issue #1369）", async () => {
-    // 断言对准用户可观察结果：删掉任一列头的 ConceptLabel 接线即找不到触发器、本用例变红
     wrapper = mount(HoldingsOverview);
     await flushPromises();
     for (const id of [
@@ -250,9 +222,7 @@ describe("HoldingsOverview 当前持仓概览卡（issue #110）", () => {
       expect(wrapper.find(`[data-testid="${id}"]`).exists(), id).toBe(true);
     }
     const mwrTip = await hoverTipText(wrapper.find('[data-testid="holdings-mwr-info"]'));
-    // 三态口径的核心事实：年化与未年化不可互算（防误读诉求，ADR-0115 修订）
     expect(mwrTip).toContain("两者不可互算");
-    // 「不随筛选收窄」是该口径自身属性：写在 mwrTip 正文里（删掉该句即本断言变红）
     expect(mwrTip).toContain("不随搜索或标的筛选收窄");
   });
 
@@ -262,7 +232,6 @@ describe("HoldingsOverview 当前持仓概览卡（issue #110）", () => {
     await flushPromises();
     const trigger = wrapper.find('[data-testid="total-market-value-info"]');
     expect(trigger.exists()).toBe(true);
-    // text 中号按钮 34px 高：外扩量须经 inset 覆写补足 48px 触控基线
     expect((trigger.element as HTMLElement).style.getPropertyValue("--touch-hit-inset")).toBe(
       "-10px -10px",
     );
@@ -272,11 +241,8 @@ describe("HoldingsOverview 当前持仓概览卡（issue #110）", () => {
     const popover = document.body.querySelector(".n-popover");
     expect(popover).not.toBeNull();
     expect(popover!.textContent).toContain("数量 × 最新价格");
-    // 边界句随 issue #1369 修订：缺价与缺汇率两种不计入同句给出
     expect(popover!.textContent).toContain("缺现价或缺汇率的持仓不计入");
-    // 持仓页作用域句：合计随过滤子集更新（首页同一组件挂 wholeLedger 变体）
     expect(popover!.textContent).toContain("随当前搜索与账户过滤收窄");
-    // 卸载触控挂载，避免已开启的气泡泄入后续指针轴断言
     wrapper!.unmount();
     wrapper = undefined;
   });
@@ -319,14 +285,12 @@ describe("HoldingsOverview 当前持仓概览卡（issue #110）", () => {
     });
     wrapper = mount(HoldingsOverview);
     await flushPromises();
-    // 现价 12345 万分之一元 = 1.2345 元，4 位小数无损展示；市值/未实现盈亏随行显形
     expect(await cellText("latest_price")).toEqual([formatPrice(12345, cny)]);
     expect(await cellText("market_value")).toEqual([formatAmount(123450, cny)]);
     expect(await cellText("unrealized_pnl")).toEqual([formatAmount(50, cny)]);
   });
 
   it("数量列按录入粒度（至多 4 位小数）抹平 f64 位噪声，不把长小数抛给用户", async () => {
-    // 位噪声来自后端逐批 FIFO 扣减/份额重述的 f64 累积（如截图 2094.5699999999965）
     const noisyHolding = makeHolding({
       id: "h-noisy",
       instrument_id: "inst-1",
@@ -367,10 +331,7 @@ describe("HoldingsOverview 当前持仓概览卡（issue #110）", () => {
     });
     wrapper = mount(HoldingsOverview);
     await flushPromises();
-    // 默认代码字母序：110022（基金）在前、600000（股票）在后
-    // 净值日期列：仅基金行携带，股票行显示「-」
     expect(await cellText("nav_date")).toEqual(["2026-01-30", "-"]);
-    // 现价列恢复单行：只含价格本身，不再附净值日期小字
     expect(await cellText("latest_price")).toEqual([
       formatPrice(33480, cny),
       formatPrice(150000, cny),
@@ -385,7 +346,6 @@ describe("HoldingsOverview 当前持仓概览卡（issue #110）", () => {
     await btn.trigger("click");
     await flushPromises();
     expect(mockInvoke).toHaveBeenCalledWith("sync_instrument_info");
-    // 同样的轻量反馈
     expect(wrapper.text()).toContain("已同步 2 只，跳过 0 只");
   });
 
@@ -426,11 +386,8 @@ describe("HoldingsOverview 当前持仓概览卡（issue #110）", () => {
     const callsBefore = mockInvoke.mock.calls.filter(([c]) => c === "list_holdings").length;
     await wrapper.find('[data-testid="sync-instrument-info"]').trigger("click");
     await flushPromises();
-    // 同步命令已发出，但点击路径自身不触发重拉——
-    // 失败/零更新路径后端不 emit（ADR-0031 决策 2），即无重拉
     expect(mockInvoke).toHaveBeenCalledWith("sync_instrument_info");
     expect(mockInvoke.mock.calls.filter(([c]) => c === "list_holdings").length).toBe(callsBefore);
-    // 信号到达才重拉
     firePricesChanged();
     await flushPromises();
     expect(mockInvoke.mock.calls.filter(([c]) => c === "list_holdings").length).toBe(
@@ -481,7 +438,6 @@ describe("HoldingsOverview 当前持仓概览卡（issue #110）", () => {
     await wrapper.find('[data-testid="sync-instrument-info"]').trigger("click");
     await flushPromises();
     expect(wrapper.text()).toContain("同步失败：网络错误");
-    // 失败路径后端不 emit（ADR-0031 决策 2），即无重拉
     expect(mockInvoke.mock.calls.filter(([c]) => c === "list_holdings").length).toBe(callsBefore);
   });
 
@@ -500,12 +456,10 @@ describe("HoldingsOverview 当前持仓概览卡（issue #110）", () => {
     resetInstrumentInfoSyncForTest();
     wrapper = mount(HoldingsOverview);
     await flushPromises();
-    // 同步前无降级标注
     expect(wrapper.find('[data-testid="instrument-sync-degraded"]').exists()).toBe(false);
 
     await wrapper.find('[data-testid="sync-instrument-info"]').trigger("click");
     await flushPromises();
-    // 删除降级标注的渲染，本断言即红（接线型负向判据）
     const notice = wrapper.find('[data-testid="instrument-sync-degraded"]');
     expect(notice.exists()).toBe(true);
     expect(notice.text()).toBe("已降级、本次较慢");
@@ -532,13 +486,6 @@ describe("HoldingsOverview 当前持仓概览卡（issue #110）", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// 持仓页签三维过滤排序（issue #902）：搜索（代码/名称/拼音，300ms 防抖）+
-// 账户单选过滤 + 市值/未实现盈亏列头排序；合计随过滤子集更新、排序不影响；
-// 缺价行金额列显示 "-"、排序恒排末尾；两态空态可区分。
-// ---------------------------------------------------------------------------
-
-/** 过滤夹具账户：现金（非投资，不进下拉）+ 两投资账户（HKD 本位币账户走 makeAccount 工厂） */
 const FILTER_ACCOUNTS: Account[] = [
   makeAccount({ id: "acc-1", name: "现金", type: "cash" }),
   makeAccount({ id: "acc-a", name: "证券A" }),
@@ -564,7 +511,6 @@ const FILTER_INSTRUMENTS: Instrument[] = [
   }),
 ];
 
-/** 四行持仓：h-2 缺价（全 null 金额），h-3/h-4 在 acc-b（HKD/USD 本位币） */
 const FILTER_HOLDINGS: Holding[] = [
   makeHolding({
     id: "h-1",
@@ -617,13 +563,11 @@ const FILTER_HOLDINGS: Holding[] = [
 const FILTER_DEFAULTS = {
   list_holdings: FILTER_HOLDINGS,
   list_instruments: { items: FILTER_INSTRUMENTS, total: FILTER_INSTRUMENTS.length },
-  // 累计收益·折本位币单值（issue #1797）：全账本口径，不随三维过滤收窄
   cumulative_pnl_native_total: { total_cents: 26000, native_currency: "CNY" },
   money_weighted_return_summary: makeMwrSummary(),
   sync_instrument_info: { synced: 4, skipped: 0, message: "已同步 4 只，跳过 0 只" },
 };
 
-/** 搜索输入 → 行集合的同步桥：防抖窗口推进 + 微任务清空 */
 async function typeSearch(wrapper: ReturnType<typeof mount>, text: string) {
   await wrapper.find('[data-testid="holdings-search"] input').setValue(text);
   vi.advanceTimersByTime(300);
@@ -634,9 +578,7 @@ describe("HoldingsOverview 三维过滤排序（issue #902）", () => {
   beforeEach(async () => {
     vi.useFakeTimers();
     resetPricesChangedHandler();
-    // 同步接缝状态是模块级共享单例：上一 describe 的失败反馈会跨实例残留，先复位
     resetInstrumentInfoSyncForTest();
-    // 账户下拉夹具：投资账户谓词收口（acc-a/acc-b 进选项面，现金不进）
     wireInvokeSeam({ defaults: FILTER_DEFAULTS, overrides: { list_accounts: FILTER_ACCOUNTS } });
     const store = useReferenceStore();
     await store.refresh();
@@ -654,7 +596,6 @@ describe("HoldingsOverview 三维过滤排序（issue #902）", () => {
     wrapper = mount(HoldingsOverview);
     await flushPromises();
     expect(await cellText("symbol")).toEqual(["000001", "00700", "600000", "AAPL"]);
-    // 折本位币单值（issue #1797）：h-1 150000 + h-3 1850000 + h-4 3600000（h-2 缺价跳过并计数）
     expect(wrapper.find('[data-testid="total-market-value-value"]').text()).toBe(
       formatAmount(5600000, cny),
     );
@@ -664,7 +605,6 @@ describe("HoldingsOverview 三维过滤排序（issue #902）", () => {
     expect(wrapper.find('[data-testid="total-market-value-missing-price"]').text()).toBe(
       "1 只持仓因缺现价未计入。",
     );
-    // 缺价行金额列显示 "-"（空值语义保持）
     expect(await cellText("market_value")).toEqual([
       "-",
       formatAmount(20000000),
@@ -676,16 +616,12 @@ describe("HoldingsOverview 三维过滤排序（issue #902）", () => {
   it("搜索按代码/名称/拼音命中，清空后恢复完整列表", async () => {
     wrapper = mount(HoldingsOverview);
     await flushPromises();
-    // 代码子串
     await typeSearch(wrapper, "00700");
     expect(await cellText("symbol")).toEqual(["00700"]);
-    // 名称子串
     await typeSearch(wrapper, "浦发");
     expect(await cellText("symbol")).toEqual(["600000"]);
-    // 拼音首字母子序列（浦发银行 → pfyh）
     await typeSearch(wrapper, "pfyh");
     expect(await cellText("symbol")).toEqual(["600000"]);
-    // 清空恢复完整列表
     await typeSearch(wrapper, "");
     expect(await cellText("symbol")).toEqual(["000001", "00700", "600000", "AAPL"]);
   });
@@ -699,7 +635,6 @@ describe("HoldingsOverview 三维过滤排序（issue #902）", () => {
     );
     await nextTick();
     expect(await cellText("symbol")).toEqual(["00700", "AAPL"]);
-    // 清除回「全部」默认态
     componentVm(wrapper.findComponent('[data-testid="holdings-account-filter"]')).$emit(
       "update:value",
       null,
@@ -711,7 +646,6 @@ describe("HoldingsOverview 三维过滤排序（issue #902）", () => {
   it("市值列头升降序：缺价行恒排末尾；第三次点击回默认代码序", async () => {
     wrapper = mount(HoldingsOverview);
     await flushPromises();
-    // 受控排序每次点击都重建表头：每次点击前重新查找 th（不用过期包装器）
     const clickMarketValue = async () => {
       await wrapper!
         .findAll("th")
@@ -719,13 +653,10 @@ describe("HoldingsOverview 三维过滤排序（issue #902）", () => {
         .trigger("click");
       await nextTick();
     };
-    // naive-ui 原生点击循环：首次点击落降序，缺价行仍恒排末尾（与方向无关）
     await clickMarketValue();
     expect(await cellText("symbol")).toEqual(["00700", "AAPL", "600000", "000001"]);
-    // 升序：150000 → 500000 → 2000000，缺价行 h-2 末尾
     await clickMarketValue();
     expect(await cellText("symbol")).toEqual(["600000", "AAPL", "00700", "000001"]);
-    // 第三态清除排序，回默认代码字母序
     await clickMarketValue();
     expect(await cellText("symbol")).toEqual(["000001", "00700", "600000", "AAPL"]);
   });
@@ -736,9 +667,7 @@ describe("HoldingsOverview 三维过滤排序（issue #902）", () => {
     const pnlTh = wrapper.findAll("th").find((th) => th.text() === "持仓收益")!;
     await pnlTh.trigger("click");
     await nextTick();
-    // 降序：30000 → 10000 → -500000，缺价行末尾
     expect(await cellText("symbol")).toEqual(["600000", "AAPL", "00700", "000001"]);
-    // 升序：盈利在后，缺价行仍末尾（表头重建后重新查找）
     await wrapper
       .findAll("th")
       .find((th) => th.text() === "持仓收益")!
@@ -750,15 +679,13 @@ describe("HoldingsOverview 三维过滤排序（issue #902）", () => {
   it("合计随搜索与账户过滤子集更新；排序不改变合计", async () => {
     wrapper = mount(HoldingsOverview);
     await flushPromises();
-    // 账户过滤后合计只含 acc-b 子集：h-3 + h-4 折本位币相加
     componentVm(wrapper.findComponent('[data-testid="holdings-account-filter"]')).$emit(
       "update:value",
       "acc-b",
     );
     await nextTick();
     const marketTotalText = () => wrapper!.find('[data-testid="total-market-value-value"]').text();
-    expect(marketTotalText()).toBe(formatAmount(5450000, cny)); // 1850000 + 3600000
-    // 排序只是重排行不是换口径：合计不动（降序 → 升序两轮后仍同值）
+    expect(marketTotalText()).toBe(formatAmount(5450000, cny));
     await wrapper!
       .findAll("th")
       .find((th) => th.text() === "市值")!
@@ -770,7 +697,6 @@ describe("HoldingsOverview 三维过滤排序（issue #902）", () => {
       .trigger("click");
     await nextTick();
     expect(marketTotalText()).toBe(formatAmount(5450000, cny));
-    // 搜索叠加在过滤之上：合计再收窄到命中行
     await typeSearch(wrapper, "txkg");
     expect(marketTotalText()).toBe(formatAmount(1850000, cny));
   });
@@ -778,15 +704,12 @@ describe("HoldingsOverview 三维过滤排序（issue #902）", () => {
   it("「没有持仓」与「筛选条件下无匹配」两种空态可区分", async () => {
     wrapper = mount(HoldingsOverview);
     await flushPromises();
-    // 无匹配空态：有持仓但筛选不命中，文案非「暂无持仓」
     await typeSearch(wrapper, "999999");
     expect(wrapper.find('[data-testid="holdings-no-match"]').exists()).toBe(true);
     expect(wrapper.text()).toContain("筛选条件下无匹配持仓");
     expect(wrapper.text()).not.toContain("暂无持仓");
-    // 清空后空态消失、完整列表恢复（过滤可逆）
     await typeSearch(wrapper, "");
     expect(wrapper.find('[data-testid="holdings-no-match"]').exists()).toBe(false);
-    // 「没有持仓」空态：全库无持仓
     wireInvokeSeam({
       defaults: FILTER_DEFAULTS,
       overrides: { list_holdings: [], list_instruments: { items: [], total: 0 } },
@@ -796,24 +719,15 @@ describe("HoldingsOverview 三维过滤排序（issue #902）", () => {
     await flushPromises();
     expect(wrapper.text()).toContain("暂无持仓");
     expect(wrapper.text()).not.toContain("筛选条件下无匹配持仓");
-    // 无持仓时过滤控件不渲染（无可过滤之列）
     expect(wrapper.find('[data-testid="holdings-search"]').exists()).toBe(false);
   });
 });
 
-// ---------------------------------------------------------------------------
-// 持仓页签客户端分页（issue #912）：页大小固定 20，切片由表格内置分页完成、
-// 页码状态归 useHoldingsFilter（三维任一变化即翻页归零，卸载重挂回默认）；
-// 合计/空态在切片前判定，与可见页无关。25 行夹具：第 21–25 行落第二页。
-// ---------------------------------------------------------------------------
-
-/** 分页夹具账户：22 行在 acc-1、3 行在 acc-2（账户过滤收窄后仍超一页） */
 const PAGE_ACCOUNTS: Account[] = [
   makeAccount({ id: "acc-page-1", name: "证券A" }),
   makeAccount({ id: "acc-page-2", name: "证券B", currency_code: "HKD" }),
 ];
 
-/** 25 行持仓 + 字典：三位零填充代码序 = 数目字序，市值随序号递增（降序首行为 025） */
 const PAGE_HOLDINGS: Holding[] = Array.from({ length: 25 }, (_, i) => {
   const code = String(i + 1).padStart(3, "0");
   return makeHolding({
@@ -864,7 +778,6 @@ describe("HoldingsOverview 客户端分页（issue #912）", () => {
     }
   });
 
-  /** 点分页条页码项（.n-pagination-item 文本即页码；前后键无文本不参与匹配） */
   async function goToPage(page: number) {
     await wrapper!
       .findAll(".n-pagination-item")
@@ -900,7 +813,6 @@ describe("HoldingsOverview 客户端分页（issue #912）", () => {
     await flushPromises();
     await goToPage(2);
     expect(await cellText("symbol")).toHaveLength(5);
-    // 账户过滤收窄到 22 行（>20）：归零后第一页显示 20 行；若停留第 2 页只会看到 2 行
     componentVm(wrapper.findComponent('[data-testid="holdings-account-filter"]')).$emit(
       "update:value",
       "acc-page-1",
@@ -915,7 +827,6 @@ describe("HoldingsOverview 客户端分页（issue #912）", () => {
     await flushPromises();
     await goToPage(2);
     expect(await cellText("symbol")).toHaveLength(5);
-    // 受控排序重排行集 + 页码归零：显示市值降序前 20 行（首行市值最大 = 025）
     await wrapper!
       .findAll("th")
       .find((th) => th.text() === "市值")!
@@ -930,7 +841,6 @@ describe("HoldingsOverview 客户端分页（issue #912）", () => {
     await flushPromises();
     await goToPage(2);
     expect(await cellText("symbol")).toHaveLength(5);
-    // 「标的」命中全部 25 行名（>20）：归零后第一页 20 行；若停留第 2 页只剩 5 行
     await typeSearch(wrapper, "标的");
     expect(await cellText("symbol")).toHaveLength(20);
     expect((await cellText("symbol"))[0]).toBe("001");
@@ -954,7 +864,6 @@ describe("HoldingsOverview 客户端分页（issue #912）", () => {
     await goToPage(2);
     expect(await cellText("symbol")).toHaveLength(5);
     wrapper.unmount();
-    // 离开期间持仓缩到 15 行（单页；分页条随之收起，恢复的页码 2 已越界）
     const shrunk = PAGE_HOLDINGS.slice(0, 15);
     wireInvokeSeam({
       defaults: {
@@ -966,10 +875,8 @@ describe("HoldingsOverview 客户端分页（issue #912）", () => {
     });
     wrapper = mount(HoldingsOverview);
     await flushPromises();
-    // 恢复页码 2 但只有 1 页：钳制后展示第 1 页全量 15 行，不落空页、不残留越界页码
     expect(await cellText("symbol")).toHaveLength(15);
     expect((await cellText("symbol"))[0]).toBe("001");
-    // 单一页码时不渲染分页条（既有形态），行集本身即第 1 页全量
     expect(wrapper.find(".n-pagination").exists()).toBe(false);
   });
 
@@ -993,16 +900,6 @@ describe("HoldingsOverview 客户端分页（issue #912）", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// 缺价行可执行引导（issue #1193）：缺价行（市值/收益/合计一并缺）在现价列
-// 保留空值语义「-」，其后按价格通道给下一步——行情 / 净值通道落既有
-// 「同步标的信息」入口（同一 useInstrumentInfoSync 接缝），手动报价通道落
-// 既有「录价」弹窗（同一 ManualPriceModal + record_manual_price 命令）；
-// 无来源 / 通道未知行不给引导。判定只读后端派生的 price_channel（标的字典
-// 透传），前端不另推通道。
-// ---------------------------------------------------------------------------
-
-/** 四类缺价行：符号按 a1 < b1 < c1 < d1 排序，与通道对照一眼可辨 */
 const GUIDE_HOLDINGS: Holding[] = [
   makeHolding({ id: "gh-manual", instrument_id: "g-inst-manual" }),
   makeHolding({ id: "gh-nav", instrument_id: "g-inst-nav" }),
@@ -1069,7 +966,6 @@ describe("HoldingsOverview 缺价行可执行引导（issue #1193）", () => {
     expect(btn.text()).toBe("同步");
     await btn.trigger("click");
     await flushPromises();
-    // 双断言：落点是既有同步命令（同接缝），且结果回执在卡内可见
     expect(mockInvoke).toHaveBeenCalledWith("sync_instrument_info");
     expect(wrapper.text()).toContain("已同步 1 只，跳过 0 只");
   });
@@ -1093,14 +989,12 @@ describe("HoldingsOverview 缺价行可执行引导（issue #1193）", () => {
     expect(btn.text()).toBe("录价");
     await btn.trigger("click");
     await nextTick();
-    // 落点 = 既有 ManualPriceModal（与标的页行内「录价」同一弹窗）
     expect(document.body.textContent).toContain("录价 — a1");
   });
 
   it("每行按自身价格通道分流：四类缺价行现价列呈「引导 + 无引导」对照", async () => {
     wrapper = mount(HoldingsOverview);
     await flushPromises();
-    // 空值语义「-」保留，引导紧随其后；无来源行只有「-」
     expect(await cellText("latest_price")).toEqual(["-录价", "-同步", "-同步", "-"]);
     expect(wrapper.find('[data-testid="missing-price-sync-acc-1-g-inst-none"]').exists()).toBe(
       false,
@@ -1111,7 +1005,6 @@ describe("HoldingsOverview 缺价行可执行引导（issue #1193）", () => {
   });
 
   it("同一标的跨账户持仓：引导 testid 按账户 + 标的派生，多行互不撞车", async () => {
-    // 两行同标的（同 symbol）不同账户——按 symbol 派生会让两行共用同一 testid
     wireInvokeSeam({
       defaults: GUIDE_DEFAULTS,
       overrides: {
@@ -1129,7 +1022,6 @@ describe("HoldingsOverview 缺价行可执行引导（issue #1193）", () => {
     expect(wrapper.find('[data-testid="missing-price-sync-acc-2-g-inst-quote"]').exists()).toBe(
       true,
     );
-    // 行身份不再回落到 symbol：同标的两行不得共用 `…-c1` 形态的 testid
     expect(wrapper.find('[data-testid="missing-price-sync-c1"]').exists()).toBe(false);
     expect(wrapper.findAll('[data-testid^="missing-price-sync-"]')).toHaveLength(2);
   });
@@ -1158,7 +1050,6 @@ describe("HoldingsOverview 表格列形态（词汇表「表格列形态」约�
     expect(nameCol.width).toBeUndefined();
     expect(nameCol.minWidth).toBeGreaterThan(0);
     expect(nameCol.ellipsis).toBeTruthy();
-    // 其余短内容列维持固定宽（scrollX = 固定列宽总和的前提）
     for (const key of ["symbol", "accountName", "nav_date"]) {
       expect(typeof byKey(key).width, key).toBe("number");
     }

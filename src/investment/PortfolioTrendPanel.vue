@@ -7,19 +7,12 @@ import { formatAmount, amountPrivacyEnabled } from "@ledger/money";
 import { t } from "@ledger/i18n";
 import { Line } from "vue-chartjs";
 import type { ChartOptions, TooltipItem } from "chart.js";
-// Chart.js 统一注册模块（issue #926）：折线图所需 controller/element/scale 一处
-// 注册，不再组件自持子集（缺项曾致渲染错误循环冻结界面）；导入即完成注册。
 import "@ledger/utils/chart-registration";
 import { TREND_RANGE_PRESETS, usePortfolioTrend } from "@/investment/usePortfolioTrend";
 
 const reference = useReferenceStore();
-// 走势的区间选择住投资页会话状态 store（issue #1192，ADR-0094 会话内保留）：
-// 页签重挂后仍是离开时的那个区间。#1907 起单标的模式随走势页签退役，
-// 面板收缩为组合市值曲线一维。
 const trend = usePortfolioTrend();
 
-/** 有通道无历史数据的引导文案：按补全状态三态（ADR-0122 决策 5 / issue #1377）
- * ——不再有指向「同步标的信息」的回填文案（同步只刷现价，历史由后台补全）。 */
 const emptyExtra = computed(() => {
   const state = trend.backfill.value?.state;
   if (state === "running") {
@@ -30,7 +23,6 @@ const emptyExtra = computed(() => {
   }
   if (state === "retry_pending") return t("investments.trend.emptyBackfillRetryPending");
   if (state === "no_data") return t("investments.trend.emptyBackfillNoData");
-  // 无补全字段（区间裁剪 / 持仓与价格周错开等）：既有空态文案的中性改写。
   return t("investments.trend.emptyNoPointsInRange");
 });
 
@@ -38,14 +30,12 @@ const currency = computed(() =>
   trend.currencyCode.value ? reference.currencyMap.get(trend.currencyCode.value) : undefined,
 );
 
-/** 币种口径标注：组合走势 = 本位币 */
 const currencyCaption = computed(() =>
   trend.currencyCode.value
     ? t("investments.trend.captionPortfolio", { currency: trend.currencyCode.value })
     : "",
 );
 
-/** 曲线值格式化（金额分走 formatAmount，随隐私开关掩码） */
 function formatTrendValue(value: number): string {
   return formatAmount(value, currency.value);
 }
@@ -62,15 +52,11 @@ const chartData = computed(() => ({
       backgroundColor: "rgba(32, 128, 240, 0.15)",
       tension: 0.25,
       pointRadius: 2,
-      // 停牌/缺价周：x 轴按日期连续、缺口连点跨越（ADR-0019）
       spanGaps: true,
     },
   ],
 }));
 
-// options computed 并读取隐私开关建立响应式依赖（issue #566）：tooltip 与轴刻度 formatter
-// 已同源走 formatAmount，但只在重绘时执行——切换时靠 options 变更驱动
-// vue-chartjs 重绘，满足「切换即时生效于所有已打开页面」（spec #564 user story 14）。
 const chartOptions = computed<ChartOptions<"line">>(() => {
   void amountPrivacyEnabled.value;
   return {

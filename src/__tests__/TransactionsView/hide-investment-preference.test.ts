@@ -1,4 +1,3 @@
-// 路由替身经 common.ts 的 vi.mock 注册，必须先于任何直连组件导入（导入顺序即 mock 生效面）
 import {
   makeTxn,
   setTxnDb,
@@ -18,23 +17,8 @@ import { useWindowGuard } from "@/composables/useWindowGuard";
 import { makeAccount } from "../factories";
 import type { Transaction } from "@ledger/types";
 
-/**
- * 「隐藏投资相关流水」视图偏好接线（issue #1811 / ADR-0136）：
- * - 开关落交易页筛选栏，桌面 / 移动同构（ADR-0136 决策 5），文案经 i18n；
- * - 开关开启 → 主列表请求携带 `hide_investment_related=true`（调用事实）+ 行集与
- *   total 一步可观察收窄（外部可见效果）——双断言；删除 TransactionsView load()
- *   请求装配中的偏好接线调用点，本文件「调用事实」断言变红（ADR-0087 接线型负向
- *   条目）；偏好是行集先决收窄，与既有筛选 AND 组合，账户下钻不让位；
- * - 偏好与筛选分家（ADR-0136 决策 1）：清除筛选与 ESC 复位不触达开关，开关状态
- *   不参与清除筛选禁用态判定。
- * 偏好 store 本体（解析防御 / 跨启动保持 / 零后端调用）见
- * transaction-view-preferences.test.ts。
- */
-
 const INVESTMENT_ACCOUNT = makeAccount({ id: "acc-inv", name: "证券", type: "investment" });
 
-/** 混合行集：日常支出（保留）+ 充值转账（银行卡 → 投资账户，主列表通用 kind）+ 投资账户直接支付的费用支出；
- * extra 追加用例自有行（如 acc-1 日常支出，构造「下钻 ∩ 偏好」非空）。 */
 function seedMixedRows(...extra: Transaction[]) {
   setAccountDb([
     makeAccount({ id: "acc-1", name: "现金", type: "cash" }),
@@ -53,7 +37,6 @@ function seedMixedRows(...extra: Transaction[]) {
   ]);
 }
 
-/** 偏好开关（筛选栏唯一开关，aria-checked 即对外状态）。 */
 function hideSwitch(wrapper: VueWrapper) {
   return wrapper.find(".n-switch");
 }
@@ -63,7 +46,6 @@ async function toggleHide(wrapper: VueWrapper) {
   await flushPromises();
 }
 
-/** 清除筛选按钮（工具栏一个；空态按钮仅在过滤无结果时渲染）。 */
 function clearButton(wrapper: VueWrapper) {
   return wrapper.findAll("button").find((b) => b.text().includes("清除筛选"))!;
 }
@@ -99,9 +81,7 @@ describe("开关 → 主列表请求携带隐藏参数 + 行集收窄（双断�
     const wrapper = await mountView();
     expect(wrapper.text()).toContain("共 3 条");
     await toggleHide(wrapper);
-    // 调用事实断言（接线型负向条目）：删除主列表请求装配中的偏好接线调用点即红
     expect(lastListFilter().hide_investment_related).toBe(true);
-    // 外部可见效果断言：行集与 total 同步收窄（充值转账与投资账户支付行消失）
     expect(wrapper.text()).toContain("共 1 条");
     expect(wrapper.text()).not.toContain("备注 2");
   });
@@ -190,7 +170,6 @@ describe("偏好与筛选分家（ADR-0136 决策 1）：复位通道不触达�
   });
 
   it("ESC 复位不触达开关：过滤与分页复位照常，开关状态原样", async () => {
-    // 窗口行为守卫宿主（App.vue 同构：守卫全局唯一，ESC 消费方，先例 session-retention）
     const GuardHost = defineComponent({
       setup() {
         useWindowGuard();

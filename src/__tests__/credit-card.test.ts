@@ -10,10 +10,8 @@ import {
   type CreditAccountFields,
 } from "@/accounts/credit-card";
 
-/** 本地日历日构造（与 `date.test.ts` 同纪律：本地构造，跨时区稳定）。 */
 const d = (year: number, month1: number, day: number) => new Date(year, month1 - 1, day);
 
-/** 信用卡账户窄口（默认招行卡：额度 50000 元、账单日 5、还款日 25）。 */
 function card(patch: Partial<CreditAccountFields> = {}): CreditAccountFields {
   return {
     type: "credit",

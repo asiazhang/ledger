@@ -16,7 +16,6 @@ import {
 } from "@/accounts/account-row-menu";
 import { renderRowMenuIcon } from "@/transaction/transaction-row-menu";
 
-/** 渲染 DropdownOption.icon 工厂，取出其中的图标组件（用于断言挂了哪个图标）。 */
 function iconComponentOf(option: DropdownOption): unknown {
   const render = option.icon;
   if (!render) return undefined;
@@ -85,7 +84,6 @@ describe("buildAccountRowMenuOptions（账户行菜单选项）", () => {
       expect(byKey("archive").label).toBe("Archive");
       expect(byKey("delete").label).toBe("Delete");
     } finally {
-      // 还原默认语言，避免污染同文件后续用例（模块级单例状态）
       await applyLocale("zh-CN");
     }
   });

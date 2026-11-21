@@ -25,10 +25,6 @@ import { useFeatureToggleStore } from "@/settings/feature-toggles";
 import type { SidebarGroupOrders } from "@/stores/sidebar-order";
 import { VIEW_STATE_KEYS } from "@ledger/utils/view-state";
 
-// 视图快捷键（键位带段）测试：键位带推导纯逻辑 + 键盘注册，经 sidebar-order store 装配
-// （issue #549：顺序状态归位 store，此处只测键位面对 store 组内序的响应；排序/收纳的
-// store 接口测试见 sidebar-order.test.ts）。「重启」惯用法 = setActivePinia(createPinia())。
-
 function setPlatform(platform: string) {
   Object.defineProperty(navigator, "platform", { value: platform, configurable: true });
 }
@@ -42,7 +38,6 @@ function press(
 
 afterEach(() => setPlatform(""));
 
-/** 默认组内序（= SIDEBAR_GROUPS 成员展开）：派生断言复用 */
 const DEFAULT_ORDERS: SidebarGroupOrders = {
   bookkeeping: ["transactions", "accounts", "budget"],
   assets: ["investments", "items", "savingsGoals"],
@@ -165,12 +160,10 @@ describe("键位随动（store 写路径 → 键位带装配，issue #549：状�
     store.applySidebarSort("search", "top");
     const keyOf = (name: string) =>
       deriveViewShortcuts(store.sidebarGroupOrders).find((s) => s.name === name)!.key;
-    // 他组键位原样（固定键位带：记账 1-3、资产 4-6、洞察 7-9）
     expect(keyOf("transactions")).toBe("1");
     expect(keyOf("budget")).toBe("3");
     expect(keyOf("investments")).toBe("4");
     expect(keyOf("items")).toBe("5");
-    // 本组内键位随动（主项恒有键位，⌘9 出厂空置）
     expect(keyOf("search")).toBe("7");
     expect(keyOf("reports")).toBe("8");
   });

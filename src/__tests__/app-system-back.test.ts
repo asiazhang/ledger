@@ -14,15 +14,7 @@ import { mount } from "@vue/test-utils";
 import { routes } from "@/router";
 import { hasOpenOverlay } from "@ledger/ui-kit/overlayRegistry";
 
-/**
- * App 壳系统返回桥接（issue #845 / ADR-0088 决策 7）：真壳链路（App 挂载
- * useSystemBack → onBackButtonPress 到达 → 三段语义）——抽屉经 AppDrawer
- * 受控中继关闭、无弹层路由回退、栈底交还系统、桌面档不注册监听。
- * 单元语义（栈序、不可关吞掉、换档撤销）见 useSystemBack.test.ts。
- */
-
 async function mountApp() {
-  // 启动门探测：桩为明文就绪让主界面照常挂载（app-mobile-nav.test 同款）
   wireInvokeSeam({ defaults: { get_boot_status: { phase: "ready", error_code: null } } });
   const router = createRouter({ history: createMemoryHistory(), routes });
   await router.push("/dashboard");

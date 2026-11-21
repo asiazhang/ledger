@@ -3,13 +3,6 @@ import { mount } from "@vue/test-utils";
 import SyncProgressBar from "@/investment/SyncProgressBar.vue";
 import type { InstrumentSyncProgress } from "@ledger/types";
 
-/**
- * 同步进度条展示组件（issue #897 / ADR-0095）：只测外部行为——形态为
- * GlobalBusyBar 同款细条的确定进度版，蓝色区分；条旁一行计数文案经 i18n
- * 随界面语言；无进度（null）不渲染。两入口（盈亏页/标的页）渲染同一份组件，
- * 行为零分叉由 props 契约保证。
- */
-
 function mountBar(progress: InstrumentSyncProgress | null) {
   return mount(SyncProgressBar, { props: { progress } });
 }
@@ -24,7 +17,6 @@ describe("SyncProgressBar 同步进度条（issue #897）", () => {
     const wrapper = mountBar({ done: 37, total: 100 });
     const bar = wrapper.find('[data-testid="instrument-sync-progress"]');
     expect(bar.exists()).toBe(true);
-    // 中文文案形如「同步标的信息 37/100」（i18n 单点）
     expect(bar.text()).toContain("同步标的信息 37/100");
     expect(bar.find('[data-testid="instrument-sync-progress-bar"]').attributes("style")).toContain(
       "width: 37%",

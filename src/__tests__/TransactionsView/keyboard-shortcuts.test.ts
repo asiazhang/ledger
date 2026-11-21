@@ -6,7 +6,6 @@ import { createOverlayToken, resetOverlays } from "@ledger/ui-kit/overlayRegistr
 import TransactionForm from "@/transaction/TransactionForm.vue";
 
 describe("TransactionsView 裸键快捷键（issue #153）", () => {
-  // 注册表是模块级状态，需每测复位（body 清空由全局壳层承担）
   beforeEach(() => {
     resetOverlays();
   });
@@ -49,14 +48,12 @@ describe("TransactionsView 裸键快捷键（issue #153）", () => {
 
   it("弹层上报打开时按键不触发；弹窗打开后再按键不换类型", async () => {
     const wrapper = await mountView();
-    // 先造一个打开中的弹层信号（真实场景由 AppModal/AppSelect 等封装上报）
     const token = createOverlayToken("modal");
     token.set(true);
     pressKey("a");
     await flushPromises();
     expect(wrapper.findComponent(NModal).props("show")).toBe(false);
     token.set(false);
-    // 真实打开支出弹窗后再按 z：AppModal 已上报打开状态，抑制触发，不切换为转账
     pressKey("a");
     await flushPromises();
     expect(wrapper.findComponent(NModal).props("title")).toBe("记一笔 · 支出");

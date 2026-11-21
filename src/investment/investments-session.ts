@@ -3,122 +3,59 @@ import { readonly, ref, watch } from "vue";
 import { SEARCH_DEBOUNCE_MS } from "@/composables/search-debounce";
 import type { TransactionKind } from "@ledger/types";
 
-/** 持仓页签排序列闭集（与持仓明细表列 key 一致）：市值 / 持仓收益（未实现盈亏） */
 export type HoldingsSortColumn = "market_value" | "unrealized_pnl";
 type HoldingsSortOrder = "ascend" | "descend";
 
-/** 排序状态：null = 默认标的代码字母序 */
 export interface HoldingsSorter {
   columnKey: HoldingsSortColumn;
   order: HoldingsSortOrder;
 }
 
-/** naive-ui `update:sorter` 的单列 sorter 形态（受控排序回传） */
 export interface NaiveUiSorterState {
   columnKey: string | number;
   order: "ascend" | "descend" | false;
 }
 
-/** 分页页大小：固定值不设选择器（全仓先例：交易页与搜索页同为 20，issue #912） */
 export const HOLDINGS_PAGE_SIZE = 20;
 
-/** 盈亏页按年/按账户汇总表分页页大小：固定值不设选择器，两表共享单源（issue #1795） */
 export const PNL_PAGE_SIZE = 8;
 
-/**
- * 投资页默认页签（冷启动与 ESC 复位共用同一默认态来源）：「概览」
- * （spec #1532 / issue #1536，原默认「盈亏」）——一进投资页就看到可投资资产，
- * 不设预算的用户也无需先建预算才能看到这笔资产。
- */
 const INVESTMENTS_DEFAULT_TAB = "overview";
 
-/** 明细页签默认页大小（档位与主列表同源：PAGE_SIZE_OPTIONS 单点
- * @ledger/utils/pagination，#1792；默认 20）。 */
 export const LEDGER_TAB_PAGE_SIZE_DEFAULT = 20;
 
-/** 走势预设区间闭集：1 月 / 3 月 / 1 年 / 3 年 / 5 年 / 全部（ADR-0019，#1907 扩展档位） */
 export type TrendRangePreset = "1m" | "3m" | "1y" | "3y" | "5y" | "all";
 
-/** 走势默认预设区间：近一年（两年回填的中间视角，其余区间一键切换） */
 export const TREND_PRESET_DEFAULT: TrendRangePreset = "1y";
 
-/**
- * 投资页会话状态 store（issue #1192）：投资页四页签瞬态选择的唯一读写方——
- * 当前页签 + 持仓页签筛选三维（搜索/账户过滤/排序）与页码 + 走势预设区间
- * + 盈亏页按年/按账户两表页码（issue #1795，客户端切片分页的展示切片状态）；
- * 走势预设区间提升到会话生命周期（ADR-0094；#1907 起走势随概览页签，
- * 单标的选中态随单标的走势退役一并移除）。
- *
- * 「会话内保留」语义（ADR-0094，先例 reports-session #427 / 交易页 #893）：
- * 同一应用会话内，切走页签再切回（或经侧栏离开投资视图再回来）回到离开时的
- * 样子，数据照常按恢复的选择现拉（持仓全量拉取后前端过滤排序，无第二份查询
- * 口径）；应用冷启动（新 pinia）回默认（默认页签 + 全量持仓 + 组合走势）。
- * 保留全程零写盘（不进 localStorage / SQLite）、不写回 URL。
- *
- * 「意图进、状态出」的小深模块，规则内化其中（视图不再各持一份瞬态）：
- * - 搜索 300ms 防抖内化为唯一写路径（输入回显即时、应用值延迟），防抖期间离开
- *   页签不留下迟到写入——`resetToDefault` 先撤销在途定时器再清应用值，复位后
- *   不会有意外的旧输入落地；
- * - 翻页归零：筛选三维任一「应用值」实际变化即回第一页（watch 只对实际变化
- *   响应，同值重设不归零）；页码是展示切片不是第四维；
- * - 搜索防抖的在途撤销：视图作用域销毁时撤销未应用的输入（useHoldingsFilter
- *   的 onScopeDispose 调 cancelPendingSearch），「已输入未应用」不算保留态；
- * - ESC 复位出口（ADR-0094）：resetToDefault 全维回默认，视图经复位回调注册表
- *   （viewResetRegistry）向窗口行为守卫声明本出口。
- *
- * 对外投影一律只读、写路径只有意图入口一条（ADR-0094「store 是唯一读写方」）：
- * 视图/面板不持可写 ref，受控组件回传经 `:value` + `@update:value` 调用入口动作。
- */
 export const useInvestmentsSessionStore = defineStore("investments-session", () => {
-  /** 当前页签（会话内保留、冷启动回默认「概览」；原为视图内实例级瞬态）。 */
   const activeTab = ref<string>(INVESTMENTS_DEFAULT_TAB);
 
-  /** 持仓搜索输入回显值（即时，未经防抖；写路径唯一为 setSearch） */
   const holdingsSearchInput = ref("");
-  /** 持仓搜索应用值（防抖后参与过滤） */
   const holdingsSearch = ref("");
-  /** 持仓账户过滤（null = 全部默认态） */
   const holdingsAccountId = ref<string | null>(null);
-  /** 持仓排序（null = 默认标的代码字母序） */
   const holdingsSorter = ref<HoldingsSorter | null>(null);
-  /** 持仓页码（1 起）：过滤排序之后派生行集的展示切片 */
   const holdingsPage = ref(1);
-  /** 盈亏页按年汇总页码（1 起）：后端行集的展示切片（issue #1795） */
   const pnlYearPage = ref(1);
-  /** 盈亏页按账户汇总页码（1 起）：同上，与按年页码彼此独立 */
   const pnlAccountPage = ref(1);
 
-  /**
-   * 明细页签状态（ADR-0135 决策 3 / issue #1779）：类型多选筛选（投资 kind 子集，
-   * null = 全部默认态）+ 服务端分页页码与页大小（ADR-0008）。会话内保留、冷启动
-   * 回默认（ADR-0094 默认粒度）；语义与主列表类型维度同构。
-   */
   const detailKinds = ref<TransactionKind[] | null>(null);
   const detailPage = ref(1);
   const detailPageSize = ref(LEDGER_TAB_PAGE_SIZE_DEFAULT);
 
-  /**
-   * 明细筛选其余三维（issue #1780 / ADR-0135 决策 3）：账户（涉及账户语义——账户端 ∪
-   * 出资端，后端同一 account_id 参数）、标的（convert 两腿任一命中即算）与日期边界
-   * （双端有界，picker 成对写入/清除，YYYY-MM-DD 含边界）。会话内保留、冷启动回默认
-   * （ADR-0094 默认粒度），语义与类型维度同构。
-   */
   const detailAccountId = ref<string | null>(null);
   const detailInstrumentId = ref<string | null>(null);
   const detailDateFrom = ref<string | null>(null);
   const detailDateTo = ref<string | null>(null);
 
-  /** 走势预设区间（会话内保留、冷启动回默认；#1907 起走势随概览页签） */
   const trendPreset = ref<TrendRangePreset>(TREND_PRESET_DEFAULT);
 
-  /** 搜索防抖定时器：闭包内单个，store 实例唯一。 */
   let searchTimer: ReturnType<typeof setTimeout> | undefined;
 
   function setSearch(input: string) {
     holdingsSearchInput.value = input;
     clearTimeout(searchTimer);
     const next = input.trim();
-    // 同值不重排定时器：重复输入同一有效值时应用值本就不变
     if (next === holdingsSearch.value) {
       searchTimer = undefined;
       return;
@@ -129,13 +66,6 @@ export const useInvestmentsSessionStore = defineStore("investments-session", () 
     }, SEARCH_DEBOUNCE_MS);
   }
 
-  /**
-   * 撤销在途搜索防抖（issue #1192，Spec 轴 finding）：视图卸载即放弃「已输入
-   * 未应用」的取值，回显一并回到最后应用值——与 useHoldingsFilter 原实例级实现
-   * 的 onScopeDispose 行为等价（issue #902 语义）。否则输入后 300ms 内离开视图，
-   * 迟到的应用值仍会落地并触发翻页归零，既不属「回到离开时的样子」（那个值从未
-   * 生效）也不属「冷启动回默认」任一保留态。已应用值不在此撤销范围内。
-   */
   function cancelPendingSearch() {
     clearTimeout(searchTimer);
     searchTimer = undefined;
@@ -146,9 +76,7 @@ export const useInvestmentsSessionStore = defineStore("investments-session", () 
     holdingsAccountId.value = id;
   }
 
-  /** naive-ui `update:sorter` 回传入口：order=false（第三态）或非本表列即清除排序回默认 */
   function setSorter(next: NaiveUiSorterState | NaiveUiSorterState[]) {
-    // naive-ui 单列排序闭集：数组形态（多列回传）不属本模块维度，视作清除
     const single = Array.isArray(next) ? next[0] : next;
     let resolved: HoldingsSorter | null = null;
     if (
@@ -158,7 +86,6 @@ export const useInvestmentsSessionStore = defineStore("investments-session", () 
     ) {
       resolved = { columnKey: single.columnKey, order: single.order };
     }
-    // 同值重设不产生新状态（翻页归零只对实际变化响应）
     if (
       holdingsSorter.value?.columnKey === resolved?.columnKey &&
       holdingsSorter.value?.order === resolved?.order
@@ -172,8 +99,6 @@ export const useInvestmentsSessionStore = defineStore("investments-session", () 
     holdingsPage.value = next;
   }
 
-  /** 盈亏按年/按账户翻页意图（表格内置分页回传，issue #1795）：页码直写，
-   *  无第二查询口径（行集全量驻留内存，切片由表格完成）。 */
   function setPnlYearPage(next: number) {
     pnlYearPage.value = next;
   }
@@ -182,11 +107,6 @@ export const useInvestmentsSessionStore = defineStore("investments-session", () 
     pnlAccountPage.value = next;
   }
 
-  /**
-   * 明细类型筛选写入意图（投资 kind 子集多选，AppSelect 回传）：空集合归一为 null
-   * （空集合 ≡ 不过滤 ≡ 默认态，主列表同构）；同一集合不同顺序视作同值不动作——
-   * 翻页归零只对实际变化响应（持仓排序同值守卫同规）。
-   */
   function setDetailKinds(kinds: TransactionKind[] | null) {
     const next = kinds?.length ? [...kinds] : null;
     const current = detailKinds.value;
@@ -200,22 +120,16 @@ export const useInvestmentsSessionStore = defineStore("investments-session", () 
     detailKinds.value = next;
   }
 
-  /** 明细翻页意图（表格内置分页回传）：页码直写，重拉由消费方 watch 承担 */
   function setDetailPage(next: number) {
     detailPage.value = next;
   }
 
-  /** 明细页大小切换意图：切换后翻回第 1 页（主列表页大小切换同构） */
   function setDetailPageSize(size: number) {
     if (size === detailPageSize.value) return;
     detailPageSize.value = size;
     detailPage.value = 1;
   }
 
-  /**
-   * 明细账户/标的筛选写入意图（null = 清除回默认态）：同值幂等——翻页归零只对
-   * 实际变化响应（类型维度同值守卫同规）。
-   */
   function setDetailAccount(id: string | null) {
     if (id === detailAccountId.value) return;
     detailAccountId.value = id;
@@ -226,10 +140,6 @@ export const useInvestmentsSessionStore = defineStore("investments-session", () 
     detailInstrumentId.value = id;
   }
 
-  /**
-   * 明细日期边界写入意图（daterange picker 成对回传）：成对写入、成对清除——
-   * 双端有界，单端不落（picker 形态即闭包）；同区间重写幂等不动作。
-   */
   function setDetailDateRange(range: [string, string] | null) {
     const from = range?.[0] ?? null;
     const to = range?.[1] ?? null;
@@ -238,11 +148,6 @@ export const useInvestmentsSessionStore = defineStore("investments-session", () 
     detailDateTo.value = to;
   }
 
-  /**
-   * 明细筛选清除意图（「清除筛选」按钮，#1807）：明细四维（类型/账户/标的/日期）
-   * 清回默认态，翻页归零由既有 watch 承担——与 ESC 复位（resetToDefault）的明细面
-   * 同出口，但不切页签、不动页大小；无激活筛选时各 setter 幂等无操作。
-   */
   function resetDetailFilters() {
     setDetailKinds(null);
     setDetailAccount(null);
@@ -250,9 +155,6 @@ export const useInvestmentsSessionStore = defineStore("investments-session", () 
     setDetailDateRange(null);
   }
 
-  /** 翻页归零：三维任一应用值实际变化即回第一页（排序清除亦属实际变化）。
-   * 同步 flush 使归零与意图应用原子生效，不留「维度已变、页码未归」的中间态；
-   * 防抖中的搜索不归零（输入回显不是应用值）。 */
   watch(
     [holdingsSearch, holdingsAccountId, holdingsSorter],
     () => {
@@ -261,10 +163,6 @@ export const useInvestmentsSessionStore = defineStore("investments-session", () 
     { flush: "sync" },
   );
 
-  /**
-   * 明细翻页归零：筛选四维（类型/账户/标的/日期边界）任一应用值实际变化即回第一页
-   * （issue #1780 验收：筛选变化翻页归零；同步 flush 使归零与意图应用原子生效）。
-   */
   watch(
     [detailKinds, detailAccountId, detailInstrumentId, detailDateFrom, detailDateTo],
     () => {
@@ -273,27 +171,14 @@ export const useInvestmentsSessionStore = defineStore("investments-session", () 
     { flush: "sync" },
   );
 
-  /** 页签写入意图入口（NTabs 受控回传与 focus 落点共用；测试经本入口换档） */
   function setActiveTab(tab: string) {
     activeTab.value = tab;
   }
 
-  /** 走势预设区间写入意图（走势卡 NRadioGroup 回传）；区间是闭集字面量，
-   * 无守卫语义（任意档位均可直接生效）。 */
   function setTrendPreset(preset: TrendRangePreset) {
     trendPreset.value = preset;
   }
 
-  /**
-   * ESC 复位出口（ADR-0094 决策 4）：页签回默认「概览」、持仓筛选三维清零、
-   * 翻页归零、走势回默认组合曲线（选中标的与单标的模式一并清除）——复位即清除
-   * 保留态本身（复位后离开再回来 = 默认）。走各维既有写入出口，同值幂等无操作。
-   *
-   * 搜索维度按**复位语义优先**处理：撤销在途防抖定时器后直接把「应用值 + 回显」
-   * 一并清空——不能复用 cancelPendingSearch 再清应用值（那会把回显先恢复成旧应用值、
-   * 再清应用值，留下「回显有旧文本、应用值为空」的不一致态，与「ESC 是取消、回到
-   * 默认」直接冲突）。定时器撤销保证复位后不会有意外的旧输入落地。
-   */
   function resetToDefault() {
     clearTimeout(searchTimer);
     searchTimer = undefined;
@@ -306,8 +191,6 @@ export const useInvestmentsSessionStore = defineStore("investments-session", () 
     pnlYearPage.value = 1;
     pnlAccountPage.value = 1;
     trendPreset.value = TREND_PRESET_DEFAULT;
-    // 明细筛选清零 + 翻页归零 + 页大小回默认（ADR-0135：ESC 复位 = 页签回概览 +
-    // 清明细筛选、翻页归零；随本票落地）
     detailKinds.value = null;
     detailPage.value = 1;
     detailPageSize.value = LEDGER_TAB_PAGE_SIZE_DEFAULT;
@@ -318,7 +201,6 @@ export const useInvestmentsSessionStore = defineStore("investments-session", () 
   }
 
   return {
-    // 全部状态只读投影：改动只经下方意图入口（ADR-0094「store 是唯一读写方」）
     activeTab: readonly(activeTab),
     holdingsSearchInput: readonly(holdingsSearchInput),
     holdingsSearch: readonly(holdingsSearch),
@@ -335,7 +217,6 @@ export const useInvestmentsSessionStore = defineStore("investments-session", () 
     detailDateFrom: readonly(detailDateFrom),
     detailDateTo: readonly(detailDateTo),
     trendPreset: readonly(trendPreset),
-    // 意图入口
     setActiveTab,
     setSearch,
     cancelPendingSearch,

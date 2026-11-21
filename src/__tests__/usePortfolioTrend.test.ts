@@ -24,10 +24,6 @@ const portfolioTrend: PortfolioValueTrend = {
   ],
 };
 
-/**
- * 默认布线表：组合走势（动态函数归 overrides）。
- * 参考字典命令走接缝内建兜底，不在此枚举。
- */
 const BASE_OVERRIDES: Record<string, InvokeSeamOverride> = {
   portfolio_value_trend: () => Promise.resolve(portfolioTrend),
 };
@@ -113,7 +109,6 @@ describe("toTrendChartSeries 点位映射 → 图表数据（纯函数）", () =
         { date: "2026-06-19", value: 95000 },
       ]),
     ).toEqual({
-      // 首末点所在周的周一之间逐周生成槽位；中间缺周 label 用周一、值为 null
       labels: ["2026-06-05", "2026-06-08", "2026-06-19"],
       values: [100000, null, 95000],
     });
@@ -153,7 +148,6 @@ describe("usePortfolioTrend 走势数据层", () => {
     setPreset("3m");
     await refresh();
     const calls = mockInvoke.mock.calls.filter(([cmd]) => cmd === "portfolio_value_trend");
-    // 初始 refresh + preset 变化触发 watch + 显式 refresh
     expect(calls.length).toBeGreaterThanOrEqual(2);
     const last = calls.at(-1)![1] as { filter: { start_date: string; end_date: string | null } };
     expect(last.filter.end_date).toBeNull();
@@ -202,7 +196,6 @@ describe("usePortfolioTrend 走势数据层", () => {
       },
     });
     const { refresh, loading } = withSetup(() => usePortfolioTrend());
-    // 挂载自动首刷先吃到拒绝布线并重置去重短路键，冲刷落定后手动 refresh 才会重发
     await flushPromises();
     await expect(refresh()).rejects.toThrow("boom");
     expect(loading.value).toBe(false);

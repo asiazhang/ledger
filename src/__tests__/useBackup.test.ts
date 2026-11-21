@@ -10,7 +10,6 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({
   save: vi.fn(),
   confirm: vi.fn(),
 }));
-// 重启钩子 mock：confirmRestore 成功后触发，断言恢复后重启语义用。
 vi.mock("@/backup/restart", () => ({ restartAppShortly: vi.fn() }));
 
 import { useAppStore } from "@/stores/app";
@@ -41,7 +40,6 @@ const manualBackupFile: BackupFileInfo = {
   source_unknown: true,
 };
 
-/** 本机设备名下的第二/第三份产物（清理弹窗待删数量只统计本设备桶，issue #1987）。 */
 const ownBackupSecond: BackupFileInfo = {
   ...autoBackupFile,
   file_name: "ledger-auto-20260216-093000-dev-this.db.zip",
@@ -53,7 +51,6 @@ const ownBackupThird: BackupFileInfo = {
   path: "/Users/me/backups/ledger-auto-20260215-093000-dev-this.db.zip",
 };
 
-/** 另一台设备名下的产物（本机清理不代删，弹窗数字不含它，issue #1987）。 */
 const foreignBackup: BackupFileInfo = {
   ...autoBackupFile,
   file_name: "ledger-auto-20260210-093000-dev-other.db.zip",
@@ -61,7 +58,6 @@ const foreignBackup: BackupFileInfo = {
   source_device_id: "dev-other",
 };
 
-// 命令契约快照：正常态（开关开、从未失败）。issue #1456 起状态含连续失败字段。
 const AUTO_STATE_OK: AutoBackupState = {
   enabled: true,
   last_backup_at: null,
@@ -80,14 +76,12 @@ function makeStub(initialList: BackupFileInfo[]) {
       get_auto_backup_state: () => Promise.resolve(autoState),
       set_auto_backup_enabled: { kept: 0, deleted: [], failed: [] },
       prune_backups: { kept: 0, deleted: [], failed: [] },
-      // 当前账本指纹（issue #1985）：手动备份默认名的标识段消费。
       get_book_fingerprint: () => Promise.resolve("fp-book-a"),
     },
   });
 
   return {
     listCalls,
-    /** 模拟后端状态变化：下一次事件触发的重拉会拿到新数据。 */
     setList(next: BackupFileInfo[]) {
       list = next;
     },
@@ -97,7 +91,6 @@ function makeStub(initialList: BackupFileInfo[]) {
   };
 }
 
-/** 承载 composable 生命周期的宿主组件：setup 中捕获返回值供断言。 */
 function mountHost() {
   let backup!: ReturnType<typeof useBackup>;
   const Host = defineComponent({
@@ -111,7 +104,6 @@ function mountHost() {
 }
 
 beforeEach(() => {
-  // 备份列表拉取以配置的目录为前提（未配置时列表恒空、不发 IPC）。
   useAppStore().setBackupDir("/Users/me/backups");
 });
 
@@ -147,7 +139,6 @@ describe("useBackup 备份产物变更信号（issue #129）", () => {
     expect(backup.backups.value).toEqual([]);
     expect(stub.listCalls()).toBe(1);
 
-    // 后端自动备份完成 → 产物出现 → 发出信号。
     stub.setList([manualBackupFile, autoBackupFile]);
     readFire()?.();
     await flushPromises();
@@ -209,7 +200,6 @@ describe("useBackup 自动备份连续失败提示（issue #1456）", () => {
     const { backup } = mountHost();
     await flushPromises();
 
-    // 后端连续失败达阈值 → 提示态。
     stub.setAutoState({
       enabled: true,
       last_backup_at: null,
@@ -220,7 +210,6 @@ describe("useBackup 自动备份连续失败提示（issue #1456）", () => {
     await flushPromises();
     expect(backup.autoBackupFailing.value).toBe(true);
 
-    // 后端一次成功：计数清零、提示态解除 → 信号刷新后提示数据源归零。
     stub.setAutoState({
       enabled: true,
       last_backup_at: "2026-02-17T10:00:00Z",
@@ -340,7 +329,6 @@ describe("useBackup 加密语义（issue #572 / ADR-0075 决策 7）", () => {
     await backup.pickRestore();
     await flushPromises();
 
-    // 跨模式警告是销毁性操作前的安全面：当前库模式未知时宁可不弹窗。
     expect(backup.restoreIntent.value).toBeNull();
   });
 
@@ -370,7 +358,6 @@ describe("useBackup 加密语义（issue #572 / ADR-0075 决策 7）", () => {
       passphrase: "pw",
     });
     expect(backup.restoreIntent.value).toBeNull();
-    // 恢复成功后应用重启，由启动探测接管实际模式（ADR-0075 决策 4/7）。
     expect(restartAppShortly).toHaveBeenCalled();
   });
 
@@ -402,8 +389,6 @@ describe("useBackup 加密语义（issue #572 / ADR-0075 决策 7）", () => {
   });
 
   it("confirmRestore：明文谎报实库为密文（后端报需口令）时，重输口令随请求上送", async () => {
-    // 元数据缺标记视为明文（intent.backupEncrypted=false），弹窗显出口令框
-    // 后用户重输：口令非空即上送，后端凭它打开实库为密文的备份（不再空转）。
     wireInvokeSeam({
       overrides: {
         list_backups: [],
@@ -460,9 +445,6 @@ describe("useBackup 加密语义（issue #572 / ADR-0075 决策 7）", () => {
 });
 
 describe("useBackup 手动清理确认弹窗（issue #652 / ADR-0078）", () => {
-  /** 预置 5 份产物（本机 3 + 未知来源 1 + 他端 1）、保留上限 1：本机桶超上
-   *  限 2 个（上限偏好显式设小，默认 30）。待删数量只统计本机桶，issue
-   *  #1987：弹窗数字与实际删除一致，不含他端与未知来源产物。 */
   function stubThreeBackups() {
     useAppStore().setBackupMaxCount(1);
     wireInvokeSeam({
@@ -475,7 +457,6 @@ describe("useBackup 手动清理确认弹窗（issue #652 / ADR-0078）", () => 
           foreignBackup,
         ],
         get_auto_backup_state: AUTO_STATE_OK,
-        // 本机设备标识（issue #1987）：待删数量的比对基准。
         get_device_id: "dev-this",
         prune_backups: { kept: 1, deleted: ["/a", "/b"], failed: [] },
       },
@@ -489,7 +470,6 @@ describe("useBackup 手动清理确认弹窗（issue #652 / ADR-0078）", () => 
 
     await backup.manualPrune();
     expect(backup.pruneConfirmShow.value).toBe(true);
-    // 总数 5 份、上限 1：旧口径会报 4；本机桶 3 份 → 待删 2（他端与未知来源不计入）。
     expect(backup.pruneExcess.value).toBe(2);
     expect(mockInvoke.mock.calls.some(([cmd]) => cmd === "prune_backups")).toBe(false);
   });
@@ -528,7 +508,6 @@ describe("useBackup 手动清理确认弹窗（issue #652 / ADR-0078）", () => 
       overrides: {
         list_backups: [manualBackupFile],
         get_auto_backup_state: AUTO_STATE_OK,
-        // 本机标识在场：未知来源产物不进本机桶，本机桶空 → 不弹（issue #1987）。
         get_device_id: "dev-this",
       },
     });
@@ -540,11 +519,6 @@ describe("useBackup 手动清理确认弹窗（issue #652 / ADR-0078）", () => 
   });
 
   it("待删数量与后端清理桶镜像一致（spec #1982 review：桶谓词漂移防护）", async () => {
-    // 后端 prune_managed_backups 的桶口径镜像（engine.rs）：本桶 = 指纹归属
-    // （列表已收口）× 设备水印逐值比对；桶内新→旧排序，超额删最旧，kept
-    // = 桶内保留数。替身按同一口径响应 keep，前端弹窗待删数与后端实际
-    // 删除数（deleted.length）必须相等：前端谓词漂移（漏过滤/比错字段/
-    // 比错基准）即红。
     const mirrorPrune = (files: BackupFileInfo[], deviceId: string, keep: number) => {
       const bucket = files.filter((f) => f.source_device_id === deviceId);
       const excess = Math.max(0, bucket.length - keep);
@@ -573,7 +547,6 @@ describe("useBackup 手动清理确认弹窗（issue #652 / ADR-0078）", () => 
 
     await backup.manualPrune();
     expect(backup.pruneConfirmShow.value).toBe(true);
-    // 镜像语义锁定：弹窗待删数 == 后端口径下本桶超额（实际将删数）。
     const backendResult = mirrorPrune(files, "dev-this", 1);
     expect(backendResult.deleted.length).toBeGreaterThan(0);
     expect(backup.pruneExcess.value).toBe(backendResult.deleted.length);
@@ -585,7 +558,6 @@ describe("useBackup 手动清理确认弹窗（issue #652 / ADR-0078）", () => 
 
 describe("useBackup 手动备份按账本分域（issue #836）", () => {
   beforeEach(() => {
-    // 默认名内嵌 `new Date()`：冻结系统时间使命名可精确断言。
     vi.useFakeTimers({ now: new Date(2026, 1, 17, 9, 30, 5) });
   });
   afterEach(() => {
@@ -606,7 +578,6 @@ describe("useBackup 手动备份按账本分域（issue #836）", () => {
           schema_version: 24,
           created_at: "2026-02-17T09:30:05Z",
         },
-        // 接缝表按调用整体替换：补上 makeStub 的指纹应答（断言命名标识段用）。
         get_book_fingerprint: () => Promise.resolve("fp-book-a"),
       },
     });
@@ -628,7 +599,6 @@ describe("useBackup 手动备份按账本分域（issue #836）", () => {
       overrides: {
         list_backups: () => Promise.resolve([]),
         get_auto_backup_state: () => Promise.resolve(AUTO_STATE_OK),
-        // 指纹读取失败现场：get_book_fingerprint 为 null。
         get_book_fingerprint: () => Promise.reject(new Error("db unavailable")),
         create_backup: {
           path: "/Users/me/backups/ledger-backup-20260217-093005.db.zip",

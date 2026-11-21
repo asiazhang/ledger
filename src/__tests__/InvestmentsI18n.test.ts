@@ -9,42 +9,29 @@ import InvestmentsView from "@/views/InvestmentsView.vue";
 import InvestmentForm from "@/investment/InvestmentForm.vue";
 import { makeInstrument, makeInvestmentOverview } from "./factories";
 
-// 走势图用共享桩组件替代（同 InvestmentsView.test.ts）
 vi.mock("vue-chartjs", async () => {
   const { LineChartStub } = await import("./line-chart-stub");
   return { Line: LineChartStub };
 });
 
-// 视图读 route.query（focus 落点消费，issue #709）：本文件不涉落点，空 query
-// 即安全空转（同 InvestmentsView.test.ts 的可控 mockRoute 先例）
 vi.mock("vue-router", () => ({
   useRoute: () => ({ query: {} }),
   useRouter: () => ({ push: vi.fn() }),
 }));
 
-/** 投资域三命令的空数据契约快照（英文渲染不消费具体数据）。 */
 const EMPTY_INVESTMENT_DEFAULTS = {
-  // 投资概览（spec #1532 / issue #1536）：默认页签落点的只读取数命令
   investment_overview: makeInvestmentOverview(),
   list_instruments: { items: [], total: 0 },
   list_holdings: [],
-  // 价格过期检查（issue #1190）：打开投资页的本地水位检查，默认无过期
   instrument_price_staleness: { stale_count: 0, threshold_days: 3 },
-  // 累计收益·折本位币单值（issue #1797）：空账本为 0 单值
   cumulative_pnl_native_total: { total_cents: 0, native_currency: "CNY" },
   portfolio_value_trend: { currency_code: "CNY", points: [] },
   realized_pnl_summary: { by_year: [], by_account: [] },
-  // 资金加权收益率（issue #1195）：持仓/盈亏两页签共用一次拉取
   money_weighted_return_summary: { by_instrument: [], by_account: [], total: [] },
-  // 投资明细列表（ADR-0135 / issue #1778）：明细页签唯一取数接口（英文冒烟不打开
-  // 明细页签，静态空行集兜底即可）
   list_investment_transactions: { items: [], total: 0 },
 };
 
-// 英文渲染冒烟（issue #350）：切 en-US 后投资域文案走 en 资源；
-// 用例末尾还原 zh-CN，避免污染同进程其他测试（i18n 模块级单例）。
 beforeEach(async () => {
-  // 参考 store 预载走接缝 opt-in 参数（五个 list 命令由桩层规范夹具兜底）。
   await wireInvokeSeam({ defaults: EMPTY_INVESTMENT_DEFAULTS, refreshReferenceStores: true }).ready;
 });
 
@@ -52,7 +39,6 @@ afterEach(async () => {
   await applyLocale("zh-CN");
 });
 
-/** 视图挂载走共享基座（@ledger/test-support/mount.ts 单点收口，NDialogProvider 包裹）。 */
 const mountView = () => mountWithDialog(InvestmentsView);
 
 describe("InvestmentsView 英文渲染（issue #350 / ADR-0049）", () => {
@@ -67,7 +53,6 @@ describe("InvestmentsView 英文渲染（issue #350 / ADR-0049）", () => {
     expect(labels).toContain("Holdings");
     expect(labels).toContain("Ledger");
     expect(labels).toContain("Instruments");
-    // 「Trend」页签随走势页签退役（#1907），组合走势卡迁入 Overview
     expect(labels).not.toContain("Trend");
   });
 
@@ -90,7 +75,6 @@ describe("InvestmentsView 英文渲染（issue #350 / ADR-0049）", () => {
     await clickTab(wrapper, "Holdings");
     expect(wrapper.text()).toContain("Current Holdings");
     expect(wrapper.text()).toContain("Sync Instrument Info");
-    // 无持仓数据 → 英文空态
     expect(wrapper.text()).toContain("No holdings");
   });
 
@@ -101,10 +85,8 @@ describe("InvestmentsView 英文渲染（issue #350 / ADR-0049）", () => {
     await clickTab(wrapper, "Instruments");
     expect(wrapper.text()).toContain("Holdings only");
     expect(wrapper.text()).toContain("Add Instrument");
-    // 全量同步入口已退役（issue #698），不再渲染 Full Sync
     expect(wrapper.text()).not.toContain("Full Sync");
     expect(wrapper.find('input[placeholder="Search symbol or name..."]').exists()).toBe(true);
-    // 空表列头英文
     const headers = wrapper.findAll("th").map((th) => th.text());
     expect(headers).toContain("Symbol");
     expect(headers).toContain("Price Source");
@@ -170,7 +152,6 @@ describe("InvestmentsView 英文渲染（issue #350 / ADR-0049）", () => {
     for (const label of ["1M", "3M", "1Y", "3Y", "5Y", "All"]) {
       expect(text).toContain(label);
     }
-    // 组合走势空数据 → 英文引导文案
     expect(text).toContain("No historical price data");
   });
 
@@ -200,7 +181,6 @@ describe("InvestmentsView 英文渲染（issue #350 / ADR-0049）", () => {
     expect(labels).toContain("Amount");
     expect(labels).toContain("Investment Account");
     expect(labels).toContain("Instrument");
-    // NSelect 未展开时 placeholder 呈现在 selection 占位元素而非 input 属性
     expect(wrapper.text()).toContain("Select investment account");
   });
 });

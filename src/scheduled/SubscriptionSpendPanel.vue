@@ -12,8 +12,6 @@ import {
 } from "naive-ui";
 import { Bar } from "vue-chartjs";
 import type { ChartOptions, TooltipItem } from "chart.js";
-// Chart.js 统一注册模块（issue #926）：柱状图所需 controller/element/scale 一处
-// 注册，不再组件自持子集；导入即完成注册。
 import "@ledger/utils/chart-registration";
 import { api } from "@ledger/api";
 import { formatAmount, amountPrivacyEnabled } from "@ledger/money";
@@ -21,11 +19,6 @@ import { t } from "@ledger/i18n";
 import { useReferenceStore } from "@/stores/reference";
 import { scheduledStatusLabel } from "@ledger/utils/scheduled";
 import type { SubscriptionSpendOverview, SubscriptionSpendRow } from "@ledger/types";
-
-// 订阅花费双口径分析区（issue #160/#161，ADR-0023 决策二）：
-// 实际花费——本月/本年 + 过去 12 个月逐月趋势（不摊销，忠实统计期次生成的流水）；
-// 推算成本——折算月/年成本两个数（只统计进行中订阅，系数收口在后端，纯展示）。
-// 数据全部来自只读聚合命令 subscription_spend_overview，前端零口径逻辑只渲染。
 
 const reference = useReferenceStore();
 const message = useMessage();
@@ -40,7 +33,6 @@ async function reload() {
   try {
     overview.value = await api.subscriptionSpendOverview();
   } catch (e) {
-    // 后端缺汇率等中文错误直接上抛展示，不静默混算（ADR-0023）
     loadFailed.value = true;
     message.error(t("scheduled.spend.loadError", { message: errorMessage(e) }));
   } finally {
@@ -54,7 +46,6 @@ const currency = computed(() =>
   overview.value ? reference.getCurrency(overview.value.native_currency) : undefined,
 );
 
-/** 趋势图数据：x 轴 12 个日历月（YYYY-MM），y 轴本位币金额（分） */
 const chartData = computed(() => ({
   labels: overview.value?.months.map((m) => m.month) ?? [],
   datasets: [
@@ -67,9 +58,6 @@ const chartData = computed(() => ({
   ],
 }));
 
-// options computed 并读取隐私开关建立响应式依赖（issue #566）：tooltip 与轴刻度
-// formatter 已同源走 formatAmount，但只在重绘时执行——切换时靠 options 变更驱动
-// vue-chartjs 重绘，满足「切换即时生效于所有已打开页面」（spec #564 user story 14）。
 const chartOptions = computed<ChartOptions<"bar">>(() => {
   void amountPrivacyEnabled.value;
   return {
@@ -95,14 +83,12 @@ const chartOptions = computed<ChartOptions<"bar">>(() => {
   };
 });
 
-/** 逐订阅行（含已取消/暂停计划，历史花费如实保留） */
 const rows = computed(() => overview.value?.rows ?? []);
 
 const rowColumns = computed<DataTableColumns<SubscriptionSpendRow>>(() => [
   {
     title: t("scheduled.column.subscription"),
     key: "note",
-    // 商户名为后端左联 merchants 现名（改名即时生效，软删后历史计划照常显示）
     render: (row) => row.note ?? row.merchant_name ?? "—",
   },
   {

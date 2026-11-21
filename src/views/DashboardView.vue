@@ -34,19 +34,10 @@ import type { MonthlySummary } from "@ledger/types";
 import { usePortfolioOverview } from "@/investment/usePortfolioOverview";
 import PortfolioStatsCards from "@/investment/PortfolioStatsCards.vue";
 
-// 首页财务全貌仪表盘（issue #140）：净资产总览卡（issue #143）+ 投资概览卡（issue #145）
-// + 本月收支（issue #144）。
-// 快速记账已迁至交易页「记一笔」弹窗、最近交易列表已移除（issue #141）；
-// 逐账户余额卡已移除（逐账户明细归账户页，首页只呈现聚合全貌），
-// 预算进度与物品使用成本两卡已移除（明细归预算页 / 物品页，issue #1950）；
-// 投资概览卡不再按数据隐匿，空态用 NEmpty 占位。
 const reference = useReferenceStore();
-// 进度条色：强调色只落数据（自由度的达成比例就是本卡的数据），色值经强调色
-// 单一解析出口取，不另写一份琥珀（ADR-0093）。
 const appStore = useAppStore();
 const freedomBarColor = computed(() => accentColor(appStore.theme).base);
 
-// 本年度预算卡（取数/重试/报错口径与自由度卡同款；日期口径全在后端）
 const {
   data: budgetSummary,
   loading: budgetLoading,
@@ -54,7 +45,6 @@ const {
   refresh: refreshBudget,
 } = useBudgetAnnualSummary();
 
-/** 年度预算进度百分比：本年已支 / 年度预算总额（年化），封顶 100（预算页同一口径）。 */
 const budgetPercentage = computed(() => {
   const s = budgetSummary.value;
   if (s === null || s.annual_budget_total_cents <= 0) return 0;
@@ -62,21 +52,14 @@ const budgetPercentage = computed(() => {
 });
 const currentMonth = ref<MonthlySummary | null>(null);
 
-// 净资产总览卡（issue #143）：多币种折算与合计全部在后端 `dashboard_overview` 完成，
-// 前端只做装配渲染；缺汇率等报错显示提示文案而非空数字。
 const { overview, loading, error } = useDashboardOverview();
 
-// 本月收支口径：收入用后端净收入列（income_net）；净支出为展示层计算
-// 毛支出 − 退款（与预算消耗、分类占比的 expense_net 口径一致，退款不单列）；
-// 结余 = 收入 − 净支出。当月无交易行时全部显示 0。
 const netIncomeCents = computed(() => currentMonth.value?.income_cents ?? 0);
 const netExpenseCents = computed(
   () => (currentMonth.value?.expense_cents ?? 0) - (currentMonth.value?.refund_cents ?? 0),
 );
 const balanceCents = computed(() => netIncomeCents.value - netExpenseCents.value);
 
-// 投资概览卡（issue #145）：复用持仓概览 composable 的折本位币单值合计（issue #1797），
-// 无任何持仓时整卡隐藏；无行情标的不以零计入合计（缺价行计数标注，缺汇率整卡警告）。
 const {
   rows: holdingRows,
   statCards,
@@ -85,8 +68,6 @@ const {
   refresh: refreshPortfolio,
 } = usePortfolioOverview();
 
-// 财务自由度卡（issue #344；口径 ADR-0048）：后端 financial_freedom 聚合
-//（分子折算、分母年化、3% 提取率），前端只做装配渲染与阶段标签派生。
 const router = useRouter();
 const {
   data: freedom,
@@ -95,21 +76,15 @@ const {
   refresh: refreshFreedom,
 } = useFinancialFreedom();
 
-// 折算基准币种（分子/分母同币种展示用）
 const freedomCurrency = computed(() =>
   freedom.value ? reference.getCurrency(freedom.value.native_currency) : undefined,
 );
 
-// 移动档适配（issue #847 / ADR-0088 决策 11 票⑦）：概览栅格单列化 + 悬停替代。
-// 断点口径接窗口分级 composable 唯一事实源，不自立断点（响应栅格不用 naive
-// 自带 640/1024 断点）；悬停替代按输入轴判定（平板横屏 = 桌面档 + 触控轴）。
 const windowTier = useWindowTier();
 const inputMode = useInputMode();
 const isMobileTier = computed(() => windowTier.value === "mobile");
 const isTouch = computed(() => inputMode.value === "touch");
 
-/** 计算口径四行文案的 i18n key 闭集：tooltip 与触控气泡两轴共用同一数据源，
- * 文案只在一处声明。 */
 const FREEDOM_INFO_KEYS = [
   "formula",
   "numeratorBreakdown",
@@ -117,8 +92,6 @@ const FREEDOM_INFO_KEYS = [
   "extractionRate",
 ] as const;
 
-// 阶段标签前端派生（ADR-0048 决策 5：阈值与文案归 UI，不做后端枚举）：
-// <30% 积累期 / 30–100% 接近自由 / ≥100% 财务自由；文案走 i18n（ADR-0049）
 const freedomStage = computed(() => {
   if (!freedom.value) return null;
   if (freedom.value.ratio >= 100)
@@ -128,7 +101,6 @@ const freedomStage = computed(() => {
   return { label: t("dashboard.freedom.stageAccumulation"), type: "default" as const };
 });
 
-// 进度条：>100% 封顶展示，≥100% 转成功状态（达成时刻的视觉确认）
 const freedomProgress = computed(() => {
   if (!freedom.value) return { percentage: 0, success: false };
   return {
@@ -141,7 +113,6 @@ function goBudget() {
   void router.push({ name: "budget" });
 }
 
-/** 净资产卡下钻：总览屏的唯一动作（钱在哪些账户） */
 function goAccounts() {
   void router.push({ name: "accounts" });
 }

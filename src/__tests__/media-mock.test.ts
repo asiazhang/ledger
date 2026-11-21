@@ -5,16 +5,6 @@ import { useInputMode } from "@/composables/useInputMode";
 import { useWindowTier } from "@ledger/window-tier";
 import { mountFlushed } from "@ledger/test-support/mount";
 
-/**
- * 媒体查询测试接缝测试（issue #841，ADR-0088 决策 11 票①）：
- * 可编程假 matchMedia 是移动端适配唯一的换档机制——本文件锁接缝自身的外部行为：
- * 设定 hover / pointer / 宽度应答 → window.matchMedia 按状态应答；重编程时向
- * matches 翻转的 MediaQueryList 派发 change；每测经全局壳层复位回桌面指针默认。
- * 断言全走 window.matchMedia 公开面（安装正确性与可编程性一体验证），
- * 不触及接缝内部注册表。消费示例（组件挂载换档）见本文件末尾 describe。
- */
-
-/** 经公开面读取当前应答（安装正确性的一体验证路径）。 */
 function matches(query: string): boolean {
   return window.matchMedia(query).matches;
 }
@@ -102,9 +92,9 @@ describe("媒体查询测试接缝：change 派发（MediaQueryList 语义）", 
       fires += 1;
     });
 
-    setFakeMedia({ hover: "none" }); // 宽度未变，该查询 matches 不翻转
+    setFakeMedia({ hover: "none" });
     expect(fires).toBe(0);
-    setFakeMedia({ width: 2000 }); // 仍然 ≥1000，不翻转
+    setFakeMedia({ width: 2000 });
     expect(fires).toBe(0);
   });
 
@@ -136,18 +126,13 @@ describe("媒体查询测试接缝：resetFakeMedia（显式复位，全局壳�
     });
 
     resetFakeMedia();
-    expect(mql.matches).toBe(false); // 默认宽视口下不再命中
-    expect(matches("(min-width: 100px)")).toBe(true); // 默认宽视口应答
-    setFakeMedia({ width: 400 }); // 复位后重编程，旧监听已随注册表清空
+    expect(mql.matches).toBe(false);
+    expect(matches("(min-width: 100px)")).toBe(true);
+    setFakeMedia({ width: 400 });
     expect(fires).toBe(0);
   });
 });
 
-/**
- * 消费示例（后续票照此换档）：挂载消费窗口分级 / 输入轴的探针组件，
- * 断言「设定信号 → 渲染分支」与「挂载后重编程 → 分支实时切换」。
- * 后续票的组件测试全部依此模式换档，不允许第二套换档机制。
- */
 const AxisProbe = defineComponent({
   name: "AxisProbe",
   setup() {

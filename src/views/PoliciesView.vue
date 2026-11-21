@@ -30,22 +30,9 @@ const policiesStore = usePoliciesStore();
 const message = useMessage();
 const route = useRoute();
 
-// 移动档（issue #849 / ADR-0088 决策 11 票⑨，收纳页布局核对级适配）：低频管理表
-// 窄屏不重排列结构，挂 scroll-x = 固定列宽总和由横向滚动吸收（触屏滑动可达全部
-// 列与行内操作）；桌面档不挂（既有压缩行为一字不变）。
 const windowTier = useWindowTier();
 const isMobileTier = computed(() => windowTier.value === "mobile");
 
-// —— 新建/编辑弹窗（同一表单组件双模式）——
-// 开启/目标/关闭编排归弹窗意图工厂 ModalIntent（ADR-0072，词汇表 ModalIntent）：
-// 意图闭集双成员（新建无载荷；编辑携带目标保单行），显示由「意图非空」派生
-// （无独立 show 布尔），序号随开启递增驱动表单重建（:key=formSeq），关闭
-// （✕ / ESC / 取消 / 保存成功）统一经工厂清回 null 终态。现状无序号守卫，
-// 迁移为缺陷修复（本票唯一声明的行为变化）：守卫从无到有，「弹窗开着时
-// 目标行被替换回填旧行」缺陷消亡，同目标重开重回填等边缘语义细化同归此类；
-// 此外等价。
-
-/** 保单表单弹窗意图（新建/编辑双模式闭集）：编辑携带目标保单行。 */
 type PolicyFormIntent = { mode: "create" } | { mode: "edit"; policy: Policy };
 
 const {
@@ -63,8 +50,6 @@ function openEdit(row: Policy) {
   openFormIntent({ mode: "edit", policy: row });
 }
 
-// —— 软删除（issue #360 / ADR-0051 决策 5）：二次确认后 is_deleted=1，
-// 列表自动过滤；库内行与历史引用保留不置空 ——
 async function removePolicy(id: string) {
   try {
     await policiesStore.remove(id);
@@ -74,10 +59,6 @@ async function removePolicy(id: string) {
   }
 }
 
-// —— 展示层到期推导（不持久化，可推导的状态不落库）：
-// 优先消费统计命令的同源推导（issue #363，与 BDD 口径一致）；统计行未加载时
-// 回落本地推导（同一规则：止日非空且早于今天 → 已到期；止日空 = 长期/终身）。
-// 「今天」在行渲染时即时取（无日历事件源，写入触发的重拉顺带刷新快照）——
 function isExpired(row: Policy): boolean {
   return row.end_date !== null && row.end_date < todayStr();
 }
@@ -94,21 +75,16 @@ function periodText(row: Policy): string {
 
 function coverageText(row: Policy): string {
   if (row.coverage_amount_cents === null || row.coverage_currency_code === null) return "—";
-  // 保额纯展示：按自带币种原样格式化，不折算、不进任何金额口径（ADR-0051）
   const currency = reference.getCurrency(row.coverage_currency_code);
   return formatAmount(row.coverage_amount_cents, currency);
 }
 
-// —— 保单视角统计（issue #363）：实时推导，按行取 store 同源快照；
-// 合计展示经共享辅助（与详情摘要同口径），统计行未加载时显示占位 ——
 function statsAmountText(row: Policy, pick: (s: PolicyStats) => number): string {
   return policyStatAmountText(policiesStore.statsById.get(row.id), pick);
 }
 
 const columns: DataTableColumns<Policy> = [
   {
-    // 保司列纯文本（issue #713 / ADR-0082）：保司不是商户，无商户排行可下钻；
-    // 名字经 reference store 保司显示映射解析（含软删保司——存量保单照常显示）。
     title: () => t("policies.columns.insurer"),
     key: "insurer_id",
     render: (row) => reference.insurerMap.get(row.insurer_id)?.name ?? "—",
@@ -183,17 +159,10 @@ const columns: DataTableColumns<Policy> = [
   },
 ];
 
-/** 横向滚动下限 = 固定列宽总和（列定义之后单点派生，桌面档不消费）。 */
 const tableScrollX = sumFixedColumnWidths(columns);
 
-// —— 来源跳转落点（spec #704 / issue #706，词汇表「实体定位参数（focus 参数）」）：
-// 挂载消费一次（读一次语义归 useFocusParam 单点）；保单行高亮属「先拿 id 后等
-// 数据」——回调只暂存 id，列表渲染后滚动定位（读取时刻与生效时刻解耦）。
-// 高亮保持到实例消亡：刷新/重进 = 新实例重定位，URL 在场即复现、可分享。
-// 独立路由与收纳态（资产·更多保单页签，同一组件整体装载）共用本消费点。
 const highlightedPolicyId = ref<string | null>(null);
 
-/** 表格组件引用：滚动定位在其自身子树内查行锚点。 */
 const tableRef = ref<{ $el?: HTMLElement } | null>(null);
 
 const focusParam = useFocusParam({
@@ -203,7 +172,6 @@ const focusParam = useFocusParam({
   },
 });
 
-/** 行锚点 + 高亮类：滚动定位的 data 属性与高亮样式同源一处。 */
 function rowProps(row: Policy): Record<string, unknown> {
   return {
     "data-policy-id": row.id,
@@ -211,12 +179,8 @@ function rowProps(row: Policy): Record<string, unknown> {
   };
 }
 
-/** 渲染完成后滚动到高亮行（列表数据到位后调用；无 focus 空转）。 */
 async function scrollToHighlighted(): Promise<void> {
   if (!highlightedPolicyId.value) return;
-  // 行挂载链多跳（数据到位 → 表格行渲染），有界重试至锚点出现；在本表格子树内
-  // 按 dataset 比对定位（不经属性选择器拼接实体 id，无注入面；组件自身子树查询，
-  // 独立路由与「更多」页签装载同效）。
   for (let hop = 0; hop < 5; hop += 1) {
     await nextTick();
     const root = tableRef.value?.$el as HTMLElement | undefined;
@@ -235,14 +199,10 @@ async function scrollToHighlighted(): Promise<void> {
 const listTitle = computed(() => t("policies.listTitle"));
 
 onMounted(() => {
-  // focus 读一次：先拿 id（消费闸门内化），列表到位后生效
   focusParam.consume();
-  // 保单 store self-init + ledger:changed 信号兜底；mounted 重拉覆盖错误重试
   void policiesStore
     .refresh()
-    .catch(() => {
-      /* 失败信号已由 status 承载 */
-    })
+    .catch(() => {})
     .then(scrollToHighlighted);
 });
 </script>
@@ -287,8 +247,6 @@ onMounted(() => {
 </template>
 
 <style>
-/* 来源跳转行高亮（spec #704 / issue #706）：rowProps 把类打在 NDataTable 内部
-   <tr> 上，scoped 选择器够不到，故用全局规则 + 视图专名类（不被复用为通用名）。 */
 tr.policy-row-focus > td {
   background-color: rgba(245, 158, 11, 0.16);
 }

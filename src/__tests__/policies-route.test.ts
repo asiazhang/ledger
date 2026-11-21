@@ -3,11 +3,6 @@ import { createMemoryHistory, createRouter } from "vue-router";
 import { routes } from "@/router";
 import { useSidebarOrderStore } from "@/stores/sidebar-order";
 
-/** /policies 收纳重定向透传 focus（spec #704 / issue #706，词汇表「实体定位参数
- *  （focus 参数）」「落点尊重组内收纳」）：真实路由表同构 memory router 直打
- *  beforeEnter 守卫——来源列深链 /policies?focus=<id> 在收纳态经重定向落资产
- *  「更多」保单页签，focus 不丢、高亮不丢；主项态不重定向、query 原样保留。 */
-
 function makeRouter() {
   return createRouter({ history: createMemoryHistory(), routes });
 }
@@ -22,7 +17,7 @@ describe("/policies 路由守卫（issue #706 focus 透传）", () => {
   });
 
   it("主项态（保单已移回侧栏）：独立路由渲染，query 原样保留", async () => {
-    useSidebarOrderStore().applyMoveIntoMore("investments"); // 腾位：资产组随储蓄目标加入出厂满员
+    useSidebarOrderStore().applyMoveIntoMore("investments");
     useSidebarOrderStore().applyMoveBackToSidebar("policies");
     const router = makeRouter();
     await router.push("/policies?focus=pol-1");

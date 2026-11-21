@@ -21,9 +21,6 @@ import { useReferenceStore } from "@/stores/reference";
 import type { Account, Merchant, Transaction } from "@ledger/types";
 
 describe("TransactionsView URL 下钻接线（issue #97/#191，冒烟级）", () => {
-  // account/merchant 参数的解析、校验、复位规则、就绪补判与字段级让位已内化在
-  // TransactionFilter 参数表，用例迁到模块接口测试 useTransactionFilter.test.ts
-  // （issue #234 / ADR-0030 决策 7）；此处仅验证视图把 route query 递给模块的接线。
   beforeEach(() => {
     setTxnDb([
       makeTxn(1, "acc-1", { merchant_id: "mch-1", date: "2026-01-05" }),
@@ -41,7 +38,6 @@ describe("TransactionsView URL 下钻接线（issue #97/#191，冒烟级）", ()
       page_size: 20,
       involving_account_id: "acc-1",
     });
-    // 涉及 acc-1：txn-1 / txn-3（主账户）+ txn-4（转账转入侧）
     expect(wrapper.text()).toContain("共 3 条");
   });
 
@@ -59,7 +55,6 @@ describe("TransactionsView URL 下钻接线（issue #97/#191，冒烟级）", ()
     routeMock.query = { account: "acc-1" };
     const wrapper = await mountView();
     expect(lastListFilter()).toMatchObject({ involving_account_id: "acc-1", page: 1 });
-    // 导航清除 query（如从侧边栏重新进入交易页）→ 复位全量 + 回第 1 页
     routeMock.query = {};
     await flushPromises();
     expect(lastListFilter()).toMatchObject({ page: 1 });
@@ -81,11 +76,8 @@ describe("TransactionsView URL 下钻接线（issue #97/#191，冒烟级）", ()
       uncategorized_only: true,
       kinds: ["expense", "refund"],
     });
-    // 未分类柱下钻列表只含支出与退款，转账不再出现（与图同口径）
     expect(wrapper.text()).toContain("共 2 条");
-    // 类型维度单维化（spec #1025）：下钻载荷与手动多选共用类型下拉，无新增控件
     expect(wrapper.findAllComponents(NSelect).length).toBe(selectCount);
-    // 导航清除 → 类型集合同步清空（请求回默认载荷：显式携带四通用 kind，ADR-0135）
     routeMock.query = {};
     await flushPromises();
     expect(lastListFilter().kinds).toEqual([...MAIN_LIST_KINDS]);
@@ -94,11 +86,6 @@ describe("TransactionsView URL 下钻接线（issue #97/#191，冒烟级）", ()
 });
 
 describe("TransactionsView 过滤行与手动过滤接线（issue #98，冒烟级）", () => {
-  // 过滤意图语义（单维/组合/复位/同值不动作 → 状态终态与请求参数）与 URL 初始化仅
-  // 结算一次、参考数据重拉不重放等时序行为已迁到模块接口测试 useTransactionFilter.test.ts
-  // （ADR-0030 决策 7）；此处仅保留过滤行渲染冒烟、「控件 → 意图 → 列表」交互路由
-  // 与 URL 只读契约。
-  // 富数据集：不同账户/日期/类型，供交互路由与空态断言（每 describe 前置重置）。
   const richDb: Transaction[] = [
     makeTxn(1, "acc-1", { kind: "expense", date: "2026-01-05" }),
     makeTxn(2, "acc-2", { kind: "income", date: "2026-02-10" }),
@@ -111,41 +98,32 @@ describe("TransactionsView 过滤行与手动过滤接线（issue #98，冒烟�
     setTxnDb([...richDb]);
   });
 
-  // 过滤行控件定位：账户下拉 = 第 1 个 NSelect（PinyinSelect 内层），
-  // 商户下拉 = 第 2 个（issue #191），类型下拉 = 第 3 个；
-  // 时间维度行（issue #382）的行为测试见 time-chips.test.ts
   const accountSelect = (wrapper: ReturnType<typeof mount>) =>
     wrapper.findAllComponents(NSelect)[0];
   const merchantSelect = (wrapper: ReturnType<typeof mount>) =>
     wrapper.findAllComponents(NSelect)[1];
   const kindSelect = (wrapper: ReturnType<typeof mount>) => wrapper.findAllComponents(NSelect)[2];
 
-  /** 直接向过滤行控件 emit 变更事件（与 SearchView.test 的 setDate 模式一致）。 */
   async function setAccount(wrapper: ReturnType<typeof mount>, id: string | null) {
     accountSelect(wrapper).vm.$emit("update:value", id);
     await flushPromises();
   }
 
-  /** 清除筛选按钮（工具栏与空态各一个）。 */
   const clearButton = (wrapper: ReturnType<typeof mount>) =>
     wrapper.findAllComponents(NButton).find((b) => b.text().includes("清除筛选"))!;
 
   it("顶部渲染过滤行：账户/商户/类型下拉可清除、清除筛选按钮（日期起止控件已移除，issue #382）", async () => {
     const wrapper = await mountView();
-    // 账户下拉：可清除，选项来自参考数据账户映射
     const account = accountSelect(wrapper);
     expect(account.props("clearable")).toBe(true);
     expect(
       (account.props("options") as { value: string; label: string }[]).map((o) => o.value),
     ).toEqual(["acc-1", "acc-2"]);
-    // 商户下拉：可清除，选项来自参考数据商户映射（在用 + 软删，issue #191）
     const merchant = merchantSelect(wrapper);
     expect(merchant.props("clearable")).toBe(true);
     expect((merchant.props("options") as { value: string }[]).map((o) => o.value)).toEqual([
       "mch-1",
     ]);
-    // 类型下拉：可清除、多选（spec #1025），可选集收窄为四通用 kind（ADR-0135 / issue #1783，
-    // 按闭集顺序渲染；投资 kind 的类型筛选在投资域投资明细页签）
     const kind = kindSelect(wrapper);
     expect(kind.props("clearable")).toBe(true);
     expect(kind.props("multiple")).toBe(true);
@@ -155,7 +133,6 @@ describe("TransactionsView 过滤行与手动过滤接线（issue #98，冒烟�
       "transfer",
       "refund",
     ]);
-    // 清除筛选按钮：无过滤时禁用
     expect(clearButton(wrapper).attributes("disabled")).toBeDefined();
   });
 
@@ -174,7 +151,6 @@ describe("TransactionsView 过滤行与手动过滤接线（issue #98，冒烟�
       page_size: 20,
       involving_account_id: "acc-2",
     });
-    // 涉及 acc-2：income(txn-2)、expense(txn-4)、transfer 转入侧(txn-3)
     expect(wrapper.text()).toContain("共 3 条");
   });
 
@@ -199,7 +175,6 @@ describe("TransactionsView 过滤行与手动过滤接线（issue #98，冒烟�
     const wrapper = await mountView();
     await setAccount(wrapper, "acc-2");
     await setKind(wrapper, ["income"]);
-    // 商户维度同样不写回（URL 只读是整层契约，非按维度分支）
     await merchantSelect(wrapper).vm.$emit("update:value", "mch-1");
     await flushPromises();
     expect(routeMock.query).toEqual({ account: "acc-1" });
@@ -208,10 +183,9 @@ describe("TransactionsView 过滤行与手动过滤接线（issue #98，冒烟�
   it("过滤无结果时展示空态提示（与加载态区分），空态可一键清除", async () => {
     const wrapper = await mountView();
     await setAccount(wrapper, "acc-1");
-    await setKind(wrapper, ["income"]); // richDb 收入行在 acc-2，配合账户过滤 acc-1 → 空结果
+    await setKind(wrapper, ["income"]);
     expect(wrapper.text()).toContain("没有符合条件的交易");
     expect(bodyRows(wrapper).length).toBe(0);
-    // 空态中的「清除筛选」可一键复位到全量
     await clearButton(wrapper).trigger("click");
     await flushPromises();
     expect(wrapper.text()).toContain("共 5 条");
@@ -219,19 +193,14 @@ describe("TransactionsView 过滤行与手动过滤接线（issue #98，冒烟�
 
   it("类型多选交互路由（spec #1025）：多类型集合生效于请求；满选四通用 kind 归一为默认态（ADR-0135）；清空回默认", async () => {
     const wrapper = await mountView();
-    // 多选收入 + 退款：请求携带集合（richDb 命中 income 与 refund 行）
     await setKind(wrapper, ["refund", "income"]);
     expect(lastListFilter()).toMatchObject({ page: 1, page_size: 20, kinds: ["refund", "income"] });
     expect(wrapper.text()).toContain("共 2 条");
-    // 标签按闭集顺序渲染（决议 6）：选择序 / URL 载荷序不作展示序
     await setKind(wrapper, ["expense", "income"]);
     expect(kindSelect(wrapper).props("value")).toEqual(["income", "expense"]);
-    // 满选四通用 kind：归一为默认态——请求仍显式携带同集（默认载荷），清除筛选按钮禁用
-    // （「满选 ≠ 默认」不等式随可选集收窄解除，ADR-0135）
     await setKind(wrapper, [...MAIN_LIST_KINDS]);
     expect(lastListFilter().kinds).toEqual([...MAIN_LIST_KINDS]);
     expect(clearButton(wrapper).attributes("disabled")).toBeDefined();
-    // 清空选择：请求回默认载荷（仍显式携带四通用 kind），回到全量
     await setKind(wrapper, null);
     expect(lastListFilter().kinds).toEqual([...MAIN_LIST_KINDS]);
     expect(wrapper.text()).toContain("共 5 条");
@@ -239,9 +208,6 @@ describe("TransactionsView 过滤行与手动过滤接线（issue #98，冒烟�
 });
 
 describe("TransactionsView 商户筛选（issue #191，冒烟级）", () => {
-  // 组合/复位等意图语义迁到模块接口测试，URL 只读契约由上方 account 维度用例覆盖
-  // （视图整层不写回，与维度无关）；此处保留下拉选项渲染冒烟与「控件 → 意图 → 列表」
-  // 交互路由（软删商户可被选中过滤的历史交易口径）。
   const merchantDbAll: Merchant[] = [
     {
       id: "mch-1",
@@ -270,14 +236,12 @@ describe("TransactionsView 商户筛选（issue #191，冒烟级）", () => {
   beforeEach(async () => {
     setMerchantDb(merchantDbAll);
     setTxnDb([...merchantTxnDb]);
-    // 外层 beforeEach 已以默认字典加载，此处强制重拉
     await useReferenceStore().refresh();
   });
 
   const merchantSelect = (wrapper: ReturnType<typeof mount>) =>
     wrapper.findAllComponents(NSelect)[1];
 
-  /** 直接向商户下拉 emit 变更事件。 */
   async function setMerchant(wrapper: ReturnType<typeof mount>, id: string | null) {
     merchantSelect(wrapper).vm.$emit("update:value", id);
     await flushPromises();
@@ -289,7 +253,6 @@ describe("TransactionsView 商户筛选（issue #191，冒烟级）", () => {
       value: string;
       label: string;
     }[];
-    // zh 拼音序：红(hong) < 京(jing)
     expect(options.map((o) => o.value)).toEqual(["mch-2", "mch-1"]);
     expect(options.map((o) => o.label)).toEqual(["红旗连锁", "京东"]);
   });
@@ -301,23 +264,15 @@ describe("TransactionsView 商户筛选（issue #191，冒烟级）", () => {
     expect(listCalls().length).toBe(before + 1);
     expect(lastListFilter()).toMatchObject({ page: 1, page_size: 20, merchant_id: "mch-1" });
     expect(wrapper.text()).toContain("共 2 条");
-    // 软删商户同样可过滤（历史交易口径）
     await setMerchant(wrapper, "mch-2");
     expect(lastListFilter()).toMatchObject({ merchant_id: "mch-2" });
     expect(wrapper.text()).toContain("共 1 条");
-    // 清除下拉回全量
     await setMerchant(wrapper, null);
     expect(lastListFilter()).not.toHaveProperty("merchant_id");
     expect(wrapper.text()).toContain("共 4 条");
   });
 });
 
-/**
- * 移动档筛选/URL 下钻两档一致（issue #846 验收 2，ADR-0088 决策 9）：同一
- * TransactionFilter 出口在移动档卡片列表形态下语义不变——手动筛选立即生效
- * （翻页归零 + 重拉）、URL 只读下钻直达、空态提示与清除回默认；换档经媒体
- * 查询测试接缝（@ledger/test-support/media-mock，薄壳 mountMobile 单点）。
- */
 describe("TransactionsView 移动档筛选（issue #846 两档一致）", () => {
   beforeEach(() => {
     setTxnDb([
@@ -334,7 +289,6 @@ describe("TransactionsView 移动档筛选（issue #846 两档一致）", () => 
     fireProp(accountSelect, "onUpdate:value", "acc-1");
     await flushPromises();
     expect(lastListFilter()).toMatchObject({ page: 1, involving_account_id: "acc-1" });
-    // 涉及 acc-1：txn-1 / txn-3（主账户）+ txn-4（转账转入侧）
     expect(cards(wrapper).length).toBe(3);
   });
 
@@ -363,7 +317,6 @@ describe("TransactionsView 移动档筛选（issue #846 两档一致）", () => 
 });
 
 describe("账户归档（spec #1952 / ADR-0142 决策 4）：筛选下拉排除归档，已存筛选值补值", () => {
-  /** 已归档账户（从已归档行下钻 `?account=<归档 id>` 进来时的筛选值） */
   const archivedAccount: Account = {
     id: "acc-arch",
     name: "已归档户",
@@ -383,7 +336,6 @@ describe("账户归档（spec #1952 / ADR-0142 决策 4）：筛选下拉排除�
     { ...archivedAccount, id: "acc-2", name: "银行", is_archived: false },
   ];
 
-  /** 过滤行第 1 个下拉 = 账户（PinyinSelect 内层 NSelect） */
   const accountSelect = (wrapper: ReturnType<typeof mount>) =>
     wrapper.findAllComponents(NSelect)[0];
 
@@ -411,7 +363,6 @@ describe("账户归档（spec #1952 / ADR-0142 决策 4）：筛选下拉排除�
       label: "已归档户（已归档）",
       value: "acc-arch",
     });
-    // 展示面零过滤：归档账户的流水照常按该账户过滤出来（下钻链接不失效）
     expect(lastListFilter()).toMatchObject({ page: 1, involving_account_id: "acc-arch" });
     expect(bodyRows(wrapper).length).toBe(1);
   });

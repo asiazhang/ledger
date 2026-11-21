@@ -35,7 +35,6 @@ const mockAccounts: Account[] = [
   },
 ];
 
-/** 参考命令覆写集（beforeEach 与用例级覆写共享）：账户保留本文件夹具，其余三表空集。 */
 const REFERENCE_OVERRIDES = {
   list_accounts: mockAccounts,
 };
@@ -64,7 +63,6 @@ describe("useTransferForm", () => {
 
     await form.submit();
 
-    // 提交路由：创建命令 + 正确 kind；wire 字段形状由装配器测试承担（issue #216）
     expect(mockInvoke).toHaveBeenCalledWith("create_transaction", {
       input: expect.objectContaining({ kind: "transfer" }),
     });
@@ -119,15 +117,12 @@ describe("useTransferForm", () => {
         onUpdated,
         editing: () => ({ ...editingTx, source_order_no: "JD-9001" }),
       });
-      // 用户改转入账户与金额
       form.toAccountId.value = "acc-1";
       form.accountId.value = "acc-2";
       form.amountText.value = "300";
 
       await form.submit();
 
-      // 提交路由：更新命令携带交易 id + 用户改动字段交接装配结果；
-      // 金额/日期转换与占位字段由装配器测试承担（issue #216）
       expect(mockInvoke).toHaveBeenCalledWith("update_transaction", {
         id: "txn-100",
         input: expect.objectContaining({
@@ -136,7 +131,6 @@ describe("useTransferForm", () => {
           to_account_id: "acc-1",
           funding_account_id: null,
           note: "房租",
-          // 来源订单号随编辑原样透传（#1862）：表单无输入位，静默清除即摧毁订单锚点
           source_order_no: "JD-9001",
         }),
       });
@@ -239,7 +233,6 @@ describe("useTransferForm", () => {
   });
 
   describe("账户归档（spec #1952 / ADR-0142 决策 4）：选择面排除 + 编辑面补值", () => {
-    /** 归档账户（任一类型皆可归档，ADR-0142 决策 6）：转出/转入两端各一 */
     const archivedFrom: Account = {
       ...mockAccounts[0],
       id: "acc-arch-from",
@@ -260,7 +253,6 @@ describe("useTransferForm", () => {
       return useTransferForm();
     }
 
-    /** 编辑一笔挂归档账户的转账（两端分别指向 archivedFrom / archivedTo） */
     function editingTransfer(accountId: string, toAccountId: string): Transaction {
       return {
         ...editingTx,
@@ -309,12 +301,10 @@ describe("useTransferForm", () => {
         overrides: { list_accounts: [...mockAccounts, archivedFrom, archivedTo] },
       });
       await useReferenceStore().refresh();
-      // 模拟「编辑后清空转入值再选新转入」：转出是被补值的归档账户
       const form = useTransferForm({
         editing: () => editingTransfer("acc-arch-from", "acc-2"),
       });
       form.toAccountId.value = null;
-      // 转出侧补值可见（已存值），转入侧新选择面不含它
       expect(form.accountOptions.value[0]).toEqual({
         label: "旧储蓄卡（已归档）",
         value: "acc-arch-from",
@@ -356,7 +346,6 @@ describe("useTransferForm", () => {
         label: "旧工资卡（已归档）",
         value: "acc-arch-to",
       });
-      // 转出侧在用账户不受影响（补值只动已存值那一侧）
       expect(form.accountOptions.value.map((o) => o.value)).toEqual(["acc-1", "acc-2"]);
     });
   });

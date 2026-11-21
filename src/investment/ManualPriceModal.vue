@@ -9,35 +9,21 @@ import { errorMessage as extractErrorMessage } from "@ledger/utils/errors";
 import { formatPrice, yuanToPrice } from "@ledger/money";
 import { todayStr } from "@ledger/utils/date";
 
-// 手动报价弹窗（issue #291 / ADR-0036）：无行情数据源标的的「日期 + 价格」
-// 单点录入。提交后一条通道两个落点（现价缓存 upsert + 价格历史周采样幂等覆盖，
-// 后端同一命令完成）；回填早于最新价格点的旧价只沉淀历史、不动现价（由后端
-// 最新点映像规则判定，回执按结果区分）。列表/持仓/走势刷新由后端广播的价格
-// 失效信号驱动既有消费方完成，本组件与调用方零手动重拉。
-// 消费面只有 id 与 symbol（弹窗标题与回执文案）：入参按真实消费面收窄，
-// 使标的页（Instrument 行）与持仓页（缺价行引导，issue #1193）共用同一入口。
 const props = defineProps<{ show: boolean; instrument: { id: string; symbol: string } | null }>();
 const emit = defineEmits<{
   "update:show": [value: boolean];
-  /** 录价成功回执文案（页面级展示）；列表刷新经价格失效信号，不由调用方重拉 */
   quoted: [message: string];
 }>();
 
-// 日期默认今天（录价当日即生效为主形态），价格以元输入（基金净值 4 位小数，
-// precision 4），提交时经 yuanToPrice 换算万分之一元（不手写换算系数）。
 const date = ref(todayStr());
 const price = ref<number | null>(null);
 const submitting = ref(false);
-/** 弹窗内错误提示（后端校验等）：保持弹窗打开供修改重试 */
 const error = ref<string | null>(null);
 
-// 价格必须 > 0（后端同款校验，前端提前拦截）且日期已选才可提交
 const canSubmit = computed(
   () => price.value !== null && price.value > 0 && !!date.value && !submitting.value,
 );
 
-// 打开时重置表单（日期回到今天、清空价格与错误），immediate 兼容初始即开
-// （先例：MerchantEditModal）
 watch(
   () => props.show,
   (show) => {
@@ -68,7 +54,6 @@ async function submit() {
       date: date.value,
       price_cents: priceCents,
     });
-    // 回执按落点结果区分：回填旧价只沉淀历史、不动现价（最新点映像规则）
     const message = result.current_price_written
       ? t("investments.manualPrice.success", {
           symbol: props.instrument.symbol,

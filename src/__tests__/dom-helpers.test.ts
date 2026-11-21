@@ -15,10 +15,8 @@ import {
   visibleModalText,
 } from "@ledger/test-support/dom";
 
-// enableAutoUnmount 幂等：setup 层已全局注册，文件级重复注册降级为 no-op（不抛错）
 enableAutoUnmount(afterEach);
 
-/** 触达三种按钮变体与输入家族的最小组件：teleport 按钮落在 document.body。 */
 const Comp = defineComponent({
   name: "DomProbe",
   setup() {
@@ -45,7 +43,6 @@ describe("helpers/dom：按钮查找三变体 + findInput 家族（issue #746）
   it("findButton 文本匹配：默认包含匹配，exact 精确匹配", async () => {
     const wrapper = await mountProbe();
     expect(findButton(wrapper, "取消")?.text()).toBe("取消");
-    // 包含匹配按 DOM 顺序命中第一个：'保存草稿' 先含 '保存'（'保 存' 带空格不含）
     expect(findButton(wrapper, "保存")?.text()).toBe("保存草稿");
     expect(findButton(wrapper, "保 存", { exact: true })?.text()).toBe("保 存");
     expect(findButton(wrapper, "取消", { exact: true })?.text()).toBe("取消");
@@ -63,7 +60,7 @@ describe("helpers/dom：按钮查找三变体 + findInput 家族（issue #746）
     const ok = findBodyButton("确定");
     expect(ok).toBeDefined();
     expect((ok!.element as HTMLButtonElement).dataset.testid).toBe("modal-ok");
-    expect(findBodyButton("取消")).toBeUndefined(); // 只查 body 范围，不查 wrapper
+    expect(findBodyButton("取消")).toBeUndefined();
   });
 
   it("findBodyButtonByTestId：body-teleport 弹窗按钮按 testid 查找", async () => {
@@ -85,9 +82,6 @@ describe("helpers/dom：按钮查找三变体 + findInput 家族（issue #746）
   });
 });
 
-// —— 弹窗可见性助手（issue #748 上收：原 TransactionsView/common 目录级实现） ——
-
-/** testid 载体组件：根元素携带 data-testid、内含一个输入框（NInput 包裹形态）。 */
 const FieldInput = defineComponent({
   name: "FieldInput",
   props: { testid: { type: String, required: true } },
@@ -103,7 +97,6 @@ const InputProbe = defineComponent({
   },
 });
 
-/** useDialog 确认框 + NModal 卡片双探针：遮罩不可关（同视图删除确认配置）。 */
 const DialogProbe = defineComponent({
   name: "DialogProbe",
   setup() {
@@ -181,7 +174,6 @@ describe("helpers/dom：弹窗可见性助手（issue #748）", () => {
   });
 });
 
-/** 输入查找探针挂载（独立 describe 使用）。 */
 async function mountInputProbe() {
   const wrapper = mount(InputProbe);
   await flushPromises();

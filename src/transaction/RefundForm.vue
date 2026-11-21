@@ -11,8 +11,6 @@ import type { Transaction } from "@ledger/types";
 
 const emit = defineEmits<{ created: [] }>();
 
-/** 行内退款（issue #151）：传入时原交易由所在行固定，隐藏搜索下拉、
- * 展示原交易只读信息；不传则保留搜索选择模式（记一笔弹窗）。 */
 const props = defineProps<{ fixedTarget?: Transaction | null }>();
 
 const ctx = useRefundForm({

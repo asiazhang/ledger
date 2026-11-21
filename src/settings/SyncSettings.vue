@@ -8,20 +8,6 @@ import AppSelect from "@ledger/ui-kit/AppSelect.vue";
 import { SYNC_HINT_CLASS } from "@/settings/sync-settings.css";
 import { useSyncCard } from "@/settings/useSyncCard";
 
-// 多端同步卡片（issue #862 / #863 / #864 / #1218 / ADR-0091）：设置页「数据」
-// Tab 的同步可见面——上次同步时间、挂起数量、「立即同步」动作、挂起通知明细、
-// 通道配置表单（S3 凭据，issue #1218）与检查点发布/引导（新端加入向导）。
-//
-// 本组件是 useSyncCard 深模块（issue #1397）的薄 adapter：加载与动作编排
-// （状态 / 挂起明细 / 通道配置 / 检查点 / 引导向导）全部内化在模块中，这里只做
-// 渲染接线——明文/密文警示 Alert（ADR-0091 决策 8 的界面义务）、引导向导的
-// AppModal 模板与文案留在组件；挂起明细逐条经 `utils/errors.ts` 的 `errorMessage`
-// 按码本地化（含 params 插值；码未命中或 params 不足则降级透传后端原文），挂起
-// 原因的码→文案实现单点在 errors.ts，此处不自建（issue #957）。
-//
-// 密钥输入框恒以空串起填、已保存值不上屏的回显口径见 useSyncCard 头注；本组件
-// 只负责把 secretKeyInput 绑上输入框。
-
 const {
   status,
   statusLoading,
@@ -54,8 +40,6 @@ const {
   confirmBootstrap,
 } = useSyncCard();
 
-/** 快照体大小展示文本（字节 → MB，一位小数；向导回显渲染用——toast 插值助手的
- *  同名实现 module 私有，文案与模板留组件故此处保留渲染侧一份，口径一致）。 */
 function formatSizeMb(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }

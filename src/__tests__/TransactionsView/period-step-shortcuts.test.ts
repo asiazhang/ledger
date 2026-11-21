@@ -15,20 +15,7 @@ import { NButton } from "naive-ui";
 import type { Transaction } from "@ledger/types";
 import { matchPeriodStepShortcut } from "@/composables/useTimePeriodShortcuts";
 
-/**
- * 周期步进快捷键（issue #1904 / ADR-0141）：裸键 `,` 上一个周期 / `.` 下一个周期，
- * 语义等同点击 QuickTimeRange 的期间步进器 `<` / `>`（步进换算、数据期间边界钳制
- * 与 v-model 写回全在组件内单点，视图经 defineExpose 暴露的入口接线）。
- *
- * 断言全部对准用户可观察结果（列表过滤区间 / 重拉 / 页码 / 提示渲染）；删除视图中的
- * useTimePeriodShortcuts 接线调用、或删除 QuickTimeRange 的 defineExpose 步进入口，
- * 「, 步进」等用例即变红（接线证明，ADR-0087）。
- * 区间 ⇄ 期间换算与边界可达性数学见 time-period.test.ts；步进器按钮行为见
- * time-stepper.test.ts（断言不改）。今天是本文件的前提——fake timers 固定为
- * 2026-01-15（本地），步进落点与钳制边界随之确定。
- */
 describe("TransactionsView 周期步进快捷键（issue #1904 / ADR-0141）", () => {
-  // 月档边界 [2025-06, 2026-01]（最新端被「今天」抬升托在当前期间）
   const stepDb: Transaction[] = [
     makeTxn(1, "acc-1", { date: "2026-01-05" }),
     makeTxn(2, "acc-1", { date: "2025-12-10" }),
@@ -78,7 +65,6 @@ describe("TransactionsView 周期步进快捷键（issue #1904 / ADR-0141）", (
   });
 
   it("快捷键步进后翻页归零：第 2 页按 , 一步回第 1 页", async () => {
-    // 混入一笔上月数据，使 ,（→ 2025-12）仍在数据边界内可达
     setTxnDb([
       makeTxn(99, "acc-1", { date: "2025-12-15" }),
       ...Array.from({ length: 25 }, (_, i) => makeTxn(i + 1, "acc-1", { date: "2026-01-05" })),
@@ -178,7 +164,6 @@ describe("TransactionsView 周期步进快捷键（issue #1904 / ADR-0141）", (
   });
 });
 
-/** 键位匹配纯函数与输入轴无关，独立于视图挂载断言边界（修饰键闭集唯一来源）。 */
 describe("matchPeriodStepShortcut（键位匹配纯函数）", () => {
   it("裸键 , / . 命中对应方向", () => {
     expect(matchPeriodStepShortcut(new KeyboardEvent("keydown", { key: "," }))).toBe("prev");

@@ -16,8 +16,6 @@ const message = useMessage();
 
 const editName = ref("");
 
-// 打开弹窗时同步待编辑字段（弹窗内容在关闭后仍保留在 DOM，需在打开时回填；
-// immediate 兼容 show 初始即为 true 的挂载）
 watch(
   () => [props.show, props.merchant],
   () => {
@@ -40,9 +38,7 @@ async function saveEdit() {
     await api.updateMerchant(m.id, input);
     message.success(t("settings.merchants.msg.updated"));
     emit("update:show", false);
-    // 参考数据由 ledger:changed 信号自动重拉：历史交易即时显示新名（引用指向 id）
   } catch (e) {
-    // 重名等后端校验错误原样上抛展示（如「商户已存在: 京东」），弹窗不关、内容不丢
     message.error(t("settings.merchants.msg.updateFailed", { msg: e }));
   }
 }

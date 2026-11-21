@@ -11,13 +11,6 @@ import {
   resetHistoryBackfillForTest,
 } from "@/investment/useHistoryBackfill";
 
-/**
- * 后台补全静默计数组件（issue #1375 / ADR-0122）：存在性断言——进度在途时
- * 渲染只读计数（删掉对应渲染即变红）；终态收起后不渲染。静默语义的可观察
- * 形态：无 role="progressbar"（不冒充手动同步的进度条形态）、无按钮、文案
- * 经 i18n。
- */
-
 function fire(handlers: CapturedListener[], payload: unknown): void {
   for (const handler of handlers) handler({ event: HISTORY_BACKFILL_PROGRESS_EVENT, payload });
 }
@@ -43,7 +36,6 @@ describe("HistoryBackfillIndicator 后台补全静默计数（投资页）", () 
     const indicator = wrapper.find('[data-testid="history-backfill-indicator"]');
     expect(indicator.exists()).toBe(true);
     expect(indicator.text()).toContain("历史数据补全中 137/228");
-    // 静默语义：不是手动同步的进度条形态（无 progressbar role），无按钮。
     expect(indicator.find('[role="progressbar"]').exists()).toBe(false);
     expect(indicator.find("button").exists()).toBe(false);
   });

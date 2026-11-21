@@ -11,25 +11,11 @@ import AppDatePicker from "@ledger/ui-kit/AppDatePicker.vue";
 import QuickTimeRange from "@/components/QuickTimeRange.vue";
 import { DATED_TIME_PERIOD_PRESETS, type NullableDateRange } from "@ledger/utils/time-period";
 
-// jsdom 未实现元素滚动（naive-ui 日期面板打开时会 scrollTo），补空实现避免
-// 打断 Vue 调度队列（仅影响本文件的弹层交互用例）。
 beforeAll(() => {
   Element.prototype.scrollTo = () => {};
 });
 
-/**
- * 时间范围快捷选择共享受控组件行为测试（issue #410，#409 接缝 2 唯一新缝）。
- *
- * 只测外部行为：点芯片 emit 快照区间、步进换算、面板选择、边界外步进置灰、
- * 面板开/关上报弹层注册表（Overlay Suppression）。组件受控不持状态源——
- * 高亮与步进游标全部由 prop 区间派生，组件产出只经 update:modelValue 回流调用方
- * （测试以 setProps 模拟调用方消费 v-model）。换算与边界数学单测见 time-period.test.ts；
- * 交易页消费后的视图级行为由 TransactionsView 的 time-chips / time-stepper 测试锚定
- * （断言不改）。今天是本文件的前提——固定「今天」假计时器为 2026-01-15（本地），
- * 预设定义、高亮与当前期间随之确定。
- */
 describe("QuickTimeRange 共享受控组件（issue #410）", () => {
-  /** 数据期间边界原始日期对：月档边界 [2025-06, 2026-01]（最新端被「今天」抬升托在当前期间）。 */
   const BOUNDARY = { min_date: "2025-06-01", max_date: "2026-01-05" };
 
   beforeEach(() => {
@@ -79,7 +65,6 @@ describe("QuickTimeRange 共享受控组件（issue #410）", () => {
 
   const periodLabel = (wrapper: VueWrapper) => wrapper.find(".period-label-text").text();
 
-  /** 步进一步并模拟调用方消费 v-model（受控契约：prop 前进后游标随之前进）。 */
   async function stepAndConsume(wrapper: VueWrapper, key: "prev" | "next") {
     await stepButton(wrapper, key).trigger("click");
     await flushPromises();
@@ -125,12 +110,10 @@ describe("QuickTimeRange 共享受控组件（issue #410）", () => {
   });
 
   it("受控高亮：点亮纯由 prop 区间派生，组件不自持选择状态", async () => {
-    // 「去年」快照 → 恰为预设定义，点亮「去年」
     const wrapper = mountRange({ from: "2025-01-01", to: "2025-12-31" });
     await flushPromises();
     expect(lit(wrapper, "去年")).toBe(true);
     expect(lit(wrapper, "全部")).toBe(false);
-    // 历史月份（非预设定义）→ 无芯片点亮，列表快照不漂移
     const historical = mountRange({ from: "2025-12-01", to: "2025-12-31" });
     await flushPromises();
     for (const label of ["全部", "当月", "当季", "当年", "去年"]) {
@@ -151,21 +134,17 @@ describe("QuickTimeRange 共享受控组件（issue #410）", () => {
   it("边界外步进置灰：最新期间 > 置灰；走到最早期间（2025-06）后 < 置灰、> 可走回；置灰点击不 emit", async () => {
     const wrapper = mountRange({ from: "2026-01-01", to: "2026-01-31" });
     await flushPromises();
-    // 最新边界 = max(当前期间, 最新交易期间) = 2026-01 → 2026-02 不可达
     expect(stepButton(wrapper, "next").props("disabled")).toBe(true);
-    // 连续 < 至最早期间 2025-06（7 步）
     let range: NullableDateRange = { from: "2026-01-01", to: "2026-01-31" };
     for (let i = 0; i < 7; i++) range = await stepAndConsume(wrapper, "prev");
     expect(range).toEqual({ from: "2025-06-01", to: "2025-06-30" });
     expect(periodLabel(wrapper)).toBe("2025年6月");
     expect(stepButton(wrapper, "prev").props("disabled")).toBe(true);
     expect(stepButton(wrapper, "next").props("disabled")).toBe(false);
-    // 置灰按钮点击不产生新 emit
     const before = emitCount(wrapper);
     await stepButton(wrapper, "prev").trigger("click");
     await flushPromises();
     expect(emitCount(wrapper)).toBe(before);
-    // > 可走回
     await stepAndConsume(wrapper, "next");
     expect(lastEmitted(wrapper)).toEqual({ from: "2025-07-01", to: "2025-07-31" });
   });
@@ -176,7 +155,7 @@ describe("QuickTimeRange 共享受控组件（issue #410）", () => {
     const failing: Promise<{ min_date: string | null; max_date: string | null }> = Promise.reject(
       new Error("boom"),
     );
-    failing.catch(() => {}); // 防 unhandled rejection 噪音
+    failing.catch(() => {});
     wireInvokeSeam({
       overrides: {
         report_date_range: () => failing,
@@ -185,7 +164,6 @@ describe("QuickTimeRange 共享受控组件（issue #410）", () => {
     const wrapper = mountRange({ from: "2026-01-01", to: "2026-01-31" });
     await flushPromises();
     expect(stepButton(wrapper, "next").props("disabled")).toBe(false);
-    // 静默语义锚定：失败走优雅降级，不弹错误 toast
     expect(sink.error).not.toHaveBeenCalled();
   });
 
@@ -199,7 +177,6 @@ describe("QuickTimeRange 共享受控组件（issue #410）", () => {
       timestamp: number,
       detail: unknown,
     ) => boolean;
-    // 2025年5月 早于最早交易期间 → 置灰；2025年6月 界内可选
     expect(isDisabled(0, { type: "month", year: 2025, month: 4 })).toBe(true);
     expect(isDisabled(0, { type: "month", year: 2025, month: 5 })).toBe(false);
   });
@@ -210,19 +187,16 @@ describe("QuickTimeRange 共享受控组件（issue #410）", () => {
     await wrapper.find(".period-label").trigger("click");
     await flushPromises();
     expect(hasOpenOverlay()).toBe(true);
-    // 选 2025年12月（界内）：emit 自然月快照
     const picker = wrapper.findComponent(NDatePicker);
     picker.vm.$emit("update:value", new Date(2025, 11, 1).getTime());
     await flushPromises();
     expect(lastEmitted(wrapper)).toEqual({ from: "2025-12-01", to: "2025-12-31" });
-    // 面板关闭 + 注册表撤销
     expect(hasOpenOverlay()).toBe(false);
   });
 
   it("键盘可达：期间标签聚焦后 Enter/Space 打开面板，aria-expanded 随开合（issue #425）", async () => {
     const wrapper = mountRange({ from: "2026-01-01", to: "2026-01-31" });
     await flushPromises();
-    // 期间标签按钮：aria-haspopup 标记面板触发器，aria-expanded 初始收合
     const trigger = wrapper.find('[aria-haspopup="dialog"]');
     expect(trigger.exists()).toBe(true);
     expect(trigger.attributes("aria-expanded")).toBe("false");
@@ -230,11 +204,9 @@ describe("QuickTimeRange 共享受控组件（issue #410）", () => {
     await flushPromises();
     expect(hasOpenOverlay()).toBe(true);
     expect(trigger.attributes("aria-expanded")).toBe("true");
-    // 关闭（update:show = false）→ aria-expanded 回落
     wrapper.findComponent(NDatePicker).vm.$emit("update:show", false);
     await flushPromises();
     expect(trigger.attributes("aria-expanded")).toBe("false");
-    // Space 同样打开
     await trigger.trigger("keydown", { key: " " });
     await flushPromises();
     expect(hasOpenOverlay()).toBe(true);
@@ -244,18 +216,15 @@ describe("QuickTimeRange 共享受控组件（issue #410）", () => {
     const wrapper = mountRange();
     await flushPromises();
     expect(hasOpenOverlay()).toBe(false);
-    // 点期间标签打开面板 → date-picker 上报打开
     await wrapper.find(".period-label").trigger("click");
     await flushPromises();
     expect(openOverlayNames()).toContain("date-picker");
-    // 关闭（update:show = false，经封装双路上报）→ 注册表撤销
     wrapper.findComponent(NDatePicker).vm.$emit("update:show", false);
     await flushPromises();
     expect(hasOpenOverlay()).toBe(false);
   });
 
   it("触控轴触控目标基线（issue #849 / ADR-0088 决策 6）：芯片、步进器与期间标签按钮本体 ≥48px 高，指针轴不挂零变化", async () => {
-    // 触控轴：hover none + coarse pointer（任一触控信号成立即触控轴）
     setFakeMedia({ width: 1280, hover: "none", pointer: "coarse" });
     const wrapper = mountRange();
     await flushPromises();
@@ -264,13 +233,11 @@ describe("QuickTimeRange 共享受控组件（issue #410）", () => {
     }
     expect(stepButton(wrapper, "prev").attributes("style")).toContain("min-height: 48px");
     expect(stepButton(wrapper, "next").attributes("style")).toContain("min-height: 48px");
-    // 期间标签按钮（面板触发器）同样达标
     const labelButton = wrapper
       .findAllComponents(NButton)
       .find((b) => b.find(".period-label-text").exists())!;
     expect(labelButton.attributes("style")).toContain("min-height: 48px");
 
-    // 指针轴（默认桌面指针环境）：不挂触控目标样式，渲染零变化
     setFakeMedia({ width: 1280, hover: "hover", pointer: "fine" });
     const desktop = mountRange();
     await flushPromises();
@@ -302,7 +269,6 @@ describe("QuickTimeRange 共享受控组件（issue #410）", () => {
 
   it("数据期间边界失效重拉：ledger:changed 后即时外扩（钳制边界跟随新数据）", async () => {
     const handlers = captureListenHandlers();
-    // 单月数据：月档边界 [2026-01, 2026-01]，< 置灰
     wireInvokeSeam({
       overrides: {
         report_date_range: { min_date: "2026-01-05", max_date: "2026-01-05" },
@@ -311,7 +277,6 @@ describe("QuickTimeRange 共享受控组件（issue #410）", () => {
     const wrapper = mountRange({ from: "2026-01-01", to: "2026-01-31" });
     await flushPromises();
     expect(stepButton(wrapper, "prev").props("disabled")).toBe(true);
-    // 数据外扩历史（AI 导入）→ ledger:changed 重拉 → < 随新边界（2025-08）解锁
     wireInvokeSeam({
       overrides: {
         report_date_range: { min_date: "2025-08-01", max_date: "2026-01-05" },
@@ -329,12 +294,10 @@ describe("QuickTimeRange 共享受控组件（issue #410）", () => {
     vm.stepPrev();
     await flushPromises();
     expect(lastEmitted(wrapper)).toEqual({ from: "2025-12-01", to: "2025-12-31" });
-    // 消费 v-model 后反向走回
     await wrapper.setProps({ modelValue: { from: "2025-12-01", to: "2025-12-31" } });
     vm.stepNext();
     await flushPromises();
     expect(lastEmitted(wrapper)).toEqual({ from: "2026-01-01", to: "2026-01-31" });
-    // 钳制守卫照常：最新期间越界调用幂等无 emit（不因暴露入口而绕过）
     await wrapper.setProps({ modelValue: { from: "2026-01-01", to: "2026-01-31" } });
     const before = emitCount(wrapper);
     vm.stepNext();
@@ -353,13 +316,11 @@ describe("QuickTimeRange 共享受控组件（issue #410）", () => {
       props: { modelValue: { from: "2026-01-01", to: "2026-01-31" }, stepShortcutKeys: keys },
     });
     await flushPromises();
-    // 键位字符内嵌步进按钮（#1929 修订 ADR-0141 决策 5）：旁注文字词退役，键位随图标
     const keySpans = inline.findAll(".period-key");
     expect(keySpans.map((s) => s.text())).toEqual([",", "."]);
     expect(inline.text()).not.toContain("上一个周期");
     expect(inline.find('[aria-label="上一个周期"]').attributes("title")).toBe("上一个周期 (,)");
 
-    // 触控轴不绑监听，渲染键位标注同样是误导（输入轴 ADR-0088）
     setFakeMedia({ width: 1280, hover: "none", pointer: "coarse" });
     const touch = mount(QuickTimeRange, {
       props: { modelValue: { from: "2026-01-01", to: "2026-01-31" }, stepShortcutKeys: keys },

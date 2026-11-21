@@ -34,37 +34,24 @@ import { SEARCH_DEBOUNCE_MS } from "@/composables/search-debounce";
 
 const store = useAppStore();
 const reference = useReferenceStore();
-// 输入轴消费登记（issue #2187 共享单例）：金额单元格与来源类型常驻小字按轴分流
-//（列工厂经 inputMode 选项消费同一信号）。
 const inputMode = useInputMode();
-// 备注复制 toast（统一出口 copyNoteWithToast 经委托装配消费）
 const message = useMessage();
-// 窗口分级（ADR-0088 决策 9）：搜索结果断点双渲染——移动档同构复用交易卡片列表
-// （第二消费方，只读形态：无「⋯」、无整卡编辑，与桌面搜索结果只读口径一致）
 const tier = useWindowTier();
 const isMobile = computed(() => tier.value === "mobile");
 
 const keyword = ref("");
-// 金额筛选：用户以「元」输入（支持小数），内部转分后传后端
 const amountMinYuan = ref("");
 const amountMaxYuan = ref("");
-// 日期筛选：由时间范围快捷选择写入的期间边界快照（YYYY-MM-DD 双端有界，
-// 「全部」= 双空 = 默认态）；不持第二状态源，唯一事实源仍是本视图本地日期条件
 const dateFrom = ref<string | null>(null);
 const dateTo = ref<string | null>(null);
-// 当前页结果浅响应式持有（issue #2187）：每次搜索响应整体替换数组引用，
-// 不对含嵌套出资项、购买项与来源对象的只读记录建立深层响应式代理。
 const results = shallowRef<Transaction[]>([]);
 const total = ref(0);
 const page = ref(1);
 const pageSize = 20;
-// 是否已完成至少一次搜索（区分「占位提示」与「空结果」两种空态）
 const searched = ref(false);
 
 let debounceTimer: ReturnType<typeof setTimeout> | undefined;
 
-// 搜索加载收编 Loadable（issue #1008 / ADR-0040）：loading 置收、竞态后发覆盖先发
-// 与错误 toast（默认策略 = 裸 errorMessage）内化；任务只产结果不写状态。
 const {
   loading,
   run: runSearchTask,
@@ -76,24 +63,14 @@ const {
 const amountMinCents = computed(() => yuanToCents(amountMinYuan.value));
 const amountMaxCents = computed(() => yuanToCents(amountMaxYuan.value));
 
-// 时间范围快捷选择（issue #526 / ADR-0070，消费形态三）：搜索页时间控件唯一形态——
-// 五枚芯片（全部 | 当月 | 当季 | 当年 | 去年，缺省预设零配置）＋期间步进器＋期间直达
-// 面板，随组件整体继承快照语义、游标派生与数据期间边界钳制。受控桥接与交易页同构：
-// 快照区间 v-model 进出，组件不持状态源，唯一事实源是本地日期条件（dateFrom/dateTo
-// 成对写入）；防抖自动搜索与「清除筛选」清回「全部」由既有 watcher/clearFilters 免费
-// 继承。两个独立日期选择器（任意起止/可单边）随本次接入退役，后端单边可选语义照旧
-// 冻结并存（比照 ADR-0057 遗留参数，新代码不使用单边语义）。
 const quickRange = computed<NullableDateRange>({
   get: () => ({ from: dateFrom.value, to: dateTo.value }),
   set: (range) => {
-    // 无条件成对写入：组件产出闭集只有双端有界或双空（「全部」须能清回默认态，
-    // 不能像报表页那样拒绝双空）；单端 null 不在产出闭集内，无需双端有界守卫。
     dateFrom.value = range.from;
     dateTo.value = range.to;
   },
 });
 
-/** 是否有激活的筛选条件（金额任一边或日期任一端非空） */
 const filtersActive = computed(
   () =>
     amountMinCents.value !== null ||
@@ -102,13 +79,10 @@ const filtersActive = computed(
     !!dateTo.value,
 );
 
-/** 是否具备查询条件：关键字非空或筛选激活（仅筛选也可出结果） */
 const hasQuery = computed(() => keyword.value.trim() !== "" || filtersActive.value);
 
-/** 当前筛选条件的可读描述（供「已应用筛选」展示，文案随语言切换）。 */
 const activeFilterDescriptions = computed(() => {
   const parts: string[] = [];
-  // 按用户默认币种展示符号（设置页可改），避免硬编码 CNY
   const currency = reference.getCurrency(store.defaultCurrency);
   const min = amountMinCents.value;
   const max = amountMaxCents.value;
@@ -148,7 +122,6 @@ async function runSearch() {
 
 function scheduleSearch() {
   clearTimeout(debounceTimer);
-  // 防抖时长单源跨域常量（issue #1402）：与投资域搜索面同一「搜索输入防抖」不变量
   debounceTimer = setTimeout(() => {
     page.value = 1;
     runSearch();
@@ -157,14 +130,13 @@ function scheduleSearch() {
 
 function resetResults() {
   clearTimeout(debounceTimer);
-  invalidate(); // 作废在途请求：迟到结果不落位、loading 收尾
+  invalidate();
   results.value = [];
   total.value = 0;
   page.value = 1;
   searched.value = false;
 }
 
-// 关键字或筛选任一变化：空查询（无关键字且无筛选）→ 占位；否则防抖查询
 watch([keyword, amountMinYuan, amountMaxYuan, dateFrom, dateTo], () => {
   if (!hasQuery.value) {
     resetResults();
@@ -173,7 +145,6 @@ watch([keyword, amountMinYuan, amountMaxYuan, dateFrom, dateTo], () => {
   scheduleSearch();
 });
 
-// 回车立即搜索（不等防抖），关键字或筛选任一存在即可
 function onEnter() {
   if (!hasQuery.value) return;
   clearTimeout(debounceTimer);
@@ -188,32 +159,21 @@ function clearFilters() {
   dateTo.value = null;
 }
 
-// 复用交易列表列配置（日期/类型/分类/账户/商品备注/金额），结果只读（不传行菜单）；
-// 经 computed 构造：列名（t()）随语言切换即时重建。购买项展开（issue #1885 /
-// ADR-0138 决策 14）：商品名命中即整单呈现全部购买项行，与交易列表同一装配。
 const columns = computed<DataTableColumn<Transaction>[]>(() =>
   buildTransactionColumns(reference, { expandPurchases: true, inputMode }),
 );
 
-// 展开显示行集 + 展示文本预计算（issue #2188，与交易列表同一接线）：数据到达或
-// 参考上下文变化时一次性产出展示文本，表格 patch 期零渲染期格式化（计数型渲染
-// 守门同源）；命中交易每购买项一行、订单级格 rowSpan 纵向合并。分页与「共 N 条」
-// 仍按交易计（后端 total，ADR-0008 口径不变）。
 const displayRows = computed(() =>
   precomputeTransactionDisplayRows(reference, results.value, { expandPurchases: true }),
 );
 
-// scroll-x：列中所有固定列（有 width 的列，备注为弹性列不计入）宽度总和
 const scrollX = computed(() => sumFixedColumnWidths(columns.value));
 
-// 服务端分页：翻页时携带 page 重新搜索（移动档 NPagination 与桌面表格同一回调）
 function onPageChange(p: number): void {
   page.value = p;
   void runSearch();
 }
 
-// 表级事件委托（issue #2189）：搜索结果的账户/商户/来源下钻与备注复制经单元格
-// 语义属性冒泡分发（无行菜单——只读结果形态）。
 const onTableCellClick = useTransactionTableCellActions({ message });
 
 const pagination = computed(() => ({

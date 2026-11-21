@@ -37,11 +37,6 @@ const createInput: ItemInput = {
   note: null,
 };
 
-/**
- * 机制断言（self-init / SWR / 在途合并 / 事件重拉 / status-version）已收口到
- * push-first-list.test.ts 工厂单点（ADR-0123 决策 6）；本文件只留领域动作断言。
- */
-
 describe("useItemsStore", () => {
   it("create 调用 create_item 后立即重拉，创建返回即可见新物品", async () => {
     const initial = [baseItem()];
@@ -227,7 +222,6 @@ describe("useItemsStore", () => {
     const store = useItemsStore();
     await flushPromises();
 
-    // 已落库的建档不因重拉失败误报「保存失败」，动作正常返回 id
     await expect(store.create(createInput)).resolves.toBe("item-new");
     expect(store.status).toBe("error");
   });

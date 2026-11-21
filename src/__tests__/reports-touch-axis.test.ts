@@ -6,18 +6,9 @@ import ReportsView from "@/views/ReportsView.vue";
 import { formatAmount } from "@ledger/money";
 import type { ReportDateRange } from "@ledger/types";
 
-/**
- * 报表页触控交互轴（issue #843 / ADR-0088 决策 6，词汇表「输入轴」「分类下钻」）：
- * 分类构成占比指针轴收进悬停 tooltip（行为不变）；触控轴经头部「占比」切换按钮
- * 点按显示——开启后柱尾标注升级为「金额 · 占比%」（口径同 tooltip 单点
- * barTooltipLabel，分母随层级）。图数据形态经图桩断言（jsdom 无 canvas，
- * line-chart-stub 先例）；两轴对比组件测试，换档经媒体查询测试接缝。
- */
-
 const pushMock = vi.fn();
 vi.mock("vue-router", () => ({ useRouter: () => ({ push: pushMock }) }));
 
-// jsdom 无 canvas：图表组件用共享桩承接（line-chart-stub，先例 #160/#378）
 vi.mock("vue-chartjs", async () => {
   const { BarChartStubWithOptions } = await import("./line-chart-stub");
   return { Bar: BarChartStubWithOptions };
@@ -51,7 +42,6 @@ async function mountReports() {
   return wrapper;
 }
 
-/** 分类构成图桩的 options（JSON 序列化还原，#378 桩约定） */
 function categoryOptions(wrapper: ReturnType<typeof mount>) {
   return JSON.parse(wrapper.find('.category-chart [data-testid="bar-options"]').text());
 }
@@ -73,10 +63,8 @@ describe("报表分类构成占比触控一击可达（issue #843 两轴对比�
     const wrapper = await mountReports();
     const toggle = percentToggle(wrapper);
     expect(toggle.exists()).toBe(true);
-    // 初始：柱尾默认金额，无覆盖
     expect(categoryOptions(wrapper).plugins.barEndAmounts.labels).toBeUndefined();
     expect(toggle.attributes("aria-pressed")).toBe("false");
-    // 点按显示：金额 · 占比%（5000/8000 → 63%、3000/8000 → 38%，口径同 tooltip）
     await toggle.trigger("click");
     await flushPromises();
     expect(percentToggle(wrapper).attributes("aria-pressed")).toBe("true");
@@ -84,7 +72,6 @@ describe("报表分类构成占比触控一击可达（issue #843 两轴对比�
       `${formatAmount(5000)} · 63%`,
       `${formatAmount(3000)} · 38%`,
     ]);
-    // 再点收回：回默认金额标注
     await percentToggle(wrapper).trigger("click");
     await flushPromises();
     expect(categoryOptions(wrapper).plugins.barEndAmounts.labels).toBeUndefined();

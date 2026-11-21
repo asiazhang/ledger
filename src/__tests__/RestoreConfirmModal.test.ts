@@ -5,10 +5,6 @@ import AppModal from "@ledger/ui-kit/AppModal.vue";
 import RestoreConfirmModal from "@/backup/RestoreConfirmModal.vue";
 import type { RestoreIntent } from "@/backup/useBackup";
 
-// 恢复确认弹窗（issue #572 / ADR-0075 决策 7）：钉住跨模式显著警告文案与
-// 密文备份主口令输入面——文案经 i18n，断言当前语言渲染出的完整句子。
-
-/** 恢复确认回调桩（useBackup.confirmRestore 的形状）。 */
 const onConfirm = vi.fn<(passphrase: string) => Promise<void>>();
 
 beforeEach(() => {
@@ -31,7 +27,6 @@ const crossToEncrypted: RestoreIntent = {
   backupEncrypted: true,
   currentEncrypted: false,
 };
-/** 密文备份 + 宿主上下文口令（issue #602/#603）：确认先自动试开。 */
 const crossToEncryptedWithContext: RestoreIntent = {
   ...crossToEncrypted,
   contextPassphrase: "context-pw",
@@ -52,7 +47,6 @@ function confirmButton(): HTMLButtonElement {
   return bodyQuery('[data-testid="restore-confirm"]') as HTMLButtonElement;
 }
 
-/** 输入主口令（弹窗内密码输入经 NInput 组件 emit 驱动，受控值在组件态）。 */
 async function setPassphrase(wrapper: ReturnType<typeof mount>, value: string) {
   const input = wrapper.findComponent(NInput);
   input.vm.$emit("update:value", value);
@@ -95,7 +89,6 @@ describe("RestoreConfirmModal（恢复确认弹窗，issue #572）", () => {
     expect(document.body.textContent).toContain(
       "恢复后此库将变为加密库，应用重启后需凭该备份的主口令解锁",
     );
-    // 密文备份：口令未输时确认禁用（防呆）。
     expect(needsPassphraseInput()).toBe(true);
     expect(confirmButton().disabled).toBe(true);
 
@@ -121,12 +114,10 @@ describe("RestoreConfirmModal（恢复确认弹窗，issue #572）", () => {
     await flushPromises();
 
     expect(document.body.textContent).toContain("口令错误或文件损坏，请重试");
-    // 弹窗仍开着：确认按钮仍在，可重试。
     expect(confirmButton()).not.toBeNull();
   });
 
   it("确认失败且错误为需口令（后端探测实库为密文）：显出口令输入可就地补救", async () => {
-    // 异常产物：元数据谎报明文（弹窗未渲染口令框），后端探测实际密文拒绝。
     onConfirm.mockRejectedValueOnce({
       kind: "Coded",
       code: "backup.passphrase-required",
@@ -139,7 +130,6 @@ describe("RestoreConfirmModal（恢复确认弹窗，issue #572）", () => {
     confirmButton().dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
     await flushPromises();
 
-    // 以后端探测为准：口令输入显出，用户可输入后重试而非卡死。
     expect(needsPassphraseInput()).toBe(true);
     expect(document.body.textContent).toContain("该备份为密文备份");
     expect(confirmButton().disabled).toBe(true);
@@ -156,7 +146,6 @@ describe("RestoreConfirmModal（恢复确认弹窗，issue #572）", () => {
     await flushPromises();
     expect(document.body.textContent).toContain("旧错误");
 
-    // 重开：同形单意图落位（seq 递增）。
     await wrapper.setProps({ intent: { ...crossToEncrypted }, seq: 2 });
     await flushPromises();
 
@@ -175,13 +164,10 @@ describe("RestoreConfirmModal（恢复确认弹窗，issue #572）", () => {
     expect(wrapper.emitted("close")).toHaveLength(1);
   });
 
-  // ---- 上下文口令自动试开（issue #602/#603）----
-
   it("密文备份携带上下文口令：不显出口令框，确认先自动试开上下文口令", async () => {
     const wrapper = mountModal(crossToEncryptedWithContext);
     await flushPromises();
 
-    // 上下文口令在场：口令框不显出，确认按钮可直接点亮
     expect(needsPassphraseInput()).toBe(false);
     expect(confirmButton().disabled).toBe(false);
 
@@ -205,12 +191,10 @@ describe("RestoreConfirmModal（恢复确认弹窗，issue #572）", () => {
     confirmButton().dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
     await flushPromises();
 
-    // 试开失败：错误可见、口令框显出（重输入口），弹窗仍开着
     expect(document.body.textContent).toContain("口令错误或文件损坏，请重试");
     expect(needsPassphraseInput()).toBe(true);
     expect(confirmButton()).not.toBeNull();
 
-    // 重输后提交：改用输入值（不再是上下文口令）
     await setPassphrase(wrapper, "right-pw");
     confirmButton().dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
     await flushPromises();
@@ -228,15 +212,11 @@ describe("RestoreConfirmModal（恢复确认弹窗，issue #572）", () => {
   });
 });
 
-/** 密文备份口令输入是否渲染（needsPassphrase 的 DOM 面）。 */
 function needsPassphraseInput(): boolean {
   return bodyQuery('[data-testid="restore-passphrase"]') !== null;
 }
 
 describe("RestoreConfirmModal 弹窗排版统一（issue #640 / spec #630）", () => {
-  /** 断言弹窗卡片：宽度归 md 档（480px）+ 无边框（AppModal 默认，调用点不再显式声明）。
-   *  弹窗卡片 teleport 到 body，本文件直接 mount 组件、body 上应恰有一张卡片
-   *  （先例 PolicyFormModal.test.ts 的 expectModalCard）。 */
   function expectModalCard(width: string) {
     const cards = [...document.querySelectorAll<HTMLElement>(".n-card")];
     expect(cards, "当前应恰有一个弹窗卡片").toHaveLength(1);

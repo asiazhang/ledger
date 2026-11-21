@@ -2,18 +2,8 @@ import { describe, it, expect } from "vitest";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
-/**
- * 原生对话框模态确认清零守门（issue #652 / ADR-0078 决策 1）：
- * 模态危险确认一律应用内弹窗（AppDangerConfirmModal 分级封装），系统原生
- * `confirm()` 在本仓库无存量、不容新增——新增危险操作确认走共享封装。
- * plugin-dialog 依赖保留：`open` / `save` 的文件选择不受影响。
- * 守门为文本级扫描：import 子句中的 `confirm` 标识符即红（动态 import 解构等
- * 间接形态文本不可达，靠评审兜底，与 check-structure.ts 同款口径）。
- */
-
 const SRC_ROOT = join(import.meta.dirname, "..");
 
-/** 递归收集 src/ 下参与扫描的源文件（ts / vue）。 */
 function collectFiles(dir: string, acc: string[] = []): string[] {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const full = join(dir, entry.name);
@@ -23,9 +13,7 @@ function collectFiles(dir: string, acc: string[] = []): string[] {
   return acc;
 }
 
-/** import 子句（含静态与动态 import()）中是否从 plugin-dialog 引入 confirm。 */
 function importsConfirmFromPluginDialog(code: string): boolean {
-  // 静态 import 子句：具名导入中出现 confirm 标识符即候选（含换行形态）
   const moduleSpec = ["@tauri-apps", "plugin-dialog"].join("/");
   const staticRe = /import\s*\{[^}]*\bconfirm\b[^}]*\}\s*from\s*['"]([\w@/-]+)['"]/g;
   // 动态：import 该模块后解构 confirm 属潜在旁路，一并拦截

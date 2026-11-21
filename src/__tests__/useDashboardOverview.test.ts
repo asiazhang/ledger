@@ -9,12 +9,10 @@ import { makeFakeSink, makeOverview, resetToastSink } from "./factories";
 
 const mockOverview = makeOverview({ net_worth_cents: 1234567, accounts_balance_cents: 1000000 });
 
-/** 默认 invoke 布线：净资产总览契约快照（参考字典命令走接缝内建兜底，不在此枚举） */
 const BASE_DEFAULTS = { dashboard_overview: mockOverview };
 
 beforeEach(async () => {
   wireInvokeSeam({ defaults: BASE_DEFAULTS });
-  // 每用例复位为 no-op，模拟「注册前」默认态，防模块级 sink 状态串扰
   resetToastSink();
   const store = useReferenceStore();
   await store.refresh();
@@ -30,7 +28,6 @@ describe("useDashboardOverview 首页净资产数据层（issue #143）", () => 
     expect(error.value).toBeNull();
     expect(overview.value).toEqual(mockOverview);
     expect(mockInvoke.mock.calls.some(([cmd]) => cmd === "dashboard_overview")).toBe(true);
-    // 成功不弹 toast
     expect(sink.error).not.toHaveBeenCalled();
   });
 
@@ -43,13 +40,11 @@ describe("useDashboardOverview 首页净资产数据层（issue #143）", () => 
     });
     const sink = makeFakeSink();
     registerToastSink(sink);
-    // 挂载自动首刷吃到拒绝布线：治愈后不抛（未处理 rejection 会让测试失败）
     const { overview, loading, error } = withSetup(() => useDashboardOverview());
     await flushPromises();
     expect(loading.value).toBe(false);
     expect(overview.value).toBeNull();
     expect(error.value).toBe("缺少 USD→CNY 汇率，无法折算");
-    // 失败弹默认 toast（归一文案），error 状态与 toast 双通道共存
     expect(sink.error).toHaveBeenCalledTimes(1);
     expect(sink.error).toHaveBeenCalledWith("缺少 USD→CNY 汇率，无法折算");
   });
@@ -94,7 +89,6 @@ describe("useDashboardOverview 首页净资产数据层（issue #143）", () => 
         dashboard_overview: () => Promise.reject(new Error("缺少 HKD→CNY 汇率")),
       },
     });
-    // 挂载自动首刷已吃到拒绝布线并弹一次 toast，无需再显式首刷
     const { refresh } = withSetup(() => useDashboardOverview());
     await flushPromises();
     expect(sink.error).toHaveBeenCalledTimes(1);

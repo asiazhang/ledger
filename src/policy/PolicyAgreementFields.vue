@@ -12,17 +12,6 @@ import { useFormShared, usePinnedAccountOptions } from "@/composables/useFormSha
 import { scheduledRecurrenceOptions } from "@ledger/scheduled-plan-list";
 import type { CreateScheduledInput, RecurrenceType } from "@ledger/types";
 
-/**
- * 保单缴费协议字段组（issue #362 / ADR-0051 决策 2）：频率/每期金额（+币种）/
- * 扣款账户/起始日——新建（保单弹窗折叠区）与编辑（协议区添加/改价预填）共用的
- * 表单字段组件。草稿状态内聚在组件内，调用方经 ref 驱动：
- * `reset`（复位/预填）→ `validate`（校验，返回首个错误文案）→
- * `build`（组装 CreateScheduledInput，校验通过后调用）。
- *
- * 组装约定（issue #713 / ADR-0082 决策 2）：不携带 merchant_id——保单缴费协议
- * 不挂商户，保费归属唯一事实是保单引用（policy_id），付款对象语义由保单的保司
- * 承担；备注带险种名称（协议与保单分离，订阅清单靠备注可读）。
- */
 const app = useAppStore();
 const { accountOptions: selectableAccountOptions, currencyOptions } = useFormShared();
 
@@ -31,14 +20,11 @@ const currencyCode = ref<string | null>(app.defaultCurrency);
 const recurrenceType = ref<RecurrenceType>("yearly");
 const recurrenceInterval = ref(1);
 const accountId = ref<string | null>(null);
-/** 账户下拉候选面：可选择账户（归档不进新选择）+ 补值兜底——改价场景的预填项可能指向
- * 已归档账户，不补值会露出裸 uuid（spec #1952 / ADR-0142 决策 4）。 */
 const accountOptions = usePinnedAccountOptions(accountId, selectableAccountOptions);
 const startDate = ref<string | null>(todayStr());
 
 const recurrenceOptions = scheduledRecurrenceOptions();
 
-/** 预填项（改价场景由调用方传旧段值；缺省字段回落默认态）。 */
 interface AgreementPrefill {
   currencyCode?: string | null;
   recurrenceType?: RecurrenceType;
@@ -47,7 +33,6 @@ interface AgreementPrefill {
   startDate?: string | null;
 }
 
-/** 复位/预填草稿（金额恒清空：新建与改价都要求显式输入金额）。 */
 function reset(prefill: AgreementPrefill = {}) {
   amountYuan.value = "";
   currencyCode.value = prefill.currencyCode ?? app.defaultCurrency;
@@ -57,7 +42,6 @@ function reset(prefill: AgreementPrefill = {}) {
   startDate.value = prefill.startDate ?? todayStr();
 }
 
-/** 校验草稿；返回首个错误的用户文案，通过返回 null。 */
 function validate(): string | null {
   if (!accountId.value) return t("policies.agreement.msg.accountRequired");
   const cents = yuanToCents(amountYuan.value);
@@ -66,7 +50,6 @@ function validate(): string | null {
   return null;
 }
 
-/** 组装创建入参（订阅形态 + 保单引用 + 不挂商户；校验通过后调用）。 */
 function build(policyId: string, productName: string): CreateScheduledInput {
   return {
     kind: "subscription",

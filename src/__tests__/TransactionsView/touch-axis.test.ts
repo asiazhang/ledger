@@ -4,24 +4,12 @@ import { NDropdown, NModal } from "naive-ui";
 import { setFakeMedia } from "@ledger/test-support/media-mock";
 import { mountView, rowMenu, rowMenuKeys } from "./common";
 
-/**
- * 触控交互轴（issue #843 / ADR-0088 决策 6，词汇表「输入轴」）：两轴对比组件测试。
- * 换档一律经媒体查询测试接缝（@ledger/test-support/media-mock）：默认桌面指针态（hover +
- * fine）为指针轴基线；`hover: none + pointer: coarse` 为触控轴（Android 手机 /
- * 平板）。断言「看到什么、交互后发生什么」：
- * - 裸键监听：触控轴不注册（按键无弹窗）；指针轴行为不变；
- * - 记一笔下拉键位标注：触控轴退役（提示不存在的键位是误导）；指针轴照渲染；
- * - 交易行「⋯」：两轴同规常显（入口全平台一致），触控轴点开同一菜单；
- * - 金额全文：触控轴点按可达（气泡全文）；指针轴无点按行为（悬停面零变化）。
- */
-
 function pressKey(key: string) {
   window.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
 }
 
 type ViewWrapper = Awaited<ReturnType<typeof mountView>>;
 
-/** 记一笔分裂按钮的下拉（选项含 create kind key，与行菜单按 delete 区分）。 */
 function createKindDropdown(wrapper: ViewWrapper) {
   return wrapper
     .findAllComponents(NDropdown)

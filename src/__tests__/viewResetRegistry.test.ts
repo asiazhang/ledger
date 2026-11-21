@@ -3,18 +3,12 @@ import { defineComponent, h } from "vue";
 import { mount, type VueWrapper } from "@vue/test-utils";
 import { fireViewReset, registerViewReset, clearViewResets } from "@/composables/viewResetRegistry";
 
-/**
- * 复位回调注册表（spec #892 唯一新缝）测试：只测外部行为——注册/撤销/消费，
- * 不断言内部实现。注册表不持业务语义：回调做什么由注册方决定。
- */
-
 const wrappers: VueWrapper[] = [];
 afterEach(() => {
   while (wrappers.length) wrappers.pop()?.unmount();
   clearViewResets();
 });
 
-/** 在组件作用域内注册复位回调的宿主（视图注册形态同构）。 */
 function mountHost(reset: () => void) {
   const Host = defineComponent({
     setup() {
@@ -55,7 +49,6 @@ describe("viewResetRegistry（spec #892 复位回调注册点）", () => {
     fireViewReset();
     expect(first).not.toHaveBeenCalled();
     expect(second).toHaveBeenCalledTimes(1);
-    // 先注册的视图卸载不撤销后注册的回调（注册表按「当前注册」判定，不误清）
     wrappers[0]!.unmount();
     expect(fireViewReset()).toBe(true);
     expect(second).toHaveBeenCalledTimes(2);

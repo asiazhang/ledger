@@ -24,11 +24,6 @@ const createInput: PolicyInput = {
   note: null,
 };
 
-/**
- * 机制断言（self-init / SWR / 在途合并 / 事件重拉 / status-version / 部分失败不落位）
- * 已收口到 push-first-list.test.ts 工厂单点（ADR-0123 决策 6）；本文件只留领域动作断言。
- */
-
 describe("usePoliciesStore", () => {
   it("create 成功后立即重拉并返回 id", async () => {
     let listCalls = 0;
@@ -76,7 +71,6 @@ describe("usePoliciesStore", () => {
     await store.update("policy-1", { ...createInput, policy_number: "P-EDIT" });
     expect(store.policies[0].policy_number).toBe("P-EDIT");
     await store.remove("policy-1");
-    // 软删后不进列表（后端 WHERE is_deleted=0 过滤）
     expect(store.policies).toHaveLength(0);
   });
 
@@ -132,7 +126,6 @@ describe("usePoliciesStore", () => {
     const store = usePoliciesStore();
     await flushPromises();
 
-    // 已落库的建档不因重拉失败误报「保存失败」，动作正常返回 id
     await expect(store.create(createInput)).resolves.toBe("new-1");
     expect(store.status).toBe("error");
   });

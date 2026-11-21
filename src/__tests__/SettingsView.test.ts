@@ -23,7 +23,6 @@ import { open, save } from "@tauri-apps/plugin-dialog";
 const mockOpen = vi.mocked(open);
 const mockSave = vi.mocked(save);
 
-/** 数据存储位置信息桩：统一形状，各用例只覆写差异字段。 */
 function dataLocationInfo(
   overrides: Partial<{
     active_dir: string;
@@ -41,19 +40,9 @@ function dataLocationInfo(
   };
 }
 
-/**
- * 场景级接缝布线表（issue #747）：defaults 只留本场景非参考命令的静态契约快照，
- * 五个参考 list 命令由接缝内建规范夹具兜底，不再枚举。「数据」pane 用
- * display-directive='show:lazy'，首次激活挂载；pane 内子页签（issue #568）默认
- * 「备份」，DataLocationSettings 随「存储位置」子页签首切才挂载（show:lazy），
- * 故 get_data_location_info 在场景级 overrides（子页签切换测试会触发）。
- */
 const SCENE_DEFAULTS = {
   list_backups: [],
   get_log_level: { level: "info" },
-  // 「关于」与「通用 → 更新」卡片的版本身份源（issue #1957）：当前版本号取壳层
-  // 命令 app_build_info，不再读前端 package.json——场景不布此命令则版本/平台行
-  // 按「宁缺不填假值」不渲染。
   app_build_info: { version: "0.10.0", platform: "macos", arch: "aarch64" },
   create_backup: {
     path: "/tmp/ledger-backup.db.zip",
@@ -73,17 +62,14 @@ const SCENE_DEFAULTS = {
   set_auto_backup_enabled: null,
 };
 
-/** 场景级函数型应答（overrides 表）。 */
 const SCENE_OVERRIDES = {
   get_data_location_info: () => dataLocationInfo(),
 };
 
-/** 定位标题为指定文本的卡片（Naive UI 卡片头主标题元素）。 */
 function findCardByTitle(wrapper: ReturnType<typeof mount>, title: string) {
   return wrapper.findAll(".n-card").find((c) => c.find(".n-card-header__main").text() === title);
 }
 
-/** 按标签文本点击设置页 Tab（避免依赖不稳定的位置下标）；「数据」内子页签同名不冲突，同一助手通吃。 */
 async function openTab(wrapper: ReturnType<typeof mount>, label: string) {
   const tab = wrapper.findAll(".n-tabs-tab").find((t) => t.text() === label);
   expect(tab, `设置页应存在「${label}」Tab`).toBeTruthy();
@@ -94,7 +80,6 @@ async function openTab(wrapper: ReturnType<typeof mount>, label: string) {
 beforeEach(async () => {
   mockOpen.mockReset();
   mockSave.mockReset();
-  // 参考 store 预载走接缝 opt-in 参数（清理四件套由全局壳层每测执行）。
   const base = wireInvokeSeam({
     defaults: SCENE_DEFAULTS,
     overrides: SCENE_OVERRIDES,
@@ -129,7 +114,6 @@ describe("SettingsView.vue Tab 分域（issue #157 ADR-0022 立项；现役格�
       "Features",
       "About",
     ]);
-    // 切回中文后新挂载的组件恢复中文页签
     const wrapper = mount(SettingsView);
     expect(wrapper.findAll(".n-tabs-tab").map((tab) => tab.text())).toEqual([
       "通用",
@@ -143,29 +127,23 @@ describe("SettingsView.vue Tab 分域（issue #157 ADR-0022 立项；现役格�
   });
 
   it("旧 Tab（备份与恢复 / 外观 / 存储位置）全部消失", () => {
-    // 「币种」自 #1664 起回归为现役 Tab 名（本位币基准与汇率同步卡自「分类」迁入，
-    // ADR-0022 修订注记）；「分类与币种」复合名不回归，ADR-0034 移除的只读币种
-    // 展示仍不回归。
     const wrapper = mount(SettingsView);
     const labels = wrapper.findAll(".n-tabs-tab").map((t) => t.text());
     expect(labels).not.toContain("分类与币种");
     expect(labels).not.toContain("备份与恢复");
     expect(labels).not.toContain("外观");
     expect(labels).not.toContain("存储位置");
-    // #444：商户管理迁入「更多」聚合页，设置页不再承载商户入口
     expect(labels).not.toContain("商户");
   });
 
   it("设置面联动：关闭「定时」后设置页「定时」Tab 消失，重新打开即回来（issue #1243 范围 3）", async () => {
     const wrapper = mount(SettingsView);
     await openTab(wrapper, "功能");
-    // 点选即关、不设确认（ADR-0116 决策 8）：关掉「定时」后本页 Tab 立即消失。
     await wrapper.find('[data-testid="feature-toggle-scheduled"] .n-switch').trigger("click");
     await nextTick();
     const closedLabels = wrapper.findAll(".n-tabs-tab").map((t) => t.text());
     expect(closedLabels).not.toContain("定时");
     expect(closedLabels).toEqual(["通用", "分类", "币种", "数据", "功能", "关于"]);
-    // 重新打开即回原位置（关闭不改写任何清单，ADR-0116 决策 3）。
     await wrapper.find('[data-testid="feature-toggle-scheduled"] .n-switch').trigger("click");
     await nextTick();
     expect(wrapper.findAll(".n-tabs-tab").map((t) => t.text())).toContain("定时");
@@ -179,14 +157,12 @@ describe("SettingsView.vue Tab 分域（issue #157 ADR-0022 立项；现役格�
     expect(getSavedClosedFeatures()).toEqual(["scheduled"]);
     wrapper.unmount();
 
-    // 「重启」= 新 Pinia：设置页与开关 store 一同重跑启动读路径（localStorage 未清）。
     setActivePinia(createPinia());
     const restarted = mount(SettingsView);
     expect(restarted.findAll(".n-tabs-tab").map((t) => t.text())).not.toContain("定时");
     await openTab(restarted, "功能");
     const scheduledSwitch = restarted.find('[data-testid="feature-toggle-scheduled"] .n-switch');
     expect(scheduledSwitch.attributes("aria-checked")).toBe("false");
-    // 开关只写 localStorage：拨动开关零后端调用（设置页其他卡片的既有调用不计）。
     const callsBeforeToggle = mockInvoke.mock.calls.length;
     await scheduledSwitch.trigger("click");
     await nextTick();
@@ -196,16 +172,12 @@ describe("SettingsView.vue Tab 分域（issue #157 ADR-0022 立项；现役格�
 
   it("「通用」默认激活，含深色模式开关与日志卡片，不含展示币种与账本级本位币基准（issue #858 币种设置拆分；issue #930 日志卡片迁入；#1664 展示币种迁「币种」页签）", async () => {
     const wrapper = mount(SettingsView);
-    // 通用是首个 Tab，无需点击即挂载（show:lazy 语义）。
     const html = wrapper.html();
     expect(html).toContain("深色模式");
-    // 日志卡片（issue #930 / ADR-0022 修订）：等级下拉与「打开日志目录」同卡在末位。
     expect(html).toContain("日志等级");
     expect(html).toContain("打开日志目录");
-    // 币种域内容已迁「币种」页签（#1664）。
     expect(html).not.toContain("展示币种");
     expect(html).not.toContain("本位币基准");
-    // 深色模式开关反映当前主题（默认暗色）。
     expect(wrapper.find(".n-switch").attributes("aria-checked")).toBe("true");
   });
 
@@ -223,12 +195,10 @@ describe("SettingsView.vue Tab 分域（issue #157 ADR-0022 立项；现役格�
     expect(html).toContain("本位币基准");
     expect(html).toContain("展示币种");
     expect(html).toContain("同步汇率");
-    // 币种字典本体仍无维护界面（ADR-0034，只读表格不回归）。
     expect(html).not.toContain("支持币种");
     expect(html).not.toContain("默认币种");
     await openTab(wrapper, "分类");
     expect(wrapper.findComponent(CategoryManager).exists()).toBe(true);
-    // 币种域卡片已迁出（displayDirective 默认 'if'，离开即卸载）。
     expect(wrapper.html()).not.toContain("本位币基准");
     expect(wrapper.html()).not.toContain("同步汇率");
   });
@@ -241,7 +211,6 @@ describe("SettingsView.vue Tab 分域（issue #157 ADR-0022 立项；现役格�
     expect(labels).toContain("备份");
     expect(labels).toContain("存储位置");
     expect(labels).toContain("数据修复");
-    // 默认「备份」：备份组件已挂载，存储位置与数据修复组件未挂载（子 pane show:lazy）。
     const html = wrapper.html();
     expect(html).toContain("一键备份");
     expect(html).not.toContain("数据存储位置");
@@ -301,10 +270,7 @@ describe("SettingsView.vue Tab 分域（issue #157 ADR-0022 立项；现役格�
     const column = wrapper.find('[data-testid="settings-column"]');
     expect(column.exists()).toBe(true);
     expect(column.classes()).toContain("settings-column");
-    // 默认「通用」页签的卡片容器挂单列堆叠钩子。实际宽度规则见
-    // settings-layout-css.test.ts（jsdom 不消费样式表，组件测试只断言 DOM 钩子）。
     expect(wrapper.find(".settings-card-stack").exists()).toBe(true);
-    // 宽度口径收口在 settings-layout.css.ts，不再有固定 720px 的内联样式。
     expect(column.attributes("style") ?? "").not.toContain("max-width");
   });
 
@@ -327,7 +293,6 @@ describe("SettingsView.vue Tab 分域（issue #157 ADR-0022 立项；现役格�
     expect(listBackupsCalls).toBe(1);
     expect(wrapper.html()).toContain("当前共 0 个备份，上限 30 个");
 
-    // 切走再切回：数据 pane 保持挂载（display-directive='show:lazy'），不重拉。
     await openTab(wrapper, "通用");
     await openTab(wrapper, "数据");
     await flushPromises();
@@ -340,7 +305,6 @@ describe("SettingsView.vue Tab 分域（issue #157 ADR-0022 立项；现役格�
     const wrapper = mount(SettingsView);
     await openTab(wrapper, "数据");
     await nextTick();
-    // 按文本定位目录按钮（卡片重排后首个按钮不再固定是它，issue #651）。
     const dirBtn = findButton(wrapper, "选择目录")!;
     await dirBtn.trigger("click");
     await nextTick();
@@ -432,7 +396,6 @@ describe("SettingsView.vue Tab 分域（issue #157 ADR-0022 立项；现役格�
           deleted: ["ledger-backup-20260101-010101.db.zip"],
           failed: [],
         }),
-        // 本机设备标识（issue #1987）：待删数量只统计本机桶（两份均为本机产物）。
         get_device_id: "dev-this",
       },
     });
@@ -443,7 +406,6 @@ describe("SettingsView.vue Tab 分域（issue #157 ADR-0022 立项；现役格�
     const pruneBtn = findButton(wrapper, "立即清理")!;
     await pruneBtn.trigger("click");
     await flushPromises();
-    // 手动清理确认弹窗（issue #652 / ADR-0078）：应用内 warning 级确认后续接删除
     const confirmPruneBtn = findBodyButtonByTestId("danger-confirm");
     expect(confirmPruneBtn, "清理确认弹窗应弹出").toBeTruthy();
     await confirmPruneBtn!.trigger("click");
@@ -482,7 +444,6 @@ describe("SettingsView.vue Tab 分域（issue #157 ADR-0022 立项；现役格�
     const html = wrapper.html();
     expect(html).toContain("自动备份");
     expect(html).toContain("上次自动备份：2026-02-17 09:30");
-    // 用语义属性 aria-checked 断言开关状态，不依赖内部样式类。
     const backupSwitch = findCardByTitle(wrapper, "自动备份")!.find(".n-switch");
     expect(backupSwitch.attributes("aria-checked")).toBe("false");
   });
@@ -542,7 +503,6 @@ describe("SettingsView.vue Tab 分域（issue #157 ADR-0022 立项；现役格�
     const restoreBtn = findButton(wrapper, "从备份恢复")!;
     await restoreBtn.trigger("click");
     await flushPromises();
-    // 元数据先行：确认弹窗已开（teleport 到 body），恢复尚未执行。
     expect(mockInvoke).toHaveBeenCalledWith("get_backup_meta", {
       path: "/Users/me/backups/ledger-backup.db.zip",
     });
@@ -617,7 +577,6 @@ describe("SettingsView.vue Tab 分域（issue #157 ADR-0022 立项；现役格�
     await flushPromises();
     expect(wrapper.html()).toContain("当前共 0 个备份，上限 30 个");
 
-    // 后端自动备份完成 → 发出无 payload 信号 → 列表自动重拉。
     backupList = [
       {
         file_name: "ledger-auto-20260217-093000.db.zip",
@@ -656,7 +615,6 @@ describe("SettingsView.vue Tab 分域（issue #157 ADR-0022 立项；现役格�
     expect(html).toContain("/Users/me/ledger-data");
     expect(html).toContain("下次启动");
 
-    // 回退告警：fallback_reason 非空时展示回退提示，原路径仍可见。
     wireInvokeSeam({
       defaults: SCENE_DEFAULTS,
       overrides: {
@@ -676,14 +634,6 @@ describe("SettingsView.vue Tab 分域（issue #157 ADR-0022 立项；现役格�
 });
 
 describe("SettingsView.vue 页签内容存在性矩阵（issue #769：切页签断言文案在场的用例收行）", () => {
-  // 行 =（导航动作，期望文案数组）；删掉对应页签/入口即红（生杀线内，见 CONTEXT-testing「存在性断言」）。
-  // 行 ↔ 原用例对应：
-  //   通用 → 原「页含界面语言选择器，默认跟随系统」（#342 / ADR-0049）；
-  //   关于 → 原「在末位，显示版本号」（末位次序由 Tab 格局用例的全等断言守护）；
-  //   数据 → 原「从未自动备份时显示从未占位」；
-  //   数据 → 备份 / 存储位置 / 数据修复 三行 ↔ 原「三组件随子页签挂载」（#568）按子页签拆行；
-  //     其中 get_data_location_info 调用断言不另保留——目录文案即该调用应答的渲染结果，
-  //     渲染断言已覆盖其失败面。
   it.each([
     { nav: "进入「通用」页签", path: ["通用"], texts: ["界面语言", "跟随系统"] },
     { nav: "进入「关于」页签", path: ["关于"], texts: ["版本号"] },
@@ -715,7 +665,6 @@ describe("SettingsView.vue 定时 Tab：设备级自动执行开关（issue #308
     const text = card!.text();
     expect(text).toContain("自动执行只应在一台机器开启");
     expect(text).toContain("不随备份");
-    // 默认关（ADR-0042：设备级开关默认关，换新机器或恢复备份后保持本机值）。
     expect(card!.find(".n-switch").attributes("aria-checked")).toBe("false");
   });
 

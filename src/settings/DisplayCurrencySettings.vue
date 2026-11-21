@@ -6,10 +6,6 @@ import { useAppStore } from "@/stores/app";
 import { useReferenceStore } from "@/stores/reference";
 import { t } from "@ledger/i18n";
 
-// 展示币种卡片（issue #858 拆分为设备级偏好；issue #1664 自「通用」迁入「币种」
-// 页签）：轻量设置项——localStorage 权威、不触后端、不随 Backup/Restore 迁移；
-// 作用域是本机表单预选与金额符号提示，不参与账本折算（折算语义在账本本位币
-// 基准，与本卡同页签相邻互为对照，各带作用域提示）。
 const store = useAppStore();
 const reference = useReferenceStore();
 

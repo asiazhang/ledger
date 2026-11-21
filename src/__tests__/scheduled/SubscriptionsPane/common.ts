@@ -4,16 +4,11 @@ import { mountFlushed } from "@ledger/test-support/mount";
 import { makeSubscriptionPlan } from "../../factories";
 import SubscriptionsPane from "@/scheduled/SubscriptionsPane.vue";
 
-// 列表商户列渲染 MerchantLink（顶层 useRouter 下钻）：pane 直挂不走完整视图路由，
-// 目录级桩掉说明符（与 ScheduledView.test.ts 提供真实路由的视图级测试分层）。
 vi.mock("vue-router", () => ({
   useRoute: () => ({ query: {} }),
   useRouter: () => ({ push: vi.fn() }),
 }));
 
-// 内嵌 SubscriptionSpendPanel 的 <Bar> 走共享桩（issue #1335，先例 #160）：jsdom 无
-// 2D context，真实 chart.js 取不到 canvas 会打「Failed to create chart」error 输出污染
-// stderr；目录级桩掉说明符，本目录测试只关心清单与弹窗行为，不验证绘制。
 vi.mock("vue-chartjs", async () => {
   const { BarChartStub } = await import("../../line-chart-stub");
   return { Bar: BarChartStub };
@@ -29,18 +24,8 @@ import type {
   SubscriptionSpendOverview,
 } from "@ledger/types";
 
-/**
- * SubscriptionsPane 测试目录薄壳（issue #748，ADR-0085 决策 7）：只承载本目录
- * 特有夹具与编排组合——计划三件套夹具族、可变数据源（重载读最新值）、面板挂载
- * 编排。通用布线（wireInvokeSeam）、清理四件套（全局壳层每测自动执行）、挂载与
- * DOM 查找（@ledger/test-support/mount、@ledger/test-support/dom）一律上收测试辅助层，禁止薄壳再生长
- * 通用能力。
- */
-
-// 查找助手直用测试辅助层出口（本目录惯用名 findInput 保持主题文件导入不变）。
 export { findInputByTestId as findInput } from "@ledger/test-support/dom";
 
-/** 目录账户夹具基线（每测重置回它；`setMockAccounts` 供归档等场景追加行） */
 export const mockAccounts: Account[] = [
   {
     id: "acc-1",
@@ -85,7 +70,6 @@ export const mockMerchants: Merchant[] = [
   },
 ];
 
-/** 订阅详情组装（目录特有派生包装，留守本地）：core + SubscriptionPlan 全字段扩展装配。 */
 export function makeDetail(
   plan: ScheduledTransactionWithExt,
   pending_occurrences: ScheduledTransactionOccurrence[],
@@ -93,8 +77,6 @@ export function makeDetail(
 ): ScheduledTransactionDetail {
   return {
     core: plan.core,
-    // 本目录计划恒为订阅形态（makePlan 固定 kind: 'subscription'），
-    // extension 按 SubscriptionPlan 全字段装配（policy_id 随 WithExt 透传）
     extension: {
       scheduled_transaction_id: plan.core.id,
       merchant_id: plan.merchant_id,
@@ -107,15 +89,11 @@ export function makeDetail(
   };
 }
 
-// —— 可变数据源，状态操作后重载读得到最新值 ——
 let mockPlans: ScheduledTransactionWithExt[] = [];
 export const mockDetails = new Map<string, ScheduledTransactionDetail>();
-/** 订阅编辑失败开关（issue #162 拒绝路径测试用） */
 let failSubscriptionUpdate = false;
-/** 商户字典 fixture（issue #190）：新建弹窗补全与列表商户列共用 */
 let mockMerchantsState: Merchant[] = mockMerchants;
 
-/** 订阅花费总览 fixture（issue #160）：面板挂载即拉取，默认空数据 */
 const emptySpendOverview: SubscriptionSpendOverview = {
   native_currency: "CNY",
   this_month_native_cents: 0,
@@ -127,7 +105,6 @@ const emptySpendOverview: SubscriptionSpendOverview = {
 };
 let mockSpendOverview: SubscriptionSpendOverview = emptySpendOverview;
 
-// 拆分后主题测试文件对导入绑定只读，可变模块态经 setter 改写。
 export function setMockPlans(rows: ScheduledTransactionWithExt[]) {
   mockPlans = rows;
 }
@@ -137,7 +114,6 @@ export function setFailSubscriptionUpdate(value: boolean) {
 export function setMockMerchants(rows: Merchant[]) {
   mockMerchantsState = rows;
 }
-/** 可变账户库（spec #1952 / ADR-0142：编辑面补值场景需要归档账户进场） */
 let accountsDb: Account[] = mockAccounts;
 export function setMockAccounts(rows: Account[]) {
   accountsDb = rows;
@@ -147,7 +123,6 @@ export async function mountView() {
   return mountFlushed(SubscriptionsPane);
 }
 
-/** 各主题文件 beforeEach 显式调用：目录态重置 + 唯一接缝布线 + 参考数据预热。 */
 export async function setup() {
   mockPlans = [];
   mockDetails.clear();
@@ -155,16 +130,11 @@ export async function setup() {
   failSubscriptionUpdate = false;
   mockMerchantsState = mockMerchants;
   accountsDb = mockAccounts;
-  // 唯一接缝布线（ADR-0085）：账户与分类以本套夹具覆写（值与规范夹具不同，
-  // 属场景契约而非重复枚举），进 defaults 表；可变库与行为编排（订阅 CRUD、
-  // 状态机、重试、花费总览）为函数型 overrides。其余参考命令由规范夹具兜底；
-  // store 层预热 opt-in 开启：主题用例依赖参考数据就绪后的即时渲染。
   const seam = wireInvokeSeam({
     defaults: {
       list_categories: mockCategories,
     },
     overrides: {
-      // 可变账户库（同 TransactionsView 薄壳先例）：函数型覆写取最新值
       list_accounts: () => accountsDb,
       list_merchants: () => mockMerchantsState,
       subscription_spend_overview: () => mockSpendOverview,
@@ -242,7 +212,6 @@ export async function setup() {
         return Promise.resolve();
       },
       execute_scheduled_occurrence: (args?: Record<string, unknown>) => {
-        // 重试语义：failed 期次 → completed（issue #205 期次详情弹窗）
         const { occurrence_id } = (args?.input ?? {}) as { occurrence_id: string };
         for (const [id, d] of mockDetails) {
           if (!d.occurrences.some((o) => o.id === occurrence_id && o.status === "failed")) continue;

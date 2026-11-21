@@ -10,22 +10,10 @@ import {
 } from "@/transaction/lending";
 import type { AccountType, TransactionModalRow } from "@ledger/types";
 
-/**
- * 借贷录入 = 转账表单的借贷变体（issue #374 / ADR-0053）：金额/币种/日期/备注、
- * 语义校验、装配与提交路由全部复用 useTransferForm（提交产物与转账同构：
- * kind=transfer + 双账户 + 金额/币种/日期/备注），仅叠加——
- * - 方向状态（预置方向 + toggle 覆盖借出/收回/借入/还款四方向）；
- * - 账户选择器按方向过滤（借出/收回：资金账户 ↔ receivable；借入/还款：debt ↔ 资金账户）；
- * - 方向切换时的已选账户处置（反向方向交换两端，其余清掉越侧选择）。
- */
 export function useLendingForm(options?: {
-  /** 创建入口的预置方向（「借出」「借入」两个入口项各预设其一）；编辑模式优先按既有
-   * 交易派生（与表单分派同用 domain 层 resolveLendingDirection），派生失败（账户类型
-   * 缺失）时以此兜底。 */
   initialDirection?: LendingFormDirection;
   onCreated?: () => void;
   onUpdated?: () => void;
-  /** 编辑模式：与 useTransferForm editing 同约定（创建时读一次回填、提交时重读定目标） */
   editing?: () => TransactionModalRow | null;
 }) {
   const { reference } = useFormShared();
@@ -33,8 +21,6 @@ export function useLendingForm(options?: {
   const accountTypeOf = (id: string | null | undefined): AccountType | undefined =>
     id == null ? undefined : reference.accountMap.get(id)?.type;
 
-  // 编辑模式先按既有交易派生方向（形态识别与表单分派同一函数）；
-  // 派生不出（账户类型缺失等）回退入口预置方向，不误判。
   const editingTx = options?.editing?.() ?? null;
   const direction = ref<LendingFormDirection>(
     editingTx
@@ -42,7 +28,6 @@ export function useLendingForm(options?: {
       : (options?.initialDirection ?? "lend"),
   );
 
-  // 创建成功提示按提交时的当前方向给专属文案（getter：方向在表单存续期可切换）
   const transfer = useTransferForm({
     onCreated: options?.onCreated,
     onUpdated: options?.onUpdated,
@@ -53,8 +38,6 @@ export function useLendingForm(options?: {
       }),
   });
 
-  /** 某侧（from/to）可选项：当前方向该侧允许侧别内的**可选择**账户（过滤表见 domain
-   * 借贷模块）；归档账户不进新选择（spec #1952 / ADR-0142 决策 4）。 */
   function selectableOptionsFor(sideKey: "from" | "to") {
     return computed(() => {
       const side = LENDING_DIRECTION_SIDES[direction.value][sideKey];
@@ -64,20 +47,16 @@ export function useLendingForm(options?: {
     });
   }
 
-  /** 转出侧可选项：可选择面 + 编辑面补值（已存值恰是归档账户时补回并标「已归档」） */
   const fromAccountOptions = usePinnedAccountOptions(
     transfer.accountId,
     selectableOptionsFor("from"),
   );
 
-  /** 转入侧可选项：同上（借贷账户是归档主目标，两端各自都可能归档） */
   const toAccountOptions = usePinnedAccountOptions(
     transfer.toAccountId,
     selectableOptionsFor("to"),
   );
 
-  /** 方向切换：反向方向的既有 Pair 交换两端即贴合新方向（借出↔收回/借入↔还款，不丢
-   * 已选账户）；其余情况保留仍属允许侧别的选择、清掉越侧的，不存在中间态残留。 */
   function setDirection(next: LendingFormDirection) {
     if (next === direction.value) return;
     const { from, to } = LENDING_DIRECTION_SIDES[next];

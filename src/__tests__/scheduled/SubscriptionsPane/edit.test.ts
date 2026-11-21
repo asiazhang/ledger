@@ -21,20 +21,17 @@ import {
 } from "./common";
 import type { Account } from "@ledger/types";
 
-// 金额断言委托形态（issue #770）：期待值调同一 formatAmount 实现，格式规则唯一归属其专测
 const cny = refCurrencies[0];
 
 beforeEach(setup);
 
 describe("SubscriptionsPane 订阅编辑——仅非金额字段（issue #162）", () => {
-  /** 按标题定位弹窗：页面有两个 NModal，findComponent 只返回第一个。 */
   function findModal(wrapper: ReturnType<typeof mount>, title: string) {
     const modal = wrapper.findAllComponents(NModal).find((m) => m.props("title") === title);
     expect(modal, `应存在标题为「${title}」的弹窗`).toBeDefined();
     return modal!;
   }
 
-  /** 打开 a1 行的编辑弹窗。 */
   async function openEditModal(wrapper: ReturnType<typeof mount>) {
     await wrapper.find('[data-testid="op-edit-a1"]').trigger("click");
     await flushPromises();
@@ -49,7 +46,6 @@ describe("SubscriptionsPane 订阅编辑——仅非金额字段（issue #162）
     mockDetails.set("a1", makeDetail(plan, []));
     const wrapper = await mountView();
     expect(wrapper.find('[data-testid="op-edit-a1"]').exists()).toBe(true);
-    // 已取消行不提供编辑（列表切到已取消后无编辑按钮）
     await wrapper.find('[data-testid="filter-cancelled"]').trigger("click");
     await flushPromises();
     expect(wrapper.find('[data-testid="op-edit-c1"]').exists()).toBe(false);
@@ -70,13 +66,10 @@ describe("SubscriptionsPane 订阅编辑——仅非金额字段（issue #162）
     const modal = findModal(wrapper, "编辑订阅");
     expect(modal.props("show")).toBe(true);
     expect(modal.props("title")).toBe("编辑订阅");
-    // 预填备注
     expect(findInput(wrapper, "sub-edit-note").element.value).toBe("视频会员");
-    // 无金额输入：无金额输入框、无数字步进（周期间隔）、无日期选择
     expect(wrapper.findComponent('[data-testid="sub-amount"]').exists()).toBe(false);
     expect(modal.findComponent(NInputNumber).exists()).toBe(false);
     expect(modal.findComponent(NDatePicker).exists()).toBe(false);
-    // 弹窗内不出现计划金额
     expect(modal.text()).not.toContain(formatAmount(1500, cny));
   });
 
@@ -86,7 +79,6 @@ describe("SubscriptionsPane 订阅编辑——仅非金额字段（issue #162）
     mockDetails.set("a1", makeDetail(plan, []));
     const wrapper = await mountView();
     await openEditModal(wrapper);
-    // 清空账户（编辑弹窗内唯一的 NSelect 是扣款账户）
     wrapper.findComponent(NSelect).vm.$emit("update:value", null);
     await flushPromises();
     await wrapper.findComponent('[data-testid="sub-edit-save"]').trigger("click");
@@ -105,7 +97,6 @@ describe("SubscriptionsPane 订阅编辑——仅非金额字段（issue #162）
     const noteInput = findInput(wrapper, "sub-edit-note");
     await noteInput.setValue("音乐会员");
     await noteInput.trigger("input");
-    // 账户/分类经组件 emit（编辑弹窗打开时新建弹窗未渲染，实例唯一）
     wrapper.findComponent(NSelect).vm.$emit("update:value", "acc-1");
     wrapper.findComponent(NTreeSelect).vm.$emit("update:value", "cat-1");
     await flushPromises();
@@ -122,13 +113,11 @@ describe("SubscriptionsPane 订阅编辑——仅非金额字段（issue #162）
         note: "音乐会员",
       },
     });
-    // 弹窗关闭且清单刷新（新备注出现在列表）
     expect(findModal(wrapper, "编辑订阅").props("show")).toBe(false);
     expect(wrapper.text()).toContain("音乐会员");
   });
 
   it("编辑弹窗改商户：预填当前商户，保存携带新 merchant_id（issue #190）", async () => {
-    // 第二个在用商户：编辑目标从 mer-1 改为 mer-2
     setMockMerchants([
       ...mockMerchants,
       {
@@ -140,14 +129,12 @@ describe("SubscriptionsPane 订阅编辑——仅非金额字段（issue #162）
         is_deleted: false,
       },
     ]);
-    // beforeEach 已加载 store，显式 refresh 强制重拉拿新字典
     await useReferenceStore().refresh();
     const plan = makeSubscriptionPlan({ id: "a1", note: "视频会员" }, "mer-1");
     setMockPlans([plan]);
     mockDetails.set("a1", makeDetail(plan, []));
     const wrapper = await mountView();
     await openEditModal(wrapper);
-    // 商户下拉 = 编辑弹窗内 data-testid 为 sub-edit-merchant 的 PinyinSelect（内部 NSelect）
     const merchantSelect = wrapper
       .findComponent('[data-testid="sub-edit-merchant"]')
       .findComponent(NSelect);
@@ -159,7 +146,6 @@ describe("SubscriptionsPane 订阅编辑——仅非金额字段（issue #162）
     await flushPromises();
     const call = mockInvoke.mock.calls.find(([cmd]) => cmd === "update_scheduled_subscription");
     expect(call![1]).toMatchObject({ input: { merchant_id: "mer-2" } });
-    // 清单商户列刷新为新商户名
     expect(wrapper.text()).toContain("商户B");
   });
 
@@ -172,7 +158,6 @@ describe("SubscriptionsPane 订阅编辑——仅非金额字段（issue #162）
     mockDetails.set("a1", makeDetail(plan, []));
     const wrapper = await mountView();
     await openEditModal(wrapper);
-    // 商户字段整个表单项不渲染（而非置灰）：协议计划行不挂商户
     expect(wrapper.findComponent('[data-testid="sub-edit-merchant"]').exists()).toBe(false);
   });
 
@@ -180,7 +165,6 @@ describe("SubscriptionsPane 订阅编辑——仅非金额字段（issue #162）
     const plan = makeSubscriptionPlan({ id: "a1", note: "视频会员" }, "mer-gone");
     setMockPlans([plan]);
     mockDetails.set("a1", makeDetail(plan, []));
-    // 商户字典为空：原商户已软删且超出会话缓存
     setMockMerchants([]);
     await useReferenceStore().refresh();
     const wrapper = await mountView();
@@ -189,7 +173,6 @@ describe("SubscriptionsPane 订阅编辑——仅非金额字段（issue #162）
       .findComponent('[data-testid="sub-edit-merchant"]')
       .findComponent(NSelect);
     expect(merchantSelect.props("value")).toBe("mer-gone");
-    // 兜底选项承载原 id（裸 uuid 不可读，以可读标签显示）
     const options = merchantSelect.props("options") as { value: string }[];
     expect(options.some((o) => o.value === "mer-gone")).toBe(true);
     await wrapper.findComponent('[data-testid="sub-edit-save"]').trigger("click");
@@ -212,7 +195,6 @@ describe("SubscriptionsPane 订阅编辑——仅非金额字段（issue #162）
   });
 
   it("编辑挂归档账户的订阅：账户下拉补回该账户并标「已归档」、保持原选中（编辑实例选项面）", async () => {
-    /** 归档账户（spec #1952 / ADR-0142 决策 4：归档不进新选择，已存值补回） */
     const archived: Account = {
       id: "acc-arch",
       name: "旧工资卡",
@@ -235,7 +217,6 @@ describe("SubscriptionsPane 订阅编辑——仅非金额字段（issue #162）
     const wrapper = await mountView();
     await openEditModal(wrapper);
     const accountSelect = findModal(wrapper, "编辑订阅").findComponent(NSelect);
-    // 值保持原选中（不静默改挂），选项补回可读名字 + 标记（不露裸 uuid）
     expect(accountSelect.props("value")).toBe("acc-arch");
     expect(accountSelect.props("options")).toContainEqual({
       label: "旧工资卡（已归档）",

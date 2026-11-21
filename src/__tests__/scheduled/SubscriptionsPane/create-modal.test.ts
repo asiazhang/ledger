@@ -8,7 +8,6 @@ import { componentVm } from "@ledger/test-support/component-vm";
 beforeEach(setup);
 
 describe("SubscriptionsPane 新建订阅模态对话框（issue #158）", () => {
-  /** 点击「新建订阅」按钮打开模态对话框。 */
   async function openCreateModal(wrapper: ReturnType<typeof mount>) {
     await wrapper.find('[data-testid="sub-create-open"]').trigger("click");
     await flushPromises();
@@ -36,7 +35,6 @@ describe("SubscriptionsPane 新建订阅模态对话框（issue #158）", () => 
     await amountInput.trigger("input");
     await wrapper.findComponent('[data-testid="sub-create"]').trigger("click");
     await flushPromises();
-    // 重新打开：备注已清空，不带上次填写
     await openCreateModal(wrapper);
     expect(findInput(wrapper, "sub-note").element.value).toBe("");
   });
@@ -52,10 +50,6 @@ describe("SubscriptionsPane 新建订阅模态对话框（issue #158）", () => 
     );
   });
 
-  // 提交流程编排（商户解析 → payload 组装 → 创建 → 提示 → 重置 → 回调）已迁移至接缝接口测试
-  // （useScheduledPlanForm.test.ts「submitCreate 提交时序编排」订阅形态用例）。此处保留：
-  // 交互冒烟（关窗 + 清单刷新接线）、金额校验（留页签）与元转分接线。
-
   it("弹窗内填表创建走创建命令，金额转分、kind=subscription（公共字段与商户解析断言留给接缝直测）", async () => {
     const wrapper = await mountView();
     await openCreateModal(wrapper);
@@ -65,7 +59,6 @@ describe("SubscriptionsPane 新建订阅模态对话框（issue #158）", () => 
     const amountInput = findInput(wrapper, "sub-amount");
     await amountInput.setValue("25");
     await amountInput.trigger("input");
-    // 账户 / 分类 / 周期：经组件 emit 设置
     wrapper.findComponent(NSelect).vm.$emit("update:value", "acc-1");
     wrapper.findComponent(NTreeSelect).vm.$emit("update:value", "cat-1");
     wrapper.findComponent(NDatePicker).vm.$emit("update:formatted-value", "2026-02-15");
@@ -114,7 +107,6 @@ describe("SubscriptionsPane 新建订阅模态对话框（issue #158）", () => 
     await flushPromises();
     await wrapper.findComponent('[data-testid="sub-create"]').trigger("click");
     await flushPromises();
-    // 弹窗关闭且清单刷新（新订阅出现在列表）
     expect(wrapper.findComponent(NModal).props("show")).toBe(false);
     expect(wrapper.text()).toContain("云存储");
   });
@@ -122,7 +114,6 @@ describe("SubscriptionsPane 新建订阅模态对话框（issue #158）", () => 
   it("商户下拉补全在用商户：选中后创建携带 merchant_id（issue #190）", async () => {
     const wrapper = await mountView();
     await openCreateModal(wrapper);
-    // 商户下拉 = 新建弹窗内 data-testid 为 sub-merchant 的 PinyinSelect（内部 NSelect 承载 options）
     const merchantSelect = wrapper
       .findComponent('[data-testid="sub-merchant"]')
       .findComponent(NSelect);
@@ -139,14 +130,12 @@ describe("SubscriptionsPane 新建订阅模态对话框（issue #158）", () => 
     await flushPromises();
     const call = mockInvoke.mock.calls.find(([cmd]) => cmd === "create_scheduled_transaction");
     expect(call![1]).toMatchObject({ input: { merchant_id: "mer-1" } });
-    // 列表商户列显示商户名
     expect(wrapper.text()).toContain("视频平台");
   });
 
   it("输入不存在的商户名保存即建：解析全仓单点走表单接缝，此处仅验接线（选中/即建矩阵见 useScheduledPlanForm.test.ts）", async () => {
     const wrapper = await mountView();
     await openCreateModal(wrapper);
-    // 输入文本「新商户」：未命中在用商户 → 保存时接缝即建
     componentVm(wrapper.findComponent('[data-testid="sub-merchant"]')).$emit(
       "update:value",
       "新商户",
@@ -158,7 +147,6 @@ describe("SubscriptionsPane 新建订阅模态对话框（issue #158）", () => 
     await flushPromises();
     await wrapper.findComponent('[data-testid="sub-create"]').trigger("click");
     await flushPromises();
-    // 提交携带解析后的商户 id（即建/重名兜底矩阵在接缝测试）
     const createCall = mockInvoke.mock.calls.find(
       ([cmd]) => cmd === "create_scheduled_transaction",
     );

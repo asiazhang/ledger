@@ -12,16 +12,8 @@ import { useAppStore } from "@/stores/app";
 import { usePhysicalAssetsStore } from "@/physical-asset/physicalAssets";
 import type { PhysicalAsset, PhysicalAssetValuationInput } from "@ledger/types";
 
-/**
- * 更新估值弹窗（issue #467 T2 / ADR-0064）：「更新估值」的唯一入口——
- * 填金额 + 日期（缺省今天、可补录过去日期、未来日期由后端拒绝）+ 币种
- * （预选该资产当前估值币种）。每次保存追加一条估值历史行（旧值保留不覆盖），
- * 当前估值变为最新一条并在列表生效；不在本弹窗展示或改写历史行。
- * 保存成功后关弹窗，列表经 store 重拉刷新；后端校验错误原样展示。
- */
 const props = defineProps<{
   show: boolean;
-  /** 目标资产（当前估值为币种预选依据） */
   asset: PhysicalAsset | null;
 }>();
 const emit = defineEmits<{ "update:show": [value: boolean] }>();
@@ -31,13 +23,10 @@ const app = useAppStore();
 const physicalAssetsStore = usePhysicalAssetsStore();
 const { currencyOptions } = useFormShared();
 
-// —— 表单状态 ——
 const amountYuan = ref("");
 const currency = ref<string | null>(null);
 const valuationDate = ref<string | null>(null);
 
-/** 打开时复位（immediate 兼容初始 show）：金额清空、币种预选当前估值币种、
- *  日期留空 = 今天（后端同语义缺省）。 */
 watch(
   () => [props.show, props.asset] as const,
   () => {
@@ -56,7 +45,6 @@ function close() {
 async function save() {
   const asset = props.asset;
   if (!asset) return;
-  // 客户端必填校验（消息与后端错误码文案同源，双保险防呆）
   const cents = yuanToCents(amountYuan.value);
   if (amountYuan.value.trim() === "" || cents === null) {
     message.warning(t("physicalAssets.valuation.msg.amountRequired"));
@@ -73,7 +61,6 @@ async function save() {
   const input: PhysicalAssetValuationInput = {
     amount_cents: cents,
     currency_code: currency.value,
-    // 日期留空 = 今天（后端缺省同语义）；可补录过去，未来由后端拒绝
     valuation_date: valuationDate.value || null,
   };
   try {
@@ -81,7 +68,6 @@ async function save() {
     message.success(t("physicalAssets.msg.valuationUpdated"));
     close();
   } catch (e) {
-    // 后端校验错误原样展示（如「估值日期 … 不能是未来」），弹窗不关、内容不丢
     message.error(t("physicalAssets.msg.saveFailed", { msg: errorMessage(e) }));
   }
 }
@@ -144,7 +130,6 @@ defineExpose({ save });
 </template>
 
 <style scoped>
-/* 表单下方段落式辅助说明（spec #630）：块级 + 上下留白，不挤占表单项 */
 .form-hint {
   display: block;
   margin: 8px 0 12px;

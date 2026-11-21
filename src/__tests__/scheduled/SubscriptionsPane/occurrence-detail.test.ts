@@ -14,7 +14,6 @@ describe("SubscriptionsPane 期次详情弹窗入口（issue #205）", () => {
     const wrapper = await mountView();
     await wrapper.find('[data-testid="op-detail-a1"]').trigger("click");
     await flushPromises();
-    // 弹窗内容渲染（display-directive="if"，仅在打开时挂载；NModal teleport 到 body）
     expect(document.body.querySelector('[data-testid="occ-plan-note"]')).not.toBeNull();
   });
 
@@ -38,7 +37,6 @@ describe("SubscriptionsPane 期次详情弹窗入口（issue #205）", () => {
     expect(retryBtn).not.toBeNull();
     retryBtn.click();
     await flushPromises();
-    // changed 信号触发清单重拉（list_scheduled_transactions 再次调用）
     const loadCalls = mockInvoke.mock.calls.filter(
       ([cmd]) => cmd === "list_scheduled_transactions",
     );

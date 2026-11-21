@@ -3,7 +3,6 @@ import { mount } from "@vue/test-utils";
 import InstrumentLink from "@/investment/InstrumentLink.vue";
 import { useAppStore } from "@/stores/app";
 
-// 标的下钻经 useRouter（AccountLink/MerchantLink 同款 pushMock 断言先例）
 const pushMock = vi.fn();
 vi.mock("vue-router", () => ({
   useRouter: () => ({ push: pushMock }),
@@ -42,12 +41,6 @@ describe("InstrumentLink 标的前提下钻（ADR-0107）强调色（issue #1268
     expect(wrapper.find("span").text()).toBe("-");
   });
 });
-/**
- * 持仓下钻改址（ADR-0135 决策 6 / ADR-0107 决策 4 修订）：持仓页签行标的/代码点击改落
- * 投资页明细页签 ?tab=detail&account=&instrument=——交易页 ?instrument= 维度随投资 kind
- * 行迁出主列表而退役。跳转 query 断言即接线型负向条目：删除改址接线（go() 不再带
- * tab=detail 或跳回交易页）任一测试变红，断言对准用户可观察结果（ADR-0087）。
- */
 describe("InstrumentLink 持仓下钻改址（ADR-0135 决策 6）", () => {
   it("持仓行形态（带账户）：跳投资页 ?tab=detail&account=&instrument=", async () => {
     const wrapper = mount(InstrumentLink, {

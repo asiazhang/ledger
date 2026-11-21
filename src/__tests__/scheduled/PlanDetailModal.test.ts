@@ -17,7 +17,6 @@ import type {
   ScheduledTransactionOccurrence,
 } from "@ledger/types";
 
-// 金额断言委托形态（issue #770）：期待值调同一 formatAmount 实现，格式规则唯一归属其专测
 const cny = refCurrencies[0];
 
 const mockAccounts: Account[] = [
@@ -95,8 +94,6 @@ function makeDetail(
   const cancelled = parts.cancelled ?? [];
   return {
     core,
-    // 默认扩展按 SubscriptionPlan 全字段装配（makeCore 默认 kind = 'subscription'；
-    // 其余形态用例显式传 parts.extension，见分期用例）
     extension: parts.extension ?? {
       scheduled_transaction_id: core.id,
       merchant_id: null,
@@ -104,16 +101,13 @@ function makeDetail(
     },
     pending_occurrences: pending,
     completed_occurrences: completed.length,
-    // 已完成期次金额合计（issue #204 实时汇总口径）：由已完成期次金额求和
     completed_amount_cents: completed.reduce((sum, o) => sum + o.amount_cents, 0),
     occurrences: [...pending, ...failed, ...completed, ...cancelled],
   };
 }
 
-// —— invoke mock：可变数据源，重试/展开后重载读得到最新值 ——
 let mockDetails = new Map<string, ScheduledTransactionDetail>();
 
-// NModal 内容 teleport 到 body：内容断言与交互直接走 document.body
 function q(sel: string): HTMLElement | null {
   return document.body.querySelector(sel);
 }
@@ -141,10 +135,6 @@ async function openModal(wrapper: ReturnType<typeof mount>, id = "plan-1") {
 
 beforeEach(async () => {
   mockDetails = new Map();
-  // 唯一接缝布线（ADR-0085）：账户/分类/商户以本套夹具覆写（值与规范夹具
-  // 不同，属场景契约而非重复枚举），进 defaults 表；可变详情库与重试/展开
-  // 编排为函数型 overrides。其余参考命令由规范夹具兜底；store 层预热
-  // opt-in 开启：弹窗按 id 独立取数前，账户/分类字典已就绪。
   const seam = wireInvokeSeam({
     defaults: {
       list_accounts: mockAccounts,
@@ -158,7 +148,6 @@ beforeEach(async () => {
       },
       execute_scheduled_occurrence: (args) => {
         const { occurrence_id } = (args?.input ?? {}) as { occurrence_id: string };
-        // 重试语义：failed 期次 → completed
         for (const [id, d] of mockDetails) {
           if (!d.occurrences.some((o) => o.id === occurrence_id && o.status === "failed")) continue;
           mockDetails.set(id, {
@@ -215,13 +204,11 @@ describe("PlanDetailModal 期次列表（issue #205）", () => {
     const wrapper = await mountModal();
     await openModal(wrapper);
     const text = document.body.textContent ?? "";
-    // 三种状态的期次都在列表中，按日期升序
     expect(text.indexOf("2026-01-01")).toBeLessThan(text.indexOf("2026-02-01"));
     expect(text.indexOf("2026-02-01")).toBeLessThan(text.indexOf("2026-04-01"));
     expect(q('[data-testid="occ-status-c1"]')!.textContent).toBe("已完成");
     expect(q('[data-testid="occ-status-f1"]')!.textContent).toBe("失败");
     expect(q('[data-testid="occ-status-o2"]')!.textContent).toBe("待执行");
-    // 金额按计划币种展示（1500 分）
     expect(text).toContain(formatAmount(1500, cny));
   });
 
@@ -254,7 +241,6 @@ describe("PlanDetailModal 期次列表（issue #205）", () => {
     expect(mockInvoke.mock.calls.some(([cmd]) => cmd === "execute_scheduled_occurrence")).toBe(
       true,
     );
-    // 重试成功后重拉详情：期次已转为已完成，重试入口消失
     expect(q('[data-testid="occ-status-f1"]')!.textContent).toBe("已完成");
     expect(exists('[data-testid="occ-retry-f1"]')).toBe(false);
   });
@@ -293,7 +279,6 @@ describe("PlanDetailModal 展开更多期次（issue #205）", () => {
     expect(mockInvoke.mock.calls.some(([cmd]) => cmd === "expand_scheduled_occurrences")).toBe(
       true,
     );
-    // 展开后重拉详情：窗口外新期次出现在列表
     expect(exists('[data-testid="occ-date-occ-expanded"]')).toBe(true);
   });
 
@@ -332,8 +317,6 @@ describe("PlanDetailModal 展开更多期次（issue #205）", () => {
   });
 });
 
-// issue #844 代表挂载：lg 档（表格详情类）弹窗在移动档自动全屏化，期次表格
-// 作为滚动方案（内容区纵向滚动）的真实作用面在场。
 describe("PlanDetailModal 移动档全屏化（issue #844）", () => {
   it("lg 表格详情弹窗移动档呈全屏化结构：卡片钩子类 + 近全屏尺寸 + 期次表在场", async () => {
     setFakeMedia({ width: 390 });
@@ -350,7 +333,6 @@ describe("PlanDetailModal 移动档全屏化（issue #844）", () => {
     expect(card, "卡片应存在").not.toBeNull();
     expect(card!.classList.contains(MOBILE_CARD_CLASS)).toBe(true);
     expect((card as HTMLElement).style.width).toBe("calc(100vw - 32px)");
-    // 滚动方案的作用面：期次表格真实渲染于卡片内容区
     expect(document.body.querySelector(".n-card-content .n-data-table")).not.toBeNull();
   });
 });
