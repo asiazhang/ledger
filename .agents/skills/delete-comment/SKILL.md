@@ -16,8 +16,7 @@ description: 按 ADR-0145 注释禁令零容忍删除代码注释。Use when 用
    - **失准（Stale）**——注释与代码行为不一致：以代码为准直接删。若注释描述的「应有行为」实为需求缺口或缺陷，停下报告，不静默修（范围外纪律见根 AGENTS.md）。
    - **同义复述（Tautology）**——复述代码已表达的内容：直接删。
 3. **决策记录类的 ADR 核对纪律**：找到注释所属域的对应 ADR（从 `docs/adr/README.md` 索引按域定位）。已含该信息 → 直接删；未含 → 先把信息并入 ADR 再删。并入时遵守 `docs/agents/domain.md`：术语用词汇表用语、坐标收敛到域/crate 级不写文件路径与行号、变更以修订注记追加不改写历史正文。crate 注释里的独有政策并入对应域 ADR；package.json `"//"` 与 Cargo.toml 类配置决策迁 `docs/agents/dependency-upgrades.md` 或守门脚本数据面（登记条目理由字段）。信息只搬家、不蒸发。
-4. **验证零容忍**：删除完成后跑 `bun scripts/check-comment-gate.ts` 全绿（基线已退役、无基线可更新；`--write-baseline` 是休眠能力，写入即进入棘轮模式，重开须修订 ADR-0145，不得在清理中顺手写入）。删除与归零同提交，PR 描述写明删除行数。
-5. **验证**：`bun scripts/check-comment-gate.ts` 全绿，且 `bun test scripts/gate-mounts.test.ts` 仍绿（确认接线未动）。清理提交按仓库纪律跑全量 `./scripts/check.sh`。
+4. **验证**：删除完成后跑 `bun scripts/check-comment-gate.ts` 全绿（基线已退役、无基线可更新；`--write-baseline` 是休眠能力，写入即进入棘轮模式，重开须修订 ADR-0145，不得在清理中顺手写入），且 `bun test scripts/gate-mounts.test.ts` 仍绿（确认接线未动）；清理提交按仓库纪律跑全量 `./scripts/check.sh`。删除与归零同提交，PR 描述写明删除行数。
 
 ## 纪律
 
