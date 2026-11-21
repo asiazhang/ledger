@@ -1,15 +1,27 @@
 // 交易列配置共享模块（Issue 39 Prefactor）：
 // 交易列表与搜索视图复用同一列配置（日期/类型/分类/账户/备注/金额）。
-// 渲染函数在运行时读取 store 的响应式数据，构建一次即可，无需 computed 包裹。
+// 展示文本经 precomputeTransactionDisplayRows 在**数据到达 / 参考上下文变化时**一次性
+// 预计算（issue #2188）：列渲染函数只读取预计算 display 记录，不在表格 patch 期间
+// 逐格调用国际化取词、金额格式化、分类路径解析或借贷方向派生（计数型渲染守门
+// render-gate.test.ts ① 收紧到 0 的接线面）；未接预计算行集的消费方（移动档卡片
+// 列表、投资明细页签、单测直调）回落渲染期单源计算路径——两路径共用同一批派生
+// 单源函数，零口径漂移。
 
 import { h, type VNode } from "vue";
-import { NEllipsis, NButton, NTag, type DataTableBaseColumn, type DataTableColumn } from "naive-ui";
+import {
+  NPerformantEllipsis,
+  NButton,
+  NTag,
+  type DataTableBaseColumn,
+  type DataTableColumn,
+} from "naive-ui";
 import { formatAmount } from "@ledger/money";
 import type {
   Transaction,
   TransactionKind,
   TransactionModalRow,
   TransactionPurchase,
+  TransactionSource,
 } from "@ledger/types";
 import type { useReferenceStore } from "@/stores/reference";
 import { useAppStore } from "@/stores/app";
@@ -75,8 +87,8 @@ export function displayAmountText(reference: ReferenceStore, row: TransactionMod
  *   `minWidth`/`maxWidth` 均无效（maxWidth 仅 `resizable` 时生效）。
  * - 策略：除备注外所有列显式 `width`（贴合实际内容，不随窗口漂移）；**备注列不设 `width`，
  *   作为唯一弹性列吸收剩余空间**——窗口更宽则备注更宽、更窄则备注收缩，表格始终铺满容器，
- *   其余列不被挤压也不被拉伸。备注超长时由单元格内 NEllipsis 省略 + 悬停全文
- *   （复制按钮并排，见 renderNoteCell）。
+ *   其余列不被挤压也不被拉伸。备注超长时由单元格内懒挂载省略（NPerformantEllipsis）
+ *   省略 + 悬停全文（复制按钮并排，见 renderNoteCell）。
  * - 不要覆盖 table 的 `width`（改 `auto` 会让带 `ellipsis` 的列被长文本撑宽，实测分类
  *   150→286px、备注 240→398px）。
  * - 使用方以「所有固定列（有 `width` 的列，含金额列；备注不计入）宽度总和」作为 `scroll-x`，
@@ -173,47 +185,247 @@ export function purchaseRowClass(row: Transaction): string | undefined {
     : PURCHASE_BLOCK_ROW_CLASS;
 }
 
+/** 类型标签色型（KIND_TAG_TYPE 值闭集的具名导出，预计算记录与列渲染共用）。 */
+export type KindTagType = (typeof KIND_TAG_TYPE)[TransactionKind];
+
+/**
+ * 单条显示行的预计算展示记录（issue #2188）：数据到达 / 参考上下文变化时
+ * 一次性产出，表格 patch 期间只读消费——渲染期不再逐格调用国际化取词、
+ * 金额格式化、分类路径解析或借贷方向派生（计数型渲染守门 ① 收紧到 0）。
+ *
+ * 各字段均为既有派生单源的产物（kindLabel / displayAmountText / categoryPath /
+ * kindSemanticColor / merchantMap / SourceLink 与出资分解标注同口径），预计算层
+ * 不建立第二套口径；列渲染函数与消费方组件读到的是同一批函数的同一时点输出。
+ * 语言 / 主题 / 金额隐私模式 / 参考数据随预计算调用点的响应式上下文即时生效。
+ */
+export interface TransactionRowDisplay {
+  /** 类型标签文案（transfer 经借贷方向派生取四方向文案，其余取 kind 文案） */
+  kindLabel: string;
+  /** 类型标签色型（KIND_TAG_TYPE 单源） */
+  kindTagType: KindTagType;
+  /** 分类路径（多级「A > B」，未知 / 无分类 '-' 兜底，与分类列原渲染同口径） */
+  categoryPath: string;
+  /** 金额文案（displayAmountText 单点：转换转出金额 / split '-' / 隐私掩码 / 数字分组） */
+  amountText: string;
+  /** 金额语义色（kindSemanticColor 单点，预计算时点主题） */
+  amountColor: string;
+  /** 账户列展示形态首端：单账户 / 双账户转出在前端 / 分解行首条出资账户 */
+  accountPrimaryId: string;
+  /** 双账户形态第二端（普通转账转入端 / buy/sell 另一端）；单账户形态 null */
+  accountSecondaryId: string | null;
+  /** 出资分解行标注：「等 N 账户」/「同账户 N 笔」；单条出资项 null */
+  fundingMarker: string | null;
+  /** 退款派生分解行标注「按比例自动分解」；非派生行 null */
+  fundingDerivedMarker: string | null;
+  /** 商户名称（merchantMap 含软删；未知 id null——渲染 '-' 占位不可点击） */
+  merchantName: string | null;
+  /** 商户可点击下钻（解析到商户即可，软删商户照常；与 MerchantLink 裁决一致） */
+  merchantClickable: boolean;
+  /** 来源展示名（display_name 缺省按来源类型名兜底）；无来源 null */
+  sourceName: string | null;
+  /** 来源状态标注文案（已取消 / 已删除等）；无状态 null */
+  sourceStatusLabel: string | null;
+  /** 来源可点击（软删保单不可点击，与 SourceLink 裁决一致） */
+  sourceClickable: boolean;
+  /** 购买项行件数标注（「共 N 件」）；仅购买项行 */
+  purchaseQuantityLabel?: string;
+}
+
+/** 展开且带预计算记录的显示行（交易主列表与搜索视图的表格行形态）。 */
+export interface PrecomputedTransactionRow extends ExpandedTransactionRow {
+  display: TransactionRowDisplay;
+}
+
+/** 渲染期预计算记录读取口（唯一）：未接预计算行集的行（移动卡片 / 投资页签 /
+ * 单测直调）返回 null，列渲染回落渲染期单源计算——回落即「删除预计算接线」的
+ * 守门形态（计数型渲染守门 ① 变红的可失败路径）。 */
+function precomputedDisplayOf(row: Transaction): TransactionRowDisplay | null {
+  return (row as Partial<PrecomputedTransactionRow>).display ?? null;
+}
+
+/** 来源三态展示数据（与 SourceLink 口径逐字段一致：展示名兜底 / 状态标注 / 可点击裁决）。 */
+function sourceDisplayOf(
+  source: TransactionSource | null,
+): Pick<TransactionRowDisplay, "sourceName" | "sourceStatusLabel" | "sourceClickable"> {
+  if (!source) return { sourceName: null, sourceStatusLabel: null, sourceClickable: false };
+  return {
+    sourceName: source.display_name || t(`transactions.source.kind.${source.kind}`),
+    sourceStatusLabel: source.status ? t(`transactions.source.status.${source.status}`) : null,
+    sourceClickable: source.status !== "deleted",
+  };
+}
+
+/** 出资分解行标注派生（单一出处）：多账户「等 N 账户」、同账户多条「同账户 N 笔」、
+ * 单条无标注；退款派生分解行另附「按比例自动分解」。预计算层与渲染回落路径
+ * 共用本函数，两路径零口径漂移。 */
+function fundingMarkersOf(row: Transaction): { marker: string | null; derived: string | null } {
+  const distinctAccounts = new Set(row.fundings.map((f) => f.account_id)).size;
+  return {
+    marker:
+      distinctAccounts > 1
+        ? t("transactions.funding.accountCount", { n: distinctAccounts })
+        : row.fundings.length > 1
+          ? t("transactions.funding.sameAccountEntries", { n: row.fundings.length })
+          : null,
+    derived: row.fundings.some((f) => f.derived) ? t("transactions.funding.autoDerived") : null,
+  };
+}
+
+/** 账户列展示形态与出资分解标注（与 renderAccountCell 分派逻辑逐字段一致的单源
+ * 数据面，renderFundingAccountCell 预计算路径与移动档卡片共用）。 */
+function accountDisplayOf(
+  row: Transaction,
+): Pick<
+  TransactionRowDisplay,
+  "accountPrimaryId" | "accountSecondaryId" | "fundingMarker" | "fundingDerivedMarker"
+> {
+  if (row.fundings.length > 0) {
+    // 出资分解行（分解子行在场 ⇔ account_id 读回 null，ADR-0138 决策 6）：
+    // 首条出资账户 + 标注（fundingMarkersOf 单源）。
+    const markers = fundingMarkersOf(row);
+    return {
+      accountPrimaryId: row.fundings[0].account_id,
+      accountSecondaryId: null,
+      fundingMarker: markers.marker,
+      fundingDerivedMarker: markers.derived,
+    };
+  }
+  const accountId = row.account_id ?? "";
+  if (row.kind === "transfer" && row.to_account_id)
+    return {
+      accountPrimaryId: accountId,
+      accountSecondaryId: row.to_account_id,
+      fundingMarker: null,
+      fundingDerivedMarker: null,
+    };
+  if (row.kind === "buy" && row.funding_account_id)
+    return {
+      accountPrimaryId: row.funding_account_id,
+      accountSecondaryId: accountId,
+      fundingMarker: null,
+      fundingDerivedMarker: null,
+    };
+  if (row.kind === "sell" && row.funding_account_id)
+    return {
+      accountPrimaryId: accountId,
+      accountSecondaryId: row.funding_account_id,
+      fundingMarker: null,
+      fundingDerivedMarker: null,
+    };
+  return {
+    accountPrimaryId: accountId,
+    accountSecondaryId: null,
+    fundingMarker: null,
+    fundingDerivedMarker: null,
+  };
+}
+
+/** 预计算装配面：调用方按需声明，缺省即未展开（每交易一行）。 */
+export interface PrecomputeTransactionDisplayOptions {
+  /** 购买项展开（与 expandPurchaseRows 同语义）：每购买项一行、行序 = 交易序 */
+  expandPurchases?: boolean;
+}
+
+/**
+ * 交易行集 → 展开显示行集 + 展示文本预计算（issue #2188 展示行预计算入口）：
+ * 以当前页交易行集与只读参考上下文为输入，一次性产出每条显示行的展示文本与
+ * 属性（类型标签文案与色型、借贷派生四方向标签、分类路径、商户名称与可点击
+ * 状态、账户展示形态与出资分解标注、来源展示名与状态标注、格式化金额与类型
+ * 语义色、购买项件数标注）。
+ *
+ * 纯函数：无副作用、不触达表格渲染；语言 / 外观主题 / 金额隐私模式 / 参考数据
+ * 经既有单源的响应式上下文读取（t / useAppStore().theme / formatAmount 内部
+ * 开关 / reference 派生映射），调用方以 computed 包裹即随上下文变化整体重派生
+ * ——表格展示文本与颜色即时更新，无需重新请求后端。
+ */
+export function precomputeTransactionDisplayRows(
+  reference: ReferenceStore,
+  rows: Transaction[],
+  options: PrecomputeTransactionDisplayOptions = {},
+): PrecomputedTransactionRow[] {
+  const theme = useAppStore().theme;
+  const expandPurchases = options.expandPurchases ?? false;
+  return rows.flatMap((row) => {
+    const merchant = row.merchant_id ? reference.merchantMap.get(row.merchant_id) : undefined;
+    const base: PrecomputedTransactionRow = {
+      ...row,
+      purchaseIndex: -1,
+      display: {
+        kindLabel: kindLabel(reference, row),
+        kindTagType: KIND_TAG_TYPE[row.kind],
+        categoryPath: row.category_id ? reference.categoryPath(row.category_id) || "-" : "-",
+        amountText: displayAmountText(reference, row),
+        amountColor: kindSemanticColor(row.kind, theme),
+        ...accountDisplayOf(row),
+        merchantName: merchant?.name ?? null,
+        merchantClickable: !!merchant,
+        ...sourceDisplayOf(row.source),
+      },
+    };
+    if (!expandPurchases || row.purchases.length === 0) return [base];
+    return row.purchases.map((item, purchaseIndex): PrecomputedTransactionRow => ({
+      ...base,
+      purchaseIndex,
+      display: {
+        ...base.display,
+        categoryPath: item.category_id ? reference.categoryPath(item.category_id) || "-" : "-",
+        purchaseQuantityLabel: t("transactions.purchase.quantity", { n: item.quantity }),
+      },
+    }));
+  });
+}
+
 /** 购买项单元格件数标注样式（弱化灰后缀注记，与账户列「等 N 账户」同型）。 */
 const PURCHASE_QTY_STYLE =
   "flex: none; color: var(--n-text-color-disabled, #999); font-size: 12px;";
 
 /** 购买项行渲染单点（issue #1884 / ADR-0138 决策 15：列表 / 移动卡片 / 只读详情共用，
  * 不自建第二套）——商品名 +「共 N 件」件数标注，两形态可选：
- * - truncate（桌面列表，「商品 / 备注」列的商品形态，#1883）：名内 NEllipsis 自省略 +
- *   悬停全文，长商品名不再只剩「…」；
+ * - truncate（桌面列表，「商品 / 备注」列的商品形态，#1883）：名内懒挂载省略
+ *   （NPerformantEllipsis：初始纯 span，指针悬停才挂带提示弹层的完整省略组件，
+ *   #2188）+ 悬停全文，长商品名不再只剩「…」；
  * - 全文（缺省，移动卡片与详情）：整名渲染、自然换行——触控轴没有悬停，详情是长
  *   商品名的全文出口（决策 15）。
- * 只读呈现：无复制按钮（备注复制通道不适用商品名）、无价格（存而不显示，决策 10）；
+ * 件数标注文案：`quantityText` 传入即直接使用（预计算件数标注，表格渲染期零取词，
+ * #2188）；缺省回落 t() 单源（移动卡片 / 详情渲染期取词，口径同一键）。只读呈现：
+ * 无复制按钮（备注复制通道不适用商品名）、无价格（存而不显示，决策 10）；
  * `suffix` 额外弱化标注（详情的分类路径）插在件数标注之前。 */
 export function renderPurchaseLine(
   item: TransactionPurchase,
-  opts: { truncate?: boolean; suffix?: string } = {},
+  opts: { truncate?: boolean; suffix?: string; quantityText?: string } = {},
 ): VNode {
   const name = opts.truncate
-    ? h(NEllipsis, { style: "flex: 1 1 auto; min-width: 0;" }, { default: () => item.name })
+    ? h(
+        NPerformantEllipsis,
+        { style: "flex: 1 1 auto; min-width: 0;" },
+        { default: () => item.name },
+      )
     : h("span", { style: "flex: 1 1 auto; min-width: 0; word-break: break-word;" }, item.name);
+  const quantityText =
+    opts.quantityText ?? t("transactions.purchase.quantity", { n: item.quantity });
   return h("div", { style: NOTE_CELL_STYLE }, [
     name,
     ...(opts.suffix ? [h("span", { style: PURCHASE_QTY_STYLE }, opts.suffix)] : []),
-    h(
-      "span",
-      { style: PURCHASE_QTY_STYLE },
-      t("transactions.purchase.quantity", { n: item.quantity }),
-    ),
+    h("span", { style: PURCHASE_QTY_STYLE }, quantityText),
   ]);
 }
 
 /** 「商品 / 备注」列的商品形态（issue #1883 / ADR-0138 决策 13）：截断形态 + 悬停全文；
- * 备注列商品形态只承载商品名与件数（订单号出口在详情订单区，#1928）。 */
-function renderPurchaseCell(item: TransactionPurchase): VNode {
-  return renderPurchaseLine(item, { truncate: true });
+ * 备注列商品形态只承载商品名与件数（订单号出口在详情订单区，#1928）。
+ * 件数标注读预计算（#2188：表格 patch 期零取词），display 缺省回落 t 单源。 */
+function renderPurchaseCell(
+  item: TransactionPurchase,
+  display: TransactionRowDisplay | null,
+): VNode {
+  return renderPurchaseLine(item, { truncate: true, quantityText: display?.purchaseQuantityLabel });
 }
 
 /** 备注单元格渲染（显式复制通道，见 CONTEXT-ui-interaction「界面文本不可选」）：
  * - 无备注渲染 '-'，不渲染复制按钮（空备注无可复制）；
- * - 有备注：单元格内 flex——NEllipsis 承载文本（自省略 + 悬停全文，同账户/来源列的
- *   单元格内省略模式），NoteCopyButton 复制完整备注（clipboard API + toast），
- *   按钮悬停行显现（显隐样式收口 global.css）；
+ * - 有备注：单元格内 flex——懒挂载省略（NPerformantEllipsis：初始纯 span，指针
+ *   悬停才挂带提示弹层的完整省略组件，#2188）承载文本（自省略 + 悬停全文，
+ *   同分类/商户列的懒挂载省略形态），NoteCopyButton 复制完整备注（clipboard API +
+ *   toast），按钮悬停行显现（显隐样式收口 global.css）；
  * - 展开视图（issue #1883）下仅无购买项行走本渲染，购买项行走 renderPurchaseCell。
  * - 来源订单号不在列表呈现（#1928 / ADR-0138 修订注记：撤行尾徽章，订单号出口
  *   收敛为详情订单区），无备注行落 '-' 的原始空值口径恢复。 */
@@ -221,7 +433,7 @@ function renderNoteCell(row: Transaction): VNode | string {
   const { note } = row;
   if (!note) return "-";
   return h("div", { style: NOTE_CELL_STYLE }, [
-    h(NEllipsis, { style: "flex: 1 1 auto; min-width: 0;" }, { default: () => note }),
+    h(NPerformantEllipsis, { style: "flex: 1 1 auto; min-width: 0;" }, { default: () => note }),
     h(NoteCopyButton, { note, style: "flex: none;" }),
   ]);
 }
@@ -257,17 +469,31 @@ export function buildTransactionColumns(
       key: "kind",
       width: 65,
       ...merged,
-      render: (row) => h(NTag, { type: KIND_TAG_TYPE[row.kind] }, () => kindLabel(reference, row)),
+      // 类型标签文案与色型读预计算（#2188：patch 期零取词、零借贷派生）；
+      // display 缺省回落渲染期单源（kindLabel / KIND_TAG_TYPE）。
+      render: (row) => {
+        const display = precomputedDisplayOf(row);
+        return h(NTag, { type: display ? display.kindTagType : KIND_TAG_TYPE[row.kind] }, () =>
+          display ? display.kindLabel : kindLabel(reference, row),
+        );
+      },
     },
     {
       title: t("transactions.columns.category"),
       key: "category_id",
       width: 150,
+      // 懒挂载省略（#2188）：performant-ellipsis 初始只输出纯文本包裹节点，
+      // 指针悬停才挂带提示弹层的完整省略组件——初始渲染与翻页不再为每格
+      // 同步实例化弹层子树；固定列宽与悬停全文语义不变。
       ellipsis: { tooltip: true },
+      ellipsisComponent: "performant-ellipsis",
       // 分类列逐行显示（ADR-0138 决策 13）：展开视图下购买项行显示该购买项自己的分类、
       // 不做一致性合并（层级分类下没有任何一个真值能同时代表一单内的不同分类）；
       // 无购买项行与未展开视图仍显示交易行分类，呈现零变化。
+      // 路径文本读预计算（#2188），display 缺省回落 categoryPath 单源。
       render: (row) => {
+        const display = precomputedDisplayOf(row);
+        if (display) return display.categoryPath;
         const item = options.expandPurchases ? purchaseOf(row) : null;
         const categoryId = item ? item.category_id : row.category_id;
         return categoryId ? reference.categoryPath(categoryId) || "-" : "-";
@@ -278,7 +504,9 @@ export function buildTransactionColumns(
       key: "merchant_id",
       width: 120,
       ...merged,
+      // 懒挂载省略（#2188，分类列同款理由）
       ellipsis: { tooltip: true },
+      ellipsisComponent: "performant-ellipsis",
       // 商户名经 merchantMap（含软删）解析并可点击下钻（issue #191）；未知/无商户回退 '-'
       render: (row) => (row.merchant_id ? h(MerchantLink, { merchantId: row.merchant_id }) : "-"),
     },
@@ -309,10 +537,10 @@ export function buildTransactionColumns(
       key: "note",
       // 弹性列：不设 width，由 fixed 布局均分剩余空间（超长时省略号 + 悬停显示全文）；
       // 不设列级 ellipsis（账户/来源列同款理由：会把复制按钮一起包进省略容器），
-      // 省略与悬停全文由单元格内 NEllipsis 承担（fixed 布局由分类/商户列维持）
+      // 省略与悬停全文由单元格内懒挂载省略承担（fixed 布局由分类/商户列维持）
       render: (row) => {
         const item = options.expandPurchases ? purchaseOf(row) : null;
-        return item ? renderPurchaseCell(item) : renderNoteCell(row);
+        return item ? renderPurchaseCell(item, precomputedDisplayOf(row)) : renderNoteCell(row);
       },
     },
     {
@@ -321,16 +549,19 @@ export function buildTransactionColumns(
       width: 125,
       ...merged,
       // 金额按交易类型语义色着色（issue #435）：色值单一来源在
-      // @ledger/theme/semantic-colors（六类型亮/暗两套）。主题在渲染时读取 app store
-      // 响应式取值：切换外观主题即时换色，无需重建列；借出/借入/收回/还款是
-      // transfer 的派生视角（ADR-0053），随 transfer 同紫，不做派生级区分。
+      // @ledger/theme/semantic-colors（六类型亮/暗两套）。文案与语义色读预计算
+      // （#2188：patch 期零金额格式化），display 缺省回落渲染期单源
+      // （displayAmountText / kindSemanticColor；主题在渲染时读取 app store
+      // 响应式取值，切换外观主题即时换色，无需重建列）。
       // 单元格交互归 AmountCell（issue #843）：指针轴纯 span 零变化，触控轴
       // 点按弹出全文（悬停一击可达；文案与色在此单点计算后传入）。
-      render: (row) =>
-        h(AmountCell, {
-          text: displayAmountText(reference, row),
-          color: kindSemanticColor(row.kind, useAppStore().theme),
-        }),
+      render: (row) => {
+        const display = precomputedDisplayOf(row);
+        return h(AmountCell, {
+          text: display ? display.amountText : displayAmountText(reference, row),
+          color: display ? display.amountColor : kindSemanticColor(row.kind, useAppStore().theme),
+        });
+      },
     },
   ];
   if (options.onRowMenuOpen) {
@@ -351,6 +582,10 @@ export function rowActionsColumn<T>(
   // 样式类，操作列在订单块内只渲染一个；其余消费方（投资明细页签）不传，零变化。
   merge: Partial<Pick<DataTableBaseColumn<T>, "rowSpan" | "className">> = {},
 ): DataTableColumn<T> {
+  // 无障碍标签在列构建时取词一次（#2188）：它是全列恒常文案，不随行变化——
+  // 逐行渲染期取词是计数型渲染守门 ① 的最大单点（每行一次），收拢到数据/
+  // 上下文到达阶段（列数组重建时点）。
+  const actionsAriaLabel = t("transactions.menu.actions");
   return {
     title: t("transactions.columns.actions"),
     key: "actions",
@@ -363,7 +598,7 @@ export function rowActionsColumn<T>(
           size: "tiny",
           quaternary: true,
           class: "row-actions-btn touch-hit-area",
-          "aria-label": t("transactions.menu.actions"),
+          "aria-label": actionsAriaLabel,
           onClick: (e: MouseEvent) => onRowMenuOpen(e, row),
         },
         () => "⋯",
@@ -413,14 +648,14 @@ const ACCOUNT_CELL_SUFFIX_STYLE =
  * 导出面（issue #846）：移动档卡片列表消费同一渲染，账户呈现三形态单源。 */
 function renderFundingAccountCell(row: Transaction): VNode {
   const first = row.fundings[0];
-  const distinctAccounts = new Set(row.fundings.map((f) => f.account_id)).size;
-  // 标注文案：多账户取「等 N 账户」、同账户多条退化「同账户 N 笔」、单条无标注
-  const markerText =
-    distinctAccounts > 1
-      ? t("transactions.funding.accountCount", { n: distinctAccounts })
-      : row.fundings.length > 1
-        ? t("transactions.funding.sameAccountEntries", { n: row.fundings.length })
-        : null;
+  // 标注文案读预计算（#2188：patch 期零取词）；display 缺省回落渲染期单源计算
+  //（fundingMarkersOf 与预计算层共用同一派生函数，两路径零口径漂移）。
+  const display = precomputedDisplayOf(row);
+  const markers = display
+    ? { marker: display.fundingMarker, derived: display.fundingDerivedMarker }
+    : fundingMarkersOf(row);
+  const markerText = markers.marker;
+  const derivedMarkerText = markers.derived;
   const line = h(
     "div",
     {
@@ -433,7 +668,7 @@ function renderFundingAccountCell(row: Transaction): VNode {
     ],
   );
   // 派生标注（任意条目 derived=true 即派生分解）另起一行，不与账户名挤同一行
-  if (!row.fundings.some((f) => f.derived)) return line;
+  if (!derivedMarkerText) return line;
   return h(
     "div",
     {
@@ -448,7 +683,7 @@ function renderFundingAccountCell(row: Transaction): VNode {
           style:
             "font-size: 11px; line-height: 18px; padding: 0 6px; border-radius: 9px; white-space: nowrap; color: var(--n-info-color, #2080f0); border: 1px dashed currentColor;",
         },
-        t("transactions.funding.autoDerived"),
+        derivedMarkerText,
       ),
     ],
   );

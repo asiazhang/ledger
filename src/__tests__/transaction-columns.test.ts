@@ -1,21 +1,32 @@
 import { describe, expect, it, vi } from "vitest";
-import { NEllipsis, type DataTableColumn } from "naive-ui";
+import { NPerformantEllipsis, type DataTableColumn } from "naive-ui";
 import type { VNode } from "vue";
 import {
   buildTransactionColumns,
+  displayAmountText,
   expandPurchaseRows,
+  precomputeTransactionDisplayRows,
   renderPurchaseLine,
   rowActionsColumn,
+  KIND_TAG_TYPE,
   type ReferenceStore,
+  type PrecomputedTransactionRow,
 } from "@/transaction/transaction-columns";
 import SourceLink from "@/transaction/SourceLink.vue";
 import NoteCopyButton from "@ledger/ui-kit/NoteCopyButton.vue";
 import AmountCell from "@/transaction/AmountCell.vue";
 import { useAppStore } from "@/stores/app";
 import { kindSemanticColor } from "@ledger/theme/semantic-colors";
-import { TRANSACTION_KINDS, type Transaction, type TransactionSource } from "@ledger/types";
-import { formatAmount } from "@ledger/money";
-import { makePurchase, makeTransaction } from "./factories";
+import {
+  TRANSACTION_KINDS,
+  type Account,
+  type Merchant,
+  type Transaction,
+  type TransactionSource,
+} from "@ledger/types";
+import { amountPrivacyEnabled, formatAmount } from "@ledger/money";
+import { kindLabel } from "@/transaction/transaction-columns";
+import { makeAccount, makeFunding, makeMerchant, makePurchase, makeTransaction } from "./factories";
 
 /** 金额列按交易类型语义着色（issue #435）：只测外部行为——
  * 给定交易类型与主题，金额单元格最终呈现语义色模块给出的颜色；
@@ -172,7 +183,7 @@ describe("buildTransactionColumns 备注列", () => {
     expect((vnode.props as { style: string }).style).toContain("display: flex");
     const children = vnode.children as VNode[];
     expect(children).toHaveLength(2);
-    expect(children[0].type).toBe(NEllipsis);
+    expect(children[0].type).toBe(NPerformantEllipsis);
     expect(children[1].type).toBe(NoteCopyButton);
     expect((children[1].props as { note: string }).note).toBe("视频会员月费");
   });
@@ -293,24 +304,24 @@ describe("buildTransactionColumns 购买项展开装配", () => {
     const vnode = render(rows[1], 1) as VNode;
     const children = vnode.children as VNode[];
     expect(children).toHaveLength(2);
-    expect(children[0].type).toBe(NEllipsis);
+    expect(children[0].type).toBe(NPerformantEllipsis);
     expect((children[1].children as string).length).toBeGreaterThan(0);
   });
 
-  it("截断形态（列表）与全文形态（卡片 / 详情）经同一渲染单点分形：NEllipsis vs 整名渲染", () => {
+  it("截断形态（列表）与全文形态（卡片 / 详情）经同一渲染单点分形：懒挂载省略 vs 整名渲染", () => {
     const item = makePurchase({
       name: "超长商品名『进口无谷深海鱼油成猫粮专用 10kg 装大袋』",
       quantity: 3,
     });
-    // 列表形态：名内 NEllipsis（省略 + 悬停全文）+ 件数标注
+    // 列表形态：名内懒挂载省略（初始纯 span，悬停才挂提示弹层，#2188）+ 件数标注
     const truncated = renderPurchaseLine(item, { truncate: true });
     const truncChildren = truncated.children as VNode[];
-    expect(truncChildren[0].type).toBe(NEllipsis);
+    expect(truncChildren[0].type).toBe(NPerformantEllipsis);
     expect(truncChildren).toHaveLength(2);
     // 全文形态（卡片 / 详情）：整名渲染、自然换行——触控轴无悬停，详情是全文出口
     const full = renderPurchaseLine(item);
     const fullChildren = full.children as VNode[];
-    expect(fullChildren[0].type).not.toBe(NEllipsis);
+    expect(fullChildren[0].type).not.toBe(NPerformantEllipsis);
     expect(fullChildren[0].children as string).toContain("10kg 装大袋』");
     expect(fullChildren).toHaveLength(2);
   });
@@ -336,7 +347,7 @@ describe("buildTransactionColumns 购买项展开装配", () => {
     const rows = expandedRows();
     const vnode = render(rows[3], 3) as VNode;
     const children = vnode.children as VNode[];
-    expect(children[0].type).toBe(NEllipsis);
+    expect(children[0].type).toBe(NPerformantEllipsis);
     expect(children[1].type).toBe(NoteCopyButton);
   });
 
@@ -344,5 +355,314 @@ describe("buildTransactionColumns 购买项展开装配", () => {
     const col = rowActionsColumn<Transaction>(() => {});
     expect((col as { rowSpan?: unknown }).rowSpan).toBeUndefined();
     expect((col as { className?: unknown }).className).toBeUndefined();
+  });
+});
+
+/** 展示行预计算（issue #2188）：纯函数入口以行集与只读参考上下文为输入，一次性产出
+ * 每条显示行的展示文本与属性。验收判据：全部展示形态与原渲染口径逐字段一致
+ * （同批派生单源函数的同一时点输出）。 */
+describe("precomputeTransactionDisplayRows 展示行预计算", () => {
+  // 参考上下文替身：分类路径映射（多级 + 软删同口径）、账户映射（借贷派生）、
+  // 商户映射（在用 + 软删）、币种免折算。语义与 Reference Data store 派生映射一致。
+  const PATHS: Record<string, string> = {
+    "cat-food": "生活 > 餐饮",
+    "cat-pet": "生活 > 宠物",
+    "cat-del": "已删分类 > 历史",
+  };
+  const accounts = new Map<string, Account>([
+    ["acc-recv", makeAccount({ id: "acc-recv", type: "receivable" })],
+    ["acc-debt", makeAccount({ id: "acc-debt", type: "debt" })],
+    ["acc-cash", makeAccount({ id: "acc-cash", type: "cash" })],
+  ]);
+  const merchants = new Map<string, Merchant>([
+    ["mch-1", makeMerchant({ id: "mch-1", name: "京东" })],
+    ["mch-del", makeMerchant({ id: "mch-del", name: "已闭店商城", is_deleted: true })],
+  ]);
+  const refStub = {
+    categoryPath: (id: string | null | undefined) => (id ? (PATHS[id] ?? null) : null),
+    accountMap: accounts,
+    merchantMap: merchants,
+    getCurrency: () => undefined,
+  } as unknown as ReferenceStore;
+
+  function pre(
+    rows: Transaction[],
+    opts?: { expandPurchases?: boolean },
+  ): PrecomputedTransactionRow[] {
+    return precomputeTransactionDisplayRows(refStub, rows, opts);
+  }
+
+  it("四通用 kind：类型标签文案与色型与 kindLabel/KIND_TAG_TYPE 单源一致", () => {
+    const rows = [
+      makeTransaction({ id: "t-expense", kind: "expense" }),
+      makeTransaction({ id: "t-income", kind: "income" }),
+      makeTransaction({ id: "t-transfer", kind: "transfer", to_account_id: "acc-cash" }),
+      makeTransaction({ id: "t-refund", kind: "refund" }),
+    ];
+    const computed = pre(rows);
+    rows.forEach((row, i) => {
+      expect(computed[i].display.kindLabel, row.kind).toBe(kindLabel(refStub, row));
+      expect(computed[i].display.kindTagType).toBe(KIND_TAG_TYPE[row.kind]);
+    });
+  });
+
+  it("借贷派生四方向：转账两端账户类型派生借出/收回/借入/还款（与 kindLabel 单源一致）", () => {
+    const rows = [
+      makeTransaction({
+        id: "t-lend",
+        kind: "transfer",
+        account_id: "acc-cash",
+        to_account_id: "acc-recv",
+      }),
+      makeTransaction({
+        id: "t-collect",
+        kind: "transfer",
+        account_id: "acc-recv",
+        to_account_id: "acc-cash",
+      }),
+      makeTransaction({
+        id: "t-borrow",
+        kind: "transfer",
+        account_id: "acc-debt",
+        to_account_id: "acc-cash",
+      }),
+      makeTransaction({
+        id: "t-repay",
+        kind: "transfer",
+        account_id: "acc-cash",
+        to_account_id: "acc-debt",
+      }),
+      // 普通转账（资金互转）：不派生，仍「转账」
+      makeTransaction({
+        id: "t-normal",
+        kind: "transfer",
+        account_id: "acc-cash",
+        to_account_id: "acc-cash",
+      }),
+    ];
+    const computed = pre(rows);
+    rows.forEach((row, i) => {
+      expect(computed[i].display.kindLabel, row.id).toBe(kindLabel(refStub, row));
+    });
+    expect(computed[0].display.kindLabel).toBe("借出");
+    expect(computed[1].display.kindLabel).toBe("收回");
+    expect(computed[2].display.kindLabel).toBe("借入");
+    expect(computed[3].display.kindLabel).toBe("还款");
+    expect(computed[4].display.kindLabel).toBe("转账");
+  });
+
+  it("账户展示形态：普通转账双账户（转出在前）、buy/sell 双账户、单账户与分派逻辑一致", () => {
+    const rows = [
+      makeTransaction({
+        id: "t-transfer",
+        kind: "transfer",
+        account_id: "acc-cash",
+        to_account_id: "acc-recv",
+      }),
+      makeTransaction({
+        id: "t-buy",
+        kind: "buy",
+        account_id: "acc-cash",
+        funding_account_id: "acc-recv",
+      }),
+      makeTransaction({
+        id: "t-sell",
+        kind: "sell",
+        account_id: "acc-cash",
+        funding_account_id: "acc-recv",
+      }),
+      makeTransaction({ id: "t-single", kind: "expense", account_id: "acc-cash" }),
+    ];
+    const [transfer, buy, sell, single] = pre(rows);
+    expect(transfer.display.accountPrimaryId).toBe("acc-cash");
+    expect(transfer.display.accountSecondaryId).toBe("acc-recv");
+    expect(buy.display.accountPrimaryId).toBe("acc-recv");
+    expect(buy.display.accountSecondaryId).toBe("acc-cash");
+    expect(sell.display.accountPrimaryId).toBe("acc-cash");
+    expect(sell.display.accountSecondaryId).toBe("acc-recv");
+    expect(single.display.accountPrimaryId).toBe("acc-cash");
+    expect(single.display.accountSecondaryId).toBeNull();
+  });
+
+  it("出资分解行标注：「等 N 账户」「同账户 N 笔」「按比例自动分解」与既有渲染同口径", () => {
+    const rows = [
+      makeTransaction({
+        id: "t-multi",
+        account_id: null,
+        fundings: [
+          makeFunding({ account_id: "acc-cash" }),
+          makeFunding({ account_id: "acc-recv" }),
+        ],
+      }),
+      makeTransaction({
+        id: "t-same",
+        account_id: null,
+        fundings: [
+          makeFunding({ account_id: "acc-cash" }),
+          makeFunding({ account_id: "acc-cash" }),
+        ],
+      }),
+      makeTransaction({
+        id: "t-single",
+        account_id: null,
+        fundings: [makeFunding({ account_id: "acc-cash" })],
+      }),
+      makeTransaction({
+        id: "t-derived",
+        account_id: null,
+        fundings: [
+          makeFunding({ account_id: "acc-cash", derived: true }),
+          makeFunding({ account_id: "acc-recv", derived: true }),
+        ],
+      }),
+    ];
+    const [multi, same, single, derived] = pre(rows);
+    expect(multi.display.fundingMarker).toBe("等 2 账户");
+    expect(multi.display.fundingDerivedMarker).toBeNull();
+    expect(multi.display.accountPrimaryId).toBe("acc-cash");
+    expect(same.display.fundingMarker).toBe("同账户 2 笔");
+    expect(single.display.fundingMarker).toBeNull();
+    expect(derived.display.fundingMarker).toBe("等 2 账户");
+    expect(derived.display.fundingDerivedMarker).toBe("按比例自动分解");
+  });
+
+  it("商户：软删商户可点击（历史交易口径）、未知 id 不可点击，与 MerchantLink 裁决一致", () => {
+    const rows = [
+      makeTransaction({ id: "t-active", merchant_id: "mch-1" }),
+      makeTransaction({ id: "t-deleted", merchant_id: "mch-del" }),
+      makeTransaction({ id: "t-unknown", merchant_id: "mch-missing" }),
+      makeTransaction({ id: "t-none" }),
+    ];
+    const [active, deleted, unknown, none] = pre(rows);
+    expect(active.display.merchantName).toBe("京东");
+    expect(active.display.merchantClickable).toBe(true);
+    expect(deleted.display.merchantName).toBe("已闭店商城");
+    expect(deleted.display.merchantClickable).toBe(true);
+    expect(unknown.display.merchantName).toBeNull();
+    expect(unknown.display.merchantClickable).toBe(false);
+    expect(none.display.merchantName).toBeNull();
+    expect(none.display.merchantClickable).toBe(false);
+  });
+
+  it("来源三态：有效/已取消可点击、软删保单不可点击，展示名与状态标注与 SourceLink 同口径", () => {
+    const rows = [
+      makeTransaction({
+        id: "t-policy",
+        source: { kind: "policy", entity_id: "pol-1", display_name: "重疾险", status: null },
+      }),
+      makeTransaction({
+        id: "t-cancelled",
+        source: {
+          kind: "subscription",
+          entity_id: "sub-1",
+          display_name: "流媒体会员",
+          status: "cancelled",
+        },
+      }),
+      makeTransaction({
+        id: "t-deleted",
+        source: { kind: "policy", entity_id: "pol-2", display_name: "医疗险", status: "deleted" },
+      }),
+    ];
+    const [policy, cancelled, deleted] = pre(rows);
+    expect(policy.display.sourceName).toBe("重疾险");
+    expect(policy.display.sourceStatusLabel).toBeNull();
+    expect(policy.display.sourceClickable).toBe(true);
+    expect(cancelled.display.sourceStatusLabel).toBe("已取消");
+    expect(cancelled.display.sourceClickable).toBe(true);
+    expect(deleted.display.sourceStatusLabel).toBe("已删除");
+    expect(deleted.display.sourceClickable).toBe(false);
+  });
+
+  it("金额：转换行转出金额、份额调整空值占位符、数字分组与隐私掩码，与 displayAmountText 单源一致", () => {
+    const convert = makeTransaction({
+      id: "t-convert",
+      kind: "convert",
+      amount_native_cents: 359062,
+      convert: {
+        to_instrument_id: "inst-in",
+        to_symbol: "519700",
+        to_quantity: 10,
+        out_amount_cents: 361561,
+        in_amount_cents: 361561,
+      },
+    });
+    const split = makeTransaction({ id: "t-split", kind: "split" });
+    const grouped = makeTransaction({ id: "t-grouped", amount_native_cents: 1234567 });
+    const [convertRow, splitRow, groupedRow] = pre([convert, split, grouped]);
+    expect(convertRow.display.amountText).toBe(displayAmountText(refStub, convert));
+    expect(convertRow.display.amountText).toBe(formatAmount(361561, undefined));
+    expect(splitRow.display.amountText).toBe("-");
+    expect(groupedRow.display.amountText).toBe(formatAmount(1234567, undefined));
+    // 金额语义色：随主题与 kindSemanticColor 单源一致（主题切换即时换色由
+    // 视图 computed 重派生承接，此处锁定单源口径）
+    const app = useAppStore();
+    app.setTheme("light");
+    const lightRow = pre([convert])[0];
+    expect(lightRow.display.amountColor).toBe(kindSemanticColor("convert", "light"));
+    app.setTheme("dark");
+  });
+
+  it("金额隐私模式：开启后预计算金额为恒形掩码，关闭后恢复真实数字", () => {
+    const row = makeTransaction({ id: "t-privacy", amount_native_cents: 123456 });
+    const before = pre([row])[0].display.amountText;
+    amountPrivacyEnabled.value = true;
+    const masked = pre([row])[0].display.amountText;
+    expect(masked).toBe("••••");
+    amountPrivacyEnabled.value = false;
+    const restored = pre([row])[0].display.amountText;
+    expect(restored).toBe(before);
+    expect(masked).not.toBe(restored);
+  });
+
+  it("分类路径：多级路径、软删分类历史口径与未知/无分类 '-' 兜底，与 categoryPath 单源一致", () => {
+    const rows = [
+      makeTransaction({ id: "t-multi", category_id: "cat-food" }),
+      makeTransaction({ id: "t-softdel", category_id: "cat-del" }),
+      makeTransaction({ id: "t-unknown", category_id: "cat-missing" }),
+      makeTransaction({ id: "t-none", category_id: null }),
+    ];
+    const [multi, softdel, unknown, none] = pre(rows);
+    expect(multi.display.categoryPath).toBe("生活 > 餐饮");
+    expect(softdel.display.categoryPath).toBe("已删分类 > 历史");
+    expect(unknown.display.categoryPath).toBe("-");
+    expect(none.display.categoryPath).toBe("-");
+  });
+
+  it("购买项展开行：每购买项一行、行序 = 交易序，件数标注与购买项分类随行预计算", () => {
+    const tx = makeTransaction({
+      id: "t-order",
+      category_id: "cat-food",
+      purchases: [
+        makePurchase({ name: "猫粮", quantity: 2, category_id: "cat-pet" }),
+        makePurchase({ name: "洗衣液", quantity: 1 }),
+      ],
+    });
+    const plain = makeTransaction({ id: "t-plain", note: "普通行" });
+    const computed = pre([tx, plain], { expandPurchases: true });
+    expect(computed).toHaveLength(3);
+    expect(computed.map((r) => r.purchaseIndex)).toEqual([0, 1, -1]);
+    // 购买项行：分类逐行取购买项自己的分类、件数标注随行
+    expect(computed[0].display.categoryPath).toBe("生活 > 宠物");
+    expect(computed[0].display.purchaseQuantityLabel).toBe("共 2 件");
+    expect(computed[1].display.categoryPath).toBe("-");
+    expect(computed[1].display.purchaseQuantityLabel).toBe("共 1 件");
+    // 订单级字段随行继承（rowSpan 合并格消费交易级 display）
+    expect(computed[0].display.kindLabel).toBe(computed[1].display.kindLabel);
+    expect(computed[0].display.amountText).toBe(computed[1].display.amountText);
+    // 非购买项行继承交易级展示（普通行分类为空 → '-' 兜底）
+    expect(computed[2].display.categoryPath).toBe("-");
+    expect(computed[2].display.purchaseQuantityLabel).toBeUndefined();
+  });
+
+  it("缺省未展开：每交易一行，零展开零变化", () => {
+    const tx = makeTransaction({
+      id: "t-order",
+      purchases: [makePurchase({ name: "猫粮" })],
+    });
+    const computed = pre([tx]);
+    expect(computed).toHaveLength(1);
+    expect(computed[0].purchaseIndex).toBe(-1);
+    expect(computed[0].display.purchaseQuantityLabel).toBeUndefined();
   });
 });

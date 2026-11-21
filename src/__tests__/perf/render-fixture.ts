@@ -4,19 +4,19 @@
 // 无备注行；计数守门（render-gate.test.ts，默认 Vitest 套件）与每日计时基准
 // （render.bench.ts，perf-bench.yml）消费同一 fixture，形态面与量测面对齐。
 //
-// 装配形态镜像 TransactionsView 的桌面表格接线（buildTransactionColumns +
-// expandPurchaseRows + displayRowKey + purchaseRowClass + 固定列宽 scroll-x +
+// 装配形态镜像 TransactionsView 的桌面表格接线（precomputeTransactionDisplayRows +
+// buildTransactionColumns + displayRowKey + purchaseRowClass + 固定列宽 scroll-x +
 // size=small + remote + 无内建分页），不带视图壳（筛选行 / 弹窗 / 分页条）——
 // 计数与计时只量表格本体，视图壳的常数噪声不进阈值。行内交互组件
 // （AccountLink 等）需要的 router / 消息替身由消费方测试文件提供（vi.mock
 // 声明须留在测试文件，随 import 提升先行注册）。
 
-import { defineComponent, h, type PropType } from "vue";
+import { computed, defineComponent, h, type PropType } from "vue";
 import { NDataTable, type DataTableColumn } from "naive-ui";
 import {
   buildTransactionColumns,
   displayRowKey,
-  expandPurchaseRows,
+  precomputeTransactionDisplayRows,
   purchaseRowClass,
 } from "@/transaction/transaction-columns";
 import { sumFixedColumnWidths } from "@ledger/utils/table";
@@ -79,6 +79,18 @@ const LENDING_ROTATION: Array<{ from: string; to: string }> = [
   { from: "acc-cash", to: "acc-debt" }, // 还款：资金 → debt
   { from: "acc-cash", to: "acc-alipay" }, // 普通转账：资金互转
 ];
+
+/** 类型列期望标签清单（每笔交易一个订单级合并格）：借贷派生四方向 + 普通转账 + 三基础 kind。 */
+export const EXPECTED_KIND_LABELS = {
+  借出: 1,
+  收回: 1,
+  借入: 1,
+  还款: 1,
+  转账: 6,
+  支出: 25,
+  收入: 10,
+  退款: 5,
+} as const;
 
 /** fixture 交易集（模块级常量：纯数据、确定性，两消费方同源）。 */
 export const FIXTURE_TXNS: Transaction[] = Array.from(
@@ -170,25 +182,8 @@ export const FIXTURE_TXNS: Transaction[] = Array.from(
   },
 );
 
-/** 展开后的显示行数：每轮两笔购买项订单（3 项 + 2 项）各多 2 / 1 行 → 50 + 15 = 65。 */
+/** fixture 展开显示行数：每轮两笔购买项订单（3 项 + 2 项）各多 2 / 1 行 → 50 + 15 = 65。 */
 export const FIXTURE_DISPLAY_ROW_COUNT = 65;
-
-/** 类型列期望标签清单（每笔交易一个订单级合并格）：借贷派生四方向 + 普通转账 + 三基础 kind。 */
-export const EXPECTED_KIND_LABELS = {
-  借出: 1,
-  收回: 1,
-  借入: 1,
-  还款: 1,
-  转账: 6,
-  支出: 25,
-  收入: 10,
-  退款: 5,
-} as const;
-
-/** fixture 展开显示行集（消费方以本出口取表格 data，与视图接线同源）。 */
-export function fixtureDisplayRows(): Transaction[] {
-  return expandPurchaseRows(FIXTURE_TXNS);
-}
 
 /** 布线 fixture 参考数据并预热参考 store（账户/商户覆写，分类/币种走接缝规范夹具）。 */
 export async function wireRenderFixture(): Promise<void> {
@@ -202,7 +197,10 @@ export async function wireRenderFixture(): Promise<void> {
   await seam.ready;
 }
 
-/** 桌面表格测试装配：镜像 TransactionsView 的 NDataTable 接线（见文件头注）。 */
+/** 桌面表格测试装配：镜像 TransactionsView 的 NDataTable 接线（见文件头注）。
+ * 行集由装配内部经预计算入口派生（#2188，与视图同一接线：数据到达/上下文变化
+ * 时预计算，patch 期只读 display）——金额隐私模式开关等上下文轴变化由 computed
+ * 重派生承接，表格即时更新（删预计算接线即计数守门 ① 变红）。 */
 export const DesktopRenderTable = defineComponent({
   name: "DesktopRenderTable",
   props: {
@@ -210,13 +208,16 @@ export const DesktopRenderTable = defineComponent({
       type: Array as PropType<DataTableColumn<Transaction>[]>,
       required: true,
     },
-    rows: { type: Array as PropType<Transaction[]>, required: true },
   },
   setup(props) {
+    const reference = useReferenceStore();
+    const rows = computed(() =>
+      precomputeTransactionDisplayRows(reference, FIXTURE_TXNS, { expandPurchases: true }),
+    );
     return () =>
       h(NDataTable, {
         columns: props.columns,
-        data: props.rows,
+        data: rows.value,
         rowKey: displayRowKey,
         rowProps: (row: Transaction) => ({ class: purchaseRowClass(row) }),
         loading: false,
@@ -238,9 +239,9 @@ export function buildFixtureColumns(): DataTableColumn<Transaction>[] {
   });
 }
 
-/** 挂载桌面表格（fixture 行集 + 生产列构造），返回 wrapper 供断言与计数。 */
+/** 挂载桌面表格（生产列构造 + 装配内预计算行集），返回 wrapper 供断言与计数。 */
 export function mountDesktopRenderTable(): VueWrapper {
   return mount(DesktopRenderTable, {
-    props: { columns: buildFixtureColumns(), rows: fixtureDisplayRows() },
+    props: { columns: buildFixtureColumns() },
   });
 }

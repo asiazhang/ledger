@@ -3,17 +3,18 @@
 // （新列 / 新组件 / 新格式化逻辑）容易无声劣化；计时断言在 CI 共享 runner 上必然
 // flaky、不可作 gate，本文件以**确定性计数指标**守「渲染期不做重复功」的形态：
 //   ① 渲染期格式化调用（t / formatAmount / resolveLendingDirection）——同一数据
-//      全表重渲染窗口内的调用次数 ≤ 阈值；#2010 文本预计算落地后本项应收紧到 0
-//      （预计算在数据到达时完成、不在 patch 期逐格执行，即 #2010 的核心形态）。
+//      全表重渲染窗口内的调用次数 = 0（#2188 文本预计算落地后的核心形态）：
+//      预计算在数据到达/上下文变化时完成、不在 patch 期逐格执行；格式化被改回
+//      渲染期逐格执行（#2188 接线被移除的形态）即红（删除即红，ADR-0087 断言强度）。
 //   ② 行内交互组件实例数（AccountLink / MerchantLink / SourceLink /
-//      NoteCopyButton / AmountCell / NTag / NEllipsis）≤ 阈值。
+//      NoteCopyButton / AmountCell / NTag / NEllipsis）≤ 阈值；省略组件（NEllipsis，
+//      同步实例化提示弹层的形态）上限收紧到 #2188 优化后基线（仅表头省略 2）。
 //   ③ 表格容器内 DOM 节点总数 ≤ 阈值。
-// 计数窗口 = 「同一行集 + 重建列数组」的全表重渲染（列对象引用更新 → 每格
-// DataTableCell 组件收到新列对象而重渲染）：不含数据到达路径——预计算若在数据
-// 到达时完成，不计入窗口；若格式化被改回渲染期逐格执行（#2010 接线被移除的
-// 形态），窗口内计数回到建票基线、阈值收紧后即红（删除即红，ADR-0087 断言强度）。
-// 阈值纪律：初始阈值 = 建票时现状基线（下方常量，fixture 推导式见各常量注）；
-// #2010 落地时收紧到优化后基线，前后差即 #2010 的量化收益（更新进 #2010）；
+// 计数窗口 = 「同一行集 + 重建列数组」的纯 patch 阶段：列数组在窗口外先构建
+//（列标题/无障碍标签取词属数据/上下文到达阶段，同视图 computed 重建列的时点），
+// mockClear 后仅 setProps 触发列对象引用更新 → 全部单元格 patch。渲染函数若逐格
+// 调用格式化（退回 #2188 前形态）即在窗口内留痕变红；列构建期的取词不在窗口内。
+// 阈值纪律：优化落地时收紧到优化后基线（前后差即量化收益记录）；
 // 上调不允许静默进行——须在 PR 中说明原因并关联 #2012。
 // 计时趋势不在此文件（CI 计时 flaky）：每日基准走 perf-bench.yml 的
 // render.bench.ts（同 fixture，mount p95 只记录不判定），量「计数之外的成本增长」
@@ -56,15 +57,12 @@ const tSpy = vi.spyOn(i18n, "t");
 const formatAmountSpy = vi.spyOn(money, "formatAmount");
 const resolveLendingSpy = vi.spyOn(lending, "resolveLendingDirection");
 
-// —— ① 渲染期格式化调用基线（2026-11 建票时现状，#2010 前形态）——
-// t = 134：全表重渲染一次的取词总量——类型标签 50（每笔交易）+ 行内组件取词
-//          （AccountLink 悬停提示 60、SourceLink 类型/状态文案、NoteCopyButton
-//          无障碍标签 20×2、购买项件数标注 25、行菜单 aria-label 50）。
-// formatAmount = 50：每笔交易一个订单级合并金额格。
-// resolveLendingDirection = 10：fixture 全部转账行（借贷四方向轮转 + 普通转账）。
-const RENDER_FORMAT_T_BASELINE = 134;
-const RENDER_FORMAT_AMOUNT_BASELINE = 50;
-const RENDER_RESOLVE_LENDING_BASELINE = 10;
+// —— ① 渲染期格式化调用（#2188 预计算落地后收紧到 0）——
+// 渲染函数只读预计算 display 字段；列构建期取词（列标题/操作列无障碍标签）在
+// 窗口外（先构建后 clear）。删除预计算接线（渲染函数回落逐格格式化）即红。
+const RENDER_FORMAT_T_BASELINE = 0;
+const RENDER_FORMAT_AMOUNT_BASELINE = 0;
+const RENDER_RESOLVE_LENDING_BASELINE = 0;
 
 // —— ② 行内交互组件实例数基线 ——
 // AccountLink 60（40 单账户行 + 10 转账行 × 2）、MerchantLink 10（含 1 软删）、
@@ -78,7 +76,11 @@ const SOURCE_LINK_BASELINE = 15;
 const NOTE_COPY_BUTTON_BASELINE = 20;
 const AMOUNT_CELL_BASELINE = 50;
 const N_TAG_BASELINE = 52;
-const N_ELLIPSIS_BASELINE = 162;
+// NEllipsis（同步省略，每格同步实例化完整提示弹层子树）#2188 后仅剩表头省略 2：
+// 分类/商户列头（列头仍走同步 Ellipsis，naive-ui Header 不消费 performant 变体）。
+// 表格分类/商户列已改列级懒挂载（performant-ellipsis）、备注/商品名单元格内已改
+// NPerformantEllipsis（初始纯 span，悬停才挂弹层）——退回同步形态即红。
+const N_ELLIPSIS_BASELINE = 2;
 
 // —— ③ 表格容器内 DOM 节点总数基线（.n-data-table 内全部元素节点）——
 const TABLE_DOM_NODES_BASELINE = 1794;
@@ -133,32 +135,50 @@ describe("fixture 形态在场（缺形态即红：计数阈值只对覆盖到�
   it("金额隐私模式：掩码即时呈现于全部金额格（••••）", async () => {
     // 先挂载再置位：app store 首次创建时从 localStorage 水合开关、会覆写渲染前置位
     // （chart-privacy-mask 同款先例）；先挂载后置位也顺带断言「开关即时生效」。
+    // 开关是展示格式化层模块级单点，用例结尾复原避免污染同文件后续用例。
     const wrapper = await mountAndFlush();
-    amountPrivacyEnabled.value = true;
-    await nextTick();
-    const amountCells = wrapper.findAll(".amount-cell");
-    expect(amountCells.length).toBe(FIXTURE_TXN_COUNT);
-    for (const cell of amountCells) expect(cell.text()).toBe("••••");
+    try {
+      amountPrivacyEnabled.value = true;
+      await nextTick();
+      const amountCells = wrapper.findAll(".amount-cell");
+      expect(amountCells.length).toBe(FIXTURE_TXN_COUNT);
+      for (const cell of amountCells) expect(cell.text()).toBe("••••");
+    } finally {
+      amountPrivacyEnabled.value = false;
+    }
   });
 });
 
-describe("渲染期计数守门（初始阈值 = 建票时现状基线，收紧纪律见文件头注）", () => {
-  it("① 同一数据全表重渲染：渲染期格式化调用 ≤ 基线", async () => {
+describe("渲染期计数守门（阈值 = 优化后基线，收紧纪律见文件头注）", () => {
+  it("① 同一数据全表重渲染：渲染期格式化调用 = 0（预计算接线，删除即红）", async () => {
     const wrapper = await mountAndFlush();
-    // 计数窗口起点：清哨兵后以「重建列数组」触发同一行集的全表重渲染（纯 patch）。
+    // 预热性全表重渲染：吸收任何待结算的响应式状态（如前一用例遗留的上下文变化
+    // 触发的预计算重派生），使计数窗口从已结算状态开始——预计算重派生属
+    // 「数据到达/上下文变化」路径，不计入窗口；随后以「重建列数组」触发
+    // 同一行集的纯 patch（窗口正式起点）。
+    await wrapper.setProps({ columns: buildFixtureColumns() });
+    await flushPromises();
+    // 计数窗口起点：列数组在窗口外先构建（列标题/无障碍标签取词属数据/上下文
+    // 到达阶段，同视图 computed 重建列时点），清哨兵后仅以「重建列数组」触发
+    // 同一行集的全表重渲染（纯 patch）。
+    const nextColumns = buildFixtureColumns();
     tSpy.mockClear();
     formatAmountSpy.mockClear();
     resolveLendingSpy.mockClear();
-    await wrapper.setProps({ columns: buildFixtureColumns() });
+    await wrapper.setProps({ columns: nextColumns });
     await flushPromises();
     expect(
       tSpy.mock.calls.length,
-      `渲染期 t() 调用 ${tSpy.mock.calls.length} 次超出基线 ${RENDER_FORMAT_T_BASELINE}（渲染期逐格格式化回归？收紧纪律见文件头注 / #2012）`,
-    ).toBeLessThanOrEqual(RENDER_FORMAT_T_BASELINE);
-    expect(formatAmountSpy.mock.calls.length).toBeLessThanOrEqual(RENDER_FORMAT_AMOUNT_BASELINE);
-    expect(resolveLendingSpy.mock.calls.length).toBeLessThanOrEqual(
-      RENDER_RESOLVE_LENDING_BASELINE,
-    );
+      `渲染期 t() 调用 ${tSpy.mock.calls.length} 次，应为 0（渲染期逐格格式化回归？预计算接线被移除？见文件头注 / #2188）`,
+    ).toBe(RENDER_FORMAT_T_BASELINE);
+    expect(
+      formatAmountSpy.mock.calls.length,
+      `渲染期 formatAmount 调用 ${formatAmountSpy.mock.calls.length} 次，应为 0`,
+    ).toBe(RENDER_FORMAT_AMOUNT_BASELINE);
+    expect(
+      resolveLendingSpy.mock.calls.length,
+      `渲染期 resolveLendingDirection 调用 ${resolveLendingSpy.mock.calls.length} 次，应为 0`,
+    ).toBe(RENDER_RESOLVE_LENDING_BASELINE);
   });
 
   it("② 行内交互组件实例数 ≤ 基线", async () => {
