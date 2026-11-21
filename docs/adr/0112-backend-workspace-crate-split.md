@@ -100,3 +100,12 @@ crate 拆分的边界约束若只靠自觉，会以「静默漏检」方式失�
 - **判据与分类**：机制级判据「事实有权威源就投影，政策无源就显式」住 ADR-0056 决策 4 修订注记；逐族退役清单与 `mod` 扫描形状判定表见 #1591 定案评论与 #1593–#1597。
 
 决策 1–3、5–7 不变；门禁保底的三层结构（编译期 / 门禁接线 / 结构守门）不变，仅第三层的载体构成按上述分类调整。
+
+## 修订注记（#2204 决策记录并入，2026-11-21）：测试实例纪律与 compile_fail 负向例载体约束自 crate 注记并入
+
+决策记录盘点票 #2204（ADR-0145 批次 2：crate 注释独有政策并入 ADR）把散落在各业务域 crate 根文档与 Cargo.toml 注释里的两条独有政策并入本文；对应注释按 ADR-0145 四分类进入后续清理批次，本文成为其唯一住址。
+
+- **测试实例纪律（dev-dependency 环双实例）**：`cargo test -p <域 crate>` 的依赖图内存在该 crate 两份实例——被测本实例（`cfg(test)` 构建）与根包图实例（tauri-app 生产依赖携带）；接缝注册静态由测试工厂（`tauri_app_lib::test_support::open`）接在根包图实例上。据此：走接缝的行为路径测试一律经 `tauri_app_lib::ledger_<域>::…` 驱动根包图实例；纯函数与守门用例（不读注册静态）直接驱动本实例；纯读域（无接缝注册静态）域单测直接驱动本实例，经壳层的旅程由根包侧三层测试覆盖。硬约束：带类型签名的钩子无法跨实例注册（名义类型不等价）。根包 lib.rs 的 crate 本名再导出面（#1108 起别名再导出清除后仅存本名再导出）正是为服务这条纪律而保留。决策 6 的 dev-dependency 环裁决不变，本条补其测试侧后果。
+- **compile_fail 负向例载体约束**：业务域 crate 不能以 `use tauri_app_lib::…` 的 compile_fail 文档用例承载「对壳层反向引用」负向例——该 crate 与根包之间存在 dev-dependency 环，而 dev-dependency 对 doctest 可见，负向用例反而编译通过、形态被击穿。该负向例的合法载体只有两处：协议 crate（依赖面无根包，先例见其 crate 根文档）与结构守门 CRATES 依赖方向核对；编译期拒绝本身由生产依赖面承担（lib 目标解析不到 dev-dependency）。crate 内私有面的「再公开即红」compile_fail（经根包再导出路径断言非 pub，如账户域余额「受影响账户」推导）不受此约束。决策 4 的三层门禁结构不变，本条补编译期负向例的载体判定。
+
+出处：各域 crate 根文档「测试实例纪律」段（ledger-transaction 最完整）与「compile_fail 承载约束」段（ledger-backup / ledger-categories / ledger-transaction 等）、根包 lib.rs crate 本名再导出注记、各域 Cargo.toml 测试专用边注释（ledger-transaction / ledger-sync-protocol 留痕最全）。
