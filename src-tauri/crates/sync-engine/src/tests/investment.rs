@@ -1,8 +1,3 @@
-//! 投资域与 AI 导入路径的全域 op 产出与重放收敛（issue #861）：
-//! buy/sell 三件套（含基金金额权威形态）、买卖删除、可卖数量依赖倒挂的
-//! 挂起重投递自愈、标的字典 / 汇率 / 手动报价 / 现价录入，以及 AI 批量导入
-//! 的 op 产出与 IdempotencyKey 去重独立性。
-
 use super::super::{OpOutcome, parked_ops, read_ops};
 use super::common::{read_lot, read_lot_sale, read_transaction, seed_device, wire_in, wire_out};
 use ledger_investment::{
@@ -75,7 +70,6 @@ fn buy_sell_replay_converge_holdings_and_pnl() {
     seed_investment_setup(&conn_a, "acc-inv", "inst-1");
     seed_investment_setup(&conn_b, "acc-inv", "inst-1");
 
-    // A 端：买入 100 份 @15.00（fee 5 分）→ 卖出 40 份；每步 wire 到 B 端。
     let buy_id = protocol::create(&conn_a, buy_input("acc-inv", "inst-1", 100.0, 1500, 5))
         .unwrap()
         .id;
@@ -103,17 +97,12 @@ fn buy_sell_replay_converge_holdings_and_pnl() {
     assert_eq!(sale_a, Some((40.0, 1505, -7)), "匹配与已实现盈亏确定性");
     assert_eq!(sale_a, sale_b, "卖出匹配重放后一致");
 
-    // 全量重投递：幂等跳过，无第二次效果。
     let again = wire_in(&conn_b, &wire_out(&conn_a));
     assert!(again.iter().all(|r| r.outcome == OpOutcome::Skipped));
     assert_eq!(read_lot(&conn_b, &buy_id), lot_a);
     assert_eq!(read_ops(&conn_a).unwrap(), read_ops(&conn_b).unwrap());
 }
 
-/// 伪造载荷带转入账户的 buy/sell op 应码化挂起、不落行（issue #1187）：本地
-/// 录入必被 `trade.buy-to-account-forbidden` / `trade.sell-to-account-forbidden`
-/// 拒绝，重放经同一接缝守卫，不绕开本地不变量（对照 convert 同款先例）；
-/// 指向存活的投资账户，先过行为层存活校验、再入投资域重放装配。
 #[test]
 fn buy_sell_op_with_to_account_parks_without_booking() {
     let conn_a = test_support::open();
@@ -123,7 +112,6 @@ fn buy_sell_op_with_to_account_parks_without_booking() {
     seed_investment_setup(&conn_a, "acc-inv", "inst-1");
     seed_investment_setup(&conn_b, "acc-inv", "inst-1");
 
-    // A 端：合法买入建仓 → 卖出，两 op 的 wire 分别篡改后投递 B 端。
     let buy_id = protocol::create(&conn_a, buy_input("acc-inv", "inst-1", 100.0, 1500, 5))
         .unwrap()
         .id;
@@ -133,7 +121,6 @@ fn buy_sell_op_with_to_account_parks_without_booking() {
     let wire = wire_out(&conn_a);
     assert_eq!(wire.len(), 2, "应有 buy 与 sell 两个 op");
 
-    // 伪造 buy op：row.to_account_id 指向存活投资账户。
     let mut tampered_buy: serde_json::Value = serde_json::from_str(&wire[0]).unwrap();
     tampered_buy["command"]["payload"]["row"]["to_account_id"] = serde_json::json!("acc-inv");
     let reports = wire_in(&conn_b, &[serde_json::to_string(&tampered_buy).unwrap()]);
@@ -143,7 +130,6 @@ fn buy_sell_op_with_to_account_parks_without_booking() {
         reports[0]
     );
 
-    // 伪造 sell op：同款（重放臂守卫先于可卖数量校验，不依赖 buy op 已达）。
     let mut tampered_sell: serde_json::Value = serde_json::from_str(&wire[1]).unwrap();
     tampered_sell["command"]["payload"]["row"]["to_account_id"] = serde_json::json!("acc-inv");
     let reports = wire_in(&conn_b, &[serde_json::to_string(&tampered_sell).unwrap()]);
@@ -153,7 +139,6 @@ fn buy_sell_op_with_to_account_parks_without_booking() {
         reports[0]
     );
 
-    // 两 op 均不落交易行（守卫在装配最前，失败即挂起、不产生中间态）。
     assert!(read_transaction(&conn_b, &buy_id).is_none(), "不落买入行");
     assert!(read_transaction(&conn_b, &sell_id).is_none(), "不落卖出行");
     assert_eq!(read_lot(&conn_b, &buy_id), None, "不落买入批次");
@@ -168,7 +153,6 @@ fn fund_buy_replay_keeps_amount_authority() {
     seed_device(&conn_b, "dev-b");
     seed_investment_setup(&conn_a, "acc-inv", "fund-1");
     seed_investment_setup(&conn_b, "acc-inv", "fund-1");
-    // 基金类型（金额权威：确认单整分金额 + 确认份额，单价反算）。
     for conn in [&conn_a, &conn_b] {
         conn.execute(
             "UPDATE instruments SET instrument_type='fund' WHERE id='fund-1'",
@@ -177,8 +161,6 @@ fn fund_buy_replay_keeps_amount_authority() {
         .unwrap();
     }
 
-    // 金额 1000.00 元（100000 分）买 9500.00 份，零费用：单价反算 1052.63…，
-    // 每份成本 = 权威金额锚定单次舍入 1053（确认单抄写即记账，ADR-0038）。
     let mut input = buy_input("acc-inv", "fund-1", 9500.0, 0, 0);
     input.amount_cents = 100_000;
     input.price_cents = None;
@@ -222,8 +204,6 @@ fn buy_delete_replay_cleans_lot() {
     assert_eq!(deleted(&conn_b), 1, "删除重放后同软删");
     assert_eq!(read_lot(&conn_a, &buy_id), None, "买入删除清理持仓批次");
     assert_eq!(read_lot(&conn_b, &buy_id), None, "删除重放同样清理批次");
-    // 删除重放不产出本地 op（ADR-0091：重放不得追加本地 op）：两端 op 日志全等
-    // ——否则重放端会再发布一条 Delete，对端重放命中已删行即挂起（issue #980）。
     assert_eq!(
         read_ops(&conn_a).unwrap(),
         read_ops(&conn_b).unwrap(),
@@ -247,7 +227,6 @@ fn sell_before_buy_parks_then_redelivery_self_heals() {
         .unwrap()
         .id;
 
-    // 依赖倒挂：只投递卖出 op（买入 op 未达）——可卖数量守卫失败，挂起不落日志。
     let ops = read_ops(&conn_a).unwrap();
     let wire_of_kind = |kind: TransactionKind| {
         ops.iter()
@@ -271,8 +250,6 @@ fn sell_before_buy_parks_then_redelivery_self_heals() {
     assert!(read_ops(&conn_b).unwrap().is_empty(), "挂起不落日志");
     assert_eq!(parked_ops(&conn_b).unwrap().len(), 1);
 
-    // 买入 op 补达（只投 buy，挂起的 sell 仍在队列）；重投递 sell：重放成功
-    // 并出队（不堆积、不复活）。
     wire_in(&conn_b, &buy_wire);
     assert_eq!(
         parked_ops(&conn_b).unwrap().len(),
@@ -296,7 +273,6 @@ fn buy_replay_with_missing_instrument_parks() {
     seed_device(&conn_a, "dev-a");
     seed_device(&conn_b, "dev-b");
     seed_investment_setup(&conn_a, "acc-inv", "inst-1");
-    // B 端只有账户，标的字典尚未同步（外键依赖缺失场景）。
     test_support::seed_account(&conn_b, "acc-inv", "美股", "investment", "USD", 0);
 
     protocol::create(&conn_a, buy_input("acc-inv", "inst-1", 100.0, 1500, 5)).unwrap();
@@ -315,7 +291,6 @@ fn instrument_dictionary_ops_replay_and_converge() {
     seed_device(&conn_a, "dev-a");
     seed_device(&conn_b, "dev-b");
 
-    // 自建标的建档 → op；重放后字典行一致（幂等复用的改名 → Update op）。
     let inst_id = create_instrument(
         &conn_a,
         InstrumentInput {
@@ -338,7 +313,6 @@ fn instrument_dictionary_ops_replay_and_converge() {
     };
     assert_eq!(row(&conn_a), row(&conn_b), "标的建档重放后一致");
 
-    // 幂等复用（同码同类型改名）→ Update op；无变化的复用不产出 op。
     let op_count_before = read_ops(&conn_a).unwrap().len();
     let same_id = create_instrument(
         &conn_a,
@@ -387,7 +361,6 @@ fn instrument_dictionary_ops_replay_and_converge() {
     wire_in(&conn_b, &wire_out(&conn_a));
     assert_eq!(row(&conn_a), row(&conn_b), "改名重放后一致");
 
-    // 自建标的删除 → op；重放后两端皆无行。
     delete_instrument(&conn_a, &inst_id).unwrap();
     wire_in(&conn_b, &wire_out(&conn_a));
     let exists = |conn: &rusqlite::Connection| -> i64 {
@@ -410,10 +383,6 @@ fn fund_add_by_code_syncs_dictionary_not_quote() {
     seed_device(&conn_a, "dev-a");
     seed_device(&conn_b, "dev-b");
 
-    // 按代码即拉（注入桩离线驱动）：标的字典随 op 同步；行情现价是行情外拉
-    // 数据，不进 op——重放端字典有行、现价无行（各端自行拉行情）。
-    // 统一报价载荷（行情接入，ADR-0103）：净值 1.2345 元 → 12345 万分之一元，
-    // 价格日期与净值日期同为净值日期。
     let quote = ledger_investment::Quote {
         code: "000001".into(),
         name: "华夏成长混合".into(),
@@ -469,7 +438,6 @@ fn exchange_rate_and_price_entries_replay_and_converge() {
     seed_investment_setup(&conn_a, "acc-inv", "inst-1");
     seed_investment_setup(&conn_b, "acc-inv", "inst-1");
 
-    // 汇率录入 → op → 重放后汇率行一致（自然键 base/quote）。
     let rate_id = create_exchange_rate(
         &conn_a,
         ledger_currencies::ExchangeRateInput {
@@ -496,7 +464,6 @@ fn exchange_rate_and_price_entries_replay_and_converge() {
     );
     assert_eq!(rate_row(&conn_a), rate_row(&conn_b), "汇率重放后一致");
 
-    // 现价录入（独立写价通道）→ op → 重放后现价行一致。
     let _price_id = create_market_price(
         &conn_a,
         ledger_investment::MarketPriceInput {
@@ -509,7 +476,6 @@ fn exchange_rate_and_price_entries_replay_and_converge() {
     )
     .unwrap();
     wire_in(&conn_b, &wire_out(&conn_a));
-    // 行 id 各端本地事实（upsert 未命中各自新建），按标的自然键读业务字段。
     let price_row = |conn: &rusqlite::Connection| -> (i64, String, String, Option<String>) {
         conn.query_row(
             "SELECT price_cents, priced_at, currency_code, nav_date FROM market_prices WHERE instrument_id='inst-1'",
@@ -524,7 +490,6 @@ fn exchange_rate_and_price_entries_replay_and_converge() {
     );
     assert_eq!(price_row(&conn_a), price_row(&conn_b), "现价重放后一致");
 
-    // 手动报价 → op → 两落点（周采样历史 + 现价映像）重放后一致。
     record_manual_price(
         &conn_a,
         &ledger_investment::ManualPriceInput {
@@ -534,7 +499,6 @@ fn exchange_rate_and_price_entries_replay_and_converge() {
         },
     )
     .unwrap();
-    // 回填早于最新点的旧价：只沉淀历史、不改现价（最新点映像规则随 op 重放）。
     record_manual_price(
         &conn_a,
         &ledger_investment::ManualPriceInput {
@@ -594,11 +558,7 @@ fn ai_batch_import_produces_ops_and_dedup_is_independent() {
     seed_investment_setup(&conn_a, "acc-inv", "inst-1");
     seed_investment_setup(&conn_b, "acc-inv", "inst-1");
 
-    // AI 批量导入（HTTP POST /transactions/batch 同一编排）：普通行 + buy 行，
-    // 各带客户端幂等键（指向源文件行的稳定身份）。
     let mut expense = super::common::make_expense("acc-inv", 88_00, "外卖");
-    // 币种随投资账户（USD）：币种一致性守卫（issue #1770 / ADR-0134）下
-    // CNY 交易挂 USD 账户已是非法形态。
     expense.currency_code = "USD".into();
     expense.idempotency_key = Some("src.csv:1".into());
     let mut buy = buy_input("acc-inv", "inst-1", 100.0, 1500, 5);
@@ -607,14 +567,10 @@ fn ai_batch_import_produces_ops_and_dedup_is_independent() {
     assert_eq!(outcome.results.len(), 2);
     assert!(outcome.results.iter().all(|r| r.success && !r.duplicate));
 
-    // 每条实际落库行各产一条 op（导入不绕过行为编排入口，op 产出同收敛）。
     let ops = read_ops(&conn_a).unwrap();
     assert_eq!(ops.len(), 2, "批量导入每实际落库行一条 op：{ops:?}");
     let buy_id = outcome.results[1].id.clone().unwrap();
 
-    // 重跑同批（AI 纠错重试常态）：IdempotencyKey 命中 → 行被导入去重跳过，
-    // 不产生第二笔交易，也不产生第二条 op——导入去重（幂等键）与 op 去重
-    // （op_id）各自独立，互不冲突。
     let mut expense_again = super::common::make_expense("acc-inv", 88_00, "外卖");
     expense_again.currency_code = "USD".into();
     expense_again.idempotency_key = Some("src.csv:1".into());
@@ -632,8 +588,6 @@ fn ai_batch_import_produces_ops_and_dedup_is_independent() {
         .unwrap();
     assert_eq!(count, 2, "重跑不产生重复交易");
 
-    // 重放端收敛：batch 里的 buy 行重放后批次一致；重投递整批 op 幂等跳过
-    // （op 去重按 op_id 生效，与导入去重无交涉）。
     wire_in(&conn_b, &wire_out(&conn_a));
     assert_eq!(
         read_lot(&conn_a, &buy_id),

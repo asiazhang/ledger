@@ -1,14 +1,3 @@
-//! 基金转换（convert）的语义命令重放（issue #980 / ADR-0099 决策 6）：
-//! 载荷携 `ConvertCommandFields`（含源端算定的结转成本），重放端本地重建 FIFO
-//! 快照并落转出消耗记录——create / update / delete 三 op 重放后两端批次、结转
-//! 成本、持仓与盈亏完全一致（确定性重放），重复投递幂等；旧 schema 版本 op 挂起、
-//! 升级后重投递自然重试成功；旧载荷（无 convert 成员）向后兼容，而旧端产出的
-//! 转换 op（有行无字段）经 kind 防御臂挂起、不静默错账。
-//!
-//! 断言权威 = 同步引擎公开接口（`read_ops` / `ingest_ops` / `parked_ops`）与行为层
-//! 公开入口；批次/消耗/匹配的判据读取以**锚定交易 id** 为自然键（批次行 id 是各端
-//! 本地事实，不参与状态等值判定——与既有投资重放测试同一取舍）。
-
 use rusqlite::Connection;
 
 use super::super::{OpOutcome, parked_ops, read_ops};
@@ -22,7 +11,6 @@ use tauri_app_lib::test_support::{
     self, assert_balance_cache_matches_realtime, seed_account, seed_instrument,
 };
 
-/// 双端铺垫：投资账户 + 转出/转入两标的（币种同账户，1:1 折算）。
 fn seed_both_ends() -> (Connection, Connection) {
     let conn_a = test_support::open();
     let conn_b = test_support::open();
@@ -32,7 +20,6 @@ fn seed_both_ends() -> (Connection, Connection) {
         seed_account(conn, "acc-cv", "基金户", "investment", "CNY", 0);
         seed_instrument(conn, "inst-out", "006793", "转出基金", "CNY", "unknown");
         seed_instrument(conn, "inst-in", "519700", "转入基金", "CNY", "unknown");
-        // 种子直插的账户无写路径钩子：夹具经既有接缝全量回填一次，缓存行才可比对。
         ledger_accounts::balance::refresh_all_account_balances(conn).unwrap();
     }
     (conn_a, conn_b)
@@ -95,8 +82,6 @@ fn sell_input(
     }
 }
 
-/// 转换输入（金额为确认单权威；行金额锚点由后端按 FIFO 结转成本重算）。
-/// 参数众多是输入构造器的固有形状（同 `investment::tests::common` 同款取舍）。
 #[allow(clippy::too_many_arguments)]
 fn convert_input(
     account_id: &str,
@@ -121,7 +106,6 @@ fn convert_input(
     }
 }
 
-/// 转换转出消耗快照：按消耗批次锚定交易 id 排序的 (锚定交易, 数量, 每份成本, 结转成本)。
 fn read_conversions(conn: &Connection, convert_id: &str) -> Vec<(String, f64, i64, i64)> {
     let mut stmt = conn
         .prepare(
@@ -138,7 +122,6 @@ fn read_conversions(conn: &Connection, convert_id: &str) -> Vec<(String, f64, i6
     .unwrap()
 }
 
-/// 转换明细行快照：(转出份额, 反算单价, 手续费, 转入标的, 转入份额, 转出金额, 转入金额)。
 #[allow(clippy::type_complexity)]
 fn read_convert_row(conn: &Connection, id: &str) -> Option<(f64, i64, i64, String, f64, i64, i64)> {
     conn.query_row(
@@ -161,7 +144,6 @@ fn read_convert_row(conn: &Connection, id: &str) -> Option<(f64, i64, i64, Strin
     .ok()
 }
 
-/// 全量重投递全部 op：逐条幂等跳过（无第二次效果）。
 fn assert_full_redelivery_is_idempotent(conn_a: &Connection, conn_b: &Connection) {
     let reports = wire_in(conn_b, &wire_out(conn_a));
     assert!(
@@ -174,8 +156,6 @@ fn assert_full_redelivery_is_idempotent(conn_a: &Connection, conn_b: &Connection
 #[test]
 fn convert_create_replay_converges_lots_carried_cost_and_pnl() {
     let (conn_a, conn_b) = seed_both_ends();
-    // A 端：两笔建仓（单价 1.00 / 2.00 元）→ 转换 15 份（耗尽首批 10 + 部分耗二批 5）→
-    // 卖出转入份额 5 份（成本随转换结转流入已实现盈亏）。
     let buy1 = protocol::create(
         &conn_a,
         buy_input("acc-cv", "inst-out", 10.0, 10_000, "2026-01-10"),
@@ -198,8 +178,6 @@ fn convert_create_replay_converges_lots_carried_cost_and_pnl() {
     .id;
     wire_in(&conn_b, &wire_out(&conn_a));
 
-    // 转换行：行金额锚点 = 结转成本 2000 分（首批耗尽 1000 + 二批部分 1000），
-    // 明细行单价 = 2250 × 100 ÷ 15 = 15000（1.50 元）。
     let expected_row = read_transaction(&conn_a, &convert_id).unwrap();
     assert_eq!(expected_row.kind, TransactionKind::Convert);
     assert_eq!(expected_row.amount_cents, 2_000, "行锚点 = FIFO 结转成本");
@@ -217,10 +195,6 @@ fn convert_create_replay_converges_lots_carried_cost_and_pnl() {
         Some((15.0, 15_000, 0, "inst-in".into(), 15.0, 2_250, 2_250))
     );
 
-    // 转出腿逐批次消耗：首批耗尽按「批次数额 − 此前已消耗」闭合、二批按数量比例单次舍入。
-    // 读侧按 buy_transaction_id 排序，而 UUIDv7 仅在毫秒内有序、同毫秒由随机位定序
-    // ——预期清单不能假设「创建序 == id 序」（#1112 范围外修复）。两侧按同一键归一后
-    // 比较，断言的仍是每批的消耗份额与结转成本（换批次序会改数值，仍可失败）。
     let mut expected_conversions = vec![
         (buy1.clone(), 10.0, 10_000, 1_000),
         (buy2.clone(), 5.0, 20_000, 1_000),
@@ -236,7 +210,6 @@ fn convert_create_replay_converges_lots_carried_cost_and_pnl() {
         "本地重建 FIFO 快照 ⇒ 同一逐批次消耗与结转成本"
     );
 
-    // 转出批次与转入批次（每份成本 = 结转成本 ÷ 转入份额单次舍入 = 13333）。
     assert_eq!(
         read_lot(&conn_a, &buy1),
         Some((10.0, 0.0, 10_000, "CNY".into()))
@@ -258,7 +231,6 @@ fn convert_create_replay_converges_lots_carried_cost_and_pnl() {
         );
     }
 
-    // 卖出转入份额 5 份：成本 667（round(5 × 13333 ÷ 100)）、盈亏 1500 − 667 = 833。
     let sell_id = protocol::create(&conn_a, sell_input("acc-cv", "inst-in", 5.0, 30_000))
         .unwrap()
         .id;
@@ -274,7 +246,6 @@ fn convert_create_replay_converges_lots_carried_cost_and_pnl() {
         "盈亏重放后一致"
     );
 
-    // 余额（含六度量系数全 0 的转换：转换前后不变）两端一致；缓存 == 实时。
     assert_eq!(cached_balance(&conn_a, "acc-cv").unwrap(), -3_000 + 1_500);
     assert_eq!(
         cached_balance(&conn_b, "acc-cv").unwrap(),
@@ -306,7 +277,6 @@ fn convert_update_replay_rebuilds_both_legs() {
         Some((10.0, 0.0, 10_000, "CNY".into()))
     );
 
-    // 就地修改：10 份 → 5 份（先回补旧转出腿，再按新输入重消耗）。
     protocol::update(
         &conn_a,
         &convert_id,
@@ -315,7 +285,6 @@ fn convert_update_replay_rebuilds_both_legs() {
     .unwrap();
     wire_in(&conn_b, &wire_out(&conn_a));
 
-    // 两端同态：转出批次回补后只消耗 5、转入批次重建为 5 份、消耗记录唯一一条。
     assert_eq!(
         read_transaction(&conn_a, &convert_id).unwrap().amount_cents,
         500
@@ -369,7 +338,6 @@ fn convert_delete_replay_reverses_both_legs() {
     .id;
     wire_in(&conn_b, &wire_out(&conn_a));
 
-    // 删除重放：转出腿逐批次精确回补、转入批次与转换明细行整批清理、转换行软删。
     protocol::delete(&conn_a, &convert_id).unwrap();
     wire_in(&conn_b, &wire_out(&conn_a));
 
@@ -411,7 +379,6 @@ fn convert_before_buy_parks_then_redelivery_self_heals() {
     assert_eq!(wire.len(), 2, "两笔交易各一条 op");
     let (buy_wire, convert_wire) = (vec![wire[0].clone()], vec![wire[1].clone()]);
 
-    // 依赖倒挂：只投递转换 op——本地 FIFO 快照无可消耗批次，可卖数量守卫挂起、不落日志。
     let reports = wire_in(&conn_b, &convert_wire);
     assert!(
         matches!(&reports[0].outcome, OpOutcome::Parked { code, .. } if code == "trade.insufficient-holding"),
@@ -421,7 +388,6 @@ fn convert_before_buy_parks_then_redelivery_self_heals() {
     assert!(read_ops(&conn_b).unwrap().is_empty(), "挂起不落日志");
     assert_eq!(parked_ops(&conn_b).unwrap().len(), 1);
 
-    // 买入 op 补达后重投递转换 op：本地重建 FIFO 快照成功，重放收敛并出队。
     wire_in(&conn_b, &buy_wire);
     assert_eq!(
         parked_ops(&conn_b).unwrap().len(),
@@ -457,7 +423,6 @@ fn convert_op_schema_ahead_parks_then_retry_after_upgrade_succeeds() {
     .unwrap()
     .id;
     let wire = wire_out(&conn_a);
-    // 依赖先到位，使挂起原因只可能是 schema 版本偏斜。
     wire_in(&conn_b, &[wire[0].clone()]);
 
     let local_version = db::schema_version(&conn_b).unwrap();
@@ -475,7 +440,6 @@ fn convert_op_schema_ahead_parks_then_retry_after_upgrade_succeeds() {
     );
     assert_eq!(parked_ops(&conn_b).unwrap().len(), 1, "挂起行可查");
 
-    // 升级后（本端版本追平）重投递同一 op：自然重试成功并出队，两端收敛。
     ahead["schema_version"] = serde_json::json!(local_version);
     let reports = wire_in(&conn_b, &[serde_json::to_string(&ahead).unwrap()]);
     assert_eq!(reports[0].outcome, OpOutcome::Applied);
@@ -507,7 +471,6 @@ fn legacy_op_without_convert_member_replays_with_default_semantics() {
     .unwrap()
     .id;
 
-    // 旧格式 op（#980 前设备产出）：载荷无 convert 成员；可选成员缺省即 None，照常应用。
     let mut legacy: serde_json::Value = serde_json::from_str(&wire_out(&conn_a)[0]).unwrap();
     let removed = legacy["command"]["payload"]
         .as_object_mut()
@@ -524,7 +487,6 @@ fn legacy_op_without_convert_member_replays_with_default_semantics() {
     );
     assert_eq!(read_lot(&conn_b, &buy_id), read_lot(&conn_a, &buy_id));
 
-    // 已落日志（幂等重投跳过），不残留挂起。
     let again = wire_in(&conn_b, &[raw]);
     assert_eq!(again[0].outcome, OpOutcome::Skipped);
     assert!(parked_ops(&conn_b).unwrap().is_empty());
@@ -547,8 +509,6 @@ fn legacy_convert_op_without_fields_parks_without_booking() {
     let wire = wire_out(&conn_a);
     wire_in(&conn_b, &[wire[0].clone()]);
 
-    // 旧端产出的转换 op（有行无 convert 字段）：kind 防御臂显式失败挂起，
-    // 不落半套持仓副作用、不静默错账（ADR-0099 决策 6 的双保险之一）。
     let mut legacy: serde_json::Value = serde_json::from_str(&wire[1]).unwrap();
     legacy["command"]["payload"]
         .as_object_mut()
@@ -589,8 +549,6 @@ fn convert_op_with_divergent_carried_cost_parks_without_booking() {
     let wire = wire_out(&conn_a);
     wire_in(&conn_b, &[wire[0].clone()]);
 
-    // 源端结转成本与本地 FIFO 重建不一致（载荷被篡改/本地快照发散）：显式失败
-    // 挂起，不静默落出错误成本基础（ADR-0099 决策 6）。
     let mut tampered: serde_json::Value = serde_json::from_str(&wire[1]).unwrap();
     tampered["command"]["payload"]["convert"]["carried_cost_cents"] = serde_json::json!(999);
     let reports = wire_in(&conn_b, &[serde_json::to_string(&tampered).unwrap()]);
@@ -628,8 +586,6 @@ fn convert_op_with_to_account_parks_without_booking() {
     let wire = wire_out(&conn_a);
     wire_in(&conn_b, &[wire[0].clone()]);
 
-    // 伪造载荷带转入账户（本地录入必被 `trade.convert-to-account-forbidden` 拒绝）：
-    // 重放经同一接缝守卫，不绕开本地不变量。账户存活校验先过（指向存活的投资账户）。
     let mut tampered: serde_json::Value = serde_json::from_str(&wire[1]).unwrap();
     tampered["command"]["payload"]["row"]["to_account_id"] = serde_json::json!("acc-cv");
     let reports = wire_in(&conn_b, &[serde_json::to_string(&tampered).unwrap()]);

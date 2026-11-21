@@ -1,5 +1,3 @@
-//! 备份/恢复测试（issue #91 外迁）：zip 打包/恢复往返/新旧 schema 策略/受管备份列表与修剪。
-
 use std::fs::File;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -14,8 +12,6 @@ use super::*;
 use ledger_infra::db;
 use ledger_infra::db::open_connection;
 
-/// 散文件夹具（issue #1645）：临时文件收进各自的暂存目录，drop（含 panic
-/// unwind）连目录一起删除；手写 `fs_util::cleanup` 收尾随迁移退役。
 fn temp_file(tag: &str) -> ScratchFile {
     ScratchFile::new(
         &format!("backup-test-{tag}"),
@@ -23,7 +19,6 @@ fn temp_file(tag: &str) -> ScratchFile {
     )
 }
 
-/// 建内存库并写入一条账户 + 一条交易（账户经工厂种子，spec #728 / ADR-0084 决策 4）。
 fn seed(conn: &Connection) {
     tauri_app_lib::test_support::seed_account(conn, "acc-1", "现金", "cash", "CNY", 0);
     conn.execute(
@@ -39,26 +34,14 @@ fn count_transactions(conn: &Connection) -> i64 {
         .unwrap()
 }
 
-/// 为每个测试准备独立的安全备份目录（互不干扰）；guard drop 整棵删除。
 fn temp_safety_dir() -> ScratchDir {
     ScratchDir::new("backup-test-safety")
 }
 
-/// 真实成对受管备份夹具（issue #1983）：在暂存目录 `dir` 内以 `file_name`
-/// （受管命名，含或不含账本标识段，由调用方给定）现场产出一份**真实成对
-/// 受管备份**——经备份写出入口 [`backup_db_to`] 生成，zip 内主库件 + 同步
-/// 元数据件 + 内层元数据三件齐全（ADR-0139）。库内容为工厂世界加 [`seed`]
-/// 的一条账户与一笔交易（内容锚稳定为 `txn-1`，供归属判定真开包的后续
-/// 用例取用）。占位文件夹具自本票起退役：内容锚与元数据判定都要真开包。
 fn real_managed_backup(dir: &Path, file_name: &str, kind: BackupKind) -> PathBuf {
     real_managed_backup_with_meta(dir, file_name, kind, &serde_json::json!({}))
 }
 
-/// 同 [`real_managed_backup`]，另把 `extra_meta`（JSON 对象）的字段并入产物
-/// 内层元数据（`backup.json`）——测试侧注入，供「元数据携带指纹/设备」类
-/// 归属判定用例构造产物（ADR-0144 决策 5）。重写动作上收在根包
-/// test_support::merge_extra_backup_meta（spec #1982 review：与 e2e 步骤层
-/// 共享单点，本文件不再自持 zip 整包重写副本）。
 fn real_managed_backup_with_meta(
     dir: &Path,
     file_name: &str,
@@ -75,9 +58,6 @@ fn real_managed_backup_with_meta(
     target
 }
 
-/// 夹具契约（issue #1983）：产出物是真实成对受管产物——受管命名、zip 三
-/// 条目齐全、内层元数据可读且成对；元数据注入扩展点把外来字段并入
-/// `backup.json` 且不破坏既有字段（后续归属判定票据的构造入口）。
 #[test]
 fn real_managed_backup_fixture_produces_paired_product() {
     let dir = ScratchDir::new("backup-test-fixture");
@@ -136,8 +116,6 @@ fn backup_creates_zip_with_db_and_meta() {
     assert!(result.size_bytes > 0);
     assert!(result.schema_version >= 4);
 
-    // 校验 zip 内容：三个条目（双文件成对，ADR-0139 决策 6；V036 拆库后工厂
-    // 世界四表住 attached 侧，sync 件为真同步元数据，paired=true）。
     let file = File::open(&target).unwrap();
     let mut archive = zip::ZipArchive::new(file).unwrap();
     assert_eq!(archive.len(), 3);
@@ -158,7 +136,6 @@ fn backup_creates_zip_with_db_and_meta() {
         "工厂世界四表住 attached 侧，paired=true"
     );
 
-    // 解出 db 可打开且数据完整。
     let extracted = temp_file("extracted");
     let mut db_entry = archive.by_name("ledger.db").unwrap();
     let mut out = File::create(&extracted).unwrap();
@@ -172,13 +149,11 @@ fn backup_creates_zip_with_db_and_meta() {
 fn restore_roundtrip_preserves_data() {
     let conn = tauri_app_lib::test_support::open();
     seed(&conn);
-    // seed 裸 SQL 绕过写接缝，按生产不变量（备份时缓存与实时一致）补齐缓存行。
     ledger_accounts::balance::refresh_all_account_balances(&conn).unwrap();
 
     let backup = temp_file("rt-backup");
     backup_db_to(&conn, &backup, "0.2.0", BackupKind::Manual).unwrap();
 
-    // 目标库先建好，含一条多余交易；恢复后应只剩备份里的数据。
     let db_path = temp_file("rt-db");
     {
         let c = tauri_app_lib::test_support::open();
@@ -189,8 +164,6 @@ fn restore_roundtrip_preserves_data() {
             [],
         )
         .unwrap();
-        // 文件库不入测试工厂（ADR-0084 决策 3）：迁移后的库经 VACUUM INTO 落盘
-        // （与下方裸库产物同款模式）。
         c.execute("VACUUM INTO ?1", params![db_path.to_string_lossy()])
             .unwrap();
         assert_eq!(count_transactions(&c), 2);
@@ -201,10 +174,8 @@ fn restore_roundtrip_preserves_data() {
     let result = restore_db_from(&backup, &db_path, &safety_dir, expected, None).unwrap();
     assert_eq!(result.schema_version, expected);
 
-    // 恢复后数据与备份一致（1 条交易）。
     let c = open_connection(&db_path).unwrap();
     assert_eq!(count_transactions(&c), 1);
-    // 余额缓存随库文件原样恢复，且与实时计算一致（issue #491：备份恢复场景数字正确）。
     let cached: i64 = c
         .query_row(
             "SELECT balance_cents FROM account_balance_cache WHERE account_id='acc-1'",
@@ -217,7 +188,6 @@ fn restore_roundtrip_preserves_data() {
         ledger_accounts::balance::compute_balance(&c, "acc-1").unwrap(),
         "恢复后缓存行应与实时计算一致"
     );
-    // 恢复前的库被安全备份。
     let safeties: Vec<_> = std::fs::read_dir(&safety_dir)
         .unwrap()
         .flatten()
@@ -232,7 +202,6 @@ fn restore_roundtrip_preserves_data() {
 
 #[test]
 fn restore_rejects_newer_schema() {
-    // 构造一个 schema 版本更高的库文件。
     let newer = temp_file("newer");
     {
         let c = open_connection(&newer).unwrap();
@@ -240,7 +209,6 @@ fn restore_rejects_newer_schema() {
     }
     let db_path = temp_file("db");
     let expected = expected_schema_version().unwrap();
-    // 恢复安全备份的落盘父目录也走暂存目录（原先直接写 /tmp 根）。
     let tmp_dir = ScratchDir::new("backup-test-restore-parent");
     let err = restore_db_from(&newer, &db_path, &tmp_dir, expected, None)
         .unwrap_err()
@@ -254,7 +222,6 @@ fn restore_supports_bare_db() {
     let conn = tauri_app_lib::test_support::open();
     seed(&conn);
 
-    // 直接 VACUUM INTO 生成裸 db 文件作为"备份"。
     let bare = temp_file("bare");
     conn.execute("VACUUM INTO ?1", params![bare.to_string_lossy()])
         .unwrap();
@@ -269,20 +236,16 @@ fn restore_supports_bare_db() {
 
 #[test]
 fn backup_meta_records_kind_for_auto_and_manual() {
-    // 仅验产物元数据，无需表结构：工厂全量建库无碍（spec #728 / ADR-0084）。
     let conn = tauri_app_lib::test_support::open();
-    // 手动产物：kind 落盘为 manual。
     let manual = temp_file("meta-manual");
     backup_db_to(&conn, &manual, "0.2.0", BackupKind::Manual).unwrap();
     assert_eq!(read_backup_kind(&manual).unwrap(), BackupKind::Manual);
 
-    // 自动产物：kind 落盘为 auto。
     let auto = temp_file("meta-auto");
     backup_db_to(&conn, &auto, "0.2.0", BackupKind::Auto).unwrap();
     assert_eq!(read_backup_kind(&auto).unwrap(), BackupKind::Auto);
 }
 
-/// 旧版本备份的 backup.json 缺 kind 字段：读取不报错且视为 manual。
 #[test]
 fn legacy_meta_without_kind_reads_as_manual() {
     let path = temp_file("legacy-meta");
@@ -303,7 +266,6 @@ fn legacy_meta_without_kind_reads_as_manual() {
     assert_eq!(read_backup_kind(&path).unwrap(), BackupKind::Manual);
 }
 
-/// 元数据里出现未知/非法的 kind 值：宽容回落 manual 而非解析失败（兼容优先）。
 #[test]
 fn meta_with_unknown_kind_reads_as_manual() {
     let path = temp_file("unknown-kind");
@@ -324,13 +286,11 @@ fn meta_with_unknown_kind_reads_as_manual() {
     assert_eq!(read_backup_kind(&path).unwrap(), BackupKind::Manual);
 }
 
-/// 旧版本备份（元数据无 kind 字段）：恢复不报错、列表正常出现，视为 manual。
 #[test]
 fn legacy_backup_restores_and_lists_without_error() {
     let conn = tauri_app_lib::test_support::open();
     seed(&conn);
 
-    // 用 VACUUM INTO 造一份裸库，再打包成元数据缺 kind 的旧格式 zip。
     let raw = temp_file("legacy-raw");
     conn.execute("VACUUM INTO ?1", params![raw.to_string_lossy()])
         .unwrap();
@@ -350,17 +310,14 @@ fn legacy_backup_restores_and_lists_without_error() {
         .unwrap();
         zip.finish().unwrap();
     }
-    // 列表：旧格式文件按命名规则正常被识别，来源按 manual 处理。
     let list = list_managed_backups(&dir, None).unwrap();
     assert_eq!(list.len(), 1);
     assert_eq!(
         read_backup_kind(Path::new(&list[0].path)).unwrap(),
         BackupKind::Manual
     );
-    // 列表项自带来源字段（issue #129）：旧格式缺 kind 按手动展示。
     assert_eq!(list[0].kind, BackupKind::Manual);
 
-    // 恢复：旧格式包完整还原数据。
     let db_path = temp_file("legacy-restore-db");
     let safety_dir = temp_safety_dir();
     let result = restore_db_from(
@@ -378,9 +335,6 @@ fn legacy_backup_restores_and_lists_without_error() {
 #[test]
 fn list_and_prune_managed_backups() {
     let dir = ScratchDir::new("backup-test-managed");
-    // 3 个手动命名 + 1 个自动命名的真实成对产物（#1983 夹具，#1984 起清理
-    // 判定要真开包读设备水印，占位文件在此不可用）+ 1 个不匹配命名 + 1 个
-    // 名字匹配但为目录。
     real_managed_backup(
         &dir,
         "ledger-backup-20260101-010101.db.zip",
@@ -411,7 +365,6 @@ fn list_and_prune_managed_backups() {
     assert_eq!(list[3].file_name, "ledger-backup-20260101-010101.db.zip");
     assert_eq!(list[3].kind, BackupKind::Manual);
 
-    // 修剪到 2：删除最旧的手动 2 个；不匹配文件与目录不受影响。
     let r = prune_managed_backups(&dir, 2, None).unwrap();
     assert_eq!(
         r.deleted,
@@ -426,16 +379,12 @@ fn list_and_prune_managed_backups() {
     assert!(dir.join("ledger-backup-20260104-010101.db.zip").is_dir());
     assert!(dir.join("ledger-auto-20260201-010101.db.zip").exists());
 
-    // 继续修剪到 1。
     let r2 = prune_managed_backups(&dir, 1, None).unwrap();
     assert_eq!(r2.deleted, vec!["ledger-backup-20260103-010101.db.zip"]);
     assert_eq!(r2.kept, 1);
     assert!(dir.join("ledger-auto-20260201-010101.db.zip").exists());
 }
 
-/// 残缺包（读不出元数据）在列表按文件名前缀回落展示（issue #129 既有行为）；
-/// 清理按「来源未知」保守不删（ADR-0144 决策 3，#1984）：判定不了归属的产物
-/// 永不参与自动清理，也不占保留配额。
 #[test]
 fn unreadable_products_list_with_fallback_and_never_pruned() {
     let dir = ScratchDir::new("backup-test-unreadable");
@@ -449,13 +398,10 @@ fn unreadable_products_list_with_fallback_and_never_pruned() {
     let list = list_managed_backups(&dir, None).unwrap();
     assert_eq!(list.len(), 2);
     assert_eq!(list[0].file_name, "ledger-auto-20260201-010101.db.zip");
-    // stub 读不出元数据：按文件名前缀回落（issue #129 展示用，行为不变）。
     assert_eq!(list[0].kind, BackupKind::Auto);
     assert_eq!(list[1].file_name, "ledger-backup-20260101-010101.db.zip");
     assert_eq!(list[1].kind, BackupKind::Manual);
 
-    // 修剪到 1：两份都判不出来源 → 全不进桶、一个不删、配额不被挤占
-    //（kept = 本桶保留数 = 0：本桶为空，目录内文件原样留存）。
     let r = prune_managed_backups(&dir, 1, None).unwrap();
     assert!(r.deleted.is_empty(), "来源未知的残缺包保守不删");
     assert_eq!(r.kept, 0, "本桶为空：kept 报告本桶保留数而非目录总数");
@@ -472,7 +418,6 @@ fn prune_keeps_all_when_within_limit_and_missing_dir() {
     assert!(r.deleted.is_empty());
     assert_eq!(r.kept, 0, "残缺包不进桶：kept 报告本桶保留数");
 
-    // 目录不存在：空结果而非报错。
     let missing = dir.join("gone");
     assert!(list_managed_backups(&missing, None).unwrap().is_empty());
     let r2 = prune_managed_backups(&missing, 5, None).unwrap();
@@ -483,7 +428,6 @@ fn prune_keeps_all_when_within_limit_and_missing_dir() {
 #[test]
 fn backup_fails_when_target_dir_missing() {
     let conn = tauri_app_lib::test_support::open();
-    // 目标父级不存在（暂存目录在场、其下 gone 子目录不建）→ 备份必失败。
     let missing_root = ScratchDir::new("backup-test-missing-target");
     let target = missing_root.join("gone").join("x.zip");
     let err = backup_db_to(&conn, &target, "0.2.0", BackupKind::Manual)
@@ -492,8 +436,6 @@ fn backup_fails_when_target_dir_missing() {
     assert!(err.contains("备份目标目录不存在"));
 }
 
-/// 断言目录内没有 `.` 前缀的临时残留（`temp_sibling` 产名恒以 `.` 开头，
-/// 备份失败的任一退出路径漏清理都会在此显形）。
 fn assert_no_temp_residue(dir: &Path) {
     let leftovers: Vec<String> = std::fs::read_dir(dir)
         .unwrap()
@@ -507,16 +449,10 @@ fn assert_no_temp_residue(dir: &Path) {
     );
 }
 
-/// 失败路径临时文件卫生（#1454 验收判据负向①，既有缺陷的范围外修复）：
-/// 备份在 `VACUUM INTO`、替换启用任一步失败，目标目录都不得留下临时残留——
-/// 失败早退绕过 cleanup 曾每次在备份目录留下 0 字节文件（现场累积 162 个）。
-/// 恢复「失败早退不清理」本用例即变红。
 #[test]
 fn backup_failure_leaves_no_temp_residue() {
     let dir = ScratchDir::new("backup-test-residue");
 
-    // 注入点一：源连接处于事务内，`VACUUM INTO` 报错（现场失败形态：
-    // 0 字节临时库文件残留）。
     let conn = tauri_app_lib::test_support::open();
     conn.execute_batch("BEGIN").unwrap();
     let target = dir.join("ledger-backup-20260918-120000.db.zip");
@@ -524,32 +460,17 @@ fn backup_failure_leaves_no_temp_residue() {
     assert_no_temp_residue(&dir);
     conn.execute_batch("ROLLBACK").unwrap();
 
-    // 注入点二：目标路径被目录占用，替换启用失败（tmp_db 与 tmp_zip
-    // 两个临时文件都已生成，双双必须收走）。
     let occupied = dir.join("occupied.zip");
     std::fs::create_dir(&occupied).unwrap();
     backup_db_to(&conn, &occupied, "0.6.0", BackupKind::Manual).unwrap_err();
     assert_no_temp_residue(&dir);
 }
 
-// -------------------------------------------------------------------------
-// 源库形态门禁（issue #1454）：外来形态明文库（每页保留字节 ≠ 0，外部工具
-// 写入，见 #1453）的 `VACUUM INTO` 必然失败（SQLCipher 无 KEY ATTACH 推断
-// 路径），备份前先拦下并给可读的码化错误，不再发起注定失败的语句。
-// -------------------------------------------------------------------------
-
-/// 外来形态明文库的备份被码化错误拦下（issue #1454 正向 + 负向②）：稳定
-/// 错误码 `backup.foreign-form`（用户读不到 SQLite 原文），目标目录无产物、
-/// 无临时残留。去掉前置形态检查本用例即变红：错误退回 SQLite 原文
-/// `unable to open database`，且留下 0 字节临时库残留。
 #[test]
 fn backup_rejects_foreign_form_db_with_coded_error() {
     let dir = ScratchDir::new("backup-test-foreign");
     let src = dir.join("ledger.db");
     ledger_infra::test_utils::write_foreign_form_plaintext_db(&src, 3);
-    // 裸连接：外来形态在产品可开启集之外（启动在建连前归一化，issue #1453；
-    // 建连收尾的同步元数据库挂载会在其上先一步复现同一条无 KEY ATTACH
-    // 推断失败）——本用例的主语是 backup_db_to 的形态门禁，不是建连。
     let conn = Connection::open(&src).unwrap();
 
     let target = dir.join("ledger-auto-20260918-120000-book-a.db.zip");
@@ -566,8 +487,6 @@ fn backup_rejects_foreign_form_db_with_coded_error() {
     assert_no_temp_residue(&dir);
 }
 
-/// 正常库备份行为与产物形态不变（issue #1454 回归判据）：应用自有形态的
-/// 明文库照常备份，产物内数据库偏移 20 = 0（自有形态，不因门禁引入变化）。
 #[test]
 fn backup_of_app_owned_db_succeeds_with_clean_form() {
     let conn = tauri_app_lib::test_support::open();
@@ -584,16 +503,10 @@ fn backup_of_app_owned_db_succeeds_with_clean_form() {
     assert_eq!(header[20], 0, "产物库偏移 20 应为 0（应用自有形态）");
 }
 
-/// 加密库快照不受形态门禁影响（issue #1454 回归判据）：密文库的保留字节
-/// 无意义（`VACUUM INTO` 继承真实密钥，ADR-0075 决策 7），照常备份，产物
-/// 仍为密文。
 #[test]
 fn backup_of_encrypted_db_bypasses_form_guard_and_stays_encrypted() {
     let dir = ScratchDir::new("backup-test-enc");
     let src = dir.join("ledger.db");
-    // 文件库不入测试工厂（ADR-0084 决策 3，同本文件上方先例）：迁移后的世界
-    // 双侧各自 VACUUM INTO 落盘（拆库后 sync 件随行，缺失即开挂载裁决），再
-    // 整库转密文。
     {
         let conn = tauri_app_lib::test_support::open();
         conn.execute("VACUUM INTO ?1", params![src.to_string_lossy()])
@@ -610,7 +523,6 @@ fn backup_of_encrypted_db_bypasses_form_guard_and_stays_encrypted() {
     let target = dir.join("ledger-backup-20260918-120000.db.zip");
     backup_db_to(&conn, &target, "0.6.0", BackupKind::Manual).unwrap();
 
-    // 产物内数据库仍是密文（继承源库加密与密钥，既有设计依赖）。
     let extracted = dir.join("extracted.db");
     let file = File::open(&target).unwrap();
     let mut archive = zip::ZipArchive::new(file).unwrap();
@@ -625,15 +537,6 @@ fn backup_of_encrypted_db_bypasses_form_guard_and_stays_encrypted() {
     );
 }
 
-// -------------------------------------------------------------------------
-// 备份按指纹分域（issue #1985 / ADR-0144 决策 3）：受管备份的账本维度只认
-// 账本指纹（跨端稳定身份），本地句柄不再参与归属；归属判定顺位短路——
-// ①文件名标识段 = 本指纹；②产物内层元数据明文指纹 = 本指纹。两台设备
-// 同一本账的产物合并可见、互不代删；两本账的产物互不可见。
-// -------------------------------------------------------------------------
-
-/// 命名/解析往返：标识内容含 `-`（UUID 与目录派生哈希）从尾部定宽解析不受干扰；
-/// 旧命名缺标识可读；非受管/残缺命名不参与解析。
 #[test]
 fn managed_name_roundtrip_with_book_tag() {
     let cases: Vec<(String, &str, Option<&str>)> = vec![
@@ -660,7 +563,6 @@ fn managed_name_roundtrip_with_book_tag() {
     ];
     for (name, _prefix, book) in cases {
         let path = Path::new(&name);
-        // 解析出的标识与命名一致；时间戳可解析。
         assert_eq!(
             super::engine::split_managed_name(&name).map(|(ts, book)| (
                 ts.format("%Y%m%d-%H%M%S").to_string(),
@@ -672,7 +574,6 @@ fn managed_name_roundtrip_with_book_tag() {
         assert!(super::engine::is_managed_backup_file_name(&name), "{name}");
         let _ = path;
     }
-    // 非受管 / 残缺命名：不解析。
     for name in [
         "other-20260909-123456.db.zip",
         "ledger-backup-not-a-timestamp.db.zip",
@@ -687,8 +588,6 @@ fn managed_name_roundtrip_with_book_tag() {
     }
 }
 
-/// 构造以「固定指纹 txn-1」为当前账本的作用域（经 [`BackupScope::of_conn`]）:
-/// 预置固化指纹 + 真实设备标识，与壳层/调度侧同一构造路径。
 fn scope_of_fixed_fingerprint(conn: &Connection) -> BackupScope {
     ledger_infra::settings::set(
         conn,
@@ -701,41 +600,30 @@ fn scope_of_fixed_fingerprint(conn: &Connection) -> BackupScope {
         .expect("固化指纹在场应可构造作用域")
 }
 
-/// 归属判定按指纹分域（issue #1985 验收①②）：文件名标识段 = 本指纹（顺位一）
-/// 与内层元数据明文指纹 = 本指纹（顺位二，另一台设备产物）都进列表；别本账
-/// 产物不进列表。元数据无指纹水印的历史产物（升级前形态）走顺位三内容锚
-/// 判定（issue #1986）：内容锚命中即归并进列表（无设备水印 → 来源标注未知）。
 #[test]
 fn listing_attributes_products_by_fingerprint_across_devices() {
     let conn = tauri_app_lib::test_support::open();
     let scope = scope_of_fixed_fingerprint(&conn);
-    // 本机设备标识（夹具库与作用域库同源注入，模拟同一台安装实例）。
     let own_device = scope.device_id.clone().expect("真实设备标识在场");
     let dir = ScratchDir::new("backup-test-fp-list");
-    // 顺位一：文件名标识段 = 本指纹（本机新命名产物，元数据同指纹同设备）。
     real_managed_backup_with_meta(
         &dir,
         "ledger-auto-20260103-000000-txn-1.db.zip",
         BackupKind::Auto,
         &serde_json::json!({ "device_id": own_device }),
     );
-    // 顺位二：另一台设备的产物——文件名仍是外来句柄旧命名，内层元数据
-    // 明文指纹 = 本指纹，设备水印 = dev-other（跨端合并可见的现场形态）。
     real_managed_backup_with_meta(
         &dir,
         "ledger-backup-20260102-000000-ab12cd34ef56ab12.db.zip",
         BackupKind::Manual,
         &serde_json::json!({ "device_id": "dev-other" }),
     );
-    // 别本账产物（文件名与元数据指纹都指向别本）：不可见。
     real_managed_backup_with_meta(
         &dir,
         "ledger-backup-20260104-000000-cd98ef01ab23cd45.db.zip",
         BackupKind::Manual,
         &serde_json::json!({ "fingerprint": "fp-other-book" }),
     );
-    // 无指纹水印的历史产物（升级前形态，指纹与设备水印同步缺位）：顺位三内
-    // 容锚判定（夹具内库内容锚 = txn-1 = 本指纹）→ 归并进列表（issue #1986）。
     real_managed_backup_with_meta(
         &dir,
         "ledger-backup-20260101-000000.db.zip",
@@ -755,10 +643,8 @@ fn listing_attributes_products_by_fingerprint_across_devices() {
         ],
         "两台设备的同账产物与内容锚归并的旧产物合并可见（新→旧），别本不进列表"
     );
-    // 内容锚归并的旧产物无设备水印：来源标注未知（归属与来源是两个维度）。
     assert_eq!(list[2].source_device_id, None);
     assert!(list[2].source_unknown);
-    // 来源设备字段（issue #1985 验收：列表返回形状新增来源设备标识与来源是否未知）。
     assert_eq!(
         list[0].source_device_id.as_deref(),
         Some(own_device.as_str())
@@ -767,12 +653,9 @@ fn listing_attributes_products_by_fingerprint_across_devices() {
     assert_eq!(list[1].source_device_id.as_deref(), Some("dev-other"));
     assert!(!list[1].source_unknown);
 
-    // 无作用域（引擎级兼容口径）仍全量可见。
     assert_eq!(list_managed_backups(&dir, None).unwrap().len(), 4);
 }
 
-/// 产物缺设备水印但元数据指纹可归属（产出轮次设备标识不可得）：照常进列表,
-/// 来源标记为「未知」（来源设备与归属是两个维度）。
 #[test]
 fn attributed_product_without_device_watermark_lists_as_unknown_source() {
     let dir = ScratchDir::new("backup-test-fp-unknown-dev");
@@ -790,18 +673,8 @@ fn attributed_product_without_device_watermark_lists_as_unknown_source() {
     assert!(list[0].source_unknown, "来源标记为未知");
 }
 
-// -------------------------------------------------------------------------
-// 归属第三顺位：内容锚归并与「未知来源」桶（issue #1986 / ADR-0144 决策 3）。
-// 元数据无指纹的存量产物解包读库内内容锚判定归属；密文且无指纹不尝试解包、
-// 直接落「未知来源」桶；判不出的产物照常可见、明确标注、永不参与自动清理。
-// -------------------------------------------------------------------------
-
-/// 归属归属缓存文件的落盘位置（备份目录内的独立本地文件，非受管命名）。
 use super::attribution::CACHE_FILE_NAME;
 
-/// 升级前异端产物（另一台设备的存量备份）：文件名带他端句柄、内层元数据
-/// 无指纹无设备水印（写侧水印抹除，模拟升级前形态）、内层库内容锚可判定
-/// （真夹具：最早一笔 = txn-1）。
 fn legacy_product_with_anchor(dir: &Path, file_name: &str) -> PathBuf {
     real_managed_backup_with_meta(
         dir,
@@ -811,8 +684,6 @@ fn legacy_product_with_anchor(dir: &Path, file_name: &str) -> PathBuf {
     )
 }
 
-/// 密文世界的升级前产物（真密文内库，ADR-0144 决策 3「密文产物读不出内容锚」
-/// 的真形态）：经加密转换 + 备份写出产出，`extra_meta` 供抹除/保留水印字段。
 fn encrypted_legacy_product(
     dir: &Path,
     file_name: &str,
@@ -841,9 +712,6 @@ fn encrypted_legacy_product(
     target
 }
 
-/// 现场同构验收（issue #1986）：29 份异端（文件名带他端句柄、元数据无指纹、
-/// 内容锚可判定）+ 4 份无标识历史命名（同桶按内容锚判定）+ 1 份本机——
-/// 升级后首次全部出现在列表里，归属正确、来源标注正确。
 #[test]
 fn field_isomorphic_products_all_visible_and_attributed() {
     let conn = tauri_app_lib::test_support::open();
@@ -852,7 +720,6 @@ fn field_isomorphic_products_all_visible_and_attributed() {
     let dir = ScratchDir::new("backup-test-field-34");
 
     let mut expected: Vec<String> = Vec::new();
-    // 1 份本机（新命名带本指纹 + 本机设备水印，最新）。
     let own = real_managed_backup_with_meta(
         &dir,
         "ledger-auto-20260301-000000-txn-1.db.zip",
@@ -861,13 +728,11 @@ fn field_isomorphic_products_all_visible_and_attributed() {
     );
     let _ = own;
     expected.push("ledger-auto-20260301-000000-txn-1.db.zip".into());
-    // 4 份无标识历史命名：同桶按内容锚判定（期望序 = 列表新→旧序）。
     for day in (1..=4).rev() {
         let name = format!("ledger-backup-2026020{day}-000000.db.zip");
         legacy_product_with_anchor(&dir, &name);
         expected.push(name);
     }
-    // 29 份异端：文件名带他端句柄、元数据无指纹、内容锚可判定。
     for day in (1..=29).rev() {
         let name = format!("ledger-backup-202601{day:02}-000000-handle-mac-{day:02}.db.zip");
         legacy_product_with_anchor(&dir, &name);
@@ -879,29 +744,23 @@ fn field_isomorphic_products_all_visible_and_attributed() {
     assert_eq!(list.len(), 34, "29 异端 + 4 无标识 + 1 本机全部可见");
     let names: Vec<String> = list.iter().map(|f| f.file_name.clone()).collect();
     assert_eq!(names, expected, "列表新→旧完整且归属本账本作用域");
-    // 本机产物：设备徽标本机、来源非未知。
     assert_eq!(
         list[0].source_device_id.as_deref(),
         Some(own_device.as_str())
     );
     assert!(!list[0].source_unknown);
-    // 33 份升级前产物（异端 + 无标识）：内容锚归并、无设备水印 → 来源标注未知。
     for f in &list[1..] {
         assert_eq!(f.source_device_id, None, "{}", f.file_name);
         assert!(f.source_unknown, "{}", f.file_name);
     }
 }
 
-/// 密文存量产物的归属（issue #1986）：带明文指纹水印的经顺位二归并（加密
-/// 不影响跨端可见性）；密文且无指纹的不尝试解包，直接落「未知来源」桶——
-/// 照常可见并标注，不猜测、不丢弃。
 #[test]
 fn encrypted_products_attribute_by_watermark_or_land_unknown() {
     let conn = tauri_app_lib::test_support::open();
     let scope = scope_of_fixed_fingerprint(&conn);
     let dir = ScratchDir::new("backup-test-enc-unknown");
 
-    // 密文 + 保留指纹水印：顺位二元数据明文指纹命中（内库密文读不出内容锚）。
     let watermarked = encrypted_legacy_product(
         &dir,
         "ledger-backup-20260101-000000-handle-mac.db.zip",
@@ -911,7 +770,6 @@ fn encrypted_products_attribute_by_watermark_or_land_unknown() {
         read_meta_json(&watermarked)["encrypted"].as_bool().unwrap(),
         "前置：产物为密文形态"
     );
-    // 密文 + 抹除指纹水印：升级前密文产物，归属判不出。
     let anonymous = encrypted_legacy_product(
         &dir,
         "ledger-backup-20260102-000000-handle-mac.db.zip",
@@ -936,8 +794,6 @@ fn encrypted_products_attribute_by_watermark_or_land_unknown() {
     }
 }
 
-/// 「未知来源」桶（密文无指纹、残缺包）永不参与自动清理（issue #1986）：
-/// 清理只摘本机设备名下的最旧产物，未知来源产物可见、留存、不占配额。
 #[test]
 fn unknown_source_bucket_visible_but_never_pruned() {
     let conn = tauri_app_lib::test_support::open();
@@ -945,7 +801,6 @@ fn unknown_source_bucket_visible_but_never_pruned() {
     let own_device = scope.device_id.clone().expect("真实设备标识在场");
     let dir = ScratchDir::new("backup-test-unknown-prune");
 
-    // 本机名下 2 份（设备水印 = 本机）。
     for ts in ["20260101", "20260102"] {
         real_managed_backup_with_meta(
             &dir,
@@ -954,7 +809,6 @@ fn unknown_source_bucket_visible_but_never_pruned() {
             &serde_json::json!({ "device_id": own_device }),
         );
     }
-    // 未知来源桶 2 份：密文无指纹 + 残缺包（元数据都读不出）。
     let encrypted_unknown = encrypted_legacy_product(
         &dir,
         "ledger-backup-20251230-000000-handle-mac.db.zip",
@@ -964,7 +818,6 @@ fn unknown_source_bucket_visible_but_never_pruned() {
     let broken = dir.join("ledger-backup-20251231-000000.db.zip");
     std::fs::write(&broken, b"x").unwrap();
 
-    // 先验证可见性：4 份全部在列表（未知来源桶照常出现）。
     let list = list_managed_backups(&dir, Some(&scope)).unwrap();
     assert_eq!(list.len(), 4, "未知来源桶产物照常出现在列表");
     assert!(
@@ -972,7 +825,6 @@ fn unknown_source_bucket_visible_but_never_pruned() {
         "未知来源桶产物标注来源未知"
     );
 
-    // 上限 1：只删本机名下最旧一份；未知来源产物永不清理、不占配额。
     let r = prune_managed_backups(&dir, 1, Some(&scope)).unwrap();
     assert_eq!(
         r.deleted,
@@ -988,8 +840,6 @@ fn unknown_source_bucket_visible_but_never_pruned() {
     assert_eq!(r.kept, 1, "kept 报告本桶保留数；未知来源产物不在桶内");
 }
 
-/// 多账本分域（issue #1986）：同一备份目录内同名时间戳、不同指纹的异端产物
-/// 各归各账本，不得归错——内容锚是唯一判据，时间戳与句柄不参与归属。
 #[test]
 fn same_timestamp_foreign_products_never_cross_attributed() {
     let conn_a = tauri_app_lib::test_support::open();
@@ -997,11 +847,9 @@ fn same_timestamp_foreign_products_never_cross_attributed() {
     let scope_a = scope_of_fixed_fingerprint(&conn_a);
     let dir = ScratchDir::new("backup-test-multi-book");
 
-    // 账本 A 的异端产物：他端句柄命名、无指纹元数据、内容锚 txn-1。
     let product_a =
         legacy_product_with_anchor(&dir, "ledger-backup-20260101-000000-handle-a.db.zip");
     let _ = product_a;
-    // 账本 B 的产物：同名时间戳、不同内容锚（txn-b）、无指纹元数据。
     {
         let conn_b = tauri_app_lib::test_support::open();
         tauri_app_lib::test_support::seed_account(&conn_b, "acc-1", "现金", "cash", "CNY", 0);
@@ -1017,7 +865,6 @@ fn same_timestamp_foreign_products_never_cross_attributed() {
             &path_b,
             &serde_json::json!({ "fingerprint": null, "device_id": null }),
         );
-        // 写出时首用固化：账本 B 的指纹 = 内容锚 txn-b。
         assert_eq!(book_fingerprint(&conn_b).unwrap(), "txn-b");
     }
 
@@ -1029,7 +876,6 @@ fn same_timestamp_foreign_products_never_cross_attributed() {
         "账本 A 只见内容锚命中的产物"
     );
 
-    // 账本 B 的作用域（固化指纹 txn-b）。
     let conn_b = tauri_app_lib::test_support::open();
     ledger_infra::settings::set(
         &conn_b,
@@ -1049,10 +895,6 @@ fn same_timestamp_foreign_products_never_cross_attributed() {
     );
 }
 
-/// 归属缓存（issue #1986）：判定结果按「文件名 + 大小 + 修改时间」缓存到备份
-/// 目录内的独立本地文件——命中缓存不再解包（篡改缓存结论即改变列表，产物
-/// 真实内容锚本会命中）；大小或修改时间变化即失效重算；缓存文件损坏不阻断
-/// 列表、可从产物重建、可整份丢弃；缓存自身不进受管列表。
 #[test]
 fn attribution_cache_hits_without_repack_and_rebuilds_on_change() {
     let conn = tauri_app_lib::test_support::open();
@@ -1062,14 +904,11 @@ fn attribution_cache_hits_without_repack_and_rebuilds_on_change() {
     let product = legacy_product_with_anchor(&dir, name);
     let cache_path = dir.join(CACHE_FILE_NAME);
 
-    // 首次列表：解包判定（内容锚命中）→ 归并可见，缓存落盘。
     let list = list_managed_backups(&dir, Some(&scope)).unwrap();
     let names: Vec<String> = list.iter().map(|f| f.file_name.clone()).collect();
     assert_eq!(names, vec![name], "首次判定解包归并");
     assert!(cache_path.exists(), "判定结果缓存到独立本地文件");
 
-    // 篡改缓存结论为「内容锚不匹配」：命中缓存不再解包 → 产物从列表消失
-    // （若实现无视缓存直接解包，真实内容锚命中会让它重新出现，本断言即红）。
     let rewrite_cache = |content_anchor: &str| {
         let mut cache: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&cache_path).unwrap()).unwrap();
@@ -1080,8 +919,6 @@ fn attribution_cache_hits_without_repack_and_rebuilds_on_change() {
     let list = list_managed_backups(&dir, Some(&scope)).unwrap();
     assert!(list.is_empty(), "命中缓存的判定结论被复用（不再解包）");
 
-    // 修改时间变化 → 缓存失效重算：恢复缓存原值并把产物 mtime 改变，重新
-    // 解包判定后归并恢复。
     rewrite_cache("txn-1");
     let shifted = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_760_000_000);
     std::fs::File::options()
@@ -1094,26 +931,21 @@ fn attribution_cache_hits_without_repack_and_rebuilds_on_change() {
     let names: Vec<String> = list.iter().map(|f| f.file_name.clone()).collect();
     assert_eq!(names, vec![name], "缓存因修改时间变化失效，重算恢复归并");
 
-    // 缓存文件损坏：不阻断列表（判定按产物重建），缓存可重建。
     std::fs::write(&cache_path, b"not-json{").unwrap();
     let list = list_managed_backups(&dir, Some(&scope)).unwrap();
     let names: Vec<String> = list.iter().map(|f| f.file_name.clone()).collect();
     assert_eq!(names, vec![name], "缓存文件损坏不阻断列表");
 
-    // 整份丢弃：删除缓存文件，列表照常（判定可从产物重建，缓存重新落盘）。
     std::fs::remove_file(&cache_path).unwrap();
     let list = list_managed_backups(&dir, Some(&scope)).unwrap();
     let names: Vec<String> = list.iter().map(|f| f.file_name.clone()).collect();
     assert_eq!(names, vec![name], "缓存可整份丢弃，判定可从产物重建");
     assert!(cache_path.exists(), "列表完成后缓存重新落盘");
 
-    // 缓存文件自身不进受管列表（非受管命名，不参与清理与备份面）。
     let all = list_managed_backups(&dir, None).unwrap();
     assert_eq!(all.len(), 1, "缓存文件不进受管列表");
 }
 
-/// 双路径布局下的内容锚归并（issue #1986 × #1988）：设备子目录内的异端产物
-/// 同样经第三顺位归并进列表；扁平与设备子目录的同名产物在缓存中互不串扰。
 #[test]
 fn content_anchor_merge_scans_device_subdirs() {
     let conn = tauri_app_lib::test_support::open();
@@ -1122,7 +954,6 @@ fn content_anchor_merge_scans_device_subdirs() {
     let device_dir = dir.join("01971234-4567-789a-bcde-f123456789ab");
     std::fs::create_dir_all(&device_dir).unwrap();
 
-    // 扁平存量一份 + 设备子目录一份：同名产物（同名是缓存键串扰的探针）。
     let name = "ledger-backup-20260101-000000-handle-mac.db.zip";
     legacy_product_with_anchor(&dir, name);
     legacy_product_with_anchor(&device_dir, name);
@@ -1137,12 +968,6 @@ fn content_anchor_merge_scans_device_subdirs() {
     assert!(list.iter().all(|f| f.source_unknown), "均为升级前形态");
 }
 
-/// 内容锚行序口径锁定（spec #1982 review）：`content_anchor` 的内联 SQL
-/// 依赖交易域行序（`date ASC, created_at ASC, id ASC`，id 最终 tiebreaker，
-/// 排除软删；口径出处：交易域读路径 order 模块，与列表同键反向）。构造
-/// 乱序 created_at（与 date 反向）、同日同 created_at 双行（id 决胜）、
-/// 更早日期的软删行，断言「最早」取值与交易域行序一致：任一排序键缺失、
-/// 键序反向或软删过滤缺失，取值都会变成本用例中的另一行（删除即红）。
 #[test]
 fn content_anchor_earliest_follows_transaction_row_order() {
     let conn = tauri_app_lib::test_support::open();
@@ -1155,19 +980,14 @@ fn content_anchor_earliest_follows_transaction_row_order() {
         )
         .unwrap();
     };
-    // date 最小的一组：created_at 反而最大（乱序），同组两行同 created_at、
-    // id 决胜——正确答案 = txn-w（date 最小 → created_at 平 → id 最小）。
     insert("txn-w", "2026-01-01", "2026-06-01T00:00:00Z", 0);
     insert("txn-w2", "2026-01-01", "2026-06-01T00:00:00Z", 0);
-    // created_at 最小的未删行（date 大）：若错误按 created_at 排序会选中它。
-    // 时刻基准用工厂固定时刻（ADR-0084 决策 5），正确答案行用更晚时刻构造乱序。
     insert(
         "txn-x",
         "2026-05-01",
         tauri_app_lib::test_support::FIXED_NOW,
         0,
     );
-    // date 最小的软删行：若漏软删过滤会选中它。
     insert(
         "txn-y",
         "2025-01-01",
@@ -1182,38 +1002,28 @@ fn content_anchor_earliest_follows_transaction_row_order() {
     );
 }
 
-/// 作用域构造（读侧唯一构造点）：已固化恒读固化值；未固化回内容锚（与首用
-/// 固化算法同源）；空库且未固化 = None。
 #[test]
 fn scope_of_conn_reads_fixed_fingerprint_or_anchor() {
-    // 已固化：恒读固化值（内容锚漂移不影响）。
     let conn = tauri_app_lib::test_support::open();
     let scope = scope_of_fixed_fingerprint(&conn);
     assert_eq!(scope.fingerprint, "txn-1");
     assert!(scope.device_id.is_some(), "设备标识随作用域一并给出");
 
-    // 未固化：回内容锚（seed 库最早一笔 = txn-1，与首用固化同源）。
     let conn = tauri_app_lib::test_support::open();
     seed(&conn);
     let scope = BackupScope::of_conn(&conn).unwrap().expect("锚在场");
     assert_eq!(scope.fingerprint, "txn-1");
 
-    // 空库且未固化：None（本账尚无任何可归属产物）。
     let empty = tauri_app_lib::test_support::open();
     assert!(BackupScope::of_conn(&empty).unwrap().is_none());
 }
 
-/// 跨设备互不代删（issue #1987 验收：清理按（指纹 × 设备）分桶，桶外不动）：
-/// 同一本账两台设备各自产生产物，本机清理只修剪「本指纹 × 本设备」桶内
-/// 超额的最旧产物；另一台设备的产物**即使自身超额**也数量不变（互不挤占
-/// 配额），别本产物与未知来源桶同样不受影响。
 #[test]
 fn scoped_prune_never_touches_other_device_products() {
     let conn = tauri_app_lib::test_support::open();
     let scope = scope_of_fixed_fingerprint(&conn);
     let own_device = scope.device_id.clone().expect("真实设备标识在场");
     let dir = ScratchDir::new("backup-test-fp-prune");
-    // 本机设备名下 3 份（文件名新命名带本指纹，设备水印同本机）。
     for ts in ["20260101", "20260102", "20260103"] {
         real_managed_backup_with_meta(
             &dir,
@@ -1222,8 +1032,6 @@ fn scoped_prune_never_touches_other_device_products() {
             &serde_json::json!({ "device_id": &own_device }),
         );
     }
-    // 另一台设备的同账产物 3 份（同样超出上限）：归属本账但设备水印是
-    // dev-other——数量不变（互不代删，ADR-0144 决策 4）。
     for ts in ["20260101", "20260102", "20260103"] {
         real_managed_backup_with_meta(
             &dir,
@@ -1232,7 +1040,6 @@ fn scoped_prune_never_touches_other_device_products() {
             &serde_json::json!({ "device_id": "dev-other" }),
         );
     }
-    // 别本账产物：不在本作用域。
     real_managed_backup_with_meta(
         &dir,
         "ledger-auto-20260102-020000-fp-b.db.zip",
@@ -1242,7 +1049,6 @@ fn scoped_prune_never_touches_other_device_products() {
 
     let r = prune_managed_backups(&dir, 1, Some(&scope)).unwrap();
 
-    // 本桶（本指纹 × 本设备）3 份，上限 1：桶内旧→新淘汰超额两份。
     assert_eq!(
         r.deleted,
         vec![
@@ -1256,7 +1062,6 @@ fn scoped_prune_never_touches_other_device_products() {
         r.failed.is_empty(),
         "清理结果仍上报 kept/deleted/failed 三元（failed 空场）"
     );
-    // 其他设备名下产物数量不变：3 份 dev-other 全部留存（即使自身超额）。
     for ts in ["20260101", "20260102", "20260103"] {
         assert!(
             dir.join(format!("ledger-auto-{ts}-010000-txn-1.db.zip"))
@@ -1275,10 +1080,6 @@ fn scoped_prune_never_touches_other_device_products() {
     );
 }
 
-/// 拆库前世界（V035 形态：四表在 main、attached 侧缺席）落盘——旧形态单文件
-/// 备份的真实源世界（拆库前应用的 main 必带四表）。构造与 infra
-/// `sync_split::pre_split_world` 同形：迁移链 `to_version` 停在拆库边界之前，
-/// 表形状权威在迁移链本体、测试不复制；另种同步身份与日志各一行供收敛断言。
 fn pre_split_world_file(path: &Path) {
     let mut conn = db::open_connection_unmounted(path).expect("别名裸连接");
     db::migrations()
@@ -1298,21 +1099,15 @@ fn pre_split_world_file(path: &Path) {
     .unwrap();
 }
 
-/// 恢复——同步元数据库一并移位（ADR-0139 决策 3 配对纪律，issue #1869）：
-/// 原位遗留的 sync.db 移入恢复安全备份目录保留；恢复后的世界重开时挂载按
-/// 恢复后主库形态补建 sync.db，不留形态错配堵塞（如密文世界恢复明文备份）。
 #[test]
 fn restore_moves_stale_sync_db_aside() {
     let dir = ScratchDir::new("backup-test-restore-sync");
     let db_path = dir.join("ledger.db");
-    // 旧形态单文件备份的真实源世界：拆库前形态（四表在 main，attached 侧缺席）。
     pre_split_world_file(&db_path);
     {
         let conn = db::open_connection_unmounted(&db_path).unwrap();
         seed(&conn);
     }
-    // 原位世界带一个 sync.db（挂载接线建连即补建的形态），写入探针表供副本
-    // 可读性断言。
     let sync_path = dir.join(db::SYNC_DB_FILE_NAME);
     {
         let sync = open_connection(&sync_path).unwrap();
@@ -1328,9 +1123,6 @@ fn restore_moves_stale_sync_db_aside() {
     let expected = expected_schema_version().unwrap();
     restore_db_from(&backup, &db_path, &safety_dir, expected, None).unwrap();
 
-    // 安全目录保留主库与 sync.db 两份副本；移走的 sync.db 副本可凭明文读回
-    // 探针表（证明移位的是原位世界的那一份）。恢复路径末端 open_reset 重开
-    // 时挂载接线会按恢复后主库形态补建新 sync.db，原位存在性不作断言。
     let entries: Vec<String> = std::fs::read_dir(&safety_dir)
         .unwrap()
         .flatten()
@@ -1345,32 +1137,18 @@ fn restore_moves_stale_sync_db_aside() {
     moved
         .query_row::<i64, _, _>("SELECT count(*) FROM restore_probe", [], |r| r.get(0))
         .expect("移位副本应为原位世界的 sync.db（含探针表）");
-    // 恢复后的世界重开：普通挂载成功（新 sync.db 按恢复后主库形态补建），
-    // 数据与备份一致。
     let conn = open_connection(&db_path).unwrap();
     assert_eq!(count_transactions(&conn), 1);
     conn.query_row::<i64, _, _>("SELECT count(*) FROM sync.sqlite_master", [], |r| r.get(0))
         .expect("恢复后世界应可正常挂载 sync.db");
 }
 
-// ---------------------------------------------------------------------------
-// 双库成对备份与按形态恢复（票 04 / ADR-0139 决策 6）：备份产物 zip 成对
-// （ledger.db + sync.db + 元数据），恢复按 `paired` 标记分支——成对产物把
-// 设备身份、位点、日志随库一致回滚，旧形态单文件行为不变。
-// ---------------------------------------------------------------------------
-
-/// 构造拆库后的双库世界文件对：业务库（main 侧，无同步表）与同步元数据库
-///（仅四表闭集；`sync_rows` 为真时注入身份行——设备 `dev-src`、对 A 流位点 3）。
-/// V036 后工厂世界的同步表住 attached 侧：身份行注在 attached，两侧各自
-/// `VACUUM [sync] INTO` 落盘。文件库不入测试工厂（ADR-0084 决策 3）：
-/// 落盘经工厂内存世界的 VACUUM INTO（产品建缝会对别名文件旁挂第三份库）。
 fn make_dual_db_world(dir: &Path, sync_rows: bool) -> (std::path::PathBuf, std::path::PathBuf) {
     let main_path = dir.join("ledger.db");
     let sync_path = dir.join("sync.db");
     let factory = tauri_app_lib::test_support::open();
     seed(&factory);
     if sync_rows {
-        // 簿记戳由工厂固定时刻发放（ADR-0084：时刻值收敛 test_support）。
         factory
             .execute(
                 "INSERT INTO sync_device (id, logical_clock, created_at, updated_at) \
@@ -1395,7 +1173,6 @@ fn make_dual_db_world(dir: &Path, sync_rows: bool) -> (std::path::PathBuf, std::
     (main_path, sync_path)
 }
 
-/// 读取 zip 包内 backup.json 的原始 JSON（形态标记断言用）。
 fn read_meta_json(path: &Path) -> serde_json::Value {
     let file = File::open(path).unwrap();
     let mut archive = zip::ZipArchive::new(file).unwrap();
@@ -1404,7 +1181,6 @@ fn read_meta_json(path: &Path) -> serde_json::Value {
     entry.read_to_string(&mut buf).unwrap();
     serde_json::from_str(&buf).unwrap()
 }
-/// 前置探针：连接的 attached `sync` 别名在位（挂载接线就绪）。
 fn assert_sync_alias_attached(conn: &Connection, why: &str) {
     let mounted: i64 = conn
         .query_row(
@@ -1416,7 +1192,6 @@ fn assert_sync_alias_attached(conn: &Connection, why: &str) {
     assert_eq!(mounted, 1, "{why}");
 }
 
-/// 在目标世界预置一个遗留 sync.db 干扰物（含探针表），返回其路径。
 fn plant_stale_sync_db(dst_dir: &Path) -> std::path::PathBuf {
     let dst_sync = dst_dir.join("sync.db");
     let conn = open_connection(&dst_sync).unwrap();
@@ -1424,23 +1199,18 @@ fn plant_stale_sync_db(dst_dir: &Path) -> std::path::PathBuf {
     dst_sync
 }
 
-/// 成对备份产物把同步身份一并搬上通道：paired=true、sync 件携带身份行；
-/// 恢复到新世界后设备身份与位点随库一致回滚，遗留 sync.db 移入安全目录保留，
-/// 重开挂载可用（恢复即回到完整世界）。
 #[test]
 fn paired_backup_restores_sync_db_when_paired() {
     let src_dir = ScratchDir::new("backup-test-paired-src");
     let (main_path, _sync_path) = make_dual_db_world(&src_dir, true);
-    let conn = open_connection(&main_path).unwrap(); // 挂载接线挂上四表 sync.db
+    let conn = open_connection(&main_path).unwrap();
     assert_sync_alias_attached(&conn, "前置：挂载接线在位（attached 侧就绪）");
 
     let backup = temp_file("paired-backup");
     backup_db_to(&conn, &backup, "0.2.0", BackupKind::Manual).unwrap();
 
-    // 产物形态：paired=true，sync 件内含身份行。
     let meta = read_meta_json(&backup);
     assert_eq!(meta["paired"], true, "双库世界的产物标记为成对");
-    // guard 绑定到用例作用域（块内临时值块结束即 drop，整棵暂存目录被清走）。
     let sync_entry_guard = temp_file("paired-sync-entry");
     let sync_entry = sync_entry_guard.path().to_path_buf();
     {
@@ -1458,7 +1228,6 @@ fn paired_backup_restores_sync_db_when_paired() {
         assert_eq!(dev, "dev-src", "sync 件携带设备身份");
     }
 
-    // 恢复到新世界（预置遗留 sync.db 干扰物）。
     let dst_dir = ScratchDir::new("backup-test-paired-dst");
     let dst_main = dst_dir.join("ledger.db");
     {
@@ -1472,7 +1241,6 @@ fn paired_backup_restores_sync_db_when_paired() {
     let expected = expected_schema_version().unwrap();
     restore_db_from(&backup, &dst_main, &safety_dir, expected, None).unwrap();
 
-    // 主库 = 备份的业务行；sync.db = 备份的同步身份（设备、位点随库回滚）。
     let sync = db::open_connection_unmounted(dst_dir.join("sync.db")).unwrap();
     let dev: String = sync
         .query_row("SELECT id FROM sync_device", [], |r| r.get(0))
@@ -1488,7 +1256,6 @@ fn paired_backup_restores_sync_db_when_paired() {
     assert_eq!(applied, 3, "位点随库一致回滚");
     let restored = open_connection(&dst_main).unwrap();
     assert_eq!(count_transactions(&restored), 1, "业务行照常恢复");
-    // 遗留 sync.db 移入安全目录保留（永不删除）；重开挂载可用。
     let moved_aside = std::fs::read_dir(&safety_dir)
         .unwrap()
         .filter_map(Result::ok)
@@ -1503,14 +1270,8 @@ fn paired_backup_restores_sync_db_when_paired() {
         .expect("恢复后世界应可正常挂载 sync.db（成对产物就位）");
 }
 
-/// 恢复按形态分支（旧形态行为不变）：拆库前应用的产物 paired=false（四表在
-/// main 内、attached 侧缺席），恢复只落主库——sync.db 照旧移入安全目录、
-/// 原位不重建（拆库前主库由恢复后的建连补建 attached 侧并经迁移链收敛）。
 #[test]
 fn legacy_form_backup_ignores_sync_entry_on_restore() {
-    // 旧形态产物只能手工拼包构造：contract 后产出方恒产真成对产物（#1872），
-    // 经 backup_db_to 产不出 paired=false 的包。expand 期回退形态的 sync 条目
-    // 就是「main 的整库拷贝」，恢复必须忽略它。
     let src = temp_file("legacy-form-src");
     pre_split_world_file(&src);
     {
@@ -1548,9 +1309,6 @@ fn legacy_form_backup_ignores_sync_entry_on_restore() {
     let expected = expected_schema_version().unwrap();
     restore_db_from(&backup, &dst_main, &safety_dir, expected, None).unwrap();
 
-    // 旧形态行为不变：主库照常恢复；sync 条目不落盘——遗留 sync.db 已移入安全
-    // 目录，原位的 sync.db 由重开经挂载接线按空库补建（既有 #1869 行为），不是
-    // 备份 sync 条目的内容（那会是回退源 main 的整库拷贝）。
     let restored = open_connection(&dst_main).unwrap();
     assert_eq!(count_transactions(&restored), 1);
     let synced_tables: i64 = restored
@@ -1574,10 +1332,6 @@ fn legacy_form_backup_ignores_sync_entry_on_restore() {
         });
     assert!(moved_aside, "遗留 sync.db 应移入恢复安全备份目录");
 
-    // 收敛链（validate_backup 注释的契约）：恢复产物重开经产品建缝
-    // （open_connection_in = 挂载 + init_db 迁移 + 守卫）后，V036 把 main 侧
-    // 四表连数据搬入 sync.db——业务行原样、同步身份与日志行入 attached 侧、
-    // main 无残留。中断（恢复与重开之间）由下次启动同链收敛。
     drop(restored);
     let converged = db::open_connection_in(&dst_dir).unwrap();
     assert_eq!(count_transactions(&converged), 1, "业务行应原样保留在主库");
@@ -1599,7 +1353,6 @@ fn legacy_form_backup_ignores_sync_entry_on_restore() {
     assert_eq!(in_main, 0, "main 不应残留同步表");
 }
 
-/// 成对产物缺 sync 条目（手工拼包才可能命中）：显式报错，不静默丢同步身份。
 #[test]
 fn paired_backup_missing_sync_entry_fails_loud() {
     let src_dir = ScratchDir::new("backup-test-paired-missing");
@@ -1608,7 +1361,6 @@ fn paired_backup_missing_sync_entry_fails_loud() {
     let backup = temp_file("paired-missing-entry");
     backup_db_to(&conn, &backup, "0.2.0", BackupKind::Manual).unwrap();
 
-    // 拆包重拼：保留 ledger.db 与 backup.json，丢掉 sync.db 条目。
     let rewritten = temp_file("paired-missing-entry-rewritten");
     {
         let file = File::open(&backup).unwrap();
@@ -1627,7 +1379,6 @@ fn paired_backup_missing_sync_entry_fails_loud() {
     let dst_dir = ScratchDir::new("backup-test-paired-missing-dst");
     let dst_main = dst_dir.join("ledger.db");
     {
-        // 目标为完整双库世界（拒绝后原样保留的「原样」以可开启世界为准）。
         let factory = tauri_app_lib::test_support::open();
         factory
             .execute("VACUUM INTO ?1", params![dst_main.to_string_lossy()])
@@ -1643,22 +1394,16 @@ fn paired_backup_missing_sync_entry_fails_loud() {
     let expected = expected_schema_version().unwrap();
     let err = restore_db_from(&rewritten, &dst_main, &safety_dir, expected, None).unwrap_err();
     assert_eq!(err.code(), Some("backup.sync-entry-missing"));
-    // 拒绝发生在任何替换之前：目标世界原样保留。
     let intact = open_connection(&dst_main).unwrap();
     assert_eq!(count_transactions(&intact), 0, "目标世界未被恢复改动");
 }
 
-/// 成对备份的密文形态继承（ADR-0139 决策 3/6）：密文双库世界的产物双件皆密文
-/// （`VACUUM INTO` 继承源库加密与密钥），恢复凭主口令把同步身份一并归位——
-/// 恢复出的世界为密文库，凭同一主口令可开、可挂载。
 #[test]
 fn paired_backup_encrypted_roundtrip_restores_sync_identity() {
     use ledger_infra::db::encryption::{DbFileKind, enable_encryption_for_file, probe_file_kind};
 
     let src_dir = ScratchDir::new("backup-test-paired-enc-src");
     let (main_path, _sync_path) = make_dual_db_world(&src_dir, true);
-    // 主库转密文——#1869 的转换接线两库配对：同目录 sync.db 随主库一并转换
-    // （同口令同密钥，ADR-0139 决策 3），无需单独转换。
     enable_encryption_for_file(&main_path, "paired-pass").unwrap();
     let conn = db::open_connection_with_passphrase(&main_path, "paired-pass").unwrap();
     assert_sync_alias_attached(&conn, "前置：密文双库世界挂载就绪");
@@ -1666,7 +1411,6 @@ fn paired_backup_encrypted_roundtrip_restores_sync_identity() {
     let backup = temp_file("paired-enc-backup");
     backup_db_to(&conn, &backup, "0.2.0", BackupKind::Manual).unwrap();
 
-    // 产物形态：paired=true，双件皆密文。
     assert_eq!(read_meta_json(&backup)["paired"], true);
     for entry in ["ledger.db", "sync.db"] {
         let extracted = temp_file("paired-enc-entry");
@@ -1684,7 +1428,6 @@ fn paired_backup_encrypted_roundtrip_restores_sync_identity() {
         );
     }
 
-    // 恢复到明文新世界（跨形态恢复：恢复出的世界为密文库，issue #572 语义）。
     let dst_dir = ScratchDir::new("backup-test-paired-enc-dst");
     let dst_main = dst_dir.join("ledger.db");
     {
@@ -1704,7 +1447,6 @@ fn paired_backup_encrypted_roundtrip_restores_sync_identity() {
     )
     .unwrap();
 
-    // 同步身份随库归位（密文 sync.db 凭同一主口令打开）。
     let dst_sync = dst_dir.join("sync.db");
     assert_eq!(
         probe_file_kind(&dst_sync).unwrap(),
@@ -1720,7 +1462,6 @@ fn paired_backup_encrypted_roundtrip_restores_sync_identity() {
     assert_eq!(count_transactions(&restored), 1, "业务行照常恢复");
 }
 
-/// 更新前备份（issue #1430）：固定名产物 + `pre-update` 来源标记。
 #[test]
 fn pre_update_backup_creates_fixed_name_zip_with_pre_update_kind() {
     let conn = tauri_app_lib::test_support::open();
@@ -1738,8 +1479,6 @@ fn pre_update_backup_creates_fixed_name_zip_with_pre_update_kind() {
     );
 }
 
-/// 覆盖式保留最近一份（issue #1430）：再次更新前备份覆盖上一份，不堆积；
-/// 目录里最终只有最新一份，内容是第二次的世界。
 #[test]
 fn pre_update_backup_overwrites_previous_one() {
     let conn = tauri_app_lib::test_support::open();
@@ -1747,7 +1486,6 @@ fn pre_update_backup_overwrites_previous_one() {
 
     let dir = temp_safety_dir();
     create_pre_update_backup(&conn, &dir, "0.2.0").unwrap();
-    // 第一次备份之后世界再前进：多写一条交易。
     conn.execute(
         "INSERT INTO transactions (id,kind,amount_cents,currency_code,amount_native_cents,account_id,date,created_at,updated_at,version,device_id,is_deleted) \
          VALUES ('txn-2','expense',2500,'CNY',2500,'acc-1','2026-02-02','2026-02-02T00:00:00Z','2026-02-02T00:00:00Z',1,'test',0)",
@@ -1762,7 +1500,6 @@ fn pre_update_backup_overwrites_previous_one() {
         .unwrap();
     assert_eq!(entries.len(), 1, "覆盖式保留：目录内只有最近一份");
 
-    // 最近一份是第二次的世界：恢复后可见两条交易。
     let backup = dir.join(PRE_UPDATE_BACKUP_FILE_NAME);
     let dst = temp_file("pre-update-overwrite-dst");
     let safety = temp_safety_dir();
@@ -1778,8 +1515,6 @@ fn pre_update_backup_overwrites_previous_one() {
     assert_eq!(count_transactions(&restored), 2, "覆盖产物是最新世界");
 }
 
-/// 同族语义（issue #1430）：固定名不匹配受管命名前缀——更新前备份不进用户
-/// 备份清单、不参与受管清理（不占 BackupRetentionLimit 配额）。
 #[test]
 fn pre_update_backup_is_not_managed() {
     assert!(!crate::engine::is_managed_backup_file_name(
@@ -1795,14 +1530,6 @@ fn pre_update_backup_is_not_managed() {
     );
 }
 
-// -------------------------------------------------------------------------
-// 账本身份与水印（ADR-0144 / issue #1984）：账本指纹（内容锚 + 首用固化）
-// 与产物自述（明文 fingerprint / device_id）；清理对来源未知产物保守不删。
-// -------------------------------------------------------------------------
-
-/// 同一份库在两个不同本地目录（各自独立的双文件世界）下独立算出相同指纹：
-/// 内容锚 = 最早一笔交易的全局唯一标识，路径与句柄不参与计算（ADR-0144
-/// 决策 1）。两库各自首用固化后值也相同。
 #[test]
 fn fingerprint_identical_across_dirs_and_handles() {
     let dir_a = ScratchDir::new("backup-test-fp-dir-a");
@@ -1818,8 +1545,6 @@ fn fingerprint_identical_across_dirs_and_handles() {
     assert_eq!(fp_a, "txn-1", "内容锚 = 库内最早一笔交易的全局唯一标识");
 }
 
-/// 首用固化：算出即写入，此后恒读固化值——删除最早一笔交易后指纹不变
-///（固化后的身份不再随数据变动，ADR-0144 决策 1）。
 #[test]
 fn fingerprint_persists_once_fixed() {
     let conn = tauri_app_lib::test_support::open();
@@ -1827,7 +1552,6 @@ fn fingerprint_persists_once_fixed() {
     let fixed = book_fingerprint(&conn).unwrap();
     assert_eq!(fixed, "txn-1");
 
-    // 固化值已落 AppSettings。
     let stored: Option<String> = ledger_infra::settings::get(
         &conn,
         ledger_infra::settings::SettingKey::BookFingerprint,
@@ -1836,7 +1560,6 @@ fn fingerprint_persists_once_fixed() {
     .unwrap();
     assert_eq!(stored.as_deref(), Some("txn-1"), "首用算出即固化存储");
 
-    // 软删最早一笔（内容锚漂移）后恒读固化值，不重算。
     conn.execute(
         "UPDATE transactions SET is_deleted = 1 WHERE id = 'txn-1'",
         [],
@@ -1849,8 +1572,6 @@ fn fingerprint_persists_once_fixed() {
     );
 }
 
-/// 空库（尚无交易）不阻塞备份：指纹退化为端内生成随机标识，首用固化后
-/// 恒读（ADR-0144 决策 1；用户故事 15）。
 #[test]
 fn empty_book_backs_up_with_generated_fingerprint() {
     let conn = tauri_app_lib::test_support::open();
@@ -1862,7 +1583,6 @@ fn empty_book_backs_up_with_generated_fingerprint() {
         .to_string();
     assert_eq!(fp.len(), 36, "端内生成随机标识（UUID 形态）");
 
-    // 固化：此后恒读同一值。
     let second = temp_file("fp-empty-2");
     backup_db_to(&conn, &second, "0.2.0", BackupKind::Manual).unwrap();
     assert_eq!(
@@ -1872,9 +1592,6 @@ fn empty_book_backs_up_with_generated_fingerprint() {
     );
 }
 
-/// 新产出备份的内层元数据含明文账本指纹与设备标识（ADR-0144 决策 5）：
-/// 指纹 = 内容锚（seed 交易 txn-1）；设备标识 = 多端同步域 DeviceId
-///（首用生成语义，与同步写路径同款）。
 #[test]
 fn backup_meta_carries_fingerprint_and_device_id() {
     let conn = tauri_app_lib::test_support::open();
@@ -1893,8 +1610,6 @@ fn backup_meta_carries_fingerprint_and_device_id() {
     );
 }
 
-/// 密文备份的水印仍是明文（只含标识不含密钥）：开包不凭口令即可读出
-/// fingerprint / device_id（ADR-0144 决策 5——归属判定不依赖主口令）。
 #[test]
 fn encrypted_backup_carries_plaintext_watermark() {
     let dir = ScratchDir::new("backup-test-enc-watermark");
@@ -1921,9 +1636,6 @@ fn encrypted_backup_carries_plaintext_watermark() {
     assert!(!meta["device_id"].as_str().unwrap().is_empty());
 }
 
-/// 读侧宽容（双向兼容，ADR-0144 决策 5/决策 7）：元数据带新增水印字段与
-/// 未知未来字段的包照常读取（旧版本应用读新包同款——serde 默认忽略未知
-/// 字段）；旧包（无水印字段）照常读取由 legacy_* 既有用例覆盖。
 #[test]
 fn meta_with_watermark_and_unknown_fields_reads_ok() {
     let dir = ScratchDir::new("backup-test-meta-unknown");
@@ -1947,10 +1659,6 @@ fn meta_with_watermark_and_unknown_fields_reads_ok() {
     assert_eq!(probe_backup_meta(&path).unwrap().kind, BackupKind::Manual);
 }
 
-/// 设备标识不可得（attached 侧无 sync_device 表）的轮次：产物不带设备水印
-/// = 来源未知，备份不阻断（ADR-0144 决策 5）；该产物永不参与自动清理、
-/// 不占保留配额（决策 3——句柄过滤命中后以元数据设备水印为第二道门，
-/// 未知来源保守不删）。
 #[test]
 fn prune_skips_unknown_origin_products() {
     let dir = ScratchDir::new("backup-test-prune-unknown");
@@ -1961,7 +1669,6 @@ fn prune_skips_unknown_origin_products() {
     ] {
         real_managed_backup(&dir, name, BackupKind::Auto);
     }
-    // 来源未知产物：设备标识不可得（drop attached 侧单行表）。
     let unknown_name = "ledger-auto-20260101-000000-book-b.db.zip";
     {
         let conn = tauri_app_lib::test_support::open();
@@ -1976,12 +1683,10 @@ fn prune_skips_unknown_origin_products() {
         "设备标识不可得的产物不带设备水印（来源未知）"
     );
 
-    // keep = 3：可清理桶恰 3 份 → 什么都不删——未知来源产物不进桶、不占配额。
     let r = prune_managed_backups(&dir, 3, None).unwrap();
     assert!(r.deleted.is_empty(), "未知来源不占保留配额");
     assert_eq!(r.kept, 3, "kept 报告本桶（带设备水印产物）保留数");
 
-    // keep = 2：本桶超额 1 → 只删本桶最旧；未知来源产物留存。
     let r2 = prune_managed_backups(&dir, 2, None).unwrap();
     assert_eq!(
         r2.deleted,
@@ -1991,13 +1696,6 @@ fn prune_skips_unknown_origin_products() {
     assert_eq!(r2.kept, 2);
 }
 
-// ── 设备子目录布局（ADR-0144 决策 6，#1988）──────────────────────────────────
-// 写侧按设备多分一层（`<备份目录>/<设备标识>/`），列表与恢复同时兼容旧扁平
-// 路径（只读）与设备子目录；引擎判定只认文件名与作用域，不依赖目录形状。
-
-/// 写侧落点：连接现场有设备标识时给出 `<备份目录>/<设备标识>/<产物名>`，
-/// 设备子目录按需创建；备份目录本体缺失不在此补建（交由 backup_db_to 的
-/// 既有目标目录门禁以码化错误收场，自动备份「目录无效即失败」语义不变）。
 #[test]
 fn managed_write_target_layers_device_subdir() {
     let dir = ScratchDir::new("backup-test-layout");
@@ -2013,7 +1711,6 @@ fn managed_write_target_layers_device_subdir() {
     );
     assert!(dir.join(&device).is_dir(), "设备子目录按需创建");
 
-    // 目录本体不存在：不补建目录（返回设备子目录路径，写出由 backup_db_to 报错）。
     let missing = dir.join("gone");
     let target =
         super::engine::managed_write_target(&missing, "ledger-auto-20260101-000000.db.zip", &conn)
@@ -2027,8 +1724,6 @@ fn managed_write_target_layers_device_subdir() {
     assert!(!missing.exists(), "备份目录本体缺失不在此补建");
 }
 
-/// 写侧落点：设备标识不可得（attached 侧无 sync_device 表，极端现场）时回落
-/// 扁平旧路径——该轮产物本就无设备水印（来源未知），备份不因身份缺失阻断。
 #[test]
 fn managed_write_target_falls_back_flat_without_device() {
     let dir = ScratchDir::new("backup-test-layout-flat");
@@ -2040,15 +1735,11 @@ fn managed_write_target_falls_back_flat_without_device() {
     assert_eq!(target, dir.join("ledger-auto-20260101-000000.db.zip"));
 }
 
-/// 列表双路径：旧扁平路径（只读存量）与设备子目录（新产物落点）内的受管产物
-/// 合并列出、统一按新→旧排序、路径各自正确；清理跨布局按路径删除。一级子
-/// 目录一律下探（引擎不认识「设备」形状，受管判定只认文件名）。
 #[test]
 fn list_and_prune_scan_flat_and_device_subdirs() {
     let dir = ScratchDir::new("backup-test-dual-path");
     let device_dir = dir.join("01971234-4567-789a-bcde-f123456789ab");
     std::fs::create_dir_all(&device_dir).unwrap();
-    // 旧扁平路径一份 + 设备子目录两份（真实成对产物，#1983 夹具）。
     let flat = real_managed_backup(
         &dir,
         "ledger-backup-20260101-010101.db.zip",
@@ -2079,15 +1770,12 @@ fn list_and_prune_scan_flat_and_device_subdirs() {
     assert_eq!(list[2].file_name, "ledger-backup-20260101-010101.db.zip");
     assert_eq!(Path::new(&list[2].path), flat, "扁平产物路径不变");
 
-    // 修剪跨布局生效：最旧的扁平产物被删，设备子目录产物按路径删除。
     let r = prune_managed_backups(&dir, 2, None).unwrap();
     assert_eq!(r.deleted, vec!["ledger-backup-20260101-010101.db.zip"]);
     assert!(!flat.exists(), "扁平路径内的超额产物照常清理");
     assert!(newest.exists(), "设备子目录产物留存");
 }
 
-/// 恢复双路径：设备子目录产物与扁平产物都走既有恢复通道（开包 → 校验 →
-/// 替换），目录形状不改变恢复行为。
 #[test]
 fn restore_works_from_both_layouts() {
     let dir = ScratchDir::new("backup-test-restore-dual");
@@ -2116,9 +1804,6 @@ fn restore_works_from_both_layouts() {
     }
 }
 
-/// 命令写侧改道：目标在当前备份目录（进程内偏好镜像）内且为受管命名 →
-/// 设备子目录落点；另存为到目录之外 / 非受管命名 / 镜像未配置 → 原样落盘。
-/// 偏好镜像为进程级共享态：本组用例以互斥锁串行，收尾复位。
 #[test]
 fn command_target_retargets_only_inside_backup_dir() {
     static PREFS_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -2132,7 +1817,6 @@ fn command_target_retargets_only_inside_backup_dir() {
         .join(&device)
         .join("ledger-backup-20260101-010101.db.zip");
 
-    // 目录内受管名 → 设备子目录；尾部分隔符的镜像目录同位命中。
     for mirror in [
         dir.to_string_lossy().into_owned(),
         format!("{}/", dir.to_string_lossy()),
@@ -2144,7 +1828,6 @@ fn command_target_retargets_only_inside_backup_dir() {
             "镜像目录内受管命名改道设备子目录"
         );
     }
-    // 目录外 → 原样（另存为到别处是用户显式选择，不代为改道）。
     let outside = ScratchDir::new("backup-test-retarget-out");
     prefs.set_dir(Some(dir.to_string_lossy().into_owned()));
     assert_eq!(
@@ -2152,12 +1835,10 @@ fn command_target_retargets_only_inside_backup_dir() {
             .unwrap(),
         outside.join("ledger-backup-20260101-010101.db.zip")
     );
-    // 目录内非受管名 → 原样。
     assert_eq!(
         managed_command_target(&dir.join("my-notes.zip"), &conn).unwrap(),
         dir.join("my-notes.zip")
     );
-    // 镜像未配置（极端时序）→ 原样，退回既有扁平行为。
     prefs.set_dir(None);
     assert_eq!(managed_command_target(&managed, &conn).unwrap(), managed);
 }

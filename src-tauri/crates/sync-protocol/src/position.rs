@@ -1,23 +1,3 @@
-//! 位点（StreamPosition，issue #857 / ADR-0091 决策 9）：本机对各来源设备 op 流
-//! 的「已应用位点」——`sync_stream_positions` 表的唯一 SQL 收口（自
-//! sync_engine/positions.rs 下放，issue #1089）。
-//!
-//! 位点语义：`applied_through` 是该流上已裁决 op 的**连续前缀水位**——位点之前
-//! 的 op 已全部并入本端状态（应用/去重/按位点门跳过）或作为 LWW 输者落日志可
-//! 追溯（压制）。位点**永不越过未裁决的 op**：挂起中的 op 不进日志（未应用），
-//! 位点停在它之前（安全钉住），增量拉取仍会拿到它，重投递自然重试——这是
-//! 「截断不丢失未应用 op」的机制根据。
-//!
-//! 推进规则（[`advance`]，仅在 op 裁决落定后调用）：
-//! - 流首见：从 0 建行并连续前滚（首见裁决之前可能存在同流挂起 op——不落
-//!   日志、不触发推进，直接以裁决时钟建行会越过它）；
-//! - 已有行且裁决时钟更大：从水位起就近日志**连续前滚**——吸收挂起出队后的
-//!   补齐（水位跨过已补齐区段），遇缺口（仍有未应用 op）即停；
-//! - 其余情形水位已覆盖，不动。
-//!
-//! 位点在截断后依然留存（水位不因日志缩短而回退）；本机产出的 op 同样推进
-//! 自己流的位点——源端截掉旧 op 后对端全量重投，位点门拦住已截掉的 op 不复活。
-
 use rusqlite::{Connection, OptionalExtension, params};
 
 use ledger_infra::db::now_iso;
@@ -25,16 +5,12 @@ use ledger_infra::error::Result;
 
 use super::op;
 
-/// 单个来源设备 op 流的已应用位点。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StreamPosition {
-    /// 来源设备标识（DeviceId）。
     pub device_id: String,
-    /// 该流已应用到的时钟（连续前缀水位；此之前的 op 全部并入本端）。
     pub applied_through: i64,
 }
 
-/// 位点表是否为空（引导守卫用：目标已有位点即已参与同步）。
 pub fn is_empty(conn: &Connection) -> Result<bool> {
     let count: i64 = conn.query_row("SELECT COUNT(*) FROM sync_stream_positions", [], |r| {
         r.get(0)
@@ -42,8 +18,6 @@ pub fn is_empty(conn: &Connection) -> Result<bool> {
     Ok(count == 0)
 }
 
-/// 位点清单（按 DeviceId 序稳定返回）：Checkpoint 位点组件与通道 manifest 上报
-/// 位点的数据面。
 pub fn list(conn: &Connection) -> Result<Vec<StreamPosition>> {
     let mut stmt = conn.prepare(
         "SELECT device_id, applied_through FROM sync_stream_positions ORDER BY device_id ASC",
@@ -61,7 +35,6 @@ pub fn list(conn: &Connection) -> Result<Vec<StreamPosition>> {
     Ok(positions)
 }
 
-/// 单流位点（无行返回 None——该流尚未跟踪，位点门不生效）。
 pub fn position_of(conn: &Connection, device_id: &str) -> Result<Option<i64>> {
     Ok(conn
         .query_row(
@@ -72,11 +45,6 @@ pub fn position_of(conn: &Connection, device_id: &str) -> Result<Option<i64>> {
         .optional()?)
 }
 
-/// 位点推进（op 裁决落定后调用；推进规则见模块文档）。
-///
-/// 首见建行从 0 起：若同流先于首见裁决存在挂起 op（不落日志、不触发推进），
-/// 直接以裁决时钟建行会越过它——从 0 起统一走连续前滚，水位被缺口挡在挂起
-/// op 之前（安全钉住）；补齐后后续推进自然前滚。
 pub fn advance(conn: &Connection, device_id: &str, decided_clock: i64) -> Result<()> {
     let position = match position_of(conn, device_id)? {
         None => {
@@ -90,8 +58,6 @@ pub fn advance(conn: &Connection, device_id: &str, decided_clock: i64) -> Result
         Some(position) if decided_clock <= position => return Ok(()),
         Some(position) => position,
     };
-    // 连续前滚：水位 +1 已在日志则前移，吸收挂起补齐后的区段；遇缺口即停
-    //（缺口 op 未应用，水位不越过——安全钉住）。
     let mut through = position;
     while op::is_known_at(conn, device_id, through + 1)? {
         through += 1;
@@ -106,8 +72,6 @@ pub fn advance(conn: &Connection, device_id: &str, decided_clock: i64) -> Result
     Ok(())
 }
 
-/// 位点整体覆写（Checkpoint 引导专用）：以 Checkpoint 携带的位点为准重建位点表
-/// （快照时刻各流头）。引导目标为空库时等价于初建。
 pub fn replace_all(conn: &Connection, positions: &[StreamPosition]) -> Result<()> {
     conn.execute("DELETE FROM sync_stream_positions", [])?;
     for position in positions {

@@ -1,6 +1,3 @@
-//! 预算域的全域 op 产出与重放收敛（issue #860）：创建/编辑/删除收敛、「分类 +
-//! 周期」唯一冲突挂起待裁决。
-
 use super::super::{OpOutcome, parked_ops, read_ops};
 use super::common::{seed_device, wire_in, wire_out};
 use ledger_budget::{BudgetInput, BudgetPeriod, create_budget, delete_budget, update_budget};
@@ -43,7 +40,6 @@ fn budget_create_update_delete_ops_replay_and_converge() {
     update_budget(&conn_a, &id, 600_000, None).unwrap();
     delete_budget(&conn_a, &id).unwrap();
 
-    // 日志含分类建档 op（夹具经公开写入口产出），预算入口各产出一条。
     let budget_ops: Vec<_> = read_ops(&conn_a)
         .unwrap()
         .into_iter()
@@ -89,7 +85,6 @@ fn budget_create_period_defaults_to_monthly_in_payload() {
         })
         .unwrap();
     assert_eq!(period, "monthly");
-    // 载荷内周期为落定值（缺省已解决），重放端不再缺省。
     let budget_ops: Vec<_> = read_ops(&conn_a)
         .unwrap()
         .into_iter()
@@ -112,7 +107,6 @@ fn budget_update_period_op_replays_and_converges() {
         },
     )
     .unwrap();
-    // 编辑改周期月 → 年（issue #1946）：op 携带目标周期，重放端与本地写同协议生效。
     update_budget(&conn_a, &id, 600_000, Some(BudgetPeriod::Yearly)).unwrap();
     let reports = wire_in(&conn_b, &wire_out(&conn_a));
     assert!(
@@ -138,7 +132,6 @@ fn budget_update_period_op_replays_and_converges() {
 fn duplicate_budget_create_parks_on_conflict() {
     let (conn_a, conn_b, category_id) = seed_category_on_both_sides();
 
-    // 两端各建同「分类 + 周期」预算（各自本地合法）。
     let input = || BudgetInput {
         category_id: category_id.clone(),
         period: Some(BudgetPeriod::Monthly),
@@ -151,7 +144,6 @@ fn duplicate_budget_create_parks_on_conflict() {
     let reports_on_b = wire_in(&conn_b, &wire_out(&conn_a));
     let reports_on_a = wire_in(&conn_a, &wire_out(&conn_b));
 
-    // 互为唯一性冲突：后到者在对方挂起待裁决（不静默覆盖、不中断批次）。
     assert!(
         reports_on_b
             .iter()

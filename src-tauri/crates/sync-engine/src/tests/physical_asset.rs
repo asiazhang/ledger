@@ -1,6 +1,3 @@
-//! 实物资产域的全域 op 产出与重放收敛（issue #860）：建档（首条估值随行）、
-//! 编辑、估值追加（只追加不改写、无 LWW——并发估值全部存活）、处置与软删。
-
 use super::super::{OpOutcome, read_ops};
 use super::common::{seed_device, wire_in, wire_out};
 use ledger_physical_asset::{
@@ -122,8 +119,6 @@ fn concurrent_valuations_all_survive_without_lww() {
     let id = create_physical_asset(&conn_a, asset_input("车子"), &mut || {}).unwrap();
     wire_in(&conn_b, &wire_out(&conn_a));
 
-    // 两端并发各追加一次估值（不同估值日期）：估值是只追加历史行，无实体指向、
-    // 不参与同实体 LWW——两条都必须存活。
     update_physical_asset_valuation(
         &conn_a,
         &id,

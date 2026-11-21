@@ -1,9 +1,3 @@
-//! 连接层统一 DB 调用 helper `db::run_db` 的纯单测（形状乙，spec #498 / #501）：
-//! 闭包在 tauri 全局运行时的阻塞线程池执行（不在调用线程内联）、业务 `Result`
-//! 原样传播（Ok 值 / Err 不二次包装）、闭包 panic（JoinError）归一化为
-//! [`AppError::Io`]、调用方 tracing 上下文（dispatcher + 当前 span）跨线程
-//! 传播（#503：HTTP handlers 迁入 helper 后 SQL 归因不得漂移）。
-
 use std::sync::{Arc, Mutex};
 
 use crate::error::AppError;
@@ -13,7 +7,6 @@ use tracing_subscriber::layer::SubscriberExt;
 
 use super::super::run_db;
 
-/// 闭包执行：闭包在阻塞线程池线程跑完，Ok 值原样带回 await 点。
 #[test]
 fn closure_runs_off_caller_thread_and_returns_value() {
     let caller = std::thread::current().id();
@@ -29,7 +22,6 @@ fn closure_runs_off_caller_thread_and_returns_value() {
     assert_eq!(result, 42);
 }
 
-/// Result 传播（Err 路径）：闭包返回的业务错误原样透传，不被 helper 二次包装。
 #[test]
 fn closure_err_propagates_verbatim() {
     let err = tauri::async_runtime::block_on(super::super::run_db::<(), _>("test", || {
@@ -42,11 +34,6 @@ fn closure_err_propagates_verbatim() {
     );
 }
 
-/// 调用方上下文传播（#503）：调用点已有活动 span + 线程局部 dispatcher
-///（HTTP handlers 先例：tower_http 请求 span「request」）时，闭包在该 span 内
-/// 执行、事件路由到调用方 dispatcher——线程局部上下文不会自动跨线程，靠 helper
-/// 显式带入，SQL 耗时归因因此不因迁移漂移（API 集成测试契约
-/// `test_http_sql_duration_attributed_to_request_span` 钉死的行为）。
 #[test]
 fn caller_span_and_dispatch_propagate_into_closure() {
     ensure_global_max_level();
@@ -90,12 +77,8 @@ fn caller_span_and_dispatch_propagate_into_closure() {
     );
 }
 
-/// 无调用方 span（IPC 异步命令先例）时重建 `command` span 兜底，维持既有
-/// SQL 耗时归因（lib.rs 异步命令归因约定，#501/#502 全部命令依赖的行为）。
 #[test]
 fn command_span_rebuilt_when_caller_has_none() {
-    // 全局 no-op subscriber：无 subscriber 时 span 一律 disabled（旧实现同样如此），
-    // 断言重建行为需先保证 span 可启用；阻塞线程池经捕获的 dispatcher 继承。
     ensure_global_max_level();
     let observed = Arc::new(Mutex::new(None::<String>));
     let obs = observed.clone();
@@ -113,8 +96,6 @@ fn command_span_rebuilt_when_caller_has_none() {
     );
 }
 
-/// 闭包 panic → JoinError 归一化为 [`AppError::Io`]（helper 的错误归一化路径，
-/// 与 `spawn_blocking` 先例 `fetch_fund_quote_for_api` 同形）。
 #[test]
 fn closure_panic_maps_to_io_error() {
     let err = tauri::async_runtime::block_on(super::super::run_db::<(), _>(

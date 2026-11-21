@@ -1,49 +1,3 @@
-//! 标的信息同步编排（issue #103，issue #137 升级，issue #303 基金分区，
-//! issue #695 ETF 纳入行情通道；覆盖面放开至库内全部标的 + 名称随行刷新
-//! issue #827）：单次收集**库内全部标的**（不再以「当前有持仓」为界，清仓
-//! 标的与纯建档未交易标的同享同步；`INVESTED_EXISTS` 谓词不再服务收集），
-//! 一次执行完成三件事：① 行情分区标的（stock|etf，#695）批量报价刷现价
-//! upsert `market_prices`，有历史序列者当周采样点直落 `price_history`；
-//! ② 非恒定的场外基金标的走批量取数面 + 历史净值通道逐只刷新现价（ADR-0038
-//! 决策 6，见 `fund_nav` 与 `fund_price_refresh`）；③ 有通道的行以数据源权威
-//! 名称随行刷新标的字典名称（行情通道零额外请求，基金通道逐只详情查询；
-//! 「随用随修 + 同步随行刷新」，ADR-0036/0081 修订）。价格历史深回填归后台
-//! 补全（[`super::history`]）、汇率序列归 ECB 同步编排（[`super::fx`]），均不在
-//! 本编排（ADR-0122 / ADR-0019 修订记录）。
-//! 单只标的的历史回填整只一次提交（ADR-0122 决策 8 / issue #1373）：场内周 K
-//! 与基金净值周线的落库各自在一只一个事务内，第 N 个周点写入失败或中途中断
-//! 整体回滚——不留半根历史，「有历史序列」与「历史完整」等价。
-//! 类型分区在 Rust 侧完成，不增删标的、不改市场。
-//! 职责切分（ADR-0015，修订见 ADR-0081 / issue #827）：同步刷价格、沉淀历史、
-//! 随行修名称；按代码查询/创建随用随修（全量同步翼已随 ADR-0081 决策 3
-//! 退役，issue #698）。
-//!
-//! 编排与网络解耦：核心流程 [`do_incremental_sync_with`] 接受注入的批量报价 /
-//! 新浪单只全历史 / 基金名称 / 货基判定确认四个闭包（新浪全历史与基金名称同签名
-//! `&str → Result<Vec<_>>`；批量报价收
-//! [「市场 + 代码」查询单元](QuoteQuery)，issue #1555）、与进度回调
-//! 闭包（`done, total`，issue #897），测试以 mock 数据驱动（不依赖真实网络）；
-//! 生产经 [`super::channels`] 的通道束接 HTTP 层（复用主机池/重试/限流 pacer
-//! 与价格换算）。进度回调闭包是本函数唯一的对外观察点：编排核心不碰网络、不碰事件
-//! 系统，进度事件发射归壳层接线（见 `commands::sync`）。
-//!
-//! 取数面（ADR-0121 / issue #1374 / ADR-0130 决策 2）：基金名称与场外基金现价
-//! 改走**批量取数面**（[`super::bulk`]：新浪 `f_` 面按代码一次请求取回名称与最新
-//! 净值，整次同步最多一次逻辑请求），批量面失败 / 停用 / 未收录（缺口）一律
-//! fail-closed 回退既有逐标的通道；缺口与失败在日志与统计上分开，缺口不触发熔断。
-//!
-//! 编排与连接解耦（issue #1275 作用域会话接缝；async 形态见 #1412 / ADR-0125
-//! 决策 5）：本模块所有函数的签名里没有连接句柄——读写库一律经注入的
-//! [`ScopedSession`] 短暂取一次连接（取连接作业 async、闭包内同步 rusqlite），
-//! 网络抓取只发生在会话之外且以 `await` 表达。「持着连接做网络 I/O」在类型上
-//! 不可表达；会话生产实现 = 门面写槽裸作业会话（[`super::session::FacadeWriteSession`]），
-//! 命令壳侧与域内后台车道各自持门面句柄接线。
-//!
-//! 周采样知识不住本模块（spec #1677）：周键、周降采样、判新与周点落库已收口
-//! 周点落库原语 [`super::weekly`]，各写入通道（本编排队列作业、基金回填、基金
-//! 现价刷新、批量面直落、汇率落库）一律经原语落周点；本模块只留同步窗口语义
-//!（北京日期、日更窗口、两年窗口、报价代码）与收集分区编排。
-
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -72,51 +26,27 @@ use super::progress::SyncProgress;
 use super::session::ScopedSession;
 use super::weekly::commit_price_history_weekly;
 
-/// 持仓股票的报价代码：数据源响应 f12 与查询单元的代码均为裸代码（如 600519 / 00700）。
-/// 字典 symbol 可能带市场后缀（schema 注释示例格式如 "600519.SH"），取点号前段归一化。
 pub(super) fn quote_code(symbol: &str) -> &str {
     symbol.split('.').next().unwrap_or(symbol)
 }
 
-/// 参与同步的标的信息（一个标的一条，库内全量标的集合，单表驱动天然去重）。
 pub(super) struct SyncInstrument {
     pub(super) instrument_id: String,
     pub(super) symbol: String,
-    /// 挂牌市场（DB 读边界 parse 一次的市场闭集类型，issue #1673）。
     pub(super) market: Market,
     pub(super) currency: String,
-    /// 标的类型与恒定单位价格：行情分区的查询单元市场再派生输入
-    ///（[`derive_quote_market`]，分区出口单点）。通道判定已在收集时消费过同
-    /// 一批输入，保留在行上使分区不必二次触库。
     pub(super) kind: InstrumentType,
     pub(super) constant_unit_price: Option<i64>,
-    /// 价格写入通道（issue #1060）：投资域派生单点 [`derive_price_channel`] 的
-    /// 判定结果——行情（Quote）/ 净值（FundNav）两分区参与同步，恒定价格
-    ///（ADR-0126 决策 4：采集链路全豁免）与手动报价、无来源行计入跳过。分区
-    /// 口径与标的读投影（`Instrument::price_channel`）同源单点，不再各自镜像
-    /// 类型与市场判定。
     pub(super) channel: PriceChannel,
 }
 
-/// 单次收集库内全部标的（一条 SQL，无持仓前置条件，issue #827）：覆盖面从
-/// 「当前有持仓」（`INVESTED_EXISTS`）放开为全库标的、按通道能力分区——清仓
-/// 标的恢复同步，纯建档未交易标的首次同步由后台补全按深度口径回填其
-/// 历史；无通道行（无行情类型、市场未知、名称充代码）由分区/编排自然计入
-/// 跳过。`INVESTED_EXISTS` 谓词自此只服务标的列表持仓派生标记、「只看持仓」
-/// 过滤、持仓页签概览与价格过期提示的持仓缺现价判定（完整清单见
-/// `investment::predicates`，不在此复述处数）。按 symbol 升序；
-/// 通道分区在 Rust 侧完成（见 [`do_incremental_sync_with`]）。
 fn collect_instruments(conn: &Connection) -> Result<Vec<SyncInstrument>> {
     let sql = "SELECT i.id, i.symbol, i.market, i.currency_code, i.instrument_type, i.constant_unit_price \
                FROM instruments i \
                ORDER BY i.symbol";
     let mut stmt = conn.prepare(sql)?;
-    // 价格通道收集时单点派生（issue #1060；恒定单位价格判定输入见 ADR-0126）：
-    // 分区判定不再留在同步域镜像（原 is_quote_channel / is_fund + 6 位代码
-    // 过滤），与标的读投影同源。
     let rows = stmt.query_map([], |r| {
         let symbol: String = r.get(1)?;
-        // DB 读边界 parse 一次（市场闭集类型，issue #1673）。
         let market: Market = r.get(2)?;
         let kind: InstrumentType = r.get(4)?;
         let constant_unit_price: Option<i64> = r.get(5)?;
@@ -137,19 +67,12 @@ fn collect_instruments(conn: &Connection) -> Result<Vec<SyncInstrument>> {
     Ok(instruments)
 }
 
-/// 本次同步从批量取数面取回的数据（ADR-0121 / issue #1374 / ADR-0130 决策 2）。
 struct BulkData {
-    /// 取数面载荷（None = 未命中 / 未尝试 → 逐只通道兜底）：名称字典是覆盖面
-    /// 判据（有名称即被面收录），净值表是「面是否给出可采信价格点」的判据
-    /// ——货基错位行只在名称字典（issue #1565 / ADR-0130 决策 6）。
     batch: Option<FundBatch>,
-    /// 本次同步是否降级（批量面失败或处于停用期）：降级对用户可见的事实位
-    ///（文案接线归 issue #1376，本票先落事实与日志统计）。
     degraded: bool,
 }
 
 impl BulkData {
-    /// 无标的可刷（净值分区为空）：不尝试也不降级——零请求是「没得刷」的自然结果。
     fn none() -> Self {
         Self {
             batch: None,
@@ -157,7 +80,6 @@ impl BulkData {
         }
     }
 
-    /// 本次同步没走上批量取数面（停用期或面失败）：降级，逐标的通道兜底。
     fn unavailable() -> Self {
         Self {
             batch: None,
@@ -165,45 +87,25 @@ impl BulkData {
         }
     }
 
-    /// 该码是否被本次批量面收录（有名称即收录，与是否给出价格点无关）。
     fn covers(&self, code: &str) -> bool {
         self.batch.as_ref().is_some_and(|batch| batch.covers(code))
     }
 
-    /// 面给出的最新单位净值点（未收录或货基错位行为 None）。
     fn nav_of(&self, code: &str) -> Option<&BulkNavPoint> {
         self.batch.as_ref().and_then(|batch| batch.nav_of(code))
     }
 
-    /// 面给出的数据源权威名称（未收录为 None）。
     fn name_of(&self, code: &str) -> Option<&str> {
         self.batch.as_ref().and_then(|batch| batch.name_of(code))
     }
 
-    /// 本次是否尝试并命中了批量面（未尝试 / 失败为 false）：缺口日志与逐只名称
-    /// 兜底日志的分流判据。
     fn has_batch(&self) -> bool {
         self.batch.is_some()
     }
 }
 
-/// 取批量取数面（ADR-0121 决策 1/3）：新浪 `f_` 场外基金批量面按本次同步现场的
-/// 基金代码查询，一次请求同时取回名称与最新净值（ADR-0130 决策 2 / issue
-/// #1565）。净值分区为空则零请求（无标的可刷，不白撞数据源，调用方保证）。
-///
-/// 熔断（决策 3）：跨同步记忆判定处于停用期时零请求、直接回退逐标的通道；本面
-/// 失败即本次同步熔断——逐标的通道随后 fail-closed 兜底，价格与名称照常落库。
-///
-/// 失败与缺口是两件事：失败进跨同步记忆、降级事实与 warn 日志；缺口（面未收录
-/// 该标的，即名称字典无该码）只体现在逐条回退的 debug 日志与 `bulk_gaps` 统计上，
-/// 不触发熔断。
-///
-/// **货基错位行不是缺口**：`f_` 面含货基、以名称行在场但不产出价格点（万份收益
-/// 在单位净值位，ADR-0130 决策 6）——它计入名称覆盖面、不计入缺口，在编排侧按
-/// 「有名称、无净值点」落逐只臂经官方披露判定门收尾。
 async fn fetch_bulk_surfaces(bulk: &mut BulkFetchSurfaces, codes: &[String]) -> BulkData {
     let now = Instant::now();
-    // 状态判定在锁内、网络请求在锁外（ADR-0069 决策 4 同款纪律：网络等待不进锁）。
     let allowed = match bulk.circuit.lock() {
         Ok(mut circuit) => circuit.should_attempt(now),
         Err(error) => {
@@ -239,8 +141,6 @@ async fn fetch_bulk_surfaces(bulk: &mut BulkFetchSurfaces, codes: &[String]) -> 
     }
 }
 
-/// 取批量面：命中记覆盖面规模（debug，名称字典行数——有名称即被面收录）；失败记
-/// warn 并返回 None，由调用方按熔断契约处置（失败即本次同步整体回退逐标的通道）。
 async fn take_bulk_surface(fetch: &mut FetchFundBatch, codes: &[String]) -> Option<FundBatch> {
     match fetch(codes).await {
         Ok(batch) => {
@@ -258,46 +158,6 @@ async fn take_bulk_surface(fetch: &mut FetchFundBatch, codes: &[String]) -> Opti
     }
 }
 
-/// 标的信息同步核心流程（ADR-0122 / issue #1377 起只刷现价）：单次收集库内全部
-/// 标的并按通道分区 → 行情分区（stock|etf，#695）递「市场 + 代码」查询单元批量报价
-///（查询键由通道内部构造，issue #1555）upsert 现价
-///（换算按随行精度位单点）、名称随行刷新、有历史序列者由现价刷新直落当周采样点
-///（不另发逐只请求）→ 基金侧先取批量取
-/// 数面（ADR-0121，未命中 / 失败 / 停用一律回退逐标的短窗），逐只刷新现价与名称
-///（委托 [`refresh_one_fund_price`]）→ 结果统计。**不再回填价格历史**：首刷深
-/// 回填与缺周点补齐归价格历史后台补全（[`super::history`]）；**不再采集汇率**：
-/// 汇率序列归 ECB 同步编排（[`super::fx`]，独立触发与窗口，ADR-0019 修订记录）。
-/// 注入面 = 三个抓取闭包 + 批量取数面 + 一个进度回调（issue #897；生产接
-/// HTTP 层与事件发射，测试注入 mock），本函数不触碰网络、不碰事件系统。
-/// 返回统计：`synced` = 处理成功的标的数（行情分区有效价 + 基金处理成功，含基金
-/// 「已是最新」）；`skipped` = 无通道行（无行情类型/市场未知/名称充代码）、停牌/
-/// 无效价/查询无果、查无净值与空响应（疑似被拦截/异常，issue #1059）的基金；
-/// `written` = 实际写入价格的标的数，
-/// `renamed` = 名称被刷新的标的数（两者共同决定价格失效信号：零变化不广播，
-/// 基金无新净值不算价格写入，issue #827）。
-///
-/// 进度回调（issue #897 / ADR-0095；页级明细 issue #1061）：载荷 `done`/`total`
-/// 的分母 `total` 为**有通道标的数**（可构造查询的行情标的 + 有真实代码的基金；
-/// 恒定价格行与无通道行不计，ADR-0126 决策 4），收集与分区完成后立即发
-/// `{ done: 0, total }`；此后每完成一个有通道标的推进一格（现价+名称合并为各通道标的的一格；
-/// 停牌/查询无果/「已是最新」照常推进——有通道标的不以成败计格）。`total` 为 0
-///（全部无通道）不发任何进度事件，空转不伪装成推进。逐只短窗翻页的基金在页抓取
-/// 返回后额外带出 `fund` 页级明细（不改 `done`/`total`；单页不发）。
-///
-/// 写入见证（issue #1277）：每个实际写入点（行情报价落库 / 当周采样点落库 /
-/// 名称随行刷新 / 基金净值落库 / 基金名称刷新）在落库成功后标记 [`WriteWitness`]
-/// ——中途失败的运行结果统计随错误丢失，见证器由调用方持有（`&mut` 传入）存活，
-/// 壳层据此把「实际写过」的失败收尾归一为证据（成败同判，见 `commands::sync`）。
-/// 取数面注入（ADR-0121 / issue #1374 / ADR-0130 决策 2）：`bulk` 是新浪 `f_`
-/// 场外基金批量面（名称与最新净值同面返回）+ 跨同步记忆的打包束（生产接 HTTP 层、
-/// 测试注入桩，见 [`super::channels`]）。批量面只回答「这次刷新用几次请求」，不改变价格来源归属。
-/// 货基判定确认闭包（issue #1563 / ADR-0126 决策 3 换源）由逐只刷新单元消费：
-/// 未打标标的进逐只通道先确认、确认即退出采集链路。
-// 四个逐标的抓取闭包（含货基判定确认）+ 取数面 + 会话 + 进度回调 + 写入见证
-// 共 8 参：网络接缝逐通道注入使然（与 HTTP 层多主机请求同形），参数表就是
-// 「本编排消费哪些外部通道」的清单（issue #1377 起日 K 通道归后台补全，不在
-// 本编排的参数表；汇率通道随 #1551 换 ECB 退役，归 [`super::fx`] 编排；
-// issue #1571 起逐只净值回退与后台补全共用新浪全历史通道）。
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn do_incremental_sync_with<Q, F, H, M, C, P>(
     session: &Q,
@@ -310,32 +170,14 @@ pub(super) async fn do_incremental_sync_with<Q, F, H, M, C, P>(
     witness: &mut WriteWitness,
 ) -> Result<SyncInstrumentInfoResult>
 where
-    // 作用域会话接缝（issue #1275 / #1412 async 形态）：读写库的唯一通道，
-    // 签名层面取不到连接。
     Q: ScopedSession,
     F: FnMut(&[QuoteQuery]) -> FetchFuture<Vec<QuoteItem>> + Send,
     H: FnMut(&str) -> FetchFuture<Vec<NavPoint>> + Send,
-    // 基金名称闭包（issue #827）：6 位代码 → 数据源权威名称；空串表示未取到
-    // （不落库）。生产接基金详情通道，测试注入 mock。
     M: FnMut(&str) -> FetchFuture<String> + Send,
-    // 货基判定确认闭包（issue #1563）：6 位代码 → 官方披露自报形态三态。
     C: FnMut(&str) -> FetchFuture<bool> + Send,
-    // 进度回调闭包（issue #897 / ADR-0095；页级明细 issue #1061）：三字段载荷，
-    // 逐有通道标的推进、基金深回填带页级明细；生产接事件发射（壳层接线），
-    // 测试注入记录闭包。
     P: FnMut(SyncProgress) + Send,
 {
     let held = session.with_connection(collect_instruments).await?;
-    // 单次收集库内全部标的（一条 SQL，无持仓前置，issue #827），按投资域派生的
-    // 价格通道分区（issue #1060，判定单点 `derive_price_channel`）：行情分区
-    // 递「市场 + 代码」查报价；净值分区（fund 且 6 位真实代码，ADR-0038 决策 6）
-    // 走历史净值通道；其余（恒定价格通道行：ADR-0126 决策 4 采集链路全豁免、
-    // 批量面结构上也不覆盖它，#1451；手动报价通道与无来源行：债券/其他、市场
-    // 未知自建行、名称充代码基金行等）计入跳过统计——各类统计天然同源。
-    // 行情分区携带查询单元市场（投资域分区出口单点 `derive_quote_market`，
-    // issue #1673）：分区即回答「这只标的用什么市场发查询」——Quote 通道 ⇔
-    // 可路由市场由同一份判定承载，分区消费方拿不到「Quote 通道但无 QuoteMarket」
-    // 的组合，不可路由市场在类型上进不了查询单元。
     let quote_channel: Vec<(&SyncInstrument, QuoteMarket)> = held
         .iter()
         .filter_map(|i| {
@@ -344,19 +186,11 @@ where
             Some((i, quote_market))
         })
         .collect();
-    // 净值分区不含恒定价格通道（ADR-0126 决策 4 / #1451）：恒定标的不进逐只
-    // 刷新（批量面未覆盖不再对它回退）、不进进度分母、不计批量面缺口——为一
-    // 个已知常量发请求收益为零。未打标的货基仍留在净值通道内，由逐只刷新的
-    // 官方披露自报形态判定门确认即打标（issue #1563 / ADR-0126 决策 3 换源，
-    // 见 [`refresh_one_fund_price`]），自下一轮同步起豁免。
     let funds: Vec<&SyncInstrument> = held
         .iter()
         .filter(|i| i.channel == PriceChannel::FundNav)
         .collect();
-    // 不参与采集的行数（恒定价格行 + 手动报价通道与无来源行）：跳过统计的
-    // 第一桶，与下方 skipped 汇总同源。
     let uncollected = held.len() - quote_channel.len() - funds.len();
-    // 库内无任何标的：明确提示，不报错。
     if held.is_empty() {
         return Ok(SyncInstrumentInfoResult {
             synced: 0,
@@ -369,12 +203,6 @@ where
         });
     }
 
-    // 构造行情批量报价的查询单元（「市场 + 代码」，issue #1555）：编排不拼数据源
-    // 查询键，键由报价通道内部构造。报价代码已归一化、与响应回显对齐；行情分区内
-    // symbol 唯一（instruments 的 UNIQUE(symbol, instrument_type)），同代码不冲突。
-    // 行情分区市场必可查由类型保证（issue #1673）：分区产物 `QuoteMarket` 是
-    // 可路由子集，查询键构造在通道内是全函数——原「派生与键构造一致」的绑定
-    // 测试随类型单点退役，漂移在编译期不可表达。
     let mut meta: HashMap<String, &SyncInstrument> = HashMap::new();
     let mut queryable: Vec<QuoteQuery> = Vec::new();
     for (inst, quote_market) in &quote_channel {
@@ -386,38 +214,18 @@ where
         });
     }
 
-    // 进度分母（issue #897 / ADR-0095）：有通道标的数 = 行情分区标的 + 净值分区
-    // 基金（价格通道派生单点已保证行情分区市场可查、净值分区代码为 6 位真实代码；
-    // 恒定价格行与无通道行不进分母，ADR-0126 决策 4）。收集与分区完成后立即发
-    // total；total 为 0 不发任何进度事件。
     let total = queryable.len() + funds.len();
     if total > 0 {
         progress(SyncProgress::instrument(0, total));
     }
     let mut done = 0usize;
 
-    // ① 查询并 upsert 现价（幂等：每标的一条 market_prices 覆盖更新，原行为不变），
-    // 名称随行刷新（issue #827）：批量报价响应携带数据源权威名称，零额外请求，
-    // 与价格解耦——停牌无价仍刷名称。报价 + 当周采样点直落合并为该标的一格
-    //（issue #897；历史日 K 已移出本编排，ADR-0122 / issue #1377），停牌/查询无果
-    // 照常推进。行情批量报价一次递出全部分区标的（issue #1560）：单次请求的批量
-    // 承载量由取数层按实测请求行上限自行分批，编排不再按源相关批大小切割。
     let mut synced_codes: HashSet<String> = HashSet::new();
     let mut renamed = 0usize;
-    // 批量报价是网络请求，在会话之外（await，issue #1412）；响应落库（名称
-    // 随行刷新 + 现价 upsert）才短暂取一次连接（issue #1275）。查询键（腾讯
-    // 市场前缀 / 美股交易所后缀）由通道内部构造（issue #1555 / #1560），编排只递
-    // 「市场 + 代码」。
-    // 库内行情分区为空则不调通道（零请求）：通道仍被调用会在无行情标的的
-    // 用例现场多一次无谓请求（先例：批量面为空时不尝试）。
     if !queryable.is_empty() {
         let items = fetch(&queryable).await?;
         for item in &items {
             if let Some(inst) = meta.get(&item.code) {
-                // 落库作业（门面作业形态，Send + 'static）：编现场的见证器 / 计数器
-                // 进不了闭包，各写入点的成功标记经共享缓冲带出，await 之后回填——
-                // 成败同判的见证语义逐字不变（后续步失败时前面已 autocommit 的
-                // 写入仍计见证，issue #1277）。
                 let marks = Arc::new(Mutex::new(Vec::new()));
                 let sink = Arc::clone(&marks);
                 let renamed_now = session
@@ -428,11 +236,9 @@ where
                         let price_cents = item.price_cents;
                         let price_date = item.price_date.clone();
                         move |conn| {
-                            // 名称随行刷新（issue #827）：以数据源权威名称覆盖（仅实际变化才落库）。
                             if refresh_instrument_name(conn, &instrument_id, &name)? {
                                 mark(&sink, StockMark::Renamed);
                             }
-                            // 停牌/无效价（≤0）在取数层已解为 None，此处跳过、保留旧价。
                             if let Some(price_cents) = price_cents {
                                 upsert_market_price(
                                     conn,
@@ -440,18 +246,11 @@ where
                                         instrument_id: &instrument_id,
                                         price_cents,
                                         currency_code: &currency,
-                                        // 场内现价时点 = 写入时刻、无净值日期语义（ADR-0036 /
-                                        // ADR-0103 决策 4）；行情日期由当周采样点的
-                                        // `trade_date` 承载（见下）。
                                         priced_at: &ledger_infra::db::now_iso(),
                                         nav_date: None,
                                         source: Some(TENCENT_PRICE_SOURCE),
                                     },
                                 )?;
-                                // 现价与当周采样点同一事务原子提交（spec #1677 收敛
-                                // 缺陷面：两段 autocommit 的中途失败不再留「现价已写、
-                                // 当周点缺失」半态；失败整体回滚时写入见证不计本
-                                // 标的——Priced 标记移到事务成功之后）。
                                 ensure_transaction(conn, || {
                                     upsert_market_price(
                                         conn,
@@ -459,23 +258,11 @@ where
                                             instrument_id: &instrument_id,
                                             price_cents,
                                             currency_code: &currency,
-                                            // 场内现价时点 = 写入时刻、无净值日期语义（ADR-0036 /
-                                            // ADR-0103 决策 4）；行情日期由当周采样点的
-                                            // `trade_date` 承载（见下）。
                                             priced_at: &ledger_infra::db::now_iso(),
                                             nav_date: None,
                                             source: Some(TENCENT_PRICE_SOURCE),
                                         },
                                     )?;
-                                    // 当周采样点直落（ADR-0122 决策 2 / issue #1377）：现价刷新
-                                    // 已携带该标的当日有效报价，经周点落库原语把当周点一并落库
-                                    //（spec #1677：判新同周同值零写入，事务并入本作业外层，
-                                    // 降采样只算一遍），不另发逐只 K 线请求；无历史序列者不落
-                                    //（单点会冒充历史完整，破坏后台补全的首刷判据）——「单点
-                                    // 不冒充完整」前置门留在调用点，不进中性原语。采样日取
-                                    // **行情日期**——交易所当地交易日的日期部分，不做时区换算
-                                    //（ADR-0130 决策 5）：按北京时间切分会把美股周五的收盘记成
-                                    // 周六；取数层解不出日期时按北京日历日兜底。
                                     let trade_date = price_date.clone().unwrap_or_else(|| {
                                         beijing_today().format("%Y-%m-%d").to_string()
                                     });
@@ -500,7 +287,6 @@ where
                         }
                     })
                     .await;
-                // 标记回填在错误判定之前：部分写入已 autocommit，见证照记（#1277）。
                 for mark in marks
                     .lock()
                     .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -522,20 +308,11 @@ where
         }
     }
 
-    // 进度推进（issue #897）：每只有通道标的一格——现价 + 当周采样点 +
-    // 名称随行刷新合并为一格，停牌/查询无果照常推进（不以成败计格）。
-    // 历史日 K 回填已随 ADR-0122 / issue #1377 移出本编排（归后台补全），
-    // 行情分区的逐只请求自此消失。
     for _ in &queryable {
         done += 1;
         progress(SyncProgress::instrument(done, total));
     }
 
-    // ② 批量取数面（ADR-0121 / issue #1374 / ADR-0130 决策 2）：新浪 `f_` 场外
-    // 基金批量面按本次现场的基金代码一次请求取回名称与最新净值（整次同步最多一次
-    // 逻辑请求）——请求量自此不再随基金数线性增长；净值分区为空则零请求（无标的
-    // 可刷，不白撞数据源）。失败 / 停用 / 未收录的标的在下方逐标的通道
-    // fail-closed 兜底（缺口与失败分开统计，见 [`fetch_bulk_surfaces`]）。
     let mut bulk_gaps = 0usize;
     let fund_codes: Vec<String> = funds.iter().map(|fund| fund.symbol.clone()).collect();
     let bulk_data = if funds.is_empty() {
@@ -544,15 +321,6 @@ where
         fetch_bulk_surfaces(bulk, &fund_codes).await
     };
 
-    // ③ 基金分区逐只（issue #897 逐只合并推进）：现价刷新（ADR-0122 决策 2，
-    // 委托 [`refresh_one_fund_price`]——批量面命中整只零请求，未收录/降级退逐只
-    // 通道（新浪全历史面，issue #1571），issue #1377 起不再承担首刷与缺周点深补）
-    // + 权威名称随行刷新
-    //（issue #827）合并为该基金的一格；「已是最新（无新净值）」同样推进。名称与
-    // 耗时随取数面改写：批量面命中即零请求（名称与最新净值同面返回，最新净值
-    // 日期即「是否有新净值」的判据），未收录的标的退回逐标的通道（名称与净值
-    // 同退逐只）。名称充代码行无通道：不进净值分区（不进
-    // 分母、零请求），计入跳过（见上）。
     let mut fund_stats = FundSyncStats {
         synced: 0,
         skipped: 0,
@@ -560,10 +328,6 @@ where
     };
     for fund in &funds {
         let code = fund.symbol.clone();
-        // 覆盖面以名称字典为准（有名称即被面收录）：未收录 = 缺口，逐条回退逐标的
-        // 通道补齐，不触发熔断。面已收录但净值表无该码 = 货基错位行（万份收益在
-        // 单位净值位，ADR-0130 决策 6）——不是缺口，`latest_hint` 为 None 自然落
-        // 逐只臂、由官方披露判定门确认收尾（issue #1565）。
         let covered = bulk_data.covers(&code);
         let latest_hint = bulk_data.nav_of(&code);
         if bulk_data.has_batch() && !covered {
@@ -584,16 +348,10 @@ where
                 &mut fund_stats,
             )
             .await?;
-            // 净值实际落库才标记（「已是最新」不算写入，与 fund_stats.written 同判）。
             if fund_stats.written > written_before {
                 witness.mark_written();
             }
         }
-        // 名称随行刷新（issue #827；取数面随 ADR-0121 / ADR-0130 改写）：批量面
-        // 命中即零请求（名称与净值同面返回，常数级请求量的一部分）；未收录的标的
-        // 退回逐只详情通道——遇「确定性查无」降级为保留原名（ADR-0039 修订，
-        // issue #1212）：基金可能已终止（搜索索引与档案通道都不再可达），但这不该
-        // 打断整次同步；网络类失败仍按既有契约上抛。空名称 = 未取到，不落库。
         let name = match bulk_data.name_of(&code) {
             Some(name) => name.to_string(),
             None => {
@@ -602,8 +360,6 @@ where
                 }
                 match fetch_fund_name(&fund.symbol).await {
                     Ok(name) => name,
-                    // 确定性查无经取数侧谓词识别（spec #1674：识别与构造同址，
-                    // 编排不嗅错误码字符串）。
                     Err(error) if is_fund_not_found(&error) => {
                         tracing::warn!(
                             code = %fund.symbol,
@@ -615,7 +371,6 @@ where
                 }
             }
         };
-        // 名称落库才短暂取一次连接（抓取在会话之外，issue #1275 / #1412 async 形态）。
         let instrument_id = fund.instrument_id.clone();
         if session
             .with_connection(move |conn| refresh_instrument_name(conn, &instrument_id, &name))
@@ -629,17 +384,9 @@ where
     }
 
     let synced = synced_codes.len() + fund_stats.synced;
-    // 已查询但未取到有效价的（停牌/无效价/查询无果）计入跳过。
     let invalid = queryable.len() - synced_codes.len();
-    // 无通道行（手动报价通道与无来源：债券/其他、市场未知自建行、名称充代码基金行）
-    // 与恒定价格行（不进收集面，ADR-0126 决策 4）、停牌/查询无果/首刷查无净值等
-    // 一并计入跳过。
     let skipped = uncollected + invalid + fund_stats.skipped;
-    // 实际写入 = 股票有效价 + 基金实际落库净值（基金「已是最新」不算写入）。
     let written = synced_codes.len() + fund_stats.written;
-    // 取数面统计收尾（ADR-0121 决策 3）：缺口与失败在统计上分开——缺口（批量面
-    // 没收录该标的）逐条回退补齐、不触发熔断；失败（面报错或处于停用期）按熔断
-    // 契约整体回退逐标的通道，并带出降级事实。
     if bulk_data.degraded || bulk_gaps > 0 {
         tracing::info!(
             bulk_degraded = bulk_data.degraded,
@@ -659,56 +406,29 @@ where
     })
 }
 
-/// 北京时间今天（A 股/基金净值日历以北京时间为准）。北京日历日 = UTC 时刻
-/// 加 8 小时后取日期部分，UTC+8 算术直接得日期、无 Option 无 expect
-///（ADR-0060 的 A 类临时豁免已由 #434 结构性消除）。
 pub(crate) fn beijing_today() -> NaiveDate {
     beijing_date(chrono::Utc::now())
 }
 
-/// [`beijing_today`] 的纯函数核：UTC 时刻加 8 小时后取日期部分即北京日历日
-///（16:00 UTC 是北京午夜边界，边界语义由 `beijing_date_shifts_utc_by_plus_8h` 钉住）。
 pub(super) fn beijing_date(now: chrono::DateTime<chrono::Utc>) -> NaiveDate {
     (now + chrono::Duration::hours(8)).date_naive()
 }
 
-/// 自然日窗口的开启判定（ADR-0122 决策 3「启动后延迟一次 + 此后每自然日各一次」的
-/// 规则单点）：**同一北京日历日只开一次**，跨日（或从未跑过）即开。
-///
-/// 每日现价刷新与价格历史补全两条后台车道共用本判定——两条循环原先各自内联同一段
-/// `last_round_date != Some(today)`（两处同体），规则散落；抽成纯函数后规则可在单测
-/// 里直接钉住（同日不开、跨日开、首轮开），调度循环只负责把结果接上副作用。
-///
-/// 规则只回答「今天该不该开窗口」，不含任何副作用与时间读取——`today` 由调用方经
-/// [`beijing_today`] 传入，纯函数可确定性测试。
 pub(crate) fn daily_window_opens(last_run: Option<NaiveDate>, today: NaiveDate) -> bool {
     last_run != Some(today)
 }
 
-/// 近两年回填窗口起点：北京时间今天 − 2 年。A 股/港股交易日历以北京时间为准，
-/// 起点精度只影响边界处至多多采一天的样本，周采样后无影响。净值窗口与深回填
-/// 窗口下界同此（#303 / #1534，唯一实现；#1906 起股票回填深度由首笔持仓周
-/// 表达，本函数不再是行情通道的请求窗口）。
 pub(super) fn two_years_ago(today: NaiveDate) -> NaiveDate {
     today
         .checked_sub_months(chrono::Months::new(24))
         .unwrap_or(today)
 }
 
-/// 行情分区单只落库作业的写入点标记（issue #1412）：作业闭包是 `Send + 'static`
-/// 形态，编排在现场的见证器与计数器进不了闭包——各写入点的成功标记经共享缓冲
-/// 带出，`await` 之后回填（后续步失败时前面已 autocommit 的写入仍计见证，
-/// issue #1277 语义逐字保持）。
 enum StockMark {
-    /// 名称随行刷新已落库。
     Renamed,
-    /// 现价已落库。
     Priced,
 }
 
-/// [`StockMark`] 的作业侧落点：互斥体中毒时按原样取用（标记缓冲只在本作业与
-/// 同一 `await` 链上的回填点之间传递，中毒仅发生于作业 panic，且 panic 后回填
-/// 仍须尽力而为——错误本身沿编排 `Result` 上抛）。
 fn mark(sink: &Mutex<Vec<StockMark>>, mark: StockMark) {
     sink.lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
