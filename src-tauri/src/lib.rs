@@ -65,6 +65,11 @@ mod db_slot_guard;
 // 零命中，源码扫描守门，仅测试可见。
 #[cfg(test)]
 mod blocking_client_guard;
+// WebKitGTK DMABUF workaround 接线守门（issue #2190）：Linux 渲染 workaround 的
+// set_var 接线是根包源码形状事实（集成测试不运行 run()，行为测试无从感知），
+// 删接线或移到 webview 创建之后只有扫描即红，仅测试可见。
+#[cfg(test)]
+mod webkit_render_env_guard;
 // 统一测试数据库工厂与共享断言库（ADR-0084，issue #751）：建库/种子/对拍断言
 // 单一入口，域测试与外部集成测试共用；仅测试消费，生产路径不得消费
 //（C 类豁免声明，ADR-0060）。
@@ -203,6 +208,18 @@ fn app_context() -> tauri::Context<tauri::Wry> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Linux WebKitGTK DMABUF 闪烁 workaround（issue #2190）：WebKitGTK 2.48+ 的
+    // DMABUF 渲染器在 Wayland 上界面闪烁（上游 tauri-apps/tauri#9394、WebKitGTK
+    // bug #261874；AMD Mesa 亦命中，实测矩阵见 issue），禁用 DMABUF 渲染器后走
+    // 加速合成的稳定路径（不闪），代价仅在 DMABUF 快路径这一层。必须在任何
+    // webview 创建之前生效，故收在 run() 最前（先于下方 Builder 装配）；尊重
+    // 用户已设值，不覆盖显式选择。Android 同属 linux 目标三元组，随门排除。
+    #[cfg(all(target_os = "linux", not(target_os = "android")))]
+    if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
+        // SAFETY（Rust 2024 起 set_var 为 unsafe）：run() 由 main() 同步首调，
+        // 此刻先于 Tauri 装配出的任何线程与 async runtime，进程环境仅本线程读写。
+        unsafe { std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1") };
+    }
     // 两扇进程级门（issue #570 / #601）：实例在装配期创建，同一份分别供
     // IPC 门禁（invoke wrapper 捕获）与启动编排（setup 登记）、HTTP 门禁消费。
     let gate = EncryptionGate::new(false);
