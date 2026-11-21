@@ -1,20 +1,13 @@
-//! 加密锁定门集成测试（issue #570 / ADR-0075 决策 5）：锁定期间 AI 导入
-//! HTTP 面返回既有码化错误契约（`encryption.locked`），解锁后照常工作；
-//! 契约自举端点（OpenAPI 文档）不受门禁影响。
-
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use tower::ServiceExt;
 
 use crate::common::{body_to_bytes, create_account_via_api, setup_app, setup_locked_app};
 
-/// 锁定期间：数据端点（读与写）统一返回码化错误，请求不进入任何 handler——
-/// 解锁前外部 AI 导入工具无法读写数据（ADR-0075 决策 5）。
 #[tokio::test]
 async fn locked_gate_rejects_data_endpoints_with_coded_error() {
     let app = setup_locked_app();
 
-    // 读端点。
     let response = app
         .clone()
         .oneshot(
@@ -33,7 +26,6 @@ async fn locked_gate_rejects_data_endpoints_with_coded_error() {
     assert_eq!(err["code"], "encryption.locked");
     assert_eq!(err["message"], "应用已锁定，请先解锁后再操作");
 
-    // 写端点（AI 导入面）。
     let response = app
         .oneshot(
             Request::builder()
@@ -51,9 +43,6 @@ async fn locked_gate_rejects_data_endpoints_with_coded_error() {
     assert_eq!(err["code"], "encryption.locked");
 }
 
-/// 锁定期间：契约自举端点不受门禁影响（OpenAPI 文档不含用户数据，
-/// AI 工具发现契约的入口保持可用）；紧凑方言端点（issue #839）同为
-/// 契约自举面，同路豁免。
 #[tokio::test]
 async fn locked_gate_keeps_openapi_contract_available() {
     let app = setup_locked_app();
@@ -73,8 +62,6 @@ async fn locked_gate_keeps_openapi_contract_available() {
     }
 }
 
-/// 解锁后（锁定门翻转为不锁）：同一应用数据端点照常工作——门禁只看标志，
-/// 对明文库路径（标志恒 `false`）行为零变化。
 #[tokio::test]
 async fn unlocked_gate_serves_requests_normally() {
     let (app, _) = setup_app();

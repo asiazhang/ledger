@@ -1,44 +1,8 @@
-//! 壳层机制（spec #1086 P5 / #1108 壳层收敛）：本模块只被壳层消费，正住址即
-//! 壳层根包；曾暂住 `ledger-infra::shell_support`（ADR-0111 决策 2 / #1130），
-//! #1108 迁回，不得被基础设施或域引用。
-//!
-//! 壳层统一读入口（ADR-0104，spec #1009 批次①）：连接句柄与读闭包进，其余全部
-//! 内化——[`ledger_infra::db::DbReadHandle`]（异步 DB 门面的**读类型化句柄**，
-//! ADR-0125 决策 1/4，issue #1410）→ 门面读 DB 线程执行（连接槽锁由门面为整个
-//! 作业持有，取用独占收在门面内，ADR-0125 决策 1）。
-//!
-//! 读命令的手抄仪式（克隆连接句柄 → 送阻塞线程池 → 锁失败映射 → span 归因）自
-//! ADR-0125 起改道：调用点取门面读句柄交给本入口，仪式仍收在本入口一处实现；
-//! 读命令壳退回到它该有的样子：解包 + 一行调用。命名与
-//! [`crate::shell_support::write_entry`] 对仗，保持「只留一种可模仿形态」（ADR-0069 立项动机之一）。
-//!
-//! 语义锚（与迁移前逐字节一致，ADR-0104 决策 4）：
-//! - **执行线程**：闭包在**门面读 DB 线程**执行（ADR-0125 决策 1；事件循环线程与
-//!   tokio worker 不被 DB 调用占用）；读侧与写侧各持一条线程，长写事务不把读排在
-//!   后面（ADR-0117 语义原样，读路径不进写者闸门）；
-//! - **锁失败映射**：门面取槽锁失败（含锁中毒）归一化为
-//!   [`ledger_infra::error::AppError::Db`]（与迁移前同一归一化口径）；
-//! - **span 归因串**保留 `&'static str` 参数：IPC 传命令名字面量、HTTP 传
-//!   `"METHOD /path"` 端点键，SQL 日志逐字节不变（ADR-0009 / ADR-0068 零感知）；
-//! - **结果证据**：闭包业务错误原样传播、闭包 panic 归一化为
-//!   [`ledger_infra::error::AppError::Io`]（与 ADR-0069 先例同形；门面侧
-//!   `catch_unwind` + 未提交事务回滚，ADR-0125 决策 3）。
-//!
-//! 读路径无置脏维度（ADR-0032 置脏豁免单点不动，ADR-0104 关联）。域层读路径
-//! （ADR-0033 接缝）不纳入——本入口壳层专用。
-
 use rusqlite::Connection;
 
 use ledger_infra::db::{DbReadHandle, DbWriteHandle};
 use ledger_infra::error::Result;
 
-/// 壳层统一读入口（ADR-0104 决策 2；取用形态经 ADR-0125 决策 1/4 更替为门面读
-/// 句柄，issue #1410）：把读闭包交给门面读句柄，在门面读 DB 线程上执行。
-///
-/// - `span`：SQL 归因串（`&'static str`，IPC 命令名 / HTTP 端点键，语义同
-///   门面作业的 `command` 参数）；
-/// - 闭包业务错误原样传播、闭包 panic 归一化为 [`ledger_infra::error::AppError::Io`]
-///   （与 ADR-0069 先例同形）；锁中毒归一化为 [`ledger_infra::error::AppError::Db`]。
 pub async fn read_entry<T, F>(span: &'static str, db: DbReadHandle, f: F) -> Result<T>
 where
     T: Send + 'static,
@@ -47,15 +11,6 @@ where
     db.run(span, f).await
 }
 
-/// 壳层统一读入口 · **写槽形态**（ADR-0117 甄别结论，issue #1410）：读形态但闭包
-/// 内含惰性写的命令（缓存自愈 UPSERT / 余额漂移修复，ADR-0117「存量读路径
-/// 只读甄别结果」逐命令留痕；搜索的拼音惰性回填随 #1727 拼音退役拆除，
-/// 该命令自此退出甄别名单、转走只读连接）必须走写连接——走只读读连接会在只读
-/// 约束上报错。
-///
-/// 作业走门面写槽**裸作业**：不经连接层统一写入口的提交点后置动作（与迁移前
-/// `read_entry` 消费写槽逐字一致——缓存属派生数据，修复不置脏、不发信号；
-/// ADR-0067 / ADR-0032）。
 pub async fn read_entry_on_write<T, F>(span: &'static str, db: DbWriteHandle, f: F) -> Result<T>
 where
     T: Send + 'static,
@@ -75,9 +30,6 @@ mod tests {
 
     use super::*;
 
-    /// 内存库夹具（统一测试工厂建库，ADR-0084 决策 3/7）：写读两槽同指一连接
-    /// （与 `DbState::open_in_memory` 同形），读句柄经具名访问器取——
-    /// 测试世界构造保持「裸库 + 状态」原形（ADR-0125 决策 4）。
     fn fixture() -> DbState {
         let conn = Arc::new(Mutex::new(open()));
         DbState {
@@ -86,7 +38,6 @@ mod tests {
         }
     }
 
-    /// 闭包拿到可用连接：读已提交的真实行（连接机制内化但真实可用）。
     #[test]
     fn closure_receives_usable_connection_and_reads_persisted_row() {
         let state = fixture();
@@ -107,7 +58,6 @@ mod tests {
         assert_eq!(balance, 12345, "闭包应能读到已种入的行");
     }
 
-    /// 业务错误原样传播（不二次包装）。
     #[test]
     fn business_error_propagates_verbatim() {
         let state = fixture();
@@ -123,8 +73,6 @@ mod tests {
         );
     }
 
-    /// 锁中毒：持锁线程 panic 使互斥体中毒，入口归一化为 AppError::Db
-    ///（与统一写入口同形，ADR-0104 决策 4）。
     #[test]
     fn poisoned_lock_maps_to_db_error() {
         let state = fixture();
@@ -148,8 +96,6 @@ mod tests {
         );
     }
 
-    /// 闭包 panic → 归一化为 AppError::Io（ADR-0069 先例同形；门面侧 catch_unwind
-    /// 拦下并回滚未提交事务，ADR-0125 决策 3）。
     #[test]
     fn closure_panic_normalizes_to_io_error() {
         let state = fixture();
@@ -165,13 +111,6 @@ mod tests {
         );
     }
 
-    /// 读入口不进写者闸门（ADR-0117 语义 / ADR-0125 决策 1 的实现形态，issue #1410）：
-    /// 长写作业在途（门面写线程整段持写槽）时，读入口仍限时返回。
-    ///
-    /// **负向判据**（ADR-0087 断言强度）：把读入口改回写者闸门（`db.run_write` 或与
-    /// 写侧共线程 / 共连接）→ 读作业排到长写作业之后，本测试在限时内收不到结果即红。
-    /// 夹具必须是**成对文件库**（写读两槽分属两连接）：内存库两槽同指一连接，
-    /// 表达不了读侧独立性（facade 侧同款取舍）。
     #[test]
     fn read_entry_returns_while_long_write_job_in_flight() {
         let dir = ScratchDir::new("read-entry");

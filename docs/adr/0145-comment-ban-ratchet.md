@@ -103,3 +103,9 @@ package.json `"//"` 键（根 + 18 包）、Cargo.toml 全部注释、`.kache.to
 - **已知双源边界（登记在案的不对称与一致点，语料不含）**：非 ASCII 标识符紧邻原始串、非 BMP 字符入 char 字面量两形态，TS 侧按 ASCII/UTF-16 近似，两侧结果可能不同；`'\u{…}'` 转义两实现**一致地**不按字面量识别；TS 侧另有 `keepLiterals` 扩展形态（保留字面量只掩注释，Rust 消费面无此需求未实现）。边界扩展属规则改动，须两侧同步 + 语料更新。
 
 决策 3 的识别口径、豁免闭集与家族双源同步纪律不变。
+
+
+## 修订注记（#2206 壳层清零，2026-11-21）：本批删除注释承载的独有决策记录在此收口
+
+- **Windows 控制台抑制载体**（根包 `main.rs`）：`#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]` 是 Windows release 构建不弹控制台窗口的载体（子系统语义）；删除该**属性**会改变 Windows 发布行为——属性是配置语义，其上的警示注释已按禁令清零，本条留痕防属性被当作无用代码移除。
+- **DMABUF workaround 的 set_var 安全前提**（`src/lib.rs` run()）：`WEBKIT_DISABLE_DMABUF_RENDERER` 的 `set_var`（Rust 2024 起 unsafe）由 `main()` 同步首调 `run()` 执行，先于 Tauri 装配出的任何线程与 async runtime，进程环境仅主线程读写——这是该 unsafe 块的正确性前提；workaround 本体与跟踪票见 #2190，接线守门见壳层 webkit 守门模块。

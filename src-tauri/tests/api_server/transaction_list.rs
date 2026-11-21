@@ -94,7 +94,6 @@ async fn test_get_transactions_filters_by_kinds_single_value() {
     let (app, _) = setup_app();
     seed_readback_transactions(&app).await;
 
-    // 单值亦经集合参数（spec #1025：原单值 kind 参数已移除，BREAKING）
     let (status, body) = get_json(&app, "/api/v1/transactions?kinds=expense").await;
     assert_eq!(status, StatusCode::OK);
     let txs = items_of(&body);
@@ -114,7 +113,6 @@ async fn test_get_transactions_filters_by_kinds_set() {
     let account_id = create_account_via_api(&app, "现金账户").await;
     let category_id = create_category_via_api(&app, r#"{"name":"餐饮","kind":"expense"}"#).await;
 
-    // 带分类支出 + 其退款（继承分类）；无分类收入与转账（转账天然无分类）
     let expense = format!(
         r#"{{"kind":"expense","amount_cents":100,"currency_code":"CNY","account_id":"{account_id}","category_id":"{category_id}","date":"2026-05-01"}}"#
     );
@@ -130,7 +128,6 @@ async fn test_get_transactions_filters_by_kinds_set() {
     let created = post_batch(&app, batch_body(&[&refund], None)).await;
     assert!(created.iter().all(|r| r["success"] == true), "{created:?}");
 
-    // 类型集合命中集合内各 kind（含带分类退款），排除无分类收入；逗号分隔单参数绑定
     let (status, body) = get_json(&app, "/api/v1/transactions?kinds=expense,refund").await;
     assert_eq!(status, StatusCode::OK);
     let txs = items_of(&body);
@@ -141,7 +138,6 @@ async fn test_get_transactions_filters_by_kinds_set() {
     );
     assert_eq!(body["total"], 2);
 
-    // 类型集合 × 仅无分类 AND 组合：支出/退款都带分类 → 空集
     let (status, body) = get_json(
         &app,
         "/api/v1/transactions?kinds=expense,refund&uncategorized_only=true",
@@ -151,32 +147,22 @@ async fn test_get_transactions_filters_by_kinds_set() {
     assert!(items_of(&body).is_empty(), "AND 组合应为空集: {body:?}");
     assert_eq!(body["total"], 0);
 
-    // 仅无分类单独调用行为不变（语义纯 NULL，不限定类型）
     let (_, body) = get_json(&app, "/api/v1/transactions?uncategorized_only=true").await;
     assert_eq!(body["total"], 1, "仅无分类应命中无分类收入: {body:?}");
 
-    // 单值 kind 参数已移除（BREAKING，spec #1025）：旧调用方传 kind= 不报错，
-    // 被忽略、结果变宽（显式接受的静默失效，见 CHANGELOG BREAKING）
     let (_, body) = get_json(&app, "/api/v1/transactions?kind=expense").await;
     assert_eq!(body["total"], 3, "kind= 不再生效，应返回全量: {body:?}");
 
-    // 集合外字面量：非法值 4xx；Query 反序列化拒绝，响应体非 JSON 契约
     let status = get_status(&app, "/api/v1/transactions?kinds=expense,bogus").await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
 }
 
-/// 隐藏投资相关流水参数的接线证明（issue #1810 / ADR-0136）：参数经 HTTP 进入读路径
-/// 后行集一步可观察收窄（投资相关行消失、total 同步），缺省不携带 = 行为不变。判定
-/// 语义（三端命中矩阵、按账户不按分类）的权威在交易域单测，本层只证壳三件套与接线。
-/// 负向（删除即变红）：读路径删除该 WHERE 分支、或请求不再携带该参数 →
-/// 本用例至少一条断言变红，断言对准行集与 total 这两个可观察结果。
 #[tokio::test]
 async fn test_get_transactions_hide_investment_related_excludes_rows() {
     let (app, _) = setup_app();
     let bank = create_account_via_api_with_type(&app, "银行卡", "bank").await;
     let inv = create_account_via_api_with_type(&app, "投资账户", "investment").await;
 
-    // 充值转账（银行卡 → 投资账户）+ 银行卡日常支出
     let topup = format!(
         r#"{{"kind":"transfer","amount_cents":1000,"currency_code":"CNY","account_id":"{bank}","to_account_id":"{inv}","date":"2026-07-01"}}"#
     );
@@ -189,12 +175,10 @@ async fn test_get_transactions_hide_investment_related_excludes_rows() {
         "写入应成功: {created:?}"
     );
 
-    // 缺省不携带参数 = 行为不变（契约只增）
     let (status, body) = get_json(&app, "/api/v1/transactions").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["total"], 2, "缺省应返回全部行: {body:?}");
 
-    // 携带参数：投资相关行从行集与 total 同步消失（一步可观察）
     let (status, body) = get_json(&app, "/api/v1/transactions?hide_investment_related=true").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["total"], 1, "投资相关行应被排除: {body:?}");
@@ -202,12 +186,10 @@ async fn test_get_transactions_hide_investment_related_excludes_rows() {
     assert_eq!(txs.len(), 1, "行集应与 total 同步收窄: {body:?}");
     assert_eq!(txs[0]["kind"], "expense", "保留行应为银行卡日常支出");
 
-    // false 显式携带 = 未携带（不过滤）
     let (status, body) = get_json(&app, "/api/v1/transactions?hide_investment_related=false").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["total"], 2, "false 不收窄行集: {body:?}");
 
-    // 与既有类型过滤 AND 组合：仅转账（1 行）∩ 偏好收窄 = 空集
     let (status, body) = get_json(&app, "/api/v1/transactions?kinds=transfer").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["total"], 1, "仅类型过滤时转账行照常返回: {body:?}");
@@ -229,7 +211,6 @@ async fn test_get_transactions_filters_by_merchant_id_query_param() {
     let (app, conn) = setup_app();
     let account_id = create_account_via_api(&app, "现金").await;
 
-    // 商户行直插（merchant 域无 HTTP 端点，T7 前临时前置）
     {
         let c = conn.lock().unwrap();
         c.execute(
@@ -252,7 +233,6 @@ async fn test_get_transactions_filters_by_merchant_id_query_param() {
         "写入应成功: {created:?}"
     );
 
-    // 按商户过滤：只命中带 merchant_id 的一条，total 口径同步
     let (status, body) = get_json(&app, "/api/v1/transactions?merchant_id=mch-1").await;
     assert_eq!(status, StatusCode::OK);
     let txs = items_of(&body);
@@ -260,7 +240,6 @@ async fn test_get_transactions_filters_by_merchant_id_query_param() {
     assert_eq!(txs[0]["merchant_id"], "mch-1");
     assert_eq!(body["total"], 1);
 
-    // 不带参数回全量
     let (_, all) = get_json(&app, "/api/v1/transactions").await;
     assert_eq!(all["total"], 2);
 }
@@ -347,11 +326,6 @@ async fn test_get_transactions_excludes_soft_deleted() {
     assert_eq!(txs[0]["date"], "2026-01-01");
 }
 
-/// 行携带来源字段（spec #704 / issue #706 tracer bullet：保单分支）：
-/// 挂单保费返回 `{kind: "policy", entity_id, display_name: 险种名, status: null}`；
-/// 软删保单的历史引用照常返回名称并携带 `status: "deleted"`；
-/// 无保单交易 `source` 为 `null`。保单/保司行直插（policy 域无 HTTP 端点，先例商户；
-/// 保单挂保司字典不挂商户，ADR-0082）。
 #[tokio::test]
 async fn test_get_transactions_includes_policy_source() {
     let (app, conn) = setup_app();
@@ -390,7 +364,6 @@ async fn test_get_transactions_includes_policy_source() {
     let txs = items_of(&body);
     assert_eq!(txs.len(), 2);
 
-    // 挂单保费：来源 = 保单（实体 id + 险种名，在册无状态标注）
     let premium = txs
         .iter()
         .find(|t| t["policy_id"] == policy_id)
@@ -406,14 +379,12 @@ async fn test_get_transactions_includes_policy_source() {
         "挂单保费来源应为保单: {premium:?}"
     );
 
-    // 无保单交易：来源为空
     let plain = txs.iter().find(|t| t["policy_id"].is_null()).unwrap();
     assert!(
         plain["source"].is_null(),
         "无挂单交易来源应为 null: {plain:?}"
     );
 
-    // 软删保单：历史引用照常返回名称 + 已删除状态（引用保留不置空，ADR-0051 决策 5）
     {
         let c = conn.lock().unwrap();
         c.execute(
@@ -432,16 +403,11 @@ async fn test_get_transactions_includes_policy_source() {
     assert_eq!(premium["source"]["status"], "deleted");
 }
 
-/// 行携带计划来源（spec #704 / issue #707 计划三形态分支）：期次生成的交易返回
-/// `{kind: "subscription", entity_id: 计划 id, display_name: 计划名（备注）,
-/// status}`；已取消计划携带 `status: "cancelled"`；无期次链接的交易 `source`
-/// 为 `null`。计划/期次行直插（scheduled 域无 HTTP 端点，先例保单直插）。
 #[tokio::test]
 async fn test_get_transactions_includes_plan_source() {
     let (app, conn) = setup_app();
     let account_id = create_account_via_api(&app, "现金").await;
 
-    // 先经既有 batch 端点落两笔交易（一挂期次、一不挂），再直插计划与期次行
     let linked = format!(
         r#"{{"kind":"expense","amount_cents":3000,"currency_code":"CNY","account_id":"{account_id}","date":"2026-02-01"}}"#
     );
@@ -482,7 +448,6 @@ async fn test_get_transactions_includes_plan_source() {
     let txs = items_of(&body);
     assert_eq!(txs.len(), 2);
 
-    // 期次生成的交易：来源 = 订阅计划（实体 id + 计划名，已取消标注）
     let from_plan = txs
         .iter()
         .find(|t| t["id"] == linked_txn_id.as_str())
@@ -498,7 +463,6 @@ async fn test_get_transactions_includes_plan_source() {
         "期次生成的交易来源应为已取消订阅计划: {from_plan:?}"
     );
 
-    // 无期次链接的交易：来源为空
     let plain_txn = txs
         .iter()
         .find(|t| t["id"] != linked_txn_id.as_str())
@@ -509,17 +473,11 @@ async fn test_get_transactions_includes_plan_source() {
     );
 }
 
-/// 行携带物品来源（spec #704 / issue #708 物品分支）：溯源指针反查，返回
-/// `{kind: "item", entity_id: 物品 id, display_name: 物品名, status}`；已处置物品
-/// 携带 `status: "disposed"`（物品列表仍在册、跳转不落空）；软删物品不反查——
-/// 与溯源唯一守卫同口径（只看未删除物品，该交易可再次建物品），`source` 为
-/// `null`。物品行直插（item 域 IPC-only 无 HTTP 端点，先例保单/计划直插）。
 #[tokio::test]
 async fn test_get_transactions_includes_item_source() {
     let (app, conn) = setup_app();
     let account_id = create_account_via_api(&app, "现金").await;
 
-    // 经既有 batch 端点落三笔交易：两笔建物品、一笔不建
     let with_item_1 = format!(
         r#"{{"kind":"expense","amount_cents":599900,"currency_code":"CNY","account_id":"{account_id}","date":"2026-02-01"}}"#
     );
@@ -538,7 +496,6 @@ async fn test_get_transactions_includes_item_source() {
     let txn_id_1 = created[0]["id"].as_str().unwrap().to_string();
     let txn_id_2 = created[1]["id"].as_str().unwrap().to_string();
 
-    // 直插物品行：item-1 在用、item-2 已处置（溯源指针指向各自购买交易）
     {
         let c = conn.lock().unwrap();
         c.execute(
@@ -559,7 +516,6 @@ async fn test_get_transactions_includes_item_source() {
     let txs = items_of(&body);
     assert_eq!(txs.len(), 3);
 
-    // 在用物品：来源 = 物品（实体 id + 物品名，无状态标注）
     let in_use = txs.iter().find(|t| t["id"] == txn_id_1.as_str()).unwrap();
     assert_eq!(
         in_use["source"],
@@ -572,7 +528,6 @@ async fn test_get_transactions_includes_item_source() {
         "购买交易来源应为溯源物品: {in_use:?}"
     );
 
-    // 已处置物品：来源照常返回名称 + 已处置状态标注（物品列表仍在册）
     let disposed = txs.iter().find(|t| t["id"] == txn_id_2.as_str()).unwrap();
     assert_eq!(
         disposed["source"],
@@ -585,7 +540,6 @@ async fn test_get_transactions_includes_item_source() {
         "已处置物品的购买交易来源应携带已处置标注: {disposed:?}"
     );
 
-    // 未建物品的交易：来源为空
     let plain_txn = txs
         .iter()
         .find(|t| t["id"] != txn_id_1.as_str() && t["id"] != txn_id_2.as_str())
@@ -595,7 +549,6 @@ async fn test_get_transactions_includes_item_source() {
         "未建物品交易 source 应为 null: {plain_txn:?}"
     );
 
-    // 软删物品：不反查，来源回退为空（与溯源唯一守卫同口径，该交易可再次建物品）
     {
         let c = conn.lock().unwrap();
         c.execute("UPDATE items SET is_deleted=1 WHERE id='item-1'", [])
@@ -610,18 +563,10 @@ async fn test_get_transactions_includes_item_source() {
     );
 }
 
-/// 行携带标的来源（spec #704 / issue #709 标的分支）：证券交易记录按生成交易
-/// id 反查，返回 `{kind: "instrument", entity_id: 标的 id, display_name: 代码 +
-/// 名称（空格连接），status: null}`——标的字典无软删（被流水引用的标的不可
-/// 删），来源恒命中、无状态标注；无标的交易 `source` 为 `null`。标的行直插
-/// （instrument 域无按 id HTTP 端点，先例保单/计划/物品直插）；买卖交易经
-/// batch 端点同一 wire（kind=buy + instrument_id/quantity/price_cents）。
 #[tokio::test]
 async fn test_get_transactions_includes_instrument_source() {
     let (app, conn) = setup_app();
 
-    // 投资账户与标的经守门认可的种子/域薄皮（ADR-0084）：seed_account 直落
-    // investment 户；create_instrument 与 IPC/HTTP 创建入口同一域接缝
     let account_id;
     let instrument_id;
     {
@@ -640,7 +585,6 @@ async fn test_get_transactions_includes_instrument_source() {
         .unwrap();
     }
 
-    // 买入经既有 batch 端点（行为层重算金额并落 security_transactions 扩展行）
     let buy = format!(
         r#"{{"kind":"buy","amount_cents":0,"currency_code":"CNY","account_id":"{account_id}","instrument_id":"{instrument_id}","quantity":2,"price_cents":100000,"date":"2026-02-01"}}"#
     );
@@ -656,7 +600,6 @@ async fn test_get_transactions_includes_instrument_source() {
     let txs = items_of(&body);
     assert_eq!(txs.len(), 2);
 
-    // 买入交易：来源 = 标的（实体 id + 代码与名称，无状态标注）
     let buy_txn = txs.iter().find(|t| t["id"] == buy_txn_id.as_str()).unwrap();
     assert_eq!(
         buy_txn["source"],
@@ -669,7 +612,6 @@ async fn test_get_transactions_includes_instrument_source() {
         "买入交易来源应为标的: {buy_txn:?}"
     );
 
-    // 无标的交易：来源为空
     let plain_txn = txs.iter().find(|t| t["id"] != buy_txn_id.as_str()).unwrap();
     assert!(
         plain_txn["source"].is_null(),
@@ -677,10 +619,6 @@ async fn test_get_transactions_includes_instrument_source() {
     );
 }
 
-/// HTTP 缺省行数上限（issue #1631）：不传分页参数不再返回全部，等价第一页 ×
-/// 上限 100（total 恒返回，客户端据 total 翻页）——多端一次拉全表可拖垮壳进程
-/// 只读连接与客户端。IPC 通道缺省全量语义不变（只动 HTTP-only 端点）。
-/// 删除 handler 缺省上限注入即红（断言对准 items 条数与 total，ADR-0087）。
 #[tokio::test]
 async fn test_get_transactions_default_caps_at_page_size_100() {
     let (app, _) = setup_app();
@@ -710,15 +648,11 @@ async fn test_get_transactions_default_caps_at_page_size_100() {
     );
     assert_eq!(body["total"], 150, "total 恒为过滤后总数，供客户端翻页");
 
-    // 分页取回其余 50 条：客户端分页可取齐（读回核对纪律的机械可行性）
     let (_, p2) = get_json(&app, "/api/v1/transactions?page=2").await;
     assert_eq!(items_of(&p2).len(), 50, "第 2 页返回剩余 50 条");
     assert_eq!(p2["total"], 150);
 }
 
-/// HTTP 显式 page_size 超上限 → 400 码化错误（issue #1631，决策 2：拒绝而非
-/// 静默截断——截断会造成读回少行不自知，AI 按码自纠）。壳三件套断言面：
-/// HTTP 状态码 + 稳定错误码 + 中文 message 与 params。删除上限校验即红。
 #[tokio::test]
 async fn test_get_transactions_page_size_over_cap_returns_coded_400() {
     let (app, _) = setup_app();
@@ -738,9 +672,6 @@ async fn test_get_transactions_page_size_over_cap_returns_coded_400() {
     );
 }
 
-/// HTTP limit 同规加固（issue #1631）：limit 是同一「单请求行数」上限的第二个
-/// 入口——超上限与负值（SQLite 负值无上限语义）都拒绝；边界 100 放行。
-/// 删除 limit 校验即红。
 #[tokio::test]
 async fn test_get_transactions_limit_out_of_range_returns_coded_400() {
     let (app, _) = setup_app();
@@ -765,7 +696,6 @@ async fn test_get_transactions_limit_out_of_range_returns_coded_400() {
         );
     }
 
-    // 边界放行：limit=100 与 page_size=100 都可用（上限本身不拒绝）
     let (status, body) = get_json(&app, "/api/v1/transactions?limit=100").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(items_of(&body).len(), 5);

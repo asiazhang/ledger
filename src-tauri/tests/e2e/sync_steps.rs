@@ -1,27 +1,3 @@
-//! 多端同步单端旅程 BDD 步骤（spec #863 / ADR-0091 决策 9）。
-//!
-//! 单端旅程：配置通道 → 触发同步 → 数据落库 → 挂起通知可见。真双端语义（LWW /
-//! 防双扣 / 重放幂等 / 源端折算）归域单测（ADR-0087），本文件不为域规则凑数据。
-//!
-//! 步骤直调域层公开接缝（`sync_engine::trigger` 的通道配置/构库/轮次编排/会话
-//! 信封形态、`sync_engine::channel` 的通道取件），不经壳层（测试无应用运行时）；
-//! 通道用真实 S3 桩（进程内 axum，域单测与命令集成测试同体消费，ADR-0084
-//! 决策 1；#1217 起场景通道换到 S3 后端），故「配置通道 → 触发同步 → 数据落库」
-//! 是真实 HTTP 语义而非内存替身。
-//!
-//! 桩按场景现起（`world.boot.sync_stub`，Drop 清理）：每个场景一个独立通道世界，
-//! 场景之间零串扰（域单测里桩是场景内局部量，同款纪律）。对端投递用「另起一个
-//! 设备库发布」与「直接写一段坏 op 的段文件」两条通道路径：前者经产品轮次，
-//! 后者（无公开入口能产出「引用不存在账户的 op」）经共享的**通道线格式替身**
-//! （`test_support::channel`，issue #956）按产品消费的字节形态成帧。
-//!
-//! 与测试工厂的分层边界（ADR-0086 决策 9）：本文件只共享两个**协议/线格式替身**
-//! —— `test_support::s3` 的 **S3 协议替身**（真实 HTTP 服务的进程内实现）
-//! 与 `test_support::channel` 的**通道线格式替身**（字节级成帧），两者均由
-//! ≥2 层同体消费（ADR-0084 准入）；**不消费工厂的建库/种子/默认值集**——BDD 侧
-//! 建库走产品开库入口（world 的 `DbState`）、种子走 `crate::common` 的 e2e 共享
-//! 助手、输入走 `step_inputs`、写入走 `step_verbs`，两层互不共享默认值。
-
 use cucumber::{given, then, when};
 use rusqlite::Connection;
 
@@ -43,17 +19,10 @@ use crate::world::LedgerWorld;
 use ledger_infra::db::DbState;
 use tauri_app_lib::test_support::{S3Addressing, S3StubConfig, publish_raw_segment, spawn_s3_stub};
 
-/// 把阻塞的通道工作（S3 传输桥的真 HTTP 往返）移出异步上下文：cucumber
-/// 场景跑在 tokio 运行时内，S3 传输桥自持专用线程与阻塞等待（多端同步域异步化
-/// #1405 另案前传输面同步形态），直接占用运行时线程会拖死调度。`block_in_place`
-/// 声明「本段要阻塞」——与产品侧把同步轮次放进阻塞线程池同一语义
-///（ADR-0069 / 壳层 `sync_now` 的接线形态）。
 fn blocking<T>(f: impl FnOnce() -> T) -> T {
     tokio::task::block_in_place(f)
 }
 
-/// 场景级通道句柄（world 不持它——通道是配置产物，随场景现构）。
-/// 构库本身要起 S3 传输桥（自持专用线程），故整段在阻塞上下文中执行（见 [`blocking`]）。
 fn channel_of(world: &LedgerWorld) -> SyncChannel {
     let config = {
         let conn = world_conn!(world);
@@ -64,7 +33,6 @@ fn channel_of(world: &LedgerWorld) -> SyncChannel {
     blocking(|| build_channel(&config).expect("通道构库应成功"))
 }
 
-/// 场景通道配置（S3 后端 + 本场景桩；空间字段由调用方给）。
 fn stub_channel_config(world: &LedgerWorld, space: &str) -> SyncChannelConfig {
     let stub = world.boot.sync_stub.as_ref().expect("场景应先起通道桩");
     SyncChannelConfig {
@@ -79,32 +47,23 @@ fn stub_channel_config(world: &LedgerWorld, space: &str) -> SyncChannelConfig {
     }
 }
 
-/// 本机设备标识（判定依据读取，非夹具）。
 fn device_id_of(conn: &Connection) -> String {
     conn.query_row("SELECT id FROM sync_device LIMIT 1", [], |r| r.get(0))
         .expect("本机设备标识应已生成")
 }
-
-// ---------------------------------------------------------------------------
-// Given
-// ---------------------------------------------------------------------------
 
 #[given(expr = "以当前账本配置同步通道 空间 {string}")]
 fn configure_channel(world: &mut LedgerWorld, space: String) {
     configure_channel_impl(world, space);
 }
 
-/// 同一段落在「用户动作」语境下也出现（旅程首步「配置通道」）：cucumber 按关键字
-/// 匹配步骤定义，故 When 形态另行注册、委托同一实现（语义零分叉）。
 #[when(expr = "以当前账本配置同步通道 空间 {string}")]
 fn configure_channel_when(world: &mut LedgerWorld, space: String) {
     configure_channel_impl(world, space);
 }
 
 fn configure_channel_impl(world: &mut LedgerWorld, space: String) {
-    // 场景前置：清会话密钥记忆（进程级单例跨场景共享，明文库场景不应残留密文形态）。
     SessionEnvelope::forget();
-    // 通道桩按场景现起（同场景内重复配置复用同一桩——语义等价于「改配置」）。
     if world.boot.sync_stub.is_none() {
         world.boot.sync_stub = Some(spawn_s3_stub(S3StubConfig::new(S3Addressing::PathStyle)));
     }
@@ -127,19 +86,11 @@ fn write_expense(
         date,
         ..expense_input(amount, &account_id, "2026-02-01")
     };
-    // 步骤动词（ADR-0086 决策 1/3）：写入经共享动词走公开写入口，步骤函数
-    // 只做文本解析 + 动词调用（不直调行为层）。
     create_transaction_verb(world, input);
 }
 
-/// 对端把同一笔数据推上同一通道：另起一个「对端设备」库（同构种子）跑一轮发布。
-/// 桩根目录按同步空间共享，故对端的段对本端可见——本端随后拉取即得真实数据。
 #[given(expr = "对端账本已把同一笔数据推上同一通道")]
 fn peer_publishes(world: &mut LedgerWorld) {
-    // 对端库：e2e 共享种子形态（`crate::common`，非测试工厂——ADR-0086 决策 9
-    // 分层互斥）。账户 + 一笔支出都经域公开写入口，产出账户 op 与交易 op 随行：
-    // 本端重放时账户先落地，交易 op 才有可引用的外键——「对端数据落到本端」的
-    // 真实形态（若只发交易 op，本端会因缺账户外键而挂起）。
     let peer = DbState::open_in_memory().expect("对端库初始化失败");
     {
         let conn = peer.conn.lock().expect("对端连接锁应可获取");
@@ -158,10 +109,6 @@ fn peer_publishes(world: &mut LedgerWorld) {
     });
 }
 
-/// 对端投递一条引用不存在账户的操作：按通道线格式写一个含坏 op 的段 + manifest。
-/// 该 op 外键指向不存在的账户，重放必然被账户存活守卫拒绝——挂起队列因此非空
-///（「挂起通知可见」的被测前提）。此形态无公开入口可产出（域写入口有外键守卫），
-/// 故经共享的线格式替身成帧（issue #956），字节形态与产品消费的形状同源。
 #[given(expr = "对端投递一条引用不存在账户的操作")]
 fn peer_delivers_unreplayable_op(world: &mut LedgerWorld) {
     let layout = ChannelLayout::new("default").expect("布局应可构造");
@@ -173,13 +120,10 @@ fn peer_delivers_unreplayable_op(world: &mut LedgerWorld) {
     };
     let channel = blocking(|| build_channel(&config).expect("通道构库应成功"));
     let transport = channel.transport();
-    // 对端身份与时钟：段必须归属该流（通道侧有错流防御），故用固定设备 id。
     let op = SyncOp {
         op_id: "e2e-parked-op".into(),
         device_id: "e2e-peer-device".into(),
         clock: 1,
-        // 与当前 schema 同版（走重放路径而非 schema 偏斜挂起）：取本场景库的
-        // `user_version`（迁移后即当前版本）。
         schema_version: world_conn!(world)
             .query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
             .expect("读 schema 版本应成功"),
@@ -242,10 +186,6 @@ fn point_to_unreachable_channel(world: &mut LedgerWorld) {
     .expect("通道配置应落库");
 }
 
-// ---------------------------------------------------------------------------
-// When
-// ---------------------------------------------------------------------------
-
 #[when(expr = "打开应用即同步一轮")]
 fn auto_sync_once(world: &mut LedgerWorld) {
     let conn = world_conn!(world);
@@ -269,7 +209,6 @@ fn manual_sync_once(world: &mut LedgerWorld) {
 
 #[when(expr = "以密文库会话形态打开应用即同步一轮")]
 fn auto_sync_encrypted_session(world: &mut LedgerWorld) {
-    // 密文库会话形态：记入会话口令（自动轮次据此封包，不读钥匙串）。
     SessionEnvelope::remember(SessionEnvelope::Encrypted("master-pass".into()));
     let session = SessionEnvelope::current();
     world.boot.sync_session_encrypted = matches!(session, SessionEnvelope::Encrypted(_));
@@ -279,10 +218,6 @@ fn auto_sync_encrypted_session(world: &mut LedgerWorld) {
     }));
     SessionEnvelope::forget();
 }
-
-// ---------------------------------------------------------------------------
-// Then
-// ---------------------------------------------------------------------------
 
 #[then(expr = "通道上应有本机账本目录")]
 fn channel_has_book_dir(world: &mut LedgerWorld) {

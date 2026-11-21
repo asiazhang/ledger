@@ -1,11 +1,3 @@
-//! 实物资产（PhysicalAsset）BDD 步骤（issue #466 / spec #465 / ADR-0064）：
-//! 建档守卫、字段读回（含首条估值为当前值）、在持合计与失效信号计数。
-//!
-//! 经 `physical_asset` 域 API（`tauri_app_lib::physical_asset`）断言外部可观察
-//! 行为：建档读回、校验错误信息、写后发失效信号（notify 注入，生产路径发
-//! `ledger:changed`）、列表与在持合计。汇率 Given 复用 `scheduled_steps/occurrence`
-//! 的已注册步骤（写 `exchange_rates` 当期表）。
-
 use cucumber::{given, then, when};
 
 use ledger_physical_asset::{
@@ -16,10 +8,9 @@ use ledger_physical_asset::{
 use crate::common::assert_last_error_contains;
 use crate::world::LedgerWorld;
 
-/// 哨兵值：「无」= 日期缺省（估值日期取今天）/ 金额缺省 / 币种缺省。
 const NONE: &str = "无";
 
-#[allow(clippy::too_many_arguments)] // cucumber step 签名由表达式参数决定，无法缩减
+#[allow(clippy::too_many_arguments)]
 fn build_input(
     name: &str,
     purchase_date: &str,
@@ -29,9 +20,7 @@ fn build_input(
     valuation_currency: &str,
     valuation_date: &str,
 ) -> PhysicalAssetInput {
-    // 金额哨兵「无」→ None（缺失，触发必填报错路径）；存在时解析整数分。
     let price = purchase_price.parse::<i64>().ok();
-    // 购买价存在且币种给出时才携带（触发成对校验路径），同保单保额先例。
     let purchase_currency_code = (price.is_some() && !purchase_currency.eq_ignore_ascii_case(NONE))
         .then(|| purchase_currency.to_string());
     PhysicalAssetInput {
@@ -47,16 +36,13 @@ fn build_input(
     }
 }
 
-/// 创建实物资产并要求成功；记录失效信号次数（写后发 `ledger:changed` 的 seam 断言）。
-/// Given/When 双注册（先例 dashboard_steps 已买入）：其它域场景可作前置建档，
-/// 也可在动作流中建档（#469 净资产第三腿场景复用）。
 #[given(
     expr = "创建实物资产 名称 {string} 购买日期 {string} 购买价 {string} 币种 {string} 估值 {string} 估值币种 {string} 估值日期 {string}"
 )]
 #[when(
     expr = "创建实物资产 名称 {string} 购买日期 {string} 购买价 {string} 币种 {string} 估值 {string} 估值币种 {string} 估值日期 {string}"
 )]
-#[allow(clippy::too_many_arguments)] // cucumber step 签名由表达式参数决定，无法缩减
+#[allow(clippy::too_many_arguments)]
 fn create_physical_asset(
     world: &mut LedgerWorld,
     name: String,
@@ -86,11 +72,10 @@ fn create_physical_asset(
     }
 }
 
-/// 尝试创建实物资产并捕获错误（供「应返回错误」断言；失败不发信号）。
 #[when(
     expr = "尝试创建实物资产 名称 {string} 购买日期 {string} 购买价 {string} 币种 {string} 估值 {string} 估值币种 {string} 估值日期 {string}"
 )]
-#[allow(clippy::too_many_arguments)] // cucumber step 签名由表达式参数决定，无法缩减
+#[allow(clippy::too_many_arguments)]
 fn try_create_physical_asset(
     world: &mut LedgerWorld,
     name: String,
@@ -120,7 +105,6 @@ fn try_create_physical_asset(
     }
 }
 
-/// 读取最近创建资产的详情（详情读路径场景：与列表同一读口径）。
 #[when(expr = "读取实物资产详情")]
 fn get_physical_asset_detail(world: &mut LedgerWorld) {
     let id = world
@@ -134,7 +118,6 @@ fn get_physical_asset_detail(world: &mut LedgerWorld) {
     }
 }
 
-/// 拉取列表快照（默认口径 = 在持；合计口径恒为在持，与筛选无关）。
 #[then(expr = "实物资产列表应包含 {int} 件资产")]
 fn list_physical_assets(world: &mut LedgerWorld, expected: usize) {
     let list = list_physical_assets_domain(&world_conn!(world), None).expect("列表实物资产应成功");
@@ -174,7 +157,6 @@ fn assert_asset_valuation(world: &mut LedgerWorld, index: usize, cents: i64, cur
     );
 }
 
-/// 估值日期缺省 = 建档当天的本地今天（域内取当前日期，先例物品使用成本）。
 #[then(expr = "第 {int} 件资产估值日期应为今天")]
 fn assert_asset_valuation_today(world: &mut LedgerWorld, index: usize) {
     let today = chrono::Local::now().date_naive().to_string();
@@ -268,7 +250,6 @@ fn assert_holding_total(world: &mut LedgerWorld, cents: i64, currency: String) {
     assert_eq!(list.native_currency, currency, "合计本位币代码不符");
 }
 
-/// 唯一 ID + 审计字段（UUID v7 + 软删标志复位 + 版本起点）。
 #[then(expr = "第 {int} 件资产应有唯一 ID 与审计字段")]
 fn assert_asset_audit(world: &mut LedgerWorld, index: usize) {
     let asset = &world
@@ -328,6 +309,5 @@ fn assert_detail_valuation(
         Some(native_cents),
         "详情当前估值折本位币不符"
     );
-    // 折算基准恒为全局默认币种（Amount 接缝）。
     assert_eq!(asset.native_currency, "CNY", "详情本位币代码不符");
 }

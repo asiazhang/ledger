@@ -1,10 +1,3 @@
-//! 日志初始化与滚动清理（按天滚动、保留 7 天，issue #283）+ 日志档位闭集与
-//! 运行期滤镜接管（spec #608 / #611）。
-//!
-//! 壳层机制（spec #1086 P5 / #1108 壳层收敛）：本模块只被壳层消费（启动接线、
-//! 日志命令与设置命令壳），正住址即壳层根包；曾暂住
-//! `ledger-infra::shell_support`（ADR-0111 决策 2 / #1130），#1108 迁回。
-
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::OnceLock;
@@ -19,13 +12,9 @@ use tracing_subscriber::util::SubscriberInitExt;
 
 static LOG_DIR: OnceLock<PathBuf> = OnceLock::new();
 static GUARD: OnceLock<WorkerGuard> = OnceLock::new();
-/// 运行期可重载的全局日志滤镜句柄（spec #608 预铸接缝）：
-/// `init` 启动期以「RUST_LOG 或默认 info」建立滤镜后登记；`set_level` 经它替换滤镜。
 static FILTER_HANDLE: OnceLock<reload::Handle<EnvFilter, tracing_subscriber::Registry>> =
     OnceLock::new();
 
-/// 日志等级闭集（spec #608）：error / warn / info / debug / trace。
-/// 后端消费、持久化到 `app_settings`，随 Backup/Restore 迁移。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum LogLevel {
     Error,
@@ -36,7 +25,6 @@ pub enum LogLevel {
 }
 
 impl LogLevel {
-    /// 该档位对应的 EnvFilter 指令，亦是持久化的字符串表示。
     pub fn directive(self) -> &'static str {
         match self {
             LogLevel::Error => "error",
@@ -63,18 +51,12 @@ impl FromStr for LogLevel {
     }
 }
 
-/// 由档位构造对应的全局 EnvFilter（单一全局档位，不做定向 directives）。
 pub fn filter_for_level(level: LogLevel) -> EnvFilter {
     EnvFilter::new(level.directive())
 }
 
-/// 运行期把全局日志滤镜替换为指定档位（spec #608 预铸接缝，此时无调用方）。
-///
-/// 行为说明：`init` 启动期仍以「RUST_LOG 环境变量或默认 info」建立滤镜；
-/// 本函数只负责把已登记的全局句柄替换为指定档位——后续 `set_log_level` 命令经它切档。
 pub fn set_level(level: LogLevel) {
     let Some(handle) = FILTER_HANDLE.get() else {
-        // init 尚未登记句柄：没有可切换的全局滤镜，仅记录（区别于启动期 fail loud）。
         tracing::warn!("日志滤镜句柄未初始化，忽略等级切换");
         return;
     };
@@ -83,10 +65,6 @@ pub fn set_level(level: LogLevel) {
     }
 }
 
-/// 读取持久化档位（spec #608 / #611）：`app_settings` 的 `logging.level` 键，缺 key
-/// 或整表缺失（旧版本备份）回默认 info（`settings::get` 兜底）；解析失败（库内被写入
-/// 闭集外字符串）同样回默认 info 并告警——读路径不因坏值上抛，行为免费正确。
-/// 界面展示的持久化档位与实际生效档位可能不一致（RUST_LOG 运行时覆盖），属已接受取舍。
 pub fn persisted_level(conn: &rusqlite::Connection) -> LogLevel {
     let raw: String = ledger_infra::settings::get(
         conn,
@@ -103,11 +81,6 @@ pub fn persisted_level(conn: &rusqlite::Connection) -> LogLevel {
     })
 }
 
-/// 把持久化档位接管到运行期滤镜（spec #608 / #611 启动顺序契约）：启动期 `init`
-/// 以「RUST_LOG 环境变量或默认 info」建立滤镜，数据库就绪并读出持久化档位后
-/// [`set_level`] 接管一次。显式 `RUST_LOG` 在本次启动内优先（优先级：
-/// RUST_LOG > 持久化 > 默认 info），此时不覆盖、只记日志；终端/文件两条输出共用
-/// 同一滤镜、一起变化。密文库在解锁换连后再调用（锁定期间库未就绪）。
 pub fn apply_persisted_level(conn: &rusqlite::Connection) {
     if std::env::var_os("RUST_LOG").is_some() {
         tracing::info!("RUST_LOG 已显式设置，本次启动内以它为准，跳过持久化档位接管");
@@ -118,11 +91,6 @@ pub fn apply_persisted_level(conn: &rusqlite::Connection) {
     set_level(level);
 }
 
-/// 日志档位接管的应用状态形态（issue #1303 收单）：锁写连接读持久化档位并
-/// 接管运行期滤镜——启动引导（明文库就绪后）与业务可用起点编排（解锁/重置
-/// 成对换连后）两处消费，接替逐处手抄的「取状态 + 锁 + [`apply_persisted_level`]」
-/// 重复块。锁获取失败映射与两处原手抄行逐字节一致；[`DbState`] 未登记时 panic
-///（与 `app.state` 原语义一致——两处调用点均在连接就绪之后）。
 pub fn apply_persisted_level_via_state<R: Runtime>(
     app: &AppHandle<R>,
 ) -> ledger_infra::error::Result<()> {
@@ -135,10 +103,6 @@ pub fn apply_persisted_level_via_state<R: Runtime>(
     Ok(())
 }
 
-/// 校验闭集 + 持久化 + 运行期接管（`set_log_level` 命令与 BDD 共用，spec #611）：
-/// 非闭集档位返回码化错误 `settings.log-level-invalid`（未落库、未接管）；合法档位
-/// 写入 `app_settings`（经 settings 模块单点收口、置脏豁免 ADR-0032）后
-/// [`set_level`] 接管运行期滤镜（文件 / 终端共用同一滤镜）。
 pub fn set_persisted_level(
     conn: &rusqlite::Connection,
     level_str: &str,
@@ -160,14 +124,11 @@ pub fn set_persisted_level(
 }
 
 pub fn log_dir() -> &'static PathBuf {
-    // B 类豁免（ADR-0060）：日志目录由 init 在启动期首次登记；未初始化即启动装配
-    // 缺陷，fail loud。
     #[allow(clippy::expect_used)]
     LOG_DIR.get().expect("logger not initialized")
 }
 
 pub fn init(app_handle: &tauri::AppHandle) {
-    // B 类豁免（ADR-0060）：日志系统首次初始化失败即无法运行——fail loud。
     #[allow(clippy::expect_used)]
     let dir = app_handle.path().app_log_dir().expect("获取日志目录失败");
     #[allow(clippy::expect_used)]
@@ -203,9 +164,6 @@ pub fn init(app_handle: &tauri::AppHandle) {
     GUARD.set(guard).ok();
 }
 
-/// 日滚文件名前缀：`rolling::daily` 按 `{prefix}.{YYYY-MM-DD}` 产出文件名，
-/// 创建（`init`）与清理共用本常量防漂移——前缀曾写死为 `ledger.log.`，
-/// 与实际文件名永不相交，7 天保留从未生效（#1720 拷问期间发现）。
 const LOG_FILE_PREFIX: &str = "ledger";
 
 fn cleanup_old_logs(dir: &PathBuf) {
@@ -227,8 +185,6 @@ fn cleanup_old_logs(dir: &PathBuf) {
     }
 }
 
-/// 判断是否本模块日滚产物 `{LOG_FILE_PREFIX}.{YYYY-MM-DD}`；
-/// 日期须可解析，目录内无关文件不命中。
 fn is_rolling_log_name(name: &str) -> bool {
     name.strip_prefix(LOG_FILE_PREFIX)
         .and_then(|rest| rest.strip_prefix('.'))
@@ -243,9 +199,6 @@ mod tests {
     use super::*;
     use ledger_infra::test_utils::{CaptureLayer, CapturedEvent, ensure_global_max_level};
 
-    /// 在指定档位滤镜作用下执行 `f`，返回捕获到的 tracing 事件。
-    /// 先稳定全局最大级别（`ensure_global_max_level`），使 `debug!`/`trace!` 宏
-    /// 快路径不放行级别过滤，真正由该档位的 EnvFilter 决定是否放行（spec #608 接缝 2）。
     fn capture_with_level(level: LogLevel, f: impl FnOnce()) -> Vec<CapturedEvent> {
         ensure_global_max_level();
         let layer = CaptureLayer::new();
@@ -286,9 +239,6 @@ mod tests {
 
     #[test]
     fn reload_layer_switches_filter_at_runtime() {
-        // 生产接缝（reload::Layer + Handle）而非裸 EnvFilter：验证运行时重载确实
-        // 替换全局滤镜——info 档丢弃 debug!，reload 到 debug 档后同一 callsite 的
-        // debug! 被放行（文件/终端两条输出共用同一滤镜的语义依存于此）。
         ensure_global_max_level();
         let (filter_layer, handle) = reload::Layer::new(EnvFilter::new("info"));
         let layer = CaptureLayer::new();
@@ -321,7 +271,6 @@ mod tests {
 
     #[test]
     fn level_directives_round_trip() {
-        // 闭集五档由 Directive 往返一致（档位 → 指令字符串 → 档位）。
         for level in [
             LogLevel::Error,
             LogLevel::Warn,
@@ -331,24 +280,18 @@ mod tests {
         ] {
             assert_eq!(level.directive().parse::<LogLevel>().unwrap(), level);
         }
-        // 闭集外字符串应被拒绝。
         assert!("verbose".parse::<LogLevel>().is_err());
     }
 
-    // ---- 持久化档位读写（spec #611）----
-
     fn migrated_conn() -> rusqlite::Connection {
-        // 建库两行序经统一测试工厂承载（spec #728 / issue #758 / ADR-0084 决策 3/7）。
         crate::test_support::open()
     }
 
-    /// 缺 key / 缺表：`persisted_level` 回默认 info（`settings::get` 兜底）。
     #[test]
     fn persisted_level_defaults_to_info_when_unset() {
         assert_eq!(persisted_level(&migrated_conn()), LogLevel::Info);
     }
 
-    /// set→get 回读：`set_persisted_level` 写入后 `persisted_level` 读回一致。
     #[test]
     fn persisted_level_roundtrips_set_level() {
         let conn = migrated_conn();
@@ -356,7 +299,6 @@ mod tests {
         assert_eq!(persisted_level(&conn), LogLevel::Debug);
     }
 
-    /// 库内残留闭集外字符串：读回兜底默认 info（settings::set 是通用 KV 写、不校验闭集）。
     #[test]
     fn persisted_level_falls_back_when_stored_value_outside_closed_set() {
         let conn = migrated_conn();
@@ -369,7 +311,6 @@ mod tests {
         assert_eq!(persisted_level(&conn), LogLevel::Info);
     }
 
-    /// 闭集外档位被拒：未落库、未接管，读回仍默认；错误为码化错误。
     #[test]
     fn set_persisted_level_rejects_outside_closed_set() {
         let conn = migrated_conn();
@@ -378,10 +319,6 @@ mod tests {
         assert_eq!(persisted_level(&conn), LogLevel::Info);
     }
 
-    // ---- 日志清理命名匹配（根因：清理前缀与日滚文件名漂移，7 天保留曾从未生效）----
-
-    /// `rolling::daily(LOG_FILE_PREFIX)` 的真实产物名必须命中清理匹配：
-    /// 前缀再次写死成别的值即红（本用例即当时缺陷的负向条目）。
     #[test]
     fn rolling_log_names_match_cleanup() {
         assert!(is_rolling_log_name("ledger.2026-08-28"));
@@ -390,7 +327,6 @@ mod tests {
         )));
     }
 
-    /// 纯前缀、日期不可解析、异前缀的目录内无关文件不得被清理命中。
     #[test]
     fn cleanup_skips_unrelated_names() {
         assert!(!is_rolling_log_name("ledger"));

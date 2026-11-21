@@ -1,8 +1,3 @@
-//! 交易修改/删除 BDD 步骤（issue #761 迁移）：修改入参经 L1 [`existing_input`]
-//! 底座（既有行 → 全量替换入参）+ 步骤文本字段覆盖，写入收编 L2 修改/删除动词；
-//! 买卖铺垫与买卖修改经 create/update 动词，错误断言路径改走 try 形态，断言语义
-//! 不变。
-
 use cucumber::{then, when};
 use rusqlite::params;
 
@@ -17,7 +12,6 @@ use crate::step_verbs::{
 };
 use crate::world::LedgerWorld;
 
-/// 按 id 全字段替换最近一笔交易（修改场景），沿用原交易账户/币种等非编辑字段。
 #[when(expr = "修改最近交易 类型 {string} 金额 {int} 日期 {string} 备注 {string}")]
 fn update_last_txn(world: &mut LedgerWorld, kind: String, amount: i64, date: String, note: String) {
     let id = world
@@ -42,7 +36,6 @@ fn update_last_txn(world: &mut LedgerWorld, kind: String, amount: i64, date: Str
     world.txn.transactions_list = query_all_transactions(&world_conn!(world));
 }
 
-/// 尝试把最近一笔交易改为转账（缺目标账户），应触发按 kind 校验并记录错误。
 #[when(expr = "尝试修改最近交易为转账 金额 {int} 日期 {string}")]
 fn try_update_last_to_transfer(world: &mut LedgerWorld, amount: i64, date: String) {
     let id = world
@@ -68,8 +61,6 @@ fn try_update_last_to_transfer(world: &mut LedgerWorld, amount: i64, date: Strin
     capture_expected_error(world, result);
 }
 
-/// 删除最近一笔交易（软删除，与 IPC/HTTP 删除同一行为层权威），
-/// 供「编辑已删除交易」场景铺垫。
 #[when(expr = "删除最近交易")]
 fn delete_last_txn(world: &mut LedgerWorld) {
     let id = world
@@ -81,7 +72,6 @@ fn delete_last_txn(world: &mut LedgerWorld) {
     world.txn.transactions_list = query_all_transactions(&world_conn!(world));
 }
 
-/// 删除买入交易（issue #940 级联场景）：按标的定位 buy 交易 id，经删除动词软删。
 #[when(expr = "删除买入交易 {string}")]
 fn delete_buy_by_symbol(world: &mut LedgerWorld, symbol: String) {
     let id = trade_txn_id(world, &symbol, "buy");
@@ -89,9 +79,6 @@ fn delete_buy_by_symbol(world: &mut LedgerWorld, symbol: String) {
     world.txn.transactions_list = query_all_transactions(&world_conn!(world));
 }
 
-/// 按标的 + 动作（buy/sell）定位交易 id：场景内同标的多笔买卖并存，
-/// 不能依赖「最近交易」指针（买入后再卖出，最近交易已指向卖出）。
-/// pub(crate)：转换回归扫尾步骤复用（尝试删除被转换消耗的买入，issue #982）。
 pub(crate) fn trade_txn_id(world: &LedgerWorld, symbol: &str, action: &str) -> String {
     world_conn!(world)
         .query_row(
@@ -104,8 +91,6 @@ pub(crate) fn trade_txn_id(world: &LedgerWorld, symbol: &str, action: &str) -> S
         .expect("未找到对应买卖交易")
 }
 
-/// 经行为层创建一笔 buy/sell 交易（issue #180 编辑场景铺垫）：走真实写路径
-/// plan → insert → apply（买入建仓 / 卖出 FIFO 匹配），并记录为最近交易。
 fn insert_trade_for_edit(
     world: &mut LedgerWorld,
     kind: TransactionKind,
@@ -169,8 +154,6 @@ fn sell_for_edit(
     );
 }
 
-/// 构造 buy/sell 编辑入参（issue #180）：instrument_id 取自 security_transactions
-/// （扩展表投影，与前端编辑回填同一数据源）；金额传 0（后端按数量×单价±手续费重算）。
 fn trade_edit_input(
     world: &LedgerWorld,
     kind: TransactionKind,
@@ -203,7 +186,6 @@ fn trade_edit_input(
     }
 }
 
-/// 修改买入交易（issue #180）：全字段替换后重建持仓批次。
 #[when(expr = "修改买入交易 {string} 数量 {int} 单价 {int} 手续费 {int}")]
 fn update_buy(
     world: &mut LedgerWorld,
@@ -225,7 +207,6 @@ fn update_buy(
     world.txn.transactions_list = query_all_transactions(&world_conn!(world));
 }
 
-/// 尝试修改买入交易，应触发部分卖出守卫并记录错误（issue #180）。
 #[when(expr = "尝试修改买入交易 {string} 数量 {int} 单价 {int}")]
 fn try_update_partially_sold_buy(
     world: &mut LedgerWorld,
@@ -239,7 +220,6 @@ fn try_update_partially_sold_buy(
     capture_expected_error(world, result);
 }
 
-/// 修改卖出交易（issue #180）：回补持仓后按新输入重建卖出匹配。
 #[when(expr = "修改卖出交易 {string} 数量 {int} 单价 {int} 手续费 {int}")]
 fn update_sell(
     world: &mut LedgerWorld,
@@ -261,7 +241,6 @@ fn update_sell(
     world.txn.transactions_list = query_all_transactions(&world_conn!(world));
 }
 
-/// 尝试修改一笔已删除的交易，应返回明确错误（NotFound：已删除与不存在同口径）。
 #[when(expr = "尝试修改已删除的交易 金额 {int} 日期 {string}")]
 fn try_update_deleted_txn(world: &mut LedgerWorld, amount: i64, date: String) {
     let id = world
@@ -290,7 +269,6 @@ fn check_txn_version(world: &mut LedgerWorld, index: i64, expected_version: i64)
 
 #[then(expr = "标的 {string} 持仓数量应为 {int}")]
 fn assert_holding_quantity(world: &mut LedgerWorld, symbol: String, expected: i64) {
-    // 按标的定位持仓批次（场景内单账户，标的唯一确定批次）
     let quantity: f64 = world_conn!(world)
         .query_row(
             "SELECT remaining_quantity FROM security_lots \
@@ -305,7 +283,6 @@ fn assert_holding_quantity(world: &mut LedgerWorld, symbol: String, expected: i6
     );
 }
 
-/// 断言标的的持仓批次数（级联删除后批次应整批清理，issue #940）。
 #[then(expr = "标的 {string} 持仓批次应为 {int} 条")]
 fn assert_lot_count(world: &mut LedgerWorld, symbol: String, expected: i64) {
     let count: i64 = world_conn!(world)
@@ -319,7 +296,6 @@ fn assert_lot_count(world: &mut LedgerWorld, symbol: String, expected: i64) {
     assert_eq!(count, expected, "持仓批次数不符");
 }
 
-/// 断言买入/卖出明细与预期一致（编辑回填数据源：security_transactions JOIN instruments）。
 fn assert_trade_detail_of(
     world: &LedgerWorld,
     symbol: &str,
@@ -330,8 +306,6 @@ fn assert_trade_detail_of(
 ) {
     let id = trade_txn_id(world, symbol, action);
     let expected_instrument_id = instrument_id_by_symbol(&world_conn!(world), symbol);
-    // 直接断言扩展表投影（与 IPC get_transaction_trade 同一数据源：
-    // security_transactions JOIN instruments），验证编辑后回填数据正确
     let (instrument_id, trade_quantity, trade_price, trade_fee): (String, f64, i64, i64) =
         world_conn!(world)
             .query_row(

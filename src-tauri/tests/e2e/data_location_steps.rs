@@ -1,9 +1,3 @@
-//! DataLocation 启动引导 BDD 步骤（issue #132）。
-//!
-//! 与 backup.feature 同一的文件级接缝：真临时目录驱动真实文件系统，
-//! 每个 scenario 干净的目录现场，只断言外部可见行为（哪个目录的 `ledger.db`
-//! 被创建/保留、内容是否完整、回退信号）。
-
 use cucumber::{given, then, when};
 use rusqlite::Connection;
 
@@ -15,18 +9,12 @@ use ledger_infra::db::{data_location, init_db, open_connection, open_db_in, rese
 use crate::common::{count_transactions_in_file, seed_account_with_expenses};
 use crate::world::LedgerWorld;
 
-// ---------------------------------------------------------------------------
-// 场景现场
-// ---------------------------------------------------------------------------
-
 fn ensure_default_dir(world: &mut LedgerWorld) {
     if world.boot.dl_default_dir.is_none() {
         world.boot.dl_default_dir = Some(world.scratch_dir("e2e-dl-default"));
     }
 }
 
-/// 在指定文件库中建账户与交易：账户经域公开创建入口（余额缓存行不变量由
-/// 产品代码保证，#763 旁路归零），交易经共享种子助手（L1 工厂 + 行为层接缝）。
 fn seed_db(conn: &Connection, account: &str, count: usize) {
     seed_account_with_expenses(conn, account, "种子交易", count, 1000, "2026-03-01");
 }
@@ -35,7 +23,6 @@ fn count_transactions(db_path: &std::path::Path) -> usize {
     count_transactions_in_file(db_path, None) as usize
 }
 
-/// 抽取关键表的内容快照（排序后逐行拼接），供搬迁前后一致性比对。
 fn key_table_fingerprint(db_path: &std::path::Path) -> String {
     let conn = open_connection(db_path).unwrap();
     let mut fingerprint = String::new();
@@ -65,10 +52,6 @@ fn key_table_fingerprint(db_path: &std::path::Path) -> String {
     fingerprint
 }
 
-// ---------------------------------------------------------------------------
-// Given
-// ---------------------------------------------------------------------------
-
 #[given(expr = "默认数据目录中已有一个含 {int} 条交易的库")]
 fn default_dir_with_db(world: &mut LedgerWorld, count: usize) {
     ensure_default_dir(world);
@@ -96,7 +79,6 @@ fn pointer_to_target(world: &mut LedgerWorld) {
 fn pointer_to_target_with_db(world: &mut LedgerWorld, count: usize) {
     pointer_to_target(world);
     let target = world.boot.dl_target_dir.clone().unwrap();
-    // 真实流程中目标目录在壳层校验时已创建（#133）；场景现场直接准备就绪。
     std::fs::create_dir_all(&target).unwrap();
     let mut conn = open_connection(target.join(data_location::DB_FILE_NAME)).unwrap();
     init_db(&mut conn).unwrap();
@@ -112,7 +94,6 @@ fn pointer_corrupted(world: &mut LedgerWorld, raw: String) {
 #[given(expr = "指针文件指向一个无法创建的目标目录")]
 fn pointer_to_unusable_target(world: &mut LedgerWorld) {
     let default_dir = world.boot.dl_default_dir.clone().unwrap();
-    // 目标父级是一个普通文件 → create_dir_all 必然失败（跨平台）。
     let blocker = default_dir.join("blocker");
     std::fs::write(&blocker, b"not a directory").unwrap();
     let target = blocker.join("child");
@@ -137,10 +118,6 @@ fn record_default_db_bytes(world: &mut LedgerWorld) {
     let bytes = std::fs::read(default_dir.join(data_location::DB_FILE_NAME)).unwrap();
     world.boot.dl_default_db_bytes = Some(bytes);
 }
-
-// ---------------------------------------------------------------------------
-// When
-// ---------------------------------------------------------------------------
 
 #[when(expr = "执行 DataLocation 引导并打开数据库")]
 fn boot_and_open(world: &mut LedgerWorld) {
@@ -179,10 +156,6 @@ fn run_reset(world: &mut LedgerWorld) {
     assert!(conn.is_ok(), "启动失败重置失败: {:?}", conn.err());
     world.boot.dl_conn = Some(conn.unwrap());
 }
-
-// ---------------------------------------------------------------------------
-// Then
-// ---------------------------------------------------------------------------
 
 #[then(expr = "生效目录应为默认数据目录")]
 fn active_dir_is_default(world: &mut LedgerWorld) {
@@ -231,7 +204,6 @@ fn opened_db_contains(world: &mut LedgerWorld, count: usize) {
 
 #[then(expr = "打开的库应为空库（0 条交易）")]
 fn opened_db_is_empty(world: &mut LedgerWorld) {
-    // 复用同一断言（显式 0），保持 feature 文案可读。
     opened_db_contains(world, 0);
 }
 
@@ -296,15 +268,8 @@ fn bak_file_preserved(world: &mut LedgerWorld) {
     assert!(bak.exists(), ".bak 文件应保留: {}", bak.display());
 }
 
-// ---------------------------------------------------------------------------
-// 更改意图提交与信息查询（issue #133；#408 逻辑下沉 db 基础设施，
-// BDD 与真实 IPC 命令调用同一实现接缝）
-// ---------------------------------------------------------------------------
-
-/// 提交更改意图并记录结果（成功 → outcome，失败 → last_error）。
 fn submit(world: &mut LedgerWorld, target: &std::path::Path, adopt_existing: bool) {
     let default_dir = world.boot.dl_default_dir.clone().unwrap();
-    // 清空上次结果，避免跨 When 的时序耦合。
     world.boot.dl_last_outcome = None;
     world.last_error = None;
     match validate_and_commit(&default_dir, target, adopt_existing) {
@@ -324,7 +289,6 @@ fn submit_to_fresh_dir(world: &mut LedgerWorld) {
 #[when(expr = "向一个无法创建的目录提交更改意图")]
 fn submit_to_uncreatable(world: &mut LedgerWorld) {
     let default_dir = world.boot.dl_default_dir.clone().unwrap();
-    // 目标父级是一个普通文件 → create_dir_all 必然失败（跨平台）。
     let blocker = default_dir.join("blocker");
     std::fs::write(&blocker, b"not a directory").unwrap();
     let target = blocker.join("child");
@@ -335,12 +299,6 @@ fn submit_to_uncreatable(world: &mut LedgerWorld) {
 #[when(expr = "向一个只读目录提交更改意图")]
 fn submit_to_readonly_dir(world: &mut LedgerWorld) {
     let target = world.scratch_dir("e2e-dl-readonly");
-    // 目录存在但不可写，两个互补手段（顺序关键：先建探针目录再改权限，
-    // 否则非 root 环境下创建探针目录本身就会 PermissionDenied）：
-    // ① 用探针同名目录预占试写路径：fs::write 对目录必然报 EISDIR，
-    //    root 也绕不过，保证任何环境下都命中「目标目录不可写」拒绝分支；
-    // ② Unix 权限位（非 root 下真实生效；root 绕过权限检查，不可依赖）。
-    //    文件名取自 WRITE_PROBE_FILE_NAME 单一来源，不硬编码实现细节。
     std::fs::create_dir(target.join(WRITE_PROBE_FILE_NAME)).unwrap();
     #[cfg(unix)]
     {
@@ -349,7 +307,6 @@ fn submit_to_readonly_dir(world: &mut LedgerWorld) {
     }
     world.boot.dl_target_dir = Some(target.clone());
     submit(world, &target, false);
-    // 恢复权限，便于临时目录清理。
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -360,7 +317,6 @@ fn submit_to_readonly_dir(world: &mut LedgerWorld) {
 #[when(expr = "向副业账的登记目录提交更改意图")]
 fn submit_to_other_book_dir(world: &mut LedgerWorld) {
     let default_dir = world.boot.dl_default_dir.clone().unwrap();
-    // 目标 = 指定账本的登记目录（清单来自注册表最新落盘态，与界面同一读入口）。
     let other_dir = match data_location_configured_books(&default_dir) {
         Ok(books) => books
             .into_iter()
@@ -386,7 +342,6 @@ fn submit_to_active_dir(world: &mut LedgerWorld) {
     submit(world, &active, false);
 }
 
-/// 尝试在搬迁意图未生效期间新建账本：应被拒绝（book.registry-busy）。
 #[when(expr = "尝试新建账本应被拒绝（搬迁未完成）")]
 fn create_book_while_relocation_pending(world: &mut LedgerWorld) {
     let default_dir = world.boot.dl_default_dir.clone().unwrap();
@@ -425,14 +380,9 @@ fn restore_default_adopt(world: &mut LedgerWorld) {
 #[when(expr = "查询 DataLocation 信息")]
 fn query_info(world: &mut LedgerWorld) {
     let default_dir = world.boot.dl_default_dir.clone().unwrap();
-    // 与真实命令一致：active/fallback 来自启动期已登记的引导结果。
     let boot = world.boot.last_boot.clone();
     world.boot.dl_last_info = Some(gather_info_from_boot(&default_dir, boot.as_ref()));
 }
-
-// ---------------------------------------------------------------------------
-// Then：提交/查询结果断言
-// ---------------------------------------------------------------------------
 
 #[then(expr = "提交结果应为意图已落盘")]
 fn outcome_committed(world: &mut LedgerWorld) {
@@ -441,7 +391,6 @@ fn outcome_committed(world: &mut LedgerWorld) {
         outcome.committed && !outcome.requires_choice,
         "提交结果应为意图已落盘，实际 {outcome:?}"
     );
-    // 意图指向是否正确由「指针文件应指向目标/默认数据目录」步骤断言。
 }
 
 #[then(expr = "提交结果应为需要二选一")]
@@ -543,7 +492,6 @@ fn info_not_pending(world: &mut LedgerWorld) {
 #[given(expr = "一个已含 {int} 条交易库的目标目录")]
 fn target_dir_with_db_no_pointer(world: &mut LedgerWorld, count: usize) {
     ensure_default_dir(world);
-    // 不写指针：仅准备目标现场，供「二选一」场景提交时使用。
     let target = world.scratch_dir("e2e-dl-adopt");
     let mut conn = open_connection(target.join(data_location::DB_FILE_NAME)).unwrap();
     init_db(&mut conn).unwrap();
@@ -551,7 +499,6 @@ fn target_dir_with_db_no_pointer(world: &mut LedgerWorld, count: usize) {
     world.boot.dl_target_dir = Some(target);
 }
 
-/// 读取注册表最新落盘态的账本清单（展示名 → 登记目录）。
 fn data_location_configured_books(
     default_dir: &std::path::Path,
 ) -> Result<Vec<(String, std::path::PathBuf)>, String> {

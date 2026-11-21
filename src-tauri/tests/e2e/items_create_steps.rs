@@ -1,13 +1,3 @@
-//! 物品（Item）BDD 步骤 · 创建主题（issue #115 / spec #113）：创建与读回。
-//!
-//! 经物品域入口 `item::domain`（域目录化前为 `commands::item` 的 `*_internal` seam）
-//! 断言外部可观察行为：
-//! 创建读回、每天成本（`item::cost` 口径，含起止两端的日历天数）、金额折算、
-//! 写后发失效信号（notify 注入，生产路径发 `ledger:changed`）。
-//! 通用列表/字段断言（物品列表应包含 N 件、第 N 件名称/金额/状态/已用天数、
-//! 唯一 ID 与审计字段、失效信号）亦收敛于此，供其余主题模块的 feature 场景
-//! 复用（cucumber 步骤全局注册，各模块步骤均可被任一 feature 命中）。
-
 use cucumber::{then, when};
 
 use ledger_infra::error::AppError;
@@ -22,11 +12,6 @@ use crate::step_inputs::expense_input;
 use crate::step_verbs::create_account_verb;
 use crate::world::LedgerWorld;
 
-/// 脚手架：创建一笔 expense 购买交易并返回其 id（issue #207 起物品创建必关联
-/// 购买交易，未显式 Given 交易的场景由本脚手架补齐溯源）。账户按币种惰性创建
-/// （经账户域公开创建入口动词，#763 旁路归零）并注册到 world（与「存在账户」
-/// Given 同款）；交易经 L1 工厂构造后走 `create_transaction_internal` 接缝，
-/// 金额/日期/汇率不合法会在此处失败，与真实写入路径一致。
 fn scaffold_purchase_tx(
     world: &mut LedgerWorld,
     date: &str,
@@ -47,10 +32,6 @@ fn scaffold_purchase_tx(
         .id
 }
 
-/// 创建物品并要求成功；记录失效信号次数（写后发 `ledger:changed` 的 seam 断言）。
-///
-/// issue #207 起创建必关联购买交易（ADR-0025 唯一入口）：本步骤先脚手架一笔同额
-/// 支出交易作为溯源再关联创建，后端以交易值覆盖带出（与本步骤入参一致，既有断言不变）。
 #[when(expr = "创建物品 {string} 购买日期 {string} 总成本 {int} 币种 {string}")]
 fn create_item(
     world: &mut LedgerWorld,
@@ -76,7 +57,6 @@ fn create_item(
     }
 }
 
-/// 创建物品（购买日期 = 今天，本地时区日历日，同 `item::cost::today` 口径）。
 #[when(expr = "创建物品 {string} 今天购买 总成本 {int} 币种 {string}")]
 fn create_item_bought_today(
     world: &mut LedgerWorld,
@@ -88,7 +68,6 @@ fn create_item_bought_today(
     create_item(world, name, date, cost_cents, currency);
 }
 
-/// 创建物品（购买日期 = 今天前 N 天；N=9 → 含起止两端共 10 天）。
 #[when(expr = "创建物品 {string} 今天前 {int} 天购买 总成本 {int} 币种 {string}")]
 fn create_item_bought_days_ago(
     world: &mut LedgerWorld,
@@ -103,8 +82,6 @@ fn create_item_bought_days_ago(
     create_item(world, name, date, cost_cents, currency);
 }
 
-/// 尝试创建物品并捕获错误（供「应返回错误」断言，与交易场景同一 seam）。
-/// 同 `create_item`：先脚手架购买交易再关联创建（issue #207）。
 #[when(expr = "尝试创建物品 {string} 购买日期 {string} 总成本 {int} 币种 {string}")]
 fn try_create_item(
     world: &mut LedgerWorld,
@@ -128,7 +105,6 @@ fn try_create_item(
     };
 }
 
-/// 刷新物品列表快照并断言件数。
 #[then(expr = "物品列表应包含 {int} 件物品")]
 fn refresh_and_check_item_count(world: &mut LedgerWorld, expected: usize) {
     world.item.items_list = domain::list_items(&world_conn!(world)).expect("列出物品失败");
@@ -205,7 +181,6 @@ fn check_no_item_signals(world: &mut LedgerWorld) {
     assert_eq!(world.item.item_signal_count, 0, "不应发出失效信号");
 }
 
-/// 复用交易的「应返回错误」断言（同一 seam：world.last_error 包含片段）。
 #[then(expr = "物品创建应返回错误 {string}")]
 fn check_item_error(world: &mut LedgerWorld, expected: String) {
     assert_last_error_contains(world, &expected);

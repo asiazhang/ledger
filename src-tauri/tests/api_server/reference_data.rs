@@ -387,12 +387,6 @@ async fn test_get_currencies_returns_seed_list() {
     assert_eq!(hkd["name"], "港币");
 }
 
-// ---------------------------------------------------------------------------
-// 信用卡档案字段（spec #1327 / ADR-0119）：创建侧携带与拒绝（壳三件套 + 接线证明）。
-// ---------------------------------------------------------------------------
-
-/// 创建信用卡账户携带三个档案字段 → 201，且读出口读回同值。
-/// 接线证明：写入经 HTTP 进入账户写入接缝，直接可观察结果是列表读得到。
 #[tokio::test]
 async fn test_create_credit_account_persists_credit_terms() {
     let (app, _) = setup_app();
@@ -419,8 +413,6 @@ async fn test_create_credit_account_persists_credit_terms() {
     assert_eq!(account["due_day"], 25);
 }
 
-/// 未携带档案字段的信用卡账户：三个字段读回 `null`（「未设置」与「额度为 0」不是
-/// 同一状态），且创建不报错。
 #[tokio::test]
 async fn test_create_credit_account_without_credit_terms_returns_nulls() {
     let (app, _) = setup_app();
@@ -446,7 +438,6 @@ async fn test_create_credit_account_without_credit_terms_returns_nulls() {
     assert!(account["due_day"].is_null());
 }
 
-/// 非信用卡账户携带档案字段 → 400 + 码化错误（账户类型与属性的对应关系不被破坏）。
 #[tokio::test]
 async fn test_create_non_credit_account_with_credit_terms_returns_400() {
     let (app, _) = setup_app();
@@ -471,7 +462,6 @@ async fn test_create_non_credit_account_with_credit_terms_returns_400() {
     assert_eq!(err["code"], "account.credit-attribute-not-applicable");
 }
 
-/// 越界档案值 → 400 + 各自错误码（维度即矩阵：额度为正、账单日与还款日各自 1–31）。
 #[tokio::test]
 async fn test_create_credit_account_rejects_out_of_range_terms() {
     let (app, _) = setup_app();

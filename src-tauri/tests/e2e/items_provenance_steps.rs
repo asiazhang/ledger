@@ -1,10 +1,3 @@
-//! 物品（Item）BDD 步骤 · 溯源关联主题（issue #207 / ADR-0025、issue #119）：
-//! 创建唯一入口守卫与 source_transaction_id 关联语义。
-//!
-//! 创建必关联购买交易（不关联被拒、不落库）；关联创建/编辑时后端自动带出
-//! 日期与基础成本；校验交易存在且为 expense；同一交易溯源唯一（创建与更新
-//! 守卫共用，只看未删除物品）。
-
 use cucumber::{then, when};
 
 use ledger_infra::error::AppError;
@@ -17,8 +10,6 @@ use crate::items_common::build_input;
 use crate::step_inputs::expense_input;
 use crate::world::LedgerWorld;
 
-/// 关联购买交易的入参：日期/成本/币种填入**故意错误的占位值**，
-/// 断言「自动带出」这一外部行为（后端必须用交易值覆盖占位值）。
 fn build_linked_input(name: &str, tx_id: &str) -> ItemInput {
     ItemInput {
         name: name.into(),
@@ -30,8 +21,6 @@ fn build_linked_input(name: &str, tx_id: &str) -> ItemInput {
     }
 }
 
-/// 尝试不关联购买交易创建物品并捕获错误（issue #207 溯源守卫拒绝路径：
-/// 创建请求缺溯源直接拒绝，不发失效信号、不落库）。
 #[when(expr = "尝试创建物品 {string} 不关联购买交易")]
 fn try_create_item_unlinked(world: &mut LedgerWorld, name: String) {
     let mut signals = 0;
@@ -53,11 +42,6 @@ fn check_item_purchase_date(world: &mut LedgerWorld, n: usize, date: String) {
     assert_eq!(world.item.nth(n).item.purchase_date, date);
 }
 
-// ---------------------------------------------------------------------------
-// 关联购买交易（issue #119）：自动带出日期/成本，存溯源，校验存在且为 expense
-// ---------------------------------------------------------------------------
-
-/// 创建一笔外币支出交易（通用「创建交易」步骤固定 CNY，此处补币种参数）。
 #[when(expr = "创建支出交易 金额 {int} 币种 {string} 到账户 {string} 日期 {string}")]
 fn create_expense_txn_with_currency(
     world: &mut LedgerWorld,
@@ -75,14 +59,11 @@ fn create_expense_txn_with_currency(
     world.txn.last_transaction_id = Some(write.id);
 }
 
-/// 记住最近创建的交易为关联购买交易（后续「关联该购买交易」步骤引用它）。
 #[when(expr = "记住该交易为关联购买交易")]
 fn remember_purchase_transaction(world: &mut LedgerWorld) {
     world.item.remembered_purchase_transaction_id = world.txn.last_transaction_id.clone();
 }
 
-/// 创建物品并关联记住的购买交易：入参日期/成本为占位值，
-/// 后端必须用交易值覆盖（自动带出）。
 #[when(expr = "创建物品 {string} 关联该购买交易")]
 fn create_item_linked(world: &mut LedgerWorld, name: String) {
     let tx_id = world
@@ -105,7 +86,6 @@ fn create_item_linked(world: &mut LedgerWorld, name: String) {
     }
 }
 
-/// 尝试创建关联记住交易的物品并捕获错误（非 expense 报错路径）。
 #[when(expr = "尝试创建物品 {string} 关联该购买交易")]
 fn try_create_item_linked(world: &mut LedgerWorld, name: String) {
     let tx_id = world
@@ -126,7 +106,6 @@ fn try_create_item_linked(world: &mut LedgerWorld, name: String) {
     };
 }
 
-/// 尝试创建关联不存在交易的物品并捕获错误（固定假 id 走不存在报错路径）。
 #[when(expr = "尝试创建物品 {string} 关联不存在的购买交易")]
 fn try_create_item_linked_missing(world: &mut LedgerWorld, name: String) {
     let mut signals = 0;
@@ -142,9 +121,6 @@ fn try_create_item_linked_missing(world: &mut LedgerWorld, name: String) {
     };
 }
 
-/// 修改最近创建的物品并关联记住的购买交易。入参日期/成本为占位值：
-/// 新关联/换关时后端必须用交易值覆盖（自动带出）；维持既有关联时则原样落库，
-/// 两种语义由不同场景分别断言。
 #[when(
     expr = "修改物品名称为 {string} 购买日期 {string} 总成本 {int} 币种 {string} 关联该购买交易 备注为 {string}"
 )]
@@ -179,7 +155,6 @@ fn update_item_linked(
     }
 }
 
-/// 尝试修改最近创建的物品并关联记住的购买交易（捕获错误，溯源唯一拒绝路径）。
 #[when(
     expr = "尝试修改物品名称为 {string} 购买日期 {string} 总成本 {int} 币种 {string} 关联该购买交易 备注为 {string}"
 )]
@@ -215,7 +190,6 @@ fn try_update_item_linked(
     };
 }
 
-/// 断言第 n 件物品的溯源指向记住的关联购买交易。
 #[then(expr = "第 {int} 件物品关联购买交易应为记住的交易")]
 fn check_item_linked_transaction(world: &mut LedgerWorld, n: usize) {
     let expected = world
