@@ -1,19 +1,8 @@
-//! 定时计划域闭集解析与期次日期守卫的码契约（ADR-0050 码化收口，#1072）。
-//!
-//! 四个 `FromStr` 闭集解析覆盖 DB 读边界（`FromSql` / `parse`）：未知值报稳定码
-//! 与插值参数，`message` 逐字保留（ADR-0050 只增不改）。四个码在当前 wire/DB
-//! 路径不可达前端（经 serde/rusqlite 错误类型扁平化后只承载 `message`），断言
-//! 在构造点——与 `account.type-unknown` 同形（ADR-0108 决策 4 已知边界）。
-//!
-//! 期次日期守卫（`advance_date`）另断言用户可见路径：`recurrence_day` 未在入口
-//! 校验，月度计划的 0 日落在 `from_ymd_opt` 的 None 分支，错误按码上报。
-
 use std::str::FromStr;
 
 use super::super::*;
 use ledger_infra::error::AppError;
 
-/// 断言错误同时满足：稳定码、`kind` 归类、message 逐字、插值参数顺序。
 fn assert_coded(err: &AppError, code: &str, message: &str, params: &[&str]) {
     let wire = serde_json::to_value(err).unwrap();
     assert_eq!(wire["kind"], "Invalid", "码化参数错误 kind 保持 Invalid");
@@ -73,8 +62,6 @@ fn occurrence_status_parse_rejects_unknown_with_code() {
     );
 }
 
-/// 期次日期守卫（#1072）：月度计划给出闭集内的周期类型但非法 `recurrence_day`
-/// （0 日），建档展开期次时报码化「无效日期」——用户可见条件不留裸 `Invalid`。
 #[test]
 fn occurrence_date_guard_reports_coded_invalid_date() {
     let conn = tauri_app_lib::test_support::open();

@@ -1,67 +1,26 @@
-//! 交易类型→金额度量矩阵（共享语义区，ADR-0113 决策 8）：行级展示与 SQL 聚合同源。
-//!
-//! 职责：[`TransferSide`] 归因端点 + [`Measure`] 六度量；[`signed_amount`]（行级/
-//! 展示）与五个 SQL 片段 builder 由同一 [`coefficient`] 矩阵驱动。不变量：两条路径
-//! 口径恒一致（矩阵是唯一真源，改矩阵同时影响展示与聚合）。ADR 指针：ADR-0096 /
-//! ADR-0113 决策 8。币种口径：`account_flow` 取账户币种 `amount_cents`（余额口径），
-//! 其余度量取本位币 `amount_native_cents`（报表口径），见 [`measure_amount_column`]。
-//! 陷阱：矩阵数值须以测试锁定。
-
 use std::fmt::Write as _;
 
 use super::kind::TransactionKind;
 
-// ---------------------------------------------------------------------------
-// 具名度量
-// ---------------------------------------------------------------------------
-
-/// 账户现金流量的归因端点：转出侧（`account_id`）、转入侧（`to_account_id`）
-/// 或出资侧（`funding_account_id`，ADR-0096）。`account_flow` 度量对 transfer 的
-/// 符号由转出/转入侧决定；出资侧只承载 buy/sell 的现金腿。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TransferSide {
-    /// 转出账户侧：现金流出（−）。
     Out,
-    /// 转入账户侧：现金流入（+）。
     In,
-    /// 出资账户侧（ADR-0096）：buy/sell 的结算现金端点——结算账户 =
-    /// 出资账户 ?? 投资账户；buy 记 −、sell 记 +，kind 矩阵符号不变、
-    /// 归因端点可变。非 buy/sell 行不经出资端（准入收口，防御性记 0）。
     Funding,
 }
 
-/// 具名金额度量。每种度量对每种 kind 的符号见 [`coefficient`] 矩阵。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Measure {
-    /// 账户现金流动：某账户视角下的现金出入（余额口径）。
-    /// 转账按 [`TransferSide`] 取号，其余 kind 与侧无关。
     AccountFlow(TransferSide),
-    /// 支出净额 = 毛支出 − 退款；投资类（buy/sell）不计入经营收支。
     ExpenseNet,
-    /// 收入净额 = 收入 + 分红（dividend 计入收入）。
     IncomeNet,
-    /// 退款毛额：独立成列可看，供毛值/净值并存展示。
     RefundGross,
-    /// 保单已缴保费（挂单 `expense` 之和）：保单视角统计口径（issue #363 /
-    /// ADR-0051 决策 6）。挂单准入（行为层，issue #361）保证只有 expense/income
-    /// 可携带 policy_id，故本度量恒不含退款冲减——保单现金流入记 income 挂单
-    /// 而非 refund（ADR-0051 决策 4），保费口径不被冲小。
     PolicyPremium,
-    /// 保单现金流入（挂单 `income` 之和）：理赔/退保/满期返还统一记 income 挂单
-    /// （ADR-0051 决策 4），三者记账语义无差别。
     PolicyInflow,
 }
 
-/// kind→度量系数矩阵（单一真源）：-1 / 0 / +1。
-///
-/// Rust 助手 [`signed_amount`] 与 SQL 片段 builder 均由此驱动；
-/// 修改任何口径只改这里，两侧行为同步变化。
 fn coefficient(kind: TransactionKind, measure: Measure) -> i64 {
     match measure {
-        // 账户现金流动：buy/sell 的符号与端点无关（矩阵符号不变，归因端点可变，
-        // ADR-0096）——转出侧带出资守卫后只对未出资行生效，出资侧只对 buy/sell
-        // 生效（见 [`account_flow_expr`] 的归因规则）。非 buy/sell 行不经出资端
-        // （准入收口在行为层，防御性记 0）。
         Measure::AccountFlow(side) => match kind {
             TransactionKind::Income | TransactionKind::Refund | TransactionKind::Dividend => {
                 match side {
@@ -80,8 +39,6 @@ fn coefficient(kind: TransactionKind, measure: Measure) -> i64 {
                 TransferSide::In => 1,
                 TransferSide::Funding => 0,
             },
-            // convert 无现金腿（ADR-0099）：两侧标的互换不涉任何账户现金，
-            // 三个侧别恒记 0——落账前后全部账户余额（含黑洞）不变。
             TransactionKind::Split | TransactionKind::Convert => 0,
         },
         Measure::ExpenseNet => match kind {
@@ -141,25 +98,10 @@ fn coefficient(kind: TransactionKind, measure: Measure) -> i64 {
     }
 }
 
-/// 行级/展示用有符号金额：`coefficient(kind, measure) × amount`。
-///
-/// `amount` 的币种随度量而定（与 [`measure_amount_column`] 同口径）：
-/// `AccountFlow` 传**账户币种**金额（`amount_cents`），其余度量传本位币金额
-/// （`amount_native_cents`）。`split` 对现金度量恒为 0，buy/sell 不进
-/// expense_net/income_net。
 pub fn signed_amount(kind: TransactionKind, amount: i64, measure: Measure) -> i64 {
     coefficient(kind, measure) * amount
 }
 
-// ---------------------------------------------------------------------------
-// SQL 片段 builder（服务端聚合）
-// ---------------------------------------------------------------------------
-
-/// 度量取数列（币种口径的单一真源，issue #1769）：
-/// - [`Measure::AccountFlow`] 是账户余额口径——现金腿金额本就是**账户币种**金额，
-///   取 `amount_cents`；余额即账户币种余额，本位币折算只在净资产/报表等全局口径做
-///   （ADR-0011：折算基准为全局默认币种、与账户币种无关）。
-/// - 其余度量（支出/收入/退款/保单）是报表与统计口径——取本位币 `amount_native_cents`。
 fn measure_amount_column(measure: Measure) -> &'static str {
     match measure {
         Measure::AccountFlow(_) => "amount_cents",
@@ -167,10 +109,6 @@ fn measure_amount_column(measure: Measure) -> &'static str {
     }
 }
 
-/// 由 coefficient 矩阵生成 `CASE ... END` 片段：按系数分组 kind，
-/// 输出对度量所属币种列（[`measure_amount_column`]）的有符号表达式。
-///
-/// 只负责 kind→符号与取数列，不含 `is_deleted` 等过滤，过滤条件由调用方 WHERE 决定。
 fn kind_case_expr(alias: &str, measure: Measure) -> String {
     let amount_col = format!("{alias}.{}", measure_amount_column(measure));
     let kind_col = format!("{alias}.kind");
@@ -210,18 +148,6 @@ fn quote_list(items: &[&str]) -> String {
         .join(",")
 }
 
-/// `account_flow` 聚合片段。转账符号按 `side` 取：
-/// 转出侧 join `t.account_id`、转入侧 join `t.to_account_id` 后分别求和相加。
-/// 取数列为账户币种 `amount_cents`（[`measure_amount_column`]）——余额是账户币种金额。
-///
-/// 出资账户归因规则单条在此落库为 SQL（ADR-0096 决策 2，全库唯一直 incarnation）：
-/// 结算账户 = 出资账户 ?? 投资账户（`account_id`）——带出资账户的 buy/sell，其现金
-/// 腿归出资侧（[`TransferSide::Funding`] 端点，join `funding_account_id`），转出侧
-/// （投资账户端）对带出资账户的 buy/sell 记 0（钱不经手）；未填出资账户时矩阵符号
-/// 原样记在投资账户上。转入侧不需要守卫：buy/sell 行恒无 `to_account_id`——
-/// 该不变量由投资域 prepare / 重放装配的 forbidden 守卫拒绝携带保证
-/// （`trade.buy-to-account-forbidden` / `trade.sell-to-account-forbidden`，
-/// issue #1187），本表达式不另设第二份判定。
 pub fn account_flow_expr(alias: &str, side: TransferSide) -> String {
     let matrix = kind_case_expr(alias, Measure::AccountFlow(side));
     match side {
@@ -233,16 +159,6 @@ pub fn account_flow_expr(alias: &str, side: TransferSide) -> String {
     }
 }
 
-/// 出资项 `account_flow` 聚合片段（issue #1860 / ADR-0138 决策 7，全库唯一
-/// incarnation）：每条出资子行按**所属交易 kind 的符号**计入该账户 `account_flow`
-///（等价于一组不可见 posting）——取数列为子行账户币种金额 `f.amount_cents`
-///（与 [`Measure::AccountFlow`] 同一币种口径），符号由同一 [`coefficient`] 矩阵
-/// 驱动（expense 记 −、income 记 +；分解仅 expense/income/refund 可携带，其余
-/// kind 的系数在子行上按矩阵原样表达、子行不可存在）。
-///
-/// `funding_alias` 是 `transaction_fundings` 行别名（取 `f.amount_cents`），
-/// `tx_alias` 是 join 到的 `transactions` 行别名（取 `t.kind` 判符号）。调用方
-/// 负责 WHERE（`t.is_deleted=0` + 账户列对齐）与 `COALESCE/SUM` 包裹。
 pub fn funding_item_flow_expr(funding_alias: &str, tx_alias: &str) -> String {
     let mut pos: Vec<&'static str> = Vec::new();
     let mut neg: Vec<&'static str> = Vec::new();
@@ -274,36 +190,26 @@ pub fn funding_item_flow_expr(funding_alias: &str, tx_alias: &str) -> String {
     expr
 }
 
-/// `expense_net` 聚合片段（毛支出 − 退款）。
 pub fn expense_net_expr(alias: &str) -> String {
     kind_case_expr(alias, Measure::ExpenseNet)
 }
 
-/// `income_net` 聚合片段（收入 + 分红）。
 pub fn income_net_expr(alias: &str) -> String {
     kind_case_expr(alias, Measure::IncomeNet)
 }
 
-/// `refund_gross` 聚合片段（退款毛额）。
 pub fn refund_gross_expr(alias: &str) -> String {
     kind_case_expr(alias, Measure::RefundGross)
 }
 
-/// `policy_premium` 聚合片段（保单已缴保费，issue #363）：挂单 `expense` 之和。
 pub fn policy_premium_expr(alias: &str) -> String {
     kind_case_expr(alias, Measure::PolicyPremium)
 }
 
-/// `policy_inflow` 聚合片段（保单现金流入，issue #363）：挂单 `income` 之和。
 pub fn policy_inflow_expr(alias: &str) -> String {
     kind_case_expr(alias, Measure::PolicyInflow)
 }
 
-/// 毛支出聚合片段 = `expense_net + refund_gross`（spec #52 净值关系恒等式：
-/// `expense_net = expense_gross − refund_gross`）。
-///
-/// 毛值不作为独立度量进入矩阵，而由两个具名度量经恒等式导出，
-/// 毛值/净值口径由同一矩阵驱动、永不漂移（月度汇总毛值三列用，见 issue #57）。
 pub fn expense_gross_expr(alias: &str) -> String {
     format!(
         "({} + {})",
@@ -312,9 +218,6 @@ pub fn expense_gross_expr(alias: &str) -> String {
     )
 }
 
-/// 对度量有贡献（系数非 0）的 kind 字符串列表，矩阵驱动。
-/// 供聚合 SQL 的 `WHERE kind IN (...)` 行过滤使用，与聚合片段出自同一矩阵，
-/// 避免手写 kind 清单漂移（如 income_net 必须含 dividend）。
 pub fn contributing_kinds(measure: Measure) -> Vec<&'static str> {
     TransactionKind::ALL
         .into_iter()
@@ -323,9 +226,6 @@ pub fn contributing_kinds(measure: Measure) -> Vec<&'static str> {
         .collect()
 }
 
-/// 带引号的贡献 kind 清单（如 `'expense','refund'`），可直接内插进
-/// `WHERE kind IN (...)`。供聚合 SQL 行过滤用，与 [`contributing_kinds`]
-/// 同源，消费方不再各自手拼 SQL 字面量（budget / reports 共用）。
 pub fn contributing_kinds_sql(measure: Measure) -> String {
     quote_list(&contributing_kinds(measure))
 }
