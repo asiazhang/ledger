@@ -1,15 +1,7 @@
-//! 物品领域模型（#420 随域归位）：物品实体、创建入参与列表项（含每天使用成本）。
-//!
-//! 自全局模型目录迁入本域（#417 归属原则），消费方经 `item` 域路径
-//! 逐类型显式 import。术语边界见 CONTEXT.md `Item` / `DailyUsageCost` 条目与 ADR-0014：
-//! 物品是独立领域实体，与投资标的（Instrument）严格区分；金额沿用
-//! 整数分 + raw/native 分离约定，折算走 Amount 接缝。
-
 use serde::{Deserialize, Serialize};
 
 use ledger_infra::db::query::FromRow;
 
-/// 物品生命周期状态：`in_use`（在用，摊到今天）/ `disposed`（已处置，摊到处置日）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ItemStatus {
     InUse,
@@ -17,7 +9,6 @@ pub enum ItemStatus {
 }
 
 impl ItemStatus {
-    /// 数据库存储的状态字符串（与 serde 序列化同形）。
     pub const fn as_str(self) -> &'static str {
         match self {
             ItemStatus::InUse => "in_use",
@@ -25,7 +16,6 @@ impl ItemStatus {
         }
     }
 
-    /// 从状态字符串解析；未知值报参数错误。
     pub fn parse(s: &str) -> Result<ItemStatus, String> {
         match s {
             "in_use" => Ok(ItemStatus::InUse),
@@ -54,8 +44,6 @@ impl<'de> Deserialize<'de> for ItemStatus {
     }
 }
 
-// rusqlite：从 `items.status` 列直接读为枚举（DB 边界：TEXT 列经 [`ItemStatus::parse`]
-// 严格映射，未知值即 FromSql 错误——DB CHECK 约束（V009）保证正常数据不可达）。
 impl rusqlite::types::FromSql for ItemStatus {
     fn column_result(value: rusqlite::types::ValueRef<'_>) -> rusqlite::types::FromSqlResult<Self> {
         ItemStatus::parse(value.as_str()?)
@@ -63,26 +51,17 @@ impl rusqlite::types::FromSql for ItemStatus {
     }
 }
 
-/// 物品实体（读模型，全字段）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Item {
     pub id: String,
     pub name: String,
-    /// 购买日期（YYYY-MM-DD）。
     pub purchase_date: String,
-    /// 总成本（原始币种，整数分）。
     pub total_cost_cents: i64,
     pub currency_code: String,
-    /// 总成本折算本位币（默认币种，整数分，Amount 接缝折算）。
     pub cost_native_cents: i64,
-    /// 生命周期状态（serde 小写字符串序列化）。
     pub status: ItemStatus,
-    /// 处置日期（仅 disposed；YYYY-MM-DD）。
     pub disposal_date: Option<String>,
-    /// 残值（仅 disposed 可填，整数分）。
     pub residual_value_cents: Option<i64>,
-    /// 关联购买交易 id（溯源，可空）：仅为自动带出日期/成本与溯源，
-    /// 不建立「交易→物品」反向引用（CONTEXT.md Item 条目）。
     pub purchase_transaction_id: Option<String>,
     pub note: Option<String>,
     pub created_at: String,
@@ -115,69 +94,36 @@ impl FromRow for Item {
     }
 }
 
-/// 创建物品入参（issue #115 骨架：创建即「在用」物品）。
-///
-/// 生命周期流转（标记已处置/残值）由后续票（#120）扩展；关联购买交易
-/// 自动带出由 #119 扩展。金额必须 > 0、名称非空、日期可解析。
 #[derive(Debug, Clone, Deserialize)]
 pub struct ItemInput {
     pub name: String,
-    /// 购买日期（YYYY-MM-DD）。
     pub purchase_date: String,
-    /// 总成本（原始币种，整数分），必须 > 0。
     pub total_cost_cents: i64,
-    /// 原始币种代码（须可按 Amount 接缝折算到默认币种）。
     pub currency_code: String,
-    /// 备注（可选）。
     pub note: Option<String>,
-    /// 可选关联的购买交易 id：创建时提供（或修改时提供与既有不同的 id）→
-    /// 校验交易存在且为 expense，并自动带出购买日期与基础成本（覆盖同名字段）；
-    /// 修改时提供与既有相同的 id 或省略（None）→ 维持现状，不重新带出。
     pub purchase_transaction_id: Option<String>,
 }
 
-/// 处置物品入参（issue #120）：生命周期流转 `in_use` → `disposed`。
-/// 处置日期必填（不得早于购买日期，否则每天成本口径不可达）；残值可选，
-/// `Some` 时必须 ≥ 0。残值 ≥ 成本合法（分子下限 0，`item::cost` 口径）。
 #[derive(Debug, Clone, Deserialize)]
 pub struct ItemDisposeInput {
-    /// 处置日期（YYYY-MM-DD），必填；每天成本分母摊到该日。
     pub disposal_date: String,
-    /// 残值（整数分，可选）：`None` 视同无残值（分子 = 总成本）。
     pub residual_value_cents: Option<i64>,
 }
 
-/// 物品列表项：物品实体 + 每天使用成本快照（经 `item::cost` 接缝计算，
-/// 调用方不另写口径）。`used_days` / `per_day_cents` 为查询时刻快照，不落库。
-/// 成本分解三元组（分子 `numerator_cents` ÷ 天数 `used_days` = `per_day_cents`）
-/// 一并返回，供物品详情视图直接展示，避免调用方反推口径。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ItemWithDailyCost {
     #[serde(flatten)]
     pub item: Item,
-    /// 已用天数：购买日 → 目标日的日历天数，含起止两端（在用 = 今天，已处置 = 处置日）。
     pub used_days: i64,
-    /// 成本分解分子（分）：总成本 − 残值，下限 0（在用未填残值时即总成本）。
     pub numerator_cents: i64,
-    /// 每天成本（分/天，**小数**）：`item::cost` 接缝计算，仅供展示。
     pub per_day_cents: f64,
 }
 
-/// 交易列表来源反查投影（spec #704 / issue #708，词汇表「来源列」）：按溯源
-/// 指针（`purchase_transaction_id`）批量取物品展示字段的最小行——物品名（来源
-/// 列展示名）+ 已处置标志（来源状态），供核心交易域按页填充来源列。展示层
-/// 反查不落任何数据级反向引用（物品域 source_transaction_id 词条边界）。
 #[derive(Debug, Clone)]
 pub struct ItemSourceDisplay {
     pub id: String,
-    /// 溯源指针（购买交易 id）：调用方按它把物品归位到交易行。
     pub purchase_transaction_id: Option<String>,
-    /// 物品名称（来源列展示名）。
     pub name: String,
-    /// 已处置标志（disposed）：来源列携带「已处置」状态标注（物品列表仍在册，
-    /// 跳转不落空）。只查未删除物品：软删物品不在物品列表（跳转会落空），且
-    /// 溯源唯一守卫只看未删除物品（软删后该交易可再次建物品）——来源列同口径
-    /// 视为无来源。
     pub is_disposed: bool,
 }
 
@@ -192,15 +138,9 @@ impl FromRow for ItemSourceDisplay {
     }
 }
 
-/// 每天使用成本计算结果（issue #121 自选参考日重算）：不带物品实体的独立形态，
-/// 供单件计算命令（`calculate_item_cost`）返回；三元组与 [`ItemWithDailyCost`]
-/// 同一口径（均经 `item::cost` 接缝），前端详情视图重算展示共用。
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct ItemDailyCost {
-    /// 已用天数：购买日 → 目标日（参考日或缺省目标日）的日历天数，含起止两端。
     pub used_days: i64,
-    /// 成本分解分子（分）：总成本 − 残值，下限 0。
     pub numerator_cents: i64,
-    /// 每天成本（分/天，**小数**），仅供展示。
     pub per_day_cents: f64,
 }

@@ -1,8 +1,3 @@
-//! 预算领域模型（#420 随域归位）：预算周期枚举、预算实体与入参、进度。
-//!
-//! 自全局模型目录迁入本域（#417 归属原则），消费方经 `budget` 域路径
-//! 逐类型显式 import。
-
 use std::fmt;
 use std::str::FromStr;
 
@@ -34,9 +29,6 @@ impl FromStr for BudgetPeriod {
         match s {
             "monthly" => Ok(BudgetPeriod::Monthly),
             "yearly" => Ok(BudgetPeriod::Yearly),
-            // ADR-0050 码化收口（#1072）：闭集解析未知值报码化参数错误，
-            // message 逐字保留、未知值进 params（FromSql 路径经 rusqlite 扁平化
-            // 只承载 message，码在构造点稳定存在，与 account.type-unknown 同形）。
             _ => Err(AppError::codedp(
                 "budget.period-unknown",
                 format!("未知预算周期: {s}"),
@@ -83,9 +75,6 @@ pub struct BudgetInput {
     pub start_date: String,
 }
 
-/// 预算编辑入参（issue #184 只许金额 → issue #1946 放开周期）：金额必填；
-/// 周期可改（受「分类 + 周期」唯一校验约束，见 `crud`），分类不可改（删旧建新）。
-/// `period` 缺省 = 不改周期（serde default，兼容旧调用形态与存量同步载荷）。
 #[derive(Debug, Deserialize)]
 pub struct BudgetUpdateInput {
     pub amount_cents: i64,
@@ -101,8 +90,6 @@ pub struct BudgetProgress {
     pub over_budget: bool,
 }
 
-/// 预算年度汇总（issue #1948；词汇表 BudgetAnnualSummary）：年度预算总额（月预算
-/// 年化口径）与本年已支，两者均为默认币种单币种口径、可直接相减判断超标。
 #[derive(Debug, Serialize)]
 pub struct BudgetAnnualSummary {
     pub annual_budget_total_cents: i64,

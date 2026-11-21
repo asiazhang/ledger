@@ -1,18 +1,12 @@
-//! 商户字典域测试（issue #188 / ADR-0028）。
-
-use ledger_infra::error::{AppError, ErrClass};
-// 测试实例纪律（#1092 同款）：本域行为路径不读交易域接缝注册静态，域单测直接
-// 驱动本 crate 实例（crate 根再导出面路径与拆出前域根路径同形）。
 use crate::{
     create_merchant, create_merchant_by_name, delete_merchant, find_merchant_by_name,
     list_merchants as list_merchants_domain, update_merchant,
 };
+use ledger_infra::error::{AppError, ErrClass};
 
 use super::model::{Merchant, MerchantInput, MerchantUpdateInput};
 
 fn setup() -> rusqlite::Connection {
-    // 建库两行序经统一测试工厂承载（spec #728 / issue #754 / ADR-0084 决策 7）：
-    // 工厂住根包，dev-dependency 环引用（ledger-transaction/#1092 先例同款）。
     tauri_app_lib::test_support::open()
 }
 
@@ -20,10 +14,6 @@ fn list_merchants(conn: &rusqlite::Connection) -> Vec<Merchant> {
     list_merchants_domain(conn, false).unwrap()
 }
 
-/// 种子口径哨兵：建库不 seed 商户（ADR-0028：商户是强个人属性，seed 是字典
-/// 噪音）。变异面外保留——变红条件 = 建库种子加了商户行（种子/迁移产物不在
-/// cargo-mutants 覆盖面，按「零击杀测试」词条核对覆盖面后裁决保留，
-/// 2026-10 首轮清理）。
 #[test]
 fn list_merchants_starts_empty() {
     let conn = setup();
@@ -51,7 +41,6 @@ fn create_merchant_returns_id_and_lists_sorted_by_name() {
 
     let merchants = list_merchants(&conn);
     assert_eq!(merchants.len(), 2);
-    // 按名称排序（字典语义），而非创建顺序。
     assert_eq!(merchants[0].id, id_a);
     assert_eq!(merchants[0].name, "京东");
     assert_eq!(merchants[1].id, id_b);
@@ -100,7 +89,6 @@ fn update_merchant_renames() {
     let merchants = list_merchants(&conn);
     assert_eq!(merchants.len(), 1);
     assert_eq!(merchants[0].name, "京东商城");
-    // 改名即时生效：历史交易以 merchant_id 引用，不回刷交易行（本层只保证名字变更）。
 }
 
 #[test]
@@ -131,8 +119,6 @@ fn update_merchant_rename_to_taken_name_rejected() {
     assert_eq!(err.to_string(), "商户已存在: 京东");
 }
 
-/// 改名入参先 trim（issue #884，与导入即建同款归一）：带首尾空白的名字入库前修剪，
-/// 防带空白绕开唯一性产生碎商户。
 #[test]
 fn update_merchant_trims_name() {
     let conn = setup();
@@ -154,8 +140,6 @@ fn update_merchant_trims_name() {
     assert_eq!(list_merchants(&conn)[0].name, "京东商城");
 }
 
-/// 改名 trim 后为空 → 码化错误 `merchant.name-required`（与导入即建同码），
-/// 原名保持不变。
 #[test]
 fn update_merchant_blank_name_rejected() {
     let conn = setup();
@@ -180,8 +164,6 @@ fn update_merchant_blank_name_rejected() {
     assert_eq!(list_merchants(&conn)[0].name, "京东");
 }
 
-/// 改名撞名判定在 trim 之后：改成「空白 + 在用同名」同样报已存在，
-/// 不得绕开唯一性。
 #[test]
 fn update_merchant_trim_collides_with_existing_name() {
     let conn = setup();
@@ -241,10 +223,8 @@ fn delete_merchant_soft_deletes_and_hides_from_list() {
     )
     .unwrap();
     delete_merchant(&conn, &id).unwrap();
-    // 列表不再包含（软删商户不可再被新交易选择）。
     assert!(list_merchants(&conn).is_empty());
 
-    // 行仍在库中（历史引用保留，读回照常显示商户名），is_deleted=1。
     let (is_deleted, name): (i64, String) = conn
         .query_row(
             "SELECT is_deleted, name FROM merchants WHERE id=?1",
@@ -269,8 +249,6 @@ fn delete_merchant_missing_is_not_found() {
     ));
 }
 
-/// 软删后同名可重建：在用行唯一（partial unique index），软删行不占名字
-/// （AI 导入未命中即建的前提，ADR-0028 代价 #2「重新录入或导入时自然重建」）。
 #[test]
 fn recreate_same_name_after_soft_delete() {
     let conn = setup();
@@ -295,7 +273,6 @@ fn recreate_same_name_after_soft_delete() {
     assert_eq!(merchants[0].id, new_id);
 }
 
-/// 商户名查找（issue #194 / ADR-0028）：命中返回 id，未命中返回 None（不落库）。
 #[test]
 fn find_merchant_by_name_hits_active_exact_match() {
     let conn = setup();
@@ -304,7 +281,6 @@ fn find_merchant_by_name_hits_active_exact_match() {
     assert_eq!(find_merchant_by_name(&conn, "盒马").unwrap(), Some(id));
 }
 
-/// 查找先 trim（AI 生成文本常带首尾空白），trim 后为空返回 None（不落库）。
 #[test]
 fn find_merchant_by_name_trims_and_blank_is_none() {
     let conn = setup();
@@ -314,7 +290,6 @@ fn find_merchant_by_name_trims_and_blank_is_none() {
     assert!(list_merchants(&conn).len() == 1);
 }
 
-/// 即建：未命中创建并返回新 id，返回的商户名已 trim。
 #[test]
 fn create_merchant_by_name_creates_trimmed() {
     let conn = setup();
@@ -325,7 +300,6 @@ fn create_merchant_by_name_creates_trimmed() {
     assert_eq!(merchants[0].name, "盒马");
 }
 
-/// 即建命中复用：同名在用商户直接返回已有 id，不新建（幂等重放不碎商户的前提）。
 #[test]
 fn create_merchant_by_name_reuses_exact_match() {
     let conn = setup();
@@ -335,7 +309,6 @@ fn create_merchant_by_name_reuses_exact_match() {
     assert_eq!(list_merchants(&conn).len(), 1);
 }
 
-/// 即建 trim 后为空 → 明确错误，不落库。
 #[test]
 fn create_merchant_by_name_blank_is_invalid() {
     let conn = setup();
@@ -346,7 +319,6 @@ fn create_merchant_by_name_blank_is_invalid() {
     assert!(list_merchants(&conn).is_empty());
 }
 
-/// 软删商户不算命中：同名即建新行（在用行精确匹配）。
 #[test]
 fn create_merchant_by_name_ignores_soft_deleted() {
     let conn = setup();
@@ -362,8 +334,6 @@ fn create_merchant_by_name_ignores_soft_deleted() {
     assert_ne!(new_id, old_id);
 }
 
-/// 商户契约回归「名字字典」（issue #223）：响应序列化不含 icon/color 字段——
-/// 请求侧结构体已无对应字段（多传即编译错误/反序列化忽略未知字段），此处锁定响应侧。
 #[test]
 fn merchant_json_contract_has_no_icon_or_color() {
     let conn = setup();

@@ -1,9 +1,3 @@
-//! 计划/期次引擎（issue #59 / #230 / #856）：定时计划的建档与状态机、期次展开
-//! （预生成窗口，行 id 各端独立生成、不作落地身份）与期次执行。
-//!
-//! 事务自持（issue #230 / ADR-0033 决策 6）：本模块是登记的「事务自持唯一合法
-//! 例外」，继续直调 Writer 接缝、不经行为层编排入口。
-
 use chrono::Datelike;
 use rusqlite::{Connection, OptionalExtension};
 
@@ -21,20 +15,12 @@ use ledger_transaction::write::writer;
 
 use super::models::*;
 
-/// 默认预生成窗口大小（期次数）。
 const WINDOW_SIZE: i64 = 12;
 
-// ---------------------------------------------------------------------------
-// 计划管理
-// ---------------------------------------------------------------------------
-
-/// 创建定时交易计划（核心 + 扩展表 + 预生成期次）。
 pub fn create_plan(conn: &Connection, input: CreateScheduledInput) -> Result<String> {
     ensure_transaction(conn, || {
         let id = new_uuid();
         create_protocol(conn, &id, &input)?;
-        // op 产出接缝（issue #860）：建档成功后随同一事务追加 op（全量入参随行；
-        // 期次展开不在载荷内——重放端按同一协议本地展开，行 id 各端独立生成）。
         record_local(
             conn,
             ScheduledCommand::CreatePlan {
@@ -46,8 +32,6 @@ pub fn create_plan(conn: &Connection, input: CreateScheduledInput) -> Result<Str
     })
 }
 
-/// 计划建档协议（本地创建与重放共用，无 op 产出）：校验 + 核心表/扩展表插入 +
-/// 期次展开（按本端现状展开，行 id 各端独立生成、不作身份）。
 pub(crate) fn create_protocol(
     conn: &Connection,
     id: &str,
@@ -67,8 +51,6 @@ pub(crate) fn create_protocol(
             "转出账户不能等于转入账户",
         ));
     }
-    // 定时转账（issue #203，词汇表 ScheduledTransfer 边界）：核心交易域转账交易是
-    // 单金额单币种，转出与转入账户必须同币种，不一致在创建入口显式拒绝。
     if input.kind == ScheduledKind::ScheduledTransfer
         && let Some(ref to_acc) = input.to_account_id
     {
@@ -97,10 +79,6 @@ pub(crate) fn create_protocol(
             ));
         }
     }
-    // 商户收口（issue #190 / ADR-0028）：installment/subscription 可携带商户，
-    // 携带的商户必须存在且未软删除（软删商户不可再被新计划选择，与交易写入
-    // 共用 writer 接缝的校验）；scheduled_transfer 不使用商户（用 to_account_id
-    // 表示本方账户间转账），行为层拒绝携带。
     match input.kind {
         ScheduledKind::ScheduledTransfer => {
             if input.merchant_id.is_some() {
@@ -114,12 +92,6 @@ pub(crate) fn create_protocol(
             writer::validate_merchant_active(conn, input.merchant_id.as_deref())?;
         }
     }
-    // 保单引用准入（issue #362 / ADR-0051 决策 2）：保费协议 = 订阅形态，只有
-    // 订阅可携带保单引用，分期/定时转账携带即在行为层显式拒绝；携带的保单必须
-    // 存在且未软删除（软删保单不可被新协议选择，共用 Writer 接缝的保单校验）。
-    // 保单协议不挂商户（issue #713 / ADR-0082 决策 2）：保费归属唯一事实是保单
-    // 引用，付款对象语义由保单的保司承担——订阅 + 保单 + 商户组合在入口显式
-    // 拒绝（非保单订阅/分期照旧挂商户，不受本守卫约束）。
     if input.policy_id.is_some() {
         if input.kind != ScheduledKind::Subscription {
             return Err(AppError::coded(
@@ -215,11 +187,9 @@ pub(crate) fn create_protocol(
     Ok(())
 }
 
-/// 更新计划状态（暂停/恢复/取消）。
 pub fn update_plan_status(conn: &Connection, id: &str, new_status: ScheduledStatus) -> Result<()> {
     ensure_transaction(conn, || {
         update_plan_status_protocol(conn, id, new_status)?;
-        // op 产出接缝（issue #860）：状态变更成功后随同一事务追加 op。
         record_local(
             conn,
             ScheduledCommand::UpdatePlanStatus {
@@ -230,8 +200,6 @@ pub fn update_plan_status(conn: &Connection, id: &str, new_status: ScheduledStat
     })
 }
 
-/// 计划状态变更协议（本地变更与重放共用，无 op 产出）：状态机校验 + 落库，
-/// 取消时把所有 pending 期次置为 cancelled（级联副作用随同一协议在重放端生效）。
 pub(crate) fn update_plan_status_protocol(
     conn: &Connection,
     id: &str,
@@ -277,7 +245,6 @@ pub(crate) fn update_plan_status_protocol(
         rusqlite::params![id, status_str, now, device_id(conn)?],
     )?;
 
-    // 取消时把所有 pending 期次置为 cancelled
     if new_status == ScheduledStatus::Cancelled {
         conn.execute(
             "UPDATE scheduled_transaction_occurrences SET status='cancelled', updated_at=?2, version=version+1, device_id=?3 \
@@ -289,18 +256,9 @@ pub(crate) fn update_plan_status_protocol(
     Ok(())
 }
 
-/// 编辑订阅计划的非金额字段（issue #162，ADR-0023 决策三；商户 issue #190）。
-///
-/// 仅允许备注、分类、扣款账户、商户；请求携带金额字段时显式拒绝并提示
-/// 「改价 = 取消旧计划 + 新建」。编辑不改任何已生成的期次与交易：
-/// 期次执行时从计划读取 account_id / category_id / note / 商户（金额取自期次行），
-/// 因此编辑天然只影响未来期次。商户为**全量替换**语义：提交值与扩展表当前值
-/// 相同视为保持历史引用（软删商户照常保留），变更时校验新商户在用。
 pub fn update_subscription(conn: &Connection, input: UpdateSubscriptionInput) -> Result<()> {
     ensure_transaction(conn, || {
         update_subscription_protocol(conn, &input)?;
-        // op 产出接缝（issue #860）：编辑成功后随同一事务追加 op（解决后的非金额
-        // 字段随行；金额不可编辑哨兵在源端已裁决，不随行携带）。
         record_local(
             conn,
             ScheduledCommand::UpdateSubscription {
@@ -314,8 +272,6 @@ pub fn update_subscription(conn: &Connection, input: UpdateSubscriptionInput) ->
     })
 }
 
-/// 订阅编辑协议（本地编辑与重放共用，无 op 产出）：金额哨兵拒绝 + 存在性/形态
-/// 校验 + 商户保持历史引用语义 + 落库。
 pub(crate) fn update_subscription_protocol(
     conn: &Connection,
     input: &UpdateSubscriptionInput,
@@ -344,10 +300,6 @@ pub(crate) fn update_subscription_protocol(
         ));
     }
 
-    // 商户（issue #190）：与 writer 编辑路径同语义——提交值与当前引用相同视为
-    // 保持历史引用（软删商户照常保留），变更时校验新商户在用（不可选软删商户）。
-    // 挂保单的计划行不回挂商户（issue #713 / ADR-0082 决策 2）：提交非空商户
-    // 显式拒绝（提交空 = 保持置空态），保费归属不重开商户口径。
     let current_policy_id: Option<String> = conn
         .query_row(
             "SELECT policy_id FROM subscription_plans WHERE scheduled_transaction_id=?1",
@@ -391,18 +343,9 @@ pub(crate) fn update_subscription_protocol(
         rusqlite::params![&input.id, input.merchant_id],
     )?;
 
-    // 保单引用不在编辑面（issue #362）：订阅编辑只影响未来期次的非核心字段，
-    // 「这段协议属于哪张保单」是身份要素、创建后不可改（改挂保单无业务场景；
-    // 价变重建走「取消旧协议 + 按新金额重建」，新段携带引用）。
     Ok(())
 }
 
-/// 获取计划完整详情（含扩展字段和期次）。
-///
-/// **读快照一致性（issue #1702）**：core、扩展、pending 列表、完成计数与全量
-/// 期次是五段语句，整体收进同一读事务（嵌套感知）——「已完成 N 期 / 已还金额」
-/// 与弹窗期次明细、总期数必须同时点（页与总数形态），期次执行落在语句间即
-/// 计数与明细错位。
 pub fn get_plan_detail(conn: &Connection, id: &str) -> Result<ScheduledTransactionDetail> {
     ensure_transaction(conn, || {
         let core: ScheduledTransaction = query_one(
@@ -480,8 +423,6 @@ pub fn get_plan_detail(conn: &Connection, id: &str) -> Result<ScheduledTransacti
             |r| Ok((r.get(0)?, r.get(1)?)),
         )?;
 
-        // issue #205：期次详情弹窗需要全量期次列表（含 failed 可重试、cancelled
-        // 历史等各状态）；新增返回字段，不改动既有字段口径。
         let occurrences: Vec<ScheduledTransactionOccurrence> = query_all(
             conn,
             "SELECT id,scheduled_transaction_id,scheduled_date,status,transaction_id,amount_cents,\
@@ -503,11 +444,6 @@ pub fn get_plan_detail(conn: &Connection, id: &str) -> Result<ScheduledTransacti
     })
 }
 
-/// 列出所有非软删除的定时计划（含类型特有字段）。
-///
-/// **读快照一致性（issue #1702）**：core 行与逐行扩展（分期 / 订阅 / 转账 ext）
-/// 是 1+N 段语句（两段 join 形态），整体收进同一读事务——ext 行在 core 读后
-/// 新建 / 重建删旧段时，行内静默兜底为 0 值 / 空串的「半行」即消失。
 pub fn list_plans(conn: &Connection) -> Result<Vec<ScheduledTransactionWithExt>> {
     ensure_transaction(conn, || {
         let cores: Vec<ScheduledTransaction> = query_all(
@@ -592,16 +528,9 @@ pub fn list_plans(conn: &Connection) -> Result<Vec<ScheduledTransactionWithExt>>
     })
 }
 
-// ---------------------------------------------------------------------------
-// 期次展开
-// ---------------------------------------------------------------------------
-
-/// 预生成下一批期次（壳层写入口：op 产出随同一事务）。
 pub fn expand_occurrences(conn: &Connection, st_id: &str) -> Result<Vec<String>> {
     ensure_transaction(conn, || {
         let ids = expand_occurrences_protocol(conn, st_id)?;
-        // op 产出接缝（issue #860）：展开成功后随同一事务追加 op（重放端按本端
-        // 现状重推同一协议，count 守卫防溢出，行 id 各端独立生成）。
         if !ids.is_empty() {
             record_local(
                 conn,
@@ -614,8 +543,6 @@ pub fn expand_occurrences(conn: &Connection, st_id: &str) -> Result<Vec<String>>
     })
 }
 
-/// 期次展开协议（本地展开与重放共用，无 op 产出）。对于有上限的计划（如
-/// installment）生成所有剩余期次；对于无限循环的计划生成有限窗口。
 pub(crate) fn expand_occurrences_protocol(conn: &Connection, st_id: &str) -> Result<Vec<String>> {
     let st: ScheduledTransaction = query_one(
         conn,
@@ -688,7 +615,6 @@ pub(crate) fn expand_occurrences_protocol(conn: &Connection, st_id: &str) -> Res
         return Ok(vec![]);
     }
 
-    // 确定起始日期：取已有最后一期的下一期，或 start_date
     let start = if existing_count > 0 {
         let last_date: String = conn.query_row(
             "SELECT scheduled_date FROM scheduled_transaction_occurrences \
@@ -705,10 +631,6 @@ pub(crate) fn expand_occurrences_protocol(conn: &Connection, st_id: &str) -> Res
     let now = now_iso();
     let mut ids = Vec::new();
 
-    // 分期路径用 `if let` 收编 Option（#433，ADR-0060 A 类临时豁免就此摘除）：
-    // total 直接绑定自 total_occurrences，分支进入条件即「Option 有值且为分期」——
-    // 「分期恒 Some（Installment 扩展行保证）」不再依赖 unwrap 断言，而由控制流
-    // 结构性保证；Option 意外为 None 时走下方通用窗口路径而非 panic。
     if let Some(total) = total_occurrences
         && is_installment
     {
@@ -761,7 +683,6 @@ pub(crate) fn expand_occurrences_protocol(conn: &Connection, st_id: &str) -> Res
     Ok(ids)
 }
 
-/// 计算日期加上 offset 期次后的日期。
 fn advance_date(st: &ScheduledTransaction, from: &str, offset: i64) -> Result<String> {
     let date = chrono::NaiveDate::parse_from_str(from, "%Y-%m-%d").map_err(|e| {
         AppError::codedp(
@@ -787,11 +708,7 @@ fn advance_date(st: &ScheduledTransaction, from: &str, offset: i64) -> Result<St
             let day = st.recurrence_day.map(|d| d as u32).unwrap_or(date.day());
             let max_day = days_in_month(y, m as u32);
             chrono::NaiveDate::from_ymd_opt(y as i32, m as u32, day.min(max_day)).ok_or_else(
-                || {
-                    // ADR-0050 码化收口（#1072）：recurrence_day 未在入口校验，
-                    // 0 等非法值在此给出用户可见的码化参数错误，message 逐字保留。
-                    AppError::coded("scheduled-plan.occurrence-date-invalid", "无效日期")
-                },
+                || AppError::coded("scheduled-plan.occurrence-date-invalid", "无效日期"),
             )?
         }
         "yearly" => {
@@ -802,10 +719,6 @@ fn advance_date(st: &ScheduledTransaction, from: &str, offset: i64) -> Result<St
                 AppError::coded("scheduled-plan.occurrence-date-invalid", "无效日期")
             })?
         }
-        // 防御臂（ADR-0050 允许的「程序性/内部错误」不转，本票明确保留）：
-        // recurrence_type 列只由 `RecurrenceType` 闭集写入，闭集外的值只可能来自
-        // 外部改库；同一条件的稳定码 `scheduled-plan.recurrence-unknown` 归
-        // `RecurrenceType` 解析边界（models.rs / spend.rs），此处不另立第二码。
         _ => return Err(AppError::Invalid("未知周期类型".into())),
     };
 
@@ -827,19 +740,6 @@ fn days_in_month(year: i64, month: u32) -> u32 {
     }
 }
 
-// ---------------------------------------------------------------------------
-// 期次执行
-// ---------------------------------------------------------------------------
-
-/// 执行一条 pending/failed 期次：生成 Transaction 并回填。
-///
-/// 事务边界（issue #230 / ADR-0033 决策 #6，引擎是登记的**事务自持唯一合法例外**，
-/// 继续直调 Writer 接缝、不经行为层编排入口）：[`writer::normalize`] 是只读校验，
-/// 保持事务外——业务错误（如非默认币种缺汇率）期次停留 pending 可重试，现状不变；
-/// 其后从 CAS 置 processing 起包到计划完成检查，任何失败整体 ROLLBACK、期次回原
-/// 状态可重试，不再出现期次滞留 processing 而交易未落库的中间态。调用方仅 IPC
-/// 命令一处（`db.write`，autocommit），无嵌套问题，自持 BEGIN/COMMIT/ROLLBACK
-/// 即可，无需行为层的嵌套感知分支。
 pub fn execute_occurrence(conn: &Connection, occurrence_id: &str) -> Result<String> {
     tracing::info!(occurrence_id = %occurrence_id, "开始执行定时交易期次");
     let occ: ScheduledTransactionOccurrence = query_one(
@@ -881,16 +781,6 @@ pub fn execute_occurrence(conn: &Connection, occurrence_id: &str) -> Result<Stri
 
     let (kind, category_id, ext) = match st.kind {
         ScheduledKind::Installment | ScheduledKind::Subscription => {
-            // 复制计划的商户到流水（issue #190 / ADR-0028）：installment/subscription
-            // 每期生成的交易带上计划扩展表的 merchant_id（沿用原 counterparty 复制语义）；
-            // 商户全程 Option 透传、无非空假设：非保单订阅/分期照旧复制商户，保单协议
-            // 计划行商户为空（建档入口已拒绝携带，issue #713 / ADR-0082 决策 2），
-            // 期次照常执行、生成的保费流水不携带商户引用；
-            // 同时复制保单引用（issue #362 / ADR-0051 决策 2，同机制）：保费协议
-            // （订阅形态）每期生成的交易携带扩展表的 policy_id——协议对保单的引用
-            // 是历史引用（创建时已校验在用），保单随后被软删时照常复制（与商户
-            // 「保持历史引用」同一语义），而不是让期次执行失败。分期不持保单引用
-            // （准入守卫在 create_plan），恒 None。
             let ext = match st.kind {
                 ScheduledKind::Installment => {
                     let plan = query_one::<InstallmentPlan, _>(
@@ -918,12 +808,6 @@ pub fn execute_occurrence(conn: &Connection, occurrence_id: &str) -> Result<Stri
                         ..Default::default()
                     }
                 }
-                // 穷尽 match 防御臂改码化错误（#433，ADR-0060 A 类临时豁免就此
-                // 摘除）：外层 match 已按 ScheduledTransfer 分流处理，该聚合分支
-                // 正常不可达；万一触发（内部状态非法）返回码化错误而非 panic——
-                // 自动执行是无人值守路径（ADR-0042），此错误经追补失败走向按
-                // ADR-0024 失败策略置 failed 保持手动重试、不中断同批后续；手动
-                // 执行路径此臂位于事务 BEGIN 之前，期次保持原状态可直接重试。
                 ScheduledKind::ScheduledTransfer => {
                     return Err(AppError::coded(
                         "scheduled-plan.kind-mismatch",
@@ -958,20 +842,6 @@ pub fn execute_occurrence(conn: &Connection, occurrence_id: &str) -> Result<Stri
         }
     };
 
-    // 经 Writer 接缝归一化（issue #59 / spec #52）：
-    // - 本位币金额由 Amount 接缝按交易日入口折算（#1547：按交易所属 ISO 周命中
-    //   汇率历史），修复非默认币种定时交易
-    //   把原始金额当作 amount_native_cents 落库的 bug（故事 3/17/23）；
-    // - normalize 为只读校验+折算，放在 CAS 锁定**之前**：业务错误（如非默认币种
-    //   缺汇率）直接返回、期次保持 pending 可重试，不会滞留 processing；
-    // - id 由 OccurrenceKey 确定性派生（落地身份，issue #856），审计字段
-    //   （created_at/updated_at/version/device_id/is_deleted）由写入接缝生成，
-    //   与手动创建/导入共用同一写入权威。
-    // 商户复制语义（issue #190 / ADR-0028）：期次生成交易复制计划的商户引用。
-    // `existing_merchant_id` 传同值——计划对商户的引用是历史引用（创建计划时已校验
-    // 商户在用），期次只是把该引用复制到流水：计划商户随后被软删时，历史引用照常
-    // 保留、继续复制（与 writer 编辑路径「保持历史引用跳过校验」同一语义），
-    // 而不是让期次执行失败。
     let norm = writer::normalize(
         conn,
         &writer::Input {
@@ -980,40 +850,25 @@ pub fn execute_occurrence(conn: &Connection, occurrence_id: &str) -> Result<Stri
             currency_code: st.currency_code.clone(),
             account_id: Some(st.account_id.clone()),
             to_account_id: ext.to_account_id,
-            // 定时计划无出资账户语义（期次只产通用 kind，issue #935）。
             funding_account_id: None,
-            // 定时计划不携带出资分解（ADR-0138 决策 3：分期/订阅维持单出资）。
             funding: Vec::new(),
             existing_funding: Vec::new(),
-            // 定时计划不携带购买项（issue #1882 / ADR-0138 决策 15：仅 AI 导入写入）。
             purchases: Vec::new(),
             existing_purchases: Vec::new(),
-            // 定时计划不携带来源订单号（期次生成非导入行，V035 缺省 None）。
             source_order_no: None,
             category_id,
             merchant_id: ext.merchant_id.clone(),
             existing_merchant_id: ext.merchant_id,
-            // 保单引用复制（issue #362 / ADR-0051 决策 2）：保费协议每期生成交易
-            // 携带扩展表 policy_id；`existing_policy_id` 传同值——协议对保单的引用
-            // 是历史引用（创建时已校验在用），保单随后被软删时照常复制、期次不失败。
             policy_id: ext.policy_id.clone(),
             existing_policy_id: ext.policy_id,
             refund_of_transaction_id: None,
             note: st.note.clone(),
             date: occ.scheduled_date.clone(),
-            // 定时计划定义不携带逐笔显式汇率（#1549 的可选字段面向单笔写入调用方，
-            // 计划/期次无此契约），期次恒走序列查询路径（#1547），缺汇率报错期次保持可重试。
             fx_rate: None,
-            // 期次是创建路径：无编辑沿用基线（#1550）。
             fx_edit_baseline: None,
         },
     )?;
 
-    // 事务自持：从 CAS 置 processing 起包到计划完成检查（事务边界见本函数 doc）。
-    // 无条件自持原语归基础设施 `db::tx_scope::hold_transaction`（issue #1014 / #1003
-    // 定案 5）：中途失败整体回滚、期次回原状态可重试；失败语义（尽力回滚不遮蔽、
-    // COMMIT 失败尽力清理）与行为层编排入口统一。ADR-0033 决策 6 的例外本质不变
-    // （不经三入口直调 Writer），变的只是事务壳住址。
     let now = now_iso();
     let txn_id = hold_transaction(conn, || {
         execute_within_transaction(
@@ -1030,8 +885,6 @@ pub fn execute_occurrence(conn: &Connection, occurrence_id: &str) -> Result<Stri
     Ok(txn_id)
 }
 
-/// 读取订阅计划扩展行（期次执行引用复制用）；缺失即错（核心行存在而扩展行
-/// 缺失属数据损坏）。
 fn subscription_ext(conn: &Connection, st_id: &str) -> Result<SubscriptionPlan> {
     query_one::<SubscriptionPlan, _>(
         conn,
@@ -1047,9 +900,6 @@ fn subscription_ext(conn: &Connection, st_id: &str) -> Result<SubscriptionPlan> 
     })
 }
 
-/// 计划形态扩展的读取投影（`list_plans` / [`execute_occurrence`] 共用视图）：
-/// 按 kind 从各扩展表读出的可外携字段，互斥字段用 `None` 占位——命名结构体
-/// 承载，避免多形态字段并作位置元组后在形态间错位（评审修正）。
 #[derive(Default)]
 struct PlanExtProjection {
     merchant_id: Option<String>,
@@ -1059,14 +909,6 @@ struct PlanExtProjection {
     to_account_id: Option<String>,
 }
 
-/// 期次落库协议本体（无事务语义，由 [`execute_occurrence`] 自持事务包裹）：
-/// CAS 置 processing → 交易行落库 → 回填 transaction_id → 计划完成检查。
-///
-/// 落地身份（issue #856 / ADR-0091 决策 5）：交易 id 由 OccurrenceKey
-/// （plan_id + 期次计划日期）确定性派生（[`occurrence_transaction_id`]）——
-/// 落地已存在（他端经同步落地、本端期次行晚到）则只回填完成、不插第二笔、
-/// 不产出 op（落地 op 已存在于全局日志）；否则落库并产出期次触发 op（随本
-/// 事务提交/回滚）。双端同时自动执行同一期派生同一 id，同步收敛后只落一次。
 fn execute_within_transaction(
     conn: &Connection,
     occurrence_id: &str,
@@ -1076,7 +918,6 @@ fn execute_within_transaction(
     scheduled_date: &str,
     now: &str,
 ) -> Result<String> {
-    // 锁定期次: CAS update status -> processing
     let updated = conn.execute(
         "UPDATE scheduled_transaction_occurrences SET status='processing', updated_at=?2, version=version+1, device_id=?3 \
          WHERE id=?1 AND status=?4 AND is_deleted=0",
@@ -1090,15 +931,10 @@ fn execute_within_transaction(
         ));
     }
 
-    // 落地身份：OccurrenceKey 派生，跨端一致（防双扣的结构承载）。
     let landing_id = occurrence_transaction_id(plan_id, scheduled_date);
     let landed = transaction_landed(conn, &landing_id)?;
     if !landed {
-        // 落库（显式 id 形态：落地身份即主键）。
         writer::insert_row_with_id(conn, &landing_id, norm)?;
-        // op 产出接缝（issue #856 / ADR-0091 决策 5）：期次触发动作连同归一化行
-        // （含源端折算）追加进本机 OpLog；随本事务提交/回滚。落地身份由键派生、
-        // 不随命令携带（消除第二事实源漂移）。
         record_local(
             conn,
             ScheduledCommand::ExecuteOccurrence {
@@ -1109,21 +945,17 @@ fn execute_within_transaction(
         )?;
     }
 
-    // 回填 transaction_id（已落地路径只回填完成：不插第二笔、不产出 op——
-    // 落地 op 已存在于全局日志；不自动复活被用户删除的落地）。
     conn.execute(
         "UPDATE scheduled_transaction_occurrences SET status='completed', transaction_id=?2, updated_at=?3, version=version+1, device_id=?4 \
          WHERE id=?1",
         rusqlite::params![occurrence_id, landing_id, now, device_id(conn)?],
     )?;
 
-    // 检查计划是否应标记为 completed
     check_and_complete_plan(conn, plan_id)?;
 
     Ok(landing_id)
 }
 
-/// 检查计划是否所有期次已完成，如果是则标记为 completed。
 fn check_and_complete_plan(conn: &Connection, st_id: &str) -> Result<()> {
     let kind: ScheduledKind = conn.query_row(
         "SELECT kind FROM scheduled_transactions WHERE id=?1",

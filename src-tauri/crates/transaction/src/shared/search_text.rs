@@ -1,31 +1,10 @@
-//! 统一模糊搜索语义（共享语义区，issue #195 规格 / ADR-0027 全库唯一定义点）。
-//!
-//! 职责：输入按空白切词、词条间 AND；每词条对每个可搜索字段判定「原文连续子串
-//! （大小写不敏感）∨ 词条是该字段拼音首字母串的子序列（大小写不敏感）」。不变量：
-//! 前后端共同遵守的统一契约，被交易搜索与投资域下拉共同消费（ADR-0113 决策 2
-//! 先例，故归共享语义而非交易搜索）。ADR 指针：ADR-0027。陷阱：混合输入（如
-//! 「招zsyh」）无需特判——含汉字词条对纯 ASCII 首字母串的子序列匹配自然失败，
-//! 落到原文子串路径，两路径任一命中即算。
-
-// ---------------------------------------------------------------------------
-// 拼音首字母
-// ---------------------------------------------------------------------------
-
-/// 常见多音字在记账语境下的读音修正（前字 + 当前字 → 拼音首字母）。
-/// `pinyin` crate 按单字常用读音取音，无上下文消歧；此处用简单前字规则覆盖
-/// 高频金融/账户场景的例外读音，其余多音字沿用默认读音（已知局限）。
 fn polyphone_initial(prev: Option<char>, ch: char) -> Option<char> {
     match ch {
-        // 行：银行/商业银行等 → háng（h）；默认行走/行为 → xíng（x）
         '行' if prev == Some('银') => Some('h'),
         _ => None,
     }
 }
 
-/// 生成拼音首字母缩写（小写）。逐字符处理：
-/// - 中文字符取拼音（无声调）首字母，如「招商银行」→ `zsyh`（银行 → yh，多音字修正）；
-/// - ASCII 字母/数字小写保留（如 `ABC银行` → `abcyh`，`123` → `123`）；
-/// - 其余字符（标点、空格等）跳过。
 pub fn pinyin_initials(text: &str) -> String {
     use pinyin::ToPinyin;
     let mut out = String::with_capacity(text.len());
@@ -45,12 +24,6 @@ pub fn pinyin_initials(text: &str) -> String {
     out
 }
 
-// ---------------------------------------------------------------------------
-// 统一语义匹配
-// ---------------------------------------------------------------------------
-
-/// 大小写不敏感的子序列判定：`pattern` 的每个字符按原顺序出现在 `target` 中
-/// （允许跳字，间隔不限）。空 pattern 恒命中（`all` 对空迭代器为 true）。
 pub fn is_subsequence(pattern: &str, target: &str) -> bool {
     let target_lower = target.to_lowercase();
     let mut target_chars = target_lower.chars();
@@ -60,15 +33,11 @@ pub fn is_subsequence(pattern: &str, target: &str) -> bool {
         .all(|p| target_chars.any(|t| t == p))
 }
 
-/// 词条对单个可搜索字段判定（统一语义契约）：
-/// 原文连续子串（大小写不敏感）∨ 该字段拼音首字母串的子序列（大小写不敏感）。
 pub fn term_matches_text(term: &str, text: &str) -> bool {
     text.to_lowercase().contains(&term.to_lowercase())
         || is_subsequence(term, &pinyin_initials(text))
 }
 
-/// 词条对一笔交易判定：任一可搜索字段（备注 ∨ 转出账户名 ∨ 商户名）命中即算。
-/// 两条路径任一命中即算，字段之间 OR、词条之间 AND（由调用方组合）。
 pub fn term_matches(
     term: &str,
     note: Option<&str>,
@@ -80,7 +49,6 @@ pub fn term_matches(
         || merchant_name.is_some_and(|m| term_matches_text(term, m))
 }
 
-/// 切词：按空白拆分，过滤空词条（词条之间 AND 由调用方组合）。
 pub fn split_terms(query: &str) -> Vec<String> {
     query.split_whitespace().map(str::to_string).collect()
 }

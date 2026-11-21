@@ -6,7 +6,6 @@ use ledger_sync_protocol::device::device_id;
 use ledger_transaction::amount::{Measure, TransactionKind, TransferSide, signed_amount};
 
 fn setup() -> rusqlite::Connection {
-    // 建库两行序经统一测试工厂承载（spec #728 / issue #754 / ADR-0084 决策 7）。
     tauri_app_lib::test_support::open()
 }
 
@@ -28,15 +27,11 @@ fn insert_account(
     currency: &str,
     initial: i64,
 ) {
-    // 工厂账户种子（归一签名，spec #728 / ADR-0084 决策 4）；裸种子绕过
-    // create_account 域钩子，按 V017 迁移回填语义补建缓存行（ADR-0067）。
     tauri_app_lib::test_support::seed_account(conn, id, name, kind, currency, initial);
     crate::balance::refresh_account_balances(conn, &[id]).unwrap();
 }
 
 fn insert_hidden_account(conn: &rusqlite::Connection, id: &str, name: &str, currency: &str) {
-    // 黑洞账户 = 工厂账户种子 + is_hidden 修正（隐藏语义为本域场景输入，
-    // 不入工厂种子）；缓存行补建同 insert_account（ADR-0067）。
     tauri_app_lib::test_support::seed_account(conn, id, name, "other", currency, 0);
     conn.execute(
         "UPDATE accounts SET is_hidden=1 WHERE id=?1",
@@ -62,8 +57,6 @@ fn insert_tx(
          VALUES (?1,?2,?3,'CNY',?3,?4,?5,NULL,NULL,NULL,'2026-01-15',?6,?7,?8,?9,0)",
         rusqlite::params![id, kind, amount, account_id, to_account_id, now, now, 1, device_id(conn).unwrap()],
     ).unwrap();
-    // 裸 SQL 绕过 Writer 接缝缓存刷新，同步补齐两侧账户的缓存行（保持「缓存==实时」
-    // 不变量，ADR-0067）。
     let mut affected = vec![account_id];
     if let Some(to) = to_account_id {
         affected.push(to);
@@ -71,7 +64,6 @@ fn insert_tx(
     crate::balance::refresh_account_balances(conn, &affected).unwrap();
 }
 
-/// 原币金额与本位币金额**不等**的 HKD 行：锁定「余额按账户币种累计」（issue #1769）。
 fn insert_tx_dual(
     conn: &rusqlite::Connection,
     id: &str,
@@ -89,7 +81,6 @@ fn insert_tx_dual(
          VALUES (?1,?2,?3,'HKD',?4,?5,?6,NULL,NULL,NULL,'2026-01-15',?7,?8,?9,?10,0)",
         rusqlite::params![id, kind, amount_cents, amount_native_cents, account_id, to_account_id, now, now, 1, device_id(conn).unwrap()],
     ).unwrap();
-    // 裸 SQL 绕过 Writer 接缝缓存刷新，同步补齐缓存行（ADR-0067）。
     let mut affected = vec![account_id];
     if let Some(to) = to_account_id {
         affected.push(to);
@@ -97,23 +88,17 @@ fn insert_tx_dual(
     crate::balance::refresh_account_balances(conn, &affected).unwrap();
 }
 
-/// 外币账户余额按**账户币种**（`amount_cents`）累计，不按本位币折算值累计
-/// （issue #1769）：HKD 投资账户落 dividend/expense 后余额 = 原币现金腿之和，
-/// 缓存出口（UI 与 API 同源）与实时口径一致。
 #[test]
 fn foreign_currency_balance_accumulates_in_account_currency() {
     let conn = setup();
-    // 账户币种 HKD：行内 amount_cents 为 HKD 分，amount_native_cents 为 CNY 折算值。
     insert_account(&conn, "acc-hkd", "富图牛牛", "investment", "HKD", 0);
     insert_tx_dual(&conn, "hkd-d1", "dividend", 19091, 15541, "acc-hkd", None);
     insert_tx_dual(&conn, "hkd-e1", "expense", 3000, 2442, "acc-hkd", None);
     insert_tx_dual(&conn, "hkd-e2", "expense", 1800, 1465, "acc-hkd", None);
     insert_tx_dual(&conn, "hkd-e3", "expense", 6, 5, "acc-hkd", None);
 
-    // 原币现金腿之和 = +190.91 − 30.00 − 18.00 − 0.06 = 142.85 HKD。
     assert_eq!(balance(&conn, "acc-hkd"), 14285, "余额应为账户币种原币之和");
 
-    // 缓存出口与实时口径一致，且等于原币口径（本位币折算值之和为 116.29）。
     let rows = crate::balance::list_account_balances_with_visibility(&conn, false).unwrap();
     let row = rows
         .iter()
@@ -122,15 +107,12 @@ fn foreign_currency_balance_accumulates_in_account_currency() {
     assert_eq!(row.balance_cents, 14285, "缓存出口应为账户币种余额");
 }
 
-/// 黑洞腿佐证（issue #1769）：外币黑洞账户（buy 的出资侧）余额同样按账户币种
-/// 累计——「无(HKD)」应为 −52,508,160 HKD 分，而非 −52,508,160 × 0.814145 的本位币值。
 #[test]
 fn foreign_currency_black_hole_balance_stays_in_account_currency() {
     let conn = setup();
     insert_hidden_account(&conn, "hole-hkd", "无(HKD)", "HKD");
     insert_account(&conn, "acc-inv-hkd", "港美股", "investment", "HKD", 0);
     let now = now_iso();
-    // buy 52,508,160 HKD 分经黑洞出资；amount_native_cents = ×0.814145 的折算值。
     conn.execute(
         "INSERT INTO transactions \
          (id,kind,amount_cents,currency_code,amount_native_cents,account_id,funding_account_id,\
@@ -229,7 +211,6 @@ fn delete_account_returns_not_found_for_already_deleted() {
     );
 }
 
-/// 场景行内的一笔流水（kind 用 Amount 接缝的 TransactionKind 枚举表述）。
 #[derive(Debug)]
 struct ScenarioTx {
     kind: TransactionKind,
@@ -238,8 +219,6 @@ struct ScenarioTx {
     to_account_id: Option<&'static str>,
 }
 
-/// 场景行：行名 + 账户（id, 初始额）+ 若干笔流水 + 期望余额。
-/// 转移行带 A/B 双侧期望，退款行为多笔流水行。
 #[derive(Debug)]
 struct ScenarioRow {
     name: &'static str,
@@ -248,24 +227,15 @@ struct ScenarioRow {
     expects: &'static [(&'static str, i64)],
 }
 
-/// 余额场景矩阵（#767）：原五连测（初始额/收入/支出/转入/退款）仅类型与金额不同，
-/// 收敛为行数据 + 单一断言体。断言面保持五连测原样——单账户余额查询，
-/// 不因收敛扩大；软删过滤语义不同（soft_deleted_transaction_excluded_from_balance），
-/// 不进表。
-/// 期望值为独立人算字面量（守「余额口径本身对」）；同文件度量矩阵测试
-/// `balance_computed_via_account_flow_measure` 的期望由 signed_amount × AccountFlow
-/// 复算推导（守「SQL↔Rust 口径一致」），两类预言并存互补，不合并不删除。
 #[test]
 fn balance_scenario_matrix() {
     let rows: &[ScenarioRow] = &[
-        // balance_starts_at_initial
         ScenarioRow {
             name: "初始额起步",
             accounts: &[("acc-bal-1", 10000)],
             txs: &[],
             expects: &[("acc-bal-1", 10000)],
         },
-        // balance_adds_income
         ScenarioRow {
             name: "收入入账",
             accounts: &[("acc-bal-2", 0)],
@@ -277,7 +247,6 @@ fn balance_scenario_matrix() {
             }],
             expects: &[("acc-bal-2", 5000)],
         },
-        // balance_subtracts_expense
         ScenarioRow {
             name: "支出扣减",
             accounts: &[("acc-bal-3", 10000)],
@@ -289,7 +258,6 @@ fn balance_scenario_matrix() {
             }],
             expects: &[("acc-bal-3", 7000)],
         },
-        // balance_adds_transfer_in：转出/转入双侧
         ScenarioRow {
             name: "转账 A/B 双侧",
             accounts: &[("acc-a", 0), ("acc-b", 0)],
@@ -301,7 +269,6 @@ fn balance_scenario_matrix() {
             }],
             expects: &[("acc-a", -2000), ("acc-b", 2000)],
         },
-        // balance_adds_refund：多笔流水行
         ScenarioRow {
             name: "退款冲减",
             accounts: &[("acc-bal-4", 0)],
@@ -374,7 +341,6 @@ fn list_account_balances_returns_all_accounts() {
     assert_eq!(balance(&conn, "acc-list-2"), 48000);
 }
 
-// 余额口径测试夹具：一行 = 一笔交易（kind 用 Amount 接缝的 TransactionKind 枚举表述）。
 struct FlowRow {
     id: &'static str,
     kind: TransactionKind,
@@ -383,9 +349,6 @@ struct FlowRow {
     to_account_id: Option<&'static str>,
 }
 
-/// 期望余额由度量矩阵（`signed_amount` × `AccountFlow`）在 Rust 侧对夹具逐行求和得出，
-/// 断言 `compute_balance` 与 `compute_all_balances` 均与之一致——测试不复制生产 SQL。
-/// 覆盖全部 8 种 kind（含 buy/sell/dividend/split 与 transfer 双侧）。
 #[test]
 fn balance_computed_via_account_flow_measure() {
     let conn = setup();
@@ -483,9 +446,7 @@ fn balance_computed_via_account_flow_measure() {
                 .sum::<i64>()
     };
 
-    // acc-flow-m = 1000 +5000 −1200 +300 −800 = 4300
     assert_eq!(balance(&conn, "acc-flow-m"), 4300);
-    // acc-flow-n = +800 −2000 +1500 +60 +0 = 360
     assert_eq!(balance(&conn, "acc-flow-n"), 360);
 
     let all = crate::balance::compute_all_balances(&conn).unwrap();
@@ -650,10 +611,6 @@ fn seed_contains_black_hole_accounts_for_cny_and_hkd() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// update_account（编辑账户）
-// ---------------------------------------------------------------------------
-
 use super::model::{AccountBalanceAdjustInput, AccountInput, AccountType, AccountUpdateInput};
 
 fn find_black_hole(conn: &rusqlite::Connection, currency: &str) -> Option<String> {
@@ -729,7 +686,6 @@ fn update_account_rejects_currency_change_when_has_transactions() {
     .unwrap_err();
     assert!(matches!(err, AppError::Coded { .. }));
     assert!(err.to_string().contains("不能修改币种"));
-    // 币种未被改动
     assert_eq!(
         super::get_account(&conn, "acc-u3").unwrap().currency_code,
         "CNY"
@@ -805,10 +761,6 @@ fn update_account_returns_not_found_for_missing_id() {
     ));
 }
 
-// ---------------------------------------------------------------------------
-// adjust_account_balance（余额调整，ADR-0026 黑洞转账）
-// ---------------------------------------------------------------------------
-
 fn adjust(conn: &rusqlite::Connection, id: &str, target: i64) -> Result<(String, bool), AppError> {
     super::adjust_account_balance(
         conn,
@@ -821,17 +773,12 @@ fn adjust(conn: &rusqlite::Connection, id: &str, target: i64) -> Result<(String,
     )
 }
 
-/// 为非本位币测试补汇率（余额调整经 Writer 接缝折算本位币，缺汇率报错）。
-/// #1547 起写路径按交易日取数：当期行服务读路径，另种调整日期所属周的历史点
-/// （adjust 固定日期 2026-09-15，周一为 2026-09-14）。
 fn ensure_rate(conn: &rusqlite::Connection, code: &str, rate: f64) {
     conn.execute(
         "INSERT OR IGNORE INTO currencies (code, name, symbol, decimal_places) VALUES (?1, ?1, '$', 2)",
         rusqlite::params![code],
     )
     .unwrap();
-    // 汇率行：工厂汇率种子（簿记戳内部发放，spec #728 / ADR-0084 决策 5；
-    // 来源列落表默认，被测调整路径只读汇率值）。
     tauri_app_lib::test_support::seed_exchange_rate(conn, code, "CNY", rate);
     tauri_app_lib::test_support::seed_fx_rate_history(
         conn,
@@ -850,7 +797,6 @@ fn adjust_up_creates_transfer_from_black_hole_and_reaches_target() {
     insert_tx(&conn, "tx-adj-1", "income", 5000, "acc-adj-1", None);
     assert_eq!(balance(&conn, "acc-adj-1"), 5000);
 
-    // Δ=+2000 → 从「无(CNY)」转入；种子黑洞已存在，不新建
     let (tx_id, created) = adjust(&conn, "acc-adj-1", 7000).unwrap();
     assert!(!created, "种子已预置 无(CNY)，不应新建黑洞账户");
     let black_hole = find_black_hole(&conn, "CNY").unwrap();
@@ -898,7 +844,7 @@ fn adjust_down_creates_transfer_to_black_hole() {
 #[test]
 fn adjust_creates_black_hole_for_missing_currency() {
     let conn = setup();
-    ensure_rate(&conn, "USD", 1.0); // MVP 汇率 1:1
+    ensure_rate(&conn, "USD", 1.0);
     insert_account(&conn, "acc-adj-3", "美元户", "cash", "USD", 0);
     let (_tx_id, created) = adjust(&conn, "acc-adj-3", 9900).unwrap();
     assert!(created, "缺失币种的黑洞账户应按需自动创建");
@@ -919,7 +865,7 @@ fn adjust_creates_black_hole_for_missing_currency() {
 #[test]
 fn adjust_reuses_existing_black_hole_for_same_currency() {
     let conn = setup();
-    ensure_rate(&conn, "HKD", 1.0); // MVP 汇率 1:1
+    ensure_rate(&conn, "HKD", 1.0);
     insert_account(&conn, "acc-adj-4", "港币户", "cash", "HKD", 0);
     let _ = adjust(&conn, "acc-adj-4", 100).unwrap();
     let (_tx_id2, created2) = adjust(&conn, "acc-adj-4", 300).unwrap();
@@ -933,7 +879,6 @@ fn adjust_reuses_existing_black_hole_for_same_currency() {
         .unwrap();
     assert_eq!(count, 1, "同币种黑洞账户不应重复创建");
     assert_eq!(balance(&conn, "acc-adj-4"), 300);
-    // 两笔调整交易独立存在，均可删除撤销（普通 transfer，无特殊标记）
     let txs: i64 = conn
         .query_row(
             "SELECT COUNT(*) FROM transactions WHERE (account_id=(\
@@ -989,7 +934,6 @@ fn adjust_deleted_adjustment_tx_reverts_balance() {
     insert_account(&conn, "acc-adj-7", "现金", "cash", "CNY", 0);
     let (tx_id, _) = adjust(&conn, "acc-adj-7", 5000).unwrap();
     assert_eq!(balance(&conn, "acc-adj-7"), 5000);
-    // 调整产生的转账就是普通 transfer：删除即撤销调整
     conn.execute(
         "UPDATE transactions SET is_deleted=1, updated_at=?2, version=version+1, device_id=?3 WHERE id=?1",
         rusqlite::params![tx_id, now_iso(), device_id(&conn).unwrap()],
@@ -998,12 +942,6 @@ fn adjust_deleted_adjustment_tx_reverts_balance() {
     assert_eq!(balance(&conn, "acc-adj-7"), 0, "删除调整交易即恢复原余额");
 }
 
-// ---------------------------------------------------------------------------
-// 信用卡档案字段（spec #1327 / ADR-0119）：携带守卫、范围校验、三态编辑语义，
-// 与「档案不参与余额口径」的负向守卫。
-// ---------------------------------------------------------------------------
-
-/// 信用卡账户建参助手（CNY、无期初余额、无档案字段，逐项覆写）。
 fn credit_input(name: &str) -> AccountInput {
     AccountInput {
         name: name.into(),
@@ -1016,8 +954,6 @@ fn credit_input(name: &str) -> AccountInput {
     }
 }
 
-/// 创建信用卡账户并携带三个档案字段 → 读回同值。**声明值原样存储**：月末钳制
-/// （31 日 → 2 月取 28/29 日）只发生在展示层的「下次账单日」派生，不进库。
 #[test]
 fn create_credit_account_persists_credit_terms() {
     let conn = setup();
@@ -1045,7 +981,6 @@ fn create_credit_account_persists_credit_terms() {
     );
 }
 
-/// 三个字段彼此独立可空：只填额度、只填日子、全不填都要能建。
 #[test]
 fn create_credit_account_allows_partial_credit_terms() {
     let conn = setup();
@@ -1077,7 +1012,6 @@ fn create_credit_account_allows_partial_credit_terms() {
     assert_eq!(account.due_day, Some(25));
 }
 
-/// 非信用卡账户携带档案字段 → 拒绝，且不落库（账户类型与属性的对应关系不被破坏）。
 #[test]
 fn create_non_credit_account_rejects_credit_terms() {
     let conn = setup();
@@ -1122,7 +1056,6 @@ fn create_non_credit_account_rejects_credit_terms() {
     );
 }
 
-/// 额度必须为正整数分：0 与负数非法（`None` 才是「未设置」，两者不可混同）。
 #[test]
 fn credit_limit_must_be_positive() {
     let conn = setup();
@@ -1146,7 +1079,6 @@ fn credit_limit_must_be_positive() {
     }
 }
 
-/// 账单日与还款日必须落在 1–31：越界失败，码与文案各自区分（不混成一个错误）。
 #[test]
 fn credit_days_must_be_within_1_to_31() {
     let conn = setup();
@@ -1177,8 +1109,6 @@ fn credit_days_must_be_within_1_to_31() {
     }
 }
 
-/// 编辑三态：给值落定 / 缺席保持原值 / `Some(None)` 清空——三个字段彼此独立，
-/// 且清空只作用于被给的字段。
 #[test]
 fn update_credit_terms_supports_set_keep_and_clear() {
     let conn = setup();
@@ -1197,7 +1127,6 @@ fn update_credit_terms_supports_set_keep_and_clear() {
         (a.credit_limit_cents, a.statement_day, a.due_day)
     };
 
-    // 缺席 = 不改：只改名字，三字段原样保留
     super::update_account(
         &conn,
         &id,
@@ -1213,7 +1142,6 @@ fn update_credit_terms_supports_set_keep_and_clear() {
     .unwrap();
     assert_eq!(terms(&conn), (Some(1_000_000), Some(5), Some(25)));
 
-    // 给值 = 落定（未被给的字段保持原值）
     super::update_account(
         &conn,
         &id,
@@ -1229,7 +1157,6 @@ fn update_credit_terms_supports_set_keep_and_clear() {
     .unwrap();
     assert_eq!(terms(&conn), (Some(2_000_000), Some(10), Some(25)));
 
-    // `Some(None)` = 清空（单字段独立清空，不牵连另两个）
     super::update_account(
         &conn,
         &id,
@@ -1246,7 +1173,6 @@ fn update_credit_terms_supports_set_keep_and_clear() {
     assert_eq!(terms(&conn), (None, Some(10), None));
 }
 
-/// 编辑非法档案值 → 拒绝且不落任何字段（拒绝是整体失败，不是部分写入）。
 #[test]
 fn update_rejects_invalid_credit_terms_without_writing() {
     let conn = setup();
@@ -1288,7 +1214,6 @@ fn update_rejects_invalid_credit_terms_without_writing() {
     );
 }
 
-/// 编辑非信用卡账户携带档案字段 → 拒绝。
 #[test]
 fn update_non_credit_account_rejects_credit_terms() {
     let conn = setup();
@@ -1309,7 +1234,6 @@ fn update_non_credit_account_rejects_credit_terms() {
     assert!(err.to_string().contains("仅信用卡账户可填写"));
 }
 
-/// 读路径同样带出档案字段（列表列清单在查询处重复，UI 消费的是列表读出口）。
 #[test]
 fn list_accounts_carries_credit_terms() {
     let conn = setup();
@@ -1340,8 +1264,6 @@ fn list_accounts_carries_credit_terms() {
     assert_eq!(row.account.credit_limit_cents, Some(5_000_000));
 }
 
-/// 负向守卫：改/清档案字段不改变账户余额——额度是档案不是钱，信用卡欠款仍由
-/// 余额唯一表达（余额缓存与实时口径同值，额度不进缓存写路径）。
 #[test]
 fn credit_terms_do_not_change_account_balance() {
     let conn = setup();
@@ -1392,12 +1314,6 @@ fn credit_terms_do_not_change_account_balance() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// 账户归档（spec #1952 / ADR-0142 / issue #1953）：归档是收纳态——只翻标志，
-// 不改任何金额口径；幂等（已目标态零 UPDATE 零 op）；读面零过滤。
-// ---------------------------------------------------------------------------
-
-/// 归档态读回（测试侧同形 SELECT：域读面零过滤的直接探针）。
 fn archived_flag(conn: &rusqlite::Connection, id: &str) -> bool {
     conn.query_row(
         "SELECT is_archived FROM accounts WHERE id=?1",
@@ -1408,14 +1324,11 @@ fn archived_flag(conn: &rusqlite::Connection, id: &str) -> bool {
     .unwrap()
 }
 
-/// 本机 op 日志行数（幂等断言：重复归档不重复产 op）。
 fn op_count(conn: &rusqlite::Connection) -> i64 {
     conn.query_row("SELECT COUNT(*) FROM sync.sync_ops", [], |r| r.get(0))
         .unwrap()
 }
 
-/// 本机 op 日志里指定动作的载荷（按记录顺序，测试侧形状探针：审 Update 载荷不
-/// 携带归档态）。
 fn op_payloads(conn: &rusqlite::Connection) -> Vec<serde_json::Value> {
     let mut stmt = conn
         .prepare("SELECT payload FROM sync.sync_ops ORDER BY clock")
@@ -1449,7 +1362,6 @@ fn archive_is_idempotent_no_second_op_no_version_bump() {
     let ops_after_first = op_count(&conn);
     let version_after_first = super::get_account(&conn, "acc-arc-2").unwrap().version;
 
-    // 重复归档：不报错、零 UPDATE（version 不动）、零 op。
     super::set_account_archived(&conn, "acc-arc-2", true).unwrap();
     assert_eq!(
         super::get_account(&conn, "acc-arc-2").unwrap().version,
@@ -1459,7 +1371,6 @@ fn archive_is_idempotent_no_second_op_no_version_bump() {
     assert_eq!(op_count(&conn), ops_after_first, "已是目标态时不得再产 op");
 }
 
-/// spec 最关键断言：归档前后该账户余额、全部账户余额合计、净资产读数完全不变。
 #[test]
 fn archive_keeps_balance_totals_and_net_worth_unchanged() {
     let conn = setup();
@@ -1534,8 +1445,6 @@ fn set_account_archived_returns_not_found_for_missing_id() {
     assert!(err.to_string().contains("账户不存在"));
 }
 
-/// 读面零过滤（ADR-0142 决策 4）：归档账户继续出现在列表与余额清单（带标志），
-/// 名称映射与历史可读才成立。
 #[test]
 fn archived_account_stays_in_read_faces_with_flag() {
     let conn = setup();
@@ -1556,8 +1465,6 @@ fn archived_account_stays_in_read_faces_with_flag() {
     );
 }
 
-/// 重放臂与本地写同一执行协议（同 UPDATE + 簿记戳 + touch），且重放不产 op；
-/// 重放自身幂等（同参数重放两次，version 只走一次）。
 #[test]
 fn replay_set_archived_matches_local_protocol_without_op() {
     let conn = setup();
@@ -1577,9 +1484,6 @@ fn replay_set_archived_matches_local_protocol_without_op() {
     );
 }
 
-/// 编辑入口的归档可选键（spec #1952 / ADR-0142 决策 5）：`update_account` 解出
-/// 该键并落定；Update 命令载荷**不**携带归档态（旧日志重放不会把归档刷回未归档——
-/// 落定走独立 SetArchived op）。
 #[test]
 fn update_account_resolves_archive_key_without_putting_it_in_update_payload() {
     let conn = setup();
@@ -1612,8 +1516,6 @@ fn update_account_resolves_archive_key_without_putting_it_in_update_payload() {
         2,
         "Update + SetArchived 各一条：{payloads:?}"
     );
-    // 信封形态：`{entity, payload}`（record_local 单点的落库形态），动作住
-    // 内层 `payload.action`（AccountCommand 的 serde tag）。
     assert_eq!(payloads[0]["entity"], "account");
     let update = &payloads[0]["payload"];
     assert_eq!(update["action"], "update", "首条仍是编辑 op");
@@ -1624,7 +1526,6 @@ fn update_account_resolves_archive_key_without_putting_it_in_update_payload() {
     assert_eq!(payloads[1]["payload"]["action"], "set_archived");
     assert_eq!(payloads[1]["payload"]["archived"], true);
 
-    // 恢复方向同路径（`false` 落定）。
     super::update_account(
         &conn,
         "acc-arc-8",
@@ -1644,9 +1545,6 @@ fn update_account_resolves_archive_key_without_putting_it_in_update_payload() {
     );
 }
 
-/// 归档-only 编辑（PUT 只带 `is_archived`，无任何编辑键）：只产一条 `SetArchived`
-/// op、只写一次账户行——编辑路径在「无编辑键」时必须整段不执行（AC「归档 / 恢复
-/// 幂等（重复调用不报错、不重复产同步 op）」在编辑入口的落点）。
 #[test]
 fn update_account_archive_only_emits_single_set_archived_op() {
     let conn = setup();
@@ -1694,7 +1592,6 @@ fn update_account_archive_only_emits_single_set_archived_op() {
     );
 }
 
-/// 归档-only 编辑的幂等：已是目标态时重复同一 PUT——零 op、零 version bump、不报错。
 #[test]
 fn update_account_archive_only_is_idempotent() {
     let conn = setup();
@@ -1711,7 +1608,6 @@ fn update_account_archive_only_is_idempotent() {
     let version_after_first = super::get_account(&conn, "acc-arc-10").unwrap().version;
     let ops_after_first = op_count(&conn);
 
-    // 重复同一 PUT：不报错、零 UPDATE（version 不动）、零 op。
     super::update_account(&conn, "acc-arc-10", input()).unwrap();
     assert_eq!(
         super::get_account(&conn, "acc-arc-10").unwrap().version,
@@ -1725,8 +1621,6 @@ fn update_account_archive_only_is_idempotent() {
     );
 }
 
-/// 合并请求（改名 + 归档）仍是「Update + SetArchived 各一条」，同一事务内落定——
-/// 编辑路径只在真的有编辑键时才与归档动作并行执行。
 #[test]
 fn update_account_with_edit_and_archive_emits_both_ops() {
     let conn = setup();
