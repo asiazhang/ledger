@@ -297,10 +297,7 @@ fn can_break(chars: &[char], cand: usize) -> bool {
         return false;
     }
     let wordish = |c: char| c.is_ascii_alphanumeric() || "-_/.#,".contains(c);
-    if wordish(prev) && wordish(next) {
-        return false;
-    }
-    true
+    !(wordish(prev) && wordish(next))
 }
 
 /// 显示宽贪心折行（帮助条目文案的唯一折行实现）：每行显示宽 ≤ limit，
