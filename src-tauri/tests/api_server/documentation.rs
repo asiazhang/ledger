@@ -3,9 +3,6 @@ use axum::http::{Request, StatusCode};
 use tower::ServiceExt;
 
 use crate::common::{body_to_bytes, get_json, setup_app};
-// 投资五节标题锚点（issue #1185）：与 handler 常量结构锁同源——唯一住处在
-// lib 侧 `handlers::import`，经 `test-utils` feature 门控再导出；基础知识端点
-// 响应的排他断言、投资端点响应的存在断言，都以节标题为锚（issue #1123 分级自足）。
 use tauri_app_lib::api_server::INVESTMENT_SECTION_HEADERS;
 
 #[tokio::test]
@@ -118,7 +115,6 @@ async fn test_openapi_doc_batch_wrapper_and_duplicate_field() {
     let doc: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     let schemas = doc["components"]["schemas"].as_object().unwrap();
 
-    // batch 请求体 wrapper：{ transactions, dedup }
     let batch = &schemas["TransactionBatchInput"];
     let props = batch["properties"].as_object().unwrap();
     assert!(props.contains_key("transactions"));
@@ -136,20 +132,17 @@ async fn test_openapi_doc_batch_wrapper_and_duplicate_field() {
         "dedup 应可缺省（默认 true）"
     );
 
-    // CreateTransactionResult 应包含 duplicate 字段
     let result = &schemas["CreateTransactionResult"];
     assert!(
         result["properties"]["duplicate"].is_object(),
         "CreateTransactionResult 应包含 duplicate 字段"
     );
 
-    // 账户响应应包含 is_hidden（黑洞账户契约）
     let account = &schemas["Account"];
     assert!(
         account["properties"]["is_hidden"].is_object(),
         "Account 应包含 is_hidden 字段"
     );
-    // 归档收纳态读面只增字段（spec #1952 / ADR-0142 决策 5：AI 对账辨识用，无归档写权限）
     assert!(
         account["properties"]["is_archived"].is_object(),
         "Account 应包含 is_archived 字段（只增披露）"
@@ -171,9 +164,6 @@ async fn test_openapi_update_transaction_input_omits_idempotency_key() {
     );
 }
 
-/// 投资四字段契约描述锁（issue #298）：`TransactionInput` / `UpdateTransactionInput`
-/// 的 `instrument_id` / `quantity` / `price_cents` / `fee_cents` 必须带中文描述——
-/// 契约是 AI 的唯一字段语义来源，裸字段即契约缺口（buy/sell 的悬空契约曾致投资教学缺位）。
 #[tokio::test]
 async fn test_openapi_investment_fields_have_descriptions() {
     let (app, _) = setup_app();
@@ -192,9 +182,6 @@ async fn test_openapi_investment_fields_have_descriptions() {
     }
 }
 
-/// kind 迁移为闭集枚举后，OpenAPI 契约锁：`Transaction.kind` 引用
-/// `#/components/schemas/TransactionKind` 组件，组件为小写字符串枚举（与 wire 一致），
-/// 而非 PascalCase 变体名或裸 string（issue #74 迁移锁）。
 #[tokio::test]
 async fn test_openapi_transaction_kind_is_lowercase_enum() {
     let (app, _) = setup_app();
@@ -253,30 +240,6 @@ async fn test_openapi_doc_has_currencies_endpoint() {
     assert!(schemas.contains_key("TransactionInput"));
 }
 
-/// OpenAPI 契约文档体积预算护栏：20 端点实测 47204 字节（issue #1123 投资知识
-/// 端点加入后复核），预算 48KB 留增长空间；端点继续增长触线时需人工决策（拆文档
-/// 或提预算），避免契约文档无界膨胀挤占 AI 上下文（32KB 预算在基金查询端点加入时
-/// 触线，issue #304 人工决策提至 40KB；40KB 在股票查询端点加入时触线，issue #693
-/// 人工决策提至 48KB：18 端点下契约是 AI 教学的唯一权威文本，拆分反而破坏
-/// 「一次拉取即自足」）。spec #1327 / ADR-0119（信用卡档案字段）：三个新字段跨
-/// `Account` / `AccountInput` / `AccountUpdateInput` 三个 schema，字段描述已收敛到
-/// 单行后实测 49312 字节越 48KB，本票提至 50KB（与紧凑方言同票同因，ADR-0119 后果节）。
-///
-/// issue #1569 复核：Instrument.source 描述去东财化改写后实测 51181 字节，
-/// 余量仅 19——本票已就地瘦身（删「同词表」措辞、压历史值说明）未提预算；
-/// 下一个新增端点/字段大概率触线，延续人工决策与留痕传统。
-///
-/// issue #1860 / ADR-0138 触线：多出资方（组合支付）契约面（`TransactionFunding` /
-/// `TransactionFundingInput` 两 schema、`funding` / `fundings` 字段、`account_id` 可空化
-/// 与 6 个出资错误码）加入后实测 56909 字节越 52KB，与紧凑方言同票同因提至 57KB：
-/// 新描述承载互斥二选一与 refund 缺省派生语义，删掉会让 AI 误读分解行口径，
-/// 不选删描述换预算（ADR-0119 后果节决策）。
-///
-/// issue #1882 / ADR-0138 触线：购买项契约面（`TransactionPurchase` /
-/// `TransactionPurchaseInput` 两 schema、`purchases` 字段三处与 5 个购买项错误码）
-/// 加入后实测 61037 字节越 57KB，与紧凑方言同票同因提至 62KB：新描述承载 kind
-/// 准入、对账单顺序与「价格拿不到就留空」语义，删掉会让 AI 误读购买项口径，
-/// 不选删描述换预算（同 #1860 决策分支）。
 #[tokio::test]
 async fn test_openapi_doc_size_within_budget() {
     let (app, _) = setup_app();
@@ -333,7 +296,6 @@ async fn test_import_knowledge_returns_ok_as_text_plain() {
         text.contains("/api/v1/contract"),
         "知识应内嵌紧凑契约方言地址（issue #839：契约自描述形态换轨，教学同步换指向）"
     );
-    // 分级自足（issue #1123 / ADR-0110）：基础知识 = 知识索引 + 非投资节。
     assert!(
         text.contains("## 知识索引"),
         "基础知识应含知识索引段（分域知识节的目录与触发单点）"
@@ -350,9 +312,6 @@ async fn test_import_knowledge_returns_ok_as_text_plain() {
     }
 }
 
-/// 投资知识端点可达（issue #1123）：分级自足的按需分支——记账会话多数行与
-/// 投资无关，只有索引触发时才拉本端点；删除路由注册本测试即红（接线型负向，
-/// 断言对准端点可达与响应内容，ADR-0087）。
 #[tokio::test]
 async fn test_import_investment_knowledge_returns_ok_as_text_plain() {
     let (app, _) = setup_app();
@@ -405,10 +364,6 @@ async fn test_import_knowledge_covers_key_conventions() {
     let bytes = body_to_bytes(response.into_body()).await;
     let text = String::from_utf8(bytes).unwrap();
 
-    // 基础知识关键词锁（issue #1123 分级自足拆分）：只锁基础知识端点自身应
-    // 携带的约定——金额与日期口径、每行拆解、商户、个人间借贷、幂等去重、
-    // 对账与纠错、知识索引；投资五节的关键词锁随节正文迁至投资端点测试
-    // （见下方投资锁测试）。
     let required_keywords = [
         "流入金额",
         "流出金额",
@@ -427,29 +382,16 @@ async fn test_import_knowledge_covers_key_conventions() {
         "to_account_id",
         "currency_code",
         "dividend",
-        // 跨切面投资语义已收口至投资节（issue #1124），基础侧只留指针：
-        // 拆行指针、商户排除指针与对账读回来源口径指针——投资专属规则的
-        // 正面陈述退回基础侧时逐词报红。
         "投资流水不落这三类",
         "投资流水的商户规则不在本页陈述",
         "由投资节承载",
-        // 知识索引条目内容锁：投资索引条目的一句话语义、行驱动触发、整场
-        // 黏住、停止标志与五节名称清单逐一锁定——删除投资索引条目即红
-        // （接线型，断言对准 HTTP 响应体内容）。
         "标的解析与投资落账",
         "即须先拉取投资节再落账",
         "整场会话黏住",
         "不得套用普通收支写法",
         "现金分红五节",
-        // 知识索引（issue #1123 / ADR-0110）：目录段与投资端点指针在位——
-        // 删除索引条目即红（接线型，断言对准响应体内容）。
         "## 知识索引",
         "GET /api/v1/import/knowledge/investment",
-        // 个人间借贷教学关键词锁（issue #368 / ADR-0053）：落账映射方向
-        // （借出=自资金账户转入 receivable、借入经 debt、还款反向转账、
-        // 勿记成 expense 的示例句）、一人一账户命名约定、不带商户、利息
-        // 才进收支、既有借贷经期初余额表达、AI 不代做核销（否定语义短语）。
-        // 各词均属借贷节独有措辞，整节被误删或方向/否定语义被改时逐词报红。
         "个人间借贷",
         "receivable",
         "debt",
@@ -464,28 +406,15 @@ async fn test_import_knowledge_covers_key_conventions() {
         "initial_balance_cents",
         "余额调整",
         "不自行清零余额",
-        // 契约端点教学迁入锁（issue #839 → #931 反向迁出）的基础侧残留：
-        // 读回确定性排序与多类型过滤用法（恒 unknown / 市场保留随投资节正文
-        // 迁至投资端点锁测试）。
-        "稳定排序", // 读回确定性排序（流程保证）
-        "逗号分隔", // kinds 多类型过滤（读回用法）
-        // HTTP 读回分页教学锁（issue #1631）：缺省不再返回全部，分页读回是
-        // 必选流程、按 total 取齐、超上限码化按码自纠——教学被误删或退回
-        // 「缺省全量」旧口径时逐词报红。
-        "单请求行数上限为 100",           // 缺省上限（对账读回前提）
-        "必须分页读回",                   // 读回流程（不再缺省全量）
-        "即已读全",                       // 按 total 取齐的判定句
-        "transaction.page-size-over-cap", // 超上限码化（按码自纠）
-        "transaction.limit-out-of-range", // limit 超范围码化（按码自纠）
-        // 出资账户教学关键词锁（issue #939 / ADR-0096 决策 8）的基础侧：去重
-        // 哈希纳入出资账户——新表述被误删或退回旧口径时逐词报红；直扣/直付
-        // 携带与现金腿归属的锁随投资节正文在投资端点锁测试。
+        "稳定排序",
+        "逗号分隔",
+        "单请求行数上限为 100",
+        "必须分页读回",
+        "即已读全",
+        "transaction.page-size-over-cap",
+        "transaction.limit-out-of-range",
         "出资账户",
         "仅出资账户不同的两笔不互相去重",
-        // 购买项教学关键词锁（issue #1882 / ADR-0138 决策 9/10 + 影响・AI 导入教学）：字段位置
-        // （purchases 条目形状）、仅 expense 准入、商品名不写备注、价格留空
-        // 不猜不编造、订单级分类选取规则（金额最大商品 / 件数退让）、读回
-        // 顺序语义——整节被误删或退回「商品名写备注」旧口径时逐词报红。
         "购买项",
         "purchases",
         "unit_price_cents",
@@ -501,9 +430,6 @@ async fn test_import_knowledge_covers_key_conventions() {
     }
 }
 
-/// 投资知识端点关键词锁（issue #1123 分级自足拆分）：投资五节的教学能力
-/// 全部迁至本端点——标的解析三步法、基金申赎、基金转换、份额调整、现金
-/// 分红及出资账户投资侧的确定性措辞，整节被误删或口径回退时逐词报红。
 #[tokio::test]
 async fn test_import_investment_knowledge_covers_key_conventions() {
     let (app, _) = setup_app();
@@ -523,8 +449,6 @@ async fn test_import_investment_knowledge_covers_key_conventions() {
     let text = String::from_utf8(bytes).unwrap();
 
     let required_keywords = [
-        // 投资交易教学关键词锁（issue #298）：锁定标的解析三步法、行字段约束、
-        // 纠错与对账四要点的确定性措辞，防后续编辑静默丢失教学能力。
         "投资交易",
         "buy",
         "sell",
@@ -539,8 +463,6 @@ async fn test_import_investment_knowledge_covers_key_conventions() {
         "POST /api/v1/instruments",
         "重算",
         "部分卖出",
-        // 基金申赎教学关键词锁（issue #304 / ADR-0039）：行拆解、费用归属、
-        // 按代码查询优先、真实代码必带、不走名称充代码。
         "基金申赎",
         "申购",
         "赎回",
@@ -548,23 +470,14 @@ async fn test_import_investment_knowledge_covers_key_conventions() {
         "6 位代码",
         "GET /api/v1/funds",
         "名称充代码",
-        // 投资交易三步法关键词锁（issue #694 / ADR-0081）：查询未命中/行情源
-        // 降级的流程措辞；市场推断/类型提示/回填落价等行为语义已随 #931
-        // 迁回契约端点描述，锁在契约锁测试。
         "查无此码",
         "降级",
         "兜底建行",
-        "恒 unknown", // fund 标的市场收口（知识侧差异教学保留）
-        "市场保留",   // 股票降级建行保留离线可知市场（流程后果措辞）
-        // 出资账户教学关键词锁（issue #939 / ADR-0096 决策 8）的投资侧：
-        // 直扣/直付场景携带出资账户、余额核对含结算账户现金流（含出资账户）。
+        "恒 unknown",
+        "市场保留",
         "funding_account_id",
         "直扣/直付",
         "现金腿记出资账户",
-        // 基金转换教学关键词锁（issue #981 / ADR-0099）：快照字段位置（转出端与
-        // tradingTarget 转入端）、单腿一条记录、腿序幂等键、多腿转出份额两写、
-        // 金额占比分摊与尾差末腿、余额不变对账口径、软删 + 重建纠错与 kind 变更
-        // 禁用——整节被误删或口径退回借位落账时逐词报红。
         "基金转换",
         "convert",
         "tradingTarget",
@@ -579,9 +492,6 @@ async fn test_import_investment_knowledge_covers_key_conventions() {
         "扣费后净份额",
         "kind 改成 / 改出",
         "假卖出",
-        // 现金分红教学关键词锁（ADR-0109 / issue #1078）：字段位置（到账账户 /
-        // 归属标的 / 金额）、「禁止落 income」、累计收益第三腿口径、对账与纠错
-        // 边界、红利再投口径——整节被误删或退回普通收入承载时逐词报红。
         "现金分红（dividend",
         "到账账户",
         "归属于某标的",
@@ -589,18 +499,9 @@ async fn test_import_investment_knowledge_covers_key_conventions() {
         "第三腿",
         "不摊薄持仓成本",
         "红利再投",
-        // 红利再投口径锁为投资账户内两笔（ADR-0109 2026-09-13 修订）：知识
-        // 正文必须显式给出「到账账户 = 投资账户」与两腿「自相抵」——退回
-        // 「分红入黑洞账户 + 黑洞出资买入」（丢前者）或退回单条 0 手续费
-        // buy（丢后者）时本节逐词报红。本锁只覆盖导入知识投资节正文。
         "到账账户 = 投资账户",
         "自相抵",
         "kinds=dividend",
-        // 份额调整教学关键词锁（ADR-0106 决策 11 / issue #1054）：字段位置、方向
-        // 符号、无现金腿、守卫、成本与盈亏口径、余额不变而持仓市值随份额变化、
-        // 纠错边界——整节被误删或口径退回买 / 卖借位落账时逐词报红。#1051 收编
-        // 就地改 / 删后，纠错边界锁从「不可改、不可删」（过渡期限制，已失效）
-        // 改为「可全字段替换修改、可软删 + 下游在用消耗守卫」。
         "份额调整（split",
         "带符号份额增量",
         "缩股",
@@ -611,20 +512,15 @@ async fn test_import_investment_knowledge_covers_key_conventions() {
         "随份额变化",
         "可全字段替换修改、可软删",
         "码化守卫拒绝",
-        // kind 清单与商户排除：issue #1124 自基础侧迁入（ADR-0110 决策 4）——
-        // 投资专属规则的唯一正面陈述点，基础侧退回正面陈述或本节误删时逐词报红。
         "kind 清单与通用规则",
         "共五个 kind 值",
         "一律不带商户",
         "提交会被拒绝",
-        // 读回来源口径：issue #1124 自基础侧「对账完成判定」迁入——source
-        // 字段、标的投影与「入参字段不经读回返回」的措辞逐一锁定。
         "source",
         "entity_id",
         "display_name",
         "转出标的",
         "不经交易读回返回",
-        // 投资读回过滤用法：issue #1124 自基础侧「查询纪律」迁入。
         "kinds=buy,sell",
     ];
     for kw in required_keywords {
@@ -632,11 +528,6 @@ async fn test_import_investment_knowledge_covers_key_conventions() {
     }
 }
 
-/// 数据源中立守门（issue #1569 / ADR-0130）：AI 看到的导入知识不得把任何具体
-/// 行情数据源（东方财富）当作数据源陈述——换源后知识节降级建行、兜底建行等
-/// 表述一律用「行情源」中立交称。负向断言对准端点产物文本（删除知识节的
-/// 中立化改写即红，ADR-0087）；契约方言半边见 `contract.rs` 的
-/// `contract_is_data_source_neutral`。
 #[tokio::test]
 async fn test_knowledge_sections_are_data_source_neutral() {
     let (app, _) = setup_app();
@@ -681,27 +572,22 @@ async fn test_contract_covers_behavior_semantics_keywords() {
     let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     let text = serde_json::to_string(&value).unwrap();
 
-    // 行为语义关键词锁（issue #931）：知识侧的契约第二副本剪除后，行为语义措辞
-    // 回落契约端点描述（「手写零复述」）；本锁随内容迁至契约，防这些语义在
-    // 注解层被静默删除（知识侧流程锁见上一个测试）。
     let required_keywords = [
-        "类型提示",             // GET /stocks 返回（stock/etf）
-        "精确市场",             // GET /stocks 返回与 POST /instruments 入参
-        "权威名称",             // 行情源校验回填（POST /instruments 描述）
-        "北交所",               // 显式 400 边界（GET /stocks 描述）
-        "美股",                 // ticker 遍历三市场（GET /stocks 描述）
-        "静默复用",             // 标的 find-or-create（POST /instruments 描述）
-        "回填权威名称与最新价", // 行情源增强落价（POST /instruments 描述）
-        "上限 100",             // 搜索封顶上限（GET /instruments 描述）
-        "不影响其余行",         // 批量单行失败隔离（POST /transactions/batch 描述）
+        "类型提示",
+        "精确市场",
+        "权威名称",
+        "北交所",
+        "美股",
+        "静默复用",
+        "回填权威名称与最新价",
+        "上限 100",
+        "不影响其余行",
     ];
     for kw in required_keywords {
         assert!(text.contains(kw), "契约应包含行为语义关键词 {kw:?}");
     }
 }
 
-/// 两个知识端点的 OpenAPI 自述锁（issue #1123 分级自足）：基础知识自述以
-/// 知识索引界定范围，投资节自述以投资五节界定范围；均声明 text/plain 200。
 #[tokio::test]
 async fn test_openapi_doc_covers_knowledge_endpoint() {
     let (app, _) = setup_app();
@@ -775,9 +661,7 @@ async fn test_openapi_doc_covers_list_transactions_params_and_schema() {
         "from",
         "to",
         "account_id",
-        // 类型维度唯一集合参数（spec #1025：单值 kind 参数已移除，BREAKING）
         "kinds",
-        // 视图偏好载荷（issue #1810 / ADR-0136）：只增可选参数
         "hide_investment_related",
         "limit",
         "page",
@@ -795,8 +679,6 @@ async fn test_openapi_doc_covers_list_transactions_params_and_schema() {
         response_200["$ref"], "#/components/schemas/TransactionListResult",
         "响应 schema 应为 TransactionListResult"
     );
-    // HTTP 缺省上限契约声明（issue #1631）：400 码化超限响应必须在契约中
-    // 可见（AI 唯一契约来源是 openapi/contract），描述携带两码供按码自纠。
     let get_desc = get["description"].as_str().unwrap_or_default();
     assert!(
         get_desc.contains("HTTP 单请求行数上限 100"),

@@ -1,9 +1,3 @@
-//! AI 导入商户契约（issue #194 / ADR-0028）：
-//! - `GET /api/v1/merchants` 暴露在用商户列表（供 AI 复用已有商户）；
-//! - 交易提交体接受 `merchant_name`（商户名字符串）：后端精确匹配在用商户名，
-//!   命中复用、未命中即建——归一化责任收口在后端，AI 不负责商户去重；
-//! - 幂等重放不产生重复交易、不产生碎商户。
-
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use tower::ServiceExt;
@@ -13,7 +7,6 @@ use crate::common::{
     get_json, post_batch, put_merchant_via_api, put_transaction_via_api, setup_app,
 };
 
-/// 批量导入一行带商户名的支出。
 fn expense_with_merchant(
     account_id: &str,
     date: &str,
@@ -29,7 +22,6 @@ fn expense_with_merchant(
     )
 }
 
-/// 商户列表端点：空表启动不 seed（ADR-0028），导入带商户名后出现在列表。
 #[tokio::test]
 async fn test_get_merchants_lists_merchants_created_by_import() {
     let (app, _) = setup_app();
@@ -58,12 +50,10 @@ async fn test_get_merchants_lists_merchants_created_by_import() {
     assert_eq!(list.len(), 1);
     assert_eq!(list[0]["name"], "盒马");
     assert_eq!(list[0]["is_deleted"], false);
-    // 商户契约回归「名字字典」（issue #223）：响应不含已退役的 icon/color 字段。
     assert!(list[0].get("icon").is_none(), "商户响应不应含 icon 字段");
     assert!(list[0].get("color").is_none(), "商户响应不应含 color 字段");
 }
 
-/// 带商户名导入落库：交易行解析出 merchant_id，读回可按商户关联。
 #[tokio::test]
 async fn test_import_with_merchant_name_attaches_merchant() {
     let (app, _) = setup_app();
@@ -99,7 +89,6 @@ async fn test_import_with_merchant_name_attaches_merchant() {
     assert_eq!(hit["name"], "盒马");
 }
 
-/// 同批多行同名只建一个商户（未命中即建、命中复用，同批不分裂）。
 #[tokio::test]
 async fn test_same_merchant_name_in_one_batch_creates_single_merchant() {
     let (app, conn) = setup_app();
@@ -123,12 +112,10 @@ async fn test_same_merchant_name_in_one_batch_creates_single_merchant() {
     let (_, list) = get_json(&app, "/api/v1/transactions").await;
     let items = list["items"].as_array().unwrap();
     assert_eq!(items.len(), 3);
-    // 三行指向同一商户（trim 后精确匹配）。
     assert_eq!(items[0]["merchant_id"], items[1]["merchant_id"]);
     assert_eq!(items[1]["merchant_id"], items[2]["merchant_id"]);
 }
 
-/// 跨批复用：第二次导入同名命中第一次建的商户（AI 不负责去重）。
 #[tokio::test]
 async fn test_later_import_reuses_existing_merchant_by_name() {
     let (app, conn) = setup_app();
@@ -179,7 +166,6 @@ async fn test_later_import_reuses_existing_merchant_by_name() {
     assert_eq!(items[1]["merchant_id"], first_merchant_id, "复用已有商户");
 }
 
-/// 幂等重放：同批带幂等键重跑全部去重跳过，不产生重复交易、不产生碎商户。
 #[tokio::test]
 async fn test_idempotent_replay_no_merchant_fragmentation() {
     let (app, conn) = setup_app();
@@ -211,8 +197,6 @@ async fn test_idempotent_replay_no_merchant_fragmentation() {
     assert_eq!(count_rows(&conn.lock().unwrap(), "merchants"), 1);
 }
 
-/// transfer 携带商户名（issue #875 / ADR-0092）：批量导入成功，按名即建商户并挂到转账行。
-/// 借贷关联只是检索与展示指针，准入为纯 kind 判定（不要求账户类型）。
 #[tokio::test]
 async fn test_batch_import_transfer_with_merchant_name_attaches_merchant() {
     let (app, conn) = setup_app();
@@ -254,7 +238,6 @@ async fn test_batch_import_transfer_with_merchant_name_attaches_merchant() {
     assert_eq!(hit["name"], "魏有鼎");
 }
 
-/// 同批多行同名 transfer 只建一个商户（与 expense 同款的未命中即建、命中复用）。
 #[tokio::test]
 async fn test_batch_import_transfer_reuses_merchant_by_name() {
     let (app, conn) = setup_app();
@@ -284,7 +267,6 @@ async fn test_batch_import_transfer_reuses_merchant_by_name() {
     );
 }
 
-/// 修改路径（PUT）同样接受 transfer 携带商户名（行为层同一入口）。
 #[tokio::test]
 async fn test_update_transfer_with_merchant_name_attaches_merchant() {
     let (app, conn) = setup_app();
@@ -316,7 +298,6 @@ async fn test_update_transfer_with_merchant_name_attaches_merchant() {
     assert_eq!(merchants.as_array().unwrap()[0]["id"], merchant_id);
 }
 
-/// `merchant_id` 与 `merchant_name` 同时提供属请求错误（歧义，逐条校验失败不影响其他行）。
 #[tokio::test]
 async fn test_merchant_id_and_name_mutually_exclusive() {
     let (app, conn) = setup_app();
@@ -344,7 +325,6 @@ async fn test_merchant_id_and_name_mutually_exclusive() {
     assert_eq!(count_active_transactions(&conn.lock().unwrap()), 0);
 }
 
-/// 商户名为空白 → 逐条校验失败（不落库、不建商户）。
 #[tokio::test]
 async fn test_blank_merchant_name_rejected() {
     let (app, conn) = setup_app();
@@ -372,7 +352,6 @@ async fn test_blank_merchant_name_rejected() {
     assert_eq!(count_active_transactions(&conn.lock().unwrap()), 0);
 }
 
-/// 导入知识同步覆盖商户约定：`merchant_name` 携带、复用指引、kind 范围与幂等不碎。
 #[tokio::test]
 async fn test_import_knowledge_covers_merchant_convention() {
     let (app, _) = setup_app();
@@ -396,8 +375,6 @@ async fn test_import_knowledge_covers_merchant_convention() {
     assert!(knowledge.contains("未命中"), "应说明未命中即建");
 }
 
-/// 校验失败的行**不**建商户：未命中名字的即建推迟到行内校验全部通过之后，
-/// 金额非法的行报 success:false 且不残留无引用商户（不碎商户）。
 #[tokio::test]
 async fn test_invalid_row_with_merchant_name_creates_no_merchant() {
     let (app, conn) = setup_app();
@@ -419,7 +396,6 @@ async fn test_invalid_row_with_merchant_name_creates_no_merchant() {
     assert_eq!(count_active_transactions(&conn.lock().unwrap()), 0);
 }
 
-/// refund 携带商户名被忽略（继承原支出商户），不解析、不即建——否则即建商户必成孤儿。
 #[tokio::test]
 async fn test_refund_with_merchant_name_inherits_and_creates_no_merchant() {
     let (app, conn) = setup_app();
@@ -470,7 +446,6 @@ async fn test_refund_with_merchant_name_inherits_and_creates_no_merchant() {
     );
 }
 
-/// 修改路径（PUT）同样接受商户名：解析出的 id 与该行当前商户相同即保持历史引用。
 #[tokio::test]
 async fn test_update_transaction_with_merchant_name() {
     let (app, _) = setup_app();
@@ -491,7 +466,6 @@ async fn test_update_transaction_with_merchant_name() {
     .await;
     let txn_id = created[0]["id"].as_str().unwrap().to_string();
 
-    // 改名指向已有商户（精确匹配复用）。
     let update_body = format!(
         r#"{{"kind":"expense","amount_cents":1200,"currency_code":"CNY","account_id":"{account_id}","date":"2026-08-01","merchant_name":"永辉"}}"#
     );
@@ -521,9 +495,6 @@ async fn test_update_transaction_with_merchant_name() {
     assert_eq!(hit["name"], "永辉");
 }
 
-/// 更新端点同走商户名归一化（行为层同一入口）：改携带新商户名 → 200 且商户即建并
-/// 进列表；再改命中名字 → 复用（商户数不变）。`app: None`（集成测试）跳过信号发射
-/// 分支，写路径语义不变（issue #331 两壳接线，ADR-0044）。
 #[tokio::test]
 async fn test_update_transaction_with_merchant_name_creates_then_reuses() {
     let (app, _) = setup_app();
@@ -534,7 +505,6 @@ async fn test_update_transaction_with_merchant_name_creates_then_reuses() {
     let created = post_batch(&app, batch_body(&[&tx], None)).await;
     let id = created[0]["id"].as_str().unwrap();
 
-    // 改为携带新商户名：200，交易引用即建的商户，商户列表出现该行。
     let body = format!(
         r#"{{"kind":"expense","amount_cents":900,"currency_code":"CNY","account_id":"{account_id}","date":"2026-07-10","merchant_name":"盒马"}}"#
     );
@@ -549,7 +519,6 @@ async fn test_update_transaction_with_merchant_name_creates_then_reuses() {
     assert_eq!(list[0]["id"], merchant_id);
     assert_eq!(list[0]["name"], "盒马");
 
-    // 再改为命中名字「盒马」：复用既有商户，列表仍一行。
     let body = format!(
         r#"{{"kind":"expense","amount_cents":900,"currency_code":"CNY","account_id":"{account_id}","date":"2026-07-11","merchant_name":"盒马"}}"#
     );
@@ -562,8 +531,6 @@ async fn test_update_transaction_with_merchant_name_creates_then_reuses() {
     assert_eq!(merchants.as_array().unwrap().len(), 1, "复用不新建");
 }
 
-/// 商户改名端点（issue #884）：改名成功 200 返回更新后完整商户；改名即时生效——
-/// 商户列表按新名呈现，历史交易仍引用同一 `merchant_id`（不回刷，ADR-0028）。
 #[tokio::test]
 async fn test_put_merchant_renames() {
     let (app, _) = setup_app();
@@ -608,7 +575,6 @@ async fn test_put_merchant_renames() {
     );
 }
 
-/// `name` 可省略：省略即保持原值（等价空更新，200 不报错）。
 #[tokio::test]
 async fn test_put_merchant_name_omitted_keeps_original() {
     let (app, _) = setup_app();
@@ -635,7 +601,6 @@ async fn test_put_merchant_name_omitted_keeps_original() {
     assert_eq!(updated["name"], "盒马", "name 省略即保持原值");
 }
 
-/// 不存在的 id → 404 码化 `merchant.not-found`（与域层同一判定，软删 id 同样 404）。
 #[tokio::test]
 async fn test_put_merchant_unknown_id_returns_coded_404() {
     let (app, _) = setup_app();
@@ -648,8 +613,6 @@ async fn test_put_merchant_unknown_id_returns_coded_404() {
     assert_eq!(err["message"], "商户不存在: no-such-merchant");
 }
 
-/// 改名撞在用同名 → 400 码化 `merchant.already-exists`，不做同义合并
-/// （改名不迁移交易引用，合并需逐笔改挂交易，另立题）。
 #[tokio::test]
 async fn test_put_merchant_collision_returns_coded_400() {
     let (app, _) = setup_app();
@@ -683,13 +646,10 @@ async fn test_put_merchant_collision_returns_coded_400() {
     assert_eq!(err["code"], "merchant.already-exists");
     assert_eq!(err["message"], "商户已存在: 盒马");
 
-    // 失败改名不落库：字典仍两行、名字原样。
     let (_, merchants) = get_json(&app, "/api/v1/merchants").await;
     assert_eq!(merchants.as_array().unwrap().len(), 2);
 }
 
-/// 改名入参先 trim（与导入即建同款归一）：带首尾空白的名字入库前修剪；
-/// trim 后为空 → 400 码化 `merchant.name-required`，原名保持。
 #[tokio::test]
 async fn test_put_merchant_trims_name_and_rejects_blank() {
     let (app, _) = setup_app();

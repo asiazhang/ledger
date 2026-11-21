@@ -1,14 +1,3 @@
-//! 走势查询（issue #138 / spec #135 / ADR-0019）：PortfolioValueTrend 的取数与推算。
-//!
-//! - 组合市值走势：当期持有数量按标的分组增量推进（issue #1654）——价格行按
-//!   标的分组、组内按采样交易日升序，逐标的一次扫描持仓变动腿流（时点持仓
-//!   同一推算不变量的流水投影，见 [`crate::holdings`]）游标累加运行时数量；
-//!   各标的市值 = 数量 × 当期周线价格；非本位币经同期 `fx_rate_history` 正反向
-//!   兜底折算到 DefaultCurrency 后汇总为一条曲线。
-//! - 某标的某周无价格行、或某周缺同期汇率，沿用其最近一个有价 / 有汇率周的值（无前值
-//!   则该贡献不计入）；周集合取区间内出现过任一价格行的周，整周无任何价格行则该周
-//!   无点、曲线跨越空档连续。
-
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use chrono::NaiveDate;
@@ -23,8 +12,6 @@ use ledger_infra::db::tx_scope::ensure_transaction;
 use ledger_infra::error::{AppError, Result};
 use ledger_transaction::amount::default_currency_code;
 
-/// 校验区间：日期格式合法且起点不晚于终点。返回原样起止字符串（SQL 字符串比较
-/// 对 ISO 8601 日期即时间序）。
 fn validate_range(range: &TrendRange) -> Result<()> {
     let parse = |label: &str, code: &str, raw: &Option<String>| -> Result<Option<NaiveDate>> {
         raw.as_deref()
@@ -51,8 +38,6 @@ fn validate_range(range: &TrendRange) -> Result<()> {
     Ok(())
 }
 
-/// 恒定标的的常量合成采样窗口（组合走势消费面）：下界取建档锚点
-/// 与区间起点的较晚者，上界夹到区间终点与今天；区间界解析失败按无界处理。
 fn constant_sample_window(
     constant: &ConstantPriceValue,
     range: &TrendRange,
@@ -68,7 +53,6 @@ fn constant_sample_window(
     (start, end)
 }
 
-/// 区间内的一条价格历史周点行。
 struct PriceRow {
     instrument_id: String,
     trade_date: String,
@@ -77,18 +61,6 @@ struct PriceRow {
     currency_code: String,
 }
 
-/// 组合市值走势：逐周汇总「当期持有数量 × 周线价格」（折算到本位币）。
-///
-/// 数量推算：按标的分组增量推进（issue #1654）——价格行按标的分组、组内按
-/// 采样交易日升序，逐标的一次扫描持仓变动腿流（同 [`holdings_as_of`] 推算
-/// 不变量的流水投影，口径单点在推算模块）游标推进运行时数量：买入累加、
-/// 卖出递减、convert 两腿与 split 带符号 Δ。buy/sell 口径单点在推算模块，
-/// 本函数只负责取数、折算与组装（数量按交易日取、汇率按周键取，双时间键
-/// 契约显式分界）；缺价格或缺同期汇率的标的沿用最近有价 / 有汇率周的值（无前值则不计入），
-/// 整周无任何价格行则该周
-/// 无点。恒定价格标的（ADR-0126 决策 6）：历史表无行，市值 = 时点份额 ×
-/// 常量在响应内按区间周键合成，与真实价格行同路聚合——库里不落虚拟行，
-/// 存量平坦序列不再参与。
 pub fn query_portfolio_value_trend(
     conn: &Connection,
     range: &TrendRange,
@@ -96,12 +68,6 @@ pub fn query_portfolio_value_trend(
     query_portfolio_value_trend_on(conn, range, super::staleness::beijing_today())
 }
 
-/// [`query_portfolio_value_trend`] 的可注入形态（时钟是测试的行为输入，先例：
-/// `instrument_price_staleness_on`）：常量合成的序列右界由「今天」夹出。
-///
-/// 多语句读闭包收进同一读事务（issue #1702，快照纪律见 `tx_scope` 模块文档）：
-/// 曲线各周 = 数量 × 周线价 × 同期汇率，价格行与汇率历史是两次独立语句——写提交
-/// 落在段间即「价格读旧、汇率读新」，折算出任何快照都不存在的周点。
 pub fn query_portfolio_value_trend_on(
     conn: &Connection,
     range: &TrendRange,
@@ -110,9 +76,6 @@ pub fn query_portfolio_value_trend_on(
     ensure_transaction(conn, || portfolio_value_trend_within_tx(conn, range, today))
 }
 
-/// 组合走势投影本体（无事务语义，由 [`query_portfolio_value_trend_on`] 的
-/// [`ensure_transaction`] 包裹）：区间校验 → 本位币 → 价格行 → 恒量合成 →
-/// 汇率历史 → 数量腿流 → 按周聚合。
 fn portfolio_value_trend_within_tx(
     conn: &Connection,
     range: &TrendRange,
@@ -121,9 +84,6 @@ fn portfolio_value_trend_within_tx(
     validate_range(range)?;
     let native = default_currency_code(conn)?;
 
-    // 1. 区间内价格历史周点（week_start 为 STORED 生成列，直读即为周键）。
-    //    恒定价格标的排除（ADR-0126 决策 6）：它的取值由下方常量合成承担，
-    //    存量平坦序列不再参与聚合（否则与常量行双重计入）。
     let mut conditions: Vec<String> = vec![
         "1=1".to_string(),
         "instrument_id NOT IN \
@@ -162,10 +122,6 @@ fn portfolio_value_trend_within_tx(
         }
     }
 
-    // 1.5 恒定标的贡献（ADR-0126 决策 6）：市值 = 时点份额 × 常量，响应内
-    //     按区间周键合成（窗口口径与单标的走势共用 [`constant_sample_window`]）；
-    //     合成行与真实价格行同路聚合（数量、汇率、周分组全部共用同一段代码）。
-    //     库里不落虚拟行。
     {
         for constant in load_constant_prices(conn)? {
             let (start, end) = constant_sample_window(&constant, range, today);
@@ -181,15 +137,8 @@ fn portfolio_value_trend_within_tx(
         }
     }
 
-    // 2. 同期汇率历史：数据量小（周粒度、币种对个位数），全量载入建周键索引
-    //    （装载单点 [`load_fx_week_history`]，issue #1852 合并既有内联拷贝）。
     let fx = load_fx_week_history(conn)?;
 
-    // 3. 数量推算按标的分组增量推进（issue #1654）：一次装载全库持仓变动腿流
-    //    （按标的分组、组内交易日升序，推算口径单点在 [`holdings_legs_by_instrument`]），
-    //    价格行按标的分组、组内按采样交易日升序，逐标的游标推进运行时数量
-    //    （交易日 ≤ 采样日的腿全部入账，含当日）——替代逐价格行全量重算
-    //    （周采样 × 标的的嵌套循环，50 万笔库 p95 8.85s，AC：回落默认线）。
     let legs_by_instrument = holdings_legs_by_instrument(conn)?;
     let mut rows_by_instrument: HashMap<&str, Vec<&PriceRow>> = HashMap::new();
     for row in &price_rows {
@@ -199,11 +148,6 @@ fn portfolio_value_trend_within_tx(
             .push(row);
     }
 
-    // 4. 按周聚合（缺料沿用上一周）：周集合 = 区间内出现过任一价格行的周（升序）；
-    //    整周无任何价格行则该周无点、曲线跨越空档连续。标的在某周无价格行时沿用其
-    //    最近一个有价周的价格；某周缺同期汇率时沿用币种最近一个有汇率周的汇率；
-    //    无前值则该贡献不计入。数量采样日：有真实价格行的周取该行交易日，沿用周取
-    //    周集合内该周最晚交易日。合计为整数分累加（可结合可交换，与行序无关）。
     let mut week_cut: BTreeMap<&str, &str> = BTreeMap::new();
     for row in &price_rows {
         week_cut
@@ -216,7 +160,6 @@ fn portfolio_value_trend_within_tx(
             .or_insert(row.trade_date.as_str());
     }
     let weeks: Vec<&str> = week_cut.keys().copied().collect();
-    // 币种汇率沿用表：逐币种沿周序推进，缺同期汇率即取最近一个有汇率的周。
     let currencies: BTreeSet<&str> = price_rows
         .iter()
         .map(|row| row.currency_code.as_str())
@@ -236,12 +179,8 @@ fn portfolio_value_trend_within_tx(
 
     let mut by_week: BTreeMap<String, (i64, bool)> = BTreeMap::new();
     for (instrument_id, rows) in rows_by_instrument {
-        // 组内升序是游标推进正确性的前提：价格行 SQL 已按 trade_date 升序、
-        // 常量合成行按周键升序，分组保序后组内已升序；显式稳定排序兜底，
-        // 防上游取数形态变化悄悄引入乱序。
         let mut rows = rows;
         rows.sort_by(|a, b| a.trade_date.cmp(&b.trade_date));
-        // 周键 → 真实价格行（组内升序，同周后写覆盖，即取交易日最晚者）。
         let mut weekly: HashMap<&str, &PriceRow> = HashMap::new();
         for row in rows {
             weekly.insert(row.week_start.as_str(), row);
@@ -272,7 +211,6 @@ fn portfolio_value_trend_within_tx(
             else {
                 continue;
             };
-            // 金额分 = 数量 × 单价（万分之一元）÷ 换算因子，再折算到本位币（ADR-0038）。
             let value = (quantity * price.price_cents as f64 / PRICE_UNITS_PER_FEN).round() as i64;
             let entry = by_week.entry(week.to_string()).or_insert((0, false));
             entry.0 += (value as f64 * rate).round() as i64;
@@ -289,9 +227,6 @@ fn portfolio_value_trend_within_tx(
         })
         .collect();
 
-    // 补全状态（ADR-0122 决策 5 / issue #1377，读投影只增字段）：仅空采样点时
-    // 对「有通道而无任何历史序列」的标的聚合三态；历史齐全而曲线仍空（区间
-    // 裁剪 / 持仓与价格周错开）不携带该字段，前端按既有空态文案渲染。
     let backfill = if points.is_empty() {
         super::backfill::portfolio_trend_backfill_status(conn)?
     } else {

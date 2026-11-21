@@ -1,9 +1,3 @@
-//! 分类域核心逻辑（issue #91 域内收口，#404 自命令壳层迁入）：CRUD / 幂等创建 /
-//! 软删除 / 两级分类校验 / 预算删除守卫 / 排序重排。
-//!
-//! 置脏触发已收口连接层统一写入口（`db::write_locked`，ADR-0032）：本模块对备份域零感知，
-//! 写入成功后的置脏/到期检查由调用方所在写入口闭包在提交点单点执行。
-
 use rusqlite::{Connection, OptionalExtension};
 
 use ledger_infra::db::query::query_all;
@@ -15,9 +9,6 @@ use ledger_sync_protocol::device::device_id;
 use super::command::{CategoryCommand, CategoryCommandRow, record_local};
 use super::model::{Category, CategoryInput, CategoryUpdateInput, ReorderItem};
 
-/// 分类列表：默认仅未删除；`include_deleted=true` 返回含软删全量（issue #377）。
-/// 软删分类不可再被选择，但历史交易引用照常存在——含软删列表供前端下钻校验映射
-/// 与历史显示拆分在用/软删（先例商户 issue #191）。
 pub fn list_categories(conn: &Connection, include_deleted: bool) -> Result<Vec<Category>> {
     let where_clause = if include_deleted {
         ""
@@ -54,7 +45,6 @@ pub fn create_category(conn: &Connection, input: CategoryInput) -> Result<String
     })
 }
 
-/// 分类落库协议（本地创建与重放共用，无 op 产出）：新建行落 `sort_order=0`。
 fn write_create(conn: &Connection, id: &str, row: &CategoryCommandRow) -> Result<String> {
     let now = now_iso();
     conn.execute(
@@ -74,8 +64,6 @@ fn write_create(conn: &Connection, id: &str, row: &CategoryCommandRow) -> Result
     Ok(id.to_string())
 }
 
-/// 按自然键（name + kind + parent_id）幂等创建分类：已存在（未删除）时返回已有 id，
-/// 不重复插入、不报错。供 HTTP 导入 API 使用。
 pub fn create_category_idempotent(conn: &Connection, input: CategoryInput) -> Result<String> {
     if let Some(id) = find_category_by_natural_key(conn, &input)? {
         return Ok(id);
@@ -98,11 +86,6 @@ fn find_category_by_natural_key(
     }
 }
 
-/// 软删除分类（`is_deleted=1`）。删除守卫（issue #355）：分类自身名下存在未删除预算时拒绝，
-/// 中文文案引导先删对应预算；只查分类自身（删父分类不检查其子分类名下预算，
-/// 与「删除只影响该分类自身」一致）；仅剩软删除预算不阻拦。不存在的 id
-/// 返回 `AppError::NotFound`（HTTP 侧映射 404）。IPC 与 HTTP 端点共用本函数，
-/// 守卫一处生效。
 pub fn delete_category(conn: &Connection, id: &str) -> Result<()> {
     ensure_transaction(conn, || {
         write_delete(conn, id)?;
@@ -110,8 +93,6 @@ pub fn delete_category(conn: &Connection, id: &str) -> Result<()> {
     })
 }
 
-/// 分类软删协议（本地删除与重放共用，无 op 产出）：存在性检查 + 预算删除守卫
-/// （issue #355）+ 软删。
 fn write_delete(conn: &Connection, id: &str) -> Result<()> {
     let exists: bool = conn
         .query_row(
@@ -128,7 +109,6 @@ fn write_delete(conn: &Connection, id: &str) -> Result<()> {
             &[id],
         ));
     }
-    // 预算删除守卫（issue #355）：防止误删分类留下孤儿预算。
     let has_budget: bool = conn
         .query_row(
             "SELECT 1 FROM budgets WHERE category_id=?1 AND is_deleted=0 LIMIT 1",
@@ -150,9 +130,6 @@ fn write_delete(conn: &Connection, id: &str) -> Result<()> {
     Ok(())
 }
 
-/// 编辑分类（`name` / `icon` / `parent_id` 可选字段，未传保持原值）：两级分类校验——
-/// 自身不可为父、父分类须存在（未删除）且 `kind` 与自身一致——通过后落库。
-/// 分类名不在搜索范围内（ADR-0027），且搜索无索引，改名无需任何后续处理。
 pub fn update_category(conn: &Connection, id: &str, input: CategoryUpdateInput) -> Result<()> {
     ensure_transaction(conn, || {
         let (name, icon, parent_id) = write_update(conn, id, &input)?;
@@ -168,8 +145,6 @@ pub fn update_category(conn: &Connection, id: &str, input: CategoryUpdateInput) 
     })
 }
 
-/// 分类编辑协议（本地修改与重放共用，无 op 产出）：两级分类校验 + 落库，返回
-/// 解决后的落定值（名称 / 图标 / 父分类）。调用方保证处于写事务内。
 fn write_update(
     conn: &Connection,
     id: &str,
@@ -214,7 +189,6 @@ fn write_update(
     }
 
     let name = input.name.clone().unwrap_or(existing.name);
-    // 三态：`None` = 键缺席（不改）、`Some(..)` = 落定值（`Some(None)` 即清空图标）
     let icon = input.icon.clone().unwrap_or(existing.icon);
 
     conn.execute(
@@ -224,8 +198,6 @@ fn write_update(
     Ok((name, icon, parent_id))
 }
 
-/// 排序重排：按提交顺序逐行落 `sort_order`（`updated_at`/`version`/`device_id`
-/// 同步递增）；IPC 与 HTTP 侧共用本函数，排序语义一处生效。
 pub fn reorder_categories(conn: &Connection, items: Vec<ReorderItem>) -> Result<()> {
     ensure_transaction(conn, || {
         write_reorder(conn, &items)?;
@@ -233,8 +205,6 @@ pub fn reorder_categories(conn: &Connection, items: Vec<ReorderItem>) -> Result<
     })
 }
 
-/// 重排落库协议（本地重排与重放共用，无 op 产出）：循环逐行 UPDATE（原样
-/// 保持逐行递增的簿记戳语义）；调用方保证处于写事务内（op 随整批提交/回滚）。
 pub(crate) fn write_reorder(conn: &Connection, items: &[ReorderItem]) -> Result<()> {
     let now = now_iso();
     let did = device_id(conn)?;
@@ -247,13 +217,11 @@ pub(crate) fn write_reorder(conn: &Connection, items: &[ReorderItem]) -> Result<
     Ok(())
 }
 
-/// 重放执行：创建（不产出 op；两级分类校验原样生效）。
 pub(crate) fn replay_create(conn: &Connection, id: &str, row: &CategoryCommandRow) -> Result<()> {
     write_create(conn, id, row)?;
     Ok(())
 }
 
-/// 重放执行：修改——携带的即解决后的落定值，以同一协议复验两级分类校验后落库。
 pub(crate) fn replay_update(
     conn: &Connection,
     id: &str,
@@ -266,8 +234,6 @@ pub(crate) fn replay_update(
         id,
         &CategoryUpdateInput {
             name: Some(name.to_string()),
-            // 重放携带的是**落定值**（含空值），故一律包 `Some(..)`：`Some(None)` 即置空，
-            // 与本地编辑的「不改」形态区分开（这里不存在「不改」）。
             icon: Some(icon.map(String::from)),
             parent_id: Some(parent_id.map(String::from)),
         },
@@ -275,7 +241,6 @@ pub(crate) fn replay_update(
     Ok(())
 }
 
-/// 重放执行：软删除（同一协议含预算删除守卫：引用失败挂起待裁决）。
 pub(crate) fn replay_delete(conn: &Connection, id: &str) -> Result<()> {
     write_delete(conn, id)
 }

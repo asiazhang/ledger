@@ -1,28 +1,3 @@
-//! 物品（Item）域 API（issue #115 / #117 / #118 / #120 / #121 / spec #113 /
-//! ADR-0014）：创建、修改、处置、删除、列表与单件每天成本的单一权威——写路径
-//! 的校验与归一化、读路径的口径接线。
-//!
-//! 组织方式（阶段 1 域目录化，#397 / ADR-0056）：原 `commands::item` 的
-//! `*_internal` 复用函数整体归位，接口正名为域语言短名（`create_item` /
-//! `list_items` / `update_item` / `dispose_item` / `delete_item` /
-//! `calculate_item_cost`）；IPC 壳层（`commands::item`）
-//! 只做参数解包、统一写入口与信号发射，转调本模块。
-//!
-//! 接缝约定：
-//! - 金额折算走 Amount 接缝，不另写口径：写路径（创建/修改的本位币成本）按交易日
-//!   入口 `transaction::amount::convert_to_native_on_trade_date` 折算、继承溯源交易行
-//!   留痕汇率（ADR-0014 2026-09-22 修订 / #1693，基础成本与交易行精确一致）；
-//!   跨物品当期折算聚合（`item_daily_total`）已随概览汇总卡退役（issue #1950）；
-//! - 每天使用成本走 `item::cost` 接缝（DailyUsageCost 单一权威），列表不重算口径；
-//! - 溯源守卫（创建唯一入口的准入接缝）独立在 [`guard`]：
-//!   创建/换关路径经其解析关联购买交易并自动带出；
-//! - 写入成功后经 `notify` 回调发出 `ledger:changed` 粗粒度失效信号（回调注入式，
-//!   仿行情同步域 `sync` 的 emit 注入先例：生产路径经信号映射单点 `signals::emit_for`
-//!   判定发射，ADR-0044 决策 8——notify 只是发射钩子不再是决策点；BDD/测试注入
-//!   记录闭包断言「写后发信号」这一外部可观察行为）；
-//! - 置脏触发已收口连接层统一写入口（`db::write_locked`，ADR-0032）：本模块对备份域
-//!   零感知，写入成功后的置脏/到期检查由调用方所在写入口闭包在提交点单点执行。
-
 use std::collections::HashMap;
 
 use rusqlite::{Connection, OptionalExtension};
@@ -42,7 +17,6 @@ use ledger_infra::error::{AppError, Result};
 use ledger_sync_protocol::device::device_id;
 use ledger_transaction::amount;
 
-/// 按 `id` 读未删除物品（多命令共用的前检）：不存在（或已软删除）返回 `None`。
 fn get_item_by_id(conn: &Connection, id: &str) -> Result<Option<Item>> {
     query_one(
         conn,
@@ -53,11 +27,6 @@ fn get_item_by_id(conn: &Connection, id: &str) -> Result<Option<Item>> {
     )
 }
 
-/// 列出全部未删除物品，每件附「已用天数」与「每天成本」。
-///
-/// 目标日按状态取：在用 → 今天（本地时区日历日）；已处置 → 处置日
-/// （T1 骨架尚无处置入口，#120 接线后可达，此处口径先行对齐 `item::cost`）。
-/// 排序按创建先后（created_at 升序），保证列表稳定。
 pub fn list_items(conn: &Connection) -> Result<Vec<ItemWithDailyCost>> {
     let items: Vec<Item> = query_all(
         conn,
@@ -80,13 +49,6 @@ pub fn list_items(conn: &Connection) -> Result<Vec<ItemWithDailyCost>> {
         .collect()
 }
 
-/// 交易列表来源反查（spec #704 / issue #708，词汇表「来源列」展示层溯源反查）：
-/// 按溯源指针（`purchase_transaction_id`）批量取指向给定交易的未删除物品
-/// （物品名 + 已处置标志），供核心交易域按页填充来源列——展示层 join，不落
-/// 任何数据级反向引用（物品域 source_transaction_id 词条边界：禁令针对数据
-/// 模型，不针对展示）。软删物品不返回（跳转会落空，且溯源唯一守卫只看未删除
-/// 物品，该交易可再次建物品——来源列同口径视为无来源）。溯源唯一（创建守卫）
-/// 使一交易至多一物品，返回仍为 Vec 供调用方按映射消费。
 pub fn source_display_by_transaction_ids(
     conn: &Connection,
     transaction_ids: &[String],
@@ -105,8 +67,6 @@ pub fn source_display_by_transaction_ids(
     )
 }
 
-/// 以物品自身字段（分子口径：总成本 − 残值，下限 0）向指定目标日计算，
-/// 列表缺省口径与自选参考日重算共用（口径全在 `item::cost` 接缝）。
 fn usage_to(item: &Item, target_date: chrono::NaiveDate) -> Result<cost::DailyUsageCost> {
     cost::calculate(
         item.total_cost_cents,
@@ -116,8 +76,6 @@ fn usage_to(item: &Item, target_date: chrono::NaiveDate) -> Result<cost::DailyUs
     )
 }
 
-/// 按物品生命周期状态计算每天使用成本（在用 → 今天；已处置 → 处置日），
-/// 列表与单件详情共用同一口径（`item::cost` 接缝）。
 fn daily_usage(item: &Item) -> Result<cost::DailyUsageCost> {
     match item.status {
         ItemStatus::InUse => usage_to(item, cost::today()),
@@ -134,11 +92,6 @@ fn daily_usage(item: &Item) -> Result<cost::DailyUsageCost> {
     }
 }
 
-/// 计算单件物品的每天使用成本（issue #121 自选参考日重算）：
-/// `reference_date` 缺省 → 沿用列表口径（在用 → 今天；已处置 → 处置日，见 [`daily_usage`]）；
-/// 提供参考日 → 覆盖目标日（在用/已处置均生效，分子口径不变：总成本 − 残值，下限 0），
-/// 支持未来日期（预览「用满 N 天」的摊薄）。参考日早于购买日或不可解析报错，
-/// 口径全部收敛在 `item::cost` 接缝，本函数只做读取与缺省目标日选择。
 pub fn calculate_item_cost(
     conn: &Connection,
     id: &str,
@@ -158,39 +111,21 @@ pub fn calculate_item_cost(
     })
 }
 
-/// 创建一件在用物品：溯源守卫 → 校验 → 金额折算本位币（Amount 接缝）→
-/// 落库（生成 `id` 与审计字段）→ 成功后调用 `notify`（生产路径发 `ledger:changed`）。
-///
-/// 溯源守卫（issue #207，ADR-0025 创建唯一入口）：不关联购买交易的创建请求
-/// 直接拒绝——物品只能经交易右键「加入物品」+ 确认弹窗创建，无溯源物品会让
-/// 每天成本口径失真；列仍可空是为修改语义（None = 保留）与外键清理保留，
-/// 必填仅约束创建时刻。
-///
-/// 其余校验：名称非空、总成本 > 0、购买日期可解析（YYYY-MM-DD）；
-/// 币种折算经 [`amount::convert_to_native_on_trade_date`]（交易日口径，继承溯源
-/// 交易行留痕汇率，见 [`validate_and_convert`]；缺汇率即报错，不静默混币种）。
 pub fn create_item(
     conn: &Connection,
     input: ItemInput,
     notify: &mut dyn FnMut(),
 ) -> Result<String> {
     let id = ensure_transaction(conn, || create_within_transaction(conn, &input))?;
-    // 写入成功 → 通知调用方发出失效信号（生产为 ledger:changed；失败不至此处）。
     notify();
     Ok(id)
 }
 
-/// 创建协议本体（无事务语义，由 [`ensure_transaction`] 包裹）：溯源守卫 → 校验
-/// → 源端折算 → 落库 + op 产出（随同一事务提交/回滚）。
 fn create_within_transaction(conn: &Connection, input: &ItemInput) -> Result<String> {
-    // 溯源守卫：创建必须关联购买交易（修改路径不受此限，None = 保留既有溯源）。
     if input.purchase_transaction_id.is_none() {
         return Err(guard::link_required_error());
     }
-    // 关联购买交易：校验存在且为 expense，自动带出日期/成本/币种（覆盖同名入参）。
     let effective = apply_purchase_link(conn, input)?;
-    // 溯源守卫（上方）已强制创建关联必填：生效溯源即入参关联，折算继承与溯源
-    // 落行共用同一值。
     let link = input.purchase_transaction_id.clone();
     let (name, purchase_date, cost_native_cents) =
         validate_and_convert(conn, &effective, link.as_deref())?;
@@ -204,7 +139,6 @@ fn create_within_transaction(conn: &Connection, input: &ItemInput) -> Result<Str
         note: input.note.clone(),
     };
     let id = write_create(conn, &new_uuid(), &row)?;
-    // op 产出接缝（issue #860）：创建成功后随同一事务追加 op。
     record_local(
         conn,
         ItemCommand::Create {
@@ -215,7 +149,6 @@ fn create_within_transaction(conn: &Connection, input: &ItemInput) -> Result<Str
     Ok(id)
 }
 
-/// 物品行落库协议（本地创建与重放共用，无 op 产出）：插入在用行（处置字段空）。
 fn write_create(conn: &Connection, id: &str, row: &ItemCommandRow) -> Result<String> {
     let now = now_iso();
     conn.execute(
@@ -240,16 +173,6 @@ fn write_create(conn: &Connection, id: &str, row: &ItemCommandRow) -> Result<Str
     Ok(id.to_string())
 }
 
-/// 创建/修改共用的入参校验与归一化：名称非空、总成本 > 0、购买日期可解析
-/// （成本计算依赖日历日期）、币种按 Amount 接缝**交易日入口**折算本位币。
-///
-/// 折算取数（#1693 / ADR-0014 2026-09-22 修订）：`link` 是生效溯源（创建即入参
-/// 关联，修改为新关联或既有指针），其行内 `fx_rate_used` 经 [`linked_fx_rate`] 作
-/// 显式汇率传入——基础成本 native 与交易行精确一致、追加花费与基础同汇率可复现、
-/// 换关随新交易行重取；无留痕（迁移前行）/无溯源回落序列按购买日期重查；
-/// 本位币行由入口自持 1:1（携显式汇率报方向不符，故不传，见
-/// `convert_to_native_on_trade_date` 的同币种分支）。
-/// 返回归一化后的名称、规范化日期串（YYYY-MM-DD）与本位币成本，调用方直接落库。
 fn validate_and_convert(
     conn: &Connection,
     input: &ItemInput,
@@ -278,18 +201,6 @@ fn validate_and_convert(
     Ok((name.to_string(), trade_date, conversion.native_cents))
 }
 
-/// 继承溯源交易行留痕汇率（#1693 / ADR-0014 2026-09-22 修订）：物品币种与
-/// 关联购买交易行币种一致时，行内 `fx_rate_used` 即该笔购买的折算留痕
-/// （正反向兜底已存为使用值，方向与本折算同向），作显式汇率交交易日入口——
-/// 物品行与交易行因此对同一笔购买折出同一个本位币数。
-///
-/// 不传（回落序列重查）的三种情形：无留痕（迁移前行 `fx_rate_used` 为空）、
-/// 无溯源（创建必有关联，修改可无）、交易行缺失或物品币种被单独编辑
-/// （未换关时留痕属另一币种对，方向失效，不可冒充显式值）；本位币行同样不传
-/// （入口自持 1:1，携显式汇率报方向不符）——且按**当前**基准判定而非依赖
-/// 「同币种行必无留痕」不变量：基准币是账本级设置可变更（DefaultCurrency），
-/// 变更后写入时跨币种携率的行会变成「币种 == 新基准」，透传留痕即撞
-/// `fx.explicit-rate-direction-mismatch`、物品无法保存（#1693 交付物 1③）。
 fn linked_fx_rate(
     conn: &Connection,
     link: Option<&str>,
@@ -315,17 +226,6 @@ fn linked_fx_rate(
     })
 }
 
-/// 按 `id` 修改物品字段（名称/购买日期/总成本/币种/备注/关联购买交易，
-/// issue #117 / #119）。
-///
-/// 保留审计字段：`id` / `created_at` / `status` / 处置相关字段 / `is_deleted`
-/// 均不动；`version` 递增、`updated_at` / `device_id` 刷新（同 Writer 接缝的
-/// `update_row` 约定）。金额折算走 Amount 接缝交易日入口（继承生效溯源行留痕，
-/// 见 [`validate_and_convert`]），成功后调用 `notify`
-/// （生产路径发 `ledger:changed`）。物品不存在（或已软删除）→ [`AppError::NotFound`]。
-///
-/// 关联购买交易语义：入参提供新交易 → 校验并自动带出（覆盖日期/成本/币种，
-/// 替换溯源）；入参为 `None` → 保留既有溯源不动（溯源只增不减，不随编辑丢失）。
 pub fn update_item(
     conn: &Connection,
     id: &str,
@@ -333,13 +233,10 @@ pub fn update_item(
     notify: &mut dyn FnMut(),
 ) -> Result<()> {
     ensure_transaction(conn, || update_within_transaction(conn, id, &input))?;
-    // 写入成功 → 通知调用方发出失效信号（生产为 ledger:changed；失败不至此处）。
     notify();
     Ok(())
 }
 
-/// 修改协议本体（无事务语义，由 [`ensure_transaction`] 包裹）：带出/校验 →
-/// 落库 + op 产出（随同一事务提交/回滚）。
 fn update_within_transaction(conn: &Connection, id: &str, input: &ItemInput) -> Result<()> {
     let existing = get_item_by_id(conn, id)?;
     let Some(existing) = existing else {
@@ -350,9 +247,6 @@ fn update_within_transaction(conn: &Connection, id: &str, input: &ItemInput) -> 
         ));
     };
 
-    // 关联购买交易语义：新关联或换关（与既有指针不同）→ 校验并自动带出
-    // （覆盖日期/成本/币种）；维持既有关联或不带关联 → 不重新带出，
-    // 手动调整的成本/日期照常生效（溯源只增不减，None 不等于取消关联）。
     let effective = match &input.purchase_transaction_id {
         Some(tx_id) if Some(tx_id.as_str()) != existing.purchase_transaction_id.as_deref() => {
             apply_purchase_link(conn, input)?
@@ -367,7 +261,6 @@ fn update_within_transaction(conn: &Connection, id: &str, input: &ItemInput) -> 
     let (name, purchase_date, cost_native_cents) =
         validate_and_convert(conn, &effective, link.as_deref())?;
 
-    // 已处置物品的购买日期不得晚于处置日，否则列表/详情读取时成本口径报错（不可达状态）。
     if let Some(disposal_date) = &existing.disposal_date {
         ensure_purchase_not_after_disposal(&purchase_date, disposal_date)?;
     }
@@ -382,7 +275,6 @@ fn update_within_transaction(conn: &Connection, id: &str, input: &ItemInput) -> 
         note: input.note.clone(),
     };
     write_update_row(conn, id, &row)?;
-    // op 产出接缝（issue #860）：修改成功后随同一事务追加 op。
     record_local(
         conn,
         ItemCommand::Update {
@@ -392,8 +284,6 @@ fn update_within_transaction(conn: &Connection, id: &str, input: &ItemInput) -> 
     )
 }
 
-/// 物品行更新协议（本地修改与重放共用，无 op 产出）：替换编辑面字段
-/// （status / 处置字段 / is_deleted 不动）。
 fn write_update_row(conn: &Connection, id: &str, row: &ItemCommandRow) -> Result<()> {
     let updated = conn.execute(
         "UPDATE items \
@@ -421,15 +311,6 @@ fn write_update_row(conn: &Connection, id: &str, row: &ItemCommandRow) -> Result
     Ok(())
 }
 
-/// 处置物品（issue #120）：置 `status='disposed'` 并记录处置日期（必填）与
-/// 可选残值。已处置物品的每天成本由 [`daily_usage`] 摊到处置日，
-/// 分子 = 总成本 − 残值（口径全部在 `item::cost` 接缝，本函数只写状态字段）。
-///
-/// 校验：物品存在且未删除；处置日期可解析、不早于购买日期且不晚于今天（否则列表读取时
-/// 成本口径报错或分母虚增，均为不可达/错误状态）；残值存在时必须 ≥ 0
-/// （残值 ≥ 成本合法，分子下限 0）。
-/// 对已处置物品再次处置 = 修正处置信息（更新日期与残值，版本递增）。
-/// 成功后调用 `notify`（生产路径发 `ledger:changed`）。
 pub fn dispose_item(
     conn: &Connection,
     id: &str,
@@ -447,13 +328,10 @@ pub fn dispose_item(
             },
         )
     })?;
-    // 处置成功 → 通知调用方发出失效信号（生产为 ledger:changed）。
     notify();
     Ok(())
 }
 
-/// 物品处置协议（本地处置与重放共用，无 op 产出）：校验 + 状态流转，返回
-/// 规范化后的处置日期（YYYY-MM-DD）。
 fn write_dispose(conn: &Connection, id: &str, input: &ItemDisposeInput) -> Result<String> {
     let Some(existing) = get_item_by_id(conn, id)? else {
         return Err(AppError::coded_not_found(
@@ -472,8 +350,6 @@ fn write_dispose(conn: &Connection, id: &str, input: &ItemDisposeInput) -> Resul
         ));
     }
     if disposal_date > cost::today() {
-        // 「已处置」语义上当日之后才成立：未来日期按录入错误拒绝，
-        // 避免每天成本按未来处置日摊（分母虚增）。
         return Err(AppError::codedp(
             "item.disposal-in-future",
             format!("处置日期 {disposal_date} 不能晚于今天"),
@@ -503,20 +379,15 @@ fn write_dispose(conn: &Connection, id: &str, input: &ItemDisposeInput) -> Resul
     Ok(date)
 }
 
-/// 软删除物品（`is_deleted=1`，不物理移除）：标准列表（`WHERE is_deleted=0`）
-/// 自动过滤。不校验引用（物品当前无下游引用）。不存在（含已删除）的 id 返回
-/// `AppError::NotFound`。成功后调用 `notify`（生产路径发 `ledger:changed`）。
 pub fn delete_item(conn: &Connection, id: &str, notify: &mut dyn FnMut()) -> Result<()> {
     ensure_transaction(conn, || {
         write_delete(conn, id)?;
         record_local(conn, ItemCommand::Delete { id: id.to_string() })
     })?;
-    // 删除成功 → 通知调用方发出失效信号（生产为 ledger:changed）。
     notify();
     Ok(())
 }
 
-/// 物品软删协议（本地删除与重放共用，无 op 产出）：存在性检查 + 软删。
 fn write_delete(conn: &Connection, id: &str) -> Result<()> {
     let exists: bool = conn
         .query_row(
@@ -539,8 +410,6 @@ fn write_delete(conn: &Connection, id: &str) -> Result<()> {
     Ok(())
 }
 
-/// 已处置物品的购买日期不得晚于处置日（本地修改与重放共用的不可达状态守卫，
-/// 否则列表/详情读取时成本口径报错）。
 fn ensure_purchase_not_after_disposal(purchase_date: &str, disposal_date: &str) -> Result<()> {
     let purchase = parse_date(purchase_date)?;
     let disposal = parse_date(disposal_date)?;
@@ -554,7 +423,6 @@ fn ensure_purchase_not_after_disposal(purchase_date: &str, disposal_date: &str) 
     Ok(())
 }
 
-/// 解析 YYYY-MM-DD 日期字符串；非法格式报错（物品成本计算依赖日历日期）。
 fn parse_date(s: &str) -> Result<chrono::NaiveDate> {
     chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").map_err(|_| {
         AppError::codedp(
@@ -565,8 +433,6 @@ fn parse_date(s: &str) -> Result<chrono::NaiveDate> {
     })
 }
 
-/// 重放执行：创建（溯源守卫原样生效：关联交易缺失/被占 → 挂起待裁决；
-/// 折算结果随命令携带，不重折算——ADR-0091 决策 3）。
 pub(crate) fn replay_create(conn: &Connection, id: &str, row: &ItemCommandRow) -> Result<()> {
     let Some(tx_id) = &row.purchase_transaction_id else {
         return Err(guard::link_required_error());
@@ -576,43 +442,30 @@ pub(crate) fn replay_create(conn: &Connection, id: &str, row: &ItemCommandRow) -
     Ok(())
 }
 
-/// 重放执行：修改（换关时复验溯源守卫；处置先后守卫与本地同语义）。
 pub(crate) fn replay_update(conn: &Connection, id: &str, row: &ItemCommandRow) -> Result<()> {
     let existing = get_item_by_id(conn, id)?.ok_or_else(|| {
         AppError::codedp_not_found("item.not-found", format!("物品不存在: {id}"), &[id])
     })?;
-    // 换关（与既有指针不同）→ 校验新关联（存在/expense/溯源唯一）。
     if let Some(tx_id) = &row.purchase_transaction_id
         && Some(tx_id.as_str()) != existing.purchase_transaction_id.as_deref()
     {
         guard::resolve_purchase_link(conn, tx_id)?;
     }
-    // 已处置物品的购买日期不得晚于处置日（与本地修改同一不可达状态守卫）。
     if let Some(disposal_date) = &existing.disposal_date {
         ensure_purchase_not_after_disposal(&row.purchase_date, disposal_date)?;
     }
     write_update_row(conn, id, row)
 }
 
-/// 重放执行：处置（同一协议含全部日期/残值守卫）。
 pub(crate) fn replay_dispose(conn: &Connection, id: &str, input: &ItemDisposeInput) -> Result<()> {
     write_dispose(conn, id, input)?;
     Ok(())
 }
 
-/// 重放执行：软删除（同一协议含存在性检查）。
 pub(crate) fn replay_delete(conn: &Connection, id: &str) -> Result<()> {
     write_delete(conn, id)
 }
 
-// ---------------------------------------------------------------------------
-// 交易×物品接缝实现（spec #1086 / issue #1092）：来源列③物品反查
-// ---------------------------------------------------------------------------
-
-/// 来源列③物品反查实现（核心交易域 `transaction::seams::source` 注册点，#1092）：委托
-/// [`source_display_by_transaction_ids`] 并映射为核心交易域来源模型（kind = Item、
-/// entity = 物品 id、展示名 = 物品名、已处置 → Disposed 标注——口径零变化，
-/// spec #704）；溯源指针为空的行跳过（与迁移前调用方 filter_map 同口径）。
 fn item_source_resolver(
     conn: &Connection,
     transaction_ids: &[String],
@@ -636,8 +489,6 @@ fn item_source_resolver(
         .collect())
 }
 
-/// 注册物品反查实现（幂等：进程级一次，重复注册保留首次）。调用点在壳层启动
-/// 接线与测试建库单点，与生产同形；业务代码不直接调用。
 pub fn install_source_hook() {
     ledger_transaction::seams::source::register_item_source_resolver(item_source_resolver);
 }

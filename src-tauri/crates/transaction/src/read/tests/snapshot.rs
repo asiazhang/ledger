@@ -1,7 +1,3 @@
-//! 读快照一致性探针（issue #1699）：`total` 与 `items` 必须落在同一读快照——
-//! 写提交落在 COUNT 与 items 查询两语句之间时，页与总数错位（用户可见的
-//! 口径自相矛盾）。探针机制见 `tauri_app_lib::test_support::snapshot_probe`。
-
 use crate::tests::common::make_input;
 use tauri_app_lib::ledger_transaction::TransactionListFilter;
 use tauri_app_lib::ledger_transaction::amount::TransactionKind;
@@ -10,10 +6,6 @@ use tauri_app_lib::test_support;
 use tauri_app_lib::test_support::ScratchDir;
 use tauri_app_lib::test_support::snapshot_probe::{self, InjectionOutcome};
 
-/// 无分页全量读时 `total` 恒等于满足过滤的总数，与 `items` 同快照才自洽：
-/// 探针在 items 查询开始前于另一连接软删一条流水——
-/// - 读闭包无快照保护（红）：COUNT 读到 3、items 读到 2，`total == items.len()` 变红；
-/// - 读闭包收进读事务（绿）：注入写被挡住，两读同见 3，断言绿。
 #[test]
 fn list_total_and_items_share_one_snapshot() {
     let dir = ScratchDir::new("tx-list-read-snapshot");
@@ -36,8 +28,6 @@ fn list_total_and_items_share_one_snapshot() {
         );
     }
 
-    // 探针：items 查询（SELECT id,kind,amount_cents…，与 COUNT 的
-    // `SELECT COUNT(*)` 区分）开始前，另一连接提交软删写。
     let victim = ids[2].clone();
     snapshot_probe::arm(
         &conn,
@@ -67,11 +57,6 @@ fn list_total_and_items_share_one_snapshot() {
     );
 }
 
-/// 搜索页的命中总数与回表页必须落在同一读快照（issue #1699 同根因——与列表
-/// 同形的 total+items 两段）：探针在回表查询（`FROM transactions t WHERE t.id IN`）
-/// 开始前于另一连接改写一条命中行金额——
-/// - 读闭包无快照保护（红）：命中计数读旧、回表页读新，页与总数错位；
-/// - 读闭包收进读事务（绿）：注入写被挡住，两段同见一套数。
 #[test]
 fn search_items_and_total_share_one_snapshot() {
     let dir = ScratchDir::new("tx-search-read-snapshot");

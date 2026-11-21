@@ -1,15 +1,3 @@
-//! 现金分红（dividend）写入测试（issue #1078 / ADR-0109）。
-//!
-//! 以行为层公开入口断言外部行为（先例：`split` / `convert` 的测试纪律）：
-//! - 分红落一条 `kind=dividend` 交易行（现金腿记 `amount_cents`）+ 一条
-//!   `security_transactions` 扩展行（action='dividend'，quantity / price 恒 NULL）；
-//! - 到账账户余额按 `account_flow` 既有矩阵加现金（分红计收入，不进支出报表）；
-//! - **不要求有持仓**（除息 / 到账错位合法）、不触碰 FIFO 批次、不产生已实现盈亏；
-//! - 守卫齐全（码化中文错误）：标的必填且存在、金额 > 0、到账账户在用且币种一致、
-//!   无份额 / 单价 / 手续费，携带转入标的 / 转入账户 / 出资账户 / 商户 / 分类 /
-//!   保单一律拒绝；
-//! - 进 / 出 dividend 的 kind 变更拒绝；就地修改与删除摘除并重建 / 清空扩展行。
-
 use ledger_transaction::amount::TransactionKind;
 use ledger_transaction::{
     TransactionInput, create_transaction_internal, delete_transaction_internal,
@@ -20,15 +8,12 @@ use super::super::*;
 use super::common::*;
 use tauri_app_lib::test_support::{open, seed_account, seed_fx_history_weeks, seed_instrument};
 
-/// 账户实时余额（ADR-0067 口径的权威比对基准，同 split 测试的 `balance_snapshot`）。
 fn balance_of(conn: &rusqlite::Connection, account_id: &str) -> i64 {
     ledger_accounts::balance::compute_balance(conn, account_id).unwrap()
 }
 
-/// 该交易的证券扩展行投影：`(instrument_id, action, quantity, price_cents, fee_cents)`。
 type SecurityRow = (String, String, Option<f64>, Option<i64>, i64);
 
-/// 该交易的证券扩展行，无扩展行返回 None。
 fn security_row(conn: &rusqlite::Connection, transaction_id: &str) -> Option<SecurityRow> {
     conn.query_row(
         "SELECT instrument_id, action, quantity, price_cents, fee_cents \
@@ -45,7 +30,6 @@ fn seed_dividend_scene(conn: &rusqlite::Connection) {
     seed_instrument(conn, "inst-dv", "502010", "证券基金", "CNY", "unknown");
 }
 
-/// 普通收入输入（kind 变更守卫的对照组）。
 fn make_income_input(account_id: &str, amount_cents: i64, currency: &str) -> TransactionInput {
     TransactionInput {
         merchant_name: None,
@@ -83,7 +67,6 @@ fn dividend_create_records_cash_leg_and_instrument_extension() {
     let conn = open();
     seed_dividend_scene(&conn);
 
-    // 分红不要求有持仓：零持仓直接录入。
     let write =
         create_transaction_internal(&conn, make_dividend_input("acc-dv", "inst-dv", 3000, "CNY"))
             .unwrap();
@@ -98,14 +81,11 @@ fn dividend_create_records_cash_leg_and_instrument_extension() {
         .unwrap();
     assert_eq!(row, ("dividend".to_string(), 3000, "CNY".to_string(), 3000));
 
-    // 扩展行归属标的、无份额 / 单价 / 手续费。
     assert_eq!(
         security_row(&conn, &write.id),
         Some(("inst-dv".to_string(), "dividend".to_string(), None, None, 0))
     );
-    // 现金腿按 account_flow=+ 入账（分红计收入）。
     assert_eq!(balance_of(&conn, "acc-dv"), 3000);
-    // 不产生持仓、不产生已实现盈亏。
     assert!(list_holdings(&conn).unwrap().is_empty());
     assert_eq!(
         query_realized_pnl_summary(
@@ -122,7 +102,6 @@ fn dividend_create_records_cash_leg_and_instrument_extension() {
         .sum::<i64>(),
         0
     );
-    // 来源列反查命中标的（读时推导，零新增指针）。
     let sources =
         source_display_by_transaction_ids(&conn, std::slice::from_ref(&write.id)).unwrap();
     assert_eq!(sources.len(), 1);
@@ -131,7 +110,6 @@ fn dividend_create_records_cash_leg_and_instrument_extension() {
 
 #[test]
 fn dividend_can_land_in_any_active_account() {
-    // 到账账户不限于投资账户：分红可直达银行卡 / 现金账户。
     let conn = open();
     seed_dividend_scene(&conn);
 
@@ -153,20 +131,17 @@ fn dividend_create_guards_return_coded_errors() {
         r.expect_err("应被拒绝")
     };
 
-    // 标的必填。
     let mut input = make_dividend_input("acc-dv", "inst-dv", 3000, "CNY");
     input.instrument_id = None;
     let e = err(create_transaction_internal(&conn, input));
     assert_eq!(e.code().unwrap(), "trade.dividend-instrument-required");
 
-    // 标的不存在。
     let e = err(create_transaction_internal(
         &conn,
         make_dividend_input("acc-dv", "inst-missing", 3000, "CNY"),
     ));
     assert_eq!(e.code().unwrap(), "trade.dividend-instrument-not-found");
 
-    // 金额必须 > 0。
     let e = err(create_transaction_internal(
         &conn,
         make_dividend_input("acc-dv", "inst-dv", 0, "CNY"),
@@ -178,21 +153,18 @@ fn dividend_create_guards_return_coded_errors() {
     ));
     assert_eq!(e.code().unwrap(), "trade.dividend-amount-positive");
 
-    // 到账账户必须存在且未软删。
     let e = err(create_transaction_internal(
         &conn,
         make_dividend_input("acc-missing", "inst-dv", 3000, "CNY"),
     ));
     assert_eq!(e.code().unwrap(), "trade.dividend-account-not-found");
 
-    // 币种须与账户币种一致（币种文案单点断言住守卫单测，spec #1672）。
     let e = err(create_transaction_internal(
         &conn,
         make_dividend_input("acc-dv-usd", "inst-dv", 3000, "CNY"),
     ));
     assert_eq!(e.code().unwrap(), "trade.dividend-currency-mismatch");
 
-    // 无份额 / 单价 / 手续费（意图漂移 fail fast）。
     let mut input = make_dividend_input("acc-dv", "inst-dv", 3000, "CNY");
     input.quantity = Some(1.0);
     let e = err(create_transaction_internal(&conn, input));
@@ -206,7 +178,6 @@ fn dividend_create_guards_return_coded_errors() {
     let e = err(create_transaction_internal(&conn, input));
     assert_eq!(e.code().unwrap(), "trade.dividend-fee-forbidden");
 
-    // 转入标的 / 转入账户 / 出资账户。
     let mut input = make_dividend_input("acc-dv", "inst-dv", 3000, "CNY");
     input.to_instrument_id = Some("inst-other".into());
     let e = err(create_transaction_internal(&conn, input));
@@ -220,7 +191,6 @@ fn dividend_create_guards_return_coded_errors() {
     let e = err(create_transaction_internal(&conn, input));
     assert_eq!(e.code().unwrap(), "transaction.funding-unsupported");
 
-    // 商户 / 分类 / 保单（行为层参考数据携带准入，dividend 不在任何准入集）。
     let mut input = make_dividend_input("acc-dv", "inst-dv", 3000, "CNY");
     input.merchant_id = Some("m-1".into());
     let e = err(create_transaction_internal(&conn, input));
@@ -244,7 +214,6 @@ fn dividend_update_replaces_fields_and_delete_removes_extension() {
             .unwrap()
             .id;
 
-    // 就地修改（全字段替换）：扩展行摘除后重建，金额与账户余额随之更新。
     update_transaction_internal(
         &conn,
         &id,
@@ -265,7 +234,6 @@ fn dividend_update_replaces_fields_and_delete_removes_extension() {
         Some(("inst-dv".to_string(), "dividend".to_string(), None, None, 0))
     );
 
-    // 软删：扩展行摘除（交易行软删、余额回退到 0）。
     delete_transaction_internal(&conn, &id).unwrap();
     assert_eq!(security_row(&conn, &id), None);
     assert_eq!(balance_of(&conn, "acc-dv"), 0);
@@ -283,7 +251,6 @@ fn dividend_kind_change_is_forbidden_in_both_directions() {
         .unwrap()
         .id;
 
-    // 改出 dividend。
     let e = update_transaction_internal(
         &conn,
         &dividend_id,
@@ -292,7 +259,6 @@ fn dividend_kind_change_is_forbidden_in_both_directions() {
     .expect_err("改出 dividend 应被拒绝");
     assert_eq!(e.code().unwrap(), "trade.dividend-kind-change-forbidden");
 
-    // 改入 dividend。
     let e = update_transaction_internal(
         &conn,
         &income_id,
@@ -302,10 +268,6 @@ fn dividend_kind_change_is_forbidden_in_both_directions() {
     assert_eq!(e.code().unwrap(), "trade.dividend-kind-change-forbidden");
 }
 
-/// 写路径负向断言（#1692 / ADR-0011 决策 3 + 2026-09-22 修订 ②，buy 先例同款）：
-/// `prepare_dividend` 的现金腿按交易日历史折算——夹具只种 `fx_rate_history`
-///（分红周 2026-02-10）、**不种当期行** `exchange_rates`；把 prepare 改回当期
-/// 入口 `convert_to_native_current` 本测试即红（当期表无行、缺点报 `fx.rate-missing`）。
 #[test]
 fn dividend_native_cents_converted_via_trade_date_history() {
     let conn = open();

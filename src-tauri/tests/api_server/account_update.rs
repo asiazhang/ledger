@@ -14,10 +14,6 @@ use crate::common::{
     setup_app,
 };
 
-// ---------------------------------------------------------------------------
-// DELETE /api/v1/accounts/{id}
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn test_delete_account_returns_204_and_removes_from_readback() {
     let (app, conn) = setup_app();
@@ -57,14 +53,9 @@ async fn test_delete_account_not_found_returns_404() {
     assert!(err["message"].as_str().unwrap().contains("账户不存在"));
 }
 
-/// 壳层编排守卫（issue #1754 / ADR-0133 决策 4）：删除在用储蓄目标的专属账户
-/// 被码化拒绝（IPC 删除命令与 HTTP 端点同构调用目标域守卫——移除编排调用本
-/// 测试即红）。普通账户不受影响（既有用例覆盖）。
 #[tokio::test]
 async fn test_delete_account_of_active_goal_is_rejected() {
     let (app, conn) = setup_app();
-    // 目标经目标域公开写入口直接建档（专属账户同事务自动创建）；创建命令返回
-    // 目标 id，专属账户 id 从绑定读出（1 目标 : 1 账户）。
     let goal_id = ledger_savings_goal::create_savings_goal(
         &conn.lock().unwrap(),
         &ledger_savings_goal::SavingsGoalInput {
@@ -89,7 +80,6 @@ async fn test_delete_account_of_active_goal_is_rejected() {
     let err: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(err["code"], "savings-goal.account-in-use");
 
-    // 账户未删（软删计数不变）
     let active: i64 = conn
         .lock()
         .unwrap()
@@ -125,10 +115,6 @@ async fn test_delete_account_does_not_validate_references() {
         .unwrap();
     assert_eq!(tx_count, 1, "删除账户不应清理其历史交易");
 }
-
-// ---------------------------------------------------------------------------
-// DELETE /api/v1/categories/{id}
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn test_delete_category_returns_204_and_removes_from_readback() {
@@ -203,7 +189,6 @@ async fn test_delete_account_then_reimport_recreates() {
     let (status, _) = delete_account_via_api(&app, &id).await;
     assert_eq!(status, StatusCode::NO_CONTENT);
 
-    // 删除后重跑导入：幂等创建不再命中已删除记录，应重新创建新 id（去重位天然释放）
     let new_id = create_account_via_api(&app, "重导账户").await;
     assert_ne!(new_id, id, "删除后重导应创建新账户而非复用旧 id");
     let active: i64 = conn
@@ -240,24 +225,12 @@ async fn test_delete_category_then_reimport_recreates() {
     assert_eq!(active, 1, "重导后应恰好存在一个未删除的同名分类");
 }
 
-// ---------------------------------------------------------------------------
-// SQL 耗时归因验证（issue #44：HTTP 侧由 tower_http::trace 请求 span 归因）
-// ---------------------------------------------------------------------------
-
-/// 冒烟/回归：HTTP 导入路径的 SQL 耗时事件应归因到 `tower_http::trace` 的请求 span
-/// （默认名为 `request`）。`TraceLayer::new_for_http()` 已挂载在 `build_router` 上，
-/// handler 内基于 `conn.lock()` 的同步查询在请求 span 内执行，hook 事件应继承该 span。
-/// 采集器具（`CaptureLayer`/`ensure_global_max_level`）来自 `ledger_infra::test_utils`，
-/// 与单元测试 `db/tests.rs` 共用（避免重复实现）。
 #[tokio::test(flavor = "current_thread")]
 async fn test_http_sql_duration_attributed_to_request_span() {
     ensure_global_max_level();
     let (app, conn) = setup_app();
 
-    // 预置账户：直接写库（在捕获 guard 之前，其 SQL 不进入断言范围），
-    // 使捕获到的 SQL 只来自导入请求 span。
     let account_id = "acc-import-001";
-    // 工厂账户种子直建（归一签名，spec #728 / ADR-0084 决策 4）。
     test_support::seed_account(
         &conn.lock().unwrap(),
         account_id,
@@ -272,7 +245,6 @@ async fn test_http_sql_duration_attributed_to_request_span() {
     let subscriber = tracing_subscriber::registry().with(layer);
     let _guard = tracing::subscriber::set_default(subscriber);
 
-    // 把一次批量交易写入（导入路径）发到 `/api/v1/transactions/batch`。
     let batch = format!(
         r#"{{"transactions":[{{"kind":"income","amount_cents":1000,"currency_code":"CNY","account_id":"{account_id}","date":"2026-07-01"}}]}}"#
     );
@@ -311,7 +283,6 @@ async fn test_http_sql_duration_attributed_to_request_span() {
 async fn test_put_account_renames_and_returns_updated_account() {
     let (app, _) = setup_app();
 
-    // 创建账户
     let create_resp = app
         .clone()
         .oneshot(
@@ -327,7 +298,6 @@ async fn test_put_account_renames_and_returns_updated_account() {
     assert_eq!(create_resp.status(), StatusCode::CREATED);
     let id: String = serde_json::from_slice(&body_to_bytes(create_resp.into_body()).await).unwrap();
 
-    // PUT 改名 → 200 + 更新后的完整账户
     let update_resp = app
         .clone()
         .oneshot(
@@ -346,7 +316,6 @@ async fn test_put_account_renames_and_returns_updated_account() {
     assert_eq!(updated["name"], "零钱");
     assert_eq!(updated["currency_code"], "CNY", "未传字段保持原值");
 
-    // 读回列表应包含新名
     let list_resp = app
         .clone()
         .oneshot(
@@ -381,11 +350,6 @@ async fn test_put_account_returns_404_for_missing_id() {
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
 }
 
-// ---------------------------------------------------------------------------
-// 信用卡档案字段（spec #1327 / ADR-0119）：编辑三态（给值 / 不改 / 清空）与拒绝。
-// ---------------------------------------------------------------------------
-
-/// 建信用卡账户（`extra` 为附加的 JSON 片段，不出问题时传空串）并返回 id。
 async fn create_credit_account(app: &axum::Router, name: &str, extra: &str) -> String {
     let comma = if extra.is_empty() { "" } else { "," };
     let body =
@@ -406,7 +370,6 @@ async fn create_credit_account(app: &axum::Router, name: &str, extra: &str) -> S
     serde_json::from_slice(&body_to_bytes(response.into_body()).await).unwrap()
 }
 
-/// PUT 账户并返回状态码与响应体（400 时响应体是码化错误对象）。
 async fn put_account(app: &axum::Router, id: &str, body: &str) -> (StatusCode, serde_json::Value) {
     let response = app
         .clone()
@@ -425,7 +388,6 @@ async fn put_account(app: &axum::Router, id: &str, body: &str) -> (StatusCode, s
     (status, serde_json::from_slice(&bytes).unwrap())
 }
 
-/// 编辑信用卡账户写入档案字段 → 200 且返回落定值。
 #[tokio::test]
 async fn test_put_account_sets_credit_terms() {
     let (app, _) = setup_app();
@@ -443,8 +405,6 @@ async fn test_put_account_sets_credit_terms() {
     assert_eq!(updated["due_day"], 25);
 }
 
-/// **三态语义在 HTTP 面成立**：显式 `null` 是「清空」而不是「不改」——serde 对
-/// `Option<Option<T>>` 会默认把两者折叠成同一个 `None`，本断言钉住区分器在位。
 #[tokio::test]
 async fn test_put_account_clears_credit_terms_with_explicit_null() {
     let (app, _) = setup_app();
@@ -470,7 +430,6 @@ async fn test_put_account_clears_credit_terms_with_explicit_null() {
     assert!(updated["due_day"].is_null());
 }
 
-/// 键缺席 = 不改：只改名时档案三字段原样保留（清空需要显式 `null`）。
 #[tokio::test]
 async fn test_put_account_without_credit_fields_keeps_them() {
     let (app, _) = setup_app();
@@ -489,7 +448,6 @@ async fn test_put_account_without_credit_fields_keeps_them() {
     assert_eq!(updated["due_day"], 25);
 }
 
-/// 非信用卡账户携带档案字段 → 400 + 码化错误，且账户值不变。
 #[tokio::test]
 async fn test_put_account_rejects_credit_terms_for_non_credit_type() {
     let (app, _) = setup_app();
@@ -510,13 +468,6 @@ async fn test_put_account_rejects_credit_terms_for_non_credit_type() {
     assert!(cash["statement_day"].is_null(), "被拒绝的编辑不落库");
 }
 
-// ---------------------------------------------------------------------------
-// 归档可选键（spec #1952 / ADR-0142 决策 5 / issue #1953）：PUT 追加 is_archived
-// 可选布尔键（缺席 = 不改、true/false 落定）；读面披露标志；绑定储蓄目标的
-// 账户归档被码化拒绝（守卫住壳层编排，指向「归档目标本身」）。
-// ---------------------------------------------------------------------------
-
-/// `is_archived: true` 落定归档、`false` 恢复，读回携带标志（读面零过滤，只增披露）。
 #[tokio::test]
 async fn test_put_account_archives_and_restores_with_explicit_values() {
     let (app, conn) = setup_app();
@@ -541,7 +492,6 @@ async fn test_put_account_archives_and_restores_with_explicit_values() {
     assert_eq!(updated["is_archived"], false, "恢复落定");
 }
 
-/// 键缺席 = 不改：归档后只改名，归档态保持（清空需要显式给 `false`）。
 #[tokio::test]
 async fn test_put_account_without_archive_key_keeps_it() {
     let (app, _) = setup_app();
@@ -555,7 +505,6 @@ async fn test_put_account_without_archive_key_keeps_it() {
     assert_eq!(updated["is_archived"], true, "键缺席不改归档态");
 }
 
-/// GET 列表读面披露归档标志（读面零过滤：归档账户继续返回，只增字段）。
 #[tokio::test]
 async fn test_get_accounts_discloses_archive_flag() {
     let (app, _) = setup_app();
@@ -573,8 +522,6 @@ async fn test_get_accounts_discloses_archive_flag() {
     assert_eq!(row["is_archived"], true);
 }
 
-/// 绑定储蓄目标的账户归档被码化拒绝（守卫住壳层编排——移除编排调用本测试即红），
-/// 错误码稳定且文案指向「归档目标本身」；普通字段编辑照常放行。
 #[tokio::test]
 async fn test_put_archive_account_of_active_goal_is_rejected() {
     let (app, conn) = setup_app();
@@ -605,7 +552,6 @@ async fn test_put_archive_account_of_active_goal_is_rejected() {
         "文案应指向「归档目标本身」而不是「删除目标」"
     );
 
-    // 未归档落库
     let archived: i64 = conn
         .lock()
         .unwrap()
@@ -618,8 +564,6 @@ async fn test_put_archive_account_of_active_goal_is_rejected() {
     assert_eq!(archived, 0, "被拒归档不落库");
 }
 
-/// 该账户在同步 op 日志里的动作序列（op 面探针：只读 `sync.sync_ops` 的载荷，
-/// 不经编辑入口内部；创建期自带一条 `create`）。
 fn account_op_actions(conn: &Arc<Mutex<rusqlite::Connection>>, id: &str) -> Vec<String> {
     let conn = conn.lock().unwrap();
     let mut stmt = conn
@@ -642,9 +586,6 @@ fn account_op_actions(conn: &Arc<Mutex<rusqlite::Connection>>, id: &str) -> Vec<
         .collect()
 }
 
-/// 归档-only PUT 的 op 幂等（#1953 AC「归档 / 恢复幂等（重复调用不报错、不重复产
-/// 同步 op）」在编辑入口的落点）：只带归档键的 PUT 只产一条 `SetArchived` op（不先
-/// 多产一条 `Update`），重复同一 PUT 零新 op、version 不动。
 #[tokio::test]
 async fn test_put_archive_only_emits_one_op_and_repeat_is_idempotent() {
     let (app, conn) = setup_app();
@@ -665,7 +606,6 @@ async fn test_put_archive_only_emits_one_op_and_repeat_is_idempotent() {
         "归档-only PUT 只产一条 SetArchived op（无编辑键即无 Update op）"
     );
 
-    // 重复同一 PUT（已归档再归档）：不报错、零新 op、version 不动。
     let (status, again) = put_account(&app, &id, r#"{"is_archived":true}"#).await;
     assert_eq!(status, StatusCode::OK, "重复归档不报错");
     assert_eq!(again["is_archived"], true);
@@ -680,7 +620,6 @@ async fn test_put_archive_only_emits_one_op_and_repeat_is_idempotent() {
         "重复归档-only PUT 不得再产 op"
     );
 
-    // 恢复方向同路径：一条 set_archived（false），重复零新 op。
     let (status, restored) = put_account(&app, &id, r#"{"is_archived":false}"#).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(restored["is_archived"], false, "恢复落定");

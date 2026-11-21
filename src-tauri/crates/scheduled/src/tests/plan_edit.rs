@@ -1,17 +1,8 @@
-//! 订阅编辑校验（issue #162，ADR-0023 决策三）：仅非金额字段可编辑，
-//! 金额字段（含显式 null）显式拒绝——改价 = 取消旧计划 + 新建。
-
 use super::super::*;
 use super::common::create_subscription;
 use rusqlite::params;
 use tauri_app_lib::test_support;
 
-// ---------------------------------------------------------------------------
-// 订阅编辑——仅非金额字段（issue #162，ADR-0023 决策三）
-// ---------------------------------------------------------------------------
-
-/// 金额哨兵边界：请求携带 `amount_cents` / `total_amount_cents`（含显式 null）
-/// 一律显式拒绝，且拒绝后计划字段不被改动。
 #[test]
 fn update_subscription_rejects_amount_field_including_explicit_null() {
     let conn = test_support::open();
@@ -35,7 +26,6 @@ fn update_subscription_rejects_amount_field_including_explicit_null() {
         );
     }
 
-    // 拒绝后计划未被改动
     let (note, amount): (Option<String>, i64) = conn
         .query_row(
             "SELECT note,amount_cents FROM scheduled_transactions WHERE id=?1",

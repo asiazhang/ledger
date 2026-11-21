@@ -1,27 +1,3 @@
-//! 跨账本投资汇总（CrossBookInvestmentSummary，ADR-0114 / issue #1196）：壳层编排。
-//!
-//! 跨本聚合不属投资域（域是单本语义，且域不得依赖壳/引导层，ADR-0112）；按
-//! ADR-0114 决策与实施前核查的接缝归属，编排落在本模块：壳层枚举注册表 →
-//! 逐本只读建连（活动本复用进程内读连接）→ 调投资域 `&Connection` 读函数 →
-//! 内存合并 → 按主账本（＝当前活动账本，ADR-0114 决策 3）本位币折算与标注。
-//!
-//! 逐本状态闭集（ADR-0114 决策 5，2026-09-14 修订）：活动本恒计入；非活动本
-//! 按文件形态分派——密文库（进程内无逐本解锁能力，ADR-0117 决策 2 口令协议
-//! 禁止解锁窗外读钥匙串）标注「未解锁、未计入」；只登记未建库标注「尚未初始
-//! 化」；明文库先比 `user_version` 与活动本是否一致（活动本建连必经迁移，其版
-//! 本即当前应用 schema 版本），不一致标注「版本不一致」，一致才经投资域读函数
-//! 取数；打开或读取失败标注「读取失败」。四类排除逐本可见，不静默少算、不阻
-//! 塞其他账本出数。
-//!
-//! 折算口径（ADR-0114 决策 3）：全部金额带币种进合并器，币种＝目标币种（活动
-//! 本本位币）直接相加，否则经活动本当期汇率表折算（当期入口
-//! `convert_to_native_current`，缺汇
-//! 率码化错误上抛——与既有本内折算同一「不静默返回缺料数字」口径）；发生过任
-//! 意折算即置 `converted`，界面据此标注折算口径。
-//!
-//! 只读承诺：本模块不产生任何写路径、不持有活动本连接以外的长生命周期连接，
-//! 逐本连接在取数后即弃（作用域结束 drop）。
-
 use rusqlite::Connection;
 use serde::Serialize;
 
@@ -35,23 +11,16 @@ use ledger_infra::error::Result;
 use ledger_investment as investment;
 use ledger_transaction::amount;
 
-/// 逐本状态闭集（serde 字面量与前端 i18n 键一一对应）。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CrossBookBookStatus {
-    /// 计入。
     Included,
-    /// 加密库且进程内未解锁（非活动密文本恒此态）。
     Locked,
-    /// 只登记未建库（库文件缺失或空文件）。
     NotInitialized,
-    /// 明文库 schema 版本与活动本不一致（旧版待升级或库来自更新版本）。
     SchemaMismatch,
-    /// 只读打开或读取失败（文件损坏等）。
     Unreadable,
 }
 
-/// 逐本行：注册表序呈现，含活动本。
 #[derive(Debug, Clone, Serialize)]
 pub struct CrossBookBookRow {
     pub id: String,
@@ -59,40 +28,25 @@ pub struct CrossBookBookRow {
     pub status: CrossBookBookStatus,
 }
 
-/// 汇总载荷（折算全部在后端完成，前端不出现第二份口径——仪表盘同款纪律）。
 #[derive(Debug, Serialize)]
 pub struct CrossBookInvestmentSummary {
-    /// 折算目标＝主账本（当前活动账本）本位币。
     pub target_currency: String,
-    /// 是否发生过当期汇率折算（界面据此标注口径）。
     pub converted: bool,
     pub market_value_cents: i64,
     pub unrealized_pnl_cents: i64,
     pub cumulative_pnl_cents: i64,
     pub investable_assets_cents: i64,
-    /// 逐本状态行（注册表序，含活动本）。
     pub books: Vec<CrossBookBookRow>,
 }
 
-/// 单本投资口径原始读数（金额带币种，折算前）。
 #[derive(Debug, Clone, Default)]
 pub struct BookInvestmentReading {
-    /// 本内默认币种（本位币基准）：逐本位币与目标币是否一致的判定源。
     pub native_currency: String,
-    /// 持仓市值/持仓收益按币种分组（账户币口径）。
     pub holding_totals: Vec<investment::CurrencyHoldingTotals>,
-    /// 累计收益按币种分组（域读投影原样）。
     pub cumulative_pnl: Vec<investment::CurrencyCumulativePnl>,
-    /// 可投资资产：域分子函数折本内默认币种后的 (币种, 分)。
     pub investable_assets: Option<(String, i64)>,
 }
 
-/// 单本读数（投资域 `&Connection` 纯读组合）：持仓合计 + 累计收益 + 可投资资产。
-/// 任一读失败原样上抛（调用方决定逐本降级还是整体失败）。
-///
-/// **读快照一致性（issue #1699）**：四段读数（持仓合计 / 累计收益 / 可投资资产
-/// 两腿 / 本位币）整体收进同一读事务（嵌套感知）——写提交落在语句之间会让
-/// 同屏合计与可投资资产不同时点。覆盖活动本与非活动本两条调用路径。
 pub fn read_book_investment(conn: &Connection) -> Result<BookInvestmentReading> {
     ensure_transaction(conn, || {
         let holding_totals = investment::query_holdings_summary_by_currency(conn)?;
@@ -108,17 +62,6 @@ pub fn read_book_investment(conn: &Connection) -> Result<BookInvestmentReading> 
     })
 }
 
-/// 活动本读数与合并的单点（ADR-0114 决策 3 的第④步，壳层编排）：活动本读数、
-/// 目标本位币、当期汇率折算与逐本合并一次给出。
-///
-/// **读快照一致性（issue #1699，证据点「活动本读数与汇率折算跨口径」）**：整段
-/// 收进同一读事务（嵌套感知）——[`read_book_investment`] 的四段读数、目标本位币
-/// 与 merge 的逐笔当期汇率取数同快照，写提交落在其间不会「读数旧、汇率新」。
-/// 非活动本读数各自已收本内快照（`read_book_investment` 内接线）；跨库合天然
-/// 逐本时点（单事务跨不了库文件，结构边界如实保留，不假装跨本一致）。
-///
-/// 从命令闭包抽出的动机：接线要能在**命令线程之外**被探针测试直接驱动
-/// （`trace_v2` 回调与被测读闭包同线程才可见臂装状态），命令壳只留一行调用。
 pub fn read_active_book_and_merge(
     mut readings: Vec<BookInvestmentReading>,
     rows: Vec<CrossBookBookRow>,
@@ -142,7 +85,6 @@ pub fn read_active_book_and_merge(
     })
 }
 
-/// 合并结果（折算后，目标币种口径）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MergedTotals {
     pub market_value_cents: i64,
@@ -152,10 +94,6 @@ pub struct MergedTotals {
     pub converted: bool,
 }
 
-/// 内存合并器（纯函数，折算经注入闭包）：币种＝目标币种直接相加，否则折算并置
-/// `converted`；任一计入本的本位币≠目标币同样置 `converted`——位币不一致时
-/// 「按当期汇率折算」是口径事实（ADR-0114 决策 3），与本次实际是否发生折算无关。
-/// 空值组按域空值语义跳过、不以零计入。
 pub fn merge_readings(
     readings: &[BookInvestmentReading],
     target_currency: &str,
@@ -206,8 +144,6 @@ pub fn merge_readings(
     Ok(totals)
 }
 
-/// 逐本探测与读取（非活动本；阻塞文件 IO，调用方负责投放阻塞线程池）。
-/// 返回注册表序的全量状态行（活动本恒 `Included`）与非活动本的可计入读数。
 pub fn collect_other_books(
     books: &[Book],
     active_id: &str,
@@ -237,8 +173,6 @@ pub fn collect_other_books(
     (rows, readings)
 }
 
-/// 单本（非活动）分派：探测文件形态 → 密文=未解锁、空=未初始化、明文=比版本后
-/// 读取；打开/读取失败逐本降级为 `Unreadable`，不上抛、不阻塞其他本。
 fn read_other_book(
     book: &Book,
     active_schema_version: i64,
@@ -250,10 +184,8 @@ fn read_other_book(
     };
     match kind {
         DbFileKind::Empty => (CrossBookBookStatus::NotInitialized, None),
-        // 进程内没有逐本解锁路径（ADR-0114 决策 5 / ADR-0117 决策 2）。
         DbFileKind::Encrypted => (CrossBookBookStatus::Locked, None),
         DbFileKind::Plaintext => {
-            // 只读打开、不迁移（迁移是写；旧版本等先切换进入再升级）。
             let conn = match open_connection_readonly_in(&book.dir) {
                 Ok(conn) => conn,
                 Err(_) => return (CrossBookBookStatus::Unreadable, None),
@@ -279,26 +211,13 @@ mod tests {
     use crate::test_support::snapshot_probe::{self, InjectionOutcome};
     use crate::test_support::{ScratchDir, open_file, seed_account, seed_exchange_rate};
 
-    /// 读快照一致性·证据点「活动本读数与汇率折算跨口径」（issue #1699）：
-    /// `read_active_book_and_merge` 的活动本读数、目标本位币与 merge 的逐笔当期
-    /// 汇率取数必须同快照。
-    ///
-    /// 探针选点：活动本纯 CNY（内层 `read_book_investment` 零汇率查询），他本读数
-    /// 由参数合入（USD 组只在 merge 折算）——首个 `FROM exchange_rates` 即 merge 的
-    /// 折算取数，臂装契约①（不得命中首条语句）与「首中即外层窗口」同时成立：
-    /// - 读闭包无快照保护（红）：注入的汇率改写提交，merge 按新汇率折算，合并结果
-    ///   与基线漂移（同屏里活动本读数与折算汇率不同时点）；
-    /// - 读闭包收进读事务（绿）：注入写被挡住，合并结果与基线一致。
     #[test]
     fn active_book_merge_shares_snapshot_between_readings_and_fx() {
         let dir = ScratchDir::new("cross-book-fx-read-snapshot");
         let conn = open_file(dir.path());
-        // 活动本：纯 CNY（默认币即 CNY，现金腿同币短路，内层不读汇率表）。
         seed_account(&conn, "acc-cny", "投资账户", "investment", "CNY", 200_000);
         ledger_accounts::balance::refresh_all_account_balances(&conn).unwrap();
-        // 当期汇率：供 merge 把他本 USD 组折到目标币种 CNY。
         seed_exchange_rate(&conn, "USD", "CNY", 7.0);
-        // 他本读数（参数面）：USD 持仓组 + 可投资资产，只经 merge 折算。
         let other_book = BookInvestmentReading {
             native_currency: "USD".into(),
             holding_totals: vec![investment::CurrencyHoldingTotals {
@@ -352,11 +271,6 @@ mod tests {
         );
     }
 
-    /// 读快照一致性（issue #1699）：`read_book_investment` 的四段读数必须同快照。
-    /// 探针在现金腿（账户列表，全闭包首个 `is_hidden=0` 命中）开始前于另一连接
-    /// 提交余额缓存写——两次读数之间库内唯一变动就是这笔注入写，基线对拍即判据：
-    /// - 读闭包无快照保护（红）：持仓/累计读旧、可投资资产读新，对拍变红；
-    /// - 读闭包收进读事务（绿）：注入写被挡住，两次读数逐字段相等。
     #[test]
     fn read_book_investment_is_one_snapshot_under_concurrent_write() {
         let dir = ScratchDir::new("cross-book-read-snapshot");
@@ -396,7 +310,6 @@ mod tests {
         );
     }
 
-    /// 同币种直加：目标币种金额直接求和，`converted` 恒 false。
     #[test]
     fn same_currency_adds_directly_without_conversion() {
         let readings = vec![
@@ -429,13 +342,11 @@ mod tests {
         );
     }
 
-    /// 异币种折算：经注入闭包折算到目标币种并置 `converted`；空值组跳过。
     #[test]
     fn mixed_currencies_convert_and_flag() {
         let readings = vec![
             BookInvestmentReading {
                 native_currency: "CNY".into(),
-                // CNY 本：直加；NULL 市值组跳过未实现列。
                 holding_totals: vec![
                     totals("CNY", Some(100_000), Some(10_000)),
                     totals("USD", None, Some(2_000)),
@@ -445,7 +356,6 @@ mod tests {
             },
             BookInvestmentReading {
                 native_currency: "USD".into(),
-                // USD 本：全部折算（×7）。
                 holding_totals: vec![totals("USD", Some(12_000), Some(2_000))],
                 cumulative_pnl: vec![cumulative("HKD", 700)],
                 investable_assets: Some(("USD".into(), 14_000)),
@@ -459,7 +369,6 @@ mod tests {
         assert_eq!(merged.investable_assets_cents, 110_000 + 14_000 * 7);
     }
 
-    /// 空读数（全部排除的现场）：全零合计、未折算，不报错。
     #[test]
     fn empty_readings_yield_zero_totals() {
         let merged = merge_readings(&[], "CNY", &mut |cents, _cur| Ok(cents * 7)).unwrap();
@@ -475,9 +384,6 @@ mod tests {
         );
     }
 
-    /// 折算闭包的错误原样上抛（缺汇率现场由命令层经当期入口
-    /// `convert_to_native_current` 命中
-    /// `fx.rate-missing`），合并不吞错。
     #[test]
     fn conversion_error_propagates() {
         let readings = vec![BookInvestmentReading {
@@ -493,8 +399,6 @@ mod tests {
         assert!(matches!(err, ledger_infra::error::AppError::Invalid(_)));
     }
 
-    /// 位币不一致本身就是折算口径事实：计入本的本位币≠目标币时，即使本次金额
-    /// 全部同币种、零折算发生，也置 `converted`（ADR-0114 决策 3 标注义务）。
     #[test]
     fn base_currency_divergence_flags_converted_even_without_amount_conversion() {
         let readings = vec![BookInvestmentReading {

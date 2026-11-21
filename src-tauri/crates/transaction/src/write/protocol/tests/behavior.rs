@@ -1,6 +1,3 @@
-//! 写删行为：创建 / 软删 / 修改、refund 链、dividend 分派进投资域与进 / 出 kind 变更拒绝、
-//! 买入卖出副作用清理，以及行为层编排入口（嵌套感知事务，issue #228 / #229 / ADR-0033）。
-
 use crate::tests::common::{make_buy_input, make_input, seed_category};
 use ledger_infra::error::{AppError, ErrClass};
 use rusqlite::Connection;
@@ -174,11 +171,6 @@ fn delete_transaction_internal_returns_not_found_for_already_deleted() {
     ));
 }
 
-// ---------------------------------------------------------------------------
-// issue #1078 / ADR-0109：dividend 分派进投资域 + 进 / 出 kind 变更拒绝
-// ---------------------------------------------------------------------------
-/// dividend 已激活（ADR-0109）：创建分派进投资域 `prepare_dividend`——缺标的的
-/// 输入由投资域守卫承接（不再是行为层的「暂不支持」），拒绝行不落库。
 #[test]
 fn create_transaction_internal_dispatches_dividend_to_investment_guard() {
     let conn = test_support::open();
@@ -204,8 +196,6 @@ fn create_transaction_internal_dispatches_dividend_to_investment_guard() {
     assert_eq!(count, 0, "拒绝的交易不应落库");
 }
 
-/// 修改为 dividend / split 由 kind 变更守卫拒绝（ADR-0109 / ADR-0106 决策 5，
-/// 单点分派覆盖创建与修改，事务回滚）；两者均不落库、原行保持不变。
 #[test]
 fn update_transaction_rejects_dividend_and_split_kind_change() {
     for (kind, expected_code) in [
@@ -232,22 +222,18 @@ fn update_transaction_rejects_dividend_and_split_kind_change() {
         .unwrap_err();
         assert_eq!(err.code().unwrap(), expected_code, "改入 {kind}: {err:?}");
 
-        // 修改被拒绝后原交易保持不变（事务回滚）。
         let t = get_transaction_internal(&conn, &id).unwrap();
         assert_eq!(t.kind, TransactionKind::Expense);
         assert_eq!(t.amount_cents, 500);
     }
 }
 
-/// 跨 kind 修改经行为层原子清理并重建副作用（spec #69 故事 13）：
-/// expense→buy 建仓、buy→expense 清理，均不留孤儿持仓关联。
 #[test]
 fn update_transaction_cross_kind_rebuilds_side_effects_atomically() {
     let conn = test_support::open();
     test_support::seed_account(&conn, "acc-cash-x", "现金", "cash", "CNY", 0);
     test_support::seed_investment_setup(&conn, "acc-x", "inst-x");
 
-    // expense → buy：应建仓 lot。
     let id = create_transaction_internal(
         &conn,
         make_input("acc-cash-x", TransactionKind::Expense, 500, "2026-01-01"),
@@ -271,7 +257,6 @@ fn update_transaction_cross_kind_rebuilds_side_effects_atomically() {
         .unwrap();
     assert_eq!(lots, 1, "expense→buy 应建仓一个 lot");
 
-    // buy → expense：应清理持仓关联，无孤儿 lot / security_transaction。
     update_transaction_internal(
         &conn,
         &id,
@@ -349,8 +334,6 @@ fn delete_transaction_internal_cleans_up_buy_lots() {
     assert_eq!(deleted, 1, "交易应被软删除");
 }
 
-/// 删除 buy 级联（issue #940 / ADR-0097）：部分卖出的买入可删，其在用 sell 随之
-/// 软删（各自 delete op），批次与卖出匹配整批清理——「已有部分卖出的买入禁删」退场。
 #[test]
 fn delete_transaction_internal_cascades_active_sells_and_purges_buy_lots() {
     let conn = test_support::open();
@@ -396,7 +379,6 @@ fn delete_transaction_internal_cascades_active_sells_and_purges_buy_lots() {
     assert_eq!(buy_stx, 0, "buy 明细应清理");
     assert_eq!(sell_stx, 0, "级联 sell 的明细应随回补清理");
 
-    // 各自留痕：主删与级联删各产出一条 delete op（级联先于主行，重放按序收敛）。
     let delete_ops: i64 = conn
         .query_row(
             "SELECT COUNT(*) FROM sync_ops WHERE entity_id IN (?1, ?2) \
@@ -408,9 +390,6 @@ fn delete_transaction_internal_cascades_active_sells_and_purges_buy_lots() {
     assert_eq!(delete_ops, 2, "主删与级联删应各产出一条 delete op");
 }
 
-/// 删除 sell 回补（issue #940 / ADR-0097）：删除卖出即撤销其全部持仓影响——
-/// 扣减回补、卖出匹配与卖出明细清空，不再遗留幽灵占用（旧版「sell 删除不回补」
-/// 是把买入永久锁死的根源）。
 #[test]
 fn delete_transaction_internal_sell_restores_holding() {
     let conn = test_support::open();
@@ -451,8 +430,6 @@ fn delete_transaction_internal_sell_restores_holding() {
     assert_eq!(sell_stx, 0, "删除卖出应清空其卖出明细");
 }
 
-/// 级联的跨批次涟漪（issue #940）：一笔 sell 跨两笔买入批次匹配时，删除其中
-/// 一笔 buy 会级联删掉该 sell，兄弟批次的扣减亦应回补、不留残留匹配。
 #[test]
 fn delete_buy_cascades_sell_spanning_multiple_buys_and_restores_sibling_lot() {
     let conn = test_support::open();
@@ -472,7 +449,6 @@ fn delete_buy_cascades_sell_spanning_multiple_buys_and_restores_sibling_lot() {
     sell.date = "2026-01-20".into();
     let sell_id = create_transaction_internal(&conn, sell).unwrap().id;
 
-    // 前置：sell 跨两个批次匹配（FIFO 10 + 2）。
     let matched_lots: i64 = conn
         .query_row(
             "SELECT COUNT(DISTINCT lot_id) FROM security_lot_sales WHERE sell_transaction_id=?1",
@@ -497,7 +473,6 @@ fn delete_buy_cascades_sell_spanning_multiple_buys_and_restores_sibling_lot() {
     assert_eq!(sell_deleted, 1, "跨批次 sell 应被级联软删除");
     assert_eq!(buy_b_deleted, 0, "兄弟买入不应受牵连");
 
-    // 兄弟批次扣减应回补：sell 全量回退后剩余回到初始 10。
     let remaining_b: f64 = conn
         .query_row(
             "SELECT remaining_quantity FROM security_lots WHERE buy_transaction_id=?1",
@@ -517,8 +492,6 @@ fn delete_buy_cascades_sell_spanning_multiple_buys_and_restores_sibling_lot() {
     assert_eq!(sales_on_b, 0, "兄弟批次上不应残留卖出匹配");
 }
 
-/// 幽灵占用随批次火化（issue #940）：旧版本遗留的「已软删 sell 仍挂着卖出匹配、
-/// 扣减未回补」状态不再锁死买入——删除 buy 直接成功，幽灵匹配随批次一并清理。
 #[test]
 fn delete_buy_purges_ghost_lot_sales_of_deleted_sells() {
     let conn = test_support::open();
@@ -533,7 +506,6 @@ fn delete_buy_purges_ghost_lot_sales_of_deleted_sells() {
     let mut sell = make_buy_input("acc-ghost", "inst-ghost", 4.0, 1100000, 0);
     sell.kind = TransactionKind::Sell;
     let sell_id = create_transaction_internal(&conn, sell).unwrap().id;
-    // 旧版幽灵态：只软删 sell 行，不回补持仓、不清匹配（ADR-0013 旧行为）。
     conn.execute(
         "UPDATE transactions SET is_deleted=1 WHERE id=?1",
         params![sell_id],
@@ -556,8 +528,6 @@ fn delete_buy_purges_ghost_lot_sales_of_deleted_sells() {
     assert_eq!(ghost_lot_sales, 0, "幽灵匹配应随批次火化");
 }
 
-/// update 守卫改在用归因（issue #940）：已软删 sell 的幽灵匹配不再计入「在用卖出
-/// 占用」，买入修改不被幽灵误伤（旧版按批次剩余数量判定时被幽灵扣减永久锁死）。
 #[test]
 fn update_buy_ignores_ghost_lot_sales_of_deleted_sells() {
     let conn = test_support::open();
@@ -585,7 +555,6 @@ fn update_buy_ignores_ghost_lot_sales_of_deleted_sells() {
     )
     .unwrap();
 
-    // 幽灵匹配随重建火化，新批次按新输入重建。
     let (ghost_lot_sales, remaining): (i64, f64) = conn
         .query_row(
             "SELECT (SELECT COUNT(*) FROM security_lot_sales WHERE sell_transaction_id=?1), \
@@ -598,8 +567,6 @@ fn update_buy_ignores_ghost_lot_sales_of_deleted_sells() {
     assert_eq!(remaining, 5.0, "批次应按新输入重建");
 }
 
-/// 注入「软删中途失败」：行为层 revert（清理持仓批次）成功后、软删 UPDATE 被
-/// 触发器 RAISE(ABORT) 挡下——纯测试侧手段（spec #169 定案），产品代码零 hook。
 fn inject_soft_delete_failure(conn: &Connection) {
     conn.execute(
         "CREATE TRIGGER block_soft_delete BEFORE UPDATE ON transactions \
@@ -609,9 +576,6 @@ fn inject_soft_delete_failure(conn: &Connection) {
     .unwrap();
 }
 
-/// 删除路径事务缺口修复（issue #229 / ADR-0033 决策 #3）：revert（清理持仓批次）
-/// 与软删 UPDATE 纳入同一事务，软删中途失败整体回滚——不再出现
-/// 「持仓已删而交易仍在」的中间态，报错返回。
 #[test]
 fn delete_transaction_internal_rolls_back_lot_cleanup_when_soft_delete_fails() {
     let conn = test_support::open();
@@ -631,7 +595,6 @@ fn delete_transaction_internal_rolls_back_lot_cleanup_when_soft_delete_fails() {
         "应上抛注入的软删错误，实际: {err:?}"
     );
 
-    // 数据终态：交易未被软删，持仓批次与买卖明细原样保留。
     let (deleted, lots, stx): (i64, i64, i64) = conn
         .query_row(
             "SELECT (SELECT is_deleted FROM transactions WHERE id=?1), \
@@ -861,7 +824,6 @@ fn update_transaction_internal_buy_rebuilds_lot() {
     .unwrap()
     .id;
 
-    // 编辑买入：数量/单价变化，应重建 lot 与 security_transaction。
     let edited = make_buy_input("acc-inv", "inst-aapl", 5.0, 1200000, 0);
     update_transaction_internal(&conn, &buy_id, edited).unwrap();
 
@@ -911,7 +873,6 @@ fn update_transaction_internal_rejects_partially_sold_buy() {
         make_buy_input("acc-inv2", "inst-msft", 5.0, 1000000, 0),
     )
     .unwrap_err();
-    // 守卫文案按入口内化（ADR-0033 决策 #4）：修改入口固定返回自己的措辞。
     match err {
         AppError::Coded { message, .. } => assert_eq!(message, "该买入交易已有部分卖出，无法修改"),
         other => panic!("expected Coded, got {other:?}"),
@@ -933,7 +894,6 @@ fn update_transaction_internal_sell_reverses_and_reapplies() {
     sell1.kind = TransactionKind::Sell;
     let sell_id = create_transaction_internal(&conn, sell1).unwrap().id;
 
-    // 编辑卖出：数量 4→3、单价上涨。应先回补旧扣减再按新输入重新匹配。
     let mut sell2 = make_buy_input("acc-inv3", "inst-tsla", 3.0, 1200000, 0);
     sell2.kind = TransactionKind::Sell;
     sell2.date = "2026-02-01".into();
@@ -943,7 +903,6 @@ fn update_transaction_internal_sell_reverses_and_reapplies() {
     assert_eq!(t.kind, TransactionKind::Sell);
     assert_eq!(t.amount_cents, 3 * 12000, "卖出收入 = 数量×单价");
 
-    // 修改卖出后持仓剩余 = 10 - 3 = 7。
     let remaining: f64 = conn
         .query_row(
             "SELECT remaining_quantity FROM security_lots WHERE buy_transaction_id=?1",
@@ -953,7 +912,6 @@ fn update_transaction_internal_sell_reverses_and_reapplies() {
         .unwrap();
     assert_eq!(remaining, 7.0, "修改卖出后持仓应反映新数量");
 
-    // 旧卖出关联已清空，重建为一条新的。
     let sales: i64 = conn
         .query_row(
             "SELECT COUNT(*) FROM security_lot_sales WHERE sell_transaction_id=?1",
@@ -964,11 +922,6 @@ fn update_transaction_internal_sell_reverses_and_reapplies() {
     assert_eq!(sales, 1);
 }
 
-// ---------------------------------------------------------------------------
-// 行为层 create 编排入口（issue #228 / ADR-0033）：嵌套感知事务
-// ---------------------------------------------------------------------------
-/// 注入「建仓中途失败」：security_transactions 已写入、security_lots 写入时被
-/// 触发器 RAISE(ABORT) 挡下——纯测试侧手段（spec #169 定案），产品代码零 hook。
 fn inject_buy_lot_failure(conn: &Connection) {
     conn.execute(
         "CREATE TRIGGER block_buy_lot BEFORE INSERT ON security_lots \
@@ -978,7 +931,6 @@ fn inject_buy_lot_failure(conn: &Connection) {
     .unwrap();
 }
 
-/// 断言无任何残留：交易行、买卖明细、持仓批次均为 0（数据终态，外部可观察）。
 fn assert_no_creation_residue(conn: &Connection) {
     let (txns, stx, lots): (i64, i64, i64) = conn
         .query_row(
@@ -994,8 +946,6 @@ fn assert_no_creation_residue(conn: &Connection) {
     assert_eq!(lots, 0, "持仓批次不应残留");
 }
 
-/// 创建买入 apply 中途失败 → 交易行与持仓副作用均无残留，报错返回
-/// （issue #228 验收：自持事务整体回滚，修复创建路径中间态缺口）。
 #[test]
 fn create_buy_mid_apply_failure_rolls_back_all() {
     let conn = test_support::open();
@@ -1012,15 +962,11 @@ fn create_buy_mid_apply_failure_rolls_back_all() {
     assert_no_creation_residue(&conn);
 }
 
-/// 嵌套模式（外层批次事务中）：create 加入外层、失败直接返回错误，回滚归外层持有者
-/// ——Ok 不提交（外层 ROLLBACK 即消失）、Err 不回滚外层已写的行。
 #[test]
 fn create_nested_mode_leaves_rollback_ownership_to_outer_holder() {
     let conn = test_support::open();
     test_support::seed_account(&conn, "acc-n1", "现金", "cash", "CNY", 0);
 
-    // 加入外层：Ok 不自持 COMMIT——外层 ROLLBACK 仍能成功、回滚后行消失，
-    // 证明提交点归外层持有者（若 create 自作主张提交，ROLLBACK 会因无活动事务报错）。
     conn.execute("BEGIN", []).unwrap();
     let id = create_transaction_internal(
         &conn,
@@ -1034,7 +980,6 @@ fn create_nested_mode_leaves_rollback_ownership_to_outer_holder() {
     assert_eq!(count, 0, "嵌套模式的提交权在外层：外层回滚后行应消失");
     let _ = id;
 
-    // 加入外层：Err 直接返回错误、不回滚外层——外层已写的行保留，去留由外层决定。
     conn.execute("BEGIN", []).unwrap();
     conn.execute(
         "INSERT INTO transactions (id,kind,amount_cents,currency_code,amount_native_cents,account_id,date,created_at,updated_at,version,device_id,is_deleted) \
@@ -1051,7 +996,6 @@ fn create_nested_mode_leaves_rollback_ownership_to_outer_holder() {
         err.to_string().contains("金额必须大于 0"),
         "嵌套模式失败应直接返回业务错误，实际: {err:?}"
     );
-    // 外层事务仍开启且已写行仍在（若嵌套失败自行回滚外层，此计数会归零）：
     let still_open: i64 = conn
         .query_row("SELECT COUNT(*) FROM transactions", [], |r| r.get(0))
         .unwrap();
@@ -1059,8 +1003,6 @@ fn create_nested_mode_leaves_rollback_ownership_to_outer_holder() {
     conn.execute("ROLLBACK", []).unwrap();
 }
 
-/// 嵌套模式（外层事务中）：update 加入外层、失败直接返回错误，回滚归外层持有者
-/// ——Ok 不提交（外层 ROLLBACK 即消失）、Err 不回滚外层已写的行。
 #[test]
 fn update_nested_mode_leaves_rollback_ownership_to_outer_holder() {
     let conn = test_support::open();
@@ -1072,8 +1014,6 @@ fn update_nested_mode_leaves_rollback_ownership_to_outer_holder() {
     .unwrap()
     .id;
 
-    // 加入外层：Ok 不自持 COMMIT——外层 ROLLBACK 后修改消失，
-    // 证明提交点归外层持有者（若 update 自作主张提交，ROLLBACK 会因无活动事务报错）。
     conn.execute("BEGIN", []).unwrap();
     update_transaction_internal(
         &conn,
@@ -1091,7 +1031,6 @@ fn update_nested_mode_leaves_rollback_ownership_to_outer_holder() {
         .unwrap();
     assert_eq!(amount, 1000, "嵌套模式的提交权在外层：外层回滚后修改应消失");
 
-    // 加入外层：Err 直接返回错误、不回滚外层——外层已写的行保留，去留由外层决定。
     conn.execute("BEGIN", []).unwrap();
     conn.execute(
         "INSERT INTO transactions (id,kind,amount_cents,currency_code,amount_native_cents,account_id,date,created_at,updated_at,version,device_id,is_deleted) \
@@ -1109,7 +1048,6 @@ fn update_nested_mode_leaves_rollback_ownership_to_outer_holder() {
         err.to_string().contains("金额必须大于 0"),
         "嵌套模式失败应直接返回业务错误，实际: {err:?}"
     );
-    // 外层事务仍开启且已写行仍在（若嵌套失败自行回滚外层，此计数会归零）：
     let still_open: i64 = conn
         .query_row("SELECT COUNT(*) FROM transactions", [], |r| r.get(0))
         .unwrap();
@@ -1117,13 +1055,6 @@ fn update_nested_mode_leaves_rollback_ownership_to_outer_holder() {
     conn.execute("ROLLBACK", []).unwrap();
 }
 
-// ---------------------------------------------------------------------------
-// 编辑沿用的折算留痕（#1550 / ADR-0011 2026-09-19 修订）：币种/金额/日期未变
-// 沿用行内留痕不重查序列，任一变了按新日期重查，查不到即既有码化错误。
-// 断言对准用户可观察结果（修改后的行读回），删除协议内的沿用接线即红。
-// ---------------------------------------------------------------------------
-
-/// 港币支出输入构造器（本节专用）：make_input 的币种覆写薄皮。
 fn hkd_expense_input(account_id: &str, amount_cents: i64, date: &str) -> TransactionInput {
     TransactionInput {
         currency_code: "HKD".into(),
@@ -1131,8 +1062,6 @@ fn hkd_expense_input(account_id: &str, amount_cents: i64, date: &str) -> Transac
     }
 }
 
-/// 港币行铺垫：账户 + 交易周序列点 + 经创建协议落库的港币支出，返回交易 id。
-/// 铺垫后调用方按需删序列点模拟「数据源查不到当年值」。
 fn seeded_hkd_expense(conn: &Connection, date: &str) -> String {
     test_support::seed_account(conn, "acc-fx-ed", "港币户", "cash", "HKD", 0);
     test_support::seed_fx_rate_history(conn, "fxh-ed-w1", "HKD", "CNY", "2026-06-29", 0.9);
@@ -1141,8 +1070,6 @@ fn seeded_hkd_expense(conn: &Connection, date: &str) -> String {
         .id
 }
 
-/// 只改备注（金额/币种/日期均未变）：序列点已消失仍成功，本位币金额与折算
-/// 来源逐位不变（验收 1）——导入的历史行不因数据源查不到当年值而不可编辑。
 #[test]
 fn update_note_only_reuses_inline_fx_when_series_missing() {
     let conn = test_support::open();
@@ -1161,12 +1088,10 @@ fn update_note_only_reuses_inline_fx_when_series_missing() {
     assert_eq!(t.version, 2, "修改仍正常递增版本");
 }
 
-/// 只改分类：同上沿用（分类不参与折算三元组）。
 #[test]
 fn update_category_only_reuses_inline_fx_when_series_missing() {
     let conn = test_support::open();
     let id = seeded_hkd_expense(&conn, "2026-07-01");
-    // 分类种子经公开写入口单点夹具（issue #1814 同根因收敛：不再裸 SQL 自定行 id）。
     let cat_fx_ed = seed_category(&conn, "交通", "expense");
     conn.execute("DELETE FROM fx_rate_history", []).unwrap();
 
@@ -1180,7 +1105,6 @@ fn update_category_only_reuses_inline_fx_when_series_missing() {
     assert_eq!(t.fx_rate_source, Some(FxRateSource::Series));
 }
 
-/// 只改商户：同上沿用（商户不参与折算三元组）。
 #[test]
 fn update_merchant_only_reuses_inline_fx_when_series_missing() {
     let conn = test_support::open();
@@ -1204,8 +1128,6 @@ fn update_merchant_only_reuses_inline_fx_when_series_missing() {
     assert_eq!(t.merchant_id.as_deref(), Some("mer-fx-ed"), "商户已改");
 }
 
-/// 改金额且新周查不到 → 既有 `fx.rate-missing` 码化错误（验收 3），不静默沿用
-/// 旧值，行保持原样（无部分写入）。
 #[test]
 fn update_amount_changed_fails_coded_when_series_missing() {
     let conn = test_support::open();
@@ -1229,7 +1151,6 @@ fn update_amount_changed_fails_coded_when_series_missing() {
     assert_eq!(t.version, 1, "失败不落库");
 }
 
-/// 改日期 → 按新日期所属周重查，更新本位币金额与留痕（验收 2）。
 #[test]
 fn update_date_changed_requeries_new_week() {
     let conn = test_support::open();
@@ -1250,9 +1171,6 @@ fn update_date_changed_requeries_new_week() {
     assert_eq!(t.fx_rate_source, Some(FxRateSource::Series));
 }
 
-/// 改币种 → 按新币种重查，更新本位币金额与留痕（验收 2）。币种一致性守卫
-/// （issue #1770 / ADR-0134）下交易币种必须等于账户币种，改币种与换账户
-/// 同笔编辑发生：HKD 行移挂 USD 账户并改为 USD，按新币种重查新周序列点。
 #[test]
 fn update_currency_changed_requeries() {
     let conn = test_support::open();
@@ -1278,13 +1196,6 @@ fn update_currency_changed_requeries() {
     assert_eq!(t.fx_rate_source, Some(FxRateSource::Series));
 }
 
-// ---------------------------------------------------------------------------
-// 投资 kind 的编辑沿用（#1550）：buy/sell/convert/dividend 的修改路径同样在
-// 币种/金额/日期未变时沿用行内留痕、不重查序列（投资域 prepare 经接缝基线）。
-// ---------------------------------------------------------------------------
-
-/// 港币投资户铺垫（本节专用）：HKD 投资账户 + 交易周序列点（0.9）+ 若干标的，
-/// 调用方铺垫后按需删序列点。
 fn seeded_hkd_investment(conn: &Connection, instruments: &[&str]) {
     test_support::seed_account(conn, "acc-inv-fx", "港币投资户", "investment", "HKD", 0);
     test_support::seed_fx_rate_history(conn, "fxh-inv-w1", "HKD", "CNY", "2026-06-29", 0.9);
@@ -1293,17 +1204,14 @@ fn seeded_hkd_investment(conn: &Connection, instruments: &[&str]) {
     }
 }
 
-/// 港币买入输入（场内：金额 = 数量×单价+费用，服务端算定）。
 fn hkd_buy_input(instrument_id: &str, qty: f64, price: i64, fee: i64) -> TransactionInput {
     TransactionInput {
         currency_code: "HKD".into(),
-        // 交易日期落铺垫序列点（2026-06-29 当周），与 make_buy_input 缺省日期区分。
         date: "2026-07-01".into(),
         ..make_buy_input("acc-inv-fx", instrument_id, qty, price, fee)
     }
 }
 
-/// 港币分红输入（现金腿金额权威，币种须与到账账户一致）。
 fn hkd_dividend_input(instrument_id: &str, amount_cents: i64) -> TransactionInput {
     TransactionInput {
         currency_code: "HKD".into(),
@@ -1317,7 +1225,6 @@ fn hkd_dividend_input(instrument_id: &str, amount_cents: i64) -> TransactionInpu
     }
 }
 
-/// 买入只改备注：序列点消失仍成功，本位币金额与留痕逐位不变。
 #[test]
 fn update_buy_note_only_reuses_inline_fx_when_series_missing() {
     let conn = test_support::open();
@@ -1338,7 +1245,6 @@ fn update_buy_note_only_reuses_inline_fx_when_series_missing() {
     assert_eq!(t.fx_rate_source, Some(FxRateSource::Series));
 }
 
-/// 卖出只改备注：同上沿用（卖出金额 = 数量×单价，服务端算定不变 → 沿用）。
 #[test]
 fn update_sell_note_only_reuses_inline_fx_when_series_missing() {
     let conn = test_support::open();
@@ -1346,7 +1252,7 @@ fn update_sell_note_only_reuses_inline_fx_when_series_missing() {
     create_transaction_internal(&conn, hkd_buy_input("inst-fx-s", 10.0, 100000, 0)).unwrap();
     let mut sell = hkd_buy_input("inst-fx-s", 4.0, 100000, 0);
     sell.kind = TransactionKind::Sell;
-    sell.date = "2026-07-02".into(); // 同一周
+    sell.date = "2026-07-02".into();
     let sell_id = create_transaction_internal(&conn, sell).unwrap().id;
     conn.execute("DELETE FROM fx_rate_history", []).unwrap();
 
@@ -1364,7 +1270,6 @@ fn update_sell_note_only_reuses_inline_fx_when_series_missing() {
     assert_eq!(t.version, 2);
 }
 
-/// 分红只改备注：同上沿用。
 #[test]
 fn update_dividend_note_only_reuses_inline_fx_when_series_missing() {
     let conn = test_support::open();
@@ -1384,7 +1289,6 @@ fn update_dividend_note_only_reuses_inline_fx_when_series_missing() {
     assert_eq!(t.fx_rate_source, Some(FxRateSource::Series));
 }
 
-/// 转换只改备注：行金额锚点（结转成本）重算不变 → 沿用留痕。
 #[test]
 fn update_convert_note_only_reuses_inline_fx_when_series_missing() {
     let conn = test_support::open();
@@ -1398,7 +1302,7 @@ fn update_convert_note_only_reuses_inline_fx_when_series_missing() {
     convert.out_amount_cents = Some(11000);
     convert.in_amount_cents = Some(11000);
     convert.price_cents = None;
-    convert.date = "2026-07-03".into(); // 同一周
+    convert.date = "2026-07-03".into();
     let convert_id = create_transaction_internal(&conn, convert).unwrap().id;
     conn.execute("DELETE FROM fx_rate_history", []).unwrap();
 
@@ -1421,8 +1325,6 @@ fn update_convert_note_only_reuses_inline_fx_when_series_missing() {
     assert_eq!(t.fx_rate_source, Some(FxRateSource::Series));
 }
 
-/// 编辑时该笔携带显式汇率（#1549 × #1550）：显式 > 沿用 > 序列——三元组未变
-/// 也不沿用，按显式值折算并留痕 `explicit`；对端经 op 收敛到同一显式折算。
 #[test]
 fn update_with_explicit_fx_rate_beats_baseline_reuse() {
     let conn = test_support::open();
@@ -1443,9 +1345,6 @@ fn update_with_explicit_fx_rate_beats_baseline_reuse() {
     );
 }
 
-/// 修改路径的币种一致性守卫（issue #1770 / ADR-0134 决策 1）：全字段替换按新值
-/// 验——存量脏行（守卫上线前经 insert_row 直落，USD 交易挂 CNY 账户）原样提交
-/// 被拒；改一致（币种随账户）即放行，不因历史脏而永久锁死。
 #[test]
 fn update_currency_guard_rejects_dirty_row_until_made_consistent() {
     let conn = test_support::open();
@@ -1472,7 +1371,6 @@ fn update_currency_guard_rejects_dirty_row_until_made_consistent() {
     };
     let id = insert_row(&conn, &dirty).unwrap();
 
-    // 原样编辑（只改备注，币种保持 USD ≠ 账户 CNY）：守卫拒绝、行保持原样。
     let mut keep_dirty = make_input("acc-dirty", TransactionKind::Expense, 1000, "2026-01-01");
     keep_dirty.currency_code = "USD".into();
     keep_dirty.note = Some("只改备注".into());
@@ -1487,7 +1385,6 @@ fn update_currency_guard_rejects_dirty_row_until_made_consistent() {
     let t = get_transaction_internal(&conn, &id).unwrap();
     assert_eq!(t.note, None, "失败不落库");
 
-    // 改一致（币种改随账户 CNY）：放行，脏行就地修复。
     let mut fixed = make_input("acc-dirty", TransactionKind::Expense, 1000, "2026-01-01");
     fixed.note = Some("只改备注".into());
     update_transaction_internal(&conn, &id, fixed).unwrap();

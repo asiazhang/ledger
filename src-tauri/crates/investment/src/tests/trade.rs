@@ -1,7 +1,3 @@
-//! 投资交易写入与买卖明细测试（命名对齐源码 trade 模块）：buy 建 lot、Amount
-//! 接缝折算、非投资账户拒绝、sell FIFO 多 lot 匹配、超卖拒绝、盈亏扣费、
-//! get_transaction_trade 明细与缺失拒绝（issue #257 纯移动归组）。
-
 use ledger_transaction::TransactionInput;
 use ledger_transaction::amount::TransactionKind;
 use ledger_transaction::create_transaction_internal;
@@ -13,11 +9,6 @@ use tauri_app_lib::test_support::{
     open, seed_account, seed_fx_history_weeks, seed_instrument, seed_market_price,
 };
 
-/// 价格刻度不变式（ADR-0038）：四类价格列（成交单价/每份成本/现价/价格历史）
-/// 以万分之一元（0.0001 元）存储，金额列仍为整数分——金额分 = 数量 × 单价 ÷ 100。
-/// 用 4 位小数基金净值（无法用「分」无损表示的形态）钉住刻度：
-/// 申购 3 份 @ 1.2345 元 + 1 元费 → 行金额 4.70 元（470 分），每份成本摊薄为
-/// 1.5678 元（15678）；赎回 3 份 @ 1.30 元 → 收入 3.90 元，已实现盈亏 −0.80 元。
 #[test]
 fn price_scale_invariant_unit_price_is_ten_thousandths_of_yuan() {
     let conn = open();
@@ -31,7 +22,6 @@ fn price_scale_invariant_unit_price_is_ten_thousandths_of_yuan() {
         "unknown",
     );
 
-    // 申购：数量 3、单价 1.2345 元（存 12345 万分之一元）、手续费 1 元（100 分）。
     let buy_id = create_transaction_internal(
         &conn,
         make_buy_input("acc-fund", "inst-fund-abc", 3.0, 12345, 100),
@@ -68,7 +58,6 @@ fn price_scale_invariant_unit_price_is_ten_thousandths_of_yuan() {
         "每份成本 = (3×12345 + 100×100)/3 = 15678 万分之一元"
     );
 
-    // 赎回：全部 3 份 @ 1.30 元（存 13000），无费。已实现盈亏为整数分。
     let sell_id = create_transaction_internal(
         &conn,
         make_sell_input("acc-fund", "inst-fund-abc", 3.0, 13000, 0),
@@ -87,8 +76,6 @@ fn price_scale_invariant_unit_price_is_ten_thousandths_of_yuan() {
     assert_eq!(realized_pnl, 390 - 470, "已实现盈亏 = 收入 − 成本（均分）");
 }
 
-/// 持仓视图刻度不变式：市值（分）= 数量 × 现价（万分之一元）÷ 100，
-/// 成本（分）= 数量 × 每份成本（万分之一元）÷ 100（v_holdings 表达式与 V002 同源）。
 #[test]
 fn price_scale_invariant_v_holdings_market_value() {
     let conn = open();
@@ -102,7 +89,6 @@ fn price_scale_invariant_v_holdings_market_value() {
         "unknown",
     );
 
-    // 买入 100 份 @ 0.1234 元（存 1234 万分之一元），无费。
     let buy_id = create_transaction_internal(
         &conn,
         make_buy_input("acc-scale", "inst-scale", 100.0, 1234, 0),
@@ -216,14 +202,10 @@ fn buy_transaction_creates_lot() {
     assert_eq!(cost_basis, 100500);
 }
 
-/// buy 本位币金额经 Amount 接缝折算到全局默认币种（issue #70）：非 1:1 汇率下
-/// 落库的 `amount_native_cents` 为折算值而非原始金额（旧行为硬编码 1:1）。
 #[test]
 fn buy_native_cents_converted_via_amount_seam() {
     let conn = open();
     seed_account(&conn, "acc-test-conv", "美股", "investment", "USD", 0);
-    // #1547 写路径按交易日取数：只种交易周（2026-01-10）的汇率历史点，不种当期行
-    // ——删除「按交易日取数」接线（改回当期入口）本测试即红。
     seed_fx_history_weeks(&conn, "USD", "CNY", 7.2, &["2026-01-10"]);
     seed_instrument(&conn, "inst-test-conv", "NVDA", "NVIDIA", "USD", "unknown");
 
@@ -244,8 +226,6 @@ fn buy_native_cents_converted_via_amount_seam() {
     );
 }
 
-/// 折算来源留痕（#1548 验收 2）：外币 buy 落库后，行内留痕 = 使用的序列汇率值 +
-/// `series` 来源——仅凭行即可复算本位币金额；负向判据：删除写入留痕的接线本测试即红。
 #[test]
 fn buy_row_traces_fx_rate_used_and_series_source() {
     let conn = open();
@@ -267,14 +247,10 @@ fn buy_row_traces_fx_rate_used_and_series_source() {
     assert_eq!(fx_rate_source.as_deref(), Some("series"), "来源 = 序列命中");
 }
 
-/// 逐笔显式汇率（#1549 验收 1）：buy 携 `fx_rate` 时跳过序列查询、按给定值
-/// 折算，行内留痕 = 显式值 + `explicit` 来源——数据源覆盖不到的日期由调用方
-/// 逐笔给定，事后可读回解释。
 #[test]
 fn buy_row_with_explicit_fx_rate_traces_explicit_source() {
     let conn = open();
     seed_account(&conn, "acc-test-expl", "美股", "investment", "USD", 0);
-    // 交易周有序列点：显式优先，序列值被跳过（explicit 7.0 ≠ series 7.2）。
     seed_fx_history_weeks(&conn, "USD", "CNY", 7.2, &["2026-01-10"]);
     seed_instrument(&conn, "inst-test-expl", "NVDA", "NVIDIA", "USD", "unknown");
 
@@ -301,8 +277,6 @@ fn buy_row_with_explicit_fx_rate_traces_explicit_source() {
     );
 }
 
-/// split 无现金腿、不折算：携带显式汇率按字段级无现金腿守卫拒绝（#1549，
-/// 与「不可提供单价 / 不接受手续费」同一守卫族），fail fast 不静默吞掉。
 #[test]
 fn split_rejects_explicit_fx_rate() {
     let conn = open();
@@ -328,14 +302,11 @@ fn split_rejects_explicit_fx_rate() {
     }
 }
 
-/// 修改 buy 交易（行为层 revert→plan→apply 的 UPDATE 侧）同样经折算：非 1:1 汇率下
-/// `amount_native_cents` 保持折算值（INSERT/UPDATE 共用 prepare，防回归）。
 #[test]
 fn buy_update_native_cents_converted_via_amount_seam() {
     use ledger_transaction::update_transaction_internal;
     let conn = open();
     seed_account(&conn, "acc-test-conv-upd", "美股", "investment", "USD", 0);
-    // #1547 按交易日取数：创建周（2026-01-10）与改期后周（2026-02-01）各一历史点。
     seed_fx_history_weeks(&conn, "USD", "CNY", 7.2, &["2026-01-10", "2026-02-01"]);
     seed_instrument(
         &conn,
@@ -377,13 +348,10 @@ fn buy_update_native_cents_converted_via_amount_seam() {
     );
 }
 
-/// sell 本位币金额同样经 Amount 接缝折算（issue #771 自 API 集成层移交域权威）：
-/// 非 1:1 汇率下卖出行落库的 `amount_native_cents` 为折算值而非原始金额。
 #[test]
 fn sell_native_cents_converted_via_amount_seam() {
     let conn = open();
     seed_account(&conn, "acc-test-sell-conv", "美股", "investment", "USD", 0);
-    // #1547 按交易日取数：建仓（2026-01-10）与卖出（2026-01-20）各一周历史点。
     seed_fx_history_weeks(&conn, "USD", "CNY", 7.2, &["2026-01-10", "2026-01-20"]);
     seed_instrument(
         &conn,
@@ -394,7 +362,6 @@ fn sell_native_cents_converted_via_amount_seam() {
         "unknown",
     );
 
-    // 前置买入建仓，卖出按 FIFO 消费持仓。
     create_transaction_internal(
         &conn,
         make_buy_input(
@@ -441,41 +408,24 @@ fn buy_transaction_requires_investment_account() {
 
     let input = make_buy_input("acc-test-cash", "inst-test-cny", 1.0, 10000, 0);
     let err = create_transaction_internal(&conn, input).unwrap_err();
-    // 共享守卫只断言码作接线证明；码与完整文案的单点断言住守卫单测（spec #1672）。
     assert!(
         err.is_code("trade.buy-account-not-investment"),
         "非投资账户买入应以既定码拒绝，got: {err:?}"
     );
 }
 
-/// 拒绝理由表行（#768）：行 =（行名，期望错误码，动作闭包，可选后置闭包）。
-/// 行名以写入口动作开头，兼作失败输出中的动作标识；全部拒绝须为码化
-/// [`AppError::Coded`]（HTTP 侧 400）。共享守卫（标的存在性）只断言码作接线
-/// 证明——码与完整文案（含标的 id 插值）的单点断言住守卫单测（`guards::tests`，
-/// spec #1672 测试分工），本表不再抄文案。
 struct RejectionRow {
     name: &'static str,
     expected_code: &'static str,
-    /// 动作闭包：自备前置（种子/建仓）并触发目标写入口；返回 Ok 即意外成功。
     action: fn(&Connection) -> Result<(), AppError>,
-    /// 可选后置闭包：拒绝生效后的残留/原值断言。
     post: Option<fn(&Connection)>,
 }
 
-/// 标的不存在的拒绝理由表（#768）：原三胞胎（buy 建仓 / sell 建仓 / buy 修改）
-/// 拒绝断言体逐字同构，收敛为行数据 + 单一断言体，新增拒绝理由 = 加一行数据。
-/// 断言面：引用不存在标的在 prepare 校验段拦截为码化 [`AppError::Coded`]（HTTP
-/// 侧 400），不再等到 apply 落 `security_transactions` 触发外键违规的「数据库错误」
-/// 500；sell 侧先于可卖数量校验（否则误报「可卖出数量不足，当前持有 0」，语义
-/// 不明）。第三行「保留原值」后置断言作可选后置列，不丢断言面。
-/// 失败报行：输出含行名（动作标识）与实际错误。跨层重复（BDD 镜像场景、
-/// api_server 400 断言）不进本表，归 #730 测试层级重划。
 #[test]
 fn missing_instrument_rejection_reason_table() {
     use ledger_transaction::update_transaction_internal;
 
     let rows: &[RejectionRow] = &[
-        // buy_with_missing_instrument_rejected_as_invalid_in_prepare
         RejectionRow {
             name: "buy_create 引用不存在标的",
             expected_code: "trade.buy-instrument-not-found",
@@ -492,7 +442,6 @@ fn missing_instrument_rejection_reason_table() {
                 create_transaction_internal(conn, input).map(|_| ())
             },
             post: Some(|conn| {
-                // prepare 拦截：交易行与持仓/明细均无落库残留。
                 let txns: i64 = conn
                     .query_row("SELECT COUNT(*) FROM transactions", [], |r| r.get(0))
                     .unwrap();
@@ -503,7 +452,6 @@ fn missing_instrument_rejection_reason_table() {
                 assert_eq!(lots, 0, "被拒的买入不应有持仓批次");
             }),
         },
-        // sell_with_missing_instrument_rejected_as_invalid_in_prepare
         RejectionRow {
             name: "sell_create 引用不存在标的",
             expected_code: "trade.sell-instrument-not-found",
@@ -521,7 +469,6 @@ fn missing_instrument_rejection_reason_table() {
             },
             post: None,
         },
-        // update_buy_to_missing_instrument_rejected_and_keeps_original
         RejectionRow {
             name: "update_buy 改引不存在标的",
             expected_code: "trade.buy-instrument-not-found",
@@ -554,16 +501,11 @@ fn missing_instrument_rejection_reason_table() {
                 )
                 .unwrap()
                 .id;
-                // 修改（全字段替换）路径同样在 prepare 拦截：改引不存在标的 → Invalid，
-                // 入口自持事务整体回滚（revert→plan 中途失败不留中间态）。
                 let edited =
                     make_buy_input("acc-test-upd-miss", "inst-not-exist", 5.0, 1_200_000, 0);
                 update_transaction_internal(conn, &txn_id, edited).map(|_| ())
             },
             post: Some(|conn| {
-                // 原交易行与持仓批次保持原样（revert→plan 中途失败整体回滚）：
-                // 库中唯一交易行即原买入、唯一批次即其持仓，断言其金额与剩余
-                // 数量未被改动（与原测试同面：只锁原行值，不断总行数）。
                 let amount_cents: i64 = conn
                     .query_row("SELECT amount_cents FROM transactions", [], |r| r.get(0))
                     .unwrap();
@@ -602,11 +544,6 @@ fn missing_instrument_rejection_reason_table() {
     }
 }
 
-/// buy/sell 携带转入账户即拒绝（issue #1187）：现金腿归结算账户（出资账户 ??
-/// 投资账户，ADR-0096），不存在转入侧——携带 `to_account_id` 会被余额写路径
-/// 误用于覆盖转入侧余额（凭空污染第三个账户）。创建/修改两路径同一 prepare
-/// 守卫拦截（与 convert/split/dividend 的 forbidden 守卫同款纪律），拒绝后
-/// 原行与批次保持原样（fail fast，整体回滚）。
 #[test]
 fn buy_sell_to_account_carry_rejected_with_coded_error() {
     let conn = open();
@@ -620,19 +557,16 @@ fn buy_sell_to_account_carry_rejected_with_coded_error() {
         &["2026-01-10", "2026-01-20", "2026-02-01"],
     );
 
-    // buy 创建携带转入账户。
     let mut input = make_buy_input("acc-ta", "inst-ta", 10.0, 1_000_000, 0);
     input.to_account_id = Some("acc-ta".into());
     let err = create_transaction_internal(&conn, input).expect_err("携带转入账户的买入应被拒绝");
     assert_eq!(err.code().unwrap(), "trade.buy-to-account-forbidden");
 
-    // sell 创建携带转入账户（守卫先于可卖数量校验，无需建仓）。
     let mut input = make_sell_input("acc-ta", "inst-ta", 5.0, 1_200_000, 0);
     input.to_account_id = Some("acc-ta".into());
     let err = create_transaction_internal(&conn, input).expect_err("携带转入账户的卖出应被拒绝");
     assert_eq!(err.code().unwrap(), "trade.sell-to-account-forbidden");
 
-    // buy 修改携带转入账户：同一守卫拦截，原行与批次保持原样。
     use ledger_transaction::update_transaction_internal;
     let txn_id = create_transaction_internal(
         &conn,
@@ -878,7 +812,6 @@ fn get_transaction_trade_returns_buy_detail_with_instrument_display() {
 fn get_transaction_trade_rejects_missing_or_non_trade_transaction() {
     let conn = open();
     seed_account(&conn, "acc-cash", "现金", "cash", "CNY", 0);
-    // 非买卖交易（expense）无买卖明细
     let expense_id = create_transaction_internal(
         &conn,
         TransactionInput {
@@ -915,15 +848,10 @@ fn get_transaction_trade_rejects_missing_or_non_trade_transaction() {
     .id;
     let err = trade::get_transaction_trade(&conn, &expense_id).unwrap_err();
     assert!(err.to_string().contains("无买卖明细"), "实际: {err}");
-    // 不存在的 id 同样 NotFound
     let err = trade::get_transaction_trade(&conn, "no-such-txn").unwrap_err();
     assert!(err.to_string().contains("无买卖明细"), "实际: {err}");
 }
 
-/// 可卖数量守卫容差（issue #1033）：f64 FIFO 扣减的累积位噪声不得误拒真实全清仓。
-/// 复刻真实账本位模式：buy 11511.99 → convert 转出两腿 684.76、2791.12 → 批次剩余
-/// 低于 8036.11 的位模式（issue 附 DB printf('%.17g') 证据：8036.109999999999）→
-/// sell 8036.11 必须放行，且批次精确归零。
 #[test]
 fn sell_full_clearance_with_fifo_noise_is_allowed() {
     let conn = open();
@@ -958,9 +886,6 @@ fn sell_full_clearance_with_fifo_noise_is_allowed() {
     )
     .unwrap()
     .id;
-    // 多腿转换单按提交方拆成多条 convert 记录。腿序决定噪声方向（IEEE 双精度
-    // 逐次扣减不结合）：11511.99 − 2791.12 − 684.76 = 8036.109999999999（issue
-    // 位模式），反序则恰好干净——守卫必须对两种序同等容忍。
     create_transaction_internal(
         &conn,
         make_convert_input(
@@ -1002,7 +927,6 @@ fn sell_full_clearance_with_fifo_noise_is_allowed() {
         "复刻位模式：FIFO 扣减后剩余应低于 8036.11（真实账本 8036.109999999999），got {remaining}"
     );
 
-    // 此前被裸比较误拒的全清仓卖出：容差内放行。
     create_transaction_internal(
         &conn,
         make_sell_input("acc-noise", "inst-noise-src", 8036.11, 10_000, 0),
@@ -1019,7 +943,6 @@ fn sell_full_clearance_with_fifo_noise_is_allowed() {
     assert_eq!(remaining_after, 0.0, "全清仓后批次精确归零");
 }
 
-/// 容差边界钉住 1e-6：真实超卖（差额超容差）仍以同码拒绝；容差内的位噪声差异放行。
 #[test]
 fn sell_guard_rejects_oversell_beyond_tolerance() {
     let conn = open();
@@ -1038,7 +961,6 @@ fn sell_guard_rejects_oversell_beyond_tolerance() {
     )
     .unwrap();
 
-    // 差额 2e-6 > 容差 1e-6：真实超卖，拒绝且同码。
     let err = create_transaction_internal(
         &conn,
         make_sell_input("acc-eps", "inst-eps", 100.000002, 10_000, 0),
@@ -1049,7 +971,6 @@ fn sell_guard_rejects_oversell_beyond_tolerance() {
         "超容差超卖应保持原码拒绝，got: {err:?}"
     );
 
-    // 差额 5e-7 < 容差 1e-6：位噪声量级，放行。
     create_transaction_internal(
         &conn,
         make_sell_input("acc-eps", "inst-eps", 100.0000005, 10_000, 0),
@@ -1057,10 +978,6 @@ fn sell_guard_rejects_oversell_beyond_tolerance() {
     .unwrap();
 }
 
-/// 尘埃批次（issue #1033 同根因的另一面）：批次剩余噪声偏高时，全清仓不得留下
-/// 1e-12 量级的残余批次（否则 v_holdings/InvestedInstrument 永远认其为持仓）。
-/// 噪声偏高位模式无公开写入口可确定性产生，按 ADR-0086 以裸 SQL 直置（模拟历史
-/// f64 扣减残差），显式登记于此。
 #[test]
 fn sell_full_clearance_consumes_noise_over_lot_exactly() {
     let conn = open();
@@ -1109,9 +1026,6 @@ fn sell_full_clearance_consumes_noise_over_lot_exactly() {
     assert_eq!(active_lots, 0, "无残余活跃批次");
 }
 
-/// 带位噪声的批次数据（99.99999999999999）穿过卖出写入口仍以既定码拒绝；
-/// 文案格式（四位小数去尾零、不带位噪声，issue #1033）的单点断言住守卫单测
-/// （`guards::tests`，spec #1672 测试分工）。
 #[test]
 fn float_noise_lot_sell_rejected_with_expected_code() {
     let conn = open();

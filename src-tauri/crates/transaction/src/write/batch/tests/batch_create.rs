@@ -1,6 +1,3 @@
-//! 批量写入（`TransactionBatch::run`）测试：写入与判定标记、幂等键（IdempotencyKey）
-//! 语义（重跑跳过 / 内容无关 / 约束回滚 / 索引命中）与批次汇总日志（ADR-0009 决策 #5）。
-
 use rusqlite::{Connection, params};
 
 use ledger_infra::signals::WriteEvidence;
@@ -77,10 +74,6 @@ fn batch_create_with_dedup_false_writes_duplicates() {
     assert_eq!(count, 2);
 }
 
-// ---------------------------------------------------------------------------
-// 幂等键（IdempotencyKey）：重跑跳过、内容无关、一键一活交易约束与索引命中。
-// ---------------------------------------------------------------------------
-
 #[test]
 fn batch_create_idempotency_key_rerun_skips_and_returns_id() {
     let conn = test_support::open();
@@ -126,7 +119,6 @@ fn batch_create_idempotency_key_content_agnostic() {
     a.idempotency_key = Some("file:1:1".into());
     TransactionBatch::run(&conn, vec![a.clone()], true).unwrap();
 
-    // 同一幂等键、本轮内容不同：仍应按同一条跳过（内容无关）。
     let mut b = make_input("acc-key", TransactionKind::Expense, 2000, "2026-02-01");
     b.idempotency_key = Some("file:1:1".into());
     let second = TransactionBatch::run(&conn, vec![b], true).unwrap().results;
@@ -183,14 +175,12 @@ fn batch_create_idempotency_key_same_key_dedup_false_raises_constraint() {
     let mut b = make_input("acc-key", TransactionKind::Income, 2000, "2026-01-02");
     b.idempotency_key = Some("dup-key".into());
 
-    // dedup=false 直接落库两笔同键：部分唯一索引应拒绝（一键至多一活交易）。
     let err = TransactionBatch::run(&conn, vec![a, b], false).unwrap_err();
     assert!(
         err.to_string().to_lowercase().contains("unique"),
         "同键重复应触发唯一索引约束，实际: {err:?}"
     );
 
-    // 提交失败整批回滚（外部可观察结果）：触发约束的行与同批已写行都不落库。
     let count: i64 = conn
         .query_row(
             "SELECT COUNT(*) FROM transactions WHERE is_deleted=0",
@@ -209,7 +199,6 @@ fn idempotency_key_dedup_query_uses_partial_index() {
     a.idempotency_key = Some("file:1:1".into());
     TransactionBatch::run(&conn, vec![a], true).unwrap();
 
-    // EXPLAIN QUERY PLAN 的 detail 列（第 4 列，索引 3）应命中部分唯一索引，而非全表扫描。
     let mut stmt = conn
         .prepare(
             "EXPLAIN QUERY PLAN \
@@ -232,11 +221,9 @@ fn idempotency_key_dedup_query_uses_partial_index() {
 #[test]
 fn batch_create_idempotency_key_buy_sell_different_instruments_kept() {
     let conn = test_support::open();
-    // 投资铺垫（账户+标的+1:1 汇率）一行建成；第二标的为同币种单域变体，经工厂种子。
     test_support::seed_investment_setup(&conn, "acc-inv-key", "inst-aapl");
     test_support::seed_instrument(&conn, "inst-msft", "MSFT", "Msft", "USD", "unknown");
 
-    // 两笔买入：不同标的、相同原始金额字段（amount_cents=0，内容哈希盲区），带键应都保留。
     let mut buy1 = make_buy_input("acc-inv-key", "inst-aapl", 10.0, 10000, 500);
     buy1.idempotency_key = Some("file:1:1".into());
     let mut buy2 = make_buy_input("acc-inv-key", "inst-msft", 5.0, 20000, 300);
@@ -261,11 +248,6 @@ fn batch_create_idempotency_key_buy_sell_different_instruments_kept() {
     assert_eq!(count, 2);
 }
 
-// ---------------------------------------------------------------------------
-// 导入批次汇总日志（ADR-0009 决策 #5 / issue #45）
-// ---------------------------------------------------------------------------
-
-/// 从事件字段里取同名 key 的值（无则 None）。
 fn field_value<'a>(event: &'a CapturedEvent, key: &str) -> Option<&'a str> {
     event
         .fields
@@ -274,14 +256,12 @@ fn field_value<'a>(event: &'a CapturedEvent, key: &str) -> Option<&'a str> {
         .map(|(_, v)| v.as_str())
 }
 
-/// 从捕获的事件里找出批次汇总事件（唯一带 `total`+`failed` 字段的事件）。
 fn find_batch_summary(events: &[CapturedEvent]) -> Option<&CapturedEvent> {
     events.iter().find(|e| {
         e.fields.iter().any(|(k, _)| k == "total") && e.fields.iter().any(|(k, _)| k == "failed")
     })
 }
 
-/// 成功批次：汇总行以 info 级别出现，含总耗时与条数（失败数=0）。
 #[test]
 fn batch_create_logs_summary_on_success() {
     let conn = test_support::open();
@@ -310,7 +290,6 @@ fn batch_create_logs_summary_on_success() {
     );
 }
 
-/// 批次中途回滚：汇总行仍出现，且含失败条数（触发唯一约束回滚的那条）。
 #[test]
 fn batch_create_logs_summary_on_rollback() {
     let conn = test_support::open();
@@ -336,13 +315,11 @@ fn batch_create_logs_summary_on_rollback() {
     assert!(field_value(summary, "elapsed_ms").is_some());
 }
 
-/// 部分行无效但批次提交成功：汇总行含非零失败条数（有效行落库、无效行跳过）。
 #[test]
 fn batch_create_logs_failed_count_with_invalid_row() {
     let conn = test_support::open();
     test_support::seed_account(&conn, "acc-log-part", "现金", "cash", "CNY", 0);
 
-    // 失败行：转账未指定目标账户 → Invalid；成功行：普通收入。
     let inputs = vec![
         make_input(
             "acc-log-part",
@@ -373,7 +350,6 @@ fn batch_create_logs_failed_count_with_invalid_row() {
     assert_eq!(field_value(summary, "total"), Some("2"));
     assert_eq!(field_value(summary, "failed"), Some("1"), "应含失败条数");
 
-    // 单条校验失败不影响同批（外部可观察结果）：仅有效行落库。
     let count: i64 = conn
         .query_row(
             "SELECT COUNT(*) FROM transactions WHERE is_deleted=0",
@@ -384,8 +360,6 @@ fn batch_create_logs_failed_count_with_invalid_row() {
     assert_eq!(count, 1, "无效行不落库，有效行正常落库");
 }
 
-/// 零金额行：单条校验失败（金额必须大于 0），不影响同批其他行落库（issue #66
-/// 迁自 `transactions` 模块旧 `batch_rejects_zero_amount`，改经 `run` 断言）。
 #[test]
 fn batch_create_zero_amount_row_isolated() {
     let conn = test_support::open();
@@ -423,12 +397,6 @@ fn batch_create_zero_amount_row_isolated() {
     assert_eq!(count, 1, "仅有效行落库");
 }
 
-// ---------------------------------------------------------------------------
-// 批量聚合「本批是否任一即建商户」（issue #331 / ADR-0044 决策 4）：run 随逐条结果
-// 一并返回聚合证据，壳层据此经信号映射单点判定发射（任一即建 → `ledger:changed`）。
-// ---------------------------------------------------------------------------
-
-/// 在用商户行数。
 fn active_merchant_count(conn: &Connection) -> i64 {
     conn.query_row(
         "SELECT COUNT(*) FROM merchants WHERE is_deleted=0",
@@ -438,7 +406,6 @@ fn active_merchant_count(conn: &Connection) -> i64 {
     .unwrap()
 }
 
-/// 一行携带商户名的支出。
 fn expense_named(account: &str, date: &str, name: &str) -> TransactionInput {
     TransactionInput {
         merchant_name: Some(name.into()),
@@ -447,13 +414,11 @@ fn expense_named(account: &str, date: &str, name: &str) -> TransactionInput {
     }
 }
 
-/// 任一行新名字即建 → 聚合证据真；全复用 / 无商户 / 去重重放 → 假。
 #[test]
 fn run_aggregates_merchant_created_evidence() {
     let conn = test_support::open();
     test_support::seed_account(&conn, "acc-agg", "现金", "cash", "CNY", 0);
 
-    // 全无商户：假。
     let outcome = TransactionBatch::run(
         &conn,
         vec![
@@ -465,7 +430,6 @@ fn run_aggregates_merchant_created_evidence() {
     .unwrap();
     assert_eq!(outcome.evidence, WriteEvidence::MerchantCreated(false));
 
-    // 混批：一行新名字 + 一行不带商户 → 聚合真（任一即建即真）。
     let outcome = TransactionBatch::run(
         &conn,
         vec![
@@ -483,12 +447,10 @@ fn run_aggregates_merchant_created_evidence() {
     assert_eq!(active_merchant_count(&conn), 1);
 }
 
-/// 全部行命中复用（名字命中 / 直接带商户 id）→ 聚合证据假。
 #[test]
 fn run_with_reused_merchants_aggregates_false() {
     let conn = test_support::open();
     test_support::seed_account(&conn, "acc-agg", "现金", "cash", "CNY", 0);
-    // 预置既有商户「京东」，并先落一行建立 id 复用目标（簿记戳经工厂常量发放）。
     conn.execute(
         "INSERT INTO merchants (id,name,created_at,updated_at,version,device_id,is_deleted) \
          VALUES ('mer-jd','京东',?1,?1,1,'test',0)",
@@ -513,7 +475,6 @@ fn run_with_reused_merchants_aggregates_false() {
     assert_eq!(active_merchant_count(&conn), 1, "复用不新建");
 }
 
-/// 幂等重放：首跑即建商户，重跑整批命中去重 → 不产生碎商户、聚合证据假。
 #[test]
 fn run_dedup_replay_carries_no_merchant_evidence() {
     let conn = test_support::open();
@@ -530,8 +491,6 @@ fn run_dedup_replay_carries_no_merchant_evidence() {
     assert!(replay.results[0].duplicate, "重放应命中去重");
 }
 
-/// Invalid 行（金额非法）即使携带新商户名也不即建、不携证据（碎商户防线随
-/// 两段式归一化保持不变）；同批有效行聚合不受污染。
 #[test]
 fn run_invalid_row_with_new_name_creates_no_merchant() {
     let conn = test_support::open();

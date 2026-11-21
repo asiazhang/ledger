@@ -1,8 +1,3 @@
-//! 场外基金申赎记账测试（命名对齐源码 trade 模块的 fund 语义分支，issue #302 /
-//! ADR-0038）：金额权威（确认单整分金额 + 确认份额必填，单价由两者反算）、
-//! 每份成本锚定权威金额、卖出 FIFO 匹配与已实现盈亏的舍入不变式（闭合不变式：
-//! 全平仓位 Σ已实现盈亏 = Σ卖出金额 − Σ买入金额，精确到分）、编辑全字段替换纠正。
-
 use ledger_transaction::TransactionInput;
 use ledger_transaction::amount::TransactionKind;
 use ledger_transaction::{create_transaction_internal, update_transaction_internal};
@@ -11,8 +6,6 @@ use rusqlite::{Connection, params};
 use super::common::*;
 use tauri_app_lib::test_support::{open, seed_account, seed_fund_market_price, seed_instrument};
 
-/// 基金申购输入：确认单整分金额为权威（amount_cents 必填 > 0），单价不提供
-/// （由后端反算，wire 上 price_cents = None）。
 fn make_fund_buy_input(
     account_id: &str,
     instrument_id: &str,
@@ -51,7 +44,6 @@ fn make_fund_buy_input(
     }
 }
 
-/// 基金赎回输入：同申购，金额权威、单价反算。
 fn make_fund_sell_input(
     account_id: &str,
     instrument_id: &str,
@@ -90,7 +82,6 @@ fn make_fund_sell_input(
     }
 }
 
-/// 读取一笔交易行金额与买卖明细（单价/手续费）。
 fn trade_row(conn: &Connection, id: &str) -> (i64, f64, i64, i64) {
     conn.query_row(
         "SELECT t.amount_cents, st.quantity, st.price_cents, st.fee_cents \
@@ -102,11 +93,6 @@ fn trade_row(conn: &Connection, id: &str) -> (i64, f64, i64, i64) {
     .unwrap()
 }
 
-/// 基金申购：金额权威——行金额恒等于确认单整分金额（不被单价舍入污染），
-/// 单价由（金额 − 手续费）÷ 份额反算到万分之一元，每份成本锚定权威金额单次舍入。
-/// 数例：申购 987.6543 份、金额 1000.00 元（100_000 分）、手续费 1.50 元（150 分）
-/// → 反算净值 = (100_000 − 150) × 100 ÷ 987.6543 = 10_110（1.0110 元，4 位小数）；
-/// 每份成本 = 100_000 × 100 ÷ 987.6543 = 10_125（1.0125 元）。
 #[test]
 fn fund_buy_amount_is_authoritative_and_price_derived() {
     let conn = open();
@@ -145,13 +131,6 @@ fn fund_buy_amount_is_authoritative_and_price_derived() {
     );
 }
 
-/// 每份成本舍入不变式：批次成本重建（数量 × 每份成本）与权威金额的偏差被
-/// 单次舍入钉在半价格单位/份以内；全平仓时已实现盈亏按权威金额闭合（不按
-/// 重建值漂移）。数例：申购 10_000 份、金额 12345.67 元（1_234_567 分）→ 每份
-/// 成本 = round(1_234_567 × 100 ÷ 10_000) = 12_346，重建 1_234_600 分偏差 33 分
-///（≤ 10_000 ÷ 2 = 5_000 价格单位）；赎回 10_000 份、金额 13_000.00 元、费 13 元
-/// → 已实现盈亏 = 1_300_000 − 1_234_567 = 65_433 分（精确闭合，而非重建值
-/// 1_234_600 给出的 65_400）。
 #[test]
 fn fund_lot_cost_anchors_to_authoritative_amount_and_pnl_closes_exactly() {
     let conn = open();
@@ -200,7 +179,6 @@ fn fund_lot_cost_anchors_to_authoritative_amount_and_pnl_closes_exactly() {
     );
 }
 
-/// 基金申购金额必填且为正：金额缺失（0）拒绝，中文报错。
 #[test]
 fn fund_buy_requires_positive_authoritative_amount() {
     let conn = open();
@@ -219,14 +197,12 @@ fn fund_buy_requires_positive_authoritative_amount() {
         ),
         other => panic!("应返回 Coded（400），got: {other:?}"),
     }
-    // 不落库残留
     let txns: i64 = conn
         .query_row("SELECT COUNT(*) FROM transactions", [], |r| r.get(0))
         .unwrap();
     assert_eq!(txns, 0, "被拒的申购不应落交易行");
 }
 
-/// 基金申购手续费不得超过金额：反算净投入 ≤ 0 无从产生正单价，显式拒绝。
 #[test]
 fn fund_buy_fee_must_not_exceed_amount() {
     let conn = open();
@@ -247,11 +223,6 @@ fn fund_buy_fee_must_not_exceed_amount() {
     }
 }
 
-/// 基金赎回：金额权威——行金额恒等于确认单整分金额，单价由（金额 + 手续费）
-/// ÷ 份额反算；FIFO 匹配与已实现盈亏按权威口径闭合。
-/// 数例：买入 500 份金额 500.00 元（每份成本 1.0000 元）；赎回 500 份、金额
-/// 520.00 元（52_000 分）、费 0.52 元（52 分）→ 反算净值 = (52_000 + 52) × 100
-/// ÷ 500 = 10_410.4 → 10_410（1.0410 元）；盈亏 = 52_000 − 50_000 = 2_000 分。
 #[test]
 fn fund_sell_amount_is_authoritative_price_derived_and_fifo_pnl_exact() {
     let conn = open();
@@ -301,24 +272,6 @@ fn fund_sell_amount_is_authoritative_price_derived_and_fifo_pnl_exact() {
     assert!((remaining - 0.0).abs() < 1e-9, "全平仓");
 }
 
-/// 闭合不变式（头牌不变式，issue #302）：多批次买入 + 多笔卖出（含一笔跨两批次
-/// 的卖出）全平仓后，Σ 已实现盈亏 = Σ 卖出金额 − Σ 买入金额，精确到分——
-/// 卖出费在收入与分摊两端同额出现而抵消，买入费摊薄入成本。
-///
-/// 数例（份额与净值均取万分之一元刻度下不可整除的丑数，暴露一切逐笔舍入）：
-/// - 买入①：987.6543 份、金额 100_000 分、费 150 → 每份成本 10_125；
-/// - 买入②：500 份、金额 50_000 分、费 0 → 每份成本 10_000；
-/// - 卖出①：300 份、金额 31_500 分、费 31 → 净值 (31_500+31)×100÷300 = 10_510.33
-///   → 10_510；匹配①仅批次①（未耗尽）：收入 = 金额+费 = 31_531（单匹配兜底）、
-///   成本 = round(300×10_125÷100) = 30_375、费 31 → 盈亏 1_125；
-/// - 卖出②：1187.6543 份、金额 125_000 分、费 125 → 净值 12_512_500÷1187.6543
-///   = 10535.47 → 10_535；匹配②批次①余 687.6543 份（耗尽）：收入
-///   round(687.6543×10_535÷100) = 72_444、成本 = 100_000 − 30_375 = 69_625
-///   （批次成本按权威金额闭合）、费 floor(125×687.6543÷1187.6543) = 72 → 盈亏 2_747；
-///   匹配③批次②500 份（耗尽，兼卖出末匹配）：收入 = 125_125 − 72_444 = 52_681
-///   （末匹配吸收收入余数；round 重建为 52_675，差 6 分即本不变式防守的漂移）、
-///   成本 50_000、费 53 → 盈亏 2_628；
-/// - Σ 盈亏 = 1_125 + 2_747 + 2_628 = 6_500 = (31_500 + 125_000) − (100_000 + 50_000)。
 #[test]
 fn fund_closed_position_realized_pnl_equals_sell_amounts_minus_buy_amounts() {
     let conn = open();
@@ -337,7 +290,6 @@ fn fund_closed_position_realized_pnl_equals_sell_amounts_minus_buy_amounts() {
     )
     .unwrap()
     .id;
-    // 错开批次 created_at 保证 FIFO 顺序明确（同日亦可，但显式化不依赖落库时序）。
     conn.execute(
         "UPDATE security_lots SET created_at='2026-01-10T00:00:00Z' WHERE buy_transaction_id=?1",
         params![buy1],
@@ -403,8 +355,6 @@ fn fund_closed_position_realized_pnl_equals_sell_amounts_minus_buy_amounts() {
     );
 }
 
-/// 基金申赎金额权威与单价权威互斥：wire 误传 price_cents 显式拒绝（不静默吞掉，
-/// 与前端装配器「金额与单价不可同时提供」同一契约，issue #302）。
 #[test]
 fn fund_buy_rejects_price_cents_alongside_authoritative_amount() {
     let conn = open();
@@ -423,8 +373,6 @@ fn fund_buy_rejects_price_cents_alongside_authoritative_amount() {
     }
 }
 
-/// 非基金标的（股票等）保持既有单价权威语义：wire 上的金额字段被忽略，
-/// 行金额仍由数量 × 单价 ± 手续费重算（类型分支不误伤既有通道）。
 #[test]
 fn stock_buy_keeps_price_authoritative_and_ignores_amount_field() {
     let conn = open();
@@ -432,7 +380,7 @@ fn stock_buy_keeps_price_authoritative_and_ignores_amount_field() {
     seed_instrument(&conn, "inst-stock", "600519", "贵州茅台", "CNY", "unknown");
 
     let mut input = make_buy_input("acc-stock", "inst-stock", 3.0, 12_345, 100);
-    input.amount_cents = 999_999; // 非基金：金额字段不具权威语义，应被忽略
+    input.amount_cents = 999_999;
     let id = create_transaction_internal(&conn, input).unwrap().id;
 
     let (amount_cents, _, price_cents, fee_cents) = trade_row(&conn, &id);
@@ -444,8 +392,6 @@ fn stock_buy_keeps_price_authoritative_and_ignores_amount_field() {
     assert_eq!(fee_cents, 100);
 }
 
-/// 基金申购编辑（全字段替换权威）：改金额/份额/手续费后交易行、明细与批次全部
-/// 按新确认单重建，每份成本随新金额重锚。
 #[test]
 fn fund_buy_edit_replaces_fields_and_reanchors_lot_cost() {
     let conn = open();
@@ -483,13 +429,6 @@ fn fund_buy_edit_replaces_fields_and_reanchors_lot_cost() {
     assert_eq!(cpu, 11_000, "每份成本随新金额重锚：66_000 × 100 ÷ 600");
 }
 
-/// 基金赎回编辑（全字段替换权威）：重算匹配与盈亏；编辑后再平仓，闭合不变式
-/// 在「编辑过的事实」上依然精确成立。
-///
-/// 数例：买入 500 份金额 50_000；赎回改报为 400 份、金额 41_000、费 41 → 净值
-/// (41_000+41)×100÷400 = 10260.25 → 10_260，盈亏 = 41_041 − 40_000 − 41 = 1_000；
-/// 再赎回余 100 份、金额 10_100、费 10 → 收入 10_110、成本 = 50_000 − 40_000
-/// = 10_000（批次闭合）、费 10 → 盈亏 100；Σ = 1_100 = 51_100 − 50_000。
 #[test]
 fn fund_sell_edit_rebuilds_matches_and_closed_invariant_still_holds() {
     let conn = open();
@@ -526,7 +465,6 @@ fn fund_sell_edit_rebuilds_matches_and_closed_invariant_still_holds() {
     assert_eq!(pnl_after_edit, 1_000, "41_041 − 40_000 − 41");
     assert!((remaining - 100.0).abs() < 1e-9, "持仓随编辑纠正");
 
-    // 平掉剩余 100 份：闭合不变式在编辑后的事实上仍精确成立。
     create_transaction_internal(
         &conn,
         make_fund_sell_input("acc-sell-edit", "inst-sell-edit", 100.0, 10_100, 10),
@@ -545,8 +483,6 @@ fn fund_sell_edit_rebuilds_matches_and_closed_invariant_still_holds() {
     );
 }
 
-/// 持仓显形（issue #302 验收 3 的后端腿）：基金持仓进 v_holdings——市值与未实现
-/// 盈亏按万分位刻度实时计算，成本锚定权威金额。
 #[test]
 fn fund_holdings_show_market_value_and_unrealized_pnl() {
     let conn = open();

@@ -5,8 +5,6 @@ use super::model::Currency;
 use tauri_app_lib::test_support::{assert_op_write_failure, block_op_writes};
 
 fn setup() -> rusqlite::Connection {
-    // 建库两行序经统一测试工厂承载（spec #728 / issue #754 / ADR-0084 决策 7）；
-    // 工厂住根包，经 dev-dependency 测试环消费（#1095，ledger-transaction 同款）。
     tauri_app_lib::test_support::open()
 }
 
@@ -48,9 +46,6 @@ fn currencies_have_correct_decimal_places() {
     assert_eq!(usd.decimal_places, 2);
 }
 
-// ── 本位币基准（LedgerLevelSetting 首个成员，issue #858 / ADR-0091 决策 3）──
-// 存储落 AppSettings（ADR-0017：后端消费配置存库），读写收口本域。
-
 #[test]
 fn base_currency_defaults_to_cny_when_unset() {
     let conn = setup();
@@ -78,18 +73,12 @@ fn set_base_currency_rejects_unknown_code() {
         matches!(err, AppError::Coded { ref code, .. } if code == "currency.base-invalid"),
         "应为码化错误 currency.base-invalid，实际 {err:?}"
     );
-    // 校验失败不落库：基准保持默认。
     assert_eq!(
         super::base_currency::current_base_currency(&conn).unwrap(),
         "CNY"
     );
 }
 
-/// op 落库失败时设置行必须随事务回滚（issue #1867，ADR-0139 决策 2 的先行
-/// 缺陷票）：「校验 → 落库 → op 追加」同生共死。失败注入用纯测试侧手段
-/// （op 写失败注入器具，`test_support::op_write_failure`——四域同形触发器注入
-/// 的收编单点，issue #1896）挡下 op 落库，使编排体在最后一步失败。
-/// 修复前（逐语句 autocommit）设置行已先行落库——「设置行残留」即红灯。
 #[test]
 fn set_base_currency_op_failure_rolls_back_setting() {
     let conn = setup();

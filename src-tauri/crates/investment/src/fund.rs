@@ -1,26 +1,3 @@
-//! 场外基金的行情接入通道（ADR-0103）：按代码即拉添加（issue #301 / ADR-0038
-//! 决策 1）与 AI 创建端点 fund 增强（issue #304 / ADR-0039 决策 3）共用同一套
-//! 字典形态——手动输入 / AI 提交 6 位基金代码 → 查询半边取新浪批量面报价（名称
-//! / 最新单位净值 + 净值日期；已终止基金回退证监会基金电子披露权威兜底，货基
-//! 经官方自报形态确认落恒定价，取数编排单点在行情同步域 `ledger-market-sync`
-//! crate 的 `sync::fetch_fund_quote_production`，#1106 / #1568 换源）→
-//! 落库半边（[`adopt_fund_quote`]）落标的字典（类型 fund、市场恒 unknown、
-//! 来源 manual）与现价缓存（净值即价格、币种人民币、带净值日期）。查无此码
-//! 返回中文错误，不产生标的行。
-//!
-//! 编排与网络解耦：核心接缝 [`add_fund_by_code_with`] 接受统一注入的报价获取
-//! 函数（行情接入查询半边签名 `(代码, 市场) → Result<Quote>`，ADR-0103 决策 2），
-//! 测试与 BDD 以 stub 离线驱动（不依赖真实网络）；生产命令在锁外完成网络拉取后
-//! 调 [`adopt_fund_quote`] 落库（见 `commands::investment` 壳的 `add_fund_by_code`
-//! 命令）。
-//!
-//! 本接缝在 ADR-0125 决策 7 / issue #1413 的异步化中**保持同步形状**：接缝闭包
-//! 在全部消费方都是「锁外已拉取报价的同步回放」（生产）或离线桩（测试 / BDD），
-//! 不承载网络等待；真正的网络等待在生产入口（`fetch_fund_quote_production`）处
-//! 以 `await` 表达。而连接与拉取交织的形状一旦 async 化，连接守卫必然跨 `await`
-//! 持有（`&Connection` 跨 await 即非 Send，BDD 世界的锁亦然）——同步形状正是
-//! 「连接不跨网络等待」的结构保证。
-
 use rusqlite::Connection;
 
 use super::crud;
@@ -29,17 +6,9 @@ use super::model::{AddFundResult, InstrumentInput, InstrumentType};
 use super::quote::{Quote, QuoteAdoptionInput, adopt_quote};
 use ledger_infra::error::{AppError, Result};
 
-/// 场外基金标的的固定字典形态（ADR-0038 决策 1）：类型 fund、市场恒 unknown
-/// （场外基金无交易所市场概念，纯字典键）、币种人民币（含 QDII 人民币份额）。
-/// 本常量是「fund 市场恒 unknown」的**唯一出处**：本通道落库与标的写入协议
-/// 守卫（[`super::crud`]）共用，避免同一口径出现第二份常量。
 pub(crate) const FUND_MARKET: &str = "unknown";
 const FUND_CURRENCY: &str = "CNY";
 
-/// fund 市场恒 unknown 单点判据（ADR-0038 决策 1 修订 / issue #1194）：场外基金
-/// 没有交易所市场概念，市场位只接受 unknown——非 unknown 一律以
-/// `instrument.fund-market-forbidden` 码化拒绝（规则与文案单点，供调用方市场
-/// 守卫与标的写入协议守卫共用）。
 pub(crate) fn reject_non_unknown_fund_market(market: &str) -> Result<()> {
     if market == FUND_MARKET {
         return Ok(());
@@ -51,11 +20,6 @@ pub(crate) fn reject_non_unknown_fund_market(market: &str) -> Result<()> {
     ))
 }
 
-/// 调用方携带市场守卫（ADR-0038 决策 1 修订 / issue #1194）：fund 创建不接受
-/// 调用方携带的非 unknown 市场。6 位按代码增强/降级分支的市场由通道字典形态
-/// 自造（[`FUND_MARKET`]），不读调用方输入——正因如此，这类通道必须在落到写入
-/// 协议**之前**先经本守卫拒绝携带者，否则「不变量对全部创建通道成立」在增强
-/// 通道上不成立。缺省（None）即未携带，放行。
 pub fn reject_carried_fund_market(market: Option<&str>) -> Result<()> {
     match market {
         Some(market) => reject_non_unknown_fund_market(market),
@@ -63,15 +27,10 @@ pub fn reject_carried_fund_market(market: Option<&str>) -> Result<()> {
     }
 }
 
-/// 6 位纯数字判定（入口收口的安全前提，ADR-0038 决策 6 / ADR-0039 决策 3）：
-/// 消费三方——按代码即拉的入口校验（[`validate_fund_code`]）、AI 端点 fund
-/// 增强/查询的触发前提、净值同步分区的「可拉取」判定；名称充代码的 fund 行
-///（源数据无代码）非 6 位，不触发行情源校验、不进净值通道，自编 6 位代码无产生通道。
 pub fn is_six_digit_code(code: &str) -> bool {
     code.len() == 6 && code.bytes().all(|b| b.is_ascii_digit())
 }
 
-/// 基金代码合法性校验：同 [`is_six_digit_code`]（按代码即拉入口形态）。
 pub fn validate_fund_code(code: &str) -> Result<()> {
     if is_six_digit_code(code) {
         Ok(())
@@ -83,18 +42,11 @@ pub fn validate_fund_code(code: &str) -> Result<()> {
     }
 }
 
-/// 创建端点 fund 增强的落库结果（issue #304 / ADR-0039 决策 3）：标的 id +
-/// 是否落现价（价格失效信号广播判定，语义同 `AddFundResult.price_written`）。
 pub struct FundCreateOutcome {
     pub instrument_id: String,
     pub price_written: bool,
 }
 
-/// AI 创建端点 fund 增强的降级落库（issue #304 / ADR-0039 决策 3）：行情源网络
-/// 不可达等临时故障时，以 AI 提供的名称 + 真实代码建行（不阻塞导入，名称误差
-/// 留待人工编辑）。字典形态与按代码即拉一致（类型 fund、市场 unknown、币种
-/// 人民币）；既有行直接复用、名称不动——降级重放不得用 AI 名称覆盖已回填的
-/// 权威名称。
 pub fn create_fund_degraded(
     conn: &Connection,
     symbol: &str,
@@ -129,25 +81,14 @@ pub fn create_fund_degraded(
     })
 }
 
-/// 行情接入落库半边的场外通道（ADR-0103 决策 3）：字典形态与现价时点在本通道
-/// 判定——类型恒 fund、市场恒 unknown（场外无交易所市场，纯字典键）、币种恒
-/// 人民币（含 QDII 人民币份额）；有净值时 priced_at 与 nav_date 同为净值日期
-///（现价的行情日期就是净值本身对应的日期）。覆盖不比较新旧净值日期：水位比较
-/// 归净值同步通道（#303 以 nav_date 为增量水位），本通道语义 = 数据源当前最新值
-/// 整体回放。价格来源随取数产物携带（`Quote::price_source`，ADR-0130 决策 7：
-/// 新浪批量面 / 证监会披露兜底）。建档 + 落现价交 [`adopt_quote`] 一体执行，
-/// 此处只构造回显投影 [`AddFundResult`]（含 `price_written`，价格失效信号判定
-/// 依据）。
 pub fn adopt_fund_quote(conn: &Connection, quote: &Quote) -> Result<AddFundResult> {
     let nav_date = quote.nav_date.as_deref();
     let outcome = adopt_quote(
         conn,
         &QuoteAdoptionInput {
             kind: InstrumentType::Fund,
-            // 场外基金无交易所市场概念，字典市场恒 unknown（市场闭集类型，issue #1673）。
             market: Market::Unknown,
             currency_code: FUND_CURRENCY,
-            // 基金现价时点 = 净值日期；无净值时不落现价，该值不被消费。
             priced_at: nav_date.unwrap_or_default(),
             nav_date,
         },
@@ -164,11 +105,6 @@ pub fn adopt_fund_quote(conn: &Connection, quote: &Quote) -> Result<AddFundResul
     })
 }
 
-/// 按代码即拉核心接缝：校验代码 → 注入的获取函数取报价 → 落库。
-/// 获取函数按（请求代码，通道字典市场）返回 [`Quote`]（统一注入签名，ADR-0103
-/// 决策 2；场外基金无交易所市场，市场位恒 `unknown`），查无此码以
-/// `AppError::Invalid`（中文错误）上抛；本函数不触碰网络，测试以 stub 驱动
-///（先例：`incremental::do_incremental_sync_with`）。
 pub fn add_fund_by_code_with<F>(
     conn: &Connection,
     code: &str,

@@ -1,25 +1,3 @@
-//! bench 子命令：对 generate 产出的库跑 16 项查询基准并输出 min/avg/p95 报告
-//! （issue #461 / spec #458；商户占比与投资三项
-//! 读基准 issue #1627；跨账本投资汇总基准 issue #1630；商品名搜索基准 issue #1885）。
-//!
-//! 唯一接缝（验收项）：全部基准经「现有 pub 查询函数 + 标准连接工厂
-//! （[`open_connection`]）打开文件库」调用，与 IPC 命令同一 SQL 路径——
-//! 基准代码内零手写业务 SQL、不重写任何查询；慢查询日志（perf_trace，
-//! ≥100ms warn）由连接工厂自动挂载，超阈值单条 SQL 在日志中给出线索，
-//! 本模块只初始化 tracing subscriber 让日志可见。
-//!
-//! 统计口径：每项预热 `--warmup` 次（不计入统计，只热 SQLite 页缓存——
-//! 语句缓存未接入，`prepare_cached` 全仓零调用，预热不覆盖它），
-//! 计时 `--iterations` 次取 min / avg / p95（p95 按最近秩法，
-//! n=10 时 rank=⌈9.5⌉=10 恒等于 max，默认 20 次起才有真分位数分辨力）。
-//!
-//! 性能门禁（issue #493 / ADR-0068）：`--max-p95-ms` 给出默认阈值时，全部基准
-//! 项逐项判定 p95 ≤ 各自阈值，任何一项超标则以非零退出码失败（超标清单打
-//! 在报告尾部）；缺省不判定，仅输出报告（本地观察不受影响）。个别基准确需
-//! 不同阈值时经 [`PER_BENCH_MAX_P95_MS`] 登记分项例外（搜索 SQL 下推落地后
-//! 已按 CI 实测撤销、清单当前为空，issue #516）；判据、统计口径、分项例外
-//! 与豁免原则以 ADR-0068 为准。
-
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -48,23 +26,12 @@ use tauri_app_lib::cross_book_summary::{
     CrossBookBookStatus, collect_other_books, merge_readings, read_book_investment,
 };
 
-/// 列表类基准的页大小（与前端默认页大小同量级）。
 const PAGE_SIZE: usize = 20;
 
-/// 跨账本基准里主库连接的「活动本」标识（生产＝当前活动账本，ADR-0114）。
-/// 附属账本 id 恒为 book-NN（books 模块命名），不与之相撞——逐本探测路径
-/// 因此覆盖全部附属账本，主库走活动本读连接（生产同款：活动本复用进程内
-/// 读连接）。
 const ACTIVE_BOOK_ID: &str = "ledger-perf-main";
 
-/// 分项门禁阈值例外（ADR-0068）：默认判据 200ms 对全部基准生效；个别基准
-/// 确需不同阈值时在此登记（项名精确匹配 + 阈值），增删须同步修订 ADR-0068
-/// 与 tests 里的例外表钉住断言。当前为空——两条搜索基准的 400ms 全量扫描型
-/// 例外已随搜索 SQL 下推落地按 CI 实测撤销（run 33890569837：p95 69.52ms /
-/// 82.21ms，对默认线余量 2.9×/2.4×，issue #516），全部基准统一适用默认线。
 pub(crate) const PER_BENCH_MAX_P95_MS: &[(&str, f64)] = &[];
 
-/// 某基准项的门禁阈值：分项例外优先，未列出的用默认阈值。
 fn gate_threshold_for(name: &str, default_max_p95_ms: f64) -> f64 {
     PER_BENCH_MAX_P95_MS
         .iter()
@@ -73,22 +40,13 @@ fn gate_threshold_for(name: &str, default_max_p95_ms: f64) -> f64 {
         .unwrap_or(default_max_p95_ms)
 }
 
-/// bench 参数（解析后形态；默认值见 [`Default`]）。
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct BenchCli {
-    /// 目标库文件（须已由 generate 产出）。
     pub db: PathBuf,
-    /// 每项基准预热次数（不计入统计）。
     pub warmup: usize,
-    /// 每项基准计时迭代次数（默认 20：n=10 时最近秩 p95 恒等于 max，
-    /// 20 次才成真分位数；ADR-0068 统计口径）。
     pub iterations: usize,
-    /// 中文子串搜索基准的关键字（默认「咖啡」，命中备注池，驱动原文连续
-    /// 子串匹配路径）。
     pub search: String,
-    /// 商品名搜索基准的关键字（默认「猫粮」，命中购买项名称池，issue #1885）。
     pub purchase_search: String,
-    /// 性能门禁阈值（毫秒）：全部基准 p95 ≤ 阈值才退出 0；None = 不判定。
     pub max_p95_ms: Option<f64>,
 }
 
@@ -105,8 +63,6 @@ impl Default for BenchCli {
     }
 }
 
-/// bench 的 flag 表（flag 显示形态 + 帮助文案 + apply，issue #1679 表驱动
-/// 单真源）：新增 flag 只登记本表一处，解析与 `--help` 都从表来。
 pub(crate) const FLAGS: &[FlagSpec<BenchCli>] = &[
     FlagSpec {
         flag: "--db <PATH>",
@@ -158,9 +114,6 @@ pub(crate) const FLAGS: &[FlagSpec<BenchCli>] = &[
     },
 ];
 
-/// 手写参数解析（零新增依赖；通用循环消费 [`FLAGS`]，收口在
-/// [`parse_flags`]，issue #1696）。返回 Err(消息) 表示用法错误；
-/// 「至少为 1」校验保持原位（解析层 → 参数错误通道，行为零变化）。
 pub(crate) fn parse_bench_args(args: &[String]) -> Result<Parsed<BenchCli>, String> {
     match parse_flags(args, FLAGS)? {
         Parsed::Run(cli) if cli.iterations == 0 => Err("--iterations 至少为 1".to_string()),
@@ -168,26 +121,19 @@ pub(crate) fn parse_bench_args(args: &[String]) -> Result<Parsed<BenchCli>, Stri
     }
 }
 
-/// run 入口（dispatch 表登记项）：解析 + 运行 → 共享结局形态。
 pub(crate) fn execute(args: &[String]) -> super::bench_common::Outcome {
     super::bench_common::execute_cli(args, parse_bench_args, run)
 }
 
-/// 基准运行配置（测试可注入小参数；与 [`BenchCli`] 的 CLI 字段一一对应）。
 #[derive(Debug, Clone)]
 pub(crate) struct BenchConfig {
     pub warmup: usize,
     pub iterations: usize,
     pub search_term: String,
-    /// 商品名搜索基准关键字（issue #1885）。
     pub purchase_search_term: String,
-    /// 附属账本根目录（issue #1630；生产由 `--db` 同级推导，books 模块）：
-    /// 跨账本投资汇总基准项的前置探测与逐本建连都消费它。
     pub books_dir: PathBuf,
 }
 
-/// Cli → Config 投影（issue #1679：原位 From impl；`books_dir` 由 `--db`
-/// 同级派生，与改名字段同形落地；Config 的测试可注入小参数接缝保留不动）。
 impl From<BenchCli> for BenchConfig {
     fn from(cli: BenchCli) -> Self {
         BenchConfig {
@@ -200,29 +146,19 @@ impl From<BenchCli> for BenchConfig {
     }
 }
 
-/// 单项基准的统计结果（人读报告行 + 冒烟断言面）。
 #[derive(Debug, Clone)]
 pub(crate) struct BenchMetrics {
-    /// 基准名（名单钉住在 tests，增删必须显式更新）。
     pub name: &'static str,
-    /// 规模备注：本次基准处理的数据量线索（行数/命中数/页码等）。
     pub context: String,
     pub min_ms: f64,
     pub avg_ms: f64,
     pub p95_ms: f64,
-    /// 实际计时迭代次数（报告头部已统一展示配置值；生产路径不读，
-    /// 仅供 bin 内冒烟断言「产出全部指标」使用，与 tests 豁免同款纪律）。
     #[cfg_attr(not(test), allow(dead_code))]
     pub iterations: usize,
 }
 
-/// 最近秩法 p95 与字符显示宽估算收口在 [`super::bench_common`]（issue #1650，
-/// 读基准与写基准共用）；本模块读基准的表列消费共享列宽与表头构造，
-/// ▲ 超阈值标记列的行渲染自持。单项基准的执行体：吃连接、跑一次查询、
-/// 返回人读规模备注（行数/命中数/数量等线索，由各基准自行描述语义）。
 type BenchFn<'a> = dyn Fn(&Connection) -> Result<String, String> + 'a;
 
-/// 入口：打开库、跑全部基准、打印人读表格。
 pub(crate) fn run(cli: BenchCli) -> Result<(), String> {
     init_tracing();
     if !cli.db.exists() {
@@ -241,16 +177,12 @@ pub(crate) fn run(cli: BenchCli) -> Result<(), String> {
     Ok(())
 }
 
-/// 门禁判定（ADR-0068）：全部基准逐项 p95 ≤ 各自阈值（默认线 + 分项例外）
-/// 才通过；任何一项超标，超标清单打在报告尾部（随 tee 进 Job Summary）并
-/// 返回 Err（非零退出）。
 fn gate(results: &[BenchMetrics], max_p95_ms: Option<f64>) -> Result<(), String> {
     let Some(max_p95_ms) = max_p95_ms else {
         return Ok(());
     };
     let failures = gate_failures(results, max_p95_ms);
     println!();
-    // 门禁行据实报告分项例外状态：清单为空时不再虚指「分项例外见 ADR-0068」。
     let line_prefix = if PER_BENCH_MAX_P95_MS.is_empty() {
         format!("门禁（全部基准 p95 ≤ {max_p95_ms:.0}ms，无分项例外）")
     } else {
@@ -272,8 +204,6 @@ fn gate(results: &[BenchMetrics], max_p95_ms: Option<f64>) -> Result<(), String>
     }
 }
 
-/// 超标项清单（判定纯函数）：p95 > 各自阈值（判据为 ≤）的基准名 + 实测值
-/// + 阈值（分项例外优先，未列出者用默认线）。
 pub(crate) fn gate_failures(results: &[BenchMetrics], max_p95_ms: f64) -> Vec<String> {
     results
         .iter()
@@ -289,15 +219,10 @@ pub(crate) fn gate_failures(results: &[BenchMetrics], max_p95_ms: f64) -> Vec<St
         .collect()
 }
 
-/// 基准执行核心（测试接缝）：对已打开的连接跑全部 16 项基准。
-///
-/// 前置数据（账户 id、日期极值、深分页页码）全部经现有查询函数在预热外
-/// 一次性探测，基准闭包内只做「参数已定型的单次查询调用」。
 pub(crate) fn run_benchmarks(
     conn: &Connection,
     cfg: &BenchConfig,
 ) -> Result<Vec<BenchMetrics>, String> {
-    // ---- 前置探测（同样走现有查询函数，不计入任何基准） ------------------
     let range = reports_domain::query_report_date_range(conn).map_err(|e| e.to_string())?;
     let (min_date, max_date) = match (range.min_date, range.max_date) {
         (Some(min), Some(max)) => (min, max),
@@ -309,7 +234,6 @@ pub(crate) fn run_benchmarks(
         .ok_or_else(|| "库内无账户，请先运行 ledger-perf generate".to_string())?;
     let first_account_id = first_account.id.clone();
 
-    // 首页列表探测 total → 推导深分页页码（最后一页，OFFSET 逼近全量）。
     let first_filter = TransactionListFilter {
         page_size: Some(PAGE_SIZE),
         page: Some(1),
@@ -322,7 +246,6 @@ pub(crate) fn run_benchmarks(
     let deep_page = (first_page.total as usize).div_ceil(PAGE_SIZE);
     let deep_offset = (deep_page - 1) * PAGE_SIZE;
 
-    // 日期筛选窗口：数据窗口末端的近 12 个月（NaiveDate 只做参数整形，非业务 SQL）。
     let window_end = NaiveDate::parse_from_str(&max_date, "%Y-%m-%d")
         .map_err(|e| format!("日期极值解析失败（{max_date}）：{e}"))?;
     let window_start = window_end
@@ -330,16 +253,11 @@ pub(crate) fn run_benchmarks(
         .map(|d| d.to_string())
         .ok_or_else(|| "日期窗口起点计算失败".to_string())?;
 
-    // 跨账本投资汇总基准的前置探测（issue #1630，不计入任何基准）：附属账本
-    // 夹具必须齐备且 schema 与主库一致——删除生成侧（或夹具残缺）→ 此处失败
-    // → 基准运行红（删除即变红），不静默少算本数。主库连接即「活动本」，
-    // schema 版本同生产取自活动本（建连必经迁移，即当前应用 schema 版本）。
     let active_schema_version =
         ledger_infra::db::schema_version(conn).map_err(|e| e.to_string())?;
     let attached_books =
         super::books::discover_attached_books(&cfg.books_dir, active_schema_version)?;
 
-    // ---- 16 项基准（每项一个定型参数的查询闭包） ------------------------
     let first_page_filter = TransactionListFilter {
         page_size: Some(PAGE_SIZE),
         page: Some(1),
@@ -358,7 +276,6 @@ pub(crate) fn run_benchmarks(
         page: Some(1),
         ..TransactionListFilter::default()
     };
-    // 每个闭包专用克隆（move 捕获，互不争用所有权）。
     let search_term = cfg.search_term.clone();
     let purchase_term = cfg.purchase_search_term.clone();
     let account_window_end = max_date.clone();
@@ -423,7 +340,6 @@ pub(crate) fn run_benchmarks(
         (
             "月度汇总",
             Box::new(move |conn| {
-                // 期间口径：from/to 任一存在即按期间聚合，year 参数不参与。
                 reports_domain::monthly_summary_rows(
                     conn,
                     0,
@@ -457,8 +373,6 @@ pub(crate) fn run_benchmarks(
         (
             "商户占比",
             Box::new(move |conn| {
-                // 全窗口期间口径（year 不参与），top_n None = 全量（issue #588
-                // 语义），报表三件套的第三件入集（issue #1627）。
                 reports_domain::merchant_shares_report(
                     conn,
                     0,
@@ -537,9 +451,6 @@ pub(crate) fn run_benchmarks(
         (
             "投资组合趋势",
             Box::new(move |conn| {
-                // 全窗口周线（issue #1627 入集；#1654 优化后：数量推算按标的
-                // 分组增量推进，周采样 × 标的的嵌套循环已消除，取数成本 =
-                // 全库腿流一次装载 + 逐价格行游标累加）。
                 query_portfolio_value_trend(conn, &trend_range)
                     .map_err(|e| e.to_string())
                     .map(|t| {
@@ -554,8 +465,6 @@ pub(crate) fn run_benchmarks(
         (
             "资金加权收益率",
             Box::new(move |conn| {
-                // 区间不设界 = IPC 命令的缺省调用形态（unwrap_or_default）；
-                // 每对（账户 × 标的）一次 XIRR 数值解（200 次迭代）。
                 query_money_weighted_return_summary(conn, &mwr_range)
                     .map_err(|e| e.to_string())
                     .map(|s| {
@@ -587,11 +496,6 @@ pub(crate) fn run_benchmarks(
         (
             "跨账本投资汇总",
             Box::new(move |conn| {
-                // 生产编排同形（issue #1630 / ADR-0114，唯一接缝不变）：经壳层
-                // 编排 pub 函数与 IPC 命令同一编排/SQL 路径——附属账本逐本只读
-                // 建连探测取数（collect_other_books 内含密文/空库/版本分派，
-                // 连接取数后即弃）→ 主库连接＝活动本读 → 当期汇率折算合并。
-                // 每次迭代重建附属账本连接是生产形态（汇总命令逐次建连）。
                 let (rows, mut readings) =
                     collect_other_books(&attached_books, ACTIVE_BOOK_ID, active_schema_version);
                 readings.push(read_book_investment(conn).map_err(|e| e.to_string())?);
@@ -605,7 +509,7 @@ pub(crate) fn run_benchmarks(
                     .iter()
                     .filter(|r| r.status == CrossBookBookStatus::Included)
                     .count()
-                    + 1; // + 主库（活动本恒计入）
+                    + 1;
                 Ok(format!(
                     "{included}/{} 本计入（{} 附属 + 主库），市值合计 {} 分，可投资资产 {} 分",
                     rows.len() + 1,
@@ -617,7 +521,6 @@ pub(crate) fn run_benchmarks(
         ),
     ];
 
-    // ---- 预热 + 计时 ------------------------------------------------------
     if cfg.iterations == 0 {
         return Err("--iterations 至少为 1".to_string());
     }
@@ -646,10 +549,6 @@ pub(crate) fn run_benchmarks(
     Ok(results)
 }
 
-/// 初始化 tracing subscriber（stderr，默认 info）：让连接工厂自动挂载的
-/// perf_trace 慢查询 warn（≥100ms）在终端可见。重复初始化静默忽略
-/// （测试进程内可能已被其它用例占用全局 subscriber）。bench-import 子命令
-/// 同样依赖该挂载归因刷新段耗时（issue #532），故开放为 bin 内共享。
 pub(crate) fn init_tracing() {
     use tracing_subscriber::EnvFilter;
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
@@ -660,7 +559,6 @@ pub(crate) fn init_tracing() {
         .try_init();
 }
 
-/// 人读表格输出：min / avg / p95 三列 + 超阈值标记。
 fn print_report(db: &Path, cfg: &BenchConfig, results: &[BenchMetrics]) {
     let threshold_ms = DEFAULT_SLOW_QUERY_THRESHOLD.as_secs_f64() * 1000.0;
     println!("ledger-perf bench —— 查询基准报告");
@@ -670,10 +568,6 @@ fn print_report(db: &Path, cfg: &BenchConfig, results: &[BenchMetrics]) {
         cfg.warmup, cfg.iterations, threshold_ms
     );
     println!();
-    // CJK 名称在 {:<N} 下按字符数填充、与终端显示宽错位：名称列宽随最长行
-    // 动态取、表头构造与写基准同源（共享 [`bench_common::name_column_width`]
-    // / [`bench_common::metric_table_header`]，issue #1650）；数字列右对齐
-    // 10/11 位，单位毫秒入表头；▲ 超阈值标记列自持。
     let name_width = name_column_width(results.iter().map(|r| r.name));
     println!("{}", metric_table_header(name_width));
     for r in results {

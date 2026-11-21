@@ -1,8 +1,3 @@
-//! 仪表盘域单测（issue #1702）：多语句读闭包的快照一致性探针——净资产三腿
-//! （余额 / 持仓 / 实物）必须同快照。探针机制见
-//! `tauri_app_lib::test_support::snapshot_probe`；域内测试目标随本票立项，
-//! 其余纯读聚合仍由根包侧三层测试覆盖（壳层命令集成与 e2e BDD）。
-
 use ledger_transaction::amount::TransactionKind;
 use ledger_transaction::{TransactionInput, create_transaction_internal};
 
@@ -15,8 +10,6 @@ use tauri_app_lib::test_support::{
     seed_instrument, seed_market_price,
 };
 
-/// 买入输入（价格权威形态：金额 = 数量 × 单价 + 手续费；先例：投资域测试
-/// common 的同名构造器，域特有形态不上收工厂）。
 fn make_buy_input(account_id: &str, instrument_id: &str, qty: f64, price: i64) -> TransactionInput {
     TransactionInput {
         funding: Vec::new(),
@@ -49,15 +42,6 @@ fn make_buy_input(account_id: &str, instrument_id: &str, qty: f64, price: i64) -
     }
 }
 
-/// 净资产三腿（余额 / 持仓 / 实物）必须同快照（issue #1702）：总览由余额腿
-/// （accounts × balance cache，含投资账户现金）、持仓腿（v_holdings）、实物腿
-/// 多段语句拼出，「总量 = 三腿和」要求三腿同时点。种子：现金户 1000000 CNY、
-/// 证券户买入 10 股（现金 −70000 CNY、持仓 70000 CNY，市值 = 成本，净资产 1000000）。
-/// 探针在持仓腿读取开始前于另一连接**原子**提交「现金缓存减 50000 + 现价翻倍」——
-/// - 读闭包无快照保护（红）：余额腿读旧（930000）、持仓腿读新（140000），
-///   总量 1070000 不属于任何快照（前快照 1000000、后快照 1020000）——
-///   「现金已挪动而余额腿未见」的双计形态；
-/// - 读闭包收进读事务（绿）：注入写被挡住，三腿同见种子一套数。
 #[test]
 fn dashboard_overview_legs_share_one_snapshot() {
     let dir = ScratchDir::new("dashboard-overview-read-snapshot");
@@ -73,11 +57,8 @@ fn dashboard_overview_legs_share_one_snapshot() {
     )
     .unwrap();
     ledger_accounts::balance::refresh_all_account_balances(&conn).unwrap();
-    // 现价 = 买入价（10 元/股）：持仓腿 = 10 股 × 10000 分 × 7 = 70000 分（CNY）。
     seed_market_price(&conn, "inst-dash", 100_000, "USD");
 
-    // 探针：持仓腿读取（`FROM v_holdings h JOIN accounts a`，与余额腿的
-    // accounts / account_balance_cache 读取区分）开始前，另一连接提交两语句写。
     snapshot_probe::arm(
         &conn,
         dir.path(),
@@ -115,9 +96,6 @@ fn dashboard_overview_legs_share_one_snapshot() {
     assert_eq!(after.native_currency, "CNY", "折算基准币种不应漂移");
 }
 
-/// 公式版本标签（ADR-0020 修订）：升级前写入的旧口径缓存行（指纹不带当前
-/// 公式标签，终值为旧口径「不含投资账户现金」）必须失配、被实时重算回填，
-/// 不把旧口径终值当作新口径读出。
 #[test]
 fn legacy_formula_cache_row_is_recomputed() {
     let dir = ScratchDir::new("dashboard-overview-legacy-cache");
@@ -133,7 +111,6 @@ fn legacy_formula_cache_row_is_recomputed() {
     );
     ledger_accounts::balance::refresh_all_account_balances(&conn).unwrap();
 
-    // 旧版指纹 = 当前指纹去掉公式标签前缀（升级前写入的形态）。
     let current = current_fingerprint(&conn).unwrap();
     let (_tag, legacy_fingerprint) = current.split_once('|').unwrap();
     write_cache(
@@ -157,9 +134,6 @@ fn legacy_formula_cache_row_is_recomputed() {
     assert_eq!(overview.accounts_balance_cents, 700_000);
 }
 
-/// 净资产总量 = 三腿之和的第三腿击杀面（变异测试报告 2026-10 首轮：既有两
-/// 测试的实物腿均为 0，求和 `+` 的符号变异在 ±0 下不可区分）。实物腿非零时
-/// 总量必须计入实物估值，断言总量与三腿各自的具体数值。
 #[test]
 fn dashboard_overview_net_worth_includes_physical_assets_leg() {
     let conn = open();

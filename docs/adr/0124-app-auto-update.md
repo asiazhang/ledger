@@ -57,3 +57,7 @@ macOS、Windows（NSIS）、Linux（AppImage）经官方 updater 插件自更新
 - Windows 静默安装未经平台代码签名的安装器：交互安装的 SmartScreen 警告不直接适用于静默更新路径，但平台签名缓行的信任缺口仍在；出现真实用户反馈再重开 ADR-0066 决策 4。
 - 词汇表新立应用更新分域（自动更新、更新检查、更新清单、更新工件、更新签名），「更新前备份」归备份域（谁定义、谁消费）。与 ADR-0066「构建/发布不进词汇表」的分界：自动更新是有运行时行为与界面面的用户可见功能，不是纯构建基建。
 - 用户升级率与清单可达性（GitHub 直连）在首个发布周期观察；国内直连不可达的反馈达到阈值时，启用端点镜像（决策 2 的预留扩展位），不改代码。
+
+## 修订注记（#2206，2026-11-21）：测试夹具签名密钥的安全边界与再生成（原 `tests/commands/app_update.rs` 夹具注记并入）
+
+测试夹具使用测试专用 minisign 密钥对签发更新工件签名：私钥不入库，密钥泄漏无生产影响——夹具公钥只烧入本测试夹具配置（`fixtures/updater/tauri.conf.json`），与生产签名公钥无关；trusted comment 绑定夹具版本 1.2.3。再生成方式：`pnpm exec tauri signer generate -w <key> --password "" --ci` 生成后 `pnpm exec tauri signer sign -f <key> -p "" --app-version 1.2.3 <artifact>` 签发，`.sig` 文件内容（base64 文本）原样内嵌清单 `signature` 字段，公钥同步烧入夹具配置。

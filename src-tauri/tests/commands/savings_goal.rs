@@ -1,11 +1,3 @@
-//! 储蓄目标命令面集成测试（spec #1750 / issue #1751，壳三件套 + 接线证明，
-//! ADR-0087 / CONTEXT-testing「壳三件套」「接线证明」）。
-//!
-//! 直调命令函数（`#[tokio::test]`）：断言面只有参数解包的成功 / 错误码形态与
-//! 一步可观察接线证明——创建返回成功且专属账户经账户域读命令可读、拒绝路径
-//! 再读不存在。域结果细节（进度算术、达成判定、联动矩阵）归域单测权威层
-//!（`ledger-savings-goal` 的 tests），此处不越层。
-
 use ledger_savings_goal::{
     SavingsGoalInput, SavingsGoalPaceSource, SavingsGoalProgress, SavingsGoalUpdateInput,
 };
@@ -18,25 +10,15 @@ use tauri_app_lib::test_support::ScratchDir;
 
 type AppHandle = tauri::AppHandle<tauri::test::MockRuntime>;
 
-/// mock 应用 + 产品文件库（惰性门面路径，ADR-0125 决策 1/4）：返回值第二元是
-/// 暂存目录 guard，调用方持有到用例结束（仓库的测试暂存目录纪律）。
 fn app_with_db() -> (AppHandle, ScratchDir) {
     let app = tauri::test::mock_app();
-    // 写路径副作用与交易域接缝接线（与测试工厂 / 生产启动同形，幂等，进程级）：
-    // 本套件经产品建缝拿文件库连接（不入测试工厂，ADR-0084 决策 3），建库单点
-    // 的注册不覆盖本处，落库前显式接线。
     ledger_accounts::balance::install_balance_refresh_hook();
     tauri_app_lib::transaction_wiring::install_all();
-    // 库走产品开库入口（open_db_in：建连 + 迁移成对，ScratchDir guard 随返回持有，
-    // 用例结束整棵删除）——建库两行序的测试侧唯一入口是 test_support 工厂，文件库
-    // 形态走产品入口（ADR-0084 决策 3 / sync_channel 先例）。
     let dir = ScratchDir::new("savings-goal-commands-it");
     app.manage(ledger_infra::db::open_db_in(&dir).expect("文件库应可建"));
     (app.handle().clone(), dir)
 }
 
-/// 接线证明（AC4）：创建目标返回成功，专属账户经账户域读命令可读（other 类型、
-/// 与目标 1:1 绑定——绑定在进度读数的 account_id 上可见）。
 #[tokio::test]
 async fn create_goal_returns_success_and_bound_account_is_readable() {
     let (app, _dir) = app_with_db();
@@ -52,7 +34,6 @@ async fn create_goal_returns_success_and_bound_account_is_readable() {
     .await
     .expect("创建目标应返回成功");
 
-    // 进度读命令可见该目标，且绑定指向专属账户
     let progress: Vec<SavingsGoalProgress> = savings_goal_progress(app.state())
         .await
         .expect("进度读命令应成功");
@@ -60,7 +41,6 @@ async fn create_goal_returns_success_and_bound_account_is_readable() {
     let row = &progress[0];
     assert_eq!(row.goal.id, goal_id);
 
-    // 专属账户经账户域读命令可读：other 类型、名字随目标
     let accounts = list_accounts(app.state())
         .await
         .expect("账户域读命令应成功");
@@ -76,8 +56,6 @@ async fn create_goal_returns_success_and_bound_account_is_readable() {
     );
 }
 
-/// 壳三件套（错误码）+ 接线证明负向面：非正目标金额被码化错误拒绝，
-/// 再读不存在——无目标行、无专属账户。
 #[tokio::test]
 async fn create_goal_rejects_non_positive_amount_with_code() {
     let (app, _dir) = app_with_db();
@@ -110,8 +88,6 @@ async fn create_goal_rejects_non_positive_amount_with_code() {
     );
 }
 
-/// 接线证明（AC1）：编辑目标返回成功，专属账户经账户域读命令可读出新名——
-/// 改名联动落在账户列表（各下拉同一参考来源）上一步可观察。
 #[tokio::test]
 async fn update_goal_returns_success_and_account_is_renamed() {
     let (app, _dir) = app_with_db();
@@ -141,14 +117,12 @@ async fn update_goal_returns_success_and_account_is_renamed() {
     .await
     .expect("编辑目标应返回成功");
 
-    // 进度读命令可见编辑后的目标（读出的绑定指向同一专属账户）
     let progress: Vec<SavingsGoalProgress> = savings_goal_progress(app.state())
         .await
         .expect("进度读命令应成功");
     assert_eq!(progress.len(), 1);
     let account_id = progress[0].goal.account_id.clone();
 
-    // 专属账户经账户域读命令读出新名（账户列表 / 各下拉同一参考来源）
     let accounts = list_accounts(app.state())
         .await
         .expect("账户域读命令应成功");
@@ -159,8 +133,6 @@ async fn update_goal_returns_success_and_account_is_renamed() {
     assert_eq!(bound.name, "换车基金", "改名后账户列表同步更新");
 }
 
-/// 壳三件套（错误码）+ 接线证明负向面：编辑目标金额非正数（与创建同校验）被
-/// 码化错误拒绝，再读目标仍在且金额未变（拒绝零落库）。
 #[tokio::test]
 async fn update_goal_rejects_non_positive_amount_with_code() {
     let (app, _dir) = app_with_db();
@@ -200,9 +172,6 @@ async fn update_goal_rejects_non_positive_amount_with_code() {
     assert_eq!(progress.len(), 1, "拒绝编辑不应删除目标");
 }
 
-/// 接线证明（issue #1753）：进度读命令携带双向推算——手填节奏 + 无截止 ETA、
-/// 关联计划节奏优先（经定时计划命令挂计划后节奏来源切到 Plan）。域算术细节
-/// 归域单测，此处只证接线一步可观察。
 #[tokio::test]
 async fn progress_command_wires_projection() {
     let (app, _dir) = app_with_db();
@@ -218,7 +187,6 @@ async fn progress_command_wires_projection() {
     .await
     .expect("创建目标应返回成功");
 
-    // 手填节奏（编辑命令，issue #1752）：读命令应回显节奏与 ETA
     update_savings_goal(
         app.state(),
         app.clone(),
@@ -242,8 +210,6 @@ async fn progress_command_wires_projection() {
     assert!(row.eta_months.is_some(), "无截止 + 有节奏 → ETA 月数在场");
     assert!(row.eta_month.is_some(), "预计年月在场");
 
-    // 有截止反推（编辑命令设截止日 + 挂计划的两分支归域单测权威层）：清节奏后
-    // 读命令仍给出所需月存（纯目标参数算术）、差值缺席。
     update_savings_goal(
         app.state(),
         app.clone(),
@@ -272,18 +238,12 @@ async fn progress_command_wires_projection() {
     assert_eq!(row.eta_months, None, "有截止日不正推 ETA");
 }
 
-// ---------------------------------------------------------------------------
-// 生命周期守卫（issue #1754）：归档 / 取消归档 / 删除守卫 + 账户禁删壳层编排。
-// ---------------------------------------------------------------------------
-
 use ledger_infra::db::DbState;
 use tauri_app_lib::commands::accounts::delete_account;
 use tauri_app_lib::commands::savings_goal::{
     archive_savings_goal, delete_savings_goal, unarchive_savings_goal,
 };
 
-/// 接线证明（AC 归档）：归档 / 取消归档命令往返——进度读命令 status 字段可见
-/// archived / active 切换；专属账户全程可读（归档不删账户）。
 #[tokio::test]
 async fn archive_unarchive_roundtrip_wires_progress_status() {
     let (app, _dir) = app_with_db();
@@ -321,15 +281,11 @@ async fn archive_unarchive_roundtrip_wires_progress_status() {
         ledger_savings_goal::SavingsGoalStatus::Active
     );
 
-    // 账户侧读命令全程可见专属账户（归档不删任何东西）
     let accounts = list_accounts(app.state()).await.expect("账户读命令应成功");
     let account_id = progress[0].goal.account_id.clone();
     assert!(accounts.iter().any(|a| a.id == account_id));
 }
 
-/// 壳三件套（错误码）+ 接线证明负向面：余额非零删除被码化拒绝（引导先转出），
-/// 目标与专属账户原样；真实支出清零后删除成功，专属账户经账户域读命令再读
-/// 不存在、目标退出进度读数。
 #[tokio::test]
 async fn delete_goal_guards_balance_then_cascades_account() {
     let (app, _dir) = app_with_db();
@@ -349,8 +305,6 @@ async fn delete_goal_guards_balance_then_cascades_account() {
         .expect("进度读命令应成功");
     let account_id = progress[0].goal.account_id.clone();
 
-    // 造数走真实 transfer 蓄水（余额缓存由产品写路径维护）：命令测试无独立写
-    // 命令面向目标账户，经 DbState 连接直驱交易域公开入口。
     {
         let conn = app.state::<DbState>().conn.clone();
         let guard = conn.lock().expect("种子写入锁应可取");
@@ -378,7 +332,6 @@ async fn delete_goal_guards_balance_then_cascades_account() {
         .expect("进度读命令应成功");
     assert_eq!(progress.len(), 1, "拒绝删除后目标原样");
 
-    // 清零（真实支出冲销余额）后删除：目标退出进度读数、专属账户再读不存在
     {
         let conn = app.state::<DbState>().conn.clone();
         let guard = conn.lock().expect("种子写入锁应可取");
@@ -407,9 +360,6 @@ async fn delete_goal_guards_balance_then_cascades_account() {
     );
 }
 
-/// 接线证明（AC 账户侧删除被拒·壳层编排，删除编排调用本测试即红）：删除在用
-/// 目标的专属账户被码化拒绝（账户域不反向依赖目标域，守卫经壳层编排落在删除
-/// 账户命令入口）；普通账户（非目标绑定）照常删除成功。
 #[tokio::test]
 async fn delete_account_of_active_goal_is_rejected_by_shell_orchestration() {
     let (app, _dir) = app_with_db();
@@ -437,7 +387,6 @@ async fn delete_account_of_active_goal_is_rejected_by_shell_orchestration() {
         "应报码化错误 savings-goal.account-in-use，实际 {err:?}"
     );
 
-    // 普通账户（非目标绑定）照常可删——守卫只拦目标绑定账户
     let plain = {
         let conn = app.state::<DbState>().conn.clone();
         let guard = conn.lock().expect("种子写入锁应可取");
@@ -460,7 +409,6 @@ async fn delete_account_of_active_goal_is_rejected_by_shell_orchestration() {
         .expect("非目标账户删除应成功");
 }
 
-/// 造数：真实 transfer 输入（公开写入口，域单测同款全字段形态）。
 fn transfer_input(from: &str, to: &str, amount_cents: i64) -> ledger_transaction::TransactionInput {
     ledger_transaction::TransactionInput {
         funding: Vec::new(),

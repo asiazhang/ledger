@@ -1,7 +1,3 @@
-//! 场外基金申赎记账 BDD 步骤（issue #302 / ADR-0038 金额权威）：确认单整分金额 +
-//! 确认份额为权威输入（wire 不携带单价，由后端行为层反算净值），持仓与已实现
-//! 盈亏读回断言（闭合不变式：全平仓 Σ 已实现盈亏 = Σ 卖出金额 − Σ 买入金额）。
-
 use cucumber::{given, then, when};
 use rusqlite::params;
 
@@ -14,8 +10,6 @@ use crate::common::{instrument_id_by_symbol, query_all_transactions};
 use crate::step_inputs::{buy_input, sell_input};
 use crate::world::LedgerWorld;
 
-/// 经投资域核心创建入口建基金标的字典行（#763 旁路归零；基金不设手动白名单，
-/// 核心入口与 AI HTTP 端点同款五类全开；场景无来源断言，来源标记不涉被测语义）。
 #[given(expr = "存在基金标的 {string} 名称 {string}")]
 fn create_fund_instrument(world: &mut LedgerWorld, symbol: String, name: String) {
     let input = InstrumentInput {
@@ -28,18 +22,12 @@ fn create_fund_instrument(world: &mut LedgerWorld, symbol: String, name: String)
     world_write!(world, |conn| create_instrument(conn, input)).expect("新建基金标的失败");
 }
 
-/// 确认单三联（issue #302 金额权威）：份额、整分金额、手续费——基金申赎步骤的
-/// 热点数值入参打包，避免步骤助手长参数列表。
 struct FundConfirmation {
     quantity: f64,
     amount_cents: i64,
     fee_cents: i64,
 }
 
-/// 按确认单录入基金申赎（金额权威：amount_cents = 确认单整分金额，wire 不带单价）。
-/// `funding_name` 非空时携带出资账户（issue #937 / ADR-0096：直扣买卖的资金流归因），
-/// 经同一行为层公开创建入口写入。交易日由调用方显式给出（issue #982）：转换旅程的
-/// 申赎须与转换日构成先后（FIFO 消耗序），既有步骤的固定日期仅是缺省捷径。
 fn fund_trade(
     world: &mut LedgerWorld,
     kind: TransactionKind,
@@ -63,9 +51,6 @@ fn fund_trade(
             |r| r.get(0),
         )
         .expect("账户不存在");
-    // 金额权威（issue #302 / ADR-0038）：确认单整分金额 + 手续费进 wire，
-    // 单价不落 wire（L1 买卖工厂金额置零 + 单价权威为默认，基金经结构体
-    // 更新改走金额权威——step_inputs::buy_input 文档载明的基金形态）。
     let base = match kind {
         TransactionKind::Buy => buy_input(&instrument_id, quantity, None, &account_id, date),
         TransactionKind::Sell => sell_input(&instrument_id, quantity, None, &account_id, date),
@@ -107,7 +92,6 @@ fn fund_buy(
     );
 }
 
-/// 带交易日形态（issue #982）：转换旅程的申购日须先于转换日（FIFO 消耗序）。
 #[when(
     expr = "按确认单于 {string} 申购基金 {string} 份额 {float} 金额 {int} 手续费 {int} 到投资账户 {string}"
 )]
@@ -159,7 +143,6 @@ fn fund_sell(
     );
 }
 
-/// 带交易日形态（issue #982）：全平仓旅程的赎回日在转换之后。
 #[when(
     expr = "按确认单于 {string} 赎回基金 {string} 份额 {float} 金额 {int} 手续费 {int} 从投资账户 {string}"
 )]
@@ -187,8 +170,6 @@ fn fund_sell_on(
     );
 }
 
-/// 直扣申购（issue #937 / ADR-0096）：出资账户命中的买入——结算现金从出资账户
-/// 流出、投资账户现金腿为 0。经同一行为层公开创建入口写入（公开写入口，非裸 SQL）。
 #[when(
     expr = "按确认单出资账户申购基金 {string} 份额 {float} 金额 {int} 手续费 {int} 到投资账户 {string} 出资账户 {string}"
 )]
@@ -216,7 +197,6 @@ fn fund_buy_with_funding(
     );
 }
 
-/// 断言最近一笔申赎的明细（扩展表投影：份额/反算净值/手续费）。
 fn assert_fund_trade_detail(
     world: &LedgerWorld,
     symbol: &str,
@@ -306,9 +286,6 @@ fn assert_fund_realized_pnl_total(world: &mut LedgerWorld, symbol: String, expec
     );
 }
 
-/// 列表两端展示断言（issue #937 / ADR-0096）：出资账户命中的 buy 行读回投影
-/// 同时携带投资账户（account_id）与出资账户（funding_account_id）——列表双链接
-/// 与下钻的行级数据前提；「转出 → 转入」断言（transactions_write_steps）同形。
 #[then(expr = "该买入 account_id 应匹配账户 {string}")]
 fn check_buy_investment_account(world: &mut LedgerWorld, account_name: String) {
     let txn = world.txn.transactions_list.last().expect("交易列表为空");

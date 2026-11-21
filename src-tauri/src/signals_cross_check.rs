@@ -1,30 +1,3 @@
-//! 信号守门测试（ADR-0044 决策 3 修订 / ADR-0073 决策 5，spec #523）：信号映射单点
-//! × 两壳写路径接线的源码扫描核对。仅测试可见（lib.rs 以 `#[cfg(test)]` 挂载），
-//! 生产构建不含本模块。
-//!
-//! 手写声明表已消亡为源码扫描派生物（ADR-0073 决策 5）：从命令 / handler 函数体
-//! 扫描 `write_entry` 调用点提取（声明壳, 身份）派生表，配合例外白名单与反向守门，
-//! 「漏声明即红」的守门价值不降级：
-//! - **孤儿身份**：`signals_for` 映射表中的每个写操作身份都必须被至少一个壳声明
-//!   （`write_entry` 调用点或例外白名单）；特例条目 `AutoBackupDeepPath` 除外
-//!   （登记生产者清单、刻意不做命令键）；
-//! - **单壳身份唯一**：同一壳里两个命令/端点声明同一 `WriteOp` 视为复制粘贴错误；
-//! - **反向守门**：命令 / handler 函数体内出现 `db::write` / 发射调用而无
-//!   `write_entry` 即红——「绕开入口写库」的回归被兜住，不经入口的声明写命令
-//!   必须进例外白名单（逐个附动机）；
-//! - **归因串核对**（ADR-0073 决策 4 顺带）：IPC 侧 `write_entry` 归因串 == 命令名；
-//!   HTTP 侧归因串 == 契约端点键（`METHOD /path`），日志逐字节不漂。
-//!
-//! 「声明了但映射缺行」方向由 `signals_for` 的编译期穷尽 match 兜底（enum 新增
-//! 变体漏改映射编译即错）；测试仍对每个声明身份复核映射返回值形状，把该方向
-//! 的保障显式登记在测试面。信号知识本身（每身份一条直测断言，含零信号显式）
-//! 全部保留在 `signals::tests`，不在本文件。
-//!
-//! 扫描形态与既有守门先例同款（`scripts/check-structure.ts`）：测试期文本级扫描，
-//! 掩码注释与字符串/char 字面量后匹配；词法器具单点住 `test_support::scan`
-//!（issue #1433，与 TS 侧 `maskNonCode` 双源同规）；经别名改名的间接引用文本
-//! 不可达，靠评审兜底。
-
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::Path;
@@ -36,29 +9,16 @@ use utoipa::OpenApi;
 
 include!(concat!(env!("OUT_DIR"), "/commands_manifest.rs"));
 
-// ---------------------------------------------------------------------------
-// 源码扫描器具：分块、令牌提取（测试期文本级扫描，ADR-0073 决策 5）；
-// 词法掩码与花括号配对原语住 test_support::scan（issue #1433 单一维护点）
-// ---------------------------------------------------------------------------
-
-/// 一个命令 / handler 函数体的扫描单元：锚点属性（`#[tauri::command]` 或
-/// `#[utoipa::path(...)]`）起、下一锚点（或文件尾 / 测试模块）止。
 struct Chunk {
-    /// 函数名（块内首个 `pub [async] fn` 的标识符）。
     name: String,
-    /// 掩码后文本（注释与字符串已空白化），供令牌扫描。
     masked: String,
-    /// 原文文本，供归因串 / 端点键等字符串字面量提取。
     raw: String,
 }
 
-/// 从掩码文本中按锚点切分函数体块：锚点位置在掩码文本上查找（注释中的锚点
-/// 字样不误伤），块边界切在原文上（保留字符串字面量供提取）。
 fn split_chunks(source: &str, anchor: &str) -> Vec<Chunk> {
     let masked = mask_non_code(source);
     let masked_chars: Vec<char> = masked.chars().collect();
     let source_chars: Vec<char> = source.chars().collect();
-    // 掩码保长：字符下标在两份文本上同位（按 char 计）。
     assert_eq!(masked_chars.len(), source_chars.len(), "掩码必须保长");
 
     let needle: Vec<char> = anchor.chars().collect();
@@ -73,7 +33,6 @@ fn split_chunks(source: &str, anchor: &str) -> Vec<Chunk> {
         }
     }
 
-    // 附加边界：测试模块起点（ai.rs 先例：命令后的 #[cfg(test)] 不属于命令体）。
     const TEST_ANCHOR: &str = "#[cfg(test)]";
     let test_needle: Vec<char> = TEST_ANCHOR.chars().collect();
     let mut ends: Vec<usize> = Vec::new();
@@ -94,13 +53,6 @@ fn split_chunks(source: &str, anchor: &str) -> Vec<Chunk> {
             .copied()
             .or_else(|| ends.iter().copied().find(|&e| e > start))
             .unwrap_or(masked_chars.len());
-        // 块边界截断到首个函数体的花括号配对结束（掩码文本上配对可靠）：
-        // 命令 / handler 块不再吞并锚点之间的非命令 helper（如 encryption.rs
-        // `resume_business_surface` 的手写锁行不应算进相邻命令的函数体，
-        // ADR-0104 读侧守门暴露后修正；对写侧声明提取 / 归因串核对无变化，
-        // 对反向守门是收紧——不再把后续函数的 bypass 形态算进命令体）。找不到
-        // 函数体（器具漂移）时回退旧边界，由下游断言兜底。
-        // fn_body_end 返回切片内相对偏移，加 start 绝对化；找不到函数体时回退旧边界。
         let end = fn_body_end(&masked_chars[start..next].iter().collect::<String>())
             .map(|rel| start + rel)
             .unwrap_or(next);
@@ -117,13 +69,8 @@ fn split_chunks(source: &str, anchor: &str) -> Vec<Chunk> {
     chunks
 }
 
-/// 块内首个 `pub [async] fn` 的标记对（[`fn_name`] 命名提取与
-/// [`fn_body_end`] 函数体定位共用，防两处漂移）。
 const FN_MARKERS: [&str; 2] = ["pub async fn ", "pub fn "];
 
-/// 掩码文本切片内首个 `pub [async] fn` 函数体的花括号配对结束位置（切片末尾
-/// 相对偏移）：从函数名后首个 `{` 起经 [`matching_brace_end`] 配对（#1433 上收
-/// 单一实现）。注释与字符串已在掩码中空白化，花括号只来自真实代码，配对可靠。
 fn fn_body_end(masked: &str) -> Option<usize> {
     let fn_pos = FN_MARKERS
         .iter()
@@ -133,7 +80,6 @@ fn fn_body_end(masked: &str) -> Option<usize> {
     matching_brace_end(masked, open)
 }
 
-/// 块内首个 `pub [async] fn` 的标识符（命令 / handler 函数体的命名约定）。
 fn fn_name(masked: &str) -> Option<String> {
     for marker in FN_MARKERS {
         if let Some(pos) = masked.find(marker) {
@@ -150,12 +96,10 @@ fn fn_name(masked: &str) -> Option<String> {
     None
 }
 
-/// 掩码文本中某令牌出现次数。
 fn count_token(masked: &str, token: &str) -> usize {
     masked.matches(token).count()
 }
 
-/// 掩码文本中出现的全部 `WriteOp::<Variant>` 身份（去重）。
 fn write_op_identities(masked: &str) -> HashSet<String> {
     let mut ops = HashSet::new();
     let mut rest = masked;
@@ -173,8 +117,6 @@ fn write_op_identities(masked: &str) -> HashSet<String> {
     ops
 }
 
-/// 掩码文本中是否出现 `db::write` / `.write(` / 发射调用（反向守门的 bypass 形态；
-/// 文本级扫描，别名改写不可达靠评审兜底）。
 fn has_bypass_write_or_emit(masked: &str, include_http_emit: bool) -> bool {
     if count_token(masked, "db::write(") > 0 || count_token(masked, ".write(") > 0 {
         return true;
@@ -185,18 +127,12 @@ fn has_bypass_write_or_emit(masked: &str, include_http_emit: bool) -> bool {
     include_http_emit && count_token(masked, "emit_after_write(") > 0
 }
 
-/// 写入口调用形态闭集（issue #1276）：整段（`write_entry(`）与分段取锁、
-/// 整体裁决（`write_entry_segmented(`，同步轮次形态）及 async 编排体分段形态
-///（`write_entry_segmented_async(`，issue #1412）。「每个命令/端点恰好一处写
-/// 入口调用」的裁决对各形态同责（父 spec #1274 实现决策 4）；三个分段名共享
-/// 前缀 `write_entry_segmented`，后随 `_` 不构成前名，需逐一枚举计数。
 const WRITE_ENTRY_CALL_TOKENS: [&str; 3] = [
     "write_entry(",
     "write_entry_segmented(",
     "write_entry_segmented_async(",
 ];
 
-/// 掩码文本中写入口调用点总数（两种形态合计）。
 fn write_entry_call_count(masked: &str) -> usize {
     WRITE_ENTRY_CALL_TOKENS
         .iter()
@@ -204,8 +140,6 @@ fn write_entry_call_count(masked: &str) -> usize {
         .sum()
 }
 
-/// 从原文中提取写入口调用点（两种形态取先出现者）的首个字符串字面量（span
-/// 归因串）。
 fn write_entry_span(raw: &str) -> Option<String> {
     let (pos, token) = WRITE_ENTRY_CALL_TOKENS
         .iter()
@@ -217,8 +151,6 @@ fn write_entry_span(raw: &str) -> Option<String> {
     Some(rest[..end].to_string())
 }
 
-/// 从原文的 `#[utoipa::path(` 属性提取契约端点键（`METHOD /path`，与 OpenAPI
-/// 契约端点键同款形状）。
 fn handler_endpoint_key(raw: &str) -> Option<String> {
     let pos = raw.find("#[utoipa::path(")? + "#[utoipa::path(".len();
     let rest = raw[pos..].trim_start();
@@ -232,7 +164,6 @@ fn handler_endpoint_key(raw: &str) -> Option<String> {
     Some(format!("{} {}", method.to_uppercase(), &rest[..end]))
 }
 
-/// 目录下全部 .rs 文件的源文本（按文件名排序，输出确定）。
 fn read_sources(rel: &str) -> Vec<(String, String)> {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join(rel);
     let mut entries: Vec<_> = fs::read_dir(&dir)
@@ -251,7 +182,6 @@ fn read_sources(rel: &str) -> Vec<(String, String)> {
         .collect()
 }
 
-/// IPC 壳的 `#[tauri::command]` 函数体块（全命令域文件）。
 fn ipc_command_chunks() -> Vec<Chunk> {
     let mut chunks = Vec::new();
     for (_, src) in read_sources("src/commands") {
@@ -260,10 +190,6 @@ fn ipc_command_chunks() -> Vec<Chunk> {
     chunks
 }
 
-/// 例外白名单（ADR-0073 决策 5）：不经 `write_entry` 的声明写命令，逐个附动机。
-/// 这些命令保留身份声明（孤儿身份核对把本表并入声明集）；除白名单登记外，
-/// 新写命令一律走 `write_entry`，不新增本表条目。两壳共用本清单：HTTP 壳
-/// 无例外（9 个写端点全部迁入写入口，ADR-0073 决策 7）。
 const IPC_WRITE_ENTRY_EXCEPTIONS: &[(&str, WriteOp, &str)] = &[
     (
         "create_backup",
@@ -332,8 +258,6 @@ const IPC_WRITE_ENTRY_EXCEPTIONS: &[(&str, WriteOp, &str)] = &[
     ),
 ];
 
-/// IPC 派生声明表：`write_entry` 调用点提取的（命令, 身份）。
-/// 每个调用点块恰有一次调用、恰有一个身份（多身份/零身份即红）。
 fn ipc_derived_declarations() -> Vec<(String, WriteOp)> {
     let mut declared = Vec::new();
     for chunk in ipc_command_chunks() {
@@ -360,10 +284,6 @@ fn ipc_derived_declarations() -> Vec<(String, WriteOp)> {
     declared
 }
 
-/// 扫描提取的身份标识符 → `WriteOp`（ADR-0102 决策 2）：改经宏同体派生的
-/// [`WriteOp::from_ident`] 映射，手写 `parse_write_op` 穷尽臂已消亡。映射臂集由
-/// 宏清单构造性保证完备；提取到非变体文本（扫描器具自身漂移）以断言失败报
-/// 「扫描提取漂移」。
 fn resolve_write_op(ident: &str) -> WriteOp {
     WriteOp::from_ident(ident).unwrap_or_else(|| {
         panic!(
@@ -373,7 +293,6 @@ fn resolve_write_op(ident: &str) -> WriteOp {
     })
 }
 
-/// HTTP 壳的 `#[utoipa::path(...)]` handler 函数体块（全 handler 文件）。
 fn http_handler_chunks() -> Vec<Chunk> {
     let mut chunks = Vec::new();
     for (_, src) in read_sources("src/api_server/handlers") {
@@ -382,9 +301,6 @@ fn http_handler_chunks() -> Vec<Chunk> {
     chunks
 }
 
-/// HTTP 派生声明表：handler 块内 `write_entry` 调用点提取的（端点键, 身份）。
-/// 端点键取自 handler 自身的 `#[utoipa::path]` 契约注解（`METHOD /path`，与
-/// OpenAPI 同源派生）——注解漂移即键漂移，守门顺带核对。
 fn http_derived_declarations() -> Vec<(String, WriteOp)> {
     let mut declared = Vec::new();
     for chunk in http_handler_chunks() {
@@ -412,8 +328,6 @@ fn http_derived_declarations() -> Vec<(String, WriteOp)> {
     declared
 }
 
-/// OpenAPI 契约自描述的端点集（`"METHOD /path"` 形状）：HTTP 壳注册面真源，
-/// 与 `#[utoipa::path]` 注解同源派生。
 fn openapi_endpoints() -> HashSet<String> {
     let doc = ApiDoc::openapi();
     let mut endpoints = HashSet::new();
@@ -432,8 +346,6 @@ fn openapi_endpoints() -> HashSet<String> {
     endpoints
 }
 
-/// 两壳声明（IPC 派生 + 白名单、HTTP 派生）的 `Some` 身份并集（跨壳共享同一
-/// `WriteOp` 合法，如账户删除命令与 `DELETE /api/v1/accounts/{id}`）。
 fn declared_ops() -> HashSet<WriteOp> {
     ipc_derived_declarations()
         .iter()
@@ -443,14 +355,6 @@ fn declared_ops() -> HashSet<WriteOp> {
         .collect()
 }
 
-// ---------------------------------------------------------------------------
-// 守门一：孤儿身份——每个被映射身份至少被一壳声明（ADR-0044 决策 3 原样保留）
-// ---------------------------------------------------------------------------
-
-/// 「映射未声明」反向核对（#335 验收项原样保留）：`signals_for` 映射表中的每个
-/// 写操作身份（穷尽 match = 全部变体）都必须被至少一个壳声明——`write_entry`
-/// 调用点或例外白名单；特例条目 `AutoBackupDeepPath` 豁免（生产者清单登记，
-/// 发射走镜像句柄，不经壳层）。
 #[test]
 fn every_mapped_write_op_is_declared_by_some_shell() {
     let declared = declared_ops();
@@ -466,12 +370,6 @@ fn every_mapped_write_op_is_declared_by_some_shell() {
     }
 }
 
-// ---------------------------------------------------------------------------
-// 守门二：单壳身份唯一（#335 原样保留，声明源改为扫描派生 + 白名单）
-// ---------------------------------------------------------------------------
-
-/// 同一壳里两个命令/端点声明同一 `WriteOp` 视为复制粘贴错误（跨壳共享合法——
-/// 两壳写同一数据本就共享身份）。
 #[test]
 fn write_op_is_declared_at_most_once_per_shell() {
     for (shell, declared) in [
@@ -500,12 +398,6 @@ fn write_op_is_declared_at_most_once_per_shell() {
     }
 }
 
-// ---------------------------------------------------------------------------
-// 守门三：声明身份必被映射（编译期穷尽 match 的测试面显式登记，#335 原样保留）
-// ---------------------------------------------------------------------------
-
-/// 每个声明身份经 `signals_for` 的返回值必须落在四个已知信号集之内——映射行
-/// 不缺、形状不漂。
 #[test]
 fn every_declared_write_op_is_mapped() {
     let ipc: Vec<(String, WriteOp)> = ipc_derived_declarations();
@@ -532,13 +424,6 @@ fn every_declared_write_op_is_mapped() {
     }
 }
 
-// ---------------------------------------------------------------------------
-// 守门四：IPC 反向守门 + 归因串核对 + 注册面耦合（ADR-0073 决策 5）
-// ---------------------------------------------------------------------------
-
-/// IPC 反向守门：命令体内出现 `db::write` / `.write(` / 发射调用而无
-/// `write_entry` 即红，「绕开入口写库」的回归被兜住；不经入口的声明写命令
-/// 必须在例外白名单登记。
 #[test]
 fn ipc_write_calls_must_go_through_write_entry() {
     let exceptions: HashSet<&str> = IPC_WRITE_ENTRY_EXCEPTIONS
@@ -560,8 +445,6 @@ fn ipc_write_calls_must_go_through_write_entry() {
     }
 }
 
-/// IPC 归因串核对（ADR-0073 决策 4 顺带）：`write_entry` 归因串 == 命令名，
-/// SQL 耗时日志逐字节不漂（ADR-0009 / ADR-0068）。
 #[test]
 fn ipc_write_entry_span_matches_command_name() {
     for chunk in ipc_command_chunks() {
@@ -582,10 +465,6 @@ fn ipc_write_entry_span_matches_command_name() {
     }
 }
 
-/// 启动期两扇门禁白名单（锁定 `LOCKED_ALLOWED_COMMANDS` / 启动失败
-/// `BOOT_FAILURE_ALLOWED_COMMANDS`，lib.rs）中的每个命令名都必须真实注册
-/// （build.rs 生成的 ADR-0047 真源）：白名单字符串漂移（命令改名后白名单
-/// 残留旧名）在此即红，而非运行期静默放行失败。
 #[test]
 fn startup_gate_allowlists_only_contain_registered_commands() {
     let registry: HashSet<&str> = IPC_COMMAND_MANIFEST.iter().copied().collect();
@@ -600,8 +479,6 @@ fn startup_gate_allowlists_only_contain_registered_commands() {
     }
 }
 
-/// IPC 派生命令必须都在注册清单上（build.rs 生成的 ADR-0047 真源）：扫描器具
-/// 自身的命名提取漂移（误把非命令 fn 当命令）在此即红。
 #[test]
 fn ipc_derived_declarations_are_registered_commands() {
     let registry: HashSet<&str> = IPC_COMMAND_MANIFEST.iter().copied().collect();
@@ -613,10 +490,6 @@ fn ipc_derived_declarations_are_registered_commands() {
     }
 }
 
-/// 例外白名单名字必须都在命令注册清单上（build.rs 生成的 ADR-0047 真源，
-/// ADR-0102 决策 5 顺带核对，`startup_gate_allowlists_only_contain_registered_commands`
-/// 同款器具）：白名单身份是类型化变体（非漂移面），但命令名字此前无「仍真实存在」
-/// 守门——命令改名 / 删除后旧条目静默残留为死条目，在此即红。
 #[test]
 fn ipc_write_entry_exceptions_only_contain_registered_commands() {
     let registry: HashSet<&str> = IPC_COMMAND_MANIFEST.iter().copied().collect();
@@ -628,13 +501,6 @@ fn ipc_write_entry_exceptions_only_contain_registered_commands() {
     }
 }
 
-// ---------------------------------------------------------------------------
-// 守门五：HTTP 反向守门 + 归因串/端点键核对 + 契约面耦合（ADR-0073 决策 5）
-// ---------------------------------------------------------------------------
-
-/// HTTP 反向守门：handler 函数体内出现 `db::write` / `.write(` / 发射调用而无
-/// `write_entry` 即红，「绕开入口写库」的回归被兜住。HTTP 壳无例外白名单——
-/// 9 个写端点全部经统一写入口（ADR-0073 决策 7）。
 #[test]
 fn http_write_calls_must_go_through_write_entry() {
     for chunk in http_handler_chunks() {
@@ -650,9 +516,6 @@ fn http_write_calls_must_go_through_write_entry() {
     }
 }
 
-/// HTTP 归因串核对（ADR-0073 决策 4 顺带）：`write_entry` 归因串 == 契约端点键
-///（`METHOD /path`，取自 handler 自身的 `#[utoipa::path]` 注解），SQL 耗时日志
-/// 逐字节不漂（ADR-0009 / ADR-0068）。
 #[test]
 fn http_write_entry_span_matches_endpoint_key() {
     for chunk in http_handler_chunks() {
@@ -675,9 +538,6 @@ fn http_write_entry_span_matches_endpoint_key() {
     }
 }
 
-/// HTTP 派生端点键必须都在 OpenAPI 契约端点集上（契约自描述真源）：注解与
-/// 契约装配同源派生，本核对把该事实显式登记在测试面——扫描提取漂移或契约
-/// 漏记在此即红（接替旧「声明表 × OpenAPI」双向比对的写端点方向）。
 #[test]
 fn http_derived_endpoint_keys_are_in_openapi_contract() {
     let endpoints = openapi_endpoints();
@@ -689,26 +549,8 @@ fn http_derived_endpoint_keys_are_in_openapi_contract() {
     }
 }
 
-// ---------------------------------------------------------------------------
-// 守门六：读侧锁仪式反向守门（ADR-0104 决策 6，ADR-0073 决策 5 同形）
-// ---------------------------------------------------------------------------
-
-/// 壳层标准锁行模式（ADR-0104）：锁获取 + 锁失败映射的手抄仪式——全仓复制量
-/// 最大的一行。统一读入口 [`crate::shell_support::read_entry::read_entry`] 体内单点之后，
-/// 壳层命令 / handler 函数体不应再手抄本行（确属不经读入口的命令进下方豁免
-/// 清单）。文本级扫描（掩码后匹配），换行拆写或别名改写不可达，靠评审兜底
-/// （与写侧扫描同款边界）。
 pub(crate) const STANDARD_LOCK_LINE: &str = ".lock().map_err(|e| AppError::Db(e.to_string()))";
 
-/// 读侧锁仪式豁免清单（ADR-0104 决策 6）：不经统一读/写入口、函数体保留手写
-/// 标准锁行的命令，逐个附动机。与写侧 [`IPC_WRITE_ENTRY_EXCEPTIONS`] **分立**——
-/// 两者核对的知识不同（写身份 vs 锁仪式），合并会混淆（ADR-0104 代价 2）。
-/// 全部 7 条来自 ADR-0104 决策 5 的 B/C 组结构性理由（写侧白名单写命令、锁内
-/// 文件/网络、分支锁、mut 守卫）；迁移后壳层不经入口的手写标准锁行恰为本表
-/// 7 条，以 `rg` 实测为准（`publish_sync_checkpoint` 自 issue #1284 起配置
-/// 读取迁入读入口、仅余快照产出短锁，形状 C 登记撤销；快照产出段的短锁由
-/// `read_entry(` 调用点满足反向守门）。HTTP 壳无例外（7 个读端点全部迁入读
-/// 入口，ADR-0104 决策 7）。
 const IPC_READ_ENTRY_EXCEPTIONS: &[(&str, &str)] = &[
     (
         "create_backup",
@@ -741,15 +583,10 @@ const IPC_READ_ENTRY_EXCEPTIONS: &[(&str, &str)] = &[
     ),
 ];
 
-/// 块内是否出现手写标准锁行（掩码文本上匹配，注释/字符串不误伤）。
 fn has_handwritten_lock(masked: &str) -> bool {
     count_token(masked, STANDARD_LOCK_LINE) > 0
 }
 
-/// IPC 反向守门（读侧，ADR-0104 决策 6）：命令体内出现标准锁行而同函数体无
-/// `read_entry` / `write_entry` 即红——「手抄锁仪式回潮」在测试期拦住（写入口
-/// 体内单点持锁同样满足；本票要消灭的失败类恰是评审最守不住的手抄回潮）。
-/// 确属不经读入口的命令必须在 [`IPC_READ_ENTRY_EXCEPTIONS`] 登记并附动机。
 #[test]
 fn ipc_lock_ritual_must_go_through_read_entry() {
     let exceptions: HashSet<&str> = IPC_READ_ENTRY_EXCEPTIONS.iter().map(|(n, _)| *n).collect();
@@ -769,9 +606,6 @@ fn ipc_lock_ritual_must_go_through_read_entry() {
     }
 }
 
-/// HTTP 反向守门（读侧，ADR-0104 决策 6）：handler 函数体内出现标准锁行而同
-/// 函数体无 `read_entry` / `write_entry` 即红。HTTP 壳无豁免清单——7 个读端点
-/// 全部迁入读入口（ADR-0104 决策 7），出现手写锁行即回归。
 #[test]
 fn http_lock_ritual_must_go_through_read_entry() {
     for chunk in http_handler_chunks() {
@@ -788,12 +622,6 @@ fn http_lock_ritual_must_go_through_read_entry() {
     }
 }
 
-/// 建连线收口守门（issue #1280 / ADR-0117 决策 4）：壳层源码不得直接调 rusqlite
-/// 的连接构造器（`Connection::open` / `open_with_flags`）——建连一律经基础设施
-/// `db` 的收口函数（明文/密文、写形/只读形、内存库），连接生命周期不得绕开
-/// 建连收尾单点手拷第二条连接（读连接时代每账本两连接，绕开收口即产生口令
-/// 注入与超时口径的漂移点）。基础设斲 `db` 内部与引导层自有裸连接（转换、
-/// 验证）不在扫描范围（本测试只扫壳层 `src/` 顶层）。
 #[test]
 fn shell_never_constructs_db_connections_directly() {
     for (name, src) in read_sources("src") {
@@ -809,21 +637,6 @@ fn shell_never_constructs_db_connections_directly() {
     }
 }
 
-/// 换连线收口守门（issue #1303 / ADR-0117 决策 4 换连半边，#961 同款纪律，
-/// 与建连守门同址同形制）：连接换装原语（成对 [`DbState::swap_pair`]、读槽
-/// `replace_read_conn(_slot)`、`placeholderize_read_conn`）的生产调用点
-/// 白名单——换入/换出收口既有换连单点，出现第三个手搓换装副本即红：
-/// - `boot.rs`：引导序列连接换入（`swap_or_manage_db_state`：换入或首登记）
-///   与占位化（`detach_read_conn`）；
-/// - `encryption.rs`：解锁/重置编排（`resume_business_surface` 直呼
-///   `swap_pair`，ADR-0112 决策 5 合法依赖直呼）；
-/// - `backup.rs`：恢复路径槽级换出豁免（无 DbState 句柄也必须可用，
-///   issue #601 前置修复，经槽级自由函数消费同一机制）。
-///
-/// 扫描根 = 壳层 `src` 顶层 + `src/commands`（与建连守门同款非递归单层，
-/// `api_server`/`shell_support` 等子目录不在本守门范围，同款评审兜底边界）；
-/// 基础设施 `db` 内部（原语本体与同 crate 单测）不在扫描范围。读槽单槽换入
-/// 的编译期半边由 `replace_read_conn` 的 `pub(crate)` 收窄承担（issue #1303）。
 #[test]
 fn shell_connection_swaps_stay_in_whitelisted_files() {
     const SWAP_FILE_WHITELIST: [&str; 3] = ["boot.rs", "encryption.rs", "backup.rs"];
@@ -859,8 +672,6 @@ fn shell_connection_swaps_stay_in_whitelisted_files() {
     }
 }
 
-/// 读侧豁免清单名字必须都在命令注册清单上（build.rs 生成的 ADR-0047 真源，
-/// 写侧同款死条目守卫）：命令改名 / 删除后旧条目静默残留为死条目，在此即红。
 #[test]
 fn ipc_read_entry_exceptions_only_contain_registered_commands() {
     let registry: HashSet<&str> = IPC_COMMAND_MANIFEST.iter().copied().collect();

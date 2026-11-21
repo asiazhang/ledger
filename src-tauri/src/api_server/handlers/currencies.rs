@@ -1,5 +1,3 @@
-//! 币种端点：种子币种清单（导入映射用）。
-
 use axum::Json;
 use axum::extract::State;
 

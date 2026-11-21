@@ -13,11 +13,6 @@ use crate::step_inputs::{parse_kind, plain_input};
 use crate::step_verbs::create_transaction_verb;
 use crate::world::LedgerWorld;
 
-// ---------------------------------------------------------------------------
-// When：创建带分类引用的交易（issue #377 分类下钻场景用）
-// ---------------------------------------------------------------------------
-
-/// 分类下钻场景用（issue #377）：中性底座 + 分类覆盖，经创建动词写入。
 #[when(expr = "创建交易 类型 {string} 金额 {int} 到账户 {string} 日期 {string} 分类 {string}")]
 fn create_txn_with_category(
     world: &mut LedgerWorld,
@@ -36,15 +31,6 @@ fn create_txn_with_category(
     world.txn.transactions_list = query_all_transactions(&world_conn!(world));
 }
 
-// ---------------------------------------------------------------------------
-// 服务端分页（issue-32：items + total，offset 页码模式）
-// ---------------------------------------------------------------------------
-
-/// 同日批量导入：直接写库模拟"同一批导入每批一个时间戳"（全部行 created_at 相同，
-/// 只有 id tiebreaker 能区分排序），用于验证确定性排序下翻页无重复无遗漏。
-/// 库内状态直置（#764 已登记例外）：同 created_at 平局正是被测前提，行为层
-/// 逐行发放秒级时钟（writer 内 `now_iso()`），跨秒即失去平局、前提无法确定性
-/// 构造；写入路径无时刻注入接缝（为测试开口被 ADR-0086 否决）。
 #[when(expr = "批量导入 {int} 笔同日交易 日期 {string} 到账户 {string}")]
 fn batch_import_same_day(world: &mut LedgerWorld, count: i64, date: String, account_name: String) {
     let account_id = world.account_id(&account_name);
@@ -64,8 +50,6 @@ fn batch_import_same_day(world: &mut LedgerWorld, count: i64, date: String, acco
     world.txn.transactions_list = query_all_transactions(&world_conn!(world));
 }
 
-/// 执行分页查询并断言当前页条数与 total，快照 items 供后续步骤使用。
-/// 四个 `check_page*` step 共用（避免重复的断言形状）。
 fn assert_paged(
     world: &mut LedgerWorld,
     filter: TransactionListFilter,
@@ -152,7 +136,6 @@ fn check_page_involving_account(
     );
 }
 
-/// 单值类型经集合参数（spec #1025：原单值 kind 参数已移除，BREAKING）。
 #[then(expr = "分页查询 kind {string} page {int} page_size {int} 应返回 {int} 条 total {int}")]
 fn check_page_kind(
     world: &mut LedgerWorld,
@@ -233,7 +216,7 @@ fn check_page_merchant(
 #[then(
     expr = "分页查询 商户 {string} 涉及账户 {string} page {int} page_size {int} 应返回 {int} 条 total {int}"
 )]
-#[allow(clippy::too_many_arguments)] // cucumber step 签名由表达式参数决定，无法缩减
+#[allow(clippy::too_many_arguments)]
 fn check_page_merchant_involving_account(
     world: &mut LedgerWorld,
     merchant_name: String,
@@ -263,7 +246,7 @@ fn check_page_merchant_involving_account(
 #[then(
     expr = "分页查询 商户 {string} 日期 {string} 至 {string} page {int} page_size {int} 应返回 {int} 条 total {int}"
 )]
-#[allow(clippy::too_many_arguments)] // cucumber step 签名由表达式参数决定，无法缩减
+#[allow(clippy::too_many_arguments)]
 fn check_page_merchant_date(
     world: &mut LedgerWorld,
     merchant_name: String,
@@ -337,22 +320,12 @@ fn check_page_uncategorized(
     );
 }
 
-// ---------------------------------------------------------------------------
-// 类型集合过滤（issue #581 报表分类下钻载荷）：播种 + 查询步骤
-// ---------------------------------------------------------------------------
-
-/// "expense,refund" → Vec<TransactionKind>：逗号分隔闭集字面量，未知值 panic（测试步骤即败）。
 fn parse_kinds(raw: &str) -> Vec<TransactionKind> {
     raw.split(',')
         .map(|k| TransactionKind::parse(k).unwrap_or_else(|e| panic!("非法 kind: {k}（{e}）")))
         .collect()
 }
 
-/// 播种 9 种 kind × 带分类/无分类共 18 行（读侧过滤域级测试）：写入路径按 kind 各有
-/// 专用校验（buy/sell 需标的、convert 需两标的与份额、refund 需关联原支出），而本场景
-/// 只针对读过滤接缝（kind IN + category_id IS NULL 的 AND 组合），直插 SQL 与同日批量
-/// 导入步骤同先例。库内状态直置（#764 已登记例外）：convert/split 需两标的与在用持仓、
-/// dividend 需标的、refund 需关联原支出——全 kind 统一覆盖无法经公开写入入口构造。
 #[when(expr = "播种 9 类交易各带分类与无分类 日期 {string} 到账户 {string} 分类 {string}")]
 fn seed_kinds_with_and_without_category(
     world: &mut LedgerWorld,
@@ -403,7 +376,6 @@ fn check_page_kinds(
     );
 }
 
-/// 下钻载荷组合形态（分类 + 类型集合，报表下钻落点查询）。spec #1025 旅程用。
 #[then(
     expr = "分页查询 分类 {string} 类型集合 {string} page {int} page_size {int} 应返回 {int} 条 total {int}"
 )]
@@ -432,7 +404,6 @@ fn check_page_category_kinds(
     );
 }
 
-/// 列表快照行同时含两个类型（维度内取或，spec #1025 多选旅程）。
 #[then(expr = "列表行应同时含类型 {string} 与 {string}")]
 fn check_rows_contain_both_kinds(world: &mut LedgerWorld, kind_a: String, kind_b: String) {
     let parse =
@@ -488,10 +459,6 @@ fn check_default(world: &mut LedgerWorld, expected_count: i64, expected_total: i
     world.txn.transactions_list = result.items;
 }
 
-/// 契约哨兵（issue #1783 / ADR-0135）：无 kinds 参数（TransactionListFilter::default()）
-/// 必须覆盖全部 kind 闭集——HTTP API 外部消费与交易搜索依赖此契约。变红条件 = 有人在
-/// 后端给缺省查询加默认 kind 排除（例如默认排除投资 kind）：主列表收窄走前端显式
-/// kind 集合，后端缺省语义冻结（只增不改）。
 #[then(expr = "缺省查询应覆盖全部 {int} 类交易")]
 fn check_default_covers_all_kinds(world: &mut LedgerWorld, expected_kinds: i64) {
     let all = TransactionKind::ALL;

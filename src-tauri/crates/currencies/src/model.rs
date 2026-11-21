@@ -1,10 +1,3 @@
-//! 币种领域模型（#418 随域归位）：币种实体 + 汇率实体。
-//!
-//! 自全局模型目录迁入本域（#417 归属原则：实体归属优先于消费方分布）：
-//! 汇率是币种参考数据的从属实体（`exchange_rates` 以 base/quote 双外键挂在
-//! `currencies` 上），随币种域走；投资域是汇率的消费方与录入入口，经域路径
-//! 显式 import 消费。域内类型经 `currencies` 逐类型再导出，禁止 glob。
-
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 

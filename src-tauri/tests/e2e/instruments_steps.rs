@@ -1,9 +1,3 @@
-//! 标的字典步骤（issue #199）：搜索语义的 BDD 接缝。实现为
-//! `investment::list_instruments`（与 IPC 命令同一实现，#401 域目录化后直调域入口）。
-//! 另载按代码即拉添加基金的编排接缝（issue #301 / ADR-0103）：行情源报价以注入桩离线驱动，
-//! 实现为 `investment::add_fund_by_code_with`（与 IPC 命令同一套
-//! 校验/拉取编排/落库实现，网络层经注入替换）。
-
 use cucumber::{given, then, when};
 use rusqlite::params;
 
@@ -18,14 +12,6 @@ use ledger_investment::{
 
 use crate::world::LedgerWorld;
 
-// ---------------------------------------------------------------------------
-// Given
-// ---------------------------------------------------------------------------
-
-/// 直插金融工具字典行（投资域字典，可指定中文名称供拼音语义场景使用）。
-/// 库内状态直置（#764 已登记例外）：场景以此夹具模拟「存量同步行」（来源
-/// 'eastmoney'），公开创建入口只产 'manual' 行（来源随行终身不变，ADR-0036），
-/// 「同步来源拒删」「upsert 来源不改写」等被测前提依赖直置。
 #[given(expr = "存在标的 {string} 名称 {string} 币种 {string}")]
 fn create_instrument_named(
     world: &mut LedgerWorld,
@@ -43,8 +29,6 @@ fn create_instrument_named(
         .unwrap();
 }
 
-/// 直插指定类型的金融工具字典行（同码异类型消歧场景用，issue #294；
-/// 同步来源直置例外，动机同上）。
 #[given(expr = "存在类型 {string} 的标的 {string} 名称 {string} 币种 {string}")]
 fn create_instrument_of_type(
     world: &mut LedgerWorld,
@@ -63,9 +47,6 @@ fn create_instrument_of_type(
         .unwrap();
 }
 
-/// 直插指定市场的金融工具字典行（美股持仓折算场景用，issue #696：
-/// market 为闭集值如 nasdaq/nyse/amex，经 V002 检查约束验证落库；
-/// 同步来源直置例外，动机同上）。
 #[given(expr = "存在市场 {string} 的标的 {string} 名称 {string} 币种 {string}")]
 fn create_instrument_with_market(
     world: &mut LedgerWorld,
@@ -84,15 +65,6 @@ fn create_instrument_with_market(
         .unwrap();
 }
 
-// ---------------------------------------------------------------------------
-// When
-// ---------------------------------------------------------------------------
-
-/// 手动创建标的（issue #290 / ADR-0036）：驱动 IPC 命令入口层守卫同一接缝
-/// `create_instrument_manual`（类型白名单 + 名称必填在先，核心创建函数
-/// 通用）。市场固定未知（不传入参，缺省 unknown）——自定义标的通道建档
-/// 同此形状（issue #826：#697 兜底建档的市场透传随一级通道化退役）；
-/// 结果/错误记入 world 供 Then 断言。
 #[when(expr = "手动创建标的 {string} 类型 {string} 名称 {string} 币种 {string}")]
 fn manual_create_instrument(
     world: &mut LedgerWorld,
@@ -114,10 +86,6 @@ fn manual_create_instrument(
     }
 }
 
-/// 删除标的（issue #292 / ADR-0036 决策 5）：驱动 IPC 命令同一接缝
-/// `delete_instrument`（守卫前置检查在核心函数内）。入参为标的代码：
-/// 场景内代码唯一，按（代码）取 id 驱动；结果/错误记入 world 供 Then 断言。
-/// 步骤前提是标的已存在（不存在标的的错误路径由域单测覆盖）。
 #[when(expr = "删除标的 {string}")]
 fn delete_instrument(world: &mut LedgerWorld, symbol: String) {
     let id: String = world_conn!(world)
@@ -133,7 +101,6 @@ fn delete_instrument(world: &mut LedgerWorld, symbol: String) {
     }
 }
 
-/// 列出全部标的（无过滤）：验证列表返回体来源字段的接缝（issue #290 验收项）。
 #[when(expr = "列出全部标的")]
 fn list_all_instruments(world: &mut LedgerWorld) {
     world.asset.last_instrument_search = Some(
@@ -152,7 +119,6 @@ fn search_instruments(world: &mut LedgerWorld, query: String) {
         Some(list_instruments(&world_conn!(world), &filter).expect("标的搜索失败"));
 }
 
-/// 按类型过滤搜索（同码异类型消歧语义，issue #294；与 HTTP 端点的 type 参数同一接缝）。
 #[when(expr = "搜索类型 {string} 的标的 {string}")]
 fn search_instruments_of_kind(world: &mut LedgerWorld, kind: String, query: String) {
     let filter = InstrumentListFilter {
@@ -163,10 +129,6 @@ fn search_instruments_of_kind(world: &mut LedgerWorld, kind: String, query: Stri
     world.asset.last_instrument_search =
         Some(list_instruments(&world_conn!(world), &filter).expect("标的搜索失败"));
 }
-
-// ---------------------------------------------------------------------------
-// Then
-// ---------------------------------------------------------------------------
 
 #[then(expr = "标的搜索命中 {int} 条 总数 {int}")]
 fn assert_instrument_search(world: &mut LedgerWorld, items: usize, total: i64) {
@@ -193,9 +155,6 @@ fn assert_instrument_first_symbol(world: &mut LedgerWorld, symbol: String) {
     );
 }
 
-/// 标的列表返回体带来源字段（issue #290）：存量同步行回填 'eastmoney'、
-/// 手动新建行标 'manual'。该字段是删除准入的字典来源判定依据，不经标的列表
-/// 的「价格来源」列展示（列表列展示的是价格通道派生事实，issue #1189）。
 #[then(expr = "标的列表代码 {string} 来源应为 {string}")]
 fn assert_instrument_list_source(world: &mut LedgerWorld, symbol: String, source: String) {
     let result = world
@@ -239,7 +198,6 @@ fn assert_manual_create_error(world: &mut LedgerWorld, fragment: String) {
     );
 }
 
-/// 删除守卫中文错误（issue #292）：同 last_error 记录断言模式。
 #[then(expr = "删除标的应返回错误 {string}")]
 fn assert_delete_instrument_error(world: &mut LedgerWorld, fragment: String) {
     let error = world
@@ -252,14 +210,6 @@ fn assert_delete_instrument_error(world: &mut LedgerWorld, fragment: String) {
     );
 }
 
-// ---------------------------------------------------------------------------
-// ---------------------------------------------------------------------------
-// 焦点定位（issue #1907）：来源跳转落标的页签——anchor_id 返回所在页，
-// 行集切到该页（行必在返回页内 → 前端行高亮可靠）
-// ---------------------------------------------------------------------------
-
-/// 以标的代码为锚点查询标的列表（场景内代码唯一）：域接缝直调，与 IPC 命令
-/// 同一实现（先例：列表搜索步骤直调 `investment::list_instruments`）。
 #[when(expr = "以 {string} 为锚点查询标的列表")]
 fn locate_instrument_page(world: &mut LedgerWorld, symbol: String) {
     let id: String = world_conn!(world)
@@ -272,7 +222,6 @@ fn locate_instrument_page(world: &mut LedgerWorld, symbol: String) {
     query_with_anchor(world, Some(id));
 }
 
-/// 以未知 id 为锚点：定位不落空的回落语义（不在结果集 → 按普通页码查询）。
 #[when(expr = "以未知 id 为锚点查询标的列表")]
 fn locate_instrument_page_unknown(world: &mut LedgerWorld) {
     query_with_anchor(world, Some("inst-unknown-id".to_string()));
@@ -295,7 +244,6 @@ fn query_with_anchor(world: &mut LedgerWorld, anchor_id: Option<String>) {
     }
 }
 
-/// 锚点所在页：列表响应携带 anchor_page（分页定位接缝的读出）。
 #[then(expr = "锚点应落在第 {int} 页")]
 fn assert_anchor_page(world: &mut LedgerWorld, expected: usize) {
     let result = world
@@ -310,7 +258,6 @@ fn assert_anchor_page(world: &mut LedgerWorld, expected: usize) {
     );
 }
 
-/// 锚点不在结果集：anchor_page 缺省不携带（回落普通页码，不提供落空的跳转）。
 #[then(expr = "锚点应落空（不携带所在页）")]
 fn assert_anchor_page_absent(world: &mut LedgerWorld) {
     let result = world
@@ -324,7 +271,6 @@ fn assert_anchor_page_absent(world: &mut LedgerWorld) {
     );
 }
 
-/// 锚点行在返回页内（行必在当前页，前端据此高亮）。
 #[then(expr = "锚点行 {string} 应在返回页内")]
 fn assert_anchor_row_in_page(world: &mut LedgerWorld, symbol: String) {
     let result = world
@@ -339,14 +285,6 @@ fn assert_anchor_row_in_page(world: &mut LedgerWorld, symbol: String) {
     );
 }
 
-// ---------------------------------------------------------------------------
-// 按代码即拉添加基金（issue #301 / ADR-0038）：When 注入桩驱动编排接缝
-// ---------------------------------------------------------------------------
-
-/// 驱动添加基金编排接缝并把错误记入 world（供 Then 断言；成功经重列标的/现价缓存断言）。
-/// 获取函数收到请求代码时须全等（桩只对目标代码返回详情）。接缝保持同步形状
-///（ADR-0125 决策 7 / issue #1413：闭包是锁外已拉取报价的同步回放/离线桩，
-/// 不承载网络等待；连接不跨任何 `await`）。
 fn run_add_fund<F>(world: &mut LedgerWorld, code: String, fetch: F)
 where
     F: FnMut(&str, &str) -> Result<Quote>,
@@ -367,8 +305,6 @@ fn add_fund_with_stub_detail(
     nav: f64,
     nav_date: String,
 ) {
-    // 统一报价载荷（行情接入，ADR-0103）：价格日期与净值日期同为净值日期；
-    // 基金分类已弃用恒缺省（ADR-0130 决策 8），桩与生产取数产物同形。
     let quote = Quote {
         code: code.clone(),
         name,
@@ -421,18 +357,6 @@ fn add_fund_with_stub_not_found(world: &mut LedgerWorld, code: String) {
     }
 }
 
-// ---------------------------------------------------------------------------
-// 添加投资标的·股票通道（issue #697 / spec #690；换源 ADR-0130 决策 2 / #1567）：
-// 市场必选的录入通道 → 按代码查询 → 类型自动识别 → 创建增强回填。编排接缝与
-// 生产 IPC 命令同一组合：fetch_stock_quote_for_add（锁外查询阶段）→
-// add_stock_instrument_with_quote（识别落库阶段）；行情以注入桩离线驱动，桩按
-// 「请求市场与命中市场全等（沪深港），或为聚合 us 且命中市场属美股三市场」决定
-// 命中——与数据源行为同构（美股不区分交易所，精确市场由响应自报），代码回显
-// 请求归一化形态（港股补零 / 美股大写）。
-// ---------------------------------------------------------------------------
-
-/// 股票添加的桩驱动组合：命中市场与行情内容随参数给定；`quote_market` 为 None
-/// 时桩恒未命中（查无此码），`Err(Io)` 形态以 `temporary_failure` 开关表达。
 async fn run_add_instrument<F, Fut>(
     world: &mut LedgerWorld,
     channel: String,
@@ -442,7 +366,6 @@ async fn run_add_instrument<F, Fut>(
     F: FnMut(&str, StockRoute) -> Fut,
     Fut: std::future::Future<Output = Result<Quote>>,
 {
-    // 查询阶段（生产在连接锁外）：通道解析 → 候选遍历。
     let quote = match fetch_stock_quote_for_add(&channel, &code, fetch).await {
         Ok(quote) => quote,
         Err(e) => {
@@ -450,7 +373,6 @@ async fn run_add_instrument<F, Fut>(
             return;
         }
     };
-    // 识别落库阶段（生产在统一写入口内）：类型 = 行情 kind_hint。
     match add_stock_instrument_with_quote(&world_conn!(world), &quote) {
         Ok(_) => world.last_error = None,
         Err(e) => world.last_error = Some(e.to_string()),
@@ -477,14 +399,9 @@ async fn add_instrument_with_stub_quote(
         let code = code.to_string();
         let name = name.clone();
         async move {
-            // 命中判定与数据源行为同构：请求路由 = 命中市场的聚合投影（消费
-            // 投资域 `as_stock_route` 单点，不自建第二份映射，issue #1673）。
             let hit = quote_market.as_quote_market().map(|qm| qm.as_stock_route()) == Some(route);
             if hit {
                 Ok(Quote {
-                    // 代码回显请求归一化形态（与访问层回显同构：命中判定 = 回显全等）；
-                    // 市场回显命中行自报的精确市场（美股请求为聚合 Us，数据源自报
-                    // nasdaq/nyse/amex，落库闭集不受聚合路由值污染）。
                     code,
                     name,
                     price_cents: Some(price_value_to_cents(price)),
@@ -534,10 +451,6 @@ async fn add_instrument_with_stub_temporary_failure(
     };
     run_add_instrument(world, channel, code, &mut fetch).await;
 }
-
-// ---------------------------------------------------------------------------
-// Then：标的字典行 / 现价缓存 / 错误
-// ---------------------------------------------------------------------------
 
 #[then(expr = "标的字典存在类型 {string} 代码 {string} 名称 {string} 来源 {string} 市场 {string}")]
 fn assert_instrument_row(
@@ -594,7 +507,6 @@ fn assert_fund_market_price(
         .unwrap_or_else(|e| panic!("基金 {symbol} 应有现价（{e}）"));
     assert_eq!(row.0, price_cents, "现价（万分之一元）不符");
     assert_eq!(row.1, currency, "币种不符");
-    // 现价的行情日期 = 净值日期（单位净值即价格，ADR-0038 决策 3），两处同源断言。
     assert_eq!(row.2, nav_date, "priced_at 应为净值日期");
     assert_eq!(row.3.as_deref(), Some(nav_date.as_str()), "nav_date 不符");
 }
@@ -636,9 +548,6 @@ fn assert_add_instrument_error(world: &mut LedgerWorld, fragment: String) {
     );
 }
 
-/// 股票/ETF 通道落库后的现价断言（issue #697）：与基金现价不同源——
-/// priced_at 为写入时刻、净值日期恒空（净值日期是场外基金语义，详断
-/// 在域单测 stock_add 钉住，此处不断言）。
 #[then(expr = "标的 {string} 现价为 {int} 币种 {string}")]
 fn assert_stock_market_price(
     world: &mut LedgerWorld,
