@@ -10,7 +10,10 @@ import { useLoadable } from "@ledger/loadable";
 import { api } from "@ledger/api";
 import { useAppStore } from "@/stores/app";
 import { useReferenceStore } from "@/stores/reference";
-import { buildTransactionColumns, expandPurchaseRows } from "@/transaction/transaction-columns";
+import {
+  buildTransactionColumns,
+  precomputeTransactionDisplayRows,
+} from "@/transaction/transaction-columns";
 import { sumFixedColumnWidths } from "@ledger/utils/table";
 import { type Transaction, type TransactionSearchFilter } from "@ledger/types";
 import type { NullableDateRange } from "@ledger/utils/time-period";
@@ -175,10 +178,13 @@ const columns = computed<DataTableColumn<Transaction>[]>(() =>
   buildTransactionColumns(reference, { expandPurchases: true }),
 );
 
-// 展开显示行集（展开/合并接线唯一入口）：命中交易每购买项一行、订单级格 rowSpan
-// 纵向合并；删除本接线（:data 回退原始行集）即 SearchView 购买项测试变红——搜索
-// 不再逐购买项呈现。分页与「共 N 条」仍按交易计（后端 total，ADR-0008 口径不变）。
-const displayRows = computed(() => expandPurchaseRows(results.value));
+// 展开显示行集 + 展示文本预计算（issue #2188，与交易列表同一接线）：数据到达或
+// 参考上下文变化时一次性产出展示文本，表格 patch 期零渲染期格式化（计数型渲染
+// 守门同源）；命中交易每购买项一行、订单级格 rowSpan 纵向合并。分页与「共 N 条」
+// 仍按交易计（后端 total，ADR-0008 口径不变）。
+const displayRows = computed(() =>
+  precomputeTransactionDisplayRows(reference, results.value, { expandPurchases: true }),
+);
 
 // scroll-x：列中所有固定列（有 width 的列，备注为弹性列不计入）宽度总和
 const scrollX = computed(() => sumFixedColumnWidths(columns.value));

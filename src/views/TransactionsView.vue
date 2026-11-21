@@ -65,7 +65,7 @@ import { useTransactionViewPreferencesStore } from "@/transaction/transaction-vi
 import {
   buildTransactionColumns,
   displayRowKey,
-  expandPurchaseRows,
+  precomputeTransactionDisplayRows,
   purchaseIndexOf,
   purchaseRowClass,
 } from "@/transaction/transaction-columns";
@@ -540,10 +540,16 @@ const columns = computed<DataTableColumn<Transaction>[]>(() => [
   }),
 ]);
 
-// 展开显示行集（展开/合并接线唯一入口）：带购买项的交易每项一行，订单级格以
-// rowSpan 纵向合并（ADR-0138 决策 13）；删除本接线（:data 回退原始行集）即
-// purchase-read.test.ts 变红——列表不再逐购买项呈现。
-const displayRows = computed(() => expandPurchaseRows(data.value));
+// 展开显示行集 + 展示文本预计算（issue #2188，展开/合并与预计算接线唯一入口）：
+// 数据到达或参考上下文变化（参考数据失效重拉、语言切换、亮/暗主题切换、金额隐私
+// 模式切换）时一次性产出每条显示行的展示文本与属性，表格 patch 期只读预计算字段、
+// 不再逐格调用国际化取词/金额格式化/分类路径解析/借贷方向派生（计数型渲染守门
+// ① 收紧到 0 的接线面）。带购买项的交易每项一行，订单级格以 rowSpan 纵向合并
+//（ADR-0138 决策 13）；删除本接线（:data 回退未预计算行集，列渲染回落渲染期逐格
+// 格式化）即计数守门变红。
+const displayRows = computed(() =>
+  precomputeTransactionDisplayRows(reference, data.value, { expandPurchases: true }),
+);
 
 // scroll-x：列中所有固定列（有 width 的列，备注为弹性列不计入）宽度总和
 const scrollX = computed(() => sumFixedColumnWidths(columns.value));
