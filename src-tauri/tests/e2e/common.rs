@@ -10,7 +10,6 @@ use ledger_transaction::{Transaction, TransactionInput};
 use crate::step_inputs::expense_input;
 use crate::world::LedgerWorld;
 
-/// 断言最近一次操作记录的错误信息包含指定片段（多个 `*_steps` 模块共用的 seam 断言）。
 pub fn assert_last_error_contains(world: &LedgerWorld, needle: &str) {
     match &world.last_error {
         Some(msg) => assert!(
@@ -21,10 +20,6 @@ pub fn assert_last_error_contains(world: &LedgerWorld, needle: &str) {
     }
 }
 
-/// 错误断言路径的 When 侧捕获（与 [`assert_last_error_contains`] 成对）：行为层
-/// 写入结果记入 `world.last_error`。臂形固定为两臂——码化错误记 message，其余
-/// （意外成功、非码化错误）一律记「预期失败但成功了」，由后续「应返回错误」
-/// 断言变红；与 write/edit 步骤既有逐处内联 match 同形，断言语义不变。
 pub fn capture_expected_error<T>(world: &mut LedgerWorld, result: Result<T, AppError>) {
     world.last_error = match result {
         Err(AppError::Coded { message, .. }) => Some(message),
@@ -32,8 +27,6 @@ pub fn capture_expected_error<T>(world: &mut LedgerWorld, result: Result<T, AppE
     };
 }
 
-/// 统计未删除交易数（backup/encryption/data_location 文件级步骤共用的内联
-/// COUNT 收编，#763）：连接形态，断言侧直接消费。
 pub fn count_transactions(conn: &Connection) -> i64 {
     conn.query_row(
         "SELECT COUNT(*) FROM transactions WHERE is_deleted = 0",
@@ -43,8 +36,6 @@ pub fn count_transactions(conn: &Connection) -> i64 {
     .unwrap()
 }
 
-/// 打开库文件（可选主口令）并统计未删除交易数（[#count_transactions] 的文件
-/// 形态）：备份恢复产物与加密转换副本的「应包含 N 条交易」断言共用。
 pub fn count_transactions_in_file(db: &Path, passphrase: Option<&str>) -> i64 {
     let conn = match passphrase {
         Some(p) => open_connection_with_passphrase(db, p).unwrap(),
@@ -53,10 +44,6 @@ pub fn count_transactions_in_file(db: &Path, passphrase: Option<&str>) -> i64 {
     count_transactions(&conn)
 }
 
-/// 在文件库中经账户域公开创建入口建现金账户（余额缓存行由产品代码保证，
-/// #763 旁路归零）并落 count 条带备注支出（L1 工厂 + 行为层接缝），返回账户
-/// id 供调用方注册。引导组四文件（backup/encryption/data_location/
-/// startup_failure）共用的种子形状：数量与日期各文件自选，备注按序号编码。
 pub fn seed_account_with_expenses(
     conn: &Connection,
     account: &str,
@@ -88,8 +75,6 @@ pub fn seed_account_with_expenses(
     id
 }
 
-/// 按标的代码取 id（场景内代码唯一；不存在即 panic——场景文本错误）。买入/卖出/
-/// 明细断言步骤共用（#761 收编：原 write/edit/policy 三文件内联同款 SELECT）。
 pub fn instrument_id_by_symbol(conn: &Connection, symbol: &str) -> String {
     conn.query_row(
         "SELECT id FROM instruments WHERE symbol=?1",
@@ -99,7 +84,6 @@ pub fn instrument_id_by_symbol(conn: &Connection, symbol: &str) -> String {
     .expect("标的不存在，先铺垫 Given 存在标的")
 }
 
-/// 查询全部未删除交易，按日期倒序（与 `list_transactions_internal` 的确定性排序一致，id 为 tiebreaker）。
 pub fn query_all_transactions(conn: &Connection) -> Vec<Transaction> {
     let mut stmt = conn
         .prepare(
@@ -134,9 +118,7 @@ pub fn query_all_transactions(conn: &Connection) -> Vec<Transaction> {
             policy_id: r.get(18)?,
             fx_rate_used: r.get(19)?,
             fx_rate_source: r.get(20)?,
-            // 步骤侧直读快照不做来源反查：来源契约断言一律走列表命令（transactions_source_steps）。
             source: None,
-            // 转换扩展同规：直读快照不反查，展示口径断言走列表命令。
             convert: None,
             purchases: Vec::new(),
         })
@@ -146,7 +128,6 @@ pub fn query_all_transactions(conn: &Connection) -> Vec<Transaction> {
     .collect()
 }
 
-/// 查询所有未删除、未隐藏账户名称（用户侧视角）。
 pub fn query_accounts_by_name(conn: &Connection) -> Vec<String> {
     let mut stmt = conn
         .prepare("SELECT name FROM accounts WHERE is_deleted=0 AND is_hidden=0 ORDER BY created_at")

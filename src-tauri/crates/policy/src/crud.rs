@@ -1,6 +1,3 @@
-//! 保单档案 CRUD 域行为：列表、创建、编辑与软删除（ADR-0051 决策 5：软删保留
-//! 历史行与既有引用列）；交易×保单来源列接缝的实现注册侧（#1092）。
-
 use std::collections::HashMap;
 
 use rusqlite::{Connection, OptionalExtension};
@@ -15,11 +12,9 @@ use ledger_sync_protocol::device::device_id;
 
 use super::validation::validate_input;
 
-/// 保单全列清单（读路径共用，与 `FromRow` 的列名约定一致）。
 const POLICY_COLUMNS: &str = "id,insurer_id,policy_number,product_name,start_date,end_date,\
      coverage_amount_cents,coverage_currency_code,note,created_at,updated_at,version,device_id,is_deleted";
 
-/// 按 `id` 读未删除保单（多命令共用的前检）：不存在（或已软删除）返回 `None`。
 fn get_policy_by_id(conn: &Connection, id: &str) -> Result<Option<Policy>> {
     query_one(
         conn,
@@ -28,8 +23,6 @@ fn get_policy_by_id(conn: &Connection, id: &str) -> Result<Option<Policy>> {
     )
 }
 
-/// 列出全部未删除保单，排序按创建先后（created_at 升序），保证列表稳定。
-/// 已删保单不进列表；到期状态不在此推导（展示层由保障期间即时推导，不持久化）。
 pub fn list_policies(conn: &Connection) -> Result<Vec<Policy>> {
     query_all(
         conn,
@@ -40,10 +33,6 @@ pub fn list_policies(conn: &Connection) -> Result<Vec<Policy>> {
     )
 }
 
-/// 按 id 批量取保单展示字段（spec #704 / issue #706 交易来源列反查）：供核心
-/// 交易域按页填充来源列（收集页内 policy_id 后一次查询，不做逐行 N+1）。
-/// 软删保单照常返回（历史引用保留不置空，ADR-0051 决策 5，来源列显示名称 +
-/// 已删除状态）；不存在的 id 不在结果中（引用完整性由外键保证，缺失属防御性跳过）。
 pub fn source_display_by_ids(
     conn: &Connection,
     ids: &[String],
@@ -59,8 +48,6 @@ pub fn source_display_by_ids(
     )
 }
 
-/// 创建一张保单：校验 → 落库（生成 `id` 与审计字段）→ 成功后调用 `notify`
-/// （生产路径发 `ledger:changed`）。校验语义见 `validation::validate_input`。
 pub fn create_policy(
     conn: &Connection,
     input: PolicyInput,
@@ -79,12 +66,10 @@ pub fn create_policy(
         )?;
         Ok(id)
     })?;
-    // 写入成功 → 通知调用方发出失效信号（生产为 ledger:changed；失败不至此处）。
     notify();
     Ok(id)
 }
 
-/// 保单落库协议（本地创建与重放共用，无 op 产出）：插入行（生成 id 与审计字段）。
 fn write_create(conn: &Connection, id: &str, row: &PolicyCommandRow) -> Result<String> {
     let now = now_iso();
     conn.execute(
@@ -109,14 +94,6 @@ fn write_create(conn: &Connection, id: &str, row: &PolicyCommandRow) -> Result<S
     Ok(id.to_string())
 }
 
-/// 按 `id` 编辑保单静态要素（全量替换）：保留审计字段（`id` / `created_at` /
-/// `is_deleted`），`version` 递增、`updated_at` / `device_id` 刷新（同 Writer
-/// 接缝的 `update_row` 约定）。不存在（或已软删除）→ [`AppError::NotFound`]。
-/// 成功后调用 `notify`（生产路径发 `ledger:changed`）。
-///
-/// 保司校验语义与 Writer 接缝一致（`existing_merchant_id` 先例）：提交的保司与
-/// 既有行相同 = 维持历史引用（保司后被软删的历史保单仍可编辑其他要素），
-/// 换成新保司才校验在用（软删保司不可被新档案选择，ADR-0082）。
 pub fn update_policy(
     conn: &Connection,
     id: &str,
@@ -144,8 +121,6 @@ pub fn update_policy(
     Ok(())
 }
 
-/// 保单编辑落库协议（本地编辑与重放共用，无 op 产出）：全量替换静态要素，
-/// 保留审计字段（id / created_at / is_deleted）。
 fn write_update(conn: &Connection, id: &str, row: &PolicyCommandRow) -> Result<()> {
     let updated = conn.execute(
         "UPDATE policies SET insurer_id=?2, policy_number=?3, product_name=?4, start_date=?5, \
@@ -172,10 +147,6 @@ fn write_update(conn: &Connection, id: &str, row: &PolicyCommandRow) -> Result<(
     Ok(())
 }
 
-/// 软删除保单（`is_deleted=1`，不物理移除）：标准列表（`WHERE is_deleted=0`）
-/// 自动过滤；库内行与既有引用列**原样保留、不置空**（ADR-0051 决策 5：档案的
-/// 历史语义不可毁）。不存在（含已删除）的 id → [`AppError::NotFound`]。
-/// 成功后调用 `notify`（生产路径发 `ledger:changed`）。
 pub fn delete_policy(conn: &Connection, id: &str, notify: &mut dyn FnMut()) -> Result<()> {
     ensure_transaction(conn, || {
         write_delete(conn, id)?;
@@ -185,8 +156,6 @@ pub fn delete_policy(conn: &Connection, id: &str, notify: &mut dyn FnMut()) -> R
     Ok(())
 }
 
-/// 保单软删协议（本地删除与重放共用，无 op 产出）：存在性检查 + 软删，
-/// 库内行与既有引用列原样保留、不置空（ADR-0051 决策 5）。
 fn write_delete(conn: &Connection, id: &str) -> Result<()> {
     let exists: bool = conn
         .query_row(
@@ -209,15 +178,12 @@ fn write_delete(conn: &Connection, id: &str) -> Result<()> {
     Ok(())
 }
 
-/// 重放执行：创建（保司在用校验等依赖检查原样生效，保司缺失挂起待裁决）。
 pub(crate) fn replay_create(conn: &Connection, id: &str, row: &PolicyCommandRow) -> Result<()> {
     validate_input(conn, &PolicyInput::from(row), false)?;
     write_create(conn, id, row)?;
     Ok(())
 }
 
-/// 重放执行：编辑（保司「保持历史引用」判定与本地同语义：携带保司与既有相同
-/// 则跳过在用校验）。
 pub(crate) fn replay_update(conn: &Connection, id: &str, row: &PolicyCommandRow) -> Result<()> {
     let existing = get_policy_by_id(conn, id)?.ok_or_else(|| {
         AppError::codedp_not_found("policy.not-found", format!("保单不存在: {id}"), &[id])
@@ -227,19 +193,10 @@ pub(crate) fn replay_update(conn: &Connection, id: &str, row: &PolicyCommandRow)
     write_update(conn, id, row)
 }
 
-/// 重放执行：软删除（同一协议含存在性检查）。
 pub(crate) fn replay_delete(conn: &Connection, id: &str) -> Result<()> {
     write_delete(conn, id)
 }
 
-// ---------------------------------------------------------------------------
-// 交易×保单接缝实现（spec #1086 / issue #1092）：来源列①保单直挂反查
-// ---------------------------------------------------------------------------
-
-/// 来源列①保单直挂反查实现（核心交易域 `transaction::seams::source` 注册点，#1092）：
-/// 委托 [`source_display_by_ids`] 并映射为核心交易域来源模型（kind = Policy、
-/// entity = 保单 id、展示名 = 险种名、软删 → Deleted 标注——口径零变化，
-/// spec #704；软删保单照常返回，历史引用可达）。
 fn policy_source_resolver(
     conn: &Connection,
     policy_ids: &[String],
@@ -262,8 +219,6 @@ fn policy_source_resolver(
         .collect())
 }
 
-/// 注册保单直挂反查实现（幂等：进程级一次，重复注册保留首次）。调用点在壳层
-/// 启动接线与测试建库单点，与生产同形；业务代码不直接调用。
 pub fn install_source_hook() {
     ledger_transaction::seams::source::register_policy_source_resolver(policy_source_resolver);
 }

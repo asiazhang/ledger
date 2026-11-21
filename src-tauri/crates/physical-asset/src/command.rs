@@ -1,17 +1,3 @@
-//! 实物资产同步命令（issue #860 / ADR-0091）：op 载荷的实物资产域形态、产出
-//! 单点与重放分派。
-//!
-//! - **载荷形态**（[`PhysicalAssetCommand`]）：建档携带实体 id + 资产语义行 +
-//!   **首条估值行**（估值行 id 随行——「同日按插入序」以 UUID v7 主键时间序裁决，
-//!   跨端携带同 id 即同一裁决）；编辑携带解决后的语义行；估值更新携带新估值行
-//!   （只追加不改写，历史行无实体指向、不参与同实体 LWW——并发估值全部存活，
-//!   当前值由读口径自然裁决）；处置携带落定日期与价格；删除只需实体 id。
-//!   **只增不改**。
-//! - **产出单点**（[`record_local`]）：实物资产写编排入口成功后调用，op 随写
-//!   事务提交/回滚（建档两表写入与 op 同事务）。
-//! - **重放执行**（[`replay_command`]）：与本地写同一执行协议（名称、成对、
-//!   金额、币种、日期守卫原样生效，币种缺失即挂起），不产出 op。
-
 use std::borrow::Cow;
 
 use rusqlite::Connection;
@@ -21,7 +7,6 @@ use ledger_infra::error::Result;
 use ledger_sync_protocol::command::SyncCommand;
 use ledger_sync_protocol::op::record_local as record_op;
 
-/// 估值行载荷（只追加历史行；id 随行保序）。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ValuationCommandRow {
     pub id: String,
@@ -30,11 +15,9 @@ pub struct ValuationCommandRow {
     pub currency_code: String,
 }
 
-/// 实物资产同步命令（serde：`action` 判别；作为 DomainCommand 信封的 payload 内嵌）。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case")]
 pub enum PhysicalAssetCommand {
-    /// 建档：实体 id、资产语义行与首条估值行随命令携带（重放端不得重新生成 id）。
     Create {
         id: String,
         name: String,
@@ -43,7 +26,6 @@ pub enum PhysicalAssetCommand {
         purchase_currency_code: Option<String>,
         first_valuation: ValuationCommandRow,
     },
-    /// 编辑档案（名称 + 购买信息为解决后的落定值；估值不经编辑变更）。
     Update {
         id: String,
         name: String,
@@ -51,26 +33,22 @@ pub enum PhysicalAssetCommand {
         purchase_price_cents: Option<i64>,
         purchase_currency_code: Option<String>,
     },
-    /// 追加估值历史行（当前估值 = 最新一条，由读口径裁决；无实体指向）。
     UpdateValuation {
         asset_id: String,
         valuation: ValuationCommandRow,
     },
-    /// 处置（状态标记非删除；再处置 = 修正，与本地同语义）。
     Dispose {
         id: String,
         disposal_date: String,
         disposal_price_cents: Option<i64>,
         disposal_currency_code: Option<String>,
     },
-    /// 删除（软删除；估值历史保留）。
-    Delete { id: String },
+    Delete {
+        id: String,
+    },
 }
 
 impl PhysicalAssetCommand {
-    /// 命令指向的实体键（LWW 裁决域 = 单件资产）；估值追加为只追加历史行，无实体
-    /// 指向（并发估值全部存活，不参与同实体 LWW）。实体标签不在此返回——由同步域
-    /// 重放注册表单源组装（ADR-0101 勘误 3）。
     pub(crate) fn subject(&self) -> Option<&str> {
         match self {
             PhysicalAssetCommand::Create { id, .. }
@@ -82,9 +60,6 @@ impl PhysicalAssetCommand {
     }
 }
 
-/// 协议面契约（#1089）：实体标签与 serde 信封 tag 同源（门 a 二源断言之锚），
-/// 实体键派生是域自身知识（估值追加无实体指向，不参与同实体 LWW）；op 产出
-/// 直呼协议面（环依赖由 crate 依赖图断开）。
 impl SyncCommand for PhysicalAssetCommand {
     const ENTITY: &'static str = "physical_asset";
 
@@ -93,18 +68,11 @@ impl SyncCommand for PhysicalAssetCommand {
     }
 }
 
-/// op 产出接缝（实物资产域集中单点）：本地写成功后追加一条 op 进本机 OpLog。
-///
-/// 仅实物资产写编排入口（`physical_asset::crud` 的五个写协议）调用；随编排事务
-/// 提交/回滚，写失败不残留 op。
 pub(crate) fn record_local(conn: &Connection, command: PhysicalAssetCommand) -> Result<()> {
     record_op(conn, &command)?;
     Ok(())
 }
 
-/// 重放执行（同步引擎分派接缝）：按动作转发到与本地写同一执行协议。crate 拆分后
-/// 跨 crate 消费：sync_engine::registry 经根包再导出面分派（#1102，pub(crate)→pub，
-/// 签名与语义不变，#1092 replay_command 同款）。
 pub fn replay_command(conn: &Connection, command: &PhysicalAssetCommand) -> Result<()> {
     match command {
         PhysicalAssetCommand::Create {

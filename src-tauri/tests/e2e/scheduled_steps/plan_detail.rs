@@ -1,6 +1,3 @@
-//! 期次详情弹窗（issue #205）：详情返回 failed 期次与已完成期次列表；
-//! 期次展开与失败重试。
-
 use cucumber::{then, when};
 use rusqlite::params;
 
@@ -10,15 +7,6 @@ use crate::world::LedgerWorld;
 
 use super::common::execute_occurrence_step;
 
-// ---------------------------------------------------------------------------
-// 期次详情弹窗（issue #205）：详情返回 failed 期次与已完成期次列表；期次展开
-// ---------------------------------------------------------------------------
-
-/// 把最近计划最早的一条 pending 期次置为 failed（当前引擎失败路径在 CAS 前
-/// 返回、保持 pending 可重试；failed 为 ADR-0001 预留状态，此处直接构造
-/// 以驱动详情返回与重试门控的断言）。
-/// 库内状态直置（#764 已登记例外）：期次状态机无「置 failed」公开入口——
-/// 产品当前不产 failed 状态，为测试开产品后门被 ADR-0086 否决。
 #[when(expr = "将最近计划最早的一条待执行期次置为失败")]
 fn mark_first_pending_failed(world: &mut LedgerWorld) {
     let plan_id = world.plan.last_plan_id.clone().expect("尚无定时计划");
@@ -41,7 +29,6 @@ fn mark_first_pending_failed(world: &mut LedgerWorld) {
     world.plan.last_occurrence_id = Some(occ_id);
 }
 
-/// 查询最近计划的详情（走 get_plan_detail 命令体）。
 #[when(expr = "查询该计划详情")]
 fn query_plan_detail(world: &mut LedgerWorld) {
     let plan_id = world.plan.last_plan_id.clone().expect("尚无定时计划");
@@ -92,7 +79,6 @@ fn assert_detail_status_date(world: &mut LedgerWorld, status: String, expected: 
     assert_eq!(dates, vec![expected], "状态为 {status} 的期次日期不符");
 }
 
-/// 重试最近计划的 failed 期次（走 execute_occurrence 命令体，与弹窗重试同一缝）。
 #[when(expr = "重试该失败期次")]
 fn retry_failed_occurrence(world: &mut LedgerWorld) {
     let plan_id = world.plan.last_plan_id.clone().expect("尚无定时计划");
@@ -108,7 +94,6 @@ fn retry_failed_occurrence(world: &mut LedgerWorld) {
     execute_occurrence_step(world, &occ_id);
 }
 
-/// 展开最近计划的期次（走 expand_occurrences 命令体）。
 #[when(expr = "展开该计划期次")]
 fn expand_plan_occurrences(world: &mut LedgerWorld) {
     let plan_id = world.plan.last_plan_id.clone().expect("尚无定时计划");

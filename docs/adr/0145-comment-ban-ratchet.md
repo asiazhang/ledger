@@ -104,6 +104,12 @@ package.json `"//"` 键（根 + 18 包）、Cargo.toml 全部注释、`.kache.to
 
 决策 3 的识别口径、豁免闭集与家族双源同步纪律不变。
 
+
+## 修订注记（#2206 壳层清零，2026-11-21）：本批删除注释承载的独有决策记录在此收口
+
+- **Windows 控制台抑制载体**（根包 `main.rs`）：`#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]` 是 Windows release 构建不弹控制台窗口的载体（子系统语义）；删除该**属性**会改变 Windows 发布行为——属性是配置语义，其上的警示注释已按禁令清零，本条留痕防属性被当作无用代码移除。
+- **DMABUF workaround 的 set_var 安全前提**（`src/lib.rs` run()）：`WEBKIT_DISABLE_DMABUF_RENDERER` 的 `set_var`（Rust 2024 起 unsafe）由 `main()` 同步首调 `run()` 执行，先于 Tauri 装配出的任何线程与 async runtime，进程环境仅主线程读写——这是该 unsafe 块的正确性前提；workaround 本体与跟踪票见 #2190，接线守门见壳层 webkit 守门模块。
+
 ## 修订注记（#2207 例外发现，2026-11-21）：豁免闭集扩入 compile_fail doctest 载体
 
 #2202 分域清理批次 #2207 在 transaction / accounts 域各保留 3 行 compile_fail doctest 本体——活负向守门测试，ADR-0112 #2204 修订注记的 compile_fail 载体约束认可的唯一载体（业务域 crate 不得以 `use tauri_app_lib::…` 形态承载对壳层反向引用负向例，合法载体只剩协议 crate 根文档与 crate 内私有面「再公开即红」形态；sync-protocol 根文档负向用例同属此机制）。现行豁免闭集把这些行计为注释行，两键无法归零。按决策 2「扩豁免 = 修订本 ADR」路径，豁免闭集自「SAFETY + shebang」扩为「SAFETY + shebang + compile_fail doctest 载体」：

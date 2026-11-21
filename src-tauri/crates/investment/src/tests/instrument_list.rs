@@ -1,6 +1,3 @@
-//! 标的列表与 CRUD 读路径测试：分页 / 搜索（拼音语义）/ invested 派生与过滤 /
-//! 软删除账户排除 / 建标的幂等 / 持仓视图（issue #257 纯移动归组）。
-
 use crate::InstrumentType;
 use ledger_transaction::create_transaction_internal;
 use rusqlite::{Connection, params};
@@ -25,14 +22,12 @@ fn list_instruments_pagination_and_search() {
         );
     }
 
-    // 默认第一页（page_size=50），返回全量
     let filter = InstrumentListFilter::default();
     let result = super::crud::list_instruments(&conn, &filter).unwrap();
     assert_eq!(result.total, 5);
     assert_eq!(result.items.len(), 5);
     assert_eq!(result.items[0].symbol, "SYM0");
 
-    // 分页：每页 2 条，第 1 页
     let filter = InstrumentListFilter {
         search: None,
         market: None,
@@ -48,7 +43,6 @@ fn list_instruments_pagination_and_search() {
     assert_eq!(result.items[0].symbol, "SYM0");
     assert_eq!(result.items[1].symbol, "SYM1");
 
-    // 分页：第 2 页
     let filter = InstrumentListFilter {
         search: None,
         market: None,
@@ -62,7 +56,6 @@ fn list_instruments_pagination_and_search() {
     assert_eq!(result.items.len(), 2);
     assert_eq!(result.items[0].symbol, "SYM2");
 
-    // 搜索：代码大小写不敏感
     let filter = InstrumentListFilter {
         search: Some("sym1".into()),
         market: None,
@@ -76,7 +69,6 @@ fn list_instruments_pagination_and_search() {
     assert_eq!(result.total, 1);
     assert_eq!(result.items[0].symbol, "SYM1");
 
-    // 搜索：名称
     let filter = InstrumentListFilter {
         search: Some("名称3".into()),
         market: None,
@@ -90,7 +82,6 @@ fn list_instruments_pagination_and_search() {
     assert_eq!(result.total, 1);
     assert_eq!(result.items[0].symbol, "SYM3");
 
-    // 市场筛选
     let filter = InstrumentListFilter {
         search: None,
         market: Some("sh".into()),
@@ -104,7 +95,6 @@ fn list_instruments_pagination_and_search() {
     assert_eq!(result.total, 3);
     assert!(result.items.iter().all(|i| i.market == "sh"));
 
-    // 搜索 + 市场组合
     let filter = InstrumentListFilter {
         search: Some("SYM".into()),
         market: Some("sz".into()),
@@ -120,8 +110,6 @@ fn list_instruments_pagination_and_search() {
     assert_eq!(result.items[0].symbol, "SYM3");
 }
 
-/// 标的搜索统一模糊语义（issue #199，ADR-0027）：子串 ∨ 拼音首字母子序列、
-/// 词条 AND、大小写不敏感，判定目标为下拉 label 等价文本「代码 · 名称」。
 #[test]
 fn list_instruments_search_pinyin_semantics() {
     let conn = open();
@@ -129,37 +117,29 @@ fn list_instruments_search_pinyin_semantics() {
     insert_instrument_with_market(&conn, "inst-wk", "000002", "万科物业", "CNY", "sz", "stock");
     insert_instrument_with_market(&conn, "inst-abc", "ABCH", "ABC银行", "CNY", "sh", "stock");
 
-    // 拼音首字母整串命中（多音字修正：银行 → yh）
     let result = search_all(&conn, "zsyh");
     assert_eq!(result.total, 1);
     assert_eq!(result.items[0].symbol, "600519");
 
-    // 首字母子序列跳字命中（不要求连续）：wy → 万科物业（wkwy）
     let result = search_all(&conn, "wy");
     assert_eq!(result.total, 1);
     assert_eq!(result.items[0].symbol, "000002");
 
-    // 大小写不敏感（原文与拼音两路径均不区分大小写）
     assert_eq!(search_all(&conn, "ZSYH").total, 1);
     assert_eq!(search_all(&conn, "万科").total, 1);
 
-    // ASCII 首字母串的子序列命中：ac ⊂ abcyh（非子串路径）
     let result = search_all(&conn, "ac");
     assert_eq!(result.total, 1);
     assert_eq!(result.items[0].symbol, "ABCH");
 
-    // 多词条 AND：词条分别命中代码与名称
     let result = search_all(&conn, "600 zs");
     assert_eq!(result.total, 1);
     assert_eq!(result.items[0].symbol, "600519");
 
-    // 混合词条对混合内容（「ABC银行」）：原文子串路径命中
     assert_eq!(search_all(&conn, "bc银").total, 1);
 
-    // 含汉字的词条对纯中文内容的 ASCII 首字母串必败、原文子串也不含 → 不命中
     assert_eq!(search_all(&conn, "招zs").total, 0);
 
-    // 无命中
     assert_eq!(search_all(&conn, "zsyh wy").total, 0);
 }
 
@@ -179,7 +159,6 @@ fn search_all(conn: &Connection, search: &str) -> InstrumentListResult {
     .unwrap()
 }
 
-/// invested 派生字段：持仓中为 true，未投资 / 已清仓为 false（issue #102）。
 #[test]
 fn list_instruments_invested_flag() {
     let conn = open();
@@ -191,9 +170,7 @@ fn list_instruments_invested_flag() {
         1.0,
         &["2026-01-10", "2026-01-20", "2026-02-01", "2026-02-10"],
     );
-    // 持仓中：买入 10 股，未卖出
     insert_instrument_with_market(&conn, "inst-held", "HELD", "持仓标的", "USD", "sh", "stock");
-    // 已清仓：买入 10 股后全部卖出
     insert_instrument_with_market(
         &conn,
         "inst-closed",
@@ -203,7 +180,6 @@ fn list_instruments_invested_flag() {
         "sz",
         "stock",
     );
-    // 未投资：从未交易
     insert_instrument_with_market(
         &conn,
         "inst-never",
@@ -245,7 +221,6 @@ fn list_instruments_invested_flag() {
     );
 }
 
-/// only_invested 过滤：与搜索、市场过滤、分页组合正确（issue #102）。
 #[test]
 fn list_instruments_only_invested_filter() {
     let conn = open();
@@ -293,7 +268,6 @@ fn list_instruments_only_invested_filter() {
     )
     .unwrap();
 
-    // 只看持仓：仅返回持仓中标的
     let filter = InstrumentListFilter {
         search: None,
         market: None,
@@ -309,7 +283,6 @@ fn list_instruments_only_invested_filter() {
     assert_eq!(result.items[0].symbol, "HELD");
     assert!(result.items[0].invested);
 
-    // 与搜索组合：命中已清仓标的时结果为空
     let filter = InstrumentListFilter {
         search: Some("CLOSED".into()),
         market: None,
@@ -323,7 +296,6 @@ fn list_instruments_only_invested_filter() {
     assert_eq!(result.total, 0);
     assert!(result.items.is_empty());
 
-    // 与市场过滤组合：只保留市场命中且持仓中的标的
     let filter = InstrumentListFilter {
         search: None,
         market: Some("sh".into()),
@@ -337,7 +309,6 @@ fn list_instruments_only_invested_filter() {
     assert_eq!(result.total, 1);
     assert_eq!(result.items[0].symbol, "HELD");
 
-    // 与分页组合：total 按过滤后全量计数，越界页返回空
     let filter = InstrumentListFilter {
         search: None,
         market: None,
@@ -351,7 +322,6 @@ fn list_instruments_only_invested_filter() {
     assert_eq!(result.total, 1);
     assert!(result.items.is_empty());
 
-    // only_invested 为 false 或缺省时行为一致：不过滤
     let filter = InstrumentListFilter {
         search: None,
         market: None,
@@ -368,7 +338,6 @@ fn list_instruments_only_invested_filter() {
     assert_eq!(result.total, 3);
 }
 
-/// 软删除账户的持仓批次不计入 invested（口径与 v_holdings 一致，issue #102）。
 #[test]
 fn list_instruments_invested_excludes_soft_deleted_accounts() {
     let conn = open();
@@ -413,7 +382,6 @@ fn list_instruments_invested_excludes_soft_deleted_accounts() {
     assert_eq!(result.total, 0);
 }
 
-/// 标的类型过滤（issue #294）：同码异类型消歧（如基金 000001 vs 股票 000001）。
 #[test]
 fn list_instruments_kind_filter_disambiguates_same_symbol() {
     let conn = open();
@@ -436,11 +404,9 @@ fn list_instruments_kind_filter_disambiguates_same_symbol() {
         "stock",
     );
 
-    // 不过滤：同码异类型两行并返
     let result = super::crud::list_instruments(&conn, &InstrumentListFilter::default()).unwrap();
     assert_eq!(result.total, 2);
 
-    // kind 过滤消歧：fund / stock 各一行
     for (kind, expected_name) in [
         (InstrumentType::Fund, "华夏成长混合"),
         (InstrumentType::Stock, "平安银行"),
@@ -455,7 +421,6 @@ fn list_instruments_kind_filter_disambiguates_same_symbol() {
         assert_eq!(result.items[0].kind, kind);
     }
 
-    // 与搜索组合：词条命中 label 后再按类型收敛
     let filter = InstrumentListFilter {
         search: Some("000001".into()),
         kind: Some(InstrumentType::Fund),
@@ -465,7 +430,6 @@ fn list_instruments_kind_filter_disambiguates_same_symbol() {
     assert_eq!(result.total, 1);
     assert_eq!(result.items[0].kind, InstrumentType::Fund);
 
-    // 无该类型的同码标的：不命中
     let filter = InstrumentListFilter {
         kind: Some(InstrumentType::Bond),
         ..Default::default()
@@ -512,7 +476,6 @@ fn create_instrument_is_idempotent() {
     let id1 = ledger_infra::db::new_uuid();
     let id2 = ledger_infra::db::new_uuid();
     seed_instrument(&conn, &id1, "AAPL", "Apple Inc.", "USD", "unknown");
-    // 同码同类型第二行被库层 UNIQUE(symbol, instrument_type) 拒绝（可失败薄皮种子拿 Err）。
     let result = try_insert_instrument_with_market(
         &conn,
         &id2,
@@ -565,13 +528,6 @@ fn list_holdings_returns_after_buy_and_market_price() {
     assert_eq!(unrealized_pnl, 9000);
 }
 
-// ---------------------------------------------------------------------------
-// 焦点定位（issue #1907，来源跳转落标的页签的分页定位接缝）：anchor_id 返回
-// 该 id 在当前过滤与排序下所在页，行集切到该页；id 不在结果集内按普通页码
-// 查询、不携带 anchor_page。
-// ---------------------------------------------------------------------------
-
-/// 种入 symbol 升序的标的若干（SYM0..SYM{n-1}）。
 fn seed_symbols(conn: &Connection, n: usize) -> Vec<String> {
     (0..n)
         .map(|i| {
@@ -594,7 +550,6 @@ fn anchor_id_locates_page_and_returns_that_page() {
     let conn = open();
     let ids = seed_symbols(&conn, 5);
 
-    // 每页 2 条：SYM3（序号 3）应在第 2 页，行集即该页两行。
     let result = super::crud::list_instruments(
         &conn,
         &InstrumentListFilter {
@@ -609,7 +564,6 @@ fn anchor_id_locates_page_and_returns_that_page() {
     let symbols: Vec<&str> = result.items.iter().map(|i| i.symbol.as_str()).collect();
     assert_eq!(symbols, ["SYM2", "SYM3"]);
 
-    // 末页不满页：SYM4（序号 4）在第 3 页（仅 1 行）。
     let result = super::crud::list_instruments(
         &conn,
         &InstrumentListFilter {
@@ -628,7 +582,6 @@ fn anchor_id_locates_page_and_returns_that_page() {
 fn anchor_id_respects_active_filter_when_locating() {
     let conn = open();
     let ids = seed_symbols(&conn, 5);
-    // market=sz 只留偶数序号标的（seed 里偶数序号为 sh——改用搜索词造筛选集）。
     let result = super::crud::list_instruments(
         &conn,
         &InstrumentListFilter {
@@ -639,7 +592,6 @@ fn anchor_id_respects_active_filter_when_locating() {
         },
     )
     .unwrap();
-    // 过滤后只剩 1 条：锚点必落第 1 页。
     assert_eq!(result.anchor_page, Some(1));
     assert_eq!(result.total, 1);
     assert_eq!(result.items[0].symbol, "SYM4");
@@ -650,7 +602,6 @@ fn anchor_id_not_in_result_set_falls_back_to_plain_page() {
     let conn = open();
     let ids = seed_symbols(&conn, 5);
 
-    // id 不存在：anchor_page 不携带、按普通页码查询。
     let result = super::crud::list_instruments(
         &conn,
         &InstrumentListFilter {
@@ -665,7 +616,6 @@ fn anchor_id_not_in_result_set_falls_back_to_plain_page() {
     assert_eq!(result.items.len(), 2);
     assert_eq!(result.items[0].symbol, "SYM2");
 
-    // id 被筛选藏住（only_invested 但无持仓）：同样回落普通页码。
     let result = super::crud::list_instruments(
         &conn,
         &InstrumentListFilter {

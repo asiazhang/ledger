@@ -1,8 +1,3 @@
-//! 投资明细列表读命令测试（ADR-0135 / issue #1778，命名对齐源码 ledger_tab 模块）：
-//! 四维过滤逐维断言（账户涉及语义含出资/到账端、标的含 convert 两腿命中、kind 子集、
-//! 日期区间）、排序与 offset 分页 + total、软删排除、各 kind 投影字段逐项断言、
-//! 页与总数的读快照探针（多语句读闭包纪律，#1699 / #1702）。
-
 use ledger_transaction::TransactionInput;
 use ledger_transaction::amount::TransactionKind;
 use ledger_transaction::{create_transaction_internal, delete_transaction_internal};
@@ -15,14 +10,11 @@ use tauri_app_lib::test_support::{
     FIXED_NOW, ScratchDir, open, open_file, seed_account, seed_instrument,
 };
 
-/// 五种投资 kind 各造一行（buy/sell/convert/split/dividend）+ 一行通用 expense
-/// （行集闭包的反证），全部 CNY 同币种免汇率铺垫。
 fn seed_five_kinds(conn: &rusqlite::Connection) -> Vec<String> {
     seed_account(conn, "acc-it", "投资户", "investment", "CNY", 0);
     seed_account(conn, "acc-bank", "银行卡", "bank", "CNY", 0);
     seed_instrument(conn, "inst-a", "AAPL", "苹果", "CNY", "unknown");
     seed_instrument(conn, "inst-b", "MSFT", "微软", "CNY", "unknown");
-    // 买入建仓（数量 10 @ 10 元 + 手续费 1 元）→ 卖出 5 → 转换 2（A→B）→ 份额调整 +2。
     let buy =
         create_transaction_internal(conn, make_buy_input("acc-it", "inst-a", 10.0, 100_000, 100))
             .unwrap()
@@ -40,15 +32,11 @@ fn seed_five_kinds(conn: &rusqlite::Connection) -> Vec<String> {
     let split = create_transaction_internal(conn, make_split_input("acc-it", "inst-a", 2.0))
         .unwrap()
         .id;
-    // 现金分红：现金腿到账银行卡（非投资账户）——到账账户端的造数前提。
-    // 现金分红：现金腿到账银行卡（非投资账户）——到账账户端的造数前提；带备注
-    // 与折算留痕断言（弹窗族消费列，issue #1781）的非空形态。
     let mut dividend_input = make_dividend_input("acc-bank", "inst-a", 300, "CNY");
     dividend_input.note = Some("年中分红".into());
     let dividend = create_transaction_internal(conn, dividend_input)
         .unwrap()
         .id;
-    // 通用 kind（expense）：投资明细行集闭包的反证行。
     create_transaction_internal(
         conn,
         TransactionInput {
@@ -63,7 +51,6 @@ fn seed_five_kinds(conn: &rusqlite::Connection) -> Vec<String> {
     vec![buy, sell, convert, split, dividend]
 }
 
-/// 通用 expense 行的中性底座（金额/账户/币种显式，其余缺省）。
 fn plain_expense_input() -> TransactionInput {
     TransactionInput {
         merchant_name: None,
@@ -96,8 +83,6 @@ fn plain_expense_input() -> TransactionInput {
     }
 }
 
-/// 各 kind 投影字段逐项断言（行投影是本命令的核心交付）：公共字段（行身份、
-/// 行金额锚点、账户端、归属标的）恒在场；kind 专属载荷按形态携带。
 #[test]
 fn projection_covers_all_five_kinds_with_fields() {
     let conn = open();
@@ -129,8 +114,6 @@ fn projection_covers_all_five_kinds_with_fields() {
     assert_eq!(trade.price_cents, 100_000, "单价存万分之一元");
     assert_eq!(trade.fee_cents, 100);
     assert!(buy.convert.is_none() && buy.split.is_none());
-    // 弹窗族消费列（ADR-0135 决策 4 / issue #1781）：币种 = 账户币种（ADR-0134）、
-    // 同币种行本位币金额恒等、无备注 NULL。
     assert_eq!(buy.currency_code, "CNY", "记录币种 = 账户币种");
     assert_eq!(
         buy.amount_native_cents, buy.amount_cents,
@@ -195,15 +178,11 @@ fn projection_covers_all_five_kinds_with_fields() {
         dividend.trade.is_none() && dividend.convert.is_none() && dividend.split.is_none(),
         "dividend 无 kind 专属载荷（现金腿与到账账户在公共字段）"
     );
-    // 弹窗族消费列（ADR-0135 决策 4 / issue #1781）：备注原样投影（只读详情备注
-    // 行与编辑回填防误抹的数据面）、币种与本位币金额随行。
     assert_eq!(dividend.note.as_deref(), Some("年中分红"), "备注原样投影");
     assert_eq!(dividend.currency_code, "CNY");
     assert_eq!(dividend.amount_native_cents, 300);
 }
 
-/// 账户过滤的涉及账户语义（ADR-0135 决策 3）：投资账户 ∪ 出资账户（buy/sell，
-/// ADR-0096）∪ 到账账户（dividend 行的账户端）；投资 kind 无转入侧（写入守卫恒拒）。
 #[test]
 fn account_filter_hits_funding_and_arrival_ends() {
     let conn = open();
@@ -219,7 +198,6 @@ fn account_filter_hits_funding_and_arrival_ends() {
         },
     )
     .unwrap();
-    // 分红到账出资卡（非投资账户）——到账账户端命中前提。
     create_transaction_internal(&conn, make_dividend_input("acc-fund", "inst-f", 500, "CNY"))
         .unwrap();
 
@@ -239,8 +217,6 @@ fn account_filter_hits_funding_and_arrival_ends() {
     assert_eq!(by_investment.items[0].kind, TransactionKind::Buy);
 }
 
-/// 标的过滤两腿命中口径（与时点持仓推算认 convert 两腿对齐）：转出腿或 convert
-/// 转入腿任一命中即算。
 #[test]
 fn instrument_filter_matches_convert_both_legs() {
     let conn = open();
@@ -285,15 +261,12 @@ fn instrument_filter_matches_convert_both_legs() {
             .total,
         1
     );
-    // 无任何流水命中的标的：空集而非报错。
     seed_instrument(&conn, "inst-d", "NVDA", "英伟达", "CNY", "unknown");
     let empty = list_investment_transactions(&conn, &f("inst-d")).unwrap();
     assert_eq!(empty.total, 0);
     assert!(empty.items.is_empty());
 }
 
-/// 类型子集多选（维度内取或、与其余维度 AND 组合）；空集合视为未携带；
-/// 通用 kind 不入行集闭包（传了也只是空集，不报错）。
 #[test]
 fn kind_subset_filter_and_empty_means_unfiltered() {
     let conn = open();
@@ -324,7 +297,6 @@ fn kind_subset_filter_and_empty_means_unfiltered() {
     );
 }
 
-/// 日期区间双端有界（含边界日）。
 #[test]
 fn date_range_filter_is_bounded_both_ends() {
     let conn = open();
@@ -347,15 +319,10 @@ fn date_range_filter_is_bounded_both_ends() {
     );
 }
 
-/// 排序 date 倒序（与主列表同构）+ offset 分页返回 items + total；
-/// 同日行按 created_at、id 同秒 tiebreaker 确定性翻页（无重复无遗漏）。
 #[test]
 fn sort_desc_and_offset_pagination_cover_all_without_overlap() {
     let conn = open();
     let ids = seed_five_kinds(&conn);
-    // 同秒 tiebreaker 前提钉死：convert 与 split 同日（2026-02-01），把两行
-    // created_at 钉同值（簿记戳引用工厂 FIXED_NOW，零字面量）——排序只剩 id
-    // 倒序一轴，翻页确定性可断言（split 后建，uuid v7 进程内严格单调 → id 更大）。
     conn.execute(
         "UPDATE transactions SET created_at = ?1 WHERE id IN (?2, ?3)",
         params![FIXED_NOW, &ids[2], &ids[3]],
@@ -371,10 +338,8 @@ fn sort_desc_and_offset_pagination_cover_all_without_overlap() {
     )
     .unwrap();
     assert_eq!(result.total, 5, "total 恒为满足条件的总数，与页无关");
-    // 首页两条：date 最大的 dividend（02-10）与 02-01 两条之一。
     assert_eq!(result.items.len(), 2);
     assert_eq!(result.items[0].kind, TransactionKind::Dividend);
-    // 同日同秒行确定性：id 倒序 → split（后建，id 更大）排前、convert 排后。
     assert_eq!(
         result.items[1].id, ids[3],
         "同日同秒行按 id 倒序：split 后建在前，翻页不漂移"
@@ -401,7 +366,6 @@ fn sort_desc_and_offset_pagination_cover_all_without_overlap() {
     assert_eq!(page2.items.len(), 2);
     assert_eq!(page3.items.len(), 1, "末页返回余数行");
 
-    // 翻页无重复无遗漏：三页并集 = 全部 id。
     let mut page_ids: Vec<String> = result
         .items
         .iter()
@@ -414,7 +378,6 @@ fn sort_desc_and_offset_pagination_cover_all_without_overlap() {
     expected.sort();
     assert_eq!(page_ids, expected, "三页并集应恰为全部五行");
 
-    // 超范围页码：空页、total 不变。
     let beyond = list_investment_transactions(
         &conn,
         &InvestmentTransactionListFilter {
@@ -428,7 +391,6 @@ fn sort_desc_and_offset_pagination_cover_all_without_overlap() {
     assert_eq!(beyond.total, 5);
 }
 
-/// 软删行排除（is_deleted=0）：删除后的买入不再出现在明细列表，total 同步回落。
 #[test]
 fn soft_deleted_rows_are_excluded() {
     let conn = open();
@@ -452,9 +414,6 @@ fn soft_deleted_rows_are_excluded() {
     assert!(after.items.is_empty());
 }
 
-/// 载荷列 NULL 即报错（行不变量破坏不静默回退）：buy 行的 `price_cents` 被破坏
-/// 为 NULL 时，列表读该行显式报错（消息带 kind 与字段名定位），不把坏行伪装成
-/// 零值好行。
 #[test]
 fn broken_payload_invariant_row_is_rejected_not_silently_defaulted() {
     let conn = open();
@@ -481,10 +440,6 @@ fn broken_payload_invariant_row_is_rejected_not_silently_defaulted() {
     );
 }
 
-/// 页与总数必须同快照（#1699 / #1702 同根因的多语句读闭包）：探针在 items 语句
-/// 开始前于另一连接把一行买入置软删——
-/// - 读闭包无快照保护（红）：COUNT 读旧值（1）、items 读新值（0 行），页与总数错位；
-/// - 读闭包收进读事务（绿）：注入写被挡住，COUNT 与 items 同见一套数。
 #[test]
 fn page_and_total_share_one_snapshot() {
     let dir = ScratchDir::new("investment-ledger-tab-read-snapshot");
@@ -497,8 +452,6 @@ fn page_and_total_share_one_snapshot() {
     )
     .unwrap();
 
-    // 探针：items 语句（以投影列首段为 marker，与 COUNT 语句区分）开始前，另一
-    // 连接提交软删写。
     snapshot_probe::arm(
         &conn,
         dir.path(),

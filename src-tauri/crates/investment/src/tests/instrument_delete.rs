@@ -1,7 +1,3 @@
-//! 自建标的删除守卫（issue #292 / ADR-0036 决策 5）：仅来源为手动且无任何
-//! buy/sell 流水引用（security_transactions 无行）的自建标的可物理删除；
-//! 有流水引用拒删、同步来源标的拒删，均给中文错误信息。
-
 use rusqlite::{Connection, params};
 
 use ledger_transaction::create_transaction_internal;
@@ -19,7 +15,6 @@ fn count_instruments(conn: &Connection, id: &str) -> i64 {
     .unwrap()
 }
 
-/// 无引用自建标的：物理删除成功，行消失（现价缓存随 CASCADE 一并消失）。
 #[test]
 fn delete_manual_instrument_without_trades_succeeds() {
     let conn = open();
@@ -33,7 +28,6 @@ fn delete_manual_instrument_without_trades_succeeds() {
         "other",
         "manual",
     );
-    // 现价缓存行（手动报价通道可落）应随标的删除级联消失。
     seed_market_price(&conn, "inst-manual-1", 13_180, "CNY");
 
     delete_instrument(&conn, "inst-manual-1").unwrap();
@@ -53,7 +47,6 @@ fn delete_manual_instrument_without_trades_succeeds() {
     assert_eq!(mp, 0, "现价缓存应随标的删除级联消失");
 }
 
-/// 有 buy/sell 流水引用的自建标的：拒删（中文错误），行保留。
 #[test]
 fn delete_instrument_with_trades_rejected() {
     let conn = open();
@@ -86,8 +79,6 @@ fn delete_instrument_with_trades_rejected() {
     );
 }
 
-/// 同步来源标的：即使无流水引用也拒删（字典修正由按代码查询/创建带回权威名称承担，
-/// ADR-0036 决策 5 / ADR-0081）。
 #[test]
 fn delete_sync_source_instrument_rejected() {
     let conn = open();
@@ -114,7 +105,6 @@ fn delete_sync_source_instrument_rejected() {
     );
 }
 
-/// 不存在的标的 id：码化 NotFound（`instrument.not-found`），中文错误。
 #[test]
 fn delete_missing_instrument_not_found() {
     let conn = open();

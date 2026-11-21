@@ -1,14 +1,3 @@
-//! IPC 命令壳 · 商户（Merchant）。
-//!
-//! 只负责参数解包与统一写入口一行调用；商户字典行为位于 [`crate::merchants`]。
-//! 注册路径与前端调用保持不变。
-//!
-//! 全部命令 async 化（形状乙，spec #498 / #501）；写命令经壳层统一写入口
-//! [`crate::shell_support::write_entry::write_entry`]（ADR-0073）：仪式内化单点，参考写入成功
-//! 发参考失效信号（映射单点判定，ADR-0044）。
-//
-// 豁免（ADR-0060）：tauri 宏为 async 命令生成的 `_check = unreachable!()`
-// （tauri-macros wrapper.rs，宏不透传逐点 allow，无法在源头消除，升 tauri 后移除）。
 #![allow(clippy::unreachable)]
 
 use tauri::State;
@@ -21,7 +10,6 @@ use ledger_infra::signals::WriteOp;
 use ledger_merchants as merchant_domain;
 use ledger_merchants::{Merchant, MerchantInput, MerchantTransactionCount, MerchantUpdateInput};
 
-/// 商户列表：默认仅未删除；`include_deleted=true` 返回含软删全量（交易筛选下拉用）。
 #[tauri::command]
 pub async fn list_merchants(
     db: State<'_, DbState>,
@@ -34,8 +22,6 @@ pub async fn list_merchants(
     .await
 }
 
-/// 商户关联交易计数（issue #445，毛笔数口径）：每个商户（含软删）被未删流水引用的
-/// 条数，实时推导、不落库，无引用商户计 0。商户管理列表专用读命令，纯读无写身份。
 #[tauri::command]
 pub async fn list_merchant_transaction_counts(
     db: State<'_, DbState>,

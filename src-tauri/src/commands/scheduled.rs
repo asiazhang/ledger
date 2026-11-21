@@ -1,14 +1,3 @@
-//! IPC 命令壳 · 定时计划（ScheduledTransaction）。
-//!
-//! 全部触碰 DB 的命令 async 化（形状乙，spec #498 / #502）；写命令经壳层统一
-//! 写入口 [`crate::shell_support::write_entry::write_entry`]（ADR-0073）：仪式（锁、事务、置脏、
-//! 信号）内化单点；读命令经 `run_db`。计划写入刻意零信号（映射单点显式登记），
-//! 身份仍随入口流动。
-//! `set_auto_execution_enabled` 是设备级运行时镜像推送（纯内存，不触 DB），
-//! 保持同步形态（例外白名单登记，ADR-0073）。
-//
-// 豁免（ADR-0060）：tauri 宏为 async 命令生成的 `_check = unreachable!()`
-// （tauri-macros wrapper.rs，宏不透传逐点 allow，无法在源头消除，升 tauri 后移除）。
 #![allow(clippy::unreachable)]
 
 use tauri::State;
@@ -31,7 +20,6 @@ pub async fn create_scheduled_transaction(
     app: tauri::AppHandle,
     input: CreateScheduledInput,
 ) -> Result<String> {
-    // 计划与期次属账本数据，成功即置脏（ADR-0032，#246 审计补齐）。
     let conn = db.write_handle();
     write_entry(
         "create_scheduled_transaction",
@@ -72,7 +60,6 @@ pub async fn update_scheduled_transaction_status(
     app: tauri::AppHandle,
     input: UpdateStatusInput,
 ) -> Result<()> {
-    // 状态变更成功即置脏（ADR-0032，#246 审计补齐）。
     let conn = db.write_handle();
     write_entry(
         "update_scheduled_transaction_status",
@@ -87,15 +74,12 @@ pub async fn update_scheduled_transaction_status(
     .await
 }
 
-/// 编辑订阅计划的非金额字段（issue #162，ADR-0023 决策三）：
-/// 请求携带金额字段时后端显式拒绝并提示「改价 = 取消旧计划 + 新建」。
 #[tauri::command]
 pub async fn update_scheduled_subscription(
     db: State<'_, DbState>,
     app: tauri::AppHandle,
     input: UpdateSubscriptionInput,
 ) -> Result<()> {
-    // 订阅编辑成功即置脏（ADR-0032，#246 审计补齐）。
     let conn = db.write_handle();
     write_entry(
         "update_scheduled_subscription",
@@ -113,7 +97,6 @@ pub async fn execute_scheduled_occurrence(
     app: tauri::AppHandle,
     input: ExecuteOccurrenceInput,
 ) -> Result<String> {
-    // 期次执行落交易行（Writer 接缝交易增），经写入口置脏（ADR-0032）。
     let conn = db.write_handle();
     write_entry(
         "execute_scheduled_occurrence",
@@ -133,7 +116,6 @@ pub async fn expand_scheduled_occurrences(
     app: tauri::AppHandle,
     id: String,
 ) -> Result<Vec<String>> {
-    // 期次回填写入成功即置脏（ADR-0032，#246 审计补齐）。
     let conn = db.write_handle();
     write_entry(
         "expand_scheduled_occurrences",
@@ -145,8 +127,6 @@ pub async fn expand_scheduled_occurrences(
     .await
 }
 
-/// 订阅花费总览（issue #160/#161，ADR-0023 双口径）：只读聚合，返回逐订阅行 +
-/// 本月/本年实际花费 + 过去 12 个月逐月序列 + 折算月/年推算成本（本位币）。
 #[tauri::command]
 pub async fn subscription_spend_overview(
     db: State<'_, DbState>,
@@ -158,11 +138,6 @@ pub async fn subscription_spend_overview(
     .await
 }
 
-/// 推送设备级「自动执行」开关到后端运行时镜像（issue #307 / ADR-0042）：
-/// 开关真源在前端 localStorage 设备偏好，应用启动与变更时经本命令推送
-/// （备份目录镜像推送先例）；后端镜像默认关，调度线程每轮从镜像读出后注入
-/// 追补入口。刻意不入 `app_settings`——该表随 Backup/Restore 迁移，
-/// 表达不了「这台执行、那台不执行」的设备级语义，也会把自动化意外迁移到新设备。
 #[tauri::command]
 pub fn set_auto_execution_enabled(enabled: bool) -> Result<()> {
     ledger_scheduled::auto_run::set_enabled(enabled);

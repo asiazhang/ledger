@@ -1,5 +1,3 @@
-// 测试整体豁免（ADR-0060）：BDD 测试 crate（harness=false）经 cfg(test) 放行六件套，
-// 生产构建零放宽。
 #![cfg_attr(
     test,
     allow(
@@ -111,12 +109,6 @@ mod transactions_source_steps;
 #[path = "e2e/transactions_write_steps.rs"]
 mod transactions_write_steps;
 
-/// 「目录置只读（0o555）触发转换失败」手段是否可用（issue #793）：仅非 root
-/// Unix 成立——root 凭 CAP_DAC_OVERRIDE 无视权限位，非 Unix 无权限位可依；
-/// 不可用时 @non-root-only 场景显式跳过，不假红（失败路径由 Linux 非 root
-/// CI 覆盖；与 #791 的 db 单测 readonly_trigger_available 守卫同根源同策略）。
-/// 经 /proc/self 属主读有效 uid（零新依赖）；无 /proc 的 Unix 平台按非 root
-/// 处理（票面针对 Linux root）。
 fn readonly_trigger_available() -> bool {
     #[cfg(unix)]
     {
@@ -134,9 +126,6 @@ fn readonly_trigger_available() -> bool {
 
 #[tokio::main]
 async fn main() {
-    // @non-root-only 场景（encryption.feature 两个转换失败原子性场景）靠
-    // Unix 权限位触发失败路径，root 环境显式跳过不假红（issue #793，与
-    // #791 db 单测守卫同策略）。
     if !readonly_trigger_available() {
         eprintln!(
             "root/非 Unix 环境：跳过 @non-root-only 场景（目录只读触发手段依赖非 root，失败路径由 Linux 非 root CI 覆盖，issue #793）"

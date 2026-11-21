@@ -1,11 +1,3 @@
-//! 投资域共享守卫（SharedGuard）：本地装配与同步重放共同消费的纯裁决函数。
-//!
-//! 业务事实由调用方取数并传入；本模块只登记两端必须一致的错误码、文案与插值。
-//! 新增本地 / 重放共同行为守卫时，先在此处加入穷尽映射（ADR-0033、ADR-0091）。
-//! 本模块是写路径守卫码与文案的登记点（唯一例外：Unwind 五组占用守卫，单点在
-//! `unwind`）；另登记错误文案用的数字格式化原语（迁入构造器的直接依赖）；
-//! ADR-0113 区化到达投资域时归共享语义区。
-
 use ledger_accounts::AccountType;
 use ledger_infra::error::{AppError, Result};
 use ledger_transaction::amount::TransactionKind;
@@ -20,7 +12,6 @@ pub(crate) enum InstrumentUse {
     Dividend,
 }
 
-/// 标的查询由调用方完成；本函数只把缺失事实裁决为稳定的码化错误。
 pub(crate) fn require_instrument_type(
     instrument_type: Option<String>,
     instrument_id: &str,
@@ -51,7 +42,6 @@ pub(crate) enum InvestmentAccountUse {
     Split,
 }
 
-/// 账户查询与存活校验由调用方完成；本函数只裁决账户类型错误。
 pub(crate) fn require_investment_account(
     account_type: AccountType,
     use_case: InvestmentAccountUse,
@@ -80,7 +70,6 @@ pub(crate) fn require_investment_account(
     Err(AppError::coded(code, message))
 }
 
-/// buy / sell / convert / split / dividend 均禁止携带转入账户；五值映射是共享守卫闭集。
 pub(crate) fn reject_to_account(kind: TransactionKind, present: bool) -> Result<()> {
     if !present {
         return Ok(());
@@ -125,8 +114,6 @@ pub(crate) enum PositiveValue {
     DividendAmount,
 }
 
-/// 数量/金额正性：裁决条件与收口前逐字同形（`<= 0.0` 拒、NaN 放行）——spec #1672
-/// Out of Scope「不新增或修改任何守卫的业务条件与码值」。
 pub(crate) fn require_positive(value: PositiveValue, amount: f64) -> Result<()> {
     if amount <= 0.0 {
         let (code, message) = match value {
@@ -170,9 +157,6 @@ pub(crate) fn require_nonzero_split_quantity(amount: f64) -> Result<()> {
     }
 }
 
-/// split 无现金腿（ADR-0106 决策 1）：`carried` 是调用点归一化后的「携带了现金腿
-/// 事实」——本地为行金额非零，重放为行金额或本位币偏离零腿构造器（谓词各留，
-/// 裁决与文案同码同源）。
 pub(crate) fn reject_split_cash_leg(carried: bool) -> Result<()> {
     if carried {
         Err(AppError::coded(
@@ -206,10 +190,6 @@ pub(crate) fn require_split_holding(has_holding: bool) -> Result<()> {
     }
 }
 
-/// 「缩股幅度不得达到当前持仓」码化错误构造器（ADR-0106 决策 1/7；spec #1672
-/// 既有单点构造器迁入——取严谓词留 [`super::split::plan_restatement`] 原位）：
-/// 文案对准缩股语义（不借用卖出 / 超卖口径），数字按录入粒度合同展示，
-/// 两端与两路径不漂移。
 pub(crate) fn shrink_not_less_than_holding_error(
     total_holding: f64,
     shrink_quantity: f64,
@@ -255,8 +235,6 @@ pub(crate) fn format_quantity_for_message(quantity: f64) -> String {
 mod tests {
     use super::*;
 
-    /// 守卫单测是码与完整文案（含插值参数）的唯一权威（spec #1672 测试分工）：
-    /// 每守卫钉「码 + 完整文案」一份；两端写入口测试只断言错误码作接线证明。
     fn coded_parts(err: AppError) -> (String, String, Vec<String>) {
         match err {
             AppError::Coded {
@@ -310,7 +288,6 @@ mod tests {
             assert_eq!(actual_message, message);
             assert_eq!(params, ["inst-x"], "插值参数应携带标的 id: {code}");
         }
-        // 事实在位即通过（纯裁决的通过侧）。
         assert!(require_instrument_type(Some("fund".into()), "inst-x", InstrumentUse::Buy).is_ok());
     }
 
@@ -385,7 +362,6 @@ mod tests {
             assert_eq!(actual_code, code);
             assert_eq!(actual_message, message);
             assert!(params.is_empty(), "无插值守卫不应携带参数: {code}");
-            // 未携带即通过；非投资 kind 不在守卫闭集内、恒通过。
             assert!(reject_to_account(kind, false).is_ok());
         }
         for kind in [
@@ -443,7 +419,6 @@ mod tests {
             assert_eq!(actual_code, code);
             assert_eq!(actual_message, message);
             assert!(params.is_empty(), "无插值守卫不应携带参数: {code}");
-            // 负值同拒、正值通过；分单位入口与浮点同码同文案。
             assert!(require_positive(value, -1.0).is_err());
             assert!(require_positive(value, 1.0).is_ok());
             assert_eq!(
@@ -489,7 +464,6 @@ mod tests {
             "缩股幅度必须小于当前持仓，当前持有 100，尝试缩股 100"
         );
         assert_eq!(params, ["100", "100"]);
-        // 取严谓词在 split::plan_restatement 原位，端到端拒绝由 split 域单测钉住。
     }
 
     #[test]
@@ -509,8 +483,6 @@ mod tests {
         assert_eq!(message, "可卖出数量不足，当前持有 100，尝试卖出 200");
         assert_eq!(params, ["100", "200"]);
 
-        // 文案不带位噪声（issue #1033 报障文案）：数字按录入粒度合同（至多四位
-        // 小数、去尾零）展示，8036.109999999999 → 8036.11。
         let (code, message, params) =
             coded_parts(insufficient_holding_error(99.99999999999999, 200.0));
         assert_eq!(code, "trade.insufficient-holding");

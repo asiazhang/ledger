@@ -1,6 +1,3 @@
-//! 实物资产处置与软删 BDD 步骤（issue #468 T3 / spec #465 / ADR-0064）：
-//! 处置守卫、处置读回、软删不可见、信号计数递增。
-
 use cucumber::{then, when};
 
 use ledger_physical_asset::{

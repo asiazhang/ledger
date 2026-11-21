@@ -81,3 +81,5 @@ SyncBoundary（同步边界）与 Backup/Restore 迁移边界对齐：各业务�
 
   实施细节（客户端选型、密码学基座、配置界面形态、测试方案等）同属可逆工程决策，按本文既定
   纪律不在此记录，留痕在代码、变更日志与提交信息；已实测可用的厂商清单随后续实施补齐。
+
+- **2026-11-21：真桶验收的诚实边界与跑法住址（#2206，原 `tests/real_bucket_acceptance.rs` 模块文档并入）。** 真桶验收在**用户自己的** S3 兼容桶上进行，仓库不持有、也绝不允许出现任何云账号凭据（spec #1214 边界），CI 不写任何人的桶。诚实边界：厂商档位「已实测 / 未实测」的唯一来源与翻转点是 `packages/utils/src/s3-vendors.ts` 的 `verified` 字段；「已实测」唯一含义 = 在**同一家**厂商跑完全部四类用例（上传下载 / 缺对象 / 大文件分片 / 保存前探针）且全部通过后把该家 `verified` 改 `true`；官方文档的「S3 兼容端点」声明（含 AWS SigV4 签名接受度）不构成实测结论；预设寻址方式来自公开文档、仍属未实测，真桶上两种寻址都允许试。跑法：凭据只经 `LEDGER_S3_TEST_*` 环境变量进入进程（变量名闭集以测试源码为准：endpoint / region / bucket / access_key / secret_key / path_style / 可选 prefix），建议专用桶或专用顶层前缀，最小权限 = 对象读写与分片上传六权限（不含 ListBucket，探针只读保留键）；用例默认 `#[ignore]`，`cargo test -p tauri-app --test real_bucket_acceptance -- --ignored` 手动运行；产物落 `ledger-acceptance-<随机串>/` 前缀、不自动删除，由用户按前缀清理。断言纪律：四类用例各自独立 `#[test]` 不做矩阵收敛（逐厂商逐类记录信号），逐字节比对载荷、缺对象归一 `None`、探针不在用户桶留对象。

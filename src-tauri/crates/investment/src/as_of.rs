@@ -1,15 +1,3 @@
-//! 边界市值装载器（as-of market value）：某截止日的「每标的 ≤ 该日最新周采样
-//! 价格 + 全量汇率历史」，边界市值 = 时点存量数量 × 最新周线价格 × 同期汇率
-//! （周键正反向兜底）——与组合走势同一套历史折算纪律（不用当期汇率近似历史），
-//! 缺任一环即缺料（`None`，调用方按空值语义跳过或标不可算，不以零计入）。
-//!
-//! 消费方（口径同源、装载器单点）：
-//! - 资金加权收益率的边界现金流（ADR-0115 决策 3，区间首日 / 区间末日 / 起算日
-//!   折入三处共用）。
-//!
-//! 恒定价格标的（ADR-0126 决策 6）：常量价对任意截止日成立，周键取截止日所在
-//! 自然周；写覆盖保证存量平坦序列（若有）不再被消费。
-
 use std::collections::HashMap;
 
 use chrono::NaiveDate;
@@ -19,11 +7,8 @@ use super::fx_week::{FxWeekHistory, fx_rate_at_week, load_fx_week_history};
 
 use ledger_infra::error::Result;
 
-/// 某截止日的每标的 ≤ 该日最新周线价格行 + 全量汇率历史。
 pub(crate) struct AsOfValues {
-    /// 每标的 ≤ 截止日的最新周点 (trade_date, week_start, price_cents, currency)。
     latest_price: HashMap<String, (String, String, i64, String)>,
-    /// 汇率历史：(base, quote) → week_start → rate（周粒度、币种对个位数，全量载入）。
     fx: FxWeekHistory,
 }
 
@@ -31,9 +16,6 @@ impl AsOfValues {
     pub(crate) fn load(conn: &Connection, as_of: NaiveDate) -> Result<Self> {
         let mut latest_price: HashMap<String, (String, String, i64, String)> = HashMap::new();
         {
-            // 每标的 ≤ 截止日的最新周点（issue #1805：聚合下推到 SQL——原「全量升序
-            // 取回 + Rust 覆盖写」把价格历史整表跨边界搬回再逐行覆盖，4.7 万行 →
-            // 每标的一行，实测热缓存 23.5ms → 4.2ms，逐标的结果一致）。
             let mut stmt = conn.prepare(
                 "SELECT ph.instrument_id, ph.trade_date, ph.week_start, ph.price_cents, ph.currency_code \
                  FROM price_history ph \
@@ -60,9 +42,6 @@ impl AsOfValues {
                 );
             }
         }
-        // 恒定标的覆盖（ADR-0126 决策 6）：常量价对任意截止日成立，周键取截止
-        // 日所在自然周；写覆盖保证存量平坦序列（若有）不再被消费——边界市值
-        // 各消费面共用本装载器，取值口径单点。
         for constant in crate::constant_price::load_constant_prices(conn)? {
             latest_price.insert(
                 constant.instrument_id,
@@ -78,8 +57,6 @@ impl AsOfValues {
         Ok(AsOfValues { latest_price, fx })
     }
 
-    /// 边界市值（账户币种，分）= 存量数量 × 最新周线价格 × 同期汇率；
-    /// 缺价格或缺汇率为 `None`（调用方按缺料跳过 / 标不可算，不以零计入）。
     pub(crate) fn market_value(
         &self,
         quantity: f64,
@@ -88,8 +65,6 @@ impl AsOfValues {
     ) -> Option<i64> {
         let (_, week_start, price_cents, price_currency) = self.latest_price.get(instrument_id)?;
         let rate = fx_rate_at_week(&self.fx, price_currency, account_currency, week_start)?;
-        // 金额分 = 数量 × 单价（万分之一元）÷ 换算因子（价格刻度，ADR-0038），
-        // 再按同期汇率折算。
         let value = (quantity * *price_cents as f64 / crate::prices::PRICE_UNITS_PER_FEN).round();
         Some((value * rate).round() as i64)
     }

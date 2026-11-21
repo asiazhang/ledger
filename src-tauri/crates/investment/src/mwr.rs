@@ -1,55 +1,3 @@
-//! 资金加权收益率（MoneyWeightedReturn，ADR-0115 / issue #1195）：投资粒度的
-//! 年化内部收益率（XIRR，实际天数 / 365）读投影——由实际现金流与期末市值解出，
-//! 回答「我的钱实际赚了多少」，是账本唯一的收益率口径。
-//!
-//! **现金流口径（ADR-0115 决策 2，词汇表「资金加权收益率」词条）**：
-//! - 买入为负（确认金额含手续费，即 buy 行 `transactions.amount_cents` 权威金额）、
-//!   卖出为正（净额，已扣手续费）、现金分红为正；
-//! - 份额调整（split）零现金腿，不入现金流集；
-//! - 基金转换（convert）在**单标的粒度**按转出批次的结转成本（convert 行金额
-//!   锚点 `t.amount_cents`，ADR-0099）拆成正负两条：转出腿为正、转入腿为负；
-//!   账户级与全账级不额外引入——两腿同账户同日同额反号，聚合时天然抵净。
-//!
-//! **归因端点 = 现金流归因与出资账户口径一致（ADR-0096 结算账户语义）**：
-//! 流水归属 `t.account_id`——buy/sell 行的 `account_id` 恒为投资账户（写入守卫
-//! 保证），出资账户只改结算端点不改归属行；dividend 行的 `account_id` 即到账
-//! 账户。红利再投（DRIP）按方案 B 落账（dividend 到账投资账户 + 0 手续费 buy
-//! 自同一投资账户出资，ADR-0109 修订；#1288），两腿在账户内自相抵、不构成外部
-//! 投入——本投影逐行计入两腿，聚合时自然抵净，无特判。到账账户为非投资账户的
-//! 分红按现金归因进入全账级合计（投资收益已落袋），不进任何投资账户的账户级行。
-//!
-//! **期间与期初价值（ADR-0115 决策 3）**：默认自该粒度首笔流水起算、期末为
-//! 现值（`v_holdings` 当前市值，现价 + 当期汇率）；支持区间选择——区间开始时
-//! 的存量持仓按**区间首日市值**折为一笔期初投入（负现金流），区间结束的存量
-//! 持仓按**区间末日市值**折为期末现金流。边界市值 = 时点存量数量（时点持仓
-//! 推算接缝）× ≤ 该日最新周线价格 × 同期汇率（周键正反向兜底）——与组合走势
-//! 同一套历史折算纪律，不用当期汇率近似历史。它是收益率的输入假设，不改账务、
-//! 不构成第二套持仓口径。
-//!
-//! **空值与币种（ADR-0115 决策 4）**：缺价或缺汇率的持仓跳过、不计入该标的
-//! 收益率，其现金流也不计入所属账户与全账合计（沿用 Holding 空值语义）；按
-//! 币种分组（组内同币）、不跨币种折算（与 ADR-0107 同口径）。
-//!
-//! **期初存量与年化起算点（issue #1343 / #1345）**：期初存量行（`origin =
-//! opening`）不是真实入金、不入现金流集。仅含存量、无真实流水的对年化没有输入
-//! ——改给未年化口径（累计收益 ÷ 累计投入）；存量 + 真实流水的对年化恢复：以
-//! **首笔真实流水**为起算点，期前存量按该日市值折为一笔期初投入（复用决策 3
-//! 机制：时点持仓 × ≤ 该日最新周线 × 同期汇率），区间边界对含期初存量的对一律
-//! 不施加（#1343 纪律延续）。折算是年化帧的市值锚：未年化口径仍按成本口径
-//! （期初存量买入额 + 全部真实成本流），折算不进其分子分母。
-//!
-//! **无解不给数（ADR-0115 代价 1）**：现金流多次变号可能无解或多解，此时
-//! 收益率输出 `None`（前端显式标注无法计算），绝不猜一个解。
-//!
-//! **合集口径（issue #1346 / ADR-0115 修订；触发随 #1345 收窄）**：账户级与
-//! 全账级合集含**仅存量、无真实流水**的对时整项降级为未年化——分子（累计收益）
-//! 分母（累计投入）对全合集各自汇总后相除、随行标口径；存量 + 真实流水的对
-//! 年化恢复后随普通对入年化合集、不再触发降级。不含仅存量对时维持年化逐位
-//! 不变。缺价 / 缺汇率的对仍整对跳过、不入任何口径的合计（空值语义不变）。
-//!
-//! **展示粒度（ADR-0115 决策 5）**：持仓页每行（账户 × 标的）单标的收益率、
-//! 盈亏页账户级与全账级；同一算法两个消费面，不新开页面。
-
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use chrono::NaiveDate;
@@ -64,22 +12,6 @@ use ledger_infra::db::query::{FromRow, query_all};
 use ledger_infra::db::tx_scope::ensure_transaction;
 use ledger_infra::error::{AppError, Result};
 
-// ---------------------------------------------------------------------------
-// XIRR 求解器（纯函数，无 IO）
-// ---------------------------------------------------------------------------
-
-/// 解年化内部收益率（XIRR）：给定现金流 `(t, cf)` 序列（`t` 为距首笔流水的
-/// 年化时间 = 实际天数 / 365，`cf` 为带符号金额），求使
-/// `Σ cf_i · (1+r)^(−t_i) = 0` 的 `r > −1`。
-///
-/// 求解形态是**确定性二分**（无随机种子、无发散迭代）：`r → −1⁺` 时最大 `t`
-/// 项主导（NPV 符号 → 末笔流符号），`r → ∞` 时 `t = 0` 项主导（NPV 符号 →
-/// 首笔流符号）；两端异号由介值定理保证区间内有根，二分恒收敛到机器精度。
-/// 两端同号（首末流同号）则可能无解或多解——按 ADR-0115「无解不给数」返回
-/// `None`，不猜解。
-///
-/// 退化输入同样返回 `None`：少于两笔、缺正流或缺负流（无符号变化）、全部现金
-/// 流落在同一时点（NPV 与 r 无关，无唯一解）。零金额流不入方程。
 pub fn xirr(flows: &[(f64, f64)]) -> Option<f64> {
     let flows: Vec<(f64, f64)> = flows.iter().copied().filter(|(_, cf)| *cf != 0.0).collect();
     let has_neg = flows.iter().any(|(_, cf)| *cf < 0.0);
@@ -92,14 +24,10 @@ pub fn xirr(flows: &[(f64, f64)]) -> Option<f64> {
         .map(|(t, _)| *t)
         .fold(f64::NEG_INFINITY, f64::max);
     if t_max.partial_cmp(&0.0) != Some(std::cmp::Ordering::Greater) {
-        // 全部同一时点（含 t 为 NaN）：NPV 与 r 无关，无唯一解。
         return None;
     }
     let npv = |r: f64| -> f64 { flows.iter().map(|(t, cf)| cf / (1.0 + r).powf(*t)).sum() };
 
-    // 括弧端点：lo 贴 −1⁺，hi 取 +1e9（年化超出此量级的账本场景不存在；
-    // NPV(hi) 已被 t=0 项主导，再增大不改变符号）。端点运算允许 ±inf
-    // （极长年限下 (1e-9)^t 下溢为 0）：仅用于符号比较，不入结果。
     let mut lo = -1.0 + 1e-9;
     let mut hi = 1e9f64;
     let mut f_lo = npv(lo);
@@ -111,10 +39,8 @@ pub fn xirr(flows: &[(f64, f64)]) -> Option<f64> {
         return Some(hi);
     }
     if (f_lo > 0.0) == (f_hi > 0.0) {
-        // 首末流同号：可能无解或多解，不给数（ADR-0115 代价 1）。
         return None;
     }
-    // 纯二分至机器精度（mid 不再前进即停）：行为确定，同输入恒同输出。
     for _ in 0..200 {
         let mid = 0.5 * (lo + hi);
         if mid <= lo || mid >= hi {
@@ -134,72 +60,44 @@ pub fn xirr(flows: &[(f64, f64)]) -> Option<f64> {
     Some(0.5 * (lo + hi))
 }
 
-// ---------------------------------------------------------------------------
-// IPC 投影类型
-// ---------------------------------------------------------------------------
-
-/// 收益率查询区间（可选起止 ISO 8601 日期，`None` 表示该侧不设界）：
-/// 区间开始时的存量持仓按区间首日市值折为期初投入（ADR-0115 决策 3）。
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct MwrRange {
-    /// 起始日期（含），ISO 8601。
     pub start_date: Option<String>,
-    /// 截止日期（含），ISO 8601。
     pub end_date: Option<String>,
 }
 
-/// 收益率口径（issue #1343 / ADR-0115 修订）：同一投影同出两种口径、每行自带
-/// 口径标记供前端标注——**两者不可互算**。年化回答「我的钱一年赚了多少」；
-/// 未年化回答「这笔投入一共赚了多少」，只在建仓时点未知（期初存量）时启用。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MwrBasis {
-    /// 年化内部收益率（XIRR，实际天数 / 365）。
     Annualized,
-    /// 未年化收益率 = 累计收益 ÷ 累计投入（含期初存量的标的：建仓时点未知，
-    /// 年化没有输入）。
     Cumulative,
 }
 
-/// 单标的收益率行（持仓页每行，账户 × 标的粒度）：`basis` 标口径，`rate` 为该
-/// 口径下的收益率（小数，0.1234 = 12.34%）；无法计算（缺价跳过整行 / 现金流
-/// 无解或投入为零）为 `None`。
 #[derive(Debug, Serialize)]
 pub struct InstrumentMwr {
     pub account_id: String,
     pub instrument_id: String,
-    /// 计价币种 = 账户币种（现金流与期末市值同币，组内不跨币种折算）。
     pub currency_code: String,
-    /// 本行收益率的口径（`annualized` / `cumulative`，issue #1343）。
     pub basis: MwrBasis,
     pub rate: Option<f64>,
 }
 
-/// 账户级收益率行（盈亏页账户粒度）：只覆盖投资账户（与盈亏页账户下拉同谓词）。
-/// `basis` 标本行口径（issue #1346；触发随 #1345 收窄）：名下合集含**仅存量、
-/// 无真实流水**的对时整项给未年化，否则年化（不含该形态时逐位不变）。
 #[derive(Debug, Serialize)]
 pub struct AccountMwr {
     pub account_id: String,
     pub account_name: String,
     pub currency_code: String,
-    /// 本行收益率的口径（`annualized` / `cumulative`，issue #1346）。
     pub basis: MwrBasis,
     pub rate: Option<f64>,
 }
 
-/// 全账级按币种分组的收益率行：不做跨币种折算，各币种独立解年化；该币种合集
-/// 含**仅存量、无真实流水**的对时整项给未年化（issue #1346；触发随 #1345 收窄），
-/// 口径随行标记。
 #[derive(Debug, Serialize)]
 pub struct CurrencyMwr {
     pub currency_code: String,
-    /// 本行收益率的口径（`annualized` / `cumulative`，issue #1346）。
     pub basis: MwrBasis,
     pub rate: Option<f64>,
 }
 
-/// 资金加权收益率汇总（IPC 投影）：三个消费面共用同一现金流集与同一算法。
 #[derive(Debug, Serialize)]
 pub struct MoneyWeightedReturnSummary {
     pub by_instrument: Vec<InstrumentMwr>,
@@ -207,12 +105,6 @@ pub struct MoneyWeightedReturnSummary {
     pub total: Vec<CurrencyMwr>,
 }
 
-// ---------------------------------------------------------------------------
-// 读投影
-// ---------------------------------------------------------------------------
-
-/// 收益率查询生产入口：期末不设界时以北京日历日为「今天」（行情 / 净值日历
-/// 同源，先例：价格过期检查）。
 pub fn query_money_weighted_return_summary(
     conn: &Connection,
     range: &MwrRange,
@@ -220,13 +112,6 @@ pub fn query_money_weighted_return_summary(
     query_money_weighted_return_summary_on(conn, range, beijing_today())
 }
 
-/// [`query_money_weighted_return_summary`] 的可注入形态（时钟是测试的行为输入，
-/// 先例：`instrument_price_staleness_on`）：给定今天与库内状态，结果唯一。
-///
-/// 多语句读闭包收进同一读事务（issue #1702，快照纪律见 `tx_scope` 模块文档）：
-/// 现金流集、期末/期初边界市值、账户行是多段取数，XIRR 的输入假设要求现金流与
-/// 市值锚同时点——写提交落在段间即「现金流读旧、市值读新」，解出任何快照都
-/// 不存在的收益率。
 pub fn query_money_weighted_return_summary_on(
     conn: &Connection,
     range: &MwrRange,
@@ -237,33 +122,18 @@ pub fn query_money_weighted_return_summary_on(
     })
 }
 
-/// 收益率投影本体（无事务语义，由 [`query_money_weighted_return_summary_on`]
-/// 的 [`ensure_transaction`] 包裹）：区间校验 → 现金流装载 → 边界市值 → 三消费面。
 fn query_money_weighted_return_summary_within_tx(
     conn: &Connection,
     range: &MwrRange,
     today: NaiveDate,
 ) -> Result<MoneyWeightedReturnSummary> {
-    // 区间校验与解析一体：日期格式合法、起点不晚于终点，解析结果直接传给
-    // 边界施加（不重复 parse）。
     let (start, end) = validate_range(range)?;
 
-    // 1. 现金流集：按（账户 × 标的）配对装载（口径见模块头注）。
     let mut pairs: BTreeMap<(String, String), PairFlows> = BTreeMap::new();
     load_cash_flows(conn, start, end, &mut pairs)?;
 
-    // 2. 边界现金流：期初投入（区间首日市值，负）与期末市值（区间末日 / 现值，正）；
-    //    边界市值缺料而有存量的对整体跳过（ADR-0115 决策 4 空值语义）。
     apply_boundaries(conn, start, end, today, &mut pairs)?;
 
-    // 3. 三个消费面同一算法：
-    //    - 单标的：当前持仓对（v_holdings / 区间末日仍有存量）逐对给收益率——
-    //      普通对与「存量 + 真实流水」对走年化，仅存量无流水的对走未年化
-    //      （口径随行给，ADR-0115 修订 / issue #1345）；
-    //    - 账户级：名下未被跳过标的的合集——含**仅存量、无真实流水**的对时
-    //      整项降级给未年化（分子分母各自汇总，issue #1346；#1345 后存量 +
-    //      真实流水的对年化恢复，不再触发降级），否则年化（逐位不变）；
-    //    - 全账级：按币种分组的合集，口径裁决同账户级（含到账非投资账户的分红）。
     let by_instrument: Vec<InstrumentMwr> = pairs
         .iter()
         .filter(|(_, p)| p.current_position && !p.unvalued)
@@ -288,8 +158,6 @@ fn query_money_weighted_return_summary_within_tx(
         .into_iter()
         .filter(|a| a.is_investment)
         .filter_map(|a| {
-            // 名下未被跳过（缺料）的合集：合集非空才有行——整户补记（只有期初
-            // 存量）的账户自此不再缺席（issue #1346）。
             let owned: Vec<&PairFlows> = pairs
                 .iter()
                 .filter(|(key, p)| !p.unvalued && key.0 == a.id)
@@ -314,11 +182,8 @@ fn query_money_weighted_return_summary_within_tx(
             .then(x.currency_code.cmp(&y.currency_code))
     });
 
-    // 按币种分组的合集（缺料对仍排除）：口径裁决与账户级同规（issue #1346）。
     let mut by_currency: BTreeMap<String, Vec<&PairFlows>> = BTreeMap::new();
     for p in pairs.values() {
-        // 缺料对整对跳过；仅存量无流水的对保留在组内，由合集聚合按未年化
-        // 口径消化（issue #1346）。
         if p.unvalued {
             continue;
         }
@@ -346,8 +211,6 @@ fn query_money_weighted_return_summary_within_tx(
     })
 }
 
-/// 区间校验与解析：日期格式合法且起点不晚于终点（与走势查询同一纪律），
-/// 返回解析后的起止日期供边界施加复用。
 fn validate_range(range: &MwrRange) -> Result<(Option<NaiveDate>, Option<NaiveDate>)> {
     let parse = |label: &str, raw: &Option<String>| -> Result<Option<NaiveDate>> {
         raw.as_deref()
@@ -375,7 +238,6 @@ fn validate_range(range: &MwrRange) -> Result<(Option<NaiveDate>, Option<NaiveDa
     Ok((start, end))
 }
 
-/// 一条现金流的轻量行（SQL → 内存的中立形态）。
 struct FlowRow {
     account_id: String,
     date: String,
@@ -383,7 +245,6 @@ struct FlowRow {
     amount_cents: i64,
     instrument_id: String,
     to_instrument_id: Option<String>,
-    /// 证券扩展行来源（issue #1343）：`opening` = 期初存量，不进现金流集。
     origin: String,
 }
 
@@ -401,18 +262,6 @@ impl FromRow for FlowRow {
     }
 }
 
-/// 装载现金流：buy/sell/dividend/convert 四类交易行（split 零现金腿不入），
-/// 软删账户与软删流水排除（与 Holding / 已实现盈亏读口径对齐，issue #217 定案）；
-/// **期初存量行（`origin = 'opening'`）不进现金流集**——它不是真实入金，只是
-/// 「某时刻起就存在的存量」（issue #1343 / ADR-0115 修订），只登记为该标的的
-/// 投入与「年化不适用」标记。
-///
-/// 区间过滤 `(start, end]` 在装载后按对施加——区间开始时点的存量价值由期初投入
-/// 现金流承载，起始日（含）之前的流水不重复入集；**含期初存量的对例外**，它的
-/// 口径是生命周期 / 自首笔真实流水起算的度量，不受区间收窄（见
-/// [`apply_boundaries`]）。含期初存量的对另在首笔真实流水日（t0）施加折算：
-/// 该日的持仓变动流水由折算承载、不入集（与区间起始日同款约定），分红是仓位外
-/// 现金、不在折算内、恒入集（issue #1345）。
 fn load_cash_flows(
     conn: &Connection,
     start: Option<NaiveDate>,
@@ -428,8 +277,6 @@ fn load_cash_flows(
                  AND t.is_deleted = 0 AND a.is_deleted = 0 \
                ORDER BY t.date";
     let rows: Vec<FlowRow> = query_all(conn, sql, [])?;
-    // 两遍装载：先定哪些对含期初存量、各自的首笔真实流水日（年化起算点 t0，
-    // issue #1345），再按对落现金流。
     let opening_pairs: BTreeSet<(String, String)> = rows
         .iter()
         .filter(|r| r.origin == OPENING_ORIGIN)
@@ -443,7 +290,6 @@ fn load_cash_flows(
         let date = parse_date(&row.date)?;
         let mut legs = vec![(row.account_id.clone(), row.instrument_id.clone())];
         if let Some(to) = &row.to_instrument_id {
-            // convert 转入腿同为该对的真实流水（两腿各归各对）。
             legs.push((row.account_id.clone(), to.clone()));
         }
         for key in legs {
@@ -457,7 +303,6 @@ fn load_cash_flows(
                 .or_insert(date);
         }
     }
-    // 只有含期初存量的对需要起算点：其余对的现金流时点天然完整。
     first_real.retain(|key, _| opening_pairs.contains(key));
 
     for row in rows {
@@ -468,15 +313,11 @@ fn load_cash_flows(
             .clone()
             .map(|to| (row.account_id.clone(), to));
         if row.origin == OPENING_ORIGIN {
-            // 期初存量（行为层准入保证只在 buy 上）：不进现金流集，只登记投入。
             let pair = pairs.entry(out_key).or_default();
             pair.has_opening = true;
             pair.opening_invested_cents += row.amount_cents;
             continue;
         }
-        // 区间过滤 `(start, end]`：含期初存量的对例外（生命周期度量，见函数头注）。
-        // 分红是仓位外现金、不在期初市值折算内：起始日（含）的分红照常入集，
-        // 仅起始日之前的窗口外流水排除（范围外修复：起始日分红被折算吞掉）。
         let lifetime = opening_pairs.contains(&out_key)
             || in_key.as_ref().is_some_and(|k| opening_pairs.contains(k));
         let in_window = if row.kind == "dividend" {
@@ -488,8 +329,6 @@ fn load_cash_flows(
             continue;
         }
         if row.kind == "convert" {
-            // 转换两腿（单标的粒度）：转出腿为正、转入腿为负，值 = 结转成本
-            // （convert 行金额锚点，ADR-0099 / ADR-0115 决策 2）。
             let out_leg = row.instrument_id.clone();
             if !route_t0_day_flow(
                 pairs,
@@ -512,7 +351,6 @@ fn load_cash_flows(
             }
             continue;
         }
-        // 买入为负（确认金额含手续费）、卖出为正（净额）、分红为正。
         let signed = match row.kind.as_str() {
             "buy" => -(row.amount_cents as f64),
             "sell" | "dividend" => row.amount_cents as f64,
@@ -528,12 +366,6 @@ fn load_cash_flows(
     Ok(())
 }
 
-/// 期初存量对的首笔真实流水日（t0）随行登记；该日的持仓变动流水（买卖 /
-/// 转换腿）改道入 [`PairFlows::t0_day_cost_flows`]——年化帧由 t0 折算承载
-/// （时点市值锚），累计帧按成本入账；分红是仓位外现金、不在折算内，恒入
-/// [`PairFlows::flows`]（issue #1345）。非期初存量对无 t0 登记，恒返回
-/// `false`（名字里的 route 是本函数的承重副作用：[`PairFlows::first_real_flow`]
-/// 由此建立，measure / 合计 / 边界三面依赖它）。
 fn route_t0_day_flow(
     pairs: &mut BTreeMap<(String, String), PairFlows>,
     key: &(String, String),
@@ -554,37 +386,20 @@ fn route_t0_day_flow(
     true
 }
 
-/// 一个（账户 × 标的）对的现金流集与边界状态。
 #[derive(Default)]
 struct PairFlows {
-    /// 真实成交的带日期现金流（金额单位分，符号即方向）；期初存量行不在其中。
-    /// 含期初存量且有真实流水的对：t0 当日的持仓变动流水不在此（改道
-    /// [`PairFlows::t0_day_cost_flows`]），期末现值由 [`apply_boundaries`] 追加。
     flows: Vec<(NaiveDate, f64)>,
-    /// t0 当日的持仓变动成本流（年化帧由折算承载；累计帧按成本入账，与 flows
-    /// 同尺，issue #1345）。
     t0_day_cost_flows: Vec<(NaiveDate, f64)>,
-    /// t0 折算（期前存量按首笔真实流水日市值折的期初投入，负值；年化帧专用，
-    /// 累计帧的成本口径不含它），由 [`apply_boundaries`] 写入（issue #1345）。
     t0_fold: Option<(NaiveDate, f64)>,
-    /// 期初存量买入额合计（分，正数）：不进现金流集，只进未年化口径的投入与累计。
     opening_invested_cents: i64,
-    /// 该对含期初存量（真实建仓时点未知）：仅存量、无真实流水时年化不适用。
     has_opening: bool,
-    /// 首笔真实流水日（年化起算点 t0，issue #1345）：`None` = 该对无真实流水。
-    /// t0 当日的持仓变动流水由折算承载、不入集（见 [`load_cash_flows`]）。
     first_real_flow: Option<NaiveDate>,
-    /// 计价币种 = 账户币种（现金流与期末市值同币，组内可直接比较）。
     currency_code: String,
-    /// 当前有持仓（`v_holdings` 有行 / 区间末日仍有存量）：单标的行的展示资格。
     current_position: bool,
-    /// 边界缺价或缺汇率：该对整体跳过（行不给数、流不入合计）。
     unvalued: bool,
 }
 
 impl PairFlows {
-    /// 仅期初存量、无真实流水：年化不适用、现金流不入账户级与全账级合计的
-    /// 形态判据（issue #1343 / #1345）。
     fn opening_only(&self) -> bool {
         self.has_opening && self.first_real_flow.is_none()
     }
@@ -593,10 +408,6 @@ impl PairFlows {
         self.flows.push((date, amount));
     }
 
-    /// 该对输出的收益率与口径（issue #1343 / ADR-0115 修订；#1345 细分两态）：
-    /// 仅期初存量、无真实流水的对年化不适用（真实建仓时点未知，XIRR 没有输入），
-    /// 改给未年化收益率；存量 + 真实流水的对年化恢复（起算点 = 首笔真实流水，
-    /// 期初投入由 [`apply_boundaries`] 折入）；其余对解年化。
     fn measure(&self) -> (MwrBasis, Option<f64>) {
         if self.opening_only() {
             (MwrBasis::Cumulative, self.cumulative_rate())
@@ -605,8 +416,6 @@ impl PairFlows {
         }
     }
 
-    /// 年化帧解年化：flows + t0 折算（t0 日的持仓变动已在折算内，见
-    /// [`route_t0_day_flow`]），时间为实际天数 / 365，自首笔现金流起算。
     fn annualized_rate(&self) -> Option<f64> {
         match &self.t0_fold {
             None => rate_of(&self.flows),
@@ -619,7 +428,6 @@ impl PairFlows {
         }
     }
 
-    /// 年化帧的全部现金流（flows + t0 折算）：合集年化分支合并用。
     fn annualized_flows(&self) -> impl Iterator<Item = (NaiveDate, f64)> + '_ {
         self.flows
             .iter()
@@ -627,13 +435,6 @@ impl PairFlows {
             .chain(self.t0_fold.iter().copied())
     }
 
-    /// 未年化收益率的分子（累计收益）与分母（累计投入）（ADR-0115 修订；
-    /// 口径动机与「与年化不可互算」的说明见词汇表「资金加权收益率」词条与
-    /// ADR-0115 修订记录）——拆成两腿供合集聚合复用（issue #1346）：
-    /// - 累计收益 = Σ真实流（flows + t0 日成本流，含期末现值）− 期初存量买入额；
-    ///   卖出 / 分红为正，已实现与分红因此天然入账（ADR-0109 三腿口径）；t0 折算
-    ///   是年化帧的市值锚、不进成本帧（issue #1345）；
-    /// - 累计投入 = 期初存量买入额 + Σ负向现金流绝对值（买入 + 转换转入腿）。
     fn cumulative_profit(&self) -> f64 {
         let opening = self.opening_invested_cents as f64;
         self.cost_flows().map(|(_, cf)| *cf).sum::<f64>() - opening
@@ -648,25 +449,15 @@ impl PairFlows {
                 .sum::<f64>()
     }
 
-    /// 未年化帧的全部真实流（flows + t0 日成本流，成本口径）。
     fn cost_flows(&self) -> impl Iterator<Item = &(NaiveDate, f64)> {
         self.flows.iter().chain(self.t0_day_cost_flows.iter())
     }
 
-    /// 未年化收益率 = 累计收益 ÷ 累计投入：单对形态即合集聚合的退化情形
-    /// （投入为零时无解，输出 `None`——沿用「不给数不猜数」的空值语义）。
     fn cumulative_rate(&self) -> Option<f64> {
         aggregate_cumulative_rate(std::slice::from_ref(&self))
     }
 }
 
-/// 合集（账户级 / 全账级）的口径与收益率（issue #1346 / ADR-0115 修订；
-/// 降级触发随 #1345 收窄）：合集含**仅存量、无真实流水**的对时**整项降级为
-/// 未年化**——分子（累计收益）分母（累计投入）对全合集各自汇总后相除，覆盖
-/// 全部投入；否则维持年化（XIRR 解合并现金流；「存量 + 真实流水」对的年化帧
-/// 由 t0 折算补齐，随普通对合并，issue #1345）。不拆两行：两个口径不可互算，
-/// 并列会让「该合集赚了百分之几」出现两个不可比的答案，且年化行只覆盖真实
-/// 成交残余、会被误读。
 fn measure_collection(pairs: &[&PairFlows]) -> (MwrBasis, Option<f64>) {
     if pairs.iter().any(|p| p.opening_only()) {
         (MwrBasis::Cumulative, aggregate_cumulative_rate(pairs))
@@ -677,7 +468,6 @@ fn measure_collection(pairs: &[&PairFlows]) -> (MwrBasis, Option<f64>) {
     }
 }
 
-/// 合集未年化收益率：Σ累计收益 ÷ Σ累计投入（各自汇总；分母非正不给数）。
 fn aggregate_cumulative_rate(pairs: &[&PairFlows]) -> Option<f64> {
     let invested: f64 = pairs.iter().map(|p| p.cumulative_invested()).sum();
     if invested <= 0.0 {
@@ -687,7 +477,6 @@ fn aggregate_cumulative_rate(pairs: &[&PairFlows]) -> Option<f64> {
     Some(profit / invested)
 }
 
-/// 给定现金流解年化：时间为实际天数 / 365，自首笔流水起算（空集 `None`）。
 fn rate_of(flows: &[(NaiveDate, f64)]) -> Option<f64> {
     let first = flows.iter().map(|(d, _)| *d).min()?;
     let converted: Vec<(f64, f64)> = flows
@@ -712,11 +501,8 @@ fn parse_date(raw: &str) -> Result<NaiveDate> {
     })
 }
 
-/// `security_transactions.origin` 的期初存量字面量（与 V027 的闭集取值一致）。
 const OPENING_ORIGIN: &str = "opening";
 
-/// 区间过滤 `(start, end]`（起始日含、截止日含所在侧由 `end` 上界闭区间表达）：
-/// `None` 表示该侧不设界。调用方已完成日期解析与先后校验，此处只做比较。
 fn in_range(date: NaiveDate, start: Option<NaiveDate>, end: Option<NaiveDate>) -> bool {
     if start.is_some_and(|s| date <= s) {
         return false;
@@ -727,7 +513,6 @@ fn in_range(date: NaiveDate, start: Option<NaiveDate>, end: Option<NaiveDate>) -
     true
 }
 
-/// 账户参考行（账户级消费面的名称 / 币种 / 投资账户谓词）。
 struct AccountRow {
     id: String,
     name: String,
@@ -747,19 +532,6 @@ impl FromRow for AccountRow {
     }
 }
 
-// ---------------------------------------------------------------------------
-// 边界现金流：期初投入（区间首日市值）与期末市值（区间末日 / 现值）
-// ---------------------------------------------------------------------------
-
-/// 对每个（账户 × 标的）对施加边界现金流：
-/// - 区间开始有存量 → 期初投入 `−(区间首日市值)`（负现金流，ADR-0115 决策 3）；
-/// - 区间结束有存量 → 期末现金流 `+(末日市值)`；不设界时取 `v_holdings` 现值
-///   （现价 + 当期汇率，Holding 空值语义：缺价 / 缺汇率为 NULL）；
-/// - 含期初存量且有真实流水的对（issue #1345）→ 期初投入改由首笔真实流水日
-///   （t0）市值折入，区间边界不施加、期末恒取现值（见函数体内注释）。
-///
-/// 边界 / 折算市值缺料（历史价格或同期汇率缺失）而有存量 → 该对标 `unvalued`，
-/// 整体跳过。同时装载当前持仓标志与各对的计价币种（账户币种）。
 fn apply_boundaries(
     conn: &Connection,
     start: Option<NaiveDate>,
@@ -767,8 +539,6 @@ fn apply_boundaries(
     today: NaiveDate,
     pairs: &mut BTreeMap<(String, String), PairFlows>,
 ) -> Result<()> {
-    // 当前持仓对的现值与账户币种（期末不设界时的期末市值来源；v_holdings
-    // 内部已排除软删账户）。同一对多币种 lot 时 SUM 各行市值（均为账户币）。
     let mut current: HashMap<(String, String), (Option<i64>, String)> = HashMap::new();
     {
         let mut stmt = conn.prepare(
@@ -790,8 +560,6 @@ fn apply_boundaries(
         }
     }
 
-    // 区间模式（任一侧设界）才需要历史市值；现值模式直接消费 v_holdings。
-    // 起止侧的日期与其历史市值装载器成对持有（设界即已装载，免双重判空）。
     let start_boundary = match start {
         Some(date) => Some((date, AsOfValues::load(conn, date)?)),
         None => None,
@@ -801,8 +569,6 @@ fn apply_boundaries(
         None => None,
     };
     let end_date = end.unwrap_or(today);
-    // 期初折算装载器：按起算日预载（同日起算的对共享一次装载，issue #1345；
-    // 起算点只登记在含期初存量的对上，普通对不触发装载）。
     let mut fold_values: HashMap<NaiveDate, AsOfValues> = HashMap::new();
     for t0 in pairs
         .values()
@@ -824,17 +590,9 @@ fn apply_boundaries(
             pair.currency_code = currency.clone();
         }
         if pair.currency_code.is_empty() {
-            // 无 v_holdings 行的对（已清仓 / 分红到非投资账户）：币种取账户币种。
             pair.currency_code = account_currency_of(conn, &key.0)?;
         }
 
-        // 含期初存量的对（issue #1343 / ADR-0115 修订；#1345 起分两态），区间边界
-        // 一律不施加（期初存量不是区间内的入金，#1343 纪律延续）：
-        // - 仅存量、无真实流水：未年化口径是生命周期度量，期末市值恒取现值。
-        // - 存量 + 真实流水（issue #1345）：年化恢复——期前存量按首笔真实流水日
-        //   （t0）市值折为一笔期初投入（决策 3 机制在 t0 复用：时点持仓 × ≤ 该日
-        //   最新周线 × 同期汇率），期末市值同样恒取现值。
-        // 折算或现值缺料即整行跳过（空值语义）。
         if pair.has_opening {
             if let Some((value, _)) = current.get(&key) {
                 pair.current_position = true;
@@ -847,10 +605,6 @@ fn apply_boundaries(
                 let quantity =
                     holdings_as_of_in(conn, Some(&key.0), Some(&key.1), &t0.to_string())?;
                 if quantity > QTY_GUARD_EPSILON {
-                    // fold_values 按 pairs 全体起算日预载，本处索引必命中。
-                    // 折算只进年化帧（t0_fold），不进成本帧的 flows——未年化
-                    // 口径的分子分母按期初存量买入额 + 真实成本流计，市值锚
-                    // 不得混入（issue #1345）。
                     match fold_values[&t0].market_value(quantity, &key.1, &pair.currency_code) {
                         Some(v) => pair.t0_fold = Some((t0, -(v as f64))),
                         None => pair.unvalued = true,
@@ -860,7 +614,6 @@ fn apply_boundaries(
             continue;
         }
 
-        // 期初投入：区间开始时有存量 → 折为期初市值（负现金流）；市值缺料即跳过。
         if let Some((start_date, values)) = &start_boundary {
             let quantity =
                 holdings_as_of_in(conn, Some(&key.0), Some(&key.1), &start_date.to_string())?;
@@ -875,7 +628,6 @@ fn apply_boundaries(
             }
         }
 
-        // 期末市值：设界取区间末日历史市值；不设界取现值（空值语义）。
         if let Some((boundary_date, values)) = &end_boundary {
             let quantity =
                 holdings_as_of_in(conn, Some(&key.0), Some(&key.1), &boundary_date.to_string())?;
@@ -887,7 +639,6 @@ fn apply_boundaries(
                 }
             }
         } else if let Some((value, _)) = current.get(&key) {
-            // 现值模式：v_holdings 有行即当前持仓；市值为 NULL 即缺价 / 缺汇率。
             pair.current_position = true;
             match value {
                 Some(v) => pair.flows.push((end_date, *v as f64)),
@@ -898,7 +649,6 @@ fn apply_boundaries(
     Ok(())
 }
 
-/// 账户币种（无 v_holdings 行的对回退取用）。
 fn account_currency_of(conn: &Connection, account_id: &str) -> Result<String> {
     conn.query_row(
         "SELECT currency_code FROM accounts WHERE id = ?1 AND is_deleted = 0",

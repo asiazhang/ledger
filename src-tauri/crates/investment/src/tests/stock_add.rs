@@ -1,9 +1,3 @@
-//! 「添加投资标的」股票侧录入的领域规则（issue #697 / ADR-0081 / spec #690；
-//! 换源 ADR-0130 决策 2 / issue #1567）：录入通道解析（沪/深/港显式市场、美股
-//! UI 折叠通道 → 聚合查询）、查询阶段编排（解析在先、单次查询）与识别落库
-//!（类型自动识别 = 行情 kind_hint，经创建增强同一落库接缝）。全部离线驱动，
-//! 先例：[`super::stock_lookup`] / [`super::fund_add`]。
-
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -14,7 +8,6 @@ use crate::{
 use ledger_infra::error::AppError;
 use tauri_app_lib::test_support::{block_on, open};
 
-/// 构造行情桩的命中回报：统一报价载荷（ADR-0103）自带（市场，代码，价格，类型提示）。
 fn hit_quote(market: Market, code: &str, kind: InstrumentType) -> Quote {
     Quote {
         code: code.to_string(),
@@ -30,7 +23,6 @@ fn hit_quote(market: Market, code: &str, kind: InstrumentType) -> Quote {
     }
 }
 
-/// 未命中错误（与访问层桩同款码化形态）。
 fn miss(code: &str) -> AppError {
     AppError::codedp(
         "sync.stock-not-found",
@@ -39,12 +31,8 @@ fn miss(code: &str) -> AppError {
     )
 }
 
-/// 请求轨迹句柄：共享 Rc 引用，断言时 borrow 只读访问。
 type RequestTrack = Rc<RefCell<Vec<(String, String)>>>;
 
-/// 记录请求轨迹的桩：请求市场与命中市场全等（沪深港显式市场）或为聚合路由值
-/// `us` 且命中市场属美股三市场（行情源不区分交易所）即返回命中行情，否则未命中
-/// ——换源后查询恒单只。请求轨迹经共享句柄带出供断言。
 fn tracking_fetch(
     hit: Option<(Market, Quote)>,
 ) -> (
@@ -54,9 +42,6 @@ fn tracking_fetch(
     let requests: RequestTrack = Rc::new(RefCell::new(Vec::new()));
     let track = Rc::clone(&requests);
     (
-        // async 接缝桩（ADR-0125 决策 7 / issue #1413）：应答值为立即就绪的 future。
-        // 命中判定与数据源行为同构：请求路由 = 命中市场的聚合投影（消费投资域
-        // `as_stock_route` 单点，不自建第二份映射，issue #1673）。
         move |code: &str, route: StockRoute| {
             track
                 .borrow_mut()
@@ -77,10 +62,6 @@ fn tracking_fetch(
     )
 }
 
-// ---------------------------------------------------------------------------
-// 录入通道解析（市场必选的通道闭集）
-// ---------------------------------------------------------------------------
-
 #[test]
 fn sh_sz_hk_channels_map_to_explicit_markets() {
     assert_eq!(
@@ -99,8 +80,6 @@ fn sh_sz_hk_channels_map_to_explicit_markets() {
 
 #[test]
 fn us_channel_maps_to_shape_resolution_for_aggregate_query() {
-    // 美股是 UI 折叠的通道标签（ADR-0081），精确交易所由行情源自报——通道映射
-    // 为 None（按 ticker 形态解析为聚合查询，ADR-0130 决策 2）。
     assert_eq!(resolve_add_stock_channel("us").unwrap(), None);
 }
 
@@ -111,17 +90,12 @@ fn channel_out_of_closed_set_is_rejected() {
         err.is_code("stock.channel-unsupported"),
         "应为码化拒绝: {err}"
     );
-    // 场外基金通道走基金接缝（add_fund_by_code_with），不在股票通道闭集。
     let err = resolve_add_stock_channel("fund").unwrap_err();
     assert!(
         err.is_code("stock.channel-unsupported"),
         "基金通道不入股票闭集: {err}"
     );
 }
-
-// ---------------------------------------------------------------------------
-// 查询阶段：通道 → 候选解析 → 遍历（未命中继续 / 临时错误上抛）
-// ---------------------------------------------------------------------------
 
 #[test]
 fn sh_channel_hits_first_candidate_with_normalized_code() {
@@ -184,7 +158,6 @@ fn all_miss_surfaces_not_found() {
 #[test]
 fn explicit_market_conflict_rejects_before_any_fetch() {
     let (mut fetch, requests) = tracking_fetch(None);
-    // 沪通道 + 港股形态代码：形态矛盾在候选解析单点拒绝，不发起网络。
     let err = block_on(fetch_stock_quote_for_add("sh", "700", &mut fetch)).unwrap_err();
     assert!(
         err.is_code("stock.market-conflict"),
@@ -219,10 +192,6 @@ fn temporary_error_surfaced_immediately() {
     assert_eq!(requests.borrow().len(), 1);
 }
 
-// ---------------------------------------------------------------------------
-// 识别落库：类型 = 行情 kind_hint，经创建增强同一落库接缝
-// ---------------------------------------------------------------------------
-
 #[test]
 fn etf_kind_hint_persists_etf_row_with_quote_backfill() {
     let conn = open();
@@ -246,7 +215,6 @@ fn etf_kind_hint_persists_etf_row_with_quote_backfill() {
     assert_eq!(row.1, "sz");
     assert_eq!(row.2, "CNY");
     assert_eq!(row.3, "manual", "来源 manual（非同步通道）");
-    // 现价落库：nav_date 恒 None（股票通道语义，净值日期是场外基金语义）。
     let price: (i64, Option<String>) = conn
         .query_row(
             "SELECT price_cents, nav_date FROM market_prices WHERE instrument_id=?1",

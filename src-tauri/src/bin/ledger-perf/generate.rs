@@ -1,14 +1,3 @@
-//! generate 子命令：核心交易域 + 投资域/计划域画像的确定性生成
-//! （issue #459/#460 / ADR-0062）+ 附属账本夹具（issue #1630：1 主库 + N
-//! 附属账本的多账本数据集形状，见 [`super::books`] 模块头）。
-//!
-//! 建库经应用自身的迁移应用路径（[`open_connection`] + [`init_db`]，从 lib 复用，
-//! 不复制 DDL）；数据行由本模块批量直插（一次性事务 + 关闭 fsync 的连接级 PRAGMA，
-//! 供几十秒内产出 50 万笔）。全部画像参数以常量集中在本模块头部，测试与
-//! 用法注释（bin 头）共用同一套数字；确定性由种子化 PRNG 与「无墙钟、无
-//! HashMap 遍历」纪律保证——同参数两次生成，全部生成内容的全表有序摘要一致
-//! （迁移种子行的审计时间列不参与比对，tests 内断言）。
-
 use std::collections::{BTreeMap, VecDeque};
 use std::path::{Path, PathBuf};
 
@@ -26,59 +15,35 @@ use super::plans;
 use super::rng::{Rng, time_ordered_id};
 use super::{DEFAULT_END_DATE, DEFAULT_SEED, DEFAULT_TRANSACTIONS, default_out};
 
-// ---------------------------------------------------------------------------
-// 画像常量（约数以固定值落地；变更须同步 bin 头注释与 tests）
-// ---------------------------------------------------------------------------
-
-/// 数据窗口长度：锚定结束日期前约 5 年。
 const WINDOW_MONTHS: u32 = 60;
-/// 生成账户数：现金/储蓄/信用卡/钱包混合，含少量外币账户。
 const ACCOUNT_TOTAL: usize = 50;
-/// 生成分类数（迁移自带的默认种子分类之外另生成）。
 const CATEGORY_TOTAL: usize = 40;
-/// 商户数与长尾结构：top 20 占挂商户流水的约 60%。
 const MERCHANT_TOTAL: usize = 800;
 const TOP_MERCHANTS: usize = 20;
 const TOP_MERCHANT_FLOW_SHARE: f64 = 0.60;
-/// 商户挂载率：支出/退款 85%、收入 30%（工资类收入通常无商户）。
 const EXPENSE_MERCHANT_RATE: f64 = 0.85;
 const INCOME_MERCHANT_RATE: f64 = 0.30;
-/// kind 构成：支出 79.4% / 收入 10% / 转账 8% / 退款 2% / 买入 0.4% / 卖出 0.2%
-/// （买入+卖出 = 约 3000 笔标的交易 @50 万笔，见 issue #460；分红/拆股不生成——
-/// 产品写入层拒绝且分红以普通 income 承载，词汇表 Investment 词条）。
 const EXPENSE_SHARE: f64 = 0.794;
 const INCOME_SHARE: f64 = 0.10;
 const TRANSFER_SHARE: f64 = 0.08;
-// 退款 = 2%（refund 链：refund_of_transaction_id 指向更早的支出）；
-// 买入 0.4% + 卖出 0.2% = 约 3000 笔标的交易 @50 万笔（issue #460）。
 const REFUND_SHARE: f64 = 0.02;
 const BUY_SHARE: f64 = 0.004;
 const SELL_SHARE: f64 = 0.002;
-// kind 边界（累计份额和恒为 1；assert 钉住画像常量不漂移）。
 const INCOME_BOUND: f64 = EXPENSE_SHARE + INCOME_SHARE;
 const TRANSFER_BOUND: f64 = INCOME_BOUND + TRANSFER_SHARE;
 const REFUND_BOUND: f64 = TRANSFER_BOUND + REFUND_SHARE;
 const BUY_BOUND: f64 = REFUND_BOUND + BUY_SHARE;
 const SELL_BOUND: f64 = BUY_BOUND + SELL_SHARE;
-/// 交易软删除比例（约 1%）。标的交易不软删：产品删除 buy/sell 会回滚批次副作用，
-/// 「软删交易行 + 存活批次」不是产品能产出的形态。
 const SOFT_DELETE_RATE: f64 = 0.01;
-/// 备注挂载率（保证 TransactionSearch 有内容可搜）。
 const NOTE_RATE: f64 = 0.40;
 const TRANSFER_NOTE_RATE: f64 = 0.20;
-/// 标的交易备注挂载率（低于支出：真实用户少给买卖写备注）。
 pub(crate) const TRADE_NOTE_RATE: f64 = 0.10;
-/// 外币折算基准（exchange_rates 落库值与 amount_native_cents 折算共用，恒一致）。
 const USD_CNY: f64 = 7.20;
 const EUR_CNY: f64 = 7.85;
-/// 港元折算基准（港股户交易的 native 折算与 exchange_rates 落库值共用，恒一致）。
 const HKD_CNY: f64 = 0.92;
-/// 写入侧设备标识（非真实设备）。
 pub(crate) const DEVICE_ID: &str = "ledger-perf";
-/// 每账户保留的近期支出退款源上限（环形缓冲）。
 const REFUND_BUFFER_CAP: usize = 64;
 
-/// 备注素材池：中英混合 + 纯中文品牌词，供备注随机拼装（TransactionSearch 语料）。
 pub(crate) const NOTE_SUBJECTS: [&str; 24] = [
     "和同事午餐",
     "超市购物",
@@ -115,17 +80,8 @@ pub(crate) const NOTE_SUFFIXES: [&str; 8] = [
     "加班餐",
     "临时",
 ];
-/// 购买项订单率：`expense` 行带购买项子表的概率（AI 导入电商回单的量级画像，
-/// issue #1885 商品名搜索基准语料）。
 const PURCHASE_ORDER_RATE: f64 = 0.10;
-/// 每单购买项数上限（1..=4 均匀）。
 pub(crate) const PURCHASE_ITEM_MAX: u64 = 4;
-/// 购买项名称池构成（issue #1915 语料修正）：品牌 × 品类 × 规格三轴 + 复购
-/// 单品块，经 [`purchase_name_pool`] 展开为数百个 SKU 级商品名——对齐真实
-/// 账本的 SKU 级多样性画像（单词条命中占比在百分之几量级）。替换 #1885 的
-/// 16 名小池：池小使默认关键字「猫粮」命中 3/16 条目、39% 的购买订单
-/// （CI run 实测 15,412 单），是语料制造、真实数据不会出现的场景
-/// （perf-bench 两日超标的全部来源，issue #1915 A/B 拆账证伪实现问题）。
 pub(crate) const PURCHASE_BRANDS: [&str; 26] = [
     "蓝月亮",
     "立白",
@@ -154,7 +110,6 @@ pub(crate) const PURCHASE_BRANDS: [&str; 26] = [
     "农夫山泉",
     "怡宝",
 ];
-/// 品类轴（与品牌轴全交叉）。
 pub(crate) const PURCHASE_CATEGORIES: [&str; 15] = [
     "洗衣液",
     "纸巾",
@@ -172,11 +127,7 @@ pub(crate) const PURCHASE_CATEGORIES: [&str; 15] = [
     "矿泉水",
     "辣条",
 ];
-/// 规格轴：按（品牌，品类）下标和轮转拼接，空串即无规格（不消费随机流）。
 pub(crate) const PURCHASE_SPECS: [&str; 3] = ["", "量贩装", "旅行装"];
-/// 复购单品块：高频复购单品带规格。「猫粮」仅出现在本块两条——默认关键字
-/// 的命中面钉在数百单量级（50 万笔库预期约 500 单、≤2% 订单，真实复购
-/// 单品画像，issue #1915）。
 pub(crate) const PURCHASE_REPEAT_SKUS: [&str; 10] = [
     "渴望猫粮 1.8kg",
     "冻干猫粮 500g",
@@ -190,12 +141,6 @@ pub(crate) const PURCHASE_REPEAT_SKUS: [&str; 10] = [
     "红烧牛肉面 5连包",
 ];
 
-/// 名称池展开：品牌 × 品类全交叉（规格按下标轮转）+ 复购单品块，共
-/// `BRANDS × CATEGORIES + REPEAT_SKUS` = 26 × 15 + 10 = 400 个名称。与备注
-/// 素材池关键词刻意不交（「咖啡」等备注关键词不出现在商品名，两条搜索基准
-/// 的命中面互不污染，tests 钉住）；展开是纯常量计算、不消费随机流——名称
-/// 池扩容只改变 `pick` 取模的分母，购买项独立种子流的播撒序列不变，主库
-/// 既有画像逐位不变（issue #1915）。
 pub(crate) fn purchase_name_pool() -> Vec<String> {
     let mut names: Vec<String> = PURCHASE_BRANDS
         .iter()
@@ -215,43 +160,35 @@ pub(crate) fn purchase_name_pool() -> Vec<String> {
     names.extend(PURCHASE_REPEAT_SKUS.iter().map(|s| s.to_string()));
     names
 }
-/// generate 参数（解析后、日期已合法的形态）。
 pub(crate) struct GenerateParams {
     pub seed: u64,
     pub transactions: u64,
     pub end_date: NaiveDate,
 }
 
-/// 生成结果计数（控制台摘要 + 测试参考）。
 #[derive(Debug, Default, Clone, PartialEq)]
 pub(crate) struct GenCounts {
     pub accounts: usize,
     pub categories: usize,
     pub merchants: usize,
     pub transactions: usize,
-    /// 购买项子表行数（issue #1885：商品名搜索基准语料）。
     pub purchases: usize,
     pub deleted_transactions: usize,
     pub transfer_transactions: usize,
     pub refund_transactions: usize,
     pub exchange_rates: usize,
     pub fx_rate_history: usize,
-    /// 投资域（issue #460）。
     pub instruments: usize,
     pub market_prices: usize,
     pub price_history: usize,
     pub buy_trades: usize,
     pub sell_trades: usize,
-    /// 预算与定时计划（issue #460）。
     pub budgets: usize,
     pub scheduled_plans: usize,
     pub scheduled_occurrences: usize,
-    /// 已完成期次生成的真实交易（从 --transactions 预算中预留）。
     pub scheduled_occurrence_transactions: usize,
 }
 
-/// 解析后的 generate 子命令参数（默认值见各 const；issue #1696 自 main.rs
-/// 归位本子命令文件——子命令自持 Cli + flag 表 + run 入口）。
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct GenerateCli {
     pub seed: u64,
@@ -271,8 +208,6 @@ impl Default for GenerateCli {
     }
 }
 
-/// generate 的 flag 表（flag 显示形态 + 帮助文案 + apply，issue #1679 表驱动
-/// 单真源）：新增 flag 只登记本表一处，解析与 `--help` 都从表来。
 pub(crate) const FLAGS: &[FlagSpec<GenerateCli>] = &[
     FlagSpec {
         flag: "--seed <N>",
@@ -308,18 +243,14 @@ pub(crate) const FLAGS: &[FlagSpec<GenerateCli>] = &[
     },
 ];
 
-/// 手写参数解析（零新增依赖；通用循环消费 [`FLAGS`]，收口在
-/// [`parse_flags`]，issue #1696）。返回 Err(消息) 表示用法错误。
 pub(crate) fn parse_generate_args(args: &[String]) -> Result<Parsed<GenerateCli>, String> {
     parse_flags(args, FLAGS)
 }
 
-/// run 入口（dispatch 表登记项）：解析 + 运行 → 共享结局形态。
 pub(crate) fn execute(args: &[String]) -> super::bench_common::Outcome {
     super::bench_common::execute_cli(args, parse_generate_args, run)
 }
 
-/// 入口：解析日期、准备输出文件、经迁移建库、生成、打印摘要。
 pub(crate) fn run(cli: GenerateCli) -> Result<(), String> {
     let end_date = NaiveDate::parse_from_str(&cli.end_date, "%Y-%m-%d")
         .map_err(|e| format!("--end-date 需要 YYYY-MM-DD 格式：{e}"))?;
@@ -331,11 +262,6 @@ pub(crate) fn run(cli: GenerateCli) -> Result<(), String> {
 
     prepare_out_path(&cli.out)?;
     let mut conn = open_connection(&cli.out).map_err(|e| e.to_string())?;
-    // V036 拆库（issue #1871）：迁移链跨 attached 侧；数据集文件名非产品名
-    // 时（建连收尾主库判别不生效）工具侧按同目录 sync.db 显式挂载补位（生成
-    // 产物即产品形态世界：主库 + 同目录 sync.db）。产品名 ledger.db 已由挂载
-    // 接线成对挂载，重复 ATTACH 同一别名即报错，按主库判别跳过——判别谓词
-    // 与建连收尾同源（`is_main_db_path`，issue #1896 收敛）。
     if !is_main_db_path(&cli.out) {
         let sync_path = sync_db_path(&cli.out);
         conn.execute_batch(&format!(
@@ -350,9 +276,6 @@ pub(crate) fn run(cli: GenerateCli) -> Result<(), String> {
     let counts = generate_into(&mut conn, &params)?;
     drop(conn);
 
-    // 附属账本（issue #1630）：跨账本投资汇总基准（bench，ADR-0114）的消费
-    // 夹具——1 主库 + N 附属账本的多账本数据集形状。小规模独立库、种子派生
-    // 确定性、每次先清后建；目录与主库同级（形态同产品「一库 = 一本账」）。
     let books_dirs = books::generate_attached_books(&cli.out, &params)?;
 
     println!(
@@ -401,8 +324,6 @@ pub(crate) fn run(cli: GenerateCli) -> Result<(), String> {
     Ok(())
 }
 
-/// 输出路径准备：建父目录；已存在的库文件（含遗留 -wal/-shm）先删除，
-/// 保证「从空库迁移 + 幂等重建」。
 fn prepare_out_path(out: &Path) -> Result<(), String> {
     if let Some(parent) = out.parent().filter(|p| !p.as_os_str().is_empty()) {
         std::fs::create_dir_all(parent).map_err(|e| format!("创建输出目录失败：{e}"))?;
@@ -420,13 +341,10 @@ fn prepare_out_path(out: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// 在已建库（迁移完成）的连接上生成全部画像数据。
 pub(crate) fn generate_into(
     conn: &mut Connection,
     p: &GenerateParams,
 ) -> Result<GenCounts, String> {
-    // 生成期连接级提速 PRAGMA：synchronous/journal_mode 均不持久化进库文件，
-    // 生成结束后库文件保持默认形态；生成的库是性能基准耗材，崩溃重跑即可。
     conn.execute_batch(
         "PRAGMA synchronous = OFF;\n\
          PRAGMA journal_mode = MEMORY;\n\
@@ -449,21 +367,16 @@ pub(crate) fn generate_into(
 
     let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
 
-    // 1) 账户（现金/储蓄/信用卡/钱包/投资混合 + 少量外币户）
     let account_rows = insert_accounts(&tx, &mut rng, &stamp, millis, &mut counts)?;
 
-    // 2) 分类（40 个，支出 30 / 收入 10，两级）+ 读取全量分类池（含迁移种子）
     insert_categories(&tx, &stamp, millis, &mut counts)?;
     let (expense_pool, income_pool) = category_pools(&tx)?;
 
-    // 3) 商户（800 个，长尾结构）
     let (top_merchants, tail_merchants) = insert_merchants(&tx, &stamp, millis, &mut counts)?;
 
-    // 4) 投资域字典与价格线（20 标的 + 周采样历史 + 现价缓存，issue #460）
     let instrument_rows = investments::insert_instruments(&tx, &stamp, millis, &mut counts)?;
     let md = investments::insert_market_data(&tx, &mut rng, &instrument_rows, window, &mut counts)?;
 
-    // 5) 预算与定时计划（少量固定块；期次交易从预算预留，issue #460）
     plans::insert_budgets(&tx, &mut rng, &expense_pool, start_date, &mut counts)?;
     let reserved = plans::insert_scheduled(
         &tx,
@@ -474,7 +387,6 @@ pub(crate) fn generate_into(
         &mut counts,
     )?;
 
-    // 6) 交易（核心画像 + 标的交易臂；预算扣留期次交易）
     let ctx = TxContext::new(
         &account_rows,
         &expense_pool,
@@ -495,35 +407,20 @@ pub(crate) fn generate_into(
     counts.buy_trades = buys;
     counts.sell_trades = sells;
 
-    // 7) 购买项子表语料（issue #1885，独立种子流二次播撒）
     insert_purchases(&tx, p, &mut counts)?;
 
-    // 8) 当前汇率 + 全历史周采样汇率（全历史填充供历史折算与走势查询）
     counts.exchange_rates = insert_exchange_rates(&tx, p)?;
     counts.fx_rate_history = insert_fx_rate_history(&tx, &mut rng, p, start_date)?;
 
     tx.commit().map_err(|e| e.to_string())?;
 
-    // 余额缓存回填（issue #491 / ADR-0067）：生成器绕过 Writer 接缝裸插数据，
-    // 对应「存量用户升级后被 V017 回填」形态——读基准走缓存口径，缺缓存行会
-    // 报码化错误而非实时聚合。
     ledger_accounts::balance::refresh_all_account_balances(conn).map_err(|e| e.to_string())?;
 
-    // 数据落定后全量 ANALYZE（issue #490）：基准库对应「存量用户升级后」形态
-    // ——迁移尾部 ANALYZE 在建库时空表运行，统计须随数据重算；时点持仓等
-    // join 顺序依赖统计假设，缺统计会让基准失真于真实用户库。
     conn.execute_batch("ANALYZE;").map_err(|e| e.to_string())?;
 
     Ok(counts)
 }
 
-// ---------------------------------------------------------------------------
-// 账户
-// ---------------------------------------------------------------------------
-
-/// 50 个账户：现金 12 / 储蓄 19（16 CNY + 2 USD + 1 EUR）/ 信用卡 9（8 CNY + 1 USD）/
-/// 钱包 4 / 投资 6（5 CNY + 1 HKD），全 CNY 除注明的 3 个外币户。外币户占 3/50 ≈ 6%，
-/// 即「USD/EUR 少量」；投资户承接标的交易（同币种纪律见 investments 模块头）。
 fn insert_accounts(
     conn: &Connection,
     rng: &mut Rng,
@@ -609,12 +506,6 @@ fn insert_accounts(
     Ok(rows)
 }
 
-// ---------------------------------------------------------------------------
-// 分类与商户
-// ---------------------------------------------------------------------------
-
-/// 40 个生成分类：支出 10 顶级 + 20 二级，收入 4 顶级 + 6 二级；名字带「基准」前缀
-/// 与迁移种子默认分类区分。
 fn insert_categories(
     conn: &Connection,
     stamp: &str,
@@ -681,7 +572,6 @@ fn insert_categories(
             )?;
         }
     }
-    // 补齐到 40：支出 30 + 收入 8 = 38，再加 2 个收入顶级。
     for extra in 0..2 {
         seq += 1;
         insert_one(
@@ -696,7 +586,6 @@ fn insert_categories(
     Ok(())
 }
 
-/// 分类池：读取全量在用分类并按 kind 分池（含迁移种子 + 生成分类）。
 fn category_pools(conn: &Connection) -> Result<(Vec<String>, Vec<String>), String> {
     let cats = categories::list_categories(conn, false).map_err(|e| e.to_string())?;
     let mut expense = Vec::new();
@@ -711,7 +600,6 @@ fn category_pools(conn: &Connection) -> Result<(Vec<String>, Vec<String>), Strin
     Ok((expense, income))
 }
 
-/// 800 个商户：top 20 真实感名字（长尾头部）+ 780 个长尾行。
 fn insert_merchants(
     conn: &Connection,
     stamp: &str,
@@ -767,11 +655,6 @@ fn insert_merchants(
     Ok((top_ids, tail_ids))
 }
 
-// ---------------------------------------------------------------------------
-// 交易
-// ---------------------------------------------------------------------------
-
-/// 数据窗口：交易与汇率历史共用的日期上下文（起点 / 天数 / 锚定结束日）。
 #[derive(Clone, Copy)]
 pub(crate) struct Window {
     pub start: NaiveDate,
@@ -780,21 +663,17 @@ pub(crate) struct Window {
 }
 
 impl Window {
-    /// 窗口内均匀随机日期（锥到锚定结束日期内）。
     pub fn rand_date(&self, rng: &mut Rng) -> NaiveDate {
         (self.start + Duration::days(rng.below(self.total_days as u64) as i64)).min(self.end)
     }
 }
 
-/// 生成行的账户：id 连同本位币与类型（交易币种/转账同币约束/计划账户选取/
-/// 投资槽位都消费它）。
 pub(crate) struct AccountRow {
     pub id: String,
     pub ccy: &'static str,
     pub atype: &'static str,
 }
 
-/// 退款链的支出源引用（同账户环形缓冲，供 refund 继承账户/分类/商户；币种随账户）。
 #[derive(Clone)]
 struct ExpenseRef {
     id: String,
@@ -804,8 +683,6 @@ struct ExpenseRef {
     merchant: Option<String>,
 }
 
-/// 交易生成的共享上下文：账户视图、分类/商户池、日期窗口、投资价格线与
-/// 投资账户槽位（行间只读复用）。
 struct TxContext<'a> {
     account_ids: Vec<&'a str>,
     ccys: Vec<&'a str>,
@@ -815,14 +692,10 @@ struct TxContext<'a> {
     top_merchants: &'a [String],
     tail_merchants: &'a [String],
     window: Window,
-    /// 投资价格线（标的交易取当日周价）。
     md: MarketData,
-    /// 投资账户选取：同币种槽位表 + 槽位 → 账户下标。
     inv: InvPick,
 }
 
-/// 投资账户选取上下文：槽位（生成账户清单中的下标）按币种分桶，
-/// 标的交易按「标的币种 = 账户币种」同币纪律选槽。
 struct InvPick {
     ccy_slots: Vec<(&'static str, Vec<usize>)>,
     slots: Vec<usize>,
@@ -848,9 +721,6 @@ impl InvPick {
 }
 
 impl<'a> TxContext<'a> {
-    /// 由生成的账户行与各池构建；同币种账户索引表供转账挑对手
-    /// （转账必须在同币种两账户间进行，跨币种转账非产品语义）；
-    /// 投资槽位与价格线供标的交易臂消费（issue #460）。
     fn new(
         account_rows: &'a [AccountRow],
         expense_pool: &'a [String],
@@ -885,7 +755,6 @@ impl<'a> TxContext<'a> {
         self.ccys[idx]
     }
 
-    /// 支出行：对数均匀金额 + 分类/商户/备注挂载；同时成为本账户的退款源。
     fn expense_row(&self, rng: &mut Rng) -> PendingRow {
         let amount = expense_amount(rng);
         let category = Some(rng.pick(self.expense_pool).clone());
@@ -916,7 +785,6 @@ impl<'a> TxContext<'a> {
         }
     }
 
-    /// 收入行：金额高一个量级、低商户挂载率（工资类收入通常无商户）。
     fn income_row(&self, rng: &mut Rng) -> PendingRow {
         PendingRow {
             kind: "income",
@@ -936,7 +804,6 @@ impl<'a> TxContext<'a> {
         }
     }
 
-    /// 转账行：同币种两账户间转账；本币种无第二个账户时降级为支出（如唯一的外币户）。
     fn transfer_row(&self, rng: &mut Rng, account_idx: usize) -> PendingRow {
         let ccy = self.ccy_of(account_idx);
         let candidates = self
@@ -967,7 +834,6 @@ impl<'a> TxContext<'a> {
     }
 }
 
-/// 一行待插入交易的内存形态（id/审计字段由主循环统一推导）。
 struct PendingRow {
     kind: &'static str,
     to_account: Option<String>,
@@ -977,7 +843,6 @@ struct PendingRow {
     note: Option<String>,
     amount: i64,
     date: NaiveDate,
-    /// 支出行携带：带 id 后入本账户退款源缓冲。
     new_expense: Option<ExpenseRef>,
 }
 
@@ -1004,7 +869,6 @@ fn insert_transactions(
          VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,NULL,NULL,?12,?13,?13,1,?14,?15,NULL)";
     let mut stmt = conn.prepare(SQL).map_err(|e| e.to_string())?;
 
-    // 各账户的近期支出环形缓冲（refund 链来源）。
     let mut buffers: Vec<VecDeque<ExpenseRef>> = vec![VecDeque::new(); ctx.account_ids.len()];
     let mut counts = TxnCounts {
         total: 0,
@@ -1013,8 +877,6 @@ fn insert_transactions(
         refunds: 0,
     };
 
-    // 预算扣留计划期次交易（issue #460）：序号接在其后，保证 transactions 表
-    // 确定性 id 全局不撞（同 tag 同 seq 同毫秒才同 id）。
     let regular = p.transactions.saturating_sub(reserved);
     let mut seq = reserved;
     for _ in 0..regular {
@@ -1022,8 +884,6 @@ fn insert_transactions(
         let account_idx = rng.below(ctx.account_ids.len() as u64) as usize;
         let roll = rng.next_f64();
 
-        // 常规臂产 PendingRow；标的臂（buy/sell）产 PendingRow + 交易计划——
-        // 交易行金额/日期由计划给出，批次副作用在行落库后应用（issue #460）。
         let (row, trade): (PendingRow, Option<TradeKind>) = if roll < EXPENSE_SHARE {
             (ctx.expense_row(rng), None)
         } else if roll < INCOME_BOUND {
@@ -1031,8 +891,6 @@ fn insert_transactions(
         } else if roll < TRANSFER_BOUND {
             (ctx.transfer_row(rng, account_idx), None)
         } else if roll < REFUND_BOUND {
-            // 退款链：从同账户近期支出取源（账户/分类/商户继承，币种随账户，
-            // 退款日期不早于原支出）；缓冲为空（极小规模）时退化为支出。
             let buffer = &mut buffers[account_idx];
             if buffer.is_empty() {
                 (ctx.expense_row(rng), None)
@@ -1061,7 +919,6 @@ fn insert_transactions(
                 )
             }
         } else if roll < BUY_BOUND {
-            // 买入：随机标的 → 同币种投资账户 → 当日周价（issue #460）。
             match investments::plan_buy(rng, &ctx.inv.ccy_slots, &ctx.md, ctx.window) {
                 Some(t) => {
                     let t = TradeKind::Buy(t);
@@ -1078,12 +935,9 @@ fn insert_transactions(
                     };
                     (row, Some(t))
                 }
-                // 结构退化兜底（无同币种投资账户，正常参数下不可达）：降级为支出。
                 None => (ctx.expense_row(rng), None),
             }
         } else if roll < SELL_BOUND {
-            // 卖出：有剩余量的（账户, 标的）组合中随机取一个，FIFO 匹配；
-            // 尚无可卖量（窗口初期的卖出 roll）时降级为买入。
             let plan = match investments::plan_sell(rng, pf, &ctx.md, ctx.window) {
                 Some(t) => Some(TradeKind::Sell(Box::new(t))),
                 None => investments::plan_buy(rng, &ctx.inv.ccy_slots, &ctx.md, ctx.window)
@@ -1112,7 +966,6 @@ fn insert_transactions(
                 None => (ctx.expense_row(rng), None),
             }
         } else {
-            // 浮点边界之外的兜底臂（份额和恒 1，正常不可达）。
             (ctx.expense_row(rng), None)
         };
         if row.kind == "transfer" {
@@ -1121,13 +974,11 @@ fn insert_transactions(
             counts.refunds += 1;
         }
 
-        // 标的交易的账户/币种由计划给出（投资账户 + 同币种纪律），常规行随随机账户。
         let (ccy, account) = match &trade {
             Some(t) => (t.ccy(), ctx.inv.slots[t.account_slot()]),
             None => (ctx.ccy_of(account_idx), account_idx),
         };
 
-        // 行序号推导确定性 id；新支出带 id 入缓冲（成为后续退款的源）。
         let id = time_ordered_id("transactions", seq, date_millis(&row.date));
         if let Some(exp) = &row.new_expense {
             let mut src = exp.clone();
@@ -1144,8 +995,6 @@ fn insert_transactions(
             rng.range_i64(0, 59)
         );
         let native = (row.amount as f64 * fx(ccy)).round() as i64;
-        // 标的交易不软删：产品删除 buy/sell 会回滚批次副作用，
-        // 「软删交易行 + 存活批次」不是产品能产出的形态。
         let deleted = trade.is_none() && rng.chance(SOFT_DELETE_RATE);
         if deleted {
             counts.deleted += 1;
@@ -1183,7 +1032,6 @@ fn insert_transactions(
     Ok(counts)
 }
 
-/// 外币折算基准（与 exchange_rates 落库值共用常量，恒一致）；CNY 为 DefaultCurrency。
 fn fx(ccy: &str) -> f64 {
     match ccy {
         "USD" => USD_CNY,
@@ -1193,13 +1041,10 @@ fn fx(ccy: &str) -> f64 {
     }
 }
 
-/// 支出金额：1.5–5 个数量级对数均匀（约 ¥0.3–¥316），形似日常长尾。
 fn expense_amount(rng: &mut Rng) -> i64 {
     (10f64.powf(1.5 + rng.next_f64() * 3.5)).round() as i64
 }
 
-/// 挂商户：rate 概率挂载；挂载时 top 20 池占 TOP_MERCHANT_FLOW_SHARE（约 60%），
-/// 其余走长尾池——两段式构成「头部集中、尾部广阔」的长尾画像。
 fn maybe_merchant(rng: &mut Rng, top: &[String], tail: &[String], rate: f64) -> Option<String> {
     if !rng.chance(rate) {
         return None;
@@ -1211,7 +1056,6 @@ fn maybe_merchant(rng: &mut Rng, top: &[String], tail: &[String], rate: f64) -> 
     }
 }
 
-/// 挂备注：主体 + 后缀拼装（搜索语料）。
 fn maybe_note(rng: &mut Rng, rate: f64) -> Option<String> {
     if !rng.chance(rate) {
         return None;
@@ -1223,20 +1067,12 @@ fn maybe_note(rng: &mut Rng, rate: f64) -> Option<String> {
     ))
 }
 
-/// 保留每账户最近 REFUND_BUFFER_CAP 条支出作为退款源。
 fn trim_buffer(buf: &mut VecDeque<ExpenseRef>) {
     while buf.len() > REFUND_BUFFER_CAP {
         buf.pop_front();
     }
 }
 
-/// 购买项子表语料（issue #1885 / ADR-0138 决策 9）：对已落库的 `expense` 行
-/// 二次播撒购买项（仅 `expense` 挂单，kind 准入；软删行照常携带——子行随主行
-/// 存亡，读侧不出现；单价三成留空，源单只给订单总额的可空单价形态）。
-///
-/// 用独立派生种子流（与 books 附属账本同款派生先例），主随机流（账户/kind/
-/// 金额/日期/备注语料）逐位不变——既有画像测试与基准数字不被本表语料重排。
-/// 逐行扫描按 id 序（time_ordered_id 确定性），两次生成播撒一致。
 fn insert_purchases(
     conn: &Connection,
     p: &GenerateParams,
@@ -1286,12 +1122,6 @@ pub(crate) fn date_millis(d: &NaiveDate) -> i64 {
         .unwrap_or(0)
 }
 
-// ---------------------------------------------------------------------------
-// 汇率
-// ---------------------------------------------------------------------------
-
-/// 当前汇率三行（USD/EUR/HKD → CNY；折算基准与交易 native 列共用常量，恒一致；
-/// HKD 行供港股市值在净资产/可投资资产聚合层的折算，issue #460）。
 fn insert_exchange_rates(conn: &Connection, p: &GenerateParams) -> Result<usize, String> {
     let millis = date_millis(&p.end_date);
     let priced_at = format!("{}T16:00:00Z", p.end_date);
@@ -1317,9 +1147,6 @@ fn insert_exchange_rates(conn: &Connection, p: &GenerateParams) -> Result<usize,
     Ok(3)
 }
 
-/// fx_rate_history 全历史填充：窗口内每周一采样一条（trade_date 取当周周五、
-/// 不足则钳到锚定结束日），USD/EUR/HKD 三币对，汇率围绕基准 ±2% 种子化漂移。
-/// 「币种对 × 周唯一」由 UNIQUE(base,quote,week_start) 保证，每周恰一行不冲突。
 fn insert_fx_rate_history(
     conn: &Connection,
     rng: &mut Rng,

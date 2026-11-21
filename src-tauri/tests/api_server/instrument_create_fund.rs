@@ -1,11 +1,3 @@
-//! 标的创建端点的 fund 增强（`POST /api/v1/instruments`，issue #304 / ADR-0039 决策 3）。
-//!
-//! 只断言外部行为：fund + 真实 6 位代码经行情源校验——命中回填权威名称并落最新
-//! 净值现价（万分之一元刻度 + 净值日期）、查无此码 400 拒绝且不产生标的行、
-//! 网络不可达降级为提交名称 + 真实代码建行（不阻塞）；降级重放不覆盖既有权威
-//! 名称；名称充代码（非 6 位）与其他类型不发起网络请求；幂等重放返回同一 id。
-//! 行情源访问经注入桩离线驱动（#1568 换源）。
-
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -19,8 +11,6 @@ use tauri_app_lib::api_server::FundQuoteFetcher;
 
 use crate::common::{FundStubHit, post_instrument, setup_app_with_fund_stub};
 
-/// fund 标的行与现价行的断言投影：name / market / source 与可选现价
-/// （price_cents, nav_date, source）。
 struct FundRow {
     name: Option<String>,
     market: String,
@@ -28,7 +18,6 @@ struct FundRow {
     price: Option<(i64, Option<String>, String)>,
 }
 
-/// 查询 fund 标的行（name, market, source）与现价行（price_cents, nav_date, source）。
 fn fund_row(conn: &Arc<Mutex<rusqlite::Connection>>, symbol: &str) -> FundRow {
     let conn = conn.lock().unwrap();
     let (name, market, source) = conn
@@ -67,7 +56,6 @@ fn fund_row(conn: &Arc<Mutex<rusqlite::Connection>>, symbol: &str) -> FundRow {
     }
 }
 
-/// 命中表：000001 → 华夏成长混合 / 混合型-灵活 / 净值 1.318 元 @ 2026-08-28。
 fn stub_hit() -> HashMap<String, FundStubHit> {
     HashMap::from([(
         "000001".to_string(),
@@ -80,15 +68,10 @@ fn stub_hit() -> HashMap<String, FundStubHit> {
     )])
 }
 
-// ---------------------------------------------------------------------------
-// 行情命中：权威名称回填 + 净值落现价
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn test_create_fund_with_known_code_backfills_authoritative_name_and_price() {
     let (app, conn, calls) = setup_app_with_fund_stub(stub_hit());
 
-    // AI 提交的名称有误（抄错），后端应以数据源权威名称为准。
     let body = r#"{"symbol":"000001","type":"fund","name":"华夏成长混合A（错误抄写）"}"#;
     let (status, bytes) = post_instrument(&app, body).await;
     assert_eq!(status, StatusCode::CREATED);
@@ -116,8 +99,6 @@ async fn test_create_fund_with_known_code_backfills_authoritative_name_and_price
 
 #[tokio::test]
 async fn test_create_terminated_fund_from_archive_channel_succeeds() {
-    // 已终止（清盘）基金经档案通道回退命中（ADR-0039 修订，issue #1212）：建行成功、
-    // 回填权威名称与最后一期净值——AI 迁移不再只能降级 type=other 或跳过整行。
     let hits = HashMap::from([(
         "002503".to_string(),
         FundStubHit {
@@ -174,10 +155,6 @@ async fn test_create_fund_with_known_code_but_no_nav_creates_without_price() {
     assert_eq!(*calls.lock().unwrap(), vec!["012345".to_string()]);
 }
 
-// ---------------------------------------------------------------------------
-// 查无此码：拒绝创建，不产生标的行
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn test_create_fund_with_unknown_code_rejects_without_row() {
     let (app, conn, calls) = setup_app_with_fund_stub(stub_hit());
@@ -190,8 +167,6 @@ async fn test_create_fund_with_unknown_code_rejects_without_row() {
     assert_eq!(status, StatusCode::BAD_REQUEST);
     let err: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(err["kind"], "Invalid");
-    // 码化契约（ADR-0050）：查无此码以 sync.fund-not-found 上抛，创建端点按码
-    // 判定拒绝而非降级建行（#1186）——删掉按码判定本测试即红（降级返 201）。
     assert_eq!(err["code"], "sync.fund-not-found");
     assert!(
         err["message"]
@@ -210,11 +185,6 @@ async fn test_create_fund_with_unknown_code_rejects_without_row() {
     assert_eq!(*calls.lock().unwrap(), vec!["999999".to_string()]);
 }
 
-// ---------------------------------------------------------------------------
-// 网络不可达：降级为提交名称 + 真实代码建行；重放不覆盖既有权威名称
-// ---------------------------------------------------------------------------
-
-/// 状态开关桩：`down=true` 模拟行情源网络不可达（Io），否则按命中表返回。
 fn toggle_stub(
     hits: HashMap<String, FundStubHit>,
     down: Arc<AtomicBool>,
@@ -229,7 +199,6 @@ fn toggle_stub(
                 Some(hit) => Ok(ledger_investment::Quote {
                     code: code.to_string(),
                     name: hit.name.to_string(),
-                    // 场外通道：价格已在访问层换算为万分之一元刻度，价格日期即净值日期。
                     price_cents: hit
                         .nav
                         .map(|(nav, _)| ledger_investment::prices::price_value_to_cents(nav)),
@@ -243,7 +212,6 @@ fn toggle_stub(
                         .then(|| ledger_investment::prices::price_value_to_cents(1.0)),
                     price_source: ledger_investment::prices::SINA_PRICE_SOURCE,
                 }),
-                // 未命中形状与生产同源（码化 sync.fund-not-found，#1186），不回退裸 Invalid。
                 None => Err(AppError::codedp(
                     "sync.fund-not-found",
                     format!("查无基金代码 {code}，请核对后重试"),
@@ -251,13 +219,10 @@ fn toggle_stub(
                 )),
             }
         };
-        // async 接缝（ADR-0125 决策 7 / issue #1413）：应答值装箱为立即就绪的 future。
         crate::common::ready_quote(result)
     })
 }
 
-/// 带状态开关桩的一步装配：返回 (router, 连接, 不可达开关, 调用记录)，
-/// 供「先命中后不可达」等跨请求状态切换测试使用。
 type ToggleStubApp = (
     Router,
     Arc<Mutex<rusqlite::Connection>>,
@@ -286,7 +251,6 @@ async fn test_create_fund_degrades_to_ai_name_when_network_unreachable() {
     assert_eq!(status, StatusCode::CREATED, "网络不可达应降级建行而非拒绝");
     let _: String = serde_json::from_slice(&bytes).unwrap();
 
-    // 降级行：真实代码 + AI 提交名称、字典形态与按代码即拉同款（unknown/manual），无现价。
     let row = fund_row(&conn, "000001");
     assert_eq!(
         row.name.as_deref(),
@@ -304,7 +268,6 @@ async fn test_create_fund_degrades_without_ai_name_creates_code_only_row() {
     let (app, conn, down, _calls) = setup_app_with_toggle_stub(stub_hit());
     down.store(true, Ordering::SeqCst);
 
-    // 降级 + 未提交名称：代码可用即建行（name 为 NULL），后续净值通道照常服务。
     let (status, bytes) = post_instrument(&app, r#"{"symbol":"000001","type":"fund"}"#).await;
     assert_eq!(status, StatusCode::CREATED, "降级不因缺名称被阻塞");
     let _: String = serde_json::from_slice(&bytes).unwrap();
@@ -321,13 +284,10 @@ async fn test_create_fund_degrades_without_ai_name_creates_code_only_row() {
 async fn test_create_fund_degrade_replay_keeps_existing_authoritative_name() {
     let (app, conn, down, calls) = setup_app_with_toggle_stub(stub_hit());
 
-    // 第一笔：行情源可达 → 权威名称回填。
     let (status, bytes) = post_instrument(&app, r#"{"symbol":"000001","type":"fund"}"#).await;
     assert_eq!(status, StatusCode::CREATED);
     let id: String = serde_json::from_slice(&bytes).unwrap();
 
-    // 第二笔：行情源不可达 + AI 提交了另一个名称 → 降级建行成功、返回同一 id，
-    // 既有权威名称不被 AI 名称覆盖。
     down.store(true, Ordering::SeqCst);
     let (status, bytes) = post_instrument(
         &app,
@@ -348,15 +308,10 @@ async fn test_create_fund_degrade_replay_keeps_existing_authoritative_name() {
     assert_eq!(calls.lock().unwrap().len(), 2, "两笔各发起一次行情源校验");
 }
 
-// ---------------------------------------------------------------------------
-// 名称充代码（非 6 位）与其他类型：不发起网络请求
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn test_create_fund_with_name_as_code_skips_remote_lookup() {
     let (app, conn, calls) = setup_app_with_fund_stub(stub_hit());
 
-    // 源数据无代码：名称充代码建行（自然键防碎），不触发行情源校验、无现价。
     let (status, bytes) = post_instrument(
         &app,
         r#"{"symbol":"某雪球私募一号","type":"fund","name":"某雪球私募一号"}"#,
@@ -379,8 +334,6 @@ async fn test_create_fund_with_name_as_code_skips_remote_lookup() {
 async fn test_create_non_fund_type_skips_fund_lookup() {
     let (app, _conn, calls) = setup_app_with_fund_stub(stub_hit());
 
-    // 非 fund 类型不经基金详情接缝（bond 亦不经股票行情接缝——
-    // 只有 fund/stock/etf 触发各自接缝，issue #694）。
     let (status, bytes) = post_instrument(
         &app,
         r#"{"symbol":"600519","type":"bond","name":"贵州茅台","market":"sh"}"#,
@@ -394,10 +347,6 @@ async fn test_create_non_fund_type_skips_fund_lookup() {
         "非 fund 类型不应发起基金详情请求"
     );
 }
-
-// ---------------------------------------------------------------------------
-// 幂等重放：同自然键返回同一 id，现价不重复落行
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn test_create_fund_replay_returns_same_id_without_price_fragments() {
@@ -426,18 +375,6 @@ async fn test_create_fund_replay_returns_same_id_without_price_fragments() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// 契约锁：fund 增强语义写入端点自述
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// fund 市场恒 unknown：通用创建通道携带 market 显式拒绝（issue #1194 / ADR-0038）
-// ---------------------------------------------------------------------------
-
-/// fund 类型标的市场恒 unknown 对全部创建通道成立（ADR-0038 决策 1 修订，
-/// issue #1194）：名称充代码（非 6 位）不经按代码增强、走通用创建通道，携带
-/// 非 unknown 市场即显式 400 拒绝且不产生标的行。删掉后端守卫本测试即红
-///（通用通道会 201 建出 market=sh 的基金行）。
 #[tokio::test]
 async fn test_create_fund_with_market_rejects_without_row() {
     let (app, conn, calls) = setup_app_with_fund_stub(stub_hit());
@@ -471,8 +408,6 @@ async fn test_create_fund_with_market_rejects_without_row() {
     );
 }
 
-/// 不携带市场（或显式 unknown）照常建行，市场落 unknown——守卫只拒绝真实市场
-/// 值，不误伤合法通道。
 #[tokio::test]
 async fn test_create_fund_without_market_creates_unknown_row() {
     let (app, conn, _calls) = setup_app_with_fund_stub(stub_hit());
@@ -496,10 +431,6 @@ async fn test_create_fund_without_market_creates_unknown_row() {
     assert_eq!(fund_row(&conn, "某基金组合B").market, "unknown");
 }
 
-/// 6 位基金经按代码增强通道时，调用方携带的非 unknown 市场同样被拒——不变量
-/// 「对全部创建通道成立」，不因 6 位增强自造字典市场而例外（issue #1194 /
-/// ADR-0038）。入口守卫先于行情源往返：拒绝即不发起网络请求、不落行。删掉入口
-/// 守卫接线本测试即红（增强分支会 201 建出 market=unknown 的基金行）。
 #[tokio::test]
 async fn test_create_six_digit_fund_with_market_rejects_without_lookup_or_row() {
     let (app, conn, calls) = setup_app_with_fund_stub(stub_hit());
@@ -533,8 +464,6 @@ async fn test_openapi_create_endpoint_documents_fund_enhancement() {
 
     let description = &doc["paths"]["/api/v1/instruments"]["post"]["description"];
     let description = description.as_str().unwrap_or_default();
-    // 端点自述为「一句话 + 指针」（issue #839 描述政策）：fund 增强细节迁入
-    // 导入知识「基金申赎」节，名称充代码语义由知识关键词锁保护。
     for expected in ["fund/stock", "权威名称", "查无此码", "降级", "导入知识"] {
         assert!(
             description.contains(expected),
@@ -543,12 +472,6 @@ async fn test_openapi_create_endpoint_documents_fund_enhancement() {
     }
 }
 
-// ---------------------------------------------------------------------------
-// 货币基金：建档即打标（恒定价格标的，ADR-0126）——现价 1.0000、净值日期为空
-// ---------------------------------------------------------------------------
-
-/// 搜索索引类型码自报货币型（建档打标三处确认源之一）：建档即标记恒定单位
-/// 价格，现价缓存落 1.0000 且净值日期为空（水位语义对恒定标的不适用）。
 #[tokio::test]
 async fn test_create_money_fund_marks_constant_price_with_empty_nav_date() {
     let hits = HashMap::from([(
@@ -556,7 +479,6 @@ async fn test_create_money_fund_marks_constant_price_with_empty_nav_date() {
         FundStubHit {
             name: "天弘余额宝货币",
             fund_class: "货币型",
-            // 货基报价按恒定单位净值 1.0000 落（现价列不是万份收益）。
             nav: Some((1.0, "2026-09-17")),
             money_fund: true,
         },
@@ -568,7 +490,6 @@ async fn test_create_money_fund_marks_constant_price_with_empty_nav_date() {
     assert_eq!(status, StatusCode::CREATED);
     let id: String = serde_json::from_slice(&bytes).expect("201 应为裸 id 字符串");
 
-    // 打标单向的第一笔：建档即回填恒定单位价格（万分之一元刻度 10000）。
     let (constant_cents, channel_count): (Option<i64>, i64) = conn
         .lock()
         .unwrap()
@@ -583,7 +504,6 @@ async fn test_create_money_fund_marks_constant_price_with_empty_nav_date() {
     assert_eq!(constant_cents, Some(10_000), "建档即打标恒定单位价格");
     assert_eq!(channel_count, 1);
 
-    // 现价缓存：建档一条 1.0000，净值日期为空（水位语义退出，净值日期列显示为空）。
     let (price_cents, nav_date, price_source) = fund_row(&conn, "000198")
         .price
         .expect("货基建档应落常量现价");

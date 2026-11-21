@@ -1,55 +1,23 @@
-//! 共享 S3 测试桩（issue #1216 / ADR-0084 准入：多端同步域 S3 后端单测与
-//! 通道轮次域单测 ≥2 处同体消费）：axum 实现的最小 S3 兼容服务——PUT / GET /
-//! CreateMultipartUpload / UploadPart / CompleteMultipartUpload /
-//! AbortMultipartUpload，临时目录承载对象与分片，供 S3 后端与真实 HTTP 同步
-//! 轮次使用。
-//!
-//! **结构性校验，不做密码学校验**：Authorization 头必须在场，凭据范围里的
-//! region / service 必须与桩配置一致；寻址形态（path-style / virtual-host）
-//! 必须与配置一致。签名正确性归官方 SDK，本桩只验证请求骨架。
-//!
-//! **请求闸门**（issue #1283）：`S3StubConfig::gated_requests` 让桩把请求记为
-//! 已观测后阻塞等待测试放行——「网络在途（请求已发出、应答未回）」因此成为可
-//! 确定复现的测试输入，持锁跨网络等待的调用点可用行为判据钉住（`S3Gate`）。
-//!
-//! **可见性**：`pub` + `#[doc(hidden)]`（与既有测试桩同款纪律）——集成测试链接
-//! 非 `#[cfg(test)]` 构建的 lib，经 `crate::test_support` 消费。
-// C 类豁免（ADR-0060）：仅测试用——桩体大量 unwrap 依赖测试期失败即红的语义，
-// 本文件随 test_support 文件级放行六件套（见 mod.rs 豁免声明）。
-
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crate::test_support::ScratchDir;
 
-/// 桩期望的 S3 寻址形态。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum S3Addressing {
-    /// `/{bucket}/{key}`，监听 `127.0.0.1`。
     PathStyle,
-    /// `Host: {bucket}.localhost` + `/{key}`，监听 `[::1]`（macOS 上 localhost
-    /// 解析到 `::1`）。
     VirtualHost,
 }
 
-/// 桩的故障注入档（issue #1219 错误分层消费）：默认正常应答，注入后请求经
-/// 鉴权与寻址骨架校验即按该档失败，用于覆盖凭据 / 权限 / 目标三类自救指引。
-///
-/// 凭据档走错误码而非状态码表达：S3 对「密钥不存在」与「密钥有效但没权限」
-/// 都回 403，只有 XML `<Code>` 能区分两者——桩照此建模，后端分层才有可测输入。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum S3Deny {
-    /// 密钥不存在 / 签名不符：403 + `<Code>InvalidAccessKeyId</Code>`。
     InvalidAccessKeyId,
-    /// 凭据有效但无权访问目标：403 + `<Code>AccessDenied</Code>`。
     AccessDenied,
-    /// 桶不存在：404 + `<Code>NoSuchBucket</Code>`。
     NoSuchBucket,
 }
 
 impl S3Deny {
-    /// 该档对应的 S3 错误码（XML `<Code>` 字段）。
     pub fn code(self) -> &'static str {
         match self {
             S3Deny::InvalidAccessKeyId => "InvalidAccessKeyId",
@@ -59,17 +27,13 @@ impl S3Deny {
     }
 }
 
-/// S3 桩配置（默认值适用于多数用例；凭据范围用 access key 校验归属）。
 #[derive(Debug, Clone)]
 pub struct S3StubConfig {
     pub region: String,
     pub bucket: String,
     pub access_key: String,
     pub addressing: S3Addressing,
-    /// 故障注入档（默认无故障）。
     pub deny: Option<S3Deny>,
-    /// 请求闸门（默认无闸门，请求即时应答）；只经 [`S3StubConfig::gated_requests`]
-    /// 注入，不开放字段直置。
     gate: Option<S3RequestGate>,
 }
 
@@ -85,16 +49,11 @@ impl S3StubConfig {
         }
     }
 
-    /// 注入故障档：请求经鉴权与寻址骨架校验后按该档应答。
     pub fn deny(mut self, deny: S3Deny) -> Self {
         self.deny = Some(deny);
         self
     }
 
-    /// 注入请求闸门（issue #1283）：桩把请求记为已观测后阻塞等待测试放行，
-    /// 返回（注入后的配置, 测试侧放行把手）。「网络在途」因此成为可确定复现的
-    /// 测试输入——持锁跨网络等待的调用点靠它做行为判据（观测到请求即证明请求
-    /// 已到达而应答未回，见 [`S3Stub::requests`]），不必在测试里 sleep 猜时机。
     pub fn gated_requests(mut self) -> (Self, S3Gate) {
         let (release, release_rx) = std::sync::mpsc::channel();
         self.gate = Some(S3RequestGate {
@@ -104,14 +63,12 @@ impl S3StubConfig {
     }
 }
 
-/// 请求闸门把手（测试侧）：放行已到达闸门的请求。
 #[derive(Debug)]
 pub struct S3Gate {
     release: std::sync::mpsc::Sender<()>,
 }
 
 impl S3Gate {
-    /// 放行 `count` 个已到达并阻塞在闸门处的请求。
     pub fn release(&self, count: usize) {
         for _ in 0..count {
             self.release.send(()).ok();
@@ -119,8 +76,6 @@ impl S3Gate {
     }
 }
 
-/// 请求闸门（桩侧，[`S3StubConfig::gated_requests`] 注入）：每个请求在此等测试
-/// 放行；等待上限只为「测试中途放弃放行」兜底，正常路径由测试显式放行。
 #[derive(Debug, Clone)]
 struct S3RequestGate {
     release: Arc<Mutex<std::sync::mpsc::Receiver<()>>>,
@@ -136,10 +91,8 @@ impl S3RequestGate {
     }
 }
 
-/// 闸门等待上限（测试兜底，见 [`S3RequestGate::wait_release`]）。
 const GATE_WAIT_LIMIT: Duration = Duration::from_secs(30);
 
-/// 桩观测到的一次 HTTP 请求（方法 / 路径 / 查询串 / Host / 请求头）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct S3ObservedRequest {
     pub method: String,
@@ -150,7 +103,6 @@ pub struct S3ObservedRequest {
 }
 
 impl S3ObservedRequest {
-    /// 按小写头名读取观测到的请求头。
     pub fn header(&self, name: &str) -> Option<&str> {
         self.headers
             .iter()
@@ -159,15 +111,12 @@ impl S3ObservedRequest {
     }
 }
 
-/// 本地 S3 桩句柄：端点 + 临时根目录（Drop 清理）。
 pub struct S3Stub {
     pub endpoint: String,
     pub region: String,
     pub bucket: String,
     pub access_key: String,
     pub addressing: S3Addressing,
-    /// 桩的临时根目录（issue #1645 走 ScratchDir）：仅持有以承接 Drop 清理，
-    /// 无读取点（StubState 拿的是路径副本）；下划线前缀标示 drop-guard 字段。
     _root: ScratchDir,
     observations: Arc<Mutex<Vec<S3ObservedRequest>>>,
     violations: Arc<Mutex<Vec<String>>>,
@@ -182,12 +131,6 @@ impl S3Stub {
         self.violations.lock().unwrap().clone()
     }
 
-    /// 指向本桩的 S3 通道配置（issue #1219）：探针单测与命令集成测试共用同一份
-    /// 「桩 → 通道配置」构造，不再由各测试目录各写一份搬运（CONTEXT-testing
-    /// 「目录级测试薄壳」：可通用化的夹具一律上收测试辅助层）。
-    ///
-    /// 密钥取固定值——桩只校验凭据**范围**（access key / region / service），
-    /// 不做密码学校验。
     pub fn channel_config(&self, space: &str) -> ledger_sync_engine::SyncChannelConfig {
         ledger_sync_engine::SyncChannelConfig {
             endpoint: self.endpoint.clone(),
@@ -225,7 +168,6 @@ fn xml_response(status: axum::http::StatusCode, body: String) -> axum::response:
     response
 }
 
-/// S3 错误响应 XML：`<Code>` 是后端错误分层读取的字段（凭据 / 权限 / 目标）。
 fn error_xml(code: &str) -> String {
     format!(
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\
@@ -259,7 +201,6 @@ fn parse_query(query: &str) -> HashMap<String, String> {
         .collect()
 }
 
-/// 解析 SigV4 Authorization 的 Credential 范围；形态不符回 None。
 fn credential_scope(authorization: &str) -> Option<(String, String, String)> {
     let rest = authorization.strip_prefix("AWS4-HMAC-SHA256 ")?;
     if !rest.contains("SignedHeaders=") || !rest.contains("Signature=") {
@@ -277,7 +218,6 @@ fn credential_scope(authorization: &str) -> Option<(String, String, String)> {
     Some((access_key, region, service))
 }
 
-/// 按桩配置从请求中解析 bucket 与对象键，同时校验寻址形态。
 fn addressing_key(state: &StubState, path: &str, host: Option<&str>) -> Result<String, String> {
     match state.addressing {
         S3Addressing::PathStyle => {
@@ -328,7 +268,6 @@ fn multipart_dir(state: &StubState, upload_id: &str) -> std::path::PathBuf {
     state.root.join("multipart").join(upload_id)
 }
 
-/// 起一个本地 S3 桩；寻址形态决定监听地址（见 [`S3Addressing`]）。
 pub fn spawn_s3_stub(config: S3StubConfig) -> S3Stub {
     use axum::extract::{Request, State};
     use axum::http::{Method, StatusCode};
@@ -364,8 +303,6 @@ pub fn spawn_s3_stub(config: S3StubConfig) -> S3Stub {
             headers,
         });
 
-        // 请求闸门（issue #1283）：观测即已到达，此处阻塞到测试放行——「网络在途」
-        // （请求已发出、应答未回）由此可确定复现。
         if let Some(gate) = &state.gate {
             gate.wait_release();
         }
@@ -392,8 +329,6 @@ pub fn spawn_s3_stub(config: S3StubConfig) -> S3Stub {
                 .lock()
                 .unwrap()
                 .push(format!("凭据范围 access key 不一致: {access_key:?}"));
-            // 真实 S3 对密钥不存在回 403 + 错误码（不是 401）：后端据此把
-            // 「密钥错」与「密钥对但没权限」分成两条自救指引。
             return xml_response(
                 StatusCode::FORBIDDEN,
                 error_xml(S3Deny::InvalidAccessKeyId.code()),
@@ -544,8 +479,6 @@ pub fn spawn_s3_stub(config: S3StubConfig) -> S3Stub {
         empty_response(StatusCode::METHOD_NOT_ALLOWED)
     }
 
-    // 桩的临时根目录（issue #1645）：ScratchDir guard 挂在句柄上，句柄 drop
-    // （含 panic unwind）整棵删除；HTTP 线程持有的 StubState 只留路径副本。
     let root = ScratchDir::new("s3-stub");
     let observations = Arc::new(Mutex::new(Vec::new()));
     let violations = Arc::new(Mutex::new(Vec::new()));

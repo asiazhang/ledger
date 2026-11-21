@@ -1,8 +1,3 @@
-//! 投资域市场数据 CRUD（汇率 / 行情 / 标的字典，与持仓报告无关的字典写入）。
-//!
-//! 置脏触发已收口连接层统一写入口（`db::write_locked`，ADR-0032）：本模块对备份域
-//! 零感知，写入成功后的置脏/到期检查由调用方所在写入口闭包在提交点单点执行。
-
 use rusqlite::Connection;
 
 use super::command::{
@@ -25,7 +20,6 @@ use ledger_sync_protocol::device::device_id;
 use ledger_transaction::amount;
 use ledger_transaction::shared::search_text::{split_terms, term_matches_text};
 
-/// list_holdings 行：Holding 投影 + 账户币种（本位币逐行折算的折算源，issue #1797）。
 struct HoldingRow {
     holding: Holding,
     account_currency: String,
@@ -34,7 +28,6 @@ struct HoldingRow {
 impl FromRow for HoldingRow {
     fn from_row(row: &rusqlite::Row) -> rusqlite::Result<Self> {
         Ok(HoldingRow {
-            // 前 12 列与 Holding::from_row 的位置列序一致，末列追加账户币种
             holding: Holding::from_row(row)?,
             account_currency: row.get(12)?,
         })
@@ -52,16 +45,9 @@ pub fn list_holdings(conn: &Connection) -> Result<Vec<Holding>> {
          ORDER BY v.account_id, v.instrument_id",
         [],
     )?;
-    // 逐行折本位币（issue #1797，当期汇率软形态）：持仓页签合计三卡与首页投资
-    // 概览卡的折本位币单值消费面。单行缺账户币→本位币汇率降为行级 None（命令
-    // 不失败——表格的账户币展示不依赖折算），由展示面按「警告 + 重试」显式呈现。
-    // 账户行必存（视图聚合子查询已排除软删账户），JOIN 不减行；持仓行数远小于
-    // 交易量，逐列查表（每行至多两次索引点查）不做缓存优化。
     let mut holdings = Vec::with_capacity(rows.len());
     for row in rows {
         let mut holding = row.holding;
-        // 市值与未实现盈亏的折算源同账户币；两列折算相互独立（成本腿缺失时
-        // 未实现为 None、市值仍可能有值），逐列软折算。
         holding.native_market_value_cents = match holding.market_value_cents {
             Some(cents) => {
                 amount::try_convert_to_native_current(conn, cents, &row.account_currency)?
@@ -89,9 +75,6 @@ pub fn list_exchange_rates(conn: &Connection) -> Result<Vec<ExchangeRate>> {
 }
 
 pub fn create_exchange_rate(conn: &Connection, input: ExchangeRateInput) -> Result<String> {
-    // 本地写编排入口（issue #1867）：业务写 + op 追加收进嵌套感知事务——autocommit
-    // 连接自持事务（中途失败整体回滚）、已在外层事务则并入（失败交外层回滚），
-    // 业务行与 op 行同生共死。
     ensure_transaction(conn, || {
         if input.rate <= 0.0 {
             return Err(AppError::coded("fx.rate-positive", "汇率必须大于 0"));
@@ -105,8 +88,6 @@ pub fn create_exchange_rate(conn: &Connection, input: ExchangeRateInput) -> Resu
             &input.priced_at,
             input.source.as_deref(),
         )?;
-        // op 产出接缝（issue #861 / ADR-0091）：本地写成功 → 动作随行追加进本机
-        // OpLog；随同一事务提交/回滚，写失败不残留 op。
         record_exchange_rate(
             conn,
             ExchangeRateCommand::Upsert {
@@ -122,9 +103,6 @@ pub fn create_exchange_rate(conn: &Connection, input: ExchangeRateInput) -> Resu
     })
 }
 
-/// 汇率写入协议（本地录入与重放共用，无 op 产出）：按货币对 upsert，未命中以
-/// `insert_id` 新建（本地传新生成 id、重放携带源端 id，两端收敛同一行），命中
-/// 复用既有行 id 只更新语义列。返回落库行实际 id。
 pub(crate) fn write_exchange_rate(
     conn: &Connection,
     insert_id: &str,
@@ -164,14 +142,6 @@ pub(crate) fn write_exchange_rate(
     Ok(id)
 }
 
-/// 自动采集通道的当期汇率写入（issue #1543 / ADR-0019 修订记录）：ECB 等自动
-/// 通道把最新汇率填进当期表走本入口——与手动录入、同步重放共用写入协议
-/// （[`write_exchange_rate`]，每对一行 upsert），外加**人工行保护**：既有行
-/// 来源为 [`MANUAL_SOURCE`]（人工录入）时整行跳过，自动写入不覆盖人工录入。返回是否实际写入
-/// （跳过计 false，供调用方统计）。
-///
-/// 自动采集按可重建缓存对待、不进同步日志（不产 op），由调用方通道保证；
-/// 手动录入仍走 [`create_exchange_rate`]（产 op）。
 pub fn upsert_auto_exchange_rate(
     conn: &Connection,
     base_code: &str,
@@ -213,8 +183,6 @@ pub fn list_market_prices(conn: &Connection) -> Result<Vec<MarketPrice>> {
 }
 
 pub fn create_market_price(conn: &Connection, input: MarketPriceInput) -> Result<String> {
-    // 本地写编排入口（issue #1867）：业务写 + op 追加收进嵌套感知事务（自持失败
-    // 整体回滚、嵌套失败交外层回滚），业务行与 op 行同生共死。
     ensure_transaction(conn, || {
         if input.price_cents <= 0 {
             return Err(AppError::coded(
@@ -222,11 +190,6 @@ pub fn create_market_price(conn: &Connection, input: MarketPriceInput) -> Result
                 "价格必须大于 0",
             ));
         }
-        // 写入委托现价缓存单点 upsert（issue #291 收口：原就地 SQL 与同步通道
-        // 两份同形 upsert 合并为一份）；手动落价无净值日期语义，nav_date 覆盖为 NULL
-        // （防基金现价被手动更新后旧净值日期残留错配，与同步通道同规则）。
-        // source 透传入参（可空，发布 API 形状不变）；手动报价正经 manual_price 模块
-        // （record_manual_price），本命令为已发布的独立写价通道（issue #291 前的半成品）。
         let id = upsert_market_price(
             conn,
             &MarketPriceWrite {
@@ -238,8 +201,6 @@ pub fn create_market_price(conn: &Connection, input: MarketPriceInput) -> Result
                 source: input.source.as_deref(),
             },
         )?;
-        // op 产出接缝（issue #861 / ADR-0091）：本地写成功 → 动作随行追加（裁决域
-        // = 标的的现价行）；随同一事务提交/回滚。
         record_price(
             conn,
             PriceCommand::MarketPrice {
@@ -254,8 +215,6 @@ pub fn create_market_price(conn: &Connection, input: MarketPriceInput) -> Result
     })
 }
 
-/// 标的搜索的匹配目标：「代码 · 名称」label 等价文本（与投资表单标的下拉的
-/// 选项 label 一致；无名称时退化为裸代码）。收口为具名函数，语义变更只改这里。
 fn instrument_match_label(inst: &Instrument) -> String {
     match inst.name.as_deref().filter(|n| !n.is_empty()) {
         Some(name) => format!("{} · {}", inst.symbol, name),
@@ -267,11 +226,6 @@ pub fn list_instruments(
     conn: &Connection,
     filter: &InstrumentListFilter,
 ) -> Result<InstrumentListResult> {
-    // 关键字过滤走统一模糊搜索语义（ADR-0027，复用全局搜索纯函数）：词条之间
-    // AND，命中 = 原文连续子串 ∨ 拼音首字母子序列（大小写不敏感）。判定目标为
-    // 「代码 · 名称」label 等价文本（instrument_match_label，与投资表单标的
-    // 下拉的 label 一致）。子序列匹配无法下推 SQL，故有搜索词时取候选后
-    // Rust 内存过滤再内存分页。
     let search_terms = filter
         .search
         .as_deref()
@@ -286,12 +240,10 @@ pub fn list_instruments(
         params.push(Box::new(market.to_string()));
         conditions.push(format!("i.market=?{}", params.len()));
     }
-    // 标的类型过滤（issue #294）：同码异类型消歧（如基金 000001 vs 股票 000001）。
     if let Some(kind) = filter.kind {
         params.push(Box::new(kind.to_string()));
         conditions.push(format!("i.instrument_type=?{}", params.len()));
     }
-    // 只看持仓：有当前持仓的标的，谓词单点见 predicates 模块（别名契约：i = instruments）。
     if filter.only_invested == Some(true) {
         conditions.push(INVESTED_EXISTS.to_string());
     }
@@ -314,11 +266,6 @@ pub fn list_instruments(
 
     let page_size = filter.page_size.unwrap_or(50).clamp(1, 500);
 
-    // 焦点定位（issue #1907，来源跳转落标的页签的分页定位接缝）：给出 anchor_id
-    // 时在「当前过滤 + 排序」的行集内求序号、换算所在页，分页随之切页——行必在
-    // 返回页内，前端行高亮因此可靠。定位只改页码，不改写过滤口径；id 不在结果
-    // 集内（含被筛选藏住）时不携带 anchor_page、按普通页码查询。锚点序号必须与
-    // 分页同一行集：搜索语义过滤在 Rust 侧无法下推 SQL，两分支各按自己的行集求。
     let anchor_page_in_sql_branch = match filter.anchor_id.as_deref() {
         Some(anchor_id) => {
             let id_sql = format!("SELECT i.id FROM instruments i{where_clause} ORDER BY i.symbol");
@@ -336,7 +283,6 @@ pub fn list_instruments(
         None => None,
     };
     let (total, items, anchor_page) = if let Some(terms) = &search_terms {
-        // 语义匹配分支：全量候选后 Rust 过滤，total = 命中数，内存分页。
         let all: Vec<Instrument> = query_all(conn, &select_sql(""), params_ref.as_slice())?;
         let matched: Vec<Instrument> = all
             .into_iter()
@@ -347,7 +293,6 @@ pub fn list_instruments(
             })
             .collect();
         let total = matched.len() as i64;
-        // 锚点序号在过滤后的命中集内求（与内存分页同一行集）。
         let anchor_page = filter.anchor_id.as_deref().and_then(|anchor_id| {
             matched
                 .iter()
@@ -389,11 +334,6 @@ pub fn list_instruments(
     })
 }
 
-/// 标的行 SELECT 投影单点（列表行唯一形状）：基础列 + 现价缓存（LEFT JOIN）与
-/// 持仓标志派生列；别名契约 i = instruments、
-/// p = market_prices（持仓谓词 `INVESTED_EXISTS` 的别名契约同此），投影变更
-/// 只改这里，读路径不漂移。末列恒定单位价格是价格通道派生的判定输入
-/// （ADR-0126），消费在行映射处（`FromRow for Instrument`），不随序列化输出。
 fn instrument_row_projection() -> String {
     format!(
         "i.id,i.symbol,i.instrument_type,i.name,i.currency_code,i.market,i.created_at,i.updated_at,i.version,i.device_id,i.source,p.price_cents, \
@@ -401,36 +341,13 @@ fn instrument_row_projection() -> String {
     )
 }
 
-/// 自建标的物理删除（issue #292 / ADR-0036 决策 5）：守卫前置检查——仅来源为
-/// 手动且无任何 buy/sell 流水引用（security_transactions 无行）的自建标的可删；
-/// 有引用拒删（交易行与明细归属用户记账事实，不随字典清理）、同步来源标的拒删
-/// （字典修正由按代码查询/创建带回权威名称承担，ADR-0081）。不引入软删——标的字典查询面不被污染。现价缓存与
-/// 价格历史随外键 CASCADE 一并消失；持仓批次表虽是 RESTRICT，但批次行的
-/// buy_transaction_id 为指向 security_transactions 的 NOT NULL 外键——批次存在
-/// 必有买入明细行，故守卫的流水 COUNT 已覆盖批次（无流水 ⟺ 无批次），
-/// DELETE 不会撞到 RESTRICT 外键错误。
-/// 自建标的删除（issue #292 / ADR-0036 决策 5）：守卫与删除语义单一归属
-/// [`write_delete_instrument`]，本入口只叠加 op 产出（issue #861）。
 pub fn delete_instrument(conn: &Connection, id: &str) -> Result<()> {
-    // 本地写编排入口（issue #1867）：删除 + op 追加收进嵌套感知事务（自持失败整体
-    // 回滚、嵌套失败交外层回滚）——删了标的却没留 op 的漂移不存在。
     ensure_transaction(conn, || {
         write_delete_instrument(conn, id)?;
-        // op 产出接缝（issue #861 / ADR-0091）：删除成功 → delete op（实体 id）
-        // 追加；随同一事务提交/回滚。
         record_instrument(conn, InstrumentCommand::Delete { id: id.to_string() })
     })
 }
 
-/// 标的删除协议（本地删除与重放共用，无 op 产出）：守卫前置检查——仅来源为
-/// 手动且无任何 buy/sell 流水引用（security_transactions 无行）的自建标的可删；
-/// 有引用拒删（交易行与明细归属用户记账事实，不随字典清理）、同步来源标的拒删
-/// （字典修正由按代码查询/创建带回权威名称承担，ADR-0081）。不引入软删——标的字典查询面不被污染。现价缓存与
-/// 价格历史随外键 CASCADE 一并消失；持仓批次表虽是 RESTRICT，但批次行的
-/// buy_transaction_id 为指向 security_transactions 的 NOT NULL 外键——批次存在
-/// 必有买入明细行，故守卫的流水 COUNT 已覆盖批次（无流水 ⟺ 无批次），
-/// DELETE 不会撞到 RESTRICT 外键错误。重放端守卫原样生效：守卫失败（如另一端
-/// 已有流水）由引擎挂起待裁决，不自动放行。
 pub(crate) fn write_delete_instrument(conn: &Connection, id: &str) -> Result<()> {
     let source: Option<String> = conn
         .query_row(
@@ -463,16 +380,7 @@ pub(crate) fn write_delete_instrument(conn: &Connection, id: &str) -> Result<()>
     Ok(())
 }
 
-/// 核心创建函数（手动 IPC 命令与 AI HTTP 端点共用，ADR-0037）：新建行来源标
-/// 记 [`MANUAL_SOURCE`]（非同步即手动），（代码，类型）命中既有行则复用并只更新名称/市场，
-/// 来源随行终身不变（issue #293 / ADR-0036 决策 2）。写入委托共享协议
-/// [`write_instrument`]，实际变化按形态产出 op（issue #861）——新建 →
-/// Create op；复用改名/改市场 → Update op；无变化复用不产出（op 是本机数据
-/// 变化的记录，零变化零 op）。
 pub fn create_instrument(conn: &Connection, input: InstrumentInput) -> Result<String> {
-    // 本地写编排入口（issue #1867）：业务写（建档/改名）+ op 追加收进嵌套感知事务
-    // （自持失败整体回滚、嵌套失败交外层回滚），业务行与 op 行同生共死
-    // （Created / Renamed 两产出点同壳）。
     ensure_transaction(conn, || {
         if input.symbol.trim().is_empty() {
             return Err(AppError::coded(
@@ -512,22 +420,12 @@ pub fn create_instrument(conn: &Connection, input: InstrumentInput) -> Result<St
     })
 }
 
-/// 标的写入形态（op 产出判据）：新建 / 复用有变化 / 复用无变化。
 pub(crate) enum InstrumentWrite {
     Created,
     Renamed,
     Unchanged,
 }
 
-/// fund 类型标的市场恒 unknown 守卫（ADR-0038 决策 1 修订 / issue #1194）：
-/// 场外基金的市场位只是纯字典占位，不是交易所市场；fund 行携带任何非 unknown
-/// 市场一律码化拒绝（400），判据与文案单点见
-/// [`super::fund::reject_non_unknown_fund_market`]。守卫落在标的写入协议（本域
-/// 写路径单点）——非 HTTP 创建（IPC 核心创建 / 同步命令重放）在此兜底；HTTP
-/// 6 位增强与降级通道自造字典市场、不读调用方输入，其「调用方市场拒绝」由
-/// [`super::fund::reject_carried_fund_market`] 在入口先行拒绝（见
-/// `api_server::handlers::instruments`）。缺省（None）在 [`create_instrument`]
-/// 归一为 unknown，不触发本守卫。
 fn ensure_fund_market_unknown(kind: InstrumentType, market: &str) -> Result<()> {
     if kind == InstrumentType::Fund {
         reject_non_unknown_fund_market(market)?;
@@ -535,10 +433,6 @@ fn ensure_fund_market_unknown(kind: InstrumentType, market: &str) -> Result<()> 
     Ok(())
 }
 
-/// 标的写入协议（本地创建与重放共用，无 op 产出）：按自然键（symbol, 类型）
-/// 幂等 upsert——未命中以 `insert_id` 新建（本地传新生成 id、重放携带源端 id，
-/// 两端收敛同一行），命中复用既有行 id 并只更新名称/市场（有变化才写）。
-/// 返回（生效行 id，写入形态）。
 pub(crate) fn write_instrument(
     conn: &Connection,
     insert_id: &str,
@@ -586,10 +480,6 @@ pub(crate) fn write_instrument(
     Ok((insert_id.to_string(), InstrumentWrite::Created))
 }
 
-/// 复用改名协议（重放）：以自然键（symbol, 类型）定位——建档 id 各端独立生成
-/// （并发建档各成一行、业务字段经自然键 upsert 收敛到先到行），自然键是稳定
-/// 身份；行不存在（Update 先于 Create 到达）以码化 NotFound 上抛，由引擎挂起，
-/// Create 补齐后重投递自愈。
 pub(crate) fn write_instrument_update(
     conn: &Connection,
     symbol: &str,
@@ -613,12 +503,6 @@ pub(crate) fn write_instrument_update(
     Ok(())
 }
 
-/// 同步随行名称刷新接缝（issue #827）：以数据源权威名称覆盖标的行名称——仅当
-/// 名称实际变化时写入（零变化零写入、不虚增 version），返回是否发生写入。
-/// 与 [`create_instrument`] 的「复用即更新名称」同一份 UPDATE 语义：只改名称，
-/// 不动市场/来源等其余列。空名称（数据源缺名/测试桩）与行已不存在（并发删除）
-/// 静默跳过。名称随行刷新是字典修正的同步翼（「随用随修 + 同步随行刷新」，
-/// ADR-0036/0081 修订）：同码自建行名称被数据源覆盖为已接受代价（产品裁决留痕）。
 pub fn refresh_instrument_name(conn: &Connection, instrument_id: &str, name: &str) -> Result<bool> {
     let name = name.trim();
     if name.is_empty() {
@@ -630,7 +514,6 @@ pub fn refresh_instrument_name(conn: &Connection, instrument_id: &str, name: &st
         |r| r.get(0),
     ) {
         Ok(name) => Some(name),
-        // 行已不存在（并发删除）：静默跳过；其余真实 DB 错误照常上抛，不吞。
         Err(rusqlite::Error::QueryReturnedNoRows) => None,
         Err(e) => return Err(e.into()),
     };
@@ -646,13 +529,6 @@ pub fn refresh_instrument_name(conn: &Connection, instrument_id: &str, name: &st
     }
 }
 
-/// 手动创建入口守卫（ADR-0036 决策 3）：类型白名单收窄为债券/ETF/其他三类——
-/// 股票字典归按代码查询/创建带回权威名称（ADR-0081）、基金唯一创建入口归按代码
-/// 即拉（issue #301 / ADR-0038），白名单让手动字典与两条自动通道永不相交；
-/// 名称必填（自建标的主身份是名称）。
-/// 守卫属 UI 入口政策，核心创建函数 [`create_instrument`] 保持通用：AI HTTP
-/// 创建端点（ADR-0037）五类全开、名称可选，不经本守卫。同一接缝供 IPC 命令
-/// 与 BDD 步骤复用。
 pub fn create_instrument_manual(conn: &Connection, input: InstrumentInput) -> Result<String> {
     match input.kind {
         InstrumentType::Bond | InstrumentType::Etf | InstrumentType::Other => {}

@@ -1,9 +1,3 @@
-//! 交易写入 BDD 步骤（issue #761 迁移）：交易输入构造收编 L1 步骤输入工厂
-//! （[`crate::step_inputs`]）、写入收编 L2 步骤动词（[`crate::step_verbs`]）——
-//! 步骤函数薄化为文本解析 + 快照刷新；错误断言路径改走动词 try 形态（构造 +
-//! 显式写入捕获），断言语义不变。「存在账户」前置经账户域公开创建入口动词
-//! （#763 旁路归零）；注入触发器两步骤为纯测试侧注入（spec #169 定案），留直连例外。
-
 use cucumber::{given, then, when};
 
 use ledger_transaction::TransactionInput;
@@ -18,18 +12,10 @@ use crate::step_verbs::{
 };
 use crate::world::LedgerWorld;
 
-// ---------------------------------------------------------------------------
-// Given
-// ---------------------------------------------------------------------------
-
 #[given(expr = "存在账户 {string} 类型 {string} 币种 {string}")]
 fn create_account(world: &mut LedgerWorld, name: String, kind: String, currency: String) {
     create_account_verb(world, &name, &kind, &currency, None);
 }
-
-// ---------------------------------------------------------------------------
-// When
-// ---------------------------------------------------------------------------
 
 #[when(expr = "创建交易 类型 {string} 金额 {int} 到账户 {string} 日期 {string}")]
 fn create_txn(
@@ -75,15 +61,11 @@ fn try_transfer_without_target(
     date: String,
 ) {
     let account_id = world.account_id(&account_name);
-    // 缺转入账户：被测前提是 writer 守卫 `transfer.to-account-required`，
-    // 经通用底座构造不合法形态、try 动词显式捕获（不静默吞错）。
     let input = plain_input(TransactionKind::Transfer, amount, &account_id, &date);
     let result = try_create_transaction_verb(world, input);
     capture_expected_error(world, result);
 }
 
-/// 尝试创建一笔交易并捕获错误（供「应返回错误」断言）。
-/// 与 `create_txn` 的区别：不要求成功，失败信息记入 `world.last_error`。
 #[when(expr = "尝试创建交易 类型 {string} 金额 {int} 到账户 {string} 日期 {string}")]
 fn try_create_txn(
     world: &mut LedgerWorld,
@@ -98,7 +80,6 @@ fn try_create_txn(
     capture_expected_error(world, result);
 }
 
-/// 尝试创建一笔买入交易并捕获错误（供「应返回错误」断言，issue #228）。
 #[when(expr = "尝试买入标的 {string} 数量 {int} 单价 {int} 到投资账户 {string}")]
 fn try_create_buy(
     world: &mut LedgerWorld,
@@ -122,8 +103,6 @@ fn try_create_buy(
     };
 }
 
-/// 尝试创建一笔买入/卖出交易并捕获错误，标的按裸 id 提交（不查字典）——
-/// 供「引用不存在标的」场景使用（issue #295，prepare 标的存在性校验）。
 fn try_create_trade_with_raw_instrument_id(
     world: &mut LedgerWorld,
     kind: TransactionKind,
@@ -147,7 +126,6 @@ fn try_create_trade_with_raw_instrument_id(
     };
 }
 
-/// 尝试买入不存在的标的并捕获错误（裸 id 直提，供「应返回错误」断言，issue #295）。
 #[when(expr = "尝试买入不存在标的 {string} 数量 {int} 单价 {int} 到投资账户 {string}")]
 fn try_create_buy_missing_instrument(
     world: &mut LedgerWorld,
@@ -166,7 +144,6 @@ fn try_create_buy_missing_instrument(
     );
 }
 
-/// 尝试卖出不存在的标的并捕获错误（裸 id 直提，供「应返回错误」断言，issue #295）。
 #[when(expr = "尝试卖出不存在标的 {string} 数量 {int} 单价 {int} 从投资账户 {string}")]
 fn try_create_sell_missing_instrument(
     world: &mut LedgerWorld,
@@ -185,9 +162,6 @@ fn try_create_sell_missing_instrument(
     );
 }
 
-/// 注入「建仓中途失败」：买入副作用先写 security_transactions、再写 security_lots，
-/// 触发器在第二步 RAISE(ABORT)——纯测试侧注入（spec #169 定案），检验 create
-/// 编排入口把行落库与半套副作用整体回滚（issue #228）。
 #[when(expr = "注入买入建仓中途失败触发器")]
 fn inject_buy_lot_failure_trigger(world: &mut LedgerWorld) {
     world_conn!(world)
@@ -199,9 +173,6 @@ fn inject_buy_lot_failure_trigger(world: &mut LedgerWorld) {
         .expect("注入触发器失败");
 }
 
-/// 注入「软删中途失败」：删除买入时行为层 revert（清理持仓批次）先成功、
-/// 软删 UPDATE 被触发器 RAISE(ABORT) 挡下——纯测试侧注入（spec #169 定案），
-/// 检验 delete 编排入口把持仓清理与软删纳入同一事务、中途失败整体回滚（issue #229）。
 #[when(expr = "注入软删失败触发器")]
 fn inject_soft_delete_failure_trigger(world: &mut LedgerWorld) {
     world_conn!(world)
@@ -213,7 +184,6 @@ fn inject_soft_delete_failure_trigger(world: &mut LedgerWorld) {
         .expect("注入触发器失败");
 }
 
-/// 尝试删除最近一笔交易并捕获错误（供「应返回错误」断言，issue #229）。
 #[when(expr = "尝试删除最近交易")]
 fn try_delete_last_txn(world: &mut LedgerWorld) {
     let id = world
@@ -244,10 +214,6 @@ fn create_refund(world: &mut LedgerWorld, amount: i64, date: String) {
     refund_last_transaction(world, amount, &date);
     world.txn.transactions_list = query_all_transactions(&world_conn!(world));
 }
-
-// ---------------------------------------------------------------------------
-// Then
-// ---------------------------------------------------------------------------
 
 #[then(expr = "交易列表应包含 {int} 条记录")]
 fn check_transaction_count(world: &mut LedgerWorld, expected: i64) {
@@ -306,8 +272,6 @@ fn check_error(world: &mut LedgerWorld, expected_msg: String) {
     crate::common::assert_last_error_contains(world, &expected_msg);
 }
 
-/// 建仓中途失败整体回滚的终态断言：持仓批次与买卖明细均无残留
-/// （交易行无残留由「交易列表应包含 0 条记录」断言，issue #228）。
 #[then(expr = "无买入持仓与买卖明细残留")]
 fn assert_no_lot_and_trade_residue(world: &mut LedgerWorld) {
     let conn = world_conn!(world);
@@ -349,9 +313,6 @@ fn check_refund_linked(world: &mut LedgerWorld) {
         world.txn.transactions_list.len() >= 2,
         "需要有至少 2 条交易"
     );
-    // 第一条是原支出（date DESC 排序，后创建的 refund 排前面）
-    // 实际上：expense 日期 04-01, refund 日期 04-05
-    // 按 date DESC: refund (04-05) 在前，expense (04-01) 在后
     let refund = &world.txn.transactions_list[0];
     let expense = &world.txn.transactions_list[1];
     assert_eq!(refund.kind, TransactionKind::Refund, "第一条应为退款");
