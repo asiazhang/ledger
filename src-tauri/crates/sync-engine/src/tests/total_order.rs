@@ -1,10 +1,6 @@
-//! TotalOrder（跨端全序，ADR-0091 决策 4）：按 (逻辑时钟, DeviceId) 排出
-//! 确定全序——各端对同一批 op 排出唯一一致的顺序，同钟以 DeviceId tiebreak。
-
 use super::super::{DomainCommand, SyncOp, total_order};
 use ledger_transaction::TransactionCommand;
 
-/// 构造一个任意 clock/device 的 op（排序判据不需要真实落库）。
 fn op_with(clock: i64, device_id: &str) -> SyncOp {
     SyncOp {
         op_id: format!("op-{device_id}-{clock}"),

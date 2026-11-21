@@ -1,33 +1,3 @@
-//! 场外基金按代码取价编排（issue #301 / ADR-0038 决策 1；换源 ADR-0130 决策 2 /
-//! issue #1568）：按 6 位基金代码取报价（权威名称 / 最新单位净值 + 净值日期），
-//! 投影为行情接入接缝的统一载荷 [`Quote`]（ADR-0103 决策 2）；供「按代码即拉」
-//! 添加基金、AI 查询/创建端点（#304 / ADR-0039）、名称随行刷新通道（#827）复用，
-//! 即接缝的**查询半边**（按代码取行情，纯取数不落库）。
-//!
-//! 取数编排三臂（新浪为主源、证监会基金电子披露为权威兜底与判定源）：
-//! 1. **新浪批量面**（`f_` 前缀，单只 = 一批一条，取数单元 [`super::sina_fund`]）：
-//!    普通行直接给出名称与最新单位净值——在用基金与已终止普通基金都在面（实测
-//!    清盘样本末点照常在），一次请求即答；
-//! 2. **货基判定确认**（批量面为货基错位行——万份收益在单位净值位、产不出价格
-//!    点——时经官方披露自报形态确认，[`super::csrc::confirm_money_fund_form_from`]）：
-//!    确认即按恒定单位净值 1.0000 落恒定价并携带恒定价格信号（ADR-0126 决策 3；
-//!    万份收益永不进价，#1342）；缺信号落第 3 臂；
-//! 3. **证监会披露区间查询**（[`super::csrc::fetch_fund_nav_series`]，已终止基金
-//!    存在性与最后一期净值的权威兜底面）：批量面未收录的代码在此改判存在性，
-//!    最新披露记录给出名称与取值形态（货基自报形态 → 恒定价，普通形态 → 单位
-//!    净值）。
-//!
-//! 「查无此码」的唯一结论来源是第 3 臂的可信空报文（结构完好且记录为空）——
-//! 批量面的空值语句只说明「此面未收录」，不宣布不存在；披露源不可信（Err）按
-//! fail-closed 上抛，不降级为查无此码。基金分类在替代源无来源：恒缺省（契约
-//! 投影为空串，ADR-0130 决策 8，不用名称关键词推导）。价格来源标记随取数产物
-//! 携带（[`Quote::price_source`]，ADR-0130 决策 7：批量面记 `sina`、披露臂记
-//! `csrc`）。
-//!
-//! 解析与行形态判别归各取数单元（`sina_fund` / `csrc`，fixture 单测见各自测试
-//! 文件）；本模块只做臂间编排与 [`Quote`] 投影。网络请求复用行情 HTTP 层的
-//! 主机池 / 重试 / 限流。
-
 use serde::Deserialize;
 
 use ledger_infra::error::{AppError, Result};
@@ -40,9 +10,6 @@ use super::csrc::{
 use super::http::{ForegroundGuard, Pacer, build_client, lock_pacer, shared_pacer};
 use super::sina_fund::{SINA_FUND_BATCH_HOSTS, SinaFundNavForm, fetch_sina_fund_nav_rows};
 
-/// 字符串字段兼容任意 wire 形态且**不使报文失败**（基金类型码等判定信号）：字符串去首尾空白；其余形态（数字、null 等）归为
-/// 缺省——信号缺席的代价只是退回修复前口径，不得让整页解析失败中断同步。
-/// 新浪/披露取数单元共用。
 pub(super) fn deserialize_flexible_string<'de, D>(
     d: D,
 ) -> std::result::Result<Option<String>, D::Error>
@@ -59,9 +26,6 @@ where
     })
 }
 
-/// 按 6 位代码取基金报价（三臂编排，见模块文档）：新浪批量面 → 货基判定确认 →
-/// 证监会披露区间兜底。批量面取数失败（被拦截 / 不可信形状）与披露源不可信
-/// 一律上抛，不静默降级；两源皆未收录才返回查无此码的码化错误。
 pub(super) async fn fetch_fund_quote(
     client: &reqwest::Client,
     pacer: &mut Pacer,
@@ -70,8 +34,6 @@ pub(super) async fn fetch_fund_quote(
     fetch_fund_quote_from(client, pacer, code, SINA_FUND_BATCH_HOSTS, CSRC_HOSTS).await
 }
 
-/// 同 [`fetch_fund_quote`]，两个源的主机池都可注入（本地 HTTP 服务测试编排三臂
-/// 与请求形态）。
 pub(super) async fn fetch_fund_quote_from(
     client: &reqwest::Client,
     pacer: &mut Pacer,
@@ -80,7 +42,6 @@ pub(super) async fn fetch_fund_quote_from(
     csrc_hosts: &[&str],
 ) -> Result<Quote> {
     tracing::debug!(code, "基金行情查询");
-    // 臂 1：新浪批量面（单只 = 一批一条）。普通行一次请求即答。
     let rows = fetch_sina_fund_nav_rows(client, pacer, batch_hosts, &[code.to_string()]).await?;
     if let Some(row) = rows.into_iter().find(|row| row.code == code) {
         if let SinaFundNavForm::UnitNav { unit_nav, .. } = row.form {
@@ -92,23 +53,18 @@ pub(super) async fn fetch_fund_quote_from(
                 SINA_PRICE_SOURCE,
             ));
         }
-        // 货基错位行：万份收益在单位净值位，不产出价格点——判定确认后才定价。
         match confirm_money_fund_form_from(client, pacer, code, csrc_hosts).await {
             Ok(true) => return Ok(constant_price_quote(code, &row.name, &row.nav_date)),
-            // 缺信号不是反证，但批量面给不出可采信价格——落权威兜底臂取披露记录。
             Ok(false) => {}
             Err(error) => return Err(error),
         }
     }
-    // 臂 3：证监会披露区间查询（存在性 + 名称 + 最后一期净值的权威兜底）。
-    // 窗口拉宽覆盖已终止基金的存量披露（披露止于终止日，终止越深记录越靠前）。
     let (start, end) = disclosure_window_dates();
     let records = fetch_fund_nav_series_from(client, pacer, code, &start, &end, csrc_hosts).await?;
     let latest = records
         .into_iter()
         .max_by(|a, b| a.valuation_date.cmp(&b.valuation_date));
     let Some(latest) = latest else {
-        // 可信空报文是「查无此码」的唯一结论来源（解析层保证空序列可信）。
         return Err(fund_not_found(code));
     };
     if latest.is_money_fund_form() {
@@ -124,18 +80,12 @@ pub(super) async fn fetch_fund_quote_from(
             &latest.name,
             &latest.valuation_date,
             nav,
-            // 价格自官方披露取得（兜底臂，ADR-0130 决策 7）。
             CSRC_PRICE_SOURCE,
         )),
-        // 普通形态记录缺单位净值（仅累计等字段有值）：名称可用、无价可落。
         None => Ok(name_only_quote(code, &latest.name)),
     }
 }
 
-/// 普通净值行报价投影（新浪批量面臂与披露兜底臂共用，来源由调用臂带入）：
-/// 名称 + 最新单位净值（净值即价格、万分之一元刻度），价格日期与净值日期同为
-/// 净值日期（现价的行情日期就是净值本身对应的日期）。场外通道成员（基金分类、
-/// 恒定价格信号、精确市场、类型提示）按通道形态缺省。
 fn unit_nav_quote(code: &str, name: &str, nav_date: &str, nav: f64, source: &'static str) -> Quote {
     Quote {
         code: code.to_string(),
@@ -151,10 +101,6 @@ fn unit_nav_quote(code: &str, name: &str, nav_date: &str, nav: f64, source: &'st
     }
 }
 
-/// 货基（官方披露自报形态确认）报价投影：现价 = 恒定单位净值 1.0000（万份收益
-/// 永不进价，ADR-0126 / ADR-0130 决策 6），恒定价格信号随载荷带回落库半边打标
-///（建档一次确认，单向幂等）；价格日期与净值日期同为最新披露（收益）日期。
-/// 来源记证监会披露——恒定价格的**确认源**是官方自报形态。
 fn constant_price_quote(code: &str, name: &str, date: &str) -> Quote {
     let cents = price_value_to_cents(super::fund_nav::MONEY_FUND_UNIT_NAV);
     Quote {
@@ -171,8 +117,6 @@ fn constant_price_quote(code: &str, name: &str, date: &str) -> Quote {
     }
 }
 
-/// 名称可用、无价可落的报价投影（披露记录缺单位净值、批量面缺信号等形态）：
-/// 未取到净值不落现价，标的行仍以权威名称建成。
 fn name_only_quote(code: &str, name: &str) -> Quote {
     Quote {
         code: code.to_string(),
@@ -188,13 +132,8 @@ fn name_only_quote(code: &str, name: &str) -> Quote {
     }
 }
 
-/// 「查无此码」的错误码字面量单点（构造与识别同址，spec #1674）：
-/// [`fund_not_found`] 构造与 [`is_fund_not_found`] 识别共用，码值 / 文案与
-/// 用户可见契约零变化。
 const FUND_NOT_FOUND_CODE: &str = "sync.fund-not-found";
 
-/// 「查无此码」码化错误（Invalid → 400）：批量面未收录且官方披露可信空——两源
-/// 皆未命中时的唯一出口。
 fn fund_not_found(code: &str) -> AppError {
     AppError::codedp(
         FUND_NOT_FOUND_CODE,
@@ -203,24 +142,11 @@ fn fund_not_found(code: &str) -> AppError {
     )
 }
 
-/// 「查无此码」识别谓词（spec #1674，带测谓词，与构造器同址防漂移）：编排的
-/// 名称刷新降级消费本谓词，不嗅错误码字符串——错误码、文案与用户可见契约零
-/// 变化，变的只是识别收口在取数侧（识别与构造同一字面量，漂移即测试红）。
 pub(super) fn is_fund_not_found(error: &AppError) -> bool {
     error.is_code(FUND_NOT_FOUND_CODE)
 }
 
-/// 生产拉取入口：构建客户端后经**共享限速器**执行单次查询（issue #1674：手动
-/// 查询并入进程全局额度与前台在途守卫——后台车道看得见它并让路；主机 =
-/// [`fetch_fund_quote`] 的新浪批量面 + 证监会披露面生产常量，与通道束注入面
-/// 同源、束内外不分叉，见 `channels::production_hosts`），不经数据库连接，供两壳
-/// 在连接锁外完成网络往返，避免长限流重试阻塞其它命令。
-/// 本地限速器已随限速单点退役（ADR-0121 修订注记）。async 形态（ADR-0125
-/// 决策 5/7，issue #1413）：网络等待以 `await` 表达，在异步上下文内直接可调，
-/// #1411 的过渡同步桥已随接缝 async 化拆除。
 pub async fn fetch_fund_quote_production(code: &str) -> Result<Quote> {
-    // 前台守卫先于取额度：排队等共享限速器期间后台车道同样让行
-    //（ADR-0122 决策 6 的前台请求含手动按代码查询，issue #1674）。
     let _foreground = ForegroundGuard::enter();
     let client = build_client()?;
     let pacer = shared_pacer();

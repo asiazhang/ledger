@@ -1,29 +1,8 @@
-//! 股票按代码查询的取数适配层（ADR-0130 决策 2 / issue #1567；市场闭集类型化
-//! issue #1673）：按（路由，代码）单只查询腾讯行情批量报价端点（`GET /q=<市场
-//! 前缀代码>`，单只 = 一批一条），解析与类型探测收口在 [`super::tencent`] 取数
-//! 单元（三套字段布局、类型码探测、美股交易所后缀映射、fail-closed 语义均归该
-//! 单点），本模块只做查询键构造、命中挑选与统一报价载荷投影，投影为行情接入
-//! 接缝的 [`Quote`]（ADR-0103 决策 2），供 stocks 查询端点与创建增强、添加投资
-//! 标的壳共用（即接缝的**查询半边**场内通道，注入签名与基金报价获取接缝同形）。
-//! 路由位是投资域解析流程内部小闭集 [`StockRoute`]（沪深港精确市场 + 美股聚合
-//! `Us`）——四值全部可构造查询键，键构造是全函数，不可路由市场的运行时兜底在
-//! 类型上不可表达。网络复用行情 HTTP 层的重试与限流；测试以本地 HTTP 服务注入
-//! 主机，驱动生产适配钉住请求形态（删除接线即红）。
-//!
-//! 命中判定 = 响应回显代码与请求归一化代码全等（回显全等是防错配的关键，与
-//! 东财 f57 回显同判据）；未命中（数据源明示批量内全部无效，或回显不等）返回
-//! 码化「查无此码」，网络失败 / 风控拦截由 HTTP 层与取数单元 fail-closed 上抛。
-
 use super::http::{ForegroundGuard, Pacer, build_client, lock_pacer, shared_pacer};
 use super::tencent::{TENCENT_QUOTE_HOSTS, fetch_tencent_batch, tencent_query_key};
 use ledger_infra::error::{AppError, Result};
 use ledger_investment::{Quote, StockRoute};
 
-/// 按（路由，代码）拉取单只腾讯行情并投影统一报价。路由为投资域候选解析产物
-/// [`StockRoute`]（沪深港精确市场，或美股聚合路由 `Us`——腾讯不区分交易所，
-/// 精确市场由响应自报后缀给出，ADR-0130 决策 2/4；issue #1673 类型化后键构造
-/// 全函数化，无「市场无法路由」分支）；查无此码返回码化中文错误（Invalid → 400），
-/// 网络失败 / 风控拦截由 HTTP 层重试后上抛（Io → 500）。
 pub(super) async fn fetch_stock_quote(
     client: &reqwest::Client,
     pacer: &mut Pacer,
@@ -43,17 +22,7 @@ pub(super) async fn fetch_stock_quote(
     }
 }
 
-/// 生产拉取入口：构建客户端后经**共享限速器**执行单次行情查询（issue #1674：
-/// 手动查询并入进程全局额度与前台在途守卫——后台车道看得见它并让路；主机 =
-/// 场内报价生产常量，与通道束注入面同源、束内外不分叉），不经数据库连接，供
-/// HTTP 壳在连接锁外完成网络往返，先例：`fetch_fund_quote_production`，单请求
-/// 叠加限流冷却重试最长可达
-/// 分钟级。本地限速器已随限速单点退役（ADR-0121 修订注记）。async 形态
-///（ADR-0125 决策 5/7，issue #1413）：网络等待以 `await` 表达，在异步上下文内
-/// 直接可调，#1411 的过渡同步桥已随接缝 async 化拆除。
 pub async fn fetch_stock_quote_production(route: StockRoute, code: &str) -> Result<Quote> {
-    // 前台守卫先于取额度：排队等共享限速器期间后台车道同样让行
-    //（ADR-0122 决策 6 的前台请求含手动按代码查询，issue #1674）。
     let _foreground = ForegroundGuard::enter();
     let client = build_client()?;
     let pacer = shared_pacer();

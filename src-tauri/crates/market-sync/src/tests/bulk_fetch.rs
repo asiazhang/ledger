@@ -1,8 +1,3 @@
-//! 行情批量取数面（ADR-0121 / issue #1374 / ADR-0130 决策 2）：批量面载荷的
-//! 覆盖面语义与跨同步记忆状态机。新浪 `f_` 面的报文解析、请求形态与被拦截处置
-//! 见 `tests/sina_fund.rs`（取数单元自身的测试）；本文件只测取数面作为**编排
-//! 接缝**的行为——载荷覆盖面判据与跨同步记忆。
-
 use std::time::Instant;
 
 use crate::bulk::{
@@ -10,14 +5,11 @@ use crate::bulk::{
     FundNameDictionary, FundNavTable,
 };
 
-/// 载荷覆盖面语义（issue #1565）：名称字典是覆盖面判据（有名称即被面收录），
-/// 净值表是「面是否给出可采信的价格点」的判据——货基错位行只进名称字典。
 #[test]
 fn fund_batch_separates_coverage_from_price_points() {
     let batch = FundBatch {
         names: FundNameDictionary::from([
             ("000001".to_string(), "华夏成长混合A".to_string()),
-            // 货基错位行：名称在场、净值表无它（万份收益不产出价格点）。
             ("000198".to_string(), "天弘余额宝货币".to_string()),
         ]),
         nav: FundNavTable::from([(
@@ -44,10 +36,6 @@ fn fund_batch_separates_coverage_from_price_points() {
         "货基行不给价格点（已在取数层判形为 MoneyYield）"
     );
 }
-
-// ---------------------------------------------------------------------------
-// 跨同步记忆（ADR-0121 决策 3）：连续失败达阈值停用一个期限，到期先半开试一次
-// ---------------------------------------------------------------------------
 
 #[test]
 fn circuit_opens_only_after_threshold_consecutive_failures() {

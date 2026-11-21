@@ -1,36 +1,3 @@
-//! 行情同步测试（issue #89 外迁）：HTTP 重试/多主机/解析、价格换算与增量同步行为。
-//! HTTP 层通过本地 HTTP 服务独立测试，不依赖真实网络。
-//!
-//! #256 按行为主题拆为子模块（纯移动）：
-//! - `bulk_fetch`：行情批量取数面载荷的覆盖面语义与跨同步记忆（ADR-0121，issue #1374；
-//!   报文解析与请求形态见 `sina_fund`）；
-//! - `csrc`：证监会基金电子披露区间查询报文解析与请求形态（issue #1562 / ADR-0130，fixture 为真实报文 + 本地 HTTP 服务）；
-//! - `fund_nav`：历史净值报文解析、水位窗口与 Referer 传播（issue #303，fixture 驱动）；
-//! - `fund_quote`：基金按代码查询的三臂取数编排（新浪批量面 + 官方披露判定/兜底，
-//!   issue #1568，本地 HTTP 服务驱动生产取数函数）；
-//! - `fx_persist`：ECB 汇率落库单元（issue #1543）——周采样序列落 `fx_rate_history`
-//!   （币种对 × 周键整周覆盖幂等）与 `exchange_rates` 每对最新值，人工行不被覆盖；
-//! - `fx_sync`：ECB 汇率同步编排（issue #1544）——深度判据（零痕迹跳过、落库序列
-//!   对数据源起点未覆盖走全量整份灌库、已覆盖只走增量的幂等，#1759）与两文件接线证明；
-//!   失败三态互不吞并与人工行保护经编排回归（issue #1545）；
-//! - `history_backfill`：价格历史后台补全编排（ADR-0122 / issue #1375）——派生事实
-//!   队列、一轮排空与队列随补全自然排空，含基金历史回填单元（issue #1377，
-//!   新浪单只全历史面形态见 issue #1566）；
-//! - `http_client`：HTTP 重试、多主机切换与各来源取数入口的请求形态 / 上限行为（ECB 参考汇率、腾讯周线 K 线）；
-//! - `instrument_info_sync`：标的信息同步（K 线报文解析用例随 #1377 迁 history_backfill）；
-//! - `sina_fund`：新浪场外基金取数（issue #1564，fixture 驱动）——批量面普通行 /
-//!   货基错位行 / 已终止基金行的形态判别与 fail-closed，全历史面末点 / 可信空 /
-//!   非可信形状，请求形态与批量承载量；
-//! - `source_tail`：取数尾部契约的跨单元畸形语料（spec #1675）——五个取数单元
-//!   各注入一份畸形响应，共享同一断言函数钉三件套（降速被记录、单条源畸形 warn
-//!   的文案与 source/error/body 三字段、期望的码化错误），删除即变红；
-//! - `stock_quote`：股票单点行情报文解析、类型特征探测与命中挑选（issue #693，fixture 驱动）；
-//! - `tencent`：腾讯行情批量报价取数（issue #1558，fixture 驱动）——三套字段布局的类型码 / 币种 /
-//!   交易所后缀、请求形态与批量承载量、被拦截响应 fail-closed。
-//!
-//! 全量同步（clist 报文解析、分页编排、取消与重入守卫）已随 ADR-0081 决策 3
-//! 退役删除（issue #698）。
-
 use std::sync::{Arc, Mutex};
 
 use crate::http::Pacer;
@@ -54,21 +21,10 @@ mod stock_quote;
 mod tencent;
 mod weekly;
 
-// ---------------------------------------------------------------------------
-// 共享测试脚手架（一份）
-// ---------------------------------------------------------------------------
-
-/// 桩适配器（issue #1412）：同步应答值 → 通道 future（抓取闭包 async 形态后的
-/// 最小包装——既有桩闭包的应答逻辑保持同步表达式，只在出口装箱为立即就绪的
-/// future，调用点零改动）。
 pub(super) fn ready<T: Send + 'static>(value: Result<T>) -> crate::channels::FetchFuture<T> {
     Box::pin(std::future::ready(value))
 }
 
-/// 直插一条持仓（账户 + 标的 + 交易 + 批次），绕过交易行为层以聚焦增量同步自身逻辑。
-/// 账户/标的经工厂种子（spec #728 / ADR-0084 决策 4）；标的类型工厂固定 stock，
-/// bond/other/fund 等域变体经类型修正表达——类型是本域行情通道路由/跳过规则的
-/// 行为输入，不入工厂种子。
 pub(super) fn insert_holding(
     conn: &Connection,
     account_id: &str,
@@ -104,7 +60,6 @@ pub(super) fn insert_holding(
     insert_lot(conn, account_id, instrument_id, currency);
 }
 
-/// 直插一笔买入交易 + 持仓批次（绕过交易行为层，聚焦同步自身逻辑）。
 pub(super) fn insert_lot(conn: &Connection, account_id: &str, instrument_id: &str, currency: &str) {
     let txn_id = format!("txn-{account_id}-{instrument_id}");
     conn.execute(
@@ -133,11 +88,6 @@ pub(super) fn insert_lot(conn: &Connection, account_id: &str, instrument_id: &st
     .unwrap();
 }
 
-/// 起一个本地 HTTP 服务：按调用次数回调响应 (status, body)（body 字节安全，GBK
-/// fixture 可直传），并按序收集完整请求头，返回 (基础地址, 请求头收集器)——本域
-/// 唯一一份本地 HTTP 测试服务机制（issue #1582 上收：tests/http_client.rs 与
-/// tests/csrc.rs 的同形本地实现退役）；固定应答的用例经
-/// [`spawn_header_capture_server`] 表达。
 pub(super) fn spawn_capture_server(
     responder: impl Fn(usize) -> (u16, Vec<u8>) + Send + 'static,
 ) -> (String, Arc<Mutex<Vec<String>>>) {
@@ -154,8 +104,6 @@ pub(super) fn spawn_capture_server(
             let Ok(reader_stream) = stream.try_clone() else {
                 break;
             };
-            // 循环读到请求头结束：请求行可能很长（批量承载量用例 ~7KB），单次 read
-            // 可能截断。
             let mut reader = BufReader::new(reader_stream);
             let mut head = String::new();
             loop {
@@ -188,9 +136,6 @@ pub(super) fn spawn_capture_server(
     (url, heads)
 }
 
-/// 起一个捕获请求头的本地 HTTP 服务（固定 200 + 固定响应体、按顺序收集请求头），
-/// 返回 (基础地址, 请求头收集器)——单页 fixture 用例的便捷形态，机制单点在
-/// [`spawn_capture_server`]；文本 / JSON 两类通道的请求形态断言共用。
 pub(super) fn spawn_header_capture_server(
     body: impl Into<Vec<u8>>,
 ) -> (String, Arc<Mutex<Vec<String>>>) {
@@ -198,28 +143,12 @@ pub(super) fn spawn_header_capture_server(
     spawn_capture_server(move |_| (200, body.clone()))
 }
 
-/// 测试注入的零间隔限速器（等待可注入，spec #1086 / issue #1514 同款手法）：
-/// 驱动生产通道束的接线证明用例以此替换进程级共享 pacer 单例（`Pacer::new`
-/// 零间隔即整只限速器惰性），免付相邻请求 1 秒的生产限速真实等待；束内接线
-/// 与请求形态断言不受注入影响（issue #1787）。生产入口仍取共享单例，其单例性
-/// 由 `history_backfill::shared_pacer_is_process_wide_singleton` 钉住。
 pub(super) fn zero_pacer() -> Arc<tokio::sync::Mutex<Pacer>> {
     Arc::new(tokio::sync::Mutex::new(Pacer::new(
         std::time::Duration::ZERO,
     )))
 }
 
-// ---------------------------------------------------------------------------
-// 异步运行时形态守门（ADR-0125 决策 5/7 / issue #1413，删除即变红）
-// ---------------------------------------------------------------------------
-
-/// 抹掉内联 `#[cfg(test)] mod … { … }` 块：本守门只辖生产路径，内联测试模块里
-/// 的驱动代码（block_on 驱动 async 编排的同步测试、本地 HTTP 服务的线程）不是
-/// 生产执行环境；外挂测试面（tests.rs / tests/）本就不在扫描文件清单里。
-/// 输入须先经 [`mask_non_code`]（词法器具单点住 `test_support::scan`，#1433
-/// 上收——原轻量行注释掩码退役，块注释与字符串字面量同受掩码，与
-/// `scripts/gate-primitives.ts` 的 `maskNonCode` 双源同规）；花括号配对经
-/// [`matching_brace_end`] 单一实现。
 fn blank_inline_test_modules(source: &str) -> String {
     let mut out = source.to_string();
     let mut i = 0usize;
@@ -229,18 +158,13 @@ fn blank_inline_test_modules(source: &str) -> String {
         let after = &out[head..];
         let trimmed = after.trim_start();
         if !trimmed.starts_with("mod") {
-            // #1413 原语义保留：非 mod 附属的出现即终止。原式 `i = head + rel.len()`
-            // 中 rel 是锦点之后的余下全文，恒等/于文本末尾——即终止而非跳过锦点
-            // 续扫（经验测试钉住：非 mod 锦点后的 mod 块原实现同样不抹除；当前
-            // 生产面无非 mod 附属的 cfg(test)，两形态不可区分）。
             break;
         }
-        // 找到模块体开括号（跳过 mod 名与修饰符）。
         let Some(open) = after.find('{').map(|p| head + p) else {
             break;
         };
         let Some(end) = matching_brace_end(&out, open) else {
-            break; // 不配对（不会发生），防御性退出
+            break;
         };
         let blanked: String = out[anchor..end]
             .chars()
@@ -252,8 +176,6 @@ fn blank_inline_test_modules(source: &str) -> String {
     out
 }
 
-/// 列出本 crate 全部生产源文件（相对 `src/`，排除 tests.rs 与 tests/ 目录），
-/// 排序固定保证失败输出确定。
 fn production_source_files() -> Vec<(&'static str, String)> {
     let mut files: Vec<(&'static str, String)> = vec![
         ("bulk.rs", include_str!("bulk.rs").to_string()),
@@ -299,12 +221,6 @@ fn production_source_files() -> Vec<(&'static str, String)> {
     files
 }
 
-/// 守门清单对磁盘全等（fail loud，防漂移）：`production_source_files` 的硬编码
-/// 清单必须与 `src/` 目录的实际生产文件集（排除 tests.rs 与 tests/）严格相等——
-/// 新增生产文件不入清单即红，杜绝「新文件静默漏扫」。与
-/// `scripts/check-background-services.ts` 车道守门（同规则双面）的分工：TS 面管
-/// 全量生产文件的线程禁令与车道死条目，本测试面管车道接线与阻塞驱动点的域内
-/// 断言；两处规则同源 ADR-0125 决策 7，任一处红即堵住回归。
 #[test]
 fn guard_source_list_matches_directory_exactly() {
     let manifest = env!("CARGO_MANIFEST_DIR");
@@ -333,19 +249,6 @@ fn guard_source_list_matches_directory_exactly() {
     );
 }
 
-/// 后台车道（含不经 lane 单轮骨架的每日汇率增量同步）必须是挂全局运行时的 async
-/// 任务（ADR-0125 决策 7 / issue #1413，删除即变红）：调度循环以
-/// `tauri::async_runtime::spawn` 拉起 async 任务，启动延迟与自然日窗口用
-/// `tokio::time::sleep` 异步定时；生产面零自建线程。把调度循环改回
-/// `std::thread::spawn` + `std::thread::sleep`（或删掉异步执行器接线）本测即红
-/// ——「删除即变红」的负向半边，与 `scripts/check-background-services.ts`
-/// 的成对拉起守门互补（那边管「在哪拉起」，本测管「以什么执行器拉起」）。
-///
-/// issue #1622 收敛后，执行器与异步定时接线单点住 lane.rs（三车道共用调度循环
-/// `start_daily_lane`）；车道模块只留接线（调起共享循环）与本车道编排——车道
-/// 模块自建平行调度循环（含 async 形态重写）即接线缺失变红；「接线调起的是真
-/// 车道」这正向事实无法由结构断言观察，行为半边由 tests/ 下三条接线 IT 的
-/// 在途等待超时兜底。
 #[test]
 fn background_lanes_are_global_runtime_async_tasks() {
     let sources: Vec<(&'static str, String)> = production_source_files()
@@ -353,8 +256,6 @@ fn background_lanes_are_global_runtime_async_tasks() {
         .map(|(name, src)| (name, blank_inline_test_modules(&mask_non_code(&src))))
         .collect();
 
-    // 生产面零自建线程 / 零阻塞定时：车道线程是 ADR-0125 决策 7 显式去除的执行
-    // 环境，回归即在异步上下文之外多出一条自持运行时状态的线程。
     let thread_hits: Vec<&str> = sources
         .iter()
         .filter(|(_, src)| src.contains("thread::spawn") || src.contains("std::thread::sleep"))
@@ -368,8 +269,6 @@ fn background_lanes_are_global_runtime_async_tasks() {
 
     for (name, src) in &sources {
         match *name {
-            // 调度循环单点（issue #1622 收敛）：执行器与异步定时接线住 lane.rs，
-            // 删掉任一接线（或改回自建线程）本测即红。
             "lane.rs" => {
                 assert!(
                     src.contains("tauri::async_runtime::spawn"),
@@ -382,8 +281,6 @@ fn background_lanes_are_global_runtime_async_tasks() {
                      （ADR-0125 决策 7 / issue #1413）"
                 );
             }
-            // 三条车道（接线面）：只允许经共享调度循环拉起——删接线即红。断言
-            // 对准调用形状（带括号）：只留 use 导入、删掉调用不动本测。
             "daily_refresh.rs" | "history.rs" | "fx_daily.rs" => {
                 assert!(
                     src.contains("start_daily_lane("),
@@ -396,10 +293,6 @@ fn background_lanes_are_global_runtime_async_tasks() {
     }
 }
 
-/// 生产面零阻塞驱动点（ADR-0125 决策 5/7，删除即变红）：#1411 过渡同步桥随
-/// #1413 拆除后，本 crate 生产面不得再出现 `block_on`——回归形态（两壳生产入口
-/// 改回同步形状并重新引入桥驱动）在异步任务路径上触达即运行时 panic（#1403
-/// 同款现场）；两壳生产入口必须保持 `async fn`（壳层接缝直接 `await`，无包装）。
 #[test]
 fn production_face_has_no_blocking_bridge() {
     let sources: Vec<(&'static str, String)> = production_source_files()
@@ -436,14 +329,6 @@ fn production_face_has_no_blocking_bridge() {
     }
 }
 
-/// 生产拉取入口接入前台让路纪律（issue #1674，删除即变红）：手动查询的前台在途
-/// 守卫与共享限速器是入口型接线——入口直连生产主机常量与真网络，测试面无从注入
-/// 慢拉取观察让行（与 #959/#961、`commands::investment` 同口径以源码扫描守门，
-/// ADR-0087）。限速器实例唯一由编译期收口（构造器 `cfg(test)`，见 `http.rs`），
-/// 本测钉的是「取的是共享单例 + 持前台守卫」：删掉任一入口的
-/// `ForegroundGuard::enter()`（后台车道看不见手动查询）或 `shared_pacer()`
-///（绕开进程全局额度）本测即红；断言只取**生产入口函数体**，不被同文件其他
-/// 位置的合法引用误触。
 #[test]
 fn production_entries_join_foreground_lane_discipline() {
     let sources: Vec<(&'static str, String)> = production_source_files()
@@ -478,19 +363,6 @@ fn production_entries_join_foreground_lane_discipline() {
     }
 }
 
-// ---------------------------------------------------------------------------
-// 后台车道单轮骨架单点（issue #1426，删除即变红）
-// ---------------------------------------------------------------------------
-
-/// 单轮骨架的机制不得回流到车道模块（issue #1426，删除即变红）：换装（生产束
-/// 构造）、门面会话构造、收尾裁决（见证读取与提交点置脏）与进度发射一旦出现在
-/// `daily_refresh.rs` / `history.rs`，即「下一次车道形态调整还要再改两处」的
-/// Shotgun Surgery 回归（骨架又裂成两份平行实现）。
-///
-/// 断言强度（CONTEXT-testing）：判据只取**负向**——车道模块出现骨架机制即红，
-/// 故对合法重命名（骨架 / trait / 转接单点改名）零误报；「两车道都经骨架」这一
-/// 正向事实无法由行为断言观察（两条路径行为等价），按 ADR-0125 决策 7 的车道接线
-/// 扫描先例由本结构守门承担，行为面归 `tests/` 下两条接线 IT 的端到端断言。
 #[test]
 fn background_lanes_share_single_round_skeleton() {
     let sources: Vec<(&'static str, String)> = production_source_files()
@@ -498,7 +370,6 @@ fn background_lanes_share_single_round_skeleton() {
         .map(|(name, src)| (name, mask_non_code(&src)))
         .collect();
 
-    // 机制指纹：换装 / 会话 / 裁决（见证读取、提交点置脏、失效信号）/ 进度发射。
     const SKELETON_MECHANICS: [&str; 7] = [
         "production_backfill()",
         "FacadeWriteSession::new",

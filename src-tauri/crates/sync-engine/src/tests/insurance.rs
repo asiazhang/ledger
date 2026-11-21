@@ -1,6 +1,3 @@
-//! 保险域的全域 op 产出与重放收敛（issue #860）：保司字典 + 保单档案；依赖缺失
-//! 挂起后经重投递自愈（ParkedOp 出队语义）。
-
 use super::super::{DomainCommand, OpOutcome, parked_ops, read_ops};
 use super::common::{seed_device, wire_in, wire_out};
 use ledger_policy::{
@@ -84,7 +81,6 @@ fn insurer_and_policy_ops_replay_and_converge() {
     );
     assert_eq!(read_ops(&conn_a).unwrap(), read_ops(&conn_b).unwrap());
 
-    // 重复投递：全部 Skipped。
     let again = wire_in(&conn_b, &wire_out(&conn_a));
     assert!(again.iter().all(|r| r.outcome == OpOutcome::Skipped));
 }
@@ -105,7 +101,6 @@ fn policy_create_parks_until_insurer_arrives() {
     .unwrap();
     let policy_id = create_policy(&conn_a, policy_input(&insurer_id), &mut || {}).unwrap();
 
-    // 先只投递保单 op（依赖的保司 op 未达）：保司在用校验失败 → 挂起，不落日志。
     let policy_wire: Vec<String> = wire_out(&conn_a)
         .into_iter()
         .filter(|raw| raw.contains("\"entity\":\"policy\""))
@@ -121,7 +116,6 @@ fn policy_create_parks_until_insurer_arrives() {
     assert!(read_ops(&conn_b).unwrap().is_empty(), "挂起 op 不落日志");
     assert_eq!(parked_ops(&conn_b).unwrap().len(), 1);
 
-    // 依赖方补齐后重投递：保司先建，保单 op 重放成功即出队（幂等覆盖挂起行）。
     let full_reports = wire_in(&conn_b, &wire_out(&conn_a));
     assert!(
         full_reports.iter().any(|r| r.outcome == OpOutcome::Applied),
