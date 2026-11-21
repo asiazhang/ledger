@@ -1,6 +1,6 @@
 # Ledger 数据模型设计
 
-Ledger 采用 SQLite 作为本地数据库，面向**多设备同步的离线优先**架构。表结构、索引、约束、触发器与种子数据的**唯一事实来源是 migration**（`src-tauri/migrations/`，索引见文末）；本文不复述任何可从 migration 与代码查出的细节，只保留设计动机与实体关系总览。
+Ledger 采用 SQLite 作为本地数据库，面向**多设备同步的离线优先**架构。表结构、索引、约束、触发器与种子数据的**唯一事实来源是 migration**（`src-tauri/migrations/`，逐迁移设计动机见各文件头注释）；本文不复述任何可从 migration 与代码查出的细节，只保留设计动机与实体关系总览。
 
 ## 设计原则
 
@@ -134,45 +134,6 @@ erDiagram
 - **期次执行的失败语义**（ADR-0024 未覆盖的补充）：执行失败直接返回错误，期次状态保持 pending 不变，重试即再次执行该期次；`failed` 为 schema 预留状态，当前没有写入路径。引擎单期执行的事务边界与失败残留处理见 ADR-0033 决策 #6；语义定义点见定时计划域词汇表 Failure Policy 条目。
 - **CAS 并发控制**（ADR-0024 未覆盖的补充）：基于 version 的乐观锁保证一期在多设备间只会被执行一次——执行设备先抢占（status→processing 且 version+1），仅抢占成功者生成交易并回填 transaction_id；同步时发现 transaction_id 已存在即跳过执行，避免多设备重复扣款或转账。
 
-## Migration 索引
+## Migration 约定
 
-| 迁移 | 内容 |
-|---|---|
-| `V001__initial.sql` | currencies / accounts / categories / merchants / transactions / budgets / exchange_rates 表结构、索引、CHECK 约束（含基金转换就地扩集：kind CHECK 含 convert，issue #977） |
-| `V002__investment.sql` | 投资域六表 + `v_holdings` 视图（含基金转换就地扩集：action CHECK 含 convert + 4 个转换列 + 转出消耗表 `security_lot_conversions`，issue #977） |
-| `V003__scheduled_transactions.sql` | 计划交易核心表、期次表与三张扩展表 |
-| `V004__seed_defaults.sql` | 币种与分类种子数据（含黑洞账户） |
-| `V006__transaction_amount_index.sql` | 金额筛选索引 |
-| `V007__transaction_idempotency_key.sql` | 幂等键列 + 部分唯一索引 |
-| `V008__app_settings.sql` | `app_settings` KV 表 |
-| `V009__items.sql` | 物品（items）表 |
-| `V010__price_history.sql` | `price_history` / `fx_rate_history` 周粒度历史表 |
-| `V011__instruments_source.sql` | 标的字典来源列（同步 / 手动标记，ADR-0036） |
-| `V012__policies.sql` | 保单（policies）表 |
-| `V013__transaction_policy_id.sql` | 交易保单引用列 |
-| `V014__subscription_plan_policy_id.sql` | 订阅计划保单引用列 |
-| `V015__physical_assets.sql` | 实物资产（physical_assets）与估值历史（physical_asset_valuations）表（ADR-0064） |
-| `V016__transaction_structural_indexes.sql` | 交易表 6 条 partial 覆盖索引（列表序/账户筛选序/双侧现金流/月度表达式/分类覆盖）+ 统计刷新 |
-| `V017__balance_net_worth_cache.sql` | 账户余额缓存与净资产终值缓存表（ADR-0067） |
-| `V018__note_pinyin.sql` | 备注拼音首字母冗余列（写入路径同写维护、存量行搜索惰性回填）+ 回填探针索引与搜索扫描覆盖索引（ADR-0027 修订）——冗余列与探针索引已随 V031 退役、覆盖索引 V031 重建（#1728） |
-| `V019__insurer_dictionary.sql` | 保司字典（insurers）表 + 30 家常用国内保司种子（保险域自有字典，ADR-0082） |
-| `V020__sync_oplog.sql` | 多端同步元数据：设备标识与端内逻辑时钟（sync_device 单行）与操作日志（sync_ops，只追加；issue #855 / ADR-0091） |
-| `V021__sync_merge_semantics.sql` | 多端同步合并语义：sync_ops 实体指向列（LWW 裁决检索）与挂起队列（sync_parked_ops；issue #856 / ADR-0091） |
-| `V022__sync_checkpoint.sql` | 多端同步各来源流已应用位点表（sync_stream_positions；issue #857 / ADR-0091 决策 9） |
-| `V023__transaction_funding_account.sql` | buy/sell 出资账户列（funding_account_id）与出资端聚合索引（ADR-0096） |
-| `V024__security_lot_adjustments.sql` | 份额调整（split）批次重述审计表：逐批次 before / after 快照（ADR-0106 / issue #1049） |
-| `V025__transaction_index_cleanup.sql` | transactions 索引清理：DROP 4 个零消费者索引与 2 个语义重叠索引、补保单统计部分覆盖索引与统计刷新（issue #1300） |
-| `V026__account_credit_terms.sql` | accounts 信用卡档案列（credit_limit_cents / statement_day / due_day，spec #1327 / ADR-0119） |
-| `V027__security_transaction_origin.sql` | security_transactions 期初存量标记列（origin: trade / opening 闭集，期初存量行不进资金加权收益率现金流集，含期初存量的标的改给未年化口径；#1343 / ADR-0115 修订） |
-| `V028__instrument_constant_unit_price.sql` | instruments 恒定单位价格列（constant_unit_price，可空，非空即进恒定价格通道——价格恒定标的的单位价格是定义性常量，货基为首个成员；#1450 / ADR-0126 决策 2） |
-| `V029__transaction_fx_rate_trace.sql` | transactions 折算来源留痕列（fx_rate_used / fx_rate_source，#1548 / ADR-0011 修订） |
-| `V030__transaction_merchant_covering_index.sql` | transactions 商户维度部分覆盖索引（商户消费排行聚合的分组列打头覆盖索引，查询侧 INDEXED BY 钉定，#1655） |
-| `V031__drop_note_pinyin.sql` | transactions 拼音派生列退役：DROP note_pinyin 列与回填探针索引，搜索覆盖索引重建（列清单去 note_pinyin，「列表序键 + id/note/三引用列」形态保持）——交易搜索退回原文搜索，拼音可搜语义收窄归下拉侧（#1728 / ADR-0027 修订记录「语义契约定稿」） |
-| `V032__goals.sql` | goals 储蓄目标表（目标金额 + 可选截止日 + 状态 + 手填计划月存 + 专属账户 1:1 绑定，spec #1750 / ADR-0133） |
-| `V033__security_transaction_to_instrument_index.sql` | security_transactions 转入腿索引（to_instrument_id）——首笔持仓流水日两臂各走索引 seek、查询侧 INDEXED BY 钉定（计划由 SQL 确定，索引缺失即 prepare 报错），逐标的全扫退役（#1804） |
-| `V034__transaction_fundings.sql` | 出资项子表（transaction_fundings：交易引用 + 顺序位 + 账户 + 金额 + 扣款标签，子行随主行存亡、存量行零迁移）+ transactions 表重建放宽 account_id NOT NULL（分解行主列落 NULL，账户口径由子行承载；SQLite 12 步重建规程，`init_db` 迁移期外键关闭）（#1860 / ADR-0138）；未发布窗口就地扩补**购买项子表** transaction_purchases（交易引用 + 顺序位 + 名称 + 件数 + 分类引用 + 可空单价，子行随主行存亡、存量行零迁移，仅 expense 可带）（#1882 / ADR-0138 决策 9/10） |
-| `V035__transaction_source_order_no.sql` | transactions 来源订单号可空列（来源元数据、不限 kind，订单区的行级归属锚点）+ 同单行集部分覆盖索引；存量行零迁移（#1862 / ADR-0138 决策 9） |
-| `V036__sync_db_split.sql` | 同步元数据拆库——四表闭集（sync_device / sync_ops / sync_parked_ops / sync_stream_positions）以最终形态在 attached 侧（`sync.` 限定名）建表，逐表 INSERT…SELECT 搬数（源 `main.` 显式限定）后 DROP 主库同名表；整批待跑迁移包在单一事务里，非 WAL 下经 master journal 跨两库集合级原子，中断整体回滚、重启重跑收敛；IF NOT EXISTS 复用 attached 既有空表（旧单文件快照跨版本引导的续完臂，票 07）；app_settings 同步相关键与业务主表同步审计列留守主库，不属搬迁对象（ADR-0139 决策 1/4）（#1871 / ADR-0139） |
-| `V037__account_archive.sql` | accounts 归档标志列（is_archived，布尔默认假，与 is_deleted / is_hidden 同形；归档是收纳态，读面零过滤、不改任何金额口径，spec #1952 / ADR-0142） |
-| `V038__transaction_kind_count_index.sql` | transactions kind 维度计数部分覆盖索引（kind, date, 三端引用列, id，WHERE is_deleted=0）：`list_transactions` 带 hide_investment_related 的 COUNT 从全表扫肥表收敛为纯索引扫描（无日期 43ms→12.5ms，带日期 1.5ms，副本实测），尾部 ANALYZE 刷统计（#2197） |
-> 迁移版本由 SQLite `user_version` 自动追踪，新迁移在数据库模块统一注册。V005（FTS5 搜索索引）已随统一模糊搜索方案移除（ADR-0027），编号不复用。新增 schema 变更时新建 `V00X__名称.sql` 并在注册处追加；已发布迁移的就地修改与 BREAKING 标记要求见 AGENTS.md 发布约定。
+> 迁移版本由 SQLite `user_version` 自动追踪，新迁移由构建脚本按迁移目录投影自动注册（issue #2199，注册链与链长零手工清单）。V005（FTS5 搜索索引）已随统一模糊搜索方案移除（ADR-0027），编号不复用。新增 schema 变更时只需新建 `V00X__名称.sql`（文件名必须匹配 `V<数字>__<名称>.sql`，不匹配即构建失败）；已发布迁移的就地修改与 BREAKING 标记要求见 AGENTS.md 发布约定。

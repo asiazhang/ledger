@@ -66,10 +66,12 @@ fn init_db_is_idempotent_and_seeds_defaults() {
     assert_eq!(mismatched, 0);
 }
 
-/// 当前迁移序列长度（V001–V038，V005 移除不回填，共 37 条）；新增迁移时随
-/// `migrations()` 同步更新。钉住「从零迁移到最新」的完整性基线（拆库边界
-/// 35 的常量钉在 `db::tests::sync_split`，此处只管最新版本）。
-const LATEST_SCHEMA_VERSION: usize = 37;
+/// 当前迁移序列长度：由 `crates/infra/build.rs` 按迁移目录投影生成的
+/// [`crate::db::migrate::MIGRATION_COUNT`]，单一事实源 = 目录本身（issue #2199）；
+/// 手写常量已随 #2197 现场退役（漏 bump 即「从零迁移到最新」两测试红）。
+/// 钉住「从零迁移到最新」的完整性基线（拆库边界 35 的常量钉在
+/// `db::tests::sync_split`，此处只管最新版本）。
+use crate::db::migrate::MIGRATION_COUNT as LATEST_SCHEMA_VERSION;
 
 /// 库版本超前（`boot.schema-ahead`）：user_version 高于迁移链顶（账本曾由更新
 /// 版本的应用打开过并已迁移）时拒绝并转码化错误，库与 user_version 均保持

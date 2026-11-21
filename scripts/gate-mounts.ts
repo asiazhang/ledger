@@ -55,7 +55,7 @@ export const CI_NON_GATE_RUNS: readonly string[] = ["run: pnpm run build"];
 
 /**
  * 登记清单（check.sh 全部质量门步骤：bun TS 门与非 TS 步骤同表；check-docs.sh 作
- * 单条，其内部九项校验不展开。spec #1682 定案口径 22 条 = 13 + 9——实际集合以
+ * 单条，其内部八项校验不展开。spec #1682 定案口径 22 条 = 13 + 9——实际集合以
  * 守门接线测试与 check.sh / CI 的双向全等断言为准，本注释不作计数依据）。
  * 顺序与 check.sh 执行序列一致，便于逐行核对；CI 挂载为子集（frontend job /
  * backend-lint job）。
@@ -188,7 +188,7 @@ export const GATE_MOUNTS: readonly GateMount[] = [
   },
   {
     name: "文档一致性检查（check-docs.sh）",
-    refs: "issue #166 起（九项校验逐票增补）",
+    refs: "issue #166 起（八项校验逐票增补；⑨ Migration 索引门随 #2199 退役）",
     hosts: [
       {
         file: CHECK_SH_FILE,
