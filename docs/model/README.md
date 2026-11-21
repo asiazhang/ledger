@@ -174,4 +174,5 @@ erDiagram
 | `V035__transaction_source_order_no.sql` | transactions 来源订单号可空列（来源元数据、不限 kind，订单区的行级归属锚点）+ 同单行集部分覆盖索引；存量行零迁移（#1862 / ADR-0138 决策 9） |
 | `V036__sync_db_split.sql` | 同步元数据拆库——四表闭集（sync_device / sync_ops / sync_parked_ops / sync_stream_positions）以最终形态在 attached 侧（`sync.` 限定名）建表，逐表 INSERT…SELECT 搬数（源 `main.` 显式限定）后 DROP 主库同名表；整批待跑迁移包在单一事务里，非 WAL 下经 master journal 跨两库集合级原子，中断整体回滚、重启重跑收敛；IF NOT EXISTS 复用 attached 既有空表（旧单文件快照跨版本引导的续完臂，票 07）；app_settings 同步相关键与业务主表同步审计列留守主库，不属搬迁对象（ADR-0139 决策 1/4）（#1871 / ADR-0139） |
 | `V037__account_archive.sql` | accounts 归档标志列（is_archived，布尔默认假，与 is_deleted / is_hidden 同形；归档是收纳态，读面零过滤、不改任何金额口径，spec #1952 / ADR-0142） |
+| `V038__transaction_kind_count_index.sql` | transactions kind 维度计数部分覆盖索引（kind, date, 三端引用列, id，WHERE is_deleted=0）：`list_transactions` 带 hide_investment_related 的 COUNT 从全表扫肥表收敛为纯索引扫描（无日期 43ms→12.5ms，带日期 1.5ms，副本实测），尾部 ANALYZE 刷统计（#2197） |
 > 迁移版本由 SQLite `user_version` 自动追踪，新迁移在数据库模块统一注册。V005（FTS5 搜索索引）已随统一模糊搜索方案移除（ADR-0027），编号不复用。新增 schema 变更时新建 `V00X__名称.sql` 并在注册处追加；已发布迁移的就地修改与 BREAKING 标记要求见 AGENTS.md 发布约定。
