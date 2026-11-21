@@ -59,7 +59,6 @@ describe("useInstrumentInfoSync 标的信息同步（标的页/盈亏页共用�
     const { syncing, sync } = useInstrumentInfoSync();
     const p1 = sync();
     expect(syncing.value).toBe(true);
-    // 进行中再次调用：应被短路（复用在途承诺），不新增 invoke
     const p2 = sync();
     expect(mockInvoke).toHaveBeenCalledTimes(1);
     resolveSync({ synced: 1, skipped: 0, message: "已同步 1 只，跳过 0 只" });
@@ -69,11 +68,6 @@ describe("useInstrumentInfoSync 标的信息同步（标的页/盈亏页共用�
   });
 });
 
-// ---------------------------------------------------------------------------
-// 同步确定进度（issue #897 / ADR-0095）：接缝订阅后端进度事件、产出可观察
-// 进度、终态（成功/失败）收起清空；在途短路期间进度共享。
-// ---------------------------------------------------------------------------
-
 let progressHandlers: CapturedListener[] = [];
 
 beforeEach(() => {
@@ -81,7 +75,6 @@ beforeEach(() => {
   progressHandlers = captureListenHandlers();
 });
 
-/** 触发最近捕获的进度事件监听器（tauri Event 载荷形状）。 */
 function fireProgress(payload: unknown): void {
   expect(progressHandlers.length).toBeGreaterThan(0);
   progressHandlers.at(-1)!({ event: INSTRUMENT_SYNC_PROGRESS_EVENT, payload });
@@ -136,7 +129,6 @@ describe("useInstrumentInfoSync 同步进度（issue #897）", () => {
     await expect(p).resolves.toBe("success");
     expect(progress.value).toBeNull();
 
-    // 终态之后迟到的进度事件不再复活进度条
     fireProgress({ done: 99, total: 100 });
     await flushPromises();
     expect(progress.value).toBeNull();
@@ -184,7 +176,6 @@ describe("useInstrumentInfoSync 同步进度（issue #897）", () => {
     resolveSync({ synced: 100, skipped: 0, message: "已同步 100 只，跳过 0 只" });
     await expect(p1).resolves.toBe("success");
 
-    // 重新发起：进度从零开始，等下一次事件
     let resolveSync2!: (v: unknown) => void;
     mockInvoke.mockImplementation(
       () =>
@@ -212,7 +203,6 @@ describe("useInstrumentInfoSync 同步进度（issue #897）", () => {
     const first = useInstrumentInfoSync();
     const p1 = first.sync();
 
-    // 另一入口（另一实例）创建后消费同一份进度；重复 sync 短路复用在途承诺
     const second = useInstrumentInfoSync();
     const p2 = second.sync();
     expect(mockInvoke).toHaveBeenCalledTimes(1);
@@ -227,7 +217,6 @@ describe("useInstrumentInfoSync 同步进度（issue #897）", () => {
     await expect(p2).resolves.toBe("success");
     expect(first.progress.value).toBeNull();
     expect(second.progress.value).toBeNull();
-    // 终态反馈两入口同显同一份（短路口不缺按钮 loading 与结果消息）
     expect(second.resultMessage.value).toBe("已同步 100 只，跳过 0 只");
     expect(second.status.value).toBe("success");
   });
@@ -295,12 +284,6 @@ describe("useInstrumentInfoSync 同步进度（issue #897）", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// 降级可见（ADR-0121 决策 4 / issue #1376）：本次同步回退到逐标的通道时，
-// 接缝带出「已降级」事实位，两入口据此渲染「已降级、本次较慢」标注；正常
-//（批量面命中）路径不带。状态为模块级单例、随终态反馈同生命周期。
-// ---------------------------------------------------------------------------
-
 describe("useInstrumentInfoSync 降级事实位（issue #1376）", () => {
   it("结果带 bulk_degraded:true 时接缝产出降级事实，两实例同显", async () => {
     mockInvoke.mockResolvedValue({
@@ -312,7 +295,6 @@ describe("useInstrumentInfoSync 降级事实位（issue #1376）", () => {
     const first = useInstrumentInfoSync();
     await first.sync();
     expect(first.degraded.value).toBe(true);
-    // 模块级单例：短路/后到入口看到同一份降级事实（与结果消息零分叉同形）
     const second = useInstrumentInfoSync();
     expect(second.degraded.value).toBe(true);
   });
@@ -340,8 +322,6 @@ describe("useInstrumentInfoSync 降级事实位（issue #1376）", () => {
     await sync();
     expect(degraded.value).toBe(true);
 
-    // 新一次同步开始：降级事实清空（与结果消息同生命周期）；本次正常结束后
-    // 不再带标注。
     mockInvoke.mockResolvedValueOnce({
       synced: 3,
       skipped: 0,
@@ -353,7 +333,6 @@ describe("useInstrumentInfoSync 降级事实位（issue #1376）", () => {
     await pending;
     expect(degraded.value).toBe(false);
 
-    // 失败终态：降级事实同样不残留（错误消息接棒，降级标注随终态收起）
     mockInvoke.mockResolvedValueOnce({
       synced: 3,
       skipped: 0,

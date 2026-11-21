@@ -7,15 +7,6 @@ import { mockInvoke } from "@ledger/test-support/invoke-mock";
 
 beforeEach(setup);
 
-/**
- * 订阅页签操作列（ADR-0041 迁移步 2 收缩）：生命周期状态机（命令参数/成功提示/
- * 重拉时序/可用性矩阵）已由 ScheduledPlanList 模块接口测试承接
- * （useScheduledPlanList.test.ts，转账步先行落地）；此处只留交互冒烟
- * （描述符 → 按钮渲染与 onClick 接线）与订阅真差异——生命周期变更后订阅花费
- * 面板刷新（onStatusChanged 钩子接线，验收项）。迁移与删除记录见对应提交信息。
- */
-
-/** 订阅花费总览拉取次数（花费面板挂载即拉 1 次，钩子刷新后递增）。 */
 function spendCallCount() {
   return mockInvoke.mock.calls.filter(([cmd]) => cmd === "subscription_spend_overview").length;
 }
@@ -64,7 +55,6 @@ describe("SubscriptionsPane 操作列交互冒烟（状态机见 useScheduledPla
     setMockPlans([plan]);
     mockDetails.set("a1", makeDetail(plan, []));
     const wrapper = await mountView();
-    // 打开 Popconfirm
     await wrapper.findComponent(NPopconfirm).find('[data-testid="op-cancel-a1"]').trigger("click");
     await flushPromises();
     const positive = document.body.querySelector(".n-popconfirm .n-button--primary-type");

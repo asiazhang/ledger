@@ -4,13 +4,6 @@ import AmountCell from "@/transaction/AmountCell.vue";
 import { hasOpenOverlay, resetOverlays } from "@ledger/ui-kit/overlayRegistry";
 import { setFakeMedia } from "@ledger/test-support/media-mock";
 
-/**
- * 金额单元格（issue #843 / ADR-0088 决策 6 悬停一击可达 · 交易表金额全文）：
- * 只测外部行为——指针轴纯 span 零交互（桌面零变化）；触控轴点按弹出全文
- * （经 AppPopover 入弹层注册表）。文案与色的口径归 transaction-columns 列配置
- * （其载荷单点断言见 transaction-columns.test.ts），本组件不持业务语义。
- */
-
 beforeEach(() => {
   resetOverlays();
 });

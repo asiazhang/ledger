@@ -22,7 +22,6 @@ import {
   mockInstruments,
 } from "./factories";
 
-// 财务自由度卡（issue #344）零分母占位引导跳转预算页：捕获 router.push
 const pushMock = vi.fn();
 vi.mock("vue-router", () => ({
   useRouter: () => ({ push: pushMock }),
@@ -34,7 +33,6 @@ const mockCurrencies: Currency[] = [
   { code: "USD", name: "美元", symbol: "$", decimal_places: 2 },
 ];
 
-// 金额断言委托形态（issue #770）：期待值调同一 formatAmount 实现，格式规则唯一归属其专测
 const [cny] = mockCurrencies;
 
 const mockAccounts: Account[] = [
@@ -54,10 +52,8 @@ const mockAccounts: Account[] = [
   },
 ];
 
-// 净资产总览卡（issue #143）用例可按需覆写
 const mockOverview = makeOverview();
 
-// 首页新卡片用例可按需覆写；默认空集（无当月行 → 三格为 0）
 let mockMonthlySummary: MonthlySummary[] = [];
 
 function setCurrentMonthSummary(summary: Omit<MonthlySummary, "month">) {
@@ -66,16 +62,12 @@ function setCurrentMonthSummary(summary: Omit<MonthlySummary, "month">) {
   mockMonthlySummary = [{ month: monthKey, ...summary }];
 }
 
-/** 默认布线 defaults 表：持仓 + 持仓标的字典 + 总览 + 自由度（参考五命令走接缝规范兜底） */
 const BASE_DEFAULTS = {
   list_holdings: mockHoldings,
   list_instruments: { items: mockInstruments, total: mockInstruments.length },
-  // 累计收益·折本位币单值（issue #1077 / #1797）：全账本三腿相加后端折算聚合
   cumulative_pnl_native_total: { total_cents: 48000, native_currency: "CNY" },
   dashboard_overview: mockOverview,
-  // 财务自由度卡（issue #344）默认自由度 7.5%，用例可覆写
   financial_freedom: makeFinancialFreedom(),
-  // 本年度预算卡（年度汇总口径，issue #1948）：默认 25%（300000 / 1200000 分），用例可覆写
   budget_annual_summary: {
     annual_budget_total_cents: 1_200_000,
     spent_cents: 300_000,
@@ -83,9 +75,6 @@ const BASE_DEFAULTS = {
   },
 };
 
-/** 每测基线 overrides 表：函数型 handler 实时读取可变变量（#144 用例挂载前改写生效）；
- * list_currencies 参考命令本场景需自定义值（CNY+USD，overrides 优先于参考兜底）；
- * list_categories 参考命令本场景需自定义空集 */
 const BASE_OVERRIDES = {
   list_currencies: mockCurrencies,
   list_categories: [],
@@ -120,14 +109,12 @@ describe("DashboardView 界面语言切换（issue #342 / #351）", () => {
       expect(wrapper.find('[data-testid="investment-overview-card"]').text()).toContain(
         "Total Market Value",
       );
-      // 展示词归一 + 累计收益卡的英文文案（issue #1077）
       expect(wrapper.find('[data-testid="investment-overview-card"]').text()).toContain(
         "Holding P&L",
       );
       expect(wrapper.find('[data-testid="dashboard-total-cumulative-pnl"]').text()).toContain(
         "Cumulative P&L",
       );
-      // 财务自由度卡（issue #344）同样双语：标题与阶段标签随语言切换
       expect(wrapper.find('[data-testid="financial-freedom-card"]').text()).toContain(
         "Financial Freedom",
       );
@@ -136,7 +123,6 @@ describe("DashboardView 界面语言切换（issue #342 / #351）", () => {
       );
       expect(wrapper.find('[data-testid="financial-freedom-card"]').text()).not.toContain("积累期");
     } finally {
-      // 还原默认语言，避免污染同文件后续用例（模块级单例状态）
       await applyLocale("zh-CN");
       await nextTick();
     }
@@ -149,9 +135,7 @@ describe("DashboardView 净资产总览卡（issue #143）", () => {
     const card = wrapper.find('[data-testid="net-worth-card"]');
     expect(card.exists()).toBe(true);
     expect(card.text()).toContain("净资产");
-    // 123456 分（本位币主数字，无各币种分项）
     expect(card.text()).toContain(formatAmount(123456, cny));
-    // 口径说明触发器挂在净资产卡标题行（文案单源见 dashboard.netWorth.tooltip）
     expect(card.find('[data-testid="net-worth-info"]').exists()).toBe(true);
   });
 
@@ -176,7 +160,6 @@ describe("DashboardView 净资产总览卡（issue #143）", () => {
     const card = wrapper.find('[data-testid="net-worth-card"]');
     expect(card.text()).toContain("净资产");
     expect(card.text()).toContain("缺少 USD→CNY 汇率，无法折算");
-    // 不渲染空数字
     expect(card.text()).not.toContain(formatAmount(0, cny));
   });
 });
@@ -186,23 +169,18 @@ describe("DashboardView 投资概览卡（issue #145）", () => {
     const wrapper = await mountView();
     const card = wrapper.find('[data-testid="investment-overview-card"]');
     expect(card.exists()).toBe(true);
-    // h-1 有行情计入：150000 分、30000 分（4 位整数不触发万分位分组）
-    // h-2 无行情（NULL）不计入：合计中不出现零金额
     expect(card.text()).toContain("总市值");
     expect(card.text()).toContain(formatAmount(150000, cny));
-    // 展示词逐字归一（issue #1077）：标签即「持仓收益」；缺价行计数标注随卡在位（issue #1797）
     expect(card.find('[data-testid="dashboard-total-unrealized-pnl-value"]').text()).toBe(
       formatAmount(30000, cny),
     );
     expect(card.find('[data-testid="dashboard-total-unrealized-pnl-missing-price"]').text()).toBe(
       "1 只持仓因缺现价未计入。",
     );
-    // 累计收益卡（issue #1077 / #1797）：后端折本位币单值透传
     expect(card.find('[data-testid="dashboard-total-cumulative-pnl"]').text()).toBe(
       `累计收益${formatAmount(48000, cny)}`,
     );
     expect(card.text()).not.toContain(formatAmount(0, cny));
-    // 展示词归一（issue #1077）：首页投资卡不再残留「未实现盈亏」文案
     expect(card.text()).not.toContain("未实现盈亏");
   });
 
@@ -214,7 +192,6 @@ describe("DashboardView 投资概览卡（issue #145）", () => {
       card
         .findAll(`[data-testid="${testId}-value"] span[style]`)
         .map((s) => (s.element as HTMLElement).style.color);
-    // 市值卡中性（涨跌色不外溢到市值）；盈亏两卡走同一盈亏涨跌色接缝
     expect(inlineColors("dashboard-total-market-value")).toEqual([]);
     expect(inlineColors("dashboard-total-unrealized-pnl")).toEqual([
       probeColor(pnlSemanticColor(30000, theme)),
@@ -222,7 +199,6 @@ describe("DashboardView 投资概览卡（issue #145）", () => {
     expect(inlineColors("dashboard-total-cumulative-pnl")).toEqual([
       probeColor(pnlSemanticColor(48000, theme)),
     ]);
-    // 与持仓页签同一组件：三卡同排（桌面档三列）+ 三个概念说明触发器
     expect(card.findAll(".n-statistic-value")).toHaveLength(3);
     for (const id of [
       "dashboard-total-market-value",
@@ -231,7 +207,6 @@ describe("DashboardView 投资概览卡（issue #145）", () => {
     ]) {
       expect(card.find(`[data-testid="${id}-info"]`).exists(), id).toBe(true);
     }
-    // 说明文案与持仓页同一份（investments.concepts），不复制第二份措辞
     const tip = await hoverTipText(
       card.find('[data-testid="dashboard-total-cumulative-pnl-info"]'),
     );
@@ -241,7 +216,6 @@ describe("DashboardView 投资概览卡（issue #145）", () => {
   it("投资概览卡口径说明挂 wholeLedger 作用域句（与持仓页 filtered 变体分家，issue #1369）", async () => {
     const wrapper = await mountView();
     const card = wrapper.find('[data-testid="investment-overview-card"]');
-    // 首页三卡取全部持仓、不随任何筛选收窄——与持仓页同一组件、不同作用域变体
     const tip = await hoverTipText(card.find('[data-testid="dashboard-total-market-value-info"]'));
     expect(tip).toContain("覆盖全账本的持仓");
     expect(tip).not.toContain("随当前搜索与账户过滤收窄");
@@ -259,7 +233,6 @@ describe("DashboardView 投资概览卡（issue #145）", () => {
       latest_price_currency_code: "USD",
       market_value_cents: 3000,
       unrealized_pnl_cents: -500,
-      // 后端当期汇率逐行折算（issue #1797）：USD 行折 CNY 后并入单值
       native_market_value_cents: 21000,
       native_unrealized_pnl_cents: -3500,
     });
@@ -273,14 +246,12 @@ describe("DashboardView 投资概览卡（issue #145）", () => {
     });
     const wrapper = await mountView();
     const card = wrapper.find('[data-testid="investment-overview-card"]');
-    // 两账户币种不同：市值/持仓收益各自折本位币后合并为单值（171000 / 26500）
     expect(card.find('[data-testid="dashboard-total-market-value-value"]').text()).toBe(
       formatAmount(171000, cny),
     );
     expect(card.find('[data-testid="dashboard-total-unrealized-pnl-value"]').text()).toBe(
       formatAmount(26500, cny),
     );
-    // 累计收益为后端聚合单值，不再按币种成组
     expect(card.find('[data-testid="dashboard-total-cumulative-pnl-value"]').text()).toBe(
       formatAmount(48000, cny),
     );
@@ -300,7 +271,6 @@ describe("DashboardView 投资概览卡（issue #145）", () => {
     const card = wrapper.find('[data-testid="investment-overview-card"]');
     expect(card.exists()).toBe(true);
     expect(card.text()).toContain("暂无持仓");
-    // 空态不渲染分组统计
     expect(card.text()).not.toContain("总市值");
   });
 
@@ -318,13 +288,11 @@ describe("DashboardView 投资概览卡（issue #145）", () => {
     const card = wrapper.find('[data-testid="investment-overview-card"]');
     expect(card.exists()).toBe(true);
     expect(card.text()).toContain("总市值");
-    // 精确锁定降级文本：缺价行未计入并计数（issue #1797）
     expect(card.find('[data-testid="dashboard-total-market-value-value"]').text()).toBe("-");
     expect(card.find('[data-testid="dashboard-total-unrealized-pnl-value"]').text()).toBe("-");
     expect(card.find('[data-testid="dashboard-total-market-value-missing-price"]').text()).toBe(
       "1 只持仓因缺现价未计入。",
     );
-    // 累计收益为后端聚合单值：全账本无可用腿时为 0（非空态「-」）
     expect(card.find('[data-testid="dashboard-total-cumulative-pnl-value"]').text()).toBe(
       formatAmount(0, cny),
     );
@@ -340,8 +308,6 @@ describe("DashboardView 本年度预算卡（年度汇总口径）", () => {
     expect(budgetIdx).toBeLessThan(ids.indexOf("financial-freedom-card"));
 
     const card = wrapper.find('[data-testid="dashboard-budget-card"]');
-    // 两个数字与预算页年度汇总卡同一展示口径（formatAmount 不传币种：默认币种、不带符号，
-    // 与 BudgetView 同图一文本，两屏数字必然字面一致）
     expect(card.find('[data-testid="dashboard-budget-total"]').text()).toBe(
       formatAmount(1_200_000),
     );
@@ -349,9 +315,7 @@ describe("DashboardView 本年度预算卡（年度汇总口径）", () => {
     expect(card.find('[data-testid="dashboard-budget-stage"]').text()).toBe("正常");
     const bar = card.findComponent(NProgress);
     expect(bar.props("percentage")).toBe(25);
-    // 正常态不转错误色（条体用强调色，色泽由样式断言覆盖，这里锁状态面）
     expect(bar.props("status")).toBe("default");
-    // 年化口径说明常驻，避免把 ×12 总额当成实际发生数
     expect(card.text()).toContain("月预算按 ×12 年化计入总额");
   });
 
@@ -371,7 +335,6 @@ describe("DashboardView 本年度预算卡（年度汇总口径）", () => {
     const card = wrapper.find('[data-testid="dashboard-budget-card"]');
     expect(card.find('[data-testid="dashboard-budget-stage"]').text()).toBe("已超标");
     expect(card.findComponent(NProgress).props("status")).toBe("error");
-    // 进度封顶 100，不因超标溢出条外
     expect(card.findComponent(NProgress).props("percentage")).toBe(100);
   });
 
@@ -399,15 +362,11 @@ describe("DashboardView 财务自由度卡（issue #344）", () => {
   it("展示大字百分比、进度条、分子/分母金额、覆盖年数与阶段标签", async () => {
     const wrapper = await mountView();
     const card = wrapper.find('[data-testid="financial-freedom-card"]');
-    // 7.5% 大字 + 阶段标签（<30% 积累期）
     expect(card.find('[data-testid="financial-freedom-ratio"]').text()).toBe("7.5%");
     expect(card.find('[data-testid="financial-freedom-stage"]').text()).toBe("积累期");
-    // 分子/分母（formatAmount 本位币）：500000 分与 2000000 分（后者触发万分位分组）
     expect(card.text()).toContain(`可投资资产 ${formatAmount(500000, cny)}`);
     expect(card.text()).toContain(`年度预算总额 ${formatAmount(2000000, cny)}`);
-    // 覆盖年数副文案
     expect(card.text()).toContain("可覆盖 0.3 年");
-    // 进度条随百分比；未达 100% 非成功状态
     const bar = card.findComponent(NProgress);
     expect(bar.props("percentage")).toBe(7.5);
     expect(bar.props("status")).not.toBe("success");
@@ -437,8 +396,6 @@ describe("DashboardView 财务自由度卡（issue #344）", () => {
     const card = wrapper.find('[data-testid="financial-freedom-card"]');
     expect(card.find('[data-testid="financial-freedom-ratio"]').text()).toBe("150%");
     const bar = card.findComponent(NProgress);
-    // 进度条不挂 status：达成状态由右侧阶段标签表达，条体本身是数据，
-    // 统一用强调色（ADR-0093 强调色只落数据与链接）。
     expect(bar.props("status")).toBe("default");
     expect(bar.props("percentage")).toBe(100);
   });
@@ -458,7 +415,6 @@ describe("DashboardView 财务自由度卡（issue #344）", () => {
     const wrapper = await mountView();
     const card = wrapper.find('[data-testid="financial-freedom-card"]');
     expect(card.text()).toContain("设置预算后解锁财务自由度");
-    // 不渲染自由度数字、金额与进度条（口径不回退实际支出）
     expect(card.text()).not.toContain("%");
     expect(card.text()).not.toContain(cny.symbol);
     expect(card.findComponent(NProgress).exists()).toBe(false);
@@ -511,15 +467,11 @@ describe("DashboardView 财务自由度卡计算口径提示（tooltip）", () =
     const card = wrapper.find('[data-testid="financial-freedom-card"]');
     const trigger = card.find('[data-testid="financial-freedom-info"]');
     expect(trigger.exists()).toBe(true);
-    // 悬停前口径说明不在页面上
     expect(document.body.textContent).not.toContain("安全提取率");
 
     const text = await hoverTipText(trigger);
-    // 公式：3% 乘数是百分比无法从分子/分母直接推出的原因，必须写明
     expect(text).toContain("可投资资产 × 3% ÷ 年度预算总额");
-    // 分子构成与不口径：不含生活现金与负债
     expect(text).toContain("持仓市值 + 投资账户余额");
-    // 分母构成与年化节奏
     expect(text).toContain("月度预算 × 12 + 年度预算");
     expect(text).toContain("安全提取率");
   });
@@ -535,34 +487,30 @@ describe("DashboardView 快速记账与最近交易移除（issue #141）", () =
   it("不再渲染最近交易列表", async () => {
     const wrapper = await mountView();
     expect(wrapper.text()).not.toContain("最近交易");
-    // 不再查询交易列表
     expect(mockInvoke.mock.calls.some(([cmd]) => cmd === "list_transactions")).toBe(false);
   });
 
   it("不再渲染逐账户余额卡片（逐账户明细归账户页，首页只呈现聚合全貌）", async () => {
     const wrapper = await mountView();
     expect(wrapper.text()).not.toContain("现金");
-    // 不再查询账户余额
     expect(mockInvoke.mock.calls.some(([cmd]) => cmd === "list_account_balances")).toBe(false);
   });
 });
 
 describe("DashboardView 本月收支卡（issue #144）", () => {
   it("三格口径：收入=净收入、净支出=毛支出−退款、结余=收入−净支出", async () => {
-    // income_net=100000、expense_gross=80000、refund=5000 → 净支出 75000、结余 25000
     setCurrentMonthSummary({ income_cents: 100000, expense_cents: 80000, refund_cents: 5000 });
     const wrapper = await mountView();
     const text = wrapper.text();
     expect(text).toContain("本月收支");
-    expect(text).toContain(`收入${formatAmount(100000)}`); // 净收入
-    expect(text).toContain(`净支出${formatAmount(75000)}`); // 净支出（毛 800 − 退款 50）
-    expect(text).toContain(`结余${formatAmount(25000)}`); // 结余
+    expect(text).toContain(`收入${formatAmount(100000)}`);
+    expect(text).toContain(`净支出${formatAmount(75000)}`);
+    expect(text).toContain(`结余${formatAmount(25000)}`);
   });
 
   it("净支出与预算消耗、分类占比口径一致（退款冲减而非单列）", async () => {
     setCurrentMonthSummary({ income_cents: 0, expense_cents: 12345, refund_cents: 2345 });
     const wrapper = await mountView();
-    // 净支出 10000 分 = expense_net 口径
     expect(wrapper.text()).toContain(`净支出${formatAmount(10000)}`);
   });
 
@@ -583,9 +531,9 @@ describe("DashboardView 移动档（issue #847 / ADR-0088 决策 11 票⑦，词
     const wrapper = await mountView();
     const grids = wrapper.findAllComponents(NGrid);
     expect(grids.length).toBe(3);
-    expect(grids[0].props("cols")).toBe(1); // 总览两卡（净资产 / 本月收支）
-    expect(grids[1].props("cols")).toBe(1); // 本月收支三格
-    expect(grids[2].props("cols")).toBe(1); // 投资概览三格
+    expect(grids[0].props("cols")).toBe(1);
+    expect(grids[1].props("cols")).toBe(1);
+    expect(grids[2].props("cols")).toBe(1);
   });
 
   it('桌面档栅格：总览两卡两列、本月收支三列、投资概览三列（列数纯数字——具名断点写法在 responsive="self" 下会静默退成 1 列）', async () => {
@@ -615,7 +563,6 @@ describe("DashboardView 移动档（issue #847 / ADR-0088 决策 11 票⑦，词
     const touch = await mountView();
     const trigger = touch.find('[data-testid="financial-freedom-info"]');
     expect(trigger.exists()).toBe(true);
-    // 触控轴热区 ≥48px：text 中号按钮 34px 高，外扩量须经 inset 覆写补足（默认 ±6px 仅 46px）
     expect((trigger.element as HTMLElement).style.getPropertyValue("--touch-hit-inset")).toBe(
       "-8px -14px",
     );
@@ -626,7 +573,6 @@ describe("DashboardView 移动档（issue #847 / ADR-0088 决策 11 票⑦，词
     expect(popover).not.toBeNull();
     expect(popover!.textContent).toContain("可投资资产 × 3% ÷ 年度预算总额");
     expect(popover!.textContent).toContain("安全提取率");
-    // 卸载触控挂载，避免其已开启的气泡泄入指针轴断言
     touch.unmount();
 
     setFakeMedia({ hover: "hover", pointer: "fine" });
@@ -659,7 +605,6 @@ describe("DashboardView 金额隐私模式（issue #567 仪表盘面核查：无
   it("开启后各金额卡显示掩码、币种符号一同隐藏，百分比与件数保留", async () => {
     setCurrentMonthSummary({ income_cents: 100000, expense_cents: 80000, refund_cents: 5000 });
     const wrapper = await mountView();
-    // 关闭态先确认现状金额在位（回归基准）；预言在掩码开启前取（开启后 formatAmount 返回掩码）
     const netWorthText = formatAmount(123456, cny);
     expect(wrapper.text()).toContain(netWorthText);
 
@@ -667,14 +612,11 @@ describe("DashboardView 金额隐私模式（issue #567 仪表盘面核查：无
     await nextTick();
 
     const text = wrapper.text();
-    // 净资产 / 本月收支 / 投资概览 / 自由度分子分母全部掩码；掩码无币种符号
     expect(text).toContain("••••");
     expect(text).not.toContain(cny.symbol);
     expect(text).not.toContain(netWorthText);
-    // 百分比保留（spec #564：隐藏的是数字不是形状与方向）
     expect(wrapper.find('[data-testid="financial-freedom-ratio"]').text()).toBe("7.5%");
 
-    // 关闭后立即恢复原样（回归保障）
     amountPrivacyEnabled.value = false;
     await nextTick();
     expect(wrapper.text()).toContain(netWorthText);

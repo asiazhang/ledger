@@ -6,8 +6,6 @@ import AppDatePicker from "@ledger/ui-kit/AppDatePicker.vue";
 import AppSelect from "@ledger/ui-kit/AppSelect.vue";
 import PinyinSelect from "@ledger/ui-kit/PinyinSelect.vue";
 import PolicyAgreementFields from "@/policy/PolicyAgreementFields.vue";
-// 编辑模式的协议历史区（v-if=editing）：模板曾未 import、渲染为未知元素，
-// 编辑弹窗协议历史实际不显示——本票顺手修复（issue #713 改动本文件时发现）。
 import PolicyAgreementSection from "@/policy/PolicyAgreementSection.vue";
 import { t } from "@ledger/i18n";
 import { errorMessage } from "@ledger/utils/errors";
@@ -22,24 +20,8 @@ import { usePoliciesStore } from "@/policy/policies";
 import { api } from "@ledger/api";
 import type { Policy, PolicyInput } from "@ledger/types";
 
-/**
- * 保单新建/编辑弹窗（issue #360 / ADR-0051）：静态合同要素录入。
- *
- * 保司为保险域自有独立字典（Insurer，ADR-0082）：PinyinSelect tag 模式「选择或
- * 输入即建」——保存时单点解析：选中 id 原样携带、输入文本精确命中按名复用、
- * 未命中 `create_insurer` 即建（重名竞态先强制重拉按名复用，同商户接缝先例）。
- * 保障期间止日可空 = 长期/终身；保额可选纯展示，与币种成对（清金额即清币种）。
- * 编辑模式全量替换；保存成功后关弹窗，列表经 store 重拉刷新。
- *
- * 缴费协议区（issue #362 / ADR-0051 决策 2，新建模式）：可折叠可选——开关
- * 默认关（趸交/缴清纯档案）；开启后填频率/金额/扣款账户/起始日，保存时先建档
- * 再创建订阅形态协议（携带保单引用，不挂商户，ADR-0082 决策 2），期次自动生成
- * 带保单引用、不带商户的保费流水。编辑模式的协议历史与添加/改价见
- * PolicyAgreementSection。
- */
 const props = defineProps<{
   show: boolean;
-  /** 待编辑保单；null = 新建模式 */
   editing: Policy | null;
 }>();
 const emit = defineEmits<{ "update:show": [value: boolean] }>();
@@ -50,7 +32,6 @@ const app = useAppStore();
 const policiesStore = usePoliciesStore();
 const { currencyOptions } = useFormShared();
 
-// —— 表单状态 ——
 const insurerRef = ref<string | null>(null);
 const policyNumber = ref("");
 const productName = ref("");
@@ -60,7 +41,6 @@ const coverageYuan = ref("");
 const coverageCurrency = ref<string | null>(null);
 const note = ref("");
 
-// —— 缴费协议区（新建模式，issue #362）：可折叠可选，默认关 = 趸交/缴清纯档案 ——
 const withAgreement = ref(false);
 const agreementFields = ref<InstanceType<typeof PolicyAgreementFields> | null>(null);
 
@@ -68,11 +48,8 @@ const insurerOptions = computed(() =>
   reference.insurers.map((i) => ({ label: i.name, value: i.id })),
 );
 
-/** 保额录入中：币种选择仅在填了保额时有意义（与后端「成对」校验同形）。 */
 const coverageFilled = computed(() => coverageYuan.value.trim() !== "");
 
-// —— 保单视角统计（issue #363，编辑模式 = 详情）：消费 store 同源快照，
-// 实时推导不落库；列表与弹窗共用同一份数据，合计展示经共享辅助同口径 ——
 const statsSummary = computed(() => {
   if (!props.editing) return null;
   return policiesStore.statsById.get(props.editing.id) ?? null;
@@ -86,8 +63,6 @@ const inflowText = computed(() =>
   policyStatAmountText(statsSummary.value, (s) => s.total_inflow_native_cents),
 );
 
-// 到期态摘要（与列表徽标同一推导口径）：止日空 = 长期/终身（永不判到期）；
-// 止日非空时消费统计同源 is_expired，统计行未加载时回落本地推导。
 const expiryText = computed(() => {
   const p = props.editing;
   if (!p) return "—";
@@ -96,12 +71,10 @@ const expiryText = computed(() => {
   return expired ? t("policies.expiry.expired") : t("policies.expiry.active");
 });
 
-// 清空保额即清币种（成对原子，不产生只有币种的半挂状态）
 watch(coverageFilled, (filled) => {
   if (!filled) coverageCurrency.value = null;
 });
 
-/** 打开时回填/复位（弹窗内容关闭后仍在 DOM，打开瞬间同步；immediate 兼容初始 show）。 */
 watch(
   () => [props.show, props.editing] as const,
   () => {
@@ -116,8 +89,6 @@ watch(
       p?.coverage_amount_cents != null ? String(centsToYuan(p.coverage_amount_cents)) : "";
     coverageCurrency.value = p?.coverage_currency_code ?? app.defaultCurrency;
     note.value = p?.note ?? "";
-    // 协议区随弹窗复位：开关默认关；字段组复位（起始日预填保障期间起日），
-    // nextTick 等字段组随弹窗内容挂载/更新后可取 ref。
     withAgreement.value = false;
     void nextTick(() => agreementFields.value?.reset({ startDate: startDate.value }));
   },
@@ -128,17 +99,11 @@ function close() {
   emit("update:show", false);
 }
 
-/**
- * 保司解析（保存时单点收口）：「输入即建 + 重名兜底」交互收口在共享接缝
- * `resolveInsurerRef`——选中 id 原样携带（编辑维持历史引用）、输入名精确命中
- * 在用保司复用、未命中即建保司（ADR-0082：即建目标不再是商户）。
- */
 async function resolveInsurer(): Promise<string> {
   return (await resolveInsurerRef(insurerRef.value)) ?? "";
 }
 
 async function save() {
-  // 客户端必填校验（消息与后端错误码文案同源，双保险防呆）
   if (!insurerRef.value?.trim()) {
     message.warning(t("policies.form.msg.insurerRequired"));
     return;
@@ -185,7 +150,6 @@ async function save() {
     return;
   }
 
-  // 协议区字段校验前置（先于建档，避免半建档状态）：校验失败不提交任何请求。
   if (withAgreement.value) {
     const agreementErr = agreementFields.value?.validate();
     if (agreementErr) {
@@ -200,7 +164,6 @@ async function save() {
     product_name: productName.value.trim(),
     start_date: startDate.value,
     end_date: endDate.value || null,
-    // 保额与币种成对：清金额即清币种（不产生只有币种的半挂状态）
     coverage_amount_cents: coverageCents,
     coverage_currency_code: coverageCents !== null ? coverageCurrency.value : null,
     note: note.value.trim() || null,
@@ -211,9 +174,6 @@ async function save() {
       message.success(t("policies.msg.saved"));
     } else {
       const policyId = await policiesStore.create(input);
-      // 同时创建缴费协议（issue #362 / ADR-0051 决策 2）：订阅形态 + 保单引用；
-      // 不挂商户（issue #713 / ADR-0082 决策 2：保费归属走保单引用），
-      // 备注带险种可读。
       if (withAgreement.value && agreementFields.value) {
         await api.createScheduledTransaction(
           agreementFields.value.build(policyId, input.product_name),
@@ -223,7 +183,6 @@ async function save() {
     }
     close();
   } catch (e) {
-    // 后端校验错误原样展示（如「保单号不能为空」），弹窗不关、内容不丢
     message.error(t("policies.msg.saveFailed", { msg: errorMessage(e) }));
   }
 }
@@ -371,7 +330,6 @@ defineExpose({ save });
 </template>
 
 <style scoped>
-/* 表单下方段落式辅助说明（spec #630）：块级呈现；上下留白归 NSpace 行距（issue #699） */
 .form-hint {
   display: block;
 }

@@ -1,11 +1,6 @@
 import { style } from "@vanilla-extract/css";
 import { sprinkles } from "@ledger/theme/sprinkles.css.ts";
 
-/**
- * 全局渲染错误提示条旁路样式（issue #926 / ADR-0093 样式方案）：与组件同目录
- * 共置。位置沿用 GlobalBusyBar 的窗口顶部环境指示位；错误带高度小、不遮内容，
- * 本体可点（关闭按钮），属环境指示惯例（忙碌条同位先例）。
- */
 export const banner = style([
   sprinkles({
     display: "flex",

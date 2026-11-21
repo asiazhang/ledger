@@ -10,12 +10,6 @@ import {
   useHistoryBackfill,
 } from "@/investment/useHistoryBackfill";
 
-/**
- * 价格历史后台补全接缝（issue #1375 / ADR-0122）：只读订阅——静默标的级完成
- * 计数的更新、终态静默收起（done ≥ total）、页级明细随迁、载荷形状异常忽略、
- * 下一轮重新点亮。断言只对准接缝的可观察产出（progress ref），不内省实现。
- */
-
 function fire(handlers: CapturedListener[], payload: unknown): void {
   for (const handler of handlers) handler({ event: HISTORY_BACKFILL_PROGRESS_EVENT, payload });
 }

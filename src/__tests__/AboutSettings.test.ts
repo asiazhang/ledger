@@ -7,19 +7,12 @@ import AboutSettings from "@/settings/AboutSettings.vue";
 import { formatPlatform, resetAppBuildInfoForTest } from "@/settings/useAppBuildInfo";
 import { ISSUES_URL, PROJECT_HOME_URL } from "@/settings/app-links";
 
-// 「关于」Tab 是只读元信息 + 读型动作 + 静态简介（issue #930 / #1957 / #1959 /
-// ADR-0022 修订注记）：应用名称、版本、Git 版本、运行平台、许可证、版权，加复制与
-// 两个外链，以及卡片顶部的定位语与简介（纯静态只读，不进复制文本）。
-// 日志等级与打开日志目录用例住 LogSettings.test.ts（issue #930 迁出）。
-
 const writeText = vi.fn().mockResolvedValue(undefined);
 const openUrl = vi.fn().mockResolvedValue(undefined);
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn((url: string) => openUrl(url)) }));
 
-// 固定值注入全局常量：生产环境由 vite define 注入，测试用 stubGlobal 等价注入
 const FULL_SHA = "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0";
 
-/** 壳层 `app_build_info` 的契约快照（编译期平台/架构原值 + 安装包版本）。 */
 const BUILD_INFO = { version: "9.9.9", platform: "macos", arch: "aarch64" };
 
 function mountWithGit(opts: { sha?: string; dirty?: boolean } = {}) {
@@ -55,9 +48,7 @@ describe("AboutSettings.vue — 版本与运行平台行（版本真源 + 平台
     const wrapper = mountWithGit();
     await flushPromises();
 
-    // 调用事实：版本不是前端 package.json 的镜像，而是经命令取数
     expect(mockInvoke.mock.calls.some(([cmd]) => cmd === "app_build_info")).toBe(true);
-    // 渲染效果：屏幕上的版本号 = 安装包版本（注入的契约快照）
     expect(wrapper.find('[data-testid="about-row-version"]').text()).toBe(BUILD_INFO.version);
   });
 
@@ -80,7 +71,6 @@ describe("AboutSettings.vue — 版本与运行平台行（版本真源 + 平台
 
     expect(wrapper.find('[data-testid="about-row-version"]').exists()).toBe(false);
     expect(wrapper.find('[data-testid="about-row-platform"]').exists()).toBe(false);
-    // 其余行不受影响
     expect(wrapper.find('[data-testid="about-row-license"]').text()).toBe("MIT");
   });
 });
@@ -123,7 +113,6 @@ describe("AboutSettings.vue — 复制版本信息（所见即所复制）", () 
     const copied = writeText.mock.calls[0]![0] as string;
     const lines = copied.split("\n");
 
-    // 屏幕行（data-testid 锚定的值文本）逐行出现在复制文本里
     const screenValues = wrapper.findAll('[data-testid^="about-row-"]').map((node) => node.text());
     expect(screenValues.length).toBeGreaterThan(0);
     expect(lines).toHaveLength(screenValues.length);
@@ -131,7 +120,6 @@ describe("AboutSettings.vue — 复制版本信息（所见即所复制）", () 
       expect(lines.some((line) => line.endsWith(`：${value}`))).toBe(true);
     }
 
-    // 完整期望文本（标签 + 值，逐行）：报告 issue 时可直接粘贴
     expect(copied).toBe(
       [
         `应用名称：开源记账`,

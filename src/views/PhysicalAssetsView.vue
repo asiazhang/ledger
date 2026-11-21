@@ -23,35 +23,12 @@ import { useReferenceStore } from "@/stores/reference";
 import { sumFixedColumnWidths } from "@ledger/utils/table";
 import type { PhysicalAsset } from "@ledger/types";
 
-/**
- * 实物资产视图（issue #466 建档列表 / issue #467 T2 更新估值与编辑 / spec #465 /
- * ADR-0064）：列表 + 在持合计卡 + 建档入口 + 行操作（编辑 / 更新估值）。
- *
- * 「更多」页实物资产页签的装载体（ADR-0063 组内收纳，先例保单页签）；
- * 数据全部来自 `usePhysicalAssetsStore`（self-init + `ledger:changed` 静默重拉），
- * 本组件只做展示与入口接线，零业务逻辑。列表默认只看在持资产（已处置 /
- * 软删不进默认口径，处置与筛选由 T3 承接）；当前估值折本位币展示消费
- * 后端同源折算（Amount 接缝当期汇率，缺汇率后端整体报错上抛）。
- */
 const physicalAssetsStore = usePhysicalAssetsStore();
 const reference = useReferenceStore();
 
-// 移动档（issue #849 / ADR-0088 决策 11 票⑨，收纳页布局核对级适配）：低频管理表
-// 窄屏不重排列结构，挂 scroll-x = 固定列宽总和由横向滚动吸收（触屏滑动可达全部
-// 列与行内操作）；桌面档不挂（既有压缩行为一字不变）。
 const windowTier = useWindowTier();
 const isMobileTier = computed(() => windowTier.value === "mobile");
 
-// —— 建档弹窗（新建/编辑双模式，T2）——
-// 开启/目标/关闭编排归弹窗意图工厂 ModalIntent（ADR-0072，词汇表 ModalIntent）：
-// 意图闭集双成员（新建无载荷；编辑携带目标资产行），显示由「意图非空」派生
-// （无独立 show 布尔），序号随开启递增驱动表单重建（:key=formSeq），关闭
-// （✕ / ESC / 取消 / 保存成功）统一经工厂清回 null 终态。现状无序号守卫，
-// 迁移为缺陷修复（本票唯一声明的行为变化）：守卫从无到有，「弹窗开着时
-// 目标行被替换回填旧行」缺陷消亡，同目标重开重回填等边缘语义细化同归此类；
-// 此外等价。
-
-/** 建档弹窗意图（新建/编辑双模式闭集）：编辑携带目标资产行。 */
 type PhysicalAssetFormIntent = { mode: "create" } | { mode: "edit"; asset: PhysicalAsset };
 
 const {
@@ -61,15 +38,6 @@ const {
   close: closeForm,
 } = useModalIntent<PhysicalAssetFormIntent>();
 
-// —— 更新估值弹窗（T2：追加历史行入口）——
-// 开启/目标/关闭编排归弹窗意图工厂 ModalIntent（ADR-0072，词汇表 ModalIntent）：
-// 意图闭集单成员（携带目标资产行），显示由「意图非空」派生（无独立 show 布尔），
-// 序号随开启递增驱动表单重建（:key=valuationSeq），关闭（✕ / ESC / 取消 /
-// 保存成功）统一经工厂清回 null 终态。现状无序号守卫，迁移为缺陷修复（本票
-// 唯一声明的行为变化）：守卫从无到有，「弹窗开着时目标行被替换回填旧行」
-// 缺陷消亡，同目标重开重回填等边缘语义细化同归此类；此外等价。
-
-/** 更新估值弹窗意图（单成员闭集）：携带目标资产行。 */
 interface PhysicalAssetValuationIntent {
   asset: PhysicalAsset;
 }
@@ -81,15 +49,6 @@ const {
   close: closeValuation,
 } = useModalIntent<PhysicalAssetValuationIntent>();
 
-// —— 处置弹窗（T3：状态标记入口，处置 = 状态标记；删除是分离的软删动作）——
-// 开启/目标/关闭编排归弹窗意图工厂 ModalIntent（ADR-0072，词汇表 ModalIntent）：
-// 意图闭集单成员（携带目标资产行），显示由「意图非空」派生（无独立 show 布尔），
-// 序号随开启递增驱动表单重建（:key=disposeSeq），关闭（✕ / ESC / 取消 /
-// 处置成功）统一经工厂清回 null 终态。现状无序号守卫，迁移为缺陷修复（本票
-// 唯一声明的行为变化）：守卫从无到有，「弹窗开着时目标行被替换回填旧行」
-// 缺陷消亡，同目标重开重回填等边缘语义细化同归此类；此外等价。
-
-/** 处置弹窗意图（单成员闭集）：携带目标资产行。 */
 interface PhysicalAssetDisposeIntent {
   asset: PhysicalAsset;
 }
@@ -117,17 +76,12 @@ function openDispose(asset: PhysicalAsset) {
   openDisposeIntent({ asset });
 }
 
-/** 软删除（T3）：二次确认后 is_deleted=1，数据与估值历史保留；
- *  列表与合计由 store 重拉刷新。 */
 async function removeAsset(id: string) {
   try {
     await physicalAssetsStore.remove(id);
-  } catch {
-    /* 失败信号已由 status 承载；重拉失败由 ledger:changed 兜底 */
-  }
+  } catch {}
 }
 
-/** 在持估值合计（折本位币，后端同源快照；金额格式化走统一 formatAmount）。 */
 const holdingTotalText = computed(() =>
   formatAmount(
     physicalAssetsStore.holdingTotalNativeCents,
@@ -138,8 +92,6 @@ const holdingTotalText = computed(() =>
 const columns: DataTableColumns<PhysicalAsset> = [
   { title: () => t("physicalAssets.columns.name"), key: "name" },
   {
-    // 当前估值（折本位币）：在持行显示折算值；估值金额以原币种为权威数字，
-    // 展示统一走本位币口径（与合计卡同口径，跨币种可比）
     title: () => t("physicalAssets.columns.valuation"),
     key: "current_valuation_native_cents",
     render: (row) =>
@@ -171,8 +123,6 @@ const columns: DataTableColumns<PhysicalAsset> = [
       ),
   },
   {
-    // 处置信息（T3）：已处置行回看处置日期与处置价（纯记录）；在持行恒为空。
-    // 已处置筛选下是回看完整档案的关键列（含处置日期 / 处置价）。
     title: () => t("physicalAssets.columns.disposal"),
     key: "disposal_date",
     width: 200,
@@ -187,8 +137,6 @@ const columns: DataTableColumns<PhysicalAsset> = [
     },
   },
   {
-    // 行操作（T2/T3）：编辑档案、更新估值、处置（状态标记，仅限在持行）、
-    // 删除（软删确认）——处置与删除是界面上分离的两个动作
     title: () => t("physicalAssets.columns.actions"),
     key: "actions",
     width: 240,
@@ -250,24 +198,17 @@ const columns: DataTableColumns<PhysicalAsset> = [
   },
 ];
 
-/** 横向滚动下限 = 固定列宽总和（列定义之后单点派生，桌面档不消费）。 */
 const tableScrollX = sumFixedColumnWidths(columns);
 
 const listTitle = computed(() => t("physicalAssets.listTitle"));
 const totalLabel = computed(() => t("physicalAssets.holdingTotal"));
 
-/** 状态筛选（T3）：默认只看在持；「已处置」筛选回看完整档案。 */
 function onFilterChange(value: string) {
-  void physicalAssetsStore.setStatusFilter(value as "holding" | "disposed").catch(() => {
-    /* 失败信号已由 status 承载 */
-  });
+  void physicalAssetsStore.setStatusFilter(value as "holding" | "disposed").catch(() => {});
 }
 
 onMounted(() => {
-  // store self-init + ledger:changed 信号兜底；mounted 重拉覆盖错误重试
-  void physicalAssetsStore.refresh().catch(() => {
-    /* 失败信号已由 status 承载 */
-  });
+  void physicalAssetsStore.refresh().catch(() => {});
 });
 </script>
 

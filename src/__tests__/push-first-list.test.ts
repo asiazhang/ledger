@@ -9,7 +9,6 @@ import { flushPromises } from "@vue/test-utils";
 import { ref } from "vue";
 import { createPushFirstList } from "@/composables/push-first-list";
 
-/** 捕获 ledger:changed 监听处理器（工厂创建时注册） */
 let handlers: CapturedListener[];
 
 beforeEach(() => {
@@ -31,7 +30,6 @@ describe("createPushFirstList（push-first 清单生命周期工厂，ADR-0123�
       },
     );
 
-    // self-init 同步发起：恰一次加载、status 已置 loading（调用方尚无数据）
     expect(loadCalls).toBe(1);
     expect(list.status.value).toBe("loading");
     expect(list.version.value).toBe(0);
@@ -68,7 +66,6 @@ describe("createPushFirstList（push-first 清单生命周期工厂，ADR-0123�
     expect(list.status.value).toBe("loading");
     second.resolve(["v2"]);
     await reloading;
-    // 整体替换：apply 恰两次（初载 + 重拉），不存在部分落位
     expect(applied).toEqual([["v1"], ["v2"]]);
     expect(sink.value).toEqual(["v2"]);
     expect(list.version.value).toBe(2);
@@ -90,7 +87,6 @@ describe("createPushFirstList（push-first 清单生命周期工厂，ADR-0123�
     expect(sink.value).toEqual([]);
     expect(list.version.value).toBe(0);
 
-    // 显式 refresh 同语义上抛（self-init 侧由工厂静默，调用方显式刷新自行处置）
     const failing = deferred<string[]>();
     let loadCalls = 0;
     const again = createPushFirstList<string[]>(
@@ -100,7 +96,7 @@ describe("createPushFirstList（push-first 清单生命周期工厂，ADR-0123�
       },
       () => {},
     );
-    await flushPromises(); // 初载成功
+    await flushPromises();
     failing.reject(new Error("boom"));
     await expect(again.refresh()).rejects.toThrow("boom");
     expect(again.status.value).toBe("error");
@@ -173,7 +169,6 @@ describe("createPushFirstList（push-first 清单生命周期工厂，ADR-0123�
   it("ledger:changed 订阅与事件重拉：每实例注册一次，事件到达即静默重拉（在途期间事件被合并）", async () => {
     const sink = ref<string[]>([]);
     let loadCalls = 0;
-    // holder 绕开 TS 对闭包内赋值不跟踪导致的 never 收窄
     const holder: { pending: ReturnType<typeof deferred<string[]>> | null } = { pending: null };
     const list = createPushFirstList<string[]>(
       () => {
@@ -189,18 +184,15 @@ describe("createPushFirstList（push-first 清单生命周期工厂，ADR-0123�
     await flushPromises();
     expect(sink.value).toEqual(["init"]);
 
-    // 订阅接线（删除即变红的负向守卫：工厂卸掉 listen 注册本断言即红）
     expect(mockListen).toHaveBeenCalledWith("ledger:changed", expect.any(Function));
     expect(handlers.length).toBe(1);
 
-    // 事件到达：发起第二次加载（在途，旧数据保留）
     handlers.forEach((h) => h({ event: "ledger:changed", payload: null }));
     await flushPromises();
     expect(loadCalls).toBe(2);
     expect(sink.value).toEqual(["init"]);
     expect(list.status.value).toBe("loading");
 
-    // 在途期间再到达的事件：合并进同一次加载，不新增 IPC
     handlers.forEach((h) => h({ event: "ledger:changed", payload: null }));
     expect(loadCalls).toBe(2);
 
@@ -209,7 +201,6 @@ describe("createPushFirstList（push-first 清单生命周期工厂，ADR-0123�
     expect(sink.value).toEqual(["fresh"]);
     expect(list.version.value).toBe(2);
 
-    // 第二个实例各自注册（store 各一份订阅的既有形态不变）
     createPushFirstList<string[]>(
       () => Promise.resolve([]),
       () => {},
@@ -233,14 +224,11 @@ describe("createPushFirstList（push-first 清单生命周期工厂，ADR-0123�
     await flushPromises();
     expect(sink.value).toEqual(["init"]);
 
-    // 第二次加载在途时作废
     const reloading = list.refresh();
     expect(list.status.value).toBe("loading");
     list.invalidate();
-    // loading 收尾：数据面仍展示上次成功快照 → ready（error/ready/idle 不动）
     expect(list.status.value).toBe("ready");
 
-    // 迟到的在途结果：不 apply、version 不变、对旧调用方静默 resolve
     first.resolve(["late"]);
     await reloading;
     expect(sink.value).toEqual(["init"]);
@@ -266,23 +254,19 @@ describe("createPushFirstList（push-first 清单生命周期工厂，ADR-0123�
     );
     await flushPromises();
 
-    // 第二次加载在途（旧纪元）
     void list.refresh();
     expect(loadCalls).toBe(2);
 
-    // invalidate 后 refresh：不合并进旧纪元在途，立即第三次加载
     list.invalidate();
     const reloading = list.refresh();
     expect(loadCalls).toBe(3);
     expect(list.status.value).toBe("loading");
 
-    // 旧纪元结果先到：不落位
     stale.resolve(["stale"]);
     await flushPromises();
     expect(sink.value).toEqual(["init"]);
     expect(list.status.value).toBe("loading");
 
-    // 新纪元结果后到：正常落位
     fresh.resolve(["fresh"]);
     await reloading;
     expect(sink.value).toEqual(["fresh"]);
@@ -308,17 +292,15 @@ describe("createPushFirstList（push-first 清单生命周期工厂，ADR-0123�
     );
     await flushPromises();
 
-    void list.refresh(); // 旧纪元在途
+    void list.refresh();
     list.invalidate();
-    const reloading = list.refresh(); // 新纪元新拉
+    const reloading = list.refresh();
 
-    // 旧纪元失败：不置 error，旧 promise 静默 resolve（被取代的意图不报错）
     stale.reject(new Error("stale boom"));
     await flushPromises();
     expect(list.status.value).toBe("loading");
     expect(sink.value).toEqual(["init"]);
 
-    // 新纪元失败：照常 error、上抛
     fresh.reject(new Error("fresh boom"));
     await expect(reloading).rejects.toThrow("fresh boom");
     expect(list.status.value).toBe("error");
@@ -338,14 +320,12 @@ describe("createPushFirstList（push-first 清单生命周期工厂，ADR-0123�
         sink.value = snapshot;
       },
     );
-    // 初载在途时作废：无成功快照可展示 → 回 idle
     list.invalidate();
     expect(list.status.value).toBe("idle");
     first.resolve(["late"]);
     await flushPromises();
     expect(sink.value).toEqual([]);
 
-    // error 态作废：error 不动
     await list.refresh().catch(() => {});
     expect(list.status.value).toBe("error");
     list.invalidate();

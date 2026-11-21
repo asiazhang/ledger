@@ -6,12 +6,7 @@ import { formatAmount } from "@ledger/money";
 import CrossBookSummaryView from "@/views/CrossBookSummaryView.vue";
 import type { Currency, CrossBookInvestmentSummary } from "@ledger/types";
 
-// 金额断言委托形态（issue #770）：期待值调同一 formatAmount 实现，带目标币种对象
 const CNY: Currency = { code: "CNY", name: "人民币", symbol: "¥", decimal_places: 2 };
-
-// 跨账本投资汇总页（issue #1196 / ADR-0114）：只读合计视图的组件级行为测试。
-// 命令应答走 invoke 测试接缝（ADR-0085）；金额断言委托同一 formatAmount 实现
-// （格式规则唯一归属其专测）；折算口径与逐本状态标注是本票的界面义务。
 
 function makeSummary(
   overrides: Partial<CrossBookInvestmentSummary> = {},
@@ -131,27 +126,20 @@ describe("跨账本投资汇总视图", () => {
 
   it("四个合计口径各带说明触发器，并挂跨本作用域句（issue #1369）", async () => {
     const wrapper = await mountView();
-    // 断言对准用户可观察结果：删掉任一卡的口径说明接线即找不到触发器、本用例变红
     for (const key of ["marketValue", "unrealizedPnl", "cumulativePnl", "investableAssets"]) {
       const trigger = wrapper.find(`[data-testid="cross-book-${key}-info"]`);
       expect(trigger.exists(), key).toBe(true);
-      // aria 用本表位标签（跨本页展示词「持仓市值」与投资页「总市值」不同名）
       expect(trigger.attributes("aria-label")).toContain("说明");
     }
-    // 可投资资产口径与其余三个不同：隐藏账户不计入、且是财务自由度的分子
     const tip = await hoverTipText(
       wrapper.find('[data-testid="cross-book-investableAssets-info"]'),
     );
     expect(tip).toContain("隐藏账户与负债都不计入");
-    // 跨本作用域句：逐本折算到主账本本位币、未解锁/未建库的账本不计入
     expect(tip).toContain("未解锁或未建库的账本不计入");
     wrapper.unmount();
   });
 });
 
-// 接线负向判据（ADR-0087 断言强度）：路由记录是本功能的第二处接线——删除
-// routes 中的 cross-book-summary 记录，本断言变红（弹层入口 push 断言覆盖
-// 入口侧，本测试覆盖路由侧，两侧删除都有测试承接）。
 import { routes } from "@/router/index";
 
 describe("跨账本投资汇总路由接线", () => {

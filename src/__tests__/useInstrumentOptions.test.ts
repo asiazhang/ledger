@@ -6,20 +6,10 @@ import { SEARCH_DEBOUNCE_MS } from "@/composables/search-debounce";
 import { useInstrumentOptions } from "@/investment/useInstrumentOptions";
 import { makeInstrument, resetToastSink } from "./factories";
 
-/**
- * 标的下拉候选面域件的领域断言单点（issue #1798）：候选投影（「代码 · 名称」label
- * 拼法、无名称退化裸代码）与钉住合并（防丢失、去重、合入端 head/tail、清除）钉在
- * 本文件；取数编排机制断言（防抖、在途竞态、失败吞错）归 useInstrumentSearch 模块
- * 单测不在此重复。消费方（盈亏筛选 useRealizedPnl / 投资表单 useInvestmentForm）
- * 只保留各自领域断言（筛选刷新、基金判定、select 回填）。
- */
-
 beforeEach(() => {
-  // 每用例复位为 no-op，模拟「注册前」默认态，防模块级 sink 状态串扰
   resetToastSink();
 });
 
-/** 走一次搜索到结果落位（防抖时长单源 SEARCH_DEBOUNCE_MS） */
 async function searchAndSettle(
   shell: ReturnType<typeof useInstrumentOptions>,
   query: string,
@@ -81,13 +71,11 @@ describe("useInstrumentOptions 标的下拉候选面（issue #1798）", () => {
       });
       const shell = withSetup(() => useInstrumentOptions("tail"));
       await searchAndSettle(shell, "浦发");
-      // 钉住不在候选面的标的：合入尾部，label 走同一投影单点
       shell.pin(makeInstrument({ id: "inst-9", symbol: "APPL", name: "苹果" }));
       expect(shell.options.value).toEqual([
         { label: "600000 · 浦发银行", value: "inst-1" },
         { label: "APPL · 苹果", value: "inst-9" },
       ]);
-      // 清除钉住：候选面回到纯搜索结果
       shell.pin(null);
       expect(shell.options.value).toEqual([{ label: "600000 · 浦发银行", value: "inst-1" }]);
     } finally {

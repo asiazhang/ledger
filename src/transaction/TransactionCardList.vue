@@ -21,63 +21,30 @@ import {
   CARD_MENU_CLASS,
 } from "./transaction-card-list.css.ts";
 
-/**
- * 移动档交易卡片列表（issue #846 / ADR-0088 决策 9 断点双渲染）：
- * 交易列表与搜索结果共享的移动档列表形态（第二消费方同构复用），纯展示组件、
- * 不持列表状态——数据与翻页归调用方视图（请求发起与列表数据归视图，ADR-0030
- * 决策 6），过滤语义零变化由调用方沿用既有 TransactionFilter 接缝保证。
- *
- * 字段按票⑥范围：日期、类型（表格列同源派生标签）、分类/商户（单源解析）、
- * 账户（转账行「转出 → 转入」双向链接，renderAccountCell 同一渲染）、金额
- * （formatAmount + kindSemanticColor 口径不变——金额隐私模式在格式化层收口，
- * 隐藏数字不隐藏形状与方向，语义色保留）；来源行保留链接语义（SourceLink 复用）。
- *
- * 触控语义：
- * - 卡片「⋯」与桌面右键共用同一 RowContextMenu open 入口（openRowMenu 可选——
- *   传入才渲染，搜索结果只读不传，与桌面表格操作列同构）；
- * - 整卡点击 = 行激活（activateRow 可选，交易页 = 编辑或只读详情；refund 两类都不开放
- *   的判定归调用方，ADR-0106 决策 10 / #1048）；
- *   卡内链接、「⋯」与金额触发器阻断冒泡，不连带整卡激活；
- * - 金额全文点按查看归 AmountCell（触控轴气泡，悬停一击可达同规）。
- *
- * 桌面档不渲染本组件（调用方按窗口分级分支），桌面表格一字不动。
- */
-
 const props = defineProps<{
-  /** 当前页行集（调用方视图持有） */
   rows: Transaction[];
-  /** 卡片「⋯」打开回调（与行右键同一 RowContextMenu open 入口）；缺省不渲染「⋯」（搜索结果只读） */
   openRowMenu?: (event: MouseEvent, row: Transaction) => void;
-  /** 整卡点击回调（交易页 = 编辑或只读详情，判定归调用方）；缺省整卡点击无动作 */
   activateRow?: (row: Transaction) => void;
 }>();
 
 const reference = useReferenceStore();
 const app = useAppStore();
 
-/** 账户单元格（转账双向 / 单账户）与表格列同一渲染函数；经功能组件进模板。 */
 const AccountCell = (cellProps: { row: Transaction }) => renderAccountCell(cellProps.row);
 AccountCell.props = { row: { type: Object, required: true } };
 
-/** 购买项行（issue #1884 / ADR-0138 决策 15）：列表侧渲染单点的全文形态（商品名
- * 整名渲染、自然换行 + 共 N 件），经功能组件进模板；行文本无交互，点击冒泡归整卡
- * 激活（详情是长商品名的全文出口）。 */
 const PurchaseLine = (cellProps: { item: TransactionPurchase }) =>
   renderPurchaseLine(cellProps.item);
 PurchaseLine.props = { item: { type: Object, required: true } };
 
-/** 分类路径：与表格分类列同一单源解析（未知 id 回退 '-'）。 */
 function categoryText(row: Transaction): string {
   return row.category_id ? reference.categoryPath(row.category_id) || "-" : "-";
 }
 
-/** 分类/商户合并行是否渲染缺省「-」（两者皆空，与表格两列各自 '-' 的口径一致）。 */
 function hasMeta(row: Transaction): boolean {
   return row.category_id !== null || row.merchant_id !== null;
 }
 
-/** 金额文案与语义色（formatAmount / kindSemanticColor 口径不变，归其单点）；
- * 金额文案读展示口径单点（转换行转出金额、份额调整行空值 '-'，与表格金额列同源）。 */
 function amountText(row: Transaction): string {
   return displayAmountText(reference, row);
 }
@@ -85,7 +52,6 @@ function amountColor(row: Transaction): string {
   return kindSemanticColor(row.kind, app.theme);
 }
 
-/** 整卡点击 = 行激活：交互元素（链接/按钮/金额触发器）冒泡已在各行阻断，这里只收空地点击。 */
 function onCardClick(row: Transaction): void {
   props.activateRow?.(row);
 }

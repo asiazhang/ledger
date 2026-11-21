@@ -25,23 +25,7 @@ import {
   ORDER_ERROR_CLASS,
 } from "./order-section.css.ts";
 
-/**
- * 所属订单区（issue #1862 / ADR-0138 决策 9）：按行上来源订单号取同单汇总的
- * 只读呈现面——行数 · 合计 · 按账户聚合的出资构成徽标（单账户订单 1 枚、多账户
- * 订单 ≥2 枚）+ 各行明细（日期升序，对照回单核对）。
- *
- * 数据自取：经订单汇总只读命令（IPC，无 HTTP 端点），加载三态内化在组件——
- * 打开弹窗的编排不做「先取再开窗」（dividend / funding 同款「仅作渲染面判别」，
- * 区块有加载态，失败不拦开窗）。订单区是 source_order_no 的唯一呈现出口
- * （#1928 / ADR-0138 修订注记：列表行尾徽章已撤）；无订单号的行不渲染本区
- * （调用方 v-if 保证）。
- *
- * 金额口径：合计与构成金额为行原始币种金额（币种唯一时按其格式化，混合币种
- * 回落展示币种偏好——后端不静默混算，见 TransactionOrderSummary 契约）；明细行
- * 金额与列表同源 `displayAmountText`（本位币口径 + 金额隐私模式收口在格式化层）。
- */
 const props = defineProps<{
-  /** 行上来源订单号（同单聚合锚点） */
   sourceOrderNo: string;
 }>();
 
@@ -61,29 +45,24 @@ onMounted(async () => {
   }
 });
 
-/** 未知账户回退占位（与列表账户列同口径，不抛错）。 */
 function accountName(accountId: string): string {
   return reference.accountMap.get(accountId)?.name ?? "—";
 }
 
-/** 展示币种字典：同单币种唯一按其解析；混合币种（后端 None）回落展示币种偏好。 */
 const summaryCurrency = computed(() =>
   summary.value?.currency_code
     ? reference.getCurrency(summary.value.currency_code)
     : reference.getCurrency(app.defaultCurrency),
 );
 
-/** 合计（原始币种直和）。 */
 const totalText = computed(() =>
   summary.value ? formatAmount(summary.value.total_amount_cents, summaryCurrency.value) : "",
 );
 
-/** 构成金额（聚合口径与合计同币种）。 */
 function contributionText(amountCents: number): string {
   return formatAmount(amountCents, summaryCurrency.value);
 }
 
-/** 明细行金额：与列表金额列同口径单点（本位币 + 隐私模式）。 */
 function itemAmount(row: TransactionOrderSummary["items"][number]): string {
   return displayAmountText(reference, row);
 }

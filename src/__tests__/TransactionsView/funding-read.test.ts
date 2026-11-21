@@ -15,13 +15,6 @@ import {
   shownModal,
 } from "./common";
 
-/**
- * 多出资方读侧（issue #1861 / ADR-0138 决策 8）：交易列表分解标记与详情出资项。
- * 四形态全覆盖——组合支付（多账户）、同账户多条、退款派生分解、单出资零回归；
- * 桌面表格与移动卡片共用 renderAccountCell 渲染单源，两档各验接线。
- */
-
-/** 组合支付行（issue #1859 真实样例口径）：¥281.60 = 现金 ¥28.53(罐装) + 银行 ¥253.07(固体饼干)。 */
 function comboRow(): Transaction {
   return makeTxn(1, null, {
     kind: "expense",
@@ -35,7 +28,6 @@ function comboRow(): Transaction {
   });
 }
 
-/** 同账户双笔（预售定金 + 尾款）：同一账户两条出资项，靠标签区分。 */
 function sameAccountRow(): Transaction {
   return makeTxn(2, null, {
     kind: "expense",
@@ -49,7 +41,6 @@ function sameAccountRow(): Transaction {
   });
 }
 
-/** 退款派生分解行（ADR-0138 决策 5）：缺省按出资比例回退，读时推导、不落库。 */
 function derivedRefundRow(): Transaction {
   return makeTxn(3, null, {
     kind: "refund",
@@ -64,7 +55,6 @@ function derivedRefundRow(): Transaction {
   });
 }
 
-/** 单出资行（现状形态）：无分解子行，呈现与现状完全一致（零回归基线）。 */
 function plainRow(): Transaction {
   return makeTxn(4, "acc-1", { kind: "expense", note: "普通支出" });
 }
@@ -124,7 +114,6 @@ describe("分解行菜单与只读详情（issue #1861）", () => {
     const wrapper = await mountView();
     await openMenuOnRow(wrapper, 0);
     expect(rowMenuKeys(wrapper)).toEqual(["detail", "add-item", "menu-divider", "delete"]);
-    // 单出资行菜单不变（零回归）
     await openMenuOnRow(wrapper, 1);
     expect(rowMenuKeys(wrapper)).toEqual(["edit", "refund", "add-item", "menu-divider", "delete"]);
   });
@@ -138,14 +127,12 @@ describe("分解行菜单与只读详情（issue #1861）", () => {
     expect(modal, "期望详情弹窗打开").toBeTruthy();
     const text = visibleModalText();
     expect(text).toContain("出资分解");
-    // 两条出资项：账户名 + 扣款标签 + 金额
     expect(text).toContain("现金");
     expect(text).toContain("银行");
     expect(text).toContain("罐装");
     expect(text).toContain("固体饼干");
     expect(text).toContain("¥28.53");
     expect(text).toContain("¥253.07");
-    // Σ 合计行 = 交易金额
     expect(text).toContain("¥281.6");
     await closeShownModal(wrapper);
   });

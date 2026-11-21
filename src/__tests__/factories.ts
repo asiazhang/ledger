@@ -25,10 +25,6 @@ import type {
   TransactionPurchase,
 } from "@ledger/types";
 
-// 计划实体工厂三形态 + 期次工厂自 #1322 起上收共享测试支持包
-// （@ledger/test-support/plan-factories）：抽 @ledger/scheduled-plan-list 时包内
-// 测试跟随被测包，结构守门规则 4 禁测试文件本地定义名单工厂，共享工厂层出口
-// 随测试面上收；此处再导出保持壳侧既有 import 面（'./factories'）不变。
 export {
   makeSubscriptionPlan,
   makeInstallmentPlan,
@@ -36,10 +32,6 @@ export {
   makeOccurrence,
 } from "@ledger/test-support/plan-factories";
 
-// toast sink 假件自 #1354 起上收共享测试支持包（@ledger/test-support/toast-sink）：
-// @ledger/loadable 与 @ledger/scheduled-plan-list 包内测试不可引用壳侧 factories
-// （结构守门规则③），同实现局部替身随测试面上收，唯一定义点在包内；
-// 此处再导出保持壳侧既有 import 面（'./factories'）不变。
 import { registerToastSink } from "@ledger/loadable";
 import {
   makeFakeSink,
@@ -51,12 +43,6 @@ export { makeFakeSink };
 export function resetToastSink(): void {
   resetToastSinkSupport(registerToastSink);
 }
-
-/**
- * 组件/composable 测试的共享数据工厂（issue #110 审查：消除测试文件间重复）。
- * invoke 布线一律走唯一接缝 wireInvokeSeam（@ledger/test-support/invoke-mock.ts，ADR-0085），
- * 本文件只承载数据夹具（toast sink 假件见 @ledger/test-support/toast-sink），不含任何布线能力。
- */
 
 export function makeAccount(partial: Partial<Account> & { id: string }): Account {
   return {
@@ -137,7 +123,6 @@ export function makeHolding(
     latest_nav_date: null,
     market_value_cents: null,
     unrealized_pnl_cents: null,
-    // 折本位币两列（issue #1797）：缺价行默认 null；有行情行由用例按折算结果给值
     native_market_value_cents: null,
     native_unrealized_pnl_cents: null,
     updated_at: "2026-01-01T00:00:00Z",
@@ -145,10 +130,6 @@ export function makeHolding(
   };
 }
 
-/**
- * 投资明细行工厂（ADR-0135 / issue #1779）：五种投资 kind 的投资投影行底座——
- * 默认 buy 行形态（trade 载荷按需携带，convert/split 缺省 null），公共字段中性。
- */
 export function makeInvestmentLedgerRow(
   partial: Partial<InvestmentTransactionRow> & {
     id: string;
@@ -160,7 +141,6 @@ export function makeInvestmentLedgerRow(
     amount_cents: 10000,
     account_id: "acc-1",
     funding_account_id: null,
-    // 来源订单号默认无（V035 / #1862，弹窗族消费列）：订单场景显式传
     source_order_no: null,
     instrument_id: "inst-1",
     symbol: "600000",
@@ -169,7 +149,6 @@ export function makeInvestmentLedgerRow(
     trade: null,
     convert: null,
     split: null,
-    // 弹窗族消费列（issue #1781）：默认同币种中性形态，用例按需覆盖。
     note: null,
     currency_code: "CNY",
     amount_native_cents: 10000,
@@ -177,7 +156,6 @@ export function makeInvestmentLedgerRow(
   };
 }
 
-/** h-1 有行情（价格/市值/未实现盈亏齐全，账户币 = 本位币故折算值同额），h-2 无行情（全 NULL） */
 export const mockHoldings: Holding[] = [
   makeHolding({
     id: "h-1",
@@ -204,8 +182,6 @@ export const mockInstruments: Instrument[] = [
   makeInstrument({ id: "inst-2", symbol: "000001", name: "平安银行", market: "sz" }),
 ];
 
-/** dashboard_overview 返回值工厂（issue #143）：默认人民币本位币、净申 1234.56 元 */
-/** 保单实体工厂（issue #360）：保单 store 与视图测试共用（消除本地复制）。 */
 export function makePolicy(partial: Partial<Policy> & { id: string }): Policy {
   return {
     insurer_id: "ins-1",
@@ -248,7 +224,6 @@ export function makeOverview(partial: Partial<DashboardOverview> = {}): Dashboar
   };
 }
 
-/** 交易行工厂：默认一笔 100 元人民币支出，覆写见 partial（id 必填）。 */
 export function makeTransaction(partial: Partial<Transaction> & { id: string }): Transaction {
   return {
     kind: "expense",
@@ -273,18 +248,13 @@ export function makeTransaction(partial: Partial<Transaction> & { id: string }):
     version: 1,
     device_id: "test",
     is_deleted: false,
-    // 来源列默认无来源（列表/搜索读路径才填充）；来源场景显式传 source
     source: null,
-    // 来源订单号默认无（V035 / #1862）：手动行为 null，订单场景显式传
     source_order_no: null,
-    // 转换扩展默认无（仅 convert 行由列表/搜索读路径填充）；转换场景显式传 convert
     convert: null,
     ...partial,
   };
 }
 
-/** 出资项读回条目工厂（issue #1861 / ADR-0138）：默认账户 acc-1、100 元、无标签、
- * 非派生；分解行场景经 fundings: [makeFunding(...), ...] 组装。 */
 export function makeFunding(partial: Partial<TransactionFunding> = {}): TransactionFunding {
   return {
     account_id: "acc-1",
@@ -295,9 +265,6 @@ export function makeFunding(partial: Partial<TransactionFunding> = {}): Transact
   };
 }
 
-/** 购买项读回条目工厂（issue #1883 / ADR-0138 决策 9）：默认有名称、1 件、
- * 无分类无单价（可空字段的最小形态）；订单场景经 purchases: [makePurchase(...), ...] 组装，
- * 数组顺序即对账单顺序。 */
 export function makePurchase(partial: Partial<TransactionPurchase> = {}): TransactionPurchase {
   return {
     name: "商品",
@@ -308,8 +275,6 @@ export function makePurchase(partial: Partial<TransactionPurchase> = {}): Transa
   };
 }
 
-/** financial_freedom 返回值工厂（issue #344）：默认人民币本位币、自由度 7.5%
- * （可投资资产 5000 元 × 3% ÷ 年度预算 2 万）、覆盖 0.3 年 */
 export function makeFinancialFreedom(
   partial: Partial<FinancialFreedomOverview> = {},
 ): FinancialFreedomOverview {
@@ -323,10 +288,6 @@ export function makeFinancialFreedom(
   };
 }
 
-/** realized_pnl_summary 返回值工厂（issue #325 起为盈亏汇总；#1845 起折本位币
- * 单值行——行标识 + native_currency + 主值与两腿拆解，无 total / by_instrument）：
- * 默认 2026 年 300 元（CNY 本位币）、无分红；缺料行（三项全 null）由用例经
- * partial 表达。 */
 export function makePnlSummary(partial: Partial<RealizedPnlSummary> = {}): RealizedPnlSummary {
   return {
     by_year: [
@@ -352,9 +313,6 @@ export function makePnlSummary(partial: Partial<RealizedPnlSummary> = {}): Reali
   };
 }
 
-/** money_weighted_return_summary 返回值工厂（issue #1195 / ADR-0115）：默认
- * 单标的 +10%、账户 +10%、全账 CNY +10%；null 率（无解）与缺行（缺价跳过）
- * 由用例经 partial / 覆写表达三态。 */
 export function makeMwrSummary(
   partial: Partial<MoneyWeightedReturnSummary> = {},
 ): MoneyWeightedReturnSummary {
@@ -382,7 +340,6 @@ export function makeMwrSummary(
   };
 }
 
-/** 实物资产实体夹具（issue #466）：全字段读模型 + 当前估值三件套。 */
 export function makePhysicalAsset(partial: Partial<PhysicalAsset> & { id: string }): PhysicalAsset {
   return {
     name: "客厅油画",
@@ -407,7 +364,6 @@ export function makePhysicalAsset(partial: Partial<PhysicalAsset> & { id: string
   };
 }
 
-/** 储蓄目标实体夹具（spec #1750 / issue #1751）：全字段读模型（金额整数分）。 */
 export function makeSavingsGoal(partial: Partial<SavingsGoal> & { id: string }): SavingsGoal {
   return {
     name: "买车基金",
@@ -425,9 +381,6 @@ export function makeSavingsGoal(partial: Partial<SavingsGoal> & { id: string }):
   };
 }
 
-/** 蓄水进度行夹具（spec #1750 / issue #1751 / #1753）：目标行 + 已存 / 还差 / 达成态 /
- *  币种 + 双向推算。还差缺省由目标额 − 已存派生（夹具自洽）；推算字段缺省
- *  节奏为零（全 null，不虚构时点），场景给显式值优先。 */
 export function makeSavingsGoalProgress(
   over: Partial<SavingsGoalProgress> & {
     goal?: Partial<SavingsGoal> & { id: string };
@@ -451,22 +404,14 @@ export function makeSavingsGoalProgress(
   };
 }
 
-/** 目标专属账户夹具（issue #1755 / ADR-0133 决策 2）：目标账户是 `other` 类型账户，
- *  特殊性不靠类型值表达——是否目标户由绑定派生，本工厂只造账户本体。 */
 function makeGoalBoundAccount(partial: Partial<Account> & { id: string }): Account {
   return makeAccount({ type: "other", ...partial });
 }
 
-/** 目标 + 专属账户成对夹具（issue #1755）：一次造出绑定两端——账户与进度行同源
- *  （goal.account_id 指向本工厂账户 id），新测试一律走成对厂、不手拼 account_id
- *  （makeSavingsGoal 的 account_id 缺省是 `acc-${goal.id}`，与账户 id 无关，易错位）。 */
 export function makeGoalPair(
   options: {
-    /** 专属账户 id（绑定目标 account_id 的锚点）。 */
     id: string;
-    /** 目标本体覆写（id 缺省 goal-1；account_id 一律指向本工厂账户，不可覆写错位）。 */
     goal?: Partial<SavingsGoal> & { id: string };
-    /** 账户本体覆写（name / currency_code / 余额等）。 */
     account?: Partial<Account>;
   } = { id: "acc-goal" },
 ): { account: Account; progress: SavingsGoalProgress } {
@@ -481,7 +426,6 @@ export function makeGoalPair(
   return { account, progress };
 }
 
-/** 实物资产列表返回夹具（资产行 + 在持合计同源快照）。 */
 export function makePhysicalAssetList(partial: Partial<PhysicalAssetList> = {}): PhysicalAssetList {
   return {
     assets: [],
@@ -491,7 +435,6 @@ export function makePhysicalAssetList(partial: Partial<PhysicalAssetList> = {}):
   };
 }
 
-/** 多端同步状态夹具（issue #862）：明文库 + 已配置通道 + 从未挂起。 */
 export function makeSyncStatus(partial: Partial<SyncStatus> = {}): SyncStatus {
   return {
     device_id: "device-abcdef",
@@ -503,7 +446,6 @@ export function makeSyncStatus(partial: Partial<SyncStatus> = {}): SyncStatus {
   };
 }
 
-/** 同步通道配置回显夹具（issue #1218）：已配置形态。 */
 export function makeSyncChannelConfig(partial: Partial<SyncChannelConfig> = {}): SyncChannelConfig {
   return {
     space_id: "family",
@@ -519,7 +461,6 @@ export function makeSyncChannelConfig(partial: Partial<SyncChannelConfig> = {}):
   };
 }
 
-/** 挂起操作明细夹具（issue #863）：带码化原因（schema-ahead）。 */
 export function makeParkedOp(partial: Partial<ParkedOpInfo> = {}): ParkedOpInfo {
   return {
     op_id: "op-1",
@@ -534,7 +475,6 @@ export function makeParkedOp(partial: Partial<ParkedOpInfo> = {}): ParkedOpInfo 
   };
 }
 
-/** 同步轮次报告夹具（issue #862）：上传 1 段 2 条、全部应用、无挂起。 */
 export function makeSyncRoundReport(partial: Partial<SyncRoundReport> = {}): SyncRoundReport {
   return {
     uploaded_segments: 1,
@@ -550,9 +490,6 @@ export function makeSyncRoundReport(partial: Partial<SyncRoundReport> = {}): Syn
   };
 }
 
-/** `investment_overview` 返回值工厂（spec #1532 / issue #1536）：默认无投资资产
- *（两腿与合计为 0、无缺料说明、已建投资账户）；缺价计数、无投资账户与两腿数值
- * 由用例经 partial 表达。 */
 export function makeInvestmentOverview(
   partial: Partial<InvestmentOverview> = {},
 ): InvestmentOverview {

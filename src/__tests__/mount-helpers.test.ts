@@ -4,7 +4,6 @@ import { defineComponent, h } from "vue";
 import { useDialog } from "naive-ui";
 import { mountFlushed, mountWithDialog } from "@ledger/test-support/mount";
 
-/** 最小内容探针：文本断言用。 */
 const Probe = defineComponent({
   name: "MountProbe",
   setup() {

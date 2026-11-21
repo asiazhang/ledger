@@ -9,19 +9,8 @@ import { yuanToCents, centsToYuan } from "@ledger/money";
 import { useSavingsGoalsStore } from "@/savings-goal/savingsGoals";
 import type { SavingsGoal, SavingsGoalInput, SavingsGoalUpdateInput } from "@ledger/types";
 
-/**
- * 储蓄目标新建/编辑弹窗（spec #1750 / issue #1751 建档 / issue #1752 编辑）：
- * 名称与目标金额必填、截止日期可选（不填即无截止日）。专属账户由后端同事务
- * 自动创建 / 改名联动——表单不出现账户字段（目标名权威、账户名随动只读）。
- *
- * 编辑模式（issue #1752，PhysicalAssetFormModal 先例）：四字段全量替换
- * （名称 / 目标金额 / 截止日期 / 手填「计划月存」）；计划月存字段结构性只在
- * 编辑模式出现（新建走 create 入参，不携带该字段）。保存成功后关弹窗，列表经
- * store 重拉刷新；后端校验错误原样展示，弹窗不关、内容不丢。
- */
 const props = defineProps<{
   show: boolean;
-  /** 待编辑目标；null = 新建模式 */
   editing: SavingsGoal | null;
 }>();
 const emit = defineEmits<{ "update:show": [value: boolean] }>();
@@ -29,15 +18,11 @@ const emit = defineEmits<{ "update:show": [value: boolean] }>();
 const message = useMessage();
 const savingsGoalsStore = useSavingsGoalsStore();
 
-// —— 表单状态 ——
 const name = ref("");
 const targetYuan = ref("");
 const deadline = ref<string | null>(null);
-/** 手填「计划月存」（元；空 = 清除，仅编辑模式出现）。 */
 const plannedMonthlyYuan = ref("");
 
-/** 打开时回填/复位：编辑模式预填四字段（金额分 → 元），新建复位空白建单
- *  （immediate 兼容初始 show）。 */
 watch(
   () => [props.show, props.editing] as const,
   () => {
@@ -57,7 +42,6 @@ function close() {
 }
 
 async function save() {
-  // 客户端必填校验（消息与后端码化错误同源语义，双保险防呆）
   if (!name.value.trim()) {
     message.warning(t("savingsGoals.form.msg.nameRequired"));
     return;
@@ -67,7 +51,6 @@ async function save() {
     message.warning(t("savingsGoals.form.msg.targetInvalid"));
     return;
   }
-  // 计划月存：空 = 清除（null）；填写必须为正数（与后端 planned-monthly 同校验）
   let plannedCents: number | null = null;
   if (plannedMonthlyYuan.value.trim() !== "") {
     plannedCents = yuanToCents(plannedMonthlyYuan.value);
@@ -79,7 +62,6 @@ async function save() {
 
   try {
     if (props.editing) {
-      // 编辑模式：四字段全量替换（改名联动与计划月存清除由后端同一事务承载）
       const input: SavingsGoalUpdateInput = {
         name: name.value.trim(),
         target_amount_cents: targetCents,
@@ -99,7 +81,6 @@ async function save() {
     }
     close();
   } catch (e) {
-    // 后端校验错误原样展示（如「目标金额必须为正数」），弹窗不关、内容不丢
     message.error(errorMessage(e));
   }
 }

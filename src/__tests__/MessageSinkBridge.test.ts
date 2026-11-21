@@ -5,7 +5,6 @@ import { useLoadable, registerToastSink } from "@ledger/loadable";
 import MessageSinkBridge from "@/components/MessageSinkBridge.vue";
 
 beforeEach(() => {
-  // 复位为 no-op，确保 sink 生效只能来自桥接注册
   registerToastSink({ error: () => {} });
 });
 

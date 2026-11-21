@@ -14,7 +14,6 @@ import InvestmentForm from "@/investment/InvestmentForm.vue";
 import { makeAccount, makeGoalPair } from "./factories";
 import type { Account, Instrument, SavingsGoalProgress } from "@ledger/types";
 
-// jsdom 不实现 scrollTo：naive-ui 打开虚拟滚动下拉时会调用，提前 polyfill 避免 unhandled rejection
 beforeAll(() => {
   Element.prototype.scrollTo = () => {};
 });
@@ -56,23 +55,17 @@ const mockInstruments: Instrument[] = [
   },
 ];
 
-/** 标的下拉 = 带 remote 搜索的那个 NSelect */
 function instrumentSelect(wrapper: ReturnType<typeof mount>) {
   return wrapper.findAllComponents(NSelect).find((s) => s.props("remote"))!;
 }
 
-/** 表单布线：list_accounts 参考命令本场景需自定义值（acc-1「证券户」，overrides 优先于参考兜底）；
- *  list_instruments 领域命令空字典为挂载即拉的契约快照，中途重桩用例展开合并复用。 */
 const BASE_OVERRIDES = {
   list_accounts: mockAccounts,
   list_instruments: { items: [], total: 0 },
 };
 
-/** 一次性桩（mockImplementationOnce 委托形态，接缝文档钦定）的委托目标。 */
 let base: ReturnType<typeof wireInvokeSeam>;
 
-/** 在用目标账户绑定集（issue #1755）：goals store 进度快照变量，每测复位、
- *  用例内赋值（布线闭包按调用时刻取值，赋值时机在布线之后也生效）。 */
 let goalProgress: SavingsGoalProgress[] = [];
 
 beforeEach(async () => {
@@ -88,10 +81,8 @@ beforeEach(async () => {
 describe("InvestmentForm.vue 移除「新增标的」入口（issue #152）", () => {
   it("不渲染「新增标的」切换按钮与内嵌建档表单", () => {
     const wrapper = mount(InvestmentForm, { props: { kind: "buy", submitLabel: "记买入" } });
-    // 无「新增标的」按钮
     const newBtn = findButton(wrapper, "新增标的");
     expect(newBtn).toBeUndefined();
-    // 无内嵌建档表单的字样
     expect(wrapper.text()).not.toContain("保存标的");
     expect(wrapper.text()).not.toContain("新增标的");
   });
@@ -101,7 +92,6 @@ describe("InvestmentForm.vue 移除「新增标的」入口（issue #152）", ()
       props: { kind: "buy", submitLabel: "记买入" },
       attachTo: document.body,
     });
-    // 用户点开标的选择（此时无候选）→ 下拉菜单渲染空态文案
     await instrumentSelect(wrapper).find(".n-base-selection").trigger("click");
     await flushPromises();
     expect(document.body.textContent).toContain("未找到标的，可通过同步或 AI 导入新增");
@@ -112,14 +102,12 @@ describe("InvestmentForm.vue 移除「新增标的」入口（issue #152）", ()
     try {
       const wrapper = mount(InvestmentForm, { props: { kind: "buy", submitLabel: "记买入" } });
       const select = instrumentSelect(wrapper);
-      // 用户在标的选择框输入 → 触发远程搜索（防抖 300ms）
       await select.find("input").setValue("NVDA");
       await vi.advanceTimersByTimeAsync(300);
       const calls = mockInvoke.mock.calls.filter(([cmd]) => cmd === "list_instruments");
       expect(calls).toHaveLength(1);
       const [, args] = calls[0] as [string, { filter: { search: string } }];
       expect(args.filter.search).toBe("NVDA");
-      // 返回候选后可选择（重接线携带候选，其余命令契约不变）
       wireInvokeSeam({
         overrides: {
           ...BASE_OVERRIDES,
@@ -160,7 +148,6 @@ describe("InvestmentForm.vue 基金申赎形态（issue #302）", () => {
     },
   ];
 
-  /** 挂载并选中基金标的（远程搜索 → 选中） */
   async function mountWithFundSelected(kind: "buy" | "sell") {
     const wrapper = mount(InvestmentForm, {
       props: { kind, submitLabel: kind === "buy" ? "记买入" : "记卖出" },
@@ -179,7 +166,6 @@ describe("InvestmentForm.vue 基金申赎形态（issue #302）", () => {
     return wrapper;
   }
 
-  /** 按 placeholder 找 NInputNumber 内层 input */
   function inputByPlaceholder(wrapper: ReturnType<typeof mount>, placeholder: string) {
     return wrapper.findAll("input").find((i) => i.attributes("placeholder") === placeholder);
   }
@@ -197,7 +183,6 @@ describe("InvestmentForm.vue 基金申赎形态（issue #302）", () => {
     const priceInput = inputByPlaceholder(wrapper, "由金额与份额反算");
     expect(priceInput).toBeDefined();
     expect(priceInput!.attributes("disabled")).toBeDefined();
-    // 股票形态的占位不应出现
     expect(inputByPlaceholder(wrapper, "自动计算")).toBeUndefined();
   });
 
@@ -212,17 +197,14 @@ describe("InvestmentForm.vue 基金申赎形态（issue #302）", () => {
 });
 
 describe("InvestmentForm.vue 字段错误态（ADR-0058 / issue #416）", () => {
-  /** 数量输入框（placeholder「数量」，股票形态；基金形态为「确认份额（以确认单为准）」） */
   function quantityInput(wrapper: ReturnType<typeof mount>) {
     return wrapper.findAll("input").find((i) => i.attributes("placeholder") === "数量")!;
   }
 
-  /** 单价输入框（placeholder「单价」，非基金形态的权威输入） */
   function priceInput(wrapper: ReturnType<typeof mount>) {
     return wrapper.findAll("input").find((i) => i.attributes("placeholder") === "单价")!;
   }
 
-  /** 输入框所属 NInput 根元素（错误态 class 挂载处，同 #415 先例） */
   function inputRoot(input: ReturnType<typeof quantityInput>) {
     const el = input.element.closest(".n-input");
     expect(el).not.toBeNull();
@@ -233,12 +215,10 @@ describe("InvestmentForm.vue 字段错误态（ADR-0058 / issue #416）", () => 
     return inputRoot(input).classList.contains("n-input--error-status");
   }
 
-  /** 保存按钮（按可见文案定位；数量/费用 NInputNumber 自带步进按钮，不可按序取） */
   function submitButton(wrapper: ReturnType<typeof mount>, label: string) {
     return findButton(wrapper, label)!;
   }
 
-  /** 经内层 NSelect 注入选择（0=币种，1=投资账户，2=标的） */
   function selectByIndex(wrapper: ReturnType<typeof mount>, index: number, value: string) {
     return wrapper.findAllComponents(NSelect)[index].vm.$emit("update:value", value);
   }
@@ -367,7 +347,6 @@ describe("InvestmentForm.vue 字段错误态（ADR-0058 / issue #416）", () => 
     await submitButton(wrapper, "记买入").trigger("click");
     await flushPromises();
     expect(createCalls()).toHaveLength(0);
-    // 负数可解析（非格式错误闭集），同走提交通道
     await quantityInput(wrapper).setValue("-5");
     expect(hasErrorStatus(quantityInput(wrapper))).toBe(false);
     await submitButton(wrapper, "记买入").trigger("click");
@@ -418,12 +397,10 @@ describe("InvestmentForm.vue 字段错误态（ADR-0058 / issue #416）", () => 
     await sharesInput.setValue("4.30发");
     expect(hasErrorStatus(sharesInput)).toBe(true);
     expect(submitButton(wrapper, "记买入").attributes("disabled")).toBeDefined();
-    // 基金单价为只读反算展示（disabled），无自由输入面即无红态口径
     const derivedInput = wrapper
       .findAll("input")
       .find((i) => i.attributes("placeholder") === "由金额与份额反算")!;
     expect(derivedInput.attributes("disabled")).toBeDefined();
-    // 修正份额：红态解除、保存恢复可点（基金形态无单价错误态牵连）
     await sharesInput.setValue("987.6543");
     expect(hasErrorStatus(sharesInput)).toBe(false);
     expect(submitButton(wrapper, "记买入").attributes("disabled")).toBeUndefined();
@@ -496,8 +473,6 @@ describe("InvestmentForm.vue 编辑模式（issue #180）", () => {
 });
 
 describe("出资账户表单行（issue #936 / #938 / ADR-0096，buy/sell 对称）", () => {
-  /** 候选全集：投资账户 + 现金类银行卡（出资候选）；
-   * 编辑回填用交易与买卖明细复用本文件既有形状（funding_account_id 为差异点） */
   const accountsWithFunding = [
     ...mockAccounts,
     {
@@ -516,8 +491,6 @@ describe("出资账户表单行（issue #936 / #938 / ADR-0096，buy/sell 对称
     },
     makeAccount({ id: "acc-inv-usd", name: "美股证券户", currency_code: "USD" }),
     makeAccount({ id: "acc-bank-usd", name: "美元卡", type: "bank", currency_code: "USD" }),
-    // 在用目标账户（issue #1755 / ADR-0133 决策 4）：`other` 类型、身份由绑定派生，
-    // 下拉渲染轴的过滤断言在此承担——CNY 与 USD 各一。
     makeGoalPair({ id: "acc-goal", account: { name: "买车基金账户" } }).account,
     makeGoalPair({
       id: "acc-goal-usd",
@@ -562,7 +535,6 @@ describe("出资账户表单行（issue #936 / #938 / ADR-0096，buy/sell 对称
     fee_cents: 500,
   };
 
-  /** 出资账户下拉 = 候选中含 acc-bank 的那个 NSelect（非 remote，区别于标的搜索） */
   function fundingSelect(wrapper: ReturnType<typeof mount>) {
     return wrapper
       .findAllComponents(NSelect)
@@ -571,18 +543,15 @@ describe("出资账户表单行（issue #936 / #938 / ADR-0096，buy/sell 对称
       )!;
   }
 
-  /** 币种字典（含美元）：参考兜底桩只有 CNY，币种框显示文案断言需自备字典 */
   const currencyDict = [
     { code: "CNY", name: "人民币", symbol: "¥", decimal_places: 2 },
     { code: "USD", name: "美元", symbol: "$", decimal_places: 2 },
   ];
 
-  /** 控件按 data-testid 语义定位——不按渲染序索引（字段增删/重排不牵连断言） */
   function selectByTestId(wrapper: ReturnType<typeof mount>, testid: string) {
     return wrapper.findAllComponents(NSelect).find((s) => s.attributes("data-testid") === testid)!;
   }
 
-  /** 出资账户下拉当前候选集合（用户可见选项：label|value） */
   function fundingCandidates(wrapper: ReturnType<typeof mount>) {
     return (
       selectByTestId(wrapper, "investment-funding-account").props("options") as Array<{
@@ -602,8 +571,6 @@ describe("出资账户表单行（issue #936 / #938 / ADR-0096，buy/sell 对称
       },
     });
     await useReferenceStore().refresh();
-    // 目标绑定集与参考五命令同规落位（issue #1755）：候选过滤消费绑定集，不消费
-    // 上一用例残留（goals store 不在参考预热内，挂载前显式 refresh）。
     await useSavingsGoalsStore()
       .refresh()
       .catch(() => {});
@@ -634,17 +601,14 @@ describe("出资账户表单行（issue #936 / #938 / ADR-0096，buy/sell 对称
   });
 
   it("外币投资账户（新建）：币种随账户、候选含同币种现金账户、同币种目标户不在候选（issue #1191 / #1755）", async () => {
-    // 两个在用目标账户（CNY + USD）：候选过滤双币种口径一次覆盖（issue #1755）
     goalProgress = [
       makeGoalPair({ id: "acc-goal" }).progress,
       makeGoalPair({ id: "acc-goal-usd" }).progress,
     ];
     await mountWithFundingReference({ list_currencies: currencyDict });
     const wrapper = mount(InvestmentForm, { props: { kind: "buy", submitLabel: "记买入" } });
-    // 未选账户：币种框退默认展示币种，出资候选按该币种过滤
     expect(selectByTestId(wrapper, "investment-currency").text()).toContain("人民币 (CNY)");
     expect(fundingCandidates(wrapper)).toEqual(["招商银行卡|acc-bank"]);
-    // 选中美元投资账户：币种框随账户显示美元（不再恒 CNY），出资候选只剩同币种现金账户
     selectByTestId(wrapper, "investment-account").vm.$emit("update:value", "acc-inv-usd");
     await flushPromises();
     expect(selectByTestId(wrapper, "investment-currency").text()).toContain("美元 (USD)");
@@ -652,7 +616,6 @@ describe("出资账户表单行（issue #936 / #938 / ADR-0096，buy/sell 对称
   });
 
   it("外币投资账户（编辑回填）：币种随账户、候选含同币种现金账户、同币种目标户不在候选（issue #1191 / #1755）", async () => {
-    // 两个在用目标账户（CNY + USD）：候选过滤双币种口径一次覆盖（issue #1755）
     goalProgress = [
       makeGoalPair({ id: "acc-goal" }).progress,
       makeGoalPair({ id: "acc-goal-usd" }).progress,
@@ -662,7 +625,6 @@ describe("出资账户表单行（issue #936 / #938 / ADR-0096，buy/sell 对称
       props: {
         kind: "buy",
         submitLabel: "记买入",
-        // 既有外币交易：账户币种 USD、出资账户为美元现金账户（编辑全字段替换的回填形态）
         editing: {
           ...editingTx,
           id: "txn-buy-usd",

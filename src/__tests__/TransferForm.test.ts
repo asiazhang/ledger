@@ -40,13 +40,11 @@ const mockAccounts: Account[] = [
 
 describe("TransferForm.vue", () => {
   beforeEach(async () => {
-    // 参考命令桩统一走接缝（issue #725）：币种与规范夹具等值流入，账户保留本文件夹具
     wireInvokeSeam({
       overrides: {
         list_accounts: mockAccounts,
       },
     });
-    // Pre-load store so components have data
     const store = useReferenceStore();
     await store.refresh();
   });
@@ -56,15 +54,10 @@ describe("TransferForm.vue", () => {
     expect(wrapper.text()).toContain("记转账");
   });
 
-  // ---- 字段错误态（ADR-0058 / issue #415，行为接缝）：断言用户可见状态——
-  // 输入的错误态呈现（n-input--error-status）与保存按钮可用性，不断言内部状态变量。
-  // 红态时机路径与支出/收入形态（#414 先例）完全一致。
-  /** 金额输入框（placeholder「金额」） */
   function amountInput(wrapper: ReturnType<typeof mount>) {
     return wrapper.find('input[placeholder="金额"]');
   }
 
-  /** 金额输入的 NInput 根元素（错误态 class 挂载处） */
   function amountInputRoot(wrapper: ReturnType<typeof mount>) {
     const el = amountInput(wrapper).element.closest(".n-input");
     expect(el).not.toBeNull();
@@ -75,12 +68,10 @@ describe("TransferForm.vue", () => {
     return amountInputRoot(wrapper).classList.contains("n-input--error-status");
   }
 
-  /** 保存按钮（表单内唯一按钮） */
   function submitButton(wrapper: ReturnType<typeof mount>) {
     return wrapper.find("button");
   }
 
-  /** 经内层 NSelect 注入账户选择（0=币种，1=转出账户，2=转入账户） */
   function selectAccount(wrapper: ReturnType<typeof mount>, index: number, accountId: string) {
     return wrapper.findAllComponents(NSelect)[index].vm.$emit("update:value", accountId);
   }
@@ -145,11 +136,9 @@ describe("TransferForm.vue", () => {
       const wrapper = mount(TransferForm);
       await amountInput(wrapper).setValue("4.30发");
       await amountInput(wrapper).trigger("blur");
-      // 失焦不再被静默清空
       expect((amountInput(wrapper).element as HTMLInputElement).value).toBe("4.30发");
       expect(hasErrorStatus(wrapper)).toBe(true);
       expect(submitButton(wrapper).attributes("disabled")).toBeDefined();
-      // 修正：红态立即解除（可走出的闭环）
       await amountInput(wrapper).setValue("4.30");
       expect(hasErrorStatus(wrapper)).toBe(false);
       expect(submitButton(wrapper).attributes("disabled")).toBeUndefined();
@@ -192,7 +181,6 @@ describe("TransferForm.vue", () => {
       await submitButton(wrapper).trigger("click");
       await flushPromises();
       expect(createCalls()).toHaveLength(0);
-      // 负数可解析（非格式错误闭集），同走提交通道
       await amountInput(wrapper).setValue("-5");
       expect(hasErrorStatus(wrapper)).toBe(false);
       await submitButton(wrapper).trigger("click");
@@ -201,7 +189,6 @@ describe("TransferForm.vue", () => {
     });
 
     it("创建成功后表单不留潜伏红态（清空金额但初始为空不红，ADR-0058 决策 2）", async () => {
-      // 重桩：提交成功走 create_transaction，参考命令保留本文件夹具（issue #725）
       wireInvokeSeam({
         overrides: {
           list_accounts: mockAccounts,
@@ -209,7 +196,6 @@ describe("TransferForm.vue", () => {
         },
       });
       const wrapper = mount(TransferForm);
-      // 先制造一次保存尝试与失焦（时机标志置位），再填合法值提交
       await submitButton(wrapper).trigger("click");
       await amountInput(wrapper).setValue("12");
       await amountInput(wrapper).trigger("blur");
@@ -218,14 +204,11 @@ describe("TransferForm.vue", () => {
       await submitButton(wrapper).trigger("click");
       await flushPromises();
       expect(createCalls()).toHaveLength(1);
-      // 成功后金额清空且时机标志重置：不显红态
       expect((amountInput(wrapper).element as HTMLInputElement).value).toBe("");
       expect(hasErrorStatus(wrapper)).toBe(false);
     });
   });
 
-  // 普通转账表单不暴露商户输入位（ADR-0092 决策 4），但编辑时行上商户必须随行
-  // 保留——形态退化（借贷账户被换成普通账户）退回普通转账时不静默清数据（决策 5）。
   describe("编辑保留行上商户（issue #875 / ADR-0092）", () => {
     const editingTxWithMerchant: Transaction = makeTransaction({
       id: "txn-m",

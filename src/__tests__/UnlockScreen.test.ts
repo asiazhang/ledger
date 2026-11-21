@@ -3,9 +3,6 @@ import { mockInvoke, wireInvokeSeam } from "@ledger/test-support/invoke-mock";
 import { mount, flushPromises } from "@vue/test-utils";
 import { findButton, findButtonByTestId, findBodyButtonByTestId } from "@ledger/test-support/dom";
 
-// 文件选择与重启单点 mock（先例 StartupFailureScreen.test.ts；restartAppShortly
-// 内含延时，测试断言调用而非计时）。恢复流只需 open；confirm 已随 issue #652
-// 退役，不再 mock。
 vi.mock("@tauri-apps/plugin-dialog", () => ({
   open: vi.fn(),
 }));
@@ -22,7 +19,6 @@ const mockOpen = vi.mocked(open);
 beforeEach(() => {
   mockOpen.mockReset();
   restartAppShortly.mockClear();
-  // 每个用例从「未探测」起步（模块级单例状态复位），并清空记住偏好的 localStorage。
   const gate = useEncryptionGate();
   gate.locked.value = null;
   gate.bootFailed.value = false;
@@ -30,7 +26,6 @@ beforeEach(() => {
   localStorage.removeItem("remember_passphrase");
 });
 
-/** 重置确认弹窗（teleport 到 body）内按 data-testid 找按钮。 */
 function bodyButton(testid: string): HTMLButtonElement {
   const btn = findBodyButtonByTestId(testid);
   if (!btn) throw new Error(`未找到 testid=${testid} 的按钮`);
@@ -66,7 +61,6 @@ describe("UnlockScreen.vue（加密锁定门·解锁屏流程）", () => {
     expect(html).toContain("账本已加密");
     expect(html).toContain("主口令");
     expect(findButton(wrapper, "解锁")).toBeTruthy();
-    // 不渲染主界面业务面（解锁先于一切业务读写）
     expect(html).not.toContain("仪表盘");
   });
 
@@ -132,12 +126,9 @@ describe("UnlockScreen.vue（加密锁定门·解锁屏流程）", () => {
     await findButton(wrapper, "解锁")!.trigger("click");
     await flushPromises();
     const html = wrapper.html();
-    // 合并口径（issue #603 / ADR-0075 决策 5 修订）：错误口令与损坏同报
-    // NOTADB、运行期不可区分，提示不误报损坏、可无限重试。
     expect(html).toContain("口令错误或文件损坏，请重试");
     expect(locked.value).toBe(true);
 
-    // 无限重试：再次输入并提交，按钮仍可用
     await input.setValue("再试一次");
     const button = findButton(wrapper, "解锁")!;
     expect((button.element as HTMLButtonElement).disabled).toBe(false);
@@ -165,7 +156,6 @@ describe("UnlockScreen.vue（加密锁定门·解锁屏流程）", () => {
     await findButton(wrapper, "解锁")!.trigger("click");
     await flushPromises();
     expect(wrapper.html()).toContain("数据库文件损坏");
-    // db-corrupt 专属码不走口令失败的合并口径
     expect(wrapper.html()).not.toContain("口令错误或文件损坏");
   });
 
@@ -191,12 +181,10 @@ describe("UnlockScreen.vue（加密锁定门·解锁屏流程）", () => {
     await findButton(wrapper, "解锁")!.trigger("click");
     await flushPromises();
     const html = wrapper.html();
-    // 漂移库打得开且数据完好：专属文案，不走口令错误合并口径、不混用损坏文案
     expect(html).toContain("数据库结构异常，可从备份恢复或重置");
     expect(html).not.toContain("口令错误或文件损坏");
     expect(html).not.toContain("数据库文件损坏，无法通过完整性检查");
     expect(locked.value).toBe(true);
-    // 双逃生门保持可达（忘记口令重置 / 从备份文件恢复）
     expect(findButton(wrapper, "从备份文件恢复")).toBeTruthy();
     expect(findButton(wrapper, "忘记口令")).toBeTruthy();
   });
@@ -240,8 +228,6 @@ describe("UnlockScreen.vue（加密锁定门·解锁屏流程）", () => {
 
     await findButton(wrapper, "忘记口令")!.trigger("click");
     await flushPromises();
-    // 原生对话框退役（ADR-0078 决策 1，issue #652）：弹窗为应用内 error 级，
-    // 后果说明明确不可恢复，且告知密文副本可日后救回（issue #573 语义不回退）
     expect(document.body.textContent).toContain("不可恢复");
     expect(document.body.textContent).toContain("密文副本");
     const alert = document.body.querySelector(".n-modal .n-alert");
@@ -268,7 +254,6 @@ describe("UnlockScreen.vue（加密锁定门·解锁屏流程）", () => {
       false,
     );
     expect(locked.value).toBe(true);
-    // 解锁屏仍在，可继续尝试口令或再次进入
     expect(wrapper.html()).toContain("账本已加密");
   });
 
@@ -292,7 +277,6 @@ describe("UnlockScreen.vue（加密锁定门·解锁屏流程）", () => {
 });
 
 describe("UnlockScreen.vue 本机记住主口令（issue #574）", () => {
-  /** 记住复选项（语义定位按钮文本）。 */
   function findRememberCheckbox(wrapper: ReturnType<typeof mount>) {
     return wrapper.find(".n-checkbox");
   }
@@ -312,7 +296,6 @@ describe("UnlockScreen.vue 本机记住主口令（issue #574）", () => {
     await probePromise;
     await flushPromises();
 
-    // 自动解锁：发起凭缓存解锁（口令不回流前端，只调命令），成功后翻解锁
     expect(mockInvoke).toHaveBeenCalledWith("unlock_with_remembered_passphrase");
     expect(locked.value).toBe(false);
   });
@@ -334,7 +317,6 @@ describe("UnlockScreen.vue 本机记住主口令（issue #574）", () => {
     expect(mockInvoke).not.toHaveBeenCalledWith("unlock_with_remembered_passphrase");
     expect(locked.value).toBe(true);
     expect(wrapper.html()).toContain("账本已加密");
-    // 平台不支持：隐藏「记住」选项（回退手输）
     expect(wrapper.html()).not.toContain("在本机记住主口令");
   });
 
@@ -360,7 +342,6 @@ describe("UnlockScreen.vue 本机记住主口令（issue #574）", () => {
 
     expect(locked.value).toBe(true);
     expect(wrapper.html()).toContain("本机没有缓存的主口令");
-    // 回退手输：口令输入仍可交互
     expect(wrapper.find("input").exists()).toBe(true);
   });
 
@@ -371,7 +352,6 @@ describe("UnlockScreen.vue 本机记住主口令（issue #574）", () => {
         overrides: {
           get_boot_status: () => Promise.resolve({ phase: "locked", error_code: null }),
           get_remember_passphrase_support: () => Promise.resolve({ supported: true }),
-          // 钥匙串读取阻塞：长时间不返回（开发构建受限形态的白屏根因一）。
           unlock_with_remembered_passphrase: () => new Promise(() => {}),
         },
       });
@@ -382,18 +362,15 @@ describe("UnlockScreen.vue 本机记住主口令（issue #574）", () => {
       await probePromise;
       await flushPromises();
 
-      // 到期前：仍处于自动解锁加载态（等待期只渲染小提示，不渲染解锁卡片）
       expect(wrapper.html()).toContain("正在尝试自动解锁");
       expect(wrapper.html()).not.toContain("账本已加密");
       vi.advanceTimersByTime(AUTO_UNLOCK_TIMEOUT_MS);
       await flushPromises();
 
-      // 到期后：回退手输，超时提示可见，口令输入可交互（恢复通道不再被加载态遮蔽）
       expect(locked.value).toBe(true);
       expect(wrapper.html()).toContain("账本已加密");
       expect(wrapper.html()).toContain("自动解锁超时");
       expect(wrapper.find("input").exists()).toBe(true);
-      // 逃生门双入口随回退重新可达（恢复通道不受影响）
       expect(findButton(wrapper, "从备份文件恢复")).toBeTruthy();
       expect(findButton(wrapper, "忘记口令")).toBeTruthy();
     } finally {
@@ -408,7 +385,6 @@ describe("UnlockScreen.vue 本机记住主口令（issue #574）", () => {
       let bootProbeCount = 0;
       wireInvokeSeam({
         overrides: {
-          // 首次：启动探测（锁定）；第二次：迟到成功守卫的相位复核（已就绪）。
           get_boot_status: () => {
             bootProbeCount += 1;
             return Promise.resolve({
@@ -434,7 +410,6 @@ describe("UnlockScreen.vue 本机记住主口令（issue #574）", () => {
       await flushPromises();
       expect(locked.value).toBe(true);
 
-      // 迟到成功：生物认证最终通过——相位复核就绪后照常生效，主界面挂载
       resolveUnlock({ relocated: false });
       await flushPromises();
       expect(locked.value).toBe(false);
@@ -449,8 +424,6 @@ describe("UnlockScreen.vue 本机记住主口令（issue #574）", () => {
       let resolveUnlock!: (v: { relocated: boolean }) => void;
       wireInvokeSeam({
         overrides: {
-          // 启动探测与迟到守卫的复核都返回锁定（等待期间发生了手输解锁 +
-          // 重引导，后端已重回锁定态）。
           get_boot_status: () => Promise.resolve({ phase: "locked" as const, error_code: null }),
           get_remember_passphrase_support: () => Promise.resolve({ supported: true }),
           unlock_with_remembered_passphrase: () =>
@@ -472,7 +445,6 @@ describe("UnlockScreen.vue 本机记住主口令（issue #574）", () => {
 
       resolveUnlock({ relocated: false });
       await flushPromises();
-      // 相位守卫：后端非就绪，不翻转——解锁屏维持手输形态，不被主界面遮蔽。
       expect(locked.value).toBe(true);
       expect(wrapper.html()).toContain("账本已加密");
     } finally {
@@ -550,7 +522,6 @@ describe("UnlockScreen.vue 本机记住主口令（issue #574）", () => {
     await probePromise;
     await flushPromises();
 
-    // 勾选「记住」→ 输入口令 → 解锁
     await findRememberCheckbox(wrapper).trigger("click");
     await wrapper.find("input").setValue("口令①");
     await findButton(wrapper, "解锁")!.trigger("click");
@@ -576,7 +547,6 @@ describe("UnlockScreen.vue 本机记住主口令（issue #574）", () => {
     await probePromise;
     await flushPromises();
 
-    // 不复选（默认关）→ 解锁后清缓存
     await wrapper.find("input").setValue("口令");
     await findButton(wrapper, "解锁")!.trigger("click");
     await flushPromises();
@@ -588,32 +558,26 @@ describe("UnlockScreen.vue 本机记住主口令（issue #574）", () => {
 });
 
 describe("UnlockScreen.vue 从备份文件恢复入口（issue #603）", () => {
-  /** 入口按钮（data-testid 定位，先例 StartupFailureScreen.test）。 */
   function entryButton(wrapper: ReturnType<typeof mount>) {
     return findButtonByTestId(wrapper, "unlock-restore-open");
   }
 
-  /** 弹窗内元素（teleport 已 stub：内容内联在 wrapper 内，先例 StartupFailureScreen.test）。 */
   function modalEl(wrapper: ReturnType<typeof mount>, testid: string) {
     return wrapper.find(`[data-testid="${testid}"]`);
   }
 
-  /** 弹窗打开稳定等待：naive-ui NModal 经过渡挂载内容，仅 flushPromises 时序不稳。 */
   async function waitModal() {
     await flushPromises();
     await new Promise((resolve) => setTimeout(resolve, 50));
     await flushPromises();
   }
 
-  /** 弹窗内口令输入：经 data-testid 容器定位内层 input（解锁屏自身也有 NInput，
-   *  findComponent 会误中先渲染的解锁框，不能用）。 */
   async function typePassphrase(wrapper: ReturnType<typeof mount>, value: string) {
     const input = modalEl(wrapper, "restore-passphrase").find("input");
     await input.setValue(value);
     await flushPromises();
   }
 
-  /** 挂载解锁屏并桩好恢复通道命令面：文件选择器返回指定备份。 */
   async function mountWithRestore(
     backupPath: string,
     overrides: Record<string, (args?: Record<string, unknown>) => unknown> = {},
@@ -632,7 +596,6 @@ describe("UnlockScreen.vue 从备份文件恢复入口（issue #603）", () => {
     const gate = useEncryptionGate();
     const probePromise = gate.probe();
     const wrapper = mount(UnlockScreen, {
-      // 恢复确认弹窗（AppModal/NModal）默认 teleport 到 body：stub 内联渲染才能断言
       global: { stubs: { teleport: true } },
     });
     await probePromise;
@@ -651,12 +614,9 @@ describe("UnlockScreen.vue 从备份文件恢复入口（issue #603）", () => {
     await entryButton(wrapper)!.trigger("click");
     await waitModal();
 
-    // 校验链在确认前发生（元数据 + 当前模式探测）
     expect(mockInvoke.mock.calls.some(([c]) => c === "get_backup_meta")).toBe(true);
     expect(mockInvoke.mock.calls.some(([c]) => c === "get_encryption_status")).toBe(true);
-    // 密文库恢复明文备份：跨模式警告照常出现（复用 #572 警告语义）
     expect(wrapper.text()).toContain("加密模式不一致");
-    // 明文备份无需口令；未确认前不发恢复命令
     expect(modalEl(wrapper, "restore-passphrase").exists()).toBe(false);
     expect(mockInvoke.mock.calls.some(([c]) => c === "restore_backup")).toBe(false);
 
@@ -666,7 +626,6 @@ describe("UnlockScreen.vue 从备份文件恢复入口（issue #603）", () => {
       backupPath: "/tmp/plain.db.zip",
       passphrase: null,
     });
-    // 恢复成功即自动重启，由启动探测接管实际模式（重启后直达主界面）
     expect(restartAppShortly).toHaveBeenCalledTimes(1);
   });
 
@@ -674,12 +633,10 @@ describe("UnlockScreen.vue 从备份文件恢复入口（issue #603）", () => {
     const { wrapper } = await mountWithRestore("/tmp/enc.db.zip", {
       get_backup_meta: () => Promise.resolve({ kind: "manual", encrypted: true }),
     });
-    // 先在解锁框手输口令（不提交解锁），再进入恢复入口
     await wrapper.find("input").setValue("typed-pw");
     await entryButton(wrapper)!.trigger("click");
     await waitModal();
 
-    // 有上下文口令：不显出口令框，确认即可
     expect(modalEl(wrapper, "restore-passphrase").exists()).toBe(false);
     await modalEl(wrapper, "restore-confirm")!.trigger("click");
     await flushPromises();
@@ -707,7 +664,6 @@ describe("UnlockScreen.vue 从备份文件恢复入口（issue #603）", () => {
     await entryButton(wrapper)!.trigger("click");
     await waitModal();
 
-    // 第一次：上下文口令自动试开失败 → 错误留在弹窗内（不关弹窗），口令框显出
     await modalEl(wrapper, "restore-confirm")!.trigger("click");
     await flushPromises();
     expect(mockInvoke).toHaveBeenLastCalledWith("restore_backup", {
@@ -719,7 +675,6 @@ describe("UnlockScreen.vue 从备份文件恢复入口（issue #603）", () => {
     expect(modalEl(wrapper, "restore-passphrase").exists()).toBe(true);
     expect(restartAppShortly).not.toHaveBeenCalled();
 
-    // 第二次：重输正确口令 → 恢复成功，自动重启
     failFirst = false;
     await typePassphrase(wrapper, "right-pw");
     await modalEl(wrapper, "restore-confirm").trigger("click");
@@ -738,7 +693,6 @@ describe("UnlockScreen.vue 从备份文件恢复入口（issue #603）", () => {
     await entryButton(wrapper)!.trigger("click");
     await waitModal();
 
-    // 无上下文口令：密文备份直接显出口令框，口令未输时确认禁用（防呆）
     expect(modalEl(wrapper, "restore-passphrase").exists()).toBe(true);
     expect((modalEl(wrapper, "restore-confirm")!.element as HTMLButtonElement).disabled).toBe(true);
     expect(mockInvoke.mock.calls.some(([c]) => c === "restore_backup")).toBe(false);

@@ -1,12 +1,6 @@
 import { style } from "@vanilla-extract/css";
 import { sprinkles } from "@ledger/theme/sprinkles.css.ts";
 
-/**
- * 跨账本投资汇总页旁路样式（issue #1196 / ADR-0093 样式方案）：与组件同目录
- * 共置。合计卡为自适应栅格，逐本状态行沿用账本清单行的宽松行距语言；无中性
- * token 的轴（字号/行高）以一次性字面量收在本文件，不入 sprinkles（不造第二套
- * 常量来源）。
- */
 export const summaryRoot = style([
   sprinkles({
     display: "flex",

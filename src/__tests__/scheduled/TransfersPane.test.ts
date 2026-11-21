@@ -18,19 +18,11 @@ import type {
 } from "@ledger/types";
 import { componentVm } from "@ledger/test-support/component-vm";
 
-/**
- * 定时转账页签组件测试（ADR-0041 决策 10）：清单加载/状态过滤/生命周期状态机等
- * 时序用例已迁 ScheduledPlanList 模块接口测试（useScheduledPlanList.test.ts，
- * 刷新版本号镜像法）；本文件收缩为渲染与交互冒烟 + 转账形态真差异（表单）。
- * 迁移记录见对应提交信息。
- */
-
 const mockCurrencies: Currency[] = [
   { code: "CNY", name: "人民币", symbol: "¥", decimal_places: 2 },
   { code: "USD", name: "美元", symbol: "$", decimal_places: 2 },
 ];
 
-// 金额断言委托形态（issue #770）：期待值调同一 formatAmount 实现，格式规则唯一归属其专测
 const cny = mockCurrencies[0];
 
 const mockAccounts: Account[] = [
@@ -56,7 +48,6 @@ function makeAccount(id: string, name: string, currency_code: string): Account {
   };
 }
 
-/** 转账详情组装（目录特有派生包装，留守本地）。 */
 function makeDetail(
   plan: ScheduledTransactionWithExt,
   pending_occurrences: ScheduledTransactionOccurrence[],
@@ -75,10 +66,8 @@ function makeDetail(
   };
 }
 
-// —— invoke mock：可变数据源，状态操作后重载读得到最新值 ——
 let mockPlans: ScheduledTransactionWithExt[] = [];
 const mockDetails = new Map<string, ScheduledTransactionDetail>();
-/** 创建失败开关（后端拒绝币种不一致等场景） */
 let failCreate = false;
 
 function mountView() {
@@ -89,10 +78,6 @@ beforeEach(async () => {
   mockPlans = [];
   mockDetails.clear();
   failCreate = false;
-  // 唯一接缝布线（ADR-0085）：币种（含 USD）与账户以本套夹具覆写（值与规范
-  // 夹具不同，属场景契约而非重复枚举），进 defaults 表；可变计划库与创建/
-  // 状态编排为函数型 overrides。其余参考命令由规范夹具兜底；store 层预热
-  // opt-in 开启：主题用例依赖参考数据就绪后的即时渲染（账户名、币种符号）。
   const seam = wireInvokeSeam({
     defaults: {
       list_currencies: mockCurrencies,
@@ -247,13 +232,11 @@ describe("TransfersPane 操作列渲染与确认交互（可用性矩阵与状�
 });
 
 describe("TransfersPane 新建定时转账（转账形态真差异，issue #203）", () => {
-  /** 打开新建弹窗。 */
   async function openCreateModal(wrapper: ReturnType<typeof mount>) {
     await wrapper.find('[data-testid="transfer-create-open"]').trigger("click");
     await flushPromises();
   }
 
-  /** 弹窗内转出 / 转入账户下拉（PinyinSelect 内部 NSelect 承载 options）。 */
   function accountSelect(wrapper: ReturnType<typeof mount>, testid: string) {
     return wrapper.findComponent(`[data-testid="${testid}"]`).findComponent(NSelect);
   }
@@ -283,20 +266,17 @@ describe("TransfersPane 新建定时转账（转账形态真差异，issue #203�
   it("转入账户候选按转出账户币种过滤（Vitest 验收项）", async () => {
     const wrapper = await mountView();
     await openCreateModal(wrapper);
-    // 未选转出账户时，转入候选为全部账户
     const toSelect = accountSelect(wrapper, "transfer-to-account");
     expect((toSelect.props("options") as { value: string }[]).map((o) => o.value)).toEqual([
       "acc-cny1",
       "acc-cny2",
       "acc-usd",
     ]);
-    // 选定 CNY 转出账户后，转入候选只剩其它 CNY 账户（排除转出账户本身）
     accountSelect(wrapper, "transfer-from-account").vm.$emit("update:value", "acc-cny1");
     await flushPromises();
     expect((toSelect.props("options") as { value: string }[]).map((o) => o.value)).toEqual([
       "acc-cny2",
     ]);
-    // 换成 USD 转出账户，候选只剩 USD 账户（同样排除转出账户本身）
     accountSelect(wrapper, "transfer-from-account").vm.$emit("update:value", "acc-usd");
     await flushPromises();
     expect((toSelect.props("options") as { value: string }[]).map((o) => o.value)).toEqual([]);
@@ -309,7 +289,6 @@ describe("TransfersPane 新建定时转账（转账形态真差异，issue #203�
     await flushPromises();
     accountSelect(wrapper, "transfer-to-account").vm.$emit("update:value", "acc-cny2");
     await flushPromises();
-    // 换成 USD 转出账户：已选的 CNY 转入账户被清空
     accountSelect(wrapper, "transfer-from-account").vm.$emit("update:value", "acc-usd");
     await flushPromises();
     expect(accountSelect(wrapper, "transfer-to-account").props("value")).toBeNull();
@@ -320,16 +299,11 @@ describe("TransfersPane 新建定时转账（转账形态真差异，issue #203�
     await openCreateModal(wrapper);
     accountSelect(wrapper, "transfer-from-account").vm.$emit("update:value", "acc-usd");
     await flushPromises();
-    // 币种下拉现经 AppSelect 封装（接入弹层注册表），下探到内层 NSelect 取 props
     const currencySelect = wrapper
       .findComponent('[data-testid="transfer-currency"]')
       .findComponent(NSelect);
     expect(currencySelect.props("value")).toBe("USD");
   });
-
-  // 提交流程编排（商户解析跳过 → payload 合并 → 创建 → 提示 → 重置 → 回调）已迁移至接缝接口测试
-  // （useScheduledPlanForm.test.ts「submitCreate 提交时序编排」）。此处保留：交互冒烟（关窗 + 清单刷新接线）
-  // 与本页签职责的形态特化字段组装（yuanToCents 元转分 + to_account_id/total_occurrences 直传）。
 
   it("创建成功后关闭弹窗并刷新清单，新转账出现在列表（页签直传特化字段与元转分）", async () => {
     const wrapper = await mountView();
@@ -341,7 +315,6 @@ describe("TransfersPane 新建定时转账（转账形态真差异，issue #203�
     const amountInput = findInput(wrapper, "transfer-amount");
     await amountInput.setValue("500");
     await amountInput.trigger("input");
-    // 特化字段组装（页签职责）：总期数 N
     componentVm(wrapper.findComponent('[data-testid="transfer-total-occurrences"]')).$emit(
       "update:value",
       3,
@@ -351,7 +324,6 @@ describe("TransfersPane 新建定时转账（转账形态真差异，issue #203�
     await flushPromises();
     expect(wrapper.findComponent(NModal).props("show")).toBe(false);
     expect(wrapper.text()).toContain("支付宝");
-    // 元转分（yuanToCents）与特化字段直传（非空断言留给接缝直测）
     const call = mockInvoke.mock.calls.find(([cmd]) => cmd === "create_scheduled_transaction");
     expect(call).toBeDefined();
     expect(call![1]).toMatchObject({
@@ -369,10 +341,8 @@ describe("TransfersPane 新建定时转账（转账形态真差异，issue #203�
   it("未选转出 / 转入账户或金额为 0 时不提交创建", async () => {
     const wrapper = await mountView();
     await openCreateModal(wrapper);
-    // 什么都没填
     await wrapper.findComponent('[data-testid="transfer-create"]').trigger("click");
     await flushPromises();
-    // 只选账户不填金额
     accountSelect(wrapper, "transfer-from-account").vm.$emit("update:value", "acc-cny1");
     accountSelect(wrapper, "transfer-to-account").vm.$emit("update:value", "acc-cny2");
     await flushPromises();
@@ -396,8 +366,6 @@ describe("TransfersPane 新建定时转账（转账形态真差异，issue #203�
     await wrapper.findComponent('[data-testid="transfer-create"]').trigger("click");
     await flushPromises();
     expect(wrapper.findComponent(NModal).props("show")).toBe(true);
-    // 错误提示经 useMessage 呈现（setup.ts mock 为 spy，不渲染 DOM），
-    // 这里断言弹窗保持打开即可体现拒绝路径
   });
 
   it("弹窗不出现商户字段（定时转账不使用商户）", async () => {
@@ -408,7 +376,6 @@ describe("TransfersPane 新建定时转账（转账形态真差异，issue #203�
 });
 
 describe("TransfersPane 移动档（issue #848 / ADR-0088 决策 11 票⑧）", () => {
-  /** 转账夹具：循环转账 招商银行 → 支付宝，每月，下期 2026-03-01。 */
   function wirePlan() {
     const plan = makeTransferPlan(
       { id: "t1", note: "月度储蓄", amount_cents: 50000 },
@@ -449,11 +416,9 @@ describe("TransfersPane 移动档（issue #848 / ADR-0088 决策 11 票⑧）", 
     expect(text).toContain("进行中");
     expect(text).toContain("每月");
     expect(text).toContain("2026-01-01");
-    // 双向账户：转出与转入并存（转账形态真差异）
     expect(text).toContain("招商银行");
     expect(text).toContain("支付宝");
     expect(text).toContain(formatAmount(50000, cny));
-    // 下期转账锚点与桌面同 testid
     const next = wrapper.find('[data-testid="next-transfer-t1"]');
     expect(next.exists()).toBe(true);
     expect(next.text()).toContain("2026-03-01");
@@ -470,7 +435,6 @@ describe("TransfersPane 移动档（issue #848 / ADR-0088 决策 11 票⑧）", 
       expect(el.style.minWidth).toBe("48px");
       expect(el.style.minHeight).toBe("48px");
     }
-    // 取消仍需二次确认：确认后走同一状态命令
     await wrapper.find('[data-testid="op-cancel-t1"]').trigger("click");
     await flushPromises();
     expect(

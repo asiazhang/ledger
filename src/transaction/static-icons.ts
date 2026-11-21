@@ -1,21 +1,6 @@
 import { h, type VNode } from "vue";
 import type { TransactionSourceKind } from "@ledger/types";
 
-/**
- * 静态矢量图标（issue #2189 交易表格行内高频组件瘦身）：交易表格单元格内的高频
- * 图标不再经 NIcon + @vicons 组件逐格实例化组件实例，改由本模块以纯 VNode
- * （原生 svg/path 元素）静态渲染——渲染函数直接产出元素节点，零组件实例开销。
- *
- * 形状数据逐元素转录自 @vicons/ionicons5 同名 outline 图标（fill=none、
- * stroke=currentColor、stroke-width=32 的既有呈现，与 NIcon 渲染逐像素一致）；
- * viewBox 与 @vicons 一致（512）。与 SourceLink 的 KIND_ICONS 同闭集同源惯例：
- * 新增来源类型时两处同步补行（编译器 Record 强制穷尽）。
- *
- * 图标以工厂函数产出（每次调用新建 VNode）：同一图标形状会出现在多行多个
- * 单元格，跨单元格复用同一 VNode 实例是 Vue 未定义行为，工厂保证逐格独立。
- */
-
-/** 静态图标 svg 包裹（512 viewBox + currentColor 描边继承，尺寸由调用方 class/样式控制）。 */
 function svgIcon(children: VNode[]): VNode {
   return h(
     "svg",
@@ -36,12 +21,10 @@ function strokePath(d: string): VNode {
   return h("path", { d });
 }
 
-/** 描边矩形（CalendarClear 的外框；闭合图形 linecap 无渲染影响，基准同 svg 根）。 */
 function strokeRect(attrs: Record<string, string>): VNode {
   return h("rect", attrs);
 }
 
-/** 复制图标（CopyOutline）：备注复制按钮的共享静态图标。 */
 export function copyIcon(): VNode {
   return svgIcon([
     strokeRect({ x: "128", y: "128", width: "336", height: "336", rx: "57" }),
@@ -51,8 +34,6 @@ export function copyIcon(): VNode {
   ]);
 }
 
-/** 来源类型 → 静态图标形状（六类闭集穷尽映射，与 SourceLink KIND_ICONS 同源惯例：
- * 保单=盾、物品=立方、标的=走势、订阅=循环、转账=双向、分期=日历）。 */
 const SOURCE_KIND_SHAPES: Record<TransactionSourceKind, () => VNode> = {
   installmentPlan: () =>
     svgIcon([
@@ -99,7 +80,6 @@ const SOURCE_KIND_SHAPES: Record<TransactionSourceKind, () => VNode> = {
     ]),
 };
 
-/** 来源类型静态图标（每次调用产出独立 VNode，逐格安全）。 */
 export function sourceKindIcon(kind: TransactionSourceKind): VNode {
   return SOURCE_KIND_SHAPES[kind]();
 }

@@ -57,7 +57,6 @@ async function addCategory() {
     name.value = "";
     parentId.value = "";
     icon.value = "";
-    // 参考数据由 ledger:changed 信号自动重拉，分类树随之更新
   } catch (e) {
     message.error(t("settings.categories.msg.addFailed", { msg: errorMessage(e) }));
   }

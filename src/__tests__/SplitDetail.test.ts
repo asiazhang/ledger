@@ -6,15 +6,7 @@ import SplitDetail from "@/investment/SplitDetail.vue";
 import { makeTransaction } from "./factories";
 import { formatQuantity } from "@ledger/money";
 
-/**
- * 份额调整只读详情组件测试（ADR-0106 决策 10 / issue #1052）：
- * 只读呈现标的、**带符号**份额变动、调整日与账户，界面不体现任何写操作。
- * 接线级（菜单 / 整卡 → 取数 → 开窗）由 TransactionsView 组件测试覆盖，
- * 本文件只钉组件自身的呈现与只读形态。
- */
-
 beforeEach(async () => {
-  // 参考 store 预载走接缝 opt-in（list_accounts 由桩层规范夹具兜底，含 acc-1「现金」行）。
   await wireInvokeSeam({ refreshReferenceStores: true }).ready;
 });
 
@@ -38,14 +30,12 @@ describe("SplitDetail 份额调整只读详情（ADR-0106 决策 10 / #1052）",
       },
     });
     await flushPromises();
-    // 详情可辨识：以 kind 标签开头（复用 #1048 convert 详情形态）
     expect(wrapper.text()).toContain("份额调整");
     expect(wrapper.text()).toContain("502010 证券基金");
     expect(wrapper.text()).toContain(`+${formatQuantity(339.76)}`);
     expect(wrapper.text()).toContain("2026-03-01");
     expect(wrapper.text()).toContain("现金");
     expect(wrapper.text()).toContain("年度结转");
-    // 只读形态：无可编辑输入面、无提交/保存按钮（ADR-0106 决策 10）
     expect(wrapper.findAllComponents(NInput)).toHaveLength(0);
     expect(wrapper.findAllComponents(NInputNumber)).toHaveLength(0);
     expect(wrapper.findAllComponents(NButton)).toHaveLength(0);

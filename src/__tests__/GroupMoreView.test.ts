@@ -13,18 +13,13 @@ import { formatAmount } from "@ledger/money";
 import { refCurrencies } from "@ledger/test-support/reference-stubs";
 import type { SubscriptionSpendOverview } from "@ledger/types";
 
-// 定时页签（默认激活）内嵌 SubscriptionSpendPanel 的 <Bar> 走共享桩（issue #1335，
-// 先例 #160）：jsdom 无 2D context，真实 chart.js 取不到 canvas 会打「Failed to create
-// chart」error 输出污染 stderr；本测试只断言容器壳行为，不验证绘制。
 vi.mock("vue-chartjs", async () => {
   const { BarChartStub } = await import("./line-chart-stub");
   return { Bar: BarChartStub };
 });
 
-// 金额断言委托形态（issue #770）：期待值调同一 formatAmount 实现，格式规则唯一归属其专测
 const cny = refCurrencies[0];
 
-/** 订阅花费总览空数据（定时页签挂载即拉取，容器壳测试不关心行内容）。 */
 const emptySpendOverview: SubscriptionSpendOverview = {
   native_currency: "CNY",
   this_month_native_cents: 0,
@@ -35,7 +30,6 @@ const emptySpendOverview: SubscriptionSpendOverview = {
   projected_year_native_cents: 0,
 };
 
-/** 页签挂载即拉取：给最小空数据（容器壳测试不关心行内容）。 */
 const BASE_DEFAULTS = {
   list_policies: [],
   list_scheduled_transactions: [],
@@ -45,20 +39,17 @@ const BASE_DEFAULTS = {
 
 type GroupMoreId = "bookkeeping" | "assets" | "insights";
 
-/** 容器自身页签文案：取首个 .n-tabs-nav（被收视图可能自带嵌套页签，需排除）。 */
 function containerTabs(wrapper: { element: Element }): string[] {
   const nav = wrapper.element.querySelectorAll(".n-tabs-nav")[0]!;
   return Array.from(nav.querySelectorAll(".n-tabs-tab")).map((t) => t.textContent!.trim());
 }
 
-/** 页签右键「移回侧栏」菜单选项（AppDropdown teleport 到 body，按文本定位）。 */
 function findBackOption(): Element | undefined {
   return Array.from(document.body.querySelectorAll(".n-dropdown-option")).find((el) =>
     el.textContent?.includes("移回侧栏"),
   );
 }
 
-/** 组内「更多」容器：真实路由表同构 memory router + 按组传 prop。 */
 async function mountGroupView(group: GroupMoreId, initialPath?: string) {
   const r = createRouter({ history: createMemoryHistory(), routes });
   await r.push(initialPath ?? `/${group}/more`);
@@ -157,12 +148,9 @@ describe("GroupMoreView 组内「更多」容器（issue #472 / ADR-0063 决策 
     });
     const { wrapper } = await mountGroupView("assets");
     const text = wrapper.text();
-    // 列表照常渲染（保司/险种/保单号，同 PoliciesView 既有断言口径）
     expect(text).toContain("重疾险");
     expect(text).toContain("P2026-001");
-    // 软删入口在行上可达（确认交互归 PoliciesView 自身测试）
     expect(wrapper.find('[data-testid="policy-delete-policy-1"]').exists()).toBe(true);
-    // 保单视角统计：累计已缴 600_000 分（同 PoliciesView 既有断言口径）
     expect(text).toContain("累计已缴");
     expect(text).toContain(formatAmount(600_000, cny));
     expect(wrapper.find('[data-testid="policy-new"]').exists()).toBe(true);
@@ -173,7 +161,6 @@ describe("GroupMoreView 记账组接入（issue #473 / ADR-0063 决策 3：定�
   it("记账·更多：定时页签为默认页签（清单首位），商户追加在后，两页签整体装载", async () => {
     const { wrapper } = await mountGroupView("bookkeeping");
     expect(containerTabs(wrapper)).toEqual(["定时", "商户"]);
-    // 默认页签 = 定时（内嵌态页签退内存态）：订阅面板完整装载
     expect(wrapper.find('[data-testid="sub-create-open"]').exists()).toBe(true);
   });
 
@@ -190,7 +177,6 @@ describe("GroupMoreView 记账组接入（issue #473 / ADR-0063 决策 3：定�
 
   it("内嵌定时页签不占用容器 query.tab：切内页签仅写内存态，容器页签不被互踩", async () => {
     const { wrapper, router: r } = await mountGroupView("bookkeeping");
-    // 点击定时视图内部「分期」页签：不写路由 query（内嵌态内存页签）
     await wrapper
       .findAll(".n-tabs-tab")
       .find((t) => t.text() === "分期")!
@@ -198,7 +184,6 @@ describe("GroupMoreView 记账组接入（issue #473 / ADR-0063 决策 3：定�
     await flushPromises();
     expect(r.currentRoute.value.query.tab).toBeUndefined();
     expect(wrapper.text()).toContain("分期清单");
-    // 容器页签仍停在定时（未被内页签值互踩回默认）
     expect(containerTabs(wrapper)).toEqual(["定时", "商户"]);
   });
 
@@ -222,7 +207,6 @@ describe("GroupMoreView 记账组接入（issue #473 / ADR-0063 决策 3：定�
 });
 
 describe("GroupMoreView 用户移入页签（issue #474 / ADR-0063 决策 4：移入即本组「更多」末位页签）", () => {
-  // 移入写路径会改顺序状态与 ViewState 存储：用后即复位，不污染同文件后续 describe
   afterEach(() => {
     useSidebarOrderStore().resetSidebarOrder();
   });
@@ -287,20 +271,16 @@ describe("GroupMoreView 页签右键「移回侧栏」（issue #475 / ADR-0063 �
       .find((t) => t.text().includes("定时"))!
       .trigger("contextmenu");
     await flushPromises();
-    // AppDropdown 封装 + 弹层注册表上报（ADR-0035），零新抑制机制
     expect(hasOpenOverlay()).toBe(true);
     const option = findBackOption();
     expect(option).toBeDefined();
-    // 置灰：naive-ui 的 disabled 修饰类在选项体（后代节点）上
     expect(option!.querySelector('[class*="disabled"]')).not.toBeNull();
     expect(document.body.textContent).toContain("本组主项已满 3 项");
-    // 行高自适应包装层在菜单内：缺了它两行提示会溢出 naive 固定行盒，
-    // 画到菜单容器外成为无背景板漂浮文字（机制见 global.css .tab-back-option）
     expect(document.body.querySelector(".tab-back-option")).not.toBeNull();
   });
 
   it("腾位后右键可选：点选「移回侧栏」即从清单删除（页签消失、落本组主项末位）", async () => {
-    useSidebarOrderStore().applyMoveIntoMore("transactions"); // 先移出一个主项腾位（出厂满员须先换位）
+    useSidebarOrderStore().applyMoveIntoMore("transactions");
     const { wrapper } = await mountGroupView("bookkeeping");
     await wrapper
       .findAll(".pane-tab")
@@ -313,7 +293,6 @@ describe("GroupMoreView 页签右键「移回侧栏」（issue #475 / ADR-0063 �
     const hit = (option!.querySelector(".n-dropdown-option-body") ?? option!) as HTMLElement;
     hit.click();
     await flushPromises();
-    // 定时页签消失，剩余页签随清单序（商户出厂在前、交易移入缀尾）
     expect(containerTabs(wrapper)).toEqual(["商户", "交易"]);
     const store = useSidebarOrderStore();
     expect(store.sidebarContainment.bookkeeping).toEqual(["merchants", "transactions"]);
@@ -348,10 +327,8 @@ describe("GroupMoreView 移动档裁剪组内收纳管理入口（issue #849 / A
     await flushPromises();
     expect(hasOpenOverlay()).toBe(false);
     expect(findBackOption()).toBeUndefined();
-    // 移动档只读消费收纳结构：页签清单本身不受影响
     expect(containerTabs(mobile.wrapper)).toEqual(["定时", "商户"]);
 
-    // 桌面档照常：右键菜单可用（同 #475 既有行为）
     setFakeMedia({ width: 1280, hover: "hover", pointer: "fine" });
     const desktop = await mountGroupView("bookkeeping");
     await desktop.wrapper
@@ -386,7 +363,7 @@ describe("移回侧栏后的独立路由（issue #475：侧栏/键位按 name �
   });
 
   it("/policies 分流：移回侧栏后独立渲染保单页（守卫放行，侧栏主项导航可达）", async () => {
-    useSidebarOrderStore().applyMoveIntoMore("investments"); // 腾位：资产组随储蓄目标加入出厂满员
+    useSidebarOrderStore().applyMoveIntoMore("investments");
     useSidebarOrderStore().applyMoveBackToSidebar("policies");
     await router.push("/policies");
     await flushPromises();

@@ -34,13 +34,11 @@ function submitButton(): HTMLButtonElement {
   return bodyQuery('[data-testid="submit-manual-quote"]') as HTMLButtonElement;
 }
 
-/** 弹窗内价格输入经 NInputNumber 组件 emit 驱动（受控值在组件态，非裸 DOM） */
 async function setPrice(wrapper: VueWrapper, value: number | null) {
   wrapper.findComponent(NInputNumber).vm.$emit("update:value", value);
   await flushPromises();
 }
 
-/** 点击 body 中的提交按钮（弹窗内容 teleport 到 body） */
 async function clickSubmit() {
   bodyQuery('[data-testid="submit-manual-quote"]')!.dispatchEvent(
     new MouseEvent("click", { bubbles: true, cancelable: true }),
@@ -49,7 +47,6 @@ async function clickSubmit() {
 }
 
 beforeEach(async () => {
-  // 参考字典五个 list 命令由接缝内建规范夹具兜底，供 beforeEach 的 store 预拉
   wireInvokeSeam();
   await useReferenceStore().refresh();
 });
@@ -58,7 +55,6 @@ describe("ManualPriceModal 手动报价弹窗（issue #291 / ADR-0036）", () =>
   it("打开时日期默认今天、价格为空；标题带标的代码；价格未填时提交禁用、不发请求", async () => {
     await mountModal();
     expect(document.body.textContent).toContain("录价 — 稳稳地幸福");
-    // 日期默认今天（录价当日即生效为主形态）
     const dateInput = bodyQuery('[data-testid="manual-quote-date"]')!.querySelector("input")!;
     expect((dateInput as HTMLInputElement).value).toBe(todayStr());
     expect(submitButton().disabled).toBe(true);
@@ -86,7 +82,6 @@ describe("ManualPriceModal 手动报价弹窗（issue #291 / ADR-0036）", () =>
       },
     });
     await clickSubmit();
-    // 价格 1.318 元 → 13180 万分之一元（价格刻度 ADR-0038）；日期为今天 ISO
     expect(mockInvoke).toHaveBeenCalledWith("record_manual_price", {
       input: {
         instrument_id: "inst-quote-1",

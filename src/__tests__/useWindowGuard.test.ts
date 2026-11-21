@@ -5,12 +5,6 @@ import { useWindowGuard } from "@/composables/useWindowGuard";
 import { createOverlayToken, resetOverlays } from "@ledger/ui-kit/overlayRegistry";
 import { registerViewReset, clearViewResets } from "@/composables/viewResetRegistry";
 
-/**
- * 窗口行为守卫（issue #154）测试：只测外部行为——
- * 向 document 派发真实事件，断言 defaultPrevented 与事件继续传播
- * （未被 stopPropagation），不断言模块内部实现。
- */
-
 const wrappers: VueWrapper[] = [];
 afterEach(() => {
   while (wrappers.length) wrappers.pop()?.unmount();
@@ -30,14 +24,12 @@ function mountHost() {
   return wrapper;
 }
 
-/** 在指定元素上派发可取消事件，返回该事件供断言。 */
 function fire(target: EventTarget, type: string): Event {
   const e = new Event(type, { bubbles: true, cancelable: true });
   target.dispatchEvent(e);
   return e;
 }
 
-/** 收集事件继续冒泡到 window 的监听（未被 stopPropagation 时被调用）。 */
 function bubbleSpy() {
   return vi.fn<(e: Event) => void>();
 }
@@ -82,12 +74,7 @@ describe("useWindowGuard：Escape 拦截", () => {
   });
 });
 
-// —— ESC 两级语义（spec #892 / ADR-0094）：有弹层时弹层库默认行为接管，无弹层时
-// 消费当前视图注册的复位回调。判定复用弹层注册表（ADR-0035），不做 DOM 推断。
-
 describe("useWindowGuard：ESC 两级语义（spec #892）", () => {
-  /** 带注册回调的宿主（模拟持有保留态的视图；守卫与注册宿主分离，
-   * 真实应用中守卫只在 App.vue 挂载一次）。 */
   function mountHostWithReset(reset: () => void, withGuard = true) {
     const Host = defineComponent({
       setup() {
@@ -123,7 +110,6 @@ describe("useWindowGuard：ESC 两级语义（spec #892）", () => {
     fireEscape();
     expect(reset).not.toHaveBeenCalled();
     token.set(false);
-    // 弹层关再按：复位通道恢复
     fireEscape();
     expect(reset).toHaveBeenCalledTimes(1);
   });
@@ -146,13 +132,12 @@ describe("useWindowGuard：ESC 两级语义（spec #892）", () => {
   it("多视图先后注册：以最后一次注册为准（当前视图的复位回调），先注册者卸载不误清", () => {
     const first = vi.fn();
     const second = vi.fn();
-    mountHost(); // 守卫仅一处
+    mountHost();
     mountHostWithReset(first, false);
     mountHostWithReset(second, false);
     fireEscape();
     expect(first).not.toHaveBeenCalled();
     expect(second).toHaveBeenCalledTimes(1);
-    // 先注册的视图卸载不撤销后注册的回调（注册表按「当前注册」判定，不误清）
     wrappers[1]!.unmount();
     fireEscape();
     expect(second).toHaveBeenCalledTimes(2);
@@ -214,8 +199,6 @@ describe("useWindowGuard：生命周期", () => {
   });
 
   it("拦截注册在 document 捕获阶段：先于目标层既有处理器生效", () => {
-    // 行级处理器（如 TransactionsView rowProps 的 onContextmenu）在目标/冒泡阶段，
-    // 守卫必须能先于其执行且不影响其收到事件
     mountHost();
     const row = document.createElement("div");
     document.body.appendChild(row);

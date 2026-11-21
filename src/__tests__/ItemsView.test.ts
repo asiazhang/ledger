@@ -19,16 +19,11 @@ import type {
 } from "@ledger/types";
 
 const pushMock = vi.fn();
-// focus 参数读取自路由 query（useFocusParam 注入 getter，spec #704 / issue #708）。
-// 可控 mockRoute 替代真实 router：默认空 query（无 focus 空转），来源落点场景
-// 在 mount 前写入 focus；收纳态落点分流语义归 source-jump 深模块专测。
 const mockRoute = { query: {} as Record<string, string> };
 vi.mock("vue-router", () => ({
   useRoute: () => mockRoute,
   useRouter: () => ({ push: pushMock }),
 }));
-
-// NModal 内容 teleport 到 document.body：测试在 body 中查询/触发（同 InstrumentBrowser 先例）。
 
 function bodyQuery(selector: string): HTMLElement | null {
   return document.body.querySelector(selector);
@@ -39,7 +34,6 @@ const mockCurrencies: Currency[] = [
   { code: "USD", name: "美元", symbol: "$", decimal_places: 2 },
 ];
 
-// 金额断言委托形态（issue #770）：期待值调同一 formatAmount 实现，格式规则唯一归属其专测
 const [cny, usd] = mockCurrencies;
 
 const mockItems: ItemWithDailyCost[] = [
@@ -89,10 +83,8 @@ const mockItems: ItemWithDailyCost[] = [
 
 let itemList: ItemWithDailyCost[];
 
-/** 自选参考日重算的 mock 返回（null = 模拟重算失败，issue #121）。 */
 let calcResponse: ItemDailyCost | null = null;
 
-/** 可供关联的支出交易（后端 list_transactions kinds=['expense'] 集合过滤，spec #1025）。 */
 const mockExpenseTxs: Transaction[] = [
   {
     id: "tx-1",
@@ -158,12 +150,10 @@ function setupInvoke(
 ) {
   wireInvokeSeam({
     overrides: {
-      // list_currencies 参考命令本场景需 USD 行（$ 金额格式化断言，overrides 优先于参考兜底）
       list_currencies: mockCurrencies,
       list_transactions: (args?: Record<string, unknown>) => {
         const filter = (args as { filter?: { kinds?: string[] | null } | null } | undefined)
           ?.filter;
-        // 物品视图只拉支出交易（关联购买交易候选，kinds 集合参数 spec #1025）；其他类型返回空
         const expenseOnly =
           Array.isArray(filter?.kinds) &&
           filter.kinds.length === 1 &&
@@ -201,8 +191,6 @@ function setupInvoke(
         itemList = itemList.filter((i) => i.id !== id);
         return Promise.resolve();
       },
-      // 用例级追加桩（如 get_base_currency）：与基础桩合并在同一 overrides 表内，
-      // 不能在 options 顶层展开（会整体替换 overrides、挤掉基础桩）。
       ...extraOverrides,
     },
   });
@@ -213,7 +201,6 @@ beforeEach(async () => {
   calcResponse = null;
   mockRoute.query = {};
   setupInvoke();
-  // 参考数据（币种选项）与物品 store 均为 self-init，提前预热
   await flushPromises();
 });
 
@@ -224,12 +211,10 @@ describe("ItemsView 物品列表", () => {
     const html = wrapper.text();
     expect(html).toContain("手机");
     expect(html).toContain("显示器");
-    // 总成本按原始币种 formatAmount（10000 元，万分位分组）
     expect(html).toContain(formatAmount(1_000_000, cny));
     expect(html).toContain(formatAmount(123_450, usd));
     expect(html).toContain("1000");
     expect(html).toContain("30");
-    // 每天成本 formatAmount：1000 分/天 与 4115 分/天
     expect(html).toContain(formatAmount(1000, cny));
     expect(html).toContain(formatAmount(4115, usd));
   });
@@ -237,10 +222,8 @@ describe("ItemsView 物品列表", () => {
   it("不含新增物品表单，顶部常驻创建唯一入口提示（issue #207）", async () => {
     const wrapper = mount(ItemsView);
     await flushPromises();
-    // 手动「新增物品」表单已移除
     expect(wrapper.text()).not.toContain("新增物品");
     expect(wrapper.find('input[placeholder="物品名称"]').exists()).toBe(false);
-    // 提示条常驻顶部，说明创建方式
     const hint = wrapper.find('[data-testid="item-create-hint"]');
     expect(hint.exists()).toBe(true);
     expect(hint.text()).toContain("物品不支持直接新增");
@@ -294,17 +277,14 @@ describe("ItemsView 物品列表", () => {
     expect(deleteBtn).toBeTruthy();
     await deleteBtn!.trigger("click");
     await flushPromises();
-    // 未确认前不删除
     expect(mockInvoke.mock.calls.some(([cmd]) => cmd === "delete_item")).toBe(false);
 
-    // 确认（NPopconfirm 内容 teleport 到 body，直接对其组件 emit 正向点击）
     wrapper.findComponent(NPopconfirm).vm.$emit("positiveClick");
     await flushPromises();
 
     const deleteCalls = mockInvoke.mock.calls.filter(([cmd]) => cmd === "delete_item");
     expect(deleteCalls).toHaveLength(1);
     expect((deleteCalls[0][1] as { id: string }).id).toBe("item-1");
-    // 重拉后列表不再包含已删物品
     expect(wrapper.text()).not.toContain("手机");
     expect(wrapper.text()).toContain("显示器");
   });
@@ -324,7 +304,6 @@ describe("ItemsView 物品编辑（issue #117）", () => {
     expect(modal).not.toBeNull();
     const nameInput = new DOMWrapper(modal!.querySelector('input[placeholder="物品名称"]'));
     expect((nameInput.element as HTMLInputElement).value).toBe("手机");
-    // 总成本预填：100000 分 → 10000（元）
     const costInput = new DOMWrapper(modal!.querySelector('input[placeholder="总成本（元）"]'));
     expect((costInput.element as HTMLInputElement).value).toBe("10000");
   });
@@ -357,15 +336,12 @@ describe("ItemsView 物品编辑（issue #117）", () => {
     expect(id).toBe("item-1");
     expect(input.name).toBe("手机 Pro");
     expect(input.total_cost_cents).toBe(1_200_000);
-    // 币种不可改：沿用行内币种
     expect(input.currency_code).toBe("CNY");
     expect(input.note).toBe("顶配");
     expect(input.purchase_date).toBe("2025-01-01");
 
-    // mock 已更新列表 → 重拉后新名称可见，弹窗关闭
     expect(wrapper.text()).toContain("手机 Pro");
     await new Promise((r) => setTimeout(r, 300));
-    // jsdom 不派发 transitionend：NModal 退场后仅隐藏不卸载，断言 display:none 即已关闭
     const modalEl = bodyQuery('[data-testid="item-edit-modal"]') as HTMLElement | null;
     expect(modalEl === null || modalEl.style.display === "none").toBe(true);
   });
@@ -385,7 +361,6 @@ describe("ItemsView 物品编辑（issue #117）", () => {
     await flushPromises();
 
     expect(mockInvoke.mock.calls.some(([cmd]) => cmd === "update_item")).toBe(false);
-    // 弹窗仍开着（未保存成功）
     expect(bodyQuery('[data-testid="item-edit-modal"]')).not.toBeNull();
   });
 });
@@ -404,9 +379,7 @@ describe("ItemsView 物品详情（issue #117）", () => {
     expect(modal).not.toBeNull();
     const text = modal!.textContent ?? "";
     expect(text).toContain("手机");
-    // 总成本（原始币种 formatAmount：10000 元，万分位分组）
     expect(text).toContain(formatAmount(1_000_000, cny));
-    // 成本分解：分子 ÷ 1000 天 = 每天成本
     expect(text).toContain("1000");
     expect(text).toContain(formatAmount(1000, cny));
     expect(text).toContain("每天成本分解");
@@ -428,8 +401,6 @@ describe("ItemsView 物品详情（issue #117）", () => {
   });
 
   it("「本位币折算」行按账本本位币基准渲染符号与后缀，不取设备展示币种（#858 拆分遗留，issue #1664 范围外修复）", async () => {
-    // 账本本位币 USD、设备展示币种保持默认 CNY：本位币金额必须以 $ 渲染；
-    // 旧实现误用展示币种（¥ + CNY 两位小数），删掉 baseCurrencyCode 读取本用例变红。
     itemList = [mockItems[1]];
     setupInvoke(mockExpenseTxs, { get_base_currency: { code: "USD" } });
     const wrapper = mount(ItemsView);
@@ -440,10 +411,8 @@ describe("ItemsView 物品详情（issue #117）", () => {
     await flushPromises();
 
     const text = bodyQuery('[data-testid="item-detail-modal"]')!.textContent ?? "";
-    // cost_native_cents = 890_000（USD 本位币分）→ $8,900
     expect(text).toContain(formatAmount(890_000, usd));
     expect(text).toContain("USD");
-    // 旧缺陷形态：按展示币种 CNY 渲染成 ¥8,900，不得回归
     expect(text).not.toContain("¥8,900");
     expect(text).not.toContain("CNY");
   });
@@ -467,18 +436,15 @@ describe("ItemsView 关联购买交易（issue #119）：编辑弹窗换关语�
     await flushPromises();
 
     const modal = bodyQuery('[data-testid="item-edit-modal"]')!;
-    // 手动新增表单已移除（#207）：弹窗内是唯一一处「关联购买交易」下拉
     const modalSelect = wrapper
       .findAllComponents(NSelect)
       .find((s) => s.props("placeholder") === "关联购买交易");
     expect(modalSelect, "编辑弹窗应有「关联购买交易」下拉").toBeTruthy();
     expect(modalSelect!.props("value")).toBe("tx-1");
-    // 维持既有关联：成本可手动编辑（后续花费累加到总成本，用户故事 8）
     const costInput = modal.querySelector('input[placeholder="总成本（元）"]') as HTMLInputElement;
     expect(costInput.value).toBe("5999");
     expect(costInput.disabled).toBe(false);
 
-    // 换关到 tx-2 → 自动带出新日期与成本并锁定（后端将重新带出覆盖）
     componentVm(modalSelect!).$emit("update:value", "tx-2");
     await flushPromises();
     const costAfterSwitch = modal.querySelector(
@@ -530,10 +496,8 @@ describe("ItemsView 物品处置（issue #120）", () => {
 
     const modal = bodyQuery('[data-testid="item-dispose-modal"]');
     expect(modal).not.toBeNull();
-    // 处置日期默认今天（jsdom 下 NDatePicker 渲染的 input 值）
     const dateInput = modal!.querySelector("input")!;
     expect(dateInput.value).toMatch(/^\d{4}-\d{2}-\d{2}$/);
-    // 残值默认为空
     const residualInput = new DOMWrapper(
       modal!.querySelector('input[placeholder="残值（元，可选）"]')!,
     );
@@ -556,7 +520,6 @@ describe("ItemsView 物品处置（issue #120）", () => {
         residual_value_cents: 20_000,
       },
     });
-    // 重拉后列表展示已处置状态
     expect(wrapper.text()).toContain("已处置");
   });
 
@@ -581,7 +544,6 @@ describe("ItemsView 物品处置（issue #120）", () => {
     const residualInput = new DOMWrapper(
       modal.querySelector('input[placeholder="残值（元，可选）"]')!,
     );
-    // 预填残值：10000 分 → 100（元）
     expect((residualInput.element as HTMLInputElement).value).toBe("100");
 
     await residualInput.setValue("300");
@@ -618,7 +580,6 @@ describe("ItemsView 物品处置（issue #120）", () => {
     expect(modal).not.toBeNull();
     expect(modal!.textContent).toContain("已处置");
     expect(modal!.textContent).toContain("2026-06-01");
-    // 残值 10000 分（formatAmount）
     expect(modal!.textContent).toContain(formatAmount(10000, cny));
   });
 
@@ -631,7 +592,6 @@ describe("ItemsView 物品处置（issue #120）", () => {
     await flushPromises();
 
     const modal = bodyQuery('[data-testid="item-dispose-modal"]')!;
-    // 清空处置日期（直接置空底层输入）
     const dateInputEl = modal.querySelector("input") as HTMLInputElement;
     const dateInput = new DOMWrapper(dateInputEl);
     await dateInput.setValue("");
@@ -642,13 +602,11 @@ describe("ItemsView 物品处置（issue #120）", () => {
     await flushPromises();
 
     expect(mockInvoke.mock.calls.some(([cmd]) => cmd === "dispose_item")).toBe(false);
-    // 弹窗仍开着
     expect(bodyQuery('[data-testid="item-dispose-modal"]')).not.toBeNull();
   });
 });
 
 describe("ItemsView 自选参考日重算（issue #121）", () => {
-  /** 打开第 1 件物品的详情弹窗并返回弹窗元素。 */
   async function openDetailModal(wrapper: ReturnType<typeof mount>) {
     const detailBtn = findButton(wrapper, "详情", { exact: true });
     await detailBtn!.trigger("click");
@@ -663,7 +621,6 @@ describe("ItemsView 自选参考日重算（issue #121）", () => {
     await flushPromises();
     const modal = await openDetailModal(wrapper);
 
-    // 未选参考日：不发起重算，展示列表快照口径
     expect(mockInvoke.mock.calls.some(([cmd]) => cmd === "calculate_item_cost")).toBe(false);
     expect(modal.textContent).toContain("1000");
 
@@ -678,7 +635,6 @@ describe("ItemsView 自选参考日重算（issue #121）", () => {
     const calls = mockInvoke.mock.calls.filter(([cmd]) => cmd === "calculate_item_cost");
     expect(calls).toHaveLength(1);
     expect(calls[0][1]).toEqual({ id: "item-1", referenceDate: "2026-03-01" });
-    // 重算结果覆盖展示：2000 天；每天成本 500 分；分子 1,000,000 分
     const text = modal.textContent ?? "";
     expect(text).toContain("2000");
     expect(text).toContain(formatAmount(500, cny));
@@ -698,7 +654,6 @@ describe("ItemsView 自选参考日重算（issue #121）", () => {
     await flushPromises();
     expect(modalText()).toContain("2000");
 
-    // 清空 → 缺省口径（mock 返回与列表快照一致的天数）
     calcResponse = { used_days: 1000, numerator_cents: 1_000_000, per_day_cents: 1000 };
     picker.vm.$emit("update:formatted-value", null);
     await flushPromises();
@@ -714,7 +669,6 @@ describe("ItemsView 自选参考日重算（issue #121）", () => {
     await flushPromises();
     const modal = await openDetailModal(wrapper);
 
-    // calcResponse 保持 null → 重算 reject
     const picker = wrapper
       .findAllComponents(NDatePicker)
       .find((s) => s.props("placeholder") === "自选参考日")!;
@@ -722,7 +676,6 @@ describe("ItemsView 自选参考日重算（issue #121）", () => {
     await flushPromises();
 
     expect(mockInvoke.mock.calls.some(([cmd]) => cmd === "calculate_item_cost")).toBe(true);
-    // 原列表快照口径不变
     const text = modal.textContent ?? "";
     expect(text).toContain("1000");
     expect(text).toContain(formatAmount(1000, cny));
@@ -733,10 +686,6 @@ describe("ItemsView 自选参考日重算（issue #121）", () => {
   }
 });
 
-/** 来源跳转落点（spec #704 / issue #708，词汇表「实体定位参数（focus 参数）」）：
- * 视图装配断言——focus 在场 → 对应行高亮；无 focus 空转；读一次语义下
- * 消费后路由 query 变化不再触发（高亮保持实例终态，不反复定位）。
- * 已处置物品行同样在册可高亮（来源列可点击裁决：已处置不落空）。 */
 describe("ItemsView 来源跳转落点（issue #708）", () => {
   beforeAll(() => {
     if (Element.prototype.scrollIntoView) vi.mocked(Element.prototype.scrollIntoView).mockClear();
@@ -760,7 +709,6 @@ describe("ItemsView 来源跳转落点（issue #708）", () => {
     expect(rows.map((r) => r.attributes("data-item-id"))).toEqual(["it-1", "it-2"]);
     expect(rows[0].classes()).not.toContain("item-row-focus");
     expect(rows[1].classes()).toContain("item-row-focus");
-    // 高亮行已滚动定位（jsdom 仅验证调用不炸）
     expect(Element.prototype.scrollIntoView).toHaveBeenCalled();
   });
 
@@ -791,7 +739,6 @@ describe("ItemsView 来源跳转落点（issue #708）", () => {
     const wrapper = mount(ItemsView);
     await flushPromises();
 
-    // 模拟页签切换 replace 后残留新 focus：本实例闸门已耗尽，高亮不迁移
     mockRoute.query = { tab: "items", focus: "it-9" };
     await flushPromises();
     const highlighted = wrapper.findAll("tr.item-row-focus");

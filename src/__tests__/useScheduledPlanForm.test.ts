@@ -54,11 +54,6 @@ const mockMerchants: Merchant[] = [
   },
 ];
 
-/**
- * 基础布线表（overrides 优先于接缝参考兜底）：分类/商户为自定义夹具——商户解析与
- * 选项断言消费「订阅服务」「视频平台」；账户单行走账户选项断言；创建命令固定返回新 id。
- * 币种夹具与规范夹具一致，保司无断言消费，均走内建兜底。
- */
 const BASE_OVERRIDES = {
   list_accounts: mockAccounts,
   list_categories: mockCategories,
@@ -72,7 +67,6 @@ function lastMessage(method: string): string {
   return found!.text;
 }
 
-/** 商户解析结果：填入草稿商户值后直接调接缝解析（不 mount 组件）。 */
 async function resolvedMerchant(merchantValue: string | null): Promise<string | null> {
   await useReferenceStore().refresh();
   const form = useScheduledPlanForm();
@@ -172,13 +166,12 @@ describe("useScheduledPlanForm 商户解析（输入即建 + 重名兜底，ADR-
   });
 
   it("重名兜底中重拉失败：仍上抛原 create 错误", async () => {
-    await useReferenceStore().refresh(); // 首拉成功（陈旧字典）
+    await useReferenceStore().refresh();
     let pulled = false;
     wireInvokeSeam({
       overrides: {
         create_merchant: () => Promise.reject(new Error("商户已存在")),
         list_merchants: () => {
-          // 首拉已成功，之后的兜底重拉一律失败：吞掉重拉错误，保留原错误
           if (pulled) return Promise.reject(new Error("重拉失败"));
           pulled = true;
           return mockMerchants;
@@ -194,7 +187,6 @@ describe("useScheduledPlanForm 商户解析（输入即建 + 重名兜底，ADR-
   });
 
   describe("编辑路径（订阅编辑弹窗，编辑中商户 id 参数）", () => {
-    /** 空字典 + 指定编辑中商户 id 建表单：模拟原商户软删且超出会话缓存。 */
     async function resolvedEditing(
       merchantValue: string | null,
       editingMerchantId: string | null,
@@ -348,13 +340,11 @@ describe("useScheduledPlanForm 选项面（参考数据单源）", () => {
     expect(form.accountOptions.value.map((o) => o.value)).toEqual(["acc-1"]);
     expect(form.currencyOptions.value.map((o) => o.value)).toEqual(["CNY"]);
     expect(form.merchantOptions.value).toEqual([{ label: "视频平台", value: "mch-1" }]);
-    // 分类树只含支出类（分期/订阅扣款为支出口径）
     expect(JSON.stringify(form.categoryTreeOptions.value)).toContain("订阅服务");
   });
 });
 
 describe("useScheduledPlanForm submitCreate 提交时序编排（spec #520）", () => {
-  /** 建转账草稿：设置公共草稿字段（表单校验与特化字段组装留页签，此处直填）。 */
   async function makeTransferForm(onSubmitted?: () => void) {
     await useReferenceStore().refresh();
     const form = useScheduledPlanForm({ onSubmitted });
@@ -364,7 +354,6 @@ describe("useScheduledPlanForm submitCreate 提交时序编排（spec #520）", 
   }
 
   it("转账形态「显式跳过商户解析」：创建带 merchant_id=null，不调用 create_merchant", async () => {
-    // 用户可见无商户面（issue #203），即便草稿商户值非空也不应触发解析
     const form = await makeTransferForm();
     form.merchantRef.value = "盒马";
     await form.submitCreate({
@@ -411,17 +400,13 @@ describe("useScheduledPlanForm submitCreate 提交时序编排（spec #520）", 
     const form = useScheduledPlanForm({ onSubmitted });
     form.note.value = "音乐订阅";
     form.accountId.value = "acc-1";
-    // 输入在用商户名（未选 id）：接缝按名复用（解析矩阵见「商户解析」describe）
     form.merchantRef.value = "视频平台";
     await form.submitCreate({
       kind: "subscription",
-      // 每期金额（分）由页签校验并元转分：页签传入什么金额就发什么
       amountCents: 2500,
     });
     const call = mockInvoke.mock.calls.find(([cmd]) => cmd === "create_scheduled_transaction");
     expect(call).toBeDefined();
-    // 全 payload 全量钉住：公共字段单源组装（币种/周期三字段/开始日取草稿默认终态），
-    // 订阅无形态特化键（金额即每期金额，分期/转账特化键不出现）
     expect(call![1]).toEqual({
       input: {
         kind: "subscription",
@@ -437,7 +422,6 @@ describe("useScheduledPlanForm submitCreate 提交时序编排（spec #520）", 
         note: "音乐订阅",
       },
     });
-    // 成功提示按形态由接缝单源持有（文案键逐字维持现状）
     expect(lastMessage("success")).toBe("已创建订阅");
     expect(onSubmitted).toHaveBeenCalledTimes(1);
   });
@@ -448,18 +432,14 @@ describe("useScheduledPlanForm submitCreate 提交时序编排（spec #520）", 
     const form = useScheduledPlanForm({ onSubmitted });
     form.note.value = "手机分期";
     form.accountId.value = "acc-1";
-    // 输入在用商户名（未选 id）：接缝按名复用（解析矩阵见「商户解析」describe）
     form.merchantRef.value = "视频平台";
     await form.submitCreate({
       kind: "installment",
-      // 每期 floor 口径由页签持有（installmentSchedule）：页签传入什么金额就发什么
       amountCents: 8333,
       specific: { total_amount_cents: 100000, total_occurrences: 12 },
     });
     const call = mockInvoke.mock.calls.find(([cmd]) => cmd === "create_scheduled_transaction");
     expect(call).toBeDefined();
-    // 全 payload 全量钉住：公共字段单源组装（币种/周期三字段/开始日取草稿默认终态）
-    // 合并分期 specific 与解析后的商户 id
     expect(call![1]).toEqual({
       input: {
         kind: "installment",
@@ -477,7 +457,6 @@ describe("useScheduledPlanForm submitCreate 提交时序编排（spec #520）", 
         total_occurrences: 12,
       },
     });
-    // 成功提示按形态由接缝单源持有（文案键逐字维持现状）
     expect(lastMessage("success")).toBe("已创建分期计划");
     expect(onSubmitted).toHaveBeenCalledTimes(1);
   });
@@ -490,7 +469,6 @@ describe("useScheduledPlanForm submitCreate 提交时序编排（spec #520）", 
         seen.push(`note=${form.note.value}`);
       },
     });
-    // 先改成非初始值，再提交
     form.note.value = "月度储蓄";
     form.accountId.value = "acc-1";
     form.recurrenceType.value = "weekly";
@@ -502,14 +480,12 @@ describe("useScheduledPlanForm submitCreate 提交时序编排（spec #520）", 
       specific: { to_account_id: "acc-1", total_occurrences: null },
     });
     expect(lastMessage("success")).toBe("已创建定时转账");
-    // 公共草稿重置终态：币种回默认、周期每月×1、开始日=今天、备注/账户清空
     expect(form.note.value).toBe("");
     expect(form.accountId.value).toBeNull();
     expect(form.currencyCode.value).toBe(useAppStore().defaultCurrency);
     expect(form.recurrenceType.value).toBe("monthly");
     expect(form.recurrenceInterval.value).toBe(1);
     expect(form.startDate.value).toBe(todayStr());
-    // 回调时序：在草稿重置之后调用（回调所见 note 为空）
     expect(seen).toEqual(["note="]);
   });
 
@@ -530,7 +506,6 @@ describe("useScheduledPlanForm submitCreate 提交时序编排（spec #520）", 
     expect(lastMessage("error")).toBe(
       "创建失败: 转出账户与转入账户币种不一致，定时转账不支持跨币种",
     );
-    // 不重置草稿（弹窗保持打开）
     expect(form.note.value).toBe("月度储蓄");
     expect(form.accountId.value).toBe("acc-1");
     expect(onSubmitted).not.toHaveBeenCalled();

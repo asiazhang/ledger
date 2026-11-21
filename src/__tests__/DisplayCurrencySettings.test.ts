@@ -4,12 +4,6 @@ import { mount, flushPromises } from "@vue/test-utils";
 import { NSelect } from "naive-ui";
 import DisplayCurrencySettings from "@/settings/DisplayCurrencySettings.vue";
 
-/**
- * DisplayCurrencySettings 组件测试（issue #858 拆分为设备级偏好；issue #1664 自
- * 「通用」迁入「币种」页签并抽为独立卡片）：展示币种是轻量设置项——localStorage
- * 权威、不触后端、不随同步迁移；作用域是本机表单预选与金额符号提示。
- */
-
 function selects(wrapper: ReturnType<typeof mount>) {
   return wrapper.findAllComponents(NSelect);
 }

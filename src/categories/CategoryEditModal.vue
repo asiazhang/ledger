@@ -29,7 +29,6 @@ const editParentOptions = computed(() => [
     .map((c) => ({ label: c.name, value: c.id })),
 ]);
 
-// 打开弹窗时同步待编辑字段（弹窗内容在关闭后仍保留在 DOM，需在打开时回填）
 watch(
   () => [props.show, props.category],
   () => {
@@ -56,7 +55,6 @@ async function saveEdit() {
     await api.updateCategory(cat.id, input);
     message.success(t("settings.categories.msg.updated"));
     emit("update:show", false);
-    // 参考数据由 ledger:changed 信号自动重拉，分类树随之更新
   } catch (e) {
     message.error(t("settings.categories.msg.updateFailed", { msg: errorMessage(e) }));
   }

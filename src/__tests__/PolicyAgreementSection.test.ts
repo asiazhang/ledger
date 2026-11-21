@@ -12,12 +12,10 @@ import type {
 } from "@ledger/types";
 import { componentVm } from "@ledger/test-support/component-vm";
 
-// 金额断言委托形态（issue #770）：期待值调同一 formatAmount 实现，格式规则唯一归属其专测
 const cny = refCurrencies[0];
 
 const policy: Policy = makePolicy({ id: "policy-1", insurer_id: "ins-1", product_name: "重疾险" });
 
-/** 协议行工厂：订阅形态 + 保单引用（分段历史断言用）。 */
 function makeSegment(partial: {
   id: string;
   status: ScheduledTransactionWithExt["core"]["status"];
@@ -104,7 +102,6 @@ function amountInput(): DOMWrapper<HTMLInputElement> {
   return new DOMWrapper(form.querySelector('[data-testid="policy-agreement-amount"] input')!);
 }
 
-/** 协议字段组内的扣款账户（组件实例 emit，非 teleport 直接挂载）。 */
 async function selectAccount(wrapper: ReturnType<typeof mount>) {
   componentVm(wrapper.findComponent('[data-testid="policy-agreement-account"]')).$emit(
     "update:value",
@@ -141,7 +138,6 @@ describe("PolicyAgreementSection 缴费协议区（issue #362）", () => {
     expect(table.textContent).toContain(formatAmount(300_000, cny));
     expect(table.textContent).toContain(formatAmount(360_000, cny));
     expect(table.textContent).toContain("已取消");
-    // 无活跃段判断不受取消段影响：存在活跃段 → 操作行为「改价」
     expect(wrapper.find('[data-testid="policy-agreement-rebuild-open"]').exists()).toBe(true);
     expect(wrapper.find('[data-testid="policy-agreement-add"]').exists()).toBe(false);
   });
@@ -174,7 +170,6 @@ describe("PolicyAgreementSection 缴费协议区（issue #362）", () => {
         note: "重疾险",
       },
     });
-    // 提交后重拉协议历史
     expect(
       mockInvoke.mock.calls.filter(([cmd]) => cmd === "list_scheduled_transactions").length,
     ).toBeGreaterThanOrEqual(2);

@@ -10,13 +10,6 @@ import { occurrenceStatusLabel, scheduledStatusLabel } from "@ledger/utils/sched
 import { scheduledRecurrenceLabel, scheduledRecurrenceOptions } from "@ledger/scheduled-plan-list";
 import type { SubscriptionSpendOverview } from "@ledger/types";
 
-/**
- * 定时计划域 i18n 行为测试（issue #349 / ADR-0049）：
- * 默认语言恒为 zh-CN（测试环境不初始化），此处显式切 en-US 验证英文渲染与
- * 领域标签函数输出，用例结束还原 zh-CN，不影响其他测试文件（vitest 文件级隔离）。
- */
-
-// jsdom 无 canvas：与 SubscriptionSpendPanel.test.ts 同款桩，避免真实 chart.js 响应式重渲染报错
 vi.mock("vue-chartjs", async () => {
   const { BarChartStub } = await import("../line-chart-stub");
   return { Bar: BarChartStub };
@@ -33,8 +26,6 @@ const emptySpendOverview: SubscriptionSpendOverview = {
 };
 
 function wireI18nDefaults() {
-  // 唯一接缝布线（ADR-0085）：只给页签与卡片标题所需的最小空数据；参考字典
-  // 五命令不在此枚举（规范夹具兜底，i18n 文案断言不依赖字典内容）。
   return wireInvokeSeam({
     defaults: {
       subscription_spend_overview: emptySpendOverview,
@@ -73,7 +64,6 @@ describe("定时计划域 i18n（默认 zh-CN，切换 en-US 即时生效）", (
     expect(wrapper.text()).toContain("Subscription List");
     expect(wrapper.text()).toContain("Actual Spend");
 
-    // 还原默认语言，避免污染同文件后续用例
     await applyLocale("zh-CN");
     await nextTick();
     expect(wrapper.text()).toContain("订阅清单");

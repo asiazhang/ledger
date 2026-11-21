@@ -10,14 +10,12 @@ import { formatAmount } from "@ledger/money";
 import { refCurrencies } from "@ledger/test-support/reference-stubs";
 import type { Transaction } from "@ledger/types";
 
-// 金额断言委托形态（issue #770）：期待值调同一 formatAmount 实现，格式规则唯一归属其专测
 const cny = refCurrencies[0];
 
 function createCalls() {
   return mockInvoke.mock.calls.filter(([cmd]) => cmd === "create_item");
 }
 
-/** 挂载表单（NMessageProvider 包裹以满足 useMessage 注入），flush 后参考数据就绪。 */
 async function mountForm(txn: Transaction) {
   const wrapper = mount(NMessageProvider, {
     slots: { default: () => h(AddItemForm, { transaction: txn }) },
@@ -26,7 +24,6 @@ async function mountForm(txn: Transaction) {
   return wrapper;
 }
 
-/** 弹窗布线：挂载即拉的物品列表空集（defaults 契约快照，中途重桩用例复用）。 */
 const BASE_DEFAULTS = { list_items: [] };
 
 beforeEach(() => {
@@ -47,12 +44,10 @@ describe("AddItemForm（加入物品确认弹窗，issue #119）", () => {
         date: "2026-01-15",
       }),
     );
-    // 自动带出只读展示（文本节点，非输入控件）
     expect(wrapper.text()).toContain("购买日期");
     expect(wrapper.text()).toContain("2026-01-15");
     expect(wrapper.text()).toContain(formatAmount(599_900, cny));
     expect(wrapper.text()).toContain("CNY");
-    // 名称默认 = 交易备注
     const nameInput = wrapper.find('input[placeholder="默认取交易备注，可微调"]');
     expect((nameInput.element as HTMLInputElement).value).toBe("iPhone 15");
   });
@@ -118,7 +113,6 @@ describe("AddItemForm（加入物品确认弹窗，issue #119）", () => {
     await findButtonByTestId(wrapper, "add-item-confirm").trigger("click");
     await flushPromises();
     expect(createCalls()).toHaveLength(1);
-    // 失败 → 不关闭弹窗（视图只在 created 时关闭），错误信息由 message.error 呈现
     expect(wrapper.findComponent(AddItemForm).emitted("created")).toBeUndefined();
   });
 

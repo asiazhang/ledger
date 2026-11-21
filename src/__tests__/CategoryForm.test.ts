@@ -46,7 +46,6 @@ const mockCategories: Category[] = [
 
 describe("CategoryForm.vue", () => {
   beforeEach(async () => {
-    // 参考命令本场景需自定义值（overrides 优先于参考兜底）；保单选项经 list_policies 自定义空表
     wireInvokeSeam({
       overrides: {
         list_accounts: mockAccounts,
@@ -54,7 +53,6 @@ describe("CategoryForm.vue", () => {
         list_policies: [],
       },
     });
-    // Pre-load store so components have data
     const store = useReferenceStore();
     await store.refresh();
   });
@@ -81,14 +79,12 @@ describe("CategoryForm.vue", () => {
     const btn = wrapper.find("button");
     expect(btn.exists()).toBe(true);
     await btn.trigger("click");
-    // 无账户时只提示不调用后端（mockInvoke 已清除，此处不应再出现 create_transaction 调用）
     const calls = mockInvoke.mock.calls.filter(([cmd]) => cmd === "create_transaction");
     expect(calls).toHaveLength(0);
   });
 
   it("在 store 加载前挂载不应崩溃", () => {
     setActivePinia(createPinia());
-    // 不预加载参考数据 — 验证挂载不依赖已加载状态
     const wrapper = mount(CategoryForm, {
       props: { kind: "expense", submitLabel: "记支出" },
     });
@@ -99,7 +95,6 @@ describe("CategoryForm.vue", () => {
     const wrapper = mount(CategoryForm, {
       props: { kind: "expense", submitLabel: "记支出" },
     });
-    // 检查表单项标签
     expect(wrapper.text()).toContain("金额");
     expect(wrapper.text()).toContain("账户");
     expect(wrapper.text()).toContain("分类");
@@ -113,19 +108,14 @@ describe("CategoryForm.vue", () => {
     const wrapper = mount(CategoryForm, {
       props: { kind: "expense", submitLabel: "记支出" },
     });
-    // 扫描是否存在金额输入框
     const inputs = wrapper.findAll("input");
     expect(inputs.length).toBeGreaterThan(0);
   });
 
-  // ---- 字段错误态（ADR-0058 / issue #414，行为接缝）：断言用户可见状态——
-  // 输入的错误态呈现（n-input--error-status）与保存按钮可用性，不断言内部状态变量。
-  /** 金额输入框（表单首项，placeholder「金额」） */
   function amountInput(wrapper: ReturnType<typeof mount>) {
     return wrapper.find('input[placeholder="金额"]');
   }
 
-  /** 金额输入的 NInput 根元素（错误态 class 挂载处） */
   function amountInputRoot(wrapper: ReturnType<typeof mount>) {
     const el = amountInput(wrapper).element.closest(".n-input");
     expect(el).not.toBeNull();
@@ -136,7 +126,6 @@ describe("CategoryForm.vue", () => {
     return amountInputRoot(wrapper).classList.contains("n-input--error-status");
   }
 
-  /** 保存按钮（表单内唯一按钮） */
   function submitButton(wrapper: ReturnType<typeof mount>) {
     return wrapper.find("button");
   }
@@ -209,11 +198,9 @@ describe("CategoryForm.vue", () => {
       });
       await amountInput(wrapper).setValue("4.30发");
       await amountInput(wrapper).trigger("blur");
-      // 失焦不再被静默清空
       expect((amountInput(wrapper).element as HTMLInputElement).value).toBe("4.30发");
       expect(hasErrorStatus(wrapper)).toBe(true);
       expect(submitButton(wrapper).attributes("disabled")).toBeDefined();
-      // 修正：红态立即解除（可走出的闭环）
       await amountInput(wrapper).setValue("4.30");
       expect(hasErrorStatus(wrapper)).toBe(false);
       expect(submitButton(wrapper).attributes("disabled")).toBeUndefined();
@@ -261,7 +248,6 @@ describe("CategoryForm.vue", () => {
       expect(submitButton(wrapper).attributes("disabled")).toBeUndefined();
       await submitButton(wrapper).trigger("click");
       expect(createCalls()).toHaveLength(0);
-      // 负数可解析（非格式错误闭集），同走提交通道
       await amountInput(wrapper).setValue("-5");
       expect(hasErrorStatus(wrapper)).toBe(false);
       await submitButton(wrapper).trigger("click");
@@ -276,27 +262,18 @@ describe("CategoryForm.vue", () => {
       const wrapper = mount(CategoryForm, {
         props: { kind: "expense", submitLabel: "记支出" },
       });
-      // 先制造一次保存尝试与失焦（时机标志置位），再填合法值提交
       await submitButton(wrapper).trigger("click");
       await amountInput(wrapper).setValue("12");
       await amountInput(wrapper).trigger("blur");
-      // 账户下拉经内部 NSelect 注入（第 1 个是币种 AppSelect，第 2 个是账户 PinyinSelect，
-      // 同 add-record.test 的定位方式）
       wrapper.findAllComponents(NSelect)[1].vm.$emit("update:value", "acc-1");
       await submitButton(wrapper).trigger("click");
       await flushPromises();
       expect(createCalls()).toHaveLength(1);
-      // 成功后金额清空且时机标志重置：不显红态
       expect((amountInput(wrapper).element as HTMLInputElement).value).toBe("");
       expect(hasErrorStatus(wrapper)).toBe(false);
     });
   });
 
-  // issue #844 代表挂载：记一笔/编辑表单弹窗经薄封装在移动档自动全屏化。
-  // 分支与钩子收口在 AppModal（卡片钩子类 + 近全屏内联尺寸）及其旁路样式文件
-  // （标签上置/按钮行推底为纯 CSS，选择器产出物由 app-modal-mobile-css.test
-  // 捕获断言）；此处证明真实表单弹窗的 DOM 恰好命中这些钩子与选择器——
-  // 左置标签表单项（被翻转对象）在场、按钮行是节奏容器末块（被推底对象）。
   describe("记一笔表单 × AppModal 移动档（issue #844）", () => {
     function mountFormModal() {
       const Harness = defineComponent({
@@ -319,9 +296,7 @@ describe("CategoryForm.vue", () => {
       expect(card, "卡片应存在").not.toBeNull();
       expect(card!.classList.contains(MOBILE_CARD_CLASS)).toBe(true);
       expect((card as HTMLElement).style.width).toBe("calc(100vw - 32px)");
-      // 标签上置的选择器命中面：左置标签表单项在真实表单中在场
       expect(document.body.querySelector(".n-form-item.n-form-item--left-labelled")).not.toBeNull();
-      // 按钮行推底的选择器命中面：节奏容器末块即按钮行（含提交按钮）
       const last = document.body.querySelector(".n-form > .n-space > :last-child");
       expect(last, "节奏容器末块应存在").not.toBeNull();
       expect(last!.querySelector("button")).not.toBeNull();

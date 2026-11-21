@@ -21,12 +21,6 @@ import { useAppDialog } from "@/composables/useAppDialog";
 import AppModal from "@ledger/ui-kit/AppModal.vue";
 import { routes } from "@/router";
 
-/**
- * 系统返回桥接（issue #845 / ADR-0088 决策 7）：返回事件按窗口分级挂载
- * （移动档才注册监听，桌面档零渗透），语义三段——有弹层关最上层（复用弹层
- * 注册表判定与关闭出口）→ 无弹层路由回退 → 栈底交还系统（销毁主窗口）。
- */
-
 afterEach(() => resetOverlays());
 
 async function mountBackHost() {
@@ -196,7 +190,6 @@ describe("多弹层叠开按序逐层关（验收用例，issue #845）", () => 
     await flushPromises();
     await wrapper.find(".open-dialog").trigger("click");
     await flushPromises();
-    // 栈序 = 打开序（z 序）：先弹窗后确认框
     expect(openOverlayNames()).toEqual(["modal", "dialog"]);
 
     triggerBack({ canGoBack: true });

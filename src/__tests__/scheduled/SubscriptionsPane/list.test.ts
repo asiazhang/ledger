@@ -1,10 +1,3 @@
-/**
- * 订阅清单渲染冒烟（ADR-0041 迁移步 2 收缩）：清单加载/按形态过滤/状态过滤/
- * 详情扩展时序用例已由 ScheduledPlanList 模块接口测试承接
- * （useScheduledPlanList.test.ts，刷新版本号镜像法）；本文件只验适配器的
- * 列渲染接线（含 expandDetail 接线：下期扣款日期/占位/加载失败三态与商户列）。
- * 迁移与删除记录见对应提交信息。
- */
 import { describe, it, expect, beforeEach } from "vitest";
 import { flushPromises } from "@vue/test-utils";
 import { formatAmount } from "@ledger/money";
@@ -17,7 +10,6 @@ import {
 } from "../../factories";
 import { mockDetails, makeDetail, mountView, setMockPlans, setup } from "./common";
 
-// 金额断言委托形态（issue #770）：期待值调同一 formatAmount 实现，格式规则唯一归属其专测
 const cny = refCurrencies[0];
 
 beforeEach(setup);
@@ -90,14 +82,12 @@ describe("SubscriptionsPane 订阅清单渲染冒烟（编排用例见 useSchedu
     const wrapper = await mountView();
     const cell = wrapper.find('[data-testid="next-charge-a1"]');
     expect(cell.text()).toBe("—");
-    // 不推算日期：占位格里不出现任何日期形串
     expect(cell.text()).not.toMatch(/\d{4}-\d{2}-\d{2}/);
   });
 
   it("详情命令失败时显示加载失败，不与「无 pending」混淆", async () => {
     const plan = makeSubscriptionPlan({ id: "a1" });
     setMockPlans([plan]);
-    // 不注册 a1 的详情：get_scheduled_transaction_detail 将 reject
     const wrapper = await mountView();
     expect(wrapper.find('[data-testid="next-charge-a1"]').text()).toBe("加载失败");
   });
@@ -127,7 +117,6 @@ describe("SubscriptionsPane 商户列（issue #190）", () => {
     mockDetails.set("a1", makeDetail(plan, []));
     const wrapper = await mountView();
     expect(wrapper.text()).toContain("视频会员");
-    // 商户列占位：不出现商户名
     expect(wrapper.text()).not.toContain("视频平台");
   });
 });

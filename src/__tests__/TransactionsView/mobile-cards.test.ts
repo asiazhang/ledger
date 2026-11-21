@@ -1,4 +1,3 @@
-// 路由替身经 common.ts 的 vi.mock 注册，必须先于任何直连组件导入（导入顺序即 mock 生效面）
 import {
   mountView,
   mountMobile,
@@ -28,14 +27,7 @@ import type { Transaction } from "@ledger/types";
 import { visibleModalText } from "@ledger/test-support/dom";
 import { makePurchase } from "../factories";
 
-/**
- * 卡片内购买项清单（issue #1884 / ADR-0138 决策 15）：一卡一笔交易不变，卡头仍是
- * 订单级（日期/类型/金额各一次），购买项在卡内逐行列出（商品名 + 共 N 件，列表侧
- * 渲染单点的全文形态）；整卡点击进只读详情（长商品名的全文出口）。无购买项卡片
- * 呈现零变化。
- */
 describe("卡片内购买项清单（issue #1884 / ADR-0138 决策 15）", () => {
-  /** 三件商品订单：超长商品名 + 多件数 + 无分类，数组顺序 = 对账单顺序。 */
   function orderTxn(): Transaction {
     return makeTxn(1, "acc-1", {
       kind: "expense",
@@ -58,12 +50,10 @@ describe("卡片内购买项清单（issue #1884 / ADR-0138 决策 15）", () =>
     const wrapper = await mountMobile();
     const card = cards(wrapper)[0];
     const text = card.text();
-    // 三个商品各占一行（同一渲染单源的全文形态 + 件数文案单源）
     expect(text).toContain("进口无谷深海鱼油配方成猫粮专用 10kg 装大袋全新升级");
     expect(text).toContain("洗衣液");
     expect(text).toContain("纸巾");
     expect(text).toContain("共 2 件");
-    // 卡头订单级：日期与类型标签各一次；金额 = 订单实付只出现一次
     expect(text.split("2026-01-01").length - 1).toBe(1);
     expect(card.findAll(".amount-cell").length).toBe(1);
   });
@@ -90,21 +80,8 @@ describe("卡片内购买项清单（issue #1884 / ADR-0138 决策 15）", () =>
   });
 });
 
-/**
- * 交易页移动档（issue #846 / ADR-0088 决策 9 断点双渲染）：组件测试主接缝。
- * 换档一律经媒体查询测试接缝（@ledger/test-support/media-mock，目录薄壳 mountMobile/mountPhone
- * 单点收口）：默认桌面指针态为桌面档基线；`width: 839` 换移动档（输入轴不变——
- * 桌面缩窗是移动档的附带能力），`width: 839 + hover: none + pointer: coarse`
- * 为触屏手机形态。断言「看到什么、交互后发生什么」：两档渲染分支、卡片字段与
- * 隐私掩码、卡片「⋯」与整卡编辑、记一笔悬浮按钮五类型意图矩阵。
- * 翻页/筛选/URL 下钻/页码回退的两档一致断言在既有 pagination.test.ts /
- * filtering.test.ts 上扩展（验收 2 的落点），不在本文件重复。
- */
-
 const cny = refCurrencies[0];
 
-// 金额隐私模式是模块级单点 ref：开关经 store 真实路径写入，此处置回复默认，
-// 不向同文件后续用例泄漏。
 afterEach(() => {
   useAppStore().setAmountPrivacyEnabled(false);
 });
@@ -123,11 +100,8 @@ describe("TransactionsView 断点双渲染（issue #846）", () => {
     expect(wrapper.findComponent(NDataTable).exists()).toBe(false);
     expect(wrapper.findComponent(TransactionCardList).exists()).toBe(true);
     expect(cards(wrapper).length).toBe(20);
-    // 记一笔入口分档：工具栏分裂按钮（唯一文本「记一笔」）桌面档在、移动档不在；
-    // 悬浮按钮只在移动档（触控轴移动档下快捷键不绑，它是唯一记一笔入口）
     expect(wrapper.text()).not.toContain("记一笔");
     expect(wrapper.find(".create-fab").exists()).toBe(true);
-    // 过滤语义零变化：筛选控件与时间范围快捷选择（五芯片）在移动档照常在
     for (const chip of ["全部", "当月", "当季", "当年", "去年"]) {
       expect(
         wrapper.findAll("button").some((b) => b.text() === chip),
@@ -169,20 +143,16 @@ describe("移动档卡片字段（同一段列表状态）", () => {
     const first = list[0];
     expect(first.text()).toContain("2026-03-15");
     expect(first.text()).toContain("支出");
-    // 分类路径与商户名同表格列口径（reference 单源解析）
     const reference = useReferenceStore();
     expect(first.text()).toContain(reference.categoryPath("cat-1"));
     expect(first.text()).toContain("京东");
-    // 账户名可点击（链接语义同表格）
     expect(first.findComponent(AccountLink).exists()).toBe(true);
     expect(first.text()).toContain("现金");
-    // 金额：文案走 formatAmount 单源（含隐私掩码位），色走 kindSemanticColor
     const amountEl = first.find(".amount-cell").element as HTMLElement;
     expect(amountEl.textContent).toBe(formatAmount(12345, cny));
     expect(amountEl.style.color).toBe(
       probeColor(kindSemanticColor("expense", useAppStore().theme)),
     );
-    // 收入行语义色为收入绿（方向色不因卡片形态丢失）
     const incomeEl = list[1].find(".amount-cell").element as HTMLElement;
     expect(incomeEl.style.color).toBe(probeColor(kindSemanticColor("income", useAppStore().theme)));
   });
@@ -199,7 +169,6 @@ describe("移动档卡片字段（同一段列表状态）", () => {
   it("金额隐私模式：隐藏数字不隐藏形状与方向——掩码恒形、语义色保留", async () => {
     setTxnDb([makeTxn(1, "acc-1", { kind: "expense", amount_native_cents: 12345 })]);
     const wrapper = await mountMobile();
-    // 经 store 开关开启（启动水合在 store 首次创建时读取本地存储，与真实使用同路径）
     useAppStore().setAmountPrivacyEnabled(true);
     await flushPromises();
     const amountEl = cards(wrapper)[0].find(".amount-cell").element as HTMLElement;
@@ -241,9 +210,7 @@ describe("卡片「⋯」与整卡编辑", () => {
     await cards(wrapper)[0].find(".row-actions-btn").trigger("click");
     await flushPromises();
     expect(rowMenu(wrapper).props("show")).toBe(true);
-    // 支出行集合与桌面右键逐项一致（edit/refund/add-item/divider/delete）
     expect(rowMenuKeys(wrapper)).toEqual(["edit", "refund", "add-item", "menu-divider", "delete"]);
-    // ⋯ 自身不触发整卡编辑
     expect(shownModal(wrapper)).toBeUndefined();
   });
 
@@ -272,7 +239,6 @@ describe("卡片「⋯」与整卡编辑", () => {
     await list[0].trigger("click");
     await flushPromises();
     expect(shownModal(wrapper)?.props("title")).toBe("编辑交易");
-    // 关闭后验证 refund 行
     await closeShownModal(wrapper);
     await list[1].trigger("click");
     await flushPromises();
@@ -312,7 +278,6 @@ describe("记一笔悬浮按钮（移动档交易页右下，ADR-0088 决策 5�
       const modal = shownModal(wrapper);
       expect(modal, optionLabel).toBeTruthy();
       expect(modal!.props("title"), optionLabel).toBe(expectedTitle);
-      // 关窗后再选下一类型（意图替换，序号递增由编排内化）
       await closeShownModal(wrapper);
     }
   });

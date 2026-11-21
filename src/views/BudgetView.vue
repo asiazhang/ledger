@@ -46,44 +46,20 @@ const reference = useReferenceStore();
 const message = useMessage();
 const list = ref<BudgetProgress[]>([]);
 
-// 清单加载收编 Loadable（issue #1008 / ADR-0040）：loading 置收、竞态裁决与错误
-// 提示内化；失败 = error 置位 + 默认裸 toast（治愈原 try/finally 无 catch 的静默
-// 失败与未处理 rejection），旧行保留到下次成功替换。
 const { loading, run: runList } = useLoadable(() => api.budgetProgress());
 
-// 年度汇总（issue #1948）：与进度清单同一 `refresh` 并行发起、各自 Loadable 收编
-// 错误——两处数字恒同时刷新，不会出现「卡是旧的、列表是新的」。只有当前自然年，
-// 历史维度不做（预算无历史快照，回看往年只能是假历史）。
 const summary = ref<BudgetAnnualSummary | null>(null);
 const { run: runSummary } = useLoadable(() => api.budgetAnnualSummary());
 
-// 移动档适配（issue #848 / ADR-0088 决策 11 票⑧）：预算表三分列（周期/状态并入
-// 分类副行、进度含已支/预算文案）+ 新增表单纵排。断点口径接窗口分级 composable
-// 唯一事实源，不自立断点；桌面档列结构与表单布局一字不动（回归红线）。
-// 进度语义（父含子、子只算自身、超支判断）零变化——同一命令输出，仅布局适配。
 const windowTier = useWindowTier();
 const isMobileTier = computed(() => windowTier.value === "mobile");
 
-// 移动档单元格共用样式（纵排堆叠/弱化副行/触控目标）全仓单点：@/components/mobile-cells；
-// 首行「分类名 + 状态标签同行」为预算列特有布局，留守本地。
 const MOBILE_HEAD_STYLE = "display: flex; align-items: center; gap: 6px; min-width: 0;";
 
 const categoryId = ref<string | null>(null);
 const amount = ref<number | null>(null);
-// 创建表单周期（issue #1946）：闭集二值单选，默认月度（与后端缺省一致，存量行为不变）。
 const createPeriod = ref<BudgetPeriod>("monthly");
 
-// —— 编辑弹窗（issue #184 金额 / issue #1946 放开周期，ADR-0029 修订注记）：
-// 金额与周期可改，分类不可改（改法为删旧建新）——
-// 开启/目标/关闭编排归弹窗意图工厂 ModalIntent（ADR-0072，词汇表 ModalIntent）：
-// 意图闭集单成员（携带目标预算进度行），显示由「意图非空」派生（无独立 show 布尔），
-// 序号随开启递增驱动表单重建（:key=editSeq），关闭（✕ / ESC / 取消 / 保存成功）
-// 统一经工厂清回 null 终态。现状无序号守卫，迁移为缺陷修复（本票唯一声明的行为
-// 变化）：守卫从无到有，「弹窗开着时目标行被替换回填旧行」缺陷消亡，同目标重开
-// 重回填等边缘语义细化同归此类；此外等价。金额回填（editAmount）是表单字段而非
-// 意图状态，留本视图在开启时直灌（票内裁量，非验收条件）。
-
-/** 编辑预算弹窗意图（单成员闭集）：携带目标预算进度行。 */
 interface BudgetEditIntent {
   progress: BudgetProgress;
 }
@@ -96,14 +72,8 @@ const {
 } = useModalIntent<BudgetEditIntent>();
 
 const editAmount = ref<number | null>(null);
-// 编辑弹窗周期：开启时回填当前行现值，保存随金额一并提交（缺省不改语义由
-// 后端承载；表单始终显式传当前选择，避免「不改」歧义）。
 const editPeriod = ref<BudgetPeriod>("monthly");
 
-// 创建预算分类选项（issue #356）：从仅顶级支出分类放开到全部支出分类
-//（顶级 + 子分类，按 kind 过滤即可——子分类与父分类类型一致），按分类树排序
-//（子分类紧跟父分类），子分类 label 用「父 > 子」路径名；拼音可搜由 PinyinSelect
-// 对 label 整体匹配，父名/子名拼音均可命中。收入分类（无论层级）被 kind 过滤排除。
 const categoryOptions = () =>
   reference.treeCategoryOptions("expense").flatMap((root) => [
     { label: reference.categoryDisplayName(root.key, root.category.name), value: root.key },
@@ -113,8 +83,6 @@ const categoryOptions = () =>
     })),
   ]);
 
-// 子分类预算统一以路径名呈现（列表/编辑弹窗同源，issue #356）；
-// 解析不到（守卫生效前的历史孤儿预算）回退后端返回的分类名（「未分类」）。
 const displayCategoryName = (row: BudgetProgress) =>
   reference.categoryDisplayName(row.budget.category_id, row.category_name);
 
@@ -146,7 +114,6 @@ async function create() {
     category_id: categoryId.value,
     period: createPeriod.value,
     amount_cents: yuanToCents(amount.value) ?? 0,
-    // start_date 已退化为记录字段（永久滚动预算，进度与日期无关），传创建当日（本地日历日）即可
     start_date: todayStr(),
   };
   try {
@@ -157,8 +124,6 @@ async function create() {
     createPeriod.value = "monthly";
     await refresh();
   } catch (e) {
-    // 后端拒绝（金额非正/收入分类/同分类同周期重复）时把错误信息清晰呈现给用户；
-    // 查重提示自带「可编辑该预算的金额」引导
     message.error(t("budget.message.createFailed", { message: errorMessage(e) }));
   }
 }
@@ -199,22 +164,18 @@ async function remove(id: string) {
   }
 }
 
-/** 进度百分比：消耗/上限封顶 100（桌面/移动两分支共用同一口径）。 */
 function progressPercentage(row: BudgetProgress): number {
   return row.budget.amount_cents > 0
     ? Math.min(100, Math.round((row.spent_cents / row.budget.amount_cents) * 100))
     : 0;
 }
 
-/** 年度汇总卡进度百分比：本年已支 / 年度预算总额（年化口径），封顶 100。 */
 const summaryPercentage = computed(() => {
   const s = summary.value;
   if (s === null || s.annual_budget_total_cents <= 0) return 0;
   return Math.min(100, Math.round((s.spent_cents / s.annual_budget_total_cents) * 100));
 });
 
-// 年度汇总卡排版（issue #1948）：桌面双数字横排 + 全宽进度条（决策 A，原型定稿）；
-// 移动档只压缩字号与间距，不换布局、不搬数字（同一卡两档缩放，ADR-0088）。
 const summaryStatsStyle = computed(() => ({
   display: "flex",
   alignItems: "flex-end",
@@ -227,13 +188,11 @@ const summarySecondaryStyle = computed(() => ({
 }));
 const SUMMARY_STAT_LABEL_STYLE = "font-size: 12px;";
 
-/** 进度条状态语义色：超支红 / 正常绿（两分支共用）。 */
 function progressStatus(row: BudgetProgress): "error" | "success" {
   return row.over_budget ? "error" : "success";
 }
 
 const columns = computed<DataTableColumns<BudgetProgress>>(() => {
-  // 移动档三分列（issue #848）：列数收敛至窄屏无横向滚动，信息并入副行不丢失
   if (isMobileTier.value) {
     return [
       {
@@ -247,7 +206,6 @@ const columns = computed<DataTableColumns<BudgetProgress>>(() => {
                 ? h(NTag, { type: "error" }, () => t("budget.status.over"))
                 : h(NTag, { type: "success" }, () => t("budget.status.normal")),
             ]),
-            // 周期以本地化标签呈现（issue #1946 起桌面列同款 i18n 标签，两档一致）
             h("span", { style: MOBILE_SUB_STYLE }, t(`budget.period.${row.budget.period}`)),
           ]),
       },
@@ -377,7 +335,6 @@ const columns = computed<DataTableColumns<BudgetProgress>>(() => {
 });
 
 onMounted(() => {
-  // 参考数据由 useReferenceStore self-init + ledger:changed 信号兜底，无需手工 loadAll
   void refresh();
 });
 </script>

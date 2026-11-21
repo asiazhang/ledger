@@ -73,15 +73,12 @@ const mockCategories: Category[] = [
   },
 ];
 
-/** 本场景命令快照（beforeEach 与直调接缝的用例共享）：重排序按契约返回 undefined。 */
 const CATEGORY_SEAM_DEFAULTS = { reorder_categories: undefined };
 
-/** list_categories 参考命令本场景需自定义分类树（overrides 优先于参考兜底）。 */
 const CATEGORY_SEAM_OVERRIDES = { list_categories: mockCategories };
 
 describe("CategoryManager.vue", () => {
   beforeEach(async () => {
-    // 参考 store 预载走接缝 opt-in 参数。
     await wireInvokeSeam({
       defaults: CATEGORY_SEAM_DEFAULTS,
       overrides: CATEGORY_SEAM_OVERRIDES,
@@ -143,11 +140,9 @@ describe("CategoryManager.vue", () => {
     const mobileNodes = mobile.findAll(".n-tree-node");
     expect(mobileNodes.length).toBeGreaterThan(0);
     mobileNodes.forEach((n) => {
-      // draggable 为枚举属性：false 以字符串 "false" 渲染（不可拖拽）
       expect(n.attributes("draggable")).toBe("false");
     });
 
-    // 桌面档照常（默认宽视口）：拖拽排序入口在位
     setFakeMedia({ width: 1280, hover: "hover", pointer: "fine" });
     const desktop = mount(CategoryManager);
     const desktopNodes = desktop.findAll(".n-tree-node");

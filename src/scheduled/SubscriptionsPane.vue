@@ -43,32 +43,11 @@ import { MOBILE_CELL_STYLE, MOBILE_SUB_STYLE, mobileSubLine } from "@/components
 import { usePlanFocusLanding } from "@/scheduled/usePlanFocusLanding";
 import { scheduledStatusLabel } from "@ledger/utils/scheduled";
 
-/**
- * 订阅页签 = ScheduledPlanList 计划清单模块（ADR-0041 迁移步 2）的薄适配器：
- * 清单加载/刷新、状态过滤、Plan Lifecycle 操作、行操作描述符与周期标签全在模块，
- * 生命周期变更（暂停/恢复/取消）后经 onStatusChanged 回调钩子刷新订阅花费面板。
- * 行操作经共享渲染组件 PlanRowActions 渲染（确认弹层/锚点/空占位只此一份，
- * ADR-0041 决策 7 注），描述符由本页签自组——模块产出在详情动作后插入自建
- * 编辑描述符（同形状、无确认文案；编辑弹窗开启逻辑留本页签，spec #520）。
- * 本组件只留订阅形态真差异——商户挂靠、编辑弹窗（仅金额以外字段可编辑，
- * ADR-0023 决策三，商户解析走表单接缝编辑分支）、花费面板与列/单元格渲染。
- * 本页签无 #309 显式可见变化项：列、操作、表单、提示、排序零变化。
- */
-
 const reference = useReferenceStore();
 const message = useMessage();
 
-// 移动档适配（issue #848 / ADR-0088 决策 11 票⑧）：清单列结构三分（备注/金额/
-// 操作），信息并入副行不丢失；生命周期操作经 PlanRowActions 移动档变体一击可达。
-// 断点口径接窗口分级 composable 唯一事实源；桌面档十列一字不动（回归红线）。
 const windowTier = useWindowTier();
 const isMobileTier = computed(() => windowTier.value === "mobile");
-
-// ---------------------------------------------------------------------------
-// 表单接缝（ADR-0041）：新建与编辑弹窗各持一份草稿实例——公共草稿字段、商户
-// 解析（含重名兜底竞态）与公共 payload 组装全仓单点。新建实例的提交流程编排
-// 沉入接缝 submitCreate（见下方「新建订阅表单接缝与提交」段，spec #520）。
-// ---------------------------------------------------------------------------
 
 const editForm = useScheduledPlanForm();
 const {
@@ -76,26 +55,14 @@ const {
   accountId: editAccountId,
   categoryId: editCategoryId,
   merchantRef: editMerchantRef,
-  // 编辑弹窗的账户下拉必须取**编辑实例**的选项面（spec #1952 / ADR-0142 决策 4）：
-  // 补值按「这份草稿的当前值」判定，复用新建实例的 accountOptions 会把回填的归档
-  // 账户渲染成裸 uuid、或让它从新建实例的选项里漏进新的选择面。
   accountOptions: editAccountOptions,
 } = editForm;
 
-// 实际花费分析区（issue #160）：创建/编辑/生命周期变更/期次变更后同步刷新；
-// 生命周期变更的刷新经清单模块 onStatusChanged 钩子进入此函数（订阅真差异）
 const spendPanelRef = ref<InstanceType<typeof SubscriptionSpendPanel> | null>(null);
 function refreshSpend() {
   void spendPanelRef.value?.reload();
 }
 
-// ---------------------------------------------------------------------------
-// 清单编排（ADR-0041）：全部经 ScheduledPlanList 模块；确认弹层在本适配器渲染。
-// 下期扣款 = 最早 pending 期次（模块公共扩展器，仅选取、不现场推算日期）；
-// 清单加载失败/生命周期成功失败提示与重拉时序全部内化在模块。
-// ---------------------------------------------------------------------------
-
-/** 下期扣款扩展：最早 pending 期次（无则 null，占位「—」）。 */
 interface SubscriptionExt {
   next: ScheduledTransactionOccurrence | null;
 }
@@ -114,16 +81,6 @@ const list = useScheduledPlanList<SubscriptionExt>({
 });
 const { loading, statusFilter, statusFilterOptions, filteredRows } = list;
 
-// ---------------------------------------------------------------------------
-// 新建订阅 = 模态对话框（issue #158）：不引入独立路由页面，
-// 弹窗内完成填写与校验，提交成功后关闭并刷新列表。
-// 开启/关闭编排归弹窗意图工厂 ModalIntent（ADR-0072，词汇表 ModalIntent）：
-// 纯新建布尔方言收编为单成员意图闭集（type: create，无目标载荷），显示由
-// 「意图非空」派生（无独立 show 布尔），关闭（提交成功 / ✕ / ESC / 取消）统一
-// 经工厂清回 null 终态，不存在「布尔弹窗」方言的中间态；表单重置等关闭后副作用留视图。
-// ---------------------------------------------------------------------------
-
-/** 新建订阅弹窗意图（单成员闭集）：纯新建，无目标载荷。 */
 interface SubscriptionCreateIntent {
   type: "create";
 }
@@ -136,17 +93,8 @@ const {
 
 const amountYuan = ref("");
 
-// ---------------------------------------------------------------------------
-// 新建订阅表单接缝与提交（spec #520）：提交流程编排沉入接缝 submitCreate——
-// 商户解析进编排 → 公共 payload → 创建命令 → 提示 → 公共草稿重置 → 成功后回调；
-// 成功后回调注入本页签原子动作：关窗 + 金额重置 + 清单刷新 + 订阅花费刷新
-// （花费刷新为订阅真差异追加，时序与现状一致：清单刷新之后）。金额校验
-// （账户必选、金额 > 0）与元转分留本页签。
-// ---------------------------------------------------------------------------
-
 const createForm = useScheduledPlanForm({
   onSubmitted: async () => {
-    // 提交成功后原子动作（公共草稿已由接缝重置）
     closeCreateIntent();
     amountYuan.value = "";
     await list.load();
@@ -168,7 +116,6 @@ const {
   merchantOptions,
 } = createForm;
 
-/** 新建提交：金额校验留页签，提交流程编排由接缝 submitCreate 持有（spec #520）。 */
 async function create() {
   if (!accountId.value) {
     message.warning(t("scheduled.form.selectAccount"));
@@ -182,20 +129,6 @@ async function create() {
   await createForm.submitCreate({ kind: "subscription", amountCents });
 }
 
-// ---------------------------------------------------------------------------
-// 编辑订阅（issue #162，ADR-0023 决策三）：仅非金额字段（备注/账户/分类），
-// 弹窗无金额输入；提交走订阅编辑命令，携带金额字段会被后端显式拒绝。
-// 编辑不改已生成的期次与交易（期次执行时从计划读取这些字段），只影响未来。
-// 草稿字段（备注/账户/分类/商户）复用表单接缝的第二实例，打开即回填。
-//
-// 开启/目标/关闭编排归弹窗意图工厂 ModalIntent（ADR-0072，词汇表 ModalIntent）：
-// 意图闭集单成员（携带目标计划行），显示由「意图非空」派生（无独立 show 布尔），
-// 序号随开启递增驱动表单重建（:key=editSeq），关闭（✕ / ESC / 取消 / 保存成功）
-// 统一经工厂清回 null 终态；行入口 openEdit 不变。editCurrentMerchantId 等
-// 表单伴随状态属表单接缝/视图侧，不进工厂。
-// ---------------------------------------------------------------------------
-
-/** 编辑订阅弹窗意图（单成员闭集）：携带目标计划行。 */
 interface SubscriptionEditIntent {
   row: SubscriptionRow;
 }
@@ -207,12 +140,8 @@ const {
   close: closeEdit,
 } = useModalIntent<SubscriptionEditIntent>();
 
-/** 被编辑计划的当前商户 id（供表单接缝 resolveMerchant 的软删兜底分支判定）；
- * 表单伴随状态属表单接缝/视图侧，不进意图工厂（ADR-0072 决策 4）。 */
 const editCurrentMerchantId = ref<string | null>(null);
 
-// 编辑商户下拉（issue #190）：在用商户 + 原商户软删且超出会话缓存时追加兜底选项
-// 承载原 id——裸 uuid 不可读，提交时按「未改动」语义原样保留。
 const editMerchantOptions = computed<{ label: string; value: string }[]>(() => {
   const base = reference.merchants.map((m) => ({ label: m.name, value: m.id }));
   const current = editCurrentMerchantId.value;
@@ -255,37 +184,24 @@ async function saveEdit() {
   }
 }
 
-// ---------------------------------------------------------------------------
-// 期次详情弹窗（issue #205）：三页签通用组件，订阅页签同享；
-// 弹窗内重试成功会发 changed，清单与花费面板随之刷新
-// ---------------------------------------------------------------------------
-
 async function onDetailChanged() {
   await list.load();
   refreshSpend();
 }
 
-// ---------------------------------------------------------------------------
-// 展示助手：参考数据名称解析与单元格渲染留适配器；周期标签走模块单源
-// ---------------------------------------------------------------------------
-
 function statusLabel(status: string): string {
   return scheduledStatusLabel(status);
 }
 
-/** 商户名单元格解析（桌面/移动两分支共用；改名即时生效，merchantMap 含软删会话缓存）。 */
 function merchantName(row: SubscriptionRow): string {
   const m = row.plan.merchant_id ? reference.merchantMap.get(row.plan.merchant_id) : undefined;
   return m?.name ?? "—";
 }
 
-/** 扣款账户名解析（两分支共用；未知 id 回退 id，与桌面列同口径）。 */
 function accountName(row: SubscriptionRow): string {
   return reference.accountMap.get(row.plan.core.account_id)?.name ?? row.plan.core.account_id;
 }
 
-/** 行操作描述符组装（桌面/移动两分支共用）：模块产出在详情动作后插入自建编辑
- * 描述符（订阅真差异，ADR-0023 决策三；同形状、无确认文案，spec #520）。 */
 function subscriptionActions(row: SubscriptionRow): ScheduledPlanRowAction[] {
   const status = row.plan.core.status;
   const actions: ScheduledPlanRowAction[] = [];
@@ -294,8 +210,6 @@ function subscriptionActions(row: SubscriptionRow): ScheduledPlanRowAction[] {
       actions.push(action, {
         key: "edit",
         label: t("scheduled.action.edit"),
-        // 「未结束」判据同吃计划的单一出处（`isUnfinishedStatus` = active | paused）：
-        // 订阅编辑与计划取消限同一集合，不另写一份字面量。
         available: isUnfinishedStatus(status),
         confirm: null,
         run: () => openEdit(row),
@@ -307,8 +221,6 @@ function subscriptionActions(row: SubscriptionRow): ScheduledPlanRowAction[] {
   return actions;
 }
 
-/** 下期扣款单元格（两分支共用）：无 pending 占位「—」，详情失败示「加载失败」
- * 不混淆；测试锚点两档同 testid。 */
 function nextChargeText(row: SubscriptionRow): string {
   const currency = reference.getCurrency(row.plan.core.currency_code);
   if (row.ext.next) {
@@ -317,12 +229,9 @@ function nextChargeText(row: SubscriptionRow): string {
   return row.detailFailed ? t("scheduled.list.loadFailed") : "—";
 }
 
-/** 周期下拉选项（computed 现取标签，切语言即时生效） */
 const recurrenceOptions = computed(scheduledRecurrenceOptions);
 
 const columns = computed<DataTableColumns<SubscriptionRow>>(() => {
-  // 移动档三分列（issue #848）：备注标题行 + 状态/周期/开始日与商户/分类/账户两
-  // 弱化副行 + 金额/下期扣款列；窄屏无横向滚动，信息并入副行不丢失
   if (isMobileTier.value) {
     return [
       {
@@ -395,7 +304,6 @@ const columns = computed<DataTableColumns<SubscriptionRow>>(() => {
     {
       title: t("scheduled.column.merchant"),
       key: "merchant",
-      // 改名即时生效（引用指向 id）：merchantMap 含软删商户会话缓存，历史计划照常显示
       render: (row) => merchantName(row),
     },
     {
@@ -436,30 +344,22 @@ const columns = computed<DataTableColumns<SubscriptionRow>>(() => {
     {
       title: t("scheduled.column.nextCharge"),
       key: "next",
-      // 测试锚点：无 pending 期次（预生成窗口之外）时断言占位，不现场推算日期
       render: (row) =>
         h("span", { "data-testid": `next-charge-${row.plan.core.id}` }, nextChargeText(row)),
     },
     {
       title: t("scheduled.column.actions"),
       key: "actions",
-      // 行操作描述符由模块构建，本页签自组数组透传共享渲染组件（确认弹层/测试锚点/
-      // 空占位只此一份，ADR-0041 决策 7 注）：订阅真差异「编辑」（仅非金额字段，
-      // ADR-0023 决策三）以同形状描述符紧随详情动作之后——active/paused 可编辑、
-      // 已取消不提供、无确认文案；渲染组件不识形态，编辑弹窗开启逻辑留本页签。
       render: (row) =>
         h(PlanRowActions, { actions: subscriptionActions(row), rowId: row.plan.core.id }),
     },
   ];
 });
 
-/** 来源跳转落点入参（spec #704 / issue #707）：待开的计划 id（视图侧 focus
- * 读一次后的暂存；空则无落点）。 */
 const props = defineProps<{ focusPlanId?: string | null }>();
 
 const emit = defineEmits<{ (e: "focusConsumed"): void }>();
 
-// 计划来源落点时序（读 id → 开窗 → 回报）收口共享工厂，三页签零手搓：
 usePlanFocusLanding({
   focusPlanId: () => props.focusPlanId,
   openDetail: (id) => void planDetailRef.value?.open(id),

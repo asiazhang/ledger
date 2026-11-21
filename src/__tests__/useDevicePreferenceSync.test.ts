@@ -5,12 +5,6 @@ import { defineComponent } from "vue";
 import { useAppStore } from "@/stores/app";
 import { useDevicePreferenceSync } from "@/composables/useDevicePreferenceSync";
 
-// 设备偏好镜像推送（issue #308 / ADR-0042；备份目录先例 ADR-0016 决策 3）：
-// 真源在前端 localStorage（应用设置 store），应用根组件挂载一次本 composable，
-// 启动（immediate）与变更时推给后端运行时消费。测试主缝与既有先例一致：
-// mock invoke 断言命令调用，不触碰真实 Tauri。
-
-/** 宿主组件：模拟 App.vue 在 setup 内挂载一次 composable。 */
 const Host = defineComponent({
   setup() {
     useDevicePreferenceSync();

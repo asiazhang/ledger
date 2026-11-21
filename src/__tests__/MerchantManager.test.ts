@@ -13,7 +13,6 @@ const { pushMock } = vi.hoisted(() => ({
   pushMock: vi.fn(),
 }));
 
-// 条数下钻（issue #446）经 useRouter 跳转（pushMock 断言导航目标，同 AccountLink 先例）
 vi.mock("vue-router", () => ({
   useRouter: () => ({ push: pushMock }),
 }));
@@ -39,10 +38,8 @@ const mockMerchants: Merchant[] = [
 
 let merchantDb: Merchant[] = mockMerchants;
 
-/** 关联交易计数后端响应（issue #445，毛笔数口径）：可缺行（无引用商户前端补 0）。 */
 let countDb: { merchant_id: string; transaction_count: number }[] = [];
 
-/** 管理页只消费商户表与条数聚合（可变库函数型覆写），其余走参考兜底规范夹具。 */
 const BASE_OVERRIDES = {
   list_merchants: () => merchantDb,
   list_merchant_transaction_counts: () => countDb,
@@ -108,9 +105,7 @@ describe("MerchantManager.vue（issue #189）", () => {
     expect(merchantCalls("create_merchant")).toHaveLength(1);
     expect(merchantCalls("create_merchant")[0][1]).toEqual({ input: { name: "盒马" } });
     expect(messageApi.success).toHaveBeenCalled();
-    // 表单清空
     expect(nameInput.element.value).toBe("");
-    // 重拉后列表出现新商户（store 由失效信号驱动，测试中手动 refresh 模拟）
     await useReferenceStore().refresh();
     expect(wrapper.text()).toContain("盒马");
   });
@@ -132,7 +127,6 @@ describe("MerchantManager.vue（issue #189）", () => {
     await flushPromises();
 
     expect(messageApi.error).toHaveBeenCalledWith("添加失败: Error: 参数错误: 商户已存在: 盒马");
-    // 表单不清空，用户可直接修正
     expect(nameInput.element.value).toBe("盒马");
   });
 
@@ -183,19 +177,16 @@ describe("MerchantManager.vue 关联交易条数列（issue #445，毛笔数口�
     ];
     const wrapper = mount(MerchantManager);
     await flushPromises();
-    // 初始自然序（与后端名称序一致）：京东在前
     expect(rowTexts(wrapper)[0]).toContain("京东");
 
     const sorter = wrapper.find("th.n-data-table-th--sortable");
     expect(sorter.exists()).toBe(true);
     await sorter.trigger("click");
     await flushPromises();
-    // 第一次点击降序：条数多的红旗连锁（5）在前
     expect(rowTexts(wrapper)[0]).toContain("红旗连锁");
 
     await sorter.trigger("click");
     await flushPromises();
-    // 第二次点击升序：条数少的京东（1）回到最前
     expect(rowTexts(wrapper)[0]).toContain("京东");
   });
 
@@ -224,7 +215,6 @@ describe("MerchantManager.vue 条数下钻（issue #446）", () => {
     await store.refresh();
   });
 
-  /** 条数下钻按钮：每行的条数单元格按钮（title 与 MerchantLink 同源，用作语义定位）。 */
   function countButtons(wrapper: ReturnType<typeof mount>) {
     return wrapper
       .findAll("tbody tr")
@@ -271,8 +261,6 @@ describe("MerchantManager.vue 条数下钻（issue #446）", () => {
 });
 
 describe("MerchantManager.vue 拼音模糊搜索（issue #447，统一模糊搜索语义 ADR-0027）", () => {
-  /** 五个商户：检索词构造覆盖原文子串（盒马 ⊂ 盒马/盒马鲜生、物业 ⊂ 万科物业）
-   * 与拼音首字母子序列（wy ⊂ wkwy、jd ⊂ jd）双入口。 */
   const searchMerchants: Merchant[] = ["京东", "盒马", "万科物业", "红旗连锁", "盒马鲜生"].map(
     (name, i) => ({
       id: `mch-s-${i}`,
@@ -330,7 +318,6 @@ describe("MerchantManager.vue 拼音模糊搜索（issue #447，统一模糊搜�
     expect(rows[0]).toContain("盒马");
     expect(rows[1]).toContain("盒马鲜生");
 
-    // 拼音首字母子序列路径（hm ⊂ hm / hmxs）同序
     await searchInput(wrapper).setValue("hm");
     rows = rowNames(wrapper);
     expect(rows).toHaveLength(2);
@@ -368,7 +355,6 @@ describe("MerchantManager.vue 显示已删切换（issue #447）", () => {
     await store.refresh();
   });
 
-  /** 「显示已删」开关（checkbox 语义定位）。 */
   function showDeletedToggle(wrapper: ReturnType<typeof mount>) {
     return wrapper.findAll(".n-checkbox").find((c) => c.text() === "显示已删")!;
   }
@@ -403,7 +389,6 @@ describe("MerchantManager.vue 显示已删切换（issue #447）", () => {
     await showDeletedToggle(wrapper).trigger("click");
     expect(editButtons(wrapper)).toHaveLength(2);
     expect(deleteButtons(wrapper)).toHaveLength(2);
-    // 行级精确断言（按按钮而非裸文本，避免与「已删除」标记的子串相撞）
     const deletedRowEl = wrapper.findAll("tbody tr").find((r) => r.text().includes("永辉超市"))!;
     expect(deletedRowEl.findAll("button").filter((b) => b.text() === "编辑")).toHaveLength(0);
     expect(deletedRowEl.findAll("button").filter((b) => b.text() === "删除")).toHaveLength(0);
@@ -447,7 +432,6 @@ describe("MerchantManager.vue 显示已删切换（issue #447）", () => {
 });
 
 describe("MerchantManager.vue 前端分页（issue #457）", () => {
-  /** 分页数据工厂：名称序 = id 序（补零保证字典序稳定）；56 条 → 首页 50 + 第 2 页 6。 */
   function makeMerchants(n: number): Merchant[] {
     return Array.from({ length: n }, (_, i) => ({
       id: `mch-p-${i}`,
@@ -508,9 +492,6 @@ describe("MerchantManager.vue 前端分页（issue #457）", () => {
     return wrapper.findAll(".n-checkbox").find((c) => c.text() === "显示已删")!;
   }
 
-  /** 走完整删除流程：点击行内「删除」→ popconfirm 正向确认（NPopconfirm 内容
-   * teleport 到 body，直接对其组件 emit 正向点击，PoliciesView 先例）→ mock 命令
-   * 更新数据 → 手动 refresh 模拟 ledger:changed 失效重拉。 */
   async function deleteRow(wrapper: ReturnType<typeof mount>, rowIndex: number) {
     const row = wrapper.findAll("tbody tr")[rowIndex]!;
     const deleteBtn = findButton(row, "删除", { exact: true })!;
@@ -522,8 +503,6 @@ describe("MerchantManager.vue 前端分页（issue #457）", () => {
     await flushPromises();
   }
 
-  /** 让 delete_merchant 命令对指定商户软删生效（is_deleted 置位；含软删全量
-   * 列表由 store 按 is_deleted 拆分，软删行转已删区而非消失）。 */
   function mockDeleteMerchant(id: string) {
     wireInvokeSeam({
       overrides: {
@@ -567,7 +546,6 @@ describe("MerchantManager.vue 前端分页（issue #457）", () => {
     expect(paginationProps(wrapper).page).toBe(1);
     expect(rowTexts(wrapper)).toHaveLength(20);
 
-    // 档位上限 100：56 条全量单页展示
     paginationProps(wrapper).onUpdatePageSize(100);
     await flushPromises();
     expect(rowTexts(wrapper)).toHaveLength(56);
@@ -667,10 +645,8 @@ describe("MerchantManager.vue 前端分页（issue #457）", () => {
     expect(rowTexts(wrapper)).toHaveLength(2);
 
     mockDeleteMerchant("mch-p-50");
-    // 第 2 页首行是商户050（在用区尾部）
     await deleteRow(wrapper, 0);
 
-    // 软删行仍以已删行展示（移到已删区尾部），本页行数不变，页码不动
     expect(paginationProps(wrapper).page).toBe(2);
     expect(rowTexts(wrapper)).toHaveLength(2);
   });

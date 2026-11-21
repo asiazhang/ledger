@@ -84,31 +84,17 @@ import {
 } from "@ledger/types";
 
 const reference = useReferenceStore();
-// 窗口分级（ADR-0088 决策 2 / 词汇表「窗口分级」）：断点双渲染判定——同一列表
-// 状态，桌面档表格（一字不动）/移动档卡片列表二选一；记一笔入口分档（FAB 仅
-// 移动档）。换档实时响应（媒体查询 change 驱动）。
 const tier = useWindowTier();
 const isMobile = computed(() => tier.value === "mobile");
-// 物品 store（issue #119）：仅用于右键菜单「加入物品」的置灰态判断；
-// self-init + ledger:changed 自动重拉，创建成功后菜单下次打开即为置灰态。
 const itemsStore = useItemsStore();
-// 视图偏好 store（ADR-0136 / issue #1811）：设备级「隐藏投资相关流水」裁决的唯一读写方，
-// 与会话筛选分家（不入 filters、不参与清除筛选与 ESC 复位，ADR-0094 边界原样）。
 const viewPreferences = useTransactionViewPreferencesStore();
 const message = useMessage();
 const dialog = useAppDialog();
 const route = useRoute();
-// 当前页交易数据浅响应式持有（issue #2187）：每次列表响应整体替换数组引用，
-// 不对含嵌套出资项、购买项与来源对象的百条只读记录建立深层响应式代理。
 const data = shallowRef<Transaction[]>([]);
 const total = ref(0);
 const loading = ref(false);
 
-// 过滤状态机（ADR-0030）：「用户意图进、列表状态出」。filters / page / pageSize / 重拉版本号
-// 归 TransactionFilter 模块所有；手动筛选变更走 setFilter、清除筛选走 resetFilters、
-// 记一笔/退款回填与页大小切换走 refresh（重拉 + 翻回第一页）、删除成功走 afterRowDelete
-// （页码回退入口，ADR-0045）——「翻页归零 + 刷新」全仓仅模块统一出口一处，视图不再持有
-// 翻页归零样板与首刷防双刷标志，也不直写页码回退。
 const {
   filters,
   page,
@@ -121,54 +107,30 @@ const {
   syncUrlQuery,
 } = useTransactionFilter();
 
-// ESC 复位接线（spec #892 / ADR-0094）：本视图持有保留态，setup 期向复位回调注册表
-// 声明复位回调、作用域销毁时自动撤销（注册表内化，导航离开/跨断点换档卸载均不滞留）；
-// 窗口行为守卫在无弹层 ESC 时消费。复位即清除保留态本身：走模块既有复位出口
-// resetFilters（清全部过滤 + 翻页归零 + 页大小回默认 + 版本 bump 照常重拉），
-// 复位后离开再回来 = 默认；无保留状态时幂等无操作（与按钮禁用态判定不同源，见 store）。
 registerViewReset(resetFilters);
 
-// 行操作弹窗编排（ADR-0045）：意图闭集为唯一事实源，显示开关由「意图非空」派生，
-// 回调序号随 open 递增内化（作表单 key 强制重建实例）。四个行操作弹窗——记一笔（#338）、
-// 退款/加入物品（#339）、编辑（#340）——同经本模块实例开启。
 const { intent, seq, open: openModal, close: closeModal } = useTransactionModalState();
 
-/** 是否有任一激活的过滤条件（控制清除按钮可用性与空态文案）。 */
 const filtersActive = computed(() => Object.values(filters).some((v) => v !== null));
 
-/** 只读详情意图（窄化）：非 detail 意图为 null；模板按 detail.kind 分派只读组件。 */
 const detailIntent = computed(() => (intent.value?.type === "detail" ? intent.value : null));
 
-// 时间维度行（issue #381/#382/#383，#410 起由共享受控组件承载）：预设芯片
-// 「全部 | 当月 | 当季 | 当年 | 去年」＋期间步进器＋期间直达面板整行由
-// QuickTimeRange 承载。快照区间 v-model 进出——组件不持状态源，唯一事实源
-// 仍是 TransactionFilter 日期维度（dateFrom/dateTo 成对桥接）；同值守卫、
-// 翻页归零与自动刷新在模块内免费继承，交互、文案与弹层注册表上报零变化
-//（ADR-0057 决策 5；组件语义详见该组件头部注释）。
 const quickRange = computed<NullableDateRange>({
   get: () => ({ from: filters.dateFrom, to: filters.dateTo }),
   set: (range) => setFilter({ dateFrom: range.from, dateTo: range.to }),
 });
 
-/** 账户下拉选项：参考数据的**可选择账户**单一派生（list_accounts 不含 is_hidden 黑洞
- * 账户，沿用既有边界；归档账户不进新选择，spec #1952 / ADR-0142 决策 4）。当前筛选值
- * 恰是归档账户（从已归档行下钻 `?account=<id>` 进来）时补回选项并标「已归档」——
- * 值仍保持选中、过滤照旧生效，不静默清筛选也不露裸 uuid。 */
 const accountOptions = usePinnedAccountOptions(
   computed(() => filters.involvingAccountId),
   computed(() => reference.selectableAccountOptions),
 );
 
-/** 商户下拉选项：来自 merchantMap（在用 + 软删，issue #191）——
- * 软删商户仍有历史交易，需可被选中过滤；按名称排序保证稳定。 */
 const merchantOptions = computed(() =>
   [...reference.merchantMap.values()]
     .sort((a, b) => a.name.localeCompare(b.name, "zh"))
     .map((m) => ({ label: m.name, value: m.id })),
 );
 
-/** 类型下拉选项：主列表可选集收窄为四通用 kind（ADR-0135 / issue #1783，MAIN_LIST_KINDS
- * 单源，spec #1025 起多选）；投资 kind 的类型筛选在投资域投资明细页签。标签经 t() 随语言切换。 */
 const kindOptions = computed<Array<{ label: string; value: TransactionKind }>>(() =>
   MAIN_LIST_KINDS.map((value) => ({
     label: t(`transactions.kind.${value}`),
@@ -176,17 +138,12 @@ const kindOptions = computed<Array<{ label: string; value: TransactionKind }>>((
   })),
 );
 
-/** 类型多选值（spec #1025）：脱只读投影（readonly 数组不直接喚组件）、标签按闭集顺序
- * 渲染（决议 6——手动选择序与 URL 载荷序都不作为展示序）；空集合与满选四通用 kind 经
- * normalizeKindSelection 归一为 null（空集合 ≡ 满选 ≡ 不过滤 ≡ 默认态，ADR-0135）。 */
 const kindValue = computed<TransactionKind[] | null>(() => {
   if (!filters.kinds?.length) return null;
   const rank = new Map<TransactionKind, number>(MAIN_LIST_KINDS.map((k, i) => [k, i]));
   return [...filters.kinds].sort((a, b) => (rank.get(a) ?? 0) - (rank.get(b) ?? 0));
 });
 
-/** 列表请求（ADR-0030 决策 6：请求发起、loading、行数据归视图）：以模块当前状态装配
- * 请求参数并发起查询。 */
 async function load() {
   loading.value = true;
   try {
@@ -194,26 +151,15 @@ async function load() {
       page: page.value,
       page_size: pageSize.value,
     };
-    // 过滤参数按需携带（空值省略，与后端可选字段语义一致）；分类维度三态装配（issue #377）
     if (filters.dateFrom) filter.from = filters.dateFrom;
     if (filters.dateTo) filter.to = filters.dateTo;
     if (filters.involvingAccountId) filter.involving_account_id = filters.involvingAccountId;
     if (filters.merchantId) filter.merchant_id = filters.merchantId;
     if (filters.categoryId === UNCATEGORIZED_ONLY) filter.uncategorized_only = true;
     else if (filters.categoryId) filter.category_id = filters.categoryId;
-    // 类型维度（spec #1025 手动多选 + 下钻共用；主列表收窄 ADR-0135 / issue #1783）：
-    // 每次请求显式携带 kind 集合（含默认态）——显式集合在场按其携带，默认态显式携带
-    // 四通用 kind（主列表排除投资 kind 的唯一机制，装配单点 resolveRequestKinds）。
     filter.kinds = resolveRequestKinds(filters.kinds);
-    // 视图偏好先决收窄（ADR-0136 决策 1/3 / issue #1811）：偏好不是筛选维度，不入会话
-    // 筛选、不参与清除筛选与 ESC 复位；开启时请求携带隐藏参数（缺省不携带，契约只增），
-    // 行集 = 偏好收窄 ∩ 既有筛选，账户下钻不让位（服务端分页 total 同口径）。
     if (viewPreferences.hideInvestmentRelated) filter.hide_investment_related = true;
     const res = await api.listTransactions(filter);
-    // 页码钳制（issue #893）：页码超出当前数据有效范围时自愈——空页 + 尚有数据
-    // + 非第一页 → 走 ADR-0045 页码回退入口回退一页重拉（既有出口，不新增第二出口、
-    // 视图不直写页码），本响应不落数据（不渲染空页）。恢复访次是其主场景，
-    // 数据缩页的并发漂移同规自愈。
     if (res.items.length === 0 && res.total > 0 && page.value > 1) {
       afterRowDelete(0);
       return;
@@ -227,24 +173,12 @@ async function load() {
   }
 }
 
-// URL 下钻只读入口（issue #234 / #96 决策 3/4）：?account= / ?merchant= / ?category=（issue #377）
-// / ?kinds= / ?dateFrom= / ?dateTo= 的解析与校验、复位规则、参考数据就绪补判与字段级让位全部内化在
-// TransactionFilter 参数表；
-// 视图只监听路由并把 query 递给模块，不持任何时序标志与解析逻辑。
-// URL 只读不写回（会话级 store 是唯一事实源，issue #893）。
-// 注册顺序在首拉 watch 之前（issue #893）：setup 期 immediate 同步登记本趟 query，
-// 首拉读到的即 URL 应用后的最终状态。
 watch(
   () => route.query,
   (query) => syncUrlQuery(query),
   { immediate: true },
 );
 
-// 首拉与重拉唯一触发点：模块 bump 版本号 = 需以当前模块状态重拉；首拉由 immediate
-// 承担（issue #893 会话内保留）：默认态（含冷启动）以默认态拉取，恢复访次以保留态
-// （恢复的页码与筛选）拉取，不经 refresh 出口的翻回第一页语义——离开期间新账回来
-// 即见，保留的是选择不是数据快照。同一同步批次内的多次 bump（如 URL 多维度同时
-// 声明意图）由 watcher 去重为一次请求，双刷被出口唯一性消灭。
 watch(
   refreshVersion,
   () => {
@@ -253,29 +187,14 @@ watch(
   { immediate: true },
 );
 
-/** 记一笔（create）经共享模块实例开启（意图/序号见上方编排声明）：
- * 类型由入口单点表达，弹窗内不提供切换，中途换类型 = 关闭重开。 */
-
-/** 创建形态标签：借贷变体入口取借贷文案，交易 kind 取 transactions.kind.*（issue #374）。 */
 function createKindLabel(kind: CreateFormKind): string {
   return isLendingEntryKind(kind)
     ? t(`transactions.lending.${kind}`)
     : t(`transactions.kind.${kind}`);
 }
 
-/** 下拉选项：3 个 kind 项标注快捷键（键位来自 CREATE_KIND_KEYS 单一来源，与 keydown
- * 匹配共用）+ 借贷变体「借出」「借入」两项（issue #374，分隔线分组；不占快捷键键位）。
- * refund 不在入口：退款已移出表单域，入口由交易条目右键菜单承接，独立 ticket 落地前
- * 处于过渡态；convert 不在入口：无现金腿 kind 界面只读、无手工录入，ADR-0106 决策 10 /
- * #1048；买入/卖出不在入口：创建入口迁投资页「明细」页签头部（ADR-0135 决策 5 /
- * issue #1782），闭集判定与移动悬浮按钮同源（见 utils/create-entry-kinds）。
- * 触控轴下裸键监听不绑定（ADR-0088 决策 6 / issue #843），键位标注同步退役
- * （提示不存在的键位是误导）；指针轴行为不变。 */
 const inputMode = useInputMode();
 
-/** 创建闭集收窄单源（ADR-0135 决策 5 / issue #1782）：桌面下拉与移动悬浮按钮共用同一份
- * availableCreateKinds 结果，一处生效两处；收窄无条件，不随投资功能开关变化——关闭投资
- * 时投资页整页不可达（ADR-0116 决策 4 修订注记），入口语义由整页覆盖。 */
 const createKinds = computed(() => availableCreateKinds());
 const createKindOptions = computed<DropdownOption[]>(() => [
   ...createKinds.value.map((k) => ({
@@ -302,25 +221,16 @@ const createTitle = computed(() => {
     : t("transactions.create.title");
 });
 
-/** 记一笔各入口（顶栏主体 / 子类型下拉 / 裸键快捷键）统一经模块开启。 */
 function openCreate(k: CreateFormKind) {
   void openModal({ type: "create", kind: k });
 }
 
-// 裸键快捷键（issue #153）：a/z/i 直达对应类型弹窗，与点下拉对应项同一入口；
-// 焦点在可编辑元素或弹层打开时抑制；随视图装卸，仅交易页生效。
-// 键位闭集随创建闭集同源收窄（ADR-0135 决策 5 / issue #1782）：b/s 退役——命中但
-// 不可用的键原样放行（可用性闸门经 create-entry-kinds 判定，不吞键）。
 useCreateShortcuts(openCreate, isCreateKindAvailable);
-/** 提交成功：关窗（模块意图清回终态），回填意图 refresh（重拉 + 翻回第 1 页，
- * 新记录按日期/时间排序最可能落在第 1 页），保留筛选条件（与手动过滤同等语义，不重置）。 */
 function onFormCreated() {
   closeModal();
   refresh();
 }
 
-/** 手动过滤处理器：声明意图即生效（翻页归零 + 重拉，同值守卫在模块 setFilter 内：
- * 条件实际变化才动作），不同步回 URL（组件状态是唯一事实源）。 */
 function onAccountFilterChange(id: string | null) {
   setFilter({ involvingAccountId: id });
 }
@@ -329,15 +239,10 @@ function onMerchantFilterChange(id: string | null) {
   setFilter({ merchantId: id });
 }
 
-/** 类型多选处理器（spec #1025；满选归一 ADR-0135 / issue #1783）：空集合与满选四通用 kind
- * 都归一为 null（空集合 ≡ 满选 ≡ 不过滤 ≡ 默认态，「满选 ≠ 默认」不等式随可选集收窄解除）。 */
 function onKindFilterChange(values: TransactionKind[] | null) {
   setFilter({ kinds: normalizeKindSelection(values) });
 }
 
-/** 视图偏好开关处理器（ADR-0136 / issue #1811）：写偏好 store（唯一读写方）后经模块
- *  统一出口 refresh 重拉（翻页归零 + 版本 bump）——行集裁决入口与筛选变更同构，
- *  不直写 load、不经 setFilter（偏好不是筛选维度）。 */
 function onHideInvestmentChange(value: boolean) {
   viewPreferences.setHideInvestmentRelated(value);
   refresh();
@@ -347,16 +252,12 @@ async function remove(id: string) {
   try {
     await api.deleteTransaction(id);
     message.success(t("transactions.list.deleted"));
-    // 删除成功 → 页码回退入口（ADR-0045）：声明本页删后剩 N 条，回退与重拉由模块内化，
-    // 视图不再直写页码、不再自行发起请求（删前本页 1 条 ⇔ 删后超页，ADR-0008）
     afterRowDelete(data.value.length - 1);
   } catch (e) {
     message.error(t("transactions.list.deleteFailed", { msg: errorMessage(e) }));
   }
 }
 
-/** 删除走 useAppDialog 二次确认（issue #151）：取消不删，确认后才删除。
- * 遮罩点击不构成关闭意图（issue #252 弹层关闭语义）：确认/取消须显式点击。 */
 function confirmDelete(row: Transaction) {
   dialog.warning({
     title: t("transactions.deleteDialog.title"),
@@ -368,73 +269,40 @@ function confirmDelete(row: Transaction) {
   });
 }
 
-/** 行内退款弹窗（issue #151）：目标交易行由右键所在行固定（fixed-target），
- * 序号随每次开启递增（作表单 key 强制重建实例，金额/币种/账户由 fixedTarget
- * 重新初始化，不依赖弹窗内容卸载）。开启/关闭编排经 TransactionModalState
- * （ADR-0045）；同一支出可多次发起退款（部分退款语义，不阻断）。 */
 function openRefundFromRow(row: Transaction) {
   void openModal({ type: "refund", row });
 }
 
-/** 退款提交成功：关窗（编排内化关闭意图）并回填意图 refresh（重拉 + 翻回第 1 页，
- * 新退款按日期排序最可能落在第 1 页，保留筛选条件）。 */
 function onRefundCreated() {
   closeModal();
   refresh();
 }
 
-/** 编辑弹窗（issue #178，issue #180 扩到 buy/sell）：行右键「编辑」，回填该笔交易
- * 全部业务字段，kind 锁死不可切换（跨 kind 编辑本期边界外，见 issue #176 边界）；
- * 提交走全字段更新命令（update_transaction，与 HTTP PUT 同一行为层权威）。
- * 开启/关闭编排经 TransactionModalState（ADR-0045，#340）：目标行由意图携带
- * （fixed-target），序号作表单 key 强制重建实例（回填/提交均指向本次右键所在行）；
- * buy/sell 的「先取买卖明细再开窗、失败不开窗」时序与慢取竞态守卫内化在模块，
- * 取数不经视图。提交失败弹窗不关、已填内容不丢（错误提示与不重置均在表单 composable 内）。
- * convert / split / dividend 不进本入口（界面只读 kind，见 openDetailFromRow）。 */
 function openEditFromRow(row: Transaction) {
   void openModal({ type: "edit", row });
 }
 
-/** 只读详情弹窗（ADR-0106 决策 10 / #1048、#1052；ADR-0109 / #1078）：界面只读
- * kind（convert / split / dividend）不体现写操作入口，行激活与菜单「详情」都进本
- * 入口；扩展明细的「先取数再开窗、失败不开窗」时序与慢取竞态守卫内化在
- * TransactionModalState，取数不经视图。 */
 function openDetailFromRow(row: Transaction) {
   void openModal({ type: "detail", row });
 }
 
-/** 编辑成功：关窗（编排内化关闭意图）并以当前页码重拉列表（保持当前页与筛选，
- * 不重置 page → 视图侧 load，不经模块出口 refresh 的翻回第 1 页语义）。 */
 function onEditSaved() {
   closeModal();
   void load();
 }
 
-/** 「加入物品」确认弹窗（issue #119 / ADR-0025 创建唯一入口）：目标交易行由右键所在行
- * 固定，日期/成本/币种只读带出，名称默认备注可微调；提交走既有物品创建命令
- * （溯源必填）。开启/关闭编排经 TransactionModalState（ADR-0045）；成功与取消都
- * 只是关窗（物品写入与交易列表无关，物品 store 经 ledger:changed 自动重拉，菜单
- * 下次打开即为置灰态）。 */
 function openAddItemFromRow(row: Transaction) {
   void openModal({ type: "add-item", row });
 }
 
-/** 成功与取消都只关窗（经编排内化关闭意图；物品列表经 ledger:changed 自动重拉）。 */
 function closeAddItem() {
   closeModal();
 }
 
-/** 退款/加入物品弹窗经 ✕ / ESC 显式关闭：走编排内化关闭（意图清回空终态）。 */
 function onModalShowUpdate(show: boolean) {
   if (!show) closeModal();
 }
 
-/** 行右键菜单（issue #151 / #119 / #177 / #178 / #180）：除 refund 外行首项「编辑」，
- * expense 行另有「退款」「加入物品」（已建物品置灰），所有行含「删除」。
- * 打开、重定位、关闭、选中的全部时序收进行菜单编排工厂 RowContextMenu
- * （issue #550）；选项组装收口在 transaction-row-menu 纯函数（可独立测试），
- * 菜单项图标与删除项 error 色也由该函数统一注入；业务动作分派留视图
- * （工厂入参回调，选中即收起并交付收起瞬间的目标行）。 */
 const rowMenu = useRowContextMenu<Transaction>((key, row) => {
   if (key === "detail") openDetailFromRow(row);
   else if (key === "edit") openEditFromRow(row);
@@ -443,14 +311,10 @@ const rowMenu = useRowContextMenu<Transaction>((key, row) => {
   else if (key === "delete") confirmDelete(row);
 });
 
-// 可见性由单判别状态派生（非空即显示）；定位坐标取工厂保留值（open 同步更新、
-// close 不清零）：naive-ui 离场动画期间仍按 x/y 重定位弹层，视图侧清零会让
-// 淡出中的菜单跳到视口左上角闪现一次（issue #798）。
 const menuShow = computed(() => rowMenu.state.value !== null);
 const menuX = computed(() => rowMenu.position.value.x);
 const menuY = computed(() => rowMenu.position.value.y);
 
-/** 已建物品的交易 id 集合（按物品溯源指针比对，不新增查询、不建反向引用）。 */
 const linkedTxIds = computed(
   () =>
     new Set(
@@ -460,8 +324,6 @@ const linkedTxIds = computed(
     ),
 );
 
-// 主题 error 色（issue #177）：删除项经 DropdownOption props 着色，不硬编码色值，
-// 暗色模式自动适配（useThemeVars 随当前主题响应式取值）。
 const themeVars = useThemeVars();
 
 const menuOptions = computed(() => {
@@ -474,12 +336,6 @@ const menuOptions = computed(() => {
     : [];
 });
 
-/** 表格行属性：绑定行右键菜单（open 内化「收起 → 下一帧重开」重定位舞步；
- * 原生菜单拦截单点归窗口行为守卫，视图不再 preventDefault）＋订单块行类（块内行线抹掉，
- * 见 transaction-columns.purchaseRowClass / global.css——分开两个订单块）。
- * 购买项续行不开菜单（issue #1883 / ADR-0138 决策 13）：行 = 购买项不是可操作对象、
- * 无悬浮操作（合并操作格不在续行上）也无右键；订单级交互只在承载合并格的
- * 订单块首行一处。 */
 const rowProps = (row: Transaction) => ({
   class: purchaseRowClass(row),
   onContextmenu: (e: MouseEvent) => {
@@ -488,16 +344,11 @@ const rowProps = (row: Transaction) => ({
   },
 });
 
-/** 翻页（两档同一出口）：写入页码 + 以当前状态重拉。桌面表格 pagination 与
- * 移动档 NPagination 共用，语义零分叉。 */
 function onPageChange(p: number): void {
   page.value = p;
   void load();
 }
 
-// 翻页快捷键（issue #1902 / ADR-0140）：[ 上一页 / ] 下一页，语义等同点击分页条——
-// 以最新页码为基准步进一页，走既有翻页出口 onPageChange（两档零分叉）；首/末页越界
-// 幂等无操作；抑制闸门（可编辑焦点 / 弹层 / 触控轴）由 composable 内化。
 const shortcutPageCount = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)));
 usePaginationShortcuts((dir) => {
   const target = dir === "prev" ? page.value - 1 : page.value + 1;
@@ -505,17 +356,11 @@ usePaginationShortcuts((dir) => {
   onPageChange(target);
 });
 
-/** 期间步进器暴露面（issue #1904 / ADR-0141）：只声明「等同点击 < / >」这一个入口——
- * 游标反推、数据期间边界钳制与 v-model 写回全在 QuickTimeRange 内单点。 */
 interface PeriodStepperHandle {
   stepPrev: () => void;
   stepNext: () => void;
 }
 
-// 周期步进快捷键（issue #1904 / ADR-0141）：, 上一个周期 / . 下一个周期，语义等同点击
-// 期间步进器 < / >——步进走 QuickTimeRange 经 defineExpose 暴露的同一入口（组件内单点）；
-// 「全部」无游标与数据期间边界末端越界幂等无操作；抑制闸门（可编辑焦点 / 弹层 / 触控轴）
-// 由 composable 内化。
 const periodStepper = ref<PeriodStepperHandle | null>(null);
 useTimePeriodShortcuts((dir) => {
   const stepper = periodStepper.value;
@@ -524,48 +369,25 @@ useTimePeriodShortcuts((dir) => {
   else stepper.stepNext();
 });
 
-/** 页大小切换（两档同一出口）：写入后经统一出口重拉（翻回第 1 页）。 */
 function onPageSizeChange(size: number): void {
   pageSize.value = size;
   refresh();
 }
 
-// 列经 computed 构造：列名（t()）随语言切换即时重建（列宽总和随之联动）。
-// 传入 onRowMenuOpen 即追加常显「⋯」操作列（ADR-0088 决策 6 / issue #843）：
-// 与行右键共用同一行菜单编排工厂 open 入口，以点击坐标弹出（账户行先例）。
 const columns = computed<DataTableColumn<Transaction>[]>(() => [
   ...buildTransactionColumns(reference, {
-    // 行菜单操作列（「⋯」常显第二入口，委托形态）：按钮只携带语义属性，打开动作
-    // 经下方表格容器的事件委托分发到 rowMenu.open（与行右键同一入口）。
     rowActions: true,
-    // 输入轴信号（issue #2187 共享单例，本视图已消费登记）：金额单元格与来源类型
-    // 常驻小字按轴分流。
     inputMode,
-    // 购买项展开（issue #1883 / ADR-0138 决策 13）：订单级列合并、分类逐行、备注一列两用
     expandPurchases: true,
   }),
 ]);
 
-// 展开显示行集 + 展示文本预计算（issue #2188，展开/合并与预计算接线唯一入口）：
-// 数据到达或参考上下文变化（参考数据失效重拉、语言切换、亮/暗主题切换、金额隐私
-// 模式切换）时一次性产出每条显示行的展示文本与属性，表格 patch 期只读预计算字段、
-// 不再逐格调用国际化取词/金额格式化/分类路径解析/借贷方向派生（计数型渲染守门
-// ① 收紧到 0 的接线面）。带购买项的交易每项一行，订单级格以 rowSpan 纵向合并
-//（ADR-0138 决策 13）；删除本接线（:data 回退未预计算行集，列渲染回落渲染期逐格
-// 格式化）即计数守门变红。
 const displayRows = computed(() =>
   precomputeTransactionDisplayRows(reference, data.value, { expandPurchases: true }),
 );
 
-// scroll-x：列中所有固定列（有 width 的列，备注为弹性列不计入）宽度总和
 const scrollX = computed(() => sumFixedColumnWidths(columns.value));
 
-// 表级事件委托（issue #2189 行内高频组件瘦身）：单元格内的账户/商户/来源下钻、
-// 备注复制与操作列「⋯」不再逐格绑定回调，只携带 data-tx-action 语义属性，点击
-// 冒泡到表格容器统一分发——路由跳转、来源跳转深模块（注入侧栏收纳与功能开关
-// 谓词）、剪贴板写入与统一 toast、行菜单打开（与行右键共用 rowMenu.open）全部
-// 收口在装配单点。键盘可达性由原生 button 承担（Tab 聚焦 + Enter 触发 click，
-// 冒泡即走同一分发）。
 const rowByKey = computed(() => new Map(displayRows.value.map((row) => [displayRowKey(row), row])));
 const onTableCellClick = useTransactionTableCellActions({
   message,
@@ -575,14 +397,10 @@ const onTableCellClick = useTransactionTableCellActions({
   },
 });
 
-/** 空态文案（两档同源）：过滤无结果提示 / 默认暂无数据，归一计算属性供
- * 移动档空态与桌面表格 #empty 槽共用同一字符串口径。 */
 const emptyDescription = computed(() =>
   filtersActive.value ? t("transactions.list.emptyFiltered") : t("transactions.list.empty"),
 );
 
-/** 整卡点击 = 行激活（移动档卡片）：无现金腿 kind 进只读详情（supportsRowDetail 单源），
- * 其余可编辑行进编辑表单（supportsRowEdit 单源）——refund 两类都不开放，点击无动作。 */
 function activateCard(row: Transaction): void {
   if (supportsRowDetail(row)) openDetailFromRow(row);
   else if (supportsRowEdit(row)) openEditFromRow(row);

@@ -28,22 +28,12 @@ import { amountPrivacyEnabled, formatAmount } from "@ledger/money";
 import { kindLabel } from "@/transaction/transaction-columns";
 import { makeAccount, makeFunding, makeMerchant, makePurchase, makeTransaction } from "./factories";
 
-/** 金额列按交易类型语义着色（issue #435）：只测外部行为——
- * 给定交易类型与主题，金额单元格最终呈现语义色模块给出的颜色；
- * 模块自身的色值定案见 semantic-colors.test.ts。
- * 单元格交互归 AmountCell 组件（issue #843），此处只断言列配置的载荷单点。 */
-
 const reference = {
   categoryPath: () => null,
   accountMap: new Map(),
   getCurrency: () => undefined,
 } as unknown as ReferenceStore;
 
-/**
- * 按键取渲染列：DataTableColumn 是含分组列的联合（key/render 并非每支都有），
- * 本文件只消费「带键、带 render 的普通列」——经断言守卫单点窄化，
- * 不在用例内散布 as/非空断言。
- */
 function renderColumnOf(columns: DataTableColumn<Transaction>[], key: string) {
   const hit = columns.find((c) => (c as { key?: unknown }).key === key);
   expect(hit, `列 ${key} 应存在`).toBeTruthy();
@@ -52,7 +42,6 @@ function renderColumnOf(columns: DataTableColumn<Transaction>[], key: string) {
   return render as (row: Transaction, index: number) => unknown;
 }
 
-/** 输入轴信号替身（媒体查询接缝之外的列工厂单测形态：列工厂消费 ComputedRef）。 */
 const POINTER_MODE = computed<InputMode>(() => "pointer");
 const TOUCH_MODE = computed<InputMode>(() => "touch");
 
@@ -67,16 +56,14 @@ function amountCellOf(row: Transaction, inputMode?: InputMode): VNode {
   return render(row, 0) as VNode;
 }
 
-/** 预计算行（经唯一预计算入口包装，供轻量列渲染消费 display 记录）。 */
 function precomputedRowOf(row: Transaction): Transaction {
   return precomputeTransactionDisplayRows(reference, [row])[0];
 }
 
-/** 单元格 vnode 树内的委托动作按钮（data-tx-action 语义属性，列渲染产物查找口）。 */
 function actionVnodeOf(cell: VNode, action: string): VNode | null {
   if ((cell.props as Record<string, unknown> | null)?.["data-tx-action"] === action) return cell;
   const children = cell.children;
-  if (!Array.isArray(children)) return null; // 插槽对象/文本子节点不含动作元素
+  if (!Array.isArray(children)) return null;
   for (const child of children as unknown as VNode[]) {
     if (child && typeof child === "object" && "type" in child) {
       const hit = actionVnodeOf(child, action);
@@ -134,7 +121,6 @@ describe("buildTransactionColumns 金额单元格语义着色", () => {
     expect((vnode.props as { style: { color: string } }).style.color).toBe(
       kindSemanticColor("expense", "dark"),
     );
-    // 非交互：无角色/无点按语义（金额全文气泡仅触控轴）
     expect((vnode.props as Record<string, unknown>)["aria-label"]).toBeUndefined();
   });
 
@@ -144,7 +130,6 @@ describe("buildTransactionColumns 金额单元格语义着色", () => {
     const row = makeTransaction({
       id: "tx-convert",
       kind: "convert",
-      // 行金额锚点 = 结转成本（3590.62），展示口径 = 转出金额（3615.61）。
       amount_native_cents: 359062,
       convert: {
         to_instrument_id: "inst-in",
@@ -162,9 +147,6 @@ describe("buildTransactionColumns 金额单元格语义着色", () => {
   });
 });
 
-/** 类型列轻量标签（issue #2189）：语义样式元素在场的可观察断言——四类色型
- * 经 tag-colors 按主题解析后以内联样式呈现（删除瘦身接线回退 NTag 即计数守门
- * ② 红；色型公式对齐锁定归 theme 包 tag-colors 契约测试）。 */
 describe("buildTransactionColumns 类型列轻量标签", () => {
   function kindCellOf(row: Transaction): VNode {
     const render = renderColumnOf(buildTransactionColumns(reference), "kind");
@@ -188,10 +170,6 @@ describe("buildTransactionColumns 类型列轻量标签", () => {
   });
 });
 
-/** 来源列（spec #704 / issue #706）：列序与渲染产物——
- * 只测外部行为：列位置、轻量单元格产物（委托动作按钮/占位文本），
- * 链接交互与状态标注的渲染矩阵归 SourceLink 组件测试（表外消费方，一缝一测）；
- * 委托动作语义归 TransactionsView/SearchView 组件测试（表级事件委托装配缝）。 */
 describe("buildTransactionColumns 来源列", () => {
   function columnByKey(key: string) {
     return renderColumnOf(buildTransactionColumns(reference), key);
@@ -242,9 +220,6 @@ describe("buildTransactionColumns 来源列", () => {
   });
 });
 
-/** 备注列（显式复制通道，见「界面文本不可选」词条）：只测单元格产物——
- * 占位符/容器结构/委托按钮载荷；剪贴板写入与统一 toast 归共享复制出口与
- * 视图委托装配测试（一缝一测）。 */
 describe("buildTransactionColumns 备注列", () => {
   function noteCellOf(row: Transaction) {
     const render = renderColumnOf(buildTransactionColumns(reference), "note");
@@ -270,10 +245,6 @@ describe("buildTransactionColumns 备注列", () => {
   });
 });
 
-/** 交易行「⋯」常显操作列（ADR-0088 决策 6 / issue #843；委托形态 issue #2189）：
- * 只测装配面——声明 rowActions 才追加列、按钮携带行菜单委托动作与显示行键；
- * 菜单项集合与动作分派归 TransactionsView 组件测试（行菜单编排 + 委托装配缝），
- * 直连回调形态（投资明细页签）单测锁定回调透传。 */
 describe("buildTransactionColumns 操作列（「⋯」常显第二入口）", () => {
   const row = makeTransaction({ id: "t-actions", kind: "expense" });
 
@@ -292,7 +263,6 @@ describe("buildTransactionColumns 操作列（「⋯」常显第二入口）", (
     const props = vnode.props as { class: string; "aria-label": string } & Record<string, unknown>;
     expect(props.class).toBe("row-actions-btn touch-hit-area");
     expect(props["aria-label"]).toBe("更多操作");
-    // 委托动作 + 显示行键（视图按键解析目标行打开 RowContextMenu）
     expect(props["data-tx-action"]).toBe("row-menu");
     expect(props["data-tx-row-key"]).toBe("t-actions:-1");
     expect(vnode.children as string).toBe("⋯");
@@ -310,9 +280,6 @@ describe("buildTransactionColumns 操作列（「⋯」常显第二入口）", (
   });
 });
 
-/** 购买项展开装配（issue #1883 / ADR-0138 决策 13）：列构造器是展开 + 合并规则的
- * 生产单源——订单级列 rowSpan 纵向合并 + 合并格居中类，分类/备注列不合并。
- * 视图层外部行为归 TransactionsView/purchase-read.test.ts，此处只测列装配面。 */
 describe("buildTransactionColumns 购买项展开装配", () => {
   const ORDER_LEVEL_KEYS = [
     "date",
@@ -400,12 +367,10 @@ describe("buildTransactionColumns 购买项展开装配", () => {
       name: "超长商品名『进口无谷深海鱼油成猫粮专用 10kg 装大袋』",
       quantity: 3,
     });
-    // 列表形态：名内懒挂载省略（初始纯 span，悬停才挂提示弹层，#2188）+ 件数标注
     const truncated = renderPurchaseLine(item, { truncate: true });
     const truncChildren = truncated.children as VNode[];
     expect(truncChildren[0].type).toBe(NPerformantEllipsis);
     expect(truncChildren).toHaveLength(2);
-    // 全文形态（卡片 / 详情）：整名渲染、自然换行——触控轴无悬停，详情是全文出口
     const full = renderPurchaseLine(item);
     const fullChildren = full.children as VNode[];
     expect(fullChildren[0].type).not.toBe(NPerformantEllipsis);
@@ -419,7 +384,6 @@ describe("buildTransactionColumns 购买项展开装配", () => {
       ((vnode.children as VNode[]).at(-1) as VNode).children as string;
     expect(qtyText(renderPurchaseLine(item, { truncate: true }))).toBe("共 2 件");
     expect(qtyText(renderPurchaseLine(item))).toBe("共 2 件");
-    // 详情形态：分类标注插入在件数标注之前（名称 / 分类 / 件数顺序）
     const withCategory = renderPurchaseLine(item, { suffix: "生活 > 宠物" });
     const children = withCategory.children as VNode[];
     expect(children).toHaveLength(3);
@@ -444,12 +408,7 @@ describe("buildTransactionColumns 购买项展开装配", () => {
   });
 });
 
-/** 展示行预计算（issue #2188）：纯函数入口以行集与只读参考上下文为输入，一次性产出
- * 每条显示行的展示文本与属性。验收判据：全部展示形态与原渲染口径逐字段一致
- * （同批派生单源函数的同一时点输出）。 */
 describe("precomputeTransactionDisplayRows 展示行预计算", () => {
-  // 参考上下文替身：分类路径映射（多级 + 软删同口径）、账户映射（借贷派生）、
-  // 商户映射（在用 + 软删）、币种免折算。语义与 Reference Data store 派生映射一致。
   const PATHS: Record<string, string> = {
     "cat-food": "生活 > 餐饮",
     "cat-pet": "生活 > 宠物",
@@ -518,7 +477,6 @@ describe("precomputeTransactionDisplayRows 展示行预计算", () => {
         account_id: "acc-cash",
         to_account_id: "acc-debt",
       }),
-      // 普通转账（资金互转）：不派生，仍「转账」
       makeTransaction({
         id: "t-normal",
         kind: "transfer",
@@ -680,8 +638,6 @@ describe("precomputeTransactionDisplayRows 展示行预计算", () => {
     expect(convertRow.display.amountText).toBe(formatAmount(361561, undefined));
     expect(splitRow.display.amountText).toBe("-");
     expect(groupedRow.display.amountText).toBe(formatAmount(1234567, undefined));
-    // 金额语义色：随主题与 kindSemanticColor 单源一致（主题切换即时换色由
-    // 视图 computed 重派生承接，此处锁定单源口径）
     const app = useAppStore();
     app.setTheme("light");
     const lightRow = pre([convert])[0];
@@ -728,15 +684,12 @@ describe("precomputeTransactionDisplayRows 展示行预计算", () => {
     const computed = pre([tx, plain], { expandPurchases: true });
     expect(computed).toHaveLength(3);
     expect(computed.map((r) => r.purchaseIndex)).toEqual([0, 1, -1]);
-    // 购买项行：分类逐行取购买项自己的分类、件数标注随行
     expect(computed[0].display.categoryPath).toBe("生活 > 宠物");
     expect(computed[0].display.purchaseQuantityLabel).toBe("共 2 件");
     expect(computed[1].display.categoryPath).toBe("-");
     expect(computed[1].display.purchaseQuantityLabel).toBe("共 1 件");
-    // 订单级字段随行继承（rowSpan 合并格消费交易级 display）
     expect(computed[0].display.kindLabel).toBe(computed[1].display.kindLabel);
     expect(computed[0].display.amountText).toBe(computed[1].display.amountText);
-    // 非购买项行继承交易级展示（普通行分类为空 → '-' 兜底）
     expect(computed[2].display.categoryPath).toBe("-");
     expect(computed[2].display.purchaseQuantityLabel).toBeUndefined();
   });

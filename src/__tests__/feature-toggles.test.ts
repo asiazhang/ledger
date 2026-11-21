@@ -15,12 +15,6 @@ import {
   saveContainmentLists,
 } from "@ledger/utils/view-state";
 
-// 功能开关状态基座接口测试（issue #1241 / ADR-0116 决策 2/6）。
-// 本票只做状态与读写，不做任何 UI 与过滤（后续票消费本 store 的关闭集合）。
-// 「重启」惯用法 = setActivePinia(createPinia())：store 首次实例化即启动读路径
-//（读 view_state:closed_features 经解析防御），新 pinia = 新一次启动。
-
-/** 重启：换新 pinia，下一次 useFeatureToggleStore() 即新一次启动读路径 */
 function reboot() {
   setActivePinia(createPinia());
 }

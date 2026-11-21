@@ -43,3 +43,7 @@
 
 - ADR-0030：TransactionFilter 深模块——同族工厂形态先例，本 ADR 的接口纪律沿其房式。
 - 词汇表：Loadable 词条见界面状态与交互域 `docs/contexts/CONTEXT-ui-interaction.md`。
+
+## 修订注记（#2210 注释清理，2026-11-22）：同步设置卡收编的两条行为等价例外自代码注记并入
+
+issue #1397 同步设置卡异步动作收编 Loadable（决策 3 错误通道默认策略 + 决策 6 注 silent opt-out）时显式记录两条行为等价例外：① 失败文案从「前缀：码化错误」降级为裸码化错误——码化 + params 插值不变、只少前缀（决策 3 不设策略注入，前缀无处安放；与 #1008 收编批同型）；② 引导预检为 silent 实例——error 照常置位、toast 不弹，失败经弹窗错误位就地呈现（原 precheckFailed 形态逐字等价）。成功与 warning 提示不是错误反馈，保持动作内直调。

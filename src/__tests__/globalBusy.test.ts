@@ -10,7 +10,6 @@ import { busyVisible, resetGlobalBusy } from "@ledger/api/global-busy";
 
 beforeEach(() => {
   vi.useFakeTimers();
-  // 模块级单例状态防串扰（先例：resetToastSink）
   resetGlobalBusy();
 });
 
@@ -24,15 +23,15 @@ describe("globalBusy 全局忙碌状态模块（issue #500，统一 invoke 封�
     wireInvokeSeam({ overrides: { list_currencies: () => d.promise } });
     const pending = api.listCurrencies();
 
-    expect(busyVisible.value).toBe(false); // 调用即计数，但阈值内不可见
+    expect(busyVisible.value).toBe(false);
     await vi.advanceTimersByTimeAsync(299);
-    expect(busyVisible.value).toBe(false); // 阈值内
+    expect(busyVisible.value).toBe(false);
     await vi.advanceTimersByTimeAsync(1);
-    expect(busyVisible.value).toBe(true); // 超阈值
+    expect(busyVisible.value).toBe(true);
 
     d.resolve();
     await pending;
-    expect(busyVisible.value).toBe(false); // 计数归零即隐藏
+    expect(busyVisible.value).toBe(false);
   });
 
   it("阈值内结束的快操作从不显示忙碌条", async () => {
@@ -45,7 +44,6 @@ describe("globalBusy 全局忙碌状态模块（issue #500，统一 invoke 封�
   it("并发调用聚合计数：部分完成仍显示，全部完成才隐藏", async () => {
     const a = deferred<void>();
     const b = deferred<void>();
-    // 参考命令桩统一走接缝（issue #725）：在途/兑结时机由覆写控制
     wireInvokeSeam({
       overrides: {
         list_currencies: () => a.promise,
@@ -60,7 +58,7 @@ describe("globalBusy 全局忙碌状态模块（issue #500，统一 invoke 封�
 
     a.resolve();
     await p1;
-    expect(busyVisible.value).toBe(true); // b 仍在途，聚合窗口未归零
+    expect(busyVisible.value).toBe(true);
 
     b.resolve();
     await p2;
@@ -75,12 +73,10 @@ describe("globalBusy 全局忙碌状态模块（issue #500，统一 invoke 封�
     await vi.advanceTimersByTimeAsync(300);
     expect(busyVisible.value).toBe(true);
 
-    // Tauri invoke 失败形态：后端 AppError 的 serde 序列化对象（非 Error 实例）
     d.reject({ kind: "internal", message: "炸了" });
     await expect(pending).rejects.toEqual({ kind: "internal", message: "炸了" });
     expect(busyVisible.value).toBe(false);
 
-    // 不卡死：后续慢 IO 仍能再次点亮忙碌条
     const d2 = deferred<void>();
     wireInvokeSeam({ overrides: { list_currencies: () => d2.promise } });
     const pending2 = api.listCurrencies();
@@ -92,15 +88,11 @@ describe("globalBusy 全局忙碌状态模块（issue #500，统一 invoke 封�
   });
 
   it("invoke 替身返回裸值（非 thenable）也纳入聚合计数", async () => {
-    // 本用例刻意违反 invoke「恒返回 Promise」契约（裸返回值原样透传，
-    // 不包 Promise），验证忙碌计数对非 thenable 返回同样收敛；
-    // 故仅在此单点豁免桩类型，不放宽 AppInvokeHandler 全局契约。
     mockInvoke.mockImplementation((() => []) as unknown as AppInvokeHandler);
     await api.listCurrencies();
     await vi.advanceTimersByTimeAsync(1000);
-    expect(busyVisible.value).toBe(false); // 递减走兜底包装，归零彻底
+    expect(busyVisible.value).toBe(false);
 
-    // 计数对称未被破坏：后续慢 IO 仍能正常点亮与隐藏
     const d = deferred<void>();
     mockInvoke.mockReturnValue(d.promise);
     const pending = api.listAccounts();
@@ -113,7 +105,6 @@ describe("globalBusy 全局忙碌状态模块（issue #500，统一 invoke 封�
 
   it("重叠在途窗口聚合：快调用与慢调用重叠使聚合窗口持续在途，跨阈值即点亮", async () => {
     const slow = deferred<void>();
-    // 参考命令桩统一走接缝（issue #725）：慢调用挂起、快调用即刻兑结
     wireInvokeSeam({
       overrides: {
         list_currencies: () => slow.promise,
@@ -122,13 +113,12 @@ describe("globalBusy 全局忙碌状态模块（issue #500，统一 invoke 封�
     });
     const pSlow = api.listCurrencies();
 
-    // t=100ms 起一个即刻完成的快调用；聚合窗口自 t=0 起持续在途不归零
     await vi.advanceTimersByTimeAsync(100);
     const pFast = api.listAccounts();
     await pFast;
-    expect(busyVisible.value).toBe(false); // 仍未越过阈值
+    expect(busyVisible.value).toBe(false);
 
-    await vi.advanceTimersByTimeAsync(200); // t=300ms：聚合窗口持续在途越过阈值
+    await vi.advanceTimersByTimeAsync(200);
     expect(busyVisible.value).toBe(true);
 
     slow.resolve();

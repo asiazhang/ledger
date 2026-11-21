@@ -7,15 +7,7 @@ import App from "@/App.vue";
 import { routes } from "@/router";
 import { useSidebarOrderStore } from "@/stores/sidebar-order";
 
-/**
- * App 壳触控交互轴（issue #843 / ADR-0088 决策 6，词汇表「输入轴」）：
- * 平板横屏 = 桌面档布局 + 触控轴——宽度轴落桌面档（侧栏在、移动壳不在）时，
- * 输入轴触控下侧栏菜单退役键位提示（⌘/⌃），指针轴行为不变；两轴对比组件测试，
- * 换档一律经媒体查询测试接缝（@ledger/test-support/media-mock）。
- */
-
 async function mountApp() {
-  // 启动门探测（issue #570 / #601）：桩为明文就绪让主界面照常挂载（app-mobile-nav 同款）
   wireInvokeSeam({ defaults: { get_boot_status: { phase: "ready", error_code: null } } });
   const router = createRouter({ history: createMemoryHistory(), routes });
   await router.push("/dashboard");

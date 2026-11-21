@@ -7,7 +7,6 @@ import { formatAmount } from "@ledger/money";
 import { refCurrencies } from "@ledger/test-support/reference-stubs";
 import type { SubscriptionSpendOverview, SubscriptionSpendRow } from "@ledger/types";
 
-// 金额断言委托形态（issue #770）：期待值调同一 formatAmount 实现，格式规则唯一归属其专测
 const cny = refCurrencies[0];
 
 vi.mock("vue-chartjs", async () => {
@@ -15,7 +14,6 @@ vi.mock("vue-chartjs", async () => {
   return { Bar: BarChartStub };
 });
 
-/** 生成以 endMonth 结尾的连续 n 个月（YYYY-MM，旧→新） */
 function lastMonths(endMonth: string, n: number): string[] {
   const [y, m] = endMonth.split("-").map(Number);
   const months: string[] = [];
@@ -51,7 +49,6 @@ const overview: SubscriptionSpendOverview = {
   projected_year_native_cents: 48360,
   months: lastMonths("2026-03", 12).map((month) => ({
     month,
-    // 只有 2026-01（年付扣款）与 2026-03（月付）有花费，其余补 0（不摊销口径）
     native_cents: month === "2026-01" ? 34800 : month === "2026-03" ? 3000 : 0,
   })),
   rows: [

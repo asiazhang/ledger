@@ -28,18 +28,11 @@ const createInput: PhysicalAssetInput = {
   initial_valuation_date: null,
 };
 
-/** 捕获 ledger:changed 监听处理器（store 创建时注册） */
 let handlers: CapturedListener[];
 
 beforeEach(() => {
   handlers = captureListenHandlers();
 });
-
-/**
- * 机制断言（self-init / SWR / 在途合并 / 事件重拉 / status-version）已收口到
- * push-first-list.test.ts 工厂单点（ADR-0123 决策 6）；本文件只留领域动作断言
- * （写命令调用、写后触发重拉、筛选参数与同源快照拆分等本店特有行为）。
- */
 
 describe("usePhysicalAssetsStore", () => {
   it("列表与在持合计同批就位：后端同源快照拆分落位（含折算币种）", async () => {
@@ -327,9 +320,7 @@ describe("usePhysicalAssetsStore", () => {
     expect(store.statusFilter).toBe("disposed");
     expect(store.assets[0].name).toBe("旧车");
     expect(store.assets[0].status).toBe("disposed");
-    // 在持合计口径与筛选无关（回看已处置时合计不变）
     expect(store.holdingTotalNativeCents).toBe(5_000_000);
-    // ledger:changed 重拉沿用当前筛选，不回退默认口径
     handlers.forEach((h) => h({ event: "ledger:changed", payload: null }));
     await flushPromises();
     expect(seenStatus[seenStatus.length - 1]).toBe("disposed");
@@ -358,7 +349,6 @@ describe("usePhysicalAssetsStore", () => {
           if (listCalls === 1) {
             return Promise.resolve(makePhysicalAssetList({ assets: holding }));
           }
-          // ledger:changed 按旧筛选发起的重拉，保持到测试节奏才完结
           if (listCalls === 2) return stale.promise;
           return fresh.promise;
         },
@@ -367,18 +357,14 @@ describe("usePhysicalAssetsStore", () => {
     const store = usePhysicalAssetsStore();
     await flushPromises();
 
-    // 旧筛选（holding）在途重拉期间切换筛选
     handlers.forEach((h) => h({ event: "ledger:changed", payload: null }));
     await flushPromises();
     expect(seenStatus).toEqual(["holding", "holding"]);
 
     const switching = store.setStatusFilter("disposed");
-    // 作废在途：立即按新筛选新拉，不合并进旧筛选的在途
     expect(seenStatus).toEqual(["holding", "holding", "disposed"]);
     expect(store.statusFilter).toBe("disposed");
 
-    // 旧纪元结果迟到：不落位（载荷不同于当前展示，误落位即被晾出；
-    //  修复前新筛选合并进旧在途，旧结果在此落旧筛选数据）
     stale.resolve(
       makePhysicalAssetList({ assets: [baseAsset({ id: "asset-2", name: "在途期间新建的资产" })] }),
     );
@@ -386,7 +372,6 @@ describe("usePhysicalAssetsStore", () => {
     expect(store.assets[0].id).toBe("asset-1");
     expect(store.assets[0].name).toBe("客厅油画");
 
-    // 新纪元结果：按新筛选落位
     fresh.resolve(makePhysicalAssetList({ assets: disposed }));
     await switching;
     expect(store.assets[0].name).toBe("旧车");
@@ -411,7 +396,6 @@ describe("usePhysicalAssetsStore", () => {
     const store = usePhysicalAssetsStore();
     await flushPromises();
 
-    // 已落库的删除不因重拉失败误报「删除失败」，动作正常返回
     await expect(store.remove("asset-1")).resolves.toBeUndefined();
     expect(store.status).toBe("error");
   });

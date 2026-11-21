@@ -13,17 +13,10 @@ import {
 } from "@/settings/feature-toggles";
 import { getSavedClosedFeatures } from "@ledger/utils/view-state";
 
-// 设置页「功能」Tab 内容（issue #1243 / ADR-0116 决策 2/7/8）：九项可关功能各一行
-//（功能名 + 一句简介 + NSwitch），不可关六项不出现（也不出现空行）。
-// 关闭只隐藏入口（ADR-0116 决策 1）——「关闭后什么仍然在跑」由各条简介明示，
-// 不设确认与拦截（决策 8）；状态走 feature-toggles store（localStorage，零后端调用）。
-
-/** 定位某项功能行（行容器带 data-testid=feature-toggle-<id>）。 */
 function featureRow(wrapper: ReturnType<typeof mount>, id: string) {
   return wrapper.find(`[data-testid="feature-toggle-${id}"]`);
 }
 
-/** 定位某项功能行的开关。 */
 function featureSwitch(wrapper: ReturnType<typeof mount>, id: string) {
   return featureRow(wrapper, id).find(".n-switch");
 }
@@ -39,7 +32,6 @@ describe("FeatureToggleSettings.vue 九项一行（issue #1243 范围 2）", () 
     for (const id of CLOSABLE_FEATURES) {
       const row = featureRow(wrapper, id);
       expect(row.find(".n-switch").exists(), `${id} 行应有开关`).toBe(true);
-      // 功能名与简介分两行文本（简介键 settings.features.descriptions.<id>）。
       expect(row.text()).toContain(t(`settings.features.descriptions.${id}`));
     }
     expect(wrapper.findAll(".n-switch")).toHaveLength(9);
@@ -126,7 +118,6 @@ describe("FeatureToggleSettings.vue 开关行为（issue #1243 范围 5：不设
     await nextTick();
     expect(getSavedClosedFeatures()).toEqual(["budget", "investments"]);
 
-    // 「重启」= 新 Pinia：store 首次实例化即重跑启动读路径（localStorage 未清）。
     setActivePinia(createPinia());
     const restarted = mount(FeatureToggleSettings);
     for (const id of CLOSABLE_FEATURES) {

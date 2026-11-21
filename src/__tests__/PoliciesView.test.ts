@@ -11,19 +11,13 @@ import { refCurrencies } from "@ledger/test-support/reference-stubs";
 import type { Insurer, Policy, PolicyStats } from "@ledger/types";
 import { componentVm } from "@ledger/test-support/component-vm";
 
-// 金额断言委托形态（issue #770）：期待值调同一 formatAmount 实现，格式规则唯一归属其专测
 const cny = refCurrencies[0];
 
-// focus 参数读取自路由 query（useFocusParam 注入 getter，spec #704 / issue #706）。
-// 本文件用可控 mockRoute 替代真实 router：默认空 query（无 focus 空转），来源
-// 落点场景在 mount 前写入 focus；路由守卫透传语义在 policies-route.test.ts 用真实路由表验证。
 const mockRoute = { query: {} as Record<string, string> };
 vi.mock("vue-router", () => ({
   useRoute: () => mockRoute,
   useRouter: () => ({ push: vi.fn() }),
 }));
-
-// NModal 内容 teleport 到 document.body：测试在 body 中查询/触发（同 ItemsView 先例）。
 
 function bodyQuery(selector: string): HTMLElement | null {
   return document.body.querySelector(selector);
@@ -68,8 +62,6 @@ function baseStats(policy: Policy): PolicyStats {
 function setupInvoke() {
   wireInvokeSeam({
     overrides: {
-      // 保单换轨后页面消费保司下拉（ADR-0082）：参考命令本场景需真实保司数据
-      // （overrides 优先于参考兜底）
       list_insurers: mockInsurers,
       list_policies: () => policies.filter((p) => !p.is_deleted),
       list_policy_stats: () =>
@@ -121,20 +113,16 @@ beforeEach(async () => {
   policyStats = [baseStats(policies[0])];
   setupInvoke();
   if (Element.prototype.scrollIntoView) vi.mocked(Element.prototype.scrollIntoView).mockClear();
-  // 参考数据（商户/币种选项）与保单 store 均为 self-init，提前预热
   await flushPromises();
 });
 
 beforeAll(() => {
-  // jsdom 无滚动实现：来源跳转的定位调用只断言不炸（spec #704 / issue #706）
   Element.prototype.scrollIntoView = vi.fn();
-  // 调用状态按用例清理（断言「定位已发生/未发生」以单用例为界）
   vi.mocked(Element.prototype.scrollIntoView).mockClear();
 });
 
 type ViewWrapper = ReturnType<typeof mount>;
 
-/** 保存按钮在 teleported 弹窗内（document.body），经 body 查询驱动 */
 function saveButton(): DOMWrapper<HTMLElement> {
   return new DOMWrapper(bodyQuery('[data-testid="policy-save"]'));
 }
@@ -144,7 +132,6 @@ function formInput(testid: string): DOMWrapper<HTMLInputElement> {
   return new DOMWrapper(modal.querySelector(`[data-testid="${testid}"] input`));
 }
 
-/** 弹窗内日期选择器：直接 emit formatted-value（同计划表单测试先例） */
 function setDate(wrapper: ViewWrapper, testid: string, value: string | null) {
   componentVm(wrapper.findComponent(`[data-testid="${testid}"]`)).$emit(
     "update:formatted-value",
@@ -157,12 +144,11 @@ describe("PoliciesView 保单列表（issue #360）", () => {
     const wrapper = mount(PoliciesView);
     await flushPromises();
     const text = wrapper.text();
-    expect(text).toContain("平安保险"); // 保司名经 insurerMap 解析（保司列纯文本，无下钻）
+    expect(text).toContain("平安保险");
     expect(text).toContain("重疾险");
     expect(text).toContain("P2026-001");
     expect(text).toContain("2024-01-01 ~ 2036-01-01");
     expect(text).toContain("保障中");
-    // 保额纯展示：30_000_000 分（自带币种原样格式化，不折算）
     expect(text).toContain(formatAmount(30_000_000, cny));
   });
 
@@ -193,17 +179,14 @@ describe("PoliciesView 保单列表（issue #360）", () => {
 
     await wrapper.find('[data-testid="policy-delete-policy-1"]').trigger("click");
     await flushPromises();
-    // 未确认前不删除
     expect(mockInvoke.mock.calls.some(([cmd]) => cmd === "delete_policy")).toBe(false);
 
-    // 确认（NPopconfirm 内容 teleport 到 body，直接对其组件 emit 正向点击）
     wrapper.findComponent(NPopconfirm).vm.$emit("positiveClick");
     await flushPromises();
 
     const deleteCalls = mockInvoke.mock.calls.filter(([cmd]) => cmd === "delete_policy");
     expect(deleteCalls).toHaveLength(1);
     expect((deleteCalls[0][1] as { id: string }).id).toBe("policy-1");
-    // 重拉后列表不再包含已删保单（软删不进列表）
     expect(wrapper.text()).not.toContain("P2026-001");
     expect(wrapper.text()).toContain("P2026-002");
   });
@@ -217,7 +200,6 @@ describe("PoliciesView 新建保单", () => {
     await flushPromises();
     expect(bodyQuery('[data-testid="policy-form-modal"]')).not.toBeNull();
 
-    // 保司下拉选择既有保司（PinyinSelect 内部 NSelect，emit update:value）
     componentVm(wrapper.findComponent('[data-testid="policy-insurer"]')).$emit(
       "update:value",
       "ins-2",
@@ -246,7 +228,6 @@ describe("PoliciesView 新建保单", () => {
         note: "百万医疗",
       },
     });
-    // 创建成功后弹窗关闭
     expect(wrapper.findComponent(PolicyFormModal).emitted("update:show")).toContainEqual([false]);
   });
 
@@ -293,7 +274,6 @@ describe("PoliciesView 新建保单", () => {
     await saveButton().trigger("click");
     await flushPromises();
 
-    // 未发起 create_insurer，创建携带既有保司 id
     expect(mockInvoke.mock.calls.some(([cmd]) => cmd === "create_insurer")).toBe(false);
     const call = mockInvoke.mock.calls.find(([cmd]) => cmd === "create_policy");
     expect(call![1]).toMatchObject({ input: { insurer_id: "ins-1" } });
@@ -313,7 +293,6 @@ describe("PoliciesView 新建保单", () => {
     await formInput("policy-number").setValue("P2026-300");
     await formInput("policy-product").setValue("终身寿险");
     setDate(wrapper, "policy-start-date", "2026-05-01");
-    // 止日、保额均留空
 
     await saveButton().trigger("click");
     await flushPromises();
@@ -340,7 +319,6 @@ describe("PoliciesView 新建保单", () => {
     await flushPromises();
 
     expect(mockInvoke.mock.calls.some(([cmd]) => cmd === "create_policy")).toBe(false);
-    // 弹窗不关（内容不丢）
     expect(wrapper.findComponent(PolicyFormModal).emitted("update:show") ?? []).not.toContainEqual([
       false,
     ]);
@@ -352,7 +330,6 @@ describe("PoliciesView 保单视角统计（issue #363）", () => {
     const wrapper = mount(PoliciesView);
     await flushPromises();
     const text = wrapper.text();
-    // 600_000 分与 50_000 分（统计本位币口径，经 formatAmount；中文分组万位制）
     expect(text).toContain("累计已缴");
     expect(text).toContain(formatAmount(600_000, cny));
     expect(text).toContain(formatAmount(50_000, cny));
@@ -368,7 +345,6 @@ describe("PoliciesView 保单视角统计（issue #363）", () => {
   });
 
   it("到期徽标消费统计同源推导（is_expired=true → 已到期，止日未到也生效）", async () => {
-    // 止日在远未来（本地推导永不判到期），徽标状态完全由统计行 is_expired 驱动
     policies = [basePolicy({ id: "p-1", end_date: "2999-01-01" })];
     policyStats = [makePolicyStats({ policy_id: "p-1", is_expired: true })];
     const wrapper = mount(PoliciesView);
@@ -381,8 +357,8 @@ describe("PoliciesView 保单视角统计（issue #363）", () => {
     policyStats = [];
     const wrapper = mount(PoliciesView);
     await flushPromises();
-    expect(wrapper.text()).toContain("已到期"); // 本地推导兜底
-    expect(wrapper.text()).toContain("—"); // 统计列占位
+    expect(wrapper.text()).toContain("已到期");
+    expect(wrapper.text()).toContain("—");
   });
 });
 
@@ -398,7 +374,6 @@ describe("PoliciesView 编辑保单", () => {
     expect(summary.textContent).toContain(formatAmount(600_000, cny));
     expect(summary.textContent).toContain(formatAmount(50_000, cny));
     expect(summary.textContent).toContain("2027-01-01");
-    // 到期态摘要：止日 2036 未到（统计行 is_expired=false）→ 保障中
     expect(summary.textContent).toContain("到期状态");
     expect(summary.textContent).toContain("保障中");
   });
@@ -422,7 +397,6 @@ describe("PoliciesView 编辑保单", () => {
     await flushPromises();
     expect(bodyQuery('[data-testid="policy-form-modal"]')).not.toBeNull();
 
-    // 预填断言：保单号 / 险种 / 保额（30000000 分 → 300000 元）/ 起止日
     expect(formInput("policy-number").element.value).toBe("P2026-001");
     expect(formInput("policy-product").element.value).toBe("重疾险");
     expect(formInput("policy-coverage").element.value).toBe("300000");
@@ -444,9 +418,6 @@ describe("PoliciesView 编辑保单", () => {
   });
 });
 
-/** 来源跳转落点（spec #704 / issue #706，词汇表「实体定位参数（focus 参数）」）：
- * 视图装配断言——focus 在场 → 对应行高亮；无 focus 空转；读一次语义下
- * 消费后路由 query 变化不再触发（高亮保持实例终态，不反复定位）。 */
 describe("PoliciesView 来源跳转落点（issue #706）", () => {
   it("focus 在场：列表渲染后对应行获得高亮类，行锚点 data-policy-id 恒在", async () => {
     policies = [basePolicy({ id: "p-1" }), basePolicy({ id: "p-2", policy_number: "P2026-002" })];
@@ -458,7 +429,6 @@ describe("PoliciesView 来源跳转落点（issue #706）", () => {
     expect(rows.map((r) => r.attributes("data-policy-id"))).toEqual(["p-1", "p-2"]);
     expect(rows[0].classes()).not.toContain("policy-row-focus");
     expect(rows[1].classes()).toContain("policy-row-focus");
-    // 高亮行已滚动定位（jsdom 仅验证调用不炸）
     expect(Element.prototype.scrollIntoView).toHaveBeenCalled();
   });
 
@@ -475,7 +445,6 @@ describe("PoliciesView 来源跳转落点（issue #706）", () => {
     const wrapper = mount(PoliciesView);
     await flushPromises();
 
-    // 模拟页签切换 replace 后残留新 focus：本实例闸门已耗尽，高亮不迁移
     mockRoute.query = { tab: "policies", focus: "p-9" };
     await flushPromises();
     const highlighted = wrapper.findAll("tr.policy-row-focus");

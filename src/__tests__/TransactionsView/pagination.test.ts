@@ -22,7 +22,6 @@ describe("TransactionsView 服务端分页", () => {
     const wrapper = await mountView();
     expect(lastListFilter()).toMatchObject({ page: 1, page_size: 20 });
     expect(wrapper.text()).toContain("共 45 条");
-    // 只渲染当前页数据（不全量加载）
     expect(bodyRows(wrapper).length).toBe(20);
   });
 
@@ -55,17 +54,15 @@ describe("TransactionsView 服务端分页", () => {
     await selectRowMenu(wrapper, "delete");
     await clickDialogButton("删除");
     await flushPromises();
-    // 第 2 页原本 20 条，删 1 条不触发回退，仍刷新第 2 页
     expect(listCalls().length).toBe(before + 1);
     expect(lastListFilter()).toMatchObject({ page: 2, page_size: 20 });
   });
 
   it("删除当前页最后一条后回退到上一页避免空页", async () => {
     const wrapper = await mountView();
-    tablePagination(wrapper).onChange(3); // 第 3 页共 5 条
+    tablePagination(wrapper).onChange(3);
     await flushPromises();
     expect(bodyRows(wrapper).length).toBe(5);
-    // 删除前 4 条（每删一条都会重新渲染，行列表需重新获取）
     for (let i = 0; i < 4; i++) {
       await openMenuOnRow(wrapper, 0);
       await selectRowMenu(wrapper, "delete");
@@ -73,7 +70,6 @@ describe("TransactionsView 服务端分页", () => {
       await flushPromises();
     }
     expect(bodyRows(wrapper).length).toBe(1);
-    // 删除最后一条 → 自动回退到第 2 页，不出现空页
     await openMenuOnRow(wrapper, 0);
     await selectRowMenu(wrapper, "delete");
     await clickDialogButton("删除");
@@ -84,8 +80,6 @@ describe("TransactionsView 服务端分页", () => {
 
   it("查询期间 loading 状态可见", async () => {
     let resolveList!: (v: unknown) => void;
-    // 接缝重布线：整体替换实现，仅 list_transactions 挂起不兑（loading 断言）；
-    // 参考命令由规范夹具兜底（本用例不断言字典内容），其余命令不需布线。
     wireInvokeSeam({
       overrides: {
         list_transactions: () =>
@@ -96,7 +90,6 @@ describe("TransactionsView 服务端分页", () => {
     });
     const wrapper = mountViewSync();
     await flushPromises();
-    // 参考数据已就绪（self-init），list_transactions 挂起中 → loading 应为 true
     expect(wrapper.findComponent(NDataTable).props("loading")).toBe(true);
     resolveList({ items: [], total: 0 });
     await flushPromises();
@@ -104,11 +97,6 @@ describe("TransactionsView 服务端分页", () => {
   });
 });
 
-/**
- * 移动档分页两档一致（issue #846 验收 2，ADR-0088 决策 9）：同一过滤模块出口
- * （翻页/页大小切换/页码回退）在移动档卡片列表形态下语义不变；换档经媒体查询
- * 测试接缝（@ledger/test-support/media-mock，薄壳 mountMobile 单点）。
- */
 describe("TransactionsView 移动档分页（issue #846 两档一致）", () => {
   it("移动档默认 20/页，翻页与页大小切换与桌面同语义（同一出口）", async () => {
     const wrapper = await mountMobile();
@@ -119,7 +107,6 @@ describe("TransactionsView 移动档分页（issue #846 两档一致）", () => 
     await flushPromises();
     expect(lastListFilter()).toMatchObject({ page: 2, page_size: 20 });
     expect(cards(wrapper).length).toBe(20);
-    // 页大小切换经统一出口：重拉 + 翻回第 1 页
     fireProp(pagination, "onUpdate:pageSize", 50);
     await flushPromises();
     expect(lastListFilter()).toMatchObject({ page: 1, page_size: 50 });

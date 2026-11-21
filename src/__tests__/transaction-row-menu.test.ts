@@ -12,7 +12,6 @@ import {
 import { TRANSACTION_KINDS, type TransactionFunding } from "@ledger/types";
 import { makeFunding, makePurchase } from "./factories";
 
-/** 渲染 DropdownOption.icon 工厂，取出其中的图标组件（用于断言挂了哪个图标）。 */
 function iconComponentOf(option: DropdownOption): unknown {
   const render = option.icon;
   if (!render) return undefined;
@@ -56,7 +55,6 @@ describe("buildRowMenuOptions（行右键菜单选项）", () => {
     );
     const addItem = options.find((o) => "key" in o && o.key === "add-item");
     expect(addItem).toMatchObject({ disabled: true });
-    // 其余项不受影响
     expect(options.map((o) => "key" in o && o.key)).toEqual([
       "edit",
       "refund",
@@ -162,14 +160,13 @@ describe("buildRowMenuOptions（行右键菜单选项）", () => {
   });
 
   it("删除项着主题 error 色：经 DropdownOption props 注入（不硬编码色值），图标+文字整体生效", () => {
-    const errorColor = "#d03050"; // 传入值即主题 errorColor（组件经 useThemeVars 取当前主题值）
+    const errorColor = "#d03050";
     const options = buildRowMenuOptions(
       { kind: "expense", fundings: [], purchases: [], source_order_no: null },
       { errorColor },
     );
     const byKey = (key: string) => options.find((o) => "key" in o && o.key === key)!;
     const del = byKey("delete");
-    // 文字色 + 图标前缀色（--n-prefix-color）+ hover/active 态，整体保持 error 色
     expect(del.props).toMatchObject({
       style: {
         color: errorColor,
@@ -178,11 +175,9 @@ describe("buildRowMenuOptions（行右键菜单选项）", () => {
         "--n-option-text-color-active": errorColor,
       },
     });
-    // 其余项不着色
     expect(byKey("edit").props).toBeUndefined();
     expect(byKey("refund").props).toBeUndefined();
     expect(byKey("add-item").props).toBeUndefined();
-    // 非 expense 行的删除项同样着色
     const only = buildRowMenuOptions(
       { kind: "income", fundings: [], purchases: [], source_order_no: null },
       { errorColor },
@@ -205,7 +200,6 @@ describe("buildRowMenuOptions（行右键菜单选项）", () => {
 });
 
 describe("分解行菜单形态（issue #1861 / ADR-0138 决策 8）", () => {
-  /** 非空出资分解：两账户各一条（组合支付形态）。 */
   const fundings: TransactionFunding[] = [
     makeFunding({ account_id: "acc-1" }),
     makeFunding({ account_id: "acc-2" }),
@@ -282,9 +276,6 @@ describe("行激活开放闭集（ADR-0106 决策 10 / #1048、ADR-0109 / #1078�
   });
 });
 
-/** 购买项行（issue #1884 / ADR-0138 决策 15）：详情入口开放、编辑入口关闭——
- * 编辑表单未支持购买项，全字段替换会静默清空购买项子行（分解行同款先例，
- * ADR-0138 决策 8）；纠错靠按幂等键重导覆盖该订单。 */
 describe("购买项行菜单形态（issue #1884 / ADR-0138 决策 15）", () => {
   const purchases = [makePurchase(), makePurchase({ name: "洗衣液", quantity: 2 })];
 

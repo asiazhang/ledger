@@ -4,12 +4,6 @@ import { NPopconfirm } from "naive-ui";
 import PlanRowActions from "@/scheduled/PlanRowActions.vue";
 import type { ScheduledPlanRowAction } from "@ledger/scheduled-plan-list";
 
-/**
- * 共享行操作渲染组件冒烟（spec #520 接缝二）：确认分支、测试锚点、空占位各覆盖一次。
- * 不重复清单模块接口测试（useScheduledPlanList.test.ts）已覆盖的可用性矩阵——
- * 组件只是「描述符 → 按钮」的纯渲染，可用性由描述符自带，不在此重断言。
- */
-
 function makeAction(
   over: Partial<ScheduledPlanRowAction> & { key: ScheduledPlanRowAction["key"] },
 ): ScheduledPlanRowAction {
@@ -38,7 +32,6 @@ describe("PlanRowActions 共享行操作渲染组件", () => {
     expect(wrapper.find('[data-testid="op-pause-a1"]').exists()).toBe(true);
     expect(wrapper.text()).toContain("期次");
     expect(wrapper.text()).toContain("暂停");
-    // 点击非确认动作 → run 接通
     wrapper.find('[data-testid="op-detail-a1"]').trigger("click");
     expect(run).toHaveBeenCalled();
   });
@@ -51,7 +44,6 @@ describe("PlanRowActions 共享行操作渲染组件", () => {
         actions: [makeAction({ key: "cancel", label: "取消", confirm: "确认取消？", run })],
       },
     });
-    // 触发按钮包在 AppPopconfirm 内，点击弹出确认层
     await wrapper.findComponent(NPopconfirm).find('[data-testid="op-cancel-a1"]').trigger("click");
     await flushPromises();
     const positive = document.body.querySelector(".n-popconfirm .n-button--primary-type");
@@ -86,16 +78,13 @@ describe("PlanRowActions 移动档变体（issue #848 / ADR-0088 决策 11 票�
         ],
       },
     });
-    // 纵排堆叠：容器 flex-direction column（桌面横排 row）
     const container = wrapper.find(".n-space").element as HTMLElement;
     expect(container.style.flexDirection).toBe("column");
-    // 显式 min 尺寸触控目标（相邻堆叠热区互不侵入，账户行「⋯」同款取舍）
     for (const key of ["detail", "pause"]) {
       const el = wrapper.find(`[data-testid="op-${key}-a1"]`).element as HTMLElement;
       expect(el.style.minWidth).toBe("48px");
       expect(el.style.minHeight).toBe("48px");
     }
-    // 点击接线不因档位变化
     wrapper.find('[data-testid="op-detail-a1"]').trigger("click");
     expect(run).toHaveBeenCalled();
   });

@@ -53,11 +53,6 @@ const dialog = useAppDialog();
 const themeVars = useThemeVars();
 const balances = ref<AccountBalance[]>([]);
 
-// 移动档适配（issue #847 / ADR-0088 决策 11 票⑦）：账户列表三分列 + 新增表单
-// 纵向堆叠 + 「⋯」48px 触控目标。断点口径接窗口分级 composable 唯一事实源，
-// 不自立断点；桌面档列结构与表单布局一字不动（回归红线）。
-// composable 在 setup 顶层调用一次（监听注册与 onScopeDispose 注销归其内聚），
-// 档位派生只读返回值。
 const windowTier = useWindowTier();
 const isMobileTier = computed(() => windowTier.value === "mobile");
 
@@ -66,15 +61,11 @@ const type = ref<AccountType>("cash");
 const currencyCode = ref("CNY");
 const initial = ref<number | null>(0);
 
-// 信用卡档案字段（spec #1327 / ADR-0119）：仅类型选「信用卡」时出现在新增表单。
-// 额度以元录入、经统一换算接缝转整数分（与期初余额同款，消浮点误差口径）；
-// 账单日 / 还款日 是 1–31 的**声明值**。越界不在此拦截——后端以码化错误显式拒绝。
 const creditLimit = ref<number | null>(null);
 const statementDay = ref<number | null>(null);
 const dueDay = ref<number | null>(null);
 const isCreditType = computed(() => type.value === "credit");
 
-// computed：标签经 t() 随界面语言即时切换（ADR-0049）
 const typeOptions = computed(() =>
   ACCOUNT_TYPES.map((k) => ({
     label: t(`accounts.type.${k}`),
@@ -84,49 +75,26 @@ const typeOptions = computed(() =>
 const currencyOptions = () =>
   reference.currencies.map((c) => ({ label: `${c.name} (${c.code})`, value: c.code }));
 
-// ---------------------------------------------------------------------------
-// 账户页分组（issue #1755 / ADR-0133 决策 2）：目标账户特殊性不靠类型值表达——
-// 分组按绑定派生（绑定集选择器归储蓄目标 store，#1752 同源消费），无绑定的
-// 普通 `other` 账户仍在原列表原位；目标组空集不渲染空卡（模板 v-if）。
-// 同一 balances 快照拆分展示、不做任何加减，余额与净资产读数不受分组影响。
-//
-// 已归档分区（spec #1952 / ADR-0142）：三分组 = 普通账户 / 储蓄目标账户 / 已归档，
-// 已归档区在页底、默认折叠、标题行带数量与余额合计。归档是收纳态——行集只重排、
-// 余额口径一字不动；归档行同样住在这份快照里（读命令零过滤，ADR 决策 4）。
-// ---------------------------------------------------------------------------
-/** 已归档账户行（进页底「已归档」分区）。 */
 const archivedBalances = computed(() => balances.value.filter((row) => row.account.is_archived));
-/** 目标绑定账户行（进「储蓄目标」分组卡；目标绑定账户不可归档，排除只为不变量自明）。 */
 const goalBalances = computed(() =>
   balances.value.filter(
     (row) => !row.account.is_archived && savingsGoalsStore.goalAccountIds.has(row.account.id),
   ),
 );
-/** 非目标、未归档账户行（留在原「账户」列表卡）。 */
 const normalBalances = computed(() =>
   balances.value.filter(
     (row) => !row.account.is_archived && !savingsGoalsStore.goalAccountIds.has(row.account.id),
   ),
 );
 
-/** 已归档分区展开态：默认折叠（ADR-0142 决策 1），不持久化——账本收纳态归账本，
- * 折叠展开只是本次查看的口味，不入设备偏好（ADR-0136 只管视图偏好，不为它开口）。 */
 const archivedExpanded = ref(false);
 
-/** 折叠箭头：折叠时指右、展开时指下（ChevronDown 旋转，不换图标）。 */
 const archivedChevronStyle = computed(() => ({
   transition: "transform 0.2s",
   transform: archivedExpanded.value ? "rotate(0deg)" : "rotate(-90deg)",
 }));
 
-/** 已归档分区合计：与主表**同一份** `listAccountBalances` 快照直接累加（ADR-0142
- * 决策 1：已归档分区与主表各自派生、互不重算），但合计**按币种各算一份**——
- * 跨币种相加会造出第二份金额口径（前端没有汇率折算接缝，净资产折算归后端
- * `dashboard_overview`，ADR-0067），故一组一个合计、显示时以分隔符拼接。
- * 单币种时只剩一组，读法仍是一句「{count} 个账户 · 合计 {amount}」。
- * 金额一律经 formatAmount（含金额隐私掩码）。 */
 const archivedSummary = computed(() => {
-  // 一次遍历分组（Map 保首次出现顺序）：每组 count 与合计同源累加，不加不减。
   const groups = new Map<string, { count: number; totalCents: number }>();
   for (const row of archivedBalances.value) {
     const group = groups.get(row.account.currency_code) ?? { count: 0, totalCents: 0 };
@@ -144,7 +112,6 @@ const archivedSummary = computed(() => {
     .join(t("accounts.archived.summarySeparator"));
 });
 
-/** 类型标签：目标绑定账户覆写为「储蓄目标」（三处消费：桌面类型列、移动档副行、编辑弹窗只读 type）。 */
 function accountTypeLabel(row: AccountBalance): string {
   return savingsGoalsStore.goalAccountIds.has(row.account.id)
     ? t("savingsGoals.accounts.typeLabel")
@@ -165,7 +132,6 @@ async function create() {
     type: type.value,
     currency_code: currencyCode.value,
     initial_balance_cents: yuanToCents(initial.value ?? 0) ?? 0,
-    // 档案字段仅信用卡携带；未填即不携带（缺省 = 未设置，后端不写空值）。
     ...(type.value === "credit"
       ? {
           credit_limit_cents:
@@ -183,7 +149,6 @@ async function create() {
     creditLimit.value = null;
     statementDay.value = null;
     dueDay.value = null;
-    // 参考数据由 ledger:changed 信号自动重拉；此处仅刷新交易派生余额
     await refresh();
   } catch (e) {
     message.error(t("accounts.message.createFailed", { message: errorMessage(e) }));
@@ -194,15 +159,12 @@ async function remove(id: string) {
   try {
     await api.deleteAccount(id);
     message.success(t("accounts.message.deleted"));
-    // 参考数据由 ledger:changed 信号自动重拉；此处仅刷新交易派生余额
     await refresh();
   } catch (e) {
     message.error(t("accounts.message.deleteFailed", { message: errorMessage(e) }));
   }
 }
 
-/** 删除走 useAppDialog 二次确认（与交易行菜单同语义）：取消不删，确认后才删除。
- * 遮罩点击不构成关闭意图（issue #252 弹层关闭语义）：确认/取消须显式点击。 */
 function confirmDelete(row: AccountBalance) {
   dialog.warning({
     title: t("accounts.deleteDialog.title"),
@@ -214,28 +176,9 @@ function confirmDelete(row: AccountBalance) {
   });
 }
 
-// ---------------------------------------------------------------------------
-// 归档 / 恢复（spec #1952 / ADR-0142）：收纳态——不改任何金额口径（余额、合计、
-// 净资产一律照旧计入），只把行从主表移到页底「已归档」分区。
-// 确认框把真话说清楚（#1955 / ADR-0142 决策 6）：余额非零时显示当前余额并声明
-// 「仍计入净资产与余额合计」，被未结束计划引用时提示计划数量——**两者都不阻断**
-// 归档（归档不是停用），余额为零 / 无计划引用时不追加任何句子。
-// ---------------------------------------------------------------------------
-
-/** 确认框多句正文的行距容器：纵排、自然换行，不设固定宽度（移动档窄屏仍可读）；
- *  左对齐（弹窗 icon-top 形态的正文默认居中，多句居中不好读）。 */
 const ARCHIVE_DIALOG_LINES_STYLE =
   "display: flex; flex-direction: column; gap: 6px; text-align: start;";
 
-/**
- * 确认框正文（#1955）：一句通用正文 + 余额非零声明 + 未结束计划数提示。
- *
- * - 余额句**经 formatAmount**（与列表同一格式化接缝，金额隐私模式下自动掩码），
- *   并指明退出净资产的唯一合法路径是「调整余额」归零（ADR-0142 决策 1：归档不承载
- *   金额语义，坏账核销走余额调整）。
- * - 计划句只陈述数量与「不停用」，不含任何禁用确认按钮的副作用。
- * - 无可说的两句时返回**单个字符串**（与 #1953 的渲染形态逐字节相同，不回退）。
- */
 function archiveDialogContent(row: AccountBalance, unfinishedPlanCount: number): string | VNode {
   const lines: string[] = [t("accounts.archiveDialog.content", { name: row.account.name })];
   if (row.balance_cents !== 0) {
@@ -256,10 +199,6 @@ function archiveDialogContent(row: AccountBalance, unfinishedPlanCount: number):
   );
 }
 
-/** 引用该账户的未结束计划数（判据单一出处：`@/scheduled/plan-usage`）。
- *  读一次计划清单；**读失败按 0 处理**——计划数提示是佐证信息不是守卫（ADR-0142
- *  决策 6：不阻断），不让辅信息的读失败挡住用户的收纳动作（同 PlanDetailModal 等
- *  既有「伴生信息降级」取舍）。 */
 async function unfinishedPlanCountFor(accountId: string): Promise<number> {
   try {
     return countUnfinishedPlansUsingAccount(await api.listScheduledTransactions(), accountId);
@@ -268,14 +207,8 @@ async function unfinishedPlanCountFor(accountId: string): Promise<number> {
   }
 }
 
-// 异步失败统一走 Loadable（与储蓄目标归档同款，ADR-0040）：错误捕获、文案归一
-// （码化错误经 errorMessage 按码本地化，如 `account.goal-bound-cannot-archive`）
-// 与 toast 策略内化在 Loadable 单点，视图不手搓 catch toast。
-/** 动作目标（闭包内自读的响应式参数——useLoadable 任务以 0 元闭包声明）。 */
 const archiveTarget = ref<AccountBalance | null>(null);
 
-/** 归档（幂等：重复归档不报错、不重复产同步 op）。返回是否真的调了 API：
- *  目标行缺席时任务空转——不调 API，也不返回成功（调用方据此不报成功文案）。 */
 const archiveRun = useLoadable(async () => {
   const row = archiveTarget.value;
   if (!row) return false;
@@ -283,7 +216,6 @@ const archiveRun = useLoadable(async () => {
   return true;
 });
 
-/** 恢复（幂等：归档的唯一回退动作，回主表与选择面）。空转语义同归档。 */
 const restoreRun = useLoadable(async () => {
   const row = archiveTarget.value;
   if (!row) return false;
@@ -291,10 +223,6 @@ const restoreRun = useLoadable(async () => {
   return true;
 });
 
-/** 归档 / 恢复共用的落库三步（设目标行 → Loadable 执行 → 成功文案 + 刷新快照）：
- *  两动作只差一条命令与一句成功文案，分发形状、失败归一（Loadable）与刷新时机
- *  只写一遍。`run` 回 `false` 即空转（目标行缺席：不调 API，也不报成功），
- *  `null` 即失败（Loadable 已按码化错误 toast）——两种情况都不弹成功文案。 */
 async function runArchiveChange(
   row: AccountBalance,
   run: { run(): Promise<boolean | null> },
@@ -303,19 +231,13 @@ async function runArchiveChange(
   archiveTarget.value = row;
   if ((await run.run()) !== true) return;
   message.success(successMessage);
-  // 参考数据由 ledger:changed 信号自动重拉；此处仅刷新余额快照（已归档分区与
-  // 主表同源，一次重拉后行自动分组到位）
   await refresh();
 }
 
-/** 归档：确认后落库（幂等），成功刷新余额快照——行按标志自动分组进已归档分区。 */
 async function archive(row: AccountBalance) {
   await runArchiveChange(row, archiveRun, t("accounts.message.archived"));
 }
 
-/** 归档二次确认（与删除同语义：遮罩点击不构成关闭意图）。计划数读取是异步的
- *  （确认框正文要带上数量），读完才开框：不先开一个空框再补内容，避免用户点中
- *  一个信息未就位的确认按钮。 */
 async function confirmArchive(row: AccountBalance) {
   const unfinishedPlanCount = await unfinishedPlanCountFor(row.account.id);
   dialog.warning({
@@ -328,22 +250,10 @@ async function confirmArchive(row: AccountBalance) {
   });
 }
 
-/** 恢复：确认即落库（幂等），成功刷新余额快照——行自动回到主表。 */
 async function restore(row: AccountBalance) {
   await runArchiveChange(row, restoreRun, t("accounts.message.restored"));
 }
 
-// ---------------------------------------------------------------------------
-// 编辑账户弹窗（name + currency_code；type 不可改——参与余额符号归属；
-// initial_balance_cents 归「调整余额」管，两处不同改同一字段）；目标绑定账户
-//（issue #1752）名称随动只读——输入禁用且提交不发 name 键（改名唯一入口是目标编辑）
-// 开启/目标/关闭编排归弹窗意图工厂 ModalIntent（ADR-0072）：意图闭集单成员
-// （携带目标账户行），显示由「意图非空」派生、序号随开启递增驱动表单重建、
-// 关闭清回 null 终态。现状已带序号守卫（序号驱动表单重建），迁移为纯方言
-// 替换：行为完全等价，无缺陷修复。
-// ---------------------------------------------------------------------------
-
-/** 编辑账户弹窗意图（单成员闭集）：携带目标账户行。 */
 interface AccountEditIntent {
   row: AccountBalance;
 }
@@ -357,17 +267,10 @@ const {
 
 const editName = ref("");
 const editCurrency = ref("");
-// 信用卡档案输入（仅信用卡账户可编辑；空 = 未设置，提交时以 `null` 明示清空）。
 const editCreditLimit = ref<number | null>(null);
 const editStatementDay = ref<number | null>(null);
 const editDueDay = ref<number | null>(null);
-/** 编辑中的账户是否为信用卡（决定三个档案输入与只读摘要是否出现）。 */
 const isCreditEdit = computed(() => editIntent.value?.row.account.type === "credit");
-/**
- * 编辑中的账户是否为储蓄目标专属账户（名称输入禁用 + 提交不发 name 键）：
- *  账户身份由绑定派生（ADR-0133 决策 2，issue #1752）——目标名权威、账户名
- *  随动只读（账户侧无独立改名入口），绑定集选择器归口储蓄目标 store（#1755 同源）。
- */
 const isGoalBoundEdit = computed(
   () =>
     editIntent.value !== null &&
@@ -377,7 +280,6 @@ const isGoalBoundEdit = computed(
 function openEdit(row: AccountBalance) {
   editName.value = row.account.name;
   editCurrency.value = row.account.currency_code;
-  // 档案字段回填：额度从分转元展示（统一换算接缝），日子为声明值原样。
   editCreditLimit.value =
     row.account.credit_limit_cents == null
       ? null
@@ -397,13 +299,9 @@ async function submitEdit() {
     return;
   }
   try {
-    // 信用卡档案字段三态：给值 = 落定、`null` = 清空（未填即空）；非信用卡账户
-    // **根本不发这三键**（不发 = 不改，避免把「不适用」误报成后端守卫错误）。
     const payload: AccountUpdateInput = {
       currency_code: editCurrency.value,
     };
-    // 目标绑定账户（issue #1752）：不发 name 键（缺席 = 不改）——账户名随目标
-    // 联动，账户侧任何路径都不回写名称，防把陈旧名写回去造成两处名字对不上。
     if (!isGoalBoundEdit.value) {
       payload.name = editName.value;
     }
@@ -416,15 +314,12 @@ async function submitEdit() {
     await api.updateAccount(editIntent.value.row.account.id, payload);
     message.success(t("accounts.message.saved"));
     closeEdit();
-    // 参考数据由 ledger:changed 信号自动重拉；此处仅刷新余额
     await refresh();
   } catch (e) {
     message.error(t("accounts.message.saveFailed", { message: errorMessage(e) }));
   }
 }
 
-/** 只读摘要的额度视图（派生纯函数模块单点）：取**已保存**的行值，不随上方输入框
- * 实时变化——摘要回答「这张卡现在用了多少额度」，未提交的编辑值不属于它。 */
 const editCredit = computed(() =>
   editIntent.value === null
     ? null
@@ -437,7 +332,6 @@ const editCurrencyObj = computed(() =>
     : reference.getCurrency(editIntent.value.row.account.currency_code),
 );
 
-/** 额度用量摘要：额度未设置时给引导文案，不显示占位数字（避免被读成 0 额度）。 */
 const editUsageText = computed(() => {
   const profile = editCredit.value;
   if (profile === null) return "";
@@ -452,7 +346,6 @@ const editUsageText = computed(() => {
   });
 });
 
-/** 下次账单节点摘要：两个具体日期（ISO 短格式；绝对日期不随界面语言变化）。 */
 const editNextNodesText = computed(() => {
   const profile = editCredit.value;
   if (profile === null) return "";
@@ -465,16 +358,6 @@ const editNextNodesText = computed(() => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// 调整余额弹窗（ADR-0026）：校准到目标值，后端生成一笔与黑洞账户的转账
-// （Δ>0 从「无」转入、Δ<0 转出至「无」，删除该转账即撤销调整）
-// 开启/目标/关闭编排归弹窗意图工厂 ModalIntent（ADR-0072）：意图闭集单成员
-// （携带目标账户行），显示由「意图非空」派生、序号随开启递增驱动表单重建、
-// 关闭清回 null 终态。现状已带序号守卫（序号驱动表单重建），迁移为纯方言
-// 替换：行为完全等价，无缺陷修复。
-// ---------------------------------------------------------------------------
-
-/** 调整余额弹窗意图（单成员闭集）：携带目标账户行。 */
 interface AccountAdjustIntent {
   row: AccountBalance;
 }
@@ -499,19 +382,16 @@ function todayIso(): string {
   return formatLocalDate(new Date());
 }
 
-/** 本地时区日期 → YYYY-MM-DD（不用 toISOString：避免时区偏移使日期漂移一天）。 */
 function formatLocalDate(d: Date): string {
   const m = `${d.getMonth() + 1}`.padStart(2, "0");
   const day = `${d.getDate()}`.padStart(2, "0");
   return `${d.getFullYear()}-${m}-${day}`;
 }
 
-/** 目标余额（分）：输入以元为单位，经 yuanToCents 统一口径转整数分（非法输入 → null，禁用提交）。 */
 const adjustTargetCents = computed(() =>
   adjustTarget.value === null ? null : yuanToCents(adjustTarget.value),
 );
 
-/** 差额 Δ = 目标 − 当前：>0 从黑洞转入，<0 转出至黑洞，=0 无需调整。 */
 const adjustDelta = computed(() => {
   if (adjustIntent.value === null || adjustTargetCents.value === null) return null;
   return adjustTargetCents.value - adjustIntent.value.row.balance_cents;
@@ -541,20 +421,11 @@ async function submitAdjust() {
     });
     message.success(t("accounts.message.adjusted"));
     closeAdjust();
-    // 参考数据由 ledger:changed 信号自动重拉（若按需新建了黑洞账户）；此处仅刷新余额
     await refresh();
   } catch (e) {
     message.error(t("accounts.message.adjustFailed", { message: errorMessage(e) }));
   }
 }
-
-// ---------------------------------------------------------------------------
-// 行菜单（编辑 / 调整余额 / 删除）：操作列「⋯」按钮 + 行右键两入口共用同一
-// options（buildAccountRowMenuOptions 纯函数，删除项着主题 error 色）与同一
-// open 入口。打开、重定位、关闭、选中的全部时序收进行菜单编排工厂
-// RowContextMenu（issue #550 / #551，ADR-0077）：业务动作分派留视图（工厂
-// 入参回调，选中即收起并交付收起瞬间的目标行）。
-// ---------------------------------------------------------------------------
 
 const rowMenu = useRowContextMenu<AccountBalance>((key, row) => {
   if (key === "edit") openEdit(row);
@@ -564,9 +435,6 @@ const rowMenu = useRowContextMenu<AccountBalance>((key, row) => {
   else if (key === "delete") confirmDelete(row);
 });
 
-/** 行菜单形态按当前目标行的归档态派生：已归档行只有「恢复」（ADR-0142 决策 2），
- * 未归档行是编辑 / 调整余额 / 归档 / 删除。形态选择读工厂保留的收起瞬间目标行；
- * 菜单关闭态无目标行，回落未归档形态（此时菜单不可见，形态无消费方）。 */
 const menuOptions = computed(() => {
   const errorColor = themeVars.value.errorColor;
   return rowMenu.state.value?.row.account.is_archived
@@ -574,23 +442,14 @@ const menuOptions = computed(() => {
     : buildAccountRowMenuOptions({ errorColor });
 });
 
-// 可见性由单判别状态派生（非空即显示）；定位坐标取工厂保留值（open 同步更新、
-// close 不清零）：naive-ui 离场动画期间仍按 x/y 重定位弹层，视图侧清零会让
-// 淡出中的菜单跳到视口左上角闪现一次（issue #798）。
 const menuShow = computed(() => rowMenu.state.value !== null);
 const menuX = computed(() => rowMenu.position.value.x);
 const menuY = computed(() => rowMenu.position.value.y);
 
-/** 表格行属性：绑定行右键菜单（open 内化「收起 → 下一帧重开」重定位舞步；
- * 原生菜单拦截单点归窗口行为守卫，视图不再 preventDefault）。 */
 const rowProps = (row: AccountBalance) => ({
   onContextmenu: (e: MouseEvent) => rowMenu.open(e, row),
 });
 
-/** 余额单元格渲染（移动/桌面两分支共用，格式化接缝 formatAmount 单点含隐私掩码）。
- * 信用卡行追加一行 12px 使用率小字（仅已用 > 0 且额度已设置；≥90% 用警示色）——
- * 不新增列、不动行结构，只在既有余额单元格内多一行（spec #1327 / ADR-0119）。
- * 百分比不随金额隐私模式掩码：比例不是金额，泄露不到账户规模。 */
 const renderBalanceCell = (row: AccountBalance) => {
   const text = formatAmount(row.balance_cents, reference.getCurrency(row.account.currency_code));
   const percent = listUtilizationPercent(row.account, row.balance_cents);
@@ -610,23 +469,14 @@ const renderBalanceCell = (row: AccountBalance) => {
   ]);
 };
 
-/** 移动档名称单元格布局：名称与「类型 · 币种」副行纵排；副行弱化小字（内联样式收口
- * 在列配置单点，同 transaction-columns 渲染函数先例）。 */
 const MOBILE_NAME_CELL_STYLE = "display: flex; flex-direction: column; gap: 2px; min-width: 0;";
 const MOBILE_NAME_SUB_STYLE = "font-size: 12px; opacity: 0.65;";
-/** 信用卡行余额单元格内的使用率小字：金额与百分比纵排，小字同移动档副行弱化口径。 */
 const CREDIT_CELL_STYLE = "display: flex; flex-direction: column; gap: 2px;";
 const CREDIT_SUB_STYLE = "font-size: 12px; opacity: 0.65;";
-/** 移动档名称链接：换行不截断（悬停替代原则「空间够则常驻」，触屏无悬停全文）、
- * 文本左对齐（button 拉满单元格宽后默认居中会与桌面行错位，交易列先例）。 */
 const MOBILE_NAME_LINK_STYLE = "white-space: normal; text-align: left;";
-/** 移动档「⋯」按钮：显式 48×48 触控目标（ADR-0088 全局验收基线；按钮自身达标，
- * 不用伪元素外扩——操作列内相邻行的热区互不侵入）。桌面档不挂，尺寸零变化。 */
 const MOBILE_MORE_BUTTON_STYLE = { width: "48px", height: "48px", fontSize: "18px" };
 
 const columns = computed<DataTableColumns<AccountBalance>>(() => {
-  /** 操作列：「⋯」与行右键共用同一工厂 open 入口（以点击坐标弹出）；两轴同一
-   * 列配置（入口全平台常显），仅移动档加大触控目标。 */
   const actionsColumn: DataTableColumns<AccountBalance>[number] = {
     title: t("accounts.list.colActions"),
     key: "actions",
@@ -645,14 +495,11 @@ const columns = computed<DataTableColumns<AccountBalance>>(() => {
       ),
   };
 
-  // 移动档三分列（issue #847）：名称（类型/币种并入副行）、余额、操作——328px
-  // 内容宽内无横向滚动、逐行可读；桌面档五列一字不动（回归红线）。
   if (isMobileTier.value) {
     return [
       {
         title: t("accounts.list.colName"),
         key: "account.name",
-        // 名称下钻：点击跳转交易页并按涉及账户过滤（issue #97）；副行携带类型与币种
         render: (row) =>
           h("div", { style: MOBILE_NAME_CELL_STYLE }, [
             h(AccountLink, {
@@ -680,7 +527,6 @@ const columns = computed<DataTableColumns<AccountBalance>>(() => {
     {
       title: t("accounts.list.colName"),
       key: "account.name",
-      // 账户名下钻：点击跳转交易页并按涉及账户过滤（issue #97）
       render: (row) => h(AccountLink, { accountId: row.account.id }),
     },
     {
@@ -699,7 +545,6 @@ const columns = computed<DataTableColumns<AccountBalance>>(() => {
 });
 
 onMounted(() => {
-  // 参考数据由 useReferenceStore self-init + ledger:changed 信号兜底，无需手工 loadAll
   void refresh();
 });
 </script>

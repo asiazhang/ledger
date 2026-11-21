@@ -4,7 +4,6 @@ import { mount, flushPromises } from "@vue/test-utils";
 import MerchantLink from "@/merchants/MerchantLink.vue";
 import { useAppStore } from "@/stores/app";
 
-// MerchantLink 经 useRouter 跳转（AccountLink 同款 pushMock 断言先例）
 const pushMock = vi.fn();
 vi.mock("vue-router", () => ({
   useRouter: () => ({ push: pushMock }),
@@ -12,8 +11,6 @@ vi.mock("vue-router", () => ({
 
 beforeEach(async () => {
   pushMock.mockReset();
-  // 参考 store 预载走接缝 opt-in 参数（list_merchants 由桩层规范夹具兜底，
-  // 含断言消费的 mch-1「京东」行）。
   await wireInvokeSeam({ refreshReferenceStores: true }).ready;
 });
 

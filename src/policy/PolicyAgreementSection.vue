@@ -11,24 +11,12 @@ import { useReferenceStore } from "@/stores/reference";
 import type { Policy, ScheduledTransactionWithExt } from "@ledger/types";
 import PolicyAgreementFields from "@/policy/PolicyAgreementFields.vue";
 
-/**
- * 保单缴费协议区（issue #362 / ADR-0051 决策 2，编辑模式）：展示该保单名下的
- * 协议历史（1 张保单 → 多段协议：费率变更 = 取消旧协议 + 按新金额重建的价格
- * 分段真相，含已取消段），并提供：
- * - 无活跃协议时「添加缴费协议」（趸交/缴清保单随时可补建周期扣缴）；
- * - 有活跃协议时「改价」——沿用订阅既有语义：取消旧协议 + 按新金额重建，
- *   新段经保单上下文创建并携带引用；新段起始日预填旧协议下期扣款日
- *   （最早 pending 期次，无 pending 回落旧起始日），频率/账户/币种沿用旧段。
- *
- * 引用复制（协议 → 期次流水）由引擎继承，本组件只负责创建入参携带 policy_id。
- */
 const props = defineProps<{ policy: Policy }>();
 
 const message = useMessage();
 const reference = useReferenceStore();
 const fieldsRef = ref<InstanceType<typeof PolicyAgreementFields> | null>(null);
 
-/** 协议历史（该保单名下全部订阅形态协议，按创建先后 = 分段先后）。 */
 const segments = ref<ScheduledTransactionWithExt[]>([]);
 const loading = ref(false);
 
@@ -53,21 +41,14 @@ async function load() {
   }
 }
 
-// 弹窗复用同一实例（editing 换行 / 同保单重开）：随 policy 身份变化重拉历史，
-// 避免串显上一张保单的协议段。
 watch(
   () => props.policy,
   () => void load(),
   { immediate: true },
 );
 
-// ---------------------------------------------------------------------------
-// 表单编排：添加 / 改价共用一个字段组实例；mode=null 表单隐藏
-// ---------------------------------------------------------------------------
-
 type FormMode = "add" | "rebuild";
 const mode = ref<FormMode | null>(null);
-/** 改价目标（旧段）——重建入参的频率/账户/币种与下期扣款日来源。 */
 const rebuildFrom = ref<ScheduledTransactionWithExt | null>(null);
 
 async function openAdd() {
@@ -77,7 +58,6 @@ async function openAdd() {
   fieldsRef.value?.reset({ startDate: props.policy.start_date });
 }
 
-/** 下期扣款日（最早 pending 期次；无 pending 回落旧起始日）。 */
 async function nextChargeDate(planId: string, fallback: string): Promise<string> {
   try {
     const detail = await api.getScheduledTransactionDetail(planId);
@@ -111,7 +91,6 @@ function closeForm() {
   rebuildFrom.value = null;
 }
 
-/** 提交：校验字段组 → 添加为直接创建；改价先取消旧协议再按新金额重建。 */
 async function submit() {
   const fields = fieldsRef.value;
   if (!fields) return;
@@ -124,8 +103,6 @@ async function submit() {
   try {
     if (mode.value === "rebuild" && rebuildFrom.value) {
       const oldId = rebuildFrom.value.core.id;
-      // 改价 = 取消旧协议 + 按新金额重建（订阅既有语义，ADR-0051 决策 2）；
-      // 取消成功而重建失败时旧段已停（可经「添加缴费协议」补建，不产生重复扣缴）。
       await api.updateScheduledTransactionStatus({ id: oldId, new_status: "cancelled" });
       await api.createScheduledTransaction(input);
       message.success(t("policies.agreement.msg.rebuilt"));
@@ -162,8 +139,7 @@ const segmentColumns = computed<DataTableColumns<ScheduledTransactionWithExt>>((
     render: (s) =>
       s.core.status === "active"
         ? scheduledStatusLabel(s.core.status)
-        : // 非活跃段（已取消/暂停）以弱化标签呈现——价格历史分段真相
-          h(
+        : h(
             NTag,
             {
               size: "small",

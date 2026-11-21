@@ -12,20 +12,8 @@ import { useAppStore } from "@/stores/app";
 import { usePhysicalAssetsStore } from "@/physical-asset/physicalAssets";
 import type { PhysicalAsset, PhysicalAssetInput, PhysicalAssetUpdateInput } from "@ledger/types";
 
-/**
- * 实物资产新建/编辑弹窗（issue #466 建档 / issue #467 T2 编辑 / ADR-0064）：
- * 新建时名称与当前估值必填（三十秒建档的最简表单），购买日期与购买价（含
- * 币种）可选；估值与购买价币种均预选默认币种（核心交易域 DefaultCurrency
- * 设备偏好）。估值日期不出表单（缺省 = 今天）。
- *
- * 编辑模式（T2，PolicyFormModal 先例）：仅名称与购买信息可改（全量替换），
- * **估值字段结构性排除**（v-if 不渲染）——估值只能经「更新估值」变更（历史
- * 只追加不改写，ADR-0064），编辑表单无估值入口。保存成功后关弹窗，列表经
- * store 重拉刷新；后端校验错误原样展示，弹窗不关、内容不丢。
- */
 const props = defineProps<{
   show: boolean;
-  /** 待编辑资产；null = 新建模式 */
   editing: PhysicalAsset | null;
 }>();
 const emit = defineEmits<{ "update:show": [value: boolean] }>();
@@ -35,7 +23,6 @@ const app = useAppStore();
 const physicalAssetsStore = usePhysicalAssetsStore();
 const { currencyOptions } = useFormShared();
 
-// —— 表单状态 ——
 const name = ref("");
 const valuationYuan = ref("");
 const valuationCurrency = ref<string | null>(null);
@@ -46,15 +33,12 @@ const purchaseCurrency = ref<string | null>(null);
 const valuationFilled = computed(() => valuationYuan.value.trim() !== "");
 const purchaseFilled = computed(() => purchaseYuan.value.trim() !== "");
 
-/** 打开时回填/复位（PolicyFormModal 先例；immediate 兼容初始 show）：
- *  编辑模式预填名称与购买信息；新建模式复位为空白建档单（币种预选默认币种）。 */
 watch(
   () => [props.show, props.editing] as const,
   () => {
     if (!props.show) return;
     const p = props.editing;
     name.value = p?.name ?? "";
-    // 估值字段仅新建模式使用（编辑模式结构性排除，不渲染不提交）
     valuationYuan.value = "";
     valuationCurrency.value = app.defaultCurrency;
     purchaseDate.value = p?.purchase_date ?? null;
@@ -70,7 +54,6 @@ function close() {
 }
 
 async function save() {
-  // 客户端必填校验（消息与后端错误码文案同源，双保险防呆）
   if (!name.value.trim()) {
     message.warning(t("physicalAssets.form.msg.nameRequired"));
     return;
@@ -89,10 +72,8 @@ async function save() {
     purchaseCents = cents;
   }
 
-  // 购买价与币种成对（清金额即清币种，不产生只有币种的半挂状态）
   try {
     if (props.editing) {
-      // 编辑模式（T2）：仅名称 / 购买信息全量替换，无估值字段（结构性排除）
       const input: PhysicalAssetUpdateInput = {
         name: name.value.trim(),
         purchase_date: purchaseDate.value || null,
@@ -102,7 +83,6 @@ async function save() {
       await physicalAssetsStore.update(props.editing.id, input);
       message.success(t("physicalAssets.msg.updated"));
     } else {
-      // 新建模式：估值必填（即首条估值历史行）
       if (!valuationFilled.value) {
         message.warning(t("physicalAssets.form.msg.valuationRequired"));
         return;
@@ -130,7 +110,6 @@ async function save() {
     }
     close();
   } catch (e) {
-    // 后端校验错误原样展示（如「资产名称不能为空」），弹窗不关、内容不丢
     message.error(t("physicalAssets.msg.saveFailed", { msg: errorMessage(e) }));
   }
 }

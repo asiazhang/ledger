@@ -12,10 +12,8 @@ const mockCurrencies: Currency[] = [
   { code: "USD", name: "美元", symbol: "$", decimal_places: 2 },
 ];
 
-/** 弹窗布线：list_currencies 参考命令本场景需自定义值（CNY+USD）。 */
 const BASE_OVERRIDES = { list_currencies: mockCurrencies };
 
-/** 命中回显的股票侧结果（桩：行情回填 + 类型识别 etf）。 */
 const stockHit = {
   instrument_id: "inst-1",
   symbol: "159915",
@@ -28,7 +26,6 @@ const stockHit = {
   price_written: true,
 };
 
-/** 命中回显的基金侧结果（桩：按代码即拉，语义不变）。 */
 const fundHit = {
   instrument_id: "inst-fund",
   symbol: "000001",
@@ -39,7 +36,6 @@ const fundHit = {
   price_written: true,
 };
 
-/** 查询未命中（查无此码）的码化错误（股票通道）。 */
 function stockNotFound(code: string) {
   return Promise.reject({
     kind: "Invalid",
@@ -61,7 +57,6 @@ function bodyQuery(selector: string): HTMLElement | null {
   return document.body.querySelector(selector);
 }
 
-/** 弹窗内 NInput 的受控是内部 input 元素：原生赋值 + 冒泡 input 事件驱动 v-model */
 async function setInput(testid: string, value: string) {
   const input = bodyQuery(`[data-testid="${testid}"]`)!.querySelector("input")!;
   input.value = value;
@@ -80,7 +75,6 @@ async function clickBody(testid: string) {
 
 type MountedModal = Awaited<ReturnType<typeof mountModal>>;
 
-/** 选择市场通道（模板中第一个 NSelect 即市场下拉） */
 async function selectMarket(wrapper: MountedModal, value: string) {
   wrapper.findAllComponents(NSelect)[0].vm.$emit("update:value", value);
   await nextTick();
@@ -101,7 +95,6 @@ describe("AddInstrumentModal 添加投资标的弹窗（issue #826 / spec #690�
     const wrapper = await mountModal();
     expect(submitButton().disabled).toBe(true);
     await setInput("add-instrument-code", "600519");
-    // 已输代码但未选市场：仍禁用（市场必选校验）
     expect(submitButton().disabled).toBe(true);
     await selectMarket(wrapper, "sh");
     expect(submitButton().disabled).toBe(false);
@@ -124,7 +117,6 @@ describe("AddInstrumentModal 添加投资标的弹窗（issue #826 / spec #690�
       market: "sh",
       code: "600519",
     });
-    // 识别回显：类型标签 + 权威名称 + 现价（万分之一元 → 元展示）
     expect(added[0]).toContain("创业板ETF");
     expect(added[0]).toContain("ETF");
     expect(added).toHaveLength(1);
@@ -146,7 +138,6 @@ describe("AddInstrumentModal 添加投资标的弹窗（issue #826 / spec #690�
     await flushPromises();
     expect(mockInvoke).toHaveBeenCalledWith("add_fund_by_code", { code: "000001" });
     expect(added[0]).toContain("华夏成长混合");
-    // 分类已弃用恒空串（ADR-0130 决策 8）：回执不渲染空分类段（无悬空分隔符）。
     expect(added[0]).not.toContain("· ）");
     expect(wrapper.emitted("update:show")).toContainEqual([false]);
   });
@@ -162,17 +153,14 @@ describe("AddInstrumentModal 添加投资标的弹窗（issue #826 / spec #690�
   it("自定义标的通道：选中即展开建档表单（零网络请求），按钮切为「创建」", async () => {
     const wrapper = await mountModal();
     await selectMarket(wrapper, "custom");
-    // 建档表单直接展开：名称/类型/币种可见，无需先查询
     expect(bodyQuery('[data-testid="add-instrument-name"]')).not.toBeNull();
     expect(bodyQuery('[data-testid="add-instrument-type"]')).not.toBeNull();
     expect(bodyQuery('[data-testid="add-instrument-currency"]')).not.toBeNull();
-    // 主按钮切为创建语义；代码/名称/类型未齐时禁用
     expect(submitButton().textContent).toContain("创建");
     await setInput("add-instrument-code", "HW-VR");
     expect(submitButton().disabled).toBe(true);
     await setInput("add-instrument-name", "华为虚拟股");
     expect(submitButton().disabled).toBe(true);
-    // 零网络请求：表单展开全程未发起任何查询/创建命令
     expect(mockInvoke).not.toHaveBeenCalledWith("add_instrument_by_code", expect.anything());
     expect(mockInvoke).not.toHaveBeenCalledWith("add_fund_by_code", expect.anything());
     expect(mockInvoke).not.toHaveBeenCalledWith("create_instrument", expect.anything());
@@ -181,7 +169,6 @@ describe("AddInstrumentModal 添加投资标的弹窗（issue #826 / spec #690�
   it("自定义标的通道类型白名单恰三选（债券/ETF/其他）：无股票、无基金", async () => {
     const wrapper = await mountModal();
     await selectMarket(wrapper, "custom");
-    // 自定义通道展开后：[0]=市场、[1]=类型、[2]=币种
     const typeSelect = wrapper.findAllComponents(NSelect)[1];
     const options = typeSelect.props("options") as { label: string; value: string }[];
     expect(options.map((o) => o.value)).toEqual(["bond", "etf", "other"]);
@@ -205,7 +192,6 @@ describe("AddInstrumentModal 添加投资标的弹窗（issue #826 / spec #690�
     expect(submitButton().disabled).toBe(false);
     await clickBody("submit-add-instrument");
     await flushPromises();
-    // 市场恒未知（不透传——自定义标的无真实市场，ADR-0081 口径）；币种默认 CNY
     expect(mockInvoke).toHaveBeenCalledWith("create_instrument", {
       input: {
         symbol: "HW-VR",
@@ -232,7 +218,6 @@ describe("AddInstrumentModal 添加投资标的弹窗（issue #826 / spec #690�
     });
     await clickBody("submit-add-instrument");
     await flushPromises();
-    // 未命中显式报错 + 引导文案；建档表单不展开（全对话框仅一份表单，属自定义通道）
     expect(bodyQuery('[data-testid="add-instrument-error"]')!.textContent).toContain(
       "查无股票代码",
     );
@@ -292,11 +277,9 @@ describe("AddInstrumentModal 添加投资标的弹窗（issue #826 / spec #690�
     const wrapper = await mountModal();
     await selectMarket(wrapper, "custom");
     expect(bodyQuery('[data-testid="add-instrument-name"]')).not.toBeNull();
-    // 切回股票通道：建档表单收起（表单只属于自定义通道）
     await selectMarket(wrapper, "sh");
     expect(bodyQuery('[data-testid="add-instrument-name"]')).toBeNull();
     expect(bodyQuery('[data-testid="add-instrument-custom-hint"]')).toBeNull();
-    // 再切回：表单再现
     await selectMarket(wrapper, "custom");
     expect(bodyQuery('[data-testid="add-instrument-name"]')).not.toBeNull();
     expect(bodyQuery('[data-testid="add-instrument-custom-hint"]')).not.toBeNull();

@@ -19,25 +19,6 @@ import {
   type CategoryTreeNode,
 } from "@ledger/utils/category-tree";
 
-/**
- * 参考数据（Reference Data）单一来源 store。
- *
- * 承载 `currencies / accounts / categories / merchants` 四张参考表、保司字典
- * `insurers`（保险域自有，ADR-0082，issue #714）及全部派生映射
- * （账户/分类/币种/商户映射）与分类树逻辑，作为字典/枚举的单一来源，消费端一律从本 store 读取。
- *
- * 清单生命周期（self-init / `ledger:changed` 失效重拉 / stale-while-revalidate
- * 多表全成才整体替换 / 在途合并 / status / version）内化在 push-first 工厂单点
- * （`createPushFirstList`，ADR-0123）；本店只留快照落位（含删全量拆分）、
- * 派生映射（computed，随数组自动更新）与字典查询。
- *
- * 失效机制唯一：事件驱动（`ledger:changed`）是唯一的重拉触发源，无 pull 侧兜底
- * （领域规则，ADR-0012；工厂是其实现载体）。
- */
-/**
- * 含删全量字典行的统一拆分（apply 落位内分类/商户/保司三处同构）：
- * 在用行进字典，软删行进显示/管理视图缓存 Map（历史引用与「显示已删」共用）。
- */
 function splitDeleted<T extends Syncable & { id: string }>(
   all: T[],
 ): { active: T[]; deleted: Map<string, T> } {
@@ -54,40 +35,19 @@ export const useReferenceStore = defineStore("reference", () => {
   const merchants = ref<Merchant[]>([]);
   const insurers = ref<Insurer[]>([]);
 
-  /**
-   * 软删商户（issue #189 / ADR-0028）：软删后不可再被选择，但历史交易引用照常显示。
-   * 数据源为后端含软删全量列表（`list_merchants({ includeDeleted: true })`，issue #191）
-   * 按 `is_deleted` 拆分而来：跨会话可用，无需 diff 缓存。
-   * 商户管理列表「显示已删」（issue #447）消费同一份缓存，无新增拉取。
-   */
   const deletedMerchants = ref(new Map<string, Merchant>());
 
-  /**
-   * 软删分类（issue #377）：软删后不可再被选择，但历史交易引用照常存在。
-   * 数据源与拆分方式同商户先例（issue #191）：含软删全量列表按 `is_deleted` 拆分。
-   */
   const deletedCategories = ref(new Map<string, Category>());
 
-  /**
-   * 保司字典（issue #714 / ADR-0082）：保险域自有独立字典，虽不归参考数据域，
-   * 但同享「随 ledger:changed 失效自动重拉」的参考数据心智，接入本 store
-   * （与 #713 的保单换轨同源消费；管理视图「显示已删」切换消费软删缓存）。
-   * 数据源与拆分方式同商户先例（issue #191）：含已删全量列表按 `is_deleted` 拆分。
-   */
   const deletedInsurers = ref(new Map<string, Insurer>());
 
-  // —— 失效信号（工厂产出，观测加载状态与重拉次数） ——
   const { status, version, refresh } = createPushFirstList(
     () =>
       Promise.all([
         api.listCurrencies(),
         api.listAccounts(),
-        // 分类拉含软删全量，按 is_deleted 拆分：在用进字典，软删进显示/校验缓存
-        // （历史交易口径，issue #377，先例商户 issue #191）
         api.listCategories({ includeDeleted: true }),
-        // 商户拉含软删全量，按 is_deleted 拆分：在用进字典，软删进显示缓存（issue #191）
         api.listMerchants({ includeDeleted: true }),
-        // 保司拉含已删全量，按 is_deleted 拆分：在用进字典，已删进管理视图显示缓存（issue #714）
         api.listInsurers({ includeDeleted: true }),
       ]),
     ([cs, as, catsAll, msAll, insAll]) => {
@@ -111,7 +71,6 @@ export const useReferenceStore = defineStore("reference", () => {
     return m;
   });
 
-  /** 分类显示/下钻校验映射：在用 + 软删（历史交易口径，URL 下钻校验共用，issue #377；先例商户）。 */
   const categoryMap = computed(() => {
     const m = new Map<string, Category>();
     deletedCategories.value.forEach((d) => m.set(d.id, d));
@@ -125,7 +84,6 @@ export const useReferenceStore = defineStore("reference", () => {
     return m;
   });
 
-  /** 商户显示映射：在用商户 + 软删商户（历史交易显示与筛选下拉共用，issue #191）。 */
   const merchantMap = computed(() => {
     const m = new Map<string, Merchant>();
     deletedMerchants.value.forEach((d) => m.set(d.id, d));
@@ -133,14 +91,12 @@ export const useReferenceStore = defineStore("reference", () => {
     return m;
   });
 
-  /** 按名字查找：仅含在用商户（软删商户不可再选/不可按名复用，重名即建由后端校验）。 */
   const merchantByName = computed(() => {
     const m = new Map<string, Merchant>();
     merchants.value.forEach((m2) => m.set(m2.name, m2));
     return m;
   });
 
-  /** 保司显示映射：在用 + 软删（存量保单的保司列显示用，issue #713）。 */
   const insurerMap = computed(() => {
     const m = new Map<string, Insurer>();
     deletedInsurers.value.forEach((d) => m.set(d.id, d));
@@ -148,7 +104,6 @@ export const useReferenceStore = defineStore("reference", () => {
     return m;
   });
 
-  /** 按名字查找：仅含在用保司（软删保司不可再选/不可按名复用，重名即建由后端校验）。 */
   const insurerByName = computed(() => {
     const m = new Map<string, Insurer>();
     insurers.value.forEach((i) => m.set(i.name, i));
@@ -160,57 +115,24 @@ export const useReferenceStore = defineStore("reference", () => {
   const expenseCategories = computed(() => categories.value.filter((c) => c.kind === "expense"));
   const incomeCategories = computed(() => categories.value.filter((c) => c.kind === "income"));
 
-  /**
-   * 可选择账户（spec #1952 / ADR-0142 决策 4）：账户去归档——归档是**收纳态**，
-   * 只收窄「账户页主表」与「新建 / 编辑的账户选择面」，全部选项构造点消费本派生。
-   *
-   * 读面零过滤（同决策）：`accounts` / `accountMap` 仍是全量（名称映射、下钻链接、
-   * 会话 URL 校验靠它），排除**只**发生在这里——不要在 `accounts` 落位处筛（那是
-   * 「删除账户」的断链形态，ADR 背景段已列为反面实例）。
-   */
   const selectableAccounts = computed(() => accounts.value.filter((a) => !a.is_archived));
 
-  /** 通用账户下拉候选面（`{label, value}` 投影单点，形同 investmentAccountOptions）。 */
   const selectableAccountOptions = computed(() =>
     selectableAccounts.value.map((a) => ({ label: a.name, value: a.id })),
   );
 
-  /**
-   * 投资账户全量谓词：type = investment 的账户。「投资账户下拉」语义单点收口，
-   * 候选面投影（investmentAccountOptions，#1830）随本派生同源同处；不排隐藏——
-   * 与 v_holdings / 时点持仓口径一致（issue #217 定案 Q2）。
-   */
   const investmentAccounts = computed(() => accounts.value.filter((a) => a.type === "investment"));
 
-  /**
-   * 投资账户下拉候选面（issue #1830）：谓词 → `{label, value}` 选项投影单点。
-   * 持仓筛选 / 盈亏账户下拉 / 录入表单 / 明细页签账户筛选四处同形拷贝收口于此，
-   * 候选面类调整（label 拼法、候选收窄，如 #1828）一处生效；「进不进选项面」
-   * 的账户语义仍归谓词 investmentAccounts，本派生只做机械投影。
-   */
   const investmentAccountOptions = computed(() =>
     investmentAccounts.value.map((a) => ({ label: a.name, value: a.id })),
   );
 
-  /**
-   * 投资类账户的**可选择**候选面（spec #1952 / ADR-0142 决策 4）：投资账户下拉、
-   * 持仓 / 盈亏 / 明细三处筛选下拉的选项面。谓词 investmentAccounts 与投影
-   * investmentAccountOptions 都是**读口径**（对齐 v_holdings，不得加归档过滤），
-   * 故归档收纳以本变体承载而非改谓词：同一投影 + 归档排除，读口径与选项面分家。
-   */
   const selectableInvestmentAccountOptions = computed(() =>
     investmentAccounts.value
       .filter((a) => !a.is_archived)
       .map((a) => ({ label: a.name, value: a.id })),
   );
 
-  /**
-   * 出资账户候选单一谓词派生（issue #936 / ADR-0096 决策 4）：在用账户中类型落在
-   * 准入闭集（现金类，见 types/accounts.ts isFundingCandidateAccount）者。币种一致过滤
-   * 随交易币种，由消费表单承担；后端行为层准入是唯一权威，此处仅供表单预过滤。
-   * 排除归档（spec #1952 / ADR-0142 决策 4）：本派生只被投资录入表单的**选项面**
-   * 消费，归档账户不进新选择；编辑已有买卖时已存值由补值工具钉回。
-   */
   const fundingCandidateAccounts = computed(() =>
     accounts.value.filter((a) => isFundingCandidateAccount(a.type) && !a.is_archived),
   );
@@ -219,23 +141,12 @@ export const useReferenceStore = defineStore("reference", () => {
     return pureCategoryChildren(categories.value, parentId);
   }
 
-  /**
-   * 分类路径缓存（issue #2187）：分类标识 → 完整展示路径的 O(1) 查表映射，
-   * 由含软删全量分类字典派生（categoryMap：在用 + 软删，历史交易口径同商户先例
-   * issue #191）——路径查询不再每次线性遍历全部分类重建临时映射。
-   * 路径口径与纯函数单条查询一致（顶级名 / 父 > 子 / 孤儿退自身名）；
-   * 空与未知标识不在映射内，查询回空串由调用方兜底。computed 随字典重拉
-   * 自动重建：失效信号（ledger:changed）重拉后重命名或软删分类的路径即时更新。
-   */
   const categoryPathMap = computed(() => pureBuildCategoryPathMap(categoryMap.value.values()));
 
   function categoryPath(id: string | null | undefined): string {
     return categoryPathMap.value.get(id ?? "") ?? "";
   }
 
-  /** 分类显示名（issue #356）：顶级为自身名，子分类为「父 > 子」路径名；
-   * id 解析不到（孤儿引用，如守卫生效前的历史预算）时回退调用方提供的
-   * 后端兜底名（「未分类」），不抛错。 */
   function categoryDisplayName(id: string | null | undefined, fallback: string): string {
     return categoryPath(id) || fallback;
   }
@@ -243,12 +154,6 @@ export const useReferenceStore = defineStore("reference", () => {
   function treeCategoryOptions(kind: Category["kind"]): CategoryTreeNode[] {
     return pureBuildCategoryTree(categories.value, { kind });
   }
-
-  /**
-   * 一次完整重拉由工厂承载（stale-while-revalidate：拉取期间保留旧数据，
-   * 五源全成才整体替换——部分失败不落位）；push 生命周期（self-init 与
-   * ledger:changed 订阅）由工厂内化（ADR-0123）。
-   */
 
   function getCurrency(code: string): Currency | undefined {
     return currencyMap.value.get(code);

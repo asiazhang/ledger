@@ -23,47 +23,21 @@ import InstrumentBrowser from "@/investment/InstrumentBrowser.vue";
 
 const route = useRoute();
 
-// 投资页会话状态（issue #1192）：当前页签 + 持仓页签筛选/排序/页码 + 走势页签
-// 选中标的（模式/预设区间）提升为会话级 store（ADR-0094 会话内保留，先例
-// 报表页 #427 / 交易页 #893）——切走页签再切回（或经侧栏离开再回来）回到离开
-// 时的样子，数据照常按恢复的选择现拉；冷启动回默认；全程零写盘、不写回 URL。
-// 组件仍按 display-directive 'if' 重新挂载（ADR-0094 明确否决 KeepAlive），
-// 保留由状态提升承担。
 const session = useInvestmentsSessionStore();
-// 页签受控桥接：`:value` 只读投影 + `@update:value` 直调意图入口（单一写路；
-// 不把 store 状态暴露成组件可直写的 ref，ADR-0094「store 是唯一读写方」）。
 const activeTab = computed(() => session.activeTab);
 function onActiveTabChange(tab: string) {
   session.setActiveTab(tab);
 }
 
-// ESC 复位接线（ADR-0094 决策 4）：本视图持有保留态，setup 期向复位回调注册表
-// 声明复位回调、作用域销毁时自动撤销（导航离开/跨断点换档卸载均不滞留）；
-// 窗口行为守卫在无弹层 ESC 时消费。复位走 store 既有复位出口 resetToDefault
-// （页签回默认、持仓筛选三维清零、翻页归零、走势回默认组合曲线），同值幂等。
 registerViewReset(session.resetToDefault);
 
-// 来源跳转落点状态（spec #704，#1907 改址）：focus 消费出的标的 id 交给标的
-// 页签做 anchor 分页定位 + 行高亮（走势页签退役，标的页签是新的焦点面）。
 const focusInstrumentId = ref<string | null>(null);
 
-// 价格过期提示（issue #1190）：打开投资页时做一次本地水位检查（零网络请求），
-// 有过期（或持仓缺现价）就提示并导向既有「同步标的信息」入口——刻意不做自动
-// 同步与定时轮询（ADR-0015 / ADR-0095 的显式触发口径保留，开页面不变成网络
-// 操作）。判定与阈值归后端投资域单点，本视图只渲染计数与阈值。
-// 「去同步」按钮切到标的页签：那里就是既有同步入口（按钮 + 进度条 + 结果
-// 消息复用同一 useInstrumentInfoSync 接缝），不新增第二套同步触发。
 const { staleCount, thresholdDays } = usePriceStaleness();
 function goSyncInstrumentInfo() {
   session.setActiveTab("instruments");
 }
 
-// —— 来源跳转落点（spec #704 / issue #709，词汇表「实体定位参数（focus 参数）」；
-// #1907 改址）：挂载消费一次（读一次语义归 useFocusParam 单点）。标的落标的
-// 页签——单标的走势退役后，anchor 分页定位让行必在当前页、行高亮重新可靠
-// （清仓/无持仓照常可达，列表不以持仓为界；无效 focus 在 anchor 查询内回落
-// 普通页码，不提供落空的跳转）。主项路由与收纳页签（资产「更多」investments
-// 页签）共用本视图实例，route.query 同源，两态一套接线。
 const focusParam = useFocusParam({
   query: () => route.query,
   onFocus: (instrumentId) => {
@@ -73,15 +47,6 @@ const focusParam = useFocusParam({
 });
 onMounted(() => focusParam.consume());
 
-// —— 明细页签深链落点（issue #1780 / ADR-0135 决策 6，词汇表「持仓下钻」入参键）：
-// 投资页 URL 参数表新增 `tab=detail`（值即明细页签键）+ `account` / `instrument`
-// 过滤参数，供持仓下钻与深链落明细页签。消费纪律与 focus 参数同族：URL 只读不写回
-// （本视图从不写 query）、参数在场永远赢（覆盖保留态对应维度——显式跳转意图总是被
-// 尊重）、一次性消费（同载荷不重放：消费后手动改动不因 URL 残留而复活；不同载荷=
-// 新意图重新消费）。形状校验从窄：tab 值仅收 `detail`（本票唯一参数表入口，其余值
-// 视为不在场）；account / instrument 取非空字符串，无效 id 落空集（空态可见），不做
-// 参考数据映射（涉及账户与标的命中语义单点在后端）。容器形态（组「更多」页）
-// query.tab 归容器（#473 双写互踩约定），tab=detail 深链不产生容器 URL。
 const LEDGER_TAB_URL_VALUE = "detail";
 
 interface LedgerDeepLinkParams {
@@ -90,14 +55,12 @@ interface LedgerDeepLinkParams {
   instrument: string | null;
 }
 
-/** 读 query 单值：重复键取第一、数组首元 null 按缺席、空串视为不在场。 */
 function readQueryValue(query: LocationQuery, key: string): string | null {
   const raw = query[key];
   const value = Array.isArray(raw) ? raw[0] : raw;
   return typeof value === "string" && value !== "" ? value : null;
 }
 
-/** 已消费参数载荷（一次性消费闸门：同载荷不重放）。 */
 let consumedDeepLink: LedgerDeepLinkParams | null = null;
 
 function consumeLedgerDeepLink(query: LocationQuery) {
@@ -118,7 +81,6 @@ function consumeLedgerDeepLink(query: LocationQuery) {
   }
   consumedDeepLink = payload;
   session.setActiveTab("ledger");
-  // 参数在场永远赢：在场参数覆盖保留态对应维度，缺席维度保留保留态不动
   if (payload.account) session.setDetailAccount(payload.account);
   if (payload.instrument) session.setDetailInstrument(payload.instrument);
 }
@@ -176,16 +138,6 @@ watch(
         <InvestmentOverviewPanel />
       </NTabPane>
 
-      <!-- pnl pane 用 display-directive='show'：内容保持挂载（v-show 隐藏），
-           筛选/汇总状态在 tab 切换间保留，与原视图顶层 ref 行为一致。
-           持仓/标的/走势 tab 保持默认 'if'，切回时重新挂载加载（ADR-0094 否决
-           KeepAlive）；持仓与走势的瞬态选择经投资页会话 store 恢复（issue #1192）。
-           全部 NTabPane 必须带 key（= 页签名）：naive-ui 渲染的 pane 子节点若无
-           key，Vue 按位置就地复用同类型组件实例——概览（模板首位）激活时热挂的
-           盈亏 pane 在位置 1，切到盈亏后位置 0 由概览 pane 就地改造成盈亏 pane
-           （插槽换血 = RealizedPnlPanel 重新挂载重新取数），热实例反而被销毁。
-           带 key 后按实例身份比对，'show' 的预取与状态保留语义才真正成立
-           （设置页 SettingsView 全量带 key 是既有实践）。 -->
       <NTabPane key="pnl" name="pnl" display-directive="show">
         <template #tab
           ><span class="pane-tab"
@@ -231,8 +183,6 @@ watch(
 </template>
 
 <style scoped>
-/* 页签图标 + 文字：gap 负责间距，文字与图标间不落空白，
-   保证测试/无障碍按文本定位页签时拿到纯标签文字 */
 .pane-tab {
   display: inline-flex;
   align-items: center;

@@ -9,10 +9,8 @@ import { makeFakeSink, makeFinancialFreedom, resetToastSink } from "./factories"
 
 const mockFreedom = makeFinancialFreedom();
 
-/** 默认 invoke 布线：财务自由度聚合契约快照 */
 const BASE_DEFAULTS = { financial_freedom: mockFreedom };
 
-/** 宿主组件：模拟 DashboardView 在 setup 内使用 composable（首跑时序留在薄壳内） */
 const Host = defineComponent({
   setup() {
     return { shell: useFinancialFreedom() };
@@ -22,7 +20,6 @@ const Host = defineComponent({
 
 beforeEach(() => {
   wireInvokeSeam({ defaults: BASE_DEFAULTS });
-  // 每用例复位为 no-op，模拟「注册前」默认态，防模块级 sink 状态串扰
   resetToastSink();
 });
 
@@ -87,7 +84,6 @@ describe("useFinancialFreedom 财务自由度数据层（issue #344）", () => {
       defaults: BASE_DEFAULTS,
       overrides: { financial_freedom: () => Promise.reject(new Error("缺少 USD→CNY 汇率")) },
     });
-    // 挂载自动首刷已吃到拒绝布线并弹一次 toast（sink 已注册），无需再显式首刷
     const { error, refresh } = withSetup(() => useFinancialFreedom());
     const sink = makeFakeSink();
     registerToastSink(sink);

@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-// restart_app 命令单点 mock：断言调用与后续重载编排，不触真实后端。
 const restartApp = vi.fn();
 vi.mock("@ledger/api", () => ({
   api: {
@@ -16,7 +15,6 @@ describe("restartAppShortly（原位重引导 + WebView 重载，issue #644）",
   beforeEach(() => {
     restartApp.mockReset();
     reload.mockReset();
-    // jsdom 不实现导航：以可配置属性替换 window.location，捕获 reload 调用。
     Object.defineProperty(window, "location", {
       configurable: true,
       writable: true,

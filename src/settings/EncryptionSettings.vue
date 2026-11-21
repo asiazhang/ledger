@@ -20,21 +20,11 @@ import AppModal from "@ledger/ui-kit/AppModal.vue";
 import PassphraseStrengthMeter from "@/settings/PassphraseStrengthMeter.vue";
 import { PASSPHRASE_MIN_LENGTH, useEncryptionTransitions } from "@/backup/useEncryptionTransitions";
 
-// 加密卡片（issue #570/#571 / #574 / ADR-0075；#654 重排）：数据文件管理域的加密模式开关。
-// 三条形态转换流（开启 / 修改主口令 / 关闭）与自动解锁启用的编排住
-// useEncryptionTransitions 深模块（issue #1396，备份与数据文件域，与
-// useEncryptionGate / restart 同区）；本组件是它的薄 adapter：只留设置页签面——
-// 状态渲染、四个确认弹窗（AppDangerConfirmModal / AppModal）的模板与 i18n 文案
-// props（「确认弹层文案留调用方」，ADR-0078）。
-// 已加密形态为日常视图：「已开启」标识 + 自动解锁；修改主口令、关闭加密两个
-// 低频流程收进默认收起的折叠区（展开后流程与分级确认不变，ADR-0078）。
 const {
-  // 状态加载
   status,
   statusLoading,
   statusError,
   refresh,
-  // 开启流
   passphrase,
   confirmPassphrase,
   enableRemember,
@@ -45,7 +35,6 @@ const {
   requestEnable,
   confirmEnable,
   submitting,
-  // 修改流
   changeOld,
   changeNew,
   changeConfirm,
@@ -59,13 +48,11 @@ const {
   requestChange,
   confirmChange,
   submittingChange,
-  // 关闭流
   disablePassphrase,
   disableConfirmShow,
   requestDisable,
   confirmDisable,
   submittingDisable,
-  // 自动解锁
   rememberSupport,
   autoUnlockOn,
   autoUnlockModalShow,

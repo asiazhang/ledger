@@ -27,7 +27,6 @@ const usdAccount: Account = {
 };
 
 beforeEach(() => {
-  // 参考字典命令由接缝内建规范夹具兜底（acc-1 = CNY）；USD 户按需覆写。
   wireInvokeSeam();
 });
 describe("useFormShared.useAccountCurrency（币种随账户推导，#1775 / ADR-0134 决策 5）", () => {
@@ -35,7 +34,6 @@ describe("useFormShared.useAccountCurrency（币种随账户推导，#1775 / ADR
     await useReferenceStore().refresh();
     const accountId = ref<string | null>(null);
     const currencyCode = useAccountCurrency(accountId);
-    // 钉死字面量而非读实现（app store 缺省偏好即 CNY）：期望与被测实现解耦（ADR-0087 断言强度）
     expect(currencyCode.value).toBe("CNY");
   });
 
@@ -60,7 +58,6 @@ describe("useFormShared.useAccountCurrency（币种随账户推导，#1775 / ADR
 });
 
 describe("useFormShared.usePinnedAccountOptions（编辑面补值：已选值是归档账户，spec #1952 / ADR-0142 决策 4）", () => {
-  /** 归档账户行：可选项里已排除，但已存值必须能补回并带标记 */
   const archivedAccount: Account = {
     ...usdAccount,
     id: "acc-archived",
@@ -77,7 +74,6 @@ describe("useFormShared.usePinnedAccountOptions（编辑面补值：已选值是
 
   it("当前值是归档账户：补回选项头部、标「已归档」、值保持不变（不静默改挂）", async () => {
     const { accountOptions } = await setupArchived();
-    // 新选择面不含归档账户
     expect(accountOptions.value.map((o) => o.value)).toEqual(["acc-usd"]);
     const accountId = ref<string | null>("acc-archived");
     const pinned = usePinnedAccountOptions(accountId, accountOptions);
@@ -109,7 +105,6 @@ describe("useFormShared.useEntityCurrency（币种随已持有对象推导，#18
     await useReferenceStore().refresh();
     const source = ref<{ currency_code: string } | null>(null);
     const currencyCode = useEntityCurrency(source);
-    // 钉死字面量而非读实现（app store 缺省偏好即 CNY）：期望与被测实现解耦（ADR-0087 断言强度）
     expect(currencyCode.value).toBe("CNY");
   });
 

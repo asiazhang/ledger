@@ -8,8 +8,6 @@ import { RELEASE_PAGE_URL } from "@/composables/useAppUpdate";
 import { open } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 
-// 文件选择与重启单点 mock（先例 useBackup.test.ts；restartAppShortly 内含
-// 800ms 延时，测试断言调用而非计时）。
 vi.mock("@tauri-apps/plugin-dialog", () => ({
   open: vi.fn(),
   save: vi.fn(),
@@ -24,7 +22,6 @@ const mockOpenUrl = vi.mocked(openUrl);
 beforeEach(() => {
   mockOpen.mockReset();
   restartAppShortly.mockClear();
-  // 每个用例从「未探测」起步（模块级单例状态复位）。
   const gate = useEncryptionGate();
   gate.locked.value = null;
   gate.bootFailed.value = false;
@@ -35,15 +32,12 @@ function findButton(wrapper: ReturnType<typeof mount>, testid: string) {
   return wrapper.find(`[data-testid="${testid}"]`);
 }
 
-/** 弹窗打开稳定等待：naive-ui NModal 经过渡挂载内容，仅 flushPromises 时序不稳。 */
 async function waitModal() {
   await flushPromises();
   await new Promise((resolve) => setTimeout(resolve, 50));
   await flushPromises();
 }
 
-/** 以「启动已失败」现场挂载失败恢复屏（模拟 probe 返回 failed 后的状态）。
- *  失败恢复屏只消费启动命令面（fail-loud：未布线命令由接缝一律拒绝）。 */
 async function mountFailedScreen(
   overrides: Record<string, (args?: Record<string, unknown>) => unknown> = {},
 ) {
@@ -51,14 +45,12 @@ async function mountFailedScreen(
   const gate = useEncryptionGate();
   gate.bootFailed.value = true;
   const wrapper = mount(StartupFailureScreen, {
-    // 确认弹窗（AppModal/NModal）默认 teleport 到 body：stub 内联渲染才能断言
     global: { stubs: { teleport: true } },
   });
   await flushPromises();
   return { wrapper, gate };
 }
 
-/** 备份恢复通道（issue #602）的命令面桩：文件选择返回指定备份，其余可覆写。 */
 function stubRestoreChannel(
   backupPath: string,
   overrides: Record<string, (args?: Record<string, unknown>) => unknown> = {},
@@ -81,7 +73,6 @@ describe("StartupFailureScreen.vue（启动失败恢复屏·issue #601）", () =
     const html = wrapper.html();
     expect(html).toContain("无法打开账本数据库");
     expect(html).toContain("重置为空库");
-    // 不渲染主界面业务面（失败期间业务 IPC 被后端门禁拦截）
     expect(html).not.toContain("仪表盘");
   });
 
@@ -90,12 +81,10 @@ describe("StartupFailureScreen.vue（启动失败恢复屏·issue #601）", () =
       reset_after_startup_failure: () => Promise.resolve(),
     });
 
-    // 未确认前不发命令
     expect(mockInvoke.mock.calls.some(([cmd]) => cmd === "reset_after_startup_failure")).toBe(
       false,
     );
 
-    // 打开确认弹窗：后果说明（不可逆 + .bak 副本）可见
     await findButton(wrapper, "failure-reset-open")!.trigger("click");
     await waitModal();
     const html = wrapper.html();
@@ -107,7 +96,6 @@ describe("StartupFailureScreen.vue（启动失败恢复屏·issue #601）", () =
     await findButton(wrapper, "failure-reset-confirm")!.trigger("click");
     await flushPromises();
     expect(mockInvoke).toHaveBeenCalledWith("reset_after_startup_failure");
-    // 成功即翻转状态：失败屏退场，主界面随全新空库挂载
     expect(gate.bootFailed.value).toBe(false);
     expect(gate.locked.value).toBe(false);
   });
@@ -157,7 +145,6 @@ describe("StartupFailureScreen.vue（启动失败恢复屏·issue #601）", () =
     await gate.probe();
     await flushPromises();
     expect(gate.bootFailed.value).toBe(true);
-    // locked 保持 null：主界面与解锁屏都不挂载
     expect(gate.locked.value).toBe(null);
   });
 
@@ -189,7 +176,6 @@ describe("StartupFailureScreen.vue（启动失败恢复屏·issue #601）", () =
 });
 
 describe("StartupFailureScreen.vue（schema 漂移按码呈现·issue #994）", () => {
-  /** 通道入口在 DOM 中的位置（漂移场景动作排序断言用）。 */
   function channelPos(wrapper: ReturnType<typeof mount>, testid: string) {
     return wrapper.html().indexOf(testid);
   }
@@ -215,12 +201,10 @@ describe("StartupFailureScreen.vue（schema 漂移按码呈现·issue #994）", 
     const html = wrapper.html();
     expect(html).toContain("数据库结构异常");
     expect(html).not.toContain("无法打开账本数据库");
-    // 动作排序（issue #994）：漂移库打得开且数据完好，从备份恢复是首选动作
     const restorePos = channelPos(wrapper, "failure-restore-open");
     const resetPos = channelPos(wrapper, "failure-reset-open");
     expect(restorePos).toBeGreaterThanOrEqual(0);
     expect(resetPos).toBeGreaterThan(restorePos);
-    // 首选强调：恢复入口 primary 实心，重置入口降为普通形态（次选）
     const restoreClasses = findButton(wrapper, "failure-restore-open")!.classes().join(" ");
     const resetClasses = findButton(wrapper, "failure-reset-open")!.classes().join(" ");
     expect(restoreClasses).toContain("n-button--primary-type");
@@ -261,8 +245,6 @@ describe("StartupFailureScreen.vue（schema 漂移按码呈现·issue #994）", 
     const html = wrapper.html();
     expect(html).toContain("账本由更新版本的应用创建");
     expect(html).not.toContain("无法打开账本数据库");
-    // 唯一通道：升级。重置/恢复都不呈现——重置会毁掉完好的新库，恢复出的
-    // 备份同样是超前库，两条通道都通向死路。
     expect(findButton(wrapper, "failure-upgrade-open").exists()).toBe(true);
     expect(findButton(wrapper, "failure-reset-open").exists()).toBe(false);
     expect(findButton(wrapper, "failure-restore-open").exists()).toBe(false);
@@ -280,12 +262,10 @@ describe("StartupFailureScreen.vue（schema 漂移按码呈现·issue #994）", 
 });
 
 describe("StartupFailureScreen.vue（备份恢复通道·issue #602）", () => {
-  /** 弹窗内元素（teleport 已 stub：内容内联在 wrapper 内）。 */
   function modalEl(wrapper: ReturnType<typeof mount>, testid: string) {
     return wrapper.find(`[data-testid="${testid}"]`);
   }
 
-  /** 弹窗内 NInput 输入口令（受控值经组件 emit 驱动，先例 RestoreConfirmModal.test）。 */
   async function typePassphrase(wrapper: ReturnType<typeof mount>, value: string) {
     const { NInput } = await import("naive-ui");
     const input = wrapper.findComponent(NInput);
@@ -293,7 +273,6 @@ describe("StartupFailureScreen.vue（备份恢复通道·issue #602）", () => {
     await flushPromises();
   }
 
-  /** 以「启动已失败 + 备份恢复通道」现场挂载。 */
   async function mountWithRestore(
     overrides: Record<string, (args?: Record<string, unknown>) => unknown> = {},
   ) {
@@ -324,12 +303,9 @@ describe("StartupFailureScreen.vue（备份恢复通道·issue #602）", () => {
     const { wrapper } = await mountWithRestore();
     await openRestoreModal(wrapper);
 
-    // 校验链：元数据 + 当前模式探测都在确认前发生
     expect(mockInvoke.mock.calls.some(([c]) => c === "get_backup_meta")).toBe(true);
     expect(mockInvoke.mock.calls.some(([c]) => c === "get_encryption_status")).toBe(true);
-    // 同模式（明文备份 → 明文库）：不出现跨模式警告
     expect(wrapper.text()).not.toContain("加密模式不一致");
-    // 未确认前不发恢复命令
     expect(mockInvoke.mock.calls.some(([c]) => c === "restore_backup")).toBe(false);
 
     await modalEl(wrapper, "restore-confirm")!.trigger("click");
@@ -338,7 +314,6 @@ describe("StartupFailureScreen.vue（备份恢复通道·issue #602）", () => {
       backupPath: "/tmp/plain.db.zip",
       passphrase: null,
     });
-    // 恢复成功即自动重启进入恢复后的数据（Restore 同型）
     expect(restartAppShortly).toHaveBeenCalledTimes(1);
   });
 
@@ -348,10 +323,8 @@ describe("StartupFailureScreen.vue（备份恢复通道·issue #602）", () => {
     });
     await openRestoreModal(wrapper);
 
-    // 跨模式警告照常出现（复用 #572 警告语义与文案）
     expect(wrapper.text()).toContain("加密模式不一致");
     expect(wrapper.text()).toContain("恢复后此库将变为加密库，应用重启后需凭该备份的主口令解锁");
-    // 无上下文口令：密文备份直接显出口令框，口令未输时确认禁用
     expect(modalEl(wrapper, "restore-passphrase").exists()).toBe(true);
     expect((modalEl(wrapper, "restore-confirm").element as HTMLButtonElement).disabled).toBe(true);
     expect(mockInvoke.mock.calls.some(([c]) => c === "restore_backup")).toBe(false);
@@ -372,7 +345,6 @@ describe("StartupFailureScreen.vue（备份恢复通道·issue #602）", () => {
     });
     await openRestoreModal(wrapper);
 
-    // 第一次：错误口令 → 错误留在弹窗内，弹窗不关，可就地重输
     await typePassphrase(wrapper, "wrong");
     await modalEl(wrapper, "restore-confirm").trigger("click");
     await flushPromises();
@@ -380,7 +352,6 @@ describe("StartupFailureScreen.vue（备份恢复通道·issue #602）", () => {
     expect(modalEl(wrapper, "restore-confirm").exists()).toBe(true);
     expect(restartAppShortly).not.toHaveBeenCalled();
 
-    // 第二次：正确口令 → 恢复成功，自动重启
     failFirst = false;
     await typePassphrase(wrapper, "right-pw");
     await modalEl(wrapper, "restore-confirm").trigger("click");
@@ -398,8 +369,6 @@ describe("StartupFailureScreen.vue（备份恢复通道·issue #602）", () => {
         Promise.reject({ kind: "Invalid", message: "不是有效的备份包", code: "backup.corrupt" }),
     });
     await openRestoreModal(wrapper);
-    // 校验失败即中止：确认弹窗不开、恢复不发（错误经 message.error 提示，
-    // useMessage 为全局 mock，此处钉流程中止面）。
     expect(mockInvoke.mock.calls.some(([c]) => c === "get_backup_meta")).toBe(true);
     expect(modalEl(wrapper, "restore-confirm").exists()).toBe(false);
     expect(mockInvoke.mock.calls.some(([c]) => c === "restore_backup")).toBe(false);

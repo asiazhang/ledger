@@ -8,25 +8,16 @@ import { useReferenceStore } from "@/stores/reference";
 import { useLoadable } from "@ledger/loadable";
 import type { BalanceCacheAudit } from "@ledger/types";
 
-// 账户余额缓存卡片（ADR-0067 决策 5「手动审计兜底」的界面入口）：账户余额与
-// 净资产读的是持久化缓存（V017），缓存缺失按裁决报码化错误、不静默回退实时
-// 计算——修复动作因此不能藏在读路径里，只能由此处显式触发。修复语义全部在
-// 命令层（全账户实时重算 vs 缓存逐户比对 → 整体重算回写 → 返回差异快照），
-// 本组件只触发命令与呈现报告，不持第二份口径。
-
 const message = useMessage();
 const reference = useReferenceStore();
 
 const report = ref<BalanceCacheAudit | null>(null);
 
-/** 漂移行的账户币种：账户名与币种都取自参考表（同一账户 id 的单一来源），
- *  参考表未收录该 id（如缓存行指向已删账户）时退化为无币种格式化。 */
 function currencyOf(accountId: string) {
   const code = reference.accountMap.get(accountId)?.currency_code;
   return code ? reference.getCurrency(code) : undefined;
 }
 
-/** 缓存值列：缺失（null）是差异的一种形态，独立文案呈现，不显示成 0。 */
 function cachedText(cents: number | null) {
   return cents === null ? t("settings.data.balanceCache.report.missing") : formatAmount(cents);
 }
@@ -46,8 +37,6 @@ const columns = computed(() => [
   },
 ]);
 
-/** 报告呈现形态：有漂移 → 已修复（列出逐户差异）；零漂移 → 无需修复。
- *  命令返回的报告恒为「修复已完成后的差异快照」，故不存在「未修复」态。 */
 const reportView = computed(() => {
   const r = report.value;
   if (!r) return null;
@@ -64,9 +53,6 @@ const reportView = computed(() => {
       };
 });
 
-/** 触发一键修复：幂等，重复执行安全；报告就地覆盖呈现。修复命令交由 useLoadable
- *  承载：loading 与错误反馈走其 error 通道（showErrorToast 单点，#1008 / 异步
- *  守门规则 2：catch 内直弹 toast 基线只减不增），成功另给轻量提示。 */
 const repairAction = useLoadable(() => api.auditBalanceCache());
 const repairing = repairAction.loading;
 

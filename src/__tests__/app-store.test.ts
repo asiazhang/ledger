@@ -150,7 +150,6 @@ describe("useAppStore amountPrivacyEnabled（issue #566：金额隐私模式，�
 
   it("store 状态与格式化层消费同一 ref：切换即时反映到 formatAmount", () => {
     const store = useAppStore();
-    // 具体格式归 formatAmount 专测；此处只锚「非掩码基准 ↔ 掩码」同 ref 翻转
     const unmasked = formatAmount(12345);
     expect(unmasked).not.toBe("••••");
     store.setAmountPrivacyEnabled(true);
@@ -164,7 +163,6 @@ describe("useAppStore amountPrivacyEnabled（issue #566：金额隐私模式，�
 describe("useAppStore 收缩契约（issue #85）", () => {
   it("已移除的参考数据 / 派生映射 / load 函数键不得回归", () => {
     const store = useAppStore() as unknown as Record<string, unknown>;
-    // 已移除的键不得回归（收缩契约本体）。
     const removed = [
       "currencies",
       "accounts",

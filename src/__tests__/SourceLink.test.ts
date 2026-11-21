@@ -7,7 +7,6 @@ import { useSidebarOrderStore } from "@/stores/sidebar-order";
 import { setFakeMedia } from "@ledger/test-support/media-mock";
 import type { TransactionSource } from "@ledger/types";
 
-// 点击跳转经 useRouter（MerchantLink/AccountLink 同款 pushMock 断言先例）
 const pushMock = vi.fn();
 vi.mock("vue-router", () => ({
   useRouter: () => ({ push: pushMock }),
@@ -48,7 +47,7 @@ describe("SourceLink 来源列单元格（spec #704 / issue #706）", () => {
   });
 
   it("主项态（保单已移回侧栏）落保单独立路由 + focus", async () => {
-    useSidebarOrderStore().applyMoveIntoMore("investments"); // 腾位：资产组随储蓄目标加入出厂满员
+    useSidebarOrderStore().applyMoveIntoMore("investments");
     useSidebarOrderStore().applyMoveBackToSidebar("policies");
     const wrapper = mount(SourceLink, { props: { source: makeSource() } });
     await wrapper.find("button.source-link").trigger("click");
@@ -75,7 +74,6 @@ describe("SourceLink 来源列单元格（spec #704 / issue #706）", () => {
     expect(wrapper.find("button").exists()).toBe(false);
     expect(wrapper.find(".source-name").text()).toBe("重疾险");
     expect(wrapper.text()).toContain("已删除");
-    // 名称仍带类型 tooltip（历史可见，只是不跳）
     expect(wrapper.find(".source-cell").attributes("title")).toBe("保单");
   });
 

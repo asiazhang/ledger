@@ -4,12 +4,6 @@ import { mount, flushPromises } from "@vue/test-utils";
 import { NSelect } from "naive-ui";
 import BaseCurrencySettings from "@/settings/BaseCurrencySettings.vue";
 
-/**
- * 本位币基准卡片组件测试（issue #858）：invoke 测试接缝布线（ADR-0085），
- * defaults 表给命令契约静态快照；卡片是「通用」页签轻量偏好之外的唯一
- * 账本级设置（ADR-0022 领域归属 → 「分类」页签）。
- */
-
 function mountCard() {
   return mount(BaseCurrencySettings);
 }

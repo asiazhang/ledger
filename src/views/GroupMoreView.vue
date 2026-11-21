@@ -36,31 +36,14 @@ import { useFeatureToggleStore } from "@/settings/feature-toggles";
 import { useWindowTier } from "@ledger/window-tier";
 import type { ContainableViewName, SidebarGroupId } from "@/stores/sidebar-order";
 
-/**
- * 组内「更多」聚合页（issue #472 / ADR-0063 决策 1/5）：收纳单位 = 侧栏分组。
- * 页签 = 该组收纳清单序（顺序源模块响应式读出，页签序 = 清单序、成员资格与顺序同源），
- * 默认页签 = 清单首位；页签状态收敛在路由 query.tab（可深链），
- * 切页签 replace 写回（定时页既有约定），无/非法 tab 回默认页签（展示层回退，不写回 query）。
- * 容器零业务逻辑，被收视图整体装载；页签不跨启动持久化（ViewState 只存视图名）。
- * 折叠态不渲染组标题，「更多」链接不出现，本页仅经链接/深链/恢复到达。
- */
-
 const props = defineProps<{ group: SidebarGroupId }>();
 
-/**
- * 收纳成员 → 装配记录（呈现层装配；#473 迁入定时/商户，#474 用户移入主项）：
- * 组件与图标同源一处，键收窄为 ContainableViewName（顺序源模块词表，拼错成员名即编译错误）。
- * 词表含全部主项（#474 移入自由）：任一主项被移入后在此整体装载、功能零损失。
- */
 const CONTAINED_VIEWS: Record<ContainableViewName, { component: Component; icon: Component }> = {
   policies: { component: PoliciesView, icon: ShieldCheckmarkOutline },
   physicalAssets: { component: PhysicalAssetsView, icon: CubeOutline },
-  // 保司管理（issue #714 / ADR-0082 决策 3）：保险域管理面，归位资产组「更多」
   insurers: { component: InsurerManager, icon: UmbrellaOutline },
-  // 定时内嵌态：页签退内存态（容器页签与被收视图共用 query.tab 会双写互踩）
   scheduled: { component: () => h(ScheduledView, { embedded: true }), icon: RepeatOutline },
   merchants: { component: MerchantManager, icon: StorefrontOutline },
-  // 用户移入的主项（issue #474 / ADR-0063 决策 4：任一主项可入本组「更多」）
   transactions: { component: TransactionsView, icon: SwapHorizontalOutline },
   accounts: { component: AccountsView, icon: WalletOutline },
   budget: { component: BudgetView, icon: CalculatorOutline },
@@ -74,33 +57,25 @@ const CONTAINED_VIEWS: Record<ContainableViewName, { component: Component; icon:
 const route = useRoute();
 const router = useRouter();
 
-// 窗口分级（issue #849）：裁剪判定接宽度轴唯一事实源，档位派生与其余
-// 轻适配组件同形。
 const windowTier = useWindowTier();
 const isMobileTier = computed(() => windowTier.value === "mobile");
 
-// 顺序状态消费 sidebar-order store（issue #549）：清单/组内序只读，移回写路径经 store。
 const sidebarOrder = useSidebarOrderStore();
 const { applyMoveBackToSidebar } = sidebarOrder;
-// 关闭只筛页签入口，不改写收纳清单（issue #1242 / ADR-0116 决策 3）。
 const featureToggles = useFeatureToggleStore();
 
-/** 该组可见收纳成员（响应式）：空清单 = 无页签（含出厂无成员与成员全关闭两种态）。 */
 const tabs = computed(() =>
   sidebarOrder.sidebarContainment[props.group].filter(
     (name) => !featureToggles.isFeatureClosed(name),
   ),
 );
 
-/** 页签合法性收窄：query.tab 必须是当前清单成员。 */
 function isLegalTab(v: unknown): v is string {
   return typeof v === "string" && (tabs.value as readonly string[]).includes(v);
 }
 
 const activeTab = computed(() => (isLegalTab(route.query.tab) ? route.query.tab : tabs.value[0]));
 
-/** 页签切换走 replace：不产生多余历史记录，深链语义（每页签一条 URL）；
- *  展开既有 query——保留路由上未来可能出现的其他参数。 */
 function onTabChange(key: string | number) {
   const tab = String(key);
   if (isLegalTab(tab) && tab !== activeTab.value) {
@@ -108,31 +83,15 @@ function onTabChange(key: string | number) {
   }
 }
 
-// ---------------------------------------------------------------------------
-// 页签右键「移回侧栏」（issue #475 / ADR-0063 决策 4）：手动定位弹出，与侧栏排序菜单
-// 同一模式（AppDropdown 封装 + 弹层注册表上报 ADR-0035，零新抑制机制）。
-// 组满 3 主项时菜单项置灰并附提示（上限可见、可学习）：提示是两行标签，而 naive
-// 菜单项行盒高度固定，两行内容会溢出行盒画到菜单容器外（无背景板漂浮盖内容），
-// 故经 render-option 在选项外包一层 .tab-back-option 放开行盒随内容（规则在
-// global.css），整颗菜单（项 + 提示）保持一块实心浮层；点选即从清单删除并落本组
-// 主项末位（写路径 applyMoveBackToSidebar），页签序随清单响应式更新；
-// 移回最后一个成员后清单为空，本页退化为零页签、侧栏「更多」链接随之消失。
-// ---------------------------------------------------------------------------
-
 const backMenuShow = ref(false);
 const backMenuX = ref(0);
 const backMenuY = ref(0);
 const backTarget = ref<ContainableViewName | null>(null);
 
-/** 菜单选项由本组当前主项序派生（组满置灰判定在纯函数内，响应式随动）。 */
 const backMenuOptions = computed(() =>
   buildTabContextMenuOptions(sidebarOrder.sidebarGroupOrders[props.group]),
 );
 
-/** 右键页签弹出移回菜单：先收起再 nextTick 展开，保证连续弹出时位置刷新（侧栏菜单同款）。
- * 组内收纳管理是桌面专属管理动作（ADR-0088 决策 10，issue #849）：移动档不入
- * 口（右键不弹，与导航抽屉「菜单不附右键排序事件」同口径），只读消费收纳结构；
- * 桌面档照常。 */
 function onTabContextmenu(e: MouseEvent, name: ContainableViewName) {
   if (isMobileTier.value) return;
   backTarget.value = name;
@@ -151,7 +110,6 @@ function onBackMenuSelect(key: string) {
   applyMoveBackToSidebar(target);
 }
 
-/** 选项行外包标记类：组满提示两行标签须撑开 naive 固定行盒（规则见 global.css .tab-back-option）。 */
 function renderBackOptionRow({ node }: { node: VNode }): VNode {
   return h("div", { class: "tab-back-option" }, [node]);
 }
@@ -184,8 +142,6 @@ function renderBackOptionRow({ node }: { node: VNode }): VNode {
 </template>
 
 <style scoped>
-/* 页签图标 + 文字：gap 负责间距，文字与图标间不落空白，
-   保证测试/无障碍按文本定位页签时拿到纯标签文字 */
 .pane-tab {
   display: inline-flex;
   align-items: center;

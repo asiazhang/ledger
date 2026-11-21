@@ -10,13 +10,11 @@ import {
 } from "@/transaction/lending";
 import { ACCOUNT_TYPES, TRANSACTION_KINDS, type AccountType } from "@ledger/types";
 
-/** 测试真值表（与实现独立）：账户类型的借贷侧别归类 */
 function sideOf(type: AccountType): "fund" | "receivable" | "debt" {
   if (type === "receivable" || type === "debt") return type;
   return "fund";
 }
 
-/** 测试真值表：账户类型组合 → 五态（spec #374：借出/收回/借入/还款/普通转账） */
 function expectedOf(from: AccountType, to: AccountType): LendingDirection {
   const f = sideOf(from);
   const t = sideOf(to);
@@ -52,9 +50,6 @@ describe("deriveLendingDirection（借贷方向派生，issue #374 S1）", () =>
   });
 
   it("边界：借贷端对端为未知/黑洞账户（账户类型缺失）→ 仍按借贷方向派生（issue #374 修订）", () => {
-    // 借贷方向由借贷侧（debt/receivable）唯一决定，对端账户类型缺失
-    // （黑洞 is_hidden 占位 / 已删 / 不可查）不改变借贷语义：
-    // debt 转出 = 借入、负债方转入 = 还款、receivable 转出 = 收回、receivable 转入 = 借出。
     expect(deriveLendingDirection("transfer", "debt", null)).toBe("borrow");
     expect(deriveLendingDirection("transfer", "debt", undefined)).toBe("borrow");
     expect(deriveLendingDirection("transfer", null, "debt")).toBe("repay");
@@ -63,7 +58,6 @@ describe("deriveLendingDirection（借贷方向派生，issue #374 S1）", () =>
   });
 
   it("边界：资金端对端缺失 / 两端均缺失（无任何借贷侧）→ 普通转账", () => {
-    // 非借贷侧（资金账户）对端缺失，或两端都缺失：无借贷语义，仍是普通转账。
     expect(deriveLendingDirection("transfer", "cash", null)).toBe("none");
     expect(deriveLendingDirection("transfer", null, "bank")).toBe("none");
     expect(deriveLendingDirection("transfer", undefined, undefined)).toBe("none");
@@ -105,7 +99,6 @@ describe("LENDING_DIRECTION_SIDES（方向 → 账户过滤侧别）与派生判
     expect(LENDING_FORM_DIRECTIONS).toEqual(["lend", "collect", "borrow", "repay"]);
     for (const direction of LENDING_FORM_DIRECTIONS) {
       const { from, to } = LENDING_DIRECTION_SIDES[direction];
-      // 侧别组合不变量：每方向恰好一端 fund、另一端 receivable/debt
       const pair = [from, to].sort().join("+");
       expect(
         ["debt+fund", "fund+receivable"].includes(pair),
@@ -117,7 +110,6 @@ describe("LENDING_DIRECTION_SIDES（方向 → 账户过滤侧别）与派生判
   it("方向派生与过滤表互为镜像：按过滤表选出的两端账户必派生回同一方向", () => {
     for (const direction of LENDING_FORM_DIRECTIONS) {
       const { from, to } = LENDING_DIRECTION_SIDES[direction];
-      // 不变量前提：四个真实方向的侧别不含 unknown（防御值不参与方向派生）
       if (from === "unknown" || to === "unknown") {
         throw new Error(`方向 ${direction} 的侧别含 unknown，镜像断言前提不成立`);
       }

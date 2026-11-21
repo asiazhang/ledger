@@ -4,14 +4,11 @@ import { mount, flushPromises } from "@vue/test-utils";
 import { NSelect } from "naive-ui";
 import type { Transaction } from "@ledger/types";
 
-/** 账户列委托下钻按钮（issue #2189 表级事件委托：单元格内不再实例化 AccountLink，
- * 账户名是携带 data-tx-action="account-drill" 的轻量原生按钮）。 */
 function accountDrillButtons(wrapper: ReturnType<typeof mount>) {
   return wrapper.findAll('button[data-tx-action="account-drill"]');
 }
 
 describe("TransactionsView 转账行双向账户名（issue #99）", () => {
-  // 混合数据集：转账行（txn-2: acc-2 → acc-1）与普通行并存，供双向展示 / 单账户名断言
   const mixedDb: Transaction[] = [
     makeTxn(1, "acc-1", { kind: "expense" }),
     makeTxn(2, "acc-2", { kind: "transfer", to_account_id: "acc-1" }),
@@ -22,7 +19,6 @@ describe("TransactionsView 转账行双向账户名（issue #99）", () => {
     setTxnDb([...mixedDb]);
   });
 
-  /** 类型下拉（过滤行第 3 个 NSelect，issue #191 后商户下拉插入第 2 位）直接 emit 变更（spec #1025 起多选数组值）。 */
   async function filterKind(wrapper: ReturnType<typeof mount>, k: string[] | null) {
     wrapper.findAllComponents(NSelect)[2].vm.$emit("update:value", k);
     await flushPromises();
@@ -31,18 +27,15 @@ describe("TransactionsView 转账行双向账户名（issue #99）", () => {
   it("转账行账户列显示「转出 → 转入」双向账户名，两个名字各自可点击、各自跳转对应账户", async () => {
     const wrapper = await mountView();
     await filterKind(wrapper, ["transfer"]);
-    // 双向展示：两个账户名（转出 acc-2、转入 acc-1）+ 箭头分隔
     const links = accountDrillButtons(wrapper);
     expect(links.length).toBe(2);
     expect(links.map((l) => l.text().trim())).toEqual(["银行", "现金"]);
     expect(wrapper.text()).toContain("→");
-    // 转出账户点击（表级事件委托分发）→ 跳转其过滤视图
     await links[0].trigger("click");
     expect(pushMock).toHaveBeenLastCalledWith({
       name: "transactions",
       query: { account: "acc-2" },
     });
-    // 转入账户点击 → 跳转其过滤视图
     await links[1].trigger("click");
     expect(pushMock).toHaveBeenLastCalledWith({
       name: "transactions",

@@ -20,16 +20,13 @@ import {
 
 const mockSummary = makePnlSummary();
 
-/** 默认 invoke 布线：已实现盈亏汇总 + 标的搜索契约快照（参考字典命令走接缝内建兜底） */
 const BASE_DEFAULTS = {
   realized_pnl_summary: mockSummary,
   list_instruments: { items: [makeInstrument({ id: "inst-1" })], total: 1 },
 };
 
-/** 参考命令本场景需自定义值（overrides 优先于参考兜底）：账户选项断言消费「证券账户A」 */
 const REFERENCE_OVERRIDES = { list_accounts: mockAccounts };
 
-/** 宿主组件：模拟盈亏页在 setup 内使用 composable（onMounted 自动首刷时序留在薄壳内） */
 const Host = defineComponent({
   setup() {
     return { shell: useRealizedPnl() };
@@ -39,7 +36,6 @@ const Host = defineComponent({
 
 beforeEach(async () => {
   wireInvokeSeam({ defaults: BASE_DEFAULTS, overrides: REFERENCE_OVERRIDES });
-  // 每用例复位为 no-op，模拟「注册前」默认态，防模块级 sink 状态串扰
   resetToastSink();
   const store = useReferenceStore();
   await store.refresh();
@@ -48,7 +44,7 @@ beforeEach(async () => {
 describe("useRealizedPnl 已实现盈亏数据层", () => {
   it("加载已实现盈亏汇总（盈亏页两表的同一数据源）", async () => {
     const { summary, loading, refresh } = withSetup(() => useRealizedPnl());
-    expect(summary.value).toBeNull(); // 未加载前空态
+    expect(summary.value).toBeNull();
     await refresh();
     expect(loading.value).toBe(false);
     expect(summary.value).toEqual(mockSummary);
@@ -69,11 +65,9 @@ describe("useRealizedPnl 已实现盈亏数据层", () => {
     selectedAccountId.value = "acc-1";
     expect(session.pnlYearPage).toBe(1);
     expect(session.pnlAccountPage).toBe(1);
-    // 同值重设不是实际变化：不触发归零（持仓翻页归零同规）
     session.setPnlYearPage(2);
     selectedAccountId.value = "acc-1";
     expect(session.pnlYearPage).toBe(2);
-    // 标的筛选同规
     selectedInstrumentId.value = "inst-1";
     expect(session.pnlYearPage).toBe(1);
   });
@@ -88,7 +82,6 @@ describe("useRealizedPnl 已实现盈亏数据层", () => {
         realized_pnl_summary: () => {
           calls += 1;
           if (calls === 1) {
-            // 先发慢请求：手动放行，制造「后发已终态、先发迟到」的交错
             return new Promise<RealizedPnlSummary>((resolve) => {
               releaseFirst = resolve;
             });
@@ -115,7 +108,6 @@ describe("useRealizedPnl 已实现盈亏数据层", () => {
     await second;
     expect(summary.value!.by_year[0].realized_pnl_cents).toBe(777);
 
-    // 迟到的先发结果：已被 Loadable 竞态裁决作废为空，不覆写终态、不置 error
     releaseFirst(mockSummary);
     await first;
     expect(summary.value!.by_year[0].realized_pnl_cents).toBe(777);
@@ -128,7 +120,6 @@ describe("useRealizedPnl 已实现盈亏数据层", () => {
 
     selectedAccountId.value = "acc-1";
     await refresh();
-    // 调用序：[0] 挂载自动首刷（无筛选）、[1] 无筛选显式刷、[2] 账户筛选、[3] 双筛选
     const accountCall = mockInvoke.mock.calls.filter(([cmd]) => cmd === "realized_pnl_summary")[2];
     expect(accountCall![1]).toEqual({ filter: { account_id: "acc-1" } });
 
@@ -144,7 +135,6 @@ describe("useRealizedPnl 已实现盈亏数据层", () => {
     await flushPromises();
     expect(selectedInstrumentId.value).toBe("inst-1");
     const calls = mockInvoke.mock.calls.filter(([cmd]) => cmd === "realized_pnl_summary");
-    // 挂载自动首刷 + onSelectInstrument 即时刷新
     expect(calls.length).toBe(2);
     expect(calls.at(-1)![1]).toEqual({ filter: { instrument_id: "inst-1" } });
   });
@@ -183,7 +173,6 @@ describe("useRealizedPnl 账户归档（spec #1952 / ADR-0142 决策 4）", () =
     await useReferenceStore().refresh();
     const { accountOptions, selectedAccountId } = withSetup(() => useRealizedPnl());
     expect(accountOptions.value.map((o) => o.value)).toEqual(["acc-1"]);
-    // 筛选值（会话内已选）指向归档账户：补回选项并标「已归档」，值本身不清
     selectedAccountId.value = "acc-arch";
     expect(accountOptions.value).toEqual([
       { label: "旧证券户（已归档）", value: "acc-arch" },
@@ -197,7 +186,6 @@ describe("useRealizedPnl 标的筛选的选中回显接线（投影与钉住合�
   it("选中标的不在新候选时合并不丢（下拉不丢已选筛选）", async () => {
     vi.useFakeTimers();
     try {
-      // 按次分支属动态行为：走 overrides 表（defaults 只收静态快照）
       let calls = 0;
       wireInvokeSeam({
         overrides: {
@@ -229,8 +217,6 @@ describe("useRealizedPnl 标的筛选的选中回显接线（投影与钉住合�
       await vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS);
       await flushPromises();
 
-      // 新候选只有 inst-b，已选 inst-a 仍被钉在候选面尾部不丢（钉尾是本消费方决策）；
-      // label 拼法与合并机制的域断言归 useInstrumentOptions 单测，此处只断言选项面构成与位置
       expect(pnlInstrumentOptions.value.map((o) => o.value)).toEqual(["inst-b", "inst-a"]);
     } finally {
       vi.useRealTimers();
@@ -267,7 +253,6 @@ describe("useRealizedPnl 失败治愈（issue #325 Loadable 薄壳化）", () =>
         realized_pnl_summary: () => Promise.reject({ kind: "db", message: "盈亏汇总查询失败" }),
       },
     });
-    // 挂载自动首刷已吃到拒绝布线并弹一次 toast，无需再显式首刷
     const { error, refresh } = withSetup(() => useRealizedPnl());
     await flushPromises();
     expect(error.value).toBe("盈亏汇总查询失败");

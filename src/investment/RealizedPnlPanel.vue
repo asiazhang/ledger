@@ -34,24 +34,11 @@ const {
 } = useRealizedPnl();
 const session = useInvestmentsSessionStore();
 
-// 分页（issue #1795，词汇表「客户端切片分页」）：两表行集一次全量拉取，翻页只是
-// 内存展示切片（表格内置分页），不发请求、不参数化查询。页大小固定 8 不设选择器
-// （PNL_PAGE_SIZE 单源，两表共享）、单页收起分页条（paginate-single-page=false）。
-// 按年行后端升序返回（ORDER BY year），此处倒转为最新年在前——第 1 页 = 最近年份
-// 是分页可用的前提（看盈亏先看最近表现）。按账户行保持后端返回序（账户名序，
-// 同名按 id 稳定），不引入新排序口径（grilling 定案；#1845 起币种维退役，一行一年 / 一账户）。
-// 页码住投资页会话状态 store：会话内保留、筛选变化归零（接线在 useRealizedPnl）、
-// 冷启动回默认（ESC 复位随 resetToDefault 一并归一）；恢复越界在此钳制回落并写回
-// 保留态（回退不归零，读出口即对账，持仓 useHoldingsFilter 同款）。行集与空态
-// 判定都在切片前，与可见页无关。
 const yearRows = computed(() =>
   [...(summary.value?.by_year ?? [])].sort((a, b) => Number(b.year) - Number(a.year)),
 );
-// 注意命名避开 mwrRows 内的同名局部变量（作用域本不冲突，但同名易误读）
 const accountPnlRows = computed(() => summary.value?.by_account ?? []);
 
-/** 越界钳制页码：读出口即对账（stored 超出有效页数时回落并写回；只往小走、
- *  幂等，同一越界态只回写一次，不挂 watcher）。 */
 function clampedPage(stored: () => number, rowCount: () => number, commit: (n: number) => void) {
   return computed<number>({
     get: () => {
@@ -78,7 +65,6 @@ const accountPage = clampedPage(
   session.setPnlAccountPage,
 );
 
-/** 表格内置分页装配缝（持仓 HoldingsOverview 同款：客户端切片、onChange 直写页码）。 */
 function paginationFor(page: WritableComputedRef<number>) {
   return computed(() => ({
     page: page.value,
@@ -90,13 +76,6 @@ function paginationFor(page: WritableComputedRef<number>) {
 }
 const yearPagination = paginationFor(yearPage);
 const accountPagination = paginationFor(accountPage);
-// 汇总表通用「已实现收益」列（ADR-0129 决策 1；#1845 起折本位币单值）：主值 =
-// 后端折算好的合计（已实现盈亏 + 现金分红，逐腿按事件周汇率折本位币），副行拆出
-// 两腿——前端零算术，金额按行透出的 native_currency 格式化。任一腿缺料（三项全
-// null）→ 格内只显式标注「无法计算」，不出部分数字、不以零计入。数值列右对齐 +
-// 等宽数字（词汇表「表格列形态」，两表同一单点收口）；主值与已实现腿着盈亏涨跌
-// 色（红涨绿跌，与持仓页签「持仓收益」列同源），分红腿着分红 kind 色（与交易列
-// 表的分红金额同源）——拆解项与结果一眼可分。
 function realizedGainColumn(title: string | (() => VNodeChild)): DataTableColumn {
   return {
     title,
@@ -104,8 +83,6 @@ function realizedGainColumn(title: string | (() => VNodeChild)): DataTableColumn
     align: "right",
     className: "tabular-nums",
     render(rowData) {
-      // naive-ui 列渲染入口的行类型是 InternalRowData；本列只服务两张盈亏表，
-      // 行形状在入口处一次性收窄（唯一装配面，别处不投第二份断言）。
       const row = rowData as unknown as YearPnl | AccountPnl;
       const { realized_gain_cents, realized_pnl_cents, dividend_cents } = row;
       if (realized_gain_cents === null || realized_pnl_cents === null || dividend_cents === null) {
@@ -136,7 +113,6 @@ function realizedGainColumn(title: string | (() => VNodeChild)): DataTableColumn
     },
   };
 }
-// 已实现收益口径（ADR-0129 / issue #1533）：已实现盈亏 + 现金分红，不含浮动盈亏
 const realizedGainTitle = () =>
   h(ConceptLabel, {
     label: t("investments.pnl.columns.realizedGain"),
@@ -154,16 +130,11 @@ const accountCols: DataTableColumn[] = [
   realizedGainColumn(realizedGainTitle),
 ];
 
-// 资金加权收益率（issue #1195 / ADR-0115）：账户级与全账级两个粒度与金额口径
-// 并列、互不换算。账户行随账户筛选收窄（客户端过滤，行集本就全量返回）；
-// 全账行恒为全账本口径、不随筛选收窄（与持仓页签累计收益合计同一先例）；
-// 价格失效信号驱动的重拉内化在接缝，无需调用方手动刷新。
 const { summary: mwr } = useMoneyWeightedReturn();
 
 interface MwrRow {
   scope: string;
   currency_code: string;
-  /** 本行口径（issue #1346）：合集含期初存量的行由后端标为未年化 */
   basis: MwrBasis;
   rate: number | null;
   testid: string;
@@ -194,11 +165,6 @@ const mwrColumns: DataTableColumn<MwrRow>[] = [
   { title: t("investments.pnl.columns.account"), key: "scope" },
   { title: t("investments.pnl.columns.currency"), key: "currency_code", width: 100 },
   {
-    // 三态与口径标注都收口在 renderMwrRateCell 单点（与持仓页收益率列同款形态；
-    // issue #1346：合集含期初存量的行按 basis 标未年化角标）。
-    // 收益率口径（issue #1369）：三态与「不随筛选/标的收窄」需在场说明；
-    // 「不随筛选收窄」是该口径自身的属性（按完整历史计算），写在 mwrTip 正文里，
-    // 故不挂作用域变体——变体只承担随页面语境变化的作用域差异
     title: () =>
       h(ConceptLabel, {
         label: t("investments.pnl.columns.mwr"),
