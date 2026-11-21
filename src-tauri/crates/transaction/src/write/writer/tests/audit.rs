@@ -1,5 +1,3 @@
-//! 审计字段统一生成与 native 本位币折算（issue #60：统一经 Writer 落库）。
-
 use crate::tests::common::{make_buy_input, make_input};
 use tauri_app_lib::ledger_transaction::*;
 use tauri_app_lib::test_support;
@@ -8,12 +6,6 @@ use rusqlite::params;
 use tauri_app_lib::ledger_transaction::TransactionInput;
 use tauri_app_lib::ledger_transaction::amount::TransactionKind;
 
-// ---------------------------------------------------------------------------
-// issue #60：创建/修改/买入卖出行统一经 Writer 落库
-// ---------------------------------------------------------------------------
-/// 全部创建路径（通用 kind + buy/sell）落库行带 Writer 统一生成的审计字段：
-/// version=1 / is_deleted=0 / created_at==updated_at / device_id 一致——证明
-/// create 路径不再散落手写 INSERT（issue #60 验收：审计字段统一生成）。
 #[test]
 fn create_transaction_internal_audit_fields_uniform_across_kinds() {
     let conn = test_support::open();
@@ -94,8 +86,6 @@ fn create_transaction_internal_audit_fields_uniform_across_kinds() {
     }
 }
 
-/// 修改路径经 writer::update_row：保留 created_at、version 递增、updated_at 刷新
-/// （issue #60 验收：update 不再走命令层手写 UPDATE）。
 #[test]
 fn update_transaction_internal_preserves_created_at_and_refreshes_audit() {
     let conn = test_support::open();
@@ -130,14 +120,10 @@ fn update_transaction_internal_preserves_created_at_and_refreshes_audit() {
     assert_eq!(version, 2, "修改后 version 应递增");
 }
 
-/// 通用 kind 的本位币折算改经 Amount 接缝（基准为全局默认币种，issue #60 / spec #52）：
-/// USD 账户 + USD 金额按汇率折算到 CNY，而非按账户币种 1:1 落库。
 #[test]
 fn create_transaction_internal_generic_converts_native_via_amount_seam() {
     let conn = test_support::open();
     test_support::seed_account(&conn, "acc-usd", "美元", "cash", "USD", 0);
-    // #1547 起写路径按交易日取数：只种交易周（2026-01-01 所属周，周一 2025-12-29）
-    // 的汇率历史点，不种当期行——改回当期入口本测试即红。
     test_support::seed_fx_rate_history(&conn, "fxh-w", "USD", "CNY", "2025-12-29", 7.2);
 
     let id = create_transaction_internal(

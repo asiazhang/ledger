@@ -1,30 +1,17 @@
-//! 自动执行（追补）入口（issue #307 / ADR-0042）：唯一新增接缝的行为钉子。
-//!
-//! 全部测试打同一个追补入口——内存库 + 注入开关状态与今天日期，只断言外部可观察
-//! 行为：执行汇总与数据库终态（期次状态、交易行、脏标记）。不测线程/sleep/锁
-//! （周期调用结构由调度线程「只做周期调用」保证，与自动备份同款纪律）。
-//!
-//! 测试实例纪律（#1098 拆 crate 起）：置脏钩子是本 crate 自有注册静态，由测试
-//! 工厂接在根包图实例上，故本文件经 `tauri_app_lib::ledger_scheduled::…`
-//! 驱动根包图实例（脏标记联动断言可见）；建库同经根包测试工厂。
-
 use super::common::{create_subscription, occurrence_status};
 use chrono::NaiveDate;
 use rusqlite::{Connection, params};
 use tauri_app_lib::ledger_scheduled::*;
 use tauri_app_lib::test_support;
 
-/// 解析注入的「今天」。
 fn day(s: &str) -> NaiveDate {
     NaiveDate::parse_from_str(s, "%Y-%m-%d").expect("合法日期")
 }
 
-/// 以注入的开关与今天执行追补入口。
 fn catch_up(conn: &Connection, enabled: bool, today: &str) -> CatchUpSummary {
     run_catch_up(conn, enabled, day(today))
 }
 
-/// 计划全部期次的（计划日期, 状态, 回填交易）清单，按计划日期升序。
 fn occurrence_rows(conn: &Connection, plan_id: &str) -> Vec<(String, String, Option<String>)> {
     let mut stmt = conn
         .prepare(
@@ -38,7 +25,6 @@ fn occurrence_rows(conn: &Connection, plan_id: &str) -> Vec<(String, String, Opt
         .collect()
 }
 
-/// 计划生成的交易日期清单（经期次回填关联），按交易日期升序。
 fn plan_txn_dates(conn: &Connection, plan_id: &str) -> Vec<String> {
     let mut stmt = conn
         .prepare(
@@ -53,7 +39,6 @@ fn plan_txn_dates(conn: &Connection, plan_id: &str) -> Vec<String> {
         .collect()
 }
 
-/// 整库现存交易笔数。
 fn txn_count(conn: &Connection) -> i64 {
     conn.query_row(
         "SELECT COUNT(*) FROM transactions WHERE is_deleted=0",
@@ -63,7 +48,6 @@ fn txn_count(conn: &Connection) -> i64 {
     .unwrap()
 }
 
-/// 直接把某条期次置为指定状态（构造 failed / processing 等非 pending 前置）。
 fn set_status(conn: &Connection, occ_id: &str, status: &str) {
     conn.execute(
         "UPDATE scheduled_transaction_occurrences SET status=?2 WHERE id=?1",
@@ -72,11 +56,6 @@ fn set_status(conn: &Connection, occ_id: &str, status: &str) {
     .unwrap();
 }
 
-// ---------------------------------------------------------------------------
-// 开关关闭：空转
-// ---------------------------------------------------------------------------
-
-/// 开关关闭时追补空转：不动任何期次、不产生交易（验收①）。
 #[test]
 fn disabled_means_idle() {
     let conn = test_support::open();
@@ -95,12 +74,6 @@ fn disabled_means_idle() {
     assert_eq!(txn_count(&conn), 0, "不应产生交易");
 }
 
-// ---------------------------------------------------------------------------
-// 到期追补：交易日期 = 计划日期，含今天边界，跨午夜滚动
-// ---------------------------------------------------------------------------
-
-/// 开启后到期期次逐条落账，交易日期忠实取期次计划日期（验收②）；
-/// 再次注入更晚的「今天」模拟跨午夜后的下一轮，滚动追补新到期期次。
 #[test]
 fn due_executed_with_plan_date_and_rolls_on_later_days() {
     let conn = test_support::open();
@@ -128,7 +101,6 @@ fn due_executed_with_plan_date_and_rolls_on_later_days() {
     assert_eq!(rows[1].1, "completed");
     assert!(rows[2..].iter().all(|(_, st, _)| st == "pending"));
 
-    // 跨午夜后的下一轮：只滚动到新到期的 03-15 一期，已完成的不再重跑。
     let next = catch_up(&conn, true, "2026-03-20");
     assert_eq!(next.due, 1);
     assert_eq!(next.executed, 1);
@@ -142,7 +114,6 @@ fn due_executed_with_plan_date_and_rolls_on_later_days() {
     );
 }
 
-/// 「今天」含边界：计划日期恰为今天的期次当轮即被追补。
 #[test]
 fn today_boundary_is_due() {
     let conn = test_support::open();
@@ -178,7 +149,6 @@ fn today_boundary_is_due() {
     );
 }
 
-/// 未到期（计划日期 > 今天）不动：明天才到期的期次留在 pending。
 #[test]
 fn future_occurrences_untouched() {
     let conn = test_support::open();
@@ -196,11 +166,6 @@ fn future_occurrences_untouched() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// 状态矩阵：非 pending 期次与非 active 计划不碰
-// ---------------------------------------------------------------------------
-
-/// failed / processing / cancelled 期次一律不被追补，其余 pending 正常补齐（验收③）。
 #[test]
 fn non_pending_occurrences_untouched() {
     let conn = test_support::open();
@@ -232,7 +197,6 @@ fn non_pending_occurrences_untouched() {
     );
 }
 
-/// 暂停与取消的计划不被追补（验收③）：期次与交易保持原状。
 #[test]
 fn paused_and_cancelled_plans_untouched() {
     let conn = test_support::open();
@@ -261,16 +225,10 @@ fn paused_and_cancelled_plans_untouched() {
     assert_eq!(txn_count(&conn), 0);
 }
 
-// ---------------------------------------------------------------------------
-// 失败语义：单期失败不中断后续，失败期次置 failed 不被自动反复重试
-// ---------------------------------------------------------------------------
-
-/// 无汇率的外币计划逐期失败并被置为 failed，同批其他计划不受影响；
-/// 后续轮次不重试已 failed 的期次（保持手动重试，验收③）。
 #[test]
 fn failure_marks_failed_continues_and_never_auto_retries() {
     let conn = test_support::open();
-    test_support::seed_account(&conn, "acc-usd", "acc-usd", "cash", "USD", 0); // 无汇率：归一化必失败
+    test_support::seed_account(&conn, "acc-usd", "acc-usd", "cash", "USD", 0);
     test_support::seed_account(&conn, "acc-cny", "acc-cny", "cash", "CNY", 0);
     let usd = create_subscription(&conn, "acc-usd", "USD", 10000, Some("缺汇率订阅"));
     let cny = create_subscription(&conn, "acc-cny", "CNY", 2000, Some("正常订阅"));
@@ -291,7 +249,6 @@ fn failure_marks_failed_continues_and_never_auto_retries() {
     let cny_rows = occurrence_rows(&conn, &cny);
     assert!(cny_rows[..2].iter().all(|(_, st, _)| st == "completed"));
 
-    // 下一轮：已 failed 的期次不被自动反复重试；新到期期次照常处理。
     let next = catch_up(&conn, true, "2026-03-20");
     assert_eq!(next.due, 2, "只滚动到 3 月新到期的一期");
     assert_eq!(next.executed, 1);
@@ -306,12 +263,6 @@ fn failure_marks_failed_continues_and_never_auto_retries() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// 备份联动：成功落账置脏
-// ---------------------------------------------------------------------------
-
-/// 追补成功落账经统一写入口语义置脏，自动备份到期判定联动可见（验收④）；
-/// 空转与未到期轮次不动脏标记。
 #[test]
 fn success_marks_dirty_for_backup_linkage() {
     let conn = test_support::open();
@@ -340,7 +291,6 @@ fn success_marks_dirty_for_backup_linkage() {
     assert!(tx.is_some());
 }
 
-/// 取计划第 n 条（按计划日期升序）期次 id。
 fn occurrence_id_at(conn: &Connection, plan_id: &str, index: usize) -> String {
     let mut stmt = conn
         .prepare(

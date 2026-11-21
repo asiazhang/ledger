@@ -1,6 +1,3 @@
-//! 订阅花费双口径（ADR-0023，issue #160 / #161）：实际花费按期次流水逐月忠实统计
-//! （决策二），推算成本按周期系数折算（issue #161），两口径并行互不影响。
-
 use super::common::{
     create_installment, create_subscription, create_subscription_cycle, create_transfer_plan,
     read_txn,
@@ -10,13 +7,8 @@ use rusqlite::params;
 use tauri_app_lib::ledger_scheduled::*;
 use tauri_app_lib::test_support;
 
-// ---------------------------------------------------------------------------
-// 订阅花费——实际花费口径（issue #160，ADR-0023 决策二）
-// ---------------------------------------------------------------------------
-
 use tauri_app_lib::ledger_scheduled::query_subscription_spend;
 
-/// 执行计划前 N 条 pending 期次（scheduled_date 升序），返回生成的交易日期。
 fn execute_first_n_occurrences(conn: &Connection, plan_id: &str, n: usize) -> Vec<String> {
     let occ_ids: Vec<String> = get_plan_detail(conn, plan_id)
         .unwrap()
@@ -44,13 +36,11 @@ fn month_cents(overview: &SubscriptionSpendOverview, month: &str) -> i64 {
         .native_cents
 }
 
-/// 实际花费按期次流水逐月忠实统计（本位币），非扣款月补 0；不摊销。
 #[test]
 fn subscription_spend_aggregates_by_calendar_month() {
     let conn = test_support::open();
     test_support::seed_account(&conn, "acc", "acc", "cash", "CNY", 0);
     let plan_id = create_subscription(&conn, "acc", "CNY", 3000, Some("视频会员"));
-    // 2026-01-15 起月付，执行前两期 → 2026-01 / 2026-02 各一笔 3000
     execute_first_n_occurrences(&conn, &plan_id, 2);
 
     let overview = query_subscription_spend(&conn, date("2026-03-20")).unwrap();
@@ -65,7 +55,6 @@ fn subscription_spend_aggregates_by_calendar_month() {
     assert_eq!(overview.months[11].month, "2026-03");
 }
 
-/// 年付订阅不摊销：扣款月全额计入，其余月份为 0。
 #[test]
 fn subscription_spend_yearly_not_amortized() {
     let conn = test_support::open();
@@ -101,7 +90,6 @@ fn subscription_spend_yearly_not_amortized() {
     assert_eq!(overview.this_year_native_cents, 34800);
 }
 
-/// 计划取消/暂停不影响历史实际花费；非订阅计划（分期/定时转账）不计入。
 #[test]
 fn subscription_spend_keeps_cancelled_history_and_excludes_other_kinds() {
     let conn = test_support::open();
@@ -110,7 +98,6 @@ fn subscription_spend_keeps_cancelled_history_and_excludes_other_kinds() {
     execute_first_n_occurrences(&conn, &sub_id, 2);
     update_plan_status(&conn, &sub_id, ScheduledStatus::Cancelled).unwrap();
 
-    // 干扰项：分期与定时转账各执行一期，不应计入订阅花费
     let inst_id = create_installment(&conn, "acc", 3100, 3);
     execute_first_n_occurrences(&conn, &inst_id, 1);
     let transfer_id = {
@@ -124,7 +111,6 @@ fn subscription_spend_keeps_cancelled_history_and_excludes_other_kinds() {
     assert_eq!(month_cents(&overview, "2026-02"), 3000, "取消后历史保留");
     assert_eq!(overview.this_year_native_cents, 6000, "分期/转账不计入");
 
-    // 逐订阅行：取消计划仍在行内，行内本月/本年口径正确
     assert_eq!(overview.rows.len(), 1, "只统计订阅计划");
     let row = &overview.rows[0];
     assert_eq!(row.plan_id, sub_id);
@@ -133,8 +119,6 @@ fn subscription_spend_keeps_cancelled_history_and_excludes_other_kinds() {
     assert_eq!(row.this_year_native_cents, 6000);
 }
 
-/// 推算成本（issue #161）：各周期系数折算正确（月 ×1、年 ÷12、周 ×52÷12、日 ×30），
-/// recurrence_interval > 1 时按间隔均摊；折算年成本 = 折算月成本 × 12。
 #[test]
 fn subscription_projected_spend_coefficients() {
     let conn = test_support::open();
@@ -186,7 +170,6 @@ fn subscription_projected_spend_coefficients() {
     );
 
     let overview = query_subscription_spend(&conn, date("2026-03-20")).unwrap();
-    // 3000×1 + 34800÷12 + 5200×52÷12 + 300×30 + 3000÷3 = 3000 + 2900 + 22533 + 9000 + 1000
     assert_eq!(overview.projected_month_native_cents, 38433);
     assert_eq!(
         overview.projected_year_native_cents,
@@ -195,7 +178,6 @@ fn subscription_projected_spend_coefficients() {
     );
 }
 
-/// 推算成本只统计 active 计划（暂停/取消不计入），且不看执行情况（未执行也计入）。
 #[test]
 fn subscription_projected_spend_counts_only_active_plans() {
     let conn = test_support::open();
@@ -212,12 +194,10 @@ fn subscription_projected_spend_counts_only_active_plans() {
         "暂停/取消不计入，未执行也计入"
     );
     assert_eq!(overview.projected_year_native_cents, 36000);
-    // 推算口径不影响实际口径：均未执行，实际花费为 0
     assert_eq!(overview.this_month_native_cents, 0);
     assert_eq!(overview.this_year_native_cents, 0);
 }
 
-/// 推算成本在计划币种上折算本位币；缺汇率时报错上抛，不静默混算。
 #[test]
 fn subscription_projected_spend_converts_and_requires_rate() {
     let conn = test_support::open();
@@ -237,13 +217,10 @@ fn subscription_projected_spend_converts_and_requires_rate() {
     assert!(err.to_string().contains("汇率"), "缺汇率应报错上抛: {err}");
 }
 
-/// 非默认币种订阅按流水的本位币金额（落库时折算）计入，不二次折算。
 #[test]
 fn subscription_spend_uses_native_amounts_from_transactions() {
     let conn = test_support::open();
     test_support::seed_account(&conn, "acc-usd", "acc-usd", "cash", "USD", 0);
-    // 当期行服务花费读侧预估折算；期次写入按交易日取数（#1547），另种
-    // 期次日期 2026-01-15 所属周（周一 2026-01-12）的历史点。
     test_support::seed_exchange_rate(&conn, "USD", "CNY", 7.2);
     test_support::seed_fx_rate_history(&conn, "fxh-spend", "USD", "CNY", "2026-01-12", 7.2);
     let plan_id = create_subscription(&conn, "acc-usd", "USD", 10000, Some("国际订阅"));
@@ -261,16 +238,12 @@ fn subscription_spend_uses_native_amounts_from_transactions() {
     assert_eq!(row.this_year_native_cents, 72000);
 }
 
-/// 期次合计消费金额矩阵的支出净额口径（issue #395）：SUM 表达式由 kind→系数
-/// 矩阵生成而非裸求和——「期次流水恒为支出」是引擎当前行为而非聚合假设，
-/// 期次若关联非支出流水（income 等）系数为 0 不混入合计，退款流水按净额冲减，
-/// 引擎行为漂移不再静默改变实际花费。
 #[test]
 fn subscription_spend_aggregates_expense_net_from_matrix() {
     let conn = test_support::open();
     test_support::seed_account(&conn, "acc", "acc", "cash", "CNY", 0);
     let plan_id = create_subscription(&conn, "acc", "CNY", 3000, Some("视频会员"));
-    execute_first_n_occurrences(&conn, &plan_id, 1); // 2026-01：expense 3000
+    execute_first_n_occurrences(&conn, &plan_id, 1);
     let expense_txn_id: String = conn
         .query_row(
             "SELECT transaction_id FROM scheduled_transaction_occurrences \
@@ -280,9 +253,6 @@ fn subscription_spend_aggregates_expense_net_from_matrix() {
         )
         .unwrap();
 
-    // 漂移注入：同月再挂两笔 completed 期次，关联流水分别为 income 与 refund
-    // （引擎当前不生成，直接落库模拟未来行为漂移）：income 系数为 0 不混入，
-    // refund 按支出净额冲减；裸求和会把三者无符号相加（13088），口径即漂移。
     insert_occurrence_txn(&conn, &plan_id, "2026-01-20", "income", 8888, None);
     insert_occurrence_txn(
         &conn,
@@ -301,10 +271,6 @@ fn subscription_spend_aggregates_expense_net_from_matrix() {
     );
 }
 
-/// 漂移注入辅助：给计划挂一笔 completed 期次并直接插入指定 kind 的关联流水
-/// （绕过执行引擎，模拟期次生成非支出流水的假想漂移）。簿记戳取工厂固定时刻
-/// `test_support::FIXED_NOW`（ADR-0084 决策 5：夹具簿记戳零字面量），`date` 与
-/// `scheduled_date` 是域时刻（行为输入），仍由参数显式传入。
 fn insert_occurrence_txn(
     conn: &Connection,
     plan_id: &str,

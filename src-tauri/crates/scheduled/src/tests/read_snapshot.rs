@@ -1,8 +1,3 @@
-//! 多语句读闭包的快照一致性探针（issue #1702）：写提交落在语句之间时，同屏
-//! 口径必须仍互相自洽——计划详情的完成计数与期次明细同时点、计划列表的
-//! core × 扩展两段 join 同时点、订阅花费的行清单与推算成本同时点。探针机制
-//! 见 `tauri_app_lib::test_support::snapshot_probe`。
-
 use chrono::NaiveDate;
 
 use super::super::*;
@@ -10,12 +5,6 @@ use super::common::{create_subscription, create_transfer_plan, first_pending_occ
 use tauri_app_lib::test_support::snapshot_probe::{self, InjectionOutcome};
 use tauri_app_lib::test_support::{ScratchDir, open_file, seed_account};
 
-/// 计划详情的完成计数与期次明细必须同快照（issue #1702）：pending 列表、
-/// 「已完成 N 期 / 已还金额」计数与全量期次列表是多段语句（页与总数形态）。
-/// 探针在计数读取开始前于另一连接把一笔 pending 期次置为 completed——
-/// - 读闭包无快照保护（红）：pending 列表读旧（含该笔），计数与明细读新
-///   （该笔已被计为 completed）——同一期次同屏既在 pending 又被计为已完成；
-/// - 读闭包收进读事务（绿）：注入写被挡住，计数与明细同见一套数。
 #[test]
 fn plan_detail_count_and_occurrences_share_one_snapshot() {
     let dir = ScratchDir::new("scheduled-detail-read-snapshot");
@@ -42,9 +31,6 @@ fn plan_detail_count_and_occurrences_share_one_snapshot() {
         "明细 completed 行数应与计数一致（否则口径断言空转）"
     );
 
-    // 探针：完成计数读取（`COALESCE(SUM(amount_cents),0) FROM
-    // scheduled_transaction_occurrences`，全闭包唯一命中）开始前，另一连接
-    // 提交期次状态翻转。
     snapshot_probe::arm(
         &conn,
         dir.path(),
@@ -88,11 +74,6 @@ fn plan_detail_count_and_occurrences_share_one_snapshot() {
     );
 }
 
-/// 计划列表的 core 行与扩展字段必须同快照（issue #1702）：列表先读全部 core
-/// 行、再逐计划读 ext 表（两段 join 形态）。探针在转账扩展读取开始前于另一
-/// 连接改写转入账户——
-/// - 读闭包无快照保护（红）：行内 core 与 ext 异版本（旧 core 配新 ext）；
-/// - 读闭包收进读事务（绿）：注入写被挡住，行内两段同见一套数。
 #[test]
 fn plan_list_core_and_ext_share_one_snapshot() {
     let dir = ScratchDir::new("scheduled-list-read-snapshot");
@@ -109,8 +90,6 @@ fn plan_list_core_and_ext_share_one_snapshot() {
         "种子转入账户应就位（否则口径断言空转）"
     );
 
-    // 探针：转账扩展读取（`FROM scheduled_transfer_plans`，全闭包唯一命中）
-    // 开始前，另一连接改写 ext 行。
     snapshot_probe::arm(
         &conn,
         dir.path(),
@@ -135,12 +114,6 @@ fn plan_list_core_and_ext_share_one_snapshot() {
     );
 }
 
-/// 订阅花费总览的行清单与推算成本必须同快照（issue #1702）：「行内花费与顶层
-/// 汇总同源」依赖同一快照——逐月聚合、订阅行、推算成本（计划金额 × 汇率）
-/// 是多段语句。探针在推算成本的计划读取开始前于另一连接把订阅金额翻倍——
-/// - 读闭包无快照保护（红）：行清单读旧（金额 10000）而推算成本读新
-///   （按 20000 推算），同屏口径互相矛盾；
-/// - 读闭包收进读事务（绿）：注入写被挡住，行与推算同见一套数。
 #[test]
 fn subscription_spend_rows_and_projection_share_one_snapshot() {
     let dir = ScratchDir::new("scheduled-spend-read-snapshot");
@@ -164,8 +137,6 @@ fn subscription_spend_rows_and_projection_share_one_snapshot() {
         "推算月成本应等于计划金额（否则口径断言空转）"
     );
 
-    // 探针：推算成本的计划读取（`status = 'active'`，全闭包唯一命中）开始前，
-    // 另一连接提交金额翻倍。
     snapshot_probe::arm(
         &conn,
         dir.path(),
