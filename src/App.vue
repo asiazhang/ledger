@@ -405,11 +405,14 @@ const pageTitle = computed(() => (typeof route.name === "string" ? viewLabel(rou
 </script>
 
 <template>
+  <!-- 非内联主题变量模式（issue #2186）：组件库 CSS 变量改为共享样式类下发，
+       消除百行交易表格及全应用的逐元素内联 --n-* 样式体积与 WebKitGTK 重算开销 -->
   <NConfigProvider
     :theme="store.theme === 'dark' ? darkTheme : null"
     :theme-overrides="appTheme.overrides"
     :locale="naiveLocale"
     :date-locale="naiveDateLocale"
+    inline-theme-disabled
   >
     <!-- 全局忙碌条（issue #500）：非模态环境指示，只随忙碌状态渲染，
          不注册 Overlay Suppression（ADR-0035 豁免，见词汇表词条） -->
