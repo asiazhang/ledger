@@ -1,15 +1,7 @@
 #!/bin/sh
-# 一键质量检查：执行序列保持手写；质量门清单、挂载与 issue/ADR 出处的唯一事实源
-# 是守门挂载登记 scripts/gate-mounts.ts（issue #1682）——新增/删除门须同步登记，
-# 与本文件及 CI workflow 的双向全等核对住 scripts/gate-mounts.test.ts（删宿主挂载
-# 行或删登记条目即红；核对测试文件本身的删除靠评审——import 为单向互证）。
-# Rust 侧命令必须显式声明 workspace 范围（spec #1086 / issue #1087）：非虚拟
-# workspace 下 cargo 默认只作用于根包，缺范围参数会静默漏检成员 crate。
-# 任一环节失败即退出（CI 可直接调用）
 set -eu
 cd "$(dirname "$0")/.."
 
-# 守门脚本运行时 = Bun（issue #734 / ADR-0083）：缺失即显式报错，不静默降级
 if ! command -v bun >/dev/null 2>&1; then
   echo "✗ 未检测到 bun：守门脚本以 Bun 运行时执行（ADR-0083），请安装 bun（CI 固定 1.4.4）后重试" >&2
   exit 1
@@ -30,9 +22,6 @@ pnpm exec oxfmt --check .
 echo "▶ Rust clippy (--workspace --all-targets --all-features, -D warnings)"
 ( cd src-tauri && cargo clippy --workspace --all-targets --all-features -- -D warnings )
 
-# infra 默认 feature 编译门（issue #1133）：clippy 走 --all-features（http 门恒开、
-# axum 恒在），门内 cfg 恒被编译——gate-off 形态（默认 feature 不含 axum）只有这
-# 里核到：error.rs 在无 axum 依赖图下必须独立成立，误在门外引用 axum 即红。
 echo "▶ Rust gate-off 编译检查 (cargo check -p ledger-infra，默认 feature 不含 axum)"
 ( cd src-tauri && cargo check -p ledger-infra )
 
@@ -89,10 +78,6 @@ bun scripts/check-async-guards.ts
 echo "▶ 注释禁令棘轮守门 (bun scripts/check-comment-gate.ts)"
 bun scripts/check-comment-gate.ts
 
-# 守门脚本测试（issue #1991）：scripts/*.test.ts 的唯一运行口径 = bun test——
-# 测试经 spawnSync('bun') 依赖 bun 在 PATH，vitest/node 下基线即红；vitest 收集
-# 范围自此不含 scripts/（双运行时边界收严，ADR-0083）。挂载登记归
-# scripts/gate-mounts.ts，删除本步即红。
 echo "▶ 守门脚本测试 (bun test scripts/)"
 bun test scripts/
 

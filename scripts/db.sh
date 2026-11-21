@@ -1,12 +1,4 @@
 #!/bin/sh
-# 定位并查看 SQLite 数据库
-# macOS: ~/Library/Application Support/com.zhangheng.ledger/ledger.db
-# Linux: ~/.local/share/com.zhangheng.ledger/ledger.db
-#
-# 用法:
-#   ./scripts/db.sh                 # 打印路径 + 表列表 + 结构 + 行数
-#   ./scripts/db.sh "SELECT * FROM transactions LIMIT 5;"
-#   ./scripts/db.sh                 # 也可传 sqlite3 子命令，如 ".schema accounts"
 set -eu
 cd "$(dirname "$0")/.."
 
@@ -32,7 +24,6 @@ if ! command -v sqlite3 >/dev/null 2>&1; then
 fi
 
 if [ "$#" -gt 0 ]; then
-  # 既支持 SQL 语句，也支持 sqlite3 点命令（如 .schema）
   exec sqlite3 -header -column "$DB" "$@"
 fi
 

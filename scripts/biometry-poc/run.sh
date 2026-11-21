@@ -1,22 +1,4 @@
 #!/bin/sh
-# 生物门 PoC 一键证据矩阵（issue #657 / 父任务 #645）。编译
-# biometry-poc.swift 后按四种签名形态运行，复现结论：
-#
-#   矩阵 1  ad-hoc + acl 条目（原方案形状，#645/#662 缘起）
-#           预期 SecItemAdd = -34018 errSecMissingEntitlement
-#   矩阵 2  Developer ID + hardened runtime + plain 条目（方案 A 存储原语 /
-#           #662 开发回退形状）
-#           预期 OSStatus = 0——普通条目任何签名形态可用
-#   矩阵 3  Developer ID + hardened runtime + acl 条目 + keychain-access-groups
-#           entitlements（临时生成，不入仓库）
-#           预期进程被 AMFI SIGKILL——restricted entitlement 必须 provisioning
-#           profile 背书，Developer ID 不可得
-#   矩阵 4  Developer ID + hardened runtime + la（方案 A 完整路径）
-#           预期 PASS；读取前弹 Touch ID，需要本人交互
-#
-# 依赖：Xcode Command Line Tools（swiftc / codesign）；登录钥匙串中有效的
-# Developer ID Application 证书（申请流程见 issue #660）。
-# 用法：scripts/biometry-poc/run.sh（在仓库根目录或任意位置执行均可）
 set -eu
 cd "$(dirname "$0")/../.."
 
