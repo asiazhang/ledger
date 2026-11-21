@@ -17,7 +17,7 @@ interface FixtureFile {
   content: string;
 }
 
-function makeFixture(files: FixtureFile[], baseline: Record<string, number>): string {
+function makeFixture(files: FixtureFile[], baseline?: Record<string, number>): string {
   const root = mkdtempSync(join(tmpdir(), "check-comment-gate-"));
   tempDirs.push(root);
   for (const file of files) {
@@ -25,11 +25,13 @@ function makeFixture(files: FixtureFile[], baseline: Record<string, number>): st
     mkdirSync(join(abs, ".."), { recursive: true });
     writeFileSync(abs, file.content);
   }
-  mkdirSync(join(root, "scripts", "fixtures"), { recursive: true });
-  writeFileSync(
-    join(root, "scripts", "fixtures", "comment-baseline.json"),
-    JSON.stringify(baseline, null, 2) + "\n",
-  );
+  if (baseline !== undefined) {
+    mkdirSync(join(root, "scripts", "fixtures"), { recursive: true });
+    writeFileSync(
+      join(root, "scripts", "fixtures", "comment-baseline.json"),
+      JSON.stringify(baseline, null, 2) + "\n",
+    );
+  }
   return root;
 }
 
@@ -114,15 +116,6 @@ const LANGUAGE_FIXTURE_FILES: FixtureFile[] = [
   { rel: "scripts/other.toml", content: OTHER_TOML_FIXTURE },
 ];
 
-const ZERO_LANGUAGE_BASELINE: Record<string, number> = {
-  ".kache.toml": 0,
-  "package.json": 0,
-  scripts: 0,
-  src: 0,
-  "src-tauri": 0,
-  "src-tauri/crates/demo": 0,
-};
-
 const MAIN_TS_FIXTURE = ["export const x = 1;", "// 第一行注释", "// 第二行注释", ""].join("\n");
 
 const SINGLE_COMMENT_TS = ["export const x = 1;", "// 新增注释形态", ""].join("\n");
@@ -131,37 +124,52 @@ const CLEAN_MAIN_TS = ["export const x = 1;", ""].join("\n");
 
 const MINIMAL_BASELINE: Record<string, number> = { scripts: 0, src: 0 };
 
+const EXEMPT_ONLY_FILES: FixtureFile[] = [
+  {
+    rel: "src-tauri/crates/demo/src/lib.rs",
+    content: [
+      "pub unsafe fn demo() {",
+      "    // SAFETY：调用方保证指针有效且对齐",
+      "    let p = 1 as *const u8;",
+      "    let _ = p;",
+      "}",
+      "",
+    ].join("\n"),
+  },
+  { rel: "scripts/tool.sh", content: ["#!/bin/sh", "echo done", ""].join("\n") },
+];
+
 describe("check-comment-gate", () => {
-  it("真实仓库默认通过：基线 = 治理落地现状计数，全绿（现行仓库绿）", () => {
+  it("真实仓库默认通过：零容忍模式（基线缺席）全绿，豁免闭集计数与 ADR-0145 归零收口注记一致", () => {
     const r = run([]);
     expect(r.status).toBe(0);
-    expect(r.output).toContain("注释棘轮通过");
-    expect(r.output).toContain("comment-baseline.json");
+    expect(r.output).toContain("注释零容忍通过");
+    expect(r.output).toContain("48 键、0 行注释");
+    expect(r.output).toContain("SAFETY 豁免 4 行");
+    expect(r.output).toContain("shebang 豁免 14 行");
+    expect(r.output).toContain("compile_fail 载体豁免 12 行");
+    expect(r.output).toContain("ADR-0145");
+    expect(r.output).not.toContain("基线已写入");
+  });
+
+  it("零容忍模式负向判据：无基线 fixture 下新增任意一行注释即红并报 文件:行", () => {
+    const root = makeFixture([{ rel: "src/main.ts", content: CLEAN_MAIN_TS }], MINIMAL_BASELINE);
+    rmSync(baselinePathOf(root));
+    expect(run([root]).status).toBe(0);
+    const withComment = makeFixture([{ rel: "src/main.ts", content: SINGLE_COMMENT_TS }]);
+    const r = run([withComment]);
+    expect(r.status).toBe(1);
+    expect(r.output).toContain("✗ 零容忍命中：src");
+    expect(r.output).toContain("src/main.ts:2：// 新增注释形态");
+    expect(r.output).toContain("❌ 注释禁令失败（零容忍模式，基线文件缺席）");
     expect(r.output).toContain("ADR-0145");
   });
 
-  it("真实基线文件 schema：目录键字符串键、计数为非负整数", () => {
-    const raw = readFileSync(
-      join(process.cwd(), "scripts", "fixtures", "comment-baseline.json"),
-      "utf8",
-    );
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
-    const entries = Object.entries(parsed);
-    expect(entries.length).toBeGreaterThan(0);
-    for (const [key, value] of entries) {
-      expect(typeof key).toBe("string");
-      expect(typeof value, `非数值计数：${key} = ${String(value)}`).toBe("number");
-      const count = value as number;
-      expect(Number.isInteger(count), `非整数计数：${key} = ${String(count)}`).toBe(true);
-      expect(count >= 0, `负数计数：${key} = ${String(count)}`).toBe(true);
-    }
-  });
-
-  it("各语言注释形态逐一计数，豁免闭集与字面量不误报（基线全零 → 零容忍逐行定位）", () => {
-    const root = makeFixture(LANGUAGE_FIXTURE_FILES, ZERO_LANGUAGE_BASELINE);
+  it("各语言注释形态逐一计数：零容忍模式下全部命中并逐行定位，豁免闭集与字面量不误报", () => {
+    const root = makeFixture(LANGUAGE_FIXTURE_FILES);
     const r = run([root]);
     expect(r.status).toBe(1);
-    expect(r.output).toContain("零容忍命中（基线 0）：src-tauri/crates/demo");
+    expect(r.output).toContain("✗ 零容忍命中：src-tauri/crates/demo");
     expect(r.output).toContain("lib.rs:3");
     expect(r.output).toContain("lib.rs:6");
     expect(r.output).toContain("lib.rs:10");
@@ -187,7 +195,18 @@ describe("check-comment-gate", () => {
     expect(r.output).not.toContain("other.toml");
   });
 
-  it("基线上升变红：正基线目录报目录级对比与逐文件计数，不做逐行定位", () => {
+  it("零容忍模式下 SAFETY 行与 shebang 不触发：仅豁免闭集成员时全绿", () => {
+    const root = makeFixture(EXEMPT_ONLY_FILES);
+    const r = run([root]);
+    expect(r.status).toBe(0);
+    expect(r.output).toContain("注释零容忍通过");
+    expect(r.output).toContain("SAFETY 豁免 1 行");
+    expect(r.output).toContain("shebang 豁免 1 行");
+    expect(r.output).not.toContain("零容忍命中");
+    expect(r.output).not.toContain("SAFETY：调用方保证指针有效且对齐");
+  });
+
+  it("棘轮模式（显式基线 fixture）：基线上升变红，报目录级对比与逐文件计数，不做逐行定位", () => {
     const root = makeFixture([{ rel: "src/main.ts", content: MAIN_TS_FIXTURE }], {
       scripts: 0,
       src: 1,
@@ -199,7 +218,7 @@ describe("check-comment-gate", () => {
     expect(r.output).not.toContain("main.ts:2");
   });
 
-  it("基线下降通过：实际计数低于基线即绿", () => {
+  it("棘轮模式（显式基线 fixture）：基线下降通过，实际计数低于基线即绿", () => {
     const root = makeFixture([{ rel: "src/main.ts", content: MAIN_TS_FIXTURE }], {
       scripts: 0,
       src: 3,
@@ -210,7 +229,7 @@ describe("check-comment-gate", () => {
     expect(r.output).toContain("2 行注释在基线内");
   });
 
-  it("基线归零目录零容忍：新增一行注释即红并给出 文件:行", () => {
+  it("棘轮模式基线归零目录零容忍：新增一行注释即红并给出 文件:行", () => {
     const root = makeFixture(
       [{ rel: "src/main.ts", content: SINGLE_COMMENT_TS }],
       MINIMAL_BASELINE,
@@ -221,14 +240,14 @@ describe("check-comment-gate", () => {
     expect(r.output).toContain("src/main.ts:2：// 新增注释形态");
   });
 
-  it("基线缺键即红（键集双向全等，新目录须显式登记）", () => {
+  it("棘轮模式基线缺键即红（键集双向全等，新目录须显式登记）", () => {
     const root = makeFixture([{ rel: "src/main.ts", content: CLEAN_MAIN_TS }], { src: 0 });
     const r = run([root]);
     expect(r.status).toBe(1);
     expect(r.output).toContain("基线缺键：scripts");
   });
 
-  it("基线冗余键即红（键在扫描面已不存在）", () => {
+  it("棘轮模式基线冗余键即红（键在扫描面已不存在）", () => {
     const root = makeFixture([{ rel: "src/main.ts", content: CLEAN_MAIN_TS }], {
       scripts: 0,
       src: 0,
@@ -239,7 +258,7 @@ describe("check-comment-gate", () => {
     expect(r.output).toContain("基线冗余键：src-tauri/ghost");
   });
 
-  it("基线负数与非整数计数即红（schema 校验）", () => {
+  it("棘轮模式基线负数与非整数计数即红（schema 校验）", () => {
     const negative = makeFixture([{ rel: "src/main.ts", content: CLEAN_MAIN_TS }], {
       scripts: 0,
       src: -1,
@@ -254,13 +273,7 @@ describe("check-comment-gate", () => {
     expect(run([fractional]).output).toContain("基线非法计数：src = 1.5");
   });
 
-  it("基线文件缺失或非法 JSON 即红（fail loud，不静默按零基线放行）", () => {
-    const missing = makeFixture([{ rel: "src/main.ts", content: CLEAN_MAIN_TS }], MINIMAL_BASELINE);
-    rmSync(baselinePathOf(missing));
-    const missingRun = run([missing]);
-    expect(missingRun.status).toBe(1);
-    expect(missingRun.output).toContain("基线文件不存在");
-    expect(missingRun.output).toContain("--write-baseline");
+  it("棘轮模式基线文件非法 JSON 即红（fail loud，不静默回退零容忍模式）", () => {
     const malformed = makeFixture(
       [{ rel: "src/main.ts", content: CLEAN_MAIN_TS }],
       MINIMAL_BASELINE,
@@ -271,16 +284,43 @@ describe("check-comment-gate", () => {
     expect(malformedRun.output).toContain("不是合法 JSON");
   });
 
-  it("扫描文件落不进任何基线键即红（未登记位置 fail loud）", () => {
-    const root = makeFixture([{ rel: "rogue/x.rs", content: "// 游离注释形态\n" }], {
+  it("扫描文件落不进任何键即红（未登记位置 fail loud，两模式同判）", () => {
+    const zeroTolerance = makeFixture([{ rel: "rogue/x.rs", content: "// 游离注释形态\n" }]);
+    const zr = run([zeroTolerance]);
+    expect(zr.status).toBe(1);
+    expect(zr.output).toContain("未登记目录键：rogue/x.rs");
+    const ratchet = makeFixture([{ rel: "rogue/x.rs", content: "// 游离注释形态\n" }], {
       scripts: 0,
     });
-    const r = run([root]);
-    expect(r.status).toBe(1);
-    expect(r.output).toContain("未登记目录键：rogue/x.rs");
+    const rr = run([ratchet]);
+    expect(rr.status).toBe(1);
+    expect(rr.output).toContain("未登记目录键：rogue/x.rs");
   });
 
-  it("--write-baseline 再生成基线：写入现状计数，随后棘轮放行", () => {
+  it("零容忍模式 --write-baseline：写入现状计数即进入棘轮模式，随后棘轮放行", () => {
+    const root = makeFixture([
+      { rel: "src/main.ts", content: SINGLE_COMMENT_TS },
+      { rel: "scripts/tool.ts", content: "export const y = 1;\n" },
+    ]);
+    expect(run([root]).status).toBe(1);
+    const written = run([root, "--write-baseline"]);
+    expect(written.status).toBe(0);
+    expect(written.output).toContain("基线已写入");
+    expect(written.output).toContain("写入基线即进入棘轮模式");
+    const regenerated = JSON.parse(readFileSync(baselinePathOf(root), "utf8")) as Record<
+      string,
+      number
+    >;
+    expect(regenerated["src"]).toBe(1);
+    expect(regenerated["scripts"]).toBe(0);
+    const rechecked = run([root]);
+    expect(rechecked.status).toBe(0);
+    expect(rechecked.output).toContain("注释棘轮通过");
+    rmSync(baselinePathOf(root));
+    expect(run([root]).status).toBe(1);
+  });
+
+  it("棘轮模式 --write-baseline 再生成基线：写入现状计数，随后棘轮放行", () => {
     const root = makeFixture([{ rel: "src/main.ts", content: MAIN_TS_FIXTURE }], MINIMAL_BASELINE);
     const written = run([root, "--write-baseline"]);
     expect(written.status).toBe(0);
@@ -296,7 +336,7 @@ describe("check-comment-gate", () => {
     expect(rechecked.output).toContain("注释棘轮通过");
   });
 
-  it("compile_fail doctest 载体豁免：/// 与 //! 形态、fence 体内 // 注释行、未闭合 fence 豁免至文件尾，豁免行不进棘轮计数", () => {
+  it("compile_fail doctest 载体豁免：零容忍模式下豁免行不命中，fence 外注释行命中并逐行定位", () => {
     const content = [
       "//! crate 文档行不在 fence 内照常计数",
       "",
@@ -319,32 +359,26 @@ describe("check-comment-gate", () => {
       "// 文件尾前普通注释行，仍在未闭合 fence 内一并豁免",
       "",
     ].join("\n");
-    const root = makeFixture([{ rel: "src-tauri/crates/demo/src/lib.rs", content }], {
-      scripts: 0,
-      "src-tauri": 0,
-      "src-tauri/crates/demo": 1,
-    });
+    const root = makeFixture([{ rel: "src-tauri/crates/demo/src/lib.rs", content }]);
     const r = run([root]);
-    expect(r.status).toBe(0);
-    expect(r.output).toContain("compile_fail 载体豁免 13 行");
-    expect(r.output).toContain("注释棘轮通过");
+    expect(r.status).toBe(1);
+    expect(r.output).toContain("✗ 零容忍命中：src-tauri/crates/demo");
+    expect(r.output).toContain("lib.rs:1：//! crate 文档行不在 fence 内照常计数");
     expect(r.output).not.toContain("nope;");
     expect(r.output).not.toContain("fence 体内注释行");
     expect(r.output).not.toContain("文件尾前普通注释行");
-
-    const zeroTolerance = makeFixture([{ rel: "src-tauri/crates/demo/src/lib.rs", content }], {
+    const ratchet = makeFixture([{ rel: "src-tauri/crates/demo/src/lib.rs", content }], {
       scripts: 0,
       "src-tauri": 0,
       "src-tauri/crates/demo": 0,
     });
-    const z = run([zeroTolerance]);
-    expect(z.status).toBe(1);
-    expect(z.output).toContain("零容忍命中（基线 0）：src-tauri/crates/demo");
-    expect(z.output).toContain("lib.rs:1：//! crate 文档行不在 fence 内照常计数");
-    expect(z.output).not.toContain("nope;");
+    const rr = run([ratchet]);
+    expect(rr.status).toBe(1);
+    expect(rr.output).toContain("零容忍命中（基线 0）：src-tauri/crates/demo");
+    expect(rr.output).not.toContain("nope;");
   });
 
-  it("非 compile_fail fence（rust/ignore/no_run）不豁免：文档示例内行照常计数", () => {
+  it("非 compile_fail fence（rust/ignore/no_run）不豁免：零容忍模式下文档示例内行照常命中", () => {
     const content = [
       "/// ```rust",
       "/// let x = 1;",
@@ -357,14 +391,10 @@ describe("check-comment-gate", () => {
       "/// ```",
       "",
     ].join("\n");
-    const root = makeFixture([{ rel: "src-tauri/crates/demo/src/lib.rs", content }], {
-      scripts: 0,
-      "src-tauri": 0,
-      "src-tauri/crates/demo": 0,
-    });
+    const root = makeFixture([{ rel: "src-tauri/crates/demo/src/lib.rs", content }]);
     const r = run([root]);
     expect(r.status).toBe(1);
-    expect(r.output).toContain("零容忍命中（基线 0）：src-tauri/crates/demo");
+    expect(r.output).toContain("✗ 零容忍命中：src-tauri/crates/demo");
     expect(r.output).toContain("lib.rs:1：/// ```rust");
     expect(r.output).toContain("lib.rs:2：/// let x = 1;");
     expect(r.output).toContain("lib.rs:5：/// let y = 2;");

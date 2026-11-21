@@ -16,8 +16,6 @@ function collectFiles(dir: string, acc: string[] = []): string[] {
 function importsConfirmFromPluginDialog(code: string): boolean {
   const moduleSpec = ["@tauri-apps", "plugin-dialog"].join("/");
   const staticRe = /import\s*\{[^}]*\bconfirm\b[^}]*\}\s*from\s*['"]([\w@/-]+)['"]/g;
-  // 动态：import 该模块后解构 confirm 属潜在旁路，一并拦截
-  // （测试文件对 open 的动态引入不含 confirm，不误伤）。
   const dynamicMatch = code.match(/import\(\s*['"]([\w@/-]+)['"]\s*\)(?:\s*\.\s*then[^;]*)?;/g);
   if (dynamicMatch) {
     for (const m of dynamicMatch) {

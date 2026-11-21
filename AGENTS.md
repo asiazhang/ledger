@@ -18,7 +18,7 @@
 - **HTTP 端点**：读实际路由、对应 API 契约和 API 集成测试；仅在属于 AI 导入时读取 AI 导入文档。
 - **Issue、PR、triage 或依赖关系**：按需读 `docs/agents/issue-tracker.md` 与 `docs/agents/triage-labels.md`。
 - **依赖升级、工具链 bump 或发布打 tag**：升级读 `docs/agents/dependency-upgrades.md`；发布用 `/run-release`，版本元数据与 `CHANGELOG.md` 由该流程更新。
-- **测试改动或脚本/质量检查**：测试读 `docs/contexts/CONTEXT-testing.md`；脚本当前行为是真源——脚本头部注释处于注释禁令清理过渡期（棘轮基线辖 scripts/，ADR-0145），新脚本一律零注释，规则出处查守门挂载登记与 ADR。
+- **测试改动或脚本/质量检查**：测试读 `docs/contexts/CONTEXT-testing.md`；脚本当前行为是真源——注释禁令零容忍（豁免闭集外全仓禁注释、新增即红，ADR-0145），新脚本一律零注释，规则出处查守门挂载登记与 ADR。
 
 代码行为与词汇表不一致时，按可验证行为修正词汇表。代码行为与 ADR 冲突时，先显式报告冲突，确认决策后再修改 ADR 或实现。
 

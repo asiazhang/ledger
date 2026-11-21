@@ -270,12 +270,8 @@ function fatalBaseline(message: string): Baseline {
   return { fatal: message, missing: [], extra: [], invalid: [], values: new Map() };
 }
 
-function loadBaseline(baselinePath: string, keys: readonly string[]): Baseline {
-  if (!existsSync(baselinePath)) {
-    return fatalBaseline(
-      `基线文件不存在：${baselinePath}（再生成：bun scripts/check-comment-gate.ts --write-baseline）`,
-    );
-  }
+function loadBaseline(baselinePath: string, keys: readonly string[]): Baseline | null {
+  if (!existsSync(baselinePath)) return null;
   let parsed: unknown;
   try {
     parsed = JSON.parse(readFileSync(baselinePath, "utf8"));
@@ -323,7 +319,7 @@ function main(): void {
   }
   for (const rel of result.unmatched) {
     problems.push(
-      `✗ 未登记目录键：${rel}——扫描文件必须落在基线键集内，新 crate/包/根文件须显式登记基线（ADR-0145 决策 4）`,
+      `✗ 未登记目录键：${rel}——扫描文件必须落在键集内，新 crate/包/根文件须显式登记键集（ADR-0145 决策 4）`,
     );
   }
   const baselinePath = join(root, ...BASELINE_REL_SEGMENTS);
@@ -337,12 +333,42 @@ function main(): void {
     console.log(
       `✓ 基线已写入 ${baselinePath}：${result.keys.length} 键、共 ${result.total} 行` +
         `（豁免：SAFETY ${result.safetyExempt} 行、shebang ${result.shebangExempt} 行、` +
-        `compile_fail 载体 ${result.compileFailExempt} 行）` +
+        `compile_fail 载体 ${result.compileFailExempt} 行）；写入基线即进入棘轮模式` +
         `（ADR-0145 / issue #2202）`,
     );
     return;
   }
   const baseline = loadBaseline(baselinePath, result.keys);
+  if (baseline === null) {
+    for (const key of result.keys) {
+      const stat = result.stats.get(key);
+      if (stat === undefined || stat.actual === 0) continue;
+      problems.push(`✗ 零容忍命中：${key}`);
+      for (const file of stat.files) {
+        for (const commentLine of file.lines) {
+          problems.push(`    ${file.rel}:${commentLine.line}：${commentLine.text}`);
+        }
+      }
+    }
+    if (problems.length > 0) {
+      for (const problem of problems) console.error(problem);
+      console.error(
+        `❌ 注释禁令失败（零容忍模式，基线文件缺席）：${problems.length} 处问题；` +
+          `注释只许删不许加，豁免闭集 = // SAFETY: 形态、shebang 行与 compile_fail doctest 载体，` +
+          `规则见 ADR-0145 / issue #2202 / issue #2212`,
+      );
+      process.exit(1);
+    }
+    console.log(
+      `✓ 注释零容忍通过：${result.keys.length} 键、0 行注释` +
+        `（SAFETY 豁免 ${result.safetyExempt} 行、shebang 豁免 ${result.shebangExempt} 行、` +
+        `compile_fail 载体豁免 ${result.compileFailExempt} 行）；` +
+        `基线文件缺席 = 零容忍模式，棘轮机制休眠` +
+        `（再生成基线：bun scripts/check-comment-gate.ts --write-baseline，写入即进入棘轮模式）` +
+        `（ADR-0145 / issue #2202 / issue #2212）`,
+    );
+    return;
+  }
   if (baseline.fatal !== undefined) problems.push(`✗ ${baseline.fatal}`);
   problems.push(
     ...baseline.missing.map(
@@ -406,7 +432,8 @@ function main(): void {
     `✓ 注释棘轮通过：${result.keys.length} 键、${result.total} 行注释在基线内` +
       `（SAFETY 豁免 ${result.safetyExempt} 行、shebang 豁免 ${result.shebangExempt} 行、` +
       `compile_fail 载体豁免 ${result.compileFailExempt} 行）；` +
-      `基线 ${BASELINE_REL_SEGMENTS.join("/")} 只许降不许升、归零即零容忍（ADR-0145 / issue #2202）`,
+      `基线 ${BASELINE_REL_SEGMENTS.join("/")} 只许降不许升、归零即零容忍；删除基线文件即回到零容忍模式` +
+      `（ADR-0145 / issue #2202）`,
   );
 }
 
