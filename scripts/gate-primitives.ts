@@ -173,6 +173,63 @@ function stringLiteralEnd(text: string, start: number): number {
   return text.length;
 }
 
+const REGEX_ALLOWED_PRECEDING_CHARS = new Set([
+  "(",
+  ",",
+  "=",
+  ":",
+  "[",
+  "!",
+  "&",
+  "|",
+  "?",
+  "{",
+  "}",
+  ";",
+  ">",
+]);
+
+function regexLiteralAllowedAt(text: string, i: number): boolean {
+  let j = i - 1;
+  while (j >= 0 && /\s/.test(text[j] as string)) j--;
+  if (j < 0) return true;
+  for (let k = j + 1; k < i; k++) {
+    if (text[k] === "\n") return true;
+  }
+  const prev = text[j] as string;
+  if (REGEX_ALLOWED_PRECEDING_CHARS.has(prev)) {
+    return !(prev === "!" && text[j - 1] === "#");
+  }
+  if (prev === "n" && j >= 5 && text.slice(j - 5, j + 1) === "return") {
+    const before = j >= 6 ? text[j - 6] : "";
+    return !/[A-Za-z0-9_$]/.test(before);
+  }
+  return false;
+}
+
+function regexLiteralEnd(text: string, start: number): number {
+  let i = start + 1;
+  let inClass = false;
+  while (i < text.length) {
+    const c = text[i];
+    if (c === "\\") {
+      if (text[i + 1] === "\n") return -1;
+      i += 2;
+      continue;
+    }
+    if (c === "\n") return -1;
+    if (inClass) {
+      if (c === "]") inClass = false;
+    } else if (c === "[") {
+      inClass = true;
+    } else if (c === "/") {
+      return i + 1;
+    }
+    i++;
+  }
+  return -1;
+}
+
 export function maskComments(text: string): string {
   const out = text.split("");
   const n = text.length;
@@ -190,6 +247,9 @@ export function maskComments(text: string): string {
       const stop = end === -1 ? n : end + 2;
       blank(i, stop);
       i = stop;
+    } else if (text[i] === "/" && text[i - 1] !== "\\" && regexLiteralAllowedAt(text, i)) {
+      const regexEnd = regexLiteralEnd(text, i);
+      i = regexEnd === -1 ? i + 1 : regexEnd;
     } else {
       const literalEnd = stringLiteralEnd(text, i);
       i = literalEnd === -1 ? i + 1 : literalEnd;

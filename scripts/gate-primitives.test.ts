@@ -113,6 +113,95 @@ describe("maskComments（TS/Vue 注释掩码库语义）", () => {
     const src = "const r = /a\\/\\/b/\nconst after = 1\n";
     expect(maskComments(src)).toBe(src);
   });
+
+  it("除法歧义两侧：标识符后除法链不当正则，赋值号后才按正则识别", () => {
+    const src = "const q = total / count / 2\nconst r = s.match(/x/g)\n";
+    expect(maskComments(src)).toBe(src);
+  });
+
+  it("除法后接行注释：除法斜杠不吞注释起点，行注释照常掩码", () => {
+    const src = "const q = total / // note\nconst after = 1\n";
+    expect(maskComments(src)).toBe(`const q = total / ${" ".repeat(7)}\nconst after = 1\n`);
+  });
+
+  it("字符类内斜杠不闭合正则：[/] 形态整体识别，其后代码保留", () => {
+    const src = "const seg = input.split(/[\\/]/)\nconst after = 1\n";
+    expect(maskComments(src)).toBe(src);
+  });
+
+  it("正则后跟行注释：正则体跳过后注释起点仍被掩码计数", () => {
+    const src = "const ok = /^\\d+$/.test(v) // trailing note\nconst after = 1\n";
+    expect(maskComments(src)).toBe(
+      `const ok = /^\\d+$/.test(v) ${" ".repeat(16)}\nconst after = 1\n`,
+    );
+  });
+
+  it("未闭合正则候选不逃逸：换行前无闭合斜杠按普通字符处理", () => {
+    const src = "const x = /abc\nconst after = 1\n";
+    expect(maskComments(src)).toBe(src);
+  });
+});
+
+describe("maskComments 正则字面量词法（#2211 毒化缺陷修复，ADR-0145 修订注记）", () => {
+  it("test-exec.ts:135 形态：引号入正则体不启伪字符串，误计 854 行毒化消除", () => {
+    const src =
+      [
+        "const quoted = text.match(/^(\"'])(.*)\\1$/);",
+        "if (quoted !== null) return quoted[2];",
+        "// real comment",
+        "const after = 1;",
+      ].join("\n") + "\n";
+    const masked = maskComments(src);
+    const lines = masked.split("\n");
+    expect(lines[0]).toBe("const quoted = text.match(/^(\"'])(.*)\\1$/);");
+    expect(lines[1]).toBe("if (quoted !== null) return quoted[2];");
+    expect(lines[2]).toBe(" ".repeat(15));
+    expect(lines[3]).toBe("const after = 1;");
+  });
+
+  it("棘轮失明洞闭合：正则体后的真注释行重新被计出（no-native-confirm 形态）", () => {
+    const src =
+      [
+        "const staticRe = /import\\s*\\{[^}]*\\bconfirm\\b[^}]*\\}\\s*from\\s*[\"']([\\w@/-]+)[\"']/g;",
+        "// first real comment",
+        "// second real comment",
+        "const done = 1;",
+      ].join("\n") + "\n";
+    const masked = maskComments(src);
+    const lines = masked.split("\n");
+    expect(lines[0]).toBe(src.split("\n")[0]);
+    expect(lines[1]?.trimEnd()).toBe("");
+    expect(lines[2]?.trimEnd()).toBe("");
+    expect(lines[3]).toBe("const done = 1;");
+  });
+
+  it("行首正则与跨行前导：赋值换行与多行实参中的行首正则识别，其后真注释保留", () => {
+    const src =
+      [
+        "const TEST_RESULT_RE =",
+        "  /^test result: (?:ok|FAILED)\\. (\\d+) passed;$/gm;",
+        "expect(",
+        "  /no-such-book/,",
+        ");",
+        "// counted note",
+      ].join("\n") + "\n";
+    const masked = maskComments(src);
+    const lines = masked.split("\n");
+    expect(lines[0]).toBe("const TEST_RESULT_RE =");
+    expect(lines[1]).toBe("  /^test result: (?:ok|FAILED)\\. (\\d+) passed;$/gm;");
+    expect(lines[3]).toBe("  /no-such-book/,");
+    expect(lines[5]?.trimEnd()).toBe("");
+  });
+
+  it("=> 与 return 前导的正则识别（仓内实证形态）", () => {
+    const src =
+      [
+        "const axumLine = lines.find((l) => /^\\s*axum\\s*=/.test(l));",
+        "return /mac/i.test(platform);",
+        "const after = 1;",
+      ].join("\n") + "\n";
+    expect(maskComments(src)).toBe(src);
+  });
 });
 
 describe("单源收敛：maskComments 只有一份实现（issue #1481，#1680 并入 gate-primitives）", () => {
