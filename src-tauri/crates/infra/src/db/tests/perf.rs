@@ -908,6 +908,84 @@ fn v025_zero_consumer_indexes_dropped() {
     }
 }
 
+// ---------------------------------------------------------------------------
+// V038 kind 维度计数覆盖索引（issue #2197）——计划钉定
+// ---------------------------------------------------------------------------
+
+/// V038 EXPLAIN 世界：迁移后内存库 + 三账户（含一投资户）+ 20000 笔多 kind
+/// 交易（expense/income/transfer/refund 合计约 91%，其余 buy/sell/dividend/
+/// convert/split 补齐真实 kind 分布；约 1% 软删）+ 两笔挂投资出资账户的出资
+/// 子行；迁移尾部 ANALYZE 在空表运行，此处随数据重算——与存量用户升级后的
+/// 统计形态一致，保证 planner 选择可代表真实库。
+///
+/// 行数与 kind 分布是钉定本索引的前提（实测）：20000 与真实库同量级
+/// （24k 行未删除），使 `kind IN` 的选择性（约 91%）足以让覆盖索引扫描在
+/// 估算上胜过全表扫描；小库下 planner 会平局选全表扫描或其它覆盖索引
+/// （如 `idx_transactions_to_account_flow` 的 ANY+kind，同样 index-only 但
+/// 非本迁移钉定形态）。
+fn v038_world() -> Connection {
+    let conn = test_support::open();
+
+    seed_account(&conn, "acc-01", "现金", "cash", "CNY", 0);
+    seed_account(&conn, "acc-02", "储蓄卡", "bank", "CNY", 0);
+    seed_account(&conn, "acc-inv", "证券户", "investment", "CNY", 0);
+    conn.execute_batch(
+        "WITH RECURSIVE seq(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM seq WHERE i<20000)\
+         INSERT INTO transactions\
+           (id,kind,amount_cents,currency_code,amount_native_cents,account_id,to_account_id,\
+            funding_account_id,note,date,created_at,updated_at,version,device_id,is_deleted)\
+         SELECT printf('tx-%05d', i),\
+                CASE WHEN i%1000<830 THEN 'expense' WHEN i%1000<850 THEN 'income'\
+                     WHEN i%1000<890 THEN 'transfer' WHEN i%1000<900 THEN 'refund'\
+                     WHEN i%1000<955 THEN 'buy' WHEN i%1000<975 THEN 'sell'\
+                     WHEN i%1000<990 THEN 'dividend' WHEN i%1000<997 THEN 'convert'\
+                     ELSE 'split' END,\
+                100, 'CNY', 100,\
+                CASE WHEN i%3=0 THEN 'acc-inv' WHEN i%3=1 THEN 'acc-01' ELSE 'acc-02' END,\
+                CASE WHEN i%10=7 THEN 'acc-01' ELSE NULL END,\
+                NULL, NULL,\
+                date('2026-03-01', '-' || (i%90) || ' days'),\
+                '2026-03-01T08:00:00Z', '2026-03-01T08:00:00Z',\
+                1, 'test', CASE WHEN i%100=0 THEN 1 ELSE 0 END \
+         FROM seq;\
+         INSERT INTO transaction_fundings (transaction_id, sort, account_id, amount_cents)\
+         VALUES ('tx-00001', 0, 'acc-inv', 60), ('tx-00002', 0, 'acc-inv', 60);\
+         ANALYZE;",
+    )
+    .unwrap();
+    conn
+}
+
+/// `hide_investment_related` COUNT 应由 V038 kind 维度覆盖索引驱动（计划钉定，
+/// 删除迁移即红）：外层 covering index 扫描脱离肥表，不再全表扫描；SQL 形状与
+/// `transaction/src/read/list.rs` 的 total COUNT 同构（kinds 四类取自实际调用
+/// 主面：expense/income/transfer/refund）。fundings 子查询的探测形态不钉——
+/// planner 对小表按统计自适应（SCAN f 与主键探测均合法），钉了会脆。
+#[test]
+fn v038_hide_investment_count_uses_kind_count_covering_index() {
+    let conn = v038_world();
+
+    let plan = v016_plan(
+        &conn,
+        "SELECT COUNT(*) FROM transactions WHERE is_deleted=0 AND kind IN (?,?,?,?) \
+         AND NOT EXISTS (SELECT 1 FROM accounts a WHERE a.type = 'investment' AND a.id = transactions.account_id) \
+         AND NOT EXISTS (SELECT 1 FROM accounts a WHERE a.type = 'investment' AND a.id = transactions.to_account_id) \
+         AND NOT EXISTS (SELECT 1 FROM accounts a WHERE a.type = 'investment' AND a.id = transactions.funding_account_id) \
+         AND NOT EXISTS (SELECT 1 FROM transaction_fundings f \
+         JOIN accounts a ON a.id = f.account_id AND a.type = 'investment' \
+         WHERE f.transaction_id = transactions.id)",
+        ["expense", "income", "transfer", "refund"],
+    );
+    assert!(
+        plan.contains("idx_transactions_kind_count"),
+        "hide_investment COUNT 应由 V038 覆盖索引驱动: {plan}"
+    );
+    assert!(
+        !plan.contains("SCAN transactions"),
+        "外层不应全表扫描肥表: {plan}"
+    );
+}
+
 /// 接线回归：在 `command` span 内执行 SQL，SQL 耗时事件应归因到该 span
 /// （当前 span 名为 `command`）。这验证了 IPC 侧 `logged_invoke_handler`
 /// 用 `info_span!(command, id_hint)` 包裹命令执行后，hook 事件自动继承调用方 span
