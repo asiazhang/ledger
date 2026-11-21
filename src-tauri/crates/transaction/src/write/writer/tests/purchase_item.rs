@@ -1,9 +1,3 @@
-//! 购买项契约与子行落库（issue #1882 / ADR-0138 决策 9/10）：normalize 的
-//! kind 准入与逐条约束、子行随主行落库、单价可空、修改路径保持历史引用。
-//!
-//! 断言模块外部行为：仅 expense 可带、子行按顺序位落库、价格不进余额口径。
-//! 全部基于内存库（test_support::open 已接线余额刷新钩子）。
-
 use tauri_app_lib::ledger_transaction::TransactionPurchaseInput;
 use tauri_app_lib::ledger_transaction::amount::TransactionKind;
 use tauri_app_lib::ledger_transaction::write::purchase_items::PurchaseItem;
@@ -12,7 +6,6 @@ use tauri_app_lib::test_support;
 
 use super::common::input;
 
-/// 购买项条目构造器（测试速记）。
 fn item(
     name: &str,
     quantity: i64,
@@ -27,7 +20,6 @@ fn item(
     }
 }
 
-/// 带购买项的入参构造器。
 fn purchased_input(
     kind: TransactionKind,
     amount_cents: i64,
@@ -39,11 +31,6 @@ fn purchased_input(
     }
 }
 
-// ---------------------------------------------------------------------------
-// kind 准入（ADR-0138 决策 9：仅 expense 可带）
-// ---------------------------------------------------------------------------
-
-/// transfer 携带购买项 → 码化拒绝（两端已表达，不做明细）。
 #[test]
 fn normalize_rejects_purchases_on_transfer() {
     let conn = test_support::open();
@@ -65,7 +52,6 @@ fn normalize_rejects_purchases_on_transfer() {
     assert_eq!(err.to_string(), "交易类型 transfer 不能携带购买项");
 }
 
-/// income 携带购买项 → 码化拒绝（购买项只答「这一单买了什么」，收入无此语义）。
 #[test]
 fn normalize_rejects_purchases_on_income() {
     let conn = test_support::open();
@@ -82,7 +68,6 @@ fn normalize_rejects_purchases_on_income() {
     assert_eq!(err.code(), Some("transaction.purchase-item-unsupported"));
 }
 
-/// refund 携带购买项 → 码化拒绝（退货 / 部分退款的呈现另行决策，不另挂清单）。
 #[test]
 fn normalize_rejects_purchases_on_refund() {
     let conn = test_support::open();
@@ -107,11 +92,6 @@ fn normalize_rejects_purchases_on_refund() {
     assert_eq!(err.code(), Some("transaction.purchase-item-unsupported"));
 }
 
-// ---------------------------------------------------------------------------
-// 逐条约束（ADR-0138 决策 9/10）
-// ---------------------------------------------------------------------------
-
-/// 名称缺失（空串）→ 码化错误。
 #[test]
 fn normalize_rejects_empty_name() {
     let conn = test_support::open();
@@ -128,7 +108,6 @@ fn normalize_rejects_empty_name() {
     assert_eq!(err.code(), Some("transaction.purchase-name-required"));
 }
 
-/// 件数非正 → 码化错误。
 #[test]
 fn normalize_rejects_non_positive_quantity() {
     let conn = test_support::open();
@@ -145,7 +124,6 @@ fn normalize_rejects_non_positive_quantity() {
     assert_eq!(err.code(), Some("transaction.purchase-quantity-positive"));
 }
 
-/// 单价为负 → 码化错误；0 是合法标价（赠品）。
 #[test]
 fn normalize_rejects_negative_price_but_allows_zero() {
     let conn = test_support::open();
@@ -173,7 +151,6 @@ fn normalize_rejects_negative_price_but_allows_zero() {
     assert_eq!(norm.purchases[0].unit_price_cents, Some(0));
 }
 
-/// 购买项分类不存在/已软删 → 码化 NotFound（AI 可读回自纠）。
 #[test]
 fn normalize_rejects_missing_purchase_category() {
     let conn = test_support::open();
@@ -190,12 +167,6 @@ fn normalize_rejects_missing_purchase_category() {
     assert_eq!(err.code(), Some("purchase.category-not-found"));
 }
 
-// ---------------------------------------------------------------------------
-// 子行落库（接线负向载体：删掉 insert_row 内 insert_rows 调用本测试变红）
-// ---------------------------------------------------------------------------
-
-/// insert_row 落子行（顺序位随数组序、可空单价原样落库）：
-/// 3 件商品的多商品订单端到端——写入通道提交 → 子表 3 行。
 #[test]
 fn insert_row_persists_purchase_rows_in_array_order() {
     let conn = test_support::open();
@@ -237,7 +208,6 @@ fn insert_row_persists_purchase_rows_in_array_order() {
     );
 }
 
-/// 价格不进余额口径（ADR-0138 决策 10）：带购买项的 expense 余额只看交易金额。
 #[test]
 fn purchase_prices_do_not_touch_balances() {
     let conn = test_support::open();
@@ -263,7 +233,6 @@ fn purchase_prices_do_not_touch_balances() {
     let _ = id;
 }
 
-/// 无购买项的存量行为零变化：normalize/insert 全链零子表写入。
 #[test]
 fn no_purchases_writes_no_rows() {
     let conn = test_support::open();
@@ -280,11 +249,6 @@ fn no_purchases_writes_no_rows() {
     assert_eq!(count, 0);
 }
 
-// ---------------------------------------------------------------------------
-// 修改路径：全量替换与保持历史引用（与出资项同款语义）
-// ---------------------------------------------------------------------------
-
-/// 落一笔带购买项的 expense。
 fn insert_purchased_expense(conn: &rusqlite::Connection) -> String {
     let norm = normalize(
         conn,
@@ -298,7 +262,6 @@ fn insert_purchased_expense(conn: &rusqlite::Connection) -> String {
     insert_row(conn, &norm).unwrap()
 }
 
-/// 修改路径提交与当前一致的明细（历史分类已软删）→ 不因分类准入被拒。
 #[test]
 fn normalize_keeps_historical_reference_for_unchanged_purchases() {
     let conn = test_support::open();
@@ -316,7 +279,6 @@ fn normalize_keeps_historical_reference_for_unchanged_purchases() {
         .unwrap();
         insert_row(&conn, &norm).unwrap()
     };
-    // 分类软删后：提交同一明细（保持历史引用）照常通过。
     conn.execute(
         "UPDATE categories SET is_deleted=1 WHERE id=?1",
         rusqlite::params![cat],
@@ -339,7 +301,6 @@ fn normalize_keeps_historical_reference_for_unchanged_purchases() {
     assert_eq!(norm.purchases.len(), 1);
 }
 
-/// 修改路径换用软删分类（明细有变化）→ 码化 NotFound。
 #[test]
 fn normalize_rejects_changed_purchases_with_dead_category() {
     let conn = test_support::open();

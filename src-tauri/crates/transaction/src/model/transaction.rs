@@ -1,10 +1,3 @@
-//! 交易实体与读模型（共享语义区，issue #423）：交易行、来源/转换投影与分页结果。
-//!
-//! 职责：交易全量读模型类型的单一定义点。不变量：`source` / `convert` 非库列，
-//! `FromRow` 恒填空、由读路径 `attach_*` 按页填充；类型经 `crate::model` 逐项再导出。
-//! ADR 指针：ADR-0113 决策 2/8。陷阱：列序与 `transactions` 表 SELECT 顺序一一对应。
-//! ADR 指针：ADR-0113 决策 2/8。陷阱：列序与全列 SELECT 清单 [`ROW_COLUMNS`] 一一
-//! 对应（read 区四处消费同一常量，映射钉住测试 `read/tests/row_columns.rs`）。
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -14,34 +7,20 @@ use ledger_infra::db::query::FromRow;
 #[derive(Debug, Serialize, Deserialize, Clone, ToSchema)]
 pub struct Transaction {
     pub id: String,
-    /// 交易类型枚举（serde 小写字符串序列化，wire 与裸 String 一致）。
     pub kind: TransactionKind,
     pub amount_cents: i64,
     pub currency_code: String,
     pub amount_native_cents: i64,
-    /// 出资账户引用（ADR-0138）：分解行（携出资子行的 expense/income、显式覆盖的
-    /// refund、继承分解原支出的缺省 refund）读回 `None`——AI / HTTP 契约类型域
-    /// `string → string | null`（已发布契约放宽，CHANGELOG BREAKING）；单出资行
-    /// 读回形态与现状兼容。
     pub account_id: Option<String>,
     pub to_account_id: Option<String>,
-    /// 可选出资账户（issue #935 / ADR-0096）：仅 buy/sell 可携带（行为层准入收口
-    /// `funding::validate_funding_account`），结算现金腿的归因端点。
     pub funding_account_id: Option<String>,
     pub category_id: Option<String>,
     pub merchant_id: Option<String>,
-    /// 可选保单引用（issue #361 / ADR-0051 决策 3）：仅 expense/income 可挂（行为层准入）。
     pub policy_id: Option<String>,
     pub refund_of_transaction_id: Option<String>,
-    /// 折算来源留痕（issue #1548 / ADR-0011 修订，V029）：非本位币行记录本笔折算
-    /// 使用的汇率值与来源（`native ≈ amount_cents × fx_rate_used`，到分）；
-    /// 与本位币同币种、无现金腿（split）及写入时点早于留痕功能的存量行为 `None`。
-    /// 读回解释用，不参与检索与幂等身份。
     pub fx_rate_used: Option<f64>,
     pub fx_rate_source: Option<FxRateSource>,
     pub note: Option<String>,
-    /// 来源订单号（V035）：导入来源单据的外部订单标识（详情订单区的归属锚点，#1928）；
-    /// 来源元数据不限 kind，手动行为空；单号不入备注（备注可编辑、搜索按原文命中）。
     pub source_order_no: Option<String>,
     pub date: String,
     pub created_at: String,
@@ -49,140 +28,78 @@ pub struct Transaction {
     pub version: i64,
     pub device_id: String,
     pub is_deleted: bool,
-    /// 出资项分解（issue #1860 / ADR-0138）：分解行按顺序位稳定返回；非库列——
-    /// `FromRow` 恒空，由读路径 `attach_fundings` 填充（列表与单笔读回都填）。
-    /// refund 缺省派生的条目（读时按原支出比例推导、不落库）带 `derived=true`。
     #[serde(default)]
     pub fundings: Vec<TransactionFunding>,
-    /// 购买项明细（issue #1882 / ADR-0138 决策 9）：带购买项的 expense 按对账单
-    /// 顺序稳定返回；非库列——`FromRow` 恒空，由读路径 `attach_purchases` 填充
-    /// （列表 / 详情 / 搜索 / 订单汇总同填）。仅 `expense` 可带；无购买项恒空数组。
     #[serde(default)]
     pub purchases: Vec<TransactionPurchase>,
-    /// 来源列（spec #704 / issue #706，词汇表「来源列」）：发起来源实体的读时反查推导，
-    /// 零数据迁移。仅列表/搜索读路径填充（`attach_sources`）；单笔读回与写入响应
-    /// 不做反查，恒为 `None`；无来源交易（手动录入/AI 导入）为 `None`。
     pub source: Option<TransactionSource>,
-    /// 转换两腿扩展（仅 convert，ADR-0099 / 词汇表「基金转换（Conversion）」）：
-    /// 列表/搜索读路径填充，非转换行恒 `None`。
-    /// 列表金额列展示转出金额（`out_amount_cents`），不读行金额锚点（锚点是结转成本）。
     pub convert: Option<ConvertFields>,
 }
 
-/// 出资项读回条目（issue #1860 / ADR-0138）：分解行随交易读回，按顺序位稳定排序。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct TransactionFunding {
-    /// 出资账户 id。
     pub account_id: String,
-    /// 出资金额（正整数分）：Σ 全部条目 == 交易金额。
     pub amount_cents: i64,
-    /// 扣款标签（可选自由文本）。
     pub label: Option<String>,
-    /// refund 缺省按出资比例派生的读时推导标记（ADR-0138 决策 5）：`true` = 读时
-    /// 推导、未落库；落库分解与单出资行恒 `false`。
     pub derived: bool,
 }
 
-/// 购买项读回条目（issue #1882 / ADR-0138 决策 9/10）：带购买项的 expense 随交易
-/// 读回，按顺序位（对账单顺序）稳定排序。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct TransactionPurchase {
-    /// 商品名称（源单原文）。
     pub name: String,
-    /// 件数（正整数）。
     pub quantity: i64,
-    /// 商品分类引用（可选，明细指针）：分类删除时读回 null；不承载统计口径
-    /// （报表按交易行分类整单计入，ADR-0138 决策 11）。
     pub category_id: Option<String>,
-    /// 商品单价（可选，整数分）：源单只给订单总额时为空；存而不显示、不进
-    /// 任何金额与折算口径（ADR-0138 决策 10）。
     pub unit_price_cents: Option<i64>,
 }
 
-/// 基金转换扩展（ADR-0099）：一笔 convert 两腿的标的、份额与两侧确认金额。
-///
-/// 行金额锚点（`transactions.amount_cents`）= 服务端按 FIFO 消耗算出的**结转成本**，
-/// 不是确认单金额；两侧确认金额存本扩展（展示与多腿分摊口径的输入）。
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct ConvertFields {
-    /// 转入标的。
     pub to_instrument_id: String,
-    /// 转入标的代码。
     pub to_symbol: String,
-    /// 转入份额。
     pub to_quantity: f64,
-    /// 转出金额（分，确认单权威）。
     pub out_amount_cents: i64,
-    /// 转入金额（分，确认单权威）。
     pub in_amount_cents: i64,
 }
 
-/// 交易来源类型闭集（spec #704 / issue #706，词汇表「来源列」）：定时计划三形态 /
-/// 保单 / 物品 / 标的。wire 为 camelCase 字符串（与前端词表同字面）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum TransactionSourceKind {
-    /// 分期计划（期次对生成交易反查，#707 接线）。
     InstallmentPlan,
-    /// 订阅计划（期次对生成交易反查，#707 接线）。
     Subscription,
-    /// 定时转账计划（期次对生成交易反查，#707 接线）。
     ScheduledTransfer,
-    /// 保单（PolicyReference 直挂，本票接线）。
     Policy,
-    /// 物品（溯源指针反查，本票接线）。
     Item,
-    /// 投资标的（证券交易记录反查，#709 接线）。
     Instrument,
 }
 
-/// 来源状态闭集（spec #704，可空字段）：`None` = 无状态标注。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum TransactionSourceStatus {
-    /// 已取消（计划，#707 接线）。
     Cancelled,
-    /// 已处置（物品，本票接线）。
     Disposed,
-    /// 已删除（软删保单，本票接线；历史引用保留不置空，ADR-0051 决策 5）。
     Deleted,
 }
 
-/// 交易行来源（spec #704 / issue #706）：展示名 + 可空状态，随行返回供来源列渲染。
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct TransactionSource {
-    /// 来源类型（六类闭集）。
     pub kind: TransactionSourceKind,
-    /// 来源实体 id。
     pub entity_id: String,
-    /// 展示名（保单 = 险种名；其余口径见各消费票）。
     pub display_name: String,
-    /// 来源状态（可空）：软删保单 = deleted。
     pub status: Option<TransactionSourceStatus>,
 }
 
-/// 交易搜索分页结果（服务端分页）。
 #[derive(Debug, Serialize, Deserialize, Clone, ToSchema)]
 pub struct TransactionSearchResult {
-    /// 匹配交易（当前页）。
     pub items: Vec<Transaction>,
-    /// 命中总数（供「命中 N 条」与分页）。
     pub total: i64,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
 pub struct TransactionListResult {
     pub items: Vec<Transaction>,
-    /// 满足过滤条件的未删除交易总数（用于分页条）。
     pub total: i64,
 }
 
-/// `transactions` 全列 SELECT 清单单点（issue #1880）：列序 = [`Transaction::from_row`]
-/// 的位置下标序（`id`=0 … `source_order_no`=21）。四处读路径消费同一清单（列表 /
-/// 单笔 / 订单汇总 / 搜索回表，搜索侧逐列加 `t.` 前缀），删除任一处的常量引用即
-/// 编译失败。新增列只改本常量 + `from_row` 下标 + 写入侧列清单；列名→值映射钉住
-/// 测试住 `read/tests/row_columns.rs`，错位或漏更新即红。写入侧（INSERT / UPDATE）
-/// 列序按参数序组织、与读序不同形，不同收本清单（裁决见 issue #1880）。
 pub(crate) const ROW_COLUMNS: &[&str] = &[
     "id",
     "kind",
@@ -210,8 +127,6 @@ pub(crate) const ROW_COLUMNS: &[&str] = &[
 
 impl FromRow for Transaction {
     fn from_row(row: &rusqlite::Row) -> rusqlite::Result<Self> {
-        // 位置下标与 [`ROW_COLUMNS`] 一一对应（按位取列）：新增列同步改常量与
-        // 此处下标，`read/tests/row_columns.rs` 的探针测试保证错位即红。
         Ok(Transaction {
             id: row.get(0)?,
             kind: row.get(1)?,
@@ -235,15 +150,9 @@ impl FromRow for Transaction {
             fx_rate_used: row.get(19)?,
             fx_rate_source: row.get(20)?,
             source_order_no: row.get(21)?,
-            // 出资项分解非库列：FromRow 恒空，由读路径 `attach_fundings` 填充
-            //（列表页与单笔读回同填）。
             fundings: Vec::new(),
-            // 购买项明细非库列：FromRow 恒空，由读路径 `attach_purchases` 填充
-            //（列表 / 详情 / 搜索 / 订单汇总同填）。
             purchases: Vec::new(),
-            // 来源列非库列：FromRow 恒空，由列表/搜索读路径 `attach_sources` 按页填充。
             source: None,
-            // 转换扩展同规：非库列，由列表/搜索读路径 `attach_convert_fields` 按页填充。
             convert: None,
         })
     }

@@ -1,8 +1,3 @@
-//! 预算进度域行为：按当前自然月/年实时计算支出净额。
-//!
-//! issue #182：当前周期进度——spent = `expense_net` 口径，参与 kind 由核心交易域
-//! kind→度量矩阵导出（本模块不定义口径，只消费）。
-
 use chrono::{Datelike, NaiveDate};
 use rusqlite::Connection;
 
@@ -11,10 +6,6 @@ use ledger_infra::db::query::query_all;
 use ledger_infra::error::Result;
 use ledger_transaction::amount::{Measure, contributing_kinds_sql, expense_net_expr};
 
-/// 预算 spent = `expense_net`（毛支出 − 退款，退款冲减支出），与报表分类净值同口径；参与 kind 由矩阵导出（不含 buy/sell 等投资类）。
-/// 窗口为当前自然周期，由注入的 `today` 驱动、与存储的 start_date 无关（存量旧日期
-/// 行零迁移滚动生效）：monthly = today 所在自然月，yearly = today 所在自然年。
-/// `today` 由命令层注入（本地今日，与订阅花费口径一致），测试注入固定值。
 pub fn budget_progress_rows(conn: &Connection, today: NaiveDate) -> Result<Vec<BudgetProgress>> {
     let kinds = contributing_kinds_sql(Measure::ExpenseNet);
     let month = format!("{:04}-{:02}", today.year(), today.month());

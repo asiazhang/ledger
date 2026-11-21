@@ -1,6 +1,3 @@
-//! `item::domain` 域 API 单元测试：校验语义与失效信号回调（BDD 场景外的快速反馈）。
-//! 域目录化随迁自 `commands::item/tests.rs`（#397，纯移动 + import 路径更新）。
-
 use rusqlite::Connection;
 
 use crate::domain::{create_item, delete_item, dispose_item, list_items, update_item};
@@ -10,9 +7,6 @@ use ledger_transaction::amount::TransactionKind;
 use ledger_transaction::create_transaction_internal;
 
 fn conn() -> Connection {
-    // 建库两行序经统一测试工厂承载（spec #728 / issue #754 / ADR-0084 决策 7）。
-    // 工厂住根包（test_support，ADR-0084），经 dev-dependency 环消费（#1099 拆
-    // crate 起；spec #1086 明文裁决的测试专用边，ledger-transaction 同款）。
     tauri_app_lib::test_support::open()
 }
 
@@ -27,15 +21,10 @@ fn input(name: &str, date: &str, cost_cents: i64) -> ItemInput {
     }
 }
 
-/// 创建脚手架账户 + expense 购买交易（issue #207 起创建必关联交易），返回交易 id。
-/// 不携显式汇率（序列取数），详见 [`seed_purchase_tx_with_rate`]。
 fn seed_purchase_tx(conn: &Connection, date: &str, cost_cents: i64, currency: &str) -> String {
     seed_purchase_tx_with_rate(conn, date, cost_cents, currency, None)
 }
 
-/// 同上，可逐笔显式给定该笔汇率（#1549 写入契约 `fx_rate`：显式 > 序列 > 报错）——
-/// `super::fx` 的三方分叉夹具用它在交易行上留痕一个既非序列值也非当期值的显式
-/// 汇率（#1693 物品行折算继承该留痕的锚点前提）。
 pub(super) fn seed_purchase_tx_with_rate(
     conn: &Connection,
     date: &str,
@@ -43,8 +32,6 @@ pub(super) fn seed_purchase_tx_with_rate(
     currency: &str,
     fx_rate: Option<f64>,
 ) -> String {
-    // 脚手架账户：工厂账户种子（归一签名，spec #728 / ADR-0084 决策 4）；同连接
-    // 可多次播种（同 id 复用），已存在则跳过（幂等语义与原 INSERT OR IGNORE 一致）。
     let scaffold_exists: i64 = conn
         .query_row(
             "SELECT COUNT(*) FROM accounts WHERE id='acc-item-scaffold'",
@@ -98,7 +85,6 @@ pub(super) fn seed_purchase_tx_with_rate(
     .id
 }
 
-/// 关联脚手架交易的创建入参（日期/成本/币种与交易一致，后端以交易值覆盖带出）。
 fn linked_input(name: &str, date: &str, cost_cents: i64, tx_id: &str) -> ItemInput {
     ItemInput {
         purchase_transaction_id: Some(tx_id.into()),
@@ -106,7 +92,6 @@ fn linked_input(name: &str, date: &str, cost_cents: i64, tx_id: &str) -> ItemInp
     }
 }
 
-/// 创建一件物品并返回其 id（默认不监听信号）：先建脚手架购买交易再关联创建。
 fn seed(conn: &Connection, name: &str, date: &str, cost_cents: i64) -> String {
     let tx = seed_purchase_tx(conn, date, cost_cents, "CNY");
     create_item(conn, linked_input(name, date, cost_cents, &tx), &mut || {}).unwrap()
@@ -149,7 +134,6 @@ fn update_item_persists_fields_and_increments_version() {
 fn update_item_replaces_note_whole_field() {
     let conn = conn();
     let id = seed(&conn, "水杯", "2026-01-15", 5_000);
-    // update 是整体替换语义：入参不带备注（None）即清除
     update_item(&conn, &id, input("水杯", "2026-01-15", 5_000), &mut || {}).unwrap();
     assert_eq!(list_items(&conn).unwrap()[0].item.note, None);
     let mut inp2 = input("水杯", "2026-01-15", 5_000);
@@ -223,7 +207,6 @@ fn update_item_validates_like_create() {
             "应报校验错误: {err}"
         );
     }
-    // 币种无汇率 → Amount 接缝报错
     let mut inp = input("耳机", "2026-03-01", 20_000);
     inp.currency_code = "XYZ".into();
     let err = update_item(&conn, &id, inp, &mut || {}).unwrap_err();
@@ -247,7 +230,6 @@ fn update_item_rejects_purchase_date_after_disposal_date() {
     )
     .unwrap_err();
     assert!(err.to_string().contains("晚于处置日期"));
-    // 未落库：version 不变
     assert_eq!(list_items(&conn).unwrap()[0].item.version, 1);
 }
 
@@ -290,7 +272,6 @@ fn create_item_persists_and_returns_id() {
 #[test]
 fn create_item_daily_cost_uses_cost_seam() {
     let conn = conn();
-    // 相对今天构造购买日期，断言含起止两端的日历天数（10 天前购买 → 10 天）。
     let today = crate::cost::today();
     let purchase = today - chrono::Duration::days(9);
     let date = purchase.format("%Y-%m-%d").to_string();
@@ -309,8 +290,6 @@ fn create_item_daily_cost_uses_cost_seam() {
 #[test]
 fn create_item_rejects_blank_name() {
     let conn = conn();
-    // 创建路径的成本/日期由购买交易带出（Writer 接缝已校验），名称仍是物品侧校验；
-    // 总成本>0 与日期格式校验在创建路径被带出遮蔽，由修改路径覆盖（update_item_validates_like_create）。
     let tx = seed_purchase_tx(&conn, "2026-01-15", 100, "CNY");
     let mut fired = 0;
     let err = create_item(
@@ -334,12 +313,10 @@ fn delete_item_soft_deletes_and_filters_from_list() {
     delete_item(&conn, &old, &mut || fired += 1).unwrap();
     assert_eq!(fired, 1, "删除成功应恰好发出一次失效信号");
 
-    // 标准列表过滤已删除物品
     let items = list_items(&conn).unwrap();
     assert_eq!(items.len(), 1);
     assert_eq!(items[0].item.name, "新手机");
 
-    // 软删除语义：行保留在库，仅打 is_deleted=1 标记（version 自增）
     let (is_deleted, version): (i64, i64) = conn
         .query_row(
             "SELECT is_deleted, version FROM items WHERE id=?1",
@@ -359,7 +336,6 @@ fn delete_item_missing_id_errors_without_signal() {
     assert!(err.to_string().contains("物品不存在"));
     assert_eq!(fired, 0, "删除失败不应发出失效信号");
 
-    // 已删除的物品再删一次同样报错（入口只对未删除行生效，不重复打标）
     let id = seed(&conn, "水杯", "2026-01-15", 100);
     delete_item(&conn, &id, &mut || {}).unwrap();
     let err = delete_item(&conn, &id, &mut || fired += 1).unwrap_err();
@@ -375,8 +351,6 @@ fn list_items_excludes_soft_deleted() {
         .unwrap();
     assert!(list_items(&conn).unwrap().is_empty());
 }
-
-// —— 处置（issue #120）：处置日期必填、残值可选，写状态字段，版本递增 ——
 
 fn dispose_input(date: &str, residual: Option<i64>) -> ItemDisposeInput {
     ItemDisposeInput {
@@ -404,7 +378,6 @@ fn dispose_item_persists_disposal_fields_and_increments_version() {
     assert_eq!(entry.item.disposal_date.as_deref(), Some("2026-01-10"));
     assert_eq!(entry.item.residual_value_cents, Some(20_000));
     assert_eq!(entry.item.version, 2, "版本应递增");
-    // 每天成本摊到处置日：分子 = 总成本 − 残值，天数含起止两端
     assert_eq!(entry.numerator_cents, 80_000);
     assert_eq!(entry.used_days, 10);
 }
@@ -459,7 +432,6 @@ fn dispose_item_validates_date_and_residual() {
             "应含「{fragment}」: {err}"
         );
     }
-    // 校验失败不落库：状态/版本均不动
     let item = &list_items(&conn).unwrap()[0].item;
     assert_eq!(item.status, ItemStatus::InUse);
     assert_eq!(item.version, 1);

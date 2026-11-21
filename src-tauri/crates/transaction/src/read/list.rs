@@ -1,11 +1,3 @@
-//! 交易列表与单笔读取（读路径，ADR-0113 决策 8）：过滤/排序/分页与单笔 SQL 单点。
-//!
-//! 职责：`list_transactions_internal`（过滤/排序/分页 + 来源与转换投影填充）与
-//! `get_transaction_internal`（按 id 读未删除交易）。不变量：过滤条件与 total/items
-//! 共用同一 WHERE 子句；排序 date DESC, created_at DESC, id DESC（id 最终 tiebreaker）。
-//! ADR 指针：ADR-0113 决策 8 / ADR-0056。陷阱：来源列与转换扩展经 `read::source`
-//! 读时投影填充，接缝注册点在跨域接缝区。
-
 use rusqlite::Connection;
 
 use crate::model::{ROW_COLUMNS, Transaction, TransactionListFilter, TransactionListResult};
@@ -23,11 +15,7 @@ pub fn list_transactions_internal(
     conn: &Connection,
     filter: &TransactionListFilter,
 ) -> Result<TransactionListResult> {
-    // 读快照一致性（issue #1699）：COUNT、items、来源与转换投影填充是多语句读闭包，
-    // rollback journal 下语句之间无快照隔离（写提交落在其间即页与总数错位）——
-    // 整体收进同一读事务（嵌套感知：已在事务中则加入外层，回滚权归外层）。
     ensure_transaction(conn, || {
-        // 过滤条件与 total/items 共用同一 WHERE 子句，保证 total 恒为"满足过滤条件的未删除交易总数"。
         let mut where_clause = String::from("WHERE is_deleted=0");
         let mut params: Vec<String> = Vec::new();
         if let Some(from) = filter.from.as_deref() {
@@ -43,9 +31,6 @@ pub fn list_transactions_internal(
             params.push(account_id.to_string());
         }
         if let Some(account_id) = filter.involving_account_id.as_deref() {
-            // 涉及账户口径（issue #937 / ADR-0096 三端 + ADR-0138 出资子行端）：转出 ∪
-            // 转入 ∪ 出资账户 ∪ 出资子行任一命中即算——按出资账户过滤命中它出资的
-            // buy/sell，按分解账户过滤命中它参与组合支付的行；已发布语义不变（只增不改）。
             where_clause.push_str(
                 " AND (account_id = ? OR to_account_id = ? OR funding_account_id = ? \
                  OR id IN (SELECT transaction_id FROM transaction_fundings WHERE account_id = ?))",
@@ -59,8 +44,6 @@ pub fn list_transactions_internal(
             where_clause.push_str(" AND merchant_id = ?");
             params.push(merchant_id.to_string());
         }
-        // 分类下钻两字段（issue #377）：精确匹配不含子分类；仅无分类命中 category_id IS NULL。
-        // 与其他维度同规：AND 组合，互不隐含。
         if let Some(category_id) = filter.category_id.as_deref() {
             where_clause.push_str(" AND category_id = ?");
             params.push(category_id.to_string());
@@ -68,9 +51,6 @@ pub fn list_transactions_internal(
         if filter.uncategorized_only == Some(true) {
             where_clause.push_str(" AND category_id IS NULL");
         }
-        // 标的过滤（ADR-0107）：核心交易行不持标的信息，经投资域扩展表子查询命中——
-        // 任一腿命中（instrument_id = 转出腿，to_instrument_id = convert 转入腿），
-        // 与其它维度 AND 组合；total 与 items 共用同一 WHERE 子句，口径自动一致。
         if let Some(instrument_id) = filter.instrument_id.as_deref() {
             where_clause.push_str(
                 " AND id IN (SELECT transaction_id FROM security_transactions \
@@ -79,10 +59,6 @@ pub fn list_transactions_internal(
             params.push(instrument_id.to_string());
             params.push(instrument_id.to_string());
         }
-        // 类型集合过滤（spec #1025 起为唯一类型维度，手动多选与下钻载荷共用）：kind IN (...)，
-        // 维度内取或、与其余维度 AND 组合；单值亦经本参数（原单值 kind = ? 子句已随
-        // 参数移除，BREAKING，见 CHANGELOG）。空集合视为未携带（不过滤），先例同
-        // uncategorized_only=false。
         if let Some(kinds) = filter.kinds.as_ref().filter(|k| !k.is_empty()) {
             let placeholders = vec!["?"; kinds.len()].join(",");
             where_clause.push_str(&format!(" AND kind IN ({placeholders})"));
@@ -90,28 +66,6 @@ pub fn list_transactions_internal(
                 .iter()
                 .for_each(|k| params.push(k.as_str().to_string()));
         }
-        // 隐藏投资相关流水（issue #1810 / ADR-0136 决策 2）：行的转出 / 转入 / 出资
-        // 三端任一端账户类型为 investment 即排除——与涉及账户过滤同一三端列，按账户
-        // 不按分类（银行卡支付的「投资费用」分类支出照常返回）。NOT EXISTS 对 NULL 端
-        // 天然安全（未填的转入 / 出资端不参与命中），软删投资账户的类型仍是 investment、
-        // 历史行照常排除；与其余维度 AND 组合，total 与 items 共用同一 WHERE 子句。
-        // 类型字面量对准 `accounts.type` CHECK 闭集的 `investment` 取值——本 crate 不依赖
-        // ledger-accounts，域间经 SQL 表达（先例 mwr.rs 同款字面量）；判定读表不读 id
-        // 清单，新建的投资账户自动纳入隐藏口径（spec #1808 user story 9）。
-        //
-        // 「三端 ∪ 出资子行任一命中即排除」按德摩根写成四个独立 NOT EXISTS 而非单个
-        // OR 子查询（issue #1924）：OR 形态使 planner 逐行退化为「每投资户 × fundings
-        // 全表扫」（真实库 COUNT 报 377ms），拆开后 accounts 三探测是纯主键探测
-        // （accounts id=? ×3）且不依赖 sqlite_stat1；两形态语义严格等价（真实库双向
-        // EXCEPT 计数为 0，含分解行 account_id IS NULL——故 NOT IN 改写因 NULL 误杀
-        // 不可用）。
-        //
-        // fundings 子查询的形态由 planner 按统计自适应（issue #2197）：无外层覆盖
-        // 索引时，fundings 表小则 planner 判「逐行扫 fundings（SCAN f）」更便宜，
-        // 并非恒为主键探测；V038 `idx_transactions_kind_count` 落地后外层 COUNT 走
-        // covering index 脱离肥表，fundings 子查询在真实库收敛为
-        // `SEARCH f USING sqlite_autoindex_transaction_fundings_1 (transaction_id=?)`
-        // 主键探测（该形态不钉：planner 按统计自适应，测试只钉外层走覆盖索引）。
         if filter.hide_investment_related == Some(true) {
             where_clause.push_str(
                 " AND NOT EXISTS (SELECT 1 FROM accounts a WHERE a.type = 'investment' \
@@ -132,20 +86,11 @@ pub fn list_transactions_internal(
             |r| r.get(0),
         )?;
 
-        // 确定性排序：date DESC, created_at DESC, id DESC。
-        // id 是最终 tiebreaker——`now_iso()` 为秒级精度，同一秒内写入的行 created_at 相同，
-        // 不加 id 翻页会漂移（重复/遗漏）。
         let mut sql = format!(
             "SELECT {} FROM transactions {where_clause} ORDER BY date DESC, created_at DESC, id DESC",
             ROW_COLUMNS.join(",")
         );
-        // 分页路径优先：传 page_size 时按 offset 页码取当前页（小于 1 按 1 处理，
-        // 与 InstrumentListFilter 先例一致；offset 用 saturating 运算防溢出）；
-        // 否则 limit 路径取前 N 条（沿用 SQLite 原生语义：LIMIT 0 返回空、负值无上限）；
-        // 两者都缺省时返回全部（total 恒返回）。
         if let Some(page_size) = filter.page_size {
-            // 钳制到 SQLite 可接受的 64 位整数范围，防止极端输入（usize::MAX）产生
-            // "datatype mismatch" 或 debug 构建 panic。
             let page_size = i64::try_from(page_size.max(1)).unwrap_or(i64::MAX);
             let page = filter.page.unwrap_or(1).max(1);
             let offset = i64::try_from(page.saturating_sub(1).saturating_mul(page_size as usize))
@@ -157,23 +102,12 @@ pub fn list_transactions_internal(
         let mut items = query_all(conn, &sql, rusqlite::params_from_iter(params))?;
         attach_sources(conn, &mut items)?;
         attach_convert_fields(conn, &mut items)?;
-        // 出资项读闭包与页行集同一读事务（issue #1860 / ADR-0138 影响节）：子行
-        // 与 refund 派生的读数都锚在页行快照上，写提交落在语句间即口径错位。
         attach_fundings(conn, &mut items)?;
-        // 购买项读闭包与页行集同一读事务（issue #1882 / ADR-0138 影响节）：明细
-        // 读数锚在同一页行快照上（删除本接线，read/tests/purchase.rs 探针变红）。
         attach_purchases(conn, &mut items)?;
         Ok(TransactionListResult { items, total })
     })
 }
 
-/// 按 `id` 读取未删除交易（详情读回），供修改接口返回更新后的完整交易。
-/// 不存在返回 `NotFound`。
-///
-/// 详情读回是多语句读闭包（issue #1860 / ADR-0138 影响节）：主行 SELECT、出资
-/// 子行 SELECT 与 refund 派生的原支出分解读取必须同快照——写提交落在语句间会
-/// 读到「主行为旧、子行为新」的混搭行。整体收进同一读事务（嵌套感知，#1699
-/// 同款纪律），配读快照探针测试（删除接线即红）。
 pub fn get_transaction_internal(conn: &Connection, id: &str) -> Result<Transaction> {
     ensure_transaction(conn, || {
         let mut tx = query_one::<Transaction, _>(
@@ -188,8 +122,6 @@ pub fn get_transaction_internal(conn: &Connection, id: &str) -> Result<Transacti
             AppError::codedp_not_found("transaction.not-found", format!("交易不存在: {id}"), &[id])
         })?;
         attach_fundings(conn, std::slice::from_mut(&mut tx))?;
-        // 购买项与出资项同一 attach 契约（issue #1882）：详情读回携带明细，与主行
-        // 同一读事务（读快照探针见 read/tests/purchase.rs）。
         attach_purchases(conn, std::slice::from_mut(&mut tx))?;
         Ok(tx)
     })

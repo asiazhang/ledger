@@ -1,12 +1,3 @@
-//! 写入协议（写路径，ADR-0105 / ADR-0033）：create / update / delete 三编排入口。
-//!
-//! 职责：写入 grammar——守卫 → 回退（修改路径）→ 计划装配 → 落库 → 应用副作用 →
-//! op 产出——按入口收进单正文协议函数；本地写入与同步重放（[`replay_command`]）为
-//! Local / Replay 两形态（[`WriteForm`] / [`CreateForm`] / [`UpdateForm`]），四笔差异
-//! 为计划装配来源 / id 来源 / op 发射 / 存活校验。不变量：写入时序、嵌套感知事务
-//! （[`ensure_transaction`]）与守卫同码同文案内化；kind 变更守卫单点；结果证据经
-//! [`WriteEvidence::MerchantCreated`] 外传。ADR 指针：ADR-0105 / ADR-0033 / ADR-0044；陷阱：守卫文案归投资域 `unwind`，本模块不持常量，两形态单正文不得分离。
-
 use rusqlite::Connection;
 use rusqlite::OptionalExtension;
 
@@ -36,60 +27,24 @@ pub use delete as delete_transaction_internal;
 pub use update as update_transaction;
 pub use update as update_transaction_internal;
 
-/// 进/出 convert 的 kind 变更拒绝文案与错误码（issue #979 / ADR-0099 决策 5）：
-/// 修改协议守卫段单点持有，Local / Replay 两形态同码同文案（同一入口同一文案，
-/// ADR-0033 决策 #4）。
 const CONVERT_KIND_CHANGE_FORBIDDEN_CODE: &str = "trade.convert-kind-change-forbidden";
 const CONVERT_KIND_CHANGE_FORBIDDEN: &str =
     "不可将交易类型改为或改出「转换」：转换的纠错只有「删除后重建」一条路";
 
-/// 进/出 split 的 kind 变更拒绝文案与错误码（ADR-0106 决策 5，沿用 convert 先例）：
-/// 与 convert 守卫同段单点，Local / Replay 两形态同码同文案。split 行的创建 / 就地
-/// 修改 / 删除与重放均已收编（#1051 / #1053：全字段替换 + 逐批次精确回补 + 本地
-/// 重述重建比对）。
 const SPLIT_KIND_CHANGE_FORBIDDEN_CODE: &str = "trade.split-kind-change-forbidden";
 const SPLIT_KIND_CHANGE_FORBIDDEN: &str =
     "不可将交易类型改为或改出「份额调整」：换交易类型的纠错只有「删除后重建」一条路";
 
-/// 进/出 dividend 的 kind 变更拒绝文案与错误码（issue #1078 / ADR-0109，沿用
-/// convert / split 先例）：与其余 kind 变更守卫同段单点，Local / Replay 两形态同码
-/// 同文案。分红行自身可就地修改（全字段替换，摘除并重建扩展行），但**换交易类型**
-/// 一律拒绝——扩展行与现金腿形态不可跨 kind 迁移。
 const DIVIDEND_KIND_CHANGE_FORBIDDEN_CODE: &str = "trade.dividend-kind-change-forbidden";
 const DIVIDEND_KIND_CHANGE_FORBIDDEN: &str =
     "不可将交易类型改为或改出「分红」：换交易类型的纠错只有「删除后重建」一条路";
 
-// ---------------------------------------------------------------------------
-// 写入形态闭集（issue #1004 / ADR-0105）
-// ---------------------------------------------------------------------------
-
-/// 写入形态闭集：本机写入（Local）与重放执行（Replay）的二值区分，本文件
-/// 「Local / Replay」的唯一真源——由 delete 路径既有 `OpEmission` 改名推广而来，
-/// create / update 协议与 delete 路径共用同一枚举（不留第二份同义区分）。
-///
-/// 四笔形态差异（计划装配来源、id 来源、op 发射、存活校验）在协议分歧点 match
-/// 本枚举；create / update 两形态载荷不同构，经 [`CreateForm`] / [`UpdateForm`]
-/// 承载（变体与本枚举一一对应），delete 两形态载荷同构（实体 id），直接消费。
-///
-/// 注意与投资域 `unwind::Mode`（Update / Delete）同名不同义：那是「修改 vs 删除」
-/// 的入口形态轴（ADR-0105 决策 6 防混淆注记），本枚举是「本地 vs 重放」的写入
-/// 形态轴。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum WriteForm {
-    /// 本机写入：id 本端生成、装配按输入重折算、op 逐笔留痕、无账户存活校验
-    /// （**刻意不对称**——本地账户引用来自在用字典选取，往软删账户落账的口子由
-    /// 前端守住，后端补守卫属用户可见行为变化，口子另立缺陷票处置，不夹带；
-    /// ADR-0105 决策 4）。
     Local,
-    /// 重放执行：id 随命令携带（两端收敛同一行）、装配按命令携带行（不重折算，
-    /// 源端折算 ADR-0091 决策 3）、不产本地 op（引擎在重放事务内落日志）、账户
-    /// 引用存活校验（ParkedOp「不自动复活已删数据」契约的组成部分，issue #856）。
     Replay,
 }
 
-/// 创建协议的形态参数（[`WriteForm`] 闭集的载荷载体）：两形态装配输入不同构——
-/// Local 携本地输入（装配时重折算），Replay 携重放命令部件（实体 id 与归一化行
-/// 随命令携带）。变体与 [`WriteForm`] 一一对应。
 #[derive(Debug)]
 enum CreateForm<'a> {
     Local(&'a TransactionInput),
@@ -102,8 +57,6 @@ enum CreateForm<'a> {
     },
 }
 
-/// 修改协议的形态参数（[`WriteForm`] 闭集的载荷载体）：目标 id 两形态同构
-/// （都按 id 寻址既有行），装配输入不同构——同 [`CreateForm`]。
 #[derive(Debug)]
 enum UpdateForm<'a> {
     Local(&'a TransactionInput),
@@ -116,7 +69,6 @@ enum UpdateForm<'a> {
 }
 
 impl UpdateForm<'_> {
-    /// 写入目标 kind（协议守卫段读取）：Local 取输入，Replay 取命令携带行。
     fn kind(&self) -> TransactionKind {
         match self {
             UpdateForm::Local(input) => input.kind,
@@ -125,26 +77,13 @@ impl UpdateForm<'_> {
     }
 }
 
-// ---------------------------------------------------------------------------
-// 计划与终态
-// ---------------------------------------------------------------------------
-
-/// 计划：归一化后的交易行 + kind 特有副作用数据（不落库）。
-///
-/// `#[allow(clippy::large_enum_variant)]`：Common 臂内联归一化行（随计划流转的
-/// 固定量级结构），Investment 臂是计划契约对象（Box，#1092 接缝后尺寸为指针）
-/// ——尺寸差是接缝形态的结构事实，不构成装箱另一臂的理由。
 #[allow(clippy::large_enum_variant)]
 enum Plan {
-    /// 普通 kind（income/expense/transfer/refund）：无副作用。
     Common(writer::NormalizedRow),
-    /// 投资 kind（buy/sell/convert）：归一化行与副作用数据留在投资域计划中，
-    /// 经计划契约（[`InvestmentPlan`]，#1092 接缝）消费。
     Investment(Box<dyn InvestmentPlan>),
 }
 
 impl Plan {
-    /// 归一化交易行（供 [`writer::insert_row`] / [`writer::update_row`] 落库）。
     fn normalized_row(&self) -> Result<writer::NormalizedRow> {
         match self {
             Plan::Common(row) => Ok(row.clone()),
@@ -153,57 +92,18 @@ impl Plan {
     }
 }
 
-/// 交易创建的终态与结果证据（ADR-0044 决策 4）：`id` 供调用方回传 / 回写去重身份，
-/// `evidence` 随写操作自然外传（非可变状态、不穿透 `db.write` 闭包）——壳层据此经
-/// `signals_for` 判定发射。证据恒为 [`WriteEvidence::MerchantCreated`]（交易域唯一的
-/// 条件信号），未涉商户的写（buy/sell 等，或直接带 id / 不带商户）证据恒假、零信号。
 #[derive(Debug)]
 pub struct TransactionWrite {
-    /// 新交易 id。
     pub id: String,
-    /// 本次写入证据：入参带 `merchant_name` 且未命中即建为真，仅命中复用为假。
     pub evidence: WriteEvidence,
 }
 
-// ---------------------------------------------------------------------------
-// 编排入口与写入协议
-// ---------------------------------------------------------------------------
-
-/// 创建一笔交易（IPC `create_transaction` / 批量导入批次循环 / 余额调整的交易写入，
-/// issue #228 / #310 / ADR-0033）。
-///
-/// 行为层创建编排入口：写入协议（守卫 → 计划装配 → 落库 → 应用副作用 → op 产出，
-/// ADR-0105）的 Local 形态薄壳——顺序契约、事务边界（协议本体自持，见
-/// [`ensure_transaction`]）与守卫文案全部内化，调用方只传连接与输入、处理报错。
-/// 返回值携带终态 id 与「是否即建商户」证据（ADR-0044 决策 4，issue #331）。
-///
-/// 可见性说明：三个入口函数本体 `pub`（供 [`super`] 以 `*_transaction_internal`
-/// 名字公开再导出，模块本身私有故不额外扩大可见面）。
 pub fn create(conn: &Connection, input: TransactionInput) -> Result<TransactionWrite> {
     create_protocol(conn, CreateForm::Local(&input))
 }
 
-/// 创建写入协议本体（ADR-0105）：守卫 → 计划装配 → 落库 → 应用副作用 → op 产出，
-/// 单正文承载 Local / Replay 两形态；「保证处于事务中」由本函数自持（嵌套感知，
-/// ADR-0033 决策 2，落点细化为协议本体，ADR-0105 决策 5）。
-///
-/// 守卫段（分歧点内嵌）：
-/// - 参考数据携带准入——仅 Local 按输入判定（issue #188/#361/#582 收口），须先于
-///   投资域装配（准入拒绝先行，拒绝行不产生字典碎片）；Replay 信任
-///   源端归一化行、不再判定；
-/// - kind 守卫单点——进/出 dividend / split / convert 的 kind 变更禁止（ADR-0109 /
-///   ADR-0106 决策 5 / ADR-0099 决策 5）；split / dividend 的 Local 形态进入投资域
-///   装配、Replay 形态经投资域重放装配（ADR-0106 决策 9 / ADR-0109）；
-///   Replay 的伪造/漂移载荷防御臂先于依赖校验，不误报账户缺失；
-/// - 存活校验——仅 Replay（issue #856）：账户引用必须存活，往已删账户记账码化
-///   拒绝、引擎挂起待裁决；Local 刻意不补（见 [`WriteForm::Local`]）。
-///
-/// op 产出为最后一步：写与副作用全部成功后才追加，随同一事务提交/回滚（失败不
-/// 残留 op）。Replay 形态不产本地 op；其返回值 id 即命令携带值、证据恒假（装配
-/// 不即建商户），仅为统一签名保留。
 fn create_protocol(conn: &Connection, source: CreateForm<'_>) -> Result<TransactionWrite> {
     ensure_transaction(conn, || {
-        // ── 守卫段 ──
         if let CreateForm::Local(input) = &source {
             guard_reference_admission(input)?;
         }
@@ -219,7 +119,6 @@ fn create_protocol(conn: &Connection, source: CreateForm<'_>) -> Result<Transact
                     .collect::<Vec<_>>(),
             )?;
         }
-        // ── 计划装配（分歧点①：Local 按输入重折算 / Replay 按命令携带行）──
         let (plan, merchant_created) = match &source {
             CreateForm::Local(input) => plan(conn, input)?,
             CreateForm::Replay {
@@ -230,14 +129,10 @@ fn create_protocol(conn: &Connection, source: CreateForm<'_>) -> Result<Transact
                 ..
             } => (
                 replay_assembly(conn, None, row, *investment, *convert, *split)?,
-                // 重放形态不解析商户名、不即建商户，证据恒假。
                 false,
             ),
         };
         let row = plan.normalized_row()?;
-        // ── 落库（分歧点②：id 来源——本端生成 vs 随命令携带）──
-        // 搜索（#1727 拼音退役）：Writer 只写原文，交易立即可搜（读路径按原文列匹配，
-        // 无派生列维护与回填）。
         let id = match &source {
             CreateForm::Local(_) => writer::insert_row(conn, &row)?,
             CreateForm::Replay { id, .. } => {
@@ -245,9 +140,7 @@ fn create_protocol(conn: &Connection, source: CreateForm<'_>) -> Result<Transact
                 id.to_string()
             }
         };
-        // ── 应用副作用 ──
         apply(conn, &id, &plan)?;
-        // ── op 产出（分歧点③：本地逐笔留痕 / 重放不产本地 op）──
         if let CreateForm::Local(_) = &source {
             record_local(conn, create_command(&id, &plan))?;
         }
@@ -258,49 +151,12 @@ fn create_protocol(conn: &Connection, source: CreateForm<'_>) -> Result<Transact
     })
 }
 
-/// 按 `id` 全字段替换一笔交易（IPC `update_transaction` / HTTP
-/// `PUT /api/v1/transactions/{id}`，issue #229 / ADR-0033）。
-///
-/// 行为层修改编排入口：写入修改协议（守卫 → 回退 → 计划装配 → 落库 → 应用副作用
-/// → op 产出，ADR-0105）的 Local 形态薄壳——持仓守卫语义与文案归投资域 `unwind`
-/// （issue #1020），本入口只承接分派。
-///
-/// 幂等键（`idempotency_key`）与内容哈希（`dedup_hash`）不作为
-/// 可编辑字段——修改不重算去重身份，故修改后重跑同批导入（带幂等键）仍按同键去重、不产生重复。
-/// 不存在或已软删除的 id 返回码化 NotFound（`transaction.not-found`）。
-/// 返回「是否即建商户」证据（[`WriteEvidence::MerchantCreated`]，issue #331）。
 pub fn update(conn: &Connection, id: &str, input: TransactionInput) -> Result<WriteEvidence> {
     update_protocol(conn, id, UpdateForm::Local(&input))
 }
 
-/// 修改写入协议本体（ADR-0105）：守卫 → 回退 → 计划装配 → 落库 → 应用副作用 →
-/// op 产出，单正文承载 Local / Replay 两形态；事务落点同创建协议（本体自持）。
-///
-/// 与创建协议的顺序差异（两者不强行合一的缘由）：修改多「旧行并集读取 → convert
-/// kind 变更守卫 → 回退」三步。
-///
-/// 守卫段：
-/// - 旧行并集读取（ADR-0105 决策 8）——kind + 商户 + 保单 + 折算沿用基线一次读出：
-///   本地用于「保持历史引用」判定（提交值与原值相同则跳过在用校验，已软删商户/保单
-///   的历史交易仍可修改其他字段）与折算沿用判定（#1550：币种/金额/日期未变则沿用
-///   行内留痕、不重查序列），重放仅用 kind（多读列无可观察影响）；协议内
-///   单次读取，不存在或已删除返回码化 NotFound（两形态同款）。读取在事务内
-///   （协议已保证处于事务中，消除读取与 BEGIN 之间的窗口，ADR-0033 决策 #5）。
-/// - convert kind 变更守卫单点（ADR-0099 决策 5）——从 convert 出、或改为 convert
-///   为 PUT 专属码化拒绝：转换的纠错只有「软删 + 重建」一条窄路，重放端不得由
-///   伪造 op 绕过；就地修改转换走同一协议（convert → convert 由投资域回退实现
-///   的转换清理承载，经 [`revert_investment`] 接缝委派）。
-/// - 参考数据携带准入——仅 Local，先于 kind 守卫（同创建协议）。
-/// - kind 守卫单点——进/出 dividend 与进/出 split 的 kind 变更一律拒绝（ADR-0109 /
-///   ADR-0106 决策 5；两者的就地修改两形态均放行，#1051 / #1053 / #1078）。
-///
-/// 新值守卫全部先于回退：对非法新值先行拒绝、不做任何突变（fail fast，与重放
-/// 形态既有顺序一致）。回退按旧 kind 执行（跨 kind 修改避免孤儿持仓）；存活校验
-/// 仅 Replay（同创建协议，置于回退后、装配前——与投资域装配的依赖在位校验同族）。
 fn update_protocol(conn: &Connection, id: &str, source: UpdateForm<'_>) -> Result<WriteEvidence> {
     ensure_transaction(conn, || {
-        // ── 旧行并集读取（ADR-0105 决策 8）：读取时机、单次读取与各消费方见本
-        // 函数头「守卫段」首条；产物见 [`ExistingRow`]。──
         let existing: ExistingRow = conn
             .query_row(
                 "SELECT kind, merchant_id, policy_id, amount_cents, currency_code, date, \
@@ -334,7 +190,6 @@ fn update_protocol(conn: &Connection, id: &str, source: UpdateForm<'_>) -> Resul
                     &[id],
                 )
             })?;
-        // ── 守卫段 ──
         let new_kind = source.kind();
         let old_kind = existing.kind;
         if (old_kind == TransactionKind::Convert) != (new_kind == TransactionKind::Convert) {
@@ -343,15 +198,12 @@ fn update_protocol(conn: &Connection, id: &str, source: UpdateForm<'_>) -> Resul
                 CONVERT_KIND_CHANGE_FORBIDDEN,
             ));
         }
-        // 进/出 split 的 kind 变更一律拒绝（ADR-0106 决策 5，与 convert 同规）。
         if (old_kind == TransactionKind::Split) != (new_kind == TransactionKind::Split) {
             return Err(AppError::coded(
                 SPLIT_KIND_CHANGE_FORBIDDEN_CODE,
                 SPLIT_KIND_CHANGE_FORBIDDEN,
             ));
         }
-        // 进/出 dividend 的 kind 变更一律拒绝（ADR-0109，与 convert / split 同规）：
-        // 分红行的纠错只有「软删 + 重建」一条路，重放端不得由伪造 op 绕过。
         if (old_kind == TransactionKind::Dividend) != (new_kind == TransactionKind::Dividend) {
             return Err(AppError::coded(
                 DIVIDEND_KIND_CHANGE_FORBIDDEN_CODE,
@@ -361,13 +213,7 @@ fn update_protocol(conn: &Connection, id: &str, source: UpdateForm<'_>) -> Resul
         if let UpdateForm::Local(input) = &source {
             guard_reference_admission(input)?;
         }
-        // 回退（修改路径步骤）：先按旧 kind 回退持仓/卖出关联副作用，再按新
-        // kind 装配落库；buy/convert 守卫（已有部分卖出 / 份额已被后续转换消耗）
-        // 语义与措辞归投资域 unwind 模块。持仓副作用回退经交易×投资接缝
-        //（#1092）：注册点在本域，实现由投资域启动时装入。 ──
         revert_investment(conn, id, old_kind)?;
-        // 存活校验（分歧点：仅 Replay，issue #856 / #935）：修改不得把交易改挂到
-        // 已删账户上（含出资端），码化拒绝由引擎挂起待裁决。
         if let UpdateForm::Replay { row, .. } = &source {
             writer::validate_accounts_alive(
                 conn,
@@ -380,7 +226,6 @@ fn update_protocol(conn: &Connection, id: &str, source: UpdateForm<'_>) -> Resul
                     .collect::<Vec<_>>(),
             )?;
         }
-        // ── 计划装配（分歧点①）──
         let (plan, merchant_created) = match &source {
             UpdateForm::Local(input) => plan_with_existing_refs(conn, input, Some(&existing))?,
             UpdateForm::Replay {
@@ -395,12 +240,8 @@ fn update_protocol(conn: &Connection, id: &str, source: UpdateForm<'_>) -> Resul
             ),
         };
         let row = plan.normalized_row()?;
-        // ── 落库（目标 id 两形态同构：id 即寻址既有行，无 id 来源分歧）──
         writer::update_row(conn, id, &row)?;
-        // ── 应用副作用 ──
         apply(conn, id, &plan)?;
-        // ── op 产出（分歧点③）：修改成功 → 新行（含源端折算）随 update op 追加，
-        // 随同一事务提交/回滚；Replay 不产本地 op。 ──
         if let UpdateForm::Local(_) = &source {
             record_local(conn, update_command(id, &plan))?;
         }
@@ -408,37 +249,12 @@ fn update_protocol(conn: &Connection, id: &str, source: UpdateForm<'_>) -> Resul
     })
 }
 
-// ---------------------------------------------------------------------------
-// 删除编排（参照实现：双形态单正文，语法不重塑，ADR-0105 决策 1）
-// ---------------------------------------------------------------------------
-
-/// 删除交易（软删除 `is_deleted=1`；IPC `delete_transaction` / HTTP
-/// `DELETE /api/v1/transactions/{id}`，issue #229 / ADR-0033）。
-///
-/// 行为层删除编排入口：持仓副作用回退与软删 UPDATE 同处一个事务——回退成功后
-/// 软删 UPDATE 中途失败整体回滚，不再出现「持仓已删而交易仍在」的中间态
-/// （删除路径事务缺口修复，ADR-0033 决策 #3）。delete 维持入口持有事务的现状
-/// （ADR-0105 决策 1/5）。
-///
-/// 持仓副作用回退按 kind 分派（issue #940 / ADR-0097，issue #979 / ADR-0099）：
-/// - sell：回补其扣减的持仓并清空卖出关联——删除即撤销其全部持仓影响，
-///   不再遗留幽灵占用（旧版「sell 删除不回补」是把买入永久锁死的根源）；
-/// - buy：**级联**——其持仓批次的在用 sell 逐笔回退持仓副作用并随之软删
-///   （各自 delete op 与余额刷新），「已有部分卖出的买入禁删」守卫退场；
-/// - convert：**级联**——转出腿逐批次精确回补、转入批次的在用 sell 与 buy 同规
-///   级联，再整批清理转入批次与转换明细行（ADR-0099 决策 5）；
-/// - 其余 kind 无持仓副作用，直接软删。
-///
-/// 不存在的 id 返回码化 NotFound（HTTP 侧映射 404）。IPC 与 HTTP 端点共用本函数。
 pub fn delete(conn: &Connection, id: &str) -> Result<()> {
     ensure_transaction(conn, || {
         delete_within_transaction(conn, id, WriteForm::Local)
     })
 }
 
-/// 删除协议本体：`release_for_delete（sell 回补 / buy 与 convert 级联）→ 级联软删
-/// 在用 sell → 主行软删`（无事务语义，delete 入口持有；重放经
-/// [`replay_command`] 在引擎外层事务内进入）。
 fn delete_within_transaction(conn: &Connection, id: &str, form: WriteForm) -> Result<()> {
     let (kind,): (TransactionKind,) = conn
         .query_row(
@@ -451,12 +267,6 @@ fn delete_within_transaction(conn: &Connection, id: &str, form: WriteForm) -> Re
             AppError::codedp_not_found("transaction.not-found", format!("交易不存在: {id}"), &[id])
         })?;
 
-    // 持仓副作用回退（issue #940 / ADR-0097 / issue #979 / ADR-0099）：sell 回补
-    // 持仓扣减；buy / convert 消费其持仓批次的在用 sell（逐笔回退）并整批清理批次
-    // 与匹配（convert 另回补转出腿消耗）；本行批次已被在用后续转换消耗时，以删除
-    // 入口守卫拒绝。split 行按 `security_lot_adjustments` 逐批次精确回补（ADR-0106
-    // 决策 3/5，#1051）——回补依据是本地重述审计行，两形态同源，重放无需额外载荷。
-    // dividend 行无持仓副作用，只需摘除其扩展行（issue #1078 / ADR-0109）。
     let cascaded_sell_ids = match kind {
         TransactionKind::Buy
         | TransactionKind::Sell
@@ -465,22 +275,12 @@ fn delete_within_transaction(conn: &Connection, id: &str, form: WriteForm) -> Re
         | TransactionKind::Dividend => release_for_delete_investment(conn, id, kind)?,
         _ => Vec::new(),
     };
-    // 级联软删：被消化的在用 sell 逐笔软删（各自余额刷新与 delete op），先于主行
-    // 落 op——重放端按 op 顺序先删 sell 再删 buy，级联与显式 op 不打架。
     for sell_id in &cascaded_sell_ids {
         soft_delete_transaction_row(conn, sell_id, form)?;
     }
-    // 搜索（V018 两段式，issue #492）：候选流带 is_deleted 口径过滤，软删即刻
-    // 生效，删除的交易不再可搜（拼音列非本路径维护字段，无需处理）。
     soft_delete_transaction_row(conn, id, form)
 }
 
-/// 软删单笔交易行 + 余额刷新 + delete op（删除编排的行级步骤，主删与级联删共用）。
-///
-/// 行读取（`is_deleted=0` 存在性 + 账户引用对）→ 软删 UPDATE → 受影响账户余额重算
-/// （issue #491 / ADR-0067）→ 本地删除时追加 delete op（issue #855 / ADR-0091）。
-/// 级联删除的被级联行在**源端**亦各自留痕：同步端按同一 delete 协议逐笔收敛，
-/// 无需感知级联语义；重放端不产 op（见 [`WriteForm::Replay`]）。
 fn soft_delete_transaction_row(conn: &Connection, id: &str, form: WriteForm) -> Result<()> {
     let (account_id, to_account_id, funding_account_id): (Option<String>, Option<String>, Option<String>) = conn
         .query_row(
@@ -492,19 +292,11 @@ fn soft_delete_transaction_row(conn: &Connection, id: &str, form: WriteForm) -> 
         .ok_or_else(|| {
             AppError::codedp_not_found("transaction.not-found", format!("交易不存在: {id}"), &[id])
         })?;
-    // 出资子行端先读（ADR-0138 决策 7）：软删后子行不再随主行读出，余额重算的
-    // 受影响账户并集必须包含软删前的出资端（子行无独立软删位，行保留在库、
-    // 随主行 is_deleted 过滤失效）。
     let item_accounts = crate::write::funding_items::item_account_ids(conn, id)?;
     conn.execute(
         "UPDATE transactions SET is_deleted=1, updated_at=?2, version=version+1, device_id=?3 WHERE id=?1",
         rusqlite::params![id, now_iso(), device_id(conn)?],
     )?;
-    // 余额缓存写路径（issue #491 / ADR-0067）：软删后对原行账户引用集（主表三列 +
-    // 出资子行端，ADR-0138 决策 7——删除恢复出资项各账户的现金腿；受影响账户推导
-    // 消费余额模块唯一定义，issue #534 / #935）同事务整体重算。经写路径副作用接缝
-    // 传入原行引用集（#1090 接缝反转），推导与重算都在账户域实现侧，本模块对账户
-    // 域零感知。
     let item_refs: Vec<&str> = item_accounts.iter().map(String::as_str).collect();
     crate::seams::balance::refresh_affected_balances(
         conn,
@@ -516,21 +308,12 @@ fn soft_delete_transaction_row(conn: &Connection, id: &str, form: WriteForm) -> 
         }),
         None,
     )?;
-    // op 产出接缝（issue #855 / ADR-0091）：**仅本地删除**追加 delete op（实体 id）；
-    // 随同一事务提交/回滚（失败不残留 op）。重放不产 op（见 [`WriteForm`]）。
     if form == WriteForm::Local {
         record_local(conn, TransactionCommand::Delete { id: id.to_string() })?;
     }
     Ok(())
 }
 
-// ---------------------------------------------------------------------------
-// 守卫与计划装配（协议分歧点①的 Local 臂）
-// ---------------------------------------------------------------------------
-
-/// 旧行并集读取的产物（ADR-0105 决策 8）：实体 id（split 重述目标定位与命令构造）、
-/// kind、「保持历史引用」判定所需的商户/保单当前值、折算沿用基线（#1550：旧行
-/// 折算三元组与行内留痕）。修改路径整体作为编辑上下文传入计划装配。
 struct ExistingRow {
     id: String,
     kind: TransactionKind,
@@ -539,30 +322,6 @@ struct ExistingRow {
     fx_edit_baseline: FxEditBaseline,
 }
 
-/// 参考数据携带准入（协议守卫段的 Local 分歧步骤）：商户/分类/保单按 kind 单点
-/// 判定准入闭集，准入集外的 kind 携带对应引用即码化拒绝——创建/修改两协议经本
-/// 函数共用同一收口，不另设第二份判定。Replay 形态不判定：命令携带行已随源端
-/// 归一化落定（信任源端，ADR-0091）。
-///
-/// 商户携带收口（issue #188 / ADR-0028 + #194 商户名 + #875 / ADR-0092 transfer）：
-/// expense / refund / income / transfer 可携带商户（merchant_id 或 merchant_name）；
-/// buy / sell / dividend / split 行为层拒绝（schema 层 merchant_id 允许 NULL、不设
-/// kind 限制，放开无需再改表）。transfer 放开是纯 kind 判定，**不引入账户类型条件**
-/// ——普通转账与借贷转账（receivable/debt 账户派生视角）共用同一收口，借贷关联
-/// 语义只是检索与展示指针（见 docs/adr/0092）。refund 携带的商户在
-/// [`writer::normalize`] 里被原支出商户覆盖（继承语义），此处不拦截。
-///
-/// 分类携带收口（issue #582）：expense / income 可携带分类；transfer / buy / sell
-/// 行为层拒绝——转账与资本变动没有「花在哪类」的语义，无分类交易因此不进分类
-/// 聚合。refund 携带的分类在 [`writer::normalize`] 里被原支出分类覆盖（继承语义），
-/// 此处不拦截。dividend / split 携带分类时本拒绝先于投资域装配触发（比照商户
-/// 收口先例）。
-///
-/// 保单携带准入（issue #361 / ADR-0051 决策 3）：仅 income / expense 可携带可选
-/// 保单引用；transfer / buy / sell / dividend / split 行为层拒绝（保单口径不被
-/// 资本变动污染）。refund 不在准入集：保单现金流入记 income 挂单而非 refund
-/// （ADR-0051 决策 4），且 refund 继承原支出字段，携带保单无意义，拒绝保持准入集
-/// 最小。
 fn guard_reference_admission(input: &TransactionInput) -> Result<()> {
     let kind = input.kind;
     if (input.merchant_id.is_some() || input.merchant_name.is_some())
@@ -601,12 +360,6 @@ fn guard_reference_admission(input: &TransactionInput) -> Result<()> {
             &[&kind.to_string()],
         ));
     }
-    // 出资分解携带收口（issue #1860 / ADR-0138 决策 3/5）：expense / income 可带
-    // 分解，refund 可带显式覆盖（决策 5）；transfer（两端已表达）、投资 kind（结算
-    // 归因归出资账户）、dividend / split / convert 携带即码化拒绝。kind 准入在两层
-    // 各判一次、同码同错（刻意冗余）：本函数辖 Local 形态命令入口，Writer 接缝
-    // validate_funding_items 辖全部形态（重放 / 定时引擎不经本函数）；逐条约束
-    // （正性 / 标签 / 账户准入 / Σ）只在 Writer 一处。
     if !input.funding.is_empty()
         && !matches!(
             kind,
@@ -619,11 +372,6 @@ fn guard_reference_admission(input: &TransactionInput) -> Result<()> {
             &[&kind.to_string()],
         ));
     }
-    // 购买项携带收口（issue #1882 / ADR-0138 决策 9）：仅 `expense` 可带；`refund`
-    // 不另挂清单，transfer / 投资 kind / dividend / split / convert 携带即码化拒绝。
-    // kind 准入在两层各判一次、同码同错（与出资分解同款刻意冗余）：本函数辖
-    // Local 形态命令入口，Writer 接缝 validate_purchases 辖全部 Local 形态
-    // （重放 / 定时引擎不经本函数）；逐条约束只在 Writer 一处。
     if !input.purchases.is_empty() && kind != TransactionKind::Expense {
         return Err(AppError::codedp(
             "transaction.purchase-item-unsupported",
@@ -631,8 +379,6 @@ fn guard_reference_admission(input: &TransactionInput) -> Result<()> {
             &[&kind.to_string()],
         ));
     }
-    // 期初存量准入（issue #1343 / ADR-0115 修订）：`origin` 描述的是证券扩展行的
-    // 来源，只有 buy 有证券扩展行——其余 kind 携带即拒绝（比照保单/分类准入先例）。
     if input.origin.is_some() && !matches!(kind, TransactionKind::Buy) {
         return Err(AppError::codedp(
             "transaction.origin-unsupported",
@@ -643,34 +389,10 @@ fn guard_reference_admission(input: &TransactionInput) -> Result<()> {
     Ok(())
 }
 
-/// 校验并归一化一笔交易输入为计划（交易行不落库）。计划装配 Local 臂：按输入
-/// 重折算（归一化 + 本位币折算）并可即建商户。创建路径薄壳：无旧行上下文，
-/// 装配细节见 [`plan_with_existing_refs`]。
-///
-/// 商户名归一化（AI 导入契约，issue #194）：输入带 `merchant_name` 时在此解析为
-/// `merchant_id`——精确匹配在用商户名，命中复用、未命中即建。两段式避免碎商户：
-/// 先查（[`merchant_hooks::find_merchant_by_name`]），未命中则等行内校验全部通过后
-/// 再即建（[`merchant_hooks::create_merchant_by_name`]）——金额非法等校验失败的行
-/// 不会残留无引用的商户行。商户创建与交易落库同处协议自持的事务，中途回滚不残留
-/// 碎商户。幂等重放不产生碎商户：批量导入命中去重的行不会走到本函数，同批内首行
-/// 即建、后续行按名精确匹配复用。Replay 形态不经过本函数（命令携带行无商户名）。
-///
-/// 单点分派全部 9 种 kind：通用 kind 经 Writer 接缝 [`writer::normalize`]（金额>0、
-/// transfer 目标账户、refund 继承原支出等校验 + 本位币折算）；buy/sell/convert/split/
-/// dividend 经交易×投资接缝（[`prepare_investment`]，#1092）委托投资域装配
-/// （投资账户/数量/单价/可卖数量、两标的
-/// 互异与不跨账户校验 + 折算；split 另行使零持仓 / 缩股不等式 / 字段级无现金腿守卫；
-/// dividend 另行使标的存在 / 金额正性 / 到账账户在用与币种一致 / 字段级无份额守卫）。
-/// 返回 `(计划, 是否即建商户)`：后者即 [`WriteEvidence::MerchantCreated`] 的载荷——
-/// 仅「入参带 `merchant_name` 且未命中、行内校验通过后落定即建」为真；命中复用、
-/// 直接带 `merchant_id`、refund 继承忽略、不涉商户的 kind 一律为假。
 fn plan(conn: &Connection, input: &TransactionInput) -> Result<(Plan, bool)> {
     plan_with_existing_refs(conn, input, None)
 }
 
-/// [`plan_with_existing_refs`] 的修改形态：整体传旧行并集读取的产物
-/// （[`ExistingRow`]：实体 id、「保持历史引用」判定的商户/保单当前值、
-/// 折算沿用基线），创建路径传 `None`。
 fn plan_with_existing_refs(
     conn: &Connection,
     input: &TransactionInput,
@@ -686,10 +408,6 @@ fn plan_with_existing_refs(
         | TransactionKind::Expense
         | TransactionKind::Transfer
         | TransactionKind::Refund => {
-            // 商户名解析须在 kind 收口之后：非 income/expense/refund/transfer 的行
-            // 已在协议准入段拒绝（名字与 id 同时提供属请求错误）。refund 继承原支出
-            // 商户（writer::normalize 覆盖）：携带的商户（id 或名字）一律忽略，
-            // 不解析、不即建——否则即建商户必成孤儿（issue #194）。
             let (merchant_id, pending_name) = if kind == TransactionKind::Refund {
                 (None, None)
             } else {
@@ -702,9 +420,7 @@ fn plan_with_existing_refs(
                     }
                     (Some(name), None) => {
                         match merchant_hooks::find_merchant_by_name(conn, name)? {
-                            // 命中复用：以已有 id 参与行内校验。
                             Some(id) => (Some(id), None),
-                            // 未命中：先过行内校验，通过后再即建（不残留碎商户）。
                             None => (None, Some(name.to_string())),
                         }
                     }
@@ -719,31 +435,21 @@ fn plan_with_existing_refs(
                     currency_code: input.currency_code.clone(),
                     account_id: input.account_id.clone(),
                     to_account_id: input.to_account_id.clone(),
-                    // 出资账户随输入下传；通用 kind 携带即被 writer::normalize 内的
-                    // 准入校验拒绝（issue #935），此处透传不判定。
                     funding_account_id: input.funding_account_id.clone(),
-                    // 出资分解随输入下传（issue #1860 / ADR-0138）：契约校验与
-                    // 落库形状归 writer::normalize / funding_items，此处透传不判定。
                     funding: input
                         .funding
                         .iter()
                         .map(crate::write::funding_items::FundingItem::from)
                         .collect(),
-                    // 修改路径带该行当前落库分解（「保持历史引用」比对基准），
-                    // 创建路径为空。
                     existing_funding: match existing_id {
                         Some(id) => crate::write::funding_items::read_rows(conn, id)?,
                         None => Vec::new(),
                     },
-                    // 购买项明细随输入下传（issue #1882 / ADR-0138 决策 9）：kind 准入与
-                    // 逐条约束归 writer::normalize / purchase_items，此处透传不判定。
                     purchases: input
                         .purchases
                         .iter()
                         .map(crate::write::purchase_items::PurchaseItem::from)
                         .collect(),
-                    // 修改路径带该行当前落库明细（「保持历史引用」比对基准），
-                    // 创建路径为空。
                     existing_purchases: match existing_id {
                         Some(id) => crate::write::purchase_items::read_rows(conn, id)?,
                         None => Vec::new(),
@@ -755,19 +461,12 @@ fn plan_with_existing_refs(
                     existing_policy_id: existing_policy_id.map(str::to_string),
                     refund_of_transaction_id: input.refund_of_transaction_id.clone(),
                     note: input.note.clone(),
-                    // 来源订单号随输入下传（issue #1862 / ADR-0138 决策 9）：来源元数据，
-                    // 不限 kind、无准入校验，缺省 None。
                     source_order_no: input.source_order_no.clone(),
                     date: input.date.clone(),
-                    // 逐笔显式汇率随输入下传（#1549）：归一化与非法值校验归
-                    // Amount 接缝编辑沿用入口单点，本层不重复判定。
                     fx_rate: input.fx_rate,
-                    // 折算沿用基线随修改路径下传（#1550），创建路径为 None。
                     fx_edit_baseline: fx_edit_baseline.cloned(),
                 },
             )?;
-            // 行内校验全部通过后才即建商户：未命中名字在此落定（失败行不产生碎商户）；
-            // 「即建」事实作为证据外传（ADR-0044 决策 4，壳层据此发参考失效信号）。
             let merchant_created = if let Some(name) = pending_name {
                 norm.merchant_id = Some(merchant_hooks::create_merchant_by_name(conn, &name)?);
                 true
@@ -780,26 +479,19 @@ fn plan_with_existing_refs(
         | TransactionKind::Sell
         | TransactionKind::Convert
         | TransactionKind::Split
-        | TransactionKind::Dividend => {
-            // 投资 kind 不涉商户（协议准入段已拒绝携带），证据恒假；split / dividend
-            // 由投资域各自的 prepare 守卫与装配（ADR-0106 / ADR-0109）——经交易×
-            // 投资接缝（#1092）委派，注册点在本域，实现由投资域启动时装入。
-            // 折算沿用基线随修改路径下传（#1550），创建路径为 None。
-            Ok((
-                Plan::Investment(prepare_investment(
-                    conn,
-                    kind,
-                    input,
-                    existing_id,
-                    fx_edit_baseline,
-                )?),
-                false,
-            ))
-        }
+        | TransactionKind::Dividend => Ok((
+            Plan::Investment(prepare_investment(
+                conn,
+                kind,
+                input,
+                existing_id,
+                fx_edit_baseline,
+            )?),
+            false,
+        )),
     }
 }
 
-/// 应用计划的副作用（创建/修改落库后调用）。
 fn apply(conn: &Connection, id: &str, plan: &Plan) -> Result<()> {
     match plan {
         Plan::Common(_) => Ok(()),
@@ -807,25 +499,6 @@ fn apply(conn: &Connection, id: &str, plan: &Plan) -> Result<()> {
     }
 }
 
-// ---------------------------------------------------------------------------
-// 同步命令（issue #855 / ADR-0091）：产出侧桥与重放执行形态
-// ---------------------------------------------------------------------------
-
-/// 编排计划 → 命令载荷部件（产出侧桥）：归一化行 + 投资 kind 的语义字段与
-/// 派生结果（买入每份成本随行，源端折算，ADR-0091 决策 3）；普通 kind 恒 None。
-///
-/// 转换的语义字段（[`ConvertCommandFields`]）与源端算定的结转成本随同步票
-/// （issue #980 / ADR-0099 决策 6）携带：重放端据以本地重建 FIFO 快照并比对
-/// 结转成本合计，不依赖源端的批次行 id。
-///
-/// 份额调整的语义字段（[`SplitCommandFields`]）与源端**最终持仓 / 批次总成本**
-/// 两个比对锚点随本票（issue #1053 / ADR-0106 决策 9）携带：重放端本地重建批次
-/// 重述并比对两个总量，不一致显式挂起；**逐批次重述结果不随载荷携带**（重述是
-/// 当前批次快照 + Δ 的纯函数）。
-///
-/// 投资 kind 的字段摘取（变体 → 命令字段）属计划数据到契约类型的适配，随接缝
-/// 反转（#1092）归投资域实现侧（[`InvestmentPlan::command_parts`]），本域只消费
-/// 契约部件。
 fn command_parts(plan: &Plan) -> (NormalizedTransaction, PlanCommandParts) {
     match plan {
         Plan::Common(r) => (NormalizedTransaction::from(r), PlanCommandParts::none()),
@@ -833,7 +506,6 @@ fn command_parts(plan: &Plan) -> (NormalizedTransaction, PlanCommandParts) {
     }
 }
 
-/// 创建命令构造（创建协议 op 产出步专用）。
 fn create_command(id: &str, plan: &Plan) -> TransactionCommand {
     let (row, parts) = command_parts(plan);
     TransactionCommand::Create {
@@ -845,7 +517,6 @@ fn create_command(id: &str, plan: &Plan) -> TransactionCommand {
     }
 }
 
-/// 修改命令构造（修改协议 op 产出步专用）。
 fn update_command(id: &str, plan: &Plan) -> TransactionCommand {
     let (row, parts) = command_parts(plan);
     TransactionCommand::Update {
@@ -857,27 +528,6 @@ fn update_command(id: &str, plan: &Plan) -> TransactionCommand {
     }
 }
 
-/// 同步重放入口：执行外来交易命令（issue #855 / ADR-0091）。
-///
-/// 创建/修改薄壳进各自写入协议的 Replay 形态（守卫、顺序、事务语义与本地写入
-/// 同一正文，ADR-0105）；删除直接进删除协议的 Replay 形态（引擎外层事务内嵌套
-/// 加入，删除入口不另持事务——见 [`delete`] 的入口持有现状）。重放形态差异由
-/// 协议分歧点承载：
-/// - **折算随命令携带**（源端折算）：行数据原样落库，不查本地汇率表——重放
-///   不依赖本地汇率表状态与设备配置（ADR-0091 决策 3）；
-/// - **实体 id 随命令携带**：两端对同一笔交易收敛到同一行；
-/// - **不产出 op**：外来 op 由同步引擎（`sync_engine::apply_ops`）在重放事务
-///   内落日志，命令执行不得再追加本地 op。
-///
-/// 投资 kind（buy/sell）与转换（convert）的重放依赖在位校验（标的、投资账户、
-/// 可卖数量、结转成本比对）以与本地写入同码的码化错误上抛，由同步引擎挂起进
-/// 队列（issue #856），依赖方 op 补齐后重投递自然重试（issue #861 / #980）。
-/// 份额调整（split）同规重放：本地按 Δ 重建批次重述，与源端携带的最终持仓 /
-/// 批次总成本比对，不一致（前序 op 未达、载荷篡改）码化挂起（issue #1053 /
-/// ADR-0106 决策 9）。
-/// 删除重放支持全部 kind（按行现状执行与本地删除同一协议，含 sell 回补 /
-/// buy 与 convert 级联与持仓清理、split 按重述审计精确回补，issue #940 / #979 /
-/// #1051）。
 pub fn replay_command(conn: &Connection, command: &TransactionCommand) -> Result<()> {
     match command {
         TransactionCommand::Create {
@@ -922,18 +572,6 @@ pub fn replay_command(conn: &Connection, command: &TransactionCommand) -> Result
     }
 }
 
-/// 计划装配 Replay 臂（协议分歧点①的 Replay 形态）：从命令携带的归一化行与语义
-/// 字段装配 [`Plan`]，不重折算（源端折算，ADR-0091 决策 3）。
-///
-/// - 普通 kind：行原样为计划（落库即行本身，含余额缓存重算）；
-/// - 投资 kind（buy/sell/convert/split/dividend）：经交易×投资接缝（#1092）委派
-///   投资域重放装配——依赖在位校验（标的、投资账户、可卖数量、结转成本/总量
-///   比对）以与本地写入同码的码化错误上抛，由同步引擎挂起承接；语义字段缺省的
-///   防御臂（伪造/旧版本载荷 → 挂起，`transaction.convert-fields-missing` /
-///   `transaction.split-fields-missing` 等）同归实现侧，错误码与文案逐字保留。
-///
-/// `existing_id`：修改路径传本行 id（split 重述以本行落账序为界，ADR-0106 决策 6；
-/// 其余 kind 忽略），创建路径传 `None`。
 fn replay_assembly(
     conn: &Connection,
     existing_id: Option<&str>,
@@ -948,18 +586,12 @@ fn replay_assembly(
         | TransactionKind::Expense
         | TransactionKind::Transfer
         | TransactionKind::Refund => {
-            // 币种一致性守卫（issue #1770 / ADR-0134）：与本地 normalize 同码同文案，
-            // 存活校验（create / update 协议守卫段）已先行；失败码化上抛，由同步
-            // 引擎挂 ParkedOp 挂起、不中断批次（dividend 重放臂先例）。
             writer::validate_currency_consistency(
                 conn,
                 norm_row.account_id.as_deref(),
                 norm_row.to_account_id.as_deref(),
                 &norm_row.currency_code,
             )?;
-            // 出资子行币种复验（issue #1860 / ADR-0138 影响节）：分解随行搬运后，
-            // 「现金腿即账户币种」不变量在重放端对子行同样复验——存活校验先行，
-            // 此处实际只补币种差；失败同码挂 ParkedOp。
             crate::write::funding_items::validate_funding_item_currencies(
                 conn,
                 &norm_row.funding,
