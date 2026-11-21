@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { NPerformantEllipsis, type DataTableColumn } from "naive-ui";
-import type { VNode } from "vue";
+import { computed, type VNode } from "vue";
 import {
   buildTransactionColumns,
   displayAmountText,
@@ -12,9 +12,8 @@ import {
   type ReferenceStore,
   type PrecomputedTransactionRow,
 } from "@/transaction/transaction-columns";
-import SourceLink from "@/transaction/SourceLink.vue";
-import NoteCopyButton from "@ledger/ui-kit/NoteCopyButton.vue";
 import AmountCell from "@/transaction/AmountCell.vue";
+import type { InputMode } from "@/composables/useInputMode";
 import { useAppStore } from "@/stores/app";
 import { kindSemanticColor } from "@ledger/theme/semantic-colors";
 import {
@@ -52,9 +51,38 @@ function renderColumnOf(columns: DataTableColumn<Transaction>[], key: string) {
   return render as (row: Transaction, index: number) => unknown;
 }
 
-function amountCellOf(row: Transaction): VNode {
-  const render = renderColumnOf(buildTransactionColumns(reference), "amount_native_cents");
+/** 输入轴信号替身（媒体查询接缝之外的列工厂单测形态：列工厂消费 ComputedRef）。 */
+const POINTER_MODE = computed<InputMode>(() => "pointer");
+const TOUCH_MODE = computed<InputMode>(() => "touch");
+
+function amountCellOf(row: Transaction, inputMode?: InputMode): VNode {
+  const render = renderColumnOf(
+    buildTransactionColumns(reference, {
+      inputMode:
+        inputMode === "pointer" ? POINTER_MODE : inputMode === "touch" ? TOUCH_MODE : undefined,
+    }),
+    "amount_native_cents",
+  );
   return render(row, 0) as VNode;
+}
+
+/** 预计算行（经唯一预计算入口包装，供轻量列渲染消费 display 记录）。 */
+function precomputedRowOf(row: Transaction): Transaction {
+  return precomputeTransactionDisplayRows(reference, [row])[0];
+}
+
+/** 单元格 vnode 树内的委托动作按钮（data-tx-action 语义属性，列渲染产物查找口）。 */
+function actionVnodeOf(cell: VNode, action: string): VNode | null {
+  if ((cell.props as Record<string, unknown> | null)?.["data-tx-action"] === action) return cell;
+  const children = cell.children;
+  if (!Array.isArray(children)) return null; // 插槽对象/文本子节点不含动作元素
+  for (const child of children as unknown as VNode[]) {
+    if (child && typeof child === "object" && "type" in child) {
+      const hit = actionVnodeOf(child, action);
+      if (hit) return hit;
+    }
+  }
+  return null;
 }
 
 describe("buildTransactionColumns 金额单元格语义着色", () => {
@@ -96,6 +124,19 @@ describe("buildTransactionColumns 金额单元格语义着色", () => {
     );
   });
 
+  it("指针轴（桌面）：金额格为轻量文本元素——语义色与文案即用户可观察产物，无交互封装", () => {
+    const app = useAppStore();
+    app.setTheme("dark");
+    const vnode = amountCellOf(makeTransaction({ id: "tx-ptr", kind: "expense" }), "pointer");
+    expect(vnode.type).toBe("span");
+    expect(vnode.children as string).toBe(formatAmount(100_00, reference.getCurrency("CNY")));
+    expect((vnode.props as { style: { color: string } }).style.color).toBe(
+      kindSemanticColor("expense", "dark"),
+    );
+    // 非交互：无角色/无点按语义（金额全文气泡仅触控轴）
+    expect((vnode.props as Record<string, unknown>)["aria-label"]).toBeUndefined();
+  });
+
   it("转换行金额显示转出金额（确认单口径），不读行金额锚点（结转成本，ADR-0099）", () => {
     const app = useAppStore();
     app.setTheme("dark");
@@ -121,15 +162,16 @@ describe("buildTransactionColumns 金额单元格语义着色", () => {
 });
 
 /** 来源列（spec #704 / issue #706）：列序与渲染产物——
- * 只测外部行为：列位置、单元格产物（SourceLink 组件/占位符），
- * 链接交互与状态标注的渲染矩阵归 SourceLink 组件测试（一缝一测）。 */
+ * 只测外部行为：列位置、轻量单元格产物（委托动作按钮/占位文本），
+ * 链接交互与状态标注的渲染矩阵归 SourceLink 组件测试（表外消费方，一缝一测）；
+ * 委托动作语义归 TransactionsView/SearchView 组件测试（表级事件委托装配缝）。 */
 describe("buildTransactionColumns 来源列", () => {
   function columnByKey(key: string) {
     return renderColumnOf(buildTransactionColumns(reference), key);
   }
 
-  function sourceCellOf(row: Transaction) {
-    return columnByKey("source")(row, 0);
+  function sourceCellOf(row: Transaction): VNode {
+    return columnByKey("source")(precomputedRowOf(row), 0) as VNode;
   }
 
   it("列序：来源列位于账户之后、备注之前", () => {
@@ -138,27 +180,34 @@ describe("buildTransactionColumns 来源列", () => {
     expect(keys.indexOf("source")).toBeLessThan(keys.indexOf("note"));
   });
 
-  it("保单来源渲染 SourceLink，携带行来源对象", () => {
+  it("有效来源：名称为委托跳转按钮，携带来源跳转语义属性（深模块经委托消费）", () => {
     const source: TransactionSource = {
       kind: "policy",
       entity_id: "pol-1",
       display_name: "重疾险",
       status: null,
     };
-    const vnode = sourceCellOf(makeTransaction({ id: "t1", source })) as VNode;
-    expect(vnode.type).toBe(SourceLink);
-    expect((vnode.props as { source: TransactionSource }).source).toEqual(source);
+    const vnode = sourceCellOf(makeTransaction({ id: "t1", source }));
+    const button = actionVnodeOf(vnode, "source-jump");
+    expect(button, "有效来源应渲染可点击跳转按钮").toBeTruthy();
+    const props = button!.props as Record<string, string>;
+    expect(props["data-tx-source-kind"]).toBe("policy");
+    expect(props["data-tx-source-entity"]).toBe("pol-1");
+    expect(button!.children as string).toBe("重疾险");
   });
 
-  it("软删保单来源同样走 SourceLink（禁用点击/标注归组件渲染矩阵）", () => {
+  it("软删保单：名称为占位文本，不可点击（不携带跳转动作，不提供落空的跳转）", () => {
     const source: TransactionSource = {
       kind: "policy",
       entity_id: "pol-2",
       display_name: "医疗险",
       status: "deleted",
     };
-    const vnode = sourceCellOf(makeTransaction({ id: "t2", source })) as VNode;
-    expect(vnode.type).toBe(SourceLink);
+    const vnode = sourceCellOf(makeTransaction({ id: "t2", source }));
+    expect(actionVnodeOf(vnode, "source-jump")).toBeNull();
+    expect((vnode as VNode).children as unknown).toEqual(
+      expect.arrayContaining([expect.objectContaining({ children: "医疗险" })]),
+    );
   });
 
   it("无来源留空（占位符，手动/AI 导入口径）", () => {
@@ -167,56 +216,67 @@ describe("buildTransactionColumns 来源列", () => {
 });
 
 /** 备注列（显式复制通道，见「界面文本不可选」词条）：只测单元格产物——
- * 占位符/容器结构/按钮载荷；复制动作与 toast 归 NoteCopyButton 组件测试（一缝一测）。 */
+ * 占位符/容器结构/委托按钮载荷；剪贴板写入与统一 toast 归共享复制出口与
+ * 视图委托装配测试（一缝一测）。 */
 describe("buildTransactionColumns 备注列", () => {
   function noteCellOf(row: Transaction) {
     const render = renderColumnOf(buildTransactionColumns(reference), "note");
-    return render(row, 0);
+    return render(row, 0) as VNode;
   }
 
   it("无备注渲染占位符，不渲染复制按钮（空备注无可复制）", () => {
     expect(noteCellOf(makeTransaction({ id: "t1", note: null }))).toBe("-");
   });
 
-  it("有备注渲染单元格容器：文本 NEllipsis（自省略+悬停全文）与复制按钮并排，按钮携带完整备注", () => {
-    const vnode = noteCellOf(makeTransaction({ id: "t2", note: "视频会员月费" })) as VNode;
-    expect((vnode.props as { style: string }).style).toContain("display: flex");
+  it("有备注渲染单元格容器：懒挂载省略（自省略+悬停全文）与轻量复制按钮并排，按钮携带完整备注与委托动作", () => {
+    const vnode = noteCellOf(makeTransaction({ id: "t2", note: "视频会员月费" }));
+    expect((vnode.props as { class: string }).class).toBe("tx-note-cell");
     const children = vnode.children as VNode[];
     expect(children).toHaveLength(2);
     expect(children[0].type).toBe(NPerformantEllipsis);
-    expect(children[1].type).toBe(NoteCopyButton);
-    expect((children[1].props as { note: string }).note).toBe("视频会员月费");
+    expect((children[0].children as { default: () => string }).default()).toBe("视频会员月费");
+    const button = actionVnodeOf(vnode, "copy-note");
+    expect(button, "复制按钮应携带委托动作").toBeTruthy();
+    expect((button!.props as Record<string, unknown>)["data-tx-note"]).toBe("视频会员月费");
+    expect((button!.props as { "aria-label": string })["aria-label"]).toBe("复制备注");
+    expect((button!.props as { class: string }).class).toContain("note-copy-btn");
   });
 });
 
-/** 交易行「⋯」常显操作列（ADR-0088 决策 6 / issue #843）：只测装配面——
- * 回调在场才追加列、菜单打开回调随按钮携行；菜单项集合与动作分派归
- * TransactionsView 组件测试（行菜单编排接缝，一缝一测）。 */
+/** 交易行「⋯」常显操作列（ADR-0088 决策 6 / issue #843；委托形态 issue #2189）：
+ * 只测装配面——声明 rowActions 才追加列、按钮携带行菜单委托动作与显示行键；
+ * 菜单项集合与动作分派归 TransactionsView 组件测试（行菜单编排 + 委托装配缝），
+ * 直连回调形态（投资明细页签）单测锁定回调透传。 */
 describe("buildTransactionColumns 操作列（「⋯」常显第二入口）", () => {
   const row = makeTransaction({ id: "t-actions", kind: "expense" });
 
-  it("未声明 onRowMenuOpen 不追加操作列（搜索结果保持只读）", () => {
+  it("未声明 rowActions 不追加操作列（搜索结果保持只读）", () => {
     const keys = buildTransactionColumns(reference).map((c) => (c as { key?: string }).key);
     expect(keys).not.toContain("actions");
   });
 
-  it("声明 onRowMenuOpen 追加末位操作列：tiny「⋯」按钮，点击以事件与目标行回调", () => {
-    const onRowMenuOpen = vi.fn();
-    const columns = buildTransactionColumns(reference, { onRowMenuOpen });
+  it("声明 rowActions 追加末位操作列：轻量「⋯」按钮携带行菜单委托动作与显示行键", () => {
+    const columns = buildTransactionColumns(reference, { rowActions: true });
     const actions = columns.find((c) => (c as { key?: string }).key === "actions");
     expect(actions).toBeTruthy();
     const keys = columns.map((c) => (c as { key?: string }).key);
     expect(keys[keys.length - 1]).toBe("actions");
     const vnode = (actions as unknown as { render: (row: Transaction) => VNode }).render(row);
-    const children = vnode.children as { default: () => string };
-    expect(children.default()).toBe("⋯");
-    const props = vnode.props as {
-      class: string;
-      "aria-label": string;
-      onClick: (e: MouseEvent) => void;
-    };
+    const props = vnode.props as { class: string; "aria-label": string } & Record<string, unknown>;
     expect(props.class).toBe("row-actions-btn touch-hit-area");
     expect(props["aria-label"]).toBe("更多操作");
+    // 委托动作 + 显示行键（视图按键解析目标行打开 RowContextMenu）
+    expect(props["data-tx-action"]).toBe("row-menu");
+    expect(props["data-tx-row-key"]).toBe("t-actions:-1");
+    expect(vnode.children as string).toBe("⋯");
+  });
+
+  it("rowActionsColumn（直连形态，投资明细页签）：点击以事件与目标行回调", () => {
+    const onRowMenuOpen = vi.fn();
+    const col = rowActionsColumn<Transaction>(onRowMenuOpen);
+    const vnode = (col as unknown as { render: (row: Transaction) => VNode }).render(row);
+    const props = vnode.props as { class: string; onClick: (e: MouseEvent) => void };
+    expect(props.class).toBe("row-actions-btn touch-hit-area");
     const event = new MouseEvent("click", { clientX: 10, clientY: 20 });
     props.onClick(event);
     expect(onRowMenuOpen).toHaveBeenCalledWith(event, row);
@@ -258,7 +318,7 @@ describe("buildTransactionColumns 购买项展开装配", () => {
   }
 
   it("缺省（未声明 expandPurchases）任何列都不带 rowSpan，备注列名不变——未展开行集零变化", () => {
-    const columns = buildTransactionColumns(reference, { onRowMenuOpen: () => {} });
+    const columns = buildTransactionColumns(reference, { rowActions: true });
     for (const key of [...ORDER_LEVEL_KEYS, "category_id", "note"]) {
       expect(rowSpanOf(columns, key)).toBeUndefined();
     }
@@ -268,7 +328,7 @@ describe("buildTransactionColumns 购买项展开装配", () => {
 
   it("展开装配：订单级列带 rowSpan（首行 = 件数、续行与普通行 = 1）与合并格居中类", () => {
     const columns = buildTransactionColumns(reference, {
-      onRowMenuOpen: () => {},
+      rowActions: true,
       expandPurchases: true,
     });
     const [orderFirst, orderSecond, , plainRow] = expandedRows();
@@ -339,16 +399,15 @@ describe("buildTransactionColumns 购买项展开装配", () => {
     expect(children[1].children as string).toBe("生活 > 宠物");
   });
 
-  it("展开视图下非购买项行仍走原备注渲染（有备注带复制按钮）", () => {
+  it("展开视图下非购买项行仍走原备注渲染（有备注带复制委托按钮）", () => {
     const render = renderColumnOf(
       buildTransactionColumns(reference, { expandPurchases: true }),
       "note",
     );
     const rows = expandedRows();
     const vnode = render(rows[3], 3) as VNode;
-    const children = vnode.children as VNode[];
-    expect(children[0].type).toBe(NPerformantEllipsis);
-    expect(children[1].type).toBe(NoteCopyButton);
+    expect((vnode.children as VNode[])[0].type).toBe(NPerformantEllipsis);
+    expect(actionVnodeOf(vnode, "copy-note")).toBeTruthy();
   });
 
   it("rowActionsColumn 缺省不带合并装配（投资明细页签零变化）", () => {

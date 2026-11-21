@@ -12,6 +12,7 @@
 // 声明须留在测试文件，随 import 提升先行注册）。
 
 import { computed, defineComponent, h, type PropType } from "vue";
+import { useInputMode } from "@/composables/useInputMode";
 import { NDataTable, type DataTableColumn } from "naive-ui";
 import {
   buildTransactionColumns,
@@ -92,10 +93,13 @@ export const EXPECTED_KIND_LABELS = {
   退款: 5,
 } as const;
 
-/** fixture 交易集（模块级常量：纯数据、确定性，两消费方同源）。 */
-export const FIXTURE_TXNS: Transaction[] = Array.from(
-  { length: FIXTURE_TXN_COUNT },
-  (_, i): Transaction => {
+/**
+ * fixture 交易集生成器（纯数据、确定性，两消费方同源）：`count` 可参数化以覆盖
+ * 任意页大小档位——50（既有守门/基准基线）与 100（主列表页大小上限档，
+ * issue #2189 守门收口）。
+ */
+export function fixtureTxns(count: number): Transaction[] {
+  return Array.from({ length: count }, (_, i): Transaction => {
     const repeat = Math.floor(i / 10);
     const pattern = i % 10;
     const id = `perf-txn-${String(i).padStart(3, "0")}`;
@@ -164,7 +168,8 @@ export const FIXTURE_TXNS: Transaction[] = Array.from(
           note: `退货退款 ${i}`,
         });
       case 8: {
-        const dir = LENDING_ROTATION[repeat];
+        // 方向轮转按 5 一循环（count > 50 时 repeat 越出轮转表，取模续转）
+        const dir = LENDING_ROTATION[repeat % LENDING_ROTATION.length];
         return makeTransaction({
           ...base,
           kind: "transfer",
@@ -179,8 +184,11 @@ export const FIXTURE_TXNS: Transaction[] = Array.from(
           source: sourceFor(repeat, pattern),
         });
     }
-  },
-);
+  });
+}
+
+/** fixture 交易集（模块级常量：50 行守门/基准基线档）。 */
+export const FIXTURE_TXNS: Transaction[] = fixtureTxns(FIXTURE_TXN_COUNT);
 
 /** fixture 展开显示行数：每轮两笔购买项订单（3 项 + 2 项）各多 2 / 1 行 → 50 + 15 = 65。 */
 export const FIXTURE_DISPLAY_ROW_COUNT = 65;
@@ -208,11 +216,22 @@ export const DesktopRenderTable = defineComponent({
       type: Array as PropType<DataTableColumn<Transaction>[]>,
       required: true,
     },
+    /** 交易笔数（50 = 守门/基准基线档；100 = 主列表页大小上限档，issue #2189）。 */
+    txnCount: {
+      type: Number,
+      default: FIXTURE_TXN_COUNT,
+    },
   },
   setup(props) {
+    // 输入轴消费登记（共享订阅单例）：金额单元格按轴分流（指针轴轻量文本）
+    // 依赖信号校准——夹具与生产视图同路径消费 useInputMode，媒体查询接缝的
+    // 桌面指针默认态经此处进入共享信号。
+    useInputMode();
     const reference = useReferenceStore();
     const rows = computed(() =>
-      precomputeTransactionDisplayRows(reference, FIXTURE_TXNS, { expandPurchases: true }),
+      precomputeTransactionDisplayRows(reference, fixtureTxns(props.txnCount), {
+        expandPurchases: true,
+      }),
     );
     return () =>
       h(NDataTable, {
@@ -230,18 +249,19 @@ export const DesktopRenderTable = defineComponent({
   },
 });
 
-/** 构建一份新的列数组（与视图同参：展开装配 + 行菜单入口）；重复调用产出新列对象，
+/** 构建一份新的列数组（与视图同参：展开装配 + 委托形态操作列）；重复调用产出新列对象，
  * 是「同一数据全表重渲染」计数窗口的触发形态（列对象引用更新 → 全部单元格重渲染）。 */
 export function buildFixtureColumns(): DataTableColumn<Transaction>[] {
   return buildTransactionColumns(useReferenceStore(), {
-    onRowMenuOpen: () => {},
+    rowActions: true,
     expandPurchases: true,
   });
 }
 
-/** 挂载桌面表格（生产列构造 + 装配内预计算行集），返回 wrapper 供断言与计数。 */
-export function mountDesktopRenderTable(): VueWrapper {
+/** 挂载桌面表格（生产列构造 + 装配内预计算行集），返回 wrapper 供断言与计数。
+ * `txnCount` 覆盖交易笔数（缺省 50，守门/基准基线档）。 */
+export function mountDesktopRenderTable(options: { txnCount?: number } = {}): VueWrapper {
   return mount(DesktopRenderTable, {
-    props: { columns: buildFixtureColumns() },
+    props: { columns: buildFixtureColumns(), txnCount: options.txnCount ?? FIXTURE_TXN_COUNT },
   });
 }

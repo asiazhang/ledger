@@ -8,13 +8,7 @@
 // 单源函数，零口径漂移。
 
 import { h, type VNode } from "vue";
-import {
-  NPerformantEllipsis,
-  NButton,
-  NTag,
-  type DataTableBaseColumn,
-  type DataTableColumn,
-} from "naive-ui";
+import { NPerformantEllipsis, type DataTableBaseColumn, type DataTableColumn } from "naive-ui";
 import { formatAmount } from "@ledger/money";
 import type {
   Transaction,
@@ -23,14 +17,33 @@ import type {
   TransactionPurchase,
   TransactionSource,
 } from "@ledger/types";
+import type { ComputedRef } from "vue";
+import { sharedInputMode, type InputMode } from "@/composables/useInputMode";
 import type { useReferenceStore } from "@/stores/reference";
 import { useAppStore } from "@/stores/app";
 import { kindSemanticColor } from "@ledger/theme/semantic-colors";
+import { accentColor } from "@ledger/theme/overrides";
+import {
+  borderedTagColors,
+  neutralTagColors,
+  type BorderedTagColors,
+} from "@ledger/theme/tag-colors";
 import { t } from "@ledger/i18n";
+import {
+  TX_CELL_LINK_CLASS,
+  TX_CELL_PLACEHOLDER_CLASS,
+  TX_KIND_TAG_CLASS,
+  TX_NOTE_CELL_CLASS,
+  TX_SOURCE_CELL_CLASS,
+  TX_SOURCE_ICON_CLASS,
+  TX_SOURCE_STATUS_TAG_CLASS,
+  TX_SOURCE_TYPE_LABEL_CLASS,
+} from "./transaction-cell.css.ts";
+import { copyIcon, sourceKindIcon } from "@/transaction/static-icons";
+import { CELL_ACTION_ATTR } from "@/transaction/table-cell-actions";
 import AccountLink from "@/accounts/AccountLink.vue";
 import MerchantLink from "@/merchants/MerchantLink.vue";
 import SourceLink from "@/transaction/SourceLink.vue";
-import NoteCopyButton from "@ledger/ui-kit/NoteCopyButton.vue";
 import AmountCell from "@/transaction/AmountCell.vue";
 import { lendingLabelKey, resolveLendingDirection } from "@/transaction/lending";
 
@@ -88,7 +101,7 @@ export function displayAmountText(reference: ReferenceStore, row: TransactionMod
  * - 策略：除备注外所有列显式 `width`（贴合实际内容，不随窗口漂移）；**备注列不设 `width`，
  *   作为唯一弹性列吸收剩余空间**——窗口更宽则备注更宽、更窄则备注收缩，表格始终铺满容器，
  *   其余列不被挤压也不被拉伸。备注超长时由单元格内懒挂载省略（NPerformantEllipsis）
- *   省略 + 悬停全文（复制按钮并排，见 renderNoteCell）。
+ *   省略 + 悬停全文（复制按钮并排，见 buildTransactionColumns 备注列渲染）。
  * - 不要覆盖 table 的 `width`（改 `auto` 会让带 `ellipsis` 的列被长文本撑宽，实测分类
  *   150→286px、备注 240→398px）。
  * - 使用方以「所有固定列（有 `width` 的列，含金额列；备注不计入）宽度总和」作为 `scroll-x`，
@@ -211,8 +224,13 @@ export interface TransactionRowDisplay {
   amountColor: string;
   /** 账户列展示形态首端：单账户 / 双账户转出在前端 / 分解行首条出资账户 */
   accountPrimaryId: string;
+  /** 首端账户展示名（accountMap 命中名；黑洞/隐藏/未知账户 null → 渲染 '-' 占位不可点击，
+   * 与 AccountLink 裁决一致） */
+  accountPrimaryName: string | null;
   /** 双账户形态第二端（普通转账转入端 / buy/sell 另一端）；单账户形态 null */
   accountSecondaryId: string | null;
+  /** 第二端账户展示名（口径同首端）；单账户形态 null */
+  accountSecondaryName: string | null;
   /** 出资分解行标注：「等 N 账户」/「同账户 N 笔」；单条出资项 null */
   fundingMarker: string | null;
   /** 退款派生分解行标注「按比例自动分解」；非派生行 null */
@@ -223,6 +241,8 @@ export interface TransactionRowDisplay {
   merchantClickable: boolean;
   /** 来源展示名（display_name 缺省按来源类型名兜底）；无来源 null */
   sourceName: string | null;
+  /** 来源类型全称（指针轴悬停 title 与触控轴常驻小字共用，随预计算取词）；无来源 null */
+  sourceKindLabel: string | null;
   /** 来源状态标注文案（已取消 / 已删除等）；无状态 null */
   sourceStatusLabel: string | null;
   /** 来源可点击（软删保单不可点击，与 SourceLink 裁决一致） */
@@ -243,13 +263,23 @@ function precomputedDisplayOf(row: Transaction): TransactionRowDisplay | null {
   return (row as Partial<PrecomputedTransactionRow>).display ?? null;
 }
 
-/** 来源三态展示数据（与 SourceLink 口径逐字段一致：展示名兜底 / 状态标注 / 可点击裁决）。 */
+/** 来源三态展示数据（与 SourceLink 口径逐字段一致：展示名兜底 / 类型全称 / 状态标注 / 可点击裁决）。 */
 function sourceDisplayOf(
   source: TransactionSource | null,
-): Pick<TransactionRowDisplay, "sourceName" | "sourceStatusLabel" | "sourceClickable"> {
-  if (!source) return { sourceName: null, sourceStatusLabel: null, sourceClickable: false };
+): Pick<
+  TransactionRowDisplay,
+  "sourceName" | "sourceKindLabel" | "sourceStatusLabel" | "sourceClickable"
+> {
+  if (!source)
+    return {
+      sourceName: null,
+      sourceKindLabel: null,
+      sourceStatusLabel: null,
+      sourceClickable: false,
+    };
   return {
     sourceName: source.display_name || t(`transactions.source.kind.${source.kind}`),
+    sourceKindLabel: t(`transactions.source.kind.${source.kind}`),
     sourceStatusLabel: source.status ? t(`transactions.source.status.${source.status}`) : null,
     sourceClickable: source.status !== "deleted",
   };
@@ -347,6 +377,7 @@ export function precomputeTransactionDisplayRows(
   const expandPurchases = options.expandPurchases ?? false;
   return rows.flatMap((row) => {
     const merchant = row.merchant_id ? reference.merchantMap.get(row.merchant_id) : undefined;
+    const accountShape = accountDisplayOf(row);
     const base: PrecomputedTransactionRow = {
       ...row,
       purchaseIndex: -1,
@@ -356,7 +387,13 @@ export function precomputeTransactionDisplayRows(
         categoryPath: row.category_id ? reference.categoryPath(row.category_id) || "-" : "-",
         amountText: displayAmountText(reference, row),
         amountColor: kindSemanticColor(row.kind, theme),
-        ...accountDisplayOf(row),
+        ...accountShape,
+        // 账户展示名随预计算解析（accountMap 含软删历史口径；黑洞/隐藏/未知 null
+        // → 轻量渲染 '-' 占位不可点击，与 AccountLink 裁决一致）。
+        accountPrimaryName: reference.accountMap.get(accountShape.accountPrimaryId)?.name ?? null,
+        accountSecondaryName: accountShape.accountSecondaryId
+          ? (reference.accountMap.get(accountShape.accountSecondaryId)?.name ?? null)
+          : null,
         merchantName: merchant?.name ?? null,
         merchantClickable: !!merchant,
         ...sourceDisplayOf(row.source),
@@ -420,30 +457,41 @@ function renderPurchaseCell(
   return renderPurchaseLine(item, { truncate: true, quantityText: display?.purchaseQuantityLabel });
 }
 
-/** 备注单元格渲染（显式复制通道，见 CONTEXT-ui-interaction「界面文本不可选」）：
- * - 无备注渲染 '-'，不渲染复制按钮（空备注无可复制）；
- * - 有备注：单元格内 flex——懒挂载省略（NPerformantEllipsis：初始纯 span，指针
- *   悬停才挂带提示弹层的完整省略组件，#2188）承载文本（自省略 + 悬停全文，
- *   同分类/商户列的懒挂载省略形态），NoteCopyButton 复制完整备注（clipboard API +
- *   toast），按钮悬停行显现（显隐样式收口 global.css）；
- * - 展开视图（issue #1883）下仅无购买项行走本渲染，购买项行走 renderPurchaseCell。
- * - 来源订单号不在列表呈现（#1928 / ADR-0138 修订注记：撤行尾徽章，订单号出口
- *   收敛为详情订单区），无备注行落 '-' 的原始空值口径恢复。 */
-function renderNoteCell(row: Transaction): VNode | string {
-  const { note } = row;
-  if (!note) return "-";
-  return h("div", { style: NOTE_CELL_STYLE }, [
-    h(NPerformantEllipsis, { style: "flex: 1 1 auto; min-width: 0;" }, { default: () => note }),
-    h(NoteCopyButton, { note, style: "flex: none;" }),
-  ]);
+/** 轻量「⋯」按钮公共形态（issue #2189 操作列瘦身）：原生 button 替代 NButton
+ * tiny quaternary——移除每行波纹层/加载态/主题混入的组件实例开销，保留钩子类
+ * （row-actions-btn 触控热区、global.css 显隐/基座规则）与无障碍标签；按钮基座
+ * 与焦点环样式收口 transaction-cell.css.ts（仅表格内作用）。事件绑定两形态：
+ * 交易列表 = 表级委托（data-tx-action，见 buildTransactionColumns rowActions），
+ * 投资明细页签 = 直连回调（rowActionsColumn，消费方零迁移）。 */
+function lightActionsButton(
+  label: string,
+  extra: Record<string, unknown>,
+  content: string | VNode[] = "⋯",
+): VNode {
+  return h(
+    "button",
+    {
+      type: "button",
+      class: "row-actions-btn touch-hit-area",
+      "aria-label": label,
+      style: "width: 22px; height: 22px; line-height: 1; font-size: 14px;",
+      ...extra,
+    },
+    content,
+  );
 }
 
 /** buildTransactionColumns 可选装配面：调用方按需声明，缺省即纯只读列（搜索结果同款）。 */
 export interface BuildTransactionColumnsOptions {
-  /** 交易行「⋯」常显按钮的打开回调（ADR-0088 决策 6，issue #843）：传入即
-   * 追加常显操作列，与行右键共用 RowContextMenu 同一 open 入口（账户行先例）；
-   * 不传则不渲染该列（搜索结果无行菜单，保持只读）。 */
-  onRowMenuOpen?: (event: MouseEvent, row: Transaction) => void;
+  /** 触控轴信号（视图 setup 期经 useInputMode 消费登记后传入，issue #2187 共享单例）：
+   * 金额单元格（触控轴保留点按全文气泡封装、指针轴轻量文本）与来源类型全称
+   * 常驻小字按轴分流；缺省保守触控轴（一击可达替代不缺席）。 */
+  inputMode?: ComputedRef<InputMode>;
+  /** 交易行「⋯」常显操作列（ADR-0088 决策 6，issue #843；issue #2189 起委托形态）：
+   * 传入即追加常显操作列——按钮只携带 data-tx-action="row-menu" + data-tx-row-key，
+   * 打开动作经表级事件委托分发到 RowContextMenu 同一 open 入口（视图侧
+   * useTransactionTableCellActions 装配）；不传则不渲染该列（搜索结果只读）。 */
+  rowActions?: boolean;
   /** 购买项展开（issue #1883 / ADR-0138 决策 13）：声明即按「订单块逐购买项行」
    * 装配——订单级列（日期/类型/商户/来源/账户/金额/操作）rowSpan 纵向合并、
    * 分类列逐行取购买项分类、备注列一列两用。仅消费 expandPurchaseRows 展开行集的
@@ -452,6 +500,17 @@ export interface BuildTransactionColumnsOptions {
   expandPurchases?: boolean;
 }
 
+/**
+ * 交易基础列：日期/类型/分类/账户/来源/备注/金额（搜索结果与交易列表共用）。
+ * 行内高频单元格在指针轴下全部为轻量原生元素（issue #2189）：类型标签 = 语义
+ * 样式元素（色型经 @ledger/theme tag-colors 按主题解析，与 NTag 公式对齐）、
+ * 账户/商户/来源 = 原生按钮/占位文本 + data-tx-action 语义属性（动作经表级
+ * 事件委托分发，见 table-cell-actions）、备注复制 = 原生按钮 + 共享静态图标、
+ * 金额 = 轻量文本（触控轴保留 AmountCell 交互封装）。列级按当前主题解析一次
+ * 的强调色/标签色型与全列恒常文案在列构建期取定；预计算 display 记录缺省时
+ * （未接预计算行集/单测直调）回落组件渲染——回落即「删除瘦身接线」的守门
+ * 形态（计数型渲染守门 ② 变红的可失败路径）。
+ */
 export function buildTransactionColumns(
   reference: ReferenceStore,
   options: BuildTransactionColumnsOptions = {},
@@ -462,6 +521,45 @@ export function buildTransactionColumns(
     options.expandPurchases
       ? { rowSpan: orderLevelRowSpan, className: PURCHASE_MERGED_CELL_CLASS }
       : {};
+  // —— 列级一次解析（当前主题与语言）：视图以 computed 重建列，主题/语言切换
+  // 即整体换装换文案；表格 patch 期间只读这些闭包常量，零逐格解析。 ——
+  const theme = useAppStore().theme;
+  const accent = accentColor(theme);
+  const tagColors = borderedTagColors(theme);
+  const statusTagColors = neutralTagColors(theme);
+  const viewAccountLabel = t("common.link.viewAccount");
+  const viewMerchantLabel = t("common.link.viewMerchant");
+  const noteCopyLabel = t("transactions.list.copyNote");
+  const actionsAriaLabel = t("transactions.menu.actions");
+  // 输入轴分流：调用方显式传入信号用之，缺省读共享信号（无消费登记时保守
+  // 触控轴——一击可达替代不缺席，见 useInputMode.sharedInputMode）。
+  const inputMode = options.inputMode ?? sharedInputMode;
+  const isTouch = () => inputMode.value === "touch";
+
+  /** 强调色内联样式（列级解析一次；--tx-accent-hover 供 hover/focus 态 CSS 消费）。 */
+  const accentStyle = `color: ${accent.base}; --tx-accent-hover: ${accent.hover};`;
+
+  /** 轻量账户链接（可下钻）：原生按钮 + data-tx-action（委托分发）。
+   * layoutStyle 缺省 = 限宽省略（max-width: 100%，单账户形态）；容器内形态传
+   * ACCOUNT_CELL_LINK_STYLE（flex 内容宽度项，收缩省略由容器约束）。 */
+  const accountLink = (accountId: string, name: string, layoutStyle?: string): VNode =>
+    h(
+      "button",
+      {
+        type: "button",
+        class: TX_CELL_LINK_CLASS,
+        title: viewAccountLabel,
+        style: `${accentStyle}${layoutStyle ?? "max-width: 100%;"}`,
+        [CELL_ACTION_ATTR]: "account-drill",
+        "data-tx-account": accountId,
+      },
+      name,
+    );
+
+  /** 轻量占位文本（黑洞/隐藏账户、未知商户、软删保单名称：不可点击）。 */
+  const placeholder = (text: string, style?: string): VNode =>
+    h("span", { class: TX_CELL_PLACEHOLDER_CLASS, style }, text);
+
   const columns: DataTableColumn<Transaction>[] = [
     { title: t("transactions.columns.date"), key: "date", width: 105, ...merged },
     {
@@ -469,12 +567,26 @@ export function buildTransactionColumns(
       key: "kind",
       width: 65,
       ...merged,
-      // 类型标签文案与色型读预计算（#2188：patch 期零取词、零借贷派生）；
-      // display 缺省回落渲染期单源（kindLabel / KIND_TAG_TYPE）。
+      // 类型标签轻量化（issue #2189）：语义样式元素承载既有四类色型（色型经
+      // tag-colors 与 NTag 公式对齐，圆角随中性 token）；文案与色型读预计算
+      // （#2188：patch 期零取词、零借贷派生），display 缺省回落渲染期单源。
       render: (row) => {
         const display = precomputedDisplayOf(row);
-        return h(NTag, { type: display ? display.kindTagType : KIND_TAG_TYPE[row.kind] }, () =>
-          display ? display.kindLabel : kindLabel(reference, row),
+        const tagType = display ? display.kindTagType : KIND_TAG_TYPE[row.kind];
+        const label = display ? display.kindLabel : kindLabel(reference, row);
+        const colors: BorderedTagColors = tagColors[tagType];
+        return h(
+          "span",
+          {
+            class: TX_KIND_TAG_CLASS,
+            style: {
+              color: colors.text,
+              background: colors.background,
+              border: colors.border,
+              borderRadius: colors.radius,
+            },
+          },
+          label,
         );
       },
     },
@@ -507,26 +619,153 @@ export function buildTransactionColumns(
       // 懒挂载省略（#2188，分类列同款理由）
       ellipsis: { tooltip: true },
       ellipsisComponent: "performant-ellipsis",
-      // 商户名经 merchantMap（含软删）解析并可点击下钻（issue #191）；未知/无商户回退 '-'
-      render: (row) => (row.merchant_id ? h(MerchantLink, { merchantId: row.merchant_id }) : "-"),
+      // 商户名经 merchantMap（含软删）解析并可点击下钻（issue #191）；未知/无商户
+      // 渲染 '-' 占位不可点击。轻量形态（#2189）：原生按钮 + data-tx-action 委托
+      // 下钻，与 MerchantLink 组件（表外消费方）同视觉同裁决。
+      render: (row) => {
+        const display = precomputedDisplayOf(row);
+        if (!display)
+          return row.merchant_id ? h(MerchantLink, { merchantId: row.merchant_id }) : "-";
+        if (!display.merchantName || !row.merchant_id) return "-";
+        return h(
+          "button",
+          {
+            type: "button",
+            class: TX_CELL_LINK_CLASS,
+            title: viewMerchantLabel,
+            style: `${accentStyle}max-width: 100%;`,
+            [CELL_ACTION_ATTR]: "merchant-drill",
+            "data-tx-merchant": row.merchant_id,
+          },
+          display.merchantName,
+        );
+      },
     },
     {
       title: t("transactions.columns.account"),
       key: "account_id",
       width: 180,
       ...merged,
-      render: (row) => renderAccountCell(row),
+      // 轻量账户列（#2189）：账户名原生按钮（委托下钻）或 '-' 占位文本；
+      // 三形态（单账户/双账户/分解标注）与 renderAccountCell 分派同构，
+      // 名称/可点击性读预计算（accountMap 解析，黑洞账户占位）。
+      render: (row) => {
+        const display = precomputedDisplayOf(row);
+        if (!display) return renderAccountCell(row);
+        // 容器形态（双账户 / 分解标注行）：链接作 flex 内容宽度项（收缩省略）；
+        // 单账户形态无容器包裹，限宽由列宽约束（max-width: 100%，与 AccountLink 同）。
+        const inContainer = row.fundings.length > 0 || display.accountSecondaryId !== null;
+        const layoutStyle = inContainer ? ACCOUNT_CELL_LINK_STYLE : undefined;
+        const primary = display.accountPrimaryName
+          ? accountLink(display.accountPrimaryId, display.accountPrimaryName, layoutStyle)
+          : placeholder("-", ACCOUNT_CELL_LINK_STYLE);
+        // 出资分解行：首条出资账户 + 「等 N 账户 / 同账户 N 笔」标注（+ 派生徽标）
+        if (row.fundings.length > 0) {
+          const line = h(
+            "div",
+            {
+              style:
+                "display: inline-flex; align-items: center; justify-content: flex-start; gap: 4px; width: 100%; max-width: 100%;",
+            },
+            [
+              primary,
+              ...(display.fundingMarker
+                ? [h("span", { style: ACCOUNT_CELL_SUFFIX_STYLE }, display.fundingMarker)]
+                : []),
+            ],
+          );
+          if (!display.fundingDerivedMarker) return line;
+          return h(
+            "div",
+            {
+              style:
+                "display: flex; flex-direction: column; align-items: flex-start; gap: 2px; width: 100%;",
+            },
+            [
+              line,
+              h(
+                "span",
+                {
+                  style:
+                    "font-size: 11px; line-height: 18px; padding: 0 6px; border-radius: 9px; white-space: nowrap; color: var(--n-info-color, #2080f0); border: 1px dashed currentColor;",
+                },
+                display.fundingDerivedMarker,
+              ),
+            ],
+          );
+        }
+        // 双账户形态（转账「转出 → 转入」、buy/sell「出资账户 → 投资账户」）
+        if (display.accountSecondaryId !== null) {
+          const secondary = display.accountSecondaryName
+            ? accountLink(display.accountSecondaryId, display.accountSecondaryName, layoutStyle)
+            : placeholder("-", ACCOUNT_CELL_LINK_STYLE);
+          return h(
+            "div",
+            {
+              style:
+                "display: inline-flex; align-items: center; justify-content: flex-start; gap: 4px; width: 100%; max-width: 100%;",
+            },
+            [primary, h("span", { style: "flex: none; opacity: 0.5;" }, "→"), secondary],
+          );
+        }
+        return primary;
+      },
     },
     {
       title: t("transactions.columns.source"),
       key: "source",
       width: 140,
       ...merged,
-      // 来源列（spec #704 / issue #706）：图标 + 实体名 + 状态标注，点击经来源
-      // 跳转深模块落地（SourceLink 内部收口）；无来源留空（手动/AI 导入口径）。
-      // 不设列级 ellipsis（账户列同款理由：NEllipsis 会把图标/名称/标注包装成
-      // 整体省略，破坏链接自身省略与标注并排语义），超长由链接自身省略号兜底。
-      render: (row) => (row.source ? h(SourceLink, { source: row.source }) : "-"),
+      // 来源列（spec #704 / issue #706）：图标 + 实体名 + 状态标注。轻量形态
+      // （#2189）：静态矢量图标（零组件实例）+ 原生按钮（data-tx-action 委托，
+      // 点击仍经来源跳转深模块解析路由、注入收纳/功能开关谓词——分发收口
+      // table-cell-actions）；软删保单占位文本不可点击；触控轴类型全称常驻小字
+      // （title 不可达的一击可达替代，issue #843）。与 SourceLink 组件
+      //（表外消费方）同视觉同裁决。不设列级 ellipsis（账户列同款理由）。
+      render: (row) => {
+        const display = precomputedDisplayOf(row);
+        if (!display) return row.source ? h(SourceLink, { source: row.source }) : "-";
+        const source = row.source;
+        if (!source) return "-";
+        const kindLabel = display.sourceKindLabel ?? "";
+        const name = display.sourceClickable
+          ? h(
+              "button",
+              {
+                type: "button",
+                class: TX_CELL_LINK_CLASS,
+                style: `${accentStyle}max-width: 100%;`,
+                [CELL_ACTION_ATTR]: "source-jump",
+                "data-tx-source-kind": source.kind,
+                "data-tx-source-entity": source.entity_id,
+              },
+              display.sourceName ?? kindLabel,
+            )
+          : placeholder(display.sourceName ?? "-");
+        return h("span", { class: TX_SOURCE_CELL_CLASS, title: kindLabel }, [
+          h("span", { class: TX_SOURCE_ICON_CLASS }, [sourceKindIcon(source.kind)]),
+          name,
+          ...(isTouch() && source.display_name
+            ? [h("span", { class: TX_SOURCE_TYPE_LABEL_CLASS }, kindLabel)]
+            : []),
+          ...(display.sourceStatusLabel
+            ? [
+                h(
+                  "span",
+                  {
+                    class: TX_SOURCE_STATUS_TAG_CLASS,
+                    style: {
+                      color: statusTagColors.text,
+                      background: statusTagColors.background,
+                      borderRadius: tagColors.default.radius,
+                    },
+                  },
+                  display.sourceStatusLabel,
+                ),
+              ]
+            : []),
+        ]);
+      },
     },
     {
       // 列名两形态（ADR-0138 决策 13）：展开视图整列「商品 / 备注」（一列两用），
@@ -540,7 +779,33 @@ export function buildTransactionColumns(
       // 省略与悬停全文由单元格内懒挂载省略承担（fixed 布局由分类/商户列维持）
       render: (row) => {
         const item = options.expandPurchases ? purchaseOf(row) : null;
-        return item ? renderPurchaseCell(item, precomputedDisplayOf(row)) : renderNoteCell(row);
+        // 购买项行：商品名 + 件数标注（只读呈现，无复制按钮——备注复制通道
+        // 不适用商品名，issue #1884 / ADR-0138 决策 15）
+        if (item) return renderPurchaseCell(item, precomputedDisplayOf(row));
+        // 备注单元格（显式复制通道，见「界面文本不可选」）：懒挂载省略承载文本
+        // （自省略 + 悬停全文，#2188），轻量复制按钮（#2189：原生 button + 共享
+        // 静态图标 + data-tx-action 委托剪贴板写入与统一 toast）悬停行显现
+        //（显隐样式收口 global.css）；无备注落 '-'，不渲染复制按钮。
+        const { note } = row;
+        if (!note) return "-";
+        return h("div", { class: TX_NOTE_CELL_CLASS }, [
+          h(
+            NPerformantEllipsis,
+            { style: "flex: 1 1 auto; min-width: 0;" },
+            { default: () => note },
+          ),
+          lightActionsButton(
+            noteCopyLabel,
+            {
+              class: "note-copy-btn touch-hit-area",
+              title: noteCopyLabel,
+              [CELL_ACTION_ATTR]: "copy-note",
+              "data-tx-note": note,
+              style: "flex: none; width: 22px; height: 22px;",
+            },
+            [copyIcon()],
+          ),
+        ]);
       },
     },
     {
@@ -550,31 +815,46 @@ export function buildTransactionColumns(
       ...merged,
       // 金额按交易类型语义色着色（issue #435）：色值单一来源在
       // @ledger/theme/semantic-colors（六类型亮/暗两套）。文案与语义色读预计算
-      // （#2188：patch 期零金额格式化），display 缺省回落渲染期单源
-      // （displayAmountText / kindSemanticColor；主题在渲染时读取 app store
-      // 响应式取值，切换外观主题即时换色，无需重建列）。
-      // 单元格交互归 AmountCell（issue #843）：指针轴纯 span 零变化，触控轴
-      // 点按弹出全文（悬停一击可达；文案与色在此单点计算后传入）。
+      // （#2188：patch 期零金额格式化），display 缺省回落渲染期单源。
+      // 输入轴分流（issue #2189）：指针轴直接渲染轻量文本元素（零组件实例），
+      // 触控轴保留 AmountCell 交互封装（点按弹出全文气泡，继续纳入
+      // Overlay Suppression 弹层注册表）。
       render: (row) => {
         const display = precomputedDisplayOf(row);
-        return h(AmountCell, {
-          text: display ? display.amountText : displayAmountText(reference, row),
-          color: display ? display.amountColor : kindSemanticColor(row.kind, useAppStore().theme),
-        });
+        const text = display ? display.amountText : displayAmountText(reference, row);
+        const color = display
+          ? display.amountColor
+          : kindSemanticColor(row.kind, useAppStore().theme);
+        if (isTouch()) return h(AmountCell, { text, color });
+        return h("span", { class: "amount-cell", style: { color } }, text);
       },
     },
   ];
-  if (options.onRowMenuOpen) {
-    columns.push(rowActionsColumn(options.onRowMenuOpen, merged));
+  // 行菜单操作列（「⋯」常显第二入口，委托形态）：按钮只携带语义属性，
+  // 打开动作经表级事件委托分发（视图装配 useTransactionTableCellActions）。
+  if (options.rowActions) {
+    columns.push({
+      title: t("transactions.columns.actions"),
+      key: "actions",
+      width: 64,
+      ...merged,
+      render: (row) =>
+        lightActionsButton(actionsAriaLabel, {
+          [CELL_ACTION_ATTR]: "row-menu",
+          // 显示行键随按钮携带（displayRowKey 唯一）：视图按键解析目标行打开
+          // RowContextMenu（与行右键同一 open 入口，购买项续行无按钮不可触发）。
+          "data-tx-row-key": displayRowKey(row),
+        }),
+    });
   }
   return columns;
 }
 
 /**
- * 交易行「⋯」常显列（ADR-0088 决策 6，issue #843）：与右键共用同一行菜单编排
- * open 入口、以点击坐标弹出，全平台常显（账户行先例，桌面可见变化已裁决）；
- * 消费方（主交易列表与投资明细页签，issue #1781）各自传入回调，搜索结果不追加。
- * 泛型行：列渲染只承载行菜单入口，不读行内容。
+ * 交易行「⋯」常显列——直连回调形态（投资明细页签消费方，issue #1781）：与右键
+ * 共用同一行菜单编排 open 入口、以点击坐标弹出，全平台常显。交易列表的操作列
+ * 已改走委托形态（buildTransactionColumns rowActions 选项，#2189）；本形态保留
+ * 泛型直连回调签名，投资页签消费零迁移（按钮形态轻量化同规）。
  */
 export function rowActionsColumn<T>(
   onRowMenuOpen: (event: MouseEvent, row: T) => void,
@@ -592,17 +872,9 @@ export function rowActionsColumn<T>(
     width: 64,
     ...merge,
     render: (row) =>
-      h(
-        NButton,
-        {
-          size: "tiny",
-          quaternary: true,
-          class: "row-actions-btn touch-hit-area",
-          "aria-label": actionsAriaLabel,
-          onClick: (e: MouseEvent) => onRowMenuOpen(e, row),
-        },
-        () => "⋯",
-      ),
+      lightActionsButton(actionsAriaLabel, {
+        onClick: (e: MouseEvent) => onRowMenuOpen(e, row),
+      }),
   };
 }
 

@@ -164,9 +164,11 @@ describe("根配置非内联主题变量模式（issue #2186）", () => {
     expectAllDetached(wrapper.element, ".n-menu");
     expectAllDetached(wrapper.element, ".n-button");
 
-    // 交易列表：表格 + 类型标签 + 分页条 + 下拉筛选（NSelect 主题类在 .n-base-selection）
+    // 交易列表：表格 + 分页条 + 下拉筛选（NSelect 主题类在 .n-base-selection）。
+    // 类型标签已随 issue #2189 轻量化为语义样式元素（内联色样式属自定义标记而非
+    // 组件库节点，不在此列）；NTag 的非内联回归由移动档卡片消费方覆盖（下方
+    // 移动档段落 + TransactionCardList）。
     expectAllDetached(wrapper.element, ".n-data-table");
-    expectAllDetached(wrapper.element, ".n-tag");
     expectAllDetached(wrapper.element, ".n-pagination");
     expectAllDetached(wrapper.element, ".n-base-selection");
   });
@@ -184,7 +186,9 @@ describe("根配置非内联主题变量模式（issue #2186）", () => {
     const [darkTableClass] = expectAllDetached(wrapper.element, ".n-data-table");
     expect(findMountedThemeRuleText(darkMenuClass)).toContain(darkOverrides.Menu.itemColorActive);
 
-    const darkLink = wrapper.find(".account-link");
+    // 交易表格账户链接已随 #2189 轻量化（原生按钮 + data-tx-action），
+    // 强调色仍为列级内联注入的自定义标记样式
+    const darkLink = wrapper.find('button[data-tx-action="account-drill"]');
     expect(darkLink.exists()).toBe(true);
     expect((darkLink.element as HTMLElement).style.color).toBe(
       normalizeCssColor(accentColor("dark").base),
@@ -220,9 +224,9 @@ describe("根配置非内联主题变量模式（issue #2186）", () => {
     );
 
     // 自定义链接强调色与交易语义色同步切换到亮色
-    expect((wrapper.find(".account-link").element as HTMLElement).style.color).toBe(
-      normalizeCssColor(accentColor("light").base),
-    );
+    expect(
+      (wrapper.find('button[data-tx-action="account-drill"]').element as HTMLElement).style.color,
+    ).toBe(normalizeCssColor(accentColor("light").base));
     expect((wrapper.find(".amount-cell").element as HTMLElement).style.color).toBe(
       normalizeCssColor(kindSemanticColor("expense", "light")),
     );
@@ -281,6 +285,10 @@ describe("根配置非内联主题变量模式（issue #2186）", () => {
     // 切到移动档：导航抽屉（AppDrawer 的 .n-drawer-container + NMenu + .group-more-link）脱离内联主题变量
     setFakeMedia({ width: 839 });
     await flushPromises();
+    // 移动档交易卡片列表的 NTag（类型标签组件消费方）同样脱离内联变量
+    await router.push("/transactions");
+    await flushPromises();
+    expectAllDetached(wrapper.element, ".n-tag");
     await openMobileDrawer(wrapper);
     expectAllDetached(document.body, ".n-drawer-container");
     expect(document.body.querySelector(".n-drawer")?.getAttribute("style") ?? "").not.toMatch(
