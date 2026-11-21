@@ -1,18 +1,3 @@
-//! 检查点发布/预检/引导命令面集成测试（issue #864 / ADR-0091 决策 9 / ADR-0098
-//! 决策 5）。
-//!
-//! 直调命令函数（`#[tokio::test]`），覆盖壳行为：参数解包、错误码、**双端经
-//! 真实 S3 桩「发布检查点 → 新端引导 → 双向增量收敛」整链**（验收判据
-//! 「新端经 Checkpoint 引导」「手机记的账在桌面出现、桌面记的账在手机出现」
-//! 的自动化形态）与信封形态对齐（密文源端引导后本机转密文、双端互开对方段）。
-//! 另钉预检（issue #1283）、发布（issue #1284）与引导（issue #1285）的锁跨度：
-//! manifest GET、封包与上传、整库快照下载在网络在途时不得占据写连接锁——
-//! 负向判据（ADR-0087 断言强度）把网络调用移回锁内即红；引导下载在途落进的
-//! 本机写被显式拒绝、不静默覆盖（引导侧复验语义的「删除即变红」权威归域
-//! 单测，见 sync-engine 域 checkpoint 测试）。
-//! 引导的 SQL 级重建、位点采纳、schema 偏斜归域单测（`sync_engine::tests`，
-//! ADR-0087），此处只钉「命令壳 → 通道在位 → 拉取 → 整库换入 → 形态对齐」。
-
 use std::time::{Duration, Instant};
 
 use ledger_infra::db::data_location;
@@ -35,23 +20,17 @@ use crate::sync_channel::{
 };
 use tauri_app_lib::test_support::isolate_home;
 
-/// 命令发出通道请求的限时（真实 HTTP 到本机桩，正常在毫秒级）。
 const CHANNEL_REQUEST_LIMIT: Duration = Duration::from_secs(5);
-/// 其它命令应在限时内完成——超时即「连接锁被网络等待占据」。
 const COMMAND_LIMIT: Duration = Duration::from_secs(2);
 
-/// 断言码化错误命中的稳定码。
 fn assert_code(err: AppError, code: &str) {
     assert!(err.is_code(code), "期望 {code}，实际 {err:?}");
 }
 
-/// 等桩观测到命令发出的通道请求（此刻请求已到达、应答未回，即网络在途）。
 async fn wait_for_channel_request(stub: &S3Stub, limit: Duration) {
     wait_for_channel_request_after(stub, 0, limit).await;
 }
 
-/// 等桩观测到第 `baseline` 个请求之后的下一个通道请求（此前请求属前置阶段，
-/// 已放行完毕；新到达的请求此刻被闸门挡住，即网络在途）。
 async fn wait_for_channel_request_after(stub: &S3Stub, baseline: usize, limit: Duration) {
     let deadline = Instant::now() + limit;
     while stub.requests().len() <= baseline {
@@ -63,9 +42,6 @@ async fn wait_for_channel_request_after(stub: &S3Stub, baseline: usize, limit: D
     }
 }
 
-/// 让一个通道命令任务在闸门桩上跑完：每观测到一个未放行的新请求放行一个
-///（每轮至多一个，令牌与请求一一对应），任务结束时不留多余令牌——其后被
-/// 闸住的才是被测调用点的请求。返回命令结果。
 async fn drain_through_gate<T>(
     task: tokio::task::JoinHandle<ledger_infra::error::Result<T>>,
     stub: &S3Stub,
@@ -93,18 +69,12 @@ async fn drain_through_gate<T>(
     result
 }
 
-/// 在既有目录上重新挂一台「设备」（模拟原位重引导后的新连接）：mock 应用 +
-/// 该目录的引导登记态 + 按给定口令打开的库连接（明文库传 `None`）。
 fn reattach_app(
     _tag: &str,
     dir: &std::path::Path,
     passphrase: Option<&str>,
 ) -> tauri::AppHandle<tauri::test::MockRuntime> {
-    // 写路径副作用接缝接线（issue #1090）：本helper不经 fresh_app，落库前显式
-    // 注册余额刷新实现（幂等，进程级）。
     ledger_accounts::balance::install_balance_refresh_hook();
-    // 交易域接缝接线（issue #1092 / #1180）：与测试工厂同形——六向实现经组合入口
-    // 一次装入（幂等，进程级）。
     tauri_app_lib::transaction_wiring::install_all();
     let app = tauri::test::mock_app();
     app.manage(BootCell::new(data_location::boot(dir)));
@@ -115,7 +85,6 @@ fn reattach_app(
         None => db::open_connection_in(dir),
     }
     .expect("重挂连接应成功");
-    // 成对挂载（issue #1280 / ADR-0117）：读连接按同一文件与口令形态只读打开。
     let read_conn = match passphrase {
         Some(passphrase) => db::open_connection_readonly_with_passphrase(
             dir.join(data_location::DB_FILE_NAME),
@@ -130,7 +99,6 @@ fn reattach_app(
     });
     app.handle().clone()
 }
-/// 铺垫：建户 + 记一笔支出（经壳层公开命令，op 产出随之发生），返回 (账户id, 交易id)。
 async fn seed_account_and_expense(
     app: &tauri::AppHandle<tauri::test::MockRuntime>,
     amount_cents: i64,
@@ -166,12 +134,10 @@ async fn publish_requires_channel_then_advances_generation() {
     isolate_home();
     let (app, _dir) = device_app("publish");
 
-    // 未配置：码化拒绝。
     let err = publish_sync_checkpoint(app.clone(), None)
         .await
         .expect_err("未配置应被拒");
     assert_code(err, "sync-channel.not-configured");
-    // 预检同报该码（配置读取改走读入口短锁，错误码不变）。
     let err = get_sync_channel_checkpoint(app.clone())
         .await
         .expect_err("未配置预检应被拒");
@@ -180,13 +146,11 @@ async fn publish_requires_channel_then_advances_generation() {
     let stub = spawn_sync_stub();
     configure_channel(&app, &stub);
 
-    // 通道上还没有检查点：预检回 None。
     let precheck = get_sync_channel_checkpoint(app.clone())
         .await
         .expect("预检应成功");
     assert!(precheck.is_none(), "空通道预检应回 None");
 
-    // 发布：代数 1 → 预检可见；再发布：代数推进。
     let first = publish_sync_checkpoint(app.clone(), None)
         .await
         .expect("发布应成功");
@@ -206,17 +170,9 @@ async fn publish_requires_channel_then_advances_generation() {
     assert_eq!(second.generation, 2, "代数应单调推进");
 }
 
-/// 预检的锁跨度（issue #1283 / ADR-0069 决策 4）：配置读取走读入口短锁，
-/// manifest GET 是纯网络等待、在锁外完成——网络慢或超时时其它命令照常读写。
-///
-/// **负向判据（ADR-0087 断言强度）**：把 manifest GET 移回 `conn.lock()` 存活期内
-///（本票修复前的形状）或移进读入口闭包（占住读连接锁），下面的命令在限时内
-/// 等不到连接锁，本测试即红。
 #[tokio::test]
 async fn checkpoint_precheck_network_wait_does_not_block_other_commands() {
     isolate_home();
-    // 桩闸门把「预检的网络在途」做成可确定复现的输入：请求到达即记账并阻塞，
-    // 测试放行才应答。
     let (config, gate) = S3StubConfig::new(S3Addressing::PathStyle).gated_requests();
     let stub = spawn_s3_stub(config);
     let (app, _dir) = device_app("precheck-lock");
@@ -225,8 +181,6 @@ async fn checkpoint_precheck_network_wait_does_not_block_other_commands() {
     let precheck = tokio::spawn(get_sync_channel_checkpoint(app.clone()));
     wait_for_channel_request(&stub, CHANNEL_REQUEST_LIMIT).await;
 
-    // 网络在途：其它命令照常读写——探针取读连接（读入口）、写命令取写连接
-    //（统一写入口），两条锁都不得被网络等待占据。
     let listed = tokio::time::timeout(COMMAND_LIMIT, accounts::list_accounts(app.state())).await;
     let created = tokio::time::timeout(
         COMMAND_LIMIT,
@@ -246,7 +200,6 @@ async fn checkpoint_precheck_network_wait_does_not_block_other_commands() {
     )
     .await;
 
-    // 先放行网络与预检任务再断言：测试失败（修复回退）时不把桩线程悬在闸门上。
     gate.release(1);
     let precheck = precheck
         .await
@@ -261,29 +214,12 @@ async fn checkpoint_precheck_network_wait_does_not_block_other_commands() {
         .expect("写命令应成功");
 }
 
-/// 引导的锁跨度与复验收敛（issue #1285 / ADR-0120 判据同簇 / ADR-0069 决策 4）：
-/// 整库快照下载是纯网络等待、在主连接锁外完成——下载在途时读命令与写命令
-/// 限时完成；下载期间落进的本机写被引导显式拒绝，不被快照静默覆盖（丢账
-/// 窗口 → 显式错误）。
-///
-/// **负向判据（ADR-0087 断言强度）**：把 `fetch_checkpoint` 移回连接锁存活期
-/// 内（本票修复前的形状），下面的写命令在限时内拿不到锁，本测试即红。
-///
-/// 错误码分层说明（防误读）：本测试的并发写经统一写入口 `create_account`，
-/// 必产出 op → 段2 复验与 `bootstrap_from_checkpoint` 内层同步三表权威守卫
-/// 都命中且同报 `sync-engine.bootstrap-not-fresh`（内层守卫兜底，本测试对
-/// 二者不可分辨）；段2 复验独有的「用户数据探针半场」（不经 op 产出的写入）
-/// 其「删除复验即红」的权威在域单测
-/// `bootstrap_local_write_during_download_is_caught_by_recheck_not_overwritten`
-///（直置用户事实行，删复验即被静默覆盖）。
 #[tokio::test]
 async fn bootstrap_download_in_flight_keeps_commands_responsive_and_racy_write_errors() {
     isolate_home();
     let (config, gate) = S3StubConfig::new(S3Addressing::PathStyle).gated_requests();
     let stub = spawn_s3_stub(config);
 
-    // 来源端 A（存量数据）：记账 → 发布检查点。发布的通道请求被闸门逐个挡住、
-    // 逐个放行，结束时不留多余令牌——其后被闸住的正是引导的下载段。
     let (app_a, _dir_a) = device_app("bootstrap-lock-a");
     configure_channel(&app_a, &stub);
     let (source_acc, _txn) = seed_account_and_expense(&app_a, 10_000, "来源端").await;
@@ -296,16 +232,12 @@ async fn bootstrap_download_in_flight_keeps_commands_responsive_and_racy_write_e
     .await
     .expect("A 发布检查点应成功");
 
-    // 引导端 B（全新空库）：引导任务的第一个通道请求（manifest GET）到达即被
-    // 闸住——此刻整库快照下载在途。
     let (app_b, _dir_b) = device_app("bootstrap-lock-b");
     configure_channel(&app_b, &stub);
     let baseline = stub.requests().len();
     let bootstrap = tokio::spawn(bootstrap_sync_from_channel(app_b.clone(), None));
     wait_for_channel_request_after(&stub, baseline, CHANNEL_REQUEST_LIMIT).await;
 
-    // 网络在途：读命令与写命令限时完成——写连接锁不得被下载占据；写命令落进的
-    // 本机写即「前置守卫判空后被写」的并发写。
     let listed = tokio::time::timeout(COMMAND_LIMIT, accounts::list_accounts(app_b.state())).await;
     let raced = tokio::time::timeout(
         COMMAND_LIMIT,
@@ -325,8 +257,6 @@ async fn bootstrap_download_in_flight_keeps_commands_responsive_and_racy_write_e
     )
     .await;
 
-    // 放行 manifest GET 与快照 GET，引导收尾：段2 复验命中显式报错（op 产出
-    // 命中同步三表优先分支；错误码分层说明见函数注释）。
     gate.release(2);
     let err = bootstrap
         .await
@@ -341,7 +271,6 @@ async fn bootstrap_download_in_flight_keeps_commands_responsive_and_racy_write_e
         .expect("下载在途时写命令应在限时内完成——写连接锁不得被网络等待占据")
         .expect("写命令应成功");
 
-    // 显式报错零副作用：本机写原样保留，快照未换入（来源端数据不在场）。
     let b_accounts = accounts::list_accounts(app_b.state())
         .await
         .expect("B 账户应可读");
@@ -355,20 +284,9 @@ async fn bootstrap_download_in_flight_keeps_commands_responsive_and_racy_write_e
     );
 }
 
-/// 发布的锁跨度（issue #1284 / ADR-0069 决策 4，判据同 ADR-0120）：主连接锁只盖
-/// 快照产出（位点与快照同刻成对，`create_checkpoint`），封包（KDF）与通道网络
-/// 往返（manifest 读、检查点上传、manifest 换指针）出锁——网络慢或超时时其它
-/// 命令照常读写。
-///
-/// **负向判据（ADR-0087 断言强度）**：把发布段移回 `conn.lock()` 存活期内（本票
-/// 修复前的形状——整段发布持锁），桩闸门挡住发布的首个通道请求期间，下面的写
-/// 命令在限时内等不到连接锁，本测试即红。
 #[tokio::test]
 async fn checkpoint_publish_network_wait_does_not_block_other_commands() {
     isolate_home();
-    // 桩闸门把「发布的网络在途」做成可确定复现的输入：请求到达即记账并阻塞，
-    // 测试放行才应答。S3 后端的 ensure_dir 是无副作用空操作，发布的首个通道
-    // 请求是 manifest 读；放行按请求计数，足够覆盖全部三次往返。
     let (config, gate) = S3StubConfig::new(S3Addressing::PathStyle).gated_requests();
     let stub = spawn_s3_stub(config);
     let (app, _dir) = device_app("publish-lock");
@@ -377,8 +295,6 @@ async fn checkpoint_publish_network_wait_does_not_block_other_commands() {
     let publish = tokio::spawn(publish_sync_checkpoint(app.clone(), None));
     wait_for_channel_request(&stub, CHANNEL_REQUEST_LIMIT).await;
 
-    // 网络在途：其它命令照常读写——写命令取写连接（统一写入口）、读命令取读
-    // 连接（读入口），两条锁都不得被发布段的网络等待占据。
     let listed = tokio::time::timeout(COMMAND_LIMIT, accounts::list_accounts(app.state())).await;
     let created = tokio::time::timeout(
         COMMAND_LIMIT,
@@ -398,9 +314,6 @@ async fn checkpoint_publish_network_wait_does_not_block_other_commands() {
     )
     .await;
 
-    // 先放行网络与发布任务再断言：测试失败（修复回退）时不把桩线程悬在闸门上。
-    // 闸门按请求计数放行：发布全程三次通道往返（manifest 读、检查点上传、
-    // manifest 换指针），8 只是与预检测试 release(1) 同风的充足余量。
     gate.release(8);
     let published = publish
         .await
@@ -421,7 +334,6 @@ async fn dual_device_checkpoint_bootstrap_converges_both_ways() {
     isolate_home();
     let stub = spawn_sync_stub();
 
-    // 桌面端 A（存量数据）：记账 → 同步（op 上通道）→ 发布检查点。
     let (app_a, _dir_a) = device_app("cp-a");
     configure_channel(&app_a, &stub);
     let (acc_id, txn_a) = seed_account_and_expense(&app_a, 10_000, "桌面记的账").await;
@@ -430,7 +342,6 @@ async fn dual_device_checkpoint_bootstrap_converges_both_ways() {
         .await
         .expect("A 发布检查点应成功");
 
-    // 手机端 B（全新空库）：预检 → 引导。
     let (app_b, _dir_b) = device_app("cp-b");
     configure_channel(&app_b, &stub);
     let precheck = get_sync_channel_checkpoint(app_b.clone())
@@ -445,7 +356,6 @@ async fn dual_device_checkpoint_bootstrap_converges_both_ways() {
     assert_eq!(outcome.generation, published.generation);
     assert!(!outcome.reencrypted, "明文快照引导明文库不发生加密转换");
 
-    // 验收判据「新端经 Checkpoint 引导」：A 的账户与交易整库就位于 B。
     let b_accounts = accounts::list_accounts(app_b.state())
         .await
         .expect("B 账户应可读");
@@ -461,8 +371,6 @@ async fn dual_device_checkpoint_bootstrap_converges_both_ways() {
     );
     assert_eq!(b_amount, Some(10_000), "A 的交易应随快照就位");
 
-    // B 是自己的设备身份；位点表随快照就位（对 A 流有已应用水位，增量轮次
-    // 因此只拉位点之后的段；精确水位值归域单测，此处只钉接线）。
     let device_a = get_sync_status(app_a.clone())
         .await
         .expect("A 状态应可读")
@@ -479,17 +387,14 @@ async fn dual_device_checkpoint_bootstrap_converges_both_ways() {
     );
     assert_eq!(position_rows, Some(1), "A 流位点应随快照就位");
 
-    // 引导是本机簿记事实重置点：快照携带的来源端「上次同步时刻」不采纳。
     let b_status = get_sync_status(app_b.clone()).await.expect("B 状态应可读");
     assert_eq!(b_status.last_sync_at, None, "引导后上次同步时刻应清零");
 
-    // 重复引导被域守卫拒绝（已参与同步，整库换入会覆盖同步状态）。
     let err = bootstrap_sync_from_channel(app_b.clone(), None)
         .await
         .expect_err("重复引导应被拒");
     assert_code(err, "sync-engine.bootstrap-not-fresh");
 
-    // 桌面记的账在手机出现（增量）：A 再记一笔 → 各自同步 → B 可见。
     let (_, txn_a2) = seed_account_and_expense(&app_a, 2_500, "桌面后记的账").await;
     sync_now(app_a.clone(), None).await.expect("A 二轮应成功");
     sync_now(app_b.clone(), None).await.expect("B 二轮应成功");
@@ -500,7 +405,6 @@ async fn dual_device_checkpoint_bootstrap_converges_both_ways() {
     );
     assert_eq!(b_amount2, Some(2_500), "A 的增量交易应到 B");
 
-    // 手机记的账在桌面出现（增量）：B 记一笔 → 各自同步 → A 可见。
     let (_, txn_b1) = seed_account_and_expense(&app_b, 1_200, "手机记的账").await;
     sync_now(app_b.clone(), None).await.expect("B 三轮应成功");
     sync_now(app_a.clone(), None).await.expect("A 三轮应成功");
@@ -518,7 +422,6 @@ async fn bootstrap_refuses_library_with_user_data() {
     isolate_home();
     let stub = spawn_sync_stub();
 
-    // 来源端发布检查点。
     let (app_a, _dir_a) = device_app("guard-a");
     configure_channel(&app_a, &stub);
     let _ = seed_account_and_expense(&app_a, 5_000, "来源端").await;
@@ -527,10 +430,6 @@ async fn bootstrap_refuses_library_with_user_data() {
         .await
         .expect("A 发布应成功");
 
-    // 引导端已有用户业务数据：「加入即新库」拒绝，快照不下载。经当前代码
-    // 写入必产出 op，此处直置清空同步元数据模拟**前同步时代的存量库**
-    //（该守卫的真实保护对象：升级前已记帐的旧库；ADR-0086「无公开入口的
-    // 库内状态直置」同款）。
     let (app_b, _dir_b) = device_app("guard-b");
     configure_channel(&app_b, &stub);
     let _ = seed_account_and_expense(&app_b, 900, "本机既有数据").await;
@@ -558,15 +457,12 @@ async fn bootstrap_without_published_checkpoint_is_coded() {
     assert_code(err, "sync-channel.checkpoint-none");
 }
 
-/// 密文源端 → 明文全新端：引导后本机整库转为密文（后续轮次才开得了通道上的
-/// 密文段），重挂连接后两端在密文通道上双向收敛——信封形态全通道一致的接线。
 #[tokio::test]
 async fn encrypted_source_rekeys_fresh_joiner_and_rounds_stay_interoperable() {
     isolate_home();
     let stub = spawn_sync_stub();
     let master = "master-pass";
 
-    // 源端 A：明文库建好 → 原位转密文 → 按口令重开连接挂载。
     let (app_a, dir_a) = fresh_app("enc-a");
     db::open_db_in(&dir_a).unwrap();
     let db_path_a = dir_a.join(data_location::DB_FILE_NAME);
@@ -582,7 +478,6 @@ async fn encrypted_source_rekeys_fresh_joiner_and_rounds_stay_interoperable() {
     configure_channel(&app_a, &stub);
     let (acc_id, _) = seed_account_and_expense(&app_a, 10_000, "密文源端").await;
 
-    // 缺口令发布被拦（复用 resolve_passphrase 单点）；凭口令发布成功。
     let err = publish_sync_checkpoint(app_a.clone(), None)
         .await
         .expect_err("密文库缺口令发布应被拒");
@@ -595,7 +490,6 @@ async fn encrypted_source_rekeys_fresh_joiner_and_rounds_stay_interoperable() {
         .expect("A 凭口令发布应成功");
     assert!(!published.plaintext_mode, "密文库发布不应标记明文模式");
 
-    // 全新明文端 B：凭口令引导 → 整库换入 + 转为本机密文库。
     let (app_b, dir_b) = device_app("enc-b");
     configure_channel(&app_b, &stub);
     let outcome = bootstrap_sync_from_channel(app_b.clone(), Some(master.into()))
@@ -609,7 +503,6 @@ async fn encrypted_source_rekeys_fresh_joiner_and_rounds_stay_interoperable() {
         "引导后本机库应为密文形态"
     );
 
-    // 模拟原位重引导：以主口令重开连接挂载，快照业务数据就位。
     let app_b2 = reattach_app("enc-b2", &dir_b, Some(master));
     let b_accounts = accounts::list_accounts(app_b2.state())
         .await
@@ -619,7 +512,6 @@ async fn encrypted_source_rekeys_fresh_joiner_and_rounds_stay_interoperable() {
         "快照业务数据应在密文库中"
     );
 
-    // 双向收敛（密文通道）：B 记账 → B 同步 → A 同步可见；A 记账 → A 同步 → B 可见。
     let (_, txn_b1) = seed_account_and_expense(&app_b2, 3_300, "手机引导后记的账").await;
     sync_now(app_b2.clone(), Some(master.into()))
         .await
@@ -651,14 +543,10 @@ async fn encrypted_source_rekeys_fresh_joiner_and_rounds_stay_interoperable() {
     assert_eq!(b_amount, Some(4_400), "A 的增量应到 B（密文段互开）");
 }
 
-/// 信封形态对齐守卫：密文本机 × 密文快照但口令不是本机主口令 → 拒绝
-/// （两把钥匙会让后续轮次互开失败）；密文本机 × 明文快照 → 拒绝（引导后
-/// 本机封的密文段明文对端开不了）。两条守卫都在替换本机数据前判定。
 #[tokio::test]
 async fn envelope_form_mismatch_guards_reject_before_bootstrap() {
     isolate_home();
 
-    // 场景一：密文快照 × 密文本机、口令不一致 → bootstrap-passphrase-mismatch。
     let stub1 = spawn_sync_stub();
     let (app_a, dir_a) = fresh_app("mm-a");
     db::open_db_in(&dir_a).unwrap();
@@ -697,7 +585,6 @@ async fn envelope_form_mismatch_guards_reject_before_bootstrap() {
         .expect_err("口令不一致应被拒");
     assert_code(err, "sync-channel.bootstrap-passphrase-mismatch");
 
-    // 场景二：明文快照 × 密文本机 → bootstrap-form-mismatch。
     let stub2 = spawn_sync_stub();
     let (app_c, _dir_c) = device_app("mm-c");
     configure_channel(&app_c, &stub2);
@@ -725,17 +612,6 @@ async fn envelope_form_mismatch_guards_reject_before_bootstrap() {
     assert_code(err, "sync-channel.bootstrap-form-mismatch");
 }
 
-/// 跨版本引导兼容（票 07 / spec #1866）：旧版端产出的单文件快照（四表随
-/// 业务件、manifest 指针无 sync_* 字段）在通道上被新版端引导——业务数据入
-/// main、快照携带的同步元数据经引导收尾的迁移前向重放入 sync.db；旧端此后
-/// 以原段格式发布的增量照常拉取重放（增量交易到达）；世界随后以新形态
-///（双文件指针，代数推进）继续发布。断言钉接线形态（邻测同款）——精确
-/// 终态与「引导 + 增量 = 源状态」逐项判据归域单测
-/// `legacy_single_file_snapshot_lands_tables_in_two_dbs_and_converges`。
-///
-/// 旧形态通道由测试铺就：旧端世界用拆库前一代 schema（`to_version` 停版，
-/// 别名裸连接不挂载），业务数据经壳层公开命令产出（op 落 main 四表）；
-/// 检查点文件经测试支持域替身（产品侧成帧单点）、指针退化为旧形态。
 #[tokio::test]
 async fn legacy_single_file_checkpoint_bootstrap_lands_two_dbs_and_converges() {
     use std::sync::{Arc, Mutex};
@@ -750,9 +626,8 @@ async fn legacy_single_file_checkpoint_bootstrap_lands_two_dbs_and_converges() {
 
     isolate_home();
     let stub = spawn_sync_stub();
-    let _wire = tauri_app_lib::test_support::open(); // 测试接线进程级安装
+    let _wire = tauri_app_lib::test_support::open();
 
-    // —— 旧形态源世界（拆库前一代：四表在 main）——别名裸连接停版后原位挂app。
     let dir_legacy = ScratchDir::new("it-legacy-src");
     let legacy_db = dir_legacy.path().join(data_location::DB_FILE_NAME);
     {
@@ -770,16 +645,8 @@ async fn legacy_single_file_checkpoint_bootstrap_lands_two_dbs_and_converges() {
         read_conn: Arc::new(Mutex::new(read_legacy)),
     });
     let app_legacy = app_legacy.handle().clone();
-    // 旧端世界同样配置同一通道（真实场景：旧端正是向该通道发布检查点的端，
-    // 其通道配置随快照整库换入被引导端继承）。
     configure_channel(&app_legacy, &stub);
 
-    // 快照前的旧端业务数据（op 落 main 四表）。账户行**直置**而不走账户写命令：
-    // 停版世界的 accounts 停在 V037（账户归档列）之前，而当前账户写入口无条件携带
-    // `is_archived`（V037 排在拆库迁移之后，不能提前补列——引导端的迁移链会从
-    // 停版位重放 V036/V037，预补列必撞 duplicate column）。故按 `sync-engine`
-    // `legacy_single_file_snapshot_...` 同款取直置行写法；本测断言面是快照业务数据
-    // 与四表归位，账户创建 op 不在其列（记账仍经壳层公开命令，op 随之落 main）。
     let legacy_conn = app_legacy.state::<DbState>().conn.clone();
     let acc_id = tauri_app_lib::test_support::seed_account(
         &legacy_conn.lock().unwrap(),
@@ -805,7 +672,6 @@ async fn legacy_single_file_checkpoint_bootstrap_lands_two_dbs_and_converges() {
             .expect("旧端设备标识应就位")
     };
 
-    // 快照时刻定格：单文件快照（VACUUM INTO 产物，四表随行）+ 快照时刻位点。
     let snapshot_bytes = {
         let guard = legacy_conn.lock().unwrap();
         let snap_path = dir_legacy.path().join("legacy-snapshot.db");
@@ -820,7 +686,6 @@ async fn legacy_single_file_checkpoint_bootstrap_lands_two_dbs_and_converges() {
     let positions = stream_positions(&legacy_conn.lock().unwrap()).expect("位点应可读");
     assert_eq!(positions.len(), 1, "前置：旧端自己的流位点在列");
 
-    // 快照之后旧端继续记账（增量 op）。
     let txn_b = transactions::create_transaction(
         app_legacy.state(),
         app_legacy.clone(),
@@ -839,7 +704,6 @@ async fn legacy_single_file_checkpoint_bootstrap_lands_two_dbs_and_converges() {
         "前置：快照之后应存在增量 op（增量段非空）"
     );
 
-    // —— 铺旧形态通道（线格式收归测试支持域替身）。
     let config = stub.channel_config("family");
     let channel = build_channel(&config).expect("通道应可建");
     let transport = channel.transport();
@@ -847,7 +711,6 @@ async fn legacy_single_file_checkpoint_bootstrap_lands_two_dbs_and_converges() {
     transport
         .ensure_dir(&layout.checkpoint_dir())
         .expect("检查点目录应可建");
-    // 旧端此后的增量以原段格式发布（段格式跨版本不变；成帧收归测试支持域替身）。
     publish_raw_segment(
         transport,
         &layout,
@@ -856,8 +719,6 @@ async fn legacy_single_file_checkpoint_bootstrap_lands_two_dbs_and_converges() {
         &increment_ops,
     )
     .expect("增量段应可发布");
-    // 旧形态检查点发布替身（读改写归并保留上面的段清单）：指针退化为旧形态
-    //（无 sync_* 字段），业务件经产品侧成帧单点封装。
     let legacy_checkpoint = ledger_sync_engine::Checkpoint {
         positions: positions.clone(),
         snapshot: snapshot_bytes,
@@ -874,7 +735,6 @@ async fn legacy_single_file_checkpoint_bootstrap_lands_two_dbs_and_converges() {
     assert_eq!(pointer.generation, 1);
     assert!(pointer.sync_file.is_none(), "旧形态指针无 sync_* 字段");
 
-    // —— 新版端引导：单文件快照按表归位两库。
     let (app_b, _dir_b) = device_app("legacy-b");
     configure_channel(&app_b, &stub);
     let outcome = bootstrap_sync_from_channel(app_b.clone(), None)
@@ -883,12 +743,8 @@ async fn legacy_single_file_checkpoint_bootstrap_lands_two_dbs_and_converges() {
     assert_eq!(outcome.generation, 1);
 
     let b_conn = app_b.state::<DbState>().conn.clone();
-    // 引导落库判据在同步作用域内读取（guard 不跨 await）。
     {
         let b_guard = b_conn.lock().unwrap();
-        // 两库归位（钉接线形态，邻测同款）：业务数据入 main、旧端流位点行随
-        // 快照就位于 sync.db、主库无残留同步表——精确水位值与 op 计数归域单测
-        //（`legacy_single_file_snapshot_lands_tables_in_two_dbs_and_converges`）。
         assert_eq!(
             read_scalar_i64(
                 &b_guard,
@@ -923,9 +779,7 @@ async fn legacy_single_file_checkpoint_bootstrap_lands_two_dbs_and_converges() {
         .device_id;
     assert_ne!(device_b, dev_src, "引导端保留自己的设备身份");
 
-    // 引导 + 增量 = 源状态：旧端增量段照常拉取重放（段格式跨版本不变）。
     sync_now(app_b.clone(), None).await.expect("B 首轮应成功");
-    // 终态判据在同步作用域内读取（guard 不跨 await）。
     {
         let b_guard = b_conn.lock().unwrap();
         assert_eq!(
@@ -939,7 +793,6 @@ async fn legacy_single_file_checkpoint_bootstrap_lands_two_dbs_and_converges() {
         );
     }
 
-    // 世界随后以新形态继续：新端发布双文件检查点（指针带 sync_* 字段）。
     let published = publish_sync_checkpoint(app_b.clone(), None)
         .await
         .expect("新端发布检查点应成功");

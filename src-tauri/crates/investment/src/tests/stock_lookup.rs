@@ -1,8 +1,3 @@
-//! 股票按（市场，代码）查询的领域规则（issue #693/#696 / ADR-0081 决策 1/2；
-//! 换源 ADR-0130 决策 2 / issue #1567）：代码形态 → 查询单元单点解析（显式
-//! market 校验：矛盾/不支持/北交所三态 400）、港股左补零与美股大写归一、美股
-//! 聚合路由值与报价币种推导。纯函数测试，不触网络。
-
 use crate::market::{Market, QuoteMarket, StockRoute, derive_quote_currency};
 use crate::stock::{ResolvedStockCode, explicit_quote_market, resolve_stock_code};
 use ledger_infra::error::AppError;
@@ -13,10 +8,6 @@ fn resolved(route: StockRoute, code: &str) -> ResolvedStockCode {
         code: code.to_string(),
     }
 }
-
-// ---------------------------------------------------------------------------
-// 缺省 market：按代码形态单点推断
-// ---------------------------------------------------------------------------
 
 #[test]
 fn six_digit_codes_infer_sh_and_sz_by_leading_digit() {
@@ -39,8 +30,6 @@ fn six_digit_codes_infer_sh_and_sz_by_leading_digit() {
 
 #[test]
 fn exchange_traded_fund_code_segments_infer_their_exchange() {
-    // 场内基金段入形态闭集：ETF/LOF 是本端点类型提示（etf）的探测对象
-    //（spec #690 用户故事 12 / ADR-0081），免传 market 应按交易所推断。
     assert_eq!(
         resolve_stock_code(None, "510300").unwrap(),
         resolved(StockRoute::Sh, "510300"),
@@ -76,10 +65,6 @@ fn short_numeric_codes_infer_hk_with_zero_padding() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// 美股：纯字母 ticker 单查询解析为聚合路由值 us（ADR-0130 决策 2 / issue #1567）
-// ---------------------------------------------------------------------------
-
 #[test]
 fn letter_ticker_resolves_to_single_us_aggregate_query() {
     assert_eq!(
@@ -87,7 +72,6 @@ fn letter_ticker_resolves_to_single_us_aggregate_query() {
         resolved(StockRoute::Us, "AAPL"),
         "纯字母 ticker 单查询（聚合路由值 us，精确交易所由行情源自报；候选遍历退役）"
     );
-    // 小写 ticker 归一为大写（幂等建行同自然键）。
     assert_eq!(
         resolve_stock_code(None, "aapl").unwrap(),
         resolved(StockRoute::Us, "AAPL"),
@@ -97,7 +81,6 @@ fn letter_ticker_resolves_to_single_us_aggregate_query() {
 
 #[test]
 fn letter_ticker_with_explicit_us_market_resolves_to_same_aggregate_query() {
-    // 显式美股三市场与缺省同解：行情源不区分交易所，精确归属由响应自报。
     for market in [QuoteMarket::Nasdaq, QuoteMarket::Nyse, QuoteMarket::Amex] {
         assert_eq!(
             resolve_stock_code(Some(market), "aapl").unwrap(),
@@ -106,10 +89,6 @@ fn letter_ticker_with_explicit_us_market_resolves_to_same_aggregate_query() {
         );
     }
 }
-
-// ---------------------------------------------------------------------------
-// 显式 market：一致放行、矛盾/不支持 400
-// ---------------------------------------------------------------------------
 
 #[test]
 fn explicit_market_consistent_with_shape_passes() {
@@ -132,17 +111,17 @@ fn explicit_market_consistent_with_shape_passes() {
 #[test]
 fn explicit_market_contradicting_shape_returns_coded_400() {
     for (market, code) in [
-        (QuoteMarket::Sz, "600519"),     // 沪市形态传深市
-        (QuoteMarket::Sh, "000001"),     // 深市形态传沪市
-        (QuoteMarket::Sh, "300750"),     // 创业板形态传沪市
-        (QuoteMarket::Sz, "510300"),     // 沪场内基金段传深市
-        (QuoteMarket::Sh, "159915"),     // 深场内基金段传沪市
-        (QuoteMarket::Sz, "00700"),      // 港股形态传深市
-        (QuoteMarket::Hk, "600519"),     // 沪市形态传港股
-        (QuoteMarket::Sh, "AAPL"),       // 字母 ticker 传沪深港：形态矛盾
-        (QuoteMarket::Nasdaq, "600519"), // 数字形态传美股：形态矛盾
-        (QuoteMarket::Nyse, "00700"),    // 港股形态传美股
-        (QuoteMarket::Sh, "1234567"),    // 7 位数字不在任何市场形态闭集
+        (QuoteMarket::Sz, "600519"),
+        (QuoteMarket::Sh, "000001"),
+        (QuoteMarket::Sh, "300750"),
+        (QuoteMarket::Sz, "510300"),
+        (QuoteMarket::Sh, "159915"),
+        (QuoteMarket::Sz, "00700"),
+        (QuoteMarket::Hk, "600519"),
+        (QuoteMarket::Sh, "AAPL"),
+        (QuoteMarket::Nasdaq, "600519"),
+        (QuoteMarket::Nyse, "00700"),
+        (QuoteMarket::Sh, "1234567"),
     ] {
         let err = resolve_stock_code(Some(market), code).unwrap_err();
         assert!(
@@ -164,10 +143,6 @@ fn explicit_market_contradicting_shape_returns_coded_400() {
 
 #[test]
 fn unsupported_market_outside_closed_set_returns_400() {
-    // 闭集外取值（不可路由的 unknown、聚合路由值 us、任意词 bse、大小写错拼）：
-    // 唯一校验点 explicit_quote_market 显式 400 暂不支持——聚合路由值 us 只由
-    // 解析产物携带，不作为显式入参开放（issue #1673：校验骑行 Market::parse 与
-    // as_quote_market 单点，不设第二份清单）。
     for market in ["bse", "unknown", "us", "NasDaQ"] {
         let err = explicit_quote_market(market).unwrap_err();
         assert!(
@@ -192,10 +167,6 @@ fn unsupported_market_outside_closed_set_returns_400() {
     }
 }
 
-// ---------------------------------------------------------------------------
-// 北交所：显式「暂不支持」，与显式 market 无关
-// ---------------------------------------------------------------------------
-
 #[test]
 fn beijing_exchange_codes_rejected_as_unsupported() {
     for code in ["430047", "830799", "871981"] {
@@ -219,19 +190,12 @@ fn beijing_exchange_codes_rejected_as_unsupported() {
             }
             other => panic!("{code} 应为码化错误，实际: {other:?}"),
         }
-        // 显式 market 也无法挽救：北交所不在任何支持市场的形态闭集内。
         assert!(resolve_stock_code(Some(QuoteMarket::Sh), code).is_err());
     }
 }
 
-// ---------------------------------------------------------------------------
-// 无法推断的形态：缺省 market 400、提示显式传参
-// ---------------------------------------------------------------------------
-
 #[test]
 fn unresolvable_shapes_rejected_with_explicit_market_hint() {
-    // 混合形态（字母数字混杂、含点号）与闭集外数字形态无法推断；纯字母 ticker
-    // 自 #696 起按美股解析，不再落入本分支。
     for code in ["1234A6", "BRK.B", "900001", "1234567", ""] {
         let err = resolve_stock_code(None, code).unwrap_err();
         assert!(
@@ -249,10 +213,6 @@ fn unresolvable_shapes_rejected_with_explicit_market_hint() {
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// 报价币种推导（ADR-0037 决策 2 / ADR-0081）
-// ---------------------------------------------------------------------------
 
 #[test]
 fn quote_currency_derives_from_market() {

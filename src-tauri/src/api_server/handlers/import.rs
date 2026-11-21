@@ -1,32 +1,12 @@
-//! LLM 导入知识端点：导入全流程约定的单一权威**集合**——知识索引 + 分域知识节
-//! （#1123 分级自足上线，ADR-0110）。基础知识与投资节各由一个端点承载，
-//! 不保留全文副本（#286 红线：同一节正文只存在一处）。
-
 use axum::http::StatusCode;
 use axum::http::header;
 use axum::response::IntoResponse;
 
-/// 基础导入知识（标题 + 知识索引 + 非投资节）：金额与日期口径、每行拆解、商户约定、
-/// 个人间借贷、幂等与去重、对账完成判定、对账纠错；知识索引逐节给出分域知识节的
-/// 名称、一句话语义与「何时需要读」的触发，是按需取节的唯一陈述点（ADR-0110）。
-///
-/// 内容维护在 `src-tauri/prompts/import-knowledge-base.md`，编译期嵌入（`include_str!`）。
 const BASE_KNOWLEDGE: &str = include_str!("../../../prompts/import-knowledge-base.md");
 
-/// 投资节（投资交易 / 基金申赎 / 基金转换 / 份额调整 / 现金分红）。
-///
-/// 内容维护在 `src-tauri/prompts/import-knowledge-investment.md`，编译期嵌入
-/// （`include_str!`）；投资五节正文只存在于此常量，基础侧不保留副本（#286 红线）。
 const INVESTMENT_KNOWLEDGE_SECTIONS: &str =
     include_str!("../../../prompts/import-knowledge-investment.md");
 
-/// 投资五节标题锚点（issue #1185 收敛为单一住处）：#1121 切分边界锚点、
-/// 「投资节正文只存在一处」的判定依据，也是 #1123 API 集成锁（基础知识
-/// 排他断言 / 投资端点存在断言）的共享锚——两层锁同源，节标题改名只改这里，
-/// 漂移在两层断言同步暴露。
-/// 生产构建不编译（ADR-0111 决策 5 / #1132 先例）：仅 `cfg(test)`（本模块
-/// 单测）与显式启用 `test-utils` feature 的测试构建（集成测试经根包自身
-/// dev-dependency 启用）可见，`#[doc(hidden)]` 不进文档。
 #[cfg(any(test, feature = "test-utils"))]
 #[doc(hidden)]
 pub const INVESTMENT_SECTION_HEADERS: [&str; 5] = [
@@ -82,10 +62,6 @@ pub async fn import_investment_knowledge_handler() -> impl IntoResponse {
 mod tests {
     use super::*;
 
-    /// 投资节独有措辞抽查（多腿转换、份额调整、分红三节的确定性表述，及
-    /// issue #1124 自基础侧迁入的 kind 清单、商户排除与读回来源口径措辞）：
-    /// 整节或其中口径被误搬回基础常量时逐词报红——与端点关键词锁（HTTP 响应层）
-    /// 互补，本组断言对准常量结构，守住「同一节正文只存在一处」。
     const INVESTMENT_ONLY_WORDING: [&str; 11] = [
         "tradingTarget",
         "convertAmount",
@@ -120,8 +96,6 @@ mod tests {
         }
     }
 
-    /// 分级自足上线（#1123 / ADR-0110）：#1121 的占位拼接退役，两常量即两端点
-    /// 响应——任何占位标记不得残留；知识索引段与投资端点指针必须在基础侧在位。
     #[test]
     fn base_knowledge_carries_index_and_constants_carry_no_placeholder() {
         assert!(!BASE_KNOWLEDGE.contains("{{"), "基础常量不得含占位标记");

@@ -295,4 +295,80 @@ describe("check-comment-gate", () => {
     expect(rechecked.status).toBe(0);
     expect(rechecked.output).toContain("注释棘轮通过");
   });
+
+  it("compile_fail doctest 载体豁免：/// 与 //! 形态、fence 体内 // 注释行、未闭合 fence 豁免至文件尾，豁免行不进棘轮计数", () => {
+    const content = [
+      "//! crate 文档行不在 fence 内照常计数",
+      "",
+      "/// ```compile_fail",
+      "/// use ledger_scheduled::nope;",
+      "/// ```",
+      "",
+      "//! ```compile_fail",
+      "//! use tauri_app_lib::nope;",
+      "//! ```",
+      "",
+      "//! ```compile_fail",
+      "//! // fence 体内注释行一并豁免",
+      "//! use tauri_app_lib::nope;",
+      "//! ```",
+      "",
+      "//! ```compile_fail",
+      "//! use tauri_app_lib::unclosed_nope;",
+      "pub fn demo() {}",
+      "// 文件尾前普通注释行，仍在未闭合 fence 内一并豁免",
+      "",
+    ].join("\n");
+    const root = makeFixture([{ rel: "src-tauri/crates/demo/src/lib.rs", content }], {
+      scripts: 0,
+      "src-tauri": 0,
+      "src-tauri/crates/demo": 1,
+    });
+    const r = run([root]);
+    expect(r.status).toBe(0);
+    expect(r.output).toContain("compile_fail 载体豁免 13 行");
+    expect(r.output).toContain("注释棘轮通过");
+    expect(r.output).not.toContain("nope;");
+    expect(r.output).not.toContain("fence 体内注释行");
+    expect(r.output).not.toContain("文件尾前普通注释行");
+
+    const zeroTolerance = makeFixture([{ rel: "src-tauri/crates/demo/src/lib.rs", content }], {
+      scripts: 0,
+      "src-tauri": 0,
+      "src-tauri/crates/demo": 0,
+    });
+    const z = run([zeroTolerance]);
+    expect(z.status).toBe(1);
+    expect(z.output).toContain("零容忍命中（基线 0）：src-tauri/crates/demo");
+    expect(z.output).toContain("lib.rs:1：//! crate 文档行不在 fence 内照常计数");
+    expect(z.output).not.toContain("nope;");
+  });
+
+  it("非 compile_fail fence（rust/ignore/no_run）不豁免：文档示例内行照常计数", () => {
+    const content = [
+      "/// ```rust",
+      "/// let x = 1;",
+      "/// ```",
+      "/// ```ignore",
+      "/// let y = 2;",
+      "/// ```",
+      "/// ```no_run",
+      "/// let z = 3;",
+      "/// ```",
+      "",
+    ].join("\n");
+    const root = makeFixture([{ rel: "src-tauri/crates/demo/src/lib.rs", content }], {
+      scripts: 0,
+      "src-tauri": 0,
+      "src-tauri/crates/demo": 0,
+    });
+    const r = run([root]);
+    expect(r.status).toBe(1);
+    expect(r.output).toContain("零容忍命中（基线 0）：src-tauri/crates/demo");
+    expect(r.output).toContain("lib.rs:1：/// ```rust");
+    expect(r.output).toContain("lib.rs:2：/// let x = 1;");
+    expect(r.output).toContain("lib.rs:5：/// let y = 2;");
+    expect(r.output).toContain("lib.rs:8：/// let z = 3;");
+    expect(r.output).toContain("❌ 注释禁令失败");
+  });
 });

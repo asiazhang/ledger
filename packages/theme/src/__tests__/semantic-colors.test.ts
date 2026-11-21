@@ -8,9 +8,6 @@ import {
 } from "../semantic-colors";
 import { TRANSACTION_KINDS } from "@ledger/types";
 
-/** 语义色单一来源（issue #435）：九种交易类型 × 亮/暗两套色值。
- * 只测外部行为：类型穷尽、色值齐全、九色两两不同（防撞色回归）。 */
-
 describe("KIND_SEMANTIC_COLORS（交易类型语义色表）", () => {
   it("类型穷尽：与交易类型闭集一一对应，不多不少", () => {
     expect([...SEMANTIC_COLOR_KINDS].sort()).toEqual([...TRANSACTION_KINDS].sort());

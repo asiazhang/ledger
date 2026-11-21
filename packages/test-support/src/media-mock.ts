@@ -1,28 +1,9 @@
-/**
- * 媒体查询测试接缝：可编程假 matchMedia（issue #841，ADR-0088 决策 11 票①）。
- *
- * jsdom 无 matchMedia，既有全局桩对所有查询一律应答 false（静态）；本接缝在
- * 既有测试支持工厂体系（同目录 *-mock.ts + setup.ts 全局壳层）下提供**可编程**
- * 假 matchMedia：测试以 setFakeMedia 设定 hover / pointer / 视口宽度应答从而
- * 换档，重编程时按 MediaQueryList 语义向 matches 翻转的查询派发 change 事件。
- * 全部组件 / composable 测试经它换档，不允许第二套换档机制。
- *
- * 求值语义：接缝只认识 min-width / max-width / hover / pointer 四类特征（含
- * not 前缀与 and 组合），不认识的查询一律应答 false——与既有全局桩行为一致，
- * 外来消费者（组件库内部等）不受影响；断言不落在这类查询上。
- */
-
-/** 假 matchMedia 的可编程状态。 */
 export interface FakeMediaState {
-  /** 视口宽度（px）：窗口分级断点判定（宽度轴信号）。 */
   width: number;
-  /** hover 能力：'hover' 可悬停 / 'none' 不可（输入轴信号一）。 */
   hover: "hover" | "none";
-  /** 主指针精度：'fine' 精细 / 'coarse' 粗糙（输入轴信号二）。 */
   pointer: "fine" | "coarse";
 }
 
-/** 默认状态：桌面指针环境（宽视口 + 可悬停 + 精细主指针），既有桌面档测试语义零迁移。 */
 export const DEFAULT_MEDIA_STATE: FakeMediaState = {
   width: 1280,
   hover: "hover",
@@ -31,7 +12,6 @@ export const DEFAULT_MEDIA_STATE: FakeMediaState = {
 
 type MediaListener = (event: MediaQueryListEvent) => void;
 
-/** 注册表项：发放时记录查询与可变命中态，复位时随注册表整体清空。 */
 interface RegisteredMql {
   media: string;
   matches: boolean;
@@ -42,7 +22,6 @@ interface RegisteredMql {
 let state: FakeMediaState = { ...DEFAULT_MEDIA_STATE };
 let registry: RegisteredMql[] = [];
 
-/** 单特征求值：true / false / undefined（本接缝不认识的特征）。 */
 function evaluateFeature(feature: string, s: FakeMediaState): boolean | undefined {
   const m = /^\(\s*([\w-]+)\s*:\s*([^)]+?)\s*\)$/.exec(feature);
   if (!m) return undefined;
@@ -62,7 +41,6 @@ function evaluateFeature(feature: string, s: FakeMediaState): boolean | undefine
   }
 }
 
-/** 查询求值：not 前缀取反（内层未知仍为未知），and 组合一假即假、全真才真。 */
 function evaluateQuery(query: string, s: FakeMediaState): boolean | undefined {
   const q = query.trim();
   if (q.startsWith("not ")) {
@@ -78,18 +56,12 @@ function evaluateQuery(query: string, s: FakeMediaState): boolean | undefined {
   return known;
 }
 
-/** DOM 回调形态（函数或 { handleEvent }）归一为函数监听。 */
 function toListener(listener: EventListenerOrEventListenerObject | null): MediaListener | null {
   if (!listener) return null;
   if (typeof listener === "function") return listener;
   return (e: MediaQueryListEvent) => listener.handleEvent(e);
 }
 
-/**
- * 假 matchMedia 本体：setup.ts 以 window.matchMedia 挂载，产品代码经公开面消费。
- * matches / onchange 经 getter 读写注册表可变状态（DOM 类型只读，翻转经注册表写入）；
- * 此后由 setFakeMedia 重编程并派发 change。
- */
 export function fakeMatchMedia(query: string): MediaQueryList {
   const listeners = new Set<MediaListener>();
   const entry: RegisteredMql = {
@@ -129,10 +101,6 @@ export function fakeMatchMedia(query: string): MediaQueryList {
   return mql as unknown as MediaQueryList;
 }
 
-/**
- * 可编程换档唯一入口：合并状态补丁，重求值全部已发放查询；matches 翻转者
- * 同步翻转并派发 change（未翻转不派发，浏览器同款语义）。
- */
 export function setFakeMedia(patch: Partial<FakeMediaState>): void {
   state = { ...state, ...patch };
   for (const entry of registry) {
@@ -145,18 +113,11 @@ export function setFakeMedia(patch: Partial<FakeMediaState>): void {
   }
 }
 
-/** 复位：状态回默认、注册表与监听清空（全局壳层每测调用，语义同清理四件套）。 */
 export function resetFakeMedia(): void {
   state = { ...DEFAULT_MEDIA_STATE };
   registry = [];
 }
 
-/**
- * 观察口：统计指定查询字符串在当前注册表中累计登记的 change 监听数
- * （跨全部已发放的 MediaQueryList 求和，issue #2187 输入轴共享单例的
- * 「多消费者仅一组监听」计数断言消费本口；查询串须与产品代码收口的
- * 查询字符串完全一致）。接缝外部行为面不变，仅新增只读观测。
- */
 export function fakeMediaListenerCount(query: string): number {
   return registry.reduce((n, entry) => (entry.media === query ? n + entry.listeners.size : n), 0);
 }

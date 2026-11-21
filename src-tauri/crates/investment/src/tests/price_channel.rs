@@ -1,8 +1,3 @@
-//! 价格通道（PriceChannel）判定测试（issue #1060）：后端派生事实的分区矩阵
-//! 与读路径接线——「有价格写入通道」的口径单点（行情 / 净值 / 手动报价 /
-//! 无来源），此前由前端两处镜像谓词（走势场内白名单、录价入口）各自推断，
-//! 已漂移成第二口径，自本测试钉住的单点派生收口。
-
 use crate::{
     InstrumentListFilter, InstrumentType, Market, PriceChannel, QuoteMarket, derive_price_channel,
     derive_quote_market, list_instruments,
@@ -11,13 +6,10 @@ use crate::{
 use super::common::{insert_instrument_with_market, instrument_by_id};
 use tauri_app_lib::test_support::open;
 
-/// 行情通道：股票与场内 ETF（有市场 + 代码即可构造行情查询，issue #695）。
 #[test]
 fn stock_and_listed_etf_with_known_market_sit_in_quote_channel() {
     for quote_market in QuoteMarket::ALL {
         let market = quote_market.as_market();
-        // 可路由性唯一判定点（issue #1673）：可路由子集成员 ⇔ as_quote_market
-        // Some（反投影 as_market 同源往返）；不可路由的 unknown 恒 None。
         assert_eq!(market.as_quote_market(), Some(quote_market));
         assert_eq!(Market::Unknown.as_quote_market(), None);
         assert_eq!(
@@ -30,8 +22,6 @@ fn stock_and_listed_etf_with_known_market_sit_in_quote_channel() {
             PriceChannel::Quote,
             "etf/{market} 应属行情通道"
         );
-        // 分区出口（issue #1673）：行情分区标的经 derive_quote_market 拿到
-        // 类型化查询单元市场；不可路由市场（unknown）组合为 None。
         assert_eq!(
             derive_quote_market(InstrumentType::Stock, market, "600000", None),
             Some(quote_market)
@@ -43,8 +33,6 @@ fn stock_and_listed_etf_with_known_market_sit_in_quote_channel() {
     }
 }
 
-/// 市场未知的股票类标的：既不进行情分区（无法构造行情查询）、也不开录价入口
-/// （ADR-0036 决策 1：股票现价归同步）——真正没有价格来源的行（issue #1060）。
 #[test]
 fn stock_with_unknown_market_has_no_price_source() {
     assert_eq!(
@@ -53,8 +41,6 @@ fn stock_with_unknown_market_has_no_price_source() {
     );
 }
 
-/// 市场未知的 ETF（自建标的的合法类型白名单成员，ADR-0036）：行情不可达但
-/// 录价入口开放——手动报价通道。
 #[test]
 fn etf_with_unknown_market_falls_into_manual_channel() {
     assert_eq!(
@@ -63,8 +49,6 @@ fn etf_with_unknown_market_falls_into_manual_channel() {
     );
 }
 
-/// 场外基金净值通道（ADR-0038 决策 6）：6 位纯数字代码进净值通道；
-/// 名称充代码的基金行（非 6 位）无净值来源、归手动报价通道。
 #[test]
 fn fund_channel_splits_by_six_digit_code() {
     assert_eq!(
@@ -77,7 +61,6 @@ fn fund_channel_splits_by_six_digit_code() {
     );
 }
 
-/// 债券 / 其他类型：无行情通道，录价入口开放——手动报价通道（与市场无关）。
 #[test]
 fn bond_and_other_types_sit_in_manual_channel() {
     for kind in [InstrumentType::Bond, InstrumentType::Other] {
@@ -94,8 +77,6 @@ fn bond_and_other_types_sit_in_manual_channel() {
     }
 }
 
-/// 读路径接线：标的行（列表与按 id 精确取同一投影）携带派生通道——前端据此
-/// 放行走势与开放录价入口，不再自行按类型与市场推断（issue #1060）。
 #[test]
 fn instrument_rows_carry_derived_price_channel() {
     let conn = open();
@@ -149,7 +130,6 @@ fn instrument_rows_carry_derived_price_channel() {
     assert_eq!(channel_of("inst-manual"), PriceChannel::Manual);
     assert_eq!(channel_of("inst-none"), PriceChannel::None);
 
-    // 标的列表读路径同一投影（「价格来源」列据此展示，issue #1907 起无按 id 读路径）
     assert_eq!(
         instrument_by_id(&conn, "inst-fund").price_channel,
         PriceChannel::FundNav

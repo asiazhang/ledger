@@ -1,11 +1,3 @@
-//! 储蓄目标域的全域 op 产出与重放收敛（issue #1756）：创建 / 编辑 / 归档 /
-//! 取消归档 / 删除五入口收敛、删除余额非零禁删守卫重放侧同码挂起自愈、
-//! 重放侧金额 / 名称守卫同码、不可解码 Goal 载荷挂起不静默丢弃、
-//! schema 超前挂起与升级后重投递自愈。
-//!
-//! 专属账户的级联写入（建户 / 改名 / 软删）由账户域既有 op 承载（时钟更早、
-//! 先行到达），Goal 命令重放侧零本地 op——两端日志逐条相等是收敛判据。
-
 use super::super::{DomainCommand, OpOutcome, ingest_ops, parked_ops, read_ops};
 use super::common::{make_expense, seed_device, wire_in, wire_out};
 use ledger_savings_goal::{
@@ -25,7 +17,6 @@ fn goal_input(name: &str, amount_cents: i64) -> SavingsGoalInput {
     }
 }
 
-/// 收入输入构造器（存入目标池 = 真实 income 流水，余额缓存随产品写路径重算）。
 fn make_income(account_id: &str, amount_cents: i64, note: &str) -> TransactionInput {
     TransactionInput {
         funding: Vec::new(),
@@ -58,11 +49,6 @@ fn make_income(account_id: &str, amount_cents: i64, note: &str) -> TransactionIn
     }
 }
 
-/// 目标行业务字段快照（判据读取）：审计列（created_at / updated_at / device_id /
-/// version）是各端本地事实，不参与状态等值判定（ADR-0091，#856 承接）。
-///
-/// 元组形状系测试判据读取专用（clippy type_complexity 豁免于测试目标整体放行面
-/// 之外，此处显式豁免：元组仅测试消费，不外发）。
 #[allow(clippy::type_complexity)]
 fn read_goal(
     conn: &rusqlite::Connection,
@@ -123,7 +109,6 @@ fn goal_lifecycle_ops_replay_and_converge() {
         "创建/编辑/归档/取消归档各产出一条 op（删除即变红：移除任一写入口的 \
          record_local 接线，此断言即红）"
     );
-    // 载荷自包含：创建携带专属账户绑定（重放端只落目标行，不重建账户）。
     assert!(matches!(
         &ops_on_a[0].command,
         DomainCommand::Goal(SavingsGoalCommand::Create { .. })
@@ -141,7 +126,6 @@ fn goal_lifecycle_ops_replay_and_converge() {
         read_goal(&conn_b, &id),
         "重放后目标状态一致"
     );
-    // 专属账户随之同步（账户 op 先行到达）：绑定同 id、账户名随目标名联动。
     let account_id: String = conn_a
         .query_row("SELECT account_id FROM goals WHERE id=?1", [&id], |r| {
             r.get(0)
@@ -164,7 +148,6 @@ fn goal_lifecycle_ops_replay_and_converge() {
         "重放端零本地 op（两端日志逐条相等）"
     );
 
-    // 删除收敛：余额为零 → 级联软删专属账户（账户 op 先行）+ 目标行软删。
     delete_savings_goal(&conn_a, &id).unwrap();
     let reports = wire_in(&conn_b, &wire_out(&conn_a));
     assert!(
@@ -197,7 +180,6 @@ fn goal_delete_nonzero_balance_parks_and_self_heals() {
     seed_device(&conn_a, "dev-a");
     seed_device(&conn_b, "dev-b");
 
-    // A 建目标，同步两端一致；再记一笔从目标账户的支出（余额非零）。
     let id = create_savings_goal(&conn_a, &goal_input("买车", 100_000)).unwrap();
     wire_in(&conn_b, &wire_out(&conn_a));
     let account_id: String = conn_a
@@ -208,18 +190,14 @@ fn goal_delete_nonzero_balance_parks_and_self_heals() {
     protocol::create(&conn_a, make_expense(&account_id, 500, "从目标池支出")).unwrap();
     wire_in(&conn_b, &wire_out(&conn_a));
 
-    // 本地禁删守卫拒绝（余额非零）：零落库、零 op。
     assert!(delete_savings_goal(&conn_a, &id).is_err());
     assert_eq!(goal_ops(&conn_a).len(), 1, "本地被拒不产 op");
 
-    // A 转出清零（真实 income 流水）后删除成功：账户 op + 目标删除 op 随行产出。
     protocol::create(&conn_a, make_income(&account_id, 500, "年终奖存入")).unwrap();
     delete_savings_goal(&conn_a, &id).unwrap();
     let full = wire_out(&conn_a);
     let goal_delete = full.last().unwrap().clone();
 
-    // 只把目标删除 op 投给 B（依赖的交易 / 账户 op 滞后，对应乱序到达场景）：
-    // B 端余额仍非零 → 禁删守卫同码挂起，不落地、不静默丢弃。
     let reports = wire_in(&conn_b, std::slice::from_ref(&goal_delete));
     assert!(
         matches!(
@@ -237,7 +215,6 @@ fn goal_delete_nonzero_balance_parks_and_self_heals() {
         "禁删守卫拦下删除，目标行未软删"
     );
 
-    // 依赖方补齐（交易与账户删除 op 重投递）自然自愈：全部落地，挂起行出队。
     let reports = wire_in(&conn_b, &full);
     assert!(
         reports
@@ -257,9 +234,8 @@ fn goal_replay_guards_park_with_same_coded_error() {
     seed_device(&conn_a, "dev-a");
     seed_device(&conn_b, "dev-b");
 
-    // —— 创建侧：金额非正（载荷篡改模拟「重放侧不可信输入」）——
     let id = create_savings_goal(&conn_a, &goal_input("买车", 100_000)).unwrap();
-    let wire = wire_out(&conn_a); // [账户建户, 目标创建]
+    let wire = wire_out(&conn_a);
     let bad_create: serde_json::Value = serde_json::from_str(&wire[1]).unwrap();
     let bad_create = serde_json::to_string(&{
         let mut v = bad_create;
@@ -279,7 +255,6 @@ fn goal_replay_guards_park_with_same_coded_error() {
     assert!(read_goal(&conn_b, &id).is_none(), "非正金额创建不落地");
     assert_eq!(parked_ops(&conn_b).unwrap().len(), 1);
 
-    // 合法载荷重投递：目标行落地，挂起行出队。
     let reports = wire_in(&conn_b, &wire_out(&conn_a));
     assert!(
         reports
@@ -289,7 +264,6 @@ fn goal_replay_guards_park_with_same_coded_error() {
     assert!(read_goal(&conn_b, &id).is_some());
     assert!(parked_ops(&conn_b).unwrap().is_empty());
 
-    // —— 编辑侧：名称为空 / 金额非正（同码守卫，篡改目标编辑 op）——
     update_savings_goal(
         &conn_a,
         &id,
@@ -335,7 +309,6 @@ fn goal_replay_guards_park_with_same_coded_error() {
         "守卫挂起不落地，目标行保持合法旧值"
     );
 
-    // 合法载荷重投递：编辑落地，挂起行出队，两端收敛。
     let reports = wire_in(&conn_b, &wire_out(&conn_a));
     assert!(
         reports
@@ -348,8 +321,6 @@ fn goal_replay_guards_park_with_same_coded_error() {
     assert_eq!(read_ops(&conn_a).unwrap(), read_ops(&conn_b).unwrap());
 }
 
-/// 旧端收到新命令（Goal op 产生时 schema 版本超前本端）：挂起并提示升级、
-/// 不静默丢弃、不阻塞其余 op；升级后重投递自然重试成功即出队。
 #[test]
 fn goal_schema_ahead_op_parks_and_self_heals_after_upgrade() {
     let conn_a = test_support::open();
@@ -358,12 +329,11 @@ fn goal_schema_ahead_op_parks_and_self_heals_after_upgrade() {
     seed_device(&conn_b, "dev-b");
 
     let id = create_savings_goal(&conn_a, &goal_input("买车", 100_000)).unwrap();
-    let wire = wire_out(&conn_a); // [账户建户, 目标创建]
+    let wire = wire_out(&conn_a);
     let mut op: serde_json::Value = serde_json::from_str(&wire[1]).unwrap();
     op["schema_version"] = serde_json::json!(op["schema_version"].as_i64().unwrap() + 1);
     let ahead = serde_json::to_string(&op).unwrap();
 
-    // 超前 op 与正常 op 同批：超前者挂起，正常者照常落地。
     let reports = wire_in(&conn_b, &[wire[0].clone(), ahead]);
     assert_eq!(reports[0].outcome, OpOutcome::Applied);
     assert!(
@@ -376,7 +346,6 @@ fn goal_schema_ahead_op_parks_and_self_heals_after_upgrade() {
     assert!(read_goal(&conn_b, &id).is_none(), "未执行不落地");
     assert_eq!(parked_ops(&conn_b).unwrap().len(), 1);
 
-    // 「升级后」重投递：合法 op（同 op_id）落地，挂起行出队。
     let reports = wire_in(&conn_b, &wire_out(&conn_a));
     assert!(
         reports
@@ -389,8 +358,6 @@ fn goal_schema_ahead_op_parks_and_self_heals_after_upgrade() {
     assert_eq!(read_ops(&conn_a).unwrap(), read_ops(&conn_b).unwrap());
 }
 
-/// 旧端收到不可解码的 Goal 载荷（信封可读、载荷动作不可识别）：按既有挂起机制
-/// 落挂起队列、身份与载荷原样保留、不静默丢弃、不进日志（issue #1756 AC）。
 #[test]
 fn goal_payload_undecodable_parks_and_never_drops() {
     let conn = test_support::open();

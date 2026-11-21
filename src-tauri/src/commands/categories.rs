@@ -1,14 +1,3 @@
-//! IPC 命令壳 · 分类（Category）。
-//!
-//! 只负责参数解包与统一写入口一行调用；分类域行为位于 [`crate::categories`]。
-//! 注册路径与前端调用保持不变。
-//!
-//! 全部命令 async 化（形状乙，spec #498 / #501）；写命令经壳层统一写入口
-//! [`crate::shell_support::write_entry::write_entry`]（ADR-0073）：仪式（锁、事务、置脏、信号）
-//! 内化单点，参考写入成功发参考失效信号（映射单点判定，ADR-0044）。
-//
-// 豁免（ADR-0060）：tauri 宏为 async 命令生成的 `_check = unreachable!()`
-// （tauri-macros wrapper.rs，宏不透传逐点 allow，无法在源头消除，升 tauri 后移除）。
 #![allow(clippy::unreachable)]
 
 use tauri::State;
@@ -21,7 +10,6 @@ use ledger_infra::db::DbState;
 use ledger_infra::error::Result;
 use ledger_infra::signals::WriteOp;
 
-/// 分类列表：默认仅未删除；`include_deleted=true` 返回含软删全量（issue #377，先例商户）。
 #[tauri::command]
 pub async fn list_categories(
     db: State<'_, DbState>,

@@ -11,7 +11,6 @@ describe("createLatestWins（最新胜出竞态纪元共享 module，issue #1678
     expect(first.isStale()).toBe(true);
     expect(second.isStale()).toBe(false);
 
-    // 多次推进只认最后一次
     const third = wins.begin();
     expect(second.isStale()).toBe(true);
     expect(third.isStale()).toBe(false);
@@ -24,12 +23,10 @@ describe("createLatestWins（最新胜出竞态纪元共享 module，issue #1678
     expect(s1.isStale()).toBe(false);
     expect(s2.isStale()).toBe(false);
 
-    // 采样不推进：采样之间互不作废（push-first-list refresh 在途合并语义）
     const s3 = wins.observe();
     expect(s1.isStale()).toBe(false);
     expect(s3.isStale()).toBe(false);
 
-    // 后续推进使全部采样 token 一并过期
     wins.invalidate();
     expect(s1.isStale()).toBe(true);
     expect(s2.isStale()).toBe(true);
@@ -44,7 +41,6 @@ describe("createLatestWins（最新胜出竞态纪元共享 module，issue #1678
     expect(begun.isStale()).toBe(true);
     expect(sampled.isStale()).toBe(true);
 
-    // invalidate 后新发起照常取得未过期 token
     const fresh = wins.begin();
     expect(fresh.isStale()).toBe(false);
   });

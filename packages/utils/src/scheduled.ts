@@ -1,7 +1,6 @@
 import { t } from "@ledger/i18n";
 import type { ScheduledStatus, ScheduledTransactionOccurrence } from "@ledger/types";
 
-/** 计划状态 → 状态标签（订阅清单与花费分析面板共用，避免映射漂移；渲染时经 t() 翻译，随界面语言即时切换） */
 export function scheduledStatusLabel(status: string): string {
   switch (status as ScheduledStatus) {
     case "active":
@@ -17,7 +16,6 @@ export function scheduledStatusLabel(status: string): string {
   }
 }
 
-/** 期次状态 → 状态标签（期次详情弹窗用，issue #205；与后端 OccurrenceStatus 枚举一致；渲染时经 t() 翻译） */
 export function occurrenceStatusLabel(status: ScheduledTransactionOccurrence["status"]): string {
   switch (status) {
     case "pending":

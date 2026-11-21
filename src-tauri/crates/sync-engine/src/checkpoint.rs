@@ -1,40 +1,3 @@
-//! Checkpoint 检查点快照（issue #857 / ADR-0091 决策 9）：全量快照 + 各设备 op
-//! 流已应用位点的产出、新端引导与 OpLog 截断机制。
-//!
-//! 语义约束只有一条——任何端永远能从 Checkpoint 加其后 op 重建出一致状态：
-//! - **产出**（[`create_checkpoint`]）：`VACUUM INTO` 双文件成对一致性快照——
-//!   业务件（main）+ 同步元数据件（attached `sync` 侧的同刻快照——拆库后
-//!   四表恒住 attached 侧，contract 后无 main 回退源，#1872；ADR-0139 决策 5；
-//!   与备份同构，ADR-0016 的文件级快照纪律；继承源库加密
-//!   形态，文件即真相），配上本端位点表（[`super::positions`]）。位点与快照
-//!   须同刻成对——调用方持单连接互斥锁一次性完成（壳层同步轮次形态），
-//!   进程内无并发写插入。
-//! - **引导**（[`bootstrap_from_checkpoint`]）：业务件经 `ATTACH`（密文快照凭
-//!   主口令，与密文备份恢复同形态）挂载后整库换入——SQL 级重建（建表 → 拷行
-//!   → 索引/触发器/视图），任意加密形态组合（明文/密文库 × 明文/密文快照）
-//!   均成立（bundled SQLCipher 对加密库禁用 backup API，SQL 级是官方正解）。
-//!   同步元数据件以同款 SQL 级重建换入 attached 四表（业务件不含四表，同步件
-//!   是四表的唯一来源；contract 后恒消费，#1872）。旧形态单文件快照（同步件
-//!   为空，票 04 前产物）走跨版本兼容路径（票 07 / spec #1866）：四表随业务
-//!   件整库换入 main（user_version 回退到拆库前），引导收尾的迁移前向重放
-//!   （V036 的 IF NOT EXISTS 收敛）把四表按表搬入 attached 并清出 main——
-//!   两库归位由迁移链交付。schema 偏斜双向处置：快照更新→拒绝；较旧→对齐
-//!   后迁移升级。随后换入本机设备身份、位点表以 Checkpoint 为准重建。
-//!   快照携带的日志与挂起队列随行采纳：日志给出位点之前的去重身份（对端
-//!   全量重投不再重放），挂起行经重投递幂等覆盖自愈。
-//! - **截断**（[`truncate_stream_before`]）：机制原语，三硬约束——只有来源
-//!   设备有权截断自己的流；只有位点之前（时钟 ≤ 水位）才可删；挂起 op 不在
-//!   日志、位点不越过它，天然不被截断。**已启用**（ADR-0139 决策 8 推翻
-//!   #857「v1 永不截断」，#1874 落地触发调度）：安全水位由通道层在成功轮次
-//!   落库段计算——各端经 manifest 声明的位点最小值，并以当前对端可达
-//!   Checkpoint 的位点覆盖为上界校正（通道层 own_stream_watermark 单点）；
-//!   本函数保持原语形态（owner 门 + 位点上界 + 挂起豁免）。
-//!
-//! 引导守卫：目标必须尚未参与同步（无日志、无位点、无挂起）——引导是整库
-//! 换入，覆盖既有同步状态等于丢账；残留用户业务数据的库同样拒绝（加入即
-//! 新库）。两半守卫收在 [`bootstrap_preflight`] / [`bootstrap_from_channel`]
-//! 域内单点（issue #864），壳层退回解包与投影。
-
 use std::path::{Path, PathBuf};
 
 use rusqlite::Connection;
@@ -51,47 +14,25 @@ use super::channel::FetchedCheckpoint;
 use super::ops;
 use super::trigger::SyncChannel;
 
-/// 引导期间业务件挂载的 ATTACH 别名。
 const SNAP_ALIAS: &str = "sync_snap";
 
-/// 引导期间同步元数据件挂载的 ATTACH 别名（双文件成对，ADR-0139 决策 5）。
 const SNAP_META_ALIAS: &str = "sync_snap_meta";
 
-/// Checkpoint（检查点快照）：全量数据快照 + 各设备 op 流已应用位点。
-///
-/// `snapshot` 是业务件 SQLite 文件字节（`VACUUM INTO` 产物，继承源库加密形态，
-/// 文件即真相）；`sync_snapshot` 是同步元数据件（同步四表所在库的同刻快照，
-/// ADR-0139 决策 5 双文件成对；旧形态单文件快照无此件，空 `Vec` 承载）。位点
-/// 与快照对同刻成对，是「快照 + 其后 op = 一致状态」判据的组成部分。通道上
-/// 的打包与分代命名（SyncEnvelope / manifest 双指针）归 Transport（#859）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Checkpoint {
-    /// 各设备 op 流已应用位点（快照时刻各流头）。
     pub positions: Vec<StreamPosition>,
-    /// 业务件全量快照（main 的 SQLite 文件字节）。
     pub snapshot: Vec<u8>,
-    /// 同步元数据件（同步四表所在库的 SQLite 文件字节；旧形态单文件快照为空）。
     pub sync_snapshot: Vec<u8>,
 }
 
-/// 任意时刻产出 Checkpoint：双文件成对一致性快照（业务件 + 同步元数据件）+ 本
-/// 端位点表。
-///
-/// 必须在单连接互斥锁内调用（位点与快照同刻成对的保证）；不得处于写事务中
-/// （`VACUUM INTO` 无法在事务内执行）。成对约束只辖产出段：其后的封包与上传
-/// （[`super::channel::upload_checkpoint`]）只消费本函数定格的快照字节，不
-/// 消费连接，在连接锁外完成（#1284，判据同 ADR-0120）。
 pub fn create_checkpoint(conn: &Connection) -> Result<Checkpoint> {
     let snapshot_path = temp_snapshot_path("cp");
     let sync_snapshot_path = temp_snapshot_path("cp-sync");
     let result = (|| -> Result<Checkpoint> {
-        // 业务件：main 的一致性快照（既有形态不变）。
         conn.execute(
             "VACUUM INTO ?1",
             rusqlite::params![snapshot_path.to_string_lossy()],
         )?;
-        // 同步元数据件：attached `sync` 侧的同刻快照（逐库 VACUUM 收口基础设施单点，
-        // 与业务件同一互斥锁内先后定格，同刻成对）。
         db::snapshot_sync_tables_into(conn, &sync_snapshot_path)?;
         Ok(Checkpoint {
             positions: positions::list(conn)?,
@@ -104,23 +45,11 @@ pub fn create_checkpoint(conn: &Connection) -> Result<Checkpoint> {
     result
 }
 
-/// 新端引导：整库换入 Checkpoint 快照并就位位点。
-///
-/// 目标必须是尚未参与同步的库（守卫拒绝，见模块文档）；`passphrase` 用于
-/// 密文快照（继承加密源库的产物，与密文备份恢复同形态：缺口令报
-/// `sync-engine.checkpoint-passphrase-required` 可重试，错误口令报
-/// `encryption.passphrase-incorrect`），明文快照不消费口令。引导后本机持有
-/// 自己的设备身份（既有则保留、无则新生成），位点表以 Checkpoint 为准重建。
-///
-/// 必须在单连接互斥锁内调用、不得处于写事务中（`ATTACH`/`PRAGMA` 时序与
-/// `foreign_keys` 开关要求）。
 pub fn bootstrap_from_checkpoint(
     conn: &mut Connection,
     checkpoint: &Checkpoint,
     passphrase: Option<&str>,
 ) -> Result<()> {
-    // 守卫：目标尚未参与同步（三张同步元数据表全空；权威复验，壳层拉取前
-    // 已有同序前置）。
     if let Some(table) = first_sync_table_not_empty(conn)? {
         return Err(AppError::codedp(
             "sync-engine.bootstrap-not-fresh",
@@ -128,8 +57,6 @@ pub fn bootstrap_from_checkpoint(
             &[table],
         ));
     }
-    // 引导前捕获/生成本机设备身份（首用生成单点；重建后换回，快照携带的
-    // 来源方身份不残留）。
     let own_device = device::device_id(conn)?;
     let own_clock: i64 = conn.query_row(
         "SELECT logical_clock FROM sync_device WHERE id = ?1",
@@ -137,8 +64,6 @@ pub fn bootstrap_from_checkpoint(
         |r| r.get(0),
     )?;
 
-    // 快照对落临时文件 → 挂载（密文凭口令）→ 整库重建换入 + 同步件按形态归位
-    // → 卸载。
     let snapshot_path = temp_snapshot_path("restore");
     let sync_snapshot_path = temp_snapshot_path("restore-sync");
     std::fs::write(&snapshot_path, &checkpoint.snapshot)?;
@@ -163,17 +88,12 @@ pub fn bootstrap_from_checkpoint(
                 ));
             }
             rebuild_main_from_snapshot(conn, snapshot_version)?;
-            // 同步元数据件换入 attached 四表（业务件不含四表，同步件是四表的唯一
-            // 来源；contract 后恒消费，#1872）。旧形态单文件快照（同步件为空）恒
-            // 跳过——四表随业务件整库换入 main，由下方 init_db 的迁移前向重放
-            // 按表归位两库（跨版本兼容，票 07 已交付），不在本分支挂载缺失的同步件。
             if checkpoint.sync_snapshot.is_empty() {
                 Ok(())
             } else {
                 consume_sync_snapshot(conn, &sync_snapshot_path, passphrase)
             }
         })();
-        // 挂载库恒卸载（重建失败亦然），随后以重建结果为准。
         let detach = conn.execute(&format!("DETACH DATABASE {SNAP_ALIAS}"), []);
         rebuild?;
         detach?;
@@ -183,8 +103,6 @@ pub fn bootstrap_from_checkpoint(
     fs_util::cleanup(&sync_snapshot_path);
     result?;
 
-    // 快照 schema 较旧时迁移升级（同版本为无操作）；换入本机身份、位点重建
-    // 为 Checkpoint 携带值（与快照内置位点同刻，覆写仅为以信封对为权威）。
     db::init_db(&mut *conn)?;
     db::check_integrity(conn)?;
     ensure_transaction(conn, || {
@@ -206,22 +124,6 @@ pub fn bootstrap_from_checkpoint(
     Ok(())
 }
 
-/// 同步元数据件归位：业务件整库重建完成后调用——把同步件 SQL 级重建换入
-/// attached 四表（业务件不含四表，同步件是四表的唯一来源；contract 后恒消费，
-/// #1872，无「attached 无表则跳过」的回退分支）。
-///
-/// 旧形态单文件快照（同步件为空，票 04 前产物）在调用前已被跳过（不挂载缺失
-/// 的同步件）——四表在业务件内、随整库换入 main，由引导收尾的迁移前向重放
-/// （V036 的 IF NOT EXISTS 收敛）按表搬入 attached 并清出 main，两库归位由此
-/// 交付（票 07 / spec #1866：新版端引导旧版端快照的兼容期；归位与「引导 +
-/// 增量 = 源状态」判据见域单测
-/// `legacy_single_file_snapshot_lands_tables_in_two_dbs_and_converges`）。
-///
-/// 已知中间态（仅存在于票 04→05 之间的未发布开发态，发布形态不可达）：双库
-/// 目标引导「业务件含四表」的回退期快照时，同步件先行换入 attached、随后
-/// 迁移前向重放再从 main 搬入同刻同内容行——主键相撞即确定性报错（响亮
-/// 失败优于静默重叠）；票 05 迁移后业务件不再含四表，票 06 删除双源回退后
-/// 该形态不再可产出。
 fn consume_sync_snapshot(
     conn: &Connection,
     sync_snapshot_path: &Path,
@@ -229,17 +131,12 @@ fn consume_sync_snapshot(
 ) -> Result<()> {
     attach_snapshot(conn, SNAP_META_ALIAS, sync_snapshot_path, passphrase)?;
     let rebuild = rebuild_sync_tables_from_snapshot(conn);
-    // 挂载库恒卸载（重建失败亦然），随后以重建结果为准。
     let detach = conn.execute(&format!("DETACH DATABASE {SNAP_META_ALIAS}"), []);
     rebuild?;
     detach?;
     Ok(())
 }
 
-/// 同步元数据件的四表 SQL 级重建：以挂载的同步件（[`SNAP_META_ALIAS`]）换入
-/// attached `sync` 侧。逐表 DROP（自动带走索引）→ 按快照 DDL 建表 → 拷行 →
-/// 索引复位；单事务跨库提交（非 WAL master journal 保证集合级原子，ADR-0139
-/// 决策 2）。四表闭集无外键（V020 刻意不设）、无生成列，整列拷贝成立。
 fn rebuild_sync_tables_from_snapshot(conn: &Connection) -> Result<()> {
     ensure_transaction(conn, || {
         for table in db::SYNC_TABLES {
@@ -252,8 +149,6 @@ fn rebuild_sync_tables_from_snapshot(conn: &Connection) -> Result<()> {
                 [],
                 |r| r.get(0),
             )?;
-            // DDL 注入 attached 限定符：快照存的是原始非限定 CREATE 语句，
-            // 直接执行会落到 main（unqualified 默认建库侧）。
             let qualified = ddl.replacen("CREATE TABLE ", "CREATE TABLE sync.", 1);
             conn.execute(&qualified, [])?;
             conn.execute(
@@ -261,8 +156,6 @@ fn rebuild_sync_tables_from_snapshot(conn: &Connection) -> Result<()> {
                 [],
             )?;
         }
-        // 索引复位（四表的从属索引，按 tbl_name 归属核对、不依赖命名约定；
-        // sql IS NULL 的自动索引随表自建，跳过）。
         let placeholders = db::SYNC_TABLES
             .iter()
             .map(|t| format!("'{t}'"))
@@ -275,7 +168,6 @@ fn rebuild_sync_tables_from_snapshot(conn: &Connection) -> Result<()> {
         let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
         let index_ddl = rows.collect::<std::result::Result<Vec<_>, _>>()?;
         for sql in index_ddl {
-            // 同款限定符注入（CREATE [UNIQUE] INDEX 两种形态）。
             let qualified = sql
                 .replacen("CREATE UNIQUE INDEX ", "CREATE UNIQUE INDEX sync.", 1)
                 .replacen("CREATE INDEX ", "CREATE INDEX sync.", 1);
@@ -285,10 +177,6 @@ fn rebuild_sync_tables_from_snapshot(conn: &Connection) -> Result<()> {
     })
 }
 
-/// 挂载快照库到指定别名：密文快照凭主口令 `ATTACH ... KEY`（与密文备份恢复
-/// 同形态），明文快照免口令。SQLCipher 延迟到首条读语句才校验口令——由挂载
-/// 后的类型化读语句（[`attach_sql`]）归一错误形态。业务件与同步元数据件各用
-/// 己方别名挂载（[`SNAP_ALIAS`] / [`SNAP_META_ALIAS`]）。
 fn attach_snapshot(
     conn: &Connection,
     alias: &str,
@@ -321,15 +209,9 @@ fn attach_snapshot(
     }
 }
 
-/// ATTACH 语句执行（本仓统一 SQLCipher 构建基座：明文库以 `KEY ''` 挂载）。
-/// 挂载后立即以类型化读语句校验口令——`PRAGMA key`/`ATTACH KEY` 本身不校验，
-/// 首条读语句才解密页数据；错误口令归一为可重试的码化错误（与密文备份恢复
-/// 同款，不裸上抛）。
 fn attach_sql(conn: &Connection, sql: &str, key: &str, path: &Path, alias: &str) -> Result<()> {
     conn.execute(sql, rusqlite::params![path.to_string_lossy(), key])
         .map_err(|e| {
-            // 错误口令在本 SQLCipher 构建上于 ATTACH 即报 NOTADB，归一为可重试
-            // 码化错误；其余错误原样上抛。
             if db::encryption::is_not_a_database(&e) {
                 db::encryption::passphrase_incorrect_error()
             } else {
@@ -349,28 +231,17 @@ fn attach_sql(conn: &Connection, sql: &str, key: &str, path: &Path, alias: &str)
     Ok(())
 }
 
-/// 整库重建：以挂载的快照 schema 与数据换入 main。
-///
-/// 步骤（单事务；`foreign_keys` 先关后开，外键校验以 `foreign_key_check`
-/// 兜底在提交前完成）：清空 main 全部用户对象 → 按快照建表 → 逐表拷行 →
-/// 索引/视图/触发器复位 → `user_version` 对齐快照 → 外键校验。bundled
-/// SQLCipher 对加密库禁用 backup 页拷贝，SQL 级重建对任意加密形态组合成立。
 fn rebuild_main_from_snapshot(conn: &Connection, snapshot_version: i64) -> Result<()> {
     conn.execute("PRAGMA foreign_keys = OFF", [])?;
     let rebuilt = ensure_transaction(conn, || {
-        // 清空 main（快照外对象不留残迹）：先从属对象后表，删表自动带走
-        // 其索引/触发器，IF EXISTS 兜底重复。
         for drop_sql in drop_statements(conn)? {
             conn.execute(&drop_sql, [])?;
         }
-        // 建表（快照 schema 原样）→ 拷行 → 从属对象复位（与快照同名同序）。
         let objects = snapshot_objects(conn)?;
         for sql in objects.tables() {
             conn.execute(sql, [])?;
         }
         for (table, bare) in objects.table_names.iter().zip(&objects.bare_names) {
-            // 生成列（GENERATED ALWAYS AS，hidden≠0）不可作为 INSERT 目标，
-            // 显式列清单排除之。
             let columns = insertable_columns(conn, bare)?;
             conn.execute(
                 &format!("INSERT INTO main.{table} ({columns}) SELECT {columns} FROM {SNAP_ALIAS}.{table}"),
@@ -380,9 +251,7 @@ fn rebuild_main_from_snapshot(conn: &Connection, snapshot_version: i64) -> Resul
         for sql in objects.subordinates() {
             conn.execute(sql, [])?;
         }
-        // user_version 对齐快照（迁移起点），随后 init_db 前向升级。
         conn.execute(&format!("PRAGMA user_version = {snapshot_version}"), [])?;
-        // 外键校验兜底（快照自身不一致在此确定性失败，事务整体回滚）。
         let violations: i64 =
             conn.query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |r| {
                 r.get(0)
@@ -400,7 +269,6 @@ fn rebuild_main_from_snapshot(conn: &Connection, snapshot_version: i64) -> Resul
     rebuilt
 }
 
-/// main 库全部用户对象的 DROP 语句（触发器/视图/索引先行，表殿后）。
 fn drop_statements(conn: &Connection) -> Result<Vec<String>> {
     let mut stmt = conn.prepare(
         "SELECT type, name FROM main.sqlite_master \
@@ -423,8 +291,6 @@ fn drop_statements(conn: &Connection) -> Result<Vec<String>> {
     Ok(statements)
 }
 
-/// 快照库对象清单：建表语句 + 表名（引用形/裸名成对）+ 从属对象（索引/视图/
-/// 触发器）建语句。
 struct SnapshotObjects {
     tables: Vec<String>,
     table_names: Vec<String>,
@@ -441,7 +307,6 @@ impl SnapshotObjects {
     }
 }
 
-/// 读取快照库的 schema 对象（虚拟表/内部对象排除；自动索引 sql 为空跳过）。
 fn snapshot_objects(conn: &Connection) -> Result<SnapshotObjects> {
     let mut stmt = conn.prepare(&format!(
         "SELECT type, name, sql FROM {SNAP_ALIAS}.sqlite_master \
@@ -475,9 +340,6 @@ fn snapshot_objects(conn: &Connection) -> Result<SnapshotObjects> {
     Ok(objects)
 }
 
-/// 表的可写入列清单（逗号连接、各自 quote 引用）：生成列（`GENERATED ALWAYS
-/// AS`，`pragma_table_xinfo.hidden ≠ 0`）不可作为 INSERT 目标，排除之；裸名经
-/// 单引号转义进表值函数参数。
 fn insertable_columns(conn: &Connection, bare_table: &str) -> Result<String> {
     let literal = bare_table.replace('\'', "''");
     let mut stmt = conn.prepare(&format!(
@@ -493,14 +355,10 @@ fn insertable_columns(conn: &Connection, bare_table: &str) -> Result<String> {
         .join(", "))
 }
 
-/// 标识符双引号引用（内嵌引号翻倍），防保留字与特殊字符。
 fn quote_ident(name: &str) -> String {
     format!("\"{}\"", name.replace('"', "\"\""))
 }
 
-/// 挂载库的 schema 版本（`PRAGMA <别名>.user_version`；别名是本模块常量，
-/// 无注入面。SQLCipher 延迟到首条读语句才校验口令——密文快照的口令错误在
-/// 此首读归一为可重试码化错误）。
 fn read_snapshot_version(conn: &Connection) -> Result<i64> {
     match conn.query_row(&format!("PRAGMA {SNAP_ALIAS}.user_version"), [], |r| {
         r.get::<_, i64>(0)
@@ -515,14 +373,6 @@ fn read_snapshot_version(conn: &Connection) -> Result<i64> {
     }
 }
 
-/// 截断单流日志前缀（OpLog 截断机制原语；触发调度见 ADR-0139 决策 8 / #1874）。
-///
-/// 三硬约束的调用界：只有来源设备有权截断自己的流（本端守卫，违者报
-/// `sync-engine.truncate-not-owner`）；`through_position` 是删除上界（时钟 ≤
-/// 水位的行删除），调用方须传入安全水位——各端经 manifest 声明的位点最小值、
-/// 以当前对端可达 Checkpoint 的位点覆盖为上界（通道层义务，已在成功轮次落库段
-/// 接线（通道层 truncate_own_stream_to_watermark 单点）。挂起队列 op
-/// 不在日志、位点不越过它，不受截断影响。
 pub fn truncate_stream_before(
     conn: &Connection,
     device_id: &str,
@@ -546,8 +396,6 @@ pub fn truncate_stream_before(
     Ok(deleted)
 }
 
-/// 同步元数据表非空检查（引导守卫的第一半）：返回命中的表名。
-/// [`bootstrap_from_checkpoint`] 的权威守卫与 [`bootstrap_preflight`] 共享。
 fn first_sync_table_not_empty(conn: &Connection) -> Result<Option<&'static str>> {
     for (table, empty) in [
         ("sync_ops", ops::is_empty(conn)?),
@@ -561,12 +409,6 @@ fn first_sync_table_not_empty(conn: &Connection) -> Result<Option<&'static str>>
     Ok(None)
 }
 
-/// 引导前置守卫（fail fast，[`bootstrap_from_channel`] 在拉取快照前的段1
-/// 调用、并在段2 换入前复验；[`bootstrap_from_checkpoint`] 内部对同步三表的
-/// 复验仍是权威）：目标必须是「全新空库」——未参与同步且无用户业务数据。
-/// 已参与同步报 `sync-engine.bootstrap-not-fresh`（优先于业务数据判定：已加入
-/// 同步的端重试引导，正确提示是「已参与同步」而非「本机有数据」）；残留业务
-/// 数据报 `sync-channel.bootstrap-library-not-empty`。
 pub(crate) fn bootstrap_preflight(conn: &Connection) -> Result<()> {
     if let Some(table) = first_sync_table_not_empty(conn)? {
         return Err(AppError::codedp(
@@ -584,7 +426,6 @@ pub(crate) fn bootstrap_preflight(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-/// 探针表闭集（引导前置「加入即新库」判据）：各业务域的用户事实行。
 const PROBE_TABLES: &[&str] = &[
     "transactions",
     "accounts",
@@ -604,22 +445,10 @@ const PROBE_TABLES: &[&str] = &[
     "security_lots",
 ];
 
-/// 种子行的来源设备标识（迁移种子数据的既定约定，V004 起种子行
-/// `device_id = 'seed'`；非此值即用户事实）。
 const SEED_DEVICE_ID: &str = "seed";
 
-/// 本机库是否已有用户业务数据（「加入即新库」守卫的判据，[`bootstrap_preflight`] 消费）。
-///
-/// 引导是整库换入——带存量业务数据的库被引导等于丢账（快照整库覆盖）。
-/// 领域守卫（[`bootstrap_from_checkpoint`]）只挡「已参与同步」；「业务数据
-/// 是否残留」是同步边界的知识（业务域清单与 Backup/Restore 迁移边界对齐），
-/// 归本域单点、[`bootstrap_preflight`] 消费（issue #864）。探针为闭集清单：各业务域
-/// 的用户事实行（种子行以 `device_id = 'seed'` 排除；派生数据——余额/净值
-/// 缓存、期次行、持仓批次结转——不属用户事实或被主表探针覆盖，不在清单；
-/// 币种字典无来源设备列且全为种子闭集，自建币种残留属可接受边界）。
 pub(crate) fn library_has_user_data(conn: &Connection) -> Result<bool> {
     for table in PROBE_TABLES {
-        // 表名是本模块闭集常量（非用户输入），无注入面。
         let has_row: bool = conn.query_row(
             &format!("SELECT EXISTS(SELECT 1 FROM {table} WHERE device_id <> {SEED_DEVICE_ID:?})"),
             [],
@@ -632,86 +461,38 @@ pub(crate) fn library_has_user_data(conn: &Connection) -> Result<bool> {
     Ok(false)
 }
 
-/// 引导结果（壳层 wire 面由此投影）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BootstrapOutcome {
-    /// 采纳的检查点代数。
     pub generation: i64,
-    /// 快照密文字节数。
     pub size: u64,
-    /// 引导后本库已从明文转换为本机密文库（重启后需凭主口令解锁）。
     pub reencrypted: bool,
 }
 
-/// 引导的连接段接缝（issue #1285，ADR-0120 判据同簇适用）：引导编排对主连接
-/// 的全部消费按段短取——每段在闭包体内可见、返回即释放；整库快照下载在段与
-/// 段之间进行，结构上拿不到连接（ADR-0069 决策 4：网络任何形状不得进锁）。
-/// 域定义接缝、壳层实现并在命令闭包内接线（依赖方向：域不依赖壳，ADR-0112）。
 pub trait BootstrapConnSegments {
-    /// 短取一次连接执行一段数据库步骤。锁失败映射与持锁时长探针（超阈值记
-    /// 日志，#1276 口径）归实现方；业务 [`Result`](ledger_infra::error::Result)
-    /// 原样传播。
     fn with_conn<T>(&self, use_conn: impl FnOnce(&mut Connection) -> Result<T>) -> Result<T>;
 }
 
-/// 新端从通道检查点引导的编排单点（壳层「从通道引导本端」向导的领域接缝，
-/// issue #864）：前置守卫（段1）→ 拉取（锁外）→ 复验 + 信封形态对齐 →
-/// 整库换入 → 簿记清理 →（密文快照 × 明文本机时）整库转密文（段2）。连接经
-/// [`BootstrapConnSegments`] 按段短取——「快照拉取/换入与轮次同一互斥约束」
-/// 的旧契约随 ADR-0120 裁决退役：下载段属纯网络等待，锁只盖数据库步骤；
-/// 「preflight → 换入」与并发本地写的互斥由段2 承接。
-///
-/// 序列：
-/// 1. 段1（连接锁内）前置守卫（fail fast，不浪费拉取）：
-///    [`bootstrap_preflight`]——未参与同步且无用户业务数据；
-/// 2. 段间（连接锁外）拉取检查点：整库快照网络下载，信封自描述，密文快照
-///    凭口令开封（缺口令报 `sync-engine.checkpoint-passphrase-required` 可
-///    重试，错误口令报 `encryption.passphrase-incorrect`）；
-/// 3. 段2（连接锁内）复验前置守卫：下载不持锁，「判空后被写」的并发本地写
-///    在此重新判空——命中即显式报错（`sync-engine.bootstrap-not-fresh` /
-///    `sync-channel.bootstrap-library-not-empty`），不被快照静默覆盖；
-/// 4. 信封形态对齐守卫：同一通道的段必须同形态可开（明文端开不了密文段、
-///    密文端封的段明文对端开不了）——引导端必须对齐快照形态：密文快照 ×
-///    密文本机时输入口令必须就是本机主口令（后续轮次以本机口令封段，两把
-///    钥匙会让对端解不开），不一致报 `sync-channel.bootstrap-passphrase-mismatch`；
-///    明文快照 × 密文本机拒绝（`sync-channel.bootstrap-form-mismatch`）；
-/// 5. 整库换入（[`bootstrap_from_checkpoint`]，同步三表权威复验）；
-/// 6. 清「上次成功同步时刻」（本机簿记事实，快照携带的是来源端取值；在
-///    文件级转换前执行——转换的原子替换会让本连接指向被换下的旧文件，
-///    此后一切写路径不得再经它）；
-/// 7. 密文快照 × 明文本机：复用备份域机制整库转密文（文件级原子替换，
-///    重启后新连接凭口令打开）。转换失败的可恢复路径：本机已是引导后的
-///    完整数据，经既有「开启加密」以同一主口令转换即重新对齐通道形态。
 pub fn bootstrap_from_channel<S: BootstrapConnSegments>(
     segments: &S,
     db_path: &Path,
     channel: &SyncChannel,
     passphrase: Option<&str>,
 ) -> Result<BootstrapOutcome> {
-    // 段1：前置守卫（fail fast，通道读零次）。
     segments.with_conn(|conn| bootstrap_preflight(conn))?;
-    // 段间：拉取检查点（锁外；快照体整库下载，纯网络等待、不消费连接）。
     let fetched = channel.fetch_checkpoint(passphrase)?;
-    // 段2：复验 + 换入（对并发本地写互斥到换入完成）。
     segments.with_conn(|conn| bootstrap_apply(conn, db_path, &fetched, passphrase))
 }
 
-/// 段2（连接锁内）落地半场：复验前置守卫 → 信封形态对齐守卫 → 整库换入 →
-/// 簿记清理 → 转密文（步骤 3–7，见 [`bootstrap_from_channel`] 序列说明）。
 fn bootstrap_apply(
     conn: &mut Connection,
     db_path: &Path,
     fetched: &FetchedCheckpoint,
     passphrase: Option<&str>,
 ) -> Result<BootstrapOutcome> {
-    // 复验前置守卫（issue #1285）：下载段不持锁，前置守卫判空后、换入前落进
-    // 的并发本地写在此重新判空——显式报错，不静默覆盖（丢账）。
     bootstrap_preflight(conn)?;
-    // 信封形态对齐守卫（替换本机数据前判定，失败零副作用）。
     let local_encrypted =
         db::encryption::probe_file_kind(db_path)? == db::encryption::DbFileKind::Encrypted;
     if fetched.sealed && local_encrypted {
-        // fetch 成功 ⇒ 口令已验证可开快照（缺口令/错口令在域内归一报错）。
         let passphrase = passphrase.unwrap_or_default();
         if db::encryption::verify_source_passphrase(db_path, passphrase).is_err() {
             return Err(AppError::coded(
@@ -726,11 +507,8 @@ fn bootstrap_apply(
         ));
     }
     let reencrypted = fetched.sealed && !local_encrypted;
-    // 整库换入（同步三表权威复验）。
     bootstrap_from_checkpoint(conn, &fetched.checkpoint, passphrase)?;
-    // 本机簿记事实不采纳来源端取值（时序约束见序列说明）。
     ledger_infra::settings::clear(conn, ledger_infra::settings::SettingKey::SyncLastSyncAt)?;
-    // 密文快照 × 明文本机：整库转密文（文件级原子替换，复用备份域机制）。
     if reencrypted {
         db::encryption::enable_encryption_for_file(db_path, passphrase.unwrap_or_default())?;
     }
@@ -747,7 +525,6 @@ fn bootstrap_apply(
     })
 }
 
-/// 快照临时文件路径（系统临时目录 + 唯一名，收尾统一 [`fs_util::cleanup`]）。
 fn temp_snapshot_path(tag: &str) -> PathBuf {
     std::env::temp_dir().join(format!("ledger-{tag}-{}.db", new_uuid()))
 }

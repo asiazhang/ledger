@@ -1,12 +1,6 @@
-//! 错误：`AppError`（系统错误 + 码化错误的稳定 `code` / `params`，ADR-0050）与
-//! `Result` 别名；HTTP 响应投影经 `http` feature 门只在壳侧编入（ADR-0111 决策 5
-//! / #1133）。
-
 use serde::{Serialize, Serializer};
 use thiserror::Error;
 
-/// 码化错误的归类：决定 HTTP 状态码与序列化后的 `kind` 值（与既有枚举变体同值域）。
-/// 仅码化业务错误使用：Invalid = 参数错误（400）、NotFound = 数据不存在（404）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ErrClass {
     Invalid,
@@ -34,10 +28,6 @@ pub enum AppError {
     Parse(String),
     #[error("IO 错误: {0}")]
     Io(String),
-    /// 码化错误（issue #342 二期 / ADR-0050）：`code` 是稳定错误码（领域语言命名，
-    /// 如 `transfer.to-account-required`），`message` 中文原样保留，`params` 是前端
-    /// 插值参数（按消息中占位出现顺序）。序列化在既有 `kind`/`message` 之外**只增**
-    /// `code` 与可选 `params`，既有消费方与测试不受影响。
     #[error("{message}")]
     Coded {
         class: ErrClass,
@@ -48,7 +38,6 @@ pub enum AppError {
 }
 
 impl AppError {
-    /// 码化参数错误（HTTP 400 / kind=Invalid）：业务校验失败的用户可见错误条件。
     pub fn coded(code: &str, message: impl Into<String>) -> Self {
         AppError::Coded {
             class: ErrClass::Invalid,
@@ -58,8 +47,6 @@ impl AppError {
         }
     }
 
-    /// 码化参数错误 + 插值参数：`params` 按消息中动态值的出现顺序排列，
-    /// 供前端按码本地化时插值（zh 模板 `{0}→{1}`、en 模板同序）。
     pub fn codedp(code: &str, message: impl Into<String>, params: &[&str]) -> Self {
         AppError::Coded {
             class: ErrClass::Invalid,
@@ -69,7 +56,6 @@ impl AppError {
         }
     }
 
-    /// 码化数据不存在（HTTP 404 / kind=NotFound）。
     pub fn coded_not_found(code: &str, message: impl Into<String>) -> Self {
         AppError::Coded {
             class: ErrClass::NotFound,
@@ -79,8 +65,6 @@ impl AppError {
         }
     }
 
-    /// 码化数据不存在 + 插值参数（HTTP 404 / kind=NotFound）：
-    /// `params` 按消息中动态值的出现顺序排列，供前端按码本地化时插值。
     pub fn codedp_not_found(code: &str, message: impl Into<String>, params: &[&str]) -> Self {
         AppError::Coded {
             class: ErrClass::NotFound,
@@ -90,13 +74,10 @@ impl AppError {
         }
     }
 
-    /// 是否恰好为指定码的码化错误（只判读、不构造；供编排层按失败原因分流，
-    /// 如解锁时凭缓存口令失败需识别「口令过期」以清理缓存）。
     pub fn is_code(&self, code: &str) -> bool {
         matches!(self, AppError::Coded { code: c, .. } if c == code)
     }
 
-    /// 码化错误的稳定错误码；非码化错误返回 None（只判读、不构造）。
     pub fn code(&self) -> Option<&str> {
         match self {
             AppError::Coded { code, .. } => Some(code),
@@ -104,7 +85,6 @@ impl AppError {
         }
     }
 
-    /// 序列化parts：`(kind, message, code, params)`——code/params 为 None 时字段整体缺席。
     fn parts(&self) -> (&'static str, &str, Option<&str>, Option<&[String]>) {
         match self {
             AppError::Db(m) => ("Db", m, Some("db.error"), None),
@@ -131,10 +111,6 @@ impl AppError {
     }
 }
 
-/// 手写序列化（issue #342 二期 / ADR-0050，**只增不改**契约）：
-/// 既有字段 `kind`/`message` 的取值与顺序与 derive 时代完全一致；码化错误与
-/// Db/Parse/Io 追加 `code`，带插值参数的错误再追加 `params`。无码错误
-/// （未被码化收敛的 Invalid/NotFound）保持原两字段形态，前端降级透传原文。
 impl Serialize for AppError {
     fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
     where
@@ -142,7 +118,6 @@ impl Serialize for AppError {
     {
         use serde::ser::SerializeStruct;
         let (kind, message, code, params) = self.parts();
-        // 字段数按实际序列化内容计算（kind/message 恒在，code/params 条件性出现）
         let field_count = 2 + usize::from(code.is_some()) + usize::from(params.is_some());
         let mut s = serializer.serialize_struct("AppError", field_count)?;
         s.serialize_field("kind", kind)?;
@@ -189,21 +164,6 @@ impl From<serde_json::Error> for AppError {
 
 pub type Result<T> = std::result::Result<T, AppError>;
 
-// ---------------------------------------------------------------------------
-// HTTP 错误响应投影（壳层 `api_server` 与 HTTP-only handler 消费）
-//
-// feature 门（ADR-0111 决策 5 / issue #1133）：孤儿规则要求实现与错误类型同
-// crate，但 axum 只有壳层需要——不设门则每出现一个域 crate 依赖本 crate 就
-// 无条件编入 axum 及其传递依赖。门为 `http` feature（依赖面 `dep:axum`），
-// 仅壳侧根包启用；域侧依赖默认零 axum，响应形状与状态码不受门影响。
-// ---------------------------------------------------------------------------
-
-/// `AppError` → HTTP 状态码 + JSON 的统一投影。
-///
-/// 原住 `api_server::error`，随错误类型迁入基础设施 crate（issue #1088）：
-/// 孤儿规则（E0117）要求 trait 实现与类型同 crate——`IntoResponse` 属 axum、
-/// `AppError` 属本 crate，故实现只能住这里；壳层保留响应 DTO（`ErrorResponse`）
-/// 与路由接线，调用面零改动。
 #[cfg(feature = "http")]
 impl axum::response::IntoResponse for AppError {
     fn into_response(self) -> axum::response::Response {
@@ -216,7 +176,6 @@ impl axum::response::IntoResponse for AppError {
             AppError::Invalid(_) => StatusCode::BAD_REQUEST,
             AppError::Parse(_) => StatusCode::BAD_REQUEST,
             AppError::Io(_) => StatusCode::INTERNAL_SERVER_ERROR,
-            // 码化错误按归类取状态（ADR-0050）：Invalid→400、NotFound→404
             AppError::Coded { class, .. } => match class {
                 ErrClass::Invalid => StatusCode::BAD_REQUEST,
                 ErrClass::NotFound => StatusCode::NOT_FOUND,
@@ -313,7 +272,6 @@ mod tests {
         );
         assert!(err.is_code("encryption.passphrase-incorrect"));
         assert!(!err.is_code("encryption.remember-no-cache"));
-        // 非码化错误恒不匹配任何码（编排层按码分流不误判）。
         assert!(!AppError::Io("disk gone".into()).is_code("encryption.passphrase-incorrect"));
     }
 }

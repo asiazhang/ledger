@@ -1,8 +1,3 @@
-//! 账户端点：列表（含黑洞账户）/ 幂等创建 / 编辑 / 软删除 / 实时余额。
-//!
-//! 写端点经壳层统一写入口 [`crate::shell_support::write_entry::write_entry`]（ADR-0073）：
-//! 事务、置脏、信号内化单点；读端点经 `run_db`（形状乙）。
-
 use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
@@ -57,8 +52,6 @@ pub async fn create_account_handler(
     State(emitter): State<EmitterSlot>,
     Json(input): Json<AccountInput>,
 ) -> Result<(StatusCode, Json<String>), AppError> {
-    // 壳层统一写入口（ADR-0073）：置脏、信号内化单点；发射器 None 跳过
-    //（集成测试态语义），端点键作 SQL 归因串逐字节不变。
     let id = write_entry(
         "POST /api/v1/accounts",
         conn,
@@ -98,18 +91,12 @@ pub async fn update_account_handler(
     Path(id): Path<String>,
     Json(input): Json<AccountUpdateInput>,
 ) -> Result<Json<Account>, AppError> {
-    // 修改与读回同一写闭包，提交点置脏/检查单点。
     let updated = write_entry(
         "PUT /api/v1/accounts/{id}",
         conn,
         emitter.as_deref(),
         WriteOp::UpdateAccount,
         move |conn| {
-            // 归档可选键（spec #1952 / ADR-0142 决策 5）：缺席 = 不改、true/false
-            // 落定，由账户编辑入口统一解出（同一事务内追加一次归档动作）。归档
-            // 方向的目标绑定守卫住壳层编排（账户域不反向依赖目标域，ADR-0133
-            // 决策 4；恢复方向不拦——不涉及两套收纳语义），与 `archive_account`
-            // 命令同一守卫。
             if input.is_archived == Some(true) {
                 ledger_savings_goal::ensure_account_can_archive(conn, &id)?;
             }
@@ -149,8 +136,6 @@ pub async fn delete_account_handler(
         emitter.as_deref(),
         WriteOp::DeleteAccount,
         move |conn| {
-            // 壳层编排守卫（issue #1754 / ADR-0133 决策 4）：与 IPC 删除账户命令
-            // 同构——在用目标的专属账户先经目标域校验，命中即码化拒绝。
             ledger_savings_goal::ensure_account_not_goal_bound(conn, &id)?;
             ledger_accounts::delete_account(conn, &id).map(Outcome::Silent)
         },

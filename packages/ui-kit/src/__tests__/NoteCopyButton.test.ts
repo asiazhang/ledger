@@ -3,8 +3,6 @@ import { mount, flushPromises } from "@vue/test-utils";
 import NoteCopyButton from "../NoteCopyButton.vue";
 import { messageApi } from "@ledger/test-support/message-mock";
 
-/** 备注复制按钮（显式复制通道，见「界面文本不可选」词条）：复制走 clipboard API，
- * 反馈走消息接口——两处均为外部接缝，分别以注入替身断言（AboutSettings 复制先例同款）。 */
 const writeText = vi.fn().mockResolvedValue(undefined);
 
 beforeEach(() => {

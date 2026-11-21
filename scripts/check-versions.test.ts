@@ -4,11 +4,6 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { gateScript, runGateScript } from "./run-gate-script.test-helper.ts";
 
-// 被测对象是仓库工具脚本 scripts/check-versions.ts（版本元数据一致性守门，
-// issue #1957 / ADR-0022 修订注记）。脚本以 Bun 运行时执行（ADR-0083）：
-// runGateScript 以 spawnSync('bun') 与门槛调用同款拉起，测的就是门槛路径。
-// 按测试决策只测外部可观察结果——进程退出码与输出，通过位置参数把目标指向
-// 临时夹具目录（形状同构仓库根：三份元数据文件）。
 const script = gateScript("check-versions.ts");
 const run = (args: string[] = []) => runGateScript(script, args);
 
@@ -17,7 +12,6 @@ afterAll(() => {
   for (const dir of tempDirs) rmSync(dir, { recursive: true, force: true });
 });
 
-/** 三份元数据的最小可解析形态；值为 null 表示刻意省略该文件。 */
 const DEFAULT_FILES: Record<string, string | null> = {
   "package.json": JSON.stringify({ name: "ledger", version: "1.2.3" }, null, 2),
   "src-tauri/tauri.conf.json": JSON.stringify(
@@ -35,7 +29,6 @@ const DEFAULT_FILES: Record<string, string | null> = {
   ].join("\n"),
 };
 
-/** 建夹具目录（形状同构仓库根）；值为 null 表示刻意省略该文件。 */
 function makeFixture(files: Record<string, string | null> = {}): string {
   const dir = mkdtempSync(join(tmpdir(), "check-versions-"));
   tempDirs.push(dir);

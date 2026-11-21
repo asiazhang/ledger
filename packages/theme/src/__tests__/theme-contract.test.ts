@@ -6,24 +6,11 @@ import { darkOverrides, lightOverrides } from "../overrides";
 import type * as AppTheme from "../app-theme.css.ts";
 import type * as ThemeContract from "../theme-contract";
 
-/**
- * 新方案主题合同（issue #888 / ADR-0093）：给定亮/暗模式，产出正确的根主题类
- * 与组件库主题覆盖，且两套产物与 token 取值同源一致。只测外部行为，不断言内部
- * 实现——主题类名字符串本身无意义，断言的是「哪个模式给哪个类」的映射、绑定
- * 行为，以及经 vanilla-extract 官方 adapter 接缝捕获的「类 → CSS 变量」产出物
- * 取值（合同产出物的同源一致性证据）。
- *
- * app-theme.css.ts / theme-contract.ts 必须在装好捕获 adapter 之后动态导入：
- * createTheme 在模块求值时产出 CSS，静态导入会先于 adapter 装配完成求值。
- */
-
 let appTheme: typeof AppTheme;
 let contract: typeof ThemeContract;
 type CapturedBlock = { type: string; selector?: string; rule?: { vars?: Record<string, string> } };
 let capturedBlocks: CapturedBlock[] = [];
 
-/** 按主题类名找捕获到的变量定义块（createTheme 产出的块 type 为 'global'，
- *  选择器为类名本身，不带点）。 */
 function varsBlockOf(themeClass: string) {
   return capturedBlocks.find(
     (b) => b.type === "global" && b.selector?.replace(/^\./, "") === themeClass,
@@ -41,8 +28,6 @@ beforeAll(async () => {
     getIdentOption: () => "short",
   };
   setAdapter(adapter);
-  // vitest 不挂 ve 插件（见 vitest.config.ts）：运行时求值需显式提供 file scope
-  // （无 bundler 运行时的受支持用法），指向真实模块路径使标识符与构建同构。
   setFileScope("packages/theme/src/app-theme.css.ts");
   try {
     appTheme = await import("../app-theme.css.ts");
@@ -75,8 +60,6 @@ describe("resolveAppTheme（模式 → 根主题类 + 组件库覆盖）", () =>
 });
 
 describe("根主题类与 token 取值同源一致（createTheme 产出物行为断言）", () => {
-  /** 逐叶校验：主题类携带的 CSS 变量取值 = 对应模式的 token 取值。变量引用经
-   *  appVars 对齐（叶序不进断言），失败信息报告到具体常量组.叶子。 */
   function expectThemeVarsMatch(theme: "dark" | "light"): void {
     const themeClass = theme === "dark" ? appTheme.darkThemeClass : appTheme.lightThemeClass;
     const vars = varsBlockOf(themeClass)?.rule?.vars;

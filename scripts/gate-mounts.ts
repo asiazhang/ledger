@@ -1,65 +1,23 @@
-// 守门挂载登记（issue #1682 spec）：质量门挂载声明的单一事实源——「哪些门被质量
-// 门槛跑到、挂哪」的唯一查询点。此前该事实由三本互不核对的登记簿维持（check.sh
-// 手写行、CI workflow 手写步骤、各门头注释的「挂载于」声明），删任一行零测试变红；
-// 本模块把挂载收成家族共用的 interface，接线（wiring）成为登记条目的一环。
-//
-// 纯数据 + 类型，无运行时副作用、无 CLI（grilling 定案：查询直接读导出常量，
-// 不加 --list 报告命令，YAGNI）。核对，不生成：check.sh 与 CI workflow 保持手写，
-// 守门接线测试（gate-mounts.test.ts）遍历本登记断言双向全等——删任一宿主挂载行
-// 或删任一登记条目至少一条断言变红（删除即变红，ADR-0087 断言强度）。
-//
-// 判定语义 = per-host 行首前缀：登记条目按宿主声明 {file, prefix, where}，宿主
-// 文件的非注释行 trim 后行首匹配该前缀。echo 展示行行首是 `echo "▶`，永不可能
-// 命中执行形态——echo 假绿免疫是判定语义的结构后果（#1112 第三轮审查实测教训）。
-// 同一门在两宿主的命令文本实差（`( cd src-tauri && …)` 包裹 vs `working-directory`
-// / 裸命令、`-- --check` vs `--check`）由 per-host prefix 显式表达。
-//
-// 新增守门的登记动作（story 5）：在 GATE_MOUNTS 追加一条——唯一名称、issue/ADR
-// 出处（导航字段）、按宿主的执行行形态；check.sh 执行行与 CI 步骤同步挂载，
-// 接线测试自动核对三侧全等。门的核心判定规则归各门自身，本登记只管挂载。
-
-/** 宿主文件：本地质量门槛序列（唯一权威的全量执行面）。 */
 export const CHECK_SH_FILE = "scripts/check.sh";
 
-/** 宿主文件：CI workflow（挂载子集，按 job 分布）。 */
 export const CI_WORKFLOW_FILE = ".github/workflows/build.yml";
 
-/** 宿主标识：登记只认这两份宿主文件，挂到清单外的宿主是类型错误。 */
 export type GateHostFile = typeof CHECK_SH_FILE | typeof CI_WORKFLOW_FILE;
 
-/** 按宿主的挂载声明。 */
 interface GateHostFileMount {
-  /** 宿主文件（相对仓库根） */
   readonly file: GateHostFile;
-  /** 执行行形态：宿主非注释行 trim 后行首前缀匹配 */
   readonly prefix: string;
-  /** 宿主内定位说明（job / 序列，导航用） */
   readonly where: string;
 }
 
-/** 一条质量门的挂载登记。 */
 export interface GateMount {
-  /** 唯一名称（= 门的展示名，全表唯一） */
   readonly name: string;
-  /** issue/ADR 出处（导航字段）：门本体的权威出处，供 all-entries 核对清单一次生成 */
   readonly refs: string;
-  /** 按宿主的挂载声明：check.sh 恒有一条；CI 挂载仅在该门实际入 CI 时声明 */
   readonly hosts: readonly GateHostFileMount[];
 }
 
-/** CI 挂门 job 内的非门步骤豁免（政策显式，#1591：政策无源就显式）：
- *  构建步骤 `pnpm run build` 内含前端类型检查（package.json build 脚本 =
- *  `vue-tsc --noEmit && vite build`），类型检查由该脚本承接、CI 无独立步骤，
- *  故「前端类型检查」条目只声明 check.sh 宿主；本行随之不属门挂载面。 */
 export const CI_NON_GATE_RUNS: readonly string[] = ["run: pnpm run build"];
 
-/**
- * 登记清单（check.sh 全部质量门步骤：bun TS 门与非 TS 步骤同表；check-docs.sh 作
- * 单条，其内部九项校验不展开。spec #1682 定案口径 22 条 = 13 + 9——实际集合以
- * 守门接线测试与 check.sh / CI 的双向全等断言为准，本注释不作计数依据）。
- * 顺序与 check.sh 执行序列一致，便于逐行核对；CI 挂载为子集（frontend job /
- * backend-lint job）。
- */
 export const GATE_MOUNTS: readonly GateMount[] = [
   {
     name: "前端类型检查（vue-tsc）",

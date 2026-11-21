@@ -1,11 +1,3 @@
-//! 手动报价（issue #291 / ADR-0036）：核心接缝 `record_manual_price` 的两落点
-//! 语义与信号证据归一化——现价缓存 upsert + 价格历史周采样幂等覆盖（复用
-//! 既有周键与整周覆盖语义）、回填早于最新点的旧价只沉淀历史不动现价（最新点
-//! 映像规则）、来源标记 manual、校验拦截。信号证据经
-//! [`ManualPriceResult::any_written`] 归一化（任一落点实际写入），「是否发」的
-//! 判定单点在 signals 映射（ADR-0044 / issue #333），模块单测锁定；端到端行为
-//! 由 BDD 场景承载。
-
 use rusqlite::params;
 
 use crate::manual_price::record_manual_price;
@@ -29,7 +21,6 @@ fn quote(
     record_manual_price(conn, &quote_input(instrument_id, date, price_cents)).expect("录价失败")
 }
 
-/// 现价行：(price_cents, currency_code, priced_at, nav_date, source)。
 type PriceRow = (i64, String, String, Option<String>, Option<String>);
 
 fn price_row(conn: &rusqlite::Connection, instrument_id: &str) -> Option<PriceRow> {
@@ -49,8 +40,6 @@ fn price_row(conn: &rusqlite::Connection, instrument_id: &str) -> Option<PriceRo
     .ok()
 }
 
-/// 价格历史行按周键查询（week_start 生成列与既有周键同口径）：
-/// (trade_date, price_cents, currency_code, source)。
 fn week_point(
     conn: &rusqlite::Connection,
     instrument_id: &str,
@@ -74,11 +63,6 @@ fn history_count(conn: &rusqlite::Connection, instrument_id: &str) -> i64 {
     .unwrap()
 }
 
-// ---------------------------------------------------------------------------
-// 信号证据归一化（生产者清单再添一处，ADR-0031 模式 → #333 判定归一化 ADR-0044）：
-// 两落点结果经 `any_written` 归一化为 PriceWritten 证据，发射判定单点在 signals 映射。
-// ---------------------------------------------------------------------------
-
 #[test]
 fn price_written_evidence_pins_all_outcome_shapes() {
     use ledger_infra::signals::{Signal, WriteEvidence as E, WriteOp as Op, signals_for};
@@ -90,7 +74,6 @@ fn price_written_evidence_pins_all_outcome_shapes() {
         signals_for(Op::RecordManualPrice, E::PriceWritten(r.any_written()))
     };
 
-    // 任一落点实际写入即发；两落点均未写入（零写入）不广播——失效信号的本义是「数据变了」。
     assert_signals(
         signals(&ManualPriceResult {
             history_written: true,
@@ -98,7 +81,6 @@ fn price_written_evidence_pins_all_outcome_shapes() {
         }),
         &[Signal::PricesChanged],
     );
-    // 回填旧价：只沉淀历史、不动现价，仍是实际写入 → 广播。
     assert_signals(
         signals(&ManualPriceResult {
             history_written: true,
@@ -106,7 +88,6 @@ fn price_written_evidence_pins_all_outcome_shapes() {
         }),
         &[Signal::PricesChanged],
     );
-    // 零写入不广播。
     assert_signals(
         signals(&ManualPriceResult {
             history_written: false,
@@ -115,10 +96,6 @@ fn price_written_evidence_pins_all_outcome_shapes() {
         &[],
     );
 }
-
-// ---------------------------------------------------------------------------
-// 两落点写入
-// ---------------------------------------------------------------------------
 
 #[test]
 fn quote_writes_both_landings_with_manual_source() {
@@ -129,14 +106,12 @@ fn quote_writes_both_landings_with_manual_source() {
 
     assert!(outcome.history_written);
     assert!(outcome.current_price_written);
-    // 落点一：现价缓存 upsert，来源 manual、priced_at = 报价日、无净值日期语义。
     let price = price_row(&conn, "inst-1").expect("现价缓存应有行");
     assert_eq!(price.0, 13180);
     assert_eq!(price.1, "CNY");
     assert_eq!(price.2, "2026-08-28");
     assert_eq!(price.3, None, "手动落价无净值日期语义");
     assert_eq!(price.4.as_deref(), Some("manual"));
-    // 落点二：价格历史周采样，同周键、来源 manual、币种随标的字典。
     let point = week_point(&conn, "inst-1", "2026-08-28").expect("价格历史应有周点");
     assert_eq!(point.0, "2026-08-28");
     assert_eq!(point.1, 13180);
@@ -152,23 +127,17 @@ fn quote_reuses_instrument_currency_and_is_idempotent_per_week() {
     quote(&conn, "inst-hkd", "2026-08-24", 10000);
     quote(&conn, "inst-hkd", "2026-08-24", 10500);
 
-    // 同日重复报价：仍各一行（现价缓存单行 + 周采样单行），后写覆盖先写。
     assert_eq!(history_count(&conn, "inst-hkd"), 1);
     let point = week_point(&conn, "inst-hkd", "2026-08-24").expect("周点应存在");
     assert_eq!(point.1, 10500);
     assert_eq!(price_row(&conn, "inst-hkd").unwrap().0, 10500);
 }
 
-// ---------------------------------------------------------------------------
-// 同周后写覆盖先写（整周覆盖幂等）
-// ---------------------------------------------------------------------------
-
 #[test]
 fn same_week_later_quote_overwrites_whole_week_and_moves_current_price() {
     let conn = open();
     seed_instrument(&conn, "inst-2", "inst-2", "测试标的", "CNY", "unknown");
 
-    // 同一周（周一 08-24 与周四 08-27）：整周覆盖，仅一条周点，trade_date 随后写。
     quote(&conn, "inst-2", "2026-08-24", 10000);
     let outcome = quote(&conn, "inst-2", "2026-08-27", 12000);
 
@@ -181,22 +150,16 @@ fn same_week_later_quote_overwrites_whole_week_and_moves_current_price() {
     let point = week_point(&conn, "inst-2", "2026-08-24").expect("周点应存在");
     assert_eq!(point.0, "2026-08-27", "整周覆盖：trade_date 随后写");
     assert_eq!(point.1, 12000);
-    // 现价 = 最新历史点即时映像：随后写更新。
     let price = price_row(&conn, "inst-2").expect("现价缓存应有行");
     assert_eq!(price.0, 12000);
     assert_eq!(price.2, "2026-08-27");
 }
-
-// ---------------------------------------------------------------------------
-// 回填早于最新价格点：只沉淀历史、不动现价（最新点映像规则）
-// ---------------------------------------------------------------------------
 
 #[test]
 fn backfill_older_than_latest_settles_history_only() {
     let conn = open();
     seed_instrument(&conn, "inst-3", "inst-3", "测试标的", "CNY", "unknown");
 
-    // 先录今天价，再回填早于最新点的旧价。
     quote(&conn, "inst-3", "2026-08-28", 12000);
     let outcome = quote(&conn, "inst-3", "2026-08-05", 10000);
 
@@ -205,7 +168,6 @@ fn backfill_older_than_latest_settles_history_only() {
     assert_eq!(history_count(&conn, "inst-3"), 2, "旧价沉淀为独立周点");
     let backfilled = week_point(&conn, "inst-3", "2026-08-05").expect("回填周点应存在");
     assert_eq!(backfilled.1, 10000);
-    // 现价保持最新点的映像，纹丝不动。
     let price = price_row(&conn, "inst-3").expect("现价缓存应有行");
     assert_eq!(price.0, 12000);
     assert_eq!(price.2, "2026-08-28");
@@ -218,7 +180,6 @@ fn backfill_same_week_overwrite_of_old_point_still_keeps_current_price() {
 
     quote(&conn, "inst-4", "2026-08-28", 12000);
     quote(&conn, "inst-4", "2026-08-05", 10000);
-    // 修正旧周点（同周后写覆盖先写）：仍早于最新点，现价纹丝不动。
     let outcome = quote(&conn, "inst-4", "2026-08-06", 11000);
 
     assert!(outcome.history_written);
@@ -249,10 +210,6 @@ fn quote_newer_than_latest_moves_current_price_forward() {
     assert_eq!(price.2, "2026-08-28");
     assert_eq!(history_count(&conn, "inst-5"), 2);
 }
-
-// ---------------------------------------------------------------------------
-// 校验与守卫
-// ---------------------------------------------------------------------------
 
 #[test]
 fn quote_rejects_non_positive_price() {
@@ -289,7 +246,6 @@ fn quote_canonicalizes_lenient_date_input() {
     let conn = open();
     seed_instrument(&conn, "inst-7b", "inst-7b", "测试标的", "CNY", "unknown");
 
-    // 非补零输入按解析结果规范化落库（week_start 生成列要求 canonical ISO 串）。
     let outcome = quote(&conn, "inst-7b", "2026-8-8", 10000);
     assert!(outcome.history_written);
     let point = week_point(&conn, "inst-7b", "2026-08-08").expect("周点应存在");
@@ -309,7 +265,6 @@ fn quote_rejects_unknown_instrument() {
 #[test]
 fn quote_after_upsert_reuse_keeps_working_on_existing_instrument() {
     let conn = open();
-    // 手动创建核心函数（（代码，类型）upsert 复用语义）建标的 → 直接录价。
     let id = crate::create_instrument(
         &conn,
         InstrumentInput {

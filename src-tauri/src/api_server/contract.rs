@@ -1,15 +1,3 @@
-//! 紧凑契约方言投影（`GET /api/v1/contract`，issue #839 / ADR-0090）。
-//!
-//! 方言（`ledger-contract-1`）不是手写文本，而是与标准 OpenAPI
-//!（`GET /api/v1/openapi.json`，原样保留）**同一 [`ApiDoc`] 源的第二个机械
-//! 投影**：输入 utoipa OpenApi 模型、输出紧凑 JSON 值，utoipa 派生、属性与
-//! 装配零修改——「不改编译器，只加后端」。产物面向 AI 编程助手：剥离
-//! OpenAPI 结构样板与出处引用（`issue #N` / `ADR-N`，出处保留在源注解里），
-//! 端点路径省略 `/api/v1` 前缀（base 单列），字段级语义描述原文保留。
-//!
-//! 产物体积有字节预算护栏（测试 `contract_size_within_budget`），
-//! 契约膨胀不允许无声挤占 AI 上下文。
-
 use std::sync::{LazyLock, OnceLock};
 
 use axum::Json;
@@ -22,25 +10,17 @@ use utoipa::openapi::{OpenApi, RefOr};
 
 use super::openapi::ApiDoc;
 
-/// 方言版本标记：格式演进可被检测与协商（user story 14）。
 const DIALECT_VERSION: &str = "ledger-contract-1";
 
-/// 本机 base 地址：方言端点路径省略 `/api/v1` 前缀，连接所需信息单点落明。
 const BASE_URL: &str = "http://127.0.0.1:9527/api/v1";
 
-/// 一行图例：AI 无需 OpenAPI 样板知识即可解析方言（user story 2）。
 const LEGEND: &str = "类型: str/i64/f64/bool/obj; T[] 数组; 后缀? 可选; 字段值[类型,说明]";
 
-/// `GET /api/v1/contract`：返回紧凑契约方言 JSON（进程内一次性懒构建）。
-///
-/// 契约自举端点，与 `openapi_json_handler` 同属启动门豁免面（不含用户数据，
-/// 不触 DB），锁定/启动失败期间照常可用。
 pub async fn contract_handler() -> impl IntoResponse {
     static CONTRACT: OnceLock<serde_json::Value> = OnceLock::new();
     Json(CONTRACT.get_or_init(|| project(&ApiDoc::openapi())))
 }
 
-/// 投影单点：[`ApiDoc`] 标准模型 → 方言 JSON 值。纯函数，无 IO 无状态。
 fn project(doc: &OpenApi) -> serde_json::Value {
     let endpoints: Vec<serde_json::Value> = doc
         .paths
@@ -73,7 +53,6 @@ fn project(doc: &OpenApi) -> serde_json::Value {
     })
 }
 
-/// 端点投影：`m`/`p`/`s`/`d`/`body`/`res`（`p` 省略 `/api/v1` 前缀）。
 fn endpoint_value(method: &str, path: &str, op: &Operation) -> serde_json::Value {
     let mut endpoint = serde_json::Map::new();
     endpoint.insert("m".into(), serde_json::json!(method));
@@ -100,8 +79,6 @@ fn endpoint_value(method: &str, path: &str, op: &Operation) -> serde_json::Value
     }
     let mut res = serde_json::Map::new();
     for (status, response) in op.responses.responses.iter() {
-        // Ref 响应与无 content 响应（204、text/plain）均以 `-` 占位：方言只
-        // 承载 JSON 响应类型，状态码本身保留（读回自纠依据状态码 + ErrorResponse）。
         let schema = match response {
             RefOr::T(response) => response
                 .content
@@ -118,8 +95,6 @@ fn endpoint_value(method: &str, path: &str, op: &Operation) -> serde_json::Value
     serde_json::Value::Object(endpoint)
 }
 
-/// 组件投影：字符串枚举闭集 → `"a|b|c"`；对象 → 字段名（可选带 `?` 后缀）
-/// → 类型表达式或 `[类型, 描述]` 元组（字段级语义描述原文保留，仅剥出处）。
 fn schema_value(schema: &RefOr<Schema>) -> serde_json::Value {
     match schema {
         RefOr::T(Schema::Object(object)) if object.enum_values.is_some() => {
@@ -144,12 +119,10 @@ fn schema_value(schema: &RefOr<Schema>) -> serde_json::Value {
             }
             serde_json::Value::Object(fields)
         }
-        // 兜底：非对象组件按类型表达式（当前契约组件全部为对象或字符串枚举）。
         other => serde_json::json!(type_expr(other, false)),
     }
 }
 
-/// 字段级描述提取（对象 / 数组 / 引用 / 组合成员均可能携带，原文保留）。
 fn description_of(schema: &RefOr<Schema>) -> Option<&str> {
     match schema {
         RefOr::Ref(r) => (!r.description.is_empty()).then_some(r.description.as_str()),
@@ -162,9 +135,6 @@ fn description_of(schema: &RefOr<Schema>) -> Option<&str> {
     }
 }
 
-/// 类型表达式：`$ref`→schema 名、数组→`T[]`、可空/可选→`?` 后缀、枚举→
-/// `a|b|c` 闭集、integer/number→`i64`/`f64`、string/boolean/object→
-/// `str`/`bool`/`obj`。
 fn type_expr(schema: &RefOr<Schema>, optional: bool) -> String {
     let expr = match schema {
         RefOr::Ref(r) => ref_name(r),
@@ -184,12 +154,10 @@ fn schema_expr(schema: &Schema) -> String {
         Schema::AnyOf(a) => composite_expr(&a.items),
         Schema::AllOf(a) => composite_expr(&a.items),
         Schema::Object(object) => object_expr(object),
-        // Schema 为 #[non_exhaustive]，未来新增形态兜底为 obj（当前契约不出现）。
         _ => "obj".to_owned(),
     }
 }
 
-/// 数组元素投影（`items: false` 形态当前契约不出现，兜底 obj）。
 fn array_items_expr(items: &ArrayItems) -> String {
     match items {
         ArrayItems::RefOrSchema(schema) => type_expr(schema, false),
@@ -197,7 +165,6 @@ fn array_items_expr(items: &ArrayItems) -> String {
     }
 }
 
-/// 对象/枚举投影：枚举闭集优先，其余按 schema type（type 数组含 null 即可空）。
 fn object_expr(object: &Object) -> String {
     if let Some(values) = &object.enum_values {
         return values
@@ -222,7 +189,6 @@ fn object_expr(object: &Object) -> String {
     }
 }
 
-/// 组合类型（`oneOf(null, T)` = 可空引用）：交替项 `|` 连接，null 项折叠为 `?`。
 fn composite_expr(items: &[RefOr<Schema>]) -> String {
     let mut nullable = false;
     let mut parts = Vec::new();
@@ -262,14 +228,8 @@ fn ref_name(r: &Ref) -> String {
         .to_owned()
 }
 
-/// 机械剥离出处引用（issue #839 决策 5）：`issue #N` / `spec #N`（含紧随的
-/// 「二期」）/ `ADR-N`（含紧随的「决策 N[/M]」），连带紧邻分隔符与残留的空
-/// 括号/悬挂标点一并清理；出处保留在源注解里给开发者。已核对契约文本中裸
-/// `#N` 仅以出处形态出现，末段兜底剥离安全。
-/// 静态正则构造：模式全部为编译期内字面量，且方言投影产物由集成测试全量
-/// 锁覆盖；构造失败属编程错误，fail loud（豁免贴最近语句，ADR-0060）。
 fn static_regex(pattern: &'static str) -> Regex {
-    #[allow(clippy::expect_used)] // 静态字面量正则，有效性由作者与投影锁保证（ADR-0060）
+    #[allow(clippy::expect_used)]
     Regex::new(pattern).expect("静态正则字面量有效")
 }
 
@@ -281,13 +241,10 @@ fn strip_provenance(text: &str) -> Option<String> {
         LazyLock::new(|| static_regex(r#"\s*[/·、,，]?\s*(?:issue|spec)\s*#\d+(?:\s*二期)?"#));
     static ADR_REF: LazyLock<Regex> =
         LazyLock::new(|| static_regex(r#"\s*[/·、,，]?\s*ADR-\d+(?:\s*决策\s*[\d/]+)?"#));
-    // 已核对契约文本中裸 `#N` 仅以「issue #693/#696」同源串联形态残留，兜底剥离。
     static BARE_HASH_REF: LazyLock<Regex> =
         LazyLock::new(|| static_regex(r"\s*[/·、]\s*#\d+|#\d+"));
     static NEWLINE_TRIM: LazyLock<Regex> = LazyLock::new(|| static_regex(r" ?\n ?"));
     static SPACES: LazyLock<Regex> = LazyLock::new(|| static_regex(r"[ \t]+"));
-    // 悬挂标点清理：剥引用后残留的空括号、括号内首分隔符、结尾分隔符、
-    // 标点前空白（「见 ADR-N，」→「见，」形态）。
     static EMPTY_PAREN: LazyLock<Regex> = LazyLock::new(|| static_regex(r"[（(][）)]"));
     static PUNCT_BEFORE_PAREN: LazyLock<Regex> =
         LazyLock::new(|| static_regex(r"[，、；]\s*([）)])"));
@@ -301,7 +258,6 @@ fn strip_provenance(text: &str) -> Option<String> {
     text = BARE_HASH_REF.replace_all(&text, "").into_owned();
     text = NEWLINE_TRIM.replace_all(&text, "\n").into_owned();
     text = SPACES.replace_all(&text, " ").into_owned();
-    // 悬挂标点可能连环残留（「（ / ，」多轮剥出），清理迭代至不动点（有界）。
     for _ in 0..4 {
         let before = text.clone();
         text = EMPTY_PAREN.replace_all(&text, "").into_owned();

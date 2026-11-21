@@ -103,3 +103,18 @@ package.json `"//"` 键（根 + 18 包）、Cargo.toml 全部注释、`.kache.to
 - **已知双源边界（登记在案的不对称与一致点，语料不含）**：非 ASCII 标识符紧邻原始串、非 BMP 字符入 char 字面量两形态，TS 侧按 ASCII/UTF-16 近似，两侧结果可能不同；`'\u{…}'` 转义两实现**一致地**不按字面量识别；TS 侧另有 `keepLiterals` 扩展形态（保留字面量只掩注释，Rust 消费面无此需求未实现）。边界扩展属规则改动，须两侧同步 + 语料更新。
 
 决策 3 的识别口径、豁免闭集与家族双源同步纪律不变。
+
+
+## 修订注记（#2206 壳层清零，2026-11-21）：本批删除注释承载的独有决策记录在此收口
+
+- **Windows 控制台抑制载体**（根包 `main.rs`）：`#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]` 是 Windows release 构建不弹控制台窗口的载体（子系统语义）；删除该**属性**会改变 Windows 发布行为——属性是配置语义，其上的警示注释已按禁令清零，本条留痕防属性被当作无用代码移除。
+- **DMABUF workaround 的 set_var 安全前提**（`src/lib.rs` run()）：`WEBKIT_DISABLE_DMABUF_RENDERER` 的 `set_var`（Rust 2024 起 unsafe）由 `main()` 同步首调 `run()` 执行，先于 Tauri 装配出的任何线程与 async runtime，进程环境仅主线程读写——这是该 unsafe 块的正确性前提；workaround 本体与跟踪票见 #2190，接线守门见壳层 webkit 守门模块。
+
+## 修订注记（#2207 例外发现，2026-11-21）：豁免闭集扩入 compile_fail doctest 载体
+
+#2202 分域清理批次 #2207 在 transaction / accounts 域各保留 3 行 compile_fail doctest 本体——活负向守门测试，ADR-0112 #2204 修订注记的 compile_fail 载体约束认可的唯一载体（业务域 crate 不得以 `use tauri_app_lib::…` 形态承载对壳层反向引用负向例，合法载体只剩协议 crate 根文档与 crate 内私有面「再公开即红」形态；sync-protocol 根文档负向用例同属此机制）。现行豁免闭集把这些行计为注释行，两键无法归零。按决策 2「扩豁免 = 修订本 ADR」路径，豁免闭集自「SAFETY + shebang」扩为「SAFETY + shebang + compile_fail doctest 载体」：
+
+- **载体与理由**：Rust 文档注释（`///` 与 `//!`）内位于 ```compile_fail fence 的行（含 fence 开/闭行与体内行）是负向守门测试载荷，属代码非文档——删除即删测试。fence 体内的普通注释行是 doctest 源码的一部分，一并豁免。
+- **豁免判定 = fence 状态机（确定性口径）**：开行 = 文档注释行（trim 后 `///` 或 `//!` 起头）内容以 ``` 或 ~~~ fence 标记起头且信息串含 compile_fail；自开行起豁免至闭行 inclusive（闭行 = 文档注释行内容仅为 fence 标记、无信息串）；未闭合 fence 豁免至文件尾（rustdoc 语义下未闭合 fence 的后续文档行仍属测试载荷，确定性优先，靠评审兜底）；非 compile_fail fence（```rust / ```ignore / ```no_run 等）不豁免，文档示例内注释照常计数。机制住门内（`check-comment-gate.ts` rust face），不入守门原语库——单消费方不满足原语 ≥2 门准入判据。
+- **豁免计数单列 compileFailExempt**（与 safetyExempt 同构）：门禁报告输出独立计数，不并入其他豁免形态的计数。
+- 基线随本注记重计：transaction 3→0、accounts 3→0（#2207 保留的两处载体），sync-protocol 与 backup 按各自 fence 行数下降，其余键零变化。

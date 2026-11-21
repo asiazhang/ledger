@@ -1,5 +1,3 @@
-//! 首页财务全貌（净资产跨币种合计）e2e 步骤定义（issue #142）。
-
 use cucumber::{given, then, when};
 
 use ledger_dashboard::query_dashboard_overview;
@@ -11,12 +9,6 @@ use crate::common::instrument_id_by_symbol;
 use crate::step_inputs::trade_input;
 use crate::world::LedgerWorld;
 
-// ---------------------------------------------------------------------------
-// Given
-// ---------------------------------------------------------------------------
-
-/// 经投资域核心创建入口建标的字典行（聚合测试只需要 id/symbol/币种；
-/// #763 旁路归零；市场缺省 unknown，与原直插同值）。
 #[given(expr = "存在标的 {string} 币种 {string}")]
 fn create_instrument_fixture(world: &mut LedgerWorld, symbol: String, currency: String) {
     let input = InstrumentInput {
@@ -29,10 +21,6 @@ fn create_instrument_fixture(world: &mut LedgerWorld, symbol: String, currency: 
     world_write!(world, |conn| create_instrument(conn, input)).expect("新建标的失败");
 }
 
-/// 插入标的市场现价（market_prices 每标的仅保留最新一行）：经投资域现价缓存
-/// 写入单点 [`upsert_market_price`]（#764 旁路收敛）；`priced_at` 为行情日期
-/// （域时刻，无断言语义，取非 FIXED_NOW 日期段）；source 落 NULL、股票无
-/// nav_date，与原直插形状一致。
 #[given(expr = "标的 {string} 现价 {int} 币种 {string}")]
 fn set_market_price(world: &mut LedgerWorld, symbol: String, price: i64, currency: String) {
     let instrument_id = instrument_id_by_symbol(&world_conn!(world), &symbol);
@@ -50,8 +38,6 @@ fn set_market_price(world: &mut LedgerWorld, symbol: String, price: i64, currenc
     .expect("标的现价夹具：写入失败");
 }
 
-/// 经行为层创建一笔买入交易（建立持仓批次），走与真实写路径一致的 plan → insert → apply。
-/// 同时注册 Given/When：场景中可在创建账户（When）之前或之后使用。
 #[given(expr = "已买入 标的 {string} 数量 {int} 单价 {int} 到账户 {string}")]
 #[when(expr = "已买入 标的 {string} 数量 {int} 单价 {int} 到账户 {string}")]
 fn buy_instrument(
@@ -63,8 +49,6 @@ fn buy_instrument(
 ) {
     let instrument_id = instrument_id_by_symbol(&world_conn!(world), &symbol);
     let account_id = world.account_id(&account_name);
-    // 买入交易以账户币种成交、行金额由 prepare 按数量×单价重算（L1 买卖工厂
-    // 置零语义）；fixture 入参与真实写路径一致，不依赖 prepare 兕底覆盖。
     let input = trade_input(
         TransactionKind::Buy,
         &instrument_id,
@@ -76,10 +60,6 @@ fn buy_instrument(
     let result = create_transaction_internal(&world_conn!(world), input);
     assert!(result.is_ok(), "创建买入交易失败: {:?}", result.err());
 }
-
-// ---------------------------------------------------------------------------
-// When
-// ---------------------------------------------------------------------------
 
 #[when(expr = "查询净资产总览")]
 fn query_net_worth(world: &mut LedgerWorld) {
@@ -94,10 +74,6 @@ fn query_net_worth(world: &mut LedgerWorld) {
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// Then
-// ---------------------------------------------------------------------------
 
 #[then(expr = "净资产应为 {int}")]
 fn assert_net_worth(world: &mut LedgerWorld, expected: i64) {

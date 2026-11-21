@@ -1,16 +1,8 @@
-//! 保存前「测试连接」的读取探针（issue #1219）对真实 S3 桩的行为：
-//! 缺对象 = 连通、只读且不列桶、以及凭据 / 权限 / 目标 / 网络四类失败的分层码。
-//!
-//! 断言对准用户可观察结果（探测结论与用户拿到的码），不断言 SDK 调用形状；
-//! 「不要求列桶权限」另以桩观测到的请求面（只有一次对象 GET、无列桶/列对象、
-//! 无写请求）作证据——那是判据本身要求的最小权限结论，不是实现形状。
-
 use tauri_app_lib::ledger_sync_engine::transport::Transport;
 use tauri_app_lib::ledger_sync_engine::transport::s3::{S3Config, S3Transport};
 use tauri_app_lib::ledger_sync_engine::{SyncChannelConfig, probe_channel};
 use tauri_app_lib::test_support::{S3Addressing, S3Deny, S3StubConfig, spawn_s3_stub};
 
-/// 探针键（同步轮次从不写它；与 `ChannelLayout::probe_path` 同源）。
 fn probe_object_path(space: &str) -> String {
     format!("/ledger-test/book-{space}/probe/connectivity")
 }
@@ -20,7 +12,6 @@ fn probe_treats_missing_object_as_connected_and_reads_only() {
     let stub = spawn_s3_stub(S3StubConfig::new(S3Addressing::PathStyle));
     let config = stub.channel_config("family");
 
-    // 桶是新开的、什么对象都没有：取不到探针对象恰恰是连通形态。
     probe_channel(&config).expect("缺对象必须是「连通」而不是失败");
 
     let requests = stub.requests();
@@ -32,7 +23,6 @@ fn probe_treats_missing_object_as_connected_and_reads_only() {
         probe_object_path("family"),
         "探针对象应落在同步空间目录下（权限范围与真实轮次一致）"
     );
-    // 最小权限子账号通常没有 ListBucket：探针不得走列桶/列对象，也不得留写痕迹。
     assert!(
         request
             .query
@@ -49,8 +39,6 @@ fn probe_treats_missing_object_as_connected_and_reads_only() {
         "探针只应有对象 GET，不得有写请求或列桶请求"
     );
 
-    // 探针对象真的存在时同样连通（例如保留键恰被别的工具放过东西）：探测结论
-    // 不取决于对象在不在，只取决于「读得动」。
     let transport = S3Transport::new(S3Config {
         endpoint: config.endpoint.clone(),
         region: config.region.clone(),

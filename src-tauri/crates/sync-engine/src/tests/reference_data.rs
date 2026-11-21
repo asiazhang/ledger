@@ -1,9 +1,3 @@
-//! 参考数据字典（账户 / 分类 / 商户）的全域 op 产出与重放收敛（issue #860）。
-//!
-//! 双端场景 = 同进程两个引擎实例（[`super::common`] 同纪律）；各写入入口走
-//! 公开写入口（域函数），op 产出与重放断言全部对准同步引擎公开接口
-//! （`read_ops` / `ingest_ops` / `parked_ops`）。
-
 use super::super::{DomainCommand, OpOutcome, ingest_ops, parked_ops, read_ops};
 use super::common::{seed_device, wire_in, wire_out};
 use ledger_accounts::{
@@ -32,7 +26,6 @@ fn account_input(name: &str) -> AccountInput {
     }
 }
 
-/// 账户业务字段快照（簿记戳是各端本地事实，不参与状态等值判定）。
 fn read_account(conn: &Connection, id: &str) -> Option<(String, String, i64, bool)> {
     conn.query_row(
         "SELECT name, currency_code, initial_balance_cents, is_deleted FROM accounts WHERE id=?1",
@@ -65,7 +58,6 @@ fn account_create_update_delete_ops_replay_and_converge() {
     .unwrap();
     delete_account(&conn_a, &id).unwrap();
 
-    // A 端三入口各产出一条 op（create / update / delete）。
     let ops = read_ops(&conn_a).unwrap();
     assert_eq!(ops.len(), 3, "三个写入口各产出一条 op：{ops:?}");
     assert!(ops.iter().all(|op| op.command.subject().0 == "account"));
@@ -79,7 +71,6 @@ fn account_create_update_delete_ops_replay_and_converge() {
     );
     assert_eq!(read_ops(&conn_a).unwrap(), read_ops(&conn_b).unwrap());
 
-    // 重复投递：全部 Skipped，无第二次效果。
     let again = wire_in(&conn_b, &wire_out(&conn_a));
     assert!(again.iter().all(|r| r.outcome == OpOutcome::Skipped));
 }
@@ -91,8 +82,6 @@ fn account_concurrent_edits_converge_to_order_last() {
     seed_device(&conn_a, "dev-a");
     seed_device(&conn_b, "dev-b");
 
-    // 同一账户在两端等量种子（夹具不产 op，两端时钟同为 0），并发改名时钟相同，
-    // 全序 tiebreak 落 DeviceId 字典序（dev-a < dev-b，B 末）。
     test_support::seed_account(&conn_a, "acc-1", "现金", "cash", "CNY", 0);
     test_support::seed_account(&conn_b, "acc-1", "现金", "cash", "CNY", 0);
 
@@ -126,7 +115,6 @@ fn account_concurrent_edits_converge_to_order_last() {
     let reports_on_b = wire_in(&conn_b, &wire_out(&conn_a));
     wire_in(&conn_a, &wire_out(&conn_b));
 
-    // 两端收敛序末者（dev-b 的「乙」）；A 的编辑在 B 端为 LWW 输者（可审计）。
     let name_on_a = read_account(&conn_a, "acc-1").unwrap().0;
     let name_on_b = read_account(&conn_b, "acc-1").unwrap().0;
     assert_eq!(name_on_a, "乙");
@@ -147,8 +135,6 @@ fn black_hole_adjust_produces_account_and_transaction_ops() {
     seed_device(&conn_a, "dev-a");
     seed_device(&conn_b, "dev-b");
 
-    // 目标账户经公开写入口创建并先同步（两端都有账户行与余额缓存行）。
-    // 种子已预置 CNY 黑洞账户，用 USD 账户触发黑洞即建路径。
     let account_id = create_account(
         &conn_a,
         AccountInput {
@@ -164,11 +150,6 @@ fn black_hole_adjust_produces_account_and_transaction_ops() {
     .unwrap();
     wire_in(&conn_b, &wire_out(&conn_a));
 
-    // 余额调整：黑洞即建（账户写）+ 调整转账（交易写）——两类 op 同事务产出。
-    // 折算汇率只在 A 端存在：调整转账折算在源端完成、随 op 携带（ADR-0091 决策 3）。
-    // 当期行留作既有夹具；调整转账写入按交易日取数（#1547），源端另种
-    // 交易周（2026-01-10 所属周，周一 2026-01-05）历史点——B 端仍无汇率，
-    // 折算结果随 op 携带（ADR-0091 决策 3）不受影响。
     test_support::seed_exchange_rate(&conn_a, "USD", "CNY", 7.2);
     test_support::seed_fx_rate_history(&conn_a, "fxh-bh", "USD", "CNY", "2026-01-05", 7.2);
     let (tx_id, created) = ledger_accounts::adjust_account_balance(
@@ -185,7 +166,6 @@ fn black_hole_adjust_produces_account_and_transaction_ops() {
 
     wire_in(&conn_b, &wire_out(&conn_a));
 
-    // B 端黑洞账户就位（is_hidden=1），调整转账落地（重放不因外键缺失挂起）。
     let hidden: i64 = conn_b
         .query_row(
             "SELECT COUNT(*) FROM accounts WHERE is_hidden=1 AND name='无(USD)' AND is_deleted=0",
@@ -211,7 +191,6 @@ fn merchant_ops_replay_and_converge() {
     seed_device(&conn_a, "dev-a");
     seed_device(&conn_b, "dev-b");
 
-    // find-or-create 未命中即建（产 op），命中复用不产第二条创建 op。
     let id = create_merchant_by_name(&conn_a, "京东").unwrap();
     let again = create_merchant_by_name(&conn_a, "京东").unwrap();
     assert_eq!(id, again, "命中复用同一商户");
@@ -327,14 +306,10 @@ fn category_lifecycle_and_reorder_ops_replay_and_converge() {
     assert!(row(&conn_a, &child).3, "子分类已软删");
     assert_eq!(read_ops(&conn_a).unwrap(), read_ops(&conn_b).unwrap());
 
-    // 重复投递：全部 Skipped。
     let again = wire_in(&conn_b, &wire_out(&conn_a));
     assert!(again.iter().all(|r| r.outcome == OpOutcome::Skipped));
 }
 
-/// 命令 LWW 裁决域钉子：各域命令 subject 指向实体 id，防实体判别键漂移。
-/// 派生自然键型命令（货币对、标的 × 周）以派生键为裁决域（issue #861）。
-/// 实体标签一律取注册表 `ENTITY`（ADR-0101 勘误 3），故此处只钉键不受标签影响。
 #[test]
 fn command_subject_is_entity_id_across_domains() {
     use std::borrow::Cow;
@@ -390,11 +365,6 @@ fn command_subject_is_entity_id_across_domains() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// 信用卡档案字段（spec #1327 / ADR-0119）：op 载荷随行与旧载荷承接。
-// ---------------------------------------------------------------------------
-
-/// 信用卡档案字段快照（额度 / 账单日 / 还款日）。
 fn read_credit_terms(conn: &Connection, id: &str) -> (Option<i64>, Option<i64>, Option<i64>) {
     conn.query_row(
         "SELECT credit_limit_cents, statement_day, due_day FROM accounts WHERE id=?1",
@@ -404,8 +374,6 @@ fn read_credit_terms(conn: &Connection, id: &str) -> (Option<i64>, Option<i64>, 
     .unwrap()
 }
 
-/// 信用卡档案字段随账户 op 跨端收敛：否则「额度 / 账单日」会随设备漂移。
-/// 编辑与清空同走落定值语义（`None` = 置空），重放后两端相等。
 #[test]
 fn account_credit_terms_create_and_update_ops_replay_and_converge() {
     let conn_a = test_support::open();
@@ -455,7 +423,6 @@ fn account_credit_terms_create_and_update_ops_replay_and_converge() {
         "重放后档案两端一致"
     );
 
-    // 清空也是落定值：单字段清空不牽动另两个，重放后两端仍相等。
     update_account(
         &conn_a,
         &id,
@@ -483,8 +450,6 @@ fn account_credit_terms_create_and_update_ops_replay_and_converge() {
     );
 }
 
-/// 旧格式 op（V026 前设备产出）无信用卡档案键：重放照常应用、不挂起，档案按
-/// 「未设置」承接（与 V023 出资字段的旧载荷纪律同款：缺失即旧语义）。
 #[test]
 fn legacy_account_op_without_credit_fields_replays_as_unset() {
     let conn_a = test_support::open();
@@ -504,7 +469,6 @@ fn legacy_account_op_without_credit_fields_replays_as_unset() {
     )
     .unwrap();
 
-    // 把 op 改写成旧格式：行载荷无信用卡档案三键、schema 版本 24（V026 前）。
     let mut legacy: serde_json::Value = serde_json::from_str(&wire_out(&conn_a)[0]).unwrap();
     legacy["schema_version"] = serde_json::json!(24);
     let row = legacy["command"]["payload"]["row"].as_object_mut().unwrap();
@@ -522,16 +486,9 @@ fn legacy_account_op_without_credit_fields_replays_as_unset() {
     assert_eq!(read_credit_terms(&conn_b, &id), (None, None, None));
     assert_eq!(read_account(&conn_b, &id), read_account(&conn_a, &id));
 
-    // 已落日志（幂等重投跳过），不残留挂起。
     let again = wire_in(&conn_b, &[serde_json::to_string(&legacy).unwrap()]);
     assert_eq!(again[0].outcome, OpOutcome::Skipped);
 }
-
-// ---------------------------------------------------------------------------
-// 账户归档命令（spec #1952 / ADR-0142 决策 5 / issue #1953）：SetArchived
-// 独立变体——本地写与重放同一执行协议，跨端收敛；旧版本端按 schema 版本门
-// 挂起（ParkedOp），不崩溃、不丢数据。
-// ---------------------------------------------------------------------------
 
 fn read_archived(conn: &Connection, id: &str) -> Option<bool> {
     conn.query_row("SELECT is_archived FROM accounts WHERE id=?1", [id], |r| {
@@ -550,7 +507,6 @@ fn account_set_archived_op_replays_and_converges() {
     let id = create_account(&conn_a, account_input("借出·张三")).unwrap();
     ledger_accounts::set_account_archived(&conn_a, &id, true).unwrap();
 
-    // 本地归档产出一条 SetArchived op。
     let ops = read_ops(&conn_a).unwrap();
     assert_eq!(ops.len(), 2, "create + set_archived 各一条 op：{ops:?}");
     assert!(
@@ -566,8 +522,6 @@ fn account_set_archived_op_replays_and_converges() {
     assert_eq!(read_archived(&conn_b, &id), Some(true), "重放后归档态收敛");
     assert_eq!(read_ops(&conn_a).unwrap(), read_ops(&conn_b).unwrap());
 
-    // 恢复（目标态翻转）同样经命令传播收敛（全量重投含已见 op：已见的幂等
-    // 跳过，新的恢复 op 落地）。
     ledger_accounts::set_account_archived(&conn_a, &id, false).unwrap();
     let reports = wire_in(&conn_b, &wire_out(&conn_a));
     assert!(
@@ -582,14 +536,10 @@ fn account_set_archived_op_replays_and_converges() {
         "恢复后收敛回未归档"
     );
 
-    // 重复投递：全部 Skipped，无第二次效果。
     let again = wire_in(&conn_b, &wire_out(&conn_a));
     assert!(again.iter().all(|r| r.outcome == OpOutcome::Skipped));
 }
 
-/// 旧版本端收到 SetArchived：op 产生自更新 schema（V037 起），schema 版本门
-/// 先行挂起（ParkedOp，`sync-engine.schema-ahead`）——不崩溃、不丢数据，账本
-/// 无其效果；升级本端后重投递自然重试（spec 用户故事 23）。
 #[test]
 fn set_archived_op_from_newer_schema_parks_on_old_end() {
     let conn_a = test_support::open();
@@ -597,16 +547,12 @@ fn set_archived_op_from_newer_schema_parks_on_old_end() {
     seed_device(&conn_a, "dev-a");
     seed_device(&conn_b, "dev-b");
     let id = create_account(&conn_a, account_input("借出·李四")).unwrap();
-    // 先把创建 op 同步过去（两端账户行同在）。
     let create_op = &wire_out(&conn_a)[0];
     let reports = wire_in(&conn_b, std::slice::from_ref(create_op));
     assert!(reports.iter().all(|r| r.outcome == OpOutcome::Applied));
 
     ledger_accounts::set_account_archived(&conn_a, &id, true).unwrap();
     let mut op = read_ops(&conn_a).unwrap().remove(1);
-    // 两端同进程同 schema，合成「op 来自更新 schema」的偏斜视角（旧版本端收到
-    // 新命令的真实形状，parked.rs 先例同款）：V037 起新端产的 SetArchived 在
-    // 旧端 schema_version 门前挂起。
     op.schema_version += 1;
     let ahead = serde_json::to_string(&op).unwrap();
 
@@ -625,8 +571,6 @@ fn set_archived_op_from_newer_schema_parks_on_old_end() {
     assert_eq!(read_archived(&conn_b, &id), Some(false), "未执行不落地");
 }
 
-/// 同 schema 下未知 action（未来版本命令提前到达）：信封可读、命令不可解 →
-/// 挂起不崩溃、载荷原样保留（serde 失败兜底，与未知实体同款归宿）。
 #[test]
 fn unknown_account_action_parks_and_never_drops() {
     let conn = test_support::open();

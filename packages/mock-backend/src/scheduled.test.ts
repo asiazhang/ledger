@@ -3,29 +3,10 @@ import { installMockBackend } from "./index";
 import { invoke } from "./tauri/core";
 import { listen } from "./tauri/event";
 
-/**
- * 定时/订阅域替身行为测试（issue #1973 / spec #1964 / ADR-0143）：接缝 = 应用
- * 所见的 tauri 命令面（`installMockBackend` + `invoke`），断言布线与行为一体——
- * 删除 index.ts 任一登记行即未命中报错、本文件变红（接线负向判据，ADR-0087）。
- *
- * 期望值为独立人算字面量（输入全字面量化，见 scheduled.ts 头注的从简口径）。
- * 夹具（fixtures.ts）：分期 12 期（1_000/期、2 completed）、订阅·商户月付
- * 2_500（5 completed + 1 pending）、订阅·保单年缴 600_000（1 completed）、
- * 定时转账月度 500_000（1 completed + 1 pending）。替身「今日」锚 2026-01-15
- * （MOCK_TODAY）——订阅花费窗口 = 2025-02..2026-01（12 个日历月，旧→新）：
- *
- * - 本月（2026-01）实际 = 视频会员 2_500；本年（2026）实际 = 2_500（年缴
- *   600_000 落 2025-06，不进本年）。
- * - 逐月序列：2025-06 = 600_000、2025-09..2026-01 各 2_500、其余月 0。
- * - 折算月成本（只算 active）= 2_500 × 1 + round(600_000 ÷ 12) = 52_500；
- *   折算年成本 = 52_500 × 12 = 630_000。
- */
-
 beforeEach(() => {
-  installMockBackend(); // 重装即重播种：每用例从夹具种子起步
+  installMockBackend();
 });
 
-/** 订阅 ledger:changed 并返回触发计数（断言失效信号必发，ADR-0143 决策 3）。 */
 function captureLedgerChanged(): () => number {
   let count = 0;
   void listen("ledger:changed", () => {
@@ -51,10 +32,10 @@ describe("定时计划读：列表与详情投影", () => {
   it("list：四条夹具计划 created_at 倒序 + 形态扩展投影（独立人算字面量）", async () => {
     const rows = await listPlans();
     expect(rows.map((r) => r.core.id)).toEqual([
-      "mock-sch-installment", // created_at 2025-12-01，倒序最先
-      "mock-sch-transfer", // 2025-11-25
-      "mock-sch-subscription", // 2025-08-01
-      "mock-sch-policy-sub", // 2025-05-20
+      "mock-sch-installment",
+      "mock-sch-transfer",
+      "mock-sch-subscription",
+      "mock-sch-policy-sub",
     ]);
     const inst = rows.find((r) => r.core.id === "mock-sch-installment");
     expect(inst).toMatchObject({
@@ -74,8 +55,8 @@ describe("定时计划读：列表与详情投影", () => {
     });
     const policySub = rows.find((r) => r.core.id === "mock-sch-policy-sub");
     expect(policySub).toMatchObject({
-      merchant_id: null, // 保单协议不挂商户（ADR-0082 决策 2）
-      policy_id: "mock-policy-active", // 并入统一：原挂空 mock-pol-health 改指真实保单
+      merchant_id: null,
+      policy_id: "mock-policy-active",
     });
     const transfer = rows.find((r) => r.core.id === "mock-sch-transfer");
     expect(transfer).toMatchObject({
@@ -111,8 +92,8 @@ describe("定时计划读：列表与详情投影", () => {
       total_amount_cents: 12_000,
       total_occurrences: 12,
     });
-    expect(detail.completed_occurrences).toBe(2); // 夹具前 2 期已完成
-    expect(detail.completed_amount_cents).toBe(2_000); // 1_000 × 2
+    expect(detail.completed_occurrences).toBe(2);
+    expect(detail.completed_amount_cents).toBe(2_000);
     expect(detail.occurrences).toHaveLength(12);
     expect(detail.occurrences.map((o) => o.scheduled_date)).toEqual([
       "2025-12-15",
@@ -143,7 +124,7 @@ describe("定时计划读：列表与详情投影", () => {
     expect(detail.extension).toEqual({
       scheduled_transaction_id: "mock-sch-policy-sub",
       merchant_id: null,
-      policy_id: "mock-policy-active", // 并入统一：原挂空 mock-pol-health 改指真实保单
+      policy_id: "mock-policy-active",
     });
   });
 
@@ -178,15 +159,14 @@ describe("订阅花费总览：实际花费聚合与折算推算（独立人算�
     }>("subscription_spend_overview");
 
     expect(overview.native_currency).toBe("CNY");
-    expect(overview.this_month_native_cents).toBe(2_500); // 视频会员 2026-01 一笔
-    expect(overview.this_year_native_cents).toBe(2_500); // 年缴 600_000 落 2025-06
-    // 12 个月窗口 2025-02..2026-01（旧→新，无扣款月补 0）
+    expect(overview.this_month_native_cents).toBe(2_500);
+    expect(overview.this_year_native_cents).toBe(2_500);
     expect(overview.months).toEqual([
       { month: "2025-02", native_cents: 0 },
       { month: "2025-03", native_cents: 0 },
       { month: "2025-04", native_cents: 0 },
       { month: "2025-05", native_cents: 0 },
-      { month: "2025-06", native_cents: 600_000 }, // 年缴保费
+      { month: "2025-06", native_cents: 600_000 },
       { month: "2025-07", native_cents: 0 },
       { month: "2025-08", native_cents: 0 },
       { month: "2025-09", native_cents: 2_500 },
@@ -195,7 +175,6 @@ describe("订阅花费总览：实际花费聚合与折算推算（独立人算�
       { month: "2025-12", native_cents: 2_500 },
       { month: "2026-01", native_cents: 2_500 },
     ]);
-    // 逐订阅行（created_at 倒序）只含订阅形态：商户版在前
     expect(overview.rows.map((r) => r.plan_id)).toEqual([
       "mock-sch-subscription",
       "mock-sch-policy-sub",
@@ -212,10 +191,9 @@ describe("订阅花费总览：实际花费聚合与折算推算（独立人算�
     expect(overview.rows[1]).toMatchObject({
       note: "重疾险年缴",
       merchant_name: null,
-      this_month_native_cents: 0, // 年缴落 2025-06
+      this_month_native_cents: 0,
       this_year_native_cents: 0,
     });
-    // 折算推算（只算 active）：2_500 × 1 + 600_000 ÷ 12 = 52_500；年 = × 12
     expect(overview.projected_month_native_cents).toBe(52_500);
     expect(overview.projected_year_native_cents).toBe(630_000);
   });
@@ -239,9 +217,8 @@ describe("建计划 → 期次出现 → 手动执行 → 流水出现（主闭�
         merchant_id: "mock-mch-jd",
       },
     });
-    expect(changed()).toBe(1); // 计划写入恰发一次
+    expect(changed()).toBe(1);
 
-    // 月度窗口展开：12 期 2026-02-10..2027-01-10，全 pending
     const created = await invoke<{
       occurrences: { id: string; scheduled_date: string; status: string }[];
     }>("get_scheduled_transaction_detail", { id: planId });
@@ -261,13 +238,12 @@ describe("建计划 → 期次出现 → 手动执行 → 流水出现（主闭�
     ]);
     expect(created.occurrences.every((o) => o.status === "pending")).toBe(true);
 
-    // 手动执行第一期：真落一笔 expense 流水（复制计划商户/备注）
     const occId = created.occurrences[0]?.id;
     if (!occId) throw new Error("测试辅助：首期缺席");
     const txnId = await invoke<string>("execute_scheduled_occurrence", {
       input: { occurrence_id: occId },
     });
-    expect(changed()).toBe(2); // 执行恰发一次
+    expect(changed()).toBe(2);
 
     const txns = await invoke<{ items: { id: string }[] }>("list_transactions");
     const landed = txns.items.find((t) => t.id === txnId);
@@ -280,7 +256,6 @@ describe("建计划 → 期次出现 → 手动执行 → 流水出现（主闭�
       date: "2026-02-10",
     });
 
-    // 期次置 completed 并回填 transaction_id
     const after = await invoke<{
       occurrences: { id: string; status: string; transaction_id: string | null }[];
       completed_occurrences: number;
@@ -294,7 +269,7 @@ describe("建计划 → 期次出现 → 手动执行 → 流水出现（主闭�
 
   it("定时转账期次执行落 transfer 流水（两账户、无商户）", async () => {
     const txnId = await invoke<string>("execute_scheduled_occurrence", {
-      input: { occurrence_id: "mock-sch-occ-trf-2" }, // 2026-01-05 pending
+      input: { occurrence_id: "mock-sch-occ-trf-2" },
     });
     const txns = await invoke<{ items: { id: string }[] }>("list_transactions");
     expect(txns.items.find((t) => t.id === txnId)).toMatchObject({
@@ -328,7 +303,6 @@ describe("建计划 → 期次出现 → 手动执行 → 流水出现（主闭�
       "get_scheduled_transaction_detail",
       { id: planId },
     );
-    // 12_500 ÷ 12 = 1_041 余 8：前 11 期 1_041、末期 1_041 + 8 = 1_049
     expect(detail.occurrences.map((o) => o.amount_cents)).toEqual([
       1_041, 1_041, 1_041, 1_041, 1_041, 1_041, 1_041, 1_041, 1_041, 1_041, 1_041, 1_049,
     ]);
@@ -351,7 +325,6 @@ describe("建计划 → 期次出现 → 手动执行 → 流水出现（主闭�
       "get_scheduled_transaction_detail",
       { id: planId },
     );
-    // 2026 半年：1月31、2月28（平年钳制）、3月31、4月30、5月31、6月30
     expect(detail.occurrences.slice(0, 6).map((o) => o.scheduled_date)).toEqual([
       "2026-01-31",
       "2026-02-28",
@@ -376,24 +349,22 @@ describe("建计划 → 期次出现 → 手动执行 → 流水出现（主闭�
 
   it("非 pending 期次与暂停计划的期次执行被拒（不发信号）", async () => {
     const changed = captureLedgerChanged();
-    // 已完成期次再执行被拒
     await expect(
       invoke("execute_scheduled_occurrence", {
-        input: { occurrence_id: "mock-sch-occ-sub-1" }, // completed
+        input: { occurrence_id: "mock-sch-occ-sub-1" },
       }),
     ).rejects.toThrow(/期次状态/);
 
-    // 暂停计划后执行被拒
     await invoke("update_scheduled_transaction_status", {
       input: { id: "mock-sch-subscription", new_status: "paused" },
     });
-    const before = changed(); // 暂停发过一次
+    const before = changed();
     await expect(
       invoke("execute_scheduled_occurrence", {
-        input: { occurrence_id: "mock-sch-occ-sub-6" }, // pending 但计划已暂停
+        input: { occurrence_id: "mock-sch-occ-sub-6" },
       }),
     ).rejects.toThrow(/活跃/);
-    expect(changed()).toBe(before); // 拒绝路径零信号
+    expect(changed()).toBe(before);
   });
 });
 
@@ -411,7 +382,6 @@ describe("计划状态与订阅编辑", () => {
       pending_occurrences: unknown[];
     }>("get_scheduled_transaction_detail", { id: "mock-sch-subscription" });
     expect(detail.core.status).toBe("cancelled");
-    // 5 期 completed 保留、pending 1 期级联 cancelled
     expect(detail.occurrences.filter((o) => o.status === "cancelled")).toHaveLength(1);
     expect(detail.occurrences.filter((o) => o.status === "completed")).toHaveLength(5);
     expect(detail.pending_occurrences).toHaveLength(0);
@@ -444,12 +414,11 @@ describe("计划状态与订阅编辑", () => {
     expect(row?.core.category_id).toBe("mock-cat-food");
     expect(row?.core.note).toBe("云存储改道");
     expect(row?.merchant_id).toBe("mock-mch-meituan");
-    expect(row?.core.amount_cents).toBe(2_500); // 金额不在编辑面
+    expect(row?.core.amount_cents).toBe(2_500);
   });
 
   it("携带 amount_cents / total_amount_cents 哨兵被拒（含显式 null，不发信号）", async () => {
     const changed = captureLedgerChanged();
-    // ADR-0023 决策三：请求体 key 一旦出现即拒绝（含 null）
     await expect(
       invoke("update_scheduled_subscription", {
         input: {
@@ -465,12 +434,12 @@ describe("计划状态与订阅编辑", () => {
         input: {
           id: "mock-sch-subscription",
           account_id: "mock-acc-ewallet",
-          total_amount_cents: null, // 显式 null 同样拒绝（哨兵看 key 不看值）
+          total_amount_cents: null,
         },
       }),
     ).rejects.toThrow(/订阅金额不可编辑/);
 
-    expect(changed()).toBe(0); // 拒绝路径零信号、零写入
+    expect(changed()).toBe(0);
     const rows = await listPlans();
     expect(rows.find((r) => r.core.id === "mock-sch-subscription")?.core.note).toBe("视频会员");
   });
@@ -489,7 +458,6 @@ describe("期次展开：按计划推进后续序列", () => {
       "get_scheduled_transaction_detail",
       { id: "mock-sch-subscription" },
     );
-    // 夹具最后一期 2026-02-10 → 从 2026-03-10 起补 12 期
     expect(detail.occurrences.slice(-12).map((o) => o.scheduled_date)).toEqual([
       "2026-03-10",
       "2026-04-10",
@@ -510,7 +478,7 @@ describe("期次展开：按计划推进后续序列", () => {
   it("分期已展开满额 → 空结果零信号；非 active 计划 → 空", async () => {
     const changed = captureLedgerChanged();
     const none = await invoke<string[]>("expand_scheduled_occurrences", {
-      id: "mock-sch-installment", // 12/12 已满
+      id: "mock-sch-installment",
     });
     expect(none).toEqual([]);
     expect(changed()).toBe(0);
@@ -523,6 +491,6 @@ describe("期次展开：按计划推进后续序列", () => {
       id: "mock-sch-transfer",
     });
     expect(paused).toEqual([]);
-    expect(changed()).toBe(1); // 无新行零信号
+    expect(changed()).toBe(1);
   });
 });

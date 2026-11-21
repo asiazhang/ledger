@@ -9,28 +9,10 @@ import { installMockBackend } from "./index";
 import { invoke } from "./tauri/core";
 import { listen } from "./tauri/event";
 
-/**
- * 投资明细与交易扩展投影域替身行为测试（issue #1970 / spec #1964 / ADR-0143）：
- * 接缝 = 应用所见的 tauri 命令面（`installMockBackend` + `invoke`），断言四维
- * 筛选 + offset 分页 + 编辑回填三投影的契约形状——删除任一 index.ts 登记行
- * 即未命中报错、本文件变红（接线负向判据，ADR-0087 断言强度）。
- *
- * 夹具种子（fixtureSecurityTxns，人算期望值的独立事实源）：
- * - mock-txn-101 buy   2026-02-03  ETF 159915   数量 1000 / 单价 2.05 / 费 2 元，出资工资卡
- * - mock-txn-102 sell  2026-02-10  基金 000001  数量 2400 / 确认净额 30 元，到账工资卡
- * - mock-txn-103 convert 2026-02-15 基金→ETF  转出 1600 份 / 转入 97 份，行金额锚点 198 元
- * - mock-txn-104 split 2026-02-20  GOLD      Δ = +5，无现金腿金额恒 0
- * - mock-txn-105 dividend 2026-02-25 腾讯 00700  85 元，到账账户 = 工资卡（账户端）
- *
- * 期望值全部为独立人算字面量，不复算实现公式。纯读命令不发失效信号
- * （ledger:changed 恒 0）。
- */
-
 beforeEach(() => {
-  installMockBackend(); // 重装即重播种：每用例从夹具种子起步
+  installMockBackend();
 });
 
-/** 订阅 ledger:changed 并返回触发计数（纯读命令断言恒 0，ADR-0143 决策 3 反向）。 */
 function captureLedgerChanged(): () => number {
   let count = 0;
   void listen("ledger:changed", () => {
@@ -98,7 +80,7 @@ describe("list_investment_transactions：夹具投影与四维筛选", () => {
       filter: null,
     });
     const convertRow = result.items.find((r) => r.id === "mock-txn-103");
-    expect(convertRow?.instrument_id).toBe("mock-inst-fund"); // 公共标的地 = 转出腿
+    expect(convertRow?.instrument_id).toBe("mock-inst-fund");
     expect(convertRow?.convert).toEqual({
       quantity: 1600,
       to_instrument_id: "mock-inst-etf",
@@ -107,7 +89,7 @@ describe("list_investment_transactions：夹具投影与四维筛选", () => {
       out_amount_cents: 20_000,
       in_amount_cents: 19_900,
     });
-    expect(convertRow?.amount_cents).toBe(19_800); // 行金额锚点 = 结转成本
+    expect(convertRow?.amount_cents).toBe(19_800);
 
     const splitRow = result.items.find((r) => r.id === "mock-txn-104");
     expect(splitRow?.split).toEqual({ delta_quantity: 5 });
@@ -117,17 +99,15 @@ describe("list_investment_transactions：夹具投影与四维筛选", () => {
     expect(dividendRow?.trade).toBeNull();
     expect(dividendRow?.convert).toBeNull();
     expect(dividendRow?.split).toBeNull();
-    expect(dividendRow?.account_id).toBe("mock-acc-bank"); // 到账账户即账户端
+    expect(dividendRow?.account_id).toBe("mock-acc-bank");
   });
 
   it("账户筛选：涉及账户 ∪ 出资账户", async () => {
-    // 工资卡：buy 出资、sell 到账、dividend 到账
     await expect(idsOf({ account_id: "mock-acc-bank" })).resolves.toEqual([
       "mock-txn-105",
       "mock-txn-102",
       "mock-txn-101",
     ]);
-    // 券商账户端：buy/sell/convert/split 四行（dividend 到账在工资卡）
     await expect(idsOf({ account_id: "mock-acc-invest" })).resolves.toEqual([
       "mock-txn-104",
       "mock-txn-103",
@@ -138,17 +118,14 @@ describe("list_investment_transactions：夹具投影与四维筛选", () => {
   });
 
   it("标的筛选：convert 两腿任一命中（转出腿与转入腿都算）", async () => {
-    // ETF：buy 直接持有 + convert 转入腿
     await expect(idsOf({ instrument_id: "mock-inst-etf" })).resolves.toEqual([
       "mock-txn-103",
       "mock-txn-101",
     ]);
-    // 基金：sell 直接持有 + convert 转出腿
     await expect(idsOf({ instrument_id: "mock-inst-fund" })).resolves.toEqual([
       "mock-txn-103",
       "mock-txn-102",
     ]);
-    // 腾讯：仅 dividend
     await expect(idsOf({ instrument_id: "mock-inst-hk" })).resolves.toEqual(["mock-txn-105"]);
   });
 
@@ -159,7 +136,6 @@ describe("list_investment_transactions：夹具投影与四维筛选", () => {
       "mock-txn-101",
     ]);
     await expect(idsOf({ kinds: ["expense", "income"] })).resolves.toEqual([]);
-    // 空集合视为未携带
     await expect(idsOf({ kinds: [] })).resolves.toHaveLength(5);
   });
 
@@ -232,7 +208,7 @@ describe("get_transaction_trade / convert / split：编辑回填三投影", () =
     expect(sell?.symbol).toBe("000001");
     expect(sell?.instrument_type).toBe("fund");
     expect(sell?.quantity).toBe(2400);
-    expect(sell?.price_cents).toBe(12_625); // 金额权威反算单价（毛收入 30.3 元 ÷ 2400 份）
+    expect(sell?.price_cents).toBe(12_625);
     expect(sell?.fee_cents).toBe(30);
   });
 
@@ -270,7 +246,6 @@ describe("get_transaction_trade / convert / split：编辑回填三投影", () =
   });
 
   it("非对应 kind 查投影被拒绝（存在性校验形态）", async () => {
-    // trade 投影：convert/split/dividend/通用 kind/不存在
     for (const id of [
       "mock-txn-103",
       "mock-txn-104",
@@ -280,11 +255,9 @@ describe("get_transaction_trade / convert / split：编辑回填三投影", () =
     ]) {
       await expect(invoke("get_transaction_trade", { id })).rejects.toThrow(/明细|不存在/);
     }
-    // convert 投影：buy/sell/不存在
     for (const id of ["mock-txn-101", "mock-txn-102", "mock-txn-none"]) {
       await expect(invoke("get_transaction_convert", { id })).rejects.toThrow(/明细|不存在/);
     }
-    // split 投影：convert/dividend/不存在
     for (const id of ["mock-txn-103", "mock-txn-105", "mock-txn-none"]) {
       await expect(invoke("get_transaction_split", { id })).rejects.toThrow(/明细|不存在/);
     }

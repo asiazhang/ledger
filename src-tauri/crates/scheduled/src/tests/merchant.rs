@@ -1,18 +1,9 @@
-//! 商户复制与软删引用（issue #190 / ADR-0028）：计划带商户 → 每期生成交易复制商户到流水；
-//! 软删商户不可被新计划选择，历史引用照常保持，编辑商户仅影响未来期次。
-
 use super::super::*;
 use super::common::{first_pending_occurrence, read_txn};
 use rusqlite::Connection;
 use rusqlite::params;
 use tauri_app_lib::test_support;
 
-// ---------------------------------------------------------------------------
-// 商户复制（issue #190 / ADR-0028）：计划带商户 → 每期生成交易复制商户到流水
-// ---------------------------------------------------------------------------
-
-/// 插入一个在用商户，返回其 id。簿记戳取工厂固定时刻 `test_support::FIXED_NOW`
-/// （ADR-0084 决策 5：夹具簿记戳零字面量）。
 fn insert_merchant(conn: &Connection, name: &str) -> String {
     let id = format!("mer-{name}");
     conn.execute(
@@ -24,12 +15,10 @@ fn insert_merchant(conn: &Connection, name: &str) -> String {
     id
 }
 
-/// 软删商户（走商户域接缝）。
 fn soft_delete_merchant(conn: &Connection, id: &str) {
     ledger_merchants::delete_merchant(conn, id).unwrap();
 }
 
-/// 创建带商户的订阅计划，返回计划 id。
 fn create_subscription_with_merchant(
     conn: &Connection,
     account_id: &str,
@@ -58,7 +47,6 @@ fn create_subscription_with_merchant(
     .unwrap()
 }
 
-/// 订阅计划带商户：每期生成交易复制计划的商户到流水。
 #[test]
 fn subscription_copies_merchant_to_generated_transaction() {
     let conn = test_support::open();
@@ -75,7 +63,6 @@ fn subscription_copies_merchant_to_generated_transaction() {
     );
 }
 
-/// 分期计划带商户：每期生成交易复制计划的商户到流水。
 #[test]
 fn installment_copies_merchant_to_generated_transaction() {
     let conn = test_support::open();
@@ -108,7 +95,6 @@ fn installment_copies_merchant_to_generated_transaction() {
     assert_eq!(txn.merchant_id.as_deref(), Some(merchant_id.as_str()));
 }
 
-/// 定时转账行为层拒绝携带商户（用 to_account_id 表示本方账户间转账，ADR-0028）。
 #[test]
 fn scheduled_transfer_rejects_merchant() {
     let conn = test_support::open();
@@ -143,7 +129,6 @@ fn scheduled_transfer_rejects_merchant() {
     );
 }
 
-/// 创建计划携带已软删商户 → 拒绝（软删商户不可再被新计划选择）。
 #[test]
 fn create_plan_rejects_soft_deleted_merchant() {
     let conn = test_support::open();
@@ -178,7 +163,6 @@ fn create_plan_rejects_soft_deleted_merchant() {
     );
 }
 
-/// 计划商户被软删后，期次仍复制该历史引用（照常执行，不因校验失败卡住）。
 #[test]
 fn occurrence_keeps_plan_merchant_after_soft_delete() {
     let conn = test_support::open();
@@ -186,14 +170,12 @@ fn occurrence_keeps_plan_merchant_after_soft_delete() {
     let merchant_id = insert_merchant(&conn, "京东");
     let plan_id = create_subscription_with_merchant(&conn, "acc", &merchant_id);
 
-    // 第一期正常执行（商户在用）
     let txn1 = execute_occurrence(&conn, &first_pending_occurrence(&conn, &plan_id)).unwrap();
     assert_eq!(
         read_txn(&conn, &txn1).merchant_id.as_deref(),
         Some(merchant_id.as_str())
     );
 
-    // 软删商户后：第二期仍照常执行并复制历史引用（不报「商户不存在或已删除」）
     soft_delete_merchant(&conn, &merchant_id);
     let occ_ids: Vec<String> = get_plan_detail(&conn, &plan_id)
         .unwrap()
@@ -209,7 +191,6 @@ fn occurrence_keeps_plan_merchant_after_soft_delete() {
     );
 }
 
-/// 构造订阅编辑入参（其余字段取计划当前值，商户由调用方指定）。
 fn update_subscription_input(
     conn: &Connection,
     plan_id: &str,
@@ -233,7 +214,6 @@ fn update_subscription_input(
     }
 }
 
-/// 编辑订阅改商户：只影响未来期次（期次执行时从计划扩展表读商户）。
 #[test]
 fn update_subscription_merchant_affects_only_future_occurrences() {
     let conn = test_support::open();
@@ -242,7 +222,6 @@ fn update_subscription_merchant_affects_only_future_occurrences() {
     let mer_b = insert_merchant(&conn, "商户B");
     let plan_id = create_subscription_with_merchant(&conn, "acc", &mer_a);
 
-    // 第一期：商户 A
     let occ_ids: Vec<String> = get_plan_detail(&conn, &plan_id)
         .unwrap()
         .pending_occurrences
@@ -255,7 +234,6 @@ fn update_subscription_merchant_affects_only_future_occurrences() {
         Some(mer_a.as_str())
     );
 
-    // 编辑商户 → B：已生成交易不动，未来期次用新商户
     update_subscription(
         &conn,
         update_subscription_input(&conn, &plan_id, Some(mer_b.clone())),
@@ -269,7 +247,6 @@ fn update_subscription_merchant_affects_only_future_occurrences() {
     );
 }
 
-/// 编辑其它字段时商户为全量替换：提交当前值（软删商户）视为保持历史引用，不报错。
 #[test]
 fn update_subscription_keeps_soft_deleted_merchant_reference() {
     let conn = test_support::open();
@@ -278,7 +255,6 @@ fn update_subscription_keeps_soft_deleted_merchant_reference() {
     let plan_id = create_subscription_with_merchant(&conn, "acc", &merchant_id);
     soft_delete_merchant(&conn, &merchant_id);
 
-    // 只改备注（商户字段携带当前软删商户）：保持历史引用，编辑成功
     let mut input = update_subscription_input(&conn, &plan_id, Some(merchant_id.clone()));
     input.note = Some("改备注".into());
     update_subscription(&conn, input).expect("保持软删商户引用不应失败");
@@ -292,7 +268,6 @@ fn update_subscription_keeps_soft_deleted_merchant_reference() {
     assert_eq!(kept.as_deref(), Some(merchant_id.as_str()));
 }
 
-/// 编辑改到已软删商户 → 拒绝（软删商户不可被新选择，与创建计划同文案）。
 #[test]
 fn update_subscription_rejects_soft_deleted_new_merchant() {
     let conn = test_support::open();
@@ -313,7 +288,6 @@ fn update_subscription_rejects_soft_deleted_new_merchant() {
     );
 }
 
-/// 编辑清空商户（merchant_id → null）：允许（无商户订阅）。
 #[test]
 fn update_subscription_clears_merchant() {
     let conn = test_support::open();

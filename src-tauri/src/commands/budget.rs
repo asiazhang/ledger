@@ -1,14 +1,3 @@
-//! IPC 命令壳 · 预算（Budget）。
-//!
-//! 只负责参数解包与统一写入口一行调用；预算行为位于 [`crate::budget`]。
-//!
-//! 全部命令 async 化（形状乙，spec #498 / #502）；写命令经壳层统一写入口
-//! [`crate::shell_support::write_entry::write_entry`]（ADR-0073）：仪式（锁、事务、置脏、信号）
-//! 内化单点。预算写入刻意零信号（映射单点显式登记），身份仍随入口流动——
-//! 未来补信号时天然生效。
-//
-// 豁免（ADR-0060）：tauri 宏为 async 命令生成的 `_check = unreachable!()`
-// （tauri-macros wrapper.rs，宏不透传逐点 allow，无法在源头消除，升 tauri 后移除）。
 #![allow(clippy::unreachable)]
 
 use chrono::Local;
@@ -95,8 +84,6 @@ pub async fn budget_progress(db: State<'_, DbState>) -> Result<Vec<BudgetProgres
     .await
 }
 
-/// 预算年度汇总（issue #1948）：年度预算总额（月预算年化）+ 本年已支 + 超标判定。
-/// 窗口「今天」与 `budget_progress` 同源注入（本地今日），预算页卡与列表同一时刻滚动。
 #[tauri::command]
 pub async fn budget_annual_summary(db: State<'_, DbState>) -> Result<BudgetAnnualSummary> {
     let conn = db.read_handle();

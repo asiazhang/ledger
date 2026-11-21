@@ -1,15 +1,8 @@
-//! 保单创建/编辑入参校验与归一化。
-
 use rusqlite::{Connection, OptionalExtension};
 
 use super::model::PolicyInput;
 use ledger_infra::error::{AppError, Result};
 
-// ---------------------------------------------------------------------------
-// 校验与归一化（创建/编辑共用）
-// ---------------------------------------------------------------------------
-
-/// 校验结果（归一化后）：trim 非空、日期规范化、保额/币种成对落定。
 pub(super) struct NormalizedInput {
     pub(super) insurer_id: String,
     pub(super) policy_number: String,
@@ -21,21 +14,11 @@ pub(super) struct NormalizedInput {
     pub(super) note: Option<String>,
 }
 
-/// 创建/编辑共用的入参校验与归一化：
-/// - 保司必须为在用保司（软删保司不可再被新档案选择，历史引用不受影响，ADR-0082）；
-///   `insurer_unchanged`（编辑路径保司未变）= 维持历史引用，跳过在用校验
-///   （同 Writer 接缝 `existing_merchant_id` 语义）；
-/// - 保单号/险种名称 trim 非空；
-/// - 起止日可解析（YYYY-MM-DD），止日存在时不得早于起日（止日可空 = 长期/终身）；
-/// - 保额与币种成对：保额存在时必须 > 0 且币种必填、须存在于币种表；
-///   保额缺省时币种忽略存空（两者原子，不产生半挂状态）；
-/// - 备注 trim，空串归 `None`。
 pub(super) fn validate_input(
     conn: &Connection,
     input: &PolicyInput,
     insurer_unchanged: bool,
 ) -> Result<NormalizedInput> {
-    // 保司：在用保司（软删语义，ADR-0082）；未换保司 = 保持历史引用。
     if !insurer_unchanged {
         let insurer_active: bool = conn
             .query_row(
@@ -107,7 +90,6 @@ pub(super) fn validate_input(
             }
             (Some(cents), Some(code.to_string()))
         }
-        // 保额缺省 → 币种忽略存空（成对原子，不产生只有币种的半挂状态）。
         None => (None, None),
     };
 
@@ -128,7 +110,6 @@ pub(super) fn validate_input(
     })
 }
 
-/// 解析 YYYY-MM-DD 日期字符串；非法格式报错（保障期间依赖日历日期）。
 pub(super) fn parse_date(s: &str) -> Result<chrono::NaiveDate> {
     chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").map_err(|_| {
         AppError::codedp(

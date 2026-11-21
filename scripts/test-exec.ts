@@ -1,66 +1,10 @@
 #!/usr/bin/env bun
-// 测试执行器（issue #1112 / 父 spec #1086）：workspace 拆成多 crate 之后，
-// `cargo test --workspace` 把全部测试二进制**顺序**启动（当前清单与数量以
-// `bun scripts/test-exec.ts plan` 的输出为唯一权威，本文件不复述），每个二进制
-// 各自按 CPU 数开满 libtest 线程——进程启动开销与「最后一个二进制独占整机」的
-// 尾部空转是纯浪费。执行面按两条入口重划：
-//
-// ① 并发入口（本脚本默认命令 run，scripts/test.sh 第一条命令）：一条
-//    `cargo test --workspace --lib --test '*' --no-run --message-format=json-render-diagnostics`
-//    （与 CI build.yml 的 PR 执行面同口径）构建一次，解析 cargo 报告的测试二进制
-//    清单，再由本脚本统一调度——全局
-//    并行度 = min(--jobs 或 CPU 数, 待跑二进制数)，每个二进制固定
-//    `RUST_TEST_THREADS=1`（只约束 libtest 线程），libtest 线程数 = 并行度，
-//    不出现「各二进制各自开满 libtest 线程」的 CPU 超订（测试自起的 tokio 等
-//    运行时不在控制面，属经验证据）；失败聚合报告，跑完全部才退出。
-// ② 非并发入口（scripts/test.sh 第二、三条命令）：e2e（cucumber，
-//    `harness = false`，自有 runner 与 CLI）与 doc-test（测试二进制由 rustdoc
-//    生成、不进 cargo 的 test artifact 报告）仍走 cargo 自有入口，不纳入并发
-//    调度——e2e 的既有入口形态本票不动。
-//
-// 覆盖守门（check 命令；挂载登记归守门挂载登记 scripts/gate-mounts.ts，issue #1682）：
-// 目标清单口径与 `cargo test` 默认执行面全等——lib 单测 + bin 单测 + 集成测试 +
-// doc-test；example / bench 不在默认执行面（cargo 只构建 example、不跑 bench），
-// 故不入清单，但发现声明即提示，防口径漂移。bin 单测不入并发入口（与 CI PR 口径
-// 对齐，issue #1787 热点 2）：零单测 bin 在 manifest 声明 test = false（源码扫描
-// 守门防新增测试静默漏跑），有单测的 bin 登记 EXEMPT_BINS 并写明承接入口。
-// 守门四条（任一处漂移即红，fail loud）：
-//   ① 工作区全部测试目标 = 并发入口承接集合 ⊎ 非并发入口承接集合 ⊎ bin 豁免集合
-//      （互斥且无遗漏；目标清单自 manifest + 目录自动发现派生，新增 target /
-//      新成员 crate 自动入列；豁免登记与发现漂移即红）；
-//   ② `[[test]] harness = false` 的声明集合 ⇔ scripts/test.sh 非并发入口的
-//      `--test <name>` 名单（双向全等——新增自定义 harness 目标未登记即红，登记
-//      失效或拼写漂移同样红）；
-//   ③ 存在 doc-test 目标 ⇔ scripts/test.sh 有 `cargo test --workspace --doc`
-//      （doc 命令必须带 workspace 范围——退化成 `cargo test --doc` 会让成员 crate
-//      的 doctest 静默漏跑而守门仍绿）；且 scripts/test.sh 必须调用并发入口
-//      的**运行**命令 `bun scripts/test-exec.ts [run]`（删除即红；`… check` 自检行
-//      不算运行接线）；
-//     ②③ 同口径：只认**命令位置**的命令——非注释行里的说明文字（引号内的
-//      `echo "…bun scripts/test-exec.ts…"`）不算接线，否则把三条真命令全包成
-//      echo 字符串就能让两个入口一起假绿（#1112 第三轮审查实测）。
-//   ④ 执行器等价性：测试运行期不得依赖 cargo 注入的环境变量（现状零命中，见
-//      cargoRuntimeEnvProblems 注）。
-//（原守门规则④「门禁自身接线：check.sh 与 CI frontend job 必须调用 check」已退役
-// 并入守门挂载登记——接线成为守门家族 interface 的一环，住可测试的登记而非各门
-// 自证，issue #1682。）
-// run 命令另有第六道交叉核对：`cargo test --no-run` 实际构建出的测试二进制集合
-// 必须与①的目标清单全等——发现逻辑与 cargo 真实行为漂移即红，不给「清单看着对、
-// 实际漏跑」留口子。unsupported manifest 形态（auto* 开关、lib harness=false、
-// 非尾随 `*` 的成员 glob）一律拒绝而非猜测。
-//
-// TypeScript 化 + Bun 运行时（issue #734 / ADR-0083）：类型经 tsconfig.scripts.json
-// 门槛检查；调用方式 `bun scripts/test-exec.ts [run|check|plan] [--jobs N]`，
-// 默认 run；测试可传 `--root <夹具根>` 指向夹具（夹具只需 manifest + 目录形态，
-// 不调用 cargo）。本脚本经 scripts/test.sh 调起（本地测试入口的并发入口与入口自检）；
-// 质量门槛挂载声明归守门挂载登记 scripts/gate-mounts.ts（issue #1682）。
 
 import { spawn } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { cpus } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-// 复用守门家族共享原语库的 Rust 词法掩码（注释掩去、字面量保留）——不新建第二份词法器。
 import {
   hasExtension,
   lineAt,
@@ -69,101 +13,62 @@ import {
   walkTextFiles,
 } from "./gate-primitives.ts";
 
-/** 根包（Rust workspace 根 = tauri 应用包）目录名，相对仓库根。 */
 const SRC_TAURI_DIR_NAME = "src-tauri";
 
-/** 两个测试入口的宿主脚本（覆盖守门读取其命令行）。 */
 const TEST_SH_REL = join("scripts", "test.sh");
 
-/** 并发入口在 scripts/test.sh 里的调用标记（删除即红）。 */
 export const PARALLEL_ENTRY_MARKER = "scripts/test-exec.ts";
 
-/** 非并发入口逐目标参数与 doc-test 开关（scripts/test.sh 命令行判据）。 */
 export const DELEGATED_TARGET_FLAG = "--test";
 export const DOC_FLAG = "--doc";
 
-/** workspace 范围参数：`--workspace` 或 `--all`（精确 token 匹配，`--all-targets`
- * / `--all-features` 不算；与 check-structure.ts 的 WORKSPACE_COMMAND_FILES 同口径）。 */
 export const WORKSPACE_FLAG = "--workspace";
 export const ALL_FLAG = "--all";
 
-/** cargo `cargo test` 默认执行面的目标种类；`doc` 由 cargo 自有入口承接。 */
 export type TargetKind = "lib" | "bin" | "test" | "doc";
 
-/** 一个测试目标（doc 目标的 target 名 = lib 目标名）。 */
 export interface DiscoveredTarget {
   package: string;
   target: string;
   kind: TargetKind;
-  /** 仅集成测试目标有意义：`[[test]] harness = false`（自定义 runner）。 */
   harnessFalse: boolean;
-  /** 目标所属包根（绝对路径）——测试进程的 cwd 与 cargo 口径一致（见 runKey 注）。 */
   cwd: string;
 }
 
-/** 展示用键（包名 + 目标名）：守门报错与 plan 输出用，不参与集合相等核对。 */
 export function targetKey(t: { package: string; target: string }): string {
   return `${t.package}::${t.target}`;
 }
 
-/**
- * 执行面核对键（包名 + 目标名 + 种类）：cargo 允许同一包内 lib 与 bin / 集成
- * target 同名（`src/lib.rs` + `src/main.rs` 的常见形态），只用「包 + 名」会撞键
- * ——静态清单与 run 的交叉核对都会假绿，实际只跑掉一个二进制（issue #1112
- * Spec 审查发现）。故一切集合运算都用带 kind 的键。
- */
 export function runKey(t: { package: string; target: string; kind: TargetKind }): string {
   return `${t.package}::${t.target}::${t.kind}`;
 }
 
-/** bin 单测豁免登记条目：并发入口不跑的 bin 单测，必须写明承接入口。 */
 export interface ExemptBinDecl {
   package: string;
   target: string;
-  /** 单测的承接入口（守门报告与 summary 展示用）。 */
   owner: string;
 }
 
-/**
- * bin 单测豁免登记（issue #1787 热点 2）：并发入口的执行面与 CI build.yml 的
- * PR 口径（`cargo test --workspace --lib --test '*'`，不含 bin 单测）对齐，
- * 有单测的 bin 在此登记承接入口。当前仅 ledger-perf：生成器正确性单测属
- * 性能工具链，随每日基准在 perf-bench.yml 运行（`cargo test --bin ledger-perf`），
- * 不拖进 PR CI。守门方向：发现的每个 test = true bin 都必须登记（删登记或
- * 新增未声明 bin 即红）；bin 删除后残留的死登记无副作用，不红。
- */
 export const EXEMPT_BINS: ExemptBinDecl[] = [
   {
     package: "tauri-app",
     target: "ledger-perf",
-    // owner 文案勿写成完整命令形状（如 cargo test --bin …）：workspace 命令覆盖
-    // 守门会把它当真命令扫（缺 --workspace 即红，ADR-0056）。
     owner: "perf-bench.yml 每日基准专属入口（--bin ledger-perf 显式选择）",
   },
 ];
 
-/** `test = false` 的 bin 目标：不产生测试目标，但源码扫描守门防新增测试静默漏跑。 */
 export interface TestFalseBin {
   package: string;
   target: string;
-  /** bin 源文件绝对路径（cargo 口径解析结果；解析失败为 null，守门红）。 */
   source: string | null;
 }
 
-/** 目标发现结果：目标清单 + 形态问题（不支持形态一律显式拒绝而非猜测）。 */
 interface Discovery {
   targets: DiscoveredTarget[];
   problems: string[];
-  /** example / bench 目标（不在 `cargo test` 默认执行面，仅提示）。 */
   outOfFace: string[];
-  /** `test = false` 的 bin 目标（不入执行面，源码扫描守门用）。 */
   testFalseBins: TestFalseBin[];
 }
-
-// ── manifest 解析（窄形态文本扫描，形态同 check-structure.ts 家族） ──────────
-// 只认本仓实际存在的键形态：字符串 / 布尔 / 字符串数组 / `[[table]]` 条目。
-// 需要正则与真 TOML 解析器才能覆盖的形态（多行字符串、内联表）不出现即不支持，
-// 出现时发现阶段会因目标数对不上而在 run 命令的交叉核对里变红。
 
 interface TargetDecl {
   name?: string;
@@ -181,7 +86,6 @@ interface ManifestTables {
   benches: TargetDecl[];
   examples: TargetDecl[];
   workspace: { members?: string[] };
-  /** auto* 开关：发现逻辑不辖，出现即拒绝。 */
   unsupportedKeys: string[];
 }
 
@@ -194,7 +98,6 @@ const ARRAY_DECL_TABLES: Record<string, "bins" | "tests" | "benches" | "examples
 
 const UNSUPPORTED_KEYS = ["autobins", "autotests", "autobenches", "autoexamples"];
 
-/** 去掉行内注释：`#` 在引号外才算注释起点（字符串里的 `#` 保留）。 */
 function stripComment(line: string): string {
   let quote: string | null = null;
   for (let i = 0; i < line.length; i += 1) {
@@ -212,7 +115,6 @@ function stripComment(line: string): string {
   return line;
 }
 
-/** 方括号配平数（多行数组续行判定）。 */
 function bracketBalance(line: string): number {
   let depth = 0;
   let quote: string | null = null;
@@ -228,7 +130,6 @@ function bracketBalance(line: string): number {
   return depth;
 }
 
-/** 解析基本值：字符串 / 布尔 / 字符串数组 / 其余原样返回。 */
 function parseValue(raw: string): unknown {
   const text = raw.trim();
   const quoted = text.match(/^(["'])(.*)\1$/);
@@ -241,7 +142,6 @@ function parseValue(raw: string): unknown {
   return text;
 }
 
-/** 按顶层逗号切分数组项（引号内的逗号不算分隔）。 */
 function splitArrayItems(body: string): string[] {
   const items: string[] = [];
   let current = "";
@@ -312,7 +212,6 @@ function parseManifest(text: string): ManifestTables {
       continue;
     }
     if (line.startsWith("[")) {
-      // 点分表头（`[workspace.lints.clippy]` 等）与不认识的表：本段无受关注键。
       decl = null;
       table = null;
       continue;
@@ -336,7 +235,6 @@ function parseManifest(text: string): ManifestTables {
   return out;
 }
 
-/** 目标声明键（字符串 / 布尔）逐条落位；非受关注键忽略。 */
 function applyTargetKey(target: TargetDecl, key: string, value: unknown): void {
   if (key === "name" && typeof value === "string") target.name = value;
   else if (key === "path" && typeof value === "string") target.path = value;
@@ -345,17 +243,12 @@ function applyTargetKey(target: TargetDecl, key: string, value: unknown): void {
   else if (key === "doctest" && typeof value === "boolean") target.doctest = value;
 }
 
-// ── 目标发现（manifest 声明 + 目录自动发现，口径 = cargo test 默认执行面） ────
-
 function readManifest(dir: string): ManifestTables | null {
   const path = join(dir, "Cargo.toml");
   if (!existsSync(path)) return null;
   return parseManifest(readFileSync(path, "utf8"));
 }
 
-// #1742 留门：listDir 形状与家族一层列举原语不同构——names-only 契约（文件与目录
-// 同列）、缺目录容错（返回 []）、调用侧按路径 stat 重判类型（跟随符号链接，与
-// dirent 不跟随语义不同）；已是单点命名助手，收口只会改语义或纯写法替换。
 function listDir(dir: string): string[] {
   if (!existsSync(dir)) return [];
   return readdirSync(dir).sort();
@@ -365,12 +258,10 @@ function isDirectory(path: string): boolean {
   return existsSync(path) && statSync(path).isDirectory();
 }
 
-/** 目标名归一：cargo 对未显式命名的 target 取文件/目录名。 */
 function stemName(file: string): string {
   return file.replace(/\.rs$/, "");
 }
 
-/** 展开 `[workspace] members`：只支持「前缀 + 尾随 `*`」的单层 glob 与裸目录。 */
 function expandMemberGlobs(
   srcTauriDir: string,
   patterns: string[],
@@ -414,11 +305,6 @@ interface PackageTargets {
   testFalseBins: TestFalseBin[];
 }
 
-/**
- * bin 源文件解析（cargo 口径）：显式 path 优先；无 path 时按 cargo 默认——
- * target 名 = 包名 → src/main.rs，否则 src/bin/<name>.rs 或 src/bin/<name>/main.rs。
- * 找不到返回 null（守门红，不猜测）。
- */
 function resolveBinSource(
   dir: string,
   packageName: string,
@@ -453,7 +339,6 @@ function discoverPackage(dir: string, rel: string, tables: ManifestTables): Pack
     );
   }
 
-  // lib：显式 [lib] 表或 src/lib.rs 自动发现；`test = false` 关单测、`doctest = false` 关 doc-test。
   const libDeclared = tables.lib !== null;
   const libPresent = libDeclared || existsSync(join(dir, "src", "lib.rs"));
   if (libPresent) {
@@ -483,13 +368,11 @@ function discoverPackage(dir: string, rel: string, tables: ManifestTables): Pack
     }
   }
 
-  // bin：显式 [[bin]] 或 src/main.rs、src/bin/*.rs、src/bin/*/main.rs 自动发现。
   const binNames = new Map<string, TargetDecl>();
   for (const decl of tables.bins) binNames.set(decl.name ?? stemName(decl.path ?? ""), decl);
   for (const candidate of [{ name: packageName, path: join("src", "main.rs") }].concat(
     listDir(join(dir, "src", "bin")).flatMap((entry) => {
       const entryPath = join(dir, "src", "bin", entry);
-      // .rs 扩展名闭集换库 hasExtension + RUST_EXTENSIONS（#1742 收口，全等表在 gate-primitives.test.ts）
       if (hasExtension(entry, RUST_EXTENSIONS))
         return [{ name: stemName(entry), path: join("src", "bin", entry) }];
       if (isDirectory(entryPath) && existsSync(join(entryPath, "main.rs"))) {
@@ -510,8 +393,6 @@ function discoverPackage(dir: string, rel: string, tables: ManifestTables): Pack
       continue;
     }
     if (decl.test === false) {
-      // test = false 的 bin 不产生测试目标（cargo 也不构建其测试二进制），但
-      // 登记下来供源码扫描守门：bin 内新增 #[test] 会静默漏跑，见 testFalseBinProblems。
       testFalseBins.push({
         package: packageName,
         target: name,
@@ -528,12 +409,10 @@ function discoverPackage(dir: string, rel: string, tables: ManifestTables): Pack
     });
   }
 
-  // 集成测试：显式 [[test]] 或 tests/*.rs、tests/*/main.rs 自动发现。
   const testDecls = new Map<string, TargetDecl>();
   for (const decl of tables.tests) testDecls.set(decl.name ?? stemName(decl.path ?? ""), decl);
   for (const candidate of listDir(join(dir, "tests")).flatMap((entry) => {
     const entryPath = join(dir, "tests", entry);
-    // .rs 闭集换库，同 src/bin 站点（#1742 收口）
     if (hasExtension(entry, RUST_EXTENSIONS)) return [{ name: stemName(entry) }];
     if (isDirectory(entryPath) && existsSync(join(entryPath, "main.rs"))) return [{ name: entry }];
     return [];
@@ -551,14 +430,12 @@ function discoverPackage(dir: string, rel: string, tables: ManifestTables): Pack
     });
   }
 
-  // example / bench 不在 `cargo test` 默认执行面（只构建 example、不跑 bench），仅提示。
   for (const key of ["benches", "examples"] as const) {
     for (const decl of tables[key]) {
       const name = decl.name ?? stemName(decl.path ?? "");
       if (name !== "") outOfFace.push(`${rel}/${key === "benches" ? "bench" : "example"}:${name}`);
     }
     for (const entry of listDir(join(dir, key))) {
-      // .rs 闭集换库，同 src/bin 站点（#1742 收口）
       if (hasExtension(entry, RUST_EXTENSIONS))
         outOfFace.push(`${rel}/${key === "benches" ? "bench" : "example"}:${stemName(entry)}`);
     }
@@ -567,7 +444,6 @@ function discoverPackage(dir: string, rel: string, tables: ManifestTables): Pack
   return { targets, problems, outOfFace, testFalseBins };
 }
 
-/** 发现工作区全部测试目标（口径 = `cargo test` 默认执行面）。 */
 export function discoverTargets(rootDir: string): Discovery {
   const srcTauriDir = join(rootDir, SRC_TAURI_DIR_NAME);
   const problems: string[] = [];
@@ -624,15 +500,8 @@ export function discoverTargets(rootDir: string): Discovery {
   return { targets, problems, outOfFace, testFalseBins };
 }
 
-// ── 两个入口的覆盖守门 ───────────────────────────────────────────────────
-
-/** shell 控制符：每个字符都是新命令的起点（`&&` / `||` / `;` / 管道 / 子 shell 括号）。 */
 const SHELL_CONTROL_CHARS = new Set(["&", "|", ";", "(", ")"]);
 
-/**
- * 命令名前可出现的 shell 前缀词（保留字 / 内建）：`if bun …` / `command bun …` /
- * `env VAR=1 bun …` 都是合法调用形态，剥掉后仍算命令位置（避免偏严假红）。
- */
 const COMMAND_PREFIX_WORDS = new Set([
   "command",
   "exec",
@@ -649,18 +518,10 @@ const COMMAND_PREFIX_WORDS = new Set([
   "!",
 ]);
 
-/** `VAR=value` 赋值前缀（`VAR=x bun …`）同样不改变命令位置。 */
 const ENV_ASSIGNMENT_PREFIX = /^[A-Za-z_][A-Za-z0-9_]*=/;
 
-/** 命令行首的书写装饰（YAML 列表项 / `run:` 键），不含命令语义。 */
 const COMMAND_LINE_DECORATIONS = new Set(["-", "run:"]);
 
-/**
- * 把一行 shell/YAML 文本切成词：引号只脱壳，引号内的空格与控制符并入同一个词——
- * `echo "bun scripts/test-exec.ts"` 因此是「命令词 echo + 一个说明文字词」，不会被
- * 误当成 `bun` 接线；而 `bun "scripts/test-exec.ts" check` 脱壳后仍是 `bun` 接线。
- * 引号外的 `& | ; ( )` 一律切成独立控制符 token（`check;` 也能归到 `check`）。
- */
 function tokenizeShellLine(line: string): string[] {
   const tokens: string[] = [];
   let current = "";
@@ -705,7 +566,6 @@ function tokenizeShellLine(line: string): string[] {
   return tokens;
 }
 
-/** 剥掉行首装饰、前缀词与环境赋值，返回命令位置起的 argv；全被剥光则为空。 */
 function stripCommandPrefixes(tokens: string[]): string[] {
   for (let start = 0; start < tokens.length; start += 1) {
     const token = tokens[start] as string;
@@ -721,12 +581,6 @@ function stripCommandPrefixes(tokens: string[]): string[] {
   return [];
 }
 
-/**
- * 把脚本内容切成**命令位置**的 argv 列表：只看非注释行，行内按 shell 分隔符切段，
- * 逐段剥前缀。判据必须落在命令位置——`echo "bun scripts/test-exec.ts"` 这类说明文字
- * 虽然含命令字样，命令词却是 `echo`，不构成接线。上一版只判「非注释行含子串」，把
- * scripts/test.sh 三条真命令全包成 `echo "…"` 后三个入口一起假绿（#1112 第三轮审查）。
- */
 function shellCommands(content: string): string[][] {
   const commands: string[][] = [];
   for (const rawLine of content.split("\n")) {
@@ -747,30 +601,13 @@ function shellCommands(content: string): string[][] {
   return commands;
 }
 
-/** scripts/test.sh 命令行里的非并发入口判据。 */
 export interface EntryWiring {
-  /** `cargo test … --test <name>` 的 name 名单。 */
   tests: Set<string>;
-  /** 是否有 `cargo test … --doc`（doc 入口存在性）。 */
   doc: boolean;
-  /**
-   * doc 入口的命令行是否带 workspace 范围（`--workspace` / `--all`）。
-   * 只查 `--doc` 存在不够：退化成 `cargo test --doc`（非虚拟 workspace 下默认
-   * 只作用根包）会让成员 crate 的 doctest 静默漏跑而守门仍然绿。
-   */
   docWorkspace: boolean;
-  /**
-   * 是否**运行**并发入口（`bun scripts/test-exec.ts [run]`）。入口自检行
-   * （`… check`）与 `… plan` 不算运行接线——否则把运行行删掉、只留自检行也能假绿。
-   */
   parallel: boolean;
 }
 
-/**
- * 解析 scripts/test.sh：只看**命令位置**的命令——注释、说明文字（引号里的命令字样）
- * 与 echo 参数都不算接线。每条命令按命令词匹配：`cargo test …` 才贡献
- * `--test <name>` / `--doc` 判据，`bun … scripts/test-exec.ts` 才贡献并发入口判据。
- */
 export function parseEntryWiring(content: string): EntryWiring {
   const tests = new Set<string>();
   let doc = false;
@@ -778,8 +615,6 @@ export function parseEntryWiring(content: string): EntryWiring {
   let parallel = false;
   for (const argv of shellCommands(content)) {
     if (argv[0] === "bun") {
-      // 并发入口：`bun [前置参数] scripts/test-exec.ts [run]`（引号形态由词切分归一）；
-      // `check` / `plan` 是守门与清单命令，不跑测试，不算运行接线。
       const marker = argv.indexOf(PARALLEL_ENTRY_MARKER, 1);
       if (marker !== -1) {
         const subcommand = argv.slice(marker + 1).find((t) => !t.startsWith("-"));
@@ -791,8 +626,6 @@ export function parseEntryWiring(content: string): EntryWiring {
     const args = argv.slice(2);
     if (args.includes(DOC_FLAG)) {
       doc = true;
-      // workspace 范围必须落在同一条 `cargo test` 命令里；`--all` 是别名，精确 token
-      // 匹配（`--all-targets` / `--all-features` 不算，与 check-structure.ts 同口径）。
       if (args.includes(WORKSPACE_FLAG) || args.includes(ALL_FLAG)) docWorkspace = true;
     }
     for (let i = 0; i < args.length; i += 1) {
@@ -808,34 +641,19 @@ export function parseEntryWiring(content: string): EntryWiring {
 export interface CoverageResult {
   problems: string[];
   targets: DiscoveredTarget[];
-  /** 并发入口承接（lib 单测 + 未豁免 bin 单测 + harness=true 集成测试）。 */
   parallel: DiscoveredTarget[];
-  /** 非并发入口承接的自定义 harness 集成测试（`--test <name>`）。 */
   delegated: DiscoveredTarget[];
-  /** cargo 自有入口承接的 doc-test。 */
   doc: DiscoveredTarget[];
-  /** bin 单测豁免（EXEMPT_BINS 命中的 bin 目标，专属入口承接）。 */
   exempt: DiscoveredTarget[];
   outOfFace: string[];
 }
 
-/**
- * 执行器等价性守门（守门规则④）：执行器直接 spawn 测试二进制，**不**复制 cargo
- * 运行期注入的环境（`CARGO_MANIFEST_DIR` / `CARGO_PKG_*` / `OUT_DIR` / 动态库搜索
- * 路径）。只对齐其中一部分会给「已等价」的假信心，故取 fail loud 处置：测试运行期
- * （`env::var` / `env::var_os`；编译期 `env!` 不受影响）不得读这些变量，命中即红，
- * 由引入者显式扩展执行器并更新本守门。构建脚本的构建期读取不属测试运行期，跳过。
- * 扫描前经守门共享原语库的 Rust 词法掩码（`maskNonCode(…, keepLiterals=true)`）掩去
- * 注释、保留字面量——注释里提到这些变量名不误报，字面量本身才是判据。
- */
 const CARGO_RUNTIME_ENV_PATTERN = /\benv::var(?:_os)?\s*\(\s*"(CARGO_[A-Z0-9_]+|OUT_DIR)"/g;
 
 function cargoRuntimeEnvProblems(rootDir: string): string[] {
   const problems: string[] = [];
   const scanRoot = join(rootDir, SRC_TAURI_DIR_NAME);
   if (!isDirectory(scanRoot)) return problems;
-  // 遍历机制归守门家族共享单点 walkTextFiles（#1680 收口）：target/ 剪枝经 options
-  // 注入，build.rs 豁免是本守门扫描边界政策、walk 后按文件名过滤。
   const files = walkTextFiles(scanRoot, "", {
     extensions: RUST_EXTENSIONS,
     skipDirs: new Set(["target"]),
@@ -854,11 +672,6 @@ function cargoRuntimeEnvProblems(rootDir: string): string[] {
   return problems;
 }
 
-/**
- * bin test = false 源码扫描守门：声明 test = false 的 bin 不构建测试二进制，
- * 源码里新增 #[test] / #[cfg(test)] / #[tokio::test] 会静默漏跑。扫描前掩注释
- * （maskNonCode）——注释里提到测试属性不误报，代码里的真属性才命中（issue #1787）。
- */
 const TEST_ATTR_PATTERN = /#\[\s*(?:tokio\s*::\s*)?test\b|#\[\s*cfg\s*\(\s*test\b/g;
 
 function testFalseBinProblems(rootDir: string, bins: TestFalseBin[]): string[] {
@@ -884,7 +697,6 @@ function testFalseBinProblems(rootDir: string, bins: TestFalseBin[]): string[] {
   return problems;
 }
 
-/** 覆盖守门：目标清单 ⇔ 两个入口 + bin 豁免的并集（互斥且无遗漏）。 */
 export function checkCoverage(rootDir: string): CoverageResult {
   const discovery = discoverTargets(rootDir);
   const problems = [...discovery.problems];
@@ -894,9 +706,6 @@ export function checkCoverage(rootDir: string): CoverageResult {
     (t) =>
       t.kind === "bin" && EXEMPT_BINS.some((e) => e.package === t.package && e.target === t.target),
   );
-  // bin 单测不入并发入口（与 CI PR 口径对齐）：发现的每个 test = true bin 都必须
-  // 登记豁免（test = false 的 bin 根本不产生目标，无需登记）。删登记或新增未声明
-  // 的 bin 即红；bin 删除后残留的死登记无副作用，不红。
   for (const t of discovery.targets) {
     if (t.kind !== "bin") continue;
     if (EXEMPT_BINS.some((e) => e.package === t.package && e.target === t.target)) continue;
@@ -992,8 +801,6 @@ function summarizeCoverage(result: CoverageResult): string {
   );
 }
 
-// ── 并发执行 ─────────────────────────────────────────────────────────────
-
 interface ChildResult {
   code: number;
   stdout: string;
@@ -1027,7 +834,6 @@ function runChild(
   });
 }
 
-/** 构建一次（cargo test --no-run），返回 cargo 报告的可执行测试二进制键集合。 */
 interface CargoMessage {
   reason?: string;
   package_id?: string;
@@ -1051,8 +857,6 @@ async function buildTestBinaries(
   srcTauriDir: string,
 ): Promise<{ executables: Map<string, string>; problems: string[]; ms: number }> {
   const start = Date.now();
-  // CI PR 口径（build.yml）：--lib --test '*' 排除 bin 单测（issue #1787 热点 2）。
-  // 零单测 bin 声明 test = false；有单测的 bin（当前 ledger-perf）登记 EXEMPT_BINS。
   const result = await runChild(
     cargo,
     [
@@ -1093,7 +897,6 @@ async function buildTestBinaries(
   return { executables, problems, ms };
 }
 
-/** cargo package_id → 包名（`path+file:///…#<name>@<version>` 形态）。 */
 function packageNameFromId(id: string): string {
   const hash = id.indexOf("#");
   const tail = hash === -1 ? id : id.slice(hash + 1);
@@ -1101,7 +904,6 @@ function packageNameFromId(id: string): string {
   return at === -1 ? tail : tail.slice(0, at);
 }
 
-/** cargo artifact 的 target.kind → 目标种类（与发现侧同一口径，核对键才可比）。 */
 function artifactTargetKind(kinds: string[]): TargetKind | null {
   if (kinds.includes("test")) return "test";
   if (kinds.includes("bin")) return "bin";
@@ -1111,7 +913,6 @@ function artifactTargetKind(kinds: string[]): TargetKind | null {
   return null;
 }
 
-/** 固定并发度的任务池：全局并行度由执行器统一控制（不依赖各二进制的 libtest 线程数）。 */
 async function runPool<T>(
   items: T[],
   jobs: number,
@@ -1160,11 +961,6 @@ function formatSeconds(ms: number): string {
   return `${(ms / 1000).toFixed(2)}s`;
 }
 
-/**
- * 构建阶段超过该时长 = 测试二进制被重新链接（缓存全命中时构建秒级返回），
- * 每个二进制的首次执行会撞上 macOS 一次性安全扫描/页入开销——per-binary 耗时
- * 因此虚高，不代表测试或夹具的真实耗时（issue #1787 的误诊源头，提示防再犯）。
- */
 const FRESH_RELINK_HINT_MS = 3_000;
 
 interface RunOptions {
@@ -1195,8 +991,6 @@ async function runAll(options: RunOptions): Promise<number> {
   }
   const problems = [...coverage.problems, ...build.problems];
 
-  // 第四道交叉核对：cargo 实际构建出的测试二进制集合 ⇔ 目标发现清单（lib/集成测试 +
-  // 未豁免 bin）。构建命令 --lib --test '*' 不含 bin 单测，豁免 bin 同步剔除。
   const exemptKeys = new Set(coverage.exempt.map(runKey));
   const expected = new Map(
     coverage.targets
@@ -1252,11 +1046,6 @@ async function runAll(options: RunOptions): Promise<number> {
     if (target === undefined || executable === undefined) return;
     const itemStart = Date.now();
     const result = await runChild(executable, [], {
-      // cwd 与 cargo 口径一致（各包根，不是 workspace 根）：成员 crate 的测试若
-      // 用相对路径，直接以 workspace 根为 cwd 会读到不同位置（Spec 审查发现）。
-      // cargo 运行期注入的环境（CARGO_MANIFEST_DIR / CARGO_PKG_* / OUT_DIR /
-      // 动态库搜索路径）**不复制**——部分复制会制造「已等价」的假信心；现状等价
-      // 由守门规则④兜底（测试运行期读这些变量即红，见 cargoRuntimeEnvProblems）。
       cwd: target.cwd,
       env: { ...process.env, RUST_TEST_THREADS: "1" },
     });
@@ -1318,8 +1107,6 @@ function printProblems(problems: string[], title: string): never {
   console.error(`${title}：${problems.length} 处问题（issue #1112）`);
   process.exit(1);
 }
-
-// ── CLI ─────────────────────────────────────────────────────────────────
 
 interface CliOptions {
   command: "run" | "check" | "plan";
@@ -1389,7 +1176,6 @@ async function main(): Promise<void> {
   process.exitCode = await runAll(options);
 }
 
-// 仅直接运行时执行 main；被其他工具 import 时只取导出的发现/守门逻辑。
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   await main();
 }

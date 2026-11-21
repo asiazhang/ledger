@@ -10,15 +10,8 @@ import {
 } from "./generate-update-manifest.ts";
 import { gateScript, runGateScript } from "./run-gate-script.test-helper.ts";
 
-// 更新清单生成器测试（issue #1428）：消费方是 tauri-plugin-updater 的 Static 清单
-// 形态与发布 publish job。按测试决策只断言外部可观察结果——装配出的 latest.json
-// 内容（纯函数直测）与 CLI 进程的退出码/输出（spawnSync('bun') 与 publish job
-// 同款拉起，ADR-0083）；不测内部函数形状。夹具为临时目录里的三平台工件 + .sig，
-// 另放 deb / dmg / apk 干扰项核对「不进清单」的排除语义。
-
 const script = gateScript("generate-update-manifest.ts");
 
-/** 现实命名的一次发布工件集（后缀即识别依据）。 */
 const RELEASE_FILES: Record<string, string> = {
   "OpenLedger_0.9.0_aarch64.app.tar.gz": "macos-updater-bytes",
   "OpenLedger_0.9.0_aarch64.app.tar.gz.sig": "bWFjaW50cnVtc2lnbnNpZ25hdHVyZQ==",
@@ -26,7 +19,6 @@ const RELEASE_FILES: Record<string, string> = {
   "OpenLedger_0.9.0_x64-setup.exe.sig": "d2luZG93c21pbnNpZ25zaWc=",
   "OpenLedger_0.9.0_amd64.AppImage": "appimage-bytes",
   "OpenLedger_0.9.0_amd64.AppImage.sig": "bGludXhtaW5zaWduc2lnbg==",
-  // 干扰项：安装包与无更新语义的产物不进清单。
   "OpenLedger_0.9.0_aarch64.dmg": "dmg-bytes",
   "OpenLedger_0.9.0_amd64.deb": "deb-bytes",
   "OpenLedger_0.9.0_arm64.apk": "apk-bytes",
@@ -67,8 +59,6 @@ describe("collectUpdaterArtifacts", () => {
   });
 
   it("嵌套子目录形态（download-artifact 按 upload-artifact LCA 保留的结构）同样识别，file 取 basename", () => {
-    // 镜像 v0.9.1 publish 实测布局：windows 工件 LCA 即所在目录（平铺），
-    // macOS / Linux 工件与安装包分属不同根，保留 dmg/ macos/ appimage/ 子目录。
     const layout: Record<string, Record<string, string>> = {
       ".": {
         "OpenLedger_0.9.0_x64-setup.exe": "nsis-installer-bytes",
@@ -286,7 +276,6 @@ describe("CLI（publish job 同款拉起）", () => {
         "--repo",
         "asiazhang/ledger",
         "--notes-file",
-        // notes 文件结尾换行被剥掉
         writeNotes(dir, "0.9.0 发布说明。\n"),
         "--out",
         out,
@@ -332,7 +321,6 @@ describe("CLI（publish job 同款拉起）", () => {
     expect(run.output).toContain("用法");
   });
 
-  /** 在夹具目录里写发布说明文件，返回绝对路径。 */
   function writeNotes(dir: string, content: string): string {
     const path = join(dir, "notes.md");
     writeFileSync(path, content);

@@ -1,15 +1,3 @@
-//! 标的幂等创建 HTTP 端点（`POST /api/v1/instruments`，issue #296 / ADR-0037）。
-//!
-//! 只断言外部行为：find-or-create 幂等（自然键（symbol, type），命中静默复用并按需
-//! 更新名称/市场、返回既有 id）、201 + 裸 id 响应形状（照账户/分类创建先例）、
-//! 创建行来源标记 = `'manual'`、报价币种缺省按市场推导（沪深→CNY、港→HKD、
-//! 美股三市场→USD、未知→CNY，ADR-0081），显式传参可覆盖）、类型五类全开、错误为统一错误形状中文信息、
-//! 开放 API 契约自描述。泛型断言以非 fund 类型为代表；fund 类型的行情增强
-//! （回填权威名称/净值、查无此码拒绝、不可达降级）见 instrument_create_fund.rs
-//! （issue #304 / ADR-0039）；stock 类型的行情增强（issue #694 / ADR-0081）见
-//! instrument_create_stock.rs——本文件以「行情不可达」桩让 stock 真实代码创建
-//! 一律走降级路径（不触真实网络），聚焦通用创建语义。
-
 use std::sync::{Arc, Mutex};
 
 use axum::http::StatusCode;
@@ -20,21 +8,16 @@ use tauri_app_lib::api_server::StockQuoteFetcher;
 
 use crate::common::{post_instrument, setup_app, setup_app_with_stock_fetch};
 
-/// 行情不可达桩：stock 真实代码创建的行情往返一律失败（Io）→ 降级路径——
-/// 提交名称 + 真实代码 + 解析市场建行，与预增强时代的通用行为对齐（除显式
-/// currency_code 在增强分支不生效外）。全部请求离线，不触真实网络。
 fn setup_app_stock_degraded() -> (axum::Router, Arc<Mutex<rusqlite::Connection>>) {
     let fetch: StockQuoteFetcher =
         Arc::new(|_, _| crate::common::ready_quote(Err(AppError::Io("行情源网络不可达".into()))));
     setup_app_with_stock_fetch(Some(fetch))
 }
 
-/// 响应体应为裸 id 字符串（非 JSON 对象——`{"id": …}` 之类包装在此即解析失败）。
 fn id_of(bytes: &[u8]) -> String {
     serde_json::from_slice(bytes).expect("响应体应为裸 id 字符串")
 }
 
-/// 按自然键（symbol, type）查行字段（currency_code, market, source）。
 fn fields_of(
     conn: &Arc<Mutex<rusqlite::Connection>>,
     symbol: &str,
@@ -50,10 +33,6 @@ fn fields_of(
         )
         .unwrap()
 }
-
-// ---------------------------------------------------------------------------
-// 201 + 裸 id；创建行来源 = 'manual'
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn test_create_instrument_returns_201_with_bare_id_and_manual_source() {
@@ -72,12 +51,6 @@ async fn test_create_instrument_returns_201_with_bare_id_and_manual_source() {
     assert_eq!(source, "manual", "AI 创建行来源标记应为手动");
 }
 
-// ---------------------------------------------------------------------------
-// find-or-create 幂等：命中静默复用并按需更新名称/市场（bond：不经行情增强的
-// 通用类型——stock 真实代码重放携矛盾 market 会被增强分支显式 400，见
-// instrument_create_stock.rs；同码改市场本就是应被拦截的错挂行为）
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn test_create_instrument_idempotent_returns_same_id_without_new_row() {
     let (app, conn) = setup_app();
@@ -87,7 +60,6 @@ async fn test_create_instrument_idempotent_returns_same_id_without_new_row() {
     assert_eq!(first_status, StatusCode::CREATED);
     let first_id = id_of(&first_bytes);
 
-    // 重跑同自然键：名称/市场有变也复用（按需更新），仍返回 201 + 既有 id。
     let second_body = r#"{"symbol":"600519","type":"bond","name":"贵州茅台A","market":"sz"}"#;
     let (second_status, second_bytes) = post_instrument(&app, second_body).await;
     assert_eq!(second_status, StatusCode::CREATED);
@@ -149,15 +121,10 @@ async fn test_create_instrument_distinguishes_type_for_same_symbol() {
     assert_eq!(count, 2, "同码异类型应各自成行");
 }
 
-// ---------------------------------------------------------------------------
-// 类型五类全开（不经自建标的的 UI 白名单；泛型断言以非 fund 类型为代表）
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn test_create_instrument_all_types_open_without_ui_whitelist() {
     let (app, conn) = setup_app_stock_degraded();
 
-    // stock 是自建标的 UI 白名单排除的类型——AI 面可建即为「不经白名单」的直接证据。
     for (symbol, kind) in [
         ("600519", "stock"),
         ("019547", "bond"),
@@ -181,15 +148,10 @@ async fn test_create_instrument_all_types_open_without_ui_whitelist() {
     assert_eq!(count, 4, "四个非 fund 类型应各自成行");
 }
 
-// ---------------------------------------------------------------------------
-// 报价币种缺省推导（沪深→CNY、港→HKD、美股三市场→USD、未知→CNY，ADR-0081），显式传参可覆盖
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn test_create_instrument_derives_currency_from_market() {
     let (app, conn) = setup_app_stock_degraded();
 
-    // 沪深→人民币
     let (status, bytes) =
         post_instrument(&app, r#"{"symbol":"600519","type":"stock","market":"sh"}"#).await;
     assert_eq!(status, StatusCode::CREATED);
@@ -197,7 +159,6 @@ async fn test_create_instrument_derives_currency_from_market() {
     let (sz_status, _) =
         post_instrument(&app, r#"{"symbol":"000001","type":"stock","market":"sz"}"#).await;
     assert_eq!(sz_status, StatusCode::CREATED);
-    // 港→港币
     post_instrument(&app, r#"{"symbol":"00700","type":"stock","market":"hk"}"#).await;
 
     assert_eq!(fields_of(&conn, "600519", "stock").0, "CNY", "沪→人民币");
@@ -205,8 +166,6 @@ async fn test_create_instrument_derives_currency_from_market() {
     assert_eq!(fields_of(&conn, "00700", "stock").0, "HKD", "港→港币");
 }
 
-/// 美股三市场 → USD（issue #692 / ADR-0081）：market nasdaq/nyse/amex 缺省推导
-/// 美元，标的 market 以精确交易所值落库（NASDAQ/NYSE/AMEX 三市场精确归属）。
 #[tokio::test]
 async fn test_create_instrument_derives_usd_for_us_markets() {
     let (app, conn) = setup_app();
@@ -237,9 +196,6 @@ async fn test_create_instrument_without_market_defaults_unknown_and_cny() {
 async fn test_create_instrument_explicit_currency_overrides_derivation() {
     let (app, conn) = setup_app();
 
-    // bond 不经行情增强：显式 currency_code 在通用路径生效。stock 真实代码的
-    // 增强/降级分支以解析市场推导币种为权威、显式传参不生效（镜像 fund 分支
-    // 字典形态收口，instrument_create_stock.rs / instrument_create_fund.rs）。
     let (status, _) = post_instrument(
         &app,
         r#"{"symbol":"00700","type":"bond","market":"hk","currency_code":"USD"}"#,
@@ -250,10 +206,6 @@ async fn test_create_instrument_explicit_currency_overrides_derivation() {
     let (currency_code, _, _) = fields_of(&conn, "00700", "bond");
     assert_eq!(currency_code, "USD", "显式传参应覆盖市场推导");
 }
-
-// ---------------------------------------------------------------------------
-// 错误形状：统一 {kind, message} 中文信息
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn test_create_instrument_with_blank_symbol_returns_400_unified_shape() {
@@ -273,9 +225,6 @@ async fn test_create_instrument_with_blank_symbol_returns_400_unified_shape() {
     );
 }
 
-/// 缺省币种 + 闭集外 market：缺省币种推导前的市场闭集解析显式 400（稳定码
-/// `instrument.market-unknown`，params = [取值, 合法值清单]，issue #1673 /
-/// ADR-0050 码化构造点）。bond 不经行情增强，错误在写入口径之前返回。
 #[tokio::test]
 async fn test_create_instrument_with_unknown_market_and_default_currency_is_coded_400() {
     let (app, _) = setup_app();
@@ -302,8 +251,6 @@ async fn test_create_instrument_with_unknown_market_and_default_currency_is_code
     );
 }
 
-/// 请求体格式错误（缺必填字段 / type 非法枚举值）：与账户创建先例一致，
-/// 由 axum Json extractor 拒绝返回 422（格式错误不是业务校验，不占统一错误形状）。
 #[tokio::test]
 async fn test_create_instrument_with_malformed_body_returns_422() {
     let (app, _) = setup_app();
@@ -323,10 +270,6 @@ async fn test_create_instrument_with_malformed_body_returns_422() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// 开放 API 契约自描述
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn test_openapi_doc_covers_instruments_create_endpoint() {
     let (app, _) = setup_app();
@@ -334,8 +277,6 @@ async fn test_openapi_doc_covers_instruments_create_endpoint() {
 
     let post = &doc["paths"]["/api/v1/instruments"]["post"];
     assert!(post["summary"].is_string(), "OpenAPI 应包含标的创建端点");
-    // 端点自述为「一句话 + 指针」（issue #839 描述政策）；入参字段语义归属
-    // InstrumentCreateInput 字段级描述，来源标记语义归属 Instrument.source。
     let description = post["description"].as_str().unwrap_or_default();
     for expected in ["幂等", "静默复用", "导入知识"] {
         assert!(
@@ -386,7 +327,6 @@ async fn test_openapi_doc_covers_instruments_create_endpoint() {
         !required.iter().any(|r| r == "currency_code"),
         "currency_code 应可缺省（按市场推导）"
     );
-    // type 引用闭集枚举组件（五类小写字符串，与 GET 端点共享同一 InstrumentType schema）
     assert_eq!(
         props["type"]["$ref"], "#/components/schemas/InstrumentType",
         "type 字段应为 InstrumentType 闭集枚举引用"

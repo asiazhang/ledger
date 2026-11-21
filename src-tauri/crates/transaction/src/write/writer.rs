@@ -1,12 +1,3 @@
-//! Writer 接缝（写路径，issue #55 / spec #52）：交易行写入的单一权威。
-//!
-//! 职责：「交易输入 → 落库行」三步骤——[`normalize`]（通用 kind 归一化与校验）/
-//! [`insert_row`]（全列 INSERT + 生成 id 与审计字段）/ [`update_row`]（按 id UPDATE、
-//! 保留幂等身份、version 递增）；另承载 `NormalizedTransaction ⇄ NormalizedRow` 转换。
-//! 不变量：入参/归一化行均为模块自有类型（与模型层解耦）；退款继承原支出账户/币种/
-//! 分类；置脏归统一写入口提交点（`db::write_locked`，ADR-0032）。ADR 指针：ADR-0067 / ADR-0113 决策 3.2。
-//! 陷阱：余额重算经接缝 `crate::seams::balance` 委派，本模块对账户域零感知。
-
 use rusqlite::Connection;
 use rusqlite::OptionalExtension;
 use rusqlite::params;
@@ -19,140 +10,53 @@ use crate::amount::{self, TransactionKind};
 use crate::model::NormalizedTransaction;
 use crate::seams::balance;
 use crate::seams::balance::RowAccounts;
-/// 通用 kind 的写入入参（income / expense / transfer / refund）。
-///
-/// 与命令层 [`crate::model::TransactionInput`] 解耦：不含 buy/sell 的投资字段
-/// （instrument_id/quantity/price_cents/fee_cents）与幂等键——幂等身份由
-/// 命令层在落库后另行回写，不属本模块职责。
-/// `#[derive(PartialEq)]` 无 `Eq`：`fx_rate` / `fx_edit_baseline` 含 f64（#1549 / #1550），浮点无 Eq。
 #[derive(Debug, Clone, PartialEq)]
 pub struct Input {
     pub kind: TransactionKind,
     pub amount_cents: i64,
     pub currency_code: String,
-    /// 出资账户引用（ADR-0138 契约互斥）：非空分解时必须为 `None`；空分解时
-    /// 非 refund 必填（码化 `transaction.account-required`）、refund 继承原支出。
     pub account_id: Option<String>,
     pub to_account_id: Option<String>,
-    /// 可选出资账户（issue #935 / ADR-0096）：writer 不判 kind 准入（buy/sell 不经
-    /// 本模块 normalize），通用 kind 携带即经 [`crate::write::funding::validate_funding_account`]
-    /// 拒绝；buy/sell 由投资域 prepare 校验后随 [`NormalizedRow`] 落库。
     pub funding_account_id: Option<String>,
     pub category_id: Option<String>,
-    /// 出资分解（issue #1860 / ADR-0138）：数组顺序即落库顺序位；非空时
-    /// `account_id` 必须为 `None`（互斥在 [`validate_funding_items`] 收口）。
     pub funding: Vec<crate::write::funding_items::FundingItem>,
-    /// 修改路径该行**当前**的落库分解（创建路径为空）：提交分解与之逐项相同
-    /// 且币种未变时跳过逐条账户准入（「保持历史引用」，与 `existing_merchant_id`
-    /// 同款语义——历史分解行的出资账户此后软删不阻止编辑其他字段）。
     pub existing_funding: Vec<crate::write::funding_items::FundingItem>,
-    /// 购买项明细（issue #1882 / ADR-0138 决策 9）：数组顺序即落库顺序位；仅
-    /// `expense` 可带（kind 准入在 [`validate_purchases`] 收口）。
     pub purchases: Vec<crate::write::purchase_items::PurchaseItem>,
-    /// 修改路径该行**当前**的落库明细（创建路径为空）：提交明细与之逐项相同
-    /// 时跳过逐条分类准入（「保持历史引用」，与 [`Self::existing_funding`] 同款
-    /// 语义——历史购买项的分类此后软删不阻止编辑其他字段）。
     pub existing_purchases: Vec<crate::write::purchase_items::PurchaseItem>,
     pub merchant_id: Option<String>,
-    /// 修改路径该行**当前**的商户 id（创建路径为 None）。提交的 [`merchant_id`] 与其
-    /// 相同视为「保持历史引用」：软删商户的历史交易仍可修改其他字段，跳过在用校验；
-    /// 改选其他商户则按新选择校验在用。与账户/分类的更新语义一致（引用已软删的
-    /// 参考数据不阻止编辑既有行，issue #188 / ADR-0028）。
     pub existing_merchant_id: Option<String>,
-    /// 可选保单引用（issue #361 / ADR-0051 决策 3）：保费（expense）与保单现金流入
-    /// （income）可挂一张保单。kind 准入（哪些 kind 可携带）收口在行为层
-    /// [`crate::write::protocol`]，本模块只做引用有效性校验。
-    /// 修改路径该行**当前**的保单 id（创建路径为 None）由行为层并入
-    /// [`existing_policy_id`]：提交值与其相同视为「保持历史引用」——已软删保单的
-    /// 历史交易仍可修改其他字段，跳过在用校验（与 [`existing_merchant_id`] 同款语义，
-    /// 引用已软删的参考数据不阻止编辑既有行，issue #188 / ADR-0028）。
     pub policy_id: Option<String>,
     pub existing_policy_id: Option<String>,
     pub refund_of_transaction_id: Option<String>,
     pub note: Option<String>,
-    /// 来源订单号（issue #1862 / ADR-0138 决策 9，V035）：随行落库。来源元数据，
-    /// 不限 kind、不参与退款继承（refund 只继承账户/币种/分类/商户，调用方对本
-    /// 字段给什么落什么，缺省 `None`）。
     pub source_order_no: Option<String>,
     pub date: String,
-    /// 可选逐笔显式汇率（issue #1549）：调用方为该笔直接给定折算用汇率（与折算
-    /// 同向，`native = amount × rate`），数据源覆盖不到的日期由写入方补口；
-    /// 显式 > 序列命中 > 报错。归 [`amount::convert_to_native_on_trade_date`]
-    /// 单点校验（非正/同币种携带即码化错误），非法值不落库。
     pub fx_rate: Option<f64>,
-    /// 编辑沿用基线（#1550 / ADR-0011 修订）：修改路径从旧行读出的折算判别
-    /// 三元组与行内留痕（[`amount::FxEditBaseline`]）。未携显式汇率且币种/金额/
-    /// 日期未变时 [`normalize`] 沿用行内留痕、不再重查序列；创建路径与重放路径
-    /// 恒 `None`。显式汇率在场时沿用不生效（显式 > 沿用 > 序列）。
     pub fx_edit_baseline: Option<amount::FxEditBaseline>,
 }
 
-/// 归一化后的交易行字段（供 [`insert_row`] / [`update_row`] 落库）。
 #[derive(Debug, Clone, PartialEq)]
 pub struct NormalizedRow {
     pub kind: TransactionKind,
     pub amount_cents: i64,
     pub currency_code: String,
     pub amount_native_cents: i64,
-    /// 折算来源留痕（issue #1548 / ADR-0011 修订，V029）：本笔折算使用的汇率值与
-    /// 来源，随行落库（`transactions.fx_rate_used` / `fx_rate_source`）。由
-    /// [`amount::convert_to_native_on_trade_date`] 的返回值填充；未折算（与本位币
-    /// 同币种、无现金腿的 split）为 `None`——空值即「本笔未折算」的诚实语义。
-    /// 不参与导入幂等身份（去重哈希不含折算结果）。
     pub fx_rate_used: Option<f64>,
     pub fx_rate_source: Option<amount::FxRateSource>,
     pub account_id: Option<String>,
     pub to_account_id: Option<String>,
     pub funding_account_id: Option<String>,
-    /// 可选出资账户（issue #935 / ADR-0096）：随行落库的归因端点引用。
-    /// 出资项分解（issue #1860 / ADR-0138）：随行落库的子行序列（数组顺序即
-    /// 顺序位）；分解行 `account_id` 为 `None`、本字段非空。
     pub funding: Vec<crate::write::funding_items::FundingItem>,
-    /// 购买项明细（issue #1882 / ADR-0138 决策 9）：随行落库的子行序列（数组顺序即
-    /// 顺序位）；仅 expense 非空。
     pub purchases: Vec<crate::write::purchase_items::PurchaseItem>,
     pub category_id: Option<String>,
     pub merchant_id: Option<String>,
-    /// 可选保单引用（issue #361 / ADR-0051 决策 3），随 [`Input::policy_id`] 归一化。
     pub policy_id: Option<String>,
     pub refund_of_transaction_id: Option<String>,
     pub note: Option<String>,
-    /// 来源订单号（issue #1862 / ADR-0138 决策 9，V035）：随行落库的来源元数据列。
     pub source_order_no: Option<String>,
     pub date: String,
 }
 
-/// 校验并按 kind 归一化交易字段，产出可直接 INSERT/UPDATE 的交易行。
-///
-/// 只处理通用 kind（income/expense/transfer/refund）；buy/sell/convert/dividend/split 属
-/// 投资层路径（产出归一化行后调 [`insert_row`]/[`update_row`]），收到即报错防误用。
-///
-/// 语义（与交易行为层通用 kind 写入路径一致，见 `crate::write::protocol`）：
-/// - 金额必须 > 0；
-/// - transfer 必须指定 `to_account_id`；
-/// - 商户（merchant_id）：携带的商户必须存在且未软删除（kind 准入在行为层收口，
-///   ADR-0092：income/expense/transfer）；软删商户
-///   不可再被新交易选择，历史引用照常保留；refund 忽略调用方填的 merchant_id，
-///   自动继承原支出商户（与账户/币种/分类同款继承语义，ADR-0028）；
-/// - 保单（policy_id，issue #361）：携带的保单必须存在且未软删除（软删保单不可
-///   再被新选择，历史引用照常保留——保单是档案非字典，ADR-0051 决策 5）；
-///   修改路径提交值与该行当前保单相同视为保持历史引用（`existing_policy_id`）。
-///   kind 准入在行为层收口，本模块不重复判 kind；refund 不继承保单（现金流入
-///   记 income 挂单，非 refund，ADR-0051 决策 4），调用方传什么校验什么。
-/// - refund 必须关联**未删除**的原支出交易，且账户/币种/分类继承原支出
-///   （忽略调用方填的 account_id / currency_code / category_id）；
-/// - 本位币折算走 Amount 接缝编辑沿用入口 [`amount::convert_to_native_on_edit`]
-///   （#1547：按交易所属 ISO 周命中汇率历史，基准为全局默认币种；当期表只服务读
-///   路径；#1549：显式汇率 > 序列命中 > 报错；#1550：修改路径携
-///   [`Input::fx_edit_baseline`]，未携显式且三元组未变沿用行内留痕不重查）。
-///
-/// 与旧命令层实现的两处**刻意差异**（issue #59 定时引擎 / issue #60 创建修改与
-/// 买入卖出行已接线，语义由本模块测试锁定）：
-/// - 退款来源不存在/已软删除返回码化 [`AppError::Coded`]（class NotFound，旧实现为 rusqlite 裸错，
-///   语义不明）；其余错误文案（转账/金额/退款只能关联支出）逐字沿用旧文本，
-///   保证接线后 HTTP/BDD 断言不回退；
-/// - 折算目标为全局默认币种（spec #52 口径权威），而非旧实现的账户币种——
-///   MVP 全 CNY 时二者 1:1 无差异，汇率生效后以本模块为准（旧实现已随接线删除）。
 pub fn normalize(conn: &Connection, input: &Input) -> Result<NormalizedRow> {
     match input.kind {
         TransactionKind::Income
@@ -187,8 +91,6 @@ pub fn normalize(conn: &Connection, input: &Input) -> Result<NormalizedRow> {
             let ref_id = input.refund_of_transaction_id.clone().ok_or_else(|| {
                 AppError::coded("refund.source-required", "退款必须关联原支出交易")
             })?;
-            // 只认未删除的原支出交易；不存在或已软删除均视为无效来源（NotFound），
-            // 其余数据库错误（锁/损坏等）原样上抛。
             let (cat, acc, cur, mer, okind): (
                 Option<String>,
                 Option<String>,
@@ -216,20 +118,14 @@ pub fn normalize(conn: &Connection, input: &Input) -> Result<NormalizedRow> {
                     "退款只能关联支出交易",
                 ));
             }
-            // 商户与账户/币种/分类同款继承语义：忽略调用方填的 merchant_id，取原支出商户。
             (cat, acc, cur, mer, Some(ref_id))
         } else {
-            // 商户字典校验：携带的商户必须存在且未软删除（kind 准入在行为层收口，
-            // ADR-0092：income/expense/transfer）——软删商户
-            // 不可再被**新选择**（新建交易引用；历史引用照常保留）。修改路径提交值与
-            // 该行当前商户相同视为保持历史引用（`existing_merchant_id`），跳过校验。
             if let Some(merchant_id) = &input.merchant_id {
                 let unchanged = input.existing_merchant_id.as_deref() == Some(merchant_id.as_str());
                 if !unchanged {
                     validate_merchant_active(conn, Some(merchant_id))?;
                 }
             }
-            // 保单引用校验（issue #361）：kind 准入在行为层，此处只校验引用有效性。
             if let Some(policy_id) = &input.policy_id {
                 let unchanged = input.existing_policy_id.as_deref() == Some(policy_id.as_str());
                 if !unchanged {
@@ -244,10 +140,6 @@ pub fn normalize(conn: &Connection, input: &Input) -> Result<NormalizedRow> {
                 None,
             )
         };
-    // 出资分解契约（issue #1860 / ADR-0138）：互斥 + kind 准入 + 逐条约束（正整数分、
-    // 标签上限、账户准入、Σ == 交易金额）。置于继承之后——refund 的最终币种是
-    // 继承币种（调用方填值被忽略），逐条币种一致判定必须对最终币种跑；置于折算
-    // 之前——契约不成立时不折算（fail fast，与币种守卫同序哲学）。
     let currency_unchanged = input
         .fx_edit_baseline
         .as_ref()
@@ -265,9 +157,6 @@ pub fn normalize(conn: &Connection, input: &Input) -> Result<NormalizedRow> {
             currency_unchanged,
         },
     )?;
-    // 购买项契约（issue #1882 / ADR-0138 决策 9/10）：kind 准入 + 逐条约束（名称
-    // 非空、件数正、单价非负、分类准入）。购买项不承载资金语义，与账户落定、
-    // 币种守卫与折算零耦合，校验放行即随行落库。
     crate::write::purchase_items::validate_purchases(
         conn,
         crate::write::purchase_items::PurchaseContract {
@@ -276,9 +165,6 @@ pub fn normalize(conn: &Connection, input: &Input) -> Result<NormalizedRow> {
             existing_purchases: &input.existing_purchases,
         },
     )?;
-    // 账户引用落定（ADR-0138 决策 1/2）：非空分解 ⇒ 主表账户列落 NULL（账户口径
-    // 由子行承载，读回 `account_id: null`）；空分解 ⇒ 非 refund 必填（refund 继承
-    // 原支出账户，原支出为分解行时继承 NULL——缺省按比例派生的读时推导前提）。
     let account_id = if input.funding.is_empty() {
         if account_id.is_none() && input.kind != TransactionKind::Refund {
             return Err(AppError::coded(
@@ -290,9 +176,6 @@ pub fn normalize(conn: &Connection, input: &Input) -> Result<NormalizedRow> {
     } else {
         None
     };
-    // 币种一致性守卫（issue #1770 / ADR-0134）：现金腿 `amount_cents` 即账户币种
-    // 金额（余额按账户币种累计的前提，#1769）——交易币种必须等于所涉账户币种，
-    // transfer 两端各比一次。置于折算之前：不变量不成立时不再折算（fail fast）。
     validate_currency_consistency(
         conn,
         account_id.as_deref(),
@@ -300,8 +183,6 @@ pub fn normalize(conn: &Connection, input: &Input) -> Result<NormalizedRow> {
         &currency_code,
     )?;
 
-    // 出资账户准入（issue #935 / ADR-0096）：通用 kind 携带出资账户在此拒绝
-    //（buy/sell 不经本模块 normalize，其出资校验在投资域 prepare，同一收口）。
     crate::write::funding::validate_funding_account(
         conn,
         input.kind,
@@ -331,10 +212,8 @@ pub fn normalize(conn: &Connection, input: &Input) -> Result<NormalizedRow> {
         fx_rate_source: native.fx_rate_source,
         account_id,
         to_account_id,
-        // 分解行 account_id 为 None、本字段非空（互斥已收口，见上）。
         funding: input.funding.clone(),
         purchases: input.purchases.clone(),
-        // 通用 kind 经准入校验后恒为 None（仅 buy/sell 可携带，见 normalize）。
         funding_account_id: input.funding_account_id.clone(),
         category_id,
         merchant_id,
@@ -346,10 +225,6 @@ pub fn normalize(conn: &Connection, input: &Input) -> Result<NormalizedRow> {
     })
 }
 
-/// 校验商户存在且未软删除（ADR-0028）：软删商户不可再被**新选择**——新建交易
-/// （writer）与新建定时计划（`scheduled_transactions::engine::create_plan`）共用
-/// 同一校验与文案（e2e 断言同一错误）。历史引用（编辑保持原商户、计划期次复制
-/// 计划商户）不受此限制。
 pub fn validate_merchant_active(conn: &Connection, merchant_id: Option<&str>) -> Result<()> {
     if let Some(id) = merchant_id {
         let active: bool = conn
@@ -371,9 +246,6 @@ pub fn validate_merchant_active(conn: &Connection, merchant_id: Option<&str>) ->
     Ok(())
 }
 
-/// 校验保单存在且未软删除（issue #361 / ADR-0051 决策 5）：软删保单不可再被
-/// **新选择**——新建交易引用；历史引用（编辑保持原保单）不受此限制，
-/// 与 [`validate_merchant_active`] 同款语义与文案风格。
 pub fn validate_policy_active(conn: &Connection, policy_id: Option<&str>) -> Result<()> {
     if let Some(id) = policy_id {
         let active: bool = conn
@@ -395,14 +267,6 @@ pub fn validate_policy_active(conn: &Connection, policy_id: Option<&str>) -> Res
     Ok(())
 }
 
-/// 重放路径的账户引用存活守卫（issue #856 / ADR-0138 影响节）：转出/转入/出资
-/// 账户与全部出资项账户必须存在且未软删除，否则码化 NotFound（引擎挂起进队列、
-/// 不自动复活已删账户）——存活校验扩到出资端（出资子行账户引用），缺行挂起同
-/// 现有 ParkedOp 口径。
-///
-/// 仅同步重放消费：重放端在命令执行前无法预知对端账户的存活状态，与本地写入
-/// （账户引用来自在用字典选取）的守卫位置不同、不变量相同——「往已删账户记账」
-/// 不产生新行。
 pub fn validate_accounts_alive(
     conn: &Connection,
     account_id: Option<&str>,
@@ -435,21 +299,6 @@ pub fn validate_accounts_alive(
     Ok(())
 }
 
-/// 交易币种与账户币种一致性守卫（issue #1770 / ADR-0134）：通用 kind 的现金腿
-/// `amount_cents` 即账户币种金额（余额按账户币种累计的前提，#1769），交易币种
-/// 必须等于所涉账户币种——`account_id` 携带时必比（分解行为 `None`，账户口径由
-/// 出资子行的币种一致守卫分辖），`to_account_id` 携带时再比
-/// （transfer 两端各比一次，两端一致由「都等于交易币种」传递成立）。
-///
-/// 创建（本地 / 定时 / 批量 / HTTP）与重放两形态同码同文案：本地经 [`normalize`]
-/// 到达本守卫；重放臂（`protocol::replay_assembly`）在账户存活校验
-/// （[`validate_accounts_alive`]）之后调用同一函数，失败码化上抛、由同步引擎
-/// 挂 ParkedOp 挂起、不中断批次（dividend 重放臂先例）。
-///
-/// 只判「读得到的币种一致」：账户行读不到时跳过——存在性不属本守卫（本地
-/// 形态刻意无账户存活校验，ADR-0105 决策 4；重放臂已先行判定），本守卫不
-/// 夹带存在性拒绝。refund 继承原支出账户/币种天然一致，守卫照跑（防御性，
-/// 拦截守卫上线前的存量脏来源）。
 pub fn validate_currency_consistency(
     conn: &Connection,
     account_id: Option<&str>,
@@ -478,20 +327,12 @@ pub fn validate_currency_consistency(
     Ok(())
 }
 
-/// 将归一化行落库为完整交易行：生成 `id`（UUID v7）+ 审计字段
-/// （created_at / updated_at / version=1 / device_id / is_deleted=0），返回新交易 `id`。
-///
-/// 幂等身份（`idempotency_key` / `dedup_hash`）不在此写入——由命令层（批量导入）
-/// 在落库后另行回写，保持本模块单一职责。
 pub fn insert_row(conn: &Connection, row: &NormalizedRow) -> Result<String> {
     let id = new_uuid();
     insert_row_with_id(conn, &id, row)?;
     Ok(id)
 }
 
-/// [`insert_row`] 的显式 id 形态（issue #855）：同步重放时实体 id 随 op 携带，
-/// 重放端不得重新生成（两端对同一笔交易收敛到同一行）。本地创建一律走
-/// [`insert_row`]（id 由本模块生成），显式 id 仅限重放路径。
 pub fn insert_row_with_id(conn: &Connection, id: &str, row: &NormalizedRow) -> Result<()> {
     let now = now_iso();
     conn.execute(
@@ -524,19 +365,8 @@ pub fn insert_row_with_id(conn: &Connection, id: &str, row: &NormalizedRow) -> R
             row.fx_rate_source.map(amount::FxRateSource::as_str),
         ],
     )?;
-    // 出资项子行落库（issue #1860 / ADR-0138）：主行落库后同事务写子行；分解行
-    // account_id 为 NULL，账户口径由子行承载。空分解零写入（单出资现状）。
     crate::write::funding_items::insert_rows(conn, id, &row.funding)?;
-    // 购买项子行落库（issue #1882 / ADR-0138 决策 9）：主行落库后同事务写子行。
-    // 空明细零写入（无购买项 = 现状，存量行为零变化）。
     crate::write::purchase_items::insert_rows(conn, id, &row.purchases)?;
-    // 余额缓存写路径（issue #491 / ADR-0067）：新行落库后在同一事务内对受影响
-    // 账户按口径表达式整体重算。本接缝是全部交易创建（手动/批量导入/余额调整/
-    // buy/sell/定时引擎例外/同步重放）的单一收口，挂此处即覆盖全部创建入口。
-    // 受影响账户推导消费余额模块唯一定义（issue #533）：创建 = 新行账户引用对
-    //（主表三列 + 出资子行端，ADR-0138 决策 7）——经写路径副作用接缝传入本域
-    // 自有账户引用集，推导与重算都在账户域实现侧（#1090 接缝反转，本模块对
-    // 账户域零感知）。
     let item_accounts = crate::write::funding_items::item_account_ids(conn, id)?;
     let item_refs: Vec<&str> = item_accounts.iter().map(String::as_str).collect();
     balance::refresh_affected_balances(
@@ -552,13 +382,7 @@ pub fn insert_row_with_id(conn: &Connection, id: &str, row: &NormalizedRow) -> R
     Ok(())
 }
 
-/// 按 `id` 更新交易行字段：保留 `id`、`created_at` 与幂等身份
-/// （`idempotency_key` / `dedup_hash`），`version` 递增，`updated_at` / `device_id` 刷新。
-///
-/// buy/sell 同样经本函数落交易行字段（其持仓/卖出关联副作用由调用方另行处理）。
 pub fn update_row(conn: &Connection, id: &str, row: &NormalizedRow) -> Result<()> {
-    // 旧账户引用先行读取（同事务）：修改可能移动账户，两侧都要整体重算；旧出资
-    // 子行端一并读出（ADR-0138 决策 6：单 ⇄ 多互转时旧出资账户也要参与并集）。
     let (old_account_id, old_to_account_id, old_funding_account_id): (
         Option<String>,
         Option<String>,
@@ -597,15 +421,8 @@ pub fn update_row(conn: &Connection, id: &str, row: &NormalizedRow) -> Result<()
             row.source_order_no,
         ],
     )?;
-    // 出资项子行全量替换（ADR-0138 决策 6 全量语义）：单 ⇄ 多就地互转同一路径，
-    // 与主行 UPDATE 同事务（中途失败整体回滚）。
     crate::write::funding_items::replace_rows(conn, id, &row.funding)?;
-    // 购买项子行全量替换（与出资项同款全量语义）：与主行 UPDATE 同事务。
     crate::write::purchase_items::replace_rows(conn, id, &row.purchases)?;
-    // 余额缓存写路径：受影响账户 = 旧行 ∪ 新行账户引用集（主表三列 + 出资子行端，
-    // ADR-0138 决策 7），消费余额模块唯一定义（issue #534 / #935）；旧账户引用读取
-    // 时机与刷新事务位置不变，同事务整体重算（修改可能移动账户，ADR-0067）。经写
-    // 路径副作用接缝传入两行引用集（#1090 接缝反转），推导与重算都在账户域实现侧。
     let new_item_accounts = crate::write::funding_items::item_account_ids(conn, id)?;
     let old_item_refs: Vec<&str> = old_item_accounts.iter().map(String::as_str).collect();
     let new_item_refs: Vec<&str> = new_item_accounts.iter().map(String::as_str).collect();
@@ -627,13 +444,6 @@ pub fn update_row(conn: &Connection, id: &str, row: &NormalizedRow) -> Result<()
     Ok(())
 }
 
-/// `NormalizedTransaction` → [`NormalizedRow`]（交易行写入唯一权威，issue #70）。
-///
-/// 转换随写入路径定义（ADR-0113 决策 3.2：原住域模型、构成共享语义→写路径反边，
-/// 重排时搬进写路径），消费方（通用 kind 归一化后的行、buy/sell 投资层的归一化行）
-/// 直接产出 [`NormalizedRow`] 交给 [`insert_row`]/[`update_row`] 落库。
-/// kind 已为 [`TransactionKind`] 枚举直赋（issue #74），转换不可失败；保留 `Result`
-/// 签名以维持消费方 `?` 传播的既有形状（无多余分支）。
 impl TryFrom<&NormalizedTransaction> for NormalizedRow {
     type Error = AppError;
 
@@ -669,9 +479,6 @@ impl TryFrom<&NormalizedTransaction> for NormalizedRow {
     }
 }
 
-/// [`NormalizedRow`] → `NormalizedTransaction`（issue #855）：同步命令载荷构造的
-/// 反向桥——本地编排计划（写入协议 `Plan` 的归一化行，通用 kind）组装 op 载荷时
-/// 使用；纯字段拷贝，与正向 [`TryFrom`] 同源互逆。
 impl From<&NormalizedRow> for NormalizedTransaction {
     fn from(row: &NormalizedRow) -> Self {
         NormalizedTransaction {

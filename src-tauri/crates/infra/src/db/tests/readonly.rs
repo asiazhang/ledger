@@ -1,23 +1,13 @@
-//! 只读连接（读路径独立只读连接，issue #1280 / ADR-0117）：只读 flags（写被拒）、
-//! 密文库主口令注入、rollback journal 下「写事务在途只读连接照常可读」（路线 B
-//! 的连接级机制证据）、成对 [`DbState`] 的读槽换连语义。
-//!
-//! 文件库不入测试工厂（ADR-0084 决策 3）：建库经产品建缝 `open_connection` +
-//! 产品迁移缝 `migrations().to_latest`（boot/tests 先例）。
-
 use std::time::{Duration, Instant};
 
 use tauri_app_lib::test_support::{ScratchDir, ScratchFile};
 
 use crate::db::{migrations, open_connection, open_connection_with_passphrase};
 
-/// 暂存目录（ScratchDir guard，issue #1645）：drop（含 panic unwind）整棵删除。
 fn temp_dir(tag: &str) -> ScratchDir {
     ScratchDir::new(&format!("db-readonly-{tag}"))
 }
 
-/// 库文件夹具（issue #1645）：住各自的暂存目录，guard 随返回值交调用方持有
-/// （`db.parent()` 经 Deref 照常解析目录），用例结束整棵删除。
 fn seeded_db(tag: &str, account: &str, balance: i64) -> ScratchFile {
     let file = ScratchFile::new(
         &format!("db-readonly-{tag}"),
@@ -33,8 +23,6 @@ fn plaintext_db(tag: &str) -> ScratchFile {
     seeded_db(tag, "acct-1", 12345)
 }
 
-/// 只读连接读到已提交真实行；写入被只读约束拒绝（「读路径无写」从纪律变成
-/// 运行时约束，ADR-0117 代价 3）。
 #[test]
 fn readonly_connection_reads_committed_row_and_rejects_writes() {
     let db = plaintext_db("rw");
@@ -56,10 +44,6 @@ fn readonly_connection_reads_committed_row_and_rejects_writes() {
     );
 }
 
-/// 并发 busy 容让同源（issue #1699 / ADR-0117 决策 4）：成对建连的写、读两侧
-/// 连接都持 [`crate::db::CONCURRENT_BUSY_TIMEOUT`]——多语句读闭包收进读事务后，
-/// rollback journal 下读事务持 SHARED 锁横跨语句，写者提交须等其让出；无容让
-/// 即 SQLITE_BUSY 即时失败，「读一致性」会换成用户可见写失败。
 #[test]
 fn paired_connections_share_concurrent_busy_timeout() {
     let dir = temp_dir("busy");
@@ -78,8 +62,6 @@ fn paired_connections_share_concurrent_busy_timeout() {
     }
 }
 
-/// 密文库：只读连接凭主口令打开可读（密钥注入在建连收尾单点内，ADR-0117 决策 2）；
-/// 错误口令在建连时静默、首条读语句报错（与写连接同纪律，ADR-0075）。
 #[test]
 fn readonly_encrypted_connection_needs_passphrase() {
     let dir = temp_dir("enc");
@@ -94,9 +76,6 @@ fn readonly_encrypted_connection_needs_passphrase() {
         .unwrap();
     assert!(count > 0, "凭正确口令的只读连接应可读密文库");
 
-    // 错误口令：带 KEY 挂载的探针即首条读（issue #1869）——SQLCipher 下口令
-    // 错误与损坏同为 not-a-database、不可靠区分，建连即报合并口径码化错误
-    // （与写连接/解锁路径同码，可就地重试）。
     let wrong = crate::db::open_connection_readonly_with_passphrase(&db, "主口令-错误");
     let err = wrong.expect_err("错误口令的只读建连应在挂载探针即失败");
     assert_eq!(
@@ -106,8 +85,6 @@ fn readonly_encrypted_connection_needs_passphrase() {
     );
 }
 
-/// 路线 B 的连接级机制证据：写连接事务在途（RESERVED）期间，只读连接照常即时
-/// 可读——「长写事务不再挡读」（ADR-0117 决策 1）。
 #[test]
 fn readonly_connection_reads_while_writer_holds_transaction() {
     let db = plaintext_db("inflight");
@@ -133,8 +110,6 @@ fn readonly_connection_reads_while_writer_holds_transaction() {
     writer.execute_batch("ROLLBACK").unwrap();
 }
 
-/// 成对 DbState：写经写连接提交、读经读连接可见（open_db_in 成对换连的连接级
-/// 前提：两连接指向同一库文件）。
 #[test]
 fn open_db_in_pairs_write_and_read_connections() {
     let dir = temp_dir("pair");
@@ -160,15 +135,12 @@ fn open_db_in_pairs_write_and_read_connections() {
     assert_eq!(balance, 777, "读连接应看到写连接提交的数据");
 }
 
-/// 读槽换连：原位替换经已持有的 Arc 克隆同步可见（ADR-0080 既有语义）；占位化
-/// 后读报错（不静默回落写连接，ADR-0117 决策 3）。
 #[test]
 fn read_slot_replacement_and_placeholderization() {
     let db = plaintext_db("slot");
     let state = crate::db::open_db_in(db.parent().unwrap()).unwrap();
     let cloned = state.read_conn.clone();
 
-    // 占位化：读槽换成占位内存库（无表），读报错。
     state.placeholderize_read_conn().unwrap();
     {
         let guard = cloned.lock().unwrap();
@@ -180,7 +152,6 @@ fn read_slot_replacement_and_placeholderization() {
         );
     }
 
-    // 换回真实只读连接：同一 Arc 克隆立即读到真实库。
     state
         .replace_read_conn(crate::db::open_connection_readonly(&db).unwrap())
         .unwrap();
@@ -197,17 +168,11 @@ fn read_slot_replacement_and_placeholderization() {
     assert_eq!(balance, 12345, "换回后同一克隆应读到真实库");
 }
 
-/// 成对换入原语 `swap_pair`（issue #1303 / ADR-0117 决策 3）：机械序列
-/// 「锁写槽→替换→还锁→换读槽」单点——经事先持有的两槽 Arc 克隆断言返回后
-/// 写读两槽**一致**指向新库、旧库数据两槽不可见。`swap_pair` 退化为任一
-/// 单槽换入（漏换写槽或漏换读槽）即在本测试变红。
 #[test]
 fn swap_pair_swaps_both_slots_visible_via_held_clones() {
     let old_db = seeded_db("swap-old", "acct-old", 1111);
     let new_db = seeded_db("swap-new", "acct-new", 2222);
     let state = crate::db::open_db_in(old_db.parent().unwrap()).unwrap();
-    // 事先持有的两槽克隆（ADR-0080 语义：换入后壳层、HTTP 壳、调度线程已持有的
-    // 克隆同步可见）。
     let write_clone = state.conn.clone();
     let read_clone = state.read_conn.clone();
 

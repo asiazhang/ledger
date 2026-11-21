@@ -1,12 +1,3 @@
-//! 周点落库原语的 interface 单测（spec #1677）：只穿过两个入口
-//! （`commit_price_history_weekly` / `commit_fx_rate_history_weekly`）断言外部
-//! 行为——同周同值零写入、同周不同值整周覆盖、跨周新点、事务失败整体回滚、
-//! 调用方事务并入；不断言内部函数被调用。统一测试数据库工厂建库（ADR-0084）。
-//!
-//! 判新口径 = 「同周同值零写入」（spec #1677 统一引入，含汇率历史）：重复提交
-//! 同值周点零写入（version 不空转递增）；汇率侧删掉判新（回退无条件覆盖）即
-//! `fx_same_week_same_value_writes_nothing` 变红。
-
 use chrono::NaiveDate;
 use rusqlite::Connection;
 
@@ -50,7 +41,6 @@ fn fx_rows(conn: &Connection, base: &str, quote: &str) -> Vec<(String, f64, i64)
         .unwrap()
 }
 
-/// 注入写入失败的触发器：price_history 出现指定刻度值的 INSERT 即 RAISE(ABORT)。
 fn arm_price_insert_abort(conn: &Connection, cents: i64) {
     conn.execute_batch(&format!(
         "CREATE TRIGGER fail_weekly_insert BEFORE INSERT ON price_history \
@@ -60,12 +50,6 @@ fn arm_price_insert_abort(conn: &Connection, cents: i64) {
     .unwrap();
 }
 
-// ---------------------------------------------------------------------------
-// 价格历史入口
-// ---------------------------------------------------------------------------
-
-/// 逐日报价点降采样：一周五个交易日只落该周最后一个有报价交易日一条周点；
-/// 跨周各落一条。删除降采样即红（同周五行或首日行）。
 #[test]
 fn daily_points_land_one_row_per_week_at_last_trading_day() {
     let conn = tauri_app_lib::test_support::open();
@@ -77,10 +61,10 @@ fn daily_points_land_one_row_per_week_at_last_trading_day() {
         "CNY",
         "tencent",
         &points(&[
-            ("2026-09-14", 1.0), // 周一
+            ("2026-09-14", 1.0),
             ("2026-09-15", 1.1),
-            ("2026-09-18", 1.4), // 周五
-            ("2026-09-21", 2.0), // 下一周周一
+            ("2026-09-18", 1.4),
+            ("2026-09-21", 2.0),
         ]),
     )
     .unwrap();
@@ -96,7 +80,6 @@ fn daily_points_land_one_row_per_week_at_last_trading_day() {
     );
 }
 
-/// 无效数值（≤0）不采样：整周无效则该周无点；有效日照常落。
 #[test]
 fn non_positive_values_are_skipped_by_sampling() {
     let conn = tauri_app_lib::test_support::open();
@@ -133,7 +116,6 @@ fn non_positive_values_are_skipped_by_sampling() {
     );
 }
 
-/// 空点集零写入。
 #[test]
 fn empty_points_write_nothing() {
     let conn = tauri_app_lib::test_support::open();
@@ -143,8 +125,6 @@ fn empty_points_write_nothing() {
     assert!(price_rows(&conn, "inst-1").is_empty());
 }
 
-/// 同周同值零写入（判新口径，spec #1677）：降采样点与库内同周行值相同即不写
-/// ——version 不递增、采样日保持原值（不再按「同日不同值」判旧）。
 #[test]
 fn same_week_same_value_writes_nothing() {
     let conn = tauri_app_lib::test_support::open();
@@ -158,7 +138,6 @@ fn same_week_same_value_writes_nothing() {
     )
     .unwrap();
 
-    // 同周换采样日（周四）、同值重取：判新按周与值，不按采样日。
     let written = commit_price_history_weekly(
         &conn,
         "inst-1",
@@ -176,7 +155,6 @@ fn same_week_same_value_writes_nothing() {
     );
 }
 
-/// 同周不同值整周覆盖：一行、值与新采样日随覆盖更新。
 #[test]
 fn same_week_different_value_overwrites_the_whole_week() {
     let conn = tauri_app_lib::test_support::open();
@@ -207,7 +185,6 @@ fn same_week_different_value_overwrites_the_whole_week() {
     );
 }
 
-/// 跨周新点产生并写入；既有同值周不重写。
 #[test]
 fn new_week_produces_new_point_without_rewriting_old_weeks() {
     let conn = tauri_app_lib::test_support::open();
@@ -241,13 +218,10 @@ fn new_week_produces_new_point_without_rewriting_old_weeks() {
     );
 }
 
-/// 自持事务（一只一事务）：批内第 N 个周点写入失败，先落的周点一并回滚——
-/// 不留半根历史（ADR-0122 决策 8 的原语侧承载）。
 #[test]
 fn failed_write_rolls_back_the_whole_batch() {
     let conn = tauri_app_lib::test_support::open();
     seed_instrument_row(&conn, "inst-1");
-    // 第二周的值（9.9999 元 → 99999 刻度）命中注入的 ABORT 触发器。
     arm_price_insert_abort(&conn, 99_999);
 
     let error = commit_price_history_weekly(
@@ -266,8 +240,6 @@ fn failed_write_rolls_back_the_whole_batch() {
     );
 }
 
-/// 调用方已持事务时原语并入外层：外层后续失败回滚原语已写的周点——原语
-/// 从不在事务外写（「调用方必须开事务」的注释互认在类型上退役）。
 #[test]
 fn joins_caller_transaction_and_rolls_back_with_it() {
     let conn = tauri_app_lib::test_support::open();
@@ -294,19 +266,12 @@ fn joins_caller_transaction_and_rolls_back_with_it() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// 汇率历史入口
-// ---------------------------------------------------------------------------
-
-/// 汇率判新（spec #1677 统一引入，现状为无条件覆盖）：同周同值零写入，
-/// version 不空转递增。删除判新（回退无条件覆盖）即红。
 #[test]
 fn fx_same_week_same_value_writes_nothing() {
     let conn = tauri_app_lib::test_support::open();
     let pair = &[("2026-09-14", 0.9100), ("2026-09-21", 0.9150)];
     commit_fx_rate_history_weekly(&conn, "HKD", "CNY", "ecb", &points(pair)).unwrap();
 
-    // 同序列换采样日重取（2026-09-14 周取 2026-09-15）：同周同值零写入。
     let written = commit_fx_rate_history_weekly(
         &conn,
         "HKD",
@@ -327,7 +292,6 @@ fn fx_same_week_same_value_writes_nothing() {
     );
 }
 
-/// 汇率同周不同值整周覆盖；跨周新点追加。
 #[test]
 fn fx_new_or_changed_weeks_are_written() {
     let conn = tauri_app_lib::test_support::open();
@@ -360,7 +324,6 @@ fn fx_new_or_changed_weeks_are_written() {
     );
 }
 
-/// 汇率空点集零写入（与价格入口同形）。
 #[test]
 fn fx_empty_points_write_nothing() {
     let conn = tauri_app_lib::test_support::open();

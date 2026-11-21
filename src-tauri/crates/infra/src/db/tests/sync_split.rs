@@ -1,11 +1,3 @@
-//! V036 同步元数据拆库迁移（issue #1871 / ADR-0139 决策 1/4）：升级世界四表
-//! 数据分毫不差迁入 sync.db、主库无任何同步表；迁移失败两库整体回滚、重试
-//! 收敛（非 WAL master journal 集合级原子的行为面）；sync.db 缺失按世界版本
-//! 裁决（拆库世界码化报错、拆库前世界补建后搬迁）；拆库边界版本钉。
-//!
-//! 拆库前世界夹具经别名裸连接构造（`to_version` 停在 V035、四表在 main，无需
-//! attached 侧），归位 `ledger.db` 后走产品建缝（挂载 + 迁移 + 守卫）。
-
 use tauri_app_lib::test_support::{FIXED_NOW, ScratchDir};
 
 use crate::db::connection::{DB_FILE_NAME, SYNC_DB_FILE_NAME, SYNC_SPLIT_USER_VERSION};
@@ -16,9 +8,6 @@ fn temp_dir(tag: &str) -> ScratchDir {
     ScratchDir::new(&format!("db-sync-split-{tag}"))
 }
 
-/// 拆库前世界（V035 形态：四表在 main、user_version = V035）＋四表各一行数据
-/// ＋一行业务数据（app_settings KV，无外键）。别名裸连接：文件名非
-/// `ledger.db`，不触发挂载；V035 及之前的迁移只写 main。
 fn pre_split_world(path: &std::path::Path) -> rusqlite::Connection {
     let mut conn = crate::db::open_connection_unmounted(path).expect("别名裸连接");
     migrations()
@@ -64,8 +53,6 @@ fn pre_split_world(path: &std::path::Path) -> rusqlite::Connection {
     conn
 }
 
-/// 断言四表数据已分毫不差迁入 attached 侧（逐行逐列比对夹具字面量），
-/// 主库不留任何同步表，业务数据原样。
 fn assert_split_world(conn: &rusqlite::Connection) {
     let (id, clock, created, updated): (String, i64, String, String) = conn
         .query_row(
@@ -168,8 +155,6 @@ fn assert_split_world(conn: &rusqlite::Connection) {
     assert_eq!(setting, "probe-value", "业务数据应原样保留在主库");
 }
 
-/// 升级：带四表数据的拆库前世界迁到最新后，数据分毫不差入 sync.db、主库无
-/// 任何 sync 表（验收「升级」；删除迁移搬数步骤即红——行不迁入、断言失败）。
 #[test]
 fn upgrade_moves_sync_rows_intact_into_sync_db() {
     let dir = temp_dir("upgrade");
@@ -185,17 +170,12 @@ fn upgrade_moves_sync_rows_intact_into_sync_db() {
     assert_split_world(&conn);
 }
 
-/// 迁移中断 = 整体回退（非 WAL master journal 集合级原子，ADR-0139 决策 2）：
-/// 搬数中途失败时两库同滚——main 四表与数据原样、attached 无搬迁残迹；排除
-/// 故障后重试（重启重跑同一迁移）收敛到拆库形态（验收「中断后再启动收敛」）。
 #[test]
 fn failed_migration_rolls_back_both_dbs_and_retry_converges() {
     let dir = temp_dir("interrupted");
     let seed = dir.path().join("seed.db");
     {
         let mut conn = pre_split_world(&seed);
-        // 故障注入：attached 侧预置残缺同名表（形状漂移的假 sync.db），搬数
-        // 在第一条 INSERT 上确定性失败。
         conn.execute_batch(&format!(
             "ATTACH DATABASE '{}' AS sync; CREATE TABLE sync.sync_device (x)",
             dir.path().join(SYNC_DB_FILE_NAME).display()
@@ -208,28 +188,22 @@ fn failed_migration_rolls_back_both_dbs_and_retry_converges() {
             err.to_string().contains("sync_device"),
             "失败应发生在 sync_device 搬数：{err}"
         );
-        // 两库同滚：main 四表与数据原样在位。
         let ops_in_main: i64 = conn
             .query_row("SELECT COUNT(*) FROM main.sync_ops", [], |r| r.get(0))
             .expect("回滚后 main.sync_ops 应原样在位");
         assert_eq!(ops_in_main, 1, "回滚后搬数源行应原样保留");
-        // 失败发生在第一条搬数 INSERT：attached 侧除故障注入表外不得有任何
-        // 搬迁产物（表未建、行未拷）。
         let copied: i64 = conn
             .query_row("SELECT COUNT(*) FROM sync.sync_device", [], |r| r.get(0))
             .expect("回滚后 attached 侧应只剩故障注入表");
         assert_eq!(copied, 0, "失败迁移不得留下搬迁残迹");
     }
 
-    // 排除故障后重试（新连接 = 重启；open_connection_in 走挂载 + 迁移 + 守卫）。
     std::fs::remove_file(dir.path().join(SYNC_DB_FILE_NAME)).expect("清除故障注入世界");
     std::fs::rename(&seed, dir.path().join(DB_FILE_NAME)).expect("归位主库文件名");
     let conn = open_connection_in(dir.path()).expect("重试应收敛");
     assert_split_world(&conn);
 }
 
-/// 拆库世界的 sync.db 缺失 = 同步元数据丢失：建连码化报错，不静默补建空库
-/// 冒充完好世界（ADR-0139 决策 3 / spec 用户故事 17）。
 #[test]
 fn split_world_missing_sync_db_is_coded_mount_error() {
     let dir = temp_dir("missing");
@@ -250,9 +224,6 @@ fn split_world_missing_sync_db_is_coded_mount_error() {
     }
 }
 
-/// 搬迁窗口的 IF NOT EXISTS 收敛（票 07 跨版本引导与旧形态恢复的底层机制）：
-/// attached 侧已有同名空表时复用之、照常搬数——预置空 sync.db 的拆库前世界
-/// 升级不因表已存在而失败。
 #[test]
 fn pre_split_world_with_empty_sync_db_reuses_tables_and_converges() {
     let dir = temp_dir("reuse-empty");
@@ -265,20 +236,13 @@ fn pre_split_world_with_empty_sync_db_reuses_tables_and_converges() {
     assert_split_world(&conn);
 }
 
-/// 拆库边界版本钉：`SYNC_SPLIT_USER_VERSION` = 迁移链位置版本 35（V036，V005
-/// 缺位不回填）；边界之前（34 = V035）四表仍在 main。往 V036 之前插迁移（改变
-/// 它的位置版本）或把拆库搬到别的编号在此变红；V036 之后新增迁移允许继续
-/// 叠加（如 V037 账户归档列），边界自身不得后移。
 #[test]
 fn sync_split_user_version_boundary_is_pinned() {
-    // 边界常量钉死为 35：它是 V036 在链上的位置版本，不随后续迁移增长。
     assert_eq!(
         SYNC_SPLIT_USER_VERSION, 35,
         "拆库边界应钉在 V036 的位置版本 35"
     );
 
-    // 拆库后世界：工厂（建库唯一入口）迁到最新，最新版本不早于边界——边界
-    // 之后叠加的新迁移（V037 起）在此被接住，而边界若后移则上一条常量钉先红。
     let conn = tauri_app_lib::test_support::open();
     let latest: i64 = conn
         .query_row("PRAGMA user_version", [], |r| r.get(0))
@@ -288,7 +252,6 @@ fn sync_split_user_version_boundary_is_pinned() {
         "最新版本 {latest} 不应早于拆库边界 {SYNC_SPLIT_USER_VERSION}"
     );
 
-    // 拆库前世界（与夹具同形的别名裸连接，停在 V035）：四表仍在 main。
     let dir = temp_dir("boundary");
     let path = dir.path().join("pre-split.db");
     let mut pre_split = crate::db::open_connection_unmounted(&path).expect("别名裸连接");

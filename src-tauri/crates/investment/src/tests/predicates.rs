@@ -1,21 +1,9 @@
-//! 「持仓标的」判定谓词一致性绑定测试（issue #239）：单点谓词
-//! （`predicates::INVESTED_EXISTS`）选出的标的集合 ≡ `v_holdings` 视图有行的
-//! 标的集合。视图定义随发布冻结、只增不改，是只读对账基准；两份 SQL 编码的
-//! 一致性靠本测试钉住（先例：周键 ↔ week_start 生成列绑定测试），口径漂移
-//! 在测试期即失败，而非上线后增量同步与标的页过滤分叉。
-//!
-//! 夹具覆盖父 spec #172 点名的四类分叉：软删除账户批次、已清仓标的、
-//! 非股票持仓、同账户同标的不同币种 lot（视图 GROUP BY 含 currency_code，
-//! 一标的出多行——按标的去重后必须与谓词集合逐标的相等）。
-
 use rusqlite::{Connection, params};
 
 use super::common::insert_instrument_with_market;
 use crate::predicates::INVESTED_EXISTS;
 use tauri_app_lib::test_support::{open, seed_account};
 
-/// 直插一条最小买入链（transaction → security_transaction → lot）：谓词与视图
-/// 的驱动表是 security_lots，补齐外键链即可，绕过交易行为层以聚焦本测试。
 fn insert_lot(
     conn: &Connection,
     account_id: &str,
@@ -56,8 +44,6 @@ fn soft_delete_account(conn: &Connection, id: &str) {
         .unwrap();
 }
 
-/// 谓词选出的标的集合（按 id 升序）。外层查询以 `i` 作 instruments 别名——
-/// 同时是对 predicates 模块别名契约的例行演练。
 fn predicate_instrument_set(conn: &Connection) -> Vec<String> {
     let sql = format!("SELECT i.id FROM instruments i WHERE {INVESTED_EXISTS} ORDER BY i.id");
     let mut stmt = conn.prepare(&sql).unwrap();
@@ -65,7 +51,6 @@ fn predicate_instrument_set(conn: &Connection) -> Vec<String> {
     rows.map(|r| r.unwrap()).collect()
 }
 
-/// v_holdings 视图有行的标的集合（去重，按 id 升序）。
 fn view_instrument_set(conn: &Connection) -> Vec<String> {
     let mut stmt = conn
         .prepare("SELECT DISTINCT instrument_id FROM v_holdings ORDER BY instrument_id")
@@ -78,7 +63,6 @@ fn view_instrument_set(conn: &Connection) -> Vec<String> {
 fn invested_predicate_set_equals_v_holdings_instrument_set() {
     let conn = open();
 
-    // ① 普通在持标的：股票，正常账户 —— 两侧都应包含。
     seed_account(&conn, "acc-live", "在持账户", "investment", "CNY", 0);
     insert_instrument_with_market(
         &conn,
@@ -91,8 +75,6 @@ fn invested_predicate_set_equals_v_holdings_instrument_set() {
     );
     insert_lot(&conn, "acc-live", "inst-stock", 10.0, "CNY");
 
-    // ② 非股票持仓（基金/债券）：数据源无行情，但「持仓标的」判定与类型无关
-    //    （增量同步侧按类型分区计跳过，判定口径本身不分类型）——两侧都应包含。
     insert_instrument_with_market(
         &conn,
         "inst-fund",
@@ -114,7 +96,6 @@ fn invested_predicate_set_equals_v_holdings_instrument_set() {
     );
     insert_lot(&conn, "acc-live", "inst-bond", 10.0, "CNY");
 
-    // ③ 已清仓标的：批次剩余数量为 0 ——「持仓标的」不含已清仓，两侧都应排除。
     insert_instrument_with_market(
         &conn,
         "inst-cleared",
@@ -126,7 +107,6 @@ fn invested_predicate_set_equals_v_holdings_instrument_set() {
     );
     insert_lot(&conn, "acc-live", "inst-cleared", 0.0, "CNY");
 
-    // ④ 软删除账户的批次：口径明确排除 —— 两侧都应排除。
     seed_account(&conn, "acc-del", "已删账户", "investment", "CNY", 0);
     insert_instrument_with_market(
         &conn,
@@ -140,8 +120,6 @@ fn invested_predicate_set_equals_v_holdings_instrument_set() {
     insert_lot(&conn, "acc-del", "inst-softdel", 10.0, "CNY");
     soft_delete_account(&conn, "acc-del");
 
-    // ⑤ 同账户同标的不同币种 lot：视图 GROUP BY 含 currency_code，一标的出两行；
-    //    谓词按标的判定只出一次 —— 去重后两侧逐标的相等。
     insert_instrument_with_market(
         &conn,
         "inst-multiccy",
@@ -154,8 +132,6 @@ fn invested_predicate_set_equals_v_holdings_instrument_set() {
     insert_lot(&conn, "acc-live", "inst-multiccy", 5.0, "CNY");
     insert_lot(&conn, "acc-live", "inst-multiccy", 3.0, "USD");
 
-    // 谓词集合先对显式期望（防两侧同错的空集/同错集平凡通过）：
-    // 在持 = stock + fund + bond + multiccy；排除 = cleared（清仓）+ softdel（软删账户）。
     assert_eq!(
         predicate_instrument_set(&conn),
         vec![
@@ -167,15 +143,12 @@ fn invested_predicate_set_equals_v_holdings_instrument_set() {
         "谓词集合应恰为四只在持标的（含非股票），排除清仓与软删账户批次"
     );
 
-    // 核心绑定：谓词集合 ≡ 视图有行的标的集合（按标的去重）。
     assert_eq!(
         predicate_instrument_set(&conn),
         view_instrument_set(&conn),
         "单点谓词与 v_holdings 视图的标的口径漂移"
     );
 
-    // 视图侧多行现实核查：multiccy 标的视图确有 2 行（不同成本币种），
-    // 证明分叉场景真实进入了对账。
     let multiccy_rows: i64 = conn
         .query_row(
             "SELECT COUNT(*) FROM v_holdings WHERE instrument_id='inst-multiccy'",

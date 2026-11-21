@@ -11,9 +11,6 @@ export type TransactionKind =
   | "split"
   | "dividend";
 
-/** 交易来源类型闭集（spec #704 / issue #706，词汇表「来源列」）：定时计划三形态 /
- * 保单 / 物品 / 标的；wire 字面与后端枚举（camelCase）同源，与 source-jump.ts
- * 深模块词表一致（点击 → 跳转目标计算的入参闭集）。 */
 export type TransactionSourceKind =
   | "installmentPlan"
   | "subscription"
@@ -22,62 +19,36 @@ export type TransactionSourceKind =
   | "item"
   | "instrument";
 
-/** 来源状态闭集（spec #704，可空字段）：已取消计划 / 已处置物品 / 软删保单。 */
 export type TransactionSourceStatus = "cancelled" | "disposed" | "deleted";
 
-/** 基金转换两腿扩展（ADR-0099）：一笔 convert 两腿的标的、份额与两侧确认金额。
- * 行金额锚点（`amount_native_cents`）是结转成本而非确认单金额，展示口径读本扩展。 */
 export interface ConvertFields {
-  /** 转入标的（转出标的恒为行的 instrument_id） */
   to_instrument_id: string;
-  /** 转入标的代码（JOIN instruments 带出的展示字段，移动卡片「A → B」消费） */
   to_symbol: string;
-  /** 转入份额 */
   to_quantity: number;
-  /** 转出金额（分，确认单权威） */
   out_amount_cents: number;
-  /** 转入金额（分，确认单权威） */
   in_amount_cents: number;
 }
 
-/** 交易行来源（读时反查推导，零迁移）：仅列表/搜索命令填充，其余返回点为 null。 */
 export interface TransactionSource {
   kind: TransactionSourceKind;
-  /** 来源实体 id */
   entity_id: string;
-  /** 展示名（保单 = 险种名；其余口径见各消费票） */
   display_name: string;
-  /** 来源状态（可空）：软删保单 = deleted */
   status: TransactionSourceStatus | null;
 }
 
-/** 折算来源闭集（issue #1548 / ADR-0011）：series=命中汇率历史序列（交易所属周）；
- * explicit=调用方逐笔显式给定（写侧入参由后续票接入）。wire 字面与后端枚举同源。 */
 export type FxRateSource = "series" | "explicit";
 
-/** 出资项读回条目（issue #1860 / ADR-0138）：分解行随交易读回，按顺序位稳定排序。 */
 export interface TransactionFunding {
-  /** 出资账户 id */
   account_id: string;
-  /** 出资金额（正整数分）：Σ 全部条目 == 交易金额 */
   amount_cents: number;
-  /** 扣款标签（可选自由文本，同账户多条出资项的区分标注） */
   label: string | null;
-  /** refund 缺省按出资比例派生的读时推导标记（ADR-0138 决策 5）：true = 读时推导、
-   * 未落库；落库分解与单出资行恒 false */
   derived: boolean;
 }
 
-/** 购买项读回条目（issue #1882 / ADR-0138 决策 9/10）：带购买项的 expense 随交易
- * 读回，按顺序位（对账单顺序）稳定排序。 */
 export interface TransactionPurchase {
-  /** 商品名称（源单原文） */
   name: string;
-  /** 件数（正整数） */
   quantity: number;
-  /** 商品分类引用（可选，明细指针）：分类删除时为 null；不承载统计口径 */
   category_id: string | null;
-  /** 商品单价（可选，整数分）：源单只给订单总额时为空；不进任何金额口径 */
   unit_price_cents: number | null;
 }
 
@@ -87,49 +58,24 @@ export interface Transaction extends Syncable {
   amount_cents: number;
   currency_code: string;
   amount_native_cents: number;
-  /** 折算来源留痕（issue #1548 / ADR-0011，V029）：非本位币行记录本笔折算使用的
-   * 汇率值（本位币金额 ≈ amount_cents × fx_rate_used，到分）与来源；
-   * 同币种 / 不折算（split 恒 0）/ 存量行为 null */
   fx_rate_used: number | null;
   fx_rate_source: FxRateSource | null;
-  /** 出资账户引用（ADR-0138）：分解行（携出资子行的 expense/income、显式覆盖的
-   * refund、继承分解原支出的缺省 refund）读回 null——已发布契约放宽（CHANGELOG
-   * BREAKING）；单出资行读回形态与现状兼容 */
   account_id: string | null;
   to_account_id: string | null;
-  /** 可选出资账户（issue #935 / ADR-0096）：仅 buy/sell 可携带，读投影恒返回（无则 null） */
   funding_account_id: string | null;
   category_id: string | null;
   merchant_id: string | null;
-  /** 可选保单引用（issue #361 / ADR-0051）：仅 expense/income 可挂，后端行为层准入 */
   policy_id: string | null;
-  /** 来源列（spec #704 / issue #706）：仅列表/搜索读路径填充，其余返回点为 null */
   source: TransactionSource | null;
-  /** 转换两腿扩展（ADR-0099）：仅 kind = convert 的行由列表/搜索读路径填充（其余 null）；
-   * 行金额锚点是结转成本，列表金额列展示转出金额须读本扩展 */
   convert: ConvertFields | null;
   refund_of_transaction_id: string | null;
-  /** 出资项分解（issue #1860 / ADR-0138）：分解行按顺序位稳定返回；非分解行为空数组 */
   fundings: TransactionFunding[];
-  /** 购买项明细（issue #1882 / ADR-0138 决策 9）：带购买项的 expense 按对账单顺序稳定返回；
-   * 无购买项（含非 expense 行）恒空数组 */
   purchases: TransactionPurchase[];
-  /** 来源订单号（issue #1862 / ADR-0138 决策 9，V035）：导入来源单据的外部订单标识，
-   * 详情订单区（#1928 撤列表徽章）的行级归属锚点；手动行为 null，单号不入备注 */
   source_order_no: string | null;
   note: string | null;
   date: string;
   created_at: string;
 }
-/**
- * 交易弹窗族的行投影（ADR-0135 决策 4 / issue #1781）：交易弹窗编排
- * （TransactionModalState）与其消费组件（编辑表单族 / 只读详情族 / 菜单组装）
- * 实际读取的行字段闭集——依赖最小面：弹窗族不读取折算留痕、同步基础字段与
- * created_at。两个行源都满足本结构：主列表 Transaction 行原样满足；投资明细
- * 页签行（InvestmentTransactionRow，弹窗族消费列见后端投影注记）经弹窗行适配
- * 投影满足（fundings 恒空数组：投资 kind 不做出资分解，ADR-0138 决策 3）。
- * 消费组件以本类型收窄 props，行形状由数据源保证。
- */
 export type TransactionModalRow = Pick<
   Transaction,
   | "id"
@@ -153,28 +99,16 @@ export type TransactionModalRow = Pick<
   | "source_order_no"
 >;
 
-/** 出资项分解条目（issue #1860 / ADR-0138）：`TransactionInput.funding` /
- * `UpdateTransactionInput.funding` 的条目类型。wire：`{account_id, amount_cents, label?}` */
 export interface TransactionFundingInput {
-  /** 出资账户 id：准入与 account_id 同口径（存在、未软删、币种一致、不折算），
-   * 无账户类型闭集；允许同一账户多条（定金 + 尾款靠标签区分） */
   account_id: string;
-  /** 出资金额（正整数分）：Σ 全部条目 == 交易金额 */
   amount_cents: number;
-  /** 扣款标签（可选自由文本，上限 50 字） */
   label?: string | null;
 }
 
-/** 购买项条目（issue #1882 / ADR-0138 决策 9/10）：`TransactionInput.purchases` /
- * `UpdateTransactionInput.purchases` 的条目类型。wire：`{name, quantity, category_id?, unit_price_cents?}` */
 export interface TransactionPurchaseInput {
-  /** 商品名称（必填，源单原文）：购买项行自承载商品名，不写进交易备注 */
   name: string;
-  /** 件数（正整数） */
   quantity: number;
-  /** 商品分类引用（可选）：须为在用分类 id，未命中先建 */
   category_id?: string | null;
-  /** 商品单价（可选，整数分，≥ 0）：源单只给订单总额时留空（不猜不编造） */
   unit_price_cents?: number | null;
 }
 
@@ -182,33 +116,16 @@ export interface TransactionInput {
   kind: TransactionKind;
   amount_cents: number;
   currency_code: string;
-  /** 出资账户引用（ADR-0138 契约互斥）：与 funding 分解二选一——携带非空分解时
-   * 必须缺省（后端码化报错），不带分解时必填 */
   account_id?: string | null;
   to_account_id?: string | null;
-  /** 可选出资账户（issue #936 / ADR-0096）：仅 buy/sell 可携带（后端行为层准入），
-   * 缺省即「结算账户 = 投资账户」；编辑路径全字段替换须显式携带，避免静默抹字段 */
   funding_account_id?: string | null;
-  /** 出资分解（issue #1860 / ADR-0138）：每条 = {账户, 金额, 扣款标签}，Σ == 交易金额；
-   * 仅 expense / income 可携带（refund 显式覆盖同契约），与 account_id 互斥。
-   * 缺省（空数组）即单出资现状；修改路径为全量替换语义（空数组 = 移除分解） */
   funding?: TransactionFundingInput[] | null;
   category_id?: string | null;
-  /** 购买项明细（issue #1882 / ADR-0138 决策 9）：仅 expense 可携带（其余 kind 后端码化拒绝）；
-   * 每条 = {名称, 件数, 分类?, 单价?}，数组顺序 = 对账单顺序；价格拿不到就留空，商品名不写备注；
-   * 缺省（空数组）即无明细；修改路径为全量替换语义 */
   purchases?: TransactionPurchaseInput[] | null;
-  /** 商户引用（expense/refund/income 可携带；transfer/buy/sell/dividend/split/convert 后端行为层拒绝） */
   merchant_id?: string | null;
-  /** 商户名字符串（AI 导入契约，issue #194）：后端精确匹配在用商户名，命中复用、未命中即建；
-   * 与 merchant_id 互斥，与商户名归一化责任在后端 */
   merchant_name?: string | null;
-  /** 可选保单引用（issue #361 / ADR-0051 决策 3）：仅 expense/income 可携带，其余 kind 后端行为层拒绝；
-   * 引用不存在的保单返回错误（中文，可读回自纠） */
   policy_id?: string | null;
   refund_of_transaction_id?: string | null;
-  /** 来源订单号（issue #1862 / ADR-0138 决策 9）：同单多行写同一外部订单号；来源元数据
-   * 不限 kind、缺省即不带、单号不入备注；修改路径全字段替换（缺省 = 清除） */
   source_order_no?: string | null;
   note?: string | null;
   date: string;
@@ -216,124 +133,68 @@ export interface TransactionInput {
   quantity?: number | null;
   price_cents?: number | null;
   fee_cents?: number | null;
-  /** 转入标的 id（仅 convert 需提供，ADR-0099）：与 instrument_id（转出标的）必须不同 */
   to_instrument_id?: string | null;
-  /** 转入份额（仅 convert 需提供，必须 > 0） */
   to_quantity?: number | null;
-  /** 转出金额（仅 convert 需提供，整数分，必须 > 0）：确认单转出端金额（列表展示口径） */
   out_amount_cents?: number | null;
-  /** 转入金额（仅 convert 需提供，整数分，必须 > 0）：确认单转入端金额 */
   in_amount_cents?: number | null;
-  /** 可选逐笔显式汇率（issue #1549）：折算方向的乘数（本位币金额 ≈ amount_cents × fx_rate，
-   * 到分），用于数据源覆盖不到的日期；优先级「显式 > 序列命中 > 报错」，缺省（不传）
-   * 即既有行为不变；非法值后端报码化错误、整笔不落库 */
   fx_rate?: number | null;
-  /** 客户端提供的、内容无关的导入幂等键（指向"该交易来自源文件哪一行"） */
   idempotency_key?: string | null;
 }
 
-/** 交易修改入参（`PUT /api/v1/transactions/{id}` 与 IPC `update_transaction` 共用，issue #178）。
- * 与 TransactionInput 的唯一差异是不含 idempotency_key：幂等键不可编辑（只在导入时落定，
- * 编辑不改变导入身份），提交时同一对象形状分派创建/更新两路。 */
 export type UpdateTransactionInput = Omit<TransactionInput, "idempotency_key">;
 
-/** 交易列表查询过滤条件（服务端分页 + 过滤） */
 export interface TransactionListFilter {
-  /** 起始日期（含），YYYY-MM-DD */
   from?: string | null;
-  /** 结束日期（含），YYYY-MM-DD */
   to?: string | null;
-  /** 按转出账户过滤 */
   account_id?: string | null;
-  /** 涉及账户过滤（account_id、to_account_id 或出资账户 funding_account_id 任一命中即算） */
   involving_account_id?: string | null;
-  /** 按商户过滤（issue #191）：命中该商户全部未删除交易，软删商户同样可过滤 */
   merchant_id?: string | null;
-  /** 按分类精确过滤（issue #377）：精确匹配不含子分类，软删分类的历史交易同样可过滤 */
   category_id?: string | null;
-  /** 仅无分类（issue #377）：true 时仅返回无分类交易；与 category_id 同携按 AND 组合 */
   uncategorized_only?: boolean | null;
-  /** 按标的过滤（ADR-0107）：命中证券交易扩展表中该标的的 buy/sell 行，
-   * convert 任一腿命中即算（转入腿同算）；与其余维度 AND 组合 */
   instrument_id?: string | null;
-  /** 类型集合过滤（spec #1025 起为唯一类型维度，手动多选 + 下钻载荷共用）：命中集合内
-   * 各类型（维度内取或，与其余维度 AND 组合）；空集合视为未携带（不过滤）。
-   * 原单值 kind 查询参数已移除（BREAKING），单值亦经本参数传递 */
   kinds?: TransactionKind[] | null;
-  /** 取前 N 条（仪表盘"最近 N 条"场景），与分页互斥：传 page_size 时分页路径生效 */
   limit?: number | null;
-  /** 页码，从 1 开始，默认 1 */
   page?: number;
-  /** 每页条数，缺省返回全部（total 恒返回） */
   page_size?: number;
-  /** 隐藏投资相关流水（issue #1810 / ADR-0136）：true 时行集排除转出 / 转入 / 出资
-   * 三端任一端为投资类型账户的行（按账户不按分类，与其余维度 AND 组合，total 同口径）；
-   * false 或缺省 = 行为不变。视图偏好在读路径上的载荷，不是会话筛选维度 */
   hide_investment_related?: boolean | null;
 }
 
-/** 交易列表分页结果 */
 export interface TransactionListResult {
   items: Transaction[];
-  /** 满足过滤条件的未删除交易总数 */
   total: number;
 }
 
-/** 订单汇总按账户聚合的出资构成条目（issue #1862 / ADR-0138 决策 9） */
 export interface OrderAccountContribution {
-  /** 出资账户 id */
   account_id: string;
-  /** 该账户在本订单的出资合计（正整数分） */
   amount_cents: number;
 }
 
-/** 订单汇总（issue #1862 / ADR-0138 决策 9）：按来源订单号取同单行集的只读投影。
- * 合计是各行原始币种金额直和；currency_code 仅行集币种唯一时携带（混合币种 null，
- * 不静默混算）。出资构成：分解行逐出资项、单出资行按主账户整额、同账户合并。 */
 export interface TransactionOrderSummary {
-  /** 来源订单号（查询键原样返回） */
   source_order_no: string;
-  /** 同单未删除行数 */
   row_count: number;
-  /** 同单各行原始币种金额合计（整数分直和） */
   total_amount_cents: number;
-  /** 同单币种（唯一时携带；混合币种 null） */
   currency_code: string | null;
-  /** 按账户聚合的出资构成（单账户订单 1 条、多账户订单 ≥2 条） */
   accounts: OrderAccountContribution[];
-  /** 同单各行明细（日期升序，读回契约与列表同形） */
   items: Transaction[];
 }
 
-/** 交易搜索分页结果（服务端分页） */
 export interface TransactionSearchResult {
   items: Transaction[];
-  /** 命中总数（供「命中 N 条」与分页） */
   total: number;
 }
 
-/** 交易搜索筛选条件（与关键字 AND 组合；全部可选、单边可用） */
 export interface TransactionSearchFilter {
-  /** 金额下限（整数分） */
   amountMinCents?: number | null;
-  /** 金额上限（整数分） */
   amountMaxCents?: number | null;
-  /** 起始日期（含），YYYY-MM-DD */
   dateFrom?: string | null;
-  /** 结束日期（含），YYYY-MM-DD */
   dateTo?: string | null;
 }
 
-/** 「记一笔」可创建的类型：不含 refund（退款入口由交易条目右键菜单承接）；
- * 无手工录入入口的 kind——convert / split 无现金腿（ADR-0106 决策 10 / #1048）与
- * dividend 现金分红（ADR-0109 / #1078，界面只读呈现）——写入面由 AI 导入 /
- * HTTP 契约承担；移除后穷尽表仍由类型系统守门。 */
 export type CreateTransactionKind = Exclude<
   TransactionKind,
   "refund" | "convert" | "split" | "dividend"
 >;
 
-/** 前端交易类型闭集（穷尽表驱动）；显示标签在文案资源 transactions.kind.*（i18n，ADR-0049） */
 const TRANSACTION_KIND_PRESENCE = {
   income: true,
   expense: true,
@@ -348,12 +209,6 @@ const TRANSACTION_KIND_PRESENCE = {
 
 export const TRANSACTION_KINDS = Object.keys(TRANSACTION_KIND_PRESENCE) as TransactionKind[];
 
-/** 交易 kind 的行激活形态闭集（穷尽表驱动，ADR-0106 决策 10 / #1048）：
- * - `edit`：行激活进可编辑表单（行菜单「编辑」）；
- * - `detail`：只读详情——「无现金腿」kind 无创建 / 编辑 / 软删写入口，只保留只读呈现；
- * - `none`：无行激活（refund 破坏关联语义，仅留行菜单软删）。
- * 新增 kind 而未更新此表时编译报错；两种「无现金腿」kind（convert / split）都进
- * 只读详情。 */
 export type TransactionKindActivation = "edit" | "detail" | "none";
 
 const TRANSACTION_KIND_ACTIVATION = {
@@ -364,26 +219,14 @@ const TRANSACTION_KIND_ACTIVATION = {
   buy: "edit",
   sell: "edit",
   convert: "detail",
-  // 份额调整（ADR-0106 / #1052）：与 convert 同属「无现金腿」kind——无创建 / 编辑 /
-  // 软删写入口，行激活进只读详情（标的 + 带符号份额变动 + 调整日 + 账户）。
   split: "detail",
-  // 现金分红（ADR-0109 / #1078）：界面只读呈现（比照 convert / split）——无创建 /
-  // 编辑 / 软删入口，行激活进只读详情（归属标的 + 金额 + 到账账户 + 日期）；
-  // 写入与纠错走 HTTP 契约（AI 导入 / 迁移侧）。
   dividend: "detail",
 } satisfies Record<TransactionKind, TransactionKindActivation>;
 
-/** 行激活形态查询：行激活与行菜单按 kind 收口的唯一事实源。 */
 export function transactionKindActivation(kind: TransactionKind): TransactionKindActivation {
   return TRANSACTION_KIND_ACTIVATION[kind];
 }
 
-/**
- * 「记一笔」入口类型归属表（穷尽表驱动）：true = 交易页「记一笔」入口类型（ADR-0135
- * 决策 5 / issue #1782 收窄为三通用 kind）；false = 创建入口已迁他处的 kind——buy/sell
- * 的记一笔入口落投资页「明细」页签头部。新增 kind 而未更新此表时编译报错（穷尽性由
- * 类型系统保证，入口不会静默漏项）。
- */
 const CREATE_KIND_ENTRY = {
   expense: true,
   income: true,
@@ -392,27 +235,16 @@ const CREATE_KIND_ENTRY = {
   sell: false,
 } satisfies Record<CreateTransactionKind, boolean>;
 
-/** 「记一笔」交易页入口可选类型（CREATE_KIND_ENTRY 归属为 true 的成员，单源）：桌面
- * 记一笔下拉、移动悬浮按钮与裸键键位共用同一份清单（ADR-0135 决策 5 / issue #1782；
- * 不含 refund：退款入口由交易条目右键菜单承接；不含 convert/split/dividend：无现金腿
- * kind 界面只读、无手工录入，ADR-0106 决策 10 / #1048；买入/卖出的归属理由见上方注释）。 */
 export const CREATE_KINDS = (Object.keys(CREATE_KIND_ENTRY) as CreateTransactionKind[]).filter(
   (kind) => CREATE_KIND_ENTRY[kind],
 );
 
-/** 交易页「记一笔」入口类型闭集的成员类型：由 CREATE_KIND_ENTRY 归属为 true 的键在类型级
- * 投影派生（单源无第二表达；裸键键位映射按此收口，ADR-0135 决策 5 / issue #1782）——
- * 新 kind 落 true 即自动入闭集（CREATE_KIND_KEYS satisfies 强制补键位），落 false 则不入。 */
 export type TransactionPageCreateKind = {
   [K in keyof typeof CREATE_KIND_ENTRY]: (typeof CREATE_KIND_ENTRY)[K] extends true ? K : never;
 }[keyof typeof CREATE_KIND_ENTRY];
 
-/** 「记一笔」表单形态闭集：可创建 kind + 借贷两个呈现变体（issue #374 / ADR-0053：
- * lend/borrow 不新增交易 kind，落账仍为 transfer + receivable/debt 账户）。 */
 export type CreateFormKind = CreateTransactionKind | "lend" | "borrow";
 
-/** 「记一笔」借贷变体入口（issue #374）：两项各预设一个方向（反向方向经表单内
- * 方向切换到达），不占快捷键键位。 */
 export const LENDING_CREATE_DIRECTIONS = ["lend", "borrow"] as const;
 
 export interface CreateTransactionResult {

@@ -1,9 +1,3 @@
-//! 商户端点：在用商户列表 + 改名（AI 导入契约，issue #194 / ADR-0028 / #884）。
-//!
-//! 写端点经壳层统一写入口 [`crate::shell_support::write_entry::write_entry`]（ADR-0073）：
-//! 事务、置脏、信号内化单点（与 IPC `update_merchant` 共享 `WriteOp::UpdateMerchant`，
-//! 参考数据写入静态映射发参考失效信号）；读端点经 `run_db`（形状乙）。
-
 use axum::Json;
 use axum::extract::{Path, State};
 
@@ -16,9 +10,6 @@ use ledger_infra::error::AppError;
 use ledger_infra::signals::WriteOp;
 use ledger_merchants::{Merchant, MerchantUpdateInput};
 
-/// 商户列表（AI 导入契约，issue #194 / ADR-0028）：供 AI 在提交交易前拉取在用商户，
-/// 按已有名字填 `merchant_name` 复用字典（避免同义名分裂商户字典）。仅返回在用行
-/// （`is_deleted=0`，与 IPC `list_merchants` 缺省一致）；软删商户不可再被新交易选择。
 #[utoipa::path(
     get,
     path = "/api/v1/merchants",
@@ -43,9 +34,6 @@ pub async fn list_merchants_handler(
     .await
 }
 
-/// 商户改名（issue #884）：与 IPC `update_merchant` 共用域层 `update_merchant`
-///（入参先 trim，trim 后为空 400；撞在用同名 400，不做同义合并——改名不迁移交易
-/// 引用，ADR-0028）与 `WriteOp::UpdateMerchant`（参考失效信号单一映射）。
 #[utoipa::path(
     put,
     path = "/api/v1/merchants/{id}",
@@ -74,7 +62,6 @@ pub async fn update_merchant_handler(
     Path(id): Path<String>,
     Json(input): Json<MerchantUpdateInput>,
 ) -> Result<Json<Merchant>, AppError> {
-    // 修改与读回同一写闭包，提交点置脏/检查单点。
     let updated = write_entry(
         "PUT /api/v1/merchants/{id}",
         conn,

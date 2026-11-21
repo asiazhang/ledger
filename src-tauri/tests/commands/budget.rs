@@ -1,11 +1,3 @@
-//! 预算命令面集成测试（issue #1948，壳三件套 + 接线证明，ADR-0087 /
-//! CONTEXT-testing「壳三件套」「接线证明」）。
-//!
-//! 断言面只有一步可观察接线证明——年度汇总读命令读到预算域聚合的结果：造数经
-//! 域层公开写入口（CONTEXT-testing 造数纪律），域结果细节（年化算术、父子去重、
-//! 未设预算分类不进汇总、超标判定）归域单测权威层（`ledger-budget` 的 tests），
-//! 此处不越层。
-
 use ledger_budget::{BudgetInput, BudgetPeriod};
 use ledger_categories::CategoryInput;
 use ledger_infra::db::DbState;
@@ -15,11 +7,8 @@ use tauri_app_lib::test_support::ScratchDir;
 
 type AppHandle = tauri::AppHandle<tauri::test::MockRuntime>;
 
-/// mock 应用 + 产品文件库（惰性门面路径，ADR-0125 决策 1/4）：返回值第二元是
-/// 暂存目录 guard，调用方持有到用例结束（仓库的测试暂存目录纪律）。
 fn app_with_db() -> (AppHandle, ScratchDir) {
     let app = tauri::test::mock_app();
-    // 写路径副作用与交易域接缝接线（与测试工厂 / 生产启动同形，幂等，进程级）。
     ledger_accounts::balance::install_balance_refresh_hook();
     tauri_app_lib::transaction_wiring::install_all();
     let dir = ScratchDir::new("budget-commands-it");
@@ -27,8 +16,6 @@ fn app_with_db() -> (AppHandle, ScratchDir) {
     (app.handle().clone(), dir)
 }
 
-/// 接线证明：建预算（域公开入口）后，年度汇总读命令的年度预算总额按 `monthly × 12`
-/// 变化——壳层命令确实进到预算域聚合，且该聚合正是财务自由度分母的同一函数。
 #[tokio::test]
 async fn annual_summary_reads_annualized_budget_through_command() {
     let (app, _dir) = app_with_db();

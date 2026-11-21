@@ -1,19 +1,3 @@
-//! 启动失败接管基座（issue #601 / ADR-0075 决策 5 修订）：库文件启动处置判定
-//! 与进程级启动失败门。
-//!
-//! 启动期数据库打不开（明文库损坏等）不再弹原生「重置/退出」对话框、不再退出：
-//! 失败状态经 [`BootFailureGate`] 暴露给前端（IPC 门禁 + HTTP 门禁 + 启动编排
-//! 三处共同消费，与 [`super::encryption::EncryptionGate`] 同构），由前端启动
-//! 失败恢复屏承担恢复通道（首版通道：重置为空库）。
-//!
-//! 「等待解锁」与「损坏残留」的区分（本模块判定核心）：头探测的「密文」三态
-//! 把任意非明文魔数文件都计为密文（[`super::encryption::DbFileKind::Encrypted`]），
-//! 若照单全收，损坏的明文残留会把用户卡在解锁屏。此处沿用启动搬迁的既有实用
-//! 判别（`has_encrypted_file_layout` 页对齐形态，`data_location.rs` 先例）：
-//! 具备密文库落盘形态的才是真密文库（等待主口令），其余非明文魔数文件按启动
-//! 失败处理——SQLCipher 对错误口令与损坏同报 NOTADB、运行期不可靠区分，页对齐
-//! 是唯一可用信号（ADR-0075 决策 5 修订注记）。
-
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::RwLock;
@@ -23,16 +7,10 @@ use crate::error::Result;
 
 use super::encryption::{self, DbFileKind};
 
-/// 启动失败的稳定错误码（issue #601）：库文件不可读/建连失败共用的单一
-/// 码化错误，前端按码本地化失败恢复屏文案，IPC/HTTP 门禁拒绝同码。
 pub const BOOT_DB_UNREADABLE: &str = "boot.db-unreadable";
 
-/// 外来形态明文库归一化失败的稳定错误码（issue #1453）：启动期重写外来形态
-/// 明文库（每页保留字节 ≠ 0）失败（导出/校验/替换任一步）时的码化错误，原库
-/// 保持原样，经启动失败门交既有失败恢复屏（未知码按既有单一呈现回退）。
 pub const BOOT_DB_NORMALIZE_FAILED: &str = "boot.db-normalize-failed";
 
-/// 门禁拒绝用的单一错误构造（IPC 壳与 HTTP 壳共用，避免码 + 消息双份漂移）。
 pub fn gate_rejection_error() -> crate::error::AppError {
     crate::error::AppError::coded(
         BOOT_DB_UNREADABLE,
@@ -40,30 +18,13 @@ pub fn gate_rejection_error() -> crate::error::AppError {
     )
 }
 
-/// 启动失败门（issue #601）：启动期数据库打不开后的进程状态标志。
-///
-/// 消费方有三处，共同保证「失败恢复屏期间无业务读写」：
-/// - IPC 壳门禁（`lib.rs` invoke wrapper）：失败期间仅放行失败恢复屏所需
-///   的最小命令面（启动状态查询、重置），其余命令一律拒绝——占位连接不是
-///   业务库，任何业务读写都不得触达；
-/// - HTTP 壳门禁（`api_server` 中间件）：失败期间数据端点返回码化错误，
-///   AI 导入 HTTP 面照常不可用（与锁定期间同口径）；
-/// - 启动编排（`lib.rs`）：失败期间不启动自动备份调度（定时追补同轮承载），
-///   由重置成功后的恢复编排拉起。
-///
-/// `Clone` 形态与 [`super::encryption::EncryptionGate`] 同理：同一实例在
-/// Builder 装配期被 invoke wrapper 捕获，setup 期登记为应用状态，HTTP 壳
-/// 状态持同一实例。
 #[derive(Clone)]
 pub struct BootFailureGate {
     failed: Arc<AtomicBool>,
-    /// 引导失败错误的稳定错误码（issue #994 / ADR-0100）：失败登记时记录，
-    /// `get_boot_status` 原样上报，前端失败恢复屏按码区分文案与动作排序。
     code: Arc<RwLock<Option<String>>>,
 }
 
 impl BootFailureGate {
-    /// 新建启动失败门（默认未失败；启动失败路径再显式置位）。
     pub fn new() -> Self {
         Self {
             failed: Arc::new(AtomicBool::new(false)),
@@ -71,21 +32,15 @@ impl BootFailureGate {
         }
     }
 
-    /// 当前是否处于启动失败（等待前端恢复通道接管）状态。
     pub fn is_failed(&self) -> bool {
         self.failed.load(Ordering::SeqCst)
     }
 
-    /// 登记启动失败（启动编排失败路径调用；幂等）。`code` 是失败错误的稳定
-    /// 错误码（码化错误取 `AppError::code`，如漂移的 [`crate::db::schema_guard::BOOT_SCHEMA_DRIFT`]；
-    /// 非码化失败传 `None`，读取侧回退 [`BOOT_DB_UNREADABLE`] 既有单一码）。
     pub fn set_failed(&self, code: Option<&str>) {
         self.failed.store(true, Ordering::SeqCst);
         *self.code.write().unwrap_or_else(|e| e.into_inner()) = code.map(str::to_string);
     }
 
-    /// 失败时的稳定错误码：门内记录的原样返回；未记录（非码化失败/极端时序）
-    /// 回退 [`BOOT_DB_UNREADABLE`]——#601 时代的单一码呈现不回退。
     pub fn failure_code(&self) -> String {
         self.code
             .read()
@@ -94,41 +49,23 @@ impl BootFailureGate {
             .unwrap_or_else(|| BOOT_DB_UNREADABLE.to_string())
     }
 
-    /// 清除启动失败（重置成功、业务可用起点已就位时调用）。
     pub fn clear(&self) {
         self.failed.store(false, Ordering::SeqCst);
         *self.code.write().unwrap_or_else(|e| e.into_inner()) = None;
     }
 }
 
-// clippy::new_without_default 约定形态（无参 new 配套 Default；
-// 生产路径只经 `run()` 显式 new，Default 供泛型/工具场景兜底）。
 impl Default for BootFailureGate {
     fn default() -> Self {
         Self::new()
     }
 }
 
-/// 启动期库文件处置判定（issue #601 / #1453）：在头探测之上区分四种启动去向。
-///
-/// - [`BootDisposition::OpenPlaintext`]：应用自有形态的明文库（每页保留字节
-///   0）/空文件，正常建连（明文日常启动零改动；建连失败由调用方按启动失败
-///   处理）；
-/// - [`BootDisposition::NormalizePlaintext`]：明文库但每页保留字节 ≠ 0——
-///   外部工具写入的**外来形态**（issue #1453），建连前先整库归一化；
-/// - [`BootDisposition::AwaitUnlock`]：真密文库（头部非明文魔数**且**具备
-///   密文库页对齐落盘形态），进入锁定等待解锁（#570 既有路径）；
-/// - [`BootDisposition::Unreadable`]：头部非明文魔数且无密文库形态的损坏
-///   残留（旧缺陷会把它当密文库卡在解锁屏），按启动失败处理。
-///
-/// 探测本身的 IO 失败（权限等）原样上抛，由调用方与建连失败同路处理。
 pub fn classify_for_boot(path: &Path) -> Result<BootDisposition> {
     let probe = encryption::probe_file(path)?;
     match probe.kind {
         DbFileKind::Plaintext => Ok(match probe.reserved_bytes {
-            // 保留字节 0（或头部截断、值不可读）：应用自有形态，直接建连。
             Some(0) | None => BootDisposition::OpenPlaintext,
-            // 外来形态明文库：建连前先归一化（issue #1453）。
             Some(_) => BootDisposition::NormalizePlaintext,
         }),
         DbFileKind::Empty => Ok(BootDisposition::OpenPlaintext),
@@ -142,32 +79,19 @@ pub fn classify_for_boot(path: &Path) -> Result<BootDisposition> {
     }
 }
 
-/// [`classify_for_boot`] 的四态结果。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BootDisposition {
-    /// 应用自有形态的明文库（每页保留字节 0）/空文件：正常建连路径。
     OpenPlaintext,
-    /// 外来形态明文库（每页保留字节 ≠ 0，issue #1453）：建连前先整库归一化。
     NormalizePlaintext,
-    /// 真密文库：进入锁定等待解锁（#570 既有路径）。
     AwaitUnlock,
-    /// 损坏残留：按启动失败处理（issue #601）。
     Unreadable,
 }
 
-/// 引导计划（issue #644 / ADR-0080）：启动引导序列的纯内核——先 DataLocation
-/// 引导解析生效目录（含启动期搬迁与推迟搬迁），再对**解析后的**生效库文件
-/// 做处置判定。进程启动与重启命令（原位重引导）消费同一序列，保证「重引导
-/// 后的状态 = 新进程启动的状态」恒成立——这也是进程重启退役后语义等价的
-/// 根据。连接换入与两扇门翻转由壳层按处置执行（[`BootPlan`] 是纯数据）。
 pub struct BootPlan {
-    /// DataLocation 引导结果（生效目录、回退原因、推迟搬迁目标）。
     pub boot: super::data_location::Boot,
-    /// 生效库文件的处置判定；探测 IO 失败原样上抛（与建连失败同路处理）。
     pub disposition: Result<BootDisposition>,
 }
 
-/// 制定引导计划：DataLocation 解析 → 生效库文件处置判定，两步同序。
 pub fn plan_boot(default_dir: &Path) -> BootPlan {
     let boot = super::data_location::boot(default_dir);
     let disposition = classify_for_boot(&boot.db_dir.join(super::data_location::DB_FILE_NAME));

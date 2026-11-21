@@ -1,7 +1,3 @@
-//! S3 兼容对象存储通道后端（issue #1216 / ADR-0091 决策 1）对本地 S3 桩的
-//! 读写行为、错误归一（缺对象 = 不存在、凭据拒绝 = 码化错误）、自定义端点与
-//! 寻址形态、兼容优先校验和策略、分片上传与同步 → 异步桥接。
-
 use std::sync::Arc;
 
 use crate::transport::Transport;
@@ -11,7 +7,6 @@ use crate::transport::s3::{
 use ledger_infra::error::AppError;
 use tauri_app_lib::test_support::{S3Addressing, S3Deny, S3Stub, S3StubConfig, spawn_s3_stub};
 
-/// 按桩配置构造可用传输（path-style / virtual-host 随桩）。
 fn transport(stub: &S3Stub, prefix: &str) -> S3Transport {
     S3Transport::new(S3Config {
         endpoint: stub.endpoint.clone(),
@@ -29,7 +24,6 @@ fn path_style_stub() -> S3Stub {
     spawn_s3_stub(S3StubConfig::new(S3Addressing::PathStyle))
 }
 
-/// PUT → GET 往返逐字节一致；缺对象回 None；对象键带配置前缀。
 #[test]
 fn s3_put_get_roundtrip_missing_none_and_prefix_mapping() {
     let stub = path_style_stub();
@@ -66,9 +60,6 @@ fn s3_put_get_roundtrip_missing_none_and_prefix_mapping() {
     );
 }
 
-/// 配置字段的空白归一（范围外修复，根因见提交信息）：与 endpoint / bucket /
-/// prefix 同规，region 也必须 trim 后再参与签名——区域是 SigV4 凭据范围的一节，
-/// 带首尾空白签出的范围与桩/服务端不一致，请求一律被拒而只显鉴权失败。
 #[test]
 fn s3_config_whitespace_is_normalized_before_signing() {
     let stub = path_style_stub();
@@ -91,7 +82,6 @@ fn s3_config_whitespace_is_normalized_before_signing() {
     );
 }
 
-/// ensure_dir 是零副作用空操作：端点不可达也返回 Ok，桩上零请求。
 #[test]
 fn s3_ensure_dir_is_side_effect_free_noop() {
     let unreachable = S3Transport::new(S3Config {
@@ -115,8 +105,6 @@ fn s3_ensure_dir_is_side_effect_free_noop() {
     );
 }
 
-/// 凭据范围不匹配：桩回 403 + `InvalidAccessKeyId`（真实 S3 同形），后端归一为
-/// 可重试的 `sync-channel.auth-failed`——403 本身不足以判定「凭据错」，靠错误码。
 #[test]
 fn s3_credential_rejection_is_coded_auth_error() {
     let stub = path_style_stub();
@@ -141,9 +129,6 @@ fn s3_credential_rejection_is_coded_auth_error() {
     );
 }
 
-/// 错误分层（issue #1219）：403 + `AccessDenied` = 权限不足；404 + `NoSuchBucket`
-/// = 目标不存在——后者绝不能被读路径吞成「对象不存在」（`Ok(None)`），否则桶名
-/// 写错的端会把同步静默跑成「通道上什么都没有」。
 #[test]
 fn s3_access_denied_is_permission_error_and_missing_bucket_is_target_error() {
     let denied =
@@ -167,7 +152,6 @@ fn s3_access_denied_is_permission_error_and_missing_bucket_is_target_error() {
     assert!(err.is_code("sync-channel.target-missing"), "实际: {err:?}");
 }
 
-/// 自定义端点 + path-style / virtual-host 开关都落到请求寻址形态上。
 #[test]
 fn s3_path_style_and_virtual_host_addressing_are_honored() {
     let path_stub = path_style_stub();
@@ -211,7 +195,6 @@ fn s3_path_style_and_virtual_host_addressing_are_honored() {
     );
 }
 
-/// 兼容优先：上传请求不得追加 AWS 专有校验和扩展（显式 WhenRequired）。
 #[test]
 fn s3_uploads_omit_aws_checksum_extensions() {
     let stub = path_style_stub();
@@ -232,7 +215,6 @@ fn s3_uploads_omit_aws_checksum_extensions() {
     }
 }
 
-/// 大文件自动分片：桩观测到 Create / UploadPart×N / Complete，读回内容一致。
 #[test]
 fn s3_large_write_uses_multipart_and_reads_back() {
     let stub = path_style_stub();
@@ -274,7 +256,6 @@ fn s3_large_write_uses_multipart_and_reads_back() {
     assert_eq!(completes, 1, "应观测到 CompleteMultipartUpload");
 }
 
-/// 路径守卫：空路径、空段、`.` 与 `..` 逃逸拒绝。
 #[test]
 fn s3_rejects_invalid_paths() {
     let stub = path_style_stub();
@@ -289,7 +270,6 @@ fn s3_rejects_invalid_paths() {
     assert!(stub.requests().is_empty(), "非法路径不得触网");
 }
 
-/// 桩结构性校验：缺 Authorization = 401；region / service 与配置不符 = 403。
 #[test]
 fn s3_stub_structurally_validates_authorization_scope() {
     let stub = path_style_stub();
@@ -335,8 +315,6 @@ fn s3_stub_structurally_validates_authorization_scope() {
     );
 }
 
-/// 调用方已处在 Tokio runtime / spawn_blocking 上下文时调用也不 panic：
-/// 后端自持专用 runtime，不用调用方线程 block_on。
 #[tokio::test]
 async fn s3_calls_from_tokio_contexts_do_not_panic() {
     let stub = path_style_stub();
@@ -354,15 +332,6 @@ async fn s3_calls_from_tokio_contexts_do_not_panic() {
     assert_eq!(read.as_deref(), Some(b"{}".as_slice()));
 }
 
-/// 启动失败不留阻塞资源（issue #1405）：线程创建失败是启动路径上唯一在**调用方
-/// 线程**可见的失败分支，此时调用方线程上不得存在 runtime——它在桥接线程闭包内
-/// 构建，闭包没跑过就没有 runtime 可销毁。
-///
-/// **负向判据（ADR-0087）**：把启动单点里的 runtime 构建移回调用方线程，构造出
-/// 的 runtime 随未启动的闭包在调用方线程销毁——本测试自身就跑在异步上下文里，
-/// 于是撞 tokio 的 drop panic（#1403/#1405 同根因的现场形态），本测试即红。
-/// 生产经 `spawn` → `spawn_with` 走同一启动单点（构建件与线程创建件都由生产
-/// 注入），所以这条判据守住的是生产形态，不是测试专用的旁路。
 #[tokio::test]
 async fn bridge_startup_failure_keeps_caller_thread_free_of_blocking_resource() {
     let failed = AsyncBridge::spawn_with(transport_runtime, |_body| {
@@ -381,12 +350,6 @@ async fn bridge_startup_failure_keeps_caller_thread_free_of_blocking_resource() 
     );
 }
 
-/// 启动握手（issue #1405）：runtime 构建在桥接线程内失败必须经握手回传调用方
-/// fail loud——失败要止在构造点，既不能留下一个没有执行者的通道让后续调用撞
-/// 「桥接线程不可用」，也不能让调用方以为桥已经就绪。
-///
-/// **负向判据（ADR-0087）**：删掉构建失败的握手回传（例如只 `return` 不发送），
-/// 构造点即返回 `Ok`（或退回笼统的「线程启动失败」），本测试的失败原因断言变红。
 #[test]
 fn bridge_runtime_build_failure_is_reported_at_construction() {
     let failed = AsyncBridge::spawn_with(

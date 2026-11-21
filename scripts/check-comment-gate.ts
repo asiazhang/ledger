@@ -21,6 +21,8 @@ const SCRIPT_EXTENSIONS = new Set([".ts", ".vue", ".js"]);
 const SHELL_EXTENSIONS = new Set([".sh"]);
 const TOML_BASENAMES = new Set(["Cargo.toml", ".kache.toml"]);
 const SAFETY_FORM = /^\/\/[!/]?\s*SAFETY[:：（(]/;
+const COMPILE_FAIL_FENCE_OPEN = /^\/\/[!/]\s*(`{3,}|~{3,}).*compile_fail/;
+const FENCE_CLOSE = /^\/\/[!/]\s*(`{3,}|~{3,})\s*$/;
 const SHEBANG = /^#!/;
 const LINE_LEADING_HASH = /^\s*#/;
 const PACKAGE_JSON_COMMENT_KEY = /^\s*"\/\/"\s*:/;
@@ -46,6 +48,7 @@ interface Counted {
   lines: CommentLine[];
   safetyExempt: number;
   shebangExempt: number;
+  compileFailExempt: number;
 }
 
 interface FileCount {
@@ -66,6 +69,7 @@ interface ScanResult {
   total: number;
   safetyExempt: number;
   shebangExempt: number;
+  compileFailExempt: number;
   fileCount: number;
 }
 
@@ -123,23 +127,51 @@ function matchKey(rel: string, keys: readonly string[]): string | undefined {
   return matched;
 }
 
-function countByMask(source: string, masked: string): Counted {
+function isMaskedCommentLine(src: string, msk: string): boolean {
+  const width = Math.max(src.length, msk.length);
+  for (let col = 0; col < width; col++) {
+    if (msk[col] !== src[col]) return true;
+  }
+  return false;
+}
+
+function compileFailFenceExemptLines(
+  sourceLines: readonly string[],
+  maskedLines: readonly string[],
+): Set<number> {
+  const exempt = new Set<number>();
+  let inFence = false;
+  for (let i = 0; i < sourceLines.length; i++) {
+    const src = sourceLines[i] ?? "";
+    if (!isMaskedCommentLine(src, maskedLines[i] ?? "")) continue;
+    const trimmed = src.trim();
+    if (inFence) {
+      exempt.add(i + 1);
+      if (FENCE_CLOSE.test(trimmed)) inFence = false;
+    } else if (COMPILE_FAIL_FENCE_OPEN.test(trimmed)) {
+      inFence = true;
+      exempt.add(i + 1);
+    }
+  }
+  return exempt;
+}
+
+function countByMask(source: string, masked: string, compileFailFence = false): Counted {
   const sourceLines = source.split("\n");
   const maskedLines = masked.split("\n");
   const lines: CommentLine[] = [];
   let safetyExempt = 0;
+  let compileFailExempt = 0;
+  const fenceExempt = compileFailFence
+    ? compileFailFenceExemptLines(sourceLines, maskedLines)
+    : undefined;
   for (let i = 0; i < sourceLines.length; i++) {
     const src = sourceLines[i] ?? "";
-    const msk = maskedLines[i] ?? "";
-    const width = Math.max(src.length, msk.length);
-    let hasCommentChar = false;
-    for (let col = 0; col < width; col++) {
-      if (msk[col] !== src[col]) {
-        hasCommentChar = true;
-        break;
-      }
+    if (!isMaskedCommentLine(src, maskedLines[i] ?? "")) continue;
+    if (fenceExempt?.has(i + 1)) {
+      compileFailExempt++;
+      continue;
     }
-    if (!hasCommentChar) continue;
     const trimmed = src.trim();
     if (SAFETY_FORM.test(trimmed)) {
       safetyExempt++;
@@ -147,7 +179,13 @@ function countByMask(source: string, masked: string): Counted {
     }
     lines.push({ line: i + 1, text: trimmed });
   }
-  return { count: lines.length, lines, safetyExempt, shebangExempt: 0 };
+  return {
+    count: lines.length,
+    lines,
+    safetyExempt,
+    shebangExempt: 0,
+    compileFailExempt,
+  };
 }
 
 function countLineLeading(source: string, allowShebang: boolean): Counted {
@@ -164,7 +202,7 @@ function countLineLeading(source: string, allowShebang: boolean): Counted {
     }
     lines.push({ line: i + 1, text: trimmed });
   }
-  return { count: lines.length, lines, safetyExempt: 0, shebangExempt };
+  return { count: lines.length, lines, safetyExempt: 0, shebangExempt, compileFailExempt: 0 };
 }
 
 function countPackageJson(source: string): Counted {
@@ -175,7 +213,7 @@ function countPackageJson(source: string): Counted {
     if (!PACKAGE_JSON_COMMENT_KEY.test(raw)) continue;
     lines.push({ line: i + 1, text: raw.trim() });
   }
-  return { count: lines.length, lines, safetyExempt: 0, shebangExempt: 0 };
+  return { count: lines.length, lines, safetyExempt: 0, shebangExempt: 0, compileFailExempt: 0 };
 }
 
 function scan(root: string): ScanResult {
@@ -185,6 +223,7 @@ function scan(root: string): ScanResult {
   let total = 0;
   let safetyExempt = 0;
   let shebangExempt = 0;
+  let compileFailExempt = 0;
   let fileCount = 0;
   const walked = walkTextFiles(root, "", { extensions: WALK_EXTENSIONS, skipDirs: SKIP_DIRS });
   for (const file of walked) {
@@ -200,13 +239,14 @@ function scan(root: string): ScanResult {
     fileCount++;
     const source = readFileSync(file.abs, "utf8");
     let counted: Counted;
-    if (face === "rust") counted = countByMask(source, maskNonCode(source, true));
+    if (face === "rust") counted = countByMask(source, maskNonCode(source, true), true);
     else if (face === "script") counted = countByMask(source, maskComments(source));
     else if (face === "shell") counted = countLineLeading(source, true);
     else if (face === "toml") counted = countLineLeading(source, false);
     else counted = countPackageJson(source);
     safetyExempt += counted.safetyExempt;
     shebangExempt += counted.shebangExempt;
+    compileFailExempt += counted.compileFailExempt;
     if (counted.count === 0) continue;
     total += counted.count;
     const stat = stats.get(key);
@@ -214,7 +254,16 @@ function scan(root: string): ScanResult {
     stat.actual += counted.count;
     stat.files.push({ rel: file.rel, count: counted.count, lines: counted.lines });
   }
-  return { keys, stats, unmatched, total, safetyExempt, shebangExempt, fileCount };
+  return {
+    keys,
+    stats,
+    unmatched,
+    total,
+    safetyExempt,
+    shebangExempt,
+    compileFailExempt,
+    fileCount,
+  };
 }
 
 function fatalBaseline(message: string): Baseline {
@@ -287,7 +336,8 @@ function main(): void {
     writeBaselineFile(baselinePath, result);
     console.log(
       `✓ 基线已写入 ${baselinePath}：${result.keys.length} 键、共 ${result.total} 行` +
-        `（豁免：SAFETY ${result.safetyExempt} 行、shebang ${result.shebangExempt} 行）` +
+        `（豁免：SAFETY ${result.safetyExempt} 行、shebang ${result.shebangExempt} 行、` +
+        `compile_fail 载体 ${result.compileFailExempt} 行）` +
         `（ADR-0145 / issue #2202）`,
     );
     return;
@@ -346,14 +396,16 @@ function main(): void {
     for (const problem of problems) console.error(problem);
     console.error(
       `❌ 注释禁令失败：${overCount} 键棘轮超线 / ${zeroCount} 键零容忍命中 / ` +
-        `${problems.length} 处问题；注释只许删不许加，豁免闭集 = // SAFETY: 形态与 shebang 行，` +
+        `${problems.length} 处问题；注释只许删不许加，` +
+        `豁免闭集 = // SAFETY: 形态、shebang 行与 compile_fail doctest 载体，` +
         `规则与基线纪律见 ADR-0145 / issue #2202`,
     );
     process.exit(1);
   }
   console.log(
     `✓ 注释棘轮通过：${result.keys.length} 键、${result.total} 行注释在基线内` +
-      `（SAFETY 豁免 ${result.safetyExempt} 行、shebang 豁免 ${result.shebangExempt} 行）；` +
+      `（SAFETY 豁免 ${result.safetyExempt} 行、shebang 豁免 ${result.shebangExempt} 行、` +
+      `compile_fail 载体豁免 ${result.compileFailExempt} 行）；` +
       `基线 ${BASELINE_REL_SEGMENTS.join("/")} 只许降不许升、归零即零容忍（ADR-0145 / issue #2202）`,
   );
 }

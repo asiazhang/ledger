@@ -7,17 +7,12 @@ import { MOBILE_CARD_CLASS } from "../app-modal.css.ts";
 import { setFakeMedia } from "@ledger/test-support/media-mock";
 import { hasOpenOverlay, openOverlayNames, resetOverlays } from "../overlayRegistry";
 
-/** 在 body 上查找遮罩元素（弹层抑制同款信号，见 useViewShortcuts）。 */
 function findMask(): HTMLElement {
   const el = document.body.querySelector(".n-modal-mask");
   expect(el, ".n-modal-mask 应存在").not.toBeNull();
   return el as HTMLElement;
 }
 
-/**
- * 遮罩「按下-抬起」完整事件序列：真实浏览器中按下-抬起合成 click，
- * jsdom 不自动合成，手动派发三段事件等价模拟。
- */
 async function pressReleaseOnMask(): Promise<void> {
   const mask = findMask();
   mask.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
@@ -26,15 +21,12 @@ async function pressReleaseOnMask(): Promise<void> {
   await flushPromises();
 }
 
-/** 取 body 上已渲染的卡片元素（preset="card" 的可见输出）。 */
 function findCard(): HTMLElement {
   const el = document.body.querySelector(".n-card");
   expect(el, ".n-card 应存在").not.toBeNull();
   return el as HTMLElement;
 }
 
-// naive-ui 的 doUpdateShow 直接调用 onUpdateShow prop 而非 $emit，
-// 断言走监听 spy，不用 wrapper.emitted()。
 function mountModal(extraProps: Record<string, unknown> = {}) {
   const onUpdateShow = vi.fn();
   const wrapper = mount(AppModal, {
@@ -55,7 +47,6 @@ describe("AppModal（issue #251 弹层关闭语义收口）", () => {
     const { onUpdateShow } = mountModal();
     await flushPromises();
 
-    // 默认槽透传：内容正常渲染
     expect(document.body.querySelector(".app-modal-marker")).not.toBeNull();
 
     await pressReleaseOnMask();
@@ -208,7 +199,6 @@ describe("AppModal 弹窗移动档（issue #844 / ADR-0088 决策 8 全屏化分
   it("移动档开/关上报弹层注册表照常（快捷键抑制不回归）", async () => {
     setFakeMedia({ width: 390 });
     resetOverlays();
-    // 受控宿主：以 show 状态驱动 AppModal（生产用法 :show 绑定的等价形态）
     const wrapper = mount(
       defineComponent({
         components: { AppModal },
@@ -253,7 +243,6 @@ describe("代表性弹窗移动档挂载（issue #844 验收：调用点零改�
     const card = findCard();
     expect(card.classList.contains(MOBILE_CARD_CLASS)).toBe(true);
     expect(card.style.width).toBe("calc(100vw - 32px)");
-    // 确认框内容（说明段 + 按钮行）照常渲染于卡片内
     expect(document.body.querySelector('[data-testid="danger-confirm"]')).not.toBeNull();
   });
 });

@@ -1,19 +1,3 @@
-//! 净资产缓存与读探针（issue #491 / ADR-0067；ADR-0071 决策 3 自
-//! `db/net_worth.rs` 整块迁入仪表盘域）：输入指纹推导、读探针、缓存回写
-//! 一个模块命中，缓存访问直接以本域 [`DashboardOverview`] 为结构——缓存
-//! 专用同形结构与桥接转换已消亡，五字段唯一定义只此一处。
-//!
-//! 缓存行是首页净资产总览的派生终值（真实财富视角三腿合计，实时聚合公式
-//! 在域入口 `super::compute_dashboard_overview`，本模块不复制口径）。
-//! 正确性由**读探针指纹**保证：读取方先算当前指纹（各贡献表 `MAX(updated_at)`
-//! 组合），与缓存行不一致即视为失效，调实时聚合重算回填——无定时任务、
-//! 无写路径挂钩（源表写入天然推进 `MAX(updated_at)`）。
-//!
-//! 指纹包含 `account_balance_cache.MAX(updated_at)`：该表毫秒精度时间戳
-//! 在每次交易/账户写入时被无条件刷新（写路径整体重算接缝），为秒级精度
-//! 的源表时间戳补上同秒内连续写入的区分度；实物资产估值表为 append-only
-//! 冻结形态，无 `updated_at` 列，以 `MAX(created_at)` 承担同等角色。
-
 use rusqlite::Connection;
 
 use super::model::DashboardOverview;
@@ -22,19 +6,8 @@ use ledger_infra::db::tx_scope::ensure_transaction;
 use ledger_infra::error::Result;
 use ledger_transaction::amount;
 
-/// 净资产口径版本标签（ADR-0020 修订）：公式变更时递增，使升级前写入的缓存行
-/// 指纹失配、自动实时重算回填，不把旧口径终值当作新口径读出。
 const NET_WORTH_FORMULA_TAG: &str = "f2";
 
-/// 参与净资产计算的贡献表及其指纹输入（指纹输入清单，单一真源）。
-/// 元组：(表名, 时间戳列, 同秒判别器)。
-///
-/// 时间戳列多为秒级精度（既有冻结约定，不改格式），同秒内连续两次写入
-/// `MAX(updated_at)` 不变——故叠加判别器消除同秒盲区：带 `version` 列的表用
-/// `SUM(version)`（插入 version=1 或 version+1 都令判别值严格变化）；
-/// append-only 估值表无 version 列、只有插入，用 `COUNT(*)`；
-/// `account_balance_cache` 毫秒精度时间戳每次写入无条件刷新（ADR-0067），
-/// 天然无同秒盲区，不叠加（`none`）。
 const FINGERPRINT_SOURCES: &[(&str, &str, &str)] = &[
     ("accounts", "updated_at", "version"),
     ("transactions", "updated_at", "version"),
@@ -46,17 +19,12 @@ const FINGERPRINT_SOURCES: &[(&str, &str, &str)] = &[
     ("account_balance_cache", "updated_at", "none"),
 ];
 
-/// 当前输入指纹：各贡献表 `MAX(时间戳)`（带 version 判别的表再拼 `SUM(version)`）
-/// 的命名拼接。空表记 `-:0` 或 `-`（尚无任何行；有行后指纹必然变化）。
 pub fn current_fingerprint(conn: &Connection) -> Result<String> {
     let mut sql = String::from("SELECT ");
     for (i, (table, column, discriminator)) in FINGERPRINT_SOURCES.iter().enumerate() {
         if i > 0 {
             sql.push_str(", ");
         }
-        // 表名/列名来自上述编译期常量，非用户输入，拼接安全。
-        // 判别器：秒级时间戳表的同秒连续写入由 version 严格递增区分、append-only
-        // 表由行数区分（时间戳分量不变、判别分量必变，指纹必失配）。
         let version_part = match *discriminator {
             "version" => " || ':' || COALESCE(SUM(version), 0)",
             "count" => " || ':' || COUNT(*)",
@@ -80,8 +48,6 @@ pub fn current_fingerprint(conn: &Connection) -> Result<String> {
     Ok(format!("{NET_WORTH_FORMULA_TAG}|{fingerprint}"))
 }
 
-/// 读取与给定指纹匹配的缓存终值；无缓存行或指纹不符返回 `None`
-/// （失效判定收口在此，调用方据此决定是否重算回填）。
 pub fn read_valid(conn: &Connection, fingerprint: &str) -> Result<Option<DashboardOverview>> {
     let row = conn
         .query_row(
@@ -121,7 +87,6 @@ pub fn read_valid(conn: &Connection, fingerprint: &str) -> Result<Option<Dashboa
     }
 }
 
-/// 回填/刷新缓存终值（单例行 UPSERT）。由读探针在实时重算后调用。
 pub fn write(conn: &Connection, fingerprint: &str, overview: &DashboardOverview) -> Result<()> {
     conn.execute(
         "INSERT INTO net_worth_cache \
@@ -149,28 +114,13 @@ pub fn write(conn: &Connection, fingerprint: &str, overview: &DashboardOverview)
     Ok(())
 }
 
-/// conn 级聚合：净资产总览读探针（issue #491 / ADR-0067，只读 + 终值回填）。
-///
-/// 先算当前输入指纹（各贡献表 MAX(updated_at) 组合）：与缓存终值一致则直接
-/// 返回；不一致（或无缓存行）则调域入口实时聚合
-/// （`super::compute_dashboard_overview`）重算并回填缓存——指纹与缓存收口
-/// 在本模块，聚合公式在域入口，无定时任务。
-///
-/// **读闭包与回填的事务边界（issue #1702）**：指纹 → 缓存读 → 实时聚合是多语句
-/// 读闭包，收进同一读事务（快照纪律见 `tx_scope` 模块文档）——三腿（余额/持仓/
-/// 实物）与指纹必须同快照，写提交落在腿间即「总量 ≠ 分量和」（如买入在余额腿与
-/// 持仓腿之间提交：现金未扣、仓位已建，双计）。**回填写留在读事务之外**：
-/// 指纹标签自证失效——回填后被并发写超越即指纹失配、下次读重算，回填竞态最多
-/// 浪费一次重算、不错服旧值；而读事务内升级写（SHARED → RESERVED）在并发写
-/// 持有 RESERVED 时有 BUSY 风险，不值得为竞态无害的回填换取用户可见读失败。
 pub fn query_dashboard_overview(conn: &Connection) -> Result<DashboardOverview> {
     let (overview, fingerprint, cache_hit) = ensure_transaction(conn, || {
         let fingerprint = current_fingerprint(conn)?;
-        if let Some(cached) = read_valid(conn, &fingerprint)? {
-            // 基准币种与当前一致才可信（缓存跨币种设置变更不成立时重算）。
-            if cached.native_currency == amount::default_currency_code(conn)? {
-                return Ok((cached, fingerprint, true));
-            }
+        if let Some(cached) = read_valid(conn, &fingerprint)?
+            && cached.native_currency == amount::default_currency_code(conn)?
+        {
+            return Ok((cached, fingerprint, true));
         }
         let overview = super::compute_dashboard_overview(conn)?;
         Ok((overview, fingerprint, false))

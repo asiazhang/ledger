@@ -1,12 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { useLoadable, registerToastSink, toastError } from "../useLoadable";
 import { deferred } from "@ledger/test-support/deferred";
-// toast sink 假件消费共享唯一定义点 @ledger/test-support/toast-sink（#1354 上收；
-// 原局部替身与壳侧 factories.ts 双源，随本票消除）
 import { makeFakeSink, resetToastSink } from "@ledger/test-support/toast-sink";
 
 beforeEach(() => {
-  // 每用例复位为 no-op，模拟「注册前」默认态，防模块级 sink 状态串扰
   resetToastSink(registerToastSink);
 });
 
@@ -28,7 +25,6 @@ describe("useLoadable 异步任务模块（ADR-0040 / issue #320）", () => {
 
   it("发起永不 reject：失败回空、error 置位（文案经统一归一取 message 字段）", async () => {
     const { error, run } = useLoadable(async () => {
-      // Tauri invoke 失败形态：后端 AppError 的 serde 序列化对象（非 Error 实例）
       throw { kind: "missing_rate", message: "缺少 USD→CNY 汇率，无法折算" };
     });
 
@@ -63,7 +59,6 @@ describe("useLoadable 异步任务模块（ADR-0040 / issue #320）", () => {
   });
 
   it("注册前 sink 为 no-op：失败不炸，发起照常回空且 error 置位", async () => {
-    // beforeEach 已复位 no-op sink，此处刻意不再注册假 sink
     const { error, run } = useLoadable(async () => Promise.reject("注册前的失败"));
 
     await expect(run()).resolves.toBeNull();
@@ -75,17 +70,15 @@ describe("useLoadable 异步任务模块（ADR-0040 / issue #320）", () => {
     let n = 0;
     const { loading, error, run } = useLoadable(() => gates[n++].promise);
 
-    const p1 = run(); // 用 gates[0]
-    const p2 = run(); // 用 gates[1]
+    const p1 = run();
+    const p2 = run();
     expect(loading.value).toBe(true);
 
-    // 后发先至：终态 = 最后一次发起的结果
     gates[1].resolve("后发结果");
     await expect(p2).resolves.toBe("后发结果");
     expect(loading.value).toBe(false);
     expect(error.value).toBeNull();
 
-    // 先发迟到：结果作废（回空），loading 收尾一并作废（不扰动已收尾的终态）
     gates[0].resolve("先发的迟到结果");
     await expect(p1).resolves.toBeNull();
     expect(loading.value).toBe(false);
@@ -97,17 +90,15 @@ describe("useLoadable 异步任务模块（ADR-0040 / issue #320）", () => {
     let n = 0;
     const { loading, error, run } = useLoadable(() => gates[n++].promise);
 
-    const p1 = run(); // 用 gates[0]
-    void run(); // 用 gates[1]，保持飞行
+    const p1 = run();
+    void run();
     expect(loading.value).toBe(true);
 
-    // 先发先至而后发未完：迟到结果作废，loading 不被其收尾
     gates[0].resolve("迟到的先发结果");
     await expect(p1).resolves.toBeNull();
     expect(loading.value).toBe(true);
     expect(error.value).toBeNull();
 
-    // 后发完结才真正收 loading
     gates[1].resolve("后发结果");
     await vi.waitFor(() => expect(loading.value).toBe(false));
   });
@@ -119,8 +110,8 @@ describe("useLoadable 异步任务模块（ADR-0040 / issue #320）", () => {
     let n = 0;
     const { error, run } = useLoadable(() => gates[n++].promise);
 
-    const p1 = run(); // 用 gates[0]
-    const p2 = run(); // 用 gates[1]
+    const p1 = run();
+    const p2 = run();
 
     gates[1].resolve("后发成功");
     await expect(p2).resolves.toBe("后发成功");
@@ -193,7 +184,7 @@ describe("useLoadable 静默实例与作废在途（issue #1008）", () => {
     invalidate();
     expect(loading.value).toBe(false);
     expect(error.value).toBeNull();
-    expect(task).toHaveBeenCalledTimes(1); // 作废不发起新任务
+    expect(task).toHaveBeenCalledTimes(1);
 
     gate.resolve("迟到的结果");
     await expect(pending).resolves.toBeNull();
@@ -231,9 +222,9 @@ describe("useLoadable 静默实例与作废在途（issue #1008）", () => {
     let n = 0;
     const { loading, run, invalidate } = useLoadable(() => gates[n++].promise);
 
-    const stale = run(); // gates[0]
+    const stale = run();
     invalidate();
-    const fresh = run(); // gates[1]
+    const fresh = run();
     gates[1].resolve("新结果");
     await expect(fresh).resolves.toBe("新结果");
     expect(loading.value).toBe(false);
@@ -245,7 +236,6 @@ describe("useLoadable 静默实例与作废在途（issue #1008）", () => {
 
 describe("toastError 基础设施出口（issue #1962 / ADR-0143）", () => {
   it("复用同一模块级 sink：注册后送达，注册前 no-op 不抛", () => {
-    // 注册前（beforeEach 已复位为 no-op）：不抛、不可见
     expect(() => toastError("静默期")).not.toThrow();
 
     const sink = makeFakeSink();

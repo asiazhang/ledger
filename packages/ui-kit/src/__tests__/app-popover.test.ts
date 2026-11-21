@@ -4,12 +4,6 @@ import { defineComponent, h, nextTick } from "vue";
 import AppPopover from "../AppPopover.vue";
 import { hasOpenOverlay, resetOverlays } from "../overlayRegistry";
 
-// AppPopover 薄封装契约（issue #834 / ADR-0035 接线）：内容透传渲染 + 开/关
-// 实时上报弹层注册表（快捷键抑制零新机制）。完整交互行为由消费方组件测试
-// （book-sidebar-entry.test.ts）覆盖，此处只钉封装本体契约。
-
-// 受控替身：封装刻意不声明 show prop（attrs 透传契约），经声明 show 的宿主
-// 组件以 :show 绑定驱动（setProps 类型安全，AppModal 契约测试同款形态）。
 const ControlledHost = defineComponent({
   props: { show: { type: Boolean, default: false } },
   components: { AppPopover },

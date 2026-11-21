@@ -1,14 +1,5 @@
-//! `InstrumentType` 字符串面（ADR-0108 宏同体派生）：serde wire 形状、
-//! `parse` 严格映射与未知值报错文案。
-//!
-//! wire 形状锁死为小写字符串（与 V002 `instrument_type` CHECK、既有
-//! `rename_all = "snake_case"` 的 JSON 形状逐字一致）；未知值文案与
-//! `parse` 同源（中文 + 合法值清单）。
-
 use crate::InstrumentType;
 
-/// serde 以小写字符串序列化（wire 兼容：与 `rename_all = "snake_case"`
-/// 时代的 JSON 形状一致），反序列化严格往返；未知值报错文案与 parse 同源。
 #[test]
 fn instrument_type_serde_roundtrip() {
     for kind in InstrumentType::ALL {
@@ -21,8 +12,6 @@ fn instrument_type_serde_roundtrip() {
     assert!(err.to_string().contains("未知金融工具类型"), "实际: {err}");
 }
 
-/// `Display` / `parse` 严格往返；未知值报参数错误并附合法值清单（ADR-0050 码化：
-/// 稳定 `code` + 插值参数，`message` 逐字不变、清单仍由宏同源生成）。
 #[test]
 fn instrument_type_parse_roundtrip() {
     for kind in InstrumentType::ALL {

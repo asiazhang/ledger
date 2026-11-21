@@ -1,5 +1,3 @@
-//! OpenAPI 契约装配（`ApiDoc`）与契约自举端点（`GET /api/v1/openapi.json`）。
-
 use axum::Json;
 use axum::response::IntoResponse;
 use utoipa::OpenApi;
@@ -22,9 +20,6 @@ use super::handlers::funds::FundLookup;
 use super::handlers::instruments::InstrumentCreateInput;
 use super::handlers::stocks::StockLookup;
 
-/// Ledger 记账 API 的 OpenAPI 契约文档。
-///
-/// 供 AI 编程助手读取完整端点契约（账户/分类幂等创建、批量交易去重、币种清单、导入知识）。
 #[derive(OpenApi)]
 #[openapi(
     info(
@@ -103,7 +98,6 @@ use super::handlers::stocks::StockLookup;
 )]
 pub struct ApiDoc;
 
-/// 生成式返回 OpenAPI 文档（机器可读契约，供 AI 查询端点结构）。
 pub async fn openapi_json_handler() -> impl IntoResponse {
     Json(ApiDoc::openapi())
 }

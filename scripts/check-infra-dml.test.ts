@@ -4,12 +4,6 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { gateScript, runGateScript } from "./run-gate-script.test-helper.ts";
 
-// 被测对象是仓库工具脚本 scripts/check-infra-dml.ts（基础设施账本数据表 DML 禁令，
-// issue #1135 / ADR-0111 决策 1、决策 5）。
-// 脚本以 Bun 运行时执行（ADR-0083）：runGateScript 以 spawnSync('bun') 与门槛
-// 调用同款拉起，测的就是门槛路径。
-// 按测试决策只测外部可观察结果——进程退出码与输出，通过位置参数把扫描目标指向
-// 临时夹具目录（形状同构 src-tauri：migrations/ + crates/infra/src/）。
 const script = gateScript("check-infra-dml.ts");
 const run = (args: string[] = []) => runGateScript(script, args);
 
@@ -18,7 +12,6 @@ afterAll(() => {
   for (const dir of tempDirs) rmSync(dir, { recursive: true, force: true });
 });
 
-/** 迁移 SQL 夹具：账本数据表 + 机制表（形状同构 src-tauri/migrations 的 CREATE TABLE 清单）。 */
 const MIGRATION_SQL = [
   "-- 测试夹具：迁移链（形状同构 src-tauri/migrations）",
   "CREATE TABLE transactions (id TEXT PRIMARY KEY, amount INTEGER);",
@@ -32,16 +25,11 @@ const MIGRATION_SQL = [
   "CREATE TABLE sync_stream_positions (id TEXT PRIMARY KEY);",
 ].join("\n");
 
-/** 形状同构默认文件：免扫文件必在场，缺失即清单漂移红。
- *  （已登记例外清单自 #1108 起为空——shell_support 随壳机制迁出根包，
- *  例外随迁退役，夹具不再需要例外文件在场。） */
 const DEFAULT_INFRA_FILES: Record<string, string> = {
   "crates/infra/src/db/migrate.rs": "pub fn migrate() {}",
   "crates/infra/src/db/schema_guard.rs": "pub fn guard() {}",
 };
 
-/** 建夹具目录（形状同构 src-tauri：migrations/ 与免扫文件必在；值为 null 表示
- *  刻意省略该默认文件——清单漂移负向样本用）。返回目录路径。 */
 function makeFixture(
   files: Record<string, string | null>,
   migrationSql: string = MIGRATION_SQL,
@@ -64,10 +52,8 @@ describe("check-infra-dml（基础设施账本数据表 DML 禁令，issue #1135
     const r = run();
     expect(r.status).toBe(0);
     expect(r.output).toContain("基础设施账本数据表 DML 禁令通过");
-    // 免扫范围不靠沉默放行：成功输出逐条列出免扫文件与理由
     expect(r.output).toContain("db/migrate.rs");
     expect(r.output).toContain("db/schema_guard.rs");
-    // 已登记例外明示：#1108 起清单为空（shell_support 迁出根包，例外随迁退役）
     expect(r.output).toContain("已登记例外 0 条");
   });
 
@@ -85,7 +71,6 @@ describe("check-infra-dml（基础设施账本数据表 DML 禁令，issue #1135
     });
     const r = run([dir]);
     expect(r.status).toBe(1);
-    // 定位到 文件:行（INSERT 在第 3 行）
     expect(r.output).toContain("crates/infra/src/boot/rogue.rs:3");
     expect(r.output).toContain("INSERT INTO transactions");
     expect(r.output).toContain("UPDATE accounts");
@@ -140,7 +125,6 @@ describe("check-infra-dml（基础设施账本数据表 DML 禁令，issue #1135
 
   it("免扫范围（迁移链 / schema 守卫）按职责放行；免扫文件缺失即红（清单漂移 fail loud）", () => {
     const dir = makeFixture({
-      // 免扫文件内含账本表 DML：迁移与守卫职责所在，放行但明示
       "crates/infra/src/db/migrate.rs":
         'pub fn seed() { let _ = "UPDATE transactions SET amount = 0"; }',
       "crates/infra/src/db/schema_guard.rs": 'pub fn g() { let _ = "DELETE FROM accounts"; }',
@@ -149,7 +133,6 @@ describe("check-infra-dml（基础设施账本数据表 DML 禁令，issue #1135
     expect(ok.status).toBe(0);
     expect(ok.output).toContain("免扫");
 
-    // 免扫文件消失：清单漂移 fail loud，不放任守门空转
     const drifted = makeFixture({
       "crates/infra/src/db/migrate.rs":
         'pub fn seed() { let _ = "UPDATE transactions SET amount = 0"; }',
