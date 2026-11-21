@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { t } from "@ledger/i18n";
-import { computed, ref, watch } from "vue";
+import { computed, ref, shallowRef, watch } from "vue";
 import { NButton, NDataTable, NEmpty, NInput, NPagination, NSpace, NSpin, NText } from "naive-ui";
 import type { DataTableColumn } from "naive-ui";
 import QuickTimeRange from "@/components/QuickTimeRange.vue";
@@ -32,7 +32,9 @@ const amountMaxYuan = ref("");
 // 「全部」= 双空 = 默认态）；不持第二状态源，唯一事实源仍是本视图本地日期条件
 const dateFrom = ref<string | null>(null);
 const dateTo = ref<string | null>(null);
-const results = ref<Transaction[]>([]);
+// 当前页结果浅响应式持有（issue #2187）：每次搜索响应整体替换数组引用，
+// 不对含嵌套出资项、购买项与来源对象的只读记录建立深层响应式代理。
+const results = shallowRef<Transaction[]>([]);
 const total = ref(0);
 const page = ref(1);
 const pageSize = 20;

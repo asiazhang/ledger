@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { t } from "@ledger/i18n";
 import { errorMessage } from "@ledger/utils/errors";
-import { computed, ref, watch } from "vue";
+import { computed, ref, shallowRef, watch } from "vue";
 import { useRoute } from "vue-router";
 import {
   NDataTable,
@@ -97,7 +97,9 @@ const viewPreferences = useTransactionViewPreferencesStore();
 const message = useMessage();
 const dialog = useAppDialog();
 const route = useRoute();
-const data = ref<Transaction[]>([]);
+// 当前页交易数据浅响应式持有（issue #2187）：每次列表响应整体替换数组引用，
+// 不对含嵌套出资项、购买项与来源对象的百条只读记录建立深层响应式代理。
+const data = shallowRef<Transaction[]>([]);
 const total = ref(0);
 const loading = ref(false);
 

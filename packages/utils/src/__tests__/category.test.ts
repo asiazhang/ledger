@@ -4,6 +4,7 @@ import {
   rootCategories,
   categoryChildren,
   categoryPath,
+  buildCategoryPathMap,
   buildCategoryTree,
   categoryRoot,
 } from "../category-tree";
@@ -68,6 +69,34 @@ describe("categoryChildren", () => {
 
   it("无子分类返回空数组", () => {
     expect(categoryChildren(categories, "transport")).toEqual([]);
+  });
+});
+
+describe("buildCategoryPathMap（issue #2187）", () => {
+  it("整体折叠为 id → 路径映射，与 categoryPath 单条查询逐项同口径", () => {
+    const paths = buildCategoryPathMap(categories.values());
+    expect(paths.get("transport")).toBe("交通");
+    expect(paths.get("lunch")).toBe("餐饮 > 午餐");
+    expect(paths.get("dinner")).toBe("餐饮 > 晚餐");
+    expect(paths.get("salary")).toBe("工资");
+    expect(paths.has("nonexistent")).toBe(false);
+  });
+
+  it("孤儿引用（父级不在清单内）退自身名", () => {
+    const orphan = makeCategory({ id: "orphan", name: "孤儿", parent_id: "gone" });
+    const paths = buildCategoryPathMap([orphan]);
+    expect(paths.get("orphan")).toBe("孤儿");
+  });
+
+  it("空输入返回空映射", () => {
+    expect(buildCategoryPathMap([]).size).toBe(0);
+  });
+
+  it("与 categoryPath 单条查询结果一致（同输入同答案）", () => {
+    const paths = buildCategoryPathMap(categories.values());
+    for (const c of categories) {
+      expect(paths.get(c.id)).toBe(categoryPath(categories, c.id));
+    }
   });
 });
 
