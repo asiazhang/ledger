@@ -39,6 +39,8 @@ export interface BorderedTagColors {
 export interface NeutralTagColors {
   text: string;
   background: string;
+  /** 圆角（同 bordered 形态：Tag 取 common.borderRadiusSmall） */
+  radius: string;
 }
 
 /** 透明度叠加：hex 与 rgb()/rgba() 双形态，alpha 乘法语义同 seemly changeColor。 */
@@ -126,5 +128,9 @@ export function borderedTagColors(theme: Theme): Record<TagColorType, BorderedTa
  */
 export function neutralTagColors(theme: Theme): NeutralTagColors {
   const common = mergedCommon(theme);
-  return { text: common.textColor2, background: common.tagColor };
+  return {
+    text: common.textColor2,
+    background: common.tagColor,
+    radius: NEUTRAL_TOKENS[theme].radius.small,
+  };
 }

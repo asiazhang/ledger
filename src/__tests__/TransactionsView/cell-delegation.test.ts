@@ -10,6 +10,7 @@ import {
 } from "./common";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { flushPromises } from "@vue/test-utils";
+import { setFakeMedia } from "@ledger/test-support/media-mock";
 import { messageApi, messageCalls } from "@ledger/test-support/message-mock";
 import { makeAccount, makeMerchant, makeFunding, makePurchase } from "../factories";
 import { useReferenceStore } from "@/stores/reference";
@@ -130,6 +131,31 @@ describe("TransactionsView 账户/商户/来源下钻委托（issue #2189）", (
     const cell = wrapper.find('td[data-col-key="source"]');
     expect(cell.text()).toContain("医疗险");
     expect(cell.text()).toContain("已删除");
+  });
+});
+
+describe("TransactionsView 触控轴单元格形态（issue #2189 分流）", () => {
+  it("触控轴：来源类型全称常驻小字（title 不可达的一击可达替代）；指针轴不渲染", async () => {
+    setTxnDb([
+      makeTxn(1, "acc-1", {
+        source: {
+          kind: "subscription",
+          entity_id: "sub-1",
+          display_name: "流媒体会员",
+          status: null,
+        },
+      }),
+    ]);
+    // 桌面档 + 触控轴（平板横屏形态，宽度轴不动——mountPhone 是移动档卡片，不适用）
+    setFakeMedia({ hover: "none", pointer: "coarse" });
+    const touch = await mountView();
+    const touchLabel = touch.find(".tx-source-type-label");
+    expect(touchLabel.exists()).toBe(true);
+    expect(touchLabel.text()).toBe("订阅计划");
+    // 指针轴基线（显式换档）：类型全称收进悬停 title，不渲染常驻小字
+    setFakeMedia({ hover: "hover", pointer: "fine" });
+    const pointer = await mountView();
+    expect(pointer.find(".tx-source-type-label").exists()).toBe(false);
   });
 });
 

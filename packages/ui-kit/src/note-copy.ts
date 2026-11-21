@@ -11,7 +11,7 @@ import { errorMessage } from "@ledger/utils/errors";
  * 自取，见 NoteCopyButton）：复制动作语义归本函数，消息实例归调用环境。
  */
 
-/** 写剪贴板：成功 resolve(true)，失败 resolve(false)（不抛错，错误信息随 toast 呈现）。 */
+/** 写剪贴板：成功 resolve(null)，失败 resolve(错误文案)（不抛错，错误信息随 toast 呈现）。 */
 export async function writeNoteToClipboard(note: string): Promise<string | null> {
   try {
     await navigator.clipboard.writeText(note);

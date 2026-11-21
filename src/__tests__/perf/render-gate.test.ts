@@ -220,12 +220,18 @@ describe("100 行/页档位覆盖（issue #2189：主列表页大小上限档守
       FIXTURE_DISPLAY_ROW_COUNT * 2,
     );
     // 行内重型组件实例（指针轴）：与 50 行档同收 0——翻页换档不引入组件回潮
-    expect(wrapper.findAllComponents(AccountLink).length).toBe(ACCOUNT_LINK_BASELINE);
-    expect(wrapper.findAllComponents(MerchantLink).length).toBe(MERCHANT_LINK_BASELINE);
-    expect(wrapper.findAllComponents(SourceLink).length).toBe(SOURCE_LINK_BASELINE);
-    expect(wrapper.findAllComponents(NoteCopyButton).length).toBe(NOTE_COPY_BUTTON_BASELINE);
-    expect(wrapper.findAllComponents(AmountCell).length).toBe(AMOUNT_CELL_BASELINE);
-    expect(wrapper.findAllComponents(NTag).length).toBe(N_TAG_BASELINE);
+    expect(wrapper.findAllComponents(AccountLink).length).toBeLessThanOrEqual(
+      ACCOUNT_LINK_BASELINE,
+    );
+    expect(wrapper.findAllComponents(MerchantLink).length).toBeLessThanOrEqual(
+      MERCHANT_LINK_BASELINE,
+    );
+    expect(wrapper.findAllComponents(SourceLink).length).toBeLessThanOrEqual(SOURCE_LINK_BASELINE);
+    expect(wrapper.findAllComponents(NoteCopyButton).length).toBeLessThanOrEqual(
+      NOTE_COPY_BUTTON_BASELINE,
+    );
+    expect(wrapper.findAllComponents(AmountCell).length).toBeLessThanOrEqual(AMOUNT_CELL_BASELINE);
+    expect(wrapper.findAllComponents(NTag).length).toBeLessThanOrEqual(N_TAG_BASELINE);
     expect(wrapper.findAllComponents(NEllipsis).length).toBeLessThanOrEqual(N_ELLIPSIS_BASELINE);
     // DOM 节点总数 ≤ 100 行档基线
     const table = wrapper.find(".n-data-table");

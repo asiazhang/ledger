@@ -49,10 +49,12 @@ describe("neutralTagColors（NTag bordered=false 填充形态）", () => {
     expect(neutralTagColors("dark")).toEqual({
       text: darkOverrides.common.textColor2,
       background: darkTheme.common.tagColor,
+      radius: NEUTRAL_TOKENS.dark.radius.small,
     });
     expect(neutralTagColors("light")).toEqual({
       text: lightTheme.common.textColor2,
       background: lightTheme.common.tagColor,
+      radius: NEUTRAL_TOKENS.light.radius.small,
     });
   });
 });

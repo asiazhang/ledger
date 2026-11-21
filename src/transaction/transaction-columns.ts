@@ -686,8 +686,7 @@ export function buildTransactionColumns(
               h(
                 "span",
                 {
-                  style:
-                    "font-size: 11px; line-height: 18px; padding: 0 6px; border-radius: 9px; white-space: nowrap; color: var(--n-info-color, #2080f0); border: 1px dashed currentColor;",
+                  style: FUNDING_DERIVED_MARKER_STYLE,
                 },
                 display.fundingDerivedMarker,
               ),
@@ -757,7 +756,7 @@ export function buildTransactionColumns(
                     style: {
                       color: statusTagColors.text,
                       background: statusTagColors.background,
-                      borderRadius: tagColors.default.radius,
+                      borderRadius: statusTagColors.radius,
                     },
                   },
                   display.sourceStatusLabel,
@@ -907,6 +906,10 @@ function renderTwoAccountCell(fromAccountId: string, toAccountId: string): VNode
   );
 }
 
+/** 退款派生分解徽标样式（轻量列渲染与 renderFundingAccountCell 组件版共用单点）。 */
+const FUNDING_DERIVED_MARKER_STYLE =
+  "font-size: 11px; line-height: 18px; padding: 0 6px; border-radius: 9px; white-space: nowrap; color: var(--n-info-color, #2080f0); border: 1px dashed currentColor;";
+
 /** 账户单元格标注文字（弱化灰、随标注元素固定宽度不收缩）：语义为「共 N 个」后缀注记。 */
 const ACCOUNT_CELL_SUFFIX_STYLE =
   "flex: none; color: var(--n-text-color-disabled, #999); font-size: 12px;";
@@ -952,8 +955,7 @@ function renderFundingAccountCell(row: Transaction): VNode {
       h(
         "span",
         {
-          style:
-            "font-size: 11px; line-height: 18px; padding: 0 6px; border-radius: 9px; white-space: nowrap; color: var(--n-info-color, #2080f0); border: 1px dashed currentColor;",
+          style: FUNDING_DERIVED_MARKER_STYLE,
         },
         derivedMarkerText,
       ),

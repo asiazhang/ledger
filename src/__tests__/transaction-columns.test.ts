@@ -13,6 +13,7 @@ import {
   type PrecomputedTransactionRow,
 } from "@/transaction/transaction-columns";
 import AmountCell from "@/transaction/AmountCell.vue";
+import { borderedTagColors } from "@ledger/theme/tag-colors";
 import type { InputMode } from "@/composables/useInputMode";
 import { useAppStore } from "@/stores/app";
 import { kindSemanticColor } from "@ledger/theme/semantic-colors";
@@ -158,6 +159,32 @@ describe("buildTransactionColumns 金额单元格语义着色", () => {
       formatAmount(361561, reference.getCurrency(row.currency_code)),
     );
     expect((vnode.props as { color: string }).color).toBe(kindSemanticColor("convert", "dark"));
+  });
+});
+
+/** 类型列轻量标签（issue #2189）：语义样式元素在场的可观察断言——四类色型
+ * 经 tag-colors 按主题解析后以内联样式呈现（删除瘦身接线回退 NTag 即计数守门
+ * ② 红；色型公式对齐锁定归 theme 包 tag-colors 契约测试）。 */
+describe("buildTransactionColumns 类型列轻量标签", () => {
+  function kindCellOf(row: Transaction): VNode {
+    const render = renderColumnOf(buildTransactionColumns(reference), "kind");
+    return render(precomputedRowOf(row), 0) as VNode;
+  }
+
+  it("标签为语义样式元素，色型与 KIND_TAG_TYPE → borderedTagColors 解析一致", () => {
+    useAppStore().setTheme("dark");
+    for (const kind of TRANSACTION_KINDS) {
+      const row = makeTransaction({ id: `k-${kind}`, kind });
+      const vnode = kindCellOf(row);
+      expect(vnode.type).toBe("span");
+      const colors = borderedTagColors("dark")[KIND_TAG_TYPE[kind]];
+      const style = vnode.props as { style: Record<string, string>; class: string };
+      expect(style.class).toBe("tx-kind-tag");
+      expect(style.style.color).toBe(colors.text);
+      expect(style.style.background).toBe(colors.background);
+      expect(style.style.border).toBe(colors.border);
+      expect(vnode.children as string).toBe(kindLabel(reference, row));
+    }
   });
 });
 
