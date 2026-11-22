@@ -1,127 +1,44 @@
-# ADR 0083: 守门脚本 TypeScript 化与 Bun 运行时——零 npm 依赖保留、类型检查入门槛（收窄范围）、门槛/前端双运行时
+# ADR-0083: 守门脚本 TypeScript 化、Bun 运行时与挂载登记单源
 
-- 状态：已接受
-- 日期：2026-09-06
+- 状态：已接受（改判 ADR-0047「Node，无依赖」中的运行时表述为 Bun；正文已按 #1149、#1682/#2204、#1991/#1995 现行态收敛）
+- 日期：2026-09-06（现行态收敛：2026-11-21）
 - 作者：Ledger 项目
-- 关联：issue #734（spec，grilling 定稿）、#737（实施收窄票，#738–#740 为后续扩量票）
+- 关联：ADR-0046（pnpm 包管理）；ADR-0047（命令注册守门，运行时表述由本 ADR 改判）；ADR-0049 / ADR-0056 / ADR-0071 / ADR-0087（各守门脚本与断言强度）；ADR-0145（守门注释清零与数据面收口）；#734 / #737 / #1149 / #1682 / #1991 / #1995 / #2204
 
 ## 背景
 
-`scripts/` 下四个守门脚本（check-commands / check-structure / check-i18n-keys /
-check-test-stubs）为无依赖 ESM JavaScript（仅 `node:` 内置模块），以 node 运行。诉求：
-强类型化——守门脚本维护着全仓最关键的文本扫描规则（白名单、正则、掩码），类型错误只能
-靠运行时暴露。同时补上另一处缺口：测试文件与测试助手从未进入任何类型检查工程（根
-tsconfig 只覆盖 `src` 非测试代码）。
-
-运行时候选三选一（grilling 定稿）：① node 原生 strip-types——受 erasable-only 约束，
-TS 语法子集受限且版本门槛高；② tsx devDep——给「零 npm 依赖」的守门脚本引入运行时依赖，
-违背其自持性质；③ Bun——原生跑 `.ts`、`node:` 兼容层覆盖本仓用到的全部内置模块、单二进制
-零 npm 依赖。取 ③。
+仓库守门脚本（`scripts/check-*.ts`）承载全仓关键的白名单、词法掩码与边界扫描规则。早期使用无类型 JS 靠 Node 运行，类型错误只能运行时暴露，测试文件也缺少类型检查；同时 `scripts/*.test.ts` 一度由 Vitest 在 Node 下收集却再 `spawnSync('bun')`，且质量门在 `check.sh` 与 CI workflow 中的挂载缺乏单一事实源，容易静默漏挂。
 
 ## 决策
 
-1. **四脚本全量迁 `.ts`，行为零变化**：校验规则、白名单、扫描边界、输出文案逐字保留；零 npm 依赖性质保留——脚本 import 仅 `node:` 内置模块（bun 内建兼容层实现），`@types/node` 是 devDependency、只服务类型检查。
+### 1. 守门脚本全量 TypeScript 化，零 npm 运行时依赖
 
-2. **守门脚本运行时 = Bun（CI 固定 1.4.0）**：调用方式 `bun scripts/check-*.ts`。四个
-   守门测试（check-*.test.ts）以 `spawnSync('bun', …)` 同运行时调用——测的就是门槛路径；
-   check-structure.test.ts 对脚本的静态导入改 `.ts` 扩展名。本地 `check.sh` 前置
-   `command -v bun` 检测：缺失即显式中文报错退出（指向本 ADR 与安装方式），不静默降级
-   回 node——降级会把「门槛在什么运行时上跑」变成机器相关的偶然事实。
+- 所有守门脚本以 `.ts` 编写，仅使用 `node:` 内置模块（由 Bun 内建兼容层实现），保持零 npm 运行时依赖；`@types/node` 与 `bun-types` 仅为 devDependency 服务类型检查。
 
-   > 与 ADR-0047 决策 4/5 的「Node，无依赖」表述冲突——按规则显式处理：**零 npm 依赖
-   > 性质保留不变，运行时由 node 改判为 Bun**（本 ADR 为运行时口径的唯一解释处）；
-   > ADR-0047 的坐标已同步指向此处。
+### 2. 双运行时严格分治（#1991 / #1995）
 
-3. **类型检查入质量门槛（`tsconfig.scripts.json`）**：独立 TS 工程，compilerOptions 与
-   根 tsconfig 同构（strict 套件 / bundler 解析 / DOM lib；#1149 起公共 compilerOptions
-   收敛至根 `tsconfig.base.json`，根工程与本工程改 `extends` 继承——本「同构」表述
-   同步修订为「两工程共用同一份 extends 源，行为逐字不变」），差异两处——`types` 限定
-   `node` + `vitest/globals`（测试全局经 globals:true 使用，类型声明须显式引入）；
-   include 收窄为「脚本目录 + 测试助手 + 守门相关测试 + src 全局 `.d.ts`」。执行器用
-   vue-tsc（与前端类型检查同一执行器，为后续扩量保持命令面不变）；挂入 `check.sh`
-   （紧跟前端类型检查之后）与 CI frontend job 各一步。
+- **门槛脚本与守门测试 = Bun（固定版本 1.4.0）**：脚本执行方式为 `bun scripts/check-*.ts`；全部守门测试 `scripts/*.test.ts` 的**唯一运行口径为 `bun test scripts/`**，测试文件显式 `from "bun:test"`（消除隐式 `"vitest"` 别名依赖），仍经 `spawnSync('bun', …)` 覆盖真实门槛路径。本地 `check.sh` 缺失 `bun` 时显式报错退出，绝不静默降级回 Node。
+- **前端构建与前端测试 = Node@22**：`vite` / `vitest` / `vue-tsc` 等前端工具链跑在 Node；Vitest 收集范围不含 `scripts/`，前端测试与 CI `frontend-test` 分片均不依赖 `bun` 在场。
+- **改判 ADR-0047**：保留「零 npm 依赖」，运行时由 Node 改判为 Bun。
 
-4. **门槛范围收窄（#737 定稿，先绿后扩）**：存量测试文件类型错多（`.vue` 导入、手搓 invoke mock 参数窄化），一次性纳入不可行。门槛范围 = `scripts/**` + `src/__tests__/helpers/**` + 四个 check-*.test.ts + 全局 `.d.ts`；扩到全量测试目录由 #738–#740 分批承接。mock 边界收口为两个测试助手：`helpers/invoke-mock.ts`（invoke mock 单一入口）与 `helpers/component-vm.ts`（组件实例窄化单点）。
+### 3. 独立类型检查工程（`tsconfig.scripts.json`）
 
-5. **双运行时事实固化**：**门槛脚本 = Bun；前端构建/测试（vite / vitest / vue-tsc /
-   build.rs 之外的 node 工具）= node@22**。两套运行时各管一段，不存在「哪边都能跑」的
-   灰色地带；CI frontend job 与 frontend-test 分片 job 均经 `oven-sh/setup-bun@v2`
-   安装固定 1.4.0（与本地门槛同一固定值，升级走显式 bump），其余步骤不变。
+- 公共 `compilerOptions` 与根工程共用 `extends` 源 `tsconfig.base.json`（#1149），独立工程的 `types` 显式包含 `node`、`bun-types`（精确 1.4.0）与 `vitest/globals`（服务测试助手与部分测试全局）；由 `vue-tsc` 执行，挂入 `check.sh` 与 CI `frontend` job。
 
-6. **术语**：「守门脚本 / 门槛脚本」沿用各 ADR 既有定义，不进词汇表。
+### 4. 质量门挂载登记单源（`scripts/gate-mounts.ts`，#1682 / #2204）
 
-## 理由
+质量门「哪些门被跑、挂在哪个宿主」的单一事实源住 `scripts/gate-mounts.ts`（`GATE_MOUNTS`），而非靠 `check.sh`、CI workflow 与注释三处手写对账：
+- **判定语义 = per-host 行首前缀**：宿主文件非注释行 trim 后行首匹配登记前缀，天然免疫 `echo "▶ …"` 展示行假绿，且显式表达 `check.sh` 与 CI 步骤间的命令形态差异。
+- **核对而非生成**：`check.sh` 与 CI workflow 保持手写，由 `gate-mounts.test.ts` 断言双向全等——删任一宿主挂载行或删任一条登记至少一条测试变红（ADR-0087）。新增守门须同步在 `GATE_MOUNTS`、`check.sh` 与 CI 挂载。
 
-- **为什么独立 tsconfig 而非扩根 tsconfig**：测试代码的类型现状（68 处 `.vue` 导入错）远
-  未达门槛水位，混入根工程会把前端类型检查一起拖红；独立工程让「脚本 + 助手 + 守门测试」
-  先达标，扩量不回灌前端检查。
-- **为什么 spawnSync('bun') 而非 import 被测函数**：守门测试按「只测外部可观察结果」
-  决策（ADR-0047 决策 5 先例）以退出码与输出为接缝；bun 调用与 check.sh / CI 门槛调用
-  同款，测试覆盖的就是真实门槛路径。例外：check-structure.test.ts 另静态导入
-  `WHITELIST`/`LAYER` 派生夹具清单（单一事实源，#725 先例）。
-- **为什么版本钉死 1.4.0 而非浮动**：守门脚本属质量地基，运行时升级应是一次显式评审
-  （bun 的 node: 兼容层仍在快速演进），CI 与本地同钉一版消除「本地绿 CI 红」的运行时
-  漂移面。
-- **被排除路线（防重提）**：① node `--experimental-strip-types`——erasable-only 约束
-  排除 enum/namespace/参数属性等形态，且版本门槛与 LTS 现实不符；② tsx——运行时
-  devDep，破坏守门脚本零依赖自持性；③ 保持 .js + JSDoc——类型表达力不足，测试类型
-  缺口同样补不上。
+## 备选与否决
 
-## 代价与边界
+- **Node `--experimental-strip-types`**：erasable-only 子集受限且版本门槛高，否决。
+- **`tsx` devDependency**：破坏守门脚本零 npm 依赖自持性，否决。
+- **保持 `.js` + JSDoc**：类型表达力不足且补不上测试助手类型缺口，否决。
+- **由 Vitest 收集并运行 `scripts/*.test.ts`**：造成前端测试套件强依赖 `bun` 在场，制造双运行时灰色地带，已于 #1991 淘汰。
 
-1. 开发机与 frontend-test CI job 从此依赖 bun：无 bun 时门槛显式报错（check.sh 中文提示）
-   或守门测试 spawn 失败——失败面显式，不存在静默路径。
-2. `tsconfig.scripts.json` 的 include 是当前收窄范围而非终态：扩量由 #738–#740 承接，
-   翻转完成前全量测试的类型缺口仍在（本 ADR 记录的是门槛机制，不含扩量承诺）。
-3. bun 对 `node:` 内置的实现与 node 存在行为差异的可能：脚本只依赖
-   fs/path/url/child_process 的稳定子集，且输出逐字一致性已实跑核验；bun 升级时重跑
-   一致性核对即可。
-4. 守门测试经 spawnSync 起真进程，比纯内存测试慢（四个测试文件 ~1s）；外部可观察接缝
-   的收益优先于这层耗时。
+## 后果
 
-## 相关 ADR
-
-- ADR-0047（命令注册单一来源）：check-commands 的宿主决策；本 ADR 改判其运行时表述
-  （Node → Bun），校验机制与扫描边界不变。
-- ADR-0049（应用 i18n）：check-i18n-keys 的宿主决策。
-- ADR-0056（后端域目录化）：check-structure 的宿主决策。
-- ADR-0071（派生缓存归域）：check-structure infra→域反向扫描的扩展决策。
-- ADR-0046（包管理器切 pnpm）：CI frontend job 执行器即 pnpm；bun 与 pnpm 在同一 job
-  并存，各管门槛脚本与依赖安装/前端构建。
-
-## 修订注记（#1991，2026-10-31）：守门测试唯一运行口径 = bun test，vitest 收集范围自此不含 scripts/
-
-决策 5「双运行时事实固化」的边界自本票起收严：守门测试文件（scripts/*.test.ts，
-自决策 2 的四个增长到十八个）此前经 vitest app project 收集、在 node 运行时下执行，
-但其断言接缝是 spawnSync('bun') 拉起被测门槛——bun 不在 PATH 时基线即红（
-spawn 失败以 `-1 ≠ 0` 断言失败的降态呈现，不指向真实根因）。本票把「测试在哪个
-运行时跑」与「被测脚本在哪个运行时跑」对齐：scripts/*.test.ts 的唯一运行口径 =
-`bun test scripts/`，vitest 收集范围不再含 scripts/——前端 vitest 全量跑自此不依赖
-bun 在场，双运行时各管一段的表述（门槛脚本 = Bun；前端构建/测试 = node）不再是
-灰色地带。执行挂载：本地 scripts/check.sh 与 CI frontend job 各一步 `bun test
-scripts/`，挂载登记与「删除即变红」核对住 scripts/gate-mounts.ts / 同名测试；
-frontend-test 分片 job 不再需要 bun（setup-bun 步骤随之退役）。决策 2 的
-spawnSync('bun') 接缝不变——变的是测试文件自身的执行器（vitest → bun test），
-被测路径仍是真实门槛。
-
-## 修订注记（#1995，2026-11-01）：scripts 测试导入面与运行器同名同源——显式 bun:test，隐式别名依赖消除；types 面新增 bun-types
-
-#1991 把执行器切到 bun test 后，十八个测试文件的导入语句仍写
-`from "vitest"`，靠 Bun 运行时把 vitest 导入隐式别名到 bun:test 才能跑通
-（实测可用但未言明：bun 若移除该别名即全红，且报错不指向根因）。本票把导入
-改为显式 `from "bun:test"`，导入与唯一运行口径同名同源，隐式别名依赖消除。
-类型面同步：tsconfig.scripts.json 的 types 新增 `bun-types`（devDependency，
-精确 1.4.0 与决策 2 钉死的运行时同版——@types/node 同款“纯类型 devDep、
-零 npm 依赖性质不变”先例）；`vitest/globals` 续留——include 面内的部分导入
-测试（仅导入 describe/it 等、全局用 beforeEach/afterEach）与测试助手内联
-用例（packages/test-support/src 源码内的 expect）有真实消费者，非死面。
-
-## 修订注记（#2204 决策记录并入，2026-11-21）：守门挂载登记机制自脚本头注并入
-
-守门挂载登记（spec #1682）：质量门挂载声明的**单一事实源**住 `gate-mounts.ts` 登记表——「哪些门被质量门槛跑到、挂哪」的唯一查询点。此前该事实由 check.sh 手写行、CI workflow 手写步骤、各门头注释三本互不核对的登记簿维持，删任一行零测试变红。机制要点：
-
-- **判定语义 = per-host 行首前缀**：登记条目按宿主声明 `{file, prefix, where}`，宿主文件的非注释行 trim 后行首匹配该前缀。echo 展示行行首是 `echo "▶`，永不可能命中执行形态——echo 假绿免疫是判定语义的结构后果（#1112 第三轮审查实测教训）；同一门在两宿主的命令文本实差（`( cd src-tauri && …)` 包裹 vs `working-directory`、`-- --check` vs `--check`）由 per-host prefix 显式表达。
-- **核对，不生成**：check.sh 与 CI workflow 保持手写，守门接线测试（`gate-mounts.test.ts`）遍历登记断言双向全等——删任一宿主挂载行或删任一登记条目至少一条断言变红（ADR-0087 断言强度）；核对测试文件本身的删除靠评审（import 单向互证）。
-- **新增守门的登记动作**：在 `GATE_MOUNTS` 追加一条——唯一名称、issue / ADR 出处（导航字段）、按宿主的执行行形态；check.sh 执行行与 CI 步骤同步挂载，接线测试自动核对三侧全等。门的核心判定规则归各门自身，登记只管挂载。
-
-本条把脚本头注（过渡期读物，ADR-0145）中的机制政策收进 ADR，对应注释按四分类进入后续清理批次。
+- 本地开发机与 CI `frontend` job 需安装固定版本 Bun（1.4.0），缺失即显式报错；CI `frontend-test` 分片零 Bun 依赖。
+- 守门测试经真进程 `spawnSync` 覆盖外部退出码与输出契约，全量 `bun test scripts/` 与 `gate-mounts.test.ts` 守住质量门槛不漏挂、不漂移。

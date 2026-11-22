@@ -1,153 +1,72 @@
-# ADR 0084: 统一测试数据库工厂与共享断言库——深模块收敛、白名单守门、固定时刻显式化
+# ADR-0084: 统一测试数据库工厂与共享测试器具——深模块收敛、白名单转纯禁令、固定时刻显式化
 
-- 状态：已接受（grilling 定稿，2026-09-07 两轮；迁移收官见文末「迁移状态」段；修订：「独立测试 crate」否决前提被 ADR-0112 修订——workspace 下 dev-dependency 环可解，决策 2 其余判定与工厂接口形态不变，见文末 #1111 修订注记）
-- 日期：2026-09-07
+- 状态：已接受（按域迁移已收官，白名单已转纯禁令；正文已按 #758、#956、#1111、#1433、#1514、#1645、#1699/#1702、#1868、#1896、#1989 现行态收敛）
+- 日期：2026-09-07（现行态收敛：2026-10-31）
 - 作者：Ledger 项目
-- 关联：spec #728（本文档票）；前身 #250（合并共识在案，本决策为其落地）；前端同构先例 #725/#726（参考数据桩深模块收敛 + `check-test-stubs.ts` 守门）；ADR-0056（白名单守门哲学、测试豁免约定、结构守门）；ADR-0067（余额缓存——共享对拍断言是其测试保障面）；ADR-0083（守门脚本 Bun 运行时）
+- 关联：spec #728（前身 #250）；ADR-0056（守门哲学与测试豁免）；ADR-0067（余额缓存对拍）；ADR-0083（守门 Bun 运行时）；ADR-0086（BDD 步骤层互斥边界）；ADR-0112（workspace crate 拆分与 dev-dependency 环）；ADR-0139（跨库原子性文件库测试前提）；词汇表：测试基础设施域
 
 ## 背景
 
-测试架构评审（2026-09-06，spec #728）量化了后端测试建库与种子知识的散落：建库样板（`open_in_memory` + `init_db` 两行序）逐字重复 15 处；建账户助手 4 种参数形状 + 4 个异名共 8 种变体；直接写账户表的夹具裸 SQL 31 处；固定时刻字面量约 166 处；投资铺垫（账户+标的+汇率）在 API 集成层成段复制 6 处；「缓存回填==实时计算」对拍断言（ADR-0067 的关键不变式）在 transaction 域与 db 域测试里各维护一份；同一目录存在绕开本域共享辅助、重抄同体样板的文件。七个域级测试辅助文件合计 652 行，头部注释各自声明「仅限本目录、跨模块合并见 issue #250」。
-
-grilling（2026-09-07，两轮）逐项复核评审数字与当前工作树一致（时刻戳现值 168 行/52 文件；其中同一默认时刻 `2026-01-01T00:00:00Z` 占绝对多数，其余为表达时间推进的域时刻），并确认以下决策。
+后端测试建库样板（`open_in_memory` + `init_db`）、账户种子（8 种异名/变体）、裸 SQL 夹具、固定时刻字面量（160+ 处）以及余额缓存对拍断言曾散落七个域辅助文件（652 行），造成重复维护与漂移。同时，随着多端同步、源码扫描守门、读快照一致性与隔离环境等跨编译单元测试需求增长，测试基础器具需要统一的准入边界与防回潮守门。
 
 ## 决策
 
-### 1. 深模块方向与准入规则
+### 1. 深模块收编与准入规则
 
-建统一的测试数据库工厂 + 共享断言库：打开（吸收建库样板）、种子（吸收实体列清单与组合铺垫）、断言（吸收不变式对拍）一个入口完成。各域测试辅助文件保留为「按域种子」的薄皮，装域特有编排（订阅/分期计划创建、occurrence 读取器等），长期存在不删除。
+建立统一测试数据库工厂与共享测试器具：打开库、种子、共享断言与跨编译单元测试器具收口一处；各域测试辅助文件仅保留单域特有的薄皮（计划创建、occurrence 读取器等）。
 
-**准入规则**：工厂只收跨 ≥2 域重复的夹具；单域特有的种子与读取器留域薄皮。这是深模块防腐化的判定依据——工厂不长成大杂烩，守门豁免清单即此规则的机器面。
+- **准入规则**：仅收编**跨 ≥2 域或编译单元同体消费**的夹具与测试器具；单域特有的种子、读取器与业务写中途失败注入留各域，防止工厂长成大杂烩。
+- **与 BDD 层互斥（ADR-0086）**：e2e 层不消费本工厂的建库、种子与默认值集（避免一次默认值调整同时打红两层）；但通道线格式替身、WebDAV 协议替身、暂存目录 guard 等纯协议/基础设施器具可跨层共享。
 
-### 2. 住址与可见性
+### 2. 住址、可见性与 dev-dependency 环
 
-工厂落 `src-tauri/src/test_support/`（打开/种子/断言子模块），与既有 `test_utils.rs` 并列、职责正交（追踪捕获/假发射器不并入）；可见性跟随其先例 `pub mod` + `#[doc(hidden)]`——外部集成测试（`tests/api_server/`）看不到 `#[cfg(test)]` 模块，这是仓库已验证的共享机制，代价（测试面进产品 lib 导出）先例已接受。独立测试 crate 否决：单 crate 无 workspace，工厂需调用 `init_db` 等主 crate 接口，自依赖循环不可解。结构守门白名单追加 `test_support` 并验证其对壳层零依赖（依赖域与基础设施合法，ADR-0056 方向约束）。
+- 工厂住根包 `src-tauri/src/test_support/`，以 `pub mod` + `#[doc(hidden)]` 暴露给集成测试与各域 crate 测试目标（经 `[dev-dependencies] tauri-app` 测试专用环，Cargo 允许且不污染生产依赖图，结构守门仅辖生产依赖）。
+- 仅在负向 `compile_fail` 用例会被 dev-dependency 环击穿时（如 `ledger-sync-protocol` 根文档验证不可见 `tauri_app_lib`），该 crate 保持无环（见 ADR-0112 修订注记）。
+- 注：初版在单 crate 阶段曾以「自依赖循环不可解」否决独立测试 crate；workspace 落地（ADR-0112）后该前提已解除，独立测试支持 crate 成为后续可选目标形态。
 
-### 3. 接口形态：&Connection 自由函数集
+### 3. 建库接口形态：`&Connection` 自由函数与模板还原
 
-`open() -> Connection` 零配置项（内存库 + 迁移就是建库的全部现状；文件库/加密是 BDD 场景，不入本工厂）；种子 `seed_*(&conn, …) -> 实体 id`；断言 `assert_*(&conn, …)`。不引入包装类型与 builder 链——现状 15 处样板、全部域助手、API 集成 `ApiState` 注入都以 `&Connection` 流转，包装类型让每个调用点改两遍。深模块的第一版就该没有配置。
+- **`open() -> Connection`**：零配置内存库入口，不引入包装类型或 builder 链（与 `&Connection` 全仓流转一致）。内部采用**模板还原**（#1514，`ledger_infra::db::open_in_memory_initialized`）：进程内首次 `serialize` 固化迁移后 schema 与默认种子，后续每次 `deserialize` 还原独立内存库（约 31ms → 40µs/次），再经 `finish_open` 单点重施外键与 hook，用例间隔离性不变。
+- **文件库变体（#1699 / #1868）**：双连接读快照探针需同文件多连接，跨库（main + ATTACH sync.db，ADR-0139）集合级原子性断言需真实落盘文件库——提供 `open_file(dir)` 与 `open_file_scratch()`（自带 `ScratchDir` guard 返回元组，逐用例重放迁移链），建库接线与 `open()` 共用 `install_test_wiring` 单点。
 
-### 4. 建账户签名归一
+### 4. 种子、固定时刻与共享断言
 
-`seed_account` 单一全位置签名 `(conn, id, name, kind, currency, initial_balance_cents)`（现存最全形状），`id` 仍由调用方指定（外键引用显式）。options struct + `Default` 否决：`..Default::default()` 把关键字段藏进默认值，测试失去显式性；账户列集随已发布 schema 冻结，参数增长风险低。异名处置：`setup_investment_account`（transaction 域两份逐字重复）与 `seed_investment_account`（API 集成）由工厂投资铺垫组合种子取代；e2e 步骤内异名不动（out of scope）。
+- **建账户签名归一**：`seed_account` 单一全位置签名 `(conn, id, name, kind, currency, initial_balance_cents)`，调用方显式传 `id`（显式外键引用；否决 options struct + `Default` 隐藏关键字段）；投资铺垫（账户+标的+汇率）收口组合种子。
+- **固定时刻两类分治**：夹具簿记戳（`created_at`/`updated_at`）由工厂命名常量 `FIXED_NOW` 内部发放，调用点清零；域时刻（价格序列、预算窗口、定时触发点）属行为输入，由调用方显式传入（否决递增发放隐藏时序）。
+- **共享断言**：余额缓存「回填 == 实时」对拍（`assert_balance_cache_matches_realtime`，ADR-0067 唯一测试维护点；`ledger-perf` 保留独立断言不归一）+ 通用行读取器。
 
-### 5. 固定时刻：命名常量 + 簿记戳内部发放
+### 5. 跨编译单元共享测试器具清单（按准入规则收编）
 
-字面量两类分治：**夹具簿记戳**（账户/标的/汇率的 created_at/updated_at，同一默认时刻 `2026-01-01T00:00:00Z` 占绝对多数）由工厂命名常量（`FIXED_NOW`）在种子内部发放，调用点消失；**域时刻**（汇率/价格序列点、预算窗口、定时触发点）是测试的行为输入，不吸收——需要时间推进的种子参数显式收时刻，默认值引用常量。递增发放否决：调用点零参数但先后关系隐式化，读者无法从调用点看出时序。守门只禁默认时刻字面量出现在工厂之外（域时刻字面量合法）。
+除建库/种子/断言外，工厂收编以下跨 ≥2 编译单元的测试器具（对应词条见 `CONTEXT-testing.md`）：
 
-### 6. 共享断言库成员
+| 模块 | 职责与核心约束 |
+|---|---|
+| `channel`（#956） | 通道线格式替身 `publish_raw_segment`，摘要口径直用产品 `channel::sha256_hex`，防夹具误算 payload 摘要 |
+| `scan`（#1433） | Rust 源码扫描掩码 `mask_non_code` + `matching_brace_end`；与 TS 侧 `maskNonCode` 双源登记，共享语料夹具防漂移 |
+| `scratch`（#1645） | `ScratchDir` / `ScratchFile`（`ledger-test-` 前缀），drop（含 panic unwind）整树清理，终结 `/tmp` 残留 |
+| `snapshot_probe`（#1699/#1702） | 基于 `sqlite3_trace_v2` STMT 回调的读快照探针，在多语句读闭包中间由第二连接确定性注入并发写，覆盖七域读事务回归 |
+| `op_write_failure`（#1896） | `temp` schema 触发器注入 `sync.sync_ops` 写失败（跨库可用、仅本连接可见、内存/文件库同形） |
+| `isolate_home`（#1989） | 进程级现场隔离：`Once` 同步重定向 `$HOME` + `$XDG_DATA_HOME` + `$XDG_CONFIG_HOME` 到独立临时目录，防 Linux `dirs::data_dir()` 逃逸污染真实用户目录 |
 
-本 spec 收两件：余额缓存「回填==实时」对拍（`assert_balance_cache_matches_realtime`，transaction/db 两域旧断言删除归一，ADR-0067 的测试保障收归唯一维护点）+ 通用行读取器（既有白盒读约定是有意旁路，本决策只共享读取体、不推翻约定）。金额矩阵双算对拍（reports/budget/accounts 三域域内实现）**不**一并收编，留后续票：评审仅列其为模式先例，无双维护痛点证据；本 spec 迁移面已到 review 可机械核对上限。
+### 6. 纯禁令守门（`scripts/check-test-support.ts`）
 
-### 7. 迁移节奏：工厂先行 + 按域渐进
+按域渐进迁移于 #758 收官后，原白名单机制整体移除，转为**纯禁令守门**（挂入 `check.sh`，Bun 运行时 ADR-0083）：
 
-先落工厂 + 断言库（不动任何既有调用，全量测试保持绿）；随后按域渐进迁移，一域一 PR：薄皮体内改调工厂、调用点改用归一签名（薄皮转发可作域内中间态，签名归一在域迁移时完成）；API 集成 `build_test_app` 内部接工厂打开入口，投资铺垫三段复制改组合种子。e2e 层不动（夹具统一另立 spec）。纪律沿 ADR-0056 先例：改动可机械核对、每步质量门槛全绿。
-
-### 8. 白名单守门
-
-`check.sh` 新增 Rust 测试守门（文本级扫描，运行时遵循 ADR-0083）：测试代码直连建库样板（`open_in_memory`/`init_db` 于工厂与 db 域之外）、夹具表裸 SQL（`INSERT INTO accounts` 等于工厂与域薄皮之外）、默认时刻字面量（`FIXED_NOW` 值于工厂之外）命中即红。白名单起步、随按域迁移清零，清零后转纯禁令——「白名单即规格」（ADR-0056 哲学），前端同构问题（散落桩）已由 `check-test-stubs.ts` 验证「深模块收敛 + 守门防回潮」在本仓有效。具体命中模式清单与脚本归属（新脚本或并入既有）实施票定。
+1. 禁在工厂与 db 域外直连建库样板（`open_in_memory` / `init_db`；不辖 `tests/e2e`）。
+2. 禁在工厂与域薄皮外对夹具表写裸 SQL（`tests/e2e` 存量例外逐条登记并严格计数，见 ADR-0086）。
+3. 禁在工厂外出现 `FIXED_NOW` 默认时刻字面量。
+4. 禁测试代码手工构造通道段/清单或自建通道摘要（#956）。
 
 ## 备选与否决
 
-- **仅去重不建统一入口**（#250 原设想）：逐份 diff、保留「本质差异」——8 种签名证明差异多为偶然漂移；不打平接口则跨域读者仍要分辨 N 个入口，时刻戳与样板噪音原样保留。
-- **独立测试 crate**：见决策 2，自依赖循环。
-- **包装类型 + builder 链**：见决策 3，与现状 `&Connection` 惯例全冲突，迁移摩擦翻倍。
-- **options struct 种子签名**：见决策 4，`Default` 藏关键字段、损显式性。
-- **时刻递增发放**：见决策 5，时序隐式化。
-- **不加守门靠评审**：回潮无机器信号——样板积到 15 处无人拦即是回潮率的直接证据。
+- **仅去重不建统一入口**：8 种签名多为偶然漂移，无法消除样板与时刻戳噪音，否决。
+- **包装类型 + builder 链**：与全仓 `&Connection` 流转习惯冲突，迁移摩擦翻倍，否决。
+- **options struct + `Default` 种子签名**：隐藏关键外键/币种字段、损测试可读性，否决。
+- **时刻递增发放**：调用点无法看出先后时序，否决。
+- **不加守门靠评审**：历史样板累积到 15 处无人拦即证其失效，否决。
 
-## 影响
+## 后果
 
-- 迁移完成后：建库样板 15 处归一、簿记时刻戳清零、账户签名单一、投资铺垫一行建成、对拍断言唯一维护点；20+ 测试文件调用点按域逐步改写（期间新旧共存、守门白名单递减）。
-- 产品 lib 导出面新增 `doc(hidden)` 测试模块（先例已接受的代价）；`check.sh` 增一环；结构守门白名单追加 `test_support`。
-- schema、迁移文件、IPC/HTTP 契约零变化；「已发布契约只增不改」不受影响。
-- 实施票待定项：种子函数完整清单、守门命中模式与脚本归属、按域迁移的 PR 切分顺序。
-
-## 迁移状态（#758 收口终态，2026-09-07）
-
-按域渐进迁移已收官，守门转纯禁令：白名单机制随 #758 移除，扫描范围内命中即红（fail loud 语义不变）。两条边界仍有效：①「缺表」场景经工厂库 `DROP TABLE` 模拟，迁移后文件库落盘经 `VACUUM INTO`（工厂无「未迁移库」形态，同决策 3）；② `tests/e2e` 不在工厂辖域（BDD 与工厂分层互斥，ADR-0086），#764 落地时恢复该目录的守门覆盖。共享断言是测试域对拍的唯一维护点；ledger-perf 第三份同名断言经 #776 裁决定案（不归一，分工留痕于该函数注释）。
-
-## 修订注记（#956，2026-09-10）：通道线格式替身与测试专用域间边
-
-多端同步的「构造一段合法通道段 + 归并 manifest」在测试侧曾被命令面集成测试（`tests/commands/sync_channel.rs`）与 BDD 步骤层（`tests/e2e/sync_steps.rs`）各手工复制一份，含各自独立的 `sha256_hex` 与段文件名字面量、清单版本字面量。收归 `test_support::channel::publish_raw_segment`（决策 1 准入：≥2 层同体消费），摘要口径直接消费产品侧 `channel::sha256_hex`（该函数因本票由私有放宽为 `pub(crate)`，见其注释）。
-
-- **共享物是「通道线格式契约」（字节级成帧），不是建库/种子/默认值集**：ADR-0086 决策 9 的分层互斥不破——BDD 侧仍不消费工厂的建库、种子与默认值；与 `test_support::webdav`（WebDAV 协议替身）同待遇。`CONTEXT-testing.md` 新增「通道线格式替身」词条锚定该形态。
-- **测试专用域间边 `test_support → sync_engine`**：本票新增。按 ADR-0071 决策 5「域间横向边显式化、逐条留痕」的口径，该边由**测试豁免路径**消费（`test_support` 的消费者全是测试）、不进产品依赖图，故在此登记为测试专用边而非产品横向边；与既有的 `test_support → accounts`（`assert.rs` 的对拍断言）同性质，同属测试专用放宽面。
-- **已知边界（本票不扩守门面）**：`scripts/check-structure.ts` 的 `INFRA_DOMAIN_ALLOWED_EDGES` 只对基础设施层生效，域→域边机器不可达——域间边（含测试专用边）靠评审与 ADR 登记兜底，不是守门覆盖面的缺口误判。
-- **守门新增规则 4**（`scripts/check-test-support.ts`）：测试代码禁手工构造通道段/清单（`SegmentEntry {` / `ChannelManifest {`），禁在引用了通道面的文件里自建摘要（`Sha256` / `sha2::`）；`test_support` 本体豁免。作用域限定（同文件出现 `ChannelManifest` / `SegmentEntry` / `EnvelopeMode` / `publish_raw_segment`）是为了不误伤与通道无关的摘要用法（`src/bin/ledger-perf/tests.rs` 的生成器确定性 DB 摘要，先例见本 ADR 迁移状态段的 #776 裁决）。
-- **成因留痕**：两份夹具都把 `size`/`sha256` 算在 **payload** 上，产品算在 `envelope::seal` 的**输出**上；明文模式下二者恰好相等而长期掩盖。原票「摘要口径漂移致测试静默变绿」的风险陈述不成立（产品在拉取侧校验下载字节的尺寸与摘要，换算法会直接打红），真实风险是同一隐式假设被写了两遍。
-
-## 修订注记（#1111 / ADR-0112，2026-09-13）：「独立测试 crate」否决前提已变——workspace 下 dev-dependency 环可解
-
-决策 2 否决独立测试 crate 的理由是「单 crate 无 workspace，工厂需调用 `init_db` 等主 crate 接口，自依赖循环不可解」。该前提随 workspace 落地（#1087）失效：dev-dependency 环是 Cargo 允许的测试专用边——测试目标与生产依赖图分离，不构成生产环（ADR-0112 决策 5 测试专用边类）。先例已实证：基础设施 crate 的域单测经 `[dev-dependencies] tauri-app` 消费根包的测试工厂与共享断言（#1088），结构守门的依赖方向核对只辖生产依赖。
-
-落点判定不变的部分：工厂仍是跨域深模块（决策 1 准入规则）、接口仍是 `&Connection` 自由函数集（决策 3）。落点判定随结构演进的部分：当前工厂仍住根包 `test_support/`（域目录尚在根包，环无必要）；业务域逐域拆出后按 spec #1086 以**独立测试支持 crate** 供各域 dev-dependency 引用——届时本决策 2 的「独立测试 crate」从否决项变为目标形态，`#[doc(hidden)]` 可见性机制随之迁入该 crate（生产 lib 导出面同步瘦身）。
-
-环非默认必选：负向用例可能被环击穿时以「测试不随迁」替代——协议 crate 先例：其根文档 compile_fail 负向用例要求 `tauri_app_lib` 不可见，取环会击穿之，DeviceId 单测因此留根包 `sync_engine/tests/`（理由留痕于该 crate Cargo.toml）。
-
-## 修订注记（#1107，2026-09-13）：DeviceId 单测随多端同步域迁入 `ledger-sync-engine`
-
-上条「DeviceId 单测留根包 `sync_engine/tests/`」的落点随 #1107 变更：多端同步域自根包拆为 `ledger-sync-engine`，其 `[dev-dependencies] tauri-app` 测试环只进入该域 crate 的测试目标，协议 crate（`ledger-sync-protocol`）自身仍无环，根文档 `compile_fail` 负向用例继续由 `cargo test --workspace --doc` 守卫。DeviceId 单测随域迁入 `crates/sync-engine/src/tests/device.rs`，断言与场景文本不变。
-
-同票的跨 crate 可见性变更：`channel::sha256_hex` 随测试支持域跨 crate 消费由 `pub(crate)` 再放宽为 `#[doc(hidden)] pub`（#956 注记的第二次放宽），产品消费者仍只有通道模块；用途与单一维护点不变。
-
-## 修订注记（#1433，2026-09-17）：源码扫描掩码器具上收 `test_support::scan`
-
-源码扫描守门的词法掩码与花括号配对曾三处同型：壳层信号守门的 `mask_non_code`、TS 侧守门脚本 `check-structure.ts` 的 `maskNonCode`、market-sync 车道守门的轻量行注释掩码（#1413 自述取舍）。Rust 侧两处上收为 `test_support::scan` 单一维护点：`mask_non_code`（注释与字符串/char 字面量等长空白掩码）+ `matching_brace_end`（掩码文本花括号配对原语）；消费面 = 壳层信号/连接槽/同步触发/行情接缝守门与命令面扫描测试、market-sync 车道守门（经既有 `tauri-app` dev-dependency 环，无新依赖边）。花括号配对四处手写同型（信号守门函数体定位、触发守门 cfg(test) 剔除、命令体提取、车道守门内联测试模块抹除）随同一原语归一。
-
-- **双源登记**：与 TS 侧 `maskNonCode` 是同一条词法规则的两个运行时载体（守门脚本跑 Bun、Rust 测试跑 cargo，单份实现不可共享），规则改动必须两侧同步；共享语料夹具被双侧测试消费，任一侧单独改规则即红。
-- **准入与可见性**：沿决策 1 放宽面先例（#956 通道线格式替身——跨 ≥2 域同体消费的测试器具）与决策 2（`pub mod` + `#[doc(hidden)]`）；词汇表锚定见 CONTEXT-testing「源码扫描掩码器具」。
-- **已知双源边界**（本票如实化，未扩规则）：`r##"…"##` 多级 `#` 与 `'\u{…}'` 转义两实现一致地不按字面量识别（两侧旧注释声称支持、与实现不符，本票改为如实描述）；非 ASCII 标识符紧邻原始串等病态形态 TS 侧按 ASCII/UTF-16 近似；`keepLiterals` 扩展形态 TS 侧独有（#1014，Rust 消费面无此需求）。扩展属规则改动，须两侧同步 + 语料更新。另：掩码器具原始串标识符前缀判定的 i==0 下溢（被扫文本以 `r"` 起始即 panic）随本票以独立修复提交更正，语料首 token 字节 0 的原始串行锁定该路径。
-
-## 修订注记（#1514，2026-09-18）：`open()` 的建库形态改为模板还原 + 单测确定性等待可注入
-
-spec #1086 的测试执行提速续作（#1514）实测两处与「单测不极快」直接相关的成本，落点都不改本 ADR 的接口判定：
-
-- **建库不再逐用例重放迁移链**。决策 3 的接口形态（零配置 `open() -> Connection`）与全部调用点不变，只改建库内部形态：进程内首次调用以 `serialize` 固化迁移后的 schema 与默认种子，其后每次 `open()` 经 `deserialize` 还原一份全新的独立内存库。本机实测同一工作树配对：逐次 `open_in_memory + init_db` 约 31ms/次，还原形态稳态约 40µs/次；整套 `--workspace --lib --test '*'` 单线程口径 116.5s → 104.3s，12 线程墙钟 16.9s → 14.3s。**独立性不变**——模板只是迁移产物的只读快照，还原得到的是互不干扰的独立内存库（内存库本就按连接隔离），用例间零交叉污染与逐次 `init_db` 等价；连接级设置（外键、perf hook）按 `finish_open` 收尾单点重新施加，不进序列化产物。实现住 `ledger_infra::db::open_in_memory_initialized`（建库仍是基础设施职责，工厂仍是唯一入口；`check-test-support.ts` 规则 1 的「建库两行序唯一入口」判定不变）。
-- **确定性真实等待改为可注入**。多端同步调度侧的轮次连接源（`AutoRoundConn`）每段取锁的等待上限改为字段、产品默认仍取 `ledger_backup::LOCK_TIMEOUT`，测试可注入短超时。`auto_round_gives_up_silently_when_connection_lock_is_busy` 断言的是「拿不到锁即放弃本轮」这一瞬时可判定语义，按产品默认 5s 两次取锁实等 10.1s；注入 10ms 后同一断言面耗时 0.18s。备份侧新增 `lock_conn_within(conn, timeout)` 作为参数化形态，`lock_conn_with_timeout` 是其 `LOCK_TIMEOUT` 薄转发，`db_slot_guard::backup_acquisition_points_go_through_facade_timed_job` 的回潮哨兵判定面不变。
-
-本注记只记机制变更与实测数据；决策 1–8 的判定与守门规则不变。
-
-## 修订注记（#1645，2026-09-21）：测试暂存目录 guard 收编 `test_support::scratch`
-
-Rust 测试的真临时目录夹具「只建不删」散在 5 个编译单元约 70 处（本机 `/tmp` 实测残留 13 049 项 / 11.2 GB），收编为 `test_support::scratch`：`ScratchDir`（目录）与 `ScratchFile`（散文件的目录化形态）构造即建 `temp_dir()/ledger-test-{tag}-{uuid}/`，drop（含 panic unwind）整棵删除，前缀归一 `ledger-test-`；手写 `remove_dir_all` / `fs_util::cleanup` 收尾与 `create_dir_all` 样板随迁移退役。e2e 场景的 guard 登记进 `BootGroup::scratch`（cucumber 每 scenario 重建 World，drop 即清理）；集成测试夹具经元组返回把 guard 交调用方持有（库目录寿命 = 设备寿命）。
-
-- **准入与可见性**：沿决策 1 放宽面先例（测试器具跨编译单元同体消费，#956/#1433 同款）与决策 2（`pub mod` + `#[doc(hidden)]`）；infra / backup / sync-engine / ledger-perf（根包 bin）经既有 `tauri-app` dev-dependency 环消费——与统一测试数据库工厂同一测试专用边处理，无新依赖边、无白名单改动；词汇表锚定见 CONTEXT-testing「测试暂存目录」。
-- **不收编面**（如实登记）：进程级 `$HOME` 夹具（`Once` + 重定向，目录进程存活期不能删）保持现状，属验收豁免类；产品代码路径（如多端同步域 checkpoint 快照临时文件，自有 `fs_util::cleanup` 收尾）不属测试器具；SIGKILL 下 guard 不执行，残留从「每次全量堆积」降为「异常终止偶发」。
-
-## 修订注记（#1699，2026-09-22）：读快照探针收编 `test_support::snapshot_probe` + 文件库建库 `open_file`
-
-多语句读闭包的快照一致性修复（issue #1699：rollback journal 下语句之间无快照隔离，写提交落在两语句之间即同屏口径自相矛盾）需要「写提交恰落在两语句之间」的确定性注入现场：探针在 reader 连接注册 `trace_v2` 的 STMT 回调，目标语句（marker 子串）开始前于**另一条连接**经 `hold_transaction` 原子提交注入写——红（无修复）= 注入提交、口径断言变绿不能；绿（修复后）= 读事务持锁挡住注入、口径仍自洽。issue 四处证据点（证据点「活动本读数与汇率折算」另含命令层 merge 探针）+ 两处同根因（交易搜索、投资概览），共七处探针测试跨交易 / 投资 / 壳层三个编译单元同体消费。
-
-- **准入与可见性**：沿决策 1（≥2 域同体消费）与决策 2（`pub mod` + `#[doc(hidden)]`）；配套 `open_file(db_dir)` 是文件库建库入口——内存库按连接隔离，第二连接是另一个空库，双连接现场必须文件库；建库接线知识收 `install_test_wiring` 单点（`open` / `open_file` 共享），决策 3 的零配置 `open()` 接口形态与全部既有调用点不变；词汇表锚定见 CONTEXT-testing「读快照探针」。
-- **单槽与传态边界**（如实登记）：`sqlite3_trace_v2` 是 `(mask, fn)` 单槽，探针的 STMT 注册顶掉建连收尾安装的 PROFILE 耗时 hook——仅测试连接、仅用例存活期，perf 日志缺席无行为影响、不回装；回调只收裸 `fn` 指针，状态经线程局部传递（先例：`perf_trace` 阈值），测试线程与用例一一对应、臂装覆写结局取走即清。
-- **测试守门不触**（如实登记）：注入写事务经 `hold_transaction` 原语——原生事务语句唯一住址守门（NATIVE_TX_STMT）不触；注入载荷的簿记戳引 `FIXED_NOW` 常量——默认时刻字面量禁令（`check-test-support.ts` 规则 3）不触；`budgets` 属业务表、不在夹具裸 SQL 禁用表集（守门明文边界）。
-
-## 修订注记（#1702，2026-09-22）：同根因残留候选取舍后探针消费面扩至六域
-
-同根因残留候选 triage（issue #1702）：修复投资域收益率（mwr）与组合走势（读数↔汇率折算）、仪表盘净资产三腿、实物资产列表/详情折算、定时计划详情/列表/订阅花费、保单统计九个新读闭包——探针测试新增九处，消费面自「交易 / 投资 / 壳层」三编译单元扩至七域（新增仪表盘、实物资产、定时、保单四 crate 的 dev-dependency 测试环，ledger-reports 先例）。仪表盘接线的设计裁决：**读闭包（指纹 → 缓存读 → 实时聚合）收进读事务、回填写留在事务外**——指纹标签自证失效（回填后被并发写超越即失配重算，竞态最多浪费一次重算），而读事务内升级写有 BUSY 面。判定不修的候选（单标的走势窗口、余额清单两段、跨本合并）的审计结论随 #1702 交付报告留痕，不改变本 ADR 契约。
-
-## 修订注记（#1868，2026-09-28）：文件库测试模板 `open_file_scratch`——跨库原子性断言的承载形态
-
-ADR-0139 决策 2 的实施前置：跨库（main + ATTACH 的 sync.db）事务的集合级原子性断言必须用文件库——main 为 `:memory:` 时 SQLite 对多库事务不提供集合级原子保证，内存库测不出真实语义。内存库测试模板由此开文件库变体，收编 `test_support::open_file_scratch`：暂存目录由工厂经 `ScratchDir` 发放、guard 经元组交调用方持到用例结束（#1645 契约，drop 含 panic unwind 整树清理）；全量迁移（含默认种子与 schema 守卫）与建库接线沿 `open_file` 同两处单点。决策 3 的接口形态不动：自由函数 + `&Connection` 流转、无新包装类型，唯一差异是返回元组第二位多一个目录 guard，与既有夹具「guard 交调用方持有」惯例同形。
-
-- **准入与可见性**：工厂本体成员（决策 1/2），无新依赖边、无守门改动（新入口不扩 `check-test-support.ts` 判定面）；词汇表锚定见 CONTEXT-testing「文件库测试模板」。
-- **行为等价判据**：多端同步域首个闭环行为测试改为内存模板 / 文件库模板双形态矩阵（同一场景体两形态等价绿，迁移是纯机械的建库形态轴）；工厂自测另钉直接等值断言（user_version 与默认种子两形态相等）与 drop 后整树清理。
-- **已知边界（如实登记）**：文件库模板逐用例重放迁移链——内存模板的序列化快照机制不适用于文件库（`deserialize` 只能还原内存态，跨库原子性要求真落盘），建库成本回到毫秒级；本票不引入任何 ATTACH 与生产行为改动，跨库原子性断言由拆库切换票（#1871）消费本形态落地。
-
-## 修订注记（#1896，2026-09-29）：op 写失败注入收编 + 拆库票审查的夹具与谓词单点化
-
-拆库切换票（#1871）code-review 标准轴发现的重复形状（判断题级、按「既有技术债立单不顺手修」纪律立票 #1896）按各自归属单点化：
-
-- **op 写失败注入触发器（工厂收编）**：currencies / investment / transaction（oplog）/ sync-engine（engine）四域各自手写的同形「`BEFORE INSERT ON sync.sync_ops` 触发器 RAISE(ABORT)」注入收编 `test_support::op_write_failure`——`block_op_writes` / `unblock_op_writes` / `assert_op_write_failure`。temp schema 是形态契约（普通触发器只能引用所在库的表；temp 触发器跨库引用、仅本连接可见、不留 schema 残迹），内存库与文件库同一形态；注入消息固定并即断言契约，消息断言随夹具单点。准入沿决策 1 放宽面先例（≥2 域同体消费，#956/#1433/#1645 同款）；业务写中途失败的落点注入（交易行、价格落点、期次行等）按触发目标留各域，不上收。词汇表锚定见 CONTEXT-testing「op 写失败注入」。
-- **同票审查的另三处重复（非工厂面，各自归属单点化）**：①attached `sync` 别名判据两份实现（schema 守卫 `pragma_database_list` 与 `sync_tables_live_attached` 前半同形）收敛 `db::connection::sync_alias_attached` 单点，两处消费；②`ATTACH ':memory:' AS sync` 内存世界成对挂载夹具（infra boot/db 测试四处同形样板）收编 infra `test_utils::attach_in_memory_sync`（crate 内测试夹具，经既有 `#[cfg(any(test, feature = "test-utils"))]` 门，不属根包工厂）；③主库判别谓词（建连收尾挂载判别与 ledger-perf generate 工具侧补位同形）导出 `db::connection::is_main_db_path` 共用——评论先例（#1871「工具侧有意补位」）随收敛退役为单点引用。
-- **行为等价判据**：全部迁移为纯机械替换，全量既有测试保持绿；工厂自测另钉臂装/解除直接断言（臂装后 INSERT 被注入消息挡下、解除后同语句不再命中）。
-- **#1872 接口关系（如实登记）**：`sync_tables_live_attached` 的双源回退分支删除（票 06，#1872）落在本注记收敛后的别名谓词之上——该票届时只需重写 `sync_tables_live_attached` 本体，别名单点不受影响。
-
-## 修订注记（#1989，2026-10-31）：进程级现场隔离收编 `test_support::isolate_home`——`$HOME` 单根重定向挡不住 XDG
-
-#1983 实施期间发现（#1989）：本机设置了 `XDG_DATA_HOME` 时，各测试二进制自持的 `$HOME` 夹具只重定向单根——mock runtime 的 `app_data_dir()` 实现为 `dirs::data_dir()` 拼接 identifier，Linux 下 `data_dir()` 优先解析 `$XDG_DATA_HOME`，集成测试的备份/恢复与默认数据目录写入因此落在真实 `~/.local/share` 根（readonly_connection、db_facade_wiring 等在现场环境稳定红）。六处同体副本（commands/isolation + 五个独立二进制）收编 `test_support::isolate_home`：`$HOME` + `$XDG_DATA_HOME` + `$XDG_CONFIG_HOME` 三根一齐重定向进 `temp_dir()/ledger-test-home-{uuid}/`（data/config 各设子目录），`Once` 语义随静态住本模块、每测试二进制恰有一次写入（CI 偶发红根因的既有裁决不变）。#1645 不收编面登记的「进程级 `$HOME` 夹具保持现状」随本收编退役——收编动机正是该夹具被证实有隔离缺口且六副本已漂移，非暂存目录边界重划（隔离根仍不随用例删除，不属 `ScratchDir` 管辖，前缀仍归 `ledger-test-` 闭集）。
-
-- **准入与可见性**：决策 1（≥2 编译单元同体消费，六处副本）+ 决策 2（`pub mod` 工厂内私有模块 + 顶层再导出，与 `ScratchDir` 同面）；无新依赖边、无守门改动。
-- **删除即变红**：契约测试 `tests/home_env_isolation.rs` 先毒化 XDG 两根再调夹具，断言 mock 应用 `app_data_dir()` / `app_config_dir()`（事故同一条解析路径）落进隔离根；删除夹具内任一 XDG 写入即红。已知边界：macOS 的 `dirs` 不消费 XDG 变量，该平台对「未重定向 XDG」回归不敏感（事故仅 Linux 形态）。
-- **行为等价判据**：六处调用点迁移为纯机械替换（本地 fn 删除改 import），全量既有测试在预置 XDG 变量的本机环境保持绿；词汇表锚定见 CONTEXT-testing「进程级现场隔离」。
+- 后端测试建库、夹具、簿记时刻、缓存对拍与跨编译单元器具各有单一权威入口，回潮由 `check-test-support.ts` 自动拦截。
+- 模板还原使单测建库成本从毫秒级降至微秒级（文件库变体因需真实落盘仍为毫秒级）；进程级 `isolate_home` 与 `ScratchDir` 消除了本地环境污染与 `/tmp` 堆积。
+- `test_support` 的测试专用域间边（`test_support → sync_engine` / `accounts` 等）不进产品依赖图，由本 ADR 与结构守门豁免承接。
